@@ -1,0 +1,10 @@
+﻿#version 460
+
+// ========================================
+// ビジビリティバッファの幾何の解決: VisBuffer.Id の画素から三角形を引いて GBuffer の Albedo・Normal・Velocity を書く
+//
+// 本体は Common/VisibilityResolve.glsl（ここでは検証用の書き出しを無効にして取り込む）。
+// 1 スレッドが 1 画素、8x8 のワークグループが画面のタイル。
+// ========================================
+
+#include "Common/VisibilityResolve.glsl"

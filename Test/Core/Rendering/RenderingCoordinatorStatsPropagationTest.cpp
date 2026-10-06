@@ -1,5 +1,6 @@
 ﻿#include "Rendering/FramePacket.h"
 #include "Rendering/SceneView.h"
+#include "Rendering/SkinningComputePass.h"
 
 #include <cassert>
 #include <iostream>
@@ -61,6 +62,70 @@ namespace NorvesLib::Core::Rendering
         assert(packet.Stats.BatchingTimeMs == 6.25f);
     }
 
+    // SkinningComputePass を 1 つ持つ View（Vulkan なし。Declare は呼ばず、パスの数だけを設定する）
+    Container::TSharedPtr<View> MakeViewWithSkinningPass(SkinningComputePass*& outPass)
+    {
+        auto view = Container::MakeShared<View>();
+        auto pass = Container::MakeUnique<SkinningComputePass>();
+        outPass = pass.get();
+        view->AddPass(std::move(pass));
+        return view;
+    }
+
+    void AssertSkinningDropStatsSumOnlyThisFramesViews()
+    {
+        constexpr uint64_t Frame = 10;
+
+        SkinningComputePass* drawnPass = nullptr;
+        SkinningComputePass* twoViewportsPass = nullptr;
+        SkinningComputePass* staleDisabledPass = nullptr;
+        SkinningComputePass* staleFailedPass = nullptr;
+
+        Container::VariableArray<Container::TSharedPtr<View>> views;
+        views.push_back(nullptr);
+        views.push_back(Container::MakeShared<View>()); // パスを持たないビュー
+        views.push_back(MakeViewWithSkinningPass(drawnPass));
+        views.push_back(MakeViewWithSkinningPass(twoViewportsPass));
+        views.push_back(MakeViewWithSkinningPass(staleDisabledPass));
+        views.push_back(MakeViewWithSkinningPass(staleFailedPass));
+
+        // 前のフレームで外した数。このフレームに Declare が呼ばれなかったビュー（無効・描ける大きさが無い・描画の失敗）
+        staleDisabledPass->AccumulateFrameDroppedInstances(Frame - 1, 7);
+        staleFailedPass->AccumulateFrameDroppedInstances(Frame - 5, 11);
+        // このフレームに描いたビュー。2 つ目のビューは 2 つのビューポートを描いたので合算する
+        drawnPass->AccumulateFrameDroppedInstances(Frame, 3);
+        twoViewportsPass->AccumulateFrameDroppedInstances(Frame, 2);
+        twoViewportsPass->AccumulateFrameDroppedInstances(Frame, 4);
+
+        assert(twoViewportsPass->GetDroppedInstanceCountForFrame(Frame) == 6);
+        assert(staleDisabledPass->GetDroppedInstanceCountForFrame(Frame) == 0);
+        assert(SumSkinningComputeDroppedInstances(views, Frame) == 9);
+
+        // 次のフレーム: 誰も Declare されなければ 0（古い数を足し続けない）
+        assert(SumSkinningComputeDroppedInstances(views, Frame + 1) == 0);
+
+        // 次のフレームに片方のビューだけが描かれたら、そのビューの数だけ（累計にしない）
+        drawnPass->AccumulateFrameDroppedInstances(Frame + 1, 1);
+        assert(SumSkinningComputeDroppedInstances(views, Frame + 1) == 1);
+        assert(drawnPass->GetDroppedInstanceCountForFrame(Frame) == 0);
+    }
+
+    void AssertSkinningDropStatsOverwriteTheRenderingStatsField()
+    {
+        SkinningComputePass* pass = nullptr;
+        Container::VariableArray<Container::TSharedPtr<View>> views;
+        views.push_back(MakeViewWithSkinningPass(pass));
+        pass->AccumulateFrameDroppedInstances(5, 2);
+
+        // 前のフレームから残った値は上書きする（足さない）
+        Debug::RenderingStats stats;
+        stats.SkinningComputeDroppedInstances = 99;
+        AssignSkinningComputeStats(stats, views, 5);
+        assert(stats.SkinningComputeDroppedInstances == 2);
+        AssignSkinningComputeStats(stats, views, 6);
+        assert(stats.SkinningComputeDroppedInstances == 0);
+    }
+
     void AssertNullPacketWrapperIsNoOp()
     {
         SceneView::SceneViewStats stats;
@@ -84,6 +149,8 @@ int main()
     AssertAccumulatesViewStats();
     AssertPacketWrapperAccumulatesViewStats();
     AssertNullPacketWrapperIsNoOp();
+    AssertSkinningDropStatsSumOnlyThisFramesViews();
+    AssertSkinningDropStatsOverwriteTheRenderingStatsField();
 
     std::cout << "RenderingCoordinatorStatsPropagationTest passed\n";
     return 0;

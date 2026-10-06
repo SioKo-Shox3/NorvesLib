@@ -4,6 +4,8 @@
 #include "Logging/LogMacros.h"
 #include "Rendering/RenderWorld.h"
 
+#include <iostream>
+
 namespace NorvesLib::Test::RenderingValidation
 {
     namespace
@@ -58,6 +60,7 @@ namespace NorvesLib::Test::RenderingValidation
         m_RunConfig = RenderingValidationRunConfig{};
         m_bCaptureRequested = false;
         m_bExitRequested = false;
+        m_bRequireVisibilityBufferPath = false;
         m_CaptureRequestRenderedFrame = 0;
         m_LastAcceptedRequestId = 0;
         m_LastAcceptedRequestStageToken = 0;
@@ -129,6 +132,12 @@ namespace NorvesLib::Test::RenderingValidation
                 continue;
             }
 
+            if (argument == TEXT("--visibility-buffer=off"))
+            {
+                // エンジンが同じ引数で予備の経路へ切り替える。ここでは、どちらの経路を通ったかの検査（VerifyVisibilityBufferPath）に使う。
+                m_RunConfig.bVisibilityBufferOff = true;
+                continue;
+            }
             if (StartsWith(argument, TEXT("--renderer=")))
             {
                 const Core::Container::String value =
@@ -169,11 +178,12 @@ namespace NorvesLib::Test::RenderingValidation
                 StartsWith(argument, TEXT("--path-tracing-shutter=")) ||
                 StartsWith(argument, TEXT("--path-tracing-aperture=")) ||
                 StartsWith(argument, TEXT("--path-tracing-focus-distance=")) ||
-                StartsWith(argument, TEXT("--raster-direct-brdf=")))
+                StartsWith(argument, TEXT("--raster-direct-brdf=")) ||
+                StartsWith(argument, TEXT("--visibility-buffer=")))
             {
                 // 連番の1フレームのPTの経路（R8-P3）の絞り・ピント距離・シャッターもエンジンが読む。
                 // エンジンが同じ引数で輸送範囲・画素内の標本位置・PTの検証出力・ラスタの直接光の
-                // BRDFを設定する。
+                // BRDFを設定する。--visibility-buffer も同じく、エンジンがビジビリティバッファの使い方を設定する。
                 continue;
             }
             if (StartsWith(argument, TEXT("--path-tracing-samples=")))
@@ -211,6 +221,7 @@ bool RenderingValidationApplicationHandler::OnInitialize()
 	{
 		return false;
 	}
+	m_PathProbe.Attach();
 	if (!m_Fixture.Initialize(Core::Engine::GEngine->GetWorld(),
 		Core::Engine::GEngine->GetRenderResources(),
 		m_RunConfig.Scene,
@@ -331,9 +342,14 @@ bool RenderingValidationApplicationHandler::OnInitialize()
                              static_cast<unsigned long long>(m_CaptureRequestRenderedFrame));
                     return;
                 }
+                bool bPassed = bAccepted;
+                if (bPassed && m_bRequireVisibilityBufferPath && !VerifyVisibilityBufferPath(reason))
+                {
+                    bPassed = false;
+                }
                 m_bExitRequested = true;
-                Core::Engine::GEngine->RequestExit(bAccepted ? 0 : 1);
-                if (!bAccepted)
+                Core::Engine::GEngine->RequestExit(bPassed ? 0 : 1);
+                if (!bPassed)
                 {
                     LOG_ERROR("描画検証の capture 評価に失敗しました: %s", reason.c_str());
                 }
@@ -355,6 +371,7 @@ bool RenderingValidationApplicationHandler::OnInitialize()
 
     void RenderingValidationApplicationHandler::OnPreShutdown()
     {
+        m_PathProbe.Detach();
         if (Core::Engine::GEngine != nullptr)
         {
             m_Fixture.Shutdown(Core::Engine::GEngine->GetRenderResources());
@@ -373,6 +390,44 @@ bool RenderingValidationApplicationHandler::OnInitialize()
     const RenderingValidationRunConfig& RenderingValidationApplicationHandler::GetRunConfig() const
     {
         return m_RunConfig;
+    }
+
+    void RenderingValidationApplicationHandler::RequireVisibilityBufferPath()
+    {
+        m_bRequireVisibilityBufferPath = true;
+    }
+
+    bool RenderingValidationApplicationHandler::VerifyVisibilityBufferPath(
+        Core::Container::String& outFailureReason) const
+    {
+        if (!VisibilityBufferPathProbe::CanObserve())
+        {
+            return true;
+        }
+        const uint32_t fallbackCount = m_PathProbe.GetFallbackCount();
+        const uint32_t resolveCount = m_PathProbe.GetResolveCount();
+        std::cout << "NORVESLIB_VISIBILITY_PATH mode=" << (m_RunConfig.bVisibilityBufferOff ? "off" : "on")
+                  << " resolve_logs=" << resolveCount << " fallback_logs=" << fallbackCount << std::endl;
+        if (m_RunConfig.bVisibilityBufferOff)
+        {
+            if (resolveCount != 0u || fallbackCount != 0u)
+            {
+                outFailureReason = TEXT("予備の経路（--visibility-buffer=off）のはずが、ビジビリティバッファの解決の記録がある");
+                return false;
+            }
+            return true;
+        }
+        if (fallbackCount != 0u)
+        {
+            outFailureReason = TEXT("既定の経路（解決）のはずが、予備（GBuffer のラスタ）へ戻った（VISBUFFER_FALLBACK）");
+            return false;
+        }
+        if (resolveCount == 0u)
+        {
+            outFailureReason = TEXT("既定の経路（解決）のはずが、解決を記録したログ（VISBUFFER_RESOLVE_TILES）が無い");
+            return false;
+        }
+        return true;
     }
 
     bool RenderingValidationApplicationHandler::RequestFollowupCapture(

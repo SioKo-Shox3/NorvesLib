@@ -66,6 +66,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t PathTracingSampleBatch = 0u;
         PathTracingDebugOutput PathTracingDebug = PathTracingDebugOutput::None;
         RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Analytic;
+        VisibilityBufferMode VisibilityBuffer = VisibilityBufferMode::On;
     };
 
     // ========================================

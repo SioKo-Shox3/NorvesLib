@@ -225,24 +225,37 @@ void main()
     mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
     vec3 viewDirection = normalize(mvp.cameraPosition.xyz - fragWorldPos);
     bool bVirtualTexture = mvp.bVirtualTexture != 0u;
+    // 高さのフィードバックの標本ミップ。POM の前の元の UV で、画素ごとに分かれる分岐・ループより前に取る（画面微分は一様な位置でだけ有効）。
+    float heightLod = 0.0;
+    if (bVirtualTexture && mvp.pomParams.y > 0.5)
+    {
+        heightLod = textureQueryLOD(heightTexture, fragTexCoord).y;
+    }
     if (mvp.pomParams.y > 0.5)
     {
         texCoord = ApplyParallaxOcclusionMapping(heightTexture, fragTexCoord, TBN, viewDirection,
                                                  mvp.pomParams.x, bVirtualTexture);
     }
 
-    PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
+    // POM の直後の一様な位置で、POM の後の UV の勾配と各層の標本ミップを取る（標本・フィードバックはこれを使い、画面微分を取り直さない）。
+    MaterialTextureFootprint footprint = QueryMaterialTextureFootprint(
         albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
+        mvp.pomParams.z > 0.5, bVirtualTexture);
+    PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
+        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord, footprint,
         mvp.pomParams.z > 0.5, mvp.pomParams.w > 0.5, bVirtualTexture);
     // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（アルベドのテクスチャが VT の表の番号を持つ）。
-    // discard より前に呼ぶ（画面微分を使うので、discard の後の非一様な制御フローでは呼べない）。
+    // 標本ミップは discard より前の一様な位置で取ってあるので、書き込みは分岐・ループの後でも壊れない。
     // 法線・ORM も POM の後の UV、高さだけ POM の前の元の UV で書く。
-    WriteVirtualTextureFeedback(albedoTexture, texCoord, mvp.virtualTextureFeedbackParam, g_VirtualTextureAlbedoEscaped);
-    WriteVirtualTextureFeedback(normalTexture, texCoord, mvp.virtualTextureFeedbackNormalParam, g_VirtualTextureNormalEscaped);
-    WriteVirtualTextureFeedback(metallicTexture, texCoord, mvp.virtualTextureFeedbackOrmParam, g_VirtualTextureOrmEscaped);
+    WriteVirtualTextureFeedback(albedoTexture, texCoord, mvp.virtualTextureFeedbackParam, g_VirtualTextureAlbedoEscaped,
+                                footprint.AlbedoLod);
+    WriteVirtualTextureFeedback(normalTexture, texCoord, mvp.virtualTextureFeedbackNormalParam, g_VirtualTextureNormalEscaped,
+                                footprint.NormalLod);
+    WriteVirtualTextureFeedback(metallicTexture, texCoord, mvp.virtualTextureFeedbackOrmParam, g_VirtualTextureOrmEscaped,
+                                footprint.MetallicLod);
     if (mvp.pomParams.y > 0.5)
     {
-        WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord, mvp.virtualTextureFeedbackHeightParam);
+        WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord, mvp.virtualTextureFeedbackHeightParam, heightLod);
     }
     vec4 texColor = textureSamples.Albedo;
     vec3 baseColor = texColor.rgb * fragObjectColor.rgb;

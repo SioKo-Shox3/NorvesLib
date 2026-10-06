@@ -154,6 +154,13 @@ set(PRIVATE_SOURCES
     Private/Rendering/MegaGeometry/LODHierarchyBuilder.cpp
     Private/Rendering/MegaGeometryPass.cpp
     Private/Rendering/HiZPyramidPass.cpp
+    Private/Rendering/SkinningComputePass.cpp
+    Private/Rendering/MaterialTileClassifyPass.cpp
+    Private/Rendering/VisibilityRasterPass.cpp
+    Private/Rendering/GBufferDebugPass.h
+    Private/Rendering/GBufferDebugPass.cpp
+    Private/Rendering/VisibilityResolvePass.cpp
+    Private/Rendering/VisibilityMaterialTable.cpp
     # Engine
     Private/Engine/AssetRegistry.cpp
     # Resource
@@ -396,6 +403,12 @@ set(PUBLIC_HEADERS
     Public/Rendering/NeuralMaterialDecodePass.h
     Public/Rendering/MegaGeometryPass.h
     Public/Rendering/HiZPyramidPass.h
+    Public/Rendering/SkinningComputePass.h
+    Public/Rendering/MaterialTileClassifyPass.h
+    Public/Rendering/VisibilityRasterPass.h
+    Public/Rendering/VisibilityResolvePass.h
+    Public/Rendering/VisibilityMaterialTable.h
+    Public/Rendering/VisibilityBufferMode.h
     # MegaGeometry types
     Public/Rendering/MegaGeometry/MegaGeometryTypes.h
     Public/Rendering/MegaGeometry/MeshClusterizer.h

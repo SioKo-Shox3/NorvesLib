@@ -8,6 +8,7 @@
 //
 // 材質のシェーダーと同じ関数（Common/SparseResidencySampling.glsl の SampleSparseResidentTracked と
 // Common/VirtualTextureFeedback.glsl の WriteVirtualTextureFeedback）を、1024x1024 の BC7 の sparse テクスチャへ当てる。
+// 勾配と標本ミップ（textureQueryLOD）は材質のシェーダーと同じく、main の分岐・ループより前の一様な位置で取って、各関数へ引数で渡す。
 // 4x4 画素を 1 つの確認（probe）に使い、確認の中の勾配は一様にする。ミップ 1 のタイル(0..1, 0..1)とミップ 2 のタイル(0, 0)を結び、ミップ 0 は結ばない
 // （lod 1.58 の標本は粗い側のミップ 2 も読むので、ミップ 2 も結ぶ）。
 //   0: ミップ 1（結んだ領域）のタイル境界をまたぐ 4x4 画素。1 画素あたり 3 texel（lod 1.58）。gl_FragCoord は画素の中心なので、
@@ -20,6 +21,12 @@
 //   3: 確認 2 と同じ 1 画素 1.5 texel（lod 0.58）で、タイル境界を local = 1.0 に置く（標本の texel は 254.5 + 1.5 (l + 0.5)）。
 //      タイルは (lx >= 1, ly >= 1) で、ミップ 0 のタイル (0, 0)・(1, 0)・(0, 1)・(1, 1) が 1・3・3・9 画素になる（面積の違うタイル）。
 //      非常駐で粗いミップへ逃げるので、位相によらず 16 画素すべてが書く。
+//   4: 別のテクスチャの逃げのループ（画素ごとに逃げるミップが違い、早期 return がある）と、非常駐で全画素が書くフィードバック
+//      （ハッシュの表の atomic のループ・早期 return）の後で、本体のフィードバックを書く。材質のシェーダーの、ORM の標本の後でアルベド・法線を書く形。
+//      別のテクスチャ側はミップ 0 のタイル(3, 3)（非常駐）を 1 画素 1.5 texel（lod 0.58）で引く。奇数列の画素（8 画素）は非常駐で逃げて書き、
+//      偶数列の画素は勾配を 8 倍にして常駐のミップを引くので逃げず、位相の画素のときだけ書く。
+//      本体は 1 画素 6 texel（lod 2.58）で、結んであるミップ 2 のタイル(0, 0) を巡回の位相の画素だけが 1 件書く。
+//      分岐の後で textureQueryLOD を取ると、ドライバによっては -inf 相当（ミップ 0）が返って、本体がミップ 0 のタイルを書いてしまう。
 // 材質のパラメータ（巡回の位相・テクスチャの番号・タイルの大きさ）は UBO の u_Params.x。0 のときは何も書かない。
 // u_Params.y が 0 でないときは、材質の UBO と同じく float の bit 列として受け取り、DecodeVirtualTextureFeedbackParam で戻した値を使う
 // （GBuffer・MegaGeometry の経路。24bit の整数が float を経由しても変わらないことを確かめる）。
@@ -39,6 +46,18 @@ layout(location = 0) out vec4 outColor;
 
 // ミップ 0 の 1 texel の uv の大きさ（テクスチャは 1024x1024）
 const float TEXEL = 1.0 / 1024.0;
+
+// 同じ 2x2 の画素の中で、常駐の判定が分かれる標本（材質のシェーダーの、ORM の標本の逃げのループ・早期 return と同じく、動的に一様でない制御フロー）。
+// 偶数列の画素は勾配を 8 倍にして常駐している粗いミップを引き、逃げずに SampleSparseResidentTracked の早期 return で抜ける。
+// 奇数列の画素はミップ 0（非常駐）を引き、逃げのループが回る。
+vec4 SampleDivergentEscape(vec2 uv, vec2 uvDx, vec2 uvDy, float sampledLod, out bool bEscaped)
+{
+    if ((uint(gl_FragCoord.x) & 1u) == 0u)
+    {
+        return SampleSparseResidentTracked(u_Texture, uv, uvDx * 8.0, uvDy * 8.0, sampledLod + 3.0, bEscaped);
+    }
+    return SampleSparseResidentTracked(u_Texture, uv, uvDx, uvDy, sampledLod, bEscaped);
+}
 
 void main()
 {
@@ -62,12 +81,40 @@ void main()
         baseTexel = vec2(254.5, 254.5);
         stepTexels = 1.5;
     }
+    else if (probe == 4)
+    {
+        baseTexel = vec2(100.0, 100.0);
+        stepTexels = 6.0;
+    }
 
-    // 標本と書き込みは分岐の外で行う（画面微分を壊さない）
+    // 勾配と標本ミップは、分岐・ループの前の一様な位置で取る（確認ごとの分岐は 4x4 画素の中で一様）
     vec2 uv = (baseTexel + local * stepTexels) * TEXEL;
-    bool bEscaped = false;
-    vec4 color = SampleSparseResidentTracked(u_Texture, uv, bEscaped);
+    vec2 uvDx = dFdx(uv);
+    vec2 uvDy = dFdy(uv);
+    float lod = textureQueryLOD(u_Texture, uv).y;
     uint param = u_Params.y != 0u ? DecodeVirtualTextureFeedbackParam(uintBitsToFloat(u_Params.y)) : u_Params.x;
-    WriteVirtualTextureFeedback(u_Texture, uv, param, bEscaped);
+
+    if (probe == 4)
+    {
+        vec2 otherUv = (vec2(900.0, 900.0) + local * 1.5) * TEXEL;
+        vec2 otherUvDx = dFdx(otherUv);
+        vec2 otherUvDy = dFdy(otherUv);
+        float otherLod = textureQueryLOD(u_Texture, otherUv).y;
+
+        // 別のテクスチャの逃げ。画素ごとに逃げ始めのミップが違い、逃げのループの回数が分かれる。
+        bool bOtherEscaped = false;
+        vec4 other = SampleDivergentEscape(otherUv, otherUvDx, otherUvDy, otherLod, bOtherEscaped);
+        WriteVirtualTextureFeedback(u_Texture, otherUv, param, bOtherEscaped, otherLod);
+
+        bool bEscaped = false;
+        vec4 color = SampleSparseResidentTracked(u_Texture, uv, uvDx, uvDy, lod, bEscaped);
+        WriteVirtualTextureFeedback(u_Texture, uv, param, bEscaped, lod);
+        outColor = color + other;
+        return;
+    }
+
+    bool bEscaped = false;
+    vec4 color = SampleSparseResidentTracked(u_Texture, uv, uvDx, uvDy, lod, bEscaped);
+    WriteVirtualTextureFeedback(u_Texture, uv, param, bEscaped, lod);
     outColor = color;
 }

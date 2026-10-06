@@ -838,7 +838,13 @@ namespace NorvesLib::Core::Rendering
                                                                   arrayCount));
         }
 
-        void EnqueueMegaGeometryPass(MegaGeometryPass* pass)
+        /**
+         * @brief MegaGeometryPass の記録コマンド（今のビューポートのカメラ・描画範囲・表示・フレームの通し番号）を作る
+         *
+         * 通常は EnqueueMegaGeometryPass がキューへ積む。ビジビリティバッファの ID のラスタが記録を自分の Execute へ移す経路
+         * （MegaGeometryPass::IsFrameRecordDeferred）では、ラスタがこのコマンドを作って記録を呼ぶ。
+         */
+        FrameCommand BuildMegaGeometryPassCommand(MegaGeometryPass* pass)
         {
             const CameraProxy *activeCamera = GetActiveCamera();
             FrameCommand command = FrameCommand::CreateMegaGeometryPass(pass,
@@ -851,6 +857,8 @@ namespace NorvesLib::Core::Rendering
             command.MegaGeometry.Textures = Resources.Textures;
             command.MegaGeometry.FrameNumber = FrameNumber;
             command.MegaGeometry.TemporalFrameIndex = TemporalFrameIndex;
+            command.MegaGeometry.InFlightIndex = FrameIndex;
+            command.MegaGeometry.RenderFrameSerial = ResolveRenderFrameSerial();
             command.MegaGeometry.bDeterministicCapture = bDeterministicCapture;
             command.MegaGeometry.bTemporalEpochStart = bTemporalEpochStart;
             if (const CameraProxy *previousCamera = GetPreviousCamera())
@@ -858,7 +866,12 @@ namespace NorvesLib::Core::Rendering
                 command.MegaGeometry.PreviousCamera = *previousCamera;
                 command.MegaGeometry.bHasPreviousCamera = true;
             }
-            EnqueueFrameCommand(command);
+            return command;
+        }
+
+        void EnqueueMegaGeometryPass(MegaGeometryPass* pass)
+        {
+            EnqueueFrameCommand(BuildMegaGeometryPassCommand(pass));
         }
 
         // ========================================
@@ -937,6 +950,21 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief FramePacketの単調なフレーム番号 */
         uint64_t FrameNumber = 0;
+
+        /**
+         * @brief RenderThread が記録したフレームごとに 1 ずつ増える通し番号（同じフレームの全ビューポートで同じ値）
+         *
+         * 1 フレームに同じパスが何回も Execute される（複数のビューポート）ので、UBO・ディスクリプタセットなどの
+         * フレームごとの資源は、Execute の回数ではなくこの番号で「次のフレームか」を決める（FrameUseRing）。
+         * 0 は未設定で、そのときは FrameNumber + 1 を使う（RenderingCoordinator を通さない手組みの文脈）。
+         */
+        uint64_t RenderFrameSerial = 0;
+
+        /** @brief FrameUseRing に渡すフレームの通し番号（未設定なら FrameNumber + 1） */
+        uint64_t ResolveRenderFrameSerial() const
+        {
+            return RenderFrameSerial != 0 ? RenderFrameSerial : FrameNumber + 1;
+        }
 
         /** @brief スクリーン幅 */
         uint32_t ScreenWidth = 0;

@@ -130,3 +130,18 @@ baseline更新を通常のコード変更と同じ変更単位へ混ぜない。
 - Outdoor SHA-256: `3676A470814C68841BF1C8E4BF8612802042AB936AAA77E1A9937C5EC642BA7E`
 - forced skip contract: exit 125をCTest skipとして確認
 - 連続検証: `-Iterations 10 -RequireGpu`で20 scene実行すべてexit 0
+
+## 予備の経路（`--visibility-buffer=off`）の基準画像
+
+既定の `--visibility-buffer=on` は解決（`VisibilityResolvePass`）が GBuffer を書く。`geometryShader` の無い装置が戻る予備の経路（GBuffer のラスタ）は画素が少し違う（球の縁の 57 画素・最大 3/255。解析的な微分と三角形の接線の基底による）ので、別の基準画像を持つ。
+
+| 検査 | 引数 | 基準画像 |
+|---|---|---|
+| `RenderingGoldenIndoorVulkanTest` / `RenderingGoldenOutdoorVulkanTest` | 既定（on） | `Indoor.png` / `Outdoor.png` |
+| `RenderingGoldenIndoorGBufferFallbackVulkanTest` / `RenderingGoldenOutdoorGBufferFallbackVulkanTest` | `--visibility-buffer=off` | `IndoorGBufferFallback.png` / `OutdoorGBufferFallback.png` |
+
+- しきい値は `VisualThresholds.tsv` の同じシーンの行を使う（off 用の行は持たない）。
+- 置いた時点の値: `IndoorGBufferFallback.png` は `Indoor.png` と同じ（SHA-256 `D0D34A5F9CF478449EC34BC551DA190B9E77353E8CD807B3455E2AEB6B5E05E7`）。`OutdoorGBufferFallback.png` は、既定を on にして `Outdoor.png` を再承認する前の基準画像（`83134c09^`。SHA-256 `18A44AE8E1408EF8EF0F13FFB1009750F748FB591349AACCEEEFC06EA4B5B857`）。off の撮影はこれと完全に一致する。
+- 更新の手順: `UpdateRenderingGoldenBaselines.ps1` と `CalibrateRenderingVisualThresholds.ps1` は on の 2 枚だけを扱う。off の 2 枚は、差が予備の経路の変更だけによると確かめたうえで次のように置き換える。
+  `RenderingGoldenImageTest.exe --scene=<indoor|outdoor> --capture-source=back-buffer --visibility-buffer=off --write-baseline-staging` が `build\RenderingValidation\BaselineStaging\<Scene>GBufferFallback.png.tmp` を書くので、それを `Test\Core\Rendering\Baselines\RenderingValidation\<Scene>GBufferFallback.png` へ写す（同じ撮影の staging と基準画像のバイト一致を確かめてある）。
+- 経路の確認: 速度の検査（`RenderingVelocity*VulkanTest`）と golden は、画像・値の比較の後に `VisibilityBufferPathProbe`（`RenderingValidation/VisibilityBufferPathProbe.h`）がエンジンのログ（`VisibilityResolvePass` の `VISBUFFER_FALLBACK`・`VISBUFFER_RESOLVE_TILES`）で、走った経路を確かめる。on は解決を記録していて予備へ戻っていないこと、off は解決を通っていないことを求め、標準出力に `NORVESLIB_VISIBILITY_PATH mode=<on|off> resolve_logs=<n> fallback_logs=<n>` を出す。装置が対応しないと既定も黙って予備へ落ち、画像や速度の値だけでは区別できないための確認で、ログが無効なビルド（Release）では何も確かめない。

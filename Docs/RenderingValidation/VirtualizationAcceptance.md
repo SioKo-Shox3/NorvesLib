@@ -544,3 +544,121 @@ PNG を開いて確かめた（`VTG5-ACCEPT/default-sun45.png`・`near-sun45.png
 - **全常駐との GPU 時間の比較は未実施**: ページのストリーミングは VRAM の削減が目的で、GPU 時間は 1100 MB と 6500 MB（どちらもストリーミングあり）の比較だけ。全常駐（`-GeometryStreaming Off`）の 300 個の GPU 時間は測っていない。ほかの GPU・ドライバでの値も未測定。
 - **開発機での実測だけ**: RTX 4080 で確かめた。ほかの GPU・ドライバ・VRAM が少ない GPU での撮影は未実施。
 - **`GEOMETRY_PAGES`・`VRAM_POOLS` などの記録は開発ビルド専用**（Release にはデバッグ機能を入れない方針）。
+
+## 段6（ビジビリティバッファ）
+
+判定日: 2026-10-06。ブランチ `feature/vtg-stage6-visibility-buffer`（コミット `2e15a905` の上、main `33bd19b8` から分岐）。段6の受入れ（計画 5・6）は、起動画面と golden が移行前と同等であること（差は記録して判断）。
+
+撮影はすべて RelWithDebInfo の Game（1280×720、TAA・RTGI 有効の起動画面の既定）を `-Deterministic`（`--capture-deterministic`）で撮った。GPU 時間の計測（`-GpuTimingFrames 300`、窓 240 フレーム）は実時間の計測なので `-Deterministic` ではない。
+「ビジビリティバッファ（on）」は既定（`--visibility-buffer=on`。不透明すべてが ID と深度を描き、材質の解決パスが GBuffer を書く）、「予備の経路（off）」は `-VisibilityBuffer Off`（`--visibility-buffer=off`。段5までと同じ GBufferPass・MegaGeometryPass の GBuffer へのラスタ）。
+証拠は `.harness/runs/20261006-111432/verify-VTG6-ACCEPT-<n>-*.txt`（ビルド・ctest・撮影）と `ev-<n>-*.txt`（予備の経路の撮影・画素の比較・GPU 時間）。撮影の出力は `.harness/runs/startup-capture/VTG6-ACCEPT*/`（`metrics.json`・PNG・各視点の `*.Game.log`）。
+
+### 結果の一覧
+
+| 項目 | 検査 | 結果 |
+|---|---|---|
+| 関係ターゲットの Debug ビルド | `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest RenderingVelocityVulkanTest -- /m:1` | BUILD_EXIT_CODE=0（`verify-…-1-build.txt`） |
+| 関係する ctest（8本） | `IntegerAttachmentVulkanTest`・`VisibilityBufferEncodingTest`・`ComputeSkinningVulkanTest`・`MaterialTileClassifyVulkanTest`・`RenderGraphCompileTest`・`RenderingVelocitySkinnedVulkanTest`・`RenderingGoldenIndoorVulkanTest`・`RenderingGoldenOutdoorVulkanTest` | 8/8 passed（`-2-ctest.txt`。GPU のテスト 6 本の実行時間は計 97.75 秒） |
+| golden | 上の Indoor・Outdoor（既定 = ビジビリティバッファ）と、予備の経路の `RenderingGoldenIndoorGBufferFallbackVulkanTest`・`RenderingGoldenOutdoorGBufferFallbackVulkanTest`（今回は走らせず、`VTG6-OFF-PATH-TESTS` の記録 5/5 passed を参照） | Indoor・Outdoor とも pass。基準画像は今回動かしていない（下の「golden」） |
+| RelWithDebInfo の Game のビルド | `cmake --build build --config RelWithDebInfo --target Game -- /m:1` | BUILD_EXIT_CODE=0（`-3-rwdi-build.txt`） |
+| 朝10°・昼45°・夕3° × 既定・近接・低角度（on） | `Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3` | 9枚、result=pass（`-4-capture-day.txt`）。白飛び・黒つぶれの画素率は全視点 0 |
+| 夜 × 既定・近接・低角度（on） | `... -OutDir .harness/runs/startup-capture/VTG6-ACCEPT-night ... -Deterministic -Night` | 3枚、result=pass（`-5-capture-night.txt`）。白飛び・黒つぶれは 0 |
+| 予備の経路（off）の撮影と PSNR | 同じ引数に `-VisibilityBuffer Off`（出力先 `VTG6-ACCEPT-off`・`VTG6-ACCEPT-off-night`）。on との比較は `-CompareOnly -CompareDeterministicWith <on の出力先>` | 12視点とも pass、`within_limits=True`（`ev-6`〜`ev-9`）。PSNR は下の表 |
+| GPU 時間 | `-GpuTimingFrames 300 -VisibilityBuffer On／Off`、起動画面と `--stress-mega-instances=300` | 下の節（`ev-10`・`ev-11`）。off の 300 個だけ、スクリプトの VT の上限の判定で fail（下の節） |
+
+### 見た目（PSNR）
+
+同じ視点の 1280×720 RGB の PSNR（dB）。on 対 off（予備の経路）。スクリプトの下限（`-DeterministicPsnrLimit` 既定 45）で比べ、12視点とも超えた。平均輝度の差は最大 0.0332（上限 0.1。夜・低角度）。
+
+| 視点 | 朝10° | 昼45° | 夕3° | 夜 |
+|---|---|---|---|---|
+| 既定 | 52.669 | 56.801 | 54.606 | 53.230 |
+| 近接 | 48.863 | 53.184 | 50.302 | 53.679 |
+| 低角度 | 52.097 | 54.388 | 55.567 | 49.350 |
+
+最大チャンネル差（/255）は既定 23・17・25・56（朝・昼・夕・夜）、近接 49・23・28・60、低角度 30・29・49・64。不一致の画素は 19〜33%（夜の近接は 9.8%）。
+
+差の出どころ（段6の記録 `VTG6-DEFAULT-ON-SWITCH` と同じ）: on は材質の解決が三角形の 3 頂点と画素の光線の交点から重心座標と解析的な微分を求め、接線の基底を三角形の辺と UV から作る。off は頂点シェーダーが補間した接線と画面の微分を使う。この違いが `textureGrad` の勾配・法線の向きの 1〜数階調の差になり、手前の石畳の目地・球の縁に集まる。夜は最大差が 56〜64 と昼より大きい（差の画像では、夜・既定は石畳の道・小屋の屋根と壁・右の地面に、夜・近接は石の球の表面と手前の石畳に、夜・低角度は手前の石畳の目地・岩の周り・小屋の屋根の縁と壁に点として散らばり、面や形の欠けではない）。平均輝度は on と off で同じ（朝・昼・夕・夜で差 0.0332 以下）。
+
+- 段5の受入れの撮影（`VTG5-ACCEPT`・`VTG5-ACCEPT-night`）との間には、NVIDIA のドライバの更新（591.86 → 610.88）と、off の `gbuffer.frag`・`megageometry.frag` の勾配を明示した標本（`VTG6-VT-LOD-UNIFORM`）が挟まるので、off も段6で変わっている。同じ視点の PSNR は on 対段5が 48.85〜56.81 dB（最大チャンネル差 17〜70）、off 対段5が 55.02〜62.75 dB（同 13〜52）で、どちらも下限 45 dB を超える。材質の解決による差は、同じドライバの on と off の比較（上の表）で測った。
+- 予備の経路（off）は段5の記録と近い平均輝度（昼 124.296・126.361 など）で、`VISBUFFER_RESOLVE_TILES`・`VISBUFFER_FALLBACK` は 0（ID のラスタ・解決が走らない）。
+
+### 起動画面の撮影の所見
+
+PNG を開いて確かめた（`VTG6-ACCEPT/default-sun45.png`・`near-sun10.png`、`VTG6-ACCEPT-night/default-night.png`）。
+- 既定・昼45°: 小屋・金色の球の列・石畳の球・岩・材質の帯・空・発光の球が欠けなく出ている。外周の左右の奥のスキャン資産の岩も出ている。天球・地面・球・岩は隠れていない。
+- 近接・朝10°: 石畳の球の煉瓦の並び・足元の石畳の目地・影が欠け・継ぎ目なく出ている。
+- 夜・既定: 点光源の光だまり・球と岩の影が出ている。
+- ログに Vulkan の検証エラー（`VUID`・`VK_ERROR`）、`VISBUFFER_FALLBACK`、`COOKED_MODEL_MISSING`・`SCAN_PROP_FAILED` は 0 件（on の昼9視点・夜3視点、off 12視点、GPU 計測の on の全ログ）。
+- 解決の記録（on の最後の `VISBUFFER_RESOLVE_TILES`）: 既定・低角度は材質 24・dispatch 24、近接は材質 17・dispatch 17（材質ごとのタイルへの間接 dispatch）。
+
+### VT のフィードバックと常駐量
+
+材質の解決パスが VT のフィードバック（4×4 の画素のうちフレームごとに 1 画素の `textureQueryLod` から欲しいミップ・タイルを求めて GPU のバッファへ書く）を書く。要求の数そのものは撮影のログに出ない。要求の結果を、撮影の最後の `VT_STREAMER`（常駐タイル数）と `vt_used_mb`（`VRAM_LEDGER sparse_pool`）で比べる。どの視点も `wanted=0`・`failed=0`・`bind_failures=0`・追い出し 0（要求を全部さばいて落ち着いた後の値）。朝・昼・夕・夜で同じ。撮影の VT の上限は 64 MB（`vt_used_limit_mb`）。
+
+| 視点 | on: 常駐タイル | on: 使用量（MB） | off: 常駐タイル | off: 使用量（MB） | on / off |
+|---|---|---|---|---|---|
+| 既定 | 166 | 13 | 225〜228 | 16〜17 | 0.73 |
+| 近接 | 450 | 30 | 683 | 45 | 0.66 |
+| 低角度 | 348 | 24 | 366 | 25 | 0.95 |
+
+- 段5の撮影（`VTG5-ACCEPT`、段6の前）の値は off と同じ（既定 16・近接 45・低角度 25 MB）。段6で on にすると常駐は少なめになるが、ぼけは出ていない（鮮明さを測るラプラシアンの分散は `VTG6-DEFAULT-ON-SWITCH` の記録で on と off が同じ）。on の常駐が少ないのは、材質の解決が画素の光線から求めた微分で標本の位置を決めるので、off（頂点シェーダーが補間した値と画面の微分）より不要な細かいミップを欲しがらないため、と見ている（原因の切り分けは未実施）。
+
+### GPU 時間
+
+`-GpuTimingFrames 300`（窓 240 フレーム）、RelWithDebInfo、中央値（ms）。予算は 16.6 ms。off と on のラスタの行の名前が違うので、**パスの合計**（on = `VisibilityRasterPass` ＋ `MaterialTileClassifyPass` ＋ `VisibilityResolvePass` ＋ `GBufferPass`、off = `MegaGeometry` ＋ `GBufferPass`）で比べる。`MegaGeometry` の行は on では `VisibilityRasterPass` と同じ値（ID のラスタの描画を含む）で、off と意味が違う。個々のパスの値は隣のパスとの間でずれる（既定で on の `LightingPass` 0.668 に対し off 0.853、`SSAOPass` は on 0.286 に対し off 0.091）ので、判断はフレーム全体と合計で行う。
+
+起動画面:
+
+| 視点 | フレーム GPU（on / off） | 差 | ID のラスタ | 分類 | 解決 | 合計（on / off） | `MegaGeometryPass` の CPU の記録（on / off） | CPU のフレーム（on / off） |
+|---|---|---|---|---|---|---|---|---|
+| 既定 | 2.412 / 2.214 | +0.198 | 0.195 | 0.161 | 0.413 | 0.778 / 0.600 | 0.174 / 0.136 | 5.466 / 5.284 |
+| 近接 | 2.311 / 2.122 | +0.189 | 0.201 | 0.159 | 0.335 | 0.704 / 0.578 | 0.165 / 0.130 | 5.307 / 5.484 |
+| 低角度 | 2.215 / 1.879 | +0.336 | 0.172 | 0.157 | 0.446 | 0.784 / 0.467 | 0.171 / 0.134 | 5.331 / 5.484 |
+
+負荷モード（`--stress-mega-instances=300`）:
+
+| 視点 | フレーム GPU（on / off） | 比 | ID のラスタ（on）／ `MegaGeometry`（off） | 分類 | 解決 | 合計（on / off） | CPU のフレーム（on / off） |
+|---|---|---|---|---|---|---|---|
+| 既定 | 11.201 / 6.608 | 1.70 | 6.606 / 2.365 | 0.239 | 0.625 | 7.479 / 2.753 | 16.990 / 12.328 |
+| 近接 | 9.192 / 5.988 | 1.54 | 4.903 / 1.924 | 0.179 | 0.446 | 5.537 / 2.236 | 15.140 / 11.881 |
+| 低角度 | 8.732 / 5.597 | 1.56 | 4.580 / 1.761 | 0.169 | 0.515 | 5.273 / 2.060 | 14.728 / 11.460 |
+
+- 起動画面では on が off より 0.19〜0.34 ms 長い（約 +9〜18%）。分類（0.16 ms 前後）と解決（0.34〜0.45 ms）が足され、GBuffer の描画（0.29〜0.39 ms）と MegaGeometry の描画が ID のラスタ 1 本にまとまって（0.17〜0.20 ms）減る分では賄えない。全視点で 16.6 ms の予算の内（`within_budget=True`、超過 0）。分類の GPU は前の記録（0.26〜0.29 ms）より小さい。
+- 300 個の負荷モードでは on の ID のラスタが off の `MegaGeometry` の 2.55〜2.79 倍で、フレーム全体が 1.54〜1.70 倍（+3.1〜+4.6 ms）になる。この比は両経路で同じカリング（`MegaGeometryCull1`・`MegaGeometryCull2` の計 0.68〜0.84 ms。`MegaGeometry` の区間の内側で測る）を含み、カリングを除くと 3.4〜3.8 倍（on の区間は手続きメッシュの塊の描画と描画の記録の compute も含み、off の区間には含まない。描画だけの内訳は段6では測っていない）。on の最大は 11.2 ms（既定の視点）で、GPU の予算 16.6 ms の内。**on の既定の視点は CPU のフレームの中央値が 16.99 ms で、16.6 ms を超える**（スクリプトの `within_budget` は GPU のフレーム時間だけで判定している）。off は 12.328 ms。on と off の CPU のフレームの差（+4.66・+3.26・+3.27 ms）は GPU のフレームの差（+4.59・+3.20・+3.14 ms）とほぼ同じで、CPU のフレームの増加は GPU を待つ時間の増加による。
+- ID のラスタの区間が重い理由は未調査。`geometryShader` の段は挟んでいない（FS の `gl_PrimitiveID` のための機能だけ）。候補は、描画の記録の compute が積まれたコマンドの数によらず横 `min(ceil(区間の容量/64), 65535)` × 縦 `区間の数 × パスの数` のワークグループを立てること（負荷モードのコマンドの枠は約 109〜161 万、区間は 24）、手続きメッシュの塊の描画、FS の `gl_PrimitiveID`・深度の比較 LessOrEqual・別の render pass での深度の Load（いずれも未検証）。段7（ソフトウェアラスタ）は小さい三角形を計算シェーダーへ移すので、そこで詰められる見込み（原因が未調査なので確かではない）。
+- `MegaGeometryPass` の CPU の記録は on が約 0.03〜0.04 ms 長い（既定 0.174 / 0.136）が、300 個でも 0.21〜0.24 ms で個数に比例しない。
+- 負荷モード・off の撮影は `result=fail`（`near: VT の常駐量が上限を超えた（vt_used_mb_max=84 / 上限 64 MB）`）で終わった。GPU 時間は 3 視点とも取れており、上の値はその値。on は同じ 300 個で 近接 58 MB・低角度 42 MB・既定 20 MB で上限の内（off は 84・50・27 MB）。上限 64 MB は起動画面の常駐を守る値で、300 個の負荷モードを想定していない。on で減っている点は、上の「VT のフィードバックと常駐量」と同じ向き。
+
+### golden
+
+- 基準画像・閾値の変更（段6のコミット）: Outdoor を 2 回再承認した。`80ec7662` は NVIDIA のドライバの更新（591.86 → 610.88）の後のシェーダーコンパイルによる丸めの違いで、差は 1 画素（(193,197) の R 223→222、最大差 1/255、平均輝度は変わらない）。VT の LOD の問い合わせを移す前のシェーダー（`def594d5`）でも同じ画素・同じ値で落ちたので、LOD の問い合わせを移す変更による差ではない。`83134c09` は既定の on への切り替えによる差で、球の縁の 57 画素・最大 3/255、off では旧 baseline と完全に一致、Indoor は on でも一致。予備の経路用の基準画像 `IndoorGBufferFallback.png`・`OutdoorGBufferFallback.png`（`OutdoorGBufferFallback.png` は `83134c09` の前の版の Outdoor、すなわち `80ec7662` で再承認したものと同じ内容）と、基準画像の選び方（`RenderingGoldenImageTest.cpp` の `BaselineFileName`）は `52b399e7` で足した。閾値（`VisualThresholds.tsv`）は変えていない。手順は `GoldenBaselines.md`、2 回の再承認の根拠は `R1Acceptance.md`。
+- 今回（段6の受入れ）は基準画像・閾値を動かしていない。既定の経路の Indoor・Outdoor の golden は 2 本とも pass。
+
+### 段6の受入れの判定
+
+- 「起動画面と golden が移行前と同等（差は記録して判断）」: 満たす。起動画面は朝・昼・夕・夜の 12 視点で欠けなく出て、予備の経路（off）との比較はスクリプトの判定（PSNR の下限 45 dB・平均輝度の差の上限 0.1）で 12 視点とも pass（PSNR 48.86〜56.80 dB、平均輝度の差 0.0332 以下）。最大チャンネル差は 17〜64/255 で、起動画面は golden の閾値（`VisualThresholds.tsv`）では判定していない。差は材質の解決の解析的な微分・接線の基底による手前の石畳・球の縁の差で、平均輝度は変わらない。段5の受入れの撮影との PSNR も 48.85 dB 以上。golden（検証シーン）は別に Indoor・Outdoor とも pass（Outdoor は再承認済み）。
+- 起動画面（絶対規則 7）: 満たす。天球・地面・球・岩・小屋・見本の帯・金色の球の反射・発光の球が見え、Vulkan の検証エラー・予備への戻り・資産の欠けは 0。
+- 遮蔽カリング: on の `MEGA_OCCLUSION`（pass1 / pass2_tested / pass2_drawn / occluded）は off と完全に一致（既定 2672 / 2679 / 0 / 7、近接 2888 / 2966 / 10 / 69、低角度 1755 / 1793 / 3 / 41）。
+- VT: on は常駐が off の 0.66〜0.95 倍、`wanted=0`・`failed=0`。
+- 関係する ctest 8/8 pass、golden 2 本 pass。
+- GPU 時間: 受入れの条件にはないが、on は起動画面で off より +0.19〜+0.34 ms、300 個で +3.1〜+4.6 ms（1.54〜1.70 倍）。予算（16.6 ms）の内（CPU のフレームの 300 個・既定の視点を除く）。下の限界に記録する。
+
+### 既知の限界
+
+- **NVIDIA のドライバの更新で分岐後の `textureQueryLod` が外れるようになった**: 2026-10-06 0:17 のドライバの更新（591.86 → 610.88）で、分岐の後の `textureQueryLod` が外れ、既定の視点の VT の常駐タイルが約 42 倍（約 9500 対 225〜228）に増えた（`VTG6-VT-LOD-UNIFORM` で直した。POM の直後は一様な位置とみなす。退行の守りは撮影の VT の常駐の上限）。段6の前の撮影・基準画像は旧ドライバのもの（Outdoor の golden は `80ec7662` で再承認した。その差はシェーダーコンパイルの丸めによる 1 画素で、`textureQueryLod` の件とは別）。
+- **実行時の同期（バリア）を検証レイヤー付きで確かめていない**: GPU のテストは `bEnableValidation = false`、撮影は RelWithDebInfo。撮影のログの `VUID`・`VK_ERROR` が 0 というのは、検証レイヤーを有効にした結果ではない。
+- **カメラが動くときの遮蔽の見え始め（旋回の撮影）を段6では撮っていない**: 段3の受入れの旋回はラスタの経路（GBuffer）の記録。
+- **on の VT の常駐は off より少なめ**（0.73・0.66・0.95 倍）だが画像はぼけない。原因の切り分けは未実施。
+- **ワイヤーフレームの表示**は材質の境目の線の色が on と off で入れ替わる（深度の比較 `LessOrEqual` と `Less` の違い。塗りの起動画面では 0〜2 階調）。
+- **予備の経路（off）の検査**: Indoor・Outdoor の golden と速度の検査で守る。`geometryShader` の無い装置での実機の確認は無い。
+- **材質の解決の dispatch と分類の一覧**: 解決は材質ごとのタイルの間接 dispatch（起動画面の定常で 17〜24 回）。分類は GPU が起動画面で 0.16 ms 前後・300 個で 0.17〜0.24 ms（段6の受入れの測定。`VTG6-RESOLVE-TILE-DISPATCH` の測定では 0.258〜0.285 ms）、VRAM は約 5 MB。分類の一覧は最悪の大きさ（4K で約 33 MB、1 ビュー・1 フレーム枠あたり）で確保する（`VTG6-DEFAULT-ON-TILE-VRAM`。溢れて物が欠けるのを避ける）。
+- **計算スキニングのパイプラインだけが作れない装置**では、スキニングの無い場面でも予備になる（保守的）。
+- **on の GPU 時間は off より長い**: 起動画面で +0.19〜+0.34 ms、300 個で +3.1〜+4.6 ms（ID のラスタの区間が off の `MegaGeometry` の 2.55〜2.79 倍、カリングを除くと 3.4〜3.8 倍。on の区間は描画の記録の compute・手続きメッシュの塊の描画を含む）。300 個・既定の視点では CPU のフレームの中央値が 16.99 ms で 16.6 ms を超える（GPU を待つ時間の増加による）。原因は未調査。段7（ソフトウェアラスタ）で詰められる見込み。
+- **on の GPU 時間の行 `MegaGeometry` は `VisibilityRasterPass` と同じ値**（ID のラスタの描画を含む）: 両者を足さない。off との比較は上のパスの合計で行う。
+- **RelWithDebInfo の `RenderGraphCompileTest` は NDEBUG で落ちる**（副作用を assert の中に置いているため。既存。`TEST-ASSERT-NO-DIALOG` の記録）。Debug では 8/8 pass。
+- **負荷モード（300 個）・off の撮影は VT の上限の判定で fail**（84 MB / 64 MB）。上限は起動画面向けの値で、結果は GPU 時間の記録としては有効。
+- **負荷モード（300 個）の GPU 時間は、影の描画を一部省いた状態の値**: on・off とも `DynamicUniformAllocator` の `Out of slots (1024/1024)` が視点ごとに 343〜1102 回出て、既定の視点では CSM の UBO が足りないための `MegaGeometry` の影の描画の省略が 343 回、点光源の影の 1 面あたりの上限（8）を超えた省略が 1032 回ある（`VTG6-ACCEPT-gpu-stress-On`・`-Off` の `*.Game.log`）。段5の `VTG5-BATCHED-CULL-PERF-stress300` にも同じ `Out of slots` が 404 回あり、段6の退行ではない。起動画面の撮影では出ない。
+- **段の外の後回し**（`TASKS.md` の backlog）: `PT-NONUNIFORM-SAMPLER`（パストレーサーの一様でない添字の印）、`PT-STARTUP-GEOMETRY`（パストレーサーの撮影の形状の違い）、`TEST-ASSERT-NO-DIALOG`（Debug のテストの assert の対話窓）。
+- **開発機での実測だけ**: RTX 4080（ドライバ 610.88）で確かめた。ほかの GPU・ドライバでの撮影・計測は未実施。
+- **`VISBUFFER_*`・`VRAM_LEDGER`・`MEGA_OCCLUSION` などの記録は開発ビルド専用**（Release にはデバッグ機能を入れない方針）。

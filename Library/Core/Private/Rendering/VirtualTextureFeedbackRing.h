@@ -187,8 +187,10 @@ namespace NorvesLib::Core::Rendering
             {
                 return false;
             }
-            // 書くのは材質のフラグメントシェーダー。UnorderedAccess はコンピュート段の対応なので、フラグメント段の書き込みを src にする
+            // 書くのは材質のフラグメントシェーダーと、ビジビリティバッファの解決（計算シェーダー）。
+            // UnorderedAccess はコンピュート段、PixelShaderWrite はフラグメント段の対応なので、段ごとに src を分けて 2 回記録する
             commandList.BufferBarrier(buffer, RHI::ResourceState::PixelShaderWrite, RHI::ResourceState::HostRead);
+            commandList.BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::HostRead);
             return true;
         }
 

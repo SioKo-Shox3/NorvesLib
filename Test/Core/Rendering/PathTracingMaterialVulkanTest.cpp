@@ -8,6 +8,7 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SparsePagePool.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -1235,6 +1236,220 @@ namespace
         CheckUniformRegion(mapping, pixels, insideQuad, defaultAlbedo, ValueTolerance,
                            "overflow_albedo", bPassed);
 
+        // 9. sparse（VT）のtexture。常駐していないタイルは読まず、常駐している粗いミップの色へ逃げる。
+        //    ミップ0のタイル(0,0)とミップテイルだけを結び、結んだ領域はミップ0の色、それ以外はミップテイルの色になる。
+        bool bSparseChecked = false;
+        {
+            const SparseCapabilities& sparseCaps = device->GetCapabilities().Sparse;
+            const SparseFormatProperties* sparseFormat =
+                sparseCaps.FindFormat(Format::R8G8B8A8_UNORM);
+            if (!sparseCaps.bSparseBinding || !sparseCaps.bResidencyImage2D ||
+                !sparseCaps.bShaderResourceResidency || !sparseFormat ||
+                !sparseFormat->bSupported || !sparseFormat->bStandardBlockShape)
+            {
+                std::cout << "sparse_texture_fallback=skipped（装置がsparseの常駐の照会に対応していません）\n";
+            }
+            else
+            {
+                constexpr uint32_t SparseSize = 256u;
+                constexpr uint32_t SparseMipLevels = 9u;
+                const uint8_t residentColor[3] = {200u, 40u, 20u};
+                const uint8_t tailColor[3] = {30u, 190u, 60u};
+
+                TextureDesc sparseDesc;
+                sparseDesc.Width = SparseSize;
+                sparseDesc.Height = SparseSize;
+                sparseDesc.MipLevels = SparseMipLevels;
+                sparseDesc.TextureFormat = Format::R8G8B8A8_UNORM;
+                sparseDesc.Usage = ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
+                sparseDesc.bSparse = true;
+                sparseDesc.DebugName = "PathTracingMaterialTest.SparseAlbedo";
+                TexturePtr sparseTexture = device->CreateTexture(sparseDesc);
+                SparseTextureInfo sparseInfo;
+                if (!sparseTexture || !sparseTexture->IsSparse() ||
+                    !sparseTexture->GetSparseInfo(sparseInfo) || sparseInfo.TileWidth >= SparseSize ||
+                    sparseInfo.TileHeight >= SparseSize || sparseInfo.MipTailFirstLevel == 0u ||
+                    sparseInfo.MipTailFirstLevel >= SparseMipLevels ||
+                    sparseInfo.TileSizeBytes > SparsePageSizeBytes)
+                {
+                    std::cerr << "sparseのalbedo textureを作成できませんでした\n";
+                    return 1;
+                }
+                const uint32_t tailLevel = sparseInfo.MipTailFirstLevel;
+                const uint32_t tailSize = std::max(1u, SparseSize >> tailLevel);
+                const uint32_t tailPages = static_cast<uint32_t>(
+                    (sparseInfo.MipTailSize + SparsePageSizeBytes - 1u) / SparsePageSizeBytes);
+
+                // 先に宣言したものが後に破棄される（ページを返す前に結びを外す）。
+                SparsePagePool pool(device, (tailPages + 1u) * SparsePageSizeBytes);
+                VariableArray<SparsePagePool::PageLease> tailLeases;
+                SparsePagePool::PageLease tileLease = pool.Acquire();
+                SparseBindRequest bindRequest;
+                SparseBindRequest releaseRequest;
+                bool bSparseReady = tileLease.IsValid();
+                if (bSparseReady)
+                {
+                    SparseTileBind tile;
+                    tile.Texture = sparseTexture.get();
+                    tile.MipLevel = 0u;
+                    tile.TileX = 0u;
+                    tile.TileY = 0u;
+                    releaseRequest.Tiles.push_back(tile);
+                    tile.Page = tileLease.GetPage();
+                    bindRequest.Tiles.push_back(tile);
+                }
+                for (uint32_t page = 0u; bSparseReady && page < tailPages; ++page)
+                {
+                    tailLeases.push_back(pool.Acquire());
+                    bSparseReady = tailLeases.back().IsValid();
+                    if (!bSparseReady)
+                    {
+                        break;
+                    }
+                    SparseMipTailBind tail;
+                    tail.Texture = sparseTexture.get();
+                    tail.PageIndex = page;
+                    releaseRequest.MipTails.push_back(tail);
+                    tail.Page = tailLeases.back().GetPage();
+                    bindRequest.MipTails.push_back(tail);
+                }
+                if (!bSparseReady || !device->BindSparse(bindRequest))
+                {
+                    std::cerr << "sparseのタイルとミップテイルを結べませんでした\n";
+                    return 1;
+                }
+
+                // ミップ0のタイル(0,0)を residentColor、ミップテイルの先頭のミップを tailColor で埋める。
+                const uint64_t tailOffset = SparsePageSizeBytes;
+                const uint32_t tileTexels = sparseInfo.TileWidth * sparseInfo.TileHeight;
+                const uint32_t tailTexels = tailSize * tailSize;
+                VariableArray<uint8_t> staging;
+                staging.resize(static_cast<size_t>(tailOffset) + static_cast<size_t>(tailTexels) * 4u);
+                for (uint32_t texel = 0u; texel < tileTexels; ++texel)
+                {
+                    staging[texel * 4u + 0u] = residentColor[0];
+                    staging[texel * 4u + 1u] = residentColor[1];
+                    staging[texel * 4u + 2u] = residentColor[2];
+                    staging[texel * 4u + 3u] = 255u;
+                }
+                for (uint32_t texel = 0u; texel < tailTexels; ++texel)
+                {
+                    uint8_t* dst = staging.data() + tailOffset + static_cast<size_t>(texel) * 4u;
+                    dst[0] = tailColor[0];
+                    dst[1] = tailColor[1];
+                    dst[2] = tailColor[2];
+                    dst[3] = 255u;
+                }
+                BufferPtr stagingBuffer = device->CreateBuffer(BufferDesc(
+                    staging.size(), ResourceUsage::TransferSrc, true, "PathTracingMaterialTest.SparseStaging"));
+                CommandListPtr upload = device->CreateCommandList();
+                if (!stagingBuffer || !upload)
+                {
+                    std::cerr << "sparseの書き込み用の資源を作成できませんでした\n";
+                    return 1;
+                }
+                stagingBuffer->Update(staging.data(), staging.size(), 0u);
+                upload->Begin();
+                upload->TextureBarrier(sparseTexture, ResourceState::Undefined, ResourceState::CopyDest);
+                upload->CopyBufferToTexture(stagingBuffer, sparseTexture, sparseInfo.TileWidth,
+                                            sparseInfo.TileHeight, 0u, 0u);
+                upload->CopyBufferToTexture(stagingBuffer, sparseTexture, tailSize, tailSize, tailOffset,
+                                            tailLevel);
+                upload->TextureBarrier(sparseTexture, ResourceState::CopyDest, ResourceState::ShaderResource);
+                upload->End();
+                upload->Submit(true);
+                device->WaitIdle();
+
+                const TextureHandle sparseHandle =
+                    textures.RegisterExternalTexture(sparseTexture, "SparseAlbedo");
+                if (!sparseHandle.IsValid())
+                {
+                    std::cerr << "sparseのalbedo textureをRenderResourcesへ登録できませんでした\n";
+                    return 1;
+                }
+                context.SnapshotScene = &quadPacket.Scene;
+                context.SnapshotRayTracingScene = &quadPacket.RayTracingScene;
+                for (float& channel : quadMaterial.EmissiveColor)
+                {
+                    channel = 0.0f;
+                }
+                quadMaterial.EmissiveLuminanceNits = 0.0f;
+                quadMaterial.AlbedoTexture = sparseHandle;
+                if (!render(PathTracingDebugOutput::Albedo, 5u, "sparse_albedo"))
+                {
+                    return 1;
+                }
+
+                // 結んだタイルの内側はミップ0の色、タイルの外（どの双線形の隣接texelも非常駐）はミップテイルの色。
+                constexpr float Margin = 0.02f;
+                const float residentU = static_cast<float>(sparseInfo.TileWidth) / SparseSize;
+                const float residentV = static_cast<float>(sparseInfo.TileHeight) / SparseSize;
+                const auto toU = [](float x) { return (x + QuadHalfSize) / (2.0f * QuadHalfSize); };
+                const auto toV = [](float y) { return (QuadHalfSize - y) / (2.0f * QuadHalfSize); };
+                const auto insideResidentTile = [&](const float (&x)[4], const float (&y)[4])
+                {
+                    if (!IsFootprintInsideQuad(x, y))
+                    {
+                        return false;
+                    }
+                    for (uint32_t corner = 0u; corner < 4u; ++corner)
+                    {
+                        const float u = toU(x[corner]);
+                        const float v = toV(y[corner]);
+                        if (u < Margin || u > residentU - Margin || v < Margin || v > residentV - Margin)
+                        {
+                            return false;
+                        }
+                    }
+                    return true;
+                };
+                const auto insideNonResident = [&](const float (&x)[4], const float (&y)[4])
+                {
+                    if (!IsFootprintInsideQuad(x, y))
+                    {
+                        return false;
+                    }
+                    bool bAllBeyondU = true;
+                    bool bAllBeyondV = true;
+                    for (uint32_t corner = 0u; corner < 4u; ++corner)
+                    {
+                        bAllBeyondU = bAllBeyondU && toU(x[corner]) > residentU + Margin;
+                        bAllBeyondV = bAllBeyondV && toV(y[corner]) > residentV + Margin;
+                    }
+                    return bAllBeyondU || bAllBeyondV;
+                };
+                const float expectedResident[3] = {ObjectColor[0] * Unorm(residentColor[0]),
+                                                   ObjectColor[1] * Unorm(residentColor[1]),
+                                                   ObjectColor[2] * Unorm(residentColor[2])};
+                const float expectedTail[3] = {ObjectColor[0] * Unorm(tailColor[0]),
+                                               ObjectColor[1] * Unorm(tailColor[1]),
+                                               ObjectColor[2] * Unorm(tailColor[2])};
+                const uint32_t residentPixels = CheckUniformRegion(
+                    mapping, pixels, insideResidentTile, expectedResident, ValueTolerance,
+                    "sparse_resident_tile", bPassed);
+                const uint32_t fallbackPixels = CheckUniformRegion(
+                    mapping, pixels, insideNonResident, expectedTail, ValueTolerance,
+                    "sparse_nonresident_fallback", bPassed);
+                if (residentPixels < 16u || fallbackPixels < 256u)
+                {
+                    std::cerr << "sparseの比較画素が足りません resident=" << residentPixels
+                              << " fallback=" << fallbackPixels << '\n';
+                    bPassed = false;
+                }
+                bSparseChecked = true;
+
+                // 後片付け: 結びを外して完了を待つ（ページを返す前に）。
+                quadMaterial.AlbedoTexture = TextureHandle();
+                textures.ReleaseTexture(sparseHandle);
+                if (!device->BindSparse(releaseRequest))
+                {
+                    std::cerr << "sparseの結びを外せませんでした\n";
+                    bPassed = false;
+                }
+                device->WaitIdle();
+            }
+        }
+
         pass.Shutdown();
         graph.Shutdown();
         device->WaitIdle();
@@ -1257,6 +1472,10 @@ namespace
                          "texture_release_reset=true scatter_below_surface_terminated=true "
                          "emission_pre_exposure=true position_only_fallback=true "
                          "texture_table_overflow=true\n";
+            if (bSparseChecked)
+            {
+                std::cout << "sparse_texture_fallback=true\n";
+            }
         }
         return bPassed ? 0 : 1;
     }

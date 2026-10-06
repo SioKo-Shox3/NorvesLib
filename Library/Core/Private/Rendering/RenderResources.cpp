@@ -142,8 +142,9 @@ namespace NorvesLib::Core::Rendering
         // VT_STREAMER ログの間引き（RenderThread だけが触る）
         uint64_t VtLoggedFrame = 0;
         uint64_t VtLoggedResident = 0;
-        // VRAM_POOLS に最後に出した VT の追い出し数（変わったときにも出し直す）
+        // VRAM_POOLS に最後に出した VT の追い出し数・使用量（MB。変わったときにも出し直す）
         uint64_t VtLoggedEvictedTiles = 0;
+        uint64_t VtLoggedUsedMb = 0;
         Container::TUniquePtr<SkinnedMeshGpuStore> SkinnedMeshes;
         Container::TUniquePtr<GpuResourceStore> GpuResources;
         Container::TUniquePtr<ProceduralMeshGpuStore> ProceduralMeshes;
@@ -983,6 +984,23 @@ namespace NorvesLib::Core::Rendering
         return impl && impl->SkinnedMeshes && impl->SkinnedMeshes->IsResident(handle);
     }
 
+    bool SkinnedMeshResources::TryGetChunks(SkinnedMeshHandle handle,
+                                            Container::VariableArray<MeshIndexChunk>& out) const
+    {
+        out.clear();
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->SkinnedMeshes && impl->SkinnedMeshes->TryGetChunks(handle, out);
+    }
+
+    void SkinnedMeshResources::SetChunkBuilderForTesting(MeshIndexChunkBuilder builder)
+    {
+        auto* impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (impl && impl->SkinnedMeshes)
+        {
+            impl->SkinnedMeshes->SetChunkBuilderForTesting(builder);
+        }
+    }
+
     MegaGeometryResources::MegaGeometryResources(RenderResources *pOwner)
         : m_pOwner(pOwner)
     {
@@ -1674,16 +1692,19 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // 予算の割り振りが変わったとき、または VT が新しくタイルを外したときに VRAM_POOLS を出す
+        // 予算の割り振りが変わったとき、VT が新しくタイルを外したとき、VT の使用量（MB）が変わったときに VRAM_POOLS を出す
+        // （使用量の変化も出すのは、撮影が VT の常駐量の最大を測るため）
+        const uint64_t vtUsedBytes = impl->SparsePool ? impl->SparsePool->GetStats().UsedBytes : 0;
+        const uint64_t vtUsedMb = vtUsedBytes / kBytesPerMb;
         const uint64_t evictedTiles = impl->VtStreamer ? impl->VtStreamer->GetStats().EvictedTiles : 0;
         const uint64_t evictedPages = impl->GeometryPageStreaming ? impl->GeometryPageStreaming->GetStats().EvictedPages : 0;
         const bool bBudgetChanged = impl->VideoMemoryBudget.CommitLogIfChanged(result);
         if (bBudgetChanged || evictedTiles != impl->VtLoggedEvictedTiles ||
-            evictedPages != impl->GeometryLoggedEvictedPages)
+            evictedPages != impl->GeometryLoggedEvictedPages || vtUsedMb != impl->VtLoggedUsedMb)
         {
             impl->VtLoggedEvictedTiles = evictedTiles;
             impl->GeometryLoggedEvictedPages = evictedPages;
-            const uint64_t vtUsedBytes = impl->SparsePool ? impl->SparsePool->GetStats().UsedBytes : 0;
+            impl->VtLoggedUsedMb = vtUsedMb;
             // ジオメトリの使用量は、プールの区画の合計（外して返却待ちの区画も、提出の完了までは数える）
             const uint64_t geometryUsedBytes = impl->GeometryBuffers ? impl->GeometryBuffers->GetStats().UsedBytes : 0;
             if (result.bLimited)

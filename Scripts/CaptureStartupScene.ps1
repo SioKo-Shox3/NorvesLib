@@ -80,6 +80,11 @@
 # 絞ると、ページの追い出しが起きる。各撮影のログの STRESS_GEOMETRY_PLACED（並べた数・元の数）と VRAM_POOLS のジオメトリの枠
 # （geometry_target_mb・geometry_used_mb・geometry_evicted_pages）を metrics.json へ書き、並べた数が指定に満たない、または最後の
 # geometry_used_mb が目標を超えたまま終われば失敗にする。
+#
+# 各撮影のログの GPU_DRIVER（GPU 名とドライバの版）を metrics.json の gpu_driver へ書く（ドライバの更新で画面微分・LOD の挙動が変わる実装があり、
+# 撮影の差の原因を版から引けるようにする）。VT の常駐量は、ログの VRAM_POOLS の vt_used_mb の最大を vram_pools.vt_used_mb_max へ書き、
+# -VtUsedLimitMb（既定 64）を超えたら失敗にする（フィードバックの LOD が壊れて全面でミップ 0 を要求すると数百 MB になる。
+# -StressTextures は VT を上限まで使うので検査しない。0 で検査しない）。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -150,6 +155,11 @@ param(
     # -StressGeometry で並べる個数。
     [ValidateRange(1, 4096)]
     [int]$StressGeometryCount = 300,
+    # 検証用の骨付きのパネルを地面の上へ 2 体置いて撮る（--startup-skinned-probe）。スキニングの塊がビジビリティバッファの経路で描かれることの確認用。
+    # 起動画面は変えない（既定は置かない）。-VisibilityBuffer On・Off・Debug と -GBufferDebug の撮り比べに使う。
+    # 2 体が置けたこと（STARTUP_SKINNED_PROBE bodies=2）と、On・Debug では ID に描かれたスキニングの塊の数（VIS_RASTER の skinned_chunks が体の数以上・
+    # dropped_chunks が 0）を撮影の判定に入れる。置けない・塊が 0 なら result=fail。near の視点はパネルが画角の外なので、2 体を撮るなら default・low で撮る。
+    [switch]$SkinnedProbe,
     # 遮蔽カリングの確認用の視点（occ-sphere・occ-cottage・occ-cottage-edge・旋回の出発点 occ-sphere-orbit・occ-cottage-orbit）を撮る視点へ加える。
     [switch]$OcclusionViews,
     # 地面の外周のスキャン資産（Poly Haven）を、近くから遠くへカメラを引いて見る視点（scan-d08 から scan-d78 までの 7 視点）を撮る視点へ加える。
@@ -160,6 +170,9 @@ param(
     # VRAM の上限（MB。--vram-budget-mb）。0 は渡さない。
     [ValidateRange(0, 1048576)]
     [int]$VramBudgetMb = 0,
+    # 撮影で許す VT の常駐量（MB。ログの VRAM_POOLS の vt_used_mb の最大）。超えたら失敗にする。0 は検査しない。-StressTextures では検査しない。
+    [ValidateRange(0, 1048576)]
+    [int]$VtUsedLimitMb = 64,
     # MegaGeometry（岩・小屋など）の遮蔽カリング（2パス。既定は有効）。Off は遮蔽の判定なしの従来の経路で撮る
     # （--mega-occlusion=off。見た目の比較用）。各撮影のログの MEGA_OCCLUSION を metrics.json の mega_occlusion へ書く。
     [ValidateSet('On', 'Off')]
@@ -169,6 +182,20 @@ param(
     # 各撮影のログの GEOMETRY_PAGES_STREAMED・GEOMETRY_PAGES を metrics.json の geometry_pages へ書く。
     [ValidateSet('On', 'Off')]
     [string]$GeometryStreaming = 'On',
+    # ビジビリティバッファ（既定は On）。On は不透明の描画のすべてを VisBuffer.Id と GBuffer.Depth へ描き、幾何の解決が GBuffer を書く
+    # （--visibility-buffer=on。装置が対応しないときは GBuffer の描画へ戻る）。Off は GBuffer の描画だけ（--visibility-buffer=off。予備の経路の確認用）。
+    # Debug は GBuffer の描画に加えて ID も描き、ID を色にして画面へ表示する（--visibility-buffer=debug。検証用）。
+    [ValidateSet('Off', 'On', 'Debug')]
+    [string]$VisibilityBuffer = 'On',
+    # GBuffer の検証表示（既定は Off）。Normal・Velocity・Depth・Albedo・Material は最後のシーンの色を GBuffer の法線・速度・深度・アルベド・材質の色で置き換える
+    # （環境変数 NORVES_GBUFFER_DEBUG。統計が有効な Debug・RelWithDebInfo だけ）。-VisibilityBuffer On と Off で同じ値を撮り比べる用。
+    [ValidateSet('Off', 'Normal', 'Velocity', 'Depth', 'Albedo', 'Material')]
+    [string]$GBufferDebug = 'Off',
+    # 起動時のデバッグの表示（既定は Normal）。Clusters は MegaGeometry のクラスタの色、Lod は LOD の段、Wireframe は三角形の線
+    # （--debug-view=clusters|lod|wireframe。F3・F4・F5 と同じ表示。development ビルドだけ）。
+    # -VisibilityBuffer On と Off で同じ表示になることを撮り比べる用。
+    [ValidateSet('Normal', 'Clusters', 'Lod', 'Wireframe')]
+    [string]$DebugView = 'Normal',
     # 同じコードを -Deterministic で撮った別の出力先。各視点の平均輝度の差と PSNR を求めて metrics.json へ書き、
     # 平均輝度の差が -DeterministicMeanLuminanceLimit を超えるか PSNR が -DeterministicPsnrLimit を下回れば失敗にする。
     [string]$CompareDeterministicWith = '',
@@ -780,6 +807,10 @@ foreach ($view in $shots)
     {
         $arguments += '--stress-textures'
     }
+    if ($SkinnedProbe)
+    {
+        $arguments += '--startup-skinned-probe'
+    }
     if ($StressGeometry)
     {
         $arguments += "--stress-geometry=$StressGeometryCount"
@@ -797,6 +828,13 @@ foreach ($view in $shots)
     if ($GeometryStreaming -eq 'Off')
     {
         $arguments += '--geometry-streaming=off'
+    }
+    # ビジビリティバッファは既定で有効だが、撮影の条件を明示するため、どのモードでも引数を渡す。
+    $arguments += "--visibility-buffer=$($VisibilityBuffer.ToLowerInvariant())"
+    # デバッグの表示は既定が Normal なので、Clusters・Lod・Wireframe のときだけ引数を渡す。
+    if ($DebugView -ne 'Normal')
+    {
+        $arguments += "--debug-view=$($DebugView.ToLowerInvariant())"
     }
     foreach ($extraArgument in (($ExtraGameArguments -join ' ').Split(@(' ', ','), [StringSplitOptions]::RemoveEmptyEntries)))
     {
@@ -829,6 +867,15 @@ foreach ($view in $shots)
 
     # RTGI を切るときは環境変数で起動画面へ伝える（起動した Game だけが受け継ぐよう、起動の直後に戻す）。
     $previousRtgiSetting = $env:NORVES_STARTUP_RTGI
+    $previousGBufferDebugSetting = $env:NORVES_GBUFFER_DEBUG
+    if ($GBufferDebug -ne 'Off')
+    {
+        $env:NORVES_GBUFFER_DEBUG = $GBufferDebug.ToLowerInvariant()
+    }
+    else
+    {
+        Remove-Item Env:NORVES_GBUFFER_DEBUG -ErrorAction SilentlyContinue
+    }
     if ($Rtgi -eq 'Off')
     {
         $env:NORVES_STARTUP_RTGI = '0'
@@ -846,6 +893,8 @@ foreach ($view in $shots)
     {
         if ($null -eq $previousRtgiSetting) { Remove-Item Env:NORVES_STARTUP_RTGI -ErrorAction SilentlyContinue }
         else { $env:NORVES_STARTUP_RTGI = $previousRtgiSetting }
+        if ($null -eq $previousGBufferDebugSetting) { Remove-Item Env:NORVES_GBUFFER_DEBUG -ErrorAction SilentlyContinue }
+        else { $env:NORVES_GBUFFER_DEBUG = $previousGBufferDebugSetting }
     }
     [void]$process.Handle
     $exitCode = $null
@@ -875,12 +924,20 @@ foreach ($view in $shots)
     $vramLedgerTextureMb = $null
     $cookedMissingCount = $null
     $vramPools = $null
+    $gpuDriver = $null
     $geometryPages = $null
     $occlusionStats = $null
     $stressMaterials = $null
     $stressGeometryInfo = $null
+    $skinnedProbeInfo = $null
     if (Test-Path -LiteralPath $viewLogPath)
     {
+        # GPU_DRIVER（GPU 名とドライバの版。起動時に1回）
+        $driverLine = @(Select-String -LiteralPath $viewLogPath -Pattern 'GPU_DRIVER (name=.+)')
+        if ($driverLine.Count -gt 0)
+        {
+            $gpuDriver = $driverLine[0].Matches[0].Groups[1].Value.Trim()
+        }
         # VRAM_POOLS（予算の割り振りと VT の使用量）。数値は "none"（上限なし）のこともある。使用量は最大と最後の値を残す。
         $poolLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'VRAM_POOLS cap_mb=(\w+) non_pool_mb=(\d+) vt_target_mb=(\w+) vt_used_mb=(\d+) vt_evicted_tiles=(\d+)')
         if ($poolLines.Count -gt 0)
@@ -964,6 +1021,30 @@ foreach ($view in $shots)
             }
         }
 
+        # 骨付きのパネル（--startup-skinned-probe）: 置けた体の数・置けなかった警告・ID のラスタが描いたスキニングの塊の数（最後の VIS_RASTER）。
+        if ($SkinnedProbe)
+        {
+            $probeBodies = @(Select-String -LiteralPath $viewLogPath -Pattern 'STARTUP_SKINNED_PROBE bodies=(\d+)')
+            $probeSkipped = @(Select-String -LiteralPath $viewLogPath -Pattern 'STARTUP_SKINNED_PROBE_SKIPPED' -SimpleMatch)
+            $visRasterLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'VIS_RASTER mega_command_slots=\d+ procedural_chunks=\d+ skinned_chunks=(\d+) dropped_chunks=(\d+)')
+            $skinnedProbeInfo = [ordered]@{
+                bodies = 0
+                skipped = $probeSkipped.Count
+                skinned_chunks = $null
+                dropped_chunks = $null
+            }
+            if ($probeBodies.Count -gt 0)
+            {
+                $skinnedProbeInfo.bodies = [int]$probeBodies[$probeBodies.Count - 1].Matches[0].Groups[1].Value
+            }
+            if ($visRasterLines.Count -gt 0)
+            {
+                $lastVisRaster = $visRasterLines[$visRasterLines.Count - 1].Matches[0].Groups
+                $skinnedProbeInfo.skinned_chunks = [int]$lastVisRaster[1].Value
+                $skinnedProbeInfo.dropped_chunks = [int]$lastVisRaster[2].Value
+            }
+        }
+
         # テクスチャの VRAM（最後の VRAM_LEDGER）と、クック済みが無くばらで読んだテクスチャの数。
         $ledgerTextureMb = @(Select-String -LiteralPath $viewLogPath -Pattern 'VRAM_LEDGER textures=\d+ texture_mb=([0-9.]+)' |
             ForEach-Object { $_.Matches[0].Groups[1].Value })
@@ -984,6 +1065,10 @@ foreach ($view in $shots)
         {
             $failures += "$($view.Name): $($line.Line.Trim())"
         }
+        if (-not $StressTextures -and $VtUsedLimitMb -gt 0 -and $null -ne $vramPools -and $vramPools.vt_used_mb_max -gt [uint64]$VtUsedLimitMb)
+        {
+            $failures += "$($view.Name): VT の常駐量が上限を超えた（vt_used_mb_max=$($vramPools.vt_used_mb_max) / 上限 $VtUsedLimitMb MB。フィードバックの LOD が壊れていないか確認する。GPU_DRIVER: $gpuDriver）"
+        }
         if ($StressTextures)
         {
             if ($null -eq $stressMaterials -or $stressMaterials.present -ne $stressMaterials.total)
@@ -993,6 +1078,26 @@ foreach ($view in $shots)
             if ($null -ne $vramPools -and $vramPools.vt_target_mb -ne 'none' -and $vramPools.vt_used_mb_last -gt [uint64]$vramPools.vt_target_mb)
             {
                 $failures += "$($view.Name): VT の使用量が目標を超えたまま終わった（vt_used_mb_last=$($vramPools.vt_used_mb_last) vt_target_mb=$($vramPools.vt_target_mb)）"
+            }
+        }
+        if ($SkinnedProbe)
+        {
+            # 置けなかったのに result=pass になると、スキニングを撮れていない撮影が合格に見える。体の数と、ID に描かれた塊の数で判定する。
+            $expectedProbeBodies = 2
+            if ($null -eq $skinnedProbeInfo -or $skinnedProbeInfo.skipped -gt 0 -or $skinnedProbeInfo.bodies -ne $expectedProbeBodies)
+            {
+                $failures += "$($view.Name): 骨付きのパネルが $expectedProbeBodies 体そろっていない（STARTUP_SKINNED_PROBE bodies=$(if ($null -eq $skinnedProbeInfo) { 'なし' } else { $skinnedProbeInfo.bodies }) skipped=$(if ($null -eq $skinnedProbeInfo) { 'なし' } else { $skinnedProbeInfo.skipped })）"
+            }
+            elseif ($VisibilityBuffer -ne 'Off')
+            {
+                if ($null -eq $skinnedProbeInfo.skinned_chunks -or $skinnedProbeInfo.skinned_chunks -lt $expectedProbeBodies)
+                {
+                    $failures += "$($view.Name): スキニングの塊が ID に描かれていない（VIS_RASTER skinned_chunks=$(if ($null -eq $skinnedProbeInfo.skinned_chunks) { 'なし' } else { $skinnedProbeInfo.skinned_chunks }) / 体の数 $expectedProbeBodies 以上が要る。予備の経路（GBuffer）に戻っていないか VISBUFFER_FALLBACK を確認する）"
+                }
+                elseif ($skinnedProbeInfo.dropped_chunks -gt 0)
+                {
+                    $failures += "$($view.Name): スキニングの塊が落ちた（VIS_RASTER dropped_chunks=$($skinnedProbeInfo.dropped_chunks)）"
+                }
             }
         }
         if ($StressGeometry)
@@ -1063,10 +1168,12 @@ foreach ($view in $shots)
             vram_ledger_texture_mb = $vramLedgerTextureMb
             cooked_missing_count = $cookedMissingCount
             vram_pools = $vramPools
+            gpu_driver = $gpuDriver
             geometry_pages = $geometryPages
             mega_occlusion = $occlusionStats
             stress_materials = $stressMaterials
             stress_geometry = $stressGeometryInfo
+            skinned_probe = $skinnedProbeInfo
         }
         $results += [pscustomobject]$result
         Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5} indirect_lighting={6}" -f `
@@ -1372,6 +1479,8 @@ if ($CompareDeterministicWith -ne '')
 $metricsPath = Join-Path $outRoot 'metrics.json'
 $metrics = [ordered]@{
     configuration = $Configuration
+    gpu_driver = if ($results.Count -gt 0) { $results[0].gpu_driver } else { $null }
+    vt_used_limit_mb = $VtUsedLimitMb
     deterministic = [bool]$Deterministic
     compare_deterministic_with = $CompareDeterministicWith
     deterministic_mean_luminance_limit = $DeterministicMeanLuminanceLimit

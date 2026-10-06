@@ -11,6 +11,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SparseResidencyShading.h"
 #include "Rendering/VirtualTextureFeedbackMaterial.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Debug/DebugConfig.h"
 #include "RHI/IDevice.h"
@@ -323,6 +324,20 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    bool GBufferPass::ShouldSkipDraws(const RHI::IDevice *device, DebugViewMode mode) const
+    {
+        if (!m_bVisibilityResolveActive || !device)
+        {
+            return false;
+        }
+        // 解決のパスが分かるときは、パイプラインの準備まで含めて判定する（使えないのに止めると画面が空になる）
+        if (m_ResolvePass)
+        {
+            return m_ResolvePass->CanResolve(device, mode);
+        }
+        return VisibilityResolveGeometry::IsSupported(device->GetCapabilities());
+    }
+
     void GBufferPass::Declare(RenderGraphBuilder &builder)
     {
         const ViewRenderContext *context = builder.GetContext();
@@ -345,9 +360,19 @@ namespace NorvesLib::Core::Rendering
             height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
         }
 
+        // ビジビリティバッファの解決が書く 5 枚（Albedo・Normal・Material・Velocity・Emissive）は、storage image としても使えるようにする
+        const bool bResolveWrites = context && ShouldSkipDraws(context->Device, context->GetActiveDebugMode());
+        const RHI::ResourceUsage resolveWriteUsage =
+            bResolveWrites ? RHI::ResourceUsage::ShaderWrite : RHI::ResourceUsage::None;
+
+        RGTextureDesc albedoDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo");
+        albedoDesc.Usage = albedoDesc.Usage | resolveWriteUsage;
+        RGTextureDesc normalDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal");
+        normalDesc.Usage = normalDesc.Usage | resolveWriteUsage;
+
         m_AlbedoHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferAlbedo,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo"),
+            albedoDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,
@@ -356,25 +381,30 @@ namespace NorvesLib::Core::Rendering
 
         m_NormalHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferNormal,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal"),
+            normalDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
 
+        RGTextureDesc materialDesc =
+            RGTextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material");
+        materialDesc.Usage = materialDesc.Usage | resolveWriteUsage;
         m_MaterialHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferMaterial,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"),
+            materialDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
 
+        RGTextureDesc emissiveDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive");
+        emissiveDesc.Usage = emissiveDesc.Usage | resolveWriteUsage;
         m_EmissiveHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferEmissive,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive"),
+            emissiveDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,
@@ -386,7 +416,7 @@ namespace NorvesLib::Core::Rendering
             height,
             m_Settings.VelocityFormat,
             "GBuffer_Velocity");
-        velocityDesc.Usage = velocityDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        velocityDesc.Usage = velocityDesc.Usage | RHI::ResourceUsage::TransferSrc | resolveWriteUsage;
         m_VelocityHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferVelocity,
             velocityDesc,
@@ -490,6 +520,12 @@ namespace NorvesLib::Core::Rendering
         auto *materials = context.Resources.Materials;
         auto *textures = context.Resources.Textures;
         auto *meshes = context.Resources.Meshes;
+        // ビジビリティバッファの解決が GBuffer を書くときは、描かずにクリアだけを行う
+        if (ShouldSkipDraws(context.Device, context.GetActiveDebugMode()))
+        {
+            TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
+            return;
+        }
         if (!m_SceneRenderer || !materials || !textures || (!meshes && !context.SkinnedMeshes))
         {
             TryEnqueueNativeClearPass(context, viewport, scissor, meshes);

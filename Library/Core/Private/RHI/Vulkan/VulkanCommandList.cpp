@@ -851,6 +851,16 @@ namespace NorvesLib::RHI::Vulkan
         for (const auto &attachment : desc.colorAttachments)
         {
             VkClearValue clearValue = {};
+            if (IsUnsignedIntegerFormat(attachment.format))
+            {
+                // 整数形式の添付は uint32 の共用体の側で消す（float32 で渡すと値が壊れる）。
+                for (uint32_t component = 0; component < 4; ++component)
+                {
+                    clearValue.color.uint32[component] = attachment.clearColorUint[component];
+                }
+                clearValues.push_back(*reinterpret_cast<vk::ClearValue *>(&clearValue));
+                continue;
+            }
             clearValue.color.float32[0] = attachment.clearColor[0];
             clearValue.color.float32[1] = attachment.clearColor[1];
             clearValue.color.float32[2] = attachment.clearColor[2];
@@ -1157,6 +1167,23 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanCommandList::Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ)
     {
         m_commandBuffer.dispatch(threadGroupCountX, threadGroupCountY, threadGroupCountZ);
+    }
+
+    bool VulkanCommandList::DispatchIndirect(BufferPtr indirectBuffer, uint64_t offset)
+    {
+        // VkDispatchIndirectCommand（uint32_t x 3）の大きさ。offset は 4 の倍数で、引数がバッファに収まること。
+        // バッファは IndirectBuffer の用途で作られていること（VUID-vkCmdDispatchIndirect-buffer-02709）
+        constexpr uint64_t DispatchIndirectCommandBytes = 3u * sizeof(uint32_t);
+        auto vkBuffer = DynamicPointerCast<VulkanBuffer>(indirectBuffer);
+        if (!vkBuffer || (vkBuffer->GetUsage() & ResourceUsage::IndirectBuffer) != ResourceUsage::IndirectBuffer ||
+            (offset % 4u) != 0u || offset > vkBuffer->GetSize() ||
+            vkBuffer->GetSize() - offset < DispatchIndirectCommandBytes)
+        {
+            return false;
+        }
+
+        m_commandBuffer.dispatchIndirect(vkBuffer->GetVkBuffer(), offset);
+        return true;
     }
 
     bool VulkanCommandList::BuildAccelerationStructure(const AccelerationStructureBuildDesc& desc)

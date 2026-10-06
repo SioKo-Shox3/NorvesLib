@@ -7,6 +7,7 @@
 #include "DrawCommand.h"
 #include "PathTracingTransportScope.h"
 #include "RasterDirectBrdf.h"
+#include "VisibilityBufferMode.h"
 #include "Rendering/AutoExposure.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -233,12 +234,16 @@ namespace NorvesLib::Core::Rendering
          * @brief ディファードレンダリングパイプラインをセットアップ
          * @param sceneRenderer SceneRenderer参照
          * @param directBrdf 直接光のBRDF（既定は学習済みのニューラルBRDF）
+         * @param visibilityBuffer ビジビリティバッファの使い方（既定は On。On は不透明の描画を VisBuffer.Id へ描き、
+         *        幾何の解決が GBuffer を書く。装置が対応しないときは今の GBuffer の描画へ戻る。Off は戻り先だけを使う。
+         *        Debug は GBuffer の描画に加えて VisBuffer.Id へも描く）
          *
          * Shadow/GBuffer/Lightingの後に半透明ForwardPassを差し込み、
          * SSRを含むPostProcessStackの前でSceneColorへ合成します。
          */
         void SetupDeferredPipeline(SceneRenderer *sceneRenderer,
-                                   RasterDirectBrdf directBrdf = RasterDirectBrdf::Analytic);
+                                   RasterDirectBrdf directBrdf = RasterDirectBrdf::Analytic,
+                                   VisibilityBufferMode visibilityBuffer = VisibilityBufferMode::On);
 
         /**
          * @brief 明示選択時だけ独立パストレーシングパイプラインを設定する。

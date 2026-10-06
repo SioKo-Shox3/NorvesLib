@@ -1,0 +1,11 @@
+﻿#version 460
+
+// ========================================
+// ビジビリティバッファの幾何の解決（材質ごとのタイルの一覧から走る版）
+//
+// visbuffer_resolve.comp と同じ本体（Common/VisibilityResolve.glsl）を、NORVES_VISRESOLVE_TILES で取り込む。
+// 材質ごとに 1 回ずつ、MaterialTileClassifyPass の引数で間接 dispatch する（1 回の dispatch は 1 つの材質）。
+// ========================================
+
+#define NORVES_VISRESOLVE_TILES 1
+#include "Common/VisibilityResolve.glsl"

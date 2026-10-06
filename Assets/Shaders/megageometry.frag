@@ -45,6 +45,7 @@ layout(set = 0, binding = 6) uniform sampler2D heightTexture;
 #include "Common/PbrMaterialTextureSampling.glsl"
 #include "Common/ParallaxOcclusionMapping.glsl"
 #include "Common/PreExposedEmissive.glsl"
+#include "Common/MegaGeometryDebugColor.glsl"
 
 // GBuffer MRT出力
 layout(location = 0) out vec4 outAlbedo;    // RT0: Albedo (RGB) + alpha
@@ -55,39 +56,6 @@ layout(location = 4) out vec2 outVelocity;  // RT4: currentUV - previousUV（gbu
 
 const float DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS = 3.0;
 const float DEBUG_VIEW_MODE_LOD_LEVEL = 8.0;
-
-uint HashClusterId(uint value)
-{
-    value ^= value >> 16;
-    value *= 0x7feb352du;
-    value ^= value >> 15;
-    value *= 0x846ca68bu;
-    value ^= value >> 16;
-    return value;
-}
-
-vec3 ClusterDebugColor(uint clusterId)
-{
-    uint hash = HashClusterId(clusterId);
-    vec3 color = vec3(float(hash & 255u),
-                      float((hash >> 8) & 255u),
-                      float((hash >> 16) & 255u)) / 255.0;
-    return mix(vec3(0.18), color, 0.82);
-}
-
-vec3 LODLevelDebugColor(uint lodLevel)
-{
-    const vec3 palette[8] = vec3[8](
-        vec3(0.10, 0.72, 0.28),
-        vec3(0.14, 0.78, 0.70),
-        vec3(0.18, 0.42, 0.90),
-        vec3(0.42, 0.24, 0.86),
-        vec3(0.78, 0.22, 0.78),
-        vec3(0.96, 0.72, 0.18),
-        vec3(0.95, 0.42, 0.16),
-        vec3(0.86, 0.12, 0.12));
-    return palette[min(lodLevel, 7u)];
-}
 
 // gbuffer.frag と同じ式で、現在と直前のフレームのクリップ座標から画面上の動きを求める。
 vec2 ComputeVelocity()
@@ -112,11 +80,12 @@ vec2 ComputeVelocity()
 // 法線マップの傾き（xy/z）から、描いている段の頂点の間隔のミップ（画面の画素がそれより粗ければその画素の
 // ミップ）で引いた粗い傾きを差し引き、残りの細部だけを接空間の法線にする（同じ傾きを二重に掛けない）。
 // 段の頂点の間隔は LOD0 の間隔 × 2^段（描画の番号が段を持たない環境では LOD0 とみなす）。
-vec3 RemoveDisplacedNormalSlope(vec3 tangentNormal, vec2 texCoord, float displacementUVSpacing)
+// normalLod は texCoord での法線テクスチャの標本ミップ（textureQueryLOD。main の一様な位置で取った値を渡す）。
+vec3 RemoveDisplacedNormalSlope(vec3 tangentNormal, vec2 texCoord, float displacementUVSpacing, float normalLod)
 {
     float lodLevel = mvp.frameParams.w > 0.5 ? float(fragDebugPayload) : 0.0;
     float vertexMip = log2(max(displacementUVSpacing * float(textureSize(normalTexture, 0).x), 1.0)) + lodLevel;
-    float coarseMip = max(vertexMip, textureQueryLod(normalTexture, texCoord).y);
+    float coarseMip = max(vertexMip, normalLod);
     // 粗い傾きも標本は2チャンネル（BC5）の法線を復号して引く（B は0なので RGB のままでは Z が負になる）。
     vec3 coarseNormal = DecodePbrTangentNormal(SampleMaterialTextureLod(normalTexture, texCoord, coarseMip, mvp.materialParams.z > 0.5),
                                                mvp.materialParams.y > 0.5);
@@ -138,6 +107,36 @@ void main()
     float debugMode = mvp.pomParams.z;
     float debugPayloadSupported = mvp.pomParams.w;
 
+    // POMパラメータ取得
+    float heightScale = mvp.pomParams.x;
+    float hasHeightMap = mvp.pomParams.y;
+    bool bVirtualTexture = mvp.materialParams.z > 0.5;
+    float displacementUVSpacing = mvp.frameParams.z;
+
+    // 画面微分を使う量（高さ・各層の標本ミップと POM の後の UV の勾配）は、デバッグ表示の早期 return（描画ごとの UBO の値で分かれる）や
+    // 分岐・ループより前の一様な位置で取る。画面微分は一様でない制御フローの中では未定義。
+    // 高さのフィードバックの標本ミップは POM の前の元の UV で取る。
+    float heightLod = 0.0;
+    if (bVirtualTexture && hasHeightMap > 0.5)
+    {
+        heightLod = textureQueryLOD(heightTexture, fragTexCoord).y;
+    }
+
+    // 余接フレームは元のUVから一度だけ作り、POMと法線マップの両方に使う。
+    mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
+
+    // POM適用: ハイトマップがある場合のみUVオフセット
+    vec2 texCoord = fragTexCoord;
+    if (hasHeightMap > 0.5)
+    {
+        texCoord = ApplyParallaxOcclusionMapping(heightTexture, fragTexCoord, TBN, fragViewDir, heightScale, bVirtualTexture);
+    }
+
+    // POM の直後に、POM の後の UV の勾配と各層の標本ミップを取る。法線の粗い傾き（変位メッシュ）も法線のミップを使う。
+    MaterialTextureFootprint footprint = QueryMaterialTextureFootprint(
+        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
+        mvp.materialParams.x > 0.5, bVirtualTexture || displacementUVSpacing > 0.0);
+
     if (debugPayloadSupported > 0.5)
     {
         if (debugMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS)
@@ -153,46 +152,30 @@ void main()
         }
     }
 
-    // POMパラメータ取得
-    float heightScale = mvp.pomParams.x;
-    float hasHeightMap = mvp.pomParams.y;
-    bool bVirtualTexture = mvp.materialParams.z > 0.5;
-
-    // 余接フレームは元のUVから一度だけ作り、POMと法線マップの両方に使う。
-    mat3 TBN = CalculateCotangentFrame(fragNormal, fragWorldPos, fragTexCoord);
-
-    // POM適用: ハイトマップがある場合のみUVオフセット
-    vec2 texCoord = fragTexCoord;
-    if (hasHeightMap > 0.5)
-    {
-        texCoord = ApplyParallaxOcclusionMapping(heightTexture, fragTexCoord, TBN, fragViewDir, heightScale, bVirtualTexture);
-    }
-
     // テクスチャサンプリング × オブジェクトカラー（POM補正済みUV使用）
     PbrMaterialTextureSamples textureSamples = SamplePbrMaterialTextures(
-        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord,
+        albedoTexture, normalTexture, metallicTexture, roughnessTexture, aoTexture, texCoord, footprint,
         mvp.materialParams.x > 0.5, mvp.materialParams.y > 0.5, bVirtualTexture);
     // VT のフィードバック: POM の後の UV で欲しいタイルの要求を書く（VT のテクスチャごとに表の番号を持つ）。
     // 高さだけは POM の前の元の UV で書く。
     WriteVirtualTextureFeedback(albedoTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.materialParams.w),
-                                g_VirtualTextureAlbedoEscaped);
+                                g_VirtualTextureAlbedoEscaped, footprint.AlbedoLod);
     WriteVirtualTextureFeedback(normalTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.x),
-                                g_VirtualTextureNormalEscaped);
+                                g_VirtualTextureNormalEscaped, footprint.NormalLod);
     WriteVirtualTextureFeedback(metallicTexture, texCoord, DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.y),
-                                g_VirtualTextureOrmEscaped);
+                                g_VirtualTextureOrmEscaped, footprint.MetallicLod);
     if (hasHeightMap > 0.5)
     {
         WriteVirtualTextureHeightFeedback(heightTexture, fragTexCoord,
-                                          DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.z));
+                                          DecodeVirtualTextureFeedbackParam(mvp.vtFeedbackParams.z), heightLod);
     }
     outAlbedo = vec4(ComposePbrSurfaceAlbedo(fragObjectColor, textureSamples), textureSamples.Albedo.a);
 
     // ノーマルマップ適用（POM補正済みUVで標本し、元のUVの余接フレームで変換する）
     vec3 tangentNormal = textureSamples.TangentNormal;
-    float displacementUVSpacing = mvp.frameParams.z;
     if (displacementUVSpacing > 0.0)
     {
-        tangentNormal = RemoveDisplacedNormalSlope(tangentNormal, texCoord, displacementUVSpacing);
+        tangentNormal = RemoveDisplacedNormalSlope(tangentNormal, texCoord, displacementUVSpacing, footprint.NormalLod);
     }
     vec3 normal = ApplyTangentSpaceNormal(TBN, tangentNormal);
     outNormal = vec4(normal, 0.0);

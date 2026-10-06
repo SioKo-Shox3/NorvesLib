@@ -280,6 +280,10 @@ namespace Game::GameModes
         float m_StartupRenderScale = 1.0f;
         // --debug-draw-test-lines の指定で true にする。大きな球を囲む箱をデバッグの線で毎フレーム描く。
         bool m_bDebugDrawTestLines = false;
+        // --startup-skinned-probe の指定で true にする。検証用の骨付きのパネルを地面の上へ 2 体置く（既定は置かない）。
+        bool m_bStartupSkinnedProbe = false;
+        NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::SkeletalAssetResource> m_StartupSkinnedProbeAsset;
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Component::SkinnedMeshComponent *> m_StartupSkinnedProbeComponents;
         // 地面の外周に高ポリのスキャン資産を置くか（--startup-scan-props=off で false。既定は true）。
         bool m_bStartupScanProps = true;
         // --stress-mega-instances=<N> の個数（0 は置かない）。スキャン資産を置いた後、そのメッシュを N 個格子に複製する。
@@ -294,6 +298,8 @@ namespace Game::GameModes
         // --night の指定で true にする。空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす
         // （点光源の影を見る撮影用。既定は昼）。
         bool m_bStartupNight = false;
+        // --debug-view の指定（起動時のデバッグの表示。既定は Normal）。development ビルドだけが適用する。
+        NorvesLib::Core::Rendering::DebugViewMode m_StartupDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Normal;
         // 材質のアルベド・法線・ORM・高さを VT（sparse）で描くか（--virtual-texture=off で false）。sparse に対応しない GPU・クック済みに無い
         // テクスチャは、true でも全常駐で読む。
         bool m_bVirtualTexture = true;

@@ -121,6 +121,10 @@ namespace Game
         // デバッグ描画が最終解像度でジッタ無しに描かれることを撮影で確かめるのに使う。
         constexpr const TCHAR *kDebugDrawTestLinesOption = TEXT("--debug-draw-test-lines");
         bool s_bRendering3DTestDebugDrawTestLines = false;
+        // --startup-skinned-probe: 検証用の骨付きのパネルを地面の上へ 1 枚置く（値を取らない。既定は置かない）。
+        // ビジビリティバッファの経路でスキニングの塊が描かれることの撮影（-SkinnedProbe）に使う。
+        constexpr const TCHAR *kStartupSkinnedProbeOption = TEXT("--startup-skinned-probe");
+        bool s_bRendering3DTestSkinnedProbe = false;
         // --startup-scan-props=on|off: 起動画面の地面の外周に並べる高ポリのスキャン資産（Poly Haven）を置くか（既定は on）。
         // off は、スキャン資産を足す前と同じ描画量を撮って、足した分を差し引くための基準に使う。
         constexpr const TCHAR *kStartupScanPropsOption = TEXT("--startup-scan-props=");
@@ -148,6 +152,10 @@ namespace Game
         // --night: 起動画面を夜にする（空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす。値を取らない）。
         constexpr const TCHAR *kNightOption = TEXT("--night");
         bool s_bRendering3DTestNight = false;
+        // --debug-view=normal|clusters|lod|wireframe: 起動時のデバッグの表示（F3・F4・F5 で切り替えるものと同じ。既定は normal）。
+        // MegaGeometry のクラスタの色・LOD の段・ワイヤーフレームを、--visibility-buffer の on と off で撮り比べる用。
+        constexpr const TCHAR *kDebugViewOption = TEXT("--debug-view=");
+        NorvesLib::Core::Rendering::DebugViewMode s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Normal;
         // --virtual-texture=on|off: 起動画面の材質のアルベド・法線・ORM・高さを VT（sparse）で描くか。既定は on（sparse に対応しない GPU は全常駐へ戻る）。
         // off は VT を使わず、段1の全常駐で描く（見た目・VRAM の比較用）。
         constexpr const TCHAR *kVirtualTextureOption = TEXT("--virtual-texture=");
@@ -501,10 +509,12 @@ namespace Game
         s_Rendering3DTestRenderScale = 1.0f;
         s_VramBudgetCapMb = 0;
         s_bRendering3DTestDebugDrawTestLines = false;
+        s_bRendering3DTestSkinnedProbe = false;
         s_bRendering3DTestScanProps = true;
         s_Rendering3DTestStressMegaInstances = 0;
         s_Rendering3DTestStressGeometryCount = 0;
         s_bRendering3DTestNight = false;
+        s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Normal;
         s_bRendering3DTestVirtualTexture = true;
         s_bRendering3DTestModelSourceGltf = false;
         s_bRendering3DTestBigSphereRuntime = false;
@@ -659,6 +669,33 @@ namespace Game
                 continue;
             }
 
+            String debugViewValue;
+            if (TryStripPrefix(args[i], kDebugViewOption, debugViewValue))
+            {
+                if (debugViewValue == String(TEXT("normal")))
+                {
+                    s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Normal;
+                }
+                else if (debugViewValue == String(TEXT("clusters")))
+                {
+                    s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::MegaGeometryClusters;
+                }
+                else if (debugViewValue == String(TEXT("lod")))
+                {
+                    s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::LODLevel;
+                }
+                else if (debugViewValue == String(TEXT("wireframe")))
+                {
+                    s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Wireframe;
+                }
+                else
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --debug-view は normal・clusters・lod・wireframe のどれかで指定する");
+                    return false;
+                }
+                continue;
+            }
+
             String virtualTextureValue;
             if (TryStripPrefix(args[i], kVirtualTextureOption, virtualTextureValue))
             {
@@ -782,6 +819,11 @@ namespace Game
                 continue;
             }
 
+            if (args[i] == kStartupSkinnedProbeOption)
+            {
+                s_bRendering3DTestSkinnedProbe = true;
+                continue;
+            }
             if (args[i] == kDebugDrawTestLinesOption)
             {
                 s_bRendering3DTestDebugDrawTestLines = true;
@@ -1965,6 +2007,7 @@ namespace Game
                 mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
                 mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
+                mode->GetData().m_bStartupSkinnedProbe = s_bRendering3DTestSkinnedProbe;
                 mode->GetData().m_bStartupScanProps = s_bRendering3DTestScanProps;
                 mode->GetData().m_StressMegaInstanceCount = s_Rendering3DTestStressMegaInstances;
                 if (s_Rendering3DTestStressGeometryCount > 0u)
@@ -1974,6 +2017,7 @@ namespace Game
                 }
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
+                mode->GetData().m_StartupDebugViewMode = s_Rendering3DTestDebugViewMode;
                 mode->GetData().m_bVirtualTexture = s_bRendering3DTestVirtualTexture;
                 // --no-cooked-textures はクック済みを使わない指定なので、岩・小屋も glTF の経路で読む。
                 mode->GetData().m_bStartupModelsFromGltf = s_bRendering3DTestModelSourceGltf || m_bNoCookedTextures;

@@ -367,6 +367,26 @@ namespace NorvesLib::RHI
         virtual void Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) = 0;
 
         /**
+         * @brief コンピュートシェーダーの間接ディスパッチ
+         *
+         * GPU 側のバッファから VkDispatchIndirectCommand（x・y・z のスレッドグループ数。3 つの uint32_t）を読んで
+         * ディスパッチします。引数のバッファは ResourceUsage::IndirectBuffer で作り、書き込んだ後は
+         * ResourceState::IndirectArgument か GenericRead（どちらも間接引数の読み取りの段とアクセスを含む）へ遷移させてください。
+         * 引数の各成分は maxComputeWorkGroupCount を超えてはいけません（x は保証される最小値 65535 まで）。
+         * 対応しないコマンドリスト（既定の実装）は何も記録せず false を返します。
+         *
+         * @param indirectBuffer 間接引数バッファ
+         * @param offset バッファ内のオフセット（バイト。4 の倍数。引数 12 バイトがバッファに収まること）
+         * @return 記録したら true。引数が不正（バッファが無い・ResourceUsage::IndirectBuffer が無い・オフセットが 4 の倍数でない・範囲外）か未対応なら false で何も記録しない
+         */
+        virtual bool DispatchIndirect(BufferPtr indirectBuffer, uint64_t offset)
+        {
+            (void)indirectBuffer;
+            (void)offset;
+            return false;
+        }
+
+        /**
          * @brief TLASのBuildコマンドを記録
          * @param desc 構築内容
          * @return RT未対応、入力不正、または記録失敗時はfalse

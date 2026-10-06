@@ -173,6 +173,8 @@ namespace NorvesLib::Debug
         uint32_t InstancedDrawCalls = 0;
         uint32_t RenderGraphBarrierCount = 0;
         uint32_t RenderGraphTransientAcquireCount = 0;
+        // 頂点の合計の上限などのために、計算スキニングから外したインスタンスの数
+        uint32_t SkinningComputeDroppedInstances = 0;
 
         // タイミング（ミリ秒）
         float CollectionTimeMs = 0.0f;
@@ -198,6 +200,7 @@ namespace NorvesLib::Debug
             InstancedDrawCalls = 0;
             RenderGraphBarrierCount = 0;
             RenderGraphTransientAcquireCount = 0;
+            SkinningComputeDroppedInstances = 0;
             CollectionTimeMs = 0.0f;
             CullingTimeMs = 0.0f;
             BatchingTimeMs = 0.0f;

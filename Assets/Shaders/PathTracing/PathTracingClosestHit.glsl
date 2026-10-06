@@ -4,10 +4,14 @@
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_EXT_nonuniform_qualifier : require
+#ifdef NORVES_SPARSE_RESIDENCY_SHADING
+#extension GL_ARB_sparse_texture2 : require
+#endif
 
 #include "PathTracing/PathTracingCommon.glsl"
 #include "PathTracing/PathTracingScene.glsl"
 #include "Common/PbrMaterialEvaluation.glsl"
+#include "Common/SparseResidencySampling.glsl"
 
 layout(set = 0, binding = 8) uniform sampler2D materialTextures[256];
 
@@ -19,10 +23,18 @@ const uint MESH3D_VERTEX_BYTES = 32u;
 // ラスタの法線行列（MatrixUtils::CreateNormalMatrix）が単位行列へ落とす行列式の閾値（FLT_EPSILON）。
 const float RASTER_NORMAL_MATRIX_DETERMINANT_EPSILON = 1.192092896e-07;
 
+// 番号の bit30 は、その texture が sparse（VT）である印（PathTracingPass が立てる）。残りが texture 配列番号。
+// bit31 の印（法線が2チャンネル・ORM の1枚）は呼び出し側が先に外す。
+const uint TEXTURE_SPARSE_BIT = 0x40000000u;
+const uint TEXTURE_INDEX_MASK = 0x3FFFFFFFu;
+
 vec4 SampleMaterialTexture(uint textureIndex, vec2 uv)
 {
     // レイトレーシング段には画面微分がないため、LOD 0を標本化する。
-    return textureLod(materialTextures[nonuniformEXT(textureIndex)], uv, 0.0);
+    // VT の texture は、常駐していないタイルを読まず、常駐している粗いミップへ逃げる（ラスタと共通の関数）。
+    bool bVirtualTexture = (textureIndex & TEXTURE_SPARSE_BIT) != 0u;
+    return SampleMaterialTextureLod(
+        materialTextures[nonuniformEXT(textureIndex & TEXTURE_INDEX_MASK)], uv, 0.0, bVirtualTexture);
 }
 
 void main()

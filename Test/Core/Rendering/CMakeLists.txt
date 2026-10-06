@@ -442,6 +442,63 @@ set_tests_properties(GeometryPageRequestVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# R32_UINT・R32G32_UINT の添付へ、フラグメントシェーダーが「描画の番号 << 7 | gl_PrimitiveID」（ビジビリティバッファの ID と同じ並び）を書き、
+# 読み戻して三角形ごとに期待の値になることを確かめる。覆われない画素は整数のクリア値（0xDEADBEEF）のままであること。
+# geometryShader（gl_PrimitiveID に要る）が無いデバイスでは理由を出して 125 を返す。
+add_test(NAME IntegerAttachmentVulkanTest COMMAND RHITextureUpdateVulkanTest --test=IntegerAttachmentVulkanTest)
+set_tests_properties(IntegerAttachmentVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 計算シェーダーでのスキニング（skinning_compute.comp）を、実際の SkinnedMeshGpuStore が作る今・前のフレームのパレットで動かし、
+# 読み戻した今・前の頂点（位置・法線・UV。ワールド空間）が CPU で計算した値と許容 1e-4 で一致することを確かめる。
+# 骨 1〜4 本・重みの合計が 1 でない頂点・重み 0・範囲外の骨の番号・2 インスタンスの別の出力範囲・範囲外へ書かないこと・validation error 0 件。
+add_test(NAME ComputeSkinningVulkanTest COMMAND RHITextureUpdateVulkanTest --test=ComputeSkinningVulkanTest)
+set_tests_properties(ComputeSkinningVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 画面の 8x8 のタイルを材質ごとに分ける計算シェーダー（material_tile_classify.comp）を、合成した VisBuffer.Id の画像と描画の記録の表で動かし、
+# 材質ごとのタイルの一覧・間接 dispatch の引数・統計が期待どおりになることを確かめる。3 つの材質が混じるタイル・空のタイル・部分タイル・
+# 上限以上の材質・引けない ID・一覧が足りないときの切り詰めを含む。validation error 0 件。
+add_test(NAME MaterialTileClassifyVulkanTest COMMAND RHITextureUpdateVulkanTest --test=MaterialTileClassifyVulkanTest)
+set_tests_properties(MaterialTileClassifyVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# ビジビリティバッファの幾何の解決（visbuffer_resolve.comp）を、合成した ID の画像・描画の記録の表・頂点とインデックスのバッファで動かし、
+# GBuffer の Albedo・Normal・Velocity と、画素ごとの重心座標・UV・解析的な微分・接線の基底・前のクリップ座標が、
+# ラスタライザと同じ式で作った CPU の参照（倍精度）と一致することを確かめる。手続き（32bit・16bit インデックス）・MegaGeometry・
+# スキニング 2 体（1 つのバッファの別の位置）の記録、空の画素・引けない ID は何も書かないこと、前のカメラが無いと速度 0 を含む。
+# 製品の版と検証用の版（書き出しつき）の両方で validation error 0 件。
+add_test(NAME VisibilityResolveVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VisibilityResolveVulkanTest)
+set_tests_properties(VisibilityResolveVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 間接 dispatch（ICommandList::DispatchIndirect）を確認用の計算シェーダー（indirect_dispatch_probe.comp）で動かし、GPU 側の引数のとおりに
+# スレッドグループが走ることを読み戻して確かめる。計算シェーダーが書いた引数の GenericRead での読み取り・転送で書いた引数の IndirectArgument での読み取り・
+# 表の途中のオフセット・y への広げ（グループの番号 g = y * 数x + x）・x = 0・z > 1・不正な引数（false を返し何も記録しない）・
+# バリアの段（DRAW_INDIRECT・INDIRECT_COMMAND_READ）を含む。validation error 0 件。
+add_test(NAME IndirectDispatchVulkanTest COMMAND RHITextureUpdateVulkanTest --test=IndirectDispatchVulkanTest)
+set_tests_properties(IndirectDispatchVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
 
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
@@ -460,6 +517,11 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER HiZPyramidVulkanTest HiZPyramidVulkanTest.cpp
     MEMBER HiZOcclusionTestVulkanTest HiZOcclusionTestVulkanTest.cpp
     MEMBER GeometryPageRequestVulkanTest GeometryPageRequestVulkanTest.cpp
+    MEMBER IntegerAttachmentVulkanTest IntegerAttachmentVulkanTest.cpp
+    MEMBER ComputeSkinningVulkanTest ComputeSkinningVulkanTest.cpp
+    MEMBER MaterialTileClassifyVulkanTest MaterialTileClassifyVulkanTest.cpp
+    MEMBER VisibilityResolveVulkanTest VisibilityResolveVulkanTest.cpp
+    MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE
@@ -530,6 +592,38 @@ register_rendering_gpu_test(
     --scene=outdoor
     --capture-source=gbuffer-velocity
     --scenario=skinned-motion)
+
+# 上の既定（ビジビリティバッファの On。GBuffer.Velocity を幾何の解決 visbuffer_resolve.comp が書く）に加えて、予備の経路
+# （--visibility-buffer=off。装置が対応しないときに戻る GBuffer のラスタ）でも同じ速度の検証を通す。
+# 静止・カメラ・物体・スキニングの動きの符号と大きさが、どちらの経路でも同じ期待値を満たすこと。
+register_rendering_gpu_test(
+    RenderingVelocityStaticGBufferFallbackVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=indoor
+    --capture-source=gbuffer-velocity
+    --scenario=static
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingVelocityMotionGBufferFallbackVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=camera-object-motion
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingVelocityObjectGBufferFallbackVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=object-motion
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingVelocitySkinnedGBufferFallbackVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=skinned-motion
+    --visibility-buffer=off)
 
 add_executable(RHIImageLayoutVulkanValidationTest
     RHIImageLayoutVulkanValidationTest.cpp
@@ -1085,6 +1179,8 @@ target_compile_definitions(RenderingGoldenImageTest PRIVATE
 )
 set_target_properties(RenderingGoldenImageTest PROPERTIES FOLDER "Test/Core/Rendering")
 
+# 既定（ビジビリティバッファの On。解決が GBuffer を書く）の基準画像は Indoor.png・Outdoor.png。
+# 実際に解決を通ったこと（VISBUFFER_FALLBACK が無く VISBUFFER_RESOLVE_TILES がある）も、画像の比較の後にログで確かめる。
 register_rendering_gpu_test(
     RenderingGoldenIndoorVulkanTest
     RenderingGoldenImageTest
@@ -1095,6 +1191,20 @@ register_rendering_gpu_test(
     RenderingGoldenImageTest
     --scene=outdoor
     --capture-source=back-buffer)
+# 予備の経路（--visibility-buffer=off。geometryShader の無い装置が使う GBuffer のラスタ）の基準画像は
+# IndoorGBufferFallback.png・OutdoorGBufferFallback.png。解決を通っていないこともログで確かめる。
+register_rendering_gpu_test(
+    RenderingGoldenIndoorGBufferFallbackVulkanTest
+    RenderingGoldenImageTest
+    --scene=indoor
+    --capture-source=back-buffer
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingGoldenOutdoorGBufferFallbackVulkanTest
+    RenderingGoldenImageTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --visibility-buffer=off)
 # GTAO: 部屋の大きさ（Cornell）の壁・床・天井が遮蔽で黒くならず、隅・接地部だけが暗くなること
 register_rendering_gpu_test(
     RenderingGTAOCornellRoomVulkanTest
@@ -1794,11 +1904,16 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     MEMBER VirtualTextureRequestSetTest VirtualTextureRequestSetTest.cpp
     MEMBER VirtualTextureStreamerTest VirtualTextureStreamerTest.cpp
     MEMBER RHIBlockCompressedFormatTest RHIBlockCompressedFormatTest.cpp
+    MEMBER VisibilityBufferEncodingTest VisibilityBufferEncodingTest.cpp
+    MEMBER VisibilityMaterialTableTest VisibilityMaterialTableTest.cpp
 )
 target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
 target_include_directories(RenderResourcesDomainContractTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+target_compile_definitions(RenderResourcesDomainContractTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
 add_test(NAME RenderResourcesDomainContractTest COMMAND RenderResourcesDomainContractTest)
 
@@ -1817,6 +1932,10 @@ add_test(NAME VirtualTextureRequestSetTest COMMAND RenderResourcesDomainContract
 # 要求の集合から未常駐のタイルを優先度順に読み、ページを結び、コピーを積んで常駐させること。1 フレームの上限・同じタイルの二重の要求・読み込みの失敗・プールが尽きたときの扱い。
 add_test(NAME VirtualTextureStreamerTest COMMAND RenderResourcesDomainContractTest --test=VirtualTextureStreamerTest)
 add_test(NAME RHIBlockCompressedFormatTest COMMAND RenderResourcesDomainContractTest --test=RHIBlockCompressedFormatTest)
+# ビジビリティバッファの ID（(記録の番号 << 7) | 三角形の番号）の往復・記録の数の上限（2^25）・空（0）の扱い、描画の記録の表の追加・引き・容量、VisBuffer.Id と記録の表の RenderGraph の資源の記述、GLSL（Common/VisibilityBuffer.glsl）の定数の C++ との一致。
+add_test(NAME VisibilityBufferEncodingTest COMMAND RenderResourcesDomainContractTest --test=VisibilityBufferEncodingTest)
+# 記録の材質の番号がフレームで一意な材質の表の番号になること。同じ材質（MegaGeometry の区間・手続き・スキニングの描画）が同じ番号に、違う材質が違う番号に、番号が 0 から詰まること、上限を超えたときに予備の番号へ寄せること、記録を作る計算シェーダーが表の番号を書くこと。
+add_test(NAME VisibilityMaterialTableTest COMMAND RenderResourcesDomainContractTest --test=VisibilityMaterialTableTest)
 
 add_executable(MeshResourcesPrimitiveTest
     MeshResourcesPrimitiveTest.cpp

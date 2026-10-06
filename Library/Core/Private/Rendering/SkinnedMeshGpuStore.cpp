@@ -2,6 +2,7 @@
 
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
+#include "Logging/LogMacros.h"
 #include "Math/MatrixUtils.h"
 
 #include <cstring>
@@ -232,6 +233,24 @@ namespace NorvesLib::Core::Rendering
         return m_Entries.find(handle) != m_Entries.end();
     }
 
+    bool SkinnedMeshGpuStore::TryGetChunks(SkinnedMeshHandle handle,
+                                           Container::VariableArray<MeshIndexChunk>& out) const
+    {
+        out.clear();
+        const auto entryIt = m_Entries.find(handle);
+        if (entryIt == m_Entries.end() || !entryIt->second.bChunksValid)
+        {
+            return false;
+        }
+        out = entryIt->second.Chunks;
+        return true;
+    }
+
+    void SkinnedMeshGpuStore::SetChunkBuilderForTesting(MeshIndexChunkBuilder builder)
+    {
+        m_ChunkBuilder = builder;
+    }
+
     void SkinnedMeshGpuStore::CollectReleasedResources()
     {
         CollectReleased();
@@ -262,7 +281,8 @@ namespace NorvesLib::Core::Rendering
         vertexDesc.Size = static_cast<uint64_t>(vertices.size() * sizeof(SkinnedMeshVertex));
         vertexDesc.Usage = RHI::ResourceUsage::VertexBuffer |
                            RHI::ResourceUsage::StorageBuffer |
-                           RHI::ResourceUsage::ShaderRead;
+                           RHI::ResourceUsage::ShaderRead |
+                           RHI::ResourceUsage::BufferDeviceAddress;
         vertexDesc.CPUAccessible = true;
         vertexDesc.DebugName = "SkinnedMeshVB";
         RHI::BufferPtr vertexBuffer = m_Device->CreateBuffer(vertexDesc);
@@ -274,7 +294,12 @@ namespace NorvesLib::Core::Rendering
 
         RHI::BufferDesc indexDesc;
         indexDesc.Size = static_cast<uint64_t>(indices.size() * sizeof(uint32_t));
-        indexDesc.Usage = RHI::ResourceUsage::IndexBuffer;
+        // 頂点と同じく、描画に加えて計算シェーダー（storage）とアドレス参照（BDA）から読めるようにする。
+        // BDA が使えないデバイスでは RHI 側が用途を無視する。
+        indexDesc.Usage = RHI::ResourceUsage::IndexBuffer |
+                          RHI::ResourceUsage::StorageBuffer |
+                          RHI::ResourceUsage::ShaderRead |
+                          RHI::ResourceUsage::BufferDeviceAddress;
         indexDesc.CPUAccessible = true;
         indexDesc.DebugName = "SkinnedMeshIB";
         RHI::BufferPtr indexBuffer = m_Device->CreateBuffer(indexDesc);
@@ -289,6 +314,22 @@ namespace NorvesLib::Core::Rendering
         entry.VertexBuffer = vertexBuffer;
         entry.IndexBuffer = indexBuffer;
         entry.IndexCount = static_cast<uint32_t>(indices.size());
+        // 区切りの位置を与えないので失敗しないが、戻り値は必ず確かめる。
+        // 失敗しても GBuffer・影の経路は頂点とインデックスだけで描けるので、メッシュは登録して塊だけを持たない
+        // （登録しないと毎フレームやり直してエラーを出し、既定の GBuffer の経路からもメッシュが消える）。
+        // 塊を使うビジビリティバッファの側は、TryGetChunks が false のメッシュの塊を分け直して描く（分け直しも失敗したときだけ飛ばす）。
+        entry.bChunksValid = m_ChunkBuilder ? m_ChunkBuilder(entry.IndexCount, entry.Chunks)
+                                            : BuildMeshIndexChunks(entry.IndexCount, nullptr, 0, entry.Chunks);
+        if (!entry.bChunksValid)
+        {
+            entry.Chunks.clear();
+            if (!m_bLoggedChunkFailure)
+            {
+                m_bLoggedChunkFailure = true;
+                NORVES_LOG_WARNING("SkinnedMeshGpuStore",
+                                   "インデックスを塊に分けられないメッシュがあります。GBuffer と影では描き続け、ビジビリティバッファは塊を分け直して描きます（分け直しも失敗したときだけ飛ばします）");
+            }
+        }
         entry.AssetLease = assetLease;
         m_Entries[handle] = std::move(entry);
         return &m_Entries.find(handle)->second;

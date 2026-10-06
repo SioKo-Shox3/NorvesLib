@@ -1098,6 +1098,13 @@ namespace NorvesLib::RHI::Vulkan
         // VT の要求（フィードバック）は材質のフラグメントシェーダーが storage buffer へ書く。対応しているデバイスだけで有効にする。
         features2.features.fragmentStoresAndAtomics =
             physicalFeatures.fragmentStoresAndAtomics == VK_TRUE ? VK_TRUE : VK_FALSE;
+        // フラグメントシェーダーの gl_PrimitiveID（SPIR-V の Geometry 機能）は geometryShader の有効化が前提。
+        // ジオメトリシェーダー自体は使わない。対応しているデバイスだけで有効にする。
+        features2.features.geometryShader =
+            physicalFeatures.geometryShader == VK_TRUE ? VK_TRUE : VK_FALSE;
+        // RG16F などを形式を明示した storage image として扱うために要る。対応しているデバイスだけで有効にする。
+        features2.features.shaderStorageImageExtendedFormats =
+            physicalFeatures.shaderStorageImageExtendedFormats == VK_TRUE ? VK_TRUE : VK_FALSE;
         // 点光源のキューブシャドウはキューブ配列（samplerCubeArray）で読む。
         features2.features.imageCubeArray =
             physicalFeatures.imageCubeArray == VK_TRUE ? VK_TRUE : VK_FALSE;
@@ -1474,6 +1481,8 @@ namespace NorvesLib::RHI::Vulkan
         m_formatMap[Format::BC5_UNORM] = vk::Format::eBc5UnormBlock;
         m_formatMap[Format::BC7_UNORM] = vk::Format::eBc7UnormBlock;
         m_formatMap[Format::BC7_SRGB] = vk::Format::eBc7SrgbBlock;
+        m_formatMap[Format::R32_UINT] = vk::Format::eR32Uint;
+        m_formatMap[Format::R32G32_UINT] = vk::Format::eR32G32Uint;
 
         // vk::Format → RHI Format (逆変換マップも作成)
         for (const auto &[rhiFormat, vkFormat] : m_formatMap)
@@ -2750,6 +2759,24 @@ namespace NorvesLib::RHI::Vulkan
         m_Capabilities.bIsNvidia = (props.vendorID == 0x10DE);
         m_Capabilities.bIsDiscreteGPU = (props.deviceType == vk::PhysicalDeviceType::eDiscreteGpu);
 
+        // ドライバの版を1回だけ出す（ドライバの更新で画面微分・LOD の挙動が変わる実装があるため、撮影のログから版を引けるようにする）。
+        // NVIDIA の driverVersion は 10・8・8・6 bit に分かれる（610.88 なら major=610・minor=88）。他社は Vulkan の版の詰め方。
+        {
+            const uint32_t driverVersion = props.driverVersion;
+            if (props.vendorID == 0x10DE)
+            {
+                NORVES_LOG_INFO("VulkanDevice", "GPU_DRIVER name=%s vendor=nvidia version=%u.%u.%u.%u raw=0x%08x",
+                                props.deviceName.data(), (driverVersion >> 22) & 0x3FFu, (driverVersion >> 14) & 0xFFu,
+                                (driverVersion >> 6) & 0xFFu, driverVersion & 0x3Fu, driverVersion);
+            }
+            else
+            {
+                NORVES_LOG_INFO("VulkanDevice", "GPU_DRIVER name=%s vendor=0x%04x version=%u.%u.%u raw=0x%08x",
+                                props.deviceName.data(), static_cast<unsigned>(props.vendorID), driverVersion >> 22,
+                                (driverVersion >> 12) & 0x3FFu, driverVersion & 0xFFFu, driverVersion);
+            }
+        }
+
         // 利用可能な拡張を列挙
         auto extensionsResult = m_physicalDevice.enumerateDeviceExtensionProperties();
         Set<String> availableExtensions;
@@ -2824,6 +2851,10 @@ namespace NorvesLib::RHI::Vulkan
                 (m_enabledDeviceFeatures.drawIndirectFirstInstance == VK_TRUE);
             m_Capabilities.bTextureCompressionBC =
                 (m_enabledDeviceFeatures.textureCompressionBC == VK_TRUE);
+            m_Capabilities.bGeometryShader =
+                (m_enabledDeviceFeatures.geometryShader == VK_TRUE);
+            m_Capabilities.bShaderStorageImageExtendedFormats =
+                (m_enabledDeviceFeatures.shaderStorageImageExtendedFormats == VK_TRUE);
             m_Capabilities.bFragmentStoresAndAtomics =
                 (m_enabledDeviceFeatures.fragmentStoresAndAtomics == VK_TRUE);
 

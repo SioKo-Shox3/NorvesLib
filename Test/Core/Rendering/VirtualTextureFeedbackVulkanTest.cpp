@@ -7,6 +7,8 @@
 //   - 非常駐で粗いミップへ逃げた領域: 巡回によらず全画素が書く（欲しいミップのタイルすべてが要求になる）。
 //   - 同じタイルの要求は、ハッシュの表で要求の列の 1 語に減り、重なった件数は件数の表へ足される。
 //     読み戻した各タイルの件数（HitCount）は、そのタイルを要求した画素の数になる（面積の違う 4 タイルで 5・7・7・13 の順）。
+//   - 別のテクスチャの逃げのループ（画素ごとに逃げ始めのミップが違い、早期 return がある）と、非常駐で全画素が書くフィードバックの後でも、
+//     本体のフィードバックは分岐の前に取った標本ミップ（ミップ 2）で書かれる（ドライバ 610.88 では、分岐の後で textureQueryLOD を取る形に変えてもこの検査は通る。その退行の守りは撮影の VT の常駐の上限が担い、この検査が確かめるのは別の LOD・UV を渡す誤り）。
 //   - パラメータ 0（VT でない材質）は何も書かない。
 //   - 要求の件数が capacity を超えたとき、溢れた件数がヘッダに残る（capacity はバッファの語数から求める）。
 // Vulkan デバイスが無い、sparse の結び付け・BC7・shaderResourceResidency・fragmentStoresAndAtomics が使えない環境では 125（スキップ）を返す。
@@ -50,7 +52,7 @@ namespace
     constexpr uint64_t Page = RHI::SparsePageSizeBytes;
 
     // 確認（4×4 画素）の数と、描画先の大きさ
-    constexpr uint32_t ProbeCount = 4u;
+    constexpr uint32_t ProbeCount = 5u;
     constexpr uint32_t TargetWidth = ProbeCount * 4u;
     constexpr uint32_t TargetHeight = 4u;
     // 要求に載せるテクスチャの番号（0 でない値で、番号の詰め方を確かめる）
@@ -500,14 +502,17 @@ namespace
 
                 // 確認 0: 位相の画素 (phase & 3, phase >> 2) のタイル。確認 1: ミップ 1 のタイル(1, 1)。
                 // 確認 2: ミップ 0 の 4 タイルすべて（4 画素ずつ）。確認 3: 同じ 4 タイルを 1・3・3・9 画素ずつ。
+                // 確認 4: 別のテクスチャの逃げ側がミップ 0 のタイル(3, 3) を奇数列の 8 画素と（位相の画素が偶数列のときは）その 1 画素、
+                // 本体がミップ 2 のタイル(0, 0) を位相の 1 画素が書く。
                 // 確認 0 が(1, 1)なら確認 1 と同じ要求なので件数が 2 になる。
                 const uint32_t phaseTileX = (phase & 3u) >= 2u ? 1u : 0u;
                 const uint32_t phaseTileY = (phase >> 2u) >= 2u ? 1u : 0u;
-                // 期待の集合は重複を除き、同じタイルの件数を足して作る（確認 0 が確認 1 と同じタイルなら 5 種類、違えば 6 種類）。
-                ExpectedTile expected[6];
+                // 期待の集合は重複を除き、同じタイルの件数を足して作る（確認 0 が確認 1 と同じタイルなら 7 種類、違えば 8 種類）。
+                ExpectedTile expected[8];
                 uint32_t expectedCount = 0;
-                const ExpectedTile candidates[6] = {{1, phaseTileX, phaseTileY, 1}, {1, 1, 1, 1}, {0, 0, 0, 5},
-                                                    {0, 1, 0, 7},                   {0, 0, 1, 7}, {0, 1, 1, 13}};
+                const ExpectedTile candidates[8] = {{1, phaseTileX, phaseTileY, 1}, {1, 1, 1, 1}, {0, 0, 0, 5},
+                                                    {0, 1, 0, 7},                   {0, 0, 1, 7}, {0, 1, 1, 13},
+                                                    {0, 3, 3, (phase & 1u) == 0u ? 9u : 8u}, {2, 0, 0, 1}};
                 for (const ExpectedTile& candidate : candidates)
                 {
                     bool bDuplicate = false;
@@ -556,9 +561,12 @@ namespace
                 // 確認 0: 位相 0 の画素の標本はミップ 1 の texel (253, 253) でタイル(1, 0)。確認 1: texel (400, 400) でタイル(3, 1)。
                 // 確認 2: 非常駐でミップ 0 の標本の texel (253|255|256|258) が全画素で書き、タイル x は 1・1・2・2、y は 0・0・1・1（4 画素ずつ）。
                 // 確認 3: texel (255|256|258|259) で、タイル x は 1・2・2・2、y は 0・1・1・1（1・3・3・9 画素）。
-                const ExpectedTile expected[6] = {{1, 1, 0, 1}, {1, 3, 1, 1}, {0, 1, 0, 5},
-                                                  {0, 2, 0, 7}, {0, 1, 1, 7}, {0, 2, 1, 13}};
-                ExpectExactly("float 経由", requests, HighTextureIndex, expected, 6u);
+                // 確認 4: 別のテクスチャの逃げ側は texel (900..905, 900..905) で、タイル x は 900>>7 = 7、y は 900>>8 = 3
+                // （奇数列の 8 画素と位相 0 の偶数列の 1 画素で 9 画素）。
+                // 本体はミップ 2 の texel (25..30) でタイル(0, 0)（位相 0 の 1 画素）。
+                const ExpectedTile expected[8] = {{1, 1, 0, 1}, {1, 3, 1, 1}, {0, 1, 0, 5}, {0, 2, 0, 7},
+                                                  {0, 1, 1, 7}, {0, 2, 1, 13}, {0, 7, 3, 9}, {2, 0, 0, 1}};
+                ExpectExactly("float 経由", requests, HighTextureIndex, expected, 8u);
             }
 
             // ---- パラメータ 0（VT でない材質）は何も書かない ----
@@ -580,11 +588,11 @@ namespace
                 {
                     return 1;
                 }
-                // 位相 0 の要求は 6 種類（確認 0 は(0, 0)、確認 1 は(1, 1)、確認 2 は 4 件）。4 件だけ入り、2 件が溢れる。
+                // 位相 0 の要求は 8 種類（確認 0 は(0, 0)、確認 1 は(1, 1)、確認 2・3 は 4 件、確認 4 は 2 件）。4 件だけ入り、4 件が溢れる。
                 std::cout << TestName << " overflow tiles=" << requests.GetRequestCount()
                           << " overflow=" << requests.GetOverflowCount() << std::endl;
                 Expect(requests.GetRequestCount() == 4u, "capacity 4 のバッファには 4 件だけ入る");
-                Expect(requests.GetOverflowCount() == 2u, "6 種類の要求のうち capacity を超えた 2 件が溢れた件数に残る");
+                Expect(requests.GetOverflowCount() == 4u, "8 種類の要求のうち capacity を超えた 4 件が溢れた件数に残る");
                 device->WaitIdle();
             }
 

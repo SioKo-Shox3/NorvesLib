@@ -85,6 +85,10 @@ namespace NorvesLib::Core::Rendering
         // 統計（MEGA_OCCLUSION）の行に付けるフレームの番号。描画のフレームの番号と、決定的な撮影のエポックからの番号
         uint64_t FrameNumber = 0;
         uint64_t TemporalFrameIndex = 0;
+        // フレームごとの資源の枠（FrameUseRing）を選ぶ値。飛行中のフレームの番号と、記録したフレームの通し番号
+        // （同じフレームの複数のビューポートで同じ値）。FrameNumber は描画が飛ばす・描き直すので枠の判定には使わない
+        uint32_t InFlightIndex = 0;
+        uint64_t RenderFrameSerial = 0;
         bool bDeterministicCapture = false;
         bool bTemporalEpochStart = false;
     };

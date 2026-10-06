@@ -1,39 +1,27 @@
 ﻿// 暗黙のミップで標本する。画面微分（dFdx・dFdy）を使うので、フラグメントシェーダー専用で、
 // 動的に一様な制御フローで呼ぶ。bVirtualTexture のときは sparseTextureARB で標本し、常駐していなければ粗いミップへ逃げる。
+// 分岐・ループの後になりうる材質のシェーダーは使わず、SamplePbrMaterialTextures（MaterialTextureFootprint を取る）を使う。
 vec4 SampleMaterialTexture(sampler2D tex, vec2 uv, bool bVirtualTexture)
 {
 #ifdef NORVES_SPARSE_RESIDENCY_SHADING
     if (bVirtualTexture)
     {
-        return SampleSparseResident(tex, uv);
+        // 画面微分を関数の先頭で取る（コンピュートでは画面微分が使えないので、この関数は共有の SparseResidencySampling.glsl に置かない）
+        bool bEscaped;
+        return SampleSparseResidentTracked(tex, uv, dFdx(uv), dFdy(uv), textureQueryLOD(tex, uv).y, bEscaped);
     }
 #endif
     return texture(tex, uv);
 }
 
-// 暗黙のミップで標本し、非常駐で粗いミップへ逃げたかを bEscaped へ返す（VT でなければ常に false）。
-// 画面微分を使うので、フラグメントシェーダー専用で、動的に一様な制御フローで呼ぶ。
-vec4 SampleMaterialTextureTracked(sampler2D tex, vec2 uv, bool bVirtualTexture, out bool bEscaped)
-{
-    bEscaped = false;
-#ifdef NORVES_SPARSE_RESIDENCY_SHADING
-    if (bVirtualTexture)
-    {
-        return SampleSparseResidentTracked(tex, uv, bEscaped);
-    }
-#endif
-    return texture(tex, uv);
-}
+// 勾配を引数に取る標本（MaterialTextureFootprint・SampleMaterialTextureTracked・SamplePbrMaterialTextures）は、
+// 画面微分を使わないので Core に置き、計算シェーダー（材質の解決）と共有する。
+#include "Common/PbrMaterialTextureSamplingCore.glsl"
 
-// 材質の texture 群（sampler2D）を標本して材質値へ復号する。ラスタの材質シェーダー
-// （gbuffer.frag・megageometry.frag・forward_transparent.frag）が使う。
-// Common/PbrMaterialEvaluation.glsl と Common/SparseResidencySampling.glsl の後に取り込む。
-//
-// bHasORM のとき ORM は metallicSampler の枠に張られており、その1枚だけを引く
-// （roughnessSampler・aoSampler は引かない）。無いときは別々の枠を引く従来の経路。
-// bVirtualTexture のとき（材質のテクスチャが sparse）は、常駐していないタイルを読まず粗いミップへ逃げる。
-// 画面微分を使うので、動的に一様な制御フローで呼ぶ。
-PbrMaterialTextureSamples SamplePbrMaterialTextures(
+// 画面微分と各層の標本ミップを取る。texCoord は POM の後の uv で、POM の直後の一様な位置で呼ぶ。
+// bQueryLods（描画ごとに一様）が false のときは勾配だけ取り、ミップは 0 にする（VT でない材質は標本ミップを使わない）。
+// bHasORM のとき roughness・ao の枠は引かないのでミップを問い合わせない。
+MaterialTextureFootprint QueryMaterialTextureFootprint(
     sampler2D albedoSampler,
     sampler2D normalSampler,
     sampler2D metallicSampler,
@@ -41,28 +29,26 @@ PbrMaterialTextureSamples SamplePbrMaterialTextures(
     sampler2D aoSampler,
     vec2 texCoord,
     bool bHasORM,
-    bool bNormalTwoChannel,
-    bool bVirtualTexture)
+    bool bQueryLods)
 {
-    vec3 material;
-    if (bHasORM)
+    MaterialTextureFootprint footprint;
+    footprint.UvDx = dFdx(texCoord);
+    footprint.UvDy = dFdy(texCoord);
+    footprint.AlbedoLod = 0.0;
+    footprint.NormalLod = 0.0;
+    footprint.MetallicLod = 0.0;
+    footprint.RoughnessLod = 0.0;
+    footprint.AoLod = 0.0;
+    if (bQueryLods)
     {
-        material = DecodePbrOrmSample(
-            SampleMaterialTextureTracked(metallicSampler, texCoord, bVirtualTexture, g_VirtualTextureOrmEscaped));
+        footprint.AlbedoLod = textureQueryLOD(albedoSampler, texCoord).y;
+        footprint.NormalLod = textureQueryLOD(normalSampler, texCoord).y;
+        footprint.MetallicLod = textureQueryLOD(metallicSampler, texCoord).y;
+        if (!bHasORM)
+        {
+            footprint.RoughnessLod = textureQueryLOD(roughnessSampler, texCoord).y;
+            footprint.AoLod = textureQueryLOD(aoSampler, texCoord).y;
+        }
     }
-    else
-    {
-        material = vec3(SampleMaterialTexture(metallicSampler, texCoord, bVirtualTexture).r,
-                        SampleMaterialTexture(roughnessSampler, texCoord, bVirtualTexture).r,
-                        SampleMaterialTexture(aoSampler, texCoord, bVirtualTexture).r);
-    }
-    // アルベド・法線・ORM は、非常駐で粗いミップへ逃げたかを g_VirtualTexture*Escaped へ残す（VT のフィードバックが使う）。
-    vec4 albedo = SampleMaterialTextureTracked(albedoSampler, texCoord, bVirtualTexture, g_VirtualTextureAlbedoEscaped);
-    vec4 normalSample = SampleMaterialTextureTracked(normalSampler, texCoord, bVirtualTexture, g_VirtualTextureNormalEscaped);
-    return DecodePbrMaterialTextureSamples(albedo,
-                                           normalSample,
-                                           material.x,
-                                           material.y,
-                                           material.z,
-                                           bNormalTwoChannel);
+    return footprint;
 }

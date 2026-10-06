@@ -105,6 +105,8 @@ namespace NorvesLib::Core::Rendering
         PathTracingDebugOutput PathTracingDebug = PathTracingDebugOutput::None;
         /** @brief ラスタの直接光のBRDF（既定は解析BRDF） */
         RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Analytic;
+        /** @brief ビジビリティバッファの使い方（既定は On。装置が対応しないときは GBuffer の描画へ戻る） */
+        VisibilityBufferMode VisibilityBuffer = VisibilityBufferMode::On;
     };
 
     struct RenderingCoordinatorStatsSnapshot
@@ -581,6 +583,9 @@ namespace NorvesLib::Core::Rendering
         Container::UnorderedMap<uint64_t, PreviousSkinnedState> m_PreviousSkinnedStates;
         uint64_t m_PreviousObjectStateFrameNumber = 0;
         bool m_bPreviousObjectStateValid = false;
+        // RenderThread が記録したフレームの通し番号（ViewRenderContext::RenderFrameSerial に渡す。GameThread のフレーム番号と
+        // 違い、描画がパケットを飛ばしても、同じパケットを描き直しても、記録のたびに必ず増える）
+        uint64_t m_RenderFrameSerial = 0;
 
         // RenderThread が最後に描いたフレームの物体の変換。描画がゲームのフレームを飛ばしたとき、TAA を選んだ
         // カメラなら、パケットの前の変換（velocity の基準）をそのフレームのものへ付け替える。

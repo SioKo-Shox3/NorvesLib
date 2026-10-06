@@ -5,6 +5,11 @@
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/SkyAtmospherePass.h"
+#include "Rendering/MaterialTileClassifyPass.h"
+#include "Rendering/SkinningComputePass.h"
+#include "Rendering/VisibilityRasterPass.h"
+#include "Rendering/GBufferDebugPass.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/VolumetricsPass.h"
@@ -822,8 +827,14 @@ namespace NorvesLib::Core::Rendering
     // パイプライン構築ヘルパー
     // ========================================
 
-    void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer, RasterDirectBrdf directBrdf)
+    void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer,
+                                          RasterDirectBrdf directBrdf,
+                                          VisibilityBufferMode visibilityBuffer)
     {
+        const bool bVisibilityBuffer = IsVisibilityBufferActive(visibilityBuffer);
+        // On のときは、ビジビリティバッファの解決が GBuffer を書く（GBufferPass・MegaGeometryPass は GBuffer の描画を止める）。
+        // Debug は今の GBuffer の描画を残したまま、ID の検証表示だけを足す
+        const bool bVisibilityResolve = visibilityBuffer == VisibilityBufferMode::On;
         // 既存のパスをクリア
         while (GetPassCount() > 0)
         {
@@ -852,12 +863,21 @@ namespace NorvesLib::Core::Rendering
         neuralDecodePass->SetSceneRenderer(sceneRenderer);
         AddPass(std::move(neuralDecodePass));
 
+        // SkinningComputePass: スキニングの今・前のフレームの頂点を計算シェーダーで作る。
+        // 今の GBuffer の経路は頂点シェーダーのスキニングのままなので、ビジビリティバッファを使うときまで無効にしておく。
+        auto skinningComputePass = MakeUnique<SkinningComputePass>();
+        skinningComputePass->SetEnabled(bVisibilityBuffer);
+        SkinningComputePass *skinningComputePassPtr = skinningComputePass.get();
+        AddPass(std::move(skinningComputePass));
+
         // GBufferPass: ジオメトリ→GBuffer MRT
         GBufferPassSettings gbufferSettings;
         auto gbufferPass = MakeUnique<GBufferPass>(gbufferSettings);
         gbufferPass->SetSceneView(this);
         gbufferPass->SetSceneRenderer(sceneRenderer);
         gbufferPass->SetRegisterLegacyBridge(false);
+        gbufferPass->SetVisibilityResolveActive(bVisibilityResolve);
+        GBufferPass *gbufferPassPtr = gbufferPass.get();
         AddPass(std::move(gbufferPass));
 
         // MegaGeometryPass: GPU駆動クラスターカリング + GBufferへのIndirectDraw
@@ -865,7 +885,55 @@ namespace NorvesLib::Core::Rendering
         auto megaGeometryPass = MakeUnique<MegaGeometryPass>(megaGeoSettings);
         megaGeometryPass->SetSceneView(this);
         megaGeometryPass->SetSceneRenderer(sceneRenderer);
+        megaGeometryPass->SetVisibilityDrawPlanEnabled(bVisibilityBuffer);
+        megaGeometryPass->SetSkipGBufferDraw(bVisibilityResolve);
+        MegaGeometryPass *megaGeometryPassPtr = megaGeometryPass.get();
         AddPass(std::move(megaGeometryPass));
+
+        // VisibilityRasterPass: 不透明の描画のすべて（MegaGeometry のクラスタ・手続きメッシュの塊・スキニングの塊）を、
+        // VisBuffer.Id と GBuffer.Depth へ描く（on では GBuffer の描画の代わりに、debug では今の GBuffer の描画に加えて）。
+        // --visibility-buffer=on|debug のときだけ足す。
+        VisibilityRasterPass *visibilityRasterPassPtr = nullptr;
+        if (bVisibilityBuffer)
+        {
+            auto visibilityRasterPass = MakeUnique<VisibilityRasterPass>();
+            visibilityRasterPass->SetMegaGeometryPass(megaGeometryPassPtr);
+            visibilityRasterPass->SetSkinningComputePass(skinningComputePassPtr);
+            visibilityRasterPassPtr = visibilityRasterPass.get();
+            AddPass(std::move(visibilityRasterPass));
+        }
+
+        // MaterialTileClassifyPass: VisBuffer.Id から、材質ごとのタイルの一覧と間接 dispatch の引数を作る。
+        // 材質の解決（次のパス）が読むので、解決より前に足す。解決を使う --visibility-buffer=on のときだけ有効にする
+        // （off は足さず、debug は足しても無効のまま。既定の描画は変えない）。
+        MaterialTileClassifyPass *materialTileClassifyPassPtr = nullptr;
+        if (visibilityRasterPassPtr)
+        {
+            auto materialTileClassifyPass = MakeUnique<MaterialTileClassifyPass>();
+            materialTileClassifyPass->SetRasterPass(visibilityRasterPassPtr);
+            materialTileClassifyPass->SetEnabled(bVisibilityResolve);
+            materialTileClassifyPassPtr = materialTileClassifyPass.get();
+            AddPass(std::move(materialTileClassifyPass));
+        }
+
+        // VisibilityResolvePass: VisBuffer.Id から三角形を引いて、GBuffer の Albedo・Normal・Velocity を書く（--visibility-buffer=on）。
+        // 分類のパスの引数・一覧で、材質ごとに 1 回ずつ間接 dispatch する（分類を使えないフレームは画面全体の直接 dispatch）。
+        // 使えないとき（装置の非対応・ID のラスタや解決のパイプラインが無い・計算スキニングのパイプラインが無い）は何も宣言せず、
+        // GBufferPass・MegaGeometryPass も描画を止めない。判定はこのパスに問い合わせる（上の 2 つへ渡す参照）。
+        if (visibilityRasterPassPtr && bVisibilityResolve)
+        {
+            auto visibilityResolvePass = MakeUnique<VisibilityResolvePass>();
+            visibilityResolvePass->SetRasterPass(visibilityRasterPassPtr);
+            visibilityResolvePass->SetSkinningComputePass(skinningComputePassPtr);
+            visibilityResolvePass->SetClassifyPass(materialTileClassifyPassPtr);
+            visibilityRasterPassPtr->SetResolvePass(visibilityResolvePass.get());
+            skinningComputePassPtr->SetResolvePass(visibilityResolvePass.get());
+            gbufferPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());
+            megaGeometryPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());
+            // 2パスの遮蔽の HZB は、GBuffer の描画を止めている間は ID のラスタの深度から作る（記録をラスタの Execute へ移す）
+            megaGeometryPassPtr->SetVisibilityRasterPass(visibilityRasterPassPtr);
+            AddPass(std::move(visibilityResolvePass));
+        }
 
         // SSAOPass: GBufferの深度・法線から画面空間AO（GTAO）を計算。半径は世界の長さ（m）で、
         // 球・岩の接地部や軒下（数十cm〜1 m）を拾い、部屋の大きさの壁全体は遮蔽にしない。
@@ -914,6 +982,28 @@ namespace NorvesLib::Core::Rendering
         transparentForwardPass->SetTransparentOnly(true);
         transparentForwardPass->SetRegisterOutputs(false);
         AddPass(std::move(transparentForwardPass));
+
+        // VisibilityDebugPass: ID を色にして最後のシーンの色へ書く（--visibility-buffer=debug の検証表示）
+        if (visibilityBuffer == VisibilityBufferMode::Debug && visibilityRasterPassPtr)
+        {
+            auto visibilityDebugPass = MakeUnique<VisibilityDebugPass>();
+            visibilityDebugPass->SetRasterPass(visibilityRasterPassPtr);
+            AddPass(std::move(visibilityDebugPass));
+        }
+
+#if NORVES_ENABLE_STATS
+        // GBufferDebugPass: GBuffer の法線・速度・深度を最後のシーンの色へ書く（環境変数 NORVES_GBUFFER_DEBUG。on・off の比較用）。
+        // 統計が有効な構成（Debug・RelWithDebInfo）だけ。Release には検証表示を入れない。
+        {
+            GBufferDebugView gbufferDebugView = GBufferDebugView::Normal;
+            if (GBufferDebugPass::TryGetViewFromEnvironment(gbufferDebugView))
+            {
+                NORVES_LOG_INFO("SceneView", "GBUFFER_DEBUG NORVES_GBUFFER_DEBUG により GBuffer の検証表示を追加する（表示=%u）",
+                                static_cast<uint32_t>(gbufferDebugView));
+                AddPass(MakeUnique<GBufferDebugPass>(gbufferDebugView));
+            }
+        }
+#endif
 
         // PostProcessStack: TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw
         auto postProcessStack = MakeUnique<PostProcessStack>();

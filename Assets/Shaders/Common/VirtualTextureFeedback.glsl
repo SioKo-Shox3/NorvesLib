@@ -1,5 +1,9 @@
 ﻿// VT（sparse の仮想テクスチャ）のフィードバック。材質のサンプルの箇所が、欲しいタイルの要求を GPU のバッファへ書く。
-// 材質のシェーダー（gbuffer.frag・megageometry.frag・forward_transparent.frag）が共有する。
+// 材質のシェーダー（gbuffer.frag・megageometry.frag・forward_transparent.frag）と、ビジビリティバッファの解決
+// （計算シェーダー。Common/VisibilityResolve.glsl）が共有する。
+//
+// 計算シェーダーが取り込むときは、先に NORVES_VT_FEEDBACK_COMPUTE を定義する。フラグメント専用の宣言（early_fragment_tests）と
+// gl_FragCoord を使う関数を除き、画素の位置を引数に取る版（…AtPixel）だけを使う。
 //
 // NORVES_VT_FEEDBACK が定義されているとき（デバイスが fragmentStoresAndAtomics・shaderResourceResidency・sparse の 2D 部分常駐を有効にしたとき。
 // シェーダーコンパイラが定義する）だけ、要求のバッファ（storage buffer）へ書く。定義されていないときは何もしない。
@@ -32,7 +36,9 @@ layout(std430, set = VT_FEEDBACK_SET, binding = VT_FEEDBACK_BINDING) buffer Virt
 // フラグメントシェーダーが storage buffer へ書くと、実装によっては深度テストが後ろへ回る（早期 Z が効かなくなる）ので、
 // 深度テストを先に行う指定にする。これを取り込むシェーダーは深度を書かず、discard も深度テストの結果を変えない。
 // 隠れた画素は要求を書かないので、画面に映るタイルだけが要求になる。
+#ifndef NORVES_VT_FEEDBACK_COMPUTE
 layout(early_fragment_tests) in;
+#endif
 
 const uint VT_FEEDBACK_HEADER_WORDS = 4u;
 const uint VT_FEEDBACK_HASH_WORDS = 4096u;
@@ -49,12 +55,16 @@ uint DecodeVirtualTextureFeedbackParam(float value)
 
 // 材質のテクスチャ 1 枚（tex。VT の表の番号が param に入っているテクスチャ）の uv（POM の後）から、
 // 欲しいミップのタイルの要求を書く。
-// param: 0 なら何もしない。描画（UBO）ごとに一様な値なので、画面微分（textureQueryLod）を壊さない。
+// param: 0 なら何もしない。描画（UBO）ごとに一様な値。
+// lod: tex の欲しいミップ（uv の textureQueryLOD(tex, uv).y）。画面微分は一様でない制御フローの中では未定義で、
+//      この関数の前には画素ごとに分かれる分岐・ループ・早期 return がありうるので、呼び出し側が main の一様な位置で
+//      先に取って渡す（この関数の中では画面微分を使わない）。
 //        下位から: タイル幅の log2（4bit）・タイル高さの log2（4bit）・フレームの巡回位相（4bit）・テクスチャの番号 + 1（12bit）
 // bEscaped: このテクスチャの標本が非常駐で粗いミップへ逃げたか
+// pixel: 画素の整数の位置（巡回の位相を決める。フラグメントシェーダーは uvec2(gl_FragCoord.xy)、解決は画面の画素）
 // 法線・ORM・高さも、それぞれ自分の VT の表の番号を持つ param で同じ関数を呼ぶ（材質の UBO が 1 枚ごとに持つ）。
-// フラグメントシェーダー専用で、動的に一様な制御フローで呼ぶ。
-void WriteVirtualTextureFeedback(sampler2D tex, vec2 uv, uint param, bool bEscaped)
+// 画面微分を使わないので、分岐・ループの後でも呼べる。
+void WriteVirtualTextureFeedbackAtPixel(sampler2D tex, vec2 uv, uint param, bool bEscaped, float lod, uvec2 pixel)
 {
 #ifdef NORVES_VT_FEEDBACK
     if (param == 0u)
@@ -62,10 +72,7 @@ void WriteVirtualTextureFeedback(sampler2D tex, vec2 uv, uint param, bool bEscap
         return;
     }
 
-    // 欲しいミップ。textureQueryLod は画面微分を使うので、画素ごとに分かれる分岐より前に求める。
-    float lod = textureQueryLod(tex, uv).y;
-
-    uvec2 phasePixel = uvec2(gl_FragCoord.xy) & uvec2(3u);
+    uvec2 phasePixel = pixel & uvec2(3u);
     bool bPhasePixel = (phasePixel.y * 4u + phasePixel.x) == ((param >> 8u) & 15u);
     if (!bPhasePixel && !bEscaped)
     {
@@ -114,21 +121,42 @@ void WriteVirtualTextureFeedback(sampler2D tex, vec2 uv, uint param, bool bEscap
 #endif
 }
 
+#ifndef NORVES_VT_FEEDBACK_COMPUTE
+// フラグメントシェーダー用: 画素の位置は gl_FragCoord
+void WriteVirtualTextureFeedback(sampler2D tex, vec2 uv, uint param, bool bEscaped, float lod)
+{
+    WriteVirtualTextureFeedbackAtPixel(tex, uv, param, bEscaped, lod, uvec2(gl_FragCoord.xy));
+}
+#endif
+
 // 視差（POM）の高さのテクスチャ（heightTex。VT の表の番号が param に入っているテクスチャ）の要求を書く。
 // uv は POM の前の元の uv（マーチは元の uv の近くを引くので、そのミップ・タイルを求める）。
 // 高さは標本が POM のループの中にあって逃げた印を残せないので、ここで元の uv を引いて常駐を調べ、巡回の画素でなくても要求を書くか決める。
-// param が 0 のときは何もしない（描画ごとに一様）。フラグメントシェーダー専用で、動的に一様な制御フローで呼ぶ。
-void WriteVirtualTextureHeightFeedback(sampler2D heightTex, vec2 uv, uint param)
+// lod は uv の textureQueryLOD(heightTex, uv).y（呼び出し側が main の先頭の一様な位置で取る。WriteVirtualTextureFeedback の lod と同じ）。
+// param が 0 のときは何もしない（描画ごとに一様）。画面微分を使わないので、分岐・ループの後でも呼べる。
+// pixel は WriteVirtualTextureFeedbackAtPixel と同じ。
+void WriteVirtualTextureHeightFeedbackAtPixel(sampler2D heightTex, vec2 uv, uint param, float lod, uvec2 pixel)
 {
 #if defined(NORVES_VT_FEEDBACK) && defined(NORVES_SPARSE_RESIDENCY_SHADING)
     if (param == 0u)
     {
         return;
     }
+    // 常駐は、実際に標本されるミップ（lod）の段で調べる（暗黙の勾配の sparseTextureARB は一様でない制御フローで未定義）。
     vec4 unusedColor;
-    bool bEscaped = !sparseTexelsResidentARB(sparseTextureARB(heightTex, uv, unusedColor));
-    WriteVirtualTextureFeedback(heightTex, uv, param, bEscaped);
+    float maxLod = float(textureQueryLevels(heightTex) - 1);
+    float level = clamp(floor(max(lod, 0.0)), 0.0, maxLod);
+    bool bEscaped = !sparseTexelsResidentARB(sparseTextureLodARB(heightTex, uv, level, unusedColor));
+    WriteVirtualTextureFeedbackAtPixel(heightTex, uv, param, bEscaped, lod, pixel);
 #else
-    WriteVirtualTextureFeedback(heightTex, uv, param, false);
+    WriteVirtualTextureFeedbackAtPixel(heightTex, uv, param, false, lod, pixel);
 #endif
 }
+
+#ifndef NORVES_VT_FEEDBACK_COMPUTE
+// フラグメントシェーダー用: 画素の位置は gl_FragCoord
+void WriteVirtualTextureHeightFeedback(sampler2D heightTex, vec2 uv, uint param, float lod)
+{
+    WriteVirtualTextureHeightFeedbackAtPixel(heightTex, uv, param, lod, uvec2(gl_FragCoord.xy));
+}
+#endif

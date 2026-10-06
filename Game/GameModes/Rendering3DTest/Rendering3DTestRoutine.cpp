@@ -33,6 +33,7 @@
 #include "Core/Public/Module/ModuleRegistry.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "GameModes/Rendering3DTest/M9WorldSkeletal.h"
+#include "GameModes/Rendering3DTest/StartupSkinnedProbe.h"
 
 #if defined(NORVES_GAME_AUDIO)
 #include "Audio/IAudioModule.h"
@@ -1640,6 +1641,8 @@ namespace Game::GameModes
 
             data.m_pM9SkinnedObject = nullptr;
             data.m_pM9SkinnedMeshComponent = nullptr;
+            data.m_StartupSkinnedProbeAsset.reset();
+            data.m_StartupSkinnedProbeComponents.clear();
             if (data.m_M9WorldAcceptance)
             {
                 data.m_M9WorldAcceptance->SkeletalAsset.reset();
@@ -2259,6 +2262,11 @@ namespace Game::GameModes
 
             LOG_INFO("Sphere Entity created and added to World");
 
+            if (data.m_bStartupSkinnedProbe)
+            {
+                SpawnStartupSkinnedProbe(ctx, data);
+            }
+
             if (data.m_InstancedMeshCount > 0u)
             {
                 constexpr uint32_t kInstancedMeshGridColumns = 8u;
@@ -2447,6 +2455,16 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(
                 data.m_bStartupNight ? kNightStaticEnvironmentIntensityScale : 1.0f);
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
+#if NORVES_BUILD_DEVELOPMENT
+            // --debug-view: F4・F5 と同じ経路で、起動時のデバッグの表示を選ぶ
+            if (data.m_StartupDebugViewMode != NorvesLib::Core::Rendering::DebugViewMode::Normal)
+            {
+                ctx.EngineRef.GetRenderWorld().SetDebugViewModeAll(data.m_StartupDebugViewMode);
+                LOG_INFO("Rendering3DTest DEBUG_VIEW 起動時のデバッグの表示=%s 反映=%s",
+                         NorvesLib::Core::Rendering::DebugViewModeToString(data.m_StartupDebugViewMode),
+                         NorvesLib::Core::Rendering::DebugViewModeToString(ctx.EngineRef.GetRenderWorld().GetMainViewportDebugViewMode()));
+            }
+#endif
             if (data.m_bStartupNight)
             {
                 LOG_INFO("Rendering3DTest night enabled static_environment_scale=%.3f",
@@ -3642,6 +3660,8 @@ namespace Game::GameModes
             NorvesLib::Math::Quaternion rotation(yAxis, angle);
             data.m_pSphereObject->SetRotation(rotation);
         }
+
+        UpdateStartupSkinnedProbe(ctx, data);
 
         // 決定的な撮影は、組み立てが終わった時点（この Tick の大きな球の生成まで含む）から数え直す。
         if (ctx.EngineRef.GetDeterministicCapture().IsEnabled())

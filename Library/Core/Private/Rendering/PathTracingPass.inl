@@ -68,6 +68,7 @@ namespace NorvesLib::Core::Rendering
              *
              * 法線の番号の最上位ビットは法線が2チャンネル（BC5）の印、metallicの番号の最上位ビットは
              * metallic・roughnessの番号がORMの1枚（R=AO・G=粗さ・B=メタリック）を指す印。
+             * どの番号も bit30 は、そのtextureがsparse（VT）の印（PathTextureSparseBit）。
              */
             uint32_t Textures[4] = {};
             /** @brief TLASと同じ物体→ワールド変換（行優先3x4）。発光三角形の標本化に使う。 */
@@ -94,6 +95,10 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t PathDefaultMetallicTextureIndex = 2u;
         constexpr uint32_t PathDefaultRoughnessTextureIndex = 3u;
         constexpr uint32_t PathTextureFlagBit = 0x80000000u;
+        // 材質texture表の番号へ立てる、sparse（VT）の印。命中シェーダーが非常駐のタイルを読まず粗いミップへ逃げる。
+        constexpr uint32_t PathTextureSparseBit = 0x40000000u;
+        static_assert(PathTracingMaterialTextureCapacity <= PathTextureSparseBit,
+                      "材質texture表の番号がsparseの印のビットへ届きます");
         constexpr uint32_t PathMaterialTextureBinding = 8u;
         constexpr uint32_t PathDfgLutBinding = 9u;
         constexpr uint32_t PathEnvironmentBinding = 10u;
@@ -772,11 +777,12 @@ namespace NorvesLib::Core::Rendering
             {
                 return defaultIndex;
             }
+            const uint32_t sparseBit = texture->IsSparse() ? PathTextureSparseBit : 0u;
             for (uint32_t index = 0u; index < textureTable.size(); ++index)
             {
                 if (textureTable[index] == texture)
                 {
-                    return index;
+                    return index | sparseBit;
                 }
             }
             if (textureTable.size() >= PathTracingMaterialTextureCapacity)
@@ -790,7 +796,7 @@ namespace NorvesLib::Core::Rendering
                 return defaultIndex;
             }
             textureTable.push_back(texture);
-            return static_cast<uint32_t>(textureTable.size() - 1u);
+            return static_cast<uint32_t>(textureTable.size() - 1u) | sparseBit;
         };
 
         for (const RayTracingSceneInstanceSnapshot& snapshot : scene.Instances)

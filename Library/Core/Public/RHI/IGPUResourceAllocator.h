@@ -100,6 +100,7 @@ namespace NorvesLib::RHI
         case Format::B8G8R8A8_UNORM:
         case Format::B8G8R8A8_SRGB:
         case Format::R32_FLOAT:
+        case Format::R32_UINT:
         case Format::D24_UNORM_S8_UINT:
         case Format::D32_FLOAT:
             return 4;
@@ -112,6 +113,7 @@ namespace NorvesLib::RHI
         case Format::R16G16B16A16_FLOAT:
             return 8;
         case Format::R32G32_FLOAT:
+        case Format::R32G32_UINT:
             return 8;
         case Format::R32G32B32_FLOAT:
             return 12;
