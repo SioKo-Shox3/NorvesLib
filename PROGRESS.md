@@ -9,7 +9,7 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
 - GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
 - GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。M9起動側の複数clip拒否はGR83まで維持。
-- GR83/GR84: GR84のBVH raw/source FK・厳密名前索引・target bind/FK共有・schema非依存joint対応・明示座標変換・明示Cの1frame回転対応を実Windows CPUで受入済み。自動rest補正・role入力・複数frameのclip生成/cookと分離資産ローダは未完。
+- GR83/GR84: GR84のBVH raw/source FK・厳密名前索引・target bind/FK共有・schema非依存joint対応・明示座標変換・明示Cの1frame回転対応・全sample保持clip/report生成を実Windows CPUで受入済み。自動rest補正・role入力・clipのcook接続と分離資産ローダは未完。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
 S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
@@ -946,3 +946,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2/GR84 clipのkey受入経路を具体化。既存Samplerは内部keyでもSlerp/再正規化を行い、区間がEPSILON以下ならalpha=0になるため、単frame生成値の検査だけでは最終clipのkey受入と同値でない。区間算術だけを共有し、厳密増加済みchannelの既知keyをO(1)で同じ式に通す。生成/半球連続化の後、全keyをこの経路でsampleし、追加したnative列値検査で同じWへ再照合する2passにする。work予算もnative2回分を計上し、全補間曲線の保証とは区別する。回転80/100/120度の−X軸fixtureで現在の最大成分正規化による符号反転を必ず踏む。小さい時刻区間の0/90/180度は、生成単frameが通っても実keyがずれる拒否fixtureにする。
 
 - G2/GR84 sample保持clipの検証準備。全元データを検証する借用source回転plan、明示time/axes/C、所有clip/report、root位置診断、半球連続化を実装。完成後の各keyを共有区間式→native供給値検査で再照合し、旧EPSILONによる内部keyのずれを拒否する。静的round1全体PASS、round2追加source境界fixture PASS。実time/整数予算helperはhost通常/O2-NDEBUG/ASan-UBSan（LSan除外）とbundle改名入口でPASS、fast-math拒否も確認。BvhEvaluate.cppはg++構文PASS、native import/testは既存Windows.h依存でhost compile不可・stubなし。Python17+19+12+4+7 normal/-O、BOM/EOL/YAMLと固定harness/6095byteは不変。実Windows53CPU/4capture/旧全gateは次CIで未確認。key以外の全補間曲線・確保故障注入・外部role/CLI/cook/GPU/Blenderは未受入れ。
+
+- G2/GR84 sample保持clip受入: code6e514704/tree7d9b9ac6/run37418209451 attempt1 job112121471665。実53CPU、旧15＋新2marker、4固定6095byte capture、旧89出力、managed17/29 child退出・25+15CLI・12metadata、Python17+19+12+4+7 normal/-O、3ZIP/archived PE-CNGを確認。親readonly再実行exit0・stderr空、240payload inventory一致。summary SHA256 9e876f50b79b7125cd97f516714e157588f3a7c04ae8ce98134bbb7f0f54b621、inventory cb42e8a5632a969b5bf8321589ad8d829c36b9866ea5e0053565d4319ee5e7c6。クラウド環境のローカル消失後、repoを同一HEAD/treeへ復元し現在runと固定参照から新規に検証した。旧受入/失敗の累積ローカル証拠は失われ、復元済みと称さない。cl/Core/Sampler.exe実byteはCI hash記録のみ、exact compile/link commandとnative2全payloadの再検証には保存範囲の制限が残る。生成clipの全stored keyと選択midpointまでのCPU接続を受入れ、全補間曲線・自動C・role・rootMotion・resampling・CLI/cook・StageB・GPU/Blenderは未完。次は明示Add/Replace-by-nameとanimation無しtarget専用decodeを備えたtyped NVSKEL cook接続。
