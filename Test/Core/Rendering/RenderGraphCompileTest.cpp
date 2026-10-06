@@ -5267,7 +5267,7 @@ namespace
     }
 
     // SceneView に渡した振り分けのしきい値は、MegaGeometryPass が持ち、カリングの定数バッファ（SwRasterMaxPixels）へ届く。
-    // SceneView が既定の値（8）やしきい値を渡さない呼び出しにすると、MegaGeometryPass の値が 12 にならず、定数も 12 にならず落ちる。
+    // SceneView が既定の値（DefaultSwRasterMaxPixels）やしきい値を渡さない呼び出しにすると、MegaGeometryPass の値が 12 にならず、定数も 12 にならず落ちる。
     // SceneView が組んだ MegaGeometryPass の設定（要求・しきい値）を、カリングを実際に記録する場面へ移して、定数の語を読む
     void TestSceneViewThresholdReachesCullUniform()
     {
@@ -5294,7 +5294,7 @@ namespace
         }
         ShutdownVisibilityRasterScene(scene);
 
-        // 引数を渡さない呼び出しは既定のしきい値（8）
+        // 引数を渡さない呼び出しは既定のしきい値（DefaultSwRasterMaxPixels）
         SceneRenderer defaultRenderer;
         SceneView defaultView;
         defaultView.SetupDeferredPipeline(&defaultRenderer, RasterDirectBrdf::Analytic, VisibilityBufferMode::On, SwRasterMode::On);

@@ -23,7 +23,7 @@ namespace NorvesLib::Core::Rendering
      * @brief ソフトウェアラスタの対象にする、クラスタの画面上の半径（画素）の既定のしきい値（起動引数 --sw-raster-max-px）
      *
      * RelWithDebInfo の GPU 時間（負荷モード 300 個と起動画面の各 3 視点）で 8・16・32・64 画素を比べ、
-     * 負荷モードで最も速く、起動画面では off と同じだった 32 画素にした（64 画素は起動画面で VisibilityRasterPass が増える）。
+     * 負荷モードで 64 画素と同等に速く（off より速い）、起動画面では off と同じで VisibilityRasterPass が増えなかった 32 画素にした（64 画素は起動画面で VisibilityRasterPass が増える）。
      */
     inline constexpr float DefaultSwRasterMaxPixels = 32.0f;
 } // namespace NorvesLib::Core::Rendering
