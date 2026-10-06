@@ -344,4 +344,5 @@ int main()
     TestProfileRefusalsAndLateOverflow();
     std::puts(
         "SKELETAL_ROTATION_NATIVE result=pass actual_bvh_basis_sampler_uniform_scaled_bind_mesh_unmapped_forest_correction_float_validation_atomic_no_gpu");
+    return 0;
 }

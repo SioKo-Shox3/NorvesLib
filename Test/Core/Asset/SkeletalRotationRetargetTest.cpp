@@ -349,4 +349,5 @@ int main()
     TestBoundedDeepHierarchy();
     std::puts(
         "SKELETAL_ROTATION_FRAME result=pass explicit_c_world_local_forest_unmapped_float_export_bounded_atomic_no_root_motion");
+    return 0;
 }
