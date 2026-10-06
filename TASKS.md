@@ -945,7 +945,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG6-ACCEPT-night -Configuration RelWithDebInfo -Deterministic -Night`
 - stop-when: 受入れの数値が段6の受入れ（計画書 5）を満たさない場合は、測った値を記録して止める。
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: この段の後、親が main へマージしてプッシュする。
+- notes: この段の後、親が main へマージしてプッシュする。 2026-10-06 親（段6の評価で確かめた既知の限界。受入れの文書の「既知の限界」に、PROGRESS の該当の記録と合わせて書く）: (1) 2026-10-06 0:17 の NVIDIA のドライバの更新（591.86 → 610.88）で、分岐の後の `textureQueryLod` が外れるようになった（VTG6-VT-LOD-UNIFORM で直した。POM の直後は一様な位置とみなした。退行の守りは撮影の VT の常駐の上限）。段6の前の撮影・基準画像は旧ドライバのもの。(2) 実行時の同期（バリア）を検証レイヤー付きで確かめていない（GPU のテストは `bEnableValidation = false`、撮影は RelWithDebInfo）。(3) カメラが動くときの遮蔽の見え始め（旋回の撮影）を、段6では撮っていない（段3の受入れの旋回はラスタの経路）。(4) on の VT の常駐は off より少なめ（0.73・0.66・0.95 倍）だが画像はぼけない。(5) ワイヤーフレームの表示は材質の境目の線の色が on・off で入れ替わる（深度の比較 LessOrEqual と Less の違い。塗りの起動画面では 0〜2 階調）。(6) 予備の経路（off）は Indoor・Outdoor の golden と速度の検査で守る。`geometryShader` の無い装置での実機の確認は無い。(7) 解決は材質ごとのタイルの間接 dispatch（起動画面の定常で 17〜24 回）、分類は GPU 0.26〜0.29 ms・VRAM 約 5 MB。分類の一覧は最悪の大きさ（4K で約 33 MB、1 ビュー・1 フレーム枠あたり）。(8) 計算スキニングのパイプラインだけが作れない装置では、スキニングの無い場面でも予備になる（保守的）。(9) RelWithDebInfo の `RenderGraphCompileTest` は、副作用を assert の中に置いているため NDEBUG で落ちる（既存。TEST-ASSERT-NO-DIALOG の記録）。段の外の後回し（TASKS の backlog）: PT-NONUNIFORM-SAMPLER（パストレーサーの一様でない添字の印）、PT-STARTUP-GEOMETRY（パストレーサーの撮影の形状の違い）、TEST-ASSERT-NO-DIALOG（Debug のテストの assert の対話窓）。受入れの GPU 時間は、ビジビリティバッファのラスタ・分類・材質の解決の内訳と予備の経路（`--visibility-buffer=off`）との比較を、起動画面と負荷モード 300 個（`--stress-mega-instances=300`）で RelWithDebInfo の `-GpuTimingFrames` で測る（GPU 時間の行 "MegaGeometry" は on では ID のラスタの描画を含み、off と意味が違うことに注意）。
 
 ## PT-NONUNIFORM-SAMPLER: パストレーサーの材質のテクスチャの添字の一様でない印を、標本の関数の中まで届ける
 - status: backlog
