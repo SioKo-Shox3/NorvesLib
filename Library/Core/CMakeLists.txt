@@ -256,6 +256,7 @@ set(PRIVATE_SOURCES
     Private/Resource/SkinnedMeshResource.cpp
     Private/Resource/FontAtlas.cpp
     Private/Resource/ModelAssetLoader.cpp
+    Private/Resource/SkeletalAssetLoader.cpp
     Private/Resource/ModelAssetRuntime.cpp
     Private/Resource/ModelAsyncLoadQueue.cpp
     Private/Resource/ModelHandleCache.cpp
