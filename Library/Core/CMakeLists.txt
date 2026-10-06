@@ -50,6 +50,16 @@ set(PRIVATE_SOURCES
     Private/Animation/AnimationClipResource.cpp
     Private/Animation/SkeletalJointIndex.h
     Private/Animation/SkeletalJointIndex.cpp
+    Private/Animation/RigV1Types.cpp
+    Private/Animation/RigV1Types.h
+    Private/Animation/ClipBankBinding.cpp
+    Private/Animation/ClipBankBinding.h
+    Private/Animation/ClipBankBindingTestAccess.h
+    Private/Asset/CookedClipBankV1.cpp
+    Private/Asset/CookedClipBankV1.h
+    Private/Resource/RigAuthoring.cpp
+    Private/Resource/RigAuthoring.h
+    Public/Animation/SkeletalRestPose.h
     Private/Animation/SkeletalJointIndexNative.cpp
     Private/Animation/SkeletalAnimationSampler.cpp
     Private/Animation/SkeletalSamplingMath.h

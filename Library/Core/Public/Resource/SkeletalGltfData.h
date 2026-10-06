@@ -126,7 +126,9 @@ namespace NorvesLib::Core::Skeletal
         CubicBakeFailed,
         SubmeshLimitExceeded,
         MaterialSlotLimitExceeded,
-        InvalidSubMesh
+        InvalidSubMesh,
+        UnsupportedAuthorRest,
+        ImportLimitExceeded
     };
 
     struct SkeletalGltfDecodeResult

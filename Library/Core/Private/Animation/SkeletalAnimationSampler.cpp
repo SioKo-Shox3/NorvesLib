@@ -201,17 +201,41 @@ namespace NorvesLib::Core::Animation
                 return false;
             }
         }
-        for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+        const auto& authorRest = skeleton.GetAuthorRestPose();
+        if (!authorRest.empty())
         {
-            const int32_t parentIndex = joints[jointIndex].ParentIndex;
-            const Math::Matrix4x4* parentGlobal =
-                parentIndex >= 0 ? &bindGlobals[static_cast<size_t>(parentIndex)] : nullptr;
-            Math::Matrix4x4 bindLocal;
-            if (!Detail::TryBuildBindLocalRow(bindGlobals[jointIndex], parentGlobal, bindLocal))
+            if (authorRest.size() != jointCount)
             {
                 return false;
             }
-            localTransforms[jointIndex] = DecomposeRowTransform(bindLocal);
+            for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+            {
+                const auto& rest = authorRest[jointIndex];
+                if (!Skeletal::IsValidSkeletalRestTransform(rest))
+                {
+                    return false;
+                }
+                auto& transform = localTransforms[jointIndex];
+                transform.Translation = Math::Vector3(rest.Translation.X, rest.Translation.Y, rest.Translation.Z);
+                transform.Rotation = Detail::SkeletalRotationFromColumn(rest.Rotation.X, rest.Rotation.Y,
+                                                                        rest.Rotation.Z, rest.Rotation.W);
+                transform.Scale = Math::Vector3(rest.Scale.X, rest.Scale.Y, rest.Scale.Z);
+            }
+        }
+        else
+        {
+            for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+            {
+                const int32_t parentIndex = joints[jointIndex].ParentIndex;
+                const Math::Matrix4x4* parentGlobal =
+                    parentIndex >= 0 ? &bindGlobals[static_cast<size_t>(parentIndex)] : nullptr;
+                Math::Matrix4x4 bindLocal;
+                if (!Detail::TryBuildBindLocalRow(bindGlobals[jointIndex], parentGlobal, bindLocal))
+                {
+                    return false;
+                }
+                localTransforms[jointIndex] = DecomposeRowTransform(bindLocal);
+            }
         }
 
         const float sampleTime = std::fmax(0.0f, std::fmin(timeSeconds, clipData.DurationSeconds));

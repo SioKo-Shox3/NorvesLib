@@ -65,6 +65,8 @@ add_library(AssetCookLib STATIC
     AudioCooker.h
     MeshCooker.cpp
     SkeletalBvhCook.cpp
+    RigClipBankCook.cpp
+    RigClipBankCook.h
     SkeletalRoleProfileCook.cpp
     SkeletalRoleFileInput.cpp
     SkeletalRoleFileCook.cpp

@@ -18,7 +18,8 @@ namespace NorvesLib::Core::Gltf
         {
             return ExternalBufferReadResult::InvalidPath;
         }
-        const auto& source = static_cast<const BufferFileContext*>(context)->SourceFile;
+        auto& fileContext = *static_cast<BufferFileContext*>(context);
+        const auto& source = fileContext.SourceFile;
         if (source.empty() || !source.has_filename() || source.filename() == "." || source.filename() == "..")
         {
             return ExternalBufferReadResult::SourcePathError;
@@ -70,6 +71,13 @@ namespace NorvesLib::Core::Gltf
         {
             return ExternalBufferReadResult::InvalidSize;
         }
+        if (fileContext.MaxReadBytes != UINT64_MAX &&
+            (fileContext.ReadBytes > fileContext.MaxReadBytes ||
+             static_cast<uint64_t>(size) > fileContext.MaxReadBytes - fileContext.ReadBytes))
+        {
+            fileContext.bLimitExceeded = true;
+            return ExternalBufferReadResult::InvalidSize;
+        }
         bytes.resize(static_cast<size_t>(size));
         input.seekg(0,std::ios::beg);
         if (!input)
@@ -85,6 +93,10 @@ namespace NorvesLib::Core::Gltf
                 bytes.clear();
                 return ExternalBufferReadResult::ReadFailed;
             }
+        }
+        if (fileContext.MaxReadBytes != UINT64_MAX)
+        {
+            fileContext.ReadBytes += static_cast<uint64_t>(size);
         }
         if (outResolvedPath) *outResolvedPath = candidate;
         return ExternalBufferReadResult::Success;

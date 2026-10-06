@@ -3,6 +3,7 @@
 #include "Container/String.h"
 #include "Container/Span.h"
 #include "Resource/SkeletalGltfData.h"
+#include "Animation/SkeletalRestPose.h"
 #include <filesystem>
 
 namespace NorvesLib::Core::Gltf
@@ -17,6 +18,7 @@ namespace NorvesLib::Core::AssetImport
 
 namespace NorvesLib::Core::Skeletal
 {
+    struct RigV1Limits;
     // importSettings省略時はsource隣を自動探索する。明示値は呼出中だけ借用し、結果へ保持しない。
     // GLB/JSONの元bytes入口。outSourceBuffersはhash用の全sourceと借用BINを保持する。
     // GLB入力はoutSourceBuffersより長く保持し、その所有storageを入力に使わないこと。
@@ -43,6 +45,14 @@ namespace NorvesLib::Core::Skeletal
     // null/不正型/壊れた既存clipは拒否し、旧1本以上入口やwriterの契約は変更しない。
     [[nodiscard]] SkeletalGltfDecodeResult DecodeBvhTargetRigGltfNativePath(Container::Span<const uint8_t> sourceBytes,
         const std::filesystem::path& sourcePath, Gltf::BufferSet* outSourceBuffers = nullptr,
+        const AssetImport::LoadedImportSettings* importSettings = nullptr,
+        const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
+
+    // v1専用。jointの直接TRSを同じdecode/設定readから取得する。旧入口には使わない。
+    // target用の0clipを許可し、成功時だけrest/scaleを置換する。
+    [[nodiscard]] SkeletalGltfDecodeResult DecodeRigAuthorRestGltfNativePath(
+        Container::Span<const uint8_t> sourceBytes, const std::filesystem::path& sourcePath,
+        Container::VariableArray<SkeletalRestTransform>& outRest, double& outResolvedScale, const RigV1Limits& limits,
         const AssetImport::LoadedImportSettings* importSettings = nullptr,
         const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
 

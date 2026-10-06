@@ -43,6 +43,7 @@ namespace NorvesLib::Core
     void SkeletonResource::Unload()
     {
         m_Joints.clear();
+        m_AuthorRestPose.clear();
         m_JointIndices.clear();
         SetResourceState(ResourceState::Unloaded);
     }
@@ -55,11 +56,13 @@ namespace NorvesLib::Core
             size += joint.Name.size();
         }
         size += m_JointIndices.size() * (sizeof(Identity) + sizeof(uint32_t));
+        size += m_AuthorRestPose.size() * sizeof(Skeletal::SkeletalRestTransform);
         return size;
     }
 
     void SkeletonResource::SetJoints(Container::VariableArray<Skeletal::SkeletalJoint>&& joints)
     {
+        m_AuthorRestPose.clear();
         m_Joints = std::move(joints);
         m_JointIndices.clear();
         for (size_t index = 0; index < m_Joints.size(); ++index)
@@ -69,6 +72,28 @@ namespace NorvesLib::Core
                 m_JointIndices.emplace(Identity(m_Joints[index].Name.c_str()), static_cast<uint32_t>(index));
             }
         }
+    }
+
+    bool SkeletonResource::SetAuthorRestPose(const Container::VariableArray<Skeletal::SkeletalRestTransform>& rest)
+    {
+        if (IsLoaded() || rest.empty() || rest.size() != m_Joints.size())
+        {
+            return false;
+        }
+        for (const auto& value : rest)
+        {
+            if (!Skeletal::IsValidSkeletalRestTransform(value))
+            {
+                return false;
+            }
+        }
+        auto candidate = rest;
+        m_AuthorRestPose = std::move(candidate);
+        return true;
+    }
+    const Container::VariableArray<Skeletal::SkeletalRestTransform>& SkeletonResource::GetAuthorRestPose() const
+    {
+        return m_AuthorRestPose;
     }
 
     int32_t SkeletonResource::FindJointIndex(Identity name) const

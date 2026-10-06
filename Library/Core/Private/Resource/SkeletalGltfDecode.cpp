@@ -1,4 +1,6 @@
 ﻿#include "Resource/SkeletalGltfDecode.h"
+#include "Animation/RigV1Types.h"
+#include "Asset/CookedSkeletalNameCodec.h"
 #include "Resource/GltfNativePath.h"
 #include "Resource/SkeletalLimits.h"
 #include "Resource/SkeletalInfluenceAttributes.h"
@@ -1800,13 +1802,13 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
-        bool ExtractAnimation(const JsonValue& animation,
-                              const Container::VariableArray<int32_t>& nodeToJoint,
+        bool ExtractAnimation(const JsonValue& animation, const Container::VariableArray<int32_t>& nodeToJoint,
                               const Container::VariableArray<AccessorInfo>& accessors,
                               const Container::VariableArray<BufferViewInfo>& bufferViews,
-                              const Gltf::BufferSet& buffers,
-                              SkeletalGltfData& outData, const SkeletalGltfDecodeOptions& options,
-                              double translationScale, SkeletalGltfDecodeReport& report, SkeletalGltfDecodeStatus& status)
+                              const Gltf::BufferSet& buffers, SkeletalGltfData& outData,
+                              const SkeletalGltfDecodeOptions& options, double translationScale,
+                              SkeletalGltfDecodeReport& report, SkeletalGltfDecodeStatus& status,
+                              uint64_t* remainingSamples = nullptr)
         {
             const JsonValue samplers = animation.FindMember("samplers");
             const JsonValue channels = animation.FindMember("channels");
@@ -1905,10 +1907,24 @@ namespace NorvesLib::Core::Skeletal
                     return false;
                 }
 
+                if (remainingSamples && input->Count > *remainingSamples)
+                {
+                    status = SkeletalGltfDecodeStatus::ImportLimitExceeded;
+                    return false;
+                }
                 if (interpolation == "CUBICSPLINE")
                 {
+                    auto boundedOptions = options;
+                    if (remainingSamples)
+                    {
+                        boundedOptions.CubicMaximumSamplesPerChannel = static_cast<uint32_t>(
+                            std::min(uint64_t(options.CubicMaximumSamplesPerChannel), *remainingSamples));
+                        boundedOptions.CubicMaximumSamplesPerAsset =
+                            static_cast<uint32_t>(std::min(uint64_t(options.CubicMaximumSamplesPerAsset),
+                                                           report.CubicOutputKeyCount + *remainingSamples));
+                    }
                     if (!bBake || !ExtractCubicChannel(*input, inputLayout, *output, outputLayout, valueComponentCount,
-                        options, translationScale, channel, report, status))
+                                                       boundedOptions, translationScale, channel, report, status))
                     {
                         return false;
                     }
@@ -1956,6 +1972,15 @@ namespace NorvesLib::Core::Skeletal
                         }
                         clip.DurationSeconds = std::max(clip.DurationSeconds, sample.TimeSeconds);
                     }
+                }
+                if (remainingSamples)
+                {
+                    if (channel.Samples.size() > *remainingSamples)
+                    {
+                        status = SkeletalGltfDecodeStatus::ImportLimitExceeded;
+                        return false;
+                    }
+                    *remainingSamples -= channel.Samples.size();
                 }
                 clip.Channels.push_back(std::move(channel));
                 if (bBake)
@@ -2083,10 +2108,253 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
-        SkeletalGltfDecodeResult DecodeResolvedDocument(const JsonValue& root, const Gltf::ContainerView& container,
-            const std::filesystem::path& sourcePath, Gltf::BufferSet* outSourceBuffers,
-        const AssetImport::LoadedImportSettings* importSettings,
-        const SkeletalGltfDecodeOptions* decodeOptions, bool allowMultipleClips, bool bAllowEmptyClips = false)
+        // 新v1だけの割当前budget。legacyの受理・拒否とreader既定は変更しない。
+        bool CheckRigInputBudget(const JsonValue& root, const RigV1Limits& limits, uint64_t& reservedBufferBytes,
+                                 SkeletalGltfDecodeStatus& status)
+        {
+            status = SkeletalGltfDecodeStatus::InvalidDocument;
+            const auto exceed = [&]()
+            {
+                status = SkeletalGltfDecodeStatus::ImportLimitExceeded;
+                return false;
+            };
+            const auto nodes = root.FindMember("nodes"), accessors = root.FindMember("accessors");
+            const auto views = root.FindMember("bufferViews"), buffers = root.FindMember("buffers");
+            const auto animations = root.FindMember("animations");
+            if (nodes.GetArraySize() > limits.MaxNodes || accessors.GetArraySize() > limits.MaxAccessors ||
+                views.GetArraySize() > limits.MaxAccessors || buffers.GetArraySize() > limits.MaxBuffers ||
+                animations.GetArraySize() > limits.MaxClips)
+            {
+                return exceed();
+            }
+            const auto skins = root.FindMember("skins");
+            if (skins.IsArray() && skins.GetArraySize() == 1 &&
+                skins.GetArrayElement(0).FindMember("joints").GetArraySize() > limits.MaxJoints)
+            {
+                return exceed();
+            }
+            const auto accessorCount = [&](const JsonValue& index, uint32_t& count)
+            {
+                uint32_t i = 0;
+                return TryReadUInt32(index, i) && i < accessors.GetArraySize() &&
+                       TryReadUInt32(accessors.GetArrayElement(i).FindMember("count"), count);
+            };
+            uint64_t retainedNameBytes = 0;
+            const auto retainName = [&](const JsonValue& value)
+            {
+                if (!value.IsString())
+                {
+                    return true;
+                } // 必須/非空の意味検査は後続の名前契約で行う。
+                const auto& name = value.AsString();
+                const auto measured =
+                    Asset::MeasureSkeletalNameEncoding<Container::String::value_type>(2, {name.data(), name.size()});
+                if (!measured.Succeeded())
+                {
+                    return false;
+                }
+                if (measured.ByteCount > limits.MaxNameBytes ||
+                    measured.ByteCount > limits.MaxStringBytes - retainedNameBytes)
+                {
+                    return exceed();
+                }
+                retainedNameBytes += measured.ByteCount;
+                return true;
+            };
+            if (skins.IsArray() && skins.GetArraySize() == 1)
+            {
+                const auto joints = skins.GetArrayElement(0).FindMember("joints");
+                for (size_t i = 0; i < joints.GetArraySize(); ++i)
+                {
+                    uint32_t node = 0;
+                    if (!TryReadUInt32(joints.GetArrayElement(i), node) || node >= nodes.GetArraySize() ||
+                        !retainName(nodes.GetArrayElement(node).FindMember("name")))
+                    {
+                        return false;
+                    }
+                }
+            }
+            uint64_t channelsTotal = 0, samplesTotal = 0, samplersTotal = 0;
+            for (size_t i = 0; i < animations.GetArraySize(); ++i)
+            {
+                const auto animation = animations.GetArrayElement(i);
+                if (!retainName(animation.FindMember("name")))
+                {
+                    return false;
+                }
+                const auto channels = animation.FindMember("channels"), samplers = animation.FindMember("samplers");
+                if (channels.GetArraySize() > limits.MaxChannels - channelsTotal ||
+                    samplers.GetArraySize() > limits.MaxChannels - samplersTotal)
+                {
+                    return exceed();
+                }
+                channelsTotal += channels.GetArraySize();
+                samplersTotal += samplers.GetArraySize();
+                for (size_t n = 0; n < channels.GetArraySize(); ++n)
+                {
+                    uint32_t sampler = 0, count = 0;
+                    if (!TryReadUInt32(channels.GetArrayElement(n).FindMember("sampler"), sampler) ||
+                        sampler >= samplers.GetArraySize() ||
+                        !accessorCount(samplers.GetArrayElement(sampler).FindMember("input"), count))
+                    {
+                        return false;
+                    }
+                    // 共有accessorでもchannelごとの所有copyを数える。Bakeの追加分は生成前に別途制限する。
+                    if (count > limits.MaxSamples - samplesTotal)
+                    {
+                        return exceed();
+                    }
+                    samplesTotal += count;
+                }
+            }
+            uint64_t vertices = 0, indices = 0;
+            const auto meshes = root.FindMember("meshes");
+            for (size_t i = 0; i < meshes.GetArraySize(); ++i)
+            {
+                const auto primitives = meshes.GetArrayElement(i).FindMember("primitives");
+                if (primitives.GetArraySize() > MaximumSubmeshCount)
+                {
+                    return exceed();
+                }
+                for (size_t n = 0; n < primitives.GetArraySize(); ++n)
+                {
+                    const auto primitive = primitives.GetArrayElement(n),
+                               attributes = primitive.FindMember("attributes");
+                    if (attributes.GetObjectSize() > 128)
+                    {
+                        return exceed();
+                    }
+                    uint32_t v = 0, k = 0;
+                    if (!accessorCount(attributes.FindMember("POSITION"), v) ||
+                        !accessorCount(primitive.FindMember("indices"), k))
+                    {
+                        return false;
+                    }
+                    if (v > limits.MaxVertices - vertices || k > limits.MaxIndices - indices)
+                    {
+                        return exceed();
+                    }
+                    vertices += v;
+                    indices += k;
+                }
+            }
+            for (size_t i = 0; i < nodes.GetArraySize(); ++i)
+            {
+                const auto value = nodes.GetArrayElement(i).FindMember("name");
+                if (value.IsString())
+                {
+                    const auto& name = value.AsString();
+                    const auto measured = Asset::MeasureSkeletalNameEncoding<Container::String::value_type>(
+                        2, {name.data(), name.size()});
+                    if (!measured.Succeeded())
+                    {
+                        return false;
+                    }
+                    if (measured.ByteCount > limits.MaxNameBytes)
+                    {
+                        return exceed();
+                    }
+                }
+            }
+            uint64_t declaredBytes = 0;
+            reservedBufferBytes = 0;
+            for (size_t i = 0; i < buffers.GetArraySize(); ++i)
+            {
+                const auto buffer = buffers.GetArrayElement(i);
+                const auto length = buffer.FindMember("byteLength");
+                if (!length.IsNumber())
+                {
+                    return false;
+                }
+                const auto parsedLength = Gltf::ParseBufferByteLength(length.AsNumber());
+                if (!parsedLength.bValid)
+                {
+                    return false;
+                }
+                if (parsedLength.Value > limits.MaxBufferBytes - declaredBytes)
+                {
+                    return exceed();
+                }
+                declaredBytes += parsedLength.Value;
+                const auto uri = buffer.FindMember("uri");
+                uint64_t reserve = 0;
+                if (!buffer.HasMember("uri"))
+                {
+                    reserve = parsedLength.Value;
+                }
+                else
+                {
+                    if (!uri.IsString())
+                    {
+                        return false;
+                    }
+                    const auto& text = uri.AsString();
+                    if (text.size() > limits.MaxSourceBytes)
+                    {
+                        return exceed();
+                    }
+                    Container::VariableArray<uint8_t> raw;
+                    raw.reserve(text.size());
+                    for (auto c : text)
+                    {
+                        if (static_cast<uint32_t>(c) > 127)
+                        {
+                            return false;
+                        }
+                        raw.push_back(static_cast<uint8_t>(c));
+                    }
+                    const auto data = Gltf::ParseDataUri({raw.data(), raw.size()});
+                    if (data.Result == Gltf::BufferSourceResult::Success)
+                    {
+                        if (data.View.Mime != Gltf::DataUriMime::OctetStream &&
+                            data.View.Mime != Gltf::DataUriMime::GltfBuffer)
+                        {
+                            return false;
+                        }
+                        if (data.View.PercentDecodedSize > limits.MaxSourceBytes)
+                        {
+                            return exceed();
+                        }
+                        Container::VariableArray<uint8_t> encoded(data.View.PercentDecodedSize);
+                        if (Gltf::DecodePercentBytes(data.View.EncodedPayload, {encoded.data(), encoded.size()})
+                                .Result != Gltf::BufferSourceResult::Success)
+                        {
+                            return false;
+                        }
+                        const auto decoded = Text::GetBase64DecodedSize({encoded.data(), encoded.size()});
+                        if (decoded.Result != Text::Base64DecodeResult::Success)
+                        {
+                            return false;
+                        }
+                        reserve = decoded.Size;
+                    }
+                    else if (data.Result == Gltf::BufferSourceResult::NotDataUri)
+                    {
+                        if (text.size() > limits.MaxNameBytes)
+                        {
+                            return exceed();
+                        }
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
+                if (reserve > limits.MaxBufferBytes - reservedBufferBytes)
+                {
+                    return exceed();
+                }
+                reservedBufferBytes += reserve;
+            }
+            return true;
+        }
+
+        SkeletalGltfDecodeResult DecodeResolvedDocument(
+            const JsonValue& root, const Gltf::ContainerView& container, const std::filesystem::path& sourcePath,
+            Gltf::BufferSet* outSourceBuffers, const AssetImport::LoadedImportSettings* importSettings,
+            const SkeletalGltfDecodeOptions* decodeOptions, bool allowMultipleClips, bool bAllowEmptyClips = false,
+            Container::VariableArray<SkeletalRestTransform>* outRest = nullptr, double* outResolvedScale = nullptr,
+            const RigV1Limits* rigLimits = nullptr)
         {
             if (!Gltf::IsValidNativeSourcePath(sourcePath))
             {
@@ -2098,6 +2366,14 @@ namespace NorvesLib::Core::Skeletal
             {
                 return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
             }
+
+            uint64_t reservedBufferBytes = 0;
+            SkeletalGltfDecodeStatus budgetStatus = SkeletalGltfDecodeStatus::InvalidDocument;
+            if (rigLimits && !CheckRigInputBudget(root, *rigLimits, reservedBufferBytes, budgetStatus))
+            {
+                return Fail(budgetStatus);
+            }
+            uint64_t remainingSamples = rigLimits ? rigLimits->MaxSamples : 0;
 
             if (Gltf::CheckRequiredExtensions(root) != Gltf::RequiredExtensionsStatus::Success)
             {
@@ -2163,6 +2439,10 @@ namespace NorvesLib::Core::Skeletal
             Container::VariableArray<BufferViewInfo> bufferViews;
             Gltf::BufferSet buffers;
             Gltf::BufferFileContext fileContext{sourcePath};
+            if (rigLimits)
+            {
+                fileContext.MaxReadBytes = rigLimits->MaxBufferBytes - reservedBufferBytes;
+            }
             status = SkeletalGltfDecodeStatus::InvalidAccessor;
             if (!ParseAccessors(root, accessors, status))
             {
@@ -2171,7 +2451,8 @@ namespace NorvesLib::Core::Skeletal
             if (!ParseBufferViews(root, bufferViews) ||
                 Gltf::ResolveJsonBuffers(root, container, Gltf::ReadBufferFile, &fileContext, buffers).Result != Gltf::BufferResolveResult::Success)
             {
-                return Fail(SkeletalGltfDecodeStatus::InvalidAccessor);
+                return Fail(fileContext.bLimitExceeded ? SkeletalGltfDecodeStatus::ImportLimitExceeded
+                                                       : SkeletalGltfDecodeStatus::InvalidAccessor);
             }
 
             SkeletalGltfData data;
@@ -2280,8 +2561,9 @@ namespace NorvesLib::Core::Skeletal
             }
             for (size_t index=0;index<animations.GetArraySize();++index)
             {
-                if (!ExtractAnimation(animations.GetArrayElement(index),nodeToJoint,accessors,bufferViews,buffers,data,
-                    options,translationScale,report,status))
+                if (!ExtractAnimation(animations.GetArrayElement(index), nodeToJoint, accessors, bufferViews, buffers,
+                                      data, options, translationScale, report, status,
+                                      rigLimits ? &remainingSamples : nullptr))
                 {
                     return failWithReport(status);
                 }
@@ -2300,10 +2582,57 @@ namespace NorvesLib::Core::Skeletal
                 }
             }
 
+            Container::VariableArray<SkeletalRestTransform> restCandidate;
+            if (outRest)
+            {
+                const auto nodes = root.FindMember("nodes");
+                const auto jointValues = skin.FindMember("joints");
+                restCandidate.reserve(data.Joints.size());
+                for (size_t i = 0; i < data.Joints.size(); ++i)
+                {
+                    uint32_t nodeIndex = InvalidIndex;
+                    if (!TryReadUInt32(jointValues.GetArrayElement(i), nodeIndex) || nodeIndex >= nodes.GetArraySize())
+                    {
+                        return failWithReport(SkeletalGltfDecodeStatus::UnsupportedAuthorRest);
+                    }
+                    const auto node = nodes.GetArrayElement(nodeIndex);
+                    if (node.HasMember("matrix"))
+                    {
+                        return failWithReport(SkeletalGltfDecodeStatus::UnsupportedAuthorRest);
+                    }
+                    float t[3] = {0, 0, 0}, q[4] = {0, 0, 0, 1}, s[3] = {1, 1, 1};
+                    if ((node.HasMember("translation") && !ReadFloatArray(node.FindMember("translation"), 3, t)) ||
+                        (node.HasMember("rotation") && !ReadFloatArray(node.FindMember("rotation"), 4, q)) ||
+                        (node.HasMember("scale") && !ReadFloatArray(node.FindMember("scale"), 3, s)))
+                    {
+                        return failWithReport(SkeletalGltfDecodeStatus::UnsupportedAuthorRest);
+                    }
+                    SkeletalRestTransform rest;
+                    rest.Translation = {t[0], t[1], t[2]};
+                    rest.Rotation = {q[0], q[1], q[2], q[3]};
+                    rest.Scale = {s[0], s[1], s[2]};
+                    if (!AssetImport::TryScaleImportValue(rest.Translation.X, translationScale, rest.Translation.X) ||
+                        !AssetImport::TryScaleImportValue(rest.Translation.Y, translationScale, rest.Translation.Y) ||
+                        !AssetImport::TryScaleImportValue(rest.Translation.Z, translationScale, rest.Translation.Z) ||
+                        !IsValidSkeletalRestTransform(rest))
+                    {
+                        return failWithReport(SkeletalGltfDecodeStatus::UnsupportedAuthorRest);
+                    }
+                    restCandidate.push_back(rest);
+                }
+            }
             SkeletalGltfDecodeResult result;
             result.Status = SkeletalGltfDecodeStatus::Success;
             result.Data = std::move(data);
             result.Report = report;
+            if (outRest)
+            {
+                *outRest = std::move(restCandidate);
+            }
+            if (outResolvedScale)
+            {
+                *outResolvedScale = translationScale;
+            }
             if (outSourceBuffers != nullptr)
             {
                 outSourceBuffers->Swap(buffers);
@@ -2312,10 +2641,12 @@ namespace NorvesLib::Core::Skeletal
         }
     } // namespace
 
-    static SkeletalGltfDecodeResult DecodeGltfBytes(Container::Span<const uint8_t> sourceBytes,
-        const std::filesystem::path& sourcePath, Gltf::BufferSet* outSourceBuffers,
-        const AssetImport::LoadedImportSettings* importSettings,
-        const SkeletalGltfDecodeOptions* decodeOptions, bool allowMultipleClips, bool bAllowEmptyClips = false)
+    static SkeletalGltfDecodeResult DecodeGltfBytes(
+        Container::Span<const uint8_t> sourceBytes, const std::filesystem::path& sourcePath,
+        Gltf::BufferSet* outSourceBuffers, const AssetImport::LoadedImportSettings* importSettings,
+        const SkeletalGltfDecodeOptions* decodeOptions, bool allowMultipleClips, bool bAllowEmptyClips = false,
+        Container::VariableArray<SkeletalRestTransform>* outRest = nullptr, double* outResolvedScale = nullptr,
+        const RigV1Limits* rigLimits = nullptr)
     {
         if (outSourceBuffers != nullptr)
         {
@@ -2324,6 +2655,10 @@ namespace NorvesLib::Core::Skeletal
         if (!Gltf::IsValidNativeSourcePath(sourcePath))
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
+        }
+        if (rigLimits && (!IsValidRigV1Limits(*rigLimits) || sourceBytes.size() > rigLimits->MaxSourceBytes))
+        {
+            return Fail(SkeletalGltfDecodeStatus::ImportLimitExceeded);
         }
         Gltf::ContainerView container;
         const auto parsed = Gltf::ParseContainer(sourceBytes, container);
@@ -2342,7 +2677,9 @@ namespace NorvesLib::Core::Skeletal
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidJson);
         }
-        return DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers, importSettings, decodeOptions, allowMultipleClips, bAllowEmptyClips);
+        return DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers, importSettings,
+                                      decodeOptions, allowMultipleClips, bAllowEmptyClips, outRest, outResolvedScale,
+                                      rigLimits);
     }
 
     SkeletalGltfDecodeResult DecodeSkeletalGltf(Container::Span<const uint8_t> sourceBytes,
@@ -2381,6 +2718,17 @@ namespace NorvesLib::Core::Skeletal
         const AssetImport::LoadedImportSettings* importSettings, const SkeletalGltfDecodeOptions* decodeOptions)
     {
         return DecodeGltfBytes(sourceBytes, sourcePath, outSourceBuffers, importSettings, decodeOptions, true, true);
+    }
+
+    SkeletalGltfDecodeResult DecodeRigAuthorRestGltfNativePath(Container::Span<const uint8_t> sourceBytes,
+                                                               const std::filesystem::path& sourcePath,
+                                                               Container::VariableArray<SkeletalRestTransform>& outRest,
+                                                               double& outResolvedScale, const RigV1Limits& limits,
+                                                               const AssetImport::LoadedImportSettings* importSettings,
+                                                               const SkeletalGltfDecodeOptions* decodeOptions)
+    {
+        return DecodeGltfBytes(sourceBytes, sourcePath, nullptr, importSettings, decodeOptions, true, true, &outRest,
+                               &outResolvedScale, &limits);
     }
 
     SkeletalGltfDecodeResult DecodeSkeletalGltf(const Container::String& jsonText, const Container::String& sourcePath,

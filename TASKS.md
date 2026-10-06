@@ -2710,3 +2710,10 @@
 - stop-when: 未使用NorvesEngine::Updateだけへ配線する、2つのGEngine/rendererを統合する、3系統hot reload transactionへ拡大する、Task状態pollやrawcallback target、borrowed Registry全体のshutdown、旧handle全session無効を保証する、GPU/実物品質をCPU検証から推測する。callback内同期Shutdownは依存解体前に外側へ延期する。
 
 - result: code a082707c / tree 825dcb67 / run 37519489315 attempt 1 / job 112460910508。Release 63、owner の Debug/Release 計20 child process・20 case marker、実App source 8件×normal/-O、M9 ContractOnly All、Game両構成のcompile/linkを確認。Game execution=not_run。旧62 cppとruntime/finite/Registry/loader/Profile、固定4×6095 byte、旧89出力・25+15 CLI・12 metadata・17/29 child退出・GR84の58 process/125 file・PE-CNG/SHELL32を維持。20 checkerのnormal/-O receipt/stdout一致・stderr空、親readonly replay exit0・711 payload一致。初回run 37516423509のC2664は新fixture3行だけを修正し、失敗548 payloadは別保持。latest 2 paths/Library 0、累積26 paths/Library 9。実owner接続とCPU helperを受入、Game起動・GPU・XAudio2・既定撮影・実キャラ・Stage Bは未受入。
+
+## G2-GR82-B1-CLIPBANK-REST-BIND-POSE: 作者rest付きv1 ClipBankを安全に束縛して実姿勢まで評価する
+- status: doing
+- done-when: 新しい明示rig importで作者のlocal TRSを保持し、v1 ClipBankの必須snapshotとして保存・parseする。名前順の正準topology IDと完全な名前/親照合、現在rigとの全joint rest差検査を経て、明示ownerの未登録Resourceと実Samplerまで接続する。既定は許容超過を拒否し、明示override時だけ差量を所有reportで返して通す。
+- verify: 独立wire literal/hash/oracle、作者source破棄後のsnapshot所有、joint順置換/Unicode/親違い/hash衝突、全joint Translationと未アニメjointのT/R/nonuniform scale差、q/-q、境界とoverrideのnegative control、壊れたsection/範囲/有限予算、owner/失敗時outとRegistry保持、実Resource/FK/skin結果。旧0.x reader/writer/cook/CLIと固定Sampler出力、既存GR83 owner/runtimeを維持し、新v1は別期待値で認証する。
+- policy: topologyは厳密UTF8 unsigned byte名前順＋正準親indexのFNV-1a64、restを含めず全文も比較。全clipに作者snapshot参照を必須化。暫定許容はT 1e-5m、R 1e-4rad、各軸abs(log scale比) 1e-5で呼出し側から設定可能。初回profileは直接TRS・正scale・単一root・外部親なし・1mesh/1skin・128以下。旧入口は無変更。
+- stop-when: 旧cookedから失われた作者restを推測する、IDだけで束縛する、overrideで構造破損も通す、旧goldenを再生成する、helperだけでDoneとする、三path公開/async/cache・Armature/256・GPU/DCCまでこの一件へ混ぜる。骨格共有/ゲーム固有rigは未定のまま。

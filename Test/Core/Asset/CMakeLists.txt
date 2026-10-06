@@ -60,6 +60,8 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SkeletalAssetPublicationTest SkeletalAssetPublicationTest.cpp
     MEMBER SkeletalAssetRuntimeTest SkeletalAssetRuntimeTest.cpp
     MEMBER SkeletalAssetSessionTest SkeletalAssetSessionTest.cpp
+    MEMBER CookedClipBankV1Test CookedClipBankV1Test.cpp
+    MEMBER SkeletalClipBankBindingTest SkeletalClipBankBindingTest.cpp
     MEMBER BvhEvaluateTest BvhEvaluateTest.cpp
     MEMBER BvhDecodeTest BvhDecodeTest.cpp
     MEMBER GltfMaterialCookV1Test GltfMaterialCookV1Test.cpp
@@ -314,3 +316,6 @@ target_sources(CookedMeshTest PRIVATE
     ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/M9WorldAcceptance.cpp
 )
 target_include_directories(CookedMeshTest PRIVATE ${CMAKE_SOURCE_DIR}/Game)
+
+add_test(NAME CookedClipBankV1Test COMMAND CookedMeshTest --test=CookedClipBankV1Test)
+add_test(NAME SkeletalClipBankBindingTest COMMAND CookedMeshTest --test=SkeletalClipBankBindingTest)

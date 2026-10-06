@@ -1050,3 +1050,13 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 初回失敗: e02bd284 / run 37516423509のC2664をfixtureの所有copy3箇所だけで修正。productionは初回から不変。初回548 payloadは失敗のまま別保存、親の失敗保存replayもexit0。latest 2 paths/Library 0、累積26 paths/Library 9。
 - Notes: 元golden生成時のSampler sourceと、受入済み抽出後sourceのhashは別のimmutable参照で照合した。原本ログのstep BOM・upload path継続行・CRLFの書式対応を比較器へ加え、変更前比較器と失敗stderr/patchを保持する。golden・native gateは変更していない。
 - 範囲: 実Appの配線位置とGameビルド、実production CPU helperの寿命・取消・attachまで。実App lifecycleのOS/GPU実行、M9 t0/t1・negative control・音声drain・実犬/Blender品質は別受入。次はGR82 Stage Bのauthor-rest付きClipBankと安全束縛へ進む。
+
+### GR82 Stage B1の事前契約（2026-10-07 JST）
+
+- In progress: G2-GR82-B1-CLIPBANK-REST-BIND-POSE。基点はowner接続の受入code a082707cと結果文書dd24b999。原本/現在のユーザー条件/現decoderを再照合し、v1 ClipBankの保存→parse→安全束縛→実Resource/poseを次の一件とする。
+- 作者rest: IBMからのbindやclipのt=0を代用品にせず、提供された作成元rigのnode local TRSを保存する。現在rigと別入力にし、古いactionを新restで再exportしたファイルから失われた履歴を復元できるとは扱わない。
+- 互換: 新しい明示v1入口だけを追加。既存0.xの値/拒否/bytesとlegacy samplerを保持する。正のnonuniform TRSとq/-qを扱い、初回のmatrix/反射/特異scale/非joint親は明示未対応とする。
+- 後続: 残るSkeleton/SkinnedMesh wire、三論理path・原子的な公開/既存delegate runtime、Armature/clip-only、GR86の256、metadataはStage B内の別境界。今回だけでGR82全体/G2をDoneにしない。
+- 開始時検査: owner source8件はPASS。新v1型のLinux syntax-onlyは既存Containers.hのWindows.h依存で実行不能を確認した。ヘッダstubを用意せずWindows native CIで検査し、Linux成功として扱わない。
+- 実装候補: source rigの作者TRS、必須snapshot付きv1 ClipBank、名前/topology/rest束縛、実ownerの未登録ResourceとSampler既定pose分岐を接続。tiny/huge quaternionを旧SamplerのIdentity/zeroへ落とさないv1拒否と、animation Scale正値を追加した。v1 importのcount/累積sample/外部実bytes予算を確保前へ接続し、LINEAR/STEP/Bake・共有accessor・末尾増幅・累積2fileを反証する新CPU試験を追加。nativeは未実行。
+- 検証準備: 独立v1 oracle8件と既存owner source8件をnormal/-Oで各合格。新wireの独立literalは992 bytes/SHA256 43541886df2bce92e81697ed0b0d0ac6b1285201cf20470089ad3190761af106。legacy Sampler新分岐を除去するとbase dd24全文がwhitespace正規化で一致（11171428e0e187c5ecf15f3279d2f49c4ab6226842012008b9140b7ca06c63c6）。YAML・BOM/CRLF・行末比較も確認。Release65/新2束のDebug・実出力oracle・既存cook/CLIはCI待ち。LINEAR/STEPとBakeが同一assetで混在する専用の累積境界試験は残す（残量の実装は共通）。
