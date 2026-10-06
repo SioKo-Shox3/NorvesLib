@@ -59,6 +59,22 @@ namespace NorvesLib::Core::Animation::Detail
         return result;
     }
 
+    inline Math::Matrix4x4 ComposeSkeletalLocalRowTransform(const JointTransform& transform)
+    {
+        Math::Matrix4x4 result =
+            Math::MatrixUtils::CreateWorldRowVector(transform.Translation, transform.Rotation, Math::Vector3::One);
+        result.m00 *= transform.Scale.x;
+        result.m01 *= transform.Scale.x;
+        result.m02 *= transform.Scale.x;
+        result.m10 *= transform.Scale.y;
+        result.m11 *= transform.Scale.y;
+        result.m12 *= transform.Scale.y;
+        result.m20 *= transform.Scale.z;
+        result.m21 *= transform.Scale.z;
+        result.m22 *= transform.Scale.z;
+        return result;
+    }
+
     // inverse(IBM) * meshGlobal。失敗では出力を保持し、入力とのaliasも許可する。
     inline bool TryBuildBindGlobalRow(const Math::Matrix4x4& inverseBind, const Math::Matrix4x4& meshGlobal,
                                       Math::Matrix4x4& outGlobal)

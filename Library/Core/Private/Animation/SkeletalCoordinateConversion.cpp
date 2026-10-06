@@ -1,47 +1,8 @@
 ﻿#include "Animation/SkeletalCoordinateConversion.h"
-#include <cmath>
-#include <cfenv>
-#include <limits>
-#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
-#include <xmmintrin.h>
-#define NORVES_COORDINATE_MXCSR 1
-#else
-#define NORVES_COORDINATE_MXCSR 0
-#endif
+#include "Animation/SkeletalFloatEnvironment.h"
 
 namespace NorvesLib::Core::Animation
 {
-    namespace
-    {
-        bool SupportedEnvironment() noexcept
-        {
-#if defined(__FAST_MATH__) || defined(_M_FP_FAST) || (defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__ > 0) ||    \
-    defined(__ASSOCIATIVE_MATH__) || defined(__RECIPROCAL_MATH__) || defined(__NO_SIGNED_ZEROS__)
-            return false;
-#else
-            if (!std::numeric_limits<double>::is_iec559 || std::numeric_limits<double>::digits != 53 ||
-                std::fegetround() != FE_TONEAREST)
-            {
-                return false;
-            }
-#if NORVES_COORDINATE_MXCSR
-            // x87側だけnearestでも、SSE側の丸めが変更されていれば受理しない。
-            if ((_mm_getcsr() & 0x6000u) != 0)
-            {
-                return false;
-            }
-#endif
-            // コンパイル時の定数畳み込みを避け、現在のthreadのFTZ/DAZも検出する。
-            volatile double minimum = std::numeric_limits<double>::min();
-            volatile double half = 0.5;
-            volatile double subnormal = minimum * half;
-            volatile double tiny = std::numeric_limits<double>::denorm_min();
-            volatile double one = 1.0;
-            volatile double preserved = tiny * one;
-            return subnormal != 0 && preserved != 0;
-#endif
-        }
-    } // namespace
     SkeletalCoordinateStatus BuildSkeletalCoordinateConversion(AssetImport::SignedAxis up,
                                                                AssetImport::SignedAxis forward,
                                                                SkeletalSourceHandedness handedness,
@@ -49,7 +10,7 @@ namespace NorvesLib::Core::Animation
                                                                SkeletalCoordinateConversion& out) noexcept
     {
         using Status = SkeletalCoordinateStatus;
-        if (!SupportedEnvironment())
+        if (!Detail::SupportedSkeletalFloatEnvironment())
         {
             return Status::UnsupportedFloatEnvironment;
         }
@@ -90,7 +51,7 @@ namespace NorvesLib::Core::Animation
         {
             return Status::InvalidConversion;
         }
-        if (!SupportedEnvironment())
+        if (!Detail::SupportedSkeletalFloatEnvironment())
         {
             return Status::UnsupportedFloatEnvironment;
         }
@@ -124,7 +85,7 @@ namespace NorvesLib::Core::Animation
         {
             return Status::InvalidConversion;
         }
-        if (!SupportedEnvironment())
+        if (!Detail::SupportedSkeletalFloatEnvironment())
         {
             return Status::UnsupportedFloatEnvironment;
         }

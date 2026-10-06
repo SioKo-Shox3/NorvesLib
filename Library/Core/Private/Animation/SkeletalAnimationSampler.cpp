@@ -17,6 +17,7 @@ namespace NorvesLib::Core::Animation
 {
     namespace
     {
+        using Detail::ComposeSkeletalLocalRowTransform;
         using Detail::DecomposeRowTransform;
         using Detail::IsFiniteMatrix;
         using Detail::JointTransform;
@@ -124,22 +125,6 @@ namespace NorvesLib::Core::Animation
                     previous.Value.W + (next.Value.W - previous.Value.W) * alpha};
             }
             return samples.back().Value;
-        }
-
-        Math::Matrix4x4 ComposeSkeletalLocalRowTransform(const JointTransform& transform)
-        {
-            Math::Matrix4x4 result = Math::MatrixUtils::CreateWorldRowVector(
-                transform.Translation, transform.Rotation, Math::Vector3::One);
-            result.m00 *= transform.Scale.x;
-            result.m01 *= transform.Scale.x;
-            result.m02 *= transform.Scale.x;
-            result.m10 *= transform.Scale.y;
-            result.m11 *= transform.Scale.y;
-            result.m12 *= transform.Scale.y;
-            result.m20 *= transform.Scale.z;
-            result.m21 *= transform.Scale.z;
-            result.m22 *= transform.Scale.z;
-            return result;
         }
 
         bool ValidateParentChain(size_t jointIndex,
@@ -263,9 +248,8 @@ namespace NorvesLib::Core::Animation
                 transform.Translation = Math::Vector3(value.X, value.Y, value.Z);
                 break;
             case Skeletal::SkeletalAnimationPath::Rotation:
-                // glTF stores column-vector rotations. Conjugating the sampled quaternion
-                // converts it to the engine's row-vector convention.
-                transform.Rotation = NormalizeQuaternion(Math::Quaternion(-value.X, -value.Y, -value.Z, value.W));
+                // 列規約のclip値を共役にし、既存の正規化で行規約へ変換する。
+                transform.Rotation = Detail::SkeletalRotationFromColumn(value.X, value.Y, value.Z, value.W);
                 break;
             case Skeletal::SkeletalAnimationPath::Scale:
                 transform.Scale = Math::Vector3(value.X, value.Y, value.Z);

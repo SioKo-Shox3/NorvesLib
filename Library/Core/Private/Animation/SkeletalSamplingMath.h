@@ -21,6 +21,12 @@ namespace NorvesLib::Core::Animation::Detail
             value.w * inverseLength);
     }
 
+    // clipの列quaternionを、Samplerの絶対local行quaternionへ変換する。
+    inline Math::Quaternion SkeletalRotationFromColumn(float x, float y, float z, float w)
+    {
+        return NormalizeQuaternion(Math::Quaternion(-x, -y, -z, w));
+    }
+
     inline Math::Quaternion Slerp(const Math::Quaternion& start, const Math::Quaternion& end, float alpha)
     {
         Math::Quaternion from = NormalizeQuaternion(start);

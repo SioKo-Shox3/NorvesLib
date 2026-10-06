@@ -59,6 +59,12 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalJointMapping.cpp
     Private/Animation/SkeletalCoordinateConversion.h
     Private/Animation/SkeletalCoordinateConversion.cpp
+    Private/Animation/SkeletalFloatEnvironment.h
+    Private/Animation/SkeletalRotationRetarget.h
+    Private/Animation/SkeletalRotationRetarget.cpp
+    Private/Animation/SkeletalRotationRetargetMath.h
+    Private/Animation/SkeletalRotationRetargetNative.h
+    Private/Animation/SkeletalRotationRetargetNative.cpp
     Private/Animation/SkeletalAssetResource.cpp
     Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp
