@@ -899,13 +899,13 @@
 - notes: 2026-10-06 VTG6-DEFAULT-ON から分けた（VTG6-VIS-RASTER から回した項目）。危険地帯（描画パス）。今の on は MegaGeometryPass が GBuffer の描画を止めるので、HZB の元の GBuffer.Depth が空のままで、2パス目の遮蔽の判定が何も省かない（`MegaGeometryPass.h` の SetSkipGBufferDraw の doc）。ID のラスタ（VisibilityRasterPass）は MegaGeometryPass の後で、描画の写し（VisibilityDrawPlan）を取り出して 1・2 パス目をまとめて描くため、HZB の元に入る深度が無い。設計の選び方（MegaGeometryPass が ID のパイプラインで 1・2 パス目を描く / ラスタが 1 パス目の後に HZB と 2 パス目のカリングを呼ぶ）は、描画のコマンドの数・バリアが少ない方を採る。
 
 ## VTG6-DEFAULT-ON-SKIN-CAPTURE: スキニングを含む検証シーンをビジビリティバッファで撮る
-- status: done
+- status: doing
 - done-when: スキニングを含む検証シーン（`RenderingVelocitySkinnedVulkanTest` の場面など）を、ビジビリティバッファで撮る経路を足す（検証用の撮影の入口。起動画面は変えない）。ID の表示（`--visibility-buffer=debug` と同じ色分け）と解決の結果（Albedo・Normal・Velocity）を撮り、開いて確かめる。スキニングの塊が ID に描かれ（`VIS_RASTER` の `skinned_chunks` が 0 でない）、GBuffer の経路との画素の比較（Albedo・Normal・Velocity）が説明できる範囲に収まる。計算スキニングのパイプラインだけが作れない装置では、スキニングの無い場面でも予備（GBuffer の描画）になることを `PROGRESS.md` に記録する（持ち越しの (d)）。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest SkinnedRenderPathContractTest RenderingVelocityVulkanTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|SkinnedRenderPathContractTest|ComputeSkinningVulkanTest|RenderingVelocitySkinnedVulkanTest|RenderingVelocitySkinnedGBufferFallbackVulkanTest)$"`
 - stop-when: スキニングの物がビジビリティバッファの経路で欠ける・ずれる場合は、撮影と測った値を残して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-06 VTG6-DEFAULT-ON から分けた。起動画面にはスキニングの物が無いので、速度の検査（`RenderingVelocitySkinnedVulkanTest`）の場面か、検証用の撮影の入口で撮る。 2026-10-06 実装: Game に検証用の骨付きのパネルを置く `--startup-skinned-probe`（撮影の入口は `CaptureStartupScene.ps1 -SkinnedProbe`。既定は置かない）。ビルドの verify は、`ComputeSkinningVulkanTest` が独立ターゲットではなく `RHITextureUpdateVulkanTest` のバンドルの一部なので、そちらへ直した。
+- notes: 2026-10-06 VTG6-DEFAULT-ON から分けた。起動画面にはスキニングの物が無いので、速度の検査（`RenderingVelocitySkinnedVulkanTest`）の場面か、検証用の撮影の入口で撮る。 2026-10-06 実装: Game に検証用の骨付きのパネルを置く `--startup-skinned-probe`（撮影の入口は `CaptureStartupScene.ps1 -SkinnedProbe`。既定は置かない）。ビルドの verify は、`ComputeSkinningVulkanTest` が独立ターゲットではなく `RHITextureUpdateVulkanTest` のバンドルの一部なので、そちらへ直した。 2026-10-06 親（`7a4a5acd` の評価の差し戻し。評価者は Claude の別文脈）: 必須: 置くスキニングが 1 体（`StartupSkinnedProbe.cpp` 113〜209 行付近のパネル 1 枚。`skinned_chunks=2` は 1 体を 128 三角形の塊 2 つに分けた数）で、計算スキニングの割り当ての 1 体目の基点は必ず 0 なので、記録の頂点の基点の二重加算（`31877048` の修正）が戻っても撮影は変わらない。2 体目（1 体目の後ろに並んで基点が 0 にならない体）を画面内に置き、on・off の `-GBufferDebug` Albedo・Normal・Velocity を撮って、2 体目の範囲の差を記録する（前の評価で残った「2 体目の解決の位置・速度が頂点シェーダーのスキニングの描画と合う」端から端の照合）。あわせて: プローブが置けない（`STARTUP_SKINNED_PROBE_SKIPPED`）ときも撮影が `result=pass` になる（`Rendering3DTestRoutine.cpp` 2267 行付近で戻り値を捨てている、`CaptureStartupScene.ps1` 808〜811 行付近）ので、`-SkinnedProbe` のときは `skinned_chunks` が 0 でないこと（と体の数）を撮影の判定に入れる。near の撮影はパネルが画角の外なので、2 体が写る視点で撮るか記録を直す。near の on・off の Normal の差（最大 29、8 を超える画素 1428）も記録する。
 
 ## VTG6-DEFAULT-ON-TILE-VRAM: 材質の分類の一覧の大きさを、材質の表の上限・画面の大きさから求め直す
 - status: done
