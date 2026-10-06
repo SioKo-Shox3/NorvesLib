@@ -134,6 +134,10 @@ layout(set = 0, binding = 0) uniform CullUniforms
     uint bvhLeafBase;        // 葉の列の先頭
     uint bvhRootCount;       // BVH を持つインスタンスの数（段0の入力の数。インスタンスの表の先頭からその数）
     uint pageRequestCapacity; // ページの要求の列の容量（0 ならこのフレームは要求を書かない）
+    uint swRasterEnabled;    // 1 なら、画面上の小さいクラスタをソフトウェアラスタの一覧へ振り分ける（0 なら触らない）
+    uint swRasterCapacity;   // パスごとのソフトの一覧の容量（クラスタ数）
+    float swRasterMaxPixels; // 振り分ける画面上の半径（画素）のしきい値（以下ならソフト）
+    float swRasterNearPlane; // 近平面までの距離（視点から視線方向に測る）。これと交わるクラスタは振り分けない
 } cullData;
 
 const uint CULL_PASS_SINGLE = 0u;
@@ -144,6 +148,11 @@ const uint STAT_PASS1_DRAWN = 0u;
 const uint STAT_PASS2_TESTED = 1u;
 const uint STAT_PASS2_DRAWN = 2u;
 const uint STAT_OCCLUDED = 3u;
+// ソフトウェアラスタの振り分け（swRasterEnabled=1 かつ bStatsEnabled=1 のときだけ数える）
+const uint STAT_SW_PASS1 = 4u;     // 1パス目で一覧へ積んだクラスタ
+const uint STAT_SW_PASS2 = 5u;     // 2パス目で一覧へ積んだクラスタ
+const uint STAT_SW_HARDWARE = 6u;  // 一覧へ積まず、ハードのラスタだけが描くクラスタ（両パスの合計。STAT_SW_OVERFLOW を含む）
+const uint STAT_SW_OVERFLOW = 7u;  // 小さいが一覧が満杯で積めなかったクラスタ（両パスの合計）
 
 const uint DEBUG_PAYLOAD_MODE_NONE = 0u;
 const uint DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
@@ -180,7 +189,7 @@ layout(std430, set = 0, binding = 5) buffer VisibleLastFrameBuffer
 // set 0, binding 6: 統計（STAT_*。1フレームの全インスタンスの合計）。bStatsEnabled=0 では使わない。
 layout(std430, set = 0, binding = 6) buffer StatsBuffer
 {
-    uint stats[4];
+    uint stats[8];
 };
 
 // set 0, binding 7: 材質の区間の表（x = コマンドの先頭の位置（全パス通しの添え字）, y = 区間のコマンドの最大数）。
@@ -229,6 +238,18 @@ layout(std430, set = 0, binding = 12) buffer PageRequestBuffer
     uint pageRequests[];
 };
 const uint PAGE_REQUEST_HEADER_WORDS = 4u;
+
+// set 0, binding 13: ソフトウェアラスタの一覧（swRasterEnabled=0 では使わない）。
+// [パス p の頭 = p * 4] x = 一覧のクラスタ数（計算シェーダーの間接 dispatch の x。1 ワークグループ = 1 クラスタ）, y = 1, z = 1,
+//                       w = 一覧へ積もうとした数（容量を超えた分も数える）
+// [SW_RASTER_HEADER_WORDS + p * swRasterCapacity + n] = n 番目のクラスタのコマンドの位置（commandIndex。
+//   記録の番号は 1 + commandIndex でハードと共有する）
+layout(std430, set = 0, binding = 13) buffer SwRasterBuffer
+{
+    uint swRaster[];
+};
+const uint SW_RASTER_HEADER_WORDS = 8u;
+const uint SW_RASTER_HEADER_STRIDE = 4u;
 
 const uint BVH_LEAF_COUNTER = 16u;
 const uint BVH_STAGE_CLUSTERS = 0xFFFFFFFFu;
@@ -587,7 +608,64 @@ uint ComputeDebugPayload(uint clusterIndex, GPUClusterData cluster)
 // ========================================
 
 /**
+ * @brief クラスタがソフトウェアラスタの対象（画面上で小さく、近平面と交わらない）か
+ *
+ * 画面上の半径（画素）は、境界球のワールドの半径 R を、球の最も近い点の視線方向の深さ（中心の深さ − R）で割って
+ * projectionFactor を掛けた値に、視線から外れた点で透視投影が横の長さを伸ばす倍率（ComputePerspectiveStretch）を
+ * 掛けた上限を使う（実際の大きさ以上の値になるので、大きいクラスタがソフトに回ることは無い）。
+ * 中心の深さは ComputePerspectiveStretch と同じく、射影した w をその行列の奥行きの係数で割って求める
+ * （右手系・左手系のどちらでも、前方が正になる）。
+ */
+bool IsSwRasterSmallCluster(GPUClusterData cluster)
+{
+    float depthScale = abs(cullData.projectionMatrix[2][3]);
+    if (depthScale <= 1e-6)
+    {
+        return false; // 透視投影ではない（深さが測れない）
+    }
+
+    float worldRadius = cluster.boundsSphere.w * ComputeWorldRadiusScale();
+    vec3 center = TransformClusterCenterToWorld(cluster.boundsSphere.xyz);
+    float centerDepth = (cullData.projectionMatrix * cullData.viewMatrix * vec4(center, 1.0)).w / depthScale;
+    float nearestDepth = centerDepth - worldRadius;
+    if (!(nearestDepth > cullData.swRasterNearPlane))
+    {
+        return false; // 近平面と交わる（NaN もここで外す）
+    }
+
+    float centerDistance = distance(center, cullData.cameraPosition.xyz);
+    float stretch = ComputePerspectiveStretch(center, centerDistance, worldRadius);
+    float radiusPixels = worldRadius * cullData.projectionFactor * stretch / nearestDepth;
+    return radiusPixels <= cullData.swRasterMaxPixels;
+}
+
+/**
+ * @brief コマンドをこのパスのソフトの一覧へ積む。一覧が満杯なら積まず false（ハードのラスタだけが描く）
+ *
+ * 間接 dispatch の x（クラスタ数）は一覧へ積めた数だけを数えるので、容量を超えることは無い。
+ */
+bool AppendSwRasterList(uint commandIndex)
+{
+    uint passIndex = cullData.cullPass == CULL_PASS_SECOND ? 1u : 0u;
+    uint header = passIndex * SW_RASTER_HEADER_STRIDE;
+    uint slot = atomicAdd(swRaster[header + 3u], 1u);
+    if (slot >= cullData.swRasterCapacity)
+    {
+        return false;
+    }
+    swRaster[SW_RASTER_HEADER_WORDS + passIndex * cullData.swRasterCapacity + slot] = commandIndex;
+    // 間接 dispatch の y・z（1 以外の書き込みは無いので、複数のスレッドが同じ値を書いてよい）
+    swRaster[header + 1u] = 1u;
+    swRaster[header + 2u] = 1u;
+    atomicAdd(swRaster[header], 1u);
+    return true;
+}
+
+/**
  * @brief 描画するクラスタのIndirectDrawコマンドを、そのインスタンスの材質の区間へ1つ積む
+ *
+ * swRasterEnabled=1 なら、画面上で小さいクラスタをパスごとのソフトウェアラスタの一覧へも積む。
+ * コマンドはハードのラスタのために必ず積む（一覧への振り分けは描画を減らさない）。
  */
 void EmitDrawCommand(uint instanceIndex, MegaInstance instance, uint clusterIndex, GPUClusterData cluster)
 {
@@ -605,6 +683,27 @@ void EmitDrawCommand(uint instanceIndex, MegaInstance instance, uint clusterInde
         drawCommands[commandIndex].vertexOffset = int(instance.drawInfo.y) + int(cluster.indexInfo.z); // VertexOffset（塊の先頭から）
         drawCommands[commandIndex].firstInstance = commandIndex;
         drawInfos[commandIndex] = uvec2(instanceIndex, ComputeDebugPayload(clusterIndex, cluster));
+
+        if (cullData.swRasterEnabled != 0u)
+        {
+            bool bSmall = IsSwRasterSmallCluster(cluster);
+            bool bBinned = bSmall && AppendSwRasterList(commandIndex);
+            if (cullData.bStatsEnabled != 0u)
+            {
+                if (bBinned)
+                {
+                    atomicAdd(stats[cullData.cullPass == CULL_PASS_SECOND ? STAT_SW_PASS2 : STAT_SW_PASS1], 1u);
+                }
+                else
+                {
+                    atomicAdd(stats[STAT_SW_HARDWARE], 1u);
+                    if (bSmall)
+                    {
+                        atomicAdd(stats[STAT_SW_OVERFLOW], 1u);
+                    }
+                }
+            }
+        }
     }
 }
 

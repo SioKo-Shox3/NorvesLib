@@ -1019,7 +1019,7 @@
 - notes: 2026-10-06 親（VTG7-RECORDS-INDIRECT・VTG7-INT64-ATOMICS の評価はどちらも PASS。その non-blocking を集めた）。画は変えない。
 
 ## VTG7-SW-BIN: カリングで画面上の小さいクラスタをソフトウェアラスタの一覧へ振り分ける
-- status: todo
+- status: done
 - done-when: `MegaGeometryCull.glsl` の `EmitDrawCommand`（BVH の経路も同じ関数を通る）で、クラスタの画面上の半径（画素。`radius * projectionFactor / distance` 等）がしきい値以下で、近平面と交わらないクラスタを、パスごとのソフトの一覧（`commandIndex`）へ積み、計算シェーダーの間接 dispatch の引数を書く。コマンドの枠と記録の番号（`1 + commandIndex`）はハードと共有する（ソフトのクラスタの記録も記録の compute が書く）。起動引数 `--sw-raster=off|on`（`ApplicationProcessor`・`RenderingCoordinator::Settings`・`RenderWorld::Settings`・`SceneView`・`CaptureStartupScene.ps1` の `-SwRaster`）としきい値 `--sw-raster-max-px=<n>`（既定 8）を足す。この段階ではソフトのラスタがまだ無いので、on でもハードはすべてのクラスタを描き（`instanceCount` は 1 のまま）、ソフトの一覧の数だけを `SW_RASTER_BIN pass1=<n> pass2=<n> hw=<n>` としてログに出す。`64bit アトミックが無い・--visibility-buffer=off` では振り分けない（`SW_RASTER_FALLBACK reason=<理由>` を 1 回ログへ）。起動画面と負荷モード 300 個の撮影のログで、ソフトの一覧の数を視点ごとに PROGRESS に書く。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest|HiZOcclusionTestVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`

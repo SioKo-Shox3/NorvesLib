@@ -127,6 +127,8 @@ namespace
     Container::VariableArray<SkinnedPaletteUpdate> GSkinnedPaletteUpdates;
     // MegaGeometryPass が毎フレーム書くインスタンスの表（"MegaGeometry_InstanceTable"）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaInstanceTableUpdates;
+    // MegaGeometryPass のカリングの定数バッファ（"MegaGeometry_CullUBO"。パスごとに 1 つ）の更新の記録（更新ごとの中身）
+    Container::VariableArray<Container::VariableArray<uint8_t>> GMegaCullUniformUpdates;
     Container::VariableArray<uint8_t> GLastDescriptorBinding4UpdateBytes;
     Container::VariableArray<uint8_t> GLastDescriptorBinding5UpdateBytes;
     RHI::IBuffer* GLastDescriptorBinding4Buffer = nullptr;
@@ -299,6 +301,10 @@ namespace
             {
                 GMegaInstanceTableUpdates.push_back(LastUpdateBytes);
             }
+            if (IsDebugName(m_Desc.DebugName, "MegaGeometry_CullUBO"))
+            {
+                GMegaCullUniformUpdates.push_back(LastUpdateBytes);
+            }
             const bool bSkinnedPalette = IsDebugName(m_Desc.DebugName, "SkinnedPalette");
             const bool bSkinnedPreviousPalette = IsDebugName(m_Desc.DebugName, "SkinnedPreviousPalette");
             if (bSkinnedPalette || bSkinnedPreviousPalette)
@@ -400,6 +406,8 @@ namespace
             size_t SequencePosition = 0;
         };
         Container::VariableArray<Key64Fill> Key64Fills;
+        // ソフトウェアラスタの一覧（MegaGeometry_SwRaster）の頭の埋め（0 埋め。大きさ・値・その時点の CallSequence の長さ）
+        Container::VariableArray<Key64Fill> SwRasterFills;
         // Draw（頂点だけの描画）が呼ばれた時点の CallSequence の長さ。全画面の合流が render pass（B と E の間）で描かれたかを確かめる
         Container::VariableArray<size_t> DrawPositions;
         // 間接描画の記録（コマンドの先頭のバイト位置と、描画の最大数）。区間ごとに1回ずつ呼ばれる
@@ -556,6 +564,10 @@ namespace
             if (buffer && IsDebugName(static_cast<const FakeBuffer*>(buffer.get())->GetDesc().DebugName, "VisBuffer_Key64"))
             {
                 Key64Fills.push_back(Key64Fill{size, value, CallSequence.size()});
+            }
+            if (buffer && IsDebugName(static_cast<const FakeBuffer*>(buffer.get())->GetDesc().DebugName, "MegaGeometry_SwRaster"))
+            {
+                SwRasterFills.push_back(Key64Fill{size, value, CallSequence.size()});
             }
             if (buffer)
             {
@@ -2133,6 +2145,12 @@ namespace
         CameraProxy Camera;
         /** @brief false なら、64bit のバッファへの atomicMin に対応しない装置で動かす */
         bool bInt64Atomics = true;
+        /** @brief ID のラスタがソフトウェアラスタ（64bit のバッファの埋め・合流）を持つか。false は --sw-raster=off と同じ */
+        bool bSwRasterMerge = true;
+        /** @brief MegaGeometry がソフトウェアラスタへの振り分けを要求するか（--sw-raster=on のカリング） */
+        bool bSwRasterBin = false;
+        /** @brief 振り分けるクラスタの画面上の半径（画素）のしきい値 */
+        float SwRasterMaxPixels = 8.0f;
         /** @brief Normal 以外のときは、ビューポートの計画（表示だけを持つ）を現在のビューポートにして、この表示で描く */
         DebugViewMode DebugMode = DebugViewMode::Normal;
         ViewportRenderPlan ViewportPlan;
@@ -2379,6 +2397,8 @@ namespace
         }
 
         scene.Mega.SetVisibilityDrawPlanEnabled(bVisibilityPlan);
+        scene.Mega.SetSwRasterBinning(scene.bSwRasterBin, scene.SwRasterMaxPixels);
+        scene.Raster.SetSwRasterEnabled(scene.bSwRasterMerge);
         scene.Raster.SetMegaGeometryPass(&scene.Mega);
         assert(scene.Mega.Initialize(context));
         scene.Graph.AddPass(&scene.GBuffer);
@@ -4565,6 +4585,194 @@ namespace
         assert(CountDirectDraws(commandList) == SceneIdDirectDraws);
 
         ShutdownVisibilityRasterScene(scene);
+    }
+
+    // --sw-raster=off（既定）では、64bit のバッファ・定数・パイプラインも、その埋めと合流のパスも作らず、
+    // ID の描画は合流が無いときと同じ（render pass の数も直接の描画の数も増えない）。装置が 64bit に対応していても同じ。
+    // SetSwRasterEnabled(false) の判定を外して合流を作ると落ちる
+    void TestVisibilityMergeAbsentWhenSwRasterOff()
+    {
+        VisibilityRasterScene scene;
+        scene.bSwRasterMerge = false;
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, true, true, ResolveMode::Supported);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(VisibilityMerge::IsSupported(scene.Device->GetCapabilities()));
+        assert(!scene.Raster.IsSwRasterEnabled());
+        assert(!scene.Raster.GetMerge().IsReady());
+        assert(CountBufferCreations(*scene.Device, "VisBuffer_Key64") == 0);
+        assert(CountBufferCreations(*scene.Device, "VisBuffer_MergeParams") == 0);
+        assert(commandList.Key64Fills.empty());
+
+        const VisibilityRasterFrameStats& stats = scene.Raster.GetLastFrameStats();
+        assert(stats.bRendered);
+        assert(!stats.bMerged && stats.MergeCount == 0 && stats.KeyBufferBytes == 0);
+
+        assert(scene.Resolve.WasResolved());
+        assert(commandList.BeginRenderPassCount == 4);
+        assert(commandList.EndRenderPassCount == 4);
+        assert(CountDirectDraws(commandList) == SceneIdDirectDraws);
+        // ソフトの一覧は振り分けを要求していないので作らない
+        assert(!scene.Mega.DidSwRasterBin());
+        assert(CountBufferCreations(*scene.Device, "MegaGeometry_SwRaster") == 0);
+        assert(commandList.SwRasterFills.empty());
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // カリングの定数バッファの、ソフトウェアラスタの 4 語（bSwRasterEnabled・容量・しきい値・近平面）を、パス（0・1）ごとに読む。
+    // 場所は cluster_cull.comp の CullUniforms の並び（行列 2 つ・視点・平面 6 つ・語 21 個の後ろ）と同じ
+    struct SwRasterUniformWords
+    {
+        uint32_t bEnabled = 0;
+        uint32_t Capacity = 0;
+        float MaxPixels = 0.0f;
+        float NearPlane = 0.0f;
+    };
+    constexpr size_t CullUniformSwRasterOffset = (16 + 16 + 4 + 24 + 21) * sizeof(uint32_t);
+
+    SwRasterUniformWords ReadSwRasterUniformWords(size_t updateIndex)
+    {
+        assert(updateIndex < GMegaCullUniformUpdates.size());
+        const Container::VariableArray<uint8_t>& bytes = GMegaCullUniformUpdates[updateIndex];
+        assert(bytes.size() >= CullUniformSwRasterOffset + 4 * sizeof(uint32_t));
+        SwRasterUniformWords words;
+        std::memcpy(&words.bEnabled, bytes.data() + CullUniformSwRasterOffset, sizeof(uint32_t));
+        std::memcpy(&words.Capacity, bytes.data() + CullUniformSwRasterOffset + 4, sizeof(uint32_t));
+        std::memcpy(&words.MaxPixels, bytes.data() + CullUniformSwRasterOffset + 8, sizeof(float));
+        std::memcpy(&words.NearPlane, bytes.data() + CullUniformSwRasterOffset + 12, sizeof(float));
+        return words;
+    }
+
+    // --sw-raster=on のカリング: 2 パスの遮蔽の構成で、パスごとのソフトの一覧（頭 + 容量）を 1 つ作り、頭を 0 で埋めてから
+    // カリングの dispatch を並べ、両パスの定数バッファへ有効・容量・しきい値・近平面を渡す。
+    // 振り分けの判定（深度・半径）を外す・頭を埋めない・定数を渡さないと落ちる
+    void TestSwRasterBinningWritesListAndUniforms()
+    {
+        VisibilityRasterScene scene;
+        scene.bSwRasterBin = true;
+        scene.SwRasterMaxPixels = 6.5f;
+        GMegaCullUniformUpdates.clear();
+        // スキニングの dispatch が先に並ばないよう、スキニングは足さない（最初の dispatch が MegaGeometry のカリング）
+        RunVisibilityRasterScene(scene, true, true, ClassifyMode::None, false, true, ResolveMode::Supported);
+        FakeCommandList& commandList = scene.CommandList;
+
+        assert(scene.Mega.IsSwRasterBinningRequested());
+        assert(scene.Mega.DidSwRasterBin());
+        const uint32_t capacity = scene.Mega.GetSwRasterListCapacity();
+        assert(capacity > 0 && capacity <= 65535u);
+        assert(CountBufferCreations(*scene.Device, "MegaGeometry_SwRaster") == 1);
+
+        // 頭（パスごとに 4 語 × 2 パス = 8 語）だけを 0 で埋める。カリングの最初の dispatch より前
+        assert(commandList.SwRasterFills.size() == 1);
+        assert(commandList.SwRasterFills[0].SizeBytes == 8u * sizeof(uint32_t));
+        assert(commandList.SwRasterFills[0].Value == 0u);
+        size_t firstDispatch = commandList.CallSequence.size();
+        for (size_t index = 0; index < commandList.CallSequence.size(); ++index)
+        {
+            if (commandList.CallSequence[index] == 'D')
+            {
+                firstDispatch = index;
+                break;
+            }
+        }
+        assert(firstDispatch < commandList.CallSequence.size());
+        assert(commandList.SwRasterFills[0].SequencePosition <= firstDispatch);
+
+        // 1 パス目・2 パス目の定数バッファ（この場面は BVH を持たないので、各パスで 1 回ずつ）
+        assert(GMegaCullUniformUpdates.size() >= 2);
+        for (size_t pass = 0; pass < 2; ++pass)
+        {
+            const SwRasterUniformWords words = ReadSwRasterUniformWords(pass);
+            assert(words.bEnabled == 1u);
+            assert(words.Capacity == capacity);
+            assert(words.MaxPixels == 6.5f);
+            assert(words.NearPlane == scene.Camera.NearPlane);
+        }
+
+        ShutdownVisibilityRasterScene(scene);
+    }
+
+    // 振り分けを使えない構成では、振り分けず、ソフトの一覧も作らず、定数バッファは無効（0）を渡す（SW_RASTER_FALLBACK を 1 回出す）。
+    // 64bit アトミックが無い装置・ビジビリティバッファが無い（描画の写しを作らない）構成・遮蔽の判定が 1 回の構成の 3 つ。
+    // 判定（IsSupported・sink の有無・2 パス）のどれかを外すと、その構成で振り分けてしまい落ちる
+    void TestSwRasterBinningFallsBackWhenUnavailable()
+    {
+        struct Case
+        {
+            const char* Name;
+            bool bInt64Atomics;
+            bool bVisibilityPlan;
+            bool bOcclusionCulling;
+        };
+        const Case cases[] = {
+            {"int64_atomics_unsupported", false, true, true},
+            {"visibility_buffer_off", true, false, true},
+            {"occlusion_off", true, true, false},
+        };
+        for (const Case& testCase : cases)
+        {
+            VisibilityRasterScene scene;
+            scene.bSwRasterBin = true;
+            scene.bInt64Atomics = testCase.bInt64Atomics;
+            GMegaCullUniformUpdates.clear();
+            RunVisibilityRasterScene(scene, testCase.bVisibilityPlan, testCase.bOcclusionCulling, ClassifyMode::None,
+                                     testCase.bVisibilityPlan, true,
+                                     testCase.bVisibilityPlan ? ResolveMode::Supported : ResolveMode::None);
+            assert(scene.Mega.IsSwRasterBinningRequested());
+            assert(!scene.Mega.DidSwRasterBin());
+            assert(scene.Mega.GetSwRasterListCapacity() == 0);
+            assert(CountBufferCreations(*scene.Device, "MegaGeometry_SwRaster") == 0);
+            assert(scene.CommandList.SwRasterFills.empty());
+            assert(!GMegaCullUniformUpdates.empty());
+            for (size_t update = 0; update < GMegaCullUniformUpdates.size(); ++update)
+            {
+                const SwRasterUniformWords words = ReadSwRasterUniformWords(update);
+                assert(words.bEnabled == 0u && words.Capacity == 0u);
+            }
+            ShutdownVisibilityRasterScene(scene);
+        }
+    }
+
+    // SceneView の配線: --sw-raster=on は、ビジビリティバッファが On・Debug のとき ID のラスタの 64bit の資源を有効にし、
+    // どのモードでも MegaGeometry へ要求としきい値を渡す（使えない理由は MegaGeometry が SW_RASTER_FALLBACK へ出す）。
+    // Off（既定）は両方とも無効のまま
+    void TestSceneViewWiresSwRasterMode()
+    {
+        struct Expectation
+        {
+            VisibilityBufferMode Visibility;
+            SwRasterMode SwRaster;
+            bool bRasterEnabled;
+            bool bBinRequested;
+        };
+        const Expectation expectations[] = {
+            {VisibilityBufferMode::On, SwRasterMode::Off, false, false},
+            {VisibilityBufferMode::On, SwRasterMode::On, true, true},
+            {VisibilityBufferMode::Debug, SwRasterMode::On, true, true},
+            {VisibilityBufferMode::Off, SwRasterMode::On, false, true},
+            {VisibilityBufferMode::Off, SwRasterMode::Off, false, false},
+        };
+        for (const Expectation& expectation : expectations)
+        {
+            SceneRenderer renderer;
+            SceneView sceneView;
+            sceneView.SetupDeferredPipeline(&renderer, RasterDirectBrdf::Analytic, expectation.Visibility, expectation.SwRaster, 12.0f);
+            const auto* mega = static_cast<const MegaGeometryPass*>(sceneView.FindPass("MegaGeometryPass"));
+            const auto* raster = static_cast<const VisibilityRasterPass*>(sceneView.FindPass("VisibilityRasterPass"));
+            assert(mega != nullptr);
+            assert(mega->IsSwRasterBinningRequested() == expectation.bBinRequested);
+            assert((raster != nullptr && raster->IsSwRasterEnabled()) == expectation.bRasterEnabled);
+        }
+
+        // 引数を渡さない呼び出し（既存の呼び出しと同じ）は Off
+        SceneRenderer renderer;
+        SceneView sceneView;
+        sceneView.SetupDeferredPipeline(&renderer);
+        const auto* mega = static_cast<const MegaGeometryPass*>(sceneView.FindPass("MegaGeometryPass"));
+        const auto* raster = static_cast<const VisibilityRasterPass*>(sceneView.FindPass("VisibilityRasterPass"));
+        assert(mega != nullptr && !mega->IsSwRasterBinningRequested());
+        assert(raster != nullptr && !raster->IsSwRasterEnabled());
     }
 
     // 64bit のバッファは画面の画素数 × 8 バイトの 1 つで、同じ大きさの間は作り直さない。大きさが変わると新しく作り、
@@ -10016,6 +10224,10 @@ int main()
     TestVisibilityRasterOnBuildsHiZFromIdDepthBetweenTwoPasses();
     TestVisibilityRasterOnSinglePassCullingDrawsEverythingInOneRenderPass();
     TestVisibilityMergeAbsentWithoutInt64Atomics();
+    TestVisibilityMergeAbsentWhenSwRasterOff();
+    TestSwRasterBinningWritesListAndUniforms();
+    TestSwRasterBinningFallsBackWhenUnavailable();
+    TestSceneViewWiresSwRasterMode();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();
     TestMaterialTileClassifyDispatchesAndPublishesArgs();

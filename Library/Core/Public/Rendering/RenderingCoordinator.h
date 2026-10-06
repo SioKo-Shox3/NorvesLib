@@ -107,6 +107,10 @@ namespace NorvesLib::Core::Rendering
         RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Analytic;
         /** @brief ビジビリティバッファの使い方（既定は On。装置が対応しないときは GBuffer の描画へ戻る） */
         VisibilityBufferMode VisibilityBuffer = VisibilityBufferMode::On;
+        /** @brief ソフトウェアラスタの使い方（既定は Off） */
+        SwRasterMode SwRaster = SwRasterMode::Off;
+        /** @brief ソフトウェアラスタへ振り分けるクラスタの画面上の半径（画素）のしきい値 */
+        float SwRasterMaxPixels = DefaultSwRasterMaxPixels;
     };
 
     struct RenderingCoordinatorStatsSnapshot

@@ -85,6 +85,8 @@ namespace NorvesLib::Core::Rendering
         coordSettings.PathTracingDebug = settings.PathTracingDebug;
         coordSettings.RasterDirectBrdfMode = settings.RasterDirectBrdfMode;
         coordSettings.VisibilityBuffer = settings.VisibilityBuffer;
+        coordSettings.SwRaster = settings.SwRaster;
+        coordSettings.SwRasterMaxPixels = settings.SwRasterMaxPixels;
 
         if (!m_RenderingCoordinator.Initialize(coordSettings))
         {

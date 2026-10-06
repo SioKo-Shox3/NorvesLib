@@ -489,6 +489,33 @@ namespace
         return false;
     }
 
+    // --sw-raster=off|on
+    bool TryParseSwRasterOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::SwRasterMode& outMode,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--sw-raster=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("off"))
+        {
+            outMode = NorvesLib::Core::Rendering::SwRasterMode::Off;
+            return true;
+        }
+        if (value == TEXT("on"))
+        {
+            outMode = NorvesLib::Core::Rendering::SwRasterMode::On;
+            return true;
+        }
+        return false;
+    }
+
     // --tone-map=aces|aces20-lut
     bool TryParseToneMapOption(
         const String& argument,
@@ -729,6 +756,26 @@ namespace
         return true;
     }
 
+    // --sw-raster-max-px=<正の数>（ソフトウェアラスタへ振り分けるクラスタの画面上の半径（画素）のしきい値）
+    bool TryParseSwRasterMaxPixelsOption(const String& argument, float& outMaxPixels, bool& bMatched)
+    {
+        const String prefix = TEXT("--sw-raster-max-px=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        float parsed = 0.0f;
+        if (!TryParseNonNegativeRatio(value, parsed) || !(parsed > 0.0f))
+        {
+            return false;
+        }
+        outMaxPixels = parsed;
+        return true;
+    }
+
     // 連番の1フレームを描くPTの経路の引数。どれかを指定すると連番の経路を有効にする。
     // --path-tracing-frame-duration=秒（正）、--path-tracing-shutter=秒（0以上）、
     // --path-tracing-aperture=f値（正）、--path-tracing-focus-distance=m（0はピンホール）
@@ -954,6 +1001,8 @@ namespace NorvesLib::Core::Engine
             Rendering::PathTracingDebugOutput::None;
         Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Analytic;
         Rendering::VisibilityBufferMode visibilityBufferMode = Rendering::VisibilityBufferMode::On;
+        Rendering::SwRasterMode swRasterMode = Rendering::SwRasterMode::Off;
+        float swRasterMaxPixels = Rendering::DefaultSwRasterMaxPixels;
         Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
         bool bToneMapOperatorRequested = false;
         float filmGrainStrength = 0.0f;
@@ -1100,6 +1149,27 @@ namespace NorvesLib::Core::Engine
             else if (bMatchedVisibilityBuffer)
             {
                 LOG_WARNING("ApplicationProcessor runtime option --visibility-buffer ignored: value must be 'off', 'on' or 'debug'");
+            }
+
+            bool bMatchedSwRaster = false;
+            if (TryParseSwRasterOption(args[i], swRasterMode, bMatchedSwRaster))
+            {
+                LOG_INFO("ApplicationProcessor runtime option sw_raster=%u",
+                         static_cast<unsigned int>(swRasterMode));
+            }
+            else if (bMatchedSwRaster)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --sw-raster ignored: value must be 'off' or 'on'");
+            }
+
+            bool bMatchedSwRasterMaxPixels = false;
+            if (TryParseSwRasterMaxPixelsOption(args[i], swRasterMaxPixels, bMatchedSwRasterMaxPixels))
+            {
+                LOG_INFO("ApplicationProcessor runtime option sw_raster_max_px=%.2f", swRasterMaxPixels);
+            }
+            else if (bMatchedSwRasterMaxPixels)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --sw-raster-max-px ignored: value must be a positive number");
             }
 
             bool bMatchedToneMap = false;
@@ -1268,6 +1338,8 @@ namespace NorvesLib::Core::Engine
             renderSettings.PathTracingDebug = pathTracingDebugOutput;
             renderSettings.RasterDirectBrdfMode = rasterDirectBrdf;
             renderSettings.VisibilityBuffer = visibilityBufferMode;
+            renderSettings.SwRaster = swRasterMode;
+            renderSettings.SwRasterMaxPixels = swRasterMaxPixels;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
             {

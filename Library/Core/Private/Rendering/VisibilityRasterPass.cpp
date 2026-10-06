@@ -446,8 +446,8 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        // 64bit のバッファの合流は、対応する装置だけ作る。作れなくても ID の描画は使える（合流だけが無い）
-        if (VisibilityMerge::IsSupported(caps))
+        // 64bit のバッファの合流は、ソフトウェアラスタが有効で、対応する装置のときだけ作る。作れなくても ID の描画は使える（合流だけが無い）
+        if (m_bSwRasterEnabled && VisibilityMerge::IsSupported(caps))
         {
             m_Merge.Initialize(m_Device, context.ShaderMgr, m_SecondRenderPass);
         }

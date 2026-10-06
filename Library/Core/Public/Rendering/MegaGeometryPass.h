@@ -10,6 +10,7 @@
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include <cstddef>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -219,6 +220,27 @@ namespace NorvesLib::Core::Rendering
         bool IsVisibilityDrawPlanEnabled() const { return m_bVisibilityPlanEnabled; }
 
         /**
+         * @brief ソフトウェアラスタの振り分けを要求するか（--sw-raster=on。既定は要求しない）
+         *
+         * 要求しても、64bit アトミックが使えない・ビジビリティバッファのラスタが無い・2 パスの遮蔽の判定を使えないときは、
+         * 振り分けず SW_RASTER_FALLBACK reason=<理由> を 1 回ログへ出す。使えるとき、カリングは画面上の半径（画素）が
+         * maxPixels 以下で近平面と交わらないクラスタを、パスごとのソフトの一覧（コマンドの位置）へ積み、計算シェーダーの
+         * 間接 dispatch の引数を書く。ソフトのラスタが無い間は、ハードがすべてのクラスタを描く（コマンドは減らさない）。
+         */
+        void SetSwRasterBinning(bool bRequested, float maxPixels)
+        {
+            m_bSwRasterRequested = bRequested;
+            m_SwRasterMaxPixels = maxPixels;
+        }
+        bool IsSwRasterBinningRequested() const { return m_bSwRasterRequested; }
+
+        /** @brief 最後の RecordFrameCommand がソフトウェアラスタの振り分けを行ったか */
+        bool DidSwRasterBin() const { return m_bSwRasterBinned; }
+
+        /** @brief ソフトの一覧のパスごとの容量（クラスタ数）。振り分けを行っていなければ 0 */
+        uint32_t GetSwRasterListCapacity() const { return m_SwRasterCapacity; }
+
+        /**
          * @brief GBuffer への描画を止めるか（既定は止めない）
          *
          * ビジビリティバッファの幾何の解決が GBuffer を書くとき（--visibility-buffer=on）に true にする。止めても、
@@ -316,7 +338,14 @@ namespace NorvesLib::Core::Rendering
             uint32_t BvhLeafBase;   // 葉の列の先頭
             uint32_t BvhRootCount;  // BVH を持つインスタンスの数（インスタンスの表の先頭からその数。段0の入力の数）
             uint32_t PageRequestCapacity; // ページの要求の列の容量（0 ならこのフレームは要求を書かない）
+            uint32_t bSwRasterEnabled;    // 1 ならソフトウェアラスタの一覧へ振り分ける
+            uint32_t SwRasterCapacity;    // パスごとのソフトの一覧の容量（クラスタ数）
+            float SwRasterMaxPixels;      // 振り分ける画面上の半径（画素）のしきい値
+            float SwRasterNearPlane;      // 近平面までの距離
         };
+        // ソフトウェアラスタの 4 語は、行列 2 つ・視点・平面 6 つ・語 21 個の後ろに並ぶ（cluster_cull.comp の CullUniforms と同じ std140 の位置）
+        static_assert(offsetof(CullUniformData, bSwRasterEnabled) == (16 + 16 + 4 + 24 + 21) * sizeof(uint32_t),
+                      "cluster_cull.comp の CullUniforms と並びが一致しません");
 
         /**
          * @brief インスタンスの表の1要素（GPU送信用。cluster_cull.comp・megageometry.vert の MegaInstance と一致）
@@ -360,7 +389,7 @@ namespace NorvesLib::Core::Rendering
          */
         bool CreateCullResources(RHI::IDevice *device);
 
-        /** @brief カリングのディスクリプタセットの形（cluster_cull.comp の binding 0〜8）。パイプラインとセットが同じ形を使う */
+        /** @brief カリングのディスクリプタセットの形（cluster_cull.comp の binding 0〜13）。パイプラインとセットが同じ形を使う */
         static RHI::DescriptorSetDesc BuildCullDescriptorSetDesc();
 
         /** @brief 描画のディスクリプタセットの形（megageometry.vert/frag の binding 0〜9）。パイプラインとセットが同じ形を使う */
@@ -438,6 +467,13 @@ namespace NorvesLib::Core::Rendering
          * @param queueEntries 列の要素数（uvec2）。段ごとの列と葉の列を1本に並べた合計
          */
         bool EnsureBvhBuffers(uint32_t queueEntries);
+
+        /**
+         * @brief ソフトウェアラスタの一覧のバッファを、パスごとに capacity 個のクラスタを収められる大きさで用意する
+         *
+         * 足りないときだけ作り直し、古いものは m_RetiredBuffers へ回す。
+         */
+        bool EnsureSwRasterBuffer(uint32_t capacity);
 
         /** @brief フレームスロットに、BVH のたどりの段 stageCount 個ぶんの UBO・ディスクリプタセットを用意する */
         bool EnsureBvhStageResources(FrameSlot &slot, uint32_t passIndex, uint32_t stageCount);
@@ -550,6 +586,16 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_DummyVisibilityBuffer;
         RHI::BufferPtr m_DummyStatsBuffer;
 
+        // ソフトウェアラスタの振り分け: パスごとの一覧と間接 dispatch の引数（binding 13）。振り分けないフレームは触らず、
+        // 代わりのバッファ（m_DummyStatsBuffer）を結ぶ
+        bool m_bSwRasterRequested = false;
+        float m_SwRasterMaxPixels = 8.0f;
+        RHI::BufferPtr m_SwRasterBuffer;
+        uint32_t m_SwRasterBufferCapacity = 0; // m_SwRasterBuffer がパスごとに収められるクラスタ数
+        uint32_t m_SwRasterCapacity = 0;       // 最後に振り分けたフレームの、パスごとの一覧の容量
+        bool m_bSwRasterBinned = false;
+        bool m_bSwRasterFallbackLogged = false;
+
         // 「前のフレームで見えた」ビット（全インスタンスで1本）と、その配置（インスタンスの並び順）
         struct VisibilityEntry
         {
@@ -582,6 +628,7 @@ namespace NorvesLib::Core::Rendering
             uint64_t RenderFrameCount = 0; // 書いたときの m_RenderFrameCount
             int64_t EpochFrame = -1;   // 決定的な撮影のエポックからの相対フレーム。エポック前は -1
             bool bPending = false;
+            bool bSwRasterBin = false; // このフレームがソフトウェアラスタの振り分けを行い、統計の 4〜7 が有効
         };
         static constexpr uint32_t StatsSlotCount = 4;
         bool m_bStatsEpochActive = false;

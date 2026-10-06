@@ -76,11 +76,12 @@ namespace NorvesLib::Core::Rendering
      *   → 2 パス目のカリング → 記録を書く計算 → [ID の render pass: MegaGeometry の 2 パス目]
      * 1 回の判定のとき・移さないとき（GBuffer が先に描く構成）は、MegaGeometry の全部と塊を 1 回の render pass で描く。
      *
-     * 装置が 64bit のバッファへの atomicMin に対応するとき（bShaderBufferInt64Atomics）は、ソフトウェアラスタの結果を受ける
+     * ソフトウェアラスタが有効（SetSwRasterEnabled。--sw-raster=on）で、装置が 64bit のバッファへの atomicMin に対応するとき
+     * （bShaderBufferInt64Atomics）は、ソフトウェアラスタの結果を受ける
      * 64bit のバッファ（画面の画素数 × uint64。深度 + ID）を 1 つ持ち、フレームの最初に空で埋め、合流のパス（VisibilityMerge。
      * 全画面で、空でない画素だけ LessOrEqual で ID・深度へ書く）を「1 回目の render pass の後・HZB の前」と「2 回目の
      * render pass の後」に走らせる（1 回の判定では描画の後に 1 回）。まだ誰もバッファへ書かないので、画は変わらない。
-     * 対応しない装置・予備の経路（ビジビリティバッファが無効）では、資源もパスも作らない。
+     * ソフトウェアラスタが無効（既定）・対応しない装置・予備の経路（ビジビリティバッファが無効）では、資源もパスも作らない。
      *
      * 既定は無効（SceneView::SetupDeferredPipeline の VisibilityBufferMode が Off）。
      */
@@ -114,7 +115,15 @@ namespace NorvesLib::Core::Rendering
         void SetResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
         const VisibilityResolvePass* GetResolvePass() const { return m_ResolvePass; }
 
-        /** @brief 64bit のバッファの合流（対応しない装置・初期化に失敗したときは IsReady が false） */
+        /**
+         * @brief ソフトウェアラスタを使うか（既定は使わない。Initialize の前に決める）
+         *
+         * false の間は、64bit のバッファとその埋め・合流のパスを作らない（1280x720 で約 7 MB と毎フレーム約 0.03 ms を使わない）。
+         */
+        void SetSwRasterEnabled(bool bEnabled) { m_bSwRasterEnabled = bEnabled; }
+        bool IsSwRasterEnabled() const { return m_bSwRasterEnabled; }
+
+        /** @brief 64bit のバッファの合流（無効・対応しない装置・初期化に失敗したときは IsReady が false） */
         const VisibilityMerge& GetMerge() const { return m_Merge; }
 
         /** @brief 最後の Execute の内訳 */
@@ -367,6 +376,7 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_RecordArgsPipeline;
         // 64bit のバッファ（深度 + ID）の ID・深度への合流（対応する装置だけ初期化する）
         VisibilityMerge m_Merge;
+        bool m_bSwRasterEnabled = false;
         // ワイヤーフレーム（DebugViewMode::Wireframe）の線の描き方。3 種とも揃ったときだけ使う（development ビルドだけ作る）
         RHI::PipelinePtr m_MegaWireframePipeline;
         RHI::PipelinePtr m_MeshWireframePipeline;

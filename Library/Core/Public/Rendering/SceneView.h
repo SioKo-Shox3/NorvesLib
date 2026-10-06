@@ -8,6 +8,7 @@
 #include "PathTracingTransportScope.h"
 #include "RasterDirectBrdf.h"
 #include "VisibilityBufferMode.h"
+#include "SwRasterMode.h"
 #include "Rendering/AutoExposure.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -237,13 +238,18 @@ namespace NorvesLib::Core::Rendering
          * @param visibilityBuffer ビジビリティバッファの使い方（既定は On。On は不透明の描画を VisBuffer.Id へ描き、
          *        幾何の解決が GBuffer を書く。装置が対応しないときは今の GBuffer の描画へ戻る。Off は戻り先だけを使う。
          *        Debug は GBuffer の描画に加えて VisBuffer.Id へも描く）
+         * @param swRaster ソフトウェアラスタの使い方（既定は Off。On は画面上で小さい MegaGeometry のクラスタをソフトの一覧へ
+         *        振り分ける。ビジビリティバッファが Off のときは振り分けない）
+         * @param swRasterMaxPixels 振り分けるクラスタの画面上の半径（画素）のしきい値
          *
          * Shadow/GBuffer/Lightingの後に半透明ForwardPassを差し込み、
          * SSRを含むPostProcessStackの前でSceneColorへ合成します。
          */
         void SetupDeferredPipeline(SceneRenderer *sceneRenderer,
                                    RasterDirectBrdf directBrdf = RasterDirectBrdf::Analytic,
-                                   VisibilityBufferMode visibilityBuffer = VisibilityBufferMode::On);
+                                   VisibilityBufferMode visibilityBuffer = VisibilityBufferMode::On,
+                                   SwRasterMode swRaster = SwRasterMode::Off,
+                                   float swRasterMaxPixels = DefaultSwRasterMaxPixels);
 
         /**
          * @brief 明示選択時だけ独立パストレーシングパイプラインを設定する。

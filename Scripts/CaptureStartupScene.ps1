@@ -187,6 +187,14 @@ param(
     # Debug は GBuffer の描画に加えて ID も描き、ID を色にして画面へ表示する（--visibility-buffer=debug。検証用）。
     [ValidateSet('Off', 'On', 'Debug')]
     [string]$VisibilityBuffer = 'On',
+    # ソフトウェアラスタ（既定は Off）。On は画面上で小さい MegaGeometry のクラスタをソフトの一覧へ振り分ける（--sw-raster=on。
+    # 64bit アトミックが無い・-VisibilityBuffer Off のときは振り分けず SW_RASTER_FALLBACK をログへ出す）。Off は今のハードのラスタだけ
+    # （--sw-raster=off）。各撮影のログの SW_RASTER_BIN・SW_RASTER_FALLBACK を metrics.json の sw_raster へ書く。
+    [ValidateSet('Off', 'On')]
+    [string]$SwRaster = 'Off',
+    # ソフトウェアラスタへ振り分けるクラスタの画面上の半径（画素）のしきい値（--sw-raster-max-px。0 は渡さず、ゲームの既定の 8 画素を使う）。
+    [ValidateRange(0.0, 4096.0)]
+    [double]$SwRasterMaxPx = 0.0,
     # GBuffer の検証表示（既定は Off）。Normal・Velocity・Depth・Albedo・Material は最後のシーンの色を GBuffer の法線・速度・深度・アルベド・材質の色で置き換える
     # （環境変数 NORVES_GBUFFER_DEBUG。統計が有効な Debug・RelWithDebInfo だけ）。-VisibilityBuffer On と Off で同じ値を撮り比べる用。
     [ValidateSet('Off', 'Normal', 'Velocity', 'Depth', 'Albedo', 'Material')]
@@ -831,6 +839,12 @@ foreach ($view in $shots)
     }
     # ビジビリティバッファは既定で有効だが、撮影の条件を明示するため、どのモードでも引数を渡す。
     $arguments += "--visibility-buffer=$($VisibilityBuffer.ToLowerInvariant())"
+    # ソフトウェアラスタは既定が Off だが、撮影の条件を明示するため、どちらでも引数を渡す。しきい値は指定したときだけ渡す
+    $arguments += "--sw-raster=$($SwRaster.ToLowerInvariant())"
+    if ($SwRasterMaxPx -gt 0.0)
+    {
+        $arguments += ('--sw-raster-max-px=' + $SwRasterMaxPx.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))
+    }
     # デバッグの表示は既定が Normal なので、Clusters・Lod・Wireframe のときだけ引数を渡す。
     if ($DebugView -ne 'Normal')
     {
@@ -927,6 +941,7 @@ foreach ($view in $shots)
     $gpuDriver = $null
     $geometryPages = $null
     $occlusionStats = $null
+    $swRasterStats = $null
     $stressMaterials = $null
     $stressGeometryInfo = $null
     $skinnedProbeInfo = $null
@@ -998,6 +1013,28 @@ foreach ($view in $shots)
                 occluded = [uint64]$lastOcclusion[4].Value
                 occluded_max = [uint64]$maxOccluded
                 lines = $occlusionLines.Count
+            }
+        }
+        # SW_RASTER_BIN（ソフトウェアラスタへの振り分けの 1 フレームの数。1 パス目・2 パス目の一覧へ積んだ数・ハードだけの数・満杯で積めなかった数）。
+        # 最後の値と、一覧へ積んだ数（1 パス目 + 2 パス目）の最大を残す。振り分けないときはログが無く、理由は SW_RASTER_FALLBACK に出る。
+        $swRasterLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SW_RASTER_BIN pass1=(\d+) pass2=(\d+) hw=(\d+) overflow=(\d+)')
+        $swRasterFallback = @(Select-String -LiteralPath $viewLogPath -Pattern 'SW_RASTER_FALLBACK reason=(\S+)')
+        if ($swRasterLines.Count -gt 0 -or $swRasterFallback.Count -gt 0)
+        {
+            $swRasterStats = [ordered]@{ lines = $swRasterLines.Count; fallback_reason = $null }
+            if ($swRasterFallback.Count -gt 0)
+            {
+                $swRasterStats.fallback_reason = $swRasterFallback[0].Matches[0].Groups[1].Value
+            }
+            if ($swRasterLines.Count -gt 0)
+            {
+                $lastSwRaster = $swRasterLines[$swRasterLines.Count - 1].Matches[0].Groups
+                $maxSwRaster = ($swRasterLines | ForEach-Object { [uint64]$_.Matches[0].Groups[1].Value + [uint64]$_.Matches[0].Groups[2].Value } | Measure-Object -Maximum).Maximum
+                $swRasterStats.pass1 = [uint64]$lastSwRaster[1].Value
+                $swRasterStats.pass2 = [uint64]$lastSwRaster[2].Value
+                $swRasterStats.hw = [uint64]$lastSwRaster[3].Value
+                $swRasterStats.overflow = [uint64]$lastSwRaster[4].Value
+                $swRasterStats.binned_max = [uint64]$maxSwRaster
             }
         }
         $stressLine = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_TEXTURES materials=(\d+) of (\d+)')
@@ -1171,6 +1208,7 @@ foreach ($view in $shots)
             gpu_driver = $gpuDriver
             geometry_pages = $geometryPages
             mega_occlusion = $occlusionStats
+            sw_raster = $swRasterStats
             stress_materials = $stressMaterials
             stress_geometry = $stressGeometryInfo
             skinned_probe = $skinnedProbeInfo

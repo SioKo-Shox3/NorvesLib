@@ -829,9 +829,14 @@ namespace NorvesLib::Core::Rendering
 
     void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer,
                                           RasterDirectBrdf directBrdf,
-                                          VisibilityBufferMode visibilityBuffer)
+                                          VisibilityBufferMode visibilityBuffer,
+                                          SwRasterMode swRaster,
+                                          float swRasterMaxPixels)
     {
         const bool bVisibilityBuffer = IsVisibilityBufferActive(visibilityBuffer);
+        // ソフトウェアラスタの振り分けは、ビジビリティバッファの ID のラスタが無いと意味が無いので、そのときだけ要求する。
+        // 要求しても使えない理由（64bit アトミックが無いなど）は MegaGeometryPass が SW_RASTER_FALLBACK として 1 回だけログへ出す
+        const bool bSwRaster = bVisibilityBuffer && swRaster == SwRasterMode::On;
         // On のときは、ビジビリティバッファの解決が GBuffer を書く（GBufferPass・MegaGeometryPass は GBuffer の描画を止める）。
         // Debug は今の GBuffer の描画を残したまま、ID の検証表示だけを足す
         const bool bVisibilityResolve = visibilityBuffer == VisibilityBufferMode::On;
@@ -887,6 +892,7 @@ namespace NorvesLib::Core::Rendering
         megaGeometryPass->SetSceneRenderer(sceneRenderer);
         megaGeometryPass->SetVisibilityDrawPlanEnabled(bVisibilityBuffer);
         megaGeometryPass->SetSkipGBufferDraw(bVisibilityResolve);
+        megaGeometryPass->SetSwRasterBinning(swRaster == SwRasterMode::On, swRasterMaxPixels);
         MegaGeometryPass *megaGeometryPassPtr = megaGeometryPass.get();
         AddPass(std::move(megaGeometryPass));
 
@@ -899,6 +905,7 @@ namespace NorvesLib::Core::Rendering
             auto visibilityRasterPass = MakeUnique<VisibilityRasterPass>();
             visibilityRasterPass->SetMegaGeometryPass(megaGeometryPassPtr);
             visibilityRasterPass->SetSkinningComputePass(skinningComputePassPtr);
+            visibilityRasterPass->SetSwRasterEnabled(bSwRaster);
             visibilityRasterPassPtr = visibilityRasterPass.get();
             AddPass(std::move(visibilityRasterPass));
         }
