@@ -8,8 +8,8 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR86: 明示の影響数縮約/CUBICSPLINE焼込/morph dropと診断を接続済み。256関節はGR82 Stage Bと同時。
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
 - GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
-- GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。GR83の実owner接続でM9を明示clip選択へ移行中。
-- GR83/GR84: GR84のBVH source/target FK・名前/座標/回転対応・全sample clip/report・NVSKEL cook/package/実Sampler・Role Profile bytesと実CLI/file依存を実Windows CPUで受入済み。GR83は所有CPUローダ・原子的な一括公開・実workerからownerへのdelegate配送まで受入済みで、実ApplicationProcessor/M9へ接続中。自動rest補正・Stage Bの分離資産ローダ・GPU/実物受入れは未完。
+- GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。GR83の実owner/M9経路で明示clip選択をCPU検証済み。
+- GR83/GR84: GR84のBVH source/target FK・名前/座標/回転対応・全sample clip/report・NVSKEL cook/package/実Sampler・Role Profile bytesと実CLI/file依存を実Windows CPUで受入済み。GR83は所有CPUローダ・原子的な一括公開・実workerからownerへのdelegate配送まで受入済みで、実ApplicationProcessor/M9への配線・CPU helper・Game両構成ビルドまで検証済み。自動rest補正・Stage Bの分離資産ローダ・GPU/実物受入れは未完。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
 S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
@@ -1040,3 +1040,13 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 実装候補: owner sessionと実loop、M9の弱参照一回event・明示clip・activation境界、実World/Scope attach helperを接続。Python source8件をnormal/-Oで各合格、workflow YAML parse・新規C++ BOM/CRLF・既存行末比較・diff whitespaceを確認。固定Sampler2原本6095bytes/SHAを保持。Release63とDebugのCPU契約、Game両構成compile、既存cook/CLI比較はCI待ち。
 
 - 初回Windows CI: e02bd284 / run37516423509 / job112450358893はRelease bundle buildで失敗。新SkeletalAssetSessionTestの3箇所がconst lvalueをSetClip(rvalue専用)へ渡しMSVC C2664になった。所有copyを明示生成するfixtureだけを修正し、productionは変更しない。CPU63/Debug/Gameと後段CLIはskippedで未検証。失敗run原本は別archiveとして保持する。
+
+### GR83 製品owner/M9接続のCPU受入（2026-10-07 JST）
+
+- Done: a082707cc00b2d5d0c56c3e2642b455bb8fa8706 / tree 825dcb674755c992b4e707fb2baaf83f37fbfbe1 / run 37519489315 / job 112460910508。実ApplicationProcessorのBegin・pause外配送・Close/Drain・consumer解体後End、owned/borrowed Registry、M9の一回eventと明示clip・activation境界を接続した。
+- 検証: Release 63、owner両構成20 child processと20 case marker、Python source 8件×2、M9 ContractOnly Allのprocess自己試験、Game Debug/Release compile/linkを確認。実Game起動・GPU描画・XAudio2音声・既定画面撮影ではない。未archiveのGame binary hashはCI attestationとして区別する。
+- 互換: 旧62 cpp、runtime 28子process/36 marker、既存Debug/loader/Profile/publication/Registry/finite/model、固定4×6095 byte capture、旧89出力・25+15 CLI・12 metadata・17/29 child退出・GR84別58 process/125 file・PE-CNG/SHELL32を保持。
+- 証拠: 10比較器normal/-Oの計20回でreceipt/stdout一致・stderr空。親readonly replay exit0、711 payload・23原本API・6 ZIP・427 source一致。summary SHA256 0919122fd6ab9efaae432796d532a4ac97cacd76ebce5660714dad19936e408e、inventory SHA256 88444cbd7eb58b15f07ba499d13f2373379cfb5e66372de18482d439781d3bac。
+- 初回失敗: e02bd284 / run 37516423509のC2664をfixtureの所有copy3箇所だけで修正。productionは初回から不変。初回548 payloadは失敗のまま別保存、親の失敗保存replayもexit0。latest 2 paths/Library 0、累積26 paths/Library 9。
+- Notes: 元golden生成時のSampler sourceと、受入済み抽出後sourceのhashは別のimmutable参照で照合した。原本ログのstep BOM・upload path継続行・CRLFの書式対応を比較器へ加え、変更前比較器と失敗stderr/patchを保持する。golden・native gateは変更していない。
+- 範囲: 実Appの配線位置とGameビルド、実production CPU helperの寿命・取消・attachまで。実App lifecycleのOS/GPU実行、M9 t0/t1・negative control・音声drain・実犬/Blender品質は別受入。次はGR82 Stage Bのauthor-rest付きClipBankと安全束縛へ進む。
