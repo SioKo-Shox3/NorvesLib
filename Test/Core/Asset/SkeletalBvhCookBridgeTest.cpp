@@ -794,24 +794,26 @@ namespace
     {
         auto parsed = Parse(cooked.Cook.NvskelBytes);
         auto& data = parsed.Data.Skeletal;
-        Core::SkeletonResource skeleton;
-        Core::AnimationClipResource clip;
-        Core::SkinnedMeshResource mesh;
-        skeleton.Initialize();
-        clip.Initialize();
-        mesh.Initialize();
+        Core::ResourceRegistry registry;
+        CHECK(registry.Initialize());
+        auto skeleton = registry.CreateTransient<Core::SkeletonResource>("RoleSampleSkeleton");
+        auto clip = registry.CreateTransient<Core::AnimationClipResource>("RoleSampleClip");
+        auto mesh = registry.CreateTransient<Core::SkinnedMeshResource>("RoleSampleMesh");
+        CHECK(skeleton && clip && mesh && mesh->GetResourceId() != 0);
         const auto& v = data.MeshNodeGlobalTransform;
         const M::Matrix4x4 matrix(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12],
                                   v[13], v[14], v[15]);
-        mesh.SetVertices(std::move(data.Vertices));
-        mesh.SetIndices(std::move(data.Indices));
-        mesh.SetSubmeshTables(std::move(data.SubMeshes), std::move(data.MaterialSlots));
-        mesh.SetMeshNodeGlobalTransform(v);
-        skeleton.SetJoints(std::move(data.Joints));
-        clip.SetClip(std::move(data.Clips[cooked.ClipIndex]));
-        CHECK(skeleton.Load() && clip.Load() && mesh.Load());
+        mesh->SetVertices(std::move(data.Vertices));
+        mesh->SetIndices(std::move(data.Indices));
+        mesh->SetSubmeshTables(std::move(data.SubMeshes), std::move(data.MaterialSlots));
+        mesh->SetMeshNodeGlobalTransform(v);
+        skeleton->SetJoints(std::move(data.Joints));
+        clip->SetClip(std::move(data.Clips[cooked.ClipIndex]));
+        CHECK(skeleton->Load());
+        CHECK(clip->Load());
+        CHECK(mesh->Load());
         A::SkeletalPoseSnapshot pose;
-        CHECK(A::SkeletalAnimationSampler::Sample(skeleton, clip, mesh, time, matrix, pose));
+        CHECK(A::SkeletalAnimationSampler::Sample(*skeleton, *clip, *mesh, time, matrix, pose));
         return pose;
     }
     void RoleCookContracts()
