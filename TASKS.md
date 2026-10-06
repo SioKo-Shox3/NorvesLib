@@ -2712,8 +2712,10 @@
 - result: code a082707c / tree 825dcb67 / run 37519489315 attempt 1 / job 112460910508。Release 63、owner の Debug/Release 計20 child process・20 case marker、実App source 8件×normal/-O、M9 ContractOnly All、Game両構成のcompile/linkを確認。Game execution=not_run。旧62 cppとruntime/finite/Registry/loader/Profile、固定4×6095 byte、旧89出力・25+15 CLI・12 metadata・17/29 child退出・GR84の58 process/125 file・PE-CNG/SHELL32を維持。20 checkerのnormal/-O receipt/stdout一致・stderr空、親readonly replay exit0・711 payload一致。初回run 37516423509のC2664は新fixture3行だけを修正し、失敗548 payloadは別保持。latest 2 paths/Library 0、累積26 paths/Library 9。実owner接続とCPU helperを受入、Game起動・GPU・XAudio2・既定撮影・実キャラ・Stage Bは未受入。
 
 ## G2-GR82-B1-CLIPBANK-REST-BIND-POSE: 作者rest付きv1 ClipBankを安全に束縛して実姿勢まで評価する
-- status: doing
+- status: done
 - done-when: 新しい明示rig importで作者のlocal TRSを保持し、v1 ClipBankの必須snapshotとして保存・parseする。名前順の正準topology IDと完全な名前/親照合、現在rigとの全joint rest差検査を経て、明示ownerの未登録Resourceと実Samplerまで接続する。既定は許容超過を拒否し、明示override時だけ差量を所有reportで返して通す。
 - verify: 独立wire literal/hash/oracle、作者source破棄後のsnapshot所有、joint順置換/Unicode/親違い/hash衝突、全joint Translationと未アニメjointのT/R/nonuniform scale差、q/-q、境界とoverrideのnegative control、壊れたsection/範囲/有限予算、owner/失敗時outとRegistry保持、実Resource/FK/skin結果。旧0.x reader/writer/cook/CLIと固定Sampler出力、既存GR83 owner/runtimeを維持し、新v1は別期待値で認証する。
 - policy: topologyは厳密UTF8 unsigned byte名前順＋正準親indexのFNV-1a64、restを含めず全文も比較。全clipに作者snapshot参照を必須化。暫定許容はT 1e-5m、R 1e-4rad、各軸abs(log scale比) 1e-5で呼出し側から設定可能。初回profileは直接TRS・正scale・単一root・外部親なし・1mesh/1skin・128以下。旧入口は無変更。
 - stop-when: 旧cookedから失われた作者restを推測する、IDだけで束縛する、overrideで構造破損も通す、旧goldenを再生成する、helperだけでDoneとする、三path公開/async/cache・Armature/256・GPU/DCCまでこの一件へ混ぜる。骨格共有/ゲーム固有rigは未定のまま。
+
+- result: code 7b423fb1 / tree c10b19de / run 37537055880 attempt 1 / job 112520629199。Release65と新2membersのdirect Debug、codec/binding各3 case markerを両構成で確認。独立literalの992byte bank×2・rest-binding JSON×2・oracle8件×normal/-O、owner20/runtime28 child、旧63 cpp・固定4×6095byte・旧cook/CLI/PE証拠を保持。22 checkerのreceipt/stdout一致・stderr空、親readonly replay exit0・788 payload/448 source/21原API/6 ZIP一致。初回small macro衝突はtest3識別子だけ修正し、失敗599 payloadは別保持。latest2 paths/Library0、累積31 paths/Library19。作者rig→v1保存/所有parse→全名/topology/rest guard→明示override/差report→未登録owner Resource/実Samplerを受入。3資産cold-load/publication/runtime・Armature/256・GPU/DCC/Game実行は未受入。混在Line/Step/Bakeの専用累積境界試験は未網羅として残す。

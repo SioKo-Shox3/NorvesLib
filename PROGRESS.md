@@ -8,7 +8,7 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR86: 明示の影響数縮約/CUBICSPLINE焼込/morph dropと診断を接続済み。256関節はGR82 Stage Bと同時。
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
 - GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
-- GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bの3資産分離・作成時rest pose/束縛検査は未完。GR83の実owner/M9経路で明示clip選択をCPU検証済み。
+- GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bは作者rest付きv1 ClipBankの保存・安全束縛・明示override/差report・実姿勢評価までCPU受入済み。Skeleton/SkinnedMeshの分離wire・三パス読込・Armature/256は残る。GR83の実owner/M9経路の明示clip選択もCPU検証済み。
 - GR83/GR84: GR84のBVH source/target FK・名前/座標/回転対応・全sample clip/report・NVSKEL cook/package/実Sampler・Role Profile bytesと実CLI/file依存を実Windows CPUで受入済み。GR83は所有CPUローダ・原子的な一括公開・実workerからownerへのdelegate配送まで受入済みで、実ApplicationProcessor/M9への配線・CPU helper・Game両構成ビルドまで検証済み。自動rest補正・Stage Bの分離資産ローダ・GPU/実物受入れは未完。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
@@ -1062,3 +1062,13 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 検証準備: 独立v1 oracle8件と既存owner source8件をnormal/-Oで各合格。新wireの独立literalは992 bytes/SHA256 43541886df2bce92e81697ed0b0d0ac6b1285201cf20470089ad3190761af106。legacy Sampler新分岐を除去するとbase dd24全文がwhitespace正規化で一致（11171428e0e187c5ecf15f3279d2f49c4ab6226842012008b9140b7ca06c63c6）。YAML・BOM/CRLF・行末比較も確認。Release65/新2束のDebug・実出力oracle・既存cook/CLIはCI待ち。LINEAR/STEPとBakeが同一assetで混在する専用の累積境界試験は残す（残量の実装は共通）。
 
 - 初回B1 Windows CI: code 53f17969 / run 37534505686 / job 112511925333はRelease buildで失敗。新CookedClipBankV1Testの変数smallがWindows macroと衝突しC2628等になった。fixture変数をlowLimitsへ変更し、production/旧test/goldenは不変。Sampler/CPU65/Debug/oracle/Game/旧CLI後段はskippedで未実行。失敗599 payloadは別保持し、親の失敗readonly replayもexit0/stderr0で確認した。
+
+### GR82 Stage B1のCPU受入（2026-10-07 JST）
+
+- Done: code 7b423fb169ac57424348085bb42d2a676d19d4d3 / tree c10b19dec24d591aa9a4a0bb29a90a354530a9d5 / run 37537055880 / job 112520629199。作者TRSの所有import、author-rest必須v1 ClipBankの保存/parse、正準topologyと全jointの差検査、既定拒否/明示override、未登録owner Resourceと実Samplerまで接続した。
+- 検証: Release65、新2membersのdirect Debug、codec3/binding3のcase markerを各構成で確認。新v1の992byte bankをDebug/Releaseとも独立literalと一致確認（SHA256 43541886df2bce92e81697ed0b0d0ac6b1285201cf20470089ad3190761af106）。native rest-binding JSON2本とoracle8件×normal/-Oも確認。
+- 安全境界: 同名同階層/順序違い、全joint Translation、未アニメjoint、T/R/nonuniform scaleと閾値、q/-q、tiny/huge q・非正Scale拒否、複数author snapshot、owner/未登録失敗原子性を反証。importのcount・共有accessor・LINEAR/STEP/Bake sample・外部末尾/累積file/data URI増幅は明示予算内に制限する。全process RSSや任意入力の実行時間の保証ではない。
+- 互換: 旧63 cpp、owner20/runtime28 child、既存Debug/loader/Profile/publication/Registry/finite/model、Game両構成build-only、旧4×6095byte capture、旧89出力/25+15 CLI/12 metadata/17+29 child/GR84別58 process・125 file/PE-CNG/SHELL32を維持。legacy Sampler分岐復元後の全文正規化一致と、変更された新分岐の別oracleを分離した。
+- 証拠: 11比較器normal/-Oの計22回でreceipt/stdout一致・stderr空。親自身readonly replay exit0、788 payload・448 source・21原API・6 ZIPを確認。summary SHA256 d7e0a27e33ae696cbc73f338bca719ffd571f247e7f215ab65e1c287809dcf4f、inventory SHA256 465c95f53411b1c0e5cb10de689159efbccb76a9922e22f9a051b4ce09278bc1。
+- 初回失敗: 53f17969 / run 37534505686はtest変数smallとWindows macroの衝突。lowLimitsへの3識別子置換と文書だけを修正し、全Library/AssetCook productionは初回と不変。失敗599 payloadは別保存。latest2 paths/Library0、累積31 paths/Library19。比較器のstdlib import補正は元script/stderr/patchを保持し、原本やnative gateを変更していない。
+- Notes: B1はdirect TRS・正scale・single root・外部親なし・128以下のprofile。失われた過去restの復元、三資産cold-load/publication/runtime、Armature/clip-only/256、GPU/DCC/実犬品質とGame実行はまだ受入れていない。混在Line/Step/Bake専用累積境界試験は残る。次は残二roleと同snapshot cold-loadの接続を行う。
