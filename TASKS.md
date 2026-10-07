@@ -345,11 +345,19 @@
 - stop-when: 作者frameを現在ROOT/IBM/t0から埋める、旧profileを緩める、独立pose期待を実装都合で変える、CPU拡張のため描画側を黙って変える、clip-only/256/CLI/GR96を同時に含める。実犬/DCC/GPU受入とCPU合成試験を分ける。
 
 ## G2-MERGE: 描画改善mainとの統合
-- status: doing
+- status: done
 - done-when: 既存G2とmainの二形式cook・runtimeを保持し、統合の確認後mainへマージする
 - verify: 意味上の衝突のCPU回帰と区切りの検査。毎変更CIなし
 - next: G3-GR12。ロードマップの依存順で再生基盤から実装する
 
+- result: 2親merge4da8031d。run95のCore/AssetCookビルド成功、追加テストの名前解決修正済み。統合後の全件実行は未検証。詳細はPROGRESS.md。
+
 ## 完了済みタスクの履歴
 
 完了済み455件は[履歴一覧](Docs/History/2026-10-07-G2Integration/README.md)へ移動。todo・doing・blocked・backlogはこのファイルに残しています。
+
+## G3-GR12: 姿勢評価を事前計算と再利用scratchへ整理する
+- status: todo
+- done-when: legacy/splitの既存契約を維持し、resource派生cache、LocalPose/FK/palette/JointModelMatrices、二分キー探索、関節AABB境界、直接経路のウォームアップ後確保0を揃える。Sample wrapperと正確な境界oracle、純関数SkinPositionを残す
+- verify: 既存SkeletalAnimationSamplingTest bundleの独立oracle・不正入力・キー境界・保守的bounds・scratch安定・実測をまとめる。変更ごとのCIなし。GPU/DCCは別枠
+- notes: G3-S1/S2/S10の推奨A。split IBMはmesh所有。巨大な添字やtiny weight、legacyとsplitの異なる検証を同一化しない。詳細は管理外Docs/Plans/G3Implementation.md

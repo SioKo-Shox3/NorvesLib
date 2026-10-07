@@ -309,7 +309,7 @@ namespace ImportedRuntimeTest
         for (uint32_t algorithm : {0u, 2u, 99u})
         {
             auto invalid = Mesh();
-            Put(invalid, V0::HeaderOffset::ClusterAlgorithmId, algorithm, 4);
+            Put(invalid, A::CookedMeshFormatV0::HeaderOffset::ClusterAlgorithmId, algorithm, 4);
             const auto result = A::ParseCookedMesh(A::AssetBlob::CopyBytes(invalid));
             CHECK(result.Status == A::CookedMeshParseStatus::UnsupportedVersion);
         }
