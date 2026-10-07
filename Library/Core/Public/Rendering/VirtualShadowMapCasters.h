@@ -32,8 +32,14 @@ namespace NorvesLib::Core::Rendering
     {
         /** @brief 1 フレームの投影物の塊の記録の上限。超えた塊は書かずに数える */
         constexpr uint32_t MAX_CASTER_CHUNKS = 32768;
-        /** @brief 展開のインスタンスの容量（バッファの大きさ = この数 × 16 バイト）。超えた塊は展開が描かずに溢れとして数える */
-        constexpr uint32_t RASTER_INSTANCE_CAPACITY = 1u << 19;
+        /**
+         * @brief 展開のインスタンスの容量（バッファの大きさ = この数 × 16 バイト = 16 MiB）。超えた塊は展開が描かずに溢れとして数え、
+         *        その範囲の dirty のページには再描画の印（PAGE_ENTRY_RETRY）を付ける
+         *
+         * 負荷モード 300 個の最初の約 40 フレーム（全ページが新しく割り当てられる）の要求は最大 885457 インスタンス、
+         * --vsm-cache=off の負荷モード 300 個は最大 885316 で、2^19（524288）を超えていた。
+         */
+        constexpr uint32_t RASTER_INSTANCE_CAPACITY = 1u << 20;
         /** @brief 手続きメッシュの塊の境界を持つ、インデックスのブロックの大きさ（128 三角形 × 3）。メッシュの先頭から整列する */
         constexpr uint32_t MESH_BLOCK_INDICES = MESH_CHUNK_MAX_TRIANGLES * 3u;
 

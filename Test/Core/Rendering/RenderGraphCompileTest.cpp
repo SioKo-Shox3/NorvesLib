@@ -6255,7 +6255,7 @@ namespace
         return count;
     }
 
-    // 対応した装置では、プール（4096 ページ = 256 MiB・1 ページ 64 KiB）・ページの表（段 × 128 × 128 の uint32）・要求のビット列・
+    // 対応した装置では、プール（5120 ページ = 320 MiB・1 ページ 64 KiB）・ページの表（段 × 128 × 128 の uint32）・要求のビット列・
     // 空きページの一覧・統計を 1 回ずつ作り、深度の後・読むパスの前に並べて名前で公開する。
     // 最初の実行だけがプールを 1.0 のビット・表を 0 で埋め、要求と統計は毎フレーム 0 から数える。台帳（VRAM_LEDGER）は作成時に 1 回ずつ
     void TestVirtualShadowMapPassCreatesAndPublishesResources()
@@ -6280,7 +6280,7 @@ namespace
         VirtualShadowMapPass pass;
         assert(pass.Initialize(run.Context));
         assert(pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::None);
-        assert(pass.GetPoolPages() == 4096);
+        assert(pass.GetPoolPages() == 5120);
 
         // 資源の大きさと用途
         struct Expected
@@ -6289,12 +6289,12 @@ namespace
             uint64_t Bytes;
         };
         const Expected expected[] = {
-            {"VSM_PhysicalPool", 4096ull * 65536ull},
+            {"VSM_PhysicalPool", 5120ull * 65536ull},
             {"VSM_PageTable", 10ull * 128ull * 128ull * 4ull},
             {"VSM_RequestBits", 10ull * 128ull * 128ull / 8ull},
-            {"VSM_FreeList", (4096ull * 3ull + 1ull) * 4ull},
+            {"VSM_FreeList", (5120ull * 3ull + 1ull) * 4ull},
             {"VSM_Stats", 212ull},
-            {"VSM_DirtyList", (4096ull + 4ull) * 4ull},
+            {"VSM_DirtyList", (5120ull + 4ull) * 4ull},
         };
         for (const Expected& entry : expected)
         {
@@ -6304,7 +6304,7 @@ namespace
             assert((record->Desc.Usage & RHI::ResourceUsage::StorageBuffer) == RHI::ResourceUsage::StorageBuffer);
             assert((record->Desc.Usage & RHI::ResourceUsage::TransferDst) == RHI::ResourceUsage::TransferDst);
         }
-        assert(VirtualShadowMap::PoolBytes(4096) == 256ull * 1024ull * 1024ull);
+        assert(VirtualShadowMap::PoolBytes(5120) == 320ull * 1024ull * 1024ull);
         assert(VirtualShadowMap::PAGE_BYTES == 64ull * 1024ull);
         // 6 つの資源と、統計の読み戻しの 4 枠
         assert(CountVsmBufferCreations(*run.Device) == 10);
@@ -6314,14 +6314,14 @@ namespace
         const BufferCreationRecord* poolRecord = FindBufferCreation(*run.Device, "VSM_PhysicalPool");
         assert((poolRecord->Desc.Usage & RHI::ResourceUsage::BufferDeviceAddress) == RHI::ResourceUsage::BufferDeviceAddress);
 
-        // 空きページの一覧: 先頭が数、続いて 0 〜 4095
+        // 空きページの一覧: 先頭が数、続いて 0 〜 5119
         {
             const FakeBuffer* freeList = static_cast<const FakeBuffer*>(pass.GetFreeList().get());
             assert(freeList->UpdateCallCount == 1);
-            assert(freeList->LastUpdateBytes.size() == (4096u * 3u + 1u) * 4u);
+            assert(freeList->LastUpdateBytes.size() == (5120u * 3u + 1u) * 4u);
             const uint32_t* words = reinterpret_cast<const uint32_t*>(freeList->LastUpdateBytes.data());
-            assert(words[0] == 4096u);
-            for (uint32_t page = 0; page < 4096u; ++page)
+            assert(words[0] == 5120u);
+            for (uint32_t page = 0; page < 5120u; ++page)
             {
                 assert(words[page + 1u] == page);
             }
@@ -6329,7 +6329,7 @@ namespace
 
 #if NORVES_ENABLE_LOGGING
         // 台帳は作成時に 1 回ずつ。VSM_FALLBACK は出ない
-        assert(logs.Count("VRAM_LEDGER vsm_pool pages=4096 mb=256.000") == 1);
+        assert(logs.Count("VRAM_LEDGER vsm_pool pages=5120 mb=320.000") == 1);
         assert(logs.Count("VRAM_LEDGER vsm_page_table mb=0.625") == 1);
         assert(logs.Count("VSM_FALLBACK") == 0);
 #endif
@@ -6352,7 +6352,7 @@ namespace
             // 最初の実行だけプールを 1.0 のビットで埋め、続いて毎フレームの記録が要求・ページの表・統計を 0 から数え直す
             const auto& fills = run.CommandList.VsmFills;
             assert(fills.size() == 4);
-            assert(IsDebugName(fills[0].BufferName, "VSM_PhysicalPool") && fills[0].SizeBytes == 4096ull * 65536ull &&
+            assert(IsDebugName(fills[0].BufferName, "VSM_PhysicalPool") && fills[0].SizeBytes == 5120ull * 65536ull &&
                    fills[0].Value == 0x3F800000u);
             assert(IsDebugName(fills[1].BufferName, "VSM_RequestBits") && fills[1].SizeBytes == 20480ull && fills[1].Value == 0u);
             assert(IsDebugName(fills[2].BufferName, "VSM_PageTable") && fills[2].SizeBytes == 655360ull && fills[2].Value == 0u);
@@ -6545,7 +6545,7 @@ namespace
     // vsm の構成の 1 フレーム: 印付け（画面を 8x8 で覆う）→ 割り当て（11 段階のうち、無効化の矩形が無いので矩形の段階を除く 10 回）→
     // 消去（間接 dispatch）の順に記録する。
     //  - dispatch は 印付け (16, 8, 1)、続けて 引き継ぎ・年齢・計画・古い順に戻す・使用中の印を 0 に・印を付ける・空きへ詰める・割り当て・
-    //    消去の一覧・締める の 10 回（欄は 10 段 × 128 × 128 を 256 で割った 640、物理ページは 4096 ÷ 256、要求の語は REQUEST_WORDS ÷ 256）の後に、
+    //    消去の一覧・締める の 10 回（欄は 10 段 × 128 × 128 を 256 で割った 640、物理ページは 5120 ÷ 256、要求の語は REQUEST_WORDS ÷ 256）の後に、
     //    消去の間接 dispatch が 1 回（引数は VSM_DirtyList の先頭）。
     //  - その間のバリア: 要求のビット列は印付けの後（割り当てが読む前）、空きの一覧・ページの表・統計・消去の一覧は割り当ての各段階の後、
     //    消去する一覧は締めた後に GenericRead へ進めてから間接 dispatch が読み、読んだ後に UnorderedAccess へ戻す。物理ページは消去の後。
@@ -6582,7 +6582,7 @@ namespace
                 assert(mark.X == 16u && mark.Y == 8u && mark.Z == 1u);
             }
             const uint32_t entryGroups = VirtualShadowMap::LEVEL_COUNT * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL / 256u;
-            const uint32_t pageGroups = 4096u / 256u;
+            const uint32_t pageGroups = 5120u / 256u;
             const uint32_t requestGroups = VirtualShadowMap::REQUEST_WORDS / 256u;
             // 引き継ぎ・年齢・計画・古い順に戻す・使用中の印を 0 に・印を付ける・空きへ詰める・割り当てる・消去の一覧・締める
             const uint32_t expectedGroups[AllocateStageDispatches] = {
@@ -6863,7 +6863,7 @@ namespace
         assert(!reporter.Report(0, 0, 0));
     }
 
-    // ãã¼ã«ã®ãã¼ã¸ã®æ°ã¯、要求（0 は既定の 4096）を装置の maxStorageBufferRange に収まる数へ締める（不明は Vulkan の保証する最小値 2^27）。
+    // ãã¼ã«ã®ãã¼ã¸ã®æ°ã¯、要求（0 は既定の 5120）を装置の maxStorageBufferRange に収まる数へ締める（不明は Vulkan の保証する最小値 2^27）。
     // 512 ページちょうどは作れ、511 ページしか取れない装置は作れない。表の欄の幅（20 ビット）も超えない
     void TestVirtualShadowMapPoolPlanClampsToDeviceLimit()
     {
@@ -6878,7 +6878,7 @@ namespace
         const uint64_t unlimited = 0xFFFFFFFFull;
 
         VirtualShadowMap::PoolPlan plan = VirtualShadowMap::PlanPool(makeCaps(true, true, unlimited), 0);
-        assert(plan.IsSupported() && plan.Pages == VirtualShadowMap::DEFAULT_POOL_PAGES && plan.Pages == 4096);
+        assert(plan.IsSupported() && plan.Pages == VirtualShadowMap::DEFAULT_POOL_PAGES && plan.Pages == 5120);
         plan = VirtualShadowMap::PlanPool(makeCaps(true, true, unlimited), 100);
         assert(plan.IsSupported() && plan.Pages == 100);
         plan = VirtualShadowMap::PlanPool(makeCaps(true, true, unlimited), 100000);

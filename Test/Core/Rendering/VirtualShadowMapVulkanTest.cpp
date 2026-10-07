@@ -1080,6 +1080,8 @@ namespace
         int64_t AbsY = 0;
         uint32_t Physical = 0;
         bool bDirty = false;
+        /** 展開が容量の溢れで描けなかった塊の範囲に付ける再描画の印 */
+        bool bRetry = false;
     };
 
     // ページの表の割り当て済みの欄から、段・絶対のページ・物理ページを取り出す
@@ -1104,6 +1106,7 @@ namespace
             page.AbsY = levelData.OriginPageY + (((addressY - levelData.OriginPageY) % count) + count) % count;
             page.Physical = entry & VirtualShadowMap::PAGE_INDEX_MASK;
             page.bDirty = (entry & VirtualShadowMap::PAGE_ENTRY_DIRTY) != 0u;
+            page.bRetry = (entry & VirtualShadowMap::PAGE_ENTRY_RETRY) != 0u;
             pages.push_back(page);
         }
         return pages;
@@ -1730,6 +1733,14 @@ namespace
                 const Container::VariableArray<PageInfo> pageInfos = DecodePages(scene, readback.PageTable);
                 const char* label = instanceCapacity < needed ? "ケース H（容量が 1 足りない）" : "ケース H（容量がちょうど）";
                 CheckExpansion(label, scene, geometry, pageInfos, readback, instanceCapacity);
+                // 溢れた塊の範囲の dirty のページには再描画の印が付き（次フレームの引き継ぎが dirty を付け直す）、溢れなければ印は付かない
+                uint32_t retryPages = 0;
+                for (const PageInfo& page : pageInfos)
+                {
+                    retryPages += page.bRetry ? 1u : 0u;
+                }
+                Expect(retryPages == (instanceCapacity < needed ? needed : 0u),
+                       "ケース H: 溢れた塊の範囲のページだけに再描画の印が付かなければならない（溢れなければ付かない）");
                 if (instanceCapacity < needed)
                 {
                     // 溢れた塊は描かない: 物理ページはすべて初期値のまま
@@ -4275,6 +4286,81 @@ namespace
             {
                 return false;
             }
+        }
+
+        // ----- ケース M3c: 展開の容量が足りず描けなかった塊の範囲のページは、欠けたまま持ち越さず、次のフレームで描き直す -----
+        // 元の位置（shapesA）へ動かし、展開のインスタンスの容量が 1 の出力で記録する。動いた先のページは dirty で、2 ページ以上をまたぐ塊は
+        // どれも溢れて描かれない。その範囲の dirty のページには再描画の印が付き、次のフレーム（動きの無い場面。容量は十分）が
+        // 印のあるページだけを描き直して、毎フレーム描き直したとき（--vsm-cache=off 相当）と全 texel で一致する。最後に M3 の最後の位置へ戻す
+        {
+            ChunkGeometry overflowGeometry;
+            RasterBuffers fullBuffers;
+            RasterBuffers tinyBuffers;
+            if (!PrepareCacheGeometry(device, scene, shapesA, overflowGeometry, fullBuffers) ||
+                !CreateRasterBuffers(device, overflowGeometry, 1u, tinyBuffers))
+            {
+                std::cerr << TestName << " ケース M3c の形のバッファを作れませんでした" << std::endl;
+                return false;
+            }
+            CacheFrame overflowFrame;
+            if (!RunCacheFrame(device, cachedPages, raster, scene, resources, overflowGeometry, tinyBuffers, depth, &tracker, frameSerial++, overflowFrame))
+            {
+                std::cerr << TestName << " ケース M3c（溢れるフレーム）を実行できませんでした" << std::endl;
+                return false;
+            }
+            uint32_t retryPages = 0;
+            uint32_t dirtyPages = 0;
+            bool bRetrySetMatches = true;
+            for (const PageInfo& page : overflowFrame.Infos)
+            {
+                bool bInRange = false;
+                for (size_t chunk = 0; chunk < overflowGeometry.Chunks.size() && !bInRange; ++chunk)
+                {
+                    bInRange = PageOverlapsBounds(scene, page, overflowGeometry.Chunks[chunk].BoundsMin, overflowGeometry.Chunks[chunk].BoundsMax, 0.0);
+                }
+                retryPages += page.bRetry ? 1u : 0u;
+                dirtyPages += page.bDirty ? 1u : 0u;
+                bRetrySetMatches = bRetrySetMatches && page.bRetry == (page.bDirty && bInRange);
+            }
+            std::cout << TestName << " ケース M3c: 溢れ=" << overflowFrame.Stat(VirtualShadowMap::StatRasterOverflow) << " 再描画の印=" << retryPages
+                      << " dirty=" << dirtyPages << std::endl;
+            Expect(overflowFrame.Stat(VirtualShadowMap::StatRasterOverflow) > 0u && overflowFrame.Stat(VirtualShadowMap::StatRasterInstances) == 0u,
+                   "ケース M3c: 容量が足りない展開は塊を描かず、溢れとして数えなければならない");
+            Expect(retryPages > 0u && bRetrySetMatches,
+                   "ケース M3c: 溢れた塊の範囲の dirty のページだけに再描画の印が付かなければならない");
+
+            CacheFrame retryFrame;
+            if (!RunCacheFrame(device, cachedPages, raster, scene, resources, overflowGeometry, fullBuffers, depth, &tracker, frameSerial++, retryFrame))
+            {
+                std::cerr << TestName << " ケース M3c（描き直すフレーム）を実行できませんでした" << std::endl;
+                return false;
+            }
+            uint32_t remainingRetry = 0;
+            for (const PageInfo& page : retryFrame.Infos)
+            {
+                remainingRetry += page.bRetry ? 1u : 0u;
+            }
+            Expect(retryFrame.bContinued && retryFrame.RectCount == 0u && !retryFrame.bInvalidatedAll,
+                   "ケース M3c: 動きの無い次のフレームは、前フレームの表を引き継ぎ、無効の矩形を持たない");
+            Expect(retryFrame.Stat(VirtualShadowMap::StatRendered) == retryPages && retryFrame.Stat(VirtualShadowMap::StatInvalidated) == retryPages &&
+                       retryFrame.DirtyPages() == retryPages && remainingRetry == 0u,
+                   "ケース M3c: 再描画の印のあるページだけが dirty になって描き直され、印は外れなければならない");
+            Expect(retryFrame.Stat(VirtualShadowMap::StatRasterOverflow) == 0u && retryFrame.Stat(VirtualShadowMap::StatRasterInstances) > 0u,
+                   "ケース M3c: 描き直すフレームは溢れず、インスタンスを書かなければならない");
+            const uint32_t different = CompareWithUncachedFrame(device, uncachedPages, raster, scene, poolPages, overflowGeometry, fullBuffers, depth, retryFrame, frameSerial++);
+            std::cout << TestName << " ケース M3c: 描き直したページ=" << retryFrame.Stat(VirtualShadowMap::StatRendered) << " キャッシュなしとの違い（語）=" << different << std::endl;
+            Expect(different == 0u, "ケース M3c: 描き直した後の物理プールが、毎フレーム描き直したとき（--vsm-cache=off 相当）と全 texel で一致しなければならない");
+
+            // M3 の最後の位置へ戻し、動きが止まるまで進める（後のケースの前提）
+            CacheFrame back;
+            CacheFrame settle;
+            if (!RunCacheFrame(device, cachedPages, raster, scene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, back) ||
+                !RunCacheFrame(device, cachedPages, raster, scene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, settle))
+            {
+                std::cerr << TestName << " ケース M3c（元へ戻すフレーム）を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(settle.RectCount == 0u && settle.Stat(VirtualShadowMap::StatRendered) == 0u, "ケース M3c: 元へ戻して動きが止まれば、次のフレームは何も描かない");
         }
 
         // ----- ケース M4: 太陽の向きが変わると全ページが描き直される -----

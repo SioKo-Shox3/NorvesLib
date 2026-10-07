@@ -113,6 +113,7 @@ const uint CACHE_FLAG_INVALIDATE_ALL = 2u;
 
 const uint PAGE_ENTRY_ALLOCATED = 1u << 31;
 const uint PAGE_ENTRY_DIRTY = 1u << 30;
+const uint PAGE_ENTRY_RETRY = 1u << 29;
 const uint PAGE_INDEX_MASK = (1u << 20) - 1u;
 
 const uint DIRTY_COUNT = 3u;
@@ -184,9 +185,16 @@ void Scroll()
         return;
     }
 
-    // 前フレームに消去して描いたので、dirty は外す。全ページを無効にする指定なら付け直す
-    entry &= ~PAGE_ENTRY_DIRTY;
+    // 前フレームに消去して描いたので、dirty は外す。全ページを無効にする指定なら付け直す。
+    // 前フレームの展開が容量の溢れで描けなかった塊の範囲のページ（再描画の印）は、欠けたまま持ち越さないよう dirty を付け直す
+    const bool bRetry = (entry & PAGE_ENTRY_RETRY) != 0u;
+    entry &= ~(PAGE_ENTRY_DIRTY | PAGE_ENTRY_RETRY);
     if ((params.cache.x & CACHE_FLAG_INVALIDATE_ALL) != 0u)
+    {
+        entry |= PAGE_ENTRY_DIRTY;
+        atomicAdd(stats[STAT_INVALIDATED], 1u);
+    }
+    else if (bRetry)
     {
         entry |= PAGE_ENTRY_DIRTY;
         atomicAdd(stats[STAT_INVALIDATED], 1u);

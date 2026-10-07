@@ -35,6 +35,7 @@ const uint VSM_PAGE_WORDS = VSM_PAGE_RESOLUTION * VSM_PAGE_RESOLUTION;
 // ページの表の 1 要素の印（VirtualShadowMap::PAGE_ENTRY_* と一致）
 const uint VSM_PAGE_ENTRY_ALLOCATED = 1u << 31;
 const uint VSM_PAGE_ENTRY_DIRTY = 1u << 30;
+const uint VSM_PAGE_ENTRY_RETRY = 1u << 29;
 const uint VSM_PAGE_INDEX_MASK = (1u << 20) - 1u;
 
 // 展開が書く、間接描画の引数の配列 draws の並び: 先頭の 4 語が頭（0 = インスタンスの確保の数）、続いて塊ごとに 5 語

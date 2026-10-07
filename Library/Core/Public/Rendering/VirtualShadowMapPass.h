@@ -64,8 +64,13 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t LEVEL_COUNT = VirtualShadowMapClipmapSettings{}.LevelCount;
         static_assert(LEVEL_COUNT >= 1 && LEVEL_COUNT <= VirtualShadowMapMaxLevels, "段の数はクリップマップの上限に収まること");
 
-        /** @brief 既定のプールのページの数（4096 ページ = 256 MiB）。--vsm-pool-pages=<n> で替える */
-        constexpr uint32_t DEFAULT_POOL_PAGES = 4096;
+        /**
+         * @brief 既定のプールのページの数（5120 ページ = 320 MiB）。--vsm-pool-pages=<n> で替える
+         *
+         * 低い太陽の角度（影が長く伸びる視点）の要求は 4721〜4728 ページになり、4096 では 625 ページ以上が溢れる。
+         * 5120・6144・8192 の測定は要求 4717〜4719 で溢れ 0・フレームの GPU 時間は変わらないので、溢れない最小の 5120 にする。
+         */
+        constexpr uint32_t DEFAULT_POOL_PAGES = 5120;
         /** @brief これ未満のページしか取れない装置では VSM を作らない（pool_size） */
         constexpr uint32_t MIN_POOL_PAGES = 512;
         /** @brief ページの表の物理ページの番号の欄の幅（ビット）と、その最大のページ数 */
@@ -78,6 +83,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief ページの表の 1 要素（uint32）の印。下位 PAGE_INDEX_BITS ビットが物理ページの番号 */
         constexpr uint32_t PAGE_ENTRY_ALLOCATED = 1u << 31;
         constexpr uint32_t PAGE_ENTRY_DIRTY = 1u << 30;
+        /**
+         * @brief 展開が容量の溢れで描けなかった塊の範囲の、dirty のページに付ける印（次フレームの引き継ぎが dirty を付け直して印を外す）
+         *
+         * 描けなかった塊のぶん、そのページの影が欠けたままキャッシュに残るのを防ぐ。物理ページの番号の欄（下位 20 ビット）とは重ならない。
+         */
+        constexpr uint32_t PAGE_ENTRY_RETRY = 1u << 29;
 
         /** @brief 何も無い texel の深度（1.0）の float のビット */
         constexpr uint32_t EMPTY_DEPTH_BITS = 0x3F800000u;

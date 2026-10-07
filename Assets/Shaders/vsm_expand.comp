@@ -14,6 +14,8 @@
 // 段は、塊の記録の levelMask（CPU が境界から決めた段の集合）に入るものだけを処理する。
 //
 // 容量（インスタンスの数）を超える塊は、ページを 1 つも描かず（instanceCount 0）、溢れとして数える。
+// 描けなかった塊の範囲の、割り当て済みで dirty のページには再描画の印（VSM_PAGE_ENTRY_RETRY）を付ける。
+// 次フレームの引き継ぎ（vsm_allocate.comp）が dirty を付け直すので、そのページは欠けたまま持ち越されず、描き直される。
 // 統計（stats）の語: 5 = 描く塊の数（1 つ以上のインスタンスがある）、6 = 書いたインスタンスの数、7 = 溢れて書かなかったインスタンスの数。
 // 統計・間接描画の引数の頭は、呼ぶ前に 0 にしておくこと。
 // ========================================
@@ -44,7 +46,8 @@ layout(std430, set = 0, binding = 1) readonly buffer VsmChunks
     VsmShadowChunk chunks[];
 };
 
-layout(std430, set = 0, binding = 2) readonly buffer VsmPageTable
+// 溢れた塊の範囲のページへ再描画の印を atomicOr で書くので、読み取り専用ではない（割り当て済み・dirty・物理ページの番号の欄は変えない）
+layout(std430, set = 0, binding = 2) buffer VsmPageTable
 {
     uint pageTable[];
 };
@@ -83,6 +86,7 @@ shared uint sharedCount;
 shared uint sharedCursor;
 shared uint sharedBase;
 shared uint sharedOk;
+shared uint sharedRetry;
 
 // 段 level の、塊が覆うページの範囲（絶対のページの番号。範囲の外は切り捨てる）。覆わなければ幅・高さが 0
 void PageRange(uint level, vec2 lightMin, vec2 lightMax, out ivec2 pageMin, out uvec2 size)
@@ -107,6 +111,33 @@ uint PageEntry(uint level, int pageX, int pageY)
 bool IsDrawable(uint entry)
 {
     return (entry & VSM_PAGE_ENTRY_ALLOCATED) != 0u && (entry & VSM_PAGE_ENTRY_DIRTY) != 0u;
+}
+
+// 溢れて描けなかった塊の範囲の、割り当て済みで dirty のページに再描画の印を付ける（1 回目と同じ走査）
+void MarkRetry(uint levelMask, vec2 lightMin, vec2 lightMax, uint thread)
+{
+    for (uint level = 0u; level < params.counts.y; ++level)
+    {
+        if ((levelMask & (1u << level)) == 0u)
+        {
+            continue;
+        }
+        ivec2 pageMin;
+        uvec2 size;
+        PageRange(level, lightMin, lightMax, pageMin, size);
+        const uint total = size.x * size.y;
+        for (uint index = thread; index < total; index += 64u)
+        {
+            const int pageX = pageMin.x + int(index % size.x);
+            const int pageY = pageMin.y + int(index / size.x);
+            if (IsDrawable(PageEntry(level, pageX, pageY)))
+            {
+                const uint addressX = uint(pageX) & (VSM_TABLE_DIMENSION - 1u);
+                const uint addressY = uint(pageY) & (VSM_TABLE_DIMENSION - 1u);
+                atomicOr(pageTable[level * VSM_TABLE_ENTRIES_PER_LEVEL + addressY * VSM_TABLE_DIMENSION + addressX], VSM_PAGE_ENTRY_RETRY);
+            }
+        }
+    }
 }
 
 void main()
@@ -206,11 +237,17 @@ void main()
         draws[command + 4u] = bOk ? base : 0u;
         sharedBase = base;
         sharedOk = bOk ? 1u : 0u;
+        // 描くページがあり三角形もあるのに、容量が足りなかった塊: そのページは次フレームに描き直す
+        sharedRetry = (total != 0u && triangles != 0u && !bOk) ? 1u : 0u;
     }
     barrier();
 
     if (sharedOk == 0u)
     {
+        if (sharedRetry != 0u)
+        {
+            MarkRetry(levelMask, lightMin, lightMax, thread);
+        }
         return;
     }
 
