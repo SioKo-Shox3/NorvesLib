@@ -1165,3 +1165,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 合成反証を既存CPU試験とCLI smokeへ追加。Python構文と差分衛生のみ確認、native実行は未検証。詳細はDocs/Architecture/SkeletalClipProcessing.md。
 - GR96のrun37607084130はRigSingleCookのAnsiString範囲構築でbuild失敗。aa293f28でStringViewを明示して修正。後続試験は未実行で合格扱いにしない。
 - G2は未完了・未マージ。関連検証をまとめて閉じてからマージし、G3へ移る。
+
+- GR84/96の区切り検証run37627622848はCore buildで停止。SkeletalClipRetargetの座標変換呼出し2か所を、既存APIのConvertSkeletalMatrixBasisへ訂正した。関連CPU/CLIは未実行。

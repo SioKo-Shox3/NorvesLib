@@ -326,7 +326,7 @@ namespace NorvesLib::Core::Animation
                     c.World[i] = D::RetargetMultiply(j.ParentIndex < 0 ? c.SourceFrame : c.World[size_t(j.ParentIndex)],
                                                      Matrix(q));
                     M converted;
-                    if (ConvertSkeletalRotation(c.Conversion, c.World[i], converted) !=
+                    if (ConvertSkeletalMatrixBasis(c.Conversion, c.World[i], converted) !=
                         SkeletalCoordinateStatus::Success)
                     {
                         return false;
@@ -536,7 +536,7 @@ namespace NorvesLib::Core::Animation
         {
             M r;
             V p;
-            if (ConvertSkeletalRotation(c.Conversion, c.SourceRest[i], r) != SkeletalCoordinateStatus::Success ||
+            if (ConvertSkeletalMatrixBasis(c.Conversion, c.SourceRest[i], r) != SkeletalCoordinateStatus::Success ||
                 ConvertSkeletalTranslation(c.Conversion, sourcePositions[i], p) != SkeletalCoordinateStatus::Success)
             {
                 return Fail(error, "source_axes");
