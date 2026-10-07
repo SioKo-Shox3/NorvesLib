@@ -543,6 +543,38 @@ namespace
         return false;
     }
 
+    // --vsm-pool-pages=<n>: VSM の物理ページのプールのページの数（1 以上の整数。装置の上限へは VirtualShadowMapPass が締める）
+    bool TryParseVsmPoolPagesOption(const String& argument, uint32_t& outPages, bool& bMatched)
+    {
+        const String prefix = TEXT("--vsm-pool-pages=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value.empty() || value.size() > 7u)
+        {
+            return false;
+        }
+        uint32_t parsed = 0u;
+        for (const auto character : value)
+        {
+            if (character < TEXT('0') || character > TEXT('9'))
+            {
+                return false;
+            }
+            parsed = parsed * 10u + static_cast<uint32_t>(character - TEXT('0'));
+        }
+        if (parsed == 0u)
+        {
+            return false;
+        }
+        outPages = parsed;
+        return true;
+    }
+
     // --tone-map=aces|aces20-lut
     bool TryParseToneMapOption(
         const String& argument,
@@ -1033,6 +1065,8 @@ namespace NorvesLib::Core::Engine
         bool bShadowProbe = false;
         Rendering::ShadowMethod shadowMethod = Rendering::ShadowMethod::Csm;
         bool bInvalidShadowMethod = false;
+        uint32_t vsmPoolPages = 0u;
+        bool bInvalidVsmPoolPages = false;
         Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
         bool bToneMapOperatorRequested = false;
         float filmGrainStrength = 0.0f;
@@ -1215,6 +1249,18 @@ namespace NorvesLib::Core::Engine
                 LOG_ERROR("ApplicationProcessor の起動引数 --shadow-method の値が不正です: 'csm' か 'vsm' にしてください");
             }
 
+            // --vsm-pool-pages=<n>: VSM の物理ページのプールのページの数（既定 4096）。不正な値は起動時のエラー
+            bool bMatchedVsmPoolPages = false;
+            if (TryParseVsmPoolPagesOption(args[i], vsmPoolPages, bMatchedVsmPoolPages))
+            {
+                LOG_INFO("ApplicationProcessor runtime option vsm_pool_pages=%u", vsmPoolPages);
+            }
+            else if (bMatchedVsmPoolPages)
+            {
+                bInvalidVsmPoolPages = true;
+                LOG_ERROR("ApplicationProcessor の起動引数 --vsm-pool-pages の値が不正です: 1 以上の整数にしてください");
+            }
+
             // --shadow-probe: 太陽の影の標本のパスを足す（統計が有効な構成のみ。Release では無視される）
             if (args[i] == TEXT("--shadow-probe"))
             {
@@ -1329,7 +1375,7 @@ namespace NorvesLib::Core::Engine
             LOG_WARNING("ApplicationProcessor runtime option --wait-for-asset-settle ignored without --exit-after-rendered-frames");
         }
 
-        if (bInvalidShadowMethod)
+        if (bInvalidShadowMethod || bInvalidVsmPoolPages)
         {
             return false;
         }
@@ -1397,6 +1443,7 @@ namespace NorvesLib::Core::Engine
             renderSettings.SwRasterMaxPixels = swRasterMaxPixels;
             renderSettings.bShadowProbe = bShadowProbe;
             renderSettings.SunShadowMethod = shadowMethod;
+            renderSettings.VsmPoolPages = vsmPoolPages;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
             {

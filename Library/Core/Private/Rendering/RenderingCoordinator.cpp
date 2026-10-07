@@ -1698,6 +1698,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_MainSceneView->SetShadowProbeEnabled(settings.bShadowProbe);
             m_MainSceneView->SetShadowMethod(settings.SunShadowMethod);
+            m_MainSceneView->SetVsmPoolPages(settings.VsmPoolPages);
             m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer, settings.RasterDirectBrdfMode, settings.VisibilityBuffer,
                                                       settings.SwRaster, settings.SwRasterMaxPixels);
             // 被写界深度は半透明を合成した後のSceneColorへ掛ける。カメラのピント距離が0なら働かない。

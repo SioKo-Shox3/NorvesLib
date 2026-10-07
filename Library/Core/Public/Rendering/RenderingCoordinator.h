@@ -115,6 +115,8 @@ namespace NorvesLib::Core::Rendering
         bool bShadowProbe = false;
         /** @brief 太陽の影の方式（--shadow-method。既定は CSM） */
         ShadowMethod SunShadowMethod = ShadowMethod::Csm;
+        /** @brief VSM の物理ページのプールのページの数（--vsm-pool-pages。0 は既定） */
+        uint32_t VsmPoolPages = 0;
     };
 
     struct RenderingCoordinatorStatsSnapshot

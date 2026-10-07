@@ -157,6 +157,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/SkinningComputePass.cpp
     Private/Rendering/MaterialTileClassifyPass.cpp
     Private/Rendering/ShadowProbePass.cpp
+    Private/Rendering/VirtualShadowMapPass.cpp
     Private/Rendering/VirtualShadowMapClipmap.cpp
     Private/Rendering/VisibilityRasterPass.cpp
     Private/Rendering/VisibilitySwRaster.cpp
@@ -409,6 +410,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/SkinningComputePass.h
     Public/Rendering/MaterialTileClassifyPass.h
     Public/Rendering/ShadowProbePass.h
+    Public/Rendering/VirtualShadowMapPass.h
     Public/Rendering/ShadowMethod.h
     Public/Rendering/VirtualShadowMapClipmap.h
     Public/Rendering/VisibilityRasterPass.h

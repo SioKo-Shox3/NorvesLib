@@ -18,6 +18,8 @@ using Core::Rendering::VideoMemoryPool;
 
 constexpr uint64_t Mb = 1024ull * 1024ull;
 constexpr uint32_t VtIndex = static_cast<uint32_t>(VideoMemoryPool::VirtualTexture);
+constexpr uint32_t GeometryIndex = static_cast<uint32_t>(VideoMemoryPool::Geometry);
+constexpr uint32_t ShadowMapIndex = static_cast<uint32_t>(VideoMemoryPool::ShadowMap);
 
 int g_failures = 0;
 
@@ -233,6 +235,62 @@ void TestShares()
     Expect(bigResult.GetTargetBytes(VideoMemoryPool::VirtualTexture) <= UINT64_MAX / 4 + 2, "巨大な予算でも掛け算が溢れない");
 }
 
+// VSM の物理ページのプール（ShadowMap の枠）の確保量は、ヒープの使用量に全部入っているので、プール以外の使用量から引かれる。
+// 引いた分だけ割り振れる量が増え、VT・ジオメトリの目標に効く。ヒープの使用量を下回る分では負にならず 0 で止まり、
+// ヒープの使用量が取れないときの見込みには効かない
+void TestShadowMapPoolIsSubtractedFromNonPool()
+{
+    VideoMemoryBudgetManager manager;
+    manager.SetPoolShare(VideoMemoryPool::VirtualTexture, 1);
+    manager.SetPoolShare(VideoMemoryPool::Geometry, 1);
+
+    // VSM のプールを渡さない: 使用量 3000 のうち VT のプールが 1000 で、プール以外は 2000
+    VideoMemoryBudgetInput input = MakeInput(8000, 3000, 0, 1000);
+    const VideoMemoryBudgetResult without = manager.Compute(input);
+    Expect(without.NonPoolBytes == 2000 * Mb, "VSM のプールを渡さなければプール以外は 2000");
+    Expect(without.AvailableBytes == 6000 * Mb, "割り振れる量は 6000");
+    Expect(without.GetTargetBytes(VideoMemoryPool::VirtualTexture) == 3000 * Mb, "VT の目標は半分");
+    Expect(without.GetTargetBytes(VideoMemoryPool::Geometry) == 3000 * Mb, "ジオメトリの目標は半分");
+
+    // 256 MB の VSM のプールを渡す: プール以外が 256 減り、VT・ジオメトリが 128 ずつ増える
+    input.PoolCapacityBytes[ShadowMapIndex] = 256 * Mb;
+    const VideoMemoryBudgetResult with = manager.Compute(input);
+    Expect(with.NonPoolBytes == 1744 * Mb, "プール以外 = 使用量 - VT - VSM のプール");
+    Expect(with.AvailableBytes == 6256 * Mb, "割り振れる量は 256 増える");
+    Expect(with.GetTargetBytes(VideoMemoryPool::VirtualTexture) == 3128 * Mb, "VT の目標が増える");
+    Expect(with.GetTargetBytes(VideoMemoryPool::Geometry) == 3128 * Mb, "ジオメトリの目標が増える");
+    Expect(with.GetTargetBytes(VideoMemoryPool::ShadowMap) == 0, "VSM は取り分を持たない（確保量を渡しても目標は 0 のまま）");
+    Expect(with.GetTargetBytes(VideoMemoryPool::VirtualTexture) > without.GetTargetBytes(VideoMemoryPool::VirtualTexture), "VSM の確保量が VT の目標に効く");
+    Expect(with.GetTargetBytes(VideoMemoryPool::Geometry) > without.GetTargetBytes(VideoMemoryPool::Geometry), "VSM の確保量がジオメトリの目標に効く");
+
+    // 3 つのプールの確保量はそれぞれ別に引かれ、合計がヒープの使用量を超えるときは 0 で止まる
+    input.PoolCapacityBytes[GeometryIndex] = 500 * Mb;
+    const VideoMemoryBudgetResult three = manager.Compute(input);
+    Expect(three.NonPoolBytes == 1244 * Mb, "VT・ジオメトリ・VSM の確保量をすべて引く");
+    input.PoolCapacityBytes[ShadowMapIndex] = 4000 * Mb;
+    const VideoMemoryBudgetResult over = manager.Compute(input);
+    Expect(over.NonPoolBytes == 0, "確保量の合計が使用量より大きければプール以外は 0 で止まる");
+    Expect(over.AvailableBytes == 8000 * Mb, "割り振れる量は上限そのもの");
+
+    // ヒープの使用量が取れないときは、見込み（上限の 30%）で決まり、VSM のプールには依らない
+    VideoMemoryBudgetInput estimated;
+    estimated.bHeapValid = false;
+    estimated.CapBytes = 2000 * Mb;
+    const VideoMemoryBudgetResult estimatedWithout = manager.Compute(estimated);
+    estimated.PoolCapacityBytes[ShadowMapIndex] = 256 * Mb;
+    const VideoMemoryBudgetResult estimatedWith = manager.Compute(estimated);
+    Expect(estimatedWithout.NonPoolBytes == 600 * Mb && estimatedWith.NonPoolBytes == 600 * Mb, "見込みは VSM のプールに依らない");
+
+    // 取り分（重み）を与えれば、VSM も割り振りを受け取る
+    manager.SetPoolShare(VideoMemoryPool::ShadowMap, 2);
+    VideoMemoryBudgetInput shared = MakeInput(8000, 3000, 0, 1000);
+    shared.PoolCapacityBytes[ShadowMapIndex] = 256 * Mb;
+    const VideoMemoryBudgetResult shares = manager.Compute(shared);
+    Expect(shares.AvailableBytes == 6256 * Mb, "割り振れる量は同じ");
+    Expect(shares.GetTargetBytes(VideoMemoryPool::ShadowMap) == 3128 * Mb, "VSM は 2/4");
+    Expect(shares.GetTargetBytes(VideoMemoryPool::VirtualTexture) == 1564 * Mb, "VT は 1/4");
+}
+
 void TestLogGate()
 {
     VideoMemoryBudgetManager manager;
@@ -276,6 +334,7 @@ int RunTest()
     TestDeviceLocalHeapSizeCeiling();
     TestUnlimited();
     TestShares();
+    TestShadowMapPoolIsSubtractedFromNonPool();
     TestLogGate();
 
     if (g_failures != 0)

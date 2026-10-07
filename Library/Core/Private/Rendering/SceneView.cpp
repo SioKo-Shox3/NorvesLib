@@ -12,6 +12,7 @@
 #include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/ShadowProbePass.h"
+#include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/VolumetricsPass.h"
 #include "Rendering/ForwardPass.h"
@@ -956,6 +957,14 @@ namespace NorvesLib::Core::Rendering
         // SkyAtmospherePass: 同一空スナップショットからLUTと太陽ディスクを生成
         auto skyAtmospherePass = MakeUnique<SkyAtmospherePass>();
         AddPass(std::move(skyAtmospherePass));
+
+        // VirtualShadowMapPass: 太陽の VSM の物理ページのプールとページの表などを作り、名前で公開する（--shadow-method=vsm のときだけ）。
+        // 深度が確定した後（ビジビリティの解決・GBuffer・MegaGeometry の後）・照明の前に置く。中身はまだ使わず、照明は CSM のまま。
+        // 装置が対応しないとき・プールを取れないときは、パスが資源を作らず VSM_FALLBACK を出して CSM で描く
+        if (m_ShadowMethod == ShadowMethod::Vsm)
+        {
+            AddPass(MakeUnique<VirtualShadowMapPass>(m_VsmPoolPages));
+        }
 
         // LightingPass: GBuffer→HDRシーンカラー
         LightingPassSettings lightingSettings;

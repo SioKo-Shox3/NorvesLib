@@ -297,6 +297,13 @@ namespace NorvesLib::RHI
         bool bFragmentStoresAndAtomics = false;
 
         /**
+         * @brief storage buffer 1 つの束縛で扱える最大のバイト数（物理デバイスの maxStorageBufferRange）
+         *
+         * 0 は不明。VSM の物理ページのプールのように 1 つの storage buffer へ束縛する大きな資源は、この値に収まる量へ締める。
+         */
+        uint64_t MaxStorageBufferRange = 0;
+
+        /**
          * @brief geometryShader が論理デバイスで有効か
          *
          * ジオメトリシェーダーは使わない。フラグメントシェーダーが gl_PrimitiveID を読むには SPIR-V の Geometry
