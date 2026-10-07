@@ -1,6 +1,6 @@
 ﻿# PROGRESS — NorvesLib
 
-## G2全体の進捗（2026-10-06）
+## G2全体の進捗（2026-10-07）
 
 G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・分離資産・安全な一括増分の実用経路を接続する中盤。小taskの完了数を全体の達成率には換算しない。
 
@@ -8,8 +8,8 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR86: 明示の影響数縮約/CUBICSPLINE焼込/morph dropと診断を接続済み。256関節はGR82 Stage Bと同時。
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
 - GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
-- GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bは作者rest付きv1 ClipBankの保存・安全束縛・明示override/差report・実姿勢評価までCPU受入済み。Skeleton/SkinnedMeshの分離wire・三パス読込・Armature/256は残る。GR83の実owner/M9経路の明示clip選択もCPU検証済み。
-- GR83/GR84: GR84のBVH source/target FK・名前/座標/回転対応・全sample clip/report・NVSKEL cook/package/実Sampler・Role Profile bytesと実CLI/file依存を実Windows CPUで受入済み。GR83は所有CPUローダ・原子的な一括公開・実workerからownerへのdelegate配送まで受入済みで、実ApplicationProcessor/M9への配線・CPU helper・Game両構成ビルドまで検証済み。自動rest補正・Stage Bの分離資産ローダ・GPU/実物受入れは未完。
+- GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bは作者rest付きv1 ClipBankの保存・安全束縛・明示override/差report・実姿勢評価までCPU受入済み。Skeleton/SkinnedMeshの分離wire・同snapshot三パス読込・全MATS CPU所有・未登録owner/実姿勢まで受入済み。分離資産のRegistry/runtime公開・Armature/clip-only/256は残る。GR83の実owner/M9経路の明示clip選択もCPU検証済み。
+- GR83/GR84: GR84のBVH source/target FK・名前/座標/回転対応・全sample clip/report・NVSKEL cook/package/実Sampler・Role Profile bytesと実CLI/file依存を実Windows CPUで受入済み。GR83は所有CPUローダ・原子的な一括公開・実workerからownerへのdelegate配送まで受入済みで、実ApplicationProcessor/M9への配線・CPU helper・Game両構成ビルドまで検証済み。Stage Bの分離資産CPUローダは受入済み。分離資産のRegistry/runtime公開、自動rest補正・GPU/実物受入れは未完。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
 S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
@@ -1086,3 +1086,12 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 
 - 初回B2 Windows CI: code0043cdb3 / tree02d5f024 / run37550413059 / job112564262923。Release69と新4direct Debug・新12case markerまで成功したが、新oracleのMesh全byte比較で停止した。独立期待値が既存decoderのtriangle巻き順反転を落としていた。実Debug/ReleaseはともにINDX=[0,2,1]で、旧c8a3/dd24のswapと旧CookedSkeletalAssetTestの固定検査に一致する。差はbyte932/936と従属payload hash48–55のみ、他9sectionは一致。
 - 修正: 新Python oracleのindex列だけを0,2,1へ正し、巻き順自己試験を追加（8件）。production/旧golden/旧65cppは変更しない。初回の原oracle・ログ・480source・ZIPは失敗のまま別保持する。新oracleによる初回出力の再照合は診断であり、skippedになったB1 oracle・finite/Game/CLI等の実行を補ったとは扱わない。全後段を新codeのCIで確認する。
+
+### GR82 Stage B2のCPU受入（2026-10-07 JST）
+
+- Done: code ef4cac08e77f05e4df29a53345b81e3d4ab9cb89 / tree e5a2740d11842d6c4d9eb7ac39d517f38c4835cc / run37553853287 / job112575390064。SkeletonとMeshの分離保存、同snapshot三資産読込、全Bankの安全束縛、未登録owner組立と実Samplerまで接続した。IBM/MはMesh専有、全MATSはCPU所有し、render leaseを発行しない。
+- 検証: Release69・新4 direct Debug・12case各構成、独立wire/pose oracle8件×normal/-O。実Skeleton704byte（SHA256 15bab8e1f817e8e06ac8d54dbb5a2d8dce9ad9492e33e0327cc0df08b245ce7d）、Mesh1360byte（0ad749a7ad36d228346b9edb64dabe228cd9d9ad0aef75b97a519494ec22832b）を両構成で全byte一致確認。poseはclips2/child palette Y1/model Y2/vertex(-5,2)、materials_render_staged=false。
+- 互換: B1の992byteとrest report、旧65 cpp・owner20/runtime28、有限投入/Registry/関連Debug、Game両構成build-only、固定4×6095byte、旧89出力・25+15 CLI・12metadata・17/29 child退出・GR84別58process/125file・PE-CNG/SHELL32を維持した。旧Samplerは二段の分岐除去後の全文正規化一致と固定出力を別々に照合した。
+- 証拠: 12比較器×normal/-O計24回のreceipt/stdout一致・stderr空。親自身のreadonly replayもexit0/stderr0、827payload・480source・18原API・6ZIP一致。summary SHA256 2b043a9eb825022b8a9ddab864ab50499dca19a9b2758634bf738a378d1d811f、inventory SHA256 ba70c6380d6051c7d827c27a44f68252b73faecac04d8d1cad1e6286533001bb。
+- 初回失敗: code0043cdb3 / run37550413059の新mesh比較器だけが既存triangle巻き順変換を落としていた。Python期待値と新自己試験・文書だけを修正し、478/480 sourceと全production/旧test/golden treeは不変。失敗710payloadは別保持し、失敗保存の親replayもexit0。latest2paths/Library0と累積57paths/Library37を区別する。
+- Notes: 同asset内のLINEAR/STEP/Bake累積境界はB2で新検査した。一部確保probeのpositive control、2snapshot/既登録pool/Load内部失敗等は追加観測として残る。全allocator OOM/RSS/任意入力時間は保証しない。実GPU/DCC/Game起動、Registry/cache/runtime公開、新CLI/ファイル群公開、Armature/clip-only/256は未受入。次は既存GR83の一括公開とdelegate runtimeへ分離資産を接続する。
