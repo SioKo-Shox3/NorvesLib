@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   cli-baseline:
-    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[validate-assets]') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[validate-assets]') || contains(github.event.head_commit.message, '[validate-merge]') }}
     runs-on: windows-2022
     timeout-minutes: 90
     defaults:
@@ -24,6 +24,7 @@ jobs:
         shell: pwsh
     env:
       PYTHONUTF8: '1'
+      NORVES_MERGE_VALIDATION: ${{ contains(github.event.head_commit.message, '[validate-merge]') }}
       SDK_VERSION: 1.4.309.0
       SDK_ROOT: C:\VulkanSDK\1.4.309.0
     steps:
@@ -77,9 +78,16 @@ jobs:
           meta, files = p["load_snapshot"](Path(os.environ["RUNNER_TEMP"]) / "NorvesCliFrozenBefore/snapshot")
           scripts = [source / "Tools/AssetCook" / f"AssetCook{x}Smoke.cmake.in" for x in p["SMOKES"]]
           scripts.append(source / "Test/Core/Asset/CookedSkeletalAssetTest.cmake.in")
-          if len(files) != 79 or meta["recipe"] != p["build_recipe"](source, scripts):
-              raise SystemExit("Frozen recipe or payload inventory mismatch")
-          print("Frozen 79-file snapshot and Windows recipe verified")
+          if len(files) != 79:
+              raise SystemExit("Frozen payload inventory mismatch")
+          # G2分割の旧bytes一致はc1690c/run37652726746で確定済み。
+          # mainはクラスタ化を変更しているので、統合では旧出力同一性ではなく現在のCLI smokeを検証する。
+          if os.environ.get("NORVES_MERGE_VALIDATION") != "true":
+              if meta["recipe"] != p["build_recipe"](source, scripts):
+                  raise SystemExit("Frozen recipe mismatch")
+              print("Frozen 79-file snapshot and Windows recipe verified")
+          else:
+              print("Frozen 79-file snapshot verified; merged CLI behavior uses current smoke contracts")
           '@ | python - 2>&1 | Tee-Object "$env:NORVES_CI_LOG/frozen-preflight.log"
           if ($LASTEXITCODE -ne 0) { throw 'Frozen baseline preflight failed' }
       - name: 固定した旧texture spec基準を取得する
@@ -164,6 +172,7 @@ jobs:
           if-no-files-found: warn
           path: ${{ runner.temp }}/NorvesRoleProfileCli/
       - name: 分割後の実CLI出力を採取する
+        if: env.NORVES_MERGE_VALIDATION != 'true'
         id: capture
         run: |
           python Scripts/AssetCookCliParity.py capture --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --skeletal-test-exe build/windows-cli/Test/Core/Asset/Release/CookedMeshTest.exe --output "$env:NORVES_CI_CAPTURE" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/capture.log"
@@ -176,6 +185,7 @@ jobs:
           Copy-Item "$env:NORVES_CI_CAPTURE/snapshot" "$env:NORVES_CI_BASELINE/snapshot" -Recurse
           Copy-Item $exe,$test,"$env:NORVES_CI_LOG/provenance.txt","$env:NORVES_CI_LOG/sdk-checksum.json" "$env:NORVES_CI_BASELINE/"
       - name: 分割前後の全出力をbyte比較する
+        if: env.NORVES_MERGE_VALIDATION != 'true'
         id: parity
         run: |
           python Scripts/AssetCookCliParity.py compare "$env:RUNNER_TEMP/NorvesCliFrozenBefore/snapshot" "$env:NORVES_CI_CAPTURE/snapshot" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/parity.log"
