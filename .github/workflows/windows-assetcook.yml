@@ -151,6 +151,54 @@ jobs:
         run: |
           python -B Test/Tools/AssetCookRigSplitSmoke.py --assetcook build/windows-cli/Tools/AssetCook/Release/AssetCook.exe
           if ($LASTEXITCODE -ne 0) { throw 'Rig split CLI smoke failed' }
+      - name: Role Profileの実Windows CLIを検証する
+        run: |
+          python -B Scripts/AssetCookRoleProfileSmoke.py --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --output "$env:RUNNER_TEMP/NorvesRoleProfileCli" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/role-profile-cli.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Role Profile real CLI contracts failed' }
+      - name: Role Profileの専用出力と記録を保存する
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: role-profile-cli-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/NorvesRoleProfileCli/
+      - name: 分割後の実CLI出力を採取する
+        id: capture
+        run: |
+          python Scripts/AssetCookCliParity.py capture --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --skeletal-test-exe build/windows-cli/Test/Core/Asset/Release/CookedMeshTest.exe --output "$env:NORVES_CI_CAPTURE" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/capture.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Actual CLI capture failed' }
+          $snapshot = Get-Content "$env:NORVES_CI_CAPTURE/snapshot/snapshot.json" -Raw | ConvertFrom-Json
+          $exe = 'build/windows-cli/Tools/AssetCook/Release/AssetCook.exe'
+          $test = 'build/windows-cli/Test/Core/Asset/Release/CookedMeshTest.exe'
+          if ((Get-FileHash $exe -Algorithm SHA256).Hash -ne $snapshot.metadata.asset_cook_sha256 -or (Get-FileHash $test -Algorithm SHA256).Hash -ne $snapshot.metadata.skeletal_test_sha256) { throw 'Captured executable hash changed' }
+          New-Item -ItemType Directory "$env:NORVES_CI_BASELINE" | Out-Null
+          Copy-Item "$env:NORVES_CI_CAPTURE/snapshot" "$env:NORVES_CI_BASELINE/snapshot" -Recurse
+          Copy-Item $exe,$test,"$env:NORVES_CI_LOG/provenance.txt","$env:NORVES_CI_LOG/sdk-checksum.json" "$env:NORVES_CI_BASELINE/"
+      - name: 分割前後の全出力をbyte比較する
+        id: parity
+        run: |
+          python Scripts/AssetCookCliParity.py compare "$env:RUNNER_TEMP/NorvesCliFrozenBefore/snapshot" "$env:NORVES_CI_CAPTURE/snapshot" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/parity.log"
+          if ($LASTEXITCODE -ne 0) { throw 'CLI byte parity failed' }
+      - name: native asset-setを旧PS1の全出力と比較する
+        id: texture_parity
+        run: |
+          python -B Scripts/VerifyTextureAssetSet.py --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --reference "$env:RUNNER_TEMP/NorvesTextureLegacyReference" --output "$env:RUNNER_TEMP/NorvesTextureNative" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/texture-native.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Native texture asset-set contracts failed' }
+      - name: native asset-setの一致した出力と記録を保存する
+        if: steps.texture_parity.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: texture-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/NorvesTextureNative/native1/Rendering3DTestSilverTextures/
+            ${{ runner.temp }}/NorvesTextureNative/native1/Rendering3DTestSilverGltfTextures/
+            ${{ runner.temp }}/NorvesTextureNative/managed/
+            ${{ runner.temp }}/NorvesTextureNative/verification.json
+            ${{ runner.temp }}/NorvesTextureNative/ascii-ps51.json
+            ${{ runner.temp }}/NorvesTextureNative/ascii-probe/manifest.json
       - name: SamplerのDebugとReleaseを固定した旧出力と比較する
         run: |
           python -B Test/Tools/SkeletalSamplerBaselineTest.py -v
@@ -261,54 +309,6 @@ jobs:
           }
           $record | ConvertTo-Json -Depth 5 | Set-Content "$env:NORVES_CI_LOG/game-build-evidence.json" -Encoding utf8
           Write-Output 'SKELETAL_OWNER_GAME_BUILD result=pass configurations=Debug,Release execution=not_run source=8x2 cleanup_contract=pass'
-      - name: Role Profileの実Windows CLIを検証する
-        run: |
-          python -B Scripts/AssetCookRoleProfileSmoke.py --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --output "$env:RUNNER_TEMP/NorvesRoleProfileCli" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/role-profile-cli.log"
-          if ($LASTEXITCODE -ne 0) { throw 'Role Profile real CLI contracts failed' }
-      - name: Role Profileの専用出力と記録を保存する
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: role-profile-cli-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          retention-days: 14
-          if-no-files-found: warn
-          path: ${{ runner.temp }}/NorvesRoleProfileCli/
-      - name: 分割後の実CLI出力を採取する
-        id: capture
-        run: |
-          python Scripts/AssetCookCliParity.py capture --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --skeletal-test-exe build/windows-cli/Test/Core/Asset/Release/CookedMeshTest.exe --output "$env:NORVES_CI_CAPTURE" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/capture.log"
-          if ($LASTEXITCODE -ne 0) { throw 'Actual CLI capture failed' }
-          $snapshot = Get-Content "$env:NORVES_CI_CAPTURE/snapshot/snapshot.json" -Raw | ConvertFrom-Json
-          $exe = 'build/windows-cli/Tools/AssetCook/Release/AssetCook.exe'
-          $test = 'build/windows-cli/Test/Core/Asset/Release/CookedMeshTest.exe'
-          if ((Get-FileHash $exe -Algorithm SHA256).Hash -ne $snapshot.metadata.asset_cook_sha256 -or (Get-FileHash $test -Algorithm SHA256).Hash -ne $snapshot.metadata.skeletal_test_sha256) { throw 'Captured executable hash changed' }
-          New-Item -ItemType Directory "$env:NORVES_CI_BASELINE" | Out-Null
-          Copy-Item "$env:NORVES_CI_CAPTURE/snapshot" "$env:NORVES_CI_BASELINE/snapshot" -Recurse
-          Copy-Item $exe,$test,"$env:NORVES_CI_LOG/provenance.txt","$env:NORVES_CI_LOG/sdk-checksum.json" "$env:NORVES_CI_BASELINE/"
-      - name: 分割前後の全出力をbyte比較する
-        id: parity
-        run: |
-          python Scripts/AssetCookCliParity.py compare "$env:RUNNER_TEMP/NorvesCliFrozenBefore/snapshot" "$env:NORVES_CI_CAPTURE/snapshot" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/parity.log"
-          if ($LASTEXITCODE -ne 0) { throw 'CLI byte parity failed' }
-      - name: native asset-setを旧PS1の全出力と比較する
-        id: texture_parity
-        run: |
-          python -B Scripts/VerifyTextureAssetSet.py --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --reference "$env:RUNNER_TEMP/NorvesTextureLegacyReference" --output "$env:RUNNER_TEMP/NorvesTextureNative" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/texture-native.log"
-          if ($LASTEXITCODE -ne 0) { throw 'Native texture asset-set contracts failed' }
-      - name: native asset-setの一致した出力と記録を保存する
-        if: steps.texture_parity.outcome == 'success'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: texture-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          retention-days: 14
-          if-no-files-found: error
-          path: |
-            ${{ runner.temp }}/NorvesTextureNative/native1/Rendering3DTestSilverTextures/
-            ${{ runner.temp }}/NorvesTextureNative/native1/Rendering3DTestSilverGltfTextures/
-            ${{ runner.temp }}/NorvesTextureNative/managed/
-            ${{ runner.temp }}/NorvesTextureNative/verification.json
-            ${{ runner.temp }}/NorvesTextureNative/ascii-ps51.json
-            ${{ runner.temp }}/NorvesTextureNative/ascii-probe/manifest.json
       - name: 検証ログを保存する
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

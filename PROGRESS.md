@@ -1178,3 +1178,7 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - run37640229342はRelease buildとCPU73/74成功。Wireも通過。残る混在rigの失敗理由はModels/Dogのunsafe_output_targetと確定。generic相対名をnative親に連結した物理pathの区切りが混在し、cook後の既存file終端照合だけが失敗するため、AddExpectedで物理targetをmake_preferredに揃えた。componentの畳み込みやguardの緩和は行わない。再実行は未確認。
 
 - run37642958058はRelease buildとCPU73/74成功。GR96のManagedMixedRigは全経路を通過し、RetargetBatchへ到達。残る失敗は追加spec fixtureの必須default_variant欠落で、実装の拒否は正しいためfixtureへ補った。実CLIはCPU失敗と独立に結果を得られるよう、native build成功時に実行する条件へ変更した（同じ検査、jobの失敗は保持）。
+
+- run37646734701はRelease CPU74/74・rig/retarget実CLI・Sampler両構成・Debug骨格/retarget/frameケースが成功。RootFrame独立wire照合だけ、旧直接builderの材質期待をglTF cookerへ流用したため不一致だった。実Release/Debug meshは1360byteで完全一致し、差はmetallic/roughnessの-1→1、開いた三角形のauto両面flag0→1とchecksumのみ。glTF既定/既存material policyに基づいてprofile2 fixtureの期待を訂正し、旧profile1 literalは保持した。
+- 保存済みの実Release/Debug出力で、修正RootFrame oracleの12試験・3role wireと通常/一般poseの照合が成功。後続SplitRig/ClipBankの保存済みwire/pose/bindingも当該比較のみ実行して成功。本体C++は変更していない。
+- 同じ既存CLI/asset-set byte互換確認をDebug buildより前へ移した。検証コマンドは増減させず、G2の受入条件を先に確認する順序にする。後段Game/CLI全体のworkflowはまだ成功していない。

@@ -58,6 +58,12 @@ def reference(role):
                 struct.pack_into('<I', data, o+20, 2)
         elif code == b'ROOT':
             data[:] = FRAME_BYTES
+        elif code == b'MATS':
+            # このfixtureは直接builderではなくglTF cookerを通る。
+            # 材質省略時のglTF既定はmetallic=roughness=1。単一三角形は閉じておらず、
+            # 既定doubleSided=autoは両面にする。旧profile1 builderの-1 sentinelは引き継がない。
+            struct.pack_into('<ff', data, 96, 1, 1)
+            struct.pack_into('<I', data, 116, 1)
         elif code == b'SREF':
             struct.pack_into('<I', data, 12, 2)
             struct.pack_into('<Q', data, 24, fnv(reference(1)))
@@ -136,6 +142,14 @@ class Tests(unittest.TestCase):
         sref = next(data for code,_,data in sections(reference(2)) if code==b'SREF')
         self.assertEqual(struct.unpack_from('<Q',sref,24)[0],fnv(reference(1)))
         self.assertEqual(struct.unpack_from('<Q',sref,40)[0],fnv(FRAME_BYTES))
+
+    def test_cooked_material_defaults(self):
+        material = next(data for code,_,data in sections(reference(2)) if code==b'MATS')
+        self.assertEqual(struct.unpack_from('<ff',material,96),(1,1))
+        self.assertEqual(struct.unpack_from('<I',material,116)[0],1)
+        legacy = next(data for code,_,data in sections(old_mesh()) if code==b'MATS')
+        self.assertEqual(struct.unpack_from('<ff',legacy,96),(-1,-1))
+        self.assertEqual(struct.unpack_from('<I',legacy,116)[0],0)
 
     def test_mutations(self):
         for role in (1,2,3):
