@@ -2217,3 +2217,12 @@
 - 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-SAMPLE-6.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest・RenderingGoldenImageTest のビルド、BUILD_EXIT_CODE=0）、`-7.txt`（指定の 6 テストが 6/6 Passed、golden は CSM のまま変更なし）。
 - Notes: (1) 行末が混在するファイル（`LightingPass.cpp` など）は、python で行ごとの行末を保って置換し、`git diff --numstat` と `--ignore-cr-at-eol` の一致を確かめた。(2) 実機の起動画面での確認は、重い処理の扱いに従い回していない（VTG8-VSM-GPU-TIME の撮影で確かめる）。
 - Next: VTG8-VSM-GPU-TIME 以降（VTG8-VSM-PCSS は blocked のまま）。
+
+## 反復 9（2026-10-08）: VTG8-VSM-PCSS（深度の差が 107 m を超える場面を足して閉じる、done）
+
+- 状況: 探索・PCF の半径の上限 R_max（`MAX_FILTER_RADIUS_METERS` = 0.5 m）、印付けの範囲（R_max と 5 texel から求め、固定のページ数で打ち切らない）、ケース L5（本番の流れで描いた同じ四角形を深度の差 10 m・30 m に置き、帯の幅の比 3）、C2（印の範囲 81 ページ）は前の反復で入っていた。残っていた「深度の差が約 107 m を超える場面で半径が R_max で止まり、その半径の標本のページに印が付く」を足した。
+- テスト（`VirtualShadowMapVulkanTest` ケース L5）: 受け手の読みを `ProbeReceiverEdge`（本番の流れ → 縁からの位置の一覧を照明と同じ関数で読む）に分け、帯の幅の測定はそれを使う形にした。深度の差 200 m（物理の半影の半幅 0.936 m > R_max）で、縁から -0.6・-0.4・0・0.4・0.6 m の受け手の可視度が 0, 0.125, 0.5, 0.75, 1、逃げた標本 0（半径 R_max の標本の読むページまで印が届く。ページ 1 m ≦ R_max の 2 倍）。R_max で止まるので 0.6 m 離れた受け手は完全に影・光になり、止まらなければ 0 と 1 の間の値になる。
+- 変異（`verify-VTG8-VSM-PCSS-5-mutations.txt`。どちらも `VirtualShadowMapVulkanTest` が FAIL、`git checkout` で戻して更新時刻を更新し再ビルド）: (a) PCF 半径の上限を外す → 縁から -0.6 m の可視度が 0.1875、(b) 印の範囲から R_max の分を外す → 逃げた標本 3。前の反復で記録した変異（探索を外して半径を最小に固定 → 帯の幅の比 1）も有効なまま。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-PCSS-3.txt`（Debug の Game・RHITextureUpdateVulkanTest・RenderingGoldenImageTest のビルド、BUILD_EXIT_CODE=0）、`-4.txt`・`-6.txt`（VirtualShadowMapVulkanTest・RenderingGoldenIndoorVulkanTest・RenderingGoldenOutdoorVulkanTest が 3/3 Passed。`-6` は変異を戻した後）、`-2-verbose.txt`（ケース L5 の値、VUID_COUNT=0。最初の試行で、ページの大きさの確認の不等号が厳しすぎて落ちたものを直す前の出力）。golden は CSM のまま基準画像・閾値を動かさずに合格。
+- Notes: (1) 評価者の前回の指摘 1（`min(…, R_max)` が `max(物理の半影, p(d), texel)` を満たさない）は、親の判断（2026-10-08。R_max を完了条件に書き足した。TASKS.md の done-when と notes）に従い実装どおりとする。R_max は探索・印付けの範囲を決めるための上限で、深度の差が約 107 m を超えたときだけ効く（起動画面の深度の差は 20 m 未満）。(2) 実機の起動画面での確認は、重い処理の扱いに従い回していない（VTG8-VSM-GPU-TIME の撮影で確かめる）。
+- Next: VTG8-VSM-GPU-TIME 以降。

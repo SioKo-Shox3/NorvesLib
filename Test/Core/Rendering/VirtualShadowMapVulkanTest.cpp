@@ -3205,17 +3205,36 @@ namespace
         uint32_t Fallback = 0;
     };
 
-    // 受け手の平面の深度の画像を本番の流れに通し、縁がライト空間の x = 中心 + 0.0731 の四角形（受け手から depthGap だけ光の側）を描いて、縁を読む
-    BandResult MeasureReceiverBand(const DevicePtr& device,
-                                   VirtualShadowMapPages& pages,
-                                   VirtualShadowMapRaster& raster,
-                                   const SampleProbe& probe,
-                                   const ReceiverScene& receiver,
-                                   const TexturePtr& depth,
-                                   double depthGap,
-                                   uint64_t& frameSerial)
+    struct ReceiverProbeResult
     {
-        BandResult result;
+        bool bRan = false;
+        // 粗い段へ逃げた標本の数
+        uint32_t Fallback = 0;
+        // 縁からの横の位置ごとの可視度
+        Container::VariableArray<float> Visibility;
+    };
+
+    // 受け手が使う段の texel の一辺（m）。段が無ければ負
+    double ReceiverTexel(const ReceiverScene& receiver)
+    {
+        const Scene& scene = receiver.Base;
+        const int32_t level = SelectVirtualShadowMapLevel(scene.Settings, static_cast<float>(receiver.MinDistance), scene.Camera.FieldOfView, static_cast<float>(ImageHeight));
+        return level < 0 ? -1.0 : static_cast<double>(scene.Clipmap.Levels[static_cast<uint32_t>(level)].TexelMeters);
+    }
+
+    // 受け手の平面の深度の画像を本番の流れに通し、縁がライト空間の x = 中心 + 0.0731 の四角形（受け手から depthGap だけ光の側）を描いて、
+    // 縁から offsets（m。正が光の当たる側）だけ離れた受け手を照明と同じ関数で読む
+    ReceiverProbeResult ProbeReceiverEdge(const DevicePtr& device,
+                                          VirtualShadowMapPages& pages,
+                                          VirtualShadowMapRaster& raster,
+                                          const SampleProbe& probe,
+                                          const ReceiverScene& receiver,
+                                          const TexturePtr& depth,
+                                          double depthGap,
+                                          uint64_t& frameSerial,
+                                          const Container::VariableArray<double>& offsets)
+    {
+        ReceiverProbeResult result;
         const Scene& scene = receiver.Base;
         const double edgeX = receiver.CenterX + 0.0731;
 
@@ -3252,22 +3271,10 @@ namespace
         Expect(params.pixel[1] == VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS && params.pixel[2] == VirtualShadowMap::MAX_FILTER_RADIUS_METERS,
                "ケース L5: 読み出しのパラメータが太陽の角半径の tan と探索・PCF の半径の上限を持たなければならない");
 
-        const int32_t level = SelectVirtualShadowMapLevel(scene.Settings, static_cast<float>(receiver.MinDistance), scene.Camera.FieldOfView, static_cast<float>(ImageHeight));
-        if (level < 0)
-        {
-            return result;
-        }
-        const double texel = static_cast<double>(scene.Clipmap.Levels[static_cast<uint32_t>(level)].TexelMeters);
-        constexpr double TanRadius = static_cast<double>(VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS);
-        const double penumbra = depthGap * TanRadius;
-        // 縁を中心に、帯（約 1.92 × 半影）が十分に入る範囲を texel の 1/4 刻みで読む
-        const double span = std::max(1.5 * penumbra, 6.0 * texel);
-        const double step = 0.25 * texel;
-        const int32_t half = static_cast<int32_t>(std::ceil(span / step));
         Container::VariableArray<SampleProbePoint> points;
-        for (int32_t index = -half; index <= half; ++index)
+        for (const double offset : offsets)
         {
-            points.push_back(MakeReceiver(scene, edgeX + static_cast<double>(index) * step, receiver.CenterY, receiver.ReceiverDepth));
+            points.push_back(MakeReceiver(scene, edgeX + offset, receiver.CenterY, receiver.ReceiverDepth));
         }
 
         SampleOutput output;
@@ -3277,11 +3284,50 @@ namespace
         }
         result.bRan = true;
         result.Fallback = output.Fallback;
+        result.Visibility = output.Visibility;
+        return result;
+    }
+
+    // 縁を横切る受け手を読み、可視度が 0 と 1 の間の値になる位置の幅（帯の幅）を測る
+    BandResult MeasureReceiverBand(const DevicePtr& device,
+                                   VirtualShadowMapPages& pages,
+                                   VirtualShadowMapRaster& raster,
+                                   const SampleProbe& probe,
+                                   const ReceiverScene& receiver,
+                                   const TexturePtr& depth,
+                                   double depthGap,
+                                   uint64_t& frameSerial)
+    {
+        BandResult result;
+        const double texel = ReceiverTexel(receiver);
+        if (!(texel > 0.0))
+        {
+            return result;
+        }
+        constexpr double TanRadius = static_cast<double>(VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS);
+        const double penumbra = depthGap * TanRadius;
+        // 縁を中心に、帯（約 1.92 × 半影）が十分に入る範囲を texel の 1/4 刻みで読む
+        const double span = std::max(1.5 * penumbra, 6.0 * texel);
+        const double step = 0.25 * texel;
+        const int32_t half = static_cast<int32_t>(std::ceil(span / step));
+        Container::VariableArray<double> offsets;
+        for (int32_t index = -half; index <= half; ++index)
+        {
+            offsets.push_back(static_cast<double>(index) * step);
+        }
+
+        const ReceiverProbeResult probed = ProbeReceiverEdge(device, pages, raster, probe, receiver, depth, depthGap, frameSerial, offsets);
+        if (!probed.bRan)
+        {
+            return result;
+        }
+        result.bRan = true;
+        result.Fallback = probed.Fallback;
         int32_t first = -1;
         int32_t last = -1;
-        for (int32_t index = 0; index < static_cast<int32_t>(output.Visibility.size()); ++index)
+        for (int32_t index = 0; index < static_cast<int32_t>(probed.Visibility.size()); ++index)
         {
-            const float value = output.Visibility[static_cast<size_t>(index)];
+            const float value = probed.Visibility[static_cast<size_t>(index)];
             if (value > 1.0e-6f && value < 1.0f - 1.0e-6f)
             {
                 first = first < 0 ? index : first;
@@ -3361,6 +3407,39 @@ namespace
             }
             std::cout << TestName << " ケース L5 接する受け手: 帯の幅=" << contact.Width * 1000.0 << " mm" << std::endl;
             Expect(!contact.bBand || contact.Width < 0.5 * widths[0], "ケース L5: 遮る物に接する受け手の縁は、深度の差 10 m の縁より十分に鋭くなければならない");
+        }
+
+        // 深度の差が約 107 m を超えると半径は上限 R_max（探索・PCF のワールドの長さの上限）で止まる。深度の差 200 m（物理の半影の半幅 0.936 m）の四角形で、
+        // 縁から離れた受け手を読む。半径が R_max のとき標本の横の広がりは [-0.942, 0.975] × R_max なので、縁から 0.6 m 離れた受け手は
+        // 標本のどれも反対側へ届かず、光の側は 1、影の側は 0 になる（上限が無ければ半影の半幅 0.936 m の標本が反対側へ届き、0 と 1 の間の値になる）。
+        // 縁から 0.4 m の受け手は、R_max の標本だけが反対側へ届いて 0 と 1 の間の値になる。印付けは R_max の標本の読むページまで届くので、粗い段へ逃げない
+        {
+            constexpr double HugeGap = 200.0;
+            constexpr double RadiusLimit = static_cast<double>(VirtualShadowMap::MAX_FILTER_RADIUS_METERS);
+            Expect(HugeGap * TanRadius > RadiusLimit, "ケース L5: 深度の差が物理の半影の半幅を R_max より大きくする値でなければならない");
+            const double texel = ReceiverTexel(receiver);
+            const double pageMeters = static_cast<double>(scene.Clipmap.Levels[static_cast<uint32_t>(nearLevel)].PageMeters);
+            const double offsetValues[5] = {-0.6, -0.4, 0.0, 0.4, 0.6};
+            Container::VariableArray<double> offsets;
+            for (const double value : offsetValues)
+            {
+                offsets.push_back(value);
+            }
+            const ReceiverProbeResult capped = ProbeReceiverEdge(device, pages, raster, probe, receiver, depth, HugeGap, frameSerial, offsets);
+            if (!capped.bRan || capped.Visibility.size() != 5u)
+            {
+                return false;
+            }
+            std::cout << TestName << " ケース L5 深度の差 " << HugeGap << " m: 半影の半幅=" << HugeGap * TanRadius << " m R_max=" << RadiusLimit << " m ページ=" << pageMeters
+                      << " m texel=" << texel * 1000.0 << " mm 可視度(-0.6, -0.4, 0, 0.4, 0.6 m)=" << capped.Visibility[0] << ", " << capped.Visibility[1] << ", "
+                      << capped.Visibility[2] << ", " << capped.Visibility[3] << ", " << capped.Visibility[4] << " 逃げた標本=" << capped.Fallback << std::endl;
+            Expect(pageMeters <= 2.0 * RadiusLimit, "ケース L5: ページが R_max の 2 倍以下でなければならない（半径 R_max の標本が隣のページを読む場面）");
+            Expect(capped.Visibility[4] == 1.0f, "ケース L5: 深度の差が 107 m を超えても半径は R_max で止まり、縁から 0.6 m の光の側は 1 でなければならない");
+            Expect(capped.Visibility[0] == 0.0f, "ケース L5: 深度の差が 107 m を超えても半径は R_max で止まり、縁から 0.6 m の影の側は 0 でなければならない");
+            Expect(capped.Visibility[1] > 0.0f && capped.Visibility[1] < 1.0f && capped.Visibility[3] > 0.0f && capped.Visibility[3] < 1.0f,
+                   "ケース L5: 縁から 0.4 m の受け手は R_max の標本が反対側へ届き、0 と 1 の間の値でなければならない");
+            Expect(capped.Visibility[2] > 0.0f && capped.Visibility[2] < 1.0f, "ケース L5: 縁の受け手は 0 と 1 の間の値でなければならない");
+            Expect(capped.Fallback == 0u, "ケース L5: 印付けが半径 R_max の標本の読むページまで届き、粗い段へ逃げてはならない");
         }
         return true;
     }
