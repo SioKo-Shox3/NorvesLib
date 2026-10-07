@@ -1274,7 +1274,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「照明は PCF から始める」）。PCSS（物理の半影）は VTG8-VSM-PCSS。この項目では起動画面を撮らない（VTG8-VSM-GPU-TIME の撮影と VTG8-VSM-DEFAULT-ON の検証の実行で初めて画を見る。そこで壊れて見えたら、その項目で直す）。半透明・ボリュームを VSM で読むには、画面の深度に無い位置のページの印が要るので段8では扱わない（既知の限界）。危険地帯（照明のシェーダー）。
 
 ## VTG8-VSM-PCSS: VSM の照明の読みに、ブロッカーの探索と物理の半影を足す
-- status: done
+- status: blocked
 - done-when: VSM の照明の読み（`Common/VirtualShadowMap.glsl`）に、CSM と同じ考え方のブロッカーの探索と物理の半影（太陽の角半径 0.00468 rad × 受け手と遮る物の深度の差）を足し、PCF の半径を r = max(物理の半影, p(d), 使う段の 1 texel) にする（接するところは鋭く、離れるほどぼける）。探索の半径はワールドの長さで決め（段に依らない）、探索の標本も各自のページの表を引く。VTG8-VSM-MARK の隣のページへの印の範囲を、探索と PCF の最大の半径に合わせる。`VirtualShadowMapVulkanTest` に、同じ四角形を受け手から 2 つの高さに置いたとき、高いほうの縁の途中の値の帯が広く、その幅の比が物理の半影の比（高さの比）に ±30% で合うことを確かめる場面を足す。変異（探索を外して半径を最小に固定する）で落ちることを記録する。golden 4 本は変わらない。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`

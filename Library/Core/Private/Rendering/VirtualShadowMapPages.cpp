@@ -10,6 +10,9 @@
 #include "RHI/IPipeline.h"
 #include "RHI/ITexture.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 
@@ -30,14 +33,38 @@ namespace NorvesLib::Core::Rendering
             float thresholds[VirtualShadowMapMaxLevels];
             float levelInfo[VirtualShadowMapMaxLevels][4];   // x = ページの一辺（m）、y = texel の一辺（m）
             int32_t levelOrigin[VirtualShadowMapMaxLevels][4]; // x, y = 範囲の最小の絶対のページの番号
+            // ここから下は vsm_allocate.comp だけが読む（vsm_mark.comp・vsm_clear.comp の VsmParams はここまでの前半と同じ並び）
+            uint32_t cache[4];                                  // x = 印（CacheFlag*）、y = 持ち越すフレーム数、z = 無効化の矩形の数
+            int32_t previousOrigin[VirtualShadowMapMaxLevels][4]; // x, y = 前フレームの範囲の最小の絶対のページの番号
+            float rects[VirtualShadowMap::MAX_INVALIDATION_RECTS][4]; // 無効化の矩形（ライト空間。x, y = 最小、z, w = 最大）
         };
-        static_assert(sizeof(GPUVsmParams) == 736, "vsm_*.comp の VsmParams と同じ大きさにすること");
+        static_assert(sizeof(GPUVsmParams) == 736 + 16 + 256 + VirtualShadowMap::MAX_INVALIDATION_RECTS * 16,
+                      "vsm_*.comp の VsmParams と同じ大きさにすること");
 
         constexpr uint32_t GroupSize = 256;
         constexpr uint32_t MarkGroupSize = 8;
-        constexpr uint32_t StageReset = 0;
-        constexpr uint32_t StageAllocate = 1;
-        constexpr uint32_t StageFinalize = 2;
+        // vsm_allocate.comp の段階（control.x）。この順に 1 回ずつ dispatch する
+        enum AllocateStage : uint32_t
+        {
+            StageScroll = 0,
+            StageRects,
+            StageAge,
+            StageEvictPlan,
+            StageEvict,
+            StageFreeReset,
+            StageFreeMark,
+            StageFreeCompact,
+            StageAllocate,
+            StageDirtyList,
+            StageFinalize,
+            StageCount,
+        };
+        constexpr uint32_t CacheFlagEnabled = 1u;
+        constexpr uint32_t CacheFlagInvalidateAll = 2u;
+        // 太陽の向きが前フレームと同じと見なす、成分ごとの差の上限
+        constexpr float SunDirectionTolerance = 1.0e-6f;
+        // 無効化の矩形の外側へ足す余白（m）。展開の範囲の計算（float）との丸めの差でページを取りこぼさないため
+        constexpr float InvalidationMarginMeters = 1.0e-3f;
         // 絶対のページの番号を int32 でシェーダーへ渡せる範囲（範囲の端 + 128 ページが溢れない余裕を持つ）
         constexpr int64_t MaxOriginMagnitude = 1ll << 30;
 
@@ -118,6 +145,30 @@ namespace NorvesLib::Core::Rendering
         bool IsOriginInRange(int64_t origin)
         {
             return origin > -MaxOriginMagnitude && origin < MaxOriginMagnitude;
+        }
+
+        bool IsSameDirection(const Math::Vector3& a, const Math::Vector3& b)
+        {
+            return std::abs(a.x - b.x) <= SunDirectionTolerance && std::abs(a.y - b.y) <= SunDirectionTolerance &&
+                   std::abs(a.z - b.z) <= SunDirectionTolerance;
+        }
+
+        // 段の設定（ページの大きさ・段の数）が前フレームと同じか。違えば、ページの表の欄が指すページの意味が変わるので引き継げない
+        bool IsSameLevelLayout(const VirtualShadowMapClipmap& previous, const VirtualShadowMapClipmap& current)
+        {
+            if (previous.LevelCount != current.LevelCount || previous.PagesPerAxis != current.PagesPerAxis)
+            {
+                return false;
+            }
+            for (uint32_t level = 0; level < current.LevelCount; ++level)
+            {
+                if (previous.Levels[level].PageMeters != current.Levels[level].PageMeters ||
+                    previous.Levels[level].TexelMeters != current.Levels[level].TexelMeters)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         // 印付けに使える入力か。使えるなら params へクリップマップ由来の値を書く
@@ -254,6 +305,12 @@ namespace NorvesLib::Core::Rendering
         m_PointSampler.reset();
         m_Device = nullptr;
         m_bMarked = false;
+        m_bCacheValid = false;
+        m_bCacheContinued = false;
+        m_bInvalidatedAll = false;
+        m_CachedPageTable = nullptr;
+        m_CachedPool = nullptr;
+        m_CachedPoolPages = 0;
     }
 
     void VirtualShadowMapPages::BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial)
@@ -282,6 +339,11 @@ namespace NorvesLib::Core::Rendering
     bool VirtualShadowMapPages::Record(RHI::ICommandList* commandList, const VirtualShadowMapPagesDispatch& dispatch)
     {
         m_bMarked = false;
+        m_bCacheContinued = false;
+        m_bInvalidatedAll = false;
+        // 記録の途中で戻ったとき、古い状態を次の記録が引き継がないよう先に無効にする（最後で入力を残して有効に戻す）
+        const bool bCacheWasValid = m_bCacheValid;
+        m_bCacheValid = false;
         if (!IsReady() || !commandList || dispatch.PoolPages == 0 || dispatch.PoolPages > VirtualShadowMap::MAX_POOL_PAGES ||
             !dispatch.Pool || !dispatch.PageTable || !dispatch.RequestBits || !dispatch.FreeList || !dispatch.Stats ||
             !dispatch.DirtyList)
@@ -311,7 +373,7 @@ namespace NorvesLib::Core::Rendering
                            FillMarkParams(dispatch, width, height, markParams);
 
         Use* markUse = nullptr;
-        Use* allocateUses[3] = {nullptr, nullptr, nullptr};
+        Use* allocateUses[StageCount] = {};
         Use* clearUse = nullptr;
         if (bMark && !AcquireUse(m_MarkUses, MakeMarkLayout(), markUse))
         {
@@ -351,17 +413,62 @@ namespace NorvesLib::Core::Rendering
             BarrierWrites(commandList, {dispatch.RequestBits});
         }
 
+        // ----- 前フレームのページの表を引き継げるか -----
+        // 引き継ぐには、キャッシュを使い、印付けをして、同じ資源・同じ段の設定で前フレームも記録していること。
+        // 引き継がないときは表を 0 にして全部を割り当て直す（資源は未初期化・見張りの値でもよい）
+        const bool bCacheWanted = dispatch.bCacheEnabled && bMark;
+        const bool bContinue = bCacheWanted && bCacheWasValid && m_CachedPageTable == dispatch.PageTable.get() &&
+                               m_CachedPool == dispatch.Pool.get() && m_CachedPoolPages == dispatch.PoolPages &&
+                               IsSameLevelLayout(m_PreviousClipmap, *dispatch.Clipmap);
+        bool bInvalidateAll = false;
+        if (bContinue)
+        {
+            const VirtualShadowMapClipmap& current = *dispatch.Clipmap;
+            bInvalidateAll = dispatch.bInvalidateAll || !IsSameDirection(m_PreviousClipmap.Direction, current.Direction) ||
+                             !IsSameDirection(m_PreviousClipmap.LightRight, current.LightRight) ||
+                             !IsSameDirection(m_PreviousClipmap.LightUp, current.LightUp) ||
+                             m_PreviousClipmap.DepthCenter != current.DepthCenter ||
+                             dispatch.InvalidationRectCount > VirtualShadowMap::MAX_INVALIDATION_RECTS;
+        }
+        m_bCacheContinued = bContinue;
+        m_bInvalidatedAll = bInvalidateAll;
+
         // ----- 割り当て -----
         {
             ScopedGpuTimestamp timestamp(commandList, "VsmAllocate");
-            ZeroFill(commandList, dispatch.PageTable, VirtualShadowMap::PageTableBytes());
+            if (!bContinue)
+            {
+                ZeroFill(commandList, dispatch.PageTable, VirtualShadowMap::PageTableBytes());
+            }
             ZeroFill(commandList, dispatch.Stats, VirtualShadowMap::STATS_BYTES);
 
-            const uint32_t stages[3] = {StageReset, StageAllocate, StageFinalize};
-            for (uint32_t index = 0; index < 3u; ++index)
+            GPUVsmParams allocateParams = bMark ? markParams : baseParams;
+            allocateParams.cache[0] = (bCacheWanted ? CacheFlagEnabled : 0u) | (bInvalidateAll ? CacheFlagInvalidateAll : 0u);
+            allocateParams.cache[1] = VirtualShadowMap::CACHE_CARRY_FRAMES;
+            const uint32_t rectCount = bContinue && !bInvalidateAll ? dispatch.InvalidationRectCount : 0u;
+            allocateParams.cache[2] = rectCount;
+            for (uint32_t level = 0; level < VirtualShadowMapMaxLevels; ++level)
             {
-                GPUVsmParams params = baseParams;
-                params.control[0] = stages[index];
+                // 引き継がないときは、範囲が動いていない（前フレームも今フレームと同じ）ものとして扱う
+                const bool bPrevious = bContinue && level < m_PreviousClipmap.LevelCount;
+                allocateParams.previousOrigin[level][0] =
+                    bPrevious ? static_cast<int32_t>(m_PreviousClipmap.Levels[level].OriginPageX) : allocateParams.levelOrigin[level][0];
+                allocateParams.previousOrigin[level][1] =
+                    bPrevious ? static_cast<int32_t>(m_PreviousClipmap.Levels[level].OriginPageY) : allocateParams.levelOrigin[level][1];
+            }
+            for (uint32_t index = 0; index < rectCount; ++index)
+            {
+                const float* rect = dispatch.InvalidationRects + static_cast<size_t>(index) * 4u;
+                allocateParams.rects[index][0] = rect[0] - InvalidationMarginMeters;
+                allocateParams.rects[index][1] = rect[1] - InvalidationMarginMeters;
+                allocateParams.rects[index][2] = rect[2] + InvalidationMarginMeters;
+                allocateParams.rects[index][3] = rect[3] + InvalidationMarginMeters;
+            }
+
+            for (uint32_t index = 0; index < StageCount; ++index)
+            {
+                GPUVsmParams params = allocateParams;
+                params.control[0] = index;
                 Use& use = *allocateUses[index];
                 use.Uniform->Update(&params, sizeof(params));
                 use.DescriptorSet->BindConstantBuffer(BindParams, use.Uniform, 0, sizeof(params));
@@ -377,19 +484,35 @@ namespace NorvesLib::Core::Rendering
                 use.DescriptorSet->Update();
             }
 
+            const uint32_t entryGroups = GroupsFor(VirtualShadowMap::LEVEL_COUNT * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL, GroupSize);
+            const uint32_t pageGroups = GroupsFor(dispatch.PoolPages, GroupSize);
+            const uint32_t rectGroups = GroupsFor(rectCount * VirtualShadowMap::LEVEL_COUNT, GroupSize);
+            const uint32_t requestGroups = GroupsFor(VirtualShadowMap::REQUEST_WORDS, GroupSize);
+            // 段階ごとの dispatch の大きさ（0 は記録しない）
+            const uint32_t groups[StageCount] = {
+                entryGroups,   // StageScroll
+                rectGroups,    // StageRects
+                entryGroups,   // StageAge
+                1u,            // StageEvictPlan
+                entryGroups,   // StageEvict
+                pageGroups,    // StageFreeReset
+                entryGroups,   // StageFreeMark
+                pageGroups,    // StageFreeCompact
+                requestGroups, // StageAllocate
+                entryGroups,   // StageDirtyList
+                1u,            // StageFinalize
+            };
             commandList->SetPipeline(m_AllocatePipeline);
-            // 段階 0: 空きページの一覧を全ページが空きに作り直す
-            commandList->SetDescriptorSet(allocateUses[0]->DescriptorSet, 0);
-            commandList->Dispatch(GroupsFor(dispatch.PoolPages, GroupSize), 1u, 1u);
-            BarrierWrites(commandList, {dispatch.FreeList});
-            // 段階 1: 要求のページへ物理ページを割り当てる
-            commandList->SetDescriptorSet(allocateUses[1]->DescriptorSet, 0);
-            commandList->Dispatch(GroupsFor(VirtualShadowMap::REQUEST_WORDS, GroupSize), 1u, 1u);
-            BarrierWrites(commandList, {dispatch.FreeList, dispatch.PageTable, dispatch.Stats, dispatch.DirtyList});
-            // 段階 2: 統計・空きの数・消去する一覧の数と引数を決める
-            commandList->SetDescriptorSet(allocateUses[2]->DescriptorSet, 0);
-            commandList->Dispatch(1u, 1u, 1u);
-            BarrierWrites(commandList, {dispatch.FreeList, dispatch.PageTable, dispatch.Stats, dispatch.DirtyList});
+            for (uint32_t index = 0; index < StageCount; ++index)
+            {
+                if (groups[index] == 0u)
+                {
+                    continue;
+                }
+                commandList->SetDescriptorSet(allocateUses[index]->DescriptorSet, 0);
+                commandList->Dispatch(groups[index], 1u, 1u);
+                BarrierWrites(commandList, {dispatch.FreeList, dispatch.PageTable, dispatch.Stats, dispatch.DirtyList});
+            }
         }
 
         // ----- 消去 -----
@@ -416,6 +539,16 @@ namespace NorvesLib::Core::Rendering
         if (!bCleared)
         {
             NORVES_LOG_WARNING("VirtualShadowMapPages", "間接 dispatch を記録できないので、VSM のページを消去できない");
+        }
+
+        // 次の記録が引き継ぐ入力を残す。キャッシュを使わない・印付けをしなかった記録は、引き継がない
+        m_bCacheValid = bCacheWanted;
+        if (bCacheWanted)
+        {
+            m_CachedPageTable = dispatch.PageTable.get();
+            m_CachedPool = dispatch.Pool.get();
+            m_CachedPoolPages = dispatch.PoolPages;
+            m_PreviousClipmap = *dispatch.Clipmap;
         }
         return bCleared;
     }

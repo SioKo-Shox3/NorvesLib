@@ -2,7 +2,8 @@
 
 // 太陽の仮想シャドウマップ（VSM。--shadow-method=vsm）の資源を持つパス。
 // 深度が確定した後・照明の前に置き、物理ページのプールとページの表などを作って名前で公開し、毎フレーム
-// 深度から要るページに印を付け・物理ページを割り当て・消去する（VirtualShadowMapPages。キャッシュは無く毎フレームすべて作り直す）。
+// 深度から要るページに印を付け・物理ページを割り当て・消去する（VirtualShadowMapPages）。ページは次のフレームへ持ち越し、
+// 動かない物のページは描き直さない（動いた投影物の範囲・太陽の向きの変化・深度の原点の移動だけを無効にする）。
 // その後、影を落とす手続きメッシュとスキニングの投影物を塊（128 三角形以下）の記録にして展開・描画し（VirtualShadowMapRaster）、
 // 物理ページへ深度を描く。集め方は CSM と同じ（VirtualShadowMapCasters.h）。
 // 照明（lighting.frag）は、公開したページの表・物理ページのプールを読んで太陽の影を引く（Common/VirtualShadowMap.glsl。VirtualShadowMapSample.h が
@@ -86,7 +87,7 @@ namespace NorvesLib::Core::Rendering
          *        展開が描く塊の数・展開が書いたインスタンスの数・展開の容量を超えて書かなかったインスタンスの数・
          *        MegaGeometry の投影物のカリングの（インスタンス、段）の数・書いたクラスタの数・容量を超えて書かなかったクラスタの数
          */
-        constexpr uint32_t STATS_WORD_COUNT = 11;
+        constexpr uint32_t STATS_WORD_COUNT = 53;
         constexpr uint64_t STATS_BYTES = static_cast<uint64_t>(STATS_WORD_COUNT) * sizeof(uint32_t);
         enum StatWord : uint32_t
         {
@@ -101,7 +102,28 @@ namespace NorvesLib::Core::Rendering
             StatMegaInstances = 8,
             StatMegaClusters = 9,
             StatMegaOverflow = 10,
+            // キャッシュ（要求があり dirty でない = 描かずに持ち越したページ・描いたページ・無効にしたページ・空きへ戻したページの数）
+            StatCached = 11,
+            StatRendered = 12,
+            StatInvalidated = 13,
+            StatReleased = 14,
+            // 割り当ての作業の語（vsm_allocate.comp が毎フレーム 0 から使う）: 新しく要るページの数・使用中のページの数・
+            // 古い順に戻す段階としきい値の年齢・その段階で戻す数の枠と戻した数・割り当ての位置、続けて年齢ごとの数（STATS_AGE_BINS 個）
+            StatScratchNeed = 15,
+            StatScratchUsed = 16,
+            StatScratchEvictAge = 17,
+            StatScratchEvictQuota = 18,
+            StatScratchEvictTaken = 19,
+            StatScratchAllocCursor = 20,
+            StatScratchAgeHistogram = 21,
         };
+        /** @brief 要求されなかったフレーム数ごとの数の語の数（年齢 0〜31） */
+        constexpr uint32_t STATS_AGE_BINS = 32;
+        static_assert(STATS_WORD_COUNT == StatScratchAgeHistogram + STATS_AGE_BINS, "統計の語の数が並びと合っていること");
+        /** @brief 要求されなくなったページを持ち越すフレーム数（これを超えて要求が無ければ空きへ戻す） */
+        constexpr uint32_t CACHE_CARRY_FRAMES = 30;
+        /** @brief 1 フレームに渡せる無効化の矩形の数（超えたら全ページを無効にする） */
+        constexpr uint32_t MAX_INVALIDATION_RECTS = 256;
 
         /** @brief 統計のバッファの用途。計算で書き、読み戻しのコピーの元になる（TransferSrc が無いとコピーが検証に違反する） */
         inline RHI::ResourceUsage StatsBufferUsage()
@@ -225,10 +247,15 @@ namespace NorvesLib::Core::Rendering
             return static_cast<uint64_t>(pages) * PAGE_BYTES;
         }
 
-        /** @brief 空きページの一覧の大きさ（バイト）: 先頭の 1 語が数、続く pages 語が空きページの番号 */
+        /**
+         * @brief 空きページの一覧の大きさ（バイト）
+         *
+         * 先頭の 1 語が数、続く pages 語が空きページの番号。その後ろに作業の領域が 2 つ続く:
+         * 物理ページごとの「使用中」の印（pages 語）と、要求されなかったフレーム数（年齢。pages 語）。
+         */
         constexpr uint64_t FreeListBytes(uint32_t pages)
         {
-            return (static_cast<uint64_t>(pages) + 1u) * sizeof(uint32_t);
+            return (static_cast<uint64_t>(pages) * 3u + 1u) * sizeof(uint32_t);
         }
     } // namespace VirtualShadowMap
 
@@ -241,15 +268,17 @@ namespace NorvesLib::Core::Rendering
      *   VSM.DirtyList（消去するページの一覧。先頭 3 語が間接 dispatch の引数、続く 1 語が数、以降が物理ページの番号）。
      * 読むもの: GBuffer.Depth（印付けの入力）・GBuffer.Normal（深度が確定した後に並ぶための依存。中身は読まない）・
      *   スキニングの変形した頂点（SkinningComputePass が持つとき。投影物の読み取りの依存）。
-     * 毎フレームの記録: 要求・ページの表・統計を 0 にし、深度から印を付け（VsmMark）、物理ページを割り当て（VsmAllocate）、
-     * dirty のページを 1.0 のビットで埋める（VsmClear）。続けて、影を落とす投影物の塊の記録を作り（CPU。ホストが書くバッファ）、
+     * 毎フレームの記録: 要求・統計を 0 にし、深度から印を付け（VsmMark）、ページの表を前フレームから引き継いで（範囲の外へ出たページ・
+     * 要求の無いまま持ち越しの上限を超えたページを空きへ戻し、無効にするページに dirty を付け）物理ページを割り当て（VsmAllocate）、
+     * dirty のページを 1.0 のビットで埋める（VsmClear）。--vsm-cache=off では毎フレーム表を 0 にして、すべて割り当て直す。続けて、影を落とす投影物の塊の記録を作り（CPU。ホストが書くバッファ）、
      * 段ごとにページへ展開し（VsmExpand）、物理ページへ深度を描く（VsmDraw）。投影物が無い・印付けをしなかったフレームは展開・描画を記録しない。
      * MegaGeometry の投影物のカリングは、印付け・割り当て・消去の後・展開の前に VsmCullMega として記録する（SetMegaGeometryPass の相手が
      * 今フレームに影を落とすインスタンスを持つときだけ）。出力は VsmMega_List（頭 4 語 = 選んだクラスタの数・溢れた数・判定を通った
      * （インスタンス、段）の数・予約、続いて uvec4 = インスタンスの表の番号・段・クラスタの番号・予約）。統計の語 8〜10 を
      * VSM_MEGA_CULL instances=<n> clusters=<n> overflow=<n> として 60 回ごとに出す。
      * 統計は数フレーム遅れで読み戻し、値が変わったとき（または 60 フレームごと）に
-     * VSM_PAGES requested=<n> allocated=<n> overflow=<n> levels_used=<mask> を出す。投影物の集めた内訳は
+     * VSM_PAGES requested=<n> allocated=<n> overflow=<n> levels_used=<mask> を出す。60 フレームごとに
+     * VSM_CACHE cached=<n> rendered=<n> invalidated=<n> released=<n>（持ち越したページ・描いたページ・無効にしたページ・空きへ戻したページ）も出す。投影物の集めた内訳は
      * VSM_CASTERS procedural_chunks=<n> skinned_chunks=<n> culled=<n> dropped=<n> skipped=<n> に出す（値が変わったとき・60 回ごと）。
      * プールの確保量は GpuResources::SetShadowMapPoolBytes で予算の計算（VideoMemoryPool::ShadowMap）へ伝える。
      */
@@ -275,6 +304,10 @@ namespace NorvesLib::Core::Rendering
         /** @brief MegaGeometry の投影物の取り出し元（同じ View の主の経路。null なら MegaGeometry の投影物はカリングしない） */
         void SetMegaGeometryPass(const MegaGeometryPass* pass) { m_MegaPass = pass; }
         const MegaGeometryPass* GetMegaGeometryPass() const { return m_MegaPass; }
+
+        /** @brief ページのキャッシュ（動かない物のページを次のフレームへ持ち越す）を使うか。既定は使う（--vsm-cache=off で毎フレームすべて描き直す） */
+        void SetCacheEnabled(bool bEnabled) { m_bCacheEnabled = bEnabled; }
+        bool IsCacheEnabled() const { return m_bCacheEnabled; }
 
         /** @brief 資源を作れて、このパスが動くか */
         bool IsActive() const { return m_bActive; }
@@ -330,6 +363,8 @@ namespace NorvesLib::Core::Rendering
         void ReleaseResources();
         /** @brief 影を落とす手続きメッシュとスキニングを、塊の記録に集める（CPU。段の範囲に入らない塊は省く） */
         void CollectCasters(ViewRenderContext& context);
+        /** @brief 集めた投影物の動きを前フレームの記録と比べて、無効にするページのライト空間の矩形（なければ全ページ）を決める */
+        void PlanInvalidation(ViewRenderContext& context);
         /** @brief 集めた塊を書き、展開 → 描画を記録する。バッファは Common から UnorderedAccess へ進めて、Common へ戻す */
         bool RecordRaster(ViewRenderContext& context, uint64_t frameSerial);
         /** @brief MegaGeometry の投影物のカリングを記録する。バッファは Common から UnorderedAccess へ進めて、Common へ戻す */
@@ -341,6 +376,7 @@ namespace NorvesLib::Core::Rendering
 
         uint32_t m_RequestedPoolPages = 0;
         uint32_t m_PoolPages = 0;
+        bool m_bCacheEnabled = true;
         RHI::IDevice* m_Device = nullptr;
         GpuResources* m_Gpu = nullptr;
         bool m_bActive = false;
@@ -378,6 +414,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_LoggedStats[4] = {};
         bool m_bStatsLogged = false;
         uint32_t m_FramesSinceStatsLog = 0;
+        /** @brief VSM_CACHE を出してからの読み戻したフレーム数（60 フレームごとに出す） */
+        uint32_t m_FramesSinceCacheLog = 0;
 
         RGResourceHandle m_PoolHandle;
         RGResourceHandle m_PageTableHandle;

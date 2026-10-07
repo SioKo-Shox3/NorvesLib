@@ -1,13 +1,20 @@
 ﻿#pragma once
 
-// 太陽の仮想シャドウマップ（VSM）の、要るページへの印付け・物理ページの割り当て・消去の計算（毎フレームすべて作り直す。キャッシュは無い）。
+// 太陽の仮想シャドウマップ（VSM）の、要るページへの印付け・物理ページの割り当て・消去の計算（ページの表を前フレームから引き継ぐキャッシュ付き）。
 // VirtualShadowMapPass がこの記録を RenderGraph の中で使い、GPU のテストは RenderGraph なしで直接呼ぶ。
 //
 // 3 つの区間（GPU のタイムスタンプの名前）:
 //   VsmMark     : 要求のビット列を 0 にし、GBuffer.Depth の空でない画素から要るページに印を付ける（vsm_mark.comp）。
-//   VsmAllocate : ページの表・統計を 0 にし、空きページの一覧を作り直し、要求のページへ物理ページを割り当てて、
-//                 ページの表に「割り当て済み・dirty」を書く（vsm_allocate.comp の 3 段階）。
+//   VsmAllocate : 統計を 0 にし、ページの表を前フレームから引き継いで（範囲の外へ出たページ・長く要求の無いページを空きへ戻し、
+//                 無効にするページに dirty を付け）、空きページの一覧を作り直し、まだ無い要求のページへ物理ページを割り当てて、
+//                 ページの表に「割り当て済み・dirty」を書く（vsm_allocate.comp の 11 段階）。
 //   VsmClear    : dirty のページの物理ページを 1.0 のビットで埋める（vsm_clear.comp。間接 dispatch）。
+//
+// キャッシュ: 前フレームから割り当て済みで今フレームも要求され、無効にされていないページは物理ページを保ち、消去も描画もしない（dirty にしない）。
+// 要求の無いページは CACHE_CARRY_FRAMES フレーム持ち越し、空きが足りないときは古い順に戻す。段の範囲が動いて範囲の外へ出たページは空きへ戻す
+// （トーラスの番地なので、残ったページの番地は変わらない）。太陽の向き・深度の原点が変わったときは全ページを、動いた投影物の矩形は
+// その範囲のページだけを dirty にする。バッファ・段の設定が前フレームと違う、印付けをしなかった、キャッシュを使わない指定のフレームは、
+// ページの表を 0 にして全部を割り当て直す。
 
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
@@ -78,6 +85,16 @@ namespace NorvesLib::Core::Rendering
         float MaxFilterRadiusMeters = VirtualShadowMap::MAX_FILTER_RADIUS_METERS;
         /** @brief 物理ページの数（プール・空きページの一覧・消去の一覧の大きさと合っていること） */
         uint32_t PoolPages = 0;
+        /** @brief ページを次のフレームへ持ち越すか。false（--vsm-cache=off）なら毎フレーム表を 0 にして、すべて割り当て直して描き直す */
+        bool bCacheEnabled = true;
+        /**
+         * @brief 無効にするライト空間の矩形（x, y = 最小、z, w = 最大。ワールドの境界を今フレームのクリップマップのライト空間へ移したもの）。
+         *        矩形が覆う、範囲の中の割り当て済みのページを dirty にする。矩形の数は MAX_INVALIDATION_RECTS まで
+         */
+        const float* InvalidationRects = nullptr;
+        uint32_t InvalidationRectCount = 0;
+        /** @brief 全ページを無効にする（境界の無い投影物が変わった・矩形が多すぎるとき）。太陽の向き・深度の原点の変化は Pages が自分で見つける */
+        bool bInvalidateAll = false;
 
         RHI::BufferPtr Pool;
         RHI::BufferPtr PageTable;
@@ -113,6 +130,13 @@ namespace NorvesLib::Core::Rendering
         /** @brief 直前の Record が印付けを記録したか */
         bool WasMarked() const { return m_bMarked; }
 
+        /** @brief 直前の Record が、前フレームのページの表を引き継いだか（false は表を 0 にして全部を割り当て直した） */
+        bool WasCacheContinued() const { return m_bCacheContinued; }
+        /** @brief 直前の Record が、太陽の向き・深度の原点の変化で全ページを無効にしたか */
+        bool WasInvalidatedAll() const { return m_bInvalidatedAll; }
+        /** @brief 次の Record で、前フレームのページの表を引き継がず、全部を割り当て直す（資源を作り直したとき・テスト） */
+        void DiscardCache() { m_bCacheValid = false; }
+
     private:
         struct Use
         {
@@ -139,6 +163,15 @@ namespace NorvesLib::Core::Rendering
         FrameUseRing<Use> m_AllocateUses;
         FrameUseRing<Use> m_ClearUses;
         bool m_bMarked = false;
+
+        // キャッシュの状態（前フレームの記録が見た入力）。資源・段の設定が変わったときは引き継がない
+        bool m_bCacheValid = false;
+        bool m_bCacheContinued = false;
+        bool m_bInvalidatedAll = false;
+        const void* m_CachedPageTable = nullptr;
+        const void* m_CachedPool = nullptr;
+        uint32_t m_CachedPoolPages = 0;
+        VirtualShadowMapClipmap m_PreviousClipmap;
     };
 
 } // namespace NorvesLib::Core::Rendering

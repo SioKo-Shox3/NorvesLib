@@ -47,6 +47,22 @@ namespace NorvesLib::Core::Rendering
     static_assert(sizeof(MegaGeometryShadowInstance) == 48, "Common/VirtualShadowMapMegaCull.glsl の ShadowInstance と大きさが一致しません");
 
     /**
+     * @brief 影を落とすインスタンス 1 つの動き。VSM のキャッシュが、動いた投影物のページだけを描き直すために、フレームをまたいで比べる
+     */
+    struct MegaGeometryShadowMotion
+    {
+        /** @brief フレームをまたいで同じインスタンスを指す鍵（プロキシの ObjectId と ComponentId・並びの番号から作る） */
+        uint64_t Key = 0;
+        /** @brief 変換・メッシュから作った署名。違えば動いた（作り直された）と見なす */
+        uint64_t Signature = 0;
+        /** @brief インスタンスの境界（ワールドの球）の中心 xyz + 半径。bHasBounds が false なら使えない */
+        float BoundsSphere[4] = {};
+        bool bHasBounds = false;
+        /** @brief ワールド変換が直前のフレームの変換と違う */
+        bool bMoved = false;
+    };
+
+    /**
      * @brief VSM の投影物のカリングが読む、直前の RecordFrameCommand の入力（無ければ bValid が false）
      *
      * バッファはどれも host-visible で、ホストが書いたまま（このフレームの記録が終わるまで書き換わらない）。主の経路が
@@ -65,6 +81,13 @@ namespace NorvesLib::Core::Rendering
         uint32_t CasterCount = 0;
         /** @brief 影の判定の全ワークグループの数（影を落とすインスタンスのクラスタ ÷ 64 の切り上げの合計） */
         uint32_t TotalGroups = 0;
+        /** @brief 影を落とすインスタンスの動き（CasterCount 個。インスタンスの表の並び） */
+        Container::VariableArray<MegaGeometryShadowMotion> Motions;
+        /**
+         * @brief ページの表（ジオメトリのページの常駐）の版。常駐するページが変わると、カリングが選ぶクラスタが（インスタンスが動かなくても）
+         *        変わるので、VSM のキャッシュは版が変わったときにインスタンスの範囲を描き直す
+         */
+        uint64_t PageTableVersion = 0;
     };
 
     /**

@@ -25,6 +25,13 @@
 //     受け手の点から照明と同じ関数で読む。画面の安定した画素では印を付けた段のページが逃げずに読め、使った段が CPU の選んだ段と一致すること、
 //     段を固定した受け手で、影の中心で 0・影の外で 1・縁（PCF の標本が縁をまたぐ位置）で 0 と 1 の間の値（CPU の参照と一致）・ページの境界をまたぐ標本も読めること、
 //     受け手のページが割り当て外なら粗い段の値になり（逃げた標本 16）、粗い段にも無ければ影なし（1）になることを確かめる。
+//   ケース M（ページのキャッシュ。前フレームのページの表の引き継ぎ・無効化。従来のケース A〜L はキャッシュを使わない = --vsm-cache=off 相当）:
+//     M1 最初のフレームは全ページを描く。M2 止まった場面の 2 フレーム目は描かれるページが 0・持ち越しが要求の数・物理プールの中身と物理ページが不変
+//     （M2b は 30 フレームを超えて続けても、要求のあるページは空きへ戻らない）。M3 投影物を動かすと、前フレームと今フレームの境界のライト空間の矩形が覆うページだけが
+//     dirty になり、物理プールが毎フレーム描き直したときと全 texel で一致する（3a 同じページの中の動き・3b 別のページへ出る動き）。
+//     M4 太陽の向きを変えると全ページが描き直される。M5 深度の原点（スナップ）が動くと全ページが描き直される。M6 段の中心が動くと、範囲に残ったページは
+//     同じ物理ページのまま描き直されず、範囲の外へ出たページは空きへ戻る。M7 要求の無いページは 30 フレーム持ち越し、次のフレームで空きへ戻る。
+//     M8 空きが足りないとき、要求の無いページを古い順（最も昔に要求されたもの）から戻す。
 // 参照は、段の境界・ページの境界・影の最大距離に近い曖昧な画素を深度の画像から除いて作るので、GPU の単精度との差で揺れない。
 // どのケースも Vulkan の validation error が 0 件。Vulkan デバイスが無い環境では 125（スキップ）を返す。
 #include "Container/Containers.h"
@@ -543,6 +550,8 @@ namespace
         dispatch.DirtyList = resources.DirtyList;
         dispatch.Depth = depth;
         dispatch.Clipmap = bPassClipmap ? &scene.Clipmap : nullptr;
+        // この関数を使う従来のケースは、毎フレームすべて割り当て直す動き（--vsm-cache=off 相当）を確かめる。キャッシュを使う場面は RunCachePages
+        dispatch.bCacheEnabled = false;
         std::memcpy(dispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(dispatch.InverseViewProjection));
         std::memcpy(dispatch.CameraPosition, scene.CameraPosition, sizeof(dispatch.CameraPosition));
         dispatch.FovYDegrees = scene.Camera.FieldOfView;
@@ -960,10 +969,20 @@ namespace
         }
     }
 
+    // RunRaster がページの記録へ渡すキャッシュの入力（null なら従来どおりキャッシュを使わない）
+    struct CacheInput
+    {
+        bool bEnabled = true;
+        const float* Rects = nullptr;
+        uint32_t RectCount = 0;
+        bool bInvalidateAll = false;
+    };
+
     struct RasterReadback
     {
         Container::VariableArray<uint32_t> Pool;
         Container::VariableArray<uint32_t> PageTable;
+        Container::VariableArray<uint32_t> FreeList;
         Container::VariableArray<uint32_t> Stats;
         Container::VariableArray<uint32_t> Draws;
         Container::VariableArray<uint32_t> Instances;
@@ -982,7 +1001,8 @@ namespace
                    const RasterBuffers& rasterBuffers,
                    const TexturePtr& depth,
                    uint64_t frameSerial,
-                   RasterReadback& readback)
+                   RasterReadback& readback,
+                   const CacheInput* cache = nullptr)
     {
         CommandListPtr commandList = device->CreateCommandList();
         if (!commandList)
@@ -1018,6 +1038,14 @@ namespace
             std::memcpy(pagesDispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(pagesDispatch.InverseViewProjection));
             std::memcpy(pagesDispatch.CameraPosition, scene.CameraPosition, sizeof(pagesDispatch.CameraPosition));
             pagesDispatch.FovYDegrees = scene.Camera.FieldOfView;
+            // 従来のケースはキャッシュを使わない（毎フレームすべて割り当て直す）。キャッシュの入力があるときだけ使う
+            pagesDispatch.bCacheEnabled = cache != nullptr && cache->bEnabled;
+            if (cache != nullptr)
+            {
+                pagesDispatch.InvalidationRects = cache->Rects;
+                pagesDispatch.InvalidationRectCount = cache->RectCount;
+                pagesDispatch.bInvalidateAll = cache->bInvalidateAll;
+            }
             readback.bPagesRecorded = pages->Record(commandList.get(), pagesDispatch);
         }
         VirtualShadowMapRasterDispatch rasterDispatch;
@@ -1041,8 +1069,8 @@ namespace
         device->WaitIdle();
 
         return ReadAll(resources.Pool, readback.Pool) && ReadAll(resources.PageTable, readback.PageTable) &&
-               ReadAll(resources.Stats, readback.Stats) && ReadAll(rasterBuffers.Draws, readback.Draws) &&
-               ReadAll(rasterBuffers.Instances, readback.Instances);
+               ReadAll(resources.FreeList, readback.FreeList) && ReadAll(resources.Stats, readback.Stats) &&
+               ReadAll(rasterBuffers.Draws, readback.Draws) && ReadAll(rasterBuffers.Instances, readback.Instances);
     }
 
     struct PageInfo
@@ -3717,6 +3745,679 @@ namespace
         return RunPenumbraCase(device, pages, raster, probe, frameSerial);
     }
 
+    // ========================================
+    // ページのキャッシュ（前フレームのページの表の引き継ぎ・持ち越し・無効化）
+    // ========================================
+
+    // 1 フレーム分の結果
+    struct CacheFrame
+    {
+        RasterReadback Readback;
+        Container::VariableArray<PageInfo> Infos;
+        Container::VariableArray<uint32_t> FreeList;
+        bool bContinued = false;
+        bool bInvalidatedAll = false;
+        uint32_t RectCount = 0;
+
+        uint32_t Stat(VirtualShadowMap::StatWord word) const { return Readback.Stats[word]; }
+        uint32_t DirtyPages() const
+        {
+            uint32_t count = 0;
+            for (const PageInfo& page : Infos)
+            {
+                count += page.bDirty ? 1u : 0u;
+            }
+            return count;
+        }
+    };
+
+    // 塊の記録 1 つぶんの、フレームをまたぐ動きの入力（鍵 = 塊の番号、署名 = 境界・変換、境界 = 塊の境界）
+    Container::VariableArray<VirtualShadowMap::CasterMotionEntry> BuildMotionEntries(const ChunkGeometry& geometry)
+    {
+        Container::VariableArray<VirtualShadowMap::CasterMotionEntry> entries;
+        for (size_t index = 0; index < geometry.Chunks.size(); ++index)
+        {
+            const VsmShadowChunk& chunk = geometry.Chunks[index];
+            VirtualShadowMap::CasterMotionEntry entry;
+            entry.Key = static_cast<uint64_t>(index) + 1u;
+            uint64_t signature = VirtualShadowMap::CasterHashFloats(1469598103934665603ull, chunk.BoundsMin, 3u);
+            signature = VirtualShadowMap::CasterHashFloats(signature, chunk.BoundsMax, 3u);
+            signature = VirtualShadowMap::CasterHashFloats(signature, chunk.World, 12u);
+            entry.Signature = signature;
+            entry.bHasBounds = true;
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                entry.Bounds.Min[axis] = chunk.BoundsMin[axis];
+                entry.Bounds.Max[axis] = chunk.BoundsMax[axis];
+            }
+            entries.push_back(entry);
+        }
+        return entries;
+    }
+
+    // キャッシュを使って、印付け → 割り当て → 消去 → 展開 → 描画を 1 フレーム分走らせる。tracker が null ならキャッシュを使わない（--vsm-cache=off 相当）。
+    // useTracker が true で tracker の無効化の入力が要らないときは、無効化の矩形を渡さない（動いた物が無いフレーム）
+    bool RunCacheFrame(const DevicePtr& device,
+                       VirtualShadowMapPages& pages,
+                       VirtualShadowMapRaster& raster,
+                       const Scene& scene,
+                       const Resources& resources,
+                       const ChunkGeometry& geometry,
+                       const RasterBuffers& rasterBuffers,
+                       const TexturePtr& depth,
+                       VirtualShadowMap::CasterMotionTracker* tracker,
+                       uint64_t frameSerial,
+                       CacheFrame& out)
+    {
+        CacheInput input;
+        input.bEnabled = tracker != nullptr;
+        Container::VariableArray<float> rects;
+        if (tracker != nullptr)
+        {
+            Container::VariableArray<VirtualShadowMap::CasterBounds> changed;
+            bool bInvalidateAll = false;
+            tracker->Update(BuildMotionEntries(geometry), changed, bInvalidateAll);
+            if (!bInvalidateAll && !VirtualShadowMap::BuildInvalidationRects(scene.Clipmap, changed, VirtualShadowMap::MAX_INVALIDATION_RECTS, rects))
+            {
+                bInvalidateAll = true;
+                rects.clear();
+            }
+            input.Rects = rects.empty() ? nullptr : rects.data();
+            input.RectCount = static_cast<uint32_t>(rects.size() / 4u);
+            input.bInvalidateAll = bInvalidateAll;
+            out.RectCount = input.RectCount;
+        }
+        if (!RunRaster(device, &pages, raster, scene, resources, rasterBuffers, depth, frameSerial, out.Readback, &input))
+        {
+            return false;
+        }
+        out.Infos = DecodePages(scene, out.Readback.PageTable);
+        out.FreeList = out.Readback.FreeList;
+        out.bContinued = pages.WasCacheContinued();
+        out.bInvalidatedAll = pages.WasInvalidatedAll();
+        return out.Readback.bPagesRecorded;
+    }
+
+    const PageInfo* FindPage(const Container::VariableArray<PageInfo>& infos, uint32_t level, int64_t absX, int64_t absY)
+    {
+        for (const PageInfo& page : infos)
+        {
+            if (page.Level == level && page.AbsX == absX && page.AbsY == absY)
+            {
+                return &page;
+            }
+        }
+        return nullptr;
+    }
+
+    // 2 つの結果が、同じ（段・絶対のページ）の集合を持ち、全 texel の語が一致する（物理ページの番号は違ってよい）。違った語の数を返す（集合が違えば最大）
+    uint32_t CountPoolDifferences(const CacheFrame& cached, const CacheFrame& uncached)
+    {
+        if (cached.Infos.size() != uncached.Infos.size())
+        {
+            return 0xFFFFFFFFu;
+        }
+        uint32_t different = 0;
+        for (const PageInfo& page : cached.Infos)
+        {
+            const PageInfo* counterpart = FindPage(uncached.Infos, page.Level, page.AbsX, page.AbsY);
+            if (counterpart == nullptr)
+            {
+                return 0xFFFFFFFFu;
+            }
+            const size_t baseCached = static_cast<size_t>(page.Physical) * VirtualShadowMap::PAGE_WORDS;
+            const size_t baseUncached = static_cast<size_t>(counterpart->Physical) * VirtualShadowMap::PAGE_WORDS;
+            for (uint32_t word = 0; word < VirtualShadowMap::PAGE_WORDS; ++word)
+            {
+                different += cached.Readback.Pool[baseCached + word] != uncached.Readback.Pool[baseUncached + word] ? 1u : 0u;
+            }
+        }
+        return different;
+    }
+
+    // 同じ場面を、キャッシュを使わない別の記録で描き直し、キャッシュを使った結果と全 texel で比べる。違った語の数を返す
+    uint32_t CompareWithUncachedFrame(const DevicePtr& device,
+                                      VirtualShadowMapPages& uncachedPages,
+                                      VirtualShadowMapRaster& raster,
+                                      const Scene& scene,
+                                      uint32_t poolPages,
+                                      const ChunkGeometry& geometry,
+                                      const RasterBuffers& rasterBuffers,
+                                      const TexturePtr& depth,
+                                      const CacheFrame& cached,
+                                      uint64_t frameSerial)
+    {
+        Resources resources;
+        CacheFrame uncached;
+        if (!CreateResources(device, poolPages, resources) ||
+            !RunCacheFrame(device, uncachedPages, raster, scene, resources, geometry, rasterBuffers, depth, nullptr, frameSerial, uncached))
+        {
+            return 0xFFFFFFFFu;
+        }
+        return CountPoolDifferences(cached, uncached);
+    }
+
+    // ワールドの境界（最小・最大）のライト空間の矩形（margin だけ広げる）が覆うページに、page が入るか。展開・無効化と同じ floor の範囲
+    bool PageOverlapsBounds(const Scene& scene, const PageInfo& page, const float (&boundsMin)[3], const float (&boundsMax)[3], double margin)
+    {
+        VirtualShadowMap::CasterBounds bounds;
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            bounds.Min[axis] = boundsMin[axis];
+            bounds.Max[axis] = boundsMax[axis];
+        }
+        double lightMin[2] = {};
+        double lightMax[2] = {};
+        if (!VirtualShadowMap::LightSpaceRect(scene.Clipmap, bounds, lightMin, lightMax))
+        {
+            return false;
+        }
+        const double pageMeters = static_cast<double>(scene.Clipmap.Levels[page.Level].PageMeters);
+        const int64_t minX = static_cast<int64_t>(std::floor((lightMin[0] - margin) / pageMeters));
+        const int64_t maxX = static_cast<int64_t>(std::floor((lightMax[0] + margin) / pageMeters));
+        const int64_t minY = static_cast<int64_t>(std::floor((lightMin[1] - margin) / pageMeters));
+        const int64_t maxY = static_cast<int64_t>(std::floor((lightMax[1] + margin) / pageMeters));
+        return page.AbsX >= minX && page.AbsX <= maxX && page.AbsY >= minY && page.AbsY <= maxY;
+    }
+
+    // 形（ライト空間）を、ページ (level, pageX, pageY) とその右のページの境界をまたぐ近い四角形と遠い四角形にする。offsetPages だけ x へ動かす
+    Container::VariableArray<Shape> MakeCacheShapes(const Scene& scene, uint32_t level, int64_t pageX, int64_t pageY, double offsetPages)
+    {
+        const double depthCenter = scene.Clipmap.DepthCenter;
+        const double pageMeters = static_cast<double>(scene.Clipmap.Levels[level].PageMeters);
+        const double boundaryX = static_cast<double>(pageX + 1) * pageMeters + offsetPages * pageMeters;
+        const double bottomY = static_cast<double>(pageY) * pageMeters;
+        Container::VariableArray<Shape> shapes;
+        Shape nearQuad = MakeRect(boundaryX - 0.3137 * pageMeters, boundaryX + 0.2713 * pageMeters, bottomY + 0.2231 * pageMeters, bottomY + 0.6619 * pageMeters);
+        SetPlane(nearQuad, boundaryX, bottomY, depthCenter - 50.0, 0.5, -0.25);
+        shapes.push_back(nearQuad);
+        Shape farQuad = MakeRect(boundaryX - 0.1 * pageMeters, boundaryX + 0.6 * pageMeters, bottomY + 0.4 * pageMeters, bottomY + 0.9 * pageMeters);
+        SetPlane(farQuad, boundaryX, bottomY, depthCenter - 40.0, 0.0, 0.0);
+        farQuad.bLocalTransform = true;
+        shapes.push_back(farQuad);
+        return shapes;
+    }
+
+    // 形の塊と、その頂点・インデックス・塊・展開の出力のバッファを作る
+    bool PrepareCacheGeometry(const DevicePtr& device,
+                              const Scene& scene,
+                              const Container::VariableArray<Shape>& shapes,
+                              ChunkGeometry& geometry,
+                              RasterBuffers& rasterBuffers)
+    {
+        geometry = BuildChunks(scene, shapes);
+        rasterBuffers = RasterBuffers{};
+        return CreateRasterBuffers(device, geometry, 4096u, rasterBuffers);
+    }
+
+    // 段 level の安定した画素だけを残した深度の画像（ほかは空）。段ごとに要求の集合を分けるのに使う
+    Container::VariableArray<float> BuildLevelImage(const Scene& scene, const Container::VariableArray<float>& image, uint32_t level)
+    {
+        Container::VariableArray<float> result(ImageWidth * ImageHeight, 1.0f);
+        for (uint32_t pixelY = 0; pixelY < ImageHeight; ++pixelY)
+        {
+            for (uint32_t pixelX = 0; pixelX < ImageWidth; ++pixelX)
+            {
+                uint32_t pixelLevel = 0;
+                const float depthValue = image[pixelY * ImageWidth + pixelX];
+                if (ClassifyPixel(scene, pixelX, pixelY, depthValue, nullptr, nullptr, &pixelLevel) == PixelKind::Stable && pixelLevel == level)
+                {
+                    result[pixelY * ImageWidth + pixelX] = depthValue;
+                }
+            }
+        }
+        return result;
+    }
+
+    // 絶対のページ (level, absX, absY) の集合の中の要素の数
+    uint32_t CountAllocated(const CacheFrame& frame)
+    {
+        return static_cast<uint32_t>(frame.Infos.size());
+    }
+
+    bool RunCacheCases(const DevicePtr& device,
+                       ShaderManager& shaderManager,
+                       VirtualShadowMapRaster& raster,
+                       const Scene& scene,
+                       const Reference& reference,
+                       const Container::VariableArray<float>& image,
+                       const TexturePtr& depth,
+                       uint64_t& frameSerial)
+    {
+        VirtualShadowMapPages cachedPages;
+        VirtualShadowMapPages uncachedPages;
+        if (!cachedPages.Initialize(device.get(), &shaderManager) || !uncachedPages.Initialize(device.get(), &shaderManager))
+        {
+            std::cerr << TestName << " ケース M: ページのパイプラインを初期化できませんでした" << std::endl;
+            return false;
+        }
+        uint32_t level = 0;
+        int64_t pageX = 0;
+        int64_t pageY = 0;
+        if (!FindAdjacentPages(scene, reference.Keys, level, pageX, pageY))
+        {
+            std::cerr << TestName << " ケース M: 横に隣り合うページが参照に無い" << std::endl;
+            return false;
+        }
+        const uint32_t requested = static_cast<uint32_t>(reference.Keys.size());
+        const uint32_t poolPages = requested + 24u;
+        const double pageMeters = static_cast<double>(scene.Clipmap.Levels[level].PageMeters);
+        const double margin = 1.0e-3;
+
+        Resources resources;
+        if (!CreateResources(device, poolPages, resources))
+        {
+            std::cerr << TestName << " ケース M: 資源を作れませんでした" << std::endl;
+            return false;
+        }
+        VirtualShadowMap::CasterMotionTracker tracker;
+
+        const Container::VariableArray<Shape> shapesA = MakeCacheShapes(scene, level, pageX, pageY, 0.0);
+        ChunkGeometry geometryA;
+        RasterBuffers buffersA;
+        if (!PrepareCacheGeometry(device, scene, shapesA, geometryA, buffersA))
+        {
+            std::cerr << TestName << " ケース M: 形のバッファを作れませんでした" << std::endl;
+            return false;
+        }
+
+        // ----- ケース M1: 最初のフレームはすべて割り当てて描く -----
+        CacheFrame frame1;
+        if (!RunCacheFrame(device, cachedPages, raster, scene, resources, geometryA, buffersA, depth, &tracker, frameSerial++, frame1))
+        {
+            std::cerr << TestName << " ケース M1 を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(!frame1.bContinued, "ケース M1: 最初のフレームは前フレームの表を引き継がない");
+        Expect(CountAllocated(frame1) == requested, "ケース M1: 要求のページがすべて割り当て済みでなければならない");
+        Expect(frame1.Stat(VirtualShadowMap::StatRendered) == requested && frame1.Stat(VirtualShadowMap::StatCached) == 0u,
+               "ケース M1: 最初のフレームは全ページを描き、持ち越しは 0 でなければならない");
+        {
+            const PoolCheck check = CheckPool("ケース M1", scene, shapesA, frame1.Infos, frame1.Readback.Pool, VirtualShadowMap::EMPTY_DEPTH_BITS);
+            Expect(check.Mismatches == 0u && check.Covered > 2000u, "ケース M1: 物理ページが形の和の参照と一致しなければならない");
+        }
+
+        // ----- ケース M2: 止まった場面の 2 フレーム目は、描かれるページが 0 -----
+        CacheFrame frame2;
+        if (!RunCacheFrame(device, cachedPages, raster, scene, resources, geometryA, buffersA, depth, &tracker, frameSerial++, frame2))
+        {
+            std::cerr << TestName << " ケース M2 を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(frame2.bContinued && !frame2.bInvalidatedAll && frame2.RectCount == 0u, "ケース M2: 止まった場面は前フレームの表を引き継ぎ、無効にしない");
+        Expect(frame2.Stat(VirtualShadowMap::StatRendered) == 0u && frame2.Stat(VirtualShadowMap::StatCached) == requested &&
+                   frame2.Stat(VirtualShadowMap::StatInvalidated) == 0u && frame2.Stat(VirtualShadowMap::StatReleased) == 0u,
+               "ケース M2: 止まった場面の 2 フレーム目に描かれるページが 0、持ち越しが要求の数でなければならない");
+        Expect(frame2.Readback.Stats[VirtualShadowMap::StatRasterInstances] == 0u,
+               "ケース M2: 展開が dirty のページを持たないので、描くインスタンスが 0 でなければならない");
+        Expect(frame2.DirtyPages() == 0u && CountAllocated(frame2) == requested, "ケース M2: ページの表に dirty が無く、割り当ては残っていなければならない");
+        Expect(frame2.Readback.Pool == frame1.Readback.Pool, "ケース M2: 持ち越したページの物理プールの中身が変わってはならない");
+        for (const PageInfo& page : frame1.Infos)
+        {
+            const PageInfo* same = FindPage(frame2.Infos, page.Level, page.AbsX, page.AbsY);
+            Expect(same != nullptr && same->Physical == page.Physical, "ケース M2: 持ち越したページが同じ物理ページを保たなければならない");
+        }
+        std::cout << TestName << " ケース M2: 持ち越し=" << frame2.Stat(VirtualShadowMap::StatCached) << " 描いたページ=" << frame2.Stat(VirtualShadowMap::StatRendered) << std::endl;
+
+        // ----- ケース M2b: 止まった場面を長く続けても、要求のあるページは空きへ戻らない（持ち越しの条件が要求の印を見ること） -----
+        {
+            bool bStable = true;
+            for (uint32_t index = 0; index < VirtualShadowMap::CACHE_CARRY_FRAMES + 5u && bStable; ++index)
+            {
+                CacheFrame frame;
+                if (!RunCacheFrame(device, cachedPages, raster, scene, resources, geometryA, buffersA, depth, &tracker, frameSerial++, frame))
+                {
+                    std::cerr << TestName << " ケース M2b を実行できませんでした" << std::endl;
+                    return false;
+                }
+                bStable = frame.bContinued && frame.Stat(VirtualShadowMap::StatRendered) == 0u && frame.Stat(VirtualShadowMap::StatReleased) == 0u &&
+                          frame.Stat(VirtualShadowMap::StatCached) == requested && CountAllocated(frame) == requested;
+                if (!bStable)
+                {
+                    std::cerr << TestName << " ケース M2b: " << index + 3u << " フレーム目: 描いた=" << frame.Stat(VirtualShadowMap::StatRendered)
+                              << " 戻した=" << frame.Stat(VirtualShadowMap::StatReleased) << " 持ち越し=" << frame.Stat(VirtualShadowMap::StatCached)
+                              << " 割り当て=" << CountAllocated(frame) << std::endl;
+                }
+            }
+            Expect(bStable, "ケース M2b: 要求が続くページは、持ち越しの上限を超えても空きへ戻らず、描き直されてもならない");
+        }
+
+        // ----- ケース M3: 投影物を動かすと、その範囲（前フレームと今フレームの境界）のページだけが描き直される -----
+        // 3a は同じページの中での小さな動き、3b は別のページへ出る大きな動き（元の場所のページが古い形のまま残らないこと）
+        const double moves[2] = {0.4, 1.7};
+        const char* const moveNames[2] = {"M3a", "M3b"};
+        Container::VariableArray<Shape> previousShapes = shapesA;
+        ChunkGeometry previousGeometry = geometryA;
+        for (uint32_t moveIndex = 0; moveIndex < 2u; ++moveIndex)
+        {
+            const Container::VariableArray<Shape> movedShapes = MakeCacheShapes(scene, level, pageX, pageY, moves[moveIndex]);
+            ChunkGeometry movedGeometry;
+            RasterBuffers movedBuffers;
+            if (!PrepareCacheGeometry(device, scene, movedShapes, movedGeometry, movedBuffers))
+            {
+                std::cerr << TestName << " ケース " << moveNames[moveIndex] << " の形のバッファを作れませんでした" << std::endl;
+                return false;
+            }
+            CacheFrame frame;
+            if (!RunCacheFrame(device, cachedPages, raster, scene, resources, movedGeometry, movedBuffers, depth, &tracker, frameSerial++, frame))
+            {
+                std::cerr << TestName << " ケース " << moveNames[moveIndex] << " を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(frame.bContinued && !frame.bInvalidatedAll && frame.RectCount == previousGeometry.Chunks.size() * 2u,
+                   "ケース M3: 動いた塊ごとに、前フレームと今フレームの境界の 2 つの矩形で無効にしなければならない");
+            // 期待: 割り当て済みのページのうち、前フレームの境界か今フレームの境界のライト空間の矩形に入るもの
+            uint32_t expectedDirty = 0;
+            uint32_t actualDirty = 0;
+            bool bSetMatches = true;
+            for (const PageInfo& page : frame.Infos)
+            {
+                bool bExpected = false;
+                for (size_t chunk = 0; chunk < movedGeometry.Chunks.size() && !bExpected; ++chunk)
+                {
+                    bExpected = PageOverlapsBounds(scene, page, previousGeometry.Chunks[chunk].BoundsMin, previousGeometry.Chunks[chunk].BoundsMax, margin) ||
+                                PageOverlapsBounds(scene, page, movedGeometry.Chunks[chunk].BoundsMin, movedGeometry.Chunks[chunk].BoundsMax, margin);
+                }
+                expectedDirty += bExpected ? 1u : 0u;
+                actualDirty += page.bDirty ? 1u : 0u;
+                bSetMatches = bSetMatches && bExpected == page.bDirty;
+            }
+            Expect(bSetMatches, "ケース M3: dirty のページが、動いた塊の前後の境界が覆うページと一致しなければならない");
+            Expect(actualDirty > 0u && actualDirty < CountAllocated(frame), "ケース M3: 一部のページだけが描き直されなければならない（全部でも 0 でもない）");
+            Expect(frame.Stat(VirtualShadowMap::StatRendered) == actualDirty && frame.Stat(VirtualShadowMap::StatCached) == CountAllocated(frame) - actualDirty &&
+                       frame.Stat(VirtualShadowMap::StatInvalidated) == actualDirty,
+                   "ケース M3: 統計の描いたページ・持ち越し・無効にしたページが dirty の数と一致しなければならない");
+            const uint32_t different = CompareWithUncachedFrame(device, uncachedPages, raster, scene, poolPages, movedGeometry, movedBuffers, depth, frame, frameSerial++);
+            std::cout << TestName << " ケース " << moveNames[moveIndex] << ": 描き直したページ=" << actualDirty << "/" << CountAllocated(frame)
+                      << " 期待=" << expectedDirty << " キャッシュなしとの違い（語）=" << different << std::endl;
+            Expect(different == 0u, "ケース M3: 動いた後の物理プールが、毎フレーム描き直したとき（--vsm-cache=off 相当）と全 texel で一致しなければならない");
+            previousShapes = movedShapes;
+            previousGeometry = movedGeometry;
+            // 次の動きは、この位置から始める（動いた物をいったん止めて、1 フレーム持ち越しを挟む）
+            // 動きが止まれば、次のフレームは何も描かない
+            CacheFrame settle;
+            if (!RunCacheFrame(device, cachedPages, raster, scene, resources, movedGeometry, movedBuffers, depth, &tracker, frameSerial++, settle))
+            {
+                return false;
+            }
+            Expect(settle.RectCount == 0u && settle.Stat(VirtualShadowMap::StatRendered) == 0u, "ケース M3: 動きが止まれば次のフレームは何も描かない");
+        }
+
+        // 以降の場面は、元の位置（M3 で動かす前）の形を、M3 の最後の位置のまま使う
+        ChunkGeometry stillGeometry = previousGeometry;
+        RasterBuffers stillBuffers;
+        {
+            const Container::VariableArray<Shape> stillShapes = previousShapes;
+            if (!PrepareCacheGeometry(device, scene, stillShapes, stillGeometry, stillBuffers))
+            {
+                return false;
+            }
+        }
+
+        // ----- ケース M4: 太陽の向きが変わると全ページが描き直される -----
+        {
+            Scene sunScene = scene;
+            sunScene.Clipmap = BuildVirtualShadowMapClipmap(Math::Vector3(0.36f, -0.8f, 0.45f),
+                                                            1u,
+                                                            Math::Vector3(scene.CameraPosition[0], scene.CameraPosition[1], scene.CameraPosition[2]),
+                                                            scene.Settings);
+            Expect(sunScene.Clipmap.bEnabled, "ケース M4: 向きを変えたクリップマップが有効でなければならない");
+            CacheFrame frame;
+            if (!RunCacheFrame(device, cachedPages, raster, sunScene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, frame))
+            {
+                std::cerr << TestName << " ケース M4 を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(frame.bContinued && frame.bInvalidatedAll, "ケース M4: 太陽の向きの変化で全ページを無効にしなければならない");
+            Expect(CountAllocated(frame) > 0u && frame.DirtyPages() == CountAllocated(frame) && frame.Stat(VirtualShadowMap::StatRendered) == CountAllocated(frame) &&
+                       frame.Stat(VirtualShadowMap::StatCached) == 0u,
+                   "ケース M4: 太陽の向きを変えると、全ページが描き直されなければならない");
+            const uint32_t different = CompareWithUncachedFrame(device, uncachedPages, raster, sunScene, poolPages, stillGeometry, stillBuffers, depth, frame, frameSerial++);
+            std::cout << TestName << " ケース M4: 描き直したページ=" << frame.Stat(VirtualShadowMap::StatRendered) << "/" << CountAllocated(frame)
+                      << " キャッシュなしとの違い（語）=" << different << std::endl;
+            Expect(different == 0u, "ケース M4: 太陽の向きを変えた後の物理プールが、毎フレーム描き直したときと全 texel で一致しなければならない");
+            // 元の向きへ戻す（次のケースの前提）。向きが変わるので、また全ページを描き直す
+            CacheFrame back;
+            if (!RunCacheFrame(device, cachedPages, raster, scene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, back))
+            {
+                return false;
+            }
+            Expect(back.bInvalidatedAll && back.Stat(VirtualShadowMap::StatRendered) == CountAllocated(back), "ケース M4: 向きを戻したときも全ページを描き直さなければならない");
+            CacheFrame stay;
+            if (!RunCacheFrame(device, cachedPages, raster, scene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, stay))
+            {
+                return false;
+            }
+            Expect(stay.Stat(VirtualShadowMap::StatRendered) == 0u, "ケース M4: 向きが落ち着けば次のフレームは何も描かない");
+        }
+
+        // ----- ケース M5: 深度の原点がスナップで動くと、全ページが描き直される（段の中心は動かない） -----
+        {
+            Scene depthScene = scene;
+            const Math::Vector3 direction = scene.Clipmap.Direction;
+            depthScene.Clipmap = BuildVirtualShadowMapClipmap(Math::Vector3(0.35f, -0.8f, 0.45f),
+                                                              1u,
+                                                              Math::Vector3(scene.CameraPosition[0] + direction.x * 300.0f,
+                                                                            scene.CameraPosition[1] + direction.y * 300.0f,
+                                                                            scene.CameraPosition[2] + direction.z * 300.0f),
+                                                              scene.Settings);
+            Expect(depthScene.Clipmap.bEnabled && depthScene.Clipmap.DepthCenter != scene.Clipmap.DepthCenter,
+                   "ケース M5: カメラを光の向きへ動かすと深度の原点が変わらなければならない");
+            bool bSameOrigins = depthScene.Clipmap.LevelCount == scene.Clipmap.LevelCount;
+            for (uint32_t levelIndex = 0; bSameOrigins && levelIndex < scene.Clipmap.LevelCount; ++levelIndex)
+            {
+                bSameOrigins = depthScene.Clipmap.Levels[levelIndex].OriginPageX == scene.Clipmap.Levels[levelIndex].OriginPageX &&
+                               depthScene.Clipmap.Levels[levelIndex].OriginPageY == scene.Clipmap.Levels[levelIndex].OriginPageY;
+            }
+            Expect(bSameOrigins, "ケース M5: 光の向きへの移動では、段の範囲が動かない");
+            CacheFrame frame;
+            if (!RunCacheFrame(device, cachedPages, raster, depthScene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, frame))
+            {
+                std::cerr << TestName << " ケース M5 を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(frame.bContinued && frame.bInvalidatedAll, "ケース M5: 深度の原点の変化で全ページを無効にしなければならない");
+            Expect(frame.DirtyPages() == CountAllocated(frame) && frame.Stat(VirtualShadowMap::StatRendered) == CountAllocated(frame) &&
+                       frame.Stat(VirtualShadowMap::StatCached) == 0u,
+                   "ケース M5: 深度の原点が動くと、全ページが描き直されなければならない");
+            const uint32_t different = CompareWithUncachedFrame(device, uncachedPages, raster, depthScene, poolPages, stillGeometry, stillBuffers, depth, frame, frameSerial++);
+            Expect(different == 0u, "ケース M5: 深度の原点が動いた後の物理プールが、毎フレーム描き直したときと全 texel で一致しなければならない");
+            CacheFrame back;
+            if (!RunCacheFrame(device, cachedPages, raster, scene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, back))
+            {
+                return false;
+            }
+            Expect(back.bInvalidatedAll, "ケース M5: 深度の原点を戻したときも全ページを無効にしなければならない");
+        }
+
+        // ----- ケース M6: 段の中心がページ単位で動くと、範囲に残ったページは描き直されず、範囲の外へ出たページは空きへ戻る -----
+        {
+            CacheFrame before;
+            if (!RunCacheFrame(device, cachedPages, raster, scene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, before))
+            {
+                return false;
+            }
+            Expect(before.Stat(VirtualShadowMap::StatRendered) == 0u && CountAllocated(before) == requested, "ケース M6: 動かす前は落ち着いていなければならない");
+
+            const Math::Vector3 right = scene.Clipmap.LightRight;
+            const float shifts[2] = {static_cast<float>(pageMeters), 2500.0f};
+            for (uint32_t shiftIndex = 0; shiftIndex < 2u; ++shiftIndex)
+            {
+                Scene movedScene = scene;
+                movedScene.Clipmap = BuildVirtualShadowMapClipmap(Math::Vector3(0.35f, -0.8f, 0.45f),
+                                                                  1u,
+                                                                  Math::Vector3(scene.CameraPosition[0] + right.x * shifts[shiftIndex],
+                                                                                scene.CameraPosition[1] + right.y * shifts[shiftIndex],
+                                                                                scene.CameraPosition[2] + right.z * shifts[shiftIndex]),
+                                                                  scene.Settings);
+                CacheFrame beforeMove;
+                if (!RunCacheFrame(device, cachedPages, raster, scene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, beforeMove))
+                {
+                    return false;
+                }
+                CacheFrame frame;
+                if (!RunCacheFrame(device, cachedPages, raster, movedScene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, frame))
+                {
+                    std::cerr << TestName << " ケース M6 を実行できませんでした" << std::endl;
+                    return false;
+                }
+                // 期待: 前フレームのページのうち、新しい範囲の中のものは同じ物理ページのまま残り、外のものは戻る
+                uint32_t expectedKept = 0;
+                uint32_t expectedReleased = 0;
+                bool bKeptSame = true;
+                for (const PageInfo& page : beforeMove.Infos)
+                {
+                    const VirtualShadowMapClipmapLevel& levelData = movedScene.Clipmap.Levels[page.Level];
+                    const int64_t count = static_cast<int64_t>(VirtualShadowMap::TABLE_DIMENSION);
+                    const bool bInside = page.AbsX >= levelData.OriginPageX && page.AbsX < levelData.OriginPageX + count && page.AbsY >= levelData.OriginPageY &&
+                                         page.AbsY < levelData.OriginPageY + count;
+                    if (bInside)
+                    {
+                        ++expectedKept;
+                        const PageInfo* same = FindPage(frame.Infos, page.Level, page.AbsX, page.AbsY);
+                        bKeptSame = bKeptSame && same != nullptr && same->Physical == page.Physical && !same->bDirty;
+                    }
+                    else
+                    {
+                        ++expectedReleased;
+                    }
+                }
+                const uint32_t newPages = CountAllocated(frame) - std::min(CountAllocated(frame), expectedKept);
+                std::cout << TestName << " ケース M6（移動 " << shifts[shiftIndex] << " m）: 残ったページ=" << expectedKept << " 戻したページ=" << expectedReleased
+                          << " 描いたページ=" << frame.Stat(VirtualShadowMap::StatRendered) << " 持ち越し=" << frame.Stat(VirtualShadowMap::StatCached) << std::endl;
+                Expect(frame.bContinued && !frame.bInvalidatedAll, "ケース M6: 段の中心の移動だけでは全ページを無効にしない");
+                Expect(frame.Stat(VirtualShadowMap::StatReleased) == expectedReleased, "ケース M6: 範囲の外へ出たページだけを空きへ戻さなければならない");
+                Expect(bKeptSame, "ケース M6: 範囲に残ったページは同じ物理ページを保ち、dirty にしてはならない");
+                Expect(frame.Stat(VirtualShadowMap::StatRendered) == newPages, "ケース M6: 描くのは、範囲に残らず新しく割り当てたページだけでなければならない");
+                if (shiftIndex == 0u)
+                {
+                    Expect(expectedKept == requested && expectedReleased == 0u && frame.Stat(VirtualShadowMap::StatRendered) == 0u,
+                           "ケース M6: 1 ページだけの移動では、要求のページがすべて残り、何も描き直さない");
+                }
+                else
+                {
+                    Expect(expectedReleased == requested && frame.Stat(VirtualShadowMap::StatCached) == 0u,
+                           "ケース M6: 範囲より大きく動くと、前のページはすべて空きへ戻る");
+                }
+            }
+        }
+
+        // ----- ケース M7: 要求の無いページは 30 フレーム持ち越し、その後に空きへ戻す -----
+        {
+            VirtualShadowMapPages agePages;
+            Resources ageResources;
+            if (!agePages.Initialize(device.get(), &shaderManager) || !CreateResources(device, poolPages, ageResources))
+            {
+                return false;
+            }
+            const Container::VariableArray<float> emptyImage(ImageWidth * ImageHeight, 1.0f);
+            const TexturePtr emptyDepth = CreateDepthTexture(device, emptyImage);
+            if (!emptyDepth)
+            {
+                return false;
+            }
+            VirtualShadowMap::CasterMotionTracker ageTracker;
+            CacheFrame first;
+            if (!RunCacheFrame(device, agePages, raster, scene, ageResources, geometryA, buffersA, depth, &ageTracker, frameSerial++, first))
+            {
+                return false;
+            }
+            Expect(CountAllocated(first) == requested, "ケース M7: 最初のフレームで要求のページが割り当て済みでなければならない");
+            bool bCarried = true;
+            for (uint32_t index = 1; index <= VirtualShadowMap::CACHE_CARRY_FRAMES && bCarried; ++index)
+            {
+                CacheFrame frame;
+                if (!RunCacheFrame(device, agePages, raster, scene, ageResources, geometryA, buffersA, emptyDepth, &ageTracker, frameSerial++, frame))
+                {
+                    return false;
+                }
+                bCarried = frame.Stat(VirtualShadowMap::StatReleased) == 0u && CountAllocated(frame) == requested && frame.Stat(VirtualShadowMap::StatRendered) == 0u &&
+                           frame.Stat(VirtualShadowMap::StatRequested) == 0u;
+                if (!bCarried)
+                {
+                    std::cerr << TestName << " ケース M7: 要求の無い " << index << " フレーム目: 戻した=" << frame.Stat(VirtualShadowMap::StatReleased)
+                              << " 割り当て=" << CountAllocated(frame) << std::endl;
+                }
+            }
+            Expect(bCarried, "ケース M7: 要求の無いページは 30 フレームの間、空きへ戻さず持ち越さなければならない");
+            CacheFrame expired;
+            if (!RunCacheFrame(device, agePages, raster, scene, ageResources, geometryA, buffersA, emptyDepth, &ageTracker, frameSerial++, expired))
+            {
+                return false;
+            }
+            Expect(expired.Stat(VirtualShadowMap::StatReleased) == requested && CountAllocated(expired) == 0u && expired.FreeList[0] == poolPages,
+                   "ケース M7: 30 フレーム持ち越した次のフレームで、要求の無いページをすべて空きへ戻さなければならない");
+            std::cout << TestName << " ケース M7: 戻したページ=" << expired.Stat(VirtualShadowMap::StatReleased) << " 空き=" << expired.FreeList[0] << "/" << poolPages << std::endl;
+        }
+
+        // ----- ケース M8: 空きが足りないとき、要求の無いページを古い順に戻す -----
+        {
+            Container::VariableArray<uint32_t> levelKeys[3];
+            Container::VariableArray<float> levelImages[3];
+            uint32_t order[3] = {0, 1, 2};
+            for (uint32_t levelIndex = 0; levelIndex < 3u; ++levelIndex)
+            {
+                levelImages[levelIndex] = BuildLevelImage(scene, image, levelIndex);
+                levelKeys[levelIndex] = BuildReference(scene, levelImages[levelIndex]).Keys;
+            }
+            std::sort(order, order + 3, [&](uint32_t a, uint32_t b) { return levelKeys[a].size() > levelKeys[b].size(); });
+            const Container::VariableArray<uint32_t>& oldest = levelKeys[order[0]];
+            const Container::VariableArray<uint32_t>& middle = levelKeys[order[1]];
+            const Container::VariableArray<uint32_t>& newest = levelKeys[order[2]];
+            Expect(!oldest.empty() && !middle.empty() && !newest.empty(), "ケース M8: 3 つの段それぞれに要求のページが要る（シーンが退化している）");
+            if (oldest.empty() || middle.empty() || newest.empty())
+            {
+                return false;
+            }
+            const uint32_t evictPoolPages = static_cast<uint32_t>(oldest.size() + middle.size());
+            VirtualShadowMapPages evictPages;
+            Resources evictResources;
+            if (!evictPages.Initialize(device.get(), &shaderManager) || !CreateResources(device, evictPoolPages, evictResources))
+            {
+                return false;
+            }
+            VirtualShadowMap::CasterMotionTracker evictTracker;
+            CacheFrame frames[3];
+            for (uint32_t index = 0; index < 3u; ++index)
+            {
+                const TexturePtr levelDepth = CreateDepthTexture(device, levelImages[order[index]]);
+                if (!levelDepth ||
+                    !RunCacheFrame(device, evictPages, raster, scene, evictResources, geometryA, buffersA, levelDepth, &evictTracker, frameSerial++, frames[index]))
+                {
+                    return false;
+                }
+            }
+            // 3 フレーム目: 空きが 0 で、新しく要るページ（newest）の数だけ、いちばん古く要求された oldest から戻す
+            uint32_t oldestLeft = 0;
+            uint32_t middleLeft = 0;
+            uint32_t newestAllocated = 0;
+            for (const PageInfo& page : frames[2].Infos)
+            {
+                const uint32_t key = PageKey(page.Level, page.AbsX, page.AbsY);
+                if (std::binary_search(oldest.begin(), oldest.end(), key))
+                {
+                    ++oldestLeft;
+                }
+                else if (std::binary_search(middle.begin(), middle.end(), key))
+                {
+                    ++middleLeft;
+                    Expect(!page.bDirty, "ケース M8: 要求の無い新しいページは、戻さず持ち越さなければならない");
+                }
+                else if (std::binary_search(newest.begin(), newest.end(), key))
+                {
+                    ++newestAllocated;
+                    Expect(page.bDirty, "ケース M8: 新しく割り当てたページは dirty でなければならない");
+                }
+            }
+            std::cout << TestName << " ケース M8: プール=" << evictPoolPages << " 古い=" << oldest.size() << " 中=" << middle.size() << " 新しい=" << newest.size()
+                      << " 戻したページ=" << frames[2].Stat(VirtualShadowMap::StatReleased) << " 古いページの残り=" << oldestLeft << std::endl;
+            Expect(frames[2].Stat(VirtualShadowMap::StatOverflow) == 0u && newestAllocated == newest.size(), "ケース M8: 戻した空きへ、要求のページがすべて割り当てられなければならない（溢れ 0）");
+            Expect(frames[2].Stat(VirtualShadowMap::StatReleased) == newest.size(), "ケース M8: 足りない数だけを戻さなければならない");
+            Expect(oldestLeft == oldest.size() - newest.size() && middleLeft == middle.size(), "ケース M8: 戻すのは最も古く要求されたページからで、新しいページは残さなければならない");
+        }
+        return true;
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -3932,6 +4633,11 @@ namespace
                 }
                 // ----- ケース C2: 隣のページへの印の範囲が、ページの何枚分にもなるとき -----
                 if (!RunWideMarginMarkingCase(device, pages, frameSerial))
+                {
+                    return 1;
+                }
+                // ----- ケース M: ページのキャッシュ（持ち越し・無効化・古い順の解放） -----
+                if (!RunCacheCases(device, shaderManager, raster, scene, reference, image, depth, frameSerial))
                 {
                     return 1;
                 }

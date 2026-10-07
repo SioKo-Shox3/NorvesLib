@@ -19,6 +19,8 @@
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 
+#include <cwchar>
+
 namespace NorvesLib::Core::Rendering
 {
     /**
@@ -48,6 +50,12 @@ namespace NorvesLib::Core::Rendering
         VirtualShadowMap::CasterStats LoggedStats;
         bool bLogged = false;
         uint32_t ReportsSinceLog = 0;
+        /** @brief キャッシュの無効化: 今フレームの投影物の動きの入力・前フレームの記録・無効にするライト空間の矩形 */
+        Container::VariableArray<VirtualShadowMap::CasterMotionEntry> Motion;
+        VirtualShadowMap::CasterMotionTracker MotionTracker;
+        Container::VariableArray<VirtualShadowMap::CasterBounds> ChangedBounds;
+        Container::VariableArray<float> InvalidationRects;
+        bool bInvalidateAll = false;
     };
 
     namespace
@@ -106,6 +114,41 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        // --vsm-cache=off（または環境変数 NORVES_VSM_CACHE=off）のときだけ false。ページのキャッシュは既定で有効。
+        // 起動引数は ApplicationProcessor の外（描画の層）でも読めるよう、プロセスのコマンドラインを直接見る
+        bool IsCacheEnabledByProcess()
+        {
+            const auto IsOffValue = [](const wchar_t* value) {
+                return value != nullptr && (std::wcscmp(value, L"off") == 0 || std::wcscmp(value, L"0") == 0 || std::wcscmp(value, L"false") == 0);
+            };
+            wchar_t environmentValue[16] = {};
+            const DWORD length = GetEnvironmentVariableW(L"NORVES_VSM_CACHE", environmentValue, 16);
+            if (length > 0 && length < 16 && IsOffValue(environmentValue))
+            {
+                return false;
+            }
+            const wchar_t* commandLine = GetCommandLineW();
+            if (commandLine == nullptr)
+            {
+                return true;
+            }
+            constexpr wchar_t Prefix[] = L"--vsm-cache=";
+            const wchar_t* found = std::wcsstr(commandLine, Prefix);
+            if (found == nullptr)
+            {
+                return true;
+            }
+            wchar_t argumentValue[16] = {};
+            const wchar_t* begin = found + (sizeof(Prefix) / sizeof(wchar_t) - 1);
+            size_t count = 0;
+            while (begin[count] != L'\0' && begin[count] != L' ' && begin[count] != L'"' && count + 1 < 16)
+            {
+                argumentValue[count] = begin[count];
+                ++count;
+            }
+            return !IsOffValue(argumentValue);
+        }
+
         // 資源 1 つ分: 名前・バッファ・グラフに取り込んだ資源の控え
         struct DeclaredBuffer
         {
@@ -118,6 +161,7 @@ namespace NorvesLib::Core::Rendering
 
     VirtualShadowMapPass::VirtualShadowMapPass(uint32_t requestedPoolPages)
         : m_RequestedPoolPages(requestedPoolPages)
+        , m_bCacheEnabled(IsCacheEnabledByProcess())
     {
     }
 
@@ -304,10 +348,11 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        // 空きページの一覧: 先頭が数（全ページ）、続いて空きページの番号（0 〜 pages-1）。最初は全ページが空き
+        // 空きページの一覧: 先頭が数（全ページ）、続いて空きページの番号（0 〜 pages-1）。最初は全ページが空き。
+        // 後ろの作業の領域（使用中の印・年齢）は 0 のまま（毎フレームの割り当てが作り直す）
         {
             Container::VariableArray<uint32_t> freeList;
-            freeList.resize(static_cast<size_t>(plan.Pages) + 1u);
+            freeList.resize(static_cast<size_t>(plan.Pages) * 3u + 1u, 0u);
             freeList[0] = plan.Pages;
             for (uint32_t page = 0; page < plan.Pages; ++page)
             {
@@ -474,6 +519,7 @@ namespace NorvesLib::Core::Rendering
     {
         VirtualShadowMapCasterState& state = *m_Casters;
         state.Chunks.clear();
+        state.Motion.clear();
         state.Stats = {};
         const VirtualShadowMapClipmap& clipmap = context.PhysicalLighting.SunClipmap;
         if (!clipmap.bEnabled)
@@ -522,6 +568,20 @@ namespace NorvesLib::Core::Rendering
                         continue;
                     }
                     VirtualShadowMap::AppendProceduralInstance(input, state.Plan, world, clipmap, state.Chunks, state.Stats);
+
+                    // キャッシュの無効化の入力: 同じ描画が同じ変換・範囲なら動いていない
+                    VirtualShadowMap::CasterMotionEntry motion;
+                    motion.Key = VirtualShadowMap::CasterHashCombine(VirtualShadowMap::CasterHashCombine(proxy.ComponentId, proxy.ObjectId), rangeIndex);
+                    uint64_t signature = VirtualShadowMap::CasterHashFloats(1469598103934665603ull, world, 16u);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.VertexAddress);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.IndexAddress);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.FirstIndex);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.IndexCount);
+                    signature = VirtualShadowMap::CasterHashCombine(signature, input.VertexOffset);
+                    motion.Signature = signature;
+                    motion.bHasBounds = true;
+                    motion.Bounds = VirtualShadowMap::TransformBoundsByWorld(world, *input.MeshBounds);
+                    state.Motion.push_back(motion);
                 }
             }
         }
@@ -559,7 +619,66 @@ namespace NorvesLib::Core::Rendering
                     }
                 }
                 VirtualShadowMap::AppendSkinnedInstance(instance.CurrentVertexAddress, indexAddress, bounds, chunks, clipmap, state.Chunks, state.Stats);
+
+                // スキニングは毎フレーム変形するので、毎フレーム動いた物として扱う
+                VirtualShadowMap::CasterMotionEntry motion;
+                motion.Key = VirtualShadowMap::CasterHashCombine(0x534B494Eull, instance.SourceMeshComponentId);
+                motion.bAlwaysChanged = true;
+                motion.bHasBounds = true;
+                motion.Bounds = bounds;
+                state.Motion.push_back(motion);
             }
+        }
+
+        // ----- MegaGeometry: インスタンスの表を作ったときに集めた動き（world ≠ previousWorld は動いた物） -----
+        if (m_MegaPass)
+        {
+            const MegaGeometryShadowCasterInputs& inputs = m_MegaPass->GetShadowCasterInputs();
+            if (inputs.bValid)
+            {
+                for (const MegaGeometryShadowMotion& source : inputs.Motions)
+                {
+                    VirtualShadowMap::CasterMotionEntry motion;
+                    motion.Key = VirtualShadowMap::CasterHashCombine(0x4D454741ull, source.Key);
+                    // 常駐するジオメトリのページが変わると、選ばれるクラスタが変わる（ストリーミング中の影の欠けを残さない）
+                    motion.Signature = VirtualShadowMap::CasterHashCombine(source.Signature, inputs.PageTableVersion);
+                    motion.bAlwaysChanged = source.bMoved;
+                    motion.bHasBounds = source.bHasBounds;
+                    if (source.bHasBounds)
+                    {
+                        for (uint32_t axis = 0; axis < 3u; ++axis)
+                        {
+                            motion.Bounds.Min[axis] = source.BoundsSphere[axis] - source.BoundsSphere[3];
+                            motion.Bounds.Max[axis] = source.BoundsSphere[axis] + source.BoundsSphere[3];
+                        }
+                    }
+                    state.Motion.push_back(motion);
+                }
+            }
+        }
+    }
+
+    void VirtualShadowMapPass::PlanInvalidation(ViewRenderContext& context)
+    {
+        VirtualShadowMapCasterState& state = *m_Casters;
+        state.ChangedBounds.clear();
+        state.InvalidationRects.clear();
+        state.bInvalidateAll = false;
+        if (!m_bCacheEnabled)
+        {
+            state.MotionTracker.Reset();
+            return;
+        }
+        state.MotionTracker.Update(state.Motion, state.ChangedBounds, state.bInvalidateAll);
+        if (!state.bInvalidateAll &&
+            !VirtualShadowMap::BuildInvalidationRects(context.PhysicalLighting.SunClipmap,
+                                                      state.ChangedBounds,
+                                                      VirtualShadowMap::MAX_INVALIDATION_RECTS,
+                                                      state.InvalidationRects))
+        {
+            // 矩形が多すぎる・境界が有限でない: 範囲を絞れないので全ページを無効にする
+            state.InvalidationRects.clear();
+            state.bInvalidateAll = true;
         }
     }
 
@@ -721,6 +840,17 @@ namespace NorvesLib::Core::Rendering
                                      slot.Mapped[VirtualShadowMap::StatRasterInstances],
                                      slot.Mapped[VirtualShadowMap::StatRasterOverflow]);
         }
+        // キャッシュの内訳（60 フレームごと）
+        if (++m_FramesSinceCacheLog >= StatsLogIntervalFrames)
+        {
+            m_FramesSinceCacheLog = 0;
+            NORVES_LOG_INFO("VirtualShadowMapPass",
+                            "VSM_CACHE cached=%u rendered=%u invalidated=%u released=%u",
+                            slot.Mapped[VirtualShadowMap::StatCached],
+                            slot.Mapped[VirtualShadowMap::StatRendered],
+                            slot.Mapped[VirtualShadowMap::StatInvalidated],
+                            slot.Mapped[VirtualShadowMap::StatReleased]);
+        }
         const uint32_t stats[4] = {slot.Mapped[VirtualShadowMap::StatRequested],
                                    slot.Mapped[VirtualShadowMap::StatAllocated],
                                    slot.Mapped[VirtualShadowMap::StatOverflow],
@@ -819,15 +949,32 @@ namespace NorvesLib::Core::Rendering
         {
             m_MegaCull->BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
         }
+        // 投影物を集め、前フレームからの動き（無効にするページの範囲）を決める。印付けをするフレームだけ（しなければ記録も要らない）
+        bool bCollected = false;
+        if (dispatch.Depth && dispatch.Clipmap && dispatch.Clipmap->bEnabled && m_Raster->IsReady())
+        {
+            CollectCasters(context);
+            PlanInvalidation(context);
+            bCollected = true;
+            dispatch.bCacheEnabled = m_bCacheEnabled;
+            dispatch.InvalidationRects = m_Casters->InvalidationRects.empty() ? nullptr : m_Casters->InvalidationRects.data();
+            dispatch.InvalidationRectCount = static_cast<uint32_t>(m_Casters->InvalidationRects.size() / 4u);
+            dispatch.bInvalidateAll = m_Casters->bInvalidateAll;
+        }
+        else
+        {
+            dispatch.bCacheEnabled = m_bCacheEnabled;
+            // 集めなかったフレームの動きは見ていないので、次に集めるとき前の記録との差が大きい。記録を捨てて新しく始める
+            m_Casters->MotionTracker.Reset();
+        }
         m_Pages->Record(commandList, dispatch);
         m_bMarked = m_Pages->WasMarked();
 
         // 影を落とす投影物の塊を物理ページへ描く。印付けをしなかった（深度かクリップマップが無い）フレームは、割り当て済みのページが無いので何も描かない
         m_bRasterRecorded = false;
         m_LastCasterChunkCount = 0;
-        if (m_bMarked && m_Raster->IsReady())
+        if (m_bMarked && bCollected)
         {
-            CollectCasters(context);
             ReportCasters();
             // MegaGeometry の投影物のカリング（展開の前。出力は VsmMega_List。主の経路のバッファには書かない）
             m_bMegaCullRecorded = RecordMegaCull(context, frameSerial);

@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -154,6 +155,174 @@ namespace NorvesLib::Core::Rendering
                 }
             }
             return mask;
+        }
+
+        /** @brief 64 ビットの値を混ぜる（キャッシュの無効化のために、投影物の変化を見分ける署名・鍵を作る） */
+        inline uint64_t CasterHashCombine(uint64_t seed, uint64_t value)
+        {
+            // FNV-1a のように 1 バイトずつ混ぜる（値の並びが違えば署名が違うことだけを期待する）
+            constexpr uint64_t Prime = 1099511628211ull;
+            for (uint32_t shift = 0; shift < 64u; shift += 8u)
+            {
+                seed = (seed ^ ((value >> shift) & 0xFFull)) * Prime;
+            }
+            return seed;
+        }
+
+        /** @brief float の並びのビットを混ぜる（行列などの署名） */
+        inline uint64_t CasterHashFloats(uint64_t seed, const float* values, uint32_t count)
+        {
+            for (uint32_t index = 0; index < count; ++index)
+            {
+                uint32_t bits = 0;
+                std::memcpy(&bits, &values[index], sizeof(bits));
+                seed = CasterHashCombine(seed, bits);
+            }
+            return seed;
+        }
+
+        /** @brief 投影物 1 つ（描画のインスタンス）の、フレームをまたいで見る動きの入力 */
+        struct CasterMotionEntry
+        {
+            /** @brief フレームをまたいで同じ投影物を指す鍵 */
+            uint64_t Key = 0;
+            /** @brief 位置・形が同じかを見分ける署名（変換・メッシュ・描く範囲から作る）。違えば動いた */
+            uint64_t Signature = 0;
+            /** @brief 毎フレーム動いた物として扱う（スキニング。MegaGeometry の world ≠ previousWorld） */
+            bool bAlwaysChanged = false;
+            /** @brief ワールドの境界（AABB）が分かるか。分からない物が変わったときは、全ページを無効にする */
+            bool bHasBounds = false;
+            CasterBounds Bounds;
+        };
+
+        /**
+         * @brief 投影物の動きを、前フレームの記録と比べて見つける（VSM のキャッシュの無効化の入力を作る）
+         *
+         * 毎フレーム Update に、そのフレームの影を落とす投影物をすべて渡す。鍵が前フレームに無い（現れた）・署名が違う・
+         * 毎フレーム動く指定の投影物は「変わった」とし、今フレームの境界と前フレームの境界の両方を無効にする範囲として返す
+         * （前フレームの境界を含めないと、動いた物が元あった場所の影のページが古いまま残る）。前フレームにあって今フレームに無い
+         * （消えた）物も、前フレームの境界を返す。最初の Update（記録が空）は何も返さない（ページの表も空なので全ページが新規）。
+         */
+        class CasterMotionTracker
+        {
+        public:
+            /** @brief 前フレームの記録を捨てる（次の Update は最初の呼び出しとして扱う） */
+            void Reset()
+            {
+                m_Records.clear();
+                m_bPrimed = false;
+            }
+
+            /**
+             * @param entries このフレームの投影物
+             * @param outChangedBounds 無効にするワールドの境界（呼ぶ前に空にしなくてよい。足す）
+             * @param outInvalidateAll 境界の分からない物が変わった（または消えた）ときに true にする（false へは戻さない）
+             */
+            void Update(const Container::VariableArray<CasterMotionEntry>& entries,
+                        Container::VariableArray<CasterBounds>& outChangedBounds,
+                        bool& outInvalidateAll)
+            {
+                ++m_Stamp;
+                for (const CasterMotionEntry& entry : entries)
+                {
+                    auto found = m_Records.find(entry.Key);
+                    const bool bExisted = found != m_Records.end();
+                    const bool bChanged = m_bPrimed && (!bExisted || entry.bAlwaysChanged || found->second.Signature != entry.Signature);
+                    if (bChanged)
+                    {
+                        AddBounds(entry.bHasBounds, entry.Bounds, outChangedBounds, outInvalidateAll);
+                        if (bExisted)
+                        {
+                            AddBounds(found->second.bHasBounds, found->second.Bounds, outChangedBounds, outInvalidateAll);
+                        }
+                    }
+                    Record& record = bExisted ? found->second : m_Records[entry.Key];
+                    record.Signature = entry.Signature;
+                    record.bHasBounds = entry.bHasBounds;
+                    record.Bounds = entry.Bounds;
+                    record.Stamp = m_Stamp;
+                }
+                // 今フレームに無かった（消えた）投影物。前フレームの境界を無効にして、記録から外す
+                for (auto iterator = m_Records.begin(); iterator != m_Records.end();)
+                {
+                    if (iterator->second.Stamp != m_Stamp)
+                    {
+                        if (m_bPrimed)
+                        {
+                            AddBounds(iterator->second.bHasBounds, iterator->second.Bounds, outChangedBounds, outInvalidateAll);
+                        }
+                        iterator = m_Records.erase(iterator);
+                    }
+                    else
+                    {
+                        ++iterator;
+                    }
+                }
+                m_bPrimed = true;
+            }
+
+            /** @brief 記録している投影物の数（観測用） */
+            size_t GetRecordCount() const { return m_Records.size(); }
+
+        private:
+            struct Record
+            {
+                uint64_t Signature = 0;
+                bool bHasBounds = false;
+                CasterBounds Bounds;
+                uint64_t Stamp = 0;
+            };
+
+            static void AddBounds(bool bHasBounds,
+                                  const CasterBounds& bounds,
+                                  Container::VariableArray<CasterBounds>& outChangedBounds,
+                                  bool& outInvalidateAll)
+            {
+                if (bHasBounds)
+                {
+                    outChangedBounds.push_back(bounds);
+                }
+                else
+                {
+                    outInvalidateAll = true;
+                }
+            }
+
+            Container::UnorderedMap<uint64_t, Record> m_Records;
+            uint64_t m_Stamp = 0;
+            bool m_bPrimed = false;
+        };
+
+        /**
+         * @brief 無効にするワールドの境界を、ライト空間の矩形（x, y = 最小、z, w = 最大の 4 つの float）の並びにする
+         *
+         * 境界が有限でないものは全ページの無効化にする（false を返す）。矩形が maxRects を超えるときも false（全ページを無効にする）。
+         * @return false なら、矩形では足りないので全ページを無効にすること
+         */
+        inline bool BuildInvalidationRects(const VirtualShadowMapClipmap& clipmap,
+                                           const Container::VariableArray<CasterBounds>& changedBounds,
+                                           uint32_t maxRects,
+                                           Container::VariableArray<float>& outRects)
+        {
+            outRects.clear();
+            if (changedBounds.size() > maxRects)
+            {
+                return false;
+            }
+            for (const CasterBounds& bounds : changedBounds)
+            {
+                double lightMin[2] = {};
+                double lightMax[2] = {};
+                if (!LightSpaceRect(clipmap, bounds, lightMin, lightMax))
+                {
+                    return false;
+                }
+                outRects.push_back(static_cast<float>(lightMin[0]));
+                outRects.push_back(static_cast<float>(lightMin[1]));
+                outRects.push_back(static_cast<float>(lightMax[0]));
+                outRects.push_back(static_cast<float>(lightMax[1]));
+            }
+            return true;
         }
 
         /** @brief 手続きメッシュの 1 描画（インデックスの範囲）の入力。インスタンスの変換は含まない */
