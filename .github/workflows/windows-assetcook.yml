@@ -1,8 +1,10 @@
 name: AssetCook Windows CLI
 
 on:
-  # ロードマップの区切りで必要時に実行する。変更ごとの自動CIは行わない。
+  # 手動操作か、ロードマップの区切りを明示したcommitだけを検証する。
   workflow_dispatch:
+  push:
+    branches: [feature/game-asset-import]
 
 permissions:
   contents: read
@@ -14,6 +16,7 @@ concurrency:
 
 jobs:
   cli-baseline:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[validate-assets]') }}
     runs-on: windows-2022
     timeout-minutes: 90
     defaults:
