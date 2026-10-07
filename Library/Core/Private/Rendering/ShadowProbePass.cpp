@@ -10,6 +10,8 @@
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -17,6 +19,7 @@
 #include "RHI/IPipeline.h"
 #include "RHI/ITexture.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -37,8 +40,9 @@ namespace NorvesLib::Core::Rendering
             uint32_t screen[4];  // x = 幅、y = 高さ、z = 格子の横の数、w = 縦の数
             uint32_t control[4]; // x = モード（0 = 標本を固定、1 = 測る）、y = カスケード数、z = 影の有効フラグ、w = 格子の間隔
             float tuning[4];     // x = 深度の一致の許容
+            GPUVsmSampleParams vsm; // 太陽の VSM を読むパラメータ（control[0] = 0 なら VSM は測らない）
         };
-        static_assert(sizeof(GPUShadowProbeParams) == 752, "shadow_probe.comp の ProbeParams と同じ大きさにすること");
+        static_assert(sizeof(GPUShadowProbeParams) == 752 + sizeof(GPUVsmSampleParams), "shadow_probe.comp の ProbeParams と同じ大きさにすること");
 
         // 標本 1 点（位置 + 法線）のバイト数（シェーダーの ProbePoint）
         constexpr uint64_t ProbePointBytes = 32;
@@ -57,8 +61,10 @@ namespace NorvesLib::Core::Rendering
                 RHI::ResourceBindType::RWBuffer,             // 4 標本
                 RHI::ResourceBindType::RWBuffer,             // 5 前のフレームの可視度
                 RHI::ResourceBindType::RWBuffer,             // 6 統計
+                RHI::ResourceBindType::RWBuffer,             // 7 VSM のページの表
+                RHI::ResourceBindType::RWBuffer,             // 8 VSM の物理ページのプール
             };
-            for (uint32_t bindingIndex = 0; bindingIndex < 7u; ++bindingIndex)
+            for (uint32_t bindingIndex = 0; bindingIndex < 9u; ++bindingIndex)
             {
                 RHI::DescriptorBinding binding;
                 binding.binding = bindingIndex;
@@ -182,6 +188,8 @@ namespace NorvesLib::Core::Rendering
         m_NormalHandle = {};
         m_ShadowMapHandle = {};
         m_SceneColorHandle = {};
+        m_VsmPageTableHandle = {};
+        m_VsmPoolHandle = {};
         m_bDeclared = false;
         m_bInitialized = false;
     }
@@ -201,6 +209,8 @@ namespace NorvesLib::Core::Rendering
         m_NormalHandle = {};
         m_ShadowMapHandle = {};
         m_SceneColorHandle = {};
+        m_VsmPageTableHandle = {};
+        m_VsmPoolHandle = {};
         m_bDeclared = false;
 
         // 初期化を済ませたのにパイプラインが無いときは何も宣言しない
@@ -235,6 +245,18 @@ namespace NorvesLib::Core::Rendering
         m_NormalHandle = normal;
         m_ShadowMapHandle = shadowMap;
         m_SceneColorHandle = sceneColor;
+
+        // 太陽の VSM（--shadow-method=vsm）のページの表・物理ページのプール。VirtualShadowMapPass が公開したときだけ読む
+        if (builder.HasBuffer(RenderGraphResourceNames::VsmPageTable) && builder.HasBuffer(RenderGraphResourceNames::VsmPhysicalPool))
+        {
+            const RGBufferHandle vsmPageTable = builder.ReadBuffer(RenderGraphResourceNames::VsmPageTable, RHI::ResourceState::ShaderResource);
+            const RGBufferHandle vsmPool = builder.ReadBuffer(RenderGraphResourceNames::VsmPhysicalPool, RHI::ResourceState::ShaderResource);
+            if (vsmPageTable.IsValid() && vsmPool.IsValid())
+            {
+                m_VsmPageTableHandle = vsmPageTable.ToResourceHandle();
+                m_VsmPoolHandle = vsmPool.ToResourceHandle();
+            }
+        }
         m_bDeclared = true;
         builder.PreserveInsertionOrder();
     }
@@ -261,7 +283,8 @@ namespace NorvesLib::Core::Rendering
                                                                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
                                                                false,
                                                                "ShadowProbe_Points"));
-        m_StateBuffer = m_Device->CreateBuffer(RHI::BufferDesc(count * sizeof(float),
+        // 前のフレームの可視度。前半が CSM、後半が VSM
+        m_StateBuffer = m_Device->CreateBuffer(RHI::BufferDesc(count * 2u * sizeof(float),
                                                                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
                                                                false,
                                                                "ShadowProbe_State"));
@@ -319,7 +342,7 @@ namespace NorvesLib::Core::Rendering
         }
         else
         {
-            m_Totals.AddMeasuredFrame(slot.Mapped);
+            m_Totals.AddMeasuredFrame(slot.Mapped, slot.bVsm);
         }
         slot.bPending = false;
     }
@@ -416,6 +439,30 @@ namespace NorvesLib::Core::Rendering
         params.control[2] = 1u;
         params.control[3] = ShadowProbe::GRID_STEP;
         params.tuning[0] = ShadowProbe::DEPTH_TOLERANCE;
+
+        // 太陽の VSM（--shadow-method=vsm）も測る。クリップマップ・ページの表・プールが揃ったときだけ（標本を固定するフレームは測らない）
+        RHI::BufferPtr vsmPageTable = m_VsmPageTableHandle.IsValid() ? resources.GetBuffer(m_VsmPageTableHandle) : RHI::BufferPtr{};
+        RHI::BufferPtr vsmPool = m_VsmPoolHandle.IsValid() ? resources.GetBuffer(m_VsmPoolHandle) : RHI::BufferPtr{};
+        bool bVsm = false;
+        if (!bCaptureFrame && vsmPageTable && vsmPool && camera->Projection == ProjectionType::Perspective &&
+            vsmPageTable->GetSize() >= VirtualShadowMap::PageTableBytes() && vsmPool->GetSize() >= VirtualShadowMap::PAGE_BYTES)
+        {
+            const float cameraPosition[3] = {camera->PositionX, camera->PositionY, camera->PositionZ};
+            const uint64_t poolPages = vsmPool->GetSize() / VirtualShadowMap::PAGE_BYTES;
+            bVsm = BuildVirtualShadowMapSampleParams(&lighting.SunClipmap,
+                                                     cameraPosition,
+                                                     camera->FieldOfView,
+                                                     static_cast<float>(depth->GetHeight()),
+                                                     static_cast<uint32_t>(std::min<uint64_t>(poolPages, VirtualShadowMap::MAX_POOL_PAGES)),
+                                                     params.vsm);
+        }
+        if (!bVsm)
+        {
+            std::memset(&params.vsm, 0, sizeof(params.vsm));
+            // 使われない（control.x = 0）ので、別のバッファを置く
+            vsmPageTable = m_ProbeBuffer;
+            vsmPool = m_ProbeBuffer;
+        }
         use->Uniform->Update(&params, sizeof(params));
 
         use->DescriptorSet->BindConstantBuffer(0, use->Uniform, 0, static_cast<uint32_t>(sizeof(params)));
@@ -428,6 +475,8 @@ namespace NorvesLib::Core::Rendering
         use->DescriptorSet->BindStorageBuffer(4, m_ProbeBuffer, 0, static_cast<uint32_t>(m_ProbeBuffer->GetSize()));
         use->DescriptorSet->BindStorageBuffer(5, m_StateBuffer, 0, static_cast<uint32_t>(m_StateBuffer->GetSize()));
         use->DescriptorSet->BindStorageBuffer(6, slot.Buffer, 0, ShadowProbe::STATS_BYTES);
+        use->DescriptorSet->BindStorageBuffer(7, vsmPageTable, 0, static_cast<uint32_t>(std::min<uint64_t>(vsmPageTable->GetSize(), 0xFFFFFFFFull)));
+        use->DescriptorSet->BindStorageBuffer(8, vsmPool, 0, static_cast<uint32_t>(std::min<uint64_t>(vsmPool->GetSize(), 0xFFFFFFFFull)));
         use->DescriptorSet->Update();
 
         RHI::ICommandList* commandList = context.CommandList;
@@ -452,6 +501,7 @@ namespace NorvesLib::Core::Rendering
         slot.ExecuteIndex = m_ExecuteCount;
         slot.bPending = true;
         slot.bCapture = bCaptureFrame;
+        slot.bVsm = bVsm;
         if (bCaptureFrame)
         {
             m_bCaptured = true;
@@ -489,6 +539,30 @@ namespace NorvesLib::Core::Rendering
                         "SHADOW_PROBE_DETAIL method=csm visible=%llu out_of_range_ratio=%.6f",
                         static_cast<unsigned long long>(totals.Visible),
                         totals.OutOfRangeRatio());
+        // --shadow-method=vsm のとき（VSM を測ったフレームがあるとき）だけ、VSM の行と CSM との一致を出す
+        if (totals.VsmFrames != 0)
+        {
+            NORVES_LOG_INFO("ShadowProbePass",
+                            "SHADOW_PROBE method=vsm frames=%llu probes=%llu pairs=%llu mean_abs_delta=%.6f changed_ratio=%.6f flip_ratio=%.6f partial_ratio=%.6f mean_texel_mm=%.3f",
+                            static_cast<unsigned long long>(totals.VsmFrames),
+                            static_cast<unsigned long long>(totals.Probes),
+                            static_cast<unsigned long long>(totals.VsmPairs),
+                            totals.VsmMeanAbsDelta(),
+                            totals.VsmChangedRatio(),
+                            totals.VsmFlipRatio(),
+                            totals.VsmPartialRatio(),
+                            totals.VsmMeanTexelMm());
+            NORVES_LOG_INFO("ShadowProbePass",
+                            "SHADOW_PROBE_AGREE both_definite=%llu agree=%llu ratio=%.6f finer_ratio=%.6f",
+                            static_cast<unsigned long long>(totals.BothDefinite),
+                            static_cast<unsigned long long>(totals.Agree),
+                            totals.AgreeRatio(),
+                            totals.FinerRatio());
+            NORVES_LOG_INFO("ShadowProbePass",
+                            "SHADOW_PROBE_DETAIL method=vsm visible=%llu fallback_ratio=%.6f",
+                            static_cast<unsigned long long>(totals.VsmVisible),
+                            totals.FallbackRatio());
+        }
     }
 
 } // namespace NorvesLib::Core::Rendering

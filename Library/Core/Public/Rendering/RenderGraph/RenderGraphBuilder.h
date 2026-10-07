@@ -115,6 +115,9 @@ namespace NorvesLib::Core::Rendering
                                    uint64_t size);
         bool TryGetTexture(Identity name, RGTextureHandle& outHandle) const;
         bool TryGetBuffer(Identity name, RGBufferHandle& outHandle) const;
+        // 名前のバッファが（この宣言の時点までに）公開されているか。TryGetBuffer と違い、公開が無くてもグラフのエラーにしない
+        // （公開するパスがある構成・無い構成の両方で、読むかどうかを決めるときに使う）
+        bool HasBuffer(Identity name) const;
         bool ExportTexture(Identity name, RGTextureHandle handle);
         bool ExportTexture(Identity name, RGResourceHandle handle);
         void PreserveInsertionOrder();

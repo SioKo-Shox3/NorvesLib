@@ -21,6 +21,10 @@
 //   ケース K（MegaGeometry のクラスタの記録の経路）: ケース F と同じ場面を、形ごとに MegaGeometry のクラスタ 1 つにして、本番の流れ
 //     （印付け → 割り当て → 消去 → カリング → クラスタの記録 → 展開 → 描画）に通し、物理プールが形の和の参照とケース F の手続きの経路と全 texel で一致すること、
 //     GPU が作ったクラスタの記録（種類・インデックスの先頭・頂点の基点・アドレス・段の集合・変換・境界）と展開の引数が一覧の件と整合することを確かめる。
+//   ケース L（照明が使う VSM の読み出し。Common/VirtualShadowMap.glsl の VsmSampleSunShadow を計算シェーダー vsm_sample_probe.comp から呼ぶ）: ケース F の物理プールとページの表を、
+//     受け手の点から照明と同じ関数で読む。画面の安定した画素では印を付けた段のページが逃げずに読め、使った段が CPU の選んだ段と一致すること、
+//     段を固定した受け手で、影の中心で 0・影の外で 1・縁（PCF の標本が縁をまたぐ位置）で 0 と 1 の間の値（CPU の参照と一致）・ページの境界をまたぐ標本も読めること、
+//     受け手のページが割り当て外なら粗い段の値になり（逃げた標本 16）、粗い段にも無ければ影なし（1）になることを確かめる。
 // 参照は、段の境界・ページの境界・影の最大距離に近い曖昧な画素を深度の画像から除いて作るので、GPU の単精度との差で揺れない。
 // どのケースも Vulkan の validation error が 0 件。Vulkan デバイスが無い環境では 125（スキップ）を返す。
 #include "Container/Containers.h"
@@ -36,11 +40,14 @@
 #include "Rendering/VirtualShadowMapPages.h"
 #include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/VirtualShadowMapRaster.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "Rendering/VisibilityBuffer.h"
 
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/IDevice.h"
+#include "RHI/IPipeline.h"
 #include "RHI/ITexture.h"
 #include "RHI/RHIDeviceDesc.h"
 #include "RHI/RHIDeviceFactory.h"
@@ -1354,6 +1361,11 @@ namespace
         Container::VariableArray<uint32_t> Pool;
         Container::VariableArray<PageInfo> Pages;
         uint32_t PoolPages = 0;
+        // ページの表の全語と、境界をまたぐ四角形のページ（段・左のページ A の絶対の座標）。ケース L が同じ場面を照明と同じ関数で読む
+        Container::VariableArray<uint32_t> PageTable;
+        uint32_t Level = 0;
+        int64_t PageX = 0;
+        int64_t PageY = 0;
     };
 
     bool RunRasterCases(const DevicePtr& device,
@@ -1434,6 +1446,10 @@ namespace
             caseFPool = readback.Pool;
             caseFPages = pageInfos;
             caseFPoolPages = poolPages;
+            caseF.PageTable = readback.PageTable;
+            caseF.Level = level;
+            caseF.PageX = pageX;
+            caseF.PageY = pageY;
         }
 
         // ----- ケース I: 手続きメッシュの記録の経路（バッファのアドレスと変換の行列）で、ケース F と同じ場面を描く -----
@@ -2745,6 +2761,519 @@ namespace
         return true;
     }
 
+    // ========================================
+    // ケース L: 照明が使う VSM の読み出し（Common/VirtualShadowMap.glsl の VsmSampleSunShadow。計算シェーダー vsm_sample_probe.comp から呼ぶ）
+    // ========================================
+    //
+    // ケース F の物理プールとページの表（近い四角形 + 遠い四角形が描かれている）を、照明と同じ関数で受け手の点から読む。
+    //   L1（実際のしきい値）: 画面の安定した画素のワールドの位置・法線を受け手にして、印を付けた段のページがそのまま読めること
+    //       （粗い段へ逃げた標本が 0）と、使った段の texel の一辺が CPU の SelectVirtualShadowMapLevel と一致することを確かめる。
+    //   L2（段を固定）: しきい値を置き換えて段をケース F の段に固定し、カメラを PCF の半径が 2 texel になる距離に置いて、四角形の後ろの受け手を読む。
+    //       影の中心で 0、影の外で 1、縁（PCF の標本が形の縁をまたぐ位置）で 0 と 1 の間の値になり、
+    //       値は CPU の参照（Poisson の 16 点それぞれが形の内側か）と一致する。ページの境界をまたぐ標本も読む。
+    //   L3（割り当てられていないページ）: 受け手のページを割り当て外にし、1 段粗い段の別の物理ページ（全 texel が受け手より手前の深度）を割り当てると、
+    //       その粗い段の値（0）になる（逃げた標本は 16）。粗い段にも無ければ影なし（1。逃げた標本は 16）。
+
+    // Common/PoissonDisk16.glsl と同じ 16 点（CPU の参照のための独立した写し。シェーダーの点列が変わると一致しなくなる）
+    constexpr double ReferencePoissonDisk[16][2] = {
+        {-0.94201624, -0.39906216}, {0.94558609, -0.76890725}, {-0.09418410, -0.92938870}, {0.34495938, 0.29387760},
+        {-0.91588581, 0.45771432},  {-0.81544232, -0.87912464}, {-0.38277543, 0.27676845}, {0.97484398, 0.75648379},
+        {0.44323325, -0.97511554},  {0.53742981, -0.47373420},  {-0.26496911, -0.41893023}, {0.79197514, 0.19090188},
+        {-0.24188840, 0.99706507},  {-0.81409955, 0.91437590},  {0.19984126, 0.78641367},  {0.14383161, -0.14100790}};
+
+    struct SampleProbePoint
+    {
+        float Position[4];
+        float Normal[4];
+    };
+
+    // vsm_sample_probe.comp の VsmSampleProbeParams（std140）と同じ並び
+    struct SampleProbeParams
+    {
+        GPUVsmSampleParams Vsm;
+        uint32_t Control[4];
+    };
+    static_assert(sizeof(SampleProbeParams) == sizeof(GPUVsmSampleParams) + 16, "vsm_sample_probe.comp の VsmSampleProbeParams と同じ大きさにすること");
+
+    struct SampleProbe
+    {
+        ShaderPtr Shader;
+        PipelinePtr Pipeline;
+        DescriptorSetDesc Layout;
+    };
+
+    struct SampleOutput
+    {
+        Container::VariableArray<float> Visibility;
+        Container::VariableArray<float> TexelMeters;
+        // 粗い段へ逃げた PCF の標本の数（統計の語 0）
+        uint32_t Fallback = 0;
+    };
+
+    bool CreateSampleProbe(const DevicePtr& device, ShaderManager& shaderManager, SampleProbe& probe)
+    {
+        probe.Shader = shaderManager.LoadShader("vsm_sample_probe.comp", RHI::ShaderStage::Compute);
+        if (!probe.Shader)
+        {
+            return false;
+        }
+        for (uint32_t binding = 0; binding < 6u; ++binding)
+        {
+            DescriptorBinding entry;
+            entry.binding = binding;
+            entry.type = binding == 0u ? ResourceBindType::ConstantBuffer : ResourceBindType::RWBuffer;
+            entry.stages = RHI::ShaderStage::Compute;
+            probe.Layout.bindings.push_back(entry);
+        }
+        ComputePipelineDesc pipelineDesc;
+        pipelineDesc.computeShader = probe.Shader;
+        pipelineDesc.descriptorSetLayouts.push_back(probe.Layout);
+        probe.Pipeline = device->CreateComputePipeline(pipelineDesc);
+        return probe.Pipeline != nullptr;
+    }
+
+    // 受け手の点を GPU で評価する。pool・table はケース F のページの表・物理プール（またはその変更）の全語
+    bool RunSampleProbe(const DevicePtr& device,
+                        const SampleProbe& probe,
+                        const GPUVsmSampleParams& vsm,
+                        const Container::VariableArray<uint32_t>& poolWords,
+                        const Container::VariableArray<uint32_t>& tableWords,
+                        const Container::VariableArray<SampleProbePoint>& points,
+                        SampleOutput& out)
+    {
+        const ResourceUsage usage = ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
+        const uint64_t pointBytes = static_cast<uint64_t>(points.size()) * sizeof(SampleProbePoint);
+        const uint64_t resultBytes = static_cast<uint64_t>(points.size()) * 4u * sizeof(float);
+        BufferPtr uniform = device->CreateBuffer(BufferDesc(sizeof(SampleProbeParams), ResourceUsage::ConstantBuffer, true, "VsmSampleProbeParams"));
+        BufferPtr pointBuffer = device->CreateBuffer(BufferDesc(pointBytes, usage, true, "VsmSampleProbePoints"));
+        BufferPtr results = device->CreateBuffer(BufferDesc(resultBytes, usage, true, "VsmSampleProbeResults"));
+        BufferPtr stats = device->CreateBuffer(BufferDesc(4u * sizeof(uint32_t), usage, true, "VsmSampleProbeStats"));
+        BufferPtr table = device->CreateBuffer(BufferDesc(static_cast<uint64_t>(tableWords.size()) * sizeof(uint32_t), usage, true, "VsmSampleProbeTable"));
+        BufferPtr pool = device->CreateBuffer(BufferDesc(static_cast<uint64_t>(poolWords.size()) * sizeof(uint32_t), usage, true, "VsmSampleProbePool"));
+        DescriptorSetPtr descriptorSet = device->CreateDescriptorSet(probe.Layout);
+        CommandListPtr commandList = device->CreateCommandList();
+        if (!uniform || !pointBuffer || !results || !stats || !table || !pool || !descriptorSet || !commandList || points.empty())
+        {
+            return false;
+        }
+
+        SampleProbeParams params = {};
+        params.Vsm = vsm;
+        params.Control[0] = static_cast<uint32_t>(points.size());
+        uniform->Update(&params, sizeof(params));
+        pointBuffer->Update(points.data(), pointBytes);
+        const Container::VariableArray<uint32_t> zeroResults(resultBytes / sizeof(uint32_t), 0u);
+        results->Update(zeroResults.data(), resultBytes);
+        const uint32_t zeroStats[4] = {};
+        stats->Update(zeroStats, sizeof(zeroStats));
+        table->Update(tableWords.data(), static_cast<uint64_t>(tableWords.size()) * sizeof(uint32_t));
+        pool->Update(poolWords.data(), static_cast<uint64_t>(poolWords.size()) * sizeof(uint32_t));
+
+        descriptorSet->BindConstantBuffer(0, uniform, 0, static_cast<uint32_t>(sizeof(SampleProbeParams)));
+        descriptorSet->BindStorageBuffer(1, pointBuffer, 0, static_cast<uint32_t>(pointBytes));
+        descriptorSet->BindStorageBuffer(2, results, 0, static_cast<uint32_t>(resultBytes));
+        descriptorSet->BindStorageBuffer(3, stats, 0, static_cast<uint32_t>(stats->GetSize()));
+        descriptorSet->BindStorageBuffer(4, table, 0, static_cast<uint32_t>(table->GetSize()));
+        descriptorSet->BindStorageBuffer(5, pool, 0, static_cast<uint32_t>(pool->GetSize()));
+        descriptorSet->Update();
+
+        const BufferPtr storage[] = {pointBuffer, results, stats, table, pool};
+        commandList->Begin();
+        for (const BufferPtr& buffer : storage)
+        {
+            commandList->BufferBarrier(buffer, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, buffer->GetSize());
+        }
+        commandList->SetPipeline(probe.Pipeline);
+        commandList->SetDescriptorSet(descriptorSet, 0);
+        commandList->Dispatch((static_cast<uint32_t>(points.size()) + 63u) / 64u, 1u, 1u);
+        for (const BufferPtr& buffer : {results, stats})
+        {
+            commandList->BufferBarrier(buffer, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, buffer->GetSize());
+        }
+        commandList->End();
+        commandList->Submit(true);
+        device->WaitIdle();
+
+        Container::VariableArray<uint32_t> resultWords;
+        Container::VariableArray<uint32_t> statWords;
+        if (!ReadAll(results, resultWords) || !ReadAll(stats, statWords))
+        {
+            return false;
+        }
+        out.Visibility.assign(points.size(), 0.0f);
+        out.TexelMeters.assign(points.size(), 0.0f);
+        for (size_t index = 0; index < points.size(); ++index)
+        {
+            out.Visibility[index] = WordToFloat(resultWords[index * 4u]);
+            out.TexelMeters[index] = WordToFloat(resultWords[index * 4u + 1u]);
+        }
+        out.Fallback = statWords[0];
+        return true;
+    }
+
+    // 受け手の点（ライト空間の位置と深度）のワールドの位置と、光源を向いた法線（光に正対するので法線の向きへのずらしも受け面の傾きも 0）
+    SampleProbePoint MakeReceiver(const Scene& scene, double lightX, double lightY, double lightDepth)
+    {
+        const Math::Vector3 position = LightToWorld(scene, lightX, lightY, lightDepth);
+        const Math::Vector3& direction = scene.Clipmap.Direction;
+        SampleProbePoint point = {};
+        point.Position[0] = position.x;
+        point.Position[1] = position.y;
+        point.Position[2] = position.z;
+        point.Position[3] = 1.0f;
+        point.Normal[0] = -direction.x;
+        point.Normal[1] = -direction.y;
+        point.Normal[2] = -direction.z;
+        return point;
+    }
+
+    // 段を固定し（しきい値: 段より下を 0、上を 1e30）、影の最大の距離を広げ、カメラを受け手から「PCF の半径が 2 texel になる距離」だけ離す
+    GPUVsmSampleParams MakeForcedLevelParams(const GPUVsmSampleParams& real, uint32_t level, const SampleProbePoint& receiver)
+    {
+        GPUVsmSampleParams params = real;
+        for (uint32_t index = 0; index < VirtualShadowMapMaxLevels; ++index)
+        {
+            params.thresholds[index] = index < level ? 0.0f : 1.0e30f;
+        }
+        const double texel = static_cast<double>(real.levelInfo[level][1]);
+        const double distance = 2.0 * texel / static_cast<double>(real.pixel[0]);
+        params.cameraPosition[0] = receiver.Position[0] + static_cast<float>(distance);
+        params.cameraPosition[1] = receiver.Position[1];
+        params.cameraPosition[2] = receiver.Position[2];
+        params.cameraPosition[3] = 1.0e6f;
+        return params;
+    }
+
+    // CPU の参照: 受け手の点から半径 radius の Poisson の 16 点が、形のどれかに覆われない割合（可視度）。
+    // 標本が読む texel（ページの格子は texel の整数倍）の中心が形の内側なら覆われている（ラスタライズの規則）。受け手は形より十分後ろにあるので、
+    // 覆われた標本は影になる。標本が texel の境界の近く（0.01 texel 未満）・texel の中心が形の縁の近くにあるものは丸めで結果が変わりうるので、あいまいとして知らせる
+    double ReferenceVisibility(const Container::VariableArray<Shape>& shapes, double lightX, double lightY, double radius, double texel, bool& outAmbiguous)
+    {
+        constexpr double AmbiguousTexels = 0.01;
+        outAmbiguous = false;
+        uint32_t lit = 0;
+        for (const auto& point : ReferencePoissonDisk)
+        {
+            const double sampleX = lightX + point[0] * radius;
+            const double sampleY = lightY + point[1] * radius;
+            // 形の縁から 1 texel 以上離れた標本は、どの texel を読んでも結果が同じ（texel の境界・中心の細かい扱いに依らない）
+            double bestInside = -1.0e300;
+            for (const Shape& shape : shapes)
+            {
+                bestInside = std::max(bestInside, ShapeSignedDistance(shape, sampleX, sampleY));
+            }
+            if (bestInside >= texel)
+            {
+                continue; // 覆われている → 影
+            }
+            if (bestInside <= -texel)
+            {
+                ++lit; // どの形にも覆われない → 光
+                continue;
+            }
+            const double gridX = sampleX / texel;
+            const double gridY = sampleY / texel;
+            if (std::abs(gridX - std::round(gridX)) < AmbiguousTexels || std::abs(gridY - std::round(gridY)) < AmbiguousTexels)
+            {
+                outAmbiguous = true;
+            }
+            const double centerX = (std::floor(gridX) + 0.5) * texel;
+            const double centerY = (std::floor(gridY) + 0.5) * texel;
+            bool covered = false;
+            for (const Shape& shape : shapes)
+            {
+                const double distance = ShapeSignedDistance(shape, centerX, centerY);
+                if (std::abs(distance) < AmbiguousTexels * texel)
+                {
+                    outAmbiguous = true;
+                }
+                covered = covered || distance >= 0.0;
+            }
+            lit += covered ? 0u : 1u;
+        }
+        return static_cast<double>(lit) / 16.0;
+    }
+
+    bool RunSampleCases(const DevicePtr& device,
+                        ShaderManager& shaderManager,
+                        const Scene& scene,
+                        const Container::VariableArray<float>& image,
+                        const CaseFData& caseF)
+    {
+        SampleProbe probe;
+        if (!CreateSampleProbe(device, shaderManager, probe))
+        {
+            std::cerr << TestName << " ケース L の計算パイプラインを作れませんでした" << std::endl;
+            return false;
+        }
+        GPUVsmSampleParams realParams;
+        if (!BuildVirtualShadowMapSampleParams(&scene.Clipmap, scene.CameraPosition, scene.Camera.FieldOfView, static_cast<float>(ImageHeight),
+                                               caseF.PoolPages, realParams))
+        {
+            std::cerr << TestName << " ケース L: 読み出しのパラメータを作れませんでした" << std::endl;
+            return false;
+        }
+        Expect(realParams.control[0] == 1u && realParams.control[1] == scene.Clipmap.LevelCount && realParams.control[2] == caseF.PoolPages,
+               "ケース L: 読み出しのパラメータが有効で、段の数・物理ページの数がクリップマップとプールと一致しなければならない");
+
+        // ----- L1: 実際のしきい値。画面の安定した画素の位置・法線で読む -----
+        {
+            Container::VariableArray<SampleProbePoint> points;
+            Container::VariableArray<uint32_t> levels;
+            for (uint32_t pixelY = 0; pixelY < ImageHeight; pixelY += 2u)
+            {
+                for (uint32_t pixelX = 0; pixelX < ImageWidth; pixelX += 2u)
+                {
+                    uint32_t level = 0;
+                    const float depth = image[pixelY * ImageWidth + pixelX];
+                    if (ClassifyPixel(scene, pixelX, pixelY, depth, nullptr, nullptr, &level) != PixelKind::Stable)
+                    {
+                        continue;
+                    }
+                    double world[3] = {};
+                    Unproject(scene, pixelX, pixelY, static_cast<double>(depth), world);
+                    SampleProbePoint point = {};
+                    point.Position[0] = static_cast<float>(world[0]);
+                    point.Position[1] = static_cast<float>(world[1]);
+                    point.Position[2] = static_cast<float>(world[2]);
+                    point.Position[3] = 1.0f;
+                    // 地面（y = 0）は上向き、奥の壁（z = -25）は手前向き
+                    const bool bGround = std::abs(world[1]) < 1.0e-3;
+                    point.Normal[1] = bGround ? 1.0f : 0.0f;
+                    point.Normal[2] = bGround ? 0.0f : 1.0f;
+                    points.push_back(point);
+                    levels.push_back(level);
+                }
+            }
+            SampleOutput output;
+            if (points.size() < 200u || !RunSampleProbe(device, probe, realParams, caseF.Pool, caseF.PageTable, points, output))
+            {
+                std::cerr << TestName << " ケース L1 を実行できませんでした（点の数 " << points.size() << "）" << std::endl;
+                return false;
+            }
+            uint32_t wrongTexel = 0;
+            uint32_t invalidValue = 0;
+            uint32_t shadowed = 0;
+            uint32_t lit = 0;
+            for (size_t index = 0; index < points.size(); ++index)
+            {
+                const float expectedTexel = scene.Clipmap.Levels[levels[index]].TexelMeters;
+                wrongTexel += std::abs(output.TexelMeters[index] - expectedTexel) > expectedTexel * 1.0e-6f ? 1u : 0u;
+                invalidValue += !(output.Visibility[index] >= 0.0f && output.Visibility[index] <= 1.0f) ? 1u : 0u;
+                shadowed += output.Visibility[index] < 0.5f ? 1u : 0u;
+                lit += output.Visibility[index] >= 0.5f ? 1u : 0u;
+            }
+            std::cout << TestName << " ケース L1: 点=" << points.size() << " 逃げた標本=" << output.Fallback << " 段の不一致=" << wrongTexel
+                      << " 影の点=" << shadowed << " 光の点=" << lit << std::endl;
+            Expect(output.Fallback == 0u, "ケース L1: 印を付けた段のページがそのまま読め、粗い段へ逃げてはならない（印付けと読み出しの段・ページが一致する）");
+            Expect(wrongTexel == 0u, "ケース L1: 使った段の texel の一辺が CPU の選んだ段と一致しなければならない");
+            Expect(invalidValue == 0u, "ケース L1: 可視度が [0, 1] でなければならない");
+            // ケース F の四角形のページの上の受け手は、四角形の後ろにあれば影になり、ほかは光が当たる（どちらも現れる場面）
+            Expect(lit > 0u, "ケース L1: 光が当たる点があるはず（場面が退化している）");
+        }
+
+        // ----- L2・L3: 段をケース F の段に固定し、四角形の後ろの受け手を読む -----
+        const uint32_t level = caseF.Level;
+        Expect(level + 1u < scene.Clipmap.LevelCount, "ケース L: ケース F の段の 1 段粗い段がなければならない（シーンが退化している）");
+        if (level + 1u >= scene.Clipmap.LevelCount || caseF.Shapes.size() < 2u)
+        {
+            return false;
+        }
+        const double pageMeters = static_cast<double>(scene.Clipmap.Levels[level].PageMeters);
+        const double texel = static_cast<double>(scene.Clipmap.Levels[level].TexelMeters);
+        const double boundaryX = static_cast<double>(caseF.PageX + 1) * pageMeters;
+        const double bottomY = static_cast<double>(caseF.PageY) * pageMeters;
+        const double depthCenter = scene.Clipmap.DepthCenter;
+        const double receiverDepth = depthCenter - 20.0; // 近い四角形（中心 - 50 の周り）・遠い四角形（中心 - 40）のどちらよりも後ろ
+        const double radius = 2.0 * texel;
+
+        auto evaluate = [&](double lightX, double lightY, const Container::VariableArray<uint32_t>& pool, const Container::VariableArray<uint32_t>& table,
+                            float& outVisibility, uint32_t& outFallback) -> bool
+        {
+            const SampleProbePoint receiver = MakeReceiver(scene, lightX, lightY, receiverDepth);
+            Container::VariableArray<SampleProbePoint> points;
+            points.push_back(receiver);
+            SampleOutput output;
+            if (!RunSampleProbe(device, probe, MakeForcedLevelParams(realParams, level, receiver), pool, table, points, output))
+            {
+                return false;
+            }
+            Expect(std::abs(static_cast<double>(output.TexelMeters[0]) - texel) < texel * 1.0e-6, "ケース L2: 固定した段の texel の一辺を返さなければならない");
+            outVisibility = output.Visibility[0];
+            outFallback = output.Fallback;
+            return true;
+        };
+
+        const double centerY = bottomY + 0.4425 * pageMeters;
+        const Shape& nearQuad = caseF.Shapes[0];
+
+        // L2-中心: 近い四角形だけに覆われる位置（遠い四角形の縁から 0.1 ページ、近い四角形の左の縁から 0.1 ページ以上）。PCF の標本がすべて形の内側 → 0
+        {
+            float visibility = -1.0f;
+            uint32_t fallback = 0;
+            bool bAmbiguous = false;
+            const double lightX = boundaryX - 0.2068 * pageMeters;
+            const double expected = ReferenceVisibility(caseF.Shapes, lightX, centerY, radius, texel, bAmbiguous);
+            if (!evaluate(lightX, centerY, caseF.Pool, caseF.PageTable, visibility, fallback))
+            {
+                return false;
+            }
+            std::cout << TestName << " ケース L2 中心: 可視度=" << visibility << " 参照=" << expected << " 逃げた標本=" << fallback << std::endl;
+            Expect(!bAmbiguous && expected == 0.0, "ケース L2 中心: 参照が影の中心（0）でなければならない");
+            Expect(std::abs(visibility - 0.0f) < 1.0e-5f, "ケース L2 中心: 影の中心で 0 でなければならない");
+            Expect(fallback == 0u, "ケース L2 中心: 割り当て済みのページを読み、逃げてはならない");
+        }
+
+        // L2-外: 近い四角形の左の縁から 0.15 ページ左（同じページ）。標本はすべて形の外側 → 1
+        {
+            float visibility = -1.0f;
+            uint32_t fallback = 0;
+            bool bAmbiguous = false;
+            const double lightX = nearQuad.MinX - 0.15 * pageMeters;
+            const double expected = ReferenceVisibility(caseF.Shapes, lightX, centerY, radius, texel, bAmbiguous);
+            if (!evaluate(lightX, centerY, caseF.Pool, caseF.PageTable, visibility, fallback))
+            {
+                return false;
+            }
+            std::cout << TestName << " ケース L2 外: 可視度=" << visibility << " 参照=" << expected << " 逃げた標本=" << fallback << std::endl;
+            Expect(!bAmbiguous && expected == 1.0, "ケース L2 外: 参照が影の外（1）でなければならない");
+            Expect(std::abs(visibility - 1.0f) < 1.0e-5f, "ケース L2 外: 影の外で 1 でなければならない");
+            Expect(fallback == 0u, "ケース L2 外: 割り当て済みのページを読み、逃げてはならない");
+        }
+
+        // L2-縁: 近い四角形の左の縁の上。PCF の標本が読む texel の中心が縁をまたぐ位置を、結果があいまいな標本が無いように刻んで探す。0 と 1 の間で CPU の参照と一致
+        {
+            bool bFound = false;
+            double edgeX = 0.0;
+            double expected = 0.0;
+            for (const double shift : {0.0, 0.37, -0.41, 0.83, -0.77, 1.31, -1.29, 1.73, -1.67, 0.19, -0.23})
+            {
+                const double candidate = nearQuad.MinX + shift * texel;
+                bool bAmbiguous = false;
+                const double reference = ReferenceVisibility(caseF.Shapes, candidate, centerY, radius, texel, bAmbiguous);
+                if (!bAmbiguous && reference > 0.0 && reference < 1.0)
+                {
+                    bFound = true;
+                    edgeX = candidate;
+                    expected = reference;
+                    break;
+                }
+            }
+            Expect(bFound, "ケース L2 縁: 標本が縁をまたぎ、texel の境界・縁に近すぎる標本が無い位置が見つからない（シーンが退化している）");
+            if (bFound)
+            {
+                float visibility = -1.0f;
+                uint32_t fallback = 0;
+                if (!evaluate(edgeX, centerY, caseF.Pool, caseF.PageTable, visibility, fallback))
+                {
+                    return false;
+                }
+                std::cout << TestName << " ケース L2 縁: 可視度=" << visibility << " 参照=" << expected << " 逃げた標本=" << fallback << std::endl;
+                Expect(visibility > 0.0f && visibility < 1.0f, "ケース L2 縁: 縁で 0 と 1 の間の値でなければならない");
+                Expect(std::abs(static_cast<double>(visibility) - expected) < 1.0e-5, "ケース L2 縁: 値が CPU の参照（形の内側の標本の数）と一致しなければならない");
+                Expect(fallback == 0u, "ケース L2 縁: 割り当て済みのページを読み、逃げてはならない");
+            }
+        }
+
+        // L2-境界: ページ A・B の境界から 1 texel 手前（標本の半径は 2 texel なので、標本が隣のページ B を読む）。近い四角形が両方のページを覆うので 0
+        {
+            float visibility = -1.0f;
+            uint32_t fallback = 0;
+            bool bAmbiguous = false;
+            const double lightX = boundaryX - texel;
+            const double lightY = bottomY + 0.30 * pageMeters;
+            const double expected = ReferenceVisibility(caseF.Shapes, lightX, lightY, radius, texel, bAmbiguous);
+            if (!evaluate(lightX, lightY, caseF.Pool, caseF.PageTable, visibility, fallback))
+            {
+                return false;
+            }
+            std::cout << TestName << " ケース L2 境界: 可視度=" << visibility << " 参照=" << expected << " 逃げた標本=" << fallback << std::endl;
+            Expect(!bAmbiguous && expected == 0.0, "ケース L2 境界: 参照が影の中心（0）でなければならない");
+            Expect(std::abs(visibility - 0.0f) < 1.0e-5f, "ケース L2 境界: 隣のページを読む標本も含めて 0 でなければならない");
+            Expect(fallback == 0u, "ケース L2 境界: 隣のページも割り当て済みなので、逃げてはならない");
+        }
+
+        // ----- L3: 割り当てられていないページ -----
+        // 受け手は L2-外 の位置（本来は光が当たり、可視度 1）。そのページ（段 level）を割り当て外にする
+        {
+            const double lightX = nearQuad.MinX - 0.15 * pageMeters;
+            const int64_t pageX = static_cast<int64_t>(std::floor(lightX / pageMeters));
+            const int64_t pageY = static_cast<int64_t>(std::floor(centerY / pageMeters));
+            Container::VariableArray<uint32_t> table = caseF.PageTable;
+            const uint32_t fineKey = PageKey(level, pageX, pageY);
+            Expect((table[fineKey] & VirtualShadowMap::PAGE_ENTRY_ALLOCATED) != 0u, "ケース L3: 受け手のページが（ケース F で）割り当て済みでなければならない");
+            table[fineKey] = 0u;
+
+            // 粗い段（level + 1 以上）の、同じ位置のページ。どの段にも無い場面のために、すべて割り当て外にする
+            Container::VariableArray<uint32_t> coarseKeys;
+            for (uint32_t coarse = level + 1u; coarse < scene.Clipmap.LevelCount; ++coarse)
+            {
+                const double coarsePageMeters = static_cast<double>(scene.Clipmap.Levels[coarse].PageMeters);
+                const uint32_t key = PageKey(coarse, static_cast<int64_t>(std::floor(lightX / coarsePageMeters)),
+                                             static_cast<int64_t>(std::floor(centerY / coarsePageMeters)));
+                coarseKeys.push_back(key);
+                table[key] = 0u;
+            }
+            const uint32_t coarseKey = coarseKeys[0];
+
+            // 割り当てに使われていない物理ページ（ケース F のプールは割り当てたページ + 24 ページ）
+            Container::VariableArray<bool> used(caseF.PoolPages, false);
+            for (const uint32_t entry : table)
+            {
+                if ((entry & VirtualShadowMap::PAGE_ENTRY_ALLOCATED) != 0u && (entry & VirtualShadowMap::PAGE_INDEX_MASK) < caseF.PoolPages)
+                {
+                    used[entry & VirtualShadowMap::PAGE_INDEX_MASK] = true;
+                }
+            }
+            uint32_t spare = caseF.PoolPages;
+            for (uint32_t index = 0; index < caseF.PoolPages; ++index)
+            {
+                if (!used[index] && index != (caseF.PageTable[fineKey] & VirtualShadowMap::PAGE_INDEX_MASK))
+                {
+                    spare = index;
+                    break;
+                }
+            }
+            Expect(spare < caseF.PoolPages, "ケース L3: 使われていない物理ページがなければならない");
+            if (spare >= caseF.PoolPages)
+            {
+                return false;
+            }
+
+            // L3-粗い段に割り当てあり: 物理ページの全 texel を、受け手より十分手前の深度（中心 - 50 m）にする → 粗い段の値 0
+            Container::VariableArray<uint32_t> pool = caseF.Pool;
+            const float blockerDepth01 = static_cast<float>(-50.0 * 0.5 / static_cast<double>(scene.Clipmap.Settings.DepthRangeMeters) + 0.5);
+            uint32_t blockerWord = 0;
+            std::memcpy(&blockerWord, &blockerDepth01, sizeof(blockerWord));
+            for (uint32_t word = 0; word < VirtualShadowMap::PAGE_WORDS; ++word)
+            {
+                pool[static_cast<size_t>(spare) * VirtualShadowMap::PAGE_WORDS + word] = blockerWord;
+            }
+            Container::VariableArray<uint32_t> tableWithCoarse = table;
+            tableWithCoarse[coarseKey] = VirtualShadowMap::PAGE_ENTRY_ALLOCATED | VirtualShadowMap::PAGE_ENTRY_DIRTY | spare;
+
+            float visibility = -1.0f;
+            uint32_t fallback = 0;
+            if (!evaluate(lightX, centerY, pool, tableWithCoarse, visibility, fallback))
+            {
+                return false;
+            }
+            std::cout << TestName << " ケース L3 粗い段あり: 可視度=" << visibility << " 逃げた標本=" << fallback << std::endl;
+            Expect(std::abs(visibility - 0.0f) < 1.0e-5f, "ケース L3: 自分の段のページが無いとき、粗い段の値（この場面では 0）を読まなければならない");
+            Expect(fallback == 16u, "ケース L3: 逃げた標本の数が 16 でなければならない");
+
+            // L3-どの段にも無い: 影なし（1）
+            if (!evaluate(lightX, centerY, pool, table, visibility, fallback))
+            {
+                return false;
+            }
+            std::cout << TestName << " ケース L3 どの段にも無い: 可視度=" << visibility << " 逃げた標本=" << fallback << std::endl;
+            Expect(std::abs(visibility - 1.0f) < 1.0e-5f, "ケース L3: どの段にもページが無いとき、影なし（1）でなければならない");
+            Expect(fallback == 16u, "ケース L3: どの段にも無い標本も、逃げた標本として 16 と数えなければならない");
+        }
+        return true;
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -2950,6 +3479,11 @@ namespace
                 }
                 // ----- ケース K: MegaGeometry のクラスタの記録の経路（ケース F と同じ場面） -----
                 if (!RunMegaDrawCase(device, pages, raster, shaderManager, scene, depth, caseF, frameSerial))
+                {
+                    return 1;
+                }
+                // ----- ケース L: 照明が使う VSM の読み出し（ケース F の物理プール・ページの表を、照明と同じ関数で読む） -----
+                if (!RunSampleCases(device, shaderManager, scene, image, caseF))
                 {
                     return 1;
                 }

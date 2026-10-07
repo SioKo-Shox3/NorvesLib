@@ -5853,6 +5853,43 @@ namespace
         ShutdownShadowProbeRun(run);
     }
 
+    // --shadow-method=vsm の統計の語（9 以降）の合計と比。VSM を測ったフレームだけが VSM の合計へ入る
+    void TestShadowProbeTotalsAggregateVsmWords()
+    {
+        ShadowProbe::Totals totals;
+        uint32_t words[ShadowProbe::STATS_WORD_COUNT] = {};
+        words[ShadowProbe::StatVisible] = 100;
+        words[ShadowProbe::StatVsmVisible] = 100;
+        words[ShadowProbe::StatVsmPairs] = 80;
+        words[ShadowProbe::StatVsmDeltaSum] = 80 * 2048; // 1 組 0.5
+        words[ShadowProbe::StatVsmChanged] = 40;
+        words[ShadowProbe::StatVsmFlip] = 8;
+        words[ShadowProbe::StatVsmPartial] = 10;
+        words[ShadowProbe::StatVsmTexelSum] = 100 * 16 * 20; // 1 点 20 mm
+        words[ShadowProbe::StatBothDefinite] = 50;
+        words[ShadowProbe::StatAgree] = 49;
+        words[ShadowProbe::StatFiner] = 90;
+        words[ShadowProbe::StatVsmFallbackSamples] = 160;
+
+        // VSM を測っていないフレームは、VSM の合計に入らない（csm の構成では VSM の行を出さない）
+        totals.AddMeasuredFrame(words, false);
+        assert(totals.Frames == 1 && totals.VsmFrames == 0 && totals.VsmVisible == 0 && totals.BothDefinite == 0);
+
+        totals.AddMeasuredFrame(words, true);
+        totals.AddMeasuredFrame(words, true);
+        assert(totals.Frames == 3 && totals.VsmFrames == 2);
+        assert(totals.VsmVisible == 200 && totals.VsmPairs == 160 && totals.BothDefinite == 100 && totals.Agree == 98);
+        assert(std::abs(totals.VsmMeanAbsDelta() - 0.5) < 1.0e-9);
+        assert(std::abs(totals.VsmChangedRatio() - 0.5) < 1.0e-9);
+        assert(std::abs(totals.VsmFlipRatio() - 0.1) < 1.0e-9);
+        assert(std::abs(totals.VsmPartialRatio() - 0.1) < 1.0e-9);
+        assert(std::abs(totals.VsmMeanTexelMm() - 20.0) < 1.0e-9);
+        assert(std::abs(totals.AgreeRatio() - 0.98) < 1.0e-9);
+        assert(std::abs(totals.FinerRatio() - 0.9) < 1.0e-9);
+        // 逃げた標本は 1 標本 16 点: 320 / (200 × 16)
+        assert(std::abs(totals.FallbackRatio() - 0.1) < 1.0e-9);
+    }
+
     // 決定的な撮影のエポックは、読み込みが落ち着くまで何度も始め直される。始まるたびに標本を固定し直し、
     // それまでに足した合計（読み込み前のシーンで測った値）を捨てる
     void TestShadowProbeEpochRestartRecapturesAndResetsTotals()
@@ -6046,6 +6083,8 @@ namespace
                                                          RenderGraphResourceNames::VsmFreeList,
                                                          RenderGraphResourceNames::VsmStats,
                                                          RenderGraphResourceNames::VsmDirtyList};
+            // 照明・影の標本が読むかどうかを決める問い合わせ（公開の有無を、グラフのエラーにせず返す）
+            bSawPublication = builder.HasBuffer(RenderGraphResourceNames::VsmPageTable) && builder.HasBuffer(RenderGraphResourceNames::VsmPhysicalPool);
             for (uint32_t index = 0; index < 6; ++index)
             {
                 Handles[index] = builder.ReadBuffer(names[index], RHI::ResourceState::ShaderResource);
@@ -6059,6 +6098,29 @@ namespace
         }
 
         RGBufferHandle Handles[6];
+        bool bSawPublication = false;
+    };
+
+    // VSM のパスが無いグラフ（csm の構成・VSM を作れなかった装置）で、公開の問い合わせがグラフをエラーにしないこと
+    // （TryGetBuffer は未公開の名前をグラフのエラーにするので、照明・影の標本は HasBuffer で読むかどうかを決める）
+    class VsmPublicationQueryPass final : public IRenderGraphPass
+    {
+    public:
+        const char* GetName() const override { return "VsmPublicationQueryPass"; }
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            bHasPageTable = builder.HasBuffer(RenderGraphResourceNames::VsmPageTable);
+            bHasPool = builder.HasBuffer(RenderGraphResourceNames::VsmPhysicalPool);
+            builder.PreserveInsertionOrder();
+        }
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+        bool bHasPageTable = true;
+        bool bHasPool = true;
     };
 
 #if NORVES_ENABLE_LOGGING
@@ -6259,6 +6321,7 @@ namespace
 
         // 1 フレーム目: 深度 → VSM → 読むパス。6 つの資源が公開され、読むパスが名前で取れる
         RunVsmFrame(run, pass, 0, true);
+        assert(run.Consumer.bSawPublication);
         {
             const Container::VariableArray<uint32_t>& order = run.Graph.GetCompiledPassOrder();
             assert(order.size() == 3 && order[0] == 0 && order[1] == 1 && order[2] == 2);
@@ -6303,6 +6366,29 @@ namespace
         logger.RemoveSink(&logs);
         logger.Shutdown();
 #endif
+    }
+
+    // VSM のパスが無いグラフでは、公開の問い合わせ（HasBuffer）が false を返すだけで、グラフのコンパイル・実行は成功する
+    void TestRenderGraphHasBufferIsQuietWithoutVsmPass()
+    {
+        VsmRun run;
+        InitializeVsmRun(run);
+        VsmPublicationQueryPass query;
+        run.Context.FrameIndex = 0;
+        run.Context.RenderFrameSerial = 1;
+        run.Pool.EndFrame();
+        run.Pool.BeginFrame(0);
+        run.Graph.BeginFrame(0);
+        run.Graph.AddPass(&run.Inputs);
+        run.Graph.AddPass(&query);
+        assert(run.Graph.Compile(run.Context));
+        const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
+        assert(result.bSuccess);
+        assert(!query.bHasPageTable && !query.bHasPool);
+        run.ShaderMgr.Shutdown();
+        run.Graph.Shutdown();
+        run.Pool.EndFrame();
+        run.Pool.Shutdown();
     }
 
     // 作れない装置（断片シェーダーの storage の書き込み・アトミックが無い、BDA が無い、プールが 512 ページ未満しか取れない、確保に失敗する）では、
@@ -13544,11 +13630,13 @@ int main()
     TestShadowProbeReadsCsmResourcesAfterLighting();
     TestShadowProbeCapturesAfterEpochThenMeasuresAndAggregates();
     TestShadowProbeEpochRestartRecapturesAndResetsTotals();
+    TestShadowProbeTotalsAggregateVsmWords();
     TestShadowProbeFallbackCapturesAfterFixedExecuteCount();
     TestShadowProbeTotalsHandleEmptyDenominators();
 #endif
     TestVirtualShadowMapPassAbsentForCsmAndBeforeLightingForVsm();
     TestVirtualShadowMapPassCreatesAndPublishesResources();
+    TestRenderGraphHasBufferIsQuietWithoutVsmPass();
     TestVirtualShadowMapPassFallsBackWhenUnsupported();
     TestVirtualShadowMapPassFallsBackWhenPipelineFails();
     TestVirtualShadowMapPassRecordsMarkAllocateClearInOrder();

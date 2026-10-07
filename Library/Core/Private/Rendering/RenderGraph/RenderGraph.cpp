@@ -416,6 +416,11 @@ namespace NorvesLib::Core::Rendering
         return m_Graph->TryGetBufferResource(name, outHandle);
     }
 
+    bool RenderGraphBuilder::HasBuffer(Identity name) const
+    {
+        return m_Graph != nullptr && m_Graph->HasNamedBufferResource(name);
+    }
+
     bool RenderGraphBuilder::ExportTexture(Identity name, RGTextureHandle handle)
     {
         return m_Graph ? m_Graph->ExportTextureResource(name, handle) : false;
@@ -1306,6 +1311,17 @@ namespace NorvesLib::Core::Rendering
 
         outHandle = RGBufferHandle(resource->CurrentHead);
         return true;
+    }
+
+    bool RenderGraph::HasNamedBufferResource(Identity name) const
+    {
+        if (!name.IsValid())
+        {
+            return false;
+        }
+        const auto existing = m_NamedResources.find(name);
+        return existing != m_NamedResources.end() && existing->second.Kind == RGResourceKind::Buffer &&
+               ValidateHandle(existing->second.CurrentHead);
     }
 
     bool RenderGraph::ExportTextureResource(Identity name, RGTextureHandle handle)

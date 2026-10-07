@@ -340,6 +340,9 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_ShadowMapHandle;
         RGResourceHandle m_PointShadowCubeHandle;
         RGResourceHandle m_RTGIDiffuseIndirectHandle;
+        /** @brief 太陽の VSM（--shadow-method=vsm）のページの表・物理ページのプール。VirtualShadowMapPass が公開したときだけ有効 */
+        RGResourceHandle m_VsmPageTableHandle;
+        RGResourceHandle m_VsmPoolHandle;
 
         // ライティング用リソース
         RHI::RenderPassPtr m_LightingRenderPass;
@@ -469,6 +472,11 @@ namespace NorvesLib::Core::Rendering
         NeuralBRDFData m_NeuralBRDFData;         ///< 学習済みBRDFデータ
         RHI::BufferPtr m_NeuralBRDFWeightBuffer; ///< GPU側重みStorageBuffer
         RHI::BufferPtr m_DefaultNeuralBRDFWeightBuffer;
+        /** @brief 太陽の VSM を読むパラメータ（GPUVsmSampleParams の定数バッファ。VSM が使えないフレームは無効の値） */
+        RHI::BufferPtr m_VsmSampleBuffer;
+        /** @brief 今フレームに RenderGraph から解決した太陽の VSM のページの表・物理ページのプール（無ければ null） */
+        RHI::BufferPtr m_FrameVsmPageTable;
+        RHI::BufferPtr m_FrameVsmPool;
         bool m_bNeuralBRDFAvailable = false;     ///< Neural BRDFが利用可能か
 
         // デバイス参照

@@ -14,9 +14,17 @@
 //   0 = 見えていた標本の数、1 = 前のフレームでも見えていた標本の組の数、2 = |Δv| の和（1/4096 単位）、
 //   3 = |Δv| > 1/64 の数、4 = |Δv| >= 0.5 の数、5 = 0.02 < v < 0.98 の数、6 = 使ったカスケードの texel の一辺の和（1/16 mm 単位）、
 //   7 = 見えていたうち影の範囲（最初の分割〜最後の分割）の外の数、8 = 固定した標本の数（mode 0 のとき）
+//
+// --shadow-method=vsm のときは、同じ標本点について VSM の可視度も照明と同じ関数（Common/VirtualShadowMap.glsl の VsmSampleSunShadow）で求め、
+// CSM と並べて集計する（CSM の描画は vsm でも残るので、同じ run の同じ点で両方を測れる）。語（C++ 側の ShadowProbe::StatWord と同じ並び）:
+//   9 = VSM の見えていた標本の数、10〜14 = VSM の前のフレームとの変化（10 = 組の数、11 = |Δv| の和、12 = |Δv| > 1/64 の数、13 = |Δv| >= 0.5 の数、14 = 0.02 < v < 0.98 の数）、
+//   15 = VSM の使った段の texel の一辺の和（1/16 mm 単位）、16 = CSM と VSM がどちらも確定（0.02 以下か 0.98 以上）の標本の延べ数、
+//   17 = そのうち同じ側の数、18 = VSM の texel が CSM の texel 以下の標本の延べ数、19 = 粗い段へ逃げた PCF の標本の数（1 標本 16 点）
 // ========================================
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#include "Common/VirtualShadowMapParams.glsl"
 
 layout(std140, set = 0, binding = 0) uniform ProbeParams
 {
@@ -30,6 +38,7 @@ layout(std140, set = 0, binding = 0) uniform ProbeParams
     uvec4 screen;                 // x = 画面の幅、y = 高さ、z = 格子の横の数、w = 縦の数
     uvec4 control;                // x = モード（0 = 標本を固定、1 = 測る）、y = カスケード数、z = 影の有効フラグ、w = 格子の間隔（画素）
     vec4 tuning;                  // x = 深度の一致の許容（線形の深度に対する比）
+    VsmSampleParams vsm;          // 太陽の VSM を読むパラメータ（control.x = 0 なら VSM は測らない）
 } params;
 
 layout(set = 0, binding = 1) uniform sampler2D gbufferDepth;
@@ -47,7 +56,7 @@ layout(std430, set = 0, binding = 4) buffer ProbePoints
     ProbePoint points[];
 };
 
-// 前のフレームの可視度（見えていなかったときは負）
+// 前のフレームの可視度（見えていなかったときは負）。前半が CSM、後半（標本の数だけ後ろ）が VSM
 layout(std430, set = 0, binding = 5) buffer ProbeState
 {
     float prevVisibility[];
@@ -56,6 +65,16 @@ layout(std430, set = 0, binding = 5) buffer ProbeState
 layout(std430, set = 0, binding = 6) buffer ProbeStats
 {
     uint stats[];
+};
+
+// 太陽の VSM のページの表・物理ページのプール（VSM を測らないときは、使われない別のバッファを置く）
+layout(std430, set = 0, binding = 7) readonly buffer VsmPageTableBuffer
+{
+    uint vsmPageTable[];
+};
+layout(std430, set = 0, binding = 8) readonly buffer VsmPoolBuffer
+{
+    uint vsmPool[];
 };
 
 #define SUN_CSM_SHADOW_MAP shadowMap
@@ -71,6 +90,13 @@ layout(std430, set = 0, binding = 6) buffer ProbeStats
 #define SUN_CSM_SAMPLE_DEPTH(uvw) textureLod(SUN_CSM_SHADOW_MAP, (uvw), 0.0).r
 #include "Common/SunShadowCsm.glsl"
 
+// 太陽の VSM の評価。粗い段へ逃げた標本は統計の語 19 に数える
+#define VSM_PARAMS params.vsm
+#define VSM_PAGE_TABLE(i) vsmPageTable[i]
+#define VSM_POOL(i) vsmPool[i]
+#define VSM_COUNT_FALLBACK() atomicAdd(stats[19], 1u)
+#include "Common/VirtualShadowMap.glsl"
+
 const uint STAT_VISIBLE = 0u;
 const uint STAT_PAIRS = 1u;
 const uint STAT_DELTA_SUM = 2u;
@@ -80,6 +106,20 @@ const uint STAT_PARTIAL = 5u;
 const uint STAT_TEXEL_SUM = 6u;
 const uint STAT_OUT_OF_RANGE = 7u;
 const uint STAT_CAPTURED = 8u;
+const uint STAT_VSM_VISIBLE = 9u;
+const uint STAT_VSM_PAIRS = 10u;
+const uint STAT_VSM_DELTA_SUM = 11u;
+const uint STAT_VSM_CHANGED = 12u;
+const uint STAT_VSM_FLIP = 13u;
+const uint STAT_VSM_PARTIAL = 14u;
+const uint STAT_VSM_TEXEL_SUM = 15u;
+const uint STAT_BOTH_DEFINITE = 16u;
+const uint STAT_AGREE = 17u;
+const uint STAT_FINER = 18u;
+
+// 「確定」とみなす可視度の閾値（0.02 以下 = 影、0.98 以上 = 光）
+const float DEFINITE_SHADOW = 0.02;
+const float DEFINITE_LIT = 0.98;
 
 const float DELTA_SCALE = 4096.0;
 const float TEXEL_SCALE = 16.0;
@@ -110,6 +150,7 @@ void main()
         const vec3 normal = texelFetch(gbufferNormal, pixel, 0).xyz;
         const float normalLength = length(normal);
         prevVisibility[index] = -1.0;
+        prevVisibility[params.screen.z * params.screen.w + index] = -1.0;
         if (depth > 0.0 && depth < 1.0 && normalLength > 0.5)
         {
             const vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
@@ -127,8 +168,11 @@ void main()
 
     // 測る: 標本点を今のカメラへ投影し、画面の中で、その画素の深度と一致するときだけ見えているとする
     const vec4 probe = points[index].position;
+    const uint vsmStateIndex = params.screen.z * params.screen.w + index;
     const float previous = prevVisibility[index];
+    const float vsmPrevious = prevVisibility[vsmStateIndex];
     float visibility = -1.0;
+    float vsmVisibility = -1.0;
     if (probe.w > 0.5)
     {
         const vec4 clip = params.viewProjection * vec4(probe.xyz, 1.0);
@@ -178,10 +222,54 @@ void main()
                                 atomicAdd(stats[STAT_FLIP], 1u);
                             }
                         }
+
+                        // 太陽の VSM（--shadow-method=vsm）。同じ標本点を照明と同じ関数で測り、CSM と並べる
+                        if (params.vsm.control.x != 0u)
+                        {
+                            float vsmTexelMeters = 0.0;
+                            vsmVisibility = clamp(VsmSampleSunShadow(probe.xyz, points[index].normal.xyz, vsmTexelMeters), 0.0, 1.0);
+                            atomicAdd(stats[STAT_VSM_VISIBLE], 1u);
+                            atomicAdd(stats[STAT_VSM_TEXEL_SUM], uint(vsmTexelMeters * 1000.0 * TEXEL_SCALE + 0.5));
+                            if (vsmVisibility > DEFINITE_SHADOW && vsmVisibility < DEFINITE_LIT)
+                            {
+                                atomicAdd(stats[STAT_VSM_PARTIAL], 1u);
+                            }
+                            if (vsmPrevious >= 0.0)
+                            {
+                                const float vsmDelta = abs(vsmVisibility - vsmPrevious);
+                                atomicAdd(stats[STAT_VSM_PAIRS], 1u);
+                                atomicAdd(stats[STAT_VSM_DELTA_SUM], uint(vsmDelta * DELTA_SCALE + 0.5));
+                                if (vsmDelta > 1.0 / 64.0)
+                                {
+                                    atomicAdd(stats[STAT_VSM_CHANGED], 1u);
+                                }
+                                if (vsmDelta >= 0.5)
+                                {
+                                    atomicAdd(stats[STAT_VSM_FLIP], 1u);
+                                }
+                            }
+                            const bool csmShadow = visibility <= DEFINITE_SHADOW;
+                            const bool csmLit = visibility >= DEFINITE_LIT;
+                            const bool vsmShadow = vsmVisibility <= DEFINITE_SHADOW;
+                            const bool vsmLit = vsmVisibility >= DEFINITE_LIT;
+                            if ((csmShadow || csmLit) && (vsmShadow || vsmLit))
+                            {
+                                atomicAdd(stats[STAT_BOTH_DEFINITE], 1u);
+                                if (csmShadow == vsmShadow)
+                                {
+                                    atomicAdd(stats[STAT_AGREE], 1u);
+                                }
+                            }
+                            if (vsmTexelMeters <= texelMm * 0.001)
+                            {
+                                atomicAdd(stats[STAT_FINER], 1u);
+                            }
+                        }
                     }
                 }
             }
         }
     }
     prevVisibility[index] = visibility;
+    prevVisibility[vsmStateIndex] = vsmVisibility;
 }

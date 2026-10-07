@@ -4,7 +4,9 @@
 // 深度が確定した後・照明の前に置き、物理ページのプールとページの表などを作って名前で公開し、毎フレーム
 // 深度から要るページに印を付け・物理ページを割り当て・消去する（VirtualShadowMapPages。キャッシュは無く毎フレームすべて作り直す）。
 // その後、影を落とす手続きメッシュとスキニングの投影物を塊（128 三角形以下）の記録にして展開・描画し（VirtualShadowMapRaster）、
-// 物理ページへ深度を描く。集め方は CSM と同じ（VirtualShadowMapCasters.h）。照明はまだ CSM のまま。
+// 物理ページへ深度を描く。集め方は CSM と同じ（VirtualShadowMapCasters.h）。
+// 照明（lighting.frag）は、公開したページの表・物理ページのプールを読んで太陽の影を引く（Common/VirtualShadowMap.glsl。VirtualShadowMapSample.h が
+// 読むパラメータを作る）。半透明（forward_transparent.frag）とボリューム（Volumetrics）は CSM のまま。
 // MegaGeometry の投影物（bCastShadow のインスタンス）は、展開の前に VirtualShadowMapMegaCull が段ごとにカリングして
 // （インスタンス、段、クラスタ）の一覧を作る（主の経路の MegaGeometryPass の入力を読み取りだけで使い、主の経路のバッファには書かない）。
 //

@@ -29,8 +29,14 @@ namespace NorvesLib::Core::Rendering
 
     namespace VirtualShadowMap
     {
-        /** @brief 照明の PCF の核の半径（texel）の既定。VTG8-VSM-SAMPLE・PCSS で広げたらここも合わせる */
-        constexpr float DEFAULT_PCF_RADIUS_TEXELS = 2.0f;
+        /**
+         * @brief 印付けが隣のページへも印を付ける範囲（texel。ページの境界からこの範囲の標本が、隣のページを読む）の既定
+         *
+         * 照明（Common/VirtualShadowMap.glsl）の PCF の半径は max(画素の大きさ, 段の 1 texel) で、段を選ぶ式（bias -0.5）では
+         * texel の 2.83 倍未満。標本の位置は法線の向きへ最大 1.5 texel ずれるので、合わせて 4.33 texel。余裕を持たせて 5 texel とする。
+         * 照明の PCF を広げる（VTG8-VSM-PCSS の探索の半径を含む）ときは、ここも合わせる。
+         */
+        constexpr float DEFAULT_PCF_RADIUS_TEXELS = 5.0f;
         /** @brief 間接 dispatch の x の上限（Vulkan が保証する maxComputeWorkGroupCount[0] の最小値。超える分は y へ広げる） */
         constexpr uint32_t GROUP_COUNT_X_LIMIT = 65535;
         /** @brief 消去するページの一覧の先頭の語: 0〜2 = 間接 dispatch の引数、3 = ページの数、4 以降 = 物理ページの番号 */

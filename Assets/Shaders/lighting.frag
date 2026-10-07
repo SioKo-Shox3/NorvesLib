@@ -79,6 +79,21 @@ layout(set = 0, binding = 20) uniform samplerCubeArray pointShadowCubes;
 // SSAO (Screen-Space Ambient Occlusion)
 layout(set = 0, binding = 10) uniform sampler2D ssaoTexture;
 
+// 太陽の VSM（--shadow-method=vsm）。無効のとき（control.x = 0）はページの表・プールを読まない
+#include "Common/VirtualShadowMapParams.glsl"
+layout(std140, set = 0, binding = 21) uniform VsmSampleBlock
+{
+    VsmSampleParams vsm;
+} vsmBlock;
+layout(std430, set = 0, binding = 22) readonly buffer VsmPageTableBuffer
+{
+    uint vsmPageTable[];
+};
+layout(std430, set = 0, binding = 23) readonly buffer VsmPoolBuffer
+{
+    uint vsmPool[];
+};
+
 // Neural BRDF重みデータ（Disney BRDF MLP）
 layout(set = 0, binding = 11) readonly buffer NeuralBRDFWeights
 {
@@ -235,6 +250,23 @@ float CalculateRangeWindow(float distance, float range)
 #define SUN_CSM_CASCADE_COUNT params.cascadeCount
 #define SUN_CSM_HARD_SHADOW_MODE IsR5HardShadowValidationMode()
 #include "Common/SunShadowCsm.glsl"
+
+// 太陽の VSM の評価。ページの表・プール・パラメータの読み方をここで与える。
+#define VSM_PARAMS vsmBlock.vsm
+#define VSM_PAGE_TABLE(i) vsmPageTable[i]
+#define VSM_POOL(i) vsmPool[i]
+#include "Common/VirtualShadowMap.glsl"
+
+// 太陽の影の可視度。--shadow-method=vsm で VSM が使えるときは VSM、それ以外（R5 のハードシャドウの検証表示を含む）は CSM。
+float CalculateSunShadow(vec3 worldPos, vec3 normal)
+{
+    if (vsmBlock.vsm.control.x != 0u && !IsR5HardShadowValidationMode())
+    {
+        float texelMeters = 0.0;
+        return VsmSampleSunShadow(worldPos, normal, texelMeters);
+    }
+    return CalculateShadow(worldPos, normal);
+}
 
 // ========================================
 // 接触影（Contact Shadow）
@@ -1004,7 +1036,7 @@ void main()
         {
             shadow = params.shadowPadding0 != 0u
                          ? texture(rayTracingShadowVisibility, fragUV).r
-                         : CalculateShadow(worldPos, N);
+                         : CalculateSunShadow(worldPos, N);
             // RT影は接地部も正しく遮るので、接触影はCSMの結果にだけ掛ける
             if (params.shadowPadding0 == 0u && shadow > 0.0 && NdotL > 0.0)
             {
