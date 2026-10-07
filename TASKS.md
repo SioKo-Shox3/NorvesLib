@@ -1347,9 +1347,10 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-ACCEPT-night -Configuration RelWithDebInfo -Deterministic -Night`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-ACCEPT-orbit -Configuration RelWithDebInfo -Deterministic -SunElevations 45,10 -OrbitDegreesPerSecond 20 -OrbitRenderedFrames 240,320,400 -ShadowProbe`
+- verify: `$env:NORVES_STARTUP_SPHERE_SPIN='0'; powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-ACCEPT-orbit-nospin -Configuration RelWithDebInfo -Deterministic -SunElevations 45,10 -OrbitDegreesPerSecond 20 -OrbitRenderedFrames 240,320,400 -ShadowProbe`
 - stop-when: 判定の行が満たせない場合は、測定値を記録して止める（判定を緩めない）。
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-07 親（段8の開始時に詳しくした）。ランナーが止まった後に親が行う（ランナーに拾わせないため backlog）。段の区切りの評価（Sol）にかける。段の受入れの撮影（ユーザーの撮影の方針の 2 つ目）。
+- notes: 2026-10-07 親（段8の開始時に詳しくした）。ランナーが止まった後に親が行う（ランナーに拾わせないため backlog）。段の区切りの評価（Sol）にかける。段の受入れの撮影（ユーザーの撮影の方針の 2 つ目）。 2026-10-08 親（受入れの測定の条件）: (2) の細かさとちらつきの判定は、大きな球の自転を止めた run（`NORVES_STARTUP_SPHERE_SPIN=0`、上の verify の `VTG8-ACCEPT-orbit-nospin`）の値で行い、自転したままの run（`VTG8-ACCEPT-orbit`）の値も同じ表に並べて記録する。理由: 標本の道具は「太陽と物が止まっていれば、ワールドに固定した点の可視度はカメラが回っても変わらない」を前提にし、VTG8-SHADOW-PROBE の notes では「球の自転など本当に動く影は CSM と VSM で同じ分だけ入る」と見込んでいた。実際には、VSM だけが描く大きな球の石の目地の自己影が球と一緒に動くので、自転したままの近接の視点では VSM の揺れ（mean_abs_delta 0.0099・flip_ratio 0.0038）と縁の帯（partial_ratio）が CSM より大きく出る。これは影の地図の不安定さではなく本当に動く影で、前提が崩れている。自転を止めた近接の視点（太陽 45 度）では CSM 0.000002・VSM 0.000079（flip 0・0.000003）、partial_ratio は CSM 0.0831・VSM 0.0635 だった（`.harness/runs/startup-capture/VTG8-ACCEPT-orbit-nospin-probe`）。判定のしきい値・項目は変えない。
 
 ## VTG9-VSM-POINT: 点光源の影をVSMにする
 - status: backlog
