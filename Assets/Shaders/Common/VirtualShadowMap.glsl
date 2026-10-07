@@ -13,8 +13,13 @@
 // 省略できるマクロ:
 //   VSM_COUNT_FALLBACK()     自分の段のページが無く、粗い段へ逃げた標本 1 つにつき 1 回呼ぶ（統計の数え上げ。既定は何もしない）
 //
-// 入口は VsmSampleSunShadow(worldPos, normal, texelMeters)。可視度（1 = 光が当たる、0 = 影）を返し、PCF の標本が実際に読んだ段の
+// 入口は VsmSampleSunShadow(worldPos, normal, texelMeters)。可視度（1 = 光が当たる、0 = 影）を返し、標本が実際に読んだ段の
 // texel の一辺（m。粗い段へ逃げた標本はその段の値。読めた標本の平均）を返す。
+//
+// 影の縁は CSM（Common/SunShadowCsm.glsl の PCSSFilter）と同じ考え方で、ブロッカーの探索 → 物理の半影 → PCF の順に引く。
+// 半影の半幅（ワールドの長さ）は 受け手と遮る物の深度の差 × 太陽の角半径の tan で、接するところは鋭く、離れるほどぼける。
+// PCF の半径は r = max(min(物理の半影, 上限), 画素の大きさ p(d), 使う段の 1 texel)。探索の半径は上限と最小の半径の大きいほうで、
+// どちらもワールドの長さ（段に依らない）。探索の標本も、PCF の標本と同じく各自のページの表を引く。
 //
 // 影の距離の範囲・奥の薄めは CSM（Common/SunShadowCsm.glsl の CalculateShadow）と同じ量で測る: カメラの前方への距離が
 // [最初の分割, 最後の分割] の外なら影なし、最後のカスケードの幅の 10% で薄める。段の選び方（カメラからの直線距離）とは別の距離。
@@ -94,6 +99,25 @@ bool VsmFetchDepthMeters(uint level, vec2 lightXY, out float outDepthMeters)
     return true;
 }
 
+// 段 level から粗い段へ順に引いて、最初に読めた段の深度と、その段の texel の一辺を返す。どの段にも無ければ false。
+// outEscaped は、自分の段のページが無く粗い段へ進んだとき（読めたかどうかに依らない）true
+bool VsmFetchDepthWithFallback(uint level, vec2 lightXY, out float outDepthMeters, out float outTexelMeters, out bool outEscaped)
+{
+    outDepthMeters = 0.0;
+    outTexelMeters = 0.0;
+    outEscaped = false;
+    for (uint candidate = level; candidate < VSM_PARAMS.control.y; ++candidate)
+    {
+        if (VsmFetchDepthMeters(candidate, lightXY, outDepthMeters))
+        {
+            outTexelMeters = VSM_PARAMS.levelInfo[candidate].y;
+            return true;
+        }
+        outEscaped = true;
+    }
+    return false;
+}
+
 // 太陽の可視度（1 = 光が当たる、0 = 影）。outTexelMeters は PCF の標本が実際に読んだ段の texel の一辺（m）の平均。
 // どの標本も読めなかった（無効・影の距離の外・不正な値・どの段にも無い）ときは、受け手の距離から選んだ段の値。
 // 無効・影の距離の外・不正な値は 1（影なし）。
@@ -145,8 +169,53 @@ float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
         slope = vec2(0.0);
     }
 
-    // PCF の半径はワールドで連続な量（段の切り替わりで縁の幅が跳ばない）: 画素の大きさと使う段の 1 texel の大きいほう
-    const float radius = max(distanceToCamera * VSM_PARAMS.pixel.x, texelMeters);
+    // 半径の下限はワールドで連続な量（段の切り替わりで縁の幅が跳ばない）: 画素の大きさと使う段の 1 texel の大きいほう
+    const float minRadius = max(distanceToCamera * VSM_PARAMS.pixel.x, texelMeters);
+    const float maxRadius = max(VSM_PARAMS.pixel.z, minRadius);
+
+    // ブロッカーの探索（CSM の FindBlockerDepth と同じ）: 探索の半径の 16 点のうち、受け手より手前にある標本の深度の平均を求める。
+    // 各標本は自分の位置のページの表を引き、無ければ粗い段へ逃げる（どの段にも無い標本は遮る物なしとして扱う）
+    const float searchSlopeBias = VSMS_CONSTANT_BIAS_TEXELS + abs(slope.x) + abs(slope.y);
+    float blockerSum = 0.0;
+    float blockerCount = 0.0;
+    float searchEscapes = 0.0;
+    float searchTexelSum = 0.0;
+    float searchReadCount = 0.0;
+    for (int index = 0; index < 16; ++index)
+    {
+        const vec2 offset = POISSON_DISK[index] * maxRadius;
+        float sampleDepth = 0.0;
+        float sampleTexel = 0.0;
+        bool bEscaped = false;
+        if (VsmFetchDepthWithFallback(level, lightXY + offset, sampleDepth, sampleTexel, bEscaped))
+        {
+            searchTexelSum += sampleTexel;
+            searchReadCount += 1.0;
+            if (receiverDepth + dot(slope, offset) - searchSlopeBias * sampleTexel > sampleDepth)
+            {
+                blockerSum += sampleDepth;
+                blockerCount += 1.0;
+            }
+        }
+        searchEscapes += bEscaped ? 1.0 : 0.0;
+    }
+    if (blockerCount == 0.0)
+    {
+        // 遮る物が無ければ光が当たる（PCF は引かない）。逃げた標本の数はこの探索のものを数える
+        for (float escaped = 0.0; escaped < searchEscapes; escaped += 1.0)
+        {
+            VSM_COUNT_FALLBACK();
+        }
+        if (searchReadCount > 0.0)
+        {
+            outTexelMeters = searchTexelSum / searchReadCount;
+        }
+        return 1.0;
+    }
+
+    // 物理の半影の半幅 = 受け手と遮る物の深度の差 × 太陽の角半径の tan。上限で抑え、下限（画素・1 texel）より小さくはしない
+    const float penumbra = max(receiverDepth - blockerSum / blockerCount, 0.0) * VSM_PARAMS.pixel.y;
+    const float radius = max(min(penumbra, VSM_PARAMS.pixel.z), minRadius);
 
     float lit = 0.0;
     float readTexelSum = 0.0;
@@ -154,25 +223,19 @@ float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
     for (int index = 0; index < 16; ++index)
     {
         const vec2 offset = POISSON_DISK[index] * radius;
-        const vec2 sampleXY = lightXY + offset;
         const float sampleReceiver = receiverDepth + dot(slope, offset);
 
         // 自分の段から粗い段へ順に引く。どの段にも無ければ影なし
         float visible = 1.0;
+        float blockerDepth = 0.0;
+        float candidateTexel = 0.0;
         bool bEscaped = false;
-        for (uint candidate = level; candidate < VSM_PARAMS.control.y; ++candidate)
+        if (VsmFetchDepthWithFallback(level, lightXY + offset, blockerDepth, candidateTexel, bEscaped))
         {
-            float blockerDepth = 0.0;
-            if (VsmFetchDepthMeters(candidate, sampleXY, blockerDepth))
-            {
-                const float candidateTexel = VSM_PARAMS.levelInfo[candidate].y;
-                const float bias = (VSMS_CONSTANT_BIAS_TEXELS + abs(slope.x) + abs(slope.y)) * candidateTexel;
-                visible = (sampleReceiver - bias > blockerDepth) ? 0.0 : 1.0;
-                readTexelSum += candidateTexel;
-                readCount += 1.0;
-                break;
-            }
-            bEscaped = true;
+            const float bias = (VSMS_CONSTANT_BIAS_TEXELS + abs(slope.x) + abs(slope.y)) * candidateTexel;
+            visible = (sampleReceiver - bias > blockerDepth) ? 0.0 : 1.0;
+            readTexelSum += candidateTexel;
+            readCount += 1.0;
         }
         if (bEscaped)
         {

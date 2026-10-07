@@ -1265,7 +1265,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした）。負荷モード（`--stress-mega-instances=300`）で CSM の UBO が足りず MegaGeometry の影の描画が 343 回省かれる件は、VSM の描画では起きない（半透明・ボリュームのために残る CSM の描画では残る。段8の既知の限界）。危険地帯（描画パス）。
 
 ## VTG8-VSM-SAMPLE: 照明で VSM を読み、標本の道具でも VSM を測る
-- status: done
+- status: blocked
 - done-when: `--shadow-method=vsm` のとき、`lighting.frag` の太陽の影を VSM で読む（`Assets/Shaders/Common/VirtualShadowMap.glsl`。半透明 `forward_transparent.frag` とボリューム（Volumetrics）は CSM のまま）。(1) 受け手の段は VTG8-VSM-CLIPMAP と同じ選び方。法線の向きへのずらしと受け面の深度の傾きのバイアスは CSM と同じ考え方で、大きさを使う段の texel に比例させる。(2) PCF: CSM の `PCSSFilter` と同じ 16 点の Poisson で、半径はワールドで連続な量 r = max(画素の大きさ p(d), 使う段の 1 texel)（段の切り替わりで縁の幅が跳ばないように）。各標本は自分の位置のページの表を引いて物理ページの texel を読み、割り当てられていないページは粗い段へ順に逃げ（逃げた数を統計に数える）、どの段にも無ければ影なしとする。(3) 影の距離の上限・奥の 10% の薄めは CSM と同じ。コンタクトシャドウは今と同じく掛ける。(4) VTG8-SHADOW-PROBE の標本でも、vsm のときは同じ関数で VSM の可視度を求め、`SHADOW_PROBE method=vsm ...`（同じ項目。mean_texel_mm は使った段の texel）を csm の行と並べて出し、`SHADOW_PROBE_AGREE both_definite=<n> agree=<n> ratio=<f> finer_ratio=<f>` を出す（both_definite は CSM と VSM の両方が 0.02 以下か 0.98 以上の標本の延べ数、agree はそのうち両方が同じ側の数、finer_ratio は VSM の texel が CSM の texel 以下の標本の割合）。(5) `VirtualShadowMapVulkanTest` に、VTG8-VSM-RASTER の四角形の場面で照明と同じ関数（計算シェーダーから呼ぶ）を受け手の点で評価し、影の中心で 0、影の外で 1、縁で途中の値になり、割り当てられていないページの点は粗い段の値になることを確かめる場面を足す。変異（ページの表の引き方を 1 段ずらす・逃げ道を外す）で落ちることを記録する。golden 4 本は CSM のまま変わらない（基準画像・閾値を動かさない）。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
@@ -1274,7 +1274,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「照明は PCF から始める」）。PCSS（物理の半影）は VTG8-VSM-PCSS。この項目では起動画面を撮らない（VTG8-VSM-GPU-TIME の撮影と VTG8-VSM-DEFAULT-ON の検証の実行で初めて画を見る。そこで壊れて見えたら、その項目で直す）。半透明・ボリュームを VSM で読むには、画面の深度に無い位置のページの印が要るので段8では扱わない（既知の限界）。危険地帯（照明のシェーダー）。
 
 ## VTG8-VSM-PCSS: VSM の照明の読みに、ブロッカーの探索と物理の半影を足す
-- status: todo
+- status: done
 - done-when: VSM の照明の読み（`Common/VirtualShadowMap.glsl`）に、CSM と同じ考え方のブロッカーの探索と物理の半影（太陽の角半径 0.00468 rad × 受け手と遮る物の深度の差）を足し、PCF の半径を r = max(物理の半影, p(d), 使う段の 1 texel) にする（接するところは鋭く、離れるほどぼける）。探索の半径はワールドの長さで決め（段に依らない）、探索の標本も各自のページの表を引く。VTG8-VSM-MARK の隣のページへの印の範囲を、探索と PCF の最大の半径に合わせる。`VirtualShadowMapVulkanTest` に、同じ四角形を受け手から 2 つの高さに置いたとき、高いほうの縁の途中の値の帯が広く、その幅の比が物理の半影の比（高さの比）に ±30% で合うことを確かめる場面を足す。変異（探索を外して半径を最小に固定する）で落ちることを記録する。golden 4 本は変わらない。
 - verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`

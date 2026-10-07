@@ -20,7 +20,10 @@ namespace NorvesLib::Core::Rendering
         float cameraPosition[4];
         /** @brief x = 深度の原点、y = 1 / (2 × 深度の範囲)、z = 2 × 深度の範囲（m）、w = 予約（0） */
         float depth[4];
-        /** @brief x = 画面上の 1 画素の大きさ / カメラからの距離（2 tan(fovY / 2) / 画面の高さ） */
+        /**
+         * @brief x = 画面上の 1 画素の大きさ / カメラからの距離（2 tan(fovY / 2) / 画面の高さ）、y = 太陽の角半径の tan、
+         *        z = ブロッカーの探索と PCF の半径の上限（m。ワールドの長さ）
+         */
         float pixel[4];
         /** @brief xyz = カメラの前方（単位ベクトル）。影の距離の範囲・薄めはこの前方への距離で測る（CSM と同じ） */
         float view[4];

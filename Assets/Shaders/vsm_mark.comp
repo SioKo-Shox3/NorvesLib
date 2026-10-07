@@ -4,8 +4,8 @@
 // 太陽の仮想シャドウマップ（VSM）の印付け
 //
 // GBuffer.Depth の空でない各画素からワールドの位置を戻し、カメラからの距離でクリップマップの段を選び、
-// その位置のライト空間のページに要求のビットを立てる。照明の PCF の核（params.tuning.x texel の半径）が
-// ページの境界をまたぐときは、隣のページにも立てる。
+// その位置のライト空間のページに要求のビットを立てる。照明のブロッカーの探索・PCF の核（params.tuning.x texel と
+// params.tuning.z m を足した半径）がページの境界をまたぐときは、隣のページにも立てる。
 //
 // 段の選び方は CPU の SelectVirtualShadowMapLevel と同じ結果になるよう、式を写さず、CPU が二分法で求めた距離のしきい値
 // （VirtualShadowMapLevelDistanceThresholds）を使う。距離 d の段は「d >= しきい値となる k の数」。
@@ -24,7 +24,7 @@ layout(std140, set = 0, binding = 0) uniform VsmParams
     vec4 lightUp;
     // x: 画面の幅、y: 画面の高さ、z: 段の数、w: 1 段の一辺のページ数（128）
     uvec4 screen;
-    // x: PCF の核の半径（texel）、y: 影の最大の距離（m）
+    // x: PCF の核の半径のうち texel に比例する分（texel）、y: 影の最大の距離（m）、z: 探索・PCF の半径の上限（ワールドの長さ m）
     vec4 tuning;
     // x: 段階、y: 物理ページの数、z: 間接 dispatch の x の上限
     uvec4 control;
@@ -95,11 +95,13 @@ void main()
     }
 
     const float pageMeters = params.levelInfo[level].x;
-    const float margin = params.tuning.x * params.levelInfo[level].y;
+    // 標本の位置は texel に比例する分（法線の向きへのずれ・画素の大きさ・1 texel）とワールドの長さの分（物理の半影）の和で届く
+    const float margin = params.tuning.x * params.levelInfo[level].y + params.tuning.z;
     const vec2 lightXY = vec2(dot(world, params.lightRight.xyz), dot(world, params.lightUp.xyz));
     const ivec2 pageMin = ivec2(floor((lightXY - margin) / pageMeters));
-    // 核の幅はページより十分小さいので、またぐのは隣の 1 ページまで
-    const ivec2 pageMax = min(ivec2(floor((lightXY + margin) / pageMeters)), pageMin + ivec2(1));
+    // 既定の上限（3 cm）は最も細かい段（ページ 3.1 cm）でも 2 ページ分までなので、またぐのは 3 ページまで（pageMin から +2）。
+    // 余裕を持って +3 までで頭打ちにする（段 0 の幅が既定より小さく、ページが上限より細かいときも 1 画素の走査を抑える）
+    const ivec2 pageMax = min(ivec2(floor((lightXY + margin) / pageMeters)), pageMin + ivec2(3));
     const ivec2 origin = params.levelOrigin[level].xy;
     const int count = int(PAGES_PER_AXIS);
 

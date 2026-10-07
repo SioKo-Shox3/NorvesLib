@@ -25,7 +25,7 @@ namespace NorvesLib::Core::Rendering
             float lightRight[4];
             float lightUp[4];
             uint32_t screen[4];  // x = 幅、y = 高さ、z = 段の数、w = 1 段の一辺のページ数
-            float tuning[4];     // x = PCF の核の半径（texel）、y = 影の最大の距離（m）
+            float tuning[4];     // x = PCF の核の半径のうち texel に比例する分（texel）、y = 影の最大の距離（m）、z = 探索・PCF の半径の上限（m）
             uint32_t control[4]; // x = 段階、y = 物理ページの数、z = 間接 dispatch の x の上限
             float thresholds[VirtualShadowMapMaxLevels];
             float levelInfo[VirtualShadowMapMaxLevels][4];   // x = ページの一辺（m）、y = texel の一辺（m）
@@ -169,6 +169,7 @@ namespace NorvesLib::Core::Rendering
             params.screen[2] = clipmap->LevelCount;
             params.tuning[0] = dispatch.PcfRadiusTexels;
             params.tuning[1] = clipmap->Settings.MaxShadowDistance;
+            params.tuning[2] = dispatch.MaxFilterRadiusMeters;
             return true;
         }
     } // namespace

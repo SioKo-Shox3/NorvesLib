@@ -30,13 +30,22 @@ namespace NorvesLib::Core::Rendering
     namespace VirtualShadowMap
     {
         /**
-         * @brief 印付けが隣のページへも印を付ける範囲（texel。ページの境界からこの範囲の標本が、隣のページを読む）の既定
+         * @brief 印付けが隣のページへも印を付ける範囲のうち、texel に比例する分（texel。ページの境界からこの範囲の標本が、隣のページを読む）の既定
          *
-         * 照明（Common/VirtualShadowMap.glsl）の PCF の半径は max(画素の大きさ, 段の 1 texel) で、段を選ぶ式（bias -0.5）では
-         * texel の 2.83 倍未満。標本の位置は法線の向きへ最大 1.5 texel ずれるので、合わせて 4.33 texel。余裕を持たせて 5 texel とする。
-         * 照明の PCF を広げる（VTG8-VSM-PCSS の探索の半径を含む）ときは、ここも合わせる。
+         * 照明（Common/VirtualShadowMap.glsl）の標本の半径は max(物理の半影, 画素の大きさ, 段の 1 texel) で、画素の大きさと 1 texel の
+         * 側は、段を選ぶ式（bias -0.5）では texel の 2.83 倍未満。標本の位置は法線の向きへ最大 1.5 texel ずれるので、合わせて 4.33 texel。
+         * 余裕を持たせて 5 texel とする。物理の半影の側（上限 MAX_FILTER_RADIUS_METERS）は、ワールドの長さとして別に足す。
          */
         constexpr float DEFAULT_PCF_RADIUS_TEXELS = 5.0f;
+        /**
+         * @brief ブロッカーの探索と PCF の半径の上限（ワールドの長さ m。段に依らない）の既定
+         *
+         * 物理の半影の半幅（受け手と遮る物の深度の差 × 太陽の角半径の tan）は、これを超えるとここで抑える。3 cm は受け手と遮る物の深度の差
+         * 約 6.4 m 分の半影。印付けは隣のページへの印の範囲にこれを足す（探索・PCF の標本が読むページに印が無いと、粗い段へ逃げて影が欠ける）。
+         */
+        constexpr float MAX_FILTER_RADIUS_METERS = 0.03f;
+        /** @brief 太陽の角半径の tan（Common/SunShadowCsm.glsl の DIRECTIONAL_LIGHT_TAN_ANGULAR_RADIUS と同じ） */
+        constexpr float SUN_TAN_ANGULAR_RADIUS = 0.00468f;
         /** @brief 間接 dispatch の x の上限（Vulkan が保証する maxComputeWorkGroupCount[0] の最小値。超える分は y へ広げる） */
         constexpr uint32_t GROUP_COUNT_X_LIMIT = 65535;
         /** @brief 消去するページの一覧の先頭の語: 0〜2 = 間接 dispatch の引数、3 = ページの数、4 以降 = 物理ページの番号 */
@@ -62,8 +71,10 @@ namespace NorvesLib::Core::Rendering
         float CameraPosition[3] = {};
         /** @brief 垂直の画角（度）。段の選び方（画面上の 1 画素の大きさ）に使う */
         float FovYDegrees = 0.0f;
-        /** @brief PCF の核の半径（texel） */
+        /** @brief PCF の核の半径のうち、texel に比例する分（texel） */
         float PcfRadiusTexels = VirtualShadowMap::DEFAULT_PCF_RADIUS_TEXELS;
+        /** @brief ブロッカーの探索と PCF の半径の上限（ワールドの長さ m）。隣のページへの印の範囲に足す */
+        float MaxFilterRadiusMeters = VirtualShadowMap::MAX_FILTER_RADIUS_METERS;
         /** @brief 物理ページの数（プール・空きページの一覧・消去の一覧の大きさと合っていること） */
         uint32_t PoolPages = 0;
 

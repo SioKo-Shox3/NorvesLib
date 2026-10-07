@@ -312,7 +312,9 @@ namespace
         VirtualShadowMapWorldToLightSpace(scene.Clipmap, position, lightX, lightY, lightDepth);
         const VirtualShadowMapClipmapLevel& levelData = scene.Clipmap.Levels[level];
         const double pageMeters = static_cast<double>(levelData.PageMeters);
-        const double margin = static_cast<double>(VirtualShadowMap::DEFAULT_PCF_RADIUS_TEXELS) * static_cast<double>(levelData.TexelMeters);
+        // 印付けの隣のページへの印の範囲 = texel に比例する分 + ワールドの長さの分（物理の半影の上限）
+        const double margin = static_cast<double>(VirtualShadowMap::DEFAULT_PCF_RADIUS_TEXELS) * static_cast<double>(levelData.TexelMeters) +
+                              static_cast<double>(VirtualShadowMap::MAX_FILTER_RADIUS_METERS);
 
         // 点とその核の 4 本の境界が、ページの境界から許容以上離れていること
         const double probes[6] = {lightX, lightX - margin, lightX + margin, lightY, lightY - margin, lightY + margin};
@@ -2775,6 +2777,9 @@ namespace
     //       その粗い段の値（0）になる（逃げた標本は 16）。粗い段にも無ければ影なし（1。逃げた標本は 16）。
     //       粗い段へ逃げたときに返す texel の一辺は、実際に読んだ（粗い）段の値。
     //   L4（影の距離の範囲・奥の薄め）: CSM と同じ前方への距離で、範囲の外は影なし、最後のカスケードの幅の 10% で薄める。
+//   L5（物理の半影）: 段 0 の texel が 0.24 mm の既定のクリップマップに、半平面の遮る物（縁がページの中央）を直接描き、同じ縁を受け手から 1 m と 3 m の
+//       深さで読む。縁の途中の値（0 と 1 の間）の帯の幅が、物理の半影（深度の差 × 太陽の角半径の tan。Poisson の 16 点の横の広がりを掛けた値）に
+//       ±30% で合い、2 つの帯の幅の比が深度の差の比（3）に ±30% で合うこと。遮る物に接する受け手は、1 m の帯の半分未満の鋭い縁になること。
 
     // Common/PoissonDisk16.glsl と同じ 16 点（CPU の参照のための独立した写し。シェーダーの点列が変わると一致しなくなる）
     constexpr double ReferencePoissonDisk[16][2] = {
@@ -3026,6 +3031,176 @@ namespace
             lit += covered ? 0u : 1u;
         }
         return static_cast<double>(lit) / 16.0;
+    }
+
+    // ----- L5: 物理の半影 -----
+    // 既定のクリップマップ（段 0 の幅 4 m・texel 0.244 mm・ページ 3.1 cm）の段 0 に、縁がページの中央を縦に通る半平面の遮る物を直接描く
+    // （物理ページの texel は、中心が縁より左なら遮る物の深度、右なら 1.0）。3x3 ページを割り当てる。
+    // 縁を横切る受け手を、遮る物から depthGap だけ後ろの深度で読み、可視度が 0 と 1 の間の値になる位置の幅（帯の幅）を測る。
+    // 半影の半幅は depthGap × 太陽の角半径の tan。Poisson の 16 点の横の広がりは [-0.94201624, 0.97484398] の 1.91686 倍
+    double MeasurePenumbraBandWidth(const DevicePtr& device,
+                                    const SampleProbe& probe,
+                                    const GPUVsmSampleParams& real,
+                                    const VirtualShadowMapClipmap& clipmap,
+                                    const Container::VariableArray<uint32_t>& pool,
+                                    const Container::VariableArray<uint32_t>& table,
+                                    double edgeX,
+                                    double lightY,
+                                    double blockerDepth,
+                                    double depthGap,
+                                    uint32_t& outFallback,
+                                    bool& outOk)
+    {
+        outOk = false;
+        outFallback = 0;
+        const double texel = static_cast<double>(clipmap.Levels[0].TexelMeters);
+        const double penumbra = depthGap * static_cast<double>(VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS);
+        // 縁を中心に、帯（約 1.92 × 半影）が十分に入る範囲を texel の 1/4 刻みで読む
+        const double span = std::max(1.5 * penumbra, 6.0 * texel);
+        const double step = 0.25 * texel;
+        const int32_t half = static_cast<int32_t>(std::ceil(span / step));
+
+        Container::VariableArray<SampleProbePoint> points;
+        for (int32_t index = -half; index <= half; ++index)
+        {
+            const double lightX = edgeX + static_cast<double>(index) * step;
+            const double lightDepth = blockerDepth + depthGap;
+            SampleProbePoint point = {};
+            const Math::Vector3 position(
+                static_cast<float>(clipmap.LightRight.x * lightX + clipmap.LightUp.x * lightY + clipmap.Direction.x * lightDepth),
+                static_cast<float>(clipmap.LightRight.y * lightX + clipmap.LightUp.y * lightY + clipmap.Direction.y * lightDepth),
+                static_cast<float>(clipmap.LightRight.z * lightX + clipmap.LightUp.z * lightY + clipmap.Direction.z * lightDepth));
+            point.Position[0] = position.x;
+            point.Position[1] = position.y;
+            point.Position[2] = position.z;
+            point.Position[3] = 1.0f;
+            // 光源を向いた法線（法線の向きへのずらしも受け面の傾きも 0）
+            point.Normal[0] = -clipmap.Direction.x;
+            point.Normal[1] = -clipmap.Direction.y;
+            point.Normal[2] = -clipmap.Direction.z;
+            points.push_back(point);
+        }
+
+        // 段 0 に固定し、カメラを中央の受け手から 1 m 離す（前方 -X）。画素の大きさは「そこでちょうど 2 texel」。縁の幅の下限は約 0.5 mm になる
+        const SampleProbePoint& center = points[static_cast<size_t>(half)];
+        GPUVsmSampleParams params = MakeForcedLevelParams(real, 0u, center);
+        constexpr double CameraDistance = 1.0;
+        params.cameraPosition[0] = center.Position[0] + static_cast<float>(CameraDistance);
+        params.cameraPosition[1] = center.Position[1];
+        params.cameraPosition[2] = center.Position[2];
+        params.pixel[0] = static_cast<float>(2.0 * texel / CameraDistance);
+
+        SampleOutput output;
+        if (!RunSampleProbe(device, probe, params, pool, table, points, output))
+        {
+            return 0.0;
+        }
+        outFallback = output.Fallback;
+        int32_t first = -1;
+        int32_t last = -1;
+        for (int32_t index = 0; index < static_cast<int32_t>(output.Visibility.size()); ++index)
+        {
+            const float value = output.Visibility[static_cast<size_t>(index)];
+            if (value > 1.0e-6f && value < 1.0f - 1.0e-6f)
+            {
+                first = first < 0 ? index : first;
+                last = index;
+            }
+        }
+        outOk = first >= 0;
+        return outOk ? static_cast<double>(last - first + 1) * step : 0.0;
+    }
+
+    bool RunPenumbraCase(const DevicePtr& device, const SampleProbe& probe, const Scene& scene)
+    {
+        constexpr uint32_t PoolPages = 9u;
+        VirtualShadowMapClipmapSettings settings;
+        const VirtualShadowMapClipmap clipmap =
+            BuildVirtualShadowMapClipmap(Math::Vector3(0.35f, -0.8f, 0.45f), 1u, Math::Vector3(0.0f, 0.0f, 0.0f), settings);
+        Expect(clipmap.bEnabled, "ケース L5: 既定のクリップマップが有効でなければならない");
+        const float cameraPosition[3] = {0.0f, 0.0f, 0.0f};
+        const float cameraForward[3] = {scene.Camera.ForwardX, scene.Camera.ForwardY, scene.Camera.ForwardZ};
+        GPUVsmSampleParams real;
+        if (!BuildVirtualShadowMapSampleParams(&clipmap, cameraPosition, cameraForward, nullptr, scene.Camera.FieldOfView,
+                                               static_cast<float>(ImageHeight), PoolPages, real))
+        {
+            std::cerr << TestName << " ケース L5: 読み出しのパラメータを作れませんでした" << std::endl;
+            return false;
+        }
+        Expect(real.pixel[1] == VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS && real.pixel[2] == VirtualShadowMap::MAX_FILTER_RADIUS_METERS,
+               "ケース L5: 読み出しのパラメータが太陽の角半径の tan と探索・PCF の半径の上限を持たなければならない");
+
+        const VirtualShadowMapClipmapLevel& level0 = clipmap.Levels[0];
+        const double pageMeters = static_cast<double>(level0.PageMeters);
+        const double texel = static_cast<double>(level0.TexelMeters);
+        const double edgeX = (static_cast<double>(level0.CenterPageX) + 0.5) * pageMeters;
+        const double lightY = (static_cast<double>(level0.CenterPageY) + 0.5) * pageMeters;
+        const double blockerDepth = clipmap.DepthCenter - 20.0;
+        const double range = static_cast<double>(clipmap.Settings.DepthRangeMeters);
+
+        // 中央のページを中心とする 3x3 ページ。中心が縁より左の texel は遮る物の深度、右は 1.0
+        Container::VariableArray<uint32_t> table(static_cast<size_t>(VirtualShadowMap::LEVEL_COUNT) * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL, 0u);
+        Container::VariableArray<uint32_t> pool(static_cast<size_t>(PoolPages) * VirtualShadowMap::PAGE_WORDS, VirtualShadowMap::EMPTY_DEPTH_BITS);
+        const float blockerDepth01 = static_cast<float>((blockerDepth - clipmap.DepthCenter) / (2.0 * range) + 0.5);
+        uint32_t blockerWord = 0;
+        std::memcpy(&blockerWord, &blockerDepth01, sizeof(blockerWord));
+        uint32_t physical = 0;
+        for (int64_t row = -1; row <= 1; ++row)
+        {
+            for (int64_t column = -1; column <= 1; ++column)
+            {
+                const int64_t pageX = level0.CenterPageX + column;
+                const int64_t pageY = level0.CenterPageY + row;
+                table[PageKey(0, pageX, pageY)] = VirtualShadowMap::PAGE_ENTRY_ALLOCATED | VirtualShadowMap::PAGE_ENTRY_DIRTY | physical;
+                for (uint32_t texelY = 0; texelY < VirtualShadowMap::PAGE_RESOLUTION; ++texelY)
+                {
+                    for (uint32_t texelX = 0; texelX < VirtualShadowMap::PAGE_RESOLUTION; ++texelX)
+                    {
+                        const double centerX = (static_cast<double>(pageX) * VirtualShadowMap::PAGE_RESOLUTION + texelX + 0.5) * texel;
+                        if (centerX < edgeX)
+                        {
+                            pool[static_cast<size_t>(physical) * VirtualShadowMap::PAGE_WORDS + texelY * VirtualShadowMap::PAGE_RESOLUTION + texelX] = blockerWord;
+                        }
+                    }
+                }
+                ++physical;
+            }
+        }
+
+        // Poisson の 16 点の横の広がり（Common/PoissonDisk16.glsl の x の最小と最大）
+        constexpr double PoissonSpread = 0.94201624 + 0.97484398;
+        constexpr double TanRadius = static_cast<double>(VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS);
+        constexpr double NearGap = 1.0;
+        constexpr double FarGap = 3.0;
+        double widths[2] = {};
+        const double gaps[2] = {NearGap, FarGap};
+        for (uint32_t index = 0; index < 2u; ++index)
+        {
+            uint32_t fallback = 0;
+            bool bOk = false;
+            widths[index] = MeasurePenumbraBandWidth(device, probe, real, clipmap, pool, table, edgeX, lightY, blockerDepth, gaps[index], fallback, bOk);
+            const double expected = PoissonSpread * gaps[index] * TanRadius;
+            std::cout << TestName << " ケース L5 深度の差 " << gaps[index] << " m: 帯の幅=" << widths[index] * 1000.0 << " mm 物理の半影から期待=" << expected * 1000.0
+                      << " mm 逃げた標本=" << fallback << std::endl;
+            Expect(bOk, "ケース L5: 縁の途中の値（0 と 1 の間）が現れなければならない");
+            Expect(fallback == 0u, "ケース L5: 割り当て済みの 3x3 ページの中で読み、粗い段へ逃げてはならない");
+            Expect(std::abs(widths[index] - expected) <= 0.3 * expected,
+                   "ケース L5: 縁の帯の幅が物理の半影（深度の差 × 太陽の角半径の tan × Poisson の広がり）に ±30% で合わなければならない");
+        }
+        const double ratio = widths[1] / std::max(widths[0], 1.0e-12);
+        std::cout << TestName << " ケース L5: 帯の幅の比=" << ratio << "（深度の差の比 " << FarGap / NearGap << "）" << std::endl;
+        Expect(std::abs(ratio - FarGap / NearGap) <= 0.3 * (FarGap / NearGap),
+               "ケース L5: 2 つの高さの縁の帯の幅の比が、深度の差の比に ±30% で合わなければならない");
+
+        // 遮る物に接する受け手（深度の差が比較の余裕の内側）は、探索で遮る物が見つからず、最小の半径の帯になる
+        {
+            uint32_t fallback = 0;
+            bool bOk = false;
+            const double contactWidth = MeasurePenumbraBandWidth(device, probe, real, clipmap, pool, table, edgeX, lightY, blockerDepth, 0.01, fallback, bOk);
+            std::cout << TestName << " ケース L5 接する受け手: 帯の幅=" << contactWidth * 1000.0 << " mm" << std::endl;
+            Expect(!bOk || contactWidth < 0.5 * widths[0], "ケース L5: 遮る物に接する受け手の縁は、深度の差 1 m の縁より十分に鋭くなければならない");
+        }
+        return true;
     }
 
     bool RunSampleCases(const DevicePtr& device,
@@ -3383,7 +3558,8 @@ namespace
                        "ケース L4: 影の距離の範囲・奥の薄めが CSM と同じ前方への距離で決まらなければならない");
             }
         }
-        return true;
+
+        return RunPenumbraCase(device, probe, scene);
     }
 
     int RunTest()
