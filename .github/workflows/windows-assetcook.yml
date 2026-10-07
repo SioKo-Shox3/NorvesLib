@@ -132,6 +132,7 @@ jobs:
           cmake -S . -B build/windows-cli -G 'Visual Studio 17 2022' -A x64 -DNORVES_BUILD_TESTS=ON 2>&1 | Tee-Object "$env:NORVES_CI_LOG/configure.log"
           if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
       - name: AssetCookとテストbundleをビルドする
+        id: native_build
         run: |
           cmake --build build/windows-cli --config Release --target AssetCook JobSystemShutdownTest CookedMeshTest ResourceRegistryTest MegaGeometryResourcesTest ModelResourcesAssetRuntimeTest SkeletalAnimationSamplingTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
           if ($LASTEXITCODE -ne 0) { throw 'Native build failed' }
@@ -146,6 +147,7 @@ jobs:
           Remove-Item Env:NORVES_RIG_SPLIT_V1_OUTPUT
           Remove-Item Env:NORVES_ROOT_FRAME_V2_OUTPUT
       - name: 分離rigの実CLIを確認する
+        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
         run: |
           python -B Test/Tools/AssetCookRigSplitSmoke.py --assetcook build/windows-cli/Tools/AssetCook/Release/AssetCook.exe
           if ($LASTEXITCODE -ne 0) { throw 'Rig split CLI smoke failed' }
