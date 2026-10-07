@@ -2298,3 +2298,62 @@
 - 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-POOL-OVERFLOW-10.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-11.txt`（RenderGraphCompileTest・VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest が 3/3 Passed。VirtualShadowMapVulkanTest は 6.67 秒の GPU 実行で、シェーダーはこのテストの中でコンパイルされる。ケース M3c の溢れ→印→次フレームの描き直しも通る）。
 - Notes: (1) 撮影による GPU 時間の再測定はしていない。原子の読み取りはキャッシュ済みの欄への 1 回の操作で、展開は 1 塊あたり 2〜3 回の走査だけなので、反復 12 の ±0.1 ms の範囲を超える見込みはないが、実測は `VTG8-VSM-GPU-TIME`（todo）の撮り直しで確かめる。(2) cache=off ＋ 負荷 300 個の `VSM_MEGA_CULL` overflow 80775 は反復 12 の記録どおり既知の限界。
 - Next: `VTG8-VSM-GPU-TIME`（6 run の撮り直し。`blocked/VTG8-VSM-GPU-TIME.md` が残っているので人が確認して `todo` に戻す／すでに `todo`）。
+
+## 反復 14（2026-10-08）: VTG8-VSM-GPU-TIME（6 run の撮り直し。done）
+
+- 反復 12・13 の修正（既定のプール 5120 ページ・溢れた塊の再描画の印・`PageEntry` の原子読み取り）を入れた現 HEAD で、RelWithDebInfo・`-GpuTimingFrames 300`・太陽 45 度の 6 run を撮り直した。ドライバは NVIDIA GeForce RTX 4080 610.88。窓は 240 フレーム（スクリプトの `gpu_timing` 行と同じ。区間の中央値は trace.csv の `Type=GPU` の行から集計）。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-GPU-TIME-21.txt`（RelWithDebInfo の Game のビルド、BUILD_EXIT_CODE=0）、`-22`〜`-27`（撮影 6 run。すべて result=pass。出力は `.harness/runs/startup-capture/VTG8-VSM-GPU-TIME-{csm,vsm-nocache,vsm,csm-stress,vsm-nocache-stress,vsm-stress}`）、`-28-aggregate.txt`（区間の中央値と各ログの最大値の集計）。
+- 設定の共通値: `VSM_CLIPMAP levels=10 first_width_m=4.000 bias=-1.000 depth_range_m=1000.0`、`VSM_TEXEL d_m=1.0 vsm_mm=0.4883 csm_mm=12.8666`、`VRAM_LEDGER vsm_pool pages=5120 mb=320.000`（VSM の 6 run すべて）。
+
+### フレーム GPU と区間の中央値（ms）
+
+| run | フレーム GPU | ShadowMapPass | VsmMark | VsmAllocate | VsmClear | VsmCullMega | VsmExpand | VsmDraw | VirtualShadowMapPass | LightingPass |
+|---|---|---|---|---|---|---|---|---|---|---|
+| CSM default | 2.438 | 0.186 | - | - | - | - | - | - | - | 0.542 |
+| CSM near | 2.511 | 0.217 | - | - | - | - | - | - | - | 0.563 |
+| CSM low | 2.462 | 0.221 | - | - | - | - | - | - | - | 0.487 |
+| VSM（持ち越し）default | 2.768 | 0.162 | 0.026 | 0.102 | 0.008 | 0.028 | 0.168 | 0.135 | 0.481 | 0.596 |
+| VSM（持ち越し）near | 3.683 | 0.147 | 0.062 | 0.673 | 0.062 | 0.032 | 0.154 | 0.687 | 1.682 | 0.558 |
+| VSM（持ち越し）low | 2.980 | 0.153 | 0.260 | 0.199 | 0.020 | 0.029 | 0.157 | 0.166 | 0.841 | 0.632 |
+| VSM cache=off default | 2.871 | 0.160 | 0.026 | 0.030 | 0.055 | 0.042 | 0.171 | 0.265 | 0.601 | 0.597 |
+| VSM cache=off near | 3.204 | 0.147 | 0.062 | 0.027 | 0.110 | 0.047 | 0.157 | 0.788 | 1.201 | 0.562 |
+| VSM cache=off low | 3.265 | 0.147 | 0.250 | 0.031 | 0.471 | 0.033 | 0.152 | 0.216 | 1.166 | 0.630 |
+| CSM 負荷 300 | 5.887 | 2.181 | - | - | - | - | - | - | - | 0.589 |
+| VSM（持ち越し）負荷 300 | 7.634 | 2.182 | 0.025 | 0.093 | 0.008 | 1.138 | 0.153 | 0.189 | 1.616 | 0.717 |
+| VSM cache=off 負荷 300 | 16.320 | 2.189 | 0.025 | 0.027 | 0.056 | 1.455 | 0.456 | 8.247 | 10.278 | 0.715 |
+
+（`VsmClear` は cache=off で毎フレーム全ページを消すので大きい。`ShadowMapPass` は CSM と点光源の合計で、VSM でも半透明・ボリューム用の CSM の描画が残る。区間の中央値の和は、フレームごとの重なりでフレーム GPU の中央値と一致しない。）
+
+### ログの最大値（全フレームの最大）と VSM_CACHE の最終行
+
+| run | VSM_PAGES requested（最大）/ overflow | VSM_RASTER instances（最大）/ overflow | VSM_MEGA_CULL clusters（最大）/ overflow | VSM_CACHE（最終行） |
+|---|---|---|---|---|
+| VSM default | 787 / 0 | 24257 / 0 | 1788 / 0 | cached=630 rendered=124 invalidated=124 released=0 |
+| VSM near | 1311 / 0 | 101866 / 0 | 5540 / 0 | cached=467 rendered=821 invalidated=831 released=10 |
+| VSM low | 4734 / 0 | 28102 / 0 | 2135 / 0 | cached=4333 rendered=385 invalidated=388 released=7 |
+| VSM cache=off default | 787 / 0 | 24482 / 0 | 5273 / 0 | cached=0 rendered=754 |
+| VSM cache=off near | 1311 / 0 | 101701 / 0 | 8207 / 0 | cached=0 rendered=1288 |
+| VSM cache=off low | 4734 / 0 | 29020 / 0 | 2913 / 0 | cached=0 rendered=4718 |
+| VSM 負荷 300（持ち越し） | 787 / 0 | 885329 / 0 | 3567 / 0 | cached=626 rendered=124 invalidated=124 released=0 |
+| VSM cache=off 負荷 300 | 787 / 0 | 885493 / 0 | 262144 / **80775** | cached=0 rendered=750 |
+
+- 溢れ: VSM の 6 つの run のうち、持ち越しありの起動画面 3 視点・cache=off の起動画面 3 視点・持ち越しありの負荷 300 個は `VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL` の overflow がすべて 0（低角度の要求 4734 は 5120 に収まる。直す前は 4096 に対して overflow 625〜639）。**cache=off ＋ 負荷 300 個だけ `VSM_MEGA_CULL` の overflow が全フレームで 80775**（clusters が上限 262144 に張り付く）。これは反復 12 で既知の限界として記録した診断用の経路（毎フレーム全ページを描き直す）で、起動画面の既定の経路（持ち越しあり）では起きない。`VSM_PAGES` と `VSM_RASTER` はこの run でも 0。done-when の「6 つの run すべて 0」はこの 1 run だけ満たさず、既知の限界として扱った（上限を上げる・分割して描く対策は費用に見合わないとして足していない）。
+
+### CSM との差（持ち越しあり VSM − CSM、フレーム GPU の中央値）
+
+- default +0.330 ms、near +1.172 ms、low +0.518 ms、負荷 300 +1.747 ms。**どれも停止条件の 2 ms 未満**。
+- default: `VirtualShadowMapPass` 0.481 ms（`VsmExpand` 0.168・`VsmDraw` 0.135・`VsmAllocate` 0.102 が主）。`ShadowMapPass` は 0.186 → 0.162 ms と下がるが、照明も 0.542 → 0.596 ms と上がる（VSM の読みは標本ごとに探索・PCF の半径を持つ）。
+- near: `VsmAllocate` 0.673 と `VsmDraw` 0.687 が大きい。`VSM_CACHE` は毎フレーム 800 ページ前後を invalidated/rendered（default は 124）で、近いほど細かい段のページが動く投影物にかかって描き直されると見られる（原因の切り分けはしていない）。静止した投影物のページは持ち越され、`VsmClear` 0.062・`VsmMark` 0.062 は小さい。
+- low: `VsmMark` 0.260（低角度で標本が広い距離にまたがり、要求ページが 4734 と多い）と `VsmAllocate` 0.199 が主。
+- 負荷 300: 増えるのは `VsmCullMega` 1.138 ms（300 個のインスタンスの段ごとのカリング）が大半で、残りは照明 +0.13 ms と `VsmAllocate` 0.093。`VsmDraw` は持ち越しで 0.189 ms に収まる。cache=off では `VsmDraw` が 8.247 ms（885493 インスタンス・全ページ）になり 16.320 ms（予算 16.6 ms の縁。5 フレームが超過）。
+
+### 直した後の変化（反復 12 の記録との比較。フレーム GPU の中央値、直す前 → 今回）
+
+- 持ち越し default 2.809 → 2.768、near 3.692 → 3.683、low 3.000 → 2.980、負荷 300 7.662 → 7.634 ms。cache=off default 2.899 → 2.871、near 3.196 → 3.204、low 3.173 → 3.265 ms。どれも ±0.1 ms 以内で、反復 13 の `PageEntry` の原子読み取りで既定の経路が 0.5 ms を超えて遅くなってはいない（`VsmExpand` default 0.168・near 0.154・low 0.157 ms）。この項目は `VTG8-VSM-POOL-OVERFLOW` が評価者に求められた「修正後の GPU 時間の実測」も満たす。
+
+### 影の見え方（PNG を開いた）
+
+- VSM の持ち越し default・near・low、持ち越しの負荷 300、cache=off の low、cache=off の負荷 300（`VSM_MEGA_CULL` が溢れる run）を開いた。小屋・岩・球・見本の帯の球の影に、欠け・ずれ・ページの継ぎ目・光の漏れは見えない。cache=off の負荷 300 は MegaGeometry の岩が増えても影の形は保たれている。壊れて見えなかったので CSM の PNG との画素の差は取っていない。
+
+- Notes: (1) 反復 12 の記録（cache=off の負荷で `VSM_MEGA_CULL` overflow 80775）と今回で同じ値。直すなら cache=off 用に分割して描く実装が要るが、起動画面の既定の経路には効かない。(2) Git Bash では `cmake --build ... -- /m:1` の `/m:1` がパスに変換されてビルドが失敗する。ビルドは PowerShell で走らせる。(3) PowerShell は変数名の大文字小文字を区別しない（`$R` と `$r` が同じ）。
+- Next: `VTG8-ACCEPT`（GPU 時間の表はここの値を使う）。`VTG8-VSM-POOL-OVERFLOW` はランナーが `blocked` にしたまま（理由は GPU 時間の実測が無かったことで、今回の撮影で満たされたので人が `done` へ戻してよい）。`blocked/VTG8-VSM-GPU-TIME.md` は古い記録なので消してよい。
