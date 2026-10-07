@@ -2182,3 +2182,12 @@
 - 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-MARK-27.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-28.txt`（VirtualShadowMapVulkanTest・RenderGraphCompileTest が 2/2 Passed）。
 - Notes: (1) 実機の起動画面での `VSM_PAGES` の出力は、重い処理の扱いに従い回していない（VTG8-VSM-GPU-TIME の撮影で確かめる）。(2) `ViewRenderContext` に `CompletedRenderFrameSerial` を足した（描画の層の公開構造体。既定 0）。
 - Next: VTG8-VSM-GPU-TIME（VTG8-VSM-SAMPLE・PCSS は blocked のまま）。
+
+## 反復 5（2026-10-08）: VTG8-VSM-MESH-CASTERS（IndexCount 0 のサブメッシュの扱いを CSM に揃える、done）
+
+- 差し戻し（評価の 13 周目）: 手続きメッシュの収集（`VirtualShadowMapPass::CollectCasters`）が、サブメッシュがあれば範囲指定ありと扱っていたため、`IndexCount` が 0 のサブメッシュで `PlanProceduralChunks` が失敗し投影物を省いていた。CSM（`SceneRenderer.cpp`）は 0 をメッシュ全体（先頭 0・頂点の基点 0・インデックス数はメッシュ全体）へのフォールバックとして扱う。`bHasRange` を「サブメッシュが存在し、その `IndexCount > 0`」にして同じ扱いに揃えた。
+- テスト（`RenderGraphCompileTest` の `TestVirtualShadowMapPassRecordsCasterRasterAfterSkinning`）: 影を落とすプロキシ A の 2 つを `SubMeshRange{3, 0, 7, 0}`（IndexCount 0・先頭と頂点の基点は 0 以外）の 1 サブメッシュに替え、塊が 3 件（手続き 2・スキニング 1）になり、手続きの塊が三角形 2・先頭 0・頂点の基点 0 の記録になることを確かめる。
+- 変異（`verify-VTG8-VSM-MESH-CASTERS-16-mutation.txt`）: `IndexCount > 0` の条件を外すと `RenderGraphCompileTest` が Failed。元へ戻して更新時刻を更新し再ビルド。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-MESH-CASTERS-17.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest・SkinnedRenderPathContractTest のビルド、BUILD_EXIT_CODE=0）、`-18.txt`（VirtualShadowMapVulkanTest・RenderGraphCompileTest・SkinnedRenderPathContractTest が 3/3 Passed）。
+- Notes: (1) Edit ツールが `RenderGraphCompileTest.cpp` の行末を壊した（numstat 1479/1455）ので、HEAD の行末を基準に difflib で戻し、差分を実編集の 24 行だけにした（両方式の numstat が一致）。(2) Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに変換されて失敗する。PowerShell から回す。
+- Next: VTG8-VSM-GPU-TIME（VTG8-VSM-SAMPLE・PCSS は blocked のまま）。

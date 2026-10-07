@@ -1238,7 +1238,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「クラスタの経路でページの表を引いて書く」）。16K のビューポートへ描いて断片ごとにページの表を引く方式は、大きな投影物（地面・壁）が細かい段で 16K×16K を塗るため採らない。塊 × ページのインスタンスなら、塗るのは割り当てたページの中だけになる。RHI に添付の無いレンダーパス・クリップ距離は無い（2026-10-07 時点）ので、128×128 のビューポートの切り捨てに頼る。危険地帯（描画パス・RHI）。
 
 ## VTG8-VSM-MESH-CASTERS: 手続きメッシュとスキニングの投影物を VSM へ描く
-- status: todo
+- status: done
 - done-when: vsm の構成で、手続きメッシュとスキニングの投影物を VTG8-VSM-RASTER の展開・描画で物理ページへ描く。集め方は CSM と同じ（`bCastShadow` の DrawCommand と、`TryPrepareSkinnedCommand` のスキニング。主カメラの錐台で省かれた物も含める）。メッシュを 128 三角形以下の塊（`BuildMeshIndexChunks`）に分け、塊ごとのワールドの境界（スキニングは描画の境界）と頂点・インデックスの読み方（手続きはメッシュのバッファの BDA と変換、スキニングは `SkinningComputePass` の変形済みの頂点）を記録にする。段ごとに、投影物の境界がその段の範囲に入らない物は CPU で省く。RenderGraphCompileTest で、vsm の構成でスキニングの計算の後に記録の作成 → 展開 → 描画が並ぶこととその間のバリア、csm の構成で何も足されないことを確かめる。`VirtualShadowMapVulkanTest` に、手続きメッシュの記録の経路（バッファの BDA と変換の行列）で描いた四角形が、VTG8-VSM-RASTER の合成の場面と同じ texel になる場面を足す。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest SkinnedRenderPathContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest|SkinnedRenderPathContractTest)$"`

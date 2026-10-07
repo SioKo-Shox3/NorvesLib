@@ -554,7 +554,8 @@ namespace NorvesLib::Core::Rendering
                 const uint32_t rangeCount = proxy.SubMeshCount == 0u ? 1u : std::min(proxy.SubMeshCount, MAX_MATERIAL_SLOTS);
                 for (uint32_t rangeIndex = 0; rangeIndex < rangeCount; ++rangeIndex)
                 {
-                    const bool bHasRange = proxy.SubMeshCount != 0u;
+                    // サブメッシュがあっても IndexCount が 0 なら、CSM と同じくメッシュ全体（先頭 0・頂点の基点 0）として扱う
+                    const bool bHasRange = proxy.SubMeshCount != 0u && proxy.SubMeshes[rangeIndex].IndexCount > 0u;
                     VirtualShadowMap::ProceduralDrawInput input;
                     input.VertexAddress = gpuData->VertexBuffer->GetDeviceAddress();
                     input.IndexAddress = gpuData->IndexBuffer->GetDeviceAddress();

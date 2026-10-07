@@ -7512,6 +7512,30 @@ namespace
             ShutdownVsmCasterScene(scene);
         }
 
+        // サブメッシュがあっても IndexCount が 0 なら、CSM と同じくメッシュ全体（先頭 0・頂点の基点 0・6 インデックス）として塊に分ける。
+        // 影を落とすプロキシ A の 2 つを、IndexCount 0 のサブメッシュ 1 つに替える（頂点の基点・先頭は 0 以外にしても無視される）
+        {
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            for (uint32_t index = 0; index < 2u; ++index)
+            {
+                scene.MeshProxies[index].SubMeshCount = 1u;
+                scene.MeshProxies[index].SubMeshes[0] = SubMeshRange{3u, 0u, 7u, 0u};
+            }
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Pass.WasRasterRecorded() && scene.Pass.GetLastCasterChunkCount() == 3u);
+            const Container::VariableArray<BarrierEvent> chunkBarriers = CollectBufferBarriers(scene.Run.CommandList, "VsmRaster_Chunks");
+            assert(!chunkBarriers.empty());
+            const Container::VariableArray<VsmShadowChunk> uploaded = ReadUploadedChunks(chunkBarriers[0].Buffer);
+            assert(uploaded.size() == 3u);
+            for (uint32_t instance = 0; instance < 2u; ++instance)
+            {
+                assert(uploaded[instance].Record.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::ProceduralChunk));
+                assert(uploaded[instance].Record.TriangleCount == 2u && uploaded[instance].Record.FirstIndex == 0u && uploaded[instance].Record.VertexBase == 0u);
+            }
+            ShutdownVsmCasterScene(scene);
+        }
+
         // 解決が使えず予備の GBuffer の描画へ戻るフレームでも、影を落とすスキニングは変形して影に描く。
         // 影を落とさない描画は変形しない。影の出力を切ると何も宣言しない（今までの動き）
         {
