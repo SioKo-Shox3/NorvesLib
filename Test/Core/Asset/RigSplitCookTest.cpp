@@ -110,7 +110,8 @@ Frame Time: 0.5
         const auto manifest = F::ReadBytes(request.RuntimeRoot / "manifest.json");
         auto assets =
             C::MakeShared<Core::Asset::AssetSystem>(C::AnsiString(request.RuntimeRoot.generic_string().c_str()));
-        RIG_CHECK(assets->LoadManifestFromJsonText(C::String(F::Text(manifest.begin(), manifest.end()).c_str())));
+        RIG_CHECK(assets->LoadManifestFromJsonText(C::String(
+            F::Text(C::AnsiStringView(reinterpret_cast<const char*>(manifest.data()), manifest.size())).c_str())));
         Core::ResourceIO::RigSplitLoadPlan plan;
         plan.Assets = std::move(assets);
         plan.SkeletonPath = "Models/Dog.skeleton";
@@ -215,8 +216,10 @@ Frame Time: 0.5
                   report.Assets[1].Metrics.Joints == 2 && report.Assets[0].Metrics.Triangles == 1);
         const auto manifest = F::ReadBytes(request.RuntimeRoot / "manifest.json");
         Core::Asset::AssetManifest parsed;
-        RIG_CHECK(parsed.LoadFromJsonText(C::String(F::Text(manifest.begin(), manifest.end()).c_str())) &&
-                  parsed.GetReferenceCount() == 7);
+        RIG_CHECK(
+            parsed.LoadFromJsonText(C::String(
+                F::Text(C::AnsiStringView(reinterpret_cast<const char*>(manifest.data()), manifest.size())).c_str())) &&
+            parsed.GetReferenceCount() == 7);
         for (size_t i = 0; i < parsed.GetReferenceCount(); ++i)
         {
             const auto& ref = parsed.GetReference(i);

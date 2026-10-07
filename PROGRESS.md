@@ -1167,3 +1167,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - G2は未完了・未マージ。関連検証をまとめて閉じてからマージし、G3へ移る。
 
 - GR84/96の区切り検証run37627622848はCore buildで停止。SkeletalClipRetargetの座標変換呼出し2か所を、既存APIのConvertSkeletalMatrixBasisへ訂正した。関連CPU/CLIは未実行。
+
+- 修復後run37628934551ではCore.libとAssetCook.exeのbuildが通過。追加CPU fixtureのmanifest bytes→独自Stringの構築2か所でtest buildが停止したため、明示StringView経由に訂正した。CPUケース本体は未実行。
