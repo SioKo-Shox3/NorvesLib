@@ -1292,7 +1292,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「動かない物のページはキャッシュし、動いた物の範囲だけ無効化する」）。起動画面の大きな球は自転するので、そのまわりのページは毎フレーム描き直しになる。持ち越しの効果は VTG8-VSM-GPU-TIME で測る。危険地帯（描画パス・GPU の資源の寿命）。
 
 ## VTG8-VSM-GPU-TIME: VSM と CSM の GPU 時間を測り、ページの数と溢れを確かめる
-- status: done
+- status: blocked
 - done-when: RelWithDebInfo の `-GpuTimingFrames 300` で、起動画面（太陽 45 度の既定・近接・低角度）と負荷モード 300 個（既定の視点）を、`-ShadowMethod Csm`、`-ShadowMethod Vsm` ＋ `--vsm-cache=off`、`-ShadowMethod Vsm`（持ち越しあり）の 3 通りで測り、フレーム GPU・`ShadowMapPass`・VSM の区間（`VsmMark`・`VsmAllocate`・`VsmClear`・`VsmCullMega`・`VsmExpand`・`VsmDraw`）・照明の区間の中央値と、`VSM_CLIPMAP`・`VSM_TEXEL`・`VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL`・`VSM_CACHE`・`VRAM_LEDGER vsm_pool` の値を表にして PROGRESS に書く。VSM の 6 つの run（起動画面 3 視点 × 2・負荷モード × 2）で `VSM_PAGES` の overflow と `VSM_RASTER`・`VSM_MEGA_CULL` の overflow が 0 であることを確かめる。VSM の撮影の PNG を開き、太陽の影（小屋・岩・球・見本の帯の物）が欠け・ずれ・ページの継ぎ目なく見えることを確かめる（壊れて見えるときだけ CSM の PNG との画素の差を調べる）。持ち越しありの VSM のフレーム GPU が CSM より遅い場合は、その差を区間の内訳で説明する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-GPU-TIME-csm -Configuration RelWithDebInfo -SunElevations 45 -GpuTimingFrames 300 -ShadowMethod Csm`
