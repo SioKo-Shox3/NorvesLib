@@ -71,6 +71,8 @@ namespace NorvesLib::Core::Skeletal
     struct RigClipSourceSelection
     {
         Container::Span<const uint32_t> JointNodes;
+        // target作者骨格の読込だけが明示する。通常のclip sourceは1本以上を要求する。
+        bool bAllowEmptyAnimations = false;
     };
 
     // 明示profileの作者frameを同じreadから取得する。既定/旧入口の受理範囲は変えない。

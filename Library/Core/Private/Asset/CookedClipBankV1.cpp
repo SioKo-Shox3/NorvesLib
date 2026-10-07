@@ -1,4 +1,5 @@
 ﻿#include "Asset/CookedClipBankV1.h"
+#include "Animation/SkeletalRootMotion.h"
 #include "Animation/RigRootFrame.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include <algorithm>
@@ -20,8 +21,9 @@ namespace NorvesLib::Core::Skeletal
         }
         constexpr uint32_t Codes[] = {Four('S', 'T', 'R', 'S'), Four('T', 'J', 'N', 'T'), Four('R', 'S', 'E', 'T'),
                                       Four('A', 'R', 'S', 'T'), Four('C', 'L', 'I', 'P'), Four('C', 'H', 'A', 'N'),
-                                      Four('S', 'A', 'M', 'P'), Four('A', 'F', 'R', 'M'), Four('A', 'N', 'L', 'Y')};
-        constexpr uint32_t RecordSizes[] = {1, 24, 48, 48, 48, 48, 32, 64, 96};
+                                      Four('S', 'A', 'M', 'P'), Four('A', 'F', 'R', 'M'), Four('A', 'N', 'L', 'Y'),
+                                      Four('R', 'M', 'T', 'N')};
+        constexpr uint32_t RecordSizes[] = {1, 24, 48, 48, 48, 48, 32, 64, 96, 40};
         struct Section
         {
             uint32_t Code = 0, Flags = 0, Record = 0, Count = 0;
@@ -221,6 +223,17 @@ namespace NorvesLib::Core::Skeletal
                 {
                     return RigV1Status::InvalidClip;
                 }
+                if (!IsValidSkeletalRootMotion(clip, d.Topology.Joints.size()) ||
+                    (!clip.RootMotion.empty() && (!IsStaticRootFrameProfile(d.Profile) ||
+                                                  d.Topology.Joints[clip.RootMotionJoint].ParentIndex != -1)))
+                {
+                    return RigV1Status::InvalidClip;
+                }
+                if (clip.RootMotion.size() > limits.MaxSamples - samples)
+                {
+                    return RigV1Status::LimitExceeded;
+                }
+                samples += clip.RootMotion.size();
                 usedSnapshots[d.ClipSnapshots[n]] = 1;
                 if (clip.Channels.size() > limits.MaxChannels - channels)
                 {
@@ -296,13 +309,14 @@ namespace NorvesLib::Core::Skeletal
     } // namespace
     bool BuildClipBankV1(C::Span<const RigAuthoringCpu> sources, ClipBankV1& out, RigV1Report& report,
                          const RigV1Limits& limits, RigImportProfile profile,
-                         const RigClipAnalysisOptions* analysisOptions)
+                         const RigClipAnalysisOptions* analysisOptions,
+                         C::Span<const SkeletalAnimationClip> replacementClips)
     {
         report = {};
         try
         {
             if (!IsSupportedRigImportProfile(profile) || !IsValidRigProfileLimits(profile, limits) || sources.empty() ||
-                !sources.data())
+                !sources.data() || (!replacementClips.empty() && sources.size() != 1))
             {
                 return false;
             }
@@ -320,19 +334,22 @@ namespace NorvesLib::Core::Skeletal
             for (const auto& source : sources)
             {
                 const auto* rig = source.GetData();
-                if (!rig || rig->Profile != profile || rig->Geometry.Clips.empty())
+                const auto clips = !replacementClips.empty()
+                                       ? replacementClips
+                                       : (rig ? C::Span<const SkeletalAnimationClip>(rig->Geometry.Clips)
+                                              : C::Span<const SkeletalAnimationClip>{});
+                if (!rig || rig->Profile != profile || clips.empty())
                 {
                     report.Status = RigV1Status::InvalidInput;
                     return false;
                 }
-                if (rig->Geometry.Clips.size() > limits.MaxClips - totalClips ||
-                    rig->Geometry.Joints.size() > limits.MaxJoints)
+                if (clips.size() > limits.MaxClips - totalClips || rig->Geometry.Joints.size() > limits.MaxJoints)
                 {
                     report.Status = RigV1Status::LimitExceeded;
                     return false;
                 }
-                totalClips += rig->Geometry.Clips.size();
-                for (const auto& clip : rig->Geometry.Clips)
+                totalClips += clips.size();
+                for (const auto& clip : clips)
                 {
                     if (clip.Channels.size() > limits.MaxChannels - totalChannels)
                     {
@@ -340,6 +357,12 @@ namespace NorvesLib::Core::Skeletal
                         return false;
                     }
                     totalChannels += clip.Channels.size();
+                    if (clip.RootMotion.size() > limits.MaxSamples - totalSamples)
+                    {
+                        report.Status = RigV1Status::LimitExceeded;
+                        return false;
+                    }
+                    totalSamples += clip.RootMotion.size();
                     for (const auto& channel : clip.Channels)
                     {
                         if (channel.Samples.size() > limits.MaxSamples - totalSamples)
@@ -356,7 +379,11 @@ namespace NorvesLib::Core::Skeletal
             for (const auto& source : sources)
             {
                 const auto* rig = source.GetData();
-                if (!rig || rig->Profile != profile || rig->Geometry.Clips.empty())
+                const auto clips = !replacementClips.empty()
+                                       ? replacementClips
+                                       : (rig ? C::Span<const SkeletalAnimationClip>(rig->Geometry.Clips)
+                                              : C::Span<const SkeletalAnimationClip>{});
+                if (!rig || rig->Profile != profile || clips.empty())
                 {
                     report.Status = RigV1Status::InvalidInput;
                     return false;
@@ -370,7 +397,7 @@ namespace NorvesLib::Core::Skeletal
                     report.Status = RigV1Status::TopologyMismatch;
                     return false;
                 }
-                if (rig->Geometry.Clips.size() > limits.MaxClips - d->Clips.size())
+                if (clips.size() > limits.MaxClips - d->Clips.size())
                 {
                     report.Status = RigV1Status::LimitExceeded;
                     return false;
@@ -387,7 +414,7 @@ namespace NorvesLib::Core::Skeletal
                 snapshot.RestHash = RigRestHash({snapshot.Rest.data(), snapshot.Rest.size()});
                 const auto snapshotIndex = static_cast<uint32_t>(d->Snapshots.size());
                 d->Snapshots.push_back(std::move(snapshot));
-                for (const auto& clip : rig->Geometry.Clips)
+                for (const auto& clip : clips)
                 {
                     auto owned = clip;
                     if (analysisOptions)
@@ -409,6 +436,15 @@ namespace NorvesLib::Core::Skeletal
                             return false;
                         }
                         channel.JointIndex = rig->Topology.SourceToCanonical[channel.JointIndex];
+                    }
+                    if (!owned.RootMotion.empty())
+                    {
+                        if (owned.RootMotionJoint >= rig->Topology.SourceToCanonical.size())
+                        {
+                            report.Status = RigV1Status::InvalidClip;
+                            return false;
+                        }
+                        owned.RootMotionJoint = rig->Topology.SourceToCanonical[owned.RootMotionJoint];
                     }
                     d->Clips.push_back(std::move(owned));
                     d->ClipSnapshots.push_back(snapshotIndex);
@@ -448,8 +484,27 @@ namespace NorvesLib::Core::Skeletal
                 return false;
             }
             // section配列を確保する前に、指定されたwire上限を全表の積和で検査する。
-            const uint32_t sectionCount = !d->Analyses.empty() ? 9 : (IsStaticRootFrameProfile(profile) ? 8 : 7);
-            uint64_t estimated[9]{};
+            C::VariableArray<uint32_t> active;
+            for (uint32_t i = 0; i < (IsStaticRootFrameProfile(profile) ? 8u : 7u); ++i)
+            {
+                active.push_back(i);
+            }
+            if (!d->Analyses.empty())
+            {
+                active.push_back(8);
+            }
+            uint64_t rootSamples = 0;
+            for (const auto& clip : d->Clips)
+            {
+                rootSamples += clip.RootMotion.size();
+            }
+            if (rootSamples)
+            {
+                active.push_back(9);
+            }
+            const uint32_t sectionCount = uint32_t(active.size());
+            uint64_t estimated[10]{};
+            estimated[9] = rootSamples * 40;
             estimated[8] = d->Analyses.size() * 96;
             if (IsStaticRootFrameProfile(profile))
             {
@@ -479,7 +534,7 @@ namespace NorvesLib::Core::Skeletal
                 }
             }
             uint64_t estimatedTotal = 256 + sectionCount * 32;
-            for (uint32_t i = 0; i < sectionCount; ++i)
+            for (uint32_t i : active)
             {
                 estimatedTotal = ((estimatedTotal + 15) & ~uint64_t{15}) + estimated[i];
             }
@@ -488,8 +543,8 @@ namespace NorvesLib::Core::Skeletal
                 report.Status = RigV1Status::LimitExceeded;
                 return false;
             }
-            Bytes sections[9];
-            uint32_t counts[9]{};
+            Bytes sections[10];
+            uint32_t counts[10]{};
             C::VariableArray<uint64_t> jointOffsets;
             const auto addString = [&](const C::AnsiString& name)
             {
@@ -604,8 +659,23 @@ namespace NorvesLib::Core::Skeletal
                     }
                 }
             }
+            for (size_t clipIndex = 0; clipIndex < d->Clips.size(); ++clipIndex)
+            {
+                const auto& clip = d->Clips[clipIndex];
+                for (const auto& sample : clip.RootMotion)
+                {
+                    const size_t o = sections[9].size();
+                    sections[9].resize(o + 40, 0);
+                    W32(sections[9], o, uint32_t(clipIndex));
+                    W32(sections[9], o + 4, clip.RootMotionJoint);
+                    WF(sections[9], o + 8, sample.TimeSeconds);
+                    W64(sections[9], o + 16, std::bit_cast<uint64_t>(sample.TranslationX));
+                    W64(sections[9], o + 24, std::bit_cast<uint64_t>(sample.TranslationZ));
+                    W64(sections[9], o + 32, std::bit_cast<uint64_t>(sample.YawRadians));
+                }
+            }
             uint64_t total = 256 + sectionCount * 32;
-            for (size_t i = 0; i < sectionCount; ++i)
+            for (uint32_t i : active)
             {
                 counts[i] = uint32_t(sections[i].size() / RecordSizes[i]);
                 total = (total + 15) & ~uint64_t{15};
@@ -629,12 +699,13 @@ namespace NorvesLib::Core::Skeletal
             W32(candidate, 64, uint32_t(profile));
             W32(candidate, 68, 1);
             size_t cursor = 256 + sectionCount * 32;
-            for (size_t i = 0; i < sectionCount; ++i)
+            for (size_t slot = 0; slot < active.size(); ++slot)
             {
+                const size_t i = active[slot];
                 cursor = (cursor + 15) & ~size_t{15};
-                const size_t e = 256 + i * 32;
+                const size_t e = 256 + slot * 32;
                 W32(candidate, e, Codes[i]);
-                W32(candidate, e + 4, i == 8 ? 0 : 1);
+                W32(candidate, e + 4, i >= 8 ? 0 : 1);
                 W64(candidate, e + 8, cursor);
                 W64(candidate, e + 16, sections[i].size());
                 W32(candidate, e + 24, RecordSizes[i]);
@@ -704,6 +775,8 @@ namespace NorvesLib::Core::Skeletal
             Section known[8]{};
             Section analysisSection{};
             bool bAnalysis = false;
+            Section motionSection{};
+            bool bMotion = false;
             bool found[8]{};
             for (uint32_t i = 0; i < count; ++i)
             {
@@ -753,6 +826,15 @@ namespace NorvesLib::Core::Skeletal
                     bAnalysis = true;
                     analysisSection = s;
                 }
+                else if (s.Code == Four('R', 'M', 'T', 'N'))
+                {
+                    if (!IsStaticRootFrameProfile(profile) || s.Flags != 0 || s.Record != 40 || s.Count == 0)
+                    {
+                        return fail(RigV1Status::BadWire);
+                    }
+                    bMotion = true;
+                    motionSection = s;
+                }
                 else if ((s.Flags & 1) || (IsStaticRootFrameProfile(profile) &&
                                            (s.Code == Four('R', 'O', 'O', 'T') || s.Code == Four('S', 'R', 'E', 'F') ||
                                             s.Code == Four('V', 'E', 'R', 'T') || s.Code == Four('I', 'N', 'D', 'X') ||
@@ -790,7 +872,8 @@ namespace NorvesLib::Core::Skeletal
                 known[1].Count > limits.MaxJoints || !known[2].Count || known[2].Count > limits.MaxSnapshots ||
                 known[3].Count != uint64_t(known[1].Count) * known[2].Count || !known[4].Count ||
                 known[4].Count > limits.MaxClips || known[5].Count > limits.MaxChannels ||
-                known[6].Count > limits.MaxSamples)
+                known[6].Count > limits.MaxSamples ||
+                (bMotion && motionSection.Count > limits.MaxSamples - known[6].Count))
             {
                 return fail(RigV1Status::LimitExceeded);
             }
@@ -951,6 +1034,28 @@ namespace NorvesLib::Core::Skeletal
             if (restCursor != known[3].Count || channelCursor != known[5].Count || sampleCursor != known[6].Count)
             {
                 return fail(RigV1Status::BadWire);
+            }
+            if (bMotion)
+            {
+                uint32_t previousClip = 0;
+                for (uint32_t i = 0; i < motionSection.Count; ++i)
+                {
+                    const size_t o = size_t(motionSection.Offset) + size_t(i) * 40;
+                    const auto clipIndex = U32(bytes, o), joint = U32(bytes, o + 4);
+                    if (clipIndex >= data->Clips.size() || (i && clipIndex < previousClip) || U32(bytes, o + 12))
+                    {
+                        return fail(RigV1Status::BadWire);
+                    }
+                    previousClip = clipIndex;
+                    auto& clip = data->Clips[clipIndex];
+                    if (!clip.RootMotion.empty() && clip.RootMotionJoint != joint)
+                    {
+                        return fail(RigV1Status::InvalidClip);
+                    }
+                    clip.RootMotionJoint = joint;
+                    clip.RootMotion.push_back(
+                        {F32(bytes, o + 8), F64(bytes, o + 16), F64(bytes, o + 24), F64(bytes, o + 32)});
+                }
             }
             if (bAnalysis)
             {

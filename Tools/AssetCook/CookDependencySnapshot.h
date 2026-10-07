@@ -4,7 +4,16 @@
 #include <cstdint>
 namespace NorvesLib::Tools::AssetCook
 {
-    enum class CookDependencyRole : uint8_t { Source, Sidecar, ExternalBuffer, ExternalImage, Bvh, RoleProfile };
+    enum class CookDependencyRole : uint8_t
+    {
+        Source,
+        Sidecar,
+        ExternalBuffer,
+        ExternalImage,
+        Bvh,
+        RoleProfile,
+        TargetSkeleton
+    };
     struct CookDependencyFile
     {
         std::filesystem::path Path;

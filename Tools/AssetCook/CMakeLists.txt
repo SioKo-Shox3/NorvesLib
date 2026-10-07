@@ -109,6 +109,9 @@ add_library(AssetCookLib STATIC
     RigSplitImageInputs.h
     RigSplitFileCook.cpp
     RigSingleCook.cpp
+    RigRetargetCook.cpp
+    RigRetargetCli.cpp
+    RigRetargetCook.h
     RigSingleCook.h
     RigSplitFileCook.h
     RigSplitFileCli.cpp

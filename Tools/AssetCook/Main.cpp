@@ -4,6 +4,7 @@
 #include "TextureAssetSetCook.h"
 #include "SkeletalRoleFileCli.h"
 #include "RigSplitFileCook.h"
+#include "RigRetargetCook.h"
 
 namespace
 {
@@ -283,6 +284,10 @@ namespace
 int main(int argc, char **argv)
 {
     int rigExitCode = 0;
+    if (NorvesLib::Tools::AssetCook::Detail::RunRigRetargetCommand(argc, argv, rigExitCode))
+    {
+        return rigExitCode;
+    }
     if (NorvesLib::Tools::AssetCook::RunRigSplitFileCommand(argc, argv, rigExitCode))
     {
         return rigExitCode;

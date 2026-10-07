@@ -51,6 +51,11 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalJointIndex.h
     Private/Animation/SkeletalJointIndex.cpp
     Private/Animation/RigClipAnalysis.cpp
+    Private/Animation/SkeletalClipProcessing.cpp
+    Private/Animation/SkeletalClipRetarget.cpp
+    Private/Animation/SkeletalClipRetarget.h
+    Private/Animation/SkeletalClipProcessing.h
+    Private/Animation/SkeletalRootMotion.h
     Private/Animation/RigClipAnalysis.h
     Private/Animation/RigV1Types.cpp
     Private/Animation/RigRootFrame.cpp

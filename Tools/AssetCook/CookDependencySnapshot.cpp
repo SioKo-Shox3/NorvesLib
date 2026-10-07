@@ -1,5 +1,6 @@
 ﻿#include "CookDependencySnapshot.h"
 #include "RigSingleCook.h"
+#include "RigRetargetCook.h"
 #include <bit>
 #include "SkeletalRoleFileInput.h"
 #include "Asset/AssetPackageFormat.h"
@@ -49,12 +50,16 @@ namespace NorvesLib::Tools::AssetCook
                 return true;
             }
         };
-        bool Read(const std::filesystem::path& path,VariableArray<uint8_t>& bytes)
+        bool Read(const std::filesystem::path& path, VariableArray<uint8_t>& bytes, size_t maximum = SIZE_MAX)
         {
             if (!std::filesystem::is_regular_file(path)) return false;
             std::ifstream file(path,std::ios::binary|std::ios::ate);const auto length=file.tellg();
-            if (!file || length<0 || static_cast<uintmax_t>(length)>std::numeric_limits<size_t>::max() ||
-                static_cast<uintmax_t>(length)>static_cast<uintmax_t>(std::numeric_limits<std::streamsize>::max())) return false;
+            if (!file || length < 0 || static_cast<uintmax_t>(length) > maximum ||
+                static_cast<uintmax_t>(length) > std::numeric_limits<size_t>::max() ||
+                static_cast<uintmax_t>(length) > static_cast<uintmax_t>(std::numeric_limits<std::streamsize>::max()))
+            {
+                return false;
+            }
             bytes.resize(static_cast<size_t>(length));file.seekg(0);
             if (!bytes.empty()) file.read(reinterpret_cast<char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));
             return file && file.peek()==std::char_traits<char>::eof() && !file.bad();
@@ -82,16 +87,27 @@ namespace NorvesLib::Tools::AssetCook
         }
         bool Capture(const SingleAssetCookRequest& request,uint64_t revision,CookDependencySnapshot& out,AnsiString& error)
         {
-            const bool model = Equal(request.Kind, "model") || Equal(request.Kind, "animation");
+            const bool retarget = Detail::HasRigRetarget(request);
+            const bool model = (Equal(request.Kind, "model") || Equal(request.Kind, "animation")) &&
+                               !Detail::IsBvhRetargetSource(request);
             const bool bRole = HasSkeletalRoleFileRequest(request.RoleProfile);
             if (bRole && !ValidateSkeletalRoleFileRequest(request, error)) return false;
-            if (revision==0 || request.InputPath.empty() || (!model && !Equal(request.Kind,"raw") && !Equal(request.Kind,"texture") && !Equal(request.Kind,"audio")))
-                return Fail(error,"invalid source, kind, or cooker revision");
+            if (revision == 0 || request.InputPath.empty() ||
+                (!model && !Equal(request.Kind, "raw") && !Equal(request.Kind, "texture") &&
+                 !Equal(request.Kind, "audio") && !(retarget && Equal(request.Kind, "animation"))))
+            {
+                return Fail(error, "invalid source, kind, or cooker revision");
+            }
             if (!model && (request.bNoSidecar || request.bRequireSidecar || !request.ImportSettingsOverridePath.empty()))
                 return Fail(error,"sidecar options require model kind");
             const auto source=std::filesystem::absolute(request.InputPath).lexically_normal();
             VariableArray<uint8_t> rootBytes;
-            if (!Read(source,rootBytes)) return Fail(error,"source read failed");
+            if (!Read(source, rootBytes,
+                      Detail::IsRigSingleFormat(request.Format) ? Core::Skeletal::RigV1Limits{}.MaxSourceBytes
+                                                                : SIZE_MAX))
+            {
+                return Fail(error, "source read failed");
+            }
             CookDependencySnapshot candidate;candidate.CookerRevision=revision;
             Add(candidate,std::filesystem::weakly_canonical(source),CookDependencyRole::Source,{rootBytes.data(),rootBytes.size()});
             FingerprintBuilder hash;hash.Text("norves.cook-dependencies");hash.Integer(candidate.SchemaVersion);hash.Integer(revision);
@@ -194,6 +210,63 @@ namespace NorvesLib::Tools::AssetCook
                     {inputs.BvhBytes.data(), inputs.BvhBytes.size()});
                 Add(candidate, std::filesystem::weakly_canonical(profile), CookDependencyRole::RoleProfile,
                     {inputs.ProfileBytes.data(), inputs.ProfileBytes.size()});
+            }
+            if (retarget)
+            {
+                if (request.RetargetSkeletonPath.empty() || request.RetargetProfilePath.empty() ||
+                    request.Kind != "animation" || request.Format != "nvskel.v1.clips")
+                {
+                    return Fail(error, "retarget_request");
+                }
+                hash.Text("retarget.clipbank.v1.pipeline1");
+                hash.Text(request.RetargetSourceClip);
+                hash.Text(request.RetargetClipName);
+                const auto targetPath = std::filesystem::absolute(request.RetargetSkeletonPath).lexically_normal();
+                const auto profilePath = std::filesystem::absolute(request.RetargetProfilePath).lexically_normal();
+                if (!hash.Path(targetPath) || !hash.Path(profilePath))
+                {
+                    return Fail(error, "retarget_path");
+                }
+                // 同じglTF依存採取をtarget骨格にも使い、外部buffer/sidecarの判定を分岐側へ複製しない。
+                auto target = request;
+                target.InputPath = targetPath;
+                target.Kind = "model";
+                target.EntryTypeText = "Skm1";
+                target.Format = "nvskel.v1.skinmesh.pnujiw.u32";
+                target.RetargetSkeletonPath.clear();
+                target.RetargetProfilePath.clear();
+                target.RetargetSourceClip.clear();
+                target.RetargetClipName.clear();
+                target.ImportSettingsOverridePath.clear();
+                target.bNoSidecar = false;
+                target.bRequireSidecar = false;
+                target.ClipJointNodes.clear();
+                CookDependencySnapshot targetDependencies;
+                if (!Capture(target, revision, targetDependencies, error))
+                {
+                    return false;
+                }
+                hash.Integer(targetDependencies.Fingerprint);
+                for (auto& file : targetDependencies.Files)
+                {
+                    if (file.Role == CookDependencyRole::Source)
+                    {
+                        file.Role = CookDependencyRole::TargetSkeleton;
+                    }
+                    candidate.Files.push_back(std::move(file));
+                }
+                if (!std::filesystem::is_regular_file(profilePath) ||
+                    std::filesystem::file_size(profilePath) > 1024 * 1024)
+                {
+                    return Fail(error, "retarget_profile_size");
+                }
+                VariableArray<uint8_t> profileBytes;
+                if (!Read(profilePath, profileBytes, 1024 * 1024))
+                {
+                    return Fail(error, "retarget_profile_read");
+                }
+                Add(candidate, std::filesystem::weakly_canonical(profilePath), CookDependencyRole::RoleProfile,
+                    profileBytes);
             }
             hash.Integer(candidate.Files.size());
             for (const auto& file:candidate.Files)

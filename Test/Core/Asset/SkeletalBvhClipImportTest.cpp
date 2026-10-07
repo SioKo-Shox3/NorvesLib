@@ -23,6 +23,7 @@
             std::abort();                                                                                              \
         }                                                                                                              \
     } while (false)
+#include "SkeletalClipProcessingCases.h"
 namespace Core = NorvesLib::Core;
 namespace A = Core::Animation;
 namespace B = Core::Bvh;
@@ -881,6 +882,7 @@ namespace
 } // namespace
 int main()
 {
+    NorvesLib::Tests::ClipProcessingCases::Run();
     TestDecoderThroughActualSampler(false, false);
     TestDecoderThroughActualSampler(true, false);
     TestDecoderThroughActualSampler(false, true);

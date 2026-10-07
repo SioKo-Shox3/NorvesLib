@@ -3,6 +3,7 @@
 #include "Tools/AssetCook/RigSplitFileCook.h"
 #include "Tools/AssetCook/TextureAssetSetCook.h"
 #include "Tools/AssetCook/RigSingleCook.h"
+#include "Tools/AssetCook/RigRetargetCook.h"
 #include "RigSplitWireTestFixture.h"
 #include "Tools/AssetCook/MeshMaterialV1Plan.h"
 namespace F = NorvesLib::Tests::RigV1Fixture;
@@ -13,6 +14,140 @@ namespace S = NorvesLib::Core::Skeletal;
 namespace C = NorvesLib::Core::Container;
 namespace
 {
+    void RetargetBatch(F::Fixture& f)
+    {
+        f.SetBuffer(f.Binary);
+        const auto sourceRoot = f.Root / "RigV1Fixture";
+        const auto write = [&](const std::filesystem::path& path, const F::Text& text)
+        { F::WriteBytes(path, F::Bytes(text.begin(), text.end())); };
+        write(sourceRoot / "target.gltf", f.Json);
+        const auto motion = F::Replace(F::RootTrs(f.Json, R"("rotation":[0,0.7071067811865475,0,0.7071067811865475],)"),
+                                       R"(,{"sampler":1,"target":{"node":0,"path":"rotation"}})", "");
+        write(sourceRoot / "motion.gltf", motion);
+        write(sourceRoot / "run.bvh", R"bvh(HIERARCHY
+ROOT Root { OFFSET 0 0 0 CHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation
+ JOINT Child { OFFSET 0 1 0 CHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation End Site { OFFSET 0 1 0 } }
+}
+MOTION
+Frames: 3
+Frame Time: 0.5
+0 0 0 0 0 45 10 0 0 0 0 0
+1 .25 0 0 0 60 20 0 0 30 0 0
+2 0 0 0 0 75 30 0 0 0 0 0
+)bvh");
+        const F::Text profile =
+            R"json({"version":1,"vocabulary":"quadruped_v1","axes":{"up":"+Y","forward":"+Z","handedness":"right"},"units":{"position_scale":1},"position_convention":"additive","time":{"mode":"header_frame_time"},"source_roles":{"root":["Root"],"spine":["Child"]},"target_roles":{"root":[{"joint":"Root"}],"spine":[{"joint":"Child"}]},"rest_pose":{"mode":"match"},"processing":{"loop_mode":"none","output_fps":30}})json";
+        namespace A = Core::Animation;
+        auto target = f.Import(f.Json);
+        auto gltfAuthor = f.Import(motion);
+        A::SkeletalRoleProfile parsedProfile;
+        RIG_CHECK(A::ParseSkeletalRoleProfile(F::View(profile), {}, parsedProfile).Succeeded());
+        A::SkeletalRetargetClipSource input;
+        F::Text conversionError;
+        RIG_CHECK(A::MakeGltfRetargetClipSource(gltfAuthor, 0, input, conversionError));
+        A::SkeletalClipRetargetSettings settings;
+        settings.RestMode = A::SkeletalRestCorrectionMode::Match;
+        settings.Processing.Loop = A::SkeletalLoopSelection::None;
+        S::SkeletalAnimationClip converted;
+        A::SkeletalClipRetargetReport convertedReport;
+        RIG_CHECK(A::RetargetSkeletalClip(input, target, parsedProfile, settings, converted, convertedReport,
+                                          conversionError));
+        RIG_CHECK(!convertedReport.bKeyErrorMeasured && convertedReport.Corrections.size() == 2);
+        Core::Bvh::BvhDocument bvh;
+        const auto bvhBytes = F::ReadBytes(sourceRoot / "run.bvh");
+        RIG_CHECK(Core::Bvh::DecodeBvh(bvhBytes, {}, bvh).Succeeded());
+        A::SkeletalRetargetClipSource bvhSource;
+        RIG_CHECK(
+            A::MakeBvhRetargetClipSource(bvh, parsedProfile.Settings, C::String("Run"), bvhSource, conversionError));
+        S::SkeletalAnimationClip bvhClip;
+        A::SkeletalClipRetargetReport bvhReport;
+        RIG_CHECK(
+            A::RetargetSkeletalClip(bvhSource, target, parsedProfile, settings, bvhClip, bvhReport, conversionError));
+        RIG_CHECK(bvhReport.IgnoredTranslationChannels == 1);
+
+        // 元骨の方向を90度変えるとmatchは拒否。align_bonesは自動Cの角度を報告する。
+        auto sideways = input;
+        sideways.Joints[1].Rest.Translation = {1, 0, 0};
+        const auto savedName = converted.Name;
+        RIG_CHECK(!A::RetargetSkeletalClip(sideways, target, parsedProfile, settings, converted, convertedReport,
+                                           conversionError));
+        RIG_CHECK(conversionError == "rest_direction_mismatch" && converted.Name == savedName);
+        settings.RestMode = A::SkeletalRestCorrectionMode::AlignBones;
+        RIG_CHECK(A::RetargetSkeletalClip(sideways, target, parsedProfile, settings, converted, convertedReport,
+                                          conversionError));
+        for (const auto& correction : convertedReport.Corrections)
+        {
+            RIG_CHECK(correction.BeforeRadians > 1.5 && correction.AfterRadians < 1e-6);
+        }
+        settings.bAutoRootHeight = true;
+        RIG_CHECK(!A::RetargetSkeletalClip(input, target, parsedProfile, settings, converted, convertedReport,
+                                           conversionError));
+        RIG_CHECK(conversionError == "root_height_requires_pelvis_and_paw");
+        write(sourceRoot / "roles.json", profile);
+        const F::Text spec =
+            R"json({"version":2,"name":"retarget","package_root":"Cooked/Rig","assets":[{"kind":"skeletal","logical_path":"Models/Dog","source_path":"target.gltf","format":"nvskel.v1.skinmesh.pnujiw.u32","package_name":"dog.nvpk","entry_name":"dog"},{"kind":"animation","logical_path":"Animations/Run","source_path":"run.bvh","format":"nvskel.v1.clips","package_name":"run.nvpk","entry_name":"run","skeleton_path":"target.gltf","role_profile":"roles.json","clip_name":"Run"},{"kind":"animation","logical_path":"Animations/Imported","source_path":"motion.gltf","format":"nvskel.v1.clips","package_name":"imported.nvpk","entry_name":"imported","skeleton_path":"target.gltf","role_profile":"roles.json","clip_name":"ImportedWave"}]})json";
+        Cook::TextureAssetSetCookRequest request;
+        request.SourceRoot = sourceRoot;
+        request.SpecPath = f.Root / "retarget.json";
+        request.RuntimeRoot = f.Root / "retarget-runtime";
+        Cook::CookBatchReport batch;
+        request.Report = &batch;
+        write(request.SpecPath, spec);
+        Cook::CookManagedBootstrapOutcome outcome;
+        F::Text error;
+        const auto run = [&](Cook::TextureAssetSetCookResult expected)
+        {
+            const auto result = Cook::CookTextureAssetSetWithOutcome(request, outcome, error);
+            if (result != expected)
+            {
+                std::fprintf(stderr, "retarget expected=%u actual=%u error=%s\n", unsigned(expected), unsigned(result),
+                             error.c_str());
+            }
+            RIG_CHECK(result == expected);
+        };
+        run(Cook::TextureAssetSetCookResult::Created);
+        run(Cook::TextureAssetSetCookResult::NoChange);
+        const auto manifest = F::ReadBytes(request.RuntimeRoot / "manifest.json");
+        auto assets =
+            C::MakeShared<Core::Asset::AssetSystem>(C::AnsiString(request.RuntimeRoot.generic_string().c_str()));
+        RIG_CHECK(assets->LoadManifestFromJsonText(C::String(F::Text(manifest.begin(), manifest.end()).c_str())));
+        Core::ResourceIO::RigSplitLoadPlan plan;
+        plan.Assets = std::move(assets);
+        plan.SkeletonPath = "Models/Dog.skeleton";
+        plan.MeshPath = "Models/Dog";
+        plan.BankPaths = {"Models/Dog.clips", "Animations/Run", "Animations/Imported"};
+        plan.Profile = S::RigImportProfile::StaticRootFrame256;
+        plan.Limits.MaxJoints = 256;
+        S::CookedRigSplitCpuAsset loaded;
+        Core::ResourceIO::RigSplitLoadReport report;
+        RIG_CHECK(Core::ResourceIO::LoadRigSplitForWorker(plan, loaded, report));
+        RIG_CHECK(loaded.GetData()->Clips.size() == 3);
+        const auto& runClip = loaded.GetData()->Clips[1];
+        RIG_CHECK(runClip.Name == C::String("Run") && runClip.RootMotion.size() == 31);
+        const auto& last = runClip.RootMotion.back();
+        RIG_CHECK(std::abs(last.TranslationX - std::sqrt(2.0)) < 1e-5 &&
+                  std::abs(last.TranslationZ - std::sqrt(2.0)) < 1e-5);
+        RIG_CHECK(std::abs(last.YawRadians - 3.141592653589793 / 6) < 1e-5);
+        const auto& imported = loaded.GetData()->Clips[2];
+        RIG_CHECK(imported.Name == C::String("ImportedWave") && !imported.RootMotion.empty());
+        // glTF作者restが90度でも静止差分は0。絶対world姿勢を差分と誤認しない。
+        for (const auto& sample : imported.RootMotion)
+        {
+            RIG_CHECK(std::abs(sample.YawRadians) < 1e-5);
+        }
+        write(sourceRoot / "roles.json", F::Replace(profile, "\"output_fps\":30", "\"output_fps\":24"));
+        run(Cook::TextureAssetSetCookResult::Updated);
+        run(Cook::TextureAssetSetCookResult::NoChange);
+        write(sourceRoot / "target.gltf.import.json", R"({"version":1})");
+        run(Cook::TextureAssetSetCookResult::Updated);
+        auto changed = f.Binary;
+        F::Float(changed, 0, .125f);
+        f.SetBuffer(changed);
+        run(Cook::TextureAssetSetCookResult::Updated);
+        f.SetBuffer(f.Binary);
+        std::filesystem::remove(sourceRoot / "target.gltf.import.json");
+        std::printf("RIG_SPLIT_CASE retarget_bvh_gltf_v1_batch_root_motion_dependencies result=pass\n");
+    }
     void ManagedMixedRig(F::Fixture& f)
     {
         f.SetBuffer(f.Binary);
@@ -582,6 +717,7 @@ int main()
     ImageLocatorAndBudgets(fixture);
     DerivedCopies(fixture);
     ManagedMixedRig(fixture);
+    RetargetBatch(fixture);
     FilePublication(fixture);
     std::printf(
         "RIG_SPLIT_COOK result=pass same_read_settings_buffers_source_slot_mapping_full_mats_three_packages_no_cli_publish\n");

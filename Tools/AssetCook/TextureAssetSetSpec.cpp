@@ -315,9 +315,10 @@ namespace NorvesLib::Tools::AssetCook
             TextureAssetSetEntry entry;
             if (candidate.Version == 2)
             {
-                const char* keys[] = {"kind",       "logical_path", "source_path", "format", "package_name",
-                                      "entry_name", "variant",      "entry_type",  "budget", "joint_nodes"};
-                if (!OnlyKeys(item, keys, 10))
+                const char* keys[] = {"kind",          "logical_path", "source_path", "format",   "package_name",
+                                      "entry_name",    "variant",      "entry_type",  "budget",   "joint_nodes",
+                                      "skeleton_path", "role_profile", "source_clip", "clip_name"};
+                if (!OnlyKeys(item, keys, sizeof(keys) / sizeof(keys[0])))
                 {
                     return {Error::InvalidValue, index, "unsupported_asset_field"};
                 }
@@ -395,6 +396,32 @@ namespace NorvesLib::Tools::AssetCook
                         (entry.Kind != "texture" && value.HasMember("max_bytes")))
                     {
                         return {Error::InvalidValue, index, "budget"};
+                    }
+                }
+            }
+            if (candidate.Version == 2 && (item.HasMember("skeleton_path") || item.HasMember("role_profile") ||
+                                           item.HasMember("source_clip") || item.HasMember("clip_name")))
+            {
+                AnsiString empty;
+                if (entry.Kind != "animation" ||
+                    StringField(item, "skeleton_path", entry.SkeletonPath) != Error::None ||
+                    StringField(item, "role_profile", entry.RoleProfilePath) != Error::None ||
+                    StringField(item, "source_clip", entry.SourceClip, &empty) != Error::None ||
+                    StringField(item, "clip_name", entry.ClipName, &empty) != Error::None ||
+                    entry.SkeletonPath.empty() || entry.RoleProfilePath.empty() || entry.SourceClip.size() > 4096 ||
+                    entry.ClipName.size() > 4096)
+                {
+                    return {Error::InvalidValue, index, "retarget_inputs"};
+                }
+                for (const auto* text :
+                     {&entry.SkeletonPath, &entry.RoleProfilePath, &entry.SourceClip, &entry.ClipName})
+                {
+                    for (const unsigned char c : *text)
+                    {
+                        if (c < 32 || c == 127)
+                        {
+                            return {Error::InvalidValue, index, "retarget_inputs"};
+                        }
                     }
                 }
             }

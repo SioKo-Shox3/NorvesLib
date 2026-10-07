@@ -191,6 +191,7 @@ namespace NorvesLib::Core::ResourceIO
                 for (const auto& clip : d.Clips)
                 {
                     actualChannels += uint32_t(clip.Channels.size());
+                    actualSamples += uint32_t(clip.RootMotion.size());
                     for (const auto& channel : clip.Channels)
                     {
                         actualSamples += uint32_t(channel.Samples.size());

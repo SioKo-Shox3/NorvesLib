@@ -1,4 +1,5 @@
 ﻿#include "RigSingleCook.h"
+#include "RigRetargetCook.h"
 #include "RigClipBankCook.h"
 #include "CookRigPayload.h"
 #include "Resource/RigGltfImportCapture.h"
@@ -54,11 +55,20 @@ namespace NorvesLib::Tools::AssetCook::Detail
         {
             return Fail(error, "rig_single_profile");
         }
+        if (HasRigRetarget(request) &&
+            (bMesh || request.RetargetSkeletonPath.empty() || request.RetargetProfilePath.empty()))
+        {
+            return Fail(error, "retarget_requires_animation_and_two_inputs");
+        }
         // path/文字列/sidecarの既存正規化は、旧model profileに写して共有する。
         auto legacy = request;
         legacy.Kind = "model";
         legacy.Format = "nvskel.v0.skinned.pnujiw.u32";
         legacy.EntryTypeText = "Skl0";
+        legacy.RetargetSkeletonPath.clear();
+        legacy.RetargetProfilePath.clear();
+        legacy.RetargetSourceClip.clear();
+        legacy.RetargetClipName.clear();
         SingleAssetCookRequest normalized;
         if (!NormalizeCacheCookRequest(legacy, normalized, error))
         {
@@ -69,6 +79,24 @@ namespace NorvesLib::Tools::AssetCook::Detail
         normalized.EntryTypeText = request.EntryTypeText;
         normalized.AssetSetEmission = request.AssetSetEmission;
         normalized.ClipJointNodes = request.ClipJointNodes;
+        if (HasRigRetarget(request))
+        {
+            std::error_code ec;
+            normalized.RetargetSkeletonPath =
+                std::filesystem::absolute(request.RetargetSkeletonPath, ec).lexically_normal();
+            if (ec)
+            {
+                return Fail(error, "retarget_skeleton_path");
+            }
+            normalized.RetargetProfilePath =
+                std::filesystem::absolute(request.RetargetProfilePath, ec).lexically_normal();
+            if (ec || request.RetargetSourceClip.size() > 4096 || request.RetargetClipName.size() > 4096)
+            {
+                return Fail(error, "retarget_profile_or_clip");
+            }
+            normalized.RetargetSourceClip = request.RetargetSourceClip;
+            normalized.RetargetClipName = request.RetargetClipName;
+        }
         out = std::move(normalized);
         return true;
     }
@@ -162,7 +190,19 @@ namespace NorvesLib::Tools::AssetCook::Detail
             {
                 return false;
             }
-            if (!bInventoryOnly)
+            if (!bInventoryOnly && HasRigRetarget(request))
+            {
+                if (!CookRigRetargetBank(request, source, dependencies, entry.Payload, error))
+                {
+                    return false;
+                }
+                r.bHasRigSplitMetadata = true;
+                if (!InspectCookedRigPayload(r.Format, entry.Payload, 3, r.RigSplitMetadata, error))
+                {
+                    return false;
+                }
+            }
+            else if (!bInventoryOnly)
             {
                 I::LoadedImportSettingsDocument document;
                 if (I::LoadImportSettingsDocument(request.InputPath, options, document).Result !=
@@ -280,7 +320,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
             }
             auto package = request.PackagePath;
             package += ".img";
-            package += C::AnsiString(number, size_t(end.ptr - number)).c_str();
+            package += C::AnsiString(C::AnsiStringView(number, size_t(end.ptr - number))).c_str();
             package += ".nvpkg";
             if (!MakeCachePackagePath(package, request.ManifestPath.parent_path(), r.CookedPackage, error))
             {

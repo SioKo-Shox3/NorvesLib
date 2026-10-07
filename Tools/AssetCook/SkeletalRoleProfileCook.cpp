@@ -103,6 +103,13 @@ namespace NorvesLib::Tools::AssetCook
                 }
                 return false;
             }
+            if (candidate.Profile.RestMode != A::SkeletalRestCorrectionMode::Explicit ||
+                candidate.Profile.RootScale != 1 || candidate.Profile.bAutoRootHeight ||
+                candidate.Profile.bHasProcessing)
+            {
+                error = "retarget_processing_requires_clipbank_v1";
+                return false;
+            }
             if (candidate.Profile.ExpandedMappings > request.MappingLimits.MaxMappings)
             {
                 error = "Profileの展開数がmapping予算を超えました";

@@ -1,6 +1,7 @@
 ﻿// 再利用可能な単体cook。入力bufferを出力完了まで同じ呼出し内で保持する。
 #include "SingleAssetCook.h"
 #include "RigSingleCook.h"
+#include "RigRetargetCook.h"
 #include "SkeletalRoleFileInput.h"
 #include "SkeletalRoleFileCook.h"
 #include "MeshMaterialV1Plan.h"
@@ -1117,6 +1118,11 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return NormalizeRigSingleRequest(request, out, outError);
             }
+            if (HasRigRetarget(request))
+            {
+                outError = "retarget_requires_clipbank_v1";
+                return false;
+            }
             if (HasSkeletalRoleFileRequest(request.RoleProfile) && !ValidateSkeletalRoleFileRequest(request, outError))
             {
                 return false;
@@ -1292,6 +1298,11 @@ namespace NorvesLib::Tools::AssetCook
         if (Detail::IsRigSingleFormat(request.Format))
         {
             return Detail::CookRigSingleAsset(request, outError);
+        }
+        if (Detail::HasRigRetarget(request))
+        {
+            outError = "retarget_requires_clipbank_v1";
+            return false;
         }
         if (HasSkeletalRoleFileRequest(request.RoleProfile))
         {

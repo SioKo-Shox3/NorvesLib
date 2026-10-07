@@ -111,6 +111,75 @@ namespace
                                                               source, report, request.Limits));
         f.SetBuffer(f.Binary);
     }
+    void RootMotionRoundtrip(F::Fixture& f)
+    {
+        f.SetBuffer(f.Binary);
+        const auto author = H::Import(f.Json);
+        auto clip = author.GetData()->Geometry.Clips[0];
+        clip.RootMotionJoint = 0;
+        const float duration = clip.DurationSeconds;
+        RIG_CHECK(duration > 0);
+        clip.RootMotion = {{0, 0, 0, 0}, {duration * 0.5f, 1, 2, 0.4}, {duration, 3, 4, 0.8}};
+        S::ClipBankV1 bank, parsed;
+        S::RigV1Report report;
+        RIG_CHECK(S::BuildClipBankV1({&author, 1}, bank, report, {}, H::Profile, nullptr, {&clip, 1}));
+        F::Bytes bytes, again;
+        RIG_CHECK(S::WriteClipBankV1(bank, bytes, report, {}, H::Profile));
+        RIG_CHECK(F::U32(bytes, 28) == 9 && F::U32(bytes, 256 + 8 * 32) == 0x4e544d52);
+        RIG_CHECK(S::ParseClipBankV1(bytes, parsed, report, {}, H::Profile));
+        const auto& value = parsed.GetData()->Clips[0];
+        RIG_CHECK(value.RootMotion.size() == 3 && value.RootMotion.back().TranslationX == 3 &&
+                  value.RootMotion.back().TranslationZ == 4 && value.RootMotion.back().YawRadians == 0.8);
+        RIG_CHECK(parsed.GetData()->Topology.Joints[value.RootMotionJoint].ParentIndex == -1);
+        RIG_CHECK(S::WriteClipBankV1(parsed, again, report, {}, H::Profile) && again == bytes);
+        S::RigClipAnalysisOptions options;
+        options.TimeScale = 2;
+        S::RigClipAnalysis analysis;
+        S::SkeletalAnimationClip adjusted;
+        RIG_CHECK(S::AnalyzeRigClip(author, clip, options, adjusted, analysis));
+        RIG_CHECK(adjusted.RootMotion.back().TimeSeconds == duration * 2 && analysis.TranslationX == 3 &&
+                  analysis.TotalYawRadians == 0.8);
+        RIG_CHECK(S::BuildClipBankV1({&author, 1}, bank, report, {}, H::Profile, &options, {&clip, 1}));
+        RIG_CHECK(S::WriteClipBankV1(bank, again, report, {}, H::Profile) && F::U32(again, 28) == 10);
+        RIG_CHECK(S::ParseClipBankV1(again, parsed, report, {}, H::Profile) && parsed.GetData()->Analyses.size() == 1);
+        const auto saved = parsed.GetData();
+        const auto offset = F::SectionOffset(bytes, 8);
+        for (size_t field : {size_t{4}, size_t{12}})
+        {
+            auto bad = bytes;
+            F::Put32(bad, offset + field, UINT32_MAX);
+            F::Reseal(bad);
+            RIG_CHECK(!S::ParseClipBankV1(bad, parsed, report, {}, H::Profile) && parsed.GetData() == saved);
+        }
+        auto bad = bytes;
+        F::Float(bad, offset + 40 + 8, 0);
+        F::Reseal(bad);
+        RIG_CHECK(!S::ParseClipBankV1(bad, parsed, report, {}, H::Profile) && parsed.GetData() == saved);
+        bad = bytes;
+        F::Put64(bad, offset + 16, std::bit_cast<uint64_t>(1.0));
+        F::Reseal(bad);
+        RIG_CHECK(!S::ParseClipBankV1(bad, parsed, report, {}, H::Profile) && parsed.GetData() == saved);
+        auto pitchedJson =
+            F::Replace(H::Armature(f.Json), R"("translation":[2,3,0],"rotation":[0,0,1,0],"scale":[2,2,2])",
+                       R"("matrix":[1,0,0,0,0,0,1,0,0,-1,0,0,0,0,0,1])");
+        pitchedJson =
+            F::Replace(pitchedJson, R"("translation":[-1,4,1],"rotation":[1,0,0,0])", R"("translation":[0,0,0])");
+        const auto pitched = H::Import(pitchedJson);
+        auto pitchedClip = clip;
+        pitchedClip.Channels.clear();
+        pitchedClip.Channels.push_back({0,
+                                        S::SkeletalAnimationPath::Rotation,
+                                        S::SkeletalAnimationInterpolation::Linear,
+                                        {{0, {0, 0, 0, 1}}, {duration, {0, 0, 0, 1}}}});
+        RIG_CHECK(S::AnalyzeRigClip(pitched, pitchedClip, {}, adjusted, analysis));
+        RIG_CHECK(analysis.TotalYawRadians == 0.8 && analysis.TranslationX == 3);
+        pitchedClip.RootMotion.clear();
+        pitchedClip.RootMotionJoint = UINT32_MAX;
+        RIG_CHECK(S::AnalyzeRigClip(pitched, pitchedClip, {}, adjusted, analysis) &&
+                  std::abs(analysis.TotalYawRadians) < 1e-9);
+        clip.RootMotionJoint = 1;
+        RIG_CHECK(!S::BuildClipBankV1({&author, 1}, bank, report, {}, H::Profile, nullptr, {&clip, 1}));
+    }
     void ClipAnalysis(F::Fixture& f)
     {
         const auto author = H::Import(f.Json);
@@ -426,6 +495,7 @@ int main()
     Binding(f);
     JointCapacity(f);
     ClipAnalysis(f);
+    RootMotionRoundtrip(f);
     std::printf("ROOT_FRAME_WIRE result=pass mandatory_author_frames_three_roles_safe_binding\n");
     return 0;
 }

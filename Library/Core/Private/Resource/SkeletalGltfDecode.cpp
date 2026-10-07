@@ -3165,8 +3165,9 @@ namespace NorvesLib::Core::Skeletal
         Container::VariableArray<SkeletalRestTransform> rest;
         double scale = 1;
         RigRootFrame frame = IdentityRigRootFrame();
-        auto result = DecodeGltfBytes(source, path, nullptr, settings, options, true, clipSource == nullptr, &rest,
-                                      &scale, &limits, outCapture ? &capture : nullptr, profile, &frame, clipSource);
+        auto result = DecodeGltfBytes(source, path, nullptr, settings, options, true,
+                                      clipSource == nullptr || clipSource->bAllowEmptyAnimations, &rest, &scale,
+                                      &limits, outCapture ? &capture : nullptr, profile, &frame, clipSource);
         if (result.Succeeded())
         {
             if (outCapture)

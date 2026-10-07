@@ -2763,3 +2763,9 @@
 - verify: 既存TextureManagedCliTest/RigSplitCookTest等の関連CPUケースと実CLIをまとめて確認。個々の変更ではCIを起動しない。未実行を合格にしない。
 - current: mixed batch、分離rig/clip、出力増減、予算/統計、jobsを接続。C++実行は未検証。増分追加は既存package親directory内に限る。--forceで全件を再cookする。--prune指定時だけspec外の資産をmanifestから外し、fileは残して自動再採用しない。
 - G2残件: GR84の自動rest補正、向き/ルート分離、出力fpsへの補間、周期検出/切り出し、glTF/BVHの共通対応づけとv1出力を続ける。GR82のANLY要約だけでGR84を完了としない。
+
+## G2-GR84: BVHとglTFの共通変換・周期処理・独立bankを接続する
+- status: doing
+- done-when: 作者rest対応、向き/平面ルート分離、出力fps、auto/none/range周期処理、v1作者rest付きbank、CLIと資産セットの依存追跡を接続する。G3の再生時適用は含めない。
+- verify: 既存SkeletalBvhClipImportTest、RigStaticRootFrameWireTest、RigSplitCookTestと実AssetCookRigSplitSmokeを区切りでまとめる。毎変更CIはしない。
+- current: 共通処理、RMTN、Role Profile拡張、CLI/asset-set接続と反証ケースを実装。native実行は未検証。

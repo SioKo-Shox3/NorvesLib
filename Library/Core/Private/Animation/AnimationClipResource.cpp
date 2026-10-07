@@ -53,6 +53,7 @@ namespace NorvesLib::Core
         size_t size =
             Skeletal::RigBoundClipAccess::MemorySize(*this) + sizeof(AnimationClipResource) + m_Clip.Name.size();
         size += m_Clip.Channels.size() * sizeof(Skeletal::SkeletalAnimationChannel);
+        size += m_Clip.RootMotion.size() * sizeof(Skeletal::SkeletalRootMotionSample);
         for (const Skeletal::SkeletalAnimationChannel& channel : m_Clip.Channels)
         {
             size += channel.Samples.size() * sizeof(Skeletal::SkeletalAnimationSample);

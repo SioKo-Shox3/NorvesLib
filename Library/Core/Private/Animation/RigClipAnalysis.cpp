@@ -1,4 +1,6 @@
 ﻿#include "Animation/RigClipAnalysis.h"
+#include "Animation/SkeletalRootMotion.h"
+#include "Animation/SkeletalRotationRetargetMath.h"
 #include "Animation/SkeletalJointGlobalRowMath.h"
 #include "Animation/SkeletalClipSampling.h"
 #include <algorithm>
@@ -30,6 +32,36 @@ namespace NorvesLib::Core::Skeletal
             const double bb = double(b.X) * b.X + double(b.Y) * b.Y + double(b.Z) * b.Z + double(b.W) * b.W;
             const double dot = double(a.X) * b.X + double(a.Y) * b.Y + double(a.Z) * b.Z + double(a.W) * b.W;
             return 2 * std::acos(std::clamp(std::abs(dot) / std::sqrt(aa * bb), 0.0, 1.0));
+        }
+        bool Heading(const Math::Matrix4x4& matrix, double& yaw)
+        {
+            if (std::hypot(double(matrix.values[8]), double(matrix.values[10])) > 1e-8)
+            {
+                yaw = std::atan2(double(matrix.values[8]), double(matrix.values[10]));
+                return true;
+            }
+            // 前方が垂直のときは平面投影が定義できない。正のscaleを除いた+Y twistで補う。
+            Bvh::Matrix3d column;
+            for (size_t c = 0; c < 3; ++c)
+            {
+                const double length = std::hypot(double(matrix.values[c * 4]), double(matrix.values[c * 4 + 1]),
+                                                 double(matrix.values[c * 4 + 2]));
+                if (!std::isfinite(length) || length <= 0)
+                {
+                    return false;
+                }
+                for (size_t row = 0; row < 3; ++row)
+                {
+                    column.Values[row * 3 + c] = matrix.values[c * 4 + row] / length;
+                }
+            }
+            D::RetargetQuaterniond q;
+            if (!D::RetargetExtractQuaternion(column, q) || std::hypot(q.Y, q.W) < 1e-12)
+            {
+                return false;
+            }
+            yaw = 2 * std::atan2(q.Y, q.W);
+            return true;
         }
         struct Evaluator
         {
@@ -130,7 +162,11 @@ namespace NorvesLib::Core::Skeletal
             {
                 return false;
             }
-            uint64_t sourceSamples = 0;
+            if (!IsValidSkeletalRootMotion(source, a->LocalRest.size()) || source.RootMotion.size() > 1048576)
+            {
+                return false;
+            }
+            uint64_t sourceSamples = source.RootMotion.size();
             for (const auto& c : source.Channels)
             {
                 sourceSamples += c.Samples.size();
@@ -179,10 +215,26 @@ namespace NorvesLib::Core::Skeletal
                     previous = s.TimeSeconds;
                 }
             }
+            for (auto& sample : clip.RootMotion)
+            {
+                sample.TimeSeconds = float(double(sample.TimeSeconds) * factor);
+            }
+            if (!IsValidSkeletalRootMotion(clip, a->LocalRest.size()))
+            {
+                return false;
+            }
             RigClipAnalysis result;
             result.DurationSeconds = clip.DurationSeconds;
             result.SourceFps = options.SourceFps > 0 ? options.SourceFps / options.TimeScale : 0;
             result.RootJoint = options.RootJoint;
+            if (!clip.RootMotion.empty())
+            {
+                if (result.RootJoint != UINT32_MAX && result.RootJoint != clip.RootMotionJoint)
+                {
+                    return false;
+                }
+                result.RootJoint = clip.RootMotionJoint;
+            }
             if (result.RootJoint == UINT32_MAX)
             {
                 for (uint32_t i = 0; i < a->Geometry.Joints.size(); ++i)
@@ -262,37 +314,53 @@ namespace NorvesLib::Core::Skeletal
             result.bLoopCandidate = clip.DurationSeconds > 0 && result.LoopError <= options.LoopThreshold;
             result.bLoop = options.Loop == RigClipLoopMode::Loop ||
                            (options.Loop == RigClipLoopMode::Auto && result.bLoopCandidate);
-            result.TranslationX = double(endMatrix.values[12]) - startMatrix.values[12];
-            result.TranslationZ = double(endMatrix.values[14]) - startMatrix.values[14];
-            const double steps = std::max(1.0, std::ceil(double(clip.DurationSeconds) * options.SampleRate));
-            if (!std::isfinite(steps) || steps + 1 > options.MaximumSamples)
+            if (clip.RootMotion.empty())
             {
-                return false;
-            }
-            if (std::hypot(double(startMatrix.values[8]), double(startMatrix.values[10])) <= 1e-8)
-            {
-                return false;
-            }
-            auto previousMatrix = startMatrix;
-            double previousYaw = std::atan2(double(startMatrix.values[8]), double(startMatrix.values[10]));
-            constexpr double Pi = 3.14159265358979323846;
-            for (uint32_t i = 1; i <= uint32_t(steps); ++i)
-            {
-                if (!eval.At(float(double(clip.DurationSeconds) * i / steps), true))
+                result.TranslationX = double(endMatrix.values[12]) - startMatrix.values[12];
+                result.TranslationZ = double(endMatrix.values[14]) - startMatrix.values[14];
+                const double steps = std::max(1.0, std::ceil(double(clip.DurationSeconds) * options.SampleRate));
+                if (!std::isfinite(steps) || steps + 1 > options.MaximumSamples)
                 {
                     return false;
                 }
-                const auto& m = eval.Global[result.RootJoint];
-                if (std::hypot(double(m.values[8]), double(m.values[10])) <= 1e-8)
+                double previousYaw = 0;
+                if (!Heading(startMatrix, previousYaw))
                 {
                     return false;
                 }
-                result.PlanarDistanceMeters += std::hypot(double(m.values[12]) - previousMatrix.values[12],
-                                                          double(m.values[14]) - previousMatrix.values[14]);
-                const double yaw = std::atan2(double(m.values[8]), double(m.values[10]));
-                result.TotalYawRadians += std::remainder(yaw - previousYaw, 2 * Pi);
-                previousYaw = yaw;
-                previousMatrix = m;
+                auto previousMatrix = startMatrix;
+                constexpr double Pi = 3.14159265358979323846;
+                for (uint32_t i = 1; i <= uint32_t(steps); ++i)
+                {
+                    if (!eval.At(float(double(clip.DurationSeconds) * i / steps), true))
+                    {
+                        return false;
+                    }
+                    const auto& m = eval.Global[result.RootJoint];
+                    double yaw = 0;
+                    if (!Heading(m, yaw))
+                    {
+                        return false;
+                    }
+                    result.PlanarDistanceMeters += std::hypot(double(m.values[12]) - previousMatrix.values[12],
+                                                              double(m.values[14]) - previousMatrix.values[14]);
+                    result.TotalYawRadians += std::remainder(yaw - previousYaw, 2 * Pi);
+                    previousYaw = yaw;
+                    previousMatrix = m;
+                }
+            }
+            if (!clip.RootMotion.empty())
+            {
+                result.TranslationX = clip.RootMotion.back().TranslationX;
+                result.TranslationZ = clip.RootMotion.back().TranslationZ;
+                result.TotalYawRadians = clip.RootMotion.back().YawRadians;
+                result.PlanarDistanceMeters = 0;
+                for (size_t i = 1; i < clip.RootMotion.size(); ++i)
+                {
+                    result.PlanarDistanceMeters +=
+                        std::hypot(clip.RootMotion[i].TranslationX - clip.RootMotion[i - 1].TranslationX,
+                                   clip.RootMotion[i].TranslationZ - clip.RootMotion[i - 1].TranslationZ);
+                }
             }
             result.AverageSpeedMetersPerSecond =
                 clip.DurationSeconds > 0 ? result.PlanarDistanceMeters / clip.DurationSeconds : 0;

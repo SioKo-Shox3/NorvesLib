@@ -66,6 +66,12 @@ namespace NorvesLib::Core::Skeletal
                         return false;
                     }
                     channels += clip.Channels.size();
+                    if (clip.RootMotion.size() > limits.MaxSamples - samples)
+                    {
+                        report.Status = RigV1Status::LimitExceeded;
+                        return false;
+                    }
+                    samples += clip.RootMotion.size();
                     for (const auto& channel : clip.Channels)
                     {
                         if (channel.Samples.size() > limits.MaxSamples - samples)

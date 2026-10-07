@@ -2632,6 +2632,14 @@ namespace NorvesLib::Tools::AssetCook
                               MeshByteArray& outBytes,
                               AnsiString& error, uint64_t maxBytes = UINT64_MAX)
         {
+            for (const auto& clip : skeletal.Clips)
+            {
+                if (!clip.RootMotion.empty())
+                {
+                    error = "root_motion_requires_clipbank_v1";
+                    return false;
+                }
+            }
             namespace SkeletalFormat = NorvesLib::Core::Asset::CookedSkeletalFormatV0;
             namespace SkeletalHeader = SkeletalFormat::HeaderOffset;
             namespace V02 = Core::Asset::CookedSkeletalFormatV02;

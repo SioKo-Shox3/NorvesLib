@@ -212,9 +212,22 @@ namespace NorvesLib::Core::ResourceIO
         {
             const auto bits = [](float v) { return std::bit_cast<uint32_t>(v); };
             if (a.Name != b.Name || bits(a.DurationSeconds) != bits(b.DurationSeconds) ||
-                a.Channels.size() != b.Channels.size())
+                a.Channels.size() != b.Channels.size() || a.RootMotionJoint != b.RootMotionJoint ||
+                a.RootMotion.size() != b.RootMotion.size())
             {
                 return false;
+            }
+            for (size_t i = 0; i < a.RootMotion.size(); ++i)
+            {
+                const auto& x = a.RootMotion[i];
+                const auto& y = b.RootMotion[i];
+                if (bits(x.TimeSeconds) != bits(y.TimeSeconds) ||
+                    std::bit_cast<uint64_t>(x.TranslationX) != std::bit_cast<uint64_t>(y.TranslationX) ||
+                    std::bit_cast<uint64_t>(x.TranslationZ) != std::bit_cast<uint64_t>(y.TranslationZ) ||
+                    std::bit_cast<uint64_t>(x.YawRadians) != std::bit_cast<uint64_t>(y.YawRadians))
+                {
+                    return false;
+                }
             }
             for (size_t i = 0; i < a.Channels.size(); ++i)
             {
@@ -242,7 +255,8 @@ namespace NorvesLib::Core::ResourceIO
         size_t ClipBytes(const S::SkeletalAnimationClip& clip)
         {
             size_t n = clip.Name.size() * sizeof(C::String::value_type) +
-                       clip.Channels.capacity() * sizeof(S::SkeletalAnimationChannel);
+                       clip.Channels.capacity() * sizeof(S::SkeletalAnimationChannel) +
+                       clip.RootMotion.capacity() * sizeof(S::SkeletalRootMotionSample);
             for (const auto& c : clip.Channels)
             {
                 n += c.Samples.capacity() * sizeof(S::SkeletalAnimationSample);

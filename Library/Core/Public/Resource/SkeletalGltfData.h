@@ -74,11 +74,19 @@ namespace NorvesLib::Core::Skeletal
         Container::VariableArray<SkeletalAnimationSample> Samples;
     };
 
+    struct SkeletalRootMotionSample
+    {
+        float TimeSeconds = 0;
+        double TranslationX = 0, TranslationZ = 0, YawRadians = 0;
+    };
     struct SkeletalAnimationClip
     {
         Container::String Name;
         float DurationSeconds = 0.0f;
         Container::VariableArray<SkeletalAnimationChannel> Channels;
+        // GR84で抽出した先頭基準の軌跡。runtimeへの適用はAnimator側が明示する。
+        uint32_t RootMotionJoint = UINT32_MAX;
+        Container::VariableArray<SkeletalRootMotionSample> RootMotion;
     };
 
     // slot名のみを所有する。材質係数/textureの共有recordはGR79/v1で扱う。

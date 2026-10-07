@@ -14,6 +14,7 @@ namespace NorvesLib::Tools::AssetCook
         Core::Container::AnsiString Kind = "texture", EntryType = "Tex0";
         CookAssetBudget Budget;
         Core::Container::VariableArray<uint32_t> JointNodes;
+        Core::Container::AnsiString SkeletonPath, RoleProfilePath, SourceClip, ClipName;
     };
     struct TextureAssetSetSpec
     {

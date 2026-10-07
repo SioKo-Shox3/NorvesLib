@@ -61,6 +61,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
             for (const auto& clip : data.Clips)
             {
                 m.ChannelCount += uint32_t(clip.Channels.size());
+                m.SampleCount += uint32_t(clip.RootMotion.size());
                 for (const auto& channel : clip.Channels)
                 {
                     m.SampleCount += uint32_t(channel.Samples.size());

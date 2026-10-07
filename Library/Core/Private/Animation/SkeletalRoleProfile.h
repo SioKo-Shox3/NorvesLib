@@ -1,6 +1,7 @@
 ﻿#pragma once
-// 正準roleを経由する所有Profile。実joint名と補正Cは利用者が明示する。
+// 正準roleを経由する所有Profile。実joint名は明示し、補正Cは明示または作者restから求める。
 #include "SkeletalBvhClipImport.h"
+#include "SkeletalClipProcessing.h"
 
 namespace NorvesLib::Core::Animation
 {
@@ -39,11 +40,24 @@ namespace NorvesLib::Core::Animation
         Container::VariableArray<uint8_t> Name;
         Bvh::Matrix3d Correction;
     };
+    enum class SkeletalRestCorrectionMode : uint8_t
+    {
+        Explicit,
+        Match,
+        AlignBones
+    };
     struct SkeletalRoleProfile
     {
         Container::FixedArray<Container::VariableArray<Container::VariableArray<uint8_t>>, SkeletalRoleCount> Source;
         Container::FixedArray<Container::VariableArray<SkeletalRoleTarget>, SkeletalRoleCount> Target;
         SkeletalBvhClipSettings Settings;
+        SkeletalRestCorrectionMode RestMode = SkeletalRestCorrectionMode::Explicit;
+        Bvh::Vector3d RestUpHint{0, 1, 0};
+        double MaximumRestErrorRadians = 0.08726646259971647;
+        double RootScale = 1;
+        bool bAutoRootHeight = false, bHasProcessing = false;
+        SkeletalClipProcessingSettings Processing;
+        uint32_t LoopExcludedRoles = 0;
         uint32_t RequiredMask = 0;
         uint32_t ExpandedMappings = 0;
         uint64_t NameBytes = 0;

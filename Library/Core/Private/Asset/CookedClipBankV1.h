@@ -34,14 +34,16 @@ namespace NorvesLib::Core::Skeletal
       private:
         Container::TSharedPtr<const ClipBankV1Data> m_Data;
         friend bool BuildClipBankV1(Container::Span<const RigAuthoringCpu>, ClipBankV1&, RigV1Report&,
-                                    const RigV1Limits&, RigImportProfile, const RigClipAnalysisOptions*);
+                                    const RigV1Limits&, RigImportProfile, const RigClipAnalysisOptions*,
+                                    Container::Span<const SkeletalAnimationClip>);
         friend bool ParseClipBankV1(Container::Span<const uint8_t>, ClipBankV1&, RigV1Report&, const RigV1Limits&,
                                     RigImportProfile);
     };
     [[nodiscard]] bool BuildClipBankV1(Container::Span<const RigAuthoringCpu> sources, ClipBankV1& out,
                                        RigV1Report& report, const RigV1Limits& limits = {},
                                        RigImportProfile profile = RigImportProfile::DirectTrs128,
-                                       const RigClipAnalysisOptions* analysisOptions = nullptr);
+                                       const RigClipAnalysisOptions* analysisOptions = nullptr,
+                                       Container::Span<const SkeletalAnimationClip> replacementClips = {});
     [[nodiscard]] bool WriteClipBankV1(const ClipBankV1& bank, Container::VariableArray<uint8_t>& out,
                                        RigV1Report& report, const RigV1Limits& limits = {},
                                        RigImportProfile profile = RigImportProfile::DirectTrs128);

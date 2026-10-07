@@ -149,6 +149,20 @@ namespace NorvesLib::Tools::AssetCook
                 single.Format = entry.Format;
                 single.Variant = entry.Variant;
                 single.ClipJointNodes = entry.JointNodes;
+                if (!entry.SkeletonPath.empty())
+                {
+                    if (!Detail::ResolveTextureCliPath(
+                            std::filesystem::u8path(entry.SkeletonPath.begin(), entry.SkeletonPath.end()), sourceRoot,
+                            single.RetargetSkeletonPath, error) ||
+                        !Detail::ResolveTextureCliPath(
+                            std::filesystem::u8path(entry.RoleProfilePath.begin(), entry.RoleProfilePath.end()),
+                            sourceRoot, single.RetargetProfilePath, error))
+                    {
+                        return Result::Error;
+                    }
+                    single.RetargetSourceClip = entry.SourceClip;
+                    single.RetargetClipName = entry.ClipName;
+                }
                 single.AssetSetEmission = spec.Emission;
                 CookPreparedPlan plan;
                 if (!PrepareCookOutputPlan(single, spec.Version, nullptr, plan, error))

@@ -1156,3 +1156,12 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - GR82/GR86の前回CI: ab3126feのrun 37600512793はRigSplitFileCliの文字列ビュー比較でbuild失敗。比較の型を明示する修正を入れた。後続runtime/CLI検証は未実行だったため、合格には扱わない。
 - 範囲: 要件GR96の「実装順」節に従い、G2はspec v2・増分・統合manifest・三角形/関節/texture予算と最小レポートまで。詳細異常検出とgeneratorsは後段。--forceで全件を再cookし、--verify相当のpayload照合は通常時も行う。
 - 残り: GR96の関連実行検証と、GR84のrest補正・向き/ルート分離・リサンプル・周期切り出しとv1/glTF接続。G2は未完了。ロードマップの区切りで必要な検証をまとめ、完了後にマージしてG3へ進む。
+
+### GR84 共通クリップ処理とv1出力（2026-10-07）
+
+- BVH/glTFのlocal補間→FK→作者rest差分対応、明示/match/align_bones補正、headingと平面ルート軌跡、出力fps・auto/none/range周期処理を接続。骨長重み/role除外、角速度seam、巨大frame原点に依存しない軌跡を扱う。
+- 任意RMTN節で累積軌跡を保存し、既存ANLYへ要約する。ターゲットの作者rest/frameを保持して既存の厳密束縛へ渡す。再生時適用はG3/G4。
+- --retarget-clipの新規出力CLIとasset-set v2のskeleton_path/role_profile/source_clip/clip_nameを接続。増分判定は既存C++の1か所を使い、source/target外部buffer・sidecar・profile bytesを含める。
+- 合成反証を既存CPU試験とCLI smokeへ追加。Python構文と差分衛生のみ確認、native実行は未検証。詳細はDocs/Architecture/SkeletalClipProcessing.md。
+- GR96のrun37607084130はRigSingleCookのAnsiString範囲構築でbuild失敗。aa293f28でStringViewを明示して修正。後続試験は未実行で合格扱いにしない。
+- G2は未完了・未マージ。関連検証をまとめて閉じてからマージし、G3へ移る。

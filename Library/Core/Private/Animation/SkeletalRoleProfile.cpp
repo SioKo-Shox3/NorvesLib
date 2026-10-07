@@ -253,6 +253,178 @@ namespace NorvesLib::Core::Animation
             out.Rotation = SkeletalRetargetRotationPolicy::PreserveHeadingHoldTranslations;
             return {Status::Success};
         }
+        Result ExtendedSettings(const JsonValue& root, SkeletalRoleProfile& out)
+        {
+            if (root.HasMember("rest_pose"))
+            {
+                const auto rest = root.FindMember("rest_pose");
+                constexpr const char* keys[] = {"mode", "up_hint", "maximum_error_degrees"};
+                auto result = Object(rest, keys, "rest_pose");
+                if (!result.Succeeded())
+                {
+                    return result;
+                }
+                const auto mode = rest.FindMember("mode");
+                if (StringIs(mode, "explicit"))
+                {
+                    out.RestMode = SkeletalRestCorrectionMode::Explicit;
+                }
+                else if (StringIs(mode, "match"))
+                {
+                    out.RestMode = SkeletalRestCorrectionMode::Match;
+                }
+                else if (StringIs(mode, "align_bones"))
+                {
+                    out.RestMode = SkeletalRestCorrectionMode::AlignBones;
+                }
+                else
+                {
+                    return Fail(Status::InvalidSettings, "rest_pose.mode");
+                }
+                if (rest.HasMember("up_hint"))
+                {
+                    const auto hint = rest.FindMember("up_hint");
+                    if (!hint.IsArray() || hint.GetArraySize() != 3)
+                    {
+                        return Fail(Status::InvalidSettings, "rest_pose.up_hint");
+                    }
+                    double values[3];
+                    for (size_t i = 0; i < 3; ++i)
+                    {
+                        const auto v = hint.GetArrayElement(i);
+                        if (!v.IsNumber() || !std::isfinite(v.AsNumber()))
+                        {
+                            return Fail(Status::InvalidSettings, "rest_pose.up_hint");
+                        }
+                        values[i] = v.AsNumber();
+                    }
+                    const double length = std::hypot(values[0], values[1], values[2]);
+                    if (!std::isfinite(length) || length < 1e-10)
+                    {
+                        return Fail(Status::InvalidSettings, "rest_pose.up_hint");
+                    }
+                    out.RestUpHint = {values[0] / length, values[1] / length, values[2] / length};
+                }
+                if (rest.HasMember("maximum_error_degrees"))
+                {
+                    const auto v = rest.FindMember("maximum_error_degrees");
+                    if (!v.IsNumber() || !std::isfinite(v.AsNumber()) || v.AsNumber() < 0 || v.AsNumber() > 180)
+                    {
+                        return Fail(Status::InvalidSettings, "rest_pose.maximum_error_degrees");
+                    }
+                    out.MaximumRestErrorRadians = v.AsNumber() * 3.14159265358979323846 / 180;
+                }
+            }
+            if (root.HasMember("root_scale"))
+            {
+                const auto value = root.FindMember("root_scale");
+                if (StringIs(value, "auto_height"))
+                {
+                    out.bAutoRootHeight = true;
+                }
+                else if (value.IsNumber() && std::isfinite(value.AsNumber()) && value.AsNumber() > 0)
+                {
+                    out.RootScale = value.AsNumber();
+                }
+                else
+                {
+                    return Fail(Status::InvalidSettings, "root_scale");
+                }
+            }
+            if (root.HasMember("processing"))
+            {
+                const auto processing = root.FindMember("processing");
+                constexpr const char* keys[] = {"output_fps",          "loop_mode",      "start_seconds",
+                                                "end_seconds",         "minimum_period", "maximum_period",
+                                                "extract_root_motion", "exclude_roles"};
+                auto result = Object(processing, keys, "processing");
+                if (!result.Succeeded())
+                {
+                    return result;
+                }
+                out.bHasProcessing = true;
+                const auto read = [&](const char* key, double& number)
+                {
+                    if (!processing.HasMember(key))
+                    {
+                        return true;
+                    }
+                    const auto value = processing.FindMember(key);
+                    if (!value.IsNumber() || !std::isfinite(value.AsNumber()))
+                    {
+                        return false;
+                    }
+                    number = value.AsNumber();
+                    return true;
+                };
+                auto& p = out.Processing;
+                if (!read("output_fps", p.OutputFps) || !read("start_seconds", p.RangeStart) ||
+                    !read("end_seconds", p.RangeEnd) || !read("minimum_period", p.MinimumPeriod) ||
+                    !read("maximum_period", p.MaximumPeriod) || p.OutputFps <= 0 || p.OutputFps > 1000 ||
+                    p.MinimumPeriod <= 0 || p.MaximumPeriod <= p.MinimumPeriod)
+                {
+                    return Fail(Status::InvalidSettings, "processing");
+                }
+                if (processing.HasMember("loop_mode"))
+                {
+                    const auto mode = processing.FindMember("loop_mode");
+                    if (StringIs(mode, "auto"))
+                    {
+                        p.Loop = SkeletalLoopSelection::Auto;
+                    }
+                    else if (StringIs(mode, "none"))
+                    {
+                        p.Loop = SkeletalLoopSelection::None;
+                    }
+                    else if (StringIs(mode, "range"))
+                    {
+                        p.Loop = SkeletalLoopSelection::Range;
+                    }
+                    else
+                    {
+                        return Fail(Status::InvalidSettings, "processing.loop_mode");
+                    }
+                }
+                if ((p.Loop == SkeletalLoopSelection::Range && (p.RangeStart < 0 || p.RangeEnd <= p.RangeStart)) ||
+                    (p.Loop != SkeletalLoopSelection::Range &&
+                     (processing.HasMember("start_seconds") || processing.HasMember("end_seconds"))))
+                {
+                    return Fail(Status::InvalidSettings, "processing.range");
+                }
+                if (processing.HasMember("exclude_roles"))
+                {
+                    const auto roles = processing.FindMember("exclude_roles");
+                    if (!roles.IsArray() || roles.GetArraySize() > SkeletalRoleCount)
+                    {
+                        return Fail(Status::InvalidSettings, "processing.exclude_roles");
+                    }
+                    for (size_t i = 0; i < roles.GetArraySize(); ++i)
+                    {
+                        const auto value = roles.GetArrayElement(i);
+                        if (!value.IsString())
+                        {
+                            return Fail(Status::InvalidSettings, "processing.exclude_roles");
+                        }
+                        const auto role = FindRole(value.AsString());
+                        if (role == UINT32_MAX || (out.LoopExcludedRoles & (uint32_t{1} << role)))
+                        {
+                            return Fail(Status::InvalidSettings, "processing.exclude_roles");
+                        }
+                        out.LoopExcludedRoles |= uint32_t{1} << role;
+                    }
+                }
+                if (processing.HasMember("extract_root_motion"))
+                {
+                    const auto value = processing.FindMember("extract_root_motion");
+                    if (!value.IsBoolean())
+                    {
+                        return Fail(Status::InvalidSettings, "processing.extract_root_motion");
+                    }
+                    p.bExtractRootMotion = value.AsBool();
+                }
+            }
+            return {Status::Success};
+        }
         Result Roles(const JsonValue& object, bool bTarget, const SkeletalRoleProfileLimits& limits,
                      SkeletalRoleProfile& profile)
         {
@@ -320,6 +492,15 @@ namespace NorvesLib::Core::Animation
                     {
                         return parsed;
                     }
+                    if (profile.RestMode != SkeletalRestCorrectionMode::Explicit)
+                    {
+                        if (element.HasMember("C"))
+                        {
+                            return Fail(Status::InvalidCorrection, field, role, j);
+                        }
+                        profile.Target[role].push_back(std::move(target));
+                        continue;
+                    }
                     const auto correction = element.FindMember("C");
                     if (!correction.IsArray() || correction.GetArraySize() != 9)
                     {
@@ -379,9 +560,9 @@ namespace NorvesLib::Core::Animation
             return Fail(Status::InvalidJson, "profile");
         }
         const auto root = document.GetRoot();
-        constexpr const char* rootKeys[] = {"version",      "vocabulary",          "axes",
-                                            "units",        "position_convention", "time",
-                                            "source_roles", "target_roles",        "required_roles"};
+        constexpr const char* rootKeys[] = {
+            "version",      "vocabulary",   "axes",           "units",     "position_convention", "time",
+            "source_roles", "target_roles", "required_roles", "rest_pose", "root_scale",          "processing"};
         result = Object(root, rootKeys, "profile");
         if (!result.Succeeded())
         {
@@ -398,6 +579,11 @@ namespace NorvesLib::Core::Animation
         }
         SkeletalRoleProfile candidate;
         result = Settings(root, candidate.Settings);
+        if (!result.Succeeded())
+        {
+            return result;
+        }
+        result = ExtendedSettings(root, candidate);
         if (!result.Succeeded())
         {
             return result;

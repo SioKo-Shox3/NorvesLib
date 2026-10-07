@@ -21,6 +21,8 @@ namespace NorvesLib::Tools::AssetCook
         SkeletalRoleFileRequest RoleProfile;
         Core::AssetImport::EmissiveScale AssetSetEmission;
         Core::Container::VariableArray<uint32_t> ClipJointNodes;
+        std::filesystem::path RetargetSkeletonPath, RetargetProfilePath;
+        Core::Container::AnsiString RetargetSourceClip, RetargetClipName;
     };
     // 従来の単体cook・manifest・出力検証を再利用する。batch集約や新しい増分判定は追加しない。
     // errorは呼出結果で置換する。診断streamの出力規則は従来通り。
