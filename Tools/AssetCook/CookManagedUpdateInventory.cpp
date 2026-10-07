@@ -237,6 +237,24 @@ namespace NorvesLib::Tools::AssetCook
                     return false;
                 }
             }
+            // 可変inventoryでもprimary/派生keyの二重使用は認めない。固定件数時は対応が全単射になる。
+            VariableArray<Key> currentKeys;
+            currentKeys.reserve(outputs);
+            for (const auto& plan : plans)
+            {
+                for (const auto& output : plan.Outputs)
+                {
+                    currentKeys.push_back(View(output.ExpectedIdentity));
+                }
+            }
+            std::sort(currentKeys.begin(), currentKeys.end(), [](Key a, Key b) { return Compare(a, b) < 0; });
+            for (size_t i = 1; i < currentKeys.size(); ++i)
+            {
+                if (Compare(currentKeys[i - 1], currentKeys[i]) == 0)
+                {
+                    return Fail(error, "duplicate_output_key");
+                }
+            }
             const auto& records = candidate.PreviousState.Records;
             std::sort(oldOrder.begin(), oldOrder.end(),
                       [&](size_t a, size_t b)

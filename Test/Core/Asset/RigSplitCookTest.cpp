@@ -172,8 +172,8 @@ Frame Time: 0.5
         }
         X::U32(wav, 16);
         wav.insert(wav.end(), {1, 0, 1, 0});
-        X::U32(wav, 8000);
-        X::U32(wav, 16000);
+        X::U32(wav, 48000);
+        X::U32(wav, 96000);
         wav.insert(wav.end(), {2, 0, 16, 0, 'd', 'a', 't', 'a'});
         X::U32(wav, 4);
         wav.insert(wav.end(), {0, 0, 255, 127});

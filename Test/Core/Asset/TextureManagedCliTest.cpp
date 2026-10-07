@@ -329,7 +329,7 @@ namespace TextureCliTest
         auto added = f.SpecText;
         const auto packageAt = added.find("config.nvpk");
         CHECK(packageAt != TestText::npos);
-        added.replace(packageAt, std::strlen("config.nvpk"), "config-new.nvpk");
+        added = added.substr(0, packageAt) + "config-new.nvpk" + added.substr(packageAt + std::strlen("config.nvpk"));
         Write(f.Spec, BytesOf(added));
         CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::Updated);
         CHECK(report.Assets[0].bSkipped && !report.Assets[1].bSkipped);

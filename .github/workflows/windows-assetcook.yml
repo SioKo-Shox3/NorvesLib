@@ -135,6 +135,20 @@ jobs:
         run: |
           cmake --build build/windows-cli --config Release --target AssetCook JobSystemShutdownTest CookedMeshTest ResourceRegistryTest MegaGeometryResourcesTest ModelResourcesAssetRuntimeTest SkeletalAnimationSamplingTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
           if ($LASTEXITCODE -ne 0) { throw 'Native build failed' }
+      - name: CPU契約を実行する
+        run: |
+          $env:NORVES_CLIPBANK_V1_OUTPUT = "$env:NORVES_CI_LOG/clipbank-v1-Release"
+          $env:NORVES_RIG_SPLIT_V1_OUTPUT = "$env:NORVES_CI_LOG/rig-split-v1-Release"
+          $env:NORVES_ROOT_FRAME_V2_OUTPUT = "$env:NORVES_CI_LOG/root-frame-v2-Release"
+          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(JobSystemShutdownTest|SkeletalAnimationSamplingTest|CookedMeshTest|CookedMeshV1Test|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|StringEmptyTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest|TextureAssetSetSpecTest|TextureManagedCliTest|SkeletalJointIndexTest|SkeletalBindRowMathTest|SkeletalJointGlobalRowMathTest|SkeletalJointMappingTest|SkeletalCoordinateConversionTest|SkeletalRotationRetargetTest|SkeletalRotationRetargetNativeTest|SkeletalBvhClipTimeTest|SkeletalBvhClipImportTest|SkeletalBvhCookBridgeTest|SkeletalAssetLoaderTest|SkeletalAssetPublicationTest|SkeletalAssetRuntimeTest|SkeletalAssetSessionTest|CookedClipBankV1Test|SkeletalClipBankBindingTest|CookedSkeletonV1Test|CookedSkinMeshV1Test|RigSplitCookTest|SkeletalSplitAssetLoaderTest|SkeletalSplitPublicationTest|SkeletalSplitRuntimeTest|RigStaticRootFrameImportTest|RigStaticRootFrameWireTest|RigStaticRootFrameRuntimeTest|ResourceRegistryTest|ResourceMetadataTest|SkeletalResourceLifetimeTest|SkeletalAssetResourceTest|BvhEvaluateTest|BvhDecodeTest|GltfMaterialCookV1Test|ImportedMaterialStagingTest|ImportedOpaqueRuntimeTest|MegaGeometryResourcesTest|ModelResourcesAssetRuntimeTest|TextureAssetSetOutputTest|ImportStaticIntegrationTest|CookManagedBootstrapTest|CookManagedUpdateTest|CookManagedTransactionIntentTest|CookManagedStoreInitializationTest|CookManagedStoreObservationTest|CookManagedUpdateInventoryTest|CookDestinationLockTest|CookOwnerResolverTest|CookOwnerBindingTest|CookOutputSetGuardTest|CookOutputPlanTest|CookStateFileTest|CookOwnedStateTest|ModelNativePathTest|CookCacheDecisionTest|CookOutputPackageTest|CookDependencySnapshotTest|ImportSettingsFileTest|GltfBufferSetTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
+          if ($LASTEXITCODE -ne 0) { throw 'CPU contracts failed' }
+          Remove-Item Env:NORVES_CLIPBANK_V1_OUTPUT
+          Remove-Item Env:NORVES_RIG_SPLIT_V1_OUTPUT
+          Remove-Item Env:NORVES_ROOT_FRAME_V2_OUTPUT
+      - name: 分離rigの実CLIを確認する
+        run: |
+          python -B Test/Tools/AssetCookRigSplitSmoke.py --assetcook build/windows-cli/Tools/AssetCook/Release/AssetCook.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Rig split CLI smoke failed' }
       - name: SamplerのDebugとReleaseを固定した旧出力と比較する
         run: |
           python -B Test/Tools/SkeletalSamplerBaselineTest.py -v
@@ -171,16 +185,6 @@ jobs:
           print("All 5 moved diagnostic literals preserve frozen UTF-8 bytes")
           '@ | python - 2>&1 | Tee-Object "$env:NORVES_CI_LOG/diagnostic-parity.log"
           if ($LASTEXITCODE -ne 0) { throw 'Diagnostic byte parity failed' }
-      - name: CPU契約を実行する
-        run: |
-          $env:NORVES_CLIPBANK_V1_OUTPUT = "$env:NORVES_CI_LOG/clipbank-v1-Release"
-          $env:NORVES_RIG_SPLIT_V1_OUTPUT = "$env:NORVES_CI_LOG/rig-split-v1-Release"
-          $env:NORVES_ROOT_FRAME_V2_OUTPUT = "$env:NORVES_CI_LOG/root-frame-v2-Release"
-          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(JobSystemShutdownTest|SkeletalAnimationSamplingTest|CookedMeshTest|CookedMeshV1Test|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|StringEmptyTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest|TextureAssetSetSpecTest|TextureManagedCliTest|SkeletalJointIndexTest|SkeletalBindRowMathTest|SkeletalJointGlobalRowMathTest|SkeletalJointMappingTest|SkeletalCoordinateConversionTest|SkeletalRotationRetargetTest|SkeletalRotationRetargetNativeTest|SkeletalBvhClipTimeTest|SkeletalBvhClipImportTest|SkeletalBvhCookBridgeTest|SkeletalAssetLoaderTest|SkeletalAssetPublicationTest|SkeletalAssetRuntimeTest|SkeletalAssetSessionTest|CookedClipBankV1Test|SkeletalClipBankBindingTest|CookedSkeletonV1Test|CookedSkinMeshV1Test|RigSplitCookTest|SkeletalSplitAssetLoaderTest|SkeletalSplitPublicationTest|SkeletalSplitRuntimeTest|RigStaticRootFrameImportTest|RigStaticRootFrameWireTest|RigStaticRootFrameRuntimeTest|ResourceRegistryTest|ResourceMetadataTest|SkeletalResourceLifetimeTest|SkeletalAssetResourceTest|BvhEvaluateTest|BvhDecodeTest|GltfMaterialCookV1Test|ImportedMaterialStagingTest|ImportedOpaqueRuntimeTest|MegaGeometryResourcesTest|ModelResourcesAssetRuntimeTest|TextureAssetSetOutputTest|ImportStaticIntegrationTest|CookManagedBootstrapTest|CookManagedUpdateTest|CookManagedTransactionIntentTest|CookManagedStoreInitializationTest|CookManagedStoreObservationTest|CookManagedUpdateInventoryTest|CookDestinationLockTest|CookOwnerResolverTest|CookOwnerBindingTest|CookOutputSetGuardTest|CookOutputPlanTest|CookStateFileTest|CookOwnedStateTest|ModelNativePathTest|CookCacheDecisionTest|CookOutputPackageTest|CookDependencySnapshotTest|ImportSettingsFileTest|GltfBufferSetTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
-          if ($LASTEXITCODE -ne 0) { throw 'CPU contracts failed' }
-          Remove-Item Env:NORVES_CLIPBANK_V1_OUTPUT
-          Remove-Item Env:NORVES_RIG_SPLIT_V1_OUTPUT
-          Remove-Item Env:NORVES_ROOT_FRAME_V2_OUTPUT
       - name: 骨格ローダのDebug契約とprofileログを検証する
         run: |
           cmake --build build/windows-cli --config Debug --target CookedMeshTest ResourceRegistryTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/skeletal-loader-build-Debug.log"
@@ -255,10 +259,6 @@ jobs:
           }
           $record | ConvertTo-Json -Depth 5 | Set-Content "$env:NORVES_CI_LOG/game-build-evidence.json" -Encoding utf8
           Write-Output 'SKELETAL_OWNER_GAME_BUILD result=pass configurations=Debug,Release execution=not_run source=8x2 cleanup_contract=pass'
-      - name: 分離rigの実CLIを確認する
-        run: |
-          python -B Test/Tools/AssetCookRigSplitSmoke.py --assetcook build/windows-cli/Tools/AssetCook/Release/AssetCook.exe
-          if ($LASTEXITCODE -ne 0) { throw 'Rig split CLI smoke failed' }
       - name: Role Profileの実Windows CLIを検証する
         run: |
           python -B Scripts/AssetCookRoleProfileSmoke.py --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --output "$env:RUNNER_TEMP/NorvesRoleProfileCli" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/role-profile-cli.log"

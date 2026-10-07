@@ -153,7 +153,7 @@ namespace NorvesLib::Core::Skeletal
 
         MatrixValues MultiplyMatrix(const MatrixValues& left, const MatrixValues& right)
         {
-            MatrixValues result{};
+            MatrixValues result(0.0f);
             for (size_t row = 0; row < 4; ++row)
             {
                 for (size_t column = 0; column < 4; ++column)

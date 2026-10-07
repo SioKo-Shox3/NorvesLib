@@ -85,13 +85,14 @@ namespace ManagedInventoryTest
         CHECK(error.empty());
         return out;
     }
-    void Bad(const CookStateFileRequest& scope, const CookOwnedState& state, const Plans& plans)
+    void Bad(const CookStateFileRequest& scope, const CookOwnedState& state, const Plans& plans,
+             bool bAllowChanges = false)
     {
         CookManagedUpdateInventory held;
         held.BaseGeneration = 123;
         held.ManifestTarget = "held";
         InventoryText error;
-        CHECK(!BuildCookManagedUpdateInventory(scope, state, plans, held, error));
+        CHECK(!BuildCookManagedUpdateInventory(scope, state, plans, held, error, bAllowChanges));
         CHECK(!error.empty() && held.BaseGeneration == 123 && held.ManifestTarget == "held" && held.Assets.empty());
     }
 } // namespace ManagedInventoryTest
@@ -173,6 +174,7 @@ int main()
     changed = plans;
     changed[1] = changed[0];
     Bad(scope, state, changed);
+    Bad(scope, state, changed, true);
     changed = plans;
     changed[0].Context.Request.LogicalPath = "different";
     Bad(scope, state, changed);
@@ -228,6 +230,7 @@ int main()
     changed = modelPlans;
     changed[0].Outputs[1].ExpectedIdentity.LogicalPath = changed[0].Outputs[2].ExpectedIdentity.LogicalPath;
     Bad(scope, model, changed);
+    Bad(scope, model, changed, true);
     // 4096recordを二乗探索せず照合する。これもfile I/Oはしない。
     CookOwnedState many;
     many.Binding = scope.ExpectedBinding;

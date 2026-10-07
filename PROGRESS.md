@@ -1169,3 +1169,6 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - GR84/96の区切り検証run37627622848はCore buildで停止。SkeletalClipRetargetの座標変換呼出し2か所を、既存APIのConvertSkeletalMatrixBasisへ訂正した。関連CPU/CLIは未実行。
 
 - 修復後run37628934551ではCore.libとAssetCook.exeのbuildが通過。追加CPU fixtureのmanifest bytes→独自Stringの構築2か所でtest buildが停止したため、明示StringView経由に訂正した。CPUケース本体は未実行。
+
+- run37631295354はRelease全bundle buildとSampler両構成の旧出力比較が通過し、CPU 68/74成功。6失敗は4原因：固定/可変inventoryで同じkeyの二重対応を拒否し損ねる退行、静的祖先の行列積の未初期化、混在WAV fixtureの非対応8kHz、追加spec fixtureのString::replaceによる埋込NUL。重複key拒否・明示ゼロ初期化・48kHz fixture・substr連結へ修正した。再実行は未確認。
+- 検証コマンドを増やさず、既存CPU契約と分離rig実CLIをRelease build直後へ移した。Debug buildを待たず実行失敗が分かる順にする。
