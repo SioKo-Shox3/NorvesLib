@@ -2884,6 +2884,7 @@ namespace NorvesLib::Core::Rendering
                                                                              packet->TransparentCommandRange);
         viewContext.SnapshotSkinnedMeshFrameLeases = &packet->SkinnedMeshFrameLeases;
         viewContext.SnapshotMeshProxies = &packet->Scene.MeshProxies;
+        viewContext.SnapshotInstanceData = &packet->InstanceData;
         viewContext.SnapshotSkinnedMeshProxies = &packet->Scene.SkinnedMeshProxies;
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
         viewContext.SnapshotPointShadows = &packet->PointShadows;

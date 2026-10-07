@@ -873,9 +873,10 @@ namespace NorvesLib::Core::Rendering
         AddPass(std::move(neuralDecodePass));
 
         // SkinningComputePass: スキニングの今・前のフレームの頂点を計算シェーダーで作る。
-        // 今の GBuffer の経路は頂点シェーダーのスキニングのままなので、ビジビリティバッファを使うときまで無効にしておく。
+        // 今の GBuffer の経路は頂点シェーダーのスキニングのままなので、ビジビリティバッファを使うときか、
+        // 太陽の影を VSM で描く（変形した頂点を影の描画が読む）ときまで無効にしておく。
         auto skinningComputePass = MakeUnique<SkinningComputePass>();
-        skinningComputePass->SetEnabled(bVisibilityBuffer);
+        skinningComputePass->SetEnabled(bVisibilityBuffer || m_ShadowMethod == ShadowMethod::Vsm);
         SkinningComputePass *skinningComputePassPtr = skinningComputePass.get();
         AddPass(std::move(skinningComputePass));
 
@@ -958,12 +959,15 @@ namespace NorvesLib::Core::Rendering
         auto skyAtmospherePass = MakeUnique<SkyAtmospherePass>();
         AddPass(std::move(skyAtmospherePass));
 
-        // VirtualShadowMapPass: 太陽の VSM の物理ページのプールとページの表などを作り、名前で公開する（--shadow-method=vsm のときだけ）。
-        // 深度が確定した後（ビジビリティの解決・GBuffer・MegaGeometry の後）・照明の前に置く。中身はまだ使わず、照明は CSM のまま。
+        // VirtualShadowMapPass: 太陽の VSM の物理ページのプールとページの表などを作り、名前で公開し、影を落とす手続きメッシュと
+        // スキニング（SkinningComputePass が変形した頂点）を物理ページへ描く（--shadow-method=vsm のときだけ）。
+        // 深度が確定した後（ビジビリティの解決・GBuffer・MegaGeometry の後）・照明の前に置く。照明はまだ CSM のまま。
         // 装置が対応しないとき・プールを取れないときは、パスが資源を作らず VSM_FALLBACK を出して CSM で描く
         if (m_ShadowMethod == ShadowMethod::Vsm)
         {
-            AddPass(MakeUnique<VirtualShadowMapPass>(m_VsmPoolPages));
+            auto virtualShadowMapPass = MakeUnique<VirtualShadowMapPass>(m_VsmPoolPages);
+            virtualShadowMapPass->SetSkinningComputePass(skinningComputePassPtr);
+            AddPass(std::move(virtualShadowMapPass));
         }
 
         // LightingPass: GBuffer→HDRシーンカラー

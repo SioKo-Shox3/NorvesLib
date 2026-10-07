@@ -51,6 +51,52 @@ namespace NorvesLib::Core::Rendering
             outBounds = bounds;
             return true;
         }
+
+        // インデックスを 384 個（128 三角形）ごとに区切ったブロックのローカル空間の AABB を求める。
+        // 頂点の基点が 0 の描画が、塊のインデックスの値から頂点を引くのと同じ引き方で求める。
+        // 範囲外のインデックス・非有限の位置があれば求めない（空にする）
+        bool ComputeMesh3DBlockBounds(const void *vertices,
+                                      size_t vertexSize,
+                                      const uint32_t *indices,
+                                      uint32_t indexCount,
+                                      Container::VariableArray<BoundingBox> &outBlocks)
+        {
+            outBlocks.clear();
+            if (vertices == nullptr || indices == nullptr || indexCount == 0 || vertexSize < sizeof(Mesh3DVertex) ||
+                vertexSize % sizeof(Mesh3DVertex) != 0)
+            {
+                return false;
+            }
+            constexpr uint32_t blockIndices = 128u * 3u;
+            const auto *meshVertices = static_cast<const Mesh3DVertex *>(vertices);
+            const size_t vertexCount = vertexSize / sizeof(Mesh3DVertex);
+            const uint32_t blockCount = (indexCount + blockIndices - 1u) / blockIndices;
+            outBlocks.reserve(blockCount);
+            for (uint32_t block = 0; block < blockCount; ++block)
+            {
+                const uint32_t begin = block * blockIndices;
+                const uint32_t end = std::min(begin + blockIndices, indexCount);
+                BoundingBox bounds = BoundingBox::CreateInvalid();
+                for (uint32_t position = begin; position < end; ++position)
+                {
+                    const uint32_t vertexIndex = indices[position];
+                    if (vertexIndex >= vertexCount)
+                    {
+                        outBlocks.clear();
+                        return false;
+                    }
+                    const float *point = meshVertices[vertexIndex].Position;
+                    if (!std::isfinite(point[0]) || !std::isfinite(point[1]) || !std::isfinite(point[2]))
+                    {
+                        outBlocks.clear();
+                        return false;
+                    }
+                    bounds.Expand(point[0], point[1], point[2]);
+                }
+                outBlocks.push_back(bounds);
+            }
+            return true;
+        }
     }
 
     ProceduralMeshGpuStore::ProceduralMeshGpuStore(Container::TSharedPtr<RHI::IDevice> device)
@@ -124,6 +170,7 @@ namespace NorvesLib::Core::Rendering
         gpuData.IndexBuffer = indexBuffer;
         gpuData.IndexCount = indexCount;
         gpuData.bHasLocalBounds = ComputeMesh3DVertexBounds(vertices, vertexSize, gpuData.LocalBounds);
+        ComputeMesh3DBlockBounds(vertices, vertexSize, indices, indexCount, gpuData.BlockBounds);
         gpuData.SubMeshCount = std::min(subMeshCount, MAX_MATERIAL_SLOTS);
         for (uint32_t i = 0; i < gpuData.SubMeshCount; ++i)
         {

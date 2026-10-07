@@ -3,7 +3,8 @@
 // 太陽の仮想シャドウマップ（VSM。--shadow-method=vsm）の資源を持つパス。
 // 深度が確定した後・照明の前に置き、物理ページのプールとページの表などを作って名前で公開し、毎フレーム
 // 深度から要るページに印を付け・物理ページを割り当て・消去する（VirtualShadowMapPages。キャッシュは無く毎フレームすべて作り直す）。
-// 描画はまだ無く、照明は CSM のまま。
+// その後、影を落とす手続きメッシュとスキニングの投影物を塊（128 三角形以下）の記録にして展開・描画し（VirtualShadowMapRaster）、
+// 物理ページへ深度を描く。集め方は CSM と同じ（VirtualShadowMapCasters.h）。照明はまだ CSM のまま。
 //
 // 物理ページのプールは storage buffer（画像ではない）。1 ページ = 128×128 の uint32 = 64 KiB で、ページ順に詰め、ページの中は行順。
 // 値は光源の深度 [0,1]（0 が光源に近い）の float のビット（floatBitsToUint）で、何も無い texel は 1.0 のビット。
@@ -33,9 +34,13 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     class GpuResources;
+    class SkinningComputePass;
     class VirtualShadowMapPages;
+    class VirtualShadowMapRaster;
     class VirtualShadowMapRasterStatsReporter;
     struct ViewRenderContext;
+    /** @brief 投影物の塊の記録を作る作業の状態（VirtualShadowMapPass.cpp が定義する） */
+    struct VirtualShadowMapCasterState;
 
     namespace VirtualShadowMap
     {
@@ -223,10 +228,14 @@ namespace NorvesLib::Core::Rendering
      *   VSM.PhysicalPool（物理ページのプール）・VSM.PageTable（段 × 128 × 128 の uint32）・VSM.RequestBits（今フレームの要求）・
      *   VSM.FreeList（先頭が数、続いて空きページの番号）・VSM.Stats（要求・割り当て・溢れ・描いたページの数・使った段のビット集合）・
      *   VSM.DirtyList（消去するページの一覧。先頭 3 語が間接 dispatch の引数、続く 1 語が数、以降が物理ページの番号）。
-     * 読むもの: GBuffer.Depth（印付けの入力）・GBuffer.Normal（深度が確定した後に並ぶための依存。中身は読まない）。
+     * 読むもの: GBuffer.Depth（印付けの入力）・GBuffer.Normal（深度が確定した後に並ぶための依存。中身は読まない）・
+     *   スキニングの変形した頂点（SkinningComputePass が持つとき。投影物の読み取りの依存）。
      * 毎フレームの記録: 要求・ページの表・統計を 0 にし、深度から印を付け（VsmMark）、物理ページを割り当て（VsmAllocate）、
-     * dirty のページを 1.0 のビットで埋める（VsmClear）。統計は数フレーム遅れで読み戻し、値が変わったとき（または 60 フレームごと）に
-     * VSM_PAGES requested=<n> allocated=<n> overflow=<n> levels_used=<mask> を出す。
+     * dirty のページを 1.0 のビットで埋める（VsmClear）。続けて、影を落とす投影物の塊の記録を作り（CPU。ホストが書くバッファ）、
+     * 段ごとにページへ展開し（VsmExpand）、物理ページへ深度を描く（VsmDraw）。投影物が無い・印付けをしなかったフレームは展開・描画を記録しない。
+     * 統計は数フレーム遅れで読み戻し、値が変わったとき（または 60 フレームごと）に
+     * VSM_PAGES requested=<n> allocated=<n> overflow=<n> levels_used=<mask> を出す。投影物の集めた内訳は
+     * VSM_CASTERS procedural_chunks=<n> skinned_chunks=<n> culled=<n> dropped=<n> skipped=<n> に出す（値が変わったとき・60 回ごと）。
      * プールの確保量は GpuResources::SetShadowMapPoolBytes で予算の計算（VideoMemoryPool::ShadowMap）へ伝える。
      */
     class VirtualShadowMapPass final : public IViewPass, public IRenderGraphPass
@@ -246,6 +255,9 @@ namespace NorvesLib::Core::Rendering
         void Declare(RenderGraphBuilder& builder) override;
         void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
 
+        /** @brief スキニングの投影物の取り出し元（同じ View のパス。null ならスキニングの投影物は描かない） */
+        void SetSkinningComputePass(const SkinningComputePass* pass) { m_SkinningPass = pass; }
+
         /** @brief 資源を作れて、このパスが動くか */
         bool IsActive() const { return m_bActive; }
         /** @brief 作れなかった理由（作れたときは None） */
@@ -263,6 +275,10 @@ namespace NorvesLib::Core::Rendering
         const RHI::BufferPtr& GetDirtyList() const { return m_DirtyList; }
         /** @brief 直前の Execute が印付けを記録したか（深度・有効なクリップマップ・カメラが揃ったとき） */
         bool WasMarked() const { return m_bMarked; }
+        /** @brief 直前の Execute が展開・描画を記録したか（印付けを記録し、投影物の塊が 1 つ以上あったとき） */
+        bool WasRasterRecorded() const { return m_bRasterRecorded; }
+        /** @brief 直前の Execute が展開へ渡した投影物の塊の数（記録しなかったときは 0） */
+        uint32_t GetLastCasterChunkCount() const { return m_LastCasterChunkCount; }
         /** @brief 統計の読み戻し先（飛行中のフレームの番号ごと。観測用。無ければ null） */
         const RHI::BufferPtr& GetStatsReadbackBuffer(uint32_t inFlightIndex) const { return m_StatsSlots[inFlightIndex % StatsSlotCount].Buffer; }
 
@@ -283,6 +299,12 @@ namespace NorvesLib::Core::Rendering
 
         void Fallback(VirtualShadowMap::FallbackReason reason);
         void ReleaseResources();
+        /** @brief 影を落とす手続きメッシュとスキニングを、塊の記録に集める（CPU。段の範囲に入らない塊は省く） */
+        void CollectCasters(ViewRenderContext& context);
+        /** @brief 集めた塊を書き、展開 → 描画を記録する。バッファは Common から UnorderedAccess へ進めて、Common へ戻す */
+        bool RecordRaster(ViewRenderContext& context, uint64_t frameSerial);
+        /** @brief 投影物の内訳（CasterStats）を、値が変わったとき・60 回ごとに VSM_CASTERS として出す */
+        void ReportCasters();
         /** @brief 書き終えた枠の統計を読み、値が変わった・60 フレームたったときに VSM_PAGES を出す */
         void HarvestStats(StatsSlot& slot);
 
@@ -302,8 +324,14 @@ namespace NorvesLib::Core::Rendering
         Container::TUniquePtr<VirtualShadowMapPages> m_Pages;
         /** @brief 展開の統計（語 5〜7）を VSM_RASTER の行にする（投影物を描くようになるまで 0 のままで、出さない） */
         Container::TUniquePtr<VirtualShadowMapRasterStatsReporter> m_RasterReporter;
+        /** @brief 展開・描画（投影物の塊を物理ページへ描く）と、塊の記録・展開の出力のバッファ */
+        Container::TUniquePtr<VirtualShadowMapRaster> m_Raster;
+        Container::TUniquePtr<VirtualShadowMapCasterState> m_Casters;
+        const SkinningComputePass* m_SkinningPass = nullptr;
         StatsSlot m_StatsSlots[StatsSlotCount];
         bool m_bMarked = false;
+        bool m_bRasterRecorded = false;
+        uint32_t m_LastCasterChunkCount = 0;
         /** @brief 最後に出した統計（変わったときだけ出す）と、出してからのフレーム数 */
         uint32_t m_LoggedStats[4] = {};
         bool m_bStatsLogged = false;
@@ -315,6 +343,7 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_FreeListHandle;
         RGResourceHandle m_StatsHandle;
         RGResourceHandle m_DirtyListHandle;
+        RGResourceHandle m_SkinnedVerticesHandle;
         RGTextureHandle m_DepthHandle;
         bool m_bDeclared = false;
         /** @brief プール・表を初期値で埋めたか（最初の実行で 1 回） */

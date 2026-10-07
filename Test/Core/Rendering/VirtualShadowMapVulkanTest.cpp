@@ -21,6 +21,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/VirtualShadowMapCasters.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPages.h"
 #include "Rendering/VirtualShadowMapPass.h"
@@ -1346,6 +1347,12 @@ namespace
     {
         const double depthCenter = scene.Clipmap.DepthCenter;
 
+        // ケース F の形・物理プール・プールのページの数（ケース I が、同じ場面を手続きメッシュの記録の経路で描いて比べる）
+        Container::VariableArray<Shape> caseFShapes;
+        Container::VariableArray<uint32_t> caseFPool;
+        Container::VariableArray<PageInfo> caseFPages;
+        uint32_t caseFPoolPages = 0;
+
         // ----- ケース F: 印付け → 割り当て → 消去 → 展開 → 描画（合成した地面の深度の上に、既知の四角形 2 枚） -----
         {
             uint32_t level = 0;
@@ -1404,6 +1411,133 @@ namespace
                 }
             }
             Expect(coveredPageA > 500u && coveredPageB > 500u, "ケース F: 境界をまたぐ四角形が両方のページに描かれなければならない");
+            caseFShapes = shapes;
+            caseFPool = readback.Pool;
+            caseFPages = pageInfos;
+            caseFPoolPages = poolPages;
+        }
+
+        // ----- ケース I: 手続きメッシュの記録の経路（バッファのアドレスと変換の行列）で、ケース F と同じ場面を描く -----
+        // 塊の記録をテストが組み立てず、本番の関数（PlanProceduralChunks・AppendProceduralInstance）が作る。頂点・インデックスはメッシュのバッファ、
+        // 変換は列優先の 16 個の float。物理プールがケース F（記録を直接組み立てたもの）と全 texel で一致しなければならない
+        {
+            ChunkGeometry geometry = BuildChunks(scene, caseFShapes);
+            Resources resources;
+            RasterBuffers rasterBuffers;
+            RasterReadback readback;
+            const uint32_t instanceCapacity = 4096u;
+            if (caseFShapes.empty() || !CreateResources(device, caseFPoolPages, resources) ||
+                !CreateRasterBuffers(device, geometry, instanceCapacity, rasterBuffers))
+            {
+                std::cerr << TestName << " ケース I を準備できませんでした" << std::endl;
+                return false;
+            }
+
+            Container::VariableArray<VsmShadowChunk> productionChunks;
+            VirtualShadowMap::CasterStats casterStats;
+            VirtualShadowMap::ProceduralPlanScratch planScratch;
+            Container::VariableArray<VirtualShadowMap::ProceduralChunkPlan> plan;
+            for (size_t index = 0; index < caseFShapes.size(); ++index)
+            {
+                const VsmShadowChunk& source = geometry.Chunks[index];
+                const uint32_t cornerCount = caseFShapes[index].bRect ? 4u : 3u;
+                // メッシュ全体のローカルの境界は、その形の頂点から求める
+                BoundingBox localBounds = BoundingBox::CreateInvalid();
+                for (uint32_t corner = 0; corner < cornerCount; ++corner)
+                {
+                    const float* vertex = &geometry.Vertices[static_cast<size_t>(source.Record.VertexBase + corner) * 8u];
+                    localBounds.Expand(vertex[0], vertex[1], vertex[2]);
+                }
+                VirtualShadowMap::ProceduralDrawInput input;
+                input.VertexAddress = rasterBuffers.Vertices->GetDeviceAddress();
+                input.IndexAddress = rasterBuffers.Indices->GetDeviceAddress();
+                input.FirstIndex = source.Record.FirstIndex;
+                input.IndexCount = source.Record.TriangleCount * 3u;
+                input.VertexOffset = source.Record.VertexBase;
+                input.MeshBounds = &localBounds;
+                float world[16] = {};
+                world[0] = world[5] = world[10] = world[15] = 1.0f;
+                if (caseFShapes[index].bLocalTransform)
+                {
+                    world[0] = world[5] = world[10] = LocalScale;
+                    world[12] = LocalOffset[0];
+                    world[13] = LocalOffset[1];
+                    world[14] = LocalOffset[2];
+                }
+                Expect(VirtualShadowMap::PlanProceduralChunks(input, planScratch, plan), "ケース I: 手続きメッシュの描画を塊に分けられなければならない");
+                VirtualShadowMap::AppendProceduralInstance(input, plan, world, scene.Clipmap, productionChunks, casterStats);
+            }
+            Expect(productionChunks.size() == geometry.Chunks.size() && casterStats.CulledChunks == 0u && casterStats.DroppedChunks == 0u,
+                   "ケース I: 手続きメッシュの記録がすべての塊を作らなければならない（範囲の中にある）");
+            if (productionChunks.size() != geometry.Chunks.size())
+            {
+                return false;
+            }
+            // 変換と境界・アドレスが記録に入っていること（記録の経路の入力）
+            for (size_t index = 0; index < productionChunks.size(); ++index)
+            {
+                const VsmShadowChunk& made = productionChunks[index];
+                const VsmShadowChunk& source = geometry.Chunks[index];
+                Expect(made.Record.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::ProceduralChunk) &&
+                           made.Record.TriangleCount == source.Record.TriangleCount && made.Record.FirstIndex == source.Record.FirstIndex &&
+                           made.Record.VertexBase == source.Record.VertexBase && made.Record.VertexAddress == source.Record.VertexAddress &&
+                           made.Record.IndexAddress == source.Record.IndexAddress,
+                       "ケース I: 記録の頂点・インデックスの読み方がメッシュのバッファから作られなければならない");
+                Expect(std::memcmp(made.World, source.World, sizeof(made.World)) == 0, "ケース I: 記録の変換が変換の行列から作られなければならない");
+                // 境界は、元の（頂点から求めた）境界を含む（三角形をすべて含むこと）。同じ記録の経路なので、わずかな丸めだけ広い
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    Expect(made.BoundsMin[axis] <= source.BoundsMin[axis] + 1.0e-3f && made.BoundsMax[axis] >= source.BoundsMax[axis] - 1.0e-3f,
+                           "ケース I: 記録の境界が三角形を含まなければならない");
+                }
+            }
+            geometry.Chunks = productionChunks;
+            rasterBuffers.Chunks->Update(productionChunks.data(), productionChunks.size() * sizeof(VsmShadowChunk));
+
+            if (!RunRaster(device, &pages, raster, scene, resources, rasterBuffers, depth, frameSerial++, readback))
+            {
+                std::cerr << TestName << " ケース I を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(readback.bPagesRecorded, "ケース I: 印付け・割り当て・消去を記録できなければならない");
+            const Container::VariableArray<PageInfo> pageInfos = DecodePages(scene, readback.PageTable);
+            CheckExpansion("ケース I", scene, geometry, pageInfos, readback, instanceCapacity);
+            const PoolCheck check = CheckPool("ケース I", scene, caseFShapes, pageInfos, readback.Pool, VirtualShadowMap::EMPTY_DEPTH_BITS);
+            // 物理ページの番号は、割り当ての並び（GPU のアトミックの順）で実行ごとに変わりうるので、同じ（段・絶対のページ）を持つ
+            // ページどうしで、全 texel の語を比べる
+            uint32_t differentWords = 0;
+            uint32_t comparedPages = 0;
+            Expect(readback.Pool.size() == caseFPool.size() && pageInfos.size() == caseFPages.size(),
+                   "ケース I: 物理プールの大きさ・割り当てたページの数がケース F と同じでなければならない");
+            for (const PageInfo& page : pageInfos)
+            {
+                const PageInfo* counterpart = nullptr;
+                for (const PageInfo& candidate : caseFPages)
+                {
+                    if (candidate.Level == page.Level && candidate.AbsX == page.AbsX && candidate.AbsY == page.AbsY)
+                    {
+                        counterpart = &candidate;
+                        break;
+                    }
+                }
+                Expect(counterpart != nullptr && counterpart->bDirty == page.bDirty, "ケース I: ケース F と同じページが割り当てられなければならない");
+                if (counterpart == nullptr)
+                {
+                    continue;
+                }
+                ++comparedPages;
+                const size_t baseI = static_cast<size_t>(page.Physical) * VirtualShadowMap::PAGE_WORDS;
+                const size_t baseF = static_cast<size_t>(counterpart->Physical) * VirtualShadowMap::PAGE_WORDS;
+                for (uint32_t word = 0; word < VirtualShadowMap::PAGE_WORDS; ++word)
+                {
+                    differentWords += readback.Pool[baseI + word] != caseFPool[baseF + word] ? 1u : 0u;
+                }
+            }
+            Expect(comparedPages == pageInfos.size(), "ケース I: すべてのページをケース F と比べなければならない");
+            std::cout << TestName << " ケース I: 比べた texel=" << check.Compared << " 形に覆われた texel=" << check.Covered << " 不一致=" << check.Mismatches
+                      << " ケース F との違い（語）=" << differentWords << std::endl;
+            Expect(check.Mismatches == 0u && check.Covered > 2000u, "ケース I: 手続きメッシュの記録の経路で描いた物理ページが形の和の参照と一致しなければならない");
+            Expect(differentWords == 0u, "ケース I: 手続きメッシュの記録の経路で描いた texel が、ケース F の記録を直接組み立てた場面と同じでなければならない");
         }
 
         // ----- ケース G・H: ページの表を直接書き、段 0 の 24 ページ（うち 1 ページは dirty でない）と段 1 の 4 ページを割り当てた場面 -----

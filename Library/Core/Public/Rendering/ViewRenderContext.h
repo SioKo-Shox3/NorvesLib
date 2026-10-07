@@ -597,6 +597,9 @@ namespace NorvesLib::Core::Rendering
 
         const Container::VariableArray<MeshProxy>* SnapshotMeshProxies = nullptr;
 
+        /** @brief FramePacket::InstanceData（InstanceDataBuffer へ上げた値の CPU 側。DrawCommand のインスタンスの範囲が指す） */
+        const Container::VariableArray<GPUSceneInstanceData>* SnapshotInstanceData = nullptr;
+
         /** @brief FramePacket::Scene.SkinnedMeshProxies のanimated boundsスナップショット */
         const Container::VariableArray<SkinnedMeshProxy>* SnapshotSkinnedMeshProxies = nullptr;
 

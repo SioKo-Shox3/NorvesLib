@@ -5,10 +5,13 @@
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
+#include "Math/MatrixUtils.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SkinningComputePass.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VirtualShadowMapCasters.h"
 #include "Rendering/VirtualShadowMapPages.h"
 #include "Rendering/VirtualShadowMapRaster.h"
 #include "RHI/IBuffer.h"
@@ -17,9 +20,90 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    /**
+     * 投影物の塊の記録を作る作業の状態。展開の出力（インスタンス・間接描画の引数）は GPU が書くので全 Execute で 1 つを使い回し、
+     * 塊の記録はホストが書くので、フレームの枠（FrameUseRing）ごとに Execute のたびに別のバッファを使う
+     * （同じフレームの複数のビューポートが、提出前の記録を上書きしない）。
+     */
+    struct VirtualShadowMapCasterState
+    {
+        struct Use
+        {
+            RHI::BufferPtr Chunks;
+            uint32_t ChunkCapacity = 0;
+        };
+
+        FrameUseRing<Use> Uses;
+        RHI::BufferPtr Instances;
+        RHI::BufferPtr Draws;
+        /** @brief 今回の Execute が集めた塊の記録と内訳 */
+        Container::VariableArray<VsmShadowChunk> Chunks;
+        VirtualShadowMap::CasterStats Stats;
+        /** @brief 作業配列（毎フレーム容量を使い回す） */
+        VirtualShadowMap::ProceduralPlanScratch PlanScratch;
+        Container::VariableArray<VirtualShadowMap::ProceduralChunkPlan> Plan;
+        Container::VariableArray<MeshIndexChunk> SkinnedChunks;
+        /** @brief 最後に出した内訳（変わったときだけ出す）と、出してからの回数 */
+        VirtualShadowMap::CasterStats LoggedStats;
+        bool bLogged = false;
+        uint32_t ReportsSinceLog = 0;
+    };
+
     namespace
     {
         constexpr double BytesPerMegabyte = 1024.0 * 1024.0;
+        /** @brief 投影物の内訳が変わらなくても VSM_CASTERS を出す間隔（Execute の回数） */
+        constexpr uint32_t CasterLogIntervalExecutions = 60;
+
+        // スキニングの描画の持ち主（元の描画の SourceMeshComponentId と同じ ComponentId を持つプロキシ）。無ければ null
+        const SkinnedMeshProxy* FindSkinnedProxy(const Container::VariableArray<SkinnedMeshProxy>& proxies, uint64_t componentId)
+        {
+            if (componentId == 0u)
+            {
+                return nullptr;
+            }
+            for (const SkinnedMeshProxy& proxy : proxies)
+            {
+                if (proxy.ComponentId == componentId)
+                {
+                    return &proxy;
+                }
+            }
+            return nullptr;
+        }
+
+        // アニメーション後の境界（ローカル）にワールド行列をかけた、描画のワールドの境界。境界か行列が有限でなければ false
+        bool BuildSkinnedWorldBounds(const SkinnedMeshProxy& proxy, VirtualShadowMap::CasterBounds& outBounds)
+        {
+            if (!proxy.bHasAnimatedBounds)
+            {
+                return false;
+            }
+            const Math::Vector3 localMin = proxy.AnimatedBounds.Min;
+            const Math::Vector3 localMax = proxy.AnimatedBounds.Max;
+            if (!std::isfinite(localMin.x) || !std::isfinite(localMin.y) || !std::isfinite(localMin.z) || !std::isfinite(localMax.x) ||
+                !std::isfinite(localMax.y) || !std::isfinite(localMax.z) || localMin.x > localMax.x || localMin.y > localMax.y ||
+                localMin.z > localMax.z)
+            {
+                return false;
+            }
+            for (const float value : proxy.WorldTransform.values)
+            {
+                if (!std::isfinite(value))
+                {
+                    return false;
+                }
+            }
+            const Math::Vector3 center = Math::MatrixUtils::TransformPointRowVector(proxy.WorldTransform, proxy.AnimatedBounds.Center());
+            const Math::Vector3 half = Math::MatrixUtils::AbsUpper3x3TransformExtentsRowVector(proxy.WorldTransform, proxy.AnimatedBounds.HalfExtents());
+            outBounds.Min[0] = center.x - half.x;
+            outBounds.Min[1] = center.y - half.y;
+            outBounds.Min[2] = center.z - half.z;
+            outBounds.Max[0] = center.x + half.x;
+            outBounds.Max[1] = center.y + half.y;
+            outBounds.Max[2] = center.z + half.z;
+            return true;
+        }
 
         // 資源 1 つ分: 名前・バッファ・グラフに取り込んだ資源の控え
         struct DeclaredBuffer
@@ -62,6 +146,12 @@ namespace NorvesLib::Core::Rendering
         m_DirtyList.reset();
         m_Pages.reset();
         m_RasterReporter.reset();
+        if (m_Raster)
+        {
+            m_Raster->Shutdown();
+        }
+        m_Raster.reset();
+        m_Casters.reset();
         for (StatsSlot& slot : m_StatsSlots)
         {
             slot = StatsSlot{};
@@ -105,6 +195,16 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        // 展開・描画のパイプライン。作れなければ（装置が firstInstance の間接描画を使えないときを含む）VSM を使わず CSM で描く
+        m_Raster = Container::MakeUnique<VirtualShadowMapRaster>();
+        if (!m_Raster->Initialize(m_Device, context.ShaderMgr))
+        {
+            Fallback(VirtualShadowMap::FallbackReason::Pipeline);
+            m_bInitialized = true;
+            return true;
+        }
+        m_Casters = Container::MakeUnique<VirtualShadowMapCasterState>();
+
         m_RasterReporter = Container::MakeUnique<VirtualShadowMapRasterStatsReporter>();
 
         const uint64_t poolBytes = VirtualShadowMap::PoolBytes(plan.Pages);
@@ -129,7 +229,12 @@ namespace NorvesLib::Core::Rendering
                                                                  storageUsage | RHI::ResourceUsage::IndirectBuffer,
                                                                  false,
                                                                  "VSM_DirtyList"));
-            bCreated = m_Pool && m_PageTable && m_RequestBits && m_FreeList && m_Stats && m_DirtyList;
+            // 展開の出力（GPU が書く）。投影物の塊の記録は、描くフレームで必要な大きさに合わせて作る
+            m_Casters->Instances = m_Device->CreateBuffer(RHI::BufferDesc(
+                VirtualShadowMap::RasterInstanceBytes(VirtualShadowMap::RASTER_INSTANCE_CAPACITY), VirtualShadowMap::RasterInstanceUsage(), false, "VsmRaster_Instances"));
+            m_Casters->Draws = m_Device->CreateBuffer(RHI::BufferDesc(
+                VirtualShadowMap::RasterDrawBytes(VirtualShadowMap::MAX_CASTER_CHUNKS), VirtualShadowMap::RasterDrawUsage(), false, "VsmRaster_Draws"));
+            bCreated = m_Pool && m_PageTable && m_RequestBits && m_FreeList && m_Stats && m_DirtyList && m_Casters->Instances && m_Casters->Draws;
         }
         catch (...)
         {
@@ -164,9 +269,11 @@ namespace NorvesLib::Core::Rendering
 
         m_PoolPages = plan.Pages;
         m_bActive = true;
+        const uint64_t rasterBytes = VirtualShadowMap::RasterInstanceBytes(VirtualShadowMap::RASTER_INSTANCE_CAPACITY) +
+                                     VirtualShadowMap::RasterDrawBytes(VirtualShadowMap::MAX_CASTER_CHUNKS);
         if (m_Gpu)
         {
-            m_Gpu->SetShadowMapPoolBytes(poolBytes);
+            m_Gpu->SetShadowMapPoolBytes(poolBytes + rasterBytes);
         }
 
         NORVES_LOG_INFO("VirtualShadowMapPass",
@@ -176,6 +283,9 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_INFO("VirtualShadowMapPass",
                         "VRAM_LEDGER vsm_page_table mb=%.3f",
                         static_cast<double>(VirtualShadowMap::PageTableBytes()) / BytesPerMegabyte);
+        NORVES_LOG_INFO("VirtualShadowMapPass",
+                        "VRAM_LEDGER vsm_raster mb=%.3f",
+                        static_cast<double>(rasterBytes) / BytesPerMegabyte);
         m_bInitialized = true;
         return true;
     }
@@ -189,11 +299,14 @@ namespace NorvesLib::Core::Rendering
         m_FreeListHandle = {};
         m_StatsHandle = {};
         m_DirtyListHandle = {};
+        m_SkinnedVerticesHandle = {};
         m_DepthHandle = {};
         m_bDeclared = false;
         m_bActive = false;
         m_bInitialFilled = false;
         m_bMarked = false;
+        m_bRasterRecorded = false;
+        m_LastCasterChunkCount = 0;
         m_bStatsLogged = false;
         m_FramesSinceStatsLog = 0;
         m_Device = nullptr;
@@ -218,6 +331,7 @@ namespace NorvesLib::Core::Rendering
         m_FreeListHandle = {};
         m_StatsHandle = {};
         m_DirtyListHandle = {};
+        m_SkinnedVerticesHandle = {};
         m_DepthHandle = {};
         m_bDeclared = false;
 
@@ -263,7 +377,195 @@ namespace NorvesLib::Core::Rendering
             bAllPublished = builder.PublishBuffer(declared.Name, *declared.Handle) && bAllPublished;
         }
         m_bDeclared = bAllPublished;
+
+        // スキニングの変形した頂点は、投影物の描画が（記録の頂点のアドレスから）読む。SkinningComputePass が、このフレームに
+        // 変形するインスタンスを持つときだけ宣言する（名前を持たないフレームに読むと、グラフのエラーになる）。変形の後に並べ、読める状態にする
+        if (m_SkinningPass)
+        {
+            const RGResourceHandle skinnedVertices = m_SkinningPass->GetCurrentVerticesHandle();
+            if (skinnedVertices.IsValid())
+            {
+                builder.Read(skinnedVertices, RHI::ResourceState::GenericRead);
+                m_SkinnedVerticesHandle = skinnedVertices;
+            }
+        }
         builder.PreserveInsertionOrder();
+    }
+
+    void VirtualShadowMapPass::CollectCasters(ViewRenderContext& context)
+    {
+        VirtualShadowMapCasterState& state = *m_Casters;
+        state.Chunks.clear();
+        state.Stats = {};
+        const VirtualShadowMapClipmap& clipmap = context.PhysicalLighting.SunClipmap;
+        if (!clipmap.bEnabled)
+        {
+            return;
+        }
+
+        // ----- 手続きメッシュ: 影を落とす DrawCommand（CSM と同じ集め方。主カメラの錐台で省かれた物も含める） -----
+        MeshResources* meshes = context.Resources.Meshes;
+        const Container::VariableArray<GPUSceneInstanceData>* instanceData = context.SnapshotInstanceData;
+        if (meshes && instanceData)
+        {
+            for (const DrawCommand& command : context.GetActiveDrawCommands())
+            {
+                const DrawParams& draw = command.Draw;
+                if (!draw.bCastShadow || draw.PayloadKind != DrawPayloadKind::Mesh || !draw.MeshHandle.IsValid())
+                {
+                    continue;
+                }
+                const auto* gpuData = meshes->GetGPUData(draw.MeshHandle);
+                if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer)
+                {
+                    continue;
+                }
+
+                // GBuffer・ビジビリティバッファの経路と同じ範囲の選び方
+                const bool bHasRange = draw.IndexCount > 0;
+                VirtualShadowMap::ProceduralDrawInput input;
+                input.VertexAddress = gpuData->VertexBuffer->GetDeviceAddress();
+                input.IndexAddress = gpuData->IndexBuffer->GetDeviceAddress();
+                input.FirstIndex = bHasRange ? draw.IndexOffset : 0u;
+                input.IndexCount = bHasRange ? draw.IndexCount : gpuData->IndexCount;
+                input.VertexOffset = bHasRange ? draw.VertexOffset : 0u;
+                input.MeshBounds = gpuData->bHasLocalBounds ? &gpuData->LocalBounds : nullptr;
+                input.BlockBounds = gpuData->BlockBounds.empty() ? nullptr : gpuData->BlockBounds.data();
+                input.BlockBoundsCount = static_cast<uint32_t>(gpuData->BlockBounds.size());
+                if (!VirtualShadowMap::PlanProceduralChunks(input, state.PlanScratch, state.Plan))
+                {
+                    ++state.Stats.SkippedDraws;
+                    continue;
+                }
+
+                const uint32_t instanceCount = std::max(1u, draw.InstanceCount);
+                for (uint32_t instanceOffset = 0; instanceOffset < instanceCount; ++instanceOffset)
+                {
+                    const uint64_t instanceIndex = static_cast<uint64_t>(draw.FirstInstance) + instanceOffset;
+                    if (instanceIndex >= instanceData->size())
+                    {
+                        ++state.Stats.SkippedDraws;
+                        continue;
+                    }
+                    VirtualShadowMap::AppendProceduralInstance(
+                        input, state.Plan, (*instanceData)[static_cast<size_t>(instanceIndex)].World, clipmap, state.Chunks, state.Stats);
+                }
+            }
+        }
+
+        // ----- スキニング: SkinningComputePass が変形した頂点（ワールド空間）。境界は描画の境界 -----
+        if (m_SkinningPass && context.SnapshotSkinnedMeshProxies)
+        {
+            const Container::VariableArray<SkinningComputeInstance>& instances = m_SkinningPass->GetInstances();
+            for (const SkinningComputeInstance& instance : instances)
+            {
+                if (!instance.IndexBuffer || instance.IndexCount < 3u)
+                {
+                    continue;
+                }
+                const uint64_t indexAddress = instance.IndexBuffer->GetDeviceAddress();
+                const SkinnedMeshProxy* proxy = FindSkinnedProxy(*context.SnapshotSkinnedMeshProxies, instance.SourceMeshComponentId);
+                if (proxy && !proxy->bCastShadow)
+                {
+                    continue;
+                }
+                VirtualShadowMap::CasterBounds bounds;
+                if (instance.CurrentVertexAddress == 0u || indexAddress == 0u || !proxy || !BuildSkinnedWorldBounds(*proxy, bounds))
+                {
+                    ++state.Stats.SkippedDraws;
+                    continue;
+                }
+                // 登録時に分けた塊を使い、無ければインデックスの全体を分ける
+                Container::VariableArray<MeshIndexChunk>& chunks = state.SkinnedChunks;
+                if (!context.SkinnedMeshes || !context.SkinnedMeshes->TryGetChunks(instance.MeshHandle, chunks) || chunks.empty())
+                {
+                    if (!BuildMeshIndexChunks(instance.IndexCount, nullptr, 0, chunks))
+                    {
+                        ++state.Stats.SkippedDraws;
+                        continue;
+                    }
+                }
+                VirtualShadowMap::AppendSkinnedInstance(instance.CurrentVertexAddress, indexAddress, bounds, chunks, clipmap, state.Chunks, state.Stats);
+            }
+        }
+    }
+
+    void VirtualShadowMapPass::ReportCasters()
+    {
+        VirtualShadowMapCasterState& state = *m_Casters;
+        const VirtualShadowMap::CasterStats& stats = state.Stats;
+        // 何も集めていない間は出さない（投影物の無い構成を毎回ログで埋めない）。一度出したら、0 に戻ったときも出す
+        const bool bAnything = stats.ProceduralChunks != 0u || stats.SkinnedChunks != 0u || stats.CulledChunks != 0u ||
+                               stats.DroppedChunks != 0u || stats.SkippedDraws != 0u;
+        if (!state.bLogged && !bAnything)
+        {
+            return;
+        }
+        ++state.ReportsSinceLog;
+        if (state.bLogged && stats == state.LoggedStats && state.ReportsSinceLog < CasterLogIntervalExecutions)
+        {
+            return;
+        }
+        state.LoggedStats = stats;
+        state.bLogged = true;
+        state.ReportsSinceLog = 0;
+        NORVES_LOG_INFO("VirtualShadowMapPass",
+                        "VSM_CASTERS procedural_chunks=%u skinned_chunks=%u culled=%u dropped=%u skipped=%u",
+                        stats.ProceduralChunks,
+                        stats.SkinnedChunks,
+                        stats.CulledChunks,
+                        stats.DroppedChunks,
+                        stats.SkippedDraws);
+    }
+
+    bool VirtualShadowMapPass::RecordRaster(ViewRenderContext& context, uint64_t /*frameSerial*/)
+    {
+        VirtualShadowMapCasterState& state = *m_Casters;
+        const uint32_t chunkCount = static_cast<uint32_t>(state.Chunks.size());
+        if (chunkCount == 0u || chunkCount > VirtualShadowMap::MAX_CASTER_CHUNKS || !state.Instances || !state.Draws)
+        {
+            return false;
+        }
+
+        // 塊の記録は、この Execute 専用のバッファへ書く（ホストが書く。足りなければ 2 倍ずつ広げる）
+        VirtualShadowMapCasterState::Use& use = state.Uses.Acquire();
+        if (!use.Chunks || use.ChunkCapacity < chunkCount)
+        {
+            const uint32_t wanted = std::max(chunkCount, std::min(VirtualShadowMap::MAX_CASTER_CHUNKS, std::max(256u, use.ChunkCapacity * 2u)));
+            use.Chunks = m_Device->CreateBuffer(
+                RHI::BufferDesc(VirtualShadowMap::RasterChunkBytes(wanted), VirtualShadowMap::RasterChunkUsage(), true, "VsmRaster_Chunks"));
+            use.ChunkCapacity = use.Chunks ? wanted : 0u;
+            if (!use.Chunks)
+            {
+                return false;
+            }
+        }
+        use.Chunks->Update(state.Chunks.data(), static_cast<uint64_t>(chunkCount) * sizeof(VsmShadowChunk));
+
+        RHI::ICommandList* commandList = context.CommandList;
+        const RHI::BufferPtr rasterBuffers[] = {use.Chunks, state.Instances, state.Draws};
+        for (const RHI::BufferPtr& buffer : rasterBuffers)
+        {
+            commandList->BufferBarrier(buffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
+        }
+
+        VirtualShadowMapRasterDispatch rasterDispatch;
+        rasterDispatch.Clipmap = &context.PhysicalLighting.SunClipmap;
+        rasterDispatch.PoolPages = m_PoolPages;
+        rasterDispatch.Pool = m_Pool;
+        rasterDispatch.PageTable = m_PageTable;
+        rasterDispatch.Stats = m_Stats;
+        rasterDispatch.Chunks = use.Chunks;
+        rasterDispatch.ChunkCount = chunkCount;
+        rasterDispatch.Instances = state.Instances;
+        rasterDispatch.Draws = state.Draws;
+        const bool bRecorded = m_Raster->Record(commandList, rasterDispatch);
+
+        for (const RHI::BufferPtr& buffer : rasterBuffers)
+        {
+            commandList->BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
+        }
+        return bRecorded;
     }
 
     void VirtualShadowMapPass::HarvestStats(StatsSlot& slot)
@@ -311,7 +613,9 @@ namespace NorvesLib::Core::Rendering
     void VirtualShadowMapPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
         m_bMarked = false;
-        if (!m_bActive || !m_bDeclared || !m_Pages || !context.CommandList)
+        m_bRasterRecorded = false;
+        m_LastCasterChunkCount = 0;
+        if (!m_bActive || !m_bDeclared || !m_Pages || !m_Raster || !m_Casters || !context.CommandList)
         {
             return;
         }
@@ -368,8 +672,24 @@ namespace NorvesLib::Core::Rendering
         }
 
         m_Pages->BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+        m_Raster->BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+        m_Casters->Uses.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
         m_Pages->Record(commandList, dispatch);
         m_bMarked = m_Pages->WasMarked();
+
+        // 影を落とす投影物の塊を物理ページへ描く。印付けをしなかった（深度かクリップマップが無い）フレームは、割り当て済みのページが無いので何も描かない
+        m_bRasterRecorded = false;
+        m_LastCasterChunkCount = 0;
+        if (m_bMarked && m_Raster->IsReady())
+        {
+            CollectCasters(context);
+            ReportCasters();
+            if (!m_Casters->Chunks.empty())
+            {
+                m_bRasterRecorded = RecordRaster(context, frameSerial);
+                m_LastCasterChunkCount = m_bRasterRecorded ? static_cast<uint32_t>(m_Casters->Chunks.size()) : 0u;
+            }
+        }
 
         // 統計を読み戻しの枠へ写す（読むのは、同じ番号の次のフレームの最初の Execute）。
         // 同じフレームの 2 回目以降の Execute は、同じ枠を新しい統計で上書きする
