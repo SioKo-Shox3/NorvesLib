@@ -156,7 +156,10 @@ namespace NorvesLib::Tools::AssetCook
         bool AddExpected(CurrentPlan& plan, AssetCookedReference row, const std::filesystem::path& package,
                          AnsiString& error)
         {
-            if (!Detail::MakeCachePackagePath(package, plan.Context.Request.ManifestPath.parent_path(),
+            // manifest内はgeneric相対名、物理targetはnative区切りで保持して既存fileの終端比較を揃える。
+            auto target = package;
+            target.make_preferred();
+            if (!Detail::MakeCachePackagePath(target, plan.Context.Request.ManifestPath.parent_path(),
                                               row.CookedPackage, error) ||
                 !Paths::SafeOutputName(row.CookedPackage))
             {
@@ -170,7 +173,7 @@ namespace NorvesLib::Tools::AssetCook
                 }
             }
             plan.Expected.push_back(std::move(row));
-            plan.Packages.push_back(package);
+            plan.Packages.push_back(std::move(target));
             return true;
         }
         bool BuildInventory(CurrentPlan& plan, AnsiString& error)

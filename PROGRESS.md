@@ -1174,3 +1174,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 検証コマンドを増やさず、既存CPU契約と分離rig実CLIをRelease build直後へ移した。Debug buildを待たず実行失敗が分かる順にする。
 
 - run37636419605はRelease build成功、CPU72/74成功。重複inventory・可変追加・静的frame Import/Runtimeは通過。残るWire試験は非対応matrixを使ったpitch fixtureを同じ回転のTRSへ訂正。混在rigの初回cookはstaged_captureで停止し、下位理由が失われていたためlogical pathとpackage検証の理由を保持する。検証条件は緩めず、原因の確定を続ける。
+
+- run37640229342はRelease buildとCPU73/74成功。Wireも通過。残る混在rigの失敗理由はModels/Dogのunsafe_output_targetと確定。generic相対名をnative親に連結した物理pathの区切りが混在し、cook後の既存file終端照合だけが失敗するため、AddExpectedで物理targetをmake_preferredに揃えた。componentの畳み込みやguardの緩和は行わない。再実行は未確認。
