@@ -69,6 +69,8 @@ namespace NorvesLib::Core::Rendering
         VisibilityBufferMode VisibilityBuffer = VisibilityBufferMode::On;
         SwRasterMode SwRaster = SwRasterMode::On;
         float SwRasterMaxPixels = DefaultSwRasterMaxPixels;
+        /** @brief 太陽の影の標本のパスを足す（--shadow-probe。統計が有効な構成だけで働く） */
+        bool bShadowProbe = false;
     };
 
     // ========================================

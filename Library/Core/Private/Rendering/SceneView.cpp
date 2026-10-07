@@ -11,6 +11,7 @@
 #include "Rendering/GBufferDebugPass.h"
 #include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/LightingPass.h"
+#include "Rendering/ShadowProbePass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/VolumetricsPass.h"
 #include "Rendering/ForwardPass.h"
@@ -968,6 +969,15 @@ namespace NorvesLib::Core::Rendering
         lightingPass->SetSceneView(this);
         lightingPass->SetRegisterLegacyBridge(false);
         AddPass(std::move(lightingPass));
+
+#if NORVES_ENABLE_STATS
+        // ShadowProbePass: ワールドに固定した点の太陽の可視度を毎フレーム測り、影の揺れと細かさの数を出す（--shadow-probe）。
+        // 照明の後に置く。統計が有効な構成（Debug・RelWithDebInfo）だけで、Release には入れない。
+        if (m_bShadowProbeEnabled)
+        {
+            AddPass(MakeUnique<ShadowProbePass>());
+        }
+#endif
 
         // SSR（スクリーンスペース反射、HDR空間で適用）: Lightingが足した環境光の鏡面反射を画面の反射へ置き換え、
         // "SSR.SceneColor" に書く。フォグ・半透明より前に置き、減衰していない照明の色の上で置き換える

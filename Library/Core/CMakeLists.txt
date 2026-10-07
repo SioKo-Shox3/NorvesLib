@@ -156,6 +156,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/HiZPyramidPass.cpp
     Private/Rendering/SkinningComputePass.cpp
     Private/Rendering/MaterialTileClassifyPass.cpp
+    Private/Rendering/ShadowProbePass.cpp
     Private/Rendering/VisibilityRasterPass.cpp
     Private/Rendering/VisibilitySwRaster.cpp
     Private/Rendering/GBufferDebugPass.h
@@ -406,6 +407,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/HiZPyramidPass.h
     Public/Rendering/SkinningComputePass.h
     Public/Rendering/MaterialTileClassifyPass.h
+    Public/Rendering/ShadowProbePass.h
     Public/Rendering/VisibilityRasterPass.h
     Public/Rendering/VisibilitySwRaster.h
     Public/Rendering/VisibilityResolvePass.h

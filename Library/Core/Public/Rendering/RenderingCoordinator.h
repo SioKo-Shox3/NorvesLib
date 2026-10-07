@@ -111,6 +111,8 @@ namespace NorvesLib::Core::Rendering
         SwRasterMode SwRaster = SwRasterMode::On;
         /** @brief ソフトウェアラスタへ振り分けるクラスタの画面上の半径（画素）のしきい値 */
         float SwRasterMaxPixels = DefaultSwRasterMaxPixels;
+        /** @brief 太陽の影の標本のパスを足す（--shadow-probe。統計が有効な構成だけで働く） */
+        bool bShadowProbe = false;
     };
 
     struct RenderingCoordinatorStatsSnapshot

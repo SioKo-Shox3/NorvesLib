@@ -29,6 +29,7 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/MaterialTileClassifyPass.h"
+#include "Rendering/ShadowProbePass.h"
 #include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/ViewRenderContext.h"
@@ -53,6 +54,7 @@
 #include <cstddef>
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -134,6 +136,8 @@ namespace
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaCullUniformUpdates;
     // VisibilitySwRaster が dispatch ごとに書く定数バッファ（"VisBuffer_SwRasterParams"）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GSwRasterParamsUpdates;
+    // 影の標本のパスが毎フレーム書く定数（ShadowProbeParams）。--shadow-probe の検査に使う
+    Container::VariableArray<Container::VariableArray<uint8_t>> GShadowProbeParamUpdates;
     Container::VariableArray<uint8_t> GLastDescriptorBinding4UpdateBytes;
     Container::VariableArray<uint8_t> GLastDescriptorBinding5UpdateBytes;
     RHI::IBuffer* GLastDescriptorBinding4Buffer = nullptr;
@@ -274,7 +278,7 @@ namespace
         {
             (void)size;
             // ジオメトリの区画へ書くステージングのリングだけは、写像して書き込めるようにバイト列を持つ
-            if (IsDebugName(m_Desc.DebugName, "TileUploadRing") && m_Desc.Size > 0)
+            if ((IsDebugName(m_Desc.DebugName, "TileUploadRing") || IsDebugName(m_Desc.DebugName, "ShadowProbe_Stats")) && m_Desc.Size > 0)
             {
                 if (MappedBytes.empty())
                 {
@@ -313,6 +317,10 @@ namespace
             if (IsDebugName(m_Desc.DebugName, "VisBuffer_SwRasterParams"))
             {
                 GSwRasterParamsUpdates.push_back(LastUpdateBytes);
+            }
+            if (IsDebugName(m_Desc.DebugName, "ShadowProbeParams"))
+            {
+                GShadowProbeParamUpdates.push_back(LastUpdateBytes);
             }
             const bool bSkinnedPalette = IsDebugName(m_Desc.DebugName, "SkinnedPalette");
             const bool bSkinnedPreviousPalette = IsDebugName(m_Desc.DebugName, "SkinnedPreviousPalette");
@@ -1014,6 +1022,10 @@ namespace
             {
                 VisBufferRecordUpload = buffer;
             }
+            if (IsDebugName(desc.DebugName, "ShadowProbe_Stats"))
+            {
+                ShadowProbeStatsBuffers.push_back(buffer);
+            }
             return buffer;
         }
 
@@ -1155,6 +1167,8 @@ namespace
         Container::VariableArray<BufferCreationRecord> CreatedBuffers;
         /** @brief ビジビリティバッファの「区間から材質の表の番号への対応」のバッファ（最後に作られたもの） */
         RHI::BufferPtr VisBufferSectionMaterials;
+        /** @brief 影の標本の統計の読み戻し先（作った順）。テストが GPU の書き込みの代わりに値を置く */
+        Container::VariableArray<RHI::BufferPtr> ShadowProbeStatsBuffers;
         /** @brief ビジビリティバッファのホストが書く記録の置き場（最後に作られたもの。記録の表へコピーされる元） */
         RHI::BufferPtr VisBufferRecordUpload;
         RHI::DescriptorSetDesc LastDescriptorSetDesc;
@@ -5313,6 +5327,408 @@ namespace
         const auto* defaultMega = static_cast<const MegaGeometryPass*>(defaultView.FindPass("MegaGeometryPass"));
         assert(defaultMega != nullptr && defaultMega->GetSwRasterMaxPixels() == DefaultSwRasterMaxPixels);
     }
+
+#if NORVES_ENABLE_STATS
+    // 影の標本（--shadow-probe）: SceneView は既定では標本のパスを持たず、足すと照明の後に並ぶ
+    void TestShadowProbeAbsentWithoutOptionAndAfterLightingWhenEnabled()
+    {
+        SceneRenderer renderer;
+        SceneView offView;
+        assert(!offView.IsShadowProbeEnabled());
+        offView.SetupDeferredPipeline(&renderer);
+        assert(offView.FindPass("ShadowProbePass") == nullptr);
+
+        SceneRenderer onRenderer;
+        SceneView onView;
+        onView.SetShadowProbeEnabled(true);
+        onView.SetupDeferredPipeline(&onRenderer);
+        const IViewPass* probe = onView.FindPass("ShadowProbePass");
+        const IViewPass* lighting = onView.FindPass("LightingPass");
+        assert(probe != nullptr && lighting != nullptr);
+        int probeIndex = -1;
+        int lightingIndex = -1;
+        for (uint32_t index = 0; index < onView.GetPassCount(); ++index)
+        {
+            probeIndex = onView.GetPassAt(index) == probe ? static_cast<int>(index) : probeIndex;
+            lightingIndex = onView.GetPassAt(index) == lighting ? static_cast<int>(index) : lightingIndex;
+        }
+        assert(lightingIndex >= 0 && lightingIndex < probeIndex);
+        // 有効にしても、足すのは標本のパス 1 つだけ（ほかのパスの数・順は変えない）
+        assert(onView.GetPassCount() == offView.GetPassCount() + 1);
+    }
+
+    // 影の標本のテストで、GBuffer の深度・法線・影の地図・シーンの色を書くだけのパス（照明の代わり）
+    class ShadowProbeInputsPass final : public IRenderGraphPass
+    {
+    public:
+        explicit ShadowProbeInputsPass(bool bWriteShadowMap = true)
+            : m_bWriteShadowMap(bWriteShadowMap)
+        {
+        }
+        const char* GetName() const override { return "ShadowProbeInputsPass"; }
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            Depth = builder.WriteTexture(RenderGraphResourceNames::GBufferDepth,
+                                         RGTextureDesc::RenderTarget(128, 64, RHI::Format::R32_FLOAT, "Test_Depth"),
+                                         RHI::ResourceState::RenderTarget,
+                                         RHI::ResourceState::ShaderResource);
+            Normal = builder.WriteTexture(RenderGraphResourceNames::GBufferNormal,
+                                          RGTextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "Test_Normal"),
+                                          RHI::ResourceState::RenderTarget,
+                                          RHI::ResourceState::ShaderResource);
+            SceneColor = builder.WriteTexture(RenderGraphResourceNames::SceneColor,
+                                              RGTextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "Test_SceneColor"),
+                                              RHI::ResourceState::RenderTarget,
+                                              RHI::ResourceState::ShaderResource);
+            if (m_bWriteShadowMap)
+            {
+                RGTextureDesc shadowDesc = RGTextureDesc::RenderTarget(64, 64, RHI::Format::R32_FLOAT, "Test_ShadowMap");
+                shadowDesc.ArraySize = 4;
+                ShadowMap = builder.WriteTexture(RenderGraphResourceNames::ShadowMap,
+                                                 shadowDesc,
+                                                 RHI::ResourceState::RenderTarget,
+                                                 RHI::ResourceState::ShaderResource);
+            }
+            builder.PreserveInsertionOrder();
+        }
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+        RGTextureHandle Depth;
+        RGTextureHandle Normal;
+        RGTextureHandle SceneColor;
+        RGTextureHandle ShadowMap;
+
+    private:
+        bool m_bWriteShadowMap = true;
+    };
+
+    // 標本のパスは、照明が書く Scene.Color・GBuffer の深度と法線・CSM の影の地図を読む（RenderGraph の依存で照明の後になる）。
+    // 影の地図が無い構成では何も宣言せず、何も測らない
+    void TestShadowProbeReadsCsmResourcesAfterLighting()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
+        FakeCommandList commandList;
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.CommandList = &commandList;
+        context.ShaderMgr = &shaderManager;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        ShadowProbePass probe;
+        assert(probe.Initialize(context));
+        {
+            ShadowProbeInputsPass inputs;
+            RenderGraph graph;
+            assert(graph.Initialize(nullptr));
+            const uint32_t inputsIndex = graph.AddPass(&inputs);
+            const uint32_t probeIndex = graph.AddPass(&probe);
+            assert(graph.Compile(context));
+            const Container::VariableArray<uint32_t>& order = graph.GetCompiledPassOrder();
+            assert(order.size() == 2 && order[0] == inputsIndex && order[1] == probeIndex);
+
+            bool bReadsShadowMap = false;
+            bool bReadsDepth = false;
+            bool bReadsNormal = false;
+            bool bReadsSceneColor = false;
+            const uint32_t accessCount = graph.GetDeclaredPassAccessCount(probeIndex);
+            assert(accessCount == 4);
+            for (uint32_t access = 0; access < accessCount; ++access)
+            {
+                RGResourceHandle resource;
+                RGAccessMode mode = RGAccessMode::Write;
+                RHI::ResourceState state = RHI::ResourceState::Undefined;
+                RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+                assert(graph.TryGetDeclaredPassAccess(probeIndex, access, resource, mode, state, finalState));
+                assert(mode == RGAccessMode::Read && state == RHI::ResourceState::ShaderResource);
+                bReadsShadowMap = bReadsShadowMap || resource == inputs.ShadowMap.ToResourceHandle();
+                bReadsDepth = bReadsDepth || resource == inputs.Depth.ToResourceHandle();
+                bReadsNormal = bReadsNormal || resource == inputs.Normal.ToResourceHandle();
+                bReadsSceneColor = bReadsSceneColor || resource == inputs.SceneColor.ToResourceHandle();
+            }
+            assert(bReadsShadowMap && bReadsDepth && bReadsNormal && bReadsSceneColor);
+        }
+        {
+            // 影の地図を書くパスが無い構成: 何も宣言しない
+            ShadowProbeInputsPass inputs(false);
+            RenderGraph graph;
+            assert(graph.Initialize(nullptr));
+            graph.AddPass(&inputs);
+            const uint32_t probeIndex = graph.AddPass(&probe);
+            assert(graph.Compile(context));
+            assert(graph.GetDeclaredPassAccessCount(probeIndex) == 0);
+        }
+        probe.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    uint32_t ReadShadowProbeParamWord(const Container::VariableArray<uint8_t>& bytes, size_t byteOffset)
+    {
+        assert(byteOffset + sizeof(uint32_t) <= bytes.size());
+        uint32_t value = 0;
+        std::memcpy(&value, bytes.data() + byteOffset, sizeof(value));
+        return value;
+    }
+
+    // 影の標本の実行の一式。決定的な撮影の形（エポックの最初のフレームで標本を固定し、以後は測る）か、
+    // そうでない形（起動から一定の実行の後に固定）で毎フレーム RenderGraph を回し、統計の読み戻しは GPU の代わりにテストが置く
+    struct ShadowProbeRun
+    {
+        RHI::TSharedPtr<FakeDevice> Device = RHI::MakeShared<FakeDevice>();
+        ShaderManager ShaderMgr;
+        MockAllocator Allocator;
+        RHI::TransientResourcePool Pool;
+        FakeCommandList CommandList;
+        CameraProxy Camera;
+        ViewRenderContext Context;
+        ShadowProbeInputsPass Inputs;
+        ShadowProbePass Probe;
+        RenderGraph Graph;
+    };
+
+    void InitializeShadowProbeRun(ShadowProbeRun& run, bool bDeterministic)
+    {
+        assert(run.ShaderMgr.Initialize(run.Device.get(), TestShaderDirectory));
+        assert(run.Pool.Initialize(&run.Allocator, 1));
+        run.Camera.Viewport.Width = 128.0f;
+        run.Camera.Viewport.Height = 64.0f;
+        ViewRenderContext& context = run.Context;
+        context.Device = run.Device.get();
+        context.CommandList = &run.CommandList;
+        context.ShaderMgr = &run.ShaderMgr;
+        context.TransientPool = &run.Pool;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.MainCamera = &run.Camera;
+        context.bDeterministicCapture = bDeterministic;
+        assert(run.Graph.Initialize(&run.Pool));
+        assert(run.Probe.Initialize(context));
+    }
+
+    // CSM を公開した状態にする（4 カスケード・有限の行列・増える分割）。false なら影の地図が無い状態にする
+    void PublishShadowProbeCascades(ShadowProbeRun& run, bool bPublished)
+    {
+        PhysicalLightingResources& lighting = run.Context.PhysicalLighting;
+        lighting.bShadowPublished = bPublished;
+        if (!bPublished)
+        {
+            lighting.ShadowMapTexture.reset();
+            return;
+        }
+        RHI::TextureDesc shadowDesc;
+        shadowDesc.Width = 64;
+        shadowDesc.Height = 64;
+        shadowDesc.ArraySize = PhysicalLightingShadowCascadeCount;
+        shadowDesc.TextureFormat = RHI::Format::R32_FLOAT;
+        lighting.ShadowMapTexture = run.Device->CreateTexture(shadowDesc);
+        CascadedDirectionalShadowShaderValues& cascaded = lighting.CascadedShadow;
+        cascaded.bEnabled = true;
+        cascaded.CascadeCount = PhysicalLightingShadowCascadeCount;
+        for (uint32_t cascade = 0; cascade < PhysicalLightingShadowCascadeCount; ++cascade)
+        {
+            for (uint32_t element = 0; element < 16u; ++element)
+            {
+                cascaded.View[cascade][element] = element % 5 == 0 ? 1.0f : 0.0f;
+                cascaded.Projection[cascade][element] = element % 5 == 0 ? 1.0f : 0.0f;
+            }
+        }
+        const float splits[PhysicalLightingShadowSplitCount] = {0.1f, 10.0f, 20.0f, 40.0f, 80.0f};
+        std::memcpy(cascaded.SplitDistances, splits, sizeof(splits));
+    }
+
+    // 1 フレーム回す。frameIndex は 0 から数える（実行の番号は frameIndex + 1）
+    void RunShadowProbeFrame(ShadowProbeRun& run, uint64_t frameIndex, bool bEpochStart)
+    {
+        run.Context.bTemporalEpochStart = bEpochStart;
+        run.Context.FrameIndex = static_cast<uint32_t>(frameIndex % 2);
+        run.Context.RenderFrameSerial = frameIndex + 1;
+        run.Pool.EndFrame();
+        run.Pool.BeginFrame(frameIndex);
+        run.Graph.BeginFrame(frameIndex);
+        run.Graph.AddPass(&run.Inputs);
+        run.Graph.AddPass(&run.Probe);
+        assert(run.Graph.Compile(run.Context));
+        const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
+        assert(result.bSuccess);
+    }
+
+    void ShutdownShadowProbeRun(ShadowProbeRun& run)
+    {
+        run.Probe.Shutdown();
+        run.Graph.Shutdown();
+        run.Pool.EndFrame();
+        run.Pool.Shutdown();
+        run.ShaderMgr.Shutdown();
+    }
+
+    // 決定的な撮影: エポックの前は何も dispatch しない。エポックが来ても影の地図が公開されていなければ測れないので、
+    // 次に測れるフレームで標本を固定する（mode 0）。以後は毎フレーム測る（mode 1）。
+    // 統計は数フレーム遅れて読み戻して足し、2 実行以内の分（GPU が書き終えていないかもしれない）は足さない。
+    // 比は定義どおり: mean_abs_delta・changed・flip は pairs、partial・texel は見えていた標本の延べ数に対する値
+    void TestShadowProbeCapturesAfterEpochThenMeasuresAndAggregates()
+    {
+        ShadowProbeRun run;
+        InitializeShadowProbeRun(run, true);
+        GShadowProbeParamUpdates.clear();
+
+        // フレーム 0〜2: エポックの前（影の地図は公開済み）。dispatch しない
+        PublishShadowProbeCascades(run, true);
+        for (uint64_t frame = 0; frame < 3; ++frame)
+        {
+            RunShadowProbeFrame(run, frame, false);
+        }
+        assert(run.CommandList.DispatchCount == 0 && !run.Probe.HasCapturedProbes());
+
+        // フレーム 3: エポックの最初のフレームだが影の地図が無い。測れない
+        PublishShadowProbeCascades(run, false);
+        RunShadowProbeFrame(run, 3, true);
+        assert(run.CommandList.DispatchCount == 0 && !run.Probe.HasCapturedProbes());
+
+        // フレーム 4: 影の地図が来た最初のフレームで標本を固定する（エポックの合図は 1 回だけ。ここでは立てない）
+        PublishShadowProbeCascades(run, true);
+        RunShadowProbeFrame(run, 4, false);
+        assert(run.CommandList.DispatchCount == 1 && run.Probe.HasCapturedProbes());
+        assert(GShadowProbeParamUpdates.size() == 1);
+        {
+            const Container::VariableArray<uint8_t>& bytes = GShadowProbeParamUpdates.back();
+            // screen（幅・高さ・格子の横・縦）と control（モード・カスケード数・有効・格子の間隔）の位置は std140 で 704・720
+            assert(ReadShadowProbeParamWord(bytes, 704) == 128 && ReadShadowProbeParamWord(bytes, 708) == 64);
+            assert(ReadShadowProbeParamWord(bytes, 712) == 32 && ReadShadowProbeParamWord(bytes, 716) == 16);
+            assert(ReadShadowProbeParamWord(bytes, 720) == 0);
+            assert(ReadShadowProbeParamWord(bytes, 724) == PhysicalLightingShadowCascadeCount);
+            assert(ReadShadowProbeParamWord(bytes, 728) == 1 && ReadShadowProbeParamWord(bytes, 732) == ShadowProbe::GRID_STEP);
+        }
+        assert(run.Device->ShadowProbeStatsBuffers.size() == 4);
+
+        // 実行の番号 = フレーム + 1。標本を固定したのは実行 5 で、統計の置き場は実行の番号 % 4
+        auto statsWords = [&](uint64_t executeIndex) -> uint32_t*
+        {
+            auto* buffer = static_cast<FakeBuffer*>(run.Device->ShadowProbeStatsBuffers[executeIndex % 4].get());
+            assert(buffer->MappedBytes.size() >= ShadowProbe::STATS_BYTES);
+            return reinterpret_cast<uint32_t*>(buffer->MappedBytes.data());
+        };
+        auto fillCapture = [&](uint64_t executeIndex)
+        {
+            uint32_t* words = statsWords(executeIndex);
+            std::memset(words, 0, ShadowProbe::STATS_BYTES);
+            words[ShadowProbe::StatCaptured] = 300;
+        };
+        auto fillMeasure = [&](uint64_t executeIndex, bool bFirst)
+        {
+            uint32_t* words = statsWords(executeIndex);
+            std::memset(words, 0, ShadowProbe::STATS_BYTES);
+            words[ShadowProbe::StatVisible] = 100;
+            words[ShadowProbe::StatPartial] = 20;
+            words[ShadowProbe::StatTexelSum] = 100 * 16 * 40; // 1 点 40 mm
+            if (!bFirst)
+            {
+                words[ShadowProbe::StatPairs] = 90;
+                words[ShadowProbe::StatDeltaSum] = 90 * 1024; // 1 組 0.25
+                words[ShadowProbe::StatChanged] = 45;
+                words[ShadowProbe::StatFlip] = 9;
+            }
+        };
+        fillCapture(5);
+
+        // フレーム 5〜12: 測る（mode 1）。実行 6〜13
+        constexpr uint64_t LastFrame = 12;
+        for (uint64_t frame = 5; frame <= LastFrame; ++frame)
+        {
+            RunShadowProbeFrame(run, frame, false);
+            assert(run.CommandList.DispatchCount == 1 + (frame - 4));
+            assert(ReadShadowProbeParamWord(GShadowProbeParamUpdates.back(), 720) == 1);
+            fillMeasure(frame + 1, frame == 5);
+        }
+
+        // 読み戻せたのは、最後の 2 実行（12・13）を除く固定の 1 回と測った 6 回（実行 6〜11）
+        run.Probe.LogSummary();
+        const ShadowProbe::Totals& totals = run.Probe.GetTotals();
+        assert(totals.Probes == 300);
+        assert(totals.Frames == 6);
+        assert(totals.Visible == 600 && totals.Pairs == 90 * 5);
+        assert(std::abs(totals.MeanAbsDelta() - 0.25) < 1.0e-9);
+        assert(std::abs(totals.ChangedRatio() - 0.5) < 1.0e-9);
+        assert(std::abs(totals.FlipRatio() - 0.1) < 1.0e-9);
+        assert(std::abs(totals.PartialRatio() - 0.2) < 1.0e-9);
+        assert(std::abs(totals.MeanTexelMm() - 40.0) < 1.0e-9);
+
+        ShutdownShadowProbeRun(run);
+    }
+
+    // 決定的な撮影のエポックは、読み込みが落ち着くまで何度も始め直される。始まるたびに標本を固定し直し、
+    // それまでに足した合計（読み込み前のシーンで測った値）を捨てる
+    void TestShadowProbeEpochRestartRecapturesAndResetsTotals()
+    {
+        ShadowProbeRun run;
+        InitializeShadowProbeRun(run, true);
+        PublishShadowProbeCascades(run, true);
+        GShadowProbeParamUpdates.clear();
+
+        RunShadowProbeFrame(run, 0, true);
+        assert(run.CommandList.DispatchCount == 1 && run.Probe.HasCapturedProbes());
+        assert(run.Device->ShadowProbeStatsBuffers.size() == 4);
+        for (uint64_t frame = 1; frame <= 8; ++frame)
+        {
+            RunShadowProbeFrame(run, frame, false);
+            // 実行 frame + 1 の置き場に、見えた標本が 10 あったと置く
+            auto* buffer = static_cast<FakeBuffer*>(run.Device->ShadowProbeStatsBuffers[(frame + 1) % 4].get());
+            uint32_t* words = reinterpret_cast<uint32_t*>(buffer->MappedBytes.data());
+            std::memset(words, 0, ShadowProbe::STATS_BYTES);
+            words[ShadowProbe::StatVisible] = 10;
+        }
+        assert(run.CommandList.DispatchCount == 9);
+        assert(ReadShadowProbeParamWord(GShadowProbeParamUpdates.back(), 720) == 1);
+
+        // 2 回目のエポック: その場で固定し直す（mode 0）。それまでの合計は 0 に戻る
+        RunShadowProbeFrame(run, 9, true);
+        assert(run.CommandList.DispatchCount == 10);
+        assert(ReadShadowProbeParamWord(GShadowProbeParamUpdates.back(), 720) == 0);
+        assert(run.Probe.HasCapturedProbes());
+        assert(run.Probe.GetTotals().Frames == 0 && run.Probe.GetTotals().Visible == 0);
+
+        // 固定し直した後は、また測る
+        RunShadowProbeFrame(run, 10, false);
+        assert(run.CommandList.DispatchCount == 11);
+        assert(ReadShadowProbeParamWord(GShadowProbeParamUpdates.back(), 720) == 1);
+        ShutdownShadowProbeRun(run);
+    }
+
+    // 決定的な撮影でない起動: エポックが無いので、起動から FALLBACK_CAPTURE_EXECUTE_COUNT 回目の実行で標本を固定する
+    void TestShadowProbeFallbackCapturesAfterFixedExecuteCount()
+    {
+        ShadowProbeRun run;
+        InitializeShadowProbeRun(run, false);
+        PublishShadowProbeCascades(run, true);
+        const uint64_t captureFrame = ShadowProbe::FALLBACK_CAPTURE_EXECUTE_COUNT - 1;
+        for (uint64_t frame = 0; frame < captureFrame; ++frame)
+        {
+            // エポックの合図は決定的な撮影でなければ無視する
+            RunShadowProbeFrame(run, frame, frame == 7);
+        }
+        assert(run.CommandList.DispatchCount == 0 && !run.Probe.HasCapturedProbes());
+        RunShadowProbeFrame(run, captureFrame, false);
+        assert(run.CommandList.DispatchCount == 1 && run.Probe.HasCapturedProbes());
+        ShutdownShadowProbeRun(run);
+    }
+
+    // 標本の集計の語から、ログの値を定義どおりに求める（ゼロ除算しない）
+    void TestShadowProbeTotalsHandleEmptyDenominators()
+    {
+        ShadowProbe::Totals totals;
+        assert(totals.MeanAbsDelta() == 0.0 && totals.ChangedRatio() == 0.0 && totals.FlipRatio() == 0.0);
+        assert(totals.PartialRatio() == 0.0 && totals.MeanTexelMm() == 0.0 && totals.OutOfRangeRatio() == 0.0);
+        const ShadowProbe::Grid grid = ShadowProbe::ComputeGrid(1280, 720);
+        assert(grid.CountX == 320 && grid.CountY == 180 && grid.Count() == 57600);
+        assert(ShadowProbe::ComputeGrid(1281, 721).CountX == 321);
+        assert(!ShadowProbe::ComputeGrid(0, 720).IsValid());
+    }
+#endif // NORVES_ENABLE_STATS
 
     // 64bit のバッファは画面の画素数 × 8 バイトの 1 つで、同じ大きさの間は作り直さない。大きさが変わると新しく作り、
     // 古いバッファは GPU が前のフレームで使っているかもしれないので、飛行中のフレームの数を超えるまで持つ。
@@ -10774,6 +11190,14 @@ int main()
     TestSwRasterListCapacityExceedsOneDimension();
     TestSceneViewWiresSwRasterMode();
     TestSceneViewThresholdReachesCullUniform();
+#if NORVES_ENABLE_STATS
+    TestShadowProbeAbsentWithoutOptionAndAfterLightingWhenEnabled();
+    TestShadowProbeReadsCsmResourcesAfterLighting();
+    TestShadowProbeCapturesAfterEpochThenMeasuresAndAggregates();
+    TestShadowProbeEpochRestartRecapturesAndResetsTotals();
+    TestShadowProbeFallbackCapturesAfterFixedExecuteCount();
+    TestShadowProbeTotalsHandleEmptyDenominators();
+#endif
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();
     TestMaterialTileClassifyDispatchesAndPublishesArgs();

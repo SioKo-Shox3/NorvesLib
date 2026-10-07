@@ -1934,3 +1934,22 @@
 - 検証（`.harness/runs/20261007-203349/`）: `verify-VTG8-SHADOW-CSM-INCLUDE-1.txt`（Debug の Game・RenderingGoldenImageTest・RenderGraphCompileTest のビルド、BUILD_EXIT_CODE=0）、`-2.txt`（ctest 5/5 Passed: RenderGraphCompileTest と golden の Indoor・Outdoor・各 GBuffer 予備の経路。基準画像・閾値は動かしていない。CTEST_EXIT_CODE=0）。
 - Notes: シェーダーは実行時に shaderc で解決されるので、golden が通ったことが include の解決とマクロの展開の確認を兼ねる。`forward_transparent.frag`・Volumetrics の CSM の読み方は触っていない。
 - Next: VTG8-SHADOW-PROBE は `SunShadowCsm.glsl` を計算シェーダーから include できる。
+
+## 反復 2（2026-10-07）: VTG8-SHADOW-PROBE（done）
+
+- 内容: 起動引数 `--shadow-probe`（`ApplicationProcessor` → `RenderWorld` → `RenderingCoordinator` の設定 `bShadowProbe` → `SceneView::SetShadowProbeEnabled`）で、`ShadowProbePass`（`Library/Core/{Public,Private}/Rendering/ShadowProbePass.*`、計算シェーダー `Assets/Shaders/shadow_probe.comp`）を照明の後に足す。統計が有効な構成（Debug・RelWithDebInfo）だけで作り、Release は作らない（`.cpp` の本体も `#if NORVES_ENABLE_STATS`）。(1) 画面の 4 画素おきの格子（1280×720 で 320×180）の空でない画素の深度・法線から、ワールドの位置と法線を固定の標本点として保存（モード 0）。(2) 以後の毎フレーム、標本を今のカメラへ投影し、画面の中で線形の深度（カメラ前方への距離）が画素の深度と 1% 以内のものだけを見えているとし、`Common/SunShadowCsm.glsl` の `CalculateShadow`（照明と同じ PCSS）で可視度 v を求め、使ったカスケードの texel の一辺（mm。ブレンド帯は手前、影の範囲の外は最後のカスケード）も求める（モード 1）。(3) GPU でアトミックに集計（pairs・|Δv| の和・changed（> 1/64）・flip（≥ 0.5）・見えていた延べ数・partial（0.02 < v < 0.98）・texel の和・範囲外の数）し、4 枠のホストが読めるバッファから 2 実行以上遅れて読み戻して CPU で足し、終了時（`Shutdown`）に `SHADOW_PROBE method=csm frames=… probes=… pairs=… mean_abs_delta=… changed_ratio=… flip_ratio=… partial_ratio=… mean_texel_mm=…` を 1 行出す。補助の `SHADOW_PROBE_DETAIL method=csm visible=… out_of_range_ratio=…` も 1 行出す。(4) `Scripts/CaptureStartupScene.ps1` に `-ShadowProbe`（`--shadow-probe` を渡す。Release とは併用不可）を足し、行を `metrics.json` の `shadow_probe[]` へ視点ごとに入れる（行が無ければ失敗）。(5) `RenderGraphCompileTest` に 5 件: 既定は標本のパスが無く、有効にすると照明の後に 1 つだけ入る／GBuffer の深度・法線・影の地図（CSM）・Scene.Color の 4 つを読み、影の地図が無い構成では何も宣言しない／エポックまで dispatch せず、影の地図が来たフレームで標本を固定（mode 0）し以後は測る（mode 1）、読み戻しの遅れと比の分母の定義／エポックの始め直しで固定と合計をやり直す／決定的でない起動は 300 回目の実行で固定。
+- `SunShadowCsm.glsl` に `SelectShadowCascade`（`CalculateShadow` のカスケードの選び方を関数へ出しただけ）と `ShadowCascadeTexelMeters` を足した。照明の挙動は変えていない。
+- 決定的な撮影のエポック（`epoch begin`）は、読み込みが落ち着くまで何度も始め直される（1 回目の撮影では最初の `rendered=109` で固定してしまい、読み込み前のシーンを測って frames=2236 などになった）。そのため、エポックが始まるたびに標本の固定と合計を最初からやり直す。
+- 検証（`.harness/runs/20261007-203349/`）: `verify-VTG8-SHADOW-PROBE-1.txt`（Debug の Game・RenderGraphCompileTest のビルド、BUILD_EXIT_CODE=0）、`-2.txt`（RenderGraphCompileTest 1/1 Passed。CTEST_EXIT_CODE=0）、`-3.txt`（RelWithDebInfo の Game、BUILD_EXIT_CODE=0）、`-4.txt`（起動画面の撮影。出力 `.harness/runs/startup-capture/VTG8-SHADOW-PROBE`）。
+- 撮影の終了コードは 1: 3 視点の撮影と `SHADOW_PROBE` は取れたが、`CaptureStartupScene.ps1` の既存の検査「VT の常駐量が 64 MB 以下」が low 視点（旋回）で `vt_used_mb_max=77` となり failure を返した。`-ShadowProbe` を外して low だけ同じ条件で撮り直しても `vt_used_mb_max=85` で同じ failure（`scratch-low-without-probe.txt`。画像の平均輝度も 126.921 / 127.08 / 125.343 で標本ありと同じ）なので、影の標本とは無関係な既存の事象（NVIDIA 610.88 のドライバでの VT の要求量）。上限は変えていない（VTG8-ACCEPT で扱う）。
+- CSM の基準値（太陽 45 度、`-Deterministic`・旋回 20 度/秒・エポックから 400 フレーム。標本は読み込み完了後の最初のフレームで固定、旋回で視野から出た標本は pairs に入らない）:
+
+  | 視点 | probes | frames | pairs | mean_abs_delta | changed_ratio | flip_ratio | partial_ratio | mean_texel_mm | 範囲外の割合 |
+  |---|---|---|---|---|---|---|---|---|---|
+  | default | 43329 | 399 | 12056171 | 0.000037 | 0.000514 | 0.000001 | 0.014405 | 21.103 | 0 |
+  | near | 37786 | 399 | 4852614 | 0.001070 | 0.011623 | 0.000014 | 0.079195 | 13.434 | 0 |
+  | low | 28967 | 399 | 1926831 | 0.000510 | 0.005402 | 0.000042 | 0.064247 | 13.884 | 0 |
+
+  3 視点とも pairs は 1000 以上、partial_ratio は 0 より大きい（影の縁が標本に入っている）。near が最も揺れる（changed 1.2%）。起動画面の大きな球の自転など本当に動く影は CSM・VSM で同じ分だけ入る。
+- Notes: (1) 標本は 1 画素おきではなく 4 画素おきの格子の中央の画素。範囲外（影の範囲の外）は 3 視点とも 0 なので mean_texel_mm に混ざっていない。(2) |Δv| の和は 1/4096 単位の固定小数点で数える（1 組あたり最大 1.2e-4 の丸め）。 (3) 決定的でない起動の固定は「起動から 300 回目の実行」で、読み込みの完了を知る手段が無い近似。 (4) 画面の大きさが変わると標本の対応が崩れるので、以後は測らない。
+- Next: VTG8-VSM-SAMPLE で VSM の可視度を同じ標本・同じ run で測る（`method=vsm` の行）。

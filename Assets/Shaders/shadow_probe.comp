@@ -1,0 +1,187 @@
+﻿#version 450
+
+// ========================================
+// 影の標本の計算シェーダー（--shadow-probe の測定用。Release には入らない）
+//
+// 画面の格子（params.control.w 画素おき）の空でない画素から、ワールドの位置と法線を固定の標本点として保存し（mode 0）、
+// 以後の毎フレーム、各標本点を今のカメラへ投影して、画面の中にあり深度が一致するものだけを「見えている」とし、
+// 太陽の可視度を照明と同じ関数（Common/SunShadowCsm.glsl の CalculateShadow）で求めて集計する（mode 1）。
+// 太陽と物が止まっていれば、ワールドに固定した点の可視度はカメラが動いても変わらないはずなので、
+// 前のフレームとの変化がそのまま影の揺れになる。画面の画像の差（視点の動き・TAA を含む）では測らない。
+//
+// 標本 1 点の担当は 1 スレッド（書き込み先の標本・前の可視度は担当だけが触る）。集計は stats へのアトミックの加算。
+// stats の語（C++ 側の ShadowProbe::StatWord と同じ並び）:
+//   0 = 見えていた標本の数、1 = 前のフレームでも見えていた標本の組の数、2 = |Δv| の和（1/4096 単位）、
+//   3 = |Δv| > 1/64 の数、4 = |Δv| >= 0.5 の数、5 = 0.02 < v < 0.98 の数、6 = 使ったカスケードの texel の一辺の和（1/16 mm 単位）、
+//   7 = 見えていたうち影の範囲（最初の分割〜最後の分割）の外の数、8 = 固定した標本の数（mode 0 のとき）
+// ========================================
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(std140, set = 0, binding = 0) uniform ProbeParams
+{
+    mat4 invViewProjection;
+    mat4 viewProjection;
+    mat4 lightView[4];
+    mat4 lightProjection[4];
+    vec4 shadowSplitDistances[2]; // x/y/z/w = 分割 0..3、[1].x = 分割 4
+    vec4 cameraPosition;
+    vec4 cameraForward;           // xyz = 単位ベクトル
+    uvec4 screen;                 // x = 画面の幅、y = 高さ、z = 格子の横の数、w = 縦の数
+    uvec4 control;                // x = モード（0 = 標本を固定、1 = 測る）、y = カスケード数、z = 影の有効フラグ、w = 格子の間隔（画素）
+    vec4 tuning;                  // x = 深度の一致の許容（線形の深度に対する比）
+} params;
+
+layout(set = 0, binding = 1) uniform sampler2D gbufferDepth;
+layout(set = 0, binding = 2) uniform sampler2D gbufferNormal;
+layout(set = 0, binding = 3) uniform sampler2DArray shadowMap;
+
+struct ProbePoint
+{
+    vec4 position; // xyz = ワールドの位置、w = 1 なら有効
+    vec4 normal;   // xyz = ワールドの法線（単位）
+};
+
+layout(std430, set = 0, binding = 4) buffer ProbePoints
+{
+    ProbePoint points[];
+};
+
+// 前のフレームの可視度（見えていなかったときは負）
+layout(std430, set = 0, binding = 5) buffer ProbeState
+{
+    float prevVisibility[];
+};
+
+layout(std430, set = 0, binding = 6) buffer ProbeStats
+{
+    uint stats[];
+};
+
+#define SUN_CSM_SHADOW_MAP shadowMap
+#define SUN_CSM_LIGHT_VIEW(i) params.lightView[i]
+#define SUN_CSM_LIGHT_PROJECTION(i) params.lightProjection[i]
+#define SUN_CSM_SPLIT_DISTANCE(i) ((i) < 4u ? params.shadowSplitDistances[0][i] : params.shadowSplitDistances[1][(i) - 4u])
+#define SUN_CSM_CAMERA_POSITION params.cameraPosition.xyz
+#define SUN_CSM_CAMERA_FORWARD params.cameraForward.xyz
+#define SUN_CSM_ENABLED (params.control.z != 0u)
+#define SUN_CSM_CASCADE_COUNT params.control.y
+#define SUN_CSM_HARD_SHADOW_MODE false
+// 計算シェーダーでは暗黙の微分が使えないので、影の地図は mip 0 を明示して読む
+#define SUN_CSM_SAMPLE_DEPTH(uvw) textureLod(SUN_CSM_SHADOW_MAP, (uvw), 0.0).r
+#include "Common/SunShadowCsm.glsl"
+
+const uint STAT_VISIBLE = 0u;
+const uint STAT_PAIRS = 1u;
+const uint STAT_DELTA_SUM = 2u;
+const uint STAT_CHANGED = 3u;
+const uint STAT_FLIP = 4u;
+const uint STAT_PARTIAL = 5u;
+const uint STAT_TEXEL_SUM = 6u;
+const uint STAT_OUT_OF_RANGE = 7u;
+const uint STAT_CAPTURED = 8u;
+
+const float DELTA_SCALE = 4096.0;
+const float TEXEL_SCALE = 16.0;
+
+vec3 ReconstructWorldPosition(vec2 uv, float depth)
+{
+    vec4 clipPos = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 worldPos = params.invViewProjection * clipPos;
+    return worldPos.xyz / worldPos.w;
+}
+
+void main()
+{
+    if (gl_GlobalInvocationID.x >= params.screen.z || gl_GlobalInvocationID.y >= params.screen.w)
+    {
+        return;
+    }
+    const uint index = gl_GlobalInvocationID.y * params.screen.z + gl_GlobalInvocationID.x;
+    const ivec2 size = ivec2(params.screen.xy);
+
+    if (params.control.x == 0u)
+    {
+        // 標本の固定: 格子の画素の中央に近い画素の深度・法線から、ワールドの位置と法線を保存する
+        const uint stride = params.control.w;
+        const ivec2 pixel = ivec2(min(gl_GlobalInvocationID.x * stride + stride / 2u, params.screen.x - 1u),
+                                  min(gl_GlobalInvocationID.y * stride + stride / 2u, params.screen.y - 1u));
+        const float depth = texelFetch(gbufferDepth, pixel, 0).r;
+        const vec3 normal = texelFetch(gbufferNormal, pixel, 0).xyz;
+        const float normalLength = length(normal);
+        prevVisibility[index] = -1.0;
+        if (depth > 0.0 && depth < 1.0 && normalLength > 0.5)
+        {
+            const vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
+            points[index].position = vec4(ReconstructWorldPosition(uv, depth), 1.0);
+            points[index].normal = vec4(normal / normalLength, 0.0);
+            atomicAdd(stats[STAT_CAPTURED], 1u);
+        }
+        else
+        {
+            points[index].position = vec4(0.0);
+            points[index].normal = vec4(0.0);
+        }
+        return;
+    }
+
+    // 測る: 標本点を今のカメラへ投影し、画面の中で、その画素の深度と一致するときだけ見えているとする
+    const vec4 probe = points[index].position;
+    const float previous = prevVisibility[index];
+    float visibility = -1.0;
+    if (probe.w > 0.5)
+    {
+        const vec4 clip = params.viewProjection * vec4(probe.xyz, 1.0);
+        if (clip.w > 1.0e-6)
+        {
+            const vec3 ndc = clip.xyz / clip.w;
+            const vec2 uv = ndc.xy * 0.5 + 0.5;
+            if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0))) && ndc.z >= 0.0 && ndc.z <= 1.0)
+            {
+                const ivec2 pixel = min(ivec2(uv * vec2(size)), size - 1);
+                const float depth = texelFetch(gbufferDepth, pixel, 0).r;
+                if (depth > 0.0 && depth < 1.0)
+                {
+                    // 線形の深度（カメラ前方への距離）で、標本点とその画素に写っている点を比べる
+                    const vec3 seen = ReconstructWorldPosition((vec2(pixel) + 0.5) / vec2(size), depth);
+                    const vec3 forward = params.cameraForward.xyz;
+                    const float probeDepth = dot(probe.xyz - params.cameraPosition.xyz, forward);
+                    const float seenDepth = dot(seen - params.cameraPosition.xyz, forward);
+                    if (probeDepth > 0.0 && seenDepth > 0.0 && abs(probeDepth - seenDepth) <= params.tuning.x * seenDepth)
+                    {
+                        visibility = clamp(CalculateShadow(probe.xyz, points[index].normal.xyz), 0.0, 1.0);
+
+                        // 使ったカスケードの texel の一辺。ブレンド帯は手前のカスケード、影の範囲の外は最後のカスケードで数える
+                        const uint cascade = SelectShadowCascade(probeDepth);
+                        const float texelMm = ShadowCascadeTexelMeters(cascade) * 1000.0;
+                        atomicAdd(stats[STAT_VISIBLE], 1u);
+                        atomicAdd(stats[STAT_TEXEL_SUM], uint(texelMm * TEXEL_SCALE + 0.5));
+                        if (visibility > 0.02 && visibility < 0.98)
+                        {
+                            atomicAdd(stats[STAT_PARTIAL], 1u);
+                        }
+                        if (probeDepth < GetShadowSplitDistance(0u) || probeDepth > GetShadowSplitDistance(4u))
+                        {
+                            atomicAdd(stats[STAT_OUT_OF_RANGE], 1u);
+                        }
+                        if (previous >= 0.0)
+                        {
+                            const float delta = abs(visibility - previous);
+                            atomicAdd(stats[STAT_PAIRS], 1u);
+                            atomicAdd(stats[STAT_DELTA_SUM], uint(delta * DELTA_SCALE + 0.5));
+                            if (delta > 1.0 / 64.0)
+                            {
+                                atomicAdd(stats[STAT_CHANGED], 1u);
+                            }
+                            if (delta >= 0.5)
+                            {
+                                atomicAdd(stats[STAT_FLIP], 1u);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    prevVisibility[index] = visibility;
+}

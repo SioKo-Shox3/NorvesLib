@@ -87,6 +87,7 @@ namespace NorvesLib::Core::Rendering
         coordSettings.VisibilityBuffer = settings.VisibilityBuffer;
         coordSettings.SwRaster = settings.SwRaster;
         coordSettings.SwRasterMaxPixels = settings.SwRasterMaxPixels;
+        coordSettings.bShadowProbe = settings.bShadowProbe;
 
         if (!m_RenderingCoordinator.Initialize(coordSettings))
         {

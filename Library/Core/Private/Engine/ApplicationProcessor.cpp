@@ -1003,6 +1003,7 @@ namespace NorvesLib::Core::Engine
         Rendering::VisibilityBufferMode visibilityBufferMode = Rendering::VisibilityBufferMode::On;
         Rendering::SwRasterMode swRasterMode = Rendering::SwRasterMode::On;
         float swRasterMaxPixels = Rendering::DefaultSwRasterMaxPixels;
+        bool bShadowProbe = false;
         Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
         bool bToneMapOperatorRequested = false;
         float filmGrainStrength = 0.0f;
@@ -1170,6 +1171,13 @@ namespace NorvesLib::Core::Engine
             else if (bMatchedSwRasterMaxPixels)
             {
                 LOG_WARNING("ApplicationProcessor の起動引数 --sw-raster-max-px を無視します: 値は正の数にしてください");
+            }
+
+            // --shadow-probe: 太陽の影の標本のパスを足す（統計が有効な構成のみ。Release では無視される）
+            if (args[i] == TEXT("--shadow-probe"))
+            {
+                bShadowProbe = true;
+                LOG_INFO("ApplicationProcessor runtime option shadow_probe=1");
             }
 
             bool bMatchedToneMap = false;
@@ -1340,6 +1348,7 @@ namespace NorvesLib::Core::Engine
             renderSettings.VisibilityBuffer = visibilityBufferMode;
             renderSettings.SwRaster = swRasterMode;
             renderSettings.SwRasterMaxPixels = swRasterMaxPixels;
+            renderSettings.bShadowProbe = bShadowProbe;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
             {

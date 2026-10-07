@@ -276,6 +276,28 @@ float SampleShadowCascade(vec3 worldPos, vec3 normal, uint cascadeIndex)
                       cascadeIndex);
 }
 
+// カメラ前方への距離から、使うカスケードの番号を選ぶ（CalculateShadow の選び方。範囲外の距離は 3 を返す）。
+uint SelectShadowCascade(float receiverDistance)
+{
+    uint cascadeIndex = 3u;
+    for (uint candidate = 0u; candidate < 3u; ++candidate)
+    {
+        if (receiverDistance < GetShadowSplitDistance(candidate + 1u))
+        {
+            cascadeIndex = candidate;
+            break;
+        }
+    }
+    return cascadeIndex;
+}
+
+// カスケードの影の地図の 1 texel の、ワールドでの一辺（m）。方向光は平行投影なので受け側の位置によらない。
+float ShadowCascadeTexelMeters(uint cascadeIndex)
+{
+    float uPerMeter = max(0.5 * abs(SUN_CSM_LIGHT_PROJECTION(cascadeIndex)[0][0]), 1.0e-8);
+    return (1.0 / float(textureSize(SUN_CSM_SHADOW_MAP, 0).x)) / uPerMeter;
+}
+
 float CalculateShadow(vec3 worldPos, vec3 normal)
 {
     if (!HasValidCascadedShadowData())
@@ -299,15 +321,7 @@ float CalculateShadow(vec3 worldPos, vec3 normal)
         return 1.0;
     }
 
-    uint cascadeIndex = 3u;
-    for (uint candidate = 0u; candidate < 3u; ++candidate)
-    {
-        if (receiverDistance < GetShadowSplitDistance(candidate + 1u))
-        {
-            cascadeIndex = candidate;
-            break;
-        }
-    }
+    uint cascadeIndex = SelectShadowCascade(receiverDistance);
 
     float shadow = SampleShadowCascade(worldPos, normal, cascadeIndex);
     if (cascadeIndex < 3u)
