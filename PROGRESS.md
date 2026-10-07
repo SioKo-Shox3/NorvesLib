@@ -1172,3 +1172,5 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 
 - run37631295354はRelease全bundle buildとSampler両構成の旧出力比較が通過し、CPU 68/74成功。6失敗は4原因：固定/可変inventoryで同じkeyの二重対応を拒否し損ねる退行、静的祖先の行列積の未初期化、混在WAV fixtureの非対応8kHz、追加spec fixtureのString::replaceによる埋込NUL。重複key拒否・明示ゼロ初期化・48kHz fixture・substr連結へ修正した。再実行は未確認。
 - 検証コマンドを増やさず、既存CPU契約と分離rig実CLIをRelease build直後へ移した。Debug buildを待たず実行失敗が分かる順にする。
+
+- run37636419605はRelease build成功、CPU72/74成功。重複inventory・可変追加・静的frame Import/Runtimeは通過。残るWire試験は非対応matrixを使ったpitch fixtureを同じ回転のTRSへ訂正。混在rigの初回cookはstaged_captureで停止し、下位理由が失われていたためlogical pathとpackage検証の理由を保持する。検証条件は緩めず、原因の確定を続ける。

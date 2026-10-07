@@ -161,7 +161,7 @@ namespace
         RIG_CHECK(!S::ParseClipBankV1(bad, parsed, report, {}, H::Profile) && parsed.GetData() == saved);
         auto pitchedJson =
             F::Replace(H::Armature(f.Json), R"("translation":[2,3,0],"rotation":[0,0,1,0],"scale":[2,2,2])",
-                       R"("matrix":[1,0,0,0,0,0,1,0,0,-1,0,0,0,0,0,1])");
+                       R"("rotation":[0.7071067811865475,0,0,0.7071067811865475])");
         pitchedJson =
             F::Replace(pitchedJson, R"("translation":[-1,4,1],"rotation":[1,0,0,0])", R"("translation":[0,0,0])");
         const auto pitched = H::Import(pitchedJson);

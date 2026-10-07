@@ -417,7 +417,16 @@ namespace NorvesLib::Tools::AssetCook
                 if (!Read(plan.Packages[i], bytes) ||
                     !ValidateCookOutputPackage(row.Reference, bytes, row.Package, error))
                 {
-                    return Fail(error, "output_package_invalid");
+                    const auto detail = error;
+                    Fail(error, "output_package_invalid");
+                    error += ": ";
+                    error += row.Reference.LogicalPath;
+                    if (!detail.empty())
+                    {
+                        error += ": ";
+                        error += detail;
+                    }
+                    return false;
                 }
                 row.Reference.SourceHashHex = FormatAssetHashHex(row.Reference.SourceHash);
                 row.Reference.CookedHashHex = FormatAssetHashHex(row.Reference.CookedHash);

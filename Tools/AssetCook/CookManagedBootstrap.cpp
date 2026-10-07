@@ -323,7 +323,16 @@ namespace NorvesLib::Tools::AssetCook
                     !CaptureStagedCookOutputRecord(plans[i], stages[i], fragment, record, op.Error) ||
                     record.Outputs.empty() || (request.bLegacyTextureManifest && record.Outputs.size() != 1))
                 {
-                    return Fail(op.Error, "staged_capture");
+                    const auto detail = op.Error;
+                    Fail(op.Error, "staged_capture");
+                    op.Error += ": ";
+                    op.Error += plans[i].Context.Request.LogicalPath;
+                    if (!detail.empty())
+                    {
+                        op.Error += ": ";
+                        op.Error += detail;
+                    }
+                    return false;
                 }
                 if (!AddCookReportOutputs(request, i, record.Outputs, op.Error))
                 {
