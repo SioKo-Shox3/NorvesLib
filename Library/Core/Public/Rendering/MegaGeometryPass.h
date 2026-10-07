@@ -3,6 +3,7 @@
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/HiZPyramidPass.h"
 #include "Rendering/IViewPass.h"
+#include "Rendering/MegaGeometry/MegaGeometryCullUniforms.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/SwRasterMode.h"
@@ -21,6 +22,46 @@ namespace NorvesLib::Core::Rendering
     class VisibilityResolvePass;
     struct MegaGeometryPassCommand;
     class MegaGeometryResources;
+
+    /** @brief 影の表（binding 18）の印: 影を落とす（bCastShadow）・境界（WorldBounds）が分かる */
+    inline constexpr uint32_t MegaGeometryShadowFlagCaster = 1u;
+    inline constexpr uint32_t MegaGeometryShadowFlagBounds = 2u;
+
+    /**
+     * @brief 影の表の1要素（GPU送信用。vsm_mega_cull.comp の ShadowInstance と一致）。インスタンスの表と同じ並び（同じ添字）
+     *
+     * 影を落とすインスタンスだけが、影の判定のワークグループ（64クラスタ）を持つ。FirstGroup は、そのインスタンスより前の
+     * 影を落とすインスタンスのワークグループの数の合計（落とさないインスタンスは次のインスタンスと同じ値）。
+     */
+    struct alignas(16) MegaGeometryShadowInstance
+    {
+        float BoundsSphere[4]; // インスタンスの境界（ワールド）の中心 xyz + 半径
+        uint32_t FirstGroup;   // 影の判定の最初のワークグループの通し番号
+        uint32_t Flags;        // MegaGeometryShadowFlag*
+        uint32_t Reserved[2];
+    };
+    static_assert(sizeof(MegaGeometryShadowInstance) == 32, "vsm_mega_cull.comp の ShadowInstance と大きさが一致しません");
+
+    /**
+     * @brief VSM の投影物のカリングが読む、直前の RecordFrameCommand の入力（無ければ bValid が false）
+     *
+     * バッファはどれも host-visible で、ホストが書いたまま（このフレームの記録が終わるまで書き換わらない）。主の経路が
+     * 使うものと同じバッファを読み取りだけで使うので、状態の遷移は要らない。
+     */
+    struct MegaGeometryShadowCasterInputs
+    {
+        bool bValid = false;
+        /** @brief インスタンスの表（GPUMegaInstance[]）と、同じ並びの影の表（MegaGeometryShadowInstance[]） */
+        RHI::BufferPtr InstanceBuffer;
+        RHI::BufferPtr ShadowInstanceBuffer;
+        /** @brief ページの表（ジオメトリのページの常駐。GeometryPageTable::Entry の並び） */
+        RHI::BufferPtr PageTableBuffer;
+        uint32_t InstanceCount = 0;
+        /** @brief 影を落とすインスタンスの数 */
+        uint32_t CasterCount = 0;
+        /** @brief 影の判定の全ワークグループの数（影を落とすインスタンスのクラスタ ÷ 64 の切り上げの合計） */
+        uint32_t TotalGroups = 0;
+    };
 
     /**
      * @brief MegaGeometryパス設定
@@ -347,47 +388,16 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle GetDrawCountBufferHandle() const { return m_DrawCountBufferHandle; }
         RGResourceHandle GetMegaGeometryCompleteHandle() const { return m_MegaGeometryCompleteHandle; }
 
-    private:
         /**
-         * @brief カリング用ユニフォームデータ（GPU送信用。cluster_cull.comp の CullUniforms と一致）
+         * @brief VSM の投影物（bCastShadow のインスタンス）のカリングの入力。直前の RecordFrameCommand が作る
          *
-         * インスタンスごとに変わる値（ワールド変換・LODの球・クラスタ数）はインスタンスの表にあり、ここには無い。
+         * Setup（フレームの最初）で無効に戻り、記録がインスタンスの表と影の表を書けたときだけ有効になる。
          */
-        struct alignas(16) CullUniformData
-        {
-            float ViewMatrix[16];
-            float ProjectionMatrix[16];
-            float CameraPosition[4];   // xyz + pad
-            float FrustumPlanes[6][4]; // 6 planes, each (nx, ny, nz, d)
-            uint32_t InstanceCount;    // インスタンスの表の要素数
-            uint32_t TotalGroupCount;  // 全インスタンスのワークグループ（64クラスタ）の数
-            float LODBias;
-            float ScreenHeight;     // スクリーン高さ（ピクセル）
-            float ProjectionFactor; // screenHeight / (2 * tan(fov/2))
-            uint32_t HiZWidth;      // Hi-Zの元になった深度の幅（Hi-Zのミップ0はその半分）
-            uint32_t HiZHeight;     // Hi-Zの元になった深度の高さ（Hi-Zのミップ0はその半分）
-            uint32_t HiZMipCount;   // ミップレベル数
-            uint32_t bHiZEnabled;   // Hi-Z有効フラグ（1=有効, 0=無効）
-            uint32_t DebugPayloadMode; // firstInstanceへ書き込むデバッグpayload種別
-            uint32_t CullPass;      // 0=従来（遮蔽の判定なし）, 1=1パス目, 2=2パス目
-            uint32_t bStatsEnabled; // 1なら統計バッファへ数える
-            uint32_t SectionBase;   // 区間の表・カウンタのうちこのパスの先頭（1パス目は0、2パス目は区間の数）
-            uint32_t VisibleReadStamp;  // 1パス目が「前のフレームで見えた」とみなす印の値（前のフレームの2パス目が書いた値）
-            uint32_t VisibleWriteStamp; // 2パス目が見えたクラスタへ書く印の値
-            uint32_t BvhStage;      // BVH のたどり: 節の判定の段の番号（BvhStageClusters なら葉のクラスタの判定。平らな判定では使わない）
-            uint32_t BvhInputBase;  // この段の入力の列の先頭（要素）
-            uint32_t BvhNextBase;   // 次の段の列の先頭
-            uint32_t BvhLeafBase;   // 葉の列の先頭
-            uint32_t BvhRootCount;  // BVH を持つインスタンスの数（インスタンスの表の先頭からその数。段0の入力の数）
-            uint32_t PageRequestCapacity; // ページの要求の列の容量（0 ならこのフレームは要求を書かない）
-            uint32_t bSwRasterEnabled;    // 1 ならソフトウェアラスタの一覧へ積む（ハードも描く）。2 なら積めたクラスタのハードのコマンドを空振りにする
-            uint32_t SwRasterCapacity;    // パスごとのソフトの一覧の容量（クラスタ数）
-            float SwRasterMaxPixels;      // 振り分ける画面上の半径（画素）のしきい値
-            float SwRasterNearPlane;      // 近平面までの距離
-        };
-        // ソフトウェアラスタの 4 語は、行列 2 つ・視点・平面 6 つ・語 21 個の後ろに並ぶ（cluster_cull.comp の CullUniforms と同じ std140 の位置）
-        static_assert(offsetof(CullUniformData, bSwRasterEnabled) == (16 + 16 + 4 + 24 + 21) * sizeof(uint32_t),
-                      "cluster_cull.comp の CullUniforms と並びが一致しません");
+        const MegaGeometryShadowCasterInputs &GetShadowCasterInputs() const { return m_ShadowCasterInputs; }
+
+    private:
+        /** @brief カリング用ユニフォームデータ（Common/MegaGeometryCull.glsl の CullUniforms と一致。VSM の投影物のカリングと同じ構造を使う） */
+        using CullUniformData = MegaGeometry::CullUniformData;
 
         /**
          * @brief インスタンスの表の1要素（GPU送信用。cluster_cull.comp・megageometry.vert の MegaInstance と一致）
@@ -424,6 +434,9 @@ namespace NorvesLib::Core::Rendering
             MegaGeometry::MegaMeshHandle Handle;
             float WorldMatrix[16];
             float PreviousWorldMatrix[16];
+            // 影: 影を落とすか（プロキシの bCastShadow）と、ワールドの境界（プロキシの WorldBounds。半径が 0 以下なら分からない）
+            bool bCastShadow = true;
+            BoundingSphere WorldBounds;
         };
 
         /**
@@ -472,6 +485,7 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr InstanceBuffer; // インスタンスの表（host-visible）
             uint32_t InstanceCapacity = 0; // 要素数
+            RHI::BufferPtr ShadowInstanceBuffer; // 影の表（インスタンスの表と同じ要素数。host-visible）
             RHI::BufferPtr SectionBuffer;  // 区間の表（uvec2: コマンドの先頭・最大数。host-visible）
             uint32_t SectionCapacity = 0;  // 要素数
             // ページの表（GeometryPageTable::Entry の並び。host-visible）。このフレームの常駐を固定して、
@@ -705,6 +719,9 @@ namespace NorvesLib::Core::Rendering
 
         // フレーム単位のインスタンスリスト
         Container::VariableArray<MegaMeshInstance> m_Instances;
+
+        // VSM の投影物のカリングの入力（Setup で無効に戻り、記録がバッファを書けたときに有効になる）
+        MegaGeometryShadowCasterInputs m_ShadowCasterInputs;
 
         // ビジビリティバッファのラスタへ渡す描画の写し（TakeVisibilityDrawPlan が取り出す）
         bool m_bVisibilityPlanEnabled = false;

@@ -968,6 +968,8 @@ namespace NorvesLib::Core::Rendering
         {
             auto virtualShadowMapPass = MakeUnique<VirtualShadowMapPass>(m_VsmPoolPages);
             virtualShadowMapPass->SetSkinningComputePass(skinningComputePassPtr);
+            // MegaGeometry の投影物（bCastShadow のインスタンス）を、展開の前に段ごとにカリングする（主の経路の入力を読み取りだけで使う）
+            virtualShadowMapPass->SetMegaGeometryPass(megaGeometryPassPtr);
             AddPass(std::move(virtualShadowMapPass));
         }
 

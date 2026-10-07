@@ -116,6 +116,8 @@ namespace
         uint32_t SwRasterCapacity;
         float SwRasterMaxPixels;
         float SwRasterNearPlane;
+        uint32_t OrthoLod; // 0 = 透視（主の経路）。1 は VSM の影（このテストは使わない）
+        uint32_t OrthoReserved[3];
     };
 
     // MegaInstance（192 バイト）と同じ並び

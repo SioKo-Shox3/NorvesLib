@@ -7,6 +7,7 @@
 #include "Rendering/RenderGraph/RenderGraphResources.h"
 #include "Math/MatrixUtils.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/MegaGeometryPass.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SkinningComputePass.h"
@@ -152,6 +153,14 @@ namespace NorvesLib::Core::Rendering
         }
         m_Raster.reset();
         m_Casters.reset();
+        m_MegaList.reset();
+        m_MegaDirtyBits.reset();
+        if (m_MegaCull)
+        {
+            m_MegaCull->Shutdown();
+        }
+        m_MegaCull.reset();
+        m_MegaReporter.reset();
         for (StatsSlot& slot : m_StatsSlots)
         {
             slot = StatsSlot{};
@@ -205,6 +214,17 @@ namespace NorvesLib::Core::Rendering
         }
         m_Casters = Container::MakeUnique<VirtualShadowMapCasterState>();
 
+        // MegaGeometry の投影物のカリング。作れなくても VSM は動く（MegaGeometry の投影物が載らないだけ）
+        m_MegaCull = Container::MakeUnique<VirtualShadowMapMegaCull>();
+        if (!m_MegaCull->Initialize(m_Device, context.ShaderMgr))
+        {
+            m_MegaCull.reset();
+        }
+        else
+        {
+            m_MegaReporter = Container::MakeUnique<VirtualShadowMapMegaCullStatsReporter>();
+        }
+
         m_RasterReporter = Container::MakeUnique<VirtualShadowMapRasterStatsReporter>();
 
         const uint64_t poolBytes = VirtualShadowMap::PoolBytes(plan.Pages);
@@ -235,6 +255,24 @@ namespace NorvesLib::Core::Rendering
             m_Casters->Draws = m_Device->CreateBuffer(RHI::BufferDesc(
                 VirtualShadowMap::RasterDrawBytes(VirtualShadowMap::MAX_CASTER_CHUNKS), VirtualShadowMap::RasterDrawUsage(), false, "VsmRaster_Draws"));
             bCreated = m_Pool && m_PageTable && m_RequestBits && m_FreeList && m_Stats && m_DirtyList && m_Casters->Instances && m_Casters->Draws;
+            // MegaGeometry の投影物のカリングの出力の一覧と、dirty のページの階層（GPU が書く）。作れなければカリングだけを諦める
+            if (m_MegaCull)
+            {
+                m_MegaList = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::MegaCullListBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY),
+                                                                    VirtualShadowMap::MegaCullListUsage(),
+                                                                    false,
+                                                                    "VsmMega_List"));
+                m_MegaDirtyBits = m_Device->CreateBuffer(
+                    RHI::BufferDesc(VirtualShadowMap::MegaDirtyBitsBytes(), VirtualShadowMap::MegaDirtyBitsUsage(), false, "VsmMega_DirtyBits"));
+                if (!m_MegaList || !m_MegaDirtyBits)
+                {
+                    m_MegaList.reset();
+                    m_MegaDirtyBits.reset();
+                    m_MegaCull->Shutdown();
+                    m_MegaCull.reset();
+                    m_MegaReporter.reset();
+                }
+            }
         }
         catch (...)
         {
@@ -271,9 +309,12 @@ namespace NorvesLib::Core::Rendering
         m_bActive = true;
         const uint64_t rasterBytes = VirtualShadowMap::RasterInstanceBytes(VirtualShadowMap::RASTER_INSTANCE_CAPACITY) +
                                      VirtualShadowMap::RasterDrawBytes(VirtualShadowMap::MAX_CASTER_CHUNKS);
+        const uint64_t megaBytes = m_MegaCull ? VirtualShadowMap::MegaCullListBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY) +
+                                                    VirtualShadowMap::MegaDirtyBitsBytes()
+                                              : 0ull;
         if (m_Gpu)
         {
-            m_Gpu->SetShadowMapPoolBytes(poolBytes + rasterBytes);
+            m_Gpu->SetShadowMapPoolBytes(poolBytes + rasterBytes + megaBytes);
         }
 
         NORVES_LOG_INFO("VirtualShadowMapPass",
@@ -286,6 +327,9 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_INFO("VirtualShadowMapPass",
                         "VRAM_LEDGER vsm_raster mb=%.3f",
                         static_cast<double>(rasterBytes) / BytesPerMegabyte);
+        NORVES_LOG_INFO("VirtualShadowMapPass",
+                        "VRAM_LEDGER vsm_mega_cull mb=%.3f",
+                        static_cast<double>(megaBytes) / BytesPerMegabyte);
         m_bInitialized = true;
         return true;
     }
@@ -300,12 +344,14 @@ namespace NorvesLib::Core::Rendering
         m_StatsHandle = {};
         m_DirtyListHandle = {};
         m_SkinnedVerticesHandle = {};
+        m_MegaCompleteHandle = {};
         m_DepthHandle = {};
         m_bDeclared = false;
         m_bActive = false;
         m_bInitialFilled = false;
         m_bMarked = false;
         m_bRasterRecorded = false;
+        m_bMegaCullRecorded = false;
         m_LastCasterChunkCount = 0;
         m_bStatsLogged = false;
         m_FramesSinceStatsLog = 0;
@@ -332,6 +378,7 @@ namespace NorvesLib::Core::Rendering
         m_StatsHandle = {};
         m_DirtyListHandle = {};
         m_SkinnedVerticesHandle = {};
+        m_MegaCompleteHandle = {};
         m_DepthHandle = {};
         m_bDeclared = false;
 
@@ -387,6 +434,17 @@ namespace NorvesLib::Core::Rendering
             {
                 builder.Read(skinnedVertices, RHI::ResourceState::GenericRead);
                 m_SkinnedVerticesHandle = skinnedVertices;
+            }
+        }
+        // MegaGeometry の投影物のカリングは、主の経路のインスタンスの表・ページの表を読む。主のカリング（2 パス目まで）の記録が
+        // 済んだ後に並べるため、MegaGeometryPass の完了（論理資源）を読む。MegaGeometryPass が宣言していない構成（無効）では読まない
+        if (m_MegaPass)
+        {
+            const RGResourceHandle megaComplete = m_MegaPass->GetMegaGeometryCompleteHandle();
+            if (megaComplete.IsValid())
+            {
+                builder.Read(megaComplete, RHI::ResourceState::Common);
+                m_MegaCompleteHandle = megaComplete;
             }
         }
         builder.PreserveInsertionOrder();
@@ -563,6 +621,45 @@ namespace NorvesLib::Core::Rendering
         return bRecorded;
     }
 
+    bool VirtualShadowMapPass::RecordMegaCull(ViewRenderContext& context, uint64_t /*frameSerial*/)
+    {
+        if (!m_MegaCull || !m_MegaCull->IsReady() || !m_MegaPass || !m_MegaList || !m_MegaDirtyBits)
+        {
+            return false;
+        }
+        const MegaGeometryShadowCasterInputs& inputs = m_MegaPass->GetShadowCasterInputs();
+        if (!inputs.bValid || inputs.CasterCount == 0u || inputs.TotalGroups == 0u)
+        {
+            return false;
+        }
+
+        RHI::ICommandList* commandList = context.CommandList;
+        const RHI::BufferPtr megaBuffers[] = {m_MegaList, m_MegaDirtyBits};
+        for (const RHI::BufferPtr& buffer : megaBuffers)
+        {
+            commandList->BufferBarrier(buffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
+        }
+
+        VirtualShadowMapMegaCullDispatch megaDispatch;
+        megaDispatch.Clipmap = &context.PhysicalLighting.SunClipmap;
+        megaDispatch.PageTable = m_PageTable;
+        megaDispatch.Stats = m_Stats;
+        megaDispatch.DirtyBits = m_MegaDirtyBits;
+        megaDispatch.List = m_MegaList;
+        megaDispatch.Instances = inputs.InstanceBuffer;
+        megaDispatch.ShadowInstances = inputs.ShadowInstanceBuffer;
+        megaDispatch.MegaPageTable = inputs.PageTableBuffer;
+        megaDispatch.InstanceCount = inputs.InstanceCount;
+        megaDispatch.TotalGroups = inputs.TotalGroups;
+        const bool bRecorded = m_MegaCull->Record(commandList, megaDispatch);
+
+        for (const RHI::BufferPtr& buffer : megaBuffers)
+        {
+            commandList->BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
+        }
+        return bRecorded;
+    }
+
     void VirtualShadowMapPass::HarvestStats(StatsSlot& slot)
     {
         if (!slot.bPending || !slot.Mapped)
@@ -570,6 +667,13 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         slot.bPending = false;
+        // MegaGeometry の投影物のカリングの統計（記録したフレームだけ。60 回ごとに出す）
+        if (slot.bMegaCull && m_MegaReporter)
+        {
+            m_MegaReporter->Report(slot.Mapped[VirtualShadowMap::StatMegaInstances],
+                                   slot.Mapped[VirtualShadowMap::StatMegaClusters],
+                                   slot.Mapped[VirtualShadowMap::StatMegaOverflow]);
+        }
         // 展開の統計（投影物を描かない間は 0 のままで、何も出さない）
         if (m_RasterReporter)
         {
@@ -609,6 +713,7 @@ namespace NorvesLib::Core::Rendering
     {
         m_bMarked = false;
         m_bRasterRecorded = false;
+        m_bMegaCullRecorded = false;
         m_LastCasterChunkCount = 0;
         if (!m_bActive || !m_bDeclared || !m_Pages || !m_Raster || !m_Casters || !context.CommandList)
         {
@@ -669,6 +774,10 @@ namespace NorvesLib::Core::Rendering
         m_Pages->BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
         m_Raster->BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
         m_Casters->Uses.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+        if (m_MegaCull)
+        {
+            m_MegaCull->BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+        }
         m_Pages->Record(commandList, dispatch);
         m_bMarked = m_Pages->WasMarked();
 
@@ -679,6 +788,8 @@ namespace NorvesLib::Core::Rendering
         {
             CollectCasters(context);
             ReportCasters();
+            // MegaGeometry の投影物のカリング（展開の前。出力は VsmMega_List。主の経路のバッファには書かない）
+            m_bMegaCullRecorded = RecordMegaCull(context, frameSerial);
             if (!m_Casters->Chunks.empty())
             {
                 m_bRasterRecorded = RecordRaster(context, frameSerial);
@@ -693,6 +804,7 @@ namespace NorvesLib::Core::Rendering
             VirtualShadowMap::RecordStatsReadback(*commandList, m_Stats, slot.Buffer);
             slot.bPending = true;
             slot.FrameSerial = frameSerial;
+            slot.bMegaCull = m_bMegaCullRecorded;
         }
 
         // 宣言した状態（Common）へ戻す

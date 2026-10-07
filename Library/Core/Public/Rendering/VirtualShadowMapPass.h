@@ -5,6 +5,8 @@
 // 深度から要るページに印を付け・物理ページを割り当て・消去する（VirtualShadowMapPages。キャッシュは無く毎フレームすべて作り直す）。
 // その後、影を落とす手続きメッシュとスキニングの投影物を塊（128 三角形以下）の記録にして展開・描画し（VirtualShadowMapRaster）、
 // 物理ページへ深度を描く。集め方は CSM と同じ（VirtualShadowMapCasters.h）。照明はまだ CSM のまま。
+// MegaGeometry の投影物（bCastShadow のインスタンス）は、展開の前に VirtualShadowMapMegaCull が段ごとにカリングして
+// （インスタンス、段、クラスタ）の一覧を作る（主の経路の MegaGeometryPass の入力を読み取りだけで使い、主の経路のバッファには書かない）。
 //
 // 物理ページのプールは storage buffer（画像ではない）。1 ページ = 128×128 の uint32 = 64 KiB で、ページ順に詰め、ページの中は行順。
 // 値は光源の深度 [0,1]（0 が光源に近い）の float のビット（floatBitsToUint）で、何も無い texel は 1.0 のビット。
@@ -34,7 +36,10 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     class GpuResources;
+    class MegaGeometryPass;
     class SkinningComputePass;
+    class VirtualShadowMapMegaCull;
+    class VirtualShadowMapMegaCullStatsReporter;
     class VirtualShadowMapPages;
     class VirtualShadowMapRaster;
     class VirtualShadowMapRasterStatsReporter;
@@ -76,9 +81,10 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief 統計の語（uint32）の並び: 要求・割り当て・溢れ・描いたページの数・要求のあった段のビットの集合・
-         *        展開が描く塊の数・展開が書いたインスタンスの数・展開の容量を超えて書かなかったインスタンスの数
+         *        展開が描く塊の数・展開が書いたインスタンスの数・展開の容量を超えて書かなかったインスタンスの数・
+         *        MegaGeometry の投影物のカリングの（インスタンス、段）の数・書いたクラスタの数・容量を超えて書かなかったクラスタの数
          */
-        constexpr uint32_t STATS_WORD_COUNT = 8;
+        constexpr uint32_t STATS_WORD_COUNT = 11;
         constexpr uint64_t STATS_BYTES = static_cast<uint64_t>(STATS_WORD_COUNT) * sizeof(uint32_t);
         enum StatWord : uint32_t
         {
@@ -90,6 +96,9 @@ namespace NorvesLib::Core::Rendering
             StatRasterChunks = 5,
             StatRasterInstances = 6,
             StatRasterOverflow = 7,
+            StatMegaInstances = 8,
+            StatMegaClusters = 9,
+            StatMegaOverflow = 10,
         };
 
         /** @brief 統計のバッファの用途。計算で書き、読み戻しのコピーの元になる（TransferSrc が無いとコピーが検証に違反する） */
@@ -233,6 +242,10 @@ namespace NorvesLib::Core::Rendering
      * 毎フレームの記録: 要求・ページの表・統計を 0 にし、深度から印を付け（VsmMark）、物理ページを割り当て（VsmAllocate）、
      * dirty のページを 1.0 のビットで埋める（VsmClear）。続けて、影を落とす投影物の塊の記録を作り（CPU。ホストが書くバッファ）、
      * 段ごとにページへ展開し（VsmExpand）、物理ページへ深度を描く（VsmDraw）。投影物が無い・印付けをしなかったフレームは展開・描画を記録しない。
+     * MegaGeometry の投影物のカリングは、印付け・割り当て・消去の後・展開の前に VsmCullMega として記録する（SetMegaGeometryPass の相手が
+     * 今フレームに影を落とすインスタンスを持つときだけ）。出力は VsmMega_List（頭 4 語 = 選んだクラスタの数・溢れた数・判定を通った
+     * （インスタンス、段）の数・予約、続いて uvec4 = インスタンスの表の番号・段・クラスタの番号・予約）。統計の語 8〜10 を
+     * VSM_MEGA_CULL instances=<n> clusters=<n> overflow=<n> として 60 回ごとに出す。
      * 統計は数フレーム遅れで読み戻し、値が変わったとき（または 60 フレームごと）に
      * VSM_PAGES requested=<n> allocated=<n> overflow=<n> levels_used=<mask> を出す。投影物の集めた内訳は
      * VSM_CASTERS procedural_chunks=<n> skinned_chunks=<n> culled=<n> dropped=<n> skipped=<n> に出す（値が変わったとき・60 回ごと）。
@@ -257,6 +270,9 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief スキニングの投影物の取り出し元（同じ View のパス。null ならスキニングの投影物は描かない） */
         void SetSkinningComputePass(const SkinningComputePass* pass) { m_SkinningPass = pass; }
+        /** @brief MegaGeometry の投影物の取り出し元（同じ View の主の経路。null なら MegaGeometry の投影物はカリングしない） */
+        void SetMegaGeometryPass(const MegaGeometryPass* pass) { m_MegaPass = pass; }
+        const MegaGeometryPass* GetMegaGeometryPass() const { return m_MegaPass; }
 
         /** @brief 資源を作れて、このパスが動くか */
         bool IsActive() const { return m_bActive; }
@@ -273,6 +289,11 @@ namespace NorvesLib::Core::Rendering
         const RHI::BufferPtr& GetFreeList() const { return m_FreeList; }
         const RHI::BufferPtr& GetStats() const { return m_Stats; }
         const RHI::BufferPtr& GetDirtyList() const { return m_DirtyList; }
+        /** @brief MegaGeometry の投影物のカリングの出力の一覧と、dirty のページの階層（作れなかったときは null） */
+        const RHI::BufferPtr& GetMegaCullList() const { return m_MegaList; }
+        const RHI::BufferPtr& GetMegaDirtyBits() const { return m_MegaDirtyBits; }
+        /** @brief 直前の Execute が MegaGeometry の投影物のカリング（VsmCullMega）を記録したか */
+        bool WasMegaCullRecorded() const { return m_bMegaCullRecorded; }
         /** @brief 直前の Execute が印付けを記録したか（深度・有効なクリップマップ・カメラが揃ったとき） */
         bool WasMarked() const { return m_bMarked; }
         /** @brief 直前の Execute が展開・描画を記録したか（印付けを記録し、投影物の塊が 1 つ以上あったとき） */
@@ -295,6 +316,8 @@ namespace NorvesLib::Core::Rendering
             bool bPending = false;
             /** @brief 最後にこの枠へ写したフレームの通し番号（同じフレームの複数の Execute は同じ値） */
             uint64_t FrameSerial = 0;
+            /** @brief 写した Execute が MegaGeometry の投影物のカリングを記録したか（語 8〜10 が有効か） */
+            bool bMegaCull = false;
         };
 
         void Fallback(VirtualShadowMap::FallbackReason reason);
@@ -303,6 +326,8 @@ namespace NorvesLib::Core::Rendering
         void CollectCasters(ViewRenderContext& context);
         /** @brief 集めた塊を書き、展開 → 描画を記録する。バッファは Common から UnorderedAccess へ進めて、Common へ戻す */
         bool RecordRaster(ViewRenderContext& context, uint64_t frameSerial);
+        /** @brief MegaGeometry の投影物のカリングを記録する。バッファは Common から UnorderedAccess へ進めて、Common へ戻す */
+        bool RecordMegaCull(ViewRenderContext& context, uint64_t frameSerial);
         /** @brief 投影物の内訳（CasterStats）を、値が変わったとき・60 回ごとに VSM_CASTERS として出す */
         void ReportCasters();
         /** @brief 書き終えた枠の統計を読み、値が変わった・60 フレームたったときに VSM_PAGES を出す */
@@ -321,16 +346,24 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_FreeList;
         RHI::BufferPtr m_Stats;
         RHI::BufferPtr m_DirtyList;
+        /** @brief MegaGeometry の投影物のカリングの出力の一覧（GPU が書く）と、dirty のページの階層。カリングを作れた装置だけが持つ */
+        RHI::BufferPtr m_MegaList;
+        RHI::BufferPtr m_MegaDirtyBits;
         Container::TUniquePtr<VirtualShadowMapPages> m_Pages;
         /** @brief 展開の統計（語 5〜7）を VSM_RASTER の行にする（投影物を描くようになるまで 0 のままで、出さない） */
         Container::TUniquePtr<VirtualShadowMapRasterStatsReporter> m_RasterReporter;
         /** @brief 展開・描画（投影物の塊を物理ページへ描く）と、塊の記録・展開の出力のバッファ */
         Container::TUniquePtr<VirtualShadowMapRaster> m_Raster;
         Container::TUniquePtr<VirtualShadowMapCasterState> m_Casters;
+        /** @brief MegaGeometry の投影物のカリング（作れなかった装置は null。VSM 全体は CSM へ落とさない）と、その統計の報告 */
+        Container::TUniquePtr<VirtualShadowMapMegaCull> m_MegaCull;
+        Container::TUniquePtr<VirtualShadowMapMegaCullStatsReporter> m_MegaReporter;
         const SkinningComputePass* m_SkinningPass = nullptr;
+        const MegaGeometryPass* m_MegaPass = nullptr;
         StatsSlot m_StatsSlots[StatsSlotCount];
         bool m_bMarked = false;
         bool m_bRasterRecorded = false;
+        bool m_bMegaCullRecorded = false;
         uint32_t m_LastCasterChunkCount = 0;
         /** @brief 最後に出した統計（変わったときだけ出す）と、出してからのフレーム数 */
         uint32_t m_LoggedStats[4] = {};
@@ -344,6 +377,7 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_StatsHandle;
         RGResourceHandle m_DirtyListHandle;
         RGResourceHandle m_SkinnedVerticesHandle;
+        RGResourceHandle m_MegaCompleteHandle;
         RGTextureHandle m_DepthHandle;
         bool m_bDeclared = false;
         /** @brief プール・表を初期値で埋めたか（最初の実行で 1 回） */

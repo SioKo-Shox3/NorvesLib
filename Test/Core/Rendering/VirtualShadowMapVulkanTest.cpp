@@ -14,11 +14,18 @@
 //   ケース G（ページの表を直接書く）: 段 0 の 24 ページ（うち 1 ページは dirty でなく、触られない）と段 1 の 4 ページに、縁がページの中を斜めに通る
 //     大きな三角形（24 ページ以上をまたぐ）と、その縁をまたぐ遠い四角形を描き、全 texel が参照と一致すること。
 //     ケース H: インスタンスの容量が 1 足りないとき、描かずに溢れとして数え（物理ページは触らない）、ちょうど足りるときは描くこと。
+//   ケース J（MegaGeometry の投影物のカリング。vsm_dirty_mips.comp・vsm_mega_cull.comp）: 合成した完全二分木のクラスタを本番のカリングに通し、
+//     段の texel が 2 倍になるごとに選ばれるクラスタが粗くなり（葉 8・中間 4・2・根 1）、どの葉から根への道でもちょうど 1 つが選ばれること
+//     （自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）、インスタンスの判定（段の範囲・深度の範囲・dirty のページの階層）、
+//     出力の一覧の溢れ・統計を確かめる。dirty の階層は CPU の参照と全語一致する。
 // 参照は、段の境界・ページの境界・影の最大距離に近い曖昧な画素を深度の画像から除いて作るので、GPU の単精度との差で揺れない。
 // どのケースも Vulkan の validation error が 0 件。Vulkan デバイスが無い環境では 125（スキップ）を返す。
 #include "Container/Containers.h"
 #include "Math/Vector3.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/MegaGeometry/GeometryPageTable.h"
+#include "Rendering/MegaGeometry/MegaGeometryTypes.h"
+#include "Rendering/MegaGeometryPass.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/VirtualShadowMapCasters.h"
@@ -1685,6 +1692,618 @@ namespace
         return true;
     }
 
+    // ========================================
+    // ケース J: MegaGeometry の投影物のカリング（vsm_dirty_mips.comp・vsm_mega_cull.comp / VirtualShadowMapMegaCull）
+    // ========================================
+    //
+    // 合成した完全二分木のクラスタ（根 1・中間 2 と 4・葉 8 の 15 個。誤差は高さごとに 2 倍）を、本番のカリングに通す。
+    // 段 k の texel の一辺は 0.25 × 2^k（m）で、誤差は高さ h の texel（0.25 × 2^h）の 0.9 倍。
+    // 選ばれるのは「自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1」のクラスタなので、段 k は高さ k のクラスタ（葉 8・中間 4・2・根 1）になる。
+    // 段の texel が 2 倍になるごとに選ばれる高さが 1 つ上がり（粗くなり）、どの葉から根への道でもちょうど 1 つが選ばれる（一つの切り口）。
+    //
+    // インスタンス（添字 0〜5）と、ページの表（段 0〜3 の割り当て済みで dirty のページ・dirty でないページ）を組み合わせて、
+    // インスタンスの判定（段の範囲・深度の範囲・dirty のページ）とクラスタの判定を確かめる:
+    //   0: ライト空間 (16, 16)・全段で dirty のページに入る → 段 0〜3 で選ぶ（8 + 4 + 2 + 1 クラスタ）
+    //   1: (3016, 16)・段 0 の範囲（±2048 m）の外 → 段 1〜3 で選ぶ（4 + 2 + 1 クラスタ）
+    //   2: (16, 16)・影を落とさない → 何も選ばない
+    //   3: (716, 16)・範囲内だが、そのページは割り当て済みで dirty でない（段 0）→ 何も選ばない
+    //   4: (716, 16)・境界が大きく（半径 100 m）、段 0 では矩形が dirty のページ 1 つに触れる → 段 0 のインスタンスの判定を通るが、
+    //      クラスタ（そのページの外）は選ばれない（クラスタの判定でも dirty のページを見る）
+    //   5: (16, 16)・深度が範囲（±1000 m）の外 → 何も選ばない
+    // 判定を通った（インスタンス、段）は 4 + 3 + 1 = 8、選んだクラスタは 15 + 7 = 22。dirty の階層（全 mip のビット）は CPU で作った参照と全語一致する。
+    // 出力の一覧の容量が 5 のときは、選んだ数は 22・溢れは 17 で、書かれた 5 件はどれも期待の集合に入る。
+    namespace MegaCull
+    {
+        // Common/MegaGeometryCull.glsl の MegaInstance（192 バイト）と同じ並び
+        struct TestInstance
+        {
+            float World[16];
+            float PreviousWorld[16];
+            float LODSphere[4];
+            uint32_t ClusterInfo[4]; // アドレスの下位・上位、クラスタ数、最初のワークグループの番号
+            uint32_t DrawInfo[4];
+            uint32_t BvhInfo[4]; // BVH のアドレス（0）、節の数、ページの表の先頭は [3]
+        };
+        static_assert(sizeof(TestInstance) == 192, "MegaInstance と大きさが一致しません");
+
+        constexpr uint32_t ClusterCount = 15;
+        constexpr uint32_t LevelCount = 4;
+        constexpr float FirstTexelMeters = 0.25f;
+        constexpr uint32_t InstanceCount = 6;
+        constexpr uint32_t GeometryPageNone = 0xFFFFFFFFu;
+
+        struct InstanceSpec
+        {
+            double LightX;
+            double LightY;
+            double LightDepth;
+            bool bCaster;
+            float BoundsRadius;
+        };
+
+        const InstanceSpec Specs[InstanceCount] = {
+            {16.0, 16.0, 0.0, true, 6.0f},
+            {3016.0, 16.0, 0.0, true, 6.0f},
+            {16.0, 16.0, 0.0, false, 6.0f},
+            {716.0, 16.0, 0.0, true, 6.0f},
+            {716.0, 16.0, 0.0, true, 100.0f},
+            {16.0, 16.0, 5000.0, true, 6.0f},
+        };
+
+        // 木の高さ（葉 = 0、根 = 3）
+        uint32_t HeightOf(uint32_t index)
+        {
+            return index == 0u ? 3u : (index <= 2u ? 2u : (index <= 6u ? 1u : 0u));
+        }
+
+        void BuildClusters(Core::Rendering::MegaGeometry::GPUClusterData (&clusters)[ClusterCount])
+        {
+            namespace Mega = Core::Rendering::MegaGeometry;
+            for (uint32_t index = 0; index < ClusterCount; ++index)
+            {
+                const uint32_t height = HeightOf(index);
+                const uint32_t parent = index == 0u ? 0u : (index - 1u) / 2u;
+                Mega::GPUClusterData cluster{};
+                // 全クラスタが 1 つのページの中の小さな領域に入る（中心のずれは 1 m 以内、半径は 0.5〜2 m）
+                cluster.BoundsCenterX = (static_cast<float>(index % 3u) - 1.0f) * 0.5f;
+                cluster.BoundsCenterY = (static_cast<float>((index / 3u) % 3u) - 1.0f) * 0.5f;
+                cluster.BoundsCenterZ = 0.0f;
+                cluster.BoundsRadius = 0.5f + 0.5f * static_cast<float>(height);
+                cluster.ConeCutoff = -1.0f;
+                cluster.IndexCount = 3;
+                cluster.LODLevel = height;
+                cluster.LODError = 0.9f * FirstTexelMeters * static_cast<float>(1u << height);
+                cluster.Flags = Mega::GPU_CLUSTER_FLAG_BAKED_LOD;
+                if (index != 0u)
+                {
+                    const uint32_t parentHeight = HeightOf(parent);
+                    cluster.ParentCenterX = (static_cast<float>(parent % 3u) - 1.0f) * 0.5f;
+                    cluster.ParentCenterY = (static_cast<float>((parent / 3u) % 3u) - 1.0f) * 0.5f;
+                    cluster.ParentRadius = 0.5f + 0.5f * static_cast<float>(parentHeight);
+                    cluster.ParentError = 0.9f * FirstTexelMeters * static_cast<float>(1u << parentHeight);
+                    cluster.GroupId = parent;
+                }
+                else
+                {
+                    cluster.ParentError = 3.402823466e+38f;
+                    cluster.GroupId = 0xFFFFFFFFu; // 根
+                }
+                // ページ: 葉はページ 1、それ以外はページ 0。高さ 1 のクラスタを作ったグループ（子 = 葉）はページ 1、それより上の子はページ 0
+                cluster.PageId = height == 0u ? 1u : 0u;
+                cluster.ChildPageId = height == 0u ? Mega::INVALID_PAGE_ID : (height == 1u ? 1u : 0u);
+                clusters[index] = cluster;
+            }
+        }
+
+        // 段 level の texel の一辺（m）
+        float TexelMeters(uint32_t level)
+        {
+            return FirstTexelMeters * static_cast<float>(1u << level);
+        }
+
+        // 段 level で選ばれるべきクラスタの添字（高さ level のクラスタ）。葉のページが非常駐なら、段 0 は葉の代わりに高さ 1 のクラスタ
+        // （子のページが無いので、自分の誤差が許容を超えても自分を描く）
+        void ExpectedClusters(uint32_t level, Container::VariableArray<uint32_t>& out, bool bLeafPageResident = true)
+        {
+            out.clear();
+            const uint32_t height = (level == 0u && !bLeafPageResident) ? 1u : level;
+            for (uint32_t index = 0; index < ClusterCount; ++index)
+            {
+                if (HeightOf(index) == height)
+                {
+                    out.push_back(index);
+                }
+            }
+        }
+
+        struct Outcome
+        {
+            bool bRecorded = false;
+            uint32_t GroupCount = 0;
+            uint32_t Selected = 0;
+            uint32_t Overflow = 0;
+            uint32_t InstanceLevels = 0;
+            uint32_t StatInstances = 0;
+            uint32_t StatClusters = 0;
+            uint32_t StatOverflow = 0;
+            /** @brief 実行後のジオメトリのページの表の、ページ 0・1 の要求の印（カリングはページを要求しないので、どちらも 0 のまま） */
+            uint32_t PageRequestStamps[2] = {0xFFFFFFFFu, 0xFFFFFFFFu};
+            /** @brief 書かれた一覧（4 語 = インスタンスの表の番号・段・クラスタの番号・予約を、書いた件数だけ） */
+            Container::VariableArray<uint32_t> Entries;
+            Container::VariableArray<uint32_t> DirtyBits;
+        };
+
+        // ページ座標（絶対）
+        int64_t PageOf(double light, float pageMeters)
+        {
+            return static_cast<int64_t>(std::floor(light / static_cast<double>(pageMeters)));
+        }
+
+        // dirty の階層の参照（段ごとに、dirty のページの相対の座標から全 mip のビットを立てる）。ビットの番号は Common/VirtualShadowMapMegaCull.glsl と同じ
+        void SetExpectedBits(Container::VariableArray<uint32_t>& words, uint32_t level, int64_t relX, int64_t relY)
+        {
+            const uint32_t offsets[8] = {0u, 16384u, 20480u, 21504u, 21760u, 21824u, 21840u, 21844u};
+            for (uint32_t mip = 0; mip < 8u; ++mip)
+            {
+                const uint32_t width = VirtualShadowMap::TABLE_DIMENSION >> mip;
+                const uint32_t bit = level * VirtualShadowMap::MEGA_DIRTY_WORDS_PER_LEVEL * 32u + offsets[mip] +
+                                     static_cast<uint32_t>(relY >> mip) * width + static_cast<uint32_t>(relX >> mip);
+                words[bit >> 5u] |= 1u << (bit & 31u);
+            }
+        }
+
+        // 1 回の実行。listCapacity は出力の一覧の容量（クラスタの数）
+        bool Run(const DevicePtr& device,
+                 VirtualShadowMapMegaCull& cull,
+                 const VirtualShadowMapClipmap& clipmap,
+                 uint32_t listCapacity,
+                 uint64_t frameSerial,
+                 Outcome& outcome,
+                 Container::VariableArray<uint32_t>& expectedDirtyBits,
+                 bool bLeafPageResident = true)
+        {
+            namespace Mega = Core::Rendering::MegaGeometry;
+            outcome = Outcome{};
+
+            const ResourceUsage storage = ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
+            const BufferPtr pageTable = device->CreateBuffer(BufferDesc(VirtualShadowMap::PageTableBytes(), storage, true, "VsmMegaTestPageTable"));
+            const BufferPtr stats = device->CreateBuffer(
+                BufferDesc(VirtualShadowMap::STATS_BYTES, VirtualShadowMap::StatsBufferUsage() | ResourceUsage::ShaderRead, true, "VsmMegaTestStats"));
+            const BufferPtr dirtyBits = device->CreateBuffer(
+                BufferDesc(VirtualShadowMap::MegaDirtyBitsBytes(), VirtualShadowMap::MegaDirtyBitsUsage() | ResourceUsage::ShaderRead, true, "VsmMegaTestDirtyBits"));
+            const BufferPtr list = device->CreateBuffer(
+                BufferDesc(VirtualShadowMap::MegaCullListBytes(listCapacity), VirtualShadowMap::MegaCullListUsage() | ResourceUsage::ShaderRead, true, "VsmMegaTestList"));
+            const BufferPtr clusters = device->CreateBuffer(
+                BufferDesc(sizeof(Mega::GPUClusterData) * ClusterCount, ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress, true, "VsmMegaTestClusters"));
+            const BufferPtr instances = device->CreateBuffer(
+                BufferDesc(sizeof(TestInstance) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmMegaTestInstances"));
+            const BufferPtr shadowInstances = device->CreateBuffer(
+                BufferDesc(sizeof(MegaGeometryShadowInstance) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmMegaTestShadowInstances"));
+            const BufferPtr geometryPages = device->CreateBuffer(
+                BufferDesc(sizeof(Mega::GeometryPageTable::Entry) * 4u, ResourceUsage::StorageBuffer, true, "VsmMegaTestGeometryPages"));
+            if (!pageTable || !stats || !dirtyBits || !list || !clusters || !instances || !shadowInstances || !geometryPages)
+            {
+                return false;
+            }
+            const uint64_t clusterAddress = clusters->GetDeviceAddress();
+            if (clusterAddress == 0u)
+            {
+                return false;
+            }
+
+            // クラスタ
+            Mega::GPUClusterData gpuClusters[ClusterCount];
+            BuildClusters(gpuClusters);
+            {
+                void* mapped = clusters->Map(0u, sizeof(gpuClusters));
+                if (mapped == nullptr)
+                {
+                    return false;
+                }
+                std::memcpy(mapped, gpuClusters, sizeof(gpuClusters));
+                clusters->Unmap();
+            }
+            // ジオメトリのページの表: ページ 0 は常駐（区画 0）。ページ 1（葉）は bLeafPageResident が偽なら非常駐
+            {
+                Mega::GeometryPageTable::Entry entries[4] = {};
+                entries[1].Region = bLeafPageResident ? 0u : Mega::PAGE_NON_RESIDENT;
+                void* mapped = geometryPages->Map(0u, sizeof(entries));
+                if (mapped == nullptr)
+                {
+                    return false;
+                }
+                std::memcpy(mapped, entries, sizeof(entries));
+                geometryPages->Unmap();
+            }
+
+            // インスタンスの表と影の表
+            TestInstance instanceTable[InstanceCount] = {};
+            MegaGeometryShadowInstance shadowTable[InstanceCount] = {};
+            uint32_t totalGroups = 0;
+            for (uint32_t index = 0; index < InstanceCount; ++index)
+            {
+                const InstanceSpec& spec = Specs[index];
+                const Math::Vector3 position = clipmap.LightRight * static_cast<float>(spec.LightX) +
+                                               clipmap.LightUp * static_cast<float>(spec.LightY) +
+                                               clipmap.Direction * static_cast<float>(spec.LightDepth);
+                TestInstance& instance = instanceTable[index];
+                for (uint32_t axis = 0; axis < 4u; ++axis)
+                {
+                    instance.World[axis * 4u + axis] = 1.0f;
+                    instance.PreviousWorld[axis * 4u + axis] = 1.0f;
+                }
+                instance.World[12] = position.x;
+                instance.World[13] = position.y;
+                instance.World[14] = position.z;
+                instance.PreviousWorld[12] = position.x;
+                instance.PreviousWorld[13] = position.y;
+                instance.PreviousWorld[14] = position.z;
+                instance.ClusterInfo[0] = static_cast<uint32_t>(clusterAddress & 0xFFFFFFFFull);
+                instance.ClusterInfo[1] = static_cast<uint32_t>(clusterAddress >> 32);
+                instance.ClusterInfo[2] = ClusterCount;
+                instance.BvhInfo[3] = 0u;
+
+                MegaGeometryShadowInstance& shadow = shadowTable[index];
+                shadow.BoundsSphere[0] = position.x;
+                shadow.BoundsSphere[1] = position.y;
+                shadow.BoundsSphere[2] = position.z;
+                shadow.BoundsSphere[3] = spec.BoundsRadius;
+                shadow.FirstGroup = totalGroups;
+                if (spec.bCaster)
+                {
+                    shadow.Flags = MegaGeometryShadowFlagCaster | MegaGeometryShadowFlagBounds;
+                    totalGroups += 1u; // 15 クラスタ = 1 ワークグループ
+                }
+            }
+            {
+                void* mapped = instances->Map(0u, sizeof(instanceTable));
+                if (mapped == nullptr)
+                {
+                    return false;
+                }
+                std::memcpy(mapped, instanceTable, sizeof(instanceTable));
+                instances->Unmap();
+                mapped = shadowInstances->Map(0u, sizeof(shadowTable));
+                if (mapped == nullptr)
+                {
+                    return false;
+                }
+                std::memcpy(mapped, shadowTable, sizeof(shadowTable));
+                shadowInstances->Unmap();
+            }
+
+            // VSM のページの表: 0 で埋め、dirty のページ（割り当て済み | dirty）と、割り当て済みで dirty でないページを書く
+            expectedDirtyBits.assign(VirtualShadowMap::MegaDirtyBitsBytes() / sizeof(uint32_t), 0u);
+            {
+                Container::VariableArray<uint32_t> table(VirtualShadowMap::PageTableBytes() / sizeof(uint32_t), 0u);
+                uint32_t physical = 1u;
+                const auto writePage = [&](uint32_t level, int64_t pageX, int64_t pageY, bool bDirty) {
+                    const uint32_t torusX = VirtualShadowMapPageTorusAddress(pageX, VirtualShadowMap::TABLE_DIMENSION);
+                    const uint32_t torusY = VirtualShadowMapPageTorusAddress(pageY, VirtualShadowMap::TABLE_DIMENSION);
+                    table[level * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL + torusY * VirtualShadowMap::TABLE_DIMENSION + torusX] =
+                        VirtualShadowMap::PAGE_ENTRY_ALLOCATED | (bDirty ? VirtualShadowMap::PAGE_ENTRY_DIRTY : 0u) | (physical++);
+                    if (bDirty)
+                    {
+                        const VirtualShadowMapClipmapLevel& data = clipmap.Levels[level];
+                        SetExpectedBits(expectedDirtyBits, level, pageX - data.OriginPageX, pageY - data.OriginPageY);
+                    }
+                };
+                for (uint32_t level = 0; level < LevelCount; ++level)
+                {
+                    const float page = clipmap.Levels[level].PageMeters;
+                    writePage(level, PageOf(16.0, page), PageOf(16.0, page), true);
+                    if (level >= 1u)
+                    {
+                        writePage(level, PageOf(3016.0, page), PageOf(16.0, page), true);
+                    }
+                }
+                {
+                    const float page = clipmap.Levels[0].PageMeters;
+                    // インスタンス 3 のページ: 割り当て済みで dirty でない。インスタンス 4 の矩形に入る 1 ページ（x = 780）: dirty
+                    writePage(0u, PageOf(716.0, page), PageOf(16.0, page), false);
+                    writePage(0u, PageOf(780.0, page), PageOf(16.0, page), true);
+                }
+                void* mapped = pageTable->Map(0u, VirtualShadowMap::PageTableBytes());
+                if (mapped == nullptr)
+                {
+                    return false;
+                }
+                std::memcpy(mapped, table.data(), VirtualShadowMap::PageTableBytes());
+                pageTable->Unmap();
+            }
+            // 書かれたかを確かめるため、階層・統計・一覧は見張りの値で埋めておく（階層・一覧の頭・統計の語 8〜10 は記録が 0 にする）
+            for (const BufferPtr& buffer : {dirtyBits, stats, list})
+            {
+                uint32_t* mapped = static_cast<uint32_t*>(buffer->Map(0u, buffer->GetSize()));
+                if (mapped == nullptr)
+                {
+                    return false;
+                }
+                for (uint64_t word = 0; word < buffer->GetSize() / sizeof(uint32_t); ++word)
+                {
+                    mapped[word] = GarbageWord;
+                }
+                buffer->Unmap();
+            }
+            {
+                // 統計は呼ぶ前に 0（本番は割り当ての記録が 0 にする）
+                uint32_t* mapped = static_cast<uint32_t*>(stats->Map(0u, stats->GetSize()));
+                if (mapped == nullptr)
+                {
+                    return false;
+                }
+                std::memset(mapped, 0, static_cast<size_t>(stats->GetSize()));
+                stats->Unmap();
+            }
+
+            VirtualShadowMapMegaCullDispatch dispatch;
+            dispatch.Clipmap = &clipmap;
+            dispatch.PageTable = pageTable;
+            dispatch.Stats = stats;
+            dispatch.DirtyBits = dirtyBits;
+            dispatch.List = list;
+            dispatch.Instances = instances;
+            dispatch.ShadowInstances = shadowInstances;
+            dispatch.MegaPageTable = geometryPages;
+            dispatch.InstanceCount = InstanceCount;
+            dispatch.TotalGroups = totalGroups;
+
+            CommandListPtr commandList = device->CreateCommandList();
+            if (!commandList)
+            {
+                return false;
+            }
+            cull.BeginFrame(0u, frameSerial);
+            commandList->Begin();
+            const BufferPtr owned[] = {pageTable, stats, dirtyBits, list};
+            for (const BufferPtr& buffer : owned)
+            {
+                commandList->BufferBarrier(buffer, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, buffer->GetSize());
+            }
+            outcome.bRecorded = cull.Record(commandList.get(), dispatch);
+            for (const BufferPtr& buffer : owned)
+            {
+                commandList->BufferBarrier(buffer, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, buffer->GetSize());
+            }
+            commandList->End();
+            commandList->Submit(true);
+            device->WaitIdle();
+            outcome.GroupCount = cull.GetLastGroupCount();
+            if (!outcome.bRecorded)
+            {
+                return true;
+            }
+
+            {
+                const uint32_t* words = static_cast<const uint32_t*>(list->Map(0u, list->GetSize()));
+                if (words == nullptr)
+                {
+                    return false;
+                }
+                outcome.Selected = words[0];
+                outcome.Overflow = words[1];
+                outcome.InstanceLevels = words[2];
+                const uint32_t written = std::min(outcome.Selected, listCapacity);
+                for (uint32_t index = 0; index < written; ++index)
+                {
+                    for (uint32_t word = 0; word < 4u; ++word)
+                    {
+                        outcome.Entries.push_back(words[VirtualShadowMap::MEGA_CULL_LIST_HEADER_WORDS + index * 4u + word]);
+                    }
+                }
+                list->Unmap();
+            }
+            {
+                const uint32_t* words = static_cast<const uint32_t*>(stats->Map(0u, stats->GetSize()));
+                if (words == nullptr)
+                {
+                    return false;
+                }
+                outcome.StatInstances = words[VirtualShadowMap::StatMegaInstances];
+                outcome.StatClusters = words[VirtualShadowMap::StatMegaClusters];
+                outcome.StatOverflow = words[VirtualShadowMap::StatMegaOverflow];
+                stats->Unmap();
+            }
+            {
+                const Mega::GeometryPageTable::Entry* entries =
+                    static_cast<const Mega::GeometryPageTable::Entry*>(geometryPages->Map(0u, sizeof(Mega::GeometryPageTable::Entry) * 4u));
+                if (entries == nullptr)
+                {
+                    return false;
+                }
+                outcome.PageRequestStamps[0] = entries[0].RequestStamp;
+                outcome.PageRequestStamps[1] = entries[1].RequestStamp;
+                geometryPages->Unmap();
+            }
+            return ReadAll(dirtyBits, outcome.DirtyBits);
+        }
+
+        // 期待する（インスタンス、段、クラスタ）の一覧（昇順）。段 level のクラスタは高さ level のもの
+        Container::VariableArray<uint64_t> ExpectedEntries(bool bLeafPageResident = true)
+        {
+            Container::VariableArray<uint64_t> expected;
+            const auto add = [&expected, bLeafPageResident](uint32_t instance, uint32_t level) {
+                Container::VariableArray<uint32_t> clusters;
+                ExpectedClusters(level, clusters, bLeafPageResident);
+                for (const uint32_t cluster : clusters)
+                {
+                    expected.push_back((static_cast<uint64_t>(instance) << 40) | (static_cast<uint64_t>(level) << 32) | cluster);
+                }
+            };
+            for (uint32_t level = 0; level < LevelCount; ++level)
+            {
+                add(0u, level); // インスタンス 0: 全段
+                if (level >= 1u)
+                {
+                    add(1u, level); // インスタンス 1: 段 0 の範囲の外
+                }
+            }
+            std::sort(expected.begin(), expected.end());
+            return expected;
+        }
+
+        Container::VariableArray<uint64_t> PackEntries(const Container::VariableArray<uint32_t>& words)
+        {
+            Container::VariableArray<uint64_t> packed;
+            for (size_t index = 0; index + 3u < words.size(); index += 4u)
+            {
+                packed.push_back((static_cast<uint64_t>(words[index]) << 40) | (static_cast<uint64_t>(words[index + 1u]) << 32) | words[index + 2u]);
+            }
+            std::sort(packed.begin(), packed.end());
+            return packed;
+        }
+
+        // 選ばれたクラスタが一つの切り口か: インスタンス・段ごとに、どの葉から根への道でもちょうど 1 つが選ばれる
+        bool IsSingleCut(const Container::VariableArray<uint64_t>& packed, uint32_t instance, uint32_t level)
+        {
+            bool selected[ClusterCount] = {};
+            for (const uint64_t entry : packed)
+            {
+                if (static_cast<uint32_t>(entry >> 40) == instance && static_cast<uint32_t>((entry >> 32) & 0xFFu) == level)
+                {
+                    selected[static_cast<uint32_t>(entry & 0xFFFFFFFFu)] = true;
+                }
+            }
+            for (uint32_t leaf = 7u; leaf < ClusterCount; ++leaf)
+            {
+                uint32_t count = 0;
+                for (uint32_t node = leaf;; node = (node - 1u) / 2u)
+                {
+                    count += selected[node] ? 1u : 0u;
+                    if (node == 0u)
+                    {
+                        break;
+                    }
+                }
+                if (count != 1u)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    } // namespace MegaCull
+
+    // ケース J を実行する。実行できなければ false
+    bool RunMegaCullCases(const DevicePtr& device, ShaderManager& shaderManager, uint64_t& frameSerial)
+    {
+        VirtualShadowMapMegaCull cull;
+        if (!cull.Initialize(device.get(), &shaderManager))
+        {
+            std::cerr << TestName << " MegaGeometry の投影物のカリングを初期化できませんでした" << std::endl;
+            return false;
+        }
+
+        // 段 0 の幅 4096 m（texel 0.25 m・ページ 32 m）の 4 段。カメラは原点（段の範囲は ±2048 m・±4096 m・±8192 m・±16384 m）
+        VirtualShadowMapClipmapSettings settings;
+        settings.LevelCount = MegaCull::LevelCount;
+        settings.FirstWidthMeters = 4096.0f;
+        const VirtualShadowMapClipmap clipmap = BuildVirtualShadowMapClipmap(Math::Vector3(0.35f, -0.8f, 0.45f), 1u, Math::Vector3(0.0f, 0.0f, 0.0f), settings);
+        Expect(clipmap.bEnabled, "ケース J のクリップマップが有効でなければならない");
+        for (uint32_t level = 0; level < MegaCull::LevelCount; ++level)
+        {
+            Expect(clipmap.Levels[level].TexelMeters == MegaCull::TexelMeters(level), "ケース J の段の texel は 0.25 × 2^段 でなければならない");
+        }
+
+        // ----- J1: 容量が十分 -----
+        {
+            MegaCull::Outcome outcome;
+            Container::VariableArray<uint32_t> expectedBits;
+            if (!MegaCull::Run(device, cull, clipmap, 1024u, frameSerial++, outcome, expectedBits))
+            {
+                std::cerr << TestName << " ケース J1 を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(outcome.bRecorded, "ケース J1: カリングを記録しなければならない");
+            Expect(outcome.GroupCount == 5u, "ケース J1: 影を落とす 5 インスタンスぶんの 5 ワークグループを出さなければならない");
+            // dirty の階層: CPU の参照と全語一致（ページの表のトーラスの番地から範囲の原点からの相対の座標へ直し、全 mip のビットを立てる）
+            Expect(outcome.DirtyBits.size() == expectedBits.size(), "ケース J1: dirty の階層の大きさが合わなければならない");
+            uint32_t differentWords = 0;
+            for (size_t word = 0; word < std::min(outcome.DirtyBits.size(), expectedBits.size()); ++word)
+            {
+                differentWords += outcome.DirtyBits[word] != expectedBits[word] ? 1u : 0u;
+            }
+            Expect(differentWords == 0u, "ケース J1: dirty の階層が CPU の参照と一致しなければならない");
+
+            const Container::VariableArray<uint64_t> expected = MegaCull::ExpectedEntries();
+            const Container::VariableArray<uint64_t> actual = MegaCull::PackEntries(outcome.Entries);
+            Expect(outcome.Selected == expected.size() && outcome.Selected == 22u, "ケース J1: 選んだクラスタは 22 件でなければならない");
+            Expect(outcome.Overflow == 0u, "ケース J1: 溢れてはならない");
+            Expect(outcome.InstanceLevels == 8u, "ケース J1: 判定を通った（インスタンス、段）は 8 でなければならない");
+            Expect(outcome.StatInstances == 8u && outcome.StatClusters == 22u && outcome.StatOverflow == 0u,
+                   "ケース J1: 統計の語 8〜10 が（8, 22, 0）でなければならない");
+            Expect(actual == expected, "ケース J1: 選んだ（インスタンス、段、クラスタ）が期待の集合と一致しなければならない");
+            // 段の texel が 2 倍になると選ばれるクラスタが粗く（高さが 1 つ上に）なり、どの葉から根への道でもちょうど 1 つ
+            for (uint32_t level = 0; level < MegaCull::LevelCount; ++level)
+            {
+                Expect(MegaCull::IsSingleCut(actual, 0u, level), "ケース J1: インスタンス 0 の選択が一つの切り口でなければならない");
+                if (level >= 1u)
+                {
+                    Expect(MegaCull::IsSingleCut(actual, 1u, level), "ケース J1: インスタンス 1 の選択が一つの切り口でなければならない");
+                }
+            }
+            for (const uint64_t entry : actual)
+            {
+                const uint32_t level = static_cast<uint32_t>((entry >> 32) & 0xFFu);
+                const uint32_t cluster = static_cast<uint32_t>(entry & 0xFFFFFFFFu);
+                Expect(MegaCull::HeightOf(cluster) == level, "ケース J1: 段 k では高さ k のクラスタが選ばれなければならない");
+            }
+            Expect(outcome.PageRequestStamps[0] == 0u && outcome.PageRequestStamps[1] == 0u,
+                   "ケース J1: カリングはジオメトリのページを要求してはならない（要求の印は 0 のまま）");
+            std::cout << TestName << " ケース J1: 選んだクラスタ=" << outcome.Selected << " 通った（インスタンス、段）=" << outcome.InstanceLevels
+                      << " 統計=(" << outcome.StatInstances << "," << outcome.StatClusters << "," << outcome.StatOverflow << ")" << std::endl;
+        }
+
+        // ----- J3: 葉のページが非常駐 -----
+        // 影のためにページを読み込まず、常駐している物で描く: 段 0 は子（葉）のページが無いので、高さ 1 のクラスタが自分を描く（穴を作らない）。
+        // 要求の印（ジオメトリのページの表）には触らない。ほかの段は変わらない。どの葉から根への道でも、ちょうど 1 つが選ばれる
+        {
+            MegaCull::Outcome outcome;
+            Container::VariableArray<uint32_t> expectedBits;
+            if (!MegaCull::Run(device, cull, clipmap, 1024u, frameSerial++, outcome, expectedBits, false))
+            {
+                std::cerr << TestName << " ケース J3 を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(outcome.bRecorded, "ケース J3: カリングを記録しなければならない");
+            const Container::VariableArray<uint64_t> expected = MegaCull::ExpectedEntries(false);
+            const Container::VariableArray<uint64_t> actual = MegaCull::PackEntries(outcome.Entries);
+            Expect(outcome.Selected == expected.size() && outcome.Selected == 18u, "ケース J3: 選んだクラスタは 18 件（段 0 は高さ 1 の 4 つ）でなければならない");
+            Expect(actual == expected, "ケース J3: 葉のページが非常駐なら、段 0 は高さ 1 のクラスタが選ばれなければならない");
+            Expect(outcome.PageRequestStamps[0] == 0u && outcome.PageRequestStamps[1] == 0u,
+                   "ケース J3: 非常駐の子のページを要求してはならない（要求の印は 0 のまま）");
+            for (uint32_t level = 0; level < MegaCull::LevelCount; ++level)
+            {
+                Expect(MegaCull::IsSingleCut(actual, 0u, level), "ケース J3: インスタンス 0 の選択が一つの切り口でなければならない");
+            }
+            std::cout << TestName << " ケース J3: 選んだクラスタ=" << outcome.Selected << " 要求の印=(" << outcome.PageRequestStamps[0] << ","
+                      << outcome.PageRequestStamps[1] << ")" << std::endl;
+        }
+
+        // ----- J2: 出力の一覧の容量が 5（溢れる） -----
+        {
+            MegaCull::Outcome outcome;
+            Container::VariableArray<uint32_t> expectedBits;
+            if (!MegaCull::Run(device, cull, clipmap, 5u, frameSerial++, outcome, expectedBits))
+            {
+                std::cerr << TestName << " ケース J2 を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(outcome.bRecorded, "ケース J2: カリングを記録しなければならない");
+            Expect(outcome.Selected == 22u && outcome.Overflow == 17u, "ケース J2: 選んだ数は 22・溢れは 17 でなければならない");
+            Expect(outcome.StatClusters == 5u && outcome.StatOverflow == 17u, "ケース J2: 統計は書いた 5・溢れ 17 でなければならない");
+            const Container::VariableArray<uint64_t> expected = MegaCull::ExpectedEntries();
+            const Container::VariableArray<uint64_t> actual = MegaCull::PackEntries(outcome.Entries);
+            Expect(actual.size() == 5u, "ケース J2: 容量ぶん（5 件）だけ書かなければならない");
+            for (const uint64_t entry : actual)
+            {
+                Expect(std::find(expected.begin(), expected.end(), entry) != expected.end(), "ケース J2: 書いた件は期待の集合に入らなければならない");
+            }
+            std::cout << TestName << " ケース J2: 選んだ=" << outcome.Selected << " 溢れ=" << outcome.Overflow << " 書いた=" << actual.size() << std::endl;
+        }
+        return true;
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -1887,6 +2506,12 @@ namespace
                 {
                     return 1;
                 }
+            }
+
+            // ----- ケース J: MegaGeometry の投影物のカリング -----
+            if (!RunMegaCullCases(device, shaderManager, frameSerial))
+            {
+                return 1;
             }
 
             device->WaitIdle();

@@ -139,6 +139,9 @@ namespace
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaInstanceTableUpdates;
     // MegaGeometryPass のカリングの定数バッファ（"MegaGeometry_CullUBO"。パスごとに 1 つ）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaCullUniformUpdates;
+    // VSM の MegaGeometry の投影物のカリングの定数バッファ（"VsmMegaCullUniform"・"VsmMegaCullParams"）の更新の記録（更新ごとの中身）
+    Container::VariableArray<Container::VariableArray<uint8_t>> GVsmMegaCullUniformUpdates;
+    Container::VariableArray<Container::VariableArray<uint8_t>> GVsmMegaCullParamsUpdates;
     // VisibilitySwRaster が dispatch ごとに書く定数バッファ（"VisBuffer_SwRasterParams"）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GSwRasterParamsUpdates;
     // 影の標本のパスが毎フレーム書く定数（ShadowProbeParams）。--shadow-probe の検査に使う
@@ -325,6 +328,14 @@ namespace
             {
                 GSwRasterParamsUpdates.push_back(LastUpdateBytes);
             }
+            if (IsDebugName(m_Desc.DebugName, "VsmMegaCullUniform"))
+            {
+                GVsmMegaCullUniformUpdates.push_back(LastUpdateBytes);
+            }
+            if (IsDebugName(m_Desc.DebugName, "VsmMegaCullParams"))
+            {
+                GVsmMegaCullParamsUpdates.push_back(LastUpdateBytes);
+            }
             if (IsDebugName(m_Desc.DebugName, "ShadowProbeParams"))
             {
                 GShadowProbeParamUpdates.push_back(LastUpdateBytes);
@@ -388,6 +399,85 @@ namespace
         RHI::BufferDesc m_Desc;
         RHI::TSharedPtr<FakeBufferLifetimeTracker> m_Tracker;
     };
+
+    // 記述子セットへ束縛したバッファの記録（束縛の番号と名前）。計算の dispatch の時点で、どのバッファを読み書きするかの検査に使う
+    struct BoundBufferName
+    {
+        uint32_t Binding = 0;
+        char Name[48] = {};
+    };
+    struct DescriptorBindingRecord
+    {
+        const void* Set = nullptr;
+        Container::VariableArray<BoundBufferName> Buffers;
+    };
+    Container::VariableArray<DescriptorBindingRecord> GDescriptorBindingRecords;
+
+    void RecordDescriptorBufferBinding(const void* set, uint32_t binding, const RHI::BufferPtr& buffer)
+    {
+        DescriptorBindingRecord* record = nullptr;
+        for (DescriptorBindingRecord& candidate : GDescriptorBindingRecords)
+        {
+            if (candidate.Set == set)
+            {
+                record = &candidate;
+                break;
+            }
+        }
+        if (record == nullptr)
+        {
+            GDescriptorBindingRecords.push_back(DescriptorBindingRecord{});
+            record = &GDescriptorBindingRecords.back();
+            record->Set = set;
+        }
+        BoundBufferName* entry = nullptr;
+        for (BoundBufferName& candidate : record->Buffers)
+        {
+            if (candidate.Binding == binding)
+            {
+                entry = &candidate;
+                break;
+            }
+        }
+        if (entry == nullptr)
+        {
+            record->Buffers.push_back(BoundBufferName{});
+            entry = &record->Buffers.back();
+            entry->Binding = binding;
+        }
+        std::memset(entry->Name, 0, sizeof(entry->Name));
+        const FakeBuffer* fake = static_cast<const FakeBuffer*>(buffer.get());
+        const char* name = fake != nullptr ? fake->GetDesc().DebugName : nullptr;
+        if (name != nullptr)
+        {
+            std::memcpy(entry->Name, name, std::min(std::strlen(name), sizeof(entry->Name) - 1));
+        }
+    }
+
+    // 記述子セットを手放したときに記録も消す（同じ番地に別の記述子セットができても、古い束縛が混ざらない）
+    void ClearDescriptorBufferBindings(const void* set)
+    {
+        for (size_t index = 0; index < GDescriptorBindingRecords.size(); ++index)
+        {
+            if (GDescriptorBindingRecords[index].Set == set)
+            {
+                GDescriptorBindingRecords.erase(GDescriptorBindingRecords.begin() + static_cast<std::ptrdiff_t>(index));
+                return;
+            }
+        }
+    }
+
+    Container::VariableArray<BoundBufferName> SnapshotDescriptorBindings(const void* set)
+    {
+        for (const DescriptorBindingRecord& candidate : GDescriptorBindingRecords)
+        {
+            if (candidate.Set == set)
+            {
+                return candidate.Buffers;
+            }
+        }
+        return {};
+    }
 
     class FakeCommandList final : public RHI::ICommandList
     {
@@ -514,7 +604,7 @@ namespace
         }
         void SetDescriptorSet(RHI::DescriptorSetPtr descriptorSet, uint32_t slot = 0) override
         {
-            (void)descriptorSet;
+            m_LastDescriptorSet = descriptorSet.get();
             (void)slot;
             PushRenderEvent(FakeRenderEvent::CommandSetDescriptorSet);
         }
@@ -621,6 +711,19 @@ namespace
             }
             if (buffer)
             {
+                const char* megaName = static_cast<const FakeBuffer*>(buffer.get())->GetDesc().DebugName;
+                if (megaName != nullptr && std::strncmp(megaName, "VsmMega_", 8) == 0)
+                {
+                    VsmMegaFill fill;
+                    std::memcpy(fill.BufferName, megaName, std::min(std::strlen(megaName), sizeof(fill.BufferName) - 1));
+                    fill.SizeBytes = size;
+                    fill.Value = value;
+                    fill.SequencePosition = CallSequence.size();
+                    VsmMegaFills.push_back(fill);
+                }
+            }
+            if (buffer)
+            {
                 const char* name = static_cast<const FakeBuffer*>(buffer.get())->GetDesc().DebugName;
                 if (name != nullptr && std::strncmp(name, "MaterialTile_", 13) == 0 && value == 0u)
                 {
@@ -637,8 +740,37 @@ namespace
                       uint32_t threadGroupCountZ) override
         {
             DispatchGroups.push_back({threadGroupCountX, threadGroupCountY, threadGroupCountZ});
+            DispatchBindings.push_back(SnapshotDescriptorBindings(m_LastDescriptorSet));
             ++DispatchCount;
             CallSequence.push_back('D');
+        }
+        // Dispatch ごとの、その時点で最後に設定した記述子セットへ束縛されていたバッファ（DispatchGroups と同じ並び）
+        Container::VariableArray<Container::VariableArray<BoundBufferName>> DispatchBindings;
+        // VSM の MegaGeometry の投影物のカリングの資源（VsmMega_ で始まる名前）への 0 埋めの記録（バッファの名前・大きさ・値・記録した時点の CallSequence の長さ）
+        struct VsmMegaFill
+        {
+            char BufferName[40] = {};
+            uint64_t SizeBytes = 0;
+            uint32_t Value = 0;
+            size_t SequencePosition = 0;
+        };
+        Container::VariableArray<VsmMegaFill> VsmMegaFills;
+        // 最後に SetDescriptorSet へ渡された記述子セット（Dispatch の時点の束縛を引く）
+        const void* m_LastDescriptorSet = nullptr;
+        // GPU タイムスタンプの区間（開いた順の名前と、開いた時点の CallSequence の長さ）
+        struct GpuScopeRecord
+        {
+            Container::String Name;
+            size_t SequencePosition = 0;
+        };
+        Container::VariableArray<GpuScopeRecord> GpuScopes;
+        RHI::GPUTimestampScopeHandle BeginGPUTimestampScope(const char* scopeName) override
+        {
+            GpuScopeRecord record;
+            record.Name = scopeName != nullptr ? scopeName : "";
+            record.SequencePosition = CallSequence.size();
+            GpuScopes.push_back(record);
+            return {};
         }
         // 間接 dispatch の記録（引数のバッファの名前と先頭のバイト位置）。Dispatch とは別に数える（CallSequence では 'J'）
         struct IndirectDispatchRecord
@@ -896,11 +1028,17 @@ namespace
     class FakeDescriptorSet final : public RHI::IDescriptorSet
     {
     public:
+        ~FakeDescriptorSet() override
+        {
+            ClearDescriptorBufferBindings(this);
+        }
+
         void BindConstantBuffer(uint32_t binding,
                                 RHI::BufferPtr buffer,
                                 uint32_t offset,
                                 uint32_t size) override
         {
+            RecordDescriptorBufferBinding(this, binding, buffer);
             if (binding == 4)
             {
                 m_Binding4Buffer = buffer;
@@ -929,6 +1067,7 @@ namespace
                                uint32_t offset,
                                uint32_t size) override
         {
+            RecordDescriptorBufferBinding(this, binding, buffer);
             if (binding == 5)
             {
                 m_Binding5Buffer = buffer;
@@ -5817,6 +5956,10 @@ namespace
         }
         assert(vsmView.GetPassCount() == csmView.GetPassCount() + 1);
 
+        // MegaGeometry の投影物のカリングは、vsm の構成が主の MegaGeometryPass の入力を読む（csm の構成には VSM のパスが無く、カリングも無い）
+        assert(vsmPass->GetMegaGeometryPass() != nullptr);
+        assert(static_cast<const IViewPass*>(vsmPass->GetMegaGeometryPass()) == vsmView.FindPass("MegaGeometryPass"));
+
         // スキニングの計算は VSM のパスより前（変形した頂点を影の描画が読む）
         const IViewPass* vsmSkinning = vsmView.FindPass("SkinningComputePass");
         assert(vsmSkinning != nullptr && vsmSkinning->IsEnabled());
@@ -5916,7 +6059,8 @@ namespace
 
         void OnLog(const Logging::LogEntry& entry) override
         {
-            if (entry.category == "VirtualShadowMapPass" || entry.category == "VirtualShadowMapRaster")
+            if (entry.category == "VirtualShadowMapPass" || entry.category == "VirtualShadowMapRaster" ||
+                entry.category == "VirtualShadowMapMegaCull")
             {
                 Messages.push_back(entry.message);
             }
@@ -6062,7 +6206,7 @@ namespace
             {"VSM_PageTable", 10ull * 128ull * 128ull * 4ull},
             {"VSM_RequestBits", 10ull * 128ull * 128ull / 8ull},
             {"VSM_FreeList", (4096ull + 1ull) * 4ull},
-            {"VSM_Stats", 32ull},
+            {"VSM_Stats", 44ull},
             {"VSM_DirtyList", (4096ull + 4ull) * 4ull},
         };
         for (const Expected& entry : expected)
@@ -6124,7 +6268,7 @@ namespace
                    fills[0].Value == 0x3F800000u);
             assert(IsDebugName(fills[1].BufferName, "VSM_RequestBits") && fills[1].SizeBytes == 20480ull && fills[1].Value == 0u);
             assert(IsDebugName(fills[2].BufferName, "VSM_PageTable") && fills[2].SizeBytes == 655360ull && fills[2].Value == 0u);
-            assert(IsDebugName(fills[3].BufferName, "VSM_Stats") && fills[3].SizeBytes == 32ull && fills[3].Value == 0u);
+            assert(IsDebugName(fills[3].BufferName, "VSM_Stats") && fills[3].SizeBytes == VirtualShadowMap::STATS_BYTES && fills[3].Value == 0u);
         }
 
         // 2 フレーム目: 要求・ページの表・統計だけを 0 から数え直す（プールは埋め直さない。消去は dirty のページだけ）
@@ -7273,6 +7417,519 @@ namespace
         }
 
 #if NORVES_ENABLE_LOGGING
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+#endif
+    }
+
+    // ========================================
+    // MegaGeometry の投影物のカリング（VirtualShadowMapMegaCull。vsm の構成だけ）
+    // ========================================
+
+    // 記述子セットの binding の番号に束縛されたバッファの名前（束縛が無ければ nullptr）
+    const char* BoundBufferNameAt(const Container::VariableArray<BoundBufferName>& bindings, uint32_t binding)
+    {
+        for (const BoundBufferName& entry : bindings)
+        {
+            if (entry.Binding == binding)
+            {
+                return entry.Name;
+            }
+        }
+        return nullptr;
+    }
+
+    // 主の経路（MegaGeometryPass）の記録を済ませた、vsm の構成のシーン。VsmCasterScene（手続きメッシュ・スキニングの投影物）に、
+    // MegaGeometry の 3 インスタンスを足し、2 パスの遮蔽の主のカリング（1 回目 → 描画 → HZB 7 段 → 2 回目 → 描画）を同じコマンドリストへ先に記録する
+    //   A: 影を落とす。境界（WorldBounds）は (1, 2, 3)・半径 4
+    //   B: 影を落とさない
+    //   C: 影を落とす。境界が無い（半径 0）ので、メッシュ全体のローカルの境界（中心 (0.5, 0.5, 0)・半径 1.25）をワールドの変換 (5, 0, 0) で移した球が使われる
+    struct VsmMegaScene
+    {
+        VsmCasterScene Base;
+        SharedResourceRegistry Shared;
+        MegaGeometryPass Mega;
+        Container::VariableArray<MegaGeometryProxy> Proxies;
+        RHI::TexturePtr Textures[6];
+        size_t MainSequenceLength = 0;
+        size_t MainDispatchCount = 0;
+        size_t MainBarrierCount = 0;
+    };
+
+    void BuildVsmMegaScene(VsmMegaScene& scene, bool bCasters = true)
+    {
+        VsmRun& run = scene.Base.Run;
+        run.Device->EnableMegaGeometryBatchCapabilities();
+        BuildVsmCasterScene(scene.Base, true);
+        RenderResources& resources = scene.Base.Resources;
+        resources.MegaGeometry().SetOcclusionCullingEnabled(true);
+        ViewRenderContext& context = run.Context;
+
+        const RHI::Format formats[6] = {RHI::Format::R8G8B8A8_UNORM, RHI::Format::R16G16B16A16_FLOAT, RHI::Format::R8G8B8A8_UNORM,
+                                        RHI::Format::R16G16B16A16_FLOAT, RHI::Format::D32_FLOAT, RHI::Format::R16G16_FLOAT};
+        const char* names[6] = {"GBuffer_Albedo", "GBuffer_Normal", "GBuffer_Material", "GBuffer_Emissive", "GBuffer_Depth", "GBuffer_Velocity"};
+        for (uint32_t index = 0; index < 6u; ++index)
+        {
+            scene.Textures[index] = index == 4u ? run.Device->CreateTexture(RHI::TextureDesc::DepthStencil(128, 64, formats[index], names[index]))
+                                                : run.Device->CreateTexture(RHI::TextureDesc::RenderTarget(128, 64, formats[index], names[index]));
+            scene.Shared.RegisterTexturePtr(names[index], scene.Textures[index]);
+        }
+        context.SharedResources = &scene.Shared;
+
+        float vertices[12] = {0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f};
+        uint32_t indices[3] = {0, 1, 2};
+        MegaGeometry::MeshCluster cluster;
+        cluster.IndexOffset = 0;
+        cluster.IndexCount = 3;
+        cluster.VertexOffset = 0;
+        cluster.VertexCount = 3;
+        cluster.Bounds.CenterX = 0.5f;
+        cluster.Bounds.CenterY = 0.5f;
+        cluster.Bounds.CenterZ = 0.0f;
+        cluster.Bounds.Radius = 0.75f;
+        cluster.ConeAxisZ = 1.0f;
+        cluster.ConeCutoff = 0.25f;
+        MegaGeometry::MegaMeshCreateInfo createInfo;
+        createInfo.VertexData = vertices;
+        createInfo.VertexDataSize = sizeof(vertices);
+        createInfo.VertexCount = 3;
+        createInfo.VertexStride = 4 * sizeof(float);
+        createInfo.IndexData = indices;
+        createInfo.IndexCount = 3;
+        createInfo.Clusters.push_back(cluster);
+        createInfo.TotalBounds.CenterX = 0.5f;
+        createInfo.TotalBounds.CenterY = 0.5f;
+        createInfo.TotalBounds.CenterZ = 0.0f;
+        createInfo.TotalBounds.Radius = 1.25f;
+        createInfo.bBuildLODHierarchy = false;
+        createInfo.DebugName = "VsmMegaMeshA";
+        const auto meshA = resources.MegaGeometry().CreateMegaMesh(createInfo);
+        createInfo.DebugName = "VsmMegaMeshC";
+        const auto meshC = resources.MegaGeometry().CreateMegaMesh(createInfo);
+        assert(meshA.IsValid() && meshC.IsValid());
+        assert(NorvesLib::Test::GeometryUpload::DrainGeometryUploads(resources));
+
+        MegaGeometryProxy proxyA;
+        proxyA.ObjectId = 1;
+        proxyA.ComponentId = 10;
+        proxyA.MegaMeshHandle = meshA;
+        proxyA.WorldTransform = NorvesLib::Math::Matrix4x4::Identity;
+        proxyA.WorldBounds.CenterX = 1.0f;
+        proxyA.WorldBounds.CenterY = 2.0f;
+        proxyA.WorldBounds.CenterZ = 3.0f;
+        proxyA.WorldBounds.Radius = 4.0f;
+        proxyA.bCastShadow = bCasters;
+        scene.Proxies.push_back(proxyA);
+        MegaGeometryProxy proxyB = proxyA;
+        proxyB.ObjectId = 2;
+        proxyB.ComponentId = 20;
+        proxyB.bCastShadow = false;
+        scene.Proxies.push_back(proxyB);
+        MegaGeometryProxy proxyC = proxyA;
+        proxyC.ObjectId = 3;
+        proxyC.ComponentId = 30;
+        proxyC.MegaMeshHandle = meshC;
+        proxyC.WorldTransform = MakeMarkedMatrix(5.0f, 0.0f, 0.0f);
+        proxyC.PreviousWorldTransform = proxyC.WorldTransform;
+        proxyC.WorldBounds = BoundingSphere{};
+        proxyC.bCastShadow = bCasters;
+        scene.Proxies.push_back(proxyC);
+        context.SnapshotMegaGeometryProxies = &scene.Proxies;
+
+        assert(scene.Mega.Initialize(context));
+        scene.Mega.Setup(context);
+        CameraProxy camera;
+        camera.Viewport.Width = 128.0f;
+        camera.Viewport.Height = 64.0f;
+        RHI::Viewport viewport;
+        viewport.width = 128.0f;
+        viewport.height = 64.0f;
+        viewport.maxDepth = 1.0f;
+        RHI::ScissorRect scissor;
+        scissor.right = 128;
+        scissor.bottom = 64;
+        FrameCommand frameCommand = FrameCommand::CreateMegaGeometryPass(
+            &scene.Mega, &resources.MegaGeometry(), camera, true, viewport, scissor, DebugViewMode::Normal);
+        GMegaCullUniformUpdates.clear();
+        scene.Mega.RecordFrameCommand(frameCommand.MegaGeometry, &run.CommandList);
+        scene.Base.Pass.SetMegaGeometryPass(&scene.Mega);
+        scene.MainSequenceLength = run.CommandList.CallSequence.size();
+        scene.MainDispatchCount = run.CommandList.DispatchGroups.size();
+        scene.MainBarrierCount = run.CommandList.Barriers.size();
+    }
+
+    void ShutdownVsmMegaScene(VsmMegaScene& scene)
+    {
+        scene.Mega.Shutdown();
+        ShutdownVsmCasterScene(scene.Base);
+    }
+
+    // 統計の読み戻しの枠へ、GPU が書き終えた体で MegaGeometry の投影物のカリングの統計（語 8〜10）を書く
+    void WriteVsmMegaReadbackStats(const VirtualShadowMapPass& pass, uint32_t instances, uint32_t clusters, uint32_t overflow)
+    {
+        for (uint32_t slotIndex = 0; slotIndex < 2u; ++slotIndex)
+        {
+            const RHI::BufferPtr& buffer = pass.GetStatsReadbackBuffer(slotIndex);
+            assert(buffer);
+            uint32_t* words = reinterpret_cast<uint32_t*>(static_cast<FakeBuffer*>(buffer.get())->MappedBytes.data());
+            words[VirtualShadowMap::StatMegaInstances] = instances;
+            words[VirtualShadowMap::StatMegaClusters] = clusters;
+            words[VirtualShadowMap::StatMegaOverflow] = overflow;
+        }
+    }
+
+    // 主の経路で書かない・読まないバッファの名前か（MegaGeometryPass が間接描画・見えた印・ページの要求・統計・区間などに使う）
+    bool IsMainPathOutputBufferName(const char* name)
+    {
+        if (name == nullptr)
+        {
+            return false;
+        }
+        for (const char* main : {"MegaGeometry_IndirectDraw", "MegaGeometry_DrawCount", "MegaGeometry_DrawInfo", "MegaGeometry_VisibleLastFrame",
+                                 "MegaGeometry_DummyVisibility", "MegaGeometry_DummyStats", "MegaGeometry_SwRaster", "MegaGeometry_SectionTable",
+                                 "MegaGeometry_BvhQueue", "MegaGeometry_BvhCounters", "GeometryPageRequest"})
+        {
+            if (std::strcmp(name, main) == 0)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // vsm の構成の 1 フレーム: 主の経路（2 パスの遮蔽。DBIE + HZB の D 7 つ + DBIE）の後に、スキニングの変形 → 印付け・割り当て・消去 →
+    // MegaGeometry の投影物のカリング（dirty の階層 = D・クラスタの選択 = D）→ 展開 → 描画（DDDDDJ + DD + D + BIIIE）が並ぶ。
+    //  - カリングは、主のカリング（2 回目）より後・展開より前。dispatch は dirty の階層 (16, 16, 段の数)・選択 (影を落とすインスタンスのワークグループ数 2, 1, 段の数)。
+    //  - 読む資源: 主の経路のインスタンスの表・影の表・ジオメトリのページの表（読み取りだけ）と VSM のページの表。書く資源: 自分の dirty の階層・出力の一覧・VSM の統計。
+    //    主の経路の間接描画・カウンタ・描画情報・見えた印・ページの要求・統計・区間の表は束縛せず、記録の間に主のバッファへのバリアも無い。
+    //  - 出力の一覧と dirty の階層は、記録の前に Common → UnorderedAccess、後に UnorderedAccess → Common。それぞれの頭（階層は全体・一覧は先頭 4 語）を 0 で埋めてから dispatch する。
+    //  - 影の表はインスタンスの表と同じ並びで、影を落とさないインスタンスはワークグループを持たず（FirstGroup が次と同じ）、境界が無いものはメッシュの境界から作る。
+    //  - 定数: LOD の許容は 1 texel・正射影の印（OrthoLod）が立ち、ページの要求の容量は 0。主の経路の定数の正射影の印は 0 のまま。
+    //  - 作れなかった構成（影を落とすインスタンスが無い・パイプラインを作れない）では記録せず、VSM は動く。MegaGeometryPass を渡さない構成も同じ。
+    void TestVirtualShadowMapPassRecordsMegaCullBetweenMainCullAndExpand()
+    {
+        {
+            GVsmMegaCullUniformUpdates.clear();
+            GVsmMegaCullParamsUpdates.clear();
+            VsmMegaScene scene;
+            BuildVsmMegaScene(scene);
+            FakeCommandList& commandList = scene.Base.Run.CommandList;
+
+            // 主の経路の記録
+            const char* mainSequence = "DBIEDDDDDDDDBIE";
+            assert(scene.MainSequenceLength == std::strlen(mainSequence));
+            for (size_t index = 0; index < scene.MainSequenceLength; ++index)
+            {
+                assert(commandList.CallSequence[index] == mainSequence[index]);
+            }
+            assert(scene.MainDispatchCount == 9u);
+
+            // 影の入力: 3 インスタンス・影を落とす 2 つ・ワークグループ 2（1 クラスタ = 1 ワークグループ）
+            const MegaGeometryShadowCasterInputs& inputs = scene.Mega.GetShadowCasterInputs();
+            assert(inputs.bValid && inputs.InstanceCount == 3u && inputs.CasterCount == 2u && inputs.TotalGroups == 2u);
+            assert(inputs.InstanceBuffer && inputs.ShadowInstanceBuffer && inputs.PageTableBuffer);
+            assert(IsDebugName(static_cast<const FakeBuffer*>(inputs.InstanceBuffer.get())->GetDesc().DebugName, "MegaGeometry_InstanceTable"));
+            assert(IsDebugName(static_cast<const FakeBuffer*>(inputs.ShadowInstanceBuffer.get())->GetDesc().DebugName, "MegaGeometry_ShadowInstanceTable"));
+            assert(IsDebugName(static_cast<const FakeBuffer*>(inputs.PageTableBuffer.get())->GetDesc().DebugName, "MegaGeometry_PageTable"));
+            {
+                const FakeBuffer* shadowBuffer = static_cast<const FakeBuffer*>(inputs.ShadowInstanceBuffer.get());
+                assert(shadowBuffer->LastUpdateBytes.size() == 3u * sizeof(MegaGeometryShadowInstance));
+                MegaGeometryShadowInstance table[3] = {};
+                std::memcpy(table, shadowBuffer->LastUpdateBytes.data(), sizeof(table));
+                const uint32_t casterWithBounds = MegaGeometryShadowFlagCaster | MegaGeometryShadowFlagBounds;
+                // A: プロキシの境界。ワークグループは 0 番から
+                assert(table[0].Flags == casterWithBounds && table[0].FirstGroup == 0u);
+                assert(table[0].BoundsSphere[0] == 1.0f && table[0].BoundsSphere[1] == 2.0f && table[0].BoundsSphere[2] == 3.0f &&
+                       table[0].BoundsSphere[3] == 4.0f);
+                // B: 影を落とさない。ワークグループを持たず、FirstGroup は次のインスタンスと同じ
+                assert(table[1].Flags == 0u && table[1].FirstGroup == 1u);
+                // C: 境界が無いのでメッシュの境界（中心 (0.5, 0.5, 0)・半径 1.25）をワールド (5, 0, 0) へ移した球
+                assert(table[2].Flags == casterWithBounds && table[2].FirstGroup == 1u);
+                assert(std::abs(table[2].BoundsSphere[0] - 5.5f) < 1.0e-5f && std::abs(table[2].BoundsSphere[1] - 0.5f) < 1.0e-5f &&
+                       std::abs(table[2].BoundsSphere[2] - 0.0f) < 1.0e-5f && std::abs(table[2].BoundsSphere[3] - 1.25f) < 1.0e-5f);
+            }
+            // 主の経路の定数の正射影の印は 0（主の結果を変えない）
+            assert(!GMegaCullUniformUpdates.empty());
+            for (const Container::VariableArray<uint8_t>& bytes : GMegaCullUniformUpdates)
+            {
+                assert(bytes.size() == sizeof(MegaGeometry::CullUniformData));
+                MegaGeometry::CullUniformData uniform;
+                std::memcpy(&uniform, bytes.data(), sizeof(uniform));
+                assert(uniform.OrthoLod == 0u);
+            }
+
+            RunVsmCasterViewport(scene.Base, 0, 0);
+            assert(scene.Base.Pass.WasMarked() && scene.Base.Pass.WasRasterRecorded() && scene.Base.Pass.WasMegaCullRecorded());
+            assert(scene.Base.Pass.GetMegaCullList() && scene.Base.Pass.GetMegaDirtyBits());
+
+            // 並び: 主の経路の後に、変形・印付け・割り当て 3 段・消去（J）・階層・選択・展開・描画
+            const char* vsmSequence = "DDDDDJDDDBIIIE";
+            assert(commandList.CallSequence.size() == scene.MainSequenceLength + std::strlen(vsmSequence));
+            for (size_t index = 0; index < std::strlen(vsmSequence); ++index)
+            {
+                assert(commandList.CallSequence[scene.MainSequenceLength + index] == vsmSequence[index]);
+            }
+            // GPU の区間: VsmCullMega は消去の後・展開の前に 1 回だけ開く（階層の作成と選択の両方を含む）
+            {
+                size_t clearScope = commandList.GpuScopes.size();
+                size_t cullScope = commandList.GpuScopes.size();
+                size_t expandScope = commandList.GpuScopes.size();
+                uint32_t cullScopeCount = 0;
+                for (size_t index = 0; index < commandList.GpuScopes.size(); ++index)
+                {
+                    const Container::String& name = commandList.GpuScopes[index].Name;
+                    clearScope = name == "VsmClear" ? index : clearScope;
+                    expandScope = name == "VsmExpand" ? index : expandScope;
+                    if (name == "VsmCullMega")
+                    {
+                        cullScope = index;
+                        ++cullScopeCount;
+                    }
+                }
+                assert(cullScopeCount == 1u);
+                assert(clearScope < cullScope && cullScope < expandScope && expandScope < commandList.GpuScopes.size());
+                // 開いた時点は、消去（J）の後・階層の dispatch の前（直前までに記録した B・E・D・I・J は 6 個）
+                assert(commandList.GpuScopes[cullScope].SequencePosition == scene.MainSequenceLength + 6u);
+            }
+            const size_t dirtyDispatch = scene.MainDispatchCount + 5u;
+            const size_t cullDispatch = scene.MainDispatchCount + 6u;
+            const size_t expandDispatch = scene.MainDispatchCount + 7u;
+            assert(commandList.DispatchGroups.size() == expandDispatch + 1u);
+            const uint32_t levelCount = VirtualShadowMap::LEVEL_COUNT;
+            assert(commandList.DispatchGroups[dirtyDispatch].X == 16u && commandList.DispatchGroups[dirtyDispatch].Y == 16u &&
+                   commandList.DispatchGroups[dirtyDispatch].Z == levelCount);
+            assert(commandList.DispatchGroups[cullDispatch].X == 2u && commandList.DispatchGroups[cullDispatch].Y == 1u &&
+                   commandList.DispatchGroups[cullDispatch].Z == levelCount);
+            assert(commandList.DispatchGroups[expandDispatch].X == 3u && commandList.DispatchGroups[expandDispatch].Z == 1u);
+
+            // 束縛: 階層を作る dispatch は VSM のページの表を読み、階層へ書く。選択の dispatch は主の経路の表を読み、自分の一覧・階層・統計へ書く
+            const Container::VariableArray<BoundBufferName>& dirtyBindings = commandList.DispatchBindings[dirtyDispatch];
+            assert(dirtyBindings.size() == 3u);
+            assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 14u), "VsmMegaCullParams"));
+            assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 15u), "VSM_PageTable"));
+            assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 16u), "VsmMega_DirtyBits"));
+            const Container::VariableArray<BoundBufferName>& cullBindings = commandList.DispatchBindings[cullDispatch];
+            assert(cullBindings.size() == 8u);
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 0u), "VsmMegaCullUniform"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 1u), "MegaGeometry_InstanceTable"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 11u), "MegaGeometry_PageTable"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 14u), "VsmMegaCullParams"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 15u), "VsmMega_List"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 16u), "VsmMega_DirtyBits"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 17u), "VSM_Stats"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 18u), "MegaGeometry_ShadowInstanceTable"));
+            // 主の経路の出力・見えた印・ページの要求は、どちらの dispatch にも束縛されない
+            for (const Container::VariableArray<BoundBufferName>* bindings : {&dirtyBindings, &cullBindings})
+            {
+                for (const BoundBufferName& entry : *bindings)
+                {
+                    assert(!IsMainPathOutputBufferName(entry.Name));
+                }
+            }
+
+            // バリア: 記録の間（主の経路の記録の後）に主の経路のバッファへのバリアは無い
+            for (size_t index = scene.MainBarrierCount; index < commandList.Barriers.size(); ++index)
+            {
+                const BarrierEvent& barrier = commandList.Barriers[index];
+                assert(barrier.Kind != RGBarrierKind::Buffer || barrier.Buffer == nullptr ||
+                       !IsMainPathOutputBufferName(static_cast<const FakeBuffer*>(barrier.Buffer)->GetDesc().DebugName));
+            }
+            // 自分の一覧・階層は、カリングの前に Common → UnorderedAccess（dirty の階層の dispatch の前。位置 = 直前までの B・E・D・I・J の数）、後に UnorderedAccess → Common
+            const RHI::ResourceState common = RHI::ResourceState::Common;
+            const RHI::ResourceState uav = RHI::ResourceState::UnorderedAccess;
+            const size_t beforeDirty = scene.MainSequenceLength + 6u;
+            const size_t afterCull = scene.MainSequenceLength + 8u;
+            for (const char* name : {"VsmMega_List", "VsmMega_DirtyBits"})
+            {
+                assert(HasBufferBarrierAt(commandList, name, common, uav, beforeDirty));
+                assert(HasBufferBarrierAt(commandList, name, uav, common, afterCull));
+            }
+            // 頭を 0 で埋める: 階層は全体、一覧は先頭 4 語。どちらも階層の dispatch の前
+            assert(commandList.VsmMegaFills.size() == 2u);
+            assert(IsDebugName(commandList.VsmMegaFills[0].BufferName, "VsmMega_DirtyBits") && commandList.VsmMegaFills[0].Value == 0u &&
+                   commandList.VsmMegaFills[0].SizeBytes == VirtualShadowMap::MegaDirtyBitsBytes());
+            assert(IsDebugName(commandList.VsmMegaFills[1].BufferName, "VsmMega_List") && commandList.VsmMegaFills[1].Value == 0u &&
+                   commandList.VsmMegaFills[1].SizeBytes == VirtualShadowMap::MEGA_CULL_LIST_HEADER_WORDS * sizeof(uint32_t));
+            assert(commandList.VsmMegaFills[0].SequencePosition == beforeDirty && commandList.VsmMegaFills[1].SequencePosition == beforeDirty);
+
+            // 定数: カリングの定数（LOD の許容 1 texel・正射影・要求なし）と、段の定数
+            assert(GVsmMegaCullUniformUpdates.size() == 1u && GVsmMegaCullParamsUpdates.size() == 1u);
+            {
+                assert(GVsmMegaCullUniformUpdates[0].size() == sizeof(MegaGeometry::CullUniformData));
+                MegaGeometry::CullUniformData uniform;
+                std::memcpy(&uniform, GVsmMegaCullUniformUpdates[0].data(), sizeof(uniform));
+                assert(uniform.OrthoLod == 1u && uniform.LODBias == 1.0f && uniform.PageRequestCapacity == 0u);
+                assert(uniform.InstanceCount == 3u && uniform.TotalGroupCount == 2u);
+                assert(uniform.CullPass == 0u && uniform.bHiZEnabled == 0u && uniform.bSwRasterEnabled == 0u);
+
+                const Container::VariableArray<uint8_t>& params = GVsmMegaCullParamsUpdates[0];
+                assert(params.size() == 592u);
+                uint32_t counts[4] = {};
+                std::memcpy(counts, params.data() + 64, sizeof(counts));
+                assert(counts[0] == levelCount && counts[1] == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY && counts[2] == 2u);
+                const VirtualShadowMapClipmap& clipmap = scene.Base.Run.Context.PhysicalLighting.SunClipmap;
+                for (uint32_t level = 0; level < levelCount; ++level)
+                {
+                    float info[4] = {};
+                    int32_t origin[4] = {};
+                    std::memcpy(info, params.data() + 80 + level * 16u, sizeof(info));
+                    std::memcpy(origin, params.data() + 336 + level * 16u, sizeof(origin));
+                    assert(info[0] == clipmap.Levels[level].PageMeters && info[1] == clipmap.Levels[level].TexelMeters);
+                    assert(origin[0] == static_cast<int32_t>(clipmap.Levels[level].OriginPageX) &&
+                           origin[1] == static_cast<int32_t>(clipmap.Levels[level].OriginPageY));
+                }
+            }
+            ShutdownVsmMegaScene(scene);
+        }
+
+        // 影を落とすインスタンスが無い（全部 bCastShadow = false）: 主の経路は記録するが、影の入力は無効で、カリングを記録しない（VSM は展開・描画まで動く）
+        {
+            VsmMegaScene scene;
+            BuildVsmMegaScene(scene, false);
+            assert(!scene.Mega.GetShadowCasterInputs().bValid);
+            RunVsmCasterViewport(scene.Base, 0, 0);
+            assert(scene.Base.Pass.WasMarked() && scene.Base.Pass.WasRasterRecorded() && !scene.Base.Pass.WasMegaCullRecorded());
+            const char* vsmSequence = "DDDDDJDBIIIE";
+            const FakeCommandList& commandList = scene.Base.Run.CommandList;
+            assert(commandList.CallSequence.size() == scene.MainSequenceLength + std::strlen(vsmSequence));
+            for (size_t index = 0; index < std::strlen(vsmSequence); ++index)
+            {
+                assert(commandList.CallSequence[scene.MainSequenceLength + index] == vsmSequence[index]);
+            }
+            assert(commandList.VsmMegaFills.empty());
+            ShutdownVsmMegaScene(scene);
+        }
+
+        // MegaGeometryPass を渡さない構成: カリングは記録しない
+        {
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Pass.GetMegaGeometryPass() == nullptr && !scene.Pass.WasMegaCullRecorded());
+            const char* expectedSequence = "DDDDDJDBIIIE";
+            assert(scene.Run.CommandList.CallSequence.size() == std::strlen(expectedSequence));
+            ShutdownVsmCasterScene(scene);
+        }
+
+        // 印付けをしない構成（クリップマップが無い）: カリングは記録しない
+        {
+            VsmMegaScene scene;
+            BuildVsmMegaScene(scene);
+            // 影の入力は有効なまま、クリップマップだけを無効にして回す
+            scene.Base.Run.Context.PhysicalLighting.SunClipmap = VirtualShadowMapClipmap{};
+            RunVsmCasterViewport(scene.Base, 0, 0);
+            assert(!scene.Base.Pass.WasMarked() && !scene.Base.Pass.WasMegaCullRecorded());
+            assert(scene.Base.Run.CommandList.VsmMegaFills.empty());
+            ShutdownVsmMegaScene(scene);
+        }
+
+        // カリングのパイプラインを作れない装置: VSM は動き（展開・描画まで）、カリングの資源だけ作らない
+        {
+            uint32_t baseline = 0;
+            {
+                VsmRun run;
+                run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+                InitializeVsmRun(run);
+                // 失敗の番号が 0 でないときだけ作成を数える（届かない番号にして数だけ取る）
+                run.Device->FailComputePipelineCreationNumber = 0xFFFFFFFFu;
+                VirtualShadowMapPass pass;
+                assert(pass.Initialize(run.Context) && pass.IsActive());
+                assert(pass.GetMegaCullList() && pass.GetMegaDirtyBits());
+                baseline = run.Device->ComputePipelineCreations;
+                // 印付け・割り当て・消去・展開の 4 つの後に、階層・選択の 2 つ
+                assert(baseline == 6u);
+                ShutdownVsmRun(run, pass);
+            }
+            for (const uint32_t failNumber : {baseline - 1u, baseline})
+            {
+                VsmRun run;
+                run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+                InitializeVsmRun(run);
+                run.Device->FailComputePipelineCreationNumber = failNumber;
+                VirtualShadowMapPass pass;
+                assert(pass.Initialize(run.Context));
+                assert(pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::None);
+                assert(!pass.GetMegaCullList() && !pass.GetMegaDirtyBits());
+                assert(CountBufferCreations(*run.Device, "VsmMega_List") == 0 && CountBufferCreations(*run.Device, "VsmMega_DirtyBits") == 0);
+                ShutdownVsmRun(run, pass);
+            }
+        }
+
+#if NORVES_ENABLE_LOGGING
+        // 統計: 記録したフレームの語 8〜10 を、最初の読み戻しと、以後 60 回読むごとに VSM_MEGA_CULL として出す（値が変わっても間は出さない）。
+        // 記録しないフレームの統計は読まない
+        {
+            Logging::LogConfig logConfig;
+            logConfig.minLevel = Logging::LogLevel::Trace;
+            logConfig.outputType = Logging::LogOutput::None;
+            logConfig.bAsyncLogging = false;
+            logConfig.bAutoFlush = false;
+            Logging::Logger& logger = Logging::Logger::GetInstance();
+            logger.Shutdown();
+            assert(logger.Initialize(logConfig));
+            VsmLogCollector logs;
+            logger.AddSink(&logs);
+
+            VsmMegaScene scene;
+            BuildVsmMegaScene(scene);
+            assert(CountBufferCreations(*scene.Base.Run.Device, "VsmMega_List") == 1);
+            const char* const expectedLog = "VSM_MEGA_CULL instances=3 clusters=5 overflow=1";
+            // 枠の読み戻しは同じ番号の次のフレームの最初の Execute（フレーム 2 が最初）。60 回目の次（61 回目の読み戻し = フレーム 62）で 2 回目
+            for (uint64_t frame = 0; frame <= 61u; ++frame)
+            {
+                WriteVsmMegaReadbackStats(scene.Base.Pass, 3, 5, 1);
+                RunVsmCasterViewport(scene.Base, frame, frame);
+                assert(logs.Count(expectedLog) == (frame >= 2u ? 1u : 0u));
+            }
+            WriteVsmMegaReadbackStats(scene.Base.Pass, 3, 5, 1);
+            RunVsmCasterViewport(scene.Base, 62, 62);
+            assert(logs.Count(expectedLog) == 2u && logs.Count("VSM_MEGA_CULL") == 2u);
+            ShutdownVsmMegaScene(scene);
+
+            // 記録しないフレーム（影を落とすインスタンスが無い）の統計は読まない
+            VsmMegaScene noCasters;
+            BuildVsmMegaScene(noCasters, false);
+            for (uint64_t frame = 0; frame < 6u; ++frame)
+            {
+                WriteVsmMegaReadbackStats(noCasters.Base.Pass, 3, 5, 1);
+                RunVsmCasterViewport(noCasters.Base, frame, frame);
+            }
+            assert(logs.Count("VSM_MEGA_CULL") == 2u);
+            ShutdownVsmMegaScene(noCasters);
+
+            logger.RemoveSink(&logs);
+            logger.Shutdown();
+        }
+#endif
+    }
+
+    // 報告の間隔: 最初の報告と、以後 60 回報告するごとに出す。値が変わっても間は出さない
+    void TestVirtualShadowMapMegaCullStatsReporterLogsEvery60Reports()
+    {
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        VsmLogCollector logs;
+        logger.AddSink(&logs);
+#endif
+        VirtualShadowMapMegaCullStatsReporter reporter;
+        assert(reporter.Report(1, 2, 3));
+        for (uint32_t report = 1; report < VirtualShadowMapMegaCullStatsReporter::LogIntervalReports; ++report)
+        {
+            assert(!reporter.Report(report, report * 2u, 0));
+        }
+        assert(reporter.Report(7, 8, 9));
+        assert(!reporter.Report(7, 8, 9));
+#if NORVES_ENABLE_LOGGING
+        assert(logs.Count("VSM_MEGA_CULL instances=1 clusters=2 overflow=3") == 1);
+        assert(logs.Count("VSM_MEGA_CULL instances=7 clusters=8 overflow=9") == 1);
+        assert(logs.Count("VSM_MEGA_CULL") == 2);
         logger.RemoveSink(&logs);
         logger.Shutdown();
 #endif
@@ -12763,6 +13420,8 @@ int main()
     TestVirtualShadowMapCasterAppendsSkinnedInstances();
     TestVirtualShadowMapCasterRecordsLevelMask();
     TestVirtualShadowMapPassRecordsCasterRasterAfterSkinning();
+    TestVirtualShadowMapPassRecordsMegaCullBetweenMainCullAndExpand();
+    TestVirtualShadowMapMegaCullStatsReporterLogsEvery60Reports();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();
     TestMaterialTileClassifyDispatchesAndPublishesArgs();

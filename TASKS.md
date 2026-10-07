@@ -1238,7 +1238,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「クラスタの経路でページの表を引いて書く」）。16K のビューポートへ描いて断片ごとにページの表を引く方式は、大きな投影物（地面・壁）が細かい段で 16K×16K を塗るため採らない。塊 × ページのインスタンスなら、塗るのは割り当てたページの中だけになる。RHI に添付の無いレンダーパス・クリップ距離は無い（2026-10-07 時点）ので、128×128 のビューポートの切り捨てに頼る。危険地帯（描画パス・RHI）。
 
 ## VTG8-VSM-MESH-CASTERS: 手続きメッシュとスキニングの投影物を VSM へ描く
-- status: done
+- status: blocked
 - done-when: vsm の構成で、手続きメッシュとスキニングの投影物を VTG8-VSM-RASTER の展開・描画で物理ページへ描く。集め方は CSM と同じ（`bCastShadow` の DrawCommand と、`TryPrepareSkinnedCommand` のスキニング。主カメラの錐台で省かれた物も含める）。メッシュを 128 三角形以下の塊（`BuildMeshIndexChunks`）に分け、塊ごとのワールドの境界（スキニングは描画の境界）と頂点・インデックスの読み方（手続きはメッシュのバッファの BDA と変換、スキニングは `SkinningComputePass` の変形済みの頂点）を記録にする。段ごとに、投影物の境界がその段の範囲に入らない物は CPU で省く。RenderGraphCompileTest で、vsm の構成でスキニングの計算の後に記録の作成 → 展開 → 描画が並ぶこととその間のバリア、csm の構成で何も足されないことを確かめる。`VirtualShadowMapVulkanTest` に、手続きメッシュの記録の経路（バッファの BDA と変換の行列）で描いた四角形が、VTG8-VSM-RASTER の合成の場面と同じ texel になる場面を足す。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest SkinnedRenderPathContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest|SkinnedRenderPathContractTest)$"`
@@ -1247,7 +1247,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした）。手続きメッシュ・スキニングの塊は段6でビジビリティバッファの記録にした形（`MeshIndexChunks.h`、`VisibilityRasterPass.cpp` の記録の作り方）を使い回す。起動画面の手続きメッシュ（地面・小屋の部品・見本の球など）の影は、VTG8-VSM-SAMPLE の後に VTG8-VSM-GPU-TIME の撮影で初めて画で見る。危険地帯（描画パス）。
 
 ## VTG8-VSM-MEGA-CULL: MegaGeometry の投影物を VSM の段ごとにカリングする
-- status: todo
+- status: done
 - done-when: vsm の構成で、MegaGeometry の投影物（`bCastShadow` のインスタンス）を段ごとに選ぶ計算を足す。(1) インスタンスの段の判定: インスタンスの境界（`MegaGeometryProxy::WorldBounds`）のライト空間の矩形が、その段の dirty のページを 1 つも含まなければ省く（dirty の印の階層（ページの mip。128² → 1）で判定する）。(2) 残った（インスタンス、段）のクラスタを `Common/MegaGeometryCull.glsl` の本体で選ぶ。LOD は正射影（自分の誤差 ÷ その段の texel の一辺 ≤ 1 texel、かつ親の誤差 ÷ texel > 1 texel。透視の `ProjectBakedError`・`ComputePerspectiveStretch` を使わない分岐を UBO の印で足す）。錐台は段の範囲と深度の範囲。HZB・法線の円錐・ソフトウェアラスタの振り分けは使わない。子のページが非常駐なら自分を描き、影のためのページの要求はしない（常駐している物で描く）。(3) 出力は（インスタンス、段、クラスタ）の一覧と数で、主の経路の間接描画・見えた印・ページの要求とは別のバッファに書く（主の経路の結果を変えない）。(4) GPU の区間の名前は `VsmCullMega`。`VSM_MEGA_CULL instances=<n> clusters=<n> overflow=<n>` を 60 フレームごとに出す。(5) RenderGraphCompileTest で、vsm の構成で主の cull2 の後・VSM の展開の前にこの計算が入り、主の経路のバッファへ書かないこと、csm の構成で無いことを確かめる。正射影の LOD の選び方を GPU のテスト（`GeometryPageRequestVulkanTest` と同じ作りで `VirtualShadowMapVulkanTest` に足す）か CPU の写しのテストで確かめる: 同じクラスタの階層で、段の texel が 2 倍になると選ばれる段が粗くなり、選ばれたクラスタが一つの切り口（どの葉から根への道でもちょうど 1 つ）になる。変異（親の条件を外す）で落ちることを記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|GeometryPageRequestVulkanTest|RenderGraphCompileTest)$"`

@@ -15,6 +15,10 @@
 //   - 断片シェーダーは物理ページの texel へ atomicMin(floatBitsToUint(深度 [0,1])) を書く（何も無い texel は 1.0 のビット）。
 //   - 物理ページへ書く前に、消去（VirtualShadowMapPages の VsmClear）が dirty のページを 1.0 のビットで埋めていること。
 //
+// 同じファイルに、MegaGeometry の投影物（bCastShadow のインスタンス）を段ごとにカリングする VirtualShadowMapMegaCull も置く
+// （展開の前に、主の経路のインスタンスの表を読み取りだけで使い、（インスタンス、段、クラスタ）の一覧を別のバッファへ作る。
+// 区間 VsmCullMega。この一覧を塊の記録にして描くのは後の項目）。
+//
 // 展開の容量（インスタンスの数）を超える塊は描かずに数える。統計（VSM.Stats）の語 5〜7 に、描く塊の数・書いたインスタンスの数・
 // 溢れて書かなかったインスタンスの数が入り、VirtualShadowMapRasterStatsReporter が VSM_RASTER の行にする。
 // 装置が間接描画の firstInstance・バッファのアドレスを使えないときは作れない（IsReady が false）。
@@ -172,6 +176,139 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_IdentityIndices;
         FrameUseRing<Use> m_Uses;
         uint32_t m_LastDrawCount = 0;
+    };
+
+    namespace VirtualShadowMap
+    {
+        /** @brief MegaGeometry の投影物のカリングの出力の一覧の頭（語）: 選んだクラスタの数・溢れて書かなかった数・判定を通った（インスタンス、段）の数・予約 */
+        constexpr uint32_t MEGA_CULL_LIST_HEADER_WORDS = 4;
+        /** @brief 出力の一覧の既定の容量（クラスタの数）。1 件は uvec4（インスタンスの表の番号・段・クラスタの番号・予約）= 16 バイト */
+        constexpr uint32_t MEGA_CULL_LIST_CAPACITY = 262144;
+        constexpr uint64_t MegaCullListBytes(uint32_t capacity)
+        {
+            return (static_cast<uint64_t>(MEGA_CULL_LIST_HEADER_WORDS) + static_cast<uint64_t>(capacity == 0u ? 1u : capacity) * 4u) *
+                   sizeof(uint32_t);
+        }
+        /** @brief 出力の一覧のバッファの用途（計算が書く。頭はコピーで 0 にする） */
+        inline RHI::ResourceUsage MegaCullListUsage()
+        {
+            return RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst;
+        }
+        /** @brief dirty のページの階層（段ごとのビット列。mip 0 = 128×128 から mip 7 = 1×1）の 1 段あたりの語の数（21845 ビット = 683 語を 16 語へ切り上げ） */
+        constexpr uint32_t MEGA_DIRTY_WORDS_PER_LEVEL = 688;
+        constexpr uint32_t MEGA_DIRTY_MIP_COUNT = 8;
+        constexpr uint64_t MegaDirtyBitsBytes()
+        {
+            return static_cast<uint64_t>(LEVEL_COUNT) * MEGA_DIRTY_WORDS_PER_LEVEL * sizeof(uint32_t);
+        }
+        /** @brief dirty の階層のバッファの用途（計算が atomicOr で書く。毎フレーム 0 へコピーで埋める） */
+        inline RHI::ResourceUsage MegaDirtyBitsUsage()
+        {
+            return RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst;
+        }
+    } // namespace VirtualShadowMap
+
+    /**
+     * @brief MegaGeometry の投影物のカリングの 1 回の記録の入力
+     *
+     * 自分のバッファ（PageTable・Stats・DirtyBits・List）は UnorderedAccess の状態で渡し、同じ状態で戻る。
+     * 主の経路のバッファ（Instances・ShadowInstances・MegaPageTable）は、ホストが書いたままの host-visible で、読み取りだけに使う
+     * （状態の遷移は要らない）。主の経路の間接描画・見えた印・ページの要求・統計は渡さない（書かない）。
+     */
+    struct VirtualShadowMapMegaCullDispatch
+    {
+        /** @brief 今フレームのクリップマップ（無効なら何も記録しない） */
+        const VirtualShadowMapClipmap* Clipmap = nullptr;
+        /** @brief VSM のページの表（dirty の階層を作る入力）と統計（語 8〜10 へ書く。呼ぶ前に 0 にしておくこと） */
+        RHI::BufferPtr PageTable;
+        RHI::BufferPtr Stats;
+        /** @brief dirty の階層（MegaDirtyBitsBytes 以上）と、出力の一覧（容量は (大きさ − 頭) ÷ 16 バイト） */
+        RHI::BufferPtr DirtyBits;
+        RHI::BufferPtr List;
+        /** @brief 主の経路のインスタンスの表（GPUMegaInstance[]）・同じ並びの影の表（MegaGeometryShadowInstance[]）・ジオメトリのページの表 */
+        RHI::BufferPtr Instances;
+        RHI::BufferPtr ShadowInstances;
+        RHI::BufferPtr MegaPageTable;
+        /** @brief インスタンスの表の要素数と、影の判定の全ワークグループ（64 クラスタ）の数 */
+        uint32_t InstanceCount = 0;
+        uint32_t TotalGroups = 0;
+        /** @brief LOD を選ぶ誤差の許容（texel）。段の texel の一辺 × この値以下の誤差の段まで粗くする */
+        float LodThresholdTexels = 1.0f;
+    };
+
+    /**
+     * @brief MegaGeometry の投影物（bCastShadow のインスタンス）を VSM の段ごとにカリングする
+     *
+     * 区間（GPU のタイムスタンプの名前）: VsmCullMega（dirty のページの階層の作成と、クラスタの選択の両方）。
+     *   1. dirty の階層（vsm_dirty_mips.comp）: ページの表の「割り当て済みで dirty」のページから、段ごとのページの mip（128² → 1）の
+     *      ビット列を作る。
+     *   2. 選択（vsm_mega_cull.comp。主の経路の Common/MegaGeometryCull.glsl の判定の本体を正射影の LOD で使う）: 1 ワークグループ =
+     *      1 つの（インスタンス、段）の 64 クラスタ。インスタンスの境界のライト空間の矩形が、その段の範囲・深度の範囲に入り、
+     *      dirty のページを含むものだけを残し、残ったクラスタを LOD の判定（自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）で選ぶ。
+     *      結果は（インスタンスの表の番号・段・クラスタの番号）の一覧と数で、自分のバッファに書く。
+     * 装置がバッファのアドレスを使えない・シェーダーやパイプラインを作れないときは作れない（IsReady が false。VSM 全体は CSM へ落とさない）。
+     */
+    class VirtualShadowMapMegaCull
+    {
+    public:
+        VirtualShadowMapMegaCull();
+        ~VirtualShadowMapMegaCull();
+
+        /** @brief シェーダーを読み、パイプラインを作る。失敗したら false（何も持たない） */
+        bool Initialize(RHI::IDevice* device, ShaderManager* shaderManager);
+        void Shutdown();
+        bool IsReady() const;
+
+        /** @brief フレームの枠を選ぶ（frameSerial は 0 以外でフレームごとに増える） */
+        void BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial);
+
+        /**
+         * @brief dirty の階層の作成 → クラスタの選択を記録する。入力が揃わなければ false を返し、何も記録しない
+         *
+         * 階層のバッファと出力の一覧の頭（先頭 4 語）は、ここで 0 にする。
+         */
+        bool Record(RHI::ICommandList* commandList, const VirtualShadowMapMegaCullDispatch& dispatch);
+
+        /** @brief 直前の Record が選択へ出したワークグループの数（x × y。段の数 z は含まない） */
+        uint32_t GetLastGroupCount() const { return m_LastGroupCount; }
+
+    private:
+        struct Use
+        {
+            RHI::BufferPtr CullUniform;
+            RHI::BufferPtr ParamsUniform;
+            RHI::DescriptorSetPtr DirtySet;
+            RHI::DescriptorSetPtr CullSet;
+        };
+
+        bool AcquireUse(Use*& outUse);
+
+        RHI::IDevice* m_Device = nullptr;
+        RHI::ShaderPtr m_DirtyShader;
+        RHI::ShaderPtr m_CullShader;
+        RHI::PipelinePtr m_DirtyPipeline;
+        RHI::PipelinePtr m_CullPipeline;
+        FrameUseRing<Use> m_Uses;
+        uint32_t m_LastGroupCount = 0;
+    };
+
+    /**
+     * @brief MegaGeometry の投影物のカリングの統計を VSM_MEGA_CULL の行にする（報告を 60 回受けるごとに出す）
+     *
+     * 報告は、このカリングを記録したフレームの統計だけを受け取る（記録しなかったフレームは報告しない）。最初の報告は必ず出す。
+     */
+    class VirtualShadowMapMegaCullStatsReporter
+    {
+    public:
+        /** @brief 報告の間隔（回数） */
+        static constexpr uint32_t LogIntervalReports = 60;
+
+        /** @brief 報告する。行を出したとき true */
+        bool Report(uint32_t instances, uint32_t clusters, uint32_t overflow);
+
+    private:
+        bool m_bLogged = false;
+        uint32_t m_ReportsSinceLog = 0;
     };
 
     /**
