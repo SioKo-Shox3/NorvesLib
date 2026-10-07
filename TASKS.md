@@ -1182,7 +1182,7 @@
 - notes: 2026-10-06 親（段7の開始時に詳しくした）。段の区切りの評価にかける。 2026-10-06 親（VTG7-RASTER-TIMING の評価）: `MegaGeometryDraw1/2` は on と off で同じ名前でも範囲が違う（off は `BeginRenderPass`／`EndRenderPass` をまたぎ、on は render pass の内側だけ）。on と off の比較はフレーム GPU と区間の合計で行い、`MegaGeometryDraw1` の比を「書く量の差」とは書かない。 2026-10-06 親: 受入れの撮影は VTG7-SW-DEFAULT-ON の取り直し（`.harness/runs/vtg7-defon-clean/`）を使い、GPU 時間は VTG7-SW-THRESHOLD の測定を使った（撮影の方針を受入れと既定の描画経路の確認に絞った）。
 
 ## VTG8-SHADOW-CSM-INCLUDE: 照明の太陽の CSM の評価を共通の include へ移す
-- status: todo
+- status: done
 - done-when: `Assets/Shaders/lighting.frag` の太陽の CSM の評価（`CalculateShadow` と、それが使う `SampleShadowCascade`・`IsInsideShadowCascade`・`FindBlockerDepth`・`EstimatePenumbraSize`・`PCSSFilter`・`ComputeShadowCompareBias`・`ComputeReceiverDepthGradient`・Poisson の表・R5 のハードシャドウの検証モード（246/247）の分岐）を `Assets/Shaders/Common/SunShadowCsm.glsl` へ移す。影の地図・カスケードの行列・分割の距離・カメラの位置と前方・検証モードの読み方は、include する側がマクロか引数で与える形にし、計算シェーダーからも同じ関数を呼べるようにする（VTG8-SHADOW-PROBE が使う）。`lighting.frag` はそれを include し、出力は変わらない: golden 4 本（Indoor・Outdoor と GBuffer の予備の経路）が基準画像と閾値を動かさずに通る。
 - verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
