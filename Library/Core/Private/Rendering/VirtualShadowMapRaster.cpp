@@ -38,6 +38,8 @@ namespace NorvesLib::Core::Rendering
         constexpr int64_t MaxOriginMagnitude = 1ll << 30;
         constexpr uint32_t DrawCommandStride = VirtualShadowMap::RASTER_DRAW_COMMAND_WORDS * sizeof(uint32_t);
         constexpr uint32_t DrawHeaderBytes = VirtualShadowMap::RASTER_DRAWS_HEADER_WORDS * sizeof(uint32_t);
+        // 間接描画の引数の頭の語 1〜3 = 展開の間接 dispatch の引数（vsm_expand_args.comp が書く）
+        constexpr uint64_t ExpandArgsOffsetBytes = sizeof(uint32_t);
         constexpr uint32_t InstanceBytes = 4u * sizeof(uint32_t);
         // 1 つの塊の中の頂点の番号の最大（三角形 128 個 × 3）。描画の中で使う連番のインデックスの数
         constexpr uint32_t MaxChunkVertices = VisibilityBuffer::MAX_TRIANGLES_PER_RECORD * 3u;
@@ -264,7 +266,7 @@ namespace NorvesLib::Core::Rendering
 
     bool VirtualShadowMapRaster::IsReady() const
     {
-        return m_Device != nullptr && m_ExpandPipeline && m_DrawPipeline && m_RenderPass && m_Framebuffer && m_IdentityIndices;
+        return m_Device != nullptr && m_ExpandPipeline && m_ExpandArgsPipeline && m_DrawPipeline && m_RenderPass && m_Framebuffer && m_IdentityIndices;
     }
 
     bool VirtualShadowMapRaster::Initialize(RHI::IDevice* device, ShaderManager* shaderManager)
@@ -286,9 +288,10 @@ namespace NorvesLib::Core::Rendering
         m_bMegaSupported = capabilities.bDrawIndirectCount;
 
         m_ExpandShader = shaderManager->LoadShader("vsm_expand.comp", RHI::ShaderStage::Compute);
+        m_ExpandArgsShader = shaderManager->LoadShader("vsm_expand_args.comp", RHI::ShaderStage::Compute);
         m_VertexShader = shaderManager->LoadShader("vsm_draw.vert", RHI::ShaderStage::Vertex);
         m_FragmentShader = shaderManager->LoadShader("vsm_draw.frag", RHI::ShaderStage::Pixel);
-        if (!m_ExpandShader || !m_VertexShader || !m_FragmentShader)
+        if (!m_ExpandShader || !m_ExpandArgsShader || !m_VertexShader || !m_FragmentShader)
         {
             NORVES_LOG_WARNING("VirtualShadowMapRaster", "VSM の展開・描画のシェーダーの読み込みに失敗");
             Shutdown();
@@ -302,6 +305,12 @@ namespace NorvesLib::Core::Rendering
             expandDesc.computeShader = m_ExpandShader;
             expandDesc.descriptorSetLayouts.push_back(MakeExpandLayout());
             m_ExpandPipeline = device->CreateComputePipeline(expandDesc);
+
+            // 間接 dispatch の引数を作る小さな計算。展開と同じ記述子の並びを使う（使うのは 0・3・7 だけ）
+            RHI::ComputePipelineDesc expandArgsDesc;
+            expandArgsDesc.computeShader = m_ExpandArgsShader;
+            expandArgsDesc.descriptorSetLayouts.push_back(MakeExpandLayout());
+            m_ExpandArgsPipeline = device->CreateComputePipeline(expandArgsDesc);
 
             m_RenderPass = device->CreateRenderPass(RHI::RenderPassDesc{});
             if (m_RenderPass)
@@ -367,9 +376,11 @@ namespace NorvesLib::Core::Rendering
         m_Framebuffer.reset();
         m_DrawPipeline.reset();
         m_ExpandPipeline.reset();
+        m_ExpandArgsPipeline.reset();
         m_RenderPass.reset();
         m_FragmentShader.reset();
         m_VertexShader.reset();
+        m_ExpandArgsShader.reset();
         m_ExpandShader.reset();
         m_Device = nullptr;
         m_LastDrawCount = 0;
@@ -479,12 +490,32 @@ namespace NorvesLib::Core::Rendering
                                               ClampBindSize(bMega ? dispatch.MegaList->GetSize() : VirtualShadowMap::STATS_BYTES));
             use->ExpandSet->Update();
 
-            // ホストが書いた塊（1 塊 = 1 ワークグループ）の後ろに、クラスタの記録の容量ぶんのワークグループを並べる（件数より後ろは何もしない）
-            const uint32_t groupsX = chunkTotal < VirtualShadowMap::GROUP_COUNT_X_LIMIT ? chunkTotal : VirtualShadowMap::GROUP_COUNT_X_LIMIT;
-            const uint32_t groupsY = (chunkTotal + VirtualShadowMap::GROUP_COUNT_X_LIMIT - 1u) / VirtualShadowMap::GROUP_COUNT_X_LIMIT;
-            commandList->SetPipeline(m_ExpandPipeline);
-            commandList->SetDescriptorSet(use->ExpandSet, 0);
-            commandList->Dispatch(groupsX, groupsY, 1u);
+            // ホストが書いた塊（1 塊 = 1 ワークグループ）の後ろに、クラスタの記録の件数ぶんのワークグループを並べる。
+            // 件数は GPU が決めるので、引数（件数を容量で頭打ちにした数）を計算で作って間接 dispatch で出す。
+            // 間接 dispatch を記録できないコマンドリストでは、容量ぶんを直接 dispatch する（件数より後ろは何もしない）
+            bool bIndirectExpand = false;
+            if (bMega)
+            {
+                commandList->SetPipeline(m_ExpandArgsPipeline);
+                commandList->SetDescriptorSet(use->ExpandSet, 0);
+                commandList->Dispatch(1u, 1u, 1u);
+                // 引数は間接 dispatch の読み取り。展開が書く前に、書き込みを見せてから戻す
+                commandList->BufferBarrier(dispatch.Draws, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead, 0u,
+                                           DrawHeaderBytes);
+                commandList->SetPipeline(m_ExpandPipeline);
+                commandList->SetDescriptorSet(use->ExpandSet, 0);
+                bIndirectExpand = commandList->DispatchIndirect(dispatch.Draws, ExpandArgsOffsetBytes);
+                commandList->BufferBarrier(dispatch.Draws, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess, 0u,
+                                           DrawHeaderBytes);
+            }
+            if (!bIndirectExpand)
+            {
+                const uint32_t groupsX = chunkTotal < VirtualShadowMap::GROUP_COUNT_X_LIMIT ? chunkTotal : VirtualShadowMap::GROUP_COUNT_X_LIMIT;
+                const uint32_t groupsY = (chunkTotal + VirtualShadowMap::GROUP_COUNT_X_LIMIT - 1u) / VirtualShadowMap::GROUP_COUNT_X_LIMIT;
+                commandList->SetPipeline(m_ExpandPipeline);
+                commandList->SetDescriptorSet(use->ExpandSet, 0);
+                commandList->Dispatch(groupsX, groupsY, 1u);
+            }
         }
 
         // 展開の書き込みを、間接描画の引数・頂点シェーダーの読み取りへ見せる。物理ページは消去（計算）の書き込みを断片シェーダーへ見せる

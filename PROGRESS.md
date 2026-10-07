@@ -2422,3 +2422,22 @@
 - 溢れ: 3 視点とも `VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL` の overflow がログの全行で 0（`VSM_PAGES` requested は default 756・near 1286・low 4720、プール 5120）。
 - Notes: 値は `metrics.json` の `gpu_timing[].gpu_frame_ms_median` と `pass_median_ms` を使った（trace.csv は集計していない）。`VTG8-VSM-GPU-TIME` の status はこの項目では触っていない。
 - Next: `VTG8-ACCEPT`。
+## 反復 17（2026-10-08）: VTG8-VSM-EXPAND-INDIRECT（展開を一覧の件数の間接 dispatch へ。done）
+
+- 実装: 展開（`vsm_expand.comp`）の dispatch を、ホストの塊 + `MEGA_CULL_LIST_CAPACITY` ぶんの直接 dispatch から、ホストの塊 + カリングの一覧の件数（容量で頭打ち）ぶんの間接 dispatch へ替えた。新しい 1 スレッドの計算 `vsm_expand_args.comp` が、一覧の語 0 から `VkDispatchIndirectCommand`（x の上限 65535 を超える分は y へ折り返し）を間接描画の引数の頭の語 1〜3 へ書く（語 0 は展開のインスタンスの確保の位置のまま）。`DispatchIndirect` を記録できないコマンドリストでは、従来の容量ぶんの直接 dispatch に戻る。`vsm_expand.comp` は変えていない（塊の番号 = y × x の数 + x の並びがそのまま使える）。クラスタの記録が無い構成（`MegaCapacity` 0）は従来どおりの直接 dispatch。
+- テスト: `RenderGraphCompileTest` の期待を新しい記録へ合わせた（呼び出しの並び `…JDDDDJBIIIIE`、引数の計算の dispatch が (1,1,1)、展開が `VsmRaster_Draws` のオフセット 4 への間接 dispatch、計算パイプラインの数 4 → 5・カリングありは 7 → 8、バリアの位置が 1 つ後ろ）。
+- 検証（`.harness/runs/20261008-073209/`）: `verify-VTG8-VSM-EXPAND-INDIRECT-1.txt`（RelWithDebInfo の Game・RenderGraphCompileTest のビルド、BUILD_EXIT_CODE=0）、`-2-capture.txt`（起動画面 3 視点、result=pass。出力は `.harness/runs/startup-capture/VTG8-VSM-EXPAND-INDIRECT`）、`-3-debug-build.txt`（Debug のビルド、BUILD_EXIT_CODE=0）、`-4-ctest.txt`（RenderGraphCompileTest・VirtualShadowMapVulkanTest が 2/2 Passed）。
+
+### GPU 時間の中央値（ms。RelWithDebInfo、持ち越しあり、240 フレーム。反復 16 の値と比べる）
+
+| 視点 | フレーム GPU（反復 16 → 今回） | VsmExpand（反復 16 → 今回） | VsmDraw | VsmCullMega | VirtualShadowMapPass |
+|---|---|---|---|---|---|
+| default | 2.848 → 2.674 | 0.291 → **0.017** | 0.137 | 0.030 | 0.338 |
+| near | 3.819 → 3.545 | 0.269 → **0.024** | 0.686 | 0.033 | 1.550 |
+| low | 3.074 → 2.980 | 0.266 → **0.016** | 0.176 | 0.031 | 0.740 |
+
+- done-when の「容量 262144 の時の 0.154〜0.168 ms 以下」を、3 視点とも大きく下回った（容量ぶんの空ワークグループの起動が無くなった。増えた引数の計算 1 dispatch は `VsmExpand` の区間に含まれていて 0.017 ms 以内）。他の区間（`VsmDraw`・`VsmAllocate`・`VsmMark`）は反復 16 と同じ。
+- 溢れ: 3 視点とも `VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL` の overflow がログの全行で 0。`VSM_RASTER` の chunks はクラスタの記録の数ぶん（default で約 1868）が出ていて、間接 dispatch でもクラスタの塊が展開されている。
+- 影の見え方（PNG を開いた）: default と low で小屋・球・岩・見本の帯の影に欠け・ずれ・ページの継ぎ目は見えない。
+- Notes: 値は `metrics.json` の `gpu_timing[].gpu_frame_ms_median` と `pass_median_ms` を使った。cache=off と負荷 300 個の撮り直しはこの項目の done-when に無いので行っていない（容量・溢れの扱いは変えていない）。
+- Next: `VTG8-VSM-DEFAULT-ON`（bias を変える前の今の既定で測る指示だったので、この項目が先に済んだ形）。

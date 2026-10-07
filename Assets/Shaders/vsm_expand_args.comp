@@ -1,0 +1,48 @@
+﻿#version 450
+
+// ========================================
+// 太陽の仮想シャドウマップ（VSM）の展開（vsm_expand.comp）の、間接 dispatch の引数を作る
+//
+// 展開は 1 ワークグループ = 1 塊で、塊の数 = ホストが書いた塊（counts.x）+ MegaGeometry のクラスタの記録の件数。
+// 件数は GPU（カリング）が決めるので、容量ぶんのワークグループを回さず、カリングの一覧の件数（語 0）を容量 counts.w で
+// 頭打ちにした数だけ回すよう、VkDispatchIndirectCommand（x・y・z）を間接描画の引数の頭の語 1〜3 へ書く。
+// x の上限（65535）を超える分は y へ折り返す（vsm_expand.comp の塊の番号 = y × x の数 + x と同じ並び）。
+// 1 スレッドだけが走る。展開の前に 1 回呼ぶ。
+// ========================================
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+// vsm_expand.comp の VsmRasterParams（std140）の先頭の部分。counts だけ読む
+layout(std140, set = 0, binding = 0) uniform VsmRasterParams
+{
+    vec4 lightRight;
+    vec4 lightUp;
+    vec4 lightDirection;
+    vec4 depth;
+    // x: ホストが書いた塊の数、y: 段の数、z: インスタンスの容量、w: MegaGeometry のクラスタの記録の容量（0 なら無し）
+    uvec4 counts;
+} params;
+
+// 間接描画の引数。語 0 は展開のインスタンスの確保の位置なので触らず、語 1〜3 に dispatch の引数を書く
+layout(std430, set = 0, binding = 3) buffer VsmDraws
+{
+    uint draws[];
+};
+
+// カリングの一覧の頭（語 0 = 選んだクラスタの数）
+layout(std430, set = 0, binding = 7) readonly buffer VsmMegaListHeader
+{
+    uint megaListSelected;
+};
+
+// VirtualShadowMap::GROUP_COUNT_X_LIMIT と同じ値
+const uint GROUP_COUNT_X_LIMIT = 65535u;
+
+void main()
+{
+    const uint megaCount = params.counts.w == 0u ? 0u : min(megaListSelected, params.counts.w);
+    const uint total = params.counts.x + megaCount;
+    draws[1] = min(total, GROUP_COUNT_X_LIMIT);
+    draws[2] = (total + GROUP_COUNT_X_LIMIT - 1u) / GROUP_COUNT_X_LIMIT;
+    draws[3] = 1u;
+}

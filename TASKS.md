@@ -1303,7 +1303,7 @@
 - notes: 2026-10-08 VTG8-VSM-GPU-TIME の測定から（停止条件「溢れが 0 にならない場合は --vsm-pool-pages と bias の組の測定を記録して止める」）。測定の表は PROGRESS.md の反復 10 にある。VRAM は pool 4096 = 256 MiB、5120 = 320 MiB。 2026-10-08 親（評価の差し戻し 2 周で blocked になった件）: (1)〜(3) の溢れは `429cf22b`・`a98e3c03`・`b80b5d2d` で直り、VTG8-VSM-GPU-TIME の再測定の評価で VSM の 8 run の 3 種の overflow がすべて 0 と確かめられている。残りは停止条件の「直す前より 0.5 ms を超えて遅くならない」の証拠だけ。今の HEAD で上の verify の撮影（持ち越しありの起動画面 3 視点）を行い、修正前（run 20261008-035618 の反復 10 の `verify-VTG8-VSM-GPU-TIME-*.txt` の `CAPTURE_STARTUP_SCENE gpu_timing` の行）とのフレーム GPU の中央値の差と `VsmExpand` を PROGRESS に書く。値は撮影の `metrics.json` の `gpu_timing[].gpu_frame_ms_median`・`pass_median_ms` か標準出力の `gpu_timing` の行を使い、trace.csv を自前で集計しない（`Type=Frame` は CPU のフレーム）。VTG8-VSM-GPU-TIME の status は親が順番を決めたので、この項目では触らない。
 
 ## VTG8-VSM-EXPAND-INDIRECT: VSM の展開の dispatch を MegaGeometry のクラスタの実数で絞り、一覧の容量を増やした分の費用をなくす
-- status: todo
+- status: done
 - done-when: `VirtualShadowMapRaster` の展開（`vsm_expand.comp` の MegaGeometry 側の塊）の dispatch を、`MEGA_CULL_LIST_CAPACITY / 64` グループの直接 dispatch から、カリングが書いた件数（`VsmMega_List` の語 0）を元にした間接 dispatch へ替える。RelWithDebInfo の `-GpuTimingFrames 300` の起動画面 3 視点（持ち越しあり）で `VsmExpand` の中央値が反復 15 の 0.267〜0.297 ms から、容量 262144 の時の 0.154〜0.168 ms 以下へ戻ることを確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game RenderGraphCompileTest -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-EXPAND-INDIRECT -Configuration RelWithDebInfo -SunElevations 45 -GpuTimingFrames 300 -ShadowMethod Vsm`

@@ -7,6 +7,8 @@
 //
 // 区間（GPU のタイムスタンプの名前）:
 //   VsmExpand : 展開（vsm_expand.comp。1 ワークグループ = 1 塊）。インスタンスと塊ごとの間接描画の引数を作る。
+//     MegaGeometry のクラスタの記録があるときは、先に vsm_expand_args.comp が一覧の件数から間接 dispatch の引数を作り、
+//     ホストが書いた塊 + 件数ぶんだけワークグループを出す（容量ぶんは出さない）。
 //   VsmDraw   : 描画（vsm_draw.vert・vsm_draw.frag。添付の無い 128×128 のレンダーパス）。塊ごとに 1 回の間接描画。
 //
 // 描画の規則:
@@ -19,8 +21,7 @@
 // （展開の前に、主の経路のインスタンスの表を読み取りだけで使い、（インスタンス、段、クラスタ）の一覧を別のバッファへ作り、
 // 続けて一覧の 1 件ごとの影の塊の記録にする。区間 VsmCullMega）。
 // MegaGeometry のクラスタの記録は、手続き・スキニングの塊（ホストが書く）の後ろに GPU が書いた記録として並び、同じ展開・描画の
-// 1 回の流れで物理ページへ描く（記録の件数は GPU が決めるので、展開はクラスタの記録の容量ぶんのワークグループを出して件数より
-// 後ろを何もしない形にし、描画は一覧の件数を数として間接描画の数を GPU から読む DrawIndexedIndirectCount 1 回で描く）。
+// 1 回の流れで物理ページへ描く（記録の件数は GPU が決めるので、展開は一覧の件数ぶんのワークグループを間接 dispatch で出し、描画は一覧の件数を数として間接描画の数を GPU から読む DrawIndexedIndirectCount 1 回で描く）。
 // CSM の MegaGeometry の影のように、インスタンスごとの定数バッファ（DynamicUniformAllocator のスロット）は使わない。
 //
 // 展開の容量（インスタンスの数）を超える塊は描かずに数える。統計（VSM.Stats）の語 5〜7 に、描く塊の数・書いたインスタンスの数・
@@ -83,7 +84,10 @@ namespace NorvesLib::Core::Rendering
         {
             return static_cast<uint64_t>(instances == 0u ? 1u : instances) * 4u * sizeof(uint32_t);
         }
-        /** @brief 間接描画の引数の頭（先頭の 4 語。語 0 = インスタンスの確保の位置）と、塊ごとの引数（5 語 = VkDrawIndexedIndirectCommand）の大きさ */
+        /**
+         * @brief 間接描画の引数の頭（先頭の 4 語。語 0 = インスタンスの確保の位置、語 1〜3 = MegaGeometry のクラスタの記録があるときの
+         * 展開の間接 dispatch の引数 VkDispatchIndirectCommand）と、塊ごとの引数（5 語 = VkDrawIndexedIndirectCommand）の大きさ
+         */
         constexpr uint32_t RASTER_DRAWS_HEADER_WORDS = 4;
         constexpr uint32_t RASTER_DRAW_COMMAND_WORDS = 5;
         constexpr uint64_t RasterDrawBytes(uint32_t chunks)
@@ -192,9 +196,11 @@ namespace NorvesLib::Core::Rendering
 
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_ExpandShader;
+        RHI::ShaderPtr m_ExpandArgsShader;
         RHI::ShaderPtr m_VertexShader;
         RHI::ShaderPtr m_FragmentShader;
         RHI::PipelinePtr m_ExpandPipeline;
+        RHI::PipelinePtr m_ExpandArgsPipeline;
         RHI::PipelinePtr m_DrawPipeline;
         RHI::RenderPassPtr m_RenderPass;
         RHI::FramebufferPtr m_Framebuffer;
