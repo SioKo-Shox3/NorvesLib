@@ -61,8 +61,6 @@ namespace NorvesLib::Core::Rendering
         };
         constexpr uint32_t CacheFlagEnabled = 1u;
         constexpr uint32_t CacheFlagInvalidateAll = 2u;
-        // 太陽の向きが前フレームと同じと見なす、成分ごとの差の上限
-        constexpr float SunDirectionTolerance = 1.0e-6f;
         // 無効化の矩形の外側へ足す余白（m）。展開の範囲の計算（float）との丸めの差でページを取りこぼさないため
         constexpr float InvalidationMarginMeters = 1.0e-3f;
         // 絶対のページの番号を int32 でシェーダーへ渡せる範囲（範囲の端 + 128 ページが溢れない余裕を持つ）
@@ -147,10 +145,11 @@ namespace NorvesLib::Core::Rendering
             return origin > -MaxOriginMagnitude && origin < MaxOriginMagnitude;
         }
 
+        // 向きの成分が 1 つでも違えばページの中身は古い。前フレームとの差に許容を設けると、
+        // 許容未満の微小な回転が毎フレーム続いたとき（比較元も毎フレーム更新される）に無効化されないまま累積する
         bool IsSameDirection(const Math::Vector3& a, const Math::Vector3& b)
         {
-            return std::abs(a.x - b.x) <= SunDirectionTolerance && std::abs(a.y - b.y) <= SunDirectionTolerance &&
-                   std::abs(a.z - b.z) <= SunDirectionTolerance;
+            return a.x == b.x && a.y == b.y && a.z == b.z;
         }
 
         // 段の設定（ページの大きさ・段の数）が前フレームと同じか。違えば、ページの表の欄が指すページの意味が変わるので引き継げない

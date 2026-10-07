@@ -2145,3 +2145,12 @@
 - 検証（`.harness/runs/20261007-203349/`）: `verify-VTG8-VSM-CACHE-3.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-4.txt`（VirtualShadowMapVulkanTest・RenderGraphCompileTest が 2/2 Passed）、`-5-verbose.txt`（ケース M の値、VUID_COUNT=0、RESULT=PASS）。
 - Notes: (1) 実機の起動画面でのキャッシュの効果（cached/rendered の数・GPU 時間・キャッシュの on/off の画の一致）は、重い処理の扱いに従いこの反復では回していない（VTG8-VSM-GPU-TIME の撮影で確かめる）。(2) 起動画面の大きな球は自転するので、そのまわりのページは毎フレーム描き直しになる（期待どおり）。(3) `--vsm-cache` は描画の層からプロセスのコマンドラインを直接読む（`ApplicationProcessor` の外）。
 - Next: VTG8-VSM-GPU-TIME（VTG8-VSM-SAMPLE・PCSS は blocked のまま。人の判断待ち）。
+
+## 反復 22（2026-10-08）: VTG8-VSM-CACHE（評価者の差し戻し 1 点を修正、done）
+
+- 差し戻し（太陽の向きの変化判定）: `IsSameDirection`（`VirtualShadowMapPages.cpp`）が成分ごとの差 1e-6 以下を「同じ向き」としつつ、比較元（前フレームのクリップマップ）を毎フレーム更新していたため、1 フレームの回転が許容未満の連続回転（評価者の再現: 5e-7 rad/フレームを 10 万フレームで累積 2.9°）が無効化されないまま累積した。許容（`SunDirectionTolerance`）をやめ、向き・光の右・光の上の成分の完全一致で比べる（基底は `BuildLightBasis` が向きだけから決めるので、同じ向きなら完全に同じ値になり、止まった太陽で誤って無効化されない）。
+- テスト（`VirtualShadowMapVulkanTest` ケース M4b）: 向きを 5e-7 ずつ 3 回（各回の差は 1e-6 未満）回し、各回で全ページ（14/14）を無効にして描き直し、毎フレーム描き直したときと全 texel で一致することを確かめる。元の向きへ戻したときも全ページを無効にし、落ち着けば何も描かない。
+- 変異（`verify-VTG8-VSM-CACHE-4-mutation.txt`）: 比較を 1e-6 の許容つきに戻す → M4b が 3 回とも FAIL（描き直したページ 0/14）、`RESULT=FAIL`。元へ戻し内容を確認。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-CACHE-7.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-8.txt`（VirtualShadowMapVulkanTest・RenderGraphCompileTest が 2/2 Passed）、`-3-verbose.txt`（M4b の値、VUID_COUNT=0、RESULT=PASS）。
+- Notes: (1) 変異の後、元のファイルを Copy-Item で戻すと更新時刻が古いままで MSBuild が再ビルドせず、変異版の実行ファイルで検証が FAIL した（`-5`・`-6`）。戻した後は更新時刻を更新してから再ビルドすること。内容は差分で元の修正どおりと確認済み。(2) 比較の厳密化により、カメラや太陽の入力が毎フレーム僅かに揺れる場合は全ページが毎フレーム描き直しになる。クリップマップの向きは太陽の向きだけから決まるので、静止した太陽では完全に同じ値になる。
+- Next: VTG8-VSM-GPU-TIME（VTG8-VSM-SAMPLE・PCSS は blocked のまま。人の判断待ち）。

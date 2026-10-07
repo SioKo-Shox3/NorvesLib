@@ -29,7 +29,7 @@
 //     M1 最初のフレームは全ページを描く。M2 止まった場面の 2 フレーム目は描かれるページが 0・持ち越しが要求の数・物理プールの中身と物理ページが不変
 //     （M2b は 30 フレームを超えて続けても、要求のあるページは空きへ戻らない）。M3 投影物を動かすと、前フレームと今フレームの境界のライト空間の矩形が覆うページだけが
 //     dirty になり、物理プールが毎フレーム描き直したときと全 texel で一致する（3a 同じページの中の動き・3b 別のページへ出る動き）。
-//     M4 太陽の向きを変えると全ページが描き直される。M5 深度の原点（スナップ）が動くと全ページが描き直される。M6 段の中心が動くと、範囲に残ったページは
+//     M4 太陽の向きを変えると（1 フレームの変化が微小でも）全ページが描き直される。M5 深度の原点（スナップ）が動くと全ページが描き直される。M6 段の中心が動くと、範囲に残ったページは
 //     同じ物理ページのまま描き直されず、範囲の外へ出たページは空きへ戻る。M7 要求の無いページは 30 フレーム持ち越し、次のフレームで空きへ戻る。
 //     M8 空きが足りないとき、要求の無いページを古い順（最も昔に要求されたもの）から戻す。
 // 参照は、段の境界・ページの境界・影の最大距離に近い曖昧な画素を深度の画像から除いて作るので、GPU の単精度との差で揺れない。
@@ -4189,6 +4189,52 @@ namespace
                 return false;
             }
             Expect(stay.Stat(VirtualShadowMap::StatRendered) == 0u, "ケース M4: 向きが落ち着けば次のフレームは何も描かない");
+        }
+
+        // ----- ケース M4b: 1 フレームごとの変化が微小でも、向きが変われば全ページが描き直される -----
+        // 比較に許容を設けると、許容より小さい回転が毎フレーム続いたとき（比較元も毎フレーム更新される）に無効化されないまま累積する
+        {
+            Scene tinyScene = scene;
+            const Math::Vector3 baseDirection = scene.Clipmap.Direction;
+            const Math::Vector3 cameraPosition(scene.CameraPosition[0], scene.CameraPosition[1], scene.CameraPosition[2]);
+            constexpr float TinyStep = 5.0e-7f;
+            float previousX = baseDirection.x;
+            for (uint32_t step = 1u; step <= 3u; ++step)
+            {
+                tinyScene.Clipmap = BuildVirtualShadowMapClipmap(
+                    Math::Vector3(baseDirection.x + TinyStep * static_cast<float>(step), baseDirection.y, baseDirection.z), 1u, cameraPosition, scene.Settings);
+                Expect(tinyScene.Clipmap.bEnabled, "ケース M4b: 微小に回したクリップマップが有効でなければならない");
+                Expect(tinyScene.Clipmap.Direction.x != previousX && std::abs(tinyScene.Clipmap.Direction.x - previousX) < 1.0e-6f,
+                       "ケース M4b: 微小に回した向きが、前の向きと違い、かつ 1e-6 未満の差でなければならない");
+                previousX = tinyScene.Clipmap.Direction.x;
+                CacheFrame frame;
+                if (!RunCacheFrame(device, cachedPages, raster, tinyScene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, frame))
+                {
+                    std::cerr << TestName << " ケース M4b を実行できませんでした" << std::endl;
+                    return false;
+                }
+                Expect(frame.bContinued && frame.bInvalidatedAll, "ケース M4b: 1 フレームの変化が微小でも、太陽の向きの変化で全ページを無効にしなければならない");
+                Expect(CountAllocated(frame) > 0u && frame.Stat(VirtualShadowMap::StatRendered) == CountAllocated(frame) &&
+                           frame.Stat(VirtualShadowMap::StatCached) == 0u,
+                       "ケース M4b: 微小な回転でも、全ページが描き直されなければならない");
+                const uint32_t different = CompareWithUncachedFrame(device, uncachedPages, raster, tinyScene, poolPages, stillGeometry, stillBuffers, depth, frame, frameSerial++);
+                std::cout << TestName << " ケース M4b(" << step << "): 描き直したページ=" << frame.Stat(VirtualShadowMap::StatRendered) << "/" << CountAllocated(frame)
+                          << " キャッシュなしとの違い（語）=" << different << std::endl;
+                Expect(different == 0u, "ケース M4b: 微小な回転の後の物理プールが、毎フレーム描き直したときと全 texel で一致しなければならない");
+            }
+            // 元の向きへ戻して落ち着かせる（次のケースの前提）
+            CacheFrame back;
+            if (!RunCacheFrame(device, cachedPages, raster, scene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, back))
+            {
+                return false;
+            }
+            Expect(back.bInvalidatedAll, "ケース M4b: 向きを戻したときも全ページを無効にしなければならない");
+            CacheFrame stay;
+            if (!RunCacheFrame(device, cachedPages, raster, scene, resources, stillGeometry, stillBuffers, depth, &tracker, frameSerial++, stay))
+            {
+                return false;
+            }
+            Expect(stay.Stat(VirtualShadowMap::StatRendered) == 0u, "ケース M4b: 向きが落ち着けば次のフレームは何も描かない");
         }
 
         // ----- ケース M5: 深度の原点がスナップで動くと、全ページが描き直される（段の中心は動かない） -----
