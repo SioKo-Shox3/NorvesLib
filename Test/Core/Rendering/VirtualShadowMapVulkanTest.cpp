@@ -2777,9 +2777,12 @@ namespace
     //       その粗い段の値（0）になる（逃げた標本は 16）。粗い段にも無ければ影なし（1。逃げた標本は 16）。
     //       粗い段へ逃げたときに返す texel の一辺は、実際に読んだ（粗い）段の値。
     //   L4（影の距離の範囲・奥の薄め）: CSM と同じ前方への距離で、範囲の外は影なし、最後のカスケードの幅の 10% で薄める。
-//   L5（物理の半影）: 段 0 の texel が 0.24 mm の既定のクリップマップに、半平面の遮る物（縁がページの中央）を直接描き、同じ縁を受け手から 1 m と 3 m の
-//       深さで読む。縁の途中の値（0 と 1 の間）の帯の幅が、物理の半影（深度の差 × 太陽の角半径の tan。Poisson の 16 点の横の広がりを掛けた値）に
-//       ±30% で合い、2 つの帯の幅の比が深度の差の比（3）に ±30% で合うこと。遮る物に接する受け手は、1 m の帯の半分未満の鋭い縁になること。
+    //   L5（物理の半影）: 光に正対する受け手の平面をカメラが正面から見る場面で、同じ四角形（縁が中心の近くを縦に通る）を受け手から深度の差 10 m・30 m の
+    //       位置に置き、本番の流れ（印付け → 割り当て → 消去 → 展開 → 描画）で物理ページへ描いて、縁を読む。縁の途中の値（0 と 1 の間）の帯の幅が、
+    //       物理の半影（深度の差 × 太陽の角半径の tan。Poisson の 16 点の横の広がりを掛けた値）に ±30% で合い、2 つの帯の幅の比が深度の差の比（3）に
+    //       ±30% で合うこと。遮る物に接する受け手は、深度の差 10 m の帯の半分未満の鋭い縁になること。探索・PCF の標本が粗い段へ逃げないこと
+    //       （印付けが読むページまで届くこと）も確かめる。
+    //   C2（印の範囲）: カメラを受け手の平面から 0.1 m に置いた 1 画素の印の範囲が、ページ何枚分にもなっても CPU の参照（半径が覆うすべてのページ）と一致すること。
 
     // Common/PoissonDisk16.glsl と同じ 16 点（CPU の参照のための独立した写し。シェーダーの点列が変わると一致しなくなる）
     constexpr double ReferencePoissonDisk[16][2] = {
@@ -3034,68 +3037,197 @@ namespace
     }
 
     // ----- L5: 物理の半影 -----
-    // 既定のクリップマップ（段 0 の幅 4 m・texel 0.244 mm・ページ 3.1 cm）の段 0 に、縁がページの中央を縦に通る半平面の遮る物を直接描く
-    // （物理ページの texel は、中心が縁より左なら遮る物の深度、右なら 1.0）。3x3 ページを割り当てる。
-    // 縁を横切る受け手を、遮る物から depthGap だけ後ろの深度で読み、可視度が 0 と 1 の間の値になる位置の幅（帯の幅）を測る。
+    // 光に正対する平面（法線 = 光の向き。ライト空間の深度が一定）を受け手にし、カメラがその中心を正面から見る場面を作る。受け手の平面の深度の画像を
+    // 本番の流れ（印付け → 割り当て → 消去 → 展開 → 描画）に通し、縁が中心の近くを縦に通る同じ四角形を、受け手から depthGap だけ光の側へ置いて描く。
+    // 縁を横切る受け手を照明と同じ関数で読み、可視度が 0 と 1 の間の値になる位置の幅（帯の幅）を測る。
     // 半影の半幅は depthGap × 太陽の角半径の tan。Poisson の 16 点の横の広がりは [-0.94201624, 0.97484398] の 1.91686 倍
-    double MeasurePenumbraBandWidth(const DevicePtr& device,
-                                    const SampleProbe& probe,
-                                    const GPUVsmSampleParams& real,
-                                    const VirtualShadowMapClipmap& clipmap,
-                                    const Container::VariableArray<uint32_t>& pool,
-                                    const Container::VariableArray<uint32_t>& table,
-                                    double edgeX,
-                                    double lightY,
-                                    double blockerDepth,
-                                    double depthGap,
-                                    uint32_t& outFallback,
-                                    bool& outOk)
+    struct ReceiverScene
     {
-        outOk = false;
-        outFallback = 0;
-        const double texel = static_cast<double>(clipmap.Levels[0].TexelMeters);
-        const double penumbra = depthGap * static_cast<double>(VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS);
+        Scene Base;
+        // 受け手の平面の中心（カメラの正面）のライト空間の座標と、平面のライト空間の深度
+        double CenterX = 0.0;
+        double CenterY = 0.0;
+        double ReceiverDepth = 0.0;
+        // 深度の画像（中心の周りの窓だけが平面。ほかは空）の画素の、カメラからの直線距離の最小と最大
+        double MinDistance = 0.0;
+        double MaxDistance = 0.0;
+        Container::VariableArray<float> Image;
+    };
+
+    // cameraDistance: カメラから受け手の平面までの距離。windowHalfPixels: 画面の中心から窓の端までの画素数
+    ReceiverScene BuildReceiverScene(const DevicePtr& device, double cameraDistance, int32_t windowHalfPixels)
+    {
+        ReceiverScene result;
+        Scene& scene = result.Base;
+        const Math::Vector3 sunDirection(0.35f, -0.8f, 0.45f);
+        // ライト空間の軸は太陽の向きだけで決まる。仮のカメラのクリップマップから取り出す
+        const VirtualShadowMapClipmap axes = BuildVirtualShadowMapClipmap(sunDirection, 1u, Math::Vector3(0.0f, 0.0f, 0.0f), scene.Settings);
+        const double right[3] = {axes.LightRight.x, axes.LightRight.y, axes.LightRight.z};
+        const double up[3] = {axes.LightUp.x, axes.LightUp.y, axes.LightUp.z};
+        const double forward[3] = {axes.Direction.x, axes.Direction.y, axes.Direction.z};
+
+        result.CenterX = 0.0137;
+        result.CenterY = 0.0291;
+        result.ReceiverDepth = 0.0;
+        double center[3] = {};
+        double cameraPosition[3] = {};
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            center[axis] = right[axis] * result.CenterX + up[axis] * result.CenterY + forward[axis] * result.ReceiverDepth;
+            cameraPosition[axis] = center[axis] - forward[axis] * cameraDistance;
+        }
+
+        // 前方 = 光の向き、上 = ライト空間の上、右 = 前方 × 上
+        const double cameraRight[3] = {forward[1] * up[2] - forward[2] * up[1], forward[2] * up[0] - forward[0] * up[2], forward[0] * up[1] - forward[1] * up[0]};
+        scene.Camera.PositionX = static_cast<float>(cameraPosition[0]);
+        scene.Camera.PositionY = static_cast<float>(cameraPosition[1]);
+        scene.Camera.PositionZ = static_cast<float>(cameraPosition[2]);
+        scene.Camera.ForwardX = static_cast<float>(forward[0]);
+        scene.Camera.ForwardY = static_cast<float>(forward[1]);
+        scene.Camera.ForwardZ = static_cast<float>(forward[2]);
+        scene.Camera.RightX = static_cast<float>(cameraRight[0]);
+        scene.Camera.RightY = static_cast<float>(cameraRight[1]);
+        scene.Camera.RightZ = static_cast<float>(cameraRight[2]);
+        scene.Camera.UpX = static_cast<float>(up[0]);
+        scene.Camera.UpY = static_cast<float>(up[1]);
+        scene.Camera.UpZ = static_cast<float>(up[2]);
+        scene.Camera.Projection = ProjectionType::Perspective;
+        scene.Camera.FieldOfView = 60.0f;
+        scene.Camera.NearPlane = 0.01f;
+        scene.Camera.FarPlane = 100.0f;
+        scene.Camera.AspectRatio = static_cast<float>(ImageWidth) / static_cast<float>(ImageHeight);
+        const CameraViewConstants constants = CameraViewConstants::BuildForDevice(scene.Camera, scene.Camera.AspectRatio, device.get());
+        constants.CopyShaderInverseViewProjection(scene.InverseViewProjection);
+        constants.CopyShaderViewProjection(scene.ViewProjection);
+        scene.CameraPosition[0] = scene.Camera.PositionX;
+        scene.CameraPosition[1] = scene.Camera.PositionY;
+        scene.CameraPosition[2] = scene.Camera.PositionZ;
+        scene.Clipmap = BuildVirtualShadowMapClipmap(sunDirection, 1u, Math::Vector3(scene.CameraPosition[0], scene.CameraPosition[1], scene.CameraPosition[2]), scene.Settings);
+
+        // 受け手の平面（中心を通り、法線は光の向き）の深度の画像
+        result.Image.assign(ImageWidth * ImageHeight, 1.0f);
+        result.MinDistance = 1.0e300;
+        result.MaxDistance = 0.0;
+        const int32_t centerPixelX = static_cast<int32_t>(ImageWidth / 2u);
+        const int32_t centerPixelY = static_cast<int32_t>(ImageHeight / 2u);
+        for (int32_t offsetY = -windowHalfPixels; offsetY <= windowHalfPixels; ++offsetY)
+        {
+            for (int32_t offsetX = -windowHalfPixels; offsetX <= windowHalfPixels; ++offsetX)
+            {
+                const uint32_t pixelX = static_cast<uint32_t>(centerPixelX + offsetX);
+                const uint32_t pixelY = static_cast<uint32_t>(centerPixelY + offsetY);
+                double nearPoint[3] = {};
+                double farPoint[3] = {};
+                Unproject(scene, pixelX, pixelY, 0.0, nearPoint);
+                Unproject(scene, pixelX, pixelY, 1.0, farPoint);
+                const double direction[3] = {farPoint[0] - nearPoint[0], farPoint[1] - nearPoint[1], farPoint[2] - nearPoint[2]};
+                double toPlane = 0.0;
+                double along = 0.0;
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    toPlane += (center[axis] - nearPoint[axis]) * forward[axis];
+                    along += direction[axis] * forward[axis];
+                }
+                if (std::abs(along) < 1.0e-12)
+                {
+                    continue;
+                }
+                const double t = toPlane / along;
+                const double hit[4] = {nearPoint[0] + direction[0] * t, nearPoint[1] + direction[1] * t, nearPoint[2] + direction[2] * t, 1.0};
+                double clip[4] = {};
+                Multiply(scene.ViewProjection, hit, clip);
+                result.Image[pixelY * ImageWidth + pixelX] = static_cast<float>(clip[2] / clip[3]);
+                const double distance = std::sqrt((hit[0] - cameraPosition[0]) * (hit[0] - cameraPosition[0]) + (hit[1] - cameraPosition[1]) * (hit[1] - cameraPosition[1]) +
+                                                  (hit[2] - cameraPosition[2]) * (hit[2] - cameraPosition[2]));
+                result.MinDistance = std::min(result.MinDistance, distance);
+                result.MaxDistance = std::max(result.MaxDistance, distance);
+            }
+        }
+        return result;
+    }
+
+    struct BandResult
+    {
+        bool bRan = false;
+        // 可視度が 0 と 1 の間の値になる点があったか
+        bool bBand = false;
+        double Width = 0.0;
+        // 粗い段へ逃げた標本の数
+        uint32_t Fallback = 0;
+    };
+
+    // 受け手の平面の深度の画像を本番の流れに通し、縁がライト空間の x = 中心 + 0.0731 の四角形（受け手から depthGap だけ光の側）を描いて、縁を読む
+    BandResult MeasureReceiverBand(const DevicePtr& device,
+                                   VirtualShadowMapPages& pages,
+                                   VirtualShadowMapRaster& raster,
+                                   const SampleProbe& probe,
+                                   const ReceiverScene& receiver,
+                                   const TexturePtr& depth,
+                                   double depthGap,
+                                   uint64_t& frameSerial)
+    {
+        BandResult result;
+        const Scene& scene = receiver.Base;
+        const double edgeX = receiver.CenterX + 0.0731;
+
+        // 縁の左側（x < edgeX）が四角形。奥行きは画面の窓より十分に広い
+        Container::VariableArray<Shape> shapes;
+        Shape quad = MakeRect(edgeX - 5.0, edgeX, receiver.CenterY - 5.0, receiver.CenterY + 5.0);
+        SetPlane(quad, edgeX, receiver.CenterY, receiver.ReceiverDepth - depthGap, 0.0, 0.0);
+        shapes.push_back(quad);
+
+        ChunkGeometry geometry = BuildChunks(scene, shapes);
+        Resources resources;
+        RasterBuffers rasterBuffers;
+        RasterReadback readback;
+        constexpr uint32_t PoolPages = 256u;
+        constexpr uint32_t InstanceCapacity = 4096u;
+        if (!CreateResources(device, PoolPages, resources) || !CreateRasterBuffers(device, geometry, InstanceCapacity, rasterBuffers) ||
+            !RunRaster(device, &pages, raster, scene, resources, rasterBuffers, depth, frameSerial++, readback))
+        {
+            std::cerr << TestName << " ケース L5 の本番の流れを実行できませんでした" << std::endl;
+            return result;
+        }
+        Expect(readback.bPagesRecorded && readback.bRasterRecorded, "ケース L5: 印付け・割り当て・消去・展開・描画を記録できなければならない");
+        Expect(readback.Stats[VirtualShadowMap::StatOverflow] == 0u && readback.Stats[VirtualShadowMap::StatRasterOverflow] == 0u,
+               "ケース L5: プール・インスタンスの容量に収まらなければならない");
+
+        const float cameraForward[3] = {scene.Camera.ForwardX, scene.Camera.ForwardY, scene.Camera.ForwardZ};
+        GPUVsmSampleParams params;
+        if (!BuildVirtualShadowMapSampleParams(&scene.Clipmap, scene.CameraPosition, cameraForward, nullptr, scene.Camera.FieldOfView,
+                                               static_cast<float>(ImageHeight), PoolPages, params))
+        {
+            std::cerr << TestName << " ケース L5: 読み出しのパラメータを作れませんでした" << std::endl;
+            return result;
+        }
+        Expect(params.pixel[1] == VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS && params.pixel[2] == VirtualShadowMap::MAX_FILTER_RADIUS_METERS,
+               "ケース L5: 読み出しのパラメータが太陽の角半径の tan と探索・PCF の半径の上限を持たなければならない");
+
+        const int32_t level = SelectVirtualShadowMapLevel(scene.Settings, static_cast<float>(receiver.MinDistance), scene.Camera.FieldOfView, static_cast<float>(ImageHeight));
+        if (level < 0)
+        {
+            return result;
+        }
+        const double texel = static_cast<double>(scene.Clipmap.Levels[static_cast<uint32_t>(level)].TexelMeters);
+        constexpr double TanRadius = static_cast<double>(VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS);
+        const double penumbra = depthGap * TanRadius;
         // 縁を中心に、帯（約 1.92 × 半影）が十分に入る範囲を texel の 1/4 刻みで読む
         const double span = std::max(1.5 * penumbra, 6.0 * texel);
         const double step = 0.25 * texel;
         const int32_t half = static_cast<int32_t>(std::ceil(span / step));
-
         Container::VariableArray<SampleProbePoint> points;
         for (int32_t index = -half; index <= half; ++index)
         {
-            const double lightX = edgeX + static_cast<double>(index) * step;
-            const double lightDepth = blockerDepth + depthGap;
-            SampleProbePoint point = {};
-            const Math::Vector3 position(
-                static_cast<float>(clipmap.LightRight.x * lightX + clipmap.LightUp.x * lightY + clipmap.Direction.x * lightDepth),
-                static_cast<float>(clipmap.LightRight.y * lightX + clipmap.LightUp.y * lightY + clipmap.Direction.y * lightDepth),
-                static_cast<float>(clipmap.LightRight.z * lightX + clipmap.LightUp.z * lightY + clipmap.Direction.z * lightDepth));
-            point.Position[0] = position.x;
-            point.Position[1] = position.y;
-            point.Position[2] = position.z;
-            point.Position[3] = 1.0f;
-            // 光源を向いた法線（法線の向きへのずらしも受け面の傾きも 0）
-            point.Normal[0] = -clipmap.Direction.x;
-            point.Normal[1] = -clipmap.Direction.y;
-            point.Normal[2] = -clipmap.Direction.z;
-            points.push_back(point);
+            points.push_back(MakeReceiver(scene, edgeX + static_cast<double>(index) * step, receiver.CenterY, receiver.ReceiverDepth));
         }
-
-        // 段 0 に固定し、カメラを中央の受け手から 1 m 離す（前方 -X）。画素の大きさは「そこでちょうど 2 texel」。縁の幅の下限は約 0.5 mm になる
-        const SampleProbePoint& center = points[static_cast<size_t>(half)];
-        GPUVsmSampleParams params = MakeForcedLevelParams(real, 0u, center);
-        constexpr double CameraDistance = 1.0;
-        params.cameraPosition[0] = center.Position[0] + static_cast<float>(CameraDistance);
-        params.cameraPosition[1] = center.Position[1];
-        params.cameraPosition[2] = center.Position[2];
-        params.pixel[0] = static_cast<float>(2.0 * texel / CameraDistance);
 
         SampleOutput output;
-        if (!RunSampleProbe(device, probe, params, pool, table, points, output))
+        if (!RunSampleProbe(device, probe, params, readback.Pool, readback.PageTable, points, output))
         {
-            return 0.0;
+            return result;
         }
-        outFallback = output.Fallback;
+        result.bRan = true;
+        result.Fallback = output.Fallback;
         int32_t first = -1;
         int32_t last = -1;
         for (int32_t index = 0; index < static_cast<int32_t>(output.Visibility.size()); ++index)
@@ -3107,107 +3239,126 @@ namespace
                 last = index;
             }
         }
-        outOk = first >= 0;
-        return outOk ? static_cast<double>(last - first + 1) * step : 0.0;
+        result.bBand = first >= 0;
+        result.Width = result.bBand ? static_cast<double>(last - first + 1) * step : 0.0;
+        return result;
     }
 
-    bool RunPenumbraCase(const DevicePtr& device, const SampleProbe& probe, const Scene& scene)
+    bool RunPenumbraCase(const DevicePtr& device, VirtualShadowMapPages& pages, VirtualShadowMapRaster& raster, const SampleProbe& probe, uint64_t& frameSerial)
     {
-        constexpr uint32_t PoolPages = 9u;
-        VirtualShadowMapClipmapSettings settings;
-        const VirtualShadowMapClipmap clipmap =
-            BuildVirtualShadowMapClipmap(Math::Vector3(0.35f, -0.8f, 0.45f), 1u, Math::Vector3(0.0f, 0.0f, 0.0f), settings);
-        Expect(clipmap.bEnabled, "ケース L5: 既定のクリップマップが有効でなければならない");
-        const float cameraPosition[3] = {0.0f, 0.0f, 0.0f};
-        const float cameraForward[3] = {scene.Camera.ForwardX, scene.Camera.ForwardY, scene.Camera.ForwardZ};
-        GPUVsmSampleParams real;
-        if (!BuildVirtualShadowMapSampleParams(&clipmap, cameraPosition, cameraForward, nullptr, scene.Camera.FieldOfView,
-                                               static_cast<float>(ImageHeight), PoolPages, real))
+        // カメラを受け手の平面から 1 m に置く。窓（中心から 30 画素）の画素と探索の標本が、すべて同じ段のページを読む
+        const ReceiverScene receiver = BuildReceiverScene(device, 1.0, 30);
+        const Scene& scene = receiver.Base;
+        Expect(scene.Clipmap.bEnabled && std::abs(scene.Clipmap.DepthCenter) < 1.0, "ケース L5: クリップマップが有効で、深度の中心が受け手の平面の近くになければならない");
+        const float fov = scene.Camera.FieldOfView;
+        const float height = static_cast<float>(ImageHeight);
+        const int32_t nearLevel = SelectVirtualShadowMapLevel(scene.Settings, static_cast<float>(receiver.MinDistance - AmbiguityToleranceMeters), fov, height);
+        const int32_t farLevel = SelectVirtualShadowMapLevel(scene.Settings, static_cast<float>(receiver.MaxDistance + AmbiguityToleranceMeters), fov, height);
+        std::cout << TestName << " ケース L5: カメラから受け手まで " << receiver.MinDistance << "〜" << receiver.MaxDistance << " m 段=" << nearLevel
+                  << " 段の texel=" << scene.Clipmap.Levels[static_cast<uint32_t>(std::max(nearLevel, 0))].TexelMeters * 1000.0f << " mm" << std::endl;
+        Expect(nearLevel >= 0 && nearLevel == farLevel, "ケース L5: 窓のすべての画素が同じ段を使わなければならない（場面が退化している）");
+        const TexturePtr depth = CreateDepthTexture(device, receiver.Image);
+        if (!depth || nearLevel < 0 || nearLevel != farLevel)
         {
-            std::cerr << TestName << " ケース L5: 読み出しのパラメータを作れませんでした" << std::endl;
             return false;
-        }
-        Expect(real.pixel[1] == VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS && real.pixel[2] == VirtualShadowMap::MAX_FILTER_RADIUS_METERS,
-               "ケース L5: 読み出しのパラメータが太陽の角半径の tan と探索・PCF の半径の上限を持たなければならない");
-
-        const VirtualShadowMapClipmapLevel& level0 = clipmap.Levels[0];
-        const double pageMeters = static_cast<double>(level0.PageMeters);
-        const double texel = static_cast<double>(level0.TexelMeters);
-        const double edgeX = (static_cast<double>(level0.CenterPageX) + 0.5) * pageMeters;
-        const double lightY = (static_cast<double>(level0.CenterPageY) + 0.5) * pageMeters;
-        const double blockerDepth = clipmap.DepthCenter - 20.0;
-        const double range = static_cast<double>(clipmap.Settings.DepthRangeMeters);
-
-        // 中央のページを中心とする 3x3 ページ。中心が縁より左の texel は遮る物の深度、右は 1.0
-        Container::VariableArray<uint32_t> table(static_cast<size_t>(VirtualShadowMap::LEVEL_COUNT) * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL, 0u);
-        Container::VariableArray<uint32_t> pool(static_cast<size_t>(PoolPages) * VirtualShadowMap::PAGE_WORDS, VirtualShadowMap::EMPTY_DEPTH_BITS);
-        const float blockerDepth01 = static_cast<float>((blockerDepth - clipmap.DepthCenter) / (2.0 * range) + 0.5);
-        uint32_t blockerWord = 0;
-        std::memcpy(&blockerWord, &blockerDepth01, sizeof(blockerWord));
-        uint32_t physical = 0;
-        for (int64_t row = -1; row <= 1; ++row)
-        {
-            for (int64_t column = -1; column <= 1; ++column)
-            {
-                const int64_t pageX = level0.CenterPageX + column;
-                const int64_t pageY = level0.CenterPageY + row;
-                table[PageKey(0, pageX, pageY)] = VirtualShadowMap::PAGE_ENTRY_ALLOCATED | VirtualShadowMap::PAGE_ENTRY_DIRTY | physical;
-                for (uint32_t texelY = 0; texelY < VirtualShadowMap::PAGE_RESOLUTION; ++texelY)
-                {
-                    for (uint32_t texelX = 0; texelX < VirtualShadowMap::PAGE_RESOLUTION; ++texelX)
-                    {
-                        const double centerX = (static_cast<double>(pageX) * VirtualShadowMap::PAGE_RESOLUTION + texelX + 0.5) * texel;
-                        if (centerX < edgeX)
-                        {
-                            pool[static_cast<size_t>(physical) * VirtualShadowMap::PAGE_WORDS + texelY * VirtualShadowMap::PAGE_RESOLUTION + texelX] = blockerWord;
-                        }
-                    }
-                }
-                ++physical;
-            }
         }
 
         // Poisson の 16 点の横の広がり（Common/PoissonDisk16.glsl の x の最小と最大）
         constexpr double PoissonSpread = 0.94201624 + 0.97484398;
         constexpr double TanRadius = static_cast<double>(VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS);
-        constexpr double NearGap = 1.0;
-        constexpr double FarGap = 3.0;
+        constexpr double NearGap = 10.0;
+        constexpr double FarGap = 30.0;
         double widths[2] = {};
         const double gaps[2] = {NearGap, FarGap};
         for (uint32_t index = 0; index < 2u; ++index)
         {
-            uint32_t fallback = 0;
-            bool bOk = false;
-            widths[index] = MeasurePenumbraBandWidth(device, probe, real, clipmap, pool, table, edgeX, lightY, blockerDepth, gaps[index], fallback, bOk);
+            const BandResult band = MeasureReceiverBand(device, pages, raster, probe, receiver, depth, gaps[index], frameSerial);
+            if (!band.bRan)
+            {
+                return false;
+            }
+            widths[index] = band.Width;
             const double expected = PoissonSpread * gaps[index] * TanRadius;
-            std::cout << TestName << " ケース L5 深度の差 " << gaps[index] << " m: 帯の幅=" << widths[index] * 1000.0 << " mm 物理の半影から期待=" << expected * 1000.0
-                      << " mm 逃げた標本=" << fallback << std::endl;
-            Expect(bOk, "ケース L5: 縁の途中の値（0 と 1 の間）が現れなければならない");
-            Expect(fallback == 0u, "ケース L5: 割り当て済みの 3x3 ページの中で読み、粗い段へ逃げてはならない");
-            Expect(std::abs(widths[index] - expected) <= 0.3 * expected,
+            std::cout << TestName << " ケース L5 深度の差 " << gaps[index] << " m: 帯の幅=" << band.Width * 1000.0 << " mm 物理の半影から期待=" << expected * 1000.0
+                      << " mm 逃げた標本=" << band.Fallback << std::endl;
+            Expect(band.bBand, "ケース L5: 縁の途中の値（0 と 1 の間）が現れなければならない");
+            Expect(band.Fallback == 0u, "ケース L5: 印付けが探索・PCF の標本の読むページまで届き、粗い段へ逃げてはならない");
+            Expect(std::abs(band.Width - expected) <= 0.3 * expected,
                    "ケース L5: 縁の帯の幅が物理の半影（深度の差 × 太陽の角半径の tan × Poisson の広がり）に ±30% で合わなければならない");
         }
         const double ratio = widths[1] / std::max(widths[0], 1.0e-12);
-        std::cout << TestName << " ケース L5: 帯の幅の比=" << ratio << "（深度の差の比 " << FarGap / NearGap << "）" << std::endl;
+        std::cout << TestName << " ケース L5: 高いほうの縁の帯の幅の比=" << ratio << "（高さの比 " << FarGap / NearGap << "）" << std::endl;
         Expect(std::abs(ratio - FarGap / NearGap) <= 0.3 * (FarGap / NearGap),
-               "ケース L5: 2 つの高さの縁の帯の幅の比が、深度の差の比に ±30% で合わなければならない");
+               "ケース L5: 2 つの高さの縁の帯の幅の比が、高さの比に ±30% で合わなければならない");
 
         // 遮る物に接する受け手（深度の差が比較の余裕の内側）は、探索で遮る物が見つからず、最小の半径の帯になる
         {
-            uint32_t fallback = 0;
-            bool bOk = false;
-            const double contactWidth = MeasurePenumbraBandWidth(device, probe, real, clipmap, pool, table, edgeX, lightY, blockerDepth, 0.01, fallback, bOk);
-            std::cout << TestName << " ケース L5 接する受け手: 帯の幅=" << contactWidth * 1000.0 << " mm" << std::endl;
-            Expect(!bOk || contactWidth < 0.5 * widths[0], "ケース L5: 遮る物に接する受け手の縁は、深度の差 1 m の縁より十分に鋭くなければならない");
+            const BandResult contact = MeasureReceiverBand(device, pages, raster, probe, receiver, depth, 0.01, frameSerial);
+            if (!contact.bRan)
+            {
+                return false;
+            }
+            std::cout << TestName << " ケース L5 接する受け手: 帯の幅=" << contact.Width * 1000.0 << " mm" << std::endl;
+            Expect(!contact.bBand || contact.Width < 0.5 * widths[0], "ケース L5: 遮る物に接する受け手の縁は、深度の差 10 m の縁より十分に鋭くなければならない");
         }
+        return true;
+    }
+
+    // ----- C2: 隣のページへの印の範囲がページの何枚分にもなるとき -----
+    // カメラを受け手の平面から 0.1 m に置くと、段 2（ページ 12.5 cm・texel 0.98 mm）が選ばれ、探索・PCF の最大の半径（0.5 m + 5 texel）が片側 4 ページ分に
+    // なる。1 つの画素に印を付ける範囲が、旧来の頭打ち（pageMin から 4 ページ）で切れず、CPU の参照（半径が覆うすべてのページ）と一致すること
+    bool RunWideMarginMarkingCase(const DevicePtr& device, VirtualShadowMapPages& pages, uint64_t& frameSerial)
+    {
+        const ReceiverScene receiver = BuildReceiverScene(device, 0.1, 30);
+        const Scene& scene = receiver.Base;
+        Container::VariableArray<float> single(ImageWidth * ImageHeight, 1.0f);
+        const int32_t centerPixelX = static_cast<int32_t>(ImageWidth / 2u);
+        const int32_t centerPixelY = static_cast<int32_t>(ImageHeight / 2u);
+        bool bPicked = false;
+        for (int32_t offsetY = -30; offsetY <= 30 && !bPicked; ++offsetY)
+        {
+            for (int32_t offsetX = -30; offsetX <= 30 && !bPicked; ++offsetX)
+            {
+                const uint32_t pixelX = static_cast<uint32_t>(centerPixelX + offsetX);
+                const uint32_t pixelY = static_cast<uint32_t>(centerPixelY + offsetY);
+                Container::VariableArray<uint32_t> keys;
+                const float depthValue = receiver.Image[pixelY * ImageWidth + pixelX];
+                if (ClassifyPixel(scene, pixelX, pixelY, depthValue, &keys, nullptr, nullptr) == PixelKind::Stable && keys.size() >= 64u)
+                {
+                    single[pixelY * ImageWidth + pixelX] = depthValue;
+                    bPicked = true;
+                }
+            }
+        }
+        Expect(bPicked, "ケース C2: 印の範囲が 64 ページ以上になる安定した画素が見つからない（場面が退化している）");
+        if (!bPicked)
+        {
+            return false;
+        }
+        const Reference reference = BuildReference(scene, single);
+        const TexturePtr depth = CreateDepthTexture(device, single);
+        Resources resources;
+        Readback readback;
+        const uint32_t poolPages = static_cast<uint32_t>(reference.Keys.size()) + 8u;
+        if (!depth || !CreateResources(device, poolPages, resources) || !RunPages(device, pages, scene, resources, depth, true, frameSerial++, true, readback))
+        {
+            std::cerr << TestName << " ケース C2 を実行できませんでした" << std::endl;
+            return false;
+        }
+        CheckAllocation("C2", readback, reference.Keys, poolPages, reference.LevelMask, true);
+        std::cout << TestName << " ケース C2: 1 画素の印の範囲=" << reference.Keys.size() << " ページ（段の集合 0x" << std::hex << reference.LevelMask << std::dec << "）要求="
+                  << readback.Stats[VirtualShadowMap::StatRequested] << std::endl;
         return true;
     }
 
     bool RunSampleCases(const DevicePtr& device,
                         ShaderManager& shaderManager,
+                        VirtualShadowMapPages& pages,
+                        VirtualShadowMapRaster& raster,
                         const Scene& scene,
                         const Container::VariableArray<float>& image,
-                        const CaseFData& caseF)
+                        const CaseFData& caseF,
+                        uint64_t& frameSerial)
     {
         SampleProbe probe;
         if (!CreateSampleProbe(device, shaderManager, probe))
@@ -3294,8 +3445,12 @@ namespace
         const double boundaryX = static_cast<double>(caseF.PageX + 1) * pageMeters;
         const double bottomY = static_cast<double>(caseF.PageY) * pageMeters;
         const double depthCenter = scene.Clipmap.DepthCenter;
-        const double receiverDepth = depthCenter - 20.0; // 近い四角形（中心 - 50 の周り）・遠い四角形（中心 - 40）のどちらよりも後ろ
+        // 近い四角形（中心 - 50 の周りで傾きによる ±1.2）・遠い四角形（中心 - 40）のどちらよりも後ろ。深度の差は最大でも約 21.2 m で、
+        // 物理の半影（× 太陽の角半径の tan）が最小の半径（2 texel）を超えない深さにする（L2 の参照は半径 2 texel の PCF）
+        const double receiverDepth = depthCenter - 30.0;
         const double radius = 2.0 * texel;
+        Expect(21.2 * static_cast<double>(VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS) < radius,
+               "ケース L2: 物理の半影が最小の半径（2 texel）を超えない場面でなければならない（参照の半径が 2 texel のため）");
 
         auto evaluate = [&](double lightX, double lightY, const Container::VariableArray<uint32_t>& pool, const Container::VariableArray<uint32_t>& table,
                             float& outVisibility, uint32_t& outFallback, double expectedTexel = -1.0) -> bool
@@ -3559,7 +3714,7 @@ namespace
             }
         }
 
-        return RunPenumbraCase(device, probe, scene);
+        return RunPenumbraCase(device, pages, raster, probe, frameSerial);
     }
 
     int RunTest()
@@ -3771,7 +3926,12 @@ namespace
                     return 1;
                 }
                 // ----- ケース L: 照明が使う VSM の読み出し（ケース F の物理プール・ページの表を、照明と同じ関数で読む） -----
-                if (!RunSampleCases(device, shaderManager, scene, image, caseF))
+                if (!RunSampleCases(device, shaderManager, pages, raster, scene, image, caseF, frameSerial))
+                {
+                    return 1;
+                }
+                // ----- ケース C2: 隣のページへの印の範囲が、ページの何枚分にもなるとき -----
+                if (!RunWideMarginMarkingCase(device, pages, frameSerial))
                 {
                     return 1;
                 }

@@ -40,10 +40,11 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief ブロッカーの探索と PCF の半径の上限（ワールドの長さ m。段に依らない）の既定
          *
-         * 物理の半影の半幅（受け手と遮る物の深度の差 × 太陽の角半径の tan）は、これを超えるとここで抑える。3 cm は受け手と遮る物の深度の差
-         * 約 6.4 m 分の半影。印付けは隣のページへの印の範囲にこれを足す（探索・PCF の標本が読むページに印が無いと、粗い段へ逃げて影が欠ける）。
+         * 物理の半影の半幅（受け手と遮る物の深度の差 × 太陽の角半径の tan）は、これを超えるとここで抑える。0.5 m は受け手と遮る物の深度の差
+         * 約 107 m 分の半影で、影の最大の距離（既定 80 m）より遠い遮る物まで物理の半影のまま扱える。
+         * 印付けは隣のページへの印の範囲にこれを足す（探索・PCF の標本が読むページに印が無いと、粗い段へ逃げて影が欠ける）。
          */
-        constexpr float MAX_FILTER_RADIUS_METERS = 0.03f;
+        constexpr float MAX_FILTER_RADIUS_METERS = 0.5f;
         /** @brief 太陽の角半径の tan（Common/SunShadowCsm.glsl の DIRECTIONAL_LIGHT_TAN_ANGULAR_RADIUS と同じ） */
         constexpr float SUN_TAN_ANGULAR_RADIUS = 0.00468f;
         /** @brief 間接 dispatch の x の上限（Vulkan が保証する maxComputeWorkGroupCount[0] の最小値。超える分は y へ広げる） */

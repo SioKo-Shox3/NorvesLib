@@ -2120,3 +2120,14 @@
 - 検証（`.harness/runs/20261007-203349/`）: `verify-VTG8-VSM-PCSS-1.txt`（Debug の Game・RHITextureUpdateVulkanTest・RenderingGoldenImageTest のビルド、BUILD_EXIT_CODE=0）、`-2.txt`・`-4.txt`（VirtualShadowMapVulkanTest・RenderingGoldenIndoorVulkanTest・RenderingGoldenOutdoorVulkanTest が 3/3 Passed。`-4` は変異を戻した後）、`-3-verbose.txt`（VirtualShadowMapVulkanTest の全出力。ケース L1〜L5 の値・VUID_COUNT=0・RESULT=PASS）。golden は CSM のまま基準画像・閾値を動かさずに合格。
 - Notes: (1) 印付けの 3 cm の余白は、テストの場面（段 0 の幅 1024 m・ページ 8 m）では他の判定（曖昧さの許容 3 cm）と区別できず、ケース A〜C では余白の有無を落とせない。余白の効果は、L1 の「逃げた標本 0」と L5 の割り当て内の読みで間接的に守る（印付けの変異は未実施）。(2) 実機の起動画面（`--shadow-method=vsm`）は撮っていない（重い処理の扱い・段 8 の撮影は限る）。GPU の負担（探索 16 点が加わる）は VTG8-VSM-GPU-TIME で測り、重ければ探索の標本を減らす。(3) 探索が遮る物を見つけなかった画素は PCF を引かないので、CSM と同じく光が当たる画素の読みは増えない（16 点 → 16 点）。影の縁の画素だけ 32 点になる。(4) VTG8-VSM-SAMPLE（blocked）・MARK（blocked）・MESH-CASTERS（blocked）・CLIPMAP（blocked）は触っていない。
 - Next: VTG8-VSM-CACHE。
+
+## 反復 19（2026-10-08）: VTG8-VSM-PCSS（評価者の差し戻し 3 点を修正、done）
+
+- 差し戻し 1（半影の打ち切り）: 探索・PCF の半径の上限 `VirtualShadowMap::MAX_FILTER_RADIUS_METERS` を 3 cm から 0.5 m（受け手と遮る物の深度の差 約 107 m 分の半影。影の最大の距離 80 m より遠い遮る物まで物理の半影のまま）にした。式は r = max(min(物理の半影, 上限), p(d), 使う段の 1 texel)。評価者の再現（深度差 10 m・30 m → 46.8 mm・140.4 mm）は上限の内側で、そのまま半径になる。シェーダー（`Common/VirtualShadowMap.glsl`）は上限をパラメータ（`pixel.z`）から読むので変更なし。
+- 差し戻し 2（印付けの切り捨て）: `vsm_mark.comp` の `pageMin + 3` の頭打ちを外し、印の範囲を段の範囲（origin から 128 ページ）に収めて、半径が覆うすべてのページを走査する（1 画素の走査は最大 128 x 128 ページ）。
+- 差し戻し 3（四角形の 2 高度の場面）: `VirtualShadowMapVulkanTest` のケース L5 を作り直した。光に正対する受け手の平面をカメラが正面（1 m）から見る場面の深度の画像を、本番の流れ（印付け → 割り当て → 消去 → 展開 → 描画）に通し、同じ四角形（縁が中心の近くを縦に通る）を受け手から深度の差 10 m・30 m に置いて描き、縁を照明と同じ関数で読む。物理ページの直接書き込みはやめた。帯の幅は 89.84 mm・269.53 mm（期待 89.71 mm・269.13 mm）、比 3、逃げた標本 0、接する受け手（0.01 m）は帯なし。新設ケース C2 は、カメラを 0.1 m に置いた 1 画素（段 2、ページ 12.5 cm）の印の範囲が 81 ページ（旧来の頭打ちの 16 ページ）になり、CPU の参照と一致することを確かめる。
+- 既存テストへの影響: 上限が 0.5 m になったので、ケース L2〜L4 の受け手を中心 − 30 m に動かした（物理の半影が最小の半径 2 texel を超えず、L2 の参照 = 半径 2 texel の PCF が保たれる）。
+- 変異（`verify-VTG8-VSM-PCSS-8-mutations.txt`。すべて `RESULT=FAIL`、元へ戻して `cmp` で一致を確認）: (a) 半径を最小に固定（探索・半影を外す）→ L5 の帯の幅 31.25 mm・比 1、(c) 半影の上限を 3 cm に戻す → 帯の幅 58.6 mm・比 1、(b) 印付けを `pageMin + 3` で頭打ち → C2 の印の集合が参照と違う（要求 16、参照 81）。
+- 検証（`.harness/runs/20261007-203349/`）: `verify-VTG8-VSM-PCSS-5.txt`（Debug の Game・RHITextureUpdateVulkanTest・RenderingGoldenImageTest のビルド、BUILD_EXIT_CODE=0）、`-9.txt`（VirtualShadowMapVulkanTest・RenderingGoldenIndoorVulkanTest・RenderingGoldenOutdoorVulkanTest が 3/3 Passed）、`-7-verbose.txt`（L5・C2 の値、VUID_COUNT=0）。
+- Notes: (1) 探索の半径が 0.5 m になったので、探索の 16 点より細い遮る物（幅が数 cm 以下）は、受け手が影の真ん中でも見落とすことがある（CSM も同じ考え方）。実機の負荷・見た目は VTG8-VSM-GPU-TIME の撮影で確かめる。(2) 印付けの上限が 0.5 m になり、近距離（段 0〜2）の画素は印を付けるページが増える（段 0 で最大 33 x 33 ページ）。
+- Next: VTG8-VSM-CACHE。

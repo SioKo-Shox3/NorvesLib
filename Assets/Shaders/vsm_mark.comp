@@ -98,22 +98,17 @@ void main()
     // 標本の位置は texel に比例する分（法線の向きへのずれ・画素の大きさ・1 texel）とワールドの長さの分（物理の半影）の和で届く
     const float margin = params.tuning.x * params.levelInfo[level].y + params.tuning.z;
     const vec2 lightXY = vec2(dot(world, params.lightRight.xyz), dot(world, params.lightUp.xyz));
-    const ivec2 pageMin = ivec2(floor((lightXY - margin) / pageMeters));
-    // 既定の上限（3 cm）は最も細かい段（ページ 3.1 cm）でも 2 ページ分までなので、またぐのは 3 ページまで（pageMin から +2）。
-    // 余裕を持って +3 までで頭打ちにする（段 0 の幅が既定より小さく、ページが上限より細かいときも 1 画素の走査を抑える）
-    const ivec2 pageMax = min(ivec2(floor((lightXY + margin) / pageMeters)), pageMin + ivec2(3));
     const ivec2 origin = params.levelOrigin[level].xy;
     const int count = int(PAGES_PER_AXIS);
+    // 必要なページはすべて走査する（範囲は上限と texel から決まる）。段の範囲（origin から 128 ページ）の外には印を付けないので、
+    // 走査も範囲に収めて、1 画素の走査を 128 x 128 ページまでに抑える
+    const ivec2 pageMin = max(ivec2(floor((lightXY - margin) / pageMeters)), origin);
+    const ivec2 pageMax = min(ivec2(floor((lightXY + margin) / pageMeters)), origin + ivec2(count - 1));
 
     for (int pageY = pageMin.y; pageY <= pageMax.y; ++pageY)
     {
         for (int pageX = pageMin.x; pageX <= pageMax.x; ++pageX)
         {
-            // 段の範囲の外（範囲は origin から 128 ページ）には印を付けない
-            if (pageX < origin.x || pageX >= origin.x + count || pageY < origin.y || pageY >= origin.y + count)
-            {
-                continue;
-            }
             MarkPage(level, pageX, pageY);
         }
     }
