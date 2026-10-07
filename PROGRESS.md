@@ -2154,3 +2154,13 @@
 - 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-CACHE-7.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-8.txt`（VirtualShadowMapVulkanTest・RenderGraphCompileTest が 2/2 Passed）、`-3-verbose.txt`（M4b の値、VUID_COUNT=0、RESULT=PASS）。
 - Notes: (1) 変異の後、元のファイルを Copy-Item で戻すと更新時刻が古いままで MSBuild が再ビルドせず、変異版の実行ファイルで検証が FAIL した（`-5`・`-6`）。戻した後は更新時刻を更新してから再ビルドすること。内容は差分で元の修正どおりと確認済み。(2) 比較の厳密化により、カメラや太陽の入力が毎フレーム僅かに揺れる場合は全ページが毎フレーム描き直しになる。クリップマップの向きは太陽の向きだけから決まるので、静止した太陽では完全に同じ値になる。
 - Next: VTG8-VSM-GPU-TIME（VTG8-VSM-SAMPLE・PCSS は blocked のまま。人の判断待ち）。
+
+## 反復 2（2026-10-08）: VTG8-VSM-CLIPMAP（texel の上限と被覆の両立を b = max(bias, b_cover) で解く、done）
+
+- 親の判断（TASKS.md の done-when (3)(6)・notes）に従い、`SelectVirtualShadowMapLevel` の「被覆できない段を粗くする」ループを外し、`VirtualShadowMapCoverageBiasLevels`（被覆に要る最小の bias）と `VirtualShadowMapEffectiveBiasLevels`（max(bias, b_cover)）を足した。b_cover = log2(2 / ((段 0 の被覆 / 幅)·(2tan(fovY/2)/画面の高さ)·VirtualResolution)) + 1e-3（浮動小数の丸めの余裕）。texel を満たす最も粗い段の幅は目標の幅の半分より大きいので、b が b_cover 以上なら選んだ段は影の距離の中の受け手をいつも含む。既定の `BiasLevels` は -0.5 から -1 へ戻した。
+- 起動画面（1280×720・縦画角 60 度）では b_cover ≒ -2.7 < bias なので b = bias（補正なし）。2160 画素・縦画角 35 度（評価の反例）では b_cover ≒ -0.2 で補正が入るが、texel の上限は b に対して成り立つ（例外なし）。
+- テスト（`VirtualShadowMapClipmapTest`）: 例外の免除（`bCoverageClamped` 相当）と「上限超過を合格にする」旧テストを撤去し、画面の高さ 360〜4320 画素・縦画角 20〜120 度の格子 × 距離の格子（等間隔と対数間隔）・乱数の画面 300 件で、texel ≤ p(d)·2^b・より粗い段では足りない・受け手の被覆・距離について単調を同時に確かめる。起動画面は b = bias、評価の反例（1440/2160 画素・35 度・1.94 m 近傍）を含む。
+- 変異（`mutation-VTG8-VSM-CLIPMAP.txt`）: 中心のスナップを外す・段の選び方の不等号を逆にする・被覆に要る bias を外す、のすべてで `VirtualShadowMapClipmapTest` が FAIL。元へ戻した後は更新時刻を更新して再ビルドし、合格を確認。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-CLIPMAP-3.txt`（Game・CameraViewConstantsTest・RenderGraphCompileTest のビルド、exit 0）、`-4.txt`（ctest 4/4 合格）。
+- Notes: (1) 既定の bias を -1 に戻したので、起動画面の段・要求ページ数は bias -0.5 のときより約 2 倍に増える（texel が画素の 1/4〜1/2）。GPU のテスト（`VirtualShadowMapVulkanTest`）は段を `SelectVirtualShadowMapLevel` で求めるので式の写しは無いが、実機の確認は重い処理の扱いに従い回していない（VTG8-VSM-GPU-TIME の撮影で確かめる）。(2) `VSM_CLIPMAP` の行の `bias=` は設定の BiasLevels（補正前）。
+- Next: VTG8-VSM-GPU-TIME 以降。

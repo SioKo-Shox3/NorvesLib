@@ -7,6 +7,7 @@
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Math/VectorUtils.h"
 
+#include <algorithm>
 #include <cmath>
 #include <initializer_list>
 #include <cstdint>
@@ -72,7 +73,7 @@ namespace
         Check(settings.LevelCount == 10u, "既定の段の数が 10 でない");
         Check(settings.FirstWidthMeters == 4.0f, "既定の段 0 の幅が 4 m でない");
         Check(settings.VirtualResolution == 16384u && settings.PageResolution == 128u, "既定の解像度・ページの大きさが違う");
-        Check(settings.BiasLevels == -0.5f, "既定の bias が -0.5 でない");
+        Check(settings.BiasLevels == -1.0f, "既定の bias が -1 でない");
         Check(settings.DepthRangeMeters == 1000.0f, "既定の深度の範囲が 1000 m でない");
         Check(settings.MaxShadowDistance == 80.0f, "既定の影の距離が 80 m でない");
         Check(IsValidVirtualShadowMapClipmapSettings(settings), "既定の設定が無効");
@@ -217,53 +218,27 @@ namespace
         }
     }
 
-    // 受け手の段の選び方: 距離について単調、texel は画素の大きさ × 2^bias 以下の最も粗い段、0 段より細かくは選ばない、距離の上限の外は -1。
+    // 受け手の段の選び方: 距離について単調、texel は画素の大きさ × 2^b 以下の最も粗い段（b = max(bias, b_cover)）、
+    // 0 段より細かくは選ばない、距離の上限の外は -1。
     void TestLevelSelection()
     {
         const VirtualShadowMapClipmapSettings settings;
-        const float fovYValues[] = {35.0f, 60.0f, 90.0f};
-        const float heightValues[] = {360.0f, 720.0f, 1440.0f};
 
-        // 通常の画面（1280×720・fovY 60 度）では、範囲の被覆で段が粗くなることはない
+        // 起動画面（1280×720・既定の縦画角 60 度）では被覆の補正は入らず b = bias
+        Check(VirtualShadowMapCoverageBiasLevels(settings, 60.0f, 720.0f) < settings.BiasLevels, "起動画面で被覆に要る bias が bias を超えた");
+        Check(VirtualShadowMapEffectiveBiasLevels(settings, 60.0f, 720.0f) == settings.BiasLevels, "起動画面で b が bias と違う");
         for (int step = 0; step <= 8000; ++step)
         {
             const float distance = static_cast<float>(step) * 0.01f;
             const int32_t level = SelectVirtualShadowMapLevel(settings, distance, 60.0f, 720.0f);
             const float target = VirtualShadowMapScreenPixelMeters(distance, 60.0f, 720.0f) * std::exp2(settings.BiasLevels);
             Check(target < VirtualShadowMapLevelTexelMeters(settings, 0u) || VirtualShadowMapLevelTexelMeters(settings, static_cast<uint32_t>(level)) <= target,
-                  "通常の画面で texel が画素の大きさ × 2^bias を超えた");
-            Check(distance <= VirtualShadowMapLevelCoverageMeters(settings, static_cast<uint32_t>(level)), "通常の画面で選んだ段が受け手を覆わない");
-        }
-        for (const float fovY : fovYValues)
-        {
-            for (const float height : heightValues)
+                  "起動画面で texel が画素の大きさ × 2^bias を超えた");
+            Check(distance <= VirtualShadowMapLevelCoverageMeters(settings, static_cast<uint32_t>(level)), "起動画面で選んだ段が受け手を覆わない");
+            // 起動画面の選び方は bias だけで決まる（被覆の補正が入っていない）
+            if (level + 1 < static_cast<int32_t>(settings.LevelCount) && target >= VirtualShadowMapLevelTexelMeters(settings, 0u))
             {
-                int32_t previous = -1;
-                for (int step = 0; step <= 8000; ++step)
-                {
-                    const float distance = static_cast<float>(step) * 0.01f;
-                    const int32_t level = SelectVirtualShadowMapLevel(settings, distance, fovY, height);
-                    Check(level >= 0 && level < static_cast<int32_t>(settings.LevelCount), "影の距離の中で段が選ばれない");
-                    Check(level >= previous, "選ぶ段が距離について単調でない");
-                    previous = level;
-
-                    const float target = VirtualShadowMapScreenPixelMeters(distance, fovY, height) * std::exp2(settings.BiasLevels);
-                    const float texel = VirtualShadowMapLevelTexelMeters(settings, static_cast<uint32_t>(level));
-                    // この格子の画面では被覆による粗くする補正は入らず、texel の上限と受け手の被覆が両立する（免除なし）
-                    if (target >= VirtualShadowMapLevelTexelMeters(settings, 0u))
-                    {
-                        Check(texel <= target, "選んだ段の texel が画素の大きさ × 2^bias を超えた");
-                        if (level + 1 < static_cast<int32_t>(settings.LevelCount))
-                        {
-                            Check(VirtualShadowMapLevelTexelMeters(settings, static_cast<uint32_t>(level) + 1u) > target, "より粗い段でも足りるのに細かい段を選んだ");
-                        }
-                    }
-                    else
-                    {
-                        Check(level == 0, "目標が段 0 の texel より小さいのに 0 段以外を選んだ");
-                    }
-                    Check(distance <= VirtualShadowMapLevelCoverageMeters(settings, static_cast<uint32_t>(level)), "選んだ段が受け手を覆わない");
-                }
+                Check(VirtualShadowMapLevelTexelMeters(settings, static_cast<uint32_t>(level) + 1u) > target, "起動画面でより粗い段でも足りるのに細かい段を選んだ");
             }
         }
 
@@ -272,12 +247,12 @@ namespace
         Check(SelectVirtualShadowMapLevel(settings, 10.0f, 60.0f, 0.0f) == -1, "画面の高さが 0 で段を選んだ");
         Check(SelectVirtualShadowMapLevel(settings, 0.0f, 60.0f, 720.0f) == 0, "距離 0 の受け手が段 0 でない");
 
-        // 1 m・fovY 60 度・720 画素: 1 画素 = 1.6 mm、目標 1.6·2^-0.5 = 1.13 mm、texel 0.244 mm·2^L ≤ 1.13 mm の最大は L = 2
-        Check(SelectVirtualShadowMapLevel(settings, 1.0f, 60.0f, 720.0f) == 2, "距離 1 m の段が 2 でない");
-        // 80 m: 1 画素 = 128 mm、目標 90.5 mm、0.244 mm·2^L ≤ 90.5 mm の最大は L = 8
+        // 1 m・fovY 60 度・720 画素: 1 画素 = 1.60 mm、目標 1.60·2^-1 = 0.80 mm、texel 0.244 mm·2^L ≤ 0.80 mm の最大は L = 1
+        Check(SelectVirtualShadowMapLevel(settings, 1.0f, 60.0f, 720.0f) == 1, "距離 1 m の段が 1 でない");
+        // 80 m: 1 画素 = 128 mm、目標 64.2 mm、0.244 mm·2^L ≤ 64.2 mm の最大は L = 8（62.5 mm）
         Check(SelectVirtualShadowMapLevel(settings, 80.0f, 60.0f, 720.0f) == 8, "距離 80 m の段が 8 でない");
 
-        // bias を 1 上げる（目標が 2 倍）と段は 1 つ粗くなる
+        // bias を 1 上げる（目標が 2 倍）と段は 1 つ粗くなる（被覆の補正が入らない画面で）
         VirtualShadowMapClipmapSettings coarser = settings;
         coarser.BiasLevels = settings.BiasLevels + 1.0f;
         Check(SelectVirtualShadowMapLevel(coarser, 10.0f, 60.0f, 720.0f) == SelectVirtualShadowMapLevel(settings, 10.0f, 60.0f, 720.0f) + 1,
@@ -289,28 +264,100 @@ namespace
         Check(VirtualShadowMapShadowFadeWeight(settings, 80.0f) == 1.0f, "影の距離の端で影が消えていない");
     }
 
-    // texel の上限と被覆が両立しない画面（BiasLevels の説明の式を満たさない高精細・狭画角）では、被覆を優先して粗い段を選ぶ。
-    // 選んだ段は受け手を覆い、より細かい段は覆わず、距離について単調なまま。
-    void TestCoveragePriorityOutsideSupportedScreens()
+    // 1 つの画面について、選んだ段が「texel は画素の大きさ × 2^b 以下の最も粗い段」で、受け手を覆い、距離について単調なことを確かめる。
+    // distances は昇順。被覆の補正が入った（b が bias を超えた）画面なら true を返す。
+    bool CheckScreenSelection(const VirtualShadowMapClipmapSettings& settings, float fovY, float height, const float* distances, int count)
+    {
+        const float effectiveBias = VirtualShadowMapEffectiveBiasLevels(settings, fovY, height);
+        Check(effectiveBias >= settings.BiasLevels, "b が bias を下回った");
+        int32_t previous = -1;
+        for (int index = 0; index < count; ++index)
+        {
+            const float distance = distances[index];
+            const int32_t level = SelectVirtualShadowMapLevel(settings, distance, fovY, height);
+            Check(level >= 0 && level < static_cast<int32_t>(settings.LevelCount), "影の距離の中で段が選ばれない");
+            if (level < 0)
+            {
+                continue;
+            }
+            Check(level >= previous, "選ぶ段が距離について単調でない");
+            previous = level;
+
+            const float target = VirtualShadowMapScreenPixelMeters(distance, fovY, height) * std::exp2(effectiveBias);
+            const float texel = VirtualShadowMapLevelTexelMeters(settings, static_cast<uint32_t>(level));
+            if (target >= VirtualShadowMapLevelTexelMeters(settings, 0u))
+            {
+                Check(texel <= target, "選んだ段の texel が画素の大きさ × 2^b を超えた");
+                if (level + 1 < static_cast<int32_t>(settings.LevelCount))
+                {
+                    Check(VirtualShadowMapLevelTexelMeters(settings, static_cast<uint32_t>(level) + 1u) > target, "より粗い段でも足りるのに細かい段を選んだ");
+                }
+            }
+            else
+            {
+                Check(level == 0, "目標が段 0 の texel より小さいのに 0 段以外を選んだ");
+            }
+            // 受け手の被覆は texel の上限と同時に成り立つ（補正は b を引き上げて満たすので、例外は無い）
+            Check(distance <= VirtualShadowMapLevelCoverageMeters(settings, static_cast<uint32_t>(level)), "選んだ段が受け手を覆わない");
+        }
+        return effectiveBias > settings.BiasLevels;
+    }
+
+    // 画面の高さ 360〜4320 画素・縦画角 20〜120 度の格子と距離の格子で、texel の上限と受け手の被覆を同時に確かめる。
+    void TestScreenGridKeepsTexelBoundAndCoverage()
     {
         const VirtualShadowMapClipmapSettings settings;
-        int32_t previous = -1;
-        bool bClampedOnce = false;
+        const float fovYValues[] = {20.0f, 25.0f, 35.0f, 45.0f, 60.0f, 75.0f, 90.0f, 105.0f, 120.0f};
+        const float heightValues[] = {360.0f, 540.0f, 720.0f, 1080.0f, 1440.0f, 2160.0f, 2880.0f, 4320.0f};
+
+        // 等間隔（1 cm）と対数間隔の距離の格子（段の切り替わりの近傍を細かく覆う）
+        static float distances[8001 + 4000];
+        int count = 0;
         for (int step = 0; step <= 8000; ++step)
         {
-            const float distance = static_cast<float>(step) * 0.01f;
-            const int32_t level = SelectVirtualShadowMapLevel(settings, distance, 20.0f, 2160.0f);
-            Check(level >= previous, "対応外の画面で選ぶ段が距離について単調でない");
-            previous = level;
-            Check(level >= 0 && distance <= VirtualShadowMapLevelCoverageMeters(settings, static_cast<uint32_t>(level)), "対応外の画面で選んだ段が受け手を覆わない");
-            if (level > 0)
+            distances[count++] = static_cast<float>(step) * 0.01f;
+        }
+        for (int step = 0; step < 4000; ++step)
+        {
+            distances[count++] = 0.001f * std::pow(80.0f / 0.001f, static_cast<float>(step) / 3999.0f);
+        }
+        std::sort(distances, distances + count);
+
+        int adjustedScreens = 0;
+        for (const float fovY : fovYValues)
+        {
+            for (const float height : heightValues)
             {
-                Check(distance > VirtualShadowMapLevelCoverageMeters(settings, static_cast<uint32_t>(level) - 1u), "対応外の画面で受け手を覆う最も細かい段を選んでいない");
-                const float target = VirtualShadowMapScreenPixelMeters(distance, 20.0f, 2160.0f) * std::exp2(settings.BiasLevels);
-                bClampedOnce = bClampedOnce || VirtualShadowMapLevelTexelMeters(settings, static_cast<uint32_t>(level)) > target;
+                adjustedScreens += CheckScreenSelection(settings, fovY, height, distances, count) ? 1 : 0;
             }
         }
-        Check(bClampedOnce, "対応外の画面の例で被覆による補正が入らなかった（例の画面が対応内になっている）");
+        // 被覆の補正が入る画面（高精細・狭画角）が格子の中にあること。無いと補正を確かめたことにならない
+        Check(adjustedScreens > 0, "格子の中に被覆の補正が入る画面が無い");
+
+        // 評価で見つかった反例の画面（高さ 1440・2160 画素、縦画角 35 度、距離 1.94 m の近傍）
+        const float counterexamples[] = {1.90f, 1.93f, 1.94f, 1.9401f, 1.95f, 2.0f};
+        CheckScreenSelection(settings, 35.0f, 1440.0f, counterexamples, 6);
+        Check(CheckScreenSelection(settings, 35.0f, 2160.0f, counterexamples, 6), "高さ 2160 画素・縦画角 35 度で被覆の補正が入らなかった");
+
+        // 乱数の画面（縦画角 20〜120 度、高さ 360〜4320 画素）
+        DeterministicRandom random;
+        for (int trial = 0; trial < 300; ++trial)
+        {
+            const float fovY = random.Range(20.0f, 120.0f);
+            const float height = random.Range(360.0f, 4320.0f);
+            float sampled[200];
+            for (int index = 0; index < 200; ++index)
+            {
+                sampled[index] = random.Range(0.0f, settings.MaxShadowDistance);
+            }
+            std::sort(sampled, sampled + 200);
+            CheckScreenSelection(settings, fovY, height, sampled, 200);
+        }
+
+        // b を決める式の端: 補正が入る画面では b が bias を超え、入らない画面では b = bias
+        Check(VirtualShadowMapEffectiveBiasLevels(settings, 35.0f, 2160.0f) > settings.BiasLevels, "高精細・狭画角で b が引き上げられない");
+        Check(VirtualShadowMapEffectiveBiasLevels(settings, 90.0f, 360.0f) == settings.BiasLevels, "低精細・広画角で b が引き上げられた");
+        Check(VirtualShadowMapCoverageBiasLevels(settings, 60.0f, 0.0f) == 0.0f, "不正な画面で被覆に要る bias が 0 でない");
     }
 
     // 選んだ段の範囲は、いつも受け手（カメラからの距離 d の点）を含む。
@@ -478,7 +525,7 @@ int main()
     TestTexelLatticeIsFixedInTheWorld();
     TestTorusAddressesSurviveOnePageMove();
     TestLevelSelection();
-    TestCoveragePriorityOutsideSupportedScreens();
+    TestScreenGridKeepsTexelBoundAndCoverage();
     TestSelectedLevelContainsReceiver();
     TestDepthOriginSnapsToCoarseSteps();
     TestBuildFromLightProxies();

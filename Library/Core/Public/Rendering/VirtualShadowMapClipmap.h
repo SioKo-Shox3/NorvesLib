@@ -19,12 +19,12 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief クリップマップの設定
      *
-     * BiasLevels は段の選び方の log2 のずれで、受け手の段は texel の一辺が「画面上の 1 画素の大きさ × 2^BiasLevels」
-     * 以下の最も粗い段。既定 -0.5 では texel が画素の約 0.35〜0.71 倍になる。
+     * BiasLevels は段の選び方の log2 のずれで、受け手の段は texel の一辺が「画面上の 1 画素の大きさ × 2^b」以下の
+     * 最も粗い段。b = max(BiasLevels, 被覆に要る最小の bias)。既定 -1 では texel が画素の約 0.25〜0.5 倍になる。
      *
-     * 既定を -1 にしないのは、texel の上限と範囲の被覆を両立させるため。段 L の texel と被覆は同じ 2^L で増えるので、
-     * 2^BiasLevels·2tan(fovY/2)/画面の高さ ≥ 2·(段 0 の texel)/(段 0 の被覆) ≒ 2.5e-4 のとき、texel を満たす最も粗い段は
-     * いつも受け手を覆う。-1 だと 1440 画素・fovY 35 度（1.94 m の受け手）で破れ、-0.5 なら 1440 画素・fovY 35 度まで破れない。
+     * 段 L の texel と被覆は同じ 2^L で増えるので、b が VirtualShadowMapCoverageBiasLevels 以上なら、texel を満たす最も粗い段は
+     * いつも受け手を覆う。画面の高さが大きく縦画角が狭いと BiasLevels = -1 では足りず、被覆を優先して b を引き上げる
+     * （起動画面の 1280×720・既定の縦画角では引き上げは起きず b = BiasLevels）。
      */
     struct VirtualShadowMapClipmapSettings
     {
@@ -39,7 +39,7 @@ namespace NorvesLib::Core::Rendering
         /** @brief 深度の範囲の片側（m）。範囲はライトの向きに [深度の原点 − 値, 深度の原点 + 値] */
         float DepthRangeMeters = 1000.0f;
         /** @brief 受け手の段を選ぶときの log2 のずれ */
-        float BiasLevels = -0.5f;
+        float BiasLevels = -1.0f;
         /** @brief 影を受ける最大のカメラからの距離（m）。CSM の MaxShadowDistance と同じ */
         float MaxShadowDistance = 80.0f;
         /** @brief 奥の薄めの幅（MaxShadowDistance に対する割合） */
@@ -107,12 +107,27 @@ namespace NorvesLib::Core::Rendering
     float VirtualShadowMapScreenPixelMeters(float distance, float fovYDegrees, float screenHeightPixels);
 
     /**
-     * @brief 受け手の段を選ぶ。texel の一辺が「画素の大きさ × 2^BiasLevels」以下になる最も粗い段で、0 段より細かくは選ばず、
-     *        最も粗い段（LevelCount − 1）より粗くもしない。MaxShadowDistance を超える、または値が不正なら -1（影を受けない）。
+     * @brief 受け手をいつも含む段を選ぶために要る最小の bias（log2）。画面の高さ・縦画角・ページのスナップの余裕から決まる。
      *
-     * 選んだ段の範囲が受け手に届かない（画面が高精細で画角が狭く、texel を満たす段の半幅が距離より短い）ときだけ、
-     * 受け手を含む最も細かい段（VirtualShadowMapLevelCoverageMeters が距離以上の最小の段）まで粗くする（texel の上限は破れる）。
-     * 既定では 360〜1440 画素・fovY 35〜90 度の画面では起きない（BiasLevels の説明の式を満たさない画面でだけ起きる）。
+     * texel の一辺が「画素の大きさ × 2^b」以下の最も粗い段の幅 W は、目標の幅の半分より大きい。被覆は W·(段 0 の被覆 / 段 0 の幅)
+     * なので、2^b ≥ 2 / ((被覆 / 幅)·(2tan(fovY/2)/画面の高さ)·VirtualResolution) のとき、その段は距離 d の受け手を必ず含む。
+     * 画面や設定が不正なら 0 を返す（SelectVirtualShadowMapLevel は -1 を返す）。
+     */
+    float VirtualShadowMapCoverageBiasLevels(const VirtualShadowMapClipmapSettings& settings,
+                                             float fovYDegrees,
+                                             float screenHeightPixels);
+
+    /** @brief 実際に使う bias（log2）。max(BiasLevels, VirtualShadowMapCoverageBiasLevels) */
+    float VirtualShadowMapEffectiveBiasLevels(const VirtualShadowMapClipmapSettings& settings,
+                                              float fovYDegrees,
+                                              float screenHeightPixels);
+
+    /**
+     * @brief 受け手の段を選ぶ。texel の一辺が「画素の大きさ × 2^b」（b は VirtualShadowMapEffectiveBiasLevels）以下になる
+     *        最も粗い段で、0 段より細かくは選ばず、最も粗い段（LevelCount − 1）より粗くもしない。
+     *        MaxShadowDistance を超える、または値が不正なら -1（影を受けない）。
+     *
+     * b が被覆に要る最小の bias 以上なので、選んだ段は影の距離の中の受け手をいつも含む。
      */
     int32_t SelectVirtualShadowMapLevel(const VirtualShadowMapClipmapSettings& settings,
                                         float distance,

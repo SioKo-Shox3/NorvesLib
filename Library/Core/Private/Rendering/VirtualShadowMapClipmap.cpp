@@ -16,6 +16,8 @@ namespace NorvesLib::Core::Rendering
         constexpr float NearDepthMeters = 0.01f;
         // 深度の原点を範囲のこの割合の刻みでスナップする
         constexpr double DepthSnapRatio = 0.25;
+        // 被覆に要る最小の bias に足す余裕（log2）
+        constexpr double CoverageBiasMarginLevels = 1.0e-3;
 
         bool IsFiniteVector(const Math::Vector3& value)
         {
@@ -103,6 +105,35 @@ namespace NorvesLib::Core::Rendering
         return distance * 2.0f * tangent / screenHeightPixels;
     }
 
+    float VirtualShadowMapCoverageBiasLevels(const VirtualShadowMapClipmapSettings& settings,
+                                             float fovYDegrees,
+                                             float screenHeightPixels)
+    {
+        // 1 m 先の 1 画素の大きさ（距離に比例するので、距離 1 の値が係数 k）
+        const float pixelPerMeter = VirtualShadowMapScreenPixelMeters(1.0f, fovYDegrees, screenHeightPixels);
+        if (!IsValidVirtualShadowMapClipmapSettings(settings) || !(pixelPerMeter > 0.0f))
+        {
+            return 0.0f;
+        }
+        const double coverageRatio = static_cast<double>(VirtualShadowMapLevelCoverageMeters(settings, 0u)) /
+                                     static_cast<double>(VirtualShadowMapLevelWidthMeters(settings, 0u));
+        if (!(coverageRatio > 0.0))
+        {
+            return 0.0f;
+        }
+        const double required = 2.0 / (coverageRatio * static_cast<double>(pixelPerMeter) *
+                                       static_cast<double>(settings.VirtualResolution));
+        // 段の選び方の浮動小数の丸めで境界の 1 ulp 手前に落ちないよう、わずかに余裕を足す
+        return static_cast<float>(std::log2(required) + CoverageBiasMarginLevels);
+    }
+
+    float VirtualShadowMapEffectiveBiasLevels(const VirtualShadowMapClipmapSettings& settings,
+                                              float fovYDegrees,
+                                              float screenHeightPixels)
+    {
+        return std::max(settings.BiasLevels, VirtualShadowMapCoverageBiasLevels(settings, fovYDegrees, screenHeightPixels));
+    }
+
     int32_t SelectVirtualShadowMapLevel(const VirtualShadowMapClipmapSettings& settings,
                                         float distance,
                                         float fovYDegrees,
@@ -118,7 +149,7 @@ namespace NorvesLib::Core::Rendering
         {
             return -1;
         }
-        const float targetTexel = pixelMeters * std::exp2(settings.BiasLevels);
+        const float targetTexel = pixelMeters * std::exp2(VirtualShadowMapEffectiveBiasLevels(settings, fovYDegrees, screenHeightPixels));
 
         // texel は段ごとに 2 倍になるので、目標以下の最も粗い段。目標が段 0 の texel より小さくても段 0 より細かくは選ばない
         int32_t selected = 0;
@@ -128,13 +159,6 @@ namespace NorvesLib::Core::Rendering
             {
                 selected = static_cast<int32_t>(level);
             }
-        }
-
-        // texel を満たす段の範囲が受け手に届かないときは、届く段まで粗くする（最も粗い段が上限）
-        while (static_cast<uint32_t>(selected) + 1u < settings.LevelCount &&
-               distance > VirtualShadowMapLevelCoverageMeters(settings, static_cast<uint32_t>(selected)))
-        {
-            ++selected;
         }
         return selected;
     }
