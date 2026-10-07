@@ -1181,36 +1181,153 @@
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
 - notes: 2026-10-06 親（段7の開始時に詳しくした）。段の区切りの評価にかける。 2026-10-06 親（VTG7-RASTER-TIMING の評価）: `MegaGeometryDraw1/2` は on と off で同じ名前でも範囲が違う（off は `BeginRenderPass`／`EndRenderPass` をまたぎ、on は render pass の内側だけ）。on と off の比較はフレーム GPU と区間の合計で行い、`MegaGeometryDraw1` の比を「書く量の差」とは書かない。 2026-10-06 親: 受入れの撮影は VTG7-SW-DEFAULT-ON の取り直し（`.harness/runs/vtg7-defon-clean/`）を使い、GPU 時間は VTG7-SW-THRESHOLD の測定を使った（撮影の方針を受入れと既定の描画経路の確認に絞った）。
 
-## VTG8-VSM-POOL: VSMの物理ページのプールとページの表を作る
-- status: backlog
-- done-when: 太陽のクリップマップ（各段 16K×16K 仮想、ページ 128×128）のページの表と物理ページのプールを作る。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RenderGraphCompileTest$"`
-- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 段8の開始時に親が詳しくする（計画書 4.3）。
+## VTG8-SHADOW-CSM-INCLUDE: 照明の太陽の CSM の評価を共通の include へ移す
+- status: todo
+- done-when: `Assets/Shaders/lighting.frag` の太陽の CSM の評価（`CalculateShadow` と、それが使う `SampleShadowCascade`・`IsInsideShadowCascade`・`FindBlockerDepth`・`EstimatePenumbraSize`・`PCSSFilter`・`ComputeShadowCompareBias`・`ComputeReceiverDepthGradient`・Poisson の表・R5 のハードシャドウの検証モード（246/247）の分岐）を `Assets/Shaders/Common/SunShadowCsm.glsl` へ移す。影の地図・カスケードの行列・分割の距離・カメラの位置と前方・検証モードの読み方は、include する側がマクロか引数で与える形にし、計算シェーダーからも同じ関数を呼べるようにする（VTG8-SHADOW-PROBE が使う）。`lighting.frag` はそれを include し、出力は変わらない: golden 4 本（Indoor・Outdoor と GBuffer の予備の経路）が基準画像と閾値を動かさずに通る。
+- verify: `cmake --build build --config Debug --target Game RenderingGoldenImageTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
+- stop-when: 移しただけで golden が基準を外れる場合は、差（`mean_flip`・最大差）を記録して止める（基準画像は動かさない）。
+- paths: Assets/Shaders, Library/Core/Private/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §2・§4.3。段8は VSM の太陽で、受入れは「起動画面の太陽の影が CSM 以上に細かく、ちらつかない」）。危険地帯（既定の描画経路のシェーダー）。画は変えない。`forward_transparent.frag`・Volumetrics の CSM の読み方（別の簡易版）は触らない。旧 `VTG8-VSM-MARK-RENDER` は、段8の開始時に MARK・RASTER・MESH-CASTERS・MEGA-CULL・MEGA-DRAW に分けた。段8の撮影は次の 3 つに限る（ユーザーの指示）: 速度の項目の GPU 時間（RelWithDebInfo）、段の受入れの起動画面（朝・昼・夕・夜、既定の経路）と影の測定、既定の描画経路を変える項目の golden の ctest と検証レイヤー付き Debug の実行。項目ごとの決定的な撮影の on・off・FXAA の繰り返しの比較はしない。画素の差の解析は、画像が壊れて見えるときだけ行う。テストのコードでも標準ライブラリの型を使わない。テストの実行ファイルは増やさず、既存の束の MEMBER に足す。
 
-## VTG8-VSM-MARK-RENDER: 必要なページに印を付けて描く
-- status: backlog
-- done-when: 深度から必要なページに印を付け、印のページだけを物理プールへ割り当て、クラスタの経路でページへ深度を描く。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RenderGraphCompileTest$"`
+## VTG8-SHADOW-PROBE: ワールドに固定した点で太陽の影の揺れと細かさを測る道具を作り、CSM の基準値を取る
+- status: todo
+- done-when: 起動引数 `--shadow-probe`（Release では作らない。既存の GPU 計測・トレースと同じ条件）で、影の標本の計算のパスを照明の後に足す。(1) 読み込みの完了（決定的な撮影ではエポック）の後の最初のフレームで、画面の 4 画素おきの格子（1280×720 で 320×180）のうち空でない画素の深度・法線から、ワールドの位置と法線を固定の標本点として保存する。(2) 以後の毎フレーム、各標本点を今のカメラへ投影し、画面の中にあり、線形の深度がその画素の深度と 1% 以内で一致するものだけを「見えている」とし、太陽の可視度 v（0〜1）を `Common/SunShadowCsm.glsl` の関数（照明と同じ PCSS）で求め、使ったカスケードの texel の一辺（ワールドの mm。ブレンド帯では手前のカスケード）も求める。(3) GPU で集計する: 前のフレームでも見えていた標本の組の数（pairs）、|Δv| の和、|Δv| > 1/64 の数（changed）、|Δv| ≥ 0.5 の数（flip）、見えていた標本の延べ数、そのうち 0.02 < v < 0.98 の数（partial）、texel の和。数フレーム遅れで読み戻して CPU で足し、終了時に `SHADOW_PROBE method=csm frames=<n> probes=<n> pairs=<n> mean_abs_delta=<f> changed_ratio=<f> flip_ratio=<f> partial_ratio=<f> mean_texel_mm=<f>` を 1 行出す（mean_abs_delta・changed_ratio・flip_ratio は pairs に対する値、partial_ratio・mean_texel_mm は見えていた標本の延べ数に対する値）。(4) `Scripts/CaptureStartupScene.ps1` に `-ShadowProbe`（`--shadow-probe` を渡す）を足し、`SHADOW_PROBE` の行を `metrics.json` の `shadow_probe[]` へ視点ごとに入れる。(5) RenderGraphCompileTest で、`--shadow-probe` が無い構成に標本のパスが無いこと、ある構成で照明の後に入り CSM の資源を読むことを確かめる。(6) 太陽 45 度の既定・近接・低角度の 3 視点を、視点を回しながら撮り（下の verify）、3 視点の `SHADOW_PROBE` の値を CSM の基準値として PROGRESS の表に書く。3 視点とも pairs が 1000 以上で、partial_ratio が 0 より大きい（影の縁が標本に入っている）ことを確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-SHADOW-PROBE -Configuration RelWithDebInfo -Deterministic -SunElevations 45 -OrbitDegreesPerSecond 20 -OrbitRenderedFrames 240,320,400 -ShadowProbe`
+- stop-when: 決定的な撮影と視点の旋回が併用できない場合は、`-Deterministic` を外して撮り、そのことを PROGRESS に書く（止めない）。pairs が 1000 に届かない視点がある場合は、格子の間隔・見えている判定の許容の測定を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Engine, Library/Core/Private/Engine, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした）。段8の受入れの「CSM 以上に細かく」「ちらつかない」を数値で測る道具。太陽と物が止まっていれば、ワールドに固定した点の可視度はカメラが回っても変わらないはずなので、フレーム間の変化（mean_abs_delta・changed・flip）がそのまま影の揺れになる。画面の画像の差（視点の動き・TAA を含む）では測らない。細かさは使った texel の一辺（mean_texel_mm）と縁の帯の割合（partial_ratio。同じ標本・同じ縁なら縁の幅に比例する）で比べる。起動画面の大きな球の自転など本当に動く影は CSM と VSM で同じ分だけ入る（VSM が入った後は同じ run の同じ点で両方を測る。VTG8-VSM-SAMPLE）。VSM の可視度・CSM との一致は VTG8-VSM-SAMPLE で足す。この撮影は段の受入れの測定の基準値として行う。
+
+## VTG8-VSM-CLIPMAP: 影の方式の切り替えと、太陽のクリップマップの CPU の計算を作る
+- status: todo
+- done-when: (1) 起動引数 `--shadow-method=csm|vsm`（既定 csm。`--sw-raster` と同じ経路: `ApplicationProcessor` → `RenderWorld::Settings` → `RenderingCoordinator` → `SceneView::SetupDeferredPipeline`。不正な値は起動時のエラー）と、`Scripts/CaptureStartupScene.ps1` の `-ShadowMethod Csm|Vsm`（常に渡す。既定 Csm）を足す。(2) 太陽のクリップマップの計算 `VirtualShadowMapClipmap`（Public/Rendering）を作る。段 L の幅は W0·2^L（既定 W0 = 4 m、10 段 = 4〜2048 m）、各段 16384×16384 texel・128×128 ページ（1 ページ 128×128 texel）の正射影のライト空間。段の中心はカメラの位置をその段のページの格子へスナップする（ライト空間の XY）。深度はライトの向きの固定の範囲（既定 ±1000 m）で、深度の原点は大きな刻み（範囲の 1/4）でスナップする（キャッシュのため。動いた段の無効化は VTG8-VSM-CACHE）。(3) 受け手の段の選び方: 画面上の 1 画素の大きさ p(d) = d·2tan(fovY/2)/画面の高さ（d はカメラからの距離）に対し、texel の一辺が p(d)·2^bias 以下になる最も粗い段（既定 bias = −1。0 段より細かくは選ばない）。影の距離の上限と奥の 10% の薄めは CSM の `MaxShadowDistance`（80 m）と同じ。(4) ページの表の番地はトーラス（絶対のページの座標 mod 128）で、段の中心がページ単位で動いても、範囲に残ったページの番地は変わらない。(5) vsm のとき、CSM の行列と同じ場所（`ShadowMapPass::Execute`。太陽は `SelectShadowedDirectionalLight` と同じ選び方）で毎フレーム作り、`PhysicalLighting` へ公開する（後のパス・照明が読む）。起動後に 1 回 `VSM_CLIPMAP levels=<n> first_width_m=<f> bias=<f> depth_range_m=<f>` と、距離 1・2.5・5・10・20・40・80 m の行 `VSM_TEXEL d_m=<f> vsm_mm=<f> csm_mm=<f>`（同じカメラの CSM のカスケードの texel）を出す（実行での確認は VTG8-VSM-GPU-TIME の撮影）。描画は CSM のまま（vsm でも見た目は変わらない）。(6) CPU のテスト `VirtualShadowMapClipmapTest`（`CameraViewConstantsTest` の束の MEMBER）で、カメラが 1 ページ未満動いても各段の texel の格子のワールドの位置が変わらない、1 ページ動くとトーラスの番地の対応が 1 ページ分ずれるだけで残ったページの番地は変わらない、選んだ段はいつも受け手を含む、選ぶ段は距離について単調、texel は p(d)·2^bias 以下、を確かめる。変異（スナップを外す・段の選び方の不等号を逆にする）で落ちることを記録する。
+- verify: `cmake --build build --config Debug --target Game CameraViewConstantsTest RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapClipmapTest|PointShadowFaceMatricesTest|CascadedShadowLightMatricesTest|RenderGraphCompileTest)$"`
+- stop-when: なし（既定値 W0・段数・bias・深度の範囲は、根拠を PROGRESS に書けば変えてよい）。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Engine, Library/Core/Private/Engine, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「クリップマップ（各段 16K×16K 仮想、ページ 128×128）」）。bias −1 では texel が画素の 1/4〜1/2 になる。CSM の texel（4 カスケード × 2048、80 m）はカスケードの奥の端で画素の約 0.35〜0.5 倍なので、細かさは VTG8-VSM-SAMPLE 以降に標本（mean_texel_mm）で CSM と比べ、足りなければ VTG8-VSM-DEFAULT-ON で bias を下げる。検証シーン（golden・R 系の受入れ）は `--shadow-method` を渡さず CSM のまま。危険地帯（描画の設定の経路）。
+
+## VTG8-VSM-POOL: VSM の物理ページのプールとページの表を作る
+- status: todo
+- done-when: `--shadow-method=vsm` のときだけ、VSM の資源を持つパス `VirtualShadowMapPass` を、深度が確定した後（ビジビリティの解決の後。予備の経路では GBuffer・MegaGeometry の後）・照明（`LightingPass`）の前に足す。(1) 物理ページのプール: uint32 の storage buffer（1 ページ = 128×128 の uint32 = 64 KiB、ページ順に詰め、ページの中は行順）。既定 4096 ページ = 256 MiB（`--vsm-pool-pages=<n>`。装置の `maxStorageBufferRange` を超えない数に締める）。値は光源の深度 [0,1]（0 が光源に近い）の float のビット（`floatBitsToUint`）で、何も無い texel は 1.0 のビット。(2) ページの表: 段 × 128 × 128 の uint32（物理ページの番号と「割り当て済み」「今フレームに描く（dirty）」の印）。(3) 今フレームの要求のビット列（段 × 128 × 128 ビット）、空きページの一覧と数、統計（要求・割り当て・溢れ・描いたページの数）。(4) 予算: `VideoMemoryBudgetManager` の `ShadowMap` の枠にプールの確保量を載せ（`PollVideoMemoryBudget` の `PoolCapacityBytes[ShadowMap]`）、`VRAM_POOLS` に出し、作成時に `VRAM_LEDGER vsm_pool pages=<n> mb=<f>` と `VRAM_LEDGER vsm_page_table mb=<f>` を 1 回ずつ出す。(5) 断片シェーダーの storage の書き込み・アトミック（`bFragmentStoresAndAtomics`）かバッファのアドレス（`bBufferDeviceAddress`）が無い装置、またはプールが 512 ページ未満しか取れない装置では、VSM を作らず CSM で描き `VSM_FALLBACK reason=<fragment_atomics|bda|pool_size>` を 1 回出す。(6) 資源は名前で公開し（`PublishBuffer`）、後のパス・照明が名前で取る。中身はまだ使わない（照明は CSM のまま）。RenderGraphCompileTest で、csm の構成にパスと資源が無いこと、vsm の構成でパスが照明の前に入り資源が公開されること、`bFragmentStoresAndAtomics` が無い Fake の装置では作られず `VSM_FALLBACK` になることを確かめる。`VideoMemoryBudgetManagerTest` で、`ShadowMap` の確保量がヒープの使用量から引かれて VT・ジオメトリの目標に効くことを確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RenderResourcesDomainContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VideoMemoryBudgetManagerTest)$"`
+- stop-when: なし。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/RHI, Library/Core/Private/RHI, Library/Core/Private/Engine, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §2「VSM の物理ページは、UE と同じくソフトウェアのページ表と物理ページのプール（sparse ではない）」、§4.1 の予算）。物理プールを画像でなく storage buffer にするのは、R32_UINT の画像のアトミックの実績がこのエンジンに無く、buffer の 32bit の `atomicMin` は追加の機能なしで使えるため。危険地帯（メモリ・描画パス）。
+
+## VTG8-VSM-MARK: 深度から要るページに印を付け、物理ページを割り当てて消す
+- status: todo
+- done-when: `VirtualShadowMapPass` に印付け・割り当て・消去の計算を足す（キャッシュはまだ無く、毎フレームすべて作り直す）。(1) 印付け: `GBuffer.Depth` の空でない各画素からワールドの位置を戻し、VTG8-VSM-CLIPMAP の選び方で段とページを求めて要求のビットを立てる。照明の PCF の核（最初は半径 2 texel。VTG8-VSM-SAMPLE・PCSS で広げたらここも合わせる）がページの境界をまたぐときは隣のページにも印を付ける。(2) 割り当て: 前フレームの割り当てをすべて空きへ戻し、要求のページへ空きから物理ページを割り当て、ページの表に「割り当て済み・dirty」を書く。空きが尽きたら溢れとして数え、そのページは割り当てない。割り当ては同じフレームの GPU の中で行う（読み戻しの遅れで新しいページの影が数フレーム欠けると、それ自体がちらつきになる）。(3) 消去: dirty のページの物理ページを 1.0 のビットで埋める（間接 dispatch）。(4) 統計を数フレーム遅れで読み戻し、値が変わったとき（または 60 フレームごと）に `VSM_PAGES requested=<n> allocated=<n> overflow=<n> levels_used=<mask>` を出す。GPU の区間の名前は `VsmMark`・`VsmAllocate`・`VsmClear`。(5) GPU のテスト `VirtualShadowMapVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER。Vulkan が無ければ 125）で、合成した深度（既知の平面）とカメラから印が付き割り当てられるページの集合が CPU で求めた集合と一致すること、プールを小さくしたとき溢れの数が正しく、割り当てた物理ページの番号が重ならないこと、消去の後の物理ページが 1.0 のビットであることを確かめる。変異（隣のページへの印を外す・空きの数の減算を外す）で落ちることを記録する。RenderGraphCompileTest で、vsm の構成で印付け → 割り当て → 消去の順とその間のバリアを確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`
+- stop-when: なし。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「深度から必要なページに印を付け、印の付いたページだけを物理プールへ割り当てて描く」）。前フレームのページの持ち越しは VTG8-VSM-CACHE。危険地帯（描画パス）。
+
+## VTG8-VSM-RASTER: 影の塊 × ページの単位で、物理ページへ深度を描く仕組みを作る
+- status: todo
+- done-when: VSM の物理ページへ深度を描く仕組みを作る（投影物はまだテストの合成のものだけ）。(1) 展開（計算）: 塊（三角形 128 個以下。ワールドの境界と頂点・インデックスの読み方を持つ記録。形はビジビリティバッファの記録にそろえ、`VisLoadTrianglePositions` と同じ BDA の頂点の読み方を推奨）ごと・段ごとに、塊の境界のライト空間の矩形が覆うページのうち割り当て済みで dirty のものを数え、連続した範囲を確保して（段・ページ・物理ページ・塊の番号）を書き、塊ごとの間接描画（頂点数 = 三角形の数 × 3、instanceCount = ページの数、firstInstance = 範囲の先頭）を作る。ページの表は展開で引き、描画は物理ページへ直接書く。(2) 描画: 128×128 のビューポート（色・深度は書かない。RHI に添付の無いレンダーパスが無ければ 128×128 の使い捨ての添付で受ける）。頂点シェーダーは塊の頂点を読み、ライト空間の位置をそのページの局所座標の NDC へ写し（ページの外はビューポートの外になり、ラスタライザが捨てる）、深度 [0,1] を渡す。断片シェーダーは物理ページの texel へ `atomicMin(floatBitsToUint(depth))` を書く。背面は省かない。(3) GPU の区間の名前は `VsmExpand`・`VsmDraw`。展開の容量が溢れたら数えて `VSM_RASTER chunks=<n> instances=<n> overflow=<n>` に出す（60 フレームごと、または変わったとき）。(4) `VirtualShadowMapVulkanTest` に場面を足す: 合成した地面の深度の上に既知の四角形の投影物（2 三角形）を置き、印付け → 割り当て → 消去 → 展開 → 描画の後に物理プールを読み戻し、四角形の影の範囲の texel が四角形の深度、範囲の外が 1.0 であること（縁の 1 texel は許す）、ページの境界をまたぐ四角形が両方のページに切れ目なく描かれること、16 ページ以上をまたぐ大きな三角形も描かれることを確かめる。変異（局所座標の 1 texel のずれ・`atomicMin` を代入にする）で落ちることを記録する。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`
+- stop-when: 128×128 のビューポートへ写す方式で、大きな三角形の縁の欠けが直せない場合は、テストの読み戻しの値を残して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/RHI, Library/Core/Private/RHI, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「クラスタの経路でページの表を引いて書く」）。16K のビューポートへ描いて断片ごとにページの表を引く方式は、大きな投影物（地面・壁）が細かい段で 16K×16K を塗るため採らない。塊 × ページのインスタンスなら、塗るのは割り当てたページの中だけになる。RHI に添付の無いレンダーパス・クリップ距離は無い（2026-10-07 時点）ので、128×128 のビューポートの切り捨てに頼る。危険地帯（描画パス・RHI）。
+
+## VTG8-VSM-MESH-CASTERS: 手続きメッシュとスキニングの投影物を VSM へ描く
+- status: todo
+- done-when: vsm の構成で、手続きメッシュとスキニングの投影物を VTG8-VSM-RASTER の展開・描画で物理ページへ描く。集め方は CSM と同じ（`bCastShadow` の DrawCommand と、`TryPrepareSkinnedCommand` のスキニング。主カメラの錐台で省かれた物も含める）。メッシュを 128 三角形以下の塊（`BuildMeshIndexChunks`）に分け、塊ごとのワールドの境界（スキニングは描画の境界）と頂点・インデックスの読み方（手続きはメッシュのバッファの BDA と変換、スキニングは `SkinningComputePass` の変形済みの頂点）を記録にする。段ごとに、投影物の境界がその段の範囲に入らない物は CPU で省く。RenderGraphCompileTest で、vsm の構成でスキニングの計算の後に記録の作成 → 展開 → 描画が並ぶこととその間のバリア、csm の構成で何も足されないことを確かめる。`VirtualShadowMapVulkanTest` に、手続きメッシュの記録の経路（バッファの BDA と変換の行列）で描いた四角形が、VTG8-VSM-RASTER の合成の場面と同じ texel になる場面を足す。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest SkinnedRenderPathContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest|SkinnedRenderPathContractTest)$"`
+- stop-when: なし。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした）。手続きメッシュ・スキニングの塊は段6でビジビリティバッファの記録にした形（`MeshIndexChunks.h`、`VisibilityRasterPass.cpp` の記録の作り方）を使い回す。起動画面の手続きメッシュ（地面・小屋の部品・見本の球など）の影は、VTG8-VSM-SAMPLE の後に VTG8-VSM-GPU-TIME の撮影で初めて画で見る。危険地帯（描画パス）。
+
+## VTG8-VSM-MEGA-CULL: MegaGeometry の投影物を VSM の段ごとにカリングする
+- status: todo
+- done-when: vsm の構成で、MegaGeometry の投影物（`bCastShadow` のインスタンス）を段ごとに選ぶ計算を足す。(1) インスタンスの段の判定: インスタンスの境界（`MegaGeometryProxy::WorldBounds`）のライト空間の矩形が、その段の dirty のページを 1 つも含まなければ省く（dirty の印の階層（ページの mip。128² → 1）で判定する）。(2) 残った（インスタンス、段）のクラスタを `Common/MegaGeometryCull.glsl` の本体で選ぶ。LOD は正射影（自分の誤差 ÷ その段の texel の一辺 ≤ 1 texel、かつ親の誤差 ÷ texel > 1 texel。透視の `ProjectBakedError`・`ComputePerspectiveStretch` を使わない分岐を UBO の印で足す）。錐台は段の範囲と深度の範囲。HZB・法線の円錐・ソフトウェアラスタの振り分けは使わない。子のページが非常駐なら自分を描き、影のためのページの要求はしない（常駐している物で描く）。(3) 出力は（インスタンス、段、クラスタ）の一覧と数で、主の経路の間接描画・見えた印・ページの要求とは別のバッファに書く（主の経路の結果を変えない）。(4) GPU の区間の名前は `VsmCullMega`。`VSM_MEGA_CULL instances=<n> clusters=<n> overflow=<n>` を 60 フレームごとに出す。(5) RenderGraphCompileTest で、vsm の構成で主の cull2 の後・VSM の展開の前にこの計算が入り、主の経路のバッファへ書かないこと、csm の構成で無いことを確かめる。正射影の LOD の選び方を GPU のテスト（`GeometryPageRequestVulkanTest` と同じ作りで `VirtualShadowMapVulkanTest` に足す）か CPU の写しのテストで確かめる: 同じクラスタの階層で、段の texel が 2 倍になると選ばれる段が粗くなり、選ばれたクラスタが一つの切り口（どの葉から根への道でもちょうど 1 つ）になる。変異（親の条件を外す）で落ちることを記録する。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|GeometryPageRequestVulkanTest|RenderGraphCompileTest)$"`
+- stop-when: 1 反復で閉じなければ、(1) を外して（残す判定を段の範囲だけにして）一度コミットし、(1) を `VTG8-VSM-MEGA-CULL-PAGES` として TASKS.md に足す。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「クラスタの経路でページの表を引いて書く」）。主の経路の cull は入力がユニフォームだけなので別のビューで回せるが、C++ 側（`MegaGeometryPass::RecordFrameCommand`）は主カメラ 1 本・資源 1 組の作りなので、影のための UBO・出力バッファを別に持つ。今の CSM は MegaGeometry を CPU の 1 インスタンス 1 描画（`ShadowLODLevel`・`LevelRanges` の粗い段）で描いており、VSM はクラスタの階層を使う新しい経路になる。危険地帯（描画パス）。
+
+## VTG8-VSM-MEGA-DRAW: MegaGeometry のクラスタを VSM の物理ページへ描く
+- status: todo
+- done-when: VTG8-VSM-MEGA-CULL の（インスタンス、段、クラスタ）を、VTG8-VSM-RASTER の展開・描画で物理ページへ描く（クラスタの頂点・インデックスは共有プールから、インスタンスの world で変換。展開の境界はクラスタの境界球）。手続き・スキニングの塊と同じ展開・描画の 1 回の流れにまとめる（記録の種類で頂点の読み方を分ける）。`VirtualShadowMapVulkanTest` に、MegaGeometry のクラスタの記録の経路で描いた四角形が手続きの経路と同じ texel になる場面を足す（MegaGeometry のクラスタの場面をテストで作れない場合は、RenderGraphCompileTest で記録の形・展開・描画の順を確かめ、その理由を PROGRESS に書く）。RenderGraphCompileTest で、vsm の構成で MegaGeometry の影の描画に CSM の UBO のスロットを使わないこと（VSM 側の描画の数が `DynamicUniformAllocator` に依らないこと）を確かめる。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`
+- stop-when: なし。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした）。負荷モード（`--stress-mega-instances=300`）で CSM の UBO が足りず MegaGeometry の影の描画が 343 回省かれる件は、VSM の描画では起きない（半透明・ボリュームのために残る CSM の描画では残る。段8の既知の限界）。危険地帯（描画パス）。
+
+## VTG8-VSM-SAMPLE: 照明で VSM を読み、標本の道具でも VSM を測る
+- status: todo
+- done-when: `--shadow-method=vsm` のとき、`lighting.frag` の太陽の影を VSM で読む（`Assets/Shaders/Common/VirtualShadowMap.glsl`。半透明 `forward_transparent.frag` とボリューム（Volumetrics）は CSM のまま）。(1) 受け手の段は VTG8-VSM-CLIPMAP と同じ選び方。法線の向きへのずらしと受け面の深度の傾きのバイアスは CSM と同じ考え方で、大きさを使う段の texel に比例させる。(2) PCF: CSM の `PCSSFilter` と同じ 16 点の Poisson で、半径はワールドで連続な量 r = max(画素の大きさ p(d), 使う段の 1 texel)（段の切り替わりで縁の幅が跳ばないように）。各標本は自分の位置のページの表を引いて物理ページの texel を読み、割り当てられていないページは粗い段へ順に逃げ（逃げた数を統計に数える）、どの段にも無ければ影なしとする。(3) 影の距離の上限・奥の 10% の薄めは CSM と同じ。コンタクトシャドウは今と同じく掛ける。(4) VTG8-SHADOW-PROBE の標本でも、vsm のときは同じ関数で VSM の可視度を求め、`SHADOW_PROBE method=vsm ...`（同じ項目。mean_texel_mm は使った段の texel）を csm の行と並べて出し、`SHADOW_PROBE_AGREE both_definite=<n> agree=<n> ratio=<f> finer_ratio=<f>` を出す（both_definite は CSM と VSM の両方が 0.02 以下か 0.98 以上の標本の延べ数、agree はそのうち両方が同じ側の数、finer_ratio は VSM の texel が CSM の texel 以下の標本の割合）。(5) `VirtualShadowMapVulkanTest` に、VTG8-VSM-RASTER の四角形の場面で照明と同じ関数（計算シェーダーから呼ぶ）を受け手の点で評価し、影の中心で 0、影の外で 1、縁で途中の値になり、割り当てられていないページの点は粗い段の値になることを確かめる場面を足す。変異（ページの表の引き方を 1 段ずらす・逃げ道を外す）で落ちることを記録する。golden 4 本は CSM のまま変わらない（基準画像・閾値を動かさない）。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
+- stop-when: なし。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「照明は PCF から始める」）。PCSS（物理の半影）は VTG8-VSM-PCSS。この項目では起動画面を撮らない（VTG8-VSM-GPU-TIME の撮影と VTG8-VSM-DEFAULT-ON の検証の実行で初めて画を見る。そこで壊れて見えたら、その項目で直す）。半透明・ボリュームを VSM で読むには、画面の深度に無い位置のページの印が要るので段8では扱わない（既知の限界）。危険地帯（照明のシェーダー）。
+
+## VTG8-VSM-PCSS: VSM の照明の読みに、ブロッカーの探索と物理の半影を足す
+- status: todo
+- done-when: VSM の照明の読み（`Common/VirtualShadowMap.glsl`）に、CSM と同じ考え方のブロッカーの探索と物理の半影（太陽の角半径 0.00468 rad × 受け手と遮る物の深度の差）を足し、PCF の半径を r = max(物理の半影, p(d), 使う段の 1 texel) にする（接するところは鋭く、離れるほどぼける）。探索の半径はワールドの長さで決め（段に依らない）、探索の標本も各自のページの表を引く。VTG8-VSM-MARK の隣のページへの印の範囲を、探索と PCF の最大の半径に合わせる。`VirtualShadowMapVulkanTest` に、同じ四角形を受け手から 2 つの高さに置いたとき、高いほうの縁の途中の値の帯が広く、その幅の比が物理の半影の比（高さの比）に ±30% で合うことを確かめる場面を足す。変異（探索を外して半径を最小に固定する）で落ちることを記録する。golden 4 本は変わらない。
+- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- stop-when: なし。
 - paths: Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした）。今の起動画面の CSM は PCSS（`EstimatePenumbraSize`）で、半影が遮る物からの距離で変わる。PCF だけでは遠い縁まで硬くなり起動画面の見た目が変わる（絶対規則7）ので、物理の半影をそろえる。「CSM 以上に細かく」は texel の細かさと縁の帯の割合で測り、物理の半影より細かい縁は求めない。GPU の負担は VTG8-VSM-GPU-TIME で測り、重ければ探索の標本を減らす。危険地帯（照明のシェーダー）。
 
-## VTG8-VSM-CACHE: 動かない物のページをキャッシュする
-- status: backlog
-- done-when: 動かない物のページを次フレームへ持ち越し、動いた物の範囲だけ無効化する。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^RenderGraphCompileTest$"`
-- paths: Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+## VTG8-VSM-CACHE: 動かない物の VSM のページを次のフレームへ持ち越す
+- status: todo
+- done-when: VSM のページを次のフレームへ持ち越す。(1) 前フレームから割り当て済みで、今フレームも要求され、無効にされていないページは、物理ページを保ち dirty にしない（消去も描画もしない）。(2) 要求されないページは 30 フレーム持ち越した後に空きへ戻す。空きが足りないときは古い順に戻す。(3) 段の中心がページ単位で動いたとき、範囲の外へ出たページを空きへ戻し（トーラスの番地。残ったページは持ち越す）、深度の原点がスナップで動いた段はすべて無効にする。(4) 無効化: 太陽の向きが変わったら全ページ。動いた投影物（MegaGeometry の world ≠ previousWorld、手続きメッシュの変換が前フレームと違う物、スキニングは毎フレーム）の前フレームと今フレームの境界のライト空間の矩形に入る割り当て済みのページを dirty にし、その範囲の全投影物を描き直す（展開・MegaGeometry の cull は dirty のページだけを相手にする）。(5) `--vsm-cache=off` で毎フレームすべて描き直す（比べるため）。(6) `VSM_CACHE cached=<n> rendered=<n> invalidated=<n> released=<n>` を 60 フレームごとに出す。(7) `VirtualShadowMapVulkanTest` に場面を足す: 止まった場面の 2 フレーム目に描かれるページが 0、投影物を動かすとその範囲のページだけが描き直され、物理プールの中身が毎フレーム描き直したとき（`--vsm-cache=off` 相当）と texel で一致する、太陽の向きを変えると全ページが描き直される、段の中心を 1 ページ動かすと範囲に残ったページは描き直されない。変異（無効化の矩形に前フレームの境界を含めない・持ち越しの条件で要求の印を見ない）で落ちることを記録する。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`
+- stop-when: 1 反復で閉じなければ、(1)(2)(5)(6) と止まった場面のテストで一度コミットし、(3)(4) を `VTG8-VSM-CACHE-INVALIDATE` として TASKS.md に足す。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「動かない物のページはキャッシュし、動いた物の範囲だけ無効化する」）。起動画面の大きな球は自転するので、そのまわりのページは毎フレーム描き直しになる。持ち越しの効果は VTG8-VSM-GPU-TIME で測る。危険地帯（描画パス・GPU の資源の寿命）。
 
-## VTG8-VSM-SAMPLE: 照明でVSMを読み、起動画面の太陽の影にする
-- status: backlog
-- done-when: 照明が VSM を PCF で読む。起動画面の太陽の影を VSM にし（検証シーンは CSM のまま）、撮影で CSM 以上に細かくちらつかないことを確かめる。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-SAMPLE -Configuration RelWithDebInfo -SunElevations 10,45,3`
-- paths: Library/Core/Private/Rendering, Assets/Shaders, Game, Test/Core/Rendering, TASKS.md, PROGRESS.md
+## VTG8-VSM-GPU-TIME: VSM と CSM の GPU 時間を測り、ページの数と溢れを確かめる
+- status: todo
+- done-when: RelWithDebInfo の `-GpuTimingFrames 300` で、起動画面（太陽 45 度の既定・近接・低角度）と負荷モード 300 個（既定の視点）を、`-ShadowMethod Csm`、`-ShadowMethod Vsm` ＋ `--vsm-cache=off`、`-ShadowMethod Vsm`（持ち越しあり）の 3 通りで測り、フレーム GPU・`ShadowMapPass`・VSM の区間（`VsmMark`・`VsmAllocate`・`VsmClear`・`VsmCullMega`・`VsmExpand`・`VsmDraw`）・照明の区間の中央値と、`VSM_CLIPMAP`・`VSM_TEXEL`・`VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL`・`VSM_CACHE`・`VRAM_LEDGER vsm_pool` の値を表にして PROGRESS に書く。VSM の 6 つの run（起動画面 3 視点 × 2・負荷モード × 2）で `VSM_PAGES` の overflow と `VSM_RASTER`・`VSM_MEGA_CULL` の overflow が 0 であることを確かめる。VSM の撮影の PNG を開き、太陽の影（小屋・岩・球・見本の帯の物）が欠け・ずれ・ページの継ぎ目なく見えることを確かめる（壊れて見えるときだけ CSM の PNG との画素の差を調べる）。持ち越しありの VSM のフレーム GPU が CSM より遅い場合は、その差を区間の内訳で説明する。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-GPU-TIME-csm -Configuration RelWithDebInfo -SunElevations 45 -GpuTimingFrames 300 -ShadowMethod Csm`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-GPU-TIME-vsm-nocache -Configuration RelWithDebInfo -SunElevations 45 -GpuTimingFrames 300 -ShadowMethod Vsm -ExtraGameArguments --vsm-cache=off`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-GPU-TIME-vsm -Configuration RelWithDebInfo -SunElevations 45 -GpuTimingFrames 300 -ShadowMethod Vsm`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-GPU-TIME-csm-stress -Configuration RelWithDebInfo -SunElevations 45 -ViewNames default -GpuTimingFrames 300 -ShadowMethod Csm -ExtraGameArguments --stress-mega-instances=300`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-GPU-TIME-vsm-nocache-stress -Configuration RelWithDebInfo -SunElevations 45 -ViewNames default -GpuTimingFrames 300 -ShadowMethod Vsm -ExtraGameArguments --stress-mega-instances=300,--vsm-cache=off`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-GPU-TIME-vsm-stress -Configuration RelWithDebInfo -SunElevations 45 -ViewNames default -GpuTimingFrames 300 -ShadowMethod Vsm -ExtraGameArguments --stress-mega-instances=300`
+- stop-when: 持ち越しありの VSM のフレーム GPU の中央値が、どれかの視点で CSM より 2 ms 以上遅い場合は、表と重い区間を記録して止める（対策の項目を TASKS.md に足す）。溢れが 0 にならない場合は、`--vsm-pool-pages` と bias の組の測定を記録して止める。影が壊れて見える場合は、PNG と原因の切り分けを記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした）。速度の項目の GPU 時間の撮影（ユーザーの撮影の方針の 1 つ目）。`-GpuTimingFrames` は `-Deterministic` と併用できない。`ShadowMapPass` は CSM と点光源の合計で、vsm でも半透明・ボリュームのために CSM の描画は残る。出力先は `.harness/runs/startup-capture/VTG8-VSM-GPU-TIME-*`。VTG8-ACCEPT の GPU 時間の表はここの値を使う。
+
+## VTG8-VSM-DEFAULT-ON: 起動画面の太陽の影を既定で VSM にする
+- status: todo
+- done-when: Game の起動画面（Rendering3DTest）の太陽の影を既定で VSM にする（`--shadow-method=csm` で戻せる。`Scripts/CaptureStartupScene.ps1` の `-ShadowMethod` の既定も Vsm）。検証シーン（`--scene=indoor|outdoor` の golden・R 系の受入れ）は引数を変えずに CSM のまま: golden 4 本が基準画像と閾値を動かさずに通る。検証レイヤー付きの Debug の Game で、起動画面（太陽 45 度の既定・近接・低角度）と負荷モード 300 個（既定の視点）を `-ShadowProbe` 付きで撮り（下の verify）、`vulkan_validation` の `error_count` が 0、`SHADOW_PROBE_AGREE` の ratio が 4 つの run すべてで 0.98 以上、VSM の `mean_texel_mm` が同じ run の CSM 以下であることを確かめる（満たさなければ bias を −1.5、−2 と下げて測り直し、溢れが 0 のまま満たす値を既定にする。プールの大きさを変えたら `VRAM_LEDGER vsm_pool` も記録する）。撮影の PNG を開き、天球・地面・球・岩・小屋・見本の帯・発光の球と太陽の影が欠けなく見えることを PROGRESS に書く。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VirtualShadowMapVulkanTest|VirtualShadowMapClipmapTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-DEFAULT-ON-validation -Configuration Debug -SunElevations 45 -ShadowProbe`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-DEFAULT-ON-validation-stress -Configuration Debug -SunElevations 45 -ViewNames default -ShadowProbe -ExtraGameArguments --stress-mega-instances=300`
+- stop-when: golden が基準を外れる場合（検証シーンは CSM のままなので、外れたら経路の取り違え）は、差と原因を記録して止める。検証レイヤーのエラーが直せない場合、ratio が 0.98 に届かない場合、bias を −2 まで下げても mean_texel_mm が CSM を超える場合は、測定値を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Private/Engine, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした）。既定の描画経路を変える項目の golden の ctest と検証レイヤー付き Debug の実行（ユーザーの撮影の方針の 3 つ目）。Debug の GPU 時間は参考にしない。ratio の分母は CSM と VSM の両方が言い切る標本だけなので、縁の幅の違いでは下がらず、投影物の欠け・光の漏れ・バイアスの過不足で下がる。危険地帯（既定の描画経路）。
 
 ## VTG8-ACCEPT: 段8（VSM 太陽）の受入れを記録する
 - status: backlog
-- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` の段8の節。
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$"`
+- done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` に「## 段8（VSM 太陽）」の節を段7の節と同じ構成で足す。(1) 起動画面の朝・昼・夕・夜（`-SunElevations 10,45,3` と `-Night`、既定の経路 = VSM）の撮影を開いて確かめた所見。(2) 細かさとちらつき: 既定・近接・低角度 × 太陽 45 度・10 度を `-Deterministic -OrbitDegreesPerSecond 20 -OrbitRenderedFrames 240,320,400 -ShadowProbe` で撮り、同じ run の CSM と VSM の `mean_texel_mm`・`partial_ratio`・`mean_abs_delta`・`changed_ratio`・`flip_ratio`・`SHADOW_PROBE_AGREE` を表にし、VTG8-SHADOW-PROBE の CSM だけの基準値とも並べる。旋回の 3 枚（f240・f320・f400）を開いて、影の縁の揺れ・ページの継ぎ目が無いことを確かめる。(3) GPU 時間は VTG8-VSM-GPU-TIME の表。(4) `VSM_PAGES`・`VSM_CACHE`・VRAM（`vsm_pool`）。(5) golden（基準画像を動かしていないこと）と関係する ctest の結果。(6) 判定の行: 細かさ = VSM の `mean_texel_mm` と `partial_ratio` が 6 つの組すべてで同じ run の CSM 以下。ちらつき = VSM の `mean_abs_delta` と `flip_ratio` が 6 つの組すべてで同じ run の CSM 以下（両方が 0.001 未満の組は同等とみなす）。一致 = 太陽 45 度の 3 視点で `SHADOW_PROBE_AGREE` の ratio が 0.98 以上。起動画面（絶対規則7）。(7) 既知の限界（半透明・ボリュームは CSM のまま・CSM の描画も残る、負荷モードの CSM の UBO の省略は CSM 側に残る、点光源は段9、測定は開発機の RTX 4080・ドライバ 610.88 だけ、など）。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest CameraViewConstantsTest RenderingGoldenImageTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VirtualShadowMapVulkanTest|VirtualShadowMapClipmapTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-ACCEPT -Configuration RelWithDebInfo -Deterministic -SunElevations 10,45,3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-ACCEPT-night -Configuration RelWithDebInfo -Deterministic -Night`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-ACCEPT-orbit -Configuration RelWithDebInfo -Deterministic -SunElevations 45,10 -OrbitDegreesPerSecond 20 -OrbitRenderedFrames 240,320,400 -ShadowProbe`
+- stop-when: 判定の行が満たせない場合は、測定値を記録して止める（判定を緩めない）。
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
+- notes: 2026-10-07 親（段8の開始時に詳しくした）。ランナーが止まった後に親が行う（ランナーに拾わせないため backlog）。段の区切りの評価（Sol）にかける。段の受入れの撮影（ユーザーの撮影の方針の 2 つ目）。
 
 ## VTG9-VSM-POINT: 点光源の影をVSMにする
 - status: backlog
