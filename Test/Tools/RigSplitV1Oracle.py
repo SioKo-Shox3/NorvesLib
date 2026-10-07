@@ -47,6 +47,7 @@ def reference_mesh():
     strings = b"ChildRoot" + path + slot
     sref = struct.pack("<QIIQQQQ", 9, len(path), 1, fnv(topology()), fnv(reference_skeleton()),
                        fnv(b"".join(rests())), fnv(matrix())) + bytes(16)
+    # sourceの0,1,2は既存decoderで巻き順を反転する。旧CookedSkeletalAssetTestも0,2,1を固定する。
     positions = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
     uv = [(0, 0), (1, 0), (0, 1)]
     indices = [(1, 0, 1, 1), (1, 0, 1, 1), (0, 1, 1, 1)]
@@ -57,7 +58,7 @@ def reference_mesh():
     slots = struct.pack("<QIIIIQ", 9+len(path), len(slot), 0, 0, 0, 0)
     material = bytes(64) + struct.pack("<4f3f6f3I", 1, 1, 1, 1, 0, 0, 0, 0, -1, -1, 1, 1, 0.5, 0, 0, 0)
     return envelope(2, [(b"STRS", 1, strings), (b"TJNT", 24, joints()), (b"SREF", 64, sref),
-                        (b"VERT", 64, vertices), (b"INDX", 4, struct.pack("<3I", 0, 1, 2)),
+                        (b"VERT", 64, vertices), (b"INDX", 4, struct.pack("<3I", 0, 2, 1)),
                         (b"IBMS", 64, matrix(y=-1)+matrix()), (b"MNGT", 64, matrix(x=5)),
                         (b"SUBM", 64, submesh), (b"MSLT", 32, slots), (b"MATS", 128, material)])
 
@@ -123,6 +124,12 @@ class OracleTests(unittest.TestCase):
             broken[key]=True if key=="materials_render_staged" else 99
             with self.assertRaises(ValueError):
                 check_pose(broken)
+
+    def test_legacy_winding(self):
+        value=reference_mesh()
+        code,flags,offset,size,stride,count=struct.unpack_from("<4sIQQII",value,256+4*32)
+        self.assertEqual((code,flags,size,stride,count),(b"INDX",1,12,4,3))
+        self.assertEqual(struct.unpack_from("<3I",value,offset),(0,2,1))
 
     def test_material_stride(self):
         value = reference_mesh()

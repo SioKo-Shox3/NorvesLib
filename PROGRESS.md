@@ -1083,3 +1083,6 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 実装候補: 残二roleのwire、Mesh側IBM/Mと全MATS、immutable Skeleton共有、ordered Bank束縛、同snapshotの実package cold-load、未登録owner/別Sampler枝、新library cookを接続した。material/source-slotは同readのdocument/bufferを使い、取得時canonical locatorを保存する。画像はsplit専用stb workspace・累積output/copy、ARM2copy、role参照文字列alias、source名/suffixを確保前に制限する。
 - 検証準備: 独立wire/pose oracle7件normal/-O、既存B1 oracle8件とowner source8件normal/-O、二段Sampler全文復元、B1 rest比較blockの抽出一致、YAML/BOM/行末を確認。新literalはSkeleton704/Mesh1360byte。Release69・新4members direct Debug・旧cook/CLI互換はnative CI待ちで、C++成功とは扱わない。
 - Notes: 初回profileのMSLT/MATSは同件数、false cookでSuccess statusを残さない。新probeは確保直前の限定観測であり全allocator/RSSの計測ではない。一部probeの成功positive control、極小limit時の固定生成base、2snapshot/既登録pool/Load内部失敗の追加観測は未網羅として残す。GPU/DCC・CLI公開・Registry/runtime接続はこの一件の受入に含めない。
+
+- 初回B2 Windows CI: code0043cdb3 / tree02d5f024 / run37550413059 / job112564262923。Release69と新4direct Debug・新12case markerまで成功したが、新oracleのMesh全byte比較で停止した。独立期待値が既存decoderのtriangle巻き順反転を落としていた。実Debug/ReleaseはともにINDX=[0,2,1]で、旧c8a3/dd24のswapと旧CookedSkeletalAssetTestの固定検査に一致する。差はbyte932/936と従属payload hash48–55のみ、他9sectionは一致。
+- 修正: 新Python oracleのindex列だけを0,2,1へ正し、巻き順自己試験を追加（8件）。production/旧golden/旧65cppは変更しない。初回の原oracle・ログ・480source・ZIPは失敗のまま別保持する。新oracleによる初回出力の再照合は診断であり、skippedになったB1 oracle・finite/Game/CLI等の実行を補ったとは扱わない。全後段を新codeのCIで確認する。
