@@ -420,6 +420,8 @@ namespace NorvesLib::Core::Rendering
         m_LastCasterChunkCount = 0;
         m_bStatsLogged = false;
         m_FramesSinceStatsLog = 0;
+        m_StatsWriteIndex = StatsSlotCount - 1;
+        m_StatsWriteSerial = 0;
         m_Device = nullptr;
         m_Gpu = nullptr;
         m_bInitialized = false;
@@ -879,6 +881,27 @@ namespace NorvesLib::Core::Rendering
                         stats[3]);
     }
 
+    void VirtualShadowMapPass::HarvestReadyStats(uint64_t frameSerial, uint64_t completedFrameSerial)
+    {
+        // 書いた順（最後に書いた枠の次が最も古い）に、読める枠を読む。通し番号は書いた順に増えるので、読めない枠に当たったら
+        // それより新しい枠も読めない
+        for (uint32_t offset = 1; offset <= StatsSlotCount; ++offset)
+        {
+            StatsSlot& slot = m_StatsSlots[(m_StatsWriteIndex + offset) % StatsSlotCount];
+            if (!slot.bPending)
+            {
+                continue;
+            }
+            const bool bDelayed = slot.FrameSerial + StatsReadbackMinFrameDelay <= frameSerial;
+            const bool bGpuCompleted = slot.FrameSerial <= completedFrameSerial;
+            if (!bDelayed || !bGpuCompleted)
+            {
+                break;
+            }
+            HarvestStats(slot);
+        }
+    }
+
     void VirtualShadowMapPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
         m_bMarked = false;
@@ -893,15 +916,12 @@ namespace NorvesLib::Core::Rendering
 
         RHI::ICommandList* commandList = context.CommandList;
 
-        // 統計の枠は飛行中のフレームの番号ごと。スワップチェーンのフェンスが、同じ番号の前のフレームの GPU の完了を待ってから
-        // 次のフレームを始めるので、通し番号が変わった最初の Execute では、その枠へ写した前のフレームの統計を安全に読める。
+        // 統計の読み戻しの枠は、飛行中のフレームの数とは別に、書いたフレームの順に使う。読むのは、通し番号の差が
+        // StatsReadbackMinFrameDelay 以上で、そのフレームの提出の完了が確かめられた枠だけ（コーディネーターが渡す
+        // CompletedRenderFrameSerial）。飛行中のフレームが 1 枠でも 3 枠以上でも、書いた GPU の仕事が終わる前には読まない。
         // 同じフレームの Execute（複数のビューポート）は通し番号が同じなので、提出前の枠を読まない（Execute の回数では数えない）
         const uint64_t frameSerial = context.ResolveRenderFrameSerial();
-        StatsSlot& slot = m_StatsSlots[context.FrameIndex % StatsSlotCount];
-        if (slot.bPending && slot.FrameSerial != frameSerial)
-        {
-            HarvestStats(slot);
-        }
+        HarvestReadyStats(frameSerial, context.CompletedRenderFrameSerial);
 
         // 最初の実行で、何も無い texel の深度（1.0）でプールを埋める（以後は dirty のページだけを消去する）。
         // 表・要求・統計・空きページ・消去の一覧は、毎フレームの記録が作り直す
@@ -986,14 +1006,29 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // 統計を読み戻しの枠へ写す（読むのは、同じ番号の次のフレームの最初の Execute）。
-        // 同じフレームの 2 回目以降の Execute は、同じ枠を新しい統計で上書きする
-        if (slot.Buffer && slot.Mapped)
+        // 統計を読み戻しの枠へ写す。同じフレームの 2 回目以降の Execute は、同じ枠を新しい統計で上書きする。
+        // 新しいフレームは次の枠を使い、その枠がまだ読まれていない（GPU の完了が確かめられていない）ときは、このフレームの統計は取らない
+        StatsSlot* slot = nullptr;
+        if (m_StatsWriteSerial == frameSerial)
         {
-            VirtualShadowMap::RecordStatsReadback(*commandList, m_Stats, slot.Buffer);
-            slot.bPending = true;
-            slot.FrameSerial = frameSerial;
-            slot.bMegaCull = m_bMegaCullRecorded;
+            slot = &m_StatsSlots[m_StatsWriteIndex];
+        }
+        else
+        {
+            const uint32_t nextIndex = (m_StatsWriteIndex + 1u) % StatsSlotCount;
+            if (!m_StatsSlots[nextIndex].bPending)
+            {
+                m_StatsWriteIndex = nextIndex;
+                m_StatsWriteSerial = frameSerial;
+                slot = &m_StatsSlots[nextIndex];
+            }
+        }
+        if (slot && slot->Buffer && slot->Mapped)
+        {
+            VirtualShadowMap::RecordStatsReadback(*commandList, m_Stats, slot->Buffer);
+            slot->bPending = true;
+            slot->FrameSerial = frameSerial;
+            slot->bMegaCull = m_bMegaCullRecorded;
         }
 
         // 宣言した状態（Common）へ戻す

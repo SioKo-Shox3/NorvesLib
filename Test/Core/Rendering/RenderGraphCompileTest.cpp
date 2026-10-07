@@ -6162,6 +6162,11 @@ namespace
         VsmInputsPass Inputs;
         VsmConsumerPass Consumer;
         RenderGraph Graph;
+        // スワップチェーンの飛行中のフレームの数（製品は 1。FrameIndex は飛行中の番号で、完了済みの通し番号は
+        // 「記録を始めたフレームの 1 つ前から数えて飛行中の数だけ前」までとする）
+        uint32_t FramesInFlight = 2;
+        // 0 以外なら、GPU がこの数だけ遅れて完了するものとして、完了済みの通し番号を渡す（飛行中の数より遅い GPU）
+        uint32_t CompletedLag = 0;
     };
 
     void InitializeVsmRun(VsmRun& run)
@@ -6182,13 +6187,22 @@ namespace
         assert(run.Graph.Initialize(&run.Pool));
     }
 
+    // フレームの通し番号・飛行中の番号・完了済みの通し番号を文脈へ入れる。
+    // スワップチェーンのフェンスは、同じ飛行中の番号の前のフレーム（飛行中の数だけ前）の完了を待ってから記録を始めさせる
+    void SetVsmFrame(VsmRun& run, uint64_t frameIndex)
+    {
+        run.Context.FrameIndex = static_cast<uint32_t>(frameIndex % run.FramesInFlight);
+        run.Context.RenderFrameSerial = frameIndex + 1;
+        const uint64_t lag = run.CompletedLag != 0 ? run.CompletedLag : run.FramesInFlight;
+        run.Context.CompletedRenderFrameSerial = run.Context.RenderFrameSerial > lag ? run.Context.RenderFrameSerial - lag : 0;
+    }
+
     // 1 フレーム回す。入力 → VSM → 読むパスの順に足す。bConsume が false なら読むパスは足さない
     // 1 つのビューポートの Execute を回す。フレーム（通し番号と飛行中の番号）と、プール・グラフの世代は別に数える
     // （同じフレームに複数のビューポートを描くとき、フレームは同じでプール・グラフの世代だけが進む）
     void RunVsmViewport(VsmRun& run, VirtualShadowMapPass& pass, uint64_t frameIndex, uint64_t graphGeneration, bool bConsume)
     {
-        run.Context.FrameIndex = static_cast<uint32_t>(frameIndex % 2);
-        run.Context.RenderFrameSerial = frameIndex + 1;
+        SetVsmFrame(run, frameIndex);
         run.Pool.EndFrame();
         run.Pool.BeginFrame(graphGeneration);
         run.Graph.BeginFrame(graphGeneration);
@@ -6621,7 +6635,7 @@ namespace
     // 統計の枠へ、GPU が書き終えた体の値を直接書く（偽の装置のコピーは中身を写さない）
     void WriteVsmReadbackStats(const VirtualShadowMapPass& pass, uint32_t requested, uint32_t allocated, uint32_t overflow, uint32_t levels)
     {
-        for (uint32_t slotIndex = 0; slotIndex < 2u; ++slotIndex)
+        for (uint32_t slotIndex = 0; slotIndex < VirtualShadowMapPass::StatsReadbackSlotCount; ++slotIndex)
         {
             const RHI::BufferPtr& buffer = pass.GetStatsReadbackBuffer(slotIndex);
             assert(buffer);
@@ -6633,8 +6647,9 @@ namespace
         }
     }
 
-    // 統計の読み戻しは、Execute の回数ではなくフレームの通し番号で数える。同じ番号の飛行中のフレームの次の最初の Execute だけが、
-    // その枠（フェンスが完了を保証した前のフレームの書き込み）を読む。同じフレームの複数のビューポートは提出前の枠を読まない。
+    // 統計の読み戻しは、Execute の回数ではなくフレームの通し番号で数える。通し番号の差が 2 以上で、書いたフレームの完了が
+    // 確かめられた枠だけを読む（飛行中が 2 枠のこの場面では、フレーム k がフレーム k - 2 の枠を読む）。
+    // 同じフレームの複数のビューポートは提出前の枠を読まない。
     // 値が変わったときと、変わらなくても 60 回読むごとに VSM_PAGES を出す。統計のコピー元には TransferSrc が要る
     void TestVirtualShadowMapPassReadsStatsOnlyAfterFrameFence()
     {
@@ -6705,6 +6720,62 @@ namespace
         logger.Shutdown();
     }
 
+    // 統計の読み戻しは、スワップチェーンの飛行中のフレームの数に依らず、通し番号の差が 2 以上で、かつ書いたフレームの
+    // GPU の完了が確かめられた枠だけを読む。製品は飛行中が 1 枠（翌フレームに読むと遅れが足りない）、3 枠以上では差が 2 でも
+    // 書いたフレームがまだ終わっていない。GPU が飛行中の数より遅れて完了するときも、完了まで読まない
+    void RunVsmStatsReadbackCase(uint32_t framesInFlight, uint32_t completedLag, uint64_t expectedFirstReadFrame)
+    {
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        VsmLogCollector logs;
+        logger.AddSink(&logs);
+
+        VsmRun run;
+        run.FramesInFlight = framesInFlight;
+        run.CompletedLag = completedLag;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        VirtualShadowMapPass pass;
+        assert(pass.Initialize(run.Context));
+        assert(pass.IsActive());
+
+        const char* const logA = "VSM_PAGES requested=5 allocated=4 overflow=1 levels_used=0x3";
+        WriteVsmReadbackStats(pass, 5, 4, 1, 0x3);
+        uint64_t generation = 0;
+        for (uint64_t frame = 0; frame < expectedFirstReadFrame; ++frame)
+        {
+            RunVsmViewport(run, pass, frame, generation++, true);
+            assert(logs.Count("VSM_PAGES") == 0);
+        }
+        // 最初に読むフレーム: 通し番号の差が 2 以上で、書いたフレーム（フレーム 0）の完了が確かめられている
+        RunVsmViewport(run, pass, expectedFirstReadFrame, generation++, true);
+        assert(logs.Count("VSM_PAGES") == 1 && logs.Count(logA) == 1);
+
+        ShutdownVsmRun(run, pass);
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+    }
+
+    void TestVirtualShadowMapPassStatsReadbackAcrossFlightCounts()
+    {
+        // 飛行中が 1 枠（製品）: フレーム 1 は翌フレームなので読まない。フレーム 2 が、フレーム 0 の統計を読む
+        RunVsmStatsReadbackCase(1, 0, 2);
+        // 飛行中が 2 枠: フレーム 2 が、フレーム 0 の統計を読む
+        RunVsmStatsReadbackCase(2, 0, 2);
+        // 飛行中が 3 枠: フレーム 2 は差が 2 でも、フレーム 0 の完了が確かめられていない。フレーム 3 が読む
+        RunVsmStatsReadbackCase(3, 0, 3);
+        // 飛行中が 4 枠（上限）: フレーム 4 が、フレーム 0 の統計を読む
+        RunVsmStatsReadbackCase(4, 0, 4);
+        // GPU が飛行中の数（2）より遅れて 6 フレーム後に完了する: フレーム 6 まで読まない（差が 2 以上でも完了を待つ）
+        RunVsmStatsReadbackCase(2, 6, 6);
+    }
+
     // 展開の統計の語（塊・インスタンス・溢れ）は、投影物を描かない間（0 のまま）は VSM_RASTER を出さず、
     // 0 以外になったとき・値が変わったとき・変わらなくても 60 回読むごとに出す
     void TestVirtualShadowMapPassReportsRasterStats()
@@ -6728,7 +6799,7 @@ namespace
         assert(pass.IsActive());
 
         auto writeRasterStats = [&pass](uint32_t chunks, uint32_t instances, uint32_t overflow) {
-            for (uint32_t slotIndex = 0; slotIndex < 2u; ++slotIndex)
+            for (uint32_t slotIndex = 0; slotIndex < VirtualShadowMapPass::StatsReadbackSlotCount; ++slotIndex)
             {
                 const RHI::BufferPtr& buffer = pass.GetStatsReadbackBuffer(slotIndex);
                 assert(buffer);
@@ -7276,8 +7347,7 @@ namespace
     void RunVsmCasterViewport(VsmCasterScene& scene, uint64_t frameIndex, uint64_t graphGeneration)
     {
         VsmRun& run = scene.Run;
-        run.Context.FrameIndex = static_cast<uint32_t>(frameIndex % 2);
-        run.Context.RenderFrameSerial = frameIndex + 1;
+        SetVsmFrame(run, frameIndex);
         run.Pool.EndFrame();
         run.Pool.BeginFrame(graphGeneration);
         run.Graph.BeginFrame(graphGeneration);
@@ -7684,7 +7754,7 @@ namespace
     // 統計の読み戻しの枠へ、GPU が書き終えた体で MegaGeometry の投影物のカリングの統計（語 8〜10）を書く
     void WriteVsmMegaReadbackStats(const VirtualShadowMapPass& pass, uint32_t instances, uint32_t clusters, uint32_t overflow)
     {
-        for (uint32_t slotIndex = 0; slotIndex < 2u; ++slotIndex)
+        for (uint32_t slotIndex = 0; slotIndex < VirtualShadowMapPass::StatsReadbackSlotCount; ++slotIndex)
         {
             const RHI::BufferPtr& buffer = pass.GetStatsReadbackBuffer(slotIndex);
             assert(buffer);
@@ -13664,6 +13734,7 @@ int main()
     TestVirtualShadowMapPassRecordsMarkAllocateClearInOrder();
 #if NORVES_ENABLE_LOGGING
     TestVirtualShadowMapPassReadsStatsOnlyAfterFrameFence();
+    TestVirtualShadowMapPassStatsReadbackAcrossFlightCounts();
     TestVirtualShadowMapPassReportsRasterStats();
 #endif
     TestVirtualShadowMapRasterStatsReporterDecidesWhenToLog();

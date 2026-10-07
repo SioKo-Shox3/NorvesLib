@@ -3274,14 +3274,26 @@ namespace
 
     bool RunPenumbraCase(const DevicePtr& device, VirtualShadowMapPages& pages, VirtualShadowMapRaster& raster, const SampleProbe& probe, uint64_t& frameSerial)
     {
-        // カメラを受け手の平面から 1 m に置く。窓（中心から 30 画素）の画素と探索の標本が、すべて同じ段のページを読む
-        const ReceiverScene receiver = BuildReceiverScene(device, 1.0, 30);
+        // カメラを受け手の平面の近くに置く。窓（中心から 30 画素）の画素と探索の標本が、すべて同じ段のページを読む。
+        // 段の境目の距離は段ごとに 2 倍ずつ離れていて、窓の距離の幅（約 1.22 倍）が境目をまたぐ置き方があるので、またがない距離を選ぶ
+        ReceiverScene receiver;
+        int32_t nearLevel = -1;
+        int32_t farLevel = -2;
+        for (const double cameraDistance : {1.0, 1.3, 1.6, 2.0, 2.6, 3.2})
+        {
+            receiver = BuildReceiverScene(device, cameraDistance, 30);
+            const Scene& candidate = receiver.Base;
+            nearLevel = SelectVirtualShadowMapLevel(candidate.Settings, static_cast<float>(receiver.MinDistance - AmbiguityToleranceMeters),
+                                                    candidate.Camera.FieldOfView, static_cast<float>(ImageHeight));
+            farLevel = SelectVirtualShadowMapLevel(candidate.Settings, static_cast<float>(receiver.MaxDistance + AmbiguityToleranceMeters),
+                                                   candidate.Camera.FieldOfView, static_cast<float>(ImageHeight));
+            if (nearLevel >= 0 && nearLevel == farLevel)
+            {
+                break;
+            }
+        }
         const Scene& scene = receiver.Base;
         Expect(scene.Clipmap.bEnabled && std::abs(scene.Clipmap.DepthCenter) < 1.0, "ケース L5: クリップマップが有効で、深度の中心が受け手の平面の近くになければならない");
-        const float fov = scene.Camera.FieldOfView;
-        const float height = static_cast<float>(ImageHeight);
-        const int32_t nearLevel = SelectVirtualShadowMapLevel(scene.Settings, static_cast<float>(receiver.MinDistance - AmbiguityToleranceMeters), fov, height);
-        const int32_t farLevel = SelectVirtualShadowMapLevel(scene.Settings, static_cast<float>(receiver.MaxDistance + AmbiguityToleranceMeters), fov, height);
         std::cout << TestName << " ケース L5: カメラから受け手まで " << receiver.MinDistance << "〜" << receiver.MaxDistance << " m 段=" << nearLevel
                   << " 段の texel=" << scene.Clipmap.Levels[static_cast<uint32_t>(std::max(nearLevel, 0))].TexelMeters * 1000.0f << " mm" << std::endl;
         Expect(nearLevel >= 0 && nearLevel == farLevel, "ケース L5: 窓のすべての画素が同じ段を使わなければならない（場面が退化している）");
@@ -3333,31 +3345,42 @@ namespace
     }
 
     // ----- C2: 隣のページへの印の範囲がページの何枚分にもなるとき -----
-    // カメラを受け手の平面から 0.1 m に置くと、段 2（ページ 12.5 cm・texel 0.98 mm）が選ばれ、探索・PCF の最大の半径（0.5 m + 5 texel）が片側 4 ページ分に
+    // カメラを受け手の平面の近く（0.1 m 前後）に置くと、細かい段（ページ 12.5 cm 以下）が選ばれ、探索・PCF の最大の半径（0.5 m + 5 texel）が片側 4 ページ分以上に
     // なる。1 つの画素に印を付ける範囲が、旧来の頭打ち（pageMin から 4 ページ）で切れず、CPU の参照（半径が覆うすべてのページ）と一致すること
     bool RunWideMarginMarkingCase(const DevicePtr& device, VirtualShadowMapPages& pages, uint64_t& frameSerial)
     {
-        const ReceiverScene receiver = BuildReceiverScene(device, 0.1, 30);
-        const Scene& scene = receiver.Base;
-        Container::VariableArray<float> single(ImageWidth * ImageHeight, 1.0f);
-        const int32_t centerPixelX = static_cast<int32_t>(ImageWidth / 2u);
-        const int32_t centerPixelY = static_cast<int32_t>(ImageHeight / 2u);
+        // 段の境目の距離をまたぐ置き方では、画素の段が曖昧（Stable でない）になるので、またがない距離を選ぶ
+        ReceiverScene receiver;
+        Container::VariableArray<float> single;
         bool bPicked = false;
-        for (int32_t offsetY = -30; offsetY <= 30 && !bPicked; ++offsetY)
+        for (const double cameraDistance : {0.1, 0.14, 0.2, 0.28, 0.4})
         {
-            for (int32_t offsetX = -30; offsetX <= 30 && !bPicked; ++offsetX)
+            receiver = BuildReceiverScene(device, cameraDistance, 30);
+            const Scene& candidate = receiver.Base;
+            single.assign(ImageWidth * ImageHeight, 1.0f);
+            const int32_t centerPixelX = static_cast<int32_t>(ImageWidth / 2u);
+            const int32_t centerPixelY = static_cast<int32_t>(ImageHeight / 2u);
+            for (int32_t offsetY = -30; offsetY <= 30 && !bPicked; ++offsetY)
             {
-                const uint32_t pixelX = static_cast<uint32_t>(centerPixelX + offsetX);
-                const uint32_t pixelY = static_cast<uint32_t>(centerPixelY + offsetY);
-                Container::VariableArray<uint32_t> keys;
-                const float depthValue = receiver.Image[pixelY * ImageWidth + pixelX];
-                if (ClassifyPixel(scene, pixelX, pixelY, depthValue, &keys, nullptr, nullptr) == PixelKind::Stable && keys.size() >= 64u)
+                for (int32_t offsetX = -30; offsetX <= 30 && !bPicked; ++offsetX)
                 {
-                    single[pixelY * ImageWidth + pixelX] = depthValue;
-                    bPicked = true;
+                    const uint32_t pixelX = static_cast<uint32_t>(centerPixelX + offsetX);
+                    const uint32_t pixelY = static_cast<uint32_t>(centerPixelY + offsetY);
+                    Container::VariableArray<uint32_t> keys;
+                    const float depthValue = receiver.Image[pixelY * ImageWidth + pixelX];
+                    if (ClassifyPixel(candidate, pixelX, pixelY, depthValue, &keys, nullptr, nullptr) == PixelKind::Stable && keys.size() >= 64u)
+                    {
+                        single[pixelY * ImageWidth + pixelX] = depthValue;
+                        bPicked = true;
+                    }
                 }
             }
+            if (bPicked)
+            {
+                break;
+            }
         }
+        const Scene& scene = receiver.Base;
         Expect(bPicked, "ケース C2: 印の範囲が 64 ページ以上になる安定した画素が見つからない（場面が退化している）");
         if (!bPicked)
         {

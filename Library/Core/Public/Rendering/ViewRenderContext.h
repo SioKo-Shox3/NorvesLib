@@ -973,6 +973,15 @@ namespace NorvesLib::Core::Rendering
          */
         uint64_t RenderFrameSerial = 0;
 
+        /**
+         * @brief GPU の仕事が完了したと確かめられた、最後の RenderFrameSerial（このフレームの記録を始めた時点）
+         *
+         * 提出の serial が完了済みになったフレームのうち、通し番号が最大のもの。飛行中のフレームの数に依らず、
+         * 「その通し番号のフレームが GPU に書かせた読み戻し先は、ホストが読んでよい」を表す。
+         * 0 は未設定（RenderingCoordinator を通さない手組みの文脈）で、完了したフレームが無いものとして扱う。
+         */
+        uint64_t CompletedRenderFrameSerial = 0;
+
         /** @brief FrameUseRing に渡すフレームの通し番号（未設定なら FrameNumber + 1） */
         uint64_t ResolveRenderFrameSerial() const
         {

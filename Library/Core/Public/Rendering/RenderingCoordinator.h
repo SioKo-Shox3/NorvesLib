@@ -596,6 +596,17 @@ namespace NorvesLib::Core::Rendering
         // RenderThread が記録したフレームの通し番号（ViewRenderContext::RenderFrameSerial に渡す。GameThread のフレーム番号と
         // 違い、描画がパケットを飛ばしても、同じパケットを描き直しても、記録のたびに必ず増える）
         uint64_t m_RenderFrameSerial = 0;
+        // 提出した描画フレームの通し番号と、その提出 serial の対（完了の通知が来るまで持つ）。
+        // 提出 serial が完了済みになったら m_CompletedRenderFrameSerial へ進める（ViewRenderContext::CompletedRenderFrameSerial に渡す）
+        struct SubmittedRenderFrame
+        {
+            uint64_t RenderFrameSerial = 0;
+            uint64_t SubmissionSerial = 0;
+        };
+        Container::VariableArray<SubmittedRenderFrame> m_SubmittedRenderFrames;
+        uint64_t m_CompletedRenderFrameSerial = 0;
+        uint64_t m_LastCompletedSubmissionSerial = 0;
+        void AdvanceCompletedRenderFrameSerial(uint64_t completedSubmissionSerial);
 
         // RenderThread が最後に描いたフレームの物体の変換。描画がゲームのフレームを飛ばしたとき、TAA を選んだ
         // カメラなら、パケットの前の変換（velocity の基準）をそのフレームのものへ付け替える。

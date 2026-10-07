@@ -339,12 +339,20 @@ namespace NorvesLib::Core::Rendering
         bool WasRasterRecorded() const { return m_bRasterRecorded; }
         /** @brief 直前の Execute が展開へ渡した投影物の塊の数（記録しなかったときは 0） */
         uint32_t GetLastCasterChunkCount() const { return m_LastCasterChunkCount; }
-        /** @brief 統計の読み戻し先（飛行中のフレームの番号ごと。観測用。無ければ null） */
-        const RHI::BufferPtr& GetStatsReadbackBuffer(uint32_t inFlightIndex) const { return m_StatsSlots[inFlightIndex % StatsSlotCount].Buffer; }
+        /**
+         * @brief 統計の読み戻しの枠の数。飛行中のフレームの数とは別に、書いたフレームの順に使う
+         *
+         * 読んでよいのは、通し番号の差が StatsReadbackMinFrameDelay 以上で、かつ GPU の完了が確かめられた枠だけ。
+         * 枠の数は FrameUseRing の飛行中の上限以上なので、飛行中のフレームが上限まで続いても、次の枠は完了済みになっている。
+         */
+        static constexpr uint32_t StatsReadbackSlotCount = FrameUseRingMaxInFlightSlots;
+        /** @brief 統計を書いたフレームから、読むフレームまでに最低限あける通し番号の差（数フレーム遅れて読む） */
+        static constexpr uint64_t StatsReadbackMinFrameDelay = 2;
+        /** @brief 統計の読み戻し先（書いた順の枠の番号。観測用。無ければ null） */
+        const RHI::BufferPtr& GetStatsReadbackBuffer(uint32_t slotIndex) const { return m_StatsSlots[slotIndex % StatsReadbackSlotCount].Buffer; }
 
     private:
-        /** @brief 統計の読み戻しの枠の数。飛行中のフレームの番号（FrameIndex）ごとに 1 枠で、FrameUseRing の枠の数と同じ */
-        static constexpr uint32_t StatsSlotCount = FrameUseRingMaxInFlightSlots;
+        static constexpr uint32_t StatsSlotCount = StatsReadbackSlotCount;
         /** @brief 統計の値が変わらなくても VSM_PAGES を出す間隔（読み戻したフレーム数） */
         static constexpr uint32_t StatsLogIntervalFrames = 60;
 
@@ -373,6 +381,8 @@ namespace NorvesLib::Core::Rendering
         void ReportCasters();
         /** @brief 書き終えた枠の統計を読み、値が変わった・60 フレームたったときに VSM_PAGES を出す */
         void HarvestStats(StatsSlot& slot);
+        /** @brief 通し番号の差が StatsReadbackMinFrameDelay 以上で、GPU の完了が確かめられた枠を、書いた順に読む */
+        void HarvestReadyStats(uint64_t frameSerial, uint64_t completedFrameSerial);
 
         uint32_t m_RequestedPoolPages = 0;
         uint32_t m_PoolPages = 0;
@@ -405,6 +415,9 @@ namespace NorvesLib::Core::Rendering
         const SkinningComputePass* m_SkinningPass = nullptr;
         const MegaGeometryPass* m_MegaPass = nullptr;
         StatsSlot m_StatsSlots[StatsSlotCount];
+        /** @brief 最後に書いた枠の番号と、そのときのフレームの通し番号（同じフレームの Execute は同じ枠を書き直す） */
+        uint32_t m_StatsWriteIndex = StatsSlotCount - 1;
+        uint64_t m_StatsWriteSerial = 0;
         bool m_bMarked = false;
         bool m_bRasterRecorded = false;
         bool m_bMegaCullRecorded = false;

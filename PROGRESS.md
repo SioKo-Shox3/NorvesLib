@@ -2171,3 +2171,14 @@
 - 元へ戻し（更新時刻を更新して再ビルド）、`git diff --numstat` で差分が TASKS.md だけであることを確認。
 - 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-CLIPMAP-6.txt`（Game・CameraViewConstantsTest・RenderGraphCompileTest のビルド、BUILD_EXIT_CODE=0）、`-7.txt`（ctest 4/4 Passed）。
 - Next: VTG8-VSM-GPU-TIME 以降。
+
+## 反復 4（2026-10-08）: VTG8-VSM-MARK（統計の読み戻しを飛行中の数から分離、done）
+
+- 差し戻し（評価の 2 周）: done-when (4) の「数フレーム遅れ」が、製品の飛行中 1 枠では翌フレームに読んでいた。読み戻しの枠を飛行中のフレーム番号から切り離し、書いた順に使う 4 枠（`StatsReadbackSlotCount`、FrameUseRing の上限以上）にした。読むのは「通し番号の差が `StatsReadbackMinFrameDelay`（2）以上」かつ「書いたフレームの提出の完了が確かめられた」枠だけ。
+- 完了の確かめ方: `RenderingCoordinator` が提出した描画フレームの通し番号と提出 serial の対を持ち、フレームの記録を始めるとき `swapChain->GetCompletedSubmissionSerial()` で完了済みになった最大の通し番号を `ViewRenderContext::CompletedRenderFrameSerial` へ渡す（スワップチェーンの作り直しで serial が戻ったときは、持っていた提出を完了済みとする）。手組みの文脈（0）では完了したフレームが無いものとして読まない。次の枠が未読（GPU の完了が未確認）のときは、そのフレームの統計は取らない（上書きしない）。同じフレームの複数の Execute は同じ枠を書き直す。
+- テスト（`RenderGraphCompileTest`）: `VsmRun` に飛行中の数・GPU の遅れを持たせ、`TestVirtualShadowMapPassStatsReadbackAcrossFlightCounts` で飛行中 1・2・3・4 枠と、GPU が 6 フレーム遅れて完了する場合の最初に読むフレーム（2・2・3・4・6）を確かめる。既存の `ReadsStatsOnlyAfterFrameFence`（同じフレームの 3 ビューポートが読まない・値が変わったときと 60 回ごとに出す）は新しい枠の仕組みのまま合格。
+- 変異（`verify-VTG8-VSM-MARK-26-mutations.txt`。どちらも `RenderGraphCompileTest` が Failed、元へ戻して更新時刻を更新し再ビルド）: (a) 通し番号の差の条件を外す、(b) 完了の確認を外す。
+- 前の CLIPMAP の反復（bias -1 と b = max(bias, b_cover)）で壊れていた `VirtualShadowMapVulkanTest` のケース L5・C2 を直した。受け手のカメラ距離を固定（1 m・0.1 m）にしていたため、窓の距離の幅が段の境目をまたいで「窓のすべての画素が同じ段」「Stable な画素」の前提が崩れていた。段の境目をまたがない距離を候補から選ぶようにした（実装は変更していない）。L5 の帯の幅は 89.84 mm・269.53 mm（期待 89.71・269.13）、比 3、逃げた標本 0。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-MARK-27.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-28.txt`（VirtualShadowMapVulkanTest・RenderGraphCompileTest が 2/2 Passed）。
+- Notes: (1) 実機の起動画面での `VSM_PAGES` の出力は、重い処理の扱いに従い回していない（VTG8-VSM-GPU-TIME の撮影で確かめる）。(2) `ViewRenderContext` に `CompletedRenderFrameSerial` を足した（描画の層の公開構造体。既定 0）。
+- Next: VTG8-VSM-GPU-TIME（VTG8-VSM-SAMPLE・PCSS は blocked のまま）。
