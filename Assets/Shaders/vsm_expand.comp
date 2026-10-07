@@ -101,11 +101,12 @@ void PageRange(uint level, vec2 lightMin, vec2 lightMax, out ivec2 pageMin, out 
 }
 
 // ページ (pageX, pageY) の表の欄（トーラスの番地）
+// 別のワークグループが同じ欄へ再描画の印を atomicOr するので、読み取りも原子的にしてデータ競合を避ける
 uint PageEntry(uint level, int pageX, int pageY)
 {
     const uint addressX = uint(pageX) & (VSM_TABLE_DIMENSION - 1u);
     const uint addressY = uint(pageY) & (VSM_TABLE_DIMENSION - 1u);
-    return pageTable[level * VSM_TABLE_ENTRIES_PER_LEVEL + addressY * VSM_TABLE_DIMENSION + addressX];
+    return atomicOr(pageTable[level * VSM_TABLE_ENTRIES_PER_LEVEL + addressY * VSM_TABLE_DIMENSION + addressX], 0u);
 }
 
 bool IsDrawable(uint entry)

@@ -2290,3 +2290,11 @@
 - Notes: (1) `ApplicationProcessor.cpp` の `--vsm-pool-pages` のコメント「既定 4096」は `paths:` の外なので直していない（実際の既定は 5120）。(2) `RenderWorld.h` のコメントは 5120 に直した。(3) Git Bash の `grep -c $'$'` は CR の数を数え間違える（全行が CRLF に見える）。行末の確認は Python で `
 ` を数える。`RenderGraphCompileTest.cpp` は CRLF と LF の混在なので、行末を保つ単行の置換で直した。(4) `VirtualShadowMapVulkanTest` は `RHITextureUpdateVulkanTest.exe` の束なので、ビルドの対象は `RHITextureUpdateVulkanTest`。
 - Next: `VTG8-VSM-GPU-TIME` を `todo` に戻した（6 run の撮り直し。cache=off の負荷の `VSM_MEGA_CULL` overflow は上記の既知の限界として記録する）。`blocked/VTG8-VSM-GPU-TIME.md` は残っている。`VTG8-VSM-DEFAULT-ON` は人の判断待ちのまま。
+
+## 反復 13（2026-10-08）: VTG8-VSM-POOL-OVERFLOW（反復 12 の差し戻し対応。done）
+
+- 差し戻し: `vsm_expand.comp` が溢れた塊の範囲のページ表へ `atomicOr` で再描画の印を書く一方、`PageEntry` は同じ欄を通常のロードで読んでいた。重なる塊の一部だけが溢れると、別ワークグループの読み取りと書き込みがデータ競合になる（`barrier()` はワークグループ間を同期しない）。
+- 修正: `PageEntry` の読み取りを `atomicOr(pageTable[...], 0u)` にして原子的にした（1 行。印の書き込みと同じ欄への操作がすべて原子になる）。`IsDrawable` が見る allocated・dirty と物理ページの番号の欄は印と重ならないので、結果は変わらない。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-POOL-OVERFLOW-10.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-11.txt`（RenderGraphCompileTest・VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest が 3/3 Passed。VirtualShadowMapVulkanTest は 6.67 秒の GPU 実行で、シェーダーはこのテストの中でコンパイルされる。ケース M3c の溢れ→印→次フレームの描き直しも通る）。
+- Notes: (1) 撮影による GPU 時間の再測定はしていない。原子の読み取りはキャッシュ済みの欄への 1 回の操作で、展開は 1 塊あたり 2〜3 回の走査だけなので、反復 12 の ±0.1 ms の範囲を超える見込みはないが、実測は `VTG8-VSM-GPU-TIME`（todo）の撮り直しで確かめる。(2) cache=off ＋ 負荷 300 個の `VSM_MEGA_CULL` overflow 80775 は反復 12 の記録どおり既知の限界。
+- Next: `VTG8-VSM-GPU-TIME`（6 run の撮り直し。`blocked/VTG8-VSM-GPU-TIME.md` が残っているので人が確認して `todo` に戻す／すでに `todo`）。
