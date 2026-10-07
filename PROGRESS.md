@@ -1979,3 +1979,14 @@
 - 検証（`.harness/runs/20261007-203349/`）: `verify-VTG8-VSM-CLIPMAP-7.txt`（Debug の Game・CameraViewConstantsTest・RenderGraphCompileTest のビルド、BUILD_EXIT_CODE=0。最初の `-1.txt` は Git Bash が `/m:1` をパスに変えて失敗したのでやり直した）、`-8.txt`（VirtualShadowMapClipmapTest・PointShadowFaceMatricesTest・CascadedShadowLightMatricesTest・RenderGraphCompileTest が 4/4 Passed、CTEST_EXIT_CODE=0）、`-5-mutation-nosnap.txt(.ctest)`・`-6-mutation-inequality.txt(.ctest)`（変異の失敗）、`-9-invalid-arg.txt`（不正な値の起動中止）。`-2.txt` は被覆の下限を足す前の失敗（受け手が範囲の外になる 112 件）の記録。
 - Notes: (1) 新しい GPU の撮影はしていない（描画は CSM のまま。撮影は VTG8-VSM-GPU-TIME）。(2) `VirtualShadowMapClipmap` は 16 段分の行列を持つ構造体（約 4 KB）で、`PhysicalLightingResources` へフレームごとにコピーする。重ければ後の項目で段の数だけに絞る。
 - Next: VTG8-VSM-SAMPLE 以降。
+
+## 反復 6（2026-10-07）: VTG8-VSM-CLIPMAP（差し戻しへの対応、done）
+
+- 前回の差し戻しは、被覆の補正が texel の上限を破る（既定・1.94 m・fovY 35 度・1440 画素で、上限 0.4248 mm に対し段 1 の 0.488 mm を選ぶ）のに、テストが被覆で粗くなった段の上限の検査を免除していたこと。
+- 原因: 段 L の texel と被覆はどちらも 2^L で増えるので、2^bias·2tan(fovY/2)/画面の高さ ≥ 2·(段 0 の texel)/(段 0 の被覆) ≒ 2.5e-4 でなければ、texel を満たす最も粗い段が受け手に届かないことがある。bias −1 では 1440 画素・fovY 35 度でこの式が破れる（2.19e-4）。W0・段数は式に効かない（比は 16384·62/128 で決まる）。
+- 対応: 既定の bias を −1 → −0.5 に変えた（texel は画素の約 0.35〜0.71 倍）。360/720/1440 画素 × fovY 35/60/90 度 × 距離 0〜80 m（0.01 m 刻み）の格子で被覆の補正が一度も入らないことを Python で先に確かめた（bias −0.75・−0.5 は通り、−1 は 1440・35 度で 1.94 m が破れる）。実装の選び方（被覆の補正）は変えていない。
+- テスト: 免除（`bCoverageClamped`）を撤去し、格子の全画面で「texel ≤ 画素 × 2^bias の最も粗い段」「選んだ段が受け手を覆う」を無条件に検査する。式を満たさない画面（fovY 20 度・2160 画素）では被覆を優先して粗い段を選ぶこと（受け手を覆う最も細かい段・距離について単調・補正が実際に入る）を `TestCoveragePriorityOutsideSupportedScreens` に分けて記録した（既知の限界。この画面では texel の上限は成り立たない）。進行・結果の表示を日本語にした。
+- 変異: 既定の bias を −1 に戻すと `VirtualShadowMapClipmapTest` が 1846 件の失敗で落ちる（`verify-VTG8-VSM-CLIPMAP-12-mutation-bias.txt`）。戻して 4/4 Passed。
+- 検証（`.harness/runs/20261007-203349/`）: `verify-VTG8-VSM-CLIPMAP-13.txt`（Debug の Game・CameraViewConstantsTest・RenderGraphCompileTest のビルド、BUILD_EXIT_CODE=0）、`-14.txt`（VirtualShadowMapClipmapTest・PointShadowFaceMatricesTest・CascadedShadowLightMatricesTest・RenderGraphCompileTest が 4/4 Passed、CTEST_EXIT_CODE=0）。
+- Notes: 後の VTG8-VSM-DEFAULT-ON で bias を −1 以下へ下げるときは、上の式（被覆と texel の両立）が破れる画面が出るので、段の数や被覆の余白ではなく、式を満たす範囲の確認が要る。
+- Next: VTG8-VSM-SAMPLE 以降。
