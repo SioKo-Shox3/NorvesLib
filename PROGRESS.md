@@ -2164,3 +2164,10 @@
 - 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-CLIPMAP-3.txt`（Game・CameraViewConstantsTest・RenderGraphCompileTest のビルド、exit 0）、`-4.txt`（ctest 4/4 合格）。
 - Notes: (1) 既定の bias を -1 に戻したので、起動画面の段・要求ページ数は bias -0.5 のときより約 2 倍に増える（texel が画素の 1/4〜1/2）。GPU のテスト（`VirtualShadowMapVulkanTest`）は段を `SelectVirtualShadowMapLevel` で求めるので式の写しは無いが、実機の確認は重い処理の扱いに従い回していない（VTG8-VSM-GPU-TIME の撮影で確かめる）。(2) `VSM_CLIPMAP` の行の `bias=` は設定の BiasLevels（補正前）。
 - Next: VTG8-VSM-GPU-TIME 以降。
+
+## 反復 3（2026-10-08）: VTG8-VSM-CLIPMAP（スナップを外す変異の記録を直す、done）
+
+- 差し戻し: 前回の「スナップを外す」変異は座標を 1.37 倍して整数化する置換で、中心はページの格子へスナップされたままだった。今回は `VirtualShadowMapClipmap.cpp` の `centerX/centerY`（`CenterPageX/Y * pageMeters`）を `cameraX/cameraY` に置き換え（中心のスナップを本当に外す）、`VirtualShadowMapClipmapTest` が FAIL することを記録した（`verify-VTG8-VSM-CLIPMAP-5-mutation-snap.txt`。「段の中心がページの格子へスナップされていない」が全段で出て 0% passed）。実装は変更していない。
+- 元へ戻し（更新時刻を更新して再ビルド）、`git diff --numstat` で差分が TASKS.md だけであることを確認。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-CLIPMAP-6.txt`（Game・CameraViewConstantsTest・RenderGraphCompileTest のビルド、BUILD_EXIT_CODE=0）、`-7.txt`（ctest 4/4 Passed）。
+- Next: VTG8-VSM-GPU-TIME 以降。
