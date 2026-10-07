@@ -516,6 +516,33 @@ namespace
         return false;
     }
 
+    // --shadow-method=csm|vsm
+    bool TryParseShadowMethodOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::ShadowMethod& outMethod,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--shadow-method=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("csm"))
+        {
+            outMethod = NorvesLib::Core::Rendering::ShadowMethod::Csm;
+            return true;
+        }
+        if (value == TEXT("vsm"))
+        {
+            outMethod = NorvesLib::Core::Rendering::ShadowMethod::Vsm;
+            return true;
+        }
+        return false;
+    }
+
     // --tone-map=aces|aces20-lut
     bool TryParseToneMapOption(
         const String& argument,
@@ -1004,6 +1031,8 @@ namespace NorvesLib::Core::Engine
         Rendering::SwRasterMode swRasterMode = Rendering::SwRasterMode::On;
         float swRasterMaxPixels = Rendering::DefaultSwRasterMaxPixels;
         bool bShadowProbe = false;
+        Rendering::ShadowMethod shadowMethod = Rendering::ShadowMethod::Csm;
+        bool bInvalidShadowMethod = false;
         Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
         bool bToneMapOperatorRequested = false;
         float filmGrainStrength = 0.0f;
@@ -1173,6 +1202,19 @@ namespace NorvesLib::Core::Engine
                 LOG_WARNING("ApplicationProcessor の起動引数 --sw-raster-max-px を無視します: 値は正の数にしてください");
             }
 
+            // --shadow-method=csm|vsm: 太陽の影の方式（既定 csm）。不正な値は起動時のエラー
+            bool bMatchedShadowMethod = false;
+            if (TryParseShadowMethodOption(args[i], shadowMethod, bMatchedShadowMethod))
+            {
+                LOG_INFO("ApplicationProcessor runtime option shadow_method=%u",
+                         static_cast<unsigned int>(shadowMethod));
+            }
+            else if (bMatchedShadowMethod)
+            {
+                bInvalidShadowMethod = true;
+                LOG_ERROR("ApplicationProcessor の起動引数 --shadow-method の値が不正です: 'csm' か 'vsm' にしてください");
+            }
+
             // --shadow-probe: 太陽の影の標本のパスを足す（統計が有効な構成のみ。Release では無視される）
             if (args[i] == TEXT("--shadow-probe"))
             {
@@ -1287,6 +1329,11 @@ namespace NorvesLib::Core::Engine
             LOG_WARNING("ApplicationProcessor runtime option --wait-for-asset-settle ignored without --exit-after-rendered-frames");
         }
 
+        if (bInvalidShadowMethod)
+        {
+            return false;
+        }
+
         // OnPreInitialize呼び出し
         auto *handler = GEngine->GetApplicationHandler();
         if (handler && !handler->OnPreInitialize(args))
@@ -1349,6 +1396,7 @@ namespace NorvesLib::Core::Engine
             renderSettings.SwRaster = swRasterMode;
             renderSettings.SwRasterMaxPixels = swRasterMaxPixels;
             renderSettings.bShadowProbe = bShadowProbe;
+            renderSettings.SunShadowMethod = shadowMethod;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
             {

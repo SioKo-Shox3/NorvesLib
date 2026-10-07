@@ -88,6 +88,7 @@ namespace NorvesLib::Core::Rendering
         coordSettings.SwRaster = settings.SwRaster;
         coordSettings.SwRasterMaxPixels = settings.SwRasterMaxPixels;
         coordSettings.bShadowProbe = settings.bShadowProbe;
+        coordSettings.SunShadowMethod = settings.SunShadowMethod;
 
         if (!m_RenderingCoordinator.Initialize(coordSettings))
         {

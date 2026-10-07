@@ -1275,6 +1275,7 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER CameraViewConstantsTest CameraViewConstantsTest.cpp
     MEMBER OrthographicViewportMatrixTest OrthographicViewportMatrixTest.cpp
     MEMBER PointShadowFaceMatricesTest PointShadowFaceMatricesTest.cpp
+    MEMBER VirtualShadowMapClipmapTest VirtualShadowMapClipmapTest.cpp
     MEMBER AutoExposureMathTest AutoExposureMathTest.cpp
     MEMBER TemporalAAJitterTest TemporalAAJitterTest.cpp
 )
@@ -1311,6 +1312,7 @@ add_test(NAME ViewportCameraIdRenderPlanTest COMMAND ViewportCameraIdRenderPlanT
 
 add_test(NAME OrthographicViewportMatrixTest COMMAND CameraViewConstantsTest --test=OrthographicViewportMatrixTest)
 add_test(NAME PointShadowFaceMatricesTest COMMAND CameraViewConstantsTest --test=PointShadowFaceMatricesTest)
+add_test(NAME VirtualShadowMapClipmapTest COMMAND CameraViewConstantsTest --test=VirtualShadowMapClipmapTest)
 add_test(NAME AutoExposureMathTest COMMAND CameraViewConstantsTest --test=AutoExposureMathTest)
 add_test(NAME TemporalAAJitterTest COMMAND CameraViewConstantsTest --test=TemporalAAJitterTest)
 

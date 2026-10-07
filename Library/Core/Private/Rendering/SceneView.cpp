@@ -862,6 +862,7 @@ namespace NorvesLib::Core::Rendering
         shadowMapPass->SetSceneView(this);
         shadowMapPass->SetSceneRenderer(sceneRenderer);
         shadowMapPass->SetRegisterLegacyBridge(false);
+        shadowMapPass->SetShadowMethod(m_ShadowMethod);
         AddPass(std::move(shadowMapPass));
 
         // NeuralMaterialDecodePass: ニューラルマテリアルの事前デコード（Compute）

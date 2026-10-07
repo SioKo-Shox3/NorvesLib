@@ -113,6 +113,8 @@ namespace NorvesLib::Core::Rendering
         float SwRasterMaxPixels = DefaultSwRasterMaxPixels;
         /** @brief 太陽の影の標本のパスを足す（--shadow-probe。統計が有効な構成だけで働く） */
         bool bShadowProbe = false;
+        /** @brief 太陽の影の方式（--shadow-method。既定は CSM） */
+        ShadowMethod SunShadowMethod = ShadowMethod::Csm;
     };
 
     struct RenderingCoordinatorStatsSnapshot

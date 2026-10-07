@@ -225,6 +225,9 @@ param(
     [switch]$CompareOnly,
     # 太陽の影の標本（--shadow-probe）を測る。SHADOW_PROBE の行を metrics.json の shadow_probe へ視点ごとに書く（統計が有効な構成だけ）。
     [switch]$ShadowProbe,
+    # 太陽の影の方式（既定は Csm。--shadow-method=csm|vsm を常に渡す）。Vsm は太陽のクリップマップを毎フレーム作る（段8の途中では描画は CSM のまま）。
+    [ValidateSet('Csm', 'Vsm')]
+    [string]$ShadowMethod = 'Csm',
     # Game へそのまま渡す引数（空白で区切る。例: --texture-asset-root と --texture-asset-manifest で別のクック済みの出力を使う）。
     [string[]]$ExtraGameArguments = @()
 )
@@ -872,6 +875,8 @@ foreach ($view in $shots)
     {
         $arguments += ('--sw-raster-max-px=' + $SwRasterMaxPx.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))
     }
+    # 影の方式は既定が csm だが、撮影の条件を明示するため、どちらでも引数を渡す。
+    $arguments += "--shadow-method=$($ShadowMethod.ToLowerInvariant())"
     # 影の標本は既定で作らないので、-ShadowProbe のときだけ引数を渡す。
     if ($ShadowProbe)
     {
