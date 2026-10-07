@@ -20,10 +20,10 @@ namespace NorvesLib::Core::Rendering
      * @brief クリップマップの設定
      *
      * BiasLevels は段の選び方の log2 のずれで、受け手の段は texel の一辺が「画面上の 1 画素の大きさ × 2^b」以下の
-     * 最も粗い段。b = max(BiasLevels, 被覆に要る最小の bias)。既定 -1 では texel が画素の約 0.25〜0.5 倍になる。
+     * 最も粗い段。b = max(BiasLevels, 被覆に要る最小の bias)。既定 -0.5 では texel が画素の約 0.35〜0.7 倍になる。
      *
      * 段 L の texel と被覆は同じ 2^L で増えるので、b が VirtualShadowMapCoverageBiasLevels 以上なら、texel を満たす最も粗い段は
-     * いつも受け手を覆う。画面の高さが大きく縦画角が狭いと BiasLevels = -1 では足りず、被覆を優先して b を引き上げる
+     * いつも受け手を覆う。画面の高さが大きく縦画角が狭いと BiasLevels = -0.5 では足りず、被覆を優先して b を引き上げる
      * （起動画面の 1280×720・既定の縦画角では引き上げは起きず b = BiasLevels）。
      */
     struct VirtualShadowMapClipmapSettings
@@ -39,7 +39,7 @@ namespace NorvesLib::Core::Rendering
         /** @brief 深度の範囲の片側（m）。範囲はライトの向きに [深度の原点 − 値, 深度の原点 + 値] */
         float DepthRangeMeters = 1000.0f;
         /** @brief 受け手の段を選ぶときの log2 のずれ */
-        float BiasLevels = -1.0f;
+        float BiasLevels = -0.5f;
         /** @brief 影を受ける最大のカメラからの距離（m）。CSM の MaxShadowDistance と同じ */
         float MaxShadowDistance = 80.0f;
         /** @brief 奥の薄めの幅（MaxShadowDistance に対する割合） */

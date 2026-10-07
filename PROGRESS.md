@@ -2441,3 +2441,27 @@
 - 影の見え方（PNG を開いた）: default と low で小屋・球・岩・見本の帯の影に欠け・ずれ・ページの継ぎ目は見えない。
 - Notes: 値は `metrics.json` の `gpu_timing[].gpu_frame_ms_median` と `pass_median_ms` を使った。cache=off と負荷 300 個の撮り直しはこの項目の done-when に無いので行っていない（容量・溢れの扱いは変えていない）。
 - Next: `VTG8-VSM-DEFAULT-ON`（bias を変える前の今の既定で測る指示だったので、この項目が先に済んだ形）。
+
+## 反復 18（2026-10-08）: VTG8-VSM-DEFAULT-ON（既定の bias を -0.5 にして 4 run を測り直す。done）
+
+- 実装: `VirtualShadowMapClipmapSettings::BiasLevels` の既定を -1 から -0.5 へ（`blocked/VTG8-VSM-DEFAULT-ON.md` への親の判断の選択肢 2）。ヘッダの説明（texel は画素の約 0.35〜0.7 倍）を直し、`VirtualShadowMapClipmapTest` の期待（既定値、距離 1 m の段 1 → 2、80 m の目標値の注記）を新しい既定へ合わせた。80 m の段は 8 のまま。起動画面（1280×720・縦画角 60 度）で被覆の補正が入らず b = bias のままであることは、テストの既存の検査が通っている。Game の既定を VSM にする実装（`07971947`）・プール 5120 ページ（`429cf22b`）はそのまま。
+- 検証（`.harness/runs/20261008-073209/`）: `verify-VTG8-VSM-DEFAULT-ON-1-build.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest・RenderingGoldenImageTest、`VirtualShadowMapClipmapTest` を持つ CameraViewConstantsTest のビルド、BUILD_EXIT_CODE=0）、`-2-ctest.txt`（指定の 7 テストが 7/7 Passed。golden 4 本は基準画像・閾値を動かさずに通る）、`-3-capture.txt`・`-4-capture-stress.txt`（検証レイヤー付き Debug の撮影、どちらも result=pass。出力は `.harness/runs/startup-capture/VTG8-VSM-DEFAULT-ON-validation` と `…-validation-stress`）。
+
+### 4 run の測定（Debug、検証レイヤー付き、`-Deterministic -ShadowProbe`）
+
+| run | CSM texel / VSM texel (mm) | SHADOW_PROBE_AGREE ratio | finer_ratio | validation error_count | overflow（VSM_PAGES・VSM_RASTER・VSM_MEGA_CULL の最大） |
+|---|---|---|---|---|---|
+| 起動画面（default、太陽 45 度） | 20.702 / 11.209 | 0.999976 | 0.992772 | 0 | 0・0・0 |
+| 近接（near） | 13.885 / 3.504 | **0.982673** | 0.999220 | 0 | 0・0・0 |
+| 低角度（low） | 13.997 / 3.035 | 0.999709 | 1.000000 | 0 | 0・0・0 |
+| 負荷 300 個（default の視点） | 19.979 / 10.843 | 1.000000 | 0.994838 | 0 | 0・0・0 |
+
+- 4 run すべてで ratio ≥ 0.98、VSM の texel ≤ CSM の texel、error_count・warning_count・vuid_count が 0、溢れが全行で 0。bias は -0.5 のまま（-0.25 以上へ上げる必要は無かった）。前の既定（-1）で ratio 0.9758 だった近接が 0.9827 になり、低角度のページの溢れ（要求 4735 ＞ 旧プール 4096）はプール 5120 と bias -0.5 で 0 になった。
+- プールは 5120 ページのまま（`VRAM_LEDGER vsm_pool pages=5120 mb=320.000`、`vsm_page_table mb=0.625`）。この項目では大きさを変えていない。
+- `RenderGraphCompileTest` は Debug で通った（反復 15 の「起動直後に 0xC0000005」は今回は出ていない）。
+
+### 影の見え方（PNG を開いた）
+
+- default・near・low・負荷 300 個の 4 枚を開いた。天球（地平の霞と青空）・地面の帯（砂利・草・石畳・タイル・舗装）・大きな球（石の目地）・岩・小屋・見本の帯（金属の球 5 個と艶のある球 5 個）・発光の球が欠けなく見える。小屋・大きな球・見本の球・岩の影が地面に落ちていて、ずれ・ページの継ぎ目・光の漏れ・にきびのような雑音は見えない。近接では大きな球の影の縁が細く、岩の影の長い縁にも途切れが無い。低角度では影が地面に低く伸びている。負荷 300 個では岩が小屋の奥に増えても、手前の球・岩の影は保たれている。
+- Notes: (1) `VirtualShadowMapClipmapTest` は CameraViewConstantsTest に入っているので、`verify` のビルド対象（4 つ）だけだと ctest が古い exe を走らせる。今回は CameraViewConstantsTest も足してビルドした。(2) Git Bash から cmake へ `/m:1` を渡すと `m:1` に書き換わるので、ビルドは PowerShell で行った。
+- Next: `VTG8-VSM-GPU-TIME`（最終の既定で 6 run を撮り直す）。

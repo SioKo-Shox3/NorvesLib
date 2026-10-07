@@ -73,7 +73,7 @@ namespace
         Check(settings.LevelCount == 10u, "既定の段の数が 10 でない");
         Check(settings.FirstWidthMeters == 4.0f, "既定の段 0 の幅が 4 m でない");
         Check(settings.VirtualResolution == 16384u && settings.PageResolution == 128u, "既定の解像度・ページの大きさが違う");
-        Check(settings.BiasLevels == -1.0f, "既定の bias が -1 でない");
+        Check(settings.BiasLevels == -0.5f, "既定の bias が -0.5 でない");
         Check(settings.DepthRangeMeters == 1000.0f, "既定の深度の範囲が 1000 m でない");
         Check(settings.MaxShadowDistance == 80.0f, "既定の影の距離が 80 m でない");
         Check(IsValidVirtualShadowMapClipmapSettings(settings), "既定の設定が無効");
@@ -247,9 +247,9 @@ namespace
         Check(SelectVirtualShadowMapLevel(settings, 10.0f, 60.0f, 0.0f) == -1, "画面の高さが 0 で段を選んだ");
         Check(SelectVirtualShadowMapLevel(settings, 0.0f, 60.0f, 720.0f) == 0, "距離 0 の受け手が段 0 でない");
 
-        // 1 m・fovY 60 度・720 画素: 1 画素 = 1.60 mm、目標 1.60·2^-1 = 0.80 mm、texel 0.244 mm·2^L ≤ 0.80 mm の最大は L = 1
-        Check(SelectVirtualShadowMapLevel(settings, 1.0f, 60.0f, 720.0f) == 1, "距離 1 m の段が 1 でない");
-        // 80 m: 1 画素 = 128 mm、目標 64.2 mm、0.244 mm·2^L ≤ 64.2 mm の最大は L = 8（62.5 mm）
+        // 1 m・fovY 60 度・720 画素: 1 画素 = 1.60 mm、目標 1.60·2^-0.5 = 1.13 mm、texel 0.244 mm·2^L ≤ 1.13 mm の最大は L = 2（0.977 mm）
+        Check(SelectVirtualShadowMapLevel(settings, 1.0f, 60.0f, 720.0f) == 2, "距離 1 m の段が 2 でない");
+        // 80 m: 1 画素 = 128 mm、目標 90.6 mm、0.244 mm·2^L ≤ 90.6 mm の最大は L = 8（62.5 mm）
         Check(SelectVirtualShadowMapLevel(settings, 80.0f, 60.0f, 720.0f) == 8, "距離 80 m の段が 8 でない");
 
         // bias を 1 上げる（目標が 2 倍）と段は 1 つ粗くなる（被覆の補正が入らない画面で）
