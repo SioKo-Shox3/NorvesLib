@@ -1292,7 +1292,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「動かない物のページはキャッシュし、動いた物の範囲だけ無効化する」）。起動画面の大きな球は自転するので、そのまわりのページは毎フレーム描き直しになる。持ち越しの効果は VTG8-VSM-GPU-TIME で測る。危険地帯（描画パス・GPU の資源の寿命）。
 
 ## VTG8-VSM-GPU-TIME: VSM と CSM の GPU 時間を測り、ページの数と溢れを確かめる
-- status: todo
+- status: blocked
 - done-when: RelWithDebInfo の `-GpuTimingFrames 300` で、起動画面（太陽 45 度の既定・近接・低角度）と負荷モード 300 個（既定の視点）を、`-ShadowMethod Csm`、`-ShadowMethod Vsm` ＋ `--vsm-cache=off`、`-ShadowMethod Vsm`（持ち越しあり）の 3 通りで測り、フレーム GPU・`ShadowMapPass`・VSM の区間（`VsmMark`・`VsmAllocate`・`VsmClear`・`VsmCullMega`・`VsmExpand`・`VsmDraw`）・照明の区間の中央値と、`VSM_CLIPMAP`・`VSM_TEXEL`・`VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL`・`VSM_CACHE`・`VRAM_LEDGER vsm_pool` の値を表にして PROGRESS に書く。VSM の 6 つの run（起動画面 3 視点 × 2・負荷モード × 2）で `VSM_PAGES` の overflow と `VSM_RASTER`・`VSM_MEGA_CULL` の overflow が 0 であることを確かめる。VSM の撮影の PNG を開き、太陽の影（小屋・岩・球・見本の帯の物）が欠け・ずれ・ページの継ぎ目なく見えることを確かめる（壊れて見えるときだけ CSM の PNG との画素の差を調べる）。持ち越しありの VSM のフレーム GPU が CSM より遅い場合は、その差を区間の内訳で説明する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-GPU-TIME-csm -Configuration RelWithDebInfo -SunElevations 45 -GpuTimingFrames 300 -ShadowMethod Csm`
@@ -1315,6 +1315,15 @@
 - stop-when: golden が基準を外れる場合（検証シーンは CSM のままなので、外れたら経路の取り違え）は、差と原因を記録して止める。検証レイヤーのエラーが直せない場合、ratio が 0.98 に届かない場合、bias を −2 まで下げても mean_texel_mm が CSM を超える場合は、測定値を記録して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Private/Engine, Assets/Shaders, Game, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-07 親（段8の開始時に詳しくした）。既定の描画経路を変える項目の golden の ctest と検証レイヤー付き Debug の実行（ユーザーの撮影の方針の 3 つ目）。Debug の GPU 時間は参考にしない。ratio の分母は CSM と VSM の両方が言い切る標本だけなので、縁の幅の違いでは下がらず、投影物の欠け・光の漏れ・バイアスの過不足で下がる。危険地帯（既定の描画経路）。
+
+## VTG8-VSM-POOL-OVERFLOW: VSM のページの溢れ（低角度）とラスタの溢れ（負荷モード）をなくす
+- status: todo
+- done-when: VTG8-VSM-GPU-TIME の測定（`.harness/runs/20261008-035618/verify-VTG8-VSM-GPU-TIME-*.txt` と `.harness/runs/startup-capture/VTG8-VSM-GPU-TIME-*`）で出た 3 つの溢れを、VSM の 6 つの run（起動画面 3 視点 × 2（`--vsm-cache=off` と持ち越しあり）・負荷モード 300 個 × 2）の全フレームの `VSM_PAGES` `VSM_RASTER` `VSM_MEGA_CULL` の overflow が 0 になる形で直す。(1) 低角度の視点で `VSM_PAGES` requested=4721〜4728 が既定のプール 4096 を超える（overflow 625〜639。ページごとの区間は VsmMark 0.26 ms・VsmClear 0.41 ms と大きい）: `--vsm-pool-pages` を 5120・6144・8192 にした測定では 4717〜4719 で overflow 0 になり、フレーム GPU は 2.975・2.988・2.994 ms で変わらない（256 → 320 MiB が最小）。既定のプールのページ数を 5120 以上へ替えるか、要求を減らす（段の選び方の bias は起動引数に無い。`BiasLevels` の既定 -1 を替える場合は VirtualShadowMapClipmapTest と golden への影響を確かめる）かを選び、根拠を書く。(2) 負荷モード 300 個で持ち越しあり（既定）でも、最初の約 40 フレーム（VSM_RASTER の行の 8〜46 番目）に `VSM_RASTER` の overflow が出る（最大 361170。定常の 3647 chunk・18753 instance では 0）。溢れたフレームで落ちた投影物のページが、持ち越しで欠けたまま残らないことを確かめる（溢れたフレームのページは dirty のまま残す、または容量を上げるか分割して描く）。(3) 負荷モード 300 個＋ `--vsm-cache=off` は毎フレームすべてのページを描き直すため、`VSM_RASTER` instances が上限 524288 に張り付き overflow 約 26 万、`VSM_MEGA_CULL` clusters が上限 262144 で overflow 約 8 万が全フレームで続く（フレーム GPU 13.7 ms）。上限を上げる・分割して描く、または cache=off では上限を超える旨を既知の限界として記録するかを選ぶ。起動画面の既定の経路（持ち越しあり）では起きない。完了したら、`VTG8-VSM-GPU-TIME` の status を `todo` に戻す（再測定は再度 3 視点と負荷モードの 6 run）。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VirtualShadowMapVulkanTest|VirtualShadowMapClipmapTest)$"`
+- stop-when: 起動画面の既定の経路（持ち越しあり）の GPU 時間が、直す前より 0.5 ms を超えて遅くなる場合は、測定値を記録して止める。`bias` の既定を替える変更で golden（CSM の基準画像）が動く場合は、差の原因と物理的な妥当性を確かめてから基準画像を再承認する（GoldenBaselines.md の手順）。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-08 VTG8-VSM-GPU-TIME の測定から（停止条件「溢れが 0 にならない場合は --vsm-pool-pages と bias の組の測定を記録して止める」）。測定の表は PROGRESS.md の反復 10 にある。VRAM は pool 4096 = 256 MiB、5120 = 320 MiB。
 
 ## VTG8-ACCEPT: 段8（VSM 太陽）の受入れを記録する
 - status: backlog

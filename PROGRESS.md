@@ -2226,3 +2226,43 @@
 - 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-PCSS-3.txt`（Debug の Game・RHITextureUpdateVulkanTest・RenderingGoldenImageTest のビルド、BUILD_EXIT_CODE=0）、`-4.txt`・`-6.txt`（VirtualShadowMapVulkanTest・RenderingGoldenIndoorVulkanTest・RenderingGoldenOutdoorVulkanTest が 3/3 Passed。`-6` は変異を戻した後）、`-2-verbose.txt`（ケース L5 の値、VUID_COUNT=0。最初の試行で、ページの大きさの確認の不等号が厳しすぎて落ちたものを直す前の出力）。golden は CSM のまま基準画像・閾値を動かさずに合格。
 - Notes: (1) 評価者の前回の指摘 1（`min(…, R_max)` が `max(物理の半影, p(d), texel)` を満たさない）は、親の判断（2026-10-08。R_max を完了条件に書き足した。TASKS.md の done-when と notes）に従い実装どおりとする。R_max は探索・印付けの範囲を決めるための上限で、深度の差が約 107 m を超えたときだけ効く（起動画面の深度の差は 20 m 未満）。(2) 実機の起動画面での確認は、重い処理の扱いに従い回していない（VTG8-VSM-GPU-TIME の撮影で確かめる）。
 - Next: VTG8-VSM-GPU-TIME 以降。
+
+## 反復 10（2026-10-08）: VTG8-VSM-GPU-TIME（測定は完了。ページとラスタの溢れが出たので停止条件で blocked）
+
+- 測定（RelWithDebInfo、`-GpuTimingFrames 300`、窓は 240 フレームの中央値。出力は `.harness/runs/startup-capture/VTG8-VSM-GPU-TIME-*`、ログは `.harness/runs/20261008-035618/verify-VTG8-VSM-GPU-TIME-1〜10.txt`）。区間の単位は ms。`ShadowMapPass` は CSM と点光源の合計で、VSM でも半透明・ボリュームのために残る。`VirtualShadowMapPass` は VSM の全区間の合計。
+
+| run | 視点 | フレーム GPU | ShadowMapPass | VsmMark | VsmAllocate | VsmClear | VsmCullMega | VsmExpand | VsmDraw | VirtualShadowMapPass | LightingPass |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| CSM | default | 2.430 | 0.185 | - | - | - | - | - | - | - | 0.545 |
+| CSM | near | 2.533 | 0.220 | - | - | - | - | - | - | - | 0.569 |
+| CSM | low | 2.468 | 0.221 | - | - | - | - | - | - | - | 0.489 |
+| VSM cache=off | default | 2.899 | 0.163 | 0.027 | 0.030 | 0.055 | 0.045 | 0.172 | 0.269 | 0.611 | 0.603 |
+| VSM cache=off | near | 3.196 | 0.147 | 0.062 | 0.026 | 0.110 | 0.047 | 0.157 | 0.786 | 1.199 | 0.560 |
+| VSM cache=off | low | 3.173 | 0.148 | 0.251 | 0.033 | 0.406 | 0.034 | 0.151 | 0.215 | 1.101 | 0.606 |
+| VSM 持ち越し | default | 2.809 | 0.163 | 0.027 | 0.104 | 0.009 | 0.029 | 0.170 | 0.135 | 0.485 | 0.609 |
+| VSM 持ち越し | near | 3.692 | 0.147 | 0.062 | 0.679 | 0.063 | 0.032 | 0.155 | 0.688 | 1.691 | 0.558 |
+| VSM 持ち越し | low | 3.000 | 0.154 | 0.265 | 0.206 | 0.024 | 0.033 | 0.159 | 0.164 | 0.861 | 0.618 |
+| CSM 負荷 300 | default | 5.892 | 2.182 | - | - | - | - | - | - | - | 0.589 |
+| VSM cache=off 負荷 300 | default | 13.748 | 2.186 | 0.025 | 0.027 | 0.056 | 1.455 | 0.349 | 5.784 | 7.709 | 0.713 |
+| VSM 持ち越し 負荷 300 | default | 7.662 | 2.185 | 0.025 | 0.094 | 0.008 | 1.143 | 0.154 | 0.189 | 1.623 | 0.717 |
+
+- 持ち越しありの VSM のフレーム GPU と CSM の差: default +0.379、near +1.159、low +0.532、負荷 300 +1.770 ms。どれも 2 ms 未満なので「2 ms 以上遅い」の停止条件には当たらない。差の内訳: 起動画面は VSM の区間の合計（0.49〜1.69 ms）から ShadowMapPass の差（-0.02〜-0.07 ms。VSM のとき CSM の描画は半透明・ボリューム用の分だけ）を引いた分。near は VsmAllocate 0.679・VsmDraw 0.688 が重く、`VSM_CACHE` が cached=467・rendered=821・invalidated=831 と毎フレーム約 830 ページが無効になっている（near の視点は大きな球が近く、自転する球の影のページが毎フレーム無効になるためと推定。未確認）。負荷 300 は VsmCullMega 1.143 ms（300 インスタンスのクラスタ選別）が主で、CSM 側の ShadowMapPass 2.18 ms は VSM でも同じだけ残る。
+- ログの値（各 run の最後の行）:
+
+| run | 視点 | VSM_PAGES（requested / allocated / overflow） | VSM_RASTER（chunks / instances / overflow） | VSM_MEGA_CULL（instances / clusters / overflow） | VSM_CACHE（cached / rendered / invalidated / released） |
+|---|---|---|---|---|---|
+| cache=off | default | 756 / 756 / 0 | 5353 / 24202 / 0 | 12 / 5273 / 0 | 0 / 754 / 0 / 0 |
+| cache=off | near | 1288 / 1288 / 0 | 8213 / 76300 / 0 | 14 / 8204 / 0 | 0 / 1288 / 0 / 0 |
+| cache=off | low | 4728 / 4096 / **632** | 2899 / 20863 / 0 | 10 / 2826 / 0 | 0 / 4096 / 0 / 0 |
+| 持ち越し | default | 756 / 756 / 0 | 1868 / 12018 / 0 | 4 / 1788 / 0 | 630 / 124 / 124 / 0 |
+| 持ち越し | near | 1285 / 1285 / 0 | 5554 / 66746 / 0 | 6 / 5537 / 0 | 467 / 821 / 831 / 10 |
+| 持ち越し | low | 4721 / 4096 / **625** | 2211 / 15297 / 0 | 8 / 2365 / 0 | 3675 / 421 / 383 / 40 |
+| cache=off 負荷 300 | default | 753 / 753 / 0 | 165503 / 524286 / **262387** | 495 / 262144 / **80401** | 0 / 750 / 0 / 0 |
+| 持ち越し 負荷 300 | default | 753 / 753 / 0 | 3647 / 18753 / 0（最初の約 40 フレームは **最大 361170**） | 16 / 3567 / 0 | 626 / 124 / 124 / 0 |
+
+  `VSM_CLIPMAP levels=10 first_width_m=4.000 bias=-1.000 depth_range_m=1000.0`（全 run 同じ）、`VSM_TEXEL d_m=40` は vsm 31.25 mm・csm 94.40 mm、`VRAM_LEDGER vsm_pool pages=4096 mb=256.000`。
+- 溢れ: 起動画面の default・near は全フレームで 0。**low は `VSM_PAGES` overflow が全フレームで 625〜639（要求 4721〜4728 ＞ プール 4096）**。`--vsm-pool-pages` の測定（low、持ち越しあり）: 5120 → requested 4717・overflow 0・フレーム GPU 2.975 ms、6144 → 4719・0・2.988 ms、8192 → 4717・0・2.994 ms（既定 4096 は 3.000 ms）。プールを増やしても GPU 時間は変わらず、VRAM だけ 320 / 384 / 512 MiB に増える。bias は起動引数に無く、既定 -1 のままの測定のみ（起動画面の縦画角では被覆の引き上げは起きない）。負荷 300 では持ち越しありでも最初の約 40 フレームに `VSM_RASTER` overflow が出て、cache=off は全フレームで `VSM_RASTER`・`VSM_MEGA_CULL` の overflow が続く（instances の上限 524288・クラスタの上限 262144 に張り付く）。done-when の「6 run で overflow 0」は満たせていない。
+- 影の見え方（PNG を開いた）: 持ち越しありの default・near・low、負荷 300 の持ち越しあり・cache=off のどれも、小屋・岩・球・見本の帯の物の太陽の影に、欠け・ずれ・ページの継ぎ目は見えない。壊れて見えないので CSM の PNG との画素の差は調べていない。low は overflow 中だが、この撮影の画面では影は見える（溢れた約 630 ページの影響の有無は画素では調べていない）。
+- 停止: stop-when の「溢れが 0 にならない場合は、`--vsm-pool-pages` と bias の組の測定を記録して止める」に従い、`VTG8-VSM-GPU-TIME` を `blocked` にし、直す項目 `VTG8-VSM-POOL-OVERFLOW` を `TASKS.md` に足した（完了したら GPU-TIME を `todo` に戻して 6 run を撮り直す）。`blocked/VTG8-VSM-GPU-TIME.md` に理由を書いた。
+- Notes: (1) 検証ファイルは `verify-VTG8-VSM-GPU-TIME-1.txt`（RelWithDebInfo の Game のビルド、BUILD_EXIT_CODE=0）、`-2〜-7`（6 run のキャプチャ。すべて `result=pass`）、`-8〜-10`（プール 5120・6144・8192 の low の測定）。(2) 実装は変更していない。
+- Next: VTG8-VSM-POOL-OVERFLOW。
