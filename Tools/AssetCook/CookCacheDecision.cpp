@@ -1,4 +1,5 @@
 ﻿#include "CookCacheDecision.h"
+#include "RigSingleCook.h"
 #include "SkeletalRoleFileInput.h"
 #include "CookOutputPlan.h"
 #include "CookReferenceValues.h"
@@ -186,6 +187,23 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return Fail(error, "source_changed_during_inventory");
             }
+            if (Detail::IsRigSingleFormat(r.Format))
+            {
+                VariableArray<RigSplitCookEntry> outputs;
+                if (!Detail::BuildRigSingleOutputs(r, bytes, true, outputs, error))
+                {
+                    return false;
+                }
+                for (auto& entry : outputs)
+                {
+                    const auto target = r.ManifestPath.parent_path() / entry.Reference.CookedPackage.c_str();
+                    if (!AddExpected(plan, std::move(entry.Reference), target, error))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
             AssetCookedReference primary;
             primary.LogicalPath = r.LogicalPath;
             primary.Variant = r.Variant;
@@ -203,6 +221,7 @@ namespace NorvesLib::Tools::AssetCook
                 Core::AssetImport::ImportSettingsFileOptions settings;
                 settings.OverridePath = r.ImportSettingsOverridePath;
                 settings.bDisabled = r.bNoSidecar;
+                settings.AssetSetEmission = r.AssetSetEmission;
                 settings.bRequired = r.bRequireSidecar;
                 const auto* decode = IsSupportedSkeletalCookFormat(r.Format) ? &r.SkeletalDecode : nullptr;
                 const bool bFingerprint = HasSkeletalRoleFileRequest(r.RoleProfile)
@@ -476,6 +495,10 @@ namespace NorvesLib::Tools::AssetCook
                     {
                         for (size_t i = 0; i < actual.size(); ++i)
                         {
+                            if (!MergeCookOutputMetrics(plan.Context.VerifiedMetrics, actual[i].Package.Metrics))
+                            {
+                                return CookDecision::Error;
+                            }
                             if (!SameReference(actual[i].Reference, previous->Outputs[i].Reference))
                             {
                                 reason = CookDecisionReason::ManifestMismatch;

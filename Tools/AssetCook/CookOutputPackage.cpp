@@ -1,4 +1,6 @@
 ﻿#include "CookOutputPackage.h"
+#include "CookRigPayload.h"
+#include "CookReferenceValues.h"
 #include "Asset/CookedAudioFormat.h"
 #include "Asset/CookedMeshFormat.h"
 #include "Asset/CookedSkeletalFormat.h"
@@ -23,9 +25,30 @@ namespace NorvesLib::Tools::AssetCook
             error.append(code);
             return false;
         }
-        bool Profile(const AssetCookedReference& row, const AssetBlob& payload, AnsiString& error)
+        bool Profile(const AssetCookedReference& row, const AssetBlob& payload, CookAssetMetrics& metrics,
+                     AnsiString& error)
         {
             const auto format = AnsiStringView(row.Format);
+            if (row.bHasRigSplitMetadata)
+            {
+                AssetRigSplitMetadata actual;
+                const AssetKind kinds[] = {AssetKind::Unknown, AssetKind::Skeleton, AssetKind::Model,
+                                           AssetKind::Animation};
+                const AssetPackageFourCC types[] = {0, MakeAssetPackageFourCC('S', 'k', 'e', '1'),
+                                                    MakeAssetPackageFourCC('S', 'k', 'm', '1'),
+                                                    MakeAssetPackageFourCC('A', 'n', 'm', '1')};
+                if (!Detail::InspectCookedRigPayload(format, {payload.GetData(), payload.GetSize()},
+                                                     row.RigSplitMetadata.Profile, actual, error) ||
+                    actual.Role < 1 || actual.Role > 3 || row.Kind != kinds[actual.Role] ||
+                    row.EntryType != types[actual.Role] ||
+                    !Detail::CookReferenceValues::SameRigMetadata(row.RigSplitMetadata, actual))
+                {
+                    return Fail(error, "rig_metadata_mismatch");
+                }
+                metrics.Joints = actual.JointCount;
+                metrics.Triangles = actual.IndexCount / 3;
+                return true;
+            }
             if (row.Kind == AssetKind::Raw)
             {
                 // rawは任意の有効FourCCを保持する。型名だけで他kindのparserへ送らない。
@@ -63,6 +86,13 @@ namespace NorvesLib::Tools::AssetCook
                     return Fail(error, "texture_type_mismatch");
                 }
                 const auto parsed = ParseCookedTexture(payload);
+                if (parsed.Succeeded())
+                {
+                    for (const auto& mip : parsed.Texture.Mips)
+                    {
+                        metrics.TextureBytes += mip.DataSize;
+                    }
+                }
                 return (parsed.Succeeded() && parsed.Texture.PixelFormat == pixel &&
                         parsed.Texture.ColorSpace == color) ||
                        Fail(error, "texture_payload_mismatch");
@@ -85,6 +115,10 @@ namespace NorvesLib::Tools::AssetCook
                     return Fail(error, "mesh_type_mismatch");
                 }
                 const auto parsed = ParseCookedMesh(payload);
+                if (parsed.Succeeded())
+                {
+                    metrics.Triangles = parsed.Mesh.Indices.size() / 3;
+                }
                 return (parsed.Succeeded() &&
                         parsed.Mesh.VersionMajor == (Equal(format, "nvmesh.v1.mesh3d.pnt.u32.clustered") ? 1 : 0)) ||
                        Fail(error, "mesh_payload_mismatch");
@@ -102,6 +136,8 @@ namespace NorvesLib::Tools::AssetCook
                     return Fail(error, "skeletal_payload_mismatch");
                 }
                 const auto& data = parsed.Data.Skeletal;
+                metrics.Triangles = data.Indices.size() / 3;
+                metrics.Joints = data.Joints.size();
                 const auto& counts = row.SkeletalMetadata;
                 return (counts.VertexCount == data.Vertices.size() && counts.IndexCount == data.Indices.size() &&
                         counts.JointCount == data.Joints.size() && counts.ClipCount == data.Clips.size() &&
@@ -120,8 +156,12 @@ namespace NorvesLib::Tools::AssetCook
         try
         {
             const uint32_t version =
-                expected.Kind == AssetKind::Model && Equal(expected.Format, "nvmesh.v1.mesh3d.pnt.u32.clustered") ? 1u
-                                                                                                                  : 0u;
+                (expected.Kind == AssetKind::Model && Equal(expected.Format, "nvmesh.v1.mesh3d.pnt.u32.clustered")) ||
+                        Equal(expected.Format, "nvskel.v1.skeleton") ||
+                        Equal(expected.Format, "nvskel.v1.skinmesh.pnujiw.u32") ||
+                        Equal(expected.Format, "nvskel.v1.clips")
+                    ? 1u
+                    : 0u;
             if (expected.CookedVersion != version || expected.EntryName.empty() || bytes.empty() ||
                 bytes.data() == nullptr)
             {
@@ -151,11 +191,14 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return Fail(error, "payload_hash_mismatch");
             }
-            if (!Profile(expected, payload, error))
+            CookAssetMetrics metrics;
+            metrics.CookedBytes = bytes.size();
+            if (!Profile(expected, payload, metrics, error))
             {
                 return false;
             }
-            out = {static_cast<uint64_t>(bytes.size()), ComputeAssetPackagePayloadHash(bytes.data(), bytes.size())};
+            out = {static_cast<uint64_t>(bytes.size()), ComputeAssetPackagePayloadHash(bytes.data(), bytes.size()),
+                   metrics};
             return true;
         }
         catch (const std::exception&)

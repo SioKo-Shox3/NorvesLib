@@ -6,6 +6,8 @@
 #include "CookOutputSetGuard.h"
 #include "CookReferenceValues.h"
 #include "TextureAssetSetOutput.h"
+#include "CookManagedOutputs.h"
+#include "CookBatchWorkers.h"
 #include <algorithm>
 #include <charconv>
 #include <cstring>
@@ -32,6 +34,7 @@ namespace NorvesLib::Tools::AssetCook
             CookManagedUpdateInventory Inventory;
             Array<CookPreparedPlan> Plans;
             Array<CookDecision> Decisions;
+            Array<CookAssetMetrics> VerifiedMetrics;
         };
         struct UpdateOperation
         {
@@ -127,11 +130,12 @@ namespace NorvesLib::Tools::AssetCook
             Array<CookPreparedPlan> current;
             for (size_t i = 0; i < snap.Plans.size(); ++i)
             {
-                const auto& old = snap.ParsedState.Records[snap.Inventory.Assets[i].PreviousRecordIndex].Record;
+                const size_t previous = snap.Inventory.Assets[i].PreviousRecordIndex;
+                const auto* old = previous == SIZE_MAX ? nullptr : &snap.ParsedState.Records[previous].Record;
                 CookDecisionContext decision;
                 const auto* parsed = snap.bManifestParsed ? &snap.ParsedManifest : nullptr;
-                const auto now =
-                    DecideCookCache(request.Assets[i], request.CookerRevision, true, &old, parsed, decision, op.Error);
+                const auto now = DecideCookCache(request.Assets[i], request.CookerRevision, !request.bForce, old,
+                                                 parsed, decision, op.Error);
                 CookPreparedPlan plan;
                 if (now != snap.Decisions[i] || now == CookDecision::Error ||
                     !PrepareCookOutputPlan(request.Assets[i], request.CookerRevision, parsed, plan, op.Error) ||
@@ -205,11 +209,13 @@ namespace NorvesLib::Tools::AssetCook
             for (const auto& asset : request.Assets)
             {
                 CookPreparedPlan plan;
-                if (asset.Kind != "texture" ||
+                if ((request.bLegacyTextureManifest && asset.Kind != "texture") ||
                     !PrepareCookOutputPlan(asset, request.CookerRevision,
                                            snap.bManifestParsed ? &snap.ParsedManifest : nullptr, plan, op.Error) ||
-                    plan.Outputs.size() != 1 ||
-                    plan.Outputs[0].ExpectedIdentity.Kind != Core::Asset::AssetKind::Texture)
+                    plan.Outputs.empty() ||
+                    (request.bLegacyTextureManifest &&
+                     (plan.Outputs.size() != 1 ||
+                      plan.Outputs[0].ExpectedIdentity.Kind != Core::Asset::AssetKind::Texture)))
                 {
                     return Fail(op.Error, "texture_v1_only");
                 }
@@ -219,7 +225,8 @@ namespace NorvesLib::Tools::AssetCook
             stateScope.RuntimeRoot = snap.Owner.FinalRuntimeRootLocator;
             stateScope.StatePath = stateScope.RuntimeRoot.parent_path() / N::StoreLeaf / StateLeaf(snap.Claim);
             stateScope.ExpectedBinding = snap.Owner.ExpectedBinding;
-            if (!BuildCookManagedUpdateInventory(stateScope, snap.ParsedState, snap.Plans, snap.Inventory, op.Error) ||
+            if (!BuildCookManagedUpdateInventory(stateScope, snap.ParsedState, snap.Plans, snap.Inventory, op.Error,
+                                                 !request.bLegacyTextureManifest) ||
                 !ValidateCookOutputSet(snap.Plans, {&snap.Owner.SpecLocator, 1}, op.Error))
             {
                 return false;
@@ -227,9 +234,10 @@ namespace NorvesLib::Tools::AssetCook
             for (size_t i = 0; i < snap.Plans.size(); ++i)
             {
                 CookDecisionContext context;
-                const auto& old = snap.ParsedState.Records[snap.Inventory.Assets[i].PreviousRecordIndex].Record;
+                const size_t previous = snap.Inventory.Assets[i].PreviousRecordIndex;
+                const auto* old = previous == SIZE_MAX ? nullptr : &snap.ParsedState.Records[previous].Record;
                 const auto decision =
-                    DecideCookCache(request.Assets[i], request.CookerRevision, true, &old,
+                    DecideCookCache(request.Assets[i], request.CookerRevision, !request.bForce, old,
                                     snap.bManifestParsed ? &snap.ParsedManifest : nullptr, context, op.Error);
                 if (decision == CookDecision::Error ||
                     context.Dependencies.Fingerprint != snap.Plans[i].Context.Dependencies.Fingerprint)
@@ -237,6 +245,7 @@ namespace NorvesLib::Tools::AssetCook
                     return Fail(op.Error, "update_decision");
                 }
                 snap.Decisions.push_back(decision);
+                snap.VerifiedMetrics.push_back(context.VerifiedMetrics);
             }
             return true;
         }
@@ -249,21 +258,70 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return false;
             }
+            if (!InitializeCookReport(request, snap.Plans, op.Error))
+            {
+                return false;
+            }
             Array<Core::Asset::AssetCookedReference> references;
+            CookOwnedState afterState;
+            afterState.Binding = snap.ParsedState.Binding;
+            afterState.Records.resize(snap.Plans.size());
             bool bAllSkip = true;
             for (size_t i = 0; i < snap.Plans.size(); ++i)
             {
                 bAllSkip &= snap.Decisions[i] == CookDecision::Skip;
-                references.push_back(
-                    snap.ParsedState.Records[snap.Inventory.Assets[i].PreviousRecordIndex].Record.Outputs[0].Reference);
+                if (request.Report && snap.Decisions[i] == CookDecision::Skip)
+                {
+                    request.Report->Assets[i].bSkipped = true;
+                    request.Report->Assets[i].bProcessed = true;
+                    request.Report->Assets[i].Metrics = snap.VerifiedMetrics[i];
+                }
+                const size_t oldIndex = snap.Inventory.Assets[i].PreviousRecordIndex;
+                auto& final = afterState.Records[i];
+                const auto& primary = snap.Plans[i].Outputs[0].ExpectedIdentity;
+                final.PrimaryKey = {primary.LogicalPath, primary.Kind, primary.Variant};
+                if (snap.Decisions[i] == CookDecision::Skip && oldIndex != SIZE_MAX)
+                {
+                    final.Record = snap.ParsedState.Records[oldIndex].Record;
+                    for (const auto& output : final.Record.Outputs)
+                    {
+                        references.push_back(output.Reference);
+                    }
+                }
             }
+            if (!request.bLegacyTextureManifest && !request.bPrune)
+            {
+                for (size_t oldIndex = 0; oldIndex < snap.ParsedState.Records.size(); ++oldIndex)
+                {
+                    bool bRetainedByRequest = false;
+                    for (const auto& asset : snap.Inventory.Assets)
+                    {
+                        bRetainedByRequest |= asset.PreviousRecordIndex == oldIndex;
+                    }
+                    if (!bRetainedByRequest)
+                    {
+                        const auto& retained = snap.ParsedState.Records[oldIndex];
+                        afterState.Records.push_back(retained);
+                        for (const auto& output : retained.Record.Outputs)
+                        {
+                            references.push_back(output.Reference);
+                        }
+                    }
+                }
+            }
+            bAllSkip &= afterState.Records.size() == snap.ParsedState.Records.size();
             Text aggregate;
-            if (!Detail::SerializeLegacyTextureManifest(references, aggregate, op.Error))
+            if (bAllSkip &&
+                !SerializeManagedReferences(request.bLegacyTextureManifest, references, aggregate, op.Error))
             {
                 return false;
             }
             if (bAllSkip && snap.Manifest.bPresent && EqualBytes(snap.Manifest.Value.Data, BytesOf(aggregate)))
             {
+                if (!CheckManagedBudgets(request, op.Error))
+                {
+                    return false;
+                }
                 if (!Fresh(op, request, lock, snap, {}))
                 {
                     return false;
@@ -298,21 +356,31 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return false;
             }
-            Array<size_t> cookIndices;
+            Array<size_t> cookIndices, mutationStarts;
             for (size_t i = 0; i < snap.Plans.size(); ++i)
             {
                 if (snap.Decisions[i] == CookDecision::Skip)
                 {
                     continue;
                 }
-                CookManagedPackageMutation mutation;
-                mutation.Package = snap.Plans[i].Outputs[0].ExpectedIdentity.CookedPackage;
-                if (!ReadBefore(snap.Root, mutation.Package, mutation.Before, op.Error))
-                {
-                    return false;
-                }
                 cookIndices.push_back(i);
-                draft.Packages.push_back(std::move(mutation));
+                mutationStarts.push_back(draft.Packages.size());
+                for (size_t j = 0; j < snap.Plans[i].Outputs.size(); ++j)
+                {
+                    const auto& output = snap.Plans[i].Outputs[j];
+                    CookManagedPackageMutation mutation;
+                    mutation.Package = output.ExpectedIdentity.CookedPackage;
+                    if (!ReadBefore(snap.Root, mutation.Package, mutation.Before, op.Error))
+                    {
+                        return false;
+                    }
+                    if (snap.Inventory.Assets[i].Packages[j].Before == CookBeforeImageRequirement::RequireAbsence &&
+                        mutation.Before.bPresent)
+                    {
+                        return Fail(op.Error, "new_output_requires_absence");
+                    }
+                    draft.Packages.push_back(std::move(mutation));
+                }
             }
             Text stageName = ".transaction-stage-";
             stageName.append(draft.TransactionId);
@@ -346,14 +414,13 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return false;
             }
-            CookOwnedState afterState = snap.ParsedState;
             afterState.Generation = draft.StateGeneration;
+            if (!Detail::CookPreparedBatch(stages, request.Jobs, op.Error))
+            {
+                return false;
+            }
             for (size_t i = 0; i < stages.size(); ++i)
             {
-                if (!CookSingleAsset(stages[i].Context.Request, op.Error))
-                {
-                    return false;
-                }
                 File fragmentFile;
                 Core::Asset::AssetManifest fragment;
                 CookOutputRecord record;
@@ -362,47 +429,38 @@ namespace NorvesLib::Tools::AssetCook
                                fragmentFile, op.Error) ||
                     !LoadManifest(fragmentFile.Data, fragment, op.Error) ||
                     !CaptureStagedCookOutputRecord(snap.Plans[assetIndex], stages[i], fragment, record, op.Error) ||
-                    record.Outputs.size() != 1)
+                    record.Outputs.empty() || (request.bLegacyTextureManifest && record.Outputs.size() != 1))
                 {
                     return Fail(op.Error, "update_staged_capture");
+                }
+                if (!AddCookReportOutputs(request, assetIndex, record.Outputs, op.Error))
+                {
+                    return false;
                 }
                 Array<TreeNode> tree;
                 if (!ScanTree(workDirectories[i], tree, nullptr, op.Error))
                 {
                     return false;
                 }
-                const TreeNode* package = nullptr;
-                for (const auto& node : tree)
+                if (!ValidateWorkOutputs(tree, record.Outputs, snap.Owner.ExpectedBinding.ManifestName, op.Error) ||
+                    record.Outputs.size() != snap.Plans[assetIndex].Outputs.size())
                 {
-                    if (node.bDirectory)
-                    {
-                        Text prefix = node.Relative;
-                        prefix.push_back('/');
-                        if (draft.Packages[i].Package.size() <= prefix.size() ||
-                            std::memcmp(draft.Packages[i].Package.data(), prefix.data(), prefix.size()))
-                        {
-                            return Fail(op.Error, "unexpected_work_directory");
-                        }
-                    }
-                    else if (node.Relative == draft.Packages[i].Package)
-                    {
-                        package = &node;
-                    }
-                    else if (node.Relative != snap.Owner.ExpectedBinding.ManifestName)
-                    {
-                        return Fail(op.Error, "unexpected_work_file");
-                    }
+                    return false;
                 }
-                if (!package || package->Image.Size != record.Outputs[0].Package.Size ||
-                    package->Image.ContentHash != record.Outputs[0].Package.ContentHash ||
-                    !Rename(package->Parent, package->Native.Canonical.filename(), package->Image.Object,
-                            op.Scope.Pending, PackageSlot(false, i), false, &package->Image, op.Error))
+                for (size_t outputIndex = 0; outputIndex < record.Outputs.size(); ++outputIndex)
                 {
-                    return Fail(op.Error, "update_staged_package");
+                    const auto& output = record.Outputs[outputIndex];
+                    const auto* package = FindWorkPackage(tree, output.Reference.CookedPackage);
+                    const size_t slot = mutationStarts[i] + outputIndex;
+                    if (!package || draft.Packages[slot].Package != output.Reference.CookedPackage ||
+                        !Rename(package->Parent, package->Native.Canonical.filename(), package->Image.Object,
+                                op.Scope.Pending, PackageSlot(false, slot), false, &package->Image, op.Error))
+                    {
+                        return Fail(op.Error, "update_staged_package");
+                    }
+                    draft.Packages[slot].After = package->Image;
                 }
-                draft.Packages[i].After = package->Image;
-                references[assetIndex] = record.Outputs[0].Reference;
-                afterState.Records[snap.Inventory.Assets[assetIndex].PreviousRecordIndex].Record = std::move(record);
+                afterState.Records[assetIndex].Record = std::move(record);
                 if (!DeleteKnown(workDirectories[i], Leaf(snap.Owner.ExpectedBinding.ManifestName),
                                  fragmentFile.Image.Object, false, &fragmentFile.Image, op.Error))
                 {
@@ -426,11 +484,23 @@ namespace NorvesLib::Tools::AssetCook
                     return false;
                 }
             }
+            if (!CheckManagedBudgets(request, op.Error))
+            {
+                return false;
+            }
+            references.clear();
+            for (const auto& record : afterState.Records)
+            {
+                for (const auto& output : record.Record.Outputs)
+                {
+                    references.push_back(output.Reference);
+                }
+            }
             File manifest, index, state, receipt, intentFile;
             Text indexText, stateText, receiptText, wire;
             CookManagedStoreIndex newIndex = snap.ParsedIndex;
             newIndex.Generation = draft.IndexGeneration;
-            if (!Detail::SerializeLegacyTextureManifest(references, aggregate, op.Error) ||
+            if (!SerializeManagedReferences(request.bLegacyTextureManifest, references, aggregate, op.Error) ||
                 !SerializeCookManagedStoreIndex(newIndex, indexText, op.Error) ||
                 !SerializeCookOwnedState(afterState, stateText, op.Error) ||
                 !NewFile(op.Scope.Pending, L"manifest.after", BytesOf(aggregate), manifest, op.Error) ||
@@ -506,6 +576,11 @@ namespace NorvesLib::Tools::AssetCook
                           Text& error)
         {
             error.clear();
+            if (request.Jobs == 0 || request.Jobs > Detail::MaximumCookBatchJobs)
+            {
+                error = "batch_jobs_out_of_range";
+                return Result::Error;
+            }
 #if !defined(_WIN32)
             (void)request;
             (void)probe;
@@ -514,7 +589,16 @@ namespace NorvesLib::Tools::AssetCook
             return Result::Error;
 #else
             UpdateOperation work;
-            work.Request = &request;
+            CookBatchReport internalReport;
+            auto selected = request;
+            if (!selected.Report &&
+                (!selected.Budgets.empty() || selected.TotalBudget.MaxTriangles != UINT64_MAX ||
+                 selected.TotalBudget.MaxJoints != UINT64_MAX || selected.TotalBudget.MaxTextureBytes != UINT64_MAX ||
+                 selected.TotalBudget.MaxCookedBytes != UINT64_MAX))
+            {
+                selected.Report = &internalReport;
+            }
+            work.Request = &selected;
             auto& op = work.Transaction;
             op.Test = probe;
             op.RuntimeLocator = request.Owner.FinalRuntimeRoot;

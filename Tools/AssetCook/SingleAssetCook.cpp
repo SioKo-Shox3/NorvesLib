@@ -1,5 +1,6 @@
 ﻿// 再利用可能な単体cook。入力bufferを出力完了まで同じ呼出し内で保持する。
 #include "SingleAssetCook.h"
+#include "RigSingleCook.h"
 #include "SkeletalRoleFileInput.h"
 #include "SkeletalRoleFileCook.h"
 #include "MeshMaterialV1Plan.h"
@@ -1102,6 +1103,7 @@ namespace NorvesLib::Tools::AssetCook
             options.Variant = ToStdString(request.Variant);
             options.ImportSettings.OverridePath = request.ImportSettingsOverridePath;
             options.ImportSettings.bDisabled = request.bNoSidecar;
+            options.ImportSettings.AssetSetEmission = request.AssetSetEmission;
             options.ImportSettings.bRequired = request.bRequireSidecar;
             options.bSkipIfUnchanged = request.bSkipIfUnchanged;
             options.SkeletalImport.Decode = request.SkeletalDecode;
@@ -1111,6 +1113,10 @@ namespace NorvesLib::Tools::AssetCook
         bool NormalizeCacheCookRequest(const SingleAssetCookRequest& request, SingleAssetCookRequest& out,
                                        Core::Container::AnsiString& outError)
         {
+            if (IsRigSingleFormat(request.Format))
+            {
+                return NormalizeRigSingleRequest(request, out, outError);
+            }
             if (HasSkeletalRoleFileRequest(request.RoleProfile) && !ValidateSkeletalRoleFileRequest(request, outError))
             {
                 return false;
@@ -1155,6 +1161,8 @@ namespace NorvesLib::Tools::AssetCook
                 }
             }
             out = MakeSingleCookRequest(options);
+            out.AssetSetEmission = request.AssetSetEmission;
+            out.ClipJointNodes = request.ClipJointNodes;
             return finish(true);
         }
         bool ValidateCookOptions(const CookOptions& outOptions, std::string& error)
@@ -1270,6 +1278,7 @@ namespace NorvesLib::Tools::AssetCook
             request.Variant = copy(options.Variant);
             request.ImportSettingsOverridePath = options.ImportSettings.OverridePath;
             request.bNoSidecar = options.ImportSettings.bDisabled;
+            request.AssetSetEmission = options.ImportSettings.AssetSetEmission;
             request.bRequireSidecar = options.ImportSettings.bRequired;
             request.bSkipIfUnchanged = options.bSkipIfUnchanged;
             request.SkeletalDecode = options.SkeletalImport.Decode;
@@ -1280,6 +1289,10 @@ namespace NorvesLib::Tools::AssetCook
     }
     bool CookSingleAsset(const SingleAssetCookRequest& request, Core::Container::AnsiString& outError)
     {
+        if (Detail::IsRigSingleFormat(request.Format))
+        {
+            return Detail::CookRigSingleAsset(request, outError);
+        }
         if (HasSkeletalRoleFileRequest(request.RoleProfile))
         {
             SkeletalRoleFileCookResult result;

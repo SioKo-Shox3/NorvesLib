@@ -1,5 +1,7 @@
 ﻿#pragma once
 #include "Container/Containers.h"
+#include "CookBatchReport.h"
+#include "Resource/MaterialImportPolicy.h"
 #include <cstddef>
 
 namespace NorvesLib::Core { class JsonValue; }
@@ -9,9 +11,15 @@ namespace NorvesLib::Tools::AssetCook
     struct TextureAssetSetEntry
     {
         Core::Container::AnsiString LogicalPath, SourcePath, Format, PackageName, EntryName, Variant;
+        Core::Container::AnsiString Kind = "texture", EntryType = "Tex0";
+        CookAssetBudget Budget;
+        Core::Container::VariableArray<uint32_t> JointNodes;
     };
     struct TextureAssetSetSpec
     {
+        uint32_t Version = 1;
+        CookAssetBudget TotalBudget;
+        Core::AssetImport::EmissiveScale Emission;
         Core::Container::AnsiString Name, PackageRoot, DefaultVariant;
         Core::Container::VariableArray<TextureAssetSetEntry> Textures;
     };
@@ -28,5 +36,6 @@ namespace NorvesLib::Tools::AssetCook
         [[nodiscard]] bool Succeeded() const { return Code == TextureAssetSetError::None; }
     };
     // 成功時だけoutを置換。sourceの存在や出力先とのaliasは実行層が検査する。
-    [[nodiscard]] TextureAssetSetResult ParseTextureAssetSetSpec(const Core::JsonValue& root, TextureAssetSetSpec& out);
+    [[nodiscard]] TextureAssetSetResult ParseTextureAssetSetSpec(const Core::JsonValue& root, TextureAssetSetSpec& out,
+                                                                 bool bAllowVersion2 = false);
 }

@@ -1010,6 +1010,16 @@ namespace NorvesLib::Tools::AssetCook::Detail
         {
             references.push_back(reference);
         }
+        return SerializeCookedManifestReferences(references, outJson, error);
+    }
+
+    bool SerializeCookedManifestReferences(
+        NorvesLib::Core::Container::Span<const NorvesLib::Core::Asset::AssetCookedReference> input,
+        NorvesLib::Core::Container::AnsiString& outJson, std::string& error)
+    {
+        (void)error;
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Asset::AssetCookedReference> references(
+            input.begin(), input.end());
         std::sort(references.begin(), references.end(), [](const auto& left, const auto& right)
         {
             if (left.LogicalPath != right.LogicalPath)
@@ -1070,6 +1080,30 @@ namespace NorvesLib::Tools::AssetCook::Detail
                     AppendSkeletalJsonUInt32Field(outJson, "material_slot_count", reference.SkeletalMetadata.MaterialSlotCount, false);
                 }
                 outJson += "\n      },\n      ";
+            }
+            if (reference.bHasRigSplitMetadata)
+            {
+                const auto& m = reference.RigSplitMetadata;
+                outJson += "\"metadata\":{";
+                AppendSkeletalJsonStringField(outJson, "skeleton_id", FormatAssetHashHex(m.SkeletonId), true);
+                AppendSkeletalJsonUInt32Field(outJson, "profile", m.Profile, true);
+                AppendSkeletalJsonUInt32Field(outJson, "joint_count", m.JointCount, m.Role != 1);
+                if (m.Role == 2)
+                {
+                    AppendSkeletalJsonUInt32Field(outJson, "vertex_count", m.VertexCount, true);
+                    AppendSkeletalJsonUInt32Field(outJson, "index_count", m.IndexCount, true);
+                    AppendSkeletalJsonUInt32Field(outJson, "submesh_count", m.SubmeshCount, true);
+                    AppendSkeletalJsonUInt32Field(outJson, "material_slot_count", m.MaterialSlotCount, true);
+                    AppendSkeletalJsonUInt32Field(outJson, "material_count", m.MaterialCount, false);
+                }
+                if (m.Role == 3)
+                {
+                    AppendSkeletalJsonUInt32Field(outJson, "clip_count", m.ClipCount, true);
+                    AppendSkeletalJsonUInt32Field(outJson, "snapshot_count", m.SnapshotCount, true);
+                    AppendSkeletalJsonUInt32Field(outJson, "channel_count", m.ChannelCount, true);
+                    AppendSkeletalJsonUInt32Field(outJson, "sample_count", m.SampleCount, false);
+                }
+                outJson += "},";
             }
             AppendSkeletalJsonUInt32Field(outJson, "cooked_version", reference.CookedVersion, false);
             outJson += "\n    }";

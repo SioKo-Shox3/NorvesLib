@@ -467,7 +467,8 @@ namespace NorvesLib::Tools::AssetCook
         }
         else
         {
-            const auto resolved = I::ResolveMaterialImportPlan(catalog, plan.Import.Settings, {}, plan.Resolved);
+            const auto resolved =
+                I::ResolveMaterialImportPlan(catalog, plan.Import.Settings, effective.AssetSetEmission, plan.Resolved);
             if (!resolved.Succeeded())
             {
                 return Fail(error, logicalPath, bHasMaterial, materialIndex, materialName,

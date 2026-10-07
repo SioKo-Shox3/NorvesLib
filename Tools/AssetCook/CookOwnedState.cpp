@@ -1,6 +1,8 @@
 ﻿// runtime manifestとは独立した、厳密な所有state schema v1の値codec。
 #include "CookOwnedState.h"
 #include "CookOutputPaths.h"
+#include "CookReferenceValues.h"
+#include "RigSplitCook.h"
 #include "Asset/AssetPath.h"
 #include "Text/JsonDocument.h"
 #include <algorithm>
@@ -49,7 +51,7 @@ namespace NorvesLib::Tools::AssetCook
         bool KeyKind(AssetKind kind)
         {
             return kind == AssetKind::Raw || kind == AssetKind::Texture || kind == AssetKind::Audio ||
-                   kind == AssetKind::Model;
+                   kind == AssetKind::Model || kind == AssetKind::Skeleton || kind == AssetKind::Animation;
         }
         bool Canonical(StateView text)
         {
@@ -185,6 +187,22 @@ namespace NorvesLib::Tools::AssetCook
                              m.SubmeshCount || m.MaterialSlotCount)
                     {
                         return Fail(error, "unexpected_skeletal_metadata");
+                    }
+                    if (row.bHasRigSplitMetadata)
+                    {
+                        StateText manifest, detail;
+                        Core::Asset::AssetManifest parsedManifest;
+                        if (row.bHasSkeletalMetadata || !SerializeRigSplitManifest({&row, 1}, manifest, detail) ||
+                            !parsedManifest.LoadFromJsonText(Core::Container::String(manifest.c_str())) ||
+                            parsedManifest.GetReferenceCount() != 1 ||
+                            !Detail::CookReferenceValues::SameReference(row, parsedManifest.GetReference(0)))
+                        {
+                            return Fail(error, "invalid_rig_metadata");
+                        }
+                    }
+                    else if (!Detail::CookReferenceValues::SameRigMetadata(row.RigSplitMetadata, {}))
+                    {
+                        return Fail(error, "unexpected_rig_metadata");
                     }
                     rows.push_back(&row);
                 }
@@ -325,8 +343,11 @@ namespace NorvesLib::Tools::AssetCook
         }
         bool ReadOutput(const JsonValue& value, CookRecordedOutput& out)
         {
-            if (!Shape(value, {"key", "source_hash", "format", "package", "entry", "entry_type", "cooked_hash",
-                               "cooked_version", "package_size", "package_hash", "skeletal"}))
+            const bool bRig = value.HasMember("rig");
+            if (!(bRig ? Shape(value, {"key", "source_hash", "format", "package", "entry", "entry_type", "cooked_hash",
+                                       "cooked_version", "package_size", "package_hash", "skeletal", "rig"})
+                       : Shape(value, {"key", "source_hash", "format", "package", "entry", "entry_type", "cooked_hash",
+                                       "cooked_version", "package_size", "package_hash", "skeletal"})))
             {
                 return false;
             }
@@ -351,6 +372,28 @@ namespace NorvesLib::Tools::AssetCook
             row.SourceHashHex = Core::Asset::FormatAssetHashHex(row.SourceHash);
             row.CookedHashHex = Core::Asset::FormatAssetHashHex(row.CookedHash);
             row.EntryTypeText = Core::Asset::FormatAssetPackageFourCCText(row.EntryType);
+            if (bRig)
+            {
+                const auto rig = value.FindMember("rig");
+                auto& m = row.RigSplitMetadata;
+                if (!Shape(rig, {"skeleton_id", "role", "profile", "joints", "vertices", "indices", "submeshes",
+                                 "slots", "materials", "clips", "snapshots", "channels", "samples"}) ||
+                    !Hex(rig.FindMember("skeleton_id"), m.SkeletonId) || !Number(rig.FindMember("role"), m.Role) ||
+                    !Number(rig.FindMember("profile"), m.Profile) || !Number(rig.FindMember("joints"), m.JointCount) ||
+                    !Number(rig.FindMember("vertices"), m.VertexCount) ||
+                    !Number(rig.FindMember("indices"), m.IndexCount) ||
+                    !Number(rig.FindMember("submeshes"), m.SubmeshCount) ||
+                    !Number(rig.FindMember("slots"), m.MaterialSlotCount) ||
+                    !Number(rig.FindMember("materials"), m.MaterialCount) ||
+                    !Number(rig.FindMember("clips"), m.ClipCount) ||
+                    !Number(rig.FindMember("snapshots"), m.SnapshotCount) ||
+                    !Number(rig.FindMember("channels"), m.ChannelCount) ||
+                    !Number(rig.FindMember("samples"), m.SampleCount))
+                {
+                    return false;
+                }
+                row.bHasRigSplitMetadata = true;
+            }
             const auto metadata = value.FindMember("skeletal");
             if (metadata.IsNull())
             {
@@ -543,6 +586,37 @@ namespace NorvesLib::Tools::AssetCook
                 else
                 {
                     Add("null");
+                }
+                if (r.bHasRigSplitMetadata)
+                {
+                    const auto& m = r.RigSplitMetadata;
+                    Add(",\"rig\":{\"skeleton_id\":");
+                    HexValue(m.SkeletonId);
+                    Add(",\"role\":");
+                    NumberValue(m.Role);
+                    Add(",\"profile\":");
+                    NumberValue(m.Profile);
+                    Add(",\"joints\":");
+                    NumberValue(m.JointCount);
+                    Add(",\"vertices\":");
+                    NumberValue(m.VertexCount);
+                    Add(",\"indices\":");
+                    NumberValue(m.IndexCount);
+                    Add(",\"submeshes\":");
+                    NumberValue(m.SubmeshCount);
+                    Add(",\"slots\":");
+                    NumberValue(m.MaterialSlotCount);
+                    Add(",\"materials\":");
+                    NumberValue(m.MaterialCount);
+                    Add(",\"clips\":");
+                    NumberValue(m.ClipCount);
+                    Add(",\"snapshots\":");
+                    NumberValue(m.SnapshotCount);
+                    Add(",\"channels\":");
+                    NumberValue(m.ChannelCount);
+                    Add(",\"samples\":");
+                    NumberValue(m.SampleCount);
+                    Add("}");
                 }
                 Add("}");
             }

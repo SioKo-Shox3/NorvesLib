@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "CookOwnerResolver.h"
 #include "SingleAssetCook.h"
+#include "CookBatchReport.h"
 namespace NorvesLib::Tools::AssetCook
 {
     struct CookManagedBootstrapRequest
@@ -10,6 +11,12 @@ namespace NorvesLib::Tools::AssetCook
         // 解析に使ったspecの原bytes。lock取得後と公開直前に実fileと一致させる。
         Core::Container::Span<const uint8_t> ExpectedSpecBytes;
         uint64_t CookerRevision = 1;
+        bool bLegacyTextureManifest = true;
+        Core::Container::Span<const CookAssetBudget> Budgets;
+        CookAssetBudget TotalBudget;
+        CookBatchReport* Report = nullptr;
+        uint32_t Jobs = 1;
+        bool bForce = false, bPrune = false;
     };
     struct CookManagedBootstrapOutcome
     {

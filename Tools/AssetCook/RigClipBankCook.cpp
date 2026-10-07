@@ -1,15 +1,13 @@
 ﻿#include "RigClipBankCook.h"
 namespace NorvesLib::Tools::AssetCook
 {
-    bool CookRigClipBankV1NativePath(Core::Container::Span<const uint8_t> source,
-                                     const std::filesystem::path& sourcePath, Core::Container::AnsiStringView format,
-                                     RigClipBankCookResult& out, Core::Skeletal::RigV1Report& report,
-                                     const Core::Skeletal::RigV1Limits& limits,
-                                     const Core::AssetImport::LoadedImportSettings* settings,
-                                     const Core::Skeletal::SkeletalGltfDecodeOptions* options,
-                                     Core::Skeletal::RigImportProfile profile,
-                                     const Core::Skeletal::RigClipSourceSelection* clipSource,
-                                     const Core::Skeletal::RigClipAnalysisOptions* analysisOptions)
+    bool CookRigClipBankV1NativePath(
+        Core::Container::Span<const uint8_t> source, const std::filesystem::path& sourcePath,
+        Core::Container::AnsiStringView format, RigClipBankCookResult& out, Core::Skeletal::RigV1Report& report,
+        const Core::Skeletal::RigV1Limits& limits, const Core::AssetImport::LoadedImportSettings* settings,
+        const Core::Skeletal::SkeletalGltfDecodeOptions* options, Core::Skeletal::RigImportProfile profile,
+        const Core::Skeletal::RigClipSourceSelection* clipSource,
+        const Core::Skeletal::RigClipAnalysisOptions* analysisOptions, Core::Skeletal::RigGltfImportCapture* capture)
     {
         report = {};
         try
@@ -21,7 +19,7 @@ namespace NorvesLib::Tools::AssetCook
             }
             Core::Skeletal::RigAuthoringCpu sourceRig;
             if (!Core::Skeletal::DecodeRigAuthoringWithProfileNativePath(
-                    source, sourcePath, profile, sourceRig, report, limits, settings, options, nullptr, clipSource))
+                    source, sourcePath, profile, sourceRig, report, limits, settings, options, capture, clipSource))
             {
                 return false;
             }

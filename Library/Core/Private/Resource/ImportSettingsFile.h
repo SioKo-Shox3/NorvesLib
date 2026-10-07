@@ -11,6 +11,7 @@ namespace NorvesLib::Core::AssetImport
         std::filesystem::path OverridePath;
         bool bDisabled = false;
         bool bRequired = false;
+        EmissiveScale AssetSetEmission;
     };
     struct LoadedImportSettings
     {

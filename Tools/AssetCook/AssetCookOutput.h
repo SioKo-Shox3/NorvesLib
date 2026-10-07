@@ -176,6 +176,10 @@ namespace NorvesLib::Tools::AssetCook::Detail
     bool HasSameManifestKey(const NorvesLib::Core::Asset::AssetCookedReference& left,
                             const NorvesLib::Core::Asset::AssetCookedReference& right);
 
+    bool SerializeCookedManifestReferences(
+        NorvesLib::Core::Container::Span<const NorvesLib::Core::Asset::AssetCookedReference> references,
+        NorvesLib::Core::Container::AnsiString& outJson, std::string& error);
+
     bool BuildMergedManifestJson(
         const std::filesystem::path& manifestPath,
         NorvesLib::Core::Container::Span<const NorvesLib::Core::Asset::AssetCookedReference> incoming,

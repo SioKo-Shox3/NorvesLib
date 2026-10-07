@@ -10,6 +10,11 @@ add_library(AssetCookLib STATIC
     CookManagedTransactionController.cpp
     CookManagedTransactionController.h
     CookManagedBootstrap.h
+    CookManagedOutputs.h
+    CookBatchReport.cpp
+    CookBatchWorkers.cpp
+    CookBatchWorkers.h
+    CookBatchReport.h
     CookManagedBootstrapTestAccess.h
     CookManagedStoreNative.h
     CookManagedStoreAccess.h
@@ -46,6 +51,8 @@ add_library(AssetCookLib STATIC
     CookCacheDecisionTestAccess.h
     CookOutputPaths.h
     CookOutputPackage.cpp
+    CookRigPayload.cpp
+    CookRigPayload.h
     CookOutputPackage.h
     CookDependencySnapshot.cpp
     CookDependencySnapshot.h
@@ -101,6 +108,8 @@ add_library(AssetCookLib STATIC
     RigSplitImageInputs.cpp
     RigSplitImageInputs.h
     RigSplitFileCook.cpp
+    RigSingleCook.cpp
+    RigSingleCook.h
     RigSplitFileCook.h
     RigSplitFileCli.cpp
     NativeCookArguments.h

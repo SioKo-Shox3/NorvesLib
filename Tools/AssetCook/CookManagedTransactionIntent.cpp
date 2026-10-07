@@ -900,10 +900,6 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return Fail(error, "state_generation");
             }
-            if (before && before->Records.size() != after.Records.size())
-            {
-                return Fail(error, "record_inventory_changed");
-            }
             Array<const CookRecordedOutput*> all;
             Array<size_t> packageOrder;
             for (size_t i = 0; i < d.Packages.size(); ++i)
@@ -920,10 +916,6 @@ namespace NorvesLib::Tools::AssetCook
             for (const auto& record : after.Records)
             {
                 const auto* old = oldRecords.Find(record.PrimaryKey);
-                if (before && (!old || old->Outputs.size() != record.Record.Outputs.size()))
-                {
-                    return Fail(error, "primary_or_output_inventory_changed");
-                }
                 Array<const CookRecordedOutput*> oldOutputs;
                 if (old)
                 {
@@ -941,6 +933,7 @@ namespace NorvesLib::Tools::AssetCook
                 for (const auto& output : record.Record.Outputs)
                 {
                     all.push_back(&output);
+                    bool bPreviouslyOwned = false;
                     if (old)
                     {
                         auto it = std::lower_bound(oldOutputs.begin(), oldOutputs.end(), K::View(output.Reference),
@@ -948,10 +941,8 @@ namespace NorvesLib::Tools::AssetCook
                                                    {
                                                        return K::Compare(K::View(a->Reference), key) < 0;
                                                    });
-                        if (it == oldOutputs.end() || !K::SameFixedOutput((*it)->Reference, output.Reference))
-                        {
-                            return Fail(error, "output_key_or_package_changed");
-                        }
+                        bPreviouslyOwned =
+                            it != oldOutputs.end() && K::SameFixedOutput((*it)->Reference, output.Reference);
                     }
                     auto it =
                         std::lower_bound(packageOrder.begin(), packageOrder.end(), View(output.Reference.CookedPackage),
@@ -961,6 +952,10 @@ namespace NorvesLib::Tools::AssetCook
                                          });
                     if (it != packageOrder.end() && d.Packages[*it].Package == output.Reference.CookedPackage)
                     {
+                        if (d.Packages[*it].Before.bPresent && !bPreviouslyOwned)
+                        {
+                            return Fail(error, "unowned_before_package");
+                        }
                         const auto& image = d.Packages[*it].After;
                         if (image.Size != output.Package.Size || image.ContentHash != output.Package.ContentHash)
                         {
@@ -971,7 +966,7 @@ namespace NorvesLib::Tools::AssetCook
                     }
                 }
                 if ((mutations && mutations != record.Record.Outputs.size()) ||
-                    (!before && mutations != record.Record.Outputs.size()))
+                    (!old && mutations != record.Record.Outputs.size()))
                 {
                     return Fail(error, "partial_asset_mutation");
                 }

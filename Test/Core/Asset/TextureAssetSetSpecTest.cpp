@@ -89,6 +89,17 @@ namespace
 }
 int main()
 {
+    {
+        const Container::AnsiString mixed =
+            R"({"version":2,"name":"mixed","package_root":"Cooked/Mixed","default_variant":"default","assets":[{"kind":"raw","logical_path":"Data/config","source_path":"config.bin","format":"raw.v0","package_name":"config.nvpk","entry_name":"config"},{"kind":"model","logical_path":"Models/rig","source_path":"rig.gltf","format":"nvskel.v0.skinned.pnujiw.u32","package_name":"rig.nvpk","entry_name":"rig"}]})";
+        const auto doc = Json(mixed);
+        TextureAssetSetSpec spec;
+        CHECK(ParseTextureAssetSetSpec(doc.GetRoot(), spec).Code == TextureAssetSetError::InvalidVersion);
+        CHECK(ParseTextureAssetSetSpec(doc.GetRoot(), spec, true).Succeeded());
+        CHECK(spec.Version == 2 && spec.Textures.size() == 2 && spec.Textures[0].Kind == "raw" &&
+              spec.Textures[0].EntryType == "Raw " && spec.Textures[1].EntryType == "Skl0");
+    }
+
     auto doc=Json(Base);TextureAssetSetSpec spec;
     CHECK(ParseTextureAssetSetSpec(doc.GetRoot(),spec).Succeeded());doc.Reset();
     CHECK(spec.Textures.size()==1 && Equals(spec.Textures[0].LogicalPath,"Textures/a.png"));

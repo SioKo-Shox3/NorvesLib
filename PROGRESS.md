@@ -1146,3 +1146,13 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 
 - `--rig-split` からprofile 3/256・解析・名前指定root・材質textureを含むcookを接続。native Unicode入力/出力、実package/manifestのbytes照合と3資産のparse/束縛、新規directoryのno-replace公開を実装。既存出力を上書きしない。
 - 既存RigSplitCookTestにファイル公開・既存出力保持・root名拒否・texture同梱を追加。親segment/末尾separator/非ASCII親directoryのケースを含む。実CLI用の小さいsmokeも用意したが未実行。追加C++の実行確認は未検証で、毎変更CIは行わない。
+
+### GR96 種別横断の一括・増分cook（2026-10-07 JST）
+
+- 実装: spec v2のraw/texture/audio/model/skeletal/animation、分離rig三資産とclip専用入力、共通の依存snapshot・manifest・transaction、資産/派生出力の増減、予算超過exit 2とJSON/Markdown統計を接続した。asset-setのemissiveNitsPerUnitは静的v1材質と分離rigへ渡す。
+- 並列: --jobs 1を既定、明示1〜64。stage内cookだけを並列化し、全workerをjoinしてから入力順に集約・公開する。出力名とmanifestはjobs数に依存しない。
+- 境界: 増分で追加するpackageの親directoryは既存であること。新しい階層は新規runtimeへのcookで作る。--prune指定時だけspecから外した資産を所有state/manifestから除き、package自体は消さない。同じ既存fileの自動再採用は拒否する。
+- 検証準備: 既存試験に5種混在+独立clip、jobs 1/4の全package/manifest一致、全skip、外部buffer/sidecar更新、派生画像の増減、予算とreport障害、未所有出力の拒否を追加した。クリップで実際に読んだsource/sidecar/bufferと依存snapshotを照合する。C++実行はまだ未検証。
+- GR82/GR86の前回CI: ab3126feのrun 37600512793はRigSplitFileCliの文字列ビュー比較でbuild失敗。比較の型を明示する修正を入れた。後続runtime/CLI検証は未実行だったため、合格には扱わない。
+- 範囲: 要件GR96の「実装順」節に従い、G2はspec v2・増分・統合manifest・三角形/関節/texture予算と最小レポートまで。詳細異常検出とgeneratorsは後段。--forceで全件を再cookし、--verify相当のpayload照合は通常時も行う。
+- 残り: GR96の関連実行検証と、GR84のrest補正・向き/ルート分離・リサンプル・周期切り出しとv1/glTF接続。G2は未完了。ロードマップの区切りで必要な検証をまとめ、完了後にマージしてG3へ進む。

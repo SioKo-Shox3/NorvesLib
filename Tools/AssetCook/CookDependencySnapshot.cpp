@@ -1,4 +1,6 @@
 ﻿#include "CookDependencySnapshot.h"
+#include "RigSingleCook.h"
+#include <bit>
 #include "SkeletalRoleFileInput.h"
 #include "Asset/AssetPackageFormat.h"
 #include "Asset/CookedSkeletalNameCodec.h"
@@ -80,7 +82,7 @@ namespace NorvesLib::Tools::AssetCook
         }
         bool Capture(const SingleAssetCookRequest& request,uint64_t revision,CookDependencySnapshot& out,AnsiString& error)
         {
-            const bool model=Equal(request.Kind,"model");
+            const bool model = Equal(request.Kind, "model") || Equal(request.Kind, "animation");
             const bool bRole = HasSkeletalRoleFileRequest(request.RoleProfile);
             if (bRole && !ValidateSkeletalRoleFileRequest(request, error)) return false;
             if (revision==0 || request.InputPath.empty() || (!model && !Equal(request.Kind,"raw") && !Equal(request.Kind,"texture") && !Equal(request.Kind,"audio")))
@@ -97,6 +99,20 @@ namespace NorvesLib::Tools::AssetCook
             if (!hash.Path(source)) return Fail(error,"source locator is not Unicode");
             hash.Text(request.Kind);hash.Text(request.LogicalPath);hash.Text(request.EntryName);hash.Text(request.EntryTypeText);
             hash.Text(request.Format);hash.Text(request.Variant);
+            if (Detail::IsRigSingleFormat(request.Format))
+            {
+                hash.Text("rig-single.profile3.analysis1");
+                hash.Integer(request.ClipJointNodes.size());
+                for (uint32_t node : request.ClipJointNodes)
+                {
+                    hash.Integer(node);
+                }
+            }
+            if (request.AssetSetEmission.Present)
+            {
+                hash.Text("asset-set.emissiveNitsPerUnit");
+                hash.Integer(std::bit_cast<uint64_t>(request.AssetSetEmission.NitsPerUnit));
+            }
             hash.Integer(request.bNoSidecar);hash.Integer(request.bRequireSidecar);
             hash.Integer(!request.ImportSettingsOverridePath.empty());
             if (model)
@@ -105,7 +121,7 @@ namespace NorvesLib::Tools::AssetCook
                 options.OverridePath=request.ImportSettingsOverridePath;options.bDisabled=request.bNoSidecar;options.bRequired=request.bRequireSidecar;
                 Core::AssetImport::LoadedImportSettings loaded;
                 Core::AssetImport::SettingsFileOutcome result;
-                if (request.Format == "nvmesh.v1.mesh3d.pnt.u32.clustered")
+                if (request.Format == "nvmesh.v1.mesh3d.pnt.u32.clustered" || Detail::IsRigSingleFormat(request.Format))
                 {
                     Core::AssetImport::LoadedImportSettingsDocument document;
                     result = Core::AssetImport::LoadImportSettingsDocument(source, options, document);

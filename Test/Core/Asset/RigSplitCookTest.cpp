@@ -1,6 +1,8 @@
 ﻿// same-read材質/sidecar/BufferSetと三role packageの所有を反証する。
 #include "RigSplitTestFixture.h"
 #include "Tools/AssetCook/RigSplitFileCook.h"
+#include "Tools/AssetCook/TextureAssetSetCook.h"
+#include "Tools/AssetCook/RigSingleCook.h"
 #include "RigSplitWireTestFixture.h"
 #include "Tools/AssetCook/MeshMaterialV1Plan.h"
 namespace F = NorvesLib::Tests::RigV1Fixture;
@@ -11,6 +13,131 @@ namespace S = NorvesLib::Core::Skeletal;
 namespace C = NorvesLib::Core::Container;
 namespace
 {
+    void ManagedMixedRig(F::Fixture& f)
+    {
+        f.SetBuffer(f.Binary);
+        std::filesystem::remove("RigV1Fixture/rig.gltf.import.json");
+        F::WriteBytes("RigV1Fixture/rig.gltf", F::Bytes(f.Json.begin(), f.Json.end()));
+        const F::Text spec =
+            R"json({"version":2,"name":"rig-batch","package_root":"Cooked/Rig","default_variant":"default","emissiveNitsPerUnit":42,"assets":[{"kind":"skeletal","logical_path":"Models/Dog","source_path":"rig.gltf","format":"nvskel.v1.skinmesh.pnujiw.u32","package_name":"dog.nvpk","entry_name":"dog"},{"kind":"animation","logical_path":"Animations/Wave","source_path":"rig.gltf","format":"nvskel.v1.clips","package_name":"wave.nvpk","entry_name":"wave"},{"kind":"raw","logical_path":"Data/config","source_path":"config.bin","format":"raw.v0","package_name":"config.nvpk","entry_name":"config"},{"kind":"texture","logical_path":"Textures/check","source_path":"check.ppm","format":"nvtex.v0.rgba8.linear","package_name":"check.nvpk","entry_name":"check"},{"kind":"audio","logical_path":"Audio/tick","source_path":"tick.wav","format":"nvaud.v0.pcm16","package_name":"tick.nvpk","entry_name":"tick"}]})json";
+        F::WriteBytes("RigV1Fixture/config.bin", F::Bytes{'o', 'k'});
+        const F::Text ppmHeader = "P6\n2 2\n255\n";
+        F::Bytes ppm(ppmHeader.begin(), ppmHeader.end());
+        for (size_t i = 0; i < 12; ++i)
+        {
+            ppm.push_back(uint8_t(i * 19));
+        }
+        F::WriteBytes("RigV1Fixture/check.ppm", ppm);
+        F::Bytes wav{'R', 'I', 'F', 'F'};
+        X::U32(wav, 40);
+        for (char c : F::Text("WAVEfmt "))
+        {
+            wav.push_back(uint8_t(c));
+        }
+        X::U32(wav, 16);
+        wav.insert(wav.end(), {1, 0, 1, 0});
+        X::U32(wav, 8000);
+        X::U32(wav, 16000);
+        wav.insert(wav.end(), {2, 0, 16, 0, 'd', 'a', 't', 'a'});
+        X::U32(wav, 4);
+        wav.insert(wav.end(), {0, 0, 255, 127});
+        F::WriteBytes("RigV1Fixture/tick.wav", wav);
+        Cook::TextureAssetSetCookRequest request;
+        request.SpecPath = f.Root / "batch.json";
+        request.SourceRoot = f.Root / "RigV1Fixture";
+        request.RuntimeRoot = f.Root / "batch-runtime";
+        F::WriteBytes(request.SpecPath, F::Bytes(spec.begin(), spec.end()));
+        Cook::CookManagedBootstrapOutcome outcome;
+        Cook::CookBatchReport report;
+        request.Report = &report;
+        F::Text error;
+        const auto run = [&](Cook::TextureAssetSetCookResult expected)
+        {
+            const auto result = Cook::CookTextureAssetSetWithOutcome(request, outcome, error);
+            if (result != expected)
+            {
+                std::fprintf(stderr, "mixed rig expected=%u actual=%u error=%s\n", unsigned(expected), unsigned(result),
+                             error.c_str());
+            }
+            RIG_CHECK(result == expected);
+        };
+        run(Cook::TextureAssetSetCookResult::Created);
+        Cook::SingleAssetCookRequest mismatched;
+        mismatched.Kind = "animation";
+        mismatched.Format = "nvskel.v1.clips";
+        mismatched.LogicalPath = "Animations/Mismatch";
+        mismatched.EntryName = "mismatch";
+        mismatched.EntryTypeText = "Anm1";
+        mismatched.Variant = "default";
+        mismatched.InputPath = request.SourceRoot / "rig.gltf";
+        mismatched.PackagePath = request.RuntimeRoot / "Cooked/Rig/mismatch.nvpk";
+        mismatched.ManifestPath = request.RuntimeRoot / "manifest.json";
+        const auto stale = F::Replace(f.Json, "Root", "Ruut");
+        C::VariableArray<Cook::RigSplitCookEntry> rejected;
+        RIG_CHECK(!Cook::Detail::BuildRigSingleOutputs(mismatched, F::View(stale), false, rejected, error));
+        RIG_CHECK(error == "clip_source_snapshot_mismatch" && rejected.empty());
+        RIG_CHECK(report.Assets.size() == 5 && report.Assets[0].Metrics.Joints == 2 &&
+                  report.Assets[1].Metrics.Joints == 2 && report.Assets[0].Metrics.Triangles == 1);
+        const auto manifest = F::ReadBytes(request.RuntimeRoot / "manifest.json");
+        Core::Asset::AssetManifest parsed;
+        RIG_CHECK(parsed.LoadFromJsonText(C::String(F::Text(manifest.begin(), manifest.end()).c_str())) &&
+                  parsed.GetReferenceCount() == 7);
+        for (size_t i = 0; i < parsed.GetReferenceCount(); ++i)
+        {
+            const auto& ref = parsed.GetReference(i);
+            if (ref.Kind == Core::Asset::AssetKind::Model || ref.Kind == Core::Asset::AssetKind::Skeleton ||
+                ref.Kind == Core::Asset::AssetKind::Animation)
+            {
+                RIG_CHECK(ref.bHasRigSplitMetadata && ref.RigSplitMetadata.Profile == 3);
+            }
+        }
+        const auto serial = request.RuntimeRoot;
+        request.RuntimeRoot = f.Root / "batch-parallel";
+        request.Jobs = 4;
+        run(Cook::TextureAssetSetCookResult::Created);
+        RIG_CHECK(F::ReadBytes(request.RuntimeRoot / "manifest.json") == manifest);
+        for (size_t i = 0; i < parsed.GetReferenceCount(); ++i)
+        {
+            const auto path = std::filesystem::path(parsed.GetReference(i).CookedPackage.c_str());
+            RIG_CHECK(F::ReadBytes(serial / path) == F::ReadBytes(request.RuntimeRoot / path));
+        }
+        run(Cook::TextureAssetSetCookResult::NoChange);
+        RIG_CHECK(report.Assets[0].bSkipped && report.Assets[1].bSkipped);
+        request.bForce = true;
+        run(Cook::TextureAssetSetCookResult::Updated);
+        RIG_CHECK(!report.Assets[0].bSkipped && !report.Assets[1].bSkipped &&
+                  F::ReadBytes(request.RuntimeRoot / "manifest.json") == manifest);
+        request.bForce = false;
+        auto binary = f.Binary;
+        binary.push_back(17);
+        f.SetBuffer(binary);
+        run(Cook::TextureAssetSetCookResult::Updated);
+        RIG_CHECK(!report.Assets[0].bSkipped && !report.Assets[1].bSkipped && report.Assets[2].bSkipped &&
+                  report.Assets[3].bSkipped && report.Assets[4].bSkipped);
+        X::Sidecar(R"({"version":1,"units":{"scale":2}})");
+        run(Cook::TextureAssetSetCookResult::Updated);
+        run(Cook::TextureAssetSetCookResult::NoChange);
+        std::filesystem::remove("RigV1Fixture/rig.gltf.import.json");
+        // 既存assetに内包画像の派生出力が加わっても、同じcontrollerでinventoryを更新する。
+        const auto png = X::Png(2, 2, F::Bytes(16, 255));
+        F::WriteBytes("RigV1Fixture/batch-base.png", png);
+        auto textured = X::AddMaterial(
+            f.Json,
+            R"({"name":"Body","emissiveFactor":[1,0,0],"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}})");
+        textured = F::Replace(textured, "\"skins\":",
+                              "\"images\":[{\"uri\":\"batch-base.png\"}],\"textures\":[{\"source\":0}],\"skins\":");
+        F::WriteBytes("RigV1Fixture/rig.gltf", F::Bytes(textured.begin(), textured.end()));
+        run(Cook::TextureAssetSetCookResult::Updated);
+        RIG_CHECK(report.Assets[0].Metrics.TextureBytes == 20);
+        run(Cook::TextureAssetSetCookResult::NoChange);
+        const auto imagePackage = request.RuntimeRoot / "Cooked/Rig/dog.nvpk.img0.nvpkg";
+        const auto imageBytes = F::ReadBytes(imagePackage);
+        F::WriteBytes("RigV1Fixture/rig.gltf", F::Bytes(f.Json.begin(), f.Json.end()));
+        run(Cook::TextureAssetSetCookResult::Updated);
+        RIG_CHECK(report.Assets[0].Metrics.TextureBytes == 0 && F::ReadBytes(imagePackage) == imageBytes);
+        run(Cook::TextureAssetSetCookResult::NoChange);
+        f.SetBuffer(f.Binary);
+    }
     void FilePublication(F::Fixture& f)
     {
         f.SetBuffer(f.Binary);
@@ -454,6 +581,7 @@ int main()
     NameAndPackageLimits(fixture);
     ImageLocatorAndBudgets(fixture);
     DerivedCopies(fixture);
+    ManagedMixedRig(fixture);
     FilePublication(fixture);
     std::printf(
         "RIG_SPLIT_COOK result=pass same_read_settings_buffers_source_slot_mapping_full_mats_three_packages_no_cli_publish\n");

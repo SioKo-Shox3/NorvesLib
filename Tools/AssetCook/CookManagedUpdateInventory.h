@@ -6,7 +6,8 @@ namespace NorvesLib::Tools::AssetCook
     enum class CookBeforeImageRequirement
     {
         CaptureOwnedFileOrProveAbsence,
-        CaptureExactPreviousStateFile
+        CaptureExactPreviousStateFile,
+        RequireAbsence
     };
     struct CookManagedPackageTarget
     {
@@ -41,5 +42,6 @@ namespace NorvesLib::Tools::AssetCook
                                                        const CookOwnedState& previous,
                                                        Core::Container::Span<const CookPreparedPlan> finalPlans,
                                                        CookManagedUpdateInventory& out,
-                                                       Core::Container::AnsiString& error);
+                                                       Core::Container::AnsiString& error,
+                                                       bool bAllowInventoryChanges = false);
 } // namespace NorvesLib::Tools::AssetCook

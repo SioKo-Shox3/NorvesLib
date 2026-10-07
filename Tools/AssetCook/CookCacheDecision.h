@@ -37,6 +37,7 @@ namespace NorvesLib::Tools::AssetCook
         SingleAssetCookRequest Request;
         CookDependencySnapshot Dependencies;
         CookDecisionReason Reason = CookDecisionReason::MissingRecord;
+        CookAssetMetrics VerifiedMetrics;
     };
     // currentManifestはcallerがRequest.ManifestPathの現在の集約状態として読んだ値。
     // batchで一度だけparseできる。nullptr/未読込は利用可能なmanifest無しとして扱う。

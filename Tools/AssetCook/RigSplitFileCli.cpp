@@ -68,28 +68,30 @@ namespace NorvesLib::Tools::AssetCook
                 const auto key = equals == C::AnsiStringView::npos ? token : token.substr(0, equals);
                 for (const auto& old : seen)
                 {
-                    if (old == key)
+                    if (C::AnsiStringView(old.data(), old.size()) == key)
                     {
                         throw std::runtime_error("rig_split: duplicate argument");
                     }
                 }
                 seen.push_back(C::AnsiString(key));
-                const bool flag = key == "--no-analysis" || key == "--no-sidecar" || key == "--require-sidecar";
+                const bool flag = key == C::AnsiStringView("--no-analysis") ||
+                                  key == C::AnsiStringView("--no-sidecar") ||
+                                  key == C::AnsiStringView("--require-sidecar");
                 if (flag)
                 {
                     if (equals != C::AnsiStringView::npos)
                     {
                         throw std::runtime_error("rig_split: flag has a value");
                     }
-                    if (key == "--no-analysis")
+                    if (key == C::AnsiStringView("--no-analysis"))
                     {
                         request.bAnalyzeClips = false;
                     }
-                    if (key == "--no-sidecar")
+                    if (key == C::AnsiStringView("--no-sidecar"))
                     {
                         request.ImportOptions.bDisabled = true;
                     }
-                    if (key == "--require-sidecar")
+                    if (key == C::AnsiStringView("--require-sidecar"))
                     {
                         request.ImportOptions.bRequired = true;
                     }
@@ -108,7 +110,7 @@ namespace NorvesLib::Tools::AssetCook
                     }
                     value = C::AnsiStringView(tokens[size_t(i)].data(), tokens[size_t(i)].size());
                 }
-                if (value.empty() || value.substr(0, 2) == "--")
+                if (value.empty() || value.substr(0, 2) == C::AnsiStringView("--"))
                 {
                     throw std::runtime_error("rig_split: empty argument value");
                 }
@@ -123,43 +125,43 @@ namespace NorvesLib::Tools::AssetCook
                     }
                     return n;
                 };
-                if (key == "--input")
+                if (key == C::AnsiStringView("--input"))
                 {
                     request.SourcePath = path();
                 }
-                else if (key == "--out")
+                else if (key == C::AnsiStringView("--out"))
                 {
                     destination = path();
                 }
-                else if (key == "--logical")
+                else if (key == C::AnsiStringView("--logical"))
                 {
                     logical = C::AnsiString(value);
                 }
-                else if (key == "--variant")
+                else if (key == C::AnsiStringView("--variant"))
                 {
                     request.Variant = C::AnsiString(value);
                 }
-                else if (key == "--import-settings")
+                else if (key == C::AnsiStringView("--import-settings"))
                 {
                     request.ImportOptions.OverridePath = path();
                 }
-                else if (key == "--root-joint")
+                else if (key == C::AnsiStringView("--root-joint"))
                 {
                     request.ClipRootJoint = C::AnsiString(value);
                     bAnalysisOption = true;
                 }
-                else if (key == "--loop")
+                else if (key == C::AnsiStringView("--loop"))
                 {
                     bAnalysisOption = true;
-                    if (value == "auto")
+                    if (value == C::AnsiStringView("auto"))
                     {
                         request.ClipAnalysis.Loop = S::RigClipLoopMode::Auto;
                     }
-                    else if (value == "true")
+                    else if (value == C::AnsiStringView("true"))
                     {
                         request.ClipAnalysis.Loop = S::RigClipLoopMode::Loop;
                     }
-                    else if (value == "false")
+                    else if (value == C::AnsiStringView("false"))
                     {
                         request.ClipAnalysis.Loop = S::RigClipLoopMode::Once;
                     }
@@ -168,17 +170,17 @@ namespace NorvesLib::Tools::AssetCook
                         throw std::runtime_error("rig_split: invalid loop mode");
                     }
                 }
-                else if (key == "--time-scale")
+                else if (key == C::AnsiStringView("--time-scale"))
                 {
                     request.ClipAnalysis.TimeScale = number();
                     bAnalysisOption = true;
                 }
-                else if (key == "--source-fps")
+                else if (key == C::AnsiStringView("--source-fps"))
                 {
                     request.ClipAnalysis.SourceFps = number();
                     bAnalysisOption = true;
                 }
-                else if (key == "--authored-fps")
+                else if (key == C::AnsiStringView("--authored-fps"))
                 {
                     request.ClipAnalysis.AuthoredFps = number();
                     bAnalysisOption = true;

@@ -2756,3 +2756,10 @@
 - G2-GR82継続: クリップ解析・時間補正・ANLY保存と将来節の予約を接続。残りは明示file/CLI経路と実資産受入れ。追加C++ケースは実行未検証。
 
 - G2-GR82継続: `--rig-split` の明示ファイルcookとtexture同梱・新規directory公開を接続。実CLI smokeは用意済み・未実行。GR96の混在資産セット/増分/レポートへ続く。G2完了後にマージしG3を開始する（作者指示）。
+
+## G2-GR96: 種別横断の一括cookと取り込みレポート
+- status: doing
+- done-when: spec v1互換を保ち、v2のraw/texture/audio/skeletal/clipを同一プロセスでcookし、入力・sidecar・外部file・設定・revisionによる増分判断、集約manifest、最小統計レポート、予算exit 2、jobs 1/4の出力一致が揃う。詳細異常検出は要件GR96の実装順に従って後段へ置く。
+- verify: 既存TextureManagedCliTest/RigSplitCookTest等の関連CPUケースと実CLIをまとめて確認。個々の変更ではCIを起動しない。未実行を合格にしない。
+- current: mixed batch、分離rig/clip、出力増減、予算/統計、jobsを接続。C++実行は未検証。増分追加は既存package親directory内に限る。--forceで全件を再cookする。--prune指定時だけspec外の資産をmanifestから外し、fileは残して自動再採用しない。
+- G2残件: GR84の自動rest補正、向き/ルート分離、出力fpsへの補間、周期検出/切り出し、glTF/BVHの共通対応づけとv1出力を続ける。GR82のANLY要約だけでGR84を完了としない。

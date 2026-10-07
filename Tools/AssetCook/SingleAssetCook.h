@@ -2,6 +2,8 @@
 #include "Container/String.h"
 #include "SkeletalRoleFileRequest.h"
 #include "Resource/SkeletalImportOptions.h"
+#include "Resource/MaterialImportPolicy.h"
+#include "Container/VariableArray.h"
 #include <filesystem>
 
 namespace NorvesLib::Tools::AssetCook
@@ -17,6 +19,8 @@ namespace NorvesLib::Tools::AssetCook
         bool bSkipIfUnchanged = false;
         Core::Skeletal::SkeletalGltfDecodeOptions SkeletalDecode;
         SkeletalRoleFileRequest RoleProfile;
+        Core::AssetImport::EmissiveScale AssetSetEmission;
+        Core::Container::VariableArray<uint32_t> ClipJointNodes;
     };
     // 従来の単体cook・manifest・出力検証を再利用する。batch集約や新しい増分判定は追加しない。
     // errorは呼出結果で置換する。診断streamの出力規則は従来通り。

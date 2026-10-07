@@ -8,6 +8,8 @@ namespace NorvesLib::Tools::AssetCook
 {
     struct RigSplitCookRequest
     {
+        // inventory観測ではpayload/packageを作らず、同じ入力解析とsource hashを使う。
+        bool bInventoryOnly = false;
         bool bAnalyzeClips = false;
         Core::Skeletal::RigClipAnalysisOptions ClipAnalysis;
         Core::Container::AnsiString ClipRootJoint;

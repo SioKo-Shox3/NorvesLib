@@ -103,14 +103,25 @@ namespace NorvesLib::Tools::AssetCook
                 return Fail(error, "invalid_spec_json");
             }
             TextureAssetSetSpec spec;
-            const auto parsed = ParseTextureAssetSetSpec(document.GetRoot(), spec);
+            const auto parsed = ParseTextureAssetSetSpec(document.GetRoot(), spec, true);
             if (!parsed.Succeeded())
             {
                 error = "texture_asset_set: invalid spec field ";
                 error.append(parsed.Field);
                 return Result::Error;
             }
+            if (spec.Version == 1 && request.bWarnBudget)
+            {
+                return Fail(error, "warn_budget_requires_spec_v2");
+            }
             document.Reset();
+            if (request.Report && spec.Version == 2)
+            {
+                request.Report->bEnabled = true;
+                request.Report->bWarnBudget = request.bWarnBudget;
+                request.Report->RuntimeRoot = runtime;
+            }
+            Core::Container::VariableArray<CookAssetBudget> budgets;
             Core::Container::VariableArray<SingleAssetCookRequest> assets;
             Core::Container::VariableArray<CookPreparedPlan> plans;
             for (const auto& entry : spec.Textures)
@@ -131,13 +142,16 @@ namespace NorvesLib::Tools::AssetCook
                 single.PackagePath = runtime / package.c_str();
                 single.ManifestPath = manifest;
                 single.LogicalPath = entry.LogicalPath;
-                single.Kind = "texture";
+                single.Kind = entry.Kind == "skeletal" ? Text("model") : entry.Kind;
+                budgets.push_back(entry.Budget);
                 single.EntryName = entry.EntryName;
-                single.EntryTypeText = "Tex0";
+                single.EntryTypeText = entry.EntryType;
                 single.Format = entry.Format;
                 single.Variant = entry.Variant;
+                single.ClipJointNodes = entry.JointNodes;
+                single.AssetSetEmission = spec.Emission;
                 CookPreparedPlan plan;
-                if (!PrepareCookOutputPlan(single, 1, nullptr, plan, error))
+                if (!PrepareCookOutputPlan(single, spec.Version, nullptr, plan, error))
                 {
                     return Result::Error;
                 }
@@ -173,7 +187,16 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return ObservationFailure(observed);
             }
-            CookManagedBootstrapRequest managed{owner, assets, bytes, 1};
+            CookManagedBootstrapRequest managed{owner, assets, bytes, spec.Version, spec.Version == 1};
+            managed.Jobs = request.Jobs;
+            managed.bForce = request.bForce;
+            managed.bPrune = request.bPrune;
+            if (spec.Version == 2)
+            {
+                managed.Budgets = budgets;
+                managed.TotalBudget = spec.TotalBudget;
+                managed.Report = request.Report;
+            }
             CookManagedBootstrapOutcome candidate;
             if (observation.Owner.bFinalRuntimeRootPresent && observation.bRuntimeRootClaimed)
             {
@@ -283,7 +306,31 @@ namespace NorvesLib::Tools::AssetCook
         error.clear();
         try
         {
-            return CookImpl(request, out, error);
+            CookBatchReport local;
+            auto selected = request;
+            selected.Report = request.Report ? request.Report : &local;
+            *selected.Report = {};
+            auto result = CookImpl(selected, out, error);
+            auto& report = *selected.Report;
+            const bool succeeded = result == Result::Created || result == Result::Updated || result == Result::NoChange;
+            report.bFailed = !succeeded;
+            report.Error = error;
+            if (!succeeded && report.BudgetErrors && !report.bWarnBudget)
+            {
+                result = Result::BudgetExceeded;
+            }
+            Text reportError;
+            if (!WriteCookBatchReport(report, reportError))
+            {
+                if (result == Result::BudgetExceeded)
+                {
+                    error += "; report: " + reportError;
+                    return result;
+                }
+                error = reportError;
+                return succeeded ? Result::CommittedButError : Result::Error;
+            }
+            return result;
         }
         catch (const std::exception&)
         {

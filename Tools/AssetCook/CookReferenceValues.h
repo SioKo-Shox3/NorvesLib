@@ -16,9 +16,20 @@ namespace NorvesLib::Tools::AssetCook::Detail::CookReferenceValues
                EqualName(a.CookedPackage, b.CookedPackage) && EqualName(a.EntryName, b.EntryName) &&
                a.EntryType == b.EntryType && a.CookedVersion == b.CookedVersion;
     }
+    inline bool SameRigMetadata(const Core::Asset::AssetRigSplitMetadata& a,
+                                const Core::Asset::AssetRigSplitMetadata& b)
+    {
+        return a.SkeletonId == b.SkeletonId && a.Role == b.Role && a.Profile == b.Profile &&
+               a.JointCount == b.JointCount && a.VertexCount == b.VertexCount && a.IndexCount == b.IndexCount &&
+               a.SubmeshCount == b.SubmeshCount && a.MaterialSlotCount == b.MaterialSlotCount &&
+               a.MaterialCount == b.MaterialCount && a.ClipCount == b.ClipCount && a.SnapshotCount == b.SnapshotCount &&
+               a.ChannelCount == b.ChannelCount && a.SampleCount == b.SampleCount;
+    }
     inline bool SameReference(const AssetCookedReference& a, const AssetCookedReference& b)
     {
-        if (!SameIdentity(a, b) || a.CookedHash != b.CookedHash || a.bHasSkeletalMetadata != b.bHasSkeletalMetadata)
+        if (!SameIdentity(a, b) || a.CookedHash != b.CookedHash || a.bHasSkeletalMetadata != b.bHasSkeletalMetadata ||
+            a.bHasRigSplitMetadata != b.bHasRigSplitMetadata ||
+            (a.bHasRigSplitMetadata && !SameRigMetadata(a.RigSplitMetadata, b.RigSplitMetadata)))
         {
             return false;
         }

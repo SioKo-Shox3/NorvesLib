@@ -6,6 +6,10 @@ namespace NorvesLib::Tools::AssetCook
     struct TextureAssetSetCookRequest
     {
         std::filesystem::path SpecPath, SourceRoot, RuntimeRoot, ManifestPath;
+        bool bWarnBudget = false;
+        CookBatchReport* Report = nullptr;
+        uint32_t Jobs = 1;
+        bool bForce = false, bPrune = false;
     };
     enum class TextureAssetSetCookResult
     {
@@ -17,7 +21,8 @@ namespace NorvesLib::Tools::AssetCook
         CommittedButError,
         Busy,
         Conflict,
-        Error
+        Error,
+        BudgetExceeded
     };
     // 成功3種だけoutを更新する。errorはrequest/outと独立に渡す。
     [[nodiscard]] TextureAssetSetCookResult CookTextureAssetSetWithOutcome(const TextureAssetSetCookRequest& request,

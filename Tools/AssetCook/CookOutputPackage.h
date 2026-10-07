@@ -1,11 +1,13 @@
 ﻿#pragma once
 #include "Asset/AssetManifest.h"
+#include "CookBatchReport.h"
 #include "Container/Span.h"
 namespace NorvesLib::Tools::AssetCook
 {
     struct CookOutputPackageFingerprint
     {
         uint64_t Size = 0, ContentHash = 0;
+        CookAssetMetrics Metrics;
     };
     // callerが検証した期待参照と、既に読み込んだpackageを照合する。
     // source freshness/path安全性/所有権の証明ではない。全package hashは非暗号学的な増分用。

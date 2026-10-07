@@ -8,6 +8,8 @@
 #include "CookOutputSetGuard.h"
 #include "CookReferenceValues.h"
 #include "TextureAssetSetOutput.h"
+#include "CookManagedOutputs.h"
+#include "CookBatchWorkers.h"
 #include "Text/JsonDocument.h"
 #include "Text/UnicodeText.h"
 #include <algorithm>
@@ -97,18 +99,24 @@ namespace NorvesLib::Tools::AssetCook
             parent = std::move(current);
             return true;
         }
-        bool PlanScope(const CookPreparedPlan& plan, const CookStateBinding& binding, Text& error)
+        bool PlanScope(const CookPreparedPlan& plan, const CookStateBinding& binding, bool bLegacy, Text& error)
         {
-            if (plan.Outputs.size() != 1 || plan.Outputs[0].ExpectedIdentity.Kind != Core::Asset::AssetKind::Texture)
+            if (plan.Outputs.empty() ||
+                (bLegacy && (plan.Outputs.size() != 1 ||
+                             plan.Outputs[0].ExpectedIdentity.Kind != Core::Asset::AssetKind::Texture)))
             {
                 return Fail(error, "texture_v1_only");
             }
-            Text target, manifest, expected = binding.RuntimeRootIdentity;
-            expected.push_back('/');
-            expected.append(plan.Outputs[0].ExpectedIdentity.CookedPackage);
-            if (!P::AsciiPath(plan.Outputs[0].TargetPath.lexically_normal(), target) || target != expected)
+            Text target, manifest, expected;
+            for (const auto& output : plan.Outputs)
             {
-                return Fail(error, "final_package_scope");
+                expected = binding.RuntimeRootIdentity;
+                expected.push_back('/');
+                expected.append(output.ExpectedIdentity.CookedPackage);
+                if (!P::AsciiPath(output.TargetPath.lexically_normal(), target) || target != expected)
+                {
+                    return Fail(error, "final_package_scope");
+                }
             }
             expected = binding.RuntimeRootIdentity;
             expected.push_back('/');
@@ -217,17 +225,21 @@ namespace NorvesLib::Tools::AssetCook
             Array<std::filesystem::path> workLeaves;
             for (const auto& asset : request.Assets)
             {
-                if (asset.Kind != "texture")
+                if (request.bLegacyTextureManifest && asset.Kind != "texture")
                 {
                     return Fail(op.Error, "texture_v1_only");
                 }
                 CookPreparedPlan plan;
                 if (!PrepareCookOutputPlan(asset, request.CookerRevision, nullptr, plan, op.Error) ||
-                    !PlanScope(plan, owner.ExpectedBinding, op.Error))
+                    !PlanScope(plan, owner.ExpectedBinding, request.bLegacyTextureManifest, op.Error))
                 {
                     return false;
                 }
                 plans.push_back(std::move(plan));
+            }
+            if (!InitializeCookReport(request, plans, op.Error))
+            {
+                return false;
             }
             if (!ValidateCookOutputSet(plans, {&owner.SpecLocator, 1}, op.Error))
             {
@@ -296,12 +308,12 @@ namespace NorvesLib::Tools::AssetCook
             CookOwnedState state;
             state.Binding = owner.ExpectedBinding;
             Array<Core::Asset::AssetCookedReference> references;
+            if (!Detail::CookPreparedBatch(stages, request.Jobs, op.Error))
+            {
+                return false;
+            }
             for (size_t i = 0; i < stages.size(); ++i)
             {
-                if (!CookSingleAsset(stages[i].Context.Request, op.Error))
-                {
-                    return false;
-                }
                 File fragmentFile;
                 Core::Asset::AssetManifest fragment;
                 CookOutputRecord record;
@@ -309,56 +321,41 @@ namespace NorvesLib::Tools::AssetCook
                                fragmentFile, op.Error) ||
                     !LoadManifest(fragmentFile.Data, fragment, op.Error) ||
                     !CaptureStagedCookOutputRecord(plans[i], stages[i], fragment, record, op.Error) ||
-                    record.Outputs.size() != 1)
+                    record.Outputs.empty() || (request.bLegacyTextureManifest && record.Outputs.size() != 1))
                 {
                     return Fail(op.Error, "staged_capture");
+                }
+                if (!AddCookReportOutputs(request, i, record.Outputs, op.Error))
+                {
+                    return false;
                 }
                 Array<TreeNode> work;
                 if (!ScanTree(workDirectories[i], work, nullptr, op.Error))
                 {
                     return false;
                 }
-                const auto& recorded = record.Outputs[0];
-                const TreeNode* package = nullptr;
-                for (const auto& node : work)
-                {
-                    if (node.bDirectory)
-                    {
-                        Text prefix = node.Relative;
-                        prefix.push_back('/');
-                        if (recorded.Reference.CookedPackage.size() <= prefix.size() ||
-                            std::memcmp(recorded.Reference.CookedPackage.data(), prefix.data(), prefix.size()))
-                        {
-                            return Fail(op.Error, "unexpected_work_directory");
-                        }
-                    }
-                    else if (node.Relative == recorded.Reference.CookedPackage)
-                    {
-                        package = &node;
-                    }
-                    else if (node.Relative != owner.ExpectedBinding.ManifestName)
-                    {
-                        return Fail(op.Error, "unexpected_work_file");
-                    }
-                }
-                if (!package || package->Image.Size != recorded.Package.Size ||
-                    package->Image.ContentHash != recorded.Package.ContentHash)
-                {
-                    return Fail(op.Error, "staged_package_changed");
-                }
-                Identity parent;
-                if (!EnsureParents(root, recorded.Reference.CookedPackage, parent, op.Error) ||
-                    !Rename(package->Parent, package->Native.Canonical.filename(), package->Image.Object, parent,
-                            Leaf(recorded.Reference.CookedPackage).filename(), false, &package->Image, op.Error))
+                if (!ValidateWorkOutputs(work, record.Outputs, owner.ExpectedBinding.ManifestName, op.Error))
                 {
                     return false;
                 }
-                CookManagedPackageMutation mutation;
-                mutation.Package = recorded.Reference.CookedPackage;
-                mutation.Before.Parent = Object(parent);
-                mutation.After = package->Image;
-                draft.Packages.push_back(std::move(mutation));
-                references.push_back(recorded.Reference);
+                for (const auto& recorded : record.Outputs)
+                {
+                    const auto* package = FindWorkPackage(work, recorded.Reference.CookedPackage);
+                    Identity parent;
+                    if (!package || !EnsureParents(root, recorded.Reference.CookedPackage, parent, op.Error) ||
+                        !Rename(package->Parent, package->Native.Canonical.filename(), package->Image.Object, parent,
+                                Leaf(recorded.Reference.CookedPackage).filename(), false, &package->Image, op.Error))
+                    {
+                        return false;
+                    }
+                    CookManagedPackageMutation mutation;
+                    mutation.Package = recorded.Reference.CookedPackage;
+                    mutation.Before.Parent = Object(parent);
+                    mutation.After = package->Image;
+                    draft.Packages.push_back(std::move(mutation));
+                    references.push_back(recorded.Reference);
+                }
+                const auto& recorded = record.Outputs[0];
                 CookOwnedRecord owned;
                 owned.PrimaryKey = {recorded.Reference.LogicalPath, recorded.Reference.Kind,
                                     recorded.Reference.Variant};
@@ -387,9 +384,13 @@ namespace NorvesLib::Tools::AssetCook
                     return false;
                 }
             }
+            if (!CheckManagedBudgets(request, op.Error))
+            {
+                return false;
+            }
             Text aggregate;
             File manifest;
-            if (!Detail::SerializeLegacyTextureManifest(references, aggregate, op.Error) ||
+            if (!SerializeManagedReferences(request.bLegacyTextureManifest, references, aggregate, op.Error) ||
                 !NewFile(root, Leaf(owner.ExpectedBinding.ManifestName), BytesOf(aggregate), manifest, op.Error))
             {
                 return false;
@@ -498,6 +499,11 @@ namespace NorvesLib::Tools::AssetCook
                                  CookManagedBootstrapOutcome& out, Text& error)
         {
             error.clear();
+            if (request.Jobs == 0 || request.Jobs > Detail::MaximumCookBatchJobs)
+            {
+                error = "batch_jobs_out_of_range";
+                return BootResult::Error;
+            }
 #if !defined(_WIN32)
             (void)request;
             (void)probe;
@@ -506,7 +512,16 @@ namespace NorvesLib::Tools::AssetCook
             return BootResult::Error;
 #else
             BootstrapOperation work;
-            work.Request = &request;
+            CookBatchReport internalReport;
+            auto selected = request;
+            if (!selected.Report &&
+                (!selected.Budgets.empty() || selected.TotalBudget.MaxTriangles != UINT64_MAX ||
+                 selected.TotalBudget.MaxJoints != UINT64_MAX || selected.TotalBudget.MaxTextureBytes != UINT64_MAX ||
+                 selected.TotalBudget.MaxCookedBytes != UINT64_MAX))
+            {
+                selected.Report = &internalReport;
+            }
+            work.Request = &selected;
             auto& op = work.Transaction;
             Probe adapted;
             if (probe)

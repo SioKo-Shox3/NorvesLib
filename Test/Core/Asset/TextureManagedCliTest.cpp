@@ -243,8 +243,130 @@ namespace TextureCliTest
             CHECK(result == Update::NeedsRecovery && stop.bReached && out.ClaimId == "held");
         }
     };
+    void MixedBatch(const std::filesystem::path& root)
+    {
+        Fixture f(root / "mixed-v2");
+        f.SpecText =
+            R"json({"version":2,"name":"mixed","package_root":"Cooked/Probe","default_variant":"default","assets":[{"kind":"texture","logical_path":"Textures/a.ppm","source_path":"a.ppm","format":"nvtex.v0.rgba8.linear","package_name":"a.nvpkg","entry_name":"a.nvtex"},{"kind":"raw","logical_path":"Data/config","source_path":"config.bin","format":"raw.v0","package_name":"config.nvpk","entry_name":"config"}]})json";
+        Write(f.Spec, BytesOf(f.SpecText));
+        Write(f.Source / "config.bin", "initial");
+        auto request = f.ServiceRequest();
+        CookBatchReport report;
+        request.Report = &report;
+        CookManagedBootstrapOutcome out;
+        TestText error;
+        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::Created);
+        CHECK(report.Assets.size() == 2 && report.Assets[0].Metrics.TextureBytes == 20 &&
+              report.Assets[1].Metrics.TextureBytes == 0);
+        CHECK(std::filesystem::is_regular_file(report.ReportDirectory / "cook_report.json"));
+        Fixture parallel(root / "mixed-v2-parallel");
+        Write(parallel.Spec, BytesOf(f.SpecText));
+        Write(parallel.Source / "config.bin", "initial");
+        auto parallelArgs = parallel.Arguments();
+        parallelArgs.push_back("--jobs=4");
+        Call(parallelArgs, 0);
+        for (const auto* relative : {"manifest.json", "Cooked/Probe/a.nvpkg", "Cooked/Probe/config.nvpk"})
+        {
+            CHECK(Read(f.Runtime / relative) == Read(parallel.Runtime / relative));
+        }
+        auto invalidJobs = parallel.Arguments();
+        invalidJobs.push_back("--jobs=0");
+        Call(invalidJobs, 1);
+        invalidJobs.back() = "--jobs=65";
+        Call(invalidJobs, 1);
+        invalidJobs.back() = "--jobs=4";
+        invalidJobs.push_back("--jobs=1");
+        Call(invalidJobs, 1);
+        request.Jobs = 4;
+        const auto generation = out.StateGeneration;
+        const auto texture = Read(f.Runtime / "Cooked/Probe/a.nvpkg");
+        const auto manifest = Read(f.Runtime / "manifest.json");
+        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::NoChange);
+        CHECK(out.StateGeneration == generation && report.Assets[0].bSkipped && report.Assets[1].bSkipped);
+        CHECK(Read(f.Runtime / "manifest.json") == manifest);
+        Write(f.Source / "config.bin", "changed raw source");
+        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::Updated);
+        CHECK(out.StateGeneration == generation + 1 && report.Assets[0].bSkipped && !report.Assets[1].bSkipped);
+        CHECK(Read(f.Runtime / "Cooked/Probe/a.nvpkg") == texture);
+        const auto published = Read(f.Runtime / "manifest.json");
+        const auto at = f.SpecText.find("\"assets\"");
+        CHECK(at != TestText::npos);
+        const auto limited = f.SpecText.substr(0, at) + "\"budgets\":{\"defaults\":{\"texture\":{\"max_bytes\":0}}}," +
+                             f.SpecText.substr(at);
+        Write(f.Spec, BytesOf(limited));
+        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::BudgetExceeded);
+        CHECK(report.BudgetErrors == 1 && Read(f.Runtime / "manifest.json") == published);
+        Call(f.Arguments(), 2);
+        auto warning = f.Arguments();
+        warning.push_back("--warn-budget");
+        Call(warning, 0);
+        CHECK(Read(f.Runtime / "manifest.json") == published);
+        // 固定report名にある既存ファイルは、新しいrunの出力で書き換えない。
+        auto reports = f.Runtime;
+        reports += L".reports";
+        Write(reports / "cook_report.json", "unowned-held");
+        Call(warning, 0);
+        CHECK((Read(reports / "cook_report.json") ==
+               TestBytes{'u', 'n', 'o', 'w', 'n', 'e', 'd', '-', 'h', 'e', 'l', 'd'}));
+
+        // v2は所属資産の増減を許可するが、外したpackageを削除も再採用もしない。
+        const auto rawBeforeRemoval = Read(f.Runtime / "Cooked/Probe/config.nvpk");
+        const auto rawEntry = f.SpecText.find(",{\"kind\":\"raw\"");
+        CHECK(rawEntry != TestText::npos);
+        const auto textureOnly = f.SpecText.substr(0, rawEntry) + "]}";
+        Write(f.Spec, BytesOf(textureOnly));
+        const auto beforePrune = Read(f.Runtime / "manifest.json");
+        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::NoChange);
+        CHECK(Read(f.Runtime / "manifest.json") == beforePrune);
+        request.bPrune = true;
+        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::Updated);
+        CHECK(report.Assets.size() == 1 && report.Assets[0].bSkipped);
+        CHECK(Read(f.Runtime / "Cooked/Probe/config.nvpk") == rawBeforeRemoval);
+        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::NoChange);
+        Write(f.Spec, BytesOf(f.SpecText));
+        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::Error);
+        CHECK(error.find("new_output_requires_absence") != TestText::npos);
+        auto added = f.SpecText;
+        const auto packageAt = added.find("config.nvpk");
+        CHECK(packageAt != TestText::npos);
+        added.replace(packageAt, std::strlen("config.nvpk"), "config-new.nvpk");
+        Write(f.Spec, BytesOf(added));
+        CHECK(CookTextureAssetSetWithOutcome(request, out, error) == TextureAssetSetCookResult::Updated);
+        CHECK(report.Assets[0].bSkipped && !report.Assets[1].bSkipped);
+        CHECK(Read(f.Runtime / "Cooked/Probe/config.nvpk") == rawBeforeRemoval);
+        CHECK(std::filesystem::is_regular_file(f.Runtime / "Cooked/Probe/config-new.nvpk"));
+
+        Fixture blocked(root / "budget-report-blocked");
+        Write(blocked.Spec, BytesOf(limited));
+        Write(blocked.Source / "config.bin", "raw");
+        auto reportBlock = blocked.Runtime;
+        reportBlock += L".reports";
+        Write(reportBlock, "held");
+        Call(blocked.Arguments(), 2);
+        CHECK(!std::filesystem::exists(blocked.Runtime));
+        CHECK((Read(reportBlock) == TestBytes{'h', 'e', 'l', 'd'}));
+    }
+    void BudgetWithoutReport(const std::filesystem::path& root)
+    {
+        Fixture f(root / "budget-no-report");
+        f.Create();
+        const auto before = Snapshot(f.Runtime);
+        CookManagedBootstrapRequest request;
+        request.Owner = {f.Spec, f.Runtime, "manifest.json"};
+        request.Assets = f.Assets;
+        request.ExpectedSpecBytes = BytesOf(f.SpecText);
+        request.TotalBudget.MaxTextureBytes = 0;
+        CHECK(request.Report == nullptr);
+        CookManagedBootstrapOutcome out;
+        TestText error;
+        CHECK(UpdateCookManagedAssetSet(request, out, error) == CookManagedUpdateResult::Error);
+        CHECK(error.find("budget_exceeded") != TestText::npos);
+        Unchanged(before, Snapshot(f.Runtime));
+    }
     void Run(const std::filesystem::path& root)
     {
+        MixedBatch(root);
+        BudgetWithoutReport(root);
         {
             Fixture f(root / "service");
             CookManagedBootstrapOutcome out;

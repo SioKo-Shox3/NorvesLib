@@ -471,6 +471,13 @@ namespace NorvesLib::Tools::AssetCook
             std::sort(candidate.TexturePlans.begin(), candidate.TexturePlans.end(),
                       [](const auto& a, const auto& b) { return a.ImageIndex < b.ImageIndex; });
             candidate.SourceHash = hash.Value;
+            if (request.bInventoryOnly)
+            {
+                out = std::move(candidate);
+                report.Status = S::RigV1Status::Success;
+                bSucceeded = true;
+                return true;
+            }
             S::SkeletonV1 skeleton;
             S::SkinMeshV1 mesh;
             S::ClipBankV1 bank;

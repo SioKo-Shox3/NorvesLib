@@ -150,7 +150,8 @@ namespace NorvesLib::Tools::AssetCook
     } // namespace
     bool BuildCookManagedUpdateInventory(const CookStateFileRequest& scope, const CookOwnedState& previous,
                                          Core::Container::Span<const CookPreparedPlan> plans,
-                                         CookManagedUpdateInventory& out, InventoryText& error)
+                                         CookManagedUpdateInventory& out, InventoryText& error,
+                                         bool bAllowInventoryChanges)
     {
         error.clear();
 #if !defined(_WIN32)
@@ -163,7 +164,7 @@ namespace NorvesLib::Tools::AssetCook
         try
         {
             if (plans.empty() || !plans.data() || plans.size() > MaximumCookSetPlans ||
-                previous.Records.size() != plans.size())
+                (!bAllowInventoryChanges && previous.Records.size() != plans.size()))
             {
                 return Fail(error, "primary_inventory_changed_or_limit");
             }
@@ -216,9 +217,12 @@ namespace NorvesLib::Tools::AssetCook
             {
                 return false;
             }
-            VariableArray<size_t> oldOrder, newOrder;
-            oldOrder.reserve(plans.size());
-            newOrder.reserve(plans.size());
+            VariableArray<size_t> oldOrder;
+            oldOrder.reserve(previous.Records.size());
+            for (size_t i = 0; i < previous.Records.size(); ++i)
+            {
+                oldOrder.push_back(i);
+            }
             for (size_t i = 0; i < plans.size(); ++i)
             {
                 if (plans[i].Outputs.empty() || plans[i].Outputs.size() > MaximumCookSetOutputs - outputs)
@@ -232,8 +236,6 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     return false;
                 }
-                oldOrder.push_back(i);
-                newOrder.push_back(i);
             }
             const auto& records = candidate.PreviousState.Records;
             std::sort(oldOrder.begin(), oldOrder.end(),
@@ -241,64 +243,55 @@ namespace NorvesLib::Tools::AssetCook
                       {
                           return Compare(View(records[a].PrimaryKey), View(records[b].PrimaryKey)) < 0;
                       });
-            std::sort(newOrder.begin(), newOrder.end(),
-                      [&](size_t a, size_t b)
-                      {
-                          return Compare(View(plans[a].Outputs[0].ExpectedIdentity),
-                                         View(plans[b].Outputs[0].ExpectedIdentity)) < 0;
-                      });
             candidate.Assets.resize(plans.size());
             for (size_t i = 0; i < plans.size(); ++i)
             {
-                const size_t oldIndex = oldOrder[i], newIndex = newOrder[i];
-                const auto& plan = plans[newIndex];
-                const auto& record = records[oldIndex];
-                if (Compare(View(record.PrimaryKey), View(plan.Outputs[0].ExpectedIdentity)) != 0 ||
-                    record.Record.Outputs.size() != plan.Outputs.size())
+                const auto& plan = plans[i];
+                const auto key = View(plan.Outputs[0].ExpectedIdentity);
+                const auto found =
+                    std::lower_bound(oldOrder.begin(), oldOrder.end(), key, [&](size_t index, auto target)
+                                     { return Compare(View(records[index].PrimaryKey), target) < 0; });
+                const size_t oldIndex =
+                    found != oldOrder.end() && Compare(View(records[*found].PrimaryKey), key) == 0 ? *found : SIZE_MAX;
+                const CookOutputRecord* old = oldIndex == SIZE_MAX ? nullptr : &records[oldIndex].Record;
+                if (!bAllowInventoryChanges && (!old || old->Outputs.size() != plan.Outputs.size()))
                 {
                     return Fail(error, "primary_or_derived_inventory_changed");
                 }
-                auto& asset = candidate.Assets[newIndex];
+                auto& asset = candidate.Assets[i];
                 asset.PreviousRecordIndex = oldIndex;
                 asset.FinalPlan = plan;
                 asset.Packages.resize(plan.Outputs.size());
-                VariableArray<size_t> before, after;
                 for (size_t j = 0; j < plan.Outputs.size(); ++j)
                 {
-                    before.push_back(j);
-                    after.push_back(j);
-                }
-                std::sort(before.begin(), before.end(),
-                          [&](size_t a, size_t b)
-                          {
-                              return Compare(View(record.Record.Outputs[a].Reference),
-                                             View(record.Record.Outputs[b].Reference)) < 0;
-                          });
-                std::sort(after.begin(), after.end(),
-                          [&](size_t a, size_t b)
-                          {
-                              return Compare(View(plan.Outputs[a].ExpectedIdentity),
-                                             View(plan.Outputs[b].ExpectedIdentity)) < 0;
-                          });
-                for (size_t j = 0; j < after.size(); ++j)
-                {
-                    const size_t oldOutput = before[j], newOutput = after[j];
-                    const auto& previousRef = record.Record.Outputs[oldOutput].Reference;
-                    const auto& currentRef = plan.Outputs[newOutput].ExpectedIdentity;
-                    if (!Detail::CookInventoryValues::SameFixedOutput(previousRef, currentRef))
+                    const auto& currentRef = plan.Outputs[j].ExpectedIdentity;
+                    size_t oldOutput = SIZE_MAX;
+                    if (old)
+                    {
+                        for (size_t k = 0; k < old->Outputs.size(); ++k)
+                        {
+                            if (Detail::CookInventoryValues::SameFixedOutput(old->Outputs[k].Reference, currentRef))
+                            {
+                                oldOutput = k;
+                                break;
+                            }
+                        }
+                    }
+                    if (!bAllowInventoryChanges && oldOutput == SIZE_MAX)
                     {
                         return Fail(error, "output_key_or_package_changed");
                     }
-                    auto target =
-                        candidate.Scope.RuntimeRoot / std::filesystem::path(previousRef.CookedPackage.c_str());
+                    auto target = candidate.Scope.RuntimeRoot / std::filesystem::path(currentRef.CookedPackage.c_str());
                     target.make_preferred();
-                    if (!Matches(plan.Outputs[newOutput].TargetPath, target, error) ||
-                        !PathBudget(target, budget, error))
+                    if (!Matches(plan.Outputs[j].TargetPath, target, error) || !PathBudget(target, budget, error))
                     {
                         return false;
                     }
-                    asset.Packages[newOutput] = {newOutput, oldOutput, std::move(target),
-                                                 CookBeforeImageRequirement::CaptureOwnedFileOrProveAbsence};
+                    // 新しいkeyは不在だけを許可し、削除済み/別assetの同名fileを採用しない。
+                    asset.Packages[j] = {j, oldOutput, std::move(target),
+                                         oldOutput == SIZE_MAX
+                                             ? CookBeforeImageRequirement::RequireAbsence
+                                             : CookBeforeImageRequirement::CaptureOwnedFileOrProveAbsence};
                 }
             }
             candidate.BaseGeneration = previous.Generation;
