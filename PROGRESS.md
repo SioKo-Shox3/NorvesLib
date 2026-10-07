@@ -2131,3 +2131,17 @@
 - 検証（`.harness/runs/20261007-203349/`）: `verify-VTG8-VSM-PCSS-5.txt`（Debug の Game・RHITextureUpdateVulkanTest・RenderingGoldenImageTest のビルド、BUILD_EXIT_CODE=0）、`-9.txt`（VirtualShadowMapVulkanTest・RenderingGoldenIndoorVulkanTest・RenderingGoldenOutdoorVulkanTest が 3/3 Passed）、`-7-verbose.txt`（L5・C2 の値、VUID_COUNT=0）。
 - Notes: (1) 探索の半径が 0.5 m になったので、探索の 16 点より細い遮る物（幅が数 cm 以下）は、受け手が影の真ん中でも見落とすことがある（CSM も同じ考え方）。実機の負荷・見た目は VTG8-VSM-GPU-TIME の撮影で確かめる。(2) 印付けの上限が 0.5 m になり、近距離（段 0〜2）の画素は印を付けるページが増える（段 0 で最大 33 x 33 ページ）。
 - Next: VTG8-VSM-CACHE。
+
+## 反復 21（2026-10-08）: VTG8-VSM-CACHE（done）
+
+- 内容: 反復 20 が「作業途中の保存」で残した実装を引き継ぎ、残っていた `RenderGraphCompileTest` の古い期待値を直し、検証と変異を記録して閉じた。実装の要点（`vsm_allocate.comp` の 11 段階・`VirtualShadowMapPages`・`VirtualShadowMapCasters.h` の `CasterMotionTracker`・`VirtualShadowMapPass` の `PlanInvalidation`・`MegaGeometryPass` の影の動き）:
+  - 引き継ぎ（段階 0）: 前フレームの割り当て済みの欄を残し、dirty を外す。範囲の外へ出た欄（トーラスの番地が指す絶対のページが変わった）・キャッシュを使わないときは空きへ戻す。太陽の向き・深度の原点が変わったときは残った欄すべてに dirty を付ける。
+  - 無効化（段階 1）: 動いた投影物（MegaGeometry の world ≠ previousWorld、手続きメッシュの変換・メッシュの署名の違い、スキニングは毎フレーム、消えた物）の前フレームと今フレームの境界のライト空間の矩形が覆う、割り当て済みのページを dirty にする。矩形が `MAX_INVALIDATION_RECTS`（256）を超える・境界が無い物が変わったときは全ページ。
+  - 持ち越し（段階 2〜4）: 要求のあるページは年齢 0、要求の無いページは `CACHE_CARRY_FRAMES`（30）フレーム持ち越して空きへ戻す。空きが足りないときは年齢の古い順（年齢のヒストグラムで計画）に戻す。要求の無い dirty の欄は戻す。
+  - `--vsm-cache=off`（または環境変数 `NORVES_VSM_CACHE=off`）で表を毎フレーム 0 にして全部を割り当て直す。`VSM_CACHE cached=<n> rendered=<n> invalidated=<n> released=<n>` を 60 フレームごとに出す。展開・MegaGeometry のカリングは dirty のページだけを相手にする。
+- `RenderGraphCompileTest` の更新（実装の変更に合わせた期待値）: VSM_Stats 44 → 212 バイト、VSM_FreeList を (3 × ページ数 + 1) 語、割り当ての dispatch を 3 → 10 回（矩形が無いので矩形の段階は記録されない）に伴う呼び出しの並び・バリアの位置・dispatch の添字、`ResolveShadowBounds` がプロキシの境界とメッシュ全体の境界の両方を含む球を返すようになった（読み込み前の小さなプロキシの境界で無効化・カリングが抜けないため）ことに伴う影の表の境界の期待値（両方を含み最小の半径 4.3207）。
+- テスト（`VirtualShadowMapVulkanTest` ケース M1〜M8）: 止まった場面の 2 フレーム目に描くページが 0（M2）、長く続けても要求のあるページは戻らない（M2b）、投影物を動かすとその前後の境界のページだけが描き直され、プールが毎フレーム描き直したとき（`--vsm-cache=off` 相当）と全 texel で一致（M3）、太陽の向きを変えると全ページを描き直す（M4）、深度の原点が動くと全ページを描き直す（M5）、段の中心を動かすと範囲に残ったページは描き直されず外へ出たページは戻る（M6）、古い順に戻す（M7・M8）。
+- 変異（`verify-VTG8-VSM-CACHE-mutations.txt`。いずれも `RESULT=FAIL`、元へ戻して `cmp` で一致を確認）: (a) 無効化の矩形に前フレームの境界を足さない → M3 が 3 件 FAIL、(b) 持ち越しの条件で要求の印を見ない → M2b が FAIL。
+- 検証（`.harness/runs/20261007-203349/`）: `verify-VTG8-VSM-CACHE-3.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-4.txt`（VirtualShadowMapVulkanTest・RenderGraphCompileTest が 2/2 Passed）、`-5-verbose.txt`（ケース M の値、VUID_COUNT=0、RESULT=PASS）。
+- Notes: (1) 実機の起動画面でのキャッシュの効果（cached/rendered の数・GPU 時間・キャッシュの on/off の画の一致）は、重い処理の扱いに従いこの反復では回していない（VTG8-VSM-GPU-TIME の撮影で確かめる）。(2) 起動画面の大きな球は自転するので、そのまわりのページは毎フレーム描き直しになる（期待どおり）。(3) `--vsm-cache` は描画の層からプロセスのコマンドラインを直接読む（`ApplicationProcessor` の外）。
+- Next: VTG8-VSM-GPU-TIME（VTG8-VSM-SAMPLE・PCSS は blocked のまま。人の判断待ち）。

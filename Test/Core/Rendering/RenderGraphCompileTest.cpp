@@ -6277,8 +6277,8 @@ namespace
             {"VSM_PhysicalPool", 4096ull * 65536ull},
             {"VSM_PageTable", 10ull * 128ull * 128ull * 4ull},
             {"VSM_RequestBits", 10ull * 128ull * 128ull / 8ull},
-            {"VSM_FreeList", (4096ull + 1ull) * 4ull},
-            {"VSM_Stats", 44ull},
+            {"VSM_FreeList", (4096ull * 3ull + 1ull) * 4ull},
+            {"VSM_Stats", 212ull},
             {"VSM_DirtyList", (4096ull + 4ull) * 4ull},
         };
         for (const Expected& entry : expected)
@@ -6303,7 +6303,7 @@ namespace
         {
             const FakeBuffer* freeList = static_cast<const FakeBuffer*>(pass.GetFreeList().get());
             assert(freeList->UpdateCallCount == 1);
-            assert(freeList->LastUpdateBytes.size() == (4096u + 1u) * 4u);
+            assert(freeList->LastUpdateBytes.size() == (4096u * 3u + 1u) * 4u);
             const uint32_t* words = reinterpret_cast<const uint32_t*>(freeList->LastUpdateBytes.data());
             assert(words[0] == 4096u);
             for (uint32_t page = 0; page < 4096u; ++page)
@@ -6527,12 +6527,14 @@ namespace
         return false;
     }
 
-    // vsm の構成の 1 フレーム: 印付け（画面を 8x8 で覆う）→ 割り当て（空きへ戻す・割り当てる・締める）→ 消去（間接 dispatch）の順に記録する。
-    //  - dispatch は 印付け (16, 8, 1)・空きへ戻す (4096/256, 1, 1)・割り当て (要求の語の数/256, 1, 1)・締める (1, 1, 1) の後に、
+    // vsm の構成の 1 フレーム: 印付け（画面を 8x8 で覆う）→ 割り当て（11 段階のうち、無効化の矩形が無いので矩形の段階を除く 10 回）→
+    // 消去（間接 dispatch）の順に記録する。
+    //  - dispatch は 印付け (16, 8, 1)、続けて 引き継ぎ・年齢・計画・古い順に戻す・使用中の印を 0 に・印を付ける・空きへ詰める・割り当て・
+    //    消去の一覧・締める の 10 回（欄は 10 段 × 128 × 128 を 256 で割った 640、物理ページは 4096 ÷ 256、要求の語は REQUEST_WORDS ÷ 256）の後に、
     //    消去の間接 dispatch が 1 回（引数は VSM_DirtyList の先頭）。
-    //  - その間のバリア: 要求のビット列は印付けの後（割り当てが読む前）、空きの一覧は戻した後・割り当てた後・締めた後、
+    //  - その間のバリア: 要求のビット列は印付けの後（割り当てが読む前）、空きの一覧・ページの表・統計・消去の一覧は割り当ての各段階の後、
     //    消去する一覧は締めた後に GenericRead へ進めてから間接 dispatch が読み、読んだ後に UnorderedAccess へ戻す。物理ページは消去の後。
-    //  - 深度かクリップマップが無い構成では、印付けの dispatch は無く、割り当てと消去だけが走る（要求は 0 のまま）。
+    //  - 深度かクリップマップが無い構成では、印付けの dispatch は無く、割り当てと消去だけが走る（要求は 0 のまま、キャッシュは引き継がない）。
     void TestVirtualShadowMapPassRecordsMarkAllocateClearInOrder()
     {
         for (const bool bWithClipmap : {true, false})
@@ -6555,25 +6557,32 @@ namespace
             const FakeCommandList& commandList = run.CommandList;
             assert(pass.WasMarked() == bWithClipmap);
             const size_t markCount = bWithClipmap ? 1u : 0u;
-            // 順序: [印付け] 空きへ戻す・割り当てる・締める、消去（間接）
-            assert(commandList.DispatchGroups.size() == markCount + 3u);
+            constexpr size_t AllocateStageDispatches = 10u;
+            // 順序: [印付け] 割り当ての 10 回、消去（間接）
+            assert(commandList.DispatchGroups.size() == markCount + AllocateStageDispatches);
             size_t groupIndex = 0;
             if (bWithClipmap)
             {
                 const auto& mark = commandList.DispatchGroups[groupIndex++];
                 assert(mark.X == 16u && mark.Y == 8u && mark.Z == 1u);
             }
-            const auto& reset = commandList.DispatchGroups[groupIndex++];
-            assert(reset.X == 4096u / 256u && reset.Y == 1u && reset.Z == 1u);
-            const auto& allocate = commandList.DispatchGroups[groupIndex++];
-            assert(allocate.X == VirtualShadowMap::REQUEST_WORDS / 256u && allocate.Y == 1u && allocate.Z == 1u);
-            const auto& finalize = commandList.DispatchGroups[groupIndex++];
-            assert(finalize.X == 1u && finalize.Y == 1u && finalize.Z == 1u);
+            const uint32_t entryGroups = VirtualShadowMap::LEVEL_COUNT * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL / 256u;
+            const uint32_t pageGroups = 4096u / 256u;
+            const uint32_t requestGroups = VirtualShadowMap::REQUEST_WORDS / 256u;
+            // 引き継ぎ・年齢・計画・古い順に戻す・使用中の印を 0 に・印を付ける・空きへ詰める・割り当てる・消去の一覧・締める
+            const uint32_t expectedGroups[AllocateStageDispatches] = {
+                entryGroups, entryGroups, 1u, entryGroups, pageGroups, entryGroups, pageGroups, requestGroups, entryGroups, 1u,
+            };
+            for (const uint32_t expected : expectedGroups)
+            {
+                const auto& stage = commandList.DispatchGroups[groupIndex++];
+                assert(stage.X == expected && stage.Y == 1u && stage.Z == 1u);
+            }
             assert(commandList.IndirectDispatches.size() == 1);
             assert(IsDebugName(commandList.IndirectDispatches[0].BufferName, "VSM_DirtyList") &&
                    commandList.IndirectDispatches[0].OffsetBytes == 0);
-            // 並び: 印付け（D）・戻す（D）・割り当て（D）・締め（D）・消去（J）
-            const char* expectedSequence = bWithClipmap ? "DDDDJ" : "DDDJ";
+            // 並び: 印付け（D）・割り当て（D × 10）・消去（J）
+            const char* expectedSequence = bWithClipmap ? "DDDDDDDDDDDJ" : "DDDDDDDDDDJ";
             assert(commandList.CallSequence.size() == std::strlen(expectedSequence));
             for (size_t index = 0; index < commandList.CallSequence.size(); ++index)
             {
@@ -6582,13 +6591,13 @@ namespace
 
             // バリア（SequencePosition は、直前までに記録した B・E・D・J の数）
             const size_t afterMark = markCount;
-            const size_t afterReset = markCount + 1u;
-            const size_t afterAllocate = markCount + 2u;
-            const size_t afterFinalize = markCount + 3u;
-            const size_t afterClear = markCount + 4u;
+            const size_t afterFreeReset = markCount + 5u;
+            const size_t afterAllocate = markCount + 8u;
+            const size_t afterFinalize = markCount + AllocateStageDispatches;
+            const size_t afterClear = markCount + AllocateStageDispatches + 1u;
             const RHI::ResourceState uav = RHI::ResourceState::UnorderedAccess;
             assert(HasBufferBarrierAt(commandList, "VSM_RequestBits", uav, uav, afterMark));
-            assert(HasBufferBarrierAt(commandList, "VSM_FreeList", uav, uav, afterReset));
+            assert(HasBufferBarrierAt(commandList, "VSM_FreeList", uav, uav, afterFreeReset));
             assert(HasBufferBarrierAt(commandList, "VSM_FreeList", uav, uav, afterAllocate));
             assert(HasBufferBarrierAt(commandList, "VSM_PageTable", uav, uav, afterAllocate));
             assert(HasBufferBarrierAt(commandList, "VSM_Stats", uav, uav, afterAllocate));
@@ -6597,7 +6606,8 @@ namespace
             assert(HasBufferBarrierAt(commandList, "VSM_DirtyList", uav, RHI::ResourceState::GenericRead, afterFinalize));
             assert(HasBufferBarrierAt(commandList, "VSM_DirtyList", RHI::ResourceState::GenericRead, uav, afterClear));
             assert(HasBufferBarrierAt(commandList, "VSM_PhysicalPool", uav, uav, afterClear));
-            // 割り当ての前に、要求のビット列は 0 で埋められ（印付けの前）、ページの表と統計も 0 で埋められる
+            // 割り当ての前に、要求のビット列は 0 で埋められ（印付けの前）、最初のフレームは前フレームの表が無いのでページの表も 0 で埋められ、
+            // 統計は毎フレーム 0 で埋められる
             assert(commandList.VsmFills.size() == 4);
             assert(IsDebugName(commandList.VsmFills[1].BufferName, "VSM_RequestBits"));
             assert(IsDebugName(commandList.VsmFills[2].BufferName, "VSM_PageTable"));
@@ -7322,16 +7332,16 @@ namespace
             assert(scene.Skinning.GetInstances().size() == 1u);
             assert(scene.Skinning.GetInstances()[0].bOpaque && scene.Skinning.GetInstances()[0].bCastShadow);
 
-            const char* expectedSequence = "DDDDDJDBIIIE";
+            const char* expectedSequence = "DDDDDDDDDDDDJDBIIIE";
             assert(commandList.CallSequence.size() == std::strlen(expectedSequence));
             for (size_t index = 0; index < commandList.CallSequence.size(); ++index)
             {
                 assert(commandList.CallSequence[index] == expectedSequence[index]);
             }
             // dispatch: 変形（頂点 3 つ = 1 グループ）・印付け・戻す・割り当て・締める・展開（塊 3 つ = 3 グループ）
-            assert(commandList.DispatchGroups.size() == 6u);
+            assert(commandList.DispatchGroups.size() == 13u);
             assert(commandList.DispatchGroups[0].X == 1u && commandList.DispatchGroups[1].X == 16u && commandList.DispatchGroups[1].Y == 8u);
-            assert(commandList.DispatchGroups[5].X == 3u && commandList.DispatchGroups[5].Y == 1u && commandList.DispatchGroups[5].Z == 1u);
+            assert(commandList.DispatchGroups[12].X == 3u && commandList.DispatchGroups[12].Y == 1u && commandList.DispatchGroups[12].Z == 1u);
             assert(commandList.BeginRenderPassCount == 1u && commandList.EndRenderPassCount == 1u);
             // 間接描画: 塊ごとに 1 回（引数の先頭 = 頭の 4 語の後、塊ごとに 20 バイト、描画の数 1）
             assert(commandList.IndirectDraws.size() == 3u);
@@ -7344,9 +7354,9 @@ namespace
             const RHI::ResourceState common = RHI::ResourceState::Common;
             const RHI::ResourceState uav = RHI::ResourceState::UnorderedAccess;
             const RHI::ResourceState read = RHI::ResourceState::GenericRead;
-            const size_t beforeExpand = 6u;
-            const size_t afterExpand = 7u;
-            const size_t afterDraw = 12u;
+            const size_t beforeExpand = 13u;
+            const size_t afterExpand = 14u;
+            const size_t afterDraw = 19u;
             for (const char* name : {"VsmRaster_Chunks", "VsmRaster_Instances", "VsmRaster_Draws"})
             {
                 assert(HasBufferBarrierAt(commandList, name, common, uav, beforeExpand));
@@ -7501,7 +7511,7 @@ namespace
             const FakeCommandList& commandList = scene.Run.CommandList;
             assert(!scene.Pass.WasMarked() && !scene.Pass.WasRasterRecorded() && scene.Pass.GetLastCasterChunkCount() == 0u);
             // 変形（D）の後に、割り当て・消去だけ（戻す・割り当て・締める・間接）
-            const char* expectedSequence = "DDDDJ";
+            const char* expectedSequence = "DDDDDDDDDDDJ";
             assert(commandList.CallSequence.size() == std::strlen(expectedSequence));
             for (size_t index = 0; index < commandList.CallSequence.size(); ++index)
             {
@@ -7798,10 +7808,22 @@ namespace
                 MegaGeometryShadowInstance table[3] = {};
                 std::memcpy(table, shadowBuffer->LastUpdateBytes.data(), sizeof(table));
                 const uint32_t casterWithBounds = MegaGeometryShadowFlagCaster | MegaGeometryShadowFlagBounds;
-                // A: プロキシの境界。ワークグループは 0 番から
+                // A: プロキシの境界（中心 (1, 2, 3)・半径 4）と、メッシュ全体の境界（中心 (0.5, 0.5, 0)・半径 1.25）の両方を含む最小の球。
+                //    プロキシの境界だけを信じると、読み込みが済む前の小さな球のまま影のページの無効化・カリングが抜ける。ワークグループは 0 番から
                 assert(table[0].Flags == casterWithBounds && table[0].FirstGroup == 0u);
-                assert(table[0].BoundsSphere[0] == 1.0f && table[0].BoundsSphere[1] == 2.0f && table[0].BoundsSphere[2] == 3.0f &&
-                       table[0].BoundsSphere[3] == 4.0f);
+                {
+                    const float sources[2][4] = {{1.0f, 2.0f, 3.0f, 4.0f}, {0.5f, 0.5f, 0.0f, 1.25f}};
+                    const float radius = table[0].BoundsSphere[3];
+                    for (const auto& source : sources)
+                    {
+                        const float dx = table[0].BoundsSphere[0] - source[0];
+                        const float dy = table[0].BoundsSphere[1] - source[1];
+                        const float dz = table[0].BoundsSphere[2] - source[2];
+                        assert(std::sqrt(dx * dx + dy * dy + dz * dz) + source[3] <= radius + 1.0e-4f);
+                    }
+                    // 2 つの球の中心の距離 3.391 を使った最小の半径 (3.391 + 4 + 1.25) / 2 = 4.3207
+                    assert(std::abs(radius - 4.3207f) < 1.0e-3f);
+                }
                 // B: 影を落とさない。ワークグループを持たず、FirstGroup は次のインスタンスと同じ
                 assert(table[1].Flags == 0u && table[1].FirstGroup == 1u);
                 // C: 境界が無いのでメッシュの境界（中心 (0.5, 0.5, 0)・半径 1.25）をワールド (5, 0, 0) へ移した球
@@ -7825,7 +7847,7 @@ namespace
             assert(scene.Base.Pass.GetMegaCullList() && scene.Base.Pass.GetMegaDirtyBits() && scene.Base.Pass.GetMegaChunks());
 
             // 並び: 主の経路の後に、変形・印付け・割り当て 3 段・消去（J）・階層・選択・展開・描画
-            const char* vsmSequence = "DDDDDJDDDDBIIIIE";
+            const char* vsmSequence = "DDDDDDDDDDDDJDDDDBIIIIE";
             assert(commandList.CallSequence.size() == scene.MainSequenceLength + std::strlen(vsmSequence));
             for (size_t index = 0; index < std::strlen(vsmSequence); ++index)
             {
@@ -7851,12 +7873,12 @@ namespace
                 assert(cullScopeCount == 1u);
                 assert(clearScope < cullScope && cullScope < expandScope && expandScope < commandList.GpuScopes.size());
                 // 開いた時点は、消去（J）の後・階層の dispatch の前（直前までに記録した B・E・D・I・J は 6 個）
-                assert(commandList.GpuScopes[cullScope].SequencePosition == scene.MainSequenceLength + 6u);
+                assert(commandList.GpuScopes[cullScope].SequencePosition == scene.MainSequenceLength + 13u);
             }
-            const size_t dirtyDispatch = scene.MainDispatchCount + 5u;
-            const size_t cullDispatch = scene.MainDispatchCount + 6u;
-            const size_t chunkDispatch = scene.MainDispatchCount + 7u;
-            const size_t expandDispatch = scene.MainDispatchCount + 8u;
+            const size_t dirtyDispatch = scene.MainDispatchCount + 12u;
+            const size_t cullDispatch = scene.MainDispatchCount + 13u;
+            const size_t chunkDispatch = scene.MainDispatchCount + 14u;
+            const size_t expandDispatch = scene.MainDispatchCount + 15u;
             assert(commandList.DispatchGroups.size() == expandDispatch + 1u);
             const uint32_t levelCount = VirtualShadowMap::LEVEL_COUNT;
             assert(commandList.DispatchGroups[dirtyDispatch].X == 16u && commandList.DispatchGroups[dirtyDispatch].Y == 16u &&
@@ -7924,8 +7946,8 @@ namespace
             // 自分の一覧・階層は、カリングの前に Common → UnorderedAccess（dirty の階層の dispatch の前。位置 = 直前までの B・E・D・I・J の数）、後に UnorderedAccess → Common
             const RHI::ResourceState common = RHI::ResourceState::Common;
             const RHI::ResourceState uav = RHI::ResourceState::UnorderedAccess;
-            const size_t beforeDirty = scene.MainSequenceLength + 6u;
-            const size_t afterCull = scene.MainSequenceLength + 9u;
+            const size_t beforeDirty = scene.MainSequenceLength + 13u;
+            const size_t afterCull = scene.MainSequenceLength + 16u;
             for (const char* name : {"VsmMega_List", "VsmMega_DirtyBits", "VsmMega_Chunks"})
             {
                 assert(HasBufferBarrierAt(commandList, name, common, uav, beforeDirty));
@@ -7935,8 +7957,8 @@ namespace
             assert(HasBufferBarrierAt(commandList, "VsmMega_Chunks", uav, uav, afterCull));
             // 展開・描画は、一覧とクラスタの記録を UnorderedAccess へ遷移し、展開の後に GenericRead（頂点シェーダーと間接描画が読む）、描画の後に戻す
             {
-                const size_t afterExpand = scene.MainSequenceLength + 10u;
-                const size_t afterDraw = scene.MainSequenceLength + 16u;
+                const size_t afterExpand = scene.MainSequenceLength + 17u;
+                const size_t afterDraw = scene.MainSequenceLength + 23u;
                 for (const char* name : {"VsmMega_List", "VsmMega_Chunks"})
                 {
                     assert(HasBufferBarrierAt(commandList, name, common, uav, afterCull));
@@ -8000,7 +8022,7 @@ namespace
             assert(!scene.Mega.GetShadowCasterInputs().bValid);
             RunVsmCasterViewport(scene.Base, 0, 0);
             assert(scene.Base.Pass.WasMarked() && scene.Base.Pass.WasRasterRecorded() && !scene.Base.Pass.WasMegaCullRecorded());
-            const char* vsmSequence = "DDDDDJDBIIIE";
+            const char* vsmSequence = "DDDDDDDDDDDDJDBIIIE";
             const FakeCommandList& commandList = scene.Base.Run.CommandList;
             assert(commandList.CallSequence.size() == scene.MainSequenceLength + std::strlen(vsmSequence));
             for (size_t index = 0; index < std::strlen(vsmSequence); ++index)
@@ -8017,7 +8039,7 @@ namespace
             BuildVsmCasterScene(scene, true);
             RunVsmCasterViewport(scene, 0, 0);
             assert(scene.Pass.GetMegaGeometryPass() == nullptr && !scene.Pass.WasMegaCullRecorded());
-            const char* expectedSequence = "DDDDDJDBIIIE";
+            const char* expectedSequence = "DDDDDDDDDDDDJDBIIIE";
             assert(scene.Run.CommandList.CallSequence.size() == std::strlen(expectedSequence));
             ShutdownVsmCasterScene(scene);
         }

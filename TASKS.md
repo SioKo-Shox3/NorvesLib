@@ -1283,7 +1283,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした）。今の起動画面の CSM は PCSS（`EstimatePenumbraSize`）で、半影が遮る物からの距離で変わる。PCF だけでは遠い縁まで硬くなり起動画面の見た目が変わる（絶対規則7）ので、物理の半影をそろえる。「CSM 以上に細かく」は texel の細かさと縁の帯の割合で測り、物理の半影より細かい縁は求めない。GPU の負担は VTG8-VSM-GPU-TIME で測り、重ければ探索の標本を減らす。危険地帯（照明のシェーダー）。
 
 ## VTG8-VSM-CACHE: 動かない物の VSM のページを次のフレームへ持ち越す
-- status: todo
+- status: done
 - done-when: VSM のページを次のフレームへ持ち越す。(1) 前フレームから割り当て済みで、今フレームも要求され、無効にされていないページは、物理ページを保ち dirty にしない（消去も描画もしない）。(2) 要求されないページは 30 フレーム持ち越した後に空きへ戻す。空きが足りないときは古い順に戻す。(3) 段の中心がページ単位で動いたとき、範囲の外へ出たページを空きへ戻し（トーラスの番地。残ったページは持ち越す）、深度の原点がスナップで動いた段はすべて無効にする。(4) 無効化: 太陽の向きが変わったら全ページ。動いた投影物（MegaGeometry の world ≠ previousWorld、手続きメッシュの変換が前フレームと違う物、スキニングは毎フレーム）の前フレームと今フレームの境界のライト空間の矩形に入る割り当て済みのページを dirty にし、その範囲の全投影物を描き直す（展開・MegaGeometry の cull は dirty のページだけを相手にする）。(5) `--vsm-cache=off` で毎フレームすべて描き直す（比べるため）。(6) `VSM_CACHE cached=<n> rendered=<n> invalidated=<n> released=<n>` を 60 フレームごとに出す。(7) `VirtualShadowMapVulkanTest` に場面を足す: 止まった場面の 2 フレーム目に描かれるページが 0、投影物を動かすとその範囲のページだけが描き直され、物理プールの中身が毎フレーム描き直したとき（`--vsm-cache=off` 相当）と texel で一致する、太陽の向きを変えると全ページが描き直される、段の中心を 1 ページ動かすと範囲に残ったページは描き直されない。変異（無効化の矩形に前フレームの境界を含めない・持ち越しの条件で要求の印を見ない）で落ちることを記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`
