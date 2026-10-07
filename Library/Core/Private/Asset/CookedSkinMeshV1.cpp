@@ -1,4 +1,5 @@
 ﻿#include "Asset/CookedSkinMeshV1.h"
+#include "Animation/RigRootFrame.h"
 #include "Asset/RigSplitWire.h"
 #include "Asset/RigSplitAllocationTestAccess.h"
 #include "Asset/CookedSkeletalNameCodec.h"
@@ -81,7 +82,7 @@ namespace NorvesLib::Core::Skeletal
         }
         RigV1Status Validate(const SkinMeshV1Data& d, const RigV1Limits& limits, uint64_t& strings)
         {
-            if (!IsValidRigV1Limits(limits))
+            if (!IsValidRigProfileLimits(d.Profile, limits))
             {
                 return RigV1Status::InvalidInput;
             }
@@ -237,7 +238,7 @@ namespace NorvesLib::Core::Skeletal
             ref.resize(64, 0);
             W::W64(ref, 0, W::AppendName(sections[0].Data, d.SkeletonPath));
             W::W32(ref, 8, uint32_t(d.SkeletonPath.size()));
-            W::W32(ref, 12, 1);
+            W::W32(ref, 12, uint32_t(d.Profile));
             W::W64(ref, 16, d.Topology.SkeletonId);
             W::W64(ref, 24, d.SkeletonContentHash);
             W::W64(ref, 32, d.SkeletonRestHash);
@@ -324,25 +325,31 @@ namespace NorvesLib::Core::Skeletal
                     return RigV1Status::InvalidInput;
                 }
             }
-            return W::WriteEnvelope(2, d.Topology.SkeletonId, {sections, 10}, out, limits);
+            return W::WriteEnvelope(2, d.Topology.SkeletonId, {sections, 10}, out, limits, d.Profile);
         }
     } // namespace
     bool BuildSkinMeshV1(const RigAuthoringCpu& source, const SkeletonV1& skeleton, const C::AnsiString& path,
                          C::Span<const SkinMaterialV1> materials, SkinMeshV1& out, RigV1Report& report,
-                         const RigV1Limits& limits)
+                         const RigV1Limits& limits, RigImportProfile profile)
     {
         report = {};
         try
         {
             const auto* rig = source.GetData();
             const auto* sk = skeleton.GetData();
-            if (!rig || !sk || !IsValidRigV1Limits(limits) || !IsSplitLogicalPath(path))
+            if (!rig || !sk || !IsSupportedRigImportProfile(profile) || rig->Profile != profile ||
+                sk->Profile != profile || !IsValidRigProfileLimits(profile, limits) || !IsSplitLogicalPath(path))
             {
                 return false;
             }
             if (!SameRigTopology(rig->Topology, sk->Topology))
             {
                 report.Status = RigV1Status::TopologyMismatch;
+                return false;
+            }
+            if (!SameRigRootFrame(rig->RootFrame, sk->RootTransform))
+            {
+                report.Status = RigV1Status::FrameMismatch;
                 return false;
             }
             const auto& g = rig->Geometry;
@@ -437,6 +444,7 @@ namespace NorvesLib::Core::Skeletal
                 }
             }
             SkinMeshV1Data data;
+            data.Profile = profile;
             data.Topology = sk->Topology;
             data.SkeletonPath = path;
             data.SkeletonContentHash = sk->ContentHash;
@@ -496,7 +504,7 @@ namespace NorvesLib::Core::Skeletal
             {
                 return false;
             }
-            return ParseSkinMeshV1(W::ViewOf(bytes), out, report, limits);
+            return ParseSkinMeshV1(W::ViewOf(bytes), out, report, limits, profile);
         }
         catch (...)
         {
@@ -504,13 +512,14 @@ namespace NorvesLib::Core::Skeletal
             return false;
         }
     }
-    bool WriteSkinMeshV1(const SkinMeshV1& mesh, W::Bytes& out, RigV1Report& report, const RigV1Limits& limits)
+    bool WriteSkinMeshV1(const SkinMeshV1& mesh, W::Bytes& out, RigV1Report& report, const RigV1Limits& limits,
+                         RigImportProfile profile)
     {
         report = {};
         try
         {
             const auto* data = mesh.GetData();
-            if (!data)
+            if (!data || data->Profile != profile)
             {
                 return false;
             }
@@ -529,7 +538,7 @@ namespace NorvesLib::Core::Skeletal
         report = {};
         const auto* m = mesh.GetData();
         const auto* s = skeleton.GetData();
-        if (!m || !s)
+        if (!m || !s || m->Profile != s->Profile)
         {
             return false;
         }
@@ -548,7 +557,8 @@ namespace NorvesLib::Core::Skeletal
         report.Status = RigV1Status::Success;
         return true;
     }
-    bool ParseSkinMeshV1(W::View bytes, SkinMeshV1& out, RigV1Report& report, const RigV1Limits& limits)
+    bool ParseSkinMeshV1(W::View bytes, SkinMeshV1& out, RigV1Report& report, const RigV1Limits& limits,
+                         RigImportProfile profile)
     {
         report = {};
         try
@@ -564,7 +574,7 @@ namespace NorvesLib::Core::Skeletal
                 s[i].Code = Codes[i];
                 s[i].Record = Records[i];
             }
-            report.Status = W::ReadEnvelope(bytes, 2, {s, 10}, limits);
+            report.Status = W::ReadEnvelope(bytes, 2, {s, 10}, limits, profile);
             if (report.Status != RigV1Status::Success)
             {
                 return false;
@@ -625,6 +635,7 @@ namespace NorvesLib::Core::Skeletal
             }
             Detail::ObserveSplitAllocation("mesh_owned");
             auto d = C::MakeShared<SkinMeshV1Data>();
+            d->Profile = profile;
             report.Status = W::ReadTopology(bytes, strings, s[1], limits, d->Topology);
             if (report.Status != RigV1Status::Success)
             {
@@ -632,7 +643,7 @@ namespace NorvesLib::Core::Skeletal
             }
             const size_t ref = size_t(s[2].Offset);
             if (!W::ReadName(strings, W::U64(bytes, ref), W::U32(bytes, ref + 8), d->SkeletonPath, limits) ||
-                W::U32(bytes, ref + 12) != 1 || W::U64(bytes, ref + 16) != d->Topology.SkeletonId ||
+                W::U32(bytes, ref + 12) != uint32_t(profile) || W::U64(bytes, ref + 16) != d->Topology.SkeletonId ||
                 !W::Zero(bytes, ref + 48, ref + 64))
             {
                 return fail(RigV1Status::BadWire);

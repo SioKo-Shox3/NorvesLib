@@ -50,7 +50,13 @@ set(PRIVATE_SOURCES
     Private/Animation/AnimationClipResource.cpp
     Private/Animation/SkeletalJointIndex.h
     Private/Animation/SkeletalJointIndex.cpp
+    Private/Animation/RigClipAnalysis.cpp
+    Private/Animation/RigClipAnalysis.h
     Private/Animation/RigV1Types.cpp
+    Private/Animation/RigRootFrame.cpp
+    Private/Animation/RigRootFrame.h
+    Private/Animation/RigBoundClipProof.cpp
+    Private/Animation/RigBoundClipProof.h
     Private/Animation/RigV1Types.h
     Private/Animation/ClipBankBinding.cpp
     Private/Animation/ClipBankBinding.h

@@ -6,7 +6,10 @@ namespace NorvesLib::Tools::AssetCook
                                      RigClipBankCookResult& out, Core::Skeletal::RigV1Report& report,
                                      const Core::Skeletal::RigV1Limits& limits,
                                      const Core::AssetImport::LoadedImportSettings* settings,
-                                     const Core::Skeletal::SkeletalGltfDecodeOptions* options)
+                                     const Core::Skeletal::SkeletalGltfDecodeOptions* options,
+                                     Core::Skeletal::RigImportProfile profile,
+                                     const Core::Skeletal::RigClipSourceSelection* clipSource,
+                                     const Core::Skeletal::RigClipAnalysisOptions* analysisOptions)
     {
         report = {};
         try
@@ -17,18 +20,18 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
             Core::Skeletal::RigAuthoringCpu sourceRig;
-            if (!Core::Skeletal::DecodeRigAuthoringNativePath(source, sourcePath, sourceRig, report, limits, settings,
-                                                              options))
+            if (!Core::Skeletal::DecodeRigAuthoringWithProfileNativePath(
+                    source, sourcePath, profile, sourceRig, report, limits, settings, options, nullptr, clipSource))
             {
                 return false;
             }
             Core::Skeletal::ClipBankV1 bank;
-            if (!Core::Skeletal::BuildClipBankV1({&sourceRig, 1}, bank, report, limits))
+            if (!Core::Skeletal::BuildClipBankV1({&sourceRig, 1}, bank, report, limits, profile, analysisOptions))
             {
                 return false;
             }
             RigClipBankCookResult candidate;
-            if (!Core::Skeletal::WriteClipBankV1(bank, candidate.Bytes, report, limits))
+            if (!Core::Skeletal::WriteClipBankV1(bank, candidate.Bytes, report, limits, profile))
             {
                 return false;
             }

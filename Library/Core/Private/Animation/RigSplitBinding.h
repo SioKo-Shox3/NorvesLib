@@ -24,11 +24,12 @@ namespace NorvesLib::Core::Skeletal
         Container::TSharedPtr<const RigSplitCpuData> m_Data;
         friend bool BindRigSplitV1(const SkeletonV1&, const SkinMeshV1&, Container::Span<const ClipBankV1>,
                                    const RigBindingPolicy&, CookedRigSplitCpuAsset&, RigSplitReport&,
-                                   const RigV1Limits&);
+                                   const RigV1Limits&, RigImportProfile);
     };
     [[nodiscard]] bool BindRigSplitV1(const SkeletonV1&, const SkinMeshV1&,
                                       Container::Span<const ClipBankV1> orderedBanks, const RigBindingPolicy&,
-                                      CookedRigSplitCpuAsset& out, RigSplitReport&, const RigV1Limits& = {});
+                                      CookedRigSplitCpuAsset& out, RigSplitReport&, const RigV1Limits& = {},
+                                      RigImportProfile = RigImportProfile::DirectTrs128);
     [[nodiscard]] bool AssembleRigSplitV1(const CookedRigSplitCpuAsset&, const ResourceIO::SkeletalAssetCreateContext&,
                                           Container::TSharedPtr<SkeletalAssetResource>& out, RigSplitReport&);
 } // namespace NorvesLib::Core::Skeletal

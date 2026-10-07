@@ -1,4 +1,5 @@
 ﻿#include "Animation/SkeletalSplitSampler.h"
+#include "Animation/RigBoundClipProof.h"
 #include "Animation/SkeletalBindRowMath.h"
 #include "Animation/SkeletalJointGlobalRowMath.h"
 #include "Animation/SkeletalClipSampling.h"
@@ -98,6 +99,11 @@ namespace NorvesLib::Core::Animation::Detail
             !clip.IsLoaded() || !sk || !sm || !std::isfinite(timeSeconds) ||
             !S::SameRigTopology(sk->Topology, sm->Topology) || sk->ContentHash != sm->SkeletonContentHash ||
             sk->CurrentRest.RestHash != sm->SkeletonRestHash || sk->RootHash != sm->SkeletonRootHash)
+        {
+            return false;
+        }
+        if (sk->Profile != sm->Profile ||
+            (S::IsStaticRootFrameProfile(sk->Profile) && !S::RigBoundClipAccess::Matches(clip, sk)))
         {
             return false;
         }

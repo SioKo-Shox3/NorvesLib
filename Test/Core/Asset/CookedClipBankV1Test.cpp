@@ -398,6 +398,76 @@ namespace
         f.SetBuffer(f.Binary);
         std::printf("CLIPBANK_V1_CASE result=pass cubic_bake_cumulative_sample_budget_before_output_allocation\n");
     }
+    void MeshIndependentClips(F::Fixture& f)
+    {
+        constexpr auto profile = S::RigImportProfile::StaticRootFrame128;
+        auto text = F::Replace(f.Json, "\"nodes\":[0,2]", "\"nodes\":[0]");
+        text = F::Replace(text, ",{\"name\":\"Mesh\",\"translation\":[5,0,0],\"mesh\":0,\"skin\":0}", "");
+        text = F::Replace(
+            text,
+            "\"meshes\":[{\"name\":\"Triangle\",\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2,\"JOINTS_0\":3,\"WEIGHTS_0\":5},\"indices\":8,\"mode\":4}]}],",
+            "");
+        text = F::Replace(text, "\"inverseBindMatrices\":9,", "");
+        text = F::ChildTrs(text, "\"translation\":[0,7,0]");
+        S::RigClipSourceSelection selection;
+        S::RigAuthoringCpu source;
+        S::RigV1Report report;
+        const auto import = [&](const F::Text& json, const S::RigClipSourceSelection& selected,
+                                const NorvesLib::Core::AssetImport::LoadedImportSettings* settings = nullptr)
+        {
+            return S::DecodeRigAuthoringWithProfileNativePath(F::View(json), "RigV1Fixture/clip.gltf", profile, source,
+                                                              report, {}, settings, nullptr, nullptr, &selected);
+        };
+        // 元ファイルに非indexedのmeshが残っていても、clip抽出はその形状を読まない。
+        const auto nonIndexed = F::Replace(f.Json, "\"indices\":8,", "");
+        RIG_CHECK(import(nonIndexed, selection));
+        RIG_CHECK(import(text, selection));
+        RIG_CHECK(source.GetData()->Geometry.Vertices.empty() && source.GetData()->Geometry.Indices.empty());
+        RIG_CHECK(source.GetData()->LocalRest[1].Translation.Y == 7 &&
+                  source.GetData()->Geometry.Clips[0].Channels[0].Samples[1].Value.Y == 3);
+        S::ClipBankV1 bank;
+        RIG_CHECK(S::BuildClipBankV1({&source, 1}, bank, report, {}, profile));
+        RIG_CHECK(bank.GetData()->Snapshots[0].Rest[0].Translation.Y == 7);
+        F::Bytes skinBytes;
+        RIG_CHECK(S::WriteClipBankV1(bank, skinBytes, report, {}, profile));
+        RIG_CHECK(S::ParseClipBankV1(F::View(skinBytes), bank, report, {}, profile));
+
+        // skinの無いアニメーションにも、動いていないjointを含む作者骨格を明示する。
+        const auto noSkin = F::Replace(text, "\"skins\":[{\"name\":\"Rig\",\"skeleton\":0,\"joints\":[0,1]}],", "");
+        const uint32_t nodes[] = {0, 1}, reversed[] = {1, 0}, duplicate[] = {0, 0}, invalid[] = {0, 9};
+        selection.JointNodes = {nodes, 2};
+        RIG_CHECK(import(noSkin, selection));
+        Cook::RigClipBankCookResult cooked;
+        RIG_CHECK(Cook::CookRigClipBankV1NativePath(F::View(noSkin), "RigV1Fixture/clip.gltf", "nvskel.v1.clips",
+                                                    cooked, report, {}, nullptr, nullptr, profile, &selection));
+        RIG_CHECK(cooked.Bytes == skinBytes);
+        selection.JointNodes = {reversed, 2};
+        RIG_CHECK(import(noSkin, selection));
+        RIG_CHECK(source.GetData()->LocalRest[0].Translation.Y == 7);
+        RIG_CHECK(Cook::CookRigClipBankV1NativePath(F::View(noSkin), "RigV1Fixture/clip.gltf", "nvskel.v1.clips",
+                                                    cooked, report, {}, nullptr, nullptr, profile, &selection));
+        RIG_CHECK(cooked.Bytes == skinBytes);
+        const auto sentinel = source.GetData();
+        selection.JointNodes = {duplicate, 2};
+        RIG_CHECK(!import(noSkin, selection) && source.GetData() == sentinel);
+        selection.JointNodes = {invalid, 2};
+        RIG_CHECK(!import(noSkin, selection) && source.GetData() == sentinel);
+        selection.JointNodes = {};
+        RIG_CHECK(!import(noSkin, selection) && source.GetData() == sentinel);
+        selection.JointNodes = {nodes, 2};
+        RIG_CHECK(!import(text, selection) && source.GetData() == sentinel);
+        NorvesLib::Core::AssetImport::LoadedImportSettings settings;
+        settings.bPresent = true;
+        settings.Settings.Scale = 2;
+        RIG_CHECK(import(noSkin, selection, &settings));
+        RIG_CHECK(source.GetData()->LocalRest[1].Translation.Y == 14 &&
+                  source.GetData()->Geometry.Clips[0].Channels[0].Samples[1].Value.Y == 6);
+        settings.Settings.Fit = NorvesLib::Core::AssetImport::FitAxis::Up;
+        settings.Settings.FitMeters = 4;
+        RIG_CHECK(!import(noSkin, selection, &settings));
+        // 旧入口はmesh無しを受けず、既存契約は変わらない。
+        RIG_CHECK(!S::DecodeRigAuthoringNativePath(F::View(text), "RigV1Fixture/clip.gltf", source, report));
+    }
     void AuthorRest(F::Fixture& f)
     {
         const auto source = f.Import(f.Json);
@@ -444,6 +514,7 @@ int main()
     F::Fixture fixture;
     Codec(fixture);
     AuthorRest(fixture);
+    MeshIndependentClips(fixture);
     QuaternionAndScaleDomain(fixture);
     ImportBudgets(fixture);
     BakeBudget(fixture);

@@ -1,4 +1,5 @@
 ﻿#include "Asset/CookedSkeletonV1.h"
+#include "Animation/RigRootFrame.h"
 #include "Asset/RigSplitWire.h"
 #include "Asset/RigSplitAllocationTestAccess.h"
 #include "Asset/CookedSkeletalNameCodec.h"
@@ -16,7 +17,7 @@ namespace NorvesLib::Core::Skeletal
         constexpr uint32_t Records[] = {1, 24, 48, 48, 64};
         RigV1Status Encode(const SkeletonV1Data& d, W::Bytes& out, const RigV1Limits& limits)
         {
-            if (!IsValidRigV1Limits(limits))
+            if (!IsValidRigProfileLimits(d.Profile, limits) || !IsValidRigRootFrame(d.RootTransform, d.Profile))
             {
                 return RigV1Status::InvalidInput;
             }
@@ -64,7 +65,7 @@ namespace NorvesLib::Core::Skeletal
             W::W32(set, 4, uint32_t(count));
             W::W64(set, 8, W::AppendName(sections[0].Data, d.CurrentRest.Label));
             W::W32(set, 16, uint32_t(d.CurrentRest.Label.size()));
-            W::W32(set, 20, 1);
+            W::W32(set, 20, uint32_t(d.Profile));
             W::W64(set, 24, d.CurrentRest.RestHash);
             W::W64(set, 32, std::bit_cast<uint64_t>(d.CurrentRest.ResolvedImportScale));
             sections[3].Data.resize(count * 48, 0);
@@ -77,16 +78,18 @@ namespace NorvesLib::Core::Skeletal
             {
                 W::WF(sections[4].Data, i * 4, d.RootTransform[i]);
             }
-            return W::WriteEnvelope(1, d.Topology.SkeletonId, {sections, 5}, out, limits);
+            return W::WriteEnvelope(1, d.Topology.SkeletonId, {sections, 5}, out, limits, d.Profile);
         }
     } // namespace
-    bool BuildSkeletonV1(const RigAuthoringCpu& source, SkeletonV1& out, RigV1Report& report, const RigV1Limits& limits)
+    bool BuildSkeletonV1(const RigAuthoringCpu& source, SkeletonV1& out, RigV1Report& report, const RigV1Limits& limits,
+                         RigImportProfile profile)
     {
         report = {};
         try
         {
             const auto* rig = source.GetData();
-            if (!rig || !IsValidRigV1Limits(limits))
+            if (!rig || !IsSupportedRigImportProfile(profile) || rig->Profile != profile ||
+                !IsValidRigProfileLimits(profile, limits))
             {
                 return false;
             }
@@ -123,9 +126,12 @@ namespace NorvesLib::Core::Skeletal
                 return false;
             }
             SkeletonV1Data data;
+            data.Profile = profile;
+            data.RootTransform = rig->RootFrame;
             data.Topology = rig->Topology;
             data.CurrentRest.Label = rig->SourceLabel;
             data.CurrentRest.ResolvedImportScale = rig->ResolvedImportScale;
+            data.CurrentRest.RootFrame = rig->RootFrame;
             data.CurrentRest.Rest.reserve(rig->LocalRest.size());
             for (auto index : rig->Topology.CanonicalToSource)
             {
@@ -139,7 +145,7 @@ namespace NorvesLib::Core::Skeletal
                 return false;
             }
             // 公開値は必ず正準順、完全wire hash付き。source順の写像やgeometryを持ち越さない。
-            return ParseSkeletonV1(W::ViewOf(bytes), out, report, limits);
+            return ParseSkeletonV1(W::ViewOf(bytes), out, report, limits, profile);
         }
         catch (...)
         {
@@ -147,13 +153,14 @@ namespace NorvesLib::Core::Skeletal
             return false;
         }
     }
-    bool WriteSkeletonV1(const SkeletonV1& skeleton, W::Bytes& out, RigV1Report& report, const RigV1Limits& limits)
+    bool WriteSkeletonV1(const SkeletonV1& skeleton, W::Bytes& out, RigV1Report& report, const RigV1Limits& limits,
+                         RigImportProfile profile)
     {
         report = {};
         try
         {
             const auto* d = skeleton.GetData();
-            if (!d)
+            if (!d || d->Profile != profile)
             {
                 return false;
             }
@@ -167,7 +174,8 @@ namespace NorvesLib::Core::Skeletal
             return false;
         }
     }
-    bool ParseSkeletonV1(W::View bytes, SkeletonV1& out, RigV1Report& report, const RigV1Limits& limits)
+    bool ParseSkeletonV1(W::View bytes, SkeletonV1& out, RigV1Report& report, const RigV1Limits& limits,
+                         RigImportProfile profile)
     {
         report = {};
         try
@@ -183,7 +191,7 @@ namespace NorvesLib::Core::Skeletal
                 sections[i].Code = Codes[i];
                 sections[i].Record = Records[i];
             }
-            report.Status = W::ReadEnvelope(bytes, 1, {sections, 5}, limits);
+            report.Status = W::ReadEnvelope(bytes, 1, {sections, 5}, limits, profile);
             if (report.Status != RigV1Status::Success)
             {
                 return false;
@@ -222,6 +230,7 @@ namespace NorvesLib::Core::Skeletal
             }
             Detail::ObserveSplitAllocation("skeleton_owned");
             auto data = C::MakeShared<SkeletonV1Data>();
+            data->Profile = profile;
             report.Status = W::ReadTopology(bytes, strings, sections[1], limits, data->Topology);
             if (report.Status != RigV1Status::Success)
             {
@@ -229,8 +238,8 @@ namespace NorvesLib::Core::Skeletal
             }
             auto& rest = data->CurrentRest;
             const size_t set = size_t(sections[2].Offset);
-            if (W::U32(bytes, set) != 0 || W::U32(bytes, set + 4) != joints || W::U32(bytes, set + 20) != 1 ||
-                !W::Zero(bytes, set + 40, set + 48) ||
+            if (W::U32(bytes, set) != 0 || W::U32(bytes, set + 4) != joints ||
+                W::U32(bytes, set + 20) != uint32_t(profile) || !W::Zero(bytes, set + 40, set + 48) ||
                 !W::ReadName(strings, W::U64(bytes, set + 8), W::U32(bytes, set + 16), rest.Label, limits))
             {
                 return fail(RigV1Status::InvalidRest);
@@ -263,13 +272,13 @@ namespace NorvesLib::Core::Skeletal
             const size_t root = size_t(sections[4].Offset);
             for (size_t i = 0; i < 16; ++i)
             {
-                // profile1の外部親は恒等に固定。NaN/inf/-0もcanonical bytesとして拒否する。
-                const uint32_t expected = (i % 5 == 0) ? 0x3f800000u : 0u;
-                if (W::U32(bytes, root + i * 4) != expected)
-                {
-                    return fail(RigV1Status::UnsupportedProfile);
-                }
+                data->RootTransform[i] = W::F32(bytes, root + i * 4);
             }
+            if (!IsValidRigRootFrame(data->RootTransform, profile))
+            {
+                return fail(RigV1Status::UnsupportedProfile);
+            }
+            rest.RootFrame = data->RootTransform;
             data->RootHash = RigBytesHash({bytes.data() + root, 64});
             data->PayloadHash = W::U64(bytes, 48);
             data->ContentHash = RigBytesHash(bytes);

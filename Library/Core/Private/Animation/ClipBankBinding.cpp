@@ -20,6 +20,11 @@ namespace NorvesLib::Core::Skeletal
             {
                 return false;
             }
+            if (source->Profile != RigImportProfile::DirectTrs128 || rig->Profile != RigImportProfile::DirectTrs128)
+            {
+                report.Status = RigV1Status::UnsupportedProfile;
+                return false;
+            }
             report.TargetLabel = rig->SourceLabel;
             report.SkeletonId = rig->Topology.SkeletonId;
             report.BankPayloadHash = source->PayloadHash;

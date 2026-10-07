@@ -18,6 +18,7 @@ namespace NorvesLib::Core::Skeletal
         Container::VariableArray<uint8_t> CanonicalBytes;
     };
     [[nodiscard]] bool IsValidRigV1Limits(const RigV1Limits&) noexcept;
+    [[nodiscard]] bool IsValidRigProfileLimits(RigImportProfile, const RigV1Limits&) noexcept;
     [[nodiscard]] bool IsValidRigBindingPolicy(const RigBindingPolicy&) noexcept;
     [[nodiscard]] uint64_t RigBytesHash(Container::Span<const uint8_t>) noexcept;
     // 親番号は入力順に依らず名前順へ写す。失敗/確保例外でoutを変更しない。

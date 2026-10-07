@@ -1,4 +1,5 @@
 ﻿#include "SkeletalRoleFileCli.h"
+#include "NativeCookArguments.h"
 #include "SkeletalRoleFileCliTestAccess.h"
 #include "SkeletalRoleFileCook.h"
 #include "SkeletalRoleFileInput.h"
@@ -336,6 +337,11 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
     } // namespace
+    bool Detail::CollectNativeCookArguments(int argc, const char* const* argv, C::VariableArray<C::AnsiString>& out,
+                                            C::AnsiString& error)
+    {
+        return Arguments(argc, argv, out, error);
+    }
     bool Detail::HasSkeletalRoleCliArguments(int argc, const char* const* argv)
     {
         return Detect(argc, argv);

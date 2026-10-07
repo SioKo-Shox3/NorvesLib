@@ -71,3 +71,19 @@ metadataは全roleでskeleton_id(16桁lower hex)/profile/joint_countを必須と
 一つのshared const AssetSystem snapshot、Skeleton path、Mesh path、順序付きBank path(1–16)、variant、policy、limitsからcooked-onlyで読む。manifestを別名から変更しないことはcallerの責務。opened streamの実package sizeをresize前に検査し、per-fileと全読込の残量を渡す。旧入口の既定は無制限を保つ。
 
 Bank順→内部clip順を維持し、全名重複は拒否。全bankのrest比較/数量検査成功後だけCPU結果を置換する。未登録CreateResourceで全child/aggregateのLoad成功後だけownerのoutを置換し、Registry公開/GC rollbackを使わない。ResourceIdの欠番は許容する。
+
+明示profile2の静的親と必須作者frameは `RigStaticRootFrame128.md` を参照する。本書のprofile1契約と既定値は維持する。
+
+## クリップ解析の任意節（GR82）
+
+明示解析を選んだprofile 2/3のClipBankだけ、末尾へ `ANLY`（optional、flags=0）を追加する。解析なしの7/8節の出力は不変。レコードはCLIP順に96B、件数はclip件数と一致する。offset 0=rootの正準joint番号u32、4=候補loop(bit0)/採用loop(bit1)、8から8個のf64（loop誤差・秒長・実効source fps・X移動・Z移動・平面移動距離m・平均速度m/s・総yaw rad）。72〜95は0。
+
+loopは端点の姿勢差からの候補で、明示Loop/Onceを優先する。移動とyawは作者rest・階層・ROOTを合成し、+Y上/+Z前のモデル空間を固定間隔で標本化した要約。既定30Hz、最大4096標本。接地判定や移動の適用はしない。姿勢距離の長さは明示値、未指定ならrest joint位置の対角（退化時1m）で正規化する。fps補正は作者fpsとsource fpsの両方が必須で、キー時刻を `timeScale * authoredFps / sourceFps` 倍する。fpsを推測しない。
+
+後続の任意節名を予約する: SOCK（ソケット）、MARK（イベント/位相）、CMPR（圧縮）、LODS（LOD）、PART（部位）、SURF（表面標本）。CLIPとROOTは既存の必須節名であり再利用しない。未実装の任意節は従来通り読み飛ばし、必須節は拒否する。
+
+## 明示ファイルCLI
+
+`AssetCook --rig-split --input <GLB/glTF> --out <新規directory> --logical Models/Dog` はprofile 3/256関節でSkeleton・SkinMesh・ClipBankと参照textureをcookし、`manifest.json` とpackage群を新しいdirectoryへまとめて公開する。既存directoryは空でも置換しない。更新/増分はGR96の責務。
+
+既定でクリップ解析を保存する。`--no-analysis` で省略可能。`--root-joint <名前>`、`--loop auto|true|false`、`--authored-fps` と `--source-fps` の組、`--time-scale` を指定できる。既存の影響縮約/CUBICSPLINE/morph引数とsidecar指定も受ける。検証はnative pathで実出力の全bytesを読み直し、3資産のparse/束縛を行ってからno-replace renameする。描画や実物DCCの検証は含まない。

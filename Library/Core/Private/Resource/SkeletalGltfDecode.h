@@ -4,6 +4,7 @@
 #include "Container/Span.h"
 #include "Resource/SkeletalGltfData.h"
 #include "Animation/SkeletalRestPose.h"
+#include "Animation/RigBindingTypes.h"
 #include <filesystem>
 
 namespace NorvesLib::Core::Gltf
@@ -64,6 +65,20 @@ namespace NorvesLib::Core::Skeletal
         RigGltfImportCapture& outCapture, const RigV1Limits& limits,
         const AssetImport::LoadedImportSettings* importSettings,
         const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
+
+    // clip専用入力。空ならskin.jointsを使用し、指定時はskinの無いsourceのnode番号を使う。
+    // 動いていないjointも含む作者側の全骨格を指定する。targetのrestは入力に使わない。
+    struct RigClipSourceSelection
+    {
+        Container::Span<const uint32_t> JointNodes;
+    };
+
+    // 明示profileの作者frameを同じreadから取得する。既定/旧入口の受理範囲は変えない。
+    [[nodiscard]] SkeletalGltfDecodeResult DecodeRigAuthorFrameGltfNativePath(
+        Container::Span<const uint8_t> sourceBytes, const std::filesystem::path& sourcePath, RigImportProfile profile,
+        Container::VariableArray<SkeletalRestTransform>& outRest, double& outResolvedScale, RigRootFrame& outRootFrame,
+        RigGltfImportCapture* outCapture, const RigV1Limits& limits, const AssetImport::LoadedImportSettings* settings,
+        const SkeletalGltfDecodeOptions* options = nullptr, const RigClipSourceSelection* clipSource = nullptr);
 
     // 旧String入口の互換用。出力buffer配列を求めた場合は全source bytesを所有コピーする。
     using SkeletalGltfSourceBuffers = Container::VariableArray<Container::VariableArray<uint8_t>>;

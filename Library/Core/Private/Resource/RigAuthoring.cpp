@@ -1,18 +1,23 @@
 ﻿#include "Resource/RigAuthoring.h"
 #include "Resource/RigGltfImportCapture.h"
 #include "Resource/SkeletalGltfDecode.h"
+#include "Animation/RigRootFrame.h"
 #include <cmath>
 namespace NorvesLib::Core::Skeletal
 {
-    bool DecodeRigAuthoringNativePath(Container::Span<const uint8_t> source, const std::filesystem::path& path,
-                                      RigAuthoringCpu& out, RigV1Report& report, const RigV1Limits& limits,
-                                      const AssetImport::LoadedImportSettings* settings,
-                                      const SkeletalGltfDecodeOptions* options, RigGltfImportCapture* outCapture)
+    bool DecodeRigAuthoringWithProfileNativePath(Container::Span<const uint8_t> source,
+                                                 const std::filesystem::path& path, RigImportProfile profile,
+                                                 RigAuthoringCpu& out, RigV1Report& report, const RigV1Limits& limits,
+                                                 const AssetImport::LoadedImportSettings* settings,
+                                                 const SkeletalGltfDecodeOptions* options,
+                                                 RigGltfImportCapture* outCapture,
+                                                 const RigClipSourceSelection* clipSource)
     {
         report = {};
         try
         {
-            if (!IsValidRigV1Limits(limits) || source.empty() || !source.data())
+            if (!IsSupportedRigImportProfile(profile) || !IsValidRigProfileLimits(profile, limits) || source.empty() ||
+                !source.data())
             {
                 return false;
             }
@@ -29,12 +34,10 @@ namespace NorvesLib::Core::Skeletal
             }
             auto data = Container::MakeShared<RigAuthoringData>();
             RigGltfImportCapture capture;
-            auto decoded =
-                outCapture ? DecodeRigAuthorRestGltfCapturedNativePath(source, path, data->LocalRest,
-                                                                       data->ResolvedImportScale, capture, limits,
-                                                                       settings, options)
-                           : DecodeRigAuthorRestGltfNativePath(source, path, data->LocalRest, data->ResolvedImportScale,
-                                                               limits, settings, options);
+            data->Profile = profile;
+            auto decoded = DecodeRigAuthorFrameGltfNativePath(
+                source, path, profile, data->LocalRest, data->ResolvedImportScale, data->RootFrame,
+                outCapture ? &capture : nullptr, limits, settings, options, clipSource);
             report.DecodeStatus = decoded.Status;
             if (!decoded.Succeeded())
             {
@@ -103,5 +106,13 @@ namespace NorvesLib::Core::Skeletal
             report.Status = RigV1Status::Exception;
             return false;
         }
+    }
+    bool DecodeRigAuthoringNativePath(Container::Span<const uint8_t> source, const std::filesystem::path& path,
+                                      RigAuthoringCpu& out, RigV1Report& report, const RigV1Limits& limits,
+                                      const AssetImport::LoadedImportSettings* settings,
+                                      const SkeletalGltfDecodeOptions* options, RigGltfImportCapture* capture)
+    {
+        return DecodeRigAuthoringWithProfileNativePath(source, path, RigImportProfile::DirectTrs128, out, report,
+                                                       limits, settings, options, capture);
     }
 } // namespace NorvesLib::Core::Skeletal

@@ -132,8 +132,10 @@ namespace NorvesLib::Core::Asset
             Container::AnsiString skeletonId;
             if (!TryReadStringMember(metadata, "skeleton_id", skeletonId) ||
                 !TryParseAssetHashHex(skeletonId, m.SkeletonId) ||
-                !TryReadUInt32Member(metadata, "profile", m.Profile) || m.Profile != 1 ||
-                !TryReadUInt32Member(metadata, "joint_count", m.JointCount) || !m.JointCount || m.JointCount > 128)
+                !TryReadUInt32Member(metadata, "profile", m.Profile) ||
+                (m.Profile != 1 && m.Profile != 2 && m.Profile != 3) ||
+                !TryReadUInt32Member(metadata, "joint_count", m.JointCount) || !m.JointCount ||
+                m.JointCount > (m.Profile == 3 ? 256u : 128u))
             {
                 return false;
             }

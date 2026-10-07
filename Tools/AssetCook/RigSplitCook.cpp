@@ -1,10 +1,12 @@
 ﻿#include "RigSplitCook.h"
+#include "Animation/RigRootFrame.h"
 #include "MeshMaterialV1Plan.h"
 #include "AssetCookOutput.h"
 #include "GeometryInspection.h"
 #include "Resource/SkeletalImportPolicy.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include <algorithm>
+#include <bit>
 #include <cstdio>
 namespace NorvesLib::Tools::AssetCook
 {
@@ -92,11 +94,16 @@ namespace NorvesLib::Tools::AssetCook
             StringField(json, "entry_name", r.EntryName);
             StringField(json, "entry_type", r.EntryTypeText);
             StringField(json, "cooked_hash", r.CookedHashHex);
-            Numeric(json, "cooked_version", 1);
+            Numeric(json, "cooked_version", r.CookedVersion);
+            if (!r.bHasRigSplitMetadata)
+            {
+                json.push_back('}');
+                return;
+            }
             json += " ,\"metadata\":{";
             const auto& m = r.RigSplitMetadata;
             StringField(json, "skeleton_id", A::FormatAssetHashHex(m.SkeletonId), true);
-            Numeric(json, "profile", 1);
+            Numeric(json, "profile", r.RigSplitMetadata.Profile);
             Numeric(json, "joint_count", m.JointCount);
             if (m.Role == 2)
             {
@@ -194,6 +201,27 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
     } // namespace
+    bool SerializeRigSplitManifest(C::Span<const A::AssetCookedReference> references, Text& out, Text& error)
+    {
+        Text candidate = "{\"version\":1,\"assets\":[";
+        for (size_t i = 0; i < references.size(); ++i)
+        {
+            if (i)
+            {
+                candidate.push_back(',');
+            }
+            ManifestEntry(candidate, references[i]);
+        }
+        candidate += "]}";
+        A::AssetManifest verify;
+        if (!verify.LoadFromJsonText(C::String(candidate.c_str())))
+        {
+            error = verify.GetParseError();
+            return false;
+        }
+        out = std::move(candidate);
+        return true;
+    }
     bool CookRigSplitV1NativePath(C::Span<const uint8_t> source, const RigSplitCookRequest& request,
                                   RigSplitCookResult& out, S::RigV1Report& report, Text& error)
     {
@@ -219,7 +247,8 @@ namespace NorvesLib::Tools::AssetCook
                 error = why;
                 return false;
             };
-            if (!source.data() || source.empty() || !S::IsValidRigV1Limits(request.Limits) ||
+            if (!source.data() || source.empty() || !S::IsSupportedRigImportProfile(request.Profile) ||
+                !S::IsValidRigProfileLimits(request.Profile, request.Limits) ||
                 source.size() > request.Limits.MaxSourceBytes || !IsValidRigSplitImageLimits(request.ImageLimits) ||
                 !S::IsValidSkeletalGltfDecodeOptions(request.DecodeOptions) ||
                 !S::IsSplitLogicalPath(request.SkeletonPath) || !S::IsSplitLogicalPath(request.MeshPath) ||
@@ -243,10 +272,34 @@ namespace NorvesLib::Tools::AssetCook
             S::RigAuthoringCpu rig;
             S::RigGltfImportCapture capture;
             // absent設定もnon-nullで渡し、decoderからsidecarを読み直させない。
-            if (!S::DecodeRigAuthoringNativePath(source, request.SourcePath, rig, report, request.Limits,
-                                                 &geometrySettings, &request.DecodeOptions, &capture))
+            if (!S::DecodeRigAuthoringWithProfileNativePath(source, request.SourcePath, request.Profile, rig, report,
+                                                            request.Limits, &geometrySettings, &request.DecodeOptions,
+                                                            &capture))
             {
                 return fail("split_author_import");
+            }
+            auto analysisOptions = request.ClipAnalysis;
+            if (!request.ClipRootJoint.empty())
+            {
+                if (!request.bAnalyzeClips || analysisOptions.RootJoint != UINT32_MAX)
+                {
+                    return fail("split_clip_root_ambiguous");
+                }
+                const auto& topology = rig.GetData()->Topology;
+                bool found = false;
+                for (size_t i = 0; i < topology.Joints.size(); ++i)
+                {
+                    if (topology.Joints[i].Name == request.ClipRootJoint)
+                    {
+                        analysisOptions.RootJoint = topology.CanonicalToSource[i];
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    return fail("split_clip_root_not_found");
+                }
             }
             const auto root = capture.Document.GetRoot();
             const auto materials = root.FindMember("materials");
@@ -315,8 +368,28 @@ namespace NorvesLib::Tools::AssetCook
             C::VariableArray<MeshMaterialV1Plan> plans;
             plans.reserve(keys.size());
             Hash hash;
-            hash.String("NorvesLib.RigSplit.v1");
+            hash.String(request.Profile == S::RigImportProfile::DirectTrs128 ? "NorvesLib.RigSplit.v1"
+                        : request.Profile == S::RigImportProfile::StaticRootFrame128
+                            ? "NorvesLib.RigSplit.StaticRootFrame128.v1"
+                            : "NorvesLib.RigSplit.StaticRootFrame256.v1");
             hash.Number(1);
+            if (request.Profile != S::RigImportProfile::DirectTrs128)
+            {
+                hash.Number(uint32_t(request.Profile));
+            }
+            if (request.bAnalyzeClips)
+            {
+                hash.String("RigClipAnalysis.v1");
+                const auto& a = analysisOptions;
+                hash.Number(uint32_t(a.Loop));
+                hash.Number(a.RootJoint);
+                hash.Number(a.MaximumSamples);
+                for (double value :
+                     {a.LoopThreshold, a.ReferenceLengthMeters, a.SampleRate, a.TimeScale, a.AuthoredFps, a.SourceFps})
+                {
+                    hash.Number(std::bit_cast<uint64_t>(value));
+                }
+            }
             hash.Number(GeometryClosureAlgorithmRevision);
             hash.Data(source);
             hash.Number(capture.Buffers.GetCount());
@@ -401,12 +474,14 @@ namespace NorvesLib::Tools::AssetCook
             S::SkeletonV1 skeleton;
             S::SkinMeshV1 mesh;
             S::ClipBankV1 bank;
-            if (!S::BuildSkeletonV1(rig, skeleton, report, request.Limits) ||
-                !S::BuildSkinMeshV1(rig, skeleton, request.SkeletonPath, slots, mesh, report, request.Limits) ||
-                !S::BuildClipBankV1({&rig, 1}, bank, report, request.Limits) ||
-                !S::WriteSkeletonV1(skeleton, candidate.Skeleton.Payload, report, request.Limits) ||
-                !S::WriteSkinMeshV1(mesh, candidate.Mesh.Payload, report, request.Limits) ||
-                !S::WriteClipBankV1(bank, candidate.Bank.Payload, report, request.Limits))
+            if (!S::BuildSkeletonV1(rig, skeleton, report, request.Limits, request.Profile) ||
+                !S::BuildSkinMeshV1(rig, skeleton, request.SkeletonPath, slots, mesh, report, request.Limits,
+                                    request.Profile) ||
+                !S::BuildClipBankV1({&rig, 1}, bank, report, request.Limits, request.Profile,
+                                    request.bAnalyzeClips ? &analysisOptions : nullptr) ||
+                !S::WriteSkeletonV1(skeleton, candidate.Skeleton.Payload, report, request.Limits, request.Profile) ||
+                !S::WriteSkinMeshV1(mesh, candidate.Mesh.Payload, report, request.Limits, request.Profile) ||
+                !S::WriteClipBankV1(bank, candidate.Bank.Payload, report, request.Limits, request.Profile))
             {
                 return fail("split_role_payload");
             }
@@ -426,7 +501,7 @@ namespace NorvesLib::Tools::AssetCook
                 ref.EntryType = types[i];
                 ref.bHasRigSplitMetadata = true;
                 ref.RigSplitMetadata.Role = uint32_t(i + 1);
-                ref.RigSplitMetadata.Profile = 1;
+                ref.RigSplitMetadata.Profile = uint32_t(request.Profile);
                 ref.RigSplitMetadata.JointCount = uint32_t(skeleton.GetData()->Topology.Joints.size());
                 ref.RigSplitMetadata.SkeletonId = skeleton.GetData()->Topology.SkeletonId;
             }

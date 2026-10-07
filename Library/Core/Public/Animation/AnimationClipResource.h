@@ -4,6 +4,11 @@
 #include "Object/Resource.h"
 #include "Resource/SkeletalGltfData.h"
 
+namespace NorvesLib::Core::Skeletal
+{
+    class RigBoundClipProof;
+    class RigBoundClipAccess;
+} // namespace NorvesLib::Core::Skeletal
 namespace NorvesLib::Core
 {
     class AnimationClipResource : public Resource
@@ -26,6 +31,8 @@ namespace NorvesLib::Core
         const Skeletal::SkeletalAnimationClip& GetClip() const;
 
     private:
-        Skeletal::SkeletalAnimationClip m_Clip;
+      friend class Skeletal::RigBoundClipAccess;
+      Container::TSharedPtr<const Skeletal::RigBoundClipProof> m_BoundRigProof;
+      Skeletal::SkeletalAnimationClip m_Clip;
     };
 } // namespace NorvesLib::Core

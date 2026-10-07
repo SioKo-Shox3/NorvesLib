@@ -9,6 +9,7 @@ namespace NorvesLib::Core::Skeletal
 {
     struct SkeletonV1Data
     {
+        RigImportProfile Profile = RigImportProfile::DirectTrs128;
         RigTopology Topology;
         RigClipSnapshot CurrentRest;
         Container::FixedArray<float, 16> RootTransform{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
@@ -25,12 +26,15 @@ namespace NorvesLib::Core::Skeletal
       private:
         friend class NorvesLib::Core::SkeletonResource;
         Container::TSharedPtr<const SkeletonV1Data> m_Data;
-        friend bool BuildSkeletonV1(const RigAuthoringCpu&, SkeletonV1&, RigV1Report&, const RigV1Limits&);
-        friend bool ParseSkeletonV1(Container::Span<const uint8_t>, SkeletonV1&, RigV1Report&, const RigV1Limits&);
+        friend bool BuildSkeletonV1(const RigAuthoringCpu&, SkeletonV1&, RigV1Report&, const RigV1Limits&,
+                                    RigImportProfile);
+        friend bool ParseSkeletonV1(Container::Span<const uint8_t>, SkeletonV1&, RigV1Report&, const RigV1Limits&,
+                                    RigImportProfile);
     };
-    [[nodiscard]] bool BuildSkeletonV1(const RigAuthoringCpu&, SkeletonV1& out, RigV1Report&, const RigV1Limits& = {});
+    [[nodiscard]] bool BuildSkeletonV1(const RigAuthoringCpu&, SkeletonV1& out, RigV1Report&, const RigV1Limits& = {},
+                                       RigImportProfile = RigImportProfile::DirectTrs128);
     [[nodiscard]] bool WriteSkeletonV1(const SkeletonV1&, Container::VariableArray<uint8_t>& out, RigV1Report&,
-                                       const RigV1Limits& = {});
+                                       const RigV1Limits& = {}, RigImportProfile = RigImportProfile::DirectTrs128);
     [[nodiscard]] bool ParseSkeletonV1(Container::Span<const uint8_t>, SkeletonV1& out, RigV1Report&,
-                                       const RigV1Limits& = {});
+                                       const RigV1Limits& = {}, RigImportProfile = RigImportProfile::DirectTrs128);
 } // namespace NorvesLib::Core::Skeletal

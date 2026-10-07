@@ -1,4 +1,5 @@
 ﻿#include "Animation/AnimationClipResource.h"
+#include "Animation/RigBoundClipProof.h"
 
 #include <utility>
 
@@ -42,13 +43,15 @@ namespace NorvesLib::Core
 
     void AnimationClipResource::Unload()
     {
+        m_BoundRigProof.reset();
         m_Clip = {};
         SetResourceState(ResourceState::Unloaded);
     }
 
     size_t AnimationClipResource::GetMemorySize() const
     {
-        size_t size = sizeof(AnimationClipResource) + m_Clip.Name.size();
+        size_t size =
+            Skeletal::RigBoundClipAccess::MemorySize(*this) + sizeof(AnimationClipResource) + m_Clip.Name.size();
         size += m_Clip.Channels.size() * sizeof(Skeletal::SkeletalAnimationChannel);
         for (const Skeletal::SkeletalAnimationChannel& channel : m_Clip.Channels)
         {
@@ -59,6 +62,7 @@ namespace NorvesLib::Core
 
     void AnimationClipResource::SetClip(Skeletal::SkeletalAnimationClip&& clip)
     {
+        m_BoundRigProof.reset();
         m_Clip = std::move(clip);
     }
 

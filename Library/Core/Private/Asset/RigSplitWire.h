@@ -41,9 +41,10 @@ namespace NorvesLib::Core::Skeletal::SplitWire
     void WriteRest(Bytes&, size_t, const SkeletalRestTransform&);
     SkeletalRestTransform ReadRest(View, size_t);
     // expectedのCode/Recordを入力とし、成功時だけOffset/Size/Countを設定する。
-    RigV1Status ReadEnvelope(View, uint32_t role, Container::Span<Section> expected, const RigV1Limits&);
+    RigV1Status ReadEnvelope(View, uint32_t role, Container::Span<Section> expected, const RigV1Limits&,
+                             RigImportProfile = RigImportProfile::DirectTrs128);
     RigV1Status WriteEnvelope(uint32_t role, uint64_t skeletonId, Container::Span<const OutputSection>, Bytes&,
-                              const RigV1Limits&);
+                              const RigV1Limits&, RigImportProfile = RigImportProfile::DirectTrs128);
     RigV1Status ReadTopology(View, View strings, const Section&, const RigV1Limits&, RigTopology&);
     void WriteTopology(const RigTopology&, Bytes& strings, Bytes& joints);
     uint64_t RootIdentityHash();

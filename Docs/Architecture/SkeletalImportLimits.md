@@ -333,3 +333,7 @@ GetClipCountは格納エントリ数。GetClip(index)は範囲外で空、GetCli
 子資産の内容を新たに検証するのではなく、従来どおりmesh/skeleton/全clipのLoaded/Valid状態で束の成否を決める。
 空配列/null/未load子はFailed。Unloadは全強参照を外す。GetMemorySizeは保持した配列capacityを含め、子資産本体を二重計上しない。
 実ResourceRegistryの複数保持/名前/単数互換/子状態/GC/メモリ計上をMEMBER+CTestへ登録。Windows依存でnative未実行。
+
+## 分離v1の256関節（GR86）
+
+`RigImportProfile::StaticRootFrame256`（wire profile 3）と `RigV1Limits::MaxJoints = 256` を明示した入力だけ、256関節まで受ける。静的親frame・作者rest・AFRM・束縛proofの規則はprofile 2と共通。旧NVSKELとprofile 1/2は128のままで、予算の増加によって上限を迂回できない。頂点ABI・4影響・RHI形式は変えない。

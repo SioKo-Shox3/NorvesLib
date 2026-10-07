@@ -1115,3 +1115,34 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 証拠: 13比較器×normal/-O計26回でreceipt/stdout一致・stderr空。親自身のreadonly再実行exit0/stderr0、1095payload・488source・82原API・6ZIPを確認。summary SHA256 09be5c1c1e3a38b18f6bcc0739f5a5915927fb918acbefc8da5e80d6293442c1、inventory SHA256 a312fbfa6b5092e2c5d55574f2d0435a10b74201c484d5e20b74e262ce4bf1c4。新しいin-memory状態は固定sourceとWindows CHECKの実行証拠であり、独立した全状態dump再実行とは区別する。
 - Notes: native初回成功、source修正・CI再試行なし。外部比較器の旧定数alias漏れと、封印stdoutをinventory内へ置いたことによる初回hash差は、元script/失敗stderrを保持して補正した。原native/API/ZIP/sourceは変更しない。変更26paths/Library18。CPU公開成功をGPU描画やファイル群transactionの成功として扱わない。
 - 残る境界: Armature/非関節親・作者root frame、clip-only、GR86の256、要約/metadataとCLI/file公開、GPU/DCC/実物品質。別bundleのSkeletonResource wrapper/IDは独立で、内容を共有可能にする契約まで。次は128を保つ明示profileで静的Armature親と作者frameの安全検査を接続する。
+
+### GR82 Stage B4の事前契約（2026-10-07 JST）
+
+- In progress: G2-GR82-B4-STATIC-ROOT-FRAME128。B3 code55831fe8/run37564096257の親readonly受入と文書5a64431bを基点とする。旧profile1を残して、静的な非関節親の明示profile2を追加する。
+- 推奨判断: skin.skeleton省略はgraphから一意のroot jointを選び、名前Armatureの特例を作らない。root上の祖先は静的・正一様TRSだけ。current ROOTとclip作者snapshot別のAFRMを所有し、完全frame差はrest overrideでも通さない。frame変更の自動補正/retargetはしない。
+- 束縛: 新profile2ではowner組立で検証済みclipのproofを発行し、SetClip/Unloadで失効させる。直接Sampleも別target/無証明を拒否する。profile1/legacyの手作りclipや旧wireを変更しない。
+- 開始gate: B3の13比較器×2・親replay exit0/stderr0・1095payloadを確認済み。B4は未実装/未検証。clip-onlyと256、要約/CLI、GPU/DCCは別境界として残す。
+
+- 実装候補: 明示profile2の静的非関節祖先とskin.skeleton省略、作者frameの同read所有、Skeleton ROOT/Bank必須AFRM、全snapshot frame照合、既存三資産runtime、失効可能なclip束縛proofを接続した。AFRMは既存7節の意味・添字を保つ末尾必須節とし、既定profile1のbytes/hash/keyを保つ。
+- 検証準備: 独立profile2 oracle11件をnormal/-Oで合格。合成の704/1360/1088byte literalと、非対角G＋実root T/R/Sを含む全joint行列・頂点の独立double期待を固定した。新3membersをRelease74/直接Debugへ追加し、runtimeは2schedulerの子processで検証する。旧profile1 oracle/owner source、YAML/BOM/CRLF/行末/whitespaceを確認。新C++ nativeは未実行でCI待ち。
+- 追加観測: 未アニメjointを含むprofile2専用oracle、非直角の任意回転、node配列自体の交換、AFRM専用のguard/allocation probe、微小frame差、Unload単独、profile2で既存成功poolを保持する失敗と追加の累積予算ケースは残す。一般RSS/全allocator OOM・GPU/DCC/Game実行をこの候補の成功としない。
+
+### GR82 メッシュ非依存のクリップ入力（2026-10-07）
+
+- メッシュ/IBMなしのskin付きglTFと、作者側joint nodeを明示したskinなしglTFからClipBankを作る入口を接続。restはsource nodeからのみ取得し、既存のframe/rest束縛検査へ渡す。一様scaleを許可し、形状のないfitは拒否。既定のmesh付き入口は不変。
+- 既存CookedClipBankV1Testに作者rest、skin有無・joint順でのwire一致、不正選択、非indexed mesh、scale/fitのケースを追加。fixture JSON変換・差分の行末/whitespace確認済み。C++実行は未検証。変更単位のCIは実施しない。
+
+### GR86 分離v1の256関節（2026-10-07）
+
+- 明示profile 3のdecode/cook、3資産のwire・manifest・束縛・CPU評価へ256関節を接続。旧形式とprofile 1/2の128制限は保持。
+- 既存テストへ129/256関節のcook→3資産parse→束縛→CPU姿勢、clip抽出、旧profile拒否、257拒否を追加。合成入力の構造・buffer範囲と差分衛生を確認。C++実行は未検証、CI未実行。
+
+### GR82 クリップ解析と保存（2026-10-07）
+
+- 端点のloop候補、根の平面移動・平均速度・累積yaw、明示fps/timeScale補正を実装。作者rest/階層/ROOTを使い、任意ANLY節へ保存。既定の解析なしwire/hashは保持。cook要求から明示選択できる。
+- 既存テストに周期・直進2m/s・90度旋回・時刻補正・ANLY往復と不正値拒否を追加。source確認とyaw式の数値確認、差分衛生まで。C++実行は未検証、CI未実行。
+
+### GR82 分離rigのファイルCLI（2026-10-07）
+
+- `--rig-split` からprofile 3/256・解析・名前指定root・材質textureを含むcookを接続。native Unicode入力/出力、実package/manifestのbytes照合と3資産のparse/束縛、新規directoryのno-replace公開を実装。既存出力を上書きしない。
+- 既存RigSplitCookTestにファイル公開・既存出力保持・root名拒否・texture同梱を追加。親segment/末尾separator/非ASCII親directoryのケースを含む。実CLI用の小さいsmokeも用意したが未実行。追加C++の実行確認は未検証で、毎変更CIは行わない。

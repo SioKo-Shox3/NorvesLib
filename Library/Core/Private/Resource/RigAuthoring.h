@@ -9,6 +9,7 @@ namespace NorvesLib::Core::AssetImport
 namespace NorvesLib::Core::Skeletal
 {
     struct RigGltfImportCapture;
+    struct RigClipSourceSelection;
     struct RigAuthoringData
     {
         SkeletalGltfData Geometry;
@@ -17,6 +18,8 @@ namespace NorvesLib::Core::Skeletal
         RigTopology Topology;
         Container::AnsiString SourceLabel;
         double ResolvedImportScale = 1;
+        RigImportProfile Profile = RigImportProfile::DirectTrs128;
+        RigRootFrame RootFrame = IdentityRigRootFrame();
     };
     class RigAuthoringCpu
     {
@@ -28,11 +31,22 @@ namespace NorvesLib::Core::Skeletal
 
       private:
         Container::TSharedPtr<const RigAuthoringData> m_Data;
+        friend bool DecodeRigAuthoringWithProfileNativePath(Container::Span<const uint8_t>,
+                                                            const std::filesystem::path&, RigImportProfile,
+                                                            RigAuthoringCpu&, RigV1Report&, const RigV1Limits&,
+                                                            const AssetImport::LoadedImportSettings*,
+                                                            const SkeletalGltfDecodeOptions*, RigGltfImportCapture*,
+                                                            const RigClipSourceSelection*);
         friend bool DecodeRigAuthoringNativePath(Container::Span<const uint8_t>, const std::filesystem::path&,
                                                  RigAuthoringCpu&, RigV1Report&, const RigV1Limits&,
                                                  const AssetImport::LoadedImportSettings*,
                                                  const SkeletalGltfDecodeOptions*, RigGltfImportCapture*);
     };
+    [[nodiscard]] bool DecodeRigAuthoringWithProfileNativePath(
+        Container::Span<const uint8_t> source, const std::filesystem::path& path, RigImportProfile profile,
+        RigAuthoringCpu& out, RigV1Report& report, const RigV1Limits& limits = {},
+        const AssetImport::LoadedImportSettings* settings = nullptr, const SkeletalGltfDecodeOptions* options = nullptr,
+        RigGltfImportCapture* capture = nullptr, const RigClipSourceSelection* clipSource = nullptr);
     // 成功時だけoutを置換する。原source/設定は呼出中不変。外部file全体のatomic snapshotではない。
     [[nodiscard]] bool DecodeRigAuthoringNativePath(Container::Span<const uint8_t> source,
                                                     const std::filesystem::path& path, RigAuthoringCpu& out,

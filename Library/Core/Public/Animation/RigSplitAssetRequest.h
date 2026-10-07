@@ -13,6 +13,7 @@ namespace NorvesLib::Core::Skeletal
         RigV1Limits Limits;
         uint64_t MaxPackageBytes = 68ull * 1024 * 1024;
         uint64_t MaxTotalPackageBytes = 256ull * 1024 * 1024;
+        RigImportProfile Profile = RigImportProfile::DirectTrs128;
     };
 } // namespace NorvesLib::Core::Skeletal
 namespace NorvesLib::Core::ResourceIO

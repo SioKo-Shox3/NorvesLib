@@ -67,6 +67,9 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SkeletalSplitAssetLoaderTest SkeletalSplitAssetLoaderTest.cpp
     MEMBER SkeletalSplitPublicationTest SkeletalSplitPublicationTest.cpp
     MEMBER SkeletalSplitRuntimeTest SkeletalSplitRuntimeTest.cpp
+    MEMBER RigStaticRootFrameImportTest RigStaticRootFrameImportTest.cpp
+    MEMBER RigStaticRootFrameWireTest RigStaticRootFrameWireTest.cpp
+    MEMBER RigStaticRootFrameRuntimeTest RigStaticRootFrameRuntimeTest.cpp
     MEMBER SkeletalClipBankBindingTest SkeletalClipBankBindingTest.cpp
     MEMBER BvhEvaluateTest BvhEvaluateTest.cpp
     MEMBER BvhDecodeTest BvhDecodeTest.cpp
@@ -333,3 +336,9 @@ add_test(NAME SkeletalSplitAssetLoaderTest COMMAND CookedMeshTest --test=Skeleta
 
 add_test(NAME SkeletalSplitPublicationTest COMMAND CookedMeshTest --test=SkeletalSplitPublicationTest)
 add_test(NAME SkeletalSplitRuntimeTest COMMAND CookedMeshTest --test=SkeletalSplitRuntimeTest)
+
+add_test(NAME RigStaticRootFrameImportTest COMMAND CookedMeshTest --test=RigStaticRootFrameImportTest)
+
+add_test(NAME RigStaticRootFrameWireTest COMMAND CookedMeshTest --test=RigStaticRootFrameWireTest)
+
+add_test(NAME RigStaticRootFrameRuntimeTest COMMAND CookedMeshTest --test=RigStaticRootFrameRuntimeTest)

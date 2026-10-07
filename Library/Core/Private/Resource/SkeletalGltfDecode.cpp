@@ -2,6 +2,7 @@
 #include "Resource/RigGltfImportCapture.h"
 #include "Asset/RigSplitAllocationTestAccess.h"
 #include "Animation/RigV1Types.h"
+#include "Animation/RigRootFrame.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include "Resource/GltfNativePath.h"
 #include "Resource/SkeletalLimits.h"
@@ -79,6 +80,8 @@ namespace NorvesLib::Core::Skeletal
         struct NodeContract
         {
             Container::VariableArray<int32_t> Parents;
+            Container::VariableArray<MatrixValues> Globals;
+            Container::VariableArray<uint8_t> Reachable;
             MatrixValues MeshNodeGlobal{
                 1.0f, 0.0f, 0.0f, 0.0f,
                 0.0f, 1.0f, 0.0f, 0.0f,
@@ -417,7 +420,8 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
-        bool ParseNodeContract(const JsonValue& root, NodeContract& outContract)
+        bool ParseNodeContract(const JsonValue& root, NodeContract& outContract, bool bRetainFrames = false,
+                               bool bClipOnly = false)
         {
             const JsonValue nodes = root.FindMember("nodes");
             const JsonValue scenes = root.FindMember("scenes");
@@ -486,6 +490,13 @@ namespace NorvesLib::Core::Skeletal
                 }
             }
 
+            if (bClipOnly)
+            {
+                // clipはmesh-node変換/IBMに依存しない。作者frameだけを同じsceneから得る。
+                outContract.Globals = std::move(globals);
+                outContract.Reachable = std::move(reachable);
+                return true;
+            }
             size_t bindingCount = 0;
             for (size_t nodeIndex = 0; nodeIndex < nodeCount; ++nodeIndex)
             {
@@ -512,6 +523,11 @@ namespace NorvesLib::Core::Skeletal
                 return false;
             }
             outContract.MeshNodeGlobal = globals[outContract.MeshNodeIndex];
+            if (bRetainFrames)
+            {
+                outContract.Globals = std::move(globals);
+                outContract.Reachable = std::move(reachable);
+            }
             return IsInvertibleMatrix(outContract.MeshNodeGlobal);
         }
 
@@ -1081,7 +1097,8 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
-        bool ParseSkinContract(const JsonValue& root, JsonValue& outSkin, SkeletalGltfDecodeStatus& outStatus)
+        bool ParseSkinContract(const JsonValue& root, JsonValue& outSkin, SkeletalGltfDecodeStatus& outStatus,
+                               uint32_t maximumJoints = LegacyMaximumJointCount)
         {
             const JsonValue skins = root.FindMember("skins");
             if (!skins.IsArray() || skins.GetArraySize() != 1)
@@ -1096,7 +1113,7 @@ namespace NorvesLib::Core::Skeletal
                 outStatus = SkeletalGltfDecodeStatus::InvalidSkeleton;
                 return false;
             }
-            if (joints.GetArraySize() > LegacyMaximumJointCount)
+            if (joints.GetArraySize() > maximumJoints)
             {
                 outStatus = SkeletalGltfDecodeStatus::JointLimitExceeded;
                 return false;
@@ -1431,20 +1448,166 @@ namespace NorvesLib::Core::Skeletal
             return indexComponentSize != 0;
         }
 
-        bool ExtractSkeleton(const JsonValue& root,
-                             const JsonValue& skin,
-                             const NodeContract& nodeContract,
+        // joint間をつなぐ非jointは許さず、唯一rootの上だけ静的similarityを保持する。
+        bool ExtractStaticRootFrame(const JsonValue& root, const JsonValue& skin, const NodeContract& contract,
+                                    const Container::VariableArray<int32_t>& nodeToJoint, SkeletalGltfData& data,
+                                    RigRootFrame& outFrame)
+        {
+            const auto nodes = root.FindMember("nodes");
+            const size_t count = nodes.GetArraySize();
+            if (contract.Globals.size() != count || contract.Reachable.size() != count)
+            {
+                return false;
+            }
+            uint32_t rootNode = InvalidIndex;
+            size_t roots = 0;
+            for (size_t i = 0; i < count; ++i)
+            {
+                if (nodeToJoint[i] < 0)
+                {
+                    continue;
+                }
+                if (!contract.Reachable[i])
+                {
+                    return false;
+                }
+                const auto parent = contract.Parents[i];
+                const auto parentJoint = parent < 0 ? -1 : nodeToJoint[size_t(parent)];
+                data.Joints[size_t(nodeToJoint[i])].ParentIndex = parentJoint;
+                if (parentJoint < 0)
+                {
+                    ++roots;
+                    rootNode = uint32_t(i);
+                }
+            }
+            if (roots != 1 || rootNode == InvalidIndex)
+            {
+                return false;
+            }
+            const auto rootJoint = nodeToJoint[rootNode];
+            for (size_t i = 0; i < data.Joints.size(); ++i)
+            {
+                int32_t ancestor = int32_t(i);
+                size_t depth = 0;
+                while (ancestor != rootJoint)
+                {
+                    if (ancestor < 0 || depth++ >= data.Joints.size())
+                    {
+                        return false;
+                    }
+                    ancestor = data.Joints[size_t(ancestor)].ParentIndex;
+                }
+            }
+            if (skin.HasMember("skeleton"))
+            {
+                uint32_t hint = InvalidIndex;
+                if (!TryReadRequiredUInt32(skin, "skeleton", hint) || hint >= count)
+                {
+                    return false;
+                }
+                int32_t current = int32_t(rootNode);
+                size_t depth = 0;
+                while (current >= 0 && uint32_t(current) != hint && depth++ < count)
+                {
+                    current = contract.Parents[size_t(current)];
+                }
+                if (current < 0 || uint32_t(current) != hint)
+                {
+                    return false;
+                }
+            }
+            Container::VariableArray<uint8_t> ancestors(count, 0);
+            int32_t parent = contract.Parents[rootNode];
+            size_t depth = 0;
+            while (parent >= 0)
+            {
+                const size_t i = size_t(parent);
+                if (i >= count || depth++ >= count || nodeToJoint[i] >= 0 || !contract.Reachable[i])
+                {
+                    return false;
+                }
+                ancestors[i] = 1;
+                const auto node = nodes.GetArrayElement(i);
+                if (node.HasMember("matrix"))
+                {
+                    return false;
+                }
+                float t[3]{0, 0, 0}, q[4]{0, 0, 0, 1}, scale[3]{1, 1, 1};
+                if ((node.HasMember("translation") && !ReadFloatArray(node.FindMember("translation"), 3, t)) ||
+                    (node.HasMember("rotation") && !ReadFloatArray(node.FindMember("rotation"), 4, q)) ||
+                    (node.HasMember("scale") && !ReadFloatArray(node.FindMember("scale"), 3, scale)))
+                {
+                    return false;
+                }
+                const SkeletalRestTransform transform{
+                    {t[0], t[1], t[2]}, {q[0], q[1], q[2], q[3]}, {scale[0], scale[1], scale[2]}};
+                if (!IsValidSkeletalRestTransform(transform) || scale[0] != scale[1] || scale[0] != scale[2])
+                {
+                    return false;
+                }
+                parent = contract.Parents[i];
+            }
+            const auto animations = root.FindMember("animations");
+            for (size_t a = 0; a < animations.GetArraySize(); ++a)
+            {
+                const auto channels = animations.GetArrayElement(a).FindMember("channels");
+                if (!channels.IsArray())
+                {
+                    return false;
+                }
+                for (size_t c = 0; c < channels.GetArraySize(); ++c)
+                {
+                    uint32_t target = InvalidIndex;
+                    if (!TryReadRequiredUInt32(channels.GetArrayElement(c).FindMember("target"), "node", target) ||
+                        target >= count || ancestors[target])
+                    {
+                        return false;
+                    }
+                }
+            }
+            const int32_t rootParent = contract.Parents[rootNode];
+            auto frame = rootParent < 0 ? IdentityRigRootFrame() : contract.Globals[size_t(rootParent)];
+            CanonicalizeRigRootFrameZero(frame);
+            if (!IsValidRigRootFrame(frame, RigImportProfile::StaticRootFrame128))
+            {
+                return false;
+            }
+            outFrame = frame;
+            return true;
+        }
+
+        bool ExtractSkeleton(const JsonValue& root, const JsonValue& skin, const NodeContract& nodeContract,
                              const Container::VariableArray<AccessorInfo>& accessors,
                              const Container::VariableArray<BufferViewInfo>& bufferViews,
-                             const Gltf::BufferSet& buffers,
-                             SkeletalGltfData& outData,
-                             Container::VariableArray<int32_t>& outNodeToJoint)
+                             const Gltf::BufferSet& buffers, SkeletalGltfData& outData,
+                             Container::VariableArray<int32_t>& outNodeToJoint,
+                             RigImportProfile profile = RigImportProfile::DirectTrs128,
+                             RigRootFrame* outFrame = nullptr, Container::Span<const uint32_t> clipJoints = {})
         {
             const JsonValue nodes = root.FindMember("nodes");
             const JsonValue jointValues = skin.FindMember("joints");
             if (!nodes.IsArray())
             {
                 return false;
+            }
+
+            if (!clipJoints.empty())
+            {
+                // clip専用ではIBMを作らない。名前・親子関係・作者restだけを保持する。
+                outNodeToJoint.assign(nodes.GetArraySize(), -1);
+                outData.Joints.resize(clipJoints.size());
+                for (size_t i = 0; i < clipJoints.size(); ++i)
+                {
+                    const uint32_t node = clipJoints[i];
+                    if (node >= nodes.GetArraySize() || outNodeToJoint[node] >= 0)
+                    {
+                        return false;
+                    }
+                    outNodeToJoint[node] = static_cast<int32_t>(i);
+                    outData.Joints[i].Name = nodes.GetArrayElement(node).FindMember("name").AsString();
+                }
+                return IsStaticRootFrameProfile(profile) && outFrame &&
+                       ExtractStaticRootFrame(root, skin, nodeContract, outNodeToJoint, outData, *outFrame);
             }
 
             uint32_t inverseBindAccessorIndex = InvalidIndex;
@@ -1481,6 +1644,10 @@ namespace NorvesLib::Core::Skeletal
                 }
             }
 
+            if (IsStaticRootFrameProfile(profile))
+            {
+                return outFrame && ExtractStaticRootFrame(root, skin, nodeContract, outNodeToJoint, outData, *outFrame);
+            }
             uint32_t skeletonNodeIndex = InvalidIndex;
             if (!TryReadRequiredUInt32(skin, "skeleton", skeletonNodeIndex) ||
                 skeletonNodeIndex >= nodes.GetArraySize() || outNodeToJoint[skeletonNodeIndex] < 0)
@@ -2069,10 +2236,12 @@ namespace NorvesLib::Core::Skeletal
 
     namespace
     {
-        bool ResolveSkeletalImportScale(const SkeletalGltfData& data, const AssetImport::ImportSettings& settings, double& outScale)
+        bool ResolveSkeletalImportScale(const SkeletalGltfData& data, const AssetImport::ImportSettings& settings,
+                                        double& outScale, bool bClipOnly = false)
         {
             using namespace AssetImport;
-            if (!SupportsSkeletalScaleImport(settings) || data.Vertices.empty())
+            if (!SupportsSkeletalScaleImport(settings) ||
+                (data.Vertices.empty() && (!bClipOnly || settings.Fit != FitAxis::None)))
             {
                 return false;
             }
@@ -2171,7 +2340,7 @@ namespace NorvesLib::Core::Skeletal
 
         // 新v1だけの割当前budget。legacyの受理・拒否とreader既定は変更しない。
         bool CheckRigInputBudget(const JsonValue& root, const RigV1Limits& limits, uint64_t& reservedBufferBytes,
-                                 SkeletalGltfDecodeStatus& status)
+                                 SkeletalGltfDecodeStatus& status, bool bClipOnly = false)
         {
             status = SkeletalGltfDecodeStatus::InvalidDocument;
             const auto exceed = [&]()
@@ -2270,7 +2439,7 @@ namespace NorvesLib::Core::Skeletal
             }
             uint64_t vertices = 0, indices = 0;
             const auto meshes = root.FindMember("meshes");
-            for (size_t i = 0; i < meshes.GetArraySize(); ++i)
+            for (size_t i = 0; !bClipOnly && i < meshes.GetArraySize(); ++i)
             {
                 const auto primitives = meshes.GetArrayElement(i).FindMember("primitives");
                 if (primitives.GetArraySize() > MaximumSubmeshCount)
@@ -2474,7 +2643,9 @@ namespace NorvesLib::Core::Skeletal
             Gltf::BufferSet* outSourceBuffers, const AssetImport::LoadedImportSettings* importSettings,
             const SkeletalGltfDecodeOptions* decodeOptions, bool allowMultipleClips, bool bAllowEmptyClips = false,
             Container::VariableArray<SkeletalRestTransform>* outRest = nullptr, double* outResolvedScale = nullptr,
-            const RigV1Limits* rigLimits = nullptr, RigGltfImportCapture* capture = nullptr)
+            const RigV1Limits* rigLimits = nullptr, RigGltfImportCapture* capture = nullptr,
+            RigImportProfile profile = RigImportProfile::DirectTrs128, RigRootFrame* outRootFrame = nullptr,
+            const RigClipSourceSelection* clipSource = nullptr)
         {
             if (!Gltf::IsValidNativeSourcePath(sourcePath))
             {
@@ -2489,11 +2660,12 @@ namespace NorvesLib::Core::Skeletal
 
             uint64_t reservedBufferBytes = 0;
             SkeletalGltfDecodeStatus budgetStatus = SkeletalGltfDecodeStatus::InvalidDocument;
-            if (rigLimits && !CheckRigInputBudget(root, *rigLimits, reservedBufferBytes, budgetStatus))
+            if (rigLimits &&
+                !CheckRigInputBudget(root, *rigLimits, reservedBufferBytes, budgetStatus, clipSource != nullptr))
             {
                 return Fail(budgetStatus);
             }
-            if (capture && rigLimits && !CheckSplitMaterialBudget(root, *rigLimits, budgetStatus))
+            if (!clipSource && capture && rigLimits && !CheckSplitMaterialBudget(root, *rigLimits, budgetStatus))
             {
                 return Fail(budgetStatus);
             }
@@ -2504,7 +2676,7 @@ namespace NorvesLib::Core::Skeletal
                 return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
             }
 
-            if (options.MorphPolicy == SkeletalMorphPolicy::Reject && Gltf::HasMorphData(root))
+            if ((clipSource || options.MorphPolicy == SkeletalMorphPolicy::Reject) && Gltf::HasMorphData(root))
             {
                 return Fail(SkeletalGltfDecodeStatus::UnsupportedMorphTargets);
             }
@@ -2525,16 +2697,42 @@ namespace NorvesLib::Core::Skeletal
             Container::VariableArray<SkeletalMaterialSlot> materialSlots;
             SkeletalGltfDecodeStatus status = SkeletalGltfDecodeStatus::InvalidDocument;
             Container::VariableArray<uint64_t> materialSources;
-            if (!ParsePrimitives(root, primitives, materialSlots, status, options, capture ? &materialSources : nullptr,
-                                 capture ? rigLimits : nullptr))
+            if (!clipSource && !ParsePrimitives(root, primitives, materialSlots, status, options,
+                                                capture ? &materialSources : nullptr, capture ? rigLimits : nullptr))
             {
                 return Fail(status);
             }
 
             JsonValue skin;
-            if (!ParseSkinContract(root, skin, status))
+            Container::VariableArray<uint32_t> clipJoints;
+            if (clipSource && !clipSource->JointNodes.empty())
             {
-                return Fail(status);
+                // skinと明示選択を混ぜない。曖昧な骨格選択はcook段階で拒否する。
+                if (root.HasMember("skins") || !clipSource->JointNodes.data() ||
+                    clipSource->JointNodes.size() > rigLimits->MaxJoints)
+                {
+                    return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
+                }
+                clipJoints.assign(clipSource->JointNodes.begin(), clipSource->JointNodes.end());
+            }
+            else
+            {
+                if (!ParseSkinContract(root, skin, status, RigProfileMaximumJoints(profile)))
+                {
+                    return Fail(status);
+                }
+                if (clipSource)
+                {
+                    const auto joints = skin.FindMember("joints");
+                    clipJoints.resize(joints.GetArraySize());
+                    for (size_t i = 0; i < clipJoints.size(); ++i)
+                    {
+                        if (!TryReadUInt32(joints.GetArrayElement(i), clipJoints[i]))
+                        {
+                            return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
+                        }
+                    }
+                }
             }
 
             const JsonValue animations = root.FindMember("animations");
@@ -2614,12 +2812,12 @@ namespace NorvesLib::Core::Skeletal
             data.MaterialSlots = std::move(materialSlots);
             Container::VariableArray<int32_t> nodeToJoint;
             NodeContract nodeContract;
-            if (!ParseNodeContract(root, nodeContract))
+            if (!ParseNodeContract(root, nodeContract, IsStaticRootFrameProfile(profile), clipSource != nullptr))
             {
                 return Fail(SkeletalGltfDecodeStatus::InvalidSkeleton);
             }
             data.MeshNodeGlobalTransform = nodeContract.MeshNodeGlobal;
-            const size_t skinJointCount = skin.FindMember("joints").GetArraySize();
+            const size_t skinJointCount = clipSource ? clipJoints.size() : skin.FindMember("joints").GetArraySize();
             SkeletalGltfDecodeReport report;
             uint64_t totalVertices = 0;
             for (auto& primitive : primitives)
@@ -2654,7 +2852,9 @@ namespace NorvesLib::Core::Skeletal
                 }
                 data.SubMeshes.push_back({static_cast<uint32_t>(baseIndex), static_cast<uint32_t>(data.Indices.size() - baseIndex), primitive.MaterialSlot});
             }
-            if (!ResolveSkeletalSubmeshLayout({data.SubMeshes.data(), data.SubMeshes.size()}, data.Indices.size(), data.MaterialSlots.size()).Succeeded())
+            if (!clipSource && !ResolveSkeletalSubmeshLayout({data.SubMeshes.data(), data.SubMeshes.size()},
+                                                             data.Indices.size(), data.MaterialSlots.size())
+                                    .Succeeded())
             {
                 auto failure = Fail(SkeletalGltfDecodeStatus::InvalidSubMesh);
                 failure.Report = report;
@@ -2676,11 +2876,13 @@ namespace NorvesLib::Core::Skeletal
                     }
                 }
             }
-            if (!ExtractSkeleton(root, skin, nodeContract, accessors, bufferViews, buffers, data, nodeToJoint))
+            RigRootFrame rootFrame = IdentityRigRootFrame();
+            if (!ExtractSkeleton(root, skin, nodeContract, accessors, bufferViews, buffers, data, nodeToJoint, profile,
+                                 &rootFrame, {clipJoints.data(), clipJoints.size()}))
             {
                 return failWithReport(SkeletalGltfDecodeStatus::InvalidSkeleton);
             }
-            if (options.MorphPolicy == SkeletalMorphPolicy::Drop)
+            if (!clipSource && options.MorphPolicy == SkeletalMorphPolicy::Drop)
             {
                 // 全clipの検査完了まで除去数は未確定。失敗時に途中の数を完了済み扱いしない。
                 auto morphReport = report;
@@ -2704,7 +2906,8 @@ namespace NorvesLib::Core::Skeletal
             }
             const bool bBake = options.CubicSplinePolicy == SkeletalCubicSplinePolicy::Bake;
             double translationScale = 1;
-            if (bBake && selectedImport->bPresent && !ResolveSkeletalImportScale(data, selectedImport->Settings, translationScale))
+            if (bBake && selectedImport->bPresent &&
+                !ResolveSkeletalImportScale(data, selectedImport->Settings, translationScale, clipSource != nullptr))
             {
                 return failWithReport(SkeletalGltfDecodeStatus::InvalidDocument);
             }
@@ -2730,7 +2933,8 @@ namespace NorvesLib::Core::Skeletal
 
             if (selectedImport->bPresent)
             {
-                if ((!bBake && !ResolveSkeletalImportScale(data, selectedImport->Settings, translationScale)) ||
+                if ((!bBake && !ResolveSkeletalImportScale(data, selectedImport->Settings, translationScale,
+                                                           clipSource != nullptr)) ||
                     !ApplyResolvedSkeletalImport(data, translationScale, !bBake))
                 {
                     return failWithReport(SkeletalGltfDecodeStatus::InvalidDocument);
@@ -2746,7 +2950,12 @@ namespace NorvesLib::Core::Skeletal
                 for (size_t i = 0; i < data.Joints.size(); ++i)
                 {
                     uint32_t nodeIndex = InvalidIndex;
-                    if (!TryReadUInt32(jointValues.GetArrayElement(i), nodeIndex) || nodeIndex >= nodes.GetArraySize())
+                    if (clipSource)
+                    {
+                        nodeIndex = clipJoints[i];
+                    }
+                    if ((!clipSource && !TryReadUInt32(jointValues.GetArrayElement(i), nodeIndex)) ||
+                        nodeIndex >= nodes.GetArraySize())
                     {
                         return failWithReport(SkeletalGltfDecodeStatus::UnsupportedAuthorRest);
                     }
@@ -2776,6 +2985,21 @@ namespace NorvesLib::Core::Skeletal
                     restCandidate.push_back(rest);
                 }
             }
+            if (outRootFrame)
+            {
+                for (size_t i = 12; i < 15; ++i)
+                {
+                    if (!AssetImport::TryScaleImportValue(rootFrame[i], translationScale, rootFrame[i]))
+                    {
+                        return failWithReport(SkeletalGltfDecodeStatus::UnsupportedAuthorRest);
+                    }
+                }
+                CanonicalizeRigRootFrameZero(rootFrame);
+                if (!IsValidRigRootFrame(rootFrame, profile))
+                {
+                    return failWithReport(SkeletalGltfDecodeStatus::UnsupportedAuthorRest);
+                }
+            }
             SkeletalGltfDecodeResult result;
             result.Status = SkeletalGltfDecodeStatus::Success;
             result.Data = std::move(data);
@@ -2787,6 +3011,10 @@ namespace NorvesLib::Core::Skeletal
             if (outResolvedScale)
             {
                 *outResolvedScale = translationScale;
+            }
+            if (outRootFrame)
+            {
+                *outRootFrame = rootFrame;
             }
             if (capture)
             {
@@ -2807,7 +3035,9 @@ namespace NorvesLib::Core::Skeletal
         Gltf::BufferSet* outSourceBuffers, const AssetImport::LoadedImportSettings* importSettings,
         const SkeletalGltfDecodeOptions* decodeOptions, bool allowMultipleClips, bool bAllowEmptyClips = false,
         Container::VariableArray<SkeletalRestTransform>* outRest = nullptr, double* outResolvedScale = nullptr,
-        const RigV1Limits* rigLimits = nullptr, RigGltfImportCapture* capture = nullptr)
+        const RigV1Limits* rigLimits = nullptr, RigGltfImportCapture* capture = nullptr,
+        RigImportProfile profile = RigImportProfile::DirectTrs128, RigRootFrame* outRootFrame = nullptr,
+        const RigClipSourceSelection* clipSource = nullptr)
     {
         if (outSourceBuffers != nullptr)
         {
@@ -2817,7 +3047,13 @@ namespace NorvesLib::Core::Skeletal
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidDocument);
         }
-        if (rigLimits && (!IsValidRigV1Limits(*rigLimits) || sourceBytes.size() > rigLimits->MaxSourceBytes))
+        if (!IsSupportedRigImportProfile(profile) || (clipSource && !IsStaticRootFrameProfile(profile)) ||
+            (IsStaticRootFrameProfile(profile) && (!rigLimits || !outRest || !outRootFrame)))
+        {
+            return Fail(SkeletalGltfDecodeStatus::UnsupportedAuthorRest);
+        }
+        if (rigLimits &&
+            (!IsValidRigProfileLimits(profile, *rigLimits) || sourceBytes.size() > rigLimits->MaxSourceBytes))
         {
             return Fail(SkeletalGltfDecodeStatus::ImportLimitExceeded);
         }
@@ -2838,9 +3074,10 @@ namespace NorvesLib::Core::Skeletal
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidJson);
         }
-        auto result = DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers,
-                                             importSettings, decodeOptions, allowMultipleClips, bAllowEmptyClips,
-                                             outRest, outResolvedScale, rigLimits, capture);
+        auto result =
+            DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers, importSettings,
+                                   decodeOptions, allowMultipleClips, bAllowEmptyClips, outRest, outResolvedScale,
+                                   rigLimits, capture, profile, outRootFrame, clipSource);
         if (result.Succeeded() && capture)
         {
             capture->SourceContainer = container;
@@ -2914,6 +3151,31 @@ namespace NorvesLib::Core::Skeletal
             outCapture = std::move(capture);
             outRest = std::move(rest);
             outResolvedScale = scale;
+        }
+        return result;
+    }
+
+    SkeletalGltfDecodeResult DecodeRigAuthorFrameGltfNativePath(
+        Container::Span<const uint8_t> source, const std::filesystem::path& path, RigImportProfile profile,
+        Container::VariableArray<SkeletalRestTransform>& outRest, double& outScale, RigRootFrame& outFrame,
+        RigGltfImportCapture* outCapture, const RigV1Limits& limits, const AssetImport::LoadedImportSettings* settings,
+        const SkeletalGltfDecodeOptions* options, const RigClipSourceSelection* clipSource)
+    {
+        RigGltfImportCapture capture;
+        Container::VariableArray<SkeletalRestTransform> rest;
+        double scale = 1;
+        RigRootFrame frame = IdentityRigRootFrame();
+        auto result = DecodeGltfBytes(source, path, nullptr, settings, options, true, clipSource == nullptr, &rest,
+                                      &scale, &limits, outCapture ? &capture : nullptr, profile, &frame, clipSource);
+        if (result.Succeeded())
+        {
+            if (outCapture)
+            {
+                *outCapture = std::move(capture);
+            }
+            outRest = std::move(rest);
+            outScale = scale;
+            outFrame = frame;
         }
         return result;
     }

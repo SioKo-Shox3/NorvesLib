@@ -20,6 +20,7 @@ namespace NorvesLib::Core::Skeletal
     };
     struct SkinMeshV1Data
     {
+        RigImportProfile Profile = RigImportProfile::DirectTrs128;
         RigTopology Topology;
         Container::AnsiString SkeletonPath;
         uint64_t SkeletonContentHash = 0, SkeletonRestHash = 0, SkeletonRootHash = 0;
@@ -45,18 +46,19 @@ namespace NorvesLib::Core::Skeletal
         Container::TSharedPtr<const SkinMeshV1Data> m_Data;
         friend bool BuildSkinMeshV1(const RigAuthoringCpu&, const SkeletonV1&, const Container::AnsiString&,
                                     Container::Span<const SkinMaterialV1>, SkinMeshV1&, RigV1Report&,
-                                    const RigV1Limits&);
-        friend bool ParseSkinMeshV1(Container::Span<const uint8_t>, SkinMeshV1&, RigV1Report&, const RigV1Limits&);
+                                    const RigV1Limits&, RigImportProfile);
+        friend bool ParseSkinMeshV1(Container::Span<const uint8_t>, SkinMeshV1&, RigV1Report&, const RigV1Limits&,
+                                    RigImportProfile);
     };
     // 材質列は生成slot順。implicit素材も明示的に1 record渡し、暗黙の見た目fallbackを作らない。
     [[nodiscard]] bool BuildSkinMeshV1(const RigAuthoringCpu&, const SkeletonV1&,
                                        const Container::AnsiString& skeletonPath,
                                        Container::Span<const SkinMaterialV1> materials, SkinMeshV1& out, RigV1Report&,
-                                       const RigV1Limits& = {});
+                                       const RigV1Limits& = {}, RigImportProfile = RigImportProfile::DirectTrs128);
     [[nodiscard]] bool WriteSkinMeshV1(const SkinMeshV1&, Container::VariableArray<uint8_t>& out, RigV1Report&,
-                                       const RigV1Limits& = {});
+                                       const RigV1Limits& = {}, RigImportProfile = RigImportProfile::DirectTrs128);
     [[nodiscard]] bool ParseSkinMeshV1(Container::Span<const uint8_t>, SkinMeshV1& out, RigV1Report&,
-                                       const RigV1Limits& = {});
+                                       const RigV1Limits& = {}, RigImportProfile = RigImportProfile::DirectTrs128);
     [[nodiscard]] bool MatchSkinMeshSkeletonV1(const SkinMeshV1&, const SkeletonV1&, RigV1Report&);
     [[nodiscard]] bool IsSplitLogicalPath(const Container::AnsiString&) noexcept;
 } // namespace NorvesLib::Core::Skeletal

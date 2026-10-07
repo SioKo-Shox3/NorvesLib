@@ -8,6 +8,9 @@ namespace NorvesLib::Tools::AssetCook
 {
     struct RigSplitCookRequest
     {
+        bool bAnalyzeClips = false;
+        Core::Skeletal::RigClipAnalysisOptions ClipAnalysis;
+        Core::Container::AnsiString ClipRootJoint;
         std::filesystem::path SourcePath;
         Core::Container::AnsiString SkeletonPath, MeshPath, BankPath;
         Core::Container::AnsiString Variant = "default";
@@ -17,6 +20,7 @@ namespace NorvesLib::Tools::AssetCook
         Core::Skeletal::SkeletalGltfDecodeOptions DecodeOptions;
         Core::Skeletal::RigV1Limits Limits;
         RigSplitImageLimits ImageLimits;
+        Core::Skeletal::RigImportProfile Profile = Core::Skeletal::RigImportProfile::DirectTrs128;
     };
     struct RigSplitCookEntry
     {
@@ -37,6 +41,9 @@ namespace NorvesLib::Tools::AssetCook
         // CPU記録だけ。texture package/renderer materialが揃ったことを意味しない。
         bool bMaterialsRenderStaged = false;
     };
+    [[nodiscard]] bool SerializeRigSplitManifest(
+        Core::Container::Span<const Core::Asset::AssetCookedReference> references, Core::Container::AnsiString& out,
+        Core::Container::AnsiString& error);
     [[nodiscard]] bool CookRigSplitV1NativePath(Core::Container::Span<const uint8_t> source, const RigSplitCookRequest&,
                                                 RigSplitCookResult& out, Core::Skeletal::RigV1Report&,
                                                 Core::Container::AnsiString& error);

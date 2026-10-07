@@ -1,14 +1,56 @@
 ﻿// same-read材質/sidecar/BufferSetと三role packageの所有を反証する。
 #include "RigSplitTestFixture.h"
+#include "Tools/AssetCook/RigSplitFileCook.h"
 #include "RigSplitWireTestFixture.h"
 #include "Tools/AssetCook/MeshMaterialV1Plan.h"
 namespace F = NorvesLib::Tests::RigV1Fixture;
 namespace X = NorvesLib::Tests::RigSplitFixture;
 namespace Cook = NorvesLib::Tools::AssetCook;
+namespace Core = NorvesLib::Core;
 namespace S = NorvesLib::Core::Skeletal;
 namespace C = NorvesLib::Core::Container;
 namespace
 {
+    void FilePublication(F::Fixture& f)
+    {
+        f.SetBuffer(f.Binary);
+        auto request = X::Request();
+        request.Profile = S::RigImportProfile::StaticRootFrame256;
+        request.Limits.MaxJoints = 256;
+        request.bAnalyzeClips = true;
+        request.ClipRootJoint = "Root";
+        request.ImportOptions.bDisabled = true;
+        const F::Bytes json(f.Json.begin(), f.Json.end());
+        F::WriteBytes(request.SourcePath, json);
+        Cook::RigSplitFileCookResult result;
+        F::Text error;
+        const auto directory = f.Root / std::filesystem::path(L"\u51fa\u529b\u89aa") / "split-output";
+        RIG_CHECK(Cook::CookRigSplitFile(request, directory.parent_path() / "unused" / ".." / "split-output" / "",
+                                         result, error));
+        RIG_CHECK(result.JointCount == 2 && result.ClipCount == 1 && result.TextureCount == 0);
+        const auto manifest = F::ReadBytes(directory / "manifest.json");
+        RIG_CHECK(manifest == F::Bytes(result.ManifestJson.begin(), result.ManifestJson.end()));
+        const auto hash = result.SourceHash;
+        RIG_CHECK(!Cook::CookRigSplitFile(request, directory, result, error) && result.SourceHash == hash);
+        RIG_CHECK(F::ReadBytes(directory / "manifest.json") == manifest);
+        request.ClipRootJoint = "missing";
+        RIG_CHECK(!Cook::CookRigSplitFile(request, f.Root / "invalid-root", result, error));
+        RIG_CHECK(!std::filesystem::exists(f.Root / "invalid-root"));
+        request.ClipRootJoint = "Root";
+        F::Bytes pixels(16, 255);
+        const auto png = X::Png(2, 2, pixels);
+        F::WriteBytes("RigV1Fixture/base.png", png);
+        auto textured =
+            X::AddMaterial(f.Json, R"({"name":"Body","pbrMetallicRoughness":{"baseColorTexture":{"index":0}}})");
+        textured = F::Replace(
+            textured, "\"skins\":", "\"images\":[{\"uri\":\"base.png\"}],\"textures\":[{\"source\":0}],\"skins\":");
+        F::WriteBytes(request.SourcePath, F::Bytes(textured.begin(), textured.end()));
+        RIG_CHECK(Cook::CookRigSplitFile(request, f.Root / "textured-output", result, error));
+        RIG_CHECK(result.TextureCount == 1);
+        Core::Asset::AssetManifest parsed;
+        RIG_CHECK(parsed.LoadFromJsonText(Core::Container::String(result.ManifestJson.c_str())) &&
+                  parsed.GetReferenceCount() == 4);
+    }
     void CookAndSettings(F::Fixture& f)
     {
         auto first = X::CookSource(f.Json), again = X::CookSource(f.Json);
@@ -412,6 +454,7 @@ int main()
     NameAndPackageLimits(fixture);
     ImageLocatorAndBudgets(fixture);
     DerivedCopies(fixture);
+    FilePublication(fixture);
     std::printf(
         "RIG_SPLIT_COOK result=pass same_read_settings_buffers_source_slot_mapping_full_mats_three_packages_no_cli_publish\n");
     return 0;

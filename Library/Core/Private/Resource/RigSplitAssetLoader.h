@@ -15,6 +15,7 @@ namespace NorvesLib::Core::ResourceIO
         Skeletal::RigV1Limits Limits;
         uint64_t MaxPackageBytes = 68ull * 1024 * 1024;
         uint64_t MaxTotalPackageBytes = 256ull * 1024 * 1024;
+        Skeletal::RigImportProfile Profile = Skeletal::RigImportProfile::DirectTrs128;
     };
     struct RigSplitResolvedEntry
     {
@@ -25,7 +26,8 @@ namespace NorvesLib::Core::ResourceIO
     {
         Container::VariableArray<RigSplitResolvedEntry> Entries;
     };
-    [[nodiscard]] bool IsRigSplitReferenceFormat(const Asset::AssetCookedReference&, uint32_t role);
+    [[nodiscard]] bool IsRigSplitReferenceFormat(const Asset::AssetCookedReference&, uint32_t role,
+                                                 Skeletal::RigImportProfile = Skeletal::RigImportProfile::DirectTrs128);
     [[nodiscard]] bool LoadRigSplitForWorker(const RigSplitLoadPlan&, Skeletal::CookedRigSplitCpuAsset& out,
                                              RigSplitLoadReport&, RigSplitLoadEvidence* evidence = nullptr);
 } // namespace NorvesLib::Core::ResourceIO

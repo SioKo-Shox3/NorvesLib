@@ -3,6 +3,31 @@
 #include "Animation/SkeletalRestPose.h"
 namespace NorvesLib::Core::Skeletal
 {
+    // profile1は既定のまま。新しい親frameは明示選択時だけ受ける。
+    enum class RigImportProfile : uint32_t
+    {
+        DirectTrs128 = 1,
+        StaticRootFrame128 = 2,
+        StaticRootFrame256 = 3
+    };
+    constexpr bool IsStaticRootFrameProfile(RigImportProfile profile) noexcept
+    {
+        return profile == RigImportProfile::StaticRootFrame128 || profile == RigImportProfile::StaticRootFrame256;
+    }
+    constexpr uint32_t RigProfileMaximumJoints(RigImportProfile profile) noexcept
+    {
+        return profile == RigImportProfile::StaticRootFrame256
+                   ? 256
+                   : (profile == RigImportProfile::DirectTrs128 || profile == RigImportProfile::StaticRootFrame128 ? 128
+                                                                                                                   : 0);
+    }
+
+    using RigRootFrame = Container::FixedArray<float, 16>;
+    inline RigRootFrame IdentityRigRootFrame()
+    {
+        return {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    }
+
     enum class RigV1Status : uint8_t
     {
         Success,
@@ -23,7 +48,8 @@ namespace NorvesLib::Core::Skeletal
         WrongOwner,
         RegistryNotReady,
         ResourceFailure,
-        Exception
+        Exception,
+        FrameMismatch
     };
     struct RigV1Limits
     {
@@ -67,6 +93,14 @@ namespace NorvesLib::Core::Skeletal
         double MaximumTranslationMeters = 0, MaximumRotationRadians = 0, MaximumLogScale = 0;
         uint32_t ExceededJoints = 0;
     };
+    struct RigFrameComparison
+    {
+        uint32_t SnapshotIndex = 0;
+        Container::AnsiString AuthorLabel;
+        uint64_t AuthorFrameHash = 0, TargetFrameHash = 0;
+        double MaximumAbsoluteMatrixDifference = 0;
+        bool bEqual = false;
+    };
     struct RigV1Report
     {
         RigV1Status Status = RigV1Status::InvalidInput;
@@ -78,6 +112,9 @@ namespace NorvesLib::Core::Skeletal
         bool bComparisonComplete = false, bOverrideUsed = false;
         Container::VariableArray<RigSnapshotComparison> Snapshots;
         Container::VariableArray<RigJointDifference> Differences;
+        // profile2専用の独立検査。rest overrideでframe差を免除しない。
+        bool bFrameComparisonComplete = false;
+        Container::VariableArray<RigFrameComparison> FrameComparisons;
     };
     struct RigSplitReport
     {

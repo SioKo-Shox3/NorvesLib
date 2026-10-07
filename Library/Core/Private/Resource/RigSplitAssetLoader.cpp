@@ -1,12 +1,14 @@
 ﻿#include "Resource/RigSplitAssetLoader.h"
+#include "Animation/RigRootFrame.h"
 #include <algorithm>
 namespace NorvesLib::Core::ResourceIO
 {
     namespace C = Container;
     namespace S = Skeletal;
-    bool IsRigSplitReferenceFormat(const Asset::AssetCookedReference& r, uint32_t role)
+    bool IsRigSplitReferenceFormat(const Asset::AssetCookedReference& r, uint32_t role, S::RigImportProfile profile)
     {
-        if (!r.bHasRigSplitMetadata || r.RigSplitMetadata.Role != role || r.CookedVersion != 1)
+        if (!S::IsSupportedRigImportProfile(profile) || !r.bHasRigSplitMetadata || r.RigSplitMetadata.Role != role ||
+            r.RigSplitMetadata.Profile != uint32_t(profile) || r.CookedVersion != 1)
         {
             return false;
         }
@@ -29,9 +31,11 @@ namespace NorvesLib::Core::ResourceIO
     }
     namespace
     {
-        bool CommonMetadata(const Asset::AssetRigSplitMetadata& m, const S::RigTopology& topology)
+        bool CommonMetadata(const Asset::AssetRigSplitMetadata& m, const S::RigTopology& topology,
+                            S::RigImportProfile profile)
         {
-            return m.Profile == 1 && m.SkeletonId == topology.SkeletonId && m.JointCount == topology.Joints.size();
+            return m.Profile == uint32_t(profile) && m.SkeletonId == topology.SkeletonId &&
+                   m.JointCount == topology.Joints.size();
         }
     } // namespace
     bool LoadRigSplitForWorker(const RigSplitLoadPlan& plan, S::CookedRigSplitCpuAsset& out, RigSplitLoadReport& report,
@@ -40,7 +44,8 @@ namespace NorvesLib::Core::ResourceIO
         report = {};
         try
         {
-            if (!plan.Assets || !S::IsValidRigV1Limits(plan.Limits) || !S::IsValidRigBindingPolicy(plan.Policy) ||
+            if (!plan.Assets || !S::IsSupportedRigImportProfile(plan.Profile) ||
+                !S::IsValidRigProfileLimits(plan.Profile, plan.Limits) || !S::IsValidRigBindingPolicy(plan.Policy) ||
                 !S::IsSplitLogicalPath(plan.SkeletonPath) || !S::IsSplitLogicalPath(plan.MeshPath) ||
                 plan.SkeletonPath == plan.MeshPath || plan.BankPaths.empty() || plan.BankPaths.size() > 16 ||
                 !S::IsSplitLogicalPath(plan.Variant) || !plan.MaxPackageBytes ||
@@ -79,7 +84,7 @@ namespace NorvesLib::Core::ResourceIO
                     report.Status = RigSplitLoadStatus::ResolveRejected;
                     return false;
                 }
-                if (!IsRigSplitReferenceFormat(reference.Reference, role))
+                if (!IsRigSplitReferenceFormat(reference.Reference, role, plan.Profile))
                 {
                     report.Status = RigSplitLoadStatus::FormatRejected;
                     return false;
@@ -113,12 +118,13 @@ namespace NorvesLib::Core::ResourceIO
                 {
                     return false;
                 }
-                if (!S::ParseSkeletonV1(result.Blob.GetSpan(), skeleton, report.ParseReport, plan.Limits))
+                if (!S::ParseSkeletonV1(result.Blob.GetSpan(), skeleton, report.ParseReport, plan.Limits, plan.Profile))
                 {
                     report.Status = RigSplitLoadStatus::ParseRejected;
                     return false;
                 }
-                if (!CommonMetadata(result.CookedReference.RigSplitMetadata, skeleton.GetData()->Topology))
+                if (!CommonMetadata(result.CookedReference.RigSplitMetadata, skeleton.GetData()->Topology,
+                                    plan.Profile))
                 {
                     report.Status = RigSplitLoadStatus::MetadataMismatch;
                     return false;
@@ -131,14 +137,14 @@ namespace NorvesLib::Core::ResourceIO
                 {
                     return false;
                 }
-                if (!S::ParseSkinMeshV1(result.Blob.GetSpan(), mesh, report.ParseReport, plan.Limits))
+                if (!S::ParseSkinMeshV1(result.Blob.GetSpan(), mesh, report.ParseReport, plan.Limits, plan.Profile))
                 {
                     report.Status = RigSplitLoadStatus::ParseRejected;
                     return false;
                 }
                 const auto& d = *mesh.GetData();
                 const auto& m = result.CookedReference.RigSplitMetadata;
-                if (d.SkeletonPath != plan.SkeletonPath || !CommonMetadata(m, d.Topology) ||
+                if (d.SkeletonPath != plan.SkeletonPath || !CommonMetadata(m, d.Topology, plan.Profile) ||
                     m.VertexCount != d.Vertices.size() || m.IndexCount != d.Indices.size() ||
                     m.SubmeshCount != d.SubMeshes.size() || m.MaterialSlotCount != d.Slots.size() ||
                     m.MaterialCount != d.Materials.size())
@@ -175,7 +181,7 @@ namespace NorvesLib::Core::ResourceIO
                 remaining.MaxChannels = std::max<uint32_t>(1, remaining.MaxChannels - channels);
                 remaining.MaxSamples = std::max<uint32_t>(1, remaining.MaxSamples - samples);
                 S::ClipBankV1 bank;
-                if (!S::ParseClipBankV1(result.Blob.GetSpan(), bank, report.ParseReport, remaining))
+                if (!S::ParseClipBankV1(result.Blob.GetSpan(), bank, report.ParseReport, remaining, plan.Profile))
                 {
                     report.Status = RigSplitLoadStatus::ParseRejected;
                     return false;
@@ -190,7 +196,7 @@ namespace NorvesLib::Core::ResourceIO
                         actualSamples += uint32_t(channel.Samples.size());
                     }
                 }
-                if (!CommonMetadata(metadata, d.Topology) || metadata.ClipCount != d.Clips.size() ||
+                if (!CommonMetadata(metadata, d.Topology, plan.Profile) || metadata.ClipCount != d.Clips.size() ||
                     metadata.SnapshotCount != d.Snapshots.size() || metadata.ChannelCount != actualChannels ||
                     metadata.SampleCount != actualSamples)
                 {
@@ -205,7 +211,7 @@ namespace NorvesLib::Core::ResourceIO
             }
             S::CookedRigSplitCpuAsset candidate;
             if (!S::BindRigSplitV1(skeleton, mesh, {banks.data(), banks.size()}, plan.Policy, candidate,
-                                   report.BindingReport, plan.Limits))
+                                   report.BindingReport, plan.Limits, plan.Profile))
             {
                 report.Status = RigSplitLoadStatus::BindingRejected;
                 return false;

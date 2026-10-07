@@ -2737,3 +2737,22 @@
 - stop-when: workerでResourceを作る、hashだけで一致扱いする、override結果だけをkeyにする、GCで公開失敗を戻す、State→Registry最終gateを分断する、新CLI/ファイル群transaction/Armature/256/GPUへ広げる。描画lease無しのCPU成功と描画成功を分ける。
 
 - result: code55831fe8/treeb83204ae/run37564096257 attempt1/job112607753170。Release71・旧69 cpp/順序不変、新2 direct Debug、publication5case各構成、runtime8scenario×2scheduler＝16child各構成/計32を確認。同一snapshotの実worker→owner四型一括公開→遅延delegate→名前指定CPU姿勢、strict/override分離・全clip改変とcallback内再要求拒否、取消/Close/Drain、実Session pause helperを受入。13比較器×normal/-O計26回と親自身readonly replay exit0/stderr0、1095payload/488source/82原API/6ZIP一致。B1/B2独立wire/pose、固定4×6095byteと旧cook89/CLI/GR84/PEを保持。native失敗・再CIなし。比較器の定数alias漏れとinventory自己出力差は元失敗を保持して補正し、source/native/原API/ZIPを変更しない。26paths/Library18。Gameはbuild-only、GPU/新CLI/Armature/clip-only/256とcross-bundle Skeleton ID共有は未受入。
+
+## G2-GR82-B4-STATIC-ROOT-FRAME128: 静的なArmature親と作者frameを安全に束縛する
+- status: doing
+- done-when: 明示profile2/128で、skin.skeleton省略と静的な非関節祖先を作者importから三role保存/同snapshot読込/既存runtime公開/実CPU poseまで通す。現在ROOTと全作者snapshotの必須AFRMを比較し、同local restでも異なるframeはrest overrideでも拒否する。profile2 clipには失効可能な束縛証明を持たせ、直接Sampleの迂回も拒否する。
+- verify: 合成glTF/GLBのArmature/祖先chain/省略hint/並べ替え、非可換G・M・IBMとimport scale2の独立pose oracle、frame欠落/不正/混在profile/全snapshot差拒否、SetClip・Unload・別targetでproof失効、三NVPKから実runtime/名前指定Sample、確保前の境界予算と失敗out保持。既存profile1のwire/pose・旧71/固定Sampler/cook/CLIを維持し、新Debug/Release常時検査と独立oracleを使う。
+- policy: profile1の既定/bytes/128/Identity ROOTを維持。profile2はroot上の静的直接TRS・正一様scale祖先だけ、joint自体は既存正TRS。joint間非joint/祖先animation/matrix/非一様祖先は拒否。SkeletonIdにprofile/rest/ROOTを混ぜず、別guardでprofile照合。frame全64byte一致、cross-profile自動束縛なし。
+- stop-when: 作者frameを現在ROOT/IBM/t0から埋める、旧profileを緩める、独立pose期待を実装都合で変える、CPU拡張のため描画側を黙って変える、clip-only/256/CLI/GR96を同時に含める。実犬/DCC/GPU受入とCPU合成試験を分ける。
+
+## G2-GR82: 分離資産の取り込みをロードマップの完了条件まで接続する
+- status: doing
+- done-when: Skeleton / SkinnedMesh / ClipBankの分離、作者rest検査、Armature親、clip専用glTF、ループ/ルート移動要約、拡張節の予約、明示cook入口が接続される。
+- verify: 変更箇所のCPU検査を中心に実施し、CIはロードマップの区切りで必要な場合のみ。Windows実行・GPU/DCC実物の未検証は区別する。
+- notes: 分離保存・束縛・非同期公開は接続済み。静的親frameとclip専用入力のC++実行は未検証。GR86の256関節、要約とcook入口の残りを続ける。
+
+- G2-GR82継続（GR86関連）: 明示profile 3の256関節経路を実装。129/256/257のケースを既存テストに追加、C++実行は未検証。次はクリップ要約と明示cook入口。
+
+- G2-GR82継続: クリップ解析・時間補正・ANLY保存と将来節の予約を接続。残りは明示file/CLI経路と実資産受入れ。追加C++ケースは実行未検証。
+
+- G2-GR82継続: `--rig-split` の明示ファイルcookとtexture同梱・新規directory公開を接続。実CLI smokeは用意済み・未実行。GR96の混在資産セット/増分/レポートへ続く。G2完了後にマージしG3を開始する（作者指示）。

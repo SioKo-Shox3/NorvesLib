@@ -1,19 +1,21 @@
 ﻿#include "Animation/RigSplitBinding.h"
 #include "Animation/RigSplitBindingTestAccess.h"
 #include "Animation/ClipBankRestComparison.h"
+#include "Animation/RigRootFrame.h"
+#include "Animation/RigBoundClipProof.h"
 #include "Object/ResourceRegistry.h"
 namespace NorvesLib::Core::Skeletal
 {
     namespace C = Container;
     bool BindRigSplitV1(const SkeletonV1& skeleton, const SkinMeshV1& mesh, C::Span<const ClipBankV1> banks,
                         const RigBindingPolicy& policy, CookedRigSplitCpuAsset& out, RigSplitReport& report,
-                        const RigV1Limits& limits)
+                        const RigV1Limits& limits, RigImportProfile profile)
     {
         report = {};
         try
         {
-            if (!IsValidRigV1Limits(limits) || !IsValidRigBindingPolicy(policy) || banks.empty() || banks.size() > 16 ||
-                !banks.data())
+            if (!IsSupportedRigImportProfile(profile) || !IsValidRigProfileLimits(profile, limits) ||
+                !IsValidRigBindingPolicy(policy) || banks.empty() || banks.size() > 16 || !banks.data())
             {
                 return false;
             }
@@ -24,6 +26,11 @@ namespace NorvesLib::Core::Skeletal
                 return false;
             }
             const auto* sk = skeleton.GetData();
+            if (sk->Profile != profile)
+            {
+                report.Status = RigV1Status::UnsupportedProfile;
+                return false;
+            }
             if (sk->Topology.Joints.size() > limits.MaxJoints)
             {
                 report.Status = RigV1Status::LimitExceeded;
@@ -34,7 +41,7 @@ namespace NorvesLib::Core::Skeletal
             {
                 const auto* bank = banks[b].GetData();
                 report.FailedBank = uint32_t(b);
-                if (!bank)
+                if (!bank || bank->Profile != profile)
                 {
                     return false;
                 }
@@ -85,6 +92,33 @@ namespace NorvesLib::Core::Skeletal
                 comparison.SkeletonId = sk->Topology.SkeletonId;
                 comparison.BankPayloadHash = source.PayloadHash;
                 comparison.Policy = policy;
+                if (IsStaticRootFrameProfile(profile))
+                {
+                    bool bFrameMismatch = false;
+                    comparison.FrameComparisons.reserve(source.Snapshots.size());
+                    for (size_t i = 0; i < source.Snapshots.size(); ++i)
+                    {
+                        const auto& author = source.Snapshots[i];
+                        RigFrameComparison frame;
+                        frame.SnapshotIndex = uint32_t(i);
+                        frame.AuthorLabel = author.Label;
+                        frame.AuthorFrameHash = RigRootFrameHash(author.RootFrame);
+                        frame.TargetFrameHash = sk->RootHash;
+                        frame.MaximumAbsoluteMatrixDifference =
+                            RigRootFrameMaximumDifference(author.RootFrame, sk->RootTransform);
+                        frame.bEqual = SameRigRootFrame(author.RootFrame, sk->RootTransform);
+                        bFrameMismatch = bFrameMismatch || !frame.bEqual;
+                        comparison.FrameComparisons.push_back(std::move(frame));
+                    }
+                    comparison.bFrameComparisonComplete = true;
+                    if (bFrameMismatch)
+                    {
+                        comparison.Status = RigV1Status::FrameMismatch;
+                        report.Status = RigV1Status::FrameMismatch;
+                        report.Banks.push_back(std::move(comparison));
+                        return false;
+                    }
+                }
                 const bool bBound = Detail::CompareClipBankRest(
                     source, {sk->CurrentRest.Rest.data(), sk->CurrentRest.Rest.size()},
                     {sk->Topology.CanonicalToSource.data(), sk->Topology.CanonicalToSource.size()},
@@ -189,7 +223,17 @@ namespace NorvesLib::Core::Skeletal
                 {
                     return fail();
                 }
-                clip->SetClip(SkeletalAnimationClip(value));
+                if (IsStaticRootFrameProfile(d->Skeleton.GetData()->Profile))
+                {
+                    if (!RigBoundClipAccess::SetValidated(*clip, cpu, clips.size()))
+                    {
+                        return fail();
+                    }
+                }
+                else
+                {
+                    clip->SetClip(SkeletalAnimationClip(value));
+                }
                 if (!clip->Load())
                 {
                     return fail();

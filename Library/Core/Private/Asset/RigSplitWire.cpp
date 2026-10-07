@@ -1,4 +1,5 @@
 ﻿#include "Asset/RigSplitWire.h"
+#include "Animation/RigRootFrame.h"
 #include "Asset/RigSplitAllocationTestAccess.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include <algorithm>
@@ -140,20 +141,22 @@ namespace NorvesLib::Core::Skeletal::SplitWire
     }
     namespace
     {
-        bool KnownRoleTable(uint32_t code)
+        bool KnownRoleTable(uint32_t code, RigImportProfile profile)
         {
             constexpr uint32_t codes[] = {
                 Four('S', 'T', 'R', 'S'), Four('T', 'J', 'N', 'T'), Four('R', 'S', 'E', 'T'), Four('A', 'R', 'S', 'T'),
                 Four('R', 'O', 'O', 'T'), Four('S', 'R', 'E', 'F'), Four('V', 'E', 'R', 'T'), Four('I', 'N', 'D', 'X'),
                 Four('I', 'B', 'M', 'S'), Four('M', 'N', 'G', 'T'), Four('S', 'U', 'B', 'M'), Four('M', 'S', 'L', 'T'),
                 Four('M', 'A', 'T', 'S'), Four('C', 'L', 'I', 'P'), Four('C', 'H', 'A', 'N'), Four('S', 'A', 'M', 'P')};
-            return std::find(std::begin(codes), std::end(codes), code) != std::end(codes);
+            return (IsStaticRootFrameProfile(profile) && code == Four('A', 'F', 'R', 'M')) ||
+                   std::find(std::begin(codes), std::end(codes), code) != std::end(codes);
         }
     } // namespace
-    RigV1Status ReadEnvelope(View b, uint32_t role, C::Span<Section> expected, const RigV1Limits& limits)
+    RigV1Status ReadEnvelope(View b, uint32_t role, C::Span<Section> expected, const RigV1Limits& limits,
+                             RigImportProfile profile)
     {
-        if (!IsValidRigV1Limits(limits) || !b.data() || expected.empty() || expected.size() > 16 ||
-            (role != 1 && role != 2))
+        if (!IsValidRigProfileLimits(profile, limits) || !b.data() || expected.empty() || expected.size() > 16 ||
+            (role != 1 && role != 2) || !IsSupportedRigImportProfile(profile))
         {
             return RigV1Status::InvalidInput;
         }
@@ -165,7 +168,7 @@ namespace NorvesLib::Core::Skeletal::SplitWire
         {
             return RigV1Status::BadWire;
         }
-        if (U32(b, 12) != 1 || U32(b, 20) != role || U32(b, 64) != 1 || U32(b, 68) != 1)
+        if (U32(b, 12) != 1 || U32(b, 20) != role || U32(b, 64) != uint32_t(profile) || U32(b, 68) != 1)
         {
             return RigV1Status::UnsupportedVersion;
         }
@@ -219,7 +222,7 @@ namespace NorvesLib::Core::Skeletal::SplitWire
             }
             else
             {
-                bUnsupported = bUnsupported || flags == 1 || KnownRoleTable(s.Code);
+                bUnsupported = bUnsupported || flags == 1 || KnownRoleTable(s.Code, profile);
             }
             directory[i] = s;
         }
@@ -258,9 +261,10 @@ namespace NorvesLib::Core::Skeletal::SplitWire
         return RigV1Status::Success;
     }
     RigV1Status WriteEnvelope(uint32_t role, uint64_t skeletonId, C::Span<const OutputSection> sections, Bytes& out,
-                              const RigV1Limits& limits)
+                              const RigV1Limits& limits, RigImportProfile profile)
     {
-        if (!IsValidRigV1Limits(limits) || sections.empty() || sections.size() > 16 || (role != 1 && role != 2))
+        if (!IsSupportedRigImportProfile(profile) || !IsValidRigProfileLimits(profile, limits) || sections.empty() ||
+            sections.size() > 16 || (role != 1 && role != 2))
         {
             return RigV1Status::InvalidInput;
         }
@@ -287,7 +291,7 @@ namespace NorvesLib::Core::Skeletal::SplitWire
         W64(bytes, 32, 256);
         W64(bytes, 40, total);
         W64(bytes, 56, skeletonId);
-        W32(bytes, 64, 1);
+        W32(bytes, 64, uint32_t(profile));
         W32(bytes, 68, 1);
         size_t cursor = 256 + sections.size() * 32;
         for (size_t i = 0; i < sections.size(); ++i)

@@ -3,6 +3,7 @@
 #include "SingleAssetCook.h"
 #include "TextureAssetSetCook.h"
 #include "SkeletalRoleFileCli.h"
+#include "RigSplitFileCook.h"
 
 namespace
 {
@@ -281,6 +282,11 @@ namespace
 
 int main(int argc, char **argv)
 {
+    int rigExitCode = 0;
+    if (NorvesLib::Tools::AssetCook::RunRigSplitFileCommand(argc, argv, rigExitCode))
+    {
+        return rigExitCode;
+    }
     int roleExitCode = 0;
     if (NorvesLib::Tools::AssetCook::RunSkeletalRoleFileCommand(argc, argv, roleExitCode)) return roleExitCode;
     int assetSetExitCode=0;

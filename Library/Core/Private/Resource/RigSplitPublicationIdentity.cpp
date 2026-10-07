@@ -1,4 +1,6 @@
 ﻿#include "Resource/RigSplitPublicationIdentity.h"
+#include "Animation/RigBoundClipProof.h"
+#include "Animation/RigRootFrame.h"
 #include <bit>
 #include <algorithm>
 namespace NorvesLib::Core::ResourceIO
@@ -117,8 +119,16 @@ namespace NorvesLib::Core::ResourceIO
         }
         void Request(Encoder& e, const S::RigSplitRequest& q, bool bFull)
         {
-            e.Text("rig_split_v1");
+            e.Text(q.Profile == S::RigImportProfile::DirectTrs128         ? "rig_split_v1"
+                   : q.Profile == S::RigImportProfile::StaticRootFrame128 ? "rig_split_v1_static_frame128"
+                                                                          : "rig_split_v1_static_frame256");
             e.Number(1);
+            if (q.Profile != S::RigImportProfile::DirectTrs128)
+            {
+                e.Number(uint32_t(q.Profile));
+                e.Number(1);
+            } // frame比較の契約revision。profile1の旧keyは不変。
+
             e.Text(q.Variant);
             e.Text(q.SkeletonPath);
             e.Text(q.MeshPath);
@@ -172,11 +182,12 @@ namespace NorvesLib::Core::ResourceIO
         }
         bool ValidRequest(const S::RigSplitRequest& q)
         {
-            if (!S::IsValidRigV1Limits(q.Limits) || !S::IsValidRigBindingPolicy(q.Policy) ||
-                !S::IsSplitLogicalPath(q.SkeletonPath) || !S::IsSplitLogicalPath(q.MeshPath) ||
-                q.SkeletonPath == q.MeshPath || !S::IsSplitLogicalPath(q.Variant) || q.BankPaths.empty() ||
-                q.BankPaths.size() > 16 || !q.MaxPackageBytes || q.MaxPackageBytes > 68ull * 1024 * 1024 ||
-                !q.MaxTotalPackageBytes || q.MaxTotalPackageBytes > 256ull * 1024 * 1024)
+            if (!S::IsSupportedRigImportProfile(q.Profile) || !S::IsValidRigProfileLimits(q.Profile, q.Limits) ||
+                !S::IsValidRigBindingPolicy(q.Policy) || !S::IsSplitLogicalPath(q.SkeletonPath) ||
+                !S::IsSplitLogicalPath(q.MeshPath) || q.SkeletonPath == q.MeshPath ||
+                !S::IsSplitLogicalPath(q.Variant) || q.BankPaths.empty() || q.BankPaths.size() > 16 ||
+                !q.MaxPackageBytes || q.MaxPackageBytes > 68ull * 1024 * 1024 || !q.MaxTotalPackageBytes ||
+                q.MaxTotalPackageBytes > 256ull * 1024 * 1024)
             {
                 return false;
             }
@@ -243,6 +254,11 @@ namespace NorvesLib::Core::ResourceIO
             size_t n = report.Banks.capacity() * sizeof(S::RigV1Report);
             for (const auto& b : report.Banks)
             {
+                n += b.FrameComparisons.capacity() * sizeof(S::RigFrameComparison);
+                for (const auto& frame : b.FrameComparisons)
+                {
+                    n += frame.AuthorLabel.size();
+                }
                 n += b.TargetLabel.size() + b.Snapshots.capacity() * sizeof(S::RigSnapshotComparison) +
                      b.Differences.capacity() * sizeof(S::RigJointDifference);
                 for (const auto& s : b.Snapshots)
@@ -299,8 +315,8 @@ namespace NorvesLib::Core::ResourceIO
                 {
                     n += j.Name.size();
                 }
-                n +=
-                    b.Snapshots.capacity() * sizeof(S::RigClipSnapshot) + b.ClipSnapshots.capacity() * sizeof(uint32_t);
+                n += b.Snapshots.capacity() * sizeof(S::RigClipSnapshot) +
+                     b.ClipSnapshots.capacity() * sizeof(uint32_t) + b.Analyses.capacity() * sizeof(S::RigClipAnalysis);
                 for (const auto& s : b.Snapshots)
                 {
                     n += s.Label.size() + s.Rest.capacity() * sizeof(S::SkeletalRestTransform);
@@ -346,7 +362,7 @@ namespace NorvesLib::Core::ResourceIO
                 {
                     return RigSplitIdentityStatus::LimitExceeded;
                 }
-                if (!refs[i] || !IsRigSplitReferenceFormat(*refs[i], i < 2 ? uint32_t(i + 1) : 3))
+                if (!refs[i] || !IsRigSplitReferenceFormat(*refs[i], i < 2 ? uint32_t(i + 1) : 3, q.Profile))
                 {
                     bCanCache = false;
                 }
@@ -388,6 +404,7 @@ namespace NorvesLib::Core::ResourceIO
             }
             data->Plan = {assets,   q.SkeletonPath, q.MeshPath,        q.BankPaths,           q.Variant,
                           q.Policy, q.Limits,       q.MaxPackageBytes, q.MaxTotalPackageBytes};
+            data->Plan.Profile = q.Profile;
             auto& t = data->Plan.Policy.Tolerance;
             if (t.TranslationMeters == 0)
             {
@@ -546,7 +563,9 @@ namespace NorvesLib::Core::ResourceIO
         }
         for (size_t i = 0; i < cpu->Clips.size(); ++i)
         {
-            if (!asset.GetClip(i) || !SameClip(asset.GetClip(i)->GetClip(), cpu->Clips[i]))
+            if (!asset.GetClip(i) || !SameClip(asset.GetClip(i)->GetClip(), cpu->Clips[i]) ||
+                (S::IsStaticRootFrameProfile(cpu->Skeleton.GetData()->Profile) &&
+                 !S::RigBoundClipAccess::Matches(*asset.GetClip(i), cpu->Skeleton.GetData())))
             {
                 return false;
             }

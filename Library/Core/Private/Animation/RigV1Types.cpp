@@ -59,15 +59,20 @@ namespace NorvesLib::Core::Skeletal
     bool IsValidRigV1Limits(const RigV1Limits& v) noexcept
     {
         const RigV1Limits hard;
-        return v.MaxJoints && v.MaxJoints <= hard.MaxJoints && v.MaxClips && v.MaxClips <= hard.MaxClips &&
-               v.MaxSnapshots && v.MaxSnapshots <= hard.MaxSnapshots && v.MaxChannels &&
-               v.MaxChannels <= hard.MaxChannels && v.MaxSamples && v.MaxSamples <= hard.MaxSamples && v.MaxNameBytes &&
-               v.MaxNameBytes <= hard.MaxNameBytes && v.MaxStringBytes && v.MaxStringBytes <= hard.MaxStringBytes &&
-               v.MaxWireBytes >= 480 && v.MaxWireBytes <= hard.MaxWireBytes && v.MaxSourceBytes &&
-               v.MaxSourceBytes <= hard.MaxSourceBytes && v.MaxBufferBytes && v.MaxBufferBytes <= hard.MaxBufferBytes &&
-               v.MaxNodes && v.MaxNodes <= hard.MaxNodes && v.MaxAccessors && v.MaxAccessors <= hard.MaxAccessors &&
-               v.MaxBuffers && v.MaxBuffers <= hard.MaxBuffers && v.MaxVertices && v.MaxVertices <= hard.MaxVertices &&
-               v.MaxIndices && v.MaxIndices <= hard.MaxIndices;
+        return v.MaxJoints && v.MaxJoints <= RigProfileMaximumJoints(RigImportProfile::StaticRootFrame256) &&
+               v.MaxClips && v.MaxClips <= hard.MaxClips && v.MaxSnapshots && v.MaxSnapshots <= hard.MaxSnapshots &&
+               v.MaxChannels && v.MaxChannels <= hard.MaxChannels && v.MaxSamples && v.MaxSamples <= hard.MaxSamples &&
+               v.MaxNameBytes && v.MaxNameBytes <= hard.MaxNameBytes && v.MaxStringBytes &&
+               v.MaxStringBytes <= hard.MaxStringBytes && v.MaxWireBytes >= 480 &&
+               v.MaxWireBytes <= hard.MaxWireBytes && v.MaxSourceBytes && v.MaxSourceBytes <= hard.MaxSourceBytes &&
+               v.MaxBufferBytes && v.MaxBufferBytes <= hard.MaxBufferBytes && v.MaxNodes &&
+               v.MaxNodes <= hard.MaxNodes && v.MaxAccessors && v.MaxAccessors <= hard.MaxAccessors && v.MaxBuffers &&
+               v.MaxBuffers <= hard.MaxBuffers && v.MaxVertices && v.MaxVertices <= hard.MaxVertices && v.MaxIndices &&
+               v.MaxIndices <= hard.MaxIndices;
+    }
+    bool IsValidRigProfileLimits(RigImportProfile profile, const RigV1Limits& limits) noexcept
+    {
+        return IsValidRigV1Limits(limits) && limits.MaxJoints <= RigProfileMaximumJoints(profile);
     }
     bool IsValidRigBindingPolicy(const RigBindingPolicy& policy) noexcept
     {

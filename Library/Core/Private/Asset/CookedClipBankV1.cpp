@@ -1,4 +1,5 @@
 ﻿#include "Asset/CookedClipBankV1.h"
+#include "Animation/RigRootFrame.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include <algorithm>
 #include <bit>
@@ -19,8 +20,8 @@ namespace NorvesLib::Core::Skeletal
         }
         constexpr uint32_t Codes[] = {Four('S', 'T', 'R', 'S'), Four('T', 'J', 'N', 'T'), Four('R', 'S', 'E', 'T'),
                                       Four('A', 'R', 'S', 'T'), Four('C', 'L', 'I', 'P'), Four('C', 'H', 'A', 'N'),
-                                      Four('S', 'A', 'M', 'P')};
-        constexpr uint32_t RecordSizes[] = {1, 24, 48, 48, 48, 48, 32};
+                                      Four('S', 'A', 'M', 'P'), Four('A', 'F', 'R', 'M'), Four('A', 'N', 'L', 'Y')};
+        constexpr uint32_t RecordSizes[] = {1, 24, 48, 48, 48, 48, 32, 64, 96};
         struct Section
         {
             uint32_t Code = 0, Flags = 0, Record = 0, Count = 0;
@@ -123,9 +124,18 @@ namespace NorvesLib::Core::Skeletal
             return i != topology.Joints.end() && i->Name == name ? static_cast<int32_t>(i - topology.Joints.begin())
                                                                  : -1;
         }
+        bool ValidAnalysis(const RigClipAnalysis& a, const SkeletalAnimationClip& clip, size_t joints)
+        {
+            return a.RootJoint < joints && std::isfinite(a.LoopError) && a.LoopError >= 0 &&
+                   a.DurationSeconds == double(clip.DurationSeconds) && std::isfinite(a.SourceFps) &&
+                   a.SourceFps >= 0 && std::isfinite(a.TranslationX) && std::isfinite(a.TranslationZ) &&
+                   std::isfinite(a.PlanarDistanceMeters) && a.PlanarDistanceMeters >= 0 &&
+                   std::isfinite(a.AverageSpeedMetersPerSecond) && a.AverageSpeedMetersPerSecond >= 0 &&
+                   std::isfinite(a.TotalYawRadians);
+        }
         RigV1Status ValidateData(const ClipBankV1Data& d, const RigV1Limits& limits)
         {
-            if (!IsValidRigV1Limits(limits))
+            if (!IsSupportedRigImportProfile(d.Profile) || !IsValidRigProfileLimits(d.Profile, limits))
             {
                 return RigV1Status::InvalidInput;
             }
@@ -134,6 +144,20 @@ namespace NorvesLib::Core::Skeletal
                 d.ClipSnapshots.size() != d.Clips.size())
             {
                 return RigV1Status::LimitExceeded;
+            }
+            if (!d.Analyses.empty())
+            {
+                if (!IsStaticRootFrameProfile(d.Profile) || d.Analyses.size() != d.Clips.size())
+                {
+                    return RigV1Status::InvalidClip;
+                }
+                for (size_t i = 0; i < d.Clips.size(); ++i)
+                {
+                    if (!ValidAnalysis(d.Analyses[i], d.Clips[i], d.Topology.Joints.size()))
+                    {
+                        return RigV1Status::InvalidClip;
+                    }
+                }
             }
             size_t strings = 0, channels = 0, samples = 0, roots = 0;
             const auto addName = [&](const C::AnsiString& name)
@@ -162,8 +186,9 @@ namespace NorvesLib::Core::Skeletal
             }
             for (const auto& s : d.Snapshots)
             {
-                if (!addName(s.Label) || s.Rest.size() != d.Topology.Joints.size() ||
-                    !std::isfinite(s.ResolvedImportScale) || s.ResolvedImportScale <= 0)
+                if (!IsValidRigRootFrame(s.RootFrame, d.Profile) || !addName(s.Label) ||
+                    s.Rest.size() != d.Topology.Joints.size() || !std::isfinite(s.ResolvedImportScale) ||
+                    s.ResolvedImportScale <= 0)
                 {
                     return RigV1Status::InvalidRest;
                 }
@@ -270,12 +295,14 @@ namespace NorvesLib::Core::Skeletal
         }
     } // namespace
     bool BuildClipBankV1(C::Span<const RigAuthoringCpu> sources, ClipBankV1& out, RigV1Report& report,
-                         const RigV1Limits& limits)
+                         const RigV1Limits& limits, RigImportProfile profile,
+                         const RigClipAnalysisOptions* analysisOptions)
     {
         report = {};
         try
         {
-            if (!IsValidRigV1Limits(limits) || sources.empty() || !sources.data())
+            if (!IsSupportedRigImportProfile(profile) || !IsValidRigProfileLimits(profile, limits) || sources.empty() ||
+                !sources.data())
             {
                 return false;
             }
@@ -284,11 +311,16 @@ namespace NorvesLib::Core::Skeletal
                 report.Status = RigV1Status::LimitExceeded;
                 return false;
             }
+            if (analysisOptions && !IsStaticRootFrameProfile(profile))
+            {
+                report.Status = RigV1Status::UnsupportedProfile;
+                return false;
+            }
             size_t totalClips = 0, totalChannels = 0, totalSamples = 0;
             for (const auto& source : sources)
             {
                 const auto* rig = source.GetData();
-                if (!rig || rig->Geometry.Clips.empty())
+                if (!rig || rig->Profile != profile || rig->Geometry.Clips.empty())
                 {
                     report.Status = RigV1Status::InvalidInput;
                     return false;
@@ -320,10 +352,11 @@ namespace NorvesLib::Core::Skeletal
                 }
             }
             auto d = C::MakeShared<ClipBankV1Data>();
+            d->Profile = profile;
             for (const auto& source : sources)
             {
                 const auto* rig = source.GetData();
-                if (!rig || rig->Geometry.Clips.empty())
+                if (!rig || rig->Profile != profile || rig->Geometry.Clips.empty())
                 {
                     report.Status = RigV1Status::InvalidInput;
                     return false;
@@ -345,6 +378,7 @@ namespace NorvesLib::Core::Skeletal
                 RigClipSnapshot snapshot;
                 snapshot.Label = rig->SourceLabel;
                 snapshot.ResolvedImportScale = rig->ResolvedImportScale;
+                snapshot.RootFrame = rig->RootFrame;
                 snapshot.Rest.reserve(rig->LocalRest.size());
                 for (uint32_t index : rig->Topology.CanonicalToSource)
                 {
@@ -356,6 +390,17 @@ namespace NorvesLib::Core::Skeletal
                 for (const auto& clip : rig->Geometry.Clips)
                 {
                     auto owned = clip;
+                    if (analysisOptions)
+                    {
+                        RigClipAnalysis analysis;
+                        if (!AnalyzeRigClip(source, clip, *analysisOptions, owned, analysis))
+                        {
+                            report.Status = RigV1Status::InvalidClip;
+                            return false;
+                        }
+                        analysis.RootJoint = rig->Topology.SourceToCanonical[analysis.RootJoint];
+                        d->Analyses.push_back(analysis);
+                    }
                     for (auto& channel : owned.Channels)
                     {
                         if (channel.JointIndex >= rig->Topology.SourceToCanonical.size())
@@ -386,13 +431,14 @@ namespace NorvesLib::Core::Skeletal
             return false;
         }
     }
-    bool WriteClipBankV1(const ClipBankV1& bank, Bytes& out, RigV1Report& report, const RigV1Limits& limits)
+    bool WriteClipBankV1(const ClipBankV1& bank, Bytes& out, RigV1Report& report, const RigV1Limits& limits,
+                         RigImportProfile profile)
     {
         report = {};
         try
         {
             const auto* d = bank.GetData();
-            if (!d)
+            if (!d || d->Profile != profile)
             {
                 return false;
             }
@@ -402,7 +448,13 @@ namespace NorvesLib::Core::Skeletal
                 return false;
             }
             // section配列を確保する前に、指定されたwire上限を全表の積和で検査する。
-            uint64_t estimated[7]{};
+            const uint32_t sectionCount = !d->Analyses.empty() ? 9 : (IsStaticRootFrameProfile(profile) ? 8 : 7);
+            uint64_t estimated[9]{};
+            estimated[8] = d->Analyses.size() * 96;
+            if (IsStaticRootFrameProfile(profile))
+            {
+                estimated[7] = d->Snapshots.size() * 64;
+            }
             for (const auto& joint : d->Topology.Joints)
             {
                 estimated[0] += joint.Name.size();
@@ -426,18 +478,18 @@ namespace NorvesLib::Core::Skeletal
                     estimated[6] += channel.Samples.size() * 32;
                 }
             }
-            uint64_t estimatedTotal = 480;
-            for (uint64_t size : estimated)
+            uint64_t estimatedTotal = 256 + sectionCount * 32;
+            for (uint32_t i = 0; i < sectionCount; ++i)
             {
-                estimatedTotal = ((estimatedTotal + 15) & ~uint64_t{15}) + size;
+                estimatedTotal = ((estimatedTotal + 15) & ~uint64_t{15}) + estimated[i];
             }
             if (estimatedTotal > limits.MaxWireBytes)
             {
                 report.Status = RigV1Status::LimitExceeded;
                 return false;
             }
-            Bytes sections[7];
-            uint32_t counts[7]{};
+            Bytes sections[9];
+            uint32_t counts[9]{};
             C::VariableArray<uint64_t> jointOffsets;
             const auto addString = [&](const C::AnsiString& name)
             {
@@ -467,9 +519,18 @@ namespace NorvesLib::Core::Skeletal
                 W32(sections[2], o + 4, uint32_t(snapshot.Rest.size()));
                 W64(sections[2], o + 8, addString(snapshot.Label));
                 W32(sections[2], o + 16, uint32_t(snapshot.Label.size()));
-                W32(sections[2], o + 20, 1);
+                W32(sections[2], o + 20, uint32_t(profile));
                 W64(sections[2], o + 24, snapshot.RestHash);
                 W64(sections[2], o + 32, std::bit_cast<uint64_t>(snapshot.ResolvedImportScale));
+                if (IsStaticRootFrameProfile(profile))
+                {
+                    const size_t f = sections[7].size();
+                    sections[7].resize(f + 64, 0);
+                    for (size_t i = 0; i < 16; ++i)
+                    {
+                        WF(sections[7], f + i * 4, snapshot.RootFrame[i]);
+                    }
+                }
                 for (const auto& rest : snapshot.Rest)
                 {
                     const auto r = sections[3].size();
@@ -519,8 +580,32 @@ namespace NorvesLib::Core::Skeletal
                     }
                 }
             }
-            uint64_t total = 480;
-            for (size_t i = 0; i < 7; ++i)
+            if (!d->Analyses.empty())
+            {
+                counts[8] = uint32_t(d->Analyses.size());
+                sections[8].resize(d->Analyses.size() * 96, 0);
+                for (size_t i = 0; i < d->Analyses.size(); ++i)
+                {
+                    const auto& a = d->Analyses[i];
+                    const size_t o = i * 96;
+                    W32(sections[8], o, a.RootJoint);
+                    W32(sections[8], o + 4, (a.bLoopCandidate ? 1u : 0u) | (a.bLoop ? 2u : 0u));
+                    const double values[] = {a.LoopError,
+                                             a.DurationSeconds,
+                                             a.SourceFps,
+                                             a.TranslationX,
+                                             a.TranslationZ,
+                                             a.PlanarDistanceMeters,
+                                             a.AverageSpeedMetersPerSecond,
+                                             a.TotalYawRadians};
+                    for (size_t k = 0; k < 8; ++k)
+                    {
+                        W64(sections[8], o + 8 + k * 8, std::bit_cast<uint64_t>(values[k]));
+                    }
+                }
+            }
+            uint64_t total = 256 + sectionCount * 32;
+            for (size_t i = 0; i < sectionCount; ++i)
             {
                 counts[i] = uint32_t(sections[i].size() / RecordSizes[i]);
                 total = (total + 15) & ~uint64_t{15};
@@ -537,19 +622,19 @@ namespace NorvesLib::Core::Skeletal
             W32(candidate, 12, 1);
             W32(candidate, 16, 0x01020304);
             W32(candidate, 20, 3);
-            W32(candidate, 28, 7);
+            W32(candidate, 28, sectionCount);
             W64(candidate, 32, 256);
             W64(candidate, 40, total);
             W64(candidate, 56, d->Topology.SkeletonId);
-            W32(candidate, 64, 1);
+            W32(candidate, 64, uint32_t(profile));
             W32(candidate, 68, 1);
-            size_t cursor = 480;
-            for (size_t i = 0; i < 7; ++i)
+            size_t cursor = 256 + sectionCount * 32;
+            for (size_t i = 0; i < sectionCount; ++i)
             {
                 cursor = (cursor + 15) & ~size_t{15};
                 const size_t e = 256 + i * 32;
                 W32(candidate, e, Codes[i]);
-                W32(candidate, e + 4, 1);
+                W32(candidate, e + 4, i == 8 ? 0 : 1);
                 W64(candidate, e + 8, cursor);
                 W64(candidate, e + 16, sections[i].size());
                 W32(candidate, e + 24, RecordSizes[i]);
@@ -573,7 +658,8 @@ namespace NorvesLib::Core::Skeletal
             return false;
         }
     }
-    bool ParseClipBankV1(View bytes, ClipBankV1& out, RigV1Report& report, const RigV1Limits& limits)
+    bool ParseClipBankV1(View bytes, ClipBankV1& out, RigV1Report& report, const RigV1Limits& limits,
+                         RigImportProfile profile)
     {
         report = {};
         try
@@ -583,7 +669,7 @@ namespace NorvesLib::Core::Skeletal
                 report.Status = s;
                 return false;
             };
-            if (!IsValidRigV1Limits(limits) || !bytes.data())
+            if (!IsSupportedRigImportProfile(profile) || !IsValidRigProfileLimits(profile, limits) || !bytes.data())
             {
                 return false;
             }
@@ -591,17 +677,19 @@ namespace NorvesLib::Core::Skeletal
             {
                 return fail(RigV1Status::LimitExceeded);
             }
-            if (bytes.size() < 480 || std::memcmp(bytes.data(), "NVSKELv1", 8) != 0)
+            const uint32_t sectionCount = IsStaticRootFrameProfile(profile) ? 8 : 7;
+            if (bytes.size() < 256 + sectionCount * 32 || std::memcmp(bytes.data(), "NVSKELv1", 8) != 0)
             {
                 return fail(RigV1Status::BadWire);
             }
-            if (U32(bytes, 12) != 1 || U32(bytes, 20) != 3 || U32(bytes, 64) != 1 || U32(bytes, 68) != 1)
+            if (U32(bytes, 12) != 1 || U32(bytes, 20) != 3 || U32(bytes, 64) != uint32_t(profile) ||
+                U32(bytes, 68) != 1)
             {
                 return fail(RigV1Status::UnsupportedVersion);
             }
             const uint32_t count = U32(bytes, 28);
-            if (U32(bytes, 8) != 256 || U32(bytes, 16) != 0x01020304 || U32(bytes, 24) || count < 7 || count > 16 ||
-                U64(bytes, 32) != 256 || U64(bytes, 40) != bytes.size() || !Zero(bytes, 72, 256) ||
+            if (U32(bytes, 8) != 256 || U32(bytes, 16) != 0x01020304 || U32(bytes, 24) || count < sectionCount ||
+                count > 16 || U64(bytes, 32) != 256 || U64(bytes, 40) != bytes.size() || !Zero(bytes, 72, 256) ||
                 256ull + count * 32ull > bytes.size())
             {
                 return fail(RigV1Status::BadWire);
@@ -613,8 +701,10 @@ namespace NorvesLib::Core::Skeletal
             }
             C::VariableArray<Section> directory;
             directory.reserve(count);
-            Section known[7]{};
-            bool found[7]{};
+            Section known[8]{};
+            Section analysisSection{};
+            bool bAnalysis = false;
+            bool found[8]{};
             for (uint32_t i = 0; i < count; ++i)
             {
                 const size_t e = 256 + i * 32;
@@ -638,7 +728,7 @@ namespace NorvesLib::Core::Skeletal
                     }
                 }
                 int index = -1;
-                for (int n = 0; n < 7; ++n)
+                for (uint32_t n = 0; n < sectionCount; ++n)
                 {
                     if (Codes[n] == s.Code)
                     {
@@ -654,15 +744,29 @@ namespace NorvesLib::Core::Skeletal
                     known[index] = s;
                     found[index] = true;
                 }
-                else if (s.Flags & 1)
+                else if (s.Code == Four('A', 'N', 'L', 'Y'))
+                {
+                    if (!IsStaticRootFrameProfile(profile) || s.Flags != 0 || s.Record != 96)
+                    {
+                        return fail(RigV1Status::BadWire);
+                    }
+                    bAnalysis = true;
+                    analysisSection = s;
+                }
+                else if ((s.Flags & 1) || (IsStaticRootFrameProfile(profile) &&
+                                           (s.Code == Four('R', 'O', 'O', 'T') || s.Code == Four('S', 'R', 'E', 'F') ||
+                                            s.Code == Four('V', 'E', 'R', 'T') || s.Code == Four('I', 'N', 'D', 'X') ||
+                                            s.Code == Four('I', 'B', 'M', 'S') || s.Code == Four('M', 'N', 'G', 'T') ||
+                                            s.Code == Four('S', 'U', 'B', 'M') || s.Code == Four('M', 'S', 'L', 'T') ||
+                                            s.Code == Four('M', 'A', 'T', 'S'))))
                 {
                     return fail(RigV1Status::UnsupportedSection);
                 }
                 directory.push_back(s);
             }
-            for (bool f : found)
+            for (uint32_t i = 0; i < sectionCount; ++i)
             {
-                if (!f)
+                if (!found[i])
                 {
                     return fail(RigV1Status::BadWire);
                 }
@@ -690,6 +794,26 @@ namespace NorvesLib::Core::Skeletal
             {
                 return fail(RigV1Status::LimitExceeded);
             }
+            if (IsStaticRootFrameProfile(profile))
+            {
+                if (known[7].Count != known[2].Count)
+                {
+                    return fail(RigV1Status::BadWire);
+                }
+                // 必須frameの件数と全値を可変長所有の確保前に検査する。
+                for (uint32_t n = 0; n < known[7].Count; ++n)
+                {
+                    RigRootFrame frame;
+                    for (size_t i = 0; i < 16; ++i)
+                    {
+                        frame[i] = F32(bytes, size_t(known[7].Offset) + n * 64 + i * 4);
+                    }
+                    if (!IsValidRigRootFrame(frame, profile))
+                    {
+                        return fail(RigV1Status::InvalidRest);
+                    }
+                }
+            }
             const View strings{bytes.data() + known[0].Offset, size_t(known[0].Size)};
             if (!Asset::MeasureSkeletalNameDecoding<char>(2, strings).Succeeded())
             {
@@ -710,6 +834,7 @@ namespace NorvesLib::Core::Skeletal
                 return true;
             };
             auto data = C::MakeShared<ClipBankV1Data>();
+            data->Profile = profile;
             C::VariableArray<SkeletalJoint> joints(known[1].Count);
             C::AnsiString previous;
             for (uint32_t i = 0; i < known[1].Count; ++i)
@@ -740,10 +865,18 @@ namespace NorvesLib::Core::Skeletal
             {
                 const size_t o = size_t(known[2].Offset) + i * 48;
                 RigClipSnapshot snapshot;
-                if (U32(bytes, o) != restCursor || U32(bytes, o + 4) != joints.size() || U32(bytes, o + 20) != 1 ||
-                    !Zero(bytes, o + 40, o + 48) || !name(U64(bytes, o + 8), U32(bytes, o + 16), snapshot.Label))
+                if (U32(bytes, o) != restCursor || U32(bytes, o + 4) != joints.size() ||
+                    U32(bytes, o + 20) != uint32_t(profile) || !Zero(bytes, o + 40, o + 48) ||
+                    !name(U64(bytes, o + 8), U32(bytes, o + 16), snapshot.Label))
                 {
                     return fail(RigV1Status::InvalidRest);
+                }
+                if (IsStaticRootFrameProfile(profile))
+                {
+                    for (size_t k = 0; k < 16; ++k)
+                    {
+                        snapshot.RootFrame[k] = F32(bytes, size_t(known[7].Offset) + i * 64 + k * 4);
+                    }
                 }
                 snapshot.ResolvedImportScale = F64(bytes, o + 32);
                 snapshot.RestHash = U64(bytes, o + 24);
@@ -818,6 +951,39 @@ namespace NorvesLib::Core::Skeletal
             if (restCursor != known[3].Count || channelCursor != known[5].Count || sampleCursor != known[6].Count)
             {
                 return fail(RigV1Status::BadWire);
+            }
+            if (bAnalysis)
+            {
+                if (analysisSection.Count != data->Clips.size())
+                {
+                    return fail(RigV1Status::InvalidClip);
+                }
+                data->Analyses.resize(data->Clips.size());
+                for (size_t i = 0; i < data->Analyses.size(); ++i)
+                {
+                    auto& a = data->Analyses[i];
+                    const size_t o = size_t(analysisSection.Offset) + i * 96;
+                    const uint32_t flags = U32(bytes, o + 4);
+                    if (flags > 3 || !Zero(bytes, o + 72, o + 96))
+                    {
+                        return fail(RigV1Status::BadWire);
+                    }
+                    a.RootJoint = U32(bytes, o);
+                    a.bLoopCandidate = (flags & 1) != 0;
+                    a.bLoop = (flags & 2) != 0;
+                    double* values[] = {&a.LoopError,
+                                        &a.DurationSeconds,
+                                        &a.SourceFps,
+                                        &a.TranslationX,
+                                        &a.TranslationZ,
+                                        &a.PlanarDistanceMeters,
+                                        &a.AverageSpeedMetersPerSecond,
+                                        &a.TotalYawRadians};
+                    for (size_t k = 0; k < 8; ++k)
+                    {
+                        *values[k] = F64(bytes, o + 8 + k * 8);
+                    }
+                }
             }
             report.Status = ValidateData(*data, limits);
             if (report.Status != RigV1Status::Success)
