@@ -1,4 +1,6 @@
 ﻿#include "Resource/SkinnedMeshResource.h"
+#include "Asset/CookedSkinMeshV1.h"
+#include "Asset/RigSplitWire.h"
 #include "Resource/SkeletalSubmeshLayout.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 
@@ -38,6 +40,12 @@ namespace NorvesLib::Core
 
     bool SkinnedMeshResource::Load()
     {
+        if (m_bSplitV1)
+        {
+            ReleaseRenderAssetLease();
+            SetResourceState(m_SplitMesh ? ResourceState::Loaded : ResourceState::Failed);
+            return bool(m_SplitMesh);
+        }
         RefreshRenderAssetLease();
         if (!m_RenderAssetLease)
         {
@@ -50,6 +58,7 @@ namespace NorvesLib::Core
 
     void SkinnedMeshResource::Unload()
     {
+        m_SplitMesh.reset();
         ReleaseRenderAssetLease();
         m_Vertices.clear();
         m_Indices.clear();
@@ -67,29 +76,95 @@ namespace NorvesLib::Core
         {
             size += slot.Name.size() * sizeof(Container::String::value_type);
         }
+        if (m_SplitMesh)
+        {
+            size += sizeof(Skeletal::SkinMeshV1Data) + m_SplitMesh->Vertices.size() * sizeof(Skeletal::SkeletalVertex) +
+                    m_SplitMesh->Indices.size() * sizeof(uint32_t);
+            size += m_SplitMesh->InverseBindMatrices.size() * sizeof(Container::FixedArray<float, 16>);
+            size += m_SplitMesh->Topology.CanonicalBytes.size() + m_SplitMesh->SkeletonPath.size();
+            size += m_SplitMesh->SubMeshes.size() * sizeof(Skeletal::SkeletalSubMesh);
+            for (const auto& slot : m_SplitMesh->Slots)
+            {
+                size += sizeof(slot) + slot.Name.size();
+            }
+            for (const auto& material : m_SplitMesh->Materials)
+            {
+                size += sizeof(material);
+                for (const auto& path : material.Textures)
+                {
+                    size += path.size();
+                }
+            }
+        }
         return size;
     }
 
+    bool SkinnedMeshResource::SetSplitMesh(const Skeletal::SkinMeshV1& mesh)
+    {
+        if (IsLoaded() || !mesh.m_Data)
+        {
+            return false;
+        }
+        Container::VariableArray<Skeletal::SkeletalMaterialSlot> slots;
+        slots.reserve(mesh.m_Data->Slots.size());
+        for (const auto& slot : mesh.m_Data->Slots)
+        {
+            Skeletal::SkeletalMaterialSlot native;
+            if (!Skeletal::SplitWire::NativeName(slot.Name, native.Name))
+            {
+                return false;
+            }
+            slots.push_back(std::move(native));
+        }
+        ReleaseRenderAssetLease();
+        m_Vertices.clear();
+        m_Indices.clear();
+        m_SubMeshes.clear();
+        m_MaterialSlots = std::move(slots);
+        m_SplitMesh = mesh.m_Data;
+        m_bSplitV1 = true;
+        return true;
+    }
+    bool SkinnedMeshResource::IsSplitV1() const noexcept
+    {
+        return m_bSplitV1;
+    }
+    const Skeletal::SkinMeshV1Data* SkinnedMeshResource::GetSplitMesh() const noexcept
+    {
+        return m_SplitMesh.get();
+    }
     void SkinnedMeshResource::SetVertices(Container::VariableArray<Skeletal::SkeletalVertex>&& vertices)
     {
+        if (m_bSplitV1)
+        {
+            return;
+        }
         m_Vertices = std::move(vertices);
     }
 
     void SkinnedMeshResource::SetIndices(Container::VariableArray<uint32_t>&& indices)
     {
+        if (m_bSplitV1)
+        {
+            return;
+        }
         m_Indices = std::move(indices);
     }
 
     void SkinnedMeshResource::SetSubmeshTables(Container::VariableArray<Skeletal::SkeletalSubMesh>&& submeshes,
         Container::VariableArray<Skeletal::SkeletalMaterialSlot>&& slots)
     {
+        if (m_bSplitV1)
+        {
+            return;
+        }
         m_SubMeshes = std::move(submeshes);
         m_MaterialSlots = std::move(slots);
     }
 
     const Container::VariableArray<Skeletal::SkeletalSubMesh>& SkinnedMeshResource::GetSubMeshes() const
     {
-        return m_SubMeshes;
+        return m_SplitMesh ? m_SplitMesh->SubMeshes : m_SubMeshes;
     }
 
     const Container::VariableArray<Skeletal::SkeletalMaterialSlot>& SkinnedMeshResource::GetMaterialSlots() const
@@ -99,22 +174,26 @@ namespace NorvesLib::Core
 
     void SkinnedMeshResource::SetMeshNodeGlobalTransform(const Container::FixedArray<float, 16>& transform)
     {
+        if (m_bSplitV1)
+        {
+            return;
+        }
         m_MeshNodeGlobalTransform = transform;
     }
 
     const Container::VariableArray<Skeletal::SkeletalVertex>& SkinnedMeshResource::GetVertices() const
     {
-        return m_Vertices;
+        return m_SplitMesh ? m_SplitMesh->Vertices : m_Vertices;
     }
 
     const Container::VariableArray<uint32_t>& SkinnedMeshResource::GetIndices() const
     {
-        return m_Indices;
+        return m_SplitMesh ? m_SplitMesh->Indices : m_Indices;
     }
 
     const Container::FixedArray<float, 16>& SkinnedMeshResource::GetMeshNodeGlobalTransform() const
     {
-        return m_MeshNodeGlobalTransform;
+        return m_SplitMesh ? m_SplitMesh->MeshTransform : m_MeshNodeGlobalTransform;
     }
 
     Rendering::SkinnedMeshHandle SkinnedMeshResource::GetRenderMeshHandle() const
@@ -130,6 +209,10 @@ namespace NorvesLib::Core
     void SkinnedMeshResource::RefreshRenderAssetLease()
     {
         ReleaseRenderAssetLease();
+        if (m_bSplitV1)
+        {
+            return;
+        }
         if (GetResourceId() == 0 || m_Vertices.empty() || m_Indices.empty())
         {
             return;

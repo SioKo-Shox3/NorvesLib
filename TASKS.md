@@ -2719,3 +2719,10 @@
 - stop-when: 旧cookedから失われた作者restを推測する、IDだけで束縛する、overrideで構造破損も通す、旧goldenを再生成する、helperだけでDoneとする、三path公開/async/cache・Armature/256・GPU/DCCまでこの一件へ混ぜる。骨格共有/ゲーム固有rigは未定のまま。
 
 - result: code 7b423fb1 / tree c10b19de / run 37537055880 attempt 1 / job 112520629199。Release65と新2membersのdirect Debug、codec/binding各3 case markerを両構成で確認。独立literalの992byte bank×2・rest-binding JSON×2・oracle8件×normal/-O、owner20/runtime28 child、旧63 cpp・固定4×6095byte・旧cook/CLI/PE証拠を保持。22 checkerのreceipt/stdout一致・stderr空、親readonly replay exit0・788 payload/448 source/21原API/6 ZIP一致。初回small macro衝突はtest3識別子だけ修正し、失敗599 payloadは別保持。latest2 paths/Library0、累積31 paths/Library19。作者rig→v1保存/所有parse→全名/topology/rest guard→明示override/差report→未登録owner Resource/実Samplerを受入。3資産cold-load/publication/runtime・Armature/256・GPU/DCC/Game実行は未受入。混在Line/Step/Bakeの専用累積境界試験は未網羅として残す。
+
+## G2-GR82-B2-SPLIT-WIRE-COLD-LOAD: 骨格とメッシュを分離保存して同snapshotから姿勢評価へつなぐ
+- status: doing
+- done-when: 明示v1 library cookでSkeleton/SkinnedMesh/既存ClipBankの三roleを保存し、role別1-entry NVPKとfresh manifest計画を所有する。同immutable AssetSystem snapshotからSkeleton・Mesh・順序付きBank群を全て読んで検証・束縛し、明示ownerの未登録bundleから名前指定の実Sampler/FK/SkinVertexを評価する。IBMとMはMeshに持ち、共有可能なSkeletonはtopology/rest/ROOTだけを持つ。
+- verify: 独立wire literal/oracleと破損・上限拒否、same-read設定/buffer/material対応、全MATS/slot/texture参照のCPU読戻し、SREFの完全topologyと内容世代pin、複数bank順/重複名/全作者rest比較、実package cold-load/一snapshot/所有/失敗原子性/明示owner、共有Skeletonと異なるMesh IBM、実姿勢と旧Sampler全bytes。新試験はDebug/Release常時検査。旧65 cpp・B1 992byte/差report・GR83 owner/runtime・旧cook/CLIを維持する。
+- policy: role1 STRS/TJNT/RSET/ARST/ROOT、role2 STRS/TJNT/SREF/VERT/INDX/IBMS/MNGT/SUBM/MSLT/MATS。profile1はsingle root・直接TRS・128以下・ROOT Identity。B1 role3のschema/bytesは変更しない。論理参照は既存manifest同様ASCII、joint/clip/slot名はUTF8。parse/read/image予算は確保前に検査する。
+- stop-when: SkeletonにMeshのIBMを置く、IDだけで束縛する、rest overrideでMesh世代pinを無視する、素材を暗黙Opaqueへ潰す、snapshotをfilesystem transactionと扱う、新CLI/既存manifest合成/Registry公開/async cache・Armature/256/GPUまで同時に完了扱いする。実描画は未対応のまま明示拒否しCPU責務を検証する。

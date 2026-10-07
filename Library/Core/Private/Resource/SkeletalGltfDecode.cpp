@@ -1,4 +1,6 @@
 ﻿#include "Resource/SkeletalGltfDecode.h"
+#include "Resource/RigGltfImportCapture.h"
+#include "Asset/RigSplitAllocationTestAccess.h"
 #include "Animation/RigV1Types.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include "Resource/GltfNativePath.h"
@@ -857,7 +859,10 @@ namespace NorvesLib::Core::Skeletal
         }
 
         bool AssignMaterialSlots(const JsonValue& root, const JsonValue& primitives,
-            Container::VariableArray<PrimitiveInfo>& descriptions, Container::VariableArray<SkeletalMaterialSlot>& slots)
+                                 Container::VariableArray<PrimitiveInfo>& descriptions,
+                                 Container::VariableArray<SkeletalMaterialSlot>& slots,
+                                 Container::VariableArray<uint64_t>* sourceIndices, const RigV1Limits* nameLimits,
+                                 bool& bNameLimitExceeded)
         {
             const auto materials = root.FindMember("materials");
             if (root.HasMember("materials") && !materials.IsArray())
@@ -866,6 +871,22 @@ namespace NorvesLib::Core::Skeletal
             }
             Container::VariableArray<uint64_t> sources;
             Container::VariableArray<Container::String> bases;
+            uint64_t remainingSlotNames = nameLimits ? nameLimits->MaxStringBytes : UINT64_MAX;
+            const auto nameBytes = [](const Container::String& name) -> uint64_t
+            {
+                const auto measured = Asset::MeasureSkeletalNameEncoding(
+                    2, Container::Span<const Container::String::value_type>{name.data(), name.size()});
+                return measured.Succeeded() ? measured.ByteCount : UINT64_MAX;
+            };
+            const auto fits = [&](uint64_t bytes)
+            {
+                if (nameLimits && (bytes > nameLimits->MaxNameBytes || bytes > remainingSlotNames))
+                {
+                    bNameLimitExceeded = true;
+                    return false;
+                }
+                return true;
+            };
             for (size_t index = 0; index < descriptions.size(); ++index)
             {
                 const auto primitive = primitives.GetArrayElement(index);
@@ -892,6 +913,10 @@ namespace NorvesLib::Core::Skeletal
                     if (slots.size() >= MaximumMaterialSlotCount)
                     {
                         return false;
+                    }
+                    if (nameLimits)
+                    {
+                        Detail::ObserveSplitAllocation("material_base_copy");
                     }
                     Container::String name;
                     if (source == UINT64_MAX)
@@ -942,21 +967,44 @@ namespace NorvesLib::Core::Skeletal
                 }
                 if (matches == 1)
                 {
+                    const auto bytes = nameBytes(bases[slot]);
+                    if (!fits(bytes))
+                    {
+                        return false;
+                    }
+                    if (nameLimits)
+                    {
+                        Detail::ObserveSplitAllocation("material_slot_copy");
+                        remainingSlotNames -= bytes;
+                    }
                     slots[slot].Name = bases[slot];
                     continue;
                 }
+                const auto sourceSuffix =
+                    sources[slot] == UINT64_MAX ? Container::String("default") : DecimalSlotIndex(sources[slot]);
+                const uint64_t stemBytes = nameBytes(bases[slot]) + 3 + sourceSuffix.size();
+                if (!fits(stemBytes))
+                {
+                    return false;
+                }
                 Container::String stem = bases[slot];
                 stem += " [";
-                stem += sources[slot] == UINT64_MAX ? Container::String("default") : DecimalSlotIndex(sources[slot]);
+                stem += sourceSuffix;
                 stem += "]";
                 bool bAssigned = false;
                 for (uint32_t suffix = 0; suffix <= MaximumMaterialSlotCount * 2; ++suffix)
                 {
+                    const auto suffixText = suffix ? DecimalSlotIndex(suffix) : Container::String{};
+                    const uint64_t candidateBytes = stemBytes + (suffix ? 1 + suffixText.size() : 0);
+                    if (!fits(candidateBytes))
+                    {
+                        return false;
+                    }
                     auto candidate = stem;
                     if (suffix != 0)
                     {
                         candidate += "_";
-                        candidate += DecimalSlotIndex(suffix);
+                        candidate += suffixText;
                     }
                     bool bConflict = false;
                     for (const auto& name : bases)
@@ -969,6 +1017,11 @@ namespace NorvesLib::Core::Skeletal
                     }
                     if (!bConflict)
                     {
+                        if (nameLimits)
+                        {
+                            Detail::ObserveSplitAllocation("material_slot_copy");
+                            remainingSlotNames -= candidateBytes;
+                        }
                         slots[slot].Name = std::move(candidate);
                         bAssigned = true;
                         break;
@@ -979,12 +1032,17 @@ namespace NorvesLib::Core::Skeletal
                     return false;
                 }
             }
+            if (sourceIndices)
+            {
+                *sourceIndices = std::move(sources);
+            }
             return true;
         }
 
         bool ParsePrimitives(const JsonValue& root, Container::VariableArray<PrimitiveInfo>& outPrimitives,
-            Container::VariableArray<SkeletalMaterialSlot>& outSlots, SkeletalGltfDecodeStatus& status,
-            const SkeletalGltfDecodeOptions& options)
+                             Container::VariableArray<SkeletalMaterialSlot>& outSlots, SkeletalGltfDecodeStatus& status,
+                             const SkeletalGltfDecodeOptions& options,
+                             Container::VariableArray<uint64_t>* sourceIndices, const RigV1Limits* nameLimits)
         {
             const auto meshes = root.FindMember("meshes");
             if (!meshes.IsArray() || meshes.GetArraySize() != 1)
@@ -1012,9 +1070,12 @@ namespace NorvesLib::Core::Skeletal
                 }
             }
             // 単一primitiveもsource材質名を保持し、0.2の明示表へ保存する。
-            if (!AssignMaterialSlots(root, primitives, outPrimitives, outSlots))
+            bool bNameLimitExceeded = false;
+            if (!AssignMaterialSlots(root, primitives, outPrimitives, outSlots, sourceIndices, nameLimits,
+                                     bNameLimitExceeded))
             {
-                status = SkeletalGltfDecodeStatus::InvalidSubMesh;
+                status = bNameLimitExceeded ? SkeletalGltfDecodeStatus::ImportLimitExceeded
+                                            : SkeletalGltfDecodeStatus::InvalidSubMesh;
                 return false;
             }
             return true;
@@ -2349,12 +2410,71 @@ namespace NorvesLib::Core::Skeletal
             return true;
         }
 
+        bool CheckSplitMaterialBudget(const JsonValue& root, const RigV1Limits& limits,
+                                      SkeletalGltfDecodeStatus& status)
+        {
+            const auto materials = root.FindMember("materials");
+            if (materials.IsValid() && !materials.IsArray())
+            {
+                return false;
+            }
+            if (materials.GetArraySize() > 256)
+            {
+                status = SkeletalGltfDecodeStatus::ImportLimitExceeded;
+                return false;
+            }
+            uint64_t remaining = limits.MaxStringBytes;
+            for (size_t i = 0; i < materials.GetArraySize(); ++i)
+            {
+                const auto material = materials.GetArrayElement(i);
+                const auto field = material.FindMember("name");
+                if (!material.IsObject() || (field.IsValid() && !field.IsString()))
+                {
+                    return false;
+                }
+                const auto& name = field.AsString();
+                if (name.empty())
+                {
+                    continue;
+                }
+                const auto measured = Asset::MeasureSkeletalNameEncoding(
+                    2, Container::Span<const Container::String::value_type>{name.data(), name.size()});
+                if (!measured.Succeeded())
+                {
+                    return false;
+                }
+                if (measured.ByteCount > limits.MaxNameBytes || measured.ByteCount > remaining)
+                {
+                    status = SkeletalGltfDecodeStatus::ImportLimitExceeded;
+                    return false;
+                }
+                remaining -= measured.ByteCount;
+            }
+            return true;
+        }
+        struct CapturedBufferReadContext
+        {
+            Gltf::BufferFileContext* File = nullptr;
+            Container::VariableArray<std::filesystem::path>* Paths = nullptr;
+        };
+        Gltf::ExternalBufferReadResult ReadCapturedBuffer(Container::Span<const uint8_t> uri,
+                                                          Container::VariableArray<uint8_t>& bytes, void* opaque)
+        {
+            auto& context = *static_cast<CapturedBufferReadContext*>(opaque);
+            std::filesystem::path acquired;
+            const auto status = Gltf::ReadBufferFileWithPath(uri, bytes, context.File, &acquired);
+            if (status == Gltf::ExternalBufferReadResult::Success)
+            {
+                context.Paths->push_back(std::move(acquired));
+            }
+            return status;
+        }
         SkeletalGltfDecodeResult DecodeResolvedDocument(
             const JsonValue& root, const Gltf::ContainerView& container, const std::filesystem::path& sourcePath,
             Gltf::BufferSet* outSourceBuffers, const AssetImport::LoadedImportSettings* importSettings,
             const SkeletalGltfDecodeOptions* decodeOptions, bool allowMultipleClips, bool bAllowEmptyClips = false,
             Container::VariableArray<SkeletalRestTransform>* outRest = nullptr, double* outResolvedScale = nullptr,
-            const RigV1Limits* rigLimits = nullptr)
+            const RigV1Limits* rigLimits = nullptr, RigGltfImportCapture* capture = nullptr)
         {
             if (!Gltf::IsValidNativeSourcePath(sourcePath))
             {
@@ -2370,6 +2490,10 @@ namespace NorvesLib::Core::Skeletal
             uint64_t reservedBufferBytes = 0;
             SkeletalGltfDecodeStatus budgetStatus = SkeletalGltfDecodeStatus::InvalidDocument;
             if (rigLimits && !CheckRigInputBudget(root, *rigLimits, reservedBufferBytes, budgetStatus))
+            {
+                return Fail(budgetStatus);
+            }
+            if (capture && rigLimits && !CheckSplitMaterialBudget(root, *rigLimits, budgetStatus))
             {
                 return Fail(budgetStatus);
             }
@@ -2400,7 +2524,9 @@ namespace NorvesLib::Core::Skeletal
             Container::VariableArray<PrimitiveInfo> primitives;
             Container::VariableArray<SkeletalMaterialSlot> materialSlots;
             SkeletalGltfDecodeStatus status = SkeletalGltfDecodeStatus::InvalidDocument;
-            if (!ParsePrimitives(root, primitives, materialSlots, status, options))
+            Container::VariableArray<uint64_t> materialSources;
+            if (!ParsePrimitives(root, primitives, materialSlots, status, options, capture ? &materialSources : nullptr,
+                                 capture ? rigLimits : nullptr))
             {
                 return Fail(status);
             }
@@ -2439,6 +2565,12 @@ namespace NorvesLib::Core::Skeletal
             Container::VariableArray<BufferViewInfo> bufferViews;
             Gltf::BufferSet buffers;
             Gltf::BufferFileContext fileContext{sourcePath};
+            Container::VariableArray<std::filesystem::path> acquiredPaths, sourceFiles;
+            CapturedBufferReadContext readContext{&fileContext, &acquiredPaths};
+            if (capture)
+            {
+                acquiredPaths.reserve(root.FindMember("buffers").GetArraySize());
+            }
             if (rigLimits)
             {
                 fileContext.MaxReadBytes = rigLimits->MaxBufferBytes - reservedBufferBytes;
@@ -2449,12 +2581,35 @@ namespace NorvesLib::Core::Skeletal
                 return Fail(status);
             }
             if (!ParseBufferViews(root, bufferViews) ||
-                Gltf::ResolveJsonBuffers(root, container, Gltf::ReadBufferFile, &fileContext, buffers).Result != Gltf::BufferResolveResult::Success)
+                Gltf::ResolveJsonBuffers(root, container, capture ? ReadCapturedBuffer : Gltf::ReadBufferFile,
+                                         capture ? static_cast<void*>(&readContext) : static_cast<void*>(&fileContext),
+                                         buffers)
+                        .Result != Gltf::BufferResolveResult::Success)
             {
                 return Fail(fileContext.bLimitExceeded ? SkeletalGltfDecodeStatus::ImportLimitExceeded
                                                        : SkeletalGltfDecodeStatus::InvalidAccessor);
             }
 
+            if (capture)
+            {
+                sourceFiles.resize(buffers.GetCount());
+                size_t next = 0;
+                for (size_t i = 0; i < buffers.GetCount(); ++i)
+                {
+                    if (buffers.GetSourceKind(i) == Gltf::BufferStorageKind::ExternalFile)
+                    {
+                        if (next >= acquiredPaths.size())
+                        {
+                            return Fail(SkeletalGltfDecodeStatus::InvalidAccessor);
+                        }
+                        sourceFiles[i] = std::move(acquiredPaths[next++]);
+                    }
+                }
+                if (next != acquiredPaths.size())
+                {
+                    return Fail(SkeletalGltfDecodeStatus::InvalidAccessor);
+                }
+            }
             SkeletalGltfData data;
             data.MaterialSlots = std::move(materialSlots);
             Container::VariableArray<int32_t> nodeToJoint;
@@ -2633,7 +2788,13 @@ namespace NorvesLib::Core::Skeletal
             {
                 *outResolvedScale = translationScale;
             }
-            if (outSourceBuffers != nullptr)
+            if (capture)
+            {
+                capture->Buffers.Swap(buffers);
+                capture->SourceCanonicalFiles = std::move(sourceFiles);
+                capture->SlotSourceMaterialIndices = std::move(materialSources);
+            }
+            else if (outSourceBuffers != nullptr)
             {
                 outSourceBuffers->Swap(buffers);
             }
@@ -2646,7 +2807,7 @@ namespace NorvesLib::Core::Skeletal
         Gltf::BufferSet* outSourceBuffers, const AssetImport::LoadedImportSettings* importSettings,
         const SkeletalGltfDecodeOptions* decodeOptions, bool allowMultipleClips, bool bAllowEmptyClips = false,
         Container::VariableArray<SkeletalRestTransform>* outRest = nullptr, double* outResolvedScale = nullptr,
-        const RigV1Limits* rigLimits = nullptr)
+        const RigV1Limits* rigLimits = nullptr, RigGltfImportCapture* capture = nullptr)
     {
         if (outSourceBuffers != nullptr)
         {
@@ -2677,9 +2838,15 @@ namespace NorvesLib::Core::Skeletal
         {
             return Fail(SkeletalGltfDecodeStatus::InvalidJson);
         }
-        return DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers, importSettings,
-                                      decodeOptions, allowMultipleClips, bAllowEmptyClips, outRest, outResolvedScale,
-                                      rigLimits);
+        auto result = DecodeResolvedDocument(document.GetRoot(), container, sourcePath, outSourceBuffers,
+                                             importSettings, decodeOptions, allowMultipleClips, bAllowEmptyClips,
+                                             outRest, outResolvedScale, rigLimits, capture);
+        if (result.Succeeded() && capture)
+        {
+            capture->SourceContainer = container;
+            capture->Document = std::move(document);
+        }
+        return result;
     }
 
     SkeletalGltfDecodeResult DecodeSkeletalGltf(Container::Span<const uint8_t> sourceBytes,
@@ -2729,6 +2896,26 @@ namespace NorvesLib::Core::Skeletal
     {
         return DecodeGltfBytes(sourceBytes, sourcePath, nullptr, importSettings, decodeOptions, true, true, &outRest,
                                &outResolvedScale, &limits);
+    }
+
+    SkeletalGltfDecodeResult DecodeRigAuthorRestGltfCapturedNativePath(
+        Container::Span<const uint8_t> sourceBytes, const std::filesystem::path& sourcePath,
+        Container::VariableArray<SkeletalRestTransform>& outRest, double& outResolvedScale,
+        RigGltfImportCapture& outCapture, const RigV1Limits& limits, const AssetImport::LoadedImportSettings* settings,
+        const SkeletalGltfDecodeOptions* options)
+    {
+        RigGltfImportCapture capture;
+        Container::VariableArray<SkeletalRestTransform> rest;
+        double scale = 1;
+        auto result = DecodeGltfBytes(sourceBytes, sourcePath, nullptr, settings, options, true, true, &rest, &scale,
+                                      &limits, &capture);
+        if (result.Succeeded())
+        {
+            outCapture = std::move(capture);
+            outRest = std::move(rest);
+            outResolvedScale = scale;
+        }
+        return result;
     }
 
     SkeletalGltfDecodeResult DecodeSkeletalGltf(const Container::String& jsonText, const Container::String& sourcePath,

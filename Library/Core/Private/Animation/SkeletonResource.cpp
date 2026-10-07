@@ -1,4 +1,6 @@
 ﻿#include "Animation/SkeletonResource.h"
+#include "Asset/CookedSkeletonV1.h"
+#include "Asset/RigSplitWire.h"
 
 #include <utility>
 
@@ -36,12 +38,18 @@ namespace NorvesLib::Core
 
     bool SkeletonResource::Load()
     {
+        if (m_bSplitV1 && !m_SplitSkeleton)
+        {
+            SetResourceState(ResourceState::Failed);
+            return false;
+        }
         SetResourceState(ResourceState::Loaded);
         return true;
     }
 
     void SkeletonResource::Unload()
     {
+        m_SplitSkeleton.reset();
         m_Joints.clear();
         m_AuthorRestPose.clear();
         m_JointIndices.clear();
@@ -57,11 +65,56 @@ namespace NorvesLib::Core
         }
         size += m_JointIndices.size() * (sizeof(Identity) + sizeof(uint32_t));
         size += m_AuthorRestPose.size() * sizeof(Skeletal::SkeletalRestTransform);
+        if (m_SplitSkeleton)
+        {
+            size += sizeof(Skeletal::SkeletonV1Data) +
+                    m_SplitSkeleton->CurrentRest.Rest.size() * sizeof(Skeletal::SkeletalRestTransform);
+            size += m_SplitSkeleton->Topology.CanonicalBytes.size() + m_SplitSkeleton->CurrentRest.Label.size();
+            for (const auto& joint : m_SplitSkeleton->Topology.Joints)
+            {
+                size += sizeof(joint) + joint.Name.size();
+            }
+        }
         return size;
     }
 
+    bool SkeletonResource::SetSplitSkeleton(const Skeletal::SkeletonV1& skeleton)
+    {
+        if (IsLoaded() || !skeleton.m_Data)
+        {
+            return false;
+        }
+        Container::UnorderedMap<Identity, uint32_t, Identity::Hasher> indices;
+        for (size_t i = 0; i < skeleton.m_Data->Topology.Joints.size(); ++i)
+        {
+            Container::String name;
+            if (!Skeletal::SplitWire::NativeName(skeleton.m_Data->Topology.Joints[i].Name, name))
+            {
+                return false;
+            }
+            indices.emplace(Identity(name.c_str()), uint32_t(i));
+        }
+        m_JointIndices = std::move(indices);
+        m_Joints.clear();
+        m_AuthorRestPose.clear();
+        m_SplitSkeleton = skeleton.m_Data;
+        m_bSplitV1 = true;
+        return true;
+    }
+    bool SkeletonResource::IsSplitV1() const noexcept
+    {
+        return m_bSplitV1;
+    }
+    const Skeletal::SkeletonV1Data* SkeletonResource::GetSplitSkeleton() const noexcept
+    {
+        return m_SplitSkeleton.get();
+    }
     void SkeletonResource::SetJoints(Container::VariableArray<Skeletal::SkeletalJoint>&& joints)
     {
+        if (m_bSplitV1)
+        {
+            return;
+        }
         m_AuthorRestPose.clear();
         m_Joints = std::move(joints);
         m_JointIndices.clear();
@@ -76,7 +129,7 @@ namespace NorvesLib::Core
 
     bool SkeletonResource::SetAuthorRestPose(const Container::VariableArray<Skeletal::SkeletalRestTransform>& rest)
     {
-        if (IsLoaded() || rest.empty() || rest.size() != m_Joints.size())
+        if (m_bSplitV1 || IsLoaded() || rest.empty() || rest.size() != m_Joints.size())
         {
             return false;
         }
@@ -93,7 +146,7 @@ namespace NorvesLib::Core
     }
     const Container::VariableArray<Skeletal::SkeletalRestTransform>& SkeletonResource::GetAuthorRestPose() const
     {
-        return m_AuthorRestPose;
+        return m_SplitSkeleton ? m_SplitSkeleton->CurrentRest.Rest : m_AuthorRestPose;
     }
 
     int32_t SkeletonResource::FindJointIndex(Identity name) const

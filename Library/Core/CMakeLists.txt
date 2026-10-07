@@ -54,14 +54,32 @@ set(PRIVATE_SOURCES
     Private/Animation/RigV1Types.h
     Private/Animation/ClipBankBinding.cpp
     Private/Animation/ClipBankBinding.h
+    Private/Animation/ClipBankRestComparison.h
+    Private/Animation/ClipBankRestComparison.cpp
+    Private/Animation/RigSplitBinding.h
+    Private/Animation/RigSplitBindingTestAccess.h
+    Private/Animation/RigSplitBinding.cpp
     Private/Animation/ClipBankBindingTestAccess.h
     Private/Asset/CookedClipBankV1.cpp
     Private/Asset/CookedClipBankV1.h
+    Private/Asset/RigSplitWire.h
+    Private/Asset/RigSplitAllocationTestAccess.h
+    Private/Asset/RigSplitAllocationTestAccess.cpp
+    Private/Asset/RigSplitWire.cpp
+    Private/Asset/CookedSkeletonV1.h
+    Private/Asset/CookedSkeletonV1.cpp
+    Private/Asset/CookedSkinMeshV1.h
+    Private/Asset/CookedSkinMeshV1.cpp
     Private/Resource/RigAuthoring.cpp
     Private/Resource/RigAuthoring.h
+    Private/Resource/RigGltfImportCapture.h
+    Private/Resource/RigSplitAssetLoader.cpp
+    Private/Resource/RigSplitAssetLoader.h
     Public/Animation/SkeletalRestPose.h
     Private/Animation/SkeletalJointIndexNative.cpp
     Private/Animation/SkeletalAnimationSampler.cpp
+    Private/Animation/SkeletalSplitSampler.cpp
+    Private/Animation/SkeletalSplitSampler.h
     Private/Animation/SkeletalSamplingMath.h
     Private/Animation/SkeletalClipSampling.h
     Private/Animation/SkeletalBindRowMath.h

@@ -61,6 +61,10 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER SkeletalAssetRuntimeTest SkeletalAssetRuntimeTest.cpp
     MEMBER SkeletalAssetSessionTest SkeletalAssetSessionTest.cpp
     MEMBER CookedClipBankV1Test CookedClipBankV1Test.cpp
+    MEMBER CookedSkeletonV1Test CookedSkeletonV1Test.cpp
+    MEMBER CookedSkinMeshV1Test CookedSkinMeshV1Test.cpp
+    MEMBER RigSplitCookTest RigSplitCookTest.cpp
+    MEMBER SkeletalSplitAssetLoaderTest SkeletalSplitAssetLoaderTest.cpp
     MEMBER SkeletalClipBankBindingTest SkeletalClipBankBindingTest.cpp
     MEMBER BvhEvaluateTest BvhEvaluateTest.cpp
     MEMBER BvhDecodeTest BvhDecodeTest.cpp
@@ -319,3 +323,8 @@ target_include_directories(CookedMeshTest PRIVATE ${CMAKE_SOURCE_DIR}/Game)
 
 add_test(NAME CookedClipBankV1Test COMMAND CookedMeshTest --test=CookedClipBankV1Test)
 add_test(NAME SkeletalClipBankBindingTest COMMAND CookedMeshTest --test=SkeletalClipBankBindingTest)
+
+add_test(NAME CookedSkeletonV1Test COMMAND CookedMeshTest --test=CookedSkeletonV1Test)
+add_test(NAME CookedSkinMeshV1Test COMMAND CookedMeshTest --test=CookedSkinMeshV1Test)
+add_test(NAME RigSplitCookTest COMMAND CookedMeshTest --test=RigSplitCookTest)
+add_test(NAME SkeletalSplitAssetLoaderTest COMMAND CookedMeshTest --test=SkeletalSplitAssetLoaderTest)

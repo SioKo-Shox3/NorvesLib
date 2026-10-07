@@ -149,9 +149,10 @@ namespace NorvesLib::Tools::AssetCook
             View LogicalPath;
             Array<Image> Cache;
             Text& Error;
+            const LoadedMeshMaterialV1Input* Loaded = nullptr;
             Images(const Core::JsonValue& root, const G::BufferSet& buffers, const std::filesystem::path& source,
-                   View logical, Text& error)
-                : Root(root), Buffers(buffers), SourcePath(source), LogicalPath(logical), Error(error)
+                   View logical, Text& error, const LoadedMeshMaterialV1Input* loaded)
+                : Root(root), Buffers(buffers), SourcePath(source), LogicalPath(logical), Error(error), Loaded(loaded)
             {
                 // 選択材質の5role以下。返したpixel viewがCache移動で無効にならないよう先に確保する。
                 Cache.reserve(static_cast<size_t>(G::MaterialTextureRole::Count));
@@ -177,6 +178,18 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     Error = "image_role_limit";
                     return nullptr;
+                }
+                if (Loaded)
+                {
+                    Image image;
+                    if (!Loaded->ReadImage || !Loaded->ReadImage(index, image.Encoded, image.Decoded, image.Mime,
+                                                                 Loaded->ImageContext, Error))
+                    {
+                        return nullptr;
+                    }
+                    image.bDecoded = true;
+                    Cache.push_back(std::move(image));
+                    return &Cache.back();
                 }
                 G::ImageSource source;
                 if (G::ImageSource::Resolve(Root, index, Buffers, source) != G::ImageSourceResult::Success)
@@ -414,12 +427,21 @@ namespace NorvesLib::Tools::AssetCook
     bool PrepareMeshMaterialV1(const Core::JsonValue& root, const G::BufferSet& buffers,
                                const std::filesystem::path& sourcePath, View logicalPath, bool bHasMaterial,
                                uint32_t materialIndex, uint64_t gltfSourceHash,
-                               const I::ImportSettingsFileOptions* options, MeshMaterialV1Plan& out, Text& error)
+                               const I::ImportSettingsFileOptions* options, MeshMaterialV1Plan& out, Text& error,
+                               const LoadedMeshMaterialV1Input* loaded)
     {
         error.clear();
         MeshMaterialV1Plan plan;
         I::SourceMaterialCatalog catalog;
-        if (I::ReadSourceMaterialCatalog(root, catalog) != I::SettingsResult::Success ||
+        if (loaded && (!loaded->Import || !loaded->Catalog || !loaded->Resolved))
+        {
+            return Fail(error, logicalPath, bHasMaterial, materialIndex, {}, "loaded_input");
+        }
+        if (loaded)
+        {
+            catalog = *loaded->Catalog;
+        }
+        if ((!loaded && I::ReadSourceMaterialCatalog(root, catalog) != I::SettingsResult::Success) ||
             (bHasMaterial && materialIndex >= catalog.size()))
         {
             return Fail(error, logicalPath, bHasMaterial, materialIndex, {}, "materials");
@@ -427,7 +449,11 @@ namespace NorvesLib::Tools::AssetCook
         const ByteView materialName = bHasMaterial ? ByteView(catalog[materialIndex].Name) : ByteView{};
         const I::ImportSettingsFileOptions automatic;
         const auto& effective = options ? *options : automatic;
-        if (!sourcePath.empty() || effective.bRequired || !effective.OverridePath.empty())
+        if (loaded)
+        {
+            plan.Import = *loaded->Import;
+        }
+        else if (!sourcePath.empty() || effective.bRequired || !effective.OverridePath.empty())
         {
             const auto loaded = I::LoadImportSettingsDocument(sourcePath, effective, plan.Import);
             if (loaded.Result != I::SettingsFileResult::Success)
@@ -435,10 +461,18 @@ namespace NorvesLib::Tools::AssetCook
                 return Fail(error, logicalPath, bHasMaterial, materialIndex, materialName, "import_settings");
             }
         }
-        const auto resolved = I::ResolveMaterialImportPlan(catalog, plan.Import.Settings, {}, plan.Resolved);
-        if (!resolved.Succeeded())
+        if (loaded)
         {
-            return Fail(error, logicalPath, bHasMaterial, materialIndex, materialName, "material_selector_or_settings");
+            plan.Resolved = *loaded->Resolved;
+        }
+        else
+        {
+            const auto resolved = I::ResolveMaterialImportPlan(catalog, plan.Import.Settings, {}, plan.Resolved);
+            if (!resolved.Succeeded())
+            {
+                return Fail(error, logicalPath, bHasMaterial, materialIndex, materialName,
+                            "material_selector_or_settings");
+            }
         }
         for (const auto& entry : plan.Resolved.Materials)
         {
@@ -508,7 +542,7 @@ namespace NorvesLib::Tools::AssetCook
             return source.Textures[static_cast<size_t>(role)];
         };
         Text imageError;
-        Images images(root, buffers, sourcePath, logicalPath, imageError);
+        Images images(root, buffers, sourcePath, logicalPath, imageError, loaded);
         if (!images.Emit(texture(G::MaterialTextureRole::BaseColor), MeshImageRole::Albedo, true, plan.Textures[0]) ||
             !images.Emit(texture(G::MaterialTextureRole::Normal), MeshImageRole::Normal, false, plan.Textures[1]) ||
             !images.Emit(texture(G::MaterialTextureRole::Emissive), MeshImageRole::Emissive, true, plan.Textures[3]))
@@ -538,6 +572,12 @@ namespace NorvesLib::Tools::AssetCook
         MeshEmbeddedImage derived;
         if (analyzed.TextureMask)
         {
+            if (loaded &&
+                (!loaded->ReserveDerived || !loaded->ReserveDerived(analyzed.ByteCount, analyzed.Width, analyzed.Height,
+                                                                    loaded->ImageContext, imageError)))
+            {
+                return Fail(error, logicalPath, bHasMaterial, materialIndex, materialName, "arm_output_limit");
+            }
             Bytes pixels(analyzed.ByteCount);
             ArmImagePlan baked;
             if (BakeArmImages(arm, settings.Arm, factors, pixels, baked) != ArmImageStatus::Success ||

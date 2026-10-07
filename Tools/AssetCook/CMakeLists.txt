@@ -97,6 +97,11 @@ add_library(AssetCookLib STATIC
     ImageInspection.cpp
     ImageInspection.h
     TextureCooker.cpp
+    RigSplitImageDecode.cpp
+    RigSplitImageInputs.cpp
+    RigSplitImageInputs.h
+    RigSplitCook.cpp
+    RigSplitCook.h
     TextureCooker.h
 )
 

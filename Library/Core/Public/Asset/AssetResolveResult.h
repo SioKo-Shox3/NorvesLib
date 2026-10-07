@@ -38,6 +38,7 @@ namespace NorvesLib::Core::Asset
         AssetKind Kind = AssetKind::Unknown;
         Container::AnsiString Variant = AssetManifest::DefaultVariant;
         AssetFallbackMode FallbackMode = AssetFallbackMode::FailOnCookedFailure;
+        uint64_t MaxCookedPackageBytes = UINT64_MAX;
     };
 
     struct AssetResolveResult
@@ -52,6 +53,7 @@ namespace NorvesLib::Core::Asset
         AssetManifestResolveStatus ManifestStatus = AssetManifestResolveStatus::InvalidRequest;
         AssetReadStatus LooseReadStatus = AssetReadStatus::InvalidRequest;
         AssetReadStatus PackageReadStatus = AssetReadStatus::InvalidRequest;
+        uint64_t PackageBytesRead = 0;
         ::NorvesLib::FileStream::PackageEntry Entry;
         Container::AnsiString Reason;
 

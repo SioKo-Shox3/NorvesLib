@@ -8,9 +8,11 @@ namespace NorvesLib::Core::AssetImport
 }
 namespace NorvesLib::Core::Skeletal
 {
+    struct RigGltfImportCapture;
     struct RigAuthoringData
     {
         SkeletalGltfData Geometry;
+        SkeletalGltfDecodeReport DecodeReport;
         Container::VariableArray<SkeletalRestTransform> LocalRest;
         RigTopology Topology;
         Container::AnsiString SourceLabel;
@@ -29,12 +31,13 @@ namespace NorvesLib::Core::Skeletal
         friend bool DecodeRigAuthoringNativePath(Container::Span<const uint8_t>, const std::filesystem::path&,
                                                  RigAuthoringCpu&, RigV1Report&, const RigV1Limits&,
                                                  const AssetImport::LoadedImportSettings*,
-                                                 const SkeletalGltfDecodeOptions*);
+                                                 const SkeletalGltfDecodeOptions*, RigGltfImportCapture*);
     };
     // 成功時だけoutを置換する。原source/設定は呼出中不変。外部file全体のatomic snapshotではない。
     [[nodiscard]] bool DecodeRigAuthoringNativePath(Container::Span<const uint8_t> source,
                                                     const std::filesystem::path& path, RigAuthoringCpu& out,
                                                     RigV1Report& report, const RigV1Limits& limits = {},
                                                     const AssetImport::LoadedImportSettings* settings = nullptr,
-                                                    const SkeletalGltfDecodeOptions* options = nullptr);
+                                                    const SkeletalGltfDecodeOptions* options = nullptr,
+                                                    RigGltfImportCapture* capture = nullptr);
 } // namespace NorvesLib::Core::Skeletal

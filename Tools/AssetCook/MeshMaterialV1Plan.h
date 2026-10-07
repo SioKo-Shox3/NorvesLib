@@ -1,6 +1,7 @@
 ﻿#pragma once
 // 明示NVMESH v1だけの材質/画像解析。cookとfingerprintで同じ結果を用いる。
 #include "MeshCooker.h"
+#include "TextureCooker.h"
 #include "GeometryInspection.h"
 #include "Asset/CookedMaterialFormat.h"
 #include "Resource/ImportSettingsFile.h"
@@ -11,6 +12,17 @@ namespace NorvesLib::Core
 }
 namespace NorvesLib::Tools::AssetCook
 {
+    // splitのsame-read入口。旧入口はnullptrで従来read/hash経路を保つ。
+    struct LoadedMeshMaterialV1Input
+    {
+        const Core::AssetImport::LoadedImportSettingsDocument* Import = nullptr;
+        const Core::AssetImport::SourceMaterialCatalog* Catalog = nullptr;
+        const Core::AssetImport::ResolvedMaterialImportPlan* Resolved = nullptr;
+        void* ImageContext = nullptr;
+        bool (*ReadImage)(uint32_t, MeshEmbeddedImage&, DecodedTextureRgba8&, Core::Gltf::DataUriMime&, void*,
+                          Core::Container::AnsiString&) = nullptr;
+        bool (*ReserveDerived)(uint64_t, uint32_t, uint32_t, void*, Core::Container::AnsiString&) = nullptr;
+    };
     struct MeshMaterialV1Plan
     {
         Core::AssetImport::LoadedImportSettingsDocument Import;
@@ -53,7 +65,8 @@ namespace NorvesLib::Tools::AssetCook
                                              Core::Container::AnsiStringView logicalPath, bool bHasMaterial,
                                              uint32_t materialIndex, uint64_t gltfSourceHash,
                                              const Core::AssetImport::ImportSettingsFileOptions* options,
-                                             MeshMaterialV1Plan& out, Core::Container::AnsiString& error);
+                                             MeshMaterialV1Plan& out, Core::Container::AnsiString& error,
+                                             const LoadedMeshMaterialV1Input* loaded = nullptr);
     void WarnDuplicateMeshMaterials(Core::Container::AnsiStringView asset, uint32_t groups, uint32_t first,
                                     uint32_t second);
 } // namespace NorvesLib::Tools::AssetCook

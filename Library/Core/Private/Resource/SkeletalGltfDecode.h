@@ -19,6 +19,7 @@ namespace NorvesLib::Core::AssetImport
 namespace NorvesLib::Core::Skeletal
 {
     struct RigV1Limits;
+    struct RigGltfImportCapture;
     // importSettings省略時はsource隣を自動探索する。明示値は呼出中だけ借用し、結果へ保持しない。
     // GLB/JSONの元bytes入口。outSourceBuffersはhash用の全sourceと借用BINを保持する。
     // GLB入力はoutSourceBuffersより長く保持し、その所有storageを入力に使わないこと。
@@ -54,6 +55,14 @@ namespace NorvesLib::Core::Skeletal
         Container::Span<const uint8_t> sourceBytes, const std::filesystem::path& sourcePath,
         Container::VariableArray<SkeletalRestTransform>& outRest, double& outResolvedScale, const RigV1Limits& limits,
         const AssetImport::LoadedImportSettings* importSettings = nullptr,
+        const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
+
+    // 同じdocument/buffer/slot番号を材質cookへ引き渡す。全outは成功時のみ置換する。
+    [[nodiscard]] SkeletalGltfDecodeResult DecodeRigAuthorRestGltfCapturedNativePath(
+        Container::Span<const uint8_t> sourceBytes, const std::filesystem::path& sourcePath,
+        Container::VariableArray<SkeletalRestTransform>& outRest, double& outResolvedScale,
+        RigGltfImportCapture& outCapture, const RigV1Limits& limits,
+        const AssetImport::LoadedImportSettings* importSettings,
         const SkeletalGltfDecodeOptions* decodeOptions = nullptr);
 
     // 旧String入口の互換用。出力buffer配列を求めた場合は全source bytesを所有コピーする。

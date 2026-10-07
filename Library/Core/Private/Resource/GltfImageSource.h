@@ -64,6 +64,11 @@ namespace NorvesLib::Core::Gltf
             ProbeEmbeddedImageMime(bytes) == expected;
     }
 
+    struct ImageSourceReadLimits
+    {
+        uint64_t MaxUriBytes = UINT64_MAX;
+        uint64_t MaxEncodedBytes = UINT64_MAX;
+    };
     class ImageSource
     {
     public:
@@ -75,7 +80,8 @@ namespace NorvesLib::Core::Gltf
         // file URIは解決だけでI/Oしない。data URIは所有、bufferViewはindexと範囲だけを保持する。
         // root/buffersはこの呼出中に不変。失敗/例外はoutSourceを空にし、確保例外は伝播する。
         [[nodiscard]] static ImageSourceResult Resolve(const JsonValue& root, size_t imageIndex,
-            const BufferSet& buffers, ImageSource& outSource);
+                                                       const BufferSet& buffers, ImageSource& outSource,
+                                                       const ImageSourceReadLimits* limits = nullptr);
         void Reset() noexcept;
         void Swap(ImageSource& other) noexcept;
         ImageSourceKind GetKind() const noexcept;

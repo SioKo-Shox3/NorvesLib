@@ -1,4 +1,5 @@
 ﻿#include "Resource/RigAuthoring.h"
+#include "Resource/RigGltfImportCapture.h"
 #include "Resource/SkeletalGltfDecode.h"
 #include <cmath>
 namespace NorvesLib::Core::Skeletal
@@ -6,7 +7,7 @@ namespace NorvesLib::Core::Skeletal
     bool DecodeRigAuthoringNativePath(Container::Span<const uint8_t> source, const std::filesystem::path& path,
                                       RigAuthoringCpu& out, RigV1Report& report, const RigV1Limits& limits,
                                       const AssetImport::LoadedImportSettings* settings,
-                                      const SkeletalGltfDecodeOptions* options)
+                                      const SkeletalGltfDecodeOptions* options, RigGltfImportCapture* outCapture)
     {
         report = {};
         try
@@ -27,8 +28,13 @@ namespace NorvesLib::Core::Skeletal
                 return false;
             }
             auto data = Container::MakeShared<RigAuthoringData>();
-            auto decoded = DecodeRigAuthorRestGltfNativePath(source, path, data->LocalRest, data->ResolvedImportScale,
-                                                             limits, settings, options);
+            RigGltfImportCapture capture;
+            auto decoded =
+                outCapture ? DecodeRigAuthorRestGltfCapturedNativePath(source, path, data->LocalRest,
+                                                                       data->ResolvedImportScale, capture, limits,
+                                                                       settings, options)
+                           : DecodeRigAuthorRestGltfNativePath(source, path, data->LocalRest, data->ResolvedImportScale,
+                                                               limits, settings, options);
             report.DecodeStatus = decoded.Status;
             if (!decoded.Succeeded())
             {
@@ -79,10 +85,15 @@ namespace NorvesLib::Core::Skeletal
                                     ? Container::AnsiString("memory")
                                     : Container::AnsiString(Container::AnsiStringView(
                                           reinterpret_cast<const char*>(nativeLabel.data()), nativeLabel.size()));
+            data->DecodeReport = decoded.Report;
             data->Geometry = std::move(decoded.Data);
             report.SkeletonId = data->Topology.SkeletonId;
             RigAuthoringCpu candidate;
             candidate.m_Data = std::move(data);
+            if (outCapture)
+            {
+                *outCapture = std::move(capture);
+            }
             out = std::move(candidate);
             report.Status = RigV1Status::Success;
             return true;

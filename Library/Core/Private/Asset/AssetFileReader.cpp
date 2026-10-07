@@ -193,7 +193,7 @@ namespace NorvesLib::Core::Asset
             return true;
         }
 
-        AssetReadResult ReadResolvedPath(const AssetPath &assetPath)
+        AssetReadResult ReadResolvedPath(const AssetPath& assetPath, uint64_t maxReadBytes)
         {
             const std::string resolvedPath = ToStdString(assetPath.GetResolvedPath());
             if (resolvedPath.empty())
@@ -229,6 +229,10 @@ namespace NorvesLib::Core::Asset
                 return MakeFailure(AssetReadStatus::SizeTooLarge, assetPath, "file size is too large", fileSize);
             }
 
+            if (static_cast<uint64_t>(fileSize) > maxReadBytes)
+            {
+                return MakeFailure(AssetReadStatus::SizeTooLarge, assetPath, "asset_read_byte_limit", fileSize);
+            }
             const size_t targetSize = static_cast<size_t>(fileSize);
             auto bytes = Container::MakeShared<AssetBlob::ByteArray>();
             bytes->resize(targetSize);
@@ -302,7 +306,7 @@ namespace NorvesLib::Core::Asset
                 return MakeFailure(AssetReadStatus::InvalidPath, path, "absolute path is invalid");
             }
 
-            return ReadResolvedPath(path);
+            return ReadResolvedPath(path, request.MaxReadBytes);
         }
 
         const Container::AnsiString &requestedRoot = request.AssetRoot.empty() ? m_DefaultAssetRoot : request.AssetRoot;
@@ -318,7 +322,7 @@ namespace NorvesLib::Core::Asset
             return MakeFailure(AssetReadStatus::InvalidPath, path, "relative path is invalid");
         }
 
-        return ReadResolvedPath(path);
+        return ReadResolvedPath(path, request.MaxReadBytes);
     }
 
     AssetReadResult AssetFileReader::Read(Container::AnsiStringView inputPath) const

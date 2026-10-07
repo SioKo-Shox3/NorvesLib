@@ -7,6 +7,11 @@
 #include "Resource/SkeletalGltfData.h"
 #include "Animation/SkeletalRestPose.h"
 
+namespace NorvesLib::Core::Skeletal
+{
+    class SkeletonV1;
+    struct SkeletonV1Data;
+} // namespace NorvesLib::Core::Skeletal
 namespace NorvesLib::Core
 {
     class SkeletonResource : public Resource
@@ -25,6 +30,10 @@ namespace NorvesLib::Core
         void Unload() override;
         size_t GetMemorySize() const override;
 
+        // validated値だけをLoad前に設定する。split modeでは旧setterを拒否し、Unload後も旧形へ戻らない。
+        [[nodiscard]] bool SetSplitSkeleton(const Skeletal::SkeletonV1& skeleton);
+        [[nodiscard]] bool IsSplitV1() const noexcept;
+        [[nodiscard]] const Skeletal::SkeletonV1Data* GetSplitSkeleton() const noexcept;
         void SetJoints(Container::VariableArray<Skeletal::SkeletalJoint>&& joints);
         const Container::VariableArray<Skeletal::SkeletalJoint>& GetJoints() const;
         // 未Load時のみ設定可。現在rigの作者restを明示するv1経路。旧SetJointsはこれを解除する。
@@ -35,8 +44,10 @@ namespace NorvesLib::Core
         int32_t FindJointIndex(Identity name) const;
 
     private:
-        Container::VariableArray<Skeletal::SkeletalJoint> m_Joints;
-        Container::VariableArray<Skeletal::SkeletalRestTransform> m_AuthorRestPose;
-        Container::UnorderedMap<Identity, uint32_t, Identity::Hasher> m_JointIndices;
+      Container::TSharedPtr<const Skeletal::SkeletonV1Data> m_SplitSkeleton;
+      bool m_bSplitV1 = false;
+      Container::VariableArray<Skeletal::SkeletalJoint> m_Joints;
+      Container::VariableArray<Skeletal::SkeletalRestTransform> m_AuthorRestPose;
+      Container::UnorderedMap<Identity, uint32_t, Identity::Hasher> m_JointIndices;
     };
 } // namespace NorvesLib::Core

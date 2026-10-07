@@ -1,4 +1,5 @@
 ﻿#include "Animation/SkeletalAnimationSampler.h"
+#include "Animation/SkeletalSplitSampler.h"
 #include "Animation/SkeletalSamplingMath.h"
 #include "Animation/SkeletalClipSampling.h"
 #include "Animation/SkeletalBindRowMath.h"
@@ -169,6 +170,10 @@ namespace NorvesLib::Core::Animation
                                           SkeletalPoseSnapshot& outPose)
     {
         outPose.Clear();
+        if (skeleton.IsSplitV1() || mesh.IsSplitV1())
+        {
+            return Detail::SampleSplitV1(skeleton, clip, mesh, timeSeconds, meshNodeGlobalRow, outPose);
+        }
         if (!std::isfinite(timeSeconds) || !IsFiniteMatrix(meshNodeGlobalRow))
         {
             return false;

@@ -141,8 +141,8 @@ namespace NorvesLib::Core::Gltf
         }
         return {};
     }
-    ImageSourceResult ImageSource::Resolve(const JsonValue& root, size_t imageIndex,
-        const BufferSet& buffers, ImageSource& outSource)
+    ImageSourceResult ImageSource::Resolve(const JsonValue& root, size_t imageIndex, const BufferSet& buffers,
+                                           ImageSource& outSource, const ImageSourceReadLimits* limits)
     {
         auto fail = [&](ImageSourceResult result)
         {
@@ -200,10 +200,18 @@ namespace NorvesLib::Core::Gltf
                 {
                     return fail(ImageSourceResult::InvalidBufferView);
                 }
+                if (limits && candidate.m_Length > limits->MaxEncodedBytes)
+                {
+                    return fail(ImageSourceResult::InvalidEmbeddedData);
+                }
                 candidate.m_Kind = ImageSourceKind::BufferView;
             }
             else
             {
+                if (limits && image.FindMember("uri").AsString().size() > limits->MaxUriBytes)
+                {
+                    return fail(ImageSourceResult::InvalidUri);
+                }
                 Container::VariableArray<uint8_t> uri;
                 if (!ReadAscii(image.FindMember("uri"), uri) || uri.empty())
                 {
@@ -218,6 +226,10 @@ namespace NorvesLib::Core::Gltf
                     {
                         return fail(ImageSourceResult::InvalidMime);
                     }
+                    if (limits && parsed.View.PercentDecodedSize > limits->MaxUriBytes)
+                    {
+                        return fail(ImageSourceResult::InvalidEmbeddedData);
+                    }
                     Container::VariableArray<uint8_t> encoded(parsed.View.PercentDecodedSize);
                     if (DecodePercentBytes(parsed.View.EncodedPayload, {encoded.data(), encoded.size()}).Result != BufferSourceResult::Success)
                     {
@@ -226,6 +238,10 @@ namespace NorvesLib::Core::Gltf
                     const Container::Span<const uint8_t> encodedSpan(encoded.data(), encoded.size());
                     const auto size = Text::GetBase64DecodedSize(encodedSpan);
                     if (size.Result != Text::Base64DecodeResult::Success || size.Size == 0)
+                    {
+                        return fail(ImageSourceResult::InvalidEmbeddedData);
+                    }
+                    if (limits && size.Size > limits->MaxEncodedBytes)
                     {
                         return fail(ImageSourceResult::InvalidEmbeddedData);
                     }

@@ -1,0 +1,418 @@
+﻿// same-read材質/sidecar/BufferSetと三role packageの所有を反証する。
+#include "RigSplitTestFixture.h"
+#include "RigSplitWireTestFixture.h"
+#include "Tools/AssetCook/MeshMaterialV1Plan.h"
+namespace F = NorvesLib::Tests::RigV1Fixture;
+namespace X = NorvesLib::Tests::RigSplitFixture;
+namespace Cook = NorvesLib::Tools::AssetCook;
+namespace S = NorvesLib::Core::Skeletal;
+namespace C = NorvesLib::Core::Container;
+namespace
+{
+    void CookAndSettings(F::Fixture& f)
+    {
+        auto first = X::CookSource(f.Json), again = X::CookSource(f.Json);
+        RIG_CHECK(first.Skeleton.Payload == again.Skeleton.Payload && first.Mesh.Package == again.Mesh.Package &&
+                  first.ManifestJson == again.ManifestJson);
+        RIG_CHECK(first.Skeleton.Reference.SourceHash == first.Mesh.Reference.SourceHash &&
+                  first.Mesh.Reference.SourceHash == first.Bank.Reference.SourceHash);
+        RIG_CHECK(first.SlotSourceMaterials.size() == 1 && first.SlotSourceMaterials[0] == UINT64_MAX &&
+                  !first.bMaterialsRenderStaged);
+        X::Sidecar(R"({"version":1,"units":{"scale":2},"material":{"profile":"ai_generated"}})");
+        auto scaled = X::CookSource(f.Json);
+        RIG_CHECK(scaled.SourceHash != first.SourceHash && scaled.Import.bPresent &&
+                  !scaled.Import.RawSourceBytes.empty());
+        S::SkinMeshV1 mesh;
+        S::SkeletonV1 skeleton;
+        S::RigV1Report report;
+        RIG_CHECK(S::ParseSkinMeshV1(F::View(scaled.Mesh.Payload), mesh, report) &&
+                  S::ParseSkeletonV1(F::View(scaled.Skeleton.Payload), skeleton, report));
+        RIG_CHECK(skeleton.GetData()->CurrentRest.Rest[0].Translation.Y == 2 &&
+                  mesh.GetData()->Vertices[2].Position.Y == 2);
+        RIG_CHECK(mesh.GetData()->Materials[0].Record.Metallic == 0 &&
+                  mesh.GetData()->Materials[0].Record.OcclusionStrength == 1);
+        const auto stable = scaled.SourceHash;
+        F::Text error;
+        X::Sidecar(R"({"version":1,"materials":[{"name":"Missing","doubleSided":"force_true"}]})");
+        RIG_CHECK(!Cook::CookRigSplitV1NativePath(F::View(f.Json), X::Request(), scaled, report, error) &&
+                  scaled.SourceHash == stable);
+        std::filesystem::remove("RigV1Fixture/rig.gltf.import.json");
+        auto tail = f.Binary;
+        tail.push_back(42);
+        f.SetBuffer(tail);
+        auto tailed = X::CookSource(f.Json);
+        RIG_CHECK(tailed.SourceHash != first.SourceHash && tailed.Skeleton.Payload == first.Skeleton.Payload &&
+                  tailed.Mesh.Payload == first.Mesh.Payload);
+        f.SetBuffer(f.Binary);
+        auto emissive = X::AddMaterial(f.Json, R"({"name":"Glow","emissiveFactor":[1,0,0]})");
+        auto request = X::Request();
+        RIG_CHECK(!Cook::CookRigSplitV1NativePath(F::View(emissive), request, scaled, report, error) &&
+                  error.find(C::AnsiStringView("emissiveNitsPerUnit")) != F::Text::npos);
+        request.AssetSetEmission = {true, 100};
+        auto glow = X::CookSource(emissive, request);
+        RIG_CHECK(S::ParseSkinMeshV1(F::View(glow.Mesh.Payload), mesh, report) &&
+                  mesh.GetData()->Materials[0].Record.EmissiveNits > 0);
+        std::printf("RIG_SPLIT_CASE cook_settings result=pass\n");
+    }
+    void SlotMapping(F::Fixture& f)
+    {
+        const F::Text primitive =
+            R"({"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2,"JOINTS_0":3,"WEIGHTS_0":5},"indices":8,"mode":4})";
+        const auto p1 = F::Replace(primitive, "\"mode\":4", "\"mode\":4,\"material\":1");
+        const auto p0 = F::Replace(primitive, "\"mode\":4", "\"mode\":4,\"material\":0");
+        auto json = F::Replace(f.Json, primitive.c_str(), p1 + "," + p0 + "," + primitive);
+        json = F::Replace(
+            json, "\"skins\":",
+            R"("materials":[{"name":"One","alphaMode":"MASK","pbrMetallicRoughness":{"baseColorFactor":[1,0,0,1]}},{"name":"Two","alphaMode":"BLEND","pbrMetallicRoughness":{"baseColorFactor":[0,1,0,1]}}],"skins":)");
+        const auto cooked = X::CookSource(json);
+        RIG_CHECK(cooked.SlotSourceMaterials.size() == 3 && cooked.SlotSourceMaterials[0] == 1 &&
+                  cooked.SlotSourceMaterials[1] == 0 && cooked.SlotSourceMaterials[2] == UINT64_MAX);
+        S::SkinMeshV1 mesh;
+        S::RigV1Report report;
+        RIG_CHECK(S::ParseSkinMeshV1(F::View(cooked.Mesh.Payload), mesh, report));
+        const auto* d = mesh.GetData();
+        RIG_CHECK(d->Slots[0].Name == "Two" && d->Slots[1].Name == "One" && d->Materials[0].Record.BaseColor[1] == 1 &&
+                  d->Materials[1].Record.BaseColor[0] == 1);
+        RIG_CHECK((d->Materials[0].Record.Flags & 6) == 4 && (d->Materials[1].Record.Flags & 6) == 2 &&
+                  d->SubMeshes.size() == 3);
+        auto duplicate = F::Replace(json, "\"name\":\"Two\"", "\"name\":\"One\"");
+        auto warned = X::CookSource(duplicate);
+        RIG_CHECK(warned.DuplicateMaterialNameGroups == 1 && !warned.Warnings.empty());
+        X::Sidecar(
+            R"({"version":1,"materials":[{"name":"One","doubleSided":"force_true"},{"index":0,"doubleSided":"force_false"}]})");
+        Cook::RigSplitCookResult held = cooked;
+        F::Text error;
+        RIG_CHECK(!Cook::CookRigSplitV1NativePath(F::View(json), X::Request(), held, report, error) &&
+                  held.SourceHash == cooked.SourceHash);
+        std::filesystem::remove("RigV1Fixture/rig.gltf.import.json");
+        std::printf("RIG_SPLIT_CASE source_slot_mapping result=pass\n");
+    }
+    void CapturedInputs(F::Fixture& f)
+    {
+        namespace I = NorvesLib::Core::AssetImport;
+        X::Sidecar(R"({"version":1,"units":{"scale":2},"material":{"profile":"ai_generated"}})");
+        I::LoadedImportSettingsDocument loaded;
+        RIG_CHECK(I::LoadImportSettingsDocument("RigV1Fixture/rig.gltf", {}, loaded).Result ==
+                  I::SettingsFileResult::Success);
+        I::LoadedImportSettings geometry;
+        geometry.Settings = loaded.Settings.Geometry;
+        geometry.bPresent = loaded.bPresent;
+        geometry.Path = loaded.Path;
+        S::RigAuthoringCpu rig;
+        S::RigGltfImportCapture capture;
+        S::RigV1Report report;
+        RIG_CHECK(S::DecodeRigAuthoringNativePath(F::View(f.Json), "RigV1Fixture/rig.gltf", rig, report, {}, &geometry,
+                                                  nullptr, &capture));
+        X::Sidecar("broken after first read");
+        auto modified = f.Binary;
+        modified.push_back(19);
+        f.SetBuffer(modified);
+        const auto root = capture.Document.GetRoot();
+        I::SourceMaterialCatalog catalog;
+        I::ResolvedMaterialImportPlan resolved;
+        RIG_CHECK(I::ReadSourceMaterialCatalog(root, catalog) == I::SettingsResult::Success &&
+                  I::ResolveMaterialImportPlan(catalog, loaded.Settings, {}, resolved).Succeeded());
+        Cook::LoadedMeshMaterialV1Input input;
+        input.Import = &loaded;
+        input.Catalog = &catalog;
+        input.Resolved = &resolved;
+        Cook::MeshMaterialV1Plan material;
+        F::Text error;
+        RIG_CHECK(Cook::PrepareMeshMaterialV1(root, capture.Buffers, "RigV1Fixture/rig.gltf", "Models/Mesh.nvskel",
+                                              false, 0, 0, nullptr, material, error, &input));
+        RIG_CHECK(material.Material.Metallic == 0 && rig.GetData()->LocalRest[1].Translation.Y == 2 &&
+                  capture.SlotSourceMaterialIndices[0] == UINT64_MAX &&
+                  capture.Buffers.GetSourceBytes(0).size() == 416);
+        auto held = rig.GetData();
+        const auto oldCount = capture.Buffers.GetCount();
+        RIG_CHECK(!S::DecodeRigAuthoringNativePath(F::View(F::Text("bad")), "RigV1Fixture/rig.gltf", rig, report, {},
+                                                   &geometry, nullptr, &capture) &&
+                  rig.GetData() == held && capture.Buffers.GetCount() == oldCount);
+        std::filesystem::remove("RigV1Fixture/rig.gltf.import.json");
+        f.SetBuffer(f.Binary);
+        std::printf("RIG_SPLIT_CASE same_read_capture result=pass\n");
+    }
+    void MixedBudget(F::Fixture& f)
+    {
+        auto bytes = f.Binary;
+        bytes.resize(656, 0);
+        constexpr float scale[] = {0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 2, 2, 2, 0, 0, 0};
+        for (size_t i = 0; i < 18; ++i)
+        {
+            F::Float(bytes, 584 + i * 4, scale[i]);
+        }
+        f.SetBuffer(bytes);
+        auto json = F::BaseJson("CubicChannels.gltf");
+        json = F::Replace(json, R"({"bufferView":13,"componentType":5126,"count":6,"type":"VEC3"})",
+                          R"({"bufferView":11,"componentType":5126,"count":2,"type":"VEC3"})");
+        json = F::Replace(json, R"({"bufferView":14,"componentType":5126,"count":6,"type":"VEC4"})",
+                          R"({"bufferView":12,"componentType":5126,"count":2,"type":"VEC4"})");
+        json = F::Replace(json, R"({"input":10,"output":11,"interpolation":"CUBICSPLINE"})",
+                          R"({"input":10,"output":11,"interpolation":"LINEAR"})");
+        json = F::Replace(json, R"({"input":10,"output":12,"interpolation":"CUBICSPLINE"})",
+                          R"({"input":10,"output":12,"interpolation":"STEP"})");
+        const char* original =
+            R"("channels":[{"sampler":0,"target":{"node":1,"path":"translation"}},{"sampler":1,"target":{"node":0,"path":"rotation"}},{"sampler":2,"target":{"node":1,"path":"scale"}}])";
+        const char* reordered =
+            R"("channels":[{"sampler":2,"target":{"node":1,"path":"scale"}},{"sampler":0,"target":{"node":1,"path":"translation"}},{"sampler":1,"target":{"node":0,"path":"rotation"}}])";
+        S::SkeletalGltfDecodeOptions options;
+        options.CubicSplinePolicy = S::SkeletalCubicSplinePolicy::Bake;
+        for (int order = 0; order < 2; ++order)
+        {
+            const auto text = order ? F::Replace(json, original, reordered) : json;
+            S::RigAuthoringCpu good;
+            S::RigV1Report report;
+            RIG_CHECK(S::DecodeRigAuthoringNativePath(F::View(text), "RigV1Fixture/rig.gltf", good, report, {}, nullptr,
+                                                      &options));
+            size_t total = 0;
+            for (const auto& channel : good.GetData()->Geometry.Clips[0].Channels)
+            {
+                total += channel.Samples.size();
+            }
+            RIG_CHECK(total > 6);
+            const auto* stable = good.GetData();
+            S::RigV1Limits low;
+            low.MaxSamples = uint32_t(total - 1);
+            RIG_CHECK(!S::DecodeRigAuthoringNativePath(F::View(text), "RigV1Fixture/rig.gltf", good, report, low,
+                                                       nullptr, &options) &&
+                      good.GetData() == stable);
+            low.MaxSamples = uint32_t(total);
+            RIG_CHECK(S::DecodeRigAuthoringNativePath(F::View(text), "RigV1Fixture/rig.gltf", good, report, low,
+                                                      nullptr, &options));
+        }
+        f.SetBuffer(f.Binary);
+        std::printf("RIG_SPLIT_CASE mixed_linear_step_bake_budget result=pass\n");
+    }
+    F::Text Number(uint64_t value)
+    {
+        char text[32]{};
+        std::snprintf(text, sizeof(text), "%llu", static_cast<unsigned long long>(value));
+        return F::Text(text);
+    }
+    F::Text TwoMaterials(const F::Text& base, const F::Text& first, const F::Text& second)
+    {
+        const F::Text primitive =
+            R"({"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2,"JOINTS_0":3,"WEIGHTS_0":5},"indices":8,"mode":4})";
+        const auto a = F::Replace(primitive, "\"mode\":4", "\"mode\":4,\"material\":0");
+        const auto b = F::Replace(primitive, "\"mode\":4", "\"mode\":4,\"material\":1");
+        auto json = F::Replace(base, primitive.c_str(), a + "," + b);
+        return F::Replace(json, "\"skins\":", F::Text("\"materials\":[") + first + "," + second + "],\"skins\":");
+    }
+    void NameAndPackageLimits(F::Fixture& f)
+    {
+        namespace P = NorvesLib::Tests::RigSplitWireFixture;
+        auto request = X::Request();
+        request.Limits.MaxNameBytes = 32;
+        const auto named = [](const F::Text& name) { return F::Text("{\"name\":\"") + name + "\"}"; };
+        for (int unicode = 0; unicode < 2; ++unicode)
+        {
+            const auto name = unicode ? F::Text(28, 'a') + "\\ud83d\\udc3a" : F::Text(32, 'a');
+            auto good = X::CookSource(X::AddMaterial(f.Json, named(name)), request);
+            S::SkinMeshV1 mesh;
+            S::RigV1Report report;
+            F::Text error;
+            RIG_CHECK(S::ParseSkinMeshV1(F::View(good.Mesh.Payload), mesh, report) &&
+                      mesh.GetData()->Slots[0].Name.size() == 32);
+            P::AllocationCounts counts;
+            {
+                P::ObserveAllocations observe(counts);
+                RIG_CHECK(!Cook::CookRigSplitV1NativePath(F::View(X::AddMaterial(f.Json, named(name + "a"))), request,
+                                                          good, report, error));
+            }
+            RIG_CHECK(report.Status == S::RigV1Status::LimitExceeded && counts.Base == 0 && counts.Slot == 0);
+        }
+        auto exact = TwoMaterials(f.Json, named(F::Text(28, 'x')), named(F::Text(28, 'x')));
+        auto good = X::CookSource(exact, request);
+        auto over = TwoMaterials(f.Json, named(F::Text(29, 'x')), named(F::Text(29, 'x')));
+        S::RigV1Report report;
+        F::Text error;
+        P::AllocationCounts counts;
+        {
+            P::ObserveAllocations observe(counts);
+            RIG_CHECK(!Cook::CookRigSplitV1NativePath(F::View(over), request, good, report, error));
+        }
+        RIG_CHECK(report.Status == S::RigV1Status::LimitExceeded && counts.Slot == 0);
+        request = X::Request();
+        request.PackageDirectory = F::Text(4055, 'p');
+        good = X::CookSource(f.Json, request);
+        RIG_CHECK(good.Mesh.Reference.CookedPackage.size() == 4096 &&
+                  S::IsSplitLogicalPath(good.Mesh.Reference.CookedPackage));
+        const auto saved = good.ManifestJson;
+        request.PackageDirectory.push_back('p');
+        RIG_CHECK(!Cook::CookRigSplitV1NativePath(F::View(f.Json), request, good, report, error) &&
+                  report.Status != S::RigV1Status::Success && good.ManifestJson == saved);
+        std::printf("RIG_SPLIT_CASE material_names_and_complete_package_path_budget result=pass\n");
+    }
+    void ImageLocatorAndBudgets(F::Fixture& f)
+    {
+        namespace P = NorvesLib::Tests::RigSplitWireFixture;
+        const F::Bytes pixelsA{255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255};
+        const F::Bytes pixelsB{0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255};
+        auto fileA = X::Png(2, 2, pixelsA);
+        const auto fileB = X::Png(2, 2, pixelsB);
+        fileA.resize(1024, 0);
+        fileA.insert(fileA.end(), f.Binary.begin(), f.Binary.end());
+        F::WriteBytes("RigV1Fixture/A.png", fileA);
+        F::WriteBytes("RigV1Fixture/B.png", fileB);
+        NorvesLib::Core::JsonDocument original;
+        RIG_CHECK(NorvesLib::Core::JsonDocument::TryParseUtf8(F::View(f.Json), original));
+        auto json = F::Replace(f.Json, "\"uri\":\"fixture.bin\"", "\"uri\":\"A.png\"");
+        json = F::Replace(json, "\"byteLength\":416", "\"byteLength\":1440");
+        const auto views = original.GetRoot().FindMember("bufferViews");
+        for (size_t i = 0; i < views.GetArraySize(); ++i)
+        {
+            const auto offset = views.GetArrayElement(i).FindMember("byteOffset").AsUInt32();
+            const auto needle = F::Text("\"byteOffset\":") + Number(offset) + ",";
+            json = F::Replace(json, needle.c_str(), F::Text("\"byteOffset\":") + Number(offset + 1024) + ",");
+        }
+        json = F::Replace(json, "\"skins\":", R"("images":[{"uri":"B.png"},{"uri":"A.png"}],"skins":)");
+        S::RigAuthoringCpu rig;
+        S::RigGltfImportCapture capture;
+        S::RigV1Report report;
+        RIG_CHECK(S::DecodeRigAuthoringNativePath(F::View(json), "RigV1Fixture/rig.gltf", rig, report, {}, nullptr,
+                                                  nullptr, &capture));
+        RIG_CHECK(capture.SourceCanonicalFiles.size() == 1 &&
+                  capture.SourceCanonicalFiles[0] == std::filesystem::weakly_canonical("RigV1Fixture/A.png"));
+        // 取得後のURI解決先A→Bを、OS symlink権限に依存しないdocument probeで再現する。
+        const auto lookup = F::Replace(json, "\"uri\":\"A.png\"", "\"uri\":\"B.png\"");
+        RIG_CHECK(NorvesLib::Core::JsonDocument::TryParseUtf8(F::View(lookup), capture.Document));
+        Cook::RigSplitImageInputs input;
+        input.Capture = &capture;
+        input.SourcePath = "RigV1Fixture/rig.gltf";
+        Cook::MeshEmbeddedImage encoded;
+        Cook::DecodedTextureRgba8 decoded;
+        NorvesLib::Core::Gltf::DataUriMime mime;
+        F::Text error;
+        RIG_CHECK(input.Read(0, encoded, decoded, mime, error) && decoded.Pixels == pixelsB);
+        std::filesystem::remove("RigV1Fixture/A.png");
+        RIG_CHECK(input.Read(1, encoded, decoded, mime, error) &&
+                  decoded.Pixels == pixelsA); // 保存locator Aの同readを再利用。
+        uint64_t textureBytes = 0;
+        RIG_CHECK(Cook::MeasureRigSplitTextureBytes(2, 2, {}, textureBytes));
+        for (int kind = 0; kind < 3; ++kind)
+        {
+            Cook::RigSplitImageInputs limited;
+            limited.Capture = &capture;
+            limited.SourcePath = input.SourcePath;
+            limited.Limits.MaxTotalOutputBytes = kind == 0 ? 1 : kind == 1 ? textureBytes * 2 - 1 : textureBytes * 2;
+            P::AllocationCounts counts;
+            P::ObserveAllocations observe(counts);
+            if (kind == 0)
+            {
+                RIG_CHECK(!limited.Read(0, encoded, decoded, mime, error) && counts.Pixels == 0 &&
+                          counts.ImageCopies == 0);
+            }
+            else
+            {
+                RIG_CHECK(limited.Read(0, encoded, decoded, mime, error) && counts.Pixels == 1);
+                const auto copies = counts.ImageCopies;
+                const bool ok = limited.Read(1, encoded, decoded, mime, error);
+                RIG_CHECK(ok == (kind == 2));
+                if (kind == 1)
+                {
+                    RIG_CHECK(counts.Pixels == 1 && counts.ImageCopies == copies);
+                }
+                else
+                {
+                    RIG_CHECK(counts.Pixels == 2 && limited.OutputBytes == textureBytes * 2);
+                }
+            }
+        }
+        std::printf("RIG_SPLIT_CASE acquired_locator_and_predecode_cumulative_output result=pass\n");
+    }
+    void DerivedCopies(F::Fixture& f)
+    {
+        namespace P = NorvesLib::Tests::RigSplitWireFixture;
+        const F::Bytes pixels{255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
+        const auto png = X::Png(2, 2, pixels);
+        F::WriteBytes("RigV1Fixture/mr.png", png);
+        const F::Text material = R"({"pbrMetallicRoughness":{"metallicRoughnessTexture":{"index":0}}})";
+        auto json = TwoMaterials(f.Json, material, material);
+        json = F::Replace(json, "\"skins\":", R"("textures":[{"source":0}],"images":[{"uri":"mr.png"}],"skins":)");
+        X::Sidecar(R"({"version":1,"material":{"arm":{"roughness":"texture","metallic":"texture"}}})");
+        uint64_t textureBytes = 0;
+        RIG_CHECK(Cook::MeasureRigSplitTextureBytes(2, 2, {}, textureBytes));
+        auto request = X::Request();
+        request.ImageLimits.MaxTotalDecodedBytes = 48;
+        // cache encoded一回、二材質の返却encoded/decoded、二組のscratch/raw所有copy。
+        const uint64_t copies = png.size() * 3 + 16 * 2 + 16 * 4;
+        request.ImageLimits.MaxTotalEncodedBytes = copies - 48;
+        request.ImageLimits.MaxTotalOutputBytes = textureBytes * 3;
+        auto exact = X::CookSource(json, request);
+        RIG_CHECK(exact.TexturePlans.size() == 2 && exact.TexturePlans[0].Payload == Cook::MeshImagePayload::RawRgba8);
+        S::RigV1Report report;
+        F::Text error;
+        for (int kind = 0; kind < 2; ++kind)
+        {
+            auto low = request;
+            if (kind == 0)
+            {
+                --low.ImageLimits.MaxTotalEncodedBytes;
+            }
+            else
+            {
+                --low.ImageLimits.MaxTotalOutputBytes;
+            }
+            P::AllocationCounts counts;
+            {
+                P::ObserveAllocations observe(counts);
+                RIG_CHECK(!Cook::CookRigSplitV1NativePath(F::View(json), low, exact, report, error) &&
+                          report.Status != S::RigV1Status::Success);
+            }
+            RIG_CHECK(counts.Arm == 1);
+        }
+        std::filesystem::remove("RigV1Fixture/rig.gltf.import.json");
+        std::printf("RIG_SPLIT_CASE derived_arm_double_copy_budget result=pass\n");
+    }
+    void Images(F::Fixture& f)
+    {
+        const F::Bytes pixels{255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
+        const auto png = X::Png(2, 2, pixels);
+        Cook::DecodedTextureRgba8 decoded;
+        F::Text error;
+        Cook::RigSplitImageLimits limits;
+        RIG_CHECK(Cook::DecodeRigSplitImage(F::View(png), limits, decoded, error) && decoded.Pixels == pixels);
+        auto low = limits;
+        low.MaxDecoderWorkspaceBytes = 1;
+        RIG_CHECK(!Cook::DecodeRigSplitImage(F::View(png), low, decoded, error) && decoded.Pixels == pixels &&
+                  error == "split_image_workspace_limit");
+        low = limits;
+        low.MaxDecodedBytes = 15;
+        RIG_CHECK(!Cook::DecodeRigSplitImage(F::View(png), low, decoded, error) && decoded.Pixels == pixels);
+        low = limits;
+        low.MaxDimension = 1;
+        RIG_CHECK(!Cook::DecodeRigSplitImage(F::View(png), low, decoded, error));
+        auto json =
+            X::AddMaterial(f.Json, R"({"name":"Body","pbrMetallicRoughness":{"baseColorTexture":{"index":0}}})");
+        json = F::Replace(json, "\"skins\":", R"("textures":[{"source":0}],"images":[{"uri":"base.png"}],"skins":)");
+        F::WriteBytes("RigV1Fixture/base.png", png);
+        auto cooked = X::CookSource(json);
+        RIG_CHECK(cooked.TexturePlans.size() == 1 && !cooked.TexturePlans[0].IsBorrowed() &&
+                  cooked.TexturePlans[0].GetBytes().size() == png.size());
+        auto request = X::Request();
+        request.ImageLimits.MaxEncodedBytes = png.size() - 1;
+        S::RigV1Report report;
+        const auto stable = cooked.SourceHash;
+        RIG_CHECK(!Cook::CookRigSplitV1NativePath(F::View(json), request, cooked, report, error) &&
+                  cooked.SourceHash == stable);
+        std::filesystem::remove("RigV1Fixture/base.png");
+        RIG_CHECK(std::equal(cooked.TexturePlans[0].GetBytes().begin(), cooked.TexturePlans[0].GetBytes().end(),
+                             png.begin()));
+        std::printf("RIG_SPLIT_CASE bounded_image_ownership result=pass\n");
+    }
+} // namespace
+int main()
+{
+    F::Fixture fixture;
+    CookAndSettings(fixture);
+    SlotMapping(fixture);
+    CapturedInputs(fixture);
+    MixedBudget(fixture);
+    Images(fixture);
+    NameAndPackageLimits(fixture);
+    ImageLocatorAndBudgets(fixture);
+    DerivedCopies(fixture);
+    std::printf(
+        "RIG_SPLIT_COOK result=pass same_read_settings_buffers_source_slot_mapping_full_mats_three_packages_no_cli_publish\n");
+    return 0;
+}

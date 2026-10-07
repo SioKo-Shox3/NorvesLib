@@ -1072,3 +1072,14 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 証拠: 11比較器normal/-Oの計22回でreceipt/stdout一致・stderr空。親自身readonly replay exit0、788 payload・448 source・21原API・6 ZIPを確認。summary SHA256 d7e0a27e33ae696cbc73f338bca719ffd571f247e7f215ab65e1c287809dcf4f、inventory SHA256 465c95f53411b1c0e5cb10de689159efbccb76a9922e22f9a051b4ce09278bc1。
 - 初回失敗: 53f17969 / run 37534505686はtest変数smallとWindows macroの衝突。lowLimitsへの3識別子置換と文書だけを修正し、全Library/AssetCook productionは初回と不変。失敗599 payloadは別保存。latest2 paths/Library0、累積31 paths/Library19。比較器のstdlib import補正は元script/stderr/patchを保持し、原本やnative gateを変更していない。
 - Notes: B1はdirect TRS・正scale・single root・外部親なし・128以下のprofile。失われた過去restの復元、三資産cold-load/publication/runtime、Armature/clip-only/256、GPU/DCC/実犬品質とGame実行はまだ受入れていない。混在Line/Step/Bake専用累積境界試験は残る。次は残二roleと同snapshot cold-loadの接続を行う。
+
+### GR82 Stage B2の事前契約（2026-10-07 JST）
+
+- In progress: G2-GR82-B2-SPLIT-WIRE-COLD-LOAD。B1 code 7b423fb1 / run37537055880と受入文書c8a3bd6fを基点に、残二roleの保存から同snapshot cold-load・未登録owner組立・実姿勢までを次の一件にする。
+- 推奨判断: B2は明示library入口に限定し、新CLIとファイル公開transactionは分ける。Skeletonはcurrent rest/正準topology/ROOT、MeshはIBM/M/geometry/materialsを所有する。B1のClipBank wireを維持し、MeshはSkeletonの完全topology・全wire内容・rest/ROOT hashをpinする。
+- 入力: geometryとmaterialは同じ読込済みsettings/buffersを使い、source material indexと生成slotの対応を明示保持する。全MATSをCPU所有し、未対応の描画を単一Opaque fallbackで隠さない。per-file/全packageとimageの有限予算は確保前に検査する。
+- 開始gate: B1親readonly replay exit0と独立oracle8件normal/-O、旧互換を受入済み。B2 native/sourceレビューは未実行。Armature/256、三資産runtime公開/cacheとGPU/DCCは後続境界として残す。
+
+- 実装候補: 残二roleのwire、Mesh側IBM/Mと全MATS、immutable Skeleton共有、ordered Bank束縛、同snapshotの実package cold-load、未登録owner/別Sampler枝、新library cookを接続した。material/source-slotは同readのdocument/bufferを使い、取得時canonical locatorを保存する。画像はsplit専用stb workspace・累積output/copy、ARM2copy、role参照文字列alias、source名/suffixを確保前に制限する。
+- 検証準備: 独立wire/pose oracle7件normal/-O、既存B1 oracle8件とowner source8件normal/-O、二段Sampler全文復元、B1 rest比較blockの抽出一致、YAML/BOM/行末を確認。新literalはSkeleton704/Mesh1360byte。Release69・新4members direct Debug・旧cook/CLI互換はnative CI待ちで、C++成功とは扱わない。
+- Notes: 初回profileのMSLT/MATSは同件数、false cookでSuccess statusを残さない。新probeは確保直前の限定観測であり全allocator/RSSの計測ではない。一部probeの成功positive control、極小limit時の固定生成base、2snapshot/既登録pool/Load内部失敗の追加観測は未網羅として残す。GPU/DCC・CLI公開・Registry/runtime接続はこの一件の受入に含めない。
