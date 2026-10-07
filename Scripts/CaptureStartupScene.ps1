@@ -93,7 +93,7 @@
 #
 # 各撮影のログの GPU_DRIVER（GPU 名とドライバの版）を metrics.json の gpu_driver へ書く（ドライバの更新で画面微分・LOD の挙動が変わる実装があり、
 # 撮影の差の原因を版から引けるようにする）。VT の常駐量は、ログの VRAM_POOLS の vt_used_mb の最大を vram_pools.vt_used_mb_max へ書き、
-# -VtUsedLimitMb（既定 64。-OrbitDegreesPerSecond を使う撮影は 128 まで広げる）を超えたら失敗にする（フィードバックの LOD が壊れて全面でミップ 0 を要求すると数百 MB になる。
+# -VtUsedLimitMb（既定 64。-OrbitDegreesPerSecond を使う撮影で省略したときだけ 128 にする。明示した値はそのまま使い、実効値を metrics.json の vt_used_limit_mb へ書く）を超えたら失敗にする（フィードバックの LOD が壊れて全面でミップ 0 を要求すると数百 MB になる。
 # -StressTextures は VT を上限まで使うので検査しない。0 で検査しない）。
 [CmdletBinding()]
 param(
@@ -230,6 +230,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# 長く旋回する撮影は地面の広い範囲を通るので、静止の撮影より VT の常駐量が増える（低角度で 400 フレーム旋回すると 80 MB 台）。
+# フィードバックの LOD が壊れたときの数百 MB とは桁が違うので、旋回で -VtUsedLimitMb を省略したときだけ上限を 128 MB にする。
+# 明示された値は旋回でも変えない（指定した上限が効かなくなるのを避ける）。
+$vtEffectiveLimitMb = $VtUsedLimitMb
+if ($OrbitDegreesPerSecond -gt 0 -and -not $PSBoundParameters.ContainsKey('VtUsedLimitMb') -and $VtUsedLimitMb -gt 0)
+{
+    $vtEffectiveLimitMb = 128
+}
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $gamePath = Join-Path $repoRoot "build\Game\$Configuration\Game.exe"
@@ -1203,16 +1212,9 @@ foreach ($view in $shots)
         {
             $failures += "$($view.Name): $($line.Line.Trim())"
         }
-        # 長く旋回する撮影は地面の広い範囲を通るので、静止の撮影より VT の常駐量が増える（低角度で 400 フレーム旋回すると 80 MB 台）。
-        # フィードバックの LOD が壊れたときの数百 MB とは桁が違うので、旋回では上限を 128 MB まで広げる。
-        $vtLimitMb = $VtUsedLimitMb
-        if ($OrbitDegreesPerSecond -gt 0 -and $vtLimitMb -gt 0)
+        if (-not $StressTextures -and $vtEffectiveLimitMb -gt 0 -and $null -ne $vramPools -and $vramPools.vt_used_mb_max -gt [uint64]$vtEffectiveLimitMb)
         {
-            $vtLimitMb = [Math]::Max($vtLimitMb, 128)
-        }
-        if (-not $StressTextures -and $vtLimitMb -gt 0 -and $null -ne $vramPools -and $vramPools.vt_used_mb_max -gt [uint64]$vtLimitMb)
-        {
-            $failures += "$($view.Name): VT の常駐量が上限を超えた（vt_used_mb_max=$($vramPools.vt_used_mb_max) / 上限 $vtLimitMb MB。フィードバックの LOD が壊れていないか確認する。GPU_DRIVER: $gpuDriver）"
+            $failures += "$($view.Name): VT の常駐量が上限を超えた（vt_used_mb_max=$($vramPools.vt_used_mb_max) / 上限 $vtEffectiveLimitMb MB。フィードバックの LOD が壊れていないか確認する。GPU_DRIVER: $gpuDriver）"
         }
         if ($StressTextures)
         {
@@ -1653,7 +1655,7 @@ $metricsPath = Join-Path $outRoot 'metrics.json'
 $metrics = [ordered]@{
     configuration = $Configuration
     gpu_driver = if ($results.Count -gt 0) { $results[0].gpu_driver } else { $null }
-    vt_used_limit_mb = $VtUsedLimitMb
+    vt_used_limit_mb = $vtEffectiveLimitMb
     deterministic = [bool]$Deterministic
     compare_deterministic_with = $CompareDeterministicWith
     deterministic_mean_luminance_limit = $DeterministicMeanLuminanceLimit

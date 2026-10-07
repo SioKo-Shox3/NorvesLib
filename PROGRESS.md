@@ -1960,3 +1960,10 @@
 - 対応: `Scripts/CaptureStartupScene.ps1` で、`-OrbitDegreesPerSecond` を使う撮影の VT の上限を 64 → 128 MB に広げた（`-VtUsedLimitMb` が 0 のときは検査しないまま、静止の撮影の上限は 64 のまま）。影の標本の実装は変えていない。
 - 検証: `.harness/runs/20261007-203349/verify-VTG8-SHADOW-PROBE-5.txt`（起動画面の撮影、result=pass、CAPTURE_EXIT_CODE=0）。3 視点の `SHADOW_PROBE` は上の基準値の表と同じ値（決定的な撮影で再現）。
 - Next: VTG8-VSM-SAMPLE。
+
+## 反復 4（2026-10-07）: VTG8-SHADOW-PROBE（差し戻しへの対応 2、done）
+
+- 前回の差し戻しは、旋回時の VT の上限 128 MB が `-VtUsedLimitMb` の明示値（64 や 10）まで 128 に引き上げてしまい、指定した上限の検査が効かなくなっていたこと。
+- 対応: `Scripts/CaptureStartupScene.ps1` で、実効上限 `$vtEffectiveLimitMb` を先頭で一度だけ決める。`-OrbitDegreesPerSecond` を使い、かつ `-VtUsedLimitMb` を省略したとき（`$PSBoundParameters` に無いとき）だけ 128、明示値はそのまま使う（0 は検査なしのまま）。`metrics.json` の `vt_used_limit_mb` には実効値を書く。影の標本の実装は変えていない。
+- 検証: `.harness/runs/20261007-203349/verify-VTG8-SHADOW-PROBE-6.txt`（起動画面の撮影。result=pass、CAPTURE_EXIT_CODE=0。`metrics.json` は `vt_used_limit_mb=128`・`failures=[]`、3 視点の `SHADOW_PROBE` は上の基準値の表と同じ値）。`-7.txt` は同じ引数束縛の分岐の確認（旋回で省略→128、明示 64→64、明示 10→10、明示 0→0、静止で省略→64）。`-4.txt` は反復 4 の撮影で上書きしたため、前回までの `-5.txt` と `-6.txt` を参照する。
+- Next: VTG8-VSM-SAMPLE。
