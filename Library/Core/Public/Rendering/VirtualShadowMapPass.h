@@ -17,8 +17,10 @@
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
+#include "Rendering/FrameUseRing.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "RHI/DeviceCapabilities.h"
+#include "RHI/ICommandList.h"
 #include "RHI/RHITypes.h"
 
 #include <cstdint>
@@ -77,6 +79,31 @@ namespace NorvesLib::Core::Rendering
             StatDrawn = 3,
             StatLevelsUsed = 4,
         };
+
+        /** @brief 統計のバッファの用途。計算で書き、読み戻しのコピーの元になる（TransferSrc が無いとコピーが検証に違反する） */
+        inline RHI::ResourceUsage StatsBufferUsage()
+        {
+            return RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst | RHI::ResourceUsage::TransferSrc;
+        }
+        /** @brief 統計の読み戻し先（host-visible）の用途 */
+        inline RHI::ResourceUsage StatsReadbackUsage()
+        {
+            return RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst;
+        }
+
+        /**
+         * @brief 統計のバッファを読み戻し先へ写すコマンドを記録する（計算の書き込みの後。統計は UnorderedAccess へ戻して終わる）
+         *
+         * 読み戻し先は HostRead の状態で受け取り、HostRead へ戻す。読むのは、このコマンドを含む提出が完了してから。
+         */
+        inline void RecordStatsReadback(RHI::ICommandList& commandList, const RHI::BufferPtr& stats, const RHI::BufferPtr& readback)
+        {
+            commandList.BufferBarrier(stats, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopySource);
+            commandList.BufferBarrier(readback, RHI::ResourceState::HostRead, RHI::ResourceState::CopyDest);
+            commandList.CopyBuffer(stats, readback, STATS_BYTES);
+            commandList.BufferBarrier(readback, RHI::ResourceState::CopyDest, RHI::ResourceState::HostRead);
+            commandList.BufferBarrier(stats, RHI::ResourceState::CopySource, RHI::ResourceState::UnorderedAccess);
+        }
 
         /** @brief 今フレームの要求のビット列（段 × 128 × 128 ビット）の語（uint32）の数 */
         constexpr uint32_t REQUEST_WORDS = LEVEL_COUNT * TABLE_ENTRIES_PER_LEVEL / 32u;
@@ -229,10 +256,12 @@ namespace NorvesLib::Core::Rendering
         const RHI::BufferPtr& GetDirtyList() const { return m_DirtyList; }
         /** @brief 直前の Execute が印付けを記録したか（深度・有効なクリップマップ・カメラが揃ったとき） */
         bool WasMarked() const { return m_bMarked; }
+        /** @brief 統計の読み戻し先（飛行中のフレームの番号ごと。観測用。無ければ null） */
+        const RHI::BufferPtr& GetStatsReadbackBuffer(uint32_t inFlightIndex) const { return m_StatsSlots[inFlightIndex % StatsSlotCount].Buffer; }
 
     private:
-        /** @brief 統計の読み戻しの枠の数。GPU が書き終えるまで同じ枠を再利用しない */
-        static constexpr uint32_t StatsSlotCount = 4;
+        /** @brief 統計の読み戻しの枠の数。飛行中のフレームの番号（FrameIndex）ごとに 1 枠で、FrameUseRing の枠の数と同じ */
+        static constexpr uint32_t StatsSlotCount = FrameUseRingMaxInFlightSlots;
         /** @brief 統計の値が変わらなくても VSM_PAGES を出す間隔（読み戻したフレーム数） */
         static constexpr uint32_t StatsLogIntervalFrames = 60;
 
@@ -241,7 +270,8 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr Buffer;
             const uint32_t* Mapped = nullptr;
             bool bPending = false;
-            uint64_t ExecuteIndex = 0;
+            /** @brief 最後にこの枠へ写したフレームの通し番号（同じフレームの複数の Execute は同じ値） */
+            uint64_t FrameSerial = 0;
         };
 
         void Fallback(VirtualShadowMap::FallbackReason reason);
@@ -264,7 +294,6 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_DirtyList;
         Container::TUniquePtr<VirtualShadowMapPages> m_Pages;
         StatsSlot m_StatsSlots[StatsSlotCount];
-        uint64_t m_ExecuteCount = 0;
         bool m_bMarked = false;
         /** @brief 最後に出した統計（変わったときだけ出す）と、出してからのフレーム数 */
         uint32_t m_LoggedStats[4] = {};

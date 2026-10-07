@@ -106,6 +106,7 @@ namespace NorvesLib::Core::Rendering
         const uint64_t poolBytes = VirtualShadowMap::PoolBytes(plan.Pages);
         const uint64_t freeListBytes = VirtualShadowMap::FreeListBytes(plan.Pages);
         const RHI::ResourceUsage storageUsage = RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst;
+        const RHI::ResourceUsage statsUsage = VirtualShadowMap::StatsBufferUsage();
 
         // 大きな確保は失敗しうる（装置のメモリ不足・上限）。作れなければ VSM を使わず CSM で描く
         bool bCreated = false;
@@ -118,7 +119,7 @@ namespace NorvesLib::Core::Rendering
             m_RequestBits = m_Device->CreateBuffer(
                 RHI::BufferDesc(VirtualShadowMap::RequestBitsBytes(), storageUsage, false, "VSM_RequestBits"));
             m_FreeList = m_Device->CreateBuffer(RHI::BufferDesc(freeListBytes, storageUsage, false, "VSM_FreeList"));
-            m_Stats = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::STATS_BYTES, storageUsage, false, "VSM_Stats"));
+            m_Stats = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::STATS_BYTES, statsUsage, false, "VSM_Stats"));
             // 消去するページの一覧は、間接 dispatch の引数としても読まれる
             m_DirtyList = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::DirtyListBytes(plan.Pages),
                                                                  storageUsage | RHI::ResourceUsage::IndirectBuffer,
@@ -152,10 +153,8 @@ namespace NorvesLib::Core::Rendering
         // 統計の読み戻し先（host-visible）。作れない・写像できない装置では読み戻さない（記録は続く）
         for (StatsSlot& slot : m_StatsSlots)
         {
-            slot.Buffer = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::STATS_BYTES,
-                                                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
-                                                                 true,
-                                                                 "VSM_StatsReadback"));
+            slot.Buffer = m_Device->CreateBuffer(
+                RHI::BufferDesc(VirtualShadowMap::STATS_BYTES, VirtualShadowMap::StatsReadbackUsage(), true, "VSM_StatsReadback"));
             slot.Mapped = slot.Buffer ? static_cast<const uint32_t*>(slot.Buffer->Map(0, 0)) : nullptr;
         }
 
@@ -190,7 +189,6 @@ namespace NorvesLib::Core::Rendering
         m_bDeclared = false;
         m_bActive = false;
         m_bInitialFilled = false;
-        m_ExecuteCount = 0;
         m_bMarked = false;
         m_bStatsLogged = false;
         m_FramesSinceStatsLog = 0;
@@ -308,16 +306,15 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::ICommandList* commandList = context.CommandList;
-        ++m_ExecuteCount;
 
-        // 数フレーム前（GPU が書き終えている）の統計を古い順に読み、このフレームが書く枠を空ける
-        for (uint32_t offset = 1; offset <= StatsSlotCount; ++offset)
+        // 統計の枠は飛行中のフレームの番号ごと。スワップチェーンのフェンスが、同じ番号の前のフレームの GPU の完了を待ってから
+        // 次のフレームを始めるので、通し番号が変わった最初の Execute では、その枠へ写した前のフレームの統計を安全に読める。
+        // 同じフレームの Execute（複数のビューポート）は通し番号が同じなので、提出前の枠を読まない（Execute の回数では数えない）
+        const uint64_t frameSerial = context.ResolveRenderFrameSerial();
+        StatsSlot& slot = m_StatsSlots[context.FrameIndex % StatsSlotCount];
+        if (slot.bPending && slot.FrameSerial != frameSerial)
         {
-            StatsSlot& pending = m_StatsSlots[(m_ExecuteCount + offset) % StatsSlotCount];
-            if (pending.bPending && pending.ExecuteIndex + 2 <= m_ExecuteCount)
-            {
-                HarvestStats(pending);
-            }
+            HarvestStats(slot);
         }
 
         // 最初の実行で、何も無い texel の深度（1.0）でプールを埋める（以後は dirty のページだけを消去する）。
@@ -363,17 +360,13 @@ namespace NorvesLib::Core::Rendering
         m_Pages->Record(commandList, dispatch);
         m_bMarked = m_Pages->WasMarked();
 
-        // 統計を読み戻しの枠へ写す（読むのは数フレーム後）
-        StatsSlot& slot = m_StatsSlots[m_ExecuteCount % StatsSlotCount];
+        // 統計を読み戻しの枠へ写す（読むのは、同じ番号の次のフレームの最初の Execute）。
+        // 同じフレームの 2 回目以降の Execute は、同じ枠を新しい統計で上書きする
         if (slot.Buffer && slot.Mapped)
         {
-            commandList->BufferBarrier(m_Stats, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopySource);
-            commandList->BufferBarrier(slot.Buffer, RHI::ResourceState::HostRead, RHI::ResourceState::CopyDest);
-            commandList->CopyBuffer(m_Stats, slot.Buffer, VirtualShadowMap::STATS_BYTES);
-            commandList->BufferBarrier(slot.Buffer, RHI::ResourceState::CopyDest, RHI::ResourceState::HostRead);
-            commandList->BufferBarrier(m_Stats, RHI::ResourceState::CopySource, RHI::ResourceState::UnorderedAccess);
+            VirtualShadowMap::RecordStatsReadback(*commandList, m_Stats, slot.Buffer);
             slot.bPending = true;
-            slot.ExecuteIndex = m_ExecuteCount;
+            slot.FrameSerial = frameSerial;
         }
 
         // 宣言した状態（Common）へ戻す

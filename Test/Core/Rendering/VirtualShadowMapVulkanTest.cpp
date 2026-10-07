@@ -401,6 +401,8 @@ namespace
         BufferPtr FreeList;
         BufferPtr Stats;
         BufferPtr DirtyList;
+        // 本番のパスと同じ用途の読み戻し先（統計のコピー経路の検証用）
+        BufferPtr StatsReadback;
     };
 
     struct Readback
@@ -410,6 +412,7 @@ namespace
         Container::VariableArray<uint32_t> RequestBits;
         Container::VariableArray<uint32_t> FreeList;
         Container::VariableArray<uint32_t> Stats;
+        Container::VariableArray<uint32_t> StatsCopied;
         Container::VariableArray<uint32_t> DirtyList;
         bool bRecorded = false;
         bool bMarked = false;
@@ -423,17 +426,21 @@ namespace
         resources.PageTable = device->CreateBuffer(BufferDesc(VirtualShadowMap::PageTableBytes(), usage, true, "VsmTestPageTable"));
         resources.RequestBits = device->CreateBuffer(BufferDesc(VirtualShadowMap::RequestBitsBytes(), usage, true, "VsmTestRequestBits"));
         resources.FreeList = device->CreateBuffer(BufferDesc(VirtualShadowMap::FreeListBytes(poolPages), usage, true, "VsmTestFreeList"));
-        resources.Stats = device->CreateBuffer(BufferDesc(VirtualShadowMap::STATS_BYTES, usage, true, "VsmTestStats"));
+        // 統計は本番と同じ用途（読み戻しのコピー元の TransferSrc を含む）で作る
+        resources.Stats = device->CreateBuffer(
+            BufferDesc(VirtualShadowMap::STATS_BYTES, VirtualShadowMap::StatsBufferUsage() | ResourceUsage::ShaderRead, true, "VsmTestStats"));
+        resources.StatsReadback = device->CreateBuffer(
+            BufferDesc(VirtualShadowMap::STATS_BYTES, VirtualShadowMap::StatsReadbackUsage(), true, "VsmTestStatsReadback"));
         resources.DirtyList = device->CreateBuffer(
             BufferDesc(VirtualShadowMap::DirtyListBytes(poolPages), usage | ResourceUsage::IndirectBuffer, true, "VsmTestDirtyList"));
         if (!resources.Pool || !resources.PageTable || !resources.RequestBits || !resources.FreeList || !resources.Stats ||
-            !resources.DirtyList)
+            !resources.DirtyList || !resources.StatsReadback)
         {
             return false;
         }
         // 物理ページを見張りの値で埋める（消去されたページと、触られなかったページを見分ける）。ほかは見張りで埋めて、書かれたかを確かめる
         for (const BufferPtr& buffer : {resources.Pool, resources.PageTable, resources.RequestBits, resources.FreeList, resources.Stats,
-                                         resources.DirtyList})
+                                         resources.DirtyList, resources.StatsReadback})
         {
             uint32_t* mapped = static_cast<uint32_t*>(buffer->Map(0u, buffer->GetSize()));
             if (mapped == nullptr)
@@ -523,6 +530,8 @@ namespace
         }
         readback.bRecorded = pages.Record(commandList.get(), dispatch);
         readback.bMarked = pages.WasMarked();
+        // 本番のパスと同じ読み戻しのコピー（統計 → 読み戻し先）。検証レイヤーが用途のフラグの不足を検出する
+        VirtualShadowMap::RecordStatsReadback(*commandList, resources.Stats, resources.StatsReadback);
         for (const BufferPtr& buffer : buffers)
         {
             commandList->BufferBarrier(buffer, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, buffer->GetSize());
@@ -533,7 +542,8 @@ namespace
 
         return ReadAll(resources.Pool, readback.Pool) && ReadAll(resources.PageTable, readback.PageTable) &&
                ReadAll(resources.RequestBits, readback.RequestBits) && ReadAll(resources.FreeList, readback.FreeList) &&
-               ReadAll(resources.Stats, readback.Stats) && ReadAll(resources.DirtyList, readback.DirtyList);
+               ReadAll(resources.Stats, readback.Stats) && ReadAll(resources.DirtyList, readback.DirtyList) &&
+               ReadAll(resources.StatsReadback, readback.StatsCopied);
     }
 
     // 要求のビット列から、立っているビットの番号（昇順）
@@ -593,6 +603,10 @@ namespace
         Expect(readback.Stats[VirtualShadowMap::StatAllocated] == expectedAllocated, "統計の割り当ての数が min(要求, プール) でなければならない");
         Expect(readback.Stats[VirtualShadowMap::StatOverflow] == requested - expectedAllocated, "統計の溢れの数が 要求 − 割り当て でなければならない");
         Expect(readback.Stats[VirtualShadowMap::StatDrawn] == 0u, "描いたページの数はこのパスでは 0 のはず");
+        // 読み戻し先へのコピーは統計の全語と一致しなければならない（本番の読み戻しの経路）
+        Expect(readback.StatsCopied.size() == readback.Stats.size() &&
+                   std::equal(readback.Stats.begin(), readback.Stats.end(), readback.StatsCopied.begin()),
+               "読み戻し先へコピーした統計がコピー元と一致しなければならない");
         Expect(readback.Stats[VirtualShadowMap::StatLevelsUsed] == expectedLevelMask, "要求のあった段の集合が参照と一致しなければならない");
 
         // ページの表: 要求のあるページは割り当て済み・dirty・物理ページの番号（重ならない）、割り当てなかったページと要求の無いページは 0

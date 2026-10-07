@@ -2012,3 +2012,12 @@
 - 検証（`.harness/runs/20261007-203349/`）: `verify-VTG8-VSM-MARK-3.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0。`-1`・`-2` は `DescriptorSetDesc` の include 漏れと `Math::` の名前空間のコンパイルエラーの記録）、`-4.txt`（VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・RenderGraphCompileTest が 3/3 Passed、CTEST_EXIT_CODE=0）、`-5.txt`（GPU テストの出力。RESULT=PASS・VUID_COUNT=0）。
 - Notes: (1) 実機の Game の起動（`--shadow-method=vsm` で `VSM_PAGES` が出ること）は、重い処理の扱いに従い回していない（VSM-GPU-TIME の撮影で確かめる）。(2) 印付けは深度範囲（±1000 m）の外を除いていない。(3) ワールドの位置は float で戻すので、原点から遠いとページの境界が texel 単位でずれうる（CSM と同じ精度）。(4) 消去する一覧と空きの一覧は、VTG8-VSM-CACHE が前フレームのページを持ち越すときに作り直す前提。
 - Next: VTG8-VSM-SAMPLE 以降。
+
+## 反復 10（2026-10-07）: VTG8-VSM-MARK（差し戻しへの対応、done）
+
+- 前回の差し戻しは (1) 統計のバッファ（`VSM_Stats`）が `TransferSrc` を持たないまま `CopyBuffer` の元にしていたこと（VUID-vkCmdCopyBuffer-srcBuffer-00118）と、(2) 読み戻しの遅れを Execute の回数で数えていたこと（同じ SceneView を 1 フレームに 3 つのビューポートで描くと、3 回目が 1 回目の提出前の統計を読む）。
+- 対応: (1) `VirtualShadowMap::StatsBufferUsage()`（`TransferSrc` を含む）と `StatsReadbackUsage()`、コピーの記録 `RecordStatsReadback()` を `VirtualShadowMapPass.h` に足し、パスと GPU テストの両方が同じものを使う。(2) 読み戻しの枠を飛行中のフレームの番号（`FrameIndex`）ごとにし、`ResolveRenderFrameSerial()` が変わった最初の Execute だけが、同じ番号の前のフレームの枠を読む（スワップチェーンのフェンスが同じ番号の前のフレームの GPU の完了を待つので、FrameUseRing と同じ前提）。同じフレームの複数の Execute は同じ枠を新しい統計で上書きするだけで読まない。値が変わったとき・60 回読むごとのログの条件は同じ。
+- テスト: `VirtualShadowMapVulkanTest` が `RecordStatsReadback` を実際に記録し、コピー先が統計と全語一致すること・検証エラー 0 件を確かめる。`RenderGraphCompileTest` に `TestVirtualShadowMapPassReadsStatsOnlyAfterFrameFence`（偽の装置の読み戻し枠へ値を書き、同じフレームの 3 ビューポートで読まない・次の同じ番号のフレームで 1 回目に出す・変わらなければ出さない・値が変わると出す・変わらないまま 60 回目で出す、`VSM_Stats` が `TransferSrc` を持つ）を足した。偽の `FakeBuffer::Map` は `VSM_StatsReadback` も写像する。
+- 変異: (a) `StatsBufferUsage()` から `TransferSrc` を外す → GPU テストが VUID-vkCmdCopyBuffer-srcBuffer-00118 を 10 件出して FAIL（`verify-VTG8-VSM-MARK-15-mutation-transfersrc.txt`）、RenderGraphCompileTest も失敗。(b) 読む条件から通し番号の判定を外す（`slot.bPending` だけにする）→ RenderGraphCompileTest が失敗（`-16-mutation-serial.txt`）。どちらも元に戻して合格。
+- 検証（`.harness/runs/20261007-203349/`）: `verify-VTG8-VSM-MARK-17.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0。`-10`・`-11` は `constexpr` の関数の誤り、`-12` は偽の装置が読み戻し先を写像せず null を触った SegFault の記録）、`-18.txt`（VirtualShadowMapVulkanTest・RenderGraphCompileTest が 2/2 Passed、CTEST_EXIT_CODE=0）、`-19.txt`（GPU テストの出力。VUID_COUNT=0・RESULT=PASS）。
+- Next: VTG8-VSM-SAMPLE 以降。

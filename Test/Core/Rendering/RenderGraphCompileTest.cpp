@@ -280,7 +280,9 @@ namespace
         {
             (void)size;
             // ジオメトリの区画へ書くステージングのリングだけは、写像して書き込めるようにバイト列を持つ
-            if ((IsDebugName(m_Desc.DebugName, "TileUploadRing") || IsDebugName(m_Desc.DebugName, "ShadowProbe_Stats")) && m_Desc.Size > 0)
+            if ((IsDebugName(m_Desc.DebugName, "TileUploadRing") || IsDebugName(m_Desc.DebugName, "ShadowProbe_Stats") ||
+                 IsDebugName(m_Desc.DebugName, "VSM_StatsReadback")) &&
+                m_Desc.Size > 0)
             {
                 if (MappedBytes.empty())
                 {
@@ -5919,13 +5921,15 @@ namespace
     }
 
     // 1 フレーム回す。入力 → VSM → 読むパスの順に足す。bConsume が false なら読むパスは足さない
-    void RunVsmFrame(VsmRun& run, VirtualShadowMapPass& pass, uint64_t frameIndex, bool bConsume)
+    // 1 つのビューポートの Execute を回す。フレーム（通し番号と飛行中の番号）と、プール・グラフの世代は別に数える
+    // （同じフレームに複数のビューポートを描くとき、フレームは同じでプール・グラフの世代だけが進む）
+    void RunVsmViewport(VsmRun& run, VirtualShadowMapPass& pass, uint64_t frameIndex, uint64_t graphGeneration, bool bConsume)
     {
         run.Context.FrameIndex = static_cast<uint32_t>(frameIndex % 2);
         run.Context.RenderFrameSerial = frameIndex + 1;
         run.Pool.EndFrame();
-        run.Pool.BeginFrame(frameIndex);
-        run.Graph.BeginFrame(frameIndex);
+        run.Pool.BeginFrame(graphGeneration);
+        run.Graph.BeginFrame(graphGeneration);
         run.Graph.AddPass(&run.Inputs);
         run.Graph.AddPass(&pass);
         if (bConsume)
@@ -5935,6 +5939,12 @@ namespace
         assert(run.Graph.Compile(run.Context));
         const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
         assert(result.bSuccess);
+    }
+
+    // 1 フレーム（ビューポート 1 つ）回す。入力 → VSM → 読むパスの順に足す。bConsume が false なら読むパスは足さない
+    void RunVsmFrame(VsmRun& run, VirtualShadowMapPass& pass, uint64_t frameIndex, bool bConsume)
+    {
+        RunVsmViewport(run, pass, frameIndex, frameIndex, bConsume);
     }
 
     void ShutdownVsmRun(VsmRun& run, VirtualShadowMapPass& pass)
@@ -6310,6 +6320,95 @@ namespace
             ShutdownVsmRun(run, pass);
         }
     }
+
+#if NORVES_ENABLE_LOGGING
+    // 統計の枠へ、GPU が書き終えた体の値を直接書く（偽の装置のコピーは中身を写さない）
+    void WriteVsmReadbackStats(const VirtualShadowMapPass& pass, uint32_t requested, uint32_t allocated, uint32_t overflow, uint32_t levels)
+    {
+        for (uint32_t slotIndex = 0; slotIndex < 2u; ++slotIndex)
+        {
+            const RHI::BufferPtr& buffer = pass.GetStatsReadbackBuffer(slotIndex);
+            assert(buffer);
+            uint32_t* words = reinterpret_cast<uint32_t*>(static_cast<FakeBuffer*>(buffer.get())->MappedBytes.data());
+            words[VirtualShadowMap::StatRequested] = requested;
+            words[VirtualShadowMap::StatAllocated] = allocated;
+            words[VirtualShadowMap::StatOverflow] = overflow;
+            words[VirtualShadowMap::StatLevelsUsed] = levels;
+        }
+    }
+
+    // 統計の読み戻しは、Execute の回数ではなくフレームの通し番号で数える。同じ番号の飛行中のフレームの次の最初の Execute だけが、
+    // その枠（フェンスが完了を保証した前のフレームの書き込み）を読む。同じフレームの複数のビューポートは提出前の枠を読まない。
+    // 値が変わったときと、変わらなくても 60 回読むごとに VSM_PAGES を出す。統計のコピー元には TransferSrc が要る
+    void TestVirtualShadowMapPassReadsStatsOnlyAfterFrameFence()
+    {
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        VsmLogCollector logs;
+        logger.AddSink(&logs);
+
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        VirtualShadowMapPass pass;
+        assert(pass.Initialize(run.Context));
+        assert(pass.IsActive());
+
+        // 統計は読み戻しのコピー元になるので TransferSrc を持ち、読み戻し先はコピー先になる
+        const BufferCreationRecord* statsRecord = FindBufferCreation(*run.Device, "VSM_Stats");
+        assert(statsRecord != nullptr);
+        assert((statsRecord->Desc.Usage & RHI::ResourceUsage::TransferSrc) == RHI::ResourceUsage::TransferSrc);
+        const BufferCreationRecord* readbackRecord = FindBufferCreation(*run.Device, "VSM_StatsReadback");
+        assert(readbackRecord != nullptr);
+        assert((readbackRecord->Desc.Usage & RHI::ResourceUsage::TransferDst) == RHI::ResourceUsage::TransferDst);
+
+        const char* const logA = "VSM_PAGES requested=5 allocated=4 overflow=1 levels_used=0x3";
+        const char* const logB = "VSM_PAGES requested=6 allocated=6 overflow=0 levels_used=0x7";
+        uint64_t generation = 0;
+
+        // 枠が前のフレームの値を持っているものとして、同じフレームの 3 つのビューポートが読まないことを確かめる
+        // （Execute の回数で数えると、3 回目が 1 回目の提出前の枠を読む）
+        WriteVsmReadbackStats(pass, 5, 4, 1, 0x3);
+        for (uint32_t viewport = 0; viewport < 3u; ++viewport)
+        {
+            RunVsmViewport(run, pass, 0, generation++, true);
+            assert(logs.Count("VSM_PAGES") == 0);
+        }
+        // フレーム 1（別の飛行中の番号）: 枠にまだ何も写していないので読まない
+        RunVsmViewport(run, pass, 1, generation++, true);
+        assert(logs.Count("VSM_PAGES") == 0);
+        // フレーム 2（フレーム 0 と同じ番号）: フレーム 0 の枠を読む（初回は必ず出す）
+        RunVsmViewport(run, pass, 2, generation++, true);
+        assert(logs.Count("VSM_PAGES") == 1 && logs.Count(logA) == 1);
+        // フレーム 3: フレーム 1 の枠を読む。値は変わらず、60 回に届かないので出さない
+        RunVsmViewport(run, pass, 3, generation++, true);
+        assert(logs.Count("VSM_PAGES") == 1);
+
+        // 値が変わったら次に読んだときに出す。フレーム 4 がフレーム 2 の枠を読む
+        WriteVsmReadbackStats(pass, 6, 6, 0, 0x7);
+        RunVsmViewport(run, pass, 4, generation++, true);
+        assert(logs.Count("VSM_PAGES") == 2 && logs.Count(logB) == 1);
+
+        // 変わらない間は出さず、出してから 60 回目の読み取りで出す（フレーム 4 の次から数えて 59 回までは出ない）
+        for (uint64_t frame = 5; frame <= 63; ++frame)
+        {
+            RunVsmViewport(run, pass, frame, generation++, true);
+            assert(logs.Count("VSM_PAGES") == 2);
+        }
+        RunVsmViewport(run, pass, 64, generation++, true);
+        assert(logs.Count("VSM_PAGES") == 3 && logs.Count(logB) == 2);
+
+        ShutdownVsmRun(run, pass);
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+    }
+#endif
 
     // プールのページの数は、要求（0 は既定の 4096）を装置の maxStorageBufferRange に収まる数へ締める（不明は Vulkan の保証する最小値 2^27）。
     // 512 ページちょうどは作れ、511 ページしか取れない装置は作れない。表の欄の幅（20 ビット）も超えない
@@ -11838,6 +11937,9 @@ int main()
     TestVirtualShadowMapPassFallsBackWhenUnsupported();
     TestVirtualShadowMapPassFallsBackWhenPipelineFails();
     TestVirtualShadowMapPassRecordsMarkAllocateClearInOrder();
+#if NORVES_ENABLE_LOGGING
+    TestVirtualShadowMapPassReadsStatsOnlyAfterFrameFence();
+#endif
     TestVirtualShadowMapPoolPlanClampsToDeviceLimit();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();
