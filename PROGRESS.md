@@ -2357,3 +2357,50 @@
 
 - Notes: (1) 反復 12 の記録（cache=off の負荷で `VSM_MEGA_CULL` overflow 80775）と今回で同じ値。直すなら cache=off 用に分割して描く実装が要るが、起動画面の既定の経路には効かない。(2) Git Bash では `cmake --build ... -- /m:1` の `/m:1` がパスに変換されてビルドが失敗する。ビルドは PowerShell で走らせる。(3) PowerShell は変数名の大文字小文字を区別しない（`$R` と `$r` が同じ）。
 - Next: `VTG8-ACCEPT`（GPU 時間の表はここの値を使う）。`VTG8-VSM-POOL-OVERFLOW` はランナーが `blocked` にしたまま（理由は GPU 時間の実測が無かったことで、今回の撮影で満たされたので人が `done` へ戻してよい）。`blocked/VTG8-VSM-GPU-TIME.md` は古い記録なので消してよい。
+
+## 反復 15（2026-10-08）: VTG8-VSM-GPU-TIME（評価者の差し戻し: cache=off ＋ 負荷 300 個の VSM_MEGA_CULL の溢れを一覧の容量で解消。done）
+
+- 差し戻し（反復 14 の評価者）: 「6 つの run すべて overflow 0」が cache=off ＋ 負荷 300 個の `VSM_MEGA_CULL` overflow 80775 で満たされていない。既知の限界としての記録では done-when を免除できない。
+- 対応: `VirtualShadowMap::MEGA_CULL_LIST_CAPACITY` を 262144 → 524288 にした（`VirtualShadowMapRaster.h` の 1 行）。この run の要求は 342919 クラスタ（= 262144 + 80775）で、524288 に収まる。一覧・塊の記録・間接描画の引数は容量に比例するので VRAM は一覧 +4 MiB・間接描画の引数 +5 MiB と塊の記録ぶん増える（`vsm_pool` の台帳は 320 MiB のまま）（`MaxChunkTotal` = 2^24 の内側）。分割して描く実装は要らなかった。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-GPU-TIME-30-build.txt`（RelWithDebInfo の Game のビルド）、`-31-vsm`・`-32-vsm-nocache`・`-33-vsm-stress`・`-34-vsm-nocache-stress`（撮影 4 run。すべて result=pass。出力は `.harness/runs/startup-capture/VTG8-VSM-GPU-TIME-{vsm,vsm-nocache,vsm-stress,vsm-nocache-stress}`）。CSM の 4 run は容量に関係しないので反復 14 の値（`-22`〜`-27`）を使う。
+
+### 溢れ（VSM の 6 つの run + 負荷 300 の 2 run、全フレームのログの最大値）
+
+| run | VSM_PAGES requested（最大）/ overflow | VSM_RASTER instances（最大）/ overflow | VSM_MEGA_CULL clusters（最大）/ overflow | VSM_CACHE（最終行） | vsm_pool |
+|---|---|---|---|---|---|
+| VSM default | 787 / 0 | 24264 / 0 | 1788 / 0 | cached=630 rendered=124 invalidated=124 released=0 | pages=5120 320 MiB |
+| VSM near | 1305 / 0 | 101737 / 0 | 5546 / 0 | cached=467 rendered=824 invalidated=829 released=11 | 同 |
+| VSM low | 4734 / 0 | 28102 / 0 | 2360 / 0 | cached=4333 rendered=385 invalidated=388 released=7 | 同 |
+| VSM cache=off default | 787 / 0 | 24475 / 0 | 5273 / 0 | cached=0 rendered=754 | 同 |
+| VSM cache=off near | 1309 / 0 | 102101 / 0 | 8205 / 0 | cached=0 rendered=1291 | 同 |
+| VSM cache=off low | 4734 / 0 | 29020 / 0 | 2913 / 0 | cached=0 rendered=4718 | 同 |
+| VSM（持ち越し）負荷 300 | 787 / 0 | 956530 / 0 | 3567 / 0 | cached=626 rendered=124 invalidated=124 released=0 | 同 |
+| VSM cache=off 負荷 300 | 787 / 0 | 959710 / 0 | **342919 / 0**（上限 524288） | cached=0 rendered=750 | 同 |
+
+- 8 run すべて `VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL` の overflow がログの全行で 0。`VSM_CLIPMAP`・`VSM_TEXEL` は反復 14 と同じ（levels=10・bias=-1.000・`vsm_mm=0.4883`・`csm_mm=12.8666`）。
+
+### フレーム GPU と区間の中央値（ms。240 フレーム）
+
+| run | フレーム GPU | ShadowMapPass | VsmMark | VsmAllocate | VsmClear | VsmCullMega | VsmExpand | VsmDraw | VirtualShadowMapPass | LightingPass |
+|---|---|---|---|---|---|---|---|---|---|---|
+| VSM（持ち越し）default | 2.847 | 0.164 | 0.028 | 0.102 | 0.009 | 0.029 | 0.297 | 0.134 | 0.610 | 0.598 |
+| VSM（持ち越し）near | 3.802 | 0.148 | 0.063 | 0.671 | 0.062 | 0.033 | 0.269 | 0.687 | 1.796 | 0.556 |
+| VSM（持ち越し）low | 3.030 | 0.147 | 0.248 | 0.190 | 0.017 | 0.028 | 0.267 | 0.163 | 0.924 | 0.625 |
+| VSM cache=off default | 2.948 | 0.158 | 0.027 | 0.029 | 0.058 | 0.043 | 0.297 | 0.263 | 0.728 | 0.596 |
+| VSM cache=off near | 3.318 | 0.147 | 0.061 | 0.026 | 0.106 | 0.049 | 0.272 | 0.787 | 1.313 | 0.557 |
+| VSM cache=off low | 3.382 | 0.147 | 0.253 | 0.031 | 0.465 | 0.035 | 0.267 | 0.219 | 1.280 | 0.635 |
+| VSM（持ち越し）負荷 300 | 7.779 | 2.187 | 0.025 | 0.093 | 0.008 | 1.142 | 0.269 | 0.189 | 1.738 | 0.719 |
+| VSM cache=off 負荷 300 | 18.371 | 2.190 | 0.025 | 0.028 | 0.057 | 1.497 | 0.672 | 10.058 | 12.339 | 0.714 |
+
+（CSM の行は反復 14 の表のとおり: default 2.438・near 2.511・low 2.462・負荷 300 5.887 ms。）
+
+- CSM との差（持ち越しあり VSM − CSM）: default +0.409 ms、near +1.291 ms、low +0.568 ms、負荷 300 +1.892 ms。**どれも停止条件の 2 ms 未満**（負荷 300 は余裕が 0.1 ms）。内訳は反復 14 と同じ構造: default は `VsmExpand` 0.297・`VsmDraw` 0.134・`VsmAllocate` 0.102、near は `VsmDraw` 0.687 と `VsmAllocate` 0.671、low は `VsmMark` 0.248 と `VsmAllocate` 0.190、負荷 300 は `VsmCullMega` 1.142 が大半。
+- 容量を倍にした副作用: `VsmExpand` が反復 14 より約 +0.12 ms（default 0.168 → 0.297、near 0.154 → 0.269、low 0.157 → 0.267）、フレーム GPU は default 2.768 → 2.847、near 3.683 → 3.802、low 2.980 → 3.030、負荷 300 7.634 → 7.779 ms。展開の dispatch がカリングの実数でなく容量ぶんのグループを回すため。`TASKS.md` に `VTG8-VSM-EXPAND-INDIRECT`（実数の間接 dispatch）を足した。
+- cache=off ＋ 負荷 300 個: 溢れが無くなったので全クラスタを描くようになり、`VsmDraw` が 8.247 → 10.058 ms、フレーム GPU が 16.320 → 18.371 ms（240 フレームすべて予算 16.6 ms 超）。診断用の経路（毎フレーム全ページを描き直す）で、起動画面の既定の経路（持ち越しあり）ではない。done-when に GPU 予算の条件はない。
+
+### 影の見え方（PNG を開いた）
+
+- VSM の持ち越し default・near・low、cache=off の low、持ち越しの負荷 300、cache=off の負荷 300 を開いた。小屋・岩・球・見本の帯の球の影に、欠け・ずれ・ページの継ぎ目・光の漏れは見えない（cache=off の負荷 300 は岩が増えても影の形は保たれている）。壊れて見えなかったので CSM の PNG との画素の差は取っていない。
+
+- Notes: (1) `RenderGraphCompileTest.exe` は起動直後に 0xC0000005 で落ちる（出力なし）。今回の変更を退避したベースラインのビルドでも同じなので、この変更による退行ではない（static 初期化のレイアウト依存の疑い。未調査）。容量の定数はテストの中でも `MEGA_CULL_LIST_CAPACITY` の名前で参照されていて、値の直書きは無い。(2) 反復 14 の「既知の限界」の記述（cache=off 負荷の overflow 80775）は、この反復で解消した。
+- Next: `VTG8-ACCEPT`（GPU 時間の表はこの反復の値と反復 14 の CSM の行を使う）。`VTG8-VSM-EXPAND-INDIRECT` は backlog。

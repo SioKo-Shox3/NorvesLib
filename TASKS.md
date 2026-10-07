@@ -1325,6 +1325,15 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-08 VTG8-VSM-GPU-TIME の測定から（停止条件「溢れが 0 にならない場合は --vsm-pool-pages と bias の組の測定を記録して止める」）。測定の表は PROGRESS.md の反復 10 にある。VRAM は pool 4096 = 256 MiB、5120 = 320 MiB。
 
+## VTG8-VSM-EXPAND-INDIRECT: VSM の展開の dispatch を MegaGeometry のクラスタの実数で絞り、一覧の容量を増やした分の費用をなくす
+- status: backlog
+- done-when: `VirtualShadowMapRaster` の展開（`vsm_expand.comp` の MegaGeometry 側の塊）の dispatch を、`MEGA_CULL_LIST_CAPACITY / 64` グループの直接 dispatch から、カリングが書いた件数（`VsmMega_List` の語 0）を元にした間接 dispatch へ替える。RelWithDebInfo の `-GpuTimingFrames 300` の起動画面 3 視点（持ち越しあり）で `VsmExpand` の中央値が反復 15 の 0.267〜0.297 ms から、容量 262144 の時の 0.154〜0.168 ms 以下へ戻ることを確かめる。
+- verify: `cmake --build build --config RelWithDebInfo --target Game RenderGraphCompileTest -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG8-VSM-EXPAND-INDIRECT -Configuration RelWithDebInfo -SunElevations 45 -GpuTimingFrames 300 -ShadowMethod Vsm`
+- stop-when: 間接 dispatch へ替えても `VsmExpand` が戻らない場合は、測定値を記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-08 VTG8-VSM-GPU-TIME の再測定から。cache=off ＋ 負荷 300 個で `VSM_MEGA_CULL` が 262144 を超える（342919）ので `MEGA_CULL_LIST_CAPACITY` を 524288 へ上げた。展開の dispatch はクラスタの実数でなく容量ぶんのグループを回すため、起動画面でも `VsmExpand` が約 0.12 ms 増えた（default 0.168 → 0.297）。停止条件の 2 ms には届かないが、既定の経路の無駄なので、実数の間接 dispatch で取り除く。`RenderGraphCompileTest` の `DispatchGroups.X == MEGA_CULL_LIST_CAPACITY / 64u` の期待は間接 dispatch の記録へ合わせて直す。危険地帯（描画パス）。
+
 ## VTG8-ACCEPT: 段8（VSM 太陽）の受入れを記録する
 - status: backlog
 - done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` に「## 段8（VSM 太陽）」の節を段7の節と同じ構成で足す。(1) 起動画面の朝・昼・夕・夜（`-SunElevations 10,45,3` と `-Night`、既定の経路 = VSM）の撮影を開いて確かめた所見。(2) 細かさとちらつき: 既定・近接・低角度 × 太陽 45 度・10 度を `-Deterministic -OrbitDegreesPerSecond 20 -OrbitRenderedFrames 240,320,400 -ShadowProbe` で撮り、同じ run の CSM と VSM の `mean_texel_mm`・`partial_ratio`・`mean_abs_delta`・`changed_ratio`・`flip_ratio`・`SHADOW_PROBE_AGREE` を表にし、VTG8-SHADOW-PROBE の CSM だけの基準値とも並べる。旋回の 3 枚（f240・f320・f400）を開いて、影の縁の揺れ・ページの継ぎ目が無いことを確かめる。(3) GPU 時間は VTG8-VSM-GPU-TIME の表。(4) `VSM_PAGES`・`VSM_CACHE`・VRAM（`vsm_pool`）。(5) golden（基準画像を動かしていないこと）と関係する ctest の結果。(6) 判定の行: 細かさ = VSM の `mean_texel_mm` と `partial_ratio` が 6 つの組すべてで同じ run の CSM 以下。ちらつき = VSM の `mean_abs_delta` と `flip_ratio` が 6 つの組すべてで同じ run の CSM 以下（両方が 0.001 未満の組は同等とみなす）。一致 = 太陽 45 度の 3 視点で `SHADOW_PROBE_AGREE` の ratio が 0.98 以上。起動画面（絶対規則7）。(7) 既知の限界（半透明・ボリュームは CSM のまま・CSM の描画も残る、負荷モードの CSM の UBO の省略は CSM 側に残る、点光源は段9、測定は開発機の RTX 4080・ドライバ 610.88 だけ、など）。
