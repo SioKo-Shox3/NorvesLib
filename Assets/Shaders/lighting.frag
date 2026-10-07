@@ -93,6 +93,14 @@ layout(std430, set = 0, binding = 23) readonly buffer VsmPoolBuffer
 {
     uint vsmPool[];
 };
+// 太陽の VSM の読み出しで、自分の段のページが無く粗い段へ逃げた PCF の標本の数（[0]）。ホストが数フレーム後に読み戻す。
+// 断片シェーダーの storage の書き込みを使えるデバイス（NORVES_VT_FEEDBACK が定義される）だけで数える
+#ifdef NORVES_VT_FEEDBACK
+layout(std430, set = 0, binding = 24) buffer VsmLightingStatsBuffer
+{
+    uint vsmLightingStats[];
+};
+#endif
 
 // Neural BRDF重みデータ（Disney BRDF MLP）
 layout(set = 0, binding = 11) readonly buffer NeuralBRDFWeights
@@ -255,6 +263,9 @@ float CalculateRangeWindow(float distance, float range)
 #define VSM_PARAMS vsmBlock.vsm
 #define VSM_PAGE_TABLE(i) vsmPageTable[i]
 #define VSM_POOL(i) vsmPool[i]
+#ifdef NORVES_VT_FEEDBACK
+#define VSM_COUNT_FALLBACK() atomicAdd(vsmLightingStats[0], 1u)
+#endif
 #include "Common/VirtualShadowMap.glsl"
 
 // 太陽の影の可視度。--shadow-method=vsm で VSM が使えるときは VSM、それ以外（R5 のハードシャドウの検証表示を含む）は CSM。

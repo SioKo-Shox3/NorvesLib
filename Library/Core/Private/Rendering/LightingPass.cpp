@@ -1369,6 +1369,13 @@ namespace NorvesLib::Core::Rendering
         vsmPoolBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(vsmPoolBinding);
 
+        // 太陽の VSM の読み出しの統計（逃げた標本の数）。断片シェーダーの storage の書き込みを使えるデバイスだけがシェーダーで数える
+        RHI::DescriptorBinding vsmStatsBinding;
+        vsmStatsBinding.binding = 24;
+        vsmStatsBinding.type = RHI::ResourceBindType::RWBuffer;
+        vsmStatsBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(vsmStatsBinding);
+
         return dsDesc;
     }
 
@@ -1380,6 +1387,54 @@ namespace NorvesLib::Core::Rendering
     LightingPass::~LightingPass()
     {
         Shutdown();
+    }
+
+    RHI::BufferPtr LightingPass::AcquireVsmStatsSlot()
+    {
+        if (!m_Device)
+        {
+            return {};
+        }
+        VsmStatsSlot& slot = m_VsmStatsSlots[m_VsmStatsExecuteCount % VsmStatsSlotCount];
+        if (!slot.Buffer)
+        {
+            slot.Buffer = m_Device->CreateBuffer(RHI::BufferDesc(VsmStatsBytes,
+                                                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                                                                 true,
+                                                                 "LightingVsmStats"));
+            slot.Mapped = slot.Buffer ? static_cast<const uint32_t*>(slot.Buffer->Map(0, 0)) : nullptr;
+            if (!slot.Mapped)
+            {
+                slot = VsmStatsSlot{};
+                return {};
+            }
+        }
+        // 前にこの枠を使った実行は VsmStatsSlotCount 回前で、GPU は書き終えている（フレームの先行数より十分大きい）
+        if (slot.bPending)
+        {
+            m_VsmFallbackSamples += slot.Mapped[0];
+            ++m_VsmStatsHarvestedExecutes;
+            slot.bPending = false;
+        }
+        // 写像したままのバッファは Update（内部で写像する）を使えないので、写像した領域へ直接 0 を書く（host-coherent）
+        std::memset(const_cast<uint32_t*>(slot.Mapped), 0, VsmStatsBytes);
+        slot.bPending = true;
+        slot.ExecuteIndex = m_VsmStatsExecuteCount++;
+        return slot.Buffer;
+    }
+
+    void LightingPass::HarvestVsmStats()
+    {
+        for (VsmStatsSlot& slot : m_VsmStatsSlots)
+        {
+            if (!slot.bPending || !slot.Mapped)
+            {
+                continue;
+            }
+            m_VsmFallbackSamples += slot.Mapped[0];
+            ++m_VsmStatsHarvestedExecutes;
+            slot.bPending = false;
+        }
     }
 
     namespace
@@ -1672,7 +1727,7 @@ namespace NorvesLib::Core::Rendering
                                                                    "LightingVsmSampleParams"));
         if (!m_VsmSampleBuffer)
         {
-            NORVES_LOG_ERROR("LightingPass", "Failed to create VSM sample parameter buffer");
+            NORVES_LOG_ERROR("LightingPass", "VSM を読むパラメータのバッファを作れませんでした");
             return false;
         }
         const GPUVsmSampleParams disabledVsmParams = {};
@@ -1918,6 +1973,22 @@ namespace NorvesLib::Core::Rendering
         m_NeuralBRDFWeightBuffer.reset();
         m_DefaultNeuralBRDFWeightBuffer.reset();
         m_VsmSampleBuffer.reset();
+        // 太陽の VSM の読み出しの統計。GPU が書き終えた後に残りを読み、1 度だけ集計を出す
+        HarvestVsmStats();
+        if (m_VsmStatsHarvestedExecutes > 0u)
+        {
+            NORVES_LOG_INFO("LightingPass",
+                            "VSM_LIGHTING_STATS executes=%llu fallback_samples=%llu",
+                            static_cast<unsigned long long>(m_VsmStatsHarvestedExecutes),
+                            static_cast<unsigned long long>(m_VsmFallbackSamples));
+        }
+        for (VsmStatsSlot& slot : m_VsmStatsSlots)
+        {
+            slot = VsmStatsSlot{};
+        }
+        m_VsmStatsExecuteCount = 0;
+        m_VsmStatsHarvestedExecutes = 0;
+        m_VsmFallbackSamples = 0;
         m_bNeuralBRDFAvailable = false;
 
         // Samplers are released after descriptor and texture ownership is gone.
@@ -2839,6 +2910,7 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindConstantBuffer(21, m_VsmSampleBuffer, 0u, static_cast<uint32_t>(sizeof(GPUVsmSampleParams)));
         descriptorSet->BindStorageBuffer(22, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
         descriptorSet->BindStorageBuffer(23, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
+        descriptorSet->BindStorageBuffer(24, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
 
         outDescriptorSet = std::move(descriptorSet);
         return true;
@@ -4153,6 +4225,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr boundVsmPool = m_DefaultNeuralBRDFWeightBuffer;
         uint32_t boundVsmPageTableBytes = 4u;
         uint32_t boundVsmPoolBytes = 4u;
+        RHI::BufferPtr boundVsmStats = m_DefaultNeuralBRDFWeightBuffer;
+        uint32_t boundVsmStatsBytes = 4u;
         const CameraProxy* vsmCamera = context.GetActiveCamera();
         if (m_FrameVsmPageTable && m_FrameVsmPool && vsmCamera != nullptr && depthTexture &&
             vsmCamera->Projection == ProjectionType::Perspective &&
@@ -4160,9 +4234,12 @@ namespace NorvesLib::Core::Rendering
             m_FrameVsmPool->GetSize() >= VirtualShadowMap::PAGE_BYTES)
         {
             const float cameraPosition[3] = {vsmCamera->PositionX, vsmCamera->PositionY, vsmCamera->PositionZ};
+            const float cameraForward[3] = {vsmCamera->ForwardX, vsmCamera->ForwardY, vsmCamera->ForwardZ};
             const uint64_t poolPages = m_FrameVsmPool->GetSize() / VirtualShadowMap::PAGE_BYTES;
             if (BuildVirtualShadowMapSampleParams(&context.PhysicalLighting.SunClipmap,
                                                   cameraPosition,
+                                                  cameraForward,
+                                                  context.PhysicalLighting.CascadedShadow.SplitDistances,
                                                   vsmCamera->FieldOfView,
                                                   static_cast<float>(depthTexture->GetHeight()),
                                                   static_cast<uint32_t>(std::min<uint64_t>(poolPages, VirtualShadowMap::MAX_POOL_PAGES)),
@@ -4174,12 +4251,18 @@ namespace NorvesLib::Core::Rendering
                     m_FrameVsmPageTable->GetSize(), std::numeric_limits<uint32_t>::max()));
                 boundVsmPoolBytes = static_cast<uint32_t>(std::min<uint64_t>(
                     m_FrameVsmPool->GetSize(), std::numeric_limits<uint32_t>::max()));
+                if (RHI::BufferPtr statsBuffer = AcquireVsmStatsSlot())
+                {
+                    boundVsmStats = statsBuffer;
+                    boundVsmStatsBytes = VsmStatsBytes;
+                }
             }
         }
         m_VsmSampleBuffer->Update(&vsmParams, sizeof(vsmParams));
         m_LightingDescriptorSet->BindConstantBuffer(21, m_VsmSampleBuffer, 0, static_cast<uint32_t>(sizeof(GPUVsmSampleParams)));
         m_LightingDescriptorSet->BindStorageBuffer(22, boundVsmPageTable, 0, boundVsmPageTableBytes);
         m_LightingDescriptorSet->BindStorageBuffer(23, boundVsmPool, 0, boundVsmPoolBytes);
+        m_LightingDescriptorSet->BindStorageBuffer(24, boundVsmStats, 0, boundVsmStatsBytes);
 
         m_LightingDescriptorSet->Update();
 

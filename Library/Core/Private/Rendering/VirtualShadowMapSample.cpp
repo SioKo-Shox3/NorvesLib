@@ -2,6 +2,7 @@
 
 #include "Rendering/VirtualShadowMapPass.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -11,6 +12,8 @@ namespace NorvesLib::Core::Rendering
     {
         // 絶対のページの番号を int32 でシェーダーへ渡せる範囲（印付けと同じ。範囲の端 + 128 ページが溢れない余裕を持つ）
         constexpr int64_t MaxOriginMagnitude = 1ll << 30;
+        // CSM のカスケードの数（CascadedShadowLightMatrices.h の CSM_CASCADE_COUNT と同じ。分割の距離は 1 つ多い）
+        constexpr uint32_t VirtualShadowMapCsmCascadeCount = 4u;
 
         void CopyVector(float* destination, const Math::Vector3& value)
         {
@@ -22,13 +25,15 @@ namespace NorvesLib::Core::Rendering
 
     bool BuildVirtualShadowMapSampleParams(const VirtualShadowMapClipmap* clipmap,
                                            const float* cameraPosition,
+                                           const float* cameraForward,
+                                           const float* cascadeSplitDistances,
                                            float fovYDegrees,
                                            float screenHeightPixels,
                                            uint32_t poolPages,
                                            GPUVsmSampleParams& outParams)
     {
         std::memset(&outParams, 0, sizeof(outParams));
-        if (clipmap == nullptr || cameraPosition == nullptr || !clipmap->bEnabled || clipmap->LevelCount == 0u ||
+        if (clipmap == nullptr || cameraPosition == nullptr || cameraForward == nullptr || !clipmap->bEnabled || clipmap->LevelCount == 0u ||
             clipmap->LevelCount > VirtualShadowMap::LEVEL_COUNT ||
             clipmap->PagesPerAxis != VirtualShadowMap::TABLE_DIMENSION ||
             clipmap->Settings.PageResolution != VirtualShadowMap::PAGE_RESOLUTION || poolPages == 0u ||
@@ -39,6 +44,13 @@ namespace NorvesLib::Core::Rendering
         const float pixelMeters = VirtualShadowMapScreenPixelMeters(1.0f, fovYDegrees, screenHeightPixels);
         if (!(pixelMeters > 0.0f) || !std::isfinite(cameraPosition[0]) || !std::isfinite(cameraPosition[1]) ||
             !std::isfinite(cameraPosition[2]))
+        {
+            return false;
+        }
+
+        const float forwardLength = std::sqrt(cameraForward[0] * cameraForward[0] + cameraForward[1] * cameraForward[1] +
+                                              cameraForward[2] * cameraForward[2]);
+        if (!std::isfinite(forwardLength) || !(forwardLength > 1.0e-5f))
         {
             return false;
         }
@@ -75,7 +87,30 @@ namespace NorvesLib::Core::Rendering
         params.depth[0] = static_cast<float>(clipmap->DepthCenter);
         params.depth[1] = 0.5f / depthRange;
         params.depth[2] = 2.0f * depthRange;
-        params.depth[3] = clipmap->Settings.FadeRatio;
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            params.view[axis] = cameraForward[axis] / forwardLength;
+        }
+        // 影の距離の範囲・薄めは CSM と同じ（CalculateShadow）。分割の距離が使えなければ設定の最大の距離と割合から決める
+        bool bSplitsUsable = cascadeSplitDistances != nullptr;
+        for (uint32_t index = 0; bSplitsUsable && index <= VirtualShadowMapCsmCascadeCount; ++index)
+        {
+            bSplitsUsable = std::isfinite(cascadeSplitDistances[index]) && cascadeSplitDistances[index] >= 0.0f &&
+                            (index == 0u || cascadeSplitDistances[index] > cascadeSplitDistances[index - 1u]);
+        }
+        if (bSplitsUsable)
+        {
+            const float farDistance = cascadeSplitDistances[VirtualShadowMapCsmCascadeCount];
+            params.range[0] = cascadeSplitDistances[0];
+            params.range[1] = farDistance;
+            params.range[2] = std::max((farDistance - cascadeSplitDistances[VirtualShadowMapCsmCascadeCount - 1u]) * 0.1f, 0.001f);
+        }
+        else
+        {
+            params.range[0] = 0.0f;
+            params.range[1] = clipmap->Settings.MaxShadowDistance;
+            params.range[2] = std::max(clipmap->Settings.MaxShadowDistance * clipmap->Settings.FadeRatio, 0.001f);
+        }
         params.pixel[0] = pixelMeters;
         params.control[0] = 1u;
         params.control[1] = clipmap->LevelCount;

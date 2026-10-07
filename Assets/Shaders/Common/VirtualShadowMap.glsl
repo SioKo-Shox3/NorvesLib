@@ -13,7 +13,11 @@
 // 省略できるマクロ:
 //   VSM_COUNT_FALLBACK()     自分の段のページが無く、粗い段へ逃げた標本 1 つにつき 1 回呼ぶ（統計の数え上げ。既定は何もしない）
 //
-// 入口は VsmSampleSunShadow(worldPos, normal, texelMeters)。可視度（1 = 光が当たる、0 = 影）を返し、使った段の texel の一辺（m）を返す。
+// 入口は VsmSampleSunShadow(worldPos, normal, texelMeters)。可視度（1 = 光が当たる、0 = 影）を返し、PCF の標本が実際に読んだ段の
+// texel の一辺（m。粗い段へ逃げた標本はその段の値。読めた標本の平均）を返す。
+//
+// 影の距離の範囲・奥の薄めは CSM（Common/SunShadowCsm.glsl の CalculateShadow）と同じ量で測る: カメラの前方への距離が
+// [最初の分割, 最後の分割] の外なら影なし、最後のカスケードの幅の 10% で薄める。段の選び方（カメラからの直線距離）とは別の距離。
 
 #ifndef VIRTUAL_SHADOW_MAP_GLSL
 #define VIRTUAL_SHADOW_MAP_GLSL
@@ -90,8 +94,9 @@ bool VsmFetchDepthMeters(uint level, vec2 lightXY, out float outDepthMeters)
     return true;
 }
 
-// 太陽の可視度（1 = 光が当たる、0 = 影）。outTexelMeters は、受け手の距離から選んだ段の texel の一辺（m。逃げた先ではなく、選んだ段）。
-// 無効・影の最大の距離の外・不正な値は 1（影なし）。奥の薄めは影の最大の距離の手前の FadeRatio の幅。
+// 太陽の可視度（1 = 光が当たる、0 = 影）。outTexelMeters は PCF の標本が実際に読んだ段の texel の一辺（m）の平均。
+// どの標本も読めなかった（無効・影の距離の外・不正な値・どの段にも無い）ときは、受け手の距離から選んだ段の値。
+// 無効・影の距離の外・不正な値は 1（影なし）。
 float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
 {
     outTexelMeters = 0.0;
@@ -100,12 +105,16 @@ float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
         return 1.0;
     }
 
-    const float distanceToCamera = length(worldPos - VSM_PARAMS.cameraPosition.xyz);
-    const float maxDistance = VSM_PARAMS.cameraPosition.w;
+    // 段はカメラからの直線距離で選ぶ（印付けと同じ）。影の範囲・薄めは CSM と同じカメラの前方への距離で測る
+    const vec3 toReceiver = worldPos - VSM_PARAMS.cameraPosition.xyz;
+    const float distanceToCamera = length(toReceiver);
+    const float viewDistance = dot(toReceiver, VSM_PARAMS.view.xyz);
+    const float shadowNear = VSM_PARAMS.range.x;
+    const float shadowFar = VSM_PARAMS.range.y;
     const uint level = VsmSelectLevel(distanceToCamera);
     const float texelMeters = VSM_PARAMS.levelInfo[level].y;
     outTexelMeters = texelMeters;
-    if (!(distanceToCamera <= maxDistance) || !(texelMeters > 0.0))
+    if (!(viewDistance >= shadowNear) || !(viewDistance <= shadowFar) || !(texelMeters > 0.0))
     {
         return 1.0;
     }
@@ -140,6 +149,8 @@ float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
     const float radius = max(distanceToCamera * VSM_PARAMS.pixel.x, texelMeters);
 
     float lit = 0.0;
+    float readTexelSum = 0.0;
+    float readCount = 0.0;
     for (int index = 0; index < 16; ++index)
     {
         const vec2 offset = POISSON_DISK[index] * radius;
@@ -154,8 +165,11 @@ float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
             float blockerDepth = 0.0;
             if (VsmFetchDepthMeters(candidate, sampleXY, blockerDepth))
             {
-                const float bias = (VSMS_CONSTANT_BIAS_TEXELS + abs(slope.x) + abs(slope.y)) * VSM_PARAMS.levelInfo[candidate].y;
+                const float candidateTexel = VSM_PARAMS.levelInfo[candidate].y;
+                const float bias = (VSMS_CONSTANT_BIAS_TEXELS + abs(slope.x) + abs(slope.y)) * candidateTexel;
                 visible = (sampleReceiver - bias > blockerDepth) ? 0.0 : 1.0;
+                readTexelSum += candidateTexel;
+                readCount += 1.0;
                 break;
             }
             bEscaped = true;
@@ -166,11 +180,14 @@ float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
         }
         lit += visible;
     }
+    if (readCount > 0.0)
+    {
+        outTexelMeters = readTexelSum / readCount;
+    }
     float shadow = lit / 16.0;
 
-    // 影の最大の距離の手前で影を薄め、境界で急に消えないようにする（CPU の VirtualShadowMapShadowFadeWeight と同じ）
-    const float fadeStart = maxDistance * (1.0 - VSM_PARAMS.depth.w);
-    shadow = mix(shadow, 1.0, smoothstep(fadeStart, maxDistance, distanceToCamera));
+    // 影の最大の距離の手前（最後のカスケードの幅の 10%）で影を薄め、境界で急に消えないようにする（CSM と同じ）
+    shadow = mix(shadow, 1.0, smoothstep(shadowFar - VSM_PARAMS.range.z, shadowFar, viewDistance));
     return shadow;
 }
 

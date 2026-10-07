@@ -18,10 +18,14 @@ namespace NorvesLib::Core::Rendering
         float lightDirection[4];
         /** @brief xyz = カメラの位置、w = 影の最大の距離（m） */
         float cameraPosition[4];
-        /** @brief x = 深度の原点、y = 1 / (2 × 深度の範囲)、z = 2 × 深度の範囲（m）、w = 奥の薄めの幅（影の最大の距離に対する割合） */
+        /** @brief x = 深度の原点、y = 1 / (2 × 深度の範囲)、z = 2 × 深度の範囲（m）、w = 予約（0） */
         float depth[4];
         /** @brief x = 画面上の 1 画素の大きさ / カメラからの距離（2 tan(fovY / 2) / 画面の高さ） */
         float pixel[4];
+        /** @brief xyz = カメラの前方（単位ベクトル）。影の距離の範囲・薄めはこの前方への距離で測る（CSM と同じ） */
+        float view[4];
+        /** @brief x = 影の最小の距離、y = 影の最大の距離、z = 奥の薄めの幅（m） */
+        float range[4];
         /** @brief x = 1 なら有効、y = 段の数、z = 物理ページの数 */
         uint32_t control[4];
         float thresholds[VirtualShadowMapMaxLevels];
@@ -30,7 +34,7 @@ namespace NorvesLib::Core::Rendering
         /** @brief x, y = 範囲の最小の絶対のページの番号 */
         int32_t levelOrigin[VirtualShadowMapMaxLevels][4];
     };
-    static_assert(sizeof(GPUVsmSampleParams) == 688, "Common/VirtualShadowMap.glsl の VsmSampleParams と同じ大きさにすること");
+    static_assert(sizeof(GPUVsmSampleParams) == 720, "Common/VirtualShadowMap.glsl の VsmSampleParams と同じ大きさにすること");
 
     /**
      * @brief クリップマップとカメラから、VSM を読むパラメータを作る
@@ -38,14 +42,22 @@ namespace NorvesLib::Core::Rendering
      * 使えない入力（クリップマップが無効・段の数やページの大きさが資源と合わない・物理ページが 0・画角や画面の高さが不正）なら、
      * 全部 0（control.x = 0 = 無効）にして false を返す。呼び出し側は無効のパラメータを照明へ渡し、CSM のまま描く。
      *
+     * 影の距離の範囲・奥の薄めは CSM と同じ量にする: カメラの前方への距離が [分割の最初, 分割の最後] の外なら影なし、
+     * 最後のカスケードの幅（分割の最後 − 最後から 2 番目）の 10% で薄める。分割の距離が使えなければ
+     * [0, MaxShadowDistance]・MaxShadowDistance × FadeRatio で薄める。
+     *
      * @param clipmap 今フレームのクリップマップ
      * @param cameraPosition カメラの位置（ワールド）
+     * @param cameraForward カメラの前方（ワールド。長さは問わない。0・非有限なら無効）
+     * @param cascadeSplitDistances CSM の分割の距離（5 個。前方への距離）。nullptr、または不正（非有限・増加しない）なら使わない
      * @param fovYDegrees 垂直の画角（度）
      * @param screenHeightPixels 画面の高さ（画素）
      * @param poolPages 物理ページの数
      */
     bool BuildVirtualShadowMapSampleParams(const VirtualShadowMapClipmap* clipmap,
                                            const float* cameraPosition,
+                                           const float* cameraForward,
+                                           const float* cascadeSplitDistances,
                                            float fovYDegrees,
                                            float screenHeightPixels,
                                            uint32_t poolPages,

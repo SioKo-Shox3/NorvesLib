@@ -477,6 +477,31 @@ namespace NorvesLib::Core::Rendering
         /** @brief 今フレームに RenderGraph から解決した太陽の VSM のページの表・物理ページのプール（無ければ null） */
         RHI::BufferPtr m_FrameVsmPageTable;
         RHI::BufferPtr m_FrameVsmPool;
+
+        /**
+         * @brief 太陽の VSM の読み出しの統計の読み戻し先（照明のシェーダーが storage buffer へ数え、ホストが数回後の実行で読む）
+         *
+         * [0] = 自分の段のページが無く、粗い段へ逃げた PCF の標本の数。--shadow-probe が無効でも数える。
+         */
+        struct VsmStatsSlot
+        {
+            RHI::BufferPtr Buffer;
+            const uint32_t* Mapped = nullptr;
+            uint64_t ExecuteIndex = 0;
+            bool bPending = false;
+        };
+        static constexpr uint32_t VsmStatsSlotCount = 16;
+        static constexpr uint32_t VsmStatsBytes = 16;
+        VsmStatsSlot m_VsmStatsSlots[VsmStatsSlotCount];
+        uint64_t m_VsmStatsExecuteCount = 0;
+        /** @brief 読み戻した実行の数と、その合計の逃げた標本の数 */
+        uint64_t m_VsmStatsHarvestedExecutes = 0;
+        uint64_t m_VsmFallbackSamples = 0;
+
+        /** @brief 次の統計の書き込み先を取り、0 に戻して返す（作れない・写像できないときは null） */
+        RHI::BufferPtr AcquireVsmStatsSlot();
+        /** @brief 残っている統計をすべて合計へ足す（GPU が書き終えた後の終了時） */
+        void HarvestVsmStats();
         bool m_bNeuralBRDFAvailable = false;     ///< Neural BRDFが利用可能か
 
         // デバイス参照

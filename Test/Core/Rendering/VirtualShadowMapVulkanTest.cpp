@@ -2773,6 +2773,8 @@ namespace
     //       値は CPU の参照（Poisson の 16 点それぞれが形の内側か）と一致する。ページの境界をまたぐ標本も読む。
     //   L3（割り当てられていないページ）: 受け手のページを割り当て外にし、1 段粗い段の別の物理ページ（全 texel が受け手より手前の深度）を割り当てると、
     //       その粗い段の値（0）になる（逃げた標本は 16）。粗い段にも無ければ影なし（1。逃げた標本は 16）。
+    //       粗い段へ逃げたときに返す texel の一辺は、実際に読んだ（粗い）段の値。
+    //   L4（影の距離の範囲・奥の薄め）: CSM と同じ前方への距離で、範囲の外は影なし、最後のカスケードの幅の 10% で薄める。
 
     // Common/PoissonDisk16.glsl と同じ 16 点（CPU の参照のための独立した写し。シェーダーの点列が変わると一致しなくなる）
     constexpr double ReferencePoissonDisk[16][2] = {
@@ -2927,7 +2929,8 @@ namespace
         return point;
     }
 
-    // 段を固定し（しきい値: 段より下を 0、上を 1e30）、影の最大の距離を広げ、カメラを受け手から「PCF の半径が 2 texel になる距離」だけ離す
+    // 段を固定し（しきい値: 段より下を 0、上を 1e30）、影の距離の範囲を広げ、カメラを受け手から「PCF の半径が 2 texel になる距離」だけ離す
+    // （カメラは受け手の +X 側に置き、前方は受け手を向く -X）
     GPUVsmSampleParams MakeForcedLevelParams(const GPUVsmSampleParams& real, uint32_t level, const SampleProbePoint& receiver)
     {
         GPUVsmSampleParams params = real;
@@ -2940,7 +2943,38 @@ namespace
         params.cameraPosition[0] = receiver.Position[0] + static_cast<float>(distance);
         params.cameraPosition[1] = receiver.Position[1];
         params.cameraPosition[2] = receiver.Position[2];
-        params.cameraPosition[3] = 1.0e6f;
+        params.view[0] = -1.0f;
+        params.view[1] = 0.0f;
+        params.view[2] = 0.0f;
+        params.range[0] = 0.0f;
+        params.range[1] = 1.0e6f;
+        params.range[2] = 1.0f;
+        return params;
+    }
+
+    // MakeForcedLevelParams の段の固定のまま、カメラを (受け手 + offset) へ置き、前方を viewDirection、影の距離の範囲を (near, far, fadeWidth) にする。
+    // PCF の半径は常に 2 texel（画素の大きさを、カメラからの直線距離に合わせて決める）
+    GPUVsmSampleParams MakeDistanceParams(const GPUVsmSampleParams& real,
+                                          uint32_t level,
+                                          const SampleProbePoint& receiver,
+                                          const double offset[3],
+                                          const double viewDirection[3],
+                                          double nearDistance,
+                                          double farDistance,
+                                          double fadeWidth)
+    {
+        GPUVsmSampleParams params = MakeForcedLevelParams(real, level, receiver);
+        const double texel = static_cast<double>(real.levelInfo[level][1]);
+        const double straight = std::sqrt(offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]);
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            params.cameraPosition[axis] = receiver.Position[axis] + static_cast<float>(offset[axis]);
+            params.view[axis] = static_cast<float>(viewDirection[axis]);
+        }
+        params.pixel[0] = static_cast<float>(2.0 * texel / straight);
+        params.range[0] = static_cast<float>(nearDistance);
+        params.range[1] = static_cast<float>(farDistance);
+        params.range[2] = static_cast<float>(fadeWidth);
         return params;
     }
 
@@ -3007,8 +3041,9 @@ namespace
             return false;
         }
         GPUVsmSampleParams realParams;
-        if (!BuildVirtualShadowMapSampleParams(&scene.Clipmap, scene.CameraPosition, scene.Camera.FieldOfView, static_cast<float>(ImageHeight),
-                                               caseF.PoolPages, realParams))
+        const float cameraForward[3] = {scene.Camera.ForwardX, scene.Camera.ForwardY, scene.Camera.ForwardZ};
+        if (!BuildVirtualShadowMapSampleParams(&scene.Clipmap, scene.CameraPosition, cameraForward, nullptr, scene.Camera.FieldOfView,
+                                               static_cast<float>(ImageHeight), caseF.PoolPages, realParams))
         {
             std::cerr << TestName << " ケース L: 読み出しのパラメータを作れませんでした" << std::endl;
             return false;
@@ -3088,7 +3123,7 @@ namespace
         const double radius = 2.0 * texel;
 
         auto evaluate = [&](double lightX, double lightY, const Container::VariableArray<uint32_t>& pool, const Container::VariableArray<uint32_t>& table,
-                            float& outVisibility, uint32_t& outFallback) -> bool
+                            float& outVisibility, uint32_t& outFallback, double expectedTexel = -1.0) -> bool
         {
             const SampleProbePoint receiver = MakeReceiver(scene, lightX, lightY, receiverDepth);
             Container::VariableArray<SampleProbePoint> points;
@@ -3098,7 +3133,9 @@ namespace
             {
                 return false;
             }
-            Expect(std::abs(static_cast<double>(output.TexelMeters[0]) - texel) < texel * 1.0e-6, "ケース L2: 固定した段の texel の一辺を返さなければならない");
+            const double wantedTexel = expectedTexel > 0.0 ? expectedTexel : texel;
+            Expect(std::abs(static_cast<double>(output.TexelMeters[0]) - wantedTexel) < wantedTexel * 1.0e-6,
+                   "ケース L2・L3: 実際に読んだ段（読めた標本がなければ選んだ段）の texel の一辺を返さなければならない");
             outVisibility = output.Visibility[0];
             outFallback = output.Fallback;
             return true;
@@ -3254,7 +3291,8 @@ namespace
 
             float visibility = -1.0f;
             uint32_t fallback = 0;
-            if (!evaluate(lightX, centerY, pool, tableWithCoarse, visibility, fallback))
+            const double coarseTexel = static_cast<double>(scene.Clipmap.Levels[level + 1u].TexelMeters);
+            if (!evaluate(lightX, centerY, pool, tableWithCoarse, visibility, fallback, coarseTexel))
             {
                 return false;
             }
@@ -3270,6 +3308,80 @@ namespace
             std::cout << TestName << " ケース L3 どの段にも無い: 可視度=" << visibility << " 逃げた標本=" << fallback << std::endl;
             Expect(std::abs(visibility - 1.0f) < 1.0e-5f, "ケース L3: どの段にもページが無いとき、影なし（1）でなければならない");
             Expect(fallback == 16u, "ケース L3: どの段にも無い標本も、逃げた標本として 16 と数えなければならない");
+        }
+
+        // ----- L4: 影の距離の範囲と奥の薄め（CSM と同じ前方への距離） -----
+        {
+            // CSM の分割（0.1, 5, 15, 40, 80）から、範囲 [0.1, 80]・薄めの幅 = 最後のカスケードの幅（40）の 10% = 4 m を作る
+            const float splits[5] = {0.1f, 5.0f, 15.0f, 40.0f, 80.0f};
+            GPUVsmSampleParams splitParams;
+            Expect(BuildVirtualShadowMapSampleParams(&scene.Clipmap, scene.CameraPosition, cameraForward, splits, scene.Camera.FieldOfView,
+                                                     static_cast<float>(ImageHeight), caseF.PoolPages, splitParams),
+                   "ケース L4: 分割の距離つきで読み出しのパラメータを作れなければならない");
+            Expect(std::abs(splitParams.range[0] - 0.1f) < 1.0e-6f && std::abs(splitParams.range[1] - 80.0f) < 1.0e-6f &&
+                       std::abs(splitParams.range[2] - 4.0f) < 1.0e-5f,
+                   "ケース L4: 影の距離の範囲・薄めの幅が CSM の分割（最初・最後・最後のカスケードの幅の 10%）から決まらなければならない");
+            // 分割が使えないとき（増加しない）は、設定の最大の距離と割合から決まる
+            const float brokenSplits[5] = {0.1f, 5.0f, 5.0f, 40.0f, 80.0f};
+            GPUVsmSampleParams settingsParams;
+            Expect(BuildVirtualShadowMapSampleParams(&scene.Clipmap, scene.CameraPosition, cameraForward, brokenSplits, scene.Camera.FieldOfView,
+                                                     static_cast<float>(ImageHeight), caseF.PoolPages, settingsParams),
+                   "ケース L4: 不正な分割でも設定から読み出しのパラメータを作れなければならない");
+            const float maxDistance = scene.Clipmap.Settings.MaxShadowDistance;
+            Expect(settingsParams.range[0] == 0.0f && std::abs(settingsParams.range[1] - maxDistance) < 1.0e-4f &&
+                       std::abs(settingsParams.range[2] - maxDistance * scene.Clipmap.Settings.FadeRatio) < 1.0e-4f,
+                   "ケース L4: 分割が使えないときは [0, 最大の距離]・最大の距離 × 割合で薄めなければならない");
+            const float zeroForward[3] = {0.0f, 0.0f, 0.0f};
+            GPUVsmSampleParams rejected;
+            Expect(!BuildVirtualShadowMapSampleParams(&scene.Clipmap, scene.CameraPosition, zeroForward, splits, scene.Camera.FieldOfView,
+                                                      static_cast<float>(ImageHeight), caseF.PoolPages, rejected) &&
+                       rejected.control[0] == 0u,
+                   "ケース L4: カメラの前方が 0 なら無効のパラメータ（control.x = 0）を返さなければならない");
+
+            // 影の中心（L2-中心と同じ位置。距離に依らず可視度 0）を、カメラを動かして読む
+            const double lightX = boundaryX - 0.2068 * pageMeters;
+            const SampleProbePoint receiver = MakeReceiver(scene, lightX, centerY, receiverDepth);
+            const double forwardX[3] = {-1.0, 0.0, 0.0};
+            auto readAt = [&](const double offset[3], float& outVisibility) -> bool
+            {
+                Container::VariableArray<SampleProbePoint> points;
+                points.push_back(receiver);
+                SampleOutput output;
+                if (!RunSampleProbe(device, probe, MakeDistanceParams(splitParams, level, receiver, offset, forwardX, splitParams.range[0], splitParams.range[1], splitParams.range[2]),
+                                    caseF.Pool, caseF.PageTable, points, output))
+                {
+                    return false;
+                }
+                outVisibility = output.Visibility[0];
+                return true;
+            };
+            struct DistanceCase
+            {
+                const char* Name;
+                double Offset[3];
+                double Expected;
+            };
+            // 前方への距離 74 m は薄めの手前（76 m 以降）なので影のまま（最大の距離全体の 10% = 8 m で薄めると 0.156 になる）。78 m は薄めの真ん中（0.5）。
+            // 前方への距離 70 m・直線距離 80.6 m は、直線で測ると範囲の外になるが、CSM と同じ前方への距離では範囲の内側で影のまま
+            const DistanceCase cases[] = {
+                {"前方 74 m（薄めの手前）", {74.0, 0.0, 0.0}, 0.0},
+                {"前方 78 m（薄めの真ん中）", {78.0, 0.0, 0.0}, 0.5},
+                {"前方 81 m（最大の距離の外）", {81.0, 0.0, 0.0}, 1.0},
+                {"カメラの後ろ（前方への距離が負）", {-5.0, 0.0, 0.0}, 1.0},
+                {"最小の距離の手前（0.05 m）", {0.05, 0.0, 0.0}, 1.0},
+                {"前方 70 m・直線 80.6 m（斜め）", {70.0, 40.0, 0.0}, 0.0},
+            };
+            for (const DistanceCase& distanceCase : cases)
+            {
+                float visibility = -1.0f;
+                if (!readAt(distanceCase.Offset, visibility))
+                {
+                    return false;
+                }
+                std::cout << TestName << " ケース L4 " << distanceCase.Name << ": 可視度=" << visibility << " 期待=" << distanceCase.Expected << std::endl;
+                Expect(std::abs(static_cast<double>(visibility) - distanceCase.Expected) < 1.0e-4,
+                       "ケース L4: 影の距離の範囲・奥の薄めが CSM と同じ前方への距離で決まらなければならない");
+            }
         }
         return true;
     }

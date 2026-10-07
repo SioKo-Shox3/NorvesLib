@@ -451,6 +451,8 @@ namespace NorvesLib::Core::Rendering
             const uint64_t poolPages = vsmPool->GetSize() / VirtualShadowMap::PAGE_BYTES;
             bVsm = BuildVirtualShadowMapSampleParams(&lighting.SunClipmap,
                                                      cameraPosition,
+                                                     params.cameraForward,
+                                                     lighting.CascadedShadow.SplitDistances,
                                                      camera->FieldOfView,
                                                      static_cast<float>(depth->GetHeight()),
                                                      static_cast<uint32_t>(std::min<uint64_t>(poolPages, VirtualShadowMap::MAX_POOL_PAGES)),
