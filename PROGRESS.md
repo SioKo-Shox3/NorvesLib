@@ -34,3 +34,11 @@ run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.ex
 GR12のrun37698585325ではCoreと関連テストのビルド、SkeletalAnimationSamplingTest（独立旧oracle、bounds、1000回のscratch/data安定、既存baseline30ケース）が成功した。合成52関節・18万頂点（6万三角形相当）・240frameのRelease計測は旧10977.421ms、準備済み新経路6.718ms。準備時間を除く姿勢評価単体であり、ゲーム全体や実素材の倍率ではない。
 
 同runのSkinnedRenderPathContractTestはReleaseでsegfault。既存テストがassert内でregistry/resources初期化とPrepareDrawを行い、その結果を通常コードで読むため、NDEBUGで必要な呼出が消えていた。SkeletalAnimationSamplingTestと同じ常時有効のassertへ直した。修正後の同テスト実行は未確認。GR10の本体は別途進行中。
+
+GR12修正後run37699941320（f5ec362a）は全項目成功。Core・両テストbuild、SkeletalAnimationSamplingTestとSkinnedRenderPathContractTestの2/2が通過し、GR12のCPU受入れを完了とする。再計測は旧11023.486ms、新6.791ms。境界/renderer側テストのRelease segfaultは解消した。
+
+## G3 GR10の実行系（実装中）
+
+PoseOps、typed parameter、検証付きJSONグラフ、7種ノード、状態遷移と割込時のローカル姿勢保存、Update/Evaluate分離、Animator接続、外部駆動、modifier用の遅延FK、AngelScriptの添字APIとdebug viewを追加中。GR11のmetadata/event/root motion、GR10の同期・歩幅合わせ、明示デモ接続は未実装。GR10の本体はWindowsでまだコンパイル・実行していない。数学部分PoseOpsの単体はg++で通過したが、テスト用allocator adapterでありproductionメモリ系の検証を代替しない。
+
+GR10本体の差分では共有nodeの再生時刻、逆向nonloopの初期時刻、非active機械の割込snapshot、重複名の骨格照合、失効資産の再準備拒否、加算の動的基準姿勢を修正した。loader/graph/外部駆動/スクリプトのCPUケースを既存Sampler bundleへ追加した。本体の実行確認をまとめて行い、GR11のmetadata/event/root motion・GR10の同期は引き続き別の未完部分として扱う。

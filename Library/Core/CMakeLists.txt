@@ -94,6 +94,11 @@ set(PRIVATE_SOURCES
     Private/Animation/SkeletalPoseBuilder.cpp
     Private/Animation/SkeletalPoseBounds.cpp
     Private/Animation/PoseTypes.cpp
+    Private/Animation/PoseOps.cpp
+    Private/Animation/AnimParams.cpp
+    Private/Animation/AnimGraphResource.cpp
+    Private/Animation/AnimGraphInstance.cpp
+    Private/Component/AnimatorComponent.cpp
     Private/Animation/ClipChannelSampler.cpp
     Private/Animation/SkeletalAnimationSampler.cpp
     Private/Animation/SkeletalSplitSampler.cpp
@@ -466,6 +471,12 @@ set(PUBLIC_HEADERS
     Public/Animation/RigBindingTypes.h
     Public/Animation/RigSplitAssetRequest.h
     Public/Animation/SkeletonResource.h
+    Public/Animation/PoseOps.h
+    Public/Animation/AnimParams.h
+    Public/Animation/AnimGraphResource.h
+    Public/Animation/AnimGraphInstance.h
+    Public/Animation/PoseModifier.h
+    Public/Component/AnimatorComponent.h
     # Scene
     Public/Scene/SceneQuery.h
     Public/Scene/PhysicsQueryTypes.h

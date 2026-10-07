@@ -43,9 +43,14 @@ namespace NorvesLib::Core::Animation
                                                 const Math::Matrix4x4& meshTransform);
         [[nodiscard]] static bool SampleClipToLocalPose(const SkeletalPoseContext&, const AnimationClipResource&,
                                                         float timeSeconds, LocalPose& out);
+        // 後段modifier用の遅延FK。palette・頂点境界を計算しない。
+        [[nodiscard]] static bool BuildJointModelMatrices(const SkeletalPoseContext&,const LocalPose&,PoseScratch&,
+            Container::VariableArray<Math::Matrix4x4>&);
         [[nodiscard]] static bool BuildPose(const SkeletalPoseContext&, const LocalPose&, PoseScratch&,
                                             SkeletalPoseSnapshot& out);
         [[nodiscard]] static bool Sample(const SkeletalPoseContext&, const AnimationClipResource&, float timeSeconds,
                                          PoseScratch&, SkeletalPoseSnapshot& out);
+      private:
+        static bool BuildGlobalPose(const SkeletalPoseContext&,const LocalPose&,PoseScratch&);
     };
 } // namespace NorvesLib::Core::Animation

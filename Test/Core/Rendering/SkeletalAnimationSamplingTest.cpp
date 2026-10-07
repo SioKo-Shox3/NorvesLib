@@ -727,11 +727,15 @@ namespace
 
 void TestClipChannelSearch();
 void TestPoseEvaluation();
+void TestAnimPoseOps();
+void TestAnimGraphRuntime();
 
 int main(int argc, char** argv)
 {
     TestClipChannelSearch();
     TestPoseEvaluation();
+    TestAnimPoseOps();
+    TestAnimGraphRuntime();
     if (argc != 1 && (argc != 3 || std::strcmp(argv[1], "--capture-pose-snapshot") != 0))
     {
         return 2;

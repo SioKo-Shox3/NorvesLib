@@ -185,10 +185,8 @@ namespace NorvesLib::Core::Animation
         return true;
     }
 
-    bool SkeletalPoseBuilder::BuildPose(const SkeletalPoseContext& context, const LocalPose& pose, PoseScratch& scratch,
-                                        SkeletalPoseSnapshot& out)
+    bool SkeletalPoseBuilder::BuildGlobalPose(const SkeletalPoseContext& context,const LocalPose& pose,PoseScratch& scratch)
     {
-        out.Clear();
         if (!context.bValid || pose.size() != context.Parents.size() ||
             !IsPreparedFor(context, *context.Skeleton, *context.Clip, *context.Mesh, context.MeshTransform))
         {
@@ -215,6 +213,29 @@ namespace NorvesLib::Core::Animation
                 return false;
             }
         }
+        return true;
+    }
+    bool SkeletalPoseBuilder::BuildJointModelMatrices(const SkeletalPoseContext& context,const LocalPose& pose,
+        PoseScratch& scratch,Container::VariableArray<Math::Matrix4x4>& out)
+    {
+        out.clear();
+        if(!BuildGlobalPose(context,pose,scratch))return false;
+        out.resize(pose.size());
+        for(size_t i=0;i<pose.size();++i)
+        {
+            const auto global=context.bSplit?scratch.GlobalMatrices[i]*context.RootFrame:scratch.GlobalMatrices[i];
+            out[i]=global*context.InverseMesh;
+            if(!Detail::IsFiniteMatrix(out[i])){out.clear();return false;}
+        }
+        return true;
+    }
+
+    bool SkeletalPoseBuilder::BuildPose(const SkeletalPoseContext& context, const LocalPose& pose, PoseScratch& scratch,
+                                        SkeletalPoseSnapshot& out)
+    {
+        out.Clear();
+        if(!BuildGlobalPose(context,pose,scratch))return false;
+        const size_t count=pose.size();
         out.BonePalette.resize(count);
         out.JointModelMatrices.resize(count);
         for (size_t i = 0; i < count; ++i)

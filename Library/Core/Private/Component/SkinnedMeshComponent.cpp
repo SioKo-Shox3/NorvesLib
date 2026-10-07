@@ -68,7 +68,7 @@ namespace NorvesLib::Core::Component
         {
             Tick(deltaTime);
         }
-        else if (group == ETickGroup::PoseFinalize)
+        else if (group == ETickGroup::PoseFinalize && !m_bExternalAnimationDriven)
         {
             (void)EvaluatePose();
         }
@@ -76,7 +76,7 @@ namespace NorvesLib::Core::Component
 
     void SkinnedMeshComponent::Tick(float deltaTime)
     {
-        if (!m_bPlaying || !std::isfinite(deltaTime) || !std::isfinite(m_PlaybackRate) || !m_SkeletalAsset ||
+        if (m_bExternalAnimationDriven || !m_bPlaying || !std::isfinite(deltaTime) || !std::isfinite(m_PlaybackRate) || !m_SkeletalAsset ||
             !GetAnimationClip())
         {
             return;
@@ -438,6 +438,30 @@ namespace NorvesLib::Core::Component
         return outProxy.IsValid();
     }
 
+    void SkinnedMeshComponent::SetExternalAnimationDriven(bool enabled)
+    {
+        if(m_bExternalAnimationDriven==enabled)return;
+        m_bExternalAnimationDriven=enabled;
+        m_bPoseDirty=true;
+        m_Pose.Clear();
+        MarkRenderStateDirty();
+    }
+    bool SkinnedMeshComponent::SubmitLocalPose(const Animation::LocalPose& pose)
+    {
+        if(!m_bExternalAnimationDriven||!HasValidPoseResources())return false;
+        if(!m_bMeshNodeTransformOverridden)
+            m_MeshNodeGlobalTransform=LoadMeshNodeGlobalTransform(m_SkeletalAsset->GetMesh()->GetMeshNodeGlobalTransform());
+        const auto& skeleton=*m_SkeletalAsset->GetSkeleton();
+        const auto& clip=*GetAnimationClip();
+        const auto& mesh=*m_SkeletalAsset->GetMesh();
+        m_bPoseDirty=true;m_Pose.Clear();MarkRenderStateDirty();
+        if(!Animation::SkeletalPoseBuilder::IsPreparedFor(m_PoseContext,skeleton,clip,mesh,m_MeshNodeGlobalTransform)&&
+           !Animation::SkeletalPoseBuilder::Prepare(skeleton,clip,mesh,m_MeshNodeGlobalTransform,m_PoseContext,m_PoseBoundsSettings))return false;
+        if(!Animation::SkeletalPoseBuilder::BuildPose(m_PoseContext,pose,m_PoseScratch,m_Pose))return false;
+        m_EvaluatedMesh=m_SkeletalAsset->GetMesh();m_EvaluatedSkeleton=m_SkeletalAsset->GetSkeleton();
+        m_EvaluatedClip=GetAnimationClip();m_bPoseDirty=false;++m_PoseSerial;return true;
+    }
+
     bool SkinnedMeshComponent::SetPoseBoundsSettings(const Animation::PoseBoundsSettings& settings)
     {
         if (!Animation::IsValidPoseBoundsSettings(settings)) return false;
@@ -461,6 +485,10 @@ namespace NorvesLib::Core::Component
         if (HasCurrentPose())
         {
             return true;
+        }
+        if (m_bExternalAnimationDriven)
+        {
+            return false;
         }
         m_Pose.Clear();
         m_bPoseDirty = true;

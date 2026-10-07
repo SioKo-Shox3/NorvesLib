@@ -1,6 +1,7 @@
 ﻿#include "Scripting/ScriptRuntime.h"
 
 #include "Component/ScriptComponent.h"
+#include "Component/AnimatorComponent.h"
 #include "Logging/LogMacros.h"
 #include "Object/Entity.h"
 #include "Scripting/AngelScriptEngineOwner.h"
@@ -255,6 +256,19 @@ namespace NorvesLib::Core
                 ? engine->RegisterObjectMethod("EntityRef", "bool SetPosition(const Vector3 &in)",
                                                asFUNCTION(EntityRefSetPosition), asCALL_CDECL_OBJLAST)
                 : getPosition;
+            const int animFloat = setPosition >= 0
+                ? engine->RegisterObjectMethod("EntityRef", "bool SetAnimFloatByIndex(uint, float)", asFUNCTION(EntityRefSetAnimFloat), asCALL_CDECL_OBJLAST) : setPosition;
+            const int animInt = animFloat >= 0
+                ? engine->RegisterObjectMethod("EntityRef", "bool SetAnimIntByIndex(uint, int)", asFUNCTION(EntityRefSetAnimInt), asCALL_CDECL_OBJLAST) : animFloat;
+            const int animBool = animInt >= 0
+                ? engine->RegisterObjectMethod("EntityRef", "bool SetAnimBoolByIndex(uint, bool)", asFUNCTION(EntityRefSetAnimBool), asCALL_CDECL_OBJLAST) : animInt;
+            const int animTrigger = animBool >= 0
+                ? engine->RegisterObjectMethod("EntityRef", "bool SetAnimTriggerByIndex(uint)", asFUNCTION(EntityRefSetAnimTrigger), asCALL_CDECL_OBJLAST) : animBool;
+            if(animTrigger < 0)
+            {
+                NORVES_LOG_ERROR("Scripting", "Animatorのスクリプト入口を登録できません: code=%d", animTrigger);
+                return false;
+            }
             if (setPosition < 0)
             {
                 NORVES_LOG_ERROR("Scripting", "AngelScript type registration failed: Vector3=%d x=%d y=%d z=%d EntityRef=%d IsValid=%d GetPosition=%d SetPosition=%d",
@@ -346,6 +360,30 @@ namespace NorvesLib::Core
                 context->SetException("EntityRef is no longer valid");
             }
             return false;
+        }
+
+        static Component::AnimatorComponent* ResolveAnimator(EntityRef* reference)
+        {
+            Entity* owner=nullptr;
+            if(!reference||!reference->Runtime||!static_cast<Impl*>(reference->Runtime)->ResolveEntityRef(*reference,owner))return nullptr;
+            auto* animator=owner->GetComponent<Component::AnimatorComponent>();
+            return animator&&!animator->IsPendingDestroy()?animator:nullptr;
+        }
+        static bool EntityRefSetAnimFloat(uint32_t index,float value,EntityRef* reference)
+        {
+            auto* animator=ResolveAnimator(reference);return animator&&animator->SetFloat(index,value);
+        }
+        static bool EntityRefSetAnimInt(uint32_t index,int32_t value,EntityRef* reference)
+        {
+            auto* animator=ResolveAnimator(reference);return animator&&animator->SetInt(index,value);
+        }
+        static bool EntityRefSetAnimBool(uint32_t index,bool value,EntityRef* reference)
+        {
+            auto* animator=ResolveAnimator(reference);return animator&&animator->SetBool(index,value);
+        }
+        static bool EntityRefSetAnimTrigger(uint32_t index,EntityRef* reference)
+        {
+            auto* animator=ResolveAnimator(reference);return animator&&animator->SetTrigger(index);
         }
 
         bool IsValidSlot(const ScriptBindingHandle& handle, BindingSlot*& outSlot)

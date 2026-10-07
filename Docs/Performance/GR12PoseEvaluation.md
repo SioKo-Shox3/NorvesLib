@@ -11,3 +11,7 @@
 全頂点の位置・法線評価を伴う旧境界計算に対し、新経路の既定境界は関節AABBから保守的に作る。結果はこの入力と評価範囲での実測であり、ゲーム全体の速度倍率を示さない。境界の緩みやGPU影フィット、実物の見た目は未検証。
 
 独立oracleとのpalette/readback比較、bounds包含、1000回のscratch/data-pointer・capacity安定、既存baseline30ケースは同runで通過。別テストSkinnedRenderPathContractTestの失敗を含むため、run全体はfailure。
+
+## 同区切りの再確認
+
+f5ec362afb2b6092973fab3b605d862e1e67972e の [run 37699941320](https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37699941320) は、Releaseで2/2テスト成功。描画契約テストのassertをReleaseでも実行する修正後で、姿勢評価の製品コードは同じ。再計測は旧11,023.486ms、新6.791ms。

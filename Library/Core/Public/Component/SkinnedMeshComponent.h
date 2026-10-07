@@ -37,6 +37,9 @@ namespace NorvesLib::Core::Component
 
         void SetAnimationTimeSeconds(float timeSeconds);
         float GetAnimationTimeSeconds() const;
+        void SetExternalAnimationDriven(bool enabled);
+        bool IsExternalAnimationDriven() const { return m_bExternalAnimationDriven; }
+        [[nodiscard]] bool SubmitLocalPose(const Animation::LocalPose&);
         void SetPlaying(bool bPlaying);
         bool IsPlaying() const;
         void SetLooping(bool bLooping);
@@ -97,6 +100,7 @@ namespace NorvesLib::Core::Component
         Skeletal::SkeletalMaterialBindings m_SlotMaterials;
         float m_AnimationTimeSeconds = 0.0f;
         float m_PlaybackRate = 1.0f;
+        bool m_bExternalAnimationDriven = false;
         bool m_bPlaying = true;
         bool m_bCastShadow = true;
         bool m_bLooping = true;
