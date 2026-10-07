@@ -89,7 +89,9 @@ bool LevelOverlapsSphere(uint level, vec3 center, float radius)
 /**
  * @brief ワールドの球のライト空間の矩形が覆うページに、dirty で割り当て済みのものが 1 つでもあるか（dirty の階層で判定する）
  *
- * 範囲の最小のページからの相対の座標で、矩形が 2×2 以下のセルに収まる最も細かい mip を選び、そのセルのビットを調べる。
+ * 範囲の最小のページからの相対の座標で、矩形が 2×2 以下のセルに収まる最も細かい mip から始め、そのセルのビットを調べる。
+ * ビットが立っていても、セルが矩形からはみ出しているときは矩形の外の dirty のページかもしれないので、子のセルへ下りて
+ * 矩形と交わる子だけを調べる。矩形に完全に含まれるセルのビットが立っていれば true。
  * 範囲の外へはみ出す分は切り捨てる（覆うページが範囲に無ければ false）。
  */
 bool SphereHasDirtyPage(uint level, vec3 center, float radius)
@@ -111,17 +113,54 @@ bool SphereHasDirtyPage(uint level, vec3 center, float radius)
     {
         ++mip;
     }
+
+    // 調べるセルの積み(mip と相対の座標を 1 語に詰める)。1 つのセルは最大 4 つの子を積み、深さは mip の数なので 32 で足りる
+    // （最初の 4 セル + 下りるごとに 3 つ増える ≦ 4 + 3 × 7）
+    uint stack[32];
+    uint depth = 0u;
     const uvec2 cellLow = uvec2(low) >> mip;
     const uvec2 cellHigh = uvec2(high) >> mip;
     for (uint y = cellLow.y; y <= cellHigh.y; ++y)
     {
         for (uint x = cellLow.x; x <= cellHigh.x; ++x)
         {
-            const uint bit = VsmMegaDirtyBitIndex(level, mip, uvec2(x, y));
-            if ((dirtyBits[bit >> 5u] & (1u << (bit & 31u))) != 0u)
+            stack[depth++] = (mip << 16u) | (y << 8u) | x;
+        }
+    }
+    while (depth > 0u)
+    {
+        const uint packed = stack[--depth];
+        const uint cellMip = packed >> 16u;
+        const uvec2 cell = uvec2(packed & 0xFFu, (packed >> 8u) & 0xFFu);
+        const uint bit = VsmMegaDirtyBitIndex(level, cellMip, cell);
+        if ((dirtyBits[bit >> 5u] & (1u << (bit & 31u))) == 0u)
+        {
+            continue;
+        }
+        // セルが覆うページの範囲が矩形に完全に含まれるなら、立っているビットは矩形の中の dirty のページを意味する
+        const ivec2 cellMin = ivec2(cell << cellMip);
+        const ivec2 cellMax = cellMin + ivec2(int(1u << cellMip) - 1);
+        if (all(greaterThanEqual(cellMin, low)) && all(lessThanEqual(cellMax, high)))
+        {
+            return true;
+        }
+        // mip 0 のセルは 1 ページなので、立っていれば矩形に含まれている(ここへは来ない)。念のため下りない
+        if (cellMip == 0u)
+        {
+            continue;
+        }
+        // 矩形と交わる子だけを積む
+        const uint childMip = cellMip - 1u;
+        for (uint child = 0u; child < 4u; ++child)
+        {
+            const uvec2 childCell = (cell << 1u) + uvec2(child & 1u, child >> 1u);
+            const ivec2 childMin = ivec2(childCell << childMip);
+            const ivec2 childMax = childMin + ivec2(int(1u << childMip) - 1);
+            if (childMax.x < low.x || childMin.x > high.x || childMax.y < low.y || childMin.y > high.y)
             {
-                return true;
+                continue;
             }
+            stack[depth++] = (childMip << 16u) | (childCell.y << 8u) | childCell.x;
         }
     }
     return false;

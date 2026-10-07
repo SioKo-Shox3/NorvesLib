@@ -1768,6 +1768,8 @@ namespace
     //   4: (716, 16)・境界が大きく（半径 100 m）、段 0 では矩形が dirty のページ 1 つに触れる → 段 0 のインスタンスの判定を通るが、
     //      クラスタ（そのページの外）は選ばれない（クラスタの判定でも dirty のページを見る）
     //   5: (16, 16)・深度が範囲（±1000 m）の外 → 何も選ばない
+    //   6: 段 0 の範囲の最小のページから相対 (0..2, 0..2) のページを矩形が覆い、相対 (3, 3) のページだけが dirty（矩形のすぐ外）
+    //      → 粗い mip のセルでは 1 つのセルに入るが、矩形の中に dirty のページは無いので、どの段でも何も選ばない
     // 判定を通った（インスタンス、段）は 4 + 3 + 1 = 8、選んだクラスタは 15 + 7 = 22。dirty の階層（全 mip のビット）は CPU で作った参照と全語一致する。
     // 出力の一覧の容量が 5 のときは、選んだ数は 22・溢れは 17 で、書かれた 5 件はどれも期待の集合に入る。
     namespace MegaCull
@@ -1787,7 +1789,8 @@ namespace
         constexpr uint32_t ClusterCount = 15;
         constexpr uint32_t LevelCount = 4;
         constexpr float FirstTexelMeters = 0.25f;
-        constexpr uint32_t InstanceCount = 6;
+        constexpr uint32_t FixedInstanceCount = 6;
+        constexpr uint32_t InstanceCount = FixedInstanceCount + 1; // 末尾の 1 つは範囲の原点からの相対の位置で決める（SpecOf）
         constexpr uint32_t GeometryPageNone = 0xFFFFFFFFu;
 
         struct InstanceSpec
@@ -1799,7 +1802,7 @@ namespace
             float BoundsRadius;
         };
 
-        const InstanceSpec Specs[InstanceCount] = {
+        const InstanceSpec Specs[FixedInstanceCount] = {
             {16.0, 16.0, 0.0, true, 6.0f},
             {3016.0, 16.0, 0.0, true, 6.0f},
             {16.0, 16.0, 0.0, false, 6.0f},
@@ -1807,6 +1810,20 @@ namespace
             {716.0, 16.0, 0.0, true, 100.0f},
             {16.0, 16.0, 5000.0, true, 6.0f},
         };
+
+        // 添字 index のインスタンスの仕様。最後のインスタンス（矩形のすぐ外にだけ dirty のページがある）は段 0 の範囲の原点のページから決める:
+        // 相対のページ (0..2, 0..2) を覆う半径 40 m の球（ページ 32 m）
+        InstanceSpec SpecOf(uint32_t index, const VirtualShadowMapClipmap& clipmap)
+        {
+            if (index < FixedInstanceCount)
+            {
+                return Specs[index];
+            }
+            const VirtualShadowMapClipmapLevel& first = clipmap.Levels[0];
+            const double pageMeters = static_cast<double>(first.PageMeters);
+            return {static_cast<double>(first.OriginPageX) * pageMeters + 1.5 * pageMeters, static_cast<double>(first.OriginPageY) * pageMeters + 1.5 * pageMeters,
+                    0.0, true, 40.0f};
+        }
 
         // 木の高さ（葉 = 0、根 = 3）
         uint32_t HeightOf(uint32_t index)
@@ -1980,7 +1997,7 @@ namespace
             uint32_t totalGroups = 0;
             for (uint32_t index = 0; index < InstanceCount; ++index)
             {
-                const InstanceSpec& spec = Specs[index];
+                const InstanceSpec spec = SpecOf(index, clipmap);
                 const Math::Vector3 position = clipmap.LightRight * static_cast<float>(spec.LightX) +
                                                clipmap.LightUp * static_cast<float>(spec.LightY) +
                                                clipmap.Direction * static_cast<float>(spec.LightDepth);
@@ -2060,6 +2077,9 @@ namespace
                     // インスタンス 3 のページ: 割り当て済みで dirty でない。インスタンス 4 の矩形に入る 1 ページ（x = 780）: dirty
                     writePage(0u, PageOf(716.0, page), PageOf(16.0, page), false);
                     writePage(0u, PageOf(780.0, page), PageOf(16.0, page), true);
+                    // インスタンス 6 の矩形（範囲の原点から相対 (0..2, 0..2)）のすぐ外の dirty のページ（相対 (3, 3)）。粗い mip のセルは矩形と共有する
+                    const VirtualShadowMapClipmapLevel& first = clipmap.Levels[0];
+                    writePage(0u, static_cast<int64_t>(first.OriginPageX) + 3, static_cast<int64_t>(first.OriginPageY) + 3, true);
                 }
                 void* mapped = pageTable->Map(0u, VirtualShadowMap::PageTableBytes());
                 if (mapped == nullptr)
@@ -2273,7 +2293,7 @@ namespace
                 return false;
             }
             Expect(outcome.bRecorded, "ケース J1: カリングを記録しなければならない");
-            Expect(outcome.GroupCount == 5u, "ケース J1: 影を落とす 5 インスタンスぶんの 5 ワークグループを出さなければならない");
+            Expect(outcome.GroupCount == 6u, "ケース J1: 影を落とす 6 インスタンスぶんの 6 ワークグループを出さなければならない");
             // dirty の階層: CPU の参照と全語一致（ページの表のトーラスの番地から範囲の原点からの相対の座標へ直し、全 mip のビットを立てる）
             Expect(outcome.DirtyBits.size() == expectedBits.size(), "ケース J1: dirty の階層の大きさが合わなければならない");
             uint32_t differentWords = 0;
@@ -2287,7 +2307,8 @@ namespace
             const Container::VariableArray<uint64_t> actual = MegaCull::PackEntries(outcome.Entries);
             Expect(outcome.Selected == expected.size() && outcome.Selected == 22u, "ケース J1: 選んだクラスタは 22 件でなければならない");
             Expect(outcome.Overflow == 0u, "ケース J1: 溢れてはならない");
-            Expect(outcome.InstanceLevels == 8u, "ケース J1: 判定を通った（インスタンス、段）は 8 でなければならない");
+            Expect(outcome.InstanceLevels == 8u,
+                   "ケース J1: 判定を通った（インスタンス、段）は 8 でなければならない（矩形のすぐ外にだけ dirty のページがあるインスタンス 6 は通らない）");
             Expect(outcome.StatInstances == 8u && outcome.StatClusters == 22u && outcome.StatOverflow == 0u,
                    "ケース J1: 統計の語 8〜10 が（8, 22, 0）でなければならない");
             Expect(actual == expected, "ケース J1: 選んだ（インスタンス、段、クラスタ）が期待の集合と一致しなければならない");

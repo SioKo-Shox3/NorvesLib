@@ -2198,3 +2198,12 @@
 - 変異（`.harness/runs/20261007-203349/verify-VTG8-VSM-MEGA-CULL-mutation-noparent.txt`: 親の条件を外す → `RESULT=FAIL`。ほかに nodirty・order・wiring）。
 - 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-MEGA-CULL-1.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-2.txt`（VirtualShadowMapVulkanTest・GeometryPageRequestVulkanTest・RenderGraphCompileTest が 3/3 Passed）。
 - Next: VTG8-VSM-GPU-TIME（VTG8-VSM-SAMPLE・PCSS は blocked のまま）。
+
+## 反復 7（2026-10-08）: VTG8-VSM-MEGA-CULL（インスタンスの dirty 判定が矩形の外の dirty ページで通る不具合を直す、done）
+
+- 差し戻し（評価の 6 周目）: done-when (1) の `SphereHasDirtyPage`（`vsm_mega_cull.comp`）が、矩形を 2×2 以下で覆う最も細かい mip のセルのビットだけで判定していた。そのセルが矩形の外のページも含むため、矩形のすぐ外の dirty ページで（インスタンス、段）が通っていた。粗い mip のセルのビットが立っていても、セルが矩形に完全に含まれていなければ子のセルへ下り、矩形と交わる子だけを調べるようにした（セルが矩形に完全に含まれるときだけ true。積みの深さは 4 + 3 × 7 ≦ 32）。
+- テスト（`VirtualShadowMapVulkanTest` ケース J）: インスタンス 6 を足した。段 0 の範囲の原点から相対 (0..2, 0..2) のページを矩形が覆い、相対 (3, 3) のページだけが dirty（粗い mip のセルは矩形と共有する）。範囲の原点はクリップマップから取るので、セルの境のずれに依らない。通ったインスタンス・段は 8、クラスタは 22 のまま（インスタンス 6 は通らない）。
+- 変異（`verify-VTG8-VSM-MEGA-CULL-5-mutation-coarse-mip.txt`）: シェーダーを HEAD（粗い mip のビットだけの判定）へ戻すと `VirtualShadowMapVulkanTest` が Failed（ケース J1: 通った（インスタンス、段）が 9、統計が（9, 22, 0））。元へ戻して更新時刻を更新し再ビルド。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-MEGA-CULL-6.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-7.txt`（VirtualShadowMapVulkanTest・GeometryPageRequestVulkanTest・RenderGraphCompileTest が 3/3 Passed）。
+- Notes: (1) 変異の最初の試行は、PowerShell 経由で HEAD 版を書き出して文字化けし、シェーダーの初期化に失敗して落ちただけだった（意図した理由ではない）ので、`git show` をバイト単位でファイルへ書き出してやり直した。(2) 実機の起動画面での確認は、重い処理の扱いに従い回していない。
+- Next: VTG8-VSM-GPU-TIME（VTG8-VSM-SAMPLE・PCSS は blocked のまま）。
