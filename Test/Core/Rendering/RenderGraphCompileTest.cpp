@@ -30,6 +30,7 @@
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/MaterialTileClassifyPass.h"
 #include "Rendering/ShadowProbePass.h"
+#include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/VisibilityResolvePass.h"
@@ -5831,7 +5832,7 @@ namespace
         RGTextureHandle Normal;
     };
 
-    // VSM のテストで、公開された 5 つの資源を名前で読む後のパス（後のパス・照明の代わり）
+    // VSM のテストで、公開された 6 つの資源を名前で読む後のパス（後のパス・照明の代わり）
     class VsmConsumerPass final : public IRenderGraphPass
     {
     public:
@@ -5842,8 +5843,9 @@ namespace
                                                          RenderGraphResourceNames::VsmPageTable,
                                                          RenderGraphResourceNames::VsmRequestBits,
                                                          RenderGraphResourceNames::VsmFreeList,
-                                                         RenderGraphResourceNames::VsmStats};
-            for (uint32_t index = 0; index < 5; ++index)
+                                                         RenderGraphResourceNames::VsmStats,
+                                                         RenderGraphResourceNames::VsmDirtyList};
+            for (uint32_t index = 0; index < 6; ++index)
             {
                 Handles[index] = builder.ReadBuffer(names[index], RHI::ResourceState::ShaderResource);
             }
@@ -5855,7 +5857,7 @@ namespace
             (void)context;
         }
 
-        RGBufferHandle Handles[5];
+        RGBufferHandle Handles[6];
     };
 
 #if NORVES_ENABLE_LOGGING
@@ -5891,6 +5893,7 @@ namespace
         RHI::TransientResourcePool Pool;
         FakeCommandList CommandList;
         CameraProxy Camera;
+        ShaderManager ShaderMgr;
         ViewRenderContext Context;
         VsmInputsPass Inputs;
         VsmConsumerPass Consumer;
@@ -5909,6 +5912,9 @@ namespace
         context.RenderWidth = 128;
         context.RenderHeight = 64;
         context.MainCamera = &run.Camera;
+        // 印付け・割り当て・消去の計算シェーダー（vsm_*.comp）を読む
+        assert(run.ShaderMgr.Initialize(run.Device.get(), TestShaderDirectory));
+        context.ShaderMgr = &run.ShaderMgr;
         assert(run.Graph.Initialize(&run.Pool));
     }
 
@@ -5934,6 +5940,7 @@ namespace
     void ShutdownVsmRun(VsmRun& run, VirtualShadowMapPass& pass)
     {
         pass.Shutdown();
+        run.ShaderMgr.Shutdown();
         run.Graph.Shutdown();
         run.Pool.EndFrame();
         run.Pool.Shutdown();
@@ -5999,7 +6006,8 @@ namespace
             {"VSM_PageTable", 10ull * 128ull * 128ull * 4ull},
             {"VSM_RequestBits", 10ull * 128ull * 128ull / 8ull},
             {"VSM_FreeList", (4096ull + 1ull) * 4ull},
-            {"VSM_Stats", 16ull},
+            {"VSM_Stats", 32ull},
+            {"VSM_DirtyList", (4096ull + 4ull) * 4ull},
         };
         for (const Expected& entry : expected)
         {
@@ -6011,7 +6019,11 @@ namespace
         }
         assert(VirtualShadowMap::PoolBytes(4096) == 256ull * 1024ull * 1024ull);
         assert(VirtualShadowMap::PAGE_BYTES == 64ull * 1024ull);
-        assert(CountVsmBufferCreations(*run.Device) == 5);
+        // 6 つの資源と、統計の読み戻しの 4 枠
+        assert(CountVsmBufferCreations(*run.Device) == 10);
+        assert(CountBufferCreations(*run.Device, "VSM_StatsReadback") == 4);
+        const BufferCreationRecord* dirtyRecord = FindBufferCreation(*run.Device, "VSM_DirtyList");
+        assert((dirtyRecord->Desc.Usage & RHI::ResourceUsage::IndirectBuffer) == RHI::ResourceUsage::IndirectBuffer);
         const BufferCreationRecord* poolRecord = FindBufferCreation(*run.Device, "VSM_PhysicalPool");
         assert((poolRecord->Desc.Usage & RHI::ResourceUsage::BufferDeviceAddress) == RHI::ResourceUsage::BufferDeviceAddress);
 
@@ -6035,36 +6047,38 @@ namespace
         assert(logs.Count("VSM_FALLBACK") == 0);
 #endif
 
-        // 1 フレーム目: 深度 → VSM → 読むパス。5 つの資源が公開され、読むパスが名前で取れる
+        // 1 フレーム目: 深度 → VSM → 読むパス。6 つの資源が公開され、読むパスが名前で取れる
         RunVsmFrame(run, pass, 0, true);
         {
             const Container::VariableArray<uint32_t>& order = run.Graph.GetCompiledPassOrder();
             assert(order.size() == 3 && order[0] == 0 && order[1] == 1 && order[2] == 2);
-            // 深度・法線の読み 2 つ + 資源 5 つの書き込み
-            assert(run.Graph.GetDeclaredPassAccessCount(1) == 7);
-            assert(run.Graph.GetDeclaredPassAccessCount(2) == 5);
+            // 深度・法線の読み 2 つ + 資源 6 つの書き込み
+            assert(run.Graph.GetDeclaredPassAccessCount(1) == 8);
+            assert(run.Graph.GetDeclaredPassAccessCount(2) == 6);
             for (const RGBufferHandle& handle : run.Consumer.Handles)
             {
                 assert(handle.IsValid());
             }
         }
         {
+            // 最初の実行だけプールを 1.0 のビットで埋め、続いて毎フレームの記録が要求・ページの表・統計を 0 から数え直す
             const auto& fills = run.CommandList.VsmFills;
             assert(fills.size() == 4);
             assert(IsDebugName(fills[0].BufferName, "VSM_PhysicalPool") && fills[0].SizeBytes == 4096ull * 65536ull &&
                    fills[0].Value == 0x3F800000u);
-            assert(IsDebugName(fills[1].BufferName, "VSM_PageTable") && fills[1].SizeBytes == 655360ull && fills[1].Value == 0u);
-            assert(IsDebugName(fills[2].BufferName, "VSM_RequestBits") && fills[2].SizeBytes == 20480ull && fills[2].Value == 0u);
-            assert(IsDebugName(fills[3].BufferName, "VSM_Stats") && fills[3].SizeBytes == 16ull && fills[3].Value == 0u);
+            assert(IsDebugName(fills[1].BufferName, "VSM_RequestBits") && fills[1].SizeBytes == 20480ull && fills[1].Value == 0u);
+            assert(IsDebugName(fills[2].BufferName, "VSM_PageTable") && fills[2].SizeBytes == 655360ull && fills[2].Value == 0u);
+            assert(IsDebugName(fills[3].BufferName, "VSM_Stats") && fills[3].SizeBytes == 32ull && fills[3].Value == 0u);
         }
 
-        // 2 フレーム目: 要求と統計だけを 0 から数え直す（プールと表は埋め直さない）
+        // 2 フレーム目: 要求・ページの表・統計だけを 0 から数え直す（プールは埋め直さない。消去は dirty のページだけ）
         RunVsmFrame(run, pass, 1, true);
         {
             const auto& fills = run.CommandList.VsmFills;
-            assert(fills.size() == 6);
+            assert(fills.size() == 7);
             assert(IsDebugName(fills[4].BufferName, "VSM_RequestBits") && fills[4].Value == 0u);
-            assert(IsDebugName(fills[5].BufferName, "VSM_Stats") && fills[5].Value == 0u);
+            assert(IsDebugName(fills[5].BufferName, "VSM_PageTable") && fills[5].Value == 0u);
+            assert(IsDebugName(fills[6].BufferName, "VSM_Stats") && fills[6].Value == 0u);
         }
 
 #if NORVES_ENABLE_LOGGING
@@ -6136,7 +6150,8 @@ namespace
             assert(!pass.IsActive());
             assert(pass.GetFallbackReason() == testCase.Reason);
             assert(pass.GetPoolPages() == 0);
-            assert(!pass.GetPool() && !pass.GetPageTable() && !pass.GetRequestBits() && !pass.GetFreeList() && !pass.GetStats());
+            assert(!pass.GetPool() && !pass.GetPageTable() && !pass.GetRequestBits() && !pass.GetFreeList() && !pass.GetStats() &&
+                   !pass.GetDirtyList());
             // 失敗させた資源の作成は試みても、それが成功した後ろの資源は持たない（作成記録は残るが、パスは何も持たない）
             if (testCase.FailBufferDebugName == nullptr)
             {
@@ -6158,6 +6173,140 @@ namespace
             logger.RemoveSink(&logs);
             logger.Shutdown();
 #endif
+            ShutdownVsmRun(run, pass);
+        }
+    }
+
+    // 印付け・割り当て・消去の計算パイプラインを作れない装置では、資源を作らず VSM_FALLBACK reason=pipeline を 1 回出して CSM のまま描く
+    void TestVirtualShadowMapPassFallsBackWhenPipelineFails()
+    {
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        VsmLogCollector logs;
+        logger.AddSink(&logs);
+#endif
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        run.Device->bFailComputePipelines = true;
+
+        VirtualShadowMapPass pass;
+        assert(pass.Initialize(run.Context));
+        assert(!pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::Pipeline);
+        assert(!pass.GetPool() && !pass.GetDirtyList());
+        assert(CountVsmBufferCreations(*run.Device) == 0);
+        RunVsmFrame(run, pass, 0, false);
+        assert(run.Graph.GetDeclaredPassAccessCount(1) == 0);
+        assert(run.CommandList.VsmFills.empty() && run.CommandList.DispatchGroups.empty());
+        assert(std::strcmp(VirtualShadowMap::FallbackReasonName(VirtualShadowMap::FallbackReason::Pipeline), "pipeline") == 0);
+#if NORVES_ENABLE_LOGGING
+        assert(logs.Count("VSM_FALLBACK reason=pipeline") == 1 && logs.Count("VSM_FALLBACK") == 1);
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+#endif
+        ShutdownVsmRun(run, pass);
+    }
+
+    // バリアのうち、バッファ名・前後の状態・記録した時点の CallSequence の長さが一致するものがあるか
+    bool HasBufferBarrierAt(const FakeCommandList& commandList,
+                            const char* debugName,
+                            RHI::ResourceState before,
+                            RHI::ResourceState after,
+                            size_t sequencePosition)
+    {
+        for (const BarrierEvent& barrier : CollectBufferBarriers(commandList, debugName))
+        {
+            if (barrier.BeforeState == before && barrier.AfterState == after && barrier.SequencePosition == sequencePosition)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // vsm の構成の 1 フレーム: 印付け（画面を 8x8 で覆う）→ 割り当て（空きへ戻す・割り当てる・締める）→ 消去（間接 dispatch）の順に記録する。
+    //  - dispatch は 印付け (16, 8, 1)・空きへ戻す (4096/256, 1, 1)・割り当て (要求の語の数/256, 1, 1)・締める (1, 1, 1) の後に、
+    //    消去の間接 dispatch が 1 回（引数は VSM_DirtyList の先頭）。
+    //  - その間のバリア: 要求のビット列は印付けの後（割り当てが読む前）、空きの一覧は戻した後・割り当てた後・締めた後、
+    //    消去する一覧は締めた後に GenericRead へ進めてから間接 dispatch が読み、読んだ後に UnorderedAccess へ戻す。物理ページは消去の後。
+    //  - 深度かクリップマップが無い構成では、印付けの dispatch は無く、割り当てと消去だけが走る（要求は 0 のまま）。
+    void TestVirtualShadowMapPassRecordsMarkAllocateClearInOrder()
+    {
+        for (const bool bWithClipmap : {true, false})
+        {
+            VsmRun run;
+            run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+            InitializeVsmRun(run);
+            if (bWithClipmap)
+            {
+                run.Context.PhysicalLighting.SunClipmap = BuildVirtualShadowMapClipmap(
+                    NorvesLib::Math::Vector3(0.35f, -0.8f, 0.45f), 1u, NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), VirtualShadowMapClipmapSettings{});
+                assert(run.Context.PhysicalLighting.SunClipmap.bEnabled);
+            }
+
+            VirtualShadowMapPass pass;
+            assert(pass.Initialize(run.Context));
+            assert(pass.IsActive());
+            RunVsmFrame(run, pass, 0, true);
+
+            const FakeCommandList& commandList = run.CommandList;
+            assert(pass.WasMarked() == bWithClipmap);
+            const size_t markCount = bWithClipmap ? 1u : 0u;
+            // 順序: [印付け] 空きへ戻す・割り当てる・締める、消去（間接）
+            assert(commandList.DispatchGroups.size() == markCount + 3u);
+            size_t groupIndex = 0;
+            if (bWithClipmap)
+            {
+                const auto& mark = commandList.DispatchGroups[groupIndex++];
+                assert(mark.X == 16u && mark.Y == 8u && mark.Z == 1u);
+            }
+            const auto& reset = commandList.DispatchGroups[groupIndex++];
+            assert(reset.X == 4096u / 256u && reset.Y == 1u && reset.Z == 1u);
+            const auto& allocate = commandList.DispatchGroups[groupIndex++];
+            assert(allocate.X == VirtualShadowMap::REQUEST_WORDS / 256u && allocate.Y == 1u && allocate.Z == 1u);
+            const auto& finalize = commandList.DispatchGroups[groupIndex++];
+            assert(finalize.X == 1u && finalize.Y == 1u && finalize.Z == 1u);
+            assert(commandList.IndirectDispatches.size() == 1);
+            assert(IsDebugName(commandList.IndirectDispatches[0].BufferName, "VSM_DirtyList") &&
+                   commandList.IndirectDispatches[0].OffsetBytes == 0);
+            // 並び: 印付け（D）・戻す（D）・割り当て（D）・締め（D）・消去（J）
+            const char* expectedSequence = bWithClipmap ? "DDDDJ" : "DDDJ";
+            assert(commandList.CallSequence.size() == std::strlen(expectedSequence));
+            for (size_t index = 0; index < commandList.CallSequence.size(); ++index)
+            {
+                assert(commandList.CallSequence[index] == expectedSequence[index]);
+            }
+
+            // バリア（SequencePosition は、直前までに記録した B・E・D・J の数）
+            const size_t afterMark = markCount;
+            const size_t afterReset = markCount + 1u;
+            const size_t afterAllocate = markCount + 2u;
+            const size_t afterFinalize = markCount + 3u;
+            const size_t afterClear = markCount + 4u;
+            const RHI::ResourceState uav = RHI::ResourceState::UnorderedAccess;
+            assert(HasBufferBarrierAt(commandList, "VSM_RequestBits", uav, uav, afterMark));
+            assert(HasBufferBarrierAt(commandList, "VSM_FreeList", uav, uav, afterReset));
+            assert(HasBufferBarrierAt(commandList, "VSM_FreeList", uav, uav, afterAllocate));
+            assert(HasBufferBarrierAt(commandList, "VSM_PageTable", uav, uav, afterAllocate));
+            assert(HasBufferBarrierAt(commandList, "VSM_Stats", uav, uav, afterAllocate));
+            assert(HasBufferBarrierAt(commandList, "VSM_DirtyList", uav, uav, afterAllocate));
+            assert(HasBufferBarrierAt(commandList, "VSM_DirtyList", uav, uav, afterFinalize));
+            assert(HasBufferBarrierAt(commandList, "VSM_DirtyList", uav, RHI::ResourceState::GenericRead, afterFinalize));
+            assert(HasBufferBarrierAt(commandList, "VSM_DirtyList", RHI::ResourceState::GenericRead, uav, afterClear));
+            assert(HasBufferBarrierAt(commandList, "VSM_PhysicalPool", uav, uav, afterClear));
+            // 割り当ての前に、要求のビット列は 0 で埋められ（印付けの前）、ページの表と統計も 0 で埋められる
+            assert(commandList.VsmFills.size() == 4);
+            assert(IsDebugName(commandList.VsmFills[1].BufferName, "VSM_RequestBits"));
+            assert(IsDebugName(commandList.VsmFills[2].BufferName, "VSM_PageTable"));
+            assert(IsDebugName(commandList.VsmFills[3].BufferName, "VSM_Stats"));
+
             ShutdownVsmRun(run, pass);
         }
     }
@@ -11687,6 +11836,8 @@ int main()
     TestVirtualShadowMapPassAbsentForCsmAndBeforeLightingForVsm();
     TestVirtualShadowMapPassCreatesAndPublishesResources();
     TestVirtualShadowMapPassFallsBackWhenUnsupported();
+    TestVirtualShadowMapPassFallsBackWhenPipelineFails();
+    TestVirtualShadowMapPassRecordsMarkAllocateClearInOrder();
     TestVirtualShadowMapPoolPlanClampsToDeviceLimit();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();

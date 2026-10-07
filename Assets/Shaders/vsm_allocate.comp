@@ -1,0 +1,159 @@
+﻿#version 450
+
+// ========================================
+// 太陽の仮想シャドウマップ（VSM）の物理ページの割り当て（キャッシュは無く、毎フレームすべて作り直す）
+//
+// 3 回の dispatch で作る（params.control.x が段階）。いずれも 256 スレッドのワークグループ。
+//   段階 0（空きへ戻す）: 空きページの一覧を「全ページが空き」に作り直す（先頭の語が数、続いて 0 〜 ページ数 − 1）。
+//   段階 1（割り当てる）: 要求のビット列の語ごとに 1 スレッド。立っているビットごとに要求の通し番号 n を取り、
+//     n が空きの数より小さければ、空きの一覧の後ろから n 番目の物理ページを割り当てて、ページの表へ
+//     「割り当て済み・dirty・物理ページの番号」を書き、消去するページの一覧へ番号を足す。空きが尽きたら割り当てない（溢れ）。
+//   段階 2（締める）: 1 スレッド。統計（割り当て・溢れ）と空きの数・消去する一覧の数・間接 dispatch の引数を決める。
+//
+// 統計（stats）の語: 0 = 要求（段階 1 が数える）、1 = 割り当て、2 = 溢れ、3 = 描いたページ（このシェーダーでは触らない）、
+// 4 = 要求のあった段のビットの集合。
+// 消去するページの一覧（dirtyList）: 0〜2 = 間接 dispatch の引数（x, y, 1）、3 = 数、4 以降 = 物理ページの番号。
+// ========================================
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std140, set = 0, binding = 0) uniform VsmParams
+{
+    mat4 invViewProjection;
+    vec4 cameraPosition;
+    vec4 lightRight;
+    vec4 lightUp;
+    uvec4 screen;
+    vec4 tuning;
+    // x: 段階、y: 物理ページの数、z: 間接 dispatch の x の上限
+    uvec4 control;
+    vec4 thresholds[4];
+    vec4 levelInfo[16];
+    ivec4 levelOrigin[16];
+} params;
+
+layout(std430, set = 0, binding = 2) buffer VsmRequestBits
+{
+    uint requestBits[];
+};
+
+layout(std430, set = 0, binding = 3) buffer VsmPageTable
+{
+    uint pageTable[];
+};
+
+layout(std430, set = 0, binding = 4) buffer VsmFreeList
+{
+    uint freeList[];
+};
+
+layout(std430, set = 0, binding = 5) buffer VsmStats
+{
+    uint stats[];
+};
+
+layout(std430, set = 0, binding = 6) buffer VsmDirtyList
+{
+    uint dirtyList[];
+};
+
+const uint STAGE_RESET = 0u;
+const uint STAGE_ALLOCATE = 1u;
+const uint STAGE_FINALIZE = 2u;
+
+const uint STAT_REQUESTED = 0u;
+const uint STAT_ALLOCATED = 1u;
+const uint STAT_OVERFLOW = 2u;
+const uint STAT_LEVELS_USED = 4u;
+
+const uint PAGE_ENTRY_ALLOCATED = 1u << 31;
+const uint PAGE_ENTRY_DIRTY = 1u << 30;
+
+const uint DIRTY_COUNT = 3u;
+const uint DIRTY_FIRST_PAGE = 4u;
+
+// 1 段のページの表の要素数（128 × 128）を 32 ビットの語で数えた数
+const uint WORDS_PER_LEVEL = 128u * 128u / 32u;
+
+void Reset()
+{
+    const uint index = gl_GlobalInvocationID.x;
+    const uint pages = params.control.y;
+    if (index < pages)
+    {
+        freeList[1u + index] = index;
+    }
+    if (index == 0u)
+    {
+        freeList[0] = pages;
+    }
+}
+
+void Allocate()
+{
+    const uint wordIndex = gl_GlobalInvocationID.x;
+    if (wordIndex >= params.screen.z * WORDS_PER_LEVEL)
+    {
+        return;
+    }
+    const uint bits = requestBits[wordIndex];
+    if (bits == 0u)
+    {
+        return;
+    }
+
+    atomicOr(stats[STAT_LEVELS_USED], 1u << (wordIndex / WORDS_PER_LEVEL));
+    const uint base = atomicAdd(stats[STAT_REQUESTED], uint(bitCount(bits)));
+    const uint freeCount = freeList[0];
+
+    uint ordinal = base;
+    for (uint remaining = bits; remaining != 0u; remaining &= remaining - 1u)
+    {
+        const uint bit = uint(findLSB(remaining));
+        if (ordinal < freeCount)
+        {
+            // 空きの一覧の後ろから ordinal 番目（一覧の語は 1 から始まるので、最後の語は freeCount）
+            const uint physical = freeList[freeCount - ordinal];
+            pageTable[wordIndex * 32u + bit] = PAGE_ENTRY_ALLOCATED | PAGE_ENTRY_DIRTY | physical;
+            dirtyList[DIRTY_FIRST_PAGE + ordinal] = physical;
+        }
+        ++ordinal;
+    }
+}
+
+void Finalize()
+{
+    if (gl_GlobalInvocationID.x != 0u)
+    {
+        return;
+    }
+    const uint requested = stats[STAT_REQUESTED];
+    const uint freeCount = freeList[0];
+    const uint allocated = min(requested, freeCount);
+    stats[STAT_ALLOCATED] = allocated;
+    stats[STAT_OVERFLOW] = requested - allocated;
+    freeList[0] = freeCount - allocated;
+
+    const uint groupLimit = max(params.control.z, 1u);
+    dirtyList[0] = min(allocated, groupLimit);
+    dirtyList[1] = allocated == 0u ? 1u : (allocated + groupLimit - 1u) / groupLimit;
+    dirtyList[2] = 1u;
+    dirtyList[DIRTY_COUNT] = allocated;
+}
+
+void main()
+{
+    const uint stage = params.control.x;
+    if (stage == STAGE_RESET)
+    {
+        Reset();
+    }
+    else if (stage == STAGE_ALLOCATE)
+    {
+        Allocate();
+    }
+    else if (stage == STAGE_FINALIZE)
+    {
+        Finalize();
+    }
+}

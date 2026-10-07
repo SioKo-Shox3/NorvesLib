@@ -1,0 +1,118 @@
+﻿#version 450
+
+// ========================================
+// 太陽の仮想シャドウマップ（VSM）の印付け
+//
+// GBuffer.Depth の空でない各画素からワールドの位置を戻し、カメラからの距離でクリップマップの段を選び、
+// その位置のライト空間のページに要求のビットを立てる。照明の PCF の核（params.tuning.x texel の半径）が
+// ページの境界をまたぐときは、隣のページにも立てる。
+//
+// 段の選び方は CPU の SelectVirtualShadowMapLevel と同じ結果になるよう、式を写さず、CPU が二分法で求めた距離のしきい値
+// （VirtualShadowMapLevelDistanceThresholds）を使う。距離 d の段は「d >= しきい値となる k の数」。
+// 要求のビット列は 段 × 128 × 128 のページ（トーラスの番地 = 絶対のページの座標 mod 128）で、ビットの番号は
+// 段 * 16384 + 番地y * 128 + 番地x。
+// ========================================
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// std140。VirtualShadowMapPages.cpp の GPUVsmParams と同じ並び
+layout(std140, set = 0, binding = 0) uniform VsmParams
+{
+    mat4 invViewProjection;
+    vec4 cameraPosition;
+    vec4 lightRight;
+    vec4 lightUp;
+    // x: 画面の幅、y: 画面の高さ、z: 段の数、w: 1 段の一辺のページ数（128）
+    uvec4 screen;
+    // x: PCF の核の半径（texel）、y: 影の最大の距離（m）
+    vec4 tuning;
+    // x: 段階、y: 物理ページの数、z: 間接 dispatch の x の上限
+    uvec4 control;
+    // 段を選ぶ距離のしきい値（16 個。k 番目が [k / 4][k % 4]）
+    vec4 thresholds[4];
+    // x: ページの一辺（m）、y: texel の一辺（m）
+    vec4 levelInfo[16];
+    // x, y: 範囲の最小の絶対のページの番号
+    ivec4 levelOrigin[16];
+} params;
+
+layout(set = 0, binding = 1) uniform sampler2D gbufferDepth;
+
+layout(std430, set = 0, binding = 2) buffer VsmRequestBits
+{
+    uint requestBits[];
+};
+
+const uint PAGES_PER_AXIS = 128u;
+const uint ENTRIES_PER_LEVEL = PAGES_PER_AXIS * PAGES_PER_AXIS;
+
+void MarkPage(uint level, int pageX, int pageY)
+{
+    const uint addressX = uint(pageX) & (PAGES_PER_AXIS - 1u);
+    const uint addressY = uint(pageY) & (PAGES_PER_AXIS - 1u);
+    const uint index = level * ENTRIES_PER_LEVEL + addressY * PAGES_PER_AXIS + addressX;
+    const uint word = index >> 5u;
+    const uint bit = 1u << (index & 31u);
+    // すでに立っているなら、アトミックを使わない（同じページの画素が多い）
+    if ((requestBits[word] & bit) == 0u)
+    {
+        atomicOr(requestBits[word], bit);
+    }
+}
+
+void main()
+{
+    const uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= params.screen.x || pixel.y >= params.screen.y)
+    {
+        return;
+    }
+
+    // 空（深度 1.0）と不正な深度は印を付けない
+    const float depth = texelFetch(gbufferDepth, ivec2(pixel), 0).r;
+    if (!(depth < 1.0))
+    {
+        return;
+    }
+
+    const vec2 uv = (vec2(pixel) + 0.5) / vec2(params.screen.xy);
+    const vec4 world4 = params.invViewProjection * vec4(uv * 2.0 - 1.0, depth, 1.0);
+    const vec3 world = world4.xyz / world4.w;
+
+    const float distanceToCamera = length(world - params.cameraPosition.xyz);
+    if (!(distanceToCamera <= params.tuning.y))
+    {
+        return;
+    }
+
+    uint level = 0u;
+    for (uint index = 0u; index + 1u < params.screen.z; ++index)
+    {
+        if (distanceToCamera >= params.thresholds[index >> 2u][index & 3u])
+        {
+            ++level;
+        }
+    }
+
+    const float pageMeters = params.levelInfo[level].x;
+    const float margin = params.tuning.x * params.levelInfo[level].y;
+    const vec2 lightXY = vec2(dot(world, params.lightRight.xyz), dot(world, params.lightUp.xyz));
+    const ivec2 pageMin = ivec2(floor((lightXY - margin) / pageMeters));
+    // 核の幅はページより十分小さいので、またぐのは隣の 1 ページまで
+    const ivec2 pageMax = min(ivec2(floor((lightXY + margin) / pageMeters)), pageMin + ivec2(1));
+    const ivec2 origin = params.levelOrigin[level].xy;
+    const int count = int(PAGES_PER_AXIS);
+
+    for (int pageY = pageMin.y; pageY <= pageMax.y; ++pageY)
+    {
+        for (int pageX = pageMin.x; pageX <= pageMax.x; ++pageX)
+        {
+            // 段の範囲の外（範囲は origin から 128 ページ）には印を付けない
+            if (pageX < origin.x || pageX >= origin.x + count || pageY < origin.y || pageY >= origin.y + count)
+            {
+                continue;
+            }
+            MarkPage(level, pageX, pageY);
+        }
+    }
+}

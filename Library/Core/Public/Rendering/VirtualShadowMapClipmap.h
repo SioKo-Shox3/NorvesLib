@@ -119,6 +119,22 @@ namespace NorvesLib::Core::Rendering
                                         float fovYDegrees,
                                         float screenHeightPixels);
 
+    /** @brief VirtualShadowMapLevelDistanceThresholds が、その段へ届く距離が無い（MaxShadowDistance までに選ばれない）ときに入れる値 */
+    inline constexpr float VirtualShadowMapUnreachableDistance = 1.0e30f;
+
+    /**
+     * @brief 段を選ぶ距離のしきい値。outThresholds[k]（k = 0 .. LevelCount − 2）は、SelectVirtualShadowMapLevel が k + 1 以上を返す最小の距離
+     *
+     * 選ぶ段は距離について単調に増えるので、距離 d の段は「d >= outThresholds[k] となる k の数」に等しい（d が MaxShadowDistance 以下のとき）。
+     * 計算シェーダーが段の選び方の式を写さず、CPU の SelectVirtualShadowMapLevel と同じ結果を得るために使う（二分法で求める）。
+     * MaxShadowDistance までに届かない段は VirtualShadowMapUnreachableDistance。設定が不正なら何も書かず false。
+     * outThresholds は VirtualShadowMapMaxLevels − 1 個以上の領域。
+     */
+    bool VirtualShadowMapLevelDistanceThresholds(const VirtualShadowMapClipmapSettings& settings,
+                                                 float fovYDegrees,
+                                                 float screenHeightPixels,
+                                                 float* outThresholds);
+
     /** @brief 奥の薄めの重み（0 = 影のまま、1 = 影なし）。MaxShadowDistance の奥の FadeRatio の幅で滑らかに 0 → 1 */
     float VirtualShadowMapShadowFadeWeight(const VirtualShadowMapClipmapSettings& settings, float distance);
 

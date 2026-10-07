@@ -139,6 +139,50 @@ namespace NorvesLib::Core::Rendering
         return selected;
     }
 
+    bool VirtualShadowMapLevelDistanceThresholds(const VirtualShadowMapClipmapSettings& settings,
+                                                 float fovYDegrees,
+                                                 float screenHeightPixels,
+                                                 float* outThresholds)
+    {
+        if (!IsValidVirtualShadowMapClipmapSettings(settings) || outThresholds == nullptr)
+        {
+            return false;
+        }
+        const float maxDistance = settings.MaxShadowDistance;
+        for (uint32_t index = 0u; index + 1u < settings.LevelCount; ++index)
+        {
+            const int32_t target = static_cast<int32_t>(index) + 1;
+            auto reaches = [&](float distance)
+            {
+                return SelectVirtualShadowMapLevel(settings, distance, fovYDegrees, screenHeightPixels) >= target;
+            };
+            if (!reaches(maxDistance))
+            {
+                outThresholds[index] = VirtualShadowMapUnreachableDistance;
+                continue;
+            }
+            if (reaches(0.0f))
+            {
+                outThresholds[index] = 0.0f;
+                continue;
+            }
+            // 隣り合う float に収まるまで二分する（hi は常に target 以上を選ぶ距離）
+            float low = 0.0f;
+            float high = maxDistance;
+            for (uint32_t iteration = 0u; iteration < 80u; ++iteration)
+            {
+                const float middle = low + (high - low) * 0.5f;
+                if (middle <= low || middle >= high)
+                {
+                    break;
+                }
+                (reaches(middle) ? high : low) = middle;
+            }
+            outThresholds[index] = high;
+        }
+        return true;
+    }
+
     float VirtualShadowMapShadowFadeWeight(const VirtualShadowMapClipmapSettings& settings, float distance)
     {
         const float fadeWidth = std::max(settings.MaxShadowDistance * settings.FadeRatio, 0.001f);

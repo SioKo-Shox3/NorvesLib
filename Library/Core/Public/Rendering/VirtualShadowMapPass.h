@@ -1,15 +1,19 @@
 ﻿#pragma once
 
 // 太陽の仮想シャドウマップ（VSM。--shadow-method=vsm）の資源を持つパス。
-// 深度が確定した後・照明の前に置き、物理ページのプールとページの表などを作って名前で公開する（中身はまだ使わない。照明は CSM のまま）。
+// 深度が確定した後・照明の前に置き、物理ページのプールとページの表などを作って名前で公開し、毎フレーム
+// 深度から要るページに印を付け・物理ページを割り当て・消去する（VirtualShadowMapPages。キャッシュは無く毎フレームすべて作り直す）。
+// 描画はまだ無く、照明は CSM のまま。
 //
 // 物理ページのプールは storage buffer（画像ではない）。1 ページ = 128×128 の uint32 = 64 KiB で、ページ順に詰め、ページの中は行順。
 // 値は光源の深度 [0,1]（0 が光源に近い）の float のビット（floatBitsToUint）で、何も無い texel は 1.0 のビット。
 // 画像でなく buffer にするのは、R32_UINT の画像のアトミックの実績がこのエンジンに無く、buffer の 32bit の atomicMin は追加の機能なしで使えるため。
 //
 // 作れない装置（断片シェーダーの storage の書き込み・アトミックが無い、バッファのアドレスが無い、プールが MIN_POOL_PAGES 未満しか取れない）では
-// 資源を作らず、VSM_FALLBACK reason=<fragment_atomics|bda|pool_size> を 1 回出して CSM のまま描く。
+// 資源を作らず、VSM_FALLBACK reason=<fragment_atomics|bda|pool_size|pipeline> を 1 回出して CSM のまま描く
+// （pipeline は印付け・割り当て・消去の計算シェーダーのパイプラインを作れなかったとき）。
 
+#include "Container/PointerTypes.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
@@ -27,6 +31,7 @@ namespace NorvesLib::RHI
 namespace NorvesLib::Core::Rendering
 {
     class GpuResources;
+    class VirtualShadowMapPages;
     struct ViewRenderContext;
 
     namespace VirtualShadowMap
@@ -61,8 +66,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief 何も無い texel の深度（1.0）の float のビット */
         constexpr uint32_t EMPTY_DEPTH_BITS = 0x3F800000u;
 
-        /** @brief 統計の語（uint32）の並び: 要求・割り当て・溢れ・描いたページの数 */
-        constexpr uint32_t STATS_WORD_COUNT = 4;
+        /** @brief 統計の語（uint32）の並び: 要求・割り当て・溢れ・描いたページの数・要求のあった段のビットの集合（残りは予約） */
+        constexpr uint32_t STATS_WORD_COUNT = 8;
         constexpr uint64_t STATS_BYTES = static_cast<uint64_t>(STATS_WORD_COUNT) * sizeof(uint32_t);
         enum StatWord : uint32_t
         {
@@ -70,6 +75,7 @@ namespace NorvesLib::Core::Rendering
             StatAllocated = 1,
             StatOverflow = 2,
             StatDrawn = 3,
+            StatLevelsUsed = 4,
         };
 
         /** @brief 今フレームの要求のビット列（段 × 128 × 128 ビット）の語（uint32）の数 */
@@ -82,6 +88,7 @@ namespace NorvesLib::Core::Rendering
             FragmentAtomics,
             BufferDeviceAddress,
             PoolSize,
+            Pipeline,
         };
 
         inline const char* FallbackReasonName(FallbackReason reason)
@@ -94,6 +101,8 @@ namespace NorvesLib::Core::Rendering
                 return "bda";
             case FallbackReason::PoolSize:
                 return "pool_size";
+            case FallbackReason::Pipeline:
+                return "pipeline";
             default:
                 return "none";
             }
@@ -178,8 +187,12 @@ namespace NorvesLib::Core::Rendering
      *
      * 公開する資源（RenderGraphResourceNames）:
      *   VSM.PhysicalPool（物理ページのプール）・VSM.PageTable（段 × 128 × 128 の uint32）・VSM.RequestBits（今フレームの要求）・
-     *   VSM.FreeList（先頭が数、続いて空きページの番号）・VSM.Stats（要求・割り当て・溢れ・描いたページの数）。
-     * 読むもの: GBuffer.Depth・GBuffer.Normal（深度が確定した後に並ぶための依存。このタスクでは中身を読まない）。
+     *   VSM.FreeList（先頭が数、続いて空きページの番号）・VSM.Stats（要求・割り当て・溢れ・描いたページの数・使った段のビット集合）・
+     *   VSM.DirtyList（消去するページの一覧。先頭 3 語が間接 dispatch の引数、続く 1 語が数、以降が物理ページの番号）。
+     * 読むもの: GBuffer.Depth（印付けの入力）・GBuffer.Normal（深度が確定した後に並ぶための依存。中身は読まない）。
+     * 毎フレームの記録: 要求・ページの表・統計を 0 にし、深度から印を付け（VsmMark）、物理ページを割り当て（VsmAllocate）、
+     * dirty のページを 1.0 のビットで埋める（VsmClear）。統計は数フレーム遅れで読み戻し、値が変わったとき（または 60 フレームごと）に
+     * VSM_PAGES requested=<n> allocated=<n> overflow=<n> levels_used=<mask> を出す。
      * プールの確保量は GpuResources::SetShadowMapPoolBytes で予算の計算（VideoMemoryPool::ShadowMap）へ伝える。
      */
     class VirtualShadowMapPass final : public IViewPass, public IRenderGraphPass
@@ -213,10 +226,28 @@ namespace NorvesLib::Core::Rendering
         const RHI::BufferPtr& GetRequestBits() const { return m_RequestBits; }
         const RHI::BufferPtr& GetFreeList() const { return m_FreeList; }
         const RHI::BufferPtr& GetStats() const { return m_Stats; }
+        const RHI::BufferPtr& GetDirtyList() const { return m_DirtyList; }
+        /** @brief 直前の Execute が印付けを記録したか（深度・有効なクリップマップ・カメラが揃ったとき） */
+        bool WasMarked() const { return m_bMarked; }
 
     private:
+        /** @brief 統計の読み戻しの枠の数。GPU が書き終えるまで同じ枠を再利用しない */
+        static constexpr uint32_t StatsSlotCount = 4;
+        /** @brief 統計の値が変わらなくても VSM_PAGES を出す間隔（読み戻したフレーム数） */
+        static constexpr uint32_t StatsLogIntervalFrames = 60;
+
+        struct StatsSlot
+        {
+            RHI::BufferPtr Buffer;
+            const uint32_t* Mapped = nullptr;
+            bool bPending = false;
+            uint64_t ExecuteIndex = 0;
+        };
+
         void Fallback(VirtualShadowMap::FallbackReason reason);
         void ReleaseResources();
+        /** @brief 書き終えた枠の統計を読み、値が変わった・60 フレームたったときに VSM_PAGES を出す */
+        void HarvestStats(StatsSlot& slot);
 
         uint32_t m_RequestedPoolPages = 0;
         uint32_t m_PoolPages = 0;
@@ -230,12 +261,23 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_RequestBits;
         RHI::BufferPtr m_FreeList;
         RHI::BufferPtr m_Stats;
+        RHI::BufferPtr m_DirtyList;
+        Container::TUniquePtr<VirtualShadowMapPages> m_Pages;
+        StatsSlot m_StatsSlots[StatsSlotCount];
+        uint64_t m_ExecuteCount = 0;
+        bool m_bMarked = false;
+        /** @brief 最後に出した統計（変わったときだけ出す）と、出してからのフレーム数 */
+        uint32_t m_LoggedStats[4] = {};
+        bool m_bStatsLogged = false;
+        uint32_t m_FramesSinceStatsLog = 0;
 
         RGResourceHandle m_PoolHandle;
         RGResourceHandle m_PageTableHandle;
         RGResourceHandle m_RequestBitsHandle;
         RGResourceHandle m_FreeListHandle;
         RGResourceHandle m_StatsHandle;
+        RGResourceHandle m_DirtyListHandle;
+        RGTextureHandle m_DepthHandle;
         bool m_bDeclared = false;
         /** @brief プール・表を初期値で埋めたか（最初の実行で 1 回） */
         bool m_bInitialFilled = false;

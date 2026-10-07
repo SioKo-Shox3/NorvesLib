@@ -5,8 +5,11 @@
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Rendering/RenderResources.h"
+#include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/VirtualShadowMapPages.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -55,6 +58,12 @@ namespace NorvesLib::Core::Rendering
         m_RequestBits.reset();
         m_FreeList.reset();
         m_Stats.reset();
+        m_DirtyList.reset();
+        m_Pages.reset();
+        for (StatsSlot& slot : m_StatsSlots)
+        {
+            slot = StatsSlot{};
+        }
         m_PoolPages = 0;
         if (m_Gpu)
         {
@@ -85,6 +94,15 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        // 印付け・割り当て・消去の計算パイプライン。作れなければ VSM を使わず CSM で描く
+        m_Pages = Container::MakeUnique<VirtualShadowMapPages>();
+        if (!m_Pages->Initialize(m_Device, context.ShaderMgr))
+        {
+            Fallback(VirtualShadowMap::FallbackReason::Pipeline);
+            m_bInitialized = true;
+            return true;
+        }
+
         const uint64_t poolBytes = VirtualShadowMap::PoolBytes(plan.Pages);
         const uint64_t freeListBytes = VirtualShadowMap::FreeListBytes(plan.Pages);
         const RHI::ResourceUsage storageUsage = RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst;
@@ -101,7 +119,12 @@ namespace NorvesLib::Core::Rendering
                 RHI::BufferDesc(VirtualShadowMap::RequestBitsBytes(), storageUsage, false, "VSM_RequestBits"));
             m_FreeList = m_Device->CreateBuffer(RHI::BufferDesc(freeListBytes, storageUsage, false, "VSM_FreeList"));
             m_Stats = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::STATS_BYTES, storageUsage, false, "VSM_Stats"));
-            bCreated = m_Pool && m_PageTable && m_RequestBits && m_FreeList && m_Stats;
+            // 消去するページの一覧は、間接 dispatch の引数としても読まれる
+            m_DirtyList = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::DirtyListBytes(plan.Pages),
+                                                                 storageUsage | RHI::ResourceUsage::IndirectBuffer,
+                                                                 false,
+                                                                 "VSM_DirtyList"));
+            bCreated = m_Pool && m_PageTable && m_RequestBits && m_FreeList && m_Stats && m_DirtyList;
         }
         catch (...)
         {
@@ -124,6 +147,16 @@ namespace NorvesLib::Core::Rendering
                 freeList[static_cast<size_t>(page) + 1u] = page;
             }
             m_FreeList->Update(freeList.data(), freeListBytes);
+        }
+
+        // 統計の読み戻し先（host-visible）。作れない・写像できない装置では読み戻さない（記録は続く）
+        for (StatsSlot& slot : m_StatsSlots)
+        {
+            slot.Buffer = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::STATS_BYTES,
+                                                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                                                                 true,
+                                                                 "VSM_StatsReadback"));
+            slot.Mapped = slot.Buffer ? static_cast<const uint32_t*>(slot.Buffer->Map(0, 0)) : nullptr;
         }
 
         m_PoolPages = plan.Pages;
@@ -152,9 +185,15 @@ namespace NorvesLib::Core::Rendering
         m_RequestBitsHandle = {};
         m_FreeListHandle = {};
         m_StatsHandle = {};
+        m_DirtyListHandle = {};
+        m_DepthHandle = {};
         m_bDeclared = false;
         m_bActive = false;
         m_bInitialFilled = false;
+        m_ExecuteCount = 0;
+        m_bMarked = false;
+        m_bStatsLogged = false;
+        m_FramesSinceStatsLog = 0;
         m_Device = nullptr;
         m_Gpu = nullptr;
         m_bInitialized = false;
@@ -176,6 +215,8 @@ namespace NorvesLib::Core::Rendering
         m_RequestBitsHandle = {};
         m_FreeListHandle = {};
         m_StatsHandle = {};
+        m_DirtyListHandle = {};
+        m_DepthHandle = {};
         m_bDeclared = false;
 
         // 作れなかった構成（装置の非対応・確保の失敗）では何も宣言しない
@@ -184,13 +225,14 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // 深度が確定した後に並べるため、GBuffer の深度・法線を読む（このタスクでは中身を使わない）。
-        // 無い構成（GBuffer を作らない）では読まず、資源の公開だけをする
+        // 深度が確定した後に並べるため、GBuffer の深度を読む（印付けの入力）・法線を読む（並びのための依存。中身は読まない）。
+        // 無い構成（GBuffer を作らない）では読まず、資源の公開だけをする（印付けはしない）
         RGTextureHandle depth;
         RGTextureHandle normal;
-        if (builder.TryGetTexture(RenderGraphResourceNames::GBufferDepth, depth))
+        if (builder.TryGetTexture(RenderGraphResourceNames::GBufferDepth, depth) &&
+            builder.TryReadTexture(RenderGraphResourceNames::GBufferDepth, depth, RHI::ResourceState::ShaderResource))
         {
-            builder.TryReadTexture(RenderGraphResourceNames::GBufferDepth, depth, RHI::ResourceState::ShaderResource);
+            m_DepthHandle = depth;
         }
         if (builder.TryGetTexture(RenderGraphResourceNames::GBufferNormal, normal))
         {
@@ -204,6 +246,7 @@ namespace NorvesLib::Core::Rendering
             {RenderGraphResourceNames::VsmRequestBits, &m_RequestBits, &m_RequestBitsHandle, "VSM_RequestBits"},
             {RenderGraphResourceNames::VsmFreeList, &m_FreeList, &m_FreeListHandle, "VSM_FreeList"},
             {RenderGraphResourceNames::VsmStats, &m_Stats, &m_StatsHandle, "VSM_Stats"},
+            {RenderGraphResourceNames::VsmDirtyList, &m_DirtyList, &m_DirtyListHandle, "VSM_DirtyList"},
         };
         bool bAllPublished = true;
         for (const DeclaredBuffer& declared : buffers)
@@ -221,32 +264,123 @@ namespace NorvesLib::Core::Rendering
         builder.PreserveInsertionOrder();
     }
 
-    void VirtualShadowMapPass::Execute(RenderGraphResources& /*resources*/, ViewRenderContext& context)
+    void VirtualShadowMapPass::HarvestStats(StatsSlot& slot)
     {
-        if (!m_bActive || !m_bDeclared || !context.CommandList)
+        if (!slot.bPending || !slot.Mapped)
+        {
+            return;
+        }
+        slot.bPending = false;
+        const uint32_t stats[4] = {slot.Mapped[VirtualShadowMap::StatRequested],
+                                   slot.Mapped[VirtualShadowMap::StatAllocated],
+                                   slot.Mapped[VirtualShadowMap::StatOverflow],
+                                   slot.Mapped[VirtualShadowMap::StatLevelsUsed]};
+        ++m_FramesSinceStatsLog;
+        bool bChanged = !m_bStatsLogged;
+        for (uint32_t index = 0; index < 4u; ++index)
+        {
+            bChanged = bChanged || stats[index] != m_LoggedStats[index];
+        }
+        if (!bChanged && m_FramesSinceStatsLog < StatsLogIntervalFrames)
+        {
+            return;
+        }
+        for (uint32_t index = 0; index < 4u; ++index)
+        {
+            m_LoggedStats[index] = stats[index];
+        }
+        m_bStatsLogged = true;
+        m_FramesSinceStatsLog = 0;
+        NORVES_LOG_INFO("VirtualShadowMapPass",
+                        "VSM_PAGES requested=%u allocated=%u overflow=%u levels_used=0x%x",
+                        stats[0],
+                        stats[1],
+                        stats[2],
+                        stats[3]);
+    }
+
+    void VirtualShadowMapPass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        m_bMarked = false;
+        if (!m_bActive || !m_bDeclared || !m_Pages || !context.CommandList)
         {
             return;
         }
 
         RHI::ICommandList* commandList = context.CommandList;
-        auto fill = [commandList](const RHI::BufferPtr& buffer, uint64_t bytes, uint32_t value)
-        {
-            commandList->BufferBarrier(buffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
-            commandList->FillBuffer(buffer, 0, bytes, value);
-            commandList->BufferBarrier(buffer, RHI::ResourceState::CopyDest, RHI::ResourceState::Common);
-        };
+        ++m_ExecuteCount;
 
-        // 最初の実行で、何も無い texel の深度（1.0）でプールを、割り当てなしでページの表を埋める
+        // 数フレーム前（GPU が書き終えている）の統計を古い順に読み、このフレームが書く枠を空ける
+        for (uint32_t offset = 1; offset <= StatsSlotCount; ++offset)
+        {
+            StatsSlot& pending = m_StatsSlots[(m_ExecuteCount + offset) % StatsSlotCount];
+            if (pending.bPending && pending.ExecuteIndex + 2 <= m_ExecuteCount)
+            {
+                HarvestStats(pending);
+            }
+        }
+
+        // 最初の実行で、何も無い texel の深度（1.0）でプールを埋める（以後は dirty のページだけを消去する）。
+        // 表・要求・統計・空きページ・消去の一覧は、毎フレームの記録が作り直す
         if (!m_bInitialFilled)
         {
-            fill(m_Pool, VirtualShadowMap::PoolBytes(m_PoolPages), VirtualShadowMap::EMPTY_DEPTH_BITS);
-            fill(m_PageTable, VirtualShadowMap::PageTableBytes(), 0u);
+            commandList->BufferBarrier(m_Pool, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
+            commandList->FillBuffer(m_Pool, 0, VirtualShadowMap::PoolBytes(m_PoolPages), VirtualShadowMap::EMPTY_DEPTH_BITS);
+            commandList->BufferBarrier(m_Pool, RHI::ResourceState::CopyDest, RHI::ResourceState::Common);
             m_bInitialFilled = true;
         }
 
-        // 今フレームの要求と統計は毎フレーム 0 から数える
-        fill(m_RequestBits, VirtualShadowMap::RequestBitsBytes(), 0u);
-        fill(m_Stats, VirtualShadowMap::STATS_BYTES, 0u);
+        VirtualShadowMapPagesDispatch dispatch;
+        dispatch.PoolPages = m_PoolPages;
+        dispatch.Pool = m_Pool;
+        dispatch.PageTable = m_PageTable;
+        dispatch.RequestBits = m_RequestBits;
+        dispatch.FreeList = m_FreeList;
+        dispatch.Stats = m_Stats;
+        dispatch.DirtyList = m_DirtyList;
+        const CameraProxy* camera = context.GetActiveCamera();
+        const RHI::TexturePtr depth = m_DepthHandle.IsValid() ? resources.GetTexture(m_DepthHandle) : RHI::TexturePtr{};
+        if (depth && camera && camera->Projection == ProjectionType::Perspective)
+        {
+            const CameraViewConstants cameraConstants =
+                CameraViewConstants::BuildForDevice(*camera, context.GetActiveAspectRatio(), context.Device);
+            cameraConstants.CopyShaderInverseViewProjection(dispatch.InverseViewProjection);
+            dispatch.CameraPosition[0] = camera->PositionX;
+            dispatch.CameraPosition[1] = camera->PositionY;
+            dispatch.CameraPosition[2] = camera->PositionZ;
+            dispatch.FovYDegrees = camera->FieldOfView;
+            dispatch.Depth = depth;
+            dispatch.Clipmap = &context.PhysicalLighting.SunClipmap;
+        }
+
+        const RHI::BufferPtr buffers[] = {m_Pool, m_PageTable, m_RequestBits, m_FreeList, m_Stats, m_DirtyList};
+        for (const RHI::BufferPtr& buffer : buffers)
+        {
+            commandList->BufferBarrier(buffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
+        }
+
+        m_Pages->BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
+        m_Pages->Record(commandList, dispatch);
+        m_bMarked = m_Pages->WasMarked();
+
+        // 統計を読み戻しの枠へ写す（読むのは数フレーム後）
+        StatsSlot& slot = m_StatsSlots[m_ExecuteCount % StatsSlotCount];
+        if (slot.Buffer && slot.Mapped)
+        {
+            commandList->BufferBarrier(m_Stats, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopySource);
+            commandList->BufferBarrier(slot.Buffer, RHI::ResourceState::HostRead, RHI::ResourceState::CopyDest);
+            commandList->CopyBuffer(m_Stats, slot.Buffer, VirtualShadowMap::STATS_BYTES);
+            commandList->BufferBarrier(slot.Buffer, RHI::ResourceState::CopyDest, RHI::ResourceState::HostRead);
+            commandList->BufferBarrier(m_Stats, RHI::ResourceState::CopySource, RHI::ResourceState::UnorderedAccess);
+            slot.bPending = true;
+            slot.ExecuteIndex = m_ExecuteCount;
+        }
+
+        // 宣言した状態（Common）へ戻す
+        for (const RHI::BufferPtr& buffer : buffers)
+        {
+            commandList->BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
+        }
     }
 
 } // namespace NorvesLib::Core::Rendering

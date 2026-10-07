@@ -29,12 +29,13 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity MaterialTileStats =
         Identity::Literal("MaterialTile.Stats", sizeof("MaterialTile.Stats") - 1);
     inline constexpr Identity ShadowMap = Identity::Literal("ShadowMap", sizeof("ShadowMap") - 1);
-    // 太陽の仮想シャドウマップ（--shadow-method=vsm）の資源。物理ページのプール・ページの表・今フレームの要求・空きページの一覧・統計
+    // 太陽の仮想シャドウマップ（--shadow-method=vsm）の資源。物理ページのプール・ページの表・今フレームの要求・空きページの一覧・統計・消去するページの一覧
     inline constexpr Identity VsmPhysicalPool = Identity::Literal("VSM.PhysicalPool", sizeof("VSM.PhysicalPool") - 1);
     inline constexpr Identity VsmPageTable = Identity::Literal("VSM.PageTable", sizeof("VSM.PageTable") - 1);
     inline constexpr Identity VsmRequestBits = Identity::Literal("VSM.RequestBits", sizeof("VSM.RequestBits") - 1);
     inline constexpr Identity VsmFreeList = Identity::Literal("VSM.FreeList", sizeof("VSM.FreeList") - 1);
     inline constexpr Identity VsmStats = Identity::Literal("VSM.Stats", sizeof("VSM.Stats") - 1);
+    inline constexpr Identity VsmDirtyList = Identity::Literal("VSM.DirtyList", sizeof("VSM.DirtyList") - 1);
     inline constexpr Identity PointShadowCubeMap =
         Identity::Literal("PointShadowCubeMap", sizeof("PointShadowCubeMap") - 1);
     inline constexpr Identity SkyAtmosphereTransmittance =

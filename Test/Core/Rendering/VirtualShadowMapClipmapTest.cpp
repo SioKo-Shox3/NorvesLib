@@ -416,6 +416,58 @@ namespace
         lights[0].bCastShadows = false;
         Check(!BuildVirtualShadowMapClipmap(&lights, camera, VirtualShadowMapClipmapSettings{}).bEnabled, "影を落とさない太陽で有効になった");
     }
+
+    // 段を選ぶ距離のしきい値: 「d >= しきい値となる k の数」が、どの距離でも SelectVirtualShadowMapLevel と一致する
+    // （計算シェーダーが段の選び方の式を写さず、このしきい値で CPU と同じ段を選ぶ）。被覆で粗くなる画面も含む
+    void TestLevelDistanceThresholdsMatchSelection()
+    {
+        const VirtualShadowMapClipmapSettings settings;
+        struct Screen
+        {
+            float FovY;
+            float Height;
+        };
+        const Screen screens[] = {{60.0f, 720.0f}, {35.0f, 1440.0f}, {90.0f, 360.0f}, {20.0f, 2160.0f}};
+        for (const Screen& screen : screens)
+        {
+            float thresholds[VirtualShadowMapMaxLevels] = {};
+            Check(VirtualShadowMapLevelDistanceThresholds(settings, screen.FovY, screen.Height, thresholds), "しきい値を作れない");
+            for (uint32_t index = 0u; index + 2u < settings.LevelCount; ++index)
+            {
+                Check(thresholds[index] <= thresholds[index + 1u], "しきい値が段について単調でない");
+            }
+            DeterministicRandom random;
+            for (int sample = 0; sample < 20000; ++sample)
+            {
+                // 一様な距離に加え、しきい値の近傍（隣り合う float を含む）も確かめる
+                float distance = random.Range(0.0f, settings.MaxShadowDistance);
+                if (sample % 4 == 0)
+                {
+                    const uint32_t index = static_cast<uint32_t>(random.Range(0.0f, static_cast<float>(settings.LevelCount - 1u)));
+                    const float threshold = thresholds[index];
+                    if (threshold < settings.MaxShadowDistance)
+                    {
+                        const int step = sample % 3 - 1;
+                        distance = step < 0 ? std::nextafter(threshold, 0.0f)
+                                            : (step > 0 ? std::nextafter(threshold, settings.MaxShadowDistance) : threshold);
+                    }
+                }
+                int32_t counted = 0;
+                for (uint32_t index = 0u; index + 1u < settings.LevelCount; ++index)
+                {
+                    counted += distance >= thresholds[index] ? 1 : 0;
+                }
+                Check(counted == SelectVirtualShadowMapLevel(settings, distance, screen.FovY, screen.Height),
+                      "しきい値から数えた段が SelectVirtualShadowMapLevel と違う");
+            }
+        }
+        // 不正な設定では書かない
+        VirtualShadowMapClipmapSettings invalid;
+        invalid.LevelCount = 0u;
+        float untouched[VirtualShadowMapMaxLevels] = {};
+        Check(!VirtualShadowMapLevelDistanceThresholds(invalid, 60.0f, 720.0f, untouched), "不正な設定でしきい値を作った");
+        Check(!VirtualShadowMapLevelDistanceThresholds(settings, 60.0f, 720.0f, nullptr), "出力先が無いのにしきい値を作った");
+    }
 } // namespace
 
 int main()
@@ -430,6 +482,7 @@ int main()
     TestSelectedLevelContainsReceiver();
     TestDepthOriginSnapsToCoarseSteps();
     TestBuildFromLightProxies();
+    TestLevelDistanceThresholdsMatchSelection();
 
     if (GFailureCount != 0)
     {

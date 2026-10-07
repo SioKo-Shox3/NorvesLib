@@ -1,0 +1,60 @@
+﻿#version 450
+
+// ========================================
+// 太陽の仮想シャドウマップ（VSM）の物理ページの消去
+//
+// 消去するページの一覧（dirtyList。vsm_allocate.comp が作る）のページごとに 1 ワークグループ（間接 dispatch）。
+// 物理ページの 128 × 128 の語をすべて 1.0 の float のビット（何も無い texel の深度）で埋める。
+// グループの番号 g = y * 数x + x（x の上限を超える分は y へ広がる）。g が一覧の数以上なら何もしない。
+// ========================================
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std140, set = 0, binding = 0) uniform VsmParams
+{
+    mat4 invViewProjection;
+    vec4 cameraPosition;
+    vec4 lightRight;
+    vec4 lightUp;
+    uvec4 screen;
+    vec4 tuning;
+    // x: 段階、y: 物理ページの数、z: 間接 dispatch の x の上限
+    uvec4 control;
+    vec4 thresholds[4];
+    vec4 levelInfo[16];
+    ivec4 levelOrigin[16];
+} params;
+
+layout(std430, set = 0, binding = 6) readonly buffer VsmDirtyList
+{
+    uint dirtyList[];
+};
+
+layout(std430, set = 0, binding = 7) buffer VsmPhysicalPool
+{
+    uint pool[];
+};
+
+const uint DIRTY_COUNT = 3u;
+const uint DIRTY_FIRST_PAGE = 4u;
+const uint PAGE_WORDS = 128u * 128u;
+const uint EMPTY_DEPTH_BITS = 0x3F800000u;
+
+void main()
+{
+    const uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (group >= dirtyList[DIRTY_COUNT])
+    {
+        return;
+    }
+    const uint page = dirtyList[DIRTY_FIRST_PAGE + group];
+    if (page >= params.control.y)
+    {
+        return;
+    }
+    const uint base = page * PAGE_WORDS;
+    for (uint offset = gl_LocalInvocationID.x; offset < PAGE_WORDS; offset += 256u)
+    {
+        pool[base + offset] = EMPTY_DEPTH_BITS;
+    }
+}
