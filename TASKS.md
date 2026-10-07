@@ -2728,3 +2728,10 @@
 - stop-when: SkeletonにMeshのIBMを置く、IDだけで束縛する、rest overrideでMesh世代pinを無視する、素材を暗黙Opaqueへ潰す、snapshotをfilesystem transactionと扱う、新CLI/既存manifest合成/Registry公開/async cache・Armature/256/GPUまで同時に完了扱いする。実描画は未対応のまま明示拒否しCPU責務を検証する。
 
 - result: code ef4cac08 / tree e5a2740d / run37553853287 attempt1 / job112575390064。Release69・旧65 cpp不変、新4 direct Debug・12case各構成、独立Skeleton704/Mesh1360byte各2・pose2・oracle8×normal/-Oを確認。B1/owner20/runtime28・旧4×6095byte・89出力/CLI/GR84/PEを維持。12比較器×2と親readonly replayがexit0、827payload・480source・18原API・6ZIP一致。初回run37550413059の新oracle巻き順誤りだけをPython/文書で修正し、production/旧test/goldenは不変。failed710は別保持。latest2paths/Library0、累積57paths/Library37。三資産cooked-only読込・全MATSのCPU所有・未登録owner/実姿勢まで受入。Registry/runtime/新CLI・Armature/256・GPU/DCCは未受入。限定probeのpositive control・2snapshot/既登録pool/Load内部失敗等の追加観測は残す。
+
+## G2-GR82-B3-SPLIT-BUNDLE-PUBLICATION-RUNTIME: 分離資産を既存の一括公開と非同期delegateへ接続する
+- status: doing
+- done-when: B2の同snapshot/順序付きBank検証を唯一のworker読込として使い、既存GR83 runtimeのready/handoff・owner組立・4型shadow公開・一回遅延delegateへ接続する。要求のpolicy/limits/全manifest内容と世代を完全identityに含め、immutable receiptと実child内容をcache取得時にも検査する。
+- verify: override後のstrict拒否、順序/内容/variant/limits/世代差、全clip本文変更のcache拒否、3clipで登録+6/path+1、既存poolと全準備失敗の全部-or-zero、取消/Close/Drain/再入/混在legacy、実Session owner/pause外配送と名前指定CPU pose。新Debug/Release常時検査、B2/B1全wire/poseと旧69/旧Sampler/cook/CLI/実Game buildを維持する。
+- policy: 新runtime/queue/sessionを作らず既存共有核へmodeを追加。split keyは有限256KiB、旧key4096/path2048は保持。Bank最大16、profile128/Identity ROOT/正scaleは変更しない。receiptとCPU所有はaggregate寿命に従う。別bundleのSkeleton wrapper/IDは独立とする。
+- stop-when: workerでResourceを作る、hashだけで一致扱いする、override結果だけをkeyにする、GCで公開失敗を戻す、State→Registry最終gateを分断する、新CLI/ファイル群transaction/Armature/256/GPUへ広げる。描画lease無しのCPU成功と描画成功を分ける。

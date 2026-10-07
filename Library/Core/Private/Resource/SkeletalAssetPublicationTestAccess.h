@@ -19,6 +19,10 @@ namespace NorvesLib::Core::ResourceIO::Detail
                                                            SkeletalPreparedPublication& out,
                                                            SkeletalPublicationReport& report,
                                                            SkeletalPublicationProbe probe, void* probeContext);
+    [[nodiscard]] bool PrepareRigSplitPublicationWithProbe(Container::TSharedPtr<const RigSplitPublicationReceipt>,
+                                                           const SkeletalAssetCreateContext&,
+                                                           SkeletalPreparedPublication&, SkeletalPublicationReport&,
+                                                           SkeletalPublicationProbe, void*);
     [[nodiscard]] bool CommitSkeletalPublicationWithProbe(const SkeletalPreparedPublication& prepared,
                                                           const Container::String& key,
                                                           const SkeletalPublicationLimits& limits,

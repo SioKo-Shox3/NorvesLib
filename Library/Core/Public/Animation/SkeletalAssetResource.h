@@ -7,6 +7,11 @@
 #include "Object/Resource.h"
 #include "Resource/SkinnedMeshResource.h"
 
+namespace NorvesLib::Core::ResourceIO
+{
+    class RigSplitPublicationReceipt;
+    class RigSplitAssetAccess;
+} // namespace NorvesLib::Core::ResourceIO
 namespace NorvesLib::Core
 {
     class SkeletalAssetResource : public Resource
@@ -43,10 +48,12 @@ namespace NorvesLib::Core
         const Container::TSharedPtr<AnimationClipResource>& GetAnimationClip() const;
 
     private:
-        Container::TSharedPtr<SkinnedMeshResource> m_Mesh;
-        Container::TSharedPtr<SkeletonResource> m_Skeleton;
-        // 旧GetAnimationClipが返す参照先を安定させる先頭の別名。
-        Container::TSharedPtr<AnimationClipResource> m_AnimationClip;
-        Container::VariableArray<Container::TSharedPtr<AnimationClipResource>> m_Clips;
+      friend class ResourceIO::RigSplitAssetAccess;
+      Container::TSharedPtr<const ResourceIO::RigSplitPublicationReceipt> m_SplitReceipt;
+      Container::TSharedPtr<SkinnedMeshResource> m_Mesh;
+      Container::TSharedPtr<SkeletonResource> m_Skeleton;
+      // 旧GetAnimationClipが返す参照先を安定させる先頭の別名。
+      Container::TSharedPtr<AnimationClipResource> m_AnimationClip;
+      Container::VariableArray<Container::TSharedPtr<AnimationClipResource>> m_Clips;
     };
 } // namespace NorvesLib::Core

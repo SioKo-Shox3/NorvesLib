@@ -4,12 +4,6 @@
 #include "Resource/SkeletalAssetLoader.h"
 namespace NorvesLib::Core::Skeletal
 {
-    struct RigSplitReport
-    {
-        RigV1Status Status = RigV1Status::InvalidInput;
-        uint32_t FailedBank = UINT32_MAX;
-        Container::VariableArray<RigV1Report> Banks;
-    };
     struct RigSplitCpuData
     {
         SkeletonV1 Skeleton;

@@ -1095,3 +1095,13 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 - 証拠: 12比較器×normal/-O計24回のreceipt/stdout一致・stderr空。親自身のreadonly replayもexit0/stderr0、827payload・480source・18原API・6ZIP一致。summary SHA256 2b043a9eb825022b8a9ddab864ab50499dca19a9b2758634bf738a378d1d811f、inventory SHA256 ba70c6380d6051c7d827c27a44f68252b73faecac04d8d1cad1e6286533001bb。
 - 初回失敗: code0043cdb3 / run37550413059の新mesh比較器だけが既存triangle巻き順変換を落としていた。Python期待値と新自己試験・文書だけを修正し、478/480 sourceと全production/旧test/golden treeは不変。失敗710payloadは別保持し、失敗保存の親replayもexit0。latest2paths/Library0と累積57paths/Library37を区別する。
 - Notes: 同asset内のLINEAR/STEP/Bake累積境界はB2で新検査した。一部確保probeのpositive control、2snapshot/既登録pool/Load内部失敗等は追加観測として残る。全allocator OOM/RSS/任意入力時間は保証しない。実GPU/DCC/Game起動、Registry/cache/runtime公開、新CLI/ファイル群公開、Armature/clip-only/256は未受入。次は既存GR83の一括公開とdelegate runtimeへ分離資産を接続する。
+
+### GR82 Stage B3の事前契約（2026-10-07 JST）
+
+- In progress: G2-GR82-B3-SPLIT-BUNDLE-PUBLICATION-RUNTIME。B2 codeef4cac08/run37553853287の親readonly受入と文書ce98f49fを基点に、分離資産を既存GR83へ接続する。
+- 推奨判断: 既存runtimeに入力modeと有限な所有identityを追加し、workerはB2 loader、ownerは未登録組立と既存4型shadow commitを使う。要求policy/許容/予算/順序/manifest全参照を区別し、strict要求がoverride cacheへ合流しないことを優先する。
+- 寿命: receiptは完成aggregateに持たせ、再取得時は実child handleと全clip値を照合する。別bundle間のSkeletonResource ID共有は行わず、同一のimmutable骨格内容だけを共有可能にする。既存session/ready/handoff/State→Registry gateを再実装しない。
+- 開始gate: B2の12比較器×2、親replay exit0/stderr0、827payloadを確認済み。B3 nativeは未実行。GPU/CLI/Armature/256・一般OOM/RSS/並行Registry破棄は対象外。
+
+- 実装候補: 分離要求と全field identity、同read証拠を持つopaque receipt、未登録組立から既存4型公開、同runtimeのworker/ready/delegateを接続した。成功callback内からの再購読も全内容を再照合し、clip改変/receipt消去時は新要求だけを拒否する。legacy入口もsplit childを識別し、receipt消去で別modeへ落とさない。
+- 検証準備: 旧69 cpp、B2/B1 wireと両Sampler/oracleは不変。独立split8・bank8・owner source8をnormal/-Oで合格、YAML・BOM/CRLF・行末とwhitespaceを確認。新publication5caseとruntime8scenario×2 schedulerのDebug/Release常時検査を追加し、実Session pause helperとhandoff待機開始も反証する。Release71、新2 direct Debug、既存cook/CLI/固定captureのnativeはCI待ち。

@@ -127,7 +127,7 @@ namespace NorvesLib::Core::Skeletal
     bool Detail::AssembleRigSplitWithProbe(const CookedRigSplitCpuAsset& cpu,
                                            const ResourceIO::SkeletalAssetCreateContext& context,
                                            C::TSharedPtr<SkeletalAssetResource>& out, RigSplitReport& report,
-                                           RigCreateProbe probe, void* probeContext)
+                                           RigCreateProbe probe, void* probeContext, const C::String* bundleUri)
     {
         report = {};
         try
@@ -154,6 +154,11 @@ namespace NorvesLib::Core::Skeletal
                 report.Status = RigV1Status::ResourceFailure;
                 return false;
             };
+            const C::String path = bundleUri ? *bundleUri : C::String(_T("rig-split-v1"));
+            if (path.empty())
+            {
+                return false;
+            }
             auto& registry = *context.Registry;
             uint32_t ordinal = 0;
             const auto observe = [&](const C::TSharedPtr<Resource>& value)
@@ -165,12 +170,12 @@ namespace NorvesLib::Core::Skeletal
                 ++ordinal;
                 return true;
             };
-            auto mesh = registry.CreateResource<SkinnedMeshResource>(_T("rig-split-v1"));
+            auto mesh = registry.CreateResource<SkinnedMeshResource>(path);
             if (!observe(mesh) || !mesh->SetSplitMesh(d->Mesh) || !mesh->Load())
             {
                 return fail();
             }
-            auto skeleton = registry.CreateResource<SkeletonResource>(_T("rig-split-v1"));
+            auto skeleton = registry.CreateResource<SkeletonResource>(path);
             if (!observe(skeleton) || !skeleton->SetSplitSkeleton(d->Skeleton) || !skeleton->Load())
             {
                 return fail();
@@ -179,7 +184,7 @@ namespace NorvesLib::Core::Skeletal
             clips.reserve(d->Clips.size());
             for (const auto& value : d->Clips)
             {
-                auto clip = registry.CreateResource<AnimationClipResource>(_T("rig-split-v1"));
+                auto clip = registry.CreateResource<AnimationClipResource>(path);
                 if (!observe(clip))
                 {
                     return fail();
@@ -191,7 +196,7 @@ namespace NorvesLib::Core::Skeletal
                 }
                 clips.push_back(std::move(clip));
             }
-            auto asset = registry.CreateResource<SkeletalAssetResource>(_T("rig-split-v1"));
+            auto asset = registry.CreateResource<SkeletalAssetResource>(path);
             if (!observe(asset))
             {
                 return fail();

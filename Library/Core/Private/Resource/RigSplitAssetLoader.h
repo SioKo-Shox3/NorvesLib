@@ -2,6 +2,7 @@
 // 一つのimmutable manifest snapshotで全roleを解決するcooked-only CPU入口。
 #include "Animation/RigSplitBinding.h"
 #include "Asset/AssetSystem.h"
+#include "Animation/RigSplitAssetRequest.h"
 namespace NorvesLib::Core::ResourceIO
 {
     struct RigSplitLoadPlan
@@ -15,27 +16,16 @@ namespace NorvesLib::Core::ResourceIO
         uint64_t MaxPackageBytes = 68ull * 1024 * 1024;
         uint64_t MaxTotalPackageBytes = 256ull * 1024 * 1024;
     };
-    enum class RigSplitLoadStatus : uint8_t
+    struct RigSplitResolvedEntry
     {
-        Success,
-        InvalidRequest,
-        ResolveRejected,
-        FormatRejected,
-        ParseRejected,
-        MetadataMismatch,
-        BindingRejected,
-        Exception
+        Asset::AssetCookedReference Reference;
+        uint64_t FullBlobHash = 0;
     };
-    struct RigSplitLoadReport
+    struct RigSplitLoadEvidence
     {
-        RigSplitLoadStatus Status = RigSplitLoadStatus::InvalidRequest;
-        Container::AnsiString LogicalPath;
-        uint64_t PackageBytesRead = 0;
-        Asset::AssetResolveStatus ResolveStatus = Asset::AssetResolveStatus::InvalidRequest;
-        Asset::AssetReadStatus PackageReadStatus = Asset::AssetReadStatus::InvalidRequest;
-        Skeletal::RigV1Report ParseReport;
-        Skeletal::RigSplitReport BindingReport;
+        Container::VariableArray<RigSplitResolvedEntry> Entries;
     };
+    [[nodiscard]] bool IsRigSplitReferenceFormat(const Asset::AssetCookedReference&, uint32_t role);
     [[nodiscard]] bool LoadRigSplitForWorker(const RigSplitLoadPlan&, Skeletal::CookedRigSplitCpuAsset& out,
-                                             RigSplitLoadReport&);
+                                             RigSplitLoadReport&, RigSplitLoadEvidence* evidence = nullptr);
 } // namespace NorvesLib::Core::ResourceIO

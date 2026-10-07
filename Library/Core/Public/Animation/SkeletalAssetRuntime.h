@@ -1,6 +1,7 @@
 ﻿#pragma once
 // cooked骨格資産のCPU非同期runtime。製品loopやGPUを自動駆動しない。
 #include "Animation/SkeletalAssetResource.h"
+#include "Animation/RigSplitAssetRequest.h"
 #include "Asset/AssetResolveResult.h"
 #include "Asset/CookedSkeletalFormat.h"
 #include "Container/PointerTypes.h"
@@ -72,7 +73,8 @@ namespace NorvesLib::Core
         PublicationInvalidCache,
         PublicationBudget,
         PublicationInjectedFailure,
-        PublicationException
+        PublicationException,
+        BindingRejected
     };
     struct SkeletalAssetCompletion
     {
@@ -84,12 +86,14 @@ namespace NorvesLib::Core
         NorvesLib::Core::Asset::CookedSkeletalParseStatus ParseStatus =
             NorvesLib::Core::Asset::CookedSkeletalParseStatus::InvalidBlob;
         bool bCacheHit = false;
+        Container::TSharedPtr<const RigSplitAssetDiagnostics> SplitDiagnostics;
     };
     struct SkeletalRuntimeLimits
     {
         size_t MaxPendingGroups = 1024, MaxSubscribersPerGroup = 1024, MaxPathBytes = 2048, MaxKeyBytes = 4096;
         size_t MaxBundleClips = 1024;
         uint64_t MaxRegistrySlots = 65536, MaxRegistryMapEntries = 262144, MaxRegistryBuckets = 1048576;
+        size_t MaxSplitKeyBytes = 256 * 1024;
     };
     struct SkeletalAdmissionResult
     {
@@ -116,6 +120,7 @@ namespace NorvesLib::Core
                                                  const SkeletalRuntimeLimits& limits = {});
         // Bind/Load/Flush/SetSnapshotはownerのみ。拒否ID0にはcallbackを約束しない。
         [[nodiscard]] SkeletalAdmissionResult LoadAsync(Container::AnsiStringView path, Callback callback);
+        [[nodiscard]] SkeletalAdmissionResult LoadRigSplitAsync(const Skeletal::RigSplitRequest&, Callback callback);
         [[nodiscard]] SkeletalFlushResult FlushCompleted(uint32_t maxLoads = 0);
         [[nodiscard]] SkeletalRuntimeStatus SetSnapshot(Container::TSharedPtr<const Asset::AssetSystem> snapshot);
         // group全体の未予約callbackを抑止する。予約済み呼出終了までtarget寿命が必要。

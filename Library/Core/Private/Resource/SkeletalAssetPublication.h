@@ -2,6 +2,7 @@
 // 統合骨格bundleの有限なRegistry公開境界。queue/製品loop/GPUは駆動しない。
 #include "Resource/SkeletalAssetLoader.h"
 #include "Object/ResourceRegistry.h"
+#include "Resource/RigSplitPublicationIdentity.h"
 namespace NorvesLib::Core::ResourceIO
 {
     class SkeletalBundlePublisherAccess;
@@ -40,6 +41,7 @@ namespace NorvesLib::Core::ResourceIO
     {
         SkeletalPublicationStatus Status = SkeletalPublicationStatus::InvalidRequest;
         SkeletalAssetLoadReport Assembly;
+        Skeletal::RigSplitReport SplitAssembly;
         uint64_t Session = 0;
         uint64_t CopiedSlots = 0, CopiedIdEntries = 0, CopiedPathEntries = 0, CopiedFreeIndices = 0, CopiedBuckets = 0;
         uint32_t PublishedResources = 0;
@@ -74,6 +76,12 @@ namespace NorvesLib::Core::ResourceIO
     [[nodiscard]] bool PrepareSkeletalPublication(const CookedSkeletalCpuAsset& cpu,
                                                   const SkeletalAssetCreateContext& context,
                                                   SkeletalPreparedPublication& out, SkeletalPublicationReport& report);
+    [[nodiscard]] bool PrepareRigSplitPublication(Container::TSharedPtr<const RigSplitPublicationReceipt>,
+                                                  const SkeletalAssetCreateContext&, SkeletalPreparedPublication&,
+                                                  SkeletalPublicationReport&);
+    [[nodiscard]] bool FindPublishedRigSplitAsset(const SkeletalAssetCreateContext&, const RigSplitRequestIdentity&,
+                                                  const SkeletalPublicationLimits&, SkeletalPublishedAsset&,
+                                                  SkeletalPublicationReport&);
     [[nodiscard]] bool AllocateSkeletalCacheDomain(const SkeletalAssetCreateContext& context, SkeletalCacheDomain& out,
                                                    SkeletalPublicationReport& report);
     [[nodiscard]] bool ValidateSkeletalCacheDomain(const SkeletalAssetCreateContext& context,

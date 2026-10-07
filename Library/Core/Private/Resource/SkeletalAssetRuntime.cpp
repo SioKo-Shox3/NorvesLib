@@ -114,6 +114,46 @@ namespace NorvesLib::Core
             }
             return F::OwnerException;
         }
+        F SplitLoadFailure(R::RigSplitLoadStatus s)
+        {
+            using L = R::RigSplitLoadStatus;
+            switch (s)
+            {
+            case L::Success:
+                return F::None;
+            case L::InvalidRequest:
+                return F::InvalidRequest;
+            case L::ResolveRejected:
+                return F::ResolveRejected;
+            case L::FormatRejected:
+                return F::FormatRejected;
+            case L::ParseRejected:
+                return F::ParseRejected;
+            case L::MetadataMismatch:
+                return F::MetadataMismatch;
+            case L::BindingRejected:
+                return F::BindingRejected;
+            case L::Exception:
+                return F::WorkerException;
+            }
+            return F::WorkerException;
+        }
+        F SplitAssemblyFailure(Skeletal::RigV1Status s)
+        {
+            switch (s)
+            {
+            case Skeletal::RigV1Status::WrongOwner:
+                return F::WrongOwner;
+            case Skeletal::RigV1Status::RegistryNotReady:
+                return F::RegistryNotReady;
+            case Skeletal::RigV1Status::ResourceFailure:
+                return F::ResourceLoadFailed;
+            case Skeletal::RigV1Status::Exception:
+                return F::AssemblyException;
+            default:
+                return F::InvalidCpu;
+            }
+        }
         F PublicationFailure(R::SkeletalPublicationStatus s)
         {
             using P = R::SkeletalPublicationStatus;
@@ -163,6 +203,11 @@ namespace NorvesLib::Core
         {
             uint64_t Id = 0, Generation = 0;
             R::CookedSkeletalLoadPlan Plan;
+            R::RigSplitRequestIdentity SplitIdentity;
+            C::TSharedPtr<const R::RigSplitPublicationReceipt> SplitReceipt;
+            C::TSharedPtr<RigSplitAssetDiagnostics> MutableSplitDiagnostics;
+            R::SkeletalPublicationLimits PublicationLimits;
+            bool bSplit = false;
             C::String Path, Key;
             Identity KeyIdentity;
             R::CookedSkeletalCpuAsset Cpu;
@@ -358,18 +403,35 @@ namespace NorvesLib::Core
                     return;
                 }
                 state->Fault(D::SkeletalRuntimePoint::WorkerBeforeLoad, r->Id);
-                const bool success = R::LoadCookedSkeletalForWorker(r->Plan, r->Cpu, r->LoadReport);
-                state->Fault(D::SkeletalRuntimePoint::WorkerAfterLoad, r->Id);
-                r->Completion.Failure = success ? F::None
-                                                : (r->LoadReport.Status == R::SkeletalAssetLoadStatus::Exception
-                                                       ? F::WorkerException
-                                                       : LoadFailure(r->LoadReport.Status));
-                r->Completion.ResolveStatus = r->LoadReport.ResolveStatus;
-                r->Completion.ParseStatus = r->LoadReport.ParseStatus;
+                if (r->bSplit)
+                {
+                    const bool success =
+                        R::LoadRigSplitForPublication(r->SplitIdentity, r->SplitReceipt, *r->MutableSplitDiagnostics);
+                    state->Fault(D::SkeletalRuntimePoint::WorkerAfterLoad, r->Id);
+                    r->Completion.Failure =
+                        success ? F::None : SplitLoadFailure(r->MutableSplitDiagnostics->Load.Status);
+                    r->Completion.ResolveStatus = r->MutableSplitDiagnostics->Load.ResolveStatus;
+                }
+                else
+                {
+                    const bool success = R::LoadCookedSkeletalForWorker(r->Plan, r->Cpu, r->LoadReport);
+                    state->Fault(D::SkeletalRuntimePoint::WorkerAfterLoad, r->Id);
+                    r->Completion.Failure = success ? F::None
+                                                    : (r->LoadReport.Status == R::SkeletalAssetLoadStatus::Exception
+                                                           ? F::WorkerException
+                                                           : LoadFailure(r->LoadReport.Status));
+                    r->Completion.ResolveStatus = r->LoadReport.ResolveStatus;
+                    r->Completion.ParseStatus = r->LoadReport.ParseStatus;
+                }
             }
             catch (...)
             {
                 r->Cpu = {};
+                r->SplitReceipt.reset();
+                if (r->MutableSplitDiagnostics)
+                {
+                    r->MutableSplitDiagnostics->Load.Status = R::RigSplitLoadStatus::Exception;
+                }
                 r->Completion.Failure = F::WorkerException;
             }
         }
@@ -394,7 +456,8 @@ namespace NorvesLib::Core
             --state->Handoffs;
             state->Condition.NotifyAll();
         }
-        SkeletalAdmissionResult Admit(const C::TSharedPtr<State>& self, C::AnsiStringView input, Callback callback)
+        SkeletalAdmissionResult Admit(const C::TSharedPtr<State>& self, C::AnsiStringView input, Callback callback,
+                                      const Skeletal::RigSplitRequest* splitRequest = nullptr)
         {
             RequestPtr r;
             bool handoff = false, registered = false, indexed = false, submitted = false;
@@ -406,31 +469,54 @@ namespace NorvesLib::Core
                 {
                     return {S::EmptyCallback, 0};
                 }
-                if (input.empty() || input.size() > Limits.MaxPathBytes ||
-                    !Asset::MeasureSkeletalNameDecoding<char>(
-                         2, {reinterpret_cast<const uint8_t*>(input.data()), input.size()})
-                         .Succeeded())
-                {
-                    return {S::InvalidPath, 0};
-                }
-                const auto path = Asset::AssetPath::Normalize(input);
-                if (!path.IsValid() || path.IsAbsolute() || !path.HasLogicalPath())
-                {
-                    return {S::InvalidPath, 0};
-                }
-                C::AnsiString key = "skeletal_asset:";
-                if (!AppendNumber(key, Domain.Session) || !AppendNumber(key, Domain.Ordinal) ||
-                    !AppendNumber(key, Generation))
-                {
-                    return {S::InvalidPath, 0};
-                }
-                key += "default:";
-                key += path.GetLogicalPath();
                 C::String coreKey, corePath;
-                if (key.size() > Limits.MaxKeyBytes || !CoreText(key, coreKey) ||
-                    !CoreText(path.GetLogicalPath(), corePath))
+                C::AnsiString logicalPath;
+                R::RigSplitRequestIdentity splitIdentity;
+                auto publicationLimits = PublicationLimits;
+                if (splitRequest)
                 {
-                    return {S::InvalidPath, 0};
+                    const auto result =
+                        R::BuildRigSplitRequestIdentity(*splitRequest, Snapshot, Domain.Session, Domain.Ordinal,
+                                                        Generation, Limits.MaxSplitKeyBytes, splitIdentity);
+                    if (result != R::RigSplitIdentityStatus::Success)
+                    {
+                        return {result == R::RigSplitIdentityStatus::LimitExceeded ? S::LimitExceeded
+                                : result == R::RigSplitIdentityStatus::Exception   ? S::PreparationException
+                                                                                   : S::InvalidPath,
+                                0};
+                    }
+                    coreKey = splitIdentity.GetData()->Key;
+                    corePath = splitIdentity.GetData()->BundleUri;
+                    publicationLimits.MaxKeyBytes = Limits.MaxSplitKeyBytes;
+                }
+                else
+                {
+                    if (input.empty() || input.size() > Limits.MaxPathBytes ||
+                        !Asset::MeasureSkeletalNameDecoding<char>(
+                             2, {reinterpret_cast<const uint8_t*>(input.data()), input.size()})
+                             .Succeeded())
+                    {
+                        return {S::InvalidPath, 0};
+                    }
+                    const auto path = Asset::AssetPath::Normalize(input);
+                    if (!path.IsValid() || path.IsAbsolute() || !path.HasLogicalPath())
+                    {
+                        return {S::InvalidPath, 0};
+                    }
+                    C::AnsiString key = "skeletal_asset:";
+                    if (!AppendNumber(key, Domain.Session) || !AppendNumber(key, Domain.Ordinal) ||
+                        !AppendNumber(key, Generation))
+                    {
+                        return {S::InvalidPath, 0};
+                    }
+                    key += "default:";
+                    key += path.GetLogicalPath();
+                    logicalPath = path.GetLogicalPath();
+                    if (key.size() > Limits.MaxKeyBytes || !CoreText(key, coreKey) ||
+                        !CoreText(path.GetLogicalPath(), corePath))
+                    {
+                        return {S::InvalidPath, 0};
+                    }
                 }
                 const Identity keyIdentity(coreKey);
                 if (!keyIdentity.IsValid() || keyIdentity.GetView() != C::StringView(coreKey))
@@ -453,7 +539,8 @@ namespace NorvesLib::Core
                     if (existing != ByKey.end())
                     {
                         auto& target = *existing->second;
-                        if (target.Key != coreKey)
+                        if (target.Key != coreKey || target.bSplit != bool(splitRequest) ||
+                            (splitRequest && !R::SameRigSplitRequestIdentity(target.SplitIdentity, splitIdentity)))
                         {
                             return {S::CacheRejected, 0};
                         }
@@ -461,6 +548,19 @@ namespace NorvesLib::Core
                             Limits.MaxSubscribersPerGroup)
                         {
                             return {S::LimitExceeded, 0};
+                        }
+                        // 成功通知中の再購読でも、直前のcallbackによる内容変更をcache検査から逃がさない。
+                        // 受理済みsubscriberは保持し、新しい要求だけを公開済み状態と再照合する。
+                        if (splitRequest && target.Finalized && target.Completion.Failure == F::None)
+                        {
+                            R::SkeletalPublishedAsset validated;
+                            R::SkeletalPublicationReport validation;
+                            if (!R::FindPublishedRigSplitAsset(Context, splitIdentity, publicationLimits, validated,
+                                                               validation) ||
+                                validated.Asset != target.Completion.Asset)
+                            {
+                                return {S::CacheRejected, 0};
+                            }
                         }
                         target.PendingCallbacks.push_back(std::move(callback));
                         LinkReady(target);
@@ -475,7 +575,23 @@ namespace NorvesLib::Core
                         return {S::IdExhausted, 0};
                     }
                     R::SkeletalPublicationReport report;
-                    hit = R::FindPublishedSkeletalAsset(Context, coreKey, corePath, PublicationLimits, cached, report);
+                    if (splitRequest)
+                    {
+                        if (splitIdentity.GetData()->bCanCache)
+                        {
+                            hit = R::FindPublishedRigSplitAsset(Context, splitIdentity, publicationLimits, cached,
+                                                                report);
+                        }
+                        else
+                        {
+                            report.Status = R::SkeletalPublicationStatus::CacheMiss;
+                        }
+                    }
+                    else
+                    {
+                        hit = R::FindPublishedSkeletalAsset(Context, coreKey, corePath, publicationLimits, cached,
+                                                            report);
+                    }
                     if (!hit && report.Status != R::SkeletalPublicationStatus::CacheMiss)
                     {
                         return {S::CacheRejected, 0};
@@ -483,7 +599,15 @@ namespace NorvesLib::Core
                     r = C::MakeShared<Request>();
                     r->Id = NextId++;
                     r->Generation = Generation;
-                    r->Plan = {Snapshot, path.GetLogicalPath()};
+                    r->Plan = {Snapshot, logicalPath};
+                    r->bSplit = bool(splitRequest);
+                    r->SplitIdentity = std::move(splitIdentity);
+                    r->PublicationLimits = publicationLimits;
+                    if (r->bSplit)
+                    {
+                        r->MutableSplitDiagnostics = C::MakeShared<RigSplitAssetDiagnostics>();
+                        r->Completion.SplitDiagnostics = r->MutableSplitDiagnostics;
+                    }
                     r->Key = std::move(coreKey);
                     r->KeyIdentity = keyIdentity;
                     r->Path = std::move(corePath);
@@ -492,6 +616,10 @@ namespace NorvesLib::Core
                 r->PendingCallbacks.push_back(std::move(callback));
                 if (hit)
                 {
+                    if (r->bSplit)
+                    {
+                        r->Completion.SplitDiagnostics = R::RigSplitAssetAccess::Get(*cached.Asset)->GetDiagnostics();
+                    }
                     r->Completion.Asset = std::move(cached.Asset);
                     r->Completion.Failure = F::None;
                     r->Completion.bCacheHit = true;
@@ -619,10 +747,18 @@ namespace NorvesLib::Core
                 Fault(D::SkeletalRuntimePoint::BeforeAssembly, r->Id);
                 R::SkeletalPreparedPublication prepared;
                 R::SkeletalPublicationReport report;
-                if (!R::PrepareSkeletalPublication(r->Cpu, Context, prepared, report))
+                const bool assembled = r->bSplit
+                                           ? R::PrepareRigSplitPublication(r->SplitReceipt, Context, prepared, report)
+                                           : R::PrepareSkeletalPublication(r->Cpu, Context, prepared, report);
+                if (r->bSplit)
+                {
+                    r->MutableSplitDiagnostics->Assembly = report.SplitAssembly;
+                }
+                if (!assembled)
                 {
                     r->Completion.Failure = report.Status == R::SkeletalPublicationStatus::AssemblyFailed
-                                                ? LoadFailure(report.Assembly.Status)
+                                                ? (r->bSplit ? SplitAssemblyFailure(report.SplitAssembly.Status)
+                                                             : LoadFailure(report.Assembly.Status))
                                                 : PublicationFailure(report.Status);
                     return;
                 }
@@ -664,13 +800,18 @@ namespace NorvesLib::Core
                     // 非throwing観測だけを許す。ここではStateとRegistryを保持し、再入禁止。
                     const bool committed =
                         Hooks.Observe
-                            ? D::CommitSkeletalPublicationWithProbe(prepared, r->Key, PublicationLimits, published,
+                            ? D::CommitSkeletalPublicationWithProbe(prepared, r->Key, r->PublicationLimits, published,
                                                                     report, probe, &observation)
-                            : R::CommitSkeletalPublication(prepared, r->Key, PublicationLimits, published, report);
+                            : R::CommitSkeletalPublication(prepared, r->Key, r->PublicationLimits, published, report);
                     if (!committed)
                     {
                         r->Completion.Failure = PublicationFailure(report.Status);
                         return;
+                    }
+                    if (r->bSplit)
+                    {
+                        r->Completion.SplitDiagnostics =
+                            R::RigSplitAssetAccess::Get(*published.Asset)->GetDiagnostics();
                     }
                     r->Completion.Asset = std::move(published.Asset);
                 }
@@ -678,6 +819,10 @@ namespace NorvesLib::Core
             }
             catch (...)
             {
+                if (r->MutableSplitDiagnostics)
+                {
+                    r->MutableSplitDiagnostics->Assembly.Status = Skeletal::RigV1Status::Exception;
+                }
                 r->Completion.Failure = F::OwnerException;
                 r->Completion.Asset.reset();
             }
@@ -713,8 +858,9 @@ namespace NorvesLib::Core
         }
         if (!snapshot || !limits.MaxPendingGroups || limits.MaxPendingGroups > UINT32_MAX ||
             !limits.MaxSubscribersPerGroup || limits.MaxSubscribersPerGroup > UINT32_MAX || !limits.MaxPathBytes ||
-            !limits.MaxKeyBytes || !limits.MaxBundleClips || limits.MaxBundleClips > UINT32_MAX - 3 ||
-            !limits.MaxRegistrySlots || !limits.MaxRegistryMapEntries || !limits.MaxRegistryBuckets)
+            !limits.MaxKeyBytes || !limits.MaxSplitKeyBytes || limits.MaxSplitKeyBytes > R::RigSplitMaximumKeyBytes ||
+            !limits.MaxBundleClips || limits.MaxBundleClips > UINT32_MAX - 3 || !limits.MaxRegistrySlots ||
+            !limits.MaxRegistryMapEntries || !limits.MaxRegistryBuckets)
         {
             return S::LimitExceeded;
         }
@@ -757,6 +903,30 @@ namespace NorvesLib::Core
         RuntimeScope scope(state.get());
         State::AdmissionGuard guard{state};
         return state->Admit(state, path, std::move(callback));
+    }
+    SkeletalAdmissionResult SkeletalAssetRuntime::LoadRigSplitAsync(const Skeletal::RigSplitRequest& request,
+                                                                    Callback callback)
+    {
+        auto state = m_State;
+        {
+            Thread::ScopedLock lock(state->Mutex);
+            if (!state->Bound)
+            {
+                return {S::NotBound, 0};
+            }
+            if (!state->Owner())
+            {
+                return {S::WrongOwner, 0};
+            }
+            if (state->Closing)
+            {
+                return {S::Closed, 0};
+            }
+            ++state->Admissions;
+        }
+        RuntimeScope scope(state.get());
+        State::AdmissionGuard guard{state};
+        return state->Admit(state, {}, std::move(callback), &request);
     }
     S SkeletalAssetRuntime::SetSnapshot(C::TSharedPtr<const Asset::AssetSystem> snapshot)
     {

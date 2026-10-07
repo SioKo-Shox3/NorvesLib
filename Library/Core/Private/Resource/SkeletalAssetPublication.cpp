@@ -1,4 +1,5 @@
 ﻿#include "Resource/SkeletalAssetPublication.h"
+#include "Animation/RigSplitBindingTestAccess.h"
 #include "Resource/SkeletalAssetPublicationTestAccess.h"
 #include "Asset/CookedSkeletalNameCodec.h"
 #include <algorithm>
@@ -20,6 +21,7 @@ namespace NorvesLib::Core::ResourceIO
         NorvesLib::Thread::Thread::ThreadId Owner;
         uint64_t Session = 0;
         C::String LogicalPath;
+        C::TSharedPtr<const RigSplitPublicationReceipt> SplitReceipt;
         C::TSharedPtr<SkeletalAssetResource> Asset;
     };
     SkeletalPreparedPublication::SkeletalPreparedPublication() = default;
@@ -145,7 +147,7 @@ namespace NorvesLib::Core::ResourceIO
         }
         static bool AcquireLocked(ResourceRegistry& r, const Identity& key, const C::String& logicalPath,
                                   const SkeletalPublicationLimits& limits, SkeletalPublishedAsset& candidate,
-                                  SkeletalPublicationReport& report)
+                                  SkeletalPublicationReport& report, const RigSplitRequestIdentity* split = nullptr)
         {
             const auto* pool = Old<SkeletalAssetResource>(r);
             if (!pool || pool->m_PathToIndex.find(key) == pool->m_PathToIndex.end())
@@ -163,7 +165,10 @@ namespace NorvesLib::Core::ResourceIO
             {
                 return Fail(report, Status::BudgetExceeded);
             }
-            if (!Complete(asset, limits.MaxBundleClips) || !DistinctIds(asset))
+            if (!Complete(asset, limits.MaxBundleClips) || !DistinctIds(asset) ||
+                (split ? !RigSplitAssetAccess::Matches(*asset, *split)
+                       : (bool(RigSplitAssetAccess::Get(*asset)) || asset->GetMesh()->IsSplitV1() ||
+                          asset->GetSkeleton()->IsSplitV1())))
             {
                 return Fail(report, Status::InvalidCachedAsset);
             }
@@ -363,9 +368,74 @@ namespace NorvesLib::Core::ResourceIO
                 return Fail(report, Status::Exception);
             }
         }
+        static bool PrepareSplit(C::TSharedPtr<const RigSplitPublicationReceipt> receipt,
+                                 const SkeletalAssetCreateContext& context, SkeletalPreparedPublication& out,
+                                 SkeletalPublicationReport& report, Probe probe, void* user)
+        {
+            report = {};
+            try
+            {
+                if (!Owner(context.OwnerThread))
+                {
+                    return Fail(report, Status::WrongOwnerThread);
+                }
+                if (!context.Registry)
+                {
+                    return Fail(report, Status::RegistryNotReady);
+                }
+                const auto session = Session(*context.Registry);
+                if (!session)
+                {
+                    return Fail(report, Status::RegistryNotReady);
+                }
+                if (!receipt || !receipt->IsValid() || !receipt->m_Identity.GetData() || !receipt->m_Cpu.GetData() ||
+                    !receipt->m_Identity.GetData()->bCanCache)
+                {
+                    return Fail(report, Status::InvalidCandidate);
+                }
+                if (receipt->m_Identity.GetData()->Session != session)
+                {
+                    return Fail(report, Status::SessionChanged);
+                }
+                auto state = C::MakeUnique<SkeletalPreparedPublication::State>();
+                state->Registry = context.Registry;
+                state->Owner = context.OwnerThread;
+                state->Session = session;
+                state->LogicalPath = receipt->m_Identity.GetData()->BundleUri;
+                state->SplitReceipt = std::move(receipt);
+                if (!Skeletal::Detail::AssembleRigSplitWithProbe(state->SplitReceipt->m_Cpu, context, state->Asset,
+                                                                 report.SplitAssembly, nullptr, nullptr,
+                                                                 &state->LogicalPath))
+                {
+                    return Fail(report, Status::AssemblyFailed);
+                }
+                state->SplitReceipt = CompleteRigSplitOwnerReceipt(*state->SplitReceipt, report.SplitAssembly);
+                RigSplitAssetAccess::Attach(*state->Asset, state->SplitReceipt);
+                if (!RigSplitAssetAccess::Matches(*state->Asset, state->SplitReceipt->m_Identity))
+                {
+                    return Fail(report, Status::InvalidCandidate);
+                }
+                if (!Call(probe, Point::AfterAssembly, 0, state->Asset, user, report))
+                {
+                    return false;
+                }
+                if (Session(*context.Registry) != session)
+                {
+                    return Fail(report, Status::SessionChanged);
+                }
+                report.Session = session;
+                report.Status = Status::Success;
+                out.m_State = std::move(state);
+                return true;
+            }
+            catch (...)
+            {
+                return Fail(report, Status::Exception);
+            }
+        }
         static bool Find(const SkeletalAssetCreateContext& context, const C::String& keyText, const C::String& path,
                          const SkeletalPublicationLimits& limits, SkeletalPublishedAsset& out,
-                         SkeletalPublicationReport& report)
+                         SkeletalPublicationReport& report, const RigSplitRequestIdentity* split = nullptr)
         {
             report = {};
             try
@@ -389,12 +459,17 @@ namespace NorvesLib::Core::ResourceIO
                 }
                 auto& r = *context.Registry;
                 NorvesLib::Thread::ScopedLock lock(r.m_Mutex);
-                if (!SessionLocked(r, 0, report))
+                if (split && (!split->GetData() || !split->GetData()->bCanCache || split->GetData()->Key != keyText ||
+                              split->GetData()->BundleUri != path))
+                {
+                    return Fail(report, Status::InvalidRequest);
+                }
+                if (!SessionLocked(r, split ? split->GetData()->Session : 0, report))
                 {
                     return false;
                 }
                 SkeletalPublishedAsset candidate;
-                if (!AcquireLocked(r, key, path, limits, candidate, report))
+                if (!AcquireLocked(r, key, path, limits, candidate, report, split))
                 {
                     return false;
                 }
@@ -418,6 +493,12 @@ namespace NorvesLib::Core::ResourceIO
                     return Fail(report, Status::InvalidRequest);
                 }
                 const auto& s = *prepared.m_State;
+                const auto* split = s.SplitReceipt ? &s.SplitReceipt->m_Identity : nullptr;
+                if (split &&
+                    (!split->GetData() || split->GetData()->Key != keyText || split->GetData()->Session != s.Session))
+                {
+                    return Fail(report, Status::InvalidRequest);
+                }
                 if (!Owner(s.Owner))
                 {
                     return Fail(report, Status::WrongOwnerThread);
@@ -442,7 +523,7 @@ namespace NorvesLib::Core::ResourceIO
                     return false;
                 }
                 SkeletalPublishedAsset candidate;
-                if (AcquireLocked(r, key, s.LogicalPath, limits, candidate, report))
+                if (AcquireLocked(r, key, s.LogicalPath, limits, candidate, report, split))
                 {
                     out = std::move(candidate);
                     return true;
@@ -457,7 +538,10 @@ namespace NorvesLib::Core::ResourceIO
                 {
                     return Fail(report, Status::BudgetExceeded);
                 }
-                if (!Complete(asset, limits.MaxBundleClips) || asset->GetResourcePath() != s.LogicalPath)
+                if (!Complete(asset, limits.MaxBundleClips) || asset->GetResourcePath() != s.LogicalPath ||
+                    (split ? !RigSplitAssetAccess::Matches(*asset, *split)
+                           : (bool(RigSplitAssetAccess::Get(*asset)) || asset->GetMesh()->IsSplitV1() ||
+                              asset->GetSkeleton()->IsSplitV1())))
                 {
                     return false;
                 }
@@ -616,6 +700,31 @@ namespace NorvesLib::Core::ResourceIO
                                     SkeletalPublishedAsset& out, SkeletalPublicationReport& report)
     {
         return SkeletalBundlePublisherAccess::Find(context, key, path, limits, out, report);
+    }
+    bool PrepareRigSplitPublication(C::TSharedPtr<const RigSplitPublicationReceipt> receipt,
+                                    const SkeletalAssetCreateContext& context, SkeletalPreparedPublication& out,
+                                    SkeletalPublicationReport& report)
+    {
+        return SkeletalBundlePublisherAccess::PrepareSplit(std::move(receipt), context, out, report, nullptr, nullptr);
+    }
+    bool Detail::PrepareRigSplitPublicationWithProbe(C::TSharedPtr<const RigSplitPublicationReceipt> receipt,
+                                                     const SkeletalAssetCreateContext& context,
+                                                     SkeletalPreparedPublication& out,
+                                                     SkeletalPublicationReport& report, Probe probe, void* user)
+    {
+        return SkeletalBundlePublisherAccess::PrepareSplit(std::move(receipt), context, out, report, probe, user);
+    }
+    bool FindPublishedRigSplitAsset(const SkeletalAssetCreateContext& context, const RigSplitRequestIdentity& identity,
+                                    const SkeletalPublicationLimits& limits, SkeletalPublishedAsset& out,
+                                    SkeletalPublicationReport& report)
+    {
+        if (!identity.GetData())
+        {
+            report = {};
+            return false;
+        }
+        return SkeletalBundlePublisherAccess::Find(context, identity.GetData()->Key, identity.GetData()->BundleUri,
+                                                   limits, out, report, &identity);
     }
     bool CommitSkeletalPublication(const SkeletalPreparedPublication& prepared, const C::String& key,
                                    const SkeletalPublicationLimits& limits, SkeletalPublishedAsset& out,

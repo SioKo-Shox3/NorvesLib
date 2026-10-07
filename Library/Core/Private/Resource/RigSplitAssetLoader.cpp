@@ -4,37 +4,38 @@ namespace NorvesLib::Core::ResourceIO
 {
     namespace C = Container;
     namespace S = Skeletal;
+    bool IsRigSplitReferenceFormat(const Asset::AssetCookedReference& r, uint32_t role)
+    {
+        if (!r.bHasRigSplitMetadata || r.RigSplitMetadata.Role != role || r.CookedVersion != 1)
+        {
+            return false;
+        }
+        if (!S::IsSplitLogicalPath(r.CookedPackage) || !S::IsSplitLogicalPath(r.EntryName))
+        {
+            return false;
+        }
+        if (role == 1)
+        {
+            return r.Kind == Asset::AssetKind::Skeleton && r.Format == "nvskel.v1.skeleton" &&
+                   r.EntryType == Asset::MakeAssetPackageFourCC('S', 'k', 'e', '1');
+        }
+        if (role == 2)
+        {
+            return r.Kind == Asset::AssetKind::Model && r.Format == "nvskel.v1.skinmesh.pnujiw.u32" &&
+                   r.EntryType == Asset::MakeAssetPackageFourCC('S', 'k', 'm', '1');
+        }
+        return r.Kind == Asset::AssetKind::Animation && r.Format == "nvskel.v1.clips" &&
+               r.EntryType == Asset::MakeAssetPackageFourCC('A', 'n', 'm', '1');
+    }
     namespace
     {
-        bool FormatMatches(const Asset::AssetCookedReference& r, uint32_t role)
-        {
-            if (!r.bHasRigSplitMetadata || r.RigSplitMetadata.Role != role || r.CookedVersion != 1)
-            {
-                return false;
-            }
-            if (!S::IsSplitLogicalPath(r.CookedPackage) || !S::IsSplitLogicalPath(r.EntryName))
-            {
-                return false;
-            }
-            if (role == 1)
-            {
-                return r.Kind == Asset::AssetKind::Skeleton && r.Format == "nvskel.v1.skeleton" &&
-                       r.EntryType == Asset::MakeAssetPackageFourCC('S', 'k', 'e', '1');
-            }
-            if (role == 2)
-            {
-                return r.Kind == Asset::AssetKind::Model && r.Format == "nvskel.v1.skinmesh.pnujiw.u32" &&
-                       r.EntryType == Asset::MakeAssetPackageFourCC('S', 'k', 'm', '1');
-            }
-            return r.Kind == Asset::AssetKind::Animation && r.Format == "nvskel.v1.clips" &&
-                   r.EntryType == Asset::MakeAssetPackageFourCC('A', 'n', 'm', '1');
-        }
         bool CommonMetadata(const Asset::AssetRigSplitMetadata& m, const S::RigTopology& topology)
         {
             return m.Profile == 1 && m.SkeletonId == topology.SkeletonId && m.JointCount == topology.Joints.size();
         }
     } // namespace
-    bool LoadRigSplitForWorker(const RigSplitLoadPlan& plan, S::CookedRigSplitCpuAsset& out, RigSplitLoadReport& report)
+    bool LoadRigSplitForWorker(const RigSplitLoadPlan& plan, S::CookedRigSplitCpuAsset& out, RigSplitLoadReport& report,
+                               RigSplitLoadEvidence* evidence)
     {
         report = {};
         try
@@ -63,6 +64,11 @@ namespace NorvesLib::Core::ResourceIO
                     }
                 }
             }
+            RigSplitLoadEvidence captured;
+            if (evidence)
+            {
+                captured.Entries.reserve(plan.BankPaths.size() + 2);
+            }
             const auto read =
                 [&](const C::AnsiString& path, Asset::AssetKind kind, uint32_t role, Asset::AssetResolveResult& result)
             {
@@ -73,7 +79,7 @@ namespace NorvesLib::Core::ResourceIO
                     report.Status = RigSplitLoadStatus::ResolveRejected;
                     return false;
                 }
-                if (!FormatMatches(reference.Reference, role))
+                if (!IsRigSplitReferenceFormat(reference.Reference, role))
                 {
                     report.Status = RigSplitLoadStatus::FormatRejected;
                     return false;
@@ -93,6 +99,10 @@ namespace NorvesLib::Core::ResourceIO
                 {
                     report.Status = RigSplitLoadStatus::ResolveRejected;
                     return false;
+                }
+                if (evidence)
+                {
+                    captured.Entries.push_back({result.CookedReference, S::RigBytesHash(result.Blob.GetSpan())});
                 }
                 return true;
             };
@@ -193,12 +203,18 @@ namespace NorvesLib::Core::ResourceIO
                 samples += actualSamples;
                 banks.push_back(std::move(bank));
             }
-            if (!S::BindRigSplitV1(skeleton, mesh, {banks.data(), banks.size()}, plan.Policy, out, report.BindingReport,
-                                   plan.Limits))
+            S::CookedRigSplitCpuAsset candidate;
+            if (!S::BindRigSplitV1(skeleton, mesh, {banks.data(), banks.size()}, plan.Policy, candidate,
+                                   report.BindingReport, plan.Limits))
             {
                 report.Status = RigSplitLoadStatus::BindingRejected;
                 return false;
             }
+            if (evidence)
+            {
+                evidence->Entries.swap(captured.Entries);
+            }
+            out = std::move(candidate);
             report.Status = RigSplitLoadStatus::Success;
             return true;
         }

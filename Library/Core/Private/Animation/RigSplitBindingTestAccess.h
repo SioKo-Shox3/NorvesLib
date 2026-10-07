@@ -7,5 +7,5 @@ namespace NorvesLib::Core::Skeletal::Detail
     [[nodiscard]] bool AssembleRigSplitWithProbe(const CookedRigSplitCpuAsset&,
                                                  const ResourceIO::SkeletalAssetCreateContext&,
                                                  Container::TSharedPtr<SkeletalAssetResource>&, RigSplitReport&,
-                                                 RigCreateProbe, void*);
+                                                 RigCreateProbe, void*, const Container::String* bundleUri = nullptr);
 } // namespace NorvesLib::Core::Skeletal::Detail

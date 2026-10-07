@@ -74,6 +74,8 @@ set(PRIVATE_SOURCES
     Private/Resource/RigAuthoring.h
     Private/Resource/RigGltfImportCapture.h
     Private/Resource/RigSplitAssetLoader.cpp
+    Private/Resource/RigSplitPublicationIdentity.cpp
+    Private/Resource/RigSplitPublicationIdentity.h
     Private/Resource/RigSplitAssetLoader.h
     Public/Animation/SkeletalRestPose.h
     Private/Animation/SkeletalJointIndexNative.cpp
@@ -435,6 +437,8 @@ set(PUBLIC_HEADERS
     Public/Animation/SkeletalAnimationSampler.h
     Public/Animation/SkeletalAssetResource.h
     Public/Animation/SkeletalAssetRuntime.h
+    Public/Animation/RigBindingTypes.h
+    Public/Animation/RigSplitAssetRequest.h
     Public/Animation/SkeletonResource.h
     # Scene
     Public/Scene/SceneQuery.h

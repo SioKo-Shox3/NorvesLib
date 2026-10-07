@@ -1,5 +1,6 @@
 ﻿#include "Animation/SkeletalAssetResource.h"
 #include <algorithm>
+#include "Resource/RigSplitPublicationIdentity.h"
 
 namespace NorvesLib::Core
 {
@@ -64,6 +65,7 @@ namespace NorvesLib::Core
 
     void SkeletalAssetResource::Unload()
     {
+        m_SplitReceipt.reset();
         m_Mesh.reset();
         m_Skeleton.reset();
         m_AnimationClip.reset();
@@ -73,7 +75,8 @@ namespace NorvesLib::Core
 
     size_t SkeletalAssetResource::GetMemorySize() const
     {
-        return sizeof(SkeletalAssetResource) + m_Clips.capacity()*sizeof(Container::TSharedPtr<AnimationClipResource>);
+        return ResourceIO::RigSplitAssetAccess::MemorySize(*this) + sizeof(SkeletalAssetResource) +
+               m_Clips.capacity() * sizeof(Container::TSharedPtr<AnimationClipResource>);
     }
 
     void SkeletalAssetResource::SetResources(const Container::TSharedPtr<SkinnedMeshResource>& mesh,
@@ -88,6 +91,7 @@ namespace NorvesLib::Core
         const Container::VariableArray<Container::TSharedPtr<AnimationClipResource>>& clips)
     {
         m_Clips = clips;
+        m_SplitReceipt.reset();
         m_Mesh = mesh;
         m_Skeleton = skeleton;
         m_AnimationClip = m_Clips.empty() ? Container::TSharedPtr<AnimationClipResource>{} : m_Clips.front();
