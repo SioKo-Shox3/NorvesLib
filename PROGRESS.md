@@ -8,8 +8,8 @@ G2は進行中。取り込み基盤と0.2系の実装を終えつつ、材質・
 - GR86: 明示の影響数縮約/CUBICSPLINE焼込/morph dropと診断を接続済み。256関節はGR82 Stage Bと同時。
 - GR32: 0.2のsubmesh/slot/描画/palette共有を接続済み。GPU実受入れは未完。
 - GR79: 材質codec/reader/設定/source/ARM/selector、明示v1 writer/cook/hash/cache、全値staging・1材質Opaque runtimeのCPU/FakeDevice接続・複数primitive/material cookまで実Windowsで受入済み。N>1 runtime、対応外材質の描画、実GPU/実物受入れは未完。
-- GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bは作者rest付きv1 ClipBankの保存・安全束縛・明示override/差report・実姿勢評価までCPU受入済み。Skeleton/SkinnedMeshの分離wire・同snapshot三パス読込・全MATS CPU所有・未登録owner/実姿勢まで受入済み。分離資産のRegistry/runtime公開・Armature/clip-only/256は残る。GR83の実owner/M9経路の明示clip選択もCPU検証済み。
-- GR83/GR84: GR84のBVH source/target FK・名前/座標/回転対応・全sample clip/report・NVSKEL cook/package/実Sampler・Role Profile bytesと実CLI/file依存を実Windows CPUで受入済み。GR83は所有CPUローダ・原子的な一括公開・実workerからownerへのdelegate配送まで受入済みで、実ApplicationProcessor/M9への配線・CPU helper・Game両構成ビルドまで検証済み。Stage Bの分離資産CPUローダは受入済み。分離資産のRegistry/runtime公開、自動rest補正・GPU/実物受入れは未完。
+- GR82: Stage Aの複数clipをcook/読込/Resource/一意名前APIへ接続済み。Stage Bは作者rest付きv1 ClipBankの保存・安全束縛・明示override/差report・実姿勢評価までCPU受入済み。Skeleton/SkinnedMeshの分離wire・同snapshot三パス読込・全MATS CPU所有・未登録owner/実姿勢まで受入済み。分離資産の既存Registry/runtimeへの接続もCPU受入済み。Armature/clip-only/256と要約/CLIは残る。GR83の実owner/M9経路の明示clip選択もCPU検証済み。
+- GR83/GR84: GR84のBVH source/target FK・名前/座標/回転対応・全sample clip/report・NVSKEL cook/package/実Sampler・Role Profile bytesと実CLI/file依存を実Windows CPUで受入済み。GR83は所有CPUローダ・原子的な一括公開・実workerからownerへのdelegate配送まで受入済みで、実ApplicationProcessor/M9への配線・CPU helper・Game両構成ビルドまで検証済み。Stage Bの分離資産CPUローダは受入済み。分離資産も同じRegistry/runtime/ownerへ接続してCPU受入済み。自動rest補正・GPU/実物受入れは未完。
 - GR96: 単体7CLI/79file互換とtexture v1/10file互換を実Windowsで受入済み。textureの管理付き増分公開・journal/recovery・通常CLIと明示復旧まで受入済み。種別横断spec v2・可変inventory・report/予算/jobs同値は未完。
 
 S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了とは扱わない。新規出力へのtexture一括cookと、既存出力を安全に差分更新する完成経路を区別する。
@@ -1105,3 +1105,13 @@ S1〜S8は選定課題の番号であり、S6着手を全工程の6/8完了と�
 
 - 実装候補: 分離要求と全field identity、同read証拠を持つopaque receipt、未登録組立から既存4型公開、同runtimeのworker/ready/delegateを接続した。成功callback内からの再購読も全内容を再照合し、clip改変/receipt消去時は新要求だけを拒否する。legacy入口もsplit childを識別し、receipt消去で別modeへ落とさない。
 - 検証準備: 旧69 cpp、B2/B1 wireと両Sampler/oracleは不変。独立split8・bank8・owner source8をnormal/-Oで合格、YAML・BOM/CRLF・行末とwhitespaceを確認。新publication5caseとruntime8scenario×2 schedulerのDebug/Release常時検査を追加し、実Session pause helperとhandoff待機開始も反証する。Release71、新2 direct Debug、既存cook/CLI/固定captureのnativeはCI待ち。
+
+### GR82 Stage B3のCPU受入（2026-10-07 JST）
+
+- Done: code55831fe8f5563c936f6a9634ed06d7abeffb8b85 / treeb83204ae3963d1d15ec703c8be8df7b14875c17c / run37564096257 attempt1 / job112607753170。分離三資産を既存GR83のworker/ready/handoff/owner四型公開/delegateへ接続した。同じinstanceにlegacyとsplitを混在させ、別queue/sessionを増やしていない。
+- 検証: Release71は旧69のsource/順序を保持し、新publication/runtimeのdirect Debugも成功。publication5case各構成、runtime8scenario×2schedulerの16child各構成/計32。全field要求identity、strictとoverride、Bank順/内容・許容・予算・snapshot世代、全clip変更、完了callback内の再要求、準備故障/取消/Close/Drain/再入と実Session pause外配送を常時CHECKで反証した。
+- 公開契約: 3clipでResource+6/path+1、実typed handles、失敗時の既存pool/records/会計保持、receipt/clip寿命とGC、同骨格内容/異なるMeshのCPU姿勢を確認。成功後の再購読にも共有cache検査を適用し、改変を検出した新subscriberだけを拒否する。有限budgetは一般OOM/RSSや時間上限の保証ではない。
+- 互換: B1/B2 wireと両Sampler/旧69 cppは不変。B1の992byte、B2の704/1360byteとpose、固定4×6095byte、owner20/runtime旧28、関連Debug/finite/Registry、Game両構成build-only、旧89出力/25+15CLI/12metadata/17+29child/GR84別58process・125file/PEを維持した。
+- 証拠: 13比較器×normal/-O計26回でreceipt/stdout一致・stderr空。親自身のreadonly再実行exit0/stderr0、1095payload・488source・82原API・6ZIPを確認。summary SHA256 09be5c1c1e3a38b18f6bcc0739f5a5915927fb918acbefc8da5e80d6293442c1、inventory SHA256 a312fbfa6b5092e2c5d55574f2d0435a10b74201c484d5e20b74e262ce4bf1c4。新しいin-memory状態は固定sourceとWindows CHECKの実行証拠であり、独立した全状態dump再実行とは区別する。
+- Notes: native初回成功、source修正・CI再試行なし。外部比較器の旧定数alias漏れと、封印stdoutをinventory内へ置いたことによる初回hash差は、元script/失敗stderrを保持して補正した。原native/API/ZIP/sourceは変更しない。変更26paths/Library18。CPU公開成功をGPU描画やファイル群transactionの成功として扱わない。
+- 残る境界: Armature/非関節親・作者root frame、clip-only、GR86の256、要約/metadataとCLI/file公開、GPU/DCC/実物品質。別bundleのSkeletonResource wrapper/IDは独立で、内容を共有可能にする契約まで。次は128を保つ明示profileで静的Armature親と作者frameの安全検査を接続する。
