@@ -283,7 +283,7 @@ namespace
         Check(history.Evaluate(MakeHistoryQuery(11u, 0u)) == TemporalAAHistoryDecision::Reuse,
               "直前のフレームに同じ Viewport が書いた履歴は使う");
         Check(history.IsContiguous(MakeHistoryQuery(11u, 0u)), "直前のフレームなら連続");
-        Check(history.FindReprojectionCamera(0u, 7u, 11u) == nullptr,
+        Check(history.FindReprojectionCamera(0u, 7u, 0u, 11u) == nullptr,
               "連続したフレームではパケットの前のカメラをそのまま使う");
 
         // 描画が 11 を飛ばして 12 を描く: 物体の前の変換が履歴のフレーム 10 を指すときだけ使う。
@@ -296,11 +296,11 @@ namespace
         incomplete.bPreviousObjectStateComplete = false;
         Check(history.Evaluate(incomplete) == TemporalAAHistoryDecision::ObjectStateMismatch,
               "付け替えきれなかった物体があれば使わない");
-        const CameraProxy* reprojectionCamera = history.FindReprojectionCamera(0u, 7u, 12u);
+        const CameraProxy* reprojectionCamera = history.FindReprojectionCamera(0u, 7u, 0u, 12u);
         Check(reprojectionCamera != nullptr && reprojectionCamera->PositionX == camera.PositionX &&
                   reprojectionCamera->ProjectionJitterNdcX == 0.0f,
               "飛んだフレームの前のカメラは、履歴を書いたフレームのカメラ（ジッタなし）");
-        Check(history.FindReprojectionCamera(1u, 7u, 12u) == nullptr, "別の Viewport には履歴のカメラを渡さない");
+        Check(history.FindReprojectionCamera(1u, 7u, 0u, 12u) == nullptr, "別の Viewport には履歴のカメラを渡さない");
 
         Check(history.Evaluate(MakeHistoryQuery(10u, 0u)) == TemporalAAHistoryDecision::FrameNotAdvanced,
               "同じフレームをもう一度描くときは使わない");
@@ -310,7 +310,13 @@ namespace
         TemporalAAHistoryQuery query = MakeHistoryQuery(11u, 0u);
         query.CameraId = 8u;
         Check(history.Evaluate(query) == TemporalAAHistoryDecision::CameraChanged, "カメラが替わったら使わない");
-        Check(history.FindReprojectionCamera(0u, 8u, 12u) == nullptr, "替わったカメラには履歴のカメラを渡さない");
+        Check(history.FindReprojectionCamera(0u, 8u, 0u, 12u) == nullptr, "替わったカメラには履歴のカメラを渡さない");
+        query = MakeHistoryQuery(11u, 0u);
+        query.SourceCameraId = 42u;
+        Check(history.Evaluate(query) == TemporalAAHistoryDecision::CameraChanged,
+              "登録 ID が同じでも GameThread 側のカメラが替わったら使わない");
+        Check(history.FindReprojectionCamera(0u, 7u, 42u, 12u) == nullptr,
+              "GameThread 側のカメラが替わったら履歴のカメラを渡さない");
         query = MakeHistoryQuery(11u, 0u);
         query.bHasPreviousCamera = false;
         Check(history.Evaluate(query) == TemporalAAHistoryDecision::PreviousCameraMissing,
@@ -517,7 +523,7 @@ namespace
         Check(history.Evaluate(query) == TemporalAAHistoryDecision::Reuse, "付け替えた 12 は 10 の履歴を使う");
 
         // 今のカメラと前のカメラ（履歴のカメラ）に同じジッタを掛ける（SceneView と同じ）。
-        const CameraProxy* reprojectionCamera = history.FindReprojectionCamera(0u, 7u, 12u);
+        const CameraProxy* reprojectionCamera = history.FindReprojectionCamera(0u, 7u, 0u, 12u);
         Check(reprojectionCamera != nullptr, "飛んだフレームでは履歴のカメラを前のカメラにする");
         if (!reprojectionCamera)
         {

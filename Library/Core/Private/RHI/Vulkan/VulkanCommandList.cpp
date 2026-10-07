@@ -122,6 +122,8 @@ namespace NorvesLib::RHI::Vulkan
             return vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
         case ResourceState::RayTracingStorage:
             return vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
+        case ResourceState::PixelShaderWrite:
+            return vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite;
         case ResourceState::IndirectArgument:
             return vk::AccessFlagBits::eIndirectCommandRead;
         case ResourceState::CopySource:
@@ -130,6 +132,11 @@ namespace NorvesLib::RHI::Vulkan
             return vk::AccessFlagBits::eTransferWrite;
         case ResourceState::HostRead:
             return vk::AccessFlagBits::eHostRead;
+        case ResourceState::GenericRead:
+            // バッファの読み取り全般（頂点・インデックス・定数・storage・間接引数・コピー元）
+            return vk::AccessFlagBits::eVertexAttributeRead | vk::AccessFlagBits::eIndexRead |
+                   vk::AccessFlagBits::eUniformRead | vk::AccessFlagBits::eShaderRead |
+                   vk::AccessFlagBits::eIndirectCommandRead | vk::AccessFlagBits::eTransferRead;
         case ResourceState::Present:
             return {};
         default:
@@ -168,6 +175,8 @@ namespace NorvesLib::RHI::Vulkan
         }
         case ResourceState::UnorderedAccess:
             return vk::PipelineStageFlagBits::eComputeShader;
+        case ResourceState::PixelShaderWrite:
+            return vk::PipelineStageFlagBits::eFragmentShader;
         case ResourceState::RayTracingStorage:
             return bRayTracingPipelineEnabled
                        ? vk::PipelineStageFlagBits::eRayTracingShaderKHR
@@ -179,6 +188,19 @@ namespace NorvesLib::RHI::Vulkan
             return vk::PipelineStageFlagBits::eTransfer;
         case ResourceState::HostRead:
             return vk::PipelineStageFlagBits::eHost;
+        case ResourceState::GenericRead:
+        {
+            vk::PipelineStageFlags stageFlags =
+                vk::PipelineStageFlagBits::eDrawIndirect | vk::PipelineStageFlagBits::eVertexInput |
+                vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader |
+                vk::PipelineStageFlagBits::eComputeShader | vk::PipelineStageFlagBits::eTransfer;
+            if (bRayTracingPipelineEnabled)
+            {
+                stageFlags |= vk::PipelineStageFlagBits::eRayTracingShaderKHR |
+                              vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR;
+            }
+            return stageFlags;
+        }
         case ResourceState::Present:
             return vk::PipelineStageFlagBits::eBottomOfPipe;
         default:
@@ -716,6 +738,39 @@ namespace NorvesLib::RHI::Vulkan
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &m_commandBuffer;
 
+        // 出してある sparse の結び付けの完了を待ってから実行する（結んだタイルを読む描画より前に結び付けを終える）。
+        // タイムラインの最新の値を待つので、送信に失敗しても戻す必要はない。
+        // 描画の完了を通知する値の割り当てと提出は、結び付けの提出と同じミューテックスの下で行う
+        // （タイルを外す結び付けが、この描画の完了を待てるようにする。失敗したときは窓口の破棄で値が戻る）。
+        VulkanDevice::GraphicsSubmitScope submitScope(*m_device);
+        vk::Semaphore sparseBindWait;
+        uint64_t sparseBindWaitValue = 0;
+        const vk::PipelineStageFlags sparseBindWaitStage = vk::PipelineStageFlagBits::eAllCommands;
+        vk::Semaphore renderSignal;
+        uint64_t renderSignalValue = 0;
+        vk::TimelineSemaphoreSubmitInfo sparseBindTimelineInfo{};
+        const bool bSparseBindWait = submitScope.GetSparseBindWait(sparseBindWait, sparseBindWaitValue);
+        const bool bRenderSignal = submitScope.AcquireRenderSignal(renderSignal, renderSignalValue);
+        if (bSparseBindWait)
+        {
+            sparseBindTimelineInfo.waitSemaphoreValueCount = 1;
+            sparseBindTimelineInfo.pWaitSemaphoreValues = &sparseBindWaitValue;
+            submitInfo.waitSemaphoreCount = 1;
+            submitInfo.pWaitSemaphores = &sparseBindWait;
+            submitInfo.pWaitDstStageMask = &sparseBindWaitStage;
+        }
+        if (bRenderSignal)
+        {
+            sparseBindTimelineInfo.signalSemaphoreValueCount = 1;
+            sparseBindTimelineInfo.pSignalSemaphoreValues = &renderSignalValue;
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = &renderSignal;
+        }
+        if (bSparseBindWait || bRenderSignal)
+        {
+            submitInfo.pNext = &sparseBindTimelineInfo;
+        }
+
         vk::Queue queue = m_device->GetGraphicsQueue();
 #if NORVES_ENABLE_STATS
         uint64_t submittedSerial = 0u;
@@ -736,7 +791,12 @@ namespace NorvesLib::RHI::Vulkan
                 },
                 [&]()
                 {
-                    return queue.submit(1, &submitInfo, m_fence) == vk::Result::eSuccess;
+                    const bool bSubmitted = queue.submit(1, &submitInfo, m_fence) == vk::Result::eSuccess;
+                    if (bSubmitted)
+                    {
+                        submitScope.Commit();
+                    }
+                    return bSubmitted;
                 },
                 submittedSerial);
         if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed)
@@ -756,6 +816,7 @@ namespace NorvesLib::RHI::Vulkan
         {
             throw std::runtime_error("コマンドの送信に失敗しました");
         }
+        submitScope.Commit();
 #endif
 
         CommitPendingAccelerationStructureBuilds(m_currentFrameIndex);
@@ -790,6 +851,16 @@ namespace NorvesLib::RHI::Vulkan
         for (const auto &attachment : desc.colorAttachments)
         {
             VkClearValue clearValue = {};
+            if (IsUnsignedIntegerFormat(attachment.format))
+            {
+                // 整数形式の添付は uint32 の共用体の側で消す（float32 で渡すと値が壊れる）。
+                for (uint32_t component = 0; component < 4; ++component)
+                {
+                    clearValue.color.uint32[component] = attachment.clearColorUint[component];
+                }
+                clearValues.push_back(*reinterpret_cast<vk::ClearValue *>(&clearValue));
+                continue;
+            }
             clearValue.color.float32[0] = attachment.clearColor[0];
             clearValue.color.float32[1] = attachment.clearColor[1];
             clearValue.color.float32[2] = attachment.clearColor[2];
@@ -1096,6 +1167,23 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanCommandList::Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ)
     {
         m_commandBuffer.dispatch(threadGroupCountX, threadGroupCountY, threadGroupCountZ);
+    }
+
+    bool VulkanCommandList::DispatchIndirect(BufferPtr indirectBuffer, uint64_t offset)
+    {
+        // VkDispatchIndirectCommand（uint32_t x 3）の大きさ。offset は 4 の倍数で、引数がバッファに収まること。
+        // バッファは IndirectBuffer の用途で作られていること（VUID-vkCmdDispatchIndirect-buffer-02709）
+        constexpr uint64_t DispatchIndirectCommandBytes = 3u * sizeof(uint32_t);
+        auto vkBuffer = DynamicPointerCast<VulkanBuffer>(indirectBuffer);
+        if (!vkBuffer || (vkBuffer->GetUsage() & ResourceUsage::IndirectBuffer) != ResourceUsage::IndirectBuffer ||
+            (offset % 4u) != 0u || offset > vkBuffer->GetSize() ||
+            vkBuffer->GetSize() - offset < DispatchIndirectCommandBytes)
+        {
+            return false;
+        }
+
+        m_commandBuffer.dispatchIndirect(vkBuffer->GetVkBuffer(), offset);
+        return true;
     }
 
     bool VulkanCommandList::BuildAccelerationStructure(const AccelerationStructureBuildDesc& desc)
@@ -1476,6 +1564,63 @@ namespace NorvesLib::RHI::Vulkan
             vkDst->GetVkBuffer(),
             1,
             &region);
+    }
+
+    namespace
+    {
+        // 矩形コピーの領域を Vulkan の記述へ変換する。バッファ側は行を詰めて並べる。
+        vk::BufferImageCopy MakeBufferImageCopyRegion(const TextureRegionCopy& region)
+        {
+            vk::BufferImageCopy copy;
+            copy.bufferOffset = region.BufferOffset;
+            copy.bufferRowLength = 0;
+            copy.bufferImageHeight = 0;
+            copy.imageSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+            copy.imageSubresource.mipLevel = region.MipLevel;
+            copy.imageSubresource.baseArrayLayer = region.ArrayIndex;
+            copy.imageSubresource.layerCount = 1;
+            copy.imageOffset = vk::Offset3D{static_cast<int32_t>(region.OffsetX), static_cast<int32_t>(region.OffsetY), 0};
+            copy.imageExtent = vk::Extent3D{region.Width, region.Height, 1};
+            return copy;
+        }
+    } // namespace
+
+    bool VulkanCommandList::CopyBufferToTextureRegion(BufferPtr src, TexturePtr dst, const TextureRegionCopy& region)
+    {
+        auto vkSrc = DynamicPointerCast<VulkanBuffer>(src);
+        auto vkDst = DynamicPointerCast<VulkanTexture>(dst);
+        if (!vkSrc || !vkDst || region.Width == 0 || region.Height == 0)
+        {
+            return false;
+        }
+
+        const vk::BufferImageCopy copy = MakeBufferImageCopyRegion(region);
+        m_commandBuffer.copyBufferToImage(
+            vkSrc->GetVkBuffer(),
+            vkDst->GetVkImage(),
+            vk::ImageLayout::eTransferDstOptimal,
+            1,
+            &copy);
+        return true;
+    }
+
+    bool VulkanCommandList::CopyTextureRegionToBuffer(TexturePtr src, BufferPtr dst, const TextureRegionCopy& region)
+    {
+        auto vkSrc = DynamicPointerCast<VulkanTexture>(src);
+        auto vkDst = DynamicPointerCast<VulkanBuffer>(dst);
+        if (!vkSrc || !vkDst || region.Width == 0 || region.Height == 0)
+        {
+            return false;
+        }
+
+        const vk::BufferImageCopy copy = MakeBufferImageCopyRegion(region);
+        m_commandBuffer.copyImageToBuffer(
+            vkSrc->GetVkImage(),
+            vk::ImageLayout::eTransferSrcOptimal,
+            vkDst->GetVkBuffer(),
+            1,
+            &copy);
+        return true;
     }
 
     void VulkanCommandList::CopyTexture(TexturePtr src, TexturePtr dst,

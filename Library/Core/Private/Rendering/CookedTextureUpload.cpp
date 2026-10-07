@@ -1,4 +1,4 @@
-#include "CookedTextureUpload.h"
+﻿#include "CookedTextureUpload.h"
 
 #include <exception>
 #include <limits>
@@ -51,6 +51,63 @@ namespace NorvesLib::Core::Rendering
                     return true;
                 }
                 return false;
+
+            case CookedTexturePixelFormat::R16UNorm:
+                if (colorSpace != CookedTextureColorSpace::Linear)
+                {
+                    return false;
+                }
+                outTextureFormat = TextureCreateInfo::Format::R16_UNORM;
+                outRHIFormat = RHI::Format::R16_UNORM;
+                return true;
+
+            case CookedTexturePixelFormat::BC1:
+                if (colorSpace == CookedTextureColorSpace::SRGB)
+                {
+                    outTextureFormat = TextureCreateInfo::Format::BC1_SRGB;
+                    outRHIFormat = RHI::Format::BC1_SRGB;
+                    return true;
+                }
+                if (colorSpace == CookedTextureColorSpace::Linear)
+                {
+                    outTextureFormat = TextureCreateInfo::Format::BC1_UNORM;
+                    outRHIFormat = RHI::Format::BC1_UNORM;
+                    return true;
+                }
+                return false;
+
+            case CookedTexturePixelFormat::BC4:
+                if (colorSpace != CookedTextureColorSpace::Linear)
+                {
+                    return false;
+                }
+                outTextureFormat = TextureCreateInfo::Format::BC4_UNORM;
+                outRHIFormat = RHI::Format::BC4_UNORM;
+                return true;
+
+            case CookedTexturePixelFormat::BC5:
+                if (colorSpace != CookedTextureColorSpace::Linear)
+                {
+                    return false;
+                }
+                outTextureFormat = TextureCreateInfo::Format::BC5_UNORM;
+                outRHIFormat = RHI::Format::BC5_UNORM;
+                return true;
+
+            case CookedTexturePixelFormat::BC7:
+                if (colorSpace == CookedTextureColorSpace::SRGB)
+                {
+                    outTextureFormat = TextureCreateInfo::Format::BC7_SRGB;
+                    outRHIFormat = RHI::Format::BC7_SRGB;
+                    return true;
+                }
+                if (colorSpace == CookedTextureColorSpace::Linear)
+                {
+                    outTextureFormat = TextureCreateInfo::Format::BC7_UNORM;
+                    outRHIFormat = RHI::Format::BC7_UNORM;
+                    return true;
+                }
+                return false;
             }
 
             return false;
@@ -92,9 +149,10 @@ namespace NorvesLib::Core::Rendering
             return CookedTextureUploadStatus::Success;
         }
 
+        // ミップごとの行ピッチ・スライスピッチを、形式のブロック単位（BC は 4x4 画素、端は切り上げ）で求め、
+        // 実際のミップのバイト数が一致するかを確かめる。
         CookedTextureUploadStatus ValidateMipLayout(
             const Asset::CookedTextureData &texture,
-            size_t bytesPerPixel,
             Container::VariableArray<uint32_t> &outRowPitches,
             Container::VariableArray<uint32_t> &outSlicePitches)
         {
@@ -117,10 +175,15 @@ namespace NorvesLib::Core::Rendering
                 }
 
                 uint64_t rowPitch64 = 0;
+                uint64_t rowCount64 = 0;
+                if (!Asset::ComputeCookedTextureMipLayout(texture.PixelFormat, mip.Width, mip.Height, rowPitch64, rowCount64))
+                {
+                    return CookedTextureUploadStatus::UnsupportedFormat;
+                }
+
                 uint64_t slicePitch64 = 0;
                 uint64_t expectedMipBytes64 = 0;
-                if (!MultiplyChecked(mip.Width, bytesPerPixel, rowPitch64) ||
-                    !MultiplyChecked(rowPitch64, mip.Height, slicePitch64) ||
+                if (!MultiplyChecked(rowPitch64, rowCount64, slicePitch64) ||
                     !MultiplyChecked(slicePitch64, texture.LayerCount, expectedMipBytes64))
                 {
                     return CookedTextureUploadStatus::IntegerOverflow;
@@ -150,9 +213,10 @@ namespace NorvesLib::Core::Rendering
     CookedTextureUploadStatus BuildCookedTextureCreateInfo(
         const Asset::CookedTextureData &texture,
         const Container::String &debugName,
-        TextureCreateInfo &outCreateInfo)
+        TextureCreateInfo &outCreateInfo,
+        bool bRequireSourceBlob)
     {
-        if (!texture.SourceBlob.IsValid())
+        if (bRequireSourceBlob && !texture.SourceBlob.IsValid())
         {
             return CookedTextureUploadStatus::InvalidTexture;
         }
@@ -203,16 +267,9 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
-        const size_t bytesPerPixel = Asset::GetCookedTextureBytesPerPixel(texture.PixelFormat);
-        if (bytesPerPixel == 0)
-        {
-            result.Status = CookedTextureUploadStatus::UnsupportedFormat;
-            return result;
-        }
-
         Container::VariableArray<uint32_t> rowPitches;
         Container::VariableArray<uint32_t> slicePitches;
-        result.Status = ValidateMipLayout(texture, bytesPerPixel, rowPitches, slicePitches);
+        result.Status = ValidateMipLayout(texture, rowPitches, slicePitches);
         if (result.Status != CookedTextureUploadStatus::Success)
         {
             return result;

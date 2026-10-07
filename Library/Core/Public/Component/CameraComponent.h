@@ -132,6 +132,16 @@ namespace NorvesLib::Core::Component
         Rendering::CameraAntiAliasingMode GetAntiAliasingMode() const { return m_AntiAliasingMode; }
 
         /**
+         * @brief トーンマップ後のグレーディングのコントラストを設定します。
+         *
+         * 負は View のトーンマップ設定の値（既定 1.05）を使います。コントラストは表示のリニア値を 0.5 を中心に
+         * 伸ばして 0〜1 へ切るため、1 より大きいと暗部が黒へ切れます。
+         * @return 有限ならtrue。
+         */
+        bool SetGradingContrast(float contrast);
+        float GetGradingContrast() const { return m_GradingContrast; }
+
+        /**
          * @brief 被写界深度のピント距離（m）を設定します。0はピンホール（被写界深度なし）。
          * @return 有限で0以上ならtrue。
          */
@@ -166,6 +176,7 @@ namespace NorvesLib::Core::Component
         float m_FocusDistance = 0.0f;
         Rendering::CameraExposureMode m_ExposureMode = Rendering::CameraExposureMode::Manual;
         Rendering::CameraAntiAliasingMode m_AntiAliasingMode = Rendering::CameraAntiAliasingMode::FXAA;
+        float m_GradingContrast = -1.0f;
 
     private:
         void SetDefaults();

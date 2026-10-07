@@ -11,6 +11,10 @@ namespace NorvesLib::Tools::AssetCook
     // argvに依存しない単体cook要求。CLIの明示指定有無はCLI解析側で検査する。
     struct SingleAssetCookRequest
     {
+        Core::Container::AnsiString Usage, Quality, Generate;
+        std::filesystem::path OrmAoPath, OrmRoughnessPath, OrmMetallicPath;
+        bool bFlipNormalY = false;
+        uint32_t FallbackMinTriangles = 0;
         std::filesystem::path InputPath, PackagePath, ManifestPath;
         Core::Container::AnsiString LogicalPath, Kind, EntryName, EntryTypeText, Format, Variant;
         std::filesystem::path ImportSettingsOverridePath;

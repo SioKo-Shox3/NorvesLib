@@ -13,7 +13,7 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 cameraPosition;
     vec4 emissiveChromaticityAndLuminanceNits;
     vec4 pomParams;
-    vec4 velocityParams;
+    vec4 frameParams;
 } mvp;
 
 layout(std430, set = 0, binding = 8) readonly buffer SkinningMatrices

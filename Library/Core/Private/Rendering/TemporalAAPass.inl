@@ -362,8 +362,7 @@ namespace NorvesLib::Core::Rendering
         TemporalAAHistoryQuery historyQuery;
         historyQuery.FrameNumber = context.FrameNumber;
         historyQuery.ViewportId = GetViewportId(context);
-        historyQuery.CameraId = camera->CameraId;
-        historyQuery.PreExposure = camera->PreExposure;
+        SetTemporalAAHistoryCamera(historyQuery, *camera);
         historyQuery.bHasPreviousCamera = previousCamera != nullptr;
         historyQuery.PreviousObjectStateFrameNumber = context.PreviousObjectStateFrameNumber;
         historyQuery.bPreviousObjectStateComplete = context.bPreviousObjectStateComplete;

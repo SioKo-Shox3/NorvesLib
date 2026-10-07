@@ -191,9 +191,11 @@ namespace
 int main()
 {
     static_assert(CookedMeshFormatV0::HeaderSize==256 && CookedMeshFormatV0::MaterialRecordSize==64 && CookedMeshFormatV0::ClusterRecordSize==80);
-    static_assert(CookedMeshFormatV1::MaterialRecordSize==CookedMaterialFormatV1::RecordSize && CookedMeshFormatV1::ClusterRecordSize==128);
-    static_assert(CookedMeshFormatV1::ClusterRecordOffset::SelfBoundsCenterX==80 && CookedMeshFormatV1::ClusterRecordOffset::GroupId==116 &&
-        CookedMeshFormatV1::ClusterRecordOffset::Reserved1==120);
+    static_assert(CookedMeshClusteredFormatV1::MaterialRecordSize == CookedMaterialFormatV1::RecordSize &&
+                  CookedMeshClusteredFormatV1::ClusterRecordSize == 128);
+    static_assert(CookedMeshClusteredFormatV1::ClusterRecordOffset::SelfBoundsCenterX == 80 &&
+                  CookedMeshClusteredFormatV1::ClusterRecordOffset::GroupId == 116 &&
+                  CookedMeshClusteredFormatV1::ClusterRecordOffset::Reserved1 == 120);
     CookedMeshWireEnvelope out;
     assert(ValidateCookedMeshWireEnvelope(V0,out)==Status::Success && out.VersionMajor==0 && out.Sections[2].Offset==384 && out.ClusterRecordSize==80);
     assert(ValidateCookedMeshWireEnvelope(V1,out)==Status::Success && out.VersionMajor==1 && out.Sections[2].Offset==448 && out.MaterialRecordSize==128);

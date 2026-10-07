@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Asset/CookedTextureFormat.h"
 #include "Rendering/GpuResourceTypes.h"
@@ -34,10 +34,13 @@ namespace NorvesLib::Core::Rendering
         }
     };
 
+    // bRequireSourceBlob が false のときは、ソースのバイト列を持たないメタデータだけの解析結果（範囲読みの
+    // ReadCookedTextureLayout の結果）からも作成情報を作る。
     [[nodiscard]] CookedTextureUploadStatus BuildCookedTextureCreateInfo(
         const Asset::CookedTextureData &texture,
         const Container::String &debugName,
-        TextureCreateInfo &outCreateInfo);
+        TextureCreateInfo &outCreateInfo,
+        bool bRequireSourceBlob = true);
 
     [[nodiscard]] CookedTextureUploadResult CreateAndUploadCookedTexture(
         RHI::IDevice *device,

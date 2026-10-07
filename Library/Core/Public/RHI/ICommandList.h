@@ -34,6 +34,24 @@ namespace NorvesLib::RHI
     };
 
     /**
+     * @brief バッファとテクスチャの間でコピーする矩形（1ミップ・1配列レイヤー）
+     *
+     * 位置と大きさは texel 単位。ブロック圧縮の形式では、位置はブロックの倍数、大きさはブロックの倍数
+     * （ミップの端まで届くときは端で切ってよい）にする。バッファ側は行を詰めて並べる。
+     */
+    struct TextureRegionCopy
+    {
+        uint32_t MipLevel = 0;
+        uint32_t ArrayIndex = 0;
+        uint32_t OffsetX = 0;
+        uint32_t OffsetY = 0;
+        uint32_t Width = 0;
+        uint32_t Height = 0;
+        uint64_t BufferOffset = 0;
+    };
+
+
+    /**
      * @brief コマンドリストインターフェース
      * GPUに送信するコマンドをバッチ処理するためのオブジェクトです。
      */
@@ -349,6 +367,26 @@ namespace NorvesLib::RHI
         virtual void Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) = 0;
 
         /**
+         * @brief コンピュートシェーダーの間接ディスパッチ
+         *
+         * GPU 側のバッファから VkDispatchIndirectCommand（x・y・z のスレッドグループ数。3 つの uint32_t）を読んで
+         * ディスパッチします。引数のバッファは ResourceUsage::IndirectBuffer で作り、書き込んだ後は
+         * ResourceState::IndirectArgument か GenericRead（どちらも間接引数の読み取りの段とアクセスを含む）へ遷移させてください。
+         * 引数の各成分は maxComputeWorkGroupCount を超えてはいけません（x は保証される最小値 65535 まで）。
+         * 対応しないコマンドリスト（既定の実装）は何も記録せず false を返します。
+         *
+         * @param indirectBuffer 間接引数バッファ
+         * @param offset バッファ内のオフセット（バイト。4 の倍数。引数 12 バイトがバッファに収まること）
+         * @return 記録したら true。引数が不正（バッファが無い・ResourceUsage::IndirectBuffer が無い・オフセットが 4 の倍数でない・範囲外）か未対応なら false で何も記録しない
+         */
+        virtual bool DispatchIndirect(BufferPtr indirectBuffer, uint64_t offset)
+        {
+            (void)indirectBuffer;
+            (void)offset;
+            return false;
+        }
+
+        /**
          * @brief TLASのBuildコマンドを記録
          * @param desc 構築内容
          * @return RT未対応、入力不正、または記録失敗時はfalse
@@ -409,6 +447,37 @@ namespace NorvesLib::RHI
         virtual void CopyBufferToTexture(BufferPtr src, TexturePtr dst,
                                          uint32_t width, uint32_t height, uint64_t bufferOffset = 0,
                                          uint32_t mipLevel = 0, uint32_t arrayIndex = 0) = 0;
+
+        /**
+         * @brief バッファからテクスチャの矩形へのコピー（タイルなどの部分書き込み用）
+         *
+         * 記録時点でテクスチャが TransferDst の状態であることが前提（呼び出し側が TextureBarrier で遷移する）。
+         * @param src コピー元バッファ（領域は BufferOffset から行を詰めて並ぶ）
+         * @param dst コピー先テクスチャ
+         * @param region コピー先の矩形とバッファ内のオフセット
+         * @return 記録できたら true。未対応の実装は false
+         */
+        virtual bool CopyBufferToTextureRegion(BufferPtr src, TexturePtr dst, const TextureRegionCopy& region)
+        {
+            (void)src;
+            (void)dst;
+            (void)region;
+            return false;
+        }
+
+        /**
+         * @brief テクスチャの矩形からバッファへのコピー（部分書き込みの読み戻し用）
+         *
+         * 記録時点でテクスチャが TransferSrc の状態であることが前提。
+         * @return 記録できたら true。未対応の実装は false
+         */
+        virtual bool CopyTextureRegionToBuffer(TexturePtr src, BufferPtr dst, const TextureRegionCopy& region)
+        {
+            (void)src;
+            (void)dst;
+            (void)region;
+            return false;
+        }
 
         /**
          * @brief テクスチャからバッファへのコピー

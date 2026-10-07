@@ -135,6 +135,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t FrameNumber = 0u;
         uint32_t ViewportId = 0u;
         uint64_t CameraId = 0u;
+        // GameThread 側のカメラの識別子（CameraProxy::SourceCameraId）。登録 ID が同じでも替われば切り替え
+        uint64_t SourceCameraId = 0u;
         float PreExposure = 0.0f;
         // velocity の基準にする前のカメラがあるか
         bool bHasPreviousCamera = false;
@@ -143,6 +145,14 @@ namespace NorvesLib::Core::Rendering
         uint64_t PreviousObjectStateFrameNumber = 0u;
         bool bPreviousObjectStateComplete = false;
     };
+
+    /** @brief 履歴の問い合わせへ、今のフレームのカメラの識別子と露出を写す。 */
+    inline void SetTemporalAAHistoryCamera(TemporalAAHistoryQuery& query, const CameraProxy& camera)
+    {
+        query.CameraId = camera.CameraId;
+        query.SourceCameraId = camera.SourceCameraId;
+        query.PreExposure = camera.PreExposure;
+    }
 
     /**
      * @brief TAA の履歴を書いたフレーム・Viewport・カメラ・露出を覚え、次に描くフレームで使えるかを決める
@@ -177,7 +187,7 @@ namespace NorvesLib::Core::Rendering
             {
                 return TemporalAAHistoryDecision::FrameNotAdvanced;
             }
-            if (query.CameraId != m_CameraId)
+            if (query.CameraId != m_CameraId || query.SourceCameraId != m_SourceCameraId)
             {
                 return TemporalAAHistoryDecision::CameraChanged;
             }
@@ -205,13 +215,15 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 飛んだフレームで velocity の前のカメラにする、履歴を書いたフレームのカメラ
          *
-         * 同じ Viewport・同じカメラの履歴があり、frameNumber が履歴の直後より後のときだけ返す（ジッタなし）。
-         * それ以外（連続したフレームを含む）は null で、パケットの前のカメラをそのまま使う。
+         * 同じ Viewport・同じカメラ（登録 ID と GameThread 側の識別子の両方）の履歴があり、frameNumber が
+         * 履歴の直後より後のときだけ返す（ジッタなし）。それ以外（連続したフレームを含む）は null で、
+         * パケットの前のカメラをそのまま使う。
          */
-        const CameraProxy* FindReprojectionCamera(uint32_t viewportId, uint64_t cameraId, uint64_t frameNumber) const
+        const CameraProxy* FindReprojectionCamera(uint32_t viewportId, uint64_t cameraId, uint64_t sourceCameraId,
+                                                  uint64_t frameNumber) const
         {
             if (!m_bValid || viewportId != m_ViewportId || cameraId != m_CameraId ||
-                frameNumber <= m_FrameNumber + 1u)
+                sourceCameraId != m_SourceCameraId || frameNumber <= m_FrameNumber + 1u)
             {
                 return nullptr;
             }
@@ -225,6 +237,7 @@ namespace NorvesLib::Core::Rendering
             m_FrameNumber = query.FrameNumber;
             m_ViewportId = query.ViewportId;
             m_CameraId = query.CameraId;
+            m_SourceCameraId = query.SourceCameraId;
             m_PreExposure = query.PreExposure;
             m_Camera = camera;
             m_Camera.ProjectionJitterNdcX = 0.0f;
@@ -265,6 +278,7 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_FrameNumber = 0u;
         uint32_t m_ViewportId = 0u;
         uint64_t m_CameraId = 0u;
+        uint64_t m_SourceCameraId = 0u;
         float m_PreExposure = 0.0f;
         CameraProxy m_Camera;
     };

@@ -65,6 +65,16 @@ namespace Game::GameModes
         {
             ImGui::Checkbox("TAA（切ると FXAA）", m_pTemporalAA);
         }
+        // レンズの効果（画面の端ほど強い色収差と、明るいブルームに浮くレンズダート）。
+        if (m_pLensEffects != nullptr)
+        {
+            ImGui::Checkbox("レンズの効果（色収差・ダート）", m_pLensEffects);
+        }
+        // 見た目の3D LUT（暖かみのある映画調）。
+        if (m_pLookLut != nullptr)
+        {
+            ImGui::Checkbox("見た目のLUT（暖かみのある映画調）", m_pLookLut);
+        }
         // 自動露出の測定(RenderThread が読み戻した値)。手動のときも測定は続くので表示する。
         if (m_pAutoExposureMeasurement != nullptr)
         {

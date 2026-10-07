@@ -44,6 +44,23 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief Neural BRDFウェイトファイルパス（空の場合は解析的BRDFを使用） */
         Container::String NeuralBRDFWeightPath;
+
+        /**
+         * @brief 接触影のレイの長さ（m）。0以下で無効
+         *
+         * 影を掛ける方向光（空の太陽）とキューブシャドウを持つ点光源について、GBufferの深度を
+         * 光の方向へこの長さだけ画面空間で辿り、CSM・キューブシャドウの解像度では出ない接地部の
+         * 細い影を影の結果へ掛けます。
+         */
+        float ContactShadowLength = 0.3f;
+
+        /**
+         * @brief 接触影で、深度バッファの面の奥にこの厚さ（m）までの点を遮られたとみなす
+         *
+         * 実際の厚さは、この値・レイの1段の長さ・受け手の位置の1画素の世界の幅の最大です。
+         * 薄くすると、見えない側の面から物体へ入るレイ（逆光の接地部など）を見落とします。
+         */
+        float ContactShadowThickness = 0.3f;
     };
 
     /**
@@ -65,6 +82,9 @@ namespace NorvesLib::Core::Rendering
      * 出力:
      * - "SceneColor"       : HDRライティング結果 (R16G16B16A16_FLOAT)
      * - "SceneDepth"       : 深度のコピー（GBuffer_Depthのエイリアス）
+     * - "LightingIndirectSpecular"    : SceneColorへ足した環境光の鏡面反射（露出後、R16G16B16A16_FLOAT）
+     * - "LightingSpecularReflectance" : その反射率（鏡面の遮蔽込み、R8G8B8A8_UNORM）。SSRPassが
+     *                                   環境光の鏡面反射を画面の反射へ置き換えるのに使う
      *
      * ライトデータはSceneViewのLightProxyから収集してSSBOにパックします。
      */
@@ -160,6 +180,15 @@ namespace NorvesLib::Core::Rendering
         RHI::ITexture* GetSceneColorTexture() const { return m_SceneColorTexture.get(); }
         RGResourceHandle GetSceneColorHandle() const { return m_SceneColorHandle.ToResourceHandle(); }
 
+        /**
+         * @brief SceneColorへ足した環境光の鏡面反射（露出後）と、その反射率の出力
+         */
+        RGResourceHandle GetIndirectSpecularHandle() const { return m_IndirectSpecularHandle.ToResourceHandle(); }
+        RGResourceHandle GetSpecularReflectanceHandle() const
+        {
+            return m_SpecularReflectanceHandle.ToResourceHandle();
+        }
+
     private:
         friend struct DDGIProbeRayQueryVulkanTestAccess;
         friend struct RTGIDiffuseIndirectVulkanTestAccess;
@@ -182,12 +211,22 @@ namespace NorvesLib::Core::Rendering
         bool EnsureLightArrayBufferCapacity(uint32_t requiredLightCount);
         uint32_t GetLightArrayBufferSizeBytes() const;
 
+        // ライティングの描画先（MRTの3枚。順にシェーダーの出力 location 0・1・2）
+        struct LightingOutputTargets
+        {
+            RHI::TexturePtr SceneColor;
+            RHI::TexturePtr IndirectSpecular;
+            RHI::TexturePtr SpecularReflectance;
+        };
+
         uint32_t ResolveLightingWidth(const ViewRenderContext& context) const;
         uint32_t ResolveLightingHeight(const ViewRenderContext& context) const;
         bool CreateLightingResources(uint32_t width, uint32_t height, ViewRenderContext& context);
+        // 旧経路（RenderGraphを通らない）で使う、SceneColorと環境光の鏡面反射の出力を作る
+        bool CreateLegacyLightingOutputs(uint32_t width, uint32_t height, LightingOutputTargets& outTargets) const;
         bool PrepareLightingOutput(uint32_t width,
                                    uint32_t height,
-                                   const RHI::TexturePtr& sceneColorTexture,
+                                   const LightingOutputTargets& targets,
                                    bool bUseRenderGraphInitialState,
                                    ViewRenderContext& context);
         struct AttachmentSignature
@@ -207,6 +246,8 @@ namespace NorvesLib::Core::Rendering
         struct RenderPassSignature
         {
             AttachmentSignature SceneColor;
+            AttachmentSignature IndirectSpecular;
+            AttachmentSignature SpecularReflectance;
             bool bValid = false;
         };
 
@@ -216,12 +257,12 @@ namespace NorvesLib::Core::Rendering
                                        const RenderPassSignature& rhs) const;
         RenderPassSignature CreateLightingRenderPassSignature(uint32_t width,
                                                               uint32_t height,
-                                                              const RHI::TexturePtr& sceneColorTexture,
+                                                              const LightingOutputTargets& targets,
                                                               bool bUseRenderGraphInitialState) const;
         bool EnsureLightingRenderPass(const RenderPassSignature& signature);
         bool EnsureLightingFramebuffer(uint32_t width,
                                        uint32_t height,
-                                       const RHI::TexturePtr& sceneColorTexture);
+                                       const LightingOutputTargets& targets);
         bool CreateLightingDescriptorSet(RHI::DescriptorSetPtr& outDescriptorSet);
         bool EnsureLightingDescriptorSet();
         bool EnsureLightingPipeline();
@@ -258,7 +299,7 @@ namespace NorvesLib::Core::Rendering
                                  const RHI::TexturePtr& normalTexture,
                                  const RHI::TexturePtr& materialTexture);
         void RegisterOutputs(ViewRenderContext& context,
-                             const RHI::TexturePtr& sceneColorTexture,
+                             const LightingOutputTargets& targets,
                              const RHI::TexturePtr& depthTexture) const;
         bool TryEnqueueNativeTransitionPass(ViewRenderContext& context) const;
 
@@ -284,7 +325,11 @@ namespace NorvesLib::Core::Rendering
 
         // 出力テクスチャ（Device::CreateTextureで作成、自己所有）
         RHI::TexturePtr m_SceneColorTexture;
+        RHI::TexturePtr m_IndirectSpecularTexture;
+        RHI::TexturePtr m_SpecularReflectanceTexture;
         RGTextureHandle m_SceneColorHandle;
+        RGTextureHandle m_IndirectSpecularHandle;
+        RGTextureHandle m_SpecularReflectanceHandle;
         RGResourceHandle m_GBufferAlbedoHandle;
         RGResourceHandle m_GBufferNormalHandle;
         RGResourceHandle m_GBufferMaterialHandle;
@@ -351,12 +396,24 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_RTGIHistoryLightRevision = 0;
         RTGIRayQueryCapability m_RTGIHistoryCapability;
         uint32_t m_RTGIHistoryLightWeightLimitedFrames = 0;
-        /** @brief 視点（逆ビュー射影・位置）とレイトレーシングのinstanceの前フレームの署名 */
+        /** @brief 履歴の放射輝度に掛かっているプリエクスポージャ（露出が変わったら比で掛け直す） */
+        float m_RTGIHistoryPreExposure = 1.0f;
+        /** @brief 直近に記録した間接光の出どころ（RTGIIndirectLightingSource。0xFFは未記録） */
+        uint8_t m_LoggedIndirectLightingSource = 0xFFu;
+        /** @brief 視点（ジッタを除いた逆ビュー射影・位置）とレイトレーシングのinstanceの前フレームの署名 */
         uint64_t m_RTGIStaticSignature = 0;
         /** @brief 視点・光源・シーンが変わらなかった連続フレーム数 */
         uint32_t m_RTGIStaticFrames = 0;
         /** @brief 直近のdispatchで使った画素ごとの履歴の年齢の上限 */
         uint32_t m_RTGIHistoryAgeCap = RTGIHistoryMaximumAge;
+        /**
+         * @brief RTGIの低食い違い列の番号。描画フレーム番号が変わったdispatchごとに1ずつ進め、同じ描画フレーム番号の
+         * dispatchは同じ列の番号を使う（描画フレーム番号は1回の描画の間に不規則に複数進むことがある）。
+         */
+        uint32_t m_RTGISampleIndex = 0;
+        /** @brief m_RTGISampleIndex を最後に進めたときの描画フレーム番号 */
+        uint64_t m_RTGISampleFrameNumber = 0;
+        bool m_bRTGISampleFrameNumberValid = false;
         bool m_bRTGIStaticSignatureValid = false;
         bool m_bRTGIHistoryValid = false;
         bool m_bRTGIHistoryFrameNumberValid = false;
@@ -431,6 +488,8 @@ namespace NorvesLib::Core::Rendering
         bool m_bUsingRenderGraphResources = false;
         bool m_bRenderPassUsesRenderGraphInitialState = false;
         RHI::ITexture* m_FramebufferSceneColorTexture = nullptr;
+        RHI::ITexture* m_FramebufferIndirectSpecularTexture = nullptr;
+        RHI::ITexture* m_FramebufferSpecularReflectanceTexture = nullptr;
         uint32_t m_FramebufferWidth = 0;
         uint32_t m_FramebufferHeight = 0;
         RenderPassSignature m_RenderPassSignature;

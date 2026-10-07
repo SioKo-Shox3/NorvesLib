@@ -105,6 +105,12 @@ namespace NorvesLib::Core::Rendering
         PathTracingDebugOutput PathTracingDebug = PathTracingDebugOutput::None;
         /** @brief ラスタの直接光のBRDF（既定は解析BRDF） */
         RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Analytic;
+        /** @brief ビジビリティバッファの使い方（既定は On。装置が対応しないときは GBuffer の描画へ戻る） */
+        VisibilityBufferMode VisibilityBuffer = VisibilityBufferMode::On;
+        /** @brief ソフトウェアラスタの使い方（既定は On） */
+        SwRasterMode SwRaster = SwRasterMode::On;
+        /** @brief ソフトウェアラスタへ振り分けるクラスタの画面上の半径（画素）のしきい値 */
+        float SwRasterMaxPixels = DefaultSwRasterMaxPixels;
     };
 
     struct RenderingCoordinatorStatsSnapshot
@@ -342,6 +348,19 @@ namespace NorvesLib::Core::Rendering
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
         /**
+         * @brief 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率を次のFramePacketへ公開する
+         * @param scale 0以上の有限の倍率（1で従来どおり）。範囲外は1へ戻す
+         */
+        void SetStaticEnvironmentIntensityScale(float scale);
+        float GetStaticEnvironmentIntensityScale() const { return m_StaticEnvironmentIntensityScale; }
+
+        /** @brief 決定的な撮影にする（GameThread）。FramePacket の経過時間を 1/60 秒に固定する */
+        void SetDeterministicCapture(bool bEnabled) { m_bDeterministicCapture = bEnabled; }
+
+        /** @brief 決定的な撮影のエポックを始める（GameThread）。次の FramePacket が経過 0 番になる */
+        void BeginDeterministicEpoch() { m_bDeterministicEpochPending = m_bDeterministicCapture; }
+
+        /**
          * @brief メインカメラを取得
          */
         const CameraProxy &GetMainCamera() const { return m_MainCamera; }
@@ -541,6 +560,7 @@ namespace NorvesLib::Core::Rendering
         SkyAtmosphereParameters m_SkyAtmosphere;
         DDGIVolumeParameters m_DDGIVolume;
         VolumetricFogParameters m_VolumetricFog;
+        float m_StaticEnvironmentIntensityScale = 1.0f;
         bool m_bRTGIEnabled = true;
         uint64_t m_SceneRevision = 1u;
         uint64_t m_LightRevision = 1u;
@@ -564,6 +584,9 @@ namespace NorvesLib::Core::Rendering
         SkinnedPoseHistory m_PreviousSkinnedStates;
         uint64_t m_PreviousObjectStateFrameNumber = 0;
         bool m_bPreviousObjectStateValid = false;
+        // RenderThread が記録したフレームの通し番号（ViewRenderContext::RenderFrameSerial に渡す。GameThread のフレーム番号と
+        // 違い、描画がパケットを飛ばしても、同じパケットを描き直しても、記録のたびに必ず増える）
+        uint64_t m_RenderFrameSerial = 0;
 
         // RenderThread が最後に描いたフレームの物体の変換。描画がゲームのフレームを飛ばしたとき、TAA を選んだ
         // カメラなら、パケットの前の変換（velocity の基準）をそのフレームのものへ付け替える。
@@ -645,11 +668,20 @@ namespace NorvesLib::Core::Rendering
         double m_LastFrameTime = 0.0;
         double m_TotalTime = 0.0;
 
+        // 決定的な撮影（GameThread専用）。エポックの 0 番のフレームから数えたフレーム数を FramePacket へ載せる。
+        bool m_bDeterministicCapture = false;
+        bool m_bDeterministicEpochPending = false;
+        bool m_bDeterministicEpochActive = false;
+        uint64_t m_DeterministicEpochFrames = 0u;
+
         // 状態
         bool m_bInitialized = false;
         bool m_bFrameSubmissionStarted = false;
 
         void UpdateRenderResolution(uint32_t screenWidth, uint32_t screenHeight);
+        // キャンバス（UI）の描画先・正射影の大きさ。内部解像度（SetRenderScale）に依らず画面解像度。
+        uint32_t GetCanvasWidth() const { return m_Width > 0 ? m_Width : 1u; }
+        uint32_t GetCanvasHeight() const { return m_Height > 0 ? m_Height : 1u; }
         void RequestCanvasCameraSync();
         void ConsumePendingCanvasCameraSync();
         void UpdateCanvasCameraForRenderResolution();

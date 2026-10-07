@@ -1,4 +1,4 @@
-#include "Asset/AssetFileReader.h"
+﻿#include "Asset/AssetFileReader.h"
 #include "FileStream/FileStream.h"
 #include <algorithm>
 #include <filesystem>
@@ -193,7 +193,8 @@ namespace NorvesLib::Core::Asset
             return true;
         }
 
-        AssetReadResult ReadResolvedPath(const AssetPath& assetPath, uint64_t maxReadBytes)
+        AssetReadResult ReadResolvedPath(const AssetPath &assetPath, uint64_t maxReadBytes, const uint64_t *rangeOffset,
+                                         const size_t *rangeSize)
         {
             const std::string resolvedPath = ToStdString(assetPath.GetResolvedPath());
             if (resolvedPath.empty())
@@ -229,11 +230,28 @@ namespace NorvesLib::Core::Asset
                 return MakeFailure(AssetReadStatus::SizeTooLarge, assetPath, "file size is too large", fileSize);
             }
 
-            if (static_cast<uint64_t>(fileSize) > maxReadBytes)
+            size_t targetSize = static_cast<size_t>(fileSize);
+            if (rangeOffset != nullptr && rangeSize != nullptr)
+            {
+                const uint64_t fileSize64 = static_cast<uint64_t>(fileSize);
+                if (*rangeOffset > fileSize64 || static_cast<uint64_t>(*rangeSize) > fileSize64 - *rangeOffset)
+                {
+                    return MakeFailure(AssetReadStatus::ReadFailed, assetPath, "範囲がファイルの外にある", fileSize);
+                }
+
+                if (stream->Seek(static_cast<int64_t>(*rangeOffset), NorvesLib::FileStream::SeekOrigin::Begin) !=
+                    static_cast<int64_t>(*rangeOffset))
+                {
+                    return MakeFailure(AssetReadStatus::ReadFailed, assetPath, "シークに失敗した", fileSize);
+                }
+
+                targetSize = *rangeSize;
+            }
+
+            if (static_cast<uint64_t>(targetSize) > maxReadBytes)
             {
                 return MakeFailure(AssetReadStatus::SizeTooLarge, assetPath, "asset_read_byte_limit", fileSize);
             }
-            const size_t targetSize = static_cast<size_t>(fileSize);
             auto bytes = Container::MakeShared<AssetBlob::ByteArray>();
             bytes->resize(targetSize);
 
@@ -282,6 +300,25 @@ namespace NorvesLib::Core::Asset
 
     AssetReadResult AssetFileReader::Read(const AssetReadRequest &request) const
     {
+        return ReadInternal(request, nullptr);
+    }
+
+    AssetReadResult AssetFileReader::ReadRange(const AssetReadRequest &request, uint64_t offset, size_t size) const
+    {
+        if (size == 0)
+        {
+            return MakeFailure(AssetReadStatus::InvalidRequest, AssetPath::Invalid(request.InputPath), "範囲の大きさが0である");
+        }
+
+        const RangeSpec range{offset, size};
+        return ReadInternal(request, &range);
+    }
+
+    AssetReadResult AssetFileReader::ReadInternal(const AssetReadRequest &request, const RangeSpec *range) const
+    {
+        const uint64_t *rangeOffset = range != nullptr ? &range->Offset : nullptr;
+        const size_t *rangeSize = range != nullptr ? &range->Size : nullptr;
+
         if (request.InputPath.empty())
         {
             return MakeFailure(AssetReadStatus::InvalidRequest, AssetPath::Invalid(request.InputPath), "input path is empty");
@@ -306,7 +343,7 @@ namespace NorvesLib::Core::Asset
                 return MakeFailure(AssetReadStatus::InvalidPath, path, "absolute path is invalid");
             }
 
-            return ReadResolvedPath(path, request.MaxReadBytes);
+            return ReadResolvedPath(path, request.MaxReadBytes, rangeOffset, rangeSize);
         }
 
         const Container::AnsiString &requestedRoot = request.AssetRoot.empty() ? m_DefaultAssetRoot : request.AssetRoot;
@@ -322,7 +359,7 @@ namespace NorvesLib::Core::Asset
             return MakeFailure(AssetReadStatus::InvalidPath, path, "relative path is invalid");
         }
 
-        return ReadResolvedPath(path, request.MaxReadBytes);
+        return ReadResolvedPath(path, request.MaxReadBytes, rangeOffset, rangeSize);
     }
 
     AssetReadResult AssetFileReader::Read(Container::AnsiStringView inputPath) const

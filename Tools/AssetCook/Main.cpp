@@ -1,10 +1,12 @@
 #include "AssetCookLegacyOptions.h"
 #include "AssetCookOutput.h"
-#include "SingleAssetCook.h"
-#include "TextureAssetSetCook.h"
-#include "SkeletalRoleFileCli.h"
-#include "RigSplitFileCook.h"
 #include "RigRetargetCook.h"
+#include "RigSplitFileCook.h"
+#include "SingleAssetCook.h"
+#include "SkeletalRoleFileCli.h"
+#include "TextureAssetSetCook.h"
+#include "TextureCooker.h"
+#include <cstdlib>
 
 namespace
 {
@@ -19,6 +21,75 @@ namespace
 
         ++index;
         outValue = argv[index];
+        return true;
+    }
+
+    bool ResolveTextureUsageOptions(CookOptions &options, NorvesLib::Tools::AssetCook::ErrorString &error)
+    {
+        const bool bHasOrmSource = !options.OrmAoPath.empty() ||
+                                   !options.OrmRoughnessPath.empty() ||
+                                   !options.OrmMetallicPath.empty();
+        if (options.Usage.empty())
+        {
+            if (bHasOrmSource || !options.Quality.empty())
+            {
+                error = "--orm-* と --quality は --usage と一緒に指定してください";
+                return false;
+            }
+            return true;
+        }
+
+        NorvesLib::Tools::AssetCook::TextureUsage usage{};
+        if (!NorvesLib::Tools::AssetCook::ParseTextureUsage(options.Usage, usage))
+        {
+            error = "--usage は albedo・normal・orm・single・height16 のどれかです";
+            return false;
+        }
+
+        if (options.Kind != "texture")
+        {
+            error = "--usage は --kind texture と一緒に指定してください";
+            return false;
+        }
+
+        if (!options.Format.empty())
+        {
+            error = "--usage が形式を決めるので --format は指定しないでください";
+            return false;
+        }
+        options.Format = NorvesLib::Tools::AssetCook::GetTextureUsageManifestFormat(usage);
+
+        if (!options.Quality.empty() && options.Quality != "fast" && options.Quality != "normal" && options.Quality != "best")
+        {
+            error = "--quality は fast・normal・best のどれかです";
+            return false;
+        }
+
+        if (usage == NorvesLib::Tools::AssetCook::TextureUsage::Orm)
+        {
+            // 詰め済みの ORM（glTF の ARM など。R=AO・G=粗さ・B=メタリックの1枚）は --input で、
+            // 別々の元画像は --orm-* で渡す。両方は指定できない。
+            if (!options.InputPath.empty() && bHasOrmSource)
+            {
+                error = "--usage orm は --input（詰め済みの1枚）か "
+                        "--orm-ao・--orm-roughness・--orm-metallic "
+                        "のどちらか一方で指定してください";
+                return false;
+            }
+            if (options.InputPath.empty() && !bHasOrmSource)
+            {
+                error = "--usage orm には --input か "
+                        "--orm-ao・--orm-roughness・--orm-metallic のどれか 1 "
+                        "つが要ります";
+                return false;
+            }
+        }
+        else if (bHasOrmSource)
+        {
+            error = "--orm-* は --usage orm と一緒に指定してください";
+            return false;
+        }
+
         return true;
     }
 
@@ -154,6 +225,79 @@ namespace
                 }
                 outOptions.Variant = value;
             }
+            else if (argument == "--usage")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                outOptions.Usage = NorvesLib::Core::Container::AnsiString(value.c_str());
+            }
+            else if (argument == "--quality")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                outOptions.Quality = NorvesLib::Core::Container::AnsiString(value.c_str());
+            }
+            else if (argument == "--orm-ao")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                outOptions.OrmAoPath = value;
+            }
+            else if (argument == "--orm-roughness")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                outOptions.OrmRoughnessPath = value;
+            }
+            else if (argument == "--fallback-min-triangles")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                char *end = nullptr;
+                const unsigned long parsed = std::strtoul(value.c_str(), &end, 10);
+                if (value.empty() || *end != '\0' || parsed > 1000000ul)
+                {
+                    error = "--fallback-min-triangles は 0〜1000000 "
+                            "の整数で指定してください";
+                    return false;
+                }
+                outOptions.FallbackMinTriangles = static_cast<uint32_t>(parsed);
+            }
+            else if (argument == "--generate")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                if (value != "displaced-sphere")
+                {
+                    error = "--generate は displaced-sphere だけを指定できます";
+                    return false;
+                }
+                outOptions.Generate = NorvesLib::Core::Container::AnsiString(value.c_str());
+            }
+            else if (argument == "--flip-normal-y")
+            {
+                outOptions.bFlipNormalY = true;
+            }
+            else if (argument == "--orm-metallic")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                outOptions.OrmMetallicPath = value;
+            }
             else
             {
                 error = "unknown argument: " + argument;
@@ -161,6 +305,12 @@ namespace
             }
         }
 
+        NorvesLib::Tools::AssetCook::ErrorString usageError;
+        if (!ResolveTextureUsageOptions(outOptions, usageError))
+        {
+            error = ToStdString(usageError);
+            return false;
+        }
         return ValidateCookOptions(outOptions, error);
     }
 

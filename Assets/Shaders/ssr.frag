@@ -29,13 +29,19 @@ layout(set = 0, binding = 4) uniform SSRParams
     float maxSteps;       // 最大ステップ数
     float fadeStart;      // フェード開始距離
     float fadeEnd;        // フェード終了距離
-    float roughnessCutoff; // ラフネスカットオフ（超えたらSSRなし）
+    float roughnessFadeStart; // 反射を粗さで弱め始める粗さ
+    float roughnessFadeEnd;   // 反射が0になる粗さ（これ以上はSSRなし）
     float intensity;      // SSR強度
     uint  bEnabled;       // SSR有効フラグ
 } params;
 
 // サンプラー
 layout(set = 0, binding = 5) uniform sampler2D noiseSampler;
+
+// LightingPass が環境光の鏡面反射として足した値（露出後）と、その反射率（鏡面の遮蔽込み、無次元）。
+// 反射が当たった画素では、この鏡面反射を「反射率×当たった先のシーンの色」へ置き換える。
+layout(set = 0, binding = 6) uniform sampler2D indirectSpecular;
+layout(set = 0, binding = 7) uniform sampler2D specularReflectance;
 
 // ========================================
 // ビュー空間座標復元
@@ -60,8 +66,10 @@ vec2 ViewToUV(vec3 viewPos)
 // ========================================
 // レイマーチング（ビュー空間）
 // ========================================
-bool RayMarch(vec3 origin, vec3 direction, out vec2 hitUV, out float hitDist)
+// hitThicknessRatio は、当たりを見つけた段でレイが面の奥へ入っていた深さの、厚みの判定に対する割合（0〜1）。
+bool RayMarch(vec3 origin, vec3 direction, out vec2 hitUV, out float hitDist, out float hitThicknessRatio)
 {
+    hitThicknessRatio = 1.0;
     float stepSize = params.maxDistance / params.maxSteps;
     vec3 currentPos = origin;
 
@@ -86,6 +94,7 @@ bool RayMarch(vec3 origin, vec3 direction, out vec2 hitUV, out float hitDist)
         float depthDiff = currentPos.z - sampledViewPos.z;
         if (depthDiff > 0.0 && depthDiff < params.thickness)
         {
+            hitThicknessRatio = depthDiff / params.thickness;
             // バイナリリファインメント（精度向上）
             float refinementStep = stepSize * 0.5;
             vec3 refinedPos = currentPos;
@@ -139,13 +148,16 @@ void main()
         return;
     }
 
-    vec3 normalWS = normalize(texture(gbufferNormal, fragUV).xyz * 2.0 - 1.0);
+    // GBufferの法線は符号付きのワールド法線（RGBA16F）をそのまま持つ（Lightingと同じ読み方）
+    vec3 normalWS = normalize(texture(gbufferNormal, fragUV).xyz);
     vec4 materialSample = texture(gbufferMaterial, fragUV);
-    float metallic = materialSample.r;
     float roughness = materialSample.g;
+    // 環境光の鏡面反射の反射率（金属はalbedoの色、誘電体はフレネルの分。鏡面の遮蔽込み）
+    vec3 reflectance = texture(specularReflectance, fragUV).rgb;
 
-    // ラフネスカットオフ（ざらざらの面はSSR不要）
-    if (roughness > params.roughnessCutoff)
+    // 反射が0になる粗さ以上の面と、照明が環境光を求めなかった画素（反射率0）はレイを飛ばさない
+    if (roughness >= params.roughnessFadeEnd ||
+        max(reflectance.r, max(reflectance.g, reflectance.b)) <= 0.0)
     {
         outColor = sceneColorSample;
         return;
@@ -163,21 +175,30 @@ void main()
     // レイマーチング
     vec2 hitUV;
     float hitDist;
-    bool bHit = RayMarch(viewPos, reflectDir, hitUV, hitDist);
+    float hitThicknessRatio;
+    bool bHit = RayMarch(viewPos, reflectDir, hitUV, hitDist, hitThicknessRatio);
+
+    // 当たった面が反射光線の方を向いていない（裏から当たった）とき、または画面上で1画素も進まずに当たった
+    // ときは、凸な面の輪郭で自分の隣の画素に当たった誤りとして棄却する（凸な面から出た光線は自分に当たらない）。
+    if (bHit)
+    {
+        vec3 hitNormalWS = normalize(texture(gbufferNormal, hitUV).xyz);
+        vec3 hitNormalVS = normalize((params.view * vec4(hitNormalWS, 0.0)).xyz);
+        vec2 hitPixelOffset = (hitUV - fragUV) * params.screenSize.xy;
+        if (dot(hitNormalVS, reflectDir) >= 0.0 || dot(hitPixelOffset, hitPixelOffset) < 1.0)
+        {
+            bHit = false;
+        }
+    }
 
     if (bHit)
     {
-        // ヒットしたUVからシーンカラーをサンプリング
+        // 当たった先のシーンの色（露出後）と、LightingPass が足した環境光の鏡面反射（露出後）
         vec3 reflectedColor = texture(sceneColor, hitUV).rgb;
+        vec3 environmentSpecular = texture(indirectSpecular, fragUV).rgb;
 
-        // フレネル（斜めから見るほど反射が強い）
-        float NdotV = max(dot(normalVS, -viewDir), 0.0);
-        float fresnel = pow(1.0 - NdotV, 5.0);
-        float reflectStrength = mix(0.04, 1.0, metallic);
-        reflectStrength = mix(reflectStrength, 1.0, fresnel);
-
-        // ラフネスによるフェード
-        float roughnessFade = 1.0 - smoothstep(0.0, params.roughnessCutoff, roughness);
+        // 粗さによるフェード（Start〜End の間でなめらかに0へ）
+        float roughnessFade = 1.0 - smoothstep(params.roughnessFadeStart, params.roughnessFadeEnd, roughness);
 
         // 距離によるフェード
         float distanceFade = 1.0 - smoothstep(params.fadeStart, params.fadeEnd, hitDist);
@@ -186,10 +207,16 @@ void main()
         vec2 edgeFade = smoothstep(0.0, 0.1, hitUV) * (1.0 - smoothstep(0.9, 1.0, hitUV));
         float screenEdgeFade = edgeFade.x * edgeFade.y;
 
-        // 最終ブレンド
-        float alpha = reflectStrength * roughnessFade * distanceFade * screenEdgeFade * params.intensity;
-        vec3 finalColor = mix(sceneColorSample.rgb, reflectedColor, alpha);
-        outColor = vec4(finalColor, 1.0);
+        // 厚みの判定の奥の側で見つけた当たりは、面の裏を通った光線のことがあるので弱める
+        float thicknessFade = 1.0 - smoothstep(0.5, 1.0, hitThicknessRatio);
+
+        // 環境光の鏡面反射を、同じ反射率を掛けた当たった先の色へ置き換える。金属は反射率がalbedoの色なので、
+        // 写った物にも材質の色が掛かる。拡散の項と直接光の鏡面反射はそのまま残る。
+        float alpha = clamp(roughnessFade * distanceFade * screenEdgeFade * thicknessFade * params.intensity,
+                            0.0,
+                            1.0);
+        vec3 finalColor = sceneColorSample.rgb + alpha * (reflectance * reflectedColor - environmentSpecular);
+        outColor = vec4(max(finalColor, vec3(0.0)), sceneColorSample.a);
     }
     else
     {

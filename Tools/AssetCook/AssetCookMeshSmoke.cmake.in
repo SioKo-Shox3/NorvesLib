@@ -1062,7 +1062,7 @@ nvmesh_read_le_uint("${PACKAGE_HEX}" ${NVMESH_HEADER_CLUSTER_COUNT} 4 baseline_c
 
 if(NOT baseline_vertex_count EQUAL 67042 OR
    NOT baseline_index_count EQUAL 198366 OR
-   NOT baseline_cluster_count EQUAL 25562)
+   NOT baseline_cluster_count EQUAL 1029)
     message(FATAL_ERROR
         "AssetCookMeshSmoke baseline counts changed: vertices=${baseline_vertex_count} "
         "indices=${baseline_index_count} clusters=${baseline_cluster_count}")
@@ -1742,3 +1742,55 @@ expect_model_cook_failure("multiple_meshes" "${multiple_meshes_path}"
 set(multiple_primitives_path "${INVALID_DIR}/multiple_primitives.gltf")
 expect_model_cook_failure("multiple_primitives" "${multiple_primitives_path}"
     "NVMESH v0 requires exactly one glTF primitive")
+
+# NVMESH v1(LOD の階層)の焼き込み: 起動画面の岩(boulder_01)を v1 の形式名でクックする。
+# 焼いた時間のログ(MESH_COOK)があること、焼いたパッケージを AssetCookMeshSimplifySmoke --check-package で
+# 読み直して階層の性質(誤差が単調・境界球が子を包む・切り口に穴が無い・フォールバックの段)を満たすことを確かめる。
+if(DEFINED DAG_SMOKE_EXE)
+    set(BOULDER_GLTF "${SOURCE_ROOT}/Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf")
+    set(BOULDER_DIR "${SMOKE_DIR}/Boulder")
+    file(MAKE_DIRECTORY "${BOULDER_DIR}/Cooked")
+    set(BOULDER_PACKAGE "${BOULDER_DIR}/Cooked/boulder_01.nvpkg")
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}"
+            --input "${BOULDER_GLTF}"
+            --out "${BOULDER_PACKAGE}"
+            --manifest "${BOULDER_DIR}/manifest.json"
+            --logical "Models/boulder_01_4k.gltf/boulder_01_4k.gltf"
+            --kind model
+            --entry "Models/boulder_01_4k.gltf/boulder_01.nvmesh"
+            --entry-type Msh0
+            --format "nvmesh.v1.mesh3d.pnt.u32.lodgraph"
+            --variant default
+        RESULT_VARIABLE boulder_result
+        OUTPUT_VARIABLE boulder_stdout
+        ERROR_VARIABLE boulder_stderr
+    )
+    set(boulder_output "${boulder_stdout}${boulder_stderr}")
+    message(STATUS "${boulder_output}")
+    if(NOT boulder_result EQUAL 0)
+        message(FATAL_ERROR "AssetCookMeshSmoke: 岩の v1 クックが終了コード ${boulder_result} で失敗しました")
+    endif()
+    if(NOT boulder_output MATCHES "MESH_COOK dag_levels=([0-9]+) clusters=([0-9]+) ms=([0-9]+)")
+        message(FATAL_ERROR "AssetCookMeshSmoke: 岩の v1 クックが MESH_COOK(dag_levels・clusters・ms)をログに出しませんでした")
+    endif()
+    set(boulder_levels "${CMAKE_MATCH_1}")
+    if(boulder_levels LESS 5)
+        message(FATAL_ERROR "AssetCookMeshSmoke: 岩の v1 の階層が ${boulder_levels} 段しかありません")
+    endif()
+    file(READ "${BOULDER_DIR}/manifest.json" boulder_manifest)
+    if(NOT boulder_manifest MATCHES "\"cooked_version\":1")
+        message(FATAL_ERROR "AssetCookMeshSmoke: 岩の v1 のマニフェストに cooked_version 1 が記録されていません")
+    endif()
+
+    execute_process(
+        COMMAND "${DAG_SMOKE_EXE}" --check-package "${BOULDER_PACKAGE}"
+        RESULT_VARIABLE check_result
+        OUTPUT_VARIABLE check_stdout
+        ERROR_VARIABLE check_stderr
+    )
+    message(STATUS "${check_stdout}${check_stderr}")
+    if(NOT check_result EQUAL 0)
+        message(FATAL_ERROR "AssetCookMeshSmoke: 岩の v1 の階層の検査が終了コード ${check_result} で失敗しました")
+    endif()
+endif()

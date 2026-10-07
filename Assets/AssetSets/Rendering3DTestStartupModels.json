@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "name": "Rendering3DTestStartupModels",
+  "package_root": "Cooked/StartupModels",
+  "default_variant": "default",
+  "cook_assets": true,
+  "textures": [
+    {
+      "logical_path": "Assets/Models/boulder_01_4k.gltf/cooked/boulder_01_albedo",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Models/boulder_01_4k.gltf/textures/boulder_01_diff_4k.jpg",
+      "package_name": "Boulder/boulder_01_diff.nvpkg",
+      "entry_name": "Assets/Models/boulder_01_4k.gltf/textures/boulder_01_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/boulder_01_4k.gltf/cooked/boulder_01_normal",
+      "cook_usage": "normal",
+      "flip_normal_y": true,
+      "source_path": "Assets/Models/boulder_01_4k.gltf/textures/boulder_01_nor_gl_4k.jpg",
+      "package_name": "Boulder/boulder_01_nor.nvpkg",
+      "entry_name": "Assets/Models/boulder_01_4k.gltf/textures/boulder_01_nor_gl_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/boulder_01_4k.gltf/cooked/boulder_01_orm",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/boulder_01_4k.gltf/textures/boulder_01_arm_4k.jpg",
+      "package_name": "Boulder/boulder_01_arm.nvpkg",
+      "entry_name": "Assets/Models/boulder_01_4k.gltf/textures/boulder_01_arm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/Cottage_Clean/cooked/Cottage_Clean_albedo",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Models/Cottage_Clean/Cottage_Clean_Base_Color.png",
+      "package_name": "Cottage/Cottage_Clean_Base_Color.nvpkg",
+      "entry_name": "Assets/Models/Cottage_Clean/Cottage_Clean_Base_Color.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/Cottage_Clean/cooked/Cottage_Clean_normal",
+      "cook_usage": "normal",
+      "source_path": "Assets/Models/Cottage_Clean/Cottage_Clean_Normal.png",
+      "package_name": "Cottage/Cottage_Clean_Normal.nvpkg",
+      "entry_name": "Assets/Models/Cottage_Clean/Cottage_Clean_Normal.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/Cottage_Clean/cooked/Cottage_Clean_orm",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/Cottage_Clean/Cottage_Clean_ARM.png",
+      "package_name": "Cottage/Cottage_Clean_ARM.nvpkg",
+      "entry_name": "Assets/Models/Cottage_Clean/Cottage_Clean_ARM.nvtex"
+    }
+  ],
+  "models": [
+    {
+      "logical_path": "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf",
+      "source_path": "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf",
+      "extra_sources": ["Assets/Models/boulder_01_4k.gltf/boulder_01.bin"],
+      "fallback_min_triangles": 32768,
+      "package_name": "Boulder/boulder_01.nvpkg",
+      "entry_name": "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Cottage_Clean/Cottage_Clean.gltf",
+      "source_path": "Assets/Models/Cottage_Clean/Cottage_Clean.gltf",
+      "extra_sources": ["Assets/Models/Cottage_Clean/Cottage_Clean.bin"],
+      "fallback_min_triangles": 4096,
+      "package_name": "Cottage/Cottage_Clean.nvpkg",
+      "entry_name": "Assets/Models/Cottage_Clean/Cottage_Clean.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/BigCobbleSphere/BigCobbleSphere.generated",
+      "source_path": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png",
+      "generate": "displaced-sphere",
+      "fallback_min_triangles": 131072,
+      "package_name": "BigCobbleSphere/BigCobbleSphere.nvpkg",
+      "entry_name": "Assets/Models/BigCobbleSphere/BigCobbleSphere.nvmesh"
+    }
+  ]
+}

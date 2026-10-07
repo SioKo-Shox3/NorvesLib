@@ -9,6 +9,9 @@
 #include "Rendering/SceneProxy.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/SparseResidencyShading.h"
+#include "Rendering/VirtualTextureFeedbackMaterial.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Debug/DebugConfig.h"
 #include "RHI/IDevice.h"
@@ -26,6 +29,11 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        // VT の要求のバッファの binding（gbuffer.frag の VT_FEEDBACK_BINDING と同じ。スキニングの binding 8-10 の次）
+        constexpr uint32_t VirtualTextureFeedbackBindingIndex = 11;
+    } // namespace
 
     GBufferPass::GBufferPass(const GBufferPassSettings& settings)
         : m_Settings(settings)
@@ -88,8 +96,9 @@ namespace NorvesLib::Core::Rendering
         // DynamicUniformAllocator初期化
         // ========================================
         {
-            // UBOレイアウト: current/previous view-projection(256) + cameraPos/emissive/POM/velocity(64) = 320 bytes
-            constexpr uint32_t UBO_SIZE = 320;
+            // UBOレイアウト: current/previous view-projection(256) + cameraPos/emissive/POM/velocity(64)
+            // + VT のフィードバックのパラメータ（法線・ORM・高さ。16） = 336 bytes（描画側の PerObjectUBO の大きさと同じ）
+            constexpr uint32_t UBO_SIZE = 336;
             constexpr uint32_t MAX_OBJECTS = 256; // 1フレームあたりの最大オブジェクト数
 
             RHI::DescriptorSetDesc uboDescSetDesc;
@@ -133,6 +142,12 @@ namespace NorvesLib::Core::Rendering
             previousPaletteBinding.type = RHI::ResourceBindType::StructuredBuffer;
             previousPaletteBinding.stages = RHI::ShaderStage::Vertex;
             uboDescSetDesc.bindings.push_back(previousPaletteBinding);
+
+            // VT の要求のバッファ（対応するデバイスだけ。gbuffer.frag の VT_FEEDBACK_BINDING）
+            if (UsesVirtualTextureFeedbackBinding(m_Device))
+            {
+                AddVirtualTextureFeedbackBinding(uboDescSetDesc, VirtualTextureFeedbackBindingIndex);
+            }
 
             if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, uboDescSetDesc))
             {
@@ -309,6 +324,20 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    bool GBufferPass::ShouldSkipDraws(const RHI::IDevice *device, DebugViewMode mode) const
+    {
+        if (!m_bVisibilityResolveActive || !device)
+        {
+            return false;
+        }
+        // 解決のパスが分かるときは、パイプラインの準備まで含めて判定する（使えないのに止めると画面が空になる）
+        if (m_ResolvePass)
+        {
+            return m_ResolvePass->CanResolve(device, mode);
+        }
+        return VisibilityResolveGeometry::IsSupported(device->GetCapabilities());
+    }
+
     void GBufferPass::Declare(RenderGraphBuilder &builder)
     {
         const ViewRenderContext *context = builder.GetContext();
@@ -331,9 +360,19 @@ namespace NorvesLib::Core::Rendering
             height = m_CurrentHeight > 0 ? m_CurrentHeight : 1;
         }
 
+        // ビジビリティバッファの解決が書く 5 枚（Albedo・Normal・Material・Velocity・Emissive）は、storage image としても使えるようにする
+        const bool bResolveWrites = context && ShouldSkipDraws(context->Device, context->GetActiveDebugMode());
+        const RHI::ResourceUsage resolveWriteUsage =
+            bResolveWrites ? RHI::ResourceUsage::ShaderWrite : RHI::ResourceUsage::None;
+
+        RGTextureDesc albedoDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo");
+        albedoDesc.Usage = albedoDesc.Usage | resolveWriteUsage;
+        RGTextureDesc normalDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal");
+        normalDesc.Usage = normalDesc.Usage | resolveWriteUsage;
+
         m_AlbedoHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferAlbedo,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.AlbedoFormat, "GBuffer_Albedo"),
+            albedoDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,
@@ -342,25 +381,30 @@ namespace NorvesLib::Core::Rendering
 
         m_NormalHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferNormal,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.NormalFormat, "GBuffer_Normal"),
+            normalDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
 
+        RGTextureDesc materialDesc =
+            RGTextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material");
+        materialDesc.Usage = materialDesc.Usage | resolveWriteUsage;
         m_MaterialHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferMaterial,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.MaterialFormat, "GBuffer_Material"),
+            materialDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
 
+        RGTextureDesc emissiveDesc = RGTextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive");
+        emissiveDesc.Usage = emissiveDesc.Usage | resolveWriteUsage;
         m_EmissiveHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferEmissive,
-            RGTextureDesc::RenderTarget(width, height, m_Settings.EmissiveFormat, "GBuffer_Emissive"),
+            emissiveDesc,
             RGAttachmentKind::Color,
             RHI::AttachmentLoadOp::Clear,
             RHI::AttachmentStoreOp::Store,
@@ -372,7 +416,7 @@ namespace NorvesLib::Core::Rendering
             height,
             m_Settings.VelocityFormat,
             "GBuffer_Velocity");
-        velocityDesc.Usage = velocityDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        velocityDesc.Usage = velocityDesc.Usage | RHI::ResourceUsage::TransferSrc | resolveWriteUsage;
         m_VelocityHandle = builder.WriteTextureAttachment(
             RenderGraphResourceNames::GBufferVelocity,
             velocityDesc,
@@ -476,6 +520,12 @@ namespace NorvesLib::Core::Rendering
         auto *materials = context.Resources.Materials;
         auto *textures = context.Resources.Textures;
         auto *meshes = context.Resources.Meshes;
+        // ビジビリティバッファの解決が GBuffer を書くときは、描かずにクリアだけを行う
+        if (ShouldSkipDraws(context.Device, context.GetActiveDebugMode()))
+        {
+            TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
+            return;
+        }
         if (!m_SceneRenderer || !materials || !textures || (!meshes && !context.SkinnedMeshes))
         {
             TryEnqueueNativeClearPass(context, viewport, scissor, meshes);
@@ -532,9 +582,11 @@ namespace NorvesLib::Core::Rendering
             float previousProjection[16];
             float cameraPosition[4];
             float emissiveChromaticityAndLuminanceNits[4];
-            float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=unused, w=unused
-            float velocityParams[4]; // x=前フレームカメラ履歴の有効フラグ
+            float pomParams[4];     // x=heightScale, y=hasHeightMap(0 or 1), z=ORMの1枚を metallic の枠に張ったか(0 or 1), w=法線が2チャンネルか(0 or 1)
+            float frameParams[4]; // x=前フレームカメラ履歴の有効フラグ, y=発光に掛けるプリエクスポージャ, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
+            float vtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=未使用
         };
+        static_assert(sizeof(PerObjectUBO) == 336u, "UBO_SIZE（Initialize のアロケータの大きさ）と合わせる");
 
         // ビュー・プロジェクション行列を事前変換
         float viewData[16];
@@ -555,9 +607,14 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(frameTemplate.previousView, previousViewData, sizeof(previousViewData));
         std::memcpy(frameTemplate.previousProjection, previousProjData, sizeof(previousProjData));
         std::memcpy(frameTemplate.cameraPosition, cameraPos, sizeof(cameraPos));
-        frameTemplate.velocityParams[0] = bHasPreviousCamera ? 1.0f : 0.0f;
+        frameTemplate.frameParams[0] = bHasPreviousCamera ? 1.0f : 0.0f;
+        // 発光はプリエクスポージャ後の値で GBuffer_Emissive（RGBA16F）へ書く。LightingPass は同じ値を使う。
+        frameTemplate.frameParams[1] = ResolveSceneColorPreExposure(activeCamera);
 
         auto gBufferCommands = MakeShared<Container::VariableArray<DrawCommand>>();
+
+        // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）
+        const TextureResources::VirtualTextureFeedbackTarget feedbackTarget = textures->GetVirtualTextureFeedbackTarget();
 
         // Execute-local by design: descriptors contain view/frame constants, and allocator slot lifetime
         // assumes this GBufferPass instance is executed once per frame.
@@ -593,7 +650,9 @@ namespace NorvesLib::Core::Rendering
             TextureHandle matMetallic;
             TextureHandle matRoughness;
             TextureHandle matAO;
+            TextureHandle matORM;
             TextureHandle matHeight;
+            bool bMatNormalTwoChannel = false;
             float matHeightScale = 0.05f;
             float matMetallicValue = -1.0f;
             float matRoughnessValue = -1.0f;
@@ -614,7 +673,9 @@ namespace NorvesLib::Core::Rendering
                     matMetallic = matData->MetallicTexture;
                     matRoughness = matData->RoughnessTexture;
                     matAO = matData->AOTexture;
+                    matORM = matData->ORMTexture;
                     matHeight = matData->HeightTexture;
+                    bMatNormalTwoChannel = matData->bNormalTwoChannel;
                     matHeightScale = matData->HeightScale;
                     matMetallicValue = matData->Metallic;
                     matRoughnessValue = matData->Roughness;
@@ -632,10 +693,11 @@ namespace NorvesLib::Core::Rendering
 
             uboData.pomParams[0] = matHeightScale;
             uboData.pomParams[1] = matHeight.IsValid() ? 1.0f : 0.0f;
-            uboData.pomParams[2] = 0.0f;
-            uboData.pomParams[3] = 0.0f;
-
-            allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
+            // ORM は metallic の枠に張り、シェーダーへフラグで伝える（descriptor の binding は増やさない）。
+            // texture が解決できないときは別々の枠（既定値）の経路へ落とす。
+            RHI::TexturePtr ormTex = ResolveTexture(matORM, nullptr);
+            uboData.pomParams[2] = ormTex ? 1.0f : 0.0f;
+            uboData.pomParams[3] = bMatNormalTwoChannel ? 1.0f : 0.0f;
 
             RHI::TexturePtr albedoTex = ResolveTexture(matAlbedo, m_DefaultWhiteTexture);
             RHI::TexturePtr normalTex = ResolveTexture(matNormal, m_DefaultFlatNormalTexture);
@@ -659,7 +721,29 @@ namespace NorvesLib::Core::Rendering
             RHI::TexturePtr metallicTex = ResolveTexture(matMetallic, metallicDefault);
             RHI::TexturePtr roughnessTex = ResolveTexture(matRoughness, roughnessDefault);
             RHI::TexturePtr aoTex = ResolveTexture(matAO, m_DefaultWhiteTexture);
+            if (ormTex)
+            {
+                // シェーダーは ORM のとき metallic の枠だけを読むが、descriptor の3枠は同じ texture で埋める。
+                metallicTex = ormTex;
+                roughnessTex = ormTex;
+                aoTex = ormTex;
+            }
             RHI::TexturePtr heightTex = ResolveTexture(matHeight, m_DefaultBlackTexture);
+
+            // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
+            uboData.frameParams[2] =
+                AnySparseTexture(albedoTex, normalTex, metallicTex, roughnessTex, aoTex, heightTex) ? 1.0f : 0.0f;
+            // アルベドが VT のとき、シェーダーがこのフレームの要求を書く（24bit 以下の整数は float に正確に載る）
+            uboData.frameParams[3] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(textures, matAlbedo, albedoTex.get(), feedbackTarget));
+            // 法線・ORM・高さも VT のとき、それぞれの表の番号で要求を書く（ORM の枠は metallic に張ったテクスチャ）
+            uboData.vtFeedbackParams[0] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(textures, matNormal, normalTex.get(), feedbackTarget));
+            uboData.vtFeedbackParams[1] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(textures, matORM, ormTex.get(), feedbackTarget));
+            uboData.vtFeedbackParams[2] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(textures, matHeight, heightTex.get(), feedbackTarget));
+            allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
 
             allocation.DescriptorSet->BindTexture(1, albedoTex);
             allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);
@@ -699,6 +783,7 @@ namespace NorvesLib::Core::Rendering
             {
                 return nullptr;
             }
+            BindVirtualTextureFeedback(*allocation.DescriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
             allocation.DescriptorSet->Update();
 
             return allocation.DescriptorSet;
@@ -1420,6 +1505,10 @@ namespace NorvesLib::Core::Rendering
             storageBinding.stages = RHI::ShaderStage::Vertex;
             dsDesc.bindings.push_back(storageBinding);
         }
+        if (UsesVirtualTextureFeedbackBinding(m_Device))
+        {
+            AddVirtualTextureFeedbackBinding(dsDesc, VirtualTextureFeedbackBindingIndex);
+        }
         pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
 
         outPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
@@ -1516,6 +1605,10 @@ namespace NorvesLib::Core::Rendering
             storageBinding.type = RHI::ResourceBindType::StructuredBuffer;
             storageBinding.stages = RHI::ShaderStage::Vertex;
             descriptorSet.bindings.push_back(storageBinding);
+        }
+        if (UsesVirtualTextureFeedbackBinding(m_Device))
+        {
+            AddVirtualTextureFeedbackBinding(descriptorSet, VirtualTextureFeedbackBindingIndex);
         }
         pipelineDesc.descriptorSetLayouts.push_back(descriptorSet);
 

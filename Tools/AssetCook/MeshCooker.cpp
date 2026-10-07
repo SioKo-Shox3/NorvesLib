@@ -4,17 +4,15 @@
 #include "Resource/GltfNativePath.h"
 #include "ModelInspection.h"
 
+#include "Asset/AssetPackageFormat.h"
 #include "Asset/CookedMeshFormat.h"
 #include "Asset/CookedSkeletalFormat.h"
 #include "Asset/CookedSkeletalNameCodec.h"
-#include "Resource/SkeletalSubmeshLayout.h"
-#include "Resource/SkeletalSubmeshBounds.h"
 #include "Container/FixedArray.h"
+#include "CookMeshDag.h"
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
-#include "Resource/SkeletalGltfDecode.h"
-#include "Resource/SkeletalLimits.h"
-#include "Resource/SkeletalInfluenceAttributes.h"
-#include "Resource/SkeletalImportPolicy.h"
+#include "Rendering/MegaGeometry/ProceduralMegaSphere.h"
+#include "Rendering/MegaGeometry/StartupBigSphereSpec.h"
 #include "Resource/GltfBufferFile.h"
 #include "Resource/GltfBufferJson.h"
 #include "Resource/GltfDocumentProfile.h"
@@ -22,18 +20,26 @@
 #include "Resource/ImportSettingsFile.h"
 #include "Resource/ImportSettingsHash.h"
 #include "Resource/ImportTransform.h"
-#include "Asset/AssetPackageFormat.h"
+#include "Resource/SkeletalGltfDecode.h"
+#include "Resource/SkeletalImportPolicy.h"
+#include "Resource/SkeletalInfluenceAttributes.h"
+#include "Resource/SkeletalLimits.h"
+#include "Resource/SkeletalSubmeshBounds.h"
+#include "Resource/SkeletalSubmeshLayout.h"
 #include "Text/JsonDocument.h"
 
 #include <algorithm>
 #include <bit>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <limits>
-#include <utility>
 #include <type_traits>
+#include <utility>
+
+#include "stb_image.h"
 
 namespace NorvesLib::Tools::AssetCook
 {
@@ -71,6 +77,9 @@ namespace NorvesLib::Tools::AssetCook
         constexpr size_t GltfMaximumByteStride = 252;
         constexpr AnsiStringView SupportedMeshFormat = "nvmesh.v0.mesh3d.pnt.u32.clustered";
         constexpr AnsiStringView SupportedMeshFormatV1 = "nvmesh.v1.mesh3d.pnt.u32.clustered";
+        // LOD の階層(クラスタの DAG)を焼く NVMESH v1。v0
+        // の形式名を指定した従来のクックは変わらない。
+        constexpr AnsiStringView SupportedMeshFormatLodGraph = "nvmesh.v1.mesh3d.pnt.u32.lodgraph";
         constexpr AnsiStringView SupportedSkeletalFormat = "nvskel.v0.skinned.pnujiw.u32";
 
         using MeshByteArray = NorvesLib::Core::Container::VariableArray<uint8_t>;
@@ -1436,7 +1445,7 @@ namespace NorvesLib::Tools::AssetCook
             const size_t materialRecordSize =
                 bV1 ? Core::Asset::CookedMaterialFormatV1::RecordSize : Format::MaterialRecordSize;
             const size_t clusterRecordSize =
-                bV1 ? Core::Asset::CookedMeshFormatV1::ClusterRecordSize : Format::ClusterRecordSize;
+                bV1 ? Core::Asset::CookedMeshClusteredFormatV1::ClusterRecordSize : Format::ClusterRecordSize;
             if (vertices.empty() || vertices.size() > UINT32_MAX || clusters.empty() || clusters.size() > UINT32_MAX ||
                 indices.empty() || indices.size() > UINT32_MAX)
             {
@@ -1538,10 +1547,10 @@ namespace NorvesLib::Tools::AssetCook
 
             outBytes.assign(fileSize, 0);
             std::memcpy(outBytes.data() + HeaderOffset::Magic,
-                        bV1 ? Core::Asset::CookedMeshFormatV1::Magic : Format::Magic, Format::MagicSize);
+                        bV1 ? Core::Asset::CookedMeshClusteredFormatV1::Magic : Format::Magic, Format::MagicSize);
             WriteLe32(outBytes, HeaderOffset::HeaderSize, static_cast<uint32_t>(Format::HeaderSize));
             WriteLe16(outBytes, HeaderOffset::VersionMajor,
-                      bV1 ? Core::Asset::CookedMeshFormatV1::VersionMajor : Format::VersionMajor);
+                      bV1 ? Core::Asset::CookedMeshClusteredFormatV1::VersionMajor : Format::VersionMajor);
             WriteLe16(outBytes, HeaderOffset::VersionMinor, Format::VersionMinor);
             WriteLe32(outBytes, HeaderOffset::EndianMarker, Format::EndianMarker);
             WriteLe32(outBytes, HeaderOffset::VertexRecordSize, static_cast<uint32_t>(Format::VertexRecordSize));
@@ -2360,11 +2369,101 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool CookGltfToNvmeshInternal(const uint8_t* sourceBytes, size_t sourceSize, AnsiStringView format,
-                                      const std::filesystem::path& sourcePath, AnsiStringView logicalPath, MeshCookResult& outResult,
-                                      AnsiString& error, const AssetImport::ImportSettingsFileOptions* importOptions)
+        // LOD の階層を焼いて NVMESH v1
+        // を作る。頂点の溶接・クラスタ化・簡略化の繰り返しは CookMeshDag
+        // が行い、
+        // ここでは入力の変換・材質の参照・書き出し・読み込みでの自己検証を受け持つ。
+        bool CookLodGraphMesh(const VariableArray<MeshVertexPnt>& vertices, const VariableArray<uint32_t>& indices,
+                              const MaterialReferences& materialReferences, MeshCookResult& outResult,
+                              AnsiString& error, uint32_t fallbackMinTriangles)
         {
-            if (format != SupportedMeshFormat && format != SupportedMeshFormatV1)
+            const auto bakeStart = std::chrono::steady_clock::now();
+
+            VariableArray<NorvesLib::Core::Asset::CookedMeshVertex> cookedVertices;
+            cookedVertices.reserve(vertices.size());
+            for (const MeshVertexPnt& vertex : vertices)
+            {
+                NorvesLib::Core::Asset::CookedMeshVertex cooked;
+                cooked.Position = {vertex.Position[0], vertex.Position[1], vertex.Position[2]};
+                cooked.Normal = {vertex.Normal[0], vertex.Normal[1], vertex.Normal[2]};
+                cooked.TexCoord = {vertex.TexCoord[0], vertex.TexCoord[1]};
+                cookedVertices.push_back(cooked);
+            }
+
+            CookMeshDagResult dag;
+            AnsiString dagError;
+            if (!BakeMeshLodDag(cookedVertices.data(), cookedVertices.size(), indices.data(), indices.size(), dag,
+                                dagError, fallbackMinTriangles))
+            {
+                error = AnsiString("LOD の階層の焼き込みに失敗しました: ") + dagError;
+                return false;
+            }
+            dag.Output.AlbedoTexture = AnsiStringView(materialReferences.Albedo);
+            dag.Output.NormalTexture = AnsiStringView(materialReferences.Normal);
+            dag.Output.ArmTexture = AnsiStringView(materialReferences.Arm);
+
+            // クラスタのグループを 128 KiB のページに詰めて NVMESH v1.1 に書く(常駐の根のページ群に粗い段とフォールバックの段)
+            MeshCookResult result;
+            NorvesLib::Core::Asset::CookedMeshPagedWriteInfo pageInfo;
+            const NorvesLib::Core::Asset::CookedMeshPagedWriteStatus pageStatus =
+                NorvesLib::Core::Asset::SerializeCookedMeshV1Paged(
+                    dag.Output, NorvesLib::Core::Asset::CookedMeshPagedWriteOptions{}, result.NvmeshBytes, pageInfo);
+            if (pageStatus == NorvesLib::Core::Asset::CookedMeshPagedWriteStatus::GroupExceedsPage)
+            {
+                error = AnsiString("クラスタのグループがページに収まりません(グループ ") +
+                        FormatInteger(static_cast<int>(pageInfo.LargestGroupIndex)) + " が " +
+                        FormatInteger(static_cast<int>(pageInfo.LargestGroupBytes)) + " バイト、ページの上限 " +
+                        FormatInteger(static_cast<int>(NorvesLib::Core::Asset::CookedMeshFormatV1::PageSize)) +
+                        " バイト)";
+                return false;
+            }
+            if (pageStatus != NorvesLib::Core::Asset::CookedMeshPagedWriteStatus::Success)
+            {
+                error = AnsiString("NVMESH v1.1 の書き出しに失敗しました: status=") +
+                        FormatInteger(static_cast<int>(pageStatus));
+                return false;
+            }
+
+            const NorvesLib::Core::Container::Span<const uint8_t> meshSpan(result.NvmeshBytes.data(),
+                                                                           result.NvmeshBytes.size());
+            const auto parseResult = ParseCookedMesh(AssetBlob::CopyBytes(meshSpan, "AssetCook mesh self-validation"));
+            if (!parseResult.Succeeded())
+            {
+                error = AnsiString("焼いた NVMESH v1 が自己検証に失敗しました: status=") +
+                        FormatInteger(static_cast<int>(parseResult.Status));
+                return false;
+            }
+
+            result.FormatMajor = 1;
+            result.VersionMajor = 1;
+            result.LODLevelCount = dag.Stats.LODLevelCount;
+            result.VertexCount = static_cast<uint32_t>(dag.Output.Vertices.size());
+            result.IndexCount =
+                static_cast<uint32_t>(dag.Output.ClusterIndices.size() + dag.Output.FallbackIndices.size());
+            result.ClusterCount = dag.Stats.ClusterCount;
+            result.DagRejectedGroups = dag.Stats.RejectedGroupCount;
+            result.PageCount = pageInfo.PageCount;
+            result.RootPageCount = pageInfo.RootPageCount;
+            result.RootPageBytes = pageInfo.RootPageBytes;
+            result.RootPageClusterCount = pageInfo.RootPageClusterCount;
+            result.RootPageMinLODLevel = pageInfo.RootPageMinLODLevel;
+            result.MaxPageBytes = pageInfo.MaxPageBytes;
+            result.LargestGroupBytes = pageInfo.LargestGroupBytes;
+            result.DagMilliseconds = static_cast<uint32_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - bakeStart)
+                    .count());
+            outResult = std::move(result);
+            return true;
+        }
+
+        bool CookGltfToNvmeshInternal(const uint8_t *sourceBytes, size_t sourceSize, AnsiStringView format,
+                                      const std::filesystem::path &sourcePath, AnsiStringView logicalPath,
+                                      MeshCookResult &outResult, AnsiString &error,
+                                      const AssetImport::ImportSettingsFileOptions *importOptions,
+                                      uint32_t fallbackMinTriangles)
+        {
+            if (format != SupportedMeshFormat && format != SupportedMeshFormatV1 &&
+                format != SupportedMeshFormatLodGraph)
             {
                 error = AnsiString("unsupported mesh format: ") + AnsiString(format);
                 return false;
@@ -2528,10 +2627,37 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            std::sort(result.EmbeddedImages.begin(), result.EmbeddedImages.end(), [](const auto& left, const auto& right)
+            std::sort(result.EmbeddedImages.begin(), result.EmbeddedImages.end(),
+                      [](const auto &left, const auto &right) { return left.ImageIndex < right.ImageIndex; });
+
+            if (format == SupportedMeshFormatLodGraph)
             {
-                return left.ImageIndex < right.ImageIndex;
-            });
+                MeshCookResult v1Result;
+                if (!CookLodGraphMesh(vertices, indices, materialReferences, v1Result, error, fallbackMinTriangles))
+                {
+                    return false;
+                }
+                const auto sourceHash =
+                    AssetImport::AppendImportSettingsHash(ComputeGltfSourceHash(sourceBytes, sourceSize, buffers),
+                                                          loadedImport.bPresent, loadedImport.Settings);
+                if (!sourceHash.bValid)
+                {
+                    error = "invalid import settings hash";
+                    return false;
+                }
+                v1Result.SourceHash = sourceHash.Value;
+                v1Result.EmbeddedImages = std::move(result.EmbeddedImages);
+                v1Result.bHasImportSettings = loadedImport.bPresent;
+                v1Result.ImportSettingsPath = loadedImport.Path;
+                if (loadedImport.bPresent)
+                {
+                    v1Result.ImportSettingsHash =
+                        AssetImport::AppendImportSettingsHash(Format::Fnv1a64OffsetBasis, true, loadedImport.Settings)
+                            .Value;
+                }
+                outResult = std::move(v1Result);
+                return true;
+            }
 
             VariableArray<MeshCluster> coarseClusters;
             VariableArray<uint32_t> coarseIndices;
@@ -2593,6 +2719,114 @@ namespace NorvesLib::Tools::AssetCook
             result.IndexCount = static_cast<uint32_t>(finalIndices.size());
             result.ClusterCount = static_cast<uint32_t>(finalClusters.size());
             outResult = std::move(result);
+            return true;
+        }
+
+        // 起動画面の大きな球（石畳の高さマップで変位した緯度経度の球）を作って、LOD の階層を焼く。
+        // 球の仕様（半径・分割・繰り返し・変位の深さ）は実行時の生成と共有の StartupBigSphereSpec.h にある。
+        // 実行時の生成が作る 5 段の LOD は使わず、最も細かい段（LOD0）だけを入れて階層を焼く。
+        bool CookDisplacedSphereInternal(const uint8_t* heightMapBytes, size_t heightMapSize, AnsiStringView format,
+                                         AnsiStringView logicalPath, MeshCookResult& outResult, AnsiString& error,
+                                         uint32_t fallbackMinTriangles)
+        {
+            namespace Spec = NorvesLib::Core::Rendering::MegaGeometry::StartupBigSphere;
+            using NorvesLib::Core::Rendering::MegaGeometry::BuildProceduralMegaSphere;
+            using NorvesLib::Core::Rendering::MegaGeometry::BuildProceduralMegaSphereHeightField;
+            using NorvesLib::Core::Rendering::MegaGeometry::ProceduralMegaSphereData;
+            using NorvesLib::Core::Rendering::MegaGeometry::ProceduralMegaSphereHeightField;
+            using NorvesLib::Core::Rendering::MegaGeometry::ProceduralMegaSphereSettings;
+
+            if (format != SupportedMeshFormatLodGraph)
+            {
+                error = "displaced-sphere は NVMESH v1 "
+                        "の形式（nvmesh.v1.mesh3d.pnt.u32.lodgraph）だけを焼けます";
+                return false;
+            }
+            if (heightMapBytes == nullptr || heightMapSize == 0 || heightMapSize > static_cast<size_t>(0x7fffffff))
+            {
+                error = "高さマップの入力が空か、大きすぎます";
+                return false;
+            }
+            if (!ValidateRelativePath(logicalPath, "model logical path", error))
+            {
+                return false;
+            }
+
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+            stbi_us* pixels = stbi_load_16_from_memory(heightMapBytes, static_cast<int>(heightMapSize), &width, &height,
+                                                       &channels, 1);
+            if (pixels == nullptr)
+            {
+                error = AnsiString("高さマップを読めません: ") + AnsiString(stbi_failure_reason());
+                return false;
+            }
+            ProceduralMegaSphereHeightField heightField;
+            const bool bHeightFieldOk =
+                width > 0 && width == height &&
+                BuildProceduralMegaSphereHeightField(pixels, static_cast<uint32_t>(width), Spec::kHeightFieldFirstMip,
+                                                     heightField);
+            stbi_image_free(pixels);
+            if (!bHeightFieldOk)
+            {
+                error = "高さマップは 2 の累乗の正方形の 16 "
+                        "ビットのグレーにしてください";
+                return false;
+            }
+
+            ProceduralMegaSphereSettings settings{};
+            settings.Radius = Spec::kRadius;
+            settings.Segments = Spec::kSegments;
+            settings.Rings = Spec::kRings;
+            settings.LODLevelCount = 1;
+            settings.TexCoordRepeatU = Spec::kTexCoordRepeatU;
+            settings.TexCoordRepeatV = Spec::kTexCoordRepeatV;
+            settings.HeightField = &heightField;
+            settings.DisplacementDepth = Spec::kDisplacementDepth;
+            ProceduralMegaSphereData sphere;
+            if (!BuildProceduralMegaSphere(settings, sphere) || sphere.Indices.empty())
+            {
+                error = "変位した球を作れませんでした";
+                return false;
+            }
+
+            VariableArray<MeshVertexPnt> vertices;
+            vertices.reserve(sphere.Vertices.size());
+            for (const auto& source : sphere.Vertices)
+            {
+                MeshVertexPnt vertex;
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    vertex.Position[axis] = source.Position[axis];
+                    vertex.Normal[axis] = source.Normal[axis];
+                }
+                vertex.TexCoord[0] = source.TexCoord[0];
+                vertex.TexCoord[1] = source.TexCoord[1];
+                vertices.push_back(vertex);
+            }
+
+            // 材質は Game が石畳の材質を当てるので、メッシュには材質の参照を持たせない。
+            MaterialReferences materialReferences;
+            MeshCookResult v1Result;
+            if (!CookLodGraphMesh(vertices, sphere.Indices, materialReferences, v1Result, error, fallbackMinTriangles))
+            {
+                return false;
+            }
+
+            // 元は高さマップの内容と球の仕様。仕様の値を変えたら焼き直されるよう、値もハッシュに入れる。
+            uint64_t hash = Format::Fnv1a64OffsetBasis;
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(heightMapSize));
+            hash = Fnv1a64Update(hash, heightMapBytes, heightMapSize);
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(Spec::kSegments));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(Spec::kRings));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(Spec::kHeightFieldFirstMip));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kRadius)));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kDisplacementDepth)));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kTexCoordRepeatU)));
+            hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(std::bit_cast<uint32_t>(Spec::kTexCoordRepeatV)));
+            v1Result.SourceHash = hash;
+            outResult = std::move(v1Result);
             return true;
         }
 
@@ -3260,11 +3494,12 @@ namespace NorvesLib::Tools::AssetCook
                                                   error, importOptions, decodeOptions);
     }
 
-    bool CookGltfToNvmeshNativePath(const uint8_t* sourceBytes, size_t sourceSize,
-                                    Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
-                                    Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
-                                    Core::Container::AnsiString& error,
-                                    const Core::AssetImport::ImportSettingsFileOptions* importOptions)
+    bool CookGltfToNvmeshNativePath(const uint8_t *sourceBytes, size_t sourceSize,
+                                    Core::Container::AnsiStringView format, const std::filesystem::path &sourcePath,
+                                    Core::Container::AnsiStringView logicalPath, MeshCookResult &outResult,
+                                    Core::Container::AnsiString &error,
+                                    const Core::AssetImport::ImportSettingsFileOptions *importOptions,
+                                    uint32_t fallbackMinTriangles)
     {
         if (!ValidateNativeCookPaths(sourcePath, importOptions, error))
         {
@@ -3272,7 +3507,7 @@ namespace NorvesLib::Tools::AssetCook
         }
         AnsiString internalError;
         if (!CookGltfToNvmeshInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult,
-                                      internalError, importOptions))
+                                      internalError, importOptions, fallbackMinTriangles))
         {
             error = internalError.c_str();
             return false;
@@ -3357,19 +3592,38 @@ namespace NorvesLib::Tools::AssetCook
 
     bool IsSupportedMeshCookFormat(Core::Container::AnsiStringView format) noexcept
     {
-        return format == SupportedMeshFormat || format == SupportedMeshFormatV1;
+        return format == SupportedMeshFormat || format == SupportedMeshFormatV1 ||
+               format == SupportedMeshFormatLodGraph;
     }
 
     bool CookGltfToNvmesh(const uint8_t* sourceBytes, size_t sourceSize, Core::Container::AnsiStringView format,
                           Core::Container::AnsiStringView sourcePath, Core::Container::AnsiStringView logicalPath,
-                          MeshCookResult& outResult, Core::Container::AnsiString& error,
-                          const Core::AssetImport::ImportSettingsFileOptions* importOptions)
+                          MeshCookResult &outResult, Core::Container::AnsiString &error,
+                          const Core::AssetImport::ImportSettingsFileOptions *importOptions,
+                          uint32_t fallbackMinTriangles)
     {
         return CookGltfToNvmeshNativePath(sourceBytes, sourceSize, format, LegacyModelLocator(sourcePath), logicalPath,
-                                          outResult, error, importOptions);
+                                          outResult, error, importOptions, fallbackMinTriangles);
     }
 
-    bool IsSupportedSkeletalCookFormat(Core::Container::AnsiStringView format) noexcept
+    bool CookDisplacedSphereToNvmesh(const uint8_t *heightMapBytes, size_t heightMapSize,
+                                     NorvesLib::Core::Container::AnsiStringView format,
+                                     NorvesLib::Core::Container::AnsiStringView logicalPath,
+                                     MeshCookResult& outResult,
+                                     NorvesLib::Core::Container::AnsiString& error,
+                                     uint32_t fallbackMinTriangles)
+    {
+        AnsiString internalError;
+        if (!CookDisplacedSphereInternal(heightMapBytes, heightMapSize, format, logicalPath, outResult, internalError,
+                                         fallbackMinTriangles))
+        {
+            error = internalError;
+            return false;
+        }
+        return true;
+    }
+
+    bool IsSupportedSkeletalCookFormat(NorvesLib::Core::Container::AnsiStringView format) noexcept
     {
         return format == SupportedSkeletalFormat;
     }

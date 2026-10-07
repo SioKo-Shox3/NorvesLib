@@ -10,6 +10,24 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity GBufferEmissive = Identity::Literal("GBuffer.Emissive", sizeof("GBuffer.Emissive") - 1);
     inline constexpr Identity GBufferVelocity = Identity::Literal("GBuffer.Velocity", sizeof("GBuffer.Velocity") - 1);
     inline constexpr Identity GBufferDepth = Identity::Literal("GBuffer.Depth", sizeof("GBuffer.Depth") - 1);
+    // 計算シェーダーでスキニングした今・前のフレームの頂点（ワールド空間。1 頂点 32 バイト）
+    inline constexpr Identity SkinningCurrentVertices =
+        Identity::Literal("Skinning.CurrentVertices", sizeof("Skinning.CurrentVertices") - 1);
+    inline constexpr Identity SkinningPreviousVertices =
+        Identity::Literal("Skinning.PreviousVertices", sizeof("Skinning.PreviousVertices") - 1);
+    // ビジビリティバッファ: 画素ごとの ID（R32_UINT。深度は GBuffer.Depth を共有）と、フレームごとの描画の記録の表
+    inline constexpr Identity VisBufferId = Identity::Literal("VisBuffer.Id", sizeof("VisBuffer.Id") - 1);
+    inline constexpr Identity VisBufferDrawRecords =
+        Identity::Literal("VisBuffer.DrawRecords", sizeof("VisBuffer.DrawRecords") - 1);
+    // 材質の解決の前段（MaterialTileClassifyPass）が作る、材質ごとのタイルの一覧と間接 dispatch の引数
+    inline constexpr Identity MaterialTileArgs =
+        Identity::Literal("MaterialTile.Args", sizeof("MaterialTile.Args") - 1);
+    inline constexpr Identity MaterialTileList =
+        Identity::Literal("MaterialTile.List", sizeof("MaterialTile.List") - 1);
+    inline constexpr Identity MaterialTileCursors =
+        Identity::Literal("MaterialTile.Cursors", sizeof("MaterialTile.Cursors") - 1);
+    inline constexpr Identity MaterialTileStats =
+        Identity::Literal("MaterialTile.Stats", sizeof("MaterialTile.Stats") - 1);
     inline constexpr Identity ShadowMap = Identity::Literal("ShadowMap", sizeof("ShadowMap") - 1);
     inline constexpr Identity PointShadowCubeMap =
         Identity::Literal("PointShadowCubeMap", sizeof("PointShadowCubeMap") - 1);
@@ -23,6 +41,10 @@ namespace NorvesLib::Core::Rendering::RenderGraphResourceNames
     inline constexpr Identity SSAOBlurred = Identity::Literal("SSAO.Blurred", sizeof("SSAO.Blurred") - 1);
     inline constexpr Identity SceneColor = Identity::Literal("Scene.Color", sizeof("Scene.Color") - 1);
     inline constexpr Identity SceneDepth = Identity::Literal("Scene.Depth", sizeof("Scene.Depth") - 1);
+    inline constexpr Identity LightingIndirectSpecular =
+        Identity::Literal("Lighting.IndirectSpecular", sizeof("Lighting.IndirectSpecular") - 1);
+    inline constexpr Identity LightingSpecularReflectance =
+        Identity::Literal("Lighting.SpecularReflectance", sizeof("Lighting.SpecularReflectance") - 1);
     inline constexpr Identity RTGIDiffuseIndirect =
         Identity::Literal("RTGI.DiffuseIndirect", sizeof("RTGI.DiffuseIndirect") - 1);
     inline constexpr Identity RTGIHistoryCurrent =

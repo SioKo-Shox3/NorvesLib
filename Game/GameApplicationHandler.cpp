@@ -68,6 +68,12 @@ namespace Game
         constexpr const TCHAR *kTextureAssetManifestOption = TEXT("--texture-asset-manifest");
         constexpr const TCHAR *kRendering3DTestModelOption = TEXT("--rendering3dtest-model");
         constexpr const TCHAR *kRendering3DTestUseCookedModelOption = TEXT("--rendering3dtest-use-cooked-model");
+        // --rendering3dtest-model-source=cooked|gltf: 起動画面の岩・小屋をクック済み（NVMESH v1・BC・VT）で読むか、glTF の実行時の経路で読むか。
+        // 既定は cooked（クック済みが無ければ glTF へ戻して警告する）。gltf は見た目・VRAM の比較用。
+        constexpr const TCHAR *kRendering3DTestModelSourceOption = TEXT("--rendering3dtest-model-source=");
+        // --rendering3dtest-big-sphere-source=cooked|runtime: 起動画面の大きな球をクック済み（NVMESH v1）で読むか、実行時に生成するか。
+        // 既定は cooked（クック済みが無ければ実行時の生成へ戻して警告する）。runtime は見た目・起動時間の比較用。
+        constexpr const TCHAR *kRendering3DTestBigSphereSourceOption = TEXT("--rendering3dtest-big-sphere-source=");
         constexpr const TCHAR *kRendering3DTestBoardSmokeCountOption = TEXT("--rendering3dtest-board-smoke-count");
         constexpr const TCHAR *kRendering3DTestBillboardSmokeCountOption = TEXT("--rendering3dtest-billboard-smoke-count");
         constexpr const TCHAR *kRendering3DTestImpostorSmokeCountOption = TEXT("--rendering3dtest-impostor-smoke-count");
@@ -101,14 +107,80 @@ namespace Game
         constexpr const TCHAR *kExposureEV100Option = TEXT("--exposure-ev100=");
         // --height-fog-density=<1/m>: 起動画面の高さフォグの地面での密度（0で無効、0〜1）。見比べと調整に使う。
         constexpr const TCHAR *kHeightFogDensityOption = TEXT("--height-fog-density=");
+        // --height-fog-falloff=<1/m>: 起動画面の高さフォグの高さ方向の減衰（0〜1）。見比べと調整に使う。
+        constexpr const TCHAR *kHeightFogFalloffOption = TEXT("--height-fog-falloff=");
         // --orbit-degrees-per-second=<deg/s>: カメラを一定の速さで回す（-360〜360、撮影で動くカメラを確かめる）。
         constexpr const TCHAR *kOrbitDegreesPerSecondOption = TEXT("--orbit-degrees-per-second=");
         float s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
-        // --anti-aliasing=<taa|fxaa>: 起動画面のアンチエイリアシング（既定は fxaa）。
+        // --anti-aliasing=<taa|fxaa>: 起動画面のアンチエイリアシング（既定は taa）。
         constexpr const TCHAR *kAntiAliasingOption = TEXT("--anti-aliasing=");
-        bool s_bRendering3DTestTemporalAA = false;
+        bool s_bRendering3DTestTemporalAA = true;
+        // --render-scale=<0.5〜1>: 起動画面を内部解像度（画面解像度×倍率）で描いて拡大する（既定は1）。
+        constexpr const TCHAR *kRenderScaleOption = TEXT("--render-scale=");
+        float s_Rendering3DTestRenderScale = 1.0f;
+        // --debug-draw-test-lines: 起動画面の大きな球を囲む箱をデバッグの線で毎フレーム描く（値を取らない）。
+        // デバッグ描画が最終解像度でジッタ無しに描かれることを撮影で確かめるのに使う。
+        constexpr const TCHAR *kDebugDrawTestLinesOption = TEXT("--debug-draw-test-lines");
+        bool s_bRendering3DTestDebugDrawTestLines = false;
+        // --startup-skinned-probe: 検証用の骨付きのパネルを地面の上へ 1 枚置く（値を取らない。既定は置かない）。
+        // ビジビリティバッファの経路でスキニングの塊が描かれることの撮影（-SkinnedProbe）に使う。
+        constexpr const TCHAR *kStartupSkinnedProbeOption = TEXT("--startup-skinned-probe");
+        bool s_bRendering3DTestSkinnedProbe = false;
+        // --startup-scan-props=on|off: 起動画面の地面の外周に並べる高ポリのスキャン資産（Poly Haven）を置くか（既定は on）。
+        // off は、スキャン資産を足す前と同じ描画量を撮って、足した分を差し引くための基準に使う。
+        constexpr const TCHAR *kStartupScanPropsOption = TEXT("--startup-scan-props=");
+        bool s_bRendering3DTestScanProps = true;
+        // --stress-mega-instances=<N>: 置いたスキャン資産のメッシュを N 個、地面の奥へ格子に複製して置く（0 は置かない）。
+        // MegaGeometry のインスタンスを増やしたときの GPU・CPU の時間を測るための一時の負荷（ジオメトリの負荷モードの前段）。
+        constexpr const TCHAR *kStressMegaInstancesOption = TEXT("--stress-mega-instances=");
+        uint32_t s_Rendering3DTestStressMegaInstances = 0;
+        // --stress-geometry[=<N>]: ジオメトリの負荷モード。スキャン資産・岩・小屋・大きな球を、変換を変えて地面の外側へ
+        // N 個（既定 300）並べ、カメラの軸をその中心へ移す。ジオメトリのページのストリーミングと追い出しを、
+        // 絞った --vram-budget-mb で確かめるのに使う。0 は無効。
+        constexpr const TCHAR *kStressGeometryOption = TEXT("--stress-geometry");
+        constexpr const TCHAR *kStressGeometryValueOption = TEXT("--stress-geometry=");
+        constexpr uint32_t kStressGeometryDefaultCount = 300u;
+        uint32_t s_Rendering3DTestStressGeometryCount = 0;
+        // --capture-sequence=<接頭辞> と --capture-sequence-rendered-frames=<n1,n2,...>: 1回の起動の中で、
+        // アセットが落ち着いてから n 枚目の描画フレームの最終出力を <接頭辞><n>.png に保存する。
+        constexpr const TCHAR *kCaptureSequenceOption = TEXT("--capture-sequence=");
+        constexpr const TCHAR *kCaptureSequenceRenderedFramesOption = TEXT("--capture-sequence-rendered-frames=");
+        // --vram-budget-mb=<MB>: VRAM の上限（0 は上限なし）。RenderResources へ渡し、VRAM_BUDGET のログに出す。
+        constexpr const TCHAR *kVramBudgetOption = TEXT("--vram-budget-mb=");
+        uint32_t s_VramBudgetCapMb = 0;
+        // --no-cooked-textures: クック済みのテクスチャ（build/CookedAssets/）を使わず、ばらの元画像を読む。
+        constexpr const TCHAR *kNoCookedTexturesOption = TEXT("--no-cooked-textures");
+        // --night: 起動画面を夜にする（空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす。値を取らない）。
+        constexpr const TCHAR *kNightOption = TEXT("--night");
+        bool s_bRendering3DTestNight = false;
+        // --debug-view=normal|clusters|lod|wireframe: 起動時のデバッグの表示（F3・F4・F5 で切り替えるものと同じ。既定は normal）。
+        // MegaGeometry のクラスタの色・LOD の段・ワイヤーフレームを、--visibility-buffer の on と off で撮り比べる用。
+        constexpr const TCHAR *kDebugViewOption = TEXT("--debug-view=");
+        NorvesLib::Core::Rendering::DebugViewMode s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Normal;
+        // --virtual-texture=on|off: 起動画面の材質のアルベド・法線・ORM・高さを VT（sparse）で描くか。既定は on（sparse に対応しない GPU は全常駐へ戻る）。
+        // off は VT を使わず、段1の全常駐で描く（見た目・VRAM の比較用）。
+        constexpr const TCHAR *kVirtualTextureOption = TEXT("--virtual-texture=");
+        bool s_bRendering3DTestVirtualTexture = true;
+        // --rendering3dtest-model-source=gltf のとき true（岩・小屋を glTF の実行時の経路で読む）。
+        bool s_bRendering3DTestModelSourceGltf = false;
+        // --rendering3dtest-big-sphere-source=runtime のとき true（大きな球を実行時に生成する）。
+        bool s_bRendering3DTestBigSphereRuntime = false;
+        // --mega-occlusion=on|off: MegaGeometry（岩・小屋など）の遮蔽カリング（2パス）を使うか。既定は on。
+        // off は遮蔽の判定なしの従来の1回の判定で描く（見た目・描画数の比較用）。
+        constexpr const TCHAR *kMegaOcclusionOption = TEXT("--mega-occlusion=");
+        bool s_bMegaOcclusion = true;
+        // --geometry-streaming=on|off: ページを持つメッシュ（NVMESH v1.1。岩・小屋・スキャン資産・大きな球）を、根のページだけ常駐させて
+        // 残りを要求から読み込むか。既定は on。off は全てのページを常駐させる（見た目・VRAM の比較用）。
+        constexpr const TCHAR *kGeometryStreamingOption = TEXT("--geometry-streaming=");
+        bool s_bGeometryStreaming = true;
+        // --stress-textures: テクスチャの負荷モード。起動画面の地面の外側へ、負荷用の材質（4K、24 種）を貼った板を格子に並べ、
+        // カメラの軸を格子の中心へ移す。--vram-budget-mb と併せて、VT が目標の中で描けることを確かめる。
+        constexpr const TCHAR *kStressTexturesOption = TEXT("--stress-textures");
+        bool s_bRendering3DTestStressTextures = false;
         bool s_bRendering3DTestHasHeightFogDensity = false;
         float s_Rendering3DTestHeightFogDensity = 0.0f;
+        bool s_bRendering3DTestHasHeightFogFalloff = false;
+        float s_Rendering3DTestHeightFogFalloff = 0.0f;
         bool s_bRendering3DTestHasSunElevation = false;
         bool s_bRendering3DTestHasSunAzimuth = false;
         bool s_bRendering3DTestHasExposureEV100 = false;
@@ -413,6 +485,8 @@ namespace Game
 
         m_bHasTextureAssetRuntimeConfig = false;
         m_bRendering3DTestUseCookedModel = false;
+        m_bNoCookedTextures = false;
+        m_TextureLooseAssetRoot = {};
 #if defined(NORVES_ENABLE_IMGUI)
         m_bImGuiRequested = false;
 #endif
@@ -430,8 +504,25 @@ namespace Game
         s_bRendering3DTestHasSunAzimuth = false;
         s_bRendering3DTestHasExposureEV100 = false;
         s_bRendering3DTestHasHeightFogDensity = false;
+        s_bRendering3DTestHasHeightFogFalloff = false;
         s_Rendering3DTestOrbitDegreesPerSecond = 0.0f;
-        s_bRendering3DTestTemporalAA = false;
+        s_bRendering3DTestTemporalAA = true;
+        s_Rendering3DTestRenderScale = 1.0f;
+        s_VramBudgetCapMb = 0;
+        s_bRendering3DTestDebugDrawTestLines = false;
+        s_bRendering3DTestSkinnedProbe = false;
+        s_bRendering3DTestScanProps = true;
+        s_Rendering3DTestStressMegaInstances = 0;
+        s_Rendering3DTestStressGeometryCount = 0;
+        s_bRendering3DTestNight = false;
+        s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Normal;
+        s_bRendering3DTestVirtualTexture = true;
+        s_bRendering3DTestModelSourceGltf = false;
+        s_bRendering3DTestBigSphereRuntime = false;
+        s_bMegaOcclusion = true;
+        s_bGeometryStreaming = true;
+        String captureSequencePrefix;
+        VariableArray<uint64_t> captureSequenceRenderedFrames;
         bool bHasRendering3DTestBoardSmokeCount = false;
         bool bHasRendering3DTestBillboardSmokeCount = false;
         bool bHasRendering3DTestImpostorSmokeCount = false;
@@ -552,6 +643,296 @@ namespace Game
                     return false;
                 }
                 s_bRendering3DTestHasHeightFogDensity = true;
+                continue;
+            }
+
+            String heightFogFalloffValue;
+            if (TryStripPrefix(args[i], kHeightFogFalloffOption, heightFogFalloffValue))
+            {
+                if (!TryParseBoundedFloat(heightFogFalloffValue, 0.0f, 1.0f, s_Rendering3DTestHeightFogFalloff))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: "
+                              "--height-fog-falloff は 0〜1 で指定する");
+                    return false;
+                }
+                s_bRendering3DTestHasHeightFogFalloff = true;
+                continue;
+            }
+
+            if (args[i] == kNightOption)
+            {
+                s_bRendering3DTestNight = true;
+                continue;
+            }
+
+            if (args[i] == kStressTexturesOption)
+            {
+                s_bRendering3DTestStressTextures = true;
+                continue;
+            }
+
+            String debugViewValue;
+            if (TryStripPrefix(args[i], kDebugViewOption, debugViewValue))
+            {
+                if (debugViewValue == String(TEXT("normal")))
+                {
+                    s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Normal;
+                }
+                else if (debugViewValue == String(TEXT("clusters")))
+                {
+                    s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::MegaGeometryClusters;
+                }
+                else if (debugViewValue == String(TEXT("lod")))
+                {
+                    s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::LODLevel;
+                }
+                else if (debugViewValue == String(TEXT("wireframe")))
+                {
+                    s_Rendering3DTestDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Wireframe;
+                }
+                else
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --debug-view は "
+                              "normal・clusters・lod・wireframe のどれかで指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String virtualTextureValue;
+            if (TryStripPrefix(args[i], kVirtualTextureOption, virtualTextureValue))
+            {
+                if (virtualTextureValue == String(TEXT("on")))
+                {
+                    s_bRendering3DTestVirtualTexture = true;
+                }
+                else if (virtualTextureValue == String(TEXT("off")))
+                {
+                    s_bRendering3DTestVirtualTexture = false;
+                }
+                else
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: "
+                              "--virtual-texture は on か off で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String modelSourceValue;
+            if (TryStripPrefix(args[i], kRendering3DTestModelSourceOption, modelSourceValue))
+            {
+                if (modelSourceValue == String(TEXT("cooked")))
+                {
+                    s_bRendering3DTestModelSourceGltf = false;
+                }
+                else if (modelSourceValue == String(TEXT("gltf")))
+                {
+                    s_bRendering3DTestModelSourceGltf = true;
+                }
+                else
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: "
+                              "--rendering3dtest-model-source は cooked か gltf "
+                              "で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String bigSphereSourceValue;
+            if (TryStripPrefix(args[i], kRendering3DTestBigSphereSourceOption, bigSphereSourceValue))
+            {
+                if (bigSphereSourceValue == String(TEXT("cooked")))
+                {
+                    s_bRendering3DTestBigSphereRuntime = false;
+                }
+                else if (bigSphereSourceValue == String(TEXT("runtime")))
+                {
+                    s_bRendering3DTestBigSphereRuntime = true;
+                }
+                else
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: "
+                              "--rendering3dtest-big-sphere-source は cooked か "
+                              "runtime で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String megaOcclusionValue;
+            if (TryStripPrefix(args[i], kMegaOcclusionOption, megaOcclusionValue))
+            {
+                if (megaOcclusionValue == String(TEXT("on")))
+                {
+                    s_bMegaOcclusion = true;
+                }
+                else if (megaOcclusionValue == String(TEXT("off")))
+                {
+                    s_bMegaOcclusion = false;
+                }
+                else
+                {
+                    LOG_ERROR("Game command line parse failed: --mega-occlusion は "
+                              "on か off で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String geometryStreamingValue;
+            if (TryStripPrefix(args[i], kGeometryStreamingOption, geometryStreamingValue))
+            {
+                if (geometryStreamingValue == String(TEXT("on")))
+                {
+                    s_bGeometryStreaming = true;
+                }
+                else if (geometryStreamingValue == String(TEXT("off")))
+                {
+                    s_bGeometryStreaming = false;
+                }
+                else
+                {
+                    LOG_ERROR("Game command line parse failed: "
+                              "--geometry-streaming は on か off で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String renderScaleValue;
+            if (TryStripPrefix(args[i], kRenderScaleOption, renderScaleValue))
+            {
+                if (!TryParseBoundedFloat(renderScaleValue, 0.5f, 1.0f, s_Rendering3DTestRenderScale))
+                {
+                    LOG_ERROR("Rendering3DTest command line parse failed: "
+                              "--render-scale は 0.5〜1 で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String vramBudgetValue;
+            if (TryStripPrefix(args[i], kVramBudgetOption, vramBudgetValue))
+            {
+                if (!TryParseUInt32(vramBudgetValue, s_VramBudgetCapMb))
+                {
+                    LOG_ERROR("Game command line parse failed: --vram-budget-mb は "
+                              "0 以上の整数（MB）で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            if (args[i] == kNoCookedTexturesOption)
+            {
+                m_bNoCookedTextures = true;
+                continue;
+            }
+
+            if (args[i] == kStartupSkinnedProbeOption)
+            {
+                s_bRendering3DTestSkinnedProbe = true;
+                continue;
+            }
+            if (args[i] == kDebugDrawTestLinesOption)
+            {
+                s_bRendering3DTestDebugDrawTestLines = true;
+                continue;
+            }
+
+            if (args[i] == kStressGeometryOption)
+            {
+                s_Rendering3DTestStressGeometryCount = kStressGeometryDefaultCount;
+                continue;
+            }
+
+            String stressGeometryValue;
+            if (TryStripPrefix(args[i], kStressGeometryValueOption, stressGeometryValue))
+            {
+                if (!TryParseUInt32(stressGeometryValue, s_Rendering3DTestStressGeometryCount) ||
+                    s_Rendering3DTestStressGeometryCount == 0u || s_Rendering3DTestStressGeometryCount > 4096u)
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --stress-geometry "
+                              "は個数を付けるなら 1〜4096 の整数で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String stressMegaInstancesValue;
+            if (TryStripPrefix(args[i], kStressMegaInstancesOption, stressMegaInstancesValue))
+            {
+                if (!TryParseUInt32(stressMegaInstancesValue, s_Rendering3DTestStressMegaInstances) ||
+                    s_Rendering3DTestStressMegaInstances > 4096u)
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: "
+                              "--stress-mega-instances は 0〜4096 の整数で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String startupScanPropsValue;
+            if (TryStripPrefix(args[i], kStartupScanPropsOption, startupScanPropsValue))
+            {
+                if (startupScanPropsValue == String(TEXT("on")))
+                {
+                    s_bRendering3DTestScanProps = true;
+                }
+                else if (startupScanPropsValue == String(TEXT("off")))
+                {
+                    s_bRendering3DTestScanProps = false;
+                }
+                else
+                {
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: "
+                              "--startup-scan-props は on か off で指定する");
+                    return false;
+                }
+                continue;
+            }
+
+            String captureSequenceRenderedFramesValue;
+            if (TryStripPrefix(args[i], kCaptureSequenceRenderedFramesOption, captureSequenceRenderedFramesValue))
+            {
+                // 「60,75,90」の形。各値は1以上の描画フレーム数。
+                captureSequenceRenderedFrames.clear();
+                size_t begin = 0;
+                while (begin <= captureSequenceRenderedFramesValue.size())
+                {
+                    size_t end = begin;
+                    while (end < captureSequenceRenderedFramesValue.size() &&
+                           captureSequenceRenderedFramesValue[end] != TEXT(','))
+                    {
+                        ++end;
+                    }
+                    uint32_t frames = 0;
+                    if (!TryParseUInt32(captureSequenceRenderedFramesValue.substr(begin, end - begin), frames) ||
+                        frames == 0)
+                    {
+                        LOG_ERROR("Game command line parse failed: "
+                                  "--capture-sequence-rendered-frames は 1 "
+                                  "以上の整数をカンマで区切って指定する");
+                        return false;
+                    }
+                    captureSequenceRenderedFrames.push_back(frames);
+                    begin = end + 1;
+                }
+                continue;
+            }
+
+            String captureSequenceValue;
+            if (TryStripPrefix(args[i], kCaptureSequenceOption, captureSequenceValue))
+            {
+                if (captureSequenceValue.empty())
+                {
+                    LOG_ERROR("Game command line parse failed: --capture-sequence "
+                              "の接頭辞が空");
+                    return false;
+                }
+                captureSequencePrefix = captureSequenceValue;
                 continue;
             }
 
@@ -881,19 +1262,66 @@ namespace Game
 
         const bool bHasRoot = !m_TextureAssetRoot.empty();
         const bool bHasManifest = !m_TextureAssetManifestPath.empty();
-        if (bHasRoot != bHasManifest)
+        if (!bHasRoot && bHasManifest)
         {
-            LOG_ERROR("Texture asset command line parse failed: --texture-asset-root and --texture-asset-manifest must be specified together");
+            LOG_ERROR("テクスチャ資産の引数を解析できません: --texture-asset-manifest "
+                      "には --texture-asset-root の指定も必要です");
             return false;
         }
 
-        m_bHasTextureAssetRuntimeConfig = bHasRoot && bHasManifest;
+        if (bHasRoot && !bHasManifest)
+        {
+            // root だけの指定は、クック済みの置き場の差し替えとして扱う（マニフェストは <root>/manifest.json）。
+            // 既定と同じく、足りない項目はばらの元画像で読み、クック済みの色は元画像と同じ標本値で描く。
+            String rootPrefix = m_TextureAssetRoot;
+            while (!rootPrefix.empty() &&
+                   (rootPrefix[rootPrefix.size() - 1] == '/' || rootPrefix[rootPrefix.size() - 1] == '\\'))
+            {
+                rootPrefix = rootPrefix.substr(0, rootPrefix.size() - 1);
+            }
+            m_TextureAssetManifestPath = rootPrefix + "/manifest.json";
+#if defined(NORVES_SOURCE_ASSET_DIR)
+            if (!m_bNoCookedTextures)
+            {
+                m_TextureLooseAssetRoot = String(NORVES_SOURCE_ASSET_DIR);
+            }
+#endif
+        }
+
+        m_bHasTextureAssetRuntimeConfig = !m_TextureAssetRoot.empty() && !m_TextureAssetManifestPath.empty();
         if (m_bRendering3DTestUseCookedModel &&
             (!m_bHasTextureAssetRuntimeConfig || m_Rendering3DTestModelPath.empty()))
         {
             LOG_ERROR("Rendering3DTest command line parse failed: --rendering3dtest-use-cooked-model requires --texture-asset-root, --texture-asset-manifest, and --rendering3dtest-model");
             return false;
         }
+#if defined(NORVES_COOKED_ASSET_DIR) && defined(NORVES_SOURCE_ASSET_DIR)
+        if (!m_bHasTextureAssetRuntimeConfig && !m_bNoCookedTextures)
+        {
+            // 既定は build/CookedAssets/（CookAssets 対象が焼く）。マニフェストが無ければ従来どおりばらの元画像を読む。
+            // マニフェストにない項目は Assets/ のばらの元画像を無圧縮で読む。
+            const String cookedRoot(NORVES_COOKED_ASSET_DIR);
+            const String cookedManifest = cookedRoot + "/manifest.json";
+            std::error_code manifestError;
+            if (std::filesystem::is_regular_file(ToFilesystemPath(cookedManifest), manifestError) && !manifestError)
+            {
+                m_TextureAssetRoot = cookedRoot;
+                m_TextureAssetManifestPath = cookedManifest;
+                m_TextureLooseAssetRoot = String(NORVES_SOURCE_ASSET_DIR);
+                m_bHasTextureAssetRuntimeConfig = true;
+            }
+            else
+            {
+                LOG_WARNING_F("COOKED_ASSETS_MISSING manifest=\"%s\" "
+                              "ばらの元画像を無圧縮で読みます"
+                              "（ビルド対象 CookAssets でクック済みを作れます）",
+                              cookedManifest.c_str());
+                // 読む各パスに TEXTURE_COOKED_MISSING を出すため、ばらの元画像の root を持ち、起動後に入れ直す。
+                m_TextureLooseAssetRoot = String(NORVES_SOURCE_ASSET_DIR);
+                m_bCookedManifestUnavailable = true;
+            }
+        }
+#endif
         if (m_bHasTextureAssetRuntimeConfig)
         {
             LOG_INFO_F("Texture asset runtime config parsed root=\"%s\" manifest=\"%s\"",
@@ -1010,6 +1438,18 @@ namespace Game
 #if defined(NORVES_ENABLE_IMGUI)
         m_bImGuiRequested = bImGui;
 #endif
+
+        if (captureSequencePrefix.empty() != captureSequenceRenderedFrames.empty())
+        {
+            LOG_ERROR("Game command line parse failed: --capture-sequence と "
+                      "--capture-sequence-rendered-frames は併せて指定する");
+            return false;
+        }
+        m_SequenceFrameCapture.Configure(captureSequencePrefix, captureSequenceRenderedFrames);
+        if (m_SequenceFrameCapture.IsEnabled())
+        {
+            LOG_INFO_F("SEQUENCE_CAPTURE configured frames=%zu", captureSequenceRenderedFrames.size());
+        }
         return true;
     }
 
@@ -1088,13 +1528,39 @@ namespace Game
     {
         LOG_INFO("GameApplicationHandler::OnPostInitialize()");
 
+        // --vram-budget-mb の上限を RenderResources へ渡す（0 は上限なし）。
+        if (NorvesLib::Core::Engine::GEngine)
+        {
+            NorvesLib::Core::Engine::GEngine->GetRenderResources().SetVideoMemoryCapMb(s_VramBudgetCapMb);
+            // --mega-occlusion の指定（既定は有効）を MegaGeometry へ渡す
+            NorvesLib::Core::Engine::GEngine->GetRenderResources().MegaGeometry().SetOcclusionCullingEnabled(s_bMegaOcclusion);
+            // --geometry-streaming の指定（既定は有効）。メッシュを作る前に決める
+            NorvesLib::Core::Engine::GEngine->GetRenderResources().MegaGeometry().SetPageStreamingEnabled(s_bGeometryStreaming);
+        }
+
         if (m_bHasTextureAssetRuntimeConfig && !ReloadConfiguredAssetManifest())
+        {
+            if (!m_TextureLooseAssetRoot.empty())
+            {
+                // 既定のクック済みの設定が読めないときは、終了せずばらの元画像で続ける。
+                LOG_WARNING("COOKED_ASSETS_UNUSABLE "
+                            "クック済みのマニフェストを読めないため、ばらの元画像を"
+                            "無圧縮で読みます");
+                m_bCookedManifestUnavailable = true;
+            }
+            else
         {
             if (NorvesLib::Core::Engine::GEngine)
             {
                 NorvesLib::Core::Engine::GEngine->RequestExit(1);
             }
             return;
+            }
+        }
+
+        if (m_bCookedManifestUnavailable)
+        {
+            InstallCookedManifestUnavailableAssetSystem();
         }
 
         if (m_M9WorldAcceptance && !PrepareM9WorldAssets())
@@ -1221,6 +1687,13 @@ namespace Game
             return false;
         }
 
+        if (!m_TextureLooseAssetRoot.empty())
+        {
+            // 既定のクック済みの設定: 足りない項目はばらの元画像で読み、クック済みの色は元画像と同じ標本値で描く。
+            candidate->SetLooseAssetRoot(AnsiString(m_TextureLooseAssetRoot.c_str()));
+            candidate->SetTreatSrgbTexturesAsLinear(true);
+        }
+
         TSharedPtr<const Asset::AssetSystem> immutableCandidate = candidate;
         if (!NorvesLib::Core::Engine::GEngine->GetRenderResources().ReloadAssetRuntimeSnapshot(
                 m_TextureAssetRoot,
@@ -1232,6 +1705,15 @@ namespace Game
             return false;
         }
 
+        if (!m_TextureLooseAssetRoot.empty() &&
+            !NorvesLib::Core::Engine::GEngine->GetRenderResources().Textures().SetTextureAssetFallbackMode(
+                NorvesLib::Core::Rendering::TextureAssetFallbackMode::DebugAllowLooseFallback))
+        {
+            LOG_WARNING("COOKED_FALLBACK_NOT_SET "
+                        "クック済みのパッケージが無いときにばらの元画像へ戻す設定"
+                        "を反映できませんでした");
+        }
+
         m_AssetSystemSnapshot = immutableCandidate;
         LOG_INFO("Asset runtime snapshot reload completed root=\"%s\" manifest=\"%s\"",
                  m_TextureAssetRoot.c_str(),
@@ -1239,9 +1721,41 @@ namespace Game
         return true;
     }
 
+    void GameApplicationHandler::InstallCookedManifestUnavailableAssetSystem()
+    {
+        if (m_TextureLooseAssetRoot.empty() || !NorvesLib::Core::Engine::GEngine)
+        {
+            return;
+        }
+
+        // マニフェストが無いのでクック済みは引けず、全パスをばらの元画像で読む。クック済みを使う前提の印を付け、
+        // 読んだ各パスに TEXTURE_COOKED_MISSING を1回ずつ警告させる。
+        auto candidate = MakeShared<Asset::AssetSystem>(AnsiString(m_TextureLooseAssetRoot.c_str()));
+        candidate->SetCookedExpected(true);
+        TSharedPtr<const Asset::AssetSystem> immutableCandidate = candidate;
+        if (!NorvesLib::Core::Engine::GEngine->GetRenderResources().ReloadAssetRuntimeSnapshot(
+                m_TextureLooseAssetRoot,
+                immutableCandidate))
+        {
+            LOG_WARNING("COOKED_MISSING_WARN_NOT_SET "
+                        "マニフェストが無いときの警告の設定を反映できませんでした");
+        }
+    }
+
     TSharedPtr<const Asset::AssetSystem> GameApplicationHandler::GetAssetSystemSnapshot() const
     {
         return m_AssetSystemSnapshot;
+    }
+
+    bool GameApplicationHandler::IsTextureCooked(const String &logicalPath) const
+    {
+        if (!m_AssetSystemSnapshot || logicalPath.empty())
+        {
+            return false;
+        }
+
+        const AnsiString ansiPath(logicalPath.c_str());
+        return m_AssetSystemSnapshot->FindCookedVariant(ansiPath, Asset::AssetKind::Texture).ShouldUseCooked();
     }
 
     bool GameApplicationHandler::PrepareM9WorldAssets()
@@ -1393,6 +1907,54 @@ namespace Game
         m_CameraLateUpdateSlot->Dispatch(deltaTime);
     }
 
+    void GameApplicationHandler::OnPreRender()
+    {
+        if (m_SequenceFrameCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_SequenceFrameCapture.OnPreRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
+        }
+    }
+
+    void GameApplicationHandler::OnPostRender()
+    {
+        if (m_SequenceFrameCapture.IsEnabled() && NorvesLib::Core::Engine::GEngine)
+        {
+            m_SequenceFrameCapture.OnPostRender(NorvesLib::Core::Engine::GEngine->GetRenderWorld());
+        }
+        LogVramLedgerOnce();
+    }
+
+    void GameApplicationHandler::LogVramLedgerOnce()
+    {
+        // 読み込み中を一度も見ない場合の待ち上限（描画フレーム数）。
+        constexpr uint32_t kVramLedgerFallbackFrames = 600u;
+
+        if (m_bVramLedgerLogged || !NorvesLib::Core::Engine::GEngine)
+        {
+            return;
+        }
+
+        ++m_VramLedgerFrameCount;
+        const bool bPending = NorvesLib::Core::Engine::GEngine->GetRenderWorld().HasPendingAsyncAssets();
+        if (bPending)
+        {
+            m_bVramLedgerSawPending = true;
+            return;
+        }
+        if (!m_bVramLedgerSawPending && m_VramLedgerFrameCount < kVramLedgerFallbackFrames)
+        {
+            return;
+        }
+
+        m_bVramLedgerLogged = true;
+        const auto stats = NorvesLib::Core::Engine::GEngine->GetRenderResources().GetResourceStats();
+        constexpr double kBytesPerMb = 1024.0 * 1024.0;
+        LOG_INFO("VRAM_LEDGER textures=%u texture_mb=%.1f buffers_mb=%.1f",
+                 static_cast<unsigned>(stats.TextureCount),
+                 static_cast<double>(stats.TextureBytes) / kBytesPerMb,
+                 static_cast<double>(stats.TotalBufferMemory) / kBytesPerMb);
+    }
+
     bool GameApplicationHandler::ShouldAdvanceSimulation() const
     {
         // Bridge 無効なら従来挙動（常に進行）。
@@ -1479,7 +2041,8 @@ namespace Game
         const Container::TWeakPtr<CameraLateUpdateSlot> lateCameraSlot = m_CameraLateUpdateSlot;
         stateMachine->Registry().Register(
             Rendering3DTest,
-            [bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance, lateCameraSlot](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
+            [this, bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance,
+             lateCameraSlot](const GameModeParams &params) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
                 mode->GetData().m_LateCameraSlot = lateCameraSlot;
@@ -1503,9 +2066,36 @@ namespace Game
                 mode->GetData().m_StartupExposureEV100 = s_Rendering3DTestExposureEV100;
                 mode->GetData().m_bHasStartupHeightFogDensity = s_bRendering3DTestHasHeightFogDensity;
                 mode->GetData().m_StartupHeightFogDensity = s_Rendering3DTestHeightFogDensity;
+                mode->GetData().m_bHasStartupHeightFogFalloff = s_bRendering3DTestHasHeightFogFalloff;
+                mode->GetData().m_StartupHeightFogFalloff = s_Rendering3DTestHeightFogFalloff;
                 mode->GetData().m_OrbitDegreesPerSecond = s_Rendering3DTestOrbitDegreesPerSecond;
+                mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
+                mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
+                mode->GetData().m_bStartupSkinnedProbe = s_bRendering3DTestSkinnedProbe;
+                mode->GetData().m_bStartupScanProps = s_bRendering3DTestScanProps;
+                mode->GetData().m_StressMegaInstanceCount = s_Rendering3DTestStressMegaInstances;
+                if (s_Rendering3DTestStressGeometryCount > 0u)
+                {
+                    mode->GetData().m_bStressGeometry = true;
+                    mode->GetData().m_StressMegaInstanceCount = s_Rendering3DTestStressGeometryCount;
+                }
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
+                mode->GetData().m_bStartupNight = s_bRendering3DTestNight;
+                mode->GetData().m_StartupDebugViewMode = s_Rendering3DTestDebugViewMode;
+                mode->GetData().m_bVirtualTexture = s_bRendering3DTestVirtualTexture;
+                // --no-cooked-textures はクック済みを使わない指定なので、岩・小屋も glTF の経路で読む。
+                mode->GetData().m_bStartupModelsFromGltf = s_bRendering3DTestModelSourceGltf || m_bNoCookedTextures;
+                mode->GetData().m_bBigSphereFromRuntime = s_bRendering3DTestBigSphereRuntime || m_bNoCookedTextures;
+                mode->GetData().m_GetAssetSystem = [this]()
+                {
+                    return GetAssetSystemSnapshot();
+                };
+                mode->GetData().m_bStressTextures = s_bRendering3DTestStressTextures;
                 mode->GetData().m_M9WorldAcceptance = m9WorldAcceptance;
+                mode->GetData().m_IsTextureCooked = [this](const String &logicalPath)
+                {
+                    return IsTextureCooked(logicalPath);
+                };
                 return mode;
             });
         stateMachine->Registry().Register(

@@ -43,6 +43,68 @@ The direct Rendering3DTest Silver asset set cooks these five textures from
 
 `stb_image` is still used at cook time by `AssetCook` to decode source images. Runtime smoke validation expects cooked `nvtex` loads and rejects loose `stb_image` fallback for these paths.
 
+## NVTEX v0.1（ブロック圧縮と R16）
+
+`CookedTextureFormatV0`（`Library/Core/Public/Asset/CookedTextureFormat.h`）の VersionMinor 1 は、v0.0 の上位互換で PixelFormat を足した版。
+ヘッダ・ミップ表のレイアウトと、ミップを全段（フルチェーン）必須とする規則は v0.0 と同じ。ローダーは v0.0 と v0.1 のどちらも読む。
+`--format` 指定のクック（非圧縮の 3 形式）は v0.0 のまま書く。`--usage` 指定のクック（BC・R16）は v0.2（下記）で書く。
+
+| PixelFormat | 値 | 1 ブロック | ColorSpace |
+| --- | --- | --- | --- |
+| R8UNorm / RG8UNorm / RGBA8UNorm | 1 / 2 / 3 | 1x1 画素（1 / 2 / 4 バイト） | RGBA8 のみ sRGB 可（v0.0 から） |
+| BC1 | 4 | 4x4 画素・8 バイト | Linear / sRGB |
+| BC4 | 5 | 4x4 画素・8 バイト | Linear のみ |
+| BC5 | 6 | 4x4 画素・16 バイト | Linear のみ |
+| BC7 | 7 | 4x4 画素・16 バイト | Linear / sRGB |
+| R16UNorm | 8 | 1x1 画素・2 バイト | Linear のみ |
+
+- BC1/BC4/BC5/BC7/R16UNorm は VersionMinor 1 でだけ有効。v0.0 のヘッダにこれらの値があれば `UnknownPixelFormat` で拒否する。
+- ミップのデータサイズは、ブロック単位で `ceil(width / 4) * ceil(height / 4) * ブロックのバイト数 * レイヤー数`。
+  1x1 や 2x2 のミップも最小 1 ブロック分を持つ。ミップの幅・高さのレコードは画素単位のまま（`max(1, base >> mip)`）。
+- 実行時は `MapCookedTextureFormat`（`CookedTextureUpload.cpp`）が RHI の形式（`BC1_UNORM`/`BC1_SRGB`/`BC4_UNORM`/`BC5_UNORM`/`BC7_UNORM`/`BC7_SRGB`/`R16_UNORM`）へ写し、
+  ミップごとにブロック単位の行ピッチ・スライスピッチでアップロードする。`textureCompressionBC` に対応しないデバイスでは `TextureCreationFailed` になる。
+- glTF の ARM の分割（`TrySplitPreparedCookedTextureMip0RGBA8UNormLinear`）は RGBA8 のときだけ通す。BC は理由（`unsupported pixel format`）を返して失敗する。
+
+## NVTEX v0.2（タイル配置）
+
+VersionMinor 2 は v0.1 の上位互換で、sparse テクスチャの 1 タイル（64 KiB）ずつをファイルの範囲読みで取り出せるように、
+段のデータを標準ブロック形状のタイル単位に並べ、タイルの表を持つ。v0.0・v0.1 も引き続き読む。
+`AssetCook --usage ...`（`CookAssets` の起動画面の材質を含む）は v0.2 で書く。
+
+- **ヘッダは 160 バイト**（v0.0・v0.1 は 112 バイト）。112 バイト目から、TileWidth・TileHeight（texel）、FirstTailMip、TileDataBytes（65536）、
+  TileTableOffset・TileTableSize、TailOffset・TailSize を持つ（`CookedTextureFormatV0::TiledHeaderOffset`）。
+- **ファイルの並び**: ヘッダ（160）→ ミップ表 → タイルの表 → ペイロード。ミップ表はヘッダの直後、タイルの表はミップ表の直後、
+  ペイロードはタイルの表の直後から始まる。つまり先頭の PayloadOffset バイトがメタデータの全部で、ここまで読めば本体を読まずに表を引ける。
+- **標準ブロック形状**（Vulkan の標準 sparse イメージブロック。形式ごとに 1 つに決まり、デバイスに依らないので、クックの時点で固定できる）:
+
+  | 1 ブロックのバイト数 | タイル（ブロック） | 該当する形式 | タイル（texel） |
+  | --- | --- | --- | --- |
+  | 1 | 256x256 | R8 | 256x256 |
+  | 2 | 256x128 | RG8 / R16 | 256x128 |
+  | 4 | 128x128 | RGBA8 | 128x128 |
+  | 8 | 128x64 | BC1 / BC4 | 512x256 |
+  | 16 | 64x64 | BC5 / BC7 | 256x256 |
+
+  どれも 64 KiB。デバイスが標準ブロック形状でないタイルを返す形式は、結び付けの側が VT を使わず全常駐で描く
+  （`DeviceCapabilities` の `bStandardBlockShape`）。クックの形状を実行時に変える必要はない。
+- **ミップテイル**: 段の幅か高さがタイルより小さい最初の段（FirstTailMip）以降。最後の段（1x1）は必ずタイルより小さいので、テイルは空にならない。
+  FirstTailMip はこの規則どおりの値でなければならない（ローダーが形式と大きさから求めて照合する）。デバイスの `imageMipTailFirstLod` との照合は
+  結び付けの側の仕事で、食い違う形式・大きさは VT に載せない。
+- **ペイロードの並び**: 段の昇順に、FirstTailMip より前の段はタイルを表の順に、それ以降の段は v0.0 と同じ行優先（段の昇順、レイヤーの昇順）で続ける。
+  タイルは段を隙間なく分割するので、段のデータサイズ（ミップ表の DataSize）は v0.1 と同じで、ペイロードの全体の大きさも変わらない。
+  ミップ表の DataOffset は、タイルの段ではその段のタイルの区間の先頭を指す。
+- **タイル 1 枚の中身**: 段の中のタイルの範囲（右端・下端は段の大きさで切り詰める）を、1 行ずつ行優先で詰めたバイト列。行の余白は無く、
+  非圧縮は 1 行が（タイルの幅 x 1 画素のバイト数）、ブロック圧縮は 1 行がタイルの幅のブロック分。最大 65536 バイト。
+- **タイルの表**（32 バイトの件）: DataOffset・DataSize・MipIndex・LayerIndex・TileX・TileY。並びは「段 → レイヤー → タイルの行 → タイルの列」で、
+  件数も各件の値も形式と大きさから決まる。ローダーは全件を照合し、食い違う表（位置・大きさ・番号・件数・タイル形状・ミップテイルの範囲）を
+  `TileRecordMismatch`・`TileTableSizeMismatch`・`TileTableOutOfRange`・`InvalidTileShape`・`InvalidFirstTailMip`・`TailRangeMismatch` で拒否する。
+  タイルの表はペイロードのハッシュに入らない（ハッシュはペイロードのバイト列だけ）ので、表の食い違いは表の検査が止める。
+- **読み込み**: `ParseCookedTexture` は全体を読み、ペイロードのハッシュを検証する。v0.2 は既定で各段を行優先へ展開するので、`GetMipBytes` を
+  v0.0 と同じに使える（従来の全常駐のアップロードの経路は変わらない）。ストリーマは `bMaterializeRowMajor = false` で展開を省ける。
+  範囲読みは `ReadCookedTextureLayout`（先頭 112 バイトでメタデータの大きさを知り、メタデータだけを読んで表を検証する）→
+  `ReadCookedTextureTile`・`ReadCookedTextureMipTail`（表が示す範囲だけを `AssetFileReader::ReadRange` で読む）。パッケージの中の .nvtex は
+  baseOffset（エントリのペイロードの位置）を渡す。範囲読みはペイロードのハッシュを検証しない（本体を読まないため）。
+
 ## Direct Runtime Contract
 
 The direct Silver workflow loads texture assets through the runtime manifest and package files before creating RHI textures. For cooked-ready entries the expected runtime profile stages are:

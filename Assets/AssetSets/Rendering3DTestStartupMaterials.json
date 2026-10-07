@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "name": "Rendering3DTestStartupMaterials",
+  "package_root": "Cooked/Startup",
+  "default_variant": "default",
+  "cook_assets": true,
+  "textures": [
+    {
+      "logical_path": "Assets/Textures/Silver/silver_albedo.png",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/Silver/silver_albedo.png",
+      "package_name": "Silver/silver_albedo.nvpkg",
+      "entry_name": "Assets/Textures/Silver/silver_albedo.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/Silver/silver_normal-ogl.png",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/Silver/silver_normal-ogl.png",
+      "package_name": "Silver/silver_normal-ogl.nvpkg",
+      "entry_name": "Assets/Textures/Silver/silver_normal-ogl.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/Silver/silver_orm",
+      "cook_usage": "orm",
+      "orm_roughness": "Assets/Textures/Silver/silver_roughness.png",
+      "orm_metallic": "Assets/Textures/Silver/silver_metallic.png",
+      "package_name": "Silver/silver_orm.nvpkg",
+      "entry_name": "Assets/Textures/Silver/silver_orm.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/Silver/silver_ao.png",
+      "cook_usage": "single",
+      "source_path": "Assets/Textures/Silver/silver_ao.png",
+      "package_name": "Silver/silver_ao.nvpkg",
+      "entry_name": "Assets/Textures/Silver/silver_ao.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png",
+      "package_name": "CobbleStoneFloor/cobblestone_floor_09_diff.nvpkg",
+      "entry_name": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_dx_4k.png",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_dx_4k.png",
+      "package_name": "CobbleStoneFloor/cobblestone_floor_09_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png",
+      "orm_roughness": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_rough_4k.png",
+      "package_name": "CobbleStoneFloor/cobblestone_floor_09_orm.nvpkg",
+      "entry_name": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png",
+      "cook_usage": "single",
+      "source_path": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png",
+      "package_name": "CobbleStoneFloor/cobblestone_floor_09_disp.nvpkg",
+      "entry_name": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/snow_02/snow_02_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/snow_02/snow_02_diff_4k.jpg",
+      "package_name": "PolyHaven/snow_02/snow_02_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/snow_02/snow_02_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/snow_02/snow_02_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/snow_02/snow_02_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/snow_02/snow_02_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/snow_02/snow_02_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/snow_02/snow_02_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/snow_02/snow_02_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/snow_02/snow_02_rough_4k.jpg",
+      "package_name": "PolyHaven/snow_02/snow_02_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/snow_02/snow_02_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/snow_02/snow_02_disp_4k.jpg",
+      "cook_usage": "single",
+      "source_path": "Assets/Textures/PolyHaven/snow_02/snow_02_disp_4k.jpg",
+      "package_name": "PolyHaven/snow_02/snow_02_disp.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/snow_02/snow_02_disp_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_diff_4k.jpg",
+      "package_name": "PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_rough_4k.jpg",
+      "package_name": "PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_disp_4k.jpg",
+      "cook_usage": "single",
+      "source_path": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_disp_4k.jpg",
+      "package_name": "PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_disp.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/brown_mud_leaves_01/brown_mud_leaves_01_disp_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_diff_4k.jpg",
+      "package_name": "PolyHaven/forrest_ground_01/forrest_ground_01_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/forrest_ground_01/forrest_ground_01_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_rough_4k.jpg",
+      "package_name": "PolyHaven/forrest_ground_01/forrest_ground_01_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_disp_4k.jpg",
+      "cook_usage": "single",
+      "source_path": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_disp_4k.jpg",
+      "package_name": "PolyHaven/forrest_ground_01/forrest_ground_01_disp.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/forrest_ground_01/forrest_ground_01_disp_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/marble_01/marble_01_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/marble_01/marble_01_diff_4k.jpg",
+      "package_name": "PolyHaven/marble_01/marble_01_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/marble_01/marble_01_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/marble_01/marble_01_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/marble_01/marble_01_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/marble_01/marble_01_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/marble_01/marble_01_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/marble_01/marble_01_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/marble_01/marble_01_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/marble_01/marble_01_rough_4k.jpg",
+      "package_name": "PolyHaven/marble_01/marble_01_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/marble_01/marble_01_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_diff_4k.jpg",
+      "package_name": "PolyHaven/asphalt_02/asphalt_02_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/asphalt_02/asphalt_02_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_rough_4k.jpg",
+      "package_name": "PolyHaven/asphalt_02/asphalt_02_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_disp_4k.jpg",
+      "cook_usage": "single",
+      "source_path": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_disp_4k.jpg",
+      "package_name": "PolyHaven/asphalt_02/asphalt_02_disp.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/asphalt_02/asphalt_02_disp_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/sand_01/sand_01_diff_4k.jpg",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Textures/PolyHaven/sand_01/sand_01_diff_4k.jpg",
+      "package_name": "PolyHaven/sand_01/sand_01_diff.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/sand_01/sand_01_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/sand_01/sand_01_nor_dx_4k.jpg",
+      "cook_usage": "normal",
+      "source_path": "Assets/Textures/PolyHaven/sand_01/sand_01_nor_dx_4k.jpg",
+      "package_name": "PolyHaven/sand_01/sand_01_nor_dx.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/sand_01/sand_01_nor_dx_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/sand_01/sand_01_orm_4k",
+      "cook_usage": "orm",
+      "orm_ao": "Assets/Textures/PolyHaven/sand_01/sand_01_ao_4k.jpg",
+      "orm_roughness": "Assets/Textures/PolyHaven/sand_01/sand_01_rough_4k.jpg",
+      "package_name": "PolyHaven/sand_01/sand_01_orm.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/sand_01/sand_01_orm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Textures/PolyHaven/sand_01/sand_01_disp_4k.jpg",
+      "cook_usage": "single",
+      "source_path": "Assets/Textures/PolyHaven/sand_01/sand_01_disp_4k.jpg",
+      "package_name": "PolyHaven/sand_01/sand_01_disp.nvpkg",
+      "entry_name": "Assets/Textures/PolyHaven/sand_01/sand_01_disp_4k.nvtex"
+    }
+  ]
+}

@@ -34,8 +34,11 @@ namespace NorvesLib::Core::Rendering
         /** @brief フェード終了距離 */
         float FadeEnd = 15.0f;
 
-        /** @brief ラフネスカットオフ */
-        float RoughnessCutoff = 0.5f;
+        /** @brief 反射を弱め始める材質の粗さ（これ以下は粗さで弱めない） */
+        float RoughnessFadeStart = 0.3f;
+
+        /** @brief 反射が0になる材質の粗さ（Start から smoothstep でなめらかに弱める。これ以上は反射を足さない） */
+        float RoughnessFadeEnd = 0.7f;
 
         /** @brief SSR強度 */
         float Intensity = 0.8f;
@@ -50,8 +53,11 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief SSR（Screen-Space Reflections）パス
      *
-     * LightingPassの後、Bloomの前に配置。
-     * スクリーンスペースでレイマーチングを行い、反射を追加する。
+     * LightingPassの直後、フォグ（VolumetricsPass）・半透明（ForwardPass）の前に配置し、減衰していない照明の色の上で
+     * 置き換える。後のパスは "SSRSceneColor" があればそれへ重ねる。
+     * スクリーンスペースでレイマーチングを行い、当たった画素では LightingPass が足した環境光の鏡面反射
+     * （"LightingIndirectSpecular"）を、その反射率（"LightingSpecularReflectance"）を掛けた当たった先の色へ置き換える。
+     * どちらかの入力が無いときは反射率0の既定のテクスチャを結び、何も足さない。
      * 標準経路では RenderGraph named resource 入力を読み取り、"SSRSceneColor" を graph output として公開する。
      * legacy/fallback bridge 経路でのみ SharedResourceRegistry の "SceneColor" を上書き/公開する。
      */
@@ -98,6 +104,8 @@ namespace NorvesLib::Core::Rendering
                                const RHI::TexturePtr &materialTex,
                                const RHI::TexturePtr &depthTex,
                                const RHI::TexturePtr &sceneColorTex,
+                               const RHI::TexturePtr &indirectSpecularTex,
+                               const RHI::TexturePtr &specularReflectanceTex,
                                bool bRegisterLegacyBridge);
         bool EnqueueEmptyNativePass(ViewRenderContext &context) const;
 
@@ -110,6 +118,10 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_GBufferMaterialHandle;
         RGResourceHandle m_GBufferDepthHandle;
         RGResourceHandle m_SceneColorInputHandle;
+        RGResourceHandle m_IndirectSpecularInputHandle;
+        RGResourceHandle m_SpecularReflectanceInputHandle;
+        // 環境光の鏡面反射・反射率の入力が無いときに結ぶ1×1の0（SSRは何も足さない）
+        RHI::TexturePtr m_ZeroTexture;
 
         // パイプラインリソース
         RHI::RenderPassPtr m_RenderPass;

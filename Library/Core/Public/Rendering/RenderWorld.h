@@ -66,6 +66,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t PathTracingSampleBatch = 0u;
         PathTracingDebugOutput PathTracingDebug = PathTracingDebugOutput::None;
         RasterDirectBrdf RasterDirectBrdfMode = RasterDirectBrdf::Analytic;
+        VisibilityBufferMode VisibilityBuffer = VisibilityBufferMode::On;
+        SwRasterMode SwRaster = SwRasterMode::On;
+        float SwRasterMaxPixels = DefaultSwRasterMaxPixels;
     };
 
     // ========================================
@@ -175,6 +178,27 @@ namespace NorvesLib::Core::Rendering
         void SetVolumetricFogParameters(const VolumetricFogParameters& parameters);
 
         /**
+         * @brief 空が無効なときの静的HDR環境（背景とIBL）の明るさの倍率を設定する（GameThread）
+         * @param scale 0以上の有限の倍率（1で従来どおり）。次のFramePacketへ値コピーする
+         */
+        void SetStaticEnvironmentIntensityScale(float scale);
+
+        /**
+         * @brief 決定的な撮影（--capture-deterministic）にする（GameThread）
+         *
+         * 有効な間、FramePacket の経過時間を 1/60 秒に固定する。起動の初期化で一度だけ呼ぶ。
+         */
+        void SetDeterministicCapture(bool bEnabled);
+
+        /**
+         * @brief 決定的な撮影のエポックを始める（GameThread）
+         *
+         * 次の FramePacket を経過 0 番として、時間的な状態（TAA の揺らしと履歴・RTGI の乱数と履歴・
+         * 自動露出）を捨てて数え直させる。SetDeterministicCapture(true) の後だけ意味を持つ。
+         */
+        void BeginDeterministicEpoch();
+
+        /**
          * @brief フレーム終了（GameThread）
          *
          * FramePacketを完了状態にし、RenderThreadに通知します。
@@ -193,6 +217,12 @@ namespace NorvesLib::Core::Rendering
          */
         void QuiesceAsyncAssetProducersAndWait();
 
+        /**
+         * @brief 読み込み中の資産（非同期の読み込み・ジオメトリの GPU への書き込み）が残っているか
+         *
+         * 読み込みの落ち着きの判定に使う。ジオメトリの書き込みは描画フレームが進むと終わるので、
+         * 描画の GPU への反映の窓（FlushAndRender の判定）には含めない。
+         */
         [[nodiscard]] bool HasPendingAsyncAssets() const;
         [[nodiscard]] uint64_t GetRenderedFrameCount() const;
 
@@ -361,6 +391,9 @@ namespace NorvesLib::Core::Rendering
         bool IsShowBoundingBoxes() const { return m_bShowBoundingBoxes; }
 
     private:
+        // 非同期の読み込み（テクスチャ・モデル・glTF）が残っているか。ジオメトリの GPU への書き込みは含めない
+        [[nodiscard]] bool HasPendingAssetLoads() const;
+
         // コピー・ムーブ禁止
         RenderWorld(const RenderWorld &) = delete;
         RenderWorld &operator=(const RenderWorld &) = delete;

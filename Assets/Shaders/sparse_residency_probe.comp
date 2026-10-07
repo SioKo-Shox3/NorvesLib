@@ -1,0 +1,86 @@
+﻿#version 450
+#ifdef NORVES_SPARSE_RESIDENCY_SHADING
+#extension GL_ARB_sparse_texture2 : require
+#endif
+
+// ========================================
+// sparse テクスチャの常駐フォールバックの確認用コンピュートシェーダー
+//
+// 材質のシェーダーが使う標本関数（Common/SparseResidencySampling.glsl）を、一部のタイルとミップテイルだけを
+// 結んだテクスチャへ当てて、結果をストレージバッファへ書く。GPU のテスト（VirtualTextureResidencyVulkanTest）が、
+// 結んでいない領域が粗いミップの色になり、黒や未定義の値にならないことを確かめるために使う。
+// ミップを明示する関数と勾配を明示する関数を引く（暗黙の勾配版は画面微分が要るので sparse_residency_probe.frag で確かめる）。
+// ========================================
+
+layout(local_size_x = 8, local_size_y = 1, local_size_z = 1) in;
+
+#include "Common/SparseResidencySampling.glsl"
+
+const uint PROBE_COUNT = 8u;
+
+layout(set = 0, binding = 0) uniform sampler2D u_Texture;
+
+layout(std430, set = 0, binding = 1) buffer ProbeResults
+{
+    vec4 colors[8];
+} results;
+
+// テクスチャは 512x512（ミップ0は 256x256 のタイル 2x2 枚）。タイル(0,0)は uv が 0〜0.5 の領域。
+const vec2 RESIDENT_UV = vec2(0.25, 0.25);
+const vec2 UNBOUND_UV = vec2(0.75, 0.75);
+const float TEXEL = 1.0 / 512.0;
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= PROBE_COUNT)
+    {
+        return;
+    }
+
+    vec4 color = vec4(-1.0);
+    if (index == 0u)
+    {
+        // 結んだタイルを、ミップ0で明示して引く（逃げない）。
+        color = SampleMaterialTextureLod(u_Texture, RESIDENT_UV, 0.0, true);
+    }
+    else if (index == 1u)
+    {
+        // 結んでいないタイルを、ミップ0で明示して引く（粗いミップへ逃げる）。
+        color = SampleMaterialTextureLod(u_Texture, UNBOUND_UV, 0.0, true);
+    }
+    else if (index == 2u)
+    {
+        // 結んでいないタイルを、1テクセルの勾配で引く（粗いミップへ逃げる）。
+        color = SampleMaterialTextureGrad(u_Texture, UNBOUND_UV, vec2(TEXEL, 0.0), vec2(0.0, TEXEL), 0.0, true);
+    }
+    else if (index == 3u)
+    {
+        // ミップテイルの中のミップ2を、明示して引く（もともと常駐）。
+        color = SampleMaterialTextureLod(u_Texture, UNBOUND_UV, 2.0, true);
+    }
+    else if (index == 4u)
+    {
+        // 結んだタイルを、1テクセルの勾配で引く（逃げない）。
+        color = SampleMaterialTextureGrad(u_Texture, RESIDENT_UV, vec2(TEXEL, 0.0), vec2(0.0, TEXEL), 0.0, true);
+    }
+    else if (index == 5u)
+    {
+        // 結んでいない領域を、ミップ2相当（4テクセル）の勾配で引く（ミップテイルの中なので逃げない）。
+        color = SampleMaterialTextureGrad(u_Texture, UNBOUND_UV, vec2(4.0 * TEXEL, 0.0), vec2(0.0, 4.0 * TEXEL), 2.0, true);
+    }
+    else if (index == 6u)
+    {
+        // 結んでいない領域を、異方性 4 倍の勾配（4, 1 テクセル）で引く。実際の標本ミップは 0 なので、
+        // ミップ1が常駐していればミップ1の色、無ければミップ2の色になる（常駐している中間のミップを飛ばさない）。
+        color = SampleMaterialTextureGrad(u_Texture, UNBOUND_UV, vec2(4.0 * TEXEL, 0.0), vec2(0.0, TEXEL), 0.0, true);
+    }
+    else
+    {
+        // 異方性の上限（4 倍）を超える勾配（8, 1 テクセル）を、ミップ0のタイルが常駐する位置で引く。
+        // 実際の標本ミップは log2(8 / 4) = 1。ミップ1が常駐していればミップ1の色、無ければミップ2の色になる
+        // （標本ミップより細かいミップ0へ戻ってはならない）。
+        color = SampleMaterialTextureGrad(u_Texture, RESIDENT_UV, vec2(8.0 * TEXEL, 0.0), vec2(0.0, TEXEL), 1.0, true);
+    }
+    results.colors[index] = color;
+}

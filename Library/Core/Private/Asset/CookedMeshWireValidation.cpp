@@ -71,7 +71,7 @@ namespace NorvesLib::Core::Asset
         {
             return Status::UnsupportedVersion;
         }
-        if (std::memcmp(p,value.VersionMajor==0 ? Magic : CookedMeshFormatV1::Magic,MagicSize)!=0)
+        if (std::memcmp(p, value.VersionMajor == 0 ? Magic : CookedMeshClusteredFormatV1::Magic, MagicSize) != 0)
         {
             return Status::BadMagic;
         }
@@ -79,8 +79,10 @@ namespace NorvesLib::Core::Asset
         {
             return Status::InvalidHeader;
         }
-        value.MaterialRecordSize=value.VersionMajor==0 ? MaterialRecordSize : CookedMeshFormatV1::MaterialRecordSize;
-        value.ClusterRecordSize=value.VersionMajor==0 ? ClusterRecordSize : CookedMeshFormatV1::ClusterRecordSize;
+        value.MaterialRecordSize =
+            value.VersionMajor == 0 ? MaterialRecordSize : CookedMeshClusteredFormatV1::MaterialRecordSize;
+        value.ClusterRecordSize =
+            value.VersionMajor == 0 ? ClusterRecordSize : CookedMeshClusteredFormatV1::ClusterRecordSize;
         if (U32(p+HeaderOffset::VertexRecordSize)!=VertexRecordSize || U32(p+HeaderOffset::SubmeshRecordSize)!=SubmeshRecordSize ||
             U32(p+HeaderOffset::MaterialRecordSize)!=value.MaterialRecordSize || U32(p+HeaderOffset::ClusterRecordSize)!=value.ClusterRecordSize ||
             U32(p+HeaderOffset::StringRefRecordSize)!=StringRefRecordSize)
@@ -177,7 +179,7 @@ namespace NorvesLib::Core::Asset
         {
             return Status::UnsupportedVersion;
         }
-        const size_t expected=versionMajor==0 ? ClusterRecordSize : CookedMeshFormatV1::ClusterRecordSize;
+        const size_t expected = versionMajor == 0 ? ClusterRecordSize : CookedMeshClusteredFormatV1::ClusterRecordSize;
         if (bytes.size()!=expected || !Storage(bytes.data(),bytes.size()) || !Storage(&out,sizeof(out)) ||
             Overlap(bytes.data(),bytes.size(),&out,sizeof(out)))
         {
@@ -264,13 +266,14 @@ namespace NorvesLib::Core::Asset
             {
                 const auto& cluster=clusters[static_cast<size_t>(index)];
                 const uint64_t end=uint64_t(cluster.IndexOffset)+cluster.IndexCount;
-                if (cluster.IndexOffset!=clusterIndexCursor || cluster.IndexCount==0 || cluster.IndexCount%3!=0 ||
-                    cluster.IndexCount>CookedMeshFormatV1::ClusterMaxTriangles*3 || end>indexEnd ||
-                    cluster.MaterialIndex!=submesh.MaterialIndex || cluster.VertexCount>vertexCount)
+                if (cluster.IndexOffset != clusterIndexCursor || cluster.IndexCount == 0 ||
+                    cluster.IndexCount % 3 != 0 ||
+                    cluster.IndexCount > CookedMeshClusteredFormatV1::ClusterMaxTriangles * 3 || end > indexEnd ||
+                    cluster.MaterialIndex != submesh.MaterialIndex || cluster.VertexCount > vertexCount)
                 {
                     return Status::InvalidClusterRange;
                 }
-                uint32_t unique[CookedMeshFormatV1::ClusterMaxVertices]{};
+                uint32_t unique[CookedMeshClusteredFormatV1::ClusterMaxVertices]{};
                 uint32_t uniqueCount=0;
                 for (uint64_t at=cluster.IndexOffset;at<end;++at)
                 {
@@ -290,7 +293,7 @@ namespace NorvesLib::Core::Asset
                     }
                     if (!present)
                     {
-                        if (uniqueCount==CookedMeshFormatV1::ClusterMaxVertices)
+                        if (uniqueCount == CookedMeshClusteredFormatV1::ClusterMaxVertices)
                         {
                             return Status::InvalidClusterRange;
                         }

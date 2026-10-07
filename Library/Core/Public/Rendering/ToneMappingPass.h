@@ -12,6 +12,7 @@ using namespace NorvesLib::Core::Container;
 namespace NorvesLib::Core::Rendering
 {
     class BloomPass;
+    struct CameraProxy;
 
     /**
      * @brief トーンマッピングアルゴリズムの選択
@@ -36,7 +37,15 @@ namespace NorvesLib::Core::Rendering
          * `Assets/ColorManagement/Aces20SdrRec709.lut3d` を log2 shaper で引く。
          * 表示変換そのものなので、既定のカラーグレーディングは掛けない。
          */
-        Aces20Lut
+        Aces20Lut,
+
+        /**
+         * 中間調まで線形で、明部だけを Khronos PBR Neutral と同じ式で色相を保って1へ圧縮する
+         *
+         * 参照実装の足元（暗部を2次で縮める差し引き）は使わず、最大の成分が 0.8 未満の色は入力の比のまま返す
+         * ので、ACES Filmic のように影の中を縮めない。カメラの CameraToneMapCurve::NeutralLinear でも選べる。
+         */
+        NeutralLinear
     };
 
     /**
@@ -116,6 +125,10 @@ namespace NorvesLib::Core::Rendering
      * - Uncharted2: ゲームで広く使用
      * - Exposure: 露出ベースの単純なクランプ
      * - Aces20Lut: ACES 2.0 SDR のベイク3D LUT（カラーグレーディングなし）
+     * - NeutralLinear: 中間調まで線形（Khronos PBR Neutral の明部の圧縮）
+     *
+     * カメラが見た目の3D LUT（CameraProxy::LookLut）を指定していれば、グレーディングの後・ビネットの前に掛ける
+     * （Aces20Lut の演算子には掛けない）。
      */
     class ToneMappingPass : public IViewPass, public IRenderGraphPass
     {
@@ -228,6 +241,16 @@ namespace NorvesLib::Core::Rendering
         uint32_t PrepareColorLut();
         RHI::TexturePtr LoadAces20SdrLut() const;
 
+        /**
+         * @brief binding 3 に結ぶ見た目の3D LUTを用意する
+         *
+         * カメラが指定したパスのLUTを読み込み、同じパスの間は使い回す。読み込みに失敗したパスは
+         * パスが変わるまで読み直さない。
+         * @return 掛けるLUT。掛けない（指定なし・強さ0・読み込み失敗）ときは nullptr
+         */
+        RHI::TexturePtr PrepareLookLut(const CameraProxy* camera);
+        RHI::TexturePtr LoadLookLut(const char* assetPath) const;
+
         // 設定
         ToneMappingSettings m_Settings;
 
@@ -251,6 +274,11 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_ColorLutFallbackTexture;
         RHI::SamplerPtr m_ColorLutSampler;
         bool m_bColorLutLoadFailed = false;
+
+        // 見た目の3D LUT（binding 3）。掛けないときは 1×1×1 の代替を結ぶ
+        RHI::TexturePtr m_LookLutTexture;
+        Container::String m_LookLutPath;
+        bool m_bLookLutLoadFailed = false;
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;

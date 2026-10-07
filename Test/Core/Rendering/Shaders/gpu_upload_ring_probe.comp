@@ -1,0 +1,30 @@
+﻿#version 450
+
+// ========================================
+// バッファの区画の中身を、別のバッファへそのまま写す確認用コンピュートシェーダー
+//
+// アップロードのリングがジオメトリのプールの区画へ書いた内容を、ストレージバッファとして読み戻すために使う。
+// GPU のテスト（GpuUploadRingVulkanTest）が、区画の範囲を src に、結果の置き場を dst に結び付けて dispatch する。
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer SourceWords
+{
+    uint words[];
+} src;
+
+layout(std430, set = 0, binding = 1) buffer DestinationWords
+{
+    uint words[];
+} dst;
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= uint(src.words.length()) || index >= uint(dst.words.length()))
+    {
+        return;
+    }
+    dst.words[index] = src.words[index];
+}

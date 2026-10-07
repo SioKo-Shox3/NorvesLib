@@ -5,6 +5,11 @@
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/SkyAtmospherePass.h"
+#include "Rendering/MaterialTileClassifyPass.h"
+#include "Rendering/SkinningComputePass.h"
+#include "Rendering/VisibilityRasterPass.h"
+#include "Rendering/GBufferDebugPass.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/VolumetricsPass.h"
@@ -123,6 +128,7 @@ namespace NorvesLib::Core::Rendering
                                   CameraProxy &outCamera)
         {
             autoExposurePass.SetExposureCompensation(camera.ExposureCompensation);
+            autoExposurePass.SetCompensationCurve(camera.AutoExposureCurve);
             float adaptedEV100 = 0.0f;
             if (!autoExposurePass.TryGetAdaptedEV100(adaptedEV100))
             {
@@ -674,6 +680,20 @@ namespace NorvesLib::Core::Rendering
         m_Stats.TotalObjects = static_cast<uint32_t>(m_MeshProxies.size());
         m_Stats.CollectedProxies = static_cast<uint32_t>(m_MeshProxies.size());
 
+        // 決定的な撮影のエポックの最初のフレーム: 時間的な状態（TAA のジッタの列と履歴・自動露出の順応）を捨てて
+        // 数え直す。RTGI の乱数の列と履歴は LightingPass が同じ合図で捨てる。
+        if (context.bTemporalEpochStart)
+        {
+            if (TemporalAAPass *temporalAAPass = FindTemporalAAPass(GetPostProcessStack()))
+            {
+                temporalAAPass->ResetForDeterministicEpoch();
+            }
+            if (AutoExposurePass *autoExposurePass = FindAutoExposurePass(GetPostProcessStack()))
+            {
+                autoExposurePass->ResetForDeterministicEpoch();
+            }
+        }
+
         // 自動露出のカメラは、この View を描く間だけ露出を写したカメラの複製へ差し替える
         // （FramePacket のカメラは書き換えない）
         CameraProxy autoExposedCamera;
@@ -683,13 +703,16 @@ namespace NorvesLib::Core::Rendering
             const CameraProxy *SavedMainCamera;
             const CameraProxy *SavedCurrentCamera;
             const CameraProxy *SavedPreviousMainCamera;
+            uint64_t SavedPreviousCameraFrameNumber;
             ~CameraOverrideScope()
             {
                 Context.MainCamera = SavedMainCamera;
                 Context.CurrentCamera = SavedCurrentCamera;
                 Context.PreviousMainCamera = SavedPreviousMainCamera;
+                Context.PreviousCameraFrameNumber = SavedPreviousCameraFrameNumber;
             }
-        } cameraOverrideScope{context, context.MainCamera, context.CurrentCamera, context.PreviousMainCamera};
+        } cameraOverrideScope{context, context.MainCamera, context.CurrentCamera, context.PreviousMainCamera,
+                              context.PreviousCameraFrameNumber};
         if (const CameraProxy *activeCamera = context.GetActiveCamera();
             activeCamera && activeCamera->ExposureMode == CameraExposureMode::Auto)
         {
@@ -730,7 +753,7 @@ namespace NorvesLib::Core::Rendering
                 // 描画がゲームのフレームを飛ばしたときは、前のカメラを TAA の履歴を書いたフレームのカメラにする
                 // （物体の前の変換も RenderingCoordinator がそのフレームへ付け替える）。
                 const CameraProxy *reprojectionCamera = temporalAAPass->FindReprojectionCamera(
-                    viewportId, activeCamera->CameraId, context.FrameNumber);
+                    viewportId, activeCamera->CameraId, activeCamera->SourceCameraId, context.FrameNumber);
                 const CameraProxy *previousCamera =
                     reprojectionCamera ? reprojectionCamera : context.GetPreviousCamera();
                 jitteredCamera = *activeCamera;
@@ -748,6 +771,10 @@ namespace NorvesLib::Core::Rendering
                     jitteredPreviousCamera = *previousCamera;
                     ApplyTemporalAAJitter(jitteredPreviousCamera, jitter);
                     context.PreviousMainCamera = &jitteredPreviousCamera;
+                }
+                if (reprojectionCamera)
+                {
+                    context.PreviousCameraFrameNumber = temporalAAPass->GetHistoryFrameNumber();
                 }
             }
         }
@@ -800,8 +827,20 @@ namespace NorvesLib::Core::Rendering
     // パイプライン構築ヘルパー
     // ========================================
 
-    void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer, RasterDirectBrdf directBrdf)
+    void SceneView::SetupDeferredPipeline(SceneRenderer *sceneRenderer,
+                                          RasterDirectBrdf directBrdf,
+                                          VisibilityBufferMode visibilityBuffer,
+                                          SwRasterMode swRaster,
+                                          float swRasterMaxPixels)
     {
+        const bool bVisibilityBuffer = IsVisibilityBufferActive(visibilityBuffer);
+        // On のときは、ビジビリティバッファの解決が GBuffer を書く（GBufferPass・MegaGeometryPass は GBuffer の描画を止める）。
+        // Debug は今の GBuffer の描画を残したまま、ID の検証表示だけを足す
+        const bool bVisibilityResolve = visibilityBuffer == VisibilityBufferMode::On;
+        // ソフトウェアラスタの 64bit のバッファ・埋め・合流は、材質の解決を使う On のときだけ作る（Debug は GBuffer が先に MegaGeometry を描くので、
+        // ソフトに回せない）。振り分けの要求は --sw-raster=on なら出し、使えない理由（Debug・64bit アトミックが無いなど）は
+        // MegaGeometryPass が SW_RASTER_FALLBACK として 1 回だけログへ出す
+        const bool bSwRaster = bVisibilityResolve && swRaster == SwRasterMode::On;
         // 既存のパスをクリア
         while (GetPassCount() > 0)
         {
@@ -830,12 +869,21 @@ namespace NorvesLib::Core::Rendering
         neuralDecodePass->SetSceneRenderer(sceneRenderer);
         AddPass(std::move(neuralDecodePass));
 
+        // SkinningComputePass: スキニングの今・前のフレームの頂点を計算シェーダーで作る。
+        // 今の GBuffer の経路は頂点シェーダーのスキニングのままなので、ビジビリティバッファを使うときまで無効にしておく。
+        auto skinningComputePass = MakeUnique<SkinningComputePass>();
+        skinningComputePass->SetEnabled(bVisibilityBuffer);
+        SkinningComputePass *skinningComputePassPtr = skinningComputePass.get();
+        AddPass(std::move(skinningComputePass));
+
         // GBufferPass: ジオメトリ→GBuffer MRT
         GBufferPassSettings gbufferSettings;
         auto gbufferPass = MakeUnique<GBufferPass>(gbufferSettings);
         gbufferPass->SetSceneView(this);
         gbufferPass->SetSceneRenderer(sceneRenderer);
         gbufferPass->SetRegisterLegacyBridge(false);
+        gbufferPass->SetVisibilityResolveActive(bVisibilityResolve);
+        GBufferPass *gbufferPassPtr = gbufferPass.get();
         AddPass(std::move(gbufferPass));
 
         // MegaGeometryPass: GPU駆動クラスターカリング + GBufferへのIndirectDraw
@@ -843,13 +891,63 @@ namespace NorvesLib::Core::Rendering
         auto megaGeometryPass = MakeUnique<MegaGeometryPass>(megaGeoSettings);
         megaGeometryPass->SetSceneView(this);
         megaGeometryPass->SetSceneRenderer(sceneRenderer);
+        megaGeometryPass->SetVisibilityDrawPlanEnabled(bVisibilityBuffer);
+        megaGeometryPass->SetSkipGBufferDraw(bVisibilityResolve);
+        megaGeometryPass->SetSwRasterBinning(swRaster == SwRasterMode::On, swRasterMaxPixels);
+        MegaGeometryPass *megaGeometryPassPtr = megaGeometryPass.get();
         AddPass(std::move(megaGeometryPass));
 
-        // SSAOPass: GBufferの深度・法線からスクリーンスペースAOを計算
+        // VisibilityRasterPass: 不透明の描画のすべて（MegaGeometry のクラスタ・手続きメッシュの塊・スキニングの塊）を、
+        // VisBuffer.Id と GBuffer.Depth へ描く（on では GBuffer の描画の代わりに、debug では今の GBuffer の描画に加えて）。
+        // --visibility-buffer=on|debug のときだけ足す。
+        VisibilityRasterPass *visibilityRasterPassPtr = nullptr;
+        if (bVisibilityBuffer)
+        {
+            auto visibilityRasterPass = MakeUnique<VisibilityRasterPass>();
+            visibilityRasterPass->SetMegaGeometryPass(megaGeometryPassPtr);
+            visibilityRasterPass->SetSkinningComputePass(skinningComputePassPtr);
+            visibilityRasterPass->SetSwRasterEnabled(bSwRaster);
+            visibilityRasterPassPtr = visibilityRasterPass.get();
+            AddPass(std::move(visibilityRasterPass));
+        }
+
+        // MaterialTileClassifyPass: VisBuffer.Id から、材質ごとのタイルの一覧と間接 dispatch の引数を作る。
+        // 材質の解決（次のパス）が読むので、解決より前に足す。解決を使う --visibility-buffer=on のときだけ有効にする
+        // （off は足さず、debug は足しても無効のまま。既定の描画は変えない）。
+        MaterialTileClassifyPass *materialTileClassifyPassPtr = nullptr;
+        if (visibilityRasterPassPtr)
+        {
+            auto materialTileClassifyPass = MakeUnique<MaterialTileClassifyPass>();
+            materialTileClassifyPass->SetRasterPass(visibilityRasterPassPtr);
+            materialTileClassifyPass->SetEnabled(bVisibilityResolve);
+            materialTileClassifyPassPtr = materialTileClassifyPass.get();
+            AddPass(std::move(materialTileClassifyPass));
+        }
+
+        // VisibilityResolvePass: VisBuffer.Id から三角形を引いて、GBuffer の Albedo・Normal・Velocity を書く（--visibility-buffer=on）。
+        // 分類のパスの引数・一覧で、材質ごとに 1 回ずつ間接 dispatch する（分類を使えないフレームは画面全体の直接 dispatch）。
+        // 使えないとき（装置の非対応・ID のラスタや解決のパイプラインが無い・計算スキニングのパイプラインが無い）は何も宣言せず、
+        // GBufferPass・MegaGeometryPass も描画を止めない。判定はこのパスに問い合わせる（上の 2 つへ渡す参照）。
+        if (visibilityRasterPassPtr && bVisibilityResolve)
+        {
+            auto visibilityResolvePass = MakeUnique<VisibilityResolvePass>();
+            visibilityResolvePass->SetRasterPass(visibilityRasterPassPtr);
+            visibilityResolvePass->SetSkinningComputePass(skinningComputePassPtr);
+            visibilityResolvePass->SetClassifyPass(materialTileClassifyPassPtr);
+            visibilityRasterPassPtr->SetResolvePass(visibilityResolvePass.get());
+            skinningComputePassPtr->SetResolvePass(visibilityResolvePass.get());
+            gbufferPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());
+            megaGeometryPassPtr->SetVisibilityResolvePass(visibilityResolvePass.get());
+            // 2パスの遮蔽の HZB は、GBuffer の描画を止めている間は ID のラスタの深度から作る（記録をラスタの Execute へ移す）
+            megaGeometryPassPtr->SetVisibilityRasterPass(visibilityRasterPassPtr);
+            AddPass(std::move(visibilityResolvePass));
+        }
+
+        // SSAOPass: GBufferの深度・法線から画面空間AO（GTAO）を計算。半径は世界の長さ（m）で、
+        // 球・岩の接地部や軒下（数十cm〜1 m）を拾い、部屋の大きさの壁全体は遮蔽にしない。
         SSAOSettings ssaoSettings;
-        ssaoSettings.Radius = 0.5f;
-        ssaoSettings.Bias = 0.025f;
-        ssaoSettings.Intensity = 2.0f;
+        ssaoSettings.Radius = 1.0f;
+        ssaoSettings.Intensity = 1.0f;
         auto ssaoPass = MakeUnique<SSAOPass>(ssaoSettings);
         AddPass(std::move(ssaoPass));
 
@@ -871,29 +969,54 @@ namespace NorvesLib::Core::Rendering
         lightingPass->SetRegisterLegacyBridge(false);
         AddPass(std::move(lightingPass));
 
-        // VolumetricsPass: Lighting後のSceneColorを解析高さフォグで合成
-        AddPass(MakeUnique<VolumetricsPass>());
-
-        // ForwardPass(TransparentOnly): Lighting後のSceneColorへ半透明をLoad合成
-        auto transparentForwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
-        transparentForwardPass->SetTransparentOnly(true);
-        transparentForwardPass->SetRegisterOutputs(false);
-        AddPass(std::move(transparentForwardPass));
-
-        // PostProcessStack: SSR -> TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA
-        auto postProcessStack = MakeUnique<PostProcessStack>();
-
-        // SSR（スクリーンスペース反射、HDR空間で適用）
+        // SSR（スクリーンスペース反射、HDR空間で適用）: Lightingが足した環境光の鏡面反射を画面の反射へ置き換え、
+        // "SSR.SceneColor" に書く。フォグ・半透明より前に置き、減衰していない照明の色の上で置き換える
+        // （後のパスはSSRの出力があればそれへ重ねる）。
         SSRSettings ssrSettings;
         ssrSettings.MaxDistance = 15.0f;
         ssrSettings.Thickness = 0.3f;
         ssrSettings.MaxSteps = 64.0f;
         ssrSettings.Intensity = 0.8f;
-        ssrSettings.RoughnessCutoff = 0.5f;
-        auto ssrPass = MakeUnique<SSRPass>(ssrSettings);
-        postProcessStack->AddPass(std::move(ssrPass));
+        // 粗さ0.3〜0.7の間でなめらかに弱める（しきい値で急に切れると、粗さの近い面の間で反射の有無が段になる）。
+        ssrSettings.RoughnessFadeStart = 0.3f;
+        ssrSettings.RoughnessFadeEnd = 0.7f;
+        AddPass(MakeUnique<SSRPass>(ssrSettings));
 
-        // TemporalAA（ライティング・半透明・SSRの後、ブルームの前。既定は無効で、カメラが TAA を選んだ
+        // VolumetricsPass: SSR後のシーンの色を解析高さフォグで合成
+        AddPass(MakeUnique<VolumetricsPass>());
+
+        // ForwardPass(TransparentOnly): フォグ後のシーンの色へ半透明をLoad合成
+        auto transparentForwardPass = MakeUnique<ForwardPass>(this, sceneRenderer);
+        transparentForwardPass->SetTransparentOnly(true);
+        transparentForwardPass->SetRegisterOutputs(false);
+        AddPass(std::move(transparentForwardPass));
+
+        // VisibilityDebugPass: ID を色にして最後のシーンの色へ書く（--visibility-buffer=debug の検証表示）
+        if (visibilityBuffer == VisibilityBufferMode::Debug && visibilityRasterPassPtr)
+        {
+            auto visibilityDebugPass = MakeUnique<VisibilityDebugPass>();
+            visibilityDebugPass->SetRasterPass(visibilityRasterPassPtr);
+            AddPass(std::move(visibilityDebugPass));
+        }
+
+#if NORVES_ENABLE_STATS
+        // GBufferDebugPass: GBuffer の法線・速度・深度を最後のシーンの色へ書く（環境変数 NORVES_GBUFFER_DEBUG。on・off の比較用）。
+        // 統計が有効な構成（Debug・RelWithDebInfo）だけ。Release には検証表示を入れない。
+        {
+            GBufferDebugView gbufferDebugView = GBufferDebugView::Normal;
+            if (GBufferDebugPass::TryGetViewFromEnvironment(gbufferDebugView))
+            {
+                NORVES_LOG_INFO("SceneView", "GBUFFER_DEBUG NORVES_GBUFFER_DEBUG により GBuffer の検証表示を追加する（表示=%u）",
+                                static_cast<uint32_t>(gbufferDebugView));
+                AddPass(MakeUnique<GBufferDebugPass>(gbufferDebugView));
+            }
+        }
+#endif
+
+        // PostProcessStack: TemporalAA -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw
+        auto postProcessStack = MakeUnique<PostProcessStack>();
+
+        // TemporalAA（ライティング・SSR・半透明の後、ブルームの前。既定は無効で、カメラが TAA を選んだ
         // Viewport でだけ有効にし、そのとき FXAA を外す）
         postProcessStack->AddPass(MakeUnique<TemporalAAPass>());
         m_bTemporalAAForced = IsTemporalAAForcedByEnvironment();
@@ -927,10 +1050,6 @@ namespace NorvesLib::Core::Rendering
         auto vignettePass = MakeUnique<VignettePass>();
         postProcessStack->AddPass(std::move(vignettePass));
 
-        // DebugDraw（ToneMapping後のdisplay-linear色へ、SceneDepthで深度遮蔽）
-        auto debugDrawPass = MakeUnique<DebugDrawPass>();
-        postProcessStack->AddPass(std::move(debugDrawPass));
-
         // FXAA（アンチエイリアシング、最終パス）
         FXAASettings fxaaSettings;
         fxaaSettings.EdgeThreshold = 0.0312f;
@@ -942,10 +1061,14 @@ namespace NorvesLib::Core::Rendering
         auto upscalePass = MakeUnique<UpscalePass>();
         postProcessStack->AddPass(std::move(upscalePass));
 
+        // DebugDraw（Upscale後の最終解像度のdisplay-linear色へ、ジッタを外したカメラで描き、SceneDepthで深度遮蔽）
+        auto debugDrawPass = MakeUnique<DebugDrawPass>();
+        postProcessStack->AddPass(std::move(debugDrawPass));
+
         SetPostProcessStack(std::move(postProcessStack));
 
         NORVES_LOG_INFO("SceneView",
-                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> Volumetrics -> Forward(Transparent) -> SSR -> TemporalAA(optional) -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> DebugDraw -> FXAA -> Upscale");
+                        "Deferred pipeline: ShadowMap -> GBuffer -> SSAO -> Lighting -> SSR -> Volumetrics -> Forward(Transparent) -> TemporalAA(optional) -> AutoExposure -> Bloom -> ToneMapping -> Vignette -> FXAA -> Upscale -> DebugDraw");
     }
 
     void SceneView::SetupPathTracingPipeline(uint32_t samplesPerFrame,

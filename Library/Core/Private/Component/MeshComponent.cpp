@@ -28,6 +28,32 @@ namespace NorvesLib::Core::Component
 
             return materialData->Blend;
         }
+
+        // ローカル空間のAABBを包む球をワールドへ移す。中心はワールド行列で点として変換し、半径は上3x3の絶対値で
+        // 移した半分の大きさ（変換後の箱を包むワールドのAABB）の長さにする。回転と非一様スケールが重なっても包む。
+        Rendering::BoundingSphere MakeWorldBoundingSphere(const Rendering::BoundingBox &localBounds,
+                                                          const Math::Matrix4x4 &worldTransform)
+        {
+            const Math::Vector3 localCenter((localBounds.MinX + localBounds.MaxX) * 0.5f,
+                                            (localBounds.MinY + localBounds.MaxY) * 0.5f,
+                                            (localBounds.MinZ + localBounds.MaxZ) * 0.5f);
+            const Math::Vector3 localHalfExtents((localBounds.MaxX - localBounds.MinX) * 0.5f,
+                                                 (localBounds.MaxY - localBounds.MinY) * 0.5f,
+                                                 (localBounds.MaxZ - localBounds.MinZ) * 0.5f);
+
+            const Math::Vector3 worldCenter = Math::MatrixUtils::TransformPointRowVector(worldTransform, localCenter);
+            const Math::Vector3 worldHalfExtents =
+                Math::MatrixUtils::AbsUpper3x3TransformExtentsRowVector(worldTransform, localHalfExtents);
+
+            Rendering::BoundingSphere worldBounds;
+            worldBounds.CenterX = worldCenter.x;
+            worldBounds.CenterY = worldCenter.y;
+            worldBounds.CenterZ = worldCenter.z;
+            worldBounds.Radius = std::sqrt(worldHalfExtents.x * worldHalfExtents.x +
+                                           worldHalfExtents.y * worldHalfExtents.y +
+                                           worldHalfExtents.z * worldHalfExtents.z);
+            return worldBounds;
+        }
     } // namespace
 
     MeshComponent::MeshComponent()
@@ -217,8 +243,15 @@ namespace NorvesLib::Core::Component
         outProxy.WorldTransform = m_WorldTransform;
         outProxy.PreviousWorldTransform = m_PreviousWorldTransform;
 
-        // バウンディング
+        // バウンディング。登録したメッシュの頂点から求めたAABBがあれば、それを包む球にする（GetLocalBounds の
+        // 既定の単位の箱のままだと、大きなメッシュは中心が視錐台の外に出たときに見えている部分ごとカリングされる）。
         outProxy.WorldBounds = m_WorldBounds;
+        Rendering::BoundingBox meshLocalBounds;
+        if (meshes != nullptr && meshes->TryGetLocalBounds(outProxy.MeshHandle, meshLocalBounds) &&
+            meshLocalBounds.IsValid())
+        {
+            outProxy.WorldBounds = MakeWorldBoundingSphere(meshLocalBounds, m_WorldTransform);
+        }
 
         // マテリアル
         const uint32_t materialCount = static_cast<uint32_t>(m_Materials.size());

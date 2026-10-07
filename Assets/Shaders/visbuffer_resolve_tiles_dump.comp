@@ -1,0 +1,11 @@
+﻿#version 460
+
+// ========================================
+// visbuffer_resolve_tiles.comp に、画素ごとの中間の値の書き出し（binding 11）を足した検証用の版
+//
+// 直接 dispatch の検証用の版（visbuffer_resolve_dump.comp）と画素ごとにビット単位で比べる GPU のテストが使う。製品の経路は使わない。
+// ========================================
+
+#define NORVES_VISRESOLVE_TILES 1
+#define NORVES_VISRESOLVE_DUMP 1
+#include "Common/VisibilityResolve.glsl"

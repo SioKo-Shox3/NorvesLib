@@ -253,14 +253,10 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
             return DecodeImageBytes({fileData.data(), fileData.size()}, filePath, outPixels, outWidth, outHeight, role, requestId, false);
         }
 
-        bool CreateTextureFromPixels(Rendering::TextureResources& textures,
-                                     const String& debugName,
-                                     uint32_t width,
-                                     uint32_t height,
-                                     Rendering::TextureCreateInfo::Format format,
-                                     const void* pPixelData,
-                                     size_t pixelDataSize,
-                                     NorvesLib::RHI::TexturePtr& outTexture)
+        bool CreateTextureFromPixels(Rendering::TextureResources &textures, const String &debugName, uint32_t width,
+                                     uint32_t height, Rendering::TextureCreateInfo::Format format,
+                                     const void *pPixelData, size_t pixelDataSize, Rendering::TextureHandle &outTexture,
+                                     VariableArray<TSharedPtr<const void>> &owners)
         {
             auto calculateMipCount = [](uint32_t textureWidth, uint32_t textureHeight) -> uint32_t
             {
@@ -287,10 +283,15 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                 return false;
             }
 
-            outTexture = textures.GetRHITexturePtr(textureHandle);
-            // 匿名textureはmodelがptrで所有する。registryへhandleを残さない。
+            auto owner = textures.AdoptAnonymousTexture(textureHandle);
+            if (!owner)
+            {
             textures.ReleaseTexture(textureHandle);
-            return static_cast<bool>(outTexture);
+                return false;
+            }
+            owners.push_back(std::move(owner));
+            outTexture = textureHandle;
+            return true;
         }
 
         void SetStagedTextureData(StagedTextureData& outTexture,
@@ -519,11 +520,9 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
     }
     namespace
     {
-        bool CreateTextureFromStagedData(Rendering::TextureResources& textures,
-                                         const StagedTextureData& stagedTexture,
-                                         NorvesLib::RHI::TexturePtr& outTexture,
-                                         const char* role,
-                                         uint32_t requestId)
+        bool CreateTextureFromStagedData(Rendering::TextureResources &textures, const StagedTextureData &stagedTexture,
+                                         Rendering::TextureHandle &outTexture, const char *role, uint32_t requestId,
+                                         VariableArray<TSharedPtr<const void>> &owners)
         {
             if (!stagedTexture.HasData())
             {
@@ -546,8 +545,8 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                     return false;
                 }
 
-                outTexture = textures.GetRHITexturePtr(textureHandle);
-                return static_cast<bool>(outTexture);
+                outTexture = textureHandle;
+                return true;
             }
 
             if (!stagedTexture.HasLoosePixelData())
@@ -555,23 +554,15 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                 return false;
             }
 
-            return CreateTextureFromPixels(
-                textures,
-                stagedTexture.DebugName,
-                stagedTexture.Width,
-                stagedTexture.Height,
-                stagedTexture.Format,
-                stagedTexture.PixelData.data(),
-                stagedTexture.PixelData.size(),
-                outTexture);
+            return CreateTextureFromPixels(textures, stagedTexture.DebugName, stagedTexture.Width, stagedTexture.Height,
+                                           stagedTexture.Format, stagedTexture.PixelData.data(),
+                                           stagedTexture.PixelData.size(), outTexture, owners);
         }
 
-        bool CreateStandardTextureFromReference(Rendering::TextureResources& textures,
-                                                const TextureReference& textureReference,
-                                                const String& debugName,
-                                                NorvesLib::RHI::TexturePtr& outTexture,
-                                                const char* role,
-                                                uint32_t requestId)
+        bool CreateStandardTextureFromReference(Rendering::TextureResources &textures,
+                                                const TextureReference &textureReference, const String &debugName,
+                                                Rendering::TextureHandle &outTexture, const char *role,
+                                                uint32_t requestId, VariableArray<TSharedPtr<const void>> &owners)
         {
             if (!textureReference.HasReference())
             {
@@ -602,8 +593,8 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                         return false;
                     }
 
-                    outTexture = textures.GetRHITexturePtr(textureHandle);
-                    return static_cast<bool>(outTexture);
+                    outTexture = textureHandle;
+                    return true;
                 }
 
                 if (!ShouldUseLooseFallbackForPreparedStatus(prepared.Status))
@@ -618,17 +609,15 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                 return false;
             }
 
-            return CreateTextureFromStagedData(textures, looseFallback, outTexture, role, requestId);
+            return CreateTextureFromStagedData(textures, looseFallback, outTexture, role, requestId, owners);
         }
 
-        bool CreateArmTexturesFromReference(Rendering::TextureResources& textures,
-                                            const TextureReference& textureReference,
-                                            const String& debugNamePrefix,
-                                            NorvesLib::RHI::TexturePtr& outAOTexture,
-                                            NorvesLib::RHI::TexturePtr& outRoughnessTexture,
-                                            NorvesLib::RHI::TexturePtr& outMetallicTexture,
-                                            const char* role,
-                                            uint32_t requestId)
+        bool CreateArmTexturesFromReference(Rendering::TextureResources &textures,
+                                            const TextureReference &textureReference, const String &debugNamePrefix,
+                                            Rendering::TextureHandle &outAOTexture,
+                                            Rendering::TextureHandle &outRoughnessTexture,
+                                            Rendering::TextureHandle &outMetallicTexture, const char *role,
+                                            uint32_t requestId, VariableArray<TSharedPtr<const void>> &owners)
         {
             if (!textureReference.HasReference())
             {
@@ -730,9 +719,10 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                 return false;
             }
 
-            return CreateTextureFromStagedData(textures, aoStaging, outAOTexture, role, requestId) &&
-                   CreateTextureFromStagedData(textures, roughnessStaging, outRoughnessTexture, role, requestId) &&
-                   CreateTextureFromStagedData(textures, metallicStaging, outMetallicTexture, role, requestId);
+            return CreateTextureFromStagedData(textures, aoStaging, outAOTexture, role, requestId, owners) &&
+                   CreateTextureFromStagedData(textures, roughnessStaging, outRoughnessTexture, role, requestId,
+                                               owners) &&
+                   CreateTextureFromStagedData(textures, metallicStaging, outMetallicTexture, role, requestId, owners);
         }
         bool FinalizeImportedMaterial(const ModelStagingData& staging, Rendering::TextureResources& textures,
                                       Rendering::MegaGeometry::MegaMeshMaterial& material, const char* role,
@@ -798,7 +788,7 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
             material.Metallic = source.Metallic;
             material.Roughness = source.Roughness;
             material.OcclusionStrength = source.OcclusionStrength;
-            NorvesLib::RHI::TexturePtr* standard[] = {&material.AlbedoTexture, &material.NormalTexture};
+            Rendering::TextureHandle *standard[] = {&material.AlbedoTexture, &material.NormalTexture};
             for (size_t i = 0; i < 2; ++i)
             {
                 if (!prepared[i].Payload)
@@ -808,14 +798,15 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                 StagedTextureData staged;
                 staged.PreparedTexture = prepared[i];
                 staged.bHasPreparedTexture = true;
-                if (!CreateTextureFromStagedData(textures, staged, *standard[i], role, requestId))
+                if (!CreateTextureFromStagedData(textures, staged, *standard[i], role, requestId,
+                                                 material.TextureOwners))
                 {
                     reason = "imported_opaque: texture_finalize role=";
                     reason += roles[i];
                     return false;
                 }
             }
-            NorvesLib::RHI::TexturePtr* channels[] = {&material.AOTexture, &material.RoughnessTexture,
+            Rendering::TextureHandle *channels[] = {&material.AOTexture, &material.RoughnessTexture,
                                                       &material.MetallicTexture};
             const char* suffixes[] = {"_AO", "_Roughness", "_Metallic"};
             for (size_t i = 0; i < 3; ++i)
@@ -836,10 +827,17 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                     reason = "imported_opaque: arm_channel_finalize";
                     return false;
                 }
-                *channels[i] = textures.GetRHITexturePtr(handle);
-                // 派生textureはmodelだけが所有する。registryへ匿名handleを残さない。
+                auto owner = textures.AdoptAnonymousTexture(handle);
+                if (!owner)
+                {
                 textures.ReleaseTexture(handle);
-                if (!*channels[i])
+                    reason = "imported_opaque: arm_channel_owner";
+                    return false;
+                }
+                material.TextureOwners.push_back(std::move(owner));
+                *channels[i] = handle;
+                const auto texture = textures.GetRHITexturePtr(handle);
+                if (!texture)
                 {
                     reason = "imported_opaque: arm_channel_pointer";
                     return false;
@@ -848,8 +846,7 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
                 for (size_t level = 0; level < arm.Mips.size(); ++level)
                 {
                     const auto& mip = arm.Mips[level];
-                    (*channels[i])
-                        ->Update(mip.Pixels[i].data(), mip.Width, static_cast<uint32_t>(mip.Pixels[i].size()),
+                    texture->Update(mip.Pixels[i].data(), mip.Width, static_cast<uint32_t>(mip.Pixels[i].size()),
                                  static_cast<uint32_t>(level), 0);
                 }
             }
@@ -904,32 +901,39 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
         else
         {
             Rendering::ScopedTextureCreateUploadProfileRole profileRole(role);
-            bAlbedoFinalizeSuccess = staging.AlbedoTexture.HasData()
-                                          ? CreateTextureFromStagedData(resources.Textures, staging.AlbedoTexture, material.AlbedoTexture, role, requestId)
-                                          : CreateStandardTextureFromReference(resources.Textures, staging.TextureReferences.Albedo, staging.DebugName + "_Albedo", material.AlbedoTexture, role, requestId);
-            bNormalFinalizeSuccess = staging.NormalTexture.HasData()
-                                         ? CreateTextureFromStagedData(resources.Textures, staging.NormalTexture, material.NormalTexture, role, requestId)
-                                         : CreateStandardTextureFromReference(resources.Textures, staging.TextureReferences.Normal, staging.DebugName + "_Normal", material.NormalTexture, role, requestId);
+            bAlbedoFinalizeSuccess =
+                staging.AlbedoTexture.HasData()
+                    ? CreateTextureFromStagedData(resources.Textures, staging.AlbedoTexture, material.AlbedoTexture,
+                                                  role, requestId, material.TextureOwners)
+                    : CreateStandardTextureFromReference(resources.Textures, staging.TextureReferences.Albedo,
+                                                         staging.DebugName + "_Albedo", material.AlbedoTexture, role,
+                                                         requestId, material.TextureOwners);
+            bNormalFinalizeSuccess =
+                staging.NormalTexture.HasData()
+                    ? CreateTextureFromStagedData(resources.Textures, staging.NormalTexture, material.NormalTexture,
+                                                  role, requestId, material.TextureOwners)
+                    : CreateStandardTextureFromReference(resources.Textures, staging.TextureReferences.Normal,
+                                                         staging.DebugName + "_Normal", material.NormalTexture, role,
+                                                         requestId, material.TextureOwners);
             if (staging.AOTexture.HasData() ||
                 staging.RoughnessTexture.HasData() ||
                 staging.MetallicTexture.HasData())
             {
-                bAOFinalizeSuccess = CreateTextureFromStagedData(resources.Textures, staging.AOTexture, material.AOTexture, role, requestId);
-                bRoughnessFinalizeSuccess = CreateTextureFromStagedData(resources.Textures, staging.RoughnessTexture, material.RoughnessTexture, role, requestId);
-                bMetallicFinalizeSuccess = CreateTextureFromStagedData(resources.Textures, staging.MetallicTexture, material.MetallicTexture, role, requestId);
+                bAOFinalizeSuccess = CreateTextureFromStagedData(
+                    resources.Textures, staging.AOTexture, material.AOTexture, role, requestId, material.TextureOwners);
+                bRoughnessFinalizeSuccess =
+                    CreateTextureFromStagedData(resources.Textures, staging.RoughnessTexture, material.RoughnessTexture,
+                                                role, requestId, material.TextureOwners);
+                bMetallicFinalizeSuccess =
+                    CreateTextureFromStagedData(resources.Textures, staging.MetallicTexture, material.MetallicTexture,
+                                                role, requestId, material.TextureOwners);
             }
             else
             {
                 bAOFinalizeSuccess = bRoughnessFinalizeSuccess = bMetallicFinalizeSuccess =
-                    CreateArmTexturesFromReference(
-                        resources.Textures,
-                        staging.TextureReferences.Arm,
-                        staging.DebugName,
-                        material.AOTexture,
-                        material.RoughnessTexture,
-                        material.MetallicTexture,
-                        role,
-                        requestId);
+                    CreateArmTexturesFromReference(resources.Textures, staging.TextureReferences.Arm, staging.DebugName,
+                                                   material.AOTexture, material.RoughnessTexture,
+                                                   material.MetallicTexture, role, requestId, material.TextureOwners);
             }
         }
         bool bTextureFinalizeSuccess =

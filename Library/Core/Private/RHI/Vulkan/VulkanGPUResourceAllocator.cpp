@@ -3,43 +3,6 @@
 
 namespace NorvesLib::RHI::Vulkan
 {
-    namespace
-    {
-        size_t GetFormatBytesPerPixel(Format format)
-        {
-            switch (format)
-            {
-            case Format::R8_UNORM:
-                return 1;
-            case Format::R8G8_UNORM:
-                return 2;
-            case Format::R8G8B8A8_UNORM:
-            case Format::R8G8B8A8_SRGB:
-            case Format::B8G8R8A8_UNORM:
-            case Format::B8G8R8A8_SRGB:
-            case Format::R32_FLOAT:
-            case Format::D24_UNORM_S8_UINT:
-            case Format::D32_FLOAT:
-                return 4;
-            case Format::R16_FLOAT:
-            case Format::D16_UNORM:
-                return 2;
-            case Format::R16G16_FLOAT:
-                return 4;
-            case Format::R16G16B16A16_FLOAT:
-                return 8;
-            case Format::R32G32_FLOAT:
-                return 8;
-            case Format::R32G32B32_FLOAT:
-                return 12;
-            case Format::R32G32B32A32_FLOAT:
-                return 16;
-            default:
-                return 4;
-            }
-        }
-    } // namespace
-
     VulkanGPUResourceAllocator::VulkanGPUResourceAllocator(VulkanDevice* device)
         : m_Device(device)
     {
@@ -156,11 +119,7 @@ namespace NorvesLib::RHI::Vulkan
 
     size_t VulkanGPUResourceAllocator::EstimateTextureSize(const TextureDesc& desc)
     {
-        return static_cast<size_t>(desc.Width) *
-               static_cast<size_t>(desc.Height) *
-               static_cast<size_t>(desc.Depth) *
-               static_cast<size_t>(desc.ArraySize) *
-               static_cast<size_t>(GetFormatBytesPerPixel(desc.TextureFormat));
+        return RHI::EstimateTextureSize(desc);
     }
 
 } // namespace NorvesLib::RHI::Vulkan

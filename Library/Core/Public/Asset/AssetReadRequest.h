@@ -25,7 +25,7 @@ namespace NorvesLib::Core::Asset
         Container::AnsiString InputPath;
         Container::AnsiString AssetRoot;
         bool bAllowAbsolutePath = true;
-        // 開いたstreamの実sizeを確保前に検査する。旧入口は無制限のまま。
+        // 確保する読込量（範囲読込なら指定範囲）を検査する。既定は無制限。
         uint64_t MaxReadBytes = UINT64_MAX;
     };
 

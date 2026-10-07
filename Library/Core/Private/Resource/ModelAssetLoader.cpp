@@ -20,11 +20,18 @@ namespace NorvesLib::Core::ResourceIO
         {
             const auto& reference = resolved.CookedReference;
             const bool bV1 = mesh.VersionMajor == 1 || reference.CookedVersion != 0 ||
-                             reference.Format == "nvmesh.v1.mesh3d.pnt.u32.clustered";
-            // 従来v0の解決規則は変えず、新しい形式のmanifest/payload不一致を拒否する。
-            return !bV1 || (mesh.VersionMajor == 1 && reference.CookedVersion == 1 &&
-                            reference.Format == "nvmesh.v1.mesh3d.pnt.u32.clustered" &&
-                            reference.EntryType == Asset::MakeAssetPackageFourCC('M', 's', 'h', '0'));
+                             reference.Format == "nvmesh.v1.mesh3d.pnt.u32.clustered" ||
+                             reference.Format == "nvmesh.v1.mesh3d.pnt.u32.lodgraph";
+            if (!bV1)
+            {
+                return true;
+            }
+            const char *format = mesh.Layout == Asset::CookedMeshLayout::ClusteredV1
+                                     ? "nvmesh.v1.mesh3d.pnt.u32.clustered"
+                                     : "nvmesh.v1.mesh3d.pnt.u32.lodgraph";
+            return mesh.VersionMajor == 1 && mesh.Layout != Asset::CookedMeshLayout::LegacyV0 &&
+                   reference.CookedVersion == 1 && reference.Format == format &&
+                   reference.EntryType == Asset::MakeAssetPackageFourCC('M', 's', 'h', '0');
         }
     } // namespace
 
@@ -36,10 +43,14 @@ namespace NorvesLib::Core::ResourceIO
     {
         outStaging = {};
         // 手組みv0の空表互換を保ち、v1は対応する1材質subsetだけを受理する。
-        if (cooked.VersionMajor > 1 || cooked.Submeshes.size() > 1 || cooked.Materials.size() > 1)
+        if (cooked.VersionMajor > 1 || cooked.Layout == Asset::CookedMeshLayout::LodGraphV1 ||
+            cooked.Submeshes.size() > 1 || cooked.Materials.size() > 1)
         {
-            NORVES_LOG_ERROR("ModelAsset", "NVMESH v%u・submesh=%zu・material=%zuのruntime材質接続は未対応です",
-                static_cast<unsigned>(cooked.VersionMajor),cooked.Submeshes.size(),cooked.Materials.size());
+            NORVES_LOG_ERROR("ModelAsset",
+                             "NVMESH "
+                             "v%u・submesh=%zu・material=%zuのruntime材質接続は未対応です",
+                             static_cast<unsigned>(cooked.VersionMajor), cooked.Submeshes.size(),
+                             cooked.Materials.size());
             return false;
         }
 

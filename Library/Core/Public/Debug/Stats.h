@@ -173,6 +173,8 @@ namespace NorvesLib::Debug
         uint32_t InstancedDrawCalls = 0;
         uint32_t RenderGraphBarrierCount = 0;
         uint32_t RenderGraphTransientAcquireCount = 0;
+        // 頂点の合計の上限などのために、計算スキニングから外したインスタンスの数
+        uint32_t SkinningComputeDroppedInstances = 0;
 
         // タイミング（ミリ秒）
         float CollectionTimeMs = 0.0f;
@@ -198,6 +200,7 @@ namespace NorvesLib::Debug
             InstancedDrawCalls = 0;
             RenderGraphBarrierCount = 0;
             RenderGraphTransientAcquireCount = 0;
+            SkinningComputeDroppedInstances = 0;
             CollectionTimeMs = 0.0f;
             CullingTimeMs = 0.0f;
             BatchingTimeMs = 0.0f;
@@ -300,6 +303,13 @@ namespace NorvesLib::Debug
         void BeginFrame(uint64_t frameNumber, float deltaTime);
         void EndFrame();
         void RecordScope(const char* name, const char* category, float durationMs);
+        /**
+         * @brief 完了したGPUの区間を1行としてトレースへ書く
+         * @param frameNumber 区間を記録したフレームの番号（GPUの完了はCPUのフレームより遅れる）
+         * @param name 区間の名前（FrameGPU・AccelerationStructureBuild・RenderGraph のパス名）
+         * @param durationMs GPUのタイムスタンプで測った時間
+         */
+        void RecordGPUScope(uint64_t frameNumber, const char* name, float durationMs);
         void SetGameThreadTimeMs(float timeMs);
         void SetRenderPrepareTimeMs(float timeMs);
         void SetRenderThreadTimeMs(float timeMs);
@@ -323,6 +333,7 @@ namespace NorvesLib::Debug
         void WriteTraceHeader();
         void WriteFrameTraceLine();
         void WriteScopeTraceLine(const ProfileEvent& event);
+        void WriteGPUScopeTraceLine(uint64_t frameNumber, const String& name, float durationMs);
 
     private:
         NorvesLib::Thread::Atomic<bool> m_bTraceActive{false};

@@ -1,4 +1,4 @@
-#include "Rendering/CookedTextureUpload.h"
+﻿#include "Rendering/CookedTextureUpload.h"
 
 #include "Asset/AssetBlob.h"
 #include "RHI/IBuffer.h"
@@ -72,14 +72,45 @@ namespace
         return shifted == 0 ? 1 : shifted;
     }
 
+    // 形式ごとの 1 ブロックの大きさ。テスト側で独立に持ち、実装の計算を写さない。
+    struct TestBlock
+    {
+        uint32_t Width;
+        uint32_t Height;
+        uint32_t Bytes;
+    };
+
+    TestBlock TestBlockOf(CookedTexturePixelFormat pixelFormat)
+    {
+        switch (pixelFormat)
+        {
+        case CookedTexturePixelFormat::R8UNorm:
+            return {1, 1, 1};
+        case CookedTexturePixelFormat::RG8UNorm:
+        case CookedTexturePixelFormat::R16UNorm:
+            return {1, 1, 2};
+        case CookedTexturePixelFormat::RGBA8UNorm:
+            return {1, 1, 4};
+        case CookedTexturePixelFormat::BC1:
+        case CookedTexturePixelFormat::BC4:
+            return {4, 4, 8};
+        case CookedTexturePixelFormat::BC5:
+        case CookedTexturePixelFormat::BC7:
+            return {4, 4, 16};
+        }
+        return {1, 1, 0};
+    }
+
+    // versionMinor を省略すると v0.0 で書く。BC と R16 は v0.1 を明示して書く。
     std::vector<uint8_t> BuildTextureBytes(uint32_t width,
                                            uint32_t height,
                                            uint32_t layerCount,
                                            CookedTexturePixelFormat pixelFormat,
-                                           CookedTextureColorSpace colorSpace)
+                                           CookedTextureColorSpace colorSpace,
+                                           uint16_t versionMinor = VersionMinor)
     {
         const uint32_t mipCount = ComputeCookedTextureFullMipCount(width, height);
-        const size_t bytesPerPixel = GetCookedTextureBytesPerPixel(pixelFormat);
+        const TestBlock block = TestBlockOf(pixelFormat);
         const size_t mipTableOffset = HeaderSize;
         const size_t mipTableSize = static_cast<size_t>(mipCount) * MipRecordSize;
         const size_t payloadOffset = mipTableOffset + mipTableSize;
@@ -93,10 +124,9 @@ namespace
         {
             const uint32_t mipWidth = ExpectedMipDimension(width, mipIndex);
             const uint32_t mipHeight = ExpectedMipDimension(height, mipIndex);
-            const size_t dataSize = static_cast<size_t>(mipWidth) *
-                                    static_cast<size_t>(mipHeight) *
-                                    static_cast<size_t>(layerCount) *
-                                    bytesPerPixel;
+            const size_t blocksX = (mipWidth + block.Width - 1) / block.Width;
+            const size_t blocksY = (mipHeight + block.Height - 1) / block.Height;
+            const size_t dataSize = blocksX * blocksY * static_cast<size_t>(layerCount) * block.Bytes;
             std::vector<uint8_t> mipBytes(dataSize);
             for (uint8_t &value : mipBytes)
             {
@@ -111,7 +141,7 @@ namespace
         std::memcpy(bytes.data() + HeaderOffset::Magic, Magic, MagicSize);
         WriteLe32(bytes, HeaderOffset::HeaderSize, static_cast<uint32_t>(HeaderSize));
         WriteLe16(bytes, HeaderOffset::VersionMajor, VersionMajor);
-        WriteLe16(bytes, HeaderOffset::VersionMinor, VersionMinor);
+        WriteLe16(bytes, HeaderOffset::VersionMinor, versionMinor);
         WriteLe32(bytes, HeaderOffset::EndianMarker, EndianMarker);
         WriteLe32(bytes, HeaderOffset::MipRecordSize, static_cast<uint32_t>(MipRecordSize));
         WriteLe64(bytes, HeaderOffset::FileSize, static_cast<uint64_t>(fileSize));
@@ -153,9 +183,11 @@ namespace
                                    uint32_t height,
                                    uint32_t layerCount,
                                    CookedTexturePixelFormat pixelFormat,
-                                   CookedTextureColorSpace colorSpace)
+                                   CookedTextureColorSpace colorSpace,
+                                   uint16_t versionMinor = VersionMinor)
     {
-        const std::vector<uint8_t> bytes = BuildTextureBytes(width, height, layerCount, pixelFormat, colorSpace);
+        const std::vector<uint8_t> bytes =
+            BuildTextureBytes(width, height, layerCount, pixelFormat, colorSpace, versionMinor);
         AssetBlob blob = AssetBlob::CopyBytes(Span<const uint8_t>(bytes.data(), bytes.size()), "memory.nvtex");
         CookedTextureParseResult result = ParseCookedTexture(std::move(blob));
         assert(result.Succeeded());
@@ -440,6 +472,146 @@ int main()
         assert(result.Status == CookedTextureUploadStatus::TextureCreationFailed);
         assert(!result.Texture);
         assert(device.CreatedTextureDescs.size() == 1);
+    }
+
+    // v0.1 のクック済み BC7: ミップごとにブロック単位のピッチで全ミップを上げる（端のミップは最小 1 ブロック）
+    {
+        FakeDevice device;
+        const CookedTextureData texture = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7,
+                                                       CookedTextureColorSpace::SRGB, VersionMinorBlockCompressed);
+        const CookedTextureUploadResult result = CreateAndUploadCookedTexture(&device, texture, "bc7_srgb");
+
+        assert(result.Succeeded());
+        assert(result.CreateInfo.PixelFormat == TextureCreateInfo::Format::BC7_SRGB);
+        assert(result.CreateInfo.MipLevels == 4);
+        assert(result.CreateInfo.Type == TextureType::Texture2D);
+        assert(device.CreatedTextureDescs.size() == 1);
+        const NorvesLib::RHI::TextureDesc &desc = device.CreatedTextureDescs[0];
+        assert(desc.TextureFormat == NorvesLib::RHI::Format::BC7_SRGB);
+        assert(desc.Width == 8 && desc.Height == 8);
+        assert(desc.MipLevels == 4);
+        assert(HasUsage(desc.Usage, NorvesLib::RHI::ResourceUsage::ShaderRead));
+        assert(HasUsage(desc.Usage, NorvesLib::RHI::ResourceUsage::TransferDst));
+
+        assert(result.UploadedBytes == 64 + 16 + 16 + 16);
+        assert(device.LastTexture->Updates.size() == 4);
+        const uint32_t expectedRowPitch[] = {32, 16, 16, 16};
+        const uint32_t expectedSlicePitch[] = {64, 16, 16, 16};
+        const uint8_t expectedStart[] = {0, 64, 80, 96};
+        for (uint32_t mip = 0; mip < 4; ++mip)
+        {
+            const UpdateCall &call = device.LastTexture->Updates[mip];
+            assert(call.MipLevel == mip);
+            assert(call.ArrayIndex == 0);
+            assert(call.RowPitch == expectedRowPitch[mip]);
+            assert(call.SlicePitch == expectedSlicePitch[mip]);
+            assert(call.Bytes.size() == expectedSlicePitch[mip]);
+            AssertByteSequence(call.Bytes, expectedStart[mip]);
+        }
+    }
+
+    // 4 の倍数でない大きさ・BC1/BC4/BC5・BC7 の配列
+    {
+        FakeDevice device;
+        const CookedTextureData texture = BuildTexture(6, 5, 1, CookedTexturePixelFormat::BC1,
+                                                       CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        const CookedTextureUploadResult result = CreateAndUploadCookedTexture(&device, texture, "bc1_odd");
+        assert(result.Succeeded());
+        assert(result.CreateInfo.PixelFormat == TextureCreateInfo::Format::BC1_UNORM);
+        assert(device.CreatedTextureDescs[0].TextureFormat == NorvesLib::RHI::Format::BC1_UNORM);
+        assert(device.LastTexture->Updates.size() == 3);
+        assert(device.LastTexture->Updates[0].RowPitch == 16);   // 6 画素 = 2 ブロック x 8 バイト
+        assert(device.LastTexture->Updates[0].SlicePitch == 32); // 5 画素 = 2 ブロック行
+        assert(device.LastTexture->Updates[1].RowPitch == 8);
+        assert(device.LastTexture->Updates[1].SlicePitch == 8);
+        assert(device.LastTexture->Updates[2].RowPitch == 8);
+        assert(device.LastTexture->Updates[2].SlicePitch == 8);
+        assert(result.UploadedBytes == 48);
+    }
+
+    {
+        FakeDevice device;
+        const CookedTextureData texture = BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC4,
+                                                       CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        const CookedTextureUploadResult result = CreateAndUploadCookedTexture(&device, texture, "bc4");
+        assert(result.Succeeded());
+        assert(result.CreateInfo.PixelFormat == TextureCreateInfo::Format::BC4_UNORM);
+        assert(device.CreatedTextureDescs[0].TextureFormat == NorvesLib::RHI::Format::BC4_UNORM);
+        assert(device.LastTexture->Updates[0].RowPitch == 8);
+    }
+
+    {
+        FakeDevice device;
+        const CookedTextureData texture = BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC5,
+                                                       CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        const CookedTextureUploadResult result = CreateAndUploadCookedTexture(&device, texture, "bc5");
+        assert(result.Succeeded());
+        assert(result.CreateInfo.PixelFormat == TextureCreateInfo::Format::BC5_UNORM);
+        assert(device.CreatedTextureDescs[0].TextureFormat == NorvesLib::RHI::Format::BC5_UNORM);
+        assert(device.LastTexture->Updates[0].RowPitch == 16);
+    }
+
+    {
+        FakeDevice device;
+        const CookedTextureData texture = BuildTexture(4, 4, 2, CookedTexturePixelFormat::BC7,
+                                                       CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        const CookedTextureUploadResult result = CreateAndUploadCookedTexture(&device, texture, "bc7_array");
+        assert(result.Succeeded());
+        assert(result.CreateInfo.PixelFormat == TextureCreateInfo::Format::BC7_UNORM);
+        assert(result.CreateInfo.Type == TextureType::Texture2DArray);
+        assert(device.LastTexture->Updates.size() == 6);  // 3 ミップ x 2 レイヤー
+        assert(device.LastTexture->Updates[0].SlicePitch == 16);
+        assert(device.LastTexture->Updates[1].ArrayIndex == 1);
+        AssertByteSequence(device.LastTexture->Updates[1].Bytes, 16);
+        assert(result.UploadedBytes == 96);
+    }
+
+    {
+        FakeDevice device;
+        const CookedTextureData texture = BuildTexture(3, 2, 1, CookedTexturePixelFormat::R16UNorm,
+                                                       CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        const CookedTextureUploadResult result = CreateAndUploadCookedTexture(&device, texture, "r16");
+        assert(result.Succeeded());
+        assert(result.CreateInfo.PixelFormat == TextureCreateInfo::Format::R16_UNORM);
+        assert(device.CreatedTextureDescs[0].TextureFormat == NorvesLib::RHI::Format::R16_UNORM);
+        assert(device.LastTexture->Updates.size() == 2);
+        assert(device.LastTexture->Updates[0].RowPitch == 6);
+        assert(device.LastTexture->Updates[0].SlicePitch == 12);
+    }
+
+    // BC・R16 の色空間の組み合わせ違いは写像で拒否する（デバイスは作らない）
+    {
+        TextureCreateInfo createInfo;
+        CookedTextureData bc4 = BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC4,
+                                             CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        bc4.ColorSpace = CookedTextureColorSpace::SRGB;
+        assert(BuildCookedTextureCreateInfo(bc4, "bad_bc4", createInfo) == CookedTextureUploadStatus::UnsupportedFormat);
+
+        CookedTextureData r16 = BuildTexture(2, 2, 1, CookedTexturePixelFormat::R16UNorm,
+                                             CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        r16.ColorSpace = CookedTextureColorSpace::SRGB;
+        assert(BuildCookedTextureCreateInfo(r16, "bad_r16", createInfo) == CookedTextureUploadStatus::UnsupportedFormat);
+    }
+
+    // ブロック数が足りないミップ、BC に対応しないデバイスは、失敗として返す
+    {
+        FakeDevice device;
+        CookedTextureData texture = BuildTexture(8, 8, 1, CookedTexturePixelFormat::BC7,
+                                                 CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        texture.Mips.pop_back();
+        const CookedTextureUploadResult result = CreateAndUploadCookedTexture(&device, texture, "bc7_missing_mip");
+        assert(result.Status == CookedTextureUploadStatus::InvalidMipData);
+        assert(device.CreatedTextureDescs.empty());
+    }
+
+    {
+        FakeDevice device;
+        device.bFailTextureCreation = true;
+        const CookedTextureData texture = BuildTexture(4, 4, 1, CookedTexturePixelFormat::BC7,
+                                                       CookedTextureColorSpace::Linear, VersionMinorBlockCompressed);
+        const CookedTextureUploadResult result = CreateAndUploadCookedTexture(&device, texture, "bc7_no_bc_device");
+        assert(result.Status == CookedTextureUploadStatus::TextureCreationFailed);
+        assert(!result.Texture);
     }
 
     std::cout << "CookedTextureUploadTest passed\n";

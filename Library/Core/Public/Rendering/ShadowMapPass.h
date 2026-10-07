@@ -52,7 +52,8 @@ namespace NorvesLib::Core::Rendering
      * @brief シャドウマップパス（深度描画 - ライト視点）
      *
      * ディレクショナルライトの視点からシーンの深度のみを描画し、
-     * シャドウマップテクスチャとして出力します。
+     * シャドウマップテクスチャとして出力します。CSMの4カスケードへは影を落とす描画コマンドと、
+     * 影を落とすMegaGeometry（LOD0。カスケードの影の地図にかかる物だけ）を描きます。
      *
      * GBufferPassの前に実行され、標準経路では RenderGraph named resource として公開した
      * シャドウマップをLightingPassが参照して影を計算します。
@@ -179,6 +180,13 @@ namespace NorvesLib::Core::Rendering
 
         // 最後に記録したCSMの分割の奥（m）。変わったときだけ分割を記録する。
         float m_LoggedCascadeSplitFar = -1.0f;
+        // 最後に記録したカスケードごとのMegaGeometryの描画数と三角形数。変わったときだけ記録する。
+        uint32_t m_LoggedCsmMegaDraws[4] = {~0u, ~0u, ~0u, ~0u};
+        uint32_t m_LoggedCsmMegaTriangles[4] = {~0u, ~0u, ~0u, ~0u};
+        // 最後に記録したカスケードごとのMegaGeometryの段（メッシュ名:段/三角形数）。変わったときだけ記録する。
+        Container::String m_LoggedCsmMegaLevels;
+        // 最後に記録した点光源のキューブの面ごとのMegaGeometryの段。変わったときだけ記録する。
+        Container::String m_LoggedPointMegaLevels;
 
         // PerObject UBOアロケータ
         DynamicUniformAllocator m_UniformAllocator;

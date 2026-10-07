@@ -63,7 +63,14 @@ namespace NorvesLib::Core::Rendering
             float Emission[4] = {};
             uint32_t Geometry[4] = {};
             float ObjectColor[4] = {}; ///< GBufferと同じ規則のinstance色
-            uint32_t Textures[4] = {}; ///< アルベド・法線・metallic・roughnessの材質texture表番号
+            /**
+             * @brief アルベド・法線・metallic・roughnessの材質texture表番号
+             *
+             * 法線の番号の最上位ビットは法線が2チャンネル（BC5）の印、metallicの番号の最上位ビットは
+             * metallic・roughnessの番号がORMの1枚（R=AO・G=粗さ・B=メタリック）を指す印。
+             * どの番号も bit30 は、そのtextureがsparse（VT）の印（PathTextureSparseBit）。
+             */
+            uint32_t Textures[4] = {};
             /** @brief TLASと同じ物体→ワールド変換（行優先3x4）。発光三角形の標本化に使う。 */
             float ObjectToWorld[12] = {};
         };
@@ -87,6 +94,11 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t PathDefaultNormalTextureIndex = 1u;
         constexpr uint32_t PathDefaultMetallicTextureIndex = 2u;
         constexpr uint32_t PathDefaultRoughnessTextureIndex = 3u;
+        constexpr uint32_t PathTextureFlagBit = 0x80000000u;
+        // 材質texture表の番号へ立てる、sparse（VT）の印。命中シェーダーが非常駐のタイルを読まず粗いミップへ逃げる。
+        constexpr uint32_t PathTextureSparseBit = 0x40000000u;
+        static_assert(PathTracingMaterialTextureCapacity <= PathTextureSparseBit,
+                      "材質texture表の番号がsparseの印のビットへ届きます");
         constexpr uint32_t PathMaterialTextureBinding = 8u;
         constexpr uint32_t PathDfgLutBinding = 9u;
         constexpr uint32_t PathEnvironmentBinding = 10u;
@@ -765,11 +777,12 @@ namespace NorvesLib::Core::Rendering
             {
                 return defaultIndex;
             }
+            const uint32_t sparseBit = texture->IsSparse() ? PathTextureSparseBit : 0u;
             for (uint32_t index = 0u; index < textureTable.size(); ++index)
             {
                 if (textureTable[index] == texture)
                 {
-                    return index;
+                    return index | sparseBit;
                 }
             }
             if (textureTable.size() >= PathTracingMaterialTextureCapacity)
@@ -783,7 +796,7 @@ namespace NorvesLib::Core::Rendering
                 return defaultIndex;
             }
             textureTable.push_back(texture);
-            return static_cast<uint32_t>(textureTable.size() - 1u);
+            return static_cast<uint32_t>(textureTable.size() - 1u) | sparseBit;
         };
 
         for (const RayTracingSceneInstanceSnapshot& snapshot : scene.Instances)
@@ -861,10 +874,26 @@ namespace NorvesLib::Core::Rendering
                                                        PathDefaultAlbedoTextureIndex);
             instance.Textures[1] = resolveTextureIndex(snapshot.Material.NormalTexture,
                                                        PathDefaultNormalTextureIndex);
-            instance.Textures[2] = resolveTextureIndex(snapshot.Material.MetallicTexture,
-                                                       PathDefaultMetallicTextureIndex);
-            instance.Textures[3] = resolveTextureIndex(snapshot.Material.RoughnessTexture,
-                                                       PathDefaultRoughnessTextureIndex);
+            if (snapshot.Material.bNormalTwoChannel)
+            {
+                instance.Textures[1] |= PathTextureFlagBit;
+            }
+            // ORM が解決できればそれを metallic・roughness の両方の番号にし、印を立てる。
+            // 解決できないときは別々の枠（既定texture）の経路へ落とす。
+            const uint32_t ormIndex =
+                resolveTextureIndex(snapshot.Material.ORMTexture, PathTextureFlagBit);
+            if (ormIndex != PathTextureFlagBit)
+            {
+                instance.Textures[2] = ormIndex | PathTextureFlagBit;
+                instance.Textures[3] = ormIndex;
+            }
+            else
+            {
+                instance.Textures[2] = resolveTextureIndex(snapshot.Material.MetallicTexture,
+                                                           PathDefaultMetallicTextureIndex);
+                instance.Textures[3] = resolveTextureIndex(snapshot.Material.RoughnessTexture,
+                                                           PathDefaultRoughnessTextureIndex);
+            }
             instance.Geometry[0] = snapshot.VertexStride;
             instance.Geometry[1] = snapshot.VertexCount;
             instance.Geometry[2] = snapshot.IndexCount;

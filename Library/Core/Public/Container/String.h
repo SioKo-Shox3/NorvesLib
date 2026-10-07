@@ -45,12 +45,17 @@ namespace NorvesLib::Core::Container
         static constexpr size_type npos = static_cast<size_type>(-1);
 
     private:
-        // 未確保の空文字にも、正しい文字型のゼロ終端と静的寿命を与える。
-        inline static constexpr CharT s_emptyData[1] = {CharT{}};
         pointer m_data;
         size_type m_size;
         size_type m_capacity;
         Allocator<CharT> m_allocator;
+
+        // バッファを持たない空文字列が返す、終端の0だけの文字列
+        static const_pointer EmptyCString() noexcept
+        {
+            static constexpr CharT s_empty[1] = {};
+            return s_empty;
+        }
 
         // 文字列長計算（NULL終端対応）
         static size_type StringLength(const_pointer str)
@@ -394,14 +399,15 @@ namespace NorvesLib::Core::Container
             return m_data[m_size - 1];
         }
 
+        // バッファ未確保の空文字列は、終端の0だけを持つ共有の空文字列を指す
         const_pointer data() const noexcept
         {
-            return m_data ? m_data : s_emptyData;
+            return m_data ? m_data : EmptyCString();
         }
 
         const_pointer c_str() const noexcept
         {
-            return data();
+            return m_data ? m_data : EmptyCString();
         }
 
         // 容量

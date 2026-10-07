@@ -1,0 +1,177 @@
+﻿# グレーディング用の見た目の 3D LUT（暖かみのある映画調）と、検査用の恒等の LUT を焼く。
+#
+# LUT はトーンマップとグレーディングの後の表示の値に掛かる（tonemapping.frag の ApplyLookLut）。
+# 入力の座標は sRGB の符号化値（0〜1）で、暗部に格子点を多く割り当てて階調の段差を防ぐ。
+# 各格子点には見た目の符号化値から格子点の座標を引いた差分を持たせる。恒等の LUT は差分がすべて 0 になり、
+# シェーダは補間の精度に関わらず入力をそのまま返す。
+#
+# 使い方:
+#   python Scripts/BakeLookLut.py           # LUT を書き出す
+#   python Scripts/BakeLookLut.py --verify  # 再生成の byte 一致と、見た目の LUT のなめらかさを検査する
+import argparse
+import hashlib
+import struct
+import sys
+from pathlib import Path
+
+import numpy as np
+
+LUT_SIZE = 32
+
+# ファイルの見出し（32 byte、little-endian）。ACES の LUT（NLUT3D01）と同じ並びで、magic だけが違う。
+# magic(8) size(u32) channels(u32) format(u32: 1=RGBA16F) reserved(u32) 未使用(f32) 未使用(f32)、
+# 続けて size^3 個の RGBA half を R が最も速く変わる順（x=R, y=G, z=B）で並べる。
+# RGB は格子点の座標からの差分（符号化値）、A は 0。
+LUT_MAGIC = b"NLUTLK02"
+LUT_FORMAT_RGBA16F = 1
+
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+LUT_DIRECTORY = REPOSITORY_ROOT / "Assets/Textures/LookLuts"
+WARM_FILM_PATH = LUT_DIRECTORY / "WarmFilm.lut3d"
+IDENTITY_PATH = LUT_DIRECTORY / "Identity.lut3d"
+
+REC709_LUMA = np.array([0.2126, 0.7152, 0.0722])
+
+# 見た目の固定値。変えたら LUT を作り直す。
+# 色味は表示の輝度を保つ R・G・B の倍率で、暗部・中間・明部の重みで混ぜる。暗部はわずかに青緑へ、
+# 中間と明部は琥珀へ寄せる（フィルムの暖かい焼き付けの近似）。
+SHADOW_TINT = np.array([-0.025, 0.005, 0.030])
+MIDTONE_TINT = np.array([0.080, 0.020, -0.100])
+HIGHLIGHT_TINT = np.array([0.060, 0.025, -0.070])
+# 明部の彩度を落とし（白へ寄る色の飽和を和らげる）、暗部の彩度もわずかに落とす。
+HIGHLIGHT_DESATURATION = 0.15
+SHADOW_DESATURATION = 0.06
+# 黒をわずかに持ち上げ、白をわずかに下げる（符号化値。フィルムの印画の黒と白の近似）。
+BLACK_LIFT = 0.012
+WHITE_LEVEL = 0.99
+
+# 検査の閾値。隣り合う格子点の差（符号化値）の上限と、灰色の軸の単調性。
+MAX_NEIGHBOR_STEP = 2.0 / (LUT_SIZE - 1)
+
+
+def srgb_decode(encoded):
+    encoded = np.clip(encoded, 0.0, 1.0)
+    return np.where(encoded <= 0.04045, encoded / 12.92, ((encoded + 0.055) / 1.055) ** 2.4)
+
+
+def srgb_encode(linear):
+    linear = np.clip(linear, 0.0, 1.0)
+    return np.where(linear <= 0.0031308, linear * 12.92, 1.055 * np.power(linear, 1.0 / 2.4) - 0.055)
+
+
+def lattice_encoded():
+    # 格子点 (r, g, b) の符号化値。並びは [B][G][R]（R が最も速く変わる）。
+    axis = np.arange(LUT_SIZE, dtype=np.float64) / (LUT_SIZE - 1)
+    blue, green, red = np.meshgrid(axis, axis, axis, indexing="ij")
+    return np.stack([red, green, blue], axis=-1).reshape(-1, 3)
+
+
+def warm_film_look(encoded):
+    linear = srgb_decode(encoded)
+    luma = linear @ REC709_LUMA
+    # 階調の位置は輝度の符号化値で決め、重みはどれもなめらかな多項式にする（段差を作らない）。
+    tone = srgb_encode(luma)[:, None]
+    shadow_weight = (1.0 - tone) ** 2
+    highlight_weight = tone ** 2
+    midtone_weight = 2.0 * tone * (1.0 - tone)
+
+    gain = 1.0 + shadow_weight * SHADOW_TINT + midtone_weight * MIDTONE_TINT + highlight_weight * HIGHLIGHT_TINT
+    gain /= (gain @ REC709_LUMA)[:, None]
+    tinted = linear * gain
+
+    saturation = 1.0 - HIGHLIGHT_DESATURATION * highlight_weight - SHADOW_DESATURATION * shadow_weight
+    tinted_luma = (tinted @ REC709_LUMA)[:, None]
+    graded = tinted_luma + (tinted - tinted_luma) * saturation
+
+    encoded_out = srgb_encode(graded)
+    return BLACK_LIFT + (WHITE_LEVEL - BLACK_LIFT) * encoded_out
+
+
+def encode_lut(values, lattice):
+    rgba = np.zeros((values.shape[0], 4), dtype=np.float16)
+    rgba[:, :3] = (values - lattice).astype(np.float16)
+    header = LUT_MAGIC + struct.pack("<IIIIff", LUT_SIZE, 4, LUT_FORMAT_RGBA16F, 0, 0.0, 0.0)
+    return header + rgba.astype("<f2").tobytes()
+
+
+def generate():
+    lattice = lattice_encoded()
+    warm = warm_film_look(lattice)
+    return {
+        WARM_FILM_PATH: encode_lut(warm, lattice),
+        IDENTITY_PATH: encode_lut(lattice, lattice),
+    }, warm
+
+
+def describe(outputs):
+    print(f"lut_size={LUT_SIZE} domain=srgb_encoded_offset_from_lattice format=RGBA16F")
+    for path, data in outputs.items():
+        relative = path.relative_to(REPOSITORY_ROOT).as_posix()
+        print(f"sha256 {hashlib.sha256(data).hexdigest().upper()} bytes={len(data)} {relative}")
+
+
+def verify():
+    outputs, warm = generate()
+    describe(outputs)
+    failed = False
+    for path, data in outputs.items():
+        relative = path.relative_to(REPOSITORY_ROOT).as_posix()
+        if not path.is_file():
+            print(f"FAIL 生成物がありません {relative}")
+            failed = True
+        elif path.read_bytes() != data:
+            print(f"FAIL 再生成した内容が一致しません {relative}")
+            failed = True
+        else:
+            print(f"OK 再生成とbyte一致 {relative}")
+
+    # 恒等の LUT の差分はすべて 0（シェーダが入力をそのまま返す前提）。
+    identity_payload = np.frombuffer(outputs[IDENTITY_PATH][32:], dtype="<f2")
+    identity_nonzero = int(np.count_nonzero(identity_payload))
+    print(f"identity_nonzero_halfs={identity_nonzero}")
+    if identity_nonzero != 0:
+        print("FAIL 恒等の LUT の差分に 0 でない値があります")
+        failed = True
+
+    # なめらかさ: 各軸の隣り合う格子点の差。恒等の LUT の1段は 1/(N-1)。
+    cube = warm.reshape(LUT_SIZE, LUT_SIZE, LUT_SIZE, 3)
+    steps = [np.abs(np.diff(cube, axis=axis)).max() for axis in range(3)]
+    max_step = max(steps)
+    print(f"max_neighbor_step={max_step:.5f} identity_step={1.0 / (LUT_SIZE - 1):.5f} "
+          f"threshold={MAX_NEIGHBOR_STEP:.5f}")
+    if max_step > MAX_NEIGHBOR_STEP:
+        print("FAIL 隣り合う格子点の差が閾値を超えています")
+        failed = True
+
+    # 灰色の軸で出力の輝度が厳密に増える（階調の反転や平らな段が無い）。
+    gray = np.repeat(np.linspace(0.0, 1.0, 1024)[:, None], 3, axis=1)
+    gray_out = warm_film_look(gray) @ REC709_LUMA
+    gray_steps = np.diff(gray_out)
+    print(f"gray_axis min_step={gray_steps.min():.6f} out_black={gray_out[0]:.4f} out_white={gray_out[-1]:.4f}")
+    if gray_steps.min() <= 0.0:
+        print("FAIL 灰色の軸で出力の輝度が厳密に増えていません")
+        failed = True
+
+    # 参考: 灰色の中間（符号化値 0.5）の色味と、見た目の範囲。
+    mid = warm_film_look(np.array([[0.5, 0.5, 0.5]]))[0]
+    print(f"info mid_gray_out={mid.round(4).tolist()} range=[{warm.min():.4f}, {warm.max():.4f}]")
+    print("RESULT=" + ("FAIL" if failed else "PASS"))
+    return 1 if failed else 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description="グレーディング用の見た目の 3D LUT と恒等の LUT を焼く")
+    parser.add_argument("--verify", action="store_true", help="再生成の byte 一致と LUT のなめらかさを検査する")
+    arguments = parser.parse_args()
+    if arguments.verify:
+        return verify()
+    outputs, _ = generate()
+    for path, data in outputs.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    describe(outputs)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

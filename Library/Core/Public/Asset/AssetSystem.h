@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Asset/AssetFileReader.h"
 #include "Asset/AssetManifest.h"
@@ -23,6 +23,22 @@ namespace NorvesLib::Core::Asset
         AssetSystem();
         explicit AssetSystem(const Container::AnsiString &assetRoot);
 
+        // マニフェストにないテクスチャ等をばらのファイルとして読むときの root を、クック済みの root と別にする。
+        // 空なら従来どおりクック済みの root と同じ場所を読む。
+        void SetLooseAssetRoot(const Container::AnsiString &looseAssetRoot);
+        [[nodiscard]] const Container::AnsiString &GetLooseAssetRoot() const noexcept;
+
+        // クック済みの sRGB 指定のテクスチャを、sRGB の復号なしの UNORM としてアップロードさせる。
+        // 今のシェーダーは色のテクスチャ（アルベド）を標本のまま使い、ばらの PNG・JPG も UNORM で上げているため、
+        // クック済みの色をばらと同じ見た目で描くための互換設定（既定は無効で、クック済みの指定のとおり sRGB で上げる）。
+        void SetTreatSrgbTexturesAsLinear(bool bTreatAsLinear) noexcept { m_bTreatSrgbTexturesAsLinear = bTreatAsLinear; }
+        [[nodiscard]] bool GetTreatSrgbTexturesAsLinear() const noexcept { return m_bTreatSrgbTexturesAsLinear; }
+
+        // クック済みを使う前提の設定で、マニフェスト自体を読めなかったことを示す。立てておくと、マニフェストが無いために
+        // ばらのファイルで読んだテクスチャも、クック済みが無いテクスチャとして警告の対象になる（既定は無効）。
+        void SetCookedExpected(bool bCookedExpected) noexcept { m_bCookedExpected = bCookedExpected; }
+        [[nodiscard]] bool IsCookedExpected() const noexcept { return m_bCookedExpected; }
+
         void ResetManifest();
         void SetManifest(const AssetManifest &manifest);
         [[nodiscard]] bool LoadManifestFromJsonText(const Container::String &jsonText, Container::AnsiStringView sourceName = {});
@@ -32,6 +48,25 @@ namespace NorvesLib::Core::Asset
                                                                    Container::AnsiStringView variant = AssetManifest::DefaultVariant) const;
 
         [[nodiscard]] AssetResolveResult ResolveAsset(const AssetResolveRequest &request) const;
+
+        // クック済みのエントリの、パッケージファイル内の位置を求める。パッケージ全体を一度読んで位置を確かめるので、
+        // 作成時に1回だけ呼び、その後の読み込みは GetCookedFileReader() の範囲読みで行う。
+        // クック済みを使えない（ばらのファイルを読む・圧縮したエントリ・解決の失敗）ときは false。
+        [[nodiscard]] bool TryResolveCookedRange(Container::AnsiStringView logicalPath,
+                                                 AssetKind kind,
+                                                 AssetCookedRange &outRange,
+                                                 Container::AnsiString *pOutReason = nullptr,
+                                                 Container::AnsiStringView variant = AssetManifest::DefaultVariant) const;
+
+        // 解決済みの結果（ResolveAsset の戻り値）から、クック済みのエントリのパッケージファイル内の位置を求める。
+        // 読み直さないので、解決した結果を持っている呼び出し側が、後で範囲読みするための位置だけを取れる。
+        // クック済みを使えない・圧縮したエントリのときは false。
+        [[nodiscard]] static bool TryMakeCookedRange(const AssetResolveResult &resolved,
+                                                     AssetCookedRange &outRange,
+                                                     Container::AnsiString *pOutReason = nullptr);
+
+        // クック済みのパッケージを読むファイル読み込み（アセット root を持つ）。範囲読みはここから行う。
+        [[nodiscard]] const AssetFileReader &GetCookedFileReader() const noexcept { return m_FileReader; }
 
         [[nodiscard]] AssetResolveResult ResolveAsset(Container::AnsiStringView logicalPath,
                                                       AssetKind kind,
@@ -48,5 +83,10 @@ namespace NorvesLib::Core::Asset
     private:
         AssetManifest m_Manifest;
         AssetFileReader m_FileReader;
+        AssetFileReader m_LooseFileReader;
+        Container::AnsiString m_AssetRoot;
+        Container::AnsiString m_LooseAssetRoot;
+        bool m_bTreatSrgbTexturesAsLinear = false;
+        bool m_bCookedExpected = false;
     };
 }

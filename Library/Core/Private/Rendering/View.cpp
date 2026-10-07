@@ -323,8 +323,11 @@ namespace NorvesLib::Core::Rendering
         }
 
         const RenderGraphExecutionResult& lastResult = context.Graph->GetLastExecutionResult();
+        // HDRのシーンの色は、SSRがあればその出力（フォグ・半透明・被写界深度・動きぼけはそこへ重なる）、
+        // 無ければLightingPassの出力。
         RHI::TexturePtr sceneColorTexture;
-        if (lastResult.TryGetTexture(RenderGraphResourceNames::SceneColor, sceneColorTexture))
+        if (lastResult.TryGetTexture(RenderGraphResourceNames::SSRSceneColor, sceneColorTexture) ||
+            lastResult.TryGetTexture(RenderGraphResourceNames::SceneColor, sceneColorTexture))
         {
             m_FrameSceneColorTexture = sceneColorTexture;
         }
@@ -332,6 +335,7 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr outputTexture;
         if (lastResult.TryGetTexture(RenderGraphResourceNames::PresentationColor, outputTexture) ||
             lastResult.TryGetTexture(RenderGraphResourceNames::ToneMappedColor, outputTexture) ||
+            lastResult.TryGetTexture(RenderGraphResourceNames::SSRSceneColor, outputTexture) ||
             lastResult.TryGetTexture(RenderGraphResourceNames::SceneColor, outputTexture))
         {
             SetFrameOutputTexture(outputTexture);

@@ -1,36 +1,52 @@
 ﻿#include "Rendering/MegaGeometryPass.h"
+#include "Debug/DebugConfig.h"
+#include "Debug/Stats.h"
+#include "Logging/LogMacros.h"
+#include "Math/MatrixUtils.h"
+#include "RHI/DeviceCapabilities.h"
+#include "RHI/IBuffer.h"
+#include "RHI/ICommandList.h"
+#include "RHI/IDescriptorSet.h"
+#include "RHI/IDevice.h"
+#include "RHI/IFramebuffer.h"
+#include "RHI/IGPUResourceAllocator.h"
+#include "RHI/ISampler.h"
+#include "RHI/ITexture.h"
+#include "Rendering/CameraViewConstants.h"
 #include "Rendering/ConstantMaterialTextureCache.h"
 #include "Rendering/FrameCommand.h"
-#include "Rendering/ViewRenderContext.h"
-#include "Rendering/RenderResources.h"
-#include "Rendering/SceneView.h"
-#include "Rendering/SceneRenderer.h"
-#include "Rendering/ShaderManager.h"
-#include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
+#include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
-#include "Rendering/ProceduralMeshGenerator.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/SceneProxy.h"
-#include "Rendering/CameraViewConstants.h"
-#include "Debug/DebugConfig.h"
-#include "Math/MatrixUtils.h"
-#include "RHI/IDevice.h"
-#include "RHI/ICommandList.h"
-#include "RHI/IBuffer.h"
-#include "RHI/IFramebuffer.h"
-#include "RHI/ITexture.h"
-#include "RHI/IDescriptorSet.h"
-#include "RHI/ISampler.h"
-#include "RHI/IGPUResourceAllocator.h"
-#include "RHI/DeviceCapabilities.h"
+#include "Rendering/SceneRenderer.h"
+#include "Rendering/SceneView.h"
+#include "Rendering/ScopedGpuTimestamp.h"
+#include "Rendering/ShaderManager.h"
+#include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/SparseResidencyShading.h"
+#include "Rendering/ViewRenderContext.h"
+#include "Rendering/VirtualTextureFeedbackMaterial.h"
+#include "Rendering/VisibilityMerge.h"
+#include "Rendering/VisibilityRasterPass.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "Text/IdentityPool.h"
-#include "Logging/LogMacros.h"
-#include <cstring>
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        // VT の要求のバッファの binding（megageometry.frag の VT_FEEDBACK_BINDING と同じ。材質のテクスチャ 1-6 の次）
+        constexpr uint32_t VirtualTextureFeedbackBindingIndex = 7;
+    } // namespace
+
     using namespace Container;
 
     namespace
@@ -38,6 +54,35 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DEBUG_PAYLOAD_MODE_NONE = 0u;
         constexpr uint32_t DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
         constexpr uint32_t DEBUG_PAYLOAD_MODE_LOD_LEVEL = 2u;
+
+        // cluster_cull.comp の cullPass（CULL_PASS_* と同じ値）
+        constexpr uint32_t CULL_PASS_SINGLE = 0u; // 従来の1回の判定（遮蔽の判定なし）
+        constexpr uint32_t CULL_PASS_FIRST = 1u;  // 1パス目: 前のフレームで見えたクラスタだけ
+        constexpr uint32_t CULL_PASS_SECOND = 2u; // 2パス目: HZB で判定して残りを描き、見えたビットを更新
+
+        // 統計（cluster_cull.comp の stats[12]）のバイト数。0〜3 は pass1・pass2_tested・pass2_drawn・occluded、
+        // 4〜7 はソフトウェアラスタの振り分け（pass1 の一覧・pass2 の一覧・ハードだけ・一覧が満杯で積めなかった数）、
+        // 8 はハードのコマンドを空振りにした数、9・10 は visbuffer_sw_raster.comp が数える（矩形の上限を超えた三角形・走ったワークグループ）。11 は予備
+        constexpr uint32_t StatsBufferWords = 12u;
+        constexpr uint32_t StatsBufferBytes = StatsBufferWords * sizeof(uint32_t);
+
+        // ソフトウェアラスタの一覧（cluster_cull.comp の SwRasterBuffer）。先頭はパスごとの間接 dispatch の引数（x・y・z）と
+        // 積もうとした数の 4 語ずつ（SW_RASTER_HEADER_WORDS = 8 語）で、その後にパスごとのコマンドの位置の列が続く。
+        // 一覧の容量はパスごとのコマンド数まで（間接 dispatch の引数は 2 次元なので、x の上限 65535 を超えても y へ折り返す）
+        constexpr uint32_t SwRasterHeaderWords = 8u;
+
+        // グループの BVH のたどり（cluster_bvh_cull.comp）。BvhStageClusters は葉のクラスタの判定の段の印、
+        // BvhLeafSlots は葉の列の1要素を受け持つスレッドの数（葉が持つクラスタの最大数）、
+        // BvhCounterCount はカウンタの数（添え字 s は段 s の入力の数、BvhLeafCounter は葉の列の数）
+        constexpr uint32_t BvhStageClusters = 0xFFFFFFFFu;
+        constexpr uint32_t BvhLeafSlots = MegaGeometry::GROUP_BVH_MAX_LEAF_CLUSTERS;
+        constexpr uint32_t BvhCounterCount = 32;
+        constexpr uint32_t BvhCounterBytes = BvhCounterCount * sizeof(uint32_t);
+        constexpr uint32_t BvhMinQueueEntries = 64;
+
+        // 手放したバッファ（作り直した「見えた」ビット・IndirectDraw のバッファなど）を破棄するまでのフレーム数。
+        // フレームの飛行数は2以下なので、GPUはこれより前に使い終わっている
+        constexpr uint64_t RetiredBufferFrames = 8;
 
         bool IsMegaGeometryDebugPayloadMode(DebugViewMode mode)
         {
@@ -73,6 +118,51 @@ namespace NorvesLib::Core::Rendering
     MegaGeometryPass::MegaGeometryPass(const MegaGeometryPassSettings &settings)
         : m_Settings(settings)
     {
+        // 撮り比べ用に、LODの段を選ぶ誤差の閾値（画素）を環境変数で替えられるようにする。
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char *value = std::getenv("NORVES_MEGA_LOD_ERROR_PX");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        if (value != nullptr && value[0] != '\0')
+        {
+            char *end = nullptr;
+            const float threshold = std::strtof(value, &end);
+            if (end != value && *end == '\0' && std::isfinite(threshold) && threshold > 0.0f)
+            {
+                m_Settings.LODBias = threshold;
+            }
+        }
+
+        // グループの BVH のたどりを切って、平らなクラスタの列だけで判定する（撮り比べ用）
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char *bvhValue = std::getenv("NORVES_MEGA_BVH");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        if (bvhValue != nullptr && (std::strcmp(bvhValue, "0") == 0 || std::strcmp(bvhValue, "off") == 0))
+        {
+            m_Settings.bUseGroupBVH = false;
+        }
+
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char *statsEveryFrameValue = std::getenv("NORVES_MEGA_STATS_EVERY_FRAME");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        if (statsEveryFrameValue != nullptr && std::strcmp(statsEveryFrameValue, "1") == 0)
+        {
+            m_Settings.bStatsEveryFrame = true;
+        }
     }
 
     MegaGeometryPass::~MegaGeometryPass()
@@ -93,6 +183,23 @@ namespace NorvesLib::Core::Rendering
         if (!m_Device)
         {
             return false;
+        }
+
+        // まとめたカリング・描画は、メッシュのクラスタ配列をデバイスアドレスで引き、コマンドの firstInstance で
+        // 描画情報を引く。どちらかが無いデバイスではパスを無効にする
+        {
+            const auto &initCaps = m_Device->GetCapabilities();
+            if (!initCaps.bBufferDeviceAddress || !initCaps.bDrawIndirectFirstInstance)
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass",
+                                 "MEGA_BATCH_UNSUPPORTED buffer_device_address=%d "
+                                 "draw_indirect_first_instance=%d "
+                                 "まとめたカリング・描画に対応しないため、パスは無効化されます",
+                                 initCaps.bBufferDeviceAddress ? 1 : 0,
+                                 initCaps.bDrawIndirectFirstInstance ? 1 : 0);
+                m_bInitialized = true;
+                return true;
+            }
         }
 
         // カリングコンピュートシェーダーの読み込み
@@ -118,47 +225,35 @@ namespace NorvesLib::Core::Rendering
         // カリングコンピュートパイプライン作成
         RHI::ComputePipelineDesc cullPipelineDesc;
         cullPipelineDesc.computeShader = m_CullShader;
-        {
-            RHI::DescriptorSetDesc cullDsDesc;
-
-            RHI::DescriptorBinding uniformBinding;
-            uniformBinding.binding = 0;
-            uniformBinding.type = RHI::ResourceBindType::ConstantBuffer;
-            uniformBinding.stages = RHI::ShaderStage::Compute;
-            cullDsDesc.bindings.push_back(uniformBinding);
-
-            RHI::DescriptorBinding clusterBinding;
-            clusterBinding.binding = 1;
-            clusterBinding.type = RHI::ResourceBindType::RWBuffer;
-            clusterBinding.stages = RHI::ShaderStage::Compute;
-            cullDsDesc.bindings.push_back(clusterBinding);
-
-            RHI::DescriptorBinding indirectBinding;
-            indirectBinding.binding = 2;
-            indirectBinding.type = RHI::ResourceBindType::RWBuffer;
-            indirectBinding.stages = RHI::ShaderStage::Compute;
-            cullDsDesc.bindings.push_back(indirectBinding);
-
-            RHI::DescriptorBinding drawCountBinding;
-            drawCountBinding.binding = 3;
-            drawCountBinding.type = RHI::ResourceBindType::RWBuffer;
-            drawCountBinding.stages = RHI::ShaderStage::Compute;
-            cullDsDesc.bindings.push_back(drawCountBinding);
-
-            RHI::DescriptorBinding hiZBinding;
-            hiZBinding.binding = 4;
-            hiZBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            hiZBinding.stages = RHI::ShaderStage::Compute;
-            cullDsDesc.bindings.push_back(hiZBinding);
-
-            cullPipelineDesc.descriptorSetLayouts.push_back(cullDsDesc);
-        }
+        cullPipelineDesc.descriptorSetLayouts.push_back(BuildCullDescriptorSetDesc());
         m_CullPipeline = m_Device->CreateComputePipeline(cullPipelineDesc);
         if (!m_CullPipeline)
         {
             NORVES_LOG_ERROR("MegaGeometryPass", "カリングパイプラインの作成に失敗");
             return false;
         }
+
+        // グループの BVH をたどるカリング（BVH を持つメッシュ用）。作れなければ BVH は使わず、平らなクラスタの列で判定する
+        if (context.ShaderMgr)
+        {
+            m_BvhCullShader = context.ShaderMgr->LoadShader(
+                "cluster_bvh_cull.comp", RHI::ShaderStage::Compute);
+        }
+        if (m_BvhCullShader)
+        {
+            RHI::ComputePipelineDesc bvhPipelineDesc;
+            bvhPipelineDesc.computeShader = m_BvhCullShader;
+            bvhPipelineDesc.descriptorSetLayouts.push_back(BuildCullDescriptorSetDesc());
+            m_BvhCullPipeline = m_Device->CreateComputePipeline(bvhPipelineDesc);
+        }
+        if (!m_BvhCullPipeline)
+        {
+            NORVES_LOG_WARNING("MegaGeometryPass", "MEGA_BVH_UNAVAILABLE BVH "
+                                                   "をたどるカリングを作れないため、平らなクラスタの列で判定します");
+        }
+
+        // 遮蔽カリング（2パス）の HZB。作れなければ従来の1回の判定で描く
+        m_bHiZReady = m_HiZ.Initialize(m_Device, context.ShaderMgr);
 
         // GBuffer描画用シェーダーの読み込み（MegaGeometry専用GBuffer互換シェーダー）
         if (context.ShaderMgr)
@@ -218,77 +313,6 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // Hi-Z 深度ピラミッド用リソース作成
-        if (context.ShaderMgr)
-        {
-            m_HiZShader = context.ShaderMgr->LoadShader(
-                "hiz_generate.comp", RHI::ShaderStage::Compute);
-        }
-        if (m_HiZShader)
-        {
-            RHI::ComputePipelineDesc hiZPipelineDesc;
-            hiZPipelineDesc.computeShader = m_HiZShader;
-            {
-                RHI::DescriptorSetDesc hiZDsDesc;
-
-                RHI::DescriptorBinding srcBinding;
-                srcBinding.binding = 0;
-                srcBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-                srcBinding.stages = RHI::ShaderStage::Compute;
-                hiZDsDesc.bindings.push_back(srcBinding);
-
-                RHI::DescriptorBinding dstBinding;
-                dstBinding.binding = 1;
-                dstBinding.type = RHI::ResourceBindType::RWTexture;
-                dstBinding.stages = RHI::ShaderStage::Compute;
-                hiZDsDesc.bindings.push_back(dstBinding);
-
-                RHI::DescriptorBinding paramBinding;
-                paramBinding.binding = 2;
-                paramBinding.type = RHI::ResourceBindType::ConstantBuffer;
-                paramBinding.stages = RHI::ShaderStage::Compute;
-                hiZDsDesc.bindings.push_back(paramBinding);
-
-                hiZPipelineDesc.descriptorSetLayouts.push_back(hiZDsDesc);
-            }
-            m_HiZPipeline = m_Device->CreateComputePipeline(hiZPipelineDesc);
-
-            // Hi-Z用Nearestサンプラー（Clamp）
-            RHI::SamplerDesc hiZSampDesc;
-            hiZSampDesc.filterMin = RHI::FilterMode::Point;
-            hiZSampDesc.filterMag = RHI::FilterMode::Point;
-            hiZSampDesc.filterMip = RHI::FilterMode::Point;
-            hiZSampDesc.addressU = RHI::TextureAddressMode::Clamp;
-            hiZSampDesc.addressV = RHI::TextureAddressMode::Clamp;
-            hiZSampDesc.addressW = RHI::TextureAddressMode::Clamp;
-            m_HiZNearestSampler = m_Device->CreateSampler(hiZSampDesc);
-
-            // Hi-ZパラメータUBO (ivec2 destSize = 8 bytes, pad to 16)
-            RHI::BufferDesc hiZUboDesc(
-                16,
-                RHI::ResourceUsage::ConstantBuffer,
-                true,
-                "MegaGeometry_HiZParamsUBO");
-            m_HiZParamsBuffer = m_Device->CreateBuffer(hiZUboDesc);
-
-            if (!m_HiZPipeline || !m_HiZNearestSampler || !m_HiZParamsBuffer)
-            {
-                NORVES_LOG_WARNING("MegaGeometryPass", "Hi-Zリソースの作成に失敗。オクルージョンカリング無効");
-                m_HiZPipeline.reset();
-                m_HiZShader.reset();
-                m_HiZNearestSampler.reset();
-                m_HiZParamsBuffer.reset();
-            }
-            else
-            {
-                NORVES_LOG_INFO("MegaGeometryPass", "Hi-Zオクルージョンカリング有効");
-            }
-        }
-        else
-        {
-            NORVES_LOG_WARNING("MegaGeometryPass", "Hi-Zシェーダーの読み込みに失敗。オクルージョンカリング無効");
-        }
-
         m_bInitialized = true;
         NORVES_LOG_INFO("MegaGeometryPass", "初期化完了 (MaxDrawCount: %u)", m_Settings.MaxDrawCount);
         return true;
@@ -302,25 +326,62 @@ namespace NorvesLib::Core::Rendering
     {
         m_CullPipeline.reset();
         m_CullShader.reset();
+        m_BvhCullPipeline.reset();
+        m_BvhCullShader.reset();
+        m_BvhQueueBuffer.reset();
+        m_BvhCounterBuffer.reset();
+        m_BvhQueueCapacity = 0;
+        m_LoggedBvhInstances = 0xFFFFFFFFu;
+        m_LoggedBvhLevels = 0xFFFFFFFFu;
+        m_LoggedFlatInstances = 0xFFFFFFFFu;
         m_IndirectDrawBuffer.reset();
         m_DrawCountBuffer.reset();
+        m_DrawInfoBuffer.reset();
+        m_SwRasterBuffer.reset();
+        m_SwRasterBufferCapacity = 0;
+        m_SwRasterCapacity = 0;
+        m_bSwRasterBinned = false;
+        m_CommandCapacity = 0;
+        m_CounterCapacity = 0;
         m_IndirectDrawBufferHandle = {};
         m_DrawCountBufferHandle = {};
         m_MegaGeometryCompleteHandle = {};
-        m_InstanceIndirectDrawBuffers.clear();
-        m_InstanceDrawCountBuffers.clear();
-        m_CullUniformBuffers.clear();
-        m_CullDescriptorSets.clear();
+        m_FrameSlots.Clear();
+        m_RenderFrameCount = 0;
+        m_LastRenderFrameSerial = 0;
+        m_bUnsetFrameSerialWarned = false;
+        m_DummyVisibilityBuffer.reset();
+        m_DummyStatsBuffer.reset();
+        m_VisibilityBuffer.reset();
+        m_VisibilityEntries.clear();
+        m_RetiredBuffers.clear();
+        m_OcclusionFrameCount = 0;
+        for (StatsSlot &slot : m_StatsSlots)
+        {
+            if (slot.Buffer && slot.Mapped)
+            {
+                slot.Buffer->Unmap();
+            }
+            slot = StatsSlot{};
+        }
+        m_bStatsSlotsTried = false;
+        m_bStatsLoggedOnce = false;
+        m_bStatsEpochActive = false;
+        m_bDropVisibilityContinuity = false;
+        m_bOcclusionFallbackLogged = false;
+        m_bBatchUnsupportedLogged = false;
+        m_HiZ.Shutdown();
+        m_bHiZReady = false;
 
         m_DrawPipeline.reset();
         m_DrawWireframePipeline.reset();
         m_DrawVertexShader.reset();
         m_DrawFragmentShader.reset();
-        m_DrawUniformBuffers.clear();
-        m_DrawDescriptorSets.clear();
 
         m_GBufferRenderPass.reset();
         m_GBufferFramebuffer.reset();
+        m_SecondGBufferRenderPass.reset();
+        m_SecondGBufferFramebuffer.reset();
         m_AlbedoTexture.reset();
         m_NormalTexture.reset();
         m_MaterialTexture.reset();
@@ -339,14 +400,6 @@ namespace NorvesLib::Core::Rendering
         m_DefaultBlackTexture.reset();
         m_ConstantMaterialTextures.reset();
         m_DefaultLinearSampler.reset();
-
-        m_HiZTexture.reset();
-        m_HiZShader.reset();
-        m_HiZPipeline.reset();
-        m_HiZDescriptorSet.reset();
-        m_HiZParamsBuffer.reset();
-        m_HiZNearestSampler.reset();
-        m_HiZMipCount = 0;
 
         m_Instances.clear();
         m_bPreferRenderGraphGBufferResources = false;
@@ -377,10 +430,35 @@ namespace NorvesLib::Core::Rendering
                 }
 
                 MegaMeshInstance instance;
+                instance.ObjectId = proxy.ObjectId;
+                instance.ComponentId = proxy.ComponentId;
                 instance.Handle = proxy.MegaMeshHandle;
                 std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
                 std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
                 m_Instances.push_back(instance);
+            }
+        }
+
+        // スナップショットから外れたインスタンスの見えたビットは、全インスタンスが消えて記録を省くフレームでも
+        // 引き継げないものにする（記録の中だけで連続性を見ると、空のフレームを挟んだ再追加が引き継ぎに見える）。
+        // LastUsedFrame を0にすると、次の記録の連続の条件（LastUsedFrame + 1 == 記録のフレーム数）を満たさない。
+        for (VisibilityEntry &entry : m_VisibilityEntries)
+        {
+            bool bPresent = false;
+            for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
+            {
+                const uint64_t objectId = m_Instances[instanceIndex].ObjectId;
+                const uint64_t key = objectId != 0 ? objectId : (0x8000000000000000ull | instanceIndex);
+                if (key == entry.Key)
+                {
+                    bPresent = true;
+                    break;
+                }
+            }
+
+            if (!bPresent)
+            {
+                entry.LastUsedFrame = 0;
             }
         }
 
@@ -481,15 +559,6 @@ namespace NorvesLib::Core::Rendering
             {
                 NORVES_LOG_ERROR("MegaGeometryPass", "描画パイプラインの作成に失敗");
                 return;
-            }
-
-            // Hi-Z深度ピラミッドの作成・再作成
-            if (m_HiZPipeline)
-            {
-                if (!CreateHiZResources(context))
-                {
-                    NORVES_LOG_WARNING("MegaGeometryPass", "Hi-Zテクスチャの作成に失敗。オクルージョンカリング無効");
-                }
             }
         }
     }
@@ -682,8 +751,18 @@ namespace NorvesLib::Core::Rendering
     // Execute
     // ========================================
 
+    bool MegaGeometryPass::ShouldSkipGBufferDraw(DebugViewMode mode) const
+    {
+        // 解決のパスが分かるときは、パイプラインの準備まで含めて判定する（使えないのに止めると画面が空になる）
+        return m_bSkipGBufferDraw && m_Device &&
+               (m_ResolvePass ? m_ResolvePass->CanResolve(m_Device, mode)
+                              : VisibilityResolveGeometry::IsSupported(m_Device->GetCapabilities()));
+    }
+
     void MegaGeometryPass::Execute(ViewRenderContext &context)
     {
+        m_bFrameRecordDeferred = false;
+
         const bool bCanEnqueueEmptyTransitionPass =
             m_bPreferRenderGraphGBufferResources &&
             m_GBufferRenderPass &&
@@ -728,11 +807,84 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // 解決が GBuffer を書くフレームは GBuffer の描画を止めるので、2パスの遮蔽の HZB の元になる深度が GBuffer に入らない。
+        // ID のラスタがその Execute の中で記録を駆動して（ID・深度の1パス目 → HZB → 2パス目）、HZB を ID の深度から作る。
+        // GBuffer の添付の状態遷移（render pass の開始と終了）は、ここで済ませる
+        if (m_bVisibilityPlanEnabled && m_VisibilityRaster && m_VisibilityRaster->IsExecutionPlanned() &&
+            ShouldSkipGBufferDraw(context.GetActiveDebugMode()))
+        {
+            m_bFrameRecordDeferred = true;
+            enqueueEmptyTransitionPass();
+            return;
+        }
+
         context.EnqueueMegaGeometryPass(this);
     }
 
-    void MegaGeometryPass::RecordFrameCommand(const MegaGeometryPassCommand &command, RHI::ICommandList *commandList)
+    namespace
     {
+        // 材質の区間にまとめられるか（同じ材質値・同じテクスチャのハンドルか）
+        bool IsSameMaterial(const MegaGeometry::MegaMeshMaterial &a, const MegaGeometry::MegaMeshMaterial &b)
+        {
+            for (uint32_t index = 0; index < 4; ++index)
+            {
+                if (a.BaseColor[index] != b.BaseColor[index])
+                {
+                    return false;
+                }
+            }
+            for (uint32_t index = 0; index < 3; ++index)
+            {
+                if (a.EmissiveColor[index] != b.EmissiveColor[index])
+                {
+                    return false;
+                }
+            }
+            return a.Metallic == b.Metallic && a.Roughness == b.Roughness &&
+                   a.OcclusionStrength == b.OcclusionStrength && a.EmissiveLuminanceNits == b.EmissiveLuminanceNits &&
+                   a.AlbedoTexture == b.AlbedoTexture && a.NormalTexture == b.NormalTexture &&
+                   a.MetallicTexture == b.MetallicTexture && a.RoughnessTexture == b.RoughnessTexture &&
+                   a.AOTexture == b.AOTexture && a.ORMTexture == b.ORMTexture && a.HeightTexture == b.HeightTexture &&
+                   a.bNormalTwoChannel == b.bNormalTwoChannel && a.HeightScale == b.HeightScale &&
+                   a.bHasHeightMap == b.bHasHeightMap && a.DisplacementUVSpacing == b.DisplacementUVSpacing;
+        }
+
+        // 材質の区間ごとの定数（megageometry.vert/frag の MVPData と一致。ワールド変換はインスタンスの表にある）
+        struct SectionUniformData
+        {
+            float View[16];
+            float Projection[16];
+            float CameraPosition[4];
+            float ObjectColor[4];
+            float EmissiveChromaticityAndLuminanceNits[4];
+            float PomParams[4];
+            float PreviousView[16];
+            float PreviousProjection[16];
+            float FrameParams[4]; // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
+            float MaterialParams[4]; // x=ORMの1枚を metallic の枠に張ったか（1/0）, y=法線が2チャンネル（BC5）か（1/0）, z=材質のテクスチャが sparse（VT）か（1/0）, w=VT のフィードバックのパラメータ（アルベド。0 は書かない）
+            float VtFeedbackParams[4]; // VT のフィードバックのパラメータ: x=法線, y=ORM（metallic の枠）, z=高さ（0 は書かない）, w=未使用
+        };
+        static_assert(sizeof(SectionUniformData) <= 512u);
+
+        constexpr uint32_t SectionUniformBufferBytes = 512;
+        constexpr uint32_t IndirectCommandBytes = static_cast<uint32_t>(sizeof(MegaGeometry::DrawIndexedIndirectCommand));
+    } // namespace
+
+    void MegaGeometryPass::RecordFrameCommand(const MegaGeometryPassCommand &command,
+                                              RHI::ICommandList *commandList,
+                                              IDrawSink *sink)
+    {
+        // CPU の記録時間（trace の Type=Scope 行）と、記録した区間の GPU 時間（Type=GPU 行 "MegaGeometry"）
+        NORVES_PROFILE_SCOPE("MegaGeometryPass.RecordFrameCommand");
+        ScopedGpuTimestamp gpuTimestamp(commandList, "MegaGeometry");
+
+        // 前のフレームの描画の写しのために残したバッファが戻されていなければ戻し、写しも捨てる
+        // （ビジビリティバッファのラスタが取り出さなかったフレームの後始末）
+        m_VisibilityPlan = VisibilityDrawPlan{};
+        ReleaseVisibilityDrawBuffers(commandList);
+        m_bSwRasterBinned = false;
+        m_SwRasterCapacity = 0;
+
         if (m_Instances.empty() || !m_CullPipeline || !commandList || !command.MegaGeometry || !command.bHasMainCamera)
         {
             return;
@@ -748,16 +900,15 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (!EnsurePerInstanceBindings(static_cast<uint32_t>(m_Instances.size())))
-        {
-            NORVES_LOG_ERROR("MegaGeometryPass", "Failed to prepare per-instance bindings");
-            return;
-        }
-
         auto *cmdList = commandList;
 
-        auto recordEmptyRenderPass = [this, &command, cmdList]() -> void
+        auto recordEmptyRenderPass = [this, &command, cmdList, sink]() -> void
         {
+            if (sink)
+            {
+                // GBuffer の添付の状態遷移は、呼び出し側が済ませてある
+                return;
+            }
             cmdList->BeginRenderPass(m_GBufferRenderPass, m_GBufferFramebuffer);
             cmdList->SetViewport(command.Viewport);
             cmdList->SetScissor(command.Scissor);
@@ -781,15 +932,19 @@ namespace NorvesLib::Core::Rendering
         const bool bMegaGeometryDebugPayloadSupported =
             bMegaGeometryDebugPayloadRequested &&
             caps.bDrawIndirectFirstInstance;
+        // デバッグ表示でなければ、描いているクラスタのLODの段を渡す（変位した材質が段の頂点の間隔を知るため）。
+        const bool bLODLevelPayload = !bMegaGeometryDebugPayloadRequested && caps.bDrawIndirectFirstInstance;
         const uint32_t debugPayloadMode =
-            GetMegaGeometryDebugPayloadMode(command.DebugMode, bMegaGeometryDebugPayloadSupported);
+            bLODLevelPayload ? DEBUG_PAYLOAD_MODE_LOD_LEVEL
+                             : GetMegaGeometryDebugPayloadMode(command.DebugMode, bMegaGeometryDebugPayloadSupported);
 
         if (bMegaGeometryDebugPayloadRequested &&
             !caps.bDrawIndirectFirstInstance &&
             !m_bMegaGeometryDebugPayloadUnsupportedWarned)
         {
             NORVES_LOG_WARNING("MegaGeometryPass",
-                               "%s debug view requires DrawIndirectFirstInstance; using normal MegaGeometry shading",
+                               "%s debug view requires DrawIndirectFirstInstance; "
+                               "using normal MegaGeometry shading",
                                DebugViewModeToString(command.DebugMode));
             m_bMegaGeometryDebugPayloadUnsupportedWarned = true;
         }
@@ -798,214 +953,511 @@ namespace NorvesLib::Core::Rendering
             MatrixUtils::ExtractClipSpaceFrustumPlanes(cameraConstants.ViewProjectionMatrix,
                                                        ClipSpaceDepthRange::ZeroToOne);
 
-        struct DrawableInstance
+        // ========================================
+        // 遮蔽カリングの経路を決める
+        // ========================================
+        // 2パス: 1パス目（前のフレームで見えたクラスタ）→ HZB（その時点の深度から）→ 2パス目（残りを遮蔽の判定で選ぶ）。
+        // 使えないとき（--mega-occlusion=off・HZBが作れない・描く範囲が深度と一致しない）は、
+        // 従来の1回の判定（遮蔽の判定なし）で描く。
+        bool bTwoPass = CanUseTwoPassOcclusion(command);
+        // 2パスでないフレームも数える（見えたビットは連続した2パスのフレームの間でだけ引き継ぐため）
+        ++m_OcclusionFrameCount;
+        // フレームごとの資源の組を選ぶ。1フレームの複数のビューポートは同じ通し番号なので、組が別々に渡る。
+        // 通し番号 0（FrameCommand::CreateMegaGeometryPass で直接組んだコマンドなど）はフレームの境目が分からず、そのままだと
+        // 組が記録ごとに増え続け、退避したバッファの寿命も進まず解放されない。記録の回数を代わりの番号にして、
+        // 記録ごとに別のフレームとして扱う（1 フレームに複数回記録する呼び出し側は、通し番号を渡すこと）
+        uint64_t frameSerial = command.RenderFrameSerial;
+        if (frameSerial == 0)
+        {
+            if (!m_bUnsetFrameSerialWarned)
+            {
+                m_bUnsetFrameSerialWarned = true;
+                NORVES_LOG_WARNING("MegaGeometryPass", "FRAME_SERIAL_UNSET "
+                                                       "フレームの通し番号が無いコマンドです。記録ごとに"
+                                                       "別のフレームとして扱います");
+            }
+            frameSerial = m_OcclusionFrameCount;
+        }
+        if (m_RenderFrameCount == 0 || frameSerial != m_LastRenderFrameSerial)
+        {
+            ++m_RenderFrameCount;
+            m_LastRenderFrameSerial = frameSerial;
+        }
+        m_FrameSlots.BeginFrame(command.InFlightIndex, frameSerial);
+        // 決定的な撮影のエポック（読み込み完了）の最初のフレームから、統計の行に相対フレームの番号を付ける
+        // 見えたビットも時間的な状態なので、エポックの最初のフレームは引き継がずに0から始める（読み込み完了までの
+        // フレーム数の違いが、エポックの最初のフレームの1パス目の数に出ないようにする）
+        m_bDropVisibilityContinuity = command.bDeterministicCapture && command.bTemporalEpochStart;
+        if (m_bDropVisibilityContinuity)
+        {
+            m_bStatsEpochActive = true;
+        }
+        const int64_t epochFrame =
+            (command.bDeterministicCapture && m_bStatsEpochActive) ? static_cast<int64_t>(command.TemporalFrameIndex) : -1;
+
+        // ========================================
+        // 描くインスタンスと、材質の区間の収集
+        // ========================================
+        // 区間: 同じ材質（値とテクスチャ）で、メッシュを置くプールの塊が同じインスタンスの集まり。区間ごとに
+        // IndirectDraw コマンドの連続した範囲・カウンタ・描画のディスクリプタセットを持ち、1回の間接描画で描く。
+        struct Section
+        {
+            const MegaGeometry::MegaMeshGPUData *Representative = nullptr; // 材質・プールの塊の持ち主
+            uint64_t ClusterTotal = 0;                                     // 区間のインスタンスのクラスタ数の合計
+            uint32_t Capacity = 0;                                         // 1パスのコマンドの最大数
+            uint32_t CommandBase = 0;                                      // 1パス目の範囲での先頭（コマンドの位置）
+        };
+        struct Drawable
         {
             size_t InstanceIndex = 0;
             const MegaGeometry::MegaMeshGPUData *GpuData = nullptr;
-            RHI::BufferPtr IndirectDrawBuffer;
-            RHI::BufferPtr DrawCountBuffer;
-            RHI::DescriptorSetPtr DrawDescriptorSet;
         };
 
-        VariableArray<DrawableInstance> drawableInstances;
-        drawableInstances.reserve(m_Instances.size());
+        VariableArray<Section> sections;
+        VariableArray<Drawable> drawables;
+        VariableArray<GPUMegaInstance> instanceTable;
+        VariableArray<VisibilityRequest> visibilityRequests;
+        drawables.reserve(m_Instances.size());
+        instanceTable.reserve(m_Instances.size());
 
-        // ========================================
-        // Hi-Z 深度ピラミッド生成（オクルージョンカリング用）
-        // ========================================
-        // 現状のMegaGeometryは、クラスタ球ベースのHi-Z判定が角度・距離依存で過剰カリングを起こし、
-        // モデル全体の消失や穴あきに繋がるため一旦無効化する。
-        // 専用の深度プレパスや、より保守的な遮蔽判定が整うまではFrustum/Backfaceのみで描画安定性を優先する。
+        // グループの BVH を持つメッシュ（NVMESH v1.1）は BVH をたどって判定し、それ以外は平らなクラスタの列で判定する。
+        // BVH のインスタンスをインスタンスの表の先頭に並べる（平らな判定のワークグループは、後ろのインスタンスだけが持つ）
+        const auto canTraverseBvh = [this](const MegaGeometry::MegaMeshGPUData *data) -> bool
+        {
+            return m_Settings.bUseGroupBVH && m_BvhCullPipeline && m_BvhQueueBuffer && m_BvhCounterBuffer && data &&
+                   data->GroupBVHNodeCount > 0 && data->GroupBVHBufferBytes > 0 &&
+                   !data->GroupBVHLevelNodeCounts.empty() &&
+                   data->GroupBVHLevelNodeCounts.size() <= MegaGeometry::GROUP_BVH_MAX_LEVELS;
+        };
+        VariableArray<size_t> instanceOrder;
+        instanceOrder.reserve(m_Instances.size());
+        {
+            VariableArray<size_t> flatInstances;
+            for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
+            {
+                const auto *orderData = command.MegaGeometry->GetReadyMegaMeshGPUData(m_Instances[instanceIndex].Handle);
+                (canTraverseBvh(orderData) ? instanceOrder : flatInstances).push_back(instanceIndex);
+            }
+            instanceOrder.insert(instanceOrder.end(), flatInstances.begin(), flatInstances.end());
+        }
 
-        // ========================================
-        // 各MegaMeshインスタンスに対してカリングを実行し、描画入力を準備
-        // ========================================
-        for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
+        uint64_t totalGroups = 0;
+        // BVH のたどりの規模: BVH を持つインスタンスの数と、段ごとの節の数・葉の数のインスタンスの合計（列の大きさになる）
+        uint32_t bvhInstanceCount = 0;
+        VariableArray<uint64_t> bvhLevelCapacity;
+        uint64_t bvhLeafCapacity = 0;
+        for (const size_t instanceIndex : instanceOrder)
         {
             const auto &instance = m_Instances[instanceIndex];
-            const auto *gpuData = command.MegaGeometry->GetMegaMeshGPUData(instance.Handle);
+            // 区画へのコピーが GPU で完了したメッシュだけを描く（書き込み中の区画は読まない）
+            const auto *gpuData = command.MegaGeometry->GetReadyMegaMeshGPUData(instance.Handle);
             if (!gpuData || gpuData->ClusterCount == 0)
             {
                 continue;
             }
 
-            auto cullUniformBuffer = m_CullUniformBuffers[instanceIndex];
-            auto cullDescriptorSet = m_CullDescriptorSets[instanceIndex];
-            auto drawUniformBuffer = m_DrawUniformBuffers[instanceIndex];
-            auto drawDescriptorSet = m_DrawDescriptorSets[instanceIndex];
-            auto indirectDrawBuffer = m_InstanceIndirectDrawBuffers[instanceIndex];
-            auto drawCountBuffer = m_InstanceDrawCountBuffers[instanceIndex];
-
-            if (!cullUniformBuffer ||
-                !cullDescriptorSet ||
-                !drawUniformBuffer ||
-                !drawDescriptorSet ||
-                !indirectDrawBuffer ||
-                !drawCountBuffer)
+            // クラスタ配列はデバイスアドレスで、頂点・インデックスはプールの塊の先頭からの基点で引く。
+            // 基点は頂点・インデックスの単位で表すので、領域の先頭が頂点・インデックスの大きさの倍数であること
+            // （プールの区画は 256 バイト整列）
+            const uint64_t clusterAddress =
+                gpuData->ClusterBuffer ? gpuData->ClusterBuffer->GetDeviceAddress() : 0ull;
+            const bool bAddressable = clusterAddress != 0 && gpuData->VertexBuffer && gpuData->IndexBuffer;
+            const bool bAligned =
+                gpuData->VertexBufferOffsetBytes % sizeof(Mesh3DVertex) == 0 &&
+                gpuData->IndexBufferOffsetBytes % sizeof(uint32_t) == 0;
+            const uint64_t vertexBase = gpuData->VertexBufferOffsetBytes / sizeof(Mesh3DVertex);
+            const uint64_t indexBase = gpuData->IndexBufferOffsetBytes / sizeof(uint32_t);
+            if (!bAddressable || !bAligned || vertexBase > 0x7FFFFFFFull || indexBase > 0xFFFFFFFFull)
             {
-                NORVES_LOG_ERROR("MegaGeometryPass", "Invalid per-instance MegaGeometry binding at slot %zu", instanceIndex);
-                return;
+                if (!m_bBatchUnsupportedLogged)
+                {
+                    NORVES_LOG_ERROR("MegaGeometryPass",
+                                     "MEGA_BATCH_INSTANCE_SKIPPED mesh=\"%s\" addressable=%d "
+                                     "aligned=%d "
+                                     "メッシュの区画をまとめた描画で引けないため、このメッシュは描き"
+                                     "ません",
+                                     gpuData->DebugName.empty() ? "" : gpuData->DebugName.c_str(), bAddressable ? 1 : 0,
+                                     bAligned ? 1 : 0);
+                    m_bBatchUnsupportedLogged = true;
+                }
+                continue;
             }
 
-            // ----------------------------------------
-            // 1. DrawCountバッファをゼロクリア
-            // ----------------------------------------
-            cmdList->BufferBarrier(drawCountBuffer,
-                                   RHI::ResourceState::Common,
-                                   RHI::ResourceState::CopyDest);
-            cmdList->FillBuffer(drawCountBuffer, 0, sizeof(uint32_t), 0);
-            cmdList->BufferBarrier(drawCountBuffer,
-                                   RHI::ResourceState::CopyDest,
-                                   RHI::ResourceState::UnorderedAccess);
-
-            // IndirectDrawバッファもゼロクリアしてからUAV状態にする
-            cmdList->BufferBarrier(indirectDrawBuffer,
-                                   RHI::ResourceState::Common,
-                                   RHI::ResourceState::CopyDest);
-            cmdList->FillBuffer(indirectDrawBuffer,
-                                0,
-                                static_cast<uint64_t>(m_Settings.MaxDrawCount) *
-                                    sizeof(MegaGeometry::DrawIndexedIndirectCommand),
-                                0);
-            cmdList->BufferBarrier(indirectDrawBuffer,
-                                   RHI::ResourceState::CopyDest,
-                                   RHI::ResourceState::UnorderedAccess);
-
-            // ----------------------------------------
-            // 2. カリングユニフォーム更新
-            // ----------------------------------------
-            CullUniformData uniformData{};
-
-            cameraConstants.CopyShaderView(uniformData.ViewMatrix);
-            cameraConstants.CopyShaderProjection(uniformData.ProjectionMatrix);
-            cameraConstants.CopyCameraPosition(uniformData.CameraPosition);
-            uniformData.CameraPosition[3] = 0.0f;
-
-            frustumPlanes.CopyToShaderData(uniformData.FrustumPlanes);
-
-            uniformData.TotalClusterCount = gpuData->ClusterCount;
-            uniformData.MaxDrawCount = m_Settings.MaxDrawCount;
-            uniformData.LODBias = m_Settings.LODBias;
-            uniformData.ScreenHeight = static_cast<float>(m_CurrentHeight);
-
-            // projectionFactor = screenHeight / (2 * tan(fov/2))
-            float halfFovTan = std::tan(cameraConstants.FieldOfViewRadians * 0.5f);
-            uniformData.ProjectionFactor = (halfFovTan > 1e-6f)
-                                               ? static_cast<float>(m_CurrentHeight) / (2.0f * halfFovTan)
-                                               : 1.0f;
-
-            // Hi-Zオクルージョンカリングは現状のクラスタ球近似が攻めすぎているため無効化
-            uniformData.HiZWidth = 0;
-            uniformData.HiZHeight = 0;
-            uniformData.HiZMipCount = 0;
-            uniformData.bHiZEnabled = 0;
-            uniformData.DebugPayloadMode = debugPayloadMode;
-
-            std::memcpy(uniformData.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
-            cullUniformBuffer->Update(&uniformData, sizeof(CullUniformData));
-
-            // ----------------------------------------
-            // 3. カリングディスクリプタセット更新
-            // ----------------------------------------
-            cullDescriptorSet->BindConstantBuffer(0, cullUniformBuffer, 0,
-                                                  static_cast<uint32_t>(sizeof(CullUniformData)));
-            cullDescriptorSet->BindStorageBuffer(1, gpuData->ClusterBuffer, 0,
-                                                 static_cast<uint32_t>(gpuData->ClusterCount * sizeof(MegaGeometry::GPUClusterData)));
-            cullDescriptorSet->BindStorageBuffer(2, indirectDrawBuffer, 0,
-                                                 static_cast<uint32_t>(m_Settings.MaxDrawCount * sizeof(MegaGeometry::DrawIndexedIndirectCommand)));
-            cullDescriptorSet->BindStorageBuffer(3, drawCountBuffer, 0,
-                                                 sizeof(uint32_t));
-
-            // Hi-Zテクスチャバインド（無い場合はデフォルトテクスチャでフォールバック）
-            if (m_HiZTexture)
+            // 区間を探す（無ければ作る）
+            uint32_t sectionIndex = 0;
+            for (; sectionIndex < sections.size(); ++sectionIndex)
             {
-                cullDescriptorSet->BindTexture(4, m_HiZTexture);
-                cullDescriptorSet->BindSampler(4, m_HiZNearestSampler);
+                const auto *representative = sections[sectionIndex].Representative;
+                if (representative->VertexBuffer.get() == gpuData->VertexBuffer.get() &&
+                    representative->IndexBuffer.get() == gpuData->IndexBuffer.get() &&
+                    IsSameMaterial(representative->Material, gpuData->Material))
+                {
+                    break;
+                }
+            }
+            if (sectionIndex == sections.size())
+            {
+                Section section;
+                section.Representative = gpuData;
+                sections.push_back(section);
+            }
+            sections[sectionIndex].ClusterTotal += gpuData->ClusterCount;
+
+            const uint64_t clusterAddressWithOffset = clusterAddress + gpuData->ClusterBufferOffsetBytes;
+            GPUMegaInstance entry{};
+            std::memcpy(entry.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
+            std::memcpy(entry.PreviousWorldMatrix, instance.PreviousWorldMatrix, sizeof(float) * 16);
+            if (gpuData->LODBounds.IsValid())
+            {
+                entry.LODSphere[0] = gpuData->LODBounds.CenterX;
+                entry.LODSphere[1] = gpuData->LODBounds.CenterY;
+                entry.LODSphere[2] = gpuData->LODBounds.CenterZ;
+                entry.LODSphere[3] = gpuData->LODBounds.Radius;
+            }
+            entry.ClusterAddressLow = static_cast<uint32_t>(clusterAddressWithOffset & 0xFFFFFFFFull);
+            entry.ClusterAddressHigh = static_cast<uint32_t>(clusterAddressWithOffset >> 32);
+            entry.ClusterCount = gpuData->ClusterCount;
+            entry.FirstGroup = static_cast<uint32_t>(totalGroups);
+            entry.SectionIndex = sectionIndex;
+            entry.VertexBase = static_cast<uint32_t>(vertexBase);
+            entry.IndexBase = static_cast<uint32_t>(indexBase);
+            entry.PageTableBase = gpuData->PageTableBase;
+            if (canTraverseBvh(gpuData))
+            {
+                // BVH をたどるインスタンスは、平らな判定のワークグループを持たない
+                const uint64_t bvhAddress = clusterAddress + gpuData->GroupBVHBufferOffsetBytes;
+                entry.BvhAddressLow = static_cast<uint32_t>(bvhAddress & 0xFFFFFFFFull);
+                entry.BvhAddressHigh = static_cast<uint32_t>(bvhAddress >> 32);
+                entry.BvhNodeCount = gpuData->GroupBVHNodeCount;
+                ++bvhInstanceCount;
+                if (bvhLevelCapacity.size() < gpuData->GroupBVHLevelNodeCounts.size())
+                {
+                    bvhLevelCapacity.resize(gpuData->GroupBVHLevelNodeCounts.size(), 0ull);
+                }
+                for (size_t level = 0; level < gpuData->GroupBVHLevelNodeCounts.size(); ++level)
+                {
+                    bvhLevelCapacity[level] += gpuData->GroupBVHLevelNodeCounts[level];
+                }
+                bvhLeafCapacity += gpuData->GroupBVHLeafCount;
             }
             else
             {
-                cullDescriptorSet->BindTexture(4, m_DefaultBlackTexture);
-                cullDescriptorSet->BindSampler(4, m_DefaultLinearSampler);
+                totalGroups += (static_cast<uint64_t>(gpuData->ClusterCount) + 63u) / 64u;
             }
 
-            cullDescriptorSet->Update();
+            VisibilityRequest request;
+            request.Key = instance.ObjectId != 0 ? instance.ObjectId : (0x8000000000000000ull | instanceIndex);
+            request.MeshId = instance.Handle.Id;
+            request.ComponentId = instance.ComponentId;
+            request.ClusterBufferIdentity = gpuData->ClusterBuffer.get();
+            request.ClusterBufferOffsetBytes = gpuData->ClusterBufferOffsetBytes;
+            request.ClusterCount = gpuData->ClusterCount;
 
-            // ----------------------------------------
-            // 4. カリングコンピュートディスパッチ
-            // ----------------------------------------
-            cmdList->SetPipeline(m_CullPipeline);
-            cmdList->SetDescriptorSet(cullDescriptorSet, 0);
+            Drawable drawable;
+            drawable.InstanceIndex = instanceIndex;
+            drawable.GpuData = gpuData;
+            drawables.push_back(drawable);
+            instanceTable.push_back(entry);
+            visibilityRequests.push_back(request);
+        }
 
-            uint32_t groupCount = (gpuData->ClusterCount + 63) / 64;
-            cmdList->Dispatch(groupCount, 1, 1);
+        if (instanceTable.empty() || totalGroups > 0xFFFFFFFFull)
+        {
+            recordEmptyRenderPass();
+            return;
+        }
 
-            // ----------------------------------------
-            // 5. バリア: Compute UAV → IndirectArgument
-            // ----------------------------------------
-            cmdList->BufferBarrier(indirectDrawBuffer,
-                                   RHI::ResourceState::UnorderedAccess,
-                                   RHI::ResourceState::IndirectArgument);
-            cmdList->BufferBarrier(drawCountBuffer,
-                                   RHI::ResourceState::UnorderedAccess,
-                                   RHI::ResourceState::IndirectArgument);
-
-            // ----------------------------------------
-            // 6. GBuffer描画用ディスクリプタ更新
-            // ----------------------------------------
-
-            // PerObject UBO更新（ワールド変換行列）
-            struct PerObjectUBO
+        // BVH のたどりの列の配置: 段 k（1以上）の入力の列、続けて葉の列。段 0 の入力はインスタンスの表の先頭
+        // （根の節）なので列を持たない。各節の親は1つなので、段 k の列は「段 k の節の数のインスタンスの合計」を超えない
+        const uint32_t bvhLevelCount = static_cast<uint32_t>(bvhLevelCapacity.size());
+        VariableArray<uint32_t> bvhQueueBase(static_cast<size_t>(bvhLevelCount) + 1u, 0u);
+        uint64_t bvhQueueEntries = 0;
+        for (uint32_t level = 1; level < bvhLevelCount; ++level)
+        {
+            bvhQueueBase[level] = static_cast<uint32_t>(bvhQueueEntries);
+            bvhQueueEntries += bvhLevelCapacity[level];
+            if (bvhQueueEntries > 0x3FFFFFFFull)
             {
-                float World[16];
-                float View[16];
-                float Projection[16];
-                float CameraPosition[4];
-                float ObjectColor[4];
-                float EmissiveChromaticityAndLuminanceNits[4];
-                float PomParams[4];
-                float PreviousWorld[16];
-                float PreviousView[16];
-                float PreviousProjection[16];
-                float VelocityParams[4]; // x=前のカメラがあるか（1/0）
-            };
-            static_assert(sizeof(PerObjectUBO) <= 512u);
+                break;
+            }
+        }
+        bvhQueueBase[bvhLevelCount] = static_cast<uint32_t>(bvhQueueEntries);
+        bvhQueueEntries += bvhLeafCapacity;
+        if (bvhQueueEntries > 0x3FFFFFFFull || bvhLeafCapacity * BvhLeafSlots > 0xFFFFFFFFull)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_BVH_QUEUE_TOO_LARGE entries=%llu",
+                             static_cast<unsigned long long>(bvhQueueEntries));
+            recordEmptyRenderPass();
+            return;
+        }
+        if (bvhInstanceCount != m_LoggedBvhInstances || bvhLevelCount != m_LoggedBvhLevels ||
+            static_cast<uint32_t>(instanceTable.size()) - bvhInstanceCount != m_LoggedFlatInstances)
+        {
+            m_LoggedBvhInstances = bvhInstanceCount;
+            m_LoggedBvhLevels = bvhLevelCount;
+            m_LoggedFlatInstances = static_cast<uint32_t>(instanceTable.size()) - bvhInstanceCount;
+            NORVES_LOG_INFO("MegaGeometryPass",
+                            "MEGA_BVH bvh_instances=%u flat_instances=%u levels=%u "
+                            "leaf_capacity=%llu queue_entries=%llu "
+                            "flat_groups=%llu dispatches_per_pass=%u",
+                            bvhInstanceCount,
+                            static_cast<uint32_t>(instanceTable.size()) - bvhInstanceCount,
+                            bvhLevelCount,
+                            static_cast<unsigned long long>(bvhLeafCapacity),
+                            static_cast<unsigned long long>(bvhQueueEntries),
+                            static_cast<unsigned long long>(totalGroups),
+                            (totalGroups > 0 ? 1u : 0u) + (bvhInstanceCount > 0 ? bvhLevelCount + 1u : 0u));
+        }
 
-            PerObjectUBO perObject{};
-            std::memcpy(perObject.World, instance.WorldMatrix, sizeof(float) * 16);
-            cameraConstants.CopyShaderView(perObject.View);
-            cameraConstants.CopyShaderProjection(perObject.Projection);
-            cameraConstants.CopyCameraPosition(perObject.CameraPosition);
-            std::memcpy(perObject.PreviousWorld, instance.PreviousWorldMatrix, sizeof(float) * 16);
-            previousCameraConstants.CopyShaderView(perObject.PreviousView);
-            previousCameraConstants.CopyShaderProjection(perObject.PreviousProjection);
-            perObject.VelocityParams[0] = command.bHasPreviousCamera ? 1.0f : 0.0f;
+        // 「前のフレームで見えた」ビットの配置（2パスのときだけ）。作れなければ従来の1回の判定で描く
+        if (bTwoPass)
+        {
+            if (UpdateVisibilityLayout(cmdList, visibilityRequests))
+            {
+                for (size_t index = 0; index < instanceTable.size(); ++index)
+                {
+                    instanceTable[index].VisibleOffset = visibilityRequests[index].Offset;
+                }
+            }
+            else
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass", "見えたビットのバッファを作れませんでした。遮蔽カリ"
+                                                     "ングを使わずに描きます");
+                bTwoPass = false;
+            }
+        }
+
+        // ソフトウェアラスタの振り分けを使えるか。要求されたときだけ判定し、使えない理由は 1 回だけログへ出す。
+        // 64bit のバッファ（深度 + ID）への書き込みが 64bit アトミックを使い、合流が ID のラスタ（sink）の後ろにあるので、
+        // どちらかが無ければ振り分けない。振り分けた一覧はパスごとなので、2 パスの遮蔽の判定のときだけ使う
+        bool bSwRasterBin = false;
+        if (m_bSwRasterRequested)
+        {
+            const char *fallbackReason = nullptr;
+            if (!sink)
+            {
+                // sink が無い理由: 材質の解決を使う On（GBuffer の描画を止める）なのに ID のラスタが使えないフレームは resolve_unavailable、
+                // Debug（GBuffer が先に MegaGeometry を描く）は debug_mode、描画の写しを作らない構成は visibility_buffer_off
+                fallbackReason = m_bSkipGBufferDraw ? "resolve_unavailable" : (m_bVisibilityPlanEnabled ? "debug_mode" : "visibility_buffer_off");
+            }
+            else if (!VisibilityMerge::IsSupported(caps))
+            {
+                fallbackReason = "int64_atomics_unsupported";
+            }
+            else if (!bTwoPass)
+            {
+                fallbackReason = "occlusion_off";
+            }
+            if (fallbackReason)
+            {
+                if (!m_bSwRasterFallbackLogged)
+                {
+                    NORVES_LOG_INFO("MegaGeometryPass", "SW_RASTER_FALLBACK reason=%s", fallbackReason);
+                    m_bSwRasterFallbackLogged = true;
+                }
+            }
+            else
+            {
+                bSwRasterBin = true;
+            }
+        }
+
+        // 統計（MEGA_OCCLUSION）の書き込み先。読み戻しのあるビルド（開発）だけ取る
+        StatsSlot *statsSlot = nullptr;
+#if NORVES_ENABLE_STATS
+        if (bTwoPass)
+        {
+            EnsureStatsSlots();
+            StatsSlot &slot = m_StatsSlots[m_OcclusionFrameCount % StatsSlotCount];
+            // 同じフレームの別のビューポートや直前のフレームが書いた統計は、GPU が書き終えていないかもしれないので、
+            // 読まず・上書きせず、この記録の統計は取らない（2フレーム以上前なら完了している。フレームの飛行数は2以下）
+            const bool bSlotSettled = !slot.bPending || slot.RenderFrameCount + 2 <= m_RenderFrameCount;
+            if (slot.Buffer && slot.Mapped && bSlotSettled)
+            {
+                if (slot.bPending)
+                {
+                    // 2フレーム以上前の統計。そのフレームの提出は完了している
+                    // エポックが始まっていれば相対フレームが30の倍数のフレームで出す（撮影の間で同じ相対フレームを突き合わせられる）
+                    const bool bSampleFrame = slot.EpochFrame >= 0 ? (slot.EpochFrame % 30 == 0) : (slot.Frame % 30 == 0);
+                    if (!m_bStatsLoggedOnce || bSampleFrame || m_Settings.bStatsEveryFrame)
+                    {
+                        NORVES_LOG_INFO("MegaGeometryPass",
+                                        "MEGA_OCCLUSION frame=%llu epoch_frame=%lld pass1=%u "
+                                        "pass2_tested=%u pass2_drawn=%u occluded=%u",
+                                        static_cast<unsigned long long>(slot.RenderFrame),
+                                        static_cast<long long>(slot.EpochFrame),
+                                        slot.Mapped[0],
+                                        slot.Mapped[1],
+                                        slot.Mapped[2],
+                                        slot.Mapped[3]);
+                        if (slot.bSwRasterBin)
+                        {
+                            // 振り分けの結果。ソフトのラスタが無い間は、ハードがすべてのクラスタを描く（hw は一覧へ積まなかった数）
+                            NORVES_LOG_INFO("MegaGeometryPass",
+                                            "SW_RASTER_BIN pass1=%u pass2=%u hw=%u overflow=%u "
+                                            "zeroed=%u sw_groups=%u sw_dispatches=%u frame=%llu "
+                                            "epoch_frame=%lld",
+                                            slot.Mapped[4], slot.Mapped[5], slot.Mapped[6], slot.Mapped[7],
+                                            slot.Mapped[8], slot.Mapped[10], slot.SwDispatches,
+                                            static_cast<unsigned long long>(slot.RenderFrame),
+                                            static_cast<long long>(slot.EpochFrame));
+                            // ソフトが 1 スレッド 1 三角形で走査する矩形（一辺の上限は振り分けのしきい値から max(64, ceil(2 × しきい値) + 2) 画素で決める）を超えて描かなかった三角形の数。振り分けのしきい値が保守的なら 0
+                            NORVES_LOG_INFO("MegaGeometryPass",
+                                            "SW_RASTER_OVERSIZE=%u frame=%llu epoch_frame=%lld",
+                                            slot.Mapped[9],
+                                            static_cast<unsigned long long>(slot.RenderFrame),
+                                            static_cast<long long>(slot.EpochFrame));
+                        }
+                        m_bStatsLoggedOnce = true;
+                    }
+                    slot.bPending = false;
+                }
+                statsSlot = &slot;
+            }
+        }
+#endif
+
+        // ========================================
+        // 区間のコマンドの範囲と、GPUバッファ・フレームスロットの用意
+        // ========================================
+        const uint32_t sectionCount = static_cast<uint32_t>(sections.size());
+        const uint32_t passCount = bTwoPass ? 2u : 1u;
+        uint64_t commandsPerPass = 0;
+        for (Section &section : sections)
+        {
+            section.Capacity = static_cast<uint32_t>(std::min<uint64_t>(section.ClusterTotal, m_Settings.MaxDrawCount));
+            section.CommandBase = static_cast<uint32_t>(commandsPerPass);
+            commandsPerPass += section.Capacity;
+        }
+        const uint64_t commandsTotal = commandsPerPass * passCount;
+        if (commandsTotal == 0 || commandsTotal > 0x7FFFFFFFull / IndirectCommandBytes)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_BATCH_COMMAND_COUNT_INVALID commands=%llu", static_cast<unsigned long long>(commandsTotal));
+            recordEmptyRenderPass();
+            return;
+        }
+
+        FrameSlot &frameSlot = m_FrameSlots.Acquire();
+        if (!EnsureBatchBuffers(static_cast<uint32_t>(commandsTotal), sectionCount * passCount) ||
+            !EnsureFrameSlot(frameSlot, static_cast<uint32_t>(instanceTable.size()), sectionCount * passCount, sectionCount) ||
+            (bvhInstanceCount > 0 &&
+             (!EnsureBvhBuffers(static_cast<uint32_t>(bvhQueueEntries)) ||
+              !EnsureBvhStageResources(frameSlot, 0, bvhLevelCount + 1u) ||
+              (bTwoPass && !EnsureBvhStageResources(frameSlot, 1, bvhLevelCount + 1u)))))
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "まとめた描画の資源を用意できませんでした");
+            recordEmptyRenderPass();
+            return;
+        }
+
+        // ソフトウェアラスタの一覧。作れなければ振り分けずにハードだけで描く
+        const uint32_t swRasterCapacity = static_cast<uint32_t>(commandsPerPass);
+        if (bSwRasterBin && !EnsureSwRasterBuffer(swRasterCapacity))
+        {
+            if (!m_bSwRasterFallbackLogged)
+            {
+                NORVES_LOG_INFO("MegaGeometryPass", "SW_RASTER_FALLBACK reason=buffer_unavailable");
+                m_bSwRasterFallbackLogged = true;
+            }
+            bSwRasterBin = false;
+        }
+        m_bSwRasterBinned = bSwRasterBin;
+        m_SwRasterCapacity = bSwRasterBin ? swRasterCapacity : 0u;
+        // ソフトのラスタが走るフレームだけ、一覧へ積めたクラスタのハードのコマンドを空振りにする（走らないなら積むだけ）。
+        // bSwRasterBin は sink と 2 パスの遮蔽の判定を前提にしている
+        const bool bSwRasterSkipHardware = bSwRasterBin && sink != nullptr && sink->PrepareSwRaster();
+
+        // ページの表（常駐の状態）をこのフレームのスロットへ写す。フレームの間は変わらないので、2パスの判定が食い違わない
+        if (!SyncPageTable(frameSlot, *command.MegaGeometry))
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "ページの表のバッファを用意できませんでした");
+            recordEmptyRenderPass();
+            return;
+        }
+
+        // ページの要求を書くバッファ（このフレームのもの。獲得できなければ容量 0 で、統計用の代わりのバッファを束ねる）。
+        // 要求が指す表の位置を後で引き直せるよう、このフレームのシェーダーが見る表の版を結び付ける
+        command.MegaGeometry->SetCurrentPageTableVersion(frameSlot.PageTableVersion);
+        RHI::BufferPtr pageRequestBuffer = command.MegaGeometry->GetCurrentPageRequestBuffer();
+        const uint32_t pageRequestCapacity = pageRequestBuffer ? command.MegaGeometry->GetCurrentPageRequestCapacity() : 0u;
+        if (!pageRequestBuffer || pageRequestCapacity == 0)
+        {
+            pageRequestBuffer = m_DummyStatsBuffer;
+        }
+
+        // インスタンスの表と区間の表を書く（ホストが書き、カリングと頂点シェーダーが読む）
+        frameSlot.InstanceBuffer->Update(instanceTable.data(), instanceTable.size() * sizeof(GPUMegaInstance));
+        {
+            VariableArray<uint32_t> sectionTable;
+            sectionTable.reserve(static_cast<size_t>(sectionCount) * passCount * 2u);
+            for (uint32_t passIndex = 0; passIndex < passCount; ++passIndex)
+            {
+                for (const Section &section : sections)
+                {
+                    sectionTable.push_back(static_cast<uint32_t>(passIndex * commandsPerPass) + section.CommandBase);
+                    sectionTable.push_back(section.Capacity);
+                }
+            }
+            frameSlot.SectionBuffer->Update(sectionTable.data(), sectionTable.size() * sizeof(uint32_t));
+        }
+
+        // ========================================
+        // 区間ごとの描画入力（定数・テクスチャ）を準備
+        // ========================================
+        for (uint32_t sectionIndex = 0; sectionIndex < sectionCount; ++sectionIndex)
+        {
+            const auto *gpuData = sections[sectionIndex].Representative;
+            const SectionDraw &sectionDraw = frameSlot.Sections[sectionIndex];
+
+            SectionUniformData uniform{};
+            cameraConstants.CopyShaderView(uniform.View);
+            cameraConstants.CopyShaderProjection(uniform.Projection);
+            cameraConstants.CopyCameraPosition(uniform.CameraPosition);
+            previousCameraConstants.CopyShaderView(uniform.PreviousView);
+            previousCameraConstants.CopyShaderProjection(uniform.PreviousProjection);
+            uniform.FrameParams[0] = command.bHasPreviousCamera ? 1.0f : 0.0f;
+            // 発光はプリエクスポージャ後の値で GBuffer_Emissive へ書く（GBufferPass・LightingPass と同じ値）。
+            uniform.FrameParams[1] = ResolveSceneColorPreExposure(&cam);
 
             // マテリアル値を設定
             const auto &mat = gpuData->Material;
-            perObject.ObjectColor[0] = mat.BaseColor[0];
-            perObject.ObjectColor[1] = mat.BaseColor[1];
-            perObject.ObjectColor[2] = mat.BaseColor[2];
-            perObject.ObjectColor[3] = mat.BaseColor[3];
-            perObject.EmissiveChromaticityAndLuminanceNits[0] = mat.EmissiveColor[0];
-            perObject.EmissiveChromaticityAndLuminanceNits[1] = mat.EmissiveColor[1];
-            perObject.EmissiveChromaticityAndLuminanceNits[2] = mat.EmissiveColor[2];
-            perObject.EmissiveChromaticityAndLuminanceNits[3] = mat.EmissiveLuminanceNits;
-            perObject.PomParams[0] = mat.HeightScale;
-            perObject.PomParams[1] = mat.bHasHeightMap ? 1.0f : 0.0f;
-            perObject.PomParams[2] = static_cast<float>(static_cast<uint8_t>(command.DebugMode));
-            perObject.PomParams[3] = bMegaGeometryDebugPayloadSupported ? 1.0f : 0.0f;
+            uniform.ObjectColor[0] = mat.BaseColor[0];
+            uniform.ObjectColor[1] = mat.BaseColor[1];
+            uniform.ObjectColor[2] = mat.BaseColor[2];
+            uniform.ObjectColor[3] = mat.BaseColor[3];
+            uniform.EmissiveChromaticityAndLuminanceNits[0] = mat.EmissiveColor[0];
+            uniform.EmissiveChromaticityAndLuminanceNits[1] = mat.EmissiveColor[1];
+            uniform.EmissiveChromaticityAndLuminanceNits[2] = mat.EmissiveColor[2];
+            uniform.EmissiveChromaticityAndLuminanceNits[3] = mat.EmissiveLuminanceNits;
+            uniform.PomParams[0] = mat.HeightScale;
+            uniform.PomParams[1] = mat.bHasHeightMap ? 1.0f : 0.0f;
+            uniform.PomParams[2] = static_cast<float>(static_cast<uint8_t>(command.DebugMode));
+            uniform.PomParams[3] = bMegaGeometryDebugPayloadSupported ? 1.0f : 0.0f;
+            uniform.FrameParams[2] = mat.DisplacementUVSpacing > 0.0f ? mat.DisplacementUVSpacing : 0.0f;
+            uniform.FrameParams[3] = bLODLevelPayload ? 1.0f : 0.0f;
 
-            drawUniformBuffer->Update(&perObject, sizeof(PerObjectUBO));
+            // PBRテクスチャ（マテリアルテクスチャまたはデフォルトにフォールバック）
+            // 材質はハンドルしか持たないので、描画のたびに引き直す（解放済みならデフォルトに落ちる）。
+            auto resolveTexture = [&command](TextureHandle handle, const RHI::TexturePtr &fallback) -> RHI::TexturePtr
+            {
+                if (command.Textures && handle.IsValid())
+                {
+                    if (RHI::TexturePtr texture = command.Textures->GetRHITexturePtr(handle))
+                    {
+                        return texture;
+                    }
+                }
+                return fallback;
+            };
+            // ORM は metallic の枠に張り、シェーダーへフラグで伝える（descriptor の binding は増やさない）。
+            // texture が解決できないときは別々の枠（既定値）の経路へ落とす。
+            const RHI::TexturePtr orm = resolveTexture(mat.ORMTexture, nullptr);
+            uniform.MaterialParams[0] = orm ? 1.0f : 0.0f;
+            uniform.MaterialParams[1] = mat.bNormalTwoChannel ? 1.0f : 0.0f;
 
-            drawDescriptorSet->BindConstantBuffer(0, drawUniformBuffer, 0,
-                                                  static_cast<uint32_t>(sizeof(PerObjectUBO)));
-
-            // PBRテクスチャバインド（マテリアルテクスチャまたはデフォルトにフォールバック）
-            auto albedo = mat.AlbedoTexture ? mat.AlbedoTexture : m_DefaultWhiteTexture;
-            auto normal = mat.NormalTexture ? mat.NormalTexture : m_DefaultFlatNormalTexture;
             if (!std::isfinite(mat.Metallic) || !std::isfinite(mat.Roughness) || !std::isfinite(mat.OcclusionStrength))
             {
-                NORVES_LOG_ERROR("MegaGeometryPass", "Non-finite material scalar");
+                NORVES_LOG_ERROR("MegaGeometryPass", "材質の定数が有限値ではありません");
                 continue;
             }
             const auto constant = [&](float value) -> RHI::TexturePtr
@@ -1016,105 +1468,735 @@ namespace NorvesLib::Core::Rendering
                 }
                 return m_ConstantMaterialTextures->GetOrCreate(m_Device, value);
             };
-            auto metallic = mat.MetallicTexture ? mat.MetallicTexture
-                                                : (mat.Metallic >= 0 ? constant(mat.Metallic) : m_DefaultBlackTexture);
-            auto roughness = mat.RoughnessTexture
-                                 ? mat.RoughnessTexture
-                                 : (mat.Roughness >= 0 ? constant(mat.Roughness) : m_DefaultWhiteTexture);
-            auto ao = mat.AOTexture
-                          ? mat.AOTexture
-                          : (mat.OcclusionStrength == 1 ? m_DefaultWhiteTexture : constant(mat.OcclusionStrength));
+            // PBRテクスチャ
+            auto albedo = resolveTexture(mat.AlbedoTexture, m_DefaultWhiteTexture);
+            auto normal = resolveTexture(mat.NormalTexture, m_DefaultFlatNormalTexture);
+            auto metallic = orm ? orm
+                                : resolveTexture(mat.MetallicTexture,
+                                                 mat.Metallic >= 0 ? constant(mat.Metallic) : m_DefaultBlackTexture);
+            auto roughness = orm ? orm
+                                 : resolveTexture(mat.RoughnessTexture,
+                                                  mat.Roughness >= 0 ? constant(mat.Roughness) : m_DefaultWhiteTexture);
+            auto ao = orm ? orm
+                          : resolveTexture(mat.AOTexture, mat.OcclusionStrength == 1 ? m_DefaultWhiteTexture
+                                                                                     : constant(mat.OcclusionStrength));
+            auto height = resolveTexture(mat.HeightTexture, m_DefaultBlackTexture);
             if (!metallic || !roughness || !ao)
             {
-                NORVES_LOG_ERROR("MegaGeometryPass", "Failed to prepare material scalar textures");
+                NORVES_LOG_ERROR("MegaGeometryPass", "材質の定数テクスチャを準備できません");
                 continue;
             }
-            auto height = mat.HeightTexture ? mat.HeightTexture : m_DefaultBlackTexture;
 
-            drawDescriptorSet->BindTexture(1, albedo);
-            drawDescriptorSet->BindSampler(1, m_DefaultLinearSampler);
-            drawDescriptorSet->BindTexture(2, normal);
-            drawDescriptorSet->BindSampler(2, m_DefaultLinearSampler);
-            drawDescriptorSet->BindTexture(3, metallic);
-            drawDescriptorSet->BindSampler(3, m_DefaultLinearSampler);
-            drawDescriptorSet->BindTexture(4, roughness);
-            drawDescriptorSet->BindSampler(4, m_DefaultLinearSampler);
-            drawDescriptorSet->BindTexture(5, ao);
-            drawDescriptorSet->BindSampler(5, m_DefaultLinearSampler);
-            drawDescriptorSet->BindTexture(6, height);
-            drawDescriptorSet->BindSampler(6, m_DefaultLinearSampler);
+            // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
+            uniform.MaterialParams[2] = AnySparseTexture(albedo, normal, metallic, roughness, ao, height) ? 1.0f : 0.0f;
+            // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）。
+            // アルベドが VT のとき、シェーダーがこのフレームの要求を書く（24bit 以下の整数は float に正確に載る）
+            const TextureResources::VirtualTextureFeedbackTarget feedbackTarget =
+                command.Textures ? command.Textures->GetVirtualTextureFeedbackTarget()
+                                 : TextureResources::VirtualTextureFeedbackTarget{};
+            uniform.MaterialParams[3] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(command.Textures, mat.AlbedoTexture, albedo.get(), feedbackTarget));
+            // 法線・ORM・高さも VT のとき、それぞれの表の番号で要求を書く（ORM の枠は metallic に張ったテクスチャ）
+            uniform.VtFeedbackParams[0] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(command.Textures, mat.NormalTexture, normal.get(), feedbackTarget));
+            uniform.VtFeedbackParams[1] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(command.Textures, mat.ORMTexture, orm.get(), feedbackTarget));
+            uniform.VtFeedbackParams[2] = static_cast<float>(
+                ResolveVirtualTextureFeedbackParam(command.Textures, mat.HeightTexture, height.get(), feedbackTarget));
 
-            drawDescriptorSet->Update();
-            DrawableInstance drawableInstance;
-            drawableInstance.InstanceIndex = instanceIndex;
-            drawableInstance.GpuData = gpuData;
-            drawableInstance.IndirectDrawBuffer = indirectDrawBuffer;
-            drawableInstance.DrawCountBuffer = drawCountBuffer;
-            drawableInstance.DrawDescriptorSet = drawDescriptorSet;
-            drawableInstances.push_back(drawableInstance);
-        }
+            sectionDraw.Uniform->Update(&uniform, sizeof(SectionUniformData));
 
-        if (drawableInstances.empty())
-        {
-            recordEmptyRenderPass();
-            return;
+            const RHI::DescriptorSetPtr &descriptorSet = sectionDraw.DescriptorSet;
+            descriptorSet->BindConstantBuffer(0, sectionDraw.Uniform, 0,
+                                              static_cast<uint32_t>(sizeof(SectionUniformData)));
+
+            // PBRテクスチャバインド
+            descriptorSet->BindTexture(1, albedo);
+            descriptorSet->BindSampler(1, m_DefaultLinearSampler);
+            descriptorSet->BindTexture(2, normal);
+            descriptorSet->BindSampler(2, m_DefaultLinearSampler);
+            descriptorSet->BindTexture(3, metallic);
+            descriptorSet->BindSampler(3, m_DefaultLinearSampler);
+            descriptorSet->BindTexture(4, roughness);
+            descriptorSet->BindSampler(4, m_DefaultLinearSampler);
+            descriptorSet->BindTexture(5, ao);
+            descriptorSet->BindSampler(5, m_DefaultLinearSampler);
+            descriptorSet->BindTexture(6, height);
+            descriptorSet->BindSampler(6, m_DefaultLinearSampler);
+            BindVirtualTextureFeedback(*descriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
+
+            // 頂点シェーダーが引くインスタンスの表と描画情報
+            descriptorSet->BindStorageBuffer(8, frameSlot.InstanceBuffer, 0,
+                                             static_cast<uint32_t>(instanceTable.size() * sizeof(GPUMegaInstance)));
+            descriptorSet->BindStorageBuffer(9, m_DrawInfoBuffer, 0,
+                                             static_cast<uint32_t>(m_DrawInfoBuffer->GetSize()));
+
+            descriptorSet->Update();
         }
 
         // ========================================
-        // GBuffer render pass は frame command ごとに1回だけ開く
+        // クラスタカリングの記録（パスごと）
         // ========================================
-        cmdList->BeginRenderPass(m_GBufferRenderPass, m_GBufferFramebuffer);
-        cmdList->SetViewport(command.Viewport);
-        cmdList->SetScissor(command.Scissor);
-        cmdList->SetPipeline(SelectDrawPipeline(command.DebugMode));
+        // カリング用ユニフォームの、パスによらない部分
+        CullUniformData baseUniform{};
+        cameraConstants.CopyShaderView(baseUniform.ViewMatrix);
+        cameraConstants.CopyShaderProjection(baseUniform.ProjectionMatrix);
+        cameraConstants.CopyCameraPosition(baseUniform.CameraPosition);
+        baseUniform.CameraPosition[3] = 0.0f;
+        frustumPlanes.CopyToShaderData(baseUniform.FrustumPlanes);
+        baseUniform.InstanceCount = static_cast<uint32_t>(instanceTable.size());
+        baseUniform.TotalGroupCount = static_cast<uint32_t>(totalGroups);
+        baseUniform.LODBias = m_Settings.LODBias;
+        baseUniform.ScreenHeight = static_cast<float>(m_CurrentHeight);
+        // projectionFactor = screenHeight / (2 * tan(fov/2))
+        const float halfFovTan = std::tan(cameraConstants.FieldOfViewRadians * 0.5f);
+        baseUniform.ProjectionFactor = (halfFovTan > 1e-6f)
+                                           ? static_cast<float>(m_CurrentHeight) / (2.0f * halfFovTan)
+                                           : 1.0f;
+        baseUniform.DebugPayloadMode = debugPayloadMode;
+        // 「見えた」印: 前のフレームの2パス目が書いた値（今のフレームの番号）と、今のフレームが書く値。
+        // 0（バッファを0で埋めた直後・見えなかった）とは決して一致しない（番号は1から数える）
+        baseUniform.VisibleReadStamp = static_cast<uint32_t>(m_OcclusionFrameCount);
+        baseUniform.VisibleWriteStamp = static_cast<uint32_t>(m_OcclusionFrameCount) + 1u;
+        baseUniform.BvhRootCount = bvhInstanceCount;
+        baseUniform.PageRequestCapacity = pageRequestCapacity;
+        baseUniform.bSwRasterEnabled = bSwRasterSkipHardware ? 2u : (bSwRasterBin ? 1u : 0u);
+        baseUniform.SwRasterCapacity = bSwRasterBin ? swRasterCapacity : 0u;
+        baseUniform.SwRasterMaxPixels = m_SwRasterMaxPixels;
+        baseUniform.SwRasterNearPlane = cam.NearPlane;
 
-        for (const DrawableInstance &drawableInstance : drawableInstances)
+        // メッシュ共通のLOD球を持つメッシュの選ばれる段を、変わったときに記録する
+        for (const Drawable &drawable : drawables)
         {
-            const auto *gpuData = drawableInstance.GpuData;
-            if (!gpuData)
+            if (drawable.GpuData->LODBounds.IsValid())
             {
-                continue;
+                LogUniformLODSelection(m_Instances[drawable.InstanceIndex], *drawable.GpuData, baseUniform);
+            }
+        }
+
+        RHI::BufferPtr statsBuffer = m_DummyStatsBuffer;
+        if (statsSlot)
+        {
+            statsBuffer = statsSlot->Buffer;
+            // 1フレームぶんの統計を0から数える（前に使ったのはホストが読んだ後）
+            cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::HostRead, RHI::ResourceState::CopyDest);
+            cmdList->FillBuffer(statsBuffer, 0, StatsBufferBytes, 0);
+            cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+            statsSlot->Frame = m_OcclusionFrameCount;
+            statsSlot->RenderFrame = command.FrameNumber;
+            statsSlot->RenderFrameCount = m_RenderFrameCount;
+            statsSlot->EpochFrame = epochFrame;
+            statsSlot->bPending = true;
+            statsSlot->bSwRasterBin = bSwRasterBin;
+            statsSlot->SwDispatches = 0;
+        }
+
+        // 区間のカウンタ（全パス分）を0にし、コマンド・描画情報をカリングが書ける状態にする。
+        // GPU側のカウントを参照できない環境（DrawIndexedIndirect）では、積まれなかったコマンドが
+        // instanceCount=0 の空振りになるよう、コマンドも0で埋める
+        cmdList->BufferBarrier(m_DrawCountBuffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
+        cmdList->FillBuffer(m_DrawCountBuffer, 0, static_cast<uint64_t>(sectionCount) * passCount * sizeof(uint32_t), 0);
+        cmdList->BufferBarrier(m_DrawCountBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+        if (caps.bDrawIndirectCount)
+        {
+            cmdList->BufferBarrier(m_IndirectDrawBuffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
+        }
+        else
+        {
+            cmdList->BufferBarrier(m_IndirectDrawBuffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
+            cmdList->FillBuffer(m_IndirectDrawBuffer, 0, commandsTotal * IndirectCommandBytes, 0);
+            cmdList->BufferBarrier(m_IndirectDrawBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+        }
+        cmdList->BufferBarrier(m_DrawInfoBuffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
+        if (bSwRasterBin)
+        {
+            // ソフトの一覧の頭（間接 dispatch の引数と積もうとした数）を 0 にする。一覧の中身は積んだ分だけが読まれるので消さない
+            cmdList->BufferBarrier(m_SwRasterBuffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
+            cmdList->FillBuffer(m_SwRasterBuffer, 0, SwRasterHeaderWords * sizeof(uint32_t), 0);
+            cmdList->BufferBarrier(m_SwRasterBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+        }
+
+        // BVH のたどりの列・カウンタを、このフレームで使い始めたか（最初のパスの前に Common から使える状態にする）
+        bool bBvhBuffersUsed = false;
+
+        // cullPass: 0=従来の1回の判定、1=1パス目、2=2パス目。hiZTexture は2パス目の遮蔽の判定が読む HZB（null なら判定しない）
+        auto recordCull = [&](uint32_t cullPass, const RHI::TexturePtr &hiZTexture) -> void
+        {
+            const bool bSecond = cullPass == CULL_PASS_SECOND;
+            const uint32_t passIndex = bSecond ? 1u : 0u;
+            ScopedGpuTimestamp cullTimestamp(cmdList, bSecond ? "MegaGeometryCull2" : "MegaGeometryCull1");
+
+            // ----------------------------------------
+            // 1. カリングユニフォーム更新
+            // ----------------------------------------
+            CullUniformData uniformData = baseUniform;
+            uniformData.CullPass = cullPass;
+            uniformData.bStatsEnabled = (statsSlot && cullPass != CULL_PASS_SINGLE) ? 1u : 0u;
+            uniformData.SectionBase = passIndex * sectionCount;
+
+            // 遮蔽の判定（2パス目だけ）。HZB の元の深度の解像度を渡す（HZB のミップ0 はその半分）
+            if (bSecond && hiZTexture && m_DepthTexture)
+            {
+                uniformData.HiZWidth = m_DepthTexture->GetWidth();
+                uniformData.HiZHeight = m_DepthTexture->GetHeight();
+                uniformData.HiZMipCount = m_HiZ.GetMipCount();
+                uniformData.bHiZEnabled = 1;
+            }
+            frameSlot.CullUniform[passIndex]->Update(&uniformData, sizeof(CullUniformData));
+
+            // ----------------------------------------
+            // 2. カリングディスクリプタセット（平らな判定と BVH の各段で、UBO だけが違う）
+            // ----------------------------------------
+            const auto bindCullDescriptors = [&](const RHI::DescriptorSetPtr &descriptorSet,
+                                                 const RHI::BufferPtr &cullUniformBuffer) -> void
+            {
+                descriptorSet->BindConstantBuffer(0, cullUniformBuffer, 0,
+                                                  static_cast<uint32_t>(sizeof(CullUniformData)));
+                descriptorSet->BindStorageBuffer(1, frameSlot.InstanceBuffer, 0,
+                                                 static_cast<uint32_t>(instanceTable.size() * sizeof(GPUMegaInstance)));
+                descriptorSet->BindStorageBuffer(2, m_IndirectDrawBuffer, 0,
+                                                 static_cast<uint32_t>(m_IndirectDrawBuffer->GetSize()));
+                descriptorSet->BindStorageBuffer(3, m_DrawCountBuffer, 0,
+                                                 static_cast<uint32_t>(m_DrawCountBuffer->GetSize()));
+
+                // binding 4 の HZB は2パス目の遮蔽の判定（bHiZEnabled=1）だけが読む
+                descriptorSet->BindTexture(4, (bSecond && hiZTexture) ? hiZTexture : m_DefaultBlackTexture);
+                descriptorSet->BindSampler(4, m_DefaultLinearSampler);
+
+                // binding 5・6: 「前のフレームで見えた」印と統計。従来の経路は触らないので代わりのバッファを結ぶ
+                if (bTwoPass && cullPass != CULL_PASS_SINGLE)
+                {
+                    descriptorSet->BindStorageBuffer(5, m_VisibilityBuffer, 0,
+                                                     static_cast<uint32_t>(m_VisibilityBuffer->GetSize()));
+                }
+                else
+                {
+                    descriptorSet->BindStorageBuffer(5, m_DummyVisibilityBuffer, 0,
+                                                     static_cast<uint32_t>(m_DummyVisibilityBuffer->GetSize()));
+                }
+                descriptorSet->BindStorageBuffer(6, statsBuffer, 0, StatsBufferBytes);
+                descriptorSet->BindStorageBuffer(7, frameSlot.SectionBuffer, 0,
+                                                 static_cast<uint32_t>(sectionCount * passCount * 2u * sizeof(uint32_t)));
+                descriptorSet->BindStorageBuffer(8, m_DrawInfoBuffer, 0,
+                                                 static_cast<uint32_t>(m_DrawInfoBuffer->GetSize()));
+                // binding 9・10: BVH のたどりの列とカウンタ（BVH を使わない経路は触らない）
+                descriptorSet->BindStorageBuffer(9, m_BvhQueueBuffer, 0,
+                                                 static_cast<uint32_t>(m_BvhQueueBuffer->GetSize()));
+                descriptorSet->BindStorageBuffer(10, m_BvhCounterBuffer, 0, BvhCounterBytes);
+                // binding 11・12: ページの表（このフレームの常駐）と、ページの要求の列
+                descriptorSet->BindStorageBuffer(11, frameSlot.PageTableBuffer, 0,
+                                                 static_cast<uint32_t>(frameSlot.PageTableBuffer->GetSize()));
+                descriptorSet->BindStorageBuffer(12, pageRequestBuffer, 0,
+                                                 static_cast<uint32_t>(pageRequestBuffer->GetSize()));
+                // binding 13: ソフトウェアラスタの一覧（振り分けないフレームは触らないので代わりのバッファを結ぶ）
+                if (bSwRasterBin)
+                {
+                    descriptorSet->BindStorageBuffer(13, m_SwRasterBuffer, 0,
+                                                     static_cast<uint32_t>(m_SwRasterBuffer->GetSize()));
+                }
+                else
+                {
+                    descriptorSet->BindStorageBuffer(13, m_DummyStatsBuffer, 0, StatsBufferBytes);
+                }
+                descriptorSet->Update();
+            };
+
+            // 1次元のスレッド数を、x 方向の上限を避けて2次元のワークグループで出す
+            const auto dispatchThreads = [&](uint64_t threads) -> void
+            {
+                const uint64_t groups = (threads + 63u) / 64u;
+                const uint32_t dispatchX = static_cast<uint32_t>(std::min<uint64_t>(groups, 65535u));
+                const uint32_t dispatchY = static_cast<uint32_t>((groups + dispatchX - 1u) / dispatchX);
+                cmdList->Dispatch(dispatchX, dispatchY, 1);
+            };
+
+            // ----------------------------------------
+            // 3. 平らな判定（BVH を持たないインスタンス。全部を1回の dispatch で）
+            // ----------------------------------------
+            if (totalGroups > 0)
+            {
+                const RHI::DescriptorSetPtr &cullDescriptorSet = frameSlot.CullDescriptorSet[passIndex];
+                bindCullDescriptors(cullDescriptorSet, frameSlot.CullUniform[passIndex]);
+                cmdList->SetPipeline(m_CullPipeline);
+                cmdList->SetDescriptorSet(cullDescriptorSet, 0);
+                dispatchThreads(totalGroups * 64u);
             }
 
-            cmdList->SetDescriptorSet(drawableInstance.DrawDescriptorSet, 0);
+            // ----------------------------------------
+            // 3b. BVH をたどる判定（BVH を持つインスタンス）。節を段ごとの dispatch で判定して枝を切り、
+            //     残った葉のクラスタを平らな判定と同じ判定にかける
+            // ----------------------------------------
+            if (bvhInstanceCount > 0)
+            {
+                if (totalGroups > 0)
+                {
+                    // 平らな判定の書き込み（描画コマンド・カウンタ・描画情報・見えた印・統計）を、BVH の判定へ見せる
+                    cmdList->BufferBarrier(m_IndirectDrawBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    cmdList->BufferBarrier(m_DrawCountBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    cmdList->BufferBarrier(m_DrawInfoBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    if (bSwRasterBin)
+                    {
+                        cmdList->BufferBarrier(m_SwRasterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    }
+                    if (bTwoPass && cullPass != CULL_PASS_SINGLE)
+                    {
+                        cmdList->BufferBarrier(m_VisibilityBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    }
+                    if (uniformData.bStatsEnabled != 0)
+                    {
+                        cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    }
+                    if (pageRequestCapacity != 0)
+                    {
+                        // ページの要求の印と列に、BVH の葉のクラスタの判定が続けて書く
+                        cmdList->BufferBarrier(frameSlot.PageTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                        cmdList->BufferBarrier(pageRequestBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    }
+                }
 
-            // 頂点/インデックスバッファ設定
-            cmdList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
-            cmdList->SetIndexBuffer(gpuData->IndexBuffer, 0);
+                // 列とカウンタを使える状態にし、カウンタをパスごとに0へ戻す
+                cmdList->BufferBarrier(m_BvhCounterBuffer,
+                                       bBvhBuffersUsed ? RHI::ResourceState::UnorderedAccess : RHI::ResourceState::Common,
+                                       RHI::ResourceState::CopyDest);
+                if (!bBvhBuffersUsed)
+                {
+                    cmdList->BufferBarrier(m_BvhQueueBuffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
+                    bBvhBuffersUsed = true;
+                }
+                cmdList->FillBuffer(m_BvhCounterBuffer, 0, BvhCounterBytes, 0);
+                cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
 
-            // IndirectDraw発行
-            // DrawIndirectCount対応の場合はGPU側カウントを参照し、
-            // 実際に可視なクラスタ数だけドローコールを発行する。
-            // 非対応の場合はMaxDrawCountをそのまま使用（instanceCount=0で空振り）。
+                cmdList->SetPipeline(m_BvhCullPipeline);
+                for (uint32_t stage = 0; stage <= bvhLevelCount; ++stage)
+                {
+                    const bool bClusterStage = stage == bvhLevelCount;
+                    uint64_t stageThreads = 0;
+                    if (bClusterStage)
+                    {
+                        stageThreads = bvhLeafCapacity * BvhLeafSlots;
+                    }
+                    else
+                    {
+                        stageThreads = stage == 0 ? static_cast<uint64_t>(bvhInstanceCount) : bvhLevelCapacity[stage];
+                    }
+                    if (stageThreads == 0)
+                    {
+                        continue;
+                    }
+
+                    CullUniformData stageUniform = uniformData;
+                    stageUniform.BvhStage = bClusterStage ? BvhStageClusters : stage;
+                    stageUniform.BvhInputBase = (!bClusterStage && stage >= 1) ? bvhQueueBase[stage] : 0u;
+                    stageUniform.BvhNextBase = stage + 1 < bvhLevelCount ? bvhQueueBase[stage + 1] : bvhQueueBase[bvhLevelCount];
+                    stageUniform.BvhLeafBase = bvhQueueBase[bvhLevelCount];
+                    const BvhStageDraw &stageDraw = frameSlot.BvhStages[passIndex][stage];
+                    stageDraw.Uniform->Update(&stageUniform, sizeof(CullUniformData));
+                    bindCullDescriptors(stageDraw.DescriptorSet, stageDraw.Uniform);
+                    cmdList->SetDescriptorSet(stageDraw.DescriptorSet, 0);
+                    dispatchThreads(stageThreads);
+
+                    // 次の段が、この段が積んだ列とカウンタを読む
+                    cmdList->BufferBarrier(m_BvhQueueBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                }
+            }
+
+            // ----------------------------------------
+            // 4. バリア: Compute UAV → IndirectArgument（描画情報は頂点シェーダーが読む）
+            // ----------------------------------------
+            cmdList->BufferBarrier(m_IndirectDrawBuffer,
+                                   RHI::ResourceState::UnorderedAccess,
+                                   RHI::ResourceState::IndirectArgument);
+            cmdList->BufferBarrier(m_DrawCountBuffer,
+                                   RHI::ResourceState::UnorderedAccess,
+                                   RHI::ResourceState::IndirectArgument);
+            cmdList->BufferBarrier(m_DrawInfoBuffer,
+                                   RHI::ResourceState::UnorderedAccess,
+                                   RHI::ResourceState::GenericRead);
+            if (bSwRasterBin)
+            {
+                // 次のパスのカリングが同じバッファの別の範囲へ続けて書く
+                cmdList->BufferBarrier(m_SwRasterBuffer,
+                                       RHI::ResourceState::UnorderedAccess,
+                                       RHI::ResourceState::UnorderedAccess);
+            }
+            if (cullPass == CULL_PASS_FIRST)
+            {
+                // 1パス目の読み取りを、2パス目の書き込みより前に済ませる
+                cmdList->BufferBarrier(m_VisibilityBuffer,
+                                       RHI::ResourceState::UnorderedAccess,
+                                       RHI::ResourceState::UnorderedAccess);
+            }
+            if (uniformData.bStatsEnabled != 0)
+            {
+                // 統計のカウンタへ、次のディスパッチが続けて足す
+                cmdList->BufferBarrier(statsBuffer,
+                                       RHI::ResourceState::UnorderedAccess,
+                                       RHI::ResourceState::UnorderedAccess);
+            }
+        };
+
+        // ビジビリティバッファの解決が GBuffer を書くときは、描画の呼び出しだけを省く
+        // 解決のパスが分かるときは、パイプラインの準備まで含めて判定する（使えないのに止めると画面が空になる）
+        const bool bSkipGBufferDraw = ShouldSkipGBufferDraw(command.DebugMode);
+
+        // ビジビリティバッファのラスタが引く、このフレームの描画の写し（カリングの結果のバッファと区間の表）
+        const auto buildVisibilityPlan = [&](VisibilityDrawPlan &plan) -> void
+        {
+            plan.bValid = true;
+            plan.PassCount = passCount;
+            plan.SectionCount = sectionCount;
+            plan.CommandsPerPass = static_cast<uint32_t>(commandsPerPass);
+            plan.CommandsTotal = static_cast<uint32_t>(commandsTotal);
+            plan.bUseIndirectCount = caps.bDrawIndirectCount;
+            plan.IndirectBuffer = m_IndirectDrawBuffer;
+            plan.CountBuffer = m_DrawCountBuffer;
+            plan.DrawInfoBuffer = m_DrawInfoBuffer;
+            plan.InstanceBuffer = frameSlot.InstanceBuffer;
+            plan.InstanceBufferBytes = static_cast<uint64_t>(instanceTable.size()) * sizeof(GPUMegaInstance);
+            plan.SectionBuffer = frameSlot.SectionBuffer;
+            plan.SectionBufferBytes = static_cast<uint64_t>(sectionCount) * passCount * 2u * sizeof(uint32_t);
+            if (bSwRasterBin)
+            {
+                plan.SwRasterBuffer = m_SwRasterBuffer;
+                plan.SwRasterCapacity = swRasterCapacity;
+                plan.SwRasterMaxPixels = m_SwRasterMaxPixels;
+            }
+            plan.StatsBuffer = statsBuffer;
+            plan.bStatsEnabled = statsSlot != nullptr;
+            for (const Section &section : sections)
+            {
+                VisibilityDrawPlan::Section planSection;
+                planSection.VertexBuffer = section.Representative->VertexBuffer;
+                planSection.IndexBuffer = section.Representative->IndexBuffer;
+                planSection.Capacity = section.Capacity;
+                planSection.CommandBase = section.CommandBase;
+                planSection.Material = section.Representative->Material;
+                plan.Sections.push_back(planSection);
+            }
+        };
+
+        // 描画（GBuffer render pass をパスごとに1回だけ開き、材質の区間ごとに1回の間接描画を発行する）
+        auto recordDraws = [&](const RHI::RenderPassPtr &renderPass,
+                               const RHI::FramebufferPtr &framebuffer,
+                               uint32_t passIndex) -> void
+        {
+            if (sink)
+            {
+                // GBuffer の描画は止めている。添付の状態遷移は呼び出し側が済ませ、2パスの描画は sink が行う
+                return;
+            }
+            ScopedGpuTimestamp drawTimestamp(cmdList, passIndex == 0 ? "MegaGeometryDraw1" : "MegaGeometryDraw2");
+
+            cmdList->BeginRenderPass(renderPass, framebuffer);
+            if (bSkipGBufferDraw)
+            {
+                // 添付の状態遷移（render pass の開始と終了）だけ行う
+                cmdList->EndRenderPass();
+                return;
+            }
+            cmdList->SetViewport(command.Viewport);
+            cmdList->SetScissor(command.Scissor);
+            cmdList->SetPipeline(SelectDrawPipeline(command.DebugMode));
+
+            for (uint32_t sectionIndex = 0; sectionIndex < sectionCount; ++sectionIndex)
+            {
+                const Section &section = sections[sectionIndex];
+                if (section.Capacity == 0)
+                {
+                    continue;
+                }
+
+                cmdList->SetDescriptorSet(frameSlot.Sections[sectionIndex].DescriptorSet, 0);
+
+                // 頂点/インデックスバッファ設定（プールの塊の先頭から。メッシュの位置はコマンドの基点が持つ）
+                const auto *gpuData = section.Representative;
+                cmdList->SetVertexBuffer(gpuData->VertexBuffer, 0, 0);
+                cmdList->SetIndexBuffer(gpuData->IndexBuffer, 0);
+
+                // IndirectDraw発行
+                // DrawIndirectCount対応の場合はGPU側カウントを参照し、
+                // 実際に可視なクラスタ数だけドローコールを発行する。
+                // 非対応の場合は区間のコマンドの最大数をそのまま使用（積まれなかった分は instanceCount=0 で空振り）。
+                const uint64_t commandOffsetBytes =
+                    (static_cast<uint64_t>(passIndex) * commandsPerPass + section.CommandBase) * IndirectCommandBytes;
             if (caps.bDrawIndirectCount)
             {
-                cmdList->DrawIndexedIndirectCount(
-                    drawableInstance.IndirectDrawBuffer, 0,
-                    drawableInstance.DrawCountBuffer, 0,
-                    m_Settings.MaxDrawCount,
-                    sizeof(MegaGeometry::DrawIndexedIndirectCommand));
+                    cmdList->DrawIndexedIndirectCount(m_IndirectDrawBuffer, commandOffsetBytes, m_DrawCountBuffer,
+                                                      static_cast<uint64_t>(passIndex * sectionCount + sectionIndex) *
+                                                          sizeof(uint32_t),
+                                                      section.Capacity, IndirectCommandBytes);
             }
             else
             {
-                cmdList->DrawIndexedIndirect(
-                    drawableInstance.IndirectDrawBuffer, 0,
-                    m_Settings.MaxDrawCount,
-                    sizeof(MegaGeometry::DrawIndexedIndirectCommand));
+                    cmdList->DrawIndexedIndirect(m_IndirectDrawBuffer, commandOffsetBytes, section.Capacity,
+                        IndirectCommandBytes);
             }
         }
 
-        cmdList->EndRenderPass();
+            cmdList->EndRenderPass();
+        };
 
-        // IndirectDrawバッファを次のフレーム用に戻す
-        for (const DrawableInstance &drawableInstance : drawableInstances)
+        // sink に描かせるのは2パスのときだけ（1回の判定は、描画の写しを残してラスタが全部を1回で描く）
+        const bool bStaged = sink != nullptr && bTwoPass;
+        VisibilityDrawPlan stagedPlan;
+        const uint32_t swDispatchesBefore = sink ? sink->GetSwRasterDispatchCount() : 0u;
+
+        if (!bTwoPass)
         {
-            cmdList->BufferBarrier(drawableInstance.IndirectDrawBuffer,
+            // 従来の経路: 全インスタンスを1回の判定（遮蔽の判定なし）で選び、1回の render pass で描く
+            recordCull(CULL_PASS_SINGLE, nullptr);
+            recordDraws(m_GBufferRenderPass, m_GBufferFramebuffer, 0);
+        }
+        else
+        {
+            if (bStaged)
+            {
+                buildVisibilityPlan(stagedPlan);
+            }
+
+            // 1パス目: 前のフレームで見えたクラスタだけを描く。前のフレームの2パス目の書き込みを見せる
+            cmdList->BufferBarrier(m_VisibilityBuffer,
+                                   RHI::ResourceState::UnorderedAccess,
+                                   RHI::ResourceState::UnorderedAccess);
+            recordCull(CULL_PASS_FIRST, nullptr);
+            if (bStaged)
+            {
+                sink->RecordFirstPassDraws(cmdList, stagedPlan);
+                // HZB の元の深度へ、ハードのラスタの外で書かれた深度（ソフトウェアラスタ）を合流させる
+                sink->RecordMergeBeforeHiZ(cmdList, stagedPlan);
+            }
+            else
+            {
+                recordDraws(m_GBufferRenderPass, m_GBufferFramebuffer, 0);
+            }
+
+            // 深度（GBufferPass の不透明＋1パス目。sink があるときは ID のラスタが描いた塊＋1パス目＋合流した値）から HZB を作る
+            // （深度は1パス目の終わりで ShaderResource）。
+            // 作れなかったときは遮蔽の判定をしない（1パス目で描かなかったクラスタを全て描く）
+            const bool bHiZBuilt = m_HiZ.Build(cmdList, m_DepthTexture);
+
+            // 1パス目が描いたクラスタの使用の印（ページの表の要求の印と要求の列）を、2パス目の書き込みへ見せる。
+            // 同じフレームの印での重複の省略と、列の件数の加算が、パスをまたいで続くため
+            if (pageRequestCapacity != 0)
+            {
+                cmdList->BufferBarrier(frameSlot.PageTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                cmdList->BufferBarrier(pageRequestBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            }
+
+            // 2パス目: 判定を通った全クラスタを HZB で判定し、1パス目で描かなかった見えるものを描く
+            recordCull(CULL_PASS_SECOND, bHiZBuilt ? m_HiZ.GetTexture() : RHI::TexturePtr{});
+            if (bStaged)
+            {
+                sink->RecordSecondPassDraws(cmdList, stagedPlan);
+            }
+            else
+            {
+                recordDraws(m_SecondGBufferRenderPass, m_SecondGBufferFramebuffer, 1);
+            }
+            if (statsSlot && sink)
+            {
+                // このフレームで sink が記録したソフトの dispatch の数（ログの sw_dispatches）
+                statsSlot->SwDispatches = sink->GetSwRasterDispatchCount() - swDispatchesBefore;
+            }
+
+            if (statsSlot)
+            {
+                // 統計のシェーダーの書き込みを、ホストの読み取りへ見せる
+                cmdList->BufferBarrier(statsSlot->Buffer,
+                                       RHI::ResourceState::UnorderedAccess,
+                                       RHI::ResourceState::HostRead);
+            }
+        }
+
+        // ページの要求の列へのシェーダーの書き込みを、ホストの読み取りへ見せる（数フレーム後に読み戻す）
+        if (pageRequestCapacity != 0)
+        {
+            command.MegaGeometry->RecordPageRequestHostBarrier(*cmdList);
+        }
+
+        // ソフトの一覧を次のフレーム用に戻す
+        if (bSwRasterBin)
+        {
+            cmdList->BufferBarrier(m_SwRasterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
+        }
+
+        // BVH のたどりの列・カウンタを次のフレーム用に戻す
+        if (bBvhBuffersUsed)
+        {
+            cmdList->BufferBarrier(m_BvhQueueBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
+            cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
+        }
+
+        if (m_bVisibilityPlanEnabled || bStaged)
+        {
+            // ビジビリティバッファのラスタが同じコマンドをもう一度描くので、バッファは戻さず、描画の写しを渡す
+            // （ラスタが使い終わった後に ReleaseVisibilityDrawBuffers で Common へ戻す）。
+            // sink に描かせたフレームは、写しを sink へ渡し済みなので残さない
+            if (!bStaged)
+            {
+                buildVisibilityPlan(m_VisibilityPlan);
+            }
+            m_bVisibilityBuffersHeld = true;
+            m_HeldIndirectDrawBuffer = m_IndirectDrawBuffer;
+            m_HeldDrawCountBuffer = m_DrawCountBuffer;
+            m_HeldDrawInfoBuffer = m_DrawInfoBuffer;
+        }
+        else
+        {
+            // IndirectDrawバッファ・カウンタ・描画情報を次のフレーム用に戻す
+            cmdList->BufferBarrier(m_IndirectDrawBuffer,
                                    RHI::ResourceState::IndirectArgument,
                                    RHI::ResourceState::Common);
-            cmdList->BufferBarrier(drawableInstance.DrawCountBuffer,
+            cmdList->BufferBarrier(m_DrawCountBuffer,
                                    RHI::ResourceState::IndirectArgument,
+                                   RHI::ResourceState::Common);
+            cmdList->BufferBarrier(m_DrawInfoBuffer,
+                                   RHI::ResourceState::GenericRead,
                                    RHI::ResourceState::Common);
         }
+
+        ReleaseStaleBuffers();
+    }
+
+    bool MegaGeometryPass::TakeVisibilityDrawPlan(VisibilityDrawPlan &outPlan)
+    {
+        const bool bValid = m_VisibilityPlan.bValid;
+        outPlan = std::move(m_VisibilityPlan);
+        m_VisibilityPlan = VisibilityDrawPlan{};
+        return bValid;
+    }
+
+    void MegaGeometryPass::ReleaseVisibilityDrawBuffers(RHI::ICommandList *commandList,
+                                                        RHI::ResourceState indirectState)
+    {
+        if (!m_bVisibilityBuffersHeld)
+        {
+            return;
+        }
+        m_bVisibilityBuffersHeld = false;
+        if (commandList)
+        {
+            if (m_HeldIndirectDrawBuffer)
+            {
+                commandList->BufferBarrier(m_HeldIndirectDrawBuffer, indirectState, RHI::ResourceState::Common);
+            }
+            if (m_HeldDrawCountBuffer)
+            {
+                commandList->BufferBarrier(m_HeldDrawCountBuffer, indirectState, RHI::ResourceState::Common);
+            }
+            if (m_HeldDrawInfoBuffer)
+            {
+                commandList->BufferBarrier(m_HeldDrawInfoBuffer, RHI::ResourceState::GenericRead, RHI::ResourceState::Common);
+            }
+        }
+        m_HeldIndirectDrawBuffer.reset();
+        m_HeldDrawCountBuffer.reset();
+        m_HeldDrawInfoBuffer.reset();
+    }
+
+    void MegaGeometryPass::LogUniformLODSelection(const MegaMeshInstance &instance,
+                                                  const MegaGeometry::MegaMeshGPUData &gpuData,
+                                                  const CullUniformData &uniformData)
+    {
+        if (gpuData.LevelRanges.empty())
+        {
+            return;
+        }
+
+        // ワールド行列は行ベクトル規約（並進は行3）。半径は最大の軸の伸びで広げる（cluster_cull.comp と同じ）。
+        const float *world = instance.WorldMatrix;
+        const BoundingSphere &local = gpuData.LODBounds;
+        float center[3] = {};
+        float maxScaleSquared = 0.0f;
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            center[axis] = local.CenterX * world[0 + axis] + local.CenterY * world[4 + axis] +
+                           local.CenterZ * world[8 + axis] + world[12 + axis];
+            const float lengthSquared = world[axis * 4 + 0] * world[axis * 4 + 0] +
+                                        world[axis * 4 + 1] * world[axis * 4 + 1] +
+                                        world[axis * 4 + 2] * world[axis * 4 + 2];
+            maxScaleSquared = std::max(maxScaleSquared, lengthSquared);
+        }
+        const float scale = std::sqrt(maxScaleSquared);
+        const float dx = center[0] - uniformData.CameraPosition[0];
+        const float dy = center[1] - uniformData.CameraPosition[1];
+        const float dz = center[2] - uniformData.CameraPosition[2];
+        const float centerDistance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const float radius = local.Radius * scale;
+
+        // 中心の深さと画角は、シェーダーへ渡す列優先の行列から cluster_cull.comp と同じく求める
+        // （配列の [列 * 4 + 行]。深さはクリップ座標の w を projection[2][3] で割った値）。
+        const float *view = uniformData.ViewMatrix;
+        const float *projection = uniformData.ProjectionMatrix;
+        float viewPosition[4] = {};
+        for (uint32_t row = 0; row < 4; ++row)
+        {
+            viewPosition[row] =
+                view[0 * 4 + row] * center[0] + view[1 * 4 + row] * center[1] + view[2 * 4 + row] * center[2] +
+                view[3 * 4 + row];
+        }
+        float clipW = 0.0f;
+        for (uint32_t column = 0; column < 4; ++column)
+        {
+            clipW += projection[column * 4 + 3] * viewPosition[column];
+        }
+        const float depthScale = std::abs(projection[2 * 4 + 3]);
+        const float centerDepth = depthScale > 1.0e-6f ? clipW / depthScale : 0.0f;
+        const float tanHalfFovX = 1.0f / std::max(std::abs(projection[0 * 4 + 0]), 1.0e-6f);
+        const float tanHalfFovY = 1.0f / std::max(std::abs(projection[1 * 4 + 1]), 1.0e-6f);
+        const float errorScale = MegaGeometry::ComputeLODSphereErrorPixelsPerMeter(centerDistance,
+                                                                                    centerDepth,
+                                                                                    radius,
+                                                                                    uniformData.ProjectionFactor,
+                                                                                    tanHalfFovX,
+                                                                                    tanHalfFovY) *
+                                 scale;
+        const uint32_t level = MegaGeometry::SelectCoarsestLODWithinError(gpuData.LevelRanges,
+                                                                           errorScale,
+                                                                           uniformData.LODBias);
+
+        LoggedUniformLOD *logged = nullptr;
+        for (LoggedUniformLOD &entry : m_LoggedUniformLODs)
+        {
+            if (entry.MegaMeshId == instance.Handle.Id)
+            {
+                logged = &entry;
+                break;
+            }
+        }
+        if (logged && logged->Level == level)
+        {
+            return;
+        }
+        if (!logged)
+        {
+            m_LoggedUniformLODs.push_back(LoggedUniformLOD{instance.Handle.Id, level});
+        }
+        else
+        {
+            logged->Level = level;
+        }
+
+        const MegaGeometry::MegaMeshLevelRange &range = gpuData.LevelRanges[level];
+        const bool bHasCoarser = level + 1u < gpuData.LevelRanges.size();
+        NORVES_LOG_INFO("MegaGeometryPass",
+                        "mega_lod_select mesh=\"%s\" level=%u level_triangles=%u "
+                        "camera_to_lod_center_m=%.3f "
+                        "lod_radius_m=%.3f center_depth_m=%.3f perspective_stretch=%.3f "
+                        "threshold_px=%.2f "
+                        "level_error_px=%.3f coarser_level_error_px=%.3f",
+                        gpuData.DebugName.empty() ? "" : gpuData.DebugName.c_str(),
+                        level,
+                        range.IndexCount / 3u,
+                        static_cast<double>(centerDistance),
+                        static_cast<double>(radius),
+                        static_cast<double>(centerDepth),
+                        static_cast<double>(MegaGeometry::ComputeLODSpherePerspectiveStretch(
+                            centerDistance, centerDepth, radius, tanHalfFovX, tanHalfFovY)),
+                        static_cast<double>(uniformData.LODBias),
+                        static_cast<double>(range.Error * errorScale),
+                        bHasCoarser ? static_cast<double>(gpuData.LevelRanges[level + 1u].Error * errorScale) : -1.0);
     }
 
     // ========================================
@@ -1146,39 +2228,422 @@ namespace NorvesLib::Core::Rendering
         m_Instances.clear();
     }
 
+    namespace
+    {
+        uint32_t NextPowerOfTwo(uint32_t value)
+        {
+            if (value <= 1u)
+            {
+                return 1u;
+            }
+            --value;
+            value |= value >> 1;
+            value |= value >> 2;
+            value |= value >> 4;
+            value |= value >> 8;
+            value |= value >> 16;
+            return value + 1u;
+        }
+    } // namespace
+
     // ========================================
     // カリング用GPUリソース作成
     // ========================================
 
     bool MegaGeometryPass::CreateCullResources(RHI::IDevice *device)
     {
+        if (!device)
+        {
+            return false;
+        }
+
+        // IndirectDrawコマンド・区間のカウンタ・描画情報（足りなくなったら EnsureBatchBuffers が作り直す）
+        constexpr uint32_t InitialCommandCapacity = 4096;
+        constexpr uint32_t InitialCounterCapacity = 64;
+        if (!EnsureBatchBuffers(InitialCommandCapacity, InitialCounterCapacity))
+        {
+            return false;
+        }
+
+        // 従来の経路が binding 5・6 に結ぶ代わりのバッファ（シェーダーは触らない）
+        RHI::BufferDesc dummyVisibilityDesc(
+            4u * sizeof(uint32_t),
+            RHI::ResourceUsage::StorageBuffer,
+            false,
+            "MegaGeometry_DummyVisibility");
+        m_DummyVisibilityBuffer = device->CreateBuffer(dummyVisibilityDesc);
+        RHI::BufferDesc dummyStatsDesc(
+            StatsBufferBytes,
+            RHI::ResourceUsage::StorageBuffer,
+            false,
+            "MegaGeometry_DummyStats");
+        m_DummyStatsBuffer = device->CreateBuffer(dummyStatsDesc);
+        if (!m_DummyVisibilityBuffer || !m_DummyStatsBuffer)
+        {
+            return false;
+        }
+
+        // BVH のたどりの列・カウンタ（平らな判定のディスクリプタセットも binding 9・10 に結ぶので、常に作っておく）
+        return EnsureBvhBuffers(BvhMinQueueEntries);
+    }
+
+    bool MegaGeometryPass::EnsureBvhBuffers(uint32_t queueEntries)
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        if (m_BvhQueueBuffer && m_BvhCounterBuffer && queueEntries <= m_BvhQueueCapacity)
+        {
+            return true;
+        }
+
+        const uint32_t newCapacity = NextPowerOfTwo(std::max({queueEntries, m_BvhQueueCapacity, BvhMinQueueEntries}));
+        RHI::BufferDesc queueDesc(static_cast<uint64_t>(newCapacity) * 2u * sizeof(uint32_t),
+                                  RHI::ResourceUsage::StorageBuffer,
+                                  false,
+                                  "MegaGeometry_BvhQueue");
+        RHI::BufferPtr queueBuffer = m_Device->CreateBuffer(queueDesc);
+        RHI::BufferPtr counterBuffer = m_BvhCounterBuffer;
+        if (!counterBuffer)
+        {
+            RHI::BufferDesc counterDesc(BvhCounterBytes,
+                                        RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                                        false,
+                                        "MegaGeometry_BvhCounters");
+            counterBuffer = m_Device->CreateBuffer(counterDesc);
+        }
+        if (!queueBuffer || !counterBuffer)
+        {
+            return false;
+        }
+
+        // 古い列は、直前のフレームのGPUがまだ使っているかもしれないので、しばらく保持してから破棄する
+        if (m_BvhQueueBuffer)
+        {
+            m_RetiredBuffers.push_back(RetiredBuffer{m_BvhQueueBuffer, m_RenderFrameCount});
+        }
+        m_BvhQueueBuffer = queueBuffer;
+        m_BvhCounterBuffer = counterBuffer;
+        m_BvhQueueCapacity = newCapacity;
+        return true;
+    }
+
+    bool MegaGeometryPass::EnsureSwRasterBuffer(uint32_t capacity)
+    {
+        if (!m_Device || capacity == 0)
+        {
+            return false;
+        }
+        if (m_SwRasterBuffer && capacity <= m_SwRasterBufferCapacity)
+        {
+            return true;
+        }
+
+        const uint32_t newCapacity = NextPowerOfTwo(std::max(capacity, m_SwRasterBufferCapacity));
+        const uint64_t words = static_cast<uint64_t>(SwRasterHeaderWords) + 2ull * newCapacity;
+        // 頭は間接 dispatch の引数になるので IndirectBuffer も持つ。頭は FillBuffer で 0 にする
+        RHI::BufferDesc desc(words * sizeof(uint32_t),
+                             RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer | RHI::ResourceUsage::TransferDst,
+                             false,
+                             "MegaGeometry_SwRaster");
+        RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+        if (!buffer)
+        {
+            return false;
+        }
+
+        // 古いバッファは、直前のフレームのGPUがまだ使っているかもしれないので、しばらく保持してから破棄する
+        if (m_SwRasterBuffer)
+        {
+            m_RetiredBuffers.push_back(RetiredBuffer{m_SwRasterBuffer, m_RenderFrameCount});
+        }
+        m_SwRasterBuffer = buffer;
+        m_SwRasterBufferCapacity = newCapacity;
+        NORVES_LOG_INFO("MegaGeometryPass",
+                        "VRAM_LEDGER sw_raster_list mb=%.2f capacity=%u",
+                        static_cast<double>(desc.Size) / (1024.0 * 1024.0),
+                        newCapacity);
+        return true;
+    }
+
+    bool MegaGeometryPass::EnsureBvhStageResources(FrameSlot &slot, uint32_t passIndex, uint32_t stageCount)
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        const RHI::DescriptorSetDesc cullDsDesc = BuildCullDescriptorSetDesc();
+        while (slot.BvhStages[passIndex].size() < stageCount)
+        {
+            BvhStageDraw stageDraw;
+            RHI::BufferDesc desc(sizeof(CullUniformData),
+                                 RHI::ResourceUsage::ConstantBuffer,
+                                 true,
+                                 "MegaGeometry_BvhCullUBO");
+            stageDraw.Uniform = m_Device->CreateBuffer(desc);
+            stageDraw.DescriptorSet = m_Device->CreateDescriptorSet(cullDsDesc);
+            if (!stageDraw.Uniform || !stageDraw.DescriptorSet)
+            {
+                return false;
+            }
+            slot.BvhStages[passIndex].push_back(stageDraw);
+        }
+        return true;
+    }
+
+    bool MegaGeometryPass::EnsureBatchBuffers(uint32_t commandCapacity, uint32_t counterCapacity)
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        if (m_IndirectDrawBuffer && m_DrawCountBuffer && m_DrawInfoBuffer &&
+            commandCapacity <= m_CommandCapacity && counterCapacity <= m_CounterCapacity)
+        {
+            return true;
+        }
+
+        const uint32_t newCommandCapacity = NextPowerOfTwo(std::max(commandCapacity, m_CommandCapacity));
+        const uint32_t newCounterCapacity = NextPowerOfTwo(std::max(counterCapacity, m_CounterCapacity));
+
         // IndirectDrawコマンドバッファ (SSBO + IndirectBuffer)
-        uint64_t indirectSize = static_cast<uint64_t>(m_Settings.MaxDrawCount) * sizeof(MegaGeometry::DrawIndexedIndirectCommand);
         RHI::BufferDesc indirectDesc(
-            indirectSize,
-            RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
+            static_cast<uint64_t>(newCommandCapacity) * sizeof(MegaGeometry::DrawIndexedIndirectCommand),
+            RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer | RHI::ResourceUsage::TransferDst,
             false,
             "MegaGeometry_IndirectDraw");
-        m_IndirectDrawBuffer = device->CreateBuffer(indirectDesc);
-        if (!m_IndirectDrawBuffer)
-        {
-            return false;
-        }
+        RHI::BufferPtr indirectBuffer = m_Device->CreateBuffer(indirectDesc);
 
-        // DrawCountバッファ（atomic counter用 SSBO）
+        // 区間ごとのカウンタ（atomic counter用 SSBO。DrawIndexedIndirectCount のカウントバッファも兼ねる）
         RHI::BufferDesc countDesc(
-            sizeof(uint32_t),
-            RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
+            static_cast<uint64_t>(newCounterCapacity) * sizeof(uint32_t),
+            RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer | RHI::ResourceUsage::TransferDst,
             false,
             "MegaGeometry_DrawCount");
-        m_DrawCountBuffer = device->CreateBuffer(countDesc);
-        if (!m_DrawCountBuffer)
+        RHI::BufferPtr countBuffer = m_Device->CreateBuffer(countDesc);
+
+        // コマンドごとの描画情報（インスタンスの番号・payload）。カリングが書き、頂点シェーダーが読む
+        RHI::BufferDesc drawInfoDesc(
+            static_cast<uint64_t>(newCommandCapacity) * 2u * sizeof(uint32_t),
+            RHI::ResourceUsage::StorageBuffer,
+            false,
+            "MegaGeometry_DrawInfo");
+        RHI::BufferPtr drawInfoBuffer = m_Device->CreateBuffer(drawInfoDesc);
+
+        if (!indirectBuffer || !countBuffer || !drawInfoBuffer)
         {
             return false;
         }
 
-        m_InstanceIndirectDrawBuffers.clear();
-        m_InstanceDrawCountBuffers.clear();
+        // 古いバッファは、直前のフレームのGPUがまだ使っているかもしれないので、しばらく保持してから破棄する
+        for (RHI::BufferPtr *old : {&m_IndirectDrawBuffer, &m_DrawCountBuffer, &m_DrawInfoBuffer})
+        {
+            if (*old)
+            {
+                m_RetiredBuffers.push_back(RetiredBuffer{*old, m_RenderFrameCount});
+            }
+        }
+        m_IndirectDrawBuffer = indirectBuffer;
+        m_DrawCountBuffer = countBuffer;
+        m_DrawInfoBuffer = drawInfoBuffer;
+        m_CommandCapacity = newCommandCapacity;
+        m_CounterCapacity = newCounterCapacity;
+        return true;
+    }
+
+    RHI::DescriptorSetDesc MegaGeometryPass::BuildCullDescriptorSetDesc()
+    {
+        RHI::DescriptorSetDesc desc;
+        auto addBinding = [&desc](uint32_t binding, RHI::ResourceBindType type) -> void
+        {
+            RHI::DescriptorBinding descriptorBinding;
+            descriptorBinding.binding = binding;
+            descriptorBinding.type = type;
+            descriptorBinding.stages = RHI::ShaderStage::Compute;
+            desc.bindings.push_back(descriptorBinding);
+        };
+        addBinding(0, RHI::ResourceBindType::ConstantBuffer);        // カリング用ユニフォーム
+        addBinding(1, RHI::ResourceBindType::StructuredBuffer);      // インスタンスの表
+        addBinding(2, RHI::ResourceBindType::RWBuffer);              // IndirectDrawコマンド
+        addBinding(3, RHI::ResourceBindType::RWBuffer);              // 区間ごとのカウンタ
+        addBinding(4, RHI::ResourceBindType::CombinedImageSampler);  // Hi-Z
+        addBinding(5, RHI::ResourceBindType::RWBuffer);              // 「前のフレームで見えた」ビット
+        addBinding(6, RHI::ResourceBindType::RWBuffer);              // 統計
+        addBinding(7, RHI::ResourceBindType::StructuredBuffer);      // 区間の表
+        addBinding(8, RHI::ResourceBindType::RWBuffer);              // 描画情報
+        addBinding(9, RHI::ResourceBindType::RWBuffer);              // BVH のたどりの列
+        addBinding(10, RHI::ResourceBindType::RWBuffer);             // BVH のたどりのカウンタ
+        addBinding(11, RHI::ResourceBindType::RWBuffer);             // ページの表（常駐 + 要求の印）
+        addBinding(12, RHI::ResourceBindType::RWBuffer);             // ページの要求の列
+        addBinding(13, RHI::ResourceBindType::RWBuffer);             // ソフトウェアラスタの一覧と間接 dispatch の引数
+        return desc;
+    }
+
+    RHI::DescriptorSetDesc MegaGeometryPass::BuildDrawDescriptorSetDesc() const
+    {
+        // GBufferPassと同じ（set=0, binding 0=UBO, 1-6=textures）に、頂点シェーダーが引く
+        // インスタンスの表（8）と描画情報（9）を足した形
+        RHI::DescriptorSetDesc desc;
+        RHI::DescriptorBinding uboBinding;
+        uboBinding.binding = 0;
+        uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        uboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
+        desc.bindings.push_back(uboBinding);
+
+        for (uint32_t i = 1; i <= 6; ++i)
+        {
+            RHI::DescriptorBinding texBinding;
+            texBinding.binding = i;
+            texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
+            texBinding.stages = RHI::ShaderStage::Pixel;
+            desc.bindings.push_back(texBinding);
+        }
+        if (UsesVirtualTextureFeedbackBinding(m_Device))
+        {
+            AddVirtualTextureFeedbackBinding(desc, VirtualTextureFeedbackBindingIndex);
+        }
+
+        for (uint32_t binding : {8u, 9u})
+        {
+            RHI::DescriptorBinding bufferBinding;
+            bufferBinding.binding = binding;
+            bufferBinding.type = RHI::ResourceBindType::StructuredBuffer;
+            bufferBinding.stages = RHI::ShaderStage::Vertex;
+            desc.bindings.push_back(bufferBinding);
+        }
+        return desc;
+    }
+
+    bool MegaGeometryPass::EnsureFrameSlot(FrameSlot &slot,
+                                           uint32_t instanceCount,
+                                           uint32_t sectionTableEntries,
+                                           uint32_t sectionCount)
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        // この組を直前に使ったのは前のフレーム（飛行中のフレームの番号が同じ）で、そのGPUの仕事は終わっているので、作り直して置き換えてよい
+        if (!slot.InstanceBuffer || slot.InstanceCapacity < instanceCount)
+        {
+            const uint32_t capacity = std::max(64u, NextPowerOfTwo(instanceCount));
+            RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * sizeof(GPUMegaInstance),
+                                 RHI::ResourceUsage::StorageBuffer,
+                                 true,
+                                 "MegaGeometry_InstanceTable");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            slot.InstanceBuffer = buffer;
+            slot.InstanceCapacity = capacity;
+        }
+
+        if (!slot.SectionBuffer || slot.SectionCapacity < sectionTableEntries)
+        {
+            const uint32_t capacity = std::max(16u, NextPowerOfTwo(sectionTableEntries));
+            RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * 2u * sizeof(uint32_t),
+                                 RHI::ResourceUsage::StorageBuffer,
+                                 true,
+                                 "MegaGeometry_SectionTable");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            slot.SectionBuffer = buffer;
+            slot.SectionCapacity = capacity;
+        }
+
+        const RHI::DescriptorSetDesc cullDsDesc = BuildCullDescriptorSetDesc();
+        for (uint32_t passIndex = 0; passIndex < 2; ++passIndex)
+        {
+            if (!slot.CullUniform[passIndex])
+            {
+                RHI::BufferDesc desc(sizeof(CullUniformData),
+                                     RHI::ResourceUsage::ConstantBuffer,
+                                     true,
+                                     "MegaGeometry_CullUBO");
+                slot.CullUniform[passIndex] = m_Device->CreateBuffer(desc);
+            }
+            if (!slot.CullDescriptorSet[passIndex])
+            {
+                slot.CullDescriptorSet[passIndex] = m_Device->CreateDescriptorSet(cullDsDesc);
+            }
+            if (!slot.CullUniform[passIndex] || !slot.CullDescriptorSet[passIndex])
+            {
+                return false;
+            }
+        }
+
+        if (slot.Sections.size() < sectionCount)
+        {
+            const RHI::DescriptorSetDesc drawDsDesc = BuildDrawDescriptorSetDesc();
+            while (slot.Sections.size() < sectionCount)
+            {
+                RHI::BufferDesc desc(SectionUniformBufferBytes,
+                                     RHI::ResourceUsage::ConstantBuffer,
+                                     true,
+                                     "MegaGeometry_DrawUBO");
+                SectionDraw sectionDraw;
+                sectionDraw.Uniform = m_Device->CreateBuffer(desc);
+                sectionDraw.DescriptorSet = m_Device->CreateDescriptorSet(drawDsDesc);
+                if (!sectionDraw.Uniform || !sectionDraw.DescriptorSet)
+                {
+                    return false;
+                }
+                slot.Sections.push_back(sectionDraw);
+            }
+        }
+
+        return true;
+    }
+
+    bool MegaGeometryPass::SyncPageTable(FrameSlot &slot, MegaGeometryResources &resources)
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        // バッファが無いスロットは、どの版とも一致しない版から始めて、必ず1回は書く
+        uint64_t version = slot.PageTableBuffer ? slot.PageTableVersion : ~0ull;
+        Container::VariableArray<MegaGeometry::GeometryPageTable::Entry> entries;
+        const bool bChanged = resources.CopyPageTableIfChanged(version, entries);
+        if (slot.PageTableBuffer && !bChanged)
+        {
+            return true;
+        }
+
+        // この組を直前に使ったのは前のフレーム（飛行中のフレームの番号が同じ）で、そのGPUの仕事は終わっているので、作り直して置き換えてよい
+        const uint32_t entryCount = static_cast<uint32_t>(entries.size());
+        if (!slot.PageTableBuffer || slot.PageTableCapacity < entryCount)
+        {
+            const uint32_t capacity = std::max(64u, NextPowerOfTwo(entryCount));
+            RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * sizeof(MegaGeometry::GeometryPageTable::Entry),
+                                 RHI::ResourceUsage::StorageBuffer,
+                                 true,
+                                 "MegaGeometry_PageTable");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            slot.PageTableBuffer = buffer;
+            slot.PageTableCapacity = capacity;
+        }
+        if (entryCount > 0)
+        {
+            slot.PageTableBuffer->Update(entries.data(),
+                                         static_cast<size_t>(entryCount) * sizeof(MegaGeometry::GeometryPageTable::Entry));
+        }
+        slot.PageTableVersion = version;
         return true;
     }
 
@@ -1295,6 +2760,37 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 2パス目のレンダーパス・フレームバッファ。1パス目の描画の後に続けて開くので、全てのアタッチメントが
+        // 1パス目の終わりの状態（ShaderResource）から始まる。作れなければ2パスの遮蔽カリングは使わない。
+        m_SecondGBufferRenderPass.reset();
+        m_SecondGBufferFramebuffer.reset();
+        {
+            RHI::RenderPassDesc secondRenderPassDesc = rpDesc;
+            for (RHI::AttachmentDesc &attachment : secondRenderPassDesc.colorAttachments)
+            {
+                attachment.initialState = RHI::ResourceState::ShaderResource;
+            }
+            secondRenderPassDesc.depthStencilAttachment.initialState = RHI::ResourceState::ShaderResource;
+
+            RHI::RenderPassPtr secondRenderPass = m_Device->CreateRenderPass(secondRenderPassDesc);
+            if (secondRenderPass)
+            {
+                RHI::FramebufferDesc secondFbDesc = fbDesc;
+                secondFbDesc.renderPass = secondRenderPass;
+                RHI::FramebufferPtr secondFramebuffer = m_Device->CreateFramebuffer(secondFbDesc);
+                if (secondFramebuffer)
+                {
+                    m_SecondGBufferRenderPass = secondRenderPass;
+                    m_SecondGBufferFramebuffer = secondFramebuffer;
+                }
+            }
+            if (!m_SecondGBufferRenderPass || !m_SecondGBufferFramebuffer)
+            {
+                NORVES_LOG_WARNING("MegaGeometryPass", "2パス目のGBuffer互換レンダーパスの作成に失敗。"
+                                                       "遮蔽カリングは使いません");
+            }
+        }
+
         m_bGBufferRenderPassUsesRenderGraphAttachmentStates = bUseRenderGraphAttachmentStates;
 
         if (!bRequireDrawPipeline)
@@ -1395,24 +2891,9 @@ namespace NorvesLib::Core::Rendering
 
         pipelineDesc.renderPass = m_GBufferRenderPass;
 
-        // ディスクリプタセットレイアウト（GBufferPassと同一: set=0, binding 0=UBO, 1-6=textures）
-        RHI::DescriptorSetDesc dsDesc;
-        RHI::DescriptorBinding uboBinding;
-        uboBinding.binding = 0;
-        uboBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        uboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
-        dsDesc.bindings.push_back(uboBinding);
-
-        for (uint32_t i = 1; i <= 6; ++i)
-        {
-            RHI::DescriptorBinding texBinding;
-            texBinding.binding = i;
-            texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            texBinding.stages = RHI::ShaderStage::Pixel;
-            dsDesc.bindings.push_back(texBinding);
-        }
-
-        pipelineDesc.descriptorSetLayouts.push_back(dsDesc);
+        // ディスクリプタセットレイアウト（GBufferPassの set=0, binding 0=UBO, 1-6=textures に、
+        // インスタンスの表・描画情報を足した形）
+        pipelineDesc.descriptorSetLayouts.push_back(BuildDrawDescriptorSetDesc());
 
         outPipeline = m_Device->CreateGraphicsPipeline(pipelineDesc);
         if (!outPipeline)
@@ -1436,289 +2917,273 @@ namespace NorvesLib::Core::Rendering
         return m_DrawPipeline;
     }
 
-    bool MegaGeometryPass::EnsurePerInstanceBindings(uint32_t requiredCount)
+    bool MegaGeometryPass::CanUseTwoPassOcclusion(const MegaGeometryPassCommand &command)
     {
-        if (!m_Device)
+        auto logFallbackOnce = [this](const char *reason) -> void
         {
+            if (!m_bOcclusionFallbackLogged)
+            {
+                NORVES_LOG_INFO("MegaGeometryPass", "MEGA_OCCLUSION_OFF reason=%s", reason);
+                m_bOcclusionFallbackLogged = true;
+            }
+        };
+
+        if (!command.MegaGeometry || !command.MegaGeometry->IsOcclusionCullingEnabled())
+        {
+            logFallbackOnce("disabled");
+            return false;
+        }
+        if (!m_bHiZReady || !m_DepthTexture || !m_SecondGBufferRenderPass || !m_SecondGBufferFramebuffer ||
+            !m_DummyVisibilityBuffer || !m_DummyStatsBuffer)
+        {
+            logFallbackOnce("unavailable");
             return false;
         }
 
-        if (!m_IndirectDrawBuffer || !m_DrawCountBuffer)
+        // 遮蔽の判定は深度の全体を画面（UV の 0〜1）と見るので、描く範囲が深度の全体と一致するときだけ使う
+        const uint32_t depthWidth = m_DepthTexture->GetWidth();
+        const uint32_t depthHeight = m_DepthTexture->GetHeight();
+        const RHI::Viewport &viewport = command.Viewport;
+        if (viewport.x != 0.0f ||
+            std::fabs(viewport.width - static_cast<float>(depthWidth)) > 0.5f ||
+            std::fabs(std::fabs(viewport.height) - static_cast<float>(depthHeight)) > 0.5f)
         {
+            logFallbackOnce("viewport");
             return false;
         }
 
-        if (m_InstanceIndirectDrawBuffers.empty())
+        // 判定は保存される深度がNDCの深度そのもの（範囲が0〜1）であることを前提にする
+        if (viewport.minDepth != 0.0f || viewport.maxDepth != 1.0f)
         {
-            m_InstanceIndirectDrawBuffers.push_back(m_IndirectDrawBuffer);
-            m_InstanceDrawCountBuffers.push_back(m_DrawCountBuffer);
+            logFallbackOnce("depth_range");
+            return false;
         }
 
-        while (m_InstanceIndirectDrawBuffers.size() < requiredCount)
+        if (!m_HiZ.Resize(depthWidth, depthHeight))
         {
-            const uint64_t indirectSize =
-                static_cast<uint64_t>(m_Settings.MaxDrawCount) *
-                sizeof(MegaGeometry::DrawIndexedIndirectCommand);
-            RHI::BufferDesc indirectDesc(
-                indirectSize,
-                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
-                false,
-                "MegaGeometry_IndirectDraw_Instance");
-            auto indirectDrawBuffer = m_Device->CreateBuffer(indirectDesc);
-
-            RHI::BufferDesc countDesc(
-                sizeof(uint32_t),
-                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
-                false,
-                "MegaGeometry_DrawCount_Instance");
-            auto drawCountBuffer = m_Device->CreateBuffer(countDesc);
-
-            if (!indirectDrawBuffer || !drawCountBuffer)
-            {
-                return false;
-            }
-
-            m_InstanceIndirectDrawBuffers.push_back(indirectDrawBuffer);
-            m_InstanceDrawCountBuffers.push_back(drawCountBuffer);
+            logFallbackOnce("hiz");
+            return false;
         }
-
-        RHI::DescriptorSetDesc cullDsDesc;
-        RHI::DescriptorBinding cullUboBinding;
-        cullUboBinding.binding = 0;
-        cullUboBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        cullUboBinding.stages = RHI::ShaderStage::Compute;
-        cullDsDesc.bindings.push_back(cullUboBinding);
-
-        RHI::DescriptorBinding clusterBinding;
-        clusterBinding.binding = 1;
-        clusterBinding.type = RHI::ResourceBindType::StructuredBuffer;
-        clusterBinding.stages = RHI::ShaderStage::Compute;
-        cullDsDesc.bindings.push_back(clusterBinding);
-
-        RHI::DescriptorBinding indirectBinding;
-        indirectBinding.binding = 2;
-        indirectBinding.type = RHI::ResourceBindType::RWBuffer;
-        indirectBinding.stages = RHI::ShaderStage::Compute;
-        cullDsDesc.bindings.push_back(indirectBinding);
-
-        RHI::DescriptorBinding countBinding;
-        countBinding.binding = 3;
-        countBinding.type = RHI::ResourceBindType::RWBuffer;
-        countBinding.stages = RHI::ShaderStage::Compute;
-        cullDsDesc.bindings.push_back(countBinding);
-
-        RHI::DescriptorBinding hiZBinding;
-        hiZBinding.binding = 4;
-        hiZBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-        hiZBinding.stages = RHI::ShaderStage::Compute;
-        cullDsDesc.bindings.push_back(hiZBinding);
-
-        RHI::DescriptorSetDesc drawDsDesc;
-        RHI::DescriptorBinding drawUboBinding;
-        drawUboBinding.binding = 0;
-        drawUboBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        drawUboBinding.stages = RHI::ShaderStage::Vertex | RHI::ShaderStage::Pixel;
-        drawDsDesc.bindings.push_back(drawUboBinding);
-
-        for (uint32_t i = 1; i <= 6; ++i)
-        {
-            RHI::DescriptorBinding texBinding;
-            texBinding.binding = i;
-            texBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-            texBinding.stages = RHI::ShaderStage::Pixel;
-            drawDsDesc.bindings.push_back(texBinding);
-        }
-
-        while (m_CullUniformBuffers.size() < requiredCount)
-        {
-            RHI::BufferDesc cullUboDesc(
-                sizeof(CullUniformData),
-                RHI::ResourceUsage::ConstantBuffer,
-                true,
-                "MegaGeometry_CullUBO");
-            auto cullUniformBuffer = m_Device->CreateBuffer(cullUboDesc);
-            auto cullDescriptorSet = m_Device->CreateDescriptorSet(cullDsDesc);
-            if (!cullUniformBuffer || !cullDescriptorSet)
-            {
-                return false;
-            }
-
-            constexpr uint32_t PER_OBJECT_UBO_SIZE = 512;
-            RHI::BufferDesc drawUboDesc(
-                PER_OBJECT_UBO_SIZE,
-                RHI::ResourceUsage::ConstantBuffer,
-                true,
-                "MegaGeometry_DrawUBO");
-            auto drawUniformBuffer = m_Device->CreateBuffer(drawUboDesc);
-            auto drawDescriptorSet = m_Device->CreateDescriptorSet(drawDsDesc);
-            if (!drawUniformBuffer || !drawDescriptorSet)
-            {
-                return false;
-            }
-
-            m_CullUniformBuffers.push_back(cullUniformBuffer);
-            m_CullDescriptorSets.push_back(cullDescriptorSet);
-            m_DrawUniformBuffers.push_back(drawUniformBuffer);
-            m_DrawDescriptorSets.push_back(drawDescriptorSet);
-        }
-
         return true;
     }
 
-    // ========================================
-    // Hi-Z 深度ピラミッドリソース作成
-    // ========================================
-
-    bool MegaGeometryPass::CreateHiZResources(ViewRenderContext &context)
+    bool MegaGeometryPass::UpdateVisibilityLayout(RHI::ICommandList *commandList,
+                                                  VariableArray<VisibilityRequest> &requests)
     {
-        if (!m_Device || !m_HiZPipeline || m_CurrentWidth == 0 || m_CurrentHeight == 0)
+        // 区画はインスタンスの並びで詰める
+        uint64_t totalElements = 0;
+        for (VisibilityRequest &request : requests)
+        {
+            request.Offset = static_cast<uint32_t>(totalElements);
+            totalElements += request.ClusterCount;
+        }
+        if (totalElements == 0 || totalElements > 0x3FFFFFFFull || !m_Device || !commandList)
         {
             return false;
         }
 
-        // 既存リソースをリセット
-        m_HiZTexture.reset();
-        m_HiZDescriptorSet.reset();
-
-        // Hi-Zテクスチャ: 半解像度ベース、ミップチェーン付き
-        uint32_t hiZWidth = (m_CurrentWidth + 1) / 2;
-        uint32_t hiZHeight = (m_CurrentHeight + 1) / 2;
-        uint32_t maxDim = (hiZWidth > hiZHeight) ? hiZWidth : hiZHeight;
-        m_HiZMipCount = static_cast<uint32_t>(std::floor(std::log2(static_cast<float>(maxDim)))) + 1;
-
-        RHI::TextureDesc hiZTexDesc;
-        hiZTexDesc.Width = hiZWidth;
-        hiZTexDesc.Height = hiZHeight;
-        hiZTexDesc.MipLevels = m_HiZMipCount;
-        hiZTexDesc.TextureFormat = RHI::Format::R32_FLOAT;
-        hiZTexDesc.Usage = RHI::ResourceUsage::ShaderRead | RHI::ResourceUsage::ShaderWrite;
-        hiZTexDesc.DebugName = "MegaGeometry_HiZPyramid";
-
-        m_HiZTexture = m_Device->CreateTexture(hiZTexDesc);
-        if (!m_HiZTexture)
+        // 直前のフレームに描かれていたインスタンスだけが、見えたビットを引き継げる。
+        // 1フレームでも描かれなかった（スナップショットから外れた・メッシュが無かった・2パスでなかった）インスタンスや、
+        // コンポーネントが作り直されたインスタンスは、同じ ObjectId・メッシュでも別物として0から始める。
+        // クラスタのバッファは全メッシュが共有するプールの塊なので、区画の位置も一致の条件に入れる
+        auto isContinuing = [this](const VisibilityEntry &entry, const VisibilityRequest &request) -> bool
         {
-            NORVES_LOG_ERROR("MegaGeometryPass", "Hi-Zテクスチャの作成に失敗 (%ux%u, %u mips)", hiZWidth, hiZHeight, m_HiZMipCount);
-            m_HiZMipCount = 0;
+            return !m_bDropVisibilityContinuity && entry.LastUsedFrame + 1 == m_OcclusionFrameCount &&
+                   entry.ComponentId == request.ComponentId &&
+                   entry.MeshId == request.MeshId &&
+                   entry.ClusterBufferIdentity == request.ClusterBufferIdentity &&
+                   entry.ClusterBufferOffsetBytes == request.ClusterBufferOffsetBytes &&
+                   entry.ClusterCount == request.ClusterCount;
+        };
+        auto toEntry = [this](const VisibilityRequest &request) -> VisibilityEntry
+        {
+            VisibilityEntry entry;
+            entry.Key = request.Key;
+            entry.MeshId = request.MeshId;
+            entry.ComponentId = request.ComponentId;
+            entry.ClusterBufferIdentity = request.ClusterBufferIdentity;
+            entry.ClusterBufferOffsetBytes = request.ClusterBufferOffsetBytes;
+            entry.ClusterCount = request.ClusterCount;
+            entry.Offset = request.Offset;
+            entry.LastUsedFrame = m_OcclusionFrameCount;
+            return entry;
+        };
+
+        // 配置（鍵とクラスタ数の並び）が前のフレームと同じか
+        bool bSameLayout = m_VisibilityBuffer && m_VisibilityEntries.size() == requests.size();
+        for (size_t index = 0; bSameLayout && index < requests.size(); ++index)
+        {
+            bSameLayout = m_VisibilityEntries[index].Key == requests[index].Key &&
+                          m_VisibilityEntries[index].ClusterCount == requests[index].ClusterCount;
+        }
+
+        if (bSameLayout)
+        {
+            // 配置は同じ。引き継げないインスタンス（作り直し・メッシュの差し替え・途切れ）の区画だけ0に戻す
+            bool bClearing = false;
+            for (size_t index = 0; index < requests.size(); ++index)
+            {
+                if (!isContinuing(m_VisibilityEntries[index], requests[index]))
+                {
+                    if (!bClearing)
+                    {
+                        commandList->BufferBarrier(m_VisibilityBuffer,
+                                                   RHI::ResourceState::UnorderedAccess,
+                                                   RHI::ResourceState::CopyDest);
+                        bClearing = true;
+                    }
+                    commandList->FillBuffer(m_VisibilityBuffer,
+                                            static_cast<uint64_t>(requests[index].Offset) * sizeof(uint32_t),
+                                            static_cast<uint64_t>(requests[index].ClusterCount) * sizeof(uint32_t),
+                                            0);
+                }
+            }
+            if (bClearing)
+            {
+                commandList->BufferBarrier(m_VisibilityBuffer,
+                                           RHI::ResourceState::CopyDest,
+                                           RHI::ResourceState::UnorderedAccess);
+            }
+            for (size_t index = 0; index < requests.size(); ++index)
+            {
+                m_VisibilityEntries[index] = toEntry(requests[index]);
+            }
+            return true;
+        }
+
+        // 配置が変わった（インスタンスの追加・削除・並びの変更・メッシュの差し替え）: ぴったりの大きさで作り直し、
+        // 0で埋めてから、引き継げるインスタンスの区画だけを古いバッファから写す
+        RHI::BufferDesc desc(totalElements * sizeof(uint32_t),
+                             RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst |
+                                 RHI::ResourceUsage::TransferSrc,
+                             false,
+                             "MegaGeometry_VisibleLastFrame");
+        RHI::BufferPtr newBuffer = m_Device->CreateBuffer(desc);
+        if (!newBuffer)
+        {
             return false;
         }
 
-        // Hi-Z生成用ディスクリプタセット
-        // binding 0: ソースミップ (CombinedImageSampler)
-        // binding 1: デストミップ (RWTexture / StorageImage)
-        // binding 2: HiZParams UBO (ConstantBuffer)
-        RHI::DescriptorSetDesc hiZDsDesc;
-
-        RHI::DescriptorBinding srcBinding;
-        srcBinding.binding = 0;
-        srcBinding.type = RHI::ResourceBindType::CombinedImageSampler;
-        srcBinding.stages = RHI::ShaderStage::Compute;
-        hiZDsDesc.bindings.push_back(srcBinding);
-
-        RHI::DescriptorBinding dstBinding;
-        dstBinding.binding = 1;
-        dstBinding.type = RHI::ResourceBindType::RWTexture;
-        dstBinding.stages = RHI::ShaderStage::Compute;
-        hiZDsDesc.bindings.push_back(dstBinding);
-
-        RHI::DescriptorBinding paramBinding;
-        paramBinding.binding = 2;
-        paramBinding.type = RHI::ResourceBindType::ConstantBuffer;
-        paramBinding.stages = RHI::ShaderStage::Compute;
-        hiZDsDesc.bindings.push_back(paramBinding);
-
-        m_HiZDescriptorSet = m_Device->CreateDescriptorSet(hiZDsDesc);
-        if (!m_HiZDescriptorSet)
+        // 古い配置を鍵の順に引けるようにする
+        VariableArray<uint32_t> oldOrder;
+        oldOrder.reserve(m_VisibilityEntries.size());
+        for (uint32_t index = 0; index < m_VisibilityEntries.size(); ++index)
         {
-            NORVES_LOG_ERROR("MegaGeometryPass", "Hi-Zディスクリプタセットの作成に失敗");
-            m_HiZTexture.reset();
-            m_HiZMipCount = 0;
-            return false;
+            oldOrder.push_back(index);
+        }
+        std::sort(oldOrder.begin(), oldOrder.end(),
+                  [this](uint32_t left, uint32_t right) -> bool
+                  { return m_VisibilityEntries[left].Key < m_VisibilityEntries[right].Key; });
+
+        struct CopyRegion
+        {
+            uint64_t SourceOffsetBytes = 0;
+            uint64_t DestinationOffsetBytes = 0;
+            uint64_t SizeBytes = 0;
+        };
+        VariableArray<CopyRegion> copies;
+        if (m_VisibilityBuffer)
+        {
+            for (const VisibilityRequest &request : requests)
+            {
+                size_t low = 0;
+                size_t high = oldOrder.size();
+                while (low < high)
+                {
+                    const size_t mid = low + (high - low) / 2;
+                    if (m_VisibilityEntries[oldOrder[mid]].Key < request.Key)
+                    {
+                        low = mid + 1;
+                    }
+                    else
+                    {
+                        high = mid;
+                    }
+                }
+                if (low < oldOrder.size())
+                {
+                    const VisibilityEntry &old = m_VisibilityEntries[oldOrder[low]];
+                    if (old.Key == request.Key && isContinuing(old, request))
+                    {
+                        CopyRegion region;
+                        region.SourceOffsetBytes = static_cast<uint64_t>(old.Offset) * sizeof(uint32_t);
+                        region.DestinationOffsetBytes = static_cast<uint64_t>(request.Offset) * sizeof(uint32_t);
+                        region.SizeBytes = static_cast<uint64_t>(request.ClusterCount) * sizeof(uint32_t);
+                        copies.push_back(region);
+                    }
+                }
+            }
         }
 
-        NORVES_LOG_INFO("MegaGeometryPass", "Hi-Z深度ピラミッド作成 (%ux%u, %u mips)", hiZWidth, hiZHeight, m_HiZMipCount);
+        commandList->BufferBarrier(newBuffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
+        commandList->FillBuffer(newBuffer, 0, totalElements * sizeof(uint32_t), 0);
+        if (!copies.empty())
+        {
+            // 前のフレームの2パス目の書き込みを、コピー元として見せる。0埋めの後にコピーが書く
+            commandList->BufferBarrier(m_VisibilityBuffer,
+                                       RHI::ResourceState::UnorderedAccess,
+                                       RHI::ResourceState::CopySource);
+            commandList->BufferBarrier(newBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::CopyDest);
+            for (const CopyRegion &region : copies)
+            {
+                commandList->CopyBuffer(m_VisibilityBuffer, newBuffer, region.SizeBytes,
+                                        region.SourceOffsetBytes, region.DestinationOffsetBytes);
+            }
+        }
+        commandList->BufferBarrier(newBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+
+        // 古いバッファは、GPUが使い終わるまで保持してから破棄する
+        if (m_VisibilityBuffer)
+        {
+            m_RetiredBuffers.push_back(RetiredBuffer{m_VisibilityBuffer, m_RenderFrameCount});
+        }
+        m_VisibilityBuffer = newBuffer;
+        m_VisibilityEntries.clear();
+        m_VisibilityEntries.reserve(requests.size());
+        for (const VisibilityRequest &request : requests)
+        {
+            m_VisibilityEntries.push_back(toEntry(request));
+        }
         return true;
     }
 
-    // ========================================
-    // Hi-Z 深度ピラミッド生成
-    // ========================================
-
-    void MegaGeometryPass::GenerateHiZPyramid(RHI::ICommandList *cmdList)
+    void MegaGeometryPass::ReleaseStaleBuffers()
     {
-        if (!m_HiZTexture || !m_HiZPipeline || !m_HiZDescriptorSet || m_HiZMipCount == 0)
+        // 手放したバッファは、一定のフレーム後にはGPUがとうに使い終わっているので破棄する
+        for (size_t index = 0; index < m_RetiredBuffers.size();)
+        {
+            if (m_RenderFrameCount - m_RetiredBuffers[index].RetiredFrame > RetiredBufferFrames)
+            {
+                m_RetiredBuffers[index] = m_RetiredBuffers.back();
+                m_RetiredBuffers.pop_back();
+                continue;
+            }
+            ++index;
+        }
+    }
+
+    void MegaGeometryPass::EnsureStatsSlots()
+    {
+        if (m_bStatsSlotsTried || !m_Device)
         {
             return;
         }
+        m_bStatsSlotsTried = true;
 
-        // GBuffer深度テクスチャをシェーダーリソースとして使用（既にShaderResource状態のはず）
-        // Hi-Zテクスチャ全ミップをUAV状態に遷移
-        cmdList->TextureBarrier(m_HiZTexture,
-                                RHI::ResourceState::Undefined,
-                                RHI::ResourceState::UnorderedAccess,
-                                0, 0, m_HiZMipCount, 0);
-
-        cmdList->SetPipeline(m_HiZPipeline);
-
-        uint32_t srcWidth = m_CurrentWidth;
-        uint32_t srcHeight = m_CurrentHeight;
-
-        for (uint32_t mip = 0; mip < m_HiZMipCount; ++mip)
+        // シェーダーが storage buffer として直接数え、ホストが数フレーム後に読む（host-visible・host-coherent）。
+        // 作れない・写像できないデバイスでは、統計だけ取らない。
+        for (StatsSlot &slot : m_StatsSlots)
         {
-            uint32_t destWidth = (m_HiZTexture->GetWidth() >> mip);
-            uint32_t destHeight = (m_HiZTexture->GetHeight() >> mip);
-            if (destWidth < 1) destWidth = 1;
-            if (destHeight < 1) destHeight = 1;
-
-            // HiZParams UBO更新
-            int32_t params[4] = {
-                static_cast<int32_t>(destWidth),
-                static_cast<int32_t>(destHeight),
-                0, 0
-            };
-            m_HiZParamsBuffer->Update(params, 16);
-
-            // ソースバインド
-            if (mip == 0)
+            RHI::BufferDesc desc(StatsBufferBytes,
+                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                                 true,
+                                 "MegaGeometry_OcclusionStats");
+            slot.Buffer = m_Device->CreateBuffer(desc);
+            if (slot.Buffer)
             {
-                // 初回: GBuffer深度テクスチャを読み取り
-                m_HiZDescriptorSet->BindTexture(0, m_DepthTexture);
-                m_HiZDescriptorSet->BindSampler(0, m_HiZNearestSampler);
+                slot.Mapped = static_cast<const uint32_t *>(slot.Buffer->Map(0, 0));
             }
-            else
-            {
-                // 前のミップをシェーダーリソースに遷移
-                cmdList->TextureBarrier(m_HiZTexture,
-                                        RHI::ResourceState::UnorderedAccess,
-                                        RHI::ResourceState::ShaderResource,
-                                        mip - 1, 0, 1, 0);
-
-                // 前のミップをソースとしてバインド
-                m_HiZDescriptorSet->BindTexture(0, m_HiZTexture);
-                m_HiZDescriptorSet->BindSampler(0, m_HiZNearestSampler);
-            }
-
-            // デストミップをストレージテクスチャとしてバインド
-            m_HiZDescriptorSet->BindStorageTexture(1, m_HiZTexture, mip);
-
-            // パラメータUBO
-            m_HiZDescriptorSet->BindConstantBuffer(2, m_HiZParamsBuffer, 0, 16);
-            m_HiZDescriptorSet->Update();
-            cmdList->SetDescriptorSet(m_HiZDescriptorSet, 0);
-
-            // ディスパッチ（8x8ワークグループ）
-            uint32_t groupX = (destWidth + 7) / 8;
-            uint32_t groupY = (destHeight + 7) / 8;
-            cmdList->Dispatch(groupX, groupY, 1);
-
-            srcWidth = destWidth;
-            srcHeight = destHeight;
         }
-
-        // 最後のミップをシェーダーリソースに遷移
-        cmdList->TextureBarrier(m_HiZTexture,
-                                RHI::ResourceState::UnorderedAccess,
-                                RHI::ResourceState::ShaderResource,
-                                m_HiZMipCount - 1, 0, 1, 0);
     }
 
 } // namespace NorvesLib::Core::Rendering

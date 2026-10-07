@@ -46,7 +46,7 @@ namespace NorvesLib::Core::ResourceIO::ModelStaging
     MaterialStagingStatus BuildImportedMaterialStaging(const Asset::CookedMeshData& mesh, size_t materialIndex,
                                                        ImportedMaterialStaging& out)
     {
-        if (mesh.VersionMajor != 1)
+        if (mesh.VersionMajor != 1 || mesh.Layout != Asset::CookedMeshLayout::ClusteredV1)
         {
             return MaterialStagingStatus::UnsupportedVersion;
         }

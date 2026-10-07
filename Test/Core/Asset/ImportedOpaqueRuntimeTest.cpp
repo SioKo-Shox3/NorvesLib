@@ -253,7 +253,7 @@ namespace ImportedRuntimeTest
     Bytes Mesh()
     {
         namespace V0 = A::CookedMeshFormatV0;
-        namespace V1 = A::CookedMeshFormatV1;
+        namespace V1 = A::CookedMeshClusteredFormatV1;
         const Bytes old(Support::BuildCookedModelMesh());
         Bytes bytes(old.size() + 112, 0);
         std::memcpy(bytes.data(), old.data(), 320);
@@ -298,13 +298,22 @@ namespace ImportedRuntimeTest
     S::ModelStagingData Stage()
     {
         const auto parsed = A::ParseCookedMesh(A::AssetBlob::CopyBytes(Mesh()));
-        CHECK(parsed.Succeeded());
+        CHECK(parsed.Succeeded() && parsed.Mesh.Layout == A::CookedMeshLayout::ClusteredV1);
         S::ModelStagingData result;
         CHECK(M::BuildModelStagingFromCookedMesh(parsed.Mesh, "runtime", "Models/runtime", result));
         return result;
     }
     void Pure()
     {
+        // 同じ主版でも、材質レコードとアルゴリズムの組が未知なら別形式へ逃がさない。
+        for (uint32_t algorithm : {0u, 2u, 99u})
+        {
+            auto invalid = Mesh();
+            Put(invalid, V0::HeaderOffset::ClusterAlgorithmId, algorithm, 4);
+            const auto result = A::ParseCookedMesh(A::AssetBlob::CopyBytes(invalid));
+            CHECK(result.Status == A::CookedMeshParseStatus::UnsupportedVersion);
+        }
+
         Text reason;
         auto material = Stage().ImportedMaterial;
         for (float alpha : {0.0f, .5f, 1.0f})
@@ -477,6 +486,7 @@ namespace ImportedRuntimeTest
         {
             R::RenderResources resources;
             auto device = MakeShared<FakeDevice>();
+            resources.SetGeometryPoolBlockBytes(1ull << 20);
             CHECK(resources.Initialize(device));
             SetupTextures(resources, root, armEntry);
             auto staging = Stage();
@@ -502,9 +512,10 @@ namespace ImportedRuntimeTest
             CHECK(gpu->Material.BaseColor[0] == .2f && gpu->Material.BaseColor[3] == .25f);
             CHECK(gpu->Material.Metallic == .25f && gpu->Material.Roughness == .75f &&
                   gpu->Material.OcclusionStrength == .6f);
-            CHECK(device->Textures.size() == std::popcount(static_cast<unsigned>(mask)) && device->Buffers.size() == 3);
-            const H::ITexture* textures[] = {gpu->Material.AOTexture.get(), gpu->Material.RoughnessTexture.get(),
-                                             gpu->Material.MetallicTexture.get()};
+            CHECK(device->Textures.size() == std::popcount(static_cast<unsigned>(mask)) && device->Buffers.size() == 1);
+            const H::ITexture *textures[] = {resources.Textures().GetRHITexture(gpu->Material.AOTexture),
+                                             resources.Textures().GetRHITexture(gpu->Material.RoughnessTexture),
+                                             resources.Textures().GetRHITexture(gpu->Material.MetallicTexture)};
             for (size_t c = 0; c < 3; ++c)
             {
                 CHECK(static_cast<bool>(textures[c]) == ((mask & (1u << c)) != 0));
@@ -521,7 +532,7 @@ namespace ImportedRuntimeTest
                     }
                 }
             }
-            CHECK(resources.GetResourceStats().TextureCount == 0);
+            CHECK(resources.GetResourceStats().TextureCount == std::popcount(static_cast<unsigned>(mask)));
             Array<C::TWeakPtr<FakeTexture>> weak;
             for (const auto& texture : device->Textures)
             {
@@ -532,7 +543,15 @@ namespace ImportedRuntimeTest
             {
                 CHECK(!texture.expired());
             }
+            auto materialCopy = gpu->Material;
             resources.MegaGeometry().ReleaseModel(model);
+            CHECK(resources.GetResourceStats().TextureCount == std::popcount(static_cast<unsigned>(mask)));
+            for (const auto &texture : weak)
+            {
+                CHECK(!texture.expired());
+            }
+            materialCopy.TextureOwners.clear();
+            CHECK(resources.GetResourceStats().TextureCount == 0);
             for (const auto& texture : weak)
             {
                 CHECK(texture.expired());
@@ -543,6 +562,7 @@ namespace ImportedRuntimeTest
         {
             R::RenderResources resources;
             auto device = MakeShared<FakeDevice>();
+            resources.SetGeometryPoolBlockBytes(1ull << 20);
             CHECK(resources.Initialize(device));
             auto staging = Stage();
             auto& m = staging.ImportedMaterial;
@@ -576,6 +596,7 @@ namespace ImportedRuntimeTest
         {
             R::RenderResources resources;
             auto device = MakeShared<FakeDevice>();
+            resources.SetGeometryPoolBlockBytes(1ull << 20);
             CHECK(resources.Initialize(device));
             SetupTextures(resources, root, armEntry);
             auto staging = Stage();
@@ -630,6 +651,7 @@ namespace ImportedRuntimeTest
             const auto normal = Package(root, "normal.nvpkg", "Textures/normal", Nvtex(pixels));
             R::RenderResources resources;
             auto device = MakeShared<FakeDevice>();
+            resources.SetGeometryPoolBlockBytes(1ull << 20);
             CHECK(resources.Initialize(device));
             SetupTextures(resources, root, albedo + "," + normal);
             auto staging = Stage();
@@ -666,10 +688,11 @@ namespace ImportedRuntimeTest
             CHECK(success == (version == 1) && result.bSuccess == success);
             R::RenderResources resources;
             auto device = MakeShared<FakeDevice>();
+            resources.SetGeometryPoolBlockBytes(1ull << 20);
             CHECK(resources.Initialize(device));
             const auto model =
                 M::LoadCookedModel(*assets, "Models/runtime", {resources.Textures(), resources.MegaGeometry()});
-            CHECK(model.IsValid() == (version == 1) && device->Buffers.size() == (version == 1 ? 3u : 0u));
+            CHECK(model.IsValid() == (version == 1) && device->Buffers.size() == (version == 1 ? 1u : 0u));
             resources.Shutdown();
         }
         std::puts(
@@ -714,6 +737,7 @@ namespace ImportedRuntimeTest
         {
             R::RenderResources resources;
             auto device = MakeShared<FakeDevice>();
+            resources.SetGeometryPoolBlockBytes(1ull << 20);
             CHECK(resources.Initialize(device));
             const auto baseline = resources.GetResourceStats().TextureCount;
             CHECK(device->Textures.empty());
@@ -721,13 +745,15 @@ namespace ImportedRuntimeTest
             const auto model =
                 S::FinalizeModelStaging(staging, {resources.Textures(), resources.MegaGeometry()}, "lifetime", 1);
             CHECK(model.IsValid() && device->Textures.size() == std::popcount(mask));
-            CHECK(resources.GetResourceStats().TextureCount == baseline);
+            CHECK(resources.GetResourceStats().TextureCount == baseline + std::popcount(mask));
             const auto mesh = resources.MegaGeometry().GetModelMegaMeshHandle(model);
             const auto* gpu = resources.MegaGeometry().GetMegaMeshGPUData(mesh);
             CHECK(gpu);
-            const H::ITexture* actual[] = {gpu->Material.AlbedoTexture.get(), gpu->Material.NormalTexture.get(),
-                                           gpu->Material.AOTexture.get(), gpu->Material.RoughnessTexture.get(),
-                                           gpu->Material.MetallicTexture.get()};
+            const H::ITexture *actual[] = {resources.Textures().GetRHITexture(gpu->Material.AlbedoTexture),
+                                           resources.Textures().GetRHITexture(gpu->Material.NormalTexture),
+                                           resources.Textures().GetRHITexture(gpu->Material.AOTexture),
+                                           resources.Textures().GetRHITexture(gpu->Material.RoughnessTexture),
+                                           resources.Textures().GetRHITexture(gpu->Material.MetallicTexture)};
             const S::StagedTextureData* source[] = {&staging.AlbedoTexture, &staging.NormalTexture, &staging.AOTexture,
                                                     &staging.RoughnessTexture, &staging.MetallicTexture};
             for (size_t role = 0; role < 5; ++role)
@@ -760,6 +786,7 @@ namespace ImportedRuntimeTest
         {
             R::RenderResources resources;
             auto device = MakeShared<FakeDevice>();
+            resources.SetGeometryPoolBlockBytes(1ull << 20);
             CHECK(resources.Initialize(device));
             const auto baseline = resources.GetResourceStats().TextureCount;
             auto staging = LegacyStage(31);
@@ -806,6 +833,7 @@ namespace ImportedRuntimeTest
         {
             R::RenderResources resources;
             auto device = MakeShared<FakeDevice>();
+            resources.SetGeometryPoolBlockBytes(1ull << 20);
             CHECK(resources.Initialize(device));
             R::TextureCreateInfo info;
             info.PixelFormat = R::TextureCreateInfo::Format::R8_UNORM;
@@ -820,10 +848,23 @@ namespace ImportedRuntimeTest
             CHECK(resources.GetResourceStats().TextureCount == 0);
             resources.Shutdown();
         }
+        // 資源全体の終了後にコピー先の所有者が消えても、旧登録先へ触れない。
+        {
+            R::RenderResources resources;
+            auto device = MakeShared<FakeDevice>();
+            CHECK(resources.Initialize(device));
+            R::TextureCreateInfo info;
+            const auto handle = resources.Textures().CreateTexture(info);
+            auto owner = resources.Textures().AdoptAnonymousTexture(handle);
+            CHECK(owner && resources.Textures().GetRHITexture(handle));
+            resources.Shutdown();
+            owner.reset();
+        }
         // 非例外のmip生成失敗でも、従来APIは有効handleをcallerへ返す。
         {
             R::RenderResources resources;
             auto device = MakeShared<FakeDevice>();
+            resources.SetGeometryPoolBlockBytes(1ull << 20);
             CHECK(resources.Initialize(device));
             R::TextureCreateInfo info;
             info.Width = info.Height = 2;
@@ -847,6 +888,7 @@ namespace ImportedRuntimeTest
             const auto row = Package(root, "legacy_named.nvpkg", "Textures/legacy_named", Nvtex(pixels));
             R::RenderResources resources;
             auto device = MakeShared<FakeDevice>();
+            resources.SetGeometryPoolBlockBytes(1ull << 20);
             CHECK(resources.Initialize(device));
             SetupTextures(resources, root, row);
             const auto prepared = resources.Textures().PrepareTextureAssetForWorker("Textures/legacy_named");

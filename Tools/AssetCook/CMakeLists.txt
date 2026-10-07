@@ -1,3 +1,42 @@
+# BC エンコーダ(bc7enc_rdo)は AssetCook だけがリンクする。Core・Game には入れない。
+add_subdirectory(${CMAKE_SOURCE_DIR}/Library/ThirdParty/bc7enc_rdo
+    ${CMAKE_BINARY_DIR}/ThirdParty/bc7enc_rdo)
+
+add_library(AssetCookBlockCompressor STATIC
+    BlockCompressor.cpp
+    BlockCompressor.h
+)
+target_link_libraries(AssetCookBlockCompressor PUBLIC NorvesThirdParty_Bc7Enc Core)
+target_include_directories(AssetCookBlockCompressor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(AssetCookBlockCompressor PROPERTIES FOLDER "Tools")
+
+# メッシュ簡略化(meshoptimizer)も AssetCook だけがリンクする。Core・Game には入れない。
+add_subdirectory(${CMAKE_SOURCE_DIR}/Library/ThirdParty/meshoptimizer
+    ${CMAKE_BINARY_DIR}/ThirdParty/meshoptimizer)
+
+add_library(AssetCookMeshOptimizer STATIC
+    CookMeshDag.cpp
+    CookMeshDag.h
+    CookMeshOptimizer.cpp
+    CookMeshOptimizer.h
+)
+target_link_libraries(AssetCookMeshOptimizer PUBLIC NorvesThirdParty_MeshOptimizer Core)
+target_include_directories(AssetCookMeshOptimizer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(AssetCookMeshOptimizer PROPERTIES FOLDER "Tools")
+
+# テクスチャのクック(用途ごとの形式・ミップ・NVTEX の書き出し)。スモークからも使えるよう独立の静的ライブラリにする。
+add_library(AssetCookTextureCooker STATIC
+    TextureCooker.cpp
+    TextureCooker.h
+)
+target_link_libraries(AssetCookTextureCooker PUBLIC AssetCookBlockCompressor Core)
+target_include_directories(AssetCookTextureCooker
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+    PRIVATE ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+)
+set_target_properties(AssetCookTextureCooker PROPERTIES FOLDER "Tools")
+
+
 # CLIと直接リンクする試験で同じcooker実装を共有する。
 add_library(AssetCookLib STATIC
     CookStateFile.cpp
@@ -103,7 +142,6 @@ add_library(AssetCookLib STATIC
     GeometryInspection.h
     ImageInspection.cpp
     ImageInspection.h
-    TextureCooker.cpp
     RigSplitImageDecode.cpp
     RigSplitImageInputs.cpp
     RigSplitImageInputs.h
@@ -118,10 +156,8 @@ add_library(AssetCookLib STATIC
     NativeCookArguments.h
     RigSplitCook.cpp
     RigSplitCook.h
-    TextureCooker.h
 )
-
-target_link_libraries(AssetCookLib PUBLIC Core)
+target_link_libraries(AssetCookLib PUBLIC Core AssetCookTextureCooker AssetCookMeshOptimizer)
 if(WIN32)
     target_link_libraries(AssetCookLib PRIVATE bcrypt shell32)
 endif()
@@ -141,6 +177,26 @@ target_include_directories(AssetCook PRIVATE
 
 set_target_properties(AssetCook AssetCookLib PROPERTIES FOLDER "Tools")
 
+# ブロック圧縮のスモーク。AssetCook をビルドするときに一緒にビルドされるよう依存を張る。
+add_executable(AssetCookBlockCompressSmoke AssetCookBlockCompressSmoke.cpp)
+target_link_libraries(AssetCookBlockCompressSmoke PRIVATE AssetCookBlockCompressor)
+set_target_properties(AssetCookBlockCompressSmoke PROPERTIES FOLDER "Tools")
+add_dependencies(AssetCook AssetCookBlockCompressSmoke)
+add_test(NAME AssetCookBlockCompressSmoke COMMAND $<TARGET_FILE:AssetCookBlockCompressSmoke>)
+
+# メッシュ簡略化の境界と、LOD の階層の焼き込み(閉じた球から階層を作り、切り口に穴が無いことなど)のスモーク。
+add_executable(AssetCookMeshSimplifySmoke AssetCookMeshSimplifySmoke.cpp)
+target_link_libraries(AssetCookMeshSimplifySmoke PRIVATE AssetCookMeshOptimizer)
+set_target_properties(AssetCookMeshSimplifySmoke PROPERTIES FOLDER "Tools")
+add_dependencies(AssetCook AssetCookMeshSimplifySmoke)
+add_test(NAME AssetCookMeshSimplifySmoke COMMAND $<TARGET_FILE:AssetCookMeshSimplifySmoke>)
+
+# 用途ごとのクックの中身(ORM の詰め方・法線のミップ・R16 の精度など)を確かめる。AssetCookTextureSmoke から呼ぶ。
+add_executable(AssetCookTextureUsageSmoke AssetCookTextureUsageSmoke.cpp)
+target_link_libraries(AssetCookTextureUsageSmoke PRIVATE AssetCookTextureCooker)
+set_target_properties(AssetCookTextureUsageSmoke PROPERTIES FOLDER "Tools")
+add_dependencies(AssetCook AssetCookTextureUsageSmoke)
+
 set(ASSET_COOK_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>")
 add_test(NAME AssetCookRawSmoke
     COMMAND $<TARGET_FILE:AssetCook>
@@ -159,6 +215,7 @@ set(ASSET_COOK_TEXTURE_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/T
 add_test(NAME AssetCookTextureSmoke
     COMMAND ${CMAKE_COMMAND}
         -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DUSAGE_SMOKE_EXE=$<TARGET_FILE:AssetCookTextureUsageSmoke>
         -DSMOKE_DIR=${ASSET_COOK_TEXTURE_SMOKE_DIR}
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookTextureSmoke.cmake.in"
 )
@@ -169,6 +226,7 @@ add_test(NAME AssetCookMeshSmoke
         -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
         -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
         -DSMOKE_DIR=${ASSET_COOK_MESH_SMOKE_DIR}
+        -DDAG_SMOKE_EXE=$<TARGET_FILE:AssetCookMeshSimplifySmoke>
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookMeshSmoke.cmake.in"
 )
 

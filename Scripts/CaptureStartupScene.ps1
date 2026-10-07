@@ -6,6 +6,7 @@
 #   crushed_black_ratio … R・G・B がすべて 0 の画素の割合
 # Game の終了コードが0でない、PNGが無い、Game.log にシェーダーのコンパイル失敗がある場合は終了コード1を返す。
 # Slang SDK 未設定の neural_material_decode.slang のコンパイル失敗だけは既知として除外する。
+# -Configuration Release はログが無効で Game.log を書かないため、ログの検査（シェーダーの失敗・間接光の出どころ）を飛ばす。
 #
 # -SunElevations を与えると、各視点を太陽の仰角（度）ごとに撮り、<視点>-sun<仰角>.png として保存する
 # （例: -SunElevations 10,45,3 で朝・昼・夕）。方位は -SunAzimuth（省略時は起動画面の既定）。
@@ -13,8 +14,80 @@
 # （自動露出が入るまでの暫定の対応表）。
 #
 # -OrbitDegreesPerSecond を与えると、起動からカメラを一定の速さ（度/秒）で軸の周りに回し続け、回っている
-# 途中の画面を撮る（動くカメラでの TAA の残像の確認用）。-AntiAliasing TAA で起動画面の既定の FXAA の
-# 代わりに TAA で撮る（見比べ用）。
+# 途中の画面を連続して撮る（動くカメラでの TAA の残像の確認用）。各視点を1回の起動で、アセットの読み込みが
+# 落ち着いてから -OrbitRenderedFrames の描画フレーム数（既定 60,75,90）の時点ごとに撮り（TAA の履歴は撮影の
+# 間つながったまま）、<視点>-orbit-f<フレーム数>.png として保存する。ログは <視点>-orbit.Game.log。-AntiAliasing FXAA で起動画面の既定の TAA の代わりに FXAA で撮る（見比べ用）。-HeightFogDensity・-HeightFogFalloff で高さフォグの密度・減衰を起動画面の既定から替えて撮る。
+# -RenderScale で内部解像度の倍率（0.5〜1）を替え、-DebugDrawTestLines で大きな球を囲む箱をデバッグの線で描いて撮る
+# （デバッグ描画が内部解像度に依らず最終解像度で描かれることの確認用）。
+# -Night で夜（--night: 空と空の太陽を消し、環境光を月明かり程度にする。露出は自動のまま）の3視点を
+# <視点>-night.png として撮る。点光源の影の確認用で、-SunElevations とは併用しない。
+# -StillRenderedFrames を与えると、カメラを止めたまま1回の起動で各描画フレーム数の時点を撮り
+# （<視点>-still-f<フレーム数>.png）、視点ごとに決めた静止した地面の領域で、画素の時間方向の標準偏差の
+# 平均を temporal_noise として metrics.json へ書く（表示の 8bit の輝度と、それを sRGB からリニアへ戻した
+# 輝度の2つ）。RTGI などの時間方向の雑音の確認用で、-OrbitDegreesPerSecond とは併用しない。
+# 領域は視点ごとに複数（手前・中ほど・地平線寄りの地面の帯）で、標準偏差が表示の1/255を超える画素の割合も書く。
+# -Rtgi Off で起動画面の RTGI を切り（環境変数 NORVES_STARTUP_RTGI=0）、環境光（IBL）だけで撮る。
+# -CompareNoiseWith に別の撮影（例: -Rtgi Off）の出力先を与えると、視点・領域ごとに表示の標準偏差の比
+# （今回/比べる側）を求め、どれかが -NoiseRatioLimit（既定2）を超えたら失敗にする。
+# -GpuTimingFrames を与えると、Game を --trace-file 付きで起動し、落ち着いてからその描画フレーム数の後に撮る。
+# トレースの Type=GPU の行（フレームごとの FrameGPU・AccelerationStructureBuild（加速構造の更新）・
+# RenderGraph のパスごとの GPU の時間。Frame 列は区間を記録したフレームの番号）のうち、FrameGPU（GPU の
+# タイムスタンプで測ったフレームの区間。加速構造の構築・更新、RenderGraph の全パスと表示への書き出しを含む）の
+# 最後の (-GpuTimingFrames − 60) フレーム（撮影のフレームの直前2つを除く）の中央値・95 パーセンタイル・最大と、
+# パスごとの中央値を gpu_timing として metrics.json へ書く。予算を超えたフレームはパスごとの時間と
+# 中央値からの増分を over_budget_frames に書く。
+# 同じトレースの Type=Scope の行のうち MegaGeometryPass.RecordFrameCommand（MegaGeometryPass が描画フレームごとに
+# 記録するコマンドの CPU 時間）も、同じ窓の中央値・平均・95 パーセンタイル・最大を mega_record_cpu_ms として書く
+# （MegaGeometry のインスタンス数への依存を見る。インスタンスを増やすのは -ExtraGameArguments --stress-mega-instances=300）。
+# タイムスタンプは統計が有効な構成（Debug・RelWithDebInfo）だけで取れるため、Release とは併用しない。
+# 予算（-GpuFrameBudgetMs、既定 16.6 ms）を超えても失敗にはせず、窓のどれかのフレームが超えたら
+# within_budget=false と書く（95 パーセンタイルの判定は p95_within_budget）。
+# -LooseTextures でクック済みのテクスチャ（build/CookedAssets/）を使わず、ばらの元画像を無圧縮で読んで撮る
+# （--no-cooked-textures。クック済みとの見た目の比較用）。各撮影のログから VRAM_LEDGER の texture_mb と、
+# クック済みが無くばらで読んだ数（TEXTURE_COOKED_MISSING）を metrics.json へ書く。
+# -DefaultCamera で既定視点のカメラを替え（例: 変更前の版の既定 0,30,5）、-ViewNames で撮る視点を絞る（例: default）。
+#
+# -Deterministic で Game を --capture-deterministic 付きで起動し、同じコードを2回撮ると一致する画像を撮る。
+# Game は読み込みと大きな球の生成が終わるまで待ってから、経過時間を 1/60 秒の固定刻みにして、TAA の揺らしの列・
+# RTGI の乱数の列と履歴・自動露出の順応・大きな球の自転をそこから数え直し、決まった描画フレーム数の後に撮る
+# （描画は GameThread で1フレームずつ行う）。metrics.json に deterministic=true を書く。
+# 同じコードの2回の撮影は -CompareDeterministicWith で比べる: 後の撮影に前の出力先を与えると、視点ごとの平均輝度の差
+# （既定 0.1 以下）と PSNR（既定 45 dB 以上）を deterministic_comparison として metrics.json へ書く。
+# 撮り直さず既存の2つの出力先だけを比べるときは -CompareOnly を足す。
+# -StillRenderedFrames・-GpuTimingFrames（連続撮影・計測）とは併用しない。
+#
+# -Configuration Debug では検証レイヤーのログを視点ごとの <視点>.Validation.log へ取り（Debug の Game は標準エラーをコンソールへ張り替えるのでリダイレクトでは取れない）、
+# エラー（見出しの行）・警告・VUID の件数を metrics.json の vulkan_validation へ書く。エラーが 1 件でもあるか、ログのファイルが無ければ失敗にする。
+# -OrbitDegreesPerSecond とは併用できる: 旋回の角度は読み込み完了（エポック）からの固定刻みの時間で決まるので、
+# -OrbitRenderedFrames の各時点を同じ画像で撮り直せ、-MegaOcclusion Off の撮影と画素で比べられる（-CompareDeterministicWith）。
+#
+# -OcclusionViews を足すと、遮蔽カリングの確認用の視点 occ-sphere（大きな球が岩を隠す）・occ-cottage（小屋が球と岩を隠す）・
+# occ-cottage-edge（小屋の端が球の一部を隠す）と、旋回の出発点 occ-sphere-orbit・occ-cottage-orbit を撮る視点へ加える（-ViewNames にこれらの名前を直接与えてもよい）。
+#
+# -ScanPropViews を足すと、地面の外周の高ポリのスキャン資産（Scripts/FetchPolyHavenModels.ps1 が落とし、CookAssets が焼く）を、
+# 近くから遠くへカメラを引く距離の列 scan-d08・d13・d18・d28・d38・d56・d78（資産との距離の目安 m）で撮る（名前を -ViewNames に直接与えてもよい）。
+# 各視点の描いたクラスタ数は metrics.json の mega_occlusion（pass1 + pass2_drawn）に入る。-ScanProps Off は資産を置かずに撮り、
+# 同じ視点で足した分を差し引く基準にする。
+#
+# -StressTextures でテクスチャの負荷モード（--stress-textures: 地面の外側へ、負荷用の材質 24 種を貼った板を格子に並べ、
+# カメラの軸を格子の中心へ移す）の default・low と、格子を見下ろす top（0,80,70）を撮る。負荷用のテクスチャは
+# Scripts/FetchPolyHavenTextures.ps1 -StressSet で落とし、CookAssets で焼く。-VramBudgetMb（--vram-budget-mb）で
+# VRAM の上限を人工的に下げ、各撮影のログの VRAM_POOLS（cap_mb・vt_target_mb・vt_used_mb・vt_evicted_tiles）を
+# metrics.json へ書く。最後の VT の使用量（vt_used_mb_last）が目標（vt_target_mb）を超えたまま終わったか、負荷用の材質がそろっていなければ失敗にする
+# （目標が縮んだ直後の1回の確認の間だけ使用量が超えることがあるので、最大 vt_used_mb_max は失敗にせず書くだけ）。
+#
+# -StressGeometry でジオメトリの負荷モード（--stress-geometry=<-StressGeometryCount>。既定 300）で撮る。地面の外側（+Z 側）へ、
+# スキャン資産・岩・小屋・大きな球を、向きと拡大率を替えて格子に並べ、カメラの軸を格子の中心へ移す（資産が無ければ置かずに警告）。
+# 視点は default（0,25,45。格子の手前を斜めに見る）・low（20,-8,8。地面すれすれ）・top（0,70,200。格子の全体を見下ろす）。
+# 旋回の連続フレームは -OrbitDegreesPerSecond・-OrbitRenderedFrames と併せて撮る。-VramBudgetMb でジオメトリの枠（Geometry の目標）を
+# 絞ると、ページの追い出しが起きる。各撮影のログの STRESS_GEOMETRY_PLACED（並べた数・元の数）と VRAM_POOLS のジオメトリの枠
+# （geometry_target_mb・geometry_used_mb・geometry_evicted_pages）を metrics.json へ書き、並べた数が指定に満たない、または最後の
+# geometry_used_mb が目標を超えたまま終われば失敗にする。
+#
+# 各撮影のログの GPU_DRIVER（GPU 名とドライバの版）を metrics.json の gpu_driver へ書く（ドライバの更新で画面微分・LOD の挙動が変わる実装があり、
+# 撮影の差の原因を版から引けるようにする）。VT の常駐量は、ログの VRAM_POOLS の vt_used_mb の最大を vram_pools.vt_used_mb_max へ書き、
+# -VtUsedLimitMb（既定 64）を超えたら失敗にする（フィードバックの LOD が壊れて全面でミップ 0 を要求すると数百 MB になる。
+# -StressTextures は VT を上限まで使うので検査しない。0 で検査しない）。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -30,8 +103,121 @@ param(
     [string[]]$ExposureEV100s = @(),
     [ValidateRange(-360.0, 360.0)]
     [double]$OrbitDegreesPerSecond = 0.0,
+    # 回している途中を撮る描画フレーム数の並び（「60,75,90」の形）。-OrbitDegreesPerSecond と併せて使う。
+    [string[]]$OrbitRenderedFrames = @(),
     [ValidateSet('TAA', 'FXAA')]
-    [string]$AntiAliasing = 'FXAA'
+    [string]$AntiAliasing = 'TAA',
+    # 内部解像度の倍率（0.5〜1）。1未満なら画面解像度×倍率で描いて拡大する（--render-scale）。
+    [ValidateRange(0.5, 1.0)]
+    [double]$RenderScale = 1.0,
+    # 大きな球を囲む箱をデバッグの線で描く（--debug-draw-test-lines。最終解像度で描かれることの確認用）。
+    [switch]$DebugDrawTestLines,
+    # 高さフォグの地面での密度（1/m）。省略時は起動画面の既定、0 でフォグ無し（撮り比べ用）。
+    [ValidateRange(0.0, 1.0)]
+    [Nullable[double]]$HeightFogDensity = $null,
+    # 高さフォグの高さ方向の減衰（1/m）。省略時は起動画面の既定。
+    [ValidateRange(0.0, 1.0)]
+    [Nullable[double]]$HeightFogFalloff = $null,
+    # 夜の条件で撮る（太陽が無いので -SunElevations・-ExposureEV100s とは併用しない）。
+    [switch]$Night,
+    # カメラを止めたまま撮る描画フレーム数の並び（「60,66,72」の形）。-OrbitDegreesPerSecond とは併用しない。
+    [string[]]$StillRenderedFrames = @(),
+    # 起動画面の RTGI（既定は有効）。Off で環境光（IBL）だけで撮る。
+    [ValidateSet('On', 'Off')]
+    [string]$Rtgi = 'On',
+    # 時間方向の雑音を比べる別の撮影の出力先（metrics.json のあるディレクトリ）。
+    [string]$CompareNoiseWith = '',
+    [ValidateRange(1.0, 100.0)]
+    [double]$NoiseRatioLimit = 2.0,
+    # GPU のフレーム時間を測るときの、落ち着いてから撮るまでの描画フレーム数（0 で測らない）。
+    [ValidateRange(0, 100000)]
+    [int]$GpuTimingFrames = 0,
+    # GPU のフレーム時間の予算（ms）。超えても失敗にはせず、metrics.json に within_budget として書く。
+    [ValidateRange(0.1, 1000.0)]
+    [double]$GpuFrameBudgetMs = 16.6,
+    # 既定視点のカメラ（「yaw,pitch,arm」）。省略時は起動時の既定のカメラ。変更前の版と同じ視点で撮り比べる用。
+    [string]$DefaultCamera = '',
+    # 撮る視点の名前（「default,near」の形）。省略時は3視点すべて。
+    [string[]]$ViewNames = @(),
+    # クック済みのテクスチャを使わず、ばらの元画像を無圧縮で読んで撮る（--no-cooked-textures。比べる側の撮影用）。
+    [switch]$LooseTextures,
+    # 岩・小屋の読み方（--rendering3dtest-model-source）。省略時は Game の既定（クック済みの NVMESH v1・BC・VT）。
+    # gltf は glTF の実行時の経路で読む（クック済みの経路との見た目・VRAM の比較用）。
+    [ValidateSet('', 'cooked', 'gltf')]
+    [string]$ModelSource = '',
+    # 大きな球の作り方（--rendering3dtest-big-sphere-source）。省略時は Game の既定（クック済みの NVMESH v1）。
+    # runtime は起動時に実行時の生成で作る（クック済みの球との見た目・起動時間の比較用）。
+    [ValidateSet('', 'cooked', 'runtime')]
+    [string]$BigSphereSource = '',
+    # 決定的な撮影（--capture-deterministic）で撮る。同じコードを2回撮ると一致する（見た目の保全を数値で比べる用）。
+    [switch]$Deterministic,
+    # テクスチャの負荷モード（--stress-textures）で default・low・top の3視点を撮る。-ViewNames で絞れる。
+    [switch]$StressTextures,
+    # ジオメトリの負荷モード（--stress-geometry）で default・low・top の3視点を撮る。-ViewNames で絞れる。
+    [switch]$StressGeometry,
+    # -StressGeometry で並べる個数。
+    [ValidateRange(1, 4096)]
+    [int]$StressGeometryCount = 300,
+    # 検証用の骨付きのパネルを地面の上へ 2 体置いて撮る（--startup-skinned-probe）。スキニングの塊がビジビリティバッファの経路で描かれることの確認用。
+    # 起動画面は変えない（既定は置かない）。-VisibilityBuffer On・Off・Debug と -GBufferDebug の撮り比べに使う。
+    # 2 体が置けたこと（STARTUP_SKINNED_PROBE bodies=2）と、On・Debug では ID に描かれたスキニングの塊の数（VIS_RASTER の skinned_chunks が体の数以上・
+    # dropped_chunks が 0）を撮影の判定に入れる。置けない・塊が 0 なら result=fail。near の視点はパネルが画角の外なので、2 体を撮るなら default・low で撮る。
+    [switch]$SkinnedProbe,
+    # 遮蔽カリングの確認用の視点（occ-sphere・occ-cottage・occ-cottage-edge・旋回の出発点 occ-sphere-orbit・occ-cottage-orbit）を撮る視点へ加える。
+    [switch]$OcclusionViews,
+    # 地面の外周のスキャン資産（Poly Haven）を、近くから遠くへカメラを引いて見る視点（scan-d08 から scan-d78 までの 7 視点）を撮る視点へ加える。
+    [switch]$ScanPropViews,
+    # 地面の外周のスキャン資産を置くか（--startup-scan-props。既定は On）。Off は、足した分を差し引く基準の撮影に使う。
+    [ValidateSet('On', 'Off')]
+    [string]$ScanProps = 'On',
+    # VRAM の上限（MB。--vram-budget-mb）。0 は渡さない。
+    [ValidateRange(0, 1048576)]
+    [int]$VramBudgetMb = 0,
+    # 撮影で許す VT の常駐量（MB。ログの VRAM_POOLS の vt_used_mb の最大）。超えたら失敗にする。0 は検査しない。-StressTextures では検査しない。
+    [ValidateRange(0, 1048576)]
+    [int]$VtUsedLimitMb = 64,
+    # MegaGeometry（岩・小屋など）の遮蔽カリング（2パス。既定は有効）。Off は遮蔽の判定なしの従来の経路で撮る
+    # （--mega-occlusion=off。見た目の比較用）。各撮影のログの MEGA_OCCLUSION を metrics.json の mega_occlusion へ書く。
+    [ValidateSet('On', 'Off')]
+    [string]$MegaOcclusion = 'On',
+    # ジオメトリのページのストリーミング（既定は有効。根のページだけ常駐させて、残りを要求から読む）。Off は全てのページを常駐させて
+    # 撮る（--geometry-streaming=off。ストリーミングありの撮影との画素の比較用。-CompareDeterministicWith で比べる）。
+    # 各撮影のログの GEOMETRY_PAGES_STREAMED・GEOMETRY_PAGES を metrics.json の geometry_pages へ書く。
+    [ValidateSet('On', 'Off')]
+    [string]$GeometryStreaming = 'On',
+    # ビジビリティバッファ（既定は On）。On は不透明の描画のすべてを VisBuffer.Id と GBuffer.Depth へ描き、幾何の解決が GBuffer を書く
+    # （--visibility-buffer=on。装置が対応しないときは GBuffer の描画へ戻る）。Off は GBuffer の描画だけ（--visibility-buffer=off。予備の経路の確認用）。
+    # Debug は GBuffer の描画に加えて ID も描き、ID を色にして画面へ表示する（--visibility-buffer=debug。検証用）。
+    [ValidateSet('Off', 'On', 'Debug')]
+    [string]$VisibilityBuffer = 'On',
+    # ソフトウェアラスタ（既定は On）。On は画面上で小さい MegaGeometry のクラスタをソフトの一覧へ振り分ける（--sw-raster=on。
+    # 64bit アトミックが無い・-VisibilityBuffer Off のときは振り分けず SW_RASTER_FALLBACK をログへ出す）。Off は今のハードのラスタだけ
+    # （--sw-raster=off。on・off の比較は -SwRaster Off を明示する）。各撮影のログの SW_RASTER_BIN・SW_RASTER_FALLBACK を metrics.json の sw_raster へ書く。
+    [ValidateSet('Off', 'On')]
+    [string]$SwRaster = 'On',
+    # ソフトウェアラスタへ振り分けるクラスタの画面上の半径（画素）のしきい値（--sw-raster-max-px。0 は渡さず、ゲームの既定の 32 画素を使う）。
+    [ValidateRange(0.0, 4096.0)]
+    [double]$SwRasterMaxPx = 0.0,
+    # GBuffer の検証表示（既定は Off）。Normal・Velocity・Depth・Albedo・Material は最後のシーンの色を GBuffer の法線・速度・深度・アルベド・材質の色で置き換える
+    # （環境変数 NORVES_GBUFFER_DEBUG。統計が有効な Debug・RelWithDebInfo だけ）。-VisibilityBuffer On と Off で同じ値を撮り比べる用。
+    [ValidateSet('Off', 'Normal', 'Velocity', 'Depth', 'Albedo', 'Material')]
+    [string]$GBufferDebug = 'Off',
+    # 起動時のデバッグの表示（既定は Normal）。Clusters は MegaGeometry のクラスタの色、Lod は LOD の段、Wireframe は三角形の線
+    # （--debug-view=clusters|lod|wireframe。F3・F4・F5 と同じ表示。development ビルドだけ）。
+    # -VisibilityBuffer On と Off で同じ表示になることを撮り比べる用。
+    [ValidateSet('Normal', 'Clusters', 'Lod', 'Wireframe')]
+    [string]$DebugView = 'Normal',
+    # 同じコードを -Deterministic で撮った別の出力先。各視点の平均輝度の差と PSNR を求めて metrics.json へ書き、
+    # 平均輝度の差が -DeterministicMeanLuminanceLimit を超えるか PSNR が -DeterministicPsnrLimit を下回れば失敗にする。
+    [string]$CompareDeterministicWith = '',
+    [ValidateRange(0.0, 255.0)]
+    [double]$DeterministicMeanLuminanceLimit = 0.1,
+    [ValidateRange(0.0, 100.0)]
+    [double]$DeterministicPsnrLimit = 45.0,
+    # 撮影せず、OutDir に撮った既存の画像を -CompareDeterministicWith と比べて metrics.json へ書き足す。
+    [switch]$CompareOnly,
+    # Game へそのまま渡す引数（空白で区切る。例: --texture-asset-root と --texture-asset-manifest で別のクック済みの出力を使う）。
+    [string[]]$ExtraGameArguments = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,12 +227,22 @@ $gamePath = Join-Path $repoRoot "build\Game\$Configuration\Game.exe"
 $outRoot = if ([IO.Path]::IsPathRooted($OutDir)) { [IO.Path]::GetFullPath($OutDir) } else { [IO.Path]::GetFullPath((Join-Path $repoRoot $OutDir)) }
 
 # 視点: Camera が空なら起動時の既定のカメラのまま撮る。値は --startup-camera=<yaw>,<pitch>,<arm>。
+# NoiseRegions は -StillRenderedFrames の時間方向の雑音を測る静止した地面の領域（名前と、画像の幅・高さに
+# 対する割合で 左,上,右,下）。物体・光源の球の写る範囲は避ける。
+$nearGroundRegion = [pscustomobject]@{ Name = 'near'; Rect = @(0.05, 0.80, 0.95, 0.98) }
 $views = @(
-    [pscustomobject]@{ Name = 'default'; Camera = '' },
+    [pscustomobject]@{ Name = 'default'; Camera = ''; NoiseRegions = @(
+        $nearGroundRegion,
+        [pscustomobject]@{ Name = 'middle'; Rect = @(0.05, 0.65, 0.95, 0.80) },
+        # 地平線寄り（小屋と光源の球を避けた左側）
+        [pscustomobject]@{ Name = 'far'; Rect = @(0.05, 0.33, 0.35, 0.42) }) },
     # 球（中心 y=0.5・半径1）へ寄り、輪郭が画面の中央の周りに来る視点
-    [pscustomobject]@{ Name = 'near'; Camera = '0,5,2.5' },
+    [pscustomobject]@{ Name = 'near'; Camera = '0,5,2.5'; NoiseRegions = @($nearGroundRegion) },
     # カメラの高さ約 -0.84（地面は y=-1）から地面すれすれに見る視点
-    [pscustomobject]@{ Name = 'low'; Camera = '20,-8,6' }
+    [pscustomobject]@{ Name = 'low'; Camera = '20,-8,6'; NoiseRegions = @(
+        $nearGroundRegion,
+        # 物体の接地の少し下から手前の帯まで
+        [pscustomobject]@{ Name = 'middle'; Rect = @(0.05, 0.65, 0.95, 0.80) }) }
 )
 
 # 「10,45,3」や配列で渡された数の並びを、範囲を確かめて double の配列にする。
@@ -67,8 +263,136 @@ function ConvertTo-NumberList([string[]]$Values, [double]$Minimum, [double]$Maxi
     return ,$numbers
 }
 
+if ($DefaultCamera -ne '')
+{
+    $views[0].Camera = $DefaultCamera
+}
+# 遮蔽カリングの確認用の視点（カメラの軸は原点の大きな球、岩は (3,-0.93,0)、小屋は (0,-1,-18) を中心とする
+# 幅12.4 m・奥行き14.7 m・高さ6.8 m。小屋の外から見るので腕の長さは小屋の奥の面（z=-25.4）より長くする）。
+# 既定では撮らず、-OcclusionViews か -ViewNames で名前を与えたときだけ撮る（既存の撮影の視点の並びを変えない）。
+$occlusionViewList = @(
+    # 球の -X 側の低い位置から +X の向きに見る。岩が球の真後ろに入り、球に隠れる。
+    [pscustomobject]@{ Name = 'occ-sphere'; Camera = '-90,4,9'; NoiseRegions = @() },
+    # 小屋の奥（-Z 側）から +Z の向きに見る。球と岩が小屋の真後ろに入り、小屋に隠れる。
+    [pscustomobject]@{ Name = 'occ-cottage'; Camera = '182,3,29'; NoiseRegions = @() },
+    # 球の中心と小屋の角（6.2,-10.65）を結ぶ線の延長から見る。小屋の端が球の一部を隠す（隠れる・見えるの境目）。
+    [pscustomobject]@{ Name = 'occ-cottage-edge'; Camera = '150,3,29'; NoiseRegions = @() },
+    # 旋回（-OrbitDegreesPerSecond）の出発点。旋回の途中で、岩が球の陰に入る・出る向き（球の -X 側）から始める。
+    [pscustomobject]@{ Name = 'occ-sphere-orbit'; Camera = '-100,4,9'; NoiseRegions = @() },
+    # 旋回の途中で、球と岩が小屋の端の陰に入る向きから始める。
+    [pscustomobject]@{ Name = 'occ-cottage-orbit'; Camera = '146,3,29'; NoiseRegions = @() }
+)
+# 地面の外周のスキャン資産の距離の列。カメラの軸は原点なので、資産 coast_rocks_05（17.5,-13）の延長の向き
+# （yaw 127°、地面すれすれの pitch 3°）で、資産の先（原点の反対側）から原点へ向けて見る。腕の長さを伸ばすほど資産は遠ざかる
+# （資産は原点から約 21.8 m。腕 30・35・40・50・60・78・100 で、カメラと資産の距離が約 8・13・18・28・38・56・78 m）。
+$scanPropViewList = @(
+    [pscustomobject]@{ Name = 'scan-d08'; Camera = '127,3,30'; NoiseRegions = @() },
+    [pscustomobject]@{ Name = 'scan-d13'; Camera = '127,3,35'; NoiseRegions = @() },
+    [pscustomobject]@{ Name = 'scan-d18'; Camera = '127,3,40'; NoiseRegions = @() },
+    [pscustomobject]@{ Name = 'scan-d28'; Camera = '127,3,50'; NoiseRegions = @() },
+    [pscustomobject]@{ Name = 'scan-d38'; Camera = '127,3,60'; NoiseRegions = @() },
+    [pscustomobject]@{ Name = 'scan-d56'; Camera = '127,3,78'; NoiseRegions = @() },
+    [pscustomobject]@{ Name = 'scan-d78'; Camera = '127,3,100'; NoiseRegions = @() }
+)
+if ($OcclusionViews)
+{
+    $views = @($views) + $occlusionViewList
+}
+if ($ScanPropViews)
+{
+    $views = @($views) + $scanPropViewList
+}
+if ($StressTextures)
+{
+    # 負荷モードはカメラの軸が格子の中心なので、近接（球が無い）は撮らず、格子の全体を見下ろす視点を足す。
+    $views = @($views | Where-Object { $_.Name -ne 'near' })
+    $views += [pscustomobject]@{ Name = 'top'; Camera = '0,80,70'; NoiseRegions = @() }
+}
+if ($StressGeometry)
+{
+    # 負荷モードはカメラの軸が格子の中心なので、近接（球が無い）は撮らず、既定・低角度の視点を格子向けに替え、全体を見下ろす視点を足す。
+    $views = @($views | Where-Object { $_.Name -ne 'near' })
+    foreach ($stressView in $views)
+    {
+        if ($stressView.Name -eq 'default')
+        {
+            $stressView.Camera = '0,25,45'
+        }
+        elseif ($stressView.Name -eq 'low')
+        {
+            $stressView.Camera = '20,-8,8'
+        }
+    }
+    $views += [pscustomobject]@{ Name = 'top'; Camera = '0,70,200'; NoiseRegions = @() }
+}
+$viewNameList = @(($ViewNames -join ',').Split(',', [StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
+if ($viewNameList.Count -gt 0)
+{
+    # 遮蔽カリングの確認用の視点は名前を与えれば撮れる（-OcclusionViews を併せて与えなくてよい）。
+    $views = @($views) + @($occlusionViewList | Where-Object { $_.Name -in $viewNameList -and $_.Name -notin @($views | ForEach-Object { $_.Name }) })
+    $views = @($views) + @($scanPropViewList | Where-Object { $_.Name -in $viewNameList -and $_.Name -notin @($views | ForEach-Object { $_.Name }) })
+    $unknownViews = @($viewNameList | Where-Object { $_ -notin $views.Name })
+    if ($unknownViews.Count -gt 0)
+    {
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low・top・occ-sphere・occ-cottage・occ-cottage-edge・occ-sphere-orbit・occ-cottage-orbit・scan-d08・scan-d13・scan-d18・scan-d28・scan-d38・scan-d56・scan-d78）"
+        exit 1
+    }
+    $views = @($views | Where-Object { $_.Name -in $viewNameList })
+}
+
 $sunElevationList = ConvertTo-NumberList $SunElevations 0.0 90.0 'sun_elevation'
 $exposureList = ConvertTo-NumberList $ExposureEV100s -6.0 24.0 'exposure_ev100'
+$orbitFrameList = ConvertTo-NumberList $OrbitRenderedFrames 1.0 100000.0 'orbit_rendered_frames'
+if ($orbitFrameList.Count -gt 0 -and $OrbitDegreesPerSecond -eq 0.0)
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=orbit_frames_without_orbit（-OrbitRenderedFrames は -OrbitDegreesPerSecond と併せて使う）"
+    exit 1
+}
+if ($OrbitDegreesPerSecond -ne 0.0 -and $orbitFrameList.Count -eq 0)
+{
+    $orbitFrameList = @(60.0, 75.0, 90.0)
+}
+$stillFrameList = ConvertTo-NumberList $StillRenderedFrames 1.0 100000.0 'still_rendered_frames'
+if ($stillFrameList.Count -gt 0 -and $OrbitDegreesPerSecond -ne 0.0)
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=still_frames_with_orbit（-StillRenderedFrames は -OrbitDegreesPerSecond と併用しない）"
+    exit 1
+}
+if ($GpuTimingFrames -gt 0 -and ($stillFrameList.Count -gt 0 -or $OrbitDegreesPerSecond -ne 0.0))
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=gpu_timing_with_sequence（-GpuTimingFrames は -StillRenderedFrames・-OrbitDegreesPerSecond と併用しない）"
+    exit 1
+}
+if ($GpuTimingFrames -gt 0 -and $GpuTimingFrames -lt 100)
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=gpu_timing_frames_too_few（-GpuTimingFrames は100以上）"
+    exit 1
+}
+if ($GpuTimingFrames -gt 0 -and $Configuration -eq 'Release')
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=gpu_timing_without_stats（Release は統計が無効で GPU のタイムスタンプを取れない。-Configuration RelWithDebInfo で測る）"
+    exit 1
+}
+if ($Deterministic -and ($stillFrameList.Count -gt 0 -or $GpuTimingFrames -gt 0))
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=deterministic_with_sequence（-Deterministic は -StillRenderedFrames・-GpuTimingFrames と併用しない）"
+    exit 1
+}
+if ($CompareOnly -and $CompareDeterministicWith -eq '')
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=compare_only_without_target（-CompareOnly は -CompareDeterministicWith と併せて使う）"
+    exit 1
+}
+if ($CompareDeterministicWith -ne '' -and -not $Deterministic)
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=compare_without_deterministic（-CompareDeterministicWith は -Deterministic と併せて使う）"
+    exit 1
+}
+if ($stillFrameList.Count -eq 1)
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=still_frames_too_few（-StillRenderedFrames は2つ以上）"
+    exit 1
+}
 
 # 太陽の仰角から、晴天の手動露出（EV100）の目安を選ぶ。表の間は線形に補間する。
 function Get-DefaultExposureEV100([double]$Elevation)
@@ -85,6 +409,12 @@ function Get-DefaultExposureEV100([double]$Elevation)
     return $table[$table.Count - 1][1]
 }
 
+if ($Night -and ($sunElevationList.Count -gt 0 -or $exposureList.Count -gt 0))
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=night_with_sun（-Night は -SunElevations・-ExposureEV100s と併用しない）"
+    exit 1
+}
+
 if ($exposureList.Count -gt 0 -and $exposureList.Count -ne $sunElevationList.Count)
 {
     Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=exposure_count_mismatch（-ExposureEV100s は -SunElevations と同じ数）"
@@ -98,7 +428,8 @@ foreach ($view in $views)
 {
     if ($sunElevationList.Count -eq 0)
     {
-        $shots += [pscustomobject]@{ Name = $view.Name; Camera = $view.Camera; SunElevation = $null; ExposureEV100 = $null }
+        $shotName = if ($Night) { "$($view.Name)-night" } else { $view.Name }
+        $shots += [pscustomobject]@{ Name = $shotName; Camera = $view.Camera; NoiseRegions = $view.NoiseRegions; SunElevation = $null; ExposureEV100 = $null }
         continue
     }
     for ($i = 0; $i -lt $sunElevationList.Count; ++$i)
@@ -108,10 +439,41 @@ foreach ($view in $views)
         $shots += [pscustomobject]@{
             Name = "$($view.Name)-sun$($elevation.ToString($invariant))"
             Camera = $view.Camera
+            NoiseRegions = $view.NoiseRegions
             SunElevation = $elevation
             ExposureEV100 = [math]::Round($ev, 2)
         }
     }
+}
+
+# カメラを回すときは、各撮影を1回の起動で撮り、回している途中の描画フレーム数ごとに画像を保存する
+# （同じ起動の中なので TAA の履歴は撮影の間つながったまま）。最後の1枚は --capture-png、それより前は
+# --capture-sequence で撮る。取得の要求は同時に1つだけなので、最後の2つの間は少なくとも8フレーム空ける。
+# カメラを止めて撮るときも同じく1回の起動で続けて撮る（名前は <視点>-still）。
+$sequenceFrameList = if ($stillFrameList.Count -gt 0) { $stillFrameList } else { $orbitFrameList }
+$sequenceSuffix = if ($stillFrameList.Count -gt 0) { 'still' } else { 'orbit' }
+if ($sequenceFrameList.Count -gt 0)
+{
+    $sortedOrbitFrames = @($sequenceFrameList | ForEach-Object { [int]$_ } | Sort-Object -Unique)
+    if ($sortedOrbitFrames.Count -gt 1 -and
+        $sortedOrbitFrames[$sortedOrbitFrames.Count - 1] - $sortedOrbitFrames[$sortedOrbitFrames.Count - 2] -lt 8)
+    {
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=sequence_frames_too_close（-OrbitRenderedFrames・-StillRenderedFrames の最後の2つは8フレーム以上空ける）"
+        exit 1
+    }
+    $orbitShots = @()
+    foreach ($shot in $shots)
+    {
+        $orbitShots += [pscustomobject]@{
+            Name = "$($shot.Name)-$sequenceSuffix"
+            Camera = $shot.Camera
+            NoiseRegions = $shot.NoiseRegions
+            SunElevation = $shot.SunElevation
+            ExposureEV100 = $shot.ExposureEV100
+            OrbitFrames = $sortedOrbitFrames
+        }
+    }
+    $shots = $orbitShots
 }
 
 Add-Type -AssemblyName System.Drawing
@@ -160,6 +522,172 @@ public static class StartupCaptureMetrics
             }
         }
     }
+
+    // 同じ大きさの2枚の画像の違い。{ 平均輝度A, 平均輝度B, PSNR（dB。R・G・B の 8bit。同一なら 100）,
+    // 一致しない画素の割合, 1チャンネルの最大の絶対差 }。
+    public static double[] Compare(string pathA, string pathB)
+    {
+        using (var bitmapA = new Bitmap(pathA))
+        using (var bitmapB = new Bitmap(pathB))
+        {
+            if (bitmapA.Width != bitmapB.Width || bitmapA.Height != bitmapB.Height)
+            {
+                throw new ArgumentException("画像の寸法が揃っていない: " + pathA + " / " + pathB);
+            }
+            int width = bitmapA.Width;
+            int height = bitmapA.Height;
+            var rect = new Rectangle(0, 0, width, height);
+            BitmapData dataA = bitmapA.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData dataB = bitmapB.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                byte[] bytesA = new byte[dataA.Stride * height];
+                byte[] bytesB = new byte[dataB.Stride * height];
+                Marshal.Copy(dataA.Scan0, bytesA, 0, bytesA.Length);
+                Marshal.Copy(dataB.Scan0, bytesB, 0, bytesB.Length);
+                double sumA = 0.0;
+                double sumB = 0.0;
+                double squaredError = 0.0;
+                long mismatched = 0;
+                int maxDifference = 0;
+                for (int y = 0; y < height; ++y)
+                {
+                    for (int x = 0; x < width; ++x)
+                    {
+                        int ia = y * dataA.Stride + x * 4;
+                        int ib = y * dataB.Stride + x * 4;
+                        bool differs = false;
+                        for (int c = 0; c < 3; ++c)
+                        {
+                            int d = bytesA[ia + c] - bytesB[ib + c];
+                            if (d != 0)
+                            {
+                                differs = true;
+                                squaredError += (double)d * d;
+                                int magnitude = d < 0 ? -d : d;
+                                if (magnitude > maxDifference) { maxDifference = magnitude; }
+                            }
+                        }
+                        if (differs) { ++mismatched; }
+                        sumA += 0.2126 * bytesA[ia + 2] + 0.7152 * bytesA[ia + 1] + 0.0722 * bytesA[ia];
+                        sumB += 0.2126 * bytesB[ib + 2] + 0.7152 * bytesB[ib + 1] + 0.0722 * bytesB[ib];
+                    }
+                }
+                double count = (double)width * height;
+                double meanSquaredError = squaredError / (count * 3.0);
+                double psnr = meanSquaredError <= 0.0 ? 100.0 : Math.Min(100.0, 10.0 * Math.Log10(255.0 * 255.0 / meanSquaredError));
+                return new double[] { sumA / count, sumB / count, psnr, mismatched / count, maxDifference };
+            }
+            finally
+            {
+                bitmapA.UnlockBits(dataA);
+                bitmapB.UnlockBits(dataB);
+            }
+        }
+    }
+
+    // 画像を Rec.709 の重みの輝度へ読む（display=true なら 8bit の表示値 0〜255、false なら sRGB から戻したリニア 0〜1）。
+    static double[] ReadLuminance(string path, bool display, out int width, out int height)
+    {
+        using (var bitmap = new Bitmap(path))
+        {
+            width = bitmap.Width;
+            height = bitmap.Height;
+            var rect = new Rectangle(0, 0, width, height);
+            BitmapData data = bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                int stride = data.Stride;
+                byte[] bytes = new byte[stride * height];
+                Marshal.Copy(data.Scan0, bytes, 0, bytes.Length);
+                double[] result = new double[width * height];
+                for (int y = 0; y < height; ++y)
+                {
+                    for (int x = 0; x < width; ++x)
+                    {
+                        int i = y * stride + x * 4;
+                        double b = bytes[i];
+                        double g = bytes[i + 1];
+                        double r = bytes[i + 2];
+                        if (!display)
+                        {
+                            r = SrgbToLinear(r / 255.0);
+                            g = SrgbToLinear(g / 255.0);
+                            b = SrgbToLinear(b / 255.0);
+                        }
+                        result[y * width + x] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    }
+                }
+                return result;
+            }
+            finally
+            {
+                bitmap.UnlockBits(data);
+            }
+        }
+    }
+
+    static double SrgbToLinear(double c)
+    {
+        return c <= 0.04045 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);
+    }
+
+    // 同じ視点の連続した画像で、領域（画素の範囲 [x0,x1)×[y0,y1)）の各画素の輝度の時間方向の標準偏差
+    // （母標準偏差）を求め、領域の平均を返す。{ 表示の8bit, リニア, リニアの平均輝度, x0, y0, x1, y1,
+    // 表示の標準偏差が1（8bitの1段）を超える画素の割合 }。
+    public static double[] TemporalNoise(string[] paths, double[] regionFractions)
+    {
+        int width = 0;
+        int height = 0;
+        double[][] display = new double[paths.Length][];
+        double[][] linear = new double[paths.Length][];
+        for (int f = 0; f < paths.Length; ++f)
+        {
+            int w;
+            int h;
+            display[f] = ReadLuminance(paths[f], true, out w, out h);
+            linear[f] = ReadLuminance(paths[f], false, out w, out h);
+            if (f == 0) { width = w; height = h; }
+            else if (w != width || h != height) { throw new ArgumentException("画像の寸法が揃っていない: " + paths[f]); }
+        }
+        int x0 = (int)Math.Floor(regionFractions[0] * width);
+        int y0 = (int)Math.Floor(regionFractions[1] * height);
+        int x1 = (int)Math.Ceiling(regionFractions[2] * width);
+        int y1 = (int)Math.Ceiling(regionFractions[3] * height);
+        double displaySum = 0.0;
+        double linearSum = 0.0;
+        double linearMeanSum = 0.0;
+        long pixels = 0;
+        long flickerPixels = 0;
+        int n = paths.Length;
+        for (int y = y0; y < y1; ++y)
+        {
+            for (int x = x0; x < x1; ++x)
+            {
+                int i = y * width + x;
+                double dMean = 0.0;
+                double lMean = 0.0;
+                for (int f = 0; f < n; ++f) { dMean += display[f][i]; lMean += linear[f][i]; }
+                dMean /= n;
+                lMean /= n;
+                double dVar = 0.0;
+                double lVar = 0.0;
+                for (int f = 0; f < n; ++f)
+                {
+                    dVar += (display[f][i] - dMean) * (display[f][i] - dMean);
+                    lVar += (linear[f][i] - lMean) * (linear[f][i] - lMean);
+                }
+                double dStd = Math.Sqrt(dVar / n);
+                displaySum += dStd;
+                linearSum += Math.Sqrt(lVar / n);
+                linearMeanSum += lMean;
+                if (dStd > 1.0) { ++flickerPixels; }
+                ++pixels;
+            }
+        }
+        return new double[] { displaySum / pixels, linearSum / pixels, linearMeanSum / pixels, x0, y0, x1, y1,
+                              (double)flickerPixels / pixels };
+    }
 }
 '@
 
@@ -175,7 +703,7 @@ function Stop-OwnedProcessTree([int]$ProcessId)
     & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
 }
 
-if (-not (Test-Path -LiteralPath $gamePath))
+if (-not $CompareOnly -and -not (Test-Path -LiteralPath $gamePath))
 {
     Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=game_missing path=$gamePath"
     exit 1
@@ -184,12 +712,46 @@ New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
 
 $failures = @()
 $results = @()
+if ($CompareOnly)
+{
+    # 撮り直さず、OutDir の既存の撮影（metrics.json の views）を比べる。
+    $existingMetricsPath = Join-Path $outRoot 'metrics.json'
+    if (-not (Test-Path -LiteralPath $existingMetricsPath))
+    {
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=compare_only_metrics_missing path=$existingMetricsPath"
+        exit 1
+    }
+    $existingMetrics = Get-Content -LiteralPath $existingMetricsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $results = @($existingMetrics.views)
+    $failures = @($existingMetrics.failures | Where-Object { $_ })
+    $shots = @()
+}
+$temporalNoise = @()
+$gpuTiming = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
 foreach ($view in $shots)
 {
-    $pngPath = Join-Path $outRoot "$($view.Name).png"
+    # 保存する画像（名前と、落ち着いてからの描画フレーム数）。カメラを回すときは1回の起動で複数枚を撮る。
+    $images = @()
+    if ($null -ne $view.PSObject.Properties['OrbitFrames'])
+    {
+        foreach ($frames in $view.OrbitFrames)
+        {
+            $images += [pscustomobject]@{ Name = "$($view.Name)-f$frames"; RenderedFrames = [int]$frames }
+        }
+    }
+    else
+    {
+        $images += [pscustomobject]@{ Name = $view.Name; RenderedFrames = $null }
+    }
+    $lastImage = $images[$images.Count - 1]
+    $pngPath = Join-Path $outRoot "$($lastImage.Name).png"
     $viewLogPath = Join-Path $outRoot "$($view.Name).Game.log"
-    Remove-Item -LiteralPath $pngPath, $viewLogPath -Force -ErrorAction SilentlyContinue
+    foreach ($image in $images)
+    {
+        Remove-Item -LiteralPath (Join-Path $outRoot "$($image.Name).png") -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $viewLogPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $gameLogPath -Force -ErrorAction SilentlyContinue
 
     $arguments = @("--capture-png=`"$pngPath`"")
@@ -211,10 +773,165 @@ foreach ($view in $shots)
     {
         $arguments += "--orbit-degrees-per-second=$($OrbitDegreesPerSecond.ToString($invariant))"
     }
-    $arguments += "--anti-aliasing=$($AntiAliasing.ToLowerInvariant())"
+    if ($null -ne $lastImage.RenderedFrames)
+    {
+        $arguments += "--exit-after-rendered-frames=$($lastImage.RenderedFrames)"
+    }
+    if ($images.Count -gt 1)
+    {
+        # 最後より前の時点は、同じ起動の中で Game が <接頭辞><フレーム数>.png として保存する。
+        $sequencePrefix = Join-Path $outRoot "$($view.Name)-f"
+        $sequenceFrames = @($images[0..($images.Count - 2)] | ForEach-Object { $_.RenderedFrames }) -join ','
+        $arguments += "--capture-sequence=`"$sequencePrefix`""
+        $arguments += "--capture-sequence-rendered-frames=$sequenceFrames"
+    }
+    if ($null -ne $HeightFogDensity)
+    {
+        $arguments += "--height-fog-density=$(([double]$HeightFogDensity).ToString($invariant))"
+    }
+    if ($null -ne $HeightFogFalloff)
+    {
+        $arguments += "--height-fog-falloff=$(([double]$HeightFogFalloff).ToString($invariant))"
+    }
+    if ($LooseTextures)
+    {
+        $arguments += '--no-cooked-textures'
+    }
+    if ($ModelSource -ne '')
+    {
+        $arguments += "--rendering3dtest-model-source=$ModelSource"
+    }
+    if ($BigSphereSource -ne '')
+    {
+        $arguments += "--rendering3dtest-big-sphere-source=$BigSphereSource"
+    }
+    if ($Deterministic)
+    {
+        $arguments += '--capture-deterministic'
+    }
+    # スキャン資産は既定で置くので、Off のときだけ引数を渡す。
+    if ($ScanProps -eq 'Off')
+    {
+        $arguments += '--startup-scan-props=off'
+    }
+    if ($StressTextures)
+    {
+        $arguments += '--stress-textures'
+    }
+    if ($SkinnedProbe)
+    {
+        $arguments += '--startup-skinned-probe'
+    }
+    if ($StressGeometry)
+    {
+        $arguments += "--stress-geometry=$StressGeometryCount"
+    }
+    if ($VramBudgetMb -gt 0)
+    {
+        $arguments += "--vram-budget-mb=$VramBudgetMb"
+    }
+    # 遮蔽カリングは既定で有効なので、Off のときだけ引数を渡す。
+    if ($MegaOcclusion -eq 'Off')
+    {
+        $arguments += '--mega-occlusion=off'
+    }
+    # ジオメトリのページのストリーミングも既定で有効なので、Off のときだけ引数を渡す。
+    if ($GeometryStreaming -eq 'Off')
+    {
+        $arguments += '--geometry-streaming=off'
+    }
+    # ビジビリティバッファは既定で有効だが、撮影の条件を明示するため、どのモードでも引数を渡す。
+    $arguments += "--visibility-buffer=$($VisibilityBuffer.ToLowerInvariant())"
+    # ソフトウェアラスタは既定が Off だが、撮影の条件を明示するため、どちらでも引数を渡す。しきい値は指定したときだけ渡す
+    $arguments += "--sw-raster=$($SwRaster.ToLowerInvariant())"
+    if ($SwRasterMaxPx -gt 0.0)
+    {
+        $arguments += ('--sw-raster-max-px=' + $SwRasterMaxPx.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))
+    }
+    # デバッグの表示は既定が Normal なので、Clusters・Lod・Wireframe のときだけ引数を渡す。
+    if ($DebugView -ne 'Normal')
+    {
+        $arguments += "--debug-view=$($DebugView.ToLowerInvariant())"
+    }
+    foreach ($extraArgument in (($ExtraGameArguments -join ' ').Split(@(' ', ','), [StringSplitOptions]::RemoveEmptyEntries)))
+    {
+        $arguments += $extraArgument
+    }
+    if ($Night)
+    {
+        $arguments += '--night'
+    }
+    # TAA は起動画面の既定なので引数を渡さず、既定のまま撮る。
+    if ($AntiAliasing -ne 'TAA')
+    {
+        $arguments += "--anti-aliasing=$($AntiAliasing.ToLowerInvariant())"
+    }
+    if ($RenderScale -lt 1.0)
+    {
+        $arguments += "--render-scale=$($RenderScale.ToString($invariant))"
+    }
+    if ($DebugDrawTestLines)
+    {
+        $arguments += '--debug-draw-test-lines'
+    }
+    $tracePath = Join-Path $outRoot "$($view.Name).trace.csv"
+    # Vulkan の検証レイヤーのメッセージ（VUID）は Game.log に入らず、Debug の Game はコンソールへ張り替えた標準エラーへ出す（
+    # リダイレクトでは取れない）。検証レイヤー自身のログ出力を視点ごとのファイルへ向け、VUID を数える（Debug だけ。他は検証レイヤーが無効）。
+    $viewValidationLogPath = Join-Path $outRoot "$($view.Name).Validation.log"
+    Remove-Item -LiteralPath $viewValidationLogPath -Force -ErrorAction SilentlyContinue
+    if ($GpuTimingFrames -gt 0)
+    {
+        Remove-Item -LiteralPath $tracePath -Force -ErrorAction SilentlyContinue
+        $arguments += "--trace-file=`"$tracePath`""
+        $arguments += "--exit-after-rendered-frames=$GpuTimingFrames"
+    }
 
+    # RTGI を切るときは環境変数で起動画面へ伝える（起動した Game だけが受け継ぐよう、起動の直後に戻す）。
+    $previousRtgiSetting = $env:NORVES_STARTUP_RTGI
+    $previousGBufferDebugSetting = $env:NORVES_GBUFFER_DEBUG
+    $previousValidationSettings = @{}
+    foreach ($validationVariable in @('VK_KHRONOS_VALIDATION_DEBUG_ACTION', 'VK_KHRONOS_VALIDATION_LOG_FILENAME', 'VK_KHRONOS_VALIDATION_REPORT_FLAGS'))
+    {
+        $previousValidationSettings[$validationVariable] = [Environment]::GetEnvironmentVariable($validationVariable)
+    }
+    if ($Configuration -eq 'Debug')
+    {
+        $env:VK_KHRONOS_VALIDATION_DEBUG_ACTION = 'VK_DBG_LAYER_ACTION_LOG_MSG'
+        $env:VK_KHRONOS_VALIDATION_LOG_FILENAME = $viewValidationLogPath
+        $env:VK_KHRONOS_VALIDATION_REPORT_FLAGS = 'error,warn'
+    }
+    if ($GBufferDebug -ne 'Off')
+    {
+        $env:NORVES_GBUFFER_DEBUG = $GBufferDebug.ToLowerInvariant()
+    }
+    else
+    {
+        Remove-Item Env:NORVES_GBUFFER_DEBUG -ErrorAction SilentlyContinue
+    }
+    if ($Rtgi -eq 'Off')
+    {
+        $env:NORVES_STARTUP_RTGI = '0'
+    }
+    else
+    {
+        Remove-Item Env:NORVES_STARTUP_RTGI -ErrorAction SilentlyContinue
+    }
     # アセットは作業ディレクトリからの相対パスで読むため、リポジトリのルートで起動する。
-    $process = Start-Process -FilePath $gamePath -ArgumentList $arguments -WorkingDirectory $repoRoot -PassThru
+    try
+    {
+        $process = Start-Process -FilePath $gamePath -ArgumentList $arguments -WorkingDirectory $repoRoot -PassThru
+    }
+    finally
+    {
+        if ($null -eq $previousRtgiSetting) { Remove-Item Env:NORVES_STARTUP_RTGI -ErrorAction SilentlyContinue }
+        else { $env:NORVES_STARTUP_RTGI = $previousRtgiSetting }
+        if ($null -eq $previousGBufferDebugSetting) { Remove-Item Env:NORVES_GBUFFER_DEBUG -ErrorAction SilentlyContinue }
+        else { $env:NORVES_GBUFFER_DEBUG = $previousGBufferDebugSetting }
+        foreach ($validationVariable in $previousValidationSettings.Keys)
+        {
+            [Environment]::SetEnvironmentVariable($validationVariable, $previousValidationSettings[$validationVariable])
+        }
+    }
     [void]$process.Handle
     $exitCode = $null
     if ($process.WaitForExit($TimeoutSeconds * 1000))
@@ -238,53 +955,661 @@ foreach ($view in $shots)
         $failures += "$($view.Name): Game の終了コードが $exitCode"
     }
 
+    # 間接光の出どころ（rtgi・ibl など。LightingPass が切り替わりのときだけ記録する）の最後の値。
+    $indirectLighting = $null
+    $vramLedgerTextureMb = $null
+    $cookedMissingCount = $null
+    $vramPools = $null
+    $gpuDriver = $null
+    $geometryPages = $null
+    $occlusionStats = $null
+    $swRasterStats = $null
+    $stressMaterials = $null
+    $stressGeometryInfo = $null
+    $skinnedProbeInfo = $null
     if (Test-Path -LiteralPath $viewLogPath)
     {
+        # GPU_DRIVER（GPU 名とドライバの版。起動時に1回）
+        $driverLine = @(Select-String -LiteralPath $viewLogPath -Pattern 'GPU_DRIVER (name=.+)')
+        if ($driverLine.Count -gt 0)
+        {
+            $gpuDriver = $driverLine[0].Matches[0].Groups[1].Value.Trim()
+        }
+        # VRAM_POOLS（予算の割り振りと VT の使用量）。数値は "none"（上限なし）のこともある。使用量は最大と最後の値を残す。
+        $poolLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'VRAM_POOLS cap_mb=(\w+) non_pool_mb=(\d+) vt_target_mb=(\w+) vt_used_mb=(\d+) vt_evicted_tiles=(\d+)')
+        if ($poolLines.Count -gt 0)
+        {
+            $lastPool = $poolLines[$poolLines.Count - 1].Matches[0].Groups
+            $maxUsed = ($poolLines | ForEach-Object { [uint64]$_.Matches[0].Groups[4].Value } | Measure-Object -Maximum).Maximum
+            $targetText = $lastPool[3].Value
+            $vramPools = [ordered]@{
+                cap_mb = $lastPool[1].Value
+                non_pool_mb = [uint64]$lastPool[2].Value
+                vt_target_mb = $targetText
+                vt_used_mb_last = [uint64]$lastPool[4].Value
+                vt_used_mb_max = [uint64]$maxUsed
+                vt_evicted_tiles = [uint64]$lastPool[5].Value
+                lines = $poolLines.Count
+            }
+            # 同じ行の後ろに続くジオメトリの枠（目標・プールの使用量・追い出したページの数）。無い版のログでは書かない
+            $geometryPool = [regex]::Match($poolLines[$poolLines.Count - 1].Line, 'geometry_target_mb=(\w+) geometry_used_mb=(\d+) geometry_evicted_pages=(\d+)')
+            if ($geometryPool.Success)
+            {
+                $vramPools['geometry_target_mb'] = $geometryPool.Groups[1].Value
+                $vramPools['geometry_used_mb_last'] = [uint64]$geometryPool.Groups[2].Value
+                $vramPools['geometry_evicted_pages'] = [uint64]$geometryPool.Groups[3].Value
+            }
+        }
+        # GEOMETRY_PAGES_STREAMED（ストリーミングするメッシュの数と、根のページ・ストリーミングするページの大きさ）と、
+        # GEOMETRY_PAGES（常駐するページの数・量・追い出し。最後の行）
+        $streamedMeshLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'GEOMETRY_PAGES_STREAMED mesh=')
+        $pageStateLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'GEOMETRY_PAGES resident=(\d+) uploading=(\d+) ready=(\d+) reading=(\d+) wanted=(\d+) failed=(\d+) resident_mb=([\d.]+) evicted=(\d+)')
+        if ($streamedMeshLines.Count -gt 0 -or $pageStateLines.Count -gt 0)
+        {
+            $geometryPages = [ordered]@{ streamed_meshes = $streamedMeshLines.Count }
+            if ($pageStateLines.Count -gt 0)
+            {
+                $lastPages = $pageStateLines[$pageStateLines.Count - 1].Matches[0].Groups
+                $geometryPages['resident_pages'] = [uint64]$lastPages[1].Value
+                $geometryPages['uploading_pages'] = [uint64]$lastPages[2].Value
+                $geometryPages['ready_pages'] = [uint64]$lastPages[3].Value
+                $geometryPages['reading_pages'] = [uint64]$lastPages[4].Value
+                $geometryPages['wanted_pages'] = [uint64]$lastPages[5].Value
+                $geometryPages['failed_pages'] = [uint64]$lastPages[6].Value
+                $geometryPages['resident_mb'] = [double]::Parse($lastPages[7].Value, [Globalization.CultureInfo]::InvariantCulture)
+                $geometryPages['evicted_pages'] = [uint64]$lastPages[8].Value
+            }
+        }
+        # MEGA_OCCLUSION（遮蔽カリングの1フレームの数。1パス目で描いた数・2パス目で判定した数・描いた数・隠れていた数）。最後の値と、
+        # 描いた数・隠れていた数の最大を残す。遮蔽カリングを使えない撮影（--mega-occlusion=off など）はログが無い。
+        # 行は描画フレームと相対フレームの番号（frame=… epoch_frame=…）を持つ版と、持たない旧版の両方を読む。
+        $occlusionLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'MEGA_OCCLUSION (?:frame=\d+ epoch_frame=-?\d+ )?pass1=(\d+) pass2_tested=(\d+) pass2_drawn=(\d+) occluded=(\d+)')
+        if ($occlusionLines.Count -gt 0)
+        {
+            $lastOcclusion = $occlusionLines[$occlusionLines.Count - 1].Matches[0].Groups
+            $maxOccluded = ($occlusionLines | ForEach-Object { [uint64]$_.Matches[0].Groups[4].Value } | Measure-Object -Maximum).Maximum
+            $occlusionStats = [ordered]@{
+                pass1 = [uint64]$lastOcclusion[1].Value
+                pass2_tested = [uint64]$lastOcclusion[2].Value
+                pass2_drawn = [uint64]$lastOcclusion[3].Value
+                occluded = [uint64]$lastOcclusion[4].Value
+                occluded_max = [uint64]$maxOccluded
+                lines = $occlusionLines.Count
+            }
+        }
+        # SW_RASTER_BIN（ソフトウェアラスタへの振り分けの 1 フレームの数。1 パス目・2 パス目の一覧へ積んだ数・ハードだけの数・満杯で積めなかった数）。
+        # 最後の値と、一覧へ積んだ数（1 パス目 + 2 パス目）の最大を残す。振り分けないときはログが無く、理由は SW_RASTER_FALLBACK に出る。
+        # あわせて、ハードのコマンドを空振りにした数（zeroed）・ソフトが走らせたワークグループの数（sw_groups）が pass1 + pass2 と一致すること、
+        # ソフトの dispatch の数（sw_dispatches。1 フレーム 2 回）、SW_RASTER_OVERSIZE（矩形の上限を超えて描かなかった三角形。0 であるべき）を残す。
+        $swRasterLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SW_RASTER_BIN pass1=(\d+) pass2=(\d+) hw=(\d+) overflow=(\d+)(?: zeroed=(\d+) sw_groups=(\d+) sw_dispatches=(\d+))?')
+        $swRasterOversizeLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SW_RASTER_OVERSIZE=(\d+)')
+        $swRasterFallback = @(Select-String -LiteralPath $viewLogPath -Pattern 'SW_RASTER_FALLBACK reason=(\S+)')
+        if ($swRasterLines.Count -gt 0 -or $swRasterFallback.Count -gt 0)
+        {
+            $swRasterStats = [ordered]@{ lines = $swRasterLines.Count; fallback_reason = $null }
+            if ($swRasterFallback.Count -gt 0)
+            {
+                $swRasterStats.fallback_reason = $swRasterFallback[0].Matches[0].Groups[1].Value
+            }
+            if ($swRasterLines.Count -gt 0)
+            {
+                $lastSwRaster = $swRasterLines[$swRasterLines.Count - 1].Matches[0].Groups
+                $maxSwRaster = ($swRasterLines | ForEach-Object { [uint64]$_.Matches[0].Groups[1].Value + [uint64]$_.Matches[0].Groups[2].Value } | Measure-Object -Maximum).Maximum
+                $swRasterStats.pass1 = [uint64]$lastSwRaster[1].Value
+                $swRasterStats.pass2 = [uint64]$lastSwRaster[2].Value
+                $swRasterStats.hw = [uint64]$lastSwRaster[3].Value
+                $swRasterStats.overflow = [uint64]$lastSwRaster[4].Value
+                $swRasterStats.binned_max = [uint64]$maxSwRaster
+                $positiveLines = @($swRasterLines | Where-Object { $_.Matches[0].Groups[5].Success })
+                if ($positiveLines.Count -gt 0)
+                {
+                    $binned = { param($line) [uint64]$line.Matches[0].Groups[1].Value + [uint64]$line.Matches[0].Groups[2].Value }
+                    $swRasterStats.positive_lines = $positiveLines.Count
+                    $swRasterStats.zeroed_mismatch_lines = @($positiveLines | Where-Object { [uint64]$_.Matches[0].Groups[5].Value -ne (& $binned $_) }).Count
+                    $swRasterStats.sw_groups_mismatch_lines = @($positiveLines | Where-Object { [uint64]$_.Matches[0].Groups[6].Value -ne (& $binned $_) }).Count
+                    $swRasterStats.zeroed_max = [uint64](($positiveLines | ForEach-Object { [uint64]$_.Matches[0].Groups[5].Value } | Measure-Object -Maximum).Maximum)
+                    $swRasterStats.sw_dispatches_min = [uint64](($positiveLines | ForEach-Object { [uint64]$_.Matches[0].Groups[7].Value } | Measure-Object -Minimum).Minimum)
+                    $swRasterStats.sw_dispatches_max = [uint64](($positiveLines | ForEach-Object { [uint64]$_.Matches[0].Groups[7].Value } | Measure-Object -Maximum).Maximum)
+                }
+            }
+            if ($swRasterOversizeLines.Count -gt 0)
+            {
+                $swRasterStats.oversize_lines = $swRasterOversizeLines.Count
+                $swRasterStats.oversize_max = [uint64](($swRasterOversizeLines | ForEach-Object { [uint64]$_.Matches[0].Groups[1].Value } | Measure-Object -Maximum).Maximum)
+            }
+        }
+        $stressLine = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_TEXTURES materials=(\d+) of (\d+)')
+        if ($stressLine.Count -gt 0)
+        {
+            $stressGroups = $stressLine[$stressLine.Count - 1].Matches[0].Groups
+            $stressMaterials = [ordered]@{ present = [int]$stressGroups[1].Value; total = [int]$stressGroups[2].Value }
+        }
+
+        # ジオメトリの負荷モードの配置（並べた数・元の数）と、元の資産が揃わなかった警告・何も並べなかった警告
+        $stressGeometryPlaced = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_GEOMETRY_PLACED count=(\d+) sources=(\d+)')
+        $stressGeometryWarnings = @(Select-String -LiteralPath $viewLogPath -Pattern 'STRESS_GEOMETRY_(SKIPPED|SOURCES_PARTIAL)')
+        if ($stressGeometryPlaced.Count -gt 0 -or $stressGeometryWarnings.Count -gt 0)
+        {
+            $stressGeometryInfo = [ordered]@{ placed = 0; sources = 0; warnings = $stressGeometryWarnings.Count }
+            if ($stressGeometryPlaced.Count -gt 0)
+            {
+                $placedGroups = $stressGeometryPlaced[$stressGeometryPlaced.Count - 1].Matches[0].Groups
+                $stressGeometryInfo.placed = [int]$placedGroups[1].Value
+                $stressGeometryInfo.sources = [int]$placedGroups[2].Value
+            }
+        }
+
+        # 骨付きのパネル（--startup-skinned-probe）: 置けた体の数・置けなかった警告・ID のラスタが描いたスキニングの塊の数（最後の VIS_RASTER）。
+        if ($SkinnedProbe)
+        {
+            $probeBodies = @(Select-String -LiteralPath $viewLogPath -Pattern 'STARTUP_SKINNED_PROBE bodies=(\d+)')
+            $probeSkipped = @(Select-String -LiteralPath $viewLogPath -Pattern 'STARTUP_SKINNED_PROBE_SKIPPED' -SimpleMatch)
+            $visRasterLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'VIS_RASTER mega_command_slots=\d+ procedural_chunks=\d+ skinned_chunks=(\d+) dropped_chunks=(\d+)')
+            $skinnedProbeInfo = [ordered]@{
+                bodies = 0
+                skipped = $probeSkipped.Count
+                skinned_chunks = $null
+                dropped_chunks = $null
+            }
+            if ($probeBodies.Count -gt 0)
+            {
+                $skinnedProbeInfo.bodies = [int]$probeBodies[$probeBodies.Count - 1].Matches[0].Groups[1].Value
+            }
+            if ($visRasterLines.Count -gt 0)
+            {
+                $lastVisRaster = $visRasterLines[$visRasterLines.Count - 1].Matches[0].Groups
+                $skinnedProbeInfo.skinned_chunks = [int]$lastVisRaster[1].Value
+                $skinnedProbeInfo.dropped_chunks = [int]$lastVisRaster[2].Value
+            }
+        }
+
+        # テクスチャの VRAM（最後の VRAM_LEDGER）と、クック済みが無くばらで読んだテクスチャの数。
+        $ledgerTextureMb = @(Select-String -LiteralPath $viewLogPath -Pattern 'VRAM_LEDGER textures=\d+ texture_mb=([0-9.]+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value })
+        if ($ledgerTextureMb.Count -gt 0)
+        {
+            $vramLedgerTextureMb = [double]::Parse($ledgerTextureMb[$ledgerTextureMb.Count - 1], $invariant)
+        }
+        $cookedMissingCount = @(Select-String -LiteralPath $viewLogPath -Pattern 'TEXTURE_COOKED_MISSING path=' -SimpleMatch).Count
+        $indirectSources = @(Select-String -LiteralPath $viewLogPath -Pattern 'INDIRECT_LIGHTING source=(\w+)' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value })
+        if ($indirectSources.Count -gt 0)
+        {
+            $indirectLighting = $indirectSources[$indirectSources.Count - 1]
+        }
         $shaderFailures = @(Select-String -LiteralPath $viewLogPath -Pattern 'Failed to compile shader' -SimpleMatch |
             Where-Object { -not (Test-AllowedShaderFailure $_.Line) })
         foreach ($line in $shaderFailures)
         {
             $failures += "$($view.Name): $($line.Line.Trim())"
         }
+        if (-not $StressTextures -and $VtUsedLimitMb -gt 0 -and $null -ne $vramPools -and $vramPools.vt_used_mb_max -gt [uint64]$VtUsedLimitMb)
+        {
+            $failures += "$($view.Name): VT の常駐量が上限を超えた（vt_used_mb_max=$($vramPools.vt_used_mb_max) / 上限 $VtUsedLimitMb MB。フィードバックの LOD が壊れていないか確認する。GPU_DRIVER: $gpuDriver）"
+        }
+        if ($StressTextures)
+        {
+            if ($null -eq $stressMaterials -or $stressMaterials.present -ne $stressMaterials.total)
+            {
+                $failures += "$($view.Name): 負荷用の材質がそろっていない（STRESS_TEXTURES materials=$(if ($null -eq $stressMaterials) { 'なし' } else { "$($stressMaterials.present) of $($stressMaterials.total)" })。FetchPolyHavenTextures.ps1 -StressSet と CookAssets を実行する）"
+            }
+            if ($null -ne $vramPools -and $vramPools.vt_target_mb -ne 'none' -and $vramPools.vt_used_mb_last -gt [uint64]$vramPools.vt_target_mb)
+            {
+                $failures += "$($view.Name): VT の使用量が目標を超えたまま終わった（vt_used_mb_last=$($vramPools.vt_used_mb_last) vt_target_mb=$($vramPools.vt_target_mb)）"
+            }
+        }
+        if ($SkinnedProbe)
+        {
+            # 置けなかったのに result=pass になると、スキニングを撮れていない撮影が合格に見える。体の数と、ID に描かれた塊の数で判定する。
+            $expectedProbeBodies = 2
+            if ($null -eq $skinnedProbeInfo -or $skinnedProbeInfo.skipped -gt 0 -or $skinnedProbeInfo.bodies -ne $expectedProbeBodies)
+            {
+                $failures += "$($view.Name): 骨付きのパネルが $expectedProbeBodies 体そろっていない（STARTUP_SKINNED_PROBE bodies=$(if ($null -eq $skinnedProbeInfo) { 'なし' } else { $skinnedProbeInfo.bodies }) skipped=$(if ($null -eq $skinnedProbeInfo) { 'なし' } else { $skinnedProbeInfo.skipped })）"
+            }
+            elseif ($VisibilityBuffer -ne 'Off')
+            {
+                if ($null -eq $skinnedProbeInfo.skinned_chunks -or $skinnedProbeInfo.skinned_chunks -lt $expectedProbeBodies)
+                {
+                    $failures += "$($view.Name): スキニングの塊が ID に描かれていない（VIS_RASTER skinned_chunks=$(if ($null -eq $skinnedProbeInfo.skinned_chunks) { 'なし' } else { $skinnedProbeInfo.skinned_chunks }) / 体の数 $expectedProbeBodies 以上が要る。予備の経路（GBuffer）に戻っていないか VISBUFFER_FALLBACK を確認する）"
+                }
+                elseif ($skinnedProbeInfo.dropped_chunks -gt 0)
+                {
+                    $failures += "$($view.Name): スキニングの塊が落ちた（VIS_RASTER dropped_chunks=$($skinnedProbeInfo.dropped_chunks)）"
+                }
+            }
+        }
+        if ($StressGeometry)
+        {
+            if ($null -eq $stressGeometryInfo -or $stressGeometryInfo.placed -ne $StressGeometryCount)
+            {
+                $failures += "$($view.Name): 負荷用のジオメトリが指定の数だけ並んでいない（STRESS_GEOMETRY_PLACED count=$(if ($null -eq $stressGeometryInfo) { 'なし' } else { $stressGeometryInfo.placed }) 指定=$StressGeometryCount）"
+            }
+            if ($null -ne $vramPools -and $vramPools.Contains('geometry_target_mb') -and $vramPools.geometry_target_mb -ne 'none' -and
+                $vramPools.geometry_used_mb_last -gt [uint64]$vramPools.geometry_target_mb)
+            {
+                $failures += "$($view.Name): ジオメトリの使用量が目標を超えたまま終わった（geometry_used_mb_last=$($vramPools.geometry_used_mb_last) geometry_target_mb=$($vramPools.geometry_target_mb)）"
+            }
+        }
+        if ($images.Count -gt 1)
+        {
+            # 連続撮影の数え始め（アセットが落ち着いた描画フレーム）は --capture-png と同じでなければならない。
+            $processorBaseline = @(Select-String -LiteralPath $viewLogPath -Pattern 'asset settle baseline rendered=(\d+)' |
+                ForEach-Object { $_.Matches[0].Groups[1].Value })
+            $sequenceBaseline = @(Select-String -LiteralPath $viewLogPath -Pattern 'SEQUENCE_CAPTURE baseline rendered=(\d+)' |
+                ForEach-Object { $_.Matches[0].Groups[1].Value })
+            # ページのストリーミングが続く負荷では、連続撮影が終わった後も落ち着いた判定が立ち直るので（--capture-png の側だけ
+            # 数え始めが増える）、連続撮影の並びが --capture-png の並びの先頭と一致することを確かめる。
+            $baselineMismatch = $processorBaseline.Count -eq 0 -or $sequenceBaseline.Count -eq 0 -or $sequenceBaseline.Count -gt $processorBaseline.Count
+            for ($baselineIndex = 0; -not $baselineMismatch -and $baselineIndex -lt $sequenceBaseline.Count; ++$baselineIndex)
+            {
+                if ($processorBaseline[$baselineIndex] -ne $sequenceBaseline[$baselineIndex])
+                {
+                    $baselineMismatch = $true
+                }
+            }
+            if ($baselineMismatch)
+            {
+                $failures += "$($view.Name): 連続撮影の数え始めが --capture-png と食い違う（capture_png=$($processorBaseline -join '/') sequence=$($sequenceBaseline -join '/')）"
+            }
+        }
     }
-    else
+    elseif ($Configuration -ne 'Release')
     {
         $failures += "$($view.Name): Game.log が無い"
     }
+    # Release はログが無効（NORVES_ENABLE_LOGGING=0）で Game.log を書かないため、ログの検査を飛ばす。
 
-    if (-not (Test-Path -LiteralPath $pngPath))
+    # 検証レイヤーのログ。エラーが 1 件でもあれば失敗にする。数えるのはメッセージの見出しの行（"Validation Error:"）で、
+    # VUID を持たないエラー（UNASSIGNED-Threading-* など）も含み、本文の "#VUID-" の行を二重に数えない。
+    # Debug でログのファイルが無いときは、検証レイヤーがログの設定を読んでいない（落ちようのない合格になる）ので失敗にする。
+    $validationInfo = $null
+    if (Test-Path -LiteralPath $viewValidationLogPath)
     {
-        $failures += "$($view.Name): PNG が無い"
-        continue
+        $validationLines = @(Get-Content -LiteralPath $viewValidationLogPath -Encoding Default | Where-Object { $_ -match '\S' })
+        $errorLines = @($validationLines | Where-Object { $_ -match 'Validation Error:' })
+        $warningLines = @($validationLines | Where-Object { $_ -match 'Validation Warning:' })
+        $validationInfo = [ordered]@{
+            log = "$($view.Name).Validation.log"
+            log_lines = $validationLines.Count
+            error_count = $errorLines.Count
+            warning_count = $warningLines.Count
+            vuid_count = @($errorLines | Where-Object { $_ -match 'VUID-' }).Count
+        }
+        if ($errorLines.Count -gt 0)
+        {
+            $failures += "$($view.Name): 検証レイヤーのエラーが $($errorLines.Count) 件ある（$($view.Name).Validation.log。先頭: $($errorLines[0]))"
+        }
+    }
+    elseif ($Configuration -eq 'Debug')
+    {
+        $failures += "$($view.Name): 検証レイヤーのログ（$($view.Name).Validation.log）が無い（検証レイヤーがログの設定を読んでいない）"
     }
 
-    $measured = [StartupCaptureMetrics]::Measure($pngPath)
-    $result = [ordered]@{
-        view = $view.Name
-        camera = $view.Camera
-        sun_elevation = $view.SunElevation
-        exposure_ev100 = $view.ExposureEV100
-        png = "$($view.Name).png"
-        width = [int]$measured[0]
-        height = [int]$measured[1]
-        mean_luminance = [math]::Round($measured[2], 3)
-        clipped_white_ratio = [math]::Round($measured[3], 6)
-        crushed_black_ratio = [math]::Round($measured[4], 6)
+    foreach ($image in $images)
+    {
+        $imagePath = Join-Path $outRoot "$($image.Name).png"
+        if (-not (Test-Path -LiteralPath $imagePath))
+        {
+            $failures += "$($image.Name): PNG が無い"
+            continue
+        }
+
+        $measured = [StartupCaptureMetrics]::Measure($imagePath)
+        $result = [ordered]@{
+            view = $image.Name
+            camera = $view.Camera
+            sun_elevation = $view.SunElevation
+            exposure_ev100 = $view.ExposureEV100
+            rendered_frames = $image.RenderedFrames
+            png = "$($image.Name).png"
+            game_log = if (Test-Path -LiteralPath $viewLogPath) { "$($view.Name).Game.log" } else { $null }
+            width = [int]$measured[0]
+            height = [int]$measured[1]
+            mean_luminance = [math]::Round($measured[2], 3)
+            clipped_white_ratio = [math]::Round($measured[3], 6)
+            crushed_black_ratio = [math]::Round($measured[4], 6)
+            indirect_lighting = $indirectLighting
+            vram_ledger_texture_mb = $vramLedgerTextureMb
+            cooked_missing_count = $cookedMissingCount
+            vram_pools = $vramPools
+            gpu_driver = $gpuDriver
+            geometry_pages = $geometryPages
+            mega_occlusion = $occlusionStats
+            sw_raster = $swRasterStats
+            vulkan_validation = $validationInfo
+            stress_materials = $stressMaterials
+            stress_geometry = $stressGeometryInfo
+            skinned_probe = $skinnedProbeInfo
+        }
+        $results += [pscustomobject]$result
+        Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5} indirect_lighting={6}" -f `
+            $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio, $result.indirect_lighting)
     }
-    $results += [pscustomobject]$result
-    Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5}" -f `
-        $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio)
+
+    # トレースの最後のフレームから GPU のフレーム時間を集計する（撮影のフレームの直前2つは除く）。
+    if ($GpuTimingFrames -gt 0)
+    {
+        if (-not (Test-Path -LiteralPath $tracePath))
+        {
+            $failures += "$($view.Name): トレースが無い（$tracePath）"
+        }
+        else
+        {
+            # GPU の時間は Type=GPU の行（描画したフレームごとに FrameGPU・AccelerationStructureBuild・
+            # パスごとの区間。Frame 列は区間を記録したフレームの番号）から取る。CPU の時間は Frame 行のうち
+            # 描画したフレームの行（RenderFrameMs > 0）から取る。行数が多いため Import-Csv を使わず1行ずつ読む。
+            $header = @((Get-Content -LiteralPath $tracePath -TotalCount 1) -split ',')
+            $renderFrameColumn = [array]::IndexOf($header, 'RenderFrameMs')
+            $cpuFrameColumn = [array]::IndexOf($header, 'CPUFrameMs')
+            $nameColumn = [array]::IndexOf($header, 'Name')
+            $durationColumn = [array]::IndexOf($header, 'DurationMs')
+            $cpuRows = New-Object System.Collections.Generic.List[double]
+            $gpuScopesByFrame = New-Object 'System.Collections.Generic.SortedDictionary[long,object]'
+            $megaRecordRows = New-Object System.Collections.Generic.List[double]
+            foreach ($line in [IO.File]::ReadLines($tracePath))
+            {
+                if ($line.StartsWith('Scope,'))
+                {
+                    # MegaGeometryPass の CPU の記録の時間（描画フレームごとに1行）
+                    if ($line.Contains('"MegaGeometryPass.RecordFrameCommand"'))
+                    {
+                        $scopeFields = $line -split ','
+                        $megaRecordRows.Add([double]::Parse($scopeFields[$durationColumn], $invariant))
+                    }
+                    continue
+                }
+                if ($line.StartsWith('Frame,'))
+                {
+                    $fields = $line -split ','
+                    if ([double]::Parse($fields[$renderFrameColumn], $invariant) -le 0.0) { continue }
+                    $cpuRows.Add([double]::Parse($fields[$cpuFrameColumn], $invariant))
+                }
+                elseif ($line.StartsWith('GPU,'))
+                {
+                    $fields = $line -split ','
+                    $frameNumber = [long]$fields[1]
+                    if (-not $gpuScopesByFrame.ContainsKey($frameNumber))
+                    {
+                        $gpuScopesByFrame[$frameNumber] = New-Object 'System.Collections.Generic.List[object]'
+                    }
+                    $gpuScopesByFrame[$frameNumber].Add([pscustomobject]@{
+                        Name = $fields[$nameColumn].Trim('"')
+                        Ms = [double]::Parse($fields[$durationColumn], $invariant)
+                    })
+                }
+            }
+            $windowCount = $GpuTimingFrames - 60
+            $cpuArray = $cpuRows.ToArray()
+            $cpuUsable = if ($cpuArray.Count -gt 2) { @($cpuArray[0..($cpuArray.Count - 3)]) } else { @() }
+            $cpuWindow = if ($cpuUsable.Count -gt $windowCount) { @($cpuUsable[($cpuUsable.Count - $windowCount)..($cpuUsable.Count - 1)]) } else { $cpuUsable }
+            $cpuSamples = @($cpuWindow | Where-Object { $_ -gt 0.0 } | Sort-Object)
+            # FrameGPU を持つフレームを番号の順に並べ、撮影のフレームの直前2つを除いた最後の窓を使う。
+            $gpuFrames = @($gpuScopesByFrame.Keys | Where-Object { @($gpuScopesByFrame[$_] | Where-Object { $_.Name -eq 'FrameGPU' -and $_.Ms -gt 0.0 }).Count -gt 0 })
+            $gpuUsable = if ($gpuFrames.Count -gt 2) { @($gpuFrames[0..($gpuFrames.Count - 3)]) } else { @() }
+            $gpuWindow = if ($gpuUsable.Count -gt $windowCount) { @($gpuUsable[($gpuUsable.Count - $windowCount)..($gpuUsable.Count - 1)]) } else { $gpuUsable }
+            $gpuFrameMs = @{}
+            $passSamples = @{}
+            foreach ($frameNumber in $gpuWindow)
+            {
+                foreach ($scope in $gpuScopesByFrame[$frameNumber])
+                {
+                    if ($scope.Name -eq 'FrameGPU') { $gpuFrameMs[$frameNumber] = $scope.Ms; continue }
+                    if (-not $passSamples.ContainsKey($scope.Name)) { $passSamples[$scope.Name] = New-Object System.Collections.Generic.List[double] }
+                    $passSamples[$scope.Name].Add($scope.Ms)
+                }
+            }
+            $gpuSamples = @($gpuWindow | ForEach-Object { $gpuFrameMs[$_] } | Sort-Object)
+            # MegaGeometryPass の CPU の記録の時間も、撮影のフレームの直前2つを除いた最後の窓で集める。
+            $megaRecordArray = $megaRecordRows.ToArray()
+            $megaRecordUsable = if ($megaRecordArray.Count -gt 2) { @($megaRecordArray[0..($megaRecordArray.Count - 3)]) } else { @() }
+            $megaRecordWindow = if ($megaRecordUsable.Count -gt $windowCount) { @($megaRecordUsable[($megaRecordUsable.Count - $windowCount)..($megaRecordUsable.Count - 1)]) } else { $megaRecordUsable }
+            $megaRecordSamples = @($megaRecordWindow | Sort-Object)
+            $megaRecordCpu = $null
+            if ($megaRecordSamples.Count -gt 0)
+            {
+                $megaRecordCpu = [ordered]@{
+                    samples = $megaRecordSamples.Count
+                    median = [math]::Round($megaRecordSamples[[int][math]::Floor(($megaRecordSamples.Count - 1) * 0.5)], 4)
+                    mean = [math]::Round(($megaRecordSamples | Measure-Object -Average).Average, 4)
+                    p95 = [math]::Round($megaRecordSamples[[int][math]::Floor(($megaRecordSamples.Count - 1) * 0.95)], 4)
+                    max = [math]::Round($megaRecordSamples[$megaRecordSamples.Count - 1], 4)
+                }
+            }
+            if ($gpuSamples.Count -lt [math]::Min(50, $windowCount))
+            {
+                $failures += "$($view.Name): GPU のフレーム時間の標本が足りない（$($gpuSamples.Count) 件。統計が無効な構成か、GPU のタイムスタンプが使えない）"
+            }
+            else
+            {
+                $median = $gpuSamples[[int][math]::Floor(($gpuSamples.Count - 1) * 0.5)]
+                $p95 = $gpuSamples[[int][math]::Floor(($gpuSamples.Count - 1) * 0.95)]
+                $maximum = $gpuSamples[$gpuSamples.Count - 1]
+                $mean = ($gpuSamples | Measure-Object -Average).Average
+                $cpuMedian = if ($cpuSamples.Count -gt 0) { $cpuSamples[[int][math]::Floor(($cpuSamples.Count - 1) * 0.5)] } else { $null }
+                # パスごとの中央値（窓の全フレーム）。予算を超えたフレームの内訳と比べる基準にする。
+                $passMedian = @{}
+                foreach ($name in $passSamples.Keys)
+                {
+                    $sortedPass = @($passSamples[$name] | Sort-Object)
+                    $passMedian[$name] = $sortedPass[[int][math]::Floor(($sortedPass.Count - 1) * 0.5)]
+                }
+                $passMedianList = @($passMedian.GetEnumerator() | Sort-Object -Property Value -Descending | ForEach-Object {
+                    [pscustomobject][ordered]@{ pass = $_.Key; median_ms = [math]::Round($_.Value, 3) }
+                })
+                # 予算を超えたフレームごとに、パスの時間・中央値からの増分・どの区間にも入らない残りを書く。
+                $overBudgetFrames = @()
+                foreach ($frameNumber in $gpuWindow)
+                {
+                    $frameMs = $gpuFrameMs[$frameNumber]
+                    if ($frameMs -le $GpuFrameBudgetMs) { continue }
+                    $scopes = @($gpuScopesByFrame[$frameNumber] | Where-Object { $_.Name -ne 'FrameGPU' })
+                    $scopeSum = ($scopes | Measure-Object -Property Ms -Sum).Sum
+                    $passes = @($scopes | Sort-Object -Property Ms -Descending | ForEach-Object {
+                        $baseline = if ($passMedian.ContainsKey($_.Name)) { $passMedian[$_.Name] } else { 0.0 }
+                        [pscustomobject][ordered]@{
+                            pass = $_.Name
+                            ms = [math]::Round($_.Ms, 3)
+                            median_ms = [math]::Round($baseline, 3)
+                            over_median_ms = [math]::Round($_.Ms - $baseline, 3)
+                        }
+                    })
+                    $overBudgetFrames += [pscustomobject][ordered]@{
+                        frame = $frameNumber
+                        frame_gpu_ms = [math]::Round($frameMs, 3)
+                        over_budget_ms = [math]::Round($frameMs - $GpuFrameBudgetMs, 3)
+                        unattributed_ms = [math]::Round($frameMs - $scopeSum, 3)
+                        passes = $passes
+                    }
+                }
+                $timing = [ordered]@{
+                    view = $view.Name
+                    trace = "$($view.Name).trace.csv"
+                    frames = $gpuSamples.Count
+                    gpu_frame_ms_median = [math]::Round($median, 3)
+                    gpu_frame_ms_mean = [math]::Round($mean, 3)
+                    gpu_frame_ms_p95 = [math]::Round($p95, 3)
+                    gpu_frame_ms_max = [math]::Round($maximum, 3)
+                    cpu_frame_ms_median = if ($null -ne $cpuMedian) { [math]::Round($cpuMedian, 3) } else { $null }
+                    mega_record_cpu_ms = $megaRecordCpu
+                    budget_ms = $GpuFrameBudgetMs
+                    # 窓のすべてのフレームが予算以内か（95 パーセンタイルだけで判定しない）。
+                    within_budget = ($maximum -le $GpuFrameBudgetMs)
+                    p95_within_budget = ($p95 -le $GpuFrameBudgetMs)
+                    over_budget_count = $overBudgetFrames.Count
+                    pass_median_ms = $passMedianList
+                    over_budget_frames = $overBudgetFrames
+                }
+                $gpuTiming += [pscustomobject]$timing
+                Write-Output ("CAPTURE_STARTUP_SCENE gpu_timing view={0} frames={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5} cpu_median_ms={6} budget_ms={7} within_budget={8} over_budget_count={9}" -f `
+                    $timing.view, $timing.frames, $timing.gpu_frame_ms_median, $timing.gpu_frame_ms_mean, $timing.gpu_frame_ms_p95,
+                    $timing.gpu_frame_ms_max, $timing.cpu_frame_ms_median, $timing.budget_ms, $timing.within_budget, $timing.over_budget_count)
+                if ($null -ne $megaRecordCpu)
+                {
+                    Write-Output ("CAPTURE_STARTUP_SCENE mega_record_cpu view={0} samples={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5}" -f `
+                        $timing.view, $megaRecordCpu.samples, $megaRecordCpu.median, $megaRecordCpu.mean, $megaRecordCpu.p95, $megaRecordCpu.max)
+                }
+                Write-Output ("CAPTURE_STARTUP_SCENE gpu_pass_median view={0} {1}" -f $timing.view,
+                    (($passMedianList | Select-Object -First 8 | ForEach-Object { "$($_.pass)=$($_.median_ms)" }) -join ' '))
+                foreach ($over in $overBudgetFrames)
+                {
+                    Write-Output ("CAPTURE_STARTUP_SCENE gpu_over_budget view={0} frame={1} frame_gpu_ms={2} over_budget_ms={3} unattributed_ms={4} passes={5}" -f `
+                        $timing.view, $over.frame, $over.frame_gpu_ms, $over.over_budget_ms, $over.unattributed_ms,
+                        (($over.passes | Select-Object -First 6 | ForEach-Object { "{0}:{1}({2})" -f $_.pass, $_.ms, $_.over_median_ms.ToString('+0.###;-0.###;0', $invariant) }) -join ' '))
+                }
+            }
+        }
+    }
+
+    # カメラを止めて続けて撮ったときは、静止した地面の領域で画素の時間方向の標準偏差を求める。
+    if ($stillFrameList.Count -gt 0)
+    {
+        $stillPaths = @($images | ForEach-Object { Join-Path $outRoot "$($_.Name).png" } | Where-Object { Test-Path -LiteralPath $_ })
+        if ($stillPaths.Count -ne $images.Count)
+        {
+            $failures += "$($view.Name): 時間方向の雑音を測る画像が揃っていない（$($stillPaths.Count)/$($images.Count)）"
+        }
+        else
+        {
+            foreach ($region in $view.NoiseRegions)
+            {
+                $noise = [StartupCaptureMetrics]::TemporalNoise([string[]]$stillPaths, [double[]]$region.Rect)
+                $noiseResult = [ordered]@{
+                    view = $view.Name
+                    region = $region.Name
+                    frames = $images.Count
+                    region_pixels = @([int]$noise[3], [int]$noise[4], [int]$noise[5], [int]$noise[6])
+                    temporal_std_display = [math]::Round($noise[0], 4)
+                    temporal_std_linear = [math]::Round($noise[1], 6)
+                    mean_linear = [math]::Round($noise[2], 6)
+                    flicker_ratio = [math]::Round($noise[7], 4)
+                }
+                $temporalNoise += [pscustomobject]$noiseResult
+                Write-Output ("CAPTURE_STARTUP_SCENE temporal_noise view={0} region={1} frames={2} pixels={3} std_display={4} std_linear={5} mean_linear={6} flicker_ratio={7}" -f `
+                    $noiseResult.view, $noiseResult.region, $noiseResult.frames, ($noiseResult.region_pixels -join ','),
+                    $noiseResult.temporal_std_display, $noiseResult.temporal_std_linear, $noiseResult.mean_linear, $noiseResult.flicker_ratio)
+            }
+        }
+    }
+}
+
+# 別の撮影と、視点・領域ごとに時間方向の雑音（表示の標準偏差）の比を求める。
+$noiseComparison = @()
+if ($CompareNoiseWith -ne '')
+{
+    $compareRoot = if ([IO.Path]::IsPathRooted($CompareNoiseWith)) { $CompareNoiseWith } else { Join-Path $repoRoot $CompareNoiseWith }
+    $compareMetricsPath = Join-Path $compareRoot 'metrics.json'
+    if (-not (Test-Path -LiteralPath $compareMetricsPath))
+    {
+        $failures += "比べる撮影の metrics.json が無い: $compareMetricsPath"
+    }
+    else
+    {
+        $compareNoise = @((Get-Content -LiteralPath $compareMetricsPath -Raw -Encoding UTF8 | ConvertFrom-Json).temporal_noise)
+        foreach ($entry in $temporalNoise)
+        {
+            $other = $compareNoise | Where-Object { $_.view -eq $entry.view -and $_.region -eq $entry.region } | Select-Object -First 1
+            if ($null -eq $other)
+            {
+                $failures += "$($entry.view)/$($entry.region): 比べる撮影に同じ領域の測定が無い"
+                continue
+            }
+            $ratio = if ([double]$other.temporal_std_display -gt 0.0) { [double]$entry.temporal_std_display / [double]$other.temporal_std_display } else { [double]::PositiveInfinity }
+            $comparison = [ordered]@{
+                view = $entry.view
+                region = $entry.region
+                std_display = $entry.temporal_std_display
+                compare_std_display = [double]$other.temporal_std_display
+                ratio_display = [math]::Round($ratio, 3)
+                flicker_ratio = $entry.flicker_ratio
+                compare_flicker_ratio = $other.flicker_ratio
+            }
+            $noiseComparison += [pscustomobject]$comparison
+            Write-Output ("CAPTURE_STARTUP_SCENE noise_ratio view={0} region={1} std_display={2} compare_std_display={3} ratio={4} limit={5} flicker_ratio={6} compare_flicker_ratio={7}" -f `
+                $comparison.view, $comparison.region, $comparison.std_display, $comparison.compare_std_display, $comparison.ratio_display,
+                $NoiseRatioLimit, $comparison.flicker_ratio, $comparison.compare_flicker_ratio)
+            if (-not ($ratio -le $NoiseRatioLimit))
+            {
+                $failures += "$($entry.view)/$($entry.region): 時間方向の雑音が比べる撮影の $([math]::Round($ratio, 3)) 倍（上限 $NoiseRatioLimit）"
+            }
+        }
+    }
+}
+
+# 同じコードを -Deterministic で撮った別の撮影と、視点ごとに平均輝度の差と PSNR を求める。
+$deterministicComparison = @()
+if ($CompareDeterministicWith -ne '')
+{
+    $compareImageRoot = if ([IO.Path]::IsPathRooted($CompareDeterministicWith)) { $CompareDeterministicWith } else { Join-Path $repoRoot $CompareDeterministicWith }
+    if (-not (Test-Path -LiteralPath (Join-Path $compareImageRoot 'metrics.json')))
+    {
+        $failures += "比べる撮影の metrics.json が無い: $compareImageRoot"
+    }
+    else
+    {
+        foreach ($entry in $results)
+        {
+            $thisPng = Join-Path $outRoot $entry.png
+            $otherPng = Join-Path $compareImageRoot $entry.png
+            if (-not (Test-Path -LiteralPath $thisPng) -or -not (Test-Path -LiteralPath $otherPng))
+            {
+                $failures += "$($entry.view): 比べる画像が揃っていない（$thisPng / $otherPng）"
+                continue
+            }
+            $difference = [StartupCaptureMetrics]::Compare($thisPng, $otherPng)
+            $meanDifference = [math]::Abs($difference[0] - $difference[1])
+            $withinLimits = ($meanDifference -le $DeterministicMeanLuminanceLimit) -and ($difference[2] -ge $DeterministicPsnrLimit)
+            $comparison = [ordered]@{
+                view = $entry.view
+                png = $entry.png
+                mean_luminance = [math]::Round($difference[0], 4)
+                compare_mean_luminance = [math]::Round($difference[1], 4)
+                mean_luminance_difference = [math]::Round($meanDifference, 4)
+                psnr_db = [math]::Round($difference[2], 3)
+                mismatched_pixel_ratio = [math]::Round($difference[3], 6)
+                max_channel_difference = [int]$difference[4]
+                within_limits = $withinLimits
+            }
+            $deterministicComparison += [pscustomobject]$comparison
+            Write-Output ("CAPTURE_STARTUP_SCENE deterministic_comparison view={0} mean_luminance={1} compare_mean_luminance={2} mean_luminance_difference={3} (limit {4}) psnr_db={5} (limit {6}) mismatched_pixel_ratio={7} max_channel_difference={8} within_limits={9}" -f `
+                $comparison.view, $comparison.mean_luminance, $comparison.compare_mean_luminance, $comparison.mean_luminance_difference,
+                $DeterministicMeanLuminanceLimit, $comparison.psnr_db, $DeterministicPsnrLimit, $comparison.mismatched_pixel_ratio,
+                $comparison.max_channel_difference, $comparison.within_limits)
+            if (-not $withinLimits)
+            {
+                $failures += "$($entry.view): 同じコードの2回の撮影が一致しない（平均輝度の差 $($comparison.mean_luminance_difference) / 上限 $DeterministicMeanLuminanceLimit、PSNR $($comparison.psnr_db) dB / 下限 $DeterministicPsnrLimit dB）"
+            }
+        }
+    }
 }
 
 $metricsPath = Join-Path $outRoot 'metrics.json'
 $metrics = [ordered]@{
     configuration = $Configuration
+    gpu_driver = if ($results.Count -gt 0) { $results[0].gpu_driver } else { $null }
+    vt_used_limit_mb = $VtUsedLimitMb
+    deterministic = [bool]$Deterministic
+    compare_deterministic_with = $CompareDeterministicWith
+    deterministic_mean_luminance_limit = $DeterministicMeanLuminanceLimit
+    deterministic_psnr_limit = $DeterministicPsnrLimit
+    deterministic_comparison = $deterministicComparison
     orbit_degrees_per_second = $OrbitDegreesPerSecond
+    orbit_rendered_frames = $orbitFrameList
     anti_aliasing = $AntiAliasing
+    render_scale = $RenderScale
+    debug_draw_test_lines = [bool]$DebugDrawTestLines
+    night = [bool]$Night
+    rtgi = $Rtgi
+    still_rendered_frames = $stillFrameList
     views = $results
+    temporal_noise = $temporalNoise
+    compare_noise_with = $CompareNoiseWith
+    noise_ratio_limit = $NoiseRatioLimit
+    noise_comparison = $noiseComparison
+    gpu_timing_frames = $GpuTimingFrames
+    gpu_timing = $gpuTiming
     failures = $failures
 }
-[IO.File]::WriteAllText($metricsPath, ($metrics | ConvertTo-Json -Depth 4), (New-Object System.Text.UTF8Encoding($false)))
+[IO.File]::WriteAllText($metricsPath, ($metrics | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
 
 if ($failures.Count -gt 0)
 {

@@ -220,8 +220,8 @@ namespace NorvesLib::Core::Rendering
                 commandList->SetScissor(command.Scissor);
             }
 
-            commandList->SetVertexBuffer(mesh2D.VertexBuffer, 0, 0);
-            commandList->SetIndexBuffer(mesh2D.IndexBuffer, 0, mesh2D.IndexType);
+            commandList->SetVertexBuffer(mesh2D.VertexBuffer, mesh2D.VertexBufferOffsetBytes, 0);
+            commandList->SetIndexBuffer(mesh2D.IndexBuffer, mesh2D.IndexBufferOffsetBytes, mesh2D.IndexType);
             commandList->DrawIndexed(mesh2D.IndexCount, mesh2D.IndexOffset, mesh2D.VertexOffset);
 
             ++m_Stats.DrawCallCount;

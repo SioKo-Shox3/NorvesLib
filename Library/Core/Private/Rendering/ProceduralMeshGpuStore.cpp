@@ -1,15 +1,58 @@
-#include "Rendering/ProceduralMeshGpuStore.h"
+﻿#include "Rendering/ProceduralMeshGpuStore.h"
 
 #include "Rendering/MeshTypes.h"
+#include "Rendering/ProceduralMeshGenerator.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "Logging/LogMacros.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        // 描画に加えて、計算シェーダー（storage）とアドレス参照（BDA）から頂点・インデックスを読めるようにする。
+        // BDA が使えないデバイスでは RHI 側が用途を無視する。
+        const RHI::ResourceUsage kVertexBufferUsage = RHI::ResourceUsage::VertexBuffer |
+                                                       RHI::ResourceUsage::StorageBuffer |
+                                                       RHI::ResourceUsage::ShaderRead |
+                                                       RHI::ResourceUsage::BufferDeviceAddress;
+        const RHI::ResourceUsage kIndexBufferUsage = RHI::ResourceUsage::IndexBuffer |
+                                                      RHI::ResourceUsage::StorageBuffer |
+                                                      RHI::ResourceUsage::ShaderRead |
+                                                      RHI::ResourceUsage::BufferDeviceAddress;
+
+        // 頂点の位置からローカル空間のAABBを求める。GBufferPass はこの置き場のメッシュを Mesh3DVertex の並びで
+        // 描くので、その大きさで割り切れるときだけ位置を読む。非有限の位置があれば求めない。
+        bool ComputeMesh3DVertexBounds(const void *vertices, size_t vertexSize, BoundingBox &outBounds)
+        {
+            if (vertices == nullptr || vertexSize < sizeof(Mesh3DVertex) || vertexSize % sizeof(Mesh3DVertex) != 0)
+            {
+                return false;
+            }
+            const auto *meshVertices = static_cast<const Mesh3DVertex *>(vertices);
+            const size_t vertexCount = vertexSize / sizeof(Mesh3DVertex);
+            BoundingBox bounds;
+            bounds.MinX = bounds.MaxX = meshVertices[0].Position[0];
+            bounds.MinY = bounds.MaxY = meshVertices[0].Position[1];
+            bounds.MinZ = bounds.MaxZ = meshVertices[0].Position[2];
+            for (size_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+            {
+                const float *position = meshVertices[vertexIndex].Position;
+                if (!std::isfinite(position[0]) || !std::isfinite(position[1]) || !std::isfinite(position[2]))
+                {
+                    return false;
+                }
+                bounds.Expand(position[0], position[1], position[2]);
+            }
+            outBounds = bounds;
+            return true;
+        }
+    }
+
     ProceduralMeshGpuStore::ProceduralMeshGpuStore(Container::TSharedPtr<RHI::IDevice> device)
         : m_Device(std::move(device))
     {
@@ -51,7 +94,7 @@ namespace NorvesLib::Core::Rendering
 
         RHI::BufferDesc vbDesc(
             static_cast<uint64_t>(vertexSize),
-            RHI::ResourceUsage::VertexBuffer,
+            kVertexBufferUsage,
             true,
             "MeshVB");
         auto vertexBuffer = m_Device->CreateBuffer(vbDesc);
@@ -65,7 +108,7 @@ namespace NorvesLib::Core::Rendering
         const size_t ibSize = static_cast<size_t>(indexCount) * sizeof(uint32_t);
         RHI::BufferDesc ibDesc(
             static_cast<uint64_t>(ibSize),
-            RHI::ResourceUsage::IndexBuffer,
+            kIndexBufferUsage,
             true,
             "MeshIB");
         auto indexBuffer = m_Device->CreateBuffer(ibDesc);
@@ -80,6 +123,7 @@ namespace NorvesLib::Core::Rendering
         gpuData.VertexBuffer = vertexBuffer;
         gpuData.IndexBuffer = indexBuffer;
         gpuData.IndexCount = indexCount;
+        gpuData.bHasLocalBounds = ComputeMesh3DVertexBounds(vertices, vertexSize, gpuData.LocalBounds);
         gpuData.SubMeshCount = std::min(subMeshCount, MAX_MATERIAL_SLOTS);
         for (uint32_t i = 0; i < gpuData.SubMeshCount; ++i)
         {
@@ -134,6 +178,23 @@ namespace NorvesLib::Core::Rendering
             out[i] = gpuData.SubMeshes[i];
         }
 
+        return true;
+    }
+
+    bool ProceduralMeshGpuStore::TryGetLocalBounds(MeshDataHandle handle, BoundingBox &outBounds) const
+    {
+        if (!handle.IsValid())
+        {
+            return false;
+        }
+
+        Thread::ScopedLock lock(m_Mutex);
+        auto it = m_Meshes.find(handle.Id);
+        if (it == m_Meshes.end() || !it->second.bHasLocalBounds)
+        {
+            return false;
+        }
+        outBounds = it->second.LocalBounds;
         return true;
     }
 

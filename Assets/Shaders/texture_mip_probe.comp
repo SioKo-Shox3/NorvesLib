@@ -1,0 +1,41 @@
+﻿#version 450
+
+// ========================================
+// テクスチャのミップごとの中身を読み出す確認用コンピュートシェーダー
+//
+// BC 形式や R16 のテクスチャへ全ミップを上げたあと、ミップとテクセルを指定して texelFetch し、
+// 結果をストレージバッファへ書く。GPU のテスト（RHIBlockCompressedTextureVulkanTest）が
+// 8x8・2段のテクスチャの各ブロックの色を読み戻して確かめるために使う。
+// ========================================
+
+layout(local_size_x = 8, local_size_y = 1, local_size_z = 1) in;
+
+const uint PROBE_COUNT = 5u;
+
+layout(set = 0, binding = 0) uniform sampler2D u_Texture;
+
+layout(std430, set = 0, binding = 1) buffer ProbeResults
+{
+    vec4 colors[8];
+} results;
+
+// x: ミップ、y: テクセルの x、z: テクセルの y。
+// ミップ0（8x8）の4つのブロックの中と、ミップ1（4x4）の1ブロックの中を読む。
+const ivec3 PROBES[5] = ivec3[5](
+    ivec3(0, 1, 1),
+    ivec3(0, 5, 1),
+    ivec3(0, 1, 5),
+    ivec3(0, 5, 5),
+    ivec3(1, 2, 2));
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= PROBE_COUNT)
+    {
+        return;
+    }
+
+    ivec3 probe = PROBES[index];
+    results.colors[index] = texelFetch(u_Texture, probe.yz, probe.x);
+}

@@ -29,6 +29,8 @@ namespace ImportedMaterialTest
     {
         A::CookedMeshData mesh;
         mesh.VersionMajor = 1;
+        mesh.FormatMajor = 1;
+        mesh.Layout = A::CookedMeshLayout::ClusteredV1;
         A::CookedMeshMaterial material;
         Bytes strings;
         const char* paths[] = {"Textures/犬/base.png", "Textures/normal.png", arm, "Textures/emissive.png"};
@@ -104,6 +106,12 @@ namespace ImportedMaterialTest
     }
     void Run()
     {
+        {
+            auto lod = Make();
+            lod.Layout = A::CookedMeshLayout::LodGraphV1;
+            S::ImportedMaterialStaging out;
+            CHECK(S::BuildImportedMaterialStaging(lod, 0, out) != Status::Success);
+        }
         for (uint32_t mask = 0; mask < 8; ++mask)
         {
             for (uint32_t alpha = 0; alpha < 3; ++alpha)

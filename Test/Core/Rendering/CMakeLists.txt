@@ -120,6 +120,7 @@ add_executable(RayTracingSceneSnapshotTest
 target_link_libraries(RayTracingSceneSnapshotTest PRIVATE RenderingGpuTestSupport)
 target_include_directories(RayTracingSceneSnapshotTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Test/Core/Rendering
 )
 set_target_properties(RayTracingSceneSnapshotTest PROPERTIES FOLDER "Test/Core/Rendering")
@@ -154,6 +155,7 @@ norves_add_test_bundle(R8AcesLutToneMappingVulkanTest
     MEMBER R8AcesLutToneMappingVulkanTest R8AcesLutToneMappingVulkanTest.cpp
     MEMBER R8FilmGrainVulkanTest R8FilmGrainVulkanTest.cpp
     MEMBER AutoExposureHistogramVulkanTest AutoExposureHistogramVulkanTest.cpp
+    MEMBER GradingLutIdentityVulkanTest GradingLutIdentityVulkanTest.cpp
 )
 target_link_libraries(R8AcesLutToneMappingVulkanTest PRIVATE RenderingGpuTestSupport)
 target_include_directories(R8AcesLutToneMappingVulkanTest PRIVATE
@@ -172,6 +174,8 @@ register_rendering_gpu_test(
 register_rendering_gpu_test(R8FilmGrainVulkanTest R8AcesLutToneMappingVulkanTest --test=R8FilmGrainVulkanTest)
 # 自動露出: 既知の輝度の画素から作ったヒストグラムを実GPUで読み戻し、全区間がCPUの数え方と一致すること。
 register_rendering_gpu_test(AutoExposureHistogramVulkanTest R8AcesLutToneMappingVulkanTest --test=AutoExposureHistogramVulkanTest)
+# 見た目の3D LUT: 恒等のLUTで出力が変わらず、見た目のLUTがCPUの三線形補間と一致し、ACES 2.0 SDR LUTの演算子と読めないLUTでは掛からないことを実GPUで確かめる。
+register_rendering_gpu_test(GradingLutIdentityVulkanTest R8AcesLutToneMappingVulkanTest --test=GradingLutIdentityVulkanTest)
 add_executable(R6RTGIAcceptanceVulkanTest
     R6RTGIAcceptanceVulkanTest.cpp
 )
@@ -318,15 +322,214 @@ set_tests_properties(RHITextureToBufferReadbackVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# BC1・BC4・BC5・BC7 と全ミップを渡した R16 の 8x8・2段のテクスチャを GpuResourceStore 経由で上げ、計算シェーダーでミップごとに読み戻す。
+add_test(NAME RHIBlockCompressedTextureVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIBlockCompressedTextureVulkanTest)
+set_tests_properties(RHIBlockCompressedTextureVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+add_test(NAME VideoMemoryBudgetLogGateTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetLogGateTest)
+
+add_test(NAME SparseCapabilitiesVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SparseCapabilitiesVulkanTest)
+set_tests_properties(SparseCapabilitiesVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+add_test(NAME SparseTextureVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SparseTextureVulkanTest)
+set_tests_properties(SparseTextureVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# sparse テクスチャへ物理ページを結び・外す（ミップテイルと2タイル）。結んだタイルへ書いた色を計算シェーダーで読み戻し、
+# 外したページが GpuRetireQueue を通ってプールの空きへ戻ることを確かめる。
+add_test(NAME SparseBindVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SparseBindVulkanTest)
+set_tests_properties(SparseBindVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# ステージングのリング経由で、sparse テクスチャのタイル・ミップテイルへ GPU を待たずに書く（TileUploader）。
+# 連続フレームで書いて読み戻し、その間に WaitIdle を呼ばないこと、リングの区画が提出の完了まで再利用されないこと、
+# 1フレームのコピー量の上限、提出しなかったフレームの出し直しを確かめる。
+add_test(NAME SparseTileUploadVulkanTest COMMAND RHITextureUpdateVulkanTest --test=SparseTileUploadVulkanTest)
+set_tests_properties(SparseTileUploadVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# ステージングのリング経由で、ジオメトリのプール（DeviceLocal の大きなバッファ）の区画へ GPU を待たずに書く（TileUploader::EnqueueBufferCopy）。
+# 連続フレームで区画の途中へ書き、計算シェーダーで読み戻して一致を確かめる。その間に WaitIdle を呼ばないこと、
+# テクスチャとバッファがリングと1フレームの上限を共有すること、重なるバイト範囲が次のフレームへ送られること、
+# 解放した区画宛てのコピーが無効になることを確かめる。
+add_test(NAME GpuUploadRingVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GpuUploadRingVulkanTest)
+set_tests_properties(GpuUploadRingVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# ミップ0のタイル1枚とミップテイルだけを結んだ sparse テクスチャを、材質のシェーダーの標本関数（常駐しなければ粗いミップへ逃げる）で
+# 引く。結んでいない領域が粗いミップの色になり、黒や未定義の値にならないこと、ミップ1を結ぶと1段だけ下げて止まることを確かめる。
+add_test(NAME VirtualTextureResidencyVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VirtualTextureResidencyVulkanTest)
+set_tests_properties(VirtualTextureResidencyVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 材質のシェーダーと同じ関数で sparse テクスチャを既知の UV の面に描き、タイルの要求（フィードバック）が GPU のバッファへ書かれることを確かめる。
+# 常駐の領域は 4x4 画素のうち巡回する 1 画素だけが書き、非常駐で粗いミップへ逃げた領域は全画素が書くこと、同じタイルの要求が 1 件に減ること、
+# パラメータ 0 では書かないこと、capacity を超えた件数が溢れた件数に残ることを確かめる。
+add_test(NAME VirtualTextureFeedbackVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VirtualTextureFeedbackVulkanTest)
+set_tests_properties(VirtualTextureFeedbackVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+add_test(NAME VideoMemoryBudgetVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetVulkanTest)
+set_tests_properties(VideoMemoryBudgetVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 今のフレームの深度から作る HZB（R32_FLOAT の全ミップ、2x2 の最大で縮める）の全ミップを読み戻す。奇数の大きさ（37x23 など）で、
+# 各 texel が覆う深度の最大と一致し（はみ出す行・列も含める）、深度の入れ替え・解像度の変更でも作り直されることを確かめる。
+add_test(NAME HiZPyramidVulkanTest COMMAND RHITextureUpdateVulkanTest --test=HiZPyramidVulkanTest)
+set_tests_properties(HiZPyramidVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# Hi-Z による遮蔽の判定（Common/HiZOcclusion.glsl）を、合成した HZB と球の組（完全に隠れる・一部見える・近平面をまたぐ・
+# 画面の端・小さくて 1 texel に収まる・乱数の場面）で確かめる。見えているものを隠れていると判定する誤りが 0 件であること。
+add_test(NAME HiZOcclusionTestVulkanTest COMMAND RHITextureUpdateVulkanTest --test=HiZOcclusionTestVulkanTest)
+set_tests_properties(HiZOcclusionTestVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# ジオメトリのページの要求（Common/MegaGeometryCull.glsl のページの常駐の判定と要求の書き込み）を、実際のカリング（cluster_cull.comp）で確かめる。
+# 合成したクラスタとページの表を置いて 1 回判定し、子のページが非常駐のとき穴を作らず親が描かれて要求が書かれること、同じページの要求が 1 件に減ること、
+# 容量 0 では書かないこと、容量を超えた件数が溢れに残ること、自分の誤差が許容に収まる親は要求を出さないこと、同じフレームの印で重ねて積まないことを確かめる。
+add_test(NAME GeometryPageRequestVulkanTest COMMAND RHITextureUpdateVulkanTest --test=GeometryPageRequestVulkanTest)
+set_tests_properties(GeometryPageRequestVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# R32_UINT・R32G32_UINT の添付へ、フラグメントシェーダーが「描画の番号 << 7 | gl_PrimitiveID」（ビジビリティバッファの ID と同じ並び）を書き、
+# 読み戻して三角形ごとに期待の値になることを確かめる。覆われない画素は整数のクリア値（0xDEADBEEF）のままであること。
+# geometryShader（gl_PrimitiveID に要る）が無いデバイスでは理由を出して 125 を返す。
+add_test(NAME IntegerAttachmentVulkanTest COMMAND RHITextureUpdateVulkanTest --test=IntegerAttachmentVulkanTest)
+set_tests_properties(IntegerAttachmentVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 計算シェーダーでのスキニング（skinning_compute.comp）を、実際の SkinnedMeshGpuStore が作る今・前のフレームのパレットで動かし、
+# 読み戻した今・前の頂点（位置・法線・UV。ワールド空間）が CPU で計算した値と許容 1e-4 で一致することを確かめる。
+# 骨 1〜4 本・重みの合計が 1 でない頂点・重み 0・範囲外の骨の番号・2 インスタンスの別の出力範囲・範囲外へ書かないこと・validation error 0 件。
+add_test(NAME ComputeSkinningVulkanTest COMMAND RHITextureUpdateVulkanTest --test=ComputeSkinningVulkanTest)
+set_tests_properties(ComputeSkinningVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 画面の 8x8 のタイルを材質ごとに分ける計算シェーダー（material_tile_classify.comp）を、合成した VisBuffer.Id の画像と描画の記録の表で動かし、
+# 材質ごとのタイルの一覧・間接 dispatch の引数・統計が期待どおりになることを確かめる。3 つの材質が混じるタイル・空のタイル・部分タイル・
+# 上限以上の材質・引けない ID・一覧が足りないときの切り詰めを含む。validation error 0 件。
+add_test(NAME MaterialTileClassifyVulkanTest COMMAND RHITextureUpdateVulkanTest --test=MaterialTileClassifyVulkanTest)
+set_tests_properties(MaterialTileClassifyVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# ビジビリティバッファの幾何の解決（visbuffer_resolve.comp）を、合成した ID の画像・描画の記録の表・頂点とインデックスのバッファで動かし、
+# GBuffer の Albedo・Normal・Velocity と、画素ごとの重心座標・UV・解析的な微分・接線の基底・前のクリップ座標が、
+# ラスタライザと同じ式で作った CPU の参照（倍精度）と一致することを確かめる。手続き（32bit・16bit インデックス）・MegaGeometry・
+# スキニング 2 体（1 つのバッファの別の位置）の記録、空の画素・引けない ID は何も書かないこと、前のカメラが無いと速度 0 を含む。
+# 製品の版と検証用の版（書き出しつき）の両方で validation error 0 件。
+add_test(NAME VisibilityResolveVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VisibilityResolveVulkanTest)
+set_tests_properties(VisibilityResolveVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# 間接 dispatch（ICommandList::DispatchIndirect）を確認用の計算シェーダー（indirect_dispatch_probe.comp）で動かし、GPU 側の引数のとおりに
+# スレッドグループが走ることを読み戻して確かめる。計算シェーダーが書いた引数の GenericRead での読み取り・転送で書いた引数の IndirectArgument での読み取り・
+# 表の途中のオフセット・y への広げ（グループの番号 g = y * 数x + x）・x = 0・z > 1・不正な引数（false を返し何も記録しない）・
+# バリアの段（DRAW_INDIRECT・INDIRECT_COMMAND_READ）を含む。validation error 0 件。
+add_test(NAME IndirectDispatchVulkanTest COMMAND RHITextureUpdateVulkanTest --test=IndirectDispatchVulkanTest)
+set_tests_properties(IndirectDispatchVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
 
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
     MEMBER RHITextureToBufferReadbackVulkanTest RHITextureToBufferReadbackVulkanTest.cpp
+    MEMBER RHIBlockCompressedTextureVulkanTest RHIBlockCompressedTextureVulkanTest.cpp
+    MEMBER VideoMemoryBudgetVulkanTest VideoMemoryBudgetVulkanTest.cpp
+    MEMBER SparseCapabilitiesVulkanTest SparseCapabilitiesVulkanTest.cpp
+    MEMBER SparseTextureVulkanTest SparseTextureVulkanTest.cpp
+    MEMBER SparseBindVulkanTest SparseBindVulkanTest.cpp
+    MEMBER SparseTileUploadVulkanTest SparseTileUploadVulkanTest.cpp
+    MEMBER GpuUploadRingVulkanTest GpuUploadRingVulkanTest.cpp
+    MEMBER VirtualTextureResidencyVulkanTest VirtualTextureResidencyVulkanTest.cpp
+    MEMBER VirtualTextureFeedbackVulkanTest VirtualTextureFeedbackVulkanTest.cpp
+    MEMBER VideoMemoryBudgetLogGateTest VideoMemoryBudgetLogGateTest.cpp
+    MEMBER HiZPyramidVulkanTest HiZPyramidVulkanTest.cpp
+    MEMBER HiZOcclusionTestVulkanTest HiZOcclusionTestVulkanTest.cpp
+    MEMBER GeometryPageRequestVulkanTest GeometryPageRequestVulkanTest.cpp
+    MEMBER IntegerAttachmentVulkanTest IntegerAttachmentVulkanTest.cpp
+    MEMBER ComputeSkinningVulkanTest ComputeSkinningVulkanTest.cpp
+    MEMBER MaterialTileClassifyVulkanTest MaterialTileClassifyVulkanTest.cpp
+    MEMBER VisibilityResolveVulkanTest VisibilityResolveVulkanTest.cpp
+    MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+target_compile_definitions(RHITextureUpdateVulkanTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
 add_test(NAME RHITextureUpdateVulkanTest COMMAND RHITextureUpdateVulkanTest)
 set_tests_properties(RHITextureUpdateVulkanTest PROPERTIES
@@ -383,6 +586,44 @@ register_rendering_gpu_test(
     --scene=outdoor
     --capture-source=gbuffer-velocity
     --scenario=move-then-stop)
+register_rendering_gpu_test(
+    RenderingVelocitySkinnedVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=skinned-motion)
+
+# 上の既定（ビジビリティバッファの On。GBuffer.Velocity を幾何の解決 visbuffer_resolve.comp が書く）に加えて、予備の経路
+# （--visibility-buffer=off。装置が対応しないときに戻る GBuffer のラスタ）でも同じ速度の検証を通す。
+# 静止・カメラ・物体・スキニングの動きの符号と大きさが、どちらの経路でも同じ期待値を満たすこと。
+register_rendering_gpu_test(
+    RenderingVelocityStaticGBufferFallbackVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=indoor
+    --capture-source=gbuffer-velocity
+    --scenario=static
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingVelocityMotionGBufferFallbackVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=camera-object-motion
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingVelocityObjectGBufferFallbackVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=object-motion
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingVelocitySkinnedGBufferFallbackVulkanTest
+    RenderingVelocityVulkanTest
+    --scene=outdoor
+    --capture-source=gbuffer-velocity
+    --scenario=skinned-motion
+    --visibility-buffer=off)
 
 add_executable(RHIImageLayoutVulkanValidationTest
     RHIImageLayoutVulkanValidationTest.cpp
@@ -488,6 +729,22 @@ register_rendering_gpu_test(
     RenderingHdrSceneCaptureTest
     --scene=outdoor
     --capture-source=scene-color)
+# 昼の露出（EV100 約14.6）で 1,000,000 nits の発光面が SceneColor で有限であることを確かめる
+# （GBufferへプリエクスポージャ後の発光を書く規約の検証）。
+register_rendering_gpu_test(
+    RenderingHdrEmissiveDaylightVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=indoor
+    --capture-source=scene-color
+    --emissive-scenario=daylight-1m-nits)
+# 同じ露出で、プリエクスポージャ後の発光が32768を超え65504未満のとき頭打ちにならず
+# そのまま SceneColor へ届くことを確かめる。
+register_rendering_gpu_test(
+    RenderingHdrEmissiveAboveHalfVulkanTest
+    RenderingHdrSceneCaptureTest
+    --scene=indoor
+    --capture-source=scene-color
+    --emissive-scenario=daylight-above-32768)
 
 add_executable(RenderingRayTracingShadowVulkanTest
     RenderingRayTracingShadowVulkanTest.cpp
@@ -900,6 +1157,9 @@ target_compile_definitions(RenderingGoldenImageComparatorTest PRIVATE
 )
 set_target_properties(RenderingGoldenImageComparatorTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME RenderingGoldenImageComparatorTest COMMAND RenderingGoldenImageComparatorTest)
+# R2の空のgoldenが今の空のモデルから作った画像と画素で一致することを確かめる（空のモデルを変えたら再承認が要る）。
+add_test(NAME R2SkyGoldenCurrentModelTest
+    COMMAND RenderingGoldenImageComparatorTest --compare-r2-sky-goldens)
 
 add_executable(RenderingGoldenImageTest
     RenderingGoldenImageTest.cpp
@@ -919,6 +1179,8 @@ target_compile_definitions(RenderingGoldenImageTest PRIVATE
 )
 set_target_properties(RenderingGoldenImageTest PROPERTIES FOLDER "Test/Core/Rendering")
 
+# 既定（ビジビリティバッファの On。解決が GBuffer を書く）の基準画像は Indoor.png・Outdoor.png。
+# 実際に解決を通ったこと（VISBUFFER_FALLBACK が無く VISBUFFER_RESOLVE_TILES がある）も、画像の比較の後にログで確かめる。
 register_rendering_gpu_test(
     RenderingGoldenIndoorVulkanTest
     RenderingGoldenImageTest
@@ -929,6 +1191,27 @@ register_rendering_gpu_test(
     RenderingGoldenImageTest
     --scene=outdoor
     --capture-source=back-buffer)
+# 予備の経路（--visibility-buffer=off。geometryShader の無い装置が使う GBuffer のラスタ）の基準画像は
+# IndoorGBufferFallback.png・OutdoorGBufferFallback.png。解決を通っていないこともログで確かめる。
+register_rendering_gpu_test(
+    RenderingGoldenIndoorGBufferFallbackVulkanTest
+    RenderingGoldenImageTest
+    --scene=indoor
+    --capture-source=back-buffer
+    --visibility-buffer=off)
+register_rendering_gpu_test(
+    RenderingGoldenOutdoorGBufferFallbackVulkanTest
+    RenderingGoldenImageTest
+    --scene=outdoor
+    --capture-source=back-buffer
+    --visibility-buffer=off)
+# GTAO: 部屋の大きさ（Cornell）の壁・床・天井が遮蔽で黒くならず、隅・接地部だけが暗くなること
+register_rendering_gpu_test(
+    RenderingGTAOCornellRoomVulkanTest
+    RenderingGoldenImageTest
+    --scene=indoor
+    --capture-source=back-buffer
+    --ao-scenario=cornell-room)
 
 add_test(NAME RenderingCoordinatorStatsPropagationTest COMMAND RenderingCoordinatorDiagnosticsSnapshotTest --test=RenderingCoordinatorStatsPropagationTest)
 
@@ -1613,14 +1896,46 @@ norves_add_test_bundle(RenderResourcesDomainContractTest
     FOLDER "Test/Core/Rendering"
     MEMBER RenderResourcesDomainContractTest RenderResourcesDomainContractTest.cpp
     MEMBER MeshResourcesProceduralGpuTest MeshResourcesProceduralGpuTest.cpp
+    MEMBER TextureMemoryLedgerTest TextureMemoryLedgerTest.cpp
+    MEMBER VideoMemoryBudgetManagerTest VideoMemoryBudgetManagerTest.cpp
+    MEMBER GpuRetireQueueTest GpuRetireQueueTest.cpp
+    MEMBER GeometryPoolAllocatorTest GeometryPoolAllocatorTest.cpp
+    MEMBER GeometryPageStreamerTest GeometryPageStreamerTest.cpp
+    MEMBER VirtualTextureRequestSetTest VirtualTextureRequestSetTest.cpp
+    MEMBER VirtualTextureStreamerTest VirtualTextureStreamerTest.cpp
+    MEMBER RHIBlockCompressedFormatTest RHIBlockCompressedFormatTest.cpp
+    MEMBER VisibilityBufferEncodingTest VisibilityBufferEncodingTest.cpp
+    MEMBER VisibilityMaterialTableTest VisibilityMaterialTableTest.cpp
 )
 target_link_libraries(RenderResourcesDomainContractTest PRIVATE Core)
 target_include_directories(RenderResourcesDomainContractTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
+)
+target_compile_definitions(RenderResourcesDomainContractTest PRIVATE
+    NORVES_SOURCE_ROOT="${CMAKE_SOURCE_DIR}"
 )
 add_test(NAME RenderResourcesDomainContractTest COMMAND RenderResourcesDomainContractTest)
 
 add_test(NAME MeshResourcesProceduralGpuTest COMMAND RenderResourcesDomainContractTest --test=MeshResourcesProceduralGpuTest)
+add_test(NAME TextureMemoryLedgerTest COMMAND RenderResourcesDomainContractTest --test=TextureMemoryLedgerTest)
+add_test(NAME VideoMemoryBudgetManagerTest COMMAND RenderResourcesDomainContractTest --test=VideoMemoryBudgetManagerTest)
+add_test(NAME GpuRetireQueueTest COMMAND RenderResourcesDomainContractTest --test=GpuRetireQueueTest)
+# ジオメトリの共有プールの区画の確保・解放・結合・整列・断片化の統計、塊の追加と上限・失敗、遅延解放（GpuRetireQueue）の提出順。
+add_test(NAME GeometryPoolAllocatorTest COMMAND RenderResourcesDomainContractTest --test=GeometryPoolAllocatorTest)
+# ジオメトリのページのストリーマ（読み込み・書き込み・公開・追い出しは偽の窓口）。優先度・1 フレームの上限・根のページの常駐・
+# 書き終えてからの公開・親が先・追い出しの順（LRU・子から）と目標以下への収まり・外した区画の再利用の順序・失敗の再試行・
+# メッシュの解放と、ページの配置の計算（範囲の検査・親子の関係・クラスタの記録の位置の書き換え）。
+add_test(NAME GeometryPageStreamerTest COMMAND RenderResourcesDomainContractTest --test=GeometryPageStreamerTest)
+# 1語へ詰めた VT の要求の復号・重複の除去・溢れた件数と、3つのバッファのリングが完了したものだけを GPU を待たずに読み戻すこと。
+add_test(NAME VirtualTextureRequestSetTest COMMAND RenderResourcesDomainContractTest --test=VirtualTextureRequestSetTest)
+# 要求の集合から未常駐のタイルを優先度順に読み、ページを結び、コピーを積んで常駐させること。1 フレームの上限・同じタイルの二重の要求・読み込みの失敗・プールが尽きたときの扱い。
+add_test(NAME VirtualTextureStreamerTest COMMAND RenderResourcesDomainContractTest --test=VirtualTextureStreamerTest)
+add_test(NAME RHIBlockCompressedFormatTest COMMAND RenderResourcesDomainContractTest --test=RHIBlockCompressedFormatTest)
+# ビジビリティバッファの ID（(記録の番号 << 7) | 三角形の番号）の往復・記録の数の上限（2^25）・空（0）の扱い、描画の記録の表の追加・引き・容量、VisBuffer.Id と記録の表の RenderGraph の資源の記述、GLSL（Common/VisibilityBuffer.glsl）の定数の C++ との一致。
+add_test(NAME VisibilityBufferEncodingTest COMMAND RenderResourcesDomainContractTest --test=VisibilityBufferEncodingTest)
+# 記録の材質の番号がフレームで一意な材質の表の番号になること。同じ材質（MegaGeometry の区間・手続き・スキニングの描画）が同じ番号に、違う材質が違う番号に、番号が 0 から詰まること、上限を超えたときに予備の番号へ寄せること、記録を作る計算シェーダーが表の番号を書くこと。
+add_test(NAME VisibilityMaterialTableTest COMMAND RenderResourcesDomainContractTest --test=VisibilityMaterialTableTest)
 
 add_executable(MeshResourcesPrimitiveTest
     MeshResourcesPrimitiveTest.cpp
@@ -1638,6 +1953,7 @@ add_executable(MegaGeometryResourcesTest
 target_link_libraries(MegaGeometryResourcesTest PRIVATE Core)
 target_include_directories(MegaGeometryResourcesTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
 set_target_properties(MegaGeometryResourcesTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME MegaGeometryResourcesTest COMMAND MegaGeometryResourcesTest)

@@ -43,14 +43,19 @@ namespace Game::GameModes
          * @param autoExposure 自動露出の有無の置き場(非所有・呼び出し側が寿命を持つ)
          * @param autoExposureMeasurement 表示する自動露出の測定(非所有・呼び出し側が寿命を持つ)
          * @param temporalAA TAA の有無の置き場(非所有・呼び出し側が寿命を持つ。切ると FXAA)
+         * @param lensEffects 色収差とレンズダートの有無の置き場(非所有・呼び出し側が寿命を持つ)
+         * @param lookLut 見た目の3D LUTの有無の置き場(非所有・呼び出し側が寿命を持つ)
          */
         explicit DirectionalLightEditView(NorvesLib::Core::Input::LightController* controller,
                                           float* exposureEV100,
                                           bool* autoExposure,
                                           const NorvesLib::Core::Rendering::AutoExposureMeasurement* autoExposureMeasurement,
-                                          bool* temporalAA)
+                                          bool* temporalAA,
+                                          bool* lensEffects,
+                                          bool* lookLut)
             : m_pController(controller), m_pExposureEV100(exposureEV100), m_pAutoExposure(autoExposure),
-              m_pAutoExposureMeasurement(autoExposureMeasurement), m_pTemporalAA(temporalAA)
+              m_pAutoExposureMeasurement(autoExposureMeasurement), m_pTemporalAA(temporalAA),
+              m_pLensEffects(lensEffects), m_pLookLut(lookLut)
         {
         }
 
@@ -78,6 +83,10 @@ namespace Game::GameModes
         const NorvesLib::Core::Rendering::AutoExposureMeasurement* m_pAutoExposureMeasurement = nullptr;
         // TAA の有無の置き場(借用・非所有)。Rendering3DTest の Tick がカメラのアンチエイリアシングへ写す。
         bool* m_pTemporalAA = nullptr;
+        // 色収差とレンズダートの有無の置き場(借用・非所有)。Rendering3DTest の Tick がカメラのレンズ効果へ写す。
+        bool* m_pLensEffects = nullptr;
+        // 見た目の3D LUTの有無の置き場(借用・非所有)。Rendering3DTest の Tick がカメラの LUT へ写す。
+        bool* m_pLookLut = nullptr;
     };
 
     /**
@@ -96,13 +105,18 @@ namespace Game::GameModes
          * @param autoExposure 自動露出の有無の置き場(非所有・Rendering3DTest が所有)
          * @param autoExposureMeasurement 表示する自動露出の測定(非所有・Rendering3DTest が所有)
          * @param temporalAA TAA の有無の置き場(非所有・Rendering3DTest が所有)
+         * @param lensEffects 色収差とレンズダートの有無の置き場(非所有・Rendering3DTest が所有)
+         * @param lookLut 見た目の3D LUTの有無の置き場(非所有・Rendering3DTest が所有)
          */
         explicit DirectionalLightEditSubRoutine(NorvesLib::Core::Input::LightController* controller,
                                                 float* exposureEV100,
                                                 bool* autoExposure,
                                                 const NorvesLib::Core::Rendering::AutoExposureMeasurement* autoExposureMeasurement,
-                                                bool* temporalAA)
-            : m_View(controller, exposureEV100, autoExposure, autoExposureMeasurement, temporalAA)
+                                                bool* temporalAA,
+                                                bool* lensEffects,
+                                                bool* lookLut)
+            : m_View(controller, exposureEV100, autoExposure, autoExposureMeasurement, temporalAA, lensEffects,
+                     lookLut)
         {
         }
 

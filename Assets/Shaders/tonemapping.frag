@@ -8,7 +8,7 @@ layout(set = 0, binding = 0) uniform sampler2D sceneColor;
 // トーンマッピングパラメータ
 layout(std140, set = 0, binding = 1) uniform ToneMappingParams
 {
-    uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure, 4:ACES 2.0 SDR LUT
+    uint operatorType;  // 0:Reinhard, 1:ACES, 2:Uncharted2, 3:Exposure, 4:ACES 2.0 SDR LUT, 5:中間調まで線形（Khronos PBR Neutral の明部の圧縮）
     uint bBypass;
     uint filmGrainSeed;       // フィルムグレインのフレームごとのseed
     // Vignette パラメータ
@@ -16,23 +16,31 @@ layout(std140, set = 0, binding = 1) uniform ToneMappingParams
     float vignetteRadius;     // 内側半径 ~0.8
     float vignetteSoftness;   // フォールオフの柔らかさ ~0.5
     float filmGrainStrength;  // フィルムグレインの強さ（sRGBの符号化値での標準偏差。0でオフ）
-    float _pad2;
+    uint gradingMode;         // 0: View の設定の式、1: カメラの差し替えの式（知覚的なS字コントラスト・輝度を保つ色温度）
     // Color Grading パラメータ
     vec4 colorFilter;         // カラーフィルター (rgb * intensity in w)
     float contrast;           // コントラスト (1.0 = default)
     float saturation;         // 彩度 (1.0 = default)
     float brightness;         // 明度オフセット (0.0 = default)
     float temperature;        // 色温度シフト (-1..+1, 0=neutral)
+    float contrastPivot;      // カメラの差し替えの式のコントラストの軸（表示のリニア値）
+    float lookLutIntensity;   // 見た目の3D LUTの混ぜ具合（0で掛けない）
+    float _pad4;
+    float _pad5;
 } params;
 
 // ACES 2.0 SDR 100 nit Rec.709 のベイク3D LUT（display-linear。x=R, y=G, z=B）
 layout(set = 0, binding = 2) uniform sampler3D colorLut;
+
+// グレーディング用の見た目の3D LUT（sRGBの符号化値で引き、格子点の座標からの符号化値の差分を返す。x=R, y=G, z=B）
+layout(set = 0, binding = 3) uniform sampler3D lookLut;
 
 layout(location = 0) out vec4 outColor;
 
 // LUTの shaper（Scripts/BakeAcesOutputLut.py と同じ固定値）
 // u = log2(x / 2^-8 + 1) / log2(2^8 / 2^-8 + 1)、x は [0, 256] へ飽和
 const uint ACES20_LUT_OPERATOR = 4u;
+const uint NEUTRAL_LINEAR_OPERATOR = 5u;
 const float ACES20_LUT_SHAPER_OFFSET = 0.00390625;
 const float ACES20_LUT_SHAPER_MAX = 256.0;
 const float ACES20_LUT_SHAPER_SPAN = log2(ACES20_LUT_SHAPER_MAX / ACES20_LUT_SHAPER_OFFSET + 1.0);
@@ -85,6 +93,27 @@ vec3 TonemapExposure(vec3 color)
     return vec3(1.0) - exp(-color);
 }
 
+// 中間調まで線形で、明部だけを Khronos PBR Neutral（https://github.com/KhronosGroup/ToneMapping）と
+// 同じ式で圧縮する。参照実装の足元（最も暗い成分に応じて最大 0.04 を差し引く2次の曲線）は、空の光だけの
+// 影の中（日向の約2割）を日向の1割以下まで縮めるので使わず、暗部は入力の比のまま返す。最大の成分が
+// 0.8 未満ならそのまま返し、それより明るい色は最大の成分を1へ漸近させ（色相を保つ）、圧縮した分だけ白へ寄せる。
+vec3 TonemapNeutralLinear(vec3 color)
+{
+    const float startCompression = 0.8;
+    const float desaturation = 0.15;
+    color = max(color, vec3(0.0));
+    float peak = max(color.r, max(color.g, color.b));
+    if (peak < startCompression)
+    {
+        return color;
+    }
+    const float d = 1.0 - startCompression;
+    float newPeak = 1.0 - d * d / (peak + d - startCompression);
+    color *= newPeak / peak;
+    float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
+    return mix(color, vec3(newPeak), g);
+}
+
 // ACES 2.0 SDR（ベイク3D LUTを log2 shaper の座標で三線形補間）
 vec3 TonemapAces20Lut(vec3 color)
 {
@@ -133,6 +162,27 @@ vec3 ApplySaturation(vec3 color, float saturation)
     return clamp(mix(vec3(luma), color, saturation), 0.0, 1.0);
 }
 
+// 表示の知覚的な値（2.2乗の逆）の上で、軸（表示のリニア値で指定）と0・1を動かさずに軸の周りを立てる
+// S字のコントラスト。軸より下は軸へ向かう冪、上は1へ向かう冪で、0.5中心の線形のコントラストと違い、
+// 暗部を黒へ切らず、明部を白へ飛ばさない。
+vec3 ApplyContrastPerceptual(vec3 color, float contrast, float pivotLinear)
+{
+    float pivot = clamp(pow(clamp(pivotLinear, 0.0, 1.0), 1.0 / 2.2), 0.01, 0.99);
+    vec3 x = pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2));
+    vec3 lower = pivot * pow(x / pivot, vec3(contrast));
+    vec3 upper = 1.0 - (1.0 - pivot) * pow(max(1.0 - x, 0.0) / (1.0 - pivot), vec3(contrast));
+    vec3 y = mix(lower, upper, step(vec3(pivot), x));
+    return pow(clamp(y, 0.0, 1.0), vec3(2.2));
+}
+
+// 輝度を保ってR・Bの倍率を変える色温度（正で暖色。1あたりR・Bを±10%）。黒は黒のまま。
+vec3 ApplyWhiteBalance(vec3 color, float temp)
+{
+    vec3 gain = vec3(1.0 + temp * 0.1, 1.0, 1.0 - temp * 0.1);
+    gain /= dot(gain, vec3(0.2126, 0.7152, 0.0722));
+    return clamp(color * gain, 0.0, 1.0);
+}
+
 // フィルムグレイン: 画素・フレームごとのseedから決まる、平均0・分散1の三角分布の雑音（PCGのhash）。
 uint FilmGrainHash(uint value)
 {
@@ -173,6 +223,23 @@ vec3 ApplyFilmGrain(vec3 displayLinear, uvec2 pixel, uint frameSeed, float stren
     return DecodeSrgb(clamp(encoded + vec3(noise), vec3(0.0), vec3(1.0)));
 }
 
+// 見た目の3D LUT: 表示のリニア値をsRGBの符号化値へ写し、格子点 0 と N-1 がテクセル中心に来るよう
+// 半テクセル内側の座標で三線形補間する。LUTは格子点の座標からの差分（符号化値）を持つので、
+// 補間した差分を足した符号化値と元の符号化値をそれぞれリニアへ戻し、その差を入力へ足す。
+// 恒等のLUTは差分がすべて0なので、補間の精度に関わらず入力をビット単位でそのまま返す。
+// precise は2つの DecodeSrgb の演算の融合を揃え、差分0のときの差を厳密に0にするため。
+vec3 ApplyLookLut(vec3 displayLinear, float intensity)
+{
+    vec3 encoded = clamp(EncodeSrgb(clamp(displayLinear, vec3(0.0), vec3(1.0))), vec3(0.0), vec3(1.0));
+    float lutSize = float(textureSize(lookLut, 0).x);
+    vec3 lutCoord = (encoded * (lutSize - 1.0) + 0.5) / lutSize;
+    vec3 offset = textureLod(lookLut, lutCoord, 0.0).rgb;
+    precise vec3 looked = DecodeSrgb(clamp(encoded + offset, vec3(0.0), vec3(1.0)));
+    precise vec3 original = DecodeSrgb(encoded);
+    precise vec3 delta = looked - original;
+    return displayLinear + intensity * delta;
+}
+
 void main()
 {
     if (params.bBypass != 0u)
@@ -202,6 +269,10 @@ void main()
     {
         mapped = TonemapAces20Lut(hdrColor);
     }
+    else if (params.operatorType == NEUTRAL_LINEAR_OPERATOR)
+    {
+        mapped = TonemapNeutralLinear(hdrColor);
+    }
     else
     {
         mapped = TonemapExposure(hdrColor);
@@ -222,14 +293,30 @@ void main()
         // 明度
         result += vec3(params.brightness);
 
-        // コントラスト
-        result = ApplyContrast(result, params.contrast);
+        if (params.gradingMode == 1u)
+        {
+            // カメラの差し替え: 知覚的なS字のコントラスト、彩度、輝度を保つ色温度
+            result = ApplyContrastPerceptual(result, params.contrast, params.contrastPivot);
+            result = ApplySaturation(result, params.saturation);
+            result = ApplyWhiteBalance(result, params.temperature);
+        }
+        else
+        {
+            // コントラスト
+            result = ApplyContrast(result, params.contrast);
 
-        // 彩度
-        result = ApplySaturation(result, params.saturation);
+            // 彩度
+            result = ApplySaturation(result, params.saturation);
 
-        // 色温度
-        result = ApplyTemperature(result, params.temperature);
+            // 色温度
+            result = ApplyTemperature(result, params.temperature);
+        }
+
+        // 見た目の3D LUT（グレーディングの後、ビネットの前）
+        if (params.lookLutIntensity > 0.0)
+        {
+            result = ApplyLookLut(result, params.lookLutIntensity);
+        }
     }
 
     // ========================================

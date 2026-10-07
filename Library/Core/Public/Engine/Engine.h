@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/PointerTypes.h"
+#include "Engine/DeterministicCapture.h"
 #include "GameMode/IStateMachine.h"
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
@@ -228,6 +229,19 @@ namespace NorvesLib::Core::Engine
         float GetDeltaTime() const
         {
             return m_DeltaTime;
+        }
+
+        /**
+         * @brief 決定的な撮影（--capture-deterministic）の状態を取得
+         */
+        DeterministicCapture &GetDeterministicCapture()
+        {
+            return m_DeterministicCapture;
+        }
+
+        const DeterministicCapture &GetDeterministicCapture() const
+        {
+            return m_DeterministicCapture;
         }
 
         /**
@@ -497,6 +511,9 @@ namespace NorvesLib::Core::Engine
         // フレーム情報
         float m_DeltaTime = 0.0f;
         uint64_t m_FrameCount = 0;
+
+        // 決定的な撮影の状態
+        DeterministicCapture m_DeterministicCapture;
     };
 
     /**

@@ -3,6 +3,7 @@
 #include "CameraLateUpdate.h"
 
 #include "Core/Public/Container/Containers.h"
+#include "Core/Public/Delegate/Delegate.h"
 #include "Core/Public/Container/PointerTypes.h"
 #include "Core/Public/Input/LightController.h"
 #include "Core/Public/Input/MayaCameraController.h"
@@ -13,9 +14,11 @@
 #include "Core/Public/Rendering/MaterialTypes.h"
 #include "Core/Public/Rendering/SkyAtmosphere.h"
 #include "Core/Public/Rendering/MegaGeometry/MegaGeometryTypes.h"
+#include "Core/Public/Rendering/MegaGeometry/ProceduralMegaSphere.h"
 #include "Core/Public/Rendering/RenderTypes.h"
 #include "Core/Public/Thread/Atomic.h"
 #include "Core/Public/Thread/Mutex.h"
+#include "Core/Public/Thread/Task.h"
 #include "Core/Public/Particle/ParticleSystem.h"
 #include "GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
@@ -28,6 +31,12 @@
 
 namespace NorvesLib::Core
 {
+    namespace Asset
+    {
+        class AssetSystem;
+        struct CookedMeshData;
+    } // namespace Asset
+
     namespace Component
     {
         class MeshComponent;
@@ -61,6 +70,23 @@ namespace Game::GameModes
     };
 
     /**
+     * @brief 地面の1区画（x方向に並べた、奥行きが地面全体の帯）
+     *
+     * 石畳の区画（中央と外側）と、見本の材質の区画がある。区画ごとにメッシュ（UVはテクスチャの実寸で
+     * 繰り返す）・材質・Entityを1つずつ持つ。
+     */
+    struct GroundPiece
+    {
+        NorvesLib::Core::Rendering::MeshDataHandle MeshHandle;
+        NorvesLib::Core::Rendering::MaterialHandle Material;
+        float CenterX = 0.0f;    ///< 帯の中心のx（m）
+        float Width = 0.0f;      ///< 帯の幅（m）
+        float TileMeters = 2.0f; ///< テクスチャ1枚の実寸（m）
+        int32_t SwatchIndex = -1; ///< 見本の材質の表の番号（石畳なら-1）
+        NorvesLib::Core::Entity *pObject = nullptr;
+    };
+
+    /**
      * @brief Boulder の非同期ロード共有状態
      *
      * コールバックが Data 本体ではなくこの共有状態を値キャプチャすることで、
@@ -72,6 +98,53 @@ namespace Game::GameModes
         NorvesLib::Thread::Atomic<bool> m_bCompleted{false}; ///< コールバック到着フラグ（Do が消費）
         NorvesLib::Core::Rendering::ModelHandle m_Handle;    ///< 結果ハンドル
         bool m_bLoaded = false;                              ///< 有効ハンドルが得られたか
+        float m_BoundsMinY = 0.0f; ///< クック済みのメッシュの最下点の Y（スキャン資産を地面に据えるのに使う。それ以外は 0）
+    };
+
+    /**
+     * @brief クック済み（NVMESH v1）で読む起動画面のモデル1つ分の読み込み状態
+     *
+     * メッシュは起動時に読み込んで解析し、材質のテクスチャ（VT）がそろってから MegaMesh を作る。
+     * 完了すると State を BoulderAsyncState と同じ手順で埋め、岩・小屋の組み立てが続きを受け持つ。
+     */
+    struct CookedStartupModelLoad
+    {
+        String DebugName;
+        String LogicalPath; ///< メッシュの論理パス（"Assets/Models/...gltf"）。テクスチャが読めないとき glTF の経路へ戻すのに使う
+        bool bBoulder = false; ///< 岩か（false なら小屋）。glTF の経路へ戻すとき、どちらの要求番号を更新するか決める
+        bool bAllowGltfFallback = true; ///< 材質のテクスチャが読めないとき glTF の経路へ戻すか（false なら失敗として State を埋める）
+        TSharedPtr<NorvesLib::Core::Asset::CookedMeshData> Mesh;
+        /// ページ（NVMESH v1.1）の読み込み元。ページを 2 つ以上持つメッシュだけが持つ（無ければ全て常駐で作る）
+        TSharedPtr<NorvesLib::Core::Rendering::MegaGeometry::IGeometryPageSource> PageSource;
+        TSharedPtr<PendingMaterialUpdate> Material;
+        TSharedPtr<BoulderAsyncState> State;
+    };
+
+    /**
+     * @brief 起動画面の地面の外周に並べる、高ポリのスキャン資産1つ分の読み込み状態
+     *
+     * 資産は Rendering3DTestRoutine.cpp の kStartupScanProps の表の番号で引く。クック済み（NVMESH v1・BC・VT）が
+     * 無い資産は読み込みを始めず、glTF の経路へも戻さない（置かずに警告する）。
+     */
+    struct StartupScanPropLoad
+    {
+        uint32_t SpecIndex = 0;
+        TSharedPtr<BoulderAsyncState> State;
+    };
+
+    /**
+     * @brief --stress-mega-instances で複製する元（置いたスキャン資産のメッシュと据え方）
+     */
+    struct StressMegaInstanceSource
+    {
+        NorvesLib::Core::Rendering::MegaGeometry::MegaMeshHandle Handle;
+        float PositionY = 0.0f; ///< 最下点を地面へ据えた Y
+        float Scale = 1.0f;
+        // --stress-geometry で、拡大率を変えて据え直すための値。拡大率 s のとき Y = -1 - BoundsMinY * s - SinkMeters。
+        float BoundsMinY = 0.0f; ///< メッシュの最下点の Y（拡大前）
+        float SinkMeters = 0.0f; ///< 地面へ埋める深さ
+        float ScaleMin = 1.0f;   ///< --stress-geometry で振る拡大率の範囲
+        float ScaleMax = 1.0f;
     };
 
     /**
@@ -83,8 +156,19 @@ namespace Game::GameModes
     {
         // メッシュハンドル
         NorvesLib::Core::Rendering::MeshDataHandle m_SphereMeshHandle{100};
-        NorvesLib::Core::Rendering::MeshDataHandle m_GroundMeshHandle{101};
         NorvesLib::Core::Rendering::MeshDataHandle m_LightSphereMeshHandle{102};
+        // 地面の区画のメッシュ（110から区画ごとに1つずつ使う）
+        static constexpr uint32_t kGroundPieceMeshHandleBase = 110u;
+        VariableArray<GroundPiece> m_GroundPieces;
+        // 見本の材質（Rendering3DTestRoutine.cpp の表と同じ並び。テクスチャが無い材質は無効のまま）
+        VariableArray<NorvesLib::Core::Rendering::MaterialHandle> m_GroundSwatchMaterials;
+
+        // テクスチャの負荷モード（--stress-textures）。地面の外側へ、負荷用の材質を貼った板を格子に並べる。
+        // 板のメッシュは 200 から板ごとに1つずつ使う。材質は Rendering3DTestRoutine.cpp の kStressMaterials と同じ並びで、
+        // テクスチャが無い材質は無効のまま（その板は置かない）。
+        static constexpr uint32_t kStressPanelMeshHandleBase = 200u;
+        bool m_bStressTextures = false;
+        VariableArray<NorvesLib::Core::Rendering::MaterialHandle> m_StressMaterials;
 
         // テクスチャハンドル
         NorvesLib::Core::Rendering::TextureHandle m_CheckerTextureHandle;
@@ -97,6 +181,13 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::MaterialHandle m_LightSphereMaterial; // 光源球体マテリアル
         // 非同期ロード用：マテリアル更新ペンディングリスト
         VariableArray<TSharedPtr<PendingMaterialUpdate>> m_PendingMaterialUpdates;
+        // 石畳の材質の読み込み状態（大きな球のMegaGeometryは、テクスチャがそろってから作る）
+        TSharedPtr<PendingMaterialUpdate> m_CobbleStoneMaterialUpdate;
+        // 大きな球の高ポリのMegaGeometry（起動時に作った頂点・クラスタ。MegaMeshを作ったら手放す）
+        TSharedPtr<NorvesLib::Core::Rendering::MegaGeometry::ProceduralMegaSphereData> m_pBigSphereMegaData;
+        // 大きな球の頂点・変位を別スレッドで作るジョブ（完了するまで m_pBigSphereMegaData の中身を読まない）
+        NorvesLib::Thread::TaskPtr m_BigSphereBuildTask;
+        NorvesLib::Core::Rendering::ModelHandle m_BigSphereModelHandle;
 
         // Entity参照（Worldが所有）
         NorvesLib::Core::Entity *m_pSphereObject = nullptr;
@@ -118,6 +209,7 @@ namespace Game::GameModes
         VariableArray<NorvesLib::Core::Component::BillboardComponent *> m_F9BillboardComponents;
         VariableArray<NorvesLib::Core::Component::ImpostorComponent *> m_F11ImpostorComponents;
         NorvesLib::Core::Component::MegaGeometryComponent *m_pBoulderMegaGeometryComponent = nullptr;
+        NorvesLib::Core::Component::MegaGeometryComponent *m_pSphereMegaGeometryComponent = nullptr;
 
         // LightComponent参照（Entityが所有）
         NorvesLib::Core::Component::PointLightComponent *m_pPointLightComponent = nullptr;
@@ -178,11 +270,69 @@ namespace Game::GameModes
         // --height-fog-density で指定した高さフォグの地面での密度（0で無効）
         bool m_bHasStartupHeightFogDensity = false;
         float m_StartupHeightFogDensity = 0.0f;
+        // --height-fog-falloff で指定した高さフォグの高さ方向の減衰（1/m）
+        bool m_bHasStartupHeightFogFalloff = false;
+        float m_StartupHeightFogFalloff = 0.0f;
         // --orbit-degrees-per-second で指定したカメラの周回の速さ（度/秒、0で止まったまま）。撮影で
         // 動くカメラの TAA の残像を確かめるのに使う。
         float m_OrbitDegreesPerSecond = 0.0f;
-        // --anti-aliasing=taa の指定で true にする（既定は FXAA）。
-        bool m_bStartupTemporalAA = false;
+        // 決定的な撮影の旋回は、最初に回した時点のヨー（度）に、エポックからの時間に比例した角度を足して決める。
+        float m_OrbitBaseYaw = 0.0f;
+        bool m_bOrbitBaseYawLatched = false;
+        // --render-scale で指定した内部解像度の倍率（0.5〜1、既定は1で画面解像度のまま描く）。
+        float m_StartupRenderScale = 1.0f;
+        // --debug-draw-test-lines の指定で true にする。大きな球を囲む箱をデバッグの線で毎フレーム描く。
+        bool m_bDebugDrawTestLines = false;
+        // --startup-skinned-probe の指定で true にする。検証用の骨付きのパネルを地面の上へ 2 体置く（既定は置かない）。
+        bool m_bStartupSkinnedProbe = false;
+        NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::SkeletalAssetResource> m_StartupSkinnedProbeAsset;
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Component::SkinnedMeshComponent *> m_StartupSkinnedProbeComponents;
+        // 地面の外周に高ポリのスキャン資産を置くか（--startup-scan-props=off で false。既定は true）。
+        bool m_bStartupScanProps = true;
+        // --stress-mega-instances=<N> の個数（0 は置かない）。スキャン資産を置いた後、そのメッシュを N 個格子に複製する。
+        uint32_t m_StressMegaInstanceCount = 0;
+        bool m_bStressMegaInstancesPlaced = false;
+        // ジオメトリの負荷モード（--stress-geometry[=<N>]。N は既定 300）。スキャン資産・岩・小屋・大きな球を、変換を変えて
+        // 地面の外側の格子に N 個並べ、カメラの軸を格子の中心へ移す。個数は m_StressMegaInstanceCount に入る。
+        bool m_bStressGeometry = false;
+        VariableArray<StressMegaInstanceSource> m_StressMegaSources;
+        // 起動時のアンチエイリアシングが TAA なら true（既定は TAA、--anti-aliasing=fxaa の指定で false）。
+        bool m_bStartupTemporalAA = true;
+        // --night の指定で true にする。空と空の太陽を消し、静的HDRの環境光を月明かり程度へ落とす
+        // （点光源の影を見る撮影用。既定は昼）。
+        bool m_bStartupNight = false;
+        // --debug-view の指定（起動時のデバッグの表示。既定は Normal）。development ビルドだけが適用する。
+        NorvesLib::Core::Rendering::DebugViewMode m_StartupDebugViewMode = NorvesLib::Core::Rendering::DebugViewMode::Normal;
+        // 材質のアルベド・法線・ORM・高さを VT（sparse）で描くか（--virtual-texture=off で false）。sparse に対応しない GPU・クック済みに無い
+        // テクスチャは、true でも全常駐で読む。
+        bool m_bVirtualTexture = true;
+        // VT のタイルがそろうのを待つ状態（決定的な撮影が、タイルがそろってから数え直すため）。組み立てが終わってから、
+        // ストリーマが落ち着いている連続のティック数と、待った合計のティック数。一度落ち着いたら戻さない。
+        uint32_t m_VirtualTextureIdleTicks = 0;
+        uint32_t m_VirtualTextureWaitTicks = 0;
+        bool m_bVirtualTextureSettled = false;
+
+        // クック済みのマニフェストに、論理パス（"Assets/..." から始まる）の項目があるか。起動画面の材質は、
+        // クック済みの BC のテクスチャと ORM があればそれを、無ければばらの元画像を読む。未設定ならすべてばらで読む。
+        NorvesLib::Core::Delegate<bool, const NorvesLib::Core::Container::String &> m_IsTextureCooked;
+
+        // 起動画面の岩・小屋をクック済み（NVMESH v1・BC・VT）で読むか。false が既定で、クック済みが無ければ glTF の実行時の経路へ戻して警告する。
+        // true（--rendering3dtest-model-source=gltf、--no-cooked-textures）は、最初から glTF の経路で読む（見た目・VRAM の比較用）。
+        bool m_bStartupModelsFromGltf = false;
+        // 起動画面の大きな球をクック済み（NVMESH v1。クッカーが変位した球の階層を焼いてある）で読むか。false が既定で、
+        // クック済みが無ければ実行時の生成（約3.6秒）へ戻して警告する。true（--rendering3dtest-big-sphere-source=runtime、
+        // --no-cooked-textures）は、最初から実行時に生成する（見た目・起動時間の比較用）。
+        bool m_bBigSphereFromRuntime = false;
+        // 読み込んだクック済みの大きな球（石畳の材質がそろって MegaMesh を作るまで持つ）
+        TSharedPtr<NorvesLib::Core::Asset::CookedMeshData> m_pBigSphereCooked;
+        // 大きな球のページの読み込み元（読み込みのジョブが埋める。ジョブの完了後に読む）
+        TSharedPtr<TSharedPtr<NorvesLib::Core::Rendering::MegaGeometry::IGeometryPageSource>> m_pBigSpherePageSource;
+        // クック済みのメッシュ（NVMESH）を解決する AssetSystem（無ければ null。クック済みのマニフェストを読んでいないとき）。
+        NorvesLib::Core::Delegate<NorvesLib::Core::Container::TSharedPtr<const NorvesLib::Core::Asset::AssetSystem>> m_GetAssetSystem;
+        // クック済みで読んでいる岩・小屋の、材質（VT）がそろうのを待っている状態。そろったら MegaMesh を作って取り除く。
+        VariableArray<CookedStartupModelLoad> m_CookedStartupModelLoads;
+        // 地面の外周に並べるスキャン資産のうち、読み込み中のもの。完了したものから World へ置いて取り除く。
+        VariableArray<StartupScanPropLoad> m_ScanPropLoads;
 
         // 手動露出（EV100）。ImGui のスライダーが書き、Tick が絞り・ISO を保ったままシャッター速度へ写す。
         float m_ExposureEV100 = 0.0f;
@@ -190,10 +340,16 @@ namespace Game::GameModes
         // 自動露出（起動画面の既定）。ImGui のチェックボックスが書き、Tick がカメラの露出の方式へ写す。
         bool m_bAutoExposure = true;
         bool m_bAppliedAutoExposure = true;
-        // アンチエイリアシング（起動画面の既定は FXAA、入れると TAA）。ImGui のチェックボックスが書き、
+        // アンチエイリアシング（起動画面の既定は TAA、切ると FXAA）。ImGui のチェックボックスが書き、
         // Tick がカメラのアンチエイリアシングの方式へ写す。
-        bool m_bTemporalAA = false;
-        bool m_bAppliedTemporalAA = false;
+        bool m_bTemporalAA = true;
+        bool m_bAppliedTemporalAA = true;
+        // レンズの効果（色収差とレンズダート。起動画面の既定は有効、環境変数 NORVES_STARTUP_LENS_EFFECTS=0 で
+        // 無効で起動する）。ImGui のチェックボックスが書き、Tick がカメラのレンズ効果へ写す。
+        bool m_bLensEffects = true;
+        // 見た目の3D LUT（暖かみのある映画調。起動画面の既定は有効、環境変数 NORVES_STARTUP_LOOK_LUT=0 で
+        // 無効で起動する）。ImGui のチェックボックスが書き、Tick がカメラの LUT へ写す。
+        bool m_bLookLut = true;
         // RenderThread が読み戻した自動露出の測定。Tick が統計のスナップショットから写し、ImGui が表示する。
         NorvesLib::Core::Rendering::AutoExposureMeasurement m_AutoExposureMeasurement;
 

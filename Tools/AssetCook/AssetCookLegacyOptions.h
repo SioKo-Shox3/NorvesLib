@@ -10,6 +10,10 @@ namespace NorvesLib::Tools::AssetCook::Detail
 {
     struct CookOptions
     {
+        Core::Container::AnsiString Usage, Quality, Generate;
+        std::filesystem::path OrmAoPath, OrmRoughnessPath, OrmMetallicPath;
+        bool bFlipNormalY = false;
+        uint32_t FallbackMinTriangles = 0;
         std::filesystem::path InputPath;
         std::filesystem::path PackagePath;
         std::filesystem::path ManifestPath;

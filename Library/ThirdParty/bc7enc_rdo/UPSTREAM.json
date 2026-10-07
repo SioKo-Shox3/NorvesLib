@@ -1,0 +1,64 @@
+{
+  "name": "bc7enc_rdo",
+  "version": "unversioned (master)",
+  "upstream": {
+    "repository": "https://github.com/richgel999/bc7enc_rdo",
+    "branch": "master",
+    "commit": "b9438627eef73a1157e84201b6fa6eb2ffd6d9f0",
+    "commitDate": "2026-07-30",
+    "retrievedBy": "git clone --depth 1"
+  },
+  "license": {
+    "spdx": "MIT OR Unlicense",
+    "source": "LICENSE (ALTERNATIVE A: MIT / ALTERNATIVE B: Public Domain)",
+    "excluded": "bc7e.ispc (Apache-2.0) と lodepng (zlib) は取り込まない"
+  },
+  "usage": "Tools/AssetCook の BlockCompressor だけがリンクする(Core・Game には入れない)",
+  "files": [
+    {
+      "path": "upstream/bc7decomp.cpp",
+      "size": 28709,
+      "sha256": "CFBE156926EBD96443B4407A9DA1B5B7A424FDF989FEDCA3CF2FD0515E0C368A"
+    },
+    {
+      "path": "upstream/bc7decomp.h",
+      "size": 4332,
+      "sha256": "CBBA8778640E0021F55CA686B6BC19E6960032539084C70AF698922B05C5B242"
+    },
+    {
+      "path": "upstream/bc7enc.cpp",
+      "size": 94654,
+      "sha256": "B90444A091530A13C61FA6375583FCC9BC9CA47E474FD71F818876DE68C1B581"
+    },
+    {
+      "path": "upstream/bc7enc.h",
+      "size": 4499,
+      "sha256": "F40F4A956ED6A8845B7909E83831DE09512424408B32CA29551BF49AEE2FECF6"
+    },
+    {
+      "path": "upstream/rgbcx.cpp",
+      "size": 124104,
+      "sha256": "059243CE8E8E3EC634BC1E3DA3996115AAF36196A8D75A24D3DBB3C8BFE0CA98"
+    },
+    {
+      "path": "upstream/rgbcx.h",
+      "size": 24121,
+      "sha256": "111BD4C0211ECA172BEC9D757E2E597A47C4E4731BB122C9E8761DCA85711BBA"
+    },
+    {
+      "path": "upstream/rgbcx_table4.h",
+      "size": 450869,
+      "sha256": "5051CF4CE17CB1F9D011EF788B7C8D174F2270532DA0514C9F394830BAB72F36"
+    },
+    {
+      "path": "upstream/rgbcx_table4_small.h",
+      "size": 110330,
+      "sha256": "D484802656FB7F2249674263BBB14399AB9CCB2A997AC0030E51B17A4BF8595F"
+    },
+    {
+      "path": "LICENSE",
+      "size": 3710,
+      "sha256": "B3E843763E8D3BDEB0F469ECD4107FC32B5FA27EBEE1AF10D2066BC339292800"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 ﻿#include "Rendering/RenderingCoordinator.h"
+#include "Rendering/TemporalAA.h"
 
 #include <cassert>
 #include <iostream>
@@ -72,6 +73,52 @@ int main()
         assert(updatedMain->CameraId == 1);
         assert(updatedMain->PositionX == 2.0f);
         assert(coordinator.FindCamera(2) == nullptr);
+    }
+
+    {
+        // SetMainCamera へ別の CameraComponent のカメラを渡すと、登録 ID は同じでも TAA の履歴を捨てる。
+        RenderingCoordinator coordinator;
+        CameraProxy first = MakeCamera(1.0f);
+        first.CameraId = 41; // CameraComponent の ID
+        coordinator.SetMainCamera(first);
+        assert(coordinator.GetMainCamera().SourceCameraId == 41);
+
+        TemporalAAHistoryQuery query;
+        query.FrameNumber = 10;
+        query.bHasPreviousCamera = true;
+        query.PreviousObjectStateFrameNumber = 9;
+        query.bPreviousObjectStateComplete = true;
+        SetTemporalAAHistoryCamera(query, coordinator.GetMainCamera());
+        TemporalAAHistoryTracker history;
+        history.Record(query, coordinator.GetMainCamera());
+
+        const auto evaluateNextFrame = [&](uint64_t frameNumber)
+        {
+            query.FrameNumber = frameNumber;
+            query.PreviousObjectStateFrameNumber = frameNumber - 1;
+            SetTemporalAAHistoryCamera(query, coordinator.GetMainCamera());
+            return history.Evaluate(query);
+        };
+
+        // 同じカメラが動いただけなら使う。
+        first.PositionX = 1.5f;
+        coordinator.SetMainCamera(first);
+        assert(evaluateNextFrame(11) == TemporalAAHistoryDecision::Reuse);
+        // GetMainCamera の値を渡し直しても同じカメラのまま。
+        coordinator.SetMainCamera(coordinator.GetMainCamera());
+        assert(coordinator.GetMainCamera().SourceCameraId == 41);
+        assert(evaluateNextFrame(11) == TemporalAAHistoryDecision::Reuse);
+
+        // 同じ位置の別のカメラへ切り替える。
+        CameraProxy second = MakeCamera(1.5f);
+        second.CameraId = 42;
+        coordinator.SetMainCamera(second);
+        const CameraProxy &switched = coordinator.GetMainCamera();
+        assert(switched.CameraId == 1);
+        assert(switched.SourceCameraId == 42);
+        assert(coordinator.FindCamera(1)->SourceCameraId == 42);
+        assert(evaluateNextFrame(11) == TemporalAAHistoryDecision::CameraChanged);
+        assert(history.FindReprojectionCamera(0, switched.CameraId, switched.SourceCameraId, 12) == nullptr);
     }
 
     std::cout << "CameraTableTest passed\n";

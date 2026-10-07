@@ -27,7 +27,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     uint debugViewMode;
     float preExposure;
     uint shadowPadding0;
-    uint shadowPadding1;
+    float staticEnvironmentScale; // 空が無効なときの静的HDRの背景に掛ける倍率（既定1。空が有効なら1）
     uint shadowPadding2;
     vec4 skySunDirectionAndCosRadius; // xyz=太陽方向, w=cos(太陽ディスク角半径)
     vec4 cameraForward; // xyz=CSM分割に使うカメラ前方単位ベクトル
@@ -35,6 +35,8 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     vec4 ddgiProbeSpacing; // xyz=DDGI probe間隔
     uvec4 ddgiProbeCounts; // xyz=格子数, w=probe総数
     uvec4 ddgiInfo; // x=DDGI有効フラグ
+    mat4 viewProjection; // 接触影のレイを画面へ写すViewProjection（TAAのジッタ込み）
+    vec4 contactShadowParams; // x=レイの長さ(m、0で無効), y=雑音の時間のずらし, z=遮る物体の厚さの下限(m)
 } params;
 
 // ライトデータ構造
@@ -56,7 +58,7 @@ layout(std430, set = 0, binding = 5) readonly buffer LightBuffer
 layout(set = 0, binding = 6) uniform sampler2DArray shadowMap;
 
 // GBufferエミッシブ
-layout(set = 0, binding = 7) uniform sampler2D gbufferEmissive;
+layout(set = 0, binding = 7) uniform sampler2D gbufferEmissive; // プリエクスポージャ後の発光
 
 // IBL (Image-Based Lighting)
 layout(set = 0, binding = 8) uniform sampler2D envMap;    // HDR環境マップ（equirectangular）
@@ -84,6 +86,11 @@ layout(set = 0, binding = 11) readonly buffer NeuralBRDFWeights
 } neuralBRDF;
 
 layout(location = 0) out vec4 outColor;
+// SSRPass が環境光の鏡面反射を画面の反射へ置き換えるための出力。outIndirectSpecular は環境光の鏡面反射として
+// outColor へ足した値（露出後）、outSpecularReflectance はその反射率（鏡面の遮蔽込み、無次元、RGB）。
+// 環境光を求めない表示（デバッグ・検証の表示、空）では0のままで、SSRは何も足さない。
+layout(location = 1) out vec4 outIndirectSpecular;
+layout(location = 2) out vec4 outSpecularReflectance;
 
 // ========================================
 // PBR関連関数
@@ -109,7 +116,8 @@ const uint DEBUG_VIEW_MODE_GBUFFER_MATERIAL = 6u;
 const uint DEBUG_VIEW_MODE_GBUFFER_DEPTH = 7u;
 const uint DEBUG_VIEW_MODE_LOD_LEVEL = 8u;
 const uint DEBUG_VIEW_MODE_POINT_SHADOW_DISTANCE = 9u;
-const uint DEBUG_VIEW_MODE_COUNT = 10u;
+const uint DEBUG_VIEW_MODE_AMBIENT_OCCLUSION = 10u;
+const uint DEBUG_VIEW_MODE_COUNT = 11u;
 const uint DEBUG_VIEW_MODE_VALIDATION_LAMBERT = 253u;
 const uint DEBUG_VIEW_MODE_VALIDATION_PBR = 254u;
 const uint DEBUG_VIEW_MODE_RAW250 = 250u;
@@ -148,6 +156,18 @@ vec3 ApplySceneColorPreExposure(vec3 sceneColor)
     }
 
     return sceneColor;
+}
+
+// GBufferの発光は書き込み時に同じフレームのプリエクスポージャ（params.preExposure と同じ値）を
+// 掛けてある。露出を掛ける表示ではそのまま足し、掛けない表示では物理の値へ戻す。
+vec3 ResolveGBufferEmissiveSceneColor(vec3 preExposedEmissive)
+{
+    if (ShouldApplySceneColorPreExposure())
+    {
+        return preExposedEmissive;
+    }
+
+    return preExposedEmissive / max(params.preExposure, 1.0e-6);
 }
 
 // ========================================
@@ -517,6 +537,105 @@ float CalculateShadow(vec3 worldPos, vec3 normal)
 }
 
 // ========================================
+// 接触影（Contact Shadow）
+// ========================================
+// 受け手から光の方向へ短く（contactShadowParams.x m）レイを進め、各段の点を画面へ写して
+// GBufferの深度と比べる。点が深度の面より奥（厚さcontactShadowParams.z以内）にあり、かつ
+// その画素の法線で決まる面の内側にあれば遮られたとみなす。CSM・キューブシャドウの解像度では
+// 出ない接地部の細い影を補い、影の結果へ掛ける。
+const uint CONTACT_SHADOW_STEP_COUNT = 12u;
+
+// 画素の位置で決まる雑音（Jimenez 2014のinterleaved gradient noise）。段の位置をずらし、
+// 段の間隔の階段状の境目をTAAで均せる細かな雑音にする。
+float InterleavedGradientNoise(vec2 pixel)
+{
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+}
+
+float CalculateContactShadow(vec3 worldPos, float depth, vec3 normal, vec3 L, float maxLength)
+{
+    float rayLength = min(params.contactShadowParams.x, maxLength);
+    float thickness = params.contactShadowParams.z;
+    if (!(rayLength > 0.0) || !(thickness > 0.0) || dot(normal, L) <= 0.0)
+    {
+        return 1.0;
+    }
+
+    vec3 cameraPos = params.cameraPosition.xyz;
+    vec3 forward = params.cameraForward.xyz;
+    if (!(dot(worldPos - cameraPos, forward) > 0.0))
+    {
+        return 1.0;
+    }
+
+    ivec2 depthSize = textureSize(gbufferDepth, 0);
+    // 受け手の位置での1画素の世界の幅（同じ深度で横に1画素ずらした点との距離）
+    vec3 neighborPos = ReconstructWorldPosition(fragUV + vec2(1.0 / float(depthSize.x), 0.0), depth);
+    float pixelWorldSize = length(neighborPos - worldPos);
+    if (!IsFiniteShadowValue(pixelWorldSize) || pixelWorldSize <= 0.0)
+    {
+        return 1.0;
+    }
+    // レイが画面上で数画素にしかならない遠くでは、段の比較が画素の粗さに負けるので効果を消していく
+    // （2画素で0、6画素で1）。
+    float resolveFade = clamp(rayLength / pixelWorldSize * 0.25 - 0.5, 0.0, 1.0);
+    if (resolveFade <= 0.0)
+    {
+        return 1.0;
+    }
+
+    // 起点は法線の方向へ0.25画素だけずらす。受け手自身の面での縞は下の面の内側の判定で防ぐ。
+    // 大きくずらすと、物体のすぐ外を通るレイが物体の端を切り、影の縁が外へ広がる。
+    vec3 origin = worldPos + normal * (pixelWorldSize * 0.25);
+    float jitter = fract(InterleavedGradientNoise(gl_FragCoord.xy) + params.contactShadowParams.y);
+    float stepLength = rayLength / float(CONTACT_SHADOW_STEP_COUNT);
+    // 遮る物体の厚さ。1段の長さと1画素の幅より薄いと、面へ入った段を見落とすので下限にする。
+    thickness = max(thickness, max(stepLength, pixelWorldSize));
+
+    for (uint stepIndex = 0u; stepIndex < CONTACT_SHADOW_STEP_COUNT; ++stepIndex)
+    {
+        float t = (float(stepIndex) + jitter) * stepLength;
+        vec3 samplePos = origin + L * t;
+        vec4 sampleClip = params.viewProjection * vec4(samplePos, 1.0);
+        if (!(sampleClip.w > 0.0))
+        {
+            break;
+        }
+        vec2 sampleUV = sampleClip.xy / sampleClip.w * 0.5 + 0.5;
+        if (any(lessThan(sampleUV, vec2(0.0))) || any(greaterThanEqual(sampleUV, vec2(1.0))))
+        {
+            break;
+        }
+        ivec2 texel = clamp(ivec2(sampleUV * vec2(depthSize)), ivec2(0), depthSize - ivec2(1));
+        float sceneDepth = texelFetch(gbufferDepth, texel, 0).r;
+        if (sceneDepth >= 1.0)
+        {
+            continue; // 空は遮らない
+        }
+        vec3 scenePos = ReconstructWorldPosition((vec2(texel) + 0.5) / vec2(depthSize), sceneDepth);
+        float behind = dot(samplePos - scenePos, forward);
+        if (behind <= 0.0 || behind >= thickness)
+        {
+            continue;
+        }
+        // 画素の面を、その画素の位置と法線の平面とみなし、段の点がその内側（半画素ぶんの余裕より
+        // 深い）にあるときだけ遮りとする。画素の中心の深度だけで比べると、物体の手前の面のすぐ外を
+        // かすめる段も、画素の中の面の傾きの差で奥と判定され、影の縁が1画素ほど外へ広がる。
+        vec3 sceneNormal = texelFetch(gbufferNormal, texel, 0).xyz;
+        float sceneNormalLength = length(sceneNormal);
+        if (!(sceneNormalLength > 0.0) ||
+            dot(samplePos - scenePos, sceneNormal / sceneNormalLength) >= -0.5 * pixelWorldSize)
+        {
+            continue;
+        }
+        // レイの終わり近くの遮りは弱め、長さで切れた影の端を柔らかくする
+        float occlusion = 1.0 - smoothstep(0.7, 1.0, t / rayLength);
+        return 1.0 - occlusion * resolveFade;
+    }
+    return 1.0;
+}
+
+// ========================================
 // Neural Disney BRDF評価
 // 事前学習済みMLP（30→32→32→32→4）による推論
 // 入力: NdotL, NdotV, NdotH, LdotH, roughness
@@ -605,6 +724,17 @@ bool IsRaw252ParameterInvariantValid()
            abs(params.ambientColor.w - 1.0) <= 0.0001;
 }
 
+// GTAOの多重反射の近似（Jimenez et al. 2016）。遮られた方向から来る光も周りの面で何度か反射して
+// 届くので、アルベドが高い面ほど可視率を持ち上げる（色ごと）。可視率1では1のまま。
+vec3 GTAOMultiBounce(float visibility, vec3 albedo)
+{
+    vec3 a = 2.0404 * albedo - 0.3324;
+    vec3 b = -4.7951 * albedo + 0.6417;
+    vec3 c = 2.7552 * albedo + 0.6903;
+    vec3 bounced = ((visibility * a + b) * visibility + c) * visibility;
+    return clamp(max(vec3(visibility), bounced), vec3(0.0), vec3(1.0));
+}
+
 vec3 EvaluateDiffuseEndpoint(vec3 irradiance,
                              vec3 albedo,
                              float metallic,
@@ -619,17 +749,11 @@ vec3 EvaluateDiffuseEndpoint(vec3 irradiance,
            (1.0 - metallic) * (vec3(1.0) - Ed);
 }
 
-vec3 EvaluateIblEndpoint(vec3 albedo,
-                         float metallic,
-                         float roughness,
-                         vec3 N,
-                         vec3 V,
-                         float ao,
-                         float specularAO,
-                         float iblIntensity,
-                         vec2 brdf,
-                         bool bUseDDGI,
-                         vec3 ddgiIrradiance)
+// 環境光の鏡面反射の反射率（split-sumのDFGに多重散乱の補償を掛けたもの。誘電体はF0=0.04、金属はalbedo）。
+// IBL・RTGIの鏡面の項と、SSRへ渡す反射率で同じ式を使う。
+vec3 EvaluateSpecularReflectance(vec3 albedo,
+                                 float metallic,
+                                 vec2 brdf)
 {
     float Ess = max(brdf.x + brdf.y, 0.0001);
     vec3 F0d = vec3(0.04);
@@ -640,7 +764,21 @@ vec3 EvaluateIblEndpoint(vec3 albedo,
                     vec3(0.0), vec3(1.0));
     vec3 Ec = clamp((F0c * brdf.x + brdf.y) * CompC,
                     vec3(0.0), vec3(1.0));
+    return (1.0 - metallic) * Ed + metallic * Ec;
+}
 
+vec3 EvaluateIblEndpoint(vec3 albedo,
+                         float metallic,
+                         float roughness,
+                         vec3 N,
+                         vec3 V,
+                         vec3 diffuseAO,
+                         float specularAO,
+                         float iblIntensity,
+                         vec2 brdf,
+                         bool bUseDDGI,
+                         vec3 ddgiIrradiance)
+{
     vec3 irradiance = bUseDDGI
         ? ddgiIrradiance
         : textureLod(diffuseIrradiance, EquirectangularUV(N), 0.0).rgb;
@@ -648,13 +786,12 @@ vec3 EvaluateIblEndpoint(vec3 albedo,
 
     vec3 R = reflect(-V, N);
     vec3 prefilteredColor = SamplePrefilteredSpecular(R, roughness);
-    vec3 specularIBL = prefilteredColor *
-                       ((1.0 - metallic) * Ed + metallic * Ec);
+    vec3 specularIBL = prefilteredColor * EvaluateSpecularReflectance(albedo, metallic, brdf);
     if (bUseDDGI)
     {
-        return diffuseIBL * ao + specularIBL * specularAO * iblIntensity;
+        return diffuseIBL * diffuseAO + specularIBL * specularAO * iblIntensity;
     }
-    return (diffuseIBL * ao + specularIBL * specularAO) * iblIntensity;
+    return (diffuseIBL * diffuseAO + specularIBL * specularAO) * iblIntensity;
 }
 
 vec3 EvaluateRTGIEndpoint(vec3 albedo,
@@ -672,19 +809,10 @@ vec3 EvaluateRTGIEndpoint(vec3 albedo,
     vec3 specular = vec3(0.0);
     if (params.bIBLEnabled != 0u)
     {
-        float Ess = max(brdf.x + brdf.y, 0.0001);
-        vec3 F0d = vec3(0.04);
-        vec3 F0c = albedo;
-        vec3 CompD = vec3(1.0) + F0d * (1.0 - Ess) / Ess;
-        vec3 CompC = vec3(1.0) + F0c * (1.0 - Ess) / Ess;
-        vec3 Ed = clamp((F0d * brdf.x + brdf.y) * CompD,
-                        vec3(0.0), vec3(1.0));
-        vec3 Ec = clamp((F0c * brdf.x + brdf.y) * CompC,
-                        vec3(0.0), vec3(1.0));
         vec3 R = reflect(-V, N);
         vec3 prefilteredColor = SamplePrefilteredSpecular(R, roughness);
         specular = prefilteredColor *
-                   ((1.0 - metallic) * Ed + metallic * Ec) *
+                   EvaluateSpecularReflectance(albedo, metallic, brdf) *
                    specularAO * iblIntensity;
     }
     return diffuse + specular;
@@ -879,6 +1007,10 @@ bool TrySampleDDGIIrradiance(vec3 worldPosition,
 
 void main()
 {
+    // 環境光を求めずに返す表示では、SSRへ渡す出力は0のまま
+    outIndirectSpecular = vec4(0.0);
+    outSpecularReflectance = vec4(0.0);
+
     // GBufferからデータを取得
     vec4 albedoSample = texture(gbufferAlbedo, fragUV);
     vec4 normalSample = texture(gbufferNormal, fragUV);
@@ -1022,7 +1154,8 @@ void main()
             vec2 envUV = EquirectangularUV(rayDir);
             // 空のradiance LUTは視線の透過率と地平線より下の地面を含むので、そのまま使う。
             vec4 skySample = textureLod(envMap, envUV, 0.0);
-            vec3 skyColor = skySample.rgb;
+            // 静的HDRの背景にはシーンの倍率を掛ける（空が有効なら1）。
+            vec3 skyColor = skySample.rgb * params.staticEnvironmentScale;
             vec4 sunDiskSample = textureLod(skySunDisk, vec2(0.5), 0.0);
             vec3 sunDirection = normalize(params.skySunDirectionAndCosRadius.xyz);
             float sunDiskMask = step(params.skySunDirectionAndCosRadius.w,
@@ -1060,12 +1193,25 @@ void main()
     float metallic = materialSample.r;
     float roughness = materialSample.g;
     float ao = materialSample.b;
+    // 拡散の環境光に掛ける遮蔽（多重反射の近似で色ごとに弱める）
+    vec3 diffuseAO = vec3(ao);
 
-    // SSAO適用: マテリアルAOとSSAOを掛け合わせる
+    // 画面空間AO（GTAO）適用: マテリアルAOと掛け合わせ、拡散には多重反射の近似を掛ける
     if (params.bSSAOEnabled != 0u)
     {
         float ssao = texture(ssaoTexture, fragUV).r;
+        if (params.debugViewMode == DEBUG_VIEW_MODE_AMBIENT_OCCLUSION)
+        {
+            outColor = vec4(vec3(ssao), 1.0);
+            return;
+        }
         ao *= ssao;
+        diffuseAO = GTAOMultiBounce(ao, albedo);
+    }
+    else if (params.debugViewMode == DEBUG_VIEW_MODE_AMBIENT_OCCLUSION)
+    {
+        outColor = vec4(vec3(1.0), 1.0);
+        return;
     }
 
     // ワールド座標を復元
@@ -1159,6 +1305,11 @@ void main()
             shadow = params.shadowPadding0 != 0u
                          ? texture(rayTracingShadowVisibility, fragUV).r
                          : CalculateShadow(worldPos, N);
+            // RT影は接地部も正しく遮るので、接触影はCSMの結果にだけ掛ける
+            if (params.shadowPadding0 == 0u && shadow > 0.0 && NdotL > 0.0)
+            {
+                shadow *= CalculateContactShadow(worldPos, depthSample, N, L, 1.0e30);
+            }
         }
         // 点光源のキューブシャドウ（attenuation.w=キューブの番号+1。0の灯は影を掛けない）
         else if ((!bValidationLambert || bValidationHardShadow) &&
@@ -1171,6 +1322,13 @@ void main()
                                        light.attenuation.x,
                                        worldPos,
                                        N);
+            if (shadow > 0.0 && attenuation > 0.0)
+            {
+                // 光源の手前で止める（光源の球そのものを遮りとみなさない）
+                float distanceToLight = length(light.position.xyz - worldPos);
+                shadow *= CalculateContactShadow(worldPos, depthSample, N, L,
+                                                 max(distanceToLight * 0.5, 0.0));
+            }
         }
 
         vec3 radiance = lightColor * NdotL * attenuation * shadow;
@@ -1226,6 +1384,9 @@ void main()
     vec3 ambient = vec3(0.0);
     float specularAO = 1.0;
     float directSpecularAO = 1.0;
+    // ambient に含めた環境光の鏡面反射（露出前）と、その反射率（SSRへ渡す）
+    vec3 indirectSpecular = vec3(0.0);
+    vec3 indirectSpecularReflectance = vec3(0.0);
 
     if (!bValidationLambert && !bValidationPBR)
     {
@@ -1281,6 +1442,7 @@ void main()
             vec2 brdf = texture(brdfLUT, dfgCoordinate).rg;
             // DDGIとRTGIは遮蔽を光線で解くため、画面空間AOを重ねず材質AOだけを掛ける。
             float ddgiAmbientAO = bDDGIAvailable || bRTGIAvailable ? materialSample.b : ao;
+            vec3 iblDiffuseAO = bDDGIAvailable || bRTGIAvailable ? vec3(materialSample.b) : diffuseAO;
             ambient = bRTGIAvailable
                 ? EvaluateRTGIEndpoint(iblAlbedo,
                                        metallic,
@@ -1297,12 +1459,17 @@ void main()
                                        iblRoughness,
                                        N,
                                        V,
-                                       ddgiAmbientAO,
+                                       iblDiffuseAO,
                                        specularAO,
                                        iblIntensity,
                                        brdf,
                                        bDDGIAvailable,
                                        ddgiIrradiance);
+            // EvaluateIblEndpoint・EvaluateRTGIEndpoint の鏡面の項と同じ値（どちらも遮蔽と強度を掛ける）
+            indirectSpecularReflectance =
+                EvaluateSpecularReflectance(iblAlbedo, metallic, brdf) * specularAO;
+            indirectSpecular = SamplePrefilteredSpecular(reflect(-V, N), iblRoughness) *
+                               indirectSpecularReflectance * iblIntensity;
         }
         else
         {
@@ -1313,7 +1480,10 @@ void main()
             vec3 kD_ambient = (vec3(1.0) - F_ambient) * (1.0 - metallic);
             vec3 diffuseAmbient = kD_ambient * ambientLight * albedo;
             vec3 specularAmbient = F_ambient * ambientLight * (1.0 - roughness * 0.5);
-            ambient = diffuseAmbient * ao + specularAmbient * specularAO;
+            ambient = diffuseAmbient * diffuseAO + specularAmbient * specularAO;
+            // 一様な環境光の鏡面の項（RTGIへ置き換えると、強度0で鏡面の項は無くなる）
+            indirectSpecularReflectance = F_ambient * (1.0 - roughness * 0.5) * specularAO;
+            indirectSpecular = bRTGIAvailable ? vec3(0.0) : specularAmbient * specularAO;
             if (bRTGIAvailable)
             {
                 vec2 rtgiDfgCoordinate = clamp(vec2(NdotV, roughness),
@@ -1347,7 +1517,7 @@ void main()
         {
             emissive = texture(gbufferEmissive, fragUV).rgb;
         }
-        ambient += emissive;
+        // 発光は露出を掛けた後で足す（下の outColor）。
     }
 
     // 直接光へのAO適用（マイクロシャドウ近似）:
@@ -1369,5 +1539,10 @@ void main()
     }
 
     float outputAlpha = bValidationRaw252 ? ComputeDebugDepth01(fragUV, depthSample) : 1.0;
-    outColor = vec4(ApplySceneColorPreExposure(color), outputAlpha);
+    // GBufferの発光はプリエクスポージャ後の値なので、露出を掛けた後の色へ足す。
+    // 発光を読まない表示（純Lambert・直接PBRの検証）では emissive は0のまま。
+    outColor = vec4(ApplySceneColorPreExposure(color) + ResolveGBufferEmissiveSceneColor(emissive),
+                    outputAlpha);
+    outIndirectSpecular = vec4(ApplySceneColorPreExposure(indirectSpecular), 0.0);
+    outSpecularReflectance = vec4(clamp(indirectSpecularReflectance, vec3(0.0), vec3(1.0)), 0.0);
 }

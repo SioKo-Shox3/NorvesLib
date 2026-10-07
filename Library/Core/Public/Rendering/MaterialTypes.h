@@ -4,6 +4,7 @@
 #include "Container/Containers.h"
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -224,6 +225,8 @@ namespace NorvesLib::Core::Rendering
      * @brief エミッシブ入力をY=1のchromaticityとnitsへ正規化します。
      *
      * 入力と計算はdoubleで検証し、成功時のみ出力を更新します。
+     * 物理の発光（色度×nits）の各チャンネルはfloatで有限であればよい。GBufferへは
+     * プリエクスポージャを掛けた値を書くため、RGBA16Fの上限（65504）では制限しない。
      */
     inline bool TryBuildCanonicalEmissive(const float (&inputColor)[3],
                                            float inputLuminanceNits,
@@ -264,14 +267,15 @@ namespace NorvesLib::Core::Rendering
         const double normalizedRed = red / y;
         const double normalizedGreen = green / y;
         const double normalizedBlue = blue / y;
+        constexpr double MaxPhysicalEmissive = static_cast<double>(std::numeric_limits<float>::max());
         const double physicalRed = normalizedRed * luminanceNits;
         const double physicalGreen = normalizedGreen * luminanceNits;
         const double physicalBlue = normalizedBlue * luminanceNits;
         if (!std::isfinite(normalizedRed) || !std::isfinite(normalizedGreen) ||
             !std::isfinite(normalizedBlue) || !std::isfinite(physicalRed) ||
             !std::isfinite(physicalGreen) || !std::isfinite(physicalBlue) ||
-            std::abs(physicalRed) >= 65504.0 || std::abs(physicalGreen) >= 65504.0 ||
-            std::abs(physicalBlue) >= 65504.0)
+            std::abs(physicalRed) > MaxPhysicalEmissive || std::abs(physicalGreen) > MaxPhysicalEmissive ||
+            std::abs(physicalBlue) > MaxPhysicalEmissive)
         {
             return false;
         }
@@ -293,7 +297,14 @@ namespace NorvesLib::Core::Rendering
         TextureHandle MetallicTexture;
         TextureHandle RoughnessTexture;
         TextureHandle AOTexture;
+        /// ORMを1枚に詰めたテクスチャ（R=AO・G=粗さ・B=メタリック）。有効なときは Metallic/Roughness/AO の
+        /// 別々のテクスチャとスカラー値より優先する。
+        TextureHandle ORMTexture;
         TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
+
+        /// NormalTexture が2チャンネル（BC5。RG に接空間法線の XY）のとき true。Z はシェーダーが XY から戻す。
+        /// false なら従来どおり RGB に接空間法線を持つ。
+        bool bNormalTwoChannel = false;
 
         float HeightScale = 0.05f; ///< POMの高さスケール（0.0～0.1程度が自然）
 
@@ -324,7 +335,10 @@ namespace NorvesLib::Core::Rendering
         TextureHandle MetallicTexture;
         TextureHandle RoughnessTexture;
         TextureHandle AOTexture;
+        TextureHandle ORMTexture; ///< ORMを1枚に詰めたテクスチャ（R=AO・G=粗さ・B=メタリック）。有効なら別々の枠より優先
         TextureHandle HeightTexture; ///< ディスプレイスメントマップ（POM用）
+
+        bool bNormalTwoChannel = false; ///< NormalTexture が2チャンネル（BC5）。Zはシェーダーが戻す
 
         float HeightScale = 0.05f; ///< POMの高さスケール
 
@@ -368,6 +382,10 @@ namespace NorvesLib::Core::Rendering
         TextureHandle NormalTexture;
         TextureHandle MetallicTexture;
         TextureHandle RoughnessTexture;
+        /** @brief ORMを1枚に詰めたtexture。有効ならMetallic/Roughnessの別々の枠より優先する。 */
+        TextureHandle ORMTexture;
+        /** @brief NormalTextureが2チャンネル（BC5）で、Zを戻す必要がある。 */
+        bool bNormalTwoChannel = false;
     };
 
     inline RayTracingHitMaterialSnapshot MakeRayTracingHitMaterialSnapshot(
@@ -392,6 +410,8 @@ namespace NorvesLib::Core::Rendering
         snapshot.NormalTexture = materialData->NormalTexture;
         snapshot.MetallicTexture = materialData->MetallicTexture;
         snapshot.RoughnessTexture = materialData->RoughnessTexture;
+        snapshot.ORMTexture = materialData->ORMTexture;
+        snapshot.bNormalTwoChannel = materialData->bNormalTwoChannel;
         return snapshot;
     }
 

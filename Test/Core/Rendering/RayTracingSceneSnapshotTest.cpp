@@ -1,4 +1,5 @@
 ﻿#include "Engine/NorvesEngine.h"
+#include "Rendering/GeometryPool.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RayTracingSceneSubsystem.h"
 #include "Rendering/RenderResources.h"
@@ -93,6 +94,28 @@ namespace
 
         commandList.Submit(true);
         return true;
+    }
+
+    // ジオメトリの区画への書き込みを、実デバイスのコマンドで完了させる（フレームごとに GPU の完了を待つ）
+    bool DrainGeometryUploads(const RHI::DevicePtr& device, RenderResources& resources, uint64_t& serial)
+    {
+        for (uint32_t frame = 0; frame < 64u && resources.MegaGeometry().HasPendingGpuUploads(); ++frame)
+        {
+            CommandListPtr uploadCommandList = device->CreateCommandList();
+            if (!uploadCommandList)
+            {
+                return false;
+            }
+            resources.BeginRetireFrame(serial);
+            uploadCommandList->Begin();
+            resources.RecordTileUploads(*uploadCommandList);
+            uploadCommandList->End();
+            uploadCommandList->Submit(true);
+            ++serial;
+            resources.CommitRetireFrame(serial);
+            resources.BeginRetireFrame(serial);
+        }
+        return !resources.MegaGeometry().HasPendingGpuUploads();
     }
 
     int RunTest()
@@ -215,6 +238,126 @@ namespace
                 return 1;
             }
             std::cout << "draw_snapshot_shadow_caster_masks=true\n";
+        }
+
+        // 焼き込み済みのLOD階層（NVMESH v1）のメッシュは、光線にフォールバックの段の範囲を見せる。
+        // クラスタ（段0）の範囲（先頭の3インデックス）ではなく、その後ろに置かれたフォールバック（6インデックス）が
+        // 同じバッファの範囲としてBLASの入力になる。
+        {
+            Mesh3DVertex bakedVertices[7]{};
+            for (uint32_t i = 0; i < 7u; ++i)
+            {
+                bakedVertices[i].Position[0] = static_cast<float>(i);
+                bakedVertices[i].Position[1] = static_cast<float>(i % 2u);
+                bakedVertices[i].Normal[2] = 1.0f;
+            }
+            // クラスタのインデックス（頂点の基点からの相対）の後ろに、全体の頂点の番号で書いたフォールバック
+            constexpr uint32_t bakedIndices[9] = {0, 1, 2, 3, 4, 5, 3, 5, 6};
+            MegaGeometry::MegaMeshCreateInfo createInfo;
+            createInfo.VertexData = bakedVertices;
+            createInfo.VertexDataSize = sizeof(bakedVertices);
+            createInfo.VertexCount = 7;
+            createInfo.VertexStride = sizeof(Mesh3DVertex);
+            createInfo.IndexData = bakedIndices;
+            createInfo.IndexCount = 9;
+            createInfo.bBuildLODHierarchy = false;
+            createInfo.bBakedLODHierarchy = true;
+            createInfo.BakedLODLevelCount = 1;
+            createInfo.FallbackIndexOffset = 3;
+            createInfo.FallbackIndexCount = 6;
+            createInfo.FallbackError = 0.5f;
+            createInfo.TotalBounds = BoundingSphere{3.0f, 0.5f, 0.0f, 4.0f};
+            MegaGeometry::MeshCluster cluster;
+            cluster.IndexOffset = 0;
+            cluster.IndexCount = 3;
+            cluster.VertexOffset = 0;
+            cluster.VertexCount = 3;
+            cluster.Bounds = createInfo.TotalBounds;
+            createInfo.Clusters.push_back(cluster);
+            createInfo.DebugName = "BakedFallbackRT";
+
+            const MegaGeometry::MegaMeshHandle megaHandle = renderResources.MegaGeometry().CreateMegaMesh(createInfo);
+            const MegaGeometry::MegaMeshGPUData* megaData = renderResources.MegaGeometry().GetMegaMeshGPUData(megaHandle);
+            if (!megaHandle.IsValid() || !megaData || megaData->ShadowFirstIndex != 3u ||
+                megaData->ShadowIndexCount != 6u)
+            {
+                std::cerr << "焼き込み済みメッシュの影・RTの範囲がフォールバックの段になっていません\n";
+                return 1;
+            }
+
+            FramePacket megaPacket;
+            MegaGeometryProxy proxy;
+            proxy.ObjectId = 7;
+            proxy.MegaMeshHandle = megaHandle;
+            megaPacket.Scene.MegaGeometryProxies.push_back(proxy);
+
+            // 区画への書き込みが GPU で完了するまでは、BLAS の入力にしない（同期の BLAS 構築が未書き込みの区画を読まない）
+            if (!subsystem.BuildFrameSnapshot(&renderResources.Meshes(),
+                                              megaPacket,
+                                              nullptr,
+                                              &renderResources.MegaGeometry()) ||
+                !megaPacket.RayTracingScene.Instances.empty())
+            {
+                std::cerr << "書き込み前のメッシュがinstanceになっています\n";
+                return 1;
+            }
+            uint64_t uploadSerial = 0;
+            if (!DrainGeometryUploads(device, renderResources, uploadSerial))
+            {
+                std::cerr << "メッシュの区画への書き込みが完了しませんでした\n";
+                return 1;
+            }
+            std::cout << "mega_instance_waits_for_upload=true\n";
+
+            if (!subsystem.BuildFrameSnapshot(&renderResources.Meshes(),
+                                              megaPacket,
+                                              nullptr,
+                                              &renderResources.MegaGeometry()) ||
+                megaPacket.RayTracingScene.Instances.size() != 1)
+            {
+                std::cerr << "焼き込み済みメッシュのinstanceを構築できませんでした\n";
+                return 1;
+            }
+            const RayTracingSceneInstanceSnapshot& megaInstance = megaPacket.RayTracingScene.Instances[0];
+            if (megaInstance.IndexOffset != 3u || megaInstance.IndexCount != 6u ||
+                megaInstance.VertexOffset != 0u || megaInstance.VertexCount != 7u ||
+                megaInstance.SourceVertexBuffer != megaData->VertexBuffer ||
+                megaInstance.SourceIndexBuffer != megaData->IndexBuffer ||
+                megaInstance.VertexBufferOffsetBytes != megaData->VertexBufferOffsetBytes ||
+                megaInstance.IndexBufferOffsetBytes != megaData->IndexBufferOffsetBytes ||
+                megaInstance.MegaMeshId != megaHandle.Id)
+            {
+                std::cerr << "焼き込み済みメッシュのinstanceがフォールバックの範囲を指していません\n";
+                return 1;
+            }
+            std::cout << "mega_instance_points_into_pool_region=true\n";
+
+            CommandListPtr megaCommandList = device->CreateCommandList();
+            if (!megaCommandList || !BuildAndSubmit(device, *megaCommandList, subsystem, 0, megaPacket) ||
+                !megaPacket.RayTracingScene.TopLevel || !megaPacket.RayTracingScene.Instances[0].BottomLevel)
+            {
+                std::cerr << "焼き込み済みメッシュのフォールバックの範囲でBLAS/TLASを構築できませんでした\n";
+                return 1;
+            }
+            std::cout << "baked_mesh_instance_uses_fallback_range=true\n";
+
+            // スナップショットが区画の持ち主を持っている間は、元のメッシュを解放しても区画が空きへ戻らない
+            // （解放後に別のメッシュへ使い回されて、BLAS・RTGI が参照する頂点・インデックスが書き換わらない）
+            if (!megaInstance.GeometryRegionOwner || megaInstance.GeometryRegionOwner != megaData->RegionOwner)
+            {
+                std::cerr << "instanceが区画の持ち主を持っていません\n";
+                return 1;
+            }
+            renderResources.MegaGeometry().ReleaseMegaMesh(megaHandle);
+            if (renderResources.GetGeometryPool()->GetStats().AllocationCount != 1)
+            {
+                std::cerr << "スナップショットが持っている区画が、メッシュの解放で空きへ戻りました\n";
+                return 1;
+            }
+            std::cout << "snapshot_keeps_released_region=true\n";
+
+            megaPacket.Clear();
+            megaCommandList.reset();
         }
 
         CommandListPtr commandList = device->CreateCommandList();

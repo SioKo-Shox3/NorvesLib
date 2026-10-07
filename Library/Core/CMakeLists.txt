@@ -240,9 +240,19 @@ set(PRIVATE_SOURCES
     # MegaGeometry
     Private/Rendering/MegaGeometry/MeshClusterizer.cpp
     Private/Rendering/MegaGeometry/MeshSimplifier.cpp
+    Private/Rendering/MegaGeometry/CookedMeshPageSource.cpp
     Private/Rendering/MegaGeometry/ClusterGroupBuilder.cpp
     Private/Rendering/MegaGeometry/LODHierarchyBuilder.cpp
     Private/Rendering/MegaGeometryPass.cpp
+    Private/Rendering/HiZPyramidPass.cpp
+    Private/Rendering/SkinningComputePass.cpp
+    Private/Rendering/MaterialTileClassifyPass.cpp
+    Private/Rendering/VisibilityRasterPass.cpp
+    Private/Rendering/VisibilitySwRaster.cpp
+    Private/Rendering/GBufferDebugPass.h
+    Private/Rendering/GBufferDebugPass.cpp
+    Private/Rendering/VisibilityResolvePass.cpp
+    Private/Rendering/VisibilityMaterialTable.cpp
     # Engine
     Private/Engine/AssetRegistry.cpp
     # Resource
@@ -552,6 +562,14 @@ set(PUBLIC_HEADERS
     Public/Rendering/NeuralMaterialDecoder.h
     Public/Rendering/NeuralMaterialDecodePass.h
     Public/Rendering/MegaGeometryPass.h
+    Public/Rendering/HiZPyramidPass.h
+    Public/Rendering/SkinningComputePass.h
+    Public/Rendering/MaterialTileClassifyPass.h
+    Public/Rendering/VisibilityRasterPass.h
+    Public/Rendering/VisibilitySwRaster.h
+    Public/Rendering/VisibilityResolvePass.h
+    Public/Rendering/VisibilityMaterialTable.h
+    Public/Rendering/VisibilityBufferMode.h
     # MegaGeometry types
     Public/Rendering/MegaGeometry/MegaGeometryTypes.h
     Public/Rendering/MegaGeometry/MeshClusterizer.h

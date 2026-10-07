@@ -1,5 +1,7 @@
 ﻿#include "Object/ResourceRegistry.h"
 #include "Animation/SkeletalAnimationSampler.h"
+#include "Debug/Stats.h"
+#include "Logging/Logger.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/DirectionalShadowLightMatrices.h"
 #include "Rendering/RenderResources.h"
@@ -12,6 +14,7 @@
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/ShadowMapPass.h"
+#include "Rendering/SkinningComputePass.h"
 #include "Resource/SkinnedMeshResource.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -32,6 +35,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdio>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -971,6 +975,103 @@ namespace
         registry.Shutdown();
     }
 
+    // 登録時に、インデックスを128三角形以下の塊に分けて持つ（全三角形をちょうど1回ずつ覆う）。
+    // 頂点・インデックスのバッファは、描画に加えて計算シェーダー（storage）とアドレス参照（BDA）の用途を持つ。
+    void TestRegisteredMeshHasChunksAndComputeReadableBuffers()
+    {
+        ResourceRegistry registry;
+        assert(registry.Initialize());
+        auto device = Container::MakeShared<FakeDevice>();
+        RenderResources resources;
+        assert(resources.Initialize(device));
+
+        // 1・128・129・300 三角形（128 ちょうどで割れ、129 で端の1三角形の塊ができる）
+        const uint32_t triangleCounts[] = {1, 128, 129, 300};
+        const uint32_t expectedChunkCounts[] = {1, 1, 2, 3};
+        for (size_t caseIndex = 0; caseIndex < 4; ++caseIndex)
+        {
+            const uint32_t triangleCount = triangleCounts[caseIndex];
+            auto mesh = registry.CreateTransient<SkinnedMeshResource>("SkinnedChunkMesh");
+            assert(mesh);
+            Container::VariableArray<Skeletal::SkeletalVertex> vertices(3);
+            vertices[0].Position = {0.0f, 0.0f, 0.0f};
+            vertices[1].Position = {1.0f, 0.0f, 0.0f};
+            vertices[2].Position = {0.0f, 1.0f, 0.0f};
+            for (Skeletal::SkeletalVertex& vertex : vertices)
+            {
+                vertex.Normal = {0.0f, 0.0f, 1.0f};
+                vertex.JointIndices[0] = 0;
+                vertex.JointWeights[0] = 1.0f;
+            }
+            Container::VariableArray<uint32_t> indices(static_cast<size_t>(triangleCount) * 3);
+            for (size_t i = 0; i < indices.size(); ++i)
+            {
+                indices[i] = static_cast<uint32_t>(i % 3);
+            }
+            mesh->SetVertices(std::move(vertices));
+            mesh->SetIndices(std::move(indices));
+            assert(mesh->Load());
+
+            Container::TSharedPtr<const SkinnedMeshAssetLease> assetLease = mesh->GetRenderAssetLease();
+            assert(assetLease && assetLease->IsAssetLeaseActive());
+            auto frameLease = Container::MakeShared<SkinnedMeshFrameLease>(assetLease);
+
+            resources.SkinnedMeshes().BeginFrame(0);
+            Container::VariableArray<Math::Matrix4x4> palette(1);
+            palette[0] = Math::Matrix4x4::Identity;
+            SkinnedMeshPreparedDraw prepared;
+            assert(resources.SkinnedMeshes().PrepareDraw(frameLease, palette, Math::Matrix4x4::Identity, prepared));
+            assert(prepared.IndexCount == triangleCount * 3);
+
+            const RHI::ResourceUsage computeReadable = RHI::ResourceUsage::StorageBuffer |
+                                                       RHI::ResourceUsage::ShaderRead |
+                                                       RHI::ResourceUsage::BufferDeviceAddress;
+            const RHI::ResourceUsage vertexUsage = prepared.VertexBuffer->GetUsage();
+            const RHI::ResourceUsage indexUsage = prepared.IndexBuffer->GetUsage();
+            assert((vertexUsage & RHI::ResourceUsage::VertexBuffer) == RHI::ResourceUsage::VertexBuffer);
+            assert((vertexUsage & computeReadable) == computeReadable);
+            assert((indexUsage & RHI::ResourceUsage::IndexBuffer) == RHI::ResourceUsage::IndexBuffer);
+            assert((indexUsage & computeReadable) == computeReadable);
+
+            Container::VariableArray<MeshIndexChunk> chunks;
+            assert(resources.SkinnedMeshes().TryGetChunks(prepared.MeshHandle, chunks));
+            assert(chunks.size() == expectedChunkCounts[caseIndex]);
+            Container::VariableArray<uint32_t> coverCount(triangleCount);
+            uint32_t nextFirstIndex = 0;
+            for (const MeshIndexChunk& chunk : chunks)
+            {
+                assert(chunk.IndexCount > 0 && chunk.IndexCount % 3 == 0 && chunk.FirstIndex % 3 == 0);
+                assert(chunk.IndexCount / 3 <= MESH_CHUNK_MAX_TRIANGLES);
+                assert(chunk.FirstIndex == nextFirstIndex);
+                for (uint32_t index = chunk.FirstIndex; index < chunk.FirstIndex + chunk.IndexCount; index += 3)
+                {
+                    ++coverCount[index / 3];
+                }
+                nextFirstIndex = chunk.FirstIndex + chunk.IndexCount;
+            }
+            assert(nextFirstIndex == triangleCount * 3);
+            for (uint32_t triangle = 0; triangle < triangleCount; ++triangle)
+            {
+                assert(coverCount[triangle] == 1);
+            }
+
+            // 未登録のハンドルは false で、出力は空
+            assert(!resources.SkinnedMeshes().TryGetChunks(SkinnedMeshHandle::Invalid(), chunks));
+            assert(chunks.empty());
+
+            resources.SkinnedMeshes().AbortFrame();
+            frameLease.reset();
+            assetLease.reset();
+            mesh->Unload();
+            mesh.reset();
+            registry.CollectGarbage();
+        }
+
+        resources.Shutdown();
+        registry.Shutdown();
+        std::cout << "SkinnedMesh chunks cover every triangle once\n" << std::flush;
+    }
+
     void TestShaderWeightAndNormalSemanticsMatchCpuReference()
     {
         ResourceRegistry registry;
@@ -1269,10 +1370,17 @@ namespace
 
         resources.SkinnedMeshes().BeginFrame(0);
         assert(resources.SkinnedMeshes().IsResident(lifetime.MeshHandle));
+        Container::VariableArray<MeshIndexChunk> residentChunks;
+        assert(resources.SkinnedMeshes().TryGetChunks(lifetime.MeshHandle, residentChunks));
+        assert(!residentChunks.empty());
         resources.ClearAllResources();
         assert(resources.SkinnedMeshes().IsResident(lifetime.MeshHandle));
         resources.SkinnedMeshes().BeginFrame(1);
         assert(!resources.SkinnedMeshes().IsResident(lifetime.MeshHandle));
+        // 解放したメッシュの塊は返さず、出力も空にする
+        assert(!resources.SkinnedMeshes().TryGetChunks(lifetime.MeshHandle, residentChunks));
+        assert(residentChunks.empty());
+        std::cout << "SkinnedMesh chunks are gone after release\n" << std::flush;
 
         resources.Shutdown();
         assert(device->WaitIdleCount == 1);
@@ -1340,6 +1448,125 @@ namespace
         registry.Shutdown();
     }
 
+#if NORVES_ENABLE_LOGGING
+    // SkinnedMeshGpuStore が出す警告・エラーの数を数える
+    struct StoreLogCounter final : Logging::ILogSink
+    {
+        uint32_t Count = 0;
+
+        void OnLog(const Logging::LogEntry& entry) override
+        {
+            if ((entry.level == Logging::LogLevel::Warning || entry.level == Logging::LogLevel::Error) &&
+                entry.category == "SkinnedMeshGpuStore")
+            {
+                ++Count;
+            }
+        }
+    };
+#endif
+
+    uint32_t g_FailingChunkBuilderCalls = 0;
+
+    // 塊の作成を必ず失敗させる（呼ばれた回数も数える）
+    bool FailingChunkBuilder(uint32_t, Container::VariableArray<MeshIndexChunk>& outChunks)
+    {
+        ++g_FailingChunkBuilderCalls;
+        outChunks.clear();
+        return false;
+    }
+
+    // 塊に分けられなくても、GBuffer と影の経路はメッシュを描き続ける。
+    // 失敗はメッシュごとに登録した後は持ち越され（毎フレームやり直さない）、知らせるのは1回だけ。
+    // ビジビリティバッファが使う塊だけが無い（TryGetChunks が false）。
+    void TestChunkFailureKeepsGBufferAndShadowDrawAndLogsOnce()
+    {
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        StoreLogCounter logCounter;
+        logger.AddSink(&logCounter);
+#endif
+
+        ResourceRegistry registry;
+        assert(registry.Initialize());
+        auto mesh = registry.CreateTransient<SkinnedMeshResource>("SkinnedChunkFailureMesh");
+        assert(mesh);
+        SeedMesh(mesh);
+
+        auto frameLease = Container::MakeShared<SkinnedMeshFrameLease>(mesh->GetRenderAssetLease());
+        FramePacket packet;
+        packet.SkinnedMeshFrameLeases.push_back(frameLease);
+
+        auto device = Container::MakeShared<FakeDevice>();
+        RenderResources resources;
+        assert(resources.Initialize(device));
+        g_FailingChunkBuilderCalls = 0;
+        resources.SkinnedMeshes().SetChunkBuilderForTesting(&FailingChunkBuilder);
+
+        DrawCommand source = DrawCommand::CreateDrawIndexed();
+        source.Draw.PayloadKind = DrawPayloadKind::Skinned;
+        source.Draw.InstanceCount = 1;
+        source.Draw.bInstanced = false;
+        source.Skinned.FrameLeaseIndex = 0;
+        source.Skinned.BonePalette = MakePalette();
+
+        ViewRenderContext context;
+        context.SkinnedMeshes = &resources.SkinnedMeshes();
+        context.SnapshotSkinnedMeshFrameLeases = &packet.SkinnedMeshFrameLeases;
+
+        GBufferPass gBuffer;
+        ShadowMapPass shadow;
+        constexpr uint32_t frameCount = 3;
+        for (uint32_t frame = 0; frame < frameCount; ++frame)
+        {
+            resources.SkinnedMeshes().BeginFrame(0);
+
+            DrawCommand gBufferCommand;
+            assert(SkinnedRenderPathContractTestAccess::PrepareGBuffer(
+                gBuffer, context, source, gBufferCommand));
+            assert(gBufferCommand.Skinned.Prepared.IsValid());
+            assert(gBufferCommand.Skinned.Prepared.IndexCount == 3);
+
+            DrawCommand shadowCommand;
+            assert(SkinnedRenderPathContractTestAccess::PrepareShadow(
+                shadow, context, source, shadowCommand));
+            assert(shadowCommand.Skinned.Prepared.IsValid());
+
+            // 塊は無いが、メッシュは登録されたまま
+            Container::VariableArray<MeshIndexChunk> chunks;
+            assert(resources.SkinnedMeshes().IsResident(gBufferCommand.Skinned.Prepared.MeshHandle));
+            assert(!resources.SkinnedMeshes().TryGetChunks(gBufferCommand.Skinned.Prepared.MeshHandle, chunks));
+            assert(chunks.empty());
+
+            resources.SkinnedMeshes().AbortFrame();
+        }
+
+        // 登録の1回だけ作成を試みる（毎フレームやり直さない）。知らせるのも1回だけ
+        assert(g_FailingChunkBuilderCalls == 1);
+#if NORVES_ENABLE_LOGGING
+        assert(logCounter.Count == 1);
+        logger.RemoveSink(&logCounter);
+        // この実行ファイルは他で Logger を初期化しないので、出力 None のまま残さず開始時の未初期化へ戻す
+        logger.Shutdown();
+#endif
+
+        packet.Clear();
+        frameLease.reset();
+        mesh->Unload();
+        mesh.reset();
+        resources.SkinnedMeshes().BeginFrame(0);
+        resources.Shutdown();
+        registry.CollectGarbage();
+        registry.Shutdown();
+        std::cout << "Skinned chunk failure keeps GBuffer and shadow draw, logs once\n" << std::flush;
+    }
+
     void TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer()
     {
         ResourceRegistry registry;
@@ -1367,7 +1594,7 @@ namespace
         packet.DrawCommands.push_back(source);
 
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(device.get(), ""));
+        assert(shaderManager.Initialize(device.get(), NORVES_SOURCE_DIR "/Assets/Shaders"));
         SceneRenderer renderer;
         assert(renderer.Initialize(device.get(), nullptr));
         renderer.SetSkinnedMeshResources(&resources.SkinnedMeshes());
@@ -1425,25 +1652,33 @@ namespace
         lights[0].bCastShadows = true;
         lights[0].bVisible = true;
         context.SnapshotLightProxies = &lights;
+        // CSM の行列は有効なカメラが無いと作られず、影の描画が積まれない。
+        CameraProxy shadowCamera;
+        context.MainCamera = &shadowCamera;
 
         ShadowMapPass shadow;
         shadow.SetSceneRenderer(&renderer);
         assert(shadow.Initialize(context));
         shadow.Setup(context);
         shadow.Execute(context);
-        assert(pending.size() == 1);
-        assert(pending[0].GeometryPass.DrawCommands);
-        assert(pending[0].GeometryPass.DrawCommands->size() == 1);
-        const DrawCommand& shadowDraw = (*pending[0].GeometryPass.DrawCommands)[0];
-        assert(shadowDraw.Pipeline);
-        assert(shadowDraw.DescriptorSet);
-        auto shadowDescriptor = Container::DynamicPointerCast<FakeDescriptorSet>(shadowDraw.DescriptorSet);
-        assert(shadowDescriptor);
-        assert(shadowDescriptor->StorageBuffers.find(8) != shadowDescriptor->StorageBuffers.end());
-        assert(shadowDescriptor->StorageBuffers.find(9) != shadowDescriptor->StorageBuffers.end());
+        // 影はカスケードごとに GeometryPass を1件積み、どのカスケードにもスキニングの描画が1件入る。
+        assert(pending.size() == PhysicalLightingShadowCascadeCount);
+        for (uint32_t cascadeIndex = 0; cascadeIndex < PhysicalLightingShadowCascadeCount; ++cascadeIndex)
+        {
+            assert(pending[cascadeIndex].Type == FrameCommandType::GeometryPass);
+            assert(pending[cascadeIndex].GeometryPass.DrawCommands);
+            assert(pending[cascadeIndex].GeometryPass.DrawCommands->size() == 1);
+            const DrawCommand& shadowDraw = (*pending[cascadeIndex].GeometryPass.DrawCommands)[0];
+            assert(shadowDraw.Pipeline);
+            assert(shadowDraw.DescriptorSet);
+            auto shadowDescriptor = Container::DynamicPointerCast<FakeDescriptorSet>(shadowDraw.DescriptorSet);
+            assert(shadowDescriptor);
+            assert(shadowDescriptor->StorageBuffers.find(8) != shadowDescriptor->StorageBuffers.end());
+            assert(shadowDescriptor->StorageBuffers.find(9) != shadowDescriptor->StorageBuffers.end());
+        }
         renderer.ExecuteFrameCommands(pending, &commandList);
-        assert(commandList.DrawIndexedCount == 2);
-        assert(renderer.GetStats().SkinnedShadowDrawCallCount == 1);
+        assert(commandList.DrawIndexedCount == 1 + PhysicalLightingShadowCascadeCount);
+        assert(renderer.GetStats().SkinnedShadowDrawCallCount == PhysicalLightingShadowCascadeCount);
         assert(resources.SkinnedMeshes().CommitSubmittedFrame(1));
 
         shadow.Shutdown();
@@ -1565,15 +1800,46 @@ namespace
         proxy.bCastShadow = true;
         proxy.bVisible = true;
         packet.Scene.SkinnedMeshProxies.push_back(proxy);
+        // CSM の行列は有効なカメラが無いと作られず、影の描画が積まれない。
+        packet.Scene.MainCamera.Viewport.Width = static_cast<float>(settings.Width);
+        packet.Scene.MainCamera.Viewport.Height = static_cast<float>(settings.Height);
+        packet.bHasMainCamera = true;
         packet.SetState(FramePacketState::Reading);
 
+        // 計算スキニングから外した数の統計への渡り（RenderFrame 側）: このテストは計算スキニングのパイプラインを持たず Declare が
+        // 数を置かないので、2 つのビューポートが最初のフレーム（通し番号 1）に外した数の合算を AccumulateFrameDroppedInstances で
+        // 直接置き、RenderFrame が UpdateRenderingStats より前に統計（スナップショットと StatsManager）へ設定することを確かめる。
+        // 古い通し番号の数（描かれなかったビューのもの）は足さない。Declare から数が置かれる配線は RenderGraphCompileTest で確かめる。
+        auto* skinningPass = dynamic_cast<SkinningComputePass*>(
+            coordinator.GetMainSceneView()->FindPass("SkinningComputePass"));
+        assert(skinningPass != nullptr);
+        skinningPass->AccumulateFrameDroppedInstances(0, 100);
+        skinningPass->AccumulateFrameDroppedInstances(1, 2);
+        skinningPass->AccumulateFrameDroppedInstances(1, 3);
+#if NORVES_ENABLE_STATS
+        NorvesLib::Debug::StatsManager& statsManager = NorvesLib::Debug::StatsManager::Get();
+        const char* const statsTracePath = "SkinnedRenderPathContractTest.coordinator.trace.csv";
+        std::remove(statsTracePath);
+        statsManager.ResetAll();
+        assert(statsManager.StartTrace(statsTracePath));
+        statsManager.BeginFrame(packet.FrameNumber, 0.016f);
+#endif
+
         coordinator.RenderFrame(&packet);
+        assert(coordinator.GetStats().SkinningComputeDroppedInstances == 5);
+#if NORVES_ENABLE_STATS
+        assert(statsManager.GetRenderingStats().SkinningComputeDroppedInstances == 5);
+        statsManager.EndFrame();
+        statsManager.StopTrace();
+        statsManager.ResetAll();
+        std::remove(statsTracePath);
+#endif
         assert(swapChain->GetCompletedSubmissionSerial() == 0);
         assert(packet.Stats.SkinnedGBufferRecordedDraws == 1);
-        assert(packet.Stats.SkinnedShadowRecordedDraws == 1);
+        assert(packet.Stats.SkinnedShadowRecordedDraws == PhysicalLightingShadowCascadeCount);
         const RenderingCoordinatorStatsSnapshot diagnostics = coordinator.GetStatsSnapshot();
         assert(diagnostics.SkinnedGBufferRecordedDraws == 1);
-        assert(diagnostics.SkinnedShadowRecordedDraws == 1);
+        assert(diagnostics.SkinnedShadowRecordedDraws == PhysicalLightingShadowCascadeCount);
         assert(diagnostics.GeneratedDrawCommandCount == 1);
 
         SkinnedMeshGpuLifetimeSnapshot lifetime;
@@ -1744,6 +2010,9 @@ namespace
 int main()
 {
 #ifdef _WIN32
+    // assert が失敗したときに対話窓やクラッシュ報告で待たず、標準エラーへ出して即座に終わる。
+    _set_error_mode(_OUT_TO_STDERR);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
     _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
 #endif
@@ -1752,10 +2021,12 @@ int main()
     TestOutOfRangeIndexRejectsLeaseBeforeGpuStoreAndDraw();
     TestScreenPropagatesSubmissionAndCompletionSerialsForSingleAndMultiSlot();
     TestFrameLeaseAndPaletteUpload();
+    TestRegisteredMeshHasChunksAndComputeReadableBuffers();
     TestShaderWeightAndNormalSemanticsMatchCpuReference();
     TestSameIdReloadUsesGenerationAndActualCompletionTokens();
     TestRecordCountersInstancingRejectAndThreeConditionRelease();
     TestExistingPassesPrepareSkinnedCommandsWithoutInstanceBuffer();
+    TestChunkFailureKeepsGBufferAndShadowDrawAndLogsOnce();
     TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer();
     TestDirectionalShadowFittingIncludesOnlySkinnedAnimatedWorldBounds();
     TestCoordinatorPropagatesFramePacketStatsAndSubmissionSerials();

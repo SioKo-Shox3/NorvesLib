@@ -224,6 +224,8 @@ namespace
         createInfo.RoughnessTexture = MakeTextureHandle(baseTextureId + 4);
         createInfo.AOTexture = MakeTextureHandle(baseTextureId + 5);
         createInfo.HeightTexture = MakeTextureHandle(baseTextureId + 6);
+        createInfo.ORMTexture = MakeTextureHandle(baseTextureId + 7);
+        createInfo.bNormalTwoChannel = true;
         createInfo.HeightScale = 0.08f;
         createInfo.EmissiveColor[0] = 1.0f;
         createInfo.EmissiveColor[1] = 1.0f;
@@ -246,6 +248,8 @@ namespace
         assert(data->RoughnessTexture.Id == expected.RoughnessTexture.Id);
         assert(data->AOTexture.Id == expected.AOTexture.Id);
         assert(data->HeightTexture.Id == expected.HeightTexture.Id);
+        assert(data->ORMTexture.Id == expected.ORMTexture.Id);
+        assert(data->bNormalTwoChannel == expected.bNormalTwoChannel);
         assert(data->HeightScale == expected.HeightScale);
         assert(data->EmissiveColor[0] == expected.EmissiveColor[0]);
         assert(data->EmissiveColor[1] == expected.EmissiveColor[1]);
@@ -276,7 +280,7 @@ namespace
         {"negative rgb", -0.25f, 0.0f, 0.0f, 1.0f},
         {"negative nits", 0.25f, 0.25f, 0.25f, -1.0f},
         {"positive nits with tiny Y", 0.000001f, 0.0f, 0.0f, 1.0f},
-        {"rgba16f product overflow", 1.0f, 0.0f, 0.0f, 20000.0f},
+        {"float product overflow", 1.0f, 0.0f, 0.0f, 1.0e38f},
     };
 
     void SetInvalidEmissive(MaterialCreateData &createInfo, const InvalidEmissiveRow &row)

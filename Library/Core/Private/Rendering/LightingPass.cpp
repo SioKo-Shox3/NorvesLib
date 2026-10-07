@@ -787,6 +787,12 @@ namespace NorvesLib::Core::Rendering
     }
 
     static constexpr uint32_t LIGHTING_PARAMS_SIZE = sizeof(GPULightingParams);
+    // SSRPassへ渡す、SceneColorへ足した環境光の鏡面反射（露出後）と、その反射率（0〜1）の形式
+    static constexpr RHI::Format LIGHTING_INDIRECT_SPECULAR_FORMAT = RHI::Format::R16G16B16A16_FLOAT;
+    static constexpr RHI::Format LIGHTING_SPECULAR_REFLECTANCE_FORMAT = RHI::Format::R8G8B8A8_UNORM;
+    // 接触影の雑音を、TAAのジッタが掛かったフレームごとに黄金比でずらす
+    static constexpr float CONTACT_SHADOW_TEMPORAL_NOISE_STEP = 0.6180339887f;
+    static constexpr uint64_t CONTACT_SHADOW_TEMPORAL_NOISE_PERIOD = 64u;
     static constexpr uint32_t DDGI_ATLAS_TEXEL_COUNT = 8u;
     static constexpr uint32_t DDGI_ATLAS_MINIMUM_ARRAY_LAYER_COUNT = 2u;
     static constexpr uint32_t RTGI_COMPUTE_WORKGROUP_SIZE = 8u;
@@ -803,7 +809,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t temporalState[4] = {};
         /// x=描画フレーム番号（静止中も毎フレーム別のレイを引く）、y=発光instance数、z=発光三角形数。
         uint32_t sampleState[4] = {};
-        float previousCameraPosition[4] = {}; ///< xyz=履歴を書いた前フレームのカメラ位置。
+        /// xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比（今のフレーム/履歴）。
+        float previousCameraPosition[4] = {};
     };
 
     struct RTGIInstanceData
@@ -889,11 +896,11 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            const uint64_t vertexOffsetBytes =
+            const uint64_t vertexOffsetBytes = snapshot.VertexBufferOffsetBytes +
                 static_cast<uint64_t>(snapshot.VertexOffset) * snapshot.VertexStride;
             const uint64_t vertexRangeBytes =
                 static_cast<uint64_t>(snapshot.VertexCount) * snapshot.VertexStride;
-            const uint64_t indexOffsetBytes =
+            const uint64_t indexOffsetBytes = snapshot.IndexBufferOffsetBytes +
                 static_cast<uint64_t>(snapshot.IndexOffset) * sizeof(uint32_t);
             const uint64_t indexRangeBytes =
                 static_cast<uint64_t>(snapshot.IndexCount) * sizeof(uint32_t);
@@ -1796,6 +1803,8 @@ namespace NorvesLib::Core::Rendering
         m_LightingFramebuffer.reset();
         m_LightingRenderPass.reset();
         m_SceneColorTexture.reset();
+        m_IndirectSpecularTexture.reset();
+        m_SpecularReflectanceTexture.reset();
 
         // RTGIのcompute資源はdescriptor、pipeline、shaderの順で解放する。
         m_RTGIComputeDescriptorSet.reset();
@@ -1894,6 +1903,8 @@ namespace NorvesLib::Core::Rendering
         m_GBufferPass = nullptr;
         m_SSAOPass = nullptr;
         m_SceneColorHandle = {};
+        m_IndirectSpecularHandle = {};
+        m_SpecularReflectanceHandle = {};
         m_GBufferAlbedoHandle = {};
         m_GBufferNormalHandle = {};
         m_GBufferMaterialHandle = {};
@@ -1907,6 +1918,8 @@ namespace NorvesLib::Core::Rendering
         m_bUsingRenderGraphResources = false;
         m_bRenderPassUsesRenderGraphInitialState = false;
         m_FramebufferSceneColorTexture = nullptr;
+        m_FramebufferIndirectSpecularTexture = nullptr;
+        m_FramebufferSpecularReflectanceTexture = nullptr;
         m_FramebufferWidth = 0;
         m_FramebufferHeight = 0;
 
@@ -1931,7 +1944,11 @@ namespace NorvesLib::Core::Rendering
             width != m_CurrentWidth ||
             height != m_CurrentHeight ||
             !m_SceneColorTexture ||
+            !m_IndirectSpecularTexture ||
+            !m_SpecularReflectanceTexture ||
             m_FramebufferSceneColorTexture != m_SceneColorTexture.get() ||
+            m_FramebufferIndirectSpecularTexture != m_IndirectSpecularTexture.get() ||
+            m_FramebufferSpecularReflectanceTexture != m_SpecularReflectanceTexture.get() ||
             m_bRenderPassUsesRenderGraphInitialState != bUseRenderGraphInitialState ||
             !m_LightingRenderPass ||
             !m_LightingFramebuffer ||
@@ -1940,20 +1957,15 @@ namespace NorvesLib::Core::Rendering
 
         if (bResourcesChanged)
         {
-            RHI::TextureDesc sceneColorDesc =
-                RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor");
-            sceneColorDesc.Usage = sceneColorDesc.Usage | RHI::ResourceUsage::TransferSrc;
-            RHI::TexturePtr sceneColorTexture = m_Device->CreateTexture(
-                sceneColorDesc);
-            if (!sceneColorTexture)
+            LightingOutputTargets targets;
+            if (!CreateLegacyLightingOutputs(width, height, targets))
             {
-                NORVES_LOG_ERROR("LightingPass", "Failed to create SceneColor texture");
                 return;
             }
 
             if (!PrepareLightingOutput(width,
                                        height,
-                                       sceneColorTexture,
+                                       targets,
                                        bUseRenderGraphInitialState,
                                        context))
             {
@@ -2200,6 +2212,27 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceState::ShaderResource);
         builder.ExportTexture(RenderGraphResourceNames::SceneColor, m_SceneColorHandle);
 
+        // SSRPassが環境光の鏡面反射を画面の反射へ置き換えるための出力（同じRenderGraphの中だけで読む）
+        m_IndirectSpecularHandle = builder.WriteTextureAttachment(
+            RenderGraphResourceNames::LightingIndirectSpecular,
+            RGTextureDesc::RenderTarget(width, height, LIGHTING_INDIRECT_SPECULAR_FORMAT, "LightingIndirectSpecular"),
+            RGAttachmentKind::Color,
+            RHI::AttachmentLoadOp::Clear,
+            RHI::AttachmentStoreOp::Store,
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
+        m_SpecularReflectanceHandle = builder.WriteTextureAttachment(
+            RenderGraphResourceNames::LightingSpecularReflectance,
+            RGTextureDesc::RenderTarget(width,
+                                        height,
+                                        LIGHTING_SPECULAR_REFLECTANCE_FORMAT,
+                                        "LightingSpecularReflectance"),
+            RGAttachmentKind::Color,
+            RHI::AttachmentLoadOp::Clear,
+            RHI::AttachmentStoreOp::Store,
+            RHI::ResourceState::RenderTarget,
+            RHI::ResourceState::ShaderResource);
+
         builder.PreserveInsertionOrder();
     }
 
@@ -2214,10 +2247,13 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        RHI::TexturePtr sceneColorTexture = resources.GetTexture(m_SceneColorHandle);
-        if (!sceneColorTexture)
+        LightingOutputTargets targets;
+        targets.SceneColor = resources.GetTexture(m_SceneColorHandle);
+        targets.IndirectSpecular = resources.GetTexture(m_IndirectSpecularHandle);
+        targets.SpecularReflectance = resources.GetTexture(m_SpecularReflectanceHandle);
+        if (!targets.SceneColor || !targets.IndirectSpecular || !targets.SpecularReflectance)
         {
-            NORVES_LOG_ERROR("LightingPass", "Failed to resolve native SceneColor texture");
+            NORVES_LOG_ERROR("LightingPass", "ライティングの出力（SceneColor・環境光の鏡面反射・反射率）のテクスチャを解決できませんでした");
             return;
         }
 
@@ -2337,9 +2373,9 @@ namespace NorvesLib::Core::Rendering
             m_FramePointShadowCubeTexture = resources.GetTexture(m_PointShadowCubeHandle);
         }
 
-        if (!PrepareLightingOutput(sceneColorTexture->GetWidth(),
-                                   sceneColorTexture->GetHeight(),
-                                   sceneColorTexture,
+        if (!PrepareLightingOutput(targets.SceneColor->GetWidth(),
+                                   targets.SceneColor->GetHeight(),
+                                   targets,
                                    true,
                                    context))
         {
@@ -2432,40 +2468,66 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        RHI::TextureDesc sceneColorDesc =
-            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor");
-        sceneColorDesc.Usage = sceneColorDesc.Usage | RHI::ResourceUsage::TransferSrc;
-        RHI::TexturePtr sceneColorTexture = m_Device->CreateTexture(sceneColorDesc);
-        if (!sceneColorTexture)
+        LightingOutputTargets targets;
+        if (!CreateLegacyLightingOutputs(width, height, targets))
         {
-            NORVES_LOG_ERROR("LightingPass", "Failed to create SceneColor texture");
             return false;
         }
 
-        return PrepareLightingOutput(width, height, sceneColorTexture, false, context);
+        return PrepareLightingOutput(width, height, targets, false, context);
+    }
+
+    bool LightingPass::CreateLegacyLightingOutputs(uint32_t width,
+                                                   uint32_t height,
+                                                   LightingOutputTargets& outTargets) const
+    {
+        outTargets = {};
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        RHI::TextureDesc sceneColorDesc =
+            RHI::TextureDesc::RenderTarget(width, height, m_Settings.OutputFormat, "SceneColor");
+        sceneColorDesc.Usage = sceneColorDesc.Usage | RHI::ResourceUsage::TransferSrc;
+        outTargets.SceneColor = m_Device->CreateTexture(sceneColorDesc);
+        outTargets.IndirectSpecular = m_Device->CreateTexture(RHI::TextureDesc::RenderTarget(
+            width, height, LIGHTING_INDIRECT_SPECULAR_FORMAT, "LightingIndirectSpecular"));
+        outTargets.SpecularReflectance = m_Device->CreateTexture(RHI::TextureDesc::RenderTarget(
+            width, height, LIGHTING_SPECULAR_REFLECTANCE_FORMAT, "LightingSpecularReflectance"));
+        if (!outTargets.SceneColor || !outTargets.IndirectSpecular || !outTargets.SpecularReflectance)
+        {
+            NORVES_LOG_ERROR("LightingPass", "ライティングの出力（SceneColor・環境光の鏡面反射・反射率）のテクスチャを作れませんでした");
+            outTargets = {};
+            return false;
+        }
+        return true;
     }
 
     bool LightingPass::PrepareLightingOutput(uint32_t width,
                                              uint32_t height,
-                                             const RHI::TexturePtr& sceneColorTexture,
+                                             const LightingOutputTargets& targets,
                                              bool bUseRenderGraphInitialState,
                                              ViewRenderContext& context)
     {
         (void)context;
 
-        if (!m_Device || !sceneColorTexture || width == 0 || height == 0)
+        if (!m_Device || !targets.SceneColor || !targets.IndirectSpecular || !targets.SpecularReflectance ||
+            width == 0 || height == 0)
         {
             return false;
         }
 
         m_CurrentWidth = width;
         m_CurrentHeight = height;
-        m_SceneColorTexture = sceneColorTexture;
+        m_SceneColorTexture = targets.SceneColor;
+        m_IndirectSpecularTexture = targets.IndirectSpecular;
+        m_SpecularReflectanceTexture = targets.SpecularReflectance;
         m_bUsingRenderGraphResources = bUseRenderGraphInitialState;
 
         const RenderPassSignature signature = CreateLightingRenderPassSignature(width,
                                                                                 height,
-                                                                                sceneColorTexture,
+                                                                                targets,
                                                                                 bUseRenderGraphInitialState);
 
         if (!EnsureLightingRenderPass(signature))
@@ -2473,7 +2535,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        if (!EnsureLightingFramebuffer(width, height, sceneColorTexture))
+        if (!EnsureLightingFramebuffer(width, height, targets))
         {
             return false;
         }
@@ -2510,27 +2572,40 @@ namespace NorvesLib::Core::Rendering
                                                  const RenderPassSignature& rhs) const
     {
         return lhs.bValid == rhs.bValid &&
-               AttachmentSignatureEquals(lhs.SceneColor, rhs.SceneColor);
+               AttachmentSignatureEquals(lhs.SceneColor, rhs.SceneColor) &&
+               AttachmentSignatureEquals(lhs.IndirectSpecular, rhs.IndirectSpecular) &&
+               AttachmentSignatureEquals(lhs.SpecularReflectance, rhs.SpecularReflectance);
     }
 
     LightingPass::RenderPassSignature LightingPass::CreateLightingRenderPassSignature(
         uint32_t width,
         uint32_t height,
-        const RHI::TexturePtr& sceneColorTexture,
+        const LightingOutputTargets& targets,
         bool bUseRenderGraphInitialState) const
     {
+        const RHI::ResourceState initialState =
+            bUseRenderGraphInitialState ? RHI::ResourceState::RenderTarget : RHI::ResourceState::Undefined;
+        auto makeColorSignature = [&](const RHI::TexturePtr& texture, RHI::Format fallbackFormat)
+        {
+            return AttachmentSignature{RGAttachmentKind::Color,
+                                       texture ? texture->GetFormat() : fallbackFormat,
+                                       RHI::AttachmentLoadOp::Clear,
+                                       RHI::AttachmentStoreOp::Store,
+                                       initialState,
+                                       RHI::ResourceState::ShaderResource,
+                                       texture.get(),
+                                       width,
+                                       height,
+                                       false};
+        };
+
         RenderPassSignature signature;
         signature.bValid = true;
-        signature.SceneColor = {RGAttachmentKind::Color,
-                                sceneColorTexture ? sceneColorTexture->GetFormat() : m_Settings.OutputFormat,
-                                RHI::AttachmentLoadOp::Clear,
-                                RHI::AttachmentStoreOp::Store,
-                                bUseRenderGraphInitialState ? RHI::ResourceState::RenderTarget : RHI::ResourceState::Undefined,
-                                RHI::ResourceState::ShaderResource,
-                                sceneColorTexture.get(),
-                                width,
-                                height,
-                                false};
+        signature.SceneColor = makeColorSignature(targets.SceneColor, m_Settings.OutputFormat);
+        signature.IndirectSpecular =
+            makeColorSignature(targets.IndirectSpecular, LIGHTING_INDIRECT_SPECULAR_FORMAT);
+        signature.SpecularReflectance =
+            makeColorSignature(targets.SpecularReflectance, LIGHTING_SPECULAR_REFLECTANCE_FORMAT);
         return signature;
     }
 
@@ -2546,25 +2621,34 @@ namespace NorvesLib::Core::Rendering
         m_LightingFramebuffer.reset();
         m_LightingPipeline.reset();
         m_FramebufferSceneColorTexture = nullptr;
+        m_FramebufferIndirectSpecularTexture = nullptr;
+        m_FramebufferSpecularReflectanceTexture = nullptr;
         m_FramebufferWidth = 0;
         m_FramebufferHeight = 0;
         m_RenderPassSignature = {};
 
         RHI::RenderPassDesc rpDesc;
 
-        RHI::AttachmentDesc colorAttach;
-        colorAttach.format = signature.SceneColor.Format;
-        colorAttach.isDepthStencil = false;
-        colorAttach.clear = true;
-        colorAttach.clearColor[0] = 0.0f;
-        colorAttach.clearColor[1] = 0.0f;
-        colorAttach.clearColor[2] = 0.0f;
-        colorAttach.clearColor[3] = 1.0f;
-        colorAttach.loadOp = signature.SceneColor.LoadOp;
-        colorAttach.storeOp = signature.SceneColor.StoreOp;
-        colorAttach.initialState = signature.SceneColor.InitialState;
-        colorAttach.finalState = signature.SceneColor.FinalState;
-        rpDesc.colorAttachments.push_back(colorAttach);
+        // SceneColorはアルファ1、環境光の鏡面反射とその反射率は0で始める（書かない画素はSSRが何も足さない）
+        auto pushColorAttachment = [&rpDesc](const AttachmentSignature& attachment, float clearAlpha)
+        {
+            RHI::AttachmentDesc colorAttach;
+            colorAttach.format = attachment.Format;
+            colorAttach.isDepthStencil = false;
+            colorAttach.clear = true;
+            colorAttach.clearColor[0] = 0.0f;
+            colorAttach.clearColor[1] = 0.0f;
+            colorAttach.clearColor[2] = 0.0f;
+            colorAttach.clearColor[3] = clearAlpha;
+            colorAttach.loadOp = attachment.LoadOp;
+            colorAttach.storeOp = attachment.StoreOp;
+            colorAttach.initialState = attachment.InitialState;
+            colorAttach.finalState = attachment.FinalState;
+            rpDesc.colorAttachments.push_back(colorAttach);
+        };
+        pushColorAttachment(signature.SceneColor, 1.0f);
+        pushColorAttachment(signature.IndirectSpecular, 0.0f);
+        pushColorAttachment(signature.SpecularReflectance, 0.0f);
         rpDesc.hasDepthStencil = false;
 
         m_LightingRenderPass = m_Device->CreateRenderPass(rpDesc);
@@ -2582,24 +2666,29 @@ namespace NorvesLib::Core::Rendering
 
     bool LightingPass::EnsureLightingFramebuffer(uint32_t width,
                                                  uint32_t height,
-                                                 const RHI::TexturePtr& sceneColorTexture)
+                                                 const LightingOutputTargets& targets)
     {
         if (m_LightingFramebuffer &&
-            m_FramebufferSceneColorTexture == sceneColorTexture.get() &&
+            m_FramebufferSceneColorTexture == targets.SceneColor.get() &&
+            m_FramebufferIndirectSpecularTexture == targets.IndirectSpecular.get() &&
+            m_FramebufferSpecularReflectanceTexture == targets.SpecularReflectance.get() &&
             m_FramebufferWidth == width &&
             m_FramebufferHeight == height)
         {
             return true;
         }
 
-        if (!m_LightingRenderPass || !sceneColorTexture)
+        if (!m_LightingRenderPass || !targets.SceneColor || !targets.IndirectSpecular ||
+            !targets.SpecularReflectance)
         {
             return false;
         }
 
         RHI::FramebufferDesc fbDesc;
         fbDesc.renderPass = m_LightingRenderPass;
-        fbDesc.colorTargets.push_back(sceneColorTexture);
+        fbDesc.colorTargets.push_back(targets.SceneColor);
+        fbDesc.colorTargets.push_back(targets.IndirectSpecular);
+        fbDesc.colorTargets.push_back(targets.SpecularReflectance);
         fbDesc.width = width;
         fbDesc.height = height;
 
@@ -2610,7 +2699,9 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        m_FramebufferSceneColorTexture = sceneColorTexture.get();
+        m_FramebufferSceneColorTexture = targets.SceneColor.get();
+        m_FramebufferIndirectSpecularTexture = targets.IndirectSpecular.get();
+        m_FramebufferSpecularReflectanceTexture = targets.SpecularReflectance.get();
         m_FramebufferWidth = width;
         m_FramebufferHeight = height;
         return true;
@@ -2726,9 +2817,12 @@ namespace NorvesLib::Core::Rendering
         pipelineDesc.depthStencilState.depthTestEnable = false;
         pipelineDesc.depthStencilState.depthWriteEnable = false;
 
+        // SceneColor・環境光の鏡面反射・その反射率の3枚（ブレンドなし）
         RHI::BlendAttachmentDesc blendAttachment;
         blendAttachment.blendEnable = false;
         blendAttachment.colorWriteMask = RHI::ColorWriteMask::All;
+        pipelineDesc.blendState.attachments.push_back(blendAttachment);
+        pipelineDesc.blendState.attachments.push_back(blendAttachment);
         pipelineDesc.blendState.attachments.push_back(blendAttachment);
 
         pipelineDesc.renderPass = m_LightingRenderPass;
@@ -3126,6 +3220,14 @@ namespace NorvesLib::Core::Rendering
             InvalidateRTGIHistory();
             return false;
         };
+        // 決定的な撮影のエポックの最初のフレーム: 履歴と、標本の列（低食い違い列）の番号を先頭へ戻す。
+        if (context.bTemporalEpochStart)
+        {
+            InvalidateRTGIHistory();
+            m_RTGISampleIndex = 0u;
+            m_RTGISampleFrameNumber = 0u;
+            m_bRTGISampleFrameNumberValid = false;
+        }
         if (m_bRTGIDenoiserUnavailable || !context.CommandList || !context.Device ||
             !context.bRTGIEnabled ||
             !context.bRTGITLASAvailable || !context.RTGICapability.IsUsable() ||
@@ -3266,10 +3368,18 @@ namespace NorvesLib::Core::Rendering
         const uint32_t readHistoryIndex = writeHistoryIndex ^ 1u;
         RTGIHistoryTextureSet& writeHistory = m_RTGIHistoryTextures[writeHistoryIndex];
         RTGIHistoryTextureSet& readHistory = m_RTGIHistoryTextures[readHistoryIndex];
+        // 履歴はvelocityで再投影するので、velocityの基準（前のカメラと物体の前の変換）が履歴を書いた
+        // フレームを指すときだけ使う。連続したフレームなら基準は直前のフレーム。描画がゲームのフレームを
+        // 飛ばしたときは、TAAが基準を最後に描いたフレームへ付け替えた場合に限って使う。
+        const bool bVelocityBasisIsHistoryFrame =
+            context.GetPreviousCamera() != nullptr &&
+            context.PreviousCameraFrameNumber == m_RTGIHistoryFrameNumber &&
+            context.PreviousObjectStateFrameNumber == m_RTGIHistoryFrameNumber &&
+            context.bPreviousObjectStateComplete;
         const bool bPreviousFrameIsConsecutive =
             m_bRTGIHistoryFrameNumberValid &&
             context.FrameNumber > m_RTGIHistoryFrameNumber &&
-            context.FrameNumber - m_RTGIHistoryFrameNumber == 1u;
+            (context.FrameNumber - m_RTGIHistoryFrameNumber == 1u || bVelocityBasisIsHistoryFrame);
         const bool bSceneRevisionMatches =
             m_bRTGIHistoryValid && m_RTGIHistorySceneRevision == context.SceneRevision;
         const bool bHistoryReprojectionValid =
@@ -3280,25 +3390,60 @@ namespace NorvesLib::Core::Rendering
         const uint32_t lightWeightLimitedFrames = bLightRevisionMismatch
             ? 2u
             : m_RTGIHistoryLightWeightLimitedFrames;
-        // 視点（逆ビュー射影と位置）、露出と環境光、レイトレーシングのinstance（変換・形状・材質の表と、
+        // 視点（逆ビュー射影と位置）、環境光、レイトレーシングのinstance（位置・拡大率・形状・材質の表と、
         // 材質の色・発光・textureハンドル）が前フレームと同じで、光源も変わらず履歴を再投影できる
         // フレームだけを静止として数える。静止が続くと画素ごとの履歴の年齢の上限を上げ、静止画像を
         // 収束させる。動いたフレームの上限は従来どおり8。
+        // TAAのジッタはフレームごとに投影をずらすだけで視点は動かないため、ジッタを除いた逆ビュー射影で比べる。
+        // 露出は履歴を比で掛け直すので署名に含めない（自動露出の小さな揺れで静止が切れないように）。
+        // 1フレームでRTGIHistoryStaticExposureStepEVを超える急な変化だけ、署名とは別に静止を切る。
+        // instanceの変換は原点の位置と各軸の拡大率だけを比べ、原点を通る軸の周りの回転（起動画面の
+        // 自転する球など）は静止として扱う。回転で形の向きが変わる物体の間接光は、画素ごとの履歴の棄却
+        // （自身の面）と年齢の上限（周りの面）の範囲で遅れて追従する。
         uint64_t staticSignature = 14695981039346656037ull;
-        staticSignature = HashRTGIBytes(staticSignature, lightingParams.invViewProjection,
-                                        sizeof(lightingParams.invViewProjection));
+        if (const CameraProxy* activeCamera = context.GetActiveCamera())
+        {
+            CameraProxy unjitteredCamera = *activeCamera;
+            unjitteredCamera.ProjectionJitterNdcX = 0.0f;
+            unjitteredCamera.ProjectionJitterNdcY = 0.0f;
+            const CameraViewConstants unjitteredConstants = CameraViewConstants::BuildForDevice(
+                unjitteredCamera, context.GetActiveAspectRatio(), context.Device);
+            float unjitteredInverseViewProjection[16] = {};
+            unjitteredConstants.CopyShaderInverseViewProjection(unjitteredInverseViewProjection);
+            staticSignature = HashRTGIBytes(staticSignature, unjitteredInverseViewProjection,
+                                            sizeof(unjitteredInverseViewProjection));
+        }
+        else
+        {
+            staticSignature = HashRTGIBytes(staticSignature, lightingParams.invViewProjection,
+                                            sizeof(lightingParams.invViewProjection));
+        }
         staticSignature = HashRTGIBytes(staticSignature, lightingParams.cameraPosition,
                                         sizeof(lightingParams.cameraPosition));
-        staticSignature = HashRTGIBytes(staticSignature, &lightingParams.preExposure,
-                                        sizeof(lightingParams.preExposure));
         const float environmentIntensity =
             context.PhysicalLighting.bIBLEnabled ? context.PhysicalLighting.IBLIntensity : -1.0f;
         staticSignature = HashRTGIBytes(staticSignature, &environmentIntensity,
                                         sizeof(environmentIntensity));
-        if (!instanceData.empty())
+        for (const RTGIInstanceData& instance : instanceData)
         {
-            staticSignature = HashRTGIBytes(staticSignature, instanceData.data(),
-                                            instanceData.size() * sizeof(RTGIInstanceData));
+            RTGIInstanceData placement = instance;
+            // 3x4の行優先の変換。各列の長さが拡大率、各行の4番目が原点の位置。拡大率は回転の丸めで
+            // 最下位の桁が揺れるため、1/1024の刻みにそろえて比べる。
+            float placementTransform[6] = {};
+            for (uint32_t column = 0u; column < 3u; ++column)
+            {
+                const float x = instance.Transform[column];
+                const float y = instance.Transform[4u + column];
+                const float z = instance.Transform[8u + column];
+                placementTransform[column] =
+                    std::round(std::sqrt(x * x + y * y + z * z) * 1024.0f) / 1024.0f;
+            }
+            placementTransform[3] = instance.Transform[3];
+            placementTransform[4] = instance.Transform[7];
+            placementTransform[5] = instance.Transform[11];
+            std::memset(placement.Transform, 0, sizeof(placement.Transform));
+            std::memcpy(placement.Transform, placementTransform, sizeof(placementTransform));
+            staticSignature = HashRTGIBytes(staticSignature, &placement, sizeof(placement));
         }
         for (const RayTracingSceneInstanceSnapshot& instance :
              context.SnapshotRayTracingScene->Instances)
@@ -3312,16 +3457,37 @@ namespace NorvesLib::Core::Rendering
                                             sizeof(material.EmissiveLuminanceNits));
             staticSignature = HashRTGIBytes(staticSignature, material.ObjectColor,
                                             sizeof(material.ObjectColor));
-            const uint64_t textureIds[4] = {material.AlbedoTexture.Id, material.NormalTexture.Id,
+            const uint64_t textureIds[6] = {material.AlbedoTexture.Id, material.NormalTexture.Id,
                                             material.MetallicTexture.Id,
-                                            material.RoughnessTexture.Id};
+                                            material.RoughnessTexture.Id,
+                                            material.ORMTexture.Id,
+                                            material.bNormalTwoChannel ? 1ull : 0ull};
             staticSignature = HashRTGIBytes(staticSignature, textureIds, sizeof(textureIds));
         }
+        const float rtgiPreExposure = std::isfinite(lightingParams.preExposure) &&
+                                              lightingParams.preExposure > 0.0f
+                                          ? std::clamp(lightingParams.preExposure, 1.0e-6f, 1.0e6f)
+                                          : 1.0f;
+        const bool bExposureStepped =
+            bHadHistory && std::isfinite(m_RTGIHistoryPreExposure) && m_RTGIHistoryPreExposure > 0.0f &&
+            std::abs(std::log2(rtgiPreExposure / m_RTGIHistoryPreExposure)) >
+                RTGIHistoryStaticExposureStepEV;
         const bool bStaticFrame = bHistoryReprojectionValid && !bLightRevisionMismatch &&
+                                  !bExposureStepped &&
                                   lightWeightLimitedFrames == 0u && m_bRTGIStaticSignatureValid &&
                                   staticSignature == m_RTGIStaticSignature;
         const uint32_t staticFrames = bStaticFrame ? m_RTGIStaticFrames + 1u : 0u;
         const uint32_t historyAgeCap = ComputeRTGIHistoryAgeCap(staticFrames);
+        // 静止で年齢の上限が最大に達したときと、動いて従来の上限へ戻ったときだけ記録する。
+        if (historyAgeCap != m_RTGIHistoryAgeCap &&
+            (historyAgeCap == RTGIHistoryStaticMaximumAge || historyAgeCap == RTGIHistoryMaximumAge))
+        {
+            NORVES_LOG_INFO("LightingPass",
+                            "RTGI_HISTORY age_cap=%u static_frames=%u frame=%llu",
+                            historyAgeCap,
+                            staticFrames,
+                            static_cast<unsigned long long>(context.FrameNumber));
+        }
 
         const auto transitionHistorySlot = [&](RTGIHistoryTextureSet& slot,
                                                 RHI::ResourceState beforeState,
@@ -3364,10 +3530,7 @@ namespace NorvesLib::Core::Rendering
         parameters.imageAndSceneCounts[3] = context.PhysicalLighting.LogicalLightCount;
         parameters.rayLimits[0] = RTGI_RAY_MINIMUM_DISTANCE;
         parameters.rayLimits[1] = RTGI_RAY_MAXIMUM_DISTANCE;
-        parameters.rayLimits[2] = std::isfinite(lightingParams.preExposure) &&
-                                           lightingParams.preExposure > 0.0f
-                                       ? std::clamp(lightingParams.preExposure, 1.0e-6f, 1.0e6f)
-                                       : 1.0f;
+        parameters.rayLimits[2] = rtgiPreExposure;
         parameters.rayLimits[3] = context.PhysicalLighting.bIBLEnabled &&
                                           std::isfinite(context.PhysicalLighting.IBLIntensity) &&
                                           context.PhysicalLighting.IBLIntensity > 0.0f
@@ -3377,7 +3540,16 @@ namespace NorvesLib::Core::Rendering
         parameters.temporalState[1] = bLightRevisionMismatch ? 1u : 0u;
         parameters.temporalState[2] = lightWeightLimitedFrames > 0u ? 1u : 0u;
         parameters.temporalState[3] = historyAgeCap;
-        parameters.sampleState[0] = static_cast<uint32_t>(context.FrameNumber);
+        // 方向・光源標本の低食い違い列は、描画ごとに1つずつ進めたときに最もよく散らばる。描画フレーム番号は
+        // 1回の描画の間に不規則に複数進むことがあり、列を飛び飛びに引くと静止画面の累積の収束が遅れるため、
+        // 描画フレーム番号が変わったときだけ列の番号を1進める（同じ描画フレーム番号なら同じ標本を引く）。
+        if (!m_bRTGISampleFrameNumberValid || context.FrameNumber != m_RTGISampleFrameNumber)
+        {
+            m_RTGISampleIndex += 1u;
+            m_RTGISampleFrameNumber = context.FrameNumber;
+            m_bRTGISampleFrameNumberValid = true;
+        }
+        parameters.sampleState[0] = m_RTGISampleIndex;
         parameters.sampleState[1] = static_cast<uint32_t>(emitterEntries.size());
         parameters.sampleState[2] = emitterTriangleCount;
         // 履歴の距離は前フレームのカメラから測ったものなので、現在の表面も同じカメラから測って比べる。
@@ -3393,7 +3565,16 @@ namespace NorvesLib::Core::Rendering
                         lightingParams.cameraPosition,
                         sizeof(parameters.previousCameraPosition));
         }
-        parameters.previousCameraPosition[3] = 1.0f;
+        // 履歴はそれを書いたフレームのプリエクスポージャが掛かった値なので、今のフレームの露出との比で
+        // 掛け直してから混ぜる（自動露出の順応中も履歴を捨てずに使えるように）。
+        const float currentPreExposure = parameters.rayLimits[2];
+        const float historyExposureScale =
+            bHadHistory && std::isfinite(m_RTGIHistoryPreExposure) && m_RTGIHistoryPreExposure > 0.0f
+                ? currentPreExposure / m_RTGIHistoryPreExposure
+                : 1.0f;
+        parameters.previousCameraPosition[3] =
+            std::isfinite(historyExposureScale) && historyExposureScale > 0.0f ? historyExposureScale
+                                                                                : 1.0f;
         m_RTGIComputeParametersBuffer->Update(&parameters, sizeof(parameters));
         m_RTGIComputeInstanceDataBuffer->Update(
             instanceData.data(), requiredInstanceDataSize);
@@ -3529,6 +3710,7 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistorySceneRevision = context.SceneRevision;
         m_RTGIHistoryLightRevision = context.LightRevision;
         m_RTGIHistoryLightWeightLimitedFrames = nextLightWeightLimitedFrames;
+        m_RTGIHistoryPreExposure = currentPreExposure;
         m_bRTGIHistoryFrameNumberValid = true;
         m_bRTGIHistoryLightRevisionValid = true;
         m_RTGIStaticSignature = staticSignature;
@@ -3692,6 +3874,20 @@ namespace NorvesLib::Core::Rendering
             indirectLighting.Source == RTGIIndirectLightingSource::DDGI;
         const bool bUseRTGILighting =
             indirectLighting.Source == RTGIIndirectLightingSource::RTGI;
+        // 間接光の出どころ（RTGI・DDGI・IBL・ラスタ）が変わったときだけ記録する。
+        const uint8_t indirectLightingSource = static_cast<uint8_t>(indirectLighting.Source);
+        if (indirectLightingSource != m_LoggedIndirectLightingSource)
+        {
+            static constexpr const char* kIndirectLightingSourceNames[] = {"raster", "ibl", "ddgi",
+                                                                           "rtgi"};
+            NORVES_LOG_INFO("LightingPass",
+                            "INDIRECT_LIGHTING source=%s frame=%llu",
+                            indirectLightingSource < 4u
+                                ? kIndirectLightingSourceNames[indirectLightingSource]
+                                : "unknown",
+                            static_cast<unsigned long long>(context.FrameNumber));
+            m_LoggedIndirectLightingSource = indirectLightingSource;
+        }
 
         GPUDDGILightingParams ddgiParameters = {};
         if (bUseDDGILighting)
@@ -3717,7 +3913,11 @@ namespace NorvesLib::Core::Rendering
 
         if (m_bRegisterLegacyBridge && bRegisterLegacyOutputs)
         {
-            RegisterOutputs(context, m_SceneColorTexture, depthTexture);
+            LightingOutputTargets targets;
+            targets.SceneColor = m_SceneColorTexture;
+            targets.IndirectSpecular = m_IndirectSpecularTexture;
+            targets.SpecularReflectance = m_SpecularReflectanceTexture;
+            RegisterOutputs(context, targets, depthTexture);
         }
 
         m_LightingDescriptorSet->BindTexture(0, albedoTexture);
@@ -3892,7 +4092,7 @@ namespace NorvesLib::Core::Rendering
     }
 
     void LightingPass::RegisterOutputs(ViewRenderContext& context,
-                                       const RHI::TexturePtr& sceneColorTexture,
+                                       const LightingOutputTargets& targets,
                                        const RHI::TexturePtr& depthTexture) const
     {
         if (!context.SharedResources)
@@ -3900,9 +4100,17 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        if (sceneColorTexture)
+        if (targets.SceneColor)
         {
-            context.SharedResources->RegisterTexturePtr("SceneColor", sceneColorTexture);
+            context.SharedResources->RegisterTexturePtr("SceneColor", targets.SceneColor);
+        }
+        if (targets.IndirectSpecular)
+        {
+            context.SharedResources->RegisterTexturePtr("LightingIndirectSpecular", targets.IndirectSpecular);
+        }
+        if (targets.SpecularReflectance)
+        {
+            context.SharedResources->RegisterTexturePtr("LightingSpecularReflectance", targets.SpecularReflectance);
         }
 
         if (depthTexture)
@@ -4067,16 +4275,18 @@ namespace NorvesLib::Core::Rendering
         params.cameraForward[2] = -1.0f;
         params.cameraForward[3] = 0.0f;
         const CameraProxy *activeCamera = context.GetActiveCamera();
+        bool bProjectionJittered = false;
         if (activeCamera)
         {
-            params.preExposure = std::isfinite(activeCamera->PreExposure) &&
-                                         activeCamera->PreExposure > 0.0f
-                                     ? std::clamp(activeCamera->PreExposure, 1.0e-6f, 1.0e6f)
-                                     : 1.0f;
+            // GBufferPass・MegaGeometryPass が発光に掛けた値と同じ（同じViewのカメラから求める）。
+            params.preExposure = ResolveSceneColorPreExposure(activeCamera);
             const CameraViewConstants cameraConstants =
                 CameraViewConstants::BuildForDevice(*activeCamera, context.GetActiveAspectRatio(), context.Device);
             cameraConstants.CopyCameraPosition(params.cameraPosition);
             cameraConstants.CopyShaderInverseViewProjection(params.invViewProjection);
+            cameraConstants.CopyShaderViewProjection(params.viewProjection);
+            bProjectionJittered = activeCamera->ProjectionJitterNdcX != 0.0f ||
+                                  activeCamera->ProjectionJitterNdcY != 0.0f;
             const float forwardLengthSquared =
                 activeCamera->ForwardX * activeCamera->ForwardX +
                 activeCamera->ForwardY * activeCamera->ForwardY +
@@ -4100,6 +4310,7 @@ namespace NorvesLib::Core::Rendering
             params.cameraPosition[2] = 5.0f;
             params.cameraPosition[3] = 1.0f;
             MatrixUtils::TransposeToShaderData(Matrix4x4::Identity, params.invViewProjection);
+            MatrixUtils::TransposeToShaderData(Matrix4x4::Identity, params.viewProjection);
         }
         params.skySunDirectionAndCosRadius[0] = 0.0f;
         params.skySunDirectionAndCosRadius[1] = 1.0f;
@@ -4172,6 +4383,31 @@ namespace NorvesLib::Core::Rendering
         params.bNeuralBRDFEnabled = bValidationMode ? 0u :
                                     (m_bNeuralBRDFAvailable ? 1u : 0u);
         params.lightCount = lightCount;
+
+        // 接触影は通常の描画だけに掛ける。検証表示（245の太陽の可視と246〜255）は
+        // CSM・RT影・キューブシャドウそのものを比べるので掛けない。
+        const bool bContactShadowValidationMode = bValidationMode || params.debugViewMode == 245u;
+        const float contactShadowLength =
+            std::isfinite(m_Settings.ContactShadowLength) ? m_Settings.ContactShadowLength : 0.0f;
+        const float contactShadowThickness =
+            std::isfinite(m_Settings.ContactShadowThickness) ? m_Settings.ContactShadowThickness : 0.0f;
+        if (activeCamera && !bContactShadowValidationMode &&
+            contactShadowLength > 0.0f && contactShadowThickness > 0.0f)
+        {
+            params.contactShadowParams[0] = contactShadowLength;
+            params.contactShadowParams[2] = contactShadowThickness;
+            if (bProjectionJittered)
+            {
+                // TAAの履歴が別の段の位置の結果を混ぜるよう、雑音をフレームごとにずらす
+                const uint64_t noiseFrameNumber =
+                    context.bDeterministicCapture ? context.TemporalFrameIndex : context.FrameNumber;
+                const float frame =
+                    static_cast<float>(noiseFrameNumber % CONTACT_SHADOW_TEMPORAL_NOISE_PERIOD);
+                params.contactShadowParams[1] =
+                    frame * CONTACT_SHADOW_TEMPORAL_NOISE_STEP -
+                    std::floor(frame * CONTACT_SHADOW_TEMPORAL_NOISE_STEP);
+            }
+        }
 
         // IBLパラメータ設定
         params.prefilteredSpecularMipLevels = 9u;
@@ -4251,6 +4487,26 @@ namespace NorvesLib::Core::Rendering
             params.ambientColor[3] = m_Settings.IBLIntensity;
         }
 
+        // 空が無効で静的HDRを使うフレームだけ、FramePacketの倍率を背景とIBLの強度へ掛ける
+        // （検証用の環境と空の環境には掛けない）。
+        params.staticEnvironmentScale = 1.0f;
+        if (!bSkyAtmosphereRequested && !bValidationRaw250 && !bValidationRaw251 && !bValidationRaw252 &&
+            context.SnapshotScene != nullptr)
+        {
+            const float scale = context.SnapshotScene->StaticEnvironmentIntensityScale;
+            params.staticEnvironmentScale = std::isfinite(scale) && scale >= 0.0f ? scale : 1.0f;
+        }
+        const bool bStaticEnvironmentIbl =
+            m_bIBLAvailable && !bValidationConstantIblAvailable && !bSkyAtmosphereRequested;
+        const float publishedIblIntensity =
+            bValidationConstantIblAvailable ? 1.0f
+            : bStaticEnvironmentIbl         ? m_Settings.IBLIntensity * params.staticEnvironmentScale
+                                            : m_Settings.IBLIntensity;
+        if (bStaticEnvironmentIbl)
+        {
+            params.ambientColor[3] = publishedIblIntensity;
+        }
+
         if (!m_LightDataBuffer || !m_LightArrayBuffer)
         {
             return false;
@@ -4314,7 +4570,7 @@ namespace NorvesLib::Core::Rendering
                 m_BrdfLutTexture,
                 m_DfgSampler,
                 9u,
-                bValidationConstantIblAvailable ? 1.0f : m_Settings.IBLIntensity,
+                publishedIblIntensity,
                 params.bIBLEnabled != 0u);
             // 透明物も同じキューブの番号で点光源の影を引く（光源バッファと同じフレームの配列）。
             context.PhysicalLighting.PublishPointShadowCubes(

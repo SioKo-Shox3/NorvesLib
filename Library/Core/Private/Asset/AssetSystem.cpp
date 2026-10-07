@@ -1,4 +1,4 @@
-#include "Asset/AssetSystem.h"
+﻿#include "Asset/AssetSystem.h"
 
 #include "Asset/AssetPackageFormat.h"
 #include "Asset/AssetPath.h"
@@ -152,12 +152,27 @@ namespace NorvesLib::Core::Asset
 
     AssetSystem::AssetSystem()
         : m_FileReader()
+        , m_LooseFileReader()
     {
     }
 
     AssetSystem::AssetSystem(const Container::AnsiString &assetRoot)
         : m_FileReader(assetRoot)
+        , m_LooseFileReader(assetRoot)
+        , m_AssetRoot(assetRoot)
     {
+    }
+
+    void AssetSystem::SetLooseAssetRoot(const Container::AnsiString &looseAssetRoot)
+    {
+        m_LooseAssetRoot = looseAssetRoot;
+        const Container::AnsiString &readerRoot = looseAssetRoot.empty() ? m_AssetRoot : looseAssetRoot;
+        m_LooseFileReader = readerRoot.empty() ? AssetFileReader() : AssetFileReader(readerRoot);
+    }
+
+    const Container::AnsiString &AssetSystem::GetLooseAssetRoot() const noexcept
+    {
+        return m_LooseAssetRoot.empty() ? m_AssetRoot : m_LooseAssetRoot;
     }
 
     void AssetSystem::ResetManifest()
@@ -230,7 +245,7 @@ namespace NorvesLib::Core::Asset
 
         if (manifestResult.ShouldUseLooseFallback())
         {
-            return ResolveLooseInto(std::move(result), m_FileReader, normalizedLogicalPath, AssetResolveSource::Loose);
+            return ResolveLooseInto(std::move(result), m_LooseFileReader, normalizedLogicalPath, AssetResolveSource::Loose);
         }
 
         if (!manifestResult.ShouldUseCooked())
@@ -257,7 +272,7 @@ namespace NorvesLib::Core::Asset
                 result.CookedReference.CookedPackage,
                 packageRead.Status);
             return ResolveCookedFailure(std::move(result),
-                                        m_FileReader,
+                                        m_LooseFileReader,
                                         request,
                                         GetPackageReadFailureKind(packageRead.Status),
                                         AssetResolveStatus::CookedPackageReadFailed,
@@ -271,7 +286,7 @@ namespace NorvesLib::Core::Asset
             reason += result.CookedReference.CookedPackage;
             reason += "\"";
             return ResolveCookedFailure(std::move(result),
-                                        m_FileReader,
+                                        m_LooseFileReader,
                                         request,
                                         AssetCookedFailureKind::PackageParseFailed,
                                         AssetResolveStatus::CookedPackageParseFailed,
@@ -287,7 +302,7 @@ namespace NorvesLib::Core::Asset
             reason += result.CookedReference.EntryName;
             reason += "\"";
             return ResolveCookedFailure(std::move(result),
-                                        m_FileReader,
+                                        m_LooseFileReader,
                                         request,
                                         AssetCookedFailureKind::EntryMissing,
                                         AssetResolveStatus::CookedEntryMissing,
@@ -303,7 +318,7 @@ namespace NorvesLib::Core::Asset
             reason += result.CookedReference.EntryName;
             reason += "\"";
             return ResolveCookedFailure(std::move(result),
-                                        m_FileReader,
+                                        m_LooseFileReader,
                                         request,
                                         AssetCookedFailureKind::EntryMissing,
                                         AssetResolveStatus::CookedEntryMissing,
@@ -319,7 +334,7 @@ namespace NorvesLib::Core::Asset
             reason += result.CookedReference.EntryName;
             reason += "\"";
             return ResolveCookedFailure(std::move(result),
-                                        m_FileReader,
+                                        m_LooseFileReader,
                                         request,
                                         AssetCookedFailureKind::EntryHashMismatch,
                                         AssetResolveStatus::CookedEntryHashMismatch,
@@ -345,6 +360,49 @@ namespace NorvesLib::Core::Asset
         request.Variant = ToAnsiString(variant);
         request.FallbackMode = fallbackMode;
         return ResolveAsset(request);
+    }
+
+    bool AssetSystem::TryResolveCookedRange(Container::AnsiStringView logicalPath,
+                                            AssetKind kind,
+                                            AssetCookedRange &outRange,
+                                            Container::AnsiString *pOutReason,
+                                            Container::AnsiStringView variant) const
+    {
+        const AssetResolveResult resolved =
+            ResolveAsset(logicalPath, kind, variant, AssetFallbackMode::FailOnCookedFailure);
+        return TryMakeCookedRange(resolved, outRange, pOutReason);
+    }
+
+    bool AssetSystem::TryMakeCookedRange(const AssetResolveResult &resolved,
+                                         AssetCookedRange &outRange,
+                                         Container::AnsiString *pOutReason)
+    {
+        if (!resolved.UsedCooked())
+        {
+            if (pOutReason != nullptr)
+            {
+                *pOutReason = resolved.Reason.empty() ? Container::AnsiString("クック済みのエントリが使えない")
+                                                      : resolved.Reason;
+            }
+            return false;
+        }
+        if (resolved.Entry.Compression != AssetPackageCompression::None)
+        {
+            if (pOutReason != nullptr)
+            {
+                *pOutReason = "クック済みのエントリが圧縮されていて範囲読みできない";
+            }
+            return false;
+        }
+
+        outRange = AssetCookedRange();
+        outRange.Request.InputPath = resolved.CookedReference.CookedPackage;
+        outRange.Request.AssetRoot = {};
+        outRange.Request.bAllowAbsolutePath = false;
+        outRange.BaseOffset = static_cast<uint64_t>(resolved.Entry.DataOffset);
+        outRange.Size = static_cast<uint64_t>(resolved.Entry.StoredSize);
+        outRange.Reference = resolved.CookedReference;
+        return true;
     }
 
     size_t AssetSystem::GetAssetCount() const noexcept

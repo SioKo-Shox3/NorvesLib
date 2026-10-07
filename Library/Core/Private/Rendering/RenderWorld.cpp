@@ -84,6 +84,9 @@ namespace NorvesLib::Core::Rendering
         coordSettings.PathTracingSampleBatch = settings.PathTracingSampleBatch;
         coordSettings.PathTracingDebug = settings.PathTracingDebug;
         coordSettings.RasterDirectBrdfMode = settings.RasterDirectBrdfMode;
+        coordSettings.VisibilityBuffer = settings.VisibilityBuffer;
+        coordSettings.SwRaster = settings.SwRaster;
+        coordSettings.SwRasterMaxPixels = settings.SwRasterMaxPixels;
 
         if (!m_RenderingCoordinator.Initialize(coordSettings))
         {
@@ -183,6 +186,9 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // VRAM の予算と使用量を、初回と変化があったときだけログへ出す。
+        m_RenderResources.PollVideoMemoryBudget();
+
         bool bRenderThreadQuiesced = false;
 
         // 保留中のリサイズをフレーム開始時に安全に適用する
@@ -202,7 +208,7 @@ namespace NorvesLib::Core::Rendering
             m_RenderingCoordinator.Resize(w, h);
         }
 
-        const bool bHasPendingAsyncAssets = HasPendingAsyncAssets();
+        const bool bHasPendingAsyncAssets = HasPendingAssetLoads();
         bool bAssetGpuFlushWindowAcquired = false;
         if (m_RenderThread.IsRunning() && !bRenderThreadQuiesced && bHasPendingAsyncAssets)
         {
@@ -312,6 +318,21 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetVolumetricFogParameters(parameters);
     }
 
+    void RenderWorld::SetStaticEnvironmentIntensityScale(float scale)
+    {
+        m_RenderingCoordinator.SetStaticEnvironmentIntensityScale(scale);
+    }
+
+    void RenderWorld::SetDeterministicCapture(bool bEnabled)
+    {
+        m_RenderingCoordinator.SetDeterministicCapture(bEnabled);
+    }
+
+    void RenderWorld::BeginDeterministicEpoch()
+    {
+        m_RenderingCoordinator.BeginDeterministicEpoch();
+    }
+
     void RenderWorld::EndFrame()
     {
         if (!m_bInitialized)
@@ -362,11 +383,17 @@ namespace NorvesLib::Core::Rendering
 #endif
     }
 
-    bool RenderWorld::HasPendingAsyncAssets() const
+    bool RenderWorld::HasPendingAssetLoads() const
     {
         return m_RenderResources.Textures().GetPendingAsyncLoadCount() > 0 ||
                m_RenderResources.MegaGeometry().GetPendingAsyncModelLoadCount() > 0 ||
                ResourceIO::GLTFAnalyzer::GetPendingAsyncModelLoadCount() > 0;
+    }
+
+    bool RenderWorld::HasPendingAsyncAssets() const
+    {
+        return HasPendingAssetLoads() || m_RenderResources.MegaGeometry().HasPendingGpuUploads() ||
+               m_RenderResources.MegaGeometry().HasPendingPageStreaming();
     }
 
     uint64_t RenderWorld::GetRenderedFrameCount() const

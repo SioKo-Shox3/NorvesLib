@@ -197,6 +197,12 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetPassCount() const { return static_cast<uint32_t>(m_Passes.size()); }
 
         /**
+         * @brief 登録順（グラフでの並び）の番号でパスを取得
+         * @return 範囲外なら nullptr
+         */
+        IViewPass *GetPassAt(uint32_t index) const { return index < m_Passes.size() ? m_Passes[index].get() : nullptr; }
+
+        /**
          * @brief ポストプロセススタックを設定
          * @param stack ポストプロセススタック（所有権を移譲）
          */

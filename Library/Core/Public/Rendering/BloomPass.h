@@ -39,6 +39,33 @@ namespace NorvesLib::Core::Rendering
         /** @brief 縮小の段数（1段ごとに縦横半分。1〜MaxBloomMipCount） */
         uint32_t MipCount = 6;
 
+        /**
+         * @brief レンズダートの強さ（0で無効）
+         *
+         * カメラのレンズ効果（CameraLensEffects::LensDirtIntensity）が正ならそちらを使う。
+         * ダートは、拡大したブルームのうち LensDirtThreshold を超えた分にダートの模様を掛けて加える。
+         */
+        float LensDirtIntensity = 0.0f;
+
+        /**
+         * @brief レンズダートが乗り始めるブルームの明るさ（プリエクスポージャ後の値）
+         *
+         * 画面全体のブルーム（しきい値なしでは画面の平均的な明るさ）にはダートを乗せず、太陽や発光体の
+         * 周りの明るいにじみにだけ模様を浮かせる。
+         */
+        float LensDirtThreshold = 1.0f;
+
+        /**
+         * @brief ダートの加算を、その画素のブルーム前の値（色ごと）の何倍までに抑えるか（0で抑えない）
+         *
+         * ブルームは明るい光源の周りで画面の明るさより桁違いに大きくなるため、暗い背景（夜の点光源の周り）では
+         * しみがそのまま円（ゴースト）として浮く。加算を色ごとにこの倍率×ブルーム前の画素の値へ向けてなめらかに
+         * 頭打ちにし、明るい空の上の模様は残して、暗い背景の上ではほぼ消す。ブルーム合成後の値を基準にすると
+         * にじみ自体が基準を押し上げ、夜の点光源の周りに円の縁が残る。0.25 は起動画面の夜の点光源の周りで
+         * しみの円が見えず、夕の太陽の周りに模様が淡く残る値。
+         */
+        float LensDirtSceneRatio = 0.25f;
+
         /** @brief 出力フォーマット（HDR、ToneMappingの前にかかるため） */
         RHI::Format OutputFormat = RHI::Format::R16G16B16A16_FLOAT;
     };
@@ -49,6 +76,7 @@ namespace NorvesLib::Core::Rendering
      * HDRシーンカラーを13タップのフィルタで段階的に縮小し（最初の段はKaris平均）、
      * 3×3のテントフィルタで下の段から拡大して各段へ加えたものを、元のシーンカラーへ混ぜます。
      * 縮小の各段は自前のテクスチャで、パス内で閉じています。
+     * レンズダートが有効なら、ブルームの明るい部分へ、起動時に手続きで作ったダートの模様を掛けて加えます。
      *
      * PostProcessStackに追加して使用するポストプロセスパスです。
      * ToneMappingPassの前に配置してください。
@@ -188,6 +216,9 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_ParamsBuffer;
         RHI::DescriptorSetPtr m_BloomDescriptorSet;
         RHI::SamplerPtr m_SceneColorSampler;
+
+        // レンズダートの模様（Initialize で手続きで作る。外部の画像は使わない）
+        RHI::TexturePtr m_LensDirtTexture;
 
         // 縮小・拡大の段（パス内で閉じた自前のテクスチャ）
         RHI::ShaderPtr m_DownsampleFragmentShader;

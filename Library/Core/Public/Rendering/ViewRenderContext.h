@@ -525,6 +525,15 @@ namespace NorvesLib::Core::Rendering
         uint64_t PreviousObjectStateFrameNumber = 0;
         bool bPreviousObjectStateComplete = false;
 
+        /**
+         * @brief velocity の前のカメラ（PreviousMainCamera）が指すゲームのフレーム番号
+         *
+         * パケットの前のカメラは直前のゲームのフレームのもの。描画がフレームを飛ばし、TAA が前のカメラを
+         * 履歴を書いたフレームのものへ差し替えたときはそのフレーム。前のカメラが無ければ UINT64_MAX。
+         * RTGI は、これと物体の前の変換が自分の履歴のフレームを指すときだけ、飛んだフレームでも履歴を使う。
+         */
+        uint64_t PreviousCameraFrameNumber = UINT64_MAX;
+
         /** @brief FramePacketから値コピーしたscene/light revision。 */
         uint64_t SceneRevision = 0;
         uint64_t LightRevision = 0;
@@ -701,35 +710,79 @@ namespace NorvesLib::Core::Rendering
             return scissor;
         }
 
+        /**
+         * @brief 内部解像度の画素から画面（スワップチェーン）の画素への倍率
+         *
+         * Viewport の画素の矩形は内部解像度（RenderWidth/Height）で決まる。SetRenderScale で内部解像度を
+         * 画面より小さくしたとき、Upscale の後の画像を画面へ写す矩形はこの倍率で広げる。内部解像度が
+         * 画面と同じか、画面の大きさが分からない（0）なら1。キャンバス（UI）のように画面解像度で
+         * 計画した Viewport（計画の RenderWidth/Height が画面と同じ）も1。
+         */
+        float GetOutputScaleX() const
+        {
+            return ComputeOutputScale(ScreenWidth, RenderWidth, CurrentViewport ? CurrentViewport->RenderWidth : 0u);
+        }
+
+        float GetOutputScaleY() const
+        {
+            return ComputeOutputScale(ScreenHeight, RenderHeight, CurrentViewport ? CurrentViewport->RenderHeight : 0u);
+        }
+
+        static float ComputeOutputScale(uint32_t screenExtent, uint32_t renderExtent, uint32_t planExtent)
+        {
+            if (screenExtent == 0 || renderExtent == 0 || renderExtent == screenExtent)
+            {
+                return 1.0f;
+            }
+            const uint32_t sourceExtent = planExtent > 0 ? planExtent : renderExtent;
+            return static_cast<float>(screenExtent) / static_cast<float>(sourceExtent);
+        }
+
+        /** @brief 画面（スワップチェーン）へ写すときの Viewport。画素の矩形を画面の画素へ広げる。 */
         RHI::Viewport GetActiveOutputViewport() const
         {
+            const float scaleX = GetOutputScaleX();
+            const float scaleY = GetOutputScaleY();
             if (!CurrentViewport || !CurrentViewport->HasDrawableExtent())
             {
-                return GetActiveLocalViewport();
+                RHI::Viewport viewport = GetActiveLocalViewport();
+                viewport.width *= scaleX;
+                viewport.height *= scaleY;
+                return viewport;
             }
 
             RHI::Viewport viewport;
-            viewport.x = CurrentViewport->PixelRect.X;
-            viewport.y = CurrentViewport->PixelRect.Y;
-            viewport.width = CurrentViewport->PixelRect.Width;
-            viewport.height = CurrentViewport->PixelRect.Height;
+            viewport.x = CurrentViewport->PixelRect.X * scaleX;
+            viewport.y = CurrentViewport->PixelRect.Y * scaleY;
+            viewport.width = CurrentViewport->PixelRect.Width * scaleX;
+            viewport.height = CurrentViewport->PixelRect.Height * scaleY;
             viewport.minDepth = CurrentViewport->PixelRect.MinDepth;
             viewport.maxDepth = CurrentViewport->PixelRect.MaxDepth;
             return viewport;
         }
 
+        /** @brief 画面（スワップチェーン）へ写すときの Scissor。画素の矩形を画面の画素へ広げる。 */
         RHI::ScissorRect GetActiveOutputScissor() const
         {
+            const float scaleX = GetOutputScaleX();
+            const float scaleY = GetOutputScaleY();
+            const auto scaleEdge = [](int32_t edge, float scale)
+            {
+                return static_cast<int32_t>(static_cast<float>(edge) * scale + 0.5f);
+            };
             if (!CurrentViewport || !CurrentViewport->HasDrawableExtent())
             {
-                return GetActiveLocalScissor();
+                RHI::ScissorRect scissor = GetActiveLocalScissor();
+                scissor.right = scaleEdge(scissor.right, scaleX);
+                scissor.bottom = scaleEdge(scissor.bottom, scaleY);
+                return scissor;
             }
 
             RHI::ScissorRect scissor;
-            scissor.left = CurrentViewport->Scissor.Left;
-            scissor.top = CurrentViewport->Scissor.Top;
-            scissor.right = CurrentViewport->Scissor.Right;
-            scissor.bottom = CurrentViewport->Scissor.Bottom;
+            scissor.left = scaleEdge(CurrentViewport->Scissor.Left, scaleX);
+            scissor.top = scaleEdge(CurrentViewport->Scissor.Top, scaleY);
+            scissor.right = scaleEdge(CurrentViewport->Scissor.Right, scaleX);
+            scissor.bottom = scaleEdge(CurrentViewport->Scissor.Bottom, scaleY);
             return scissor;
         }
 
@@ -785,7 +838,13 @@ namespace NorvesLib::Core::Rendering
                                                                   arrayCount));
         }
 
-        void EnqueueMegaGeometryPass(MegaGeometryPass* pass)
+        /**
+         * @brief MegaGeometryPass の記録コマンド（今のビューポートのカメラ・描画範囲・表示・フレームの通し番号）を作る
+         *
+         * 通常は EnqueueMegaGeometryPass がキューへ積む。ビジビリティバッファの ID のラスタが記録を自分の Execute へ移す経路
+         * （MegaGeometryPass::IsFrameRecordDeferred）では、ラスタがこのコマンドを作って記録を呼ぶ。
+         */
+        FrameCommand BuildMegaGeometryPassCommand(MegaGeometryPass* pass)
         {
             const CameraProxy *activeCamera = GetActiveCamera();
             FrameCommand command = FrameCommand::CreateMegaGeometryPass(pass,
@@ -795,12 +854,24 @@ namespace NorvesLib::Core::Rendering
                                                                         GetActiveLocalViewport(),
                                                                         GetActiveLocalScissor(),
                                                                         GetActiveDebugMode());
+            command.MegaGeometry.Textures = Resources.Textures;
+            command.MegaGeometry.FrameNumber = FrameNumber;
+            command.MegaGeometry.TemporalFrameIndex = TemporalFrameIndex;
+            command.MegaGeometry.InFlightIndex = FrameIndex;
+            command.MegaGeometry.RenderFrameSerial = ResolveRenderFrameSerial();
+            command.MegaGeometry.bDeterministicCapture = bDeterministicCapture;
+            command.MegaGeometry.bTemporalEpochStart = bTemporalEpochStart;
             if (const CameraProxy *previousCamera = GetPreviousCamera())
             {
                 command.MegaGeometry.PreviousCamera = *previousCamera;
                 command.MegaGeometry.bHasPreviousCamera = true;
             }
-            EnqueueFrameCommand(command);
+            return command;
+        }
+
+        void EnqueueMegaGeometryPass(MegaGeometryPass* pass)
+        {
+            EnqueueFrameCommand(BuildMegaGeometryPassCommand(pass));
         }
 
         // ========================================
@@ -880,6 +951,21 @@ namespace NorvesLib::Core::Rendering
         /** @brief FramePacketの単調なフレーム番号 */
         uint64_t FrameNumber = 0;
 
+        /**
+         * @brief RenderThread が記録したフレームごとに 1 ずつ増える通し番号（同じフレームの全ビューポートで同じ値）
+         *
+         * 1 フレームに同じパスが何回も Execute される（複数のビューポート）ので、UBO・ディスクリプタセットなどの
+         * フレームごとの資源は、Execute の回数ではなくこの番号で「次のフレームか」を決める（FrameUseRing）。
+         * 0 は未設定で、そのときは FrameNumber + 1 を使う（RenderingCoordinator を通さない手組みの文脈）。
+         */
+        uint64_t RenderFrameSerial = 0;
+
+        /** @brief FrameUseRing に渡すフレームの通し番号（未設定なら FrameNumber + 1） */
+        uint64_t ResolveRenderFrameSerial() const
+        {
+            return RenderFrameSerial != 0 ? RenderFrameSerial : FrameNumber + 1;
+        }
+
         /** @brief スクリーン幅 */
         uint32_t ScreenWidth = 0;
 
@@ -897,6 +983,19 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief アプリケーション開始からの経過時間（秒） */
         double TotalTime = 0.0;
+
+        /**
+         * @brief 決定的な撮影（--capture-deterministic）のフレームか
+         *
+         * 真の間、DeltaTime・TotalTime は 1/60 秒の固定刻みで、TemporalFrameIndex がエポックからの番号になる。
+         */
+        bool bDeterministicCapture = false;
+
+        /** @brief 決定的な撮影のエポックの最初のフレーム。時間的な状態（履歴・乱数の列・順応）を捨てて数え直す */
+        bool bTemporalEpochStart = false;
+
+        /** @brief 時間方向に動かす雑音の位相に使うフレーム番号。通常は FrameNumber、決定的な撮影ではエポックからの番号 */
+        uint64_t TemporalFrameIndex = 0;
     };
 
 } // namespace NorvesLib::Core::Rendering

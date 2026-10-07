@@ -51,6 +51,31 @@ namespace NorvesLib::Core::Rendering
             m_Settings.ExposureCompensation = exposureCompensation;
         }
 
+        /** @brief 測光した明るさに応じて足す露出補正の曲線だけを変える。次に読み戻す測定から効く */
+        void SetCompensationCurve(const AutoExposureCompensationCurve& curve)
+        {
+            m_Settings.CompensationCurve = curve;
+        }
+
+        /**
+         * @brief 決定的な撮影のエポックで、順応と読み戻し待ちの測定を捨てる。
+         *
+         * 次に読み戻した測定が目標の EV100 へそのまま合わせ（順応の初回と同じ）、そこから順応が始まる。
+         */
+        void ResetForDeterministicEpoch()
+        {
+            for (FrameSlot& slot : m_FrameSlots)
+            {
+                slot.bPending = false;
+            }
+            m_Adaptation = AutoExposureAdaptationState{};
+            m_LatestMeasurement = AutoExposureMeasurement{};
+            m_LatestHistogram = AutoExposureHistogramReadback{};
+            m_LastAdaptationTime = 0.0;
+            m_ConsumedMeasurementCount = 0u;
+            m_Transition = TransitionRecord{};
+        }
+
         /** @brief 順応させた EV100。まだ有効な測定が無いときは false */
         bool TryGetAdaptedEV100(float& outEV100) const
         {

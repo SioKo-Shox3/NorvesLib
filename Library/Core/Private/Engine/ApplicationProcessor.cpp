@@ -459,6 +459,65 @@ namespace
         return false;
     }
 
+    // --visibility-buffer=off|on|debug
+    bool TryParseVisibilityBufferOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::VisibilityBufferMode& outMode,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--visibility-buffer=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("off"))
+        {
+            outMode = NorvesLib::Core::Rendering::VisibilityBufferMode::Off;
+            return true;
+        }
+        if (value == TEXT("on"))
+        {
+            outMode = NorvesLib::Core::Rendering::VisibilityBufferMode::On;
+            return true;
+        }
+        if (value == TEXT("debug"))
+        {
+            outMode = NorvesLib::Core::Rendering::VisibilityBufferMode::Debug;
+            return true;
+        }
+        return false;
+    }
+
+    // --sw-raster=off|on
+    bool TryParseSwRasterOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::SwRasterMode& outMode,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--sw-raster=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("off"))
+        {
+            outMode = NorvesLib::Core::Rendering::SwRasterMode::Off;
+            return true;
+        }
+        if (value == TEXT("on"))
+        {
+            outMode = NorvesLib::Core::Rendering::SwRasterMode::On;
+            return true;
+        }
+        return false;
+    }
+
     // --tone-map=aces|aces20-lut
     bool TryParseToneMapOption(
         const String& argument,
@@ -503,6 +562,12 @@ namespace
         }
         outPath = value;
         return true;
+    }
+
+    // --capture-deterministic: 同じコードを2回撮ると一致する撮影（値を取らない。--capture-png と併せて使う）。
+    bool IsCaptureDeterministicOption(const String& argument)
+    {
+        return argument == String(TEXT("--capture-deterministic"));
     }
 
     // 撮影の終了条件（アセットが落ち着いてから描いたフレーム数）の既定値。時間方向に積む効果の収束を待つ。
@@ -690,6 +755,26 @@ namespace
             return false;
         }
         outStrength = strength;
+        return true;
+    }
+
+    // --sw-raster-max-px=<正の数>（ソフトウェアラスタへ振り分けるクラスタの画面上の半径（画素）のしきい値）
+    bool TryParseSwRasterMaxPixelsOption(const String& argument, float& outMaxPixels, bool& bMatched)
+    {
+        const String prefix = TEXT("--sw-raster-max-px=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        float parsed = 0.0f;
+        if (!TryParseNonNegativeRatio(value, parsed) || !(parsed > 0.0f))
+        {
+            return false;
+        }
+        outMaxPixels = parsed;
         return true;
     }
 
@@ -918,6 +1003,7 @@ namespace NorvesLib::Core::Engine
         m_bCaptureRequested = false;
         Detail::ExitFrameOptionsAccumulator exitFrameOptions{};
         bool bEnableMultiThreadedRendering = config.bEnableMultiThreadedRendering;
+        bool bCaptureDeterministic = false;
         bool bEnableCanvasView = false;
         bool bBoardInstanceBatchingEnabled = true;
         Rendering::RenderingMainViewRenderer mainViewRenderer = Rendering::RenderingMainViewRenderer::Raster;
@@ -930,6 +1016,9 @@ namespace NorvesLib::Core::Engine
         Rendering::PathTracingDebugOutput pathTracingDebugOutput =
             Rendering::PathTracingDebugOutput::None;
         Rendering::RasterDirectBrdf rasterDirectBrdf = Rendering::RasterDirectBrdf::Analytic;
+        Rendering::VisibilityBufferMode visibilityBufferMode = Rendering::VisibilityBufferMode::On;
+        Rendering::SwRasterMode swRasterMode = Rendering::SwRasterMode::On;
+        float swRasterMaxPixels = Rendering::DefaultSwRasterMaxPixels;
         Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
         bool bToneMapOperatorRequested = false;
         float filmGrainStrength = 0.0f;
@@ -1067,6 +1156,41 @@ namespace NorvesLib::Core::Engine
                 LOG_WARNING("ApplicationProcessor runtime option --raster-direct-brdf ignored: value must be 'neural' or 'analytic'");
             }
 
+            bool bMatchedVisibilityBuffer = false;
+            if (TryParseVisibilityBufferOption(args[i], visibilityBufferMode, bMatchedVisibilityBuffer))
+            {
+                LOG_INFO("ApplicationProcessor runtime option visibility_buffer=%u",
+                         static_cast<unsigned int>(visibilityBufferMode));
+            }
+            else if (bMatchedVisibilityBuffer)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --visibility-buffer "
+                            "ignored: value must be 'off', 'on' or 'debug'");
+            }
+
+            bool bMatchedSwRaster = false;
+            if (TryParseSwRasterOption(args[i], swRasterMode, bMatchedSwRaster))
+            {
+                LOG_INFO("ApplicationProcessor runtime option sw_raster=%u",
+                         static_cast<unsigned int>(swRasterMode));
+            }
+            else if (bMatchedSwRaster)
+            {
+                LOG_WARNING("ApplicationProcessor の起動引数 --sw-raster "
+                            "を無視します: 値は 'off' か 'on' にしてください");
+            }
+
+            bool bMatchedSwRasterMaxPixels = false;
+            if (TryParseSwRasterMaxPixelsOption(args[i], swRasterMaxPixels, bMatchedSwRasterMaxPixels))
+            {
+                LOG_INFO("ApplicationProcessor runtime option sw_raster_max_px=%.2f", swRasterMaxPixels);
+            }
+            else if (bMatchedSwRasterMaxPixels)
+            {
+                LOG_WARNING("ApplicationProcessor の起動引数 --sw-raster-max-px "
+                            "を無視します: 値は正の数にしてください");
+            }
+
             bool bMatchedToneMap = false;
             if (TryParseToneMapOption(args[i], toneMapOperator, bMatchedToneMap))
             {
@@ -1114,6 +1238,34 @@ namespace NorvesLib::Core::Engine
             else if (bMatchedCapturePng)
             {
                 LOG_WARNING("ApplicationProcessor runtime option --capture-png ignored: path must not be empty");
+            }
+
+            if (IsCaptureDeterministicOption(args[i]))
+            {
+                bCaptureDeterministic = true;
+            }
+        }
+
+        // 決定的な撮影: 経過時間を 1/60 秒に固定し、描画は1フレームずつGameThreadで行う（RenderThread が
+        // フレームを飛ばしたり遅れたりして、撮る瞬間の履歴が変わらないようにする）。
+        if (bCaptureDeterministic)
+        {
+            if (m_CapturePngPath.empty())
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --capture-deterministic "
+                            "は --capture-png が無いので無視する");
+                bCaptureDeterministic = false;
+            }
+            else
+            {
+                GEngine->GetDeterministicCapture().Enable();
+                if (bEnableMultiThreadedRendering)
+                {
+                    bEnableMultiThreadedRendering = false;
+                }
+                LOG_INFO("ApplicationProcessor runtime option capture_deterministic=1 "
+                         "render_thread=st fixed_delta_s=%.6f",
+                         static_cast<double>(DeterministicCapture::FixedDeltaSeconds));
             }
         }
 
@@ -1206,6 +1358,9 @@ namespace NorvesLib::Core::Engine
             renderSettings.PathTracingSampleBatch = pathTracingSampleBatch;
             renderSettings.PathTracingDebug = pathTracingDebugOutput;
             renderSettings.RasterDirectBrdfMode = rasterDirectBrdf;
+            renderSettings.VisibilityBuffer = visibilityBufferMode;
+            renderSettings.SwRaster = swRasterMode;
+            renderSettings.SwRasterMaxPixels = swRasterMaxPixels;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))
             {
@@ -1213,6 +1368,10 @@ namespace NorvesLib::Core::Engine
                 return false;
             }
             GApplicationLifecycleState.bRenderWorld = true;
+            if (bCaptureDeterministic)
+            {
+                GEngine->GetRenderWorld().SetDeterministicCapture(true);
+            }
             LOG_INFO("RenderWorld initialized successfully");
 
             auto &coordinator = GEngine->GetRenderWorld().GetRenderingCoordinator();
@@ -1662,7 +1821,12 @@ namespace NorvesLib::Core::Engine
         }
 #endif
 
-        const int64_t rawDeltaNanoseconds = CalculateRawDeltaTimeNanoseconds();
+        // 決定的な撮影では壁時計を使わず、毎フレーム 1/60 秒進める。
+        DeterministicCapture &deterministicCapture = GEngine->GetDeterministicCapture();
+        const bool bDeterministicCapture = deterministicCapture.IsEnabled();
+        const int64_t measuredDeltaNanoseconds = CalculateRawDeltaTimeNanoseconds();
+        const int64_t rawDeltaNanoseconds =
+            bDeterministicCapture ? DeterministicCapture::FixedDeltaNanoseconds : measuredDeltaNanoseconds;
         const float deltaTime = ClampVariableDeltaTime(rawDeltaNanoseconds);
         GEngine->SetDeltaTime(deltaTime);
         // 入力はゲーム用100ms clampの前の実dtで評価し、OnUpdateから同frame値を読める。
@@ -1671,6 +1835,7 @@ namespace NorvesLib::Core::Engine
             GEngine->GetInputMapper().CancelAll();
             LOG_WARNING("入力actionの評価に失敗したため操作を取り消しました");
         }
+        deterministicCapture.AdvanceFrame();
 
 #if NORVES_ENABLE_STATS
         if (bTraceActive)
@@ -1760,10 +1925,14 @@ namespace NorvesLib::Core::Engine
             auto &renderWorld = GEngine->GetRenderWorld();
             if (renderWorld.IsInitialized())
             {
+                // 決定的な撮影では、GameMode が読み込み後の組み立て（大きな球の生成など）を終えるまでを
+                // 読み込み中として数える。
+                const bool bSceneAssembling = bDeterministicCapture && !deterministicCapture.IsSceneReady();
                 if (m_bWaitForAssetSettle)
                 {
                     Detail::ObservePendingAssets(renderWorld.HasPendingAsyncAssets() ||
-                                                     HasPendingSkeletalConsumers(skeletalSession, handler),
+                                                     HasPendingSkeletalConsumers(skeletalSession, handler) ||
+                                                     bSceneAssembling,
                                                  m_bObservedPendingAssets, m_bAssetSettleBaselineLatched);
                 }
                 renderWorld.BeginFrame();
@@ -1782,7 +1951,7 @@ namespace NorvesLib::Core::Engine
                         const uint64_t previousBaseline = m_AssetSettleRenderedBaseline;
                         bRenderedExitReached = Detail::EvaluateSettledRenderedExit(
                             renderWorld.HasPendingAsyncAssets() ||
-                                HasPendingSkeletalConsumers(skeletalSession, handler),
+                                HasPendingSkeletalConsumers(skeletalSession, handler) || bSceneAssembling,
                             renderedFrameCount, m_ExitAfterRenderedFrames, m_bObservedPendingAssets,
                             m_bAssetSettleBaselineLatched, m_AssetSettleRenderedBaseline);
                         if (m_bAssetSettleBaselineLatched &&
@@ -1790,6 +1959,15 @@ namespace NorvesLib::Core::Engine
                         {
                             LOG_INFO("ApplicationProcessor asset settle baseline rendered=%llu",
                                      static_cast<unsigned long long>(m_AssetSettleRenderedBaseline));
+                            if (bDeterministicCapture)
+                            {
+                                // 読み込み完了の時点から、時間・TAA・RTGI・自動露出を数え直す（次のフレームが 0 番）。
+                                deterministicCapture.BeginEpoch();
+                                renderWorld.BeginDeterministicEpoch();
+                                LOG_INFO("ApplicationProcessor capture_deterministic "
+                                         "epoch begin rendered=%llu",
+                                         static_cast<unsigned long long>(renderedFrameCount));
+                            }
                         }
                     }
                     else

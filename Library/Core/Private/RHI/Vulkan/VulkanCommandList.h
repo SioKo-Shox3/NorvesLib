@@ -528,6 +528,7 @@ namespace NorvesLib::RHI::Vulkan
                                       uint32_t maxDrawCount, uint32_t stride) override;
         void FillBuffer(BufferPtr buffer, uint64_t offset, uint64_t size, uint32_t value) override;
         void Dispatch(uint32_t threadGroupCountX, uint32_t threadGroupCountY, uint32_t threadGroupCountZ) override;
+        bool DispatchIndirect(BufferPtr indirectBuffer, uint64_t offset) override;
         bool BuildAccelerationStructure(const AccelerationStructureBuildDesc& desc) override;
         bool UpdateAccelerationStructure(const AccelerationStructureBuildDesc& desc) override;
         bool TraceRays(uint32_t width, uint32_t height, uint32_t depth) override;
@@ -540,6 +541,8 @@ namespace NorvesLib::RHI::Vulkan
         void CopyTextureToBuffer(TexturePtr src, BufferPtr dst,
                                  uint32_t width, uint32_t height, uint64_t bufferOffset = 0,
                                  uint32_t mipLevel = 0, uint32_t arrayIndex = 0) override;
+        bool CopyBufferToTextureRegion(BufferPtr src, TexturePtr dst, const TextureRegionCopy& region) override;
+        bool CopyTextureRegionToBuffer(TexturePtr src, BufferPtr dst, const TextureRegionCopy& region) override;
         void CopyTexture(TexturePtr src, TexturePtr dst,
                          uint32_t width, uint32_t height,
                          uint32_t srcMipLevel = 0, uint32_t srcArrayIndex = 0,

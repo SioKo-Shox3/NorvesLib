@@ -37,6 +37,7 @@ namespace Game
         uint64_t SpringArmId = 0;
         uint64_t CameraId = 0;
         bool bSmokeSyncEmitted = false;
+        bool bLensEffects = false, bLookLut = false;
 
         bool Resolve(NorvesLib::Core::World& world, NorvesLib::Core::Entity*& outOwner,
             NorvesLib::Core::Component::SpringArmComponent*& outArm,

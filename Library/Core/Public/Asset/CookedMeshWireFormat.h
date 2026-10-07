@@ -152,7 +152,7 @@ namespace NorvesLib::Core::Asset
         } // namespace StringRefRecordOffset
     } // namespace CookedMeshFormatV0
 
-    namespace CookedMeshFormatV1
+    namespace CookedMeshClusteredFormatV1
     {
         inline constexpr uint8_t Magic[] = {'N', 'V', 'M', 'E', 'S', 'H', 'v', '1'};
         inline constexpr size_t MagicSize = sizeof(Magic);
@@ -300,5 +300,5 @@ namespace NorvesLib::Core::Asset
             inline constexpr size_t StringLength = 8;
             inline constexpr size_t Reserved0 = 12;
         } // namespace StringRefRecordOffset
-    } // namespace CookedMeshFormatV1
+    } // namespace CookedMeshClusteredFormatV1
 }

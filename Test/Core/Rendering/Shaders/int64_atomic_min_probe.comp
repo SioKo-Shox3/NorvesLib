@@ -1,0 +1,39 @@
+﻿#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_atomic_int64 : require
+
+// ========================================
+// storage buffer の uint64 へ atomicMin で「上位 32bit = 深度のビット、下位 32bit = ID」を書く確認用コンピュートシェーダー
+//
+// ソフトウェアラスタが画素ごとに「手前の深度、同じ深度なら小さい ID」を 1 回のアトミックで選ぶ形の確認に使う。
+// GPU のテスト（IntegerAttachmentVulkanTest）が、items に (画素, 深度のビット, ID) を並べ、keys を ~0 で初期化して dispatch する。
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Items
+{
+    // x = 画素の番号、y = 深度のビット（正の float なので整数の大小が深度の大小と一致する）、z = ID、w = 未使用
+    uvec4 items[];
+} src;
+
+layout(std430, set = 0, binding = 1) buffer Keys
+{
+    uint64_t keys[];
+} dst;
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= uint(src.items.length()))
+    {
+        return;
+    }
+    uvec4 item = src.items[index];
+    if (item.x >= uint(dst.keys.length()))
+    {
+        return;
+    }
+    uint64_t key = (uint64_t(item.y) << 32) | uint64_t(item.z);
+    atomicMin(dst.keys[item.x], key);
+}

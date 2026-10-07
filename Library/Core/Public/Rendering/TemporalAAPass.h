@@ -70,16 +70,31 @@ namespace NorvesLib::Core::Rendering
         }
 
         /** @brief 描画がフレームを飛ばしたときに前のカメラにする、履歴を書いたフレームのカメラ（無ければ null）。 */
-        const CameraProxy* FindReprojectionCamera(uint32_t viewportId, uint64_t cameraId, uint64_t frameNumber) const
+        const CameraProxy* FindReprojectionCamera(uint32_t viewportId, uint64_t cameraId, uint64_t sourceCameraId,
+                                                  uint64_t frameNumber) const
         {
-            return m_History.FindReprojectionCamera(viewportId, cameraId, frameNumber);
+            return m_History.FindReprojectionCamera(viewportId, cameraId, sourceCameraId, frameNumber);
         }
+
+        /** @brief 履歴を書いたフレームの番号（FindReprojectionCamera が返すカメラのフレーム）。 */
+        uint64_t GetHistoryFrameNumber() const { return m_History.GetFrameNumber(); }
 
         /** @brief 履歴を捨てる（次に働くフレームは現在の色だけを使う）。 */
         void InvalidateHistory() { m_History.Invalidate(); }
 
         /** @brief 次のフレームに使える履歴があるか。 */
         bool HasValidHistory() const { return m_History.IsValid(); }
+
+        /**
+         * @brief 決定的な撮影のエポックで、ジッタの列を先頭へ戻して履歴を捨てる。
+         *
+         * 次の BeginFrame が 1 番目のジッタを返し、そのフレームは現在の色だけを使う。
+         */
+        void ResetForDeterministicEpoch()
+        {
+            m_JitterIndex = 0u;
+            m_History.Invalidate();
+        }
 
     private:
         bool PrepareResources(const RHI::TexturePtr& sceneColor);

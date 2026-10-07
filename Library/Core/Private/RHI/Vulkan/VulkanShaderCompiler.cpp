@@ -83,6 +83,14 @@ namespace NorvesLib::RHI::Vulkan
         shaderc::CompileOptions options;
         options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
         options.SetOptimizationLevel(shaderc_optimization_level_performance);
+        if (m_bSparseResidencyShading)
+        {
+            options.AddMacroDefinition("NORVES_SPARSE_RESIDENCY_SHADING", "1");
+        }
+        if (m_bVirtualTextureFeedback)
+        {
+            options.AddMacroDefinition("NORVES_VT_FEEDBACK", "1");
+        }
 
         shaderc_shader_kind kind = ToShadercKind(stage);
 

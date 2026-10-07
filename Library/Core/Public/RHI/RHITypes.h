@@ -44,8 +44,48 @@ namespace NorvesLib::RHI
         R32G32B32A32_FLOAT,
         D16_UNORM,
         D24_UNORM_S8_UINT,
-        D32_FLOAT
+        D32_FLOAT,
+        // 既存の値を変えないよう末尾へ足す。
+        R16_UNORM,
+        BC1_UNORM,
+        BC1_SRGB,
+        BC4_UNORM,
+        BC5_UNORM,
+        BC7_UNORM,
+        BC7_SRGB,
+        // 整数形式（ビジビリティバッファの ID など。クリア値は整数で渡す）。
+        R32_UINT,
+        R32G32_UINT
     };
+
+    /**
+     * @brief 符号なし整数の形式か
+     *
+     * 整数のカラー添付はブレンドできず、クリア値も整数（AttachmentDesc::clearColorUint）で渡す。
+     */
+    inline bool IsUnsignedIntegerFormat(Format format)
+    {
+        return format == Format::R32_UINT || format == Format::R32G32_UINT;
+    }
+
+    /**
+     * @brief ブロック圧縮（BC1/BC4/BC5/BC7）の形式か
+     */
+    inline bool IsBlockCompressedFormat(Format format)
+    {
+        switch (format)
+        {
+        case Format::BC1_UNORM:
+        case Format::BC1_SRGB:
+        case Format::BC4_UNORM:
+        case Format::BC5_UNORM:
+        case Format::BC7_UNORM:
+        case Format::BC7_SRGB:
+            return true;
+        default:
+            return false;
+        }
+    }
 
     /**
      * @brief presentation surface の working color space
@@ -155,7 +195,7 @@ namespace NorvesLib::RHI
         IndexBuffer = 1 << 7,
         ConstantBuffer = 1 << 8,
         StorageBuffer = 1 << 9,       // ストレージバッファ（SSBO）
-        IndirectBuffer = 1 << 10,     // 間接描画引数バッファ
+        IndirectBuffer = 1 << 10,     // 間接描画・間接ディスパッチの引数バッファ
         BufferDeviceAddress = 1 << 11, // バッファのdevice addressを要求
         ShaderResource = ShaderRead,  // エイリアス: 互換性のため
         UnorderedAccess = ShaderWrite // エイリアス: 互換性のため
@@ -408,7 +448,9 @@ namespace NorvesLib::RHI
         GenericRead,
         RayTracingStorage,
         // CPU から写像して読むバッファ（GPU の書き込みの後にホストの読み取りへ見せる。テクスチャには使わない）
-        HostRead
+        HostRead,
+        // フラグメントシェーダーが storage buffer へ書く（VT の要求など。UnorderedAccess はコンピュート段の対応で、フラグメント段を含まない）
+        PixelShaderWrite
     };
 
     /**

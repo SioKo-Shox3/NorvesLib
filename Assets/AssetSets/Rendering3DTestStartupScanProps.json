@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "name": "Rendering3DTestStartupScanProps",
+  "package_root": "Cooked/StartupScanProps",
+  "default_variant": "default",
+  "cook_assets": true,
+  "textures": [
+    {
+      "logical_path": "Assets/Models/PolyHaven/coast_rocks_05/cooked/coast_rocks_05_albedo",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Models/PolyHaven/coast_rocks_05/textures/coast_rocks_05_diff_4k.jpg",
+      "package_name": "ScanProps/coast_rocks_05_diff.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/coast_rocks_05/textures/coast_rocks_05_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/coast_rocks_05/cooked/coast_rocks_05_normal",
+      "cook_usage": "normal",
+      "flip_normal_y": true,
+      "source_path": "Assets/Models/PolyHaven/coast_rocks_05/textures/coast_rocks_05_nor_gl_4k.jpg",
+      "package_name": "ScanProps/coast_rocks_05_nor.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/coast_rocks_05/textures/coast_rocks_05_nor_gl_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/coast_rocks_05/cooked/coast_rocks_05_orm",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/coast_rocks_05/textures/coast_rocks_05_arm_4k.jpg",
+      "package_name": "ScanProps/coast_rocks_05_arm.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/coast_rocks_05/textures/coast_rocks_05_arm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/sand_rocks_small_01/cooked/sand_rocks_small_01_albedo",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Models/PolyHaven/sand_rocks_small_01/textures/sand_rocks_small_01_diff_4k.jpg",
+      "package_name": "ScanProps/sand_rocks_small_01_diff.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/sand_rocks_small_01/textures/sand_rocks_small_01_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/sand_rocks_small_01/cooked/sand_rocks_small_01_normal",
+      "cook_usage": "normal",
+      "flip_normal_y": true,
+      "source_path": "Assets/Models/PolyHaven/sand_rocks_small_01/textures/sand_rocks_small_01_nor_gl_4k.jpg",
+      "package_name": "ScanProps/sand_rocks_small_01_nor.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/sand_rocks_small_01/textures/sand_rocks_small_01_nor_gl_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/sand_rocks_small_01/cooked/sand_rocks_small_01_orm",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/sand_rocks_small_01/textures/sand_rocks_small_01_arm_4k.jpg",
+      "package_name": "ScanProps/sand_rocks_small_01_arm.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/sand_rocks_small_01/textures/sand_rocks_small_01_arm_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/coast_land_rocks_03/cooked/coast_land_rocks_03_albedo",
+      "cook_usage": "albedo",
+      "source_path": "Assets/Models/PolyHaven/coast_land_rocks_03/textures/coast_land_rocks_03_diff_4k.jpg",
+      "package_name": "ScanProps/coast_land_rocks_03_diff.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/coast_land_rocks_03/textures/coast_land_rocks_03_diff_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/coast_land_rocks_03/cooked/coast_land_rocks_03_normal",
+      "cook_usage": "normal",
+      "flip_normal_y": true,
+      "source_path": "Assets/Models/PolyHaven/coast_land_rocks_03/textures/coast_land_rocks_03_nor_gl_4k.jpg",
+      "package_name": "ScanProps/coast_land_rocks_03_nor.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/coast_land_rocks_03/textures/coast_land_rocks_03_nor_gl_4k.nvtex"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/coast_land_rocks_03/cooked/coast_land_rocks_03_orm",
+      "cook_usage": "orm",
+      "source_path": "Assets/Models/PolyHaven/coast_land_rocks_03/textures/coast_land_rocks_03_arm_4k.jpg",
+      "package_name": "ScanProps/coast_land_rocks_03_arm.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/coast_land_rocks_03/textures/coast_land_rocks_03_arm_4k.nvtex"
+    }
+  ],
+  "models": [
+    {
+      "logical_path": "Assets/Models/PolyHaven/coast_rocks_05/coast_rocks_05_4k.gltf",
+      "source_path": "Assets/Models/PolyHaven/coast_rocks_05/coast_rocks_05_4k.gltf",
+      "extra_sources": [
+        "Assets/Models/PolyHaven/coast_rocks_05/coast_rocks_05.bin"
+      ],
+      "package_name": "ScanProps/coast_rocks_05.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/coast_rocks_05/coast_rocks_05_4k.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/sand_rocks_small_01/sand_rocks_small_01_4k.gltf",
+      "source_path": "Assets/Models/PolyHaven/sand_rocks_small_01/sand_rocks_small_01_4k.gltf",
+      "extra_sources": [
+        "Assets/Models/PolyHaven/sand_rocks_small_01/sand_rocks_small_01.bin"
+      ],
+      "package_name": "ScanProps/sand_rocks_small_01.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/sand_rocks_small_01/sand_rocks_small_01_4k.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/PolyHaven/coast_land_rocks_03/coast_land_rocks_03_4k.gltf",
+      "source_path": "Assets/Models/PolyHaven/coast_land_rocks_03/coast_land_rocks_03_4k.gltf",
+      "extra_sources": [
+        "Assets/Models/PolyHaven/coast_land_rocks_03/coast_land_rocks_03.bin"
+      ],
+      "package_name": "ScanProps/coast_land_rocks_03.nvpkg",
+      "entry_name": "Assets/Models/PolyHaven/coast_land_rocks_03/coast_land_rocks_03_4k.nvmesh"
+    }
+  ]
+}

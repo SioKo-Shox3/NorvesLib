@@ -1,51 +1,53 @@
 ﻿#include "Rendering/RenderingCoordinator.h"
-#include "Rendering/SkinnedDrawCommands.h"
-#include "Rendering/CanvasView.h"
-#include "Rendering/RenderingCoordinatorDiagnostics.h"
-#include "Rendering/CompositePass.h"
-#include "Rendering/DepthOfFieldPass.h"
-#include "Rendering/MotionBlurPass.h"
-#include "Rendering/Screen.h"
-#include "Rendering/SceneView.h"
-#include "Rendering/View.h"
-#include "Rendering/Viewport.h"
-#include "Rendering/InstanceBufferRing.h"
-#include "Rendering/DrawCommand.h"
-#include "Rendering/FramePacket.h"
-#include "Rendering/ViewRenderContext.h"
-#include "Rendering/SharedResourceRegistry.h"
-#include "Rendering/RenderResources.h"
-#include "Rendering/ShaderManager.h"
-#include "Rendering/PresentationComposer.h"
-#include "Rendering/PresentationPass.h"
-#include "Rendering/RenderFrameExecutor.h"
-#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
-#include "Rendering/FrameCaptureReadbackHelper.h"
-#include "Rendering/FrameCaptureAssignmentGuard.h"
-#include "Rendering/IViewPass.h"
-#include "Rendering/PathTracingPass.h"
-#include "Rendering/RayTracingSceneSubsystem.h"
-#include "Rendering/SkySunLight.h"
-#include "Rendering/ProceduralMeshGenerator.h"
+#include "Debug/Stats.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
-#include "RHI/ISampler.h"
-#include "RHI/IDevice.h"
-#include "RHI/ISwapChain.h"
-#include "RHI/ICommandList.h"
-#include "RHI/IRenderPass.h"
-#include "RHI/IFramebuffer.h"
-#include "RHI/IPipeline.h"
-#include "RHI/IShader.h"
-#include "RHI/IBuffer.h"
-#include "RHI/ITexture.h"
-#include "RHI/IDescriptorSet.h"
-#include "RHI/IGPUResourceAllocator.h"
-#include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
+#include "RHI/IBuffer.h"
+#include "RHI/ICommandList.h"
+#include "RHI/IDescriptorSet.h"
+#include "RHI/IDevice.h"
+#include "RHI/IFramebuffer.h"
+#include "RHI/IGPUResourceAllocator.h"
+#include "RHI/IPipeline.h"
+#include "RHI/IRenderPass.h"
+#include "RHI/ISampler.h"
+#include "RHI/IShader.h"
+#include "RHI/ISwapChain.h"
+#include "RHI/ITexture.h"
+#include "Rendering/CanvasView.h"
+#include "Rendering/CompositePass.h"
+#include "Rendering/DepthOfFieldPass.h"
+#include "Rendering/DrawCommand.h"
+#include "Rendering/FrameCaptureAssignmentGuard.h"
+#include "Rendering/FrameCaptureReadbackHelper.h"
+#include "Rendering/FramePacket.h"
+#include "Rendering/FrameUseRing.h"
+#include "Rendering/IViewPass.h"
+#include "Rendering/InstanceBufferRing.h"
+#include "Rendering/MotionBlurPass.h"
+#include "Rendering/PathTracingPass.h"
+#include "Rendering/PresentationComposer.h"
+#include "Rendering/PresentationPass.h"
+#include "Rendering/ProceduralMeshGenerator.h"
+#include "Rendering/RayTracingSceneSubsystem.h"
+#include "Rendering/RenderFrameExecutor.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/RenderResources.h"
+#include "Rendering/RenderingCoordinatorDiagnostics.h"
+#include "Rendering/SceneView.h"
+#include "Rendering/Screen.h"
+#include "Rendering/ShaderManager.h"
+#include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/SkinnedDrawCommands.h"
+#include "Rendering/SkinningComputePass.h"
+#include "Rendering/SkySunLight.h"
+#include "Rendering/View.h"
+#include "Rendering/ViewRenderContext.h"
+#include "Rendering/Viewport.h"
+#include <algorithm>
 #include <cassert>
 #include <chrono>
-#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -203,6 +205,7 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, packet.Scene.AmbientColorG);
             hash = HashRevisionValue(hash, packet.Scene.AmbientColorB);
             hash = HashRevisionValue(hash, packet.Scene.AmbientIntensity);
+            hash = HashRevisionValue(hash, packet.Scene.StaticEnvironmentIntensityScale);
 
             const SkyAtmosphereParameters& sky = packet.Scene.SkyAtmosphere;
             hash = HashRevisionValue(hash, sky.bEnabled);
@@ -505,6 +508,8 @@ namespace NorvesLib::Core::Rendering
             [[maybe_unused]] const uint32_t maxFramesInFlight = swapChain.GetMaxFramesInFlight();
             assert(maxFramesInFlight > 0);
             assert(frameIndex < maxFramesInFlight);
+            // フレームごとの資源の枠（FrameUseRing）は、これ以上の番号を区別できない
+            assert(maxFramesInFlight <= FrameUseRingMaxInFlightSlots);
             return frameIndex;
         }
 
@@ -572,6 +577,18 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        /**
+         * @brief 登録するカメラの GameThread 側の識別子を決める
+         *
+         * SourceCameraId があればそれ（GetMainCamera
+         * の値を渡し直したときも保たれる）、無ければ渡された
+         * CameraId（CameraComponent の ID など）を使う。
+         */
+        uint64_t ResolveSourceCameraId(const CameraProxy& camera)
+        {
+            return camera.SourceCameraId != 0 ? camera.SourceCameraId : camera.CameraId;
+        }
+
     } // namespace
 
     uint64_t ComputeSceneRevisionHash(const FramePacket& packet)
@@ -595,10 +612,11 @@ namespace NorvesLib::Core::Rendering
 
     bool RayTracingSceneSubsystem::BuildFrameSnapshot(const MeshResources* meshResources,
                                                        FramePacket& packet,
-                                                       const MaterialResources* materialResources)
+                                                       const MaterialResources* materialResources,
+                                                       const MegaGeometryResources* megaGeometryResources)
     {
         packet.RayTracingScene.Clear();
-        if (!meshResources)
+        if (!meshResources && !megaGeometryResources)
         {
             return true;
         }
@@ -612,7 +630,8 @@ namespace NorvesLib::Core::Rendering
             const DrawParams& draw = command.Draw;
             // 影を落とさない物体もパストレーサーの主光線・散乱光線には見えるため含める。
             // 影・DDGI・RTGIはinstance maskで影を落とす物体だけを調べる。
-            if ((command.Type != DrawCommandType::DrawIndexed &&
+            if (!meshResources ||
+                (command.Type != DrawCommandType::DrawIndexed &&
                  command.Type != DrawCommandType::DrawIndexedInstanced) ||
                 draw.PayloadKind != DrawPayloadKind::Mesh ||
                 !draw.MeshHandle.IsValid() ||
@@ -755,6 +774,81 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // MegaGeometry（岩・小屋など）はGBufferではクラスタ単位でGPUが選ぶが、光線には影に使う段
+        // （既定はLOD0）をそのまま見せる（点光源の影と同じ範囲）。表面色はMegaGeometryPassのGBufferと同じく材質のBaseColorを
+        // instance色とし、textureは白とみなす。
+        if (megaGeometryResources)
+        {
+            constexpr uint32_t vertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
+            for (const MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
+            {
+                if (packet.RayTracingScene.Instances.size() > 0x00FFFFFFu)
+                {
+                    break;
+                }
+                if (!proxy.IsValid())
+                {
+                    continue;
+                }
+                // 区画へのコピーが GPU で完了したメッシュだけを BLAS の入力にする（BLAS は同期で構築する）
+                const MegaGeometry::MegaMeshGPUData* gpuData =
+                    megaGeometryResources->GetReadyMegaMeshGPUData(proxy.MegaMeshHandle);
+                if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
+                    gpuData->ShadowIndexCount < 3u || gpuData->ShadowIndexCount % 3u != 0u ||
+                    gpuData->ShadowFirstIndex > gpuData->IndexCount ||
+                    gpuData->ShadowIndexCount > gpuData->IndexCount - gpuData->ShadowFirstIndex ||
+                    gpuData->VertexCount < 3u ||
+                    static_cast<uint64_t>(gpuData->VertexCount) * vertexStride >
+                        gpuData->VertexBufferBytes ||
+                    (static_cast<uint64_t>(gpuData->ShadowFirstIndex) + gpuData->ShadowIndexCount) *
+                            sizeof(uint32_t) >
+                        gpuData->IndexBufferBytes ||
+                    !IsFiniteRayTracingTransform(proxy.WorldTransform))
+                {
+                    continue;
+                }
+
+                RayTracingSceneInstanceSnapshot instance;
+                instance.ObjectId = proxy.ObjectId;
+                instance.ObjectInstanceIndex = 0;
+                instance.SourceVertexBuffer = gpuData->VertexBuffer;
+                instance.SourceIndexBuffer = gpuData->IndexBuffer;
+                instance.VertexBufferOffsetBytes = gpuData->VertexBufferOffsetBytes;
+                instance.IndexBufferOffsetBytes = gpuData->IndexBufferOffsetBytes;
+                instance.MegaMeshId = proxy.MegaMeshHandle.Id;
+                instance.GeometryRegionOwner = gpuData->RegionOwner;
+                instance.IndexOffset = gpuData->ShadowFirstIndex;
+                instance.IndexCount = gpuData->ShadowIndexCount;
+                instance.VertexOffset = 0;
+                instance.VertexCount = gpuData->VertexCount;
+                instance.VertexStride = vertexStride;
+                instance.bGeometryOpaque = true;
+                const MegaGeometry::MegaMeshMaterial& material = gpuData->Material;
+                for (uint32_t channel = 0u; channel < 4u; ++channel)
+                {
+                    instance.Material.BaseColor[channel] = material.BaseColor[channel];
+                    instance.Material.ObjectColor[channel] = material.BaseColor[channel];
+                }
+                for (uint32_t channel = 0u; channel < 3u; ++channel)
+                {
+                    instance.Material.EmissiveColor[channel] = material.EmissiveColor[channel];
+                }
+                instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
+                instance.Instance.customIndex =
+                    static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
+                instance.Instance.mask = proxy.bCastShadow ? RayTracingInstanceMaskShadowCaster
+                                                           : RayTracingInstanceMaskNonShadowCaster;
+                CopyRayTracingInstanceTransform(proxy.WorldTransform, instance.Instance.transform);
+                if (IsFiniteRayTracingTransform(proxy.PreviousWorldTransform))
+                {
+                    CopyRayTracingInstanceTransform(proxy.PreviousWorldTransform,
+                                                    instance.PreviousTransform);
+                    instance.bHasPreviousTransform = true;
+                }
+                packet.RayTracingScene.Instances.push_back(std::move(instance));
+            }
+        }
+
         return true;
     }
 
@@ -819,6 +913,9 @@ namespace NorvesLib::Core::Rendering
                 return candidate.MeshHandle == instance.MeshHandle &&
                        candidate.SourceVertexBuffer == instance.SourceVertexBuffer &&
                        candidate.SourceIndexBuffer == instance.SourceIndexBuffer &&
+                       candidate.VertexBufferOffsetBytes == instance.VertexBufferOffsetBytes &&
+                       candidate.IndexBufferOffsetBytes == instance.IndexBufferOffsetBytes &&
+                       candidate.MegaMeshId == instance.MegaMeshId &&
                        candidate.IndexOffset == instance.IndexOffset &&
                        candidate.IndexCount == instance.IndexCount &&
                        candidate.VertexOffset == instance.VertexOffset &&
@@ -855,6 +952,9 @@ namespace NorvesLib::Core::Rendering
                 entry.MeshHandle = instance.MeshHandle;
                 entry.SourceVertexBuffer = instance.SourceVertexBuffer;
                 entry.SourceIndexBuffer = instance.SourceIndexBuffer;
+                entry.VertexBufferOffsetBytes = instance.VertexBufferOffsetBytes;
+                entry.IndexBufferOffsetBytes = instance.IndexBufferOffsetBytes;
+                entry.MegaMeshId = instance.MegaMeshId;
                 entry.IndexOffset = instance.IndexOffset;
                 entry.IndexCount = instance.IndexCount;
                 entry.VertexOffset = instance.VertexOffset;
@@ -895,13 +995,13 @@ namespace NorvesLib::Core::Rendering
                 geometry.type = RHI::AccelerationStructureGeometryType::Triangles;
                 geometry.opaque = instance.bGeometryOpaque;
                 geometry.triangles.vertexBuffer = entry.VertexBuffer;
-                geometry.triangles.vertexOffset =
+                geometry.triangles.vertexOffset = instance.VertexBufferOffsetBytes +
                     static_cast<uint64_t>(instance.VertexOffset) * instance.VertexStride;
                 geometry.triangles.vertexCount = instance.VertexCount;
                 geometry.triangles.vertexStride = instance.VertexStride;
                 geometry.triangles.vertexFormat = RHI::Format::R32G32B32_FLOAT;
                 geometry.triangles.indexBuffer = entry.IndexBuffer;
-                geometry.triangles.indexOffset =
+                geometry.triangles.indexOffset = instance.IndexBufferOffsetBytes +
                     static_cast<uint64_t>(instance.IndexOffset) * sizeof(uint32_t);
                 geometry.triangles.indexCount = instance.IndexCount;
                 geometry.triangles.indexFormat = RHI::IndexType::Uint32;
@@ -1049,8 +1149,19 @@ namespace NorvesLib::Core::Rendering
 
         Container::VariableArray<RenderPassGPUTiming> timings;
         timings.reserve(results.size());
+#if NORVES_ENABLE_STATS
+        NorvesLib::Debug::StatsManager& statsManager = NorvesLib::Debug::StatsManager::Get();
+        const bool bTraceActive = statsManager.IsTraceActive();
+#endif
         for (const RHI::GPUTimestampResult& result : results)
         {
+#if NORVES_ENABLE_STATS
+            // 完了したフレームの区間（FrameGPU・加速構造の更新・RenderGraph のパス）をトレースの行へ書く。
+            if (bTraceActive && result.bValid)
+            {
+                statsManager.RecordGPUScope(result.FrameNumber, result.ScopeName.c_str(), result.DurationMs);
+            }
+#endif
             RenderPassGPUTiming timing;
             timing.FrameNumber = result.FrameNumber;
             timing.PassName = result.ScopeName;
@@ -1469,6 +1580,17 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         // 12. SceneRendererの初期化
         // ========================================
+        if (swapChain->GetMaxFramesInFlight() > FrameUseRingMaxInFlightSlots)
+        {
+            // 飛行中のフレームの番号が FrameUseRing の枠より多いと、別のフレームの資源を上書きする
+            NORVES_LOG_ERROR("RenderingCoordinator",
+                             "飛行中のフレーム数 %u "
+                             "がフレームごとの資源の枠の上限 %u を超えています",
+                             swapChain->GetMaxFramesInFlight(), FrameUseRingMaxInFlightSlots);
+            ReleaseInitializedResources();
+            return false;
+        }
+
         if (!m_TransientPool.Initialize(m_Device->GetResourceAllocator(), swapChain->GetMaxFramesInFlight()))
         {
             NORVES_LOG_ERROR("RenderingCoordinator", "Failed to initialize TransientResourcePool");
@@ -1529,7 +1651,8 @@ namespace NorvesLib::Core::Rendering
         }
         else
         {
-            m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer, settings.RasterDirectBrdfMode);
+            m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer, settings.RasterDirectBrdfMode, settings.VisibilityBuffer,
+                                                      settings.SwRaster, settings.SwRasterMaxPixels);
             // 被写界深度は半透明を合成した後のSceneColorへ掛ける。カメラのピント距離が0なら働かない。
             m_MainSceneView->AddPass(Container::MakeUnique<DepthOfFieldPass>());
             // 動きぼけは被写界深度の後のSceneColorへ掛ける。シャッター時間が0（既定）なら働かない。
@@ -1785,6 +1908,25 @@ namespace NorvesLib::Core::Rendering
         // デルタタイム計算
         float deltaTime = static_cast<float>(currentTime - m_LastFrameTime);
         m_LastFrameTime = currentTime;
+
+        // 決定的な撮影: 壁時計を使わず 1/60 秒の固定刻みにし、エポックの 0 番のフレームから数え直す。
+        bool bTemporalEpochStart = false;
+        if (m_bDeterministicCapture)
+        {
+            deltaTime = 1.0f / 60.0f;
+            if (m_bDeterministicEpochPending)
+            {
+                m_bDeterministicEpochPending = false;
+                m_bDeterministicEpochActive = true;
+                m_DeterministicEpochFrames = 0u;
+                m_TotalTime = 0.0;
+                bTemporalEpochStart = true;
+            }
+            else if (m_bDeterministicEpochActive)
+            {
+                ++m_DeterministicEpochFrames;
+            }
+        }
         m_TotalTime += deltaTime;
 
         // ST経路ではReadyパケットがRTに消費されないため、フレーム開始時に再利用する。
@@ -1806,6 +1948,9 @@ namespace NorvesLib::Core::Rendering
             m_CurrentPacket->FrameNumber = m_GameThreadStats.FrameNumber;
             m_CurrentPacket->DeltaTime = deltaTime;
             m_CurrentPacket->TotalTime = m_TotalTime;
+            m_CurrentPacket->bDeterministicCapture = m_bDeterministicCapture;
+            m_CurrentPacket->bTemporalEpochStart = bTemporalEpochStart;
+            m_CurrentPacket->EpochFrameIndex = m_bDeterministicEpochActive ? m_DeterministicEpochFrames : 0u;
         }
 
         m_GameThreadStats.DeltaTime = deltaTime;
@@ -1856,6 +2001,7 @@ namespace NorvesLib::Core::Rendering
                 capabilities.RayTracing.bAccelerationStructure,
                 capabilities.RayTracing.bRayQuery));
         packet.Scene.SetVolumetricFogParameters(m_VolumetricFog);
+        packet.Scene.StaticEnvironmentIntensityScale = m_StaticEnvironmentIntensityScale;
         packet.bRTGIEnabled = m_bRTGIEnabled;
     }
 
@@ -1891,11 +2037,12 @@ namespace NorvesLib::Core::Rendering
 
     void RenderingCoordinator::GenerateDrawCommands()
     {
-        if (!m_bInitialized || !m_Device)
+        if (!m_bInitialized)
         {
             return;
         }
-        GenerateDrawCommands(m_Device->GetCapabilities());
+        const RHI::DeviceCapabilities noDeviceCapabilities{};
+        GenerateDrawCommands(m_Device ? m_Device->GetCapabilities() : noDeviceCapabilities);
     }
 
     void RenderingCoordinator::GenerateDrawCommands(const RHI::DeviceCapabilities& capabilities)
@@ -2043,11 +2190,12 @@ namespace NorvesLib::Core::Rendering
                 {
                     return FindCamera(cameraId);
                 };
+                // キャンバス（UI）は内部解像度で描かず、画面解像度でそのまま描く。
                 ViewportRenderPlan viewportPlan = BuildViewportRenderPlan(*viewport,
                                                                           viewIndex,
                                                                           viewportIndex,
-                                                                          m_RenderWidth,
-                                                                          m_RenderHeight,
+                                                                          canvasView ? GetCanvasWidth() : m_RenderWidth,
+                                                                          canvasView ? GetCanvasHeight() : m_RenderHeight,
                                                                           resolveCamera,
                                                                           fallbackCamera);
 
@@ -2123,13 +2271,16 @@ namespace NorvesLib::Core::Rendering
                 m_RenderResources ? &m_RenderResources->Meshes() : nullptr;
             const MaterialResources* materialResources =
                 m_RenderResources ? &m_RenderResources->Materials() : nullptr;
+            const MegaGeometryResources* megaGeometryResources =
+                m_RenderResources ? &m_RenderResources->MegaGeometry() : nullptr;
             if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildFrameSnapshot(
                     meshResources,
                     *m_CurrentPacket,
-                    materialResources))
+                    materialResources,
+                    megaGeometryResources))
             {
-                NORVES_LOG_WARNING("RayTracingSceneSubsystem",
-                                   "FramePacketのレイトレーシングscene snapshotを構築できませんでした");
+                NORVES_LOG_WARNING("RayTracingSceneSubsystem", "FramePacketのレイトレーシングscene "
+                                                               "snapshotを構築できませんでした");
             }
             // 連番の1フレームの間は、どのパケットにも同じ前のカメラ・instance変換を書く。
             ApplyPathTracingSequenceCarry(*m_CurrentPacket, m_PacketManager.GetSequenceCarry());
@@ -2431,6 +2582,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_RenderResources->SkinnedMeshes().BeginFrame(
                 swapChain->GetCompletedSubmissionSerial());
+            m_RenderResources->BeginRetireFrame(swapChain->GetCompletedSubmissionSerial());
             m_SceneRenderer.SetSkinnedMeshResources(&m_RenderResources->SkinnedMeshes());
         }
         if (m_FrameCaptureReadbackHelper)
@@ -2462,10 +2614,12 @@ namespace NorvesLib::Core::Rendering
                 {
                     m_RenderResources->SkinnedMeshes().CommitSubmittedFrame(
                         endFrameResult.SubmissionSerial);
+                    m_RenderResources->CommitRetireFrame(endFrameResult.SubmissionSerial);
                 }
                 else
                 {
                     m_RenderResources->SkinnedMeshes().AbortFrame();
+                    m_RenderResources->AbortRetireFrame();
                 }
             }
             if (endFrameResult.HasError())
@@ -2500,23 +2654,34 @@ namespace NorvesLib::Core::Rendering
         // SceneRendererフレーム開始
         m_SceneRenderer.BeginFrame();
 
+        // VT のストリーマを進める（タイルの読み込み完了の取り込み・ページの結び付け・コピーの積み込み）。
+        // BindSparse は提出の直列化の下で呼ぶ必要があるので、RenderThread のこの位置（BeginRetireFrame の後）で行う。
+        if (m_RenderResources)
+        {
+            m_RenderResources->UpdateVirtualTextureStreaming();
+        }
+        // ジオメトリのページのストリーマを進める（カリングの要求の取り込み・ページの読み込み・区画への書き込みと公開・追い出し）。
+        // 区画へのコピーはステージングのリングへ積むだけで、コマンドの先頭（RecordTileUploads）で記録される。
+        if (m_RenderResources)
+        {
+            m_RenderResources->UpdateGeometryPageStreaming();
+        }
+
         // コマンド録画開始
         m_CommandList->BeginRecording();
+        // ステージングのリングに置いたタイル・ミップテイルのデータを、描画のコマンドの先頭でテクスチャの領域へコピーする
+        // （GPU を待たない。render pass の外で、他の記録より前）。
+        if (m_RenderResources)
+        {
+            m_RenderResources->RecordTileUploads(*m_CommandList);
+        }
         PublishCompletedGPUTimestampResults();
         ScopedGPUTimestampFrameRecording gpuTimestampFrameGuard(
             m_CommandList.get(),
             frameIndex);
 
-        if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildAccelerationStructures(
-                m_Device,
-                *m_CommandList,
-                m_PacketManager.GetSlotIndex(packet),
-                *packet))
-        {
-            NORVES_LOG_WARNING("RayTracingSceneSubsystem",
-                               "FramePacketのレイトレーシング加速構造を構築できませんでした");
-        }
-
+        // フレームのGPUの区間（FrameGPU）は加速構造の更新の記録より前に開き、更新の費用も含める。
+        // タイムスタンプの書き込みは同じコマンドバッファへ足すだけで、記録の順序や同期は変えない。
 #if NORVES_ENABLE_STATS
         if (bTraceActive)
         {
@@ -2542,6 +2707,33 @@ namespace NorvesLib::Core::Rendering
         }
 #endif
 
+        {
+#if NORVES_ENABLE_STATS
+            // 加速構造の更新は別の区間としても取り、トレースのGPUの行に出す。
+            RHI::GPUTimestampScopeHandle accelerationStructureTimestamp;
+            if (bTraceActive && m_CommandList->SupportsGPUTimestamps())
+            {
+                accelerationStructureTimestamp =
+                    m_CommandList->BeginGPUTimestampScope("AccelerationStructureBuild");
+            }
+#endif
+            if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildAccelerationStructures(
+                    m_Device,
+                    *m_CommandList,
+                    m_PacketManager.GetSlotIndex(packet),
+                    *packet))
+            {
+                NORVES_LOG_WARNING("RayTracingSceneSubsystem",
+                                   "FramePacketのレイトレーシング加速構造を構築できませんでした");
+            }
+#if NORVES_ENABLE_STATS
+            if (accelerationStructureTimestamp.IsValid())
+            {
+                m_CommandList->EndGPUTimestampScope(accelerationStructureTimestamp);
+            }
+#endif
+        }
+
         // ========================================
         // Deferredパスチェーン描画（スワップチェーンレンダーパスの外で実行）
         // 各パスが独自のレンダーパスを開閉する
@@ -2560,12 +2752,20 @@ namespace NorvesLib::Core::Rendering
         viewContext.bRenderPassActive = false; // Deferredパスは独自のレンダーパスを使用
         viewContext.FrameIndex = frameIndex;
         viewContext.FrameNumber = packet->FrameNumber;
+        viewContext.RenderFrameSerial = ++m_RenderFrameSerial;
         viewContext.ScreenWidth = swapChain->GetWidth();
         viewContext.ScreenHeight = swapChain->GetHeight();
         viewContext.RenderWidth = m_RenderWidth;
         viewContext.RenderHeight = m_RenderHeight;
         viewContext.DeltaTime = m_PreviousCompletedTotalFrameTimeMs * 0.001f;
         viewContext.TotalTime = packet->TotalTime;
+        viewContext.bDeterministicCapture = packet->bDeterministicCapture;
+        viewContext.bTemporalEpochStart = packet->bTemporalEpochStart;
+        viewContext.TemporalFrameIndex = packet->bDeterministicCapture ? packet->EpochFrameIndex : packet->FrameNumber;
+        if (packet->bDeterministicCapture)
+        {
+            viewContext.DeltaTime = packet->DeltaTime;
+        }
         if (m_RenderResources)
         {
             viewContext.Resources.Gpu = &m_RenderResources->Gpu();
@@ -2598,6 +2798,9 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotDeltaTime = packet->DeltaTime;
         viewContext.PreviousObjectStateFrameNumber = renderedObjectHistory.PreviousFrameNumber;
         viewContext.bPreviousObjectStateComplete = renderedObjectHistory.bComplete;
+        viewContext.PreviousCameraFrameNumber = packet->bHasPreviousMainCamera && packet->FrameNumber > 0u
+                                                    ? packet->FrameNumber - 1u
+                                                    : UINT64_MAX;
         viewContext.SkyAtmosphereSnapshot = packet->Scene.SkyAtmosphere;
         viewContext.SnapshotDrawCommandSource = &packet->DrawCommands;
         viewContext.SnapshotDrawCommands = DrawCommandView::FromRange(packet->DrawCommands,
@@ -2699,6 +2902,8 @@ namespace NorvesLib::Core::Rendering
         }
         renderStats.RenderGraphBarrierCount = m_RenderGraph.GetLastCompiledBarrierCount();
         renderStats.RenderGraphTransientAcquireCount = m_RenderGraph.GetLastTransientAcquireCount();
+        // 計算スキニングから外したインスタンスの数（フレームごと。このフレームに Declare された SceneView のパスの数を足す）
+        AssignSkinningComputeStats(renderStats, m_Views, viewContext.ResolveRenderFrameSerial());
 
         RHI::TexturePtr finalPresentationTexture;
         if (executionResult.bComposite)
@@ -2858,6 +3063,12 @@ namespace NorvesLib::Core::Rendering
         }
         executionResult.CaptureSources.Reset();
 
+        // VT の要求のバッファへのシェーダーの書き込みを、ホストの読み取りへ見せる（最後の書き込みの後・提出の前）
+        if (m_RenderResources)
+        {
+            m_RenderResources->RecordVirtualTextureFeedbackBarrier(*m_CommandList);
+        }
+
         // コマンド録画終了
 #if NORVES_ENABLE_STATS
         if (bTraceActive && m_CommandList->SupportsGPUTimestamps())
@@ -2894,10 +3105,12 @@ namespace NorvesLib::Core::Rendering
             {
                 m_RenderResources->SkinnedMeshes().CommitSubmittedFrame(
                     endFrameResult.SubmissionSerial);
+                m_RenderResources->CommitRetireFrame(endFrameResult.SubmissionSerial);
             }
             else
             {
                 m_RenderResources->SkinnedMeshes().AbortFrame();
+                m_RenderResources->AbortRetireFrame();
             }
         }
         if (endFrameResult.HasError())
@@ -3065,8 +3278,8 @@ namespace NorvesLib::Core::Rendering
 
         ViewSettings settings;
         settings.Type = ViewType::UI;
-        settings.Width = m_RenderWidth;
-        settings.Height = m_RenderHeight;
+        settings.Width = GetCanvasWidth();
+        settings.Height = GetCanvasHeight();
         settings.bClearColor = true;
         settings.ClearColor[0] = 0.0f;
         settings.ClearColor[1] = 0.0f;
@@ -3086,12 +3299,12 @@ namespace NorvesLib::Core::Rendering
         canvasCamera.CullingMask = RenderLayer::UI;
         canvasCamera.NearPlane = 0.0f;
         canvasCamera.FarPlane = 1.0f;
-        canvasCamera.OrthoWidth = static_cast<float>(m_RenderWidth);
-        canvasCamera.OrthoHeight = static_cast<float>(m_RenderHeight);
+        canvasCamera.OrthoWidth = static_cast<float>(GetCanvasWidth());
+        canvasCamera.OrthoHeight = static_cast<float>(GetCanvasHeight());
         canvasCamera.Viewport.X = 0.0f;
         canvasCamera.Viewport.Y = 0.0f;
-        canvasCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
-        canvasCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
+        canvasCamera.Viewport.Width = static_cast<float>(GetCanvasWidth());
+        canvasCamera.Viewport.Height = static_cast<float>(GetCanvasHeight());
         canvasCamera.Viewport.MinDepth = 0.0f;
         canvasCamera.Viewport.MaxDepth = 1.0f;
         m_CanvasCameraId = RegisterCamera(canvasCamera);
@@ -3165,6 +3378,7 @@ namespace NorvesLib::Core::Rendering
     void RenderingCoordinator::SetMainCamera(const CameraProxy &camera)
     {
         m_MainCamera = camera;
+        m_MainCamera.SourceCameraId = ResolveSourceCameraId(camera);
         if (!m_MainCamera.IsValid())
         {
             m_MainCamera.Viewport.X = 0.0f;
@@ -3228,10 +3442,16 @@ namespace NorvesLib::Core::Rendering
         m_VolumetricFog = SanitizeVolumetricFogParameters(parameters);
     }
 
+    void RenderingCoordinator::SetStaticEnvironmentIntensityScale(float scale)
+    {
+        m_StaticEnvironmentIntensityScale = std::isfinite(scale) && scale >= 0.0f ? scale : 1.0f;
+    }
+
     uint64_t RenderingCoordinator::RegisterCamera(const CameraProxy &camera)
     {
         const uint64_t cameraId = m_NextCameraId++;
         CameraProxy storedCamera = camera;
+        storedCamera.SourceCameraId = ResolveSourceCameraId(camera);
         storedCamera.CameraId = cameraId;
         m_Cameras[cameraId] = storedCamera;
         return cameraId;
@@ -3251,6 +3471,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         CameraProxy storedCamera = camera;
+        storedCamera.SourceCameraId = ResolveSourceCameraId(camera);
         storedCamera.CameraId = cameraId;
         it->second = storedCamera;
         return true;
@@ -3374,12 +3595,12 @@ namespace NorvesLib::Core::Rendering
         canvasCamera.CullingMask = RenderLayer::UI;
         canvasCamera.NearPlane = 0.0f;
         canvasCamera.FarPlane = 1.0f;
-        canvasCamera.OrthoWidth = static_cast<float>(m_RenderWidth);
-        canvasCamera.OrthoHeight = static_cast<float>(m_RenderHeight);
+        canvasCamera.OrthoWidth = static_cast<float>(GetCanvasWidth());
+        canvasCamera.OrthoHeight = static_cast<float>(GetCanvasHeight());
         canvasCamera.Viewport.X = 0.0f;
         canvasCamera.Viewport.Y = 0.0f;
-        canvasCamera.Viewport.Width = static_cast<float>(m_RenderWidth);
-        canvasCamera.Viewport.Height = static_cast<float>(m_RenderHeight);
+        canvasCamera.Viewport.Width = static_cast<float>(GetCanvasWidth());
+        canvasCamera.Viewport.Height = static_cast<float>(GetCanvasHeight());
         canvasCamera.Viewport.MinDepth = 0.0f;
         canvasCamera.Viewport.MaxDepth = 1.0f;
 

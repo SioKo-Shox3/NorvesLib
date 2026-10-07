@@ -78,3 +78,294 @@ if(NOT odd_mip1_hex STREQUAL "45")
 endif()
 
 message(STATUS "${odd_stdout}")
+
+# ---- format 指定（v0.0）の経路は版 0 のまま。--usage の経路は v0.2（タイル配置）で書く ----
+# パッケージの 16 進文字列から、.nvtex 内の offset バイト目から byte_count バイトをリトルエンディアンで読む。
+# .nvtex の先頭は、エントリ名の長さでパッケージ内の位置が変わるため、マジック(NVTEX と版の 8 バイト)を探して決める。
+function(read_nvtex_le package_hex offset byte_count out_var)
+    string(FIND "${package_hex}" "4e56544558763000" nvtex_hex_pos)
+    if(nvtex_hex_pos EQUAL -1)
+        message(FATAL_ERROR "パッケージに NVTEX のマジックが無い")
+    endif()
+    math(EXPR start "${nvtex_hex_pos} / 2 + ${offset}")
+    set(value 0)
+    math(EXPR last "${byte_count} - 1")
+    foreach(i RANGE 0 ${last})
+        math(EXPR hex_pos "(${start} + ${i}) * 2")
+        string(SUBSTRING "${package_hex}" ${hex_pos} 2 byte_hex)
+        math(EXPR value "${value} | (0x${byte_hex} << (8 * ${i}))")
+    endforeach()
+    set(${out_var} ${value} PARENT_SCOPE)
+endfunction()
+
+file(READ "${OUTPUT_PACKAGE}" legacy_package_hex HEX)
+read_nvtex_le("${legacy_package_hex}" 14 2 legacy_minor)
+if(NOT legacy_minor EQUAL 0)
+    message(FATAL_ERROR "format 指定のクックは NVTEX v0.0 のままのはずだが minor=${legacy_minor}")
+endif()
+
+# ---- 用途ごとのクック(--usage) ----
+# 8x8 の入力から、ヘッダの形式・色空間・ミップ数・ペイロードのバイト数を確かめる。
+# 色の値の確認(ORM の詰め方・法線のミップ・R16 の精度)は AssetCookTextureUsageSmoke 側で行う。
+set(USAGE_PPM "${SMOKE_DIR}/usage_color.ppm")
+string(REPEAT "ABC" 64 usage_color_pixels)
+file(WRITE "${USAGE_PPM}" "P6\n8 8\n127\n${usage_color_pixels}")
+
+set(USAGE_PGM "${SMOKE_DIR}/usage_gray.pgm")
+string(REPEAT "A" 64 usage_gray_pixels)
+file(WRITE "${USAGE_PGM}" "P5\n8 8\n127\n${usage_gray_pixels}")
+
+# 引数: 用途 入力の種類(single=--input 1 枚 / orm=--orm-*) 入力 期待する PixelFormat 色空間 ペイロードのバイト数 マニフェストの format
+#       標準ブロック形状のタイルの幅・高さ(texel)
+function(check_usage_cook usage input_kind input expected_pixel_format expected_color_space expected_payload_bytes expected_manifest_format expected_tile_w expected_tile_h)
+    set(package "${SMOKE_DIR}/Cooked/usage_${usage}.nvpkg")
+    set(manifest "${SMOKE_DIR}/usage_${usage}_manifest.json")
+    if(input_kind STREQUAL "orm")
+        set(input_args --orm-ao "${input}" --orm-roughness "${input}" --orm-metallic "${input}")
+    else()
+        set(input_args --input "${input}")
+    endif()
+
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}"
+            ${input_args}
+            --out "${package}"
+            --manifest "${manifest}"
+            --logical "Textures/usage_${usage}.nvtex"
+            --kind texture
+            --entry "usage_${usage}.nvtex"
+            --entry-type Tex0
+            --usage ${usage}
+            --quality fast
+            --variant default
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE out
+        ERROR_VARIABLE err
+    )
+    if(NOT result EQUAL 0)
+        message(STATUS "${out}")
+        message(STATUS "${err}")
+        message(FATAL_ERROR "AssetCook --usage ${usage} が exit code ${result} で失敗した")
+    endif()
+
+    message(STATUS "${out}")
+    string(FIND "${out}" "TEXTURE_COOK usage=${usage} format=" log_pos)
+    if(log_pos EQUAL -1)
+        message(FATAL_ERROR "--usage ${usage}: TEXTURE_COOK の行が標準出力に無い: ${out}")
+    endif()
+    string(FIND "${out}" "size=8x8 ms=" size_pos)
+    if(size_pos EQUAL -1)
+        message(FATAL_ERROR "--usage ${usage}: TEXTURE_COOK の size/ms が無い: ${out}")
+    endif()
+
+    file(READ "${manifest}" manifest_text)
+    string(FIND "${manifest_text}" "\"format\": \"${expected_manifest_format}\"" manifest_pos)
+    if(manifest_pos EQUAL -1)
+        string(FIND "${manifest_text}" "\"${expected_manifest_format}\"" manifest_pos)
+    endif()
+    if(manifest_pos EQUAL -1)
+        message(FATAL_ERROR "--usage ${usage}: マニフェストに format ${expected_manifest_format} が無い")
+    endif()
+
+    file(READ "${package}" package_hex HEX)
+    read_nvtex_le("${package_hex}" 14 2 version_minor)
+    read_nvtex_le("${package_hex}" 72 4 width)
+    read_nvtex_le("${package_hex}" 76 4 height)
+    read_nvtex_le("${package_hex}" 84 4 mip_count)
+    read_nvtex_le("${package_hex}" 88 4 pixel_format)
+    read_nvtex_le("${package_hex}" 92 4 color_space)
+    read_nvtex_le("${package_hex}" 56 8 payload_size)
+    message(STATUS "usage=${usage} minor=${version_minor} ${width}x${height} mips=${mip_count} pixel_format=${pixel_format} color_space=${color_space} payload=${payload_size}")
+
+    if(NOT version_minor EQUAL 2)
+        message(FATAL_ERROR "--usage ${usage}: NVTEX の minor が 2 ではない(${version_minor})")
+    endif()
+    if(NOT width EQUAL 8 OR NOT height EQUAL 8)
+        message(FATAL_ERROR "--usage ${usage}: 大きさが 8x8 ではない(${width}x${height})")
+    endif()
+    if(NOT mip_count EQUAL 4)
+        message(FATAL_ERROR "--usage ${usage}: ミップ数が 4 ではない(${mip_count})")
+    endif()
+    if(NOT pixel_format EQUAL ${expected_pixel_format})
+        message(FATAL_ERROR "--usage ${usage}: PixelFormat が ${expected_pixel_format} ではない(${pixel_format})")
+    endif()
+    if(NOT color_space EQUAL ${expected_color_space})
+        message(FATAL_ERROR "--usage ${usage}: ColorSpace が ${expected_color_space} ではない(${color_space})")
+    endif()
+    if(NOT payload_size EQUAL ${expected_payload_bytes})
+        message(FATAL_ERROR "--usage ${usage}: ペイロードが ${expected_payload_bytes} バイトではない(${payload_size})")
+    endif()
+
+    # v0.2 のヘッダの続き。8x8 はタイルより小さいので、全段がミップテイル（タイルの表は空）になる。
+    read_nvtex_le("${package_hex}" 8 4 header_size)
+    read_nvtex_le("${package_hex}" 112 4 tile_width)
+    read_nvtex_le("${package_hex}" 116 4 tile_height)
+    read_nvtex_le("${package_hex}" 120 4 first_tail_mip)
+    read_nvtex_le("${package_hex}" 124 4 tile_data_bytes)
+    read_nvtex_le("${package_hex}" 128 8 tile_table_offset)
+    read_nvtex_le("${package_hex}" 136 8 tile_table_size)
+    read_nvtex_le("${package_hex}" 144 8 tail_offset)
+    read_nvtex_le("${package_hex}" 152 8 tail_size)
+    read_nvtex_le("${package_hex}" 48 8 payload_offset)
+    if(NOT header_size EQUAL 160)
+        message(FATAL_ERROR "--usage ${usage}: v0.2 のヘッダが 160 バイトではない(${header_size})")
+    endif()
+    if(NOT tile_width EQUAL ${expected_tile_w} OR NOT tile_height EQUAL ${expected_tile_h})
+        message(FATAL_ERROR "--usage ${usage}: タイルの形状が ${expected_tile_w}x${expected_tile_h} ではない(${tile_width}x${tile_height})")
+    endif()
+    if(NOT tile_data_bytes EQUAL 65536)
+        message(FATAL_ERROR "--usage ${usage}: タイルのバイト数が 65536 ではない(${tile_data_bytes})")
+    endif()
+    if(NOT first_tail_mip EQUAL 0 OR NOT tile_table_size EQUAL 0)
+        message(FATAL_ERROR "--usage ${usage}: 8x8 は全段がミップテイルのはずだが first_tail_mip=${first_tail_mip} tile_table_size=${tile_table_size}")
+    endif()
+    # ヘッダ 160 + ミップ表 4 件 x 32 = 288 バイト目にタイルの表（空）とペイロードが続く。
+    if(NOT tile_table_offset EQUAL 288 OR NOT payload_offset EQUAL 288)
+        message(FATAL_ERROR "--usage ${usage}: タイルの表・ペイロードの位置が 288 ではない(${tile_table_offset}, ${payload_offset})")
+    endif()
+    if(NOT tail_offset EQUAL ${payload_offset} OR NOT tail_size EQUAL ${payload_size})
+        message(FATAL_ERROR "--usage ${usage}: ミップテイルがペイロード全体ではない(${tail_offset}, ${tail_size})")
+    endif()
+endfunction()
+
+# PixelFormat: BC4=5 BC5=6 BC7=7 R16=8、ColorSpace: Linear=1 sRGB=2。
+# 8x8 のミップは 8,4,2,1。BC は 4x4 画素を 1 ブロックとし、最小 1 ブロック。
+#   BC7・BC5(16 バイト/ブロック): 4+1+1+1 = 7 ブロック = 112 バイト
+#   BC4(8 バイト/ブロック): 7 ブロック = 56 バイト
+#   R16(2 バイト/画素): 64+16+4+1 = 85 画素 = 170 バイト
+# タイルの形状（標準ブロック形状。BC7・BC5 は 256x256、BC4 は 512x256、R16 は 256x128 texel）。
+check_usage_cook(albedo   single "${USAGE_PPM}"   7 2 112 "nvtex.v0.2.bc7.srgb"   256 256)
+check_usage_cook(normal   single "${USAGE_PPM}"   6 1 112 "nvtex.v0.2.bc5.linear" 256 256)
+check_usage_cook(orm      orm    "${USAGE_PGM}"   7 1 112 "nvtex.v0.2.bc7.linear" 256 256)
+check_usage_cook(single   single "${USAGE_PGM}"   5 1 56  "nvtex.v0.2.bc4.linear" 512 256)
+# 8bit の入力は 16bit へ拡大される。16bit の入力の精度は AssetCookTextureUsageSmoke(PNG)で確かめる。
+check_usage_cook(height16 single "${USAGE_PGM}"   8 1 170 "nvtex.v0.2.r16.linear" 256 128)
+
+# タイルを持つ大きさ: BC4 の 1024x512（タイル 512x256）。段 0 は 2x2、段 1 は 1x1 のタイルで、段 2（256x128）からミップテイル。
+#   ペイロード 349544 バイト = タイル 327680（段 0・1: (32768 + 8192) ブロック x 8）+ ミップテイル 21864（残り 2733 ブロック x 8）
+#   ミップ表 11 件 x 32 = 352、タイルの表 5 件 x 32 = 160 なので、タイルの表は 160 + 352 = 512、ペイロードは 672 バイト目。
+set(TILED_PGM "${SMOKE_DIR}/tiled_gray.pgm")
+string(REPEAT "A" 524288 tiled_gray_pixels)
+file(WRITE "${TILED_PGM}" "P5\n1024 512\n127\n${tiled_gray_pixels}")
+execute_process(
+    COMMAND "${ASSET_COOK_EXE}"
+        --input "${TILED_PGM}"
+        --out "${SMOKE_DIR}/Cooked/tiled_single.nvpkg"
+        --manifest "${SMOKE_DIR}/tiled_single_manifest.json"
+        --logical "Textures/tiled_single.nvtex"
+        --kind texture
+        --entry "tiled_single.nvtex"
+        --entry-type Tex0
+        --usage single
+        --quality fast
+        --variant default
+    RESULT_VARIABLE tiled_result
+    OUTPUT_VARIABLE tiled_out
+    ERROR_VARIABLE tiled_err
+)
+if(NOT tiled_result EQUAL 0)
+    message(STATUS "${tiled_out}")
+    message(STATUS "${tiled_err}")
+    message(FATAL_ERROR "タイルを持つ大きさの --usage single が exit code ${tiled_result} で失敗した")
+endif()
+file(READ "${SMOKE_DIR}/Cooked/tiled_single.nvpkg" tiled_hex HEX)
+read_nvtex_le("${tiled_hex}" 14 2 tiled_minor)
+read_nvtex_le("${tiled_hex}" 8 4 tiled_header_size)
+read_nvtex_le("${tiled_hex}" 24 8 tiled_file_size)
+read_nvtex_le("${tiled_hex}" 48 8 tiled_payload_offset)
+read_nvtex_le("${tiled_hex}" 56 8 tiled_payload_size)
+read_nvtex_le("${tiled_hex}" 112 4 tiled_tile_w)
+read_nvtex_le("${tiled_hex}" 116 4 tiled_tile_h)
+read_nvtex_le("${tiled_hex}" 120 4 tiled_first_tail)
+read_nvtex_le("${tiled_hex}" 128 8 tiled_table_offset)
+read_nvtex_le("${tiled_hex}" 136 8 tiled_table_size)
+read_nvtex_le("${tiled_hex}" 144 8 tiled_tail_offset)
+read_nvtex_le("${tiled_hex}" 152 8 tiled_tail_size)
+message(STATUS "tiled single: minor=${tiled_minor} payload=${tiled_payload_size} first_tail=${tiled_first_tail} tiles=${tiled_table_size}/32 tail=${tiled_tail_size}")
+if(NOT tiled_minor EQUAL 2 OR NOT tiled_header_size EQUAL 160)
+    message(FATAL_ERROR "タイルを持つ大きさ: v0.2 のヘッダではない(minor=${tiled_minor} header=${tiled_header_size})")
+endif()
+if(NOT tiled_tile_w EQUAL 512 OR NOT tiled_tile_h EQUAL 256 OR NOT tiled_first_tail EQUAL 2)
+    message(FATAL_ERROR "タイルを持つ大きさ: タイルの形状・ミップテイルの先頭が違う(${tiled_tile_w}x${tiled_tile_h} first_tail=${tiled_first_tail})")
+endif()
+if(NOT tiled_payload_size EQUAL 349544 OR NOT tiled_table_size EQUAL 160 OR NOT tiled_table_offset EQUAL 512 OR NOT tiled_payload_offset EQUAL 672)
+    message(FATAL_ERROR "タイルを持つ大きさ: 表・ペイロードの大きさか位置が違う(payload=${tiled_payload_size} table=${tiled_table_size}@${tiled_table_offset} payload@${tiled_payload_offset})")
+endif()
+math(EXPR expected_tail_offset "${tiled_payload_offset} + 327680")
+if(NOT tiled_tail_offset EQUAL ${expected_tail_offset} OR NOT tiled_tail_size EQUAL 21864)
+    message(FATAL_ERROR "タイルを持つ大きさ: ミップテイルの位置・大きさが違う(${tiled_tail_offset}, ${tiled_tail_size})")
+endif()
+math(EXPR tiled_end "${tiled_tail_offset} + ${tiled_tail_size}")
+math(EXPR tiled_payload_end "${tiled_payload_offset} + ${tiled_payload_size}")
+if(NOT tiled_end EQUAL ${tiled_payload_end})
+    message(FATAL_ERROR "タイルを持つ大きさ: ミップテイルがペイロードの終わりまで続いていない(${tiled_end} != ${tiled_payload_end})")
+endif()
+
+# 組み合わせの誤りは断る。
+function(expect_usage_failure label)
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}" ${ARGN}
+            --out "${SMOKE_DIR}/Cooked/usage_bad.nvpkg"
+            --manifest "${SMOKE_DIR}/usage_bad_manifest.json"
+            --logical "Textures/usage_bad.nvtex"
+            --kind texture
+            --entry "usage_bad.nvtex"
+            --entry-type Tex0
+            --variant default
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE out
+        ERROR_VARIABLE err
+    )
+    if(result EQUAL 0)
+        message(FATAL_ERROR "誤った引数の組み合わせが成功した: ${label}")
+    endif()
+endfunction()
+
+expect_usage_failure("未知の用途" --input "${USAGE_PPM}" --usage diffuse)
+expect_usage_failure("--usage と --format の併用" --input "${USAGE_PPM}" --usage albedo --format nvtex.v0.rgba8.srgb)
+expect_usage_failure("orm に --input" --input "${USAGE_PPM}" --usage orm --orm-ao "${USAGE_PGM}")
+expect_usage_failure("orm の元画像なし" --usage orm)
+expect_usage_failure("orm 以外に --orm-*" --input "${USAGE_PPM}" --usage albedo --orm-ao "${USAGE_PGM}")
+
+# 画像として復号できない入力は失敗し、エラーに入力のパスが残る(失効した名前を読んでいないことの確認)。
+set(BROKEN_INPUT "${SMOKE_DIR}/broken_input.bin")
+file(WRITE "${BROKEN_INPUT}" "this is not an image")
+foreach(broken_usage albedo height16)
+    execute_process(
+        COMMAND "${ASSET_COOK_EXE}"
+            --input "${BROKEN_INPUT}"
+            --out "${SMOKE_DIR}/Cooked/broken_${broken_usage}.nvpkg"
+            --manifest "${SMOKE_DIR}/broken_${broken_usage}_manifest.json"
+            --logical "Textures/broken_${broken_usage}.nvtex"
+            --kind texture
+            --entry "broken_${broken_usage}.nvtex"
+            --entry-type Tex0
+            --usage ${broken_usage}
+            --variant default
+        RESULT_VARIABLE broken_result
+        OUTPUT_VARIABLE broken_stdout
+        ERROR_VARIABLE broken_stderr
+    )
+    if(broken_result EQUAL 0)
+        message(FATAL_ERROR "復号できない入力が成功した: --usage ${broken_usage}")
+    endif()
+    string(FIND "${broken_stderr}" "broken_input.bin" broken_name_pos)
+    if(broken_name_pos EQUAL -1)
+        message(FATAL_ERROR "--usage ${broken_usage}: エラーに入力のパスが無い: ${broken_stderr}")
+    endif()
+endforeach()
+
+# ---- 用途ごとのクックの中身(色・ミップ・精度) ----
+if(DEFINED USAGE_SMOKE_EXE)
+    execute_process(
+        COMMAND "${USAGE_SMOKE_EXE}"
+        RESULT_VARIABLE usage_result
+        OUTPUT_VARIABLE usage_stdout
+        ERROR_VARIABLE usage_stderr
+    )
+    message(STATUS "${usage_stdout}")
+    if(NOT usage_result EQUAL 0)
+        message(STATUS "${usage_stderr}")
+        message(FATAL_ERROR "AssetCookTextureUsageSmoke が exit code ${usage_result} で失敗した")
+    endif()
+endif()

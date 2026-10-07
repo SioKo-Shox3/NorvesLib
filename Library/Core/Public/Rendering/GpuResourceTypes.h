@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Rendering/MaterialTypes.h"
 #include "Rendering/RenderTypes.h"
@@ -63,8 +63,24 @@ namespace NorvesLib::Core::Rendering
             R8_UNORM,
             RG8_UNORM,
             D24_S8,
-            D32_FLOAT
+            D32_FLOAT,
+            R16_UNORM,
+            BC1_UNORM,
+            BC1_SRGB,
+            BC4_UNORM,
+            BC5_UNORM,
+            BC7_UNORM,
+            BC7_SRGB
         } PixelFormat = Format::RGBA8_UNORM;
+
+        /// 初期データが全ミップを含むか。BC 形式は常に全ミップを含む（実行時に縮小できない）。
+        /// 含むとき、初期データはミップ0から順に詰めた1つの塊で、ミップごとにアップロードし、ミップ生成はしない。
+        /// ミップごとの大きさは各形式のブロック単位（BC は 4x4 画素のブロックを切り上げ）で数える。
+        bool bInitialDataHasAllMips = false;
+
+        /// sparse（部分常駐）のテクスチャにするか。物理メモリを結ばずに全ミップを作り、タイルごとに結ぶ。
+        /// 対応しない GPU・形式・用途（レンダーターゲット・深度・配列）では作成が失敗する。初期データは渡せない。
+        bool bSparse = false;
 
         TextureType Type = TextureType::Texture2D;
 
@@ -110,6 +126,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t Width = 0;
         uint32_t Height = 0;
         TextureCreateInfo::Format Format;
+        size_t Bytes = 0; // 形式の1画素のバイト数 × 全ミップの画素数 × 配列数。外部登録は 0（所有しない）。
         uint32_t RefCount = 0;
         Container::String DebugName;
     };
@@ -156,5 +173,10 @@ namespace NorvesLib::Core::Rendering
         uint32_t SamplerCount = 0;
         size_t TotalBufferMemory = 0;
         size_t TotalTextureMemory = 0;
+        size_t TextureBytes = 0; // 所有するテクスチャの確保量の合計（TotalTextureMemory と同じ値）
+        // sparse の物理メモリのプール（SparsePagePool）が持つ量と、貸し出し中の量。sparse テクスチャは
+        // 結んだ量（= 貸し出し中のページ）が TextureBytes に入るので、UsedBytes は TextureBytes の内数になる。
+        size_t SparsePoolCapacityBytes = 0;
+        size_t SparsePoolUsedBytes = 0;
     };
 }

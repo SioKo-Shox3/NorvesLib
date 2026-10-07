@@ -9,10 +9,12 @@
 #include "Container/PointerTypes.h"
 #include "FileStream/FileStream.h"
 #include "Logging/LogMacros.h"
+#include "Rendering/RenderTypes.h"
 #include "Rendering/RenderWorld.h"
 #include "Rendering/SkyAtmosphere.h"
 #include "Rendering/VolumetricFog.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <iostream>
@@ -32,8 +34,14 @@ namespace
         return scene == SceneKind::Indoor ? "indoor" : "outdoor";
     }
 
-    const TCHAR* BaselineFileName(SceneKind scene)
+    // 予備の経路（--visibility-buffer=off。GBuffer をラスタで描く）は、解決が GBuffer を書く既定とは画素が少し違う
+    // （解析的な微分・三角形の接線の基底）ので、別の基準画像を持つ。しきい値は同じ表の同じシーンの行を使う。
+    const TCHAR* BaselineFileName(SceneKind scene, bool bGBufferFallback)
     {
+        if (bGBufferFallback)
+        {
+            return scene == SceneKind::Indoor ? TEXT("IndoorGBufferFallback.png") : TEXT("OutdoorGBufferFallback.png");
+        }
         return scene == SceneKind::Indoor ? TEXT("Indoor.png") : TEXT("Outdoor.png");
     }
 
@@ -63,19 +71,19 @@ namespace
         return "Unknown";
     }
 
-    Core::Container::String BaselinePath(SceneKind scene)
+    Core::Container::String BaselinePath(SceneKind scene, bool bGBufferFallback)
     {
         Core::Container::String path(NORVES_SOURCE_ROOT);
         path += TEXT("/Test/Core/Rendering/Baselines/RenderingValidation/");
-        path += BaselineFileName(scene);
+        path += BaselineFileName(scene, bGBufferFallback);
         return path;
     }
 
-    Core::Container::String StagingPath(SceneKind scene)
+    Core::Container::String StagingPath(SceneKind scene, bool bGBufferFallback)
     {
         Core::Container::String path(NORVES_BINARY_ROOT);
         path += TEXT("/RenderingValidation/BaselineStaging/");
-        path += BaselineFileName(scene);
+        path += BaselineFileName(scene, bGBufferFallback);
         path += TEXT(".tmp");
         return path;
     }
@@ -85,6 +93,30 @@ namespace
         Core::Container::String path(NORVES_SOURCE_ROOT);
         path += TEXT("/Test/Core/Rendering/Baselines/RenderingValidation/VisualThresholds.tsv");
         return path;
+    }
+
+    // GTAOの部屋の大きさの検査（Cornell、5.5 m四方の部屋）で撮るAOの画像の保存先
+    Core::Container::String GtaoCornellCapturePath()
+    {
+        Core::Container::String path(NORVES_BINARY_ROOT);
+        path += TEXT("/RenderingValidation/GTAO/CornellAmbientOcclusion.png");
+        return path;
+    }
+
+    void EnsureGtaoCaptureDirectories()
+    {
+        Core::Container::String validationRoot(NORVES_BINARY_ROOT);
+        validationRoot += TEXT("/RenderingValidation");
+        Core::Container::String gtaoRoot = validationRoot;
+        gtaoRoot += TEXT("/GTAO");
+        CreateDirectory(validationRoot.c_str(), nullptr);
+        CreateDirectory(gtaoRoot.c_str(), nullptr);
+    }
+
+    double DecodeSrgbByte(uint8_t value)
+    {
+        const double encoded = static_cast<double>(value) / 255.0;
+        return encoded <= 0.04045 ? encoded / 12.92 : std::pow((encoded + 0.055) / 1.055, 2.4);
     }
 
     constexpr float R3DensityValues[] = {0.0025f, 0.005f, 0.01f};
@@ -193,6 +225,8 @@ namespace
                 LOG_ERROR("RenderingGoldenImageTest は BackBuffer capture のみを受け付けます");
                 return false;
             }
+            // 既定は解決を通ったこと、--visibility-buffer=off は通っていないことを、画像の比較の後にログで確かめる
+            RequireVisibilityBufferPath();
             if (m_bR3DensityScenario && GetRunConfig().Scene != SceneKind::Outdoor)
             {
                 LOG_ERROR("R3 density-sweep には outdoor scene が必要です");
@@ -209,6 +243,11 @@ namespace
                 LOG_ERROR("R3 baseline stagingには density-sweep scenario が必要です");
                 return false;
             }
+            if (m_bGtaoCornellScenario && GetRunConfig().Scene != SceneKind::Indoor)
+            {
+                LOG_ERROR("GTAOの部屋の大きさの検査には indoor scene が必要です");
+                return false;
+            }
             return true;
         }
 
@@ -222,6 +261,10 @@ namespace
             {
                 return GetFixture().ApplyR3ShadowedShaftsFixture(true, true, true);
             }
+            if (m_bGtaoCornellScenario)
+            {
+                return GetFixture().ApplyR4CornellFixture();
+            }
             if (!GetFixture().ApplyTransparentPhysicalLightingObjectPresence())
             {
                 LOG_ERROR("golden object-presence fixture preparation failed");
@@ -234,6 +277,17 @@ namespace
             const Core::Container::String& argument,
             Core::Container::String& outFailureReason) override
         {
+            if (argument == TEXT("--ao-scenario=cornell-room"))
+            {
+                if (m_bGtaoCornellScenario || m_bR3DensityScenario || m_bWriteBaselineStaging ||
+                    m_bMeasureVisual || m_bWriteR3DensityBaselineStaging)
+                {
+                    outFailureReason = TEXT("GTAOの部屋の大きさの検査は他のgolden image modeと併用できません");
+                    return false;
+                }
+                m_bGtaoCornellScenario = true;
+                return true;
+            }
             if (argument == TEXT("--r3-scenario=density-sweep"))
             {
                 if (m_bR3DensityScenario || m_bWriteBaselineStaging || m_bMeasureVisual ||
@@ -286,6 +340,13 @@ namespace
 
         void ApplyCaptureStageState(Core::Rendering::RenderWorld& renderWorld) override
         {
+            if (m_bGtaoCornellScenario)
+            {
+                // 部屋の内側をCornellの検証カメラで撮り、雑音除去後のGTAOの可視率をそのまま表示する
+                renderWorld.SetMainCamera(GetFixture().GetR4CornellCamera());
+                renderWorld.SetDebugViewModeAll(Core::Rendering::DebugViewMode::AmbientOcclusion);
+                return;
+            }
             if (!m_bR3DensityScenario || m_R3DensityStage >= R3DensityCount)
             {
                 return;
@@ -337,6 +398,10 @@ namespace
             {
                 return EvaluateR3DensityGoldenFrame(frame, outFailureReason);
             }
+            if (m_bGtaoCornellScenario)
+            {
+                return EvaluateGtaoCornellFrame(frame, outFailureReason);
+            }
             Core::Container::VariableArray<uint8_t> candidatePng;
             const GoldenImageStatus encodeStatus = EncodeCapturedFramePng(frame, candidatePng);
             if (encodeStatus != GoldenImageStatus::Success)
@@ -354,7 +419,7 @@ namespace
             if (m_bWriteBaselineStaging)
             {
                 const GoldenImageStatus saveStatus = SavePng(
-                    StagingPath(GetRunConfig().Scene),
+                    StagingPath(GetRunConfig().Scene, GetRunConfig().bVisibilityBufferOff),
                     Core::Container::Span<const uint8_t>(candidatePng));
                 if (saveStatus != GoldenImageStatus::Success)
                 {
@@ -376,7 +441,7 @@ namespace
             }
 
             Rgba8Image reference;
-            GoldenImageStatus status = LoadPng(BaselinePath(GetRunConfig().Scene), reference);
+            GoldenImageStatus status = LoadPng(BaselinePath(GetRunConfig().Scene, GetRunConfig().bVisibilityBufferOff), reference);
             if (status != GoldenImageStatus::Success)
             {
                 outFailureReason = TEXT("golden baseline PNG load failed");
@@ -681,7 +746,126 @@ namespace
             return true;
         }
 
+        // 雑音除去後のGTAOの可視率を、Cornellの部屋の面ごとの領域で測る。
+        // 部屋の大きさの壁・床・天井の中ほどは遮蔽がほとんど無く（壁全体が黒くならない）、
+        // 奥の壁と左右の壁の境目・箱の接地部は中ほどより暗い（遮蔽が出ている）ことを確かめる。
+        bool EvaluateGtaoCornellFrame(
+            const Core::Rendering::CapturedFrame& frame,
+            Core::Container::String& outFailureReason)
+        {
+            Core::Container::VariableArray<uint8_t> capturePng;
+            Rgba8Image image;
+            if (EncodeCapturedFramePng(frame, capturePng) != GoldenImageStatus::Success ||
+                DecodePng(Core::Container::Span<const uint8_t>(capturePng), image) !=
+                    GoldenImageStatus::Success ||
+                image.Width != ValidationWidth || image.Height != ValidationHeight)
+            {
+                outFailureReason = TEXT("GTAOの検査のcaptureを読めません");
+                return false;
+            }
+            EnsureGtaoCaptureDirectories();
+            if (SavePng(GtaoCornellCapturePath(), Core::Container::Span<const uint8_t>(capturePng)) !=
+                GoldenImageStatus::Success)
+            {
+                outFailureReason = TEXT("GTAOの検査の画像を保存できません");
+                return false;
+            }
+
+            auto visibilityAt = [&image](uint32_t x, uint32_t y) -> double
+            {
+                const size_t offset = static_cast<size_t>(y) * image.RowPitchBytes + static_cast<size_t>(x) * 4u;
+                return DecodeSrgbByte(image.Pixels[offset + 0u]);
+            };
+            auto regionMean = [&visibilityAt](uint32_t left, uint32_t top, uint32_t right, uint32_t bottom) -> double
+            {
+                double sum = 0.0;
+                uint32_t count = 0u;
+                for (uint32_t y = top; y < bottom; ++y)
+                {
+                    for (uint32_t x = left; x < right; ++x)
+                    {
+                        sum += visibilityAt(x, y);
+                        ++count;
+                    }
+                }
+                return count > 0u ? sum / static_cast<double>(count) : 0.0;
+            };
+
+            // 32×32画素の升ごとの平均（診断用）
+            for (uint32_t blockY = 0u; blockY < 8u; ++blockY)
+            {
+                std::cout << "GTAO_CORNELL_GRID row=" << blockY;
+                for (uint32_t blockX = 0u; blockX < 8u; ++blockX)
+                {
+                    std::cout << ' ' << std::fixed << std::setprecision(3)
+                              << regionMean(blockX * 32u, blockY * 32u, blockX * 32u + 32u, blockY * 32u + 32u);
+                }
+                std::cout << std::endl;
+            }
+            double imageMinimum = 1.0;
+            for (uint32_t y = 0u; y < image.Height; ++y)
+            {
+                for (uint32_t x = 0u; x < image.Width; ++x)
+                {
+                    imageMinimum = std::min(imageMinimum, visibilityAt(x, y));
+                }
+            }
+            const double imageMean = regionMean(0u, 0u, image.Width, image.Height);
+            std::cout << std::fixed << std::setprecision(4)
+                      << "GTAO_CORNELL image_mean=" << imageMean
+                      << " image_min=" << imageMinimum << std::endl;
+
+            // 領域は256×256の検証カメラの画像の画素（左, 上, 右, 下）
+            struct Region
+            {
+                const char* Name;
+                uint32_t Left;
+                uint32_t Top;
+                uint32_t Right;
+                uint32_t Bottom;
+                bool bOpenSurface; // true: 面の中ほど（遮蔽なしを期待）、false: 隅・接地部（遮蔽を期待）
+            };
+            constexpr Region Regions[] = {
+                {"back_wall", 72u, 64u, 184u, 100u, true},
+                {"left_wall", 12u, 90u, 44u, 150u, true},
+                {"right_wall", 212u, 90u, 244u, 150u, true},
+                {"ceiling", 72u, 12u, 184u, 40u, true},
+                {"floor_front", 84u, 236u, 116u, 250u, true},
+                {"edge_back_left", 52u, 90u, 60u, 150u, false},
+                {"edge_back_right", 198u, 90u, 206u, 150u, false},
+                {"short_block_contact", 130u, 230u, 186u, 238u, false},
+            };
+            // 部屋の大きさの面の中ほどは、遮蔽がほとんど無い（旧SSAOはここをほぼ0にしていた）
+            constexpr double MinimumOpenSurfaceVisibility = 0.95;
+            // 隅・接地部は、面の中ほどよりはっきり暗い
+            constexpr double MaximumCreaseVisibility = 0.9;
+            bool bPassed = std::isfinite(imageMean);
+            for (const Region& region : Regions)
+            {
+                const double mean = regionMean(region.Left, region.Top, region.Right, region.Bottom);
+                const bool bRegionPassed = std::isfinite(mean) &&
+                                           (region.bOpenSurface ? mean >= MinimumOpenSurfaceVisibility
+                                                                : mean <= MaximumCreaseVisibility);
+                std::cout << std::fixed << std::setprecision(4)
+                          << "GTAO_CORNELL_REGION name=" << region.Name
+                          << " kind=" << (region.bOpenSurface ? "open" : "crease")
+                          << " mean=" << mean
+                          << " limit=" << (region.bOpenSurface ? MinimumOpenSurfaceVisibility
+                                                                : MaximumCreaseVisibility)
+                          << " passed=" << (bRegionPassed ? 1 : 0) << std::endl;
+                bPassed = bPassed && bRegionPassed;
+            }
+            std::cout << "GTAO_CORNELL_ROOM_SCALE=" << (bPassed ? "PASS" : "FAIL") << std::endl;
+            if (!bPassed)
+            {
+                outFailureReason = TEXT("Cornellの部屋でGTAOの面の中ほどが暗いか、隅・接地部に遮蔽がありません");
+                return false;
+            }
+            return true;
+        }
+
     private:
+        bool m_bGtaoCornellScenario = false;
         bool m_bWriteBaselineStaging = false;
         bool m_bMeasureVisual = false;
         bool m_bR3DensityScenario = false;
