@@ -236,8 +236,9 @@ void TestShares()
 }
 
 // VSM の物理ページのプール（ShadowMap の枠）の確保量は、ヒープの使用量に全部入っているので、プール以外の使用量から引かれる。
-// 引いた分だけ割り振れる量が増え、VT・ジオメトリの目標に効く。ヒープの使用量を下回る分では負にならず 0 で止まり、
-// ヒープの使用量が取れないときの見込みには効かない
+// 取り分（重み）を持たないので固定の取り置きとして割り振れる量からも引かれ、VT・ジオメトリの目標は渡す前と変わらない
+// （引かないと、ヒープの中の VSM の分を VT・ジオメトリへ二重に割り振り、計画の合計が上限を超える）。
+// ヒープの使用量を下回る分では負にならず 0 で止まり、ヒープの使用量が取れないときも取り置きは引く
 void TestShadowMapPoolIsSubtractedFromNonPool()
 {
     VideoMemoryBudgetManager manager;
@@ -252,27 +253,34 @@ void TestShadowMapPoolIsSubtractedFromNonPool()
     Expect(without.GetTargetBytes(VideoMemoryPool::VirtualTexture) == 3000 * Mb, "VT の目標は半分");
     Expect(without.GetTargetBytes(VideoMemoryPool::Geometry) == 3000 * Mb, "ジオメトリの目標は半分");
 
-    // 256 MB の VSM のプールを渡す: プール以外が 256 減り、VT・ジオメトリが 128 ずつ増える
+    // 256 MB の VSM のプールを渡す: プール以外が 256 減り、同じ 256 を固定の取り置きとして引くので、VT・ジオメトリの目標は変わらない
     input.PoolCapacityBytes[ShadowMapIndex] = 256 * Mb;
     const VideoMemoryBudgetResult with = manager.Compute(input);
     Expect(with.NonPoolBytes == 1744 * Mb, "プール以外 = 使用量 - VT - VSM のプール");
-    Expect(with.AvailableBytes == 6256 * Mb, "割り振れる量は 256 増える");
-    Expect(with.GetTargetBytes(VideoMemoryPool::VirtualTexture) == 3128 * Mb, "VT の目標が増える");
-    Expect(with.GetTargetBytes(VideoMemoryPool::Geometry) == 3128 * Mb, "ジオメトリの目標が増える");
+    Expect(with.FixedPoolBytes == 256 * Mb, "取り分の無い VSM のプールは固定の取り置き");
+    Expect(with.AvailableBytes == 6000 * Mb, "割り振れる量 = 上限 - プール以外 - 取り置き");
+    Expect(with.GetTargetBytes(VideoMemoryPool::VirtualTexture) == without.GetTargetBytes(VideoMemoryPool::VirtualTexture), "VSM の確保量を渡しても VT の目標は増えない");
+    Expect(with.GetTargetBytes(VideoMemoryPool::Geometry) == without.GetTargetBytes(VideoMemoryPool::Geometry), "VSM の確保量を渡してもジオメトリの目標は増えない");
     Expect(with.GetTargetBytes(VideoMemoryPool::ShadowMap) == 0, "VSM は取り分を持たない（確保量を渡しても目標は 0 のまま）");
-    Expect(with.GetTargetBytes(VideoMemoryPool::VirtualTexture) > without.GetTargetBytes(VideoMemoryPool::VirtualTexture), "VSM の確保量が VT の目標に効く");
-    Expect(with.GetTargetBytes(VideoMemoryPool::Geometry) > without.GetTargetBytes(VideoMemoryPool::Geometry), "VSM の確保量がジオメトリの目標に効く");
+    Expect(with.NonPoolBytes + with.FixedPoolBytes + with.GetTargetBytes(VideoMemoryPool::VirtualTexture) +
+                   with.GetTargetBytes(VideoMemoryPool::Geometry) <=
+               with.CeilingBytes,
+           "プール以外・取り置き・目標の合計が上限を超えない");
 
     // 3 つのプールの確保量はそれぞれ別に引かれ、合計がヒープの使用量を超えるときは 0 で止まる
     input.PoolCapacityBytes[GeometryIndex] = 500 * Mb;
     const VideoMemoryBudgetResult three = manager.Compute(input);
     Expect(three.NonPoolBytes == 1244 * Mb, "VT・ジオメトリ・VSM の確保量をすべて引く");
+    Expect(three.AvailableBytes == 6500 * Mb, "取り分のある VT・ジオメトリの確保量は割り振れる量に戻り、VSM の取り置きだけを引く");
     input.PoolCapacityBytes[ShadowMapIndex] = 4000 * Mb;
     const VideoMemoryBudgetResult over = manager.Compute(input);
     Expect(over.NonPoolBytes == 0, "確保量の合計が使用量より大きければプール以外は 0 で止まる");
-    Expect(over.AvailableBytes == 8000 * Mb, "割り振れる量は上限そのもの");
+    Expect(over.AvailableBytes == 4000 * Mb, "割り振れる量 = 上限 - VSM の取り置き");
+    input.PoolCapacityBytes[ShadowMapIndex] = 9000 * Mb;
+    const VideoMemoryBudgetResult beyond = manager.Compute(input);
+    Expect(beyond.AvailableBytes == 0, "取り置きが上限を超えれば割り振れる量は 0 で止まる");
 
-    // ヒープの使用量が取れないときは、見込み（上限の 30%）で決まり、VSM のプールには依らない
+    // ヒープの使用量が取れないときは、プール以外は見込み（上限の 30%）で VSM のプールに依らず、取り置きは引く
     VideoMemoryBudgetInput estimated;
     estimated.bHeapValid = false;
     estimated.CapBytes = 2000 * Mb;
@@ -280,6 +288,7 @@ void TestShadowMapPoolIsSubtractedFromNonPool()
     estimated.PoolCapacityBytes[ShadowMapIndex] = 256 * Mb;
     const VideoMemoryBudgetResult estimatedWith = manager.Compute(estimated);
     Expect(estimatedWithout.NonPoolBytes == 600 * Mb && estimatedWith.NonPoolBytes == 600 * Mb, "見込みは VSM のプールに依らない");
+    Expect(estimatedWithout.AvailableBytes == 1400 * Mb && estimatedWith.AvailableBytes == 1144 * Mb, "見込みのときも VSM の取り置きを引く");
 
     // 取り分（重み）を与えれば、VSM も割り振りを受け取る
     manager.SetPoolShare(VideoMemoryPool::ShadowMap, 2);

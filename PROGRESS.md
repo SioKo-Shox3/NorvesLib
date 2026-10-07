@@ -2510,3 +2510,9 @@
 
 - Notes: (1) 前の反復が起動した 6 run の撮影スクリプト（`.harness/run6.ps1`）の完了を待ち、その出力を保存した verify として使った。(2) `VSM_PAGES` の `levels_used` は 16 進の文字列なので集計から外した。(3) 負荷 300 個の `VsmCullMega` 1.146 ms と近接の `VsmAllocate` 0.616 ms は、既定の経路の中で相対的に大きい区間。2 ms の停止条件には届かないので対策の項目は足していない（VTG8-ACCEPT で GPU 時間を記録する時の候補）。
 - Next: `VTG8-ACCEPT`（GPU 時間の表はここの値を使う）。
+
+## 親（2026-10-08）: VSM のプールの確保量を予算の割り振れる量から引く
+
+- 受入れの準備で見つけた予算の計算の誤り: `ShadowMap` の枠は取り分の重みが 0 なので、VSM の確保量（`SetShadowMapPoolBytes`。プール 320 MiB と展開・cull の一覧など）を `PoolCapacityBytes` で渡すと、プール以外の使用量から引かれるだけで割り振れる量が同じだけ増え、VT・ジオメトリの目標がその分増えていた（`VideoMemoryBudgetManagerTest` も「256 MB を渡すと VT・ジオメトリが 128 MB ずつ増える」を期待していた）。プール以外・VSM・VT・ジオメトリの計画の合計が上限を VSM の分だけ超える。
+- 直し方: `VideoMemoryBudgetManager::Compute` で、重み 0 のプールの確保量の合計を `FixedPoolBytes`（固定の取り置き）とし、割り振れる量 = 上限 − プール以外 − 取り置き（0 で止まる）にした。VSM の確保量を渡しても渡さなくても VT・ジオメトリの目標は同じになり（どちらもヒープの使用量の中にあるため）、プール以外・取り置き・目標の合計が上限を超えない。ヒープの使用量が取れない見込みのときも取り置きを引く。重みを与えたプールは今までどおり取り分を受け取る。
+- 検証: `VideoMemoryBudgetManagerTest` 1/1 Passed（`.harness/runs/vtg8-accept/budget-ctest2.txt`）。取り置きを引く行を外す変異で落ちる（`budget-mut-ctest.txt`、1 failed）。起動画面の VT・ジオメトリの目標はヒープの予算（約 15 GB）に対して使用量が小さいので、この変更で起動画面の描画は変わらない。
