@@ -1,6 +1,8 @@
 ﻿#include "Animation/SkeletonResource.h"
 #include "Asset/CookedSkeletonV1.h"
 #include "Asset/RigSplitWire.h"
+#include "Animation/SkeletalPoseRuntimeBuild.h"
+#include "Logging/LogMacros.h"
 
 #include <utility>
 
@@ -49,6 +51,8 @@ namespace NorvesLib::Core
 
     void SkeletonResource::Unload()
     {
+        ++m_PoseRevision;
+        m_PoseRuntime = {};
         m_SplitSkeleton.reset();
         m_Joints.clear();
         m_AuthorRestPose.clear();
@@ -63,6 +67,7 @@ namespace NorvesLib::Core
         {
             size += joint.Name.size();
         }
+        size += m_PoseRuntime.AllocatedBytes();
         size += m_JointIndices.size() * (sizeof(Identity) + sizeof(uint32_t));
         size += m_AuthorRestPose.size() * sizeof(Skeletal::SkeletalRestTransform);
         if (m_SplitSkeleton)
@@ -99,6 +104,8 @@ namespace NorvesLib::Core
         m_AuthorRestPose.clear();
         m_SplitSkeleton = skeleton.m_Data;
         m_bSplitV1 = true;
+        ++m_PoseRevision;
+        Animation::Detail::BuildSplitSkeletonPoseRuntime(*m_SplitSkeleton, m_PoseRuntime);
         return true;
     }
     bool SkeletonResource::IsSplitV1() const noexcept
@@ -115,6 +122,8 @@ namespace NorvesLib::Core
         {
             return;
         }
+        ++m_PoseRevision;
+        m_PoseRuntime = {};
         m_AuthorRestPose.clear();
         m_Joints = std::move(joints);
         m_JointIndices.clear();
@@ -122,9 +131,15 @@ namespace NorvesLib::Core
         {
             if (!m_Joints[index].Name.empty())
             {
-                m_JointIndices.emplace(Identity(m_Joints[index].Name.c_str()), static_cast<uint32_t>(index));
+                const auto inserted = m_JointIndices.emplace(Identity(m_Joints[index].Name.c_str()), static_cast<uint32_t>(index));
+                if (!inserted.second)
+                {
+                    NORVES_LOG_WARNING("SkeletonResource", "関節名が重複しています: joint_index=%zu first_index=%u",
+                                       index, inserted.first->second);
+                }
             }
         }
+        Animation::Detail::BuildLegacySkeletonPoseRuntime(m_Joints, m_AuthorRestPose, m_PoseRuntime);
     }
 
     bool SkeletonResource::SetAuthorRestPose(const Container::VariableArray<Skeletal::SkeletalRestTransform>& rest)
@@ -142,6 +157,8 @@ namespace NorvesLib::Core
         }
         auto candidate = rest;
         m_AuthorRestPose = std::move(candidate);
+        ++m_PoseRevision;
+        Animation::Detail::BuildLegacySkeletonPoseRuntime(m_Joints, m_AuthorRestPose, m_PoseRuntime);
         return true;
     }
     const Container::VariableArray<Skeletal::SkeletalRestTransform>& SkeletonResource::GetAuthorRestPose() const

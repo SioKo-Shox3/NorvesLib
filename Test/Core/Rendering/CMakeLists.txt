@@ -2075,8 +2075,13 @@ add_test(NAME GLTFSkeletalAnalyzerTest COMMAND GLTFSkeletalAnalyzerTest)
 add_executable(SkeletalAnimationSamplingTest
     SkeletalAnimationSamplingTest.cpp
     SkeletalSamplerBaseline.cpp
+    PoseEvaluationTest.cpp
+    ClipChannelSearchTest.cpp
+    LegacyPoseOracle.cpp
+    LegacySplitPoseOracle.cpp
 )
 target_link_libraries(SkeletalAnimationSamplingTest PRIVATE Core)
+target_include_directories(SkeletalAnimationSamplingTest PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Library/Core/Private)
 set_target_properties(SkeletalAnimationSamplingTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SkeletalAnimationSamplingTest COMMAND SkeletalAnimationSamplingTest)
 

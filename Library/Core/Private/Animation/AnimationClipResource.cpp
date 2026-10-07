@@ -1,5 +1,6 @@
 ﻿#include "Animation/AnimationClipResource.h"
 #include "Animation/RigBoundClipProof.h"
+#include "Animation/SkeletalPoseRuntimeBuild.h"
 
 #include <utility>
 
@@ -43,6 +44,8 @@ namespace NorvesLib::Core
 
     void AnimationClipResource::Unload()
     {
+        ++m_PoseRevision;
+        m_PoseRuntime = {};
         m_BoundRigProof.reset();
         m_Clip = {};
         SetResourceState(ResourceState::Unloaded);
@@ -52,6 +55,7 @@ namespace NorvesLib::Core
     {
         size_t size =
             Skeletal::RigBoundClipAccess::MemorySize(*this) + sizeof(AnimationClipResource) + m_Clip.Name.size();
+        size += m_PoseRuntime.AllocatedBytes();
         size += m_Clip.Channels.size() * sizeof(Skeletal::SkeletalAnimationChannel);
         size += m_Clip.RootMotion.size() * sizeof(Skeletal::SkeletalRootMotionSample);
         for (const Skeletal::SkeletalAnimationChannel& channel : m_Clip.Channels)
@@ -63,8 +67,11 @@ namespace NorvesLib::Core
 
     void AnimationClipResource::SetClip(Skeletal::SkeletalAnimationClip&& clip)
     {
+        ++m_PoseRevision;
+        m_PoseRuntime = {};
         m_BoundRigProof.reset();
         m_Clip = std::move(clip);
+        Animation::Detail::BuildClipPoseRuntime(m_Clip, m_PoseRuntime);
     }
 
     const Skeletal::SkeletalAnimationClip& AnimationClipResource::GetClip() const

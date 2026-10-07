@@ -90,6 +90,11 @@ set(PRIVATE_SOURCES
     Private/Resource/RigSplitAssetLoader.h
     Public/Animation/SkeletalRestPose.h
     Private/Animation/SkeletalJointIndexNative.cpp
+    Private/Animation/SkeletalPoseRuntimeBuild.cpp
+    Private/Animation/SkeletalPoseBuilder.cpp
+    Private/Animation/SkeletalPoseBounds.cpp
+    Private/Animation/PoseTypes.cpp
+    Private/Animation/ClipChannelSampler.cpp
     Private/Animation/SkeletalAnimationSampler.cpp
     Private/Animation/SkeletalSplitSampler.cpp
     Private/Animation/SkeletalSplitSampler.h

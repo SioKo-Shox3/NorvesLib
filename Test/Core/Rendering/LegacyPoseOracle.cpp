@@ -1,0 +1,346 @@
+﻿// GR12変更前のSampler。新しいbuilderの評価経路へ委譲しない独立オラクル。
+#include "Animation/SkeletalAnimationSampler.h"
+#include "LegacyPoseOracle.h"
+#include "Animation/SkeletalSamplingMath.h"
+#include "Animation/SkeletalClipSampling.h"
+#include "Animation/SkeletalBindRowMath.h"
+#include "Animation/SkeletalJointGlobalRowMath.h"
+
+#include "Animation/AnimationClipResource.h"
+#include "Animation/SkeletonResource.h"
+#include "Math/MatrixUtils.h"
+#include "Math/Quaternion.h"
+#include "Math/QuaternionUtils.h"
+#include "Math/Vector4.h"
+#include "Resource/SkinnedMeshResource.h"
+
+#include <cmath>
+
+namespace NorvesLib::Core::Animation::LegacyPoseOracle
+{
+    namespace
+    {
+        using Detail::ComposeSkeletalLocalRowTransform;
+        using Detail::DecomposeRowTransform;
+        using Detail::IsFiniteMatrix;
+        using Detail::JointTransform;
+        using Detail::TryInverseMatrix;
+
+        bool IsFiniteValue(const Skeletal::SkeletalValue& value)
+        {
+            return std::isfinite(value.X) && std::isfinite(value.Y) && std::isfinite(value.Z) && std::isfinite(value.W);
+        }
+
+        Math::Matrix4x4 LoadMatrix(const Container::FixedArray<float, 16>& values)
+        {
+            return Math::Matrix4x4(values[0], values[1], values[2], values[3], values[4], values[5], values[6],
+                                   values[7], values[8], values[9], values[10], values[11], values[12], values[13],
+                                   values[14], values[15]);
+        }
+
+        bool ValidateClip(const Skeletal::SkeletalAnimationClip& clip)
+        {
+            if (!std::isfinite(clip.DurationSeconds) || clip.DurationSeconds < 0.0f)
+            {
+                return false;
+            }
+
+            for (const Skeletal::SkeletalAnimationChannel& channel : clip.Channels)
+            {
+                if (channel.Path != Skeletal::SkeletalAnimationPath::Translation &&
+                    channel.Path != Skeletal::SkeletalAnimationPath::Rotation &&
+                    channel.Path != Skeletal::SkeletalAnimationPath::Scale)
+                {
+                    return false;
+                }
+                if (channel.Interpolation != Skeletal::SkeletalAnimationInterpolation::Linear &&
+                    channel.Interpolation != Skeletal::SkeletalAnimationInterpolation::Step)
+                {
+                    return false;
+                }
+
+                float previousTime = 0.0f;
+                bool bHasPreviousTime = false;
+                for (const Skeletal::SkeletalAnimationSample& sample : channel.Samples)
+                {
+                    if (!std::isfinite(sample.TimeSeconds) ||
+                        (bHasPreviousTime && sample.TimeSeconds <= previousTime) || !IsFiniteValue(sample.Value))
+                    {
+                        return false;
+                    }
+                    previousTime = sample.TimeSeconds;
+                    bHasPreviousTime = true;
+                }
+            }
+            return true;
+        }
+
+        Skeletal::SkeletalValue SampleChannelValue(const Skeletal::SkeletalAnimationChannel& channel, float timeSeconds)
+        {
+            const auto& samples = channel.Samples;
+            if (samples.empty())
+            {
+                return {};
+            }
+            if (samples.size() == 1 || timeSeconds <= samples.front().TimeSeconds)
+            {
+                return samples.front().Value;
+            }
+            if (timeSeconds >= samples.back().TimeSeconds)
+            {
+                return samples.back().Value;
+            }
+
+            for (size_t sampleIndex = 1; sampleIndex < samples.size(); ++sampleIndex)
+            {
+                const auto& next = samples[sampleIndex];
+                if (timeSeconds > next.TimeSeconds)
+                {
+                    continue;
+                }
+
+                const auto& previous = samples[sampleIndex - 1];
+                return Detail::SampleSkeletalChannelInterval(channel, previous, next, timeSeconds);
+            }
+            return samples.back().Value;
+        }
+
+        bool ValidateParentChain(size_t jointIndex, const Container::VariableArray<Skeletal::SkeletalJoint>& joints,
+                                 Container::VariableArray<uint8_t>& visitState)
+        {
+            if (visitState[jointIndex] == 2)
+            {
+                return true;
+            }
+            if (visitState[jointIndex] == 1)
+            {
+                return false;
+            }
+
+            visitState[jointIndex] = 1;
+            const int32_t parentIndex = joints[jointIndex].ParentIndex;
+            if (parentIndex >= 0 && !ValidateParentChain(static_cast<size_t>(parentIndex), joints, visitState))
+            {
+                return false;
+            }
+            visitState[jointIndex] = 2;
+            return true;
+        }
+
+        bool ValidateParentHierarchy(const Container::VariableArray<Skeletal::SkeletalJoint>& joints)
+        {
+            const size_t jointCount = joints.size();
+            for (const Skeletal::SkeletalJoint& joint : joints)
+            {
+                if (joint.ParentIndex < -1 ||
+                    (joint.ParentIndex >= 0 && static_cast<size_t>(joint.ParentIndex) >= jointCount))
+                {
+                    return false;
+                }
+                if (!IsFiniteMatrix(LoadMatrix(joint.InverseBindMatrix)))
+                {
+                    return false;
+                }
+            }
+
+            Container::VariableArray<uint8_t> visitState(jointCount, 0);
+            for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+            {
+                if (!ValidateParentChain(jointIndex, joints, visitState))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+    } // namespace
+
+    bool Sample(const SkeletonResource& skeleton, const AnimationClipResource& clip, const SkinnedMeshResource& mesh,
+                float timeSeconds, const Math::Matrix4x4& meshNodeGlobalRow, SkeletalPoseSnapshot& outPose)
+    {
+        outPose.Clear();
+        if (skeleton.IsSplitV1() || mesh.IsSplitV1())
+        {
+            return SampleSplitV1(skeleton, clip, mesh, timeSeconds, meshNodeGlobalRow, outPose);
+        }
+        if (!std::isfinite(timeSeconds) || !IsFiniteMatrix(meshNodeGlobalRow))
+        {
+            return false;
+        }
+
+        const auto& joints = skeleton.GetJoints();
+        const auto& clipData = clip.GetClip();
+        if (joints.empty() || !ValidateParentHierarchy(joints) || !ValidateClip(clipData))
+        {
+            return false;
+        }
+
+        const size_t jointCount = joints.size();
+        Container::VariableArray<Math::Matrix4x4> inverseBindMatrices(jointCount);
+        Container::VariableArray<Math::Matrix4x4> bindGlobals(jointCount);
+        Container::VariableArray<Math::Matrix4x4> localMatrices(jointCount);
+        Container::VariableArray<Math::Matrix4x4> jointGlobals(jointCount);
+        Container::VariableArray<JointTransform> localTransforms(jointCount);
+        Math::Matrix4x4 inverseMeshNodeGlobal;
+        if (!TryInverseMatrix(meshNodeGlobalRow, inverseMeshNodeGlobal))
+        {
+            return false;
+        }
+        for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+        {
+            inverseBindMatrices[jointIndex] = LoadMatrix(joints[jointIndex].InverseBindMatrix);
+            if (!Detail::TryBuildBindGlobalRow(inverseBindMatrices[jointIndex], meshNodeGlobalRow,
+                                               bindGlobals[jointIndex]))
+            {
+                return false;
+            }
+        }
+        const auto& authorRest = skeleton.GetAuthorRestPose();
+        if (!authorRest.empty())
+        {
+            if (authorRest.size() != jointCount)
+            {
+                return false;
+            }
+            for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+            {
+                const auto& rest = authorRest[jointIndex];
+                if (!Skeletal::IsValidSkeletalRestTransform(rest))
+                {
+                    return false;
+                }
+                auto& transform = localTransforms[jointIndex];
+                transform.Translation = Math::Vector3(rest.Translation.X, rest.Translation.Y, rest.Translation.Z);
+                transform.Rotation = Detail::SkeletalRotationFromColumn(rest.Rotation.X, rest.Rotation.Y,
+                                                                        rest.Rotation.Z, rest.Rotation.W);
+                transform.Scale = Math::Vector3(rest.Scale.X, rest.Scale.Y, rest.Scale.Z);
+            }
+        }
+        else
+        {
+            for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+            {
+                const int32_t parentIndex = joints[jointIndex].ParentIndex;
+                const Math::Matrix4x4* parentGlobal =
+                    parentIndex >= 0 ? &bindGlobals[static_cast<size_t>(parentIndex)] : nullptr;
+                Math::Matrix4x4 bindLocal;
+                if (!Detail::TryBuildBindLocalRow(bindGlobals[jointIndex], parentGlobal, bindLocal))
+                {
+                    return false;
+                }
+                localTransforms[jointIndex] = DecomposeRowTransform(bindLocal);
+            }
+        }
+
+        const float sampleTime = std::fmax(0.0f, std::fmin(timeSeconds, clipData.DurationSeconds));
+        for (const auto& channel : clipData.Channels)
+        {
+            if (channel.JointIndex >= jointCount || channel.Samples.empty())
+            {
+                continue;
+            }
+            const Skeletal::SkeletalValue value = SampleChannelValue(channel, sampleTime);
+            JointTransform& transform = localTransforms[channel.JointIndex];
+            switch (channel.Path)
+            {
+            case Skeletal::SkeletalAnimationPath::Translation:
+                transform.Translation = Math::Vector3(value.X, value.Y, value.Z);
+                break;
+            case Skeletal::SkeletalAnimationPath::Rotation:
+                // 列規約のclip値を共役にし、既存の正規化で行規約へ変換する。
+                transform.Rotation = Detail::SkeletalRotationFromColumn(value.X, value.Y, value.Z, value.W);
+                break;
+            case Skeletal::SkeletalAnimationPath::Scale:
+                transform.Scale = Math::Vector3(value.X, value.Y, value.Z);
+                break;
+            }
+        }
+        for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+        {
+            const JointTransform& transform = localTransforms[jointIndex];
+            localMatrices[jointIndex] = ComposeSkeletalLocalRowTransform(transform);
+            if (!IsFiniteMatrix(localMatrices[jointIndex]))
+            {
+                return false;
+            }
+        }
+
+        Container::VariableArray<uint8_t> visitState(jointCount, 0);
+        const auto parentIndexAt = [&joints](uint32_t index) noexcept -> int32_t { return joints[index].ParentIndex; };
+        const Container::Span<const Math::Matrix4x4> localRows(localMatrices);
+        const Container::Span<Math::Matrix4x4> globalRows(jointGlobals);
+        const Container::Span<uint8_t> scratch(visitState);
+        for (uint32_t jointIndex = 0; jointIndex < static_cast<uint32_t>(jointCount); ++jointIndex)
+        {
+            if (!Detail::BuildJointGlobalRow(jointIndex, parentIndexAt, localRows, globalRows, scratch))
+            {
+                outPose.Clear();
+                return false;
+            }
+        }
+
+        outPose.BonePalette.resize(jointCount);
+        outPose.JointModelMatrices.resize(jointCount);
+        for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+        {
+            outPose.BonePalette[jointIndex] =
+                inverseBindMatrices[jointIndex] * jointGlobals[jointIndex] * inverseMeshNodeGlobal;
+            outPose.JointModelMatrices[jointIndex] = jointGlobals[jointIndex] * inverseMeshNodeGlobal;
+            if (!IsFiniteMatrix(outPose.BonePalette[jointIndex]) ||
+                !IsFiniteMatrix(outPose.JointModelMatrices[jointIndex]))
+            {
+                outPose.Clear();
+                return false;
+            }
+        }
+
+        const auto& vertices = mesh.GetVertices();
+        if (!vertices.empty())
+        {
+            outPose.AnimatedBounds = Math::AABB::CreateInvalid();
+            for (const auto& vertex : vertices)
+            {
+                outPose.AnimatedBounds.Expand(SkinVertex(vertex, outPose.BonePalette).Position);
+            }
+            outPose.bHasAnimatedBounds = true;
+        }
+        return true;
+    }
+
+    SkinnedVertexSample SkinVertex(const Skeletal::SkeletalVertex& vertex,
+                                   const Container::VariableArray<Math::Matrix4x4>& bonePalette)
+    {
+        const Math::Vector3 sourcePosition(vertex.Position.X, vertex.Position.Y, vertex.Position.Z);
+        const Math::Vector3 sourceNormal(vertex.Normal.X, vertex.Normal.Y, vertex.Normal.Z);
+        Math::Vector3 position = Math::Vector3::Zero;
+        Math::Vector3 normal = Math::Vector3::Zero;
+        float totalWeight = 0.0f;
+        for (uint32_t influenceIndex = 0; influenceIndex < 4; ++influenceIndex)
+        {
+            const float weight = vertex.JointWeights[influenceIndex];
+            const uint32_t jointIndex = vertex.JointIndices[influenceIndex];
+            if (!std::isfinite(weight) || weight <= 0.0f || jointIndex >= bonePalette.size() ||
+                !IsFiniteMatrix(bonePalette[jointIndex]))
+            {
+                continue;
+            }
+            const Math::Matrix4x4& palette = bonePalette[jointIndex];
+            position += Math::MatrixUtils::TransformPointRowVector(palette, sourcePosition) * weight;
+            const Math::Matrix4x4 normalMatrix = Math::MatrixUtils::CreateNormalMatrix(palette);
+            normal += Math::MatrixUtils::TransformVectorRowVector(normalMatrix, sourceNormal) * weight;
+            totalWeight += weight;
+        }
+        if (totalWeight <= Math::Constants::EPSILON)
+        {
+            return {sourcePosition, sourceNormal};
+        }
+        position /= totalWeight;
+        normal /= totalWeight;
+        if (normal.LengthSquared() > Math::Constants::EPSILON)
+        {
+            normal.Normalize();
+        }
+        return {position, normal};
+    }
+} // namespace NorvesLib::Core::Animation::LegacyPoseOracle

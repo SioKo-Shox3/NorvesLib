@@ -24,3 +24,9 @@ G2統合: main 573d7176との意味上の衝突修正・2回のレビュー・�
 run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.exe、RenderResourcesDomainContractTest.exe、JobSystemShutdownTest.exeのビルド成功を確認。CookedMeshTestは追加テスト1行の局所別名V0がスコープ外で停止したため、完全修飾名へ修正した。実ヘッダの名前解決をg++で確認し、wire契約2件も通過した。
 
 統合後の全件CPU実行・merged CLI smoke・Game buildは未実行。run95全体は失敗であり、成功とは扱わない。作者のWindows必須解除と変更ごとのCI禁止に従い、テストの名前修正だけで全CIは回し直さない。G2実装の受入れはc1690c/run93、統合は上述の範囲を証拠として残す。GPU/DCC/実資産の見た目は引き続き別途。
+
+## G3 GR12の姿勢評価（2026-10-07）
+
+骨格の親優先順・bind/rest、クリップの検証と疎なチャンネル索引、メッシュの関節別境界を資産設定時に準備する経路を追加した。LocalPose、再利用scratch、FK・palette・関節モデル行列の公開経路を用意し、既存Samplerは互換wrapper、Componentは準備済みcontextを再利用する。キー探索は二分探索。既定の境界は影響を切り捨てず、浮動小数の範囲外などでは頂点の正確な評価へ戻る。
+
+旧legacy/split実装をテスト用oracleとして保持し、姿勢出力・不正入力・bounds包含・1000回の作業配列再利用・split profile 1/2/3・52関節/6万三角形相当の計測を既存テストへ追加。クラウドのキー探索単体テストは通過。実Coreをリンクした姿勢テストと計測は未実行であり、GR12は検証中。Windows依存の全体をクラウド用に書き換えず、ロードマップ単位のCPU検証としてまとめる。

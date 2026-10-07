@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Animation/SkeletalPoseBuilder.h"
 
 #include "Animation/SkeletalAnimationSampler.h"
 #include "Animation/SkeletalAssetResource.h"
@@ -62,6 +63,8 @@ namespace NorvesLib::Core::Component
         // dirtyな姿勢だけ評価する。成功した再評価ごとにserialを進める。
         // 同じResourceの内容を直接編集した場合はSetSkeletalAssetで再設定して無効化する。
         [[nodiscard]] bool EvaluatePose();
+        [[nodiscard]] bool SetPoseBoundsSettings(const Animation::PoseBoundsSettings& settings);
+        const Animation::PoseBoundsSettings& GetPoseBoundsSettings() const noexcept { return m_PoseBoundsSettings; }
         uint64_t GetPoseSerial() const { return m_PoseSerial; }
         int32_t FindJointIndex(Identity name) const;
         // 自動評価しない。未評価/dirty/無効資産/範囲外はfalseで出力を変更しない。
@@ -83,6 +86,9 @@ namespace NorvesLib::Core::Component
         Math::Matrix4x4 m_MeshNodeGlobalTransform;
         bool m_bMeshNodeTransformOverridden = false;
         Animation::SkeletalPoseSnapshot m_Pose;
+        Animation::SkeletalPoseContext m_PoseContext;
+        Animation::PoseScratch m_PoseScratch;
+        Animation::PoseBoundsSettings m_PoseBoundsSettings;
         uint64_t m_PoseSerial = 0;
         Container::TWeakPtr<SkinnedMeshResource> m_EvaluatedMesh;
         Container::TWeakPtr<SkeletonResource> m_EvaluatedSkeleton;

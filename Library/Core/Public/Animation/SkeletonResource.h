@@ -6,6 +6,7 @@
 #include "Object/Resource.h"
 #include "Resource/SkeletalGltfData.h"
 #include "Animation/SkeletalRestPose.h"
+#include "Animation/SkeletalPoseRuntime.h"
 
 namespace NorvesLib::Core::Skeletal
 {
@@ -43,7 +44,12 @@ namespace NorvesLib::Core
         // 空名/未発見は-1、重複名は先頭を返す。SetJointsで索引を再構築する。
         int32_t FindJointIndex(Identity name) const;
 
+        const Animation::SkeletonPoseRuntime& GetPoseRuntime() const noexcept { return m_PoseRuntime; }
+        uint64_t GetPoseRevision() const noexcept { return m_PoseRevision; }
+
     private:
+        Animation::SkeletonPoseRuntime m_PoseRuntime;
+        uint64_t m_PoseRevision = 0;
       Container::TSharedPtr<const Skeletal::SkeletonV1Data> m_SplitSkeleton;
       bool m_bSplitV1 = false;
       Container::VariableArray<Skeletal::SkeletalJoint> m_Joints;
