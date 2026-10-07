@@ -10,6 +10,7 @@
 #include "Rendering/ShaderManager.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VirtualShadowMapPages.h"
+#include "Rendering/VirtualShadowMapRaster.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -60,6 +61,7 @@ namespace NorvesLib::Core::Rendering
         m_Stats.reset();
         m_DirtyList.reset();
         m_Pages.reset();
+        m_RasterReporter.reset();
         for (StatsSlot& slot : m_StatsSlots)
         {
             slot = StatsSlot{};
@@ -102,6 +104,8 @@ namespace NorvesLib::Core::Rendering
             m_bInitialized = true;
             return true;
         }
+
+        m_RasterReporter = Container::MakeUnique<VirtualShadowMapRasterStatsReporter>();
 
         const uint64_t poolBytes = VirtualShadowMap::PoolBytes(plan.Pages);
         const uint64_t freeListBytes = VirtualShadowMap::FreeListBytes(plan.Pages);
@@ -269,6 +273,13 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         slot.bPending = false;
+        // 展開の統計（投影物を描かない間は 0 のままで、何も出さない）
+        if (m_RasterReporter)
+        {
+            m_RasterReporter->Report(slot.Mapped[VirtualShadowMap::StatRasterChunks],
+                                     slot.Mapped[VirtualShadowMap::StatRasterInstances],
+                                     slot.Mapped[VirtualShadowMap::StatRasterOverflow]);
+        }
         const uint32_t stats[4] = {slot.Mapped[VirtualShadowMap::StatRequested],
                                    slot.Mapped[VirtualShadowMap::StatAllocated],
                                    slot.Mapped[VirtualShadowMap::StatOverflow],

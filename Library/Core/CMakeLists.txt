@@ -159,6 +159,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/ShadowProbePass.cpp
     Private/Rendering/VirtualShadowMapPass.cpp
     Private/Rendering/VirtualShadowMapPages.cpp
+    Private/Rendering/VirtualShadowMapRaster.cpp
     Private/Rendering/VirtualShadowMapClipmap.cpp
     Private/Rendering/VisibilityRasterPass.cpp
     Private/Rendering/VisibilitySwRaster.cpp
@@ -413,6 +414,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/ShadowProbePass.h
     Public/Rendering/VirtualShadowMapPass.h
     Public/Rendering/VirtualShadowMapPages.h
+    Public/Rendering/VirtualShadowMapRaster.h
     Public/Rendering/ShadowMethod.h
     Public/Rendering/VirtualShadowMapClipmap.h
     Public/Rendering/VisibilityRasterPass.h

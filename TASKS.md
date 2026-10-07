@@ -1220,7 +1220,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §2「VSM の物理ページは、UE と同じくソフトウェアのページ表と物理ページのプール（sparse ではない）」、§4.1 の予算）。物理プールを画像でなく storage buffer にするのは、R32_UINT の画像のアトミックの実績がこのエンジンに無く、buffer の 32bit の `atomicMin` は追加の機能なしで使えるため。危険地帯（メモリ・描画パス）。
 
 ## VTG8-VSM-MARK: 深度から要るページに印を付け、物理ページを割り当てて消す
-- status: done
+- status: blocked
 - done-when: `VirtualShadowMapPass` に印付け・割り当て・消去の計算を足す（キャッシュはまだ無く、毎フレームすべて作り直す）。(1) 印付け: `GBuffer.Depth` の空でない各画素からワールドの位置を戻し、VTG8-VSM-CLIPMAP の選び方で段とページを求めて要求のビットを立てる。照明の PCF の核（最初は半径 2 texel。VTG8-VSM-SAMPLE・PCSS で広げたらここも合わせる）がページの境界をまたぐときは隣のページにも印を付ける。(2) 割り当て: 前フレームの割り当てをすべて空きへ戻し、要求のページへ空きから物理ページを割り当て、ページの表に「割り当て済み・dirty」を書く。空きが尽きたら溢れとして数え、そのページは割り当てない。割り当ては同じフレームの GPU の中で行う（読み戻しの遅れで新しいページの影が数フレーム欠けると、それ自体がちらつきになる）。(3) 消去: dirty のページの物理ページを 1.0 のビットで埋める（間接 dispatch）。(4) 統計を数フレーム遅れで読み戻し、値が変わったとき（または 60 フレームごと）に `VSM_PAGES requested=<n> allocated=<n> overflow=<n> levels_used=<mask>` を出す。GPU の区間の名前は `VsmMark`・`VsmAllocate`・`VsmClear`。(5) GPU のテスト `VirtualShadowMapVulkanTest`（`RHITextureUpdateVulkanTest` の束の MEMBER。Vulkan が無ければ 125）で、合成した深度（既知の平面）とカメラから印が付き割り当てられるページの集合が CPU で求めた集合と一致すること、プールを小さくしたとき溢れの数が正しく、割り当てた物理ページの番号が重ならないこと、消去の後の物理ページが 1.0 のビットであることを確かめる。変異（隣のページへの印を外す・空きの数の減算を外す）で落ちることを記録する。RenderGraphCompileTest で、vsm の構成で印付け → 割り当て → 消去の順とその間のバリアを確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`
@@ -1229,7 +1229,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「深度から必要なページに印を付け、印の付いたページだけを物理プールへ割り当てて描く」）。前フレームのページの持ち越しは VTG8-VSM-CACHE。危険地帯（描画パス）。
 
 ## VTG8-VSM-RASTER: 影の塊 × ページの単位で、物理ページへ深度を描く仕組みを作る
-- status: todo
+- status: done
 - done-when: VSM の物理ページへ深度を描く仕組みを作る（投影物はまだテストの合成のものだけ）。(1) 展開（計算）: 塊（三角形 128 個以下。ワールドの境界と頂点・インデックスの読み方を持つ記録。形はビジビリティバッファの記録にそろえ、`VisLoadTrianglePositions` と同じ BDA の頂点の読み方を推奨）ごと・段ごとに、塊の境界のライト空間の矩形が覆うページのうち割り当て済みで dirty のものを数え、連続した範囲を確保して（段・ページ・物理ページ・塊の番号）を書き、塊ごとの間接描画（頂点数 = 三角形の数 × 3、instanceCount = ページの数、firstInstance = 範囲の先頭）を作る。ページの表は展開で引き、描画は物理ページへ直接書く。(2) 描画: 128×128 のビューポート（色・深度は書かない。RHI に添付の無いレンダーパスが無ければ 128×128 の使い捨ての添付で受ける）。頂点シェーダーは塊の頂点を読み、ライト空間の位置をそのページの局所座標の NDC へ写し（ページの外はビューポートの外になり、ラスタライザが捨てる）、深度 [0,1] を渡す。断片シェーダーは物理ページの texel へ `atomicMin(floatBitsToUint(depth))` を書く。背面は省かない。(3) GPU の区間の名前は `VsmExpand`・`VsmDraw`。展開の容量が溢れたら数えて `VSM_RASTER chunks=<n> instances=<n> overflow=<n>` に出す（60 フレームごと、または変わったとき）。(4) `VirtualShadowMapVulkanTest` に場面を足す: 合成した地面の深度の上に既知の四角形の投影物（2 三角形）を置き、印付け → 割り当て → 消去 → 展開 → 描画の後に物理プールを読み戻し、四角形の影の範囲の texel が四角形の深度、範囲の外が 1.0 であること（縁の 1 texel は許す）、ページの境界をまたぐ四角形が両方のページに切れ目なく描かれること、16 ページ以上をまたぐ大きな三角形も描かれることを確かめる。変異（局所座標の 1 texel のずれ・`atomicMin` を代入にする）で落ちることを記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`

@@ -8,6 +8,12 @@
 //   ケース C（核が境界をまたぐ画素だけ）: 隣のページへの印が、画素の位置のページだけの集合より多いこと。
 //   ケース D（深度なし）: 印付けをせず、要求も割り当ても 0 で、物理ページに触らない。
 //   ケース E（同じ資源での 2 フレーム目）: 前フレームの割り当てを引き継がず、2 フレーム目の集合だけが残ること（毎フレームすべて作り直す）。
+//   ケース F（印付け → 割り当て → 消去 → 展開 → 描画）: 合成した地面の深度の上に、ページの境界をまたぐ四角形（傾いた平面）と、
+//     一部が重なる遠い四角形（ローカルの頂点 + 変換）を置き、物理プールの全 texel が形の和の参照（覆われた texel は手前の深度、ほかは 1.0。
+//     形の縁から半 texel 未満の texel は除く）と一致すること。展開の統計・間接描画の引数・インスタンスの整合も確かめる。
+//   ケース G（ページの表を直接書く）: 段 0 の 24 ページ（うち 1 ページは dirty でなく、触られない）と段 1 の 4 ページに、縁がページの中を斜めに通る
+//     大きな三角形（24 ページ以上をまたぐ）と、その縁をまたぐ遠い四角形を描き、全 texel が参照と一致すること。
+//     ケース H: インスタンスの容量が 1 足りないとき、描かずに溢れとして数え（物理ページは触らない）、ちょうど足りるときは描くこと。
 // 参照は、段の境界・ページの境界・影の最大距離に近い曖昧な画素を深度の画像から除いて作るので、GPU の単精度との差で揺れない。
 // どのケースも Vulkan の validation error が 0 件。Vulkan デバイスが無い環境では 125（スキップ）を返す。
 #include "Container/Containers.h"
@@ -18,6 +24,8 @@
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPages.h"
 #include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/VirtualShadowMapRaster.h"
+#include "Rendering/VisibilityBuffer.h"
 
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -686,6 +694,863 @@ namespace
         Expect(badWords == 0u, "割り当てたページは 1.0 のビットで埋まり、割り当てなかったページは触られていてはならない");
     }
 
+    // ========================================
+    // 影の塊の展開・描画（VirtualShadowMapRaster）
+    // ========================================
+
+    // 影の投影物の形。ライト空間（x = 右、y = 上）の矩形か三角形と、ライト空間の深度の平面
+    struct Shape
+    {
+        bool bRect = false;
+        double MinX = 0.0;
+        double MaxX = 0.0;
+        double MinY = 0.0;
+        double MaxY = 0.0;
+        double Vertex[3][2] = {};
+        // 深度の平面: ライト空間の深度 = PlaneBase + PlaneX * x + PlaneY * y
+        double PlaneBase = 0.0;
+        double PlaneX = 0.0;
+        double PlaneY = 0.0;
+        // 頂点をローカル空間で持ち、ワールドへ拡大（2 倍）・平行移動する変換を記録に持たせる
+        bool bLocalTransform = false;
+    };
+
+    void SetPlane(Shape& shape, double refX, double refY, double refDepth, double slopeX, double slopeY)
+    {
+        shape.PlaneX = slopeX;
+        shape.PlaneY = slopeY;
+        shape.PlaneBase = refDepth - slopeX * refX - slopeY * refY;
+    }
+
+    Shape MakeRect(double minX, double maxX, double minY, double maxY)
+    {
+        Shape shape;
+        shape.bRect = true;
+        shape.MinX = minX;
+        shape.MaxX = maxX;
+        shape.MinY = minY;
+        shape.MaxY = maxY;
+        return shape;
+    }
+
+    Shape MakeTriangle(double x0, double y0, double x1, double y1, double x2, double y2)
+    {
+        Shape shape;
+        shape.Vertex[0][0] = x0;
+        shape.Vertex[0][1] = y0;
+        shape.Vertex[1][0] = x1;
+        shape.Vertex[1][1] = y1;
+        shape.Vertex[2][0] = x2;
+        shape.Vertex[2][1] = y2;
+        return shape;
+    }
+
+    double ShapePlaneDepth(const Shape& shape, double x, double y)
+    {
+        return shape.PlaneBase + shape.PlaneX * x + shape.PlaneY * y;
+    }
+
+    // 点から形の縁までの符号つきの距離（内側が正）
+    double ShapeSignedDistance(const Shape& shape, double x, double y)
+    {
+        if (shape.bRect)
+        {
+            return std::min(std::min(x - shape.MinX, shape.MaxX - x), std::min(y - shape.MinY, shape.MaxY - y));
+        }
+        const double area = (shape.Vertex[1][0] - shape.Vertex[0][0]) * (shape.Vertex[2][1] - shape.Vertex[0][1]) -
+                            (shape.Vertex[1][1] - shape.Vertex[0][1]) * (shape.Vertex[2][0] - shape.Vertex[0][0]);
+        const double orientation = area >= 0.0 ? 1.0 : -1.0;
+        double distance = 1.0e300;
+        for (uint32_t edge = 0; edge < 3u; ++edge)
+        {
+            const double ax = shape.Vertex[edge][0];
+            const double ay = shape.Vertex[edge][1];
+            const double bx = shape.Vertex[(edge + 1u) % 3u][0];
+            const double by = shape.Vertex[(edge + 1u) % 3u][1];
+            const double length = std::sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+            const double cross = (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+            distance = std::min(distance, orientation * cross / length);
+        }
+        return distance;
+    }
+
+    Math::Vector3 LightToWorld(const Scene& scene, double lightX, double lightY, double lightDepth)
+    {
+        const VirtualShadowMapClipmap& clipmap = scene.Clipmap;
+        return Math::Vector3(
+            static_cast<float>(clipmap.LightRight.x * lightX + clipmap.LightUp.x * lightY + clipmap.Direction.x * lightDepth),
+            static_cast<float>(clipmap.LightRight.y * lightX + clipmap.LightUp.y * lightY + clipmap.Direction.y * lightDepth),
+            static_cast<float>(clipmap.LightRight.z * lightX + clipmap.LightUp.z * lightY + clipmap.Direction.z * lightDepth));
+    }
+
+    // ローカル空間の頂点にかけるワールドへの変換（2 倍して平行移動）
+    constexpr float LocalScale = 2.0f;
+    constexpr float LocalOffset[3] = {1.5f, -2.5f, 0.75f};
+
+    struct ChunkGeometry
+    {
+        // 頂点は 1 つ 8 個の float（位置 3・法線 3・UV 2）。全部の塊を 1 本の頂点・インデックスの列へ詰める
+        Container::VariableArray<float> Vertices;
+        Container::VariableArray<uint32_t> Indices;
+        Container::VariableArray<VsmShadowChunk> Chunks;
+    };
+
+    // 形から塊の記録（アドレス以外）と頂点・インデックスを作る。塊ごとに VertexBase・FirstIndex を進めて、
+    // 頂点の読み方（インデックス + 頂点の基点、インデックスの先頭）も確かめる
+    ChunkGeometry BuildChunks(const Scene& scene, const Container::VariableArray<Shape>& shapes)
+    {
+        ChunkGeometry geometry;
+        // 先頭に 1 つ、読まれない余りのインデックスを置く（FirstIndex が 3 の倍数でない塊を作る）
+        geometry.Indices.push_back(0u);
+        for (const Shape& shape : shapes)
+        {
+            double corners[4][2] = {};
+            uint32_t cornerCount = 0;
+            if (shape.bRect)
+            {
+                const double rect[4][2] = {{shape.MinX, shape.MinY}, {shape.MaxX, shape.MinY}, {shape.MaxX, shape.MaxY}, {shape.MinX, shape.MaxY}};
+                std::memcpy(corners, rect, sizeof(rect));
+                cornerCount = 4u;
+            }
+            else
+            {
+                std::memcpy(corners, shape.Vertex, sizeof(shape.Vertex));
+                cornerCount = 3u;
+            }
+
+            VsmShadowChunk chunk;
+            chunk.Record.Kind = static_cast<uint32_t>(VisibilityBuffer::RecordKind::ProceduralChunk);
+            chunk.Record.TriangleCount = shape.bRect ? 2u : 1u;
+            chunk.Record.FirstIndex = static_cast<uint32_t>(geometry.Indices.size());
+            chunk.Record.VertexBase = static_cast<uint32_t>(geometry.Vertices.size() / 8u);
+            if (shape.bLocalTransform)
+            {
+                chunk.World[0] = LocalScale;
+                chunk.World[3] = LocalOffset[0];
+                chunk.World[5] = LocalScale;
+                chunk.World[7] = LocalOffset[1];
+                chunk.World[10] = LocalScale;
+                chunk.World[11] = LocalOffset[2];
+            }
+
+            float boundsMin[3] = {1.0e30f, 1.0e30f, 1.0e30f};
+            float boundsMax[3] = {-1.0e30f, -1.0e30f, -1.0e30f};
+            for (uint32_t corner = 0; corner < cornerCount; ++corner)
+            {
+                const Math::Vector3 world = LightToWorld(scene, corners[corner][0], corners[corner][1], ShapePlaneDepth(shape, corners[corner][0], corners[corner][1]));
+                const float worldXyz[3] = {world.x, world.y, world.z};
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    boundsMin[axis] = std::min(boundsMin[axis], worldXyz[axis]);
+                    boundsMax[axis] = std::max(boundsMax[axis], worldXyz[axis]);
+                    const float local = shape.bLocalTransform ? (worldXyz[axis] - LocalOffset[axis]) / LocalScale : worldXyz[axis];
+                    geometry.Vertices.push_back(local);
+                }
+                // 法線と UV は読まない
+                for (uint32_t pad = 0; pad < 5u; ++pad)
+                {
+                    geometry.Vertices.push_back(0.0f);
+                }
+            }
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                chunk.BoundsMin[axis] = boundsMin[axis];
+                chunk.BoundsMax[axis] = boundsMax[axis];
+            }
+            const uint32_t localIndices[6] = {0u, 1u, 2u, 0u, 2u, 3u};
+            for (uint32_t index = 0; index < chunk.Record.TriangleCount * 3u; ++index)
+            {
+                geometry.Indices.push_back(localIndices[index]);
+            }
+            geometry.Chunks.push_back(chunk);
+        }
+        return geometry;
+    }
+
+    struct RasterBuffers
+    {
+        BufferPtr Vertices;
+        BufferPtr Indices;
+        BufferPtr Chunks;
+        BufferPtr Instances;
+        BufferPtr Draws;
+        uint32_t ChunkCount = 0;
+        uint32_t InstanceCapacity = 0;
+    };
+
+    bool CreateRasterBuffers(const DevicePtr& device, ChunkGeometry& geometry, uint32_t instanceCapacity, RasterBuffers& out)
+    {
+        const uint64_t vertexBytes = geometry.Vertices.size() * sizeof(float);
+        const uint64_t indexBytes = geometry.Indices.size() * sizeof(uint32_t);
+        out.Vertices = device->CreateBuffer(
+            BufferDesc(vertexBytes, ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress, true, "VsmTestVertices"));
+        out.Indices = device->CreateBuffer(
+            BufferDesc(indexBytes, ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress, true, "VsmTestIndices"));
+        if (!out.Vertices || !out.Indices || out.Vertices->GetDeviceAddress() == 0u || out.Indices->GetDeviceAddress() == 0u)
+        {
+            return false;
+        }
+        out.Vertices->Update(geometry.Vertices.data(), vertexBytes);
+        out.Indices->Update(geometry.Indices.data(), indexBytes);
+        for (VsmShadowChunk& chunk : geometry.Chunks)
+        {
+            chunk.Record.VertexAddress = out.Vertices->GetDeviceAddress();
+            chunk.Record.IndexAddress = out.Indices->GetDeviceAddress();
+        }
+        out.ChunkCount = static_cast<uint32_t>(geometry.Chunks.size());
+        out.InstanceCapacity = instanceCapacity;
+        const uint64_t chunkBytes = VirtualShadowMap::RasterChunkBytes(out.ChunkCount);
+        out.Chunks = device->CreateBuffer(BufferDesc(chunkBytes, VirtualShadowMap::RasterChunkUsage(), true, "VsmTestChunks"));
+        out.Instances = device->CreateBuffer(
+            BufferDesc(VirtualShadowMap::RasterInstanceBytes(instanceCapacity), VirtualShadowMap::RasterInstanceUsage(), true, "VsmTestInstances"));
+        out.Draws = device->CreateBuffer(
+            BufferDesc(VirtualShadowMap::RasterDrawBytes(out.ChunkCount), VirtualShadowMap::RasterDrawUsage(), true, "VsmTestDraws"));
+        if (!out.Chunks || !out.Instances || !out.Draws)
+        {
+            return false;
+        }
+        out.Chunks->Update(geometry.Chunks.data(), geometry.Chunks.size() * sizeof(VsmShadowChunk));
+        // インスタンスと引数は、展開が書いた分だけが意味を持つことを確かめるため、見張りで埋める
+        for (const BufferPtr& buffer : {out.Instances, out.Draws})
+        {
+            uint32_t* mapped = static_cast<uint32_t*>(buffer->Map(0u, buffer->GetSize()));
+            if (mapped == nullptr)
+            {
+                return false;
+            }
+            for (uint64_t word = 0; word < buffer->GetSize() / sizeof(uint32_t); ++word)
+            {
+                mapped[word] = GarbageWord;
+            }
+            buffer->Unmap();
+        }
+        return true;
+    }
+
+    void FillWords(const BufferPtr& buffer, uint32_t value)
+    {
+        uint32_t* mapped = static_cast<uint32_t*>(buffer->Map(0u, buffer->GetSize()));
+        for (uint64_t word = 0; mapped != nullptr && word < buffer->GetSize() / sizeof(uint32_t); ++word)
+        {
+            mapped[word] = value;
+        }
+        if (mapped != nullptr)
+        {
+            buffer->Unmap();
+        }
+    }
+
+    struct RasterReadback
+    {
+        Container::VariableArray<uint32_t> Pool;
+        Container::VariableArray<uint32_t> PageTable;
+        Container::VariableArray<uint32_t> Stats;
+        Container::VariableArray<uint32_t> Draws;
+        Container::VariableArray<uint32_t> Instances;
+        bool bPagesRecorded = false;
+        bool bRasterRecorded = false;
+        uint32_t DrawCount = 0;
+    };
+
+    // pages が null でなければ、印付け → 割り当て → 消去（深度 depth）の後に、展開 → 描画を同じコマンドリストで記録する。
+    // null なら、ホストが書いたページの表・物理ページへ展開 → 描画だけを記録する
+    bool RunRaster(const DevicePtr& device,
+                   VirtualShadowMapPages* pages,
+                   VirtualShadowMapRaster& raster,
+                   const Scene& scene,
+                   const Resources& resources,
+                   const RasterBuffers& rasterBuffers,
+                   const TexturePtr& depth,
+                   uint64_t frameSerial,
+                   RasterReadback& readback)
+    {
+        CommandListPtr commandList = device->CreateCommandList();
+        if (!commandList)
+        {
+            std::cerr << TestName << " コマンドリストを作れませんでした" << std::endl;
+            return false;
+        }
+        const BufferPtr buffers[] = {resources.Pool,      resources.PageTable, resources.RequestBits, resources.FreeList,
+                                     resources.Stats,     resources.DirtyList, rasterBuffers.Chunks,   rasterBuffers.Instances,
+                                     rasterBuffers.Draws};
+        if (pages != nullptr)
+        {
+            pages->BeginFrame(0, frameSerial);
+        }
+        raster.BeginFrame(0, frameSerial);
+        commandList->Begin();
+        for (const BufferPtr& buffer : buffers)
+        {
+            commandList->BufferBarrier(buffer, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, buffer->GetSize());
+        }
+        if (pages != nullptr)
+        {
+            VirtualShadowMapPagesDispatch pagesDispatch;
+            pagesDispatch.PoolPages = resources.PoolPages;
+            pagesDispatch.Pool = resources.Pool;
+            pagesDispatch.PageTable = resources.PageTable;
+            pagesDispatch.RequestBits = resources.RequestBits;
+            pagesDispatch.FreeList = resources.FreeList;
+            pagesDispatch.Stats = resources.Stats;
+            pagesDispatch.DirtyList = resources.DirtyList;
+            pagesDispatch.Depth = depth;
+            pagesDispatch.Clipmap = &scene.Clipmap;
+            std::memcpy(pagesDispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(pagesDispatch.InverseViewProjection));
+            std::memcpy(pagesDispatch.CameraPosition, scene.CameraPosition, sizeof(pagesDispatch.CameraPosition));
+            pagesDispatch.FovYDegrees = scene.Camera.FieldOfView;
+            readback.bPagesRecorded = pages->Record(commandList.get(), pagesDispatch);
+        }
+        VirtualShadowMapRasterDispatch rasterDispatch;
+        rasterDispatch.Clipmap = &scene.Clipmap;
+        rasterDispatch.PoolPages = resources.PoolPages;
+        rasterDispatch.Pool = resources.Pool;
+        rasterDispatch.PageTable = resources.PageTable;
+        rasterDispatch.Stats = resources.Stats;
+        rasterDispatch.Chunks = rasterBuffers.Chunks;
+        rasterDispatch.ChunkCount = rasterBuffers.ChunkCount;
+        rasterDispatch.Instances = rasterBuffers.Instances;
+        rasterDispatch.Draws = rasterBuffers.Draws;
+        readback.bRasterRecorded = raster.Record(commandList.get(), rasterDispatch);
+        readback.DrawCount = raster.GetLastDrawCount();
+        for (const BufferPtr& buffer : buffers)
+        {
+            commandList->BufferBarrier(buffer, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, buffer->GetSize());
+        }
+        commandList->End();
+        commandList->Submit(true);
+        device->WaitIdle();
+
+        return ReadAll(resources.Pool, readback.Pool) && ReadAll(resources.PageTable, readback.PageTable) &&
+               ReadAll(resources.Stats, readback.Stats) && ReadAll(rasterBuffers.Draws, readback.Draws) &&
+               ReadAll(rasterBuffers.Instances, readback.Instances);
+    }
+
+    struct PageInfo
+    {
+        uint32_t Level = 0;
+        int64_t AbsX = 0;
+        int64_t AbsY = 0;
+        uint32_t Physical = 0;
+        bool bDirty = false;
+    };
+
+    // ページの表の割り当て済みの欄から、段・絶対のページ・物理ページを取り出す
+    Container::VariableArray<PageInfo> DecodePages(const Scene& scene, const Container::VariableArray<uint32_t>& pageTable)
+    {
+        Container::VariableArray<PageInfo> pages;
+        const int64_t count = static_cast<int64_t>(VirtualShadowMap::TABLE_DIMENSION);
+        for (uint32_t index = 0; index < pageTable.size(); ++index)
+        {
+            const uint32_t entry = pageTable[index];
+            if ((entry & VirtualShadowMap::PAGE_ENTRY_ALLOCATED) == 0u)
+            {
+                continue;
+            }
+            PageInfo page;
+            page.Level = index / VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+            const uint32_t address = index % VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+            const int64_t addressY = address / VirtualShadowMap::TABLE_DIMENSION;
+            const int64_t addressX = address % VirtualShadowMap::TABLE_DIMENSION;
+            const VirtualShadowMapClipmapLevel& levelData = scene.Clipmap.Levels[page.Level];
+            page.AbsX = levelData.OriginPageX + (((addressX - levelData.OriginPageX) % count) + count) % count;
+            page.AbsY = levelData.OriginPageY + (((addressY - levelData.OriginPageY) % count) + count) % count;
+            page.Physical = entry & VirtualShadowMap::PAGE_INDEX_MASK;
+            page.bDirty = (entry & VirtualShadowMap::PAGE_ENTRY_DIRTY) != 0u;
+            pages.push_back(page);
+        }
+        return pages;
+    }
+
+    // 展開の参照: 塊のワールドの境界のライト空間の矩形（シェーダーと同じ、中心と半幅の式）が覆うページのうち、割り当て済みで dirty のものの数
+    uint32_t CountExpectedInstances(const Scene& scene, const VsmShadowChunk& chunk, const Container::VariableArray<PageInfo>& pages)
+    {
+        const VirtualShadowMapClipmap& clipmap = scene.Clipmap;
+        const double right[3] = {clipmap.LightRight.x, clipmap.LightRight.y, clipmap.LightRight.z};
+        const double up[3] = {clipmap.LightUp.x, clipmap.LightUp.y, clipmap.LightUp.z};
+        double centerRight = 0.0;
+        double centerUp = 0.0;
+        double extentRight = 0.0;
+        double extentUp = 0.0;
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            const double center = 0.5 * (static_cast<double>(chunk.BoundsMin[axis]) + static_cast<double>(chunk.BoundsMax[axis]));
+            const double extent = 0.5 * (static_cast<double>(chunk.BoundsMax[axis]) - static_cast<double>(chunk.BoundsMin[axis]));
+            centerRight += center * right[axis];
+            centerUp += center * up[axis];
+            extentRight += extent * std::abs(right[axis]);
+            extentUp += extent * std::abs(up[axis]);
+        }
+        uint32_t count = 0;
+        for (const PageInfo& page : pages)
+        {
+            if (!page.bDirty)
+            {
+                continue;
+            }
+            const double pageMeters = static_cast<double>(clipmap.Levels[page.Level].PageMeters);
+            const int64_t minX = static_cast<int64_t>(std::floor((centerRight - extentRight) / pageMeters));
+            const int64_t maxX = static_cast<int64_t>(std::floor((centerRight + extentRight) / pageMeters));
+            const int64_t minY = static_cast<int64_t>(std::floor((centerUp - extentUp) / pageMeters));
+            const int64_t maxY = static_cast<int64_t>(std::floor((centerUp + extentUp) / pageMeters));
+            if (page.AbsX >= minX && page.AbsX <= maxX && page.AbsY >= minY && page.AbsY <= maxY)
+            {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    float WordToFloat(uint32_t word)
+    {
+        float value = 0.0f;
+        std::memcpy(&value, &word, sizeof(value));
+        return value;
+    }
+
+    struct PoolCheck
+    {
+        uint32_t Mismatches = 0;
+        uint32_t Compared = 0;
+        uint32_t Covered = 0;
+        uint32_t Skipped = 0;
+        // 割り当て済みのページごとの、形に覆われた texel の数（pages の並びと同じ）
+        Container::VariableArray<uint32_t> CoveredPerPage;
+    };
+
+    // 物理ページの全 texel を、形の和から求めた参照（覆われた texel は手前の深度、ほかは 1.0。dirty でないページは初期値のまま）と比べる。
+    // 形の縁から texel の中心までが半 texel 未満の texel は、丸めで結果が変わりうるので比べない
+    PoolCheck CheckPool(const char* label,
+                        const Scene& scene,
+                        const Container::VariableArray<Shape>& shapes,
+                        const Container::VariableArray<PageInfo>& pages,
+                        const Container::VariableArray<uint32_t>& pool,
+                        uint32_t untouchedWord)
+    {
+        constexpr double DepthTolerance = 1.0e-5;
+        PoolCheck check;
+        const double depthCenter = scene.Clipmap.DepthCenter;
+        const double depthScale = 0.5 / static_cast<double>(scene.Settings.DepthRangeMeters);
+        uint32_t reported = 0;
+        for (const PageInfo& page : pages)
+        {
+            uint32_t coveredInPage = 0;
+            const double texelMeters = static_cast<double>(scene.Clipmap.Levels[page.Level].TexelMeters);
+            const double margin = 0.5 * texelMeters;
+            for (uint32_t row = 0; row < VirtualShadowMap::PAGE_RESOLUTION; ++row)
+            {
+                for (uint32_t column = 0; column < VirtualShadowMap::PAGE_RESOLUTION; ++column)
+                {
+                    const uint32_t actualWord =
+                        pool[static_cast<size_t>(page.Physical) * VirtualShadowMap::PAGE_WORDS + row * VirtualShadowMap::PAGE_RESOLUTION + column];
+                    const double x = (static_cast<double>(page.AbsX) * VirtualShadowMap::PAGE_RESOLUTION + column + 0.5) * texelMeters;
+                    const double y = (static_cast<double>(page.AbsY) * VirtualShadowMap::PAGE_RESOLUTION + row + 0.5) * texelMeters;
+
+                    bool bAmbiguous = false;
+                    bool bCovered = false;
+                    double expectedDepth = 1.0;
+                    if (page.bDirty)
+                    {
+                        for (const Shape& shape : shapes)
+                        {
+                            const double distance = ShapeSignedDistance(shape, x, y);
+                            if (std::abs(distance) < margin)
+                            {
+                                bAmbiguous = true;
+                            }
+                            else if (distance > 0.0)
+                            {
+                                const double shapeDepth = 0.5 + (ShapePlaneDepth(shape, x, y) - depthCenter) * depthScale;
+                                expectedDepth = bCovered ? std::min(expectedDepth, shapeDepth) : shapeDepth;
+                                bCovered = true;
+                            }
+                        }
+                    }
+                    if (bAmbiguous)
+                    {
+                        ++check.Skipped;
+                        continue;
+                    }
+                    ++check.Compared;
+                    bool bMatch = false;
+                    if (!page.bDirty)
+                    {
+                        bMatch = actualWord == untouchedWord;
+                    }
+                    else if (bCovered)
+                    {
+                        ++check.Covered;
+                        ++coveredInPage;
+                        bMatch = std::abs(static_cast<double>(WordToFloat(actualWord)) - expectedDepth) <= DepthTolerance;
+                    }
+                    else
+                    {
+                        bMatch = actualWord == VirtualShadowMap::EMPTY_DEPTH_BITS;
+                    }
+                    if (!bMatch)
+                    {
+                        ++check.Mismatches;
+                        if (reported < 6u)
+                        {
+                            ++reported;
+                            std::cerr << TestName << " " << label << " texel が参照と違う: 段=" << page.Level << " ページ=(" << page.AbsX << ","
+                                      << page.AbsY << ") texel=(" << column << "," << row << ") 期待=" << (bCovered ? expectedDepth : 1.0)
+                                      << " 実際=" << WordToFloat(actualWord) << std::endl;
+                        }
+                    }
+                }
+            }
+            check.CoveredPerPage.push_back(coveredInPage);
+        }
+        return check;
+    }
+
+    // 展開の統計・間接描画の引数・インスタンスが、割り当て済みで dirty のページと整合していること
+    void CheckExpansion(const char* label,
+                        const Scene& scene,
+                        const ChunkGeometry& geometry,
+                        const Container::VariableArray<PageInfo>& pages,
+                        const RasterReadback& readback,
+                        uint32_t instanceCapacity)
+    {
+        Expect(readback.bRasterRecorded, "展開・描画を記録できなければならない");
+        Expect(readback.DrawCount == geometry.Chunks.size(), "間接描画は塊の数だけ記録しなければならない");
+        uint32_t expectedChunks = 0;
+        uint32_t expectedInstances = 0;
+        uint32_t expectedOverflow = 0;
+        Container::VariableArray<uint32_t> perChunk;
+        for (const VsmShadowChunk& chunk : geometry.Chunks)
+        {
+            perChunk.push_back(CountExpectedInstances(scene, chunk, pages));
+        }
+        // 確保の順は塊の処理の順で決まるので、容量に収まる場合（溢れの無い構成）だけ確保の位置まで確かめる
+        uint32_t totalDemand = 0;
+        for (const uint32_t count : perChunk)
+        {
+            totalDemand += count;
+        }
+        const bool bFits = totalDemand <= instanceCapacity;
+        if (bFits)
+        {
+            for (const uint32_t count : perChunk)
+            {
+                expectedChunks += count != 0u ? 1u : 0u;
+                expectedInstances += count;
+            }
+        }
+        else
+        {
+            // 溢れる構成では、どの塊が先に確保するかは決まらないが、塊が 1 つなら決まる
+            Expect(perChunk.size() == 1u, "溢れの検査は塊が 1 つの構成で行う");
+            expectedOverflow = totalDemand;
+        }
+        Expect(readback.Stats[VirtualShadowMap::StatRasterChunks] == expectedChunks, "統計の描く塊の数が参照と一致しなければならない");
+        Expect(readback.Stats[VirtualShadowMap::StatRasterInstances] == expectedInstances, "統計のインスタンスの数が参照と一致しなければならない");
+        Expect(readback.Stats[VirtualShadowMap::StatRasterOverflow] == expectedOverflow, "統計の溢れの数が参照と一致しなければならない");
+        std::cout << TestName << " " << label << ": 塊=" << geometry.Chunks.size() << " 描く塊=" << readback.Stats[VirtualShadowMap::StatRasterChunks]
+                  << " インスタンス=" << readback.Stats[VirtualShadowMap::StatRasterInstances] << "（参照 " << expectedInstances << "）溢れ="
+                  << readback.Stats[VirtualShadowMap::StatRasterOverflow] << std::endl;
+
+        // 間接描画の引数: 頭 = 確保した数。塊ごと (三角形 × 3, ページの数, 0, 0, 先頭)。範囲が重ならず、容量に収まる
+        if (bFits)
+        {
+            Expect(readback.Draws[0] == expectedInstances, "間接描画の引数の頭（確保の位置）が書いたインスタンスの数でなければならない");
+        }
+        uint32_t usedEnd = 0;
+        Container::VariableArray<uint32_t> covered(instanceCapacity, 0u);
+        for (uint32_t chunkIndex = 0; chunkIndex < geometry.Chunks.size(); ++chunkIndex)
+        {
+            const uint32_t base = VirtualShadowMap::RASTER_DRAWS_HEADER_WORDS + chunkIndex * VirtualShadowMap::RASTER_DRAW_COMMAND_WORDS;
+            const uint32_t indexCount = readback.Draws[base + 0u];
+            const uint32_t instanceCount = readback.Draws[base + 1u];
+            const uint32_t firstIndex = readback.Draws[base + 2u];
+            const uint32_t vertexOffset = readback.Draws[base + 3u];
+            const uint32_t firstInstance = readback.Draws[base + 4u];
+            Expect(indexCount == geometry.Chunks[chunkIndex].Record.TriangleCount * 3u, "間接描画の頂点数は三角形の数 × 3 でなければならない");
+            Expect(firstIndex == 0u && vertexOffset == 0u, "間接描画の firstIndex・vertexOffset は 0 でなければならない");
+            if (!bFits)
+            {
+                Expect(instanceCount == 0u && firstInstance == 0u, "容量を超える塊は instanceCount 0 で描かない");
+                continue;
+            }
+            Expect(instanceCount == perChunk[chunkIndex], "間接描画の instanceCount が塊を描くページの数でなければならない");
+            Expect(static_cast<uint64_t>(firstInstance) + instanceCount <= instanceCapacity, "インスタンスの範囲が容量に収まらなければならない");
+            for (uint32_t slot = 0; slot < instanceCount && firstInstance + slot < instanceCapacity; ++slot)
+            {
+                ++covered[firstInstance + slot];
+                usedEnd = std::max(usedEnd, firstInstance + slot + 1u);
+                // インスタンス: 塊の番号・段 | 物理ページ << 4・絶対のページ。ページの表の割り当て済みで dirty のページのどれかと一致する
+                const uint32_t* instance = &readback.Instances[static_cast<size_t>(firstInstance + slot) * 4u];
+                bool bKnownPage = instance[0] == chunkIndex;
+                bool bFound = false;
+                for (const PageInfo& page : pages)
+                {
+                    if (page.bDirty && page.Level == (instance[1] & 15u) && page.Physical == (instance[1] >> 4u) &&
+                        static_cast<int32_t>(instance[2]) == page.AbsX && static_cast<int32_t>(instance[3]) == page.AbsY)
+                    {
+                        bFound = true;
+                        break;
+                    }
+                }
+                Expect(bKnownPage && bFound, "インスタンスが割り当て済みで dirty のページ（塊の番号・段・物理ページ・絶対のページ）を指さなければならない");
+            }
+        }
+        if (bFits)
+        {
+            bool bTiled = usedEnd == expectedInstances;
+            for (uint32_t slot = 0; slot < usedEnd; ++slot)
+            {
+                bTiled = bTiled && covered[slot] == 1u;
+            }
+            Expect(bTiled, "塊ごとのインスタンスの範囲が、先頭から隙間も重なりも無く並ばなければならない");
+        }
+    }
+
+    // 横に隣り合う 2 ページ（同じ段・同じ行の A と、その右の B）が両方とも参照の集合にある組を探す
+    bool FindAdjacentPages(const Scene& scene,
+                           const Container::VariableArray<uint32_t>& keys,
+                           uint32_t& outLevel,
+                           int64_t& outAbsX,
+                           int64_t& outAbsY)
+    {
+        const int64_t count = static_cast<int64_t>(VirtualShadowMap::TABLE_DIMENSION);
+        for (const uint32_t key : keys)
+        {
+            const uint32_t level = key / VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+            const uint32_t address = key % VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+            const int64_t addressX = address % VirtualShadowMap::TABLE_DIMENSION;
+            const int64_t addressY = address / VirtualShadowMap::TABLE_DIMENSION;
+            const uint32_t rightKey = level * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL +
+                                      static_cast<uint32_t>(addressY) * VirtualShadowMap::TABLE_DIMENSION +
+                                      static_cast<uint32_t>((addressX + 1) % count);
+            if (!std::binary_search(keys.begin(), keys.end(), rightKey))
+            {
+                continue;
+            }
+            const VirtualShadowMapClipmapLevel& levelData = scene.Clipmap.Levels[level];
+            outLevel = level;
+            outAbsX = levelData.OriginPageX + (((addressX - levelData.OriginPageX) % count) + count) % count;
+            outAbsY = levelData.OriginPageY + (((addressY - levelData.OriginPageY) % count) + count) % count;
+            return true;
+        }
+        return false;
+    }
+
+    // ケース F〜I。実行できなければ false
+    bool RunRasterCases(const DevicePtr& device,
+                        VirtualShadowMapPages& pages,
+                        VirtualShadowMapRaster& raster,
+                        const Scene& scene,
+                        const Reference& reference,
+                        const TexturePtr& depth,
+                        uint64_t& frameSerial)
+    {
+        const double depthCenter = scene.Clipmap.DepthCenter;
+
+        // ----- ケース F: 印付け → 割り当て → 消去 → 展開 → 描画（合成した地面の深度の上に、既知の四角形 2 枚） -----
+        {
+            uint32_t level = 0;
+            int64_t pageX = 0;
+            int64_t pageY = 0;
+            if (!FindAdjacentPages(scene, reference.Keys, level, pageX, pageY))
+            {
+                std::cerr << TestName << " ケース F: 横に隣り合うページが参照に無い（シーンが退化している）" << std::endl;
+                return false;
+            }
+            const double pageMeters = static_cast<double>(scene.Clipmap.Levels[level].PageMeters);
+            const double boundaryX = static_cast<double>(pageX + 1) * pageMeters;
+            const double bottomY = static_cast<double>(pageY) * pageMeters;
+
+            Container::VariableArray<Shape> shapes;
+            // 近い四角形: ページ A・B の境界をまたぐ。深度は傾いた平面
+            Shape nearQuad = MakeRect(boundaryX - 0.3137 * pageMeters, boundaryX + 0.2713 * pageMeters, bottomY + 0.2231 * pageMeters, bottomY + 0.6619 * pageMeters);
+            SetPlane(nearQuad, boundaryX, bottomY, depthCenter - 50.0, 0.5, -0.25);
+            shapes.push_back(nearQuad);
+            // 遠い四角形: 近い四角形と一部が重なり、後から描かれる（atomicMin でなく代入だと、重なりが遠い深度で上書きされる）。ローカルの頂点＋変換で渡す
+            Shape farQuad = MakeRect(boundaryX - 0.1 * pageMeters, boundaryX + 0.6 * pageMeters, bottomY + 0.4 * pageMeters, bottomY + 0.9 * pageMeters);
+            SetPlane(farQuad, boundaryX, bottomY, depthCenter - 40.0, 0.0, 0.0);
+            farQuad.bLocalTransform = true;
+            shapes.push_back(farQuad);
+
+            ChunkGeometry geometry = BuildChunks(scene, shapes);
+            Resources resources;
+            RasterBuffers rasterBuffers;
+            RasterReadback readback;
+            const uint32_t poolPages = static_cast<uint32_t>(reference.Keys.size()) + 24u;
+            const uint32_t instanceCapacity = 4096u;
+            if (!CreateResources(device, poolPages, resources) || !CreateRasterBuffers(device, geometry, instanceCapacity, rasterBuffers) ||
+                !RunRaster(device, &pages, raster, scene, resources, rasterBuffers, depth, frameSerial++, readback))
+            {
+                std::cerr << TestName << " ケース F を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(readback.bPagesRecorded, "ケース F: 印付け・割り当て・消去を記録できなければならない");
+            const Container::VariableArray<PageInfo> pageInfos = DecodePages(scene, readback.PageTable);
+            Expect(pageInfos.size() == reference.Keys.size(), "ケース F: 割り当てたページの数が参照と一致しなければならない");
+            CheckExpansion("ケース F", scene, geometry, pageInfos, readback, instanceCapacity);
+            const PoolCheck check = CheckPool("ケース F", scene, shapes, pageInfos, readback.Pool, VirtualShadowMap::EMPTY_DEPTH_BITS);
+            std::cout << TestName << " ケース F: 段=" << level << " ページ=(" << pageX << "," << pageY << ")+(1,0) 比べた texel=" << check.Compared
+                      << " 形に覆われた texel=" << check.Covered << " 比べなかった縁の texel=" << check.Skipped << " 不一致=" << check.Mismatches << std::endl;
+            Expect(check.Mismatches == 0u, "ケース F: 物理ページが形の和の参照と一致しなければならない（覆われた texel は手前の深度、ほかは 1.0）");
+            Expect(check.Covered > 2000u, "ケース F: 形に覆われた texel が十分に無い（シーンが退化している）");
+            // 境界をまたぐ四角形が、両方のページに描かれていること（切れ目の無さは、全 texel の一致で確かめている）
+            uint32_t coveredPageA = 0;
+            uint32_t coveredPageB = 0;
+            for (uint32_t index = 0; index < pageInfos.size(); ++index)
+            {
+                if (pageInfos[index].Level == level && pageInfos[index].AbsY == pageY)
+                {
+                    coveredPageA += pageInfos[index].AbsX == pageX ? check.CoveredPerPage[index] : 0u;
+                    coveredPageB += pageInfos[index].AbsX == pageX + 1 ? check.CoveredPerPage[index] : 0u;
+                }
+            }
+            Expect(coveredPageA > 500u && coveredPageB > 500u, "ケース F: 境界をまたぐ四角形が両方のページに描かれなければならない");
+        }
+
+        // ----- ケース G・H: ページの表を直接書き、段 0 の 24 ページ（うち 1 ページは dirty でない）と段 1 の 4 ページを割り当てた場面 -----
+        // G: 24 ページ以上をまたぐ大きな三角形（縁が段 0 のページの中を斜めに通る）と、その縁をまたぐ遠い四角形
+        // H: 容量が足りない（必要な数 − 1）ときは描かずに数え、ちょうど足りるときは描く
+        const VirtualShadowMapClipmapLevel& level0 = scene.Clipmap.Levels[0];
+        const VirtualShadowMapClipmapLevel& level1 = scene.Clipmap.Levels[1];
+        const double pageMeters0 = static_cast<double>(level0.PageMeters);
+        const double centerX = static_cast<double>(level0.CenterPageX) * pageMeters0;
+        const double centerY = static_cast<double>(level0.CenterPageY) * pageMeters0;
+
+        Container::VariableArray<Shape> bigShapes;
+        {
+            // 縁 V0→V2 が段 0 の 24 ページの中央付近 (centerX - 4, centerY - 3) を傾き 0.7 で通る。三角形は縁の右下側
+            const double edgeX = centerX - 4.0;
+            const double edgeY = centerY - 3.0;
+            Shape triangle = MakeTriangle(edgeX - 500.0, edgeY - 350.0, centerX + 600.0, centerY - 500.0, edgeX + 480.0, edgeY + 336.0);
+            SetPlane(triangle, centerX, centerY, depthCenter - 30.0, 0.01, 0.015);
+            bigShapes.push_back(triangle);
+        }
+        Container::VariableArray<Shape> allShapes = bigShapes;
+        {
+            // 縁をまたぐ遠い四角形（三角形より後。三角形が覆う所では三角形の深度、覆わない所では自分の深度）
+            Shape quad = MakeRect(centerX - 6.0, centerX - 1.5, centerY - 5.0, centerY - 0.5);
+            SetPlane(quad, centerX, centerY, depthCenter - 10.0, 0.0, 0.0);
+            allShapes.push_back(quad);
+        }
+
+        const uint32_t poolPages = 32u;
+        auto buildSyntheticTable = [&](Resources& resources) {
+            // 物理ページを 1.0 のビットで埋め、ページの表と統計・要求などを 0 にする
+            FillWords(resources.Pool, VirtualShadowMap::EMPTY_DEPTH_BITS);
+            for (const BufferPtr& buffer : {resources.PageTable, resources.RequestBits, resources.FreeList, resources.Stats, resources.DirtyList})
+            {
+                FillWords(buffer, 0u);
+            }
+            uint32_t* table = static_cast<uint32_t*>(resources.PageTable->Map(0u, resources.PageTable->GetSize()));
+            if (table == nullptr)
+            {
+                return false;
+            }
+            uint32_t physical = 0;
+            for (int64_t row = -2; row < 2; ++row)
+            {
+                for (int64_t column = -3; column < 3; ++column)
+                {
+                    // 1 ページだけ dirty でない（割り当て済みだが、描かない）
+                    const bool bDirty = !(column == -1 && row == 0);
+                    table[PageKey(0, level0.CenterPageX + column, level0.CenterPageY + row)] =
+                        VirtualShadowMap::PAGE_ENTRY_ALLOCATED | (bDirty ? VirtualShadowMap::PAGE_ENTRY_DIRTY : 0u) | physical;
+                    ++physical;
+                }
+            }
+            for (int64_t row = -1; row < 1; ++row)
+            {
+                for (int64_t column = -1; column < 1; ++column)
+                {
+                    table[PageKey(1, level1.CenterPageX + column, level1.CenterPageY + row)] =
+                        VirtualShadowMap::PAGE_ENTRY_ALLOCATED | VirtualShadowMap::PAGE_ENTRY_DIRTY | physical;
+                    ++physical;
+                }
+            }
+            resources.PageTable->Unmap();
+            return true;
+        };
+
+        // ----- ケース G -----
+        {
+            ChunkGeometry geometry = BuildChunks(scene, allShapes);
+            Resources resources;
+            RasterBuffers rasterBuffers;
+            RasterReadback readback;
+            const uint32_t instanceCapacity = 256u;
+            if (!CreateResources(device, poolPages, resources) || !buildSyntheticTable(resources) ||
+                !CreateRasterBuffers(device, geometry, instanceCapacity, rasterBuffers) ||
+                !RunRaster(device, nullptr, raster, scene, resources, rasterBuffers, TexturePtr{}, frameSerial++, readback))
+            {
+                std::cerr << TestName << " ケース G を実行できませんでした" << std::endl;
+                return false;
+            }
+            const Container::VariableArray<PageInfo> pageInfos = DecodePages(scene, readback.PageTable);
+            Expect(pageInfos.size() == 28u, "ケース G: 合成したページの表の割り当て済みの数が 28 でなければならない");
+            CheckExpansion("ケース G", scene, geometry, pageInfos, readback, instanceCapacity);
+            // 大きな三角形が段 0 の 16 ページ以上を覆うこと（シーンの前提）
+            Expect(CountExpectedInstances(scene, geometry.Chunks[0], pageInfos) >= 16u, "ケース G: 大きな三角形が 16 ページ以上を覆わなければならない");
+            const PoolCheck check = CheckPool("ケース G", scene, allShapes, pageInfos, readback.Pool, VirtualShadowMap::EMPTY_DEPTH_BITS);
+            std::cout << TestName << " ケース G: 比べた texel=" << check.Compared << " 形に覆われた texel=" << check.Covered
+                      << " 比べなかった縁の texel=" << check.Skipped << " 不一致=" << check.Mismatches << std::endl;
+            Expect(check.Mismatches == 0u, "ケース G: 大きな三角形・四角形を描いた物理ページが参照と一致しなければならない（dirty でないページは触らない）");
+            Expect(check.Covered > 20000u, "ケース G: 形に覆われた texel が十分に無い（シーンが退化している）");
+        }
+
+        // ----- ケース H: 容量 -----
+        {
+            ChunkGeometry geometry = BuildChunks(scene, bigShapes);
+            Container::VariableArray<PageInfo> expectedPages;
+            uint32_t needed = 0;
+            {
+                Resources probe;
+                if (!CreateResources(device, poolPages, probe) || !buildSyntheticTable(probe))
+                {
+                    return false;
+                }
+                Container::VariableArray<uint32_t> table;
+                if (!ReadAll(probe.PageTable, table))
+                {
+                    return false;
+                }
+                expectedPages = DecodePages(scene, table);
+                needed = CountExpectedInstances(scene, geometry.Chunks[0], expectedPages);
+            }
+            Expect(needed >= 16u, "ケース H: 三角形の必要なインスタンスの数が 16 以上でなければならない");
+            for (const uint32_t instanceCapacity : {needed - 1u, needed})
+            {
+                Resources resources;
+                RasterBuffers rasterBuffers;
+                RasterReadback readback;
+                if (!CreateResources(device, poolPages, resources) || !buildSyntheticTable(resources) ||
+                    !CreateRasterBuffers(device, geometry, instanceCapacity, rasterBuffers) ||
+                    !RunRaster(device, nullptr, raster, scene, resources, rasterBuffers, TexturePtr{}, frameSerial++, readback))
+                {
+                    std::cerr << TestName << " ケース H を実行できませんでした" << std::endl;
+                    return false;
+                }
+                const Container::VariableArray<PageInfo> pageInfos = DecodePages(scene, readback.PageTable);
+                const char* label = instanceCapacity < needed ? "ケース H（容量が 1 足りない）" : "ケース H（容量がちょうど）";
+                CheckExpansion(label, scene, geometry, pageInfos, readback, instanceCapacity);
+                if (instanceCapacity < needed)
+                {
+                    // 溢れた塊は描かない: 物理ページはすべて初期値のまま
+                    bool bUntouched = true;
+                    for (const uint32_t word : readback.Pool)
+                    {
+                        bUntouched = bUntouched && word == VirtualShadowMap::EMPTY_DEPTH_BITS;
+                    }
+                    Expect(bUntouched, "ケース H: 容量を超えた塊は物理ページへ描いてはならない");
+                }
+                else
+                {
+                    const PoolCheck check = CheckPool(label, scene, bigShapes, pageInfos, readback.Pool, VirtualShadowMap::EMPTY_DEPTH_BITS);
+                    Expect(check.Mismatches == 0u && check.Covered > 20000u, "ケース H: ちょうどの容量では三角形が描かれなければならない");
+                }
+            }
+        }
+        return true;
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -874,6 +1739,20 @@ namespace
                 }
                 Expect(!readback.bMarked, "深度かクリップマップが無いときは印付けを記録してはならない");
                 CheckAllocation("D", readback, Container::VariableArray<uint32_t>{}, poolPages, 0u, true);
+            }
+
+            // ----- ケース F〜H: 影の塊の展開・描画 -----
+            {
+                VirtualShadowMapRaster raster;
+                if (!raster.Initialize(device.get(), &shaderManager))
+                {
+                    std::cerr << TestName << " VSM の展開・描画のパイプラインを初期化できませんでした" << std::endl;
+                    return 1;
+                }
+                if (!RunRasterCases(device, pages, raster, scene, reference, depth, frameSerial))
+                {
+                    return 1;
+                }
             }
 
             device->WaitIdle();

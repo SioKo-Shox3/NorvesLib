@@ -32,6 +32,7 @@
 #include "Rendering/ShadowProbePass.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/VirtualShadowMapRaster.h"
 #include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/ViewRenderContext.h"
@@ -5870,7 +5871,7 @@ namespace
 
         void OnLog(const Logging::LogEntry& entry) override
         {
-            if (entry.category == "VirtualShadowMapPass")
+            if (entry.category == "VirtualShadowMapPass" || entry.category == "VirtualShadowMapRaster")
             {
                 Messages.push_back(entry.message);
             }
@@ -6408,9 +6409,94 @@ namespace
         logger.RemoveSink(&logs);
         logger.Shutdown();
     }
+
+    // 展開の統計の語（塊・インスタンス・溢れ）は、投影物を描かない間（0 のまま）は VSM_RASTER を出さず、
+    // 0 以外になったとき・値が変わったとき・変わらなくても 60 回読むごとに出す
+    void TestVirtualShadowMapPassReportsRasterStats()
+    {
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        VsmLogCollector logs;
+        logger.AddSink(&logs);
+
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        VirtualShadowMapPass pass;
+        assert(pass.Initialize(run.Context));
+        assert(pass.IsActive());
+
+        auto writeRasterStats = [&pass](uint32_t chunks, uint32_t instances, uint32_t overflow) {
+            for (uint32_t slotIndex = 0; slotIndex < 2u; ++slotIndex)
+            {
+                const RHI::BufferPtr& buffer = pass.GetStatsReadbackBuffer(slotIndex);
+                assert(buffer);
+                uint32_t* words = reinterpret_cast<uint32_t*>(static_cast<FakeBuffer*>(buffer.get())->MappedBytes.data());
+                words[VirtualShadowMap::StatRasterChunks] = chunks;
+                words[VirtualShadowMap::StatRasterInstances] = instances;
+                words[VirtualShadowMap::StatRasterOverflow] = overflow;
+            }
+        };
+
+        uint64_t generation = 0;
+        // 投影物を描かない間（語が 0 のまま）は、60 回を超えて読んでも出さない
+        writeRasterStats(0, 0, 0);
+        for (uint64_t frame = 0; frame < 70; ++frame)
+        {
+            RunVsmViewport(run, pass, frame, generation++, true);
+            assert(logs.Count("VSM_RASTER") == 0);
+        }
+        // 0 以外になったら次に読んだときに出す
+        writeRasterStats(3, 40, 0);
+        RunVsmViewport(run, pass, 70, generation++, true);
+        assert(logs.Count("VSM_RASTER") == 1 && logs.Count("VSM_RASTER chunks=3 instances=40 overflow=0") == 1);
+        // 変わらない間は出さず、出してから 60 回目の読み取りで出す
+        for (uint64_t frame = 71; frame <= 129; ++frame)
+        {
+            RunVsmViewport(run, pass, frame, generation++, true);
+            assert(logs.Count("VSM_RASTER") == 1);
+        }
+        RunVsmViewport(run, pass, 130, generation++, true);
+        assert(logs.Count("VSM_RASTER") == 2);
+        // 溢れが出たら次に読んだときに出す
+        writeRasterStats(3, 40, 7);
+        RunVsmViewport(run, pass, 131, generation++, true);
+        assert(logs.Count("VSM_RASTER") == 3 && logs.Count("VSM_RASTER chunks=3 instances=40 overflow=7") == 1);
+
+        ShutdownVsmRun(run, pass);
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+    }
 #endif
 
-    // プールのページの数は、要求（0 は既定の 4096）を装置の maxStorageBufferRange に収まる数へ締める（不明は Vulkan の保証する最小値 2^27）。
+    // 展開の統計の報告の決め方（ログの出力に依らない）: 0 のままなら出さず、0 以外になる・値が変わる・60 回報告するごとに出す。
+    // 一度出したら、0 に戻ったときも出す
+    void TestVirtualShadowMapRasterStatsReporterDecidesWhenToLog()
+    {
+        VirtualShadowMapRasterStatsReporter reporter;
+        for (uint32_t index = 0; index < 100u; ++index)
+        {
+            assert(!reporter.Report(0, 0, 0));
+        }
+        assert(reporter.Report(1, 2, 0));
+        for (uint32_t index = 0; index + 1u < VirtualShadowMapRasterStatsReporter::LogIntervalReports; ++index)
+        {
+            assert(!reporter.Report(1, 2, 0));
+        }
+        assert(reporter.Report(1, 2, 0));
+        assert(!reporter.Report(1, 2, 0));
+        assert(reporter.Report(1, 2, 5));
+        assert(reporter.Report(0, 0, 0));
+        assert(!reporter.Report(0, 0, 0));
+    }
+
+    // ãã¼ã«ã®ãã¼ã¸ã®æ°ã¯、要求（0 は既定の 4096）を装置の maxStorageBufferRange に収まる数へ締める（不明は Vulkan の保証する最小値 2^27）。
     // 512 ページちょうどは作れ、511 ページしか取れない装置は作れない。表の欄の幅（20 ビット）も超えない
     void TestVirtualShadowMapPoolPlanClampsToDeviceLimit()
     {
@@ -11939,7 +12025,9 @@ int main()
     TestVirtualShadowMapPassRecordsMarkAllocateClearInOrder();
 #if NORVES_ENABLE_LOGGING
     TestVirtualShadowMapPassReadsStatsOnlyAfterFrameFence();
+    TestVirtualShadowMapPassReportsRasterStats();
 #endif
+    TestVirtualShadowMapRasterStatsReporterDecidesWhenToLog();
     TestVirtualShadowMapPoolPlanClampsToDeviceLimit();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();

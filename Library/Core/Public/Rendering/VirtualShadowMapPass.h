@@ -34,6 +34,7 @@ namespace NorvesLib::Core::Rendering
 {
     class GpuResources;
     class VirtualShadowMapPages;
+    class VirtualShadowMapRasterStatsReporter;
     struct ViewRenderContext;
 
     namespace VirtualShadowMap
@@ -68,7 +69,10 @@ namespace NorvesLib::Core::Rendering
         /** @brief 何も無い texel の深度（1.0）の float のビット */
         constexpr uint32_t EMPTY_DEPTH_BITS = 0x3F800000u;
 
-        /** @brief 統計の語（uint32）の並び: 要求・割り当て・溢れ・描いたページの数・要求のあった段のビットの集合（残りは予約） */
+        /**
+         * @brief 統計の語（uint32）の並び: 要求・割り当て・溢れ・描いたページの数・要求のあった段のビットの集合・
+         *        展開が描く塊の数・展開が書いたインスタンスの数・展開の容量を超えて書かなかったインスタンスの数
+         */
         constexpr uint32_t STATS_WORD_COUNT = 8;
         constexpr uint64_t STATS_BYTES = static_cast<uint64_t>(STATS_WORD_COUNT) * sizeof(uint32_t);
         enum StatWord : uint32_t
@@ -78,6 +82,9 @@ namespace NorvesLib::Core::Rendering
             StatOverflow = 2,
             StatDrawn = 3,
             StatLevelsUsed = 4,
+            StatRasterChunks = 5,
+            StatRasterInstances = 6,
+            StatRasterOverflow = 7,
         };
 
         /** @brief 統計のバッファの用途。計算で書き、読み戻しのコピーの元になる（TransferSrc が無いとコピーが検証に違反する） */
@@ -293,6 +300,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_Stats;
         RHI::BufferPtr m_DirtyList;
         Container::TUniquePtr<VirtualShadowMapPages> m_Pages;
+        /** @brief 展開の統計（語 5〜7）を VSM_RASTER の行にする（投影物を描くようになるまで 0 のままで、出さない） */
+        Container::TUniquePtr<VirtualShadowMapRasterStatsReporter> m_RasterReporter;
         StatsSlot m_StatsSlots[StatsSlotCount];
         bool m_bMarked = false;
         /** @brief 最後に出した統計（変わったときだけ出す）と、出してからのフレーム数 */
