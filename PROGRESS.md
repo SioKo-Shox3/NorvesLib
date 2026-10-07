@@ -2404,3 +2404,21 @@
 
 - Notes: (1) `RenderGraphCompileTest.exe` は起動直後に 0xC0000005 で落ちる（出力なし）。今回の変更を退避したベースラインのビルドでも同じなので、この変更による退行ではない（static 初期化のレイアウト依存の疑い。未調査）。容量の定数はテストの中でも `MEGA_CULL_LIST_CAPACITY` の名前で参照されていて、値の直書きは無い。(2) 反復 14 の「既知の限界」の記述（cache=off 負荷の overflow 80775）は、この反復で解消した。
 - Next: `VTG8-ACCEPT`（GPU 時間の表はこの反復の値と反復 14 の CSM の行を使う）。`VTG8-VSM-EXPAND-INDIRECT` は backlog。
+
+## 反復 16（2026-10-08）: VTG8-VSM-POOL-OVERFLOW（評価者の差し戻し: 修正後の GPU 時間の実測。done）
+
+- 差し戻し（反復 13 の評価者）: 停止条件「既定の経路で修正前より 0.5 ms 超遅くならない」の証拠として、現 HEAD で持ち越しありの起動画面 3 視点を測ること。実装は変えていない（HEAD は `b80b5d2d` と TASKS.md 以外同一）。
+- 検証（`.harness/runs/20261008-073209/`）: `verify-VTG8-VSM-POOL-OVERFLOW-1.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-2.txt`（RenderGraphCompileTest・VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest が 3/3 Passed）、`-3-build.txt`（RelWithDebInfo の Game のビルド、BUILD_EXIT_CODE=0）、`-4-capture.txt`（起動画面 3 視点、result=pass。出力は `.harness/runs/startup-capture/VTG8-VSM-POOL-OVERFLOW-gpu`）。
+
+### フレーム GPU の中央値（ms。持ち越しあり、240 フレーム。修正前は run 20261008-035618 の反復 10 の値）
+
+| 視点 | 修正前 | 今回 | 差 | VsmExpand（修正前 → 今回） | VsmDraw | VsmMark | VsmAllocate |
+|---|---|---|---|---|---|---|---|
+| default | 2.809 | 2.848 | +0.039 | 0.170 → 0.291 | 0.131 | 0.026 | 0.101 |
+| near | 3.692 | 3.819 | +0.127 | 0.155 → 0.269 | 0.685 | 0.062 | 0.672 |
+| low | 3.000 | 3.074 | +0.074 | 0.159 → 0.266 | 0.160 | 0.249 | 0.193 |
+
+- 3 視点とも差は +0.04〜+0.13 ms で、停止条件の 0.5 ms を超えない。増えたのはほぼ `VsmExpand`（+0.11〜+0.12 ms）で、原因は展開の容量を倍にしたこと（反復 12）と MegaGeometry カリングの一覧の容量を倍にしたこと（反復 15）。展開が実数でなく容量ぶんのワークグループを回すため。実数の間接 dispatch は `VTG8-VSM-EXPAND-INDIRECT`（backlog）。反復 13 の `PageEntry` の原子読み取り単独の影響は、反復 14 の ±0.1 ms 以内の測定で確認済み。
+- 溢れ: 3 視点とも `VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL` の overflow がログの全行で 0（`VSM_PAGES` requested は default 756・near 1286・low 4720、プール 5120）。
+- Notes: 値は `metrics.json` の `gpu_timing[].gpu_frame_ms_median` と `pass_median_ms` を使った（trace.csv は集計していない）。`VTG8-VSM-GPU-TIME` の status はこの項目では触っていない。
+- Next: `VTG8-ACCEPT`。
