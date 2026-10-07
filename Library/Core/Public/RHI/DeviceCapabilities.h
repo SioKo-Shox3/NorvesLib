@@ -335,6 +335,17 @@ namespace NorvesLib::RHI
             return bFragmentStoresAndAtomics && Sparse.bSparseBinding && Sparse.bResidencyImage2D &&
                    Sparse.bShaderResourceResidency;
         }
+
+        /**
+         * @brief 太陽の VSM の照明が、読み出しの統計（逃げた標本の数）を断片シェーダーから storage buffer へ数えられるか
+         *
+         * 要るのは断片シェーダーの storage の書き込みとアトミック操作だけで、VT（sparse）には依らない。
+         * VSM が使える装置（VirtualShadowMap::PlanPool）はこの条件を満たすので、sparse の無い装置でも数える。
+         */
+        bool SupportsVsmLightingStats() const
+        {
+            return bFragmentStoresAndAtomics;
+        }
     };
 
 } // namespace NorvesLib::RHI

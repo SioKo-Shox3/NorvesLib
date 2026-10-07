@@ -94,8 +94,8 @@ layout(std430, set = 0, binding = 23) readonly buffer VsmPoolBuffer
     uint vsmPool[];
 };
 // 太陽の VSM の読み出しで、自分の段のページが無く粗い段へ逃げた PCF の標本の数（[0]）。ホストが数フレーム後に読み戻す。
-// 断片シェーダーの storage の書き込みを使えるデバイス（NORVES_VT_FEEDBACK が定義される）だけで数える
-#ifdef NORVES_VT_FEEDBACK
+// 断片シェーダーの storage の書き込みを使えるデバイス（NORVES_VSM_STATS が定義される。VT のフィードバックとは独立）だけで数える
+#ifdef NORVES_VSM_STATS
 layout(std430, set = 0, binding = 24) buffer VsmLightingStatsBuffer
 {
     uint vsmLightingStats[];
@@ -263,7 +263,7 @@ float CalculateRangeWindow(float distance, float range)
 #define VSM_PARAMS vsmBlock.vsm
 #define VSM_PAGE_TABLE(i) vsmPageTable[i]
 #define VSM_POOL(i) vsmPool[i]
-#ifdef NORVES_VT_FEEDBACK
+#ifdef NORVES_VSM_STATS
 #define VSM_COUNT_FALLBACK() atomicAdd(vsmLightingStats[0], 1u)
 #endif
 #include "Common/VirtualShadowMap.glsl"

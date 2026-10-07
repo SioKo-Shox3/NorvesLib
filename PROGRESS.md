@@ -2207,3 +2207,13 @@
 - 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-MEGA-CULL-6.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-7.txt`（VirtualShadowMapVulkanTest・GeometryPageRequestVulkanTest・RenderGraphCompileTest が 3/3 Passed）。
 - Notes: (1) 変異の最初の試行は、PowerShell 経由で HEAD 版を書き出して文字化けし、シェーダーの初期化に失敗して落ちただけだった（意図した理由ではない）ので、`git show` をバイト単位でファイルへ書き出してやり直した。(2) 実機の起動画面での確認は、重い処理の扱いに従い回していない。
 - Next: VTG8-VSM-GPU-TIME（VTG8-VSM-SAMPLE・PCSS は blocked のまま）。
+
+## 反復 8（2026-10-08）: VTG8-VSM-SAMPLE（逃げた標本の統計を VT から独立させ、ホスト可視化のバリアと完了確認の読み戻しを足す、done）
+
+- 差し戻し（評価の 2 周）: (a) 照明の逃げた標本の数え上げが `NORVES_VT_FEEDBACK`（sparse が要る）に依存し、sparse の無い VSM 対応装置で空マクロになっていた。専用マクロ `NORVES_VSM_STATS` を足し、`VulkanDevice::CreateShaderCompiler` が `DeviceCapabilities::SupportsVsmLightingStats()`（`bFragmentStoresAndAtomics` のみ）で定義する。`lighting.frag` の統計バッファ宣言と `VSM_COUNT_FALLBACK` はこのマクロに切り替えた。(b) 照明の描画の後に統計バッファの PixelShaderWrite → HostRead バリアを記録する（`FrameCommandType::BufferBarrier`・`ViewRenderContext::EnqueueBufferBarrier` を足し、`SceneRenderer` が記録する）。
+- 読み戻し: 統計の枠が書いたフレームの通し番号を持ち、`CompletedRenderFrameSerial` 以下になった枠だけを読んで空ける（旧版は「16 回前なら書き終わっている」という仮定だった）。空きが無い（全枠が完了未確認）ときは枠を上書きせず、読まない置き場（`LightingVsmStatsSink`）へ束ね、バリアも記録しない。他の資源（既定の重みバッファ）へシェーダーが書くことも無くなった。
+- テスト（`RenderGraphCompileTest`）: `TestLightingVsmStatsAreMadeHostVisibleAndReadAfterCompletion`（GBuffer → VSM → 照明の実グラフで、バリアが最後の EndRenderPass より後・状態が PixelShaderWrite → HostRead・各フレーム 1 回、完了前の枠は読まず上書きもしない、16 枠が埋まった後は置き場へ束ねる、完了が進むと読んで再利用する）、`TestLightingShaderCountsVsmFallbackIndependentlyOfVtFeedback`（sparse の無い装置の能力の組み合わせで VSM が使え数え上げも有効、`lighting.frag` を `NORVES_VSM_STATS` だけで実コンパイルして OpAtomicIAdd が入り、`NORVES_VT_FEEDBACK` だけでは入らない）。
+- 変異（すべて `RenderGraphCompileTest` が Failed、元へ戻して更新時刻を更新し再ビルド）: `verify-VTG8-VSM-SAMPLE-3-mutation-shader-macro.txt`（シェーダーのマクロを `NORVES_VT_FEEDBACK` へ戻す）、`-4-mutation-completion-gate.txt`（完了の確認を外す）、`-5-mutation-no-barrier.txt`（バリアを外す）。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-SAMPLE-6.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest・RenderingGoldenImageTest のビルド、BUILD_EXIT_CODE=0）、`-7.txt`（指定の 6 テストが 6/6 Passed、golden は CSM のまま変更なし）。
+- Notes: (1) 行末が混在するファイル（`LightingPass.cpp` など）は、python で行ごとの行末を保って置換し、`git diff --numstat` と `--ignore-cr-at-eol` の一致を確かめた。(2) 実機の起動画面での確認は、重い処理の扱いに従い回していない（VTG8-VSM-GPU-TIME の撮影で確かめる）。
+- Next: VTG8-VSM-GPU-TIME 以降（VTG8-VSM-PCSS は blocked のまま）。

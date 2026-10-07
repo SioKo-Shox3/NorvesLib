@@ -407,6 +407,18 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        case FrameCommandType::BufferBarrier:
+        {
+            const BufferBarrierCommand &barrier = command.BufferBarrier;
+            if (!barrier.Buffer)
+            {
+                return;
+            }
+
+            commandList->BufferBarrier(barrier.Buffer, barrier.BeforeState, barrier.AfterState);
+            return;
+        }
+
         case FrameCommandType::MegaGeometryPass:
         {
             const MegaGeometryPassCommand &megaGeometryPass = command.MegaGeometry;

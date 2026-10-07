@@ -21,6 +21,7 @@ namespace NorvesLib::Core::Rendering
         DebugDrawLineList,
         TextureBarrier,
         MegaGeometryPass,
+        BufferBarrier,
     };
 
     struct GeometryPassCommand
@@ -68,6 +69,13 @@ namespace NorvesLib::Core::Rendering
         uint32_t ArrayCount = 0;
     };
 
+    struct BufferBarrierCommand
+    {
+        RHI::BufferPtr Buffer;
+        RHI::ResourceState BeforeState = RHI::ResourceState::Undefined;
+        RHI::ResourceState AfterState = RHI::ResourceState::Undefined;
+    };
+
     struct MegaGeometryPassCommand
     {
         MegaGeometryPass* Pass = nullptr;
@@ -101,6 +109,7 @@ namespace NorvesLib::Core::Rendering
         DebugDrawLineListPassCommand DebugDrawLineList;
         TextureBarrierCommand TextureBarrier;
         MegaGeometryPassCommand MegaGeometry;
+        BufferBarrierCommand BufferBarrier;
 
         static FrameCommand CreateGeometryPass(RHI::RenderPassPtr renderPass,
                                                RHI::FramebufferPtr framebuffer,
@@ -181,6 +190,18 @@ namespace NorvesLib::Core::Rendering
             command.TextureBarrier.ArrayIndex = arrayIndex;
             command.TextureBarrier.MipCount = mipCount;
             command.TextureBarrier.ArrayCount = arrayCount;
+            return command;
+        }
+
+        static FrameCommand CreateBufferBarrier(RHI::BufferPtr buffer,
+                                                RHI::ResourceState beforeState,
+                                                RHI::ResourceState afterState)
+        {
+            FrameCommand command;
+            command.Type = FrameCommandType::BufferBarrier;
+            command.BufferBarrier.Buffer = buffer;
+            command.BufferBarrier.BeforeState = beforeState;
+            command.BufferBarrier.AfterState = afterState;
             return command;
         }
 

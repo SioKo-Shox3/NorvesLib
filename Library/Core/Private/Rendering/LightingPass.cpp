@@ -1389,38 +1389,55 @@ namespace NorvesLib::Core::Rendering
         Shutdown();
     }
 
-    RHI::BufferPtr LightingPass::AcquireVsmStatsSlot()
+    void LightingPass::HarvestCompletedVsmStats(uint64_t completedSerial)
+    {
+        for (VsmStatsSlot& slot : m_VsmStatsSlots)
+        {
+            // 書いたフレームの提出の完了が確かめられるまで読まない（書いた GPU の仕事が終わる前の値を読まない）
+            if (!slot.bPending || !slot.Mapped || slot.FrameSerial > completedSerial)
+            {
+                continue;
+            }
+            m_VsmFallbackSamples += slot.Mapped[0];
+            ++m_VsmStatsHarvestedExecutes;
+            slot.bPending = false;
+        }
+    }
+
+    RHI::BufferPtr LightingPass::AcquireVsmStatsSlot(uint64_t frameSerial, uint64_t completedSerial)
     {
         if (!m_Device)
         {
             return {};
         }
-        VsmStatsSlot& slot = m_VsmStatsSlots[m_VsmStatsExecuteCount % VsmStatsSlotCount];
-        if (!slot.Buffer)
+        HarvestCompletedVsmStats(completedSerial);
+        for (VsmStatsSlot& slot : m_VsmStatsSlots)
         {
-            slot.Buffer = m_Device->CreateBuffer(RHI::BufferDesc(VsmStatsBytes,
-                                                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
-                                                                 true,
-                                                                 "LightingVsmStats"));
-            slot.Mapped = slot.Buffer ? static_cast<const uint32_t*>(slot.Buffer->Map(0, 0)) : nullptr;
-            if (!slot.Mapped)
+            if (slot.bPending)
             {
-                slot = VsmStatsSlot{};
-                return {};
+                continue;
             }
+            if (!slot.Buffer)
+            {
+                slot.Buffer = m_Device->CreateBuffer(RHI::BufferDesc(VsmStatsBytes,
+                                                                     RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                                                                     true,
+                                                                     "LightingVsmStats"));
+                slot.Mapped = slot.Buffer ? static_cast<const uint32_t*>(slot.Buffer->Map(0, 0)) : nullptr;
+                if (!slot.Mapped)
+                {
+                    slot = VsmStatsSlot{};
+                    return {};
+                }
+            }
+            // 写像したままのバッファは Update（内部で写像する）を使えないので、写像した領域へ直接 0 を書く（host-coherent）。
+            // 空けた枠は、書いたフレームの提出の完了が確かめられているので、GPU が使っていない
+            std::memset(const_cast<uint32_t*>(slot.Mapped), 0, VsmStatsBytes);
+            slot.bPending = true;
+            slot.FrameSerial = frameSerial;
+            return slot.Buffer;
         }
-        // 前にこの枠を使った実行は VsmStatsSlotCount 回前で、GPU は書き終えている（フレームの先行数より十分大きい）
-        if (slot.bPending)
-        {
-            m_VsmFallbackSamples += slot.Mapped[0];
-            ++m_VsmStatsHarvestedExecutes;
-            slot.bPending = false;
-        }
-        // 写像したままのバッファは Update（内部で写像する）を使えないので、写像した領域へ直接 0 を書く（host-coherent）
-        std::memset(const_cast<uint32_t*>(slot.Mapped), 0, VsmStatsBytes);
-        slot.bPending = true;
-        slot.ExecuteIndex = m_VsmStatsExecuteCount++;
-        return slot.Buffer;
+        return {};
     }
 
     void LightingPass::HarvestVsmStats()
@@ -1986,7 +2003,7 @@ namespace NorvesLib::Core::Rendering
         {
             slot = VsmStatsSlot{};
         }
-        m_VsmStatsExecuteCount = 0;
+        m_VsmStatsSink.reset();
         m_VsmStatsHarvestedExecutes = 0;
         m_VsmFallbackSamples = 0;
         m_bNeuralBRDFAvailable = false;
@@ -4227,6 +4244,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t boundVsmPoolBytes = 4u;
         RHI::BufferPtr boundVsmStats = m_DefaultNeuralBRDFWeightBuffer;
         uint32_t boundVsmStatsBytes = 4u;
+        RHI::BufferPtr vsmStatsToHost;
         const CameraProxy* vsmCamera = context.GetActiveCamera();
         if (m_FrameVsmPageTable && m_FrameVsmPool && vsmCamera != nullptr && depthTexture &&
             vsmCamera->Projection == ProjectionType::Perspective &&
@@ -4251,10 +4269,29 @@ namespace NorvesLib::Core::Rendering
                     m_FrameVsmPageTable->GetSize(), std::numeric_limits<uint32_t>::max()));
                 boundVsmPoolBytes = static_cast<uint32_t>(std::min<uint64_t>(
                     m_FrameVsmPool->GetSize(), std::numeric_limits<uint32_t>::max()));
-                if (RHI::BufferPtr statsBuffer = AcquireVsmStatsSlot())
+                // VSM が有効なフレームは、シェーダーが逃げた標本を数える（VT のフィードバックの有無には依らない）。
+                // 空きの枠が無いときは、読まない置き場へ束ねて他の資源を書かないようにする
+                if (RHI::BufferPtr statsBuffer = AcquireVsmStatsSlot(context.ResolveRenderFrameSerial(),
+                                                                     context.CompletedRenderFrameSerial))
                 {
                     boundVsmStats = statsBuffer;
                     boundVsmStatsBytes = VsmStatsBytes;
+                    vsmStatsToHost = statsBuffer;
+                }
+                else
+                {
+                    if (!m_VsmStatsSink)
+                    {
+                        m_VsmStatsSink = m_Device->CreateBuffer(RHI::BufferDesc(VsmStatsBytes,
+                                                                                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                                                                                false,
+                                                                                "LightingVsmStatsSink"));
+                    }
+                    if (m_VsmStatsSink)
+                    {
+                        boundVsmStats = m_VsmStatsSink;
+                        boundVsmStatsBytes = VsmStatsBytes;
+                    }
                 }
             }
         }
@@ -4275,6 +4312,14 @@ namespace NorvesLib::Core::Rendering
                                       scissor,
                                       m_LightingPipeline,
                                       m_LightingDescriptorSet);
+
+        // 照明の描画（統計への書き込み）の後に、書き込みをホストの読み取りへ見せる。読むのは提出の完了の後
+        if (vsmStatsToHost)
+        {
+            context.EnqueueBufferBarrier(vsmStatsToHost,
+                                         RHI::ResourceState::PixelShaderWrite,
+                                         RHI::ResourceState::HostRead);
+        }
     }
 
     void LightingPass::RegisterOutputs(ViewRenderContext& context,

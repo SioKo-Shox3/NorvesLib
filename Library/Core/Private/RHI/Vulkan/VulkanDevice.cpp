@@ -2737,6 +2737,8 @@ namespace NorvesLib::RHI::Vulkan
         compiler->SetSparseResidencyShadingEnabled(m_enabledDeviceFeatures.shaderResourceResidency == VK_TRUE);
         // VT の要求を書く材質シェーダーは、descriptor に要求のバッファを束ねられるデバイス（SupportsVirtualTextureFeedback）だけ使う。
         compiler->SetVirtualTextureFeedbackEnabled(m_Capabilities.SupportsVirtualTextureFeedback());
+        // 太陽の VSM の照明の統計は、VT（sparse）とは独立に、断片シェーダーの storage の書き込みが使えるデバイスで数える。
+        compiler->SetVsmLightingStatsEnabled(m_Capabilities.SupportsVsmLightingStats());
         return StaticPointerCast<IShaderCompiler>(compiler);
     }
 

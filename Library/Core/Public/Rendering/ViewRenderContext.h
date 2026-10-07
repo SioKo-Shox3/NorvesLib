@@ -851,6 +851,14 @@ namespace NorvesLib::Core::Rendering
                                                                   arrayCount));
         }
 
+        /** @brief バッファのバリアを、フレームの記録の順（描画パスの前後）に積む */
+        void EnqueueBufferBarrier(RHI::BufferPtr buffer,
+                                  RHI::ResourceState beforeState,
+                                  RHI::ResourceState afterState)
+        {
+            EnqueueFrameCommand(FrameCommand::CreateBufferBarrier(buffer, beforeState, afterState));
+        }
+
         /**
          * @brief MegaGeometryPass の記録コマンド（今のビューポートのカメラ・描画範囲・表示・フレームの通し番号）を作る
          *

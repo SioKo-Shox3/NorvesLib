@@ -56,6 +56,7 @@
 #include "RHI/IShaderCompiler.h"
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
+#include "RHI/Vulkan/VulkanShaderCompiler.h"
 #include <cassert>
 #include <cstddef>
 #include <algorithm>
@@ -288,7 +289,7 @@ namespace
             (void)size;
             // ジオメトリの区画へ書くステージングのリングだけは、写像して書き込めるようにバイト列を持つ
             if ((IsDebugName(m_Desc.DebugName, "TileUploadRing") || IsDebugName(m_Desc.DebugName, "ShadowProbe_Stats") ||
-                 IsDebugName(m_Desc.DebugName, "VSM_StatsReadback")) &&
+                 IsDebugName(m_Desc.DebugName, "VSM_StatsReadback") || IsDebugName(m_Desc.DebugName, "LightingVsmStats")) &&
                 m_Desc.Size > 0)
             {
                 if (MappedBytes.empty())
@@ -7808,6 +7809,282 @@ namespace
         return false;
     }
 
+    // 太陽の VSM の照明の統計（逃げた標本の数）の読み戻し:
+    //  - 照明の描画の後（最後の EndRenderPass の後）に、統計のバッファへ PixelShaderWrite → HostRead のバリアを 1 回だけ記録する。
+    //  - 書いたフレームの提出の完了が確かめられた枠（通し番号が CompletedRenderFrameSerial 以下）だけを読んで空ける。
+    //    完了が未確認の枠は読まず、上書きもしない（GPU が書いているかもしれない）。
+    //  - どの枠も未確認で空きが無いフレームは、統計のバリアを記録せず、読まない置き場へ束ねる（他の資源へ書かない）。
+    void TestLightingVsmStatsAreMadeHostVisibleAndReadAfterCompletion()
+    {
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        run.Context.PhysicalLighting.SunClipmap = BuildVirtualShadowMapClipmap(
+            NorvesLib::Math::Vector3(0.35f, -0.8f, 0.45f), 1u, NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), VirtualShadowMapClipmapSettings{});
+        assert(run.Context.PhysicalLighting.SunClipmap.bEnabled);
+
+        run.Pool.BeginFrame(0);
+        RenderResources renderResources;
+        assert(renderResources.Initialize(run.Device));
+        SceneRenderer renderer;
+        assert(renderer.Initialize(run.Device.get(), nullptr, &run.Pool));
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+        run.Context.Renderer = &renderer;
+        run.Context.PendingFrameCommands = &pendingFrameCommands;
+        run.Context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        run.Context.Resources.Textures = &renderResources.Textures();
+        run.Context.Resources.Materials = &renderResources.Materials();
+        run.Context.Resources.Meshes = &renderResources.Meshes();
+
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        VirtualShadowMapPass vsmPass;
+        assert(vsmPass.Initialize(run.Context));
+        LightingPass lightingPass;
+
+        // 1 フレーム回す。frame は 0 から、通し番号は frame + 1。completed は提出の完了が確かめられた最大の通し番号
+        const auto runFrame = [&](uint64_t frame, uint64_t completed)
+        {
+            run.Context.FrameIndex = static_cast<uint32_t>(frame % 2u);
+            run.Context.RenderFrameSerial = frame + 1u;
+            run.Context.CompletedRenderFrameSerial = completed;
+            pendingFrameCommands.clear();
+            run.CommandList.Barriers.clear();
+            run.CommandList.CallSequence.clear();
+            run.Pool.EndFrame();
+            run.Pool.BeginFrame(frame);
+            run.Graph.BeginFrame(frame);
+            run.Graph.AddPass(&gbufferPass);
+            run.Graph.AddPass(&vsmPass);
+            run.Graph.AddPass(&lightingPass);
+            assert(run.Graph.Compile(run.Context));
+            const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
+            assert(result.bSuccess);
+            assert(pendingFrameCommands.empty());
+        };
+        // そのフレームの統計のバリアの数と、バリアが指すバッファ。バリアは最後の EndRenderPass（照明の描画）より後
+        const auto statsBarrier = [&](RHI::IBuffer*& outBuffer) -> size_t
+        {
+            const Container::VariableArray<BarrierEvent> barriers = CollectBufferBarriers(run.CommandList, "LightingVsmStats");
+            outBuffer = barriers.empty() ? nullptr : barriers[0].Buffer;
+            for (const BarrierEvent& barrier : barriers)
+            {
+                assert(barrier.BeforeState == RHI::ResourceState::PixelShaderWrite);
+                assert(barrier.AfterState == RHI::ResourceState::HostRead);
+                size_t lastEnd = run.CommandList.CallSequence.size();
+                for (size_t index = 0; index < run.CommandList.CallSequence.size(); ++index)
+                {
+                    lastEnd = run.CommandList.CallSequence[index] == 'E' ? index : lastEnd;
+                }
+                assert(lastEnd < run.CommandList.CallSequence.size() && barrier.SequencePosition > lastEnd);
+            }
+            return barriers.size();
+        };
+        // GPU が書き終えた体の値を、枠の先頭の語へ書く（偽の装置の描画は中身を書かない）
+        const auto word0 = [](RHI::IBuffer* buffer) -> uint32_t&
+        {
+            return *reinterpret_cast<uint32_t*>(static_cast<FakeBuffer*>(buffer)->MappedBytes.data());
+        };
+
+        RHI::IBuffer* slotA = nullptr;
+        RHI::IBuffer* slotB = nullptr;
+        RHI::IBuffer* buffer = nullptr;
+
+        // フレーム 0（通し番号 1・完了なし）: 統計の枠 A を使い、描画の後に PixelShaderWrite → HostRead のバリアを 1 回記録する
+        runFrame(0, 0);
+        assert(statsBarrier(slotA) == 1 && slotA != nullptr);
+        word0(slotA) = 5u;
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 0 && lightingPass.GetVsmFallbackSampleCount() == 0);
+
+        // フレーム 1（通し番号 2・完了なし）: 枠 A はまだ GPU の完了が未確認なので読まず、別の枠 B を使う
+        runFrame(1, 0);
+        assert(statsBarrier(slotB) == 1 && slotB != nullptr && slotB != slotA);
+        word0(slotB) = 7u;
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 0 && lightingPass.GetVsmFallbackSampleCount() == 0);
+        assert(word0(slotA) == 5u);
+
+        // フレーム 2（通し番号 3・通し番号 1 まで完了）: 枠 A を読んで空け、0 に戻して再び使う。枠 B は未確認のまま
+        runFrame(2, 1);
+        assert(statsBarrier(buffer) == 1 && buffer == slotA);
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 1 && lightingPass.GetVsmFallbackSampleCount() == 5u);
+        assert(word0(slotA) == 0u && word0(slotB) == 7u);
+        word0(slotA) = 11u;
+
+        // フレーム 3（通し番号 4・通し番号 2 まで完了）: 枠 B を読む。枠 A（通し番号 3）は未確認のまま
+        runFrame(3, 2);
+        assert(statsBarrier(buffer) == 1 && buffer == slotB);
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 2 && lightingPass.GetVsmFallbackSampleCount() == 12u);
+        assert(word0(slotA) == 11u);
+
+        // GPU が止まったまま（完了が 2 のまま）フレームが進むと、空いている枠を順に使い、全 16 枠が埋まる（フレーム 4〜17）
+        for (uint64_t frame = 4; frame <= 17; ++frame)
+        {
+            runFrame(frame, 2);
+            assert(statsBarrier(buffer) == 1 && buffer != nullptr);
+        }
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 2);
+
+        // 空きが無いフレーム 18: 統計のバリアは記録せず、どの枠も上書きしない。読まない置き場（LightingVsmStatsSink）へ束ねる
+        const BufferCreationRecord* sinkBefore = FindBufferCreation(*run.Device, "LightingVsmStatsSink");
+        assert(sinkBefore == nullptr);
+        runFrame(18, 2);
+        assert(statsBarrier(buffer) == 0);
+        assert(FindBufferCreation(*run.Device, "LightingVsmStatsSink") != nullptr);
+        assert(word0(slotA) == 11u);
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 2);
+
+        // 完了が 3 へ進むと、通し番号 3 の枠 A を読んで空け、また使える
+        runFrame(19, 3);
+        assert(statsBarrier(buffer) == 1 && buffer == slotA);
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 3 && lightingPass.GetVsmFallbackSampleCount() == 23u);
+
+        lightingPass.Shutdown();
+        gbufferPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        ShutdownVsmRun(run, vsmPass);
+    }
+
+    // include を引用符つきの相対パスで展開する（ShaderManager と同じ規則のテスト用の最小版）
+    bool ExpandTestShaderIncludes(const char* relativePath, Container::String& expanded, uint32_t depth)
+    {
+        if (depth > 16)
+        {
+            return false;
+        }
+        Container::String fullPath = TestShaderDirectory;
+        fullPath += "/";
+        fullPath += relativePath;
+        std::ifstream file(fullPath.c_str(), std::ios::binary | std::ios::ate);
+        if (!file.is_open())
+        {
+            return false;
+        }
+        const size_t size = static_cast<size_t>(file.tellg());
+        file.seekg(0, std::ios::beg);
+        Container::VariableArray<char> text;
+        text.resize(size + 1);
+        file.read(text.data(), static_cast<std::streamsize>(size));
+        text[size] = '\0';
+
+        size_t cursor = (size >= 3 && static_cast<unsigned char>(text[0]) == 0xEF && static_cast<unsigned char>(text[1]) == 0xBB &&
+                         static_cast<unsigned char>(text[2]) == 0xBF)
+                            ? 3u
+                            : 0u;
+        while (cursor < size)
+        {
+            size_t lineEnd = cursor;
+            while (lineEnd < size && text[lineEnd] != '\n')
+            {
+                ++lineEnd;
+            }
+            size_t contentEnd = lineEnd;
+            if (contentEnd > cursor && text[contentEnd - 1] == '\r')
+            {
+                --contentEnd;
+            }
+            size_t head = cursor;
+            while (head < contentEnd && (text[head] == ' ' || text[head] == '\t'))
+            {
+                ++head;
+            }
+            if (contentEnd - head >= 8 && std::strncmp(&text[head], "#include", 8) == 0)
+            {
+                size_t open = head + 8;
+                while (open < contentEnd && text[open] != '"')
+                {
+                    ++open;
+                }
+                size_t close = open + 1;
+                while (close < contentEnd && text[close] != '"')
+                {
+                    ++close;
+                }
+                if (close >= contentEnd || close - open - 1 >= 256)
+                {
+                    return false;
+                }
+                char includePath[256];
+                std::memcpy(includePath, &text[open + 1], close - open - 1);
+                includePath[close - open - 1] = '\0';
+                if (!ExpandTestShaderIncludes(includePath, expanded, depth + 1))
+                {
+                    return false;
+                }
+                expanded += "\n";
+            }
+            else
+            {
+                const char saved = text[contentEnd];
+                text[contentEnd] = '\0';
+                expanded += &text[cursor];
+                text[contentEnd] = saved;
+                expanded += "\n";
+            }
+            cursor = lineEnd + 1;
+        }
+        return true;
+    }
+
+    // SPIR-V の命令（語数 << 16 | opcode）を先頭から数え、opcode の命令の数を返す
+    uint32_t CountSpirvInstructions(const RHI::ShaderCompileResult& result, uint32_t opcode)
+    {
+        assert(result.bSuccess && result.ByteCode.size() >= 20 && result.ByteCode.size() % 4 == 0);
+        const size_t wordCount = result.ByteCode.size() / 4;
+        uint32_t count = 0;
+        size_t index = 5;
+        while (index < wordCount)
+        {
+            uint32_t word = 0;
+            std::memcpy(&word, result.ByteCode.data() + index * 4, sizeof(word));
+            const uint32_t length = word >> 16;
+            assert(length != 0);
+            count += (word & 0xFFFFu) == opcode ? 1u : 0u;
+            index += length;
+        }
+        return count;
+    }
+
+    // 太陽の VSM の照明の逃げた標本の数え上げは、VT のフィードバック（sparse が要る）から独立に有効になる:
+    //  - 能力: fragmentStoresAndAtomics と bufferDeviceAddress と十分な storage の範囲があれば、sparse が無くても VSM は使え、数え上げも有効。
+    //  - シェーダー: NORVES_VSM_STATS だけを定義して lighting.frag をコンパイルすると、アトミックの加算（OpAtomicIAdd）が入る。
+    //    NORVES_VT_FEEDBACK だけでは入らない（VT のフィードバックとは別のマクロ）。
+    void TestLightingShaderCountsVsmFallbackIndependentlyOfVtFeedback()
+    {
+        RHI::DeviceCapabilities noSparse;
+        noSparse.bFragmentStoresAndAtomics = true;
+        noSparse.bBufferDeviceAddress = true;
+        noSparse.MaxStorageBufferRange = 256ull * 1024ull * 1024ull;
+        assert(VirtualShadowMap::PlanPool(noSparse, 0).Pages != 0);
+        assert(!noSparse.SupportsVirtualTextureFeedback());
+        assert(noSparse.SupportsVsmLightingStats());
+        RHI::DeviceCapabilities noAtomics = noSparse;
+        noAtomics.bFragmentStoresAndAtomics = false;
+        assert(VirtualShadowMap::PlanPool(noAtomics, 0).Pages == 0);
+        assert(!noAtomics.SupportsVsmLightingStats());
+
+        constexpr uint32_t OpAtomicIAdd = 234;
+        Container::String source;
+        assert(ExpandTestShaderIncludes("lighting.frag", source, 0));
+        const auto compile = [&](bool bVsmStats, bool bVtFeedback)
+        {
+            RHI::Vulkan::VulkanShaderCompiler compiler;
+            compiler.SetVsmLightingStatsEnabled(bVsmStats);
+            compiler.SetVirtualTextureFeedbackEnabled(bVtFeedback);
+            return compiler.CompileFromSource(source, RHI::ShaderStage::Pixel, "lighting.frag", "main");
+        };
+        const RHI::ShaderCompileResult statsOnly = compile(true, false);
+        assert(statsOnly.bSuccess);
+        assert(CountSpirvInstructions(statsOnly, OpAtomicIAdd) > 0);
+        const RHI::ShaderCompileResult feedbackOnly = compile(false, true);
+        assert(feedbackOnly.bSuccess);
+        assert(CountSpirvInstructions(feedbackOnly, OpAtomicIAdd) == 0);
+        const RHI::ShaderCompileResult neither = compile(false, false);
+        assert(neither.bSuccess);
+        assert(CountSpirvInstructions(neither, OpAtomicIAdd) == 0);
+    }
+
     // 影を落とす MegaGeometry のインスタンスが、CSM のインスタンスごとの定数バッファ（DynamicUniformAllocator のスロット。1 カスケードあたり 256）を
     // 超える規模でも、VSM の MegaGeometry の影の描画は定数バッファのスロットを使わず、描画の数が変わらない。
     //  - VSM の記録（印付け以降）の間接描画は、ホストが書いた塊ごとの 3 回 + MegaGeometry のクラスタの記録の DrawIndexedIndirectCount 1 回のまま。
@@ -13770,6 +14047,8 @@ int main()
     TestVirtualShadowMapCasterRecordsLevelMask();
     TestVirtualShadowMapPassRecordsCasterRasterAfterSkinning();
     TestVirtualShadowMapPassRecordsMegaCullBetweenMainCullAndExpand();
+    TestLightingVsmStatsAreMadeHostVisibleAndReadAfterCompletion();
+    TestLightingShaderCountsVsmFallbackIndependentlyOfVtFeedback();
     TestVirtualShadowMapMegaDrawDoesNotUseCsmUniformSlots();
     TestVirtualShadowMapMegaCullStatsReporterLogsEvery60Reports();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();

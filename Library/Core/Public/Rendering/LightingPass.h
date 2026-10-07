@@ -189,6 +189,14 @@ namespace NorvesLib::Core::Rendering
             return m_SpecularReflectanceHandle.ToResourceHandle();
         }
 
+        /**
+         * @brief 太陽の VSM の読み出しの統計として読み戻した実行の数と、その合計の逃げた標本の数
+         *
+         * 書いたフレームの提出の完了が確かめられた枠だけを足す（提出前・実行中の枠は読まない）。
+         */
+        uint64_t GetVsmStatsHarvestedExecuteCount() const { return m_VsmStatsHarvestedExecutes; }
+        uint64_t GetVsmFallbackSampleCount() const { return m_VsmFallbackSamples; }
+
     private:
         friend struct DDGIProbeRayQueryVulkanTestAccess;
         friend struct RTGIDiffuseIndirectVulkanTestAccess;
@@ -482,24 +490,36 @@ namespace NorvesLib::Core::Rendering
          * @brief 太陽の VSM の読み出しの統計の読み戻し先（照明のシェーダーが storage buffer へ数え、ホストが数回後の実行で読む）
          *
          * [0] = 自分の段のページが無く、粗い段へ逃げた PCF の標本の数。--shadow-probe が無効でも数える。
+         * 書いたフレームの通し番号を持ち、その提出の完了が確かめられた（ViewRenderContext::CompletedRenderFrameSerial 以下）
+         * 枠だけを読んで空ける。
          */
         struct VsmStatsSlot
         {
             RHI::BufferPtr Buffer;
             const uint32_t* Mapped = nullptr;
-            uint64_t ExecuteIndex = 0;
+            uint64_t FrameSerial = 0;
             bool bPending = false;
         };
         static constexpr uint32_t VsmStatsSlotCount = 16;
         static constexpr uint32_t VsmStatsBytes = 16;
         VsmStatsSlot m_VsmStatsSlots[VsmStatsSlotCount];
-        uint64_t m_VsmStatsExecuteCount = 0;
+        /** @brief 空きの枠が無いとき・枠を作れないときに束ねる、読まない統計の置き場（シェーダーの数え上げが他の資源へ書かないようにする） */
+        RHI::BufferPtr m_VsmStatsSink;
         /** @brief 読み戻した実行の数と、その合計の逃げた標本の数 */
         uint64_t m_VsmStatsHarvestedExecutes = 0;
         uint64_t m_VsmFallbackSamples = 0;
 
-        /** @brief 次の統計の書き込み先を取り、0 に戻して返す（作れない・写像できないときは null） */
-        RHI::BufferPtr AcquireVsmStatsSlot();
+        /**
+         * @brief 次の統計の書き込み先を取り、0 に戻して返す
+         *
+         * 先に、提出の完了が確かめられた枠を読んで空ける。どの枠も GPU の完了が未確認のとき、作れない・写像できないときは null
+         * （GPU が書いているかもしれない枠は上書きしない）。
+         * @param frameSerial 今のフレームの通し番号（ViewRenderContext::ResolveRenderFrameSerial）
+         * @param completedSerial 提出の完了が確かめられた最大の通し番号
+         */
+        RHI::BufferPtr AcquireVsmStatsSlot(uint64_t frameSerial, uint64_t completedSerial);
+        /** @brief 書いたフレームの提出が完了した枠を合計へ足して空ける */
+        void HarvestCompletedVsmStats(uint64_t completedSerial);
         /** @brief 残っている統計をすべて合計へ足す（GPU が書き終えた後の終了時） */
         void HarvestVsmStats();
         bool m_bNeuralBRDFAvailable = false;     ///< Neural BRDFが利用可能か
