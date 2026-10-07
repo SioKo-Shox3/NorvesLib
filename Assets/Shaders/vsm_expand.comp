@@ -3,7 +3,10 @@
 // ========================================
 // 太陽の仮想シャドウマップ（VSM）の展開: 影の塊 × ページのインスタンスを作る
 //
-// 1 ワークグループ（64 スレッド）= 1 塊。塊のワールドの境界のライト空間の矩形が覆うページのうち、段ごとに
+// 1 ワークグループ（64 スレッド）= 1 塊。塊の番号は、ホストが書いた塊（手続きメッシュ・スキニング。binding 1）が 0 〜 counts.x - 1、
+// それに続いて MegaGeometry のクラスタの記録（vsm_mega_chunks.comp が書く。binding 6）が counts.x から並ぶ。クラスタの記録の数は GPU が決める
+// （カリングの一覧の件数 binding 7 の語 0 を、容量 counts.w で頭打ちにした数）。件数より後ろの塊のワークグループは何もしない。
+// 塊のワールドの境界のライト空間の矩形が覆うページのうち、段ごとに
 // 「範囲の中で、割り当て済みで dirty のもの」を数え（1 回目）、インスタンスの確保の位置（draws の頭の語 0 への atomicAdd）から
 // 連続した範囲を取り、同じ走査でインスタンス（塊の番号・段・絶対のページ・物理ページ）を書き（2 回目）、
 // 塊ごとの間接描画の引数（頂点数 = 三角形の数 × 3、instanceCount = ページの数、firstInstance = 範囲の先頭）を作る。
@@ -28,7 +31,7 @@ layout(std140, set = 0, binding = 0) uniform VsmRasterParams
     vec4 lightDirection;
     // x: 深度の原点（ライト空間の深度）、y: 1 / (2 × 深度の範囲)
     vec4 depth;
-    // x: 塊の数、y: 段の数、z: インスタンスの容量
+    // x: ホストが書いた塊の数、y: 段の数、z: インスタンスの容量、w: MegaGeometry のクラスタの記録の容量（0 なら無し）
     uvec4 counts;
     // x: ページの一辺（m）、y: texel の一辺（m）
     vec4 levelInfo[16];
@@ -59,6 +62,17 @@ layout(std430, set = 0, binding = 4) buffer VsmInstances
 layout(std430, set = 0, binding = 5) buffer VsmStats
 {
     uint stats[];
+};
+
+// MegaGeometry のクラスタの影の塊の記録（vsm_mega_chunks.comp が書く）と、カリングの一覧の頭（語 0 = 選んだクラスタの数）
+layout(std430, set = 0, binding = 6) readonly buffer VsmMegaChunks
+{
+    VsmShadowChunk megaChunks[];
+};
+
+layout(std430, set = 0, binding = 7) readonly buffer VsmMegaListHeader
+{
+    uint megaListSelected;
 };
 
 const uint STAT_RASTER_CHUNKS = 5u;
@@ -98,18 +112,35 @@ bool IsDrawable(uint entry)
 void main()
 {
     const uint chunkIndex = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
-    // ワークグループ全体で同じ値なので、barrier の前の早い戻りでよい
-    if (chunkIndex >= params.counts.x)
+    // counts.x 以降は MegaGeometry のクラスタの記録（件数は GPU が決める）。ワークグループ全体で同じ値なので、barrier の前の早い戻りでよい
+    const bool bMega = chunkIndex >= params.counts.x;
+    const uint megaIndex = chunkIndex - params.counts.x;
+    if (bMega && (params.counts.w == 0u || megaIndex >= min(megaListSelected, params.counts.w)))
     {
         return;
     }
     const uint thread = gl_LocalInvocationID.x;
 
-    // ワールドの境界（AABB）のライト空間の矩形
-    const vec3 boundsMin = chunks[chunkIndex].boundsMin;
-    const vec3 boundsMax = chunks[chunkIndex].boundsMax;
-    // CPU が境界から決めた段の集合。外の段は範囲を見ずに飛ばす
-    const uint levelMask = chunks[chunkIndex].levelMask;
+    // ワールドの境界（AABB）、展開する段の集合、三角形の数
+    vec3 boundsMin;
+    vec3 boundsMax;
+    uint levelMask;
+    uint recordTriangles;
+    if (bMega)
+    {
+        boundsMin = megaChunks[megaIndex].boundsMin;
+        boundsMax = megaChunks[megaIndex].boundsMax;
+        levelMask = megaChunks[megaIndex].levelMask;
+        recordTriangles = VisRecordTriangleCount(megaChunks[megaIndex].record);
+    }
+    else
+    {
+        boundsMin = chunks[chunkIndex].boundsMin;
+        boundsMax = chunks[chunkIndex].boundsMax;
+        // CPU が境界から決めた段の集合。外の段は範囲を見ずに飛ばす
+        levelMask = chunks[chunkIndex].levelMask;
+        recordTriangles = VisRecordTriangleCount(chunks[chunkIndex].record);
+    }
     const vec3 center = 0.5 * (boundsMin + boundsMax);
     const vec3 extent = 0.5 * (boundsMax - boundsMin);
     const vec2 lightCenter = vec2(dot(center, params.lightRight.xyz), dot(center, params.lightUp.xyz));
@@ -150,7 +181,7 @@ void main()
     if (thread == 0u)
     {
         const uint total = sharedCount;
-        const uint triangles = min(VisRecordTriangleCount(chunks[chunkIndex].record), VIS_MAX_TRIANGLES_PER_RECORD);
+        const uint triangles = min(recordTriangles, VIS_MAX_TRIANGLES_PER_RECORD);
         uint base = 0u;
         bool bOk = false;
         if (total != 0u && triangles != 0u)

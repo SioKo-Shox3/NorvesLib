@@ -292,8 +292,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief MegaGeometry の投影物のカリングの出力の一覧と、dirty のページの階層（作れなかったときは null） */
         const RHI::BufferPtr& GetMegaCullList() const { return m_MegaList; }
         const RHI::BufferPtr& GetMegaDirtyBits() const { return m_MegaDirtyBits; }
+        /** @brief MegaGeometry のクラスタの影の塊の記録（カリングの一覧の 1 件ごと。GPU が書く。作れなかったときは null） */
+        const RHI::BufferPtr& GetMegaChunks() const { return m_MegaChunks; }
         /** @brief 直前の Execute が MegaGeometry の投影物のカリング（VsmCullMega）を記録したか */
         bool WasMegaCullRecorded() const { return m_bMegaCullRecorded; }
+        /** @brief 直前の Execute が MegaGeometry のクラスタの記録を物理ページへ描く間接描画（展開の続きの 1 回）を記録したか */
+        bool WasMegaDrawRecorded() const { return m_bMegaDrawRecorded; }
         /** @brief 直前の Execute が印付けを記録したか（深度・有効なクリップマップ・カメラが揃ったとき） */
         bool WasMarked() const { return m_bMarked; }
         /** @brief 直前の Execute が展開・描画を記録したか（印付けを記録し、投影物の塊が 1 つ以上あったとき） */
@@ -349,6 +353,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief MegaGeometry の投影物のカリングの出力の一覧（GPU が書く）と、dirty のページの階層。カリングを作れた装置だけが持つ */
         RHI::BufferPtr m_MegaList;
         RHI::BufferPtr m_MegaDirtyBits;
+        /** @brief 一覧の 1 件ごとの影の塊の記録（GPU が書き、展開・描画が手続き・スキニングの塊の後ろに続けて読む） */
+        RHI::BufferPtr m_MegaChunks;
         Container::TUniquePtr<VirtualShadowMapPages> m_Pages;
         /** @brief 展開の統計（語 5〜7）を VSM_RASTER の行にする（投影物を描くようになるまで 0 のままで、出さない） */
         Container::TUniquePtr<VirtualShadowMapRasterStatsReporter> m_RasterReporter;
@@ -364,6 +370,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bMarked = false;
         bool m_bRasterRecorded = false;
         bool m_bMegaCullRecorded = false;
+        bool m_bMegaDrawRecorded = false;
         uint32_t m_LastCasterChunkCount = 0;
         /** @brief 最後に出した統計（変わったときだけ出す）と、出してからのフレーム数 */
         uint32_t m_LoggedStats[4] = {};

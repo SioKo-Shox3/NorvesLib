@@ -1,0 +1,52 @@
+﻿#version 450
+
+// ========================================
+// 太陽の仮想シャドウマップ（VSM）の dirty のページの階層（ページの mip。128² → 1）を作る
+//
+// ページの表の「割り当て済みで dirty」のページごとに、そのページを含む階層のすべての mip のビットを立てる（atomicOr）。
+// ビットの座標は、段の範囲の最小のページからの相対の座標（(トーラスの番地 − 範囲の原点) の下位 7 ビット）。
+// 呼ぶ前に、階層のバッファを 0 にしておくこと。1 スレッド = 1 ページ、dispatch は (16, 16, 段の数)（ローカルは 8×8）。
+// 階層は vsm_mega_cull.comp が、インスタンスの境界のライト空間の矩形に dirty のページが 1 つでもあるかの判定に使う。
+// ========================================
+
+#include "Common/VirtualShadowMapMegaCull.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 15) readonly buffer VsmPageTable
+{
+    uint pageTable[];
+};
+
+layout(std430, set = 0, binding = 16) buffer VsmDirtyBits
+{
+    uint dirtyBits[];
+};
+
+void main()
+{
+    const uint level = gl_GlobalInvocationID.z;
+    if (level >= megaParams.counts.x)
+    {
+        return;
+    }
+    const uvec2 torus = gl_GlobalInvocationID.xy;
+    if (torus.x >= VSM_MEGA_TABLE_DIMENSION || torus.y >= VSM_MEGA_TABLE_DIMENSION)
+    {
+        return;
+    }
+    const uint entry = pageTable[level * VSM_MEGA_TABLE_ENTRIES_PER_LEVEL + torus.y * VSM_MEGA_TABLE_DIMENSION + torus.x];
+    if ((entry & VSM_MEGA_PAGE_ENTRY_ALLOCATED) == 0u || (entry & VSM_MEGA_PAGE_ENTRY_DIRTY) == 0u)
+    {
+        return;
+    }
+
+    // 範囲の最小のページからの相対の座標（トーラスの番地の差の下位 7 ビット）
+    const ivec2 origin = megaParams.levelOrigin[level].xy;
+    const uvec2 relative = uvec2((ivec2(torus) - origin) & ivec2(int(VSM_MEGA_TABLE_DIMENSION) - 1));
+    for (uint mip = 0u; mip < VSM_MEGA_DIRTY_MIP_COUNT; ++mip)
+    {
+        const uint bit = VsmMegaDirtyBitIndex(level, mip, relative >> mip);
+        atomicOr(dirtyBits[bit >> 5u], 1u << (bit & 31u));
+    }
+}

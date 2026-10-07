@@ -18,6 +18,9 @@
 //     段の texel が 2 倍になるごとに選ばれるクラスタが粗くなり（葉 8・中間 4・2・根 1）、どの葉から根への道でもちょうど 1 つが選ばれること
 //     （自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）、インスタンスの判定（段の範囲・深度の範囲・dirty のページの階層）、
 //     出力の一覧の溢れ・統計を確かめる。dirty の階層は CPU の参照と全語一致する。
+//   ケース K（MegaGeometry のクラスタの記録の経路）: ケース F と同じ場面を、形ごとに MegaGeometry のクラスタ 1 つにして、本番の流れ
+//     （印付け → 割り当て → 消去 → カリング → クラスタの記録 → 展開 → 描画）に通し、物理プールが形の和の参照とケース F の手続きの経路と全 texel で一致すること、
+//     GPU が作ったクラスタの記録（種類・インデックスの先頭・頂点の基点・アドレス・段の集合・変換・境界）と展開の引数が一覧の件と整合することを確かめる。
 // 参照は、段の境界・ページの境界・影の最大距離に近い曖昧な画素を深度の画像から除いて作るので、GPU の単精度との差で揺れない。
 // どのケースも Vulkan の validation error が 0 件。Vulkan デバイスが無い環境では 125（スキップ）を返す。
 #include "Container/Containers.h"
@@ -1344,21 +1347,30 @@ namespace
     }
 
     // ケース F〜I。実行できなければ false
+    // ケース F の形・物理プール・割り当てたページ・プールのページの数（ケース I・K が、同じ場面を別の記録の経路で描いて比べる）
+    struct CaseFData
+    {
+        Container::VariableArray<Shape> Shapes;
+        Container::VariableArray<uint32_t> Pool;
+        Container::VariableArray<PageInfo> Pages;
+        uint32_t PoolPages = 0;
+    };
+
     bool RunRasterCases(const DevicePtr& device,
                         VirtualShadowMapPages& pages,
                         VirtualShadowMapRaster& raster,
                         const Scene& scene,
                         const Reference& reference,
                         const TexturePtr& depth,
-                        uint64_t& frameSerial)
+                        uint64_t& frameSerial,
+                        CaseFData& caseF)
     {
         const double depthCenter = scene.Clipmap.DepthCenter;
 
-        // ケース F の形・物理プール・プールのページの数（ケース I が、同じ場面を手続きメッシュの記録の経路で描いて比べる）
-        Container::VariableArray<Shape> caseFShapes;
-        Container::VariableArray<uint32_t> caseFPool;
-        Container::VariableArray<PageInfo> caseFPages;
-        uint32_t caseFPoolPages = 0;
+        Container::VariableArray<Shape>& caseFShapes = caseF.Shapes;
+        Container::VariableArray<uint32_t>& caseFPool = caseF.Pool;
+        Container::VariableArray<PageInfo>& caseFPages = caseF.Pages;
+        uint32_t& caseFPoolPages = caseF.PoolPages;
 
         // ----- ケース F: 印付け → 割り当て → 消去 → 展開 → 描画（合成した地面の深度の上に、既知の四角形 2 枚） -----
         {
@@ -2304,6 +2316,435 @@ namespace
         return true;
     }
 
+    // ========================================
+    // ケース K: MegaGeometry のクラスタの記録の経路（カリング → クラスタの記録 → 展開 → 描画）
+    // ========================================
+
+    // ケース F と同じ場面（近い四角形 + ローカルの頂点と変換の遠い四角形）を、形ごとに MegaGeometry のクラスタ 1 つ・インスタンス 1 つにして、
+    // 本番の流れ（印付け → 割り当て → 消去 → カリング vsm_mega_cull.comp → クラスタの記録 vsm_mega_chunks.comp → 展開 → 描画）に通す。
+    // 頂点・インデックスは 1 つの共有プールの塊のバッファに置き、クラスタの記録は GPU がカリングの一覧の 1 件から作る（頂点の基点・インデックスの
+    // 先頭・アドレスはインスタンスの表と影の表から引く）。物理プールが、形の和の参照と、ケース F（記録を直接組み立てた手続きの経路）と全 texel で一致すること、
+    // クラスタの記録の中身（種類・インスタンス・三角形の数・インデックスの先頭・頂点の基点・アドレス・段の集合・変換・境界）、展開の引数が一覧と整合することを確かめる。
+    bool RunMegaDrawCase(const DevicePtr& device,
+                         VirtualShadowMapPages& pages,
+                         VirtualShadowMapRaster& raster,
+                         ShaderManager& shaderManager,
+                         const Scene& scene,
+                         const TexturePtr& depth,
+                         const CaseFData& caseF,
+                         uint64_t& frameSerial)
+    {
+        namespace Mega = Core::Rendering::MegaGeometry;
+        if (caseF.Shapes.empty() || caseF.Pool.empty())
+        {
+            std::cerr << TestName << " ケース K: ケース F の結果が無い" << std::endl;
+            return false;
+        }
+        if (!raster.SupportsMegaCasters())
+        {
+            std::cout << TestName << " ケース K: この装置は DrawIndexedIndirectCount を使えないので省略" << std::endl;
+            return true;
+        }
+        VirtualShadowMapMegaCull cull;
+        if (!cull.Initialize(device.get(), &shaderManager))
+        {
+            std::cerr << TestName << " ケース K: MegaGeometry の投影物のカリングを初期化できませんでした" << std::endl;
+            return false;
+        }
+
+        ChunkGeometry geometry = BuildChunks(scene, caseF.Shapes);
+        const uint32_t shapeCount = static_cast<uint32_t>(geometry.Chunks.size());
+        constexpr uint32_t ListCapacity = 4096;
+        constexpr uint32_t InstanceCapacity = 16384;
+
+        // 共有プールの塊のバッファ: 頂点（1 つ 32 バイト）の後ろにインデックスを並べる。メッシュの頂点は塊の先頭から VertexPadding 個目から始まり
+        // （インスタンスの頂点の基点 = VertexPadding。クラスタの頂点の位置はそこからの相対）、インデックスの基点はインデックスの語の位置
+        constexpr uint32_t VertexPadding = 5;
+        const uint64_t vertexBytes = (static_cast<uint64_t>(VertexPadding) * 8u + geometry.Vertices.size()) * sizeof(float);
+        const uint64_t indexBytes = geometry.Indices.size() * sizeof(uint32_t);
+        const BufferPtr poolChunk = device->CreateBuffer(
+            BufferDesc(vertexBytes + indexBytes, ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress, true, "VsmMegaDrawTestPoolChunk"));
+        const BufferPtr clusterBuffer = device->CreateBuffer(BufferDesc(
+            sizeof(Mega::GPUClusterData) * shapeCount, ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress, true, "VsmMegaDrawTestClusters"));
+        const BufferPtr instanceBuffer = device->CreateBuffer(
+            BufferDesc(sizeof(MegaCull::TestInstance) * shapeCount, ResourceUsage::StorageBuffer, true, "VsmMegaDrawTestInstances"));
+        const BufferPtr shadowBuffer = device->CreateBuffer(
+            BufferDesc(sizeof(MegaGeometryShadowInstance) * shapeCount, ResourceUsage::StorageBuffer, true, "VsmMegaDrawTestShadowInstances"));
+        const BufferPtr geometryPages = device->CreateBuffer(
+            BufferDesc(sizeof(Mega::GeometryPageTable::Entry) * 4u, ResourceUsage::StorageBuffer, true, "VsmMegaDrawTestGeometryPages"));
+        const ResourceUsage readable = ResourceUsage::ShaderRead;
+        const BufferPtr dirtyBits = device->CreateBuffer(
+            BufferDesc(VirtualShadowMap::MegaDirtyBitsBytes(), VirtualShadowMap::MegaDirtyBitsUsage() | readable, true, "VsmMegaDrawTestDirtyBits"));
+        const BufferPtr list = device->CreateBuffer(
+            BufferDesc(VirtualShadowMap::MegaCullListBytes(ListCapacity), VirtualShadowMap::MegaCullListUsage() | readable, true, "VsmMegaDrawTestList"));
+        const BufferPtr megaChunks = device->CreateBuffer(
+            BufferDesc(VirtualShadowMap::RasterChunkBytes(ListCapacity), VirtualShadowMap::MegaChunkUsage() | readable, true, "VsmMegaDrawTestMegaChunks"));
+        const BufferPtr hostChunks = device->CreateBuffer(
+            BufferDesc(VirtualShadowMap::RasterChunkBytes(0u), VirtualShadowMap::RasterChunkUsage(), true, "VsmMegaDrawTestHostChunks"));
+        const BufferPtr instances = device->CreateBuffer(
+            BufferDesc(VirtualShadowMap::RasterInstanceBytes(InstanceCapacity), VirtualShadowMap::RasterInstanceUsage() | readable, true, "VsmMegaDrawTestRasterInstances"));
+        const BufferPtr draws = device->CreateBuffer(
+            BufferDesc(VirtualShadowMap::RasterDrawBytes(ListCapacity), VirtualShadowMap::RasterDrawUsage() | readable, true, "VsmMegaDrawTestDraws"));
+        Resources resources;
+        if (!poolChunk || !clusterBuffer || !instanceBuffer || !shadowBuffer || !geometryPages || !dirtyBits || !list || !megaChunks || !hostChunks ||
+            !instances || !draws || !CreateResources(device, caseF.PoolPages, resources))
+        {
+            std::cerr << TestName << " ケース K: バッファを作れませんでした" << std::endl;
+            return false;
+        }
+        const uint64_t poolAddress = poolChunk->GetDeviceAddress();
+        const uint64_t clusterAddress = clusterBuffer->GetDeviceAddress();
+        if (poolAddress == 0u || clusterAddress == 0u)
+        {
+            std::cerr << TestName << " ケース K: バッファのアドレスを取れませんでした" << std::endl;
+            return false;
+        }
+        const uint32_t indexBase = static_cast<uint32_t>(vertexBytes / sizeof(uint32_t));
+        {
+            uint8_t* mapped = static_cast<uint8_t*>(poolChunk->Map(0u, vertexBytes + indexBytes));
+            if (mapped == nullptr)
+            {
+                return false;
+            }
+            // 先頭の余りの頂点は、基点を足し忘れたときに別の頂点を引くよう、大きな値で埋める
+            float* padding = reinterpret_cast<float*>(mapped);
+            for (uint32_t word = 0; word < VertexPadding * 8u; ++word)
+            {
+                padding[word] = 1.0e6f;
+            }
+            std::memcpy(mapped + static_cast<size_t>(VertexPadding) * 8u * sizeof(float), geometry.Vertices.data(), geometry.Vertices.size() * sizeof(float));
+            std::memcpy(mapped + vertexBytes, geometry.Indices.data(), static_cast<size_t>(indexBytes));
+            poolChunk->Unmap();
+        }
+
+        // クラスタ・インスタンスの表・影の表（形ごとに 1 つ）。クラスタは根（親の誤差が無限大・自分の誤差 0）なので、どの段でも選ばれる
+        Container::VariableArray<Mega::GPUClusterData> clusters;
+        Container::VariableArray<MegaCull::TestInstance> instanceTable;
+        Container::VariableArray<MegaGeometryShadowInstance> shadowTable;
+        clusters.resize(shapeCount);
+        instanceTable.resize(shapeCount);
+        shadowTable.resize(shapeCount);
+        std::memset(clusters.data(), 0, clusters.size() * sizeof(Mega::GPUClusterData));
+        std::memset(instanceTable.data(), 0, instanceTable.size() * sizeof(MegaCull::TestInstance));
+        std::memset(shadowTable.data(), 0, shadowTable.size() * sizeof(MegaGeometryShadowInstance));
+        for (uint32_t index = 0; index < shapeCount; ++index)
+        {
+            const VsmShadowChunk& chunk = geometry.Chunks[index];
+            const uint32_t cornerCount = caseF.Shapes[index].bRect ? 4u : 3u;
+            // ローカルの頂点から球を作る（中心 = 頂点の平均、半径 = 最も遠い頂点までの距離）
+            double center[3] = {};
+            for (uint32_t corner = 0; corner < cornerCount; ++corner)
+            {
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    center[axis] += static_cast<double>(geometry.Vertices[static_cast<size_t>(chunk.Record.VertexBase + corner) * 8u + axis]) / cornerCount;
+                }
+            }
+            double radius = 0.0;
+            for (uint32_t corner = 0; corner < cornerCount; ++corner)
+            {
+                double distanceSquared = 0.0;
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    const double delta = static_cast<double>(geometry.Vertices[static_cast<size_t>(chunk.Record.VertexBase + corner) * 8u + axis]) - center[axis];
+                    distanceSquared += delta * delta;
+                }
+                radius = std::max(radius, std::sqrt(distanceSquared));
+            }
+            radius += 1.0e-3;
+
+            Mega::GPUClusterData& cluster = clusters[index];
+            cluster.BoundsCenterX = static_cast<float>(center[0]);
+            cluster.BoundsCenterY = static_cast<float>(center[1]);
+            cluster.BoundsCenterZ = static_cast<float>(center[2]);
+            cluster.BoundsRadius = static_cast<float>(radius);
+            cluster.ConeCutoff = -1.0f;
+            cluster.IndexOffset = chunk.Record.FirstIndex;
+            cluster.IndexCount = chunk.Record.TriangleCount * 3u;
+            cluster.VertexOffset = static_cast<int32_t>(chunk.Record.VertexBase);
+            cluster.LODLevel = 0u;
+            cluster.LODError = 0.0f;
+            cluster.Flags = Mega::GPU_CLUSTER_FLAG_BAKED_LOD;
+            cluster.ParentError = 3.402823466e+38f;
+            cluster.GroupId = 0xFFFFFFFFu; // 根
+            cluster.PageId = 0u;
+            cluster.ChildPageId = Mega::INVALID_PAGE_ID;
+
+            // ワールドの行列は列優先: 列 column・行 row の要素は World[row * 4 + column]（3 行。4 行目は (0, 0, 0, 1)）
+            MegaCull::TestInstance& instance = instanceTable[index];
+            for (uint32_t column = 0; column < 4u; ++column)
+            {
+                for (uint32_t row = 0; row < 3u; ++row)
+                {
+                    instance.World[column * 4u + row] = chunk.World[row * 4u + column];
+                    instance.PreviousWorld[column * 4u + row] = chunk.World[row * 4u + column];
+                }
+                instance.World[column * 4u + 3u] = column == 3u ? 1.0f : 0.0f;
+                instance.PreviousWorld[column * 4u + 3u] = column == 3u ? 1.0f : 0.0f;
+            }
+            const uint64_t address = clusterAddress + static_cast<uint64_t>(index) * sizeof(Mega::GPUClusterData);
+            instance.ClusterInfo[0] = static_cast<uint32_t>(address & 0xFFFFFFFFull);
+            instance.ClusterInfo[1] = static_cast<uint32_t>(address >> 32);
+            instance.ClusterInfo[2] = 1u;
+            instance.DrawInfo[1] = VertexPadding; // 頂点の基点（塊の先頭から）
+            instance.DrawInfo[2] = indexBase;  // インデックスの基点（塊の先頭から）
+            instance.BvhInfo[3] = 0u;
+
+            // 影の表: 境界はワールドの球（中心 = 変換した中心、半径 = ローカルの半径 × 拡大）
+            const float scale = caseF.Shapes[index].bLocalTransform ? LocalScale : 1.0f;
+            MegaGeometryShadowInstance& shadow = shadowTable[index];
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                shadow.BoundsSphere[axis] = chunk.World[axis * 4u + 0u] * static_cast<float>(center[0]) +
+                                            chunk.World[axis * 4u + 1u] * static_cast<float>(center[1]) +
+                                            chunk.World[axis * 4u + 2u] * static_cast<float>(center[2]) + chunk.World[axis * 4u + 3u];
+            }
+            shadow.BoundsSphere[3] = static_cast<float>(radius) * scale;
+            shadow.FirstGroup = index; // 1 クラスタ = 1 ワークグループ
+            shadow.Flags = MegaGeometryShadowFlagCaster | MegaGeometryShadowFlagBounds;
+            shadow.VertexAddress[0] = static_cast<uint32_t>(poolAddress & 0xFFFFFFFFull);
+            shadow.VertexAddress[1] = static_cast<uint32_t>(poolAddress >> 32);
+            shadow.IndexAddress[0] = shadow.VertexAddress[0];
+            shadow.IndexAddress[1] = shadow.VertexAddress[1];
+        }
+        clusterBuffer->Update(clusters.data(), clusters.size() * sizeof(Mega::GPUClusterData));
+        instanceBuffer->Update(instanceTable.data(), instanceTable.size() * sizeof(MegaCull::TestInstance));
+        shadowBuffer->Update(shadowTable.data(), shadowTable.size() * sizeof(MegaGeometryShadowInstance));
+        {
+            Mega::GeometryPageTable::Entry entries[4] = {};
+            entries[0].Region = 0u; // ページ 0 は常駐
+            geometryPages->Update(entries, sizeof(entries));
+        }
+        // 書かれたかを確かめるため、階層・一覧・インスタンス・引数は見張りで埋める
+        for (const BufferPtr& buffer : {dirtyBits, list, instances, draws})
+        {
+            FillWords(buffer, GarbageWord);
+        }
+        // クラスタの記録は、全件を「展開されれば物理ページを書き換える」身代わりの記録で埋める（形 0 と同じ頂点を深度だけ光源側へ 7 m ずらして全段へ）。
+        // 一覧の件数より後ろの記録を展開が読むと、描くはずのない身代わりが物理ページと統計に現れる
+        {
+            VsmShadowChunk decoy = geometry.Chunks[0];
+            decoy.Record.Kind = static_cast<uint32_t>(VisibilityBuffer::RecordKind::MegaGeometryCluster);
+            decoy.Record.FirstIndex = indexBase + geometry.Chunks[0].Record.FirstIndex;
+            decoy.Record.VertexBase = VertexPadding + geometry.Chunks[0].Record.VertexBase;
+            decoy.Record.VertexAddress = poolAddress;
+            decoy.Record.IndexAddress = poolAddress;
+            decoy.LevelMask = 0xFFFFFFFFu;
+            const float shift[3] = {scene.Clipmap.Direction.x * -7.0f, scene.Clipmap.Direction.y * -7.0f, scene.Clipmap.Direction.z * -7.0f};
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                decoy.World[axis * 4u + 3u] += shift[axis];
+                decoy.BoundsMin[axis] += shift[axis];
+                decoy.BoundsMax[axis] += shift[axis];
+            }
+            Container::VariableArray<VsmShadowChunk> decoys(ListCapacity, decoy);
+            megaChunks->Update(decoys.data(), decoys.size() * sizeof(VsmShadowChunk));
+        }
+
+        const uint64_t serial = frameSerial++;
+        pages.BeginFrame(0, serial);
+        cull.BeginFrame(0, serial);
+        raster.BeginFrame(0, serial);
+        CommandListPtr commandList = device->CreateCommandList();
+        if (!commandList)
+        {
+            std::cerr << TestName << " ケース K: コマンドリストを作れませんでした" << std::endl;
+            return false;
+        }
+        const BufferPtr buffers[] = {resources.Pool,      resources.PageTable, resources.RequestBits, resources.FreeList, resources.Stats, resources.DirtyList,
+                                     dirtyBits,           list,                megaChunks,            hostChunks,         instances,       draws};
+        commandList->Begin();
+        for (const BufferPtr& buffer : buffers)
+        {
+            commandList->BufferBarrier(buffer, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, buffer->GetSize());
+        }
+        VirtualShadowMapPagesDispatch pagesDispatch;
+        pagesDispatch.PoolPages = resources.PoolPages;
+        pagesDispatch.Pool = resources.Pool;
+        pagesDispatch.PageTable = resources.PageTable;
+        pagesDispatch.RequestBits = resources.RequestBits;
+        pagesDispatch.FreeList = resources.FreeList;
+        pagesDispatch.Stats = resources.Stats;
+        pagesDispatch.DirtyList = resources.DirtyList;
+        pagesDispatch.Depth = depth;
+        pagesDispatch.Clipmap = &scene.Clipmap;
+        std::memcpy(pagesDispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(pagesDispatch.InverseViewProjection));
+        std::memcpy(pagesDispatch.CameraPosition, scene.CameraPosition, sizeof(pagesDispatch.CameraPosition));
+        pagesDispatch.FovYDegrees = scene.Camera.FieldOfView;
+        const bool bPages = pages.Record(commandList.get(), pagesDispatch);
+
+        VirtualShadowMapMegaCullDispatch cullDispatch;
+        cullDispatch.Clipmap = &scene.Clipmap;
+        cullDispatch.PageTable = resources.PageTable;
+        cullDispatch.Stats = resources.Stats;
+        cullDispatch.DirtyBits = dirtyBits;
+        cullDispatch.List = list;
+        cullDispatch.Chunks = megaChunks;
+        cullDispatch.Instances = instanceBuffer;
+        cullDispatch.ShadowInstances = shadowBuffer;
+        cullDispatch.MegaPageTable = geometryPages;
+        cullDispatch.InstanceCount = shapeCount;
+        cullDispatch.TotalGroups = shapeCount;
+        const bool bCull = cull.Record(commandList.get(), cullDispatch);
+
+        VirtualShadowMapRasterDispatch rasterDispatch;
+        rasterDispatch.Clipmap = &scene.Clipmap;
+        rasterDispatch.PoolPages = resources.PoolPages;
+        rasterDispatch.Pool = resources.Pool;
+        rasterDispatch.PageTable = resources.PageTable;
+        rasterDispatch.Stats = resources.Stats;
+        rasterDispatch.Chunks = hostChunks;
+        rasterDispatch.ChunkCount = 0u;
+        rasterDispatch.Instances = instances;
+        rasterDispatch.Draws = draws;
+        rasterDispatch.MegaChunks = megaChunks;
+        rasterDispatch.MegaList = list;
+        rasterDispatch.MegaCapacity = ListCapacity;
+        const bool bRaster = raster.Record(commandList.get(), rasterDispatch);
+        const bool bMegaDraw = raster.WasMegaDrawRecorded();
+        for (const BufferPtr& buffer : buffers)
+        {
+            commandList->BufferBarrier(buffer, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, buffer->GetSize());
+        }
+        commandList->End();
+        commandList->Submit(true);
+        device->WaitIdle();
+
+        Expect(bPages && bCull && bRaster, "ケース K: 印付け・カリング・展開・描画を記録できなければならない");
+        Expect(cull.WasChunkBuilt(), "ケース K: カリングがクラスタの記録を作らなければならない");
+        Expect(bMegaDraw, "ケース K: MegaGeometry のクラスタの間接描画（DrawIndexedIndirectCount）を記録しなければならない");
+        Expect(raster.GetLastDrawCount() == 0u, "ケース K: ホストが書いた塊が無いので、塊ごとの間接描画は無い");
+
+        Container::VariableArray<uint32_t> poolWords;
+        Container::VariableArray<uint32_t> pageTableWords;
+        Container::VariableArray<uint32_t> statsWords;
+        Container::VariableArray<uint32_t> listWords;
+        Container::VariableArray<uint32_t> chunkWords;
+        Container::VariableArray<uint32_t> drawWords;
+        if (!ReadAll(resources.Pool, poolWords) || !ReadAll(resources.PageTable, pageTableWords) || !ReadAll(resources.Stats, statsWords) ||
+            !ReadAll(list, listWords) || !ReadAll(megaChunks, chunkWords) || !ReadAll(draws, drawWords))
+        {
+            std::cerr << TestName << " ケース K: 読み戻せませんでした" << std::endl;
+            return false;
+        }
+        const Container::VariableArray<PageInfo> pageInfos = DecodePages(scene, pageTableWords);
+        Expect(pageInfos.size() == caseF.Pages.size(), "ケース K: 割り当てたページの数がケース F と同じでなければならない");
+
+        // 一覧: 選んだクラスタの件数。どの件も（形のインスタンス、段、クラスタ 0）で、形ごとに 1 件以上ある
+        const uint32_t selected = listWords[0];
+        const uint32_t overflow = listWords[1];
+        Expect(selected > 0u && selected <= ListCapacity && overflow == 0u, "ケース K: カリングが 1 件以上を選び、溢れてはならない");
+        Expect(statsWords[VirtualShadowMap::StatMegaClusters] == selected && statsWords[VirtualShadowMap::StatMegaOverflow] == 0u,
+               "ケース K: カリングの統計が一覧の件数と一致しなければならない");
+        Container::VariableArray<uint32_t> selectedPerShape(shapeCount, 0u);
+        uint32_t chunkErrors = 0;
+        uint32_t expectedInstanceTotal = 0;
+        const uint32_t live = std::min(selected, ListCapacity);
+        for (uint32_t entryIndex = 0; entryIndex < live; ++entryIndex)
+        {
+            const uint32_t* entry = &listWords[VirtualShadowMap::MEGA_CULL_LIST_HEADER_WORDS + entryIndex * 4u];
+            const uint32_t shapeIndex = entry[0];
+            const uint32_t level = entry[1];
+            if (shapeIndex >= shapeCount || level >= scene.Clipmap.LevelCount || entry[2] != 0u)
+            {
+                ++chunkErrors;
+                continue;
+            }
+            ++selectedPerShape[shapeIndex];
+
+            // クラスタの記録の中身（GPU が一覧の 1 件から作ったもの）
+            VsmShadowChunk made;
+            std::memcpy(&made, &chunkWords[static_cast<size_t>(entryIndex) * sizeof(VsmShadowChunk) / sizeof(uint32_t)], sizeof(made));
+            const VsmShadowChunk& source = geometry.Chunks[shapeIndex];
+            bool bOk = made.Record.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::MegaGeometryCluster) && made.Record.InstanceIndex == shapeIndex &&
+                       made.Record.TriangleCount == source.Record.TriangleCount && made.Record.FirstIndex == indexBase + source.Record.FirstIndex &&
+                       made.Record.VertexBase == VertexPadding + source.Record.VertexBase && made.Record.VertexAddress == poolAddress && made.Record.IndexAddress == poolAddress &&
+                       made.Record.PreviousTransformIndex == VisibilityBuffer::NO_PREVIOUS_TRANSFORM && made.Record.PreviousVertexAddress == 0u &&
+                       made.LevelMask == (1u << level) && made.Reserved == 0u;
+            bOk = bOk && std::memcmp(made.World, source.World, sizeof(made.World)) == 0;
+            // 境界: 形の頂点（ワールド）を含む
+            const uint32_t cornerCount = caseF.Shapes[shapeIndex].bRect ? 4u : 3u;
+            for (uint32_t corner = 0; corner < cornerCount && bOk; ++corner)
+            {
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    float world = source.World[axis * 4u + 3u];
+                    for (uint32_t inner = 0; inner < 3u; ++inner)
+                    {
+                        world += source.World[axis * 4u + inner] *
+                                 geometry.Vertices[static_cast<size_t>(source.Record.VertexBase + corner) * 8u + inner];
+                    }
+                    bOk = bOk && made.BoundsMin[axis] <= world + 1.0e-3f && made.BoundsMax[axis] >= world - 1.0e-3f;
+                }
+            }
+            if (!bOk)
+            {
+                ++chunkErrors;
+            }
+
+            // 展開の引数: この件（段 level のページだけ）の dirty のページの数が instanceCount
+            Container::VariableArray<PageInfo> levelPages;
+            for (const PageInfo& page : pageInfos)
+            {
+                if (page.Level == level)
+                {
+                    levelPages.push_back(page);
+                }
+            }
+            const uint32_t expectedInstances = CountExpectedInstances(scene, made, levelPages);
+            expectedInstanceTotal += expectedInstances;
+            const uint32_t* command = &drawWords[VirtualShadowMap::RASTER_DRAWS_HEADER_WORDS + entryIndex * VirtualShadowMap::RASTER_DRAW_COMMAND_WORDS];
+            if (command[0] != source.Record.TriangleCount * 3u || command[1] != expectedInstances)
+            {
+                ++chunkErrors;
+            }
+        }
+        Expect(chunkErrors == 0u, "ケース K: クラスタの記録・展開の引数が、一覧の件と整合しなければならない");
+        for (uint32_t index = 0; index < shapeCount; ++index)
+        {
+            Expect(selectedPerShape[index] > 0u, "ケース K: どの形のクラスタも 1 つ以上の段で選ばれなければならない");
+        }
+        Expect(statsWords[VirtualShadowMap::StatRasterInstances] == expectedInstanceTotal && statsWords[VirtualShadowMap::StatRasterOverflow] == 0u,
+               "ケース K: 展開の統計（書いたインスタンス）が引数の合計と一致し、溢れてはならない");
+
+        // 物理プール: 形の和の参照と、ケース F（記録を直接組み立てた手続きの経路）の全 texel と一致
+        const PoolCheck check = CheckPool("ケース K", scene, caseF.Shapes, pageInfos, poolWords, VirtualShadowMap::EMPTY_DEPTH_BITS);
+        uint32_t differentWords = 0;
+        uint32_t comparedPages = 0;
+        Expect(poolWords.size() == caseF.Pool.size(), "ケース K: 物理プールの大きさがケース F と同じでなければならない");
+        for (const PageInfo& page : pageInfos)
+        {
+            const PageInfo* counterpart = nullptr;
+            for (const PageInfo& candidate : caseF.Pages)
+            {
+                if (candidate.Level == page.Level && candidate.AbsX == page.AbsX && candidate.AbsY == page.AbsY)
+                {
+                    counterpart = &candidate;
+                    break;
+                }
+            }
+            Expect(counterpart != nullptr && counterpart->bDirty == page.bDirty, "ケース K: ケース F と同じページが割り当てられなければならない");
+            if (counterpart == nullptr)
+            {
+                continue;
+            }
+            ++comparedPages;
+            const size_t baseK = static_cast<size_t>(page.Physical) * VirtualShadowMap::PAGE_WORDS;
+            const size_t baseF = static_cast<size_t>(counterpart->Physical) * VirtualShadowMap::PAGE_WORDS;
+            for (uint32_t word = 0; word < VirtualShadowMap::PAGE_WORDS; ++word)
+            {
+                differentWords += poolWords[baseK + word] != caseF.Pool[baseF + word] ? 1u : 0u;
+            }
+        }
+        Expect(comparedPages == pageInfos.size(), "ケース K: すべてのページをケース F と比べなければならない");
+        std::cout << TestName << " ケース K: 選んだクラスタ=" << selected << " 書いたインスタンス=" << statsWords[VirtualShadowMap::StatRasterInstances]
+                  << " 比べた texel=" << check.Compared << " 形に覆われた texel=" << check.Covered << " 不一致=" << check.Mismatches
+                  << " ケース F との違い（語）=" << differentWords << std::endl;
+        Expect(check.Mismatches == 0u && check.Covered > 2000u, "ケース K: MegaGeometry のクラスタの経路で描いた物理ページが形の和の参照と一致しなければならない");
+        Expect(differentWords == 0u, "ケース K: MegaGeometry のクラスタの経路で描いた texel が、ケース F の手続きの経路と同じでなければならない");
+        return true;
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -2502,7 +2943,13 @@ namespace
                     std::cerr << TestName << " VSM の展開・描画のパイプラインを初期化できませんでした" << std::endl;
                     return 1;
                 }
-                if (!RunRasterCases(device, pages, raster, scene, reference, depth, frameSerial))
+                CaseFData caseF;
+                if (!RunRasterCases(device, pages, raster, scene, reference, depth, frameSerial, caseF))
+                {
+                    return 1;
+                }
+                // ----- ケース K: MegaGeometry のクラスタの記録の経路（ケース F と同じ場面） -----
+                if (!RunMegaDrawCase(device, pages, raster, shaderManager, scene, depth, caseF, frameSerial))
                 {
                     return 1;
                 }

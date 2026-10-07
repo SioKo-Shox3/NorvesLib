@@ -1256,7 +1256,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした。計画書 §4.3「クラスタの経路でページの表を引いて書く」）。主の経路の cull は入力がユニフォームだけなので別のビューで回せるが、C++ 側（`MegaGeometryPass::RecordFrameCommand`）は主カメラ 1 本・資源 1 組の作りなので、影のための UBO・出力バッファを別に持つ。今の CSM は MegaGeometry を CPU の 1 インスタンス 1 描画（`ShadowLODLevel`・`LevelRanges` の粗い段）で描いており、VSM はクラスタの階層を使う新しい経路になる。危険地帯（描画パス）。
 
 ## VTG8-VSM-MEGA-DRAW: MegaGeometry のクラスタを VSM の物理ページへ描く
-- status: todo
+- status: done
 - done-when: VTG8-VSM-MEGA-CULL の（インスタンス、段、クラスタ）を、VTG8-VSM-RASTER の展開・描画で物理ページへ描く（クラスタの頂点・インデックスは共有プールから、インスタンスの world で変換。展開の境界はクラスタの境界球）。手続き・スキニングの塊と同じ展開・描画の 1 回の流れにまとめる（記録の種類で頂点の読み方を分ける）。`VirtualShadowMapVulkanTest` に、MegaGeometry のクラスタの記録の経路で描いた四角形が手続きの経路と同じ texel になる場面を足す（MegaGeometry のクラスタの場面をテストで作れない場合は、RenderGraphCompileTest で記録の形・展開・描画の順を確かめ、その理由を PROGRESS に書く）。RenderGraphCompileTest で、vsm の構成で MegaGeometry の影の描画に CSM の UBO のスロットを使わないこと（VSM 側の描画の数が `DynamicUniformAllocator` に依らないこと）を確かめる。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`

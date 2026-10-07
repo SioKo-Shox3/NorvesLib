@@ -155,6 +155,7 @@ namespace NorvesLib::Core::Rendering
         m_Casters.reset();
         m_MegaList.reset();
         m_MegaDirtyBits.reset();
+        m_MegaChunks.reset();
         if (m_MegaCull)
         {
             m_MegaCull->Shutdown();
@@ -214,15 +215,23 @@ namespace NorvesLib::Core::Rendering
         }
         m_Casters = Container::MakeUnique<VirtualShadowMapCasterState>();
 
-        // MegaGeometry の投影物のカリング。作れなくても VSM は動く（MegaGeometry の投影物が載らないだけ）
-        m_MegaCull = Container::MakeUnique<VirtualShadowMapMegaCull>();
-        if (!m_MegaCull->Initialize(m_Device, context.ShaderMgr))
+        // MegaGeometry の投影物のカリングと、クラスタの記録（影の塊）を描く仕組み。作れなくても VSM は動く（MegaGeometry の投影物が載らないだけ）。
+        // クラスタの記録は件数を GPU から読む間接描画で描くので、それが使えない装置では作らない
+        if (m_Raster->SupportsMegaCasters())
         {
-            m_MegaCull.reset();
+            m_MegaCull = Container::MakeUnique<VirtualShadowMapMegaCull>();
+            if (!m_MegaCull->Initialize(m_Device, context.ShaderMgr))
+            {
+                m_MegaCull.reset();
+            }
+            else
+            {
+                m_MegaReporter = Container::MakeUnique<VirtualShadowMapMegaCullStatsReporter>();
+            }
         }
         else
         {
-            m_MegaReporter = Container::MakeUnique<VirtualShadowMapMegaCullStatsReporter>();
+            NORVES_LOG_WARNING("VirtualShadowMapPass", "MegaGeometry の影の描画に要る DrawIndexedIndirectCount が無いので、VSM に MegaGeometry の投影物を載せない");
         }
 
         m_RasterReporter = Container::MakeUnique<VirtualShadowMapRasterStatsReporter>();
@@ -252,8 +261,13 @@ namespace NorvesLib::Core::Rendering
             // 展開の出力（GPU が書く）。投影物の塊の記録は、描くフレームで必要な大きさに合わせて作る
             m_Casters->Instances = m_Device->CreateBuffer(RHI::BufferDesc(
                 VirtualShadowMap::RasterInstanceBytes(VirtualShadowMap::RASTER_INSTANCE_CAPACITY), VirtualShadowMap::RasterInstanceUsage(), false, "VsmRaster_Instances"));
+            // 間接描画の引数は、ホストが書いた塊と、続く MegaGeometry のクラスタの記録（カリングの一覧の容量ぶん）の両方を持つ
             m_Casters->Draws = m_Device->CreateBuffer(RHI::BufferDesc(
-                VirtualShadowMap::RasterDrawBytes(VirtualShadowMap::MAX_CASTER_CHUNKS), VirtualShadowMap::RasterDrawUsage(), false, "VsmRaster_Draws"));
+                VirtualShadowMap::RasterDrawBytes(VirtualShadowMap::MAX_CASTER_CHUNKS +
+                                                  (m_MegaCull ? VirtualShadowMap::MEGA_CULL_LIST_CAPACITY : 0u)),
+                VirtualShadowMap::RasterDrawUsage(),
+                false,
+                "VsmRaster_Draws"));
             bCreated = m_Pool && m_PageTable && m_RequestBits && m_FreeList && m_Stats && m_DirtyList && m_Casters->Instances && m_Casters->Draws;
             // MegaGeometry の投影物のカリングの出力の一覧と、dirty のページの階層（GPU が書く）。作れなければカリングだけを諦める
             if (m_MegaCull)
@@ -264,10 +278,15 @@ namespace NorvesLib::Core::Rendering
                                                                     "VsmMega_List"));
                 m_MegaDirtyBits = m_Device->CreateBuffer(
                     RHI::BufferDesc(VirtualShadowMap::MegaDirtyBitsBytes(), VirtualShadowMap::MegaDirtyBitsUsage(), false, "VsmMega_DirtyBits"));
-                if (!m_MegaList || !m_MegaDirtyBits)
+                m_MegaChunks = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::RasterChunkBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY),
+                                                                      VirtualShadowMap::MegaChunkUsage(),
+                                                                      false,
+                                                                      "VsmMega_Chunks"));
+                if (!m_MegaList || !m_MegaDirtyBits || !m_MegaChunks)
                 {
                     m_MegaList.reset();
                     m_MegaDirtyBits.reset();
+                    m_MegaChunks.reset();
                     m_MegaCull->Shutdown();
                     m_MegaCull.reset();
                     m_MegaReporter.reset();
@@ -308,9 +327,10 @@ namespace NorvesLib::Core::Rendering
         m_PoolPages = plan.Pages;
         m_bActive = true;
         const uint64_t rasterBytes = VirtualShadowMap::RasterInstanceBytes(VirtualShadowMap::RASTER_INSTANCE_CAPACITY) +
-                                     VirtualShadowMap::RasterDrawBytes(VirtualShadowMap::MAX_CASTER_CHUNKS);
+                                     m_Casters->Draws->GetSize();
         const uint64_t megaBytes = m_MegaCull ? VirtualShadowMap::MegaCullListBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY) +
-                                                    VirtualShadowMap::MegaDirtyBitsBytes()
+                                                    VirtualShadowMap::MegaDirtyBitsBytes() +
+                                                    VirtualShadowMap::RasterChunkBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY)
                                               : 0ull;
         if (m_Gpu)
         {
@@ -575,7 +595,9 @@ namespace NorvesLib::Core::Rendering
     {
         VirtualShadowMapCasterState& state = *m_Casters;
         const uint32_t chunkCount = static_cast<uint32_t>(state.Chunks.size());
-        if (chunkCount == 0u || chunkCount > VirtualShadowMap::MAX_CASTER_CHUNKS || !state.Instances || !state.Draws)
+        // MegaGeometry のクラスタの記録（直前のカリングが作ったもの）は、ホストが書いた塊が 0 件でも描く
+        const bool bMega = m_bMegaCullRecorded && m_MegaChunks && m_MegaList && m_Raster->SupportsMegaCasters();
+        if ((chunkCount == 0u && !bMega) || chunkCount > VirtualShadowMap::MAX_CASTER_CHUNKS || !state.Instances || !state.Draws)
         {
             return false;
         }
@@ -593,13 +615,23 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
         }
-        use.Chunks->Update(state.Chunks.data(), static_cast<uint64_t>(chunkCount) * sizeof(VsmShadowChunk));
+        if (chunkCount != 0u)
+        {
+            use.Chunks->Update(state.Chunks.data(), static_cast<uint64_t>(chunkCount) * sizeof(VsmShadowChunk));
+        }
 
         RHI::ICommandList* commandList = context.CommandList;
-        const RHI::BufferPtr rasterBuffers[] = {use.Chunks, state.Instances, state.Draws};
-        for (const RHI::BufferPtr& buffer : rasterBuffers)
+        RHI::BufferPtr rasterBuffers[5] = {use.Chunks, state.Instances, state.Draws};
+        uint32_t rasterBufferCount = 3;
+        if (bMega)
         {
-            commandList->BufferBarrier(buffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
+            // カリングの記録の後に Common へ戻した一覧とクラスタの記録を、展開・描画が読めるように UnorderedAccess へ遷移する
+            rasterBuffers[rasterBufferCount++] = m_MegaChunks;
+            rasterBuffers[rasterBufferCount++] = m_MegaList;
+        }
+        for (uint32_t index = 0; index < rasterBufferCount; ++index)
+        {
+            commandList->BufferBarrier(rasterBuffers[index], RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
         }
 
         VirtualShadowMapRasterDispatch rasterDispatch;
@@ -612,18 +644,25 @@ namespace NorvesLib::Core::Rendering
         rasterDispatch.ChunkCount = chunkCount;
         rasterDispatch.Instances = state.Instances;
         rasterDispatch.Draws = state.Draws;
-        const bool bRecorded = m_Raster->Record(commandList, rasterDispatch);
-
-        for (const RHI::BufferPtr& buffer : rasterBuffers)
+        if (bMega)
         {
-            commandList->BufferBarrier(buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
+            rasterDispatch.MegaChunks = m_MegaChunks;
+            rasterDispatch.MegaList = m_MegaList;
+            rasterDispatch.MegaCapacity = VirtualShadowMap::MEGA_CULL_LIST_CAPACITY;
+        }
+        const bool bRecorded = m_Raster->Record(commandList, rasterDispatch);
+        m_bMegaDrawRecorded = bRecorded && m_Raster->WasMegaDrawRecorded();
+
+        for (uint32_t index = 0; index < rasterBufferCount; ++index)
+        {
+            commandList->BufferBarrier(rasterBuffers[index], RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
         }
         return bRecorded;
     }
 
     bool VirtualShadowMapPass::RecordMegaCull(ViewRenderContext& context, uint64_t /*frameSerial*/)
     {
-        if (!m_MegaCull || !m_MegaCull->IsReady() || !m_MegaPass || !m_MegaList || !m_MegaDirtyBits)
+        if (!m_MegaCull || !m_MegaCull->IsReady() || !m_MegaPass || !m_MegaList || !m_MegaDirtyBits || !m_MegaChunks)
         {
             return false;
         }
@@ -634,7 +673,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::ICommandList* commandList = context.CommandList;
-        const RHI::BufferPtr megaBuffers[] = {m_MegaList, m_MegaDirtyBits};
+        const RHI::BufferPtr megaBuffers[] = {m_MegaList, m_MegaDirtyBits, m_MegaChunks};
         for (const RHI::BufferPtr& buffer : megaBuffers)
         {
             commandList->BufferBarrier(buffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
@@ -646,6 +685,7 @@ namespace NorvesLib::Core::Rendering
         megaDispatch.Stats = m_Stats;
         megaDispatch.DirtyBits = m_MegaDirtyBits;
         megaDispatch.List = m_MegaList;
+        megaDispatch.Chunks = m_MegaChunks;
         megaDispatch.Instances = inputs.InstanceBuffer;
         megaDispatch.ShadowInstances = inputs.ShadowInstanceBuffer;
         megaDispatch.MegaPageTable = inputs.PageTableBuffer;
@@ -714,6 +754,7 @@ namespace NorvesLib::Core::Rendering
         m_bMarked = false;
         m_bRasterRecorded = false;
         m_bMegaCullRecorded = false;
+        m_bMegaDrawRecorded = false;
         m_LastCasterChunkCount = 0;
         if (!m_bActive || !m_bDeclared || !m_Pages || !m_Raster || !m_Casters || !context.CommandList)
         {
@@ -790,7 +831,8 @@ namespace NorvesLib::Core::Rendering
             ReportCasters();
             // MegaGeometry の投影物のカリング（展開の前。出力は VsmMega_List。主の経路のバッファには書かない）
             m_bMegaCullRecorded = RecordMegaCull(context, frameSerial);
-            if (!m_Casters->Chunks.empty())
+            // ホストが書いた塊がある、または MegaGeometry のクラスタの記録を作ったフレームは、展開・描画を 1 回の流れで記録する
+            if (!m_Casters->Chunks.empty() || m_bMegaCullRecorded)
             {
                 m_bRasterRecorded = RecordRaster(context, frameSerial);
                 m_LastCasterChunkCount = m_bRasterRecorded ? static_cast<uint32_t>(m_Casters->Chunks.size()) : 0u;

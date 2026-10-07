@@ -33,6 +33,7 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/VirtualShadowMapCasters.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
+#include "Rendering/VirtualShadowMapPages.h"
 #include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/VirtualShadowMapRaster.h"
 #include "Rendering/VisibilityRasterPass.h"
@@ -1268,6 +1269,7 @@ namespace
         RHI::DescriptorSetPtr CreateDescriptorSet(const RHI::DescriptorSetDesc& desc) override
         {
             LastDescriptorSetDesc = desc;
+            ++DescriptorSetCreations;
             return RHI::MakeShared<FakeDescriptorSet>();
         }
 
@@ -1331,6 +1333,12 @@ namespace
             m_Capabilities.bDrawIndirectFirstInstance = true;
         }
 
+        // DrawIndexedIndirectCount に対応する装置にする（VSM の MegaGeometry のクラスタの記録は、件数を GPU から読むこの間接描画で描く）
+        void EnableDrawIndirectCount()
+        {
+            m_Capabilities.bDrawIndirectCount = true;
+        }
+
         // バッファのアドレスに対応しない装置にする（ソフトウェアラスタの計算シェーダーが頂点を引けない）
         void DisableBufferDeviceAddress()
         {
@@ -1367,6 +1375,8 @@ namespace
         // 0 でなければ、数え始めてから n 番目の計算パイプラインの作成だけを失敗させる（ほかは作れる）
         uint32_t FailComputePipelineCreationNumber = 0;
         uint32_t ComputePipelineCreations = 0;
+        // 作った記述子セットの数
+        size_t DescriptorSetCreations = 0;
 
     private:
         RHI::DeviceCapabilities m_Capabilities;
@@ -7454,12 +7464,15 @@ namespace
         size_t MainSequenceLength = 0;
         size_t MainDispatchCount = 0;
         size_t MainBarrierCount = 0;
+        size_t MainIndirectDrawCount = 0;
     };
 
-    void BuildVsmMegaScene(VsmMegaScene& scene, bool bCasters = true)
+    // extraCasters: 影を落とすインスタンスを、A と同じメッシュで何個足すか（CSM のインスタンスごとの定数バッファの数を超える規模を作る）
+    void BuildVsmMegaScene(VsmMegaScene& scene, bool bCasters = true, uint32_t extraCasters = 0)
     {
         VsmRun& run = scene.Base.Run;
         run.Device->EnableMegaGeometryBatchCapabilities();
+        run.Device->EnableDrawIndirectCount();
         BuildVsmCasterScene(scene.Base, true);
         RenderResources& resources = scene.Base.Resources;
         resources.MegaGeometry().SetOcclusionCullingEnabled(true);
@@ -7534,6 +7547,13 @@ namespace
         proxyC.WorldBounds = BoundingSphere{};
         proxyC.bCastShadow = bCasters;
         scene.Proxies.push_back(proxyC);
+        for (uint32_t extra = 0; extra < extraCasters; ++extra)
+        {
+            MegaGeometryProxy proxyExtra = proxyA;
+            proxyExtra.ObjectId = 100 + extra;
+            proxyExtra.ComponentId = 1000 + extra;
+            scene.Proxies.push_back(proxyExtra);
+        }
         context.SnapshotMegaGeometryProxies = &scene.Proxies;
 
         assert(scene.Mega.Initialize(context));
@@ -7556,6 +7576,7 @@ namespace
         scene.MainSequenceLength = run.CommandList.CallSequence.size();
         scene.MainDispatchCount = run.CommandList.DispatchGroups.size();
         scene.MainBarrierCount = run.CommandList.Barriers.size();
+        scene.MainIndirectDrawCount = run.CommandList.IndirectDraws.size();
     }
 
     void ShutdownVsmMegaScene(VsmMegaScene& scene)
@@ -7597,9 +7618,63 @@ namespace
         return false;
     }
 
+    // 影を落とす MegaGeometry のインスタンスが、CSM のインスタンスごとの定数バッファ（DynamicUniformAllocator のスロット。1 カスケードあたり 256）を
+    // 超える規模でも、VSM の MegaGeometry の影の描画は定数バッファのスロットを使わず、描画の数が変わらない。
+    //  - VSM の記録（印付け以降）の間接描画は、ホストが書いた塊ごとの 3 回 + MegaGeometry のクラスタの記録の DrawIndexedIndirectCount 1 回のまま。
+    //  - VSM の記録の間に作るバッファの数（定数バッファを含む）は、インスタンスの数に依らない（インスタンスごとに 1 つ作る形ではない）。
+    //  - 一覧・クラスタの記録の容量は一定で、カリングの dispatch の数も変わらない（ワークグループの数だけがインスタンスの数で増える）。
+    void TestVirtualShadowMapMegaDrawDoesNotUseCsmUniformSlots()
+    {
+        constexpr uint32_t CsmUniformSlotsPerCascade = 256;
+        struct Measurement
+        {
+            size_t IndirectDraws = 0;
+            size_t CreatedBuffers = 0;
+            size_t CreatedDescriptorSets = 0;
+            size_t Dispatches = 0;
+            uint32_t CasterCount = 0;
+            uint32_t MaxDrawCount = 0;
+            bool bMegaDraw = false;
+        };
+        const auto measure = [](uint32_t extraCasters) {
+            VsmMegaScene scene;
+            BuildVsmMegaScene(scene, true, extraCasters);
+            FakeCommandList& commandList = scene.Base.Run.CommandList;
+            const size_t buffersBefore = scene.Base.Run.Device->CreatedBuffers.size();
+            const size_t setsBefore = scene.Base.Run.Device->DescriptorSetCreations;
+            RunVsmCasterViewport(scene.Base, 0, 0);
+            Measurement result;
+            result.IndirectDraws = commandList.IndirectDraws.size() - scene.MainIndirectDrawCount;
+            result.CreatedBuffers = scene.Base.Run.Device->CreatedBuffers.size() - buffersBefore;
+            result.CreatedDescriptorSets = scene.Base.Run.Device->DescriptorSetCreations - setsBefore;
+            result.Dispatches = commandList.DispatchGroups.size() - scene.MainDispatchCount;
+            result.CasterCount = scene.Mega.GetShadowCasterInputs().CasterCount;
+            result.MaxDrawCount = commandList.IndirectDraws.empty() ? 0u : commandList.IndirectDraws.back().MaxDrawCount;
+            result.bMegaDraw = scene.Base.Pass.WasMegaDrawRecorded();
+            ShutdownVsmMegaScene(scene);
+            return result;
+        };
+
+        const Measurement few = measure(0);
+        const Measurement many = measure(CsmUniformSlotsPerCascade + 47u);
+        assert(few.CasterCount == 2u);
+        assert(many.CasterCount == 2u + CsmUniformSlotsPerCascade + 47u);
+        assert(few.bMegaDraw && many.bMegaDraw);
+        // 間接描画: 塊ごとの 3 回 + クラスタの記録の 1 回。インスタンスの数に依らない
+        assert(few.IndirectDraws == 4u && many.IndirectDraws == few.IndirectDraws);
+        assert(few.MaxDrawCount == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY && many.MaxDrawCount == few.MaxDrawCount);
+        // 作るバッファ・記述子セット・dispatch の数は、インスタンスの数に依らない
+        assert(many.CreatedBuffers == few.CreatedBuffers);
+        assert(many.CreatedDescriptorSets == few.CreatedDescriptorSets);
+        assert(many.Dispatches == few.Dispatches);
+    }
+
     // vsm の構成の 1 フレーム: 主の経路（2 パスの遮蔽。DBIE + HZB の D 7 つ + DBIE）の後に、スキニングの変形 → 印付け・割り当て・消去 →
     // MegaGeometry の投影物のカリング（dirty の階層 = D・クラスタの選択 = D）→ 展開 → 描画（DDDDDJ + DD + D + BIIIE）が並ぶ。
-    //  - カリングは、主のカリング（2 回目）より後・展開より前。dispatch は dirty の階層 (16, 16, 段の数)・選択 (影を落とすインスタンスのワークグループ数 2, 1, 段の数)。
+    //  - カリングは、主のカリング（2 回目）より後・展開より前。dispatch は dirty の階層 (16, 16, 段の数)・選択 (影を落とすインスタンスのワークグループ数 2, 1, 段の数)・
+    //    クラスタの記録 (一覧の容量 ÷ 64, 1, 1。一覧の 1 件 = 1 スレッド)。続く展開は、ホストが書いた塊 3 つの後ろに一覧の容量ぶんのワークグループを足す。
+    //  - 描画は、ホストが書いた塊ごとの間接描画 3 回の後に、MegaGeometry のクラスタの記録を描く DrawIndexedIndirectCount 1 回（一覧の語 0 が数。
+    //    インスタンスごとの定数バッファは使わない）。
     //  - 読む資源: 主の経路のインスタンスの表・影の表・ジオメトリのページの表（読み取りだけ）と VSM のページの表。書く資源: 自分の dirty の階層・出力の一覧・VSM の統計。
     //    主の経路の間接描画・カウンタ・描画情報・見えた印・ページの要求・統計・区間の表は束縛せず、記録の間に主のバッファへのバリアも無い。
     //  - 出力の一覧と dirty の階層は、記録の前に Common → UnorderedAccess、後に UnorderedAccess → Common。それぞれの頭（階層は全体・一覧は先頭 4 語）を 0 で埋めてから dispatch する。
@@ -7660,10 +7735,11 @@ namespace
 
             RunVsmCasterViewport(scene.Base, 0, 0);
             assert(scene.Base.Pass.WasMarked() && scene.Base.Pass.WasRasterRecorded() && scene.Base.Pass.WasMegaCullRecorded());
-            assert(scene.Base.Pass.GetMegaCullList() && scene.Base.Pass.GetMegaDirtyBits());
+            assert(scene.Base.Pass.WasMegaDrawRecorded());
+            assert(scene.Base.Pass.GetMegaCullList() && scene.Base.Pass.GetMegaDirtyBits() && scene.Base.Pass.GetMegaChunks());
 
             // 並び: 主の経路の後に、変形・印付け・割り当て 3 段・消去（J）・階層・選択・展開・描画
-            const char* vsmSequence = "DDDDDJDDDBIIIE";
+            const char* vsmSequence = "DDDDDJDDDDBIIIIE";
             assert(commandList.CallSequence.size() == scene.MainSequenceLength + std::strlen(vsmSequence));
             for (size_t index = 0; index < std::strlen(vsmSequence); ++index)
             {
@@ -7693,14 +7769,25 @@ namespace
             }
             const size_t dirtyDispatch = scene.MainDispatchCount + 5u;
             const size_t cullDispatch = scene.MainDispatchCount + 6u;
-            const size_t expandDispatch = scene.MainDispatchCount + 7u;
+            const size_t chunkDispatch = scene.MainDispatchCount + 7u;
+            const size_t expandDispatch = scene.MainDispatchCount + 8u;
             assert(commandList.DispatchGroups.size() == expandDispatch + 1u);
             const uint32_t levelCount = VirtualShadowMap::LEVEL_COUNT;
             assert(commandList.DispatchGroups[dirtyDispatch].X == 16u && commandList.DispatchGroups[dirtyDispatch].Y == 16u &&
                    commandList.DispatchGroups[dirtyDispatch].Z == levelCount);
             assert(commandList.DispatchGroups[cullDispatch].X == 2u && commandList.DispatchGroups[cullDispatch].Y == 1u &&
                    commandList.DispatchGroups[cullDispatch].Z == levelCount);
-            assert(commandList.DispatchGroups[expandDispatch].X == 3u && commandList.DispatchGroups[expandDispatch].Z == 1u);
+            // クラスタの記録: 一覧の容量ぶんのスレッドを 64 ずつ x 方向に並べる
+            assert(commandList.DispatchGroups[chunkDispatch].X == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY / 64u &&
+                   commandList.DispatchGroups[chunkDispatch].Y == 1u && commandList.DispatchGroups[chunkDispatch].Z == 1u);
+            // 展開: ホストが書いた塊 3 つ + クラスタの記録の容量。x の上限（65535）を超える分は y へ折り返す
+            {
+                const uint32_t totalGroups = 3u + VirtualShadowMap::MEGA_CULL_LIST_CAPACITY;
+                assert(commandList.DispatchGroups[expandDispatch].X == VirtualShadowMap::GROUP_COUNT_X_LIMIT &&
+                       commandList.DispatchGroups[expandDispatch].Y ==
+                           (totalGroups + VirtualShadowMap::GROUP_COUNT_X_LIMIT - 1u) / VirtualShadowMap::GROUP_COUNT_X_LIMIT &&
+                       commandList.DispatchGroups[expandDispatch].Z == 1u);
+            }
 
             // 束縛: 階層を作る dispatch は VSM のページの表を読み、階層へ書く。選択の dispatch は主の経路の表を読み、自分の一覧・階層・統計へ書く
             const Container::VariableArray<BoundBufferName>& dirtyBindings = commandList.DispatchBindings[dirtyDispatch];
@@ -7718,8 +7805,22 @@ namespace
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 16u), "VsmMega_DirtyBits"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 17u), "VSM_Stats"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 18u), "MegaGeometry_ShadowInstanceTable"));
-            // 主の経路の出力・見えた印・ページの要求は、どちらの dispatch にも束縛されない
-            for (const Container::VariableArray<BoundBufferName>* bindings : {&dirtyBindings, &cullBindings})
+            // クラスタの記録: 主の経路のインスタンスの表・影の表と自分の一覧を読み、自分の記録の出力へ書く
+            const Container::VariableArray<BoundBufferName>& chunkBindings = commandList.DispatchBindings[chunkDispatch];
+            assert(chunkBindings.size() == 5u);
+            assert(IsDebugName(BoundBufferNameAt(chunkBindings, 1u), "MegaGeometry_InstanceTable"));
+            assert(IsDebugName(BoundBufferNameAt(chunkBindings, 14u), "VsmMegaCullParams"));
+            assert(IsDebugName(BoundBufferNameAt(chunkBindings, 15u), "VsmMega_List"));
+            assert(IsDebugName(BoundBufferNameAt(chunkBindings, 18u), "MegaGeometry_ShadowInstanceTable"));
+            assert(IsDebugName(BoundBufferNameAt(chunkBindings, 19u), "VsmMega_Chunks"));
+            // 展開は、ホストが書いた塊（束縛 1）に続けて、クラスタの記録（束縛 6）と一覧（束縛 7）を読む
+            const Container::VariableArray<BoundBufferName>& expandBindings = commandList.DispatchBindings[expandDispatch];
+            assert(expandBindings.size() == 8u);
+            assert(IsDebugName(BoundBufferNameAt(expandBindings, 1u), "VsmRaster_Chunks"));
+            assert(IsDebugName(BoundBufferNameAt(expandBindings, 6u), "VsmMega_Chunks"));
+            assert(IsDebugName(BoundBufferNameAt(expandBindings, 7u), "VsmMega_List"));
+            // 主の経路の出力・見えた印・ページの要求は、どの dispatch にも束縛されない
+            for (const Container::VariableArray<BoundBufferName>* bindings : {&dirtyBindings, &cullBindings, &chunkBindings, &expandBindings})
             {
                 for (const BoundBufferName& entry : *bindings)
                 {
@@ -7738,11 +7839,35 @@ namespace
             const RHI::ResourceState common = RHI::ResourceState::Common;
             const RHI::ResourceState uav = RHI::ResourceState::UnorderedAccess;
             const size_t beforeDirty = scene.MainSequenceLength + 6u;
-            const size_t afterCull = scene.MainSequenceLength + 8u;
-            for (const char* name : {"VsmMega_List", "VsmMega_DirtyBits"})
+            const size_t afterCull = scene.MainSequenceLength + 9u;
+            for (const char* name : {"VsmMega_List", "VsmMega_DirtyBits", "VsmMega_Chunks"})
             {
                 assert(HasBufferBarrierAt(commandList, name, common, uav, beforeDirty));
                 assert(HasBufferBarrierAt(commandList, name, uav, common, afterCull));
+            }
+            // クラスタの記録を作った後は、記録の書き込みを後の読み取りへ見せる（UnorderedAccess → UnorderedAccess）
+            assert(HasBufferBarrierAt(commandList, "VsmMega_Chunks", uav, uav, afterCull));
+            // 展開・描画は、一覧とクラスタの記録を UnorderedAccess へ遷移し、展開の後に GenericRead（頂点シェーダーと間接描画が読む）、描画の後に戻す
+            {
+                const size_t afterExpand = scene.MainSequenceLength + 10u;
+                const size_t afterDraw = scene.MainSequenceLength + 16u;
+                for (const char* name : {"VsmMega_List", "VsmMega_Chunks"})
+                {
+                    assert(HasBufferBarrierAt(commandList, name, common, uav, afterCull));
+                    assert(HasBufferBarrierAt(commandList, name, uav, RHI::ResourceState::GenericRead, afterExpand));
+                    assert(HasBufferBarrierAt(commandList, name, RHI::ResourceState::GenericRead, uav, afterDraw));
+                    assert(HasBufferBarrierAt(commandList, name, uav, common, afterDraw));
+                }
+            }
+            // 間接描画: ホストが書いた塊ごとに 1 回ずつ（引数の頭 16 バイトの後ろ、1 回 20 バイト）の後に、一覧の件数を数とする 1 回（塊の番号 3 から）
+            {
+                const FakeCommandList::IndirectDrawRecord* draws = commandList.IndirectDraws.data() + scene.MainIndirectDrawCount;
+                assert(commandList.IndirectDraws.size() == scene.MainIndirectDrawCount + 4u);
+                for (uint32_t chunk = 0; chunk < 3u; ++chunk)
+                {
+                    assert(draws[chunk].OffsetBytes == 16u + chunk * 20u && draws[chunk].MaxDrawCount == 1u);
+                }
+                assert(draws[3].OffsetBytes == 16u + 3u * 20u && draws[3].MaxDrawCount == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY);
             }
             // 頭を 0 で埋める: 階層は全体、一覧は先頭 4 語。どちらも階層の dispatch の前
             assert(commandList.VsmMegaFills.size() == 2u);
@@ -7823,34 +7948,53 @@ namespace
             ShutdownVsmMegaScene(scene);
         }
 
+        // DrawIndexedIndirectCount を使えない装置: MegaGeometry のクラスタの記録を描けないので、カリングの資源・パイプラインを作らない（VSM は動く）
+        {
+            VsmRun run;
+            run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+            InitializeVsmRun(run);
+            run.Device->FailComputePipelineCreationNumber = 0xFFFFFFFFu;
+            VirtualShadowMapPass pass;
+            assert(pass.Initialize(run.Context));
+            assert(pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::None);
+            assert(!pass.GetMegaCullList() && !pass.GetMegaDirtyBits() && !pass.GetMegaChunks());
+            // 印付け・割り当て・消去・展開の 4 つだけ
+            assert(run.Device->ComputePipelineCreations == 4u);
+            assert(CountBufferCreations(*run.Device, "VsmMega_List") == 0 && CountBufferCreations(*run.Device, "VsmMega_Chunks") == 0);
+            ShutdownVsmRun(run, pass);
+        }
+
         // カリングのパイプラインを作れない装置: VSM は動き（展開・描画まで）、カリングの資源だけ作らない
         {
             uint32_t baseline = 0;
             {
                 VsmRun run;
                 run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+                run.Device->EnableDrawIndirectCount();
                 InitializeVsmRun(run);
                 // 失敗の番号が 0 でないときだけ作成を数える（届かない番号にして数だけ取る）
                 run.Device->FailComputePipelineCreationNumber = 0xFFFFFFFFu;
                 VirtualShadowMapPass pass;
                 assert(pass.Initialize(run.Context) && pass.IsActive());
-                assert(pass.GetMegaCullList() && pass.GetMegaDirtyBits());
+                assert(pass.GetMegaCullList() && pass.GetMegaDirtyBits() && pass.GetMegaChunks());
                 baseline = run.Device->ComputePipelineCreations;
-                // 印付け・割り当て・消去・展開の 4 つの後に、階層・選択の 2 つ
-                assert(baseline == 6u);
+                // 印付け・割り当て・消去・展開の 4 つの後に、階層・選択・クラスタの記録の 3 つ
+                assert(baseline == 7u);
                 ShutdownVsmRun(run, pass);
             }
-            for (const uint32_t failNumber : {baseline - 1u, baseline})
+            for (const uint32_t failNumber : {baseline - 2u, baseline - 1u, baseline})
             {
                 VsmRun run;
                 run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+                run.Device->EnableDrawIndirectCount();
                 InitializeVsmRun(run);
                 run.Device->FailComputePipelineCreationNumber = failNumber;
                 VirtualShadowMapPass pass;
                 assert(pass.Initialize(run.Context));
                 assert(pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::None);
-                assert(!pass.GetMegaCullList() && !pass.GetMegaDirtyBits());
-                assert(CountBufferCreations(*run.Device, "VsmMega_List") == 0 && CountBufferCreations(*run.Device, "VsmMega_DirtyBits") == 0);
+                assert(!pass.GetMegaCullList() && !pass.GetMegaDirtyBits() && !pass.GetMegaChunks());
+                assert(CountBufferCreations(*run.Device, "VsmMega_List") == 0 && CountBufferCreations(*run.Device, "VsmMega_DirtyBits") == 0 &&
+                       CountBufferCreations(*run.Device, "VsmMega_Chunks") == 0);
                 ShutdownVsmRun(run, pass);
             }
         }
@@ -13421,6 +13565,7 @@ int main()
     TestVirtualShadowMapCasterRecordsLevelMask();
     TestVirtualShadowMapPassRecordsCasterRasterAfterSkinning();
     TestVirtualShadowMapPassRecordsMegaCullBetweenMainCullAndExpand();
+    TestVirtualShadowMapMegaDrawDoesNotUseCsmUniformSlots();
     TestVirtualShadowMapMegaCullStatsReporterLogsEvery60Reports();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();

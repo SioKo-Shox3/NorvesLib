@@ -28,7 +28,7 @@ namespace NorvesLib::Core::Rendering
     inline constexpr uint32_t MegaGeometryShadowFlagBounds = 2u;
 
     /**
-     * @brief 影の表の1要素（GPU送信用。vsm_mega_cull.comp の ShadowInstance と一致）。インスタンスの表と同じ並び（同じ添字）
+     * @brief 影の表の1要素（GPU送信用。Common/VirtualShadowMapMegaCull.glsl の ShadowInstance と一致）。インスタンスの表と同じ並び（同じ添字）
      *
      * 影を落とすインスタンスだけが、影の判定のワークグループ（64クラスタ）を持つ。FirstGroup は、そのインスタンスより前の
      * 影を落とすインスタンスのワークグループの数の合計（落とさないインスタンスは次のインスタンスと同じ値）。
@@ -39,8 +39,12 @@ namespace NorvesLib::Core::Rendering
         uint32_t FirstGroup;   // 影の判定の最初のワークグループの通し番号
         uint32_t Flags;        // MegaGeometryShadowFlag*
         uint32_t Reserved[2];
+        // 頂点・インデックスを持つプールの塊のバッファのデバイスアドレス（下位・上位の順。引けないインスタンスは 0）。
+        // クラスタの記録（VSM の影の塊）が、ビジビリティバッファの MegaGeometry の記録と同じ読み方（塊の先頭 + 基点）で頂点を引くのに使う
+        uint32_t VertexAddress[2];
+        uint32_t IndexAddress[2];
     };
-    static_assert(sizeof(MegaGeometryShadowInstance) == 32, "vsm_mega_cull.comp の ShadowInstance と大きさが一致しません");
+    static_assert(sizeof(MegaGeometryShadowInstance) == 48, "Common/VirtualShadowMapMegaCull.glsl の ShadowInstance と大きさが一致しません");
 
     /**
      * @brief VSM の投影物のカリングが読む、直前の RecordFrameCommand の入力（無ければ bValid が false）

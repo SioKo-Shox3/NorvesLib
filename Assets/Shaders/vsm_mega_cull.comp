@@ -1,0 +1,214 @@
+﻿#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+// ========================================
+// 太陽の仮想シャドウマップ（VSM）の、MegaGeometry の投影物（bCastShadow のインスタンス）の段ごとのカリング
+//
+// 主の経路（cluster_cull.comp・cluster_bvh_cull.comp）のインスタンスの表（binding 1）とページの表（binding 11）を読み、
+// （インスタンス、段、クラスタ）の一覧（binding 15）を作る。主の経路の間接描画・見えた印・ページの要求・統計には何も書かない
+// （同じ判定の本体 Common/MegaGeometryCull.glsl の LOD の判定を、cullData.orthoLod = 1 の正射影で使う）。
+//
+// 1 ワークグループ（64 スレッド）= 1 つの（インスタンス、段）の連続した 64 クラスタ。dispatch は (全ワークグループ数を 2 次元に折った x, y, 段の数)。
+// ワークグループの通し番号から、影の表（binding 18）の firstGroup（そのインスタンスの最初のワークグループの通し番号）を
+// 二分探索して、受け持つインスタンスとクラスタの番号を求める。影を落とさないインスタンスはワークグループを持たない。
+// BVH を持つメッシュも、ここでは平らなクラスタの列として全部見る（BVH をたどる影の判定は後の項目）。
+//
+// 判定:
+//   (1) インスタンス: 境界（WorldBounds）のライト空間の矩形が、その段の範囲・深度の範囲に入り、dirty のページを 1 つでも含む
+//       （dirty の階層 = ページの mip。vsm_dirty_mips.comp が作る）。境界が無いインスタンスはこの判定を通す。
+//   (2) クラスタ: 境界の球が、その段の範囲・深度の範囲に入り、dirty のページを含み、LOD の判定（ShouldDrawShadowCluster）を通る。
+//       LOD は正射影: 自分の誤差 ÷ その段の texel の一辺 ≤ 1 texel（lodBias）かつ親の誤差 ÷ texel > 1 texel。
+//       子のページが非常駐なら自分を描き、ページの要求は出さない。HZB・法線の円錐・ソフトウェアラスタの振り分けは使わない。
+//
+// 出力（binding 15）の並び: [0] = 選んだクラスタの数（容量を超えた分を含む。書いた件数は min(値, 容量)）、[1] = 容量を超えて
+// 書かなかった数、[2] = 判定（1）を通った（インスタンス、段）の数、[3] = 予約。続いて uvec4（x = インスタンスの表の番号、
+// y = 段、z = クラスタの番号、w = 0）が並ぶ。呼ぶ前に、頭の 4 語を 0 にしておくこと。
+// 統計（binding 17）の語 8 = 判定（1）を通った（インスタンス、段）の数、9 = 書いたクラスタの数、10 = 溢れて書かなかった数。
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#include "Common/MegaGeometryCull.glsl"
+#include "Common/VirtualShadowMapMegaCull.glsl"
+
+// binding 15: 出力の一覧
+layout(std430, set = 0, binding = 15) buffer VsmMegaList
+{
+    uint listSelected;
+    uint listOverflow;
+    uint listInstanceLevels;
+    uint listReserved;
+    uvec4 listEntries[];
+};
+
+// binding 16: dirty のページの階層（vsm_dirty_mips.comp が作る）
+layout(std430, set = 0, binding = 16) readonly buffer VsmDirtyBits
+{
+    uint dirtyBits[];
+};
+
+// binding 17: VSM の統計
+layout(std430, set = 0, binding = 17) buffer VsmStats
+{
+    uint vsmStats[];
+};
+const uint STAT_MEGA_INSTANCES = 8u;
+const uint STAT_MEGA_CLUSTERS = 9u;
+const uint STAT_MEGA_OVERFLOW = 10u;
+
+// binding 18: 影の表（インスタンスの表と同じ並び。構造は Common/VirtualShadowMapMegaCull.glsl の ShadowInstance）
+layout(std430, set = 0, binding = 18) readonly buffer ShadowInstanceBuffer
+{
+    ShadowInstance shadowInstances[];
+};
+
+// ワールドの位置のライト空間の XY
+vec2 LightXY(vec3 position)
+{
+    return vec2(dot(position, megaParams.lightRight.xyz), dot(position, megaParams.lightUp.xyz));
+}
+
+/**
+ * @brief ワールドの球が、段の範囲（ライト空間の XY）と深度の範囲に入るか（球の外接の矩形で保守的に判定する）
+ */
+bool LevelOverlapsSphere(uint level, vec3 center, float radius)
+{
+    const float lightDepth = dot(center, megaParams.lightDirection.xyz);
+    if (abs(lightDepth - megaParams.depth.x) > megaParams.depth.y + radius)
+    {
+        return false;
+    }
+    const float pageMeters = megaParams.levelInfo[level].x;
+    const vec2 rangeMin = vec2(megaParams.levelOrigin[level].xy) * pageMeters;
+    const vec2 rangeMax = rangeMin + vec2(float(VSM_MEGA_TABLE_DIMENSION) * pageMeters);
+    const vec2 lightCenter = LightXY(center);
+    return all(greaterThanEqual(lightCenter + vec2(radius), rangeMin)) && all(lessThan(lightCenter - vec2(radius), rangeMax));
+}
+
+/**
+ * @brief ワールドの球のライト空間の矩形が覆うページに、dirty で割り当て済みのものが 1 つでもあるか（dirty の階層で判定する）
+ *
+ * 範囲の最小のページからの相対の座標で、矩形が 2×2 以下のセルに収まる最も細かい mip を選び、そのセルのビットを調べる。
+ * 範囲の外へはみ出す分は切り捨てる（覆うページが範囲に無ければ false）。
+ */
+bool SphereHasDirtyPage(uint level, vec3 center, float radius)
+{
+    const float pageMeters = megaParams.levelInfo[level].x;
+    const ivec2 origin = megaParams.levelOrigin[level].xy;
+    const vec2 lightCenter = LightXY(center);
+    const vec2 lowPage = clamp(floor((lightCenter - vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
+    const vec2 highPage = clamp(floor((lightCenter + vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
+    const ivec2 low = max(ivec2(lowPage) - origin, ivec2(0));
+    const ivec2 high = min(ivec2(highPage) - origin, ivec2(int(VSM_MEGA_TABLE_DIMENSION) - 1));
+    if (low.x > high.x || low.y > high.y)
+    {
+        return false;
+    }
+
+    uint mip = 0u;
+    while (mip < VSM_MEGA_DIRTY_MIP_COUNT - 1u && ((high.x >> mip) - (low.x >> mip) > 1 || (high.y >> mip) - (low.y >> mip) > 1))
+    {
+        ++mip;
+    }
+    const uvec2 cellLow = uvec2(low) >> mip;
+    const uvec2 cellHigh = uvec2(high) >> mip;
+    for (uint y = cellLow.y; y <= cellHigh.y; ++y)
+    {
+        for (uint x = cellLow.x; x <= cellHigh.x; ++x)
+        {
+            const uint bit = VsmMegaDirtyBitIndex(level, mip, uvec2(x, y));
+            if ((dirtyBits[bit >> 5u] & (1u << (bit & 31u))) != 0u)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void main()
+{
+    const uint level = gl_WorkGroupID.z;
+    if (level >= megaParams.counts.x)
+    {
+        return;
+    }
+    // ワークグループの通し番号（dispatch は x 方向の上限を避けて 2 次元で出す）
+    const uint flatGroup = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    if (flatGroup >= megaParams.counts.z || cullData.instanceCount == 0u)
+    {
+        return;
+    }
+
+    // firstGroup が flatGroup 以下の最後のインスタンスを二分探索で求める（表は firstGroup の昇順。ワークグループを持たない
+    // インスタンスは次のインスタンスと firstGroup が同じなので、最後のものが選ばれて飛ばされる）
+    uint low = 0u;
+    uint high = cullData.instanceCount - 1u;
+    while (low < high)
+    {
+        const uint mid = (low + high + 1u) >> 1u;
+        if (shadowInstances[mid].info.x <= flatGroup)
+        {
+            low = mid;
+        }
+        else
+        {
+            high = mid - 1u;
+        }
+    }
+    const uint instanceIndex = low;
+    const ShadowInstance shadow = shadowInstances[instanceIndex];
+    if ((shadow.info.y & SHADOW_FLAG_CASTER) == 0u)
+    {
+        return;
+    }
+
+    // (1) インスタンスの判定。境界が無いインスタンスは通す
+    if ((shadow.info.y & SHADOW_FLAG_BOUNDS) != 0u)
+    {
+        if (!LevelOverlapsSphere(level, shadow.boundsSphere.xyz, shadow.boundsSphere.w) ||
+            !SphereHasDirtyPage(level, shadow.boundsSphere.xyz, shadow.boundsSphere.w))
+        {
+            return;
+        }
+    }
+    const MegaInstance instance = instances[instanceIndex];
+    if (flatGroup == shadow.info.x && gl_LocalInvocationID.x == 0u)
+    {
+        atomicAdd(listInstanceLevels, 1u);
+        atomicAdd(vsmStats[STAT_MEGA_INSTANCES], 1u);
+    }
+
+    // (2) クラスタの判定
+    const uint clusterIndex = (flatGroup - shadow.info.x) * 64u + gl_LocalInvocationID.x;
+    if (clusterIndex >= instance.clusterInfo.z)
+    {
+        return;
+    }
+    g_WorldMatrix = instance.world;
+    g_LODSphere = instance.lodSphere;
+    g_Clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));
+    g_OrthoTexelMeters = megaParams.levelInfo[level].y;
+
+    const GPUClusterData cluster = g_Clusters.clusters[clusterIndex];
+    const vec3 center = TransformClusterCenterToWorld(cluster.boundsSphere.xyz);
+    const float radius = cluster.boundsSphere.w * ComputeWorldRadiusScale();
+    if (!LevelOverlapsSphere(level, center, radius) || !SphereHasDirtyPage(level, center, radius) ||
+        !ShouldDrawShadowCluster(cluster, center, instance.bvhInfo.w))
+    {
+        return;
+    }
+
+    const uint slot = atomicAdd(listSelected, 1u);
+    if (slot < megaParams.counts.y)
+    {
+        listEntries[slot] = uvec4(instanceIndex, level, clusterIndex, 0u);
+        atomicAdd(vsmStats[STAT_MEGA_CLUSTERS], 1u);
+    }
+    else
+    {
+        atomicAdd(listOverflow, 1u);
+        atomicAdd(vsmStats[STAT_MEGA_OVERFLOW], 1u);
+    }
+}

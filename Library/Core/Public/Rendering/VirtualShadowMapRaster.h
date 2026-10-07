@@ -16,8 +16,12 @@
 //   - 物理ページへ書く前に、消去（VirtualShadowMapPages の VsmClear）が dirty のページを 1.0 のビットで埋めていること。
 //
 // 同じファイルに、MegaGeometry の投影物（bCastShadow のインスタンス）を段ごとにカリングする VirtualShadowMapMegaCull も置く
-// （展開の前に、主の経路のインスタンスの表を読み取りだけで使い、（インスタンス、段、クラスタ）の一覧を別のバッファへ作る。
-// 区間 VsmCullMega。この一覧を塊の記録にして描くのは後の項目）。
+// （展開の前に、主の経路のインスタンスの表を読み取りだけで使い、（インスタンス、段、クラスタ）の一覧を別のバッファへ作り、
+// 続けて一覧の 1 件ごとの影の塊の記録にする。区間 VsmCullMega）。
+// MegaGeometry のクラスタの記録は、手続き・スキニングの塊（ホストが書く）の後ろに GPU が書いた記録として並び、同じ展開・描画の
+// 1 回の流れで物理ページへ描く（記録の件数は GPU が決めるので、展開はクラスタの記録の容量ぶんのワークグループを出して件数より
+// 後ろを何もしない形にし、描画は一覧の件数を数として間接描画の数を GPU から読む DrawIndexedIndirectCount 1 回で描く）。
+// CSM の MegaGeometry の影のように、インスタンスごとの定数バッファ（DynamicUniformAllocator のスロット）は使わない。
 //
 // 展開の容量（インスタンスの数）を超える塊は描かずに数える。統計（VSM.Stats）の語 5〜7 に、描く塊の数・書いたインスタンスの数・
 // 溢れて書かなかったインスタンスの数が入り、VirtualShadowMapRasterStatsReporter が VSM_RASTER の行にする。
@@ -103,6 +107,11 @@ namespace NorvesLib::Core::Rendering
         {
             return RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst | RHI::ResourceUsage::IndirectBuffer;
         }
+        /** @brief MegaGeometry のクラスタの記録のバッファの用途（vsm_mega_chunks.comp が書き、展開・描画が読む） */
+        inline RHI::ResourceUsage MegaChunkUsage()
+        {
+            return RHI::ResourceUsage::StorageBuffer;
+        }
         /** @brief 描画のビューポートの一辺（= 1 ページの一辺） */
         constexpr uint32_t RASTER_VIEWPORT = PAGE_RESOLUTION;
     } // namespace VirtualShadowMap
@@ -123,9 +132,22 @@ namespace NorvesLib::Core::Rendering
         /** @brief 塊の記録（VsmShadowChunk の並び）と数 */
         RHI::BufferPtr Chunks;
         uint32_t ChunkCount = 0;
-        /** @brief 展開の出力: インスタンス（容量はバッファの大きさ ÷ 16 バイト）と、間接描画の引数（塊の容量は (大きさ − 頭) ÷ 20 バイト） */
+        /**
+         * @brief 展開の出力: インスタンス（容量はバッファの大きさ ÷ 16 バイト）と、間接描画の引数（塊の容量は (大きさ − 頭) ÷ 20 バイト。
+         * ChunkCount + MegaCapacity 件ぶん以上）
+         */
         RHI::BufferPtr Instances;
         RHI::BufferPtr Draws;
+        /**
+         * @brief MegaGeometry のクラスタの記録（VirtualShadowMapMegaCull が書いた VsmShadowChunk の並びで、MegaCapacity 件ぶん以上）と、
+         * カリングの出力の一覧（語 0 = 選んだクラスタの数。IndirectBuffer の用途を持つこと）。MegaCapacity が 0 ならクラスタの記録は無い
+         *
+         * 記録の番号は ChunkCount から MegaCapacity 件が並ぶ（一覧の件数で頭打ち）。装置が DrawIndexedIndirectCount を使えない
+         * （SupportsMegaCasters が false）とき、MegaCapacity が 0 でないと Record は false を返す。
+         */
+        RHI::BufferPtr MegaChunks;
+        RHI::BufferPtr MegaList;
+        uint32_t MegaCapacity = 0;
     };
 
     /** @brief 展開と描画の 2 つのパイプラインと、128×128 の添付なしのレンダーパスを持つ */
@@ -147,12 +169,16 @@ namespace NorvesLib::Core::Rendering
          * @brief 展開 → 描画を記録する。入力が揃わなければ false を返し、何も記録しない
          *
          * 塊が 0 件でも、引数の頭を 0 にして展開を記録する（描画の呼び出しは無い）。
-         * 展開の前に、塊の記録（ホストが書いたもの）が UnorderedAccess へ遷移済みであること。
+         * 展開の前に、塊の記録（ホストが書いたもの）と MegaGeometry のクラスタの記録・一覧が UnorderedAccess へ遷移済みであること。
          */
         bool Record(RHI::ICommandList* commandList, const VirtualShadowMapRasterDispatch& dispatch);
 
-        /** @brief 直前の Record が記録した間接描画の回数（= 塊の数） */
+        /** @brief 直前の Record が記録した、ホストが書いた塊ごとの間接描画の回数（= その塊の数。MegaGeometry の 1 回は含まない） */
         uint32_t GetLastDrawCount() const { return m_LastDrawCount; }
+        /** @brief 直前の Record が MegaGeometry のクラスタの記録を描く間接描画（DrawIndexedIndirectCount）を記録したか */
+        bool WasMegaDrawRecorded() const { return m_bLastMegaDraw; }
+        /** @brief MegaGeometry のクラスタの記録を描けるか（装置が DrawIndexedIndirectCount を使える） */
+        bool SupportsMegaCasters() const { return m_bMegaSupported; }
 
     private:
         struct Use
@@ -176,6 +202,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_IdentityIndices;
         FrameUseRing<Use> m_Uses;
         uint32_t m_LastDrawCount = 0;
+        bool m_bLastMegaDraw = false;
+        bool m_bMegaSupported = false;
     };
 
     namespace VirtualShadowMap
@@ -189,10 +217,10 @@ namespace NorvesLib::Core::Rendering
             return (static_cast<uint64_t>(MEGA_CULL_LIST_HEADER_WORDS) + static_cast<uint64_t>(capacity == 0u ? 1u : capacity) * 4u) *
                    sizeof(uint32_t);
         }
-        /** @brief 出力の一覧のバッファの用途（計算が書く。頭はコピーで 0 にする） */
+        /** @brief 出力の一覧のバッファの用途（計算が書く。頭はコピーで 0 にする。語 0 の件数を、描画が間接描画の数として読む） */
         inline RHI::ResourceUsage MegaCullListUsage()
         {
-            return RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst;
+            return RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst | RHI::ResourceUsage::IndirectBuffer;
         }
         /** @brief dirty のページの階層（段ごとのビット列。mip 0 = 128×128 から mip 7 = 1×1）の 1 段あたりの語の数（21845 ビット = 683 語を 16 語へ切り上げ） */
         constexpr uint32_t MEGA_DIRTY_WORDS_PER_LEVEL = 688;
@@ -225,6 +253,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief dirty の階層（MegaDirtyBitsBytes 以上）と、出力の一覧（容量は (大きさ − 頭) ÷ 16 バイト） */
         RHI::BufferPtr DirtyBits;
         RHI::BufferPtr List;
+        /**
+         * @brief 一覧の 1 件ごとの影の塊の記録の出力（RasterChunkBytes(一覧の容量) 以上。MegaChunkUsage）。null なら記録を作らない
+         *
+         * 一覧の添字と同じ位置へ書く。UnorderedAccess の状態で渡し、同じ状態で戻る。
+         */
+        RHI::BufferPtr Chunks;
         /** @brief 主の経路のインスタンスの表（GPUMegaInstance[]）・同じ並びの影の表（MegaGeometryShadowInstance[]）・ジオメトリのページの表 */
         RHI::BufferPtr Instances;
         RHI::BufferPtr ShadowInstances;
@@ -246,6 +280,8 @@ namespace NorvesLib::Core::Rendering
      *      1 つの（インスタンス、段）の 64 クラスタ。インスタンスの境界のライト空間の矩形が、その段の範囲・深度の範囲に入り、
      *      dirty のページを含むものだけを残し、残ったクラスタを LOD の判定（自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）で選ぶ。
      *      結果は（インスタンスの表の番号・段・クラスタの番号）の一覧と数で、自分のバッファに書く。
+     *   3. 影の塊の記録（vsm_mega_chunks.comp。dispatch.Chunks があるときだけ）: 一覧の 1 件を、手続き・スキニングと同じ形の
+     *      VsmShadowChunk（クラスタの境界球の AABB・インスタンスのワールド行列・頂点とインデックスの読み方・展開する段 = 選んだ段）にする。
      * 装置がバッファのアドレスを使えない・シェーダーやパイプラインを作れないときは作れない（IsReady が false。VSM 全体は CSM へ落とさない）。
      */
     class VirtualShadowMapMegaCull
@@ -271,6 +307,8 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 直前の Record が選択へ出したワークグループの数（x × y。段の数 z は含まない） */
         uint32_t GetLastGroupCount() const { return m_LastGroupCount; }
+        /** @brief 直前の Record が影の塊の記録を作ったか */
+        bool WasChunkBuilt() const { return m_bLastChunkBuilt; }
 
     private:
         struct Use
@@ -279,6 +317,7 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr ParamsUniform;
             RHI::DescriptorSetPtr DirtySet;
             RHI::DescriptorSetPtr CullSet;
+            RHI::DescriptorSetPtr ChunkSet;
         };
 
         bool AcquireUse(Use*& outUse);
@@ -286,10 +325,13 @@ namespace NorvesLib::Core::Rendering
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_DirtyShader;
         RHI::ShaderPtr m_CullShader;
+        RHI::ShaderPtr m_ChunkShader;
         RHI::PipelinePtr m_DirtyPipeline;
         RHI::PipelinePtr m_CullPipeline;
+        RHI::PipelinePtr m_ChunkPipeline;
         FrameUseRing<Use> m_Uses;
         uint32_t m_LastGroupCount = 0;
+        bool m_bLastChunkBuilt = false;
     };
 
     /**

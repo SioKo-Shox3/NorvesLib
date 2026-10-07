@@ -1217,6 +1217,15 @@ namespace NorvesLib::Core::Rendering
             // 平らなクラスタの列として全部見る（影の判定は BVH をたどらない）
             MegaGeometryShadowInstance shadowEntry{};
             shadowEntry.FirstGroup = static_cast<uint32_t>(shadowTotalGroups);
+            {
+                // 頂点・インデックスの塊のバッファのアドレス（bAddressable で両方のバッファがあることは確かめてある）
+                const uint64_t vertexAddress = gpuData->VertexBuffer->GetDeviceAddress();
+                const uint64_t indexAddress = gpuData->IndexBuffer->GetDeviceAddress();
+                shadowEntry.VertexAddress[0] = static_cast<uint32_t>(vertexAddress & 0xFFFFFFFFull);
+                shadowEntry.VertexAddress[1] = static_cast<uint32_t>(vertexAddress >> 32);
+                shadowEntry.IndexAddress[0] = static_cast<uint32_t>(indexAddress & 0xFFFFFFFFull);
+                shadowEntry.IndexAddress[1] = static_cast<uint32_t>(indexAddress >> 32);
+            }
             if (instance.bCastShadow)
             {
                 shadowEntry.Flags |= MegaGeometryShadowFlagCaster;
