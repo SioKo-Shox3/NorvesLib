@@ -1063,7 +1063,8 @@ namespace NorvesLib::Core::Engine
         Rendering::SwRasterMode swRasterMode = Rendering::SwRasterMode::On;
         float swRasterMaxPixels = Rendering::DefaultSwRasterMaxPixels;
         bool bShadowProbe = false;
-        Rendering::ShadowMethod shadowMethod = Rendering::ShadowMethod::Csm;
+        // 既定は BootConfig の値（Game は VSM、検証アプリは CSM）。--shadow-method で上書きする
+        Rendering::ShadowMethod shadowMethod = config.DefaultSunShadowMethod;
         bool bInvalidShadowMethod = false;
         uint32_t vsmPoolPages = 0u;
         bool bInvalidVsmPoolPages = false;
@@ -1236,7 +1237,7 @@ namespace NorvesLib::Core::Engine
                 LOG_WARNING("ApplicationProcessor の起動引数 --sw-raster-max-px を無視します: 値は正の数にしてください");
             }
 
-            // --shadow-method=csm|vsm: 太陽の影の方式（既定 csm）。不正な値は起動時のエラー
+            // --shadow-method=csm|vsm: 太陽の影の方式（既定は BootConfig::DefaultSunShadowMethod）。不正な値は起動時のエラー
             bool bMatchedShadowMethod = false;
             if (TryParseShadowMethodOption(args[i], shadowMethod, bMatchedShadowMethod))
             {

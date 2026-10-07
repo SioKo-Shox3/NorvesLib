@@ -5,6 +5,7 @@
 #include "Container/PointerTypes.h"
 #include "Debug/DebugConfig.h"
 #include "RHI/RHIDeviceDesc.h"
+#include "Rendering/ShadowMethod.h"
 
 namespace NorvesLib::Core::Application
 {
@@ -74,6 +75,13 @@ namespace NorvesLib::Core::Boot
          * @brief デバッグコンソール有効（Windowsのみ）
          */
         bool bEnableDebugConsole = true;
+
+        /**
+         * @brief 太陽の影の方式の既定（起動引数 --shadow-method で上書きされる）
+         *
+         * 検証アプリ（golden など）は既定の CSM のまま、Game は VSM にする。
+         */
+        Rendering::ShadowMethod DefaultSunShadowMethod = Rendering::ShadowMethod::Csm;
 
         // ========== RHI設定 ==========
 

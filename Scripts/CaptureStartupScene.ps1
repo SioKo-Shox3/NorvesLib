@@ -225,9 +225,14 @@ param(
     [switch]$CompareOnly,
     # 太陽の影の標本（--shadow-probe）を測る。SHADOW_PROBE の行を metrics.json の shadow_probe へ視点ごとに書く（統計が有効な構成だけ）。
     [switch]$ShadowProbe,
-    # 太陽の影の方式（既定は Csm。--shadow-method=csm|vsm を常に渡す）。Vsm は太陽のクリップマップを毎フレーム作る（段8の途中では描画は CSM のまま）。
+    # -ShadowProbe で描画フレーム数を指定しない撮影（-OrbitDegreesPerSecond なし）が、読み込みの完了の後にこの数だけ描いてから撮る。
+    # 標本は起動から 300 回目の実行で固定されるため、最初に撮れた時点で終わると視点によっては（読み込みが早い default など）測るフレームが 0 のまま終わる。
+    # 固定の後に約 100 フレームを測れるよう 360 を既定にする。
+    [ValidateRange(1, 100000)]
+    [int]$ShadowProbeRenderedFrames = 360,
+    # 太陽の影の方式（既定は Vsm。--shadow-method=csm|vsm を常に渡す）。Csm は従来のカスケードシャドウマップ。
     [ValidateSet('Csm', 'Vsm')]
-    [string]$ShadowMethod = 'Csm',
+    [string]$ShadowMethod = 'Vsm',
     # Game へそのまま渡す引数（空白で区切る。例: --texture-asset-root と --texture-asset-manifest で別のクック済みの出力を使う）。
     [string[]]$ExtraGameArguments = @()
 )
@@ -769,7 +774,7 @@ foreach ($view in $shots)
     }
     else
     {
-        $images += [pscustomobject]@{ Name = $view.Name; RenderedFrames = $null }
+        $images += [pscustomobject]@{ Name = $view.Name; RenderedFrames = $(if ($ShadowProbe -and $GpuTimingFrames -le 0) { $ShadowProbeRenderedFrames } else { $null }) }
     }
     $lastImage = $images[$images.Count - 1]
     $pngPath = Join-Path $outRoot "$($lastImage.Name).png"
@@ -875,7 +880,7 @@ foreach ($view in $shots)
     {
         $arguments += ('--sw-raster-max-px=' + $SwRasterMaxPx.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))
     }
-    # 影の方式は既定が csm だが、撮影の条件を明示するため、どちらでも引数を渡す。
+    # 影の方式は Game の既定が vsm だが、撮影の条件を明示するため、どちらでも引数を渡す。
     $arguments += "--shadow-method=$($ShadowMethod.ToLowerInvariant())"
     # 影の標本は既定で作らないので、-ShadowProbe のときだけ引数を渡す。
     if ($ShadowProbe)

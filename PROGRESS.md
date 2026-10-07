@@ -2266,3 +2266,14 @@
 - 停止: stop-when の「溢れが 0 にならない場合は、`--vsm-pool-pages` と bias の組の測定を記録して止める」に従い、`VTG8-VSM-GPU-TIME` を `blocked` にし、直す項目 `VTG8-VSM-POOL-OVERFLOW` を `TASKS.md` に足した（完了したら GPU-TIME を `todo` に戻して 6 run を撮り直す）。`blocked/VTG8-VSM-GPU-TIME.md` に理由を書いた。
 - Notes: (1) 検証ファイルは `verify-VTG8-VSM-GPU-TIME-1.txt`（RelWithDebInfo の Game のビルド、BUILD_EXIT_CODE=0）、`-2〜-7`（6 run のキャプチャ。すべて `result=pass`）、`-8〜-10`（プール 5120・6144・8192 の low の測定）。(2) 実装は変更していない。
 - Next: VTG8-VSM-POOL-OVERFLOW。
+
+## 反復 11（2026-10-08）: VTG8-VSM-DEFAULT-ON（Game の既定を VSM にした。近接の ratio が基準に届かず blocked）
+
+- 実装: `BootConfig::DefaultSunShadowMethod`（構造体の既定は CSM）を足し、`ApplicationProcessor` が `--shadow-method` の既定をこの値にする。`GameBoot.cpp` が VSM を設定する。`--shadow-method=csm` で戻せる。検証アプリ（golden など）は BootConfig が既定のままなので CSM。最初の試行で `ApplicationProcessor` の局所の既定を VSM にしたところ、検証アプリもこの経路を通るため Outdoor の golden 2 本が mean_flip 0.0024 で落ちた（`verify-VTG8-VSM-DEFAULT-ON-2-first-attempt-golden-outdoor-failed.txt`）。BootConfig へ移して解消。`Scripts/CaptureStartupScene.ps1` の `-ShadowMethod` の既定は Vsm。
+- 撮影の修正: `-ShadowProbe` で描画フレーム数を指定しない撮影は、読み込みが早い default 視点で `frames=0`（標本は起動から 300 回目の実行で固定されるが、約 107 フレームで終わる）。CSM でも同じ。`-ShadowProbeRenderedFrames`（既定 360）を足し、指定が無いときだけ使う。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-DEFAULT-ON-3.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest・RenderingGoldenImageTest のビルド、BUILD_EXIT_CODE=0）、`-4.txt`（指定の 7 テストが 7/7 Passed。golden 4 本は基準画像・閾値を動かさずに合格）、`-5.txt`（起動画面 3 視点）、`-12-stress.txt`（負荷モード 300 個）。
+- 測定: 4 つの run すべて `vulkan_validation` の error_count 0・VSM の mean_texel_mm ≦ CSM（default 8.093/20.695、near 2.449/13.898、low 2.228/13.993、負荷 7.534/19.973）。ratio は default 0.999975・low 0.999702・負荷 0.999311 で基準を満たし、**near は 0.975755 で 0.98 未満**。overflow は low の `VSM_PAGES` が最大 639（要求 4735 ＞ 4096）、負荷の `VSM_RASTER` が最初の 38 行で最大 361457（どちらも `VTG8-VSM-POOL-OVERFLOW` の対象。この反復で増えたものではない）。
+- bias の測り直し（near のみ。ヘッダの既定を一時的に書き換え、測定後に `git checkout` で戻し、再ビルド済み）: -0.5 → ratio 0.980726・texel 3.518 mm、-1（既定）→ 0.975755、-1.5 → 0.963054・texel 1.768 mm・要求 2598 ページ。bias を下げるほど悪化する。`--vsm-cache=off` は 0.974851 で持ち越しは原因ではない。done-when は「bias を下げて測り直す」だが逆向きに効くため、停止条件に従って止めた。
+- 見え方（PNG を開いた）: default・near・low・負荷 300 個のどれも、天球・地面・球・岩・小屋・見本の帯・発光の球と、それらの太陽の影が欠けなく見える。near は大きな球と岩の影、low は低い角度で伸びる影が出ていて、ページの継ぎ目・光の漏れは目に付かない。
+- Notes: (1) 判断が要る点（基準を 0.975 に緩める／既定の bias を -0.5 に戻す／ratio の測り方を見直す）は `blocked/VTG8-VSM-DEFAULT-ON.md`。-0.5 の default・low・負荷モードは測っていない。(2) Git Bash から `cmake ... -- /m:1` を呼ぶと `/m:1` がパスに変換されて失敗する。PowerShell で呼ぶ。(3) 実装はコミット済みで Game の既定は VSM だが、受入れ（ratio・overflow 0）は未達のまま。
+- Next: 人の判断（`blocked/VTG8-VSM-DEFAULT-ON.md`）。`VTG8-VSM-POOL-OVERFLOW` は todo のまま。

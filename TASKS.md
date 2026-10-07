@@ -1306,7 +1306,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした）。速度の項目の GPU 時間の撮影（ユーザーの撮影の方針の 1 つ目）。`-GpuTimingFrames` は `-Deterministic` と併用できない。`ShadowMapPass` は CSM と点光源の合計で、vsm でも半透明・ボリュームのために CSM の描画は残る。出力先は `.harness/runs/startup-capture/VTG8-VSM-GPU-TIME-*`。VTG8-ACCEPT の GPU 時間の表はここの値を使う。
 
 ## VTG8-VSM-DEFAULT-ON: 起動画面の太陽の影を既定で VSM にする
-- status: todo
+- status: blocked
 - done-when: Game の起動画面（Rendering3DTest）の太陽の影を既定で VSM にする（`--shadow-method=csm` で戻せる。`Scripts/CaptureStartupScene.ps1` の `-ShadowMethod` の既定も Vsm）。検証シーン（`--scene=indoor|outdoor` の golden・R 系の受入れ）は引数を変えずに CSM のまま: golden 4 本が基準画像と閾値を動かさずに通る。検証レイヤー付きの Debug の Game で、起動画面（太陽 45 度の既定・近接・低角度）と負荷モード 300 個（既定の視点）を `-ShadowProbe` 付きで撮り（下の verify）、`vulkan_validation` の `error_count` が 0、`SHADOW_PROBE_AGREE` の ratio が 4 つの run すべてで 0.98 以上、VSM の `mean_texel_mm` が同じ run の CSM 以下であることを確かめる（満たさなければ bias を −1.5、−2 と下げて測り直し、溢れが 0 のまま満たす値を既定にする。プールの大きさを変えたら `VRAM_LEDGER vsm_pool` も記録する）。撮影の PNG を開き、天球・地面・球・岩・小屋・見本の帯・発光の球と太陽の影が欠けなく見えることを PROGRESS に書く。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VirtualShadowMapVulkanTest|VirtualShadowMapClipmapTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
