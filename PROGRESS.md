@@ -2191,3 +2191,10 @@
 - 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-MESH-CASTERS-17.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest・SkinnedRenderPathContractTest のビルド、BUILD_EXIT_CODE=0）、`-18.txt`（VirtualShadowMapVulkanTest・RenderGraphCompileTest・SkinnedRenderPathContractTest が 3/3 Passed）。
 - Notes: (1) Edit ツールが `RenderGraphCompileTest.cpp` の行末を壊した（numstat 1479/1455）ので、HEAD の行末を基準に difflib で戻し、差分を実編集の 24 行だけにした（両方式の numstat が一致）。(2) Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに変換されて失敗する。PowerShell から回す。
 - Next: VTG8-VSM-GPU-TIME（VTG8-VSM-SAMPLE・PCSS は blocked のまま）。
+
+## 反復 6（2026-10-08）: VTG8-VSM-MEGA-CULL（done-when を実装と証拠で 1 つずつ確かめて閉じる）
+
+- 反復 14 の実装（`42457bbb` と反復 15 の追加）を done-when に照らして確かめた。(1) `vsm_mega_cull.comp` の `LevelOverlapsSphere`・`SphereHasDirtyPage`（dirty の階層。ページの mip）でインスタンスの境界を段ごとに判定、(2) クラスタは `ShouldDrawShadowCluster`（`cullData.orthoLod = 1` の正射影で自分の誤差 ÷ texel ≤ lodBias かつ親の誤差 ÷ texel > lodBias。子のページが非常駐なら自分を描き、要求は出さない。HZB・法線の円錐・ソフトウェアラスタは使わない）、(3) 出力は自分のバッファ `VsmMega_List` と統計の語 8〜10 だけで、主の経路の間接描画・見えた印・ページの要求には書かない、(4) 区間 `VsmCullMega` と `VSM_MEGA_CULL` の行、(5) `RenderGraphCompileTest` の `TestVirtualShadowMapPassRecordsMegaCullBetweenMainCullAndExpand` と `VirtualShadowMapVulkanTest` のケース J1〜J3。
+- 変異（`.harness/runs/20261007-203349/verify-VTG8-VSM-MEGA-CULL-mutation-noparent.txt`: 親の条件を外す → `RESULT=FAIL`。ほかに nodirty・order・wiring）。
+- 検証（`.harness/runs/20261008-035618/`）: `verify-VTG8-VSM-MEGA-CULL-1.txt`（Debug の Game・RenderGraphCompileTest・RHITextureUpdateVulkanTest のビルド、BUILD_EXIT_CODE=0）、`-2.txt`（VirtualShadowMapVulkanTest・GeometryPageRequestVulkanTest・RenderGraphCompileTest が 3/3 Passed）。
+- Next: VTG8-VSM-GPU-TIME（VTG8-VSM-SAMPLE・PCSS は blocked のまま）。
