@@ -206,6 +206,11 @@ namespace NorvesLib::Core::Rendering
         return m_Graph ? m_Graph->PublishBufferResource(name, handle) : false;
     }
 
+    bool RenderGraphBuilder::PublishBuffer(Identity name, RGResourceHandle handle)
+    {
+        return m_Graph ? m_Graph->PublishBufferResource(name, RGBufferHandle(handle)) : false;
+    }
+
     RGTextureHandle RenderGraphBuilder::ReadTexture(Identity name, RHI::ResourceState state)
     {
         return m_Graph ? m_Graph->ReadTextureResource(m_PassIndex, name, state) : RGTextureHandle{};

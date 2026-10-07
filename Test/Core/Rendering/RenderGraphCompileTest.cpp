@@ -5838,11 +5838,11 @@ namespace
         const char* GetName() const override { return "VsmConsumerPass"; }
         void Declare(RenderGraphBuilder& builder) override
         {
-            const Identity names[] = {RenderGraphResourceNames::VsmPhysicalPool,
-                                      RenderGraphResourceNames::VsmPageTable,
-                                      RenderGraphResourceNames::VsmRequestBits,
-                                      RenderGraphResourceNames::VsmFreeList,
-                                      RenderGraphResourceNames::VsmStats};
+            const NorvesLib::Core::Identity names[] = {RenderGraphResourceNames::VsmPhysicalPool,
+                                                         RenderGraphResourceNames::VsmPageTable,
+                                                         RenderGraphResourceNames::VsmRequestBits,
+                                                         RenderGraphResourceNames::VsmFreeList,
+                                                         RenderGraphResourceNames::VsmStats};
             for (uint32_t index = 0; index < 5; ++index)
             {
                 Handles[index] = builder.ReadBuffer(names[index], RHI::ResourceState::ShaderResource);

@@ -53,6 +53,8 @@ namespace NorvesLib::Core::Rendering
         bool PublishTexture(Identity name, RGTextureHandle handle);
         bool PublishTexture(Identity name, RGResourceHandle handle);
         bool PublishBuffer(Identity name, RGBufferHandle handle);
+        // ImportBuffer が返したハンドルをそのまま名前で公開する（永続のバッファ用）
+        bool PublishBuffer(Identity name, RGResourceHandle handle);
         RGTextureHandle ReadTexture(Identity name,
                                     RHI::ResourceState state = RHI::ResourceState::ShaderResource);
         bool TryReadTexture(Identity name,
