@@ -15,9 +15,11 @@
 struct VsmShadowChunk
 {
     VisibilityDrawRecord record;
-    // ワールドの境界（xyz。w は使わない）
-    vec4 boundsMin;
-    vec4 boundsMax;
+    // ワールドの境界と、展開する段の集合（CPU が境界から決めた段。ビット L が段 L）。std430 で vec3 の後ろの uint は同じ 16 バイトに詰まる
+    vec3 boundsMin;
+    uint levelMask;
+    vec3 boundsMax;
+    uint reserved;
     // ワールドへの変換: ワールドの位置 = (dot(world0, p), dot(world1, p), dot(world2, p))、p = (ローカルの位置, 1)
     vec4 world0;
     vec4 world1;

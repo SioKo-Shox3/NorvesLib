@@ -1,9 +1,9 @@
 ﻿#pragma once
 
 // 太陽の仮想シャドウマップ（VSM。--shadow-method=vsm）の投影物を、影の塊（VsmShadowChunk）の記録にする CPU の計算。
-// VirtualShadowMapPass が、集めた DrawCommand・計算スキニングの結果からここで記録を作り、VirtualShadowMapRaster の展開・描画へ渡す。
+// VirtualShadowMapPass が、集めたメッシュのプロキシ・計算スキニングの結果からここで記録を作り、VirtualShadowMapRaster の展開・描画へ渡す。
 //
-// 集め方は CSM と同じ（影を落とす DrawCommand と、スキニングの変形した頂点。主カメラの錐台で省かれた物も含める）で、
+// 集め方は影を落とす物すべて（影を落とすメッシュのプロキシと、スキニングの変形した頂点。主カメラの錐台で省かれた物も含める）で、
 // メッシュを 128 三角形以下の塊（BuildMeshIndexChunks）に分け、塊ごとに
 //   - ワールドの境界（AABB）: 手続きメッシュは登録時に求めた塊の境界（無ければメッシュ全体）にインスタンスの変換をかけた値、
 //     スキニングは描画の境界（アニメーション後の境界にワールド行列をかけた値）
@@ -12,6 +12,7 @@
 // を持つ記録にする。ビジビリティバッファの塊の記録（VisibilityRasterPass）と同じ形の描画の記録を使う。
 //
 // 段ごとの絞り込み: 塊の境界がどの段の範囲にも入らないときは、展開が 1 つもインスタンスを作らないので、CPU で省く。
+// 入る段があるときは、その段の集合を記録（VsmShadowChunk::LevelMask）に持ち、展開は集合の外の段を処理しない。
 // この計算は描画の装置にも ViewRenderContext にも依らない（GPU の無いテストが直接呼べる）。
 
 #include "Container/Containers.h"
@@ -285,7 +286,8 @@ namespace NorvesLib::Core::Rendering
             for (const ProceduralChunkPlan& entry : plan)
             {
                 const CasterBounds bounds = TransformBoundsByWorld(world, entry.LocalBounds);
-                if (LevelMaskForBounds(clipmap, bounds) == 0u)
+                const uint32_t levelMask = LevelMaskForBounds(clipmap, bounds);
+                if (levelMask == 0u)
                 {
                     ++inOutStats.CulledChunks;
                     continue;
@@ -307,6 +309,7 @@ namespace NorvesLib::Core::Rendering
                     chunk.BoundsMin[axis] = bounds.Min[axis];
                     chunk.BoundsMax[axis] = bounds.Max[axis];
                 }
+                chunk.LevelMask = levelMask;
                 std::copy(rows, rows + 12, chunk.World);
                 inOutChunks.push_back(chunk);
                 ++inOutStats.ProceduralChunks;
@@ -333,7 +336,8 @@ namespace NorvesLib::Core::Rendering
             {
                 return;
             }
-            if (LevelMaskForBounds(clipmap, worldBounds) == 0u)
+            const uint32_t levelMask = LevelMaskForBounds(clipmap, worldBounds);
+            if (levelMask == 0u)
             {
                 inOutStats.CulledChunks += static_cast<uint32_t>(chunks.size());
                 return;
@@ -358,6 +362,7 @@ namespace NorvesLib::Core::Rendering
                     chunk.BoundsMin[axis] = worldBounds.Min[axis];
                     chunk.BoundsMax[axis] = worldBounds.Max[axis];
                 }
+                chunk.LevelMask = levelMask;
                 inOutChunks.push_back(chunk);
                 ++inOutStats.SkinnedChunks;
                 bAdded = true;

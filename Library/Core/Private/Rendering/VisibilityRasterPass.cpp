@@ -1089,7 +1089,9 @@ namespace NorvesLib::Core::Rendering
         for (uint32_t instanceIndex = 0; instanceIndex < instances.size(); ++instanceIndex)
         {
             const SkinningComputeInstance& instance = instances[instanceIndex];
-            if (!instance.IndexBuffer || instance.IndexCount < 3)
+            // 半透明の一覧のスキニングは影のためだけに変形した物で、ID のラスタは不透明の描画だけを描く。
+            // 記録の instanceIndex は GetInstances() の添字のままにする（飛ばしても詰めない）
+            if (!instance.bOpaque || !instance.IndexBuffer || instance.IndexCount < 3)
             {
                 continue;
             }

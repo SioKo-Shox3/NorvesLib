@@ -8,6 +8,7 @@
 // 連続した範囲を取り、同じ走査でインスタンス（塊の番号・段・絶対のページ・物理ページ）を書き（2 回目）、
 // 塊ごとの間接描画の引数（頂点数 = 三角形の数 × 3、instanceCount = ページの数、firstInstance = 範囲の先頭）を作る。
 // ページの表はここで引き、描画は物理ページへ直接書く。
+// 段は、塊の記録の levelMask（CPU が境界から決めた段の集合）に入るものだけを処理する。
 //
 // 容量（インスタンスの数）を超える塊は、ページを 1 つも描かず（instanceCount 0）、溢れとして数える。
 // 統計（stats）の語: 5 = 描く塊の数（1 つ以上のインスタンスがある）、6 = 書いたインスタンスの数、7 = 溢れて書かなかったインスタンスの数。
@@ -105,8 +106,10 @@ void main()
     const uint thread = gl_LocalInvocationID.x;
 
     // ワールドの境界（AABB）のライト空間の矩形
-    const vec3 boundsMin = chunks[chunkIndex].boundsMin.xyz;
-    const vec3 boundsMax = chunks[chunkIndex].boundsMax.xyz;
+    const vec3 boundsMin = chunks[chunkIndex].boundsMin;
+    const vec3 boundsMax = chunks[chunkIndex].boundsMax;
+    // CPU が境界から決めた段の集合。外の段は範囲を見ずに飛ばす
+    const uint levelMask = chunks[chunkIndex].levelMask;
     const vec3 center = 0.5 * (boundsMin + boundsMax);
     const vec3 extent = 0.5 * (boundsMax - boundsMin);
     const vec2 lightCenter = vec2(dot(center, params.lightRight.xyz), dot(center, params.lightUp.xyz));
@@ -124,6 +127,10 @@ void main()
     // 1 回目: 描くページの数
     for (uint level = 0u; level < params.counts.y; ++level)
     {
+        if ((levelMask & (1u << level)) == 0u)
+        {
+            continue;
+        }
         ivec2 pageMin;
         uvec2 size;
         PageRange(level, lightMin, lightMax, pageMin, size);
@@ -179,6 +186,10 @@ void main()
     // 2 回目: インスタンスを書く
     for (uint level = 0u; level < params.counts.y; ++level)
     {
+        if ((levelMask & (1u << level)) == 0u)
+        {
+            continue;
+        }
         ivec2 pageMin;
         uvec2 size;
         PageRange(level, lightMin, lightMax, pageMin, size);

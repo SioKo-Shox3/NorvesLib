@@ -6863,6 +6863,47 @@ namespace
         assert(chunks.size() == VirtualShadowMap::MAX_CASTER_CHUNKS && stats.DroppedChunks == 1u);
     }
 
+    // 記録は、境界がかかる段の集合（LevelMask）を持つ。展開はこの集合の外の段を処理しない。
+    // 既定（CPU が絞らない塊）は全段。手続き・スキニングとも、境界から LevelMaskForBounds が決めた集合を書く
+    void TestVirtualShadowMapCasterRecordsLevelMask()
+    {
+        const VirtualShadowMapClipmap clipmap = MakeCasterClipmap();
+        assert(VsmShadowChunk{}.LevelMask == 0xFFFFFFFFu);
+
+        // 段 0（幅 4 m）の外で段 1 の内側に置いた、小さな四角形とスキニングの境界
+        const NorvesLib::Math::Vector3 right = clipmap.LightRight;
+        const VirtualShadowMap::CasterBounds placed = MakeCubeBounds(right.x * 3.0f, right.y * 3.0f, right.z * 3.0f, 0.01f);
+        const uint32_t expectedMask = VirtualShadowMap::LevelMaskForBounds(clipmap, placed);
+        assert((expectedMask & 1u) == 0u && (expectedMask & 2u) != 0u);
+
+        BoundingBox meshBounds{-0.01f, -0.01f, -0.01f, 0.01f, 0.01f, 0.01f};
+        VirtualShadowMap::ProceduralDrawInput draw;
+        draw.VertexAddress = 0x1000u;
+        draw.IndexAddress = 0x2000u;
+        draw.IndexCount = 6u;
+        draw.MeshBounds = &meshBounds;
+        VirtualShadowMap::ProceduralPlanScratch scratch;
+        Container::VariableArray<VirtualShadowMap::ProceduralChunkPlan> plan;
+        assert(VirtualShadowMap::PlanProceduralChunks(draw, scratch, plan));
+        const NorvesLib::Math::Matrix4x4 matrix = MakeMarkedMatrix(right.x * 3.0f, right.y * 3.0f, right.z * 3.0f);
+        float world[16] = {};
+        NorvesLib::Math::MatrixUtils::CopyToShaderData(matrix, world);
+        Container::VariableArray<VsmShadowChunk> chunks;
+        VirtualShadowMap::CasterStats stats;
+        VirtualShadowMap::AppendProceduralInstance(draw, plan, world, clipmap, chunks, stats);
+        assert(chunks.size() == 1u && chunks[0].LevelMask == expectedMask);
+
+        Container::VariableArray<MeshIndexChunk> meshChunks;
+        meshChunks.push_back(MeshIndexChunk{0u, 3u});
+        VirtualShadowMap::AppendSkinnedInstance(0x3000u, 0x4000u, placed, meshChunks, clipmap, chunks, stats);
+        assert(chunks.size() == 2u && chunks[1].LevelMask == expectedMask);
+
+        // 原点のそばはすべての段
+        const uint32_t allLevels = (1u << VirtualShadowMap::LEVEL_COUNT) - 1u;
+        VirtualShadowMap::AppendSkinnedInstance(0x3000u, 0x4000u, MakeCubeBounds(0.0f, 0.0f, 0.0f, 0.1f), meshChunks, clipmap, chunks, stats);
+        assert(chunks.size() == 3u && chunks[2].LevelMask == allLevels);
+    }
+
     // FakeBuffer の Update に渡された塊の記録（VsmShadowChunk の並び）を取り出す
     Container::VariableArray<VsmShadowChunk> ReadUploadedChunks(const RHI::IBuffer* buffer)
     {
@@ -6884,16 +6925,17 @@ namespace
         RenderResources Resources;
         SkinningComputePass Skinning;
         VirtualShadowMapPass Pass;
+        /** @brief 描画コマンドの一覧（スキニングの 1 件だけ。手続きメッシュは描画コマンドに載せず、プロキシから集める） */
         Container::VariableArray<DrawCommand> AllCommands;
-        Container::VariableArray<DrawCommand> OpaqueCommands;
         Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>> SkinnedLeases;
-        Container::VariableArray<GPUSceneInstanceData> InstanceData;
+        Container::VariableArray<MeshProxy> MeshProxies;
         Container::VariableArray<SkinnedMeshProxy> SkinnedProxies;
         MeshDataHandle Mesh;
     };
 
-    // 4 頂点の四角形（XZ 平面、半幅 0.4）を登録した手続きメッシュの描画を 3 件（AllCommands）と、スキニングの描画 1 件（OpaqueCommands）を足す:
-    //   A: 影を落とす。インスタンス 2 つ（原点の近くの (0.5, 0, 0.5) と (-0.5, 0, 0.5)）
+    // 4 頂点の四角形（XZ 平面、半幅 0.4）を登録した手続きメッシュのプロキシ 4 件（MeshProxies）と、スキニングの描画 1 件（AllCommands）を足す。
+    // 手続きメッシュは、主カメラの錐台で省かれた後の描画コマンドの一覧ではなく、カリング前のプロキシの一覧から集める:
+    //   A: 影を落とす。プロキシ 2 つ（原点の近くの (0.5, 0, 0.5) と (-0.5, 0, 0.5)）
     //   B: 影を落とす。ライトの右向きに 5000 m（どの段の範囲にも入らない）
     //   C: 影を落とさない
     //   スキニング: 影を落とす。3 頂点・三角形 1 つ。描画の境界は原点の近く
@@ -6921,29 +6963,19 @@ namespace
         scene.Mesh.Id = 8801;
         assert(scene.Resources.Meshes().Register(scene.Mesh, vertices, sizeof(vertices), indices, 6));
 
-        const auto addInstance = [&](float x, float y, float z) {
-            GPUSceneInstanceData data = {};
-            NorvesLib::Math::MatrixUtils::CopyToShaderData(MakeMarkedMatrix(x, y, z), data.World);
-            scene.InstanceData.push_back(data);
-        };
-        const auto addMeshDraw = [&](uint32_t firstInstance, uint32_t instanceCount, bool bCastShadow) {
-            DrawCommand command;
-            command.Draw.PayloadKind = DrawPayloadKind::Mesh;
-            command.Draw.MeshHandle = scene.Mesh;
-            command.Draw.FirstInstance = firstInstance;
-            command.Draw.InstanceCount = instanceCount;
-            command.Draw.bInstanced = instanceCount > 1u;
-            command.Draw.bCastShadow = bCastShadow;
-            scene.AllCommands.push_back(command);
+        const auto addMeshProxy = [&](float x, float y, float z, bool bCastShadow) {
+            MeshProxy meshProxy;
+            meshProxy.ComponentId = 100 + scene.MeshProxies.size();
+            meshProxy.MeshHandle = scene.Mesh;
+            meshProxy.WorldTransform = MakeMarkedMatrix(x, y, z);
+            meshProxy.bCastShadow = bCastShadow;
+            scene.MeshProxies.push_back(meshProxy);
         };
         const NorvesLib::Math::Vector3 right = run.Context.PhysicalLighting.SunClipmap.LightRight;
-        addInstance(0.5f, 0.0f, 0.5f);
-        addInstance(-0.5f, 0.0f, 0.5f);
-        addMeshDraw(0u, 2u, true);
-        addInstance(right.x * 5000.0f, right.y * 5000.0f, right.z * 5000.0f);
-        addMeshDraw(2u, 1u, true);
-        addInstance(0.0f, 0.5f, 0.0f);
-        addMeshDraw(3u, 1u, false);
+        addMeshProxy(0.5f, 0.0f, 0.5f, true);
+        addMeshProxy(-0.5f, 0.0f, 0.5f, true);
+        addMeshProxy(right.x * 5000.0f, right.y * 5000.0f, right.z * 5000.0f, true);
+        addMeshProxy(0.0f, 0.5f, 0.0f, false);
 
         // スキニングの描画 1 件（SkinningComputePass が頂点を変形する）。持ち主のプロキシ（ComponentId 77）は影を落とし、境界は原点の近く
         Container::VariableArray<SkinnedMeshVertex> skinVertices;
@@ -6965,7 +6997,7 @@ namespace
         skinned.Draw.WorldMatrix = MakeMarkedMatrix(-0.5f, 0.0f, 0.25f);
         skinned.Skinned.FrameLeaseIndex = 0;
         skinned.Skinned.BonePalette.push_back(MakeMarkedMatrix(0.0f, 0.0f, 0.0f));
-        scene.OpaqueCommands.push_back(skinned);
+        scene.AllCommands.push_back(skinned);
         SkinnedMeshProxy proxy;
         proxy.ComponentId = 77;
         proxy.bCastShadow = true;
@@ -6977,12 +7009,13 @@ namespace
 
         ViewRenderContext& context = run.Context;
         context.SnapshotDrawCommands = DrawCommandView::FromArray(scene.AllCommands);
-        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(scene.OpaqueCommands);
-        context.SnapshotInstanceData = &scene.InstanceData;
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(scene.AllCommands);
+        context.SnapshotMeshProxies = &scene.MeshProxies;
         context.SnapshotSkinnedMeshFrameLeases = &scene.SkinnedLeases;
         context.SnapshotSkinnedMeshProxies = &scene.SkinnedProxies;
 
         scene.Skinning.SetEnabled(true);
+        scene.Skinning.SetShadowCasterOutput(true);
         assert(scene.Skinning.Initialize(context));
         scene.Pass.SetSkinningComputePass(&scene.Skinning);
         assert(scene.Pass.Initialize(context));
@@ -7047,6 +7080,7 @@ namespace
             const FakeCommandList& commandList = scene.Run.CommandList;
             assert(scene.Pass.WasMarked() && scene.Pass.WasRasterRecorded() && scene.Pass.GetLastCasterChunkCount() == 3u);
             assert(scene.Skinning.GetInstances().size() == 1u);
+            assert(scene.Skinning.GetInstances()[0].bOpaque && scene.Skinning.GetInstances()[0].bCastShadow);
 
             const char* expectedSequence = "DDDDDJDBIIIE";
             assert(commandList.CallSequence.size() == std::strlen(expectedSequence));
@@ -7119,6 +7153,8 @@ namespace
                 assert(chunk.Record.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::ProceduralChunk));
                 assert(chunk.Record.TriangleCount == 2u && chunk.Record.FirstIndex == 0u && chunk.Record.VertexBase == 0u);
                 assert(chunk.Record.VertexAddress == meshVertexAddress && chunk.Record.IndexAddress == meshIndexAddress);
+                // 原点のそばの境界はすべての段にかかる
+                assert(chunk.LevelMask == (1u << VirtualShadowMap::LEVEL_COUNT) - 1u);
                 assert(chunk.World[3] == x && chunk.World[7] == 0.0f && chunk.World[11] == 0.5f);
                 assert(chunk.World[0] == 1.0f && chunk.World[5] == 1.0f && chunk.World[10] == 1.0f);
                 assert(std::abs(chunk.BoundsMin[0] - (x - 0.4f)) < 1.0e-6f && std::abs(chunk.BoundsMax[0] - (x + 0.4f)) < 1.0e-6f);
@@ -7140,6 +7176,63 @@ namespace
             assert(logs.Count("VSM_CASTERS") == 1);
             assert(logs.Count("VSM_CASTERS procedural_chunks=2 skinned_chunks=1 culled=1 dropped=0 skipped=0") == 1);
 #endif
+            ShutdownVsmCasterScene(scene);
+        }
+
+        // 主カメラの錐台で省かれた後の描画コマンドの一覧（現在のビューポートの一覧）が空でも、影を落とす手続きメッシュは
+        // カリング前のプロキシから集める（錐台の外でも VSM の段の範囲に入る投影物の影を落とす）。スキニングの描画は一覧が空なので無い
+        {
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            ViewportRenderPlan viewportPlan;
+            scene.Run.Context.CurrentViewport = &viewportPlan;
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Pass.WasRasterRecorded() && scene.Pass.GetLastCasterChunkCount() == 2u);
+            assert(scene.Skinning.GetInstances().empty());
+            ShutdownVsmCasterScene(scene);
+        }
+
+        // 解決が使えず予備の GBuffer の描画へ戻るフレームでも、影を落とすスキニングは変形して影に描く。
+        // 影を落とさない描画は変形しない。影の出力を切ると何も宣言しない（今までの動き）
+        {
+            VisibilityResolvePass unusableResolve;
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            scene.Skinning.SetResolvePass(&unusableResolve);
+            assert(!unusableResolve.CanResolve(scene.Run.Device.get()));
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Skinning.GetInstances().size() == 1u && scene.Pass.GetLastCasterChunkCount() == 3u);
+            ShutdownVsmCasterScene(scene);
+        }
+        {
+            VisibilityResolvePass unusableResolve;
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            scene.Skinning.SetResolvePass(&unusableResolve);
+            scene.AllCommands[0].Draw.bCastShadow = false;
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Skinning.GetInstances().empty() && scene.Pass.GetLastCasterChunkCount() == 2u);
+            ShutdownVsmCasterScene(scene);
+        }
+        {
+            VisibilityResolvePass unusableResolve;
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            scene.Skinning.SetResolvePass(&unusableResolve);
+            scene.Skinning.SetShadowCasterOutput(false);
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Skinning.GetInstances().empty() && scene.Pass.GetLastCasterChunkCount() == 2u);
+            ShutdownVsmCasterScene(scene);
+        }
+
+        // 半透明の一覧にあるスキニングの描画も、影の描画と同じ全描画の一覧から変形する（ID のラスタが描かないよう bOpaque は false）
+        {
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            scene.Run.Context.SnapshotOpaqueCommands = DrawCommandView{};
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Skinning.GetInstances().size() == 1u && !scene.Skinning.GetInstances()[0].bOpaque);
+            assert(scene.Pass.GetLastCasterChunkCount() == 3u);
             ShutdownVsmCasterScene(scene);
         }
 
@@ -12668,6 +12761,7 @@ int main()
     TestVirtualShadowMapCasterPlansProceduralChunks();
     TestVirtualShadowMapCasterAppendsProceduralInstances();
     TestVirtualShadowMapCasterAppendsSkinnedInstances();
+    TestVirtualShadowMapCasterRecordsLevelMask();
     TestVirtualShadowMapPassRecordsCasterRasterAfterSkinning();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();

@@ -45,17 +45,22 @@ namespace NorvesLib::Core::Rendering
      * Record はビジビリティバッファの描画の記録（頂点・インデックスの読み方）。Kind は 0 以外・TriangleCount は 1 以上 128 以下にする。
      * World はローカル空間の位置をワールドへ変える 3×4 行列（行ごとに 4 要素。ワールドの x = World[0..3] と (位置, 1) の内積、y = World[4..7]、z = World[8..11]）。
      * ワールド空間の頂点（スキニングの出力など）は単位行列にする。
-     * Bounds はワールドの境界（AABB。w は使わない）で、展開が覆うページを決める。三角形をすべて含むこと。
+     * Bounds はワールドの境界（AABB）で、展開が覆うページを決める。三角形をすべて含むこと。
+     * LevelMask はこの塊を展開する段の集合（ビット L が段 L）。CPU が境界から決めた段だけを展開が処理し、外の段は見ない。
+     * 既定は全段（CPU が絞らない塊は、展開が段ごとに範囲を見て決める）。
      */
     struct alignas(16) VsmShadowChunk
     {
         VisibilityBuffer::DrawRecord Record;
-        float BoundsMin[4] = {};
-        float BoundsMax[4] = {};
+        float BoundsMin[3] = {};
+        uint32_t LevelMask = 0xFFFFFFFFu;
+        float BoundsMax[3] = {};
+        uint32_t Reserved = 0;
         float World[12] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
     };
     static_assert(sizeof(VsmShadowChunk) == 144, "vsm_*.vert/comp の VsmShadowChunk と同じ大きさにすること");
-    static_assert(offsetof(VsmShadowChunk, BoundsMin) == 64 && offsetof(VsmShadowChunk, World) == 96,
+    static_assert(offsetof(VsmShadowChunk, BoundsMin) == 64 && offsetof(VsmShadowChunk, LevelMask) == 76 &&
+                      offsetof(VsmShadowChunk, BoundsMax) == 80 && offsetof(VsmShadowChunk, World) == 96,
                   "Common/VirtualShadowMapChunk.glsl の VsmShadowChunk と同じ並びにすること");
 
     namespace VirtualShadowMap

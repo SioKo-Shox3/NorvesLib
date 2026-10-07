@@ -877,6 +877,7 @@ namespace NorvesLib::Core::Rendering
         // 太陽の影を VSM で描く（変形した頂点を影の描画が読む）ときまで無効にしておく。
         auto skinningComputePass = MakeUnique<SkinningComputePass>();
         skinningComputePass->SetEnabled(bVisibilityBuffer || m_ShadowMethod == ShadowMethod::Vsm);
+        skinningComputePass->SetShadowCasterOutput(m_ShadowMethod == ShadowMethod::Vsm);
         SkinningComputePass *skinningComputePassPtr = skinningComputePass.get();
         AddPass(std::move(skinningComputePass));
 

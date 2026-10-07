@@ -403,52 +403,47 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // ----- 手続きメッシュ: 影を落とす DrawCommand（CSM と同じ集め方。主カメラの錐台で省かれた物も含める） -----
+        // ----- 手続きメッシュ: 影を落とすメッシュのプロキシ -----
+        // 描画コマンドは主カメラの錐台で省かれた後の一覧なので、錐台の外でも VSM の段の範囲に入る投影物を落とす。
+        // カリング前の全プロキシ（FramePacket::Scene.MeshProxies）から、サブメッシュ（無ければメッシュ全体）ごとに集める
         MeshResources* meshes = context.Resources.Meshes;
-        const Container::VariableArray<GPUSceneInstanceData>* instanceData = context.SnapshotInstanceData;
-        if (meshes && instanceData)
+        if (meshes && context.SnapshotMeshProxies)
         {
-            for (const DrawCommand& command : context.GetActiveDrawCommands())
+            for (const MeshProxy& proxy : *context.SnapshotMeshProxies)
             {
-                const DrawParams& draw = command.Draw;
-                if (!draw.bCastShadow || draw.PayloadKind != DrawPayloadKind::Mesh || !draw.MeshHandle.IsValid())
+                if (!proxy.IsValid() || !proxy.bCastShadow)
                 {
                     continue;
                 }
-                const auto* gpuData = meshes->GetGPUData(draw.MeshHandle);
+                const auto* gpuData = meshes->GetGPUData(proxy.MeshHandle);
                 if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer)
                 {
                     continue;
                 }
 
-                // GBuffer・ビジビリティバッファの経路と同じ範囲の選び方
-                const bool bHasRange = draw.IndexCount > 0;
-                VirtualShadowMap::ProceduralDrawInput input;
-                input.VertexAddress = gpuData->VertexBuffer->GetDeviceAddress();
-                input.IndexAddress = gpuData->IndexBuffer->GetDeviceAddress();
-                input.FirstIndex = bHasRange ? draw.IndexOffset : 0u;
-                input.IndexCount = bHasRange ? draw.IndexCount : gpuData->IndexCount;
-                input.VertexOffset = bHasRange ? draw.VertexOffset : 0u;
-                input.MeshBounds = gpuData->bHasLocalBounds ? &gpuData->LocalBounds : nullptr;
-                input.BlockBounds = gpuData->BlockBounds.empty() ? nullptr : gpuData->BlockBounds.data();
-                input.BlockBoundsCount = static_cast<uint32_t>(gpuData->BlockBounds.size());
-                if (!VirtualShadowMap::PlanProceduralChunks(input, state.PlanScratch, state.Plan))
-                {
-                    ++state.Stats.SkippedDraws;
-                    continue;
-                }
+                float world[16] = {};
+                Math::MatrixUtils::CopyToShaderData(proxy.WorldTransform, world);
 
-                const uint32_t instanceCount = std::max(1u, draw.InstanceCount);
-                for (uint32_t instanceOffset = 0; instanceOffset < instanceCount; ++instanceOffset)
+                // サブメッシュが無いプロキシはメッシュ全体を 1 つの範囲にする（GBuffer・ビジビリティバッファの経路と同じ範囲の選び方）
+                const uint32_t rangeCount = proxy.SubMeshCount == 0u ? 1u : std::min(proxy.SubMeshCount, MAX_MATERIAL_SLOTS);
+                for (uint32_t rangeIndex = 0; rangeIndex < rangeCount; ++rangeIndex)
                 {
-                    const uint64_t instanceIndex = static_cast<uint64_t>(draw.FirstInstance) + instanceOffset;
-                    if (instanceIndex >= instanceData->size())
+                    const bool bHasRange = proxy.SubMeshCount != 0u;
+                    VirtualShadowMap::ProceduralDrawInput input;
+                    input.VertexAddress = gpuData->VertexBuffer->GetDeviceAddress();
+                    input.IndexAddress = gpuData->IndexBuffer->GetDeviceAddress();
+                    input.FirstIndex = bHasRange ? proxy.SubMeshes[rangeIndex].IndexStart : 0u;
+                    input.IndexCount = bHasRange ? proxy.SubMeshes[rangeIndex].IndexCount : gpuData->IndexCount;
+                    input.VertexOffset = bHasRange ? proxy.SubMeshes[rangeIndex].VertexStart : 0u;
+                    input.MeshBounds = gpuData->bHasLocalBounds ? &gpuData->LocalBounds : nullptr;
+                    input.BlockBounds = gpuData->BlockBounds.empty() ? nullptr : gpuData->BlockBounds.data();
+                    input.BlockBoundsCount = static_cast<uint32_t>(gpuData->BlockBounds.size());
+                    if (!VirtualShadowMap::PlanProceduralChunks(input, state.PlanScratch, state.Plan))
                     {
                         ++state.Stats.SkippedDraws;
                         continue;
                     }
-                    VirtualShadowMap::AppendProceduralInstance(
-                        input, state.Plan, (*instanceData)[static_cast<size_t>(instanceIndex)].World, clipmap, state.Chunks, state.Stats);
+                    VirtualShadowMap::AppendProceduralInstance(input, state.Plan, world, clipmap, state.Chunks, state.Stats);
                 }
             }
         }
