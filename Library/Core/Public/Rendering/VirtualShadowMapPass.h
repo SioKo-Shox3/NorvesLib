@@ -63,9 +63,21 @@ namespace NorvesLib::Core::Rendering
         /** @brief クリップマップの 1 段のページの数（一辺）。ページの表の一辺 */
         constexpr uint32_t TABLE_DIMENSION = 128;
         constexpr uint32_t TABLE_ENTRIES_PER_LEVEL = TABLE_DIMENSION * TABLE_DIMENSION;
-        /** @brief 段の数（クリップマップの既定と同じ） */
+        /** @brief 段の数（クリップマップの既定と同じ）。VSM の資源を作るときの既定のスライスの数でもある */
         constexpr uint32_t LEVEL_COUNT = VirtualShadowMapClipmapSettings{}.LevelCount;
         static_assert(LEVEL_COUNT >= 1 && LEVEL_COUNT <= VirtualShadowMapMaxLevels, "段の数はクリップマップの上限に収まること");
+        /**
+         * @brief 展開のインスタンスと塊の段の印が持てるスライスの数の上限。展開のインスタンスの段の欄は 8 ビット
+         *        （インスタンスの y = スライス | 物理ページ << 8。物理ページは 24 ビットまで）
+         */
+        constexpr uint32_t MAX_SLICES = 256;
+        /** @brief 塊の段の印（VsmShadowChunk::LevelMask。32 ビット）が 1 つの組で持てるスライスの数 */
+        constexpr uint32_t SLICES_PER_GROUP = 32;
+        /** @brief スライスの数が sliceCount のときの、塊の段の印の組の数（ceil(sliceCount / 32)） */
+        constexpr uint32_t SliceGroupCount(uint32_t sliceCount)
+        {
+            return (sliceCount + SLICES_PER_GROUP - 1u) / SLICES_PER_GROUP;
+        }
 
         /**
          * @brief 既定のプールのページの数（5120 ページ = 320 MiB）。--vsm-pool-pages=<n> で替える
@@ -80,6 +92,7 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t PAGE_INDEX_BITS = 20;
         constexpr uint32_t PAGE_INDEX_MASK = (1u << PAGE_INDEX_BITS) - 1u;
         constexpr uint32_t MAX_POOL_PAGES = PAGE_INDEX_MASK;
+        static_assert(PAGE_INDEX_BITS <= 24, "展開のインスタンスの物理ページの欄は 24 ビット（スライスの欄の 8 ビットの上）");
         /** @brief maxStorageBufferRange が不明（0）のときに使う、Vulkan が保証する最小値（2^27） */
         constexpr uint64_t GUARANTEED_MAX_STORAGE_BUFFER_RANGE = 1ull << 27;
 
@@ -100,8 +113,11 @@ namespace NorvesLib::Core::Rendering
          * @brief 統計の語（uint32）の並び: 要求・割り当て・溢れ・描いたページの数・要求のあった段のビットの集合・
          *        展開が描く塊の数・展開が書いたインスタンスの数・展開の容量を超えて書かなかったインスタンスの数・
          *        MegaGeometry の投影物のカリングの（インスタンス、段）の数・書いたクラスタの数・容量を超えて書かなかったクラスタの数
+         *
+         * StatLevelsUsed は先頭 32 スライスのうち要求のあったものの集合（ビット s がスライス s）、StatLevelsUsedBeyond は
+         * 33 番目以降のスライスに要求があれば 1（集合を溢れさせないため）。
          */
-        constexpr uint32_t STATS_WORD_COUNT = 53;
+        constexpr uint32_t STATS_WORD_COUNT = 54;
         constexpr uint64_t STATS_BYTES = static_cast<uint64_t>(STATS_WORD_COUNT) * sizeof(uint32_t);
         enum StatWord : uint32_t
         {
@@ -130,10 +146,13 @@ namespace NorvesLib::Core::Rendering
             StatScratchEvictTaken = 19,
             StatScratchAllocCursor = 20,
             StatScratchAgeHistogram = 21,
+            // 年齢ごとの数（STATS_AGE_BINS 個）の後ろ
+            StatLevelsUsedBeyond = StatScratchAgeHistogram + 32,
         };
         /** @brief 要求されなかったフレーム数ごとの数の語の数（年齢 0〜31） */
         constexpr uint32_t STATS_AGE_BINS = 32;
-        static_assert(STATS_WORD_COUNT == StatScratchAgeHistogram + STATS_AGE_BINS, "統計の語の数が並びと合っていること");
+        static_assert(STATS_WORD_COUNT == StatScratchAgeHistogram + STATS_AGE_BINS + 1u && StatLevelsUsedBeyond == STATS_WORD_COUNT - 1u,
+                      "統計の語の数が並びと合っていること");
         /** @brief 要求されなくなったページを持ち越すフレーム数（これを超えて要求が無ければ空きへ戻す） */
         constexpr uint32_t CACHE_CARRY_FRAMES = 30;
         /** @brief 1 フレームに渡せる無効化の矩形の数（超えたら全ページを無効にする） */
@@ -164,8 +183,11 @@ namespace NorvesLib::Core::Rendering
             commandList.BufferBarrier(stats, RHI::ResourceState::CopySource, RHI::ResourceState::UnorderedAccess);
         }
 
-        /** @brief 今フレームの要求のビット列（段 × 128 × 128 ビット）の語（uint32）の数 */
-        constexpr uint32_t REQUEST_WORDS = LEVEL_COUNT * TABLE_ENTRIES_PER_LEVEL / 32u;
+        /** @brief 今フレームの要求のビット列（スライス × 128 × 128 ビット）の語（uint32）の数 */
+        constexpr uint32_t RequestWords(uint32_t sliceCount)
+        {
+            return sliceCount * TABLE_ENTRIES_PER_LEVEL / 32u;
+        }
 
         /** @brief VSM を作れない理由。名前は VSM_FALLBACK reason= の値 */
         enum class FallbackReason : uint32_t
@@ -246,16 +268,16 @@ namespace NorvesLib::Core::Rendering
             return plan;
         }
 
-        /** @brief ページの表の大きさ（バイト）: 段 × 128 × 128 の uint32 */
-        constexpr uint64_t PageTableBytes()
+        /** @brief ページの表の大きさ（バイト）: スライス × 128 × 128 の uint32。既定は太陽の段の数（LEVEL_COUNT） */
+        constexpr uint64_t PageTableBytes(uint32_t sliceCount = LEVEL_COUNT)
         {
-            return static_cast<uint64_t>(LEVEL_COUNT) * TABLE_ENTRIES_PER_LEVEL * sizeof(uint32_t);
+            return static_cast<uint64_t>(sliceCount) * TABLE_ENTRIES_PER_LEVEL * sizeof(uint32_t);
         }
 
-        /** @brief 今フレームの要求のビット列の大きさ（バイト） */
-        constexpr uint64_t RequestBitsBytes()
+        /** @brief 今フレームの要求のビット列の大きさ（バイト）。既定は太陽の段の数（LEVEL_COUNT） */
+        constexpr uint64_t RequestBitsBytes(uint32_t sliceCount = LEVEL_COUNT)
         {
-            return static_cast<uint64_t>(REQUEST_WORDS) * sizeof(uint32_t);
+            return static_cast<uint64_t>(RequestWords(sliceCount)) * sizeof(uint32_t);
         }
 
         /** @brief 物理ページのプールの大きさ（バイト） */

@@ -51,9 +51,14 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    uint32_t BuildVirtualShadowMapSlices(const VirtualShadowMapClipmap* clipmap, const VirtualShadowMapClipmap* previous, GPUVsmSlice* outSlices)
+    uint32_t BuildVirtualShadowMapSlices(const VirtualShadowMapClipmap* clipmap,
+                                         const VirtualShadowMapClipmap* previous,
+                                         uint32_t sliceCount,
+                                         GPUVsmSlice* outSlices)
     {
-        for (uint32_t index = 0; index < VirtualShadowMapMaxSlices; ++index)
+        static_assert(VirtualShadowMapMaxSlices == VirtualShadowMap::MAX_SLICES, "スライスの上限は VirtualShadowMap::MAX_SLICES と同じにすること");
+        sliceCount = std::min(sliceCount, VirtualShadowMapMaxSlices);
+        for (uint32_t index = 0; index < sliceCount; ++index)
         {
             GPUVsmSlice& slice = outSlices[index];
             std::memset(&slice, 0, sizeof(slice));
@@ -66,7 +71,7 @@ namespace NorvesLib::Core::Rendering
             return 0u;
         }
         uint32_t count = 0u;
-        const uint32_t levelCount = std::min(clipmap->LevelCount, VirtualShadowMapMaxSlices);
+        const uint32_t levelCount = std::min(std::min(clipmap->LevelCount, VirtualShadowMapMaxLevels), sliceCount);
         for (uint32_t level = 0; level < levelCount; ++level)
         {
             const VirtualShadowMapClipmapLevel& data = clipmap->Levels[level];

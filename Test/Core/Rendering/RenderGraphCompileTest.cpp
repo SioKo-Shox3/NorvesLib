@@ -41,6 +41,7 @@
 #include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Test/Core/Rendering/GeometryUploadTestSupport.h"
+#include "Test/Core/Rendering/VirtualShadowMapWideTestSupport.h"
 #include "Container/PointerTypes.h"
 #include "Debug/Stats.h"
 #include "FileStream/FileStream.h"
@@ -6322,7 +6323,7 @@ namespace
             {"VSM_PageTable", 10ull * 128ull * 128ull * 4ull},
             {"VSM_RequestBits", 10ull * 128ull * 128ull / 8ull},
             {"VSM_FreeList", (5120ull * 3ull + 1ull) * 4ull},
-            {"VSM_Stats", 212ull},
+            {"VSM_Stats", 216ull},
             {"VSM_DirtyList", (5120ull + 4ull) * 4ull},
         };
         for (const Expected& entry : expected)
@@ -6576,7 +6577,7 @@ namespace
     // vsm の構成の 1 フレーム: 印付け（画面を 8x8 で覆う）→ 割り当て（11 段階のうち、無効化の矩形が無いので矩形の段階を除く 10 回）→
     // 消去（間接 dispatch）の順に記録する。
     //  - dispatch は 印付け (16, 8, 1)、続けて 引き継ぎ・年齢・計画・古い順に戻す・使用中の印を 0 に・印を付ける・空きへ詰める・割り当て・
-    //    消去の一覧・締める の 10 回（欄は 10 段 × 128 × 128 を 256 で割った 640、物理ページは 5120 ÷ 256、要求の語は REQUEST_WORDS ÷ 256）の後に、
+    //    消去の一覧・締める の 10 回（欄は 10 段 × 128 × 128 を 256 で割った 640、物理ページは 5120 ÷ 256、要求の語は RequestWords(LEVEL_COUNT) ÷ 256）の後に、
     //    消去の間接 dispatch が 1 回（引数は VSM_DirtyList の先頭）。
     //  - その間のバリア: 要求のビット列は印付けの後（割り当てが読む前）、空きの一覧・ページの表・統計・消去の一覧は割り当ての各段階の後、
     //    消去する一覧は締めた後に GenericRead へ進めてから間接 dispatch が読み、読んだ後に UnorderedAccess へ戻す。物理ページは消去の後。
@@ -6614,7 +6615,7 @@ namespace
             }
             const uint32_t entryGroups = VirtualShadowMap::LEVEL_COUNT * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL / 256u;
             const uint32_t pageGroups = 5120u / 256u;
-            const uint32_t requestGroups = VirtualShadowMap::REQUEST_WORDS / 256u;
+            const uint32_t requestGroups = VirtualShadowMap::RequestWords(VirtualShadowMap::LEVEL_COUNT) / 256u;
             // 引き継ぎ・年齢・計画・古い順に戻す・使用中の印を 0 に・印を付ける・空きへ詰める・割り当てる・消去の一覧・締める
             const uint32_t expectedGroups[AllocateStageDispatches] = {
                 entryGroups, entryGroups, 1u, entryGroups, pageGroups, entryGroups, pageGroups, requestGroups, entryGroups, 1u,
@@ -7255,6 +7256,128 @@ namespace
         const uint32_t allLevels = (1u << VirtualShadowMap::LEVEL_COUNT) - 1u;
         VirtualShadowMap::AppendSkinnedInstance(0x3000u, 0x4000u, MakeCubeBounds(0.0f, 0.0f, 0.0f, 0.1f), meshChunks, clipmap, chunks, stats);
         assert(chunks.size() == 3u && chunks[2].LevelMask == allLevels);
+    }
+
+    // スライスが 33 個以上の場面（太陽の 10 段 + 後ろに同じ範囲を繰り返した正射影のスライス 30 個 = 40 スライス）。
+    // 塊の段の印（LevelMask）は 32 スライスずつの組で、Reserved が組の番号: 組 0 = スライス 0〜31、組 1 = 32〜39。
+    // 複数の組にまたがる投影物は、同じ描画の記録を持つ塊を組ごとに出す。バッファの大きさはスライスの数から決まる
+    void TestVirtualShadowMapCasterRecordsSliceGroups()
+    {
+        // スライスの数から決まる大きさ（ページの表・要求のビット列・dirty の階層）。既定は太陽の段の数
+        assert(VirtualShadowMap::SliceGroupCount(1u) == 1u && VirtualShadowMap::SliceGroupCount(32u) == 1u &&
+               VirtualShadowMap::SliceGroupCount(33u) == 2u && VirtualShadowMap::SliceGroupCount(VirtualShadowMap::MAX_SLICES) == 8u);
+        assert(VirtualShadowMap::PageTableBytes() == VirtualShadowMap::PageTableBytes(VirtualShadowMap::LEVEL_COUNT));
+        assert(VirtualShadowMap::PageTableBytes(40u) == 40ull * 128ull * 128ull * 4ull);
+        assert(VirtualShadowMap::RequestBitsBytes(40u) == 40ull * 128ull * 128ull / 8ull &&
+               VirtualShadowMap::RequestWords(256u) == 256u * 128u * 128u / 32u);
+        assert(VirtualShadowMap::MegaDirtyBitsBytes(40u) == 40ull * VirtualShadowMap::MEGA_DIRTY_WORDS_PER_LEVEL * 4ull);
+        assert(VirtualShadowMap::STATS_WORD_COUNT == VirtualShadowMap::StatLevelsUsedBeyond + 1u);
+
+        const VirtualShadowMapClipmap clipmap = MakeCasterClipmap();
+        constexpr uint32_t sliceCount = 40u;
+        GPUVsmSlice slices[VirtualShadowMapMaxSlices];
+        VirtualShadowMapWideTest::BuildWideSlices(clipmap, sliceCount, slices);
+        for (uint32_t slice = 0; slice < sliceCount; ++slice)
+        {
+            // どのスライスも 128 × 128 のページを先頭から並べ、後ろのスライスは先頭の段と同じ範囲
+            assert(slices[slice].origin[2] == static_cast<int32_t>(slice * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL));
+            assert(slices[slice].info[0] == clipmap.Levels[slice % clipmap.LevelCount].PageMeters);
+        }
+        const VirtualShadowMap::CasterSliceTable table{slices, sliceCount};
+        const uint32_t levelCount = clipmap.LevelCount;
+
+        // 境界から決めた組ごとの印は、先頭の段の印を繰り返したもの
+        const auto expectedMask = [&](uint32_t baseMask, uint32_t group) {
+            uint32_t mask = 0u;
+            for (uint32_t bit = 0; bit < 32u; ++bit)
+            {
+                const uint32_t slice = group * 32u + bit;
+                if (slice < sliceCount && ((baseMask >> (slice % levelCount)) & 1u) != 0u)
+                {
+                    mask |= 1u << bit;
+                }
+            }
+            return mask;
+        };
+        const NorvesLib::Math::Vector3 right = clipmap.LightRight;
+        const VirtualShadowMap::CasterBounds placed = MakeCubeBounds(right.x * 3.0f, right.y * 3.0f, right.z * 3.0f, 0.01f);
+        const VirtualShadowMap::CasterBounds center = MakeCubeBounds(0.0f, 0.0f, 0.0f, 0.1f);
+        const VirtualShadowMap::CasterBounds remote = MakeCubeBounds(right.x * 5000.0f, right.y * 5000.0f, right.z * 5000.0f, 1.0f);
+        const uint32_t placedBase = VirtualShadowMap::LevelMaskForBounds(clipmap, placed);
+        const uint32_t centerBase = VirtualShadowMap::LevelMaskForBounds(clipmap, center);
+        assert((placedBase & 1u) == 0u && placedBase != 0u && centerBase == (1u << levelCount) - 1u);
+        assert(VirtualShadowMap::LevelMaskForBounds(clipmap, center, 1u) == 0u);
+
+        for (const VirtualShadowMap::CasterBounds& bounds : {placed, center})
+        {
+            const uint32_t base = VirtualShadowMap::LevelMaskForBounds(clipmap, bounds);
+            const VirtualShadowMap::SliceMasks masks = VirtualShadowMap::SliceMasksForBounds(slices, sliceCount, bounds);
+            assert(masks.GroupCount == 2u);
+            assert(masks.Masks[0] == expectedMask(base, 0u) && masks.Masks[1] == expectedMask(base, 1u));
+            assert(masks.Masks[2] == 0u && masks.IsAny());
+        }
+        // 範囲の外・境界が有限でない: どの組にも印が無い
+        assert(!VirtualShadowMap::SliceMasksForBounds(slices, sliceCount, remote).IsAny());
+        VirtualShadowMap::CasterBounds notFinite = center;
+        notFinite.Max[0] = std::numeric_limits<float>::quiet_NaN();
+        assert(!VirtualShadowMap::SliceMasksForBounds(slices, sliceCount, notFinite).IsAny());
+        // 透視のスライスは印を付けない（基底が違うので、点光源の面は後の項目で扱う）
+        {
+            GPUVsmSlice perspective[VirtualShadowMapMaxSlices];
+            std::memcpy(perspective, slices, sizeof(GPUVsmSlice) * sliceCount);
+            perspective[39].extra[2] = VirtualShadowMapSliceProjectionPerspective;
+            const VirtualShadowMap::SliceMasks masks = VirtualShadowMap::SliceMasksForBounds(perspective, sliceCount, center);
+            assert(masks.Masks[0] == 0xFFFFFFFFu && masks.Masks[1] == 0x7Fu);
+        }
+
+        // 手続きメッシュ: 原点のそばの 1 つの塊が 2 つの組にまたがるので、同じ記録を持つ塊が 2 つ出る
+        BoundingBox meshBounds{-0.01f, -0.01f, -0.01f, 0.01f, 0.01f, 0.01f};
+        VirtualShadowMap::ProceduralDrawInput draw;
+        draw.VertexAddress = 0x1000u;
+        draw.IndexAddress = 0x2000u;
+        draw.IndexCount = 6u;
+        draw.VertexOffset = 7u;
+        draw.MeshBounds = &meshBounds;
+        VirtualShadowMap::ProceduralPlanScratch scratch;
+        Container::VariableArray<VirtualShadowMap::ProceduralChunkPlan> plan;
+        assert(VirtualShadowMap::PlanProceduralChunks(draw, scratch, plan) && plan.size() == 1u);
+        float world[16] = {};
+        NorvesLib::Math::MatrixUtils::CopyToShaderData(NorvesLib::Math::Matrix4x4::Identity, world);
+        Container::VariableArray<VsmShadowChunk> chunks;
+        VirtualShadowMap::CasterStats stats;
+        VirtualShadowMap::AppendProceduralInstance(draw, plan, world, clipmap, chunks, stats, &table);
+        assert(chunks.size() == 2u && stats.ProceduralChunks == 2u && stats.ProceduralDraws == 1u && stats.CulledChunks == 0u);
+        assert(chunks[0].Reserved == 0u && chunks[0].LevelMask == 0xFFFFFFFFu);
+        assert(chunks[1].Reserved == 1u && chunks[1].LevelMask == 0xFFu);
+        for (const VsmShadowChunk& chunk : chunks)
+        {
+            assert(chunk.Record.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::ProceduralChunk));
+            assert(chunk.Record.VertexAddress == 0x1000u && chunk.Record.IndexAddress == 0x2000u && chunk.Record.VertexBase == 7u &&
+                   chunk.Record.TriangleCount == 2u);
+        }
+        // 表を渡さなければ従来どおり、クリップマップの段だけで 1 つの塊（組 0）
+        chunks.clear();
+        stats = VirtualShadowMap::CasterStats{};
+        VirtualShadowMap::AppendProceduralInstance(draw, plan, world, clipmap, chunks, stats);
+        assert(chunks.size() == 1u && chunks[0].Reserved == 0u && chunks[0].LevelMask == centerBase);
+
+        // スキニング: 同じ。範囲の外は省く。上限に 1 つ足りないときは、組のうち 1 つだけが入り、残りは書かずに数える
+        Container::VariableArray<MeshIndexChunk> meshChunks;
+        meshChunks.push_back(MeshIndexChunk{0u, 3u});
+        chunks.clear();
+        stats = VirtualShadowMap::CasterStats{};
+        VirtualShadowMap::AppendSkinnedInstance(0x3000u, 0x4000u, placed, meshChunks, clipmap, chunks, stats, &table);
+        assert(chunks.size() == 2u && stats.SkinnedChunks == 2u && stats.SkinnedDraws == 1u);
+        assert(chunks[0].Reserved == 0u && chunks[0].LevelMask == expectedMask(placedBase, 0u));
+        assert(chunks[1].Reserved == 1u && chunks[1].LevelMask == expectedMask(placedBase, 1u));
+        VirtualShadowMap::AppendSkinnedInstance(0x3000u, 0x4000u, remote, meshChunks, clipmap, chunks, stats, &table);
+        assert(chunks.size() == 2u && stats.CulledChunks == 1u);
+        chunks.clear();
+        stats = VirtualShadowMap::CasterStats{};
+        chunks.resize(VirtualShadowMap::MAX_CASTER_CHUNKS - 1u);
+        VirtualShadowMap::AppendSkinnedInstance(0x3000u, 0x4000u, center, meshChunks, clipmap, chunks, stats, &table);
+        assert(chunks.size() == VirtualShadowMap::MAX_CASTER_CHUNKS && stats.SkinnedChunks == 1u && stats.DroppedChunks == 1u);
+        assert(chunks.back().Reserved == 0u);
     }
 
     // FakeBuffer の Update に渡された塊の記録（VsmShadowChunk の並び）を取り出す
@@ -8648,9 +8771,10 @@ namespace
                 std::memcpy(counts, params.data() + 64, sizeof(counts));
                 assert(counts[0] == levelCount && counts[1] == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY && counts[2] == 2u);
                 // 段ごとの値（ページの一辺・texel・範囲の原点・ページの表の先頭）はスライスの表にある
-                assert(GVsmMegaCullSliceUpdates.size() == 1u && GVsmMegaCullSliceUpdates[0].size() == sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices);
+                // スライスの表は、スライスの数（外から渡さなければクリップマップの段の数）ぶんだけ書く
+                assert(GVsmMegaCullSliceUpdates.size() == 1u && GVsmMegaCullSliceUpdates[0].size() == sizeof(GPUVsmSlice) * levelCount);
                 GPUVsmSlice slices[VirtualShadowMapMaxSlices];
-                std::memcpy(slices, GVsmMegaCullSliceUpdates[0].data(), sizeof(slices));
+                std::memcpy(slices, GVsmMegaCullSliceUpdates[0].data(), GVsmMegaCullSliceUpdates[0].size());
                 const VirtualShadowMapClipmap& clipmap = scene.Base.Run.Context.PhysicalLighting.SunClipmap;
                 for (uint32_t level = 0; level < levelCount; ++level)
                 {
@@ -14352,6 +14476,7 @@ int main()
     TestVirtualShadowMapCasterAppendsProceduralInstances();
     TestVirtualShadowMapCasterAppendsSkinnedInstances();
     TestVirtualShadowMapCasterRecordsLevelMask();
+    TestVirtualShadowMapCasterRecordsSliceGroups();
     TestVirtualShadowMapPassRecordsCasterRasterAfterSkinning();
     TestVirtualShadowMapPassDrawsOnlyShadowCastingSkinnedSubmeshRanges();
     TestVirtualShadowMapPassRecordsMegaCullBetweenMainCullAndExpand();

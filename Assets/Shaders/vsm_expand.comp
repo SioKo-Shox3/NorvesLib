@@ -11,7 +11,9 @@
 // 連続した範囲を取り、同じ走査でインスタンス（塊の番号・段・絶対のページ・物理ページ）を書き（2 回目）、
 // 塊ごとの間接描画の引数（頂点数 = 三角形の数 × 3、instanceCount = ページの数、firstInstance = 範囲の先頭）を作る。
 // ページの表はここで引き、描画は物理ページへ直接書く。
-// 段は、塊の記録の levelMask（CPU が境界から決めた段の集合）に入るものだけを処理する。
+// スライス（段）は、塊の記録の levelMask（CPU が境界から決めたスライスの集合）に入るものだけを処理する。levelMask は 32 スライスずつの組の印で、
+// 記録の reserved が組の番号 g（スライス / 32）。ビット b が スライス g × 32 + b。複数の組にまたがる投影物は、組ごとの塊に分かれている。
+// インスタンスの y は スライス（下位 8 ビット）| 物理ページ << 8。
 //
 // 容量（インスタンスの数）を超える塊は、ページを 1 つも描かず（instanceCount 0）、溢れとして数える。
 // 描けなかった塊の範囲の、割り当て済みで dirty のページには再描画の印（VSM_PAGE_ENTRY_RETRY）を付ける。
@@ -36,7 +38,7 @@ layout(std140, set = 0, binding = 0) uniform VsmRasterParams
     vec4 lightDirection;
     // x: 深度の原点（ライト空間の深度）、y: 1 / (2 × 深度の範囲)
     vec4 depth;
-    // x: ホストが書いた塊の数、y: スライス（段）の数、z: インスタンスの容量、w: MegaGeometry のクラスタの記録の容量（0 なら無し）
+    // x: ホストが書いた塊の数、y: スライスの数、z: インスタンスの容量、w: MegaGeometry のクラスタの記録の容量（0 なら無し）
     uvec4 counts;
 } params;
 
@@ -118,13 +120,14 @@ bool IsDrawable(uint entry)
 }
 
 // 溢れて描けなかった塊の範囲の、割り当て済みで dirty のページに再描画の印を付ける（1 回目と同じ走査）
-void MarkRetry(uint levelMask, vec2 lightMin, vec2 lightMax, uint thread)
+void MarkRetry(uint levelMask, uint levelBase, vec2 lightMin, vec2 lightMax, uint thread)
 {
-    for (uint level = 0u; level < params.counts.y; ++level)
+    for (uint remaining = levelMask; remaining != 0u; remaining &= remaining - 1u)
     {
-        if ((levelMask & (1u << level)) == 0u)
+        const uint level = levelBase + uint(findLSB(remaining));
+        if (level >= params.counts.y)
         {
-            continue;
+            break;
         }
         ivec2 pageMin;
         uvec2 size;
@@ -154,24 +157,27 @@ void main()
     }
     const uint thread = gl_LocalInvocationID.x;
 
-    // ワールドの境界（AABB）、展開する段の集合、三角形の数
+    // ワールドの境界（AABB）、展開するスライスの集合（組 levelGroup の印）、三角形の数
     vec3 boundsMin;
     vec3 boundsMax;
     uint levelMask;
+    uint levelGroup;
     uint recordTriangles;
     if (bMega)
     {
         boundsMin = megaChunks[megaIndex].boundsMin;
         boundsMax = megaChunks[megaIndex].boundsMax;
         levelMask = megaChunks[megaIndex].levelMask;
+        levelGroup = megaChunks[megaIndex].reserved;
         recordTriangles = VisRecordTriangleCount(megaChunks[megaIndex].record);
     }
     else
     {
         boundsMin = chunks[chunkIndex].boundsMin;
         boundsMax = chunks[chunkIndex].boundsMax;
-        // CPU が境界から決めた段の集合。外の段は範囲を見ずに飛ばす
+        // CPU が境界から決めたスライスの集合。外のスライスは範囲を見ずに飛ばす
         levelMask = chunks[chunkIndex].levelMask;
+        levelGroup = chunks[chunkIndex].reserved;
         recordTriangles = VisRecordTriangleCount(chunks[chunkIndex].record);
     }
     const vec3 center = 0.5 * (boundsMin + boundsMax);
@@ -180,6 +186,8 @@ void main()
     const vec2 lightExtent = vec2(dot(extent, abs(params.lightRight.xyz)), dot(extent, abs(params.lightUp.xyz)));
     const vec2 lightMin = lightCenter - lightExtent;
     const vec2 lightMax = lightCenter + lightExtent;
+    // 組 levelGroup の先頭のスライスの番号（組の番号が大きすぎるときは、どのスライスにも当たらない）
+    const uint levelBase = levelGroup * 32u;
 
     if (thread == 0u)
     {
@@ -189,11 +197,12 @@ void main()
     barrier();
 
     // 1 回目: 描くページの数
-    for (uint level = 0u; level < params.counts.y; ++level)
+    for (uint remaining = levelMask; remaining != 0u; remaining &= remaining - 1u)
     {
-        if ((levelMask & (1u << level)) == 0u)
+        const uint level = levelBase + uint(findLSB(remaining));
+        if (level >= params.counts.y)
         {
-            continue;
+            break;
         }
         ivec2 pageMin;
         uvec2 size;
@@ -248,17 +257,18 @@ void main()
     {
         if (sharedRetry != 0u)
         {
-            MarkRetry(levelMask, lightMin, lightMax, thread);
+            MarkRetry(levelMask, levelBase, lightMin, lightMax, thread);
         }
         return;
     }
 
     // 2 回目: インスタンスを書く
-    for (uint level = 0u; level < params.counts.y; ++level)
+    for (uint remaining = levelMask; remaining != 0u; remaining &= remaining - 1u)
     {
-        if ((levelMask & (1u << level)) == 0u)
+        const uint level = levelBase + uint(findLSB(remaining));
+        if (level >= params.counts.y)
         {
-            continue;
+            break;
         }
         ivec2 pageMin;
         uvec2 size;
@@ -273,7 +283,7 @@ void main()
             {
                 const uint slot = atomicAdd(sharedCursor, 1u);
                 const uint physical = entry & VSM_PAGE_INDEX_MASK;
-                instances[sharedBase + slot] = uvec4(chunkIndex, level | (physical << 4u), uint(pageX), uint(pageY));
+                instances[sharedBase + slot] = uvec4(chunkIndex, level | (physical << 8u), uint(pageX), uint(pageY));
             }
         }
     }

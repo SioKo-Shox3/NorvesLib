@@ -11,8 +11,10 @@
 //     スキニングは SkinningComputePass が変形した頂点（ワールド空間なので変換は単位行列）
 // を持つ記録にする。ビジビリティバッファの塊の記録（VisibilityRasterPass）と同じ形の描画の記録を使う。
 //
-// 段ごとの絞り込み: 塊の境界がどの段の範囲にも入らないときは、展開が 1 つもインスタンスを作らないので、CPU で省く。
-// 入る段があるときは、その段の集合を記録（VsmShadowChunk::LevelMask）に持ち、展開は集合の外の段を処理しない。
+// スライス（太陽では段）ごとの絞り込み: 塊の境界がどのスライスの範囲にも入らないときは、展開が 1 つもインスタンスを作らないので、CPU で省く。
+// 入るスライスがあるときは、その集合を記録（VsmShadowChunk::LevelMask）に持ち、展開は集合の外のスライスを処理しない。
+// 集合は 32 スライスずつの組の印で、組の番号を記録の Reserved に書く（ビット b が スライス Reserved × 32 + b）。
+// 1 つの投影物が複数の組にまたがるときは、同じ描画の記録を持つ塊を組ごとに出す。
 // この計算は描画の装置にも ViewRenderContext にも依らない（GPU の無いテストが直接呼べる）。
 
 #include "Container/Containers.h"
@@ -92,11 +94,9 @@ namespace NorvesLib::Core::Rendering
             return bounds;
         }
 
-        /** @brief ワールドの境界がライト空間で覆う矩形（XY の最小・最大）。境界が有限でなければ false */
-        inline bool LightSpaceRect(const VirtualShadowMapClipmap& clipmap, const CasterBounds& bounds, double (&outMin)[2], double (&outMax)[2])
+        /** @brief ワールドの境界が、ライト空間の基底（右・上）で覆う矩形（XY の最小・最大）。境界が有限でなければ false */
+        inline bool LightSpaceRect(const double (&right)[3], const double (&up)[3], const CasterBounds& bounds, double (&outMin)[2], double (&outMax)[2])
         {
-            const double right[3] = {clipmap.LightRight.x, clipmap.LightRight.y, clipmap.LightRight.z};
-            const double up[3] = {clipmap.LightUp.x, clipmap.LightUp.y, clipmap.LightUp.z};
             double centerRight = 0.0;
             double centerUp = 0.0;
             double extentRight = 0.0;
@@ -121,15 +121,25 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        /** @brief ワールドの境界がライト空間で覆う矩形（XY の最小・最大）。境界が有限でなければ false */
+        inline bool LightSpaceRect(const VirtualShadowMapClipmap& clipmap, const CasterBounds& bounds, double (&outMin)[2], double (&outMax)[2])
+        {
+            const double right[3] = {clipmap.LightRight.x, clipmap.LightRight.y, clipmap.LightRight.z};
+            const double up[3] = {clipmap.LightUp.x, clipmap.LightUp.y, clipmap.LightUp.z};
+            return LightSpaceRect(right, up, bounds, outMin, outMax);
+        }
+
         /**
-         * @brief 境界が範囲に入る段の集合（ビット L が段 L）。展開が塊の覆うページを数える範囲（段ごとの絶対のページの範囲）と同じ判定
+         * @brief 境界が範囲に入る段の集合（組 group の印。ビット b が 段 group × 32 + b）。展開が塊の覆うページを数える範囲
+         *        （段ごとの絶対のページの範囲）と同じ判定
          *
          * 範囲は [OriginPage, OriginPage + PagesPerAxis) で、ライト空間の矩形の floor(位置 / ページの幅) がそれに触れる段を返す。
+         * クリップマップの段は最大 VirtualShadowMapMaxLevels（16）なので、組 0 より後ろは 0。
          * クリップマップが無効・境界が有限でないときは 0。
          */
-        inline uint32_t LevelMaskForBounds(const VirtualShadowMapClipmap& clipmap, const CasterBounds& bounds)
+        inline uint32_t LevelMaskForBounds(const VirtualShadowMapClipmap& clipmap, const CasterBounds& bounds, uint32_t group = 0u)
         {
-            if (!clipmap.bEnabled || clipmap.PagesPerAxis == 0u)
+            if (!clipmap.bEnabled || clipmap.PagesPerAxis == 0u || group != 0u)
             {
                 return 0u;
             }
@@ -161,6 +171,133 @@ namespace NorvesLib::Core::Rendering
                 }
             }
             return mask;
+        }
+
+        /** @brief 塊の段の印の組の数の上限（スライスの上限 ÷ 32） */
+        constexpr uint32_t MAX_SLICE_GROUPS = SliceGroupCount(MAX_SLICES);
+
+        /** @brief スライスの組ごとの印（Masks[g] が組 g の LevelMask）。GroupCount は印を持つ組の数の上限（それより後ろの組の印は 0） */
+        struct SliceMasks
+        {
+            uint32_t Masks[MAX_SLICE_GROUPS] = {};
+            uint32_t GroupCount = 0;
+
+            /** @brief どの組にも印が無ければ false（どのスライスの範囲にも入らない） */
+            bool IsAny() const
+            {
+                for (uint32_t group = 0; group < GroupCount; ++group)
+                {
+                    if (Masks[group] != 0u)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        };
+
+        /** @brief 外から渡すスライスの表（GPUVsmSlice の配列）。null・0 件ならクリップマップの段を使う */
+        struct CasterSliceTable
+        {
+            const GPUVsmSlice* Slices = nullptr;
+            uint32_t Count = 0;
+        };
+
+        /**
+         * @brief 境界が範囲に入るスライスの、組ごとの印。LevelMaskForBounds と同じ判定を、スライスの表の正射影のスライス（投影の種類が正射影で
+         *        ページの一辺が正のもの）について行う。ライト空間の基底はスライスごとの axisX・axisY、範囲は [原点, 原点 + 一辺)
+         *
+         * 透視のスライスは判定の基底が違うので印を付けない（点光源の面は後の項目で扱う）。境界が有限でなければ空。
+         */
+        inline SliceMasks SliceMasksForBounds(const GPUVsmSlice* slices, uint32_t sliceCount, const CasterBounds& bounds)
+        {
+            SliceMasks result;
+            sliceCount = std::min(sliceCount, MAX_SLICES);
+            result.GroupCount = SliceGroupCount(sliceCount);
+            double right[3] = {};
+            double up[3] = {};
+            double lightMin[2] = {};
+            double lightMax[2] = {};
+            bool bRectValid = false;
+            bool bRectKnown = false;
+            for (uint32_t index = 0; slices != nullptr && index < sliceCount; ++index)
+            {
+                const GPUVsmSlice& slice = slices[index];
+                if (slice.extra[2] != VirtualShadowMapSliceProjectionOrtho || !(slice.info[0] > 0.0f) || slice.origin[3] <= 0)
+                {
+                    continue;
+                }
+                const double sliceRight[3] = {slice.axisX[0], slice.axisX[1], slice.axisX[2]};
+                const double sliceUp[3] = {slice.axisY[0], slice.axisY[1], slice.axisY[2]};
+                // 基底が前のスライスと同じなら矩形を使い回す（太陽の段はどれも同じ基底）
+                if (!bRectKnown || std::memcmp(right, sliceRight, sizeof(right)) != 0 || std::memcmp(up, sliceUp, sizeof(up)) != 0)
+                {
+                    std::memcpy(right, sliceRight, sizeof(right));
+                    std::memcpy(up, sliceUp, sizeof(up));
+                    bRectValid = LightSpaceRect(right, up, bounds, lightMin, lightMax);
+                    bRectKnown = true;
+                }
+                if (!bRectValid)
+                {
+                    return result;
+                }
+                const double pageMeters = static_cast<double>(slice.info[0]);
+                const double lastX = static_cast<double>(slice.origin[0]) + static_cast<double>(slice.origin[3]) - 1.0;
+                const double lastY = static_cast<double>(slice.origin[1]) + static_cast<double>(slice.origin[3]) - 1.0;
+                const bool bTouchesX = std::floor(lightMax[0] / pageMeters) >= static_cast<double>(slice.origin[0]) &&
+                                       std::floor(lightMin[0] / pageMeters) <= lastX;
+                const bool bTouchesY = std::floor(lightMax[1] / pageMeters) >= static_cast<double>(slice.origin[1]) &&
+                                       std::floor(lightMin[1] / pageMeters) <= lastY;
+                if (bTouchesX && bTouchesY)
+                {
+                    result.Masks[index / SLICES_PER_GROUP] |= 1u << (index % SLICES_PER_GROUP);
+                }
+            }
+            return result;
+        }
+
+        /** @brief 境界のスライスの組ごとの印。スライスの表があればその表から、なければクリップマップの段から求める（組は 1 つ） */
+        inline SliceMasks MasksForBounds(const VirtualShadowMapClipmap& clipmap, const CasterSliceTable* table, const CasterBounds& bounds)
+        {
+            if (table != nullptr && table->Slices != nullptr && table->Count != 0u)
+            {
+                return SliceMasksForBounds(table->Slices, table->Count, bounds);
+            }
+            SliceMasks result;
+            result.GroupCount = 1u;
+            result.Masks[0] = LevelMaskForBounds(clipmap, bounds);
+            return result;
+        }
+
+        /**
+         * @brief 描画の記録を持つ塊を、印のある組ごとに 1 つ出す（LevelMask = その組の印、Reserved = 組の番号）
+         *
+         * 上限（MAX_CASTER_CHUNKS）に収まらない塊は書かずに DroppedChunks で数える。出した塊の数を返す。
+         */
+        inline uint32_t PushChunkPerGroup(const VsmShadowChunk& chunk,
+                                          const SliceMasks& masks,
+                                          Container::VariableArray<VsmShadowChunk>& inOutChunks,
+                                          CasterStats& inOutStats)
+        {
+            uint32_t pushed = 0;
+            for (uint32_t group = 0; group < masks.GroupCount; ++group)
+            {
+                if (masks.Masks[group] == 0u)
+                {
+                    continue;
+                }
+                if (inOutChunks.size() >= MAX_CASTER_CHUNKS)
+                {
+                    ++inOutStats.DroppedChunks;
+                    continue;
+                }
+                VsmShadowChunk grouped = chunk;
+                grouped.LevelMask = masks.Masks[group];
+                grouped.Reserved = group;
+                inOutChunks.push_back(grouped);
+                ++pushed;
+            }
+            return pushed;
         }
 
         /** @brief 64 ビットの値を混ぜる（キャッシュの無効化のために、投影物の変化を見分ける署名・鍵を作る） */
@@ -438,19 +575,21 @@ namespace NorvesLib::Core::Rendering
          *
          * 先にメッシュ全体の境界で判定し、どの段にも入らなければ塊の境界を 1 つずつ見ずに全部を省く。
          * @param world インスタンスの変換（列優先 16 個の float。GPUSceneInstanceData::World と同じ並び）
+         * @param slices スライスの表（null ならクリップマップの段）。複数の組にまたがる塊は、組ごとに 1 つずつ出す
          */
         inline void AppendProceduralInstance(const ProceduralDrawInput& draw,
                                              const Container::VariableArray<ProceduralChunkPlan>& plan,
                                              const float world[16],
                                              const VirtualShadowMapClipmap& clipmap,
                                              Container::VariableArray<VsmShadowChunk>& inOutChunks,
-                                             CasterStats& inOutStats)
+                                             CasterStats& inOutStats,
+                                             const CasterSliceTable* slices = nullptr)
         {
             if (plan.empty() || draw.MeshBounds == nullptr)
             {
                 return;
             }
-            if (LevelMaskForBounds(clipmap, TransformBoundsByWorld(world, *draw.MeshBounds)) == 0u)
+            if (!MasksForBounds(clipmap, slices, TransformBoundsByWorld(world, *draw.MeshBounds)).IsAny())
             {
                 inOutStats.CulledChunks += static_cast<uint32_t>(plan.size());
                 return;
@@ -461,15 +600,10 @@ namespace NorvesLib::Core::Rendering
             for (const ProceduralChunkPlan& entry : plan)
             {
                 const CasterBounds bounds = TransformBoundsByWorld(world, entry.LocalBounds);
-                const uint32_t levelMask = LevelMaskForBounds(clipmap, bounds);
-                if (levelMask == 0u)
+                const SliceMasks masks = MasksForBounds(clipmap, slices, bounds);
+                if (!masks.IsAny())
                 {
                     ++inOutStats.CulledChunks;
-                    continue;
-                }
-                if (inOutChunks.size() >= MAX_CASTER_CHUNKS)
-                {
-                    ++inOutStats.DroppedChunks;
                     continue;
                 }
                 VsmShadowChunk chunk;
@@ -484,11 +618,10 @@ namespace NorvesLib::Core::Rendering
                     chunk.BoundsMin[axis] = bounds.Min[axis];
                     chunk.BoundsMax[axis] = bounds.Max[axis];
                 }
-                chunk.LevelMask = levelMask;
                 std::copy(rows, rows + 12, chunk.World);
-                inOutChunks.push_back(chunk);
-                ++inOutStats.ProceduralChunks;
-                bAdded = true;
+                const uint32_t pushed = PushChunkPerGroup(chunk, masks, inOutChunks, inOutStats);
+                inOutStats.ProceduralChunks += pushed;
+                bAdded = bAdded || pushed != 0u;
             }
             inOutStats.ProceduralDraws += bAdded ? 1u : 0u;
         }
@@ -505,14 +638,15 @@ namespace NorvesLib::Core::Rendering
                                           const Container::VariableArray<MeshIndexChunk>& chunks,
                                           const VirtualShadowMapClipmap& clipmap,
                                           Container::VariableArray<VsmShadowChunk>& inOutChunks,
-                                          CasterStats& inOutStats)
+                                          CasterStats& inOutStats,
+                                          const CasterSliceTable* slices = nullptr)
         {
             if (chunks.empty())
             {
                 return;
             }
-            const uint32_t levelMask = LevelMaskForBounds(clipmap, worldBounds);
-            if (levelMask == 0u)
+            const SliceMasks masks = MasksForBounds(clipmap, slices, worldBounds);
+            if (!masks.IsAny())
             {
                 inOutStats.CulledChunks += static_cast<uint32_t>(chunks.size());
                 return;
@@ -520,11 +654,6 @@ namespace NorvesLib::Core::Rendering
             bool bAdded = false;
             for (const MeshIndexChunk& entry : chunks)
             {
-                if (inOutChunks.size() >= MAX_CASTER_CHUNKS)
-                {
-                    ++inOutStats.DroppedChunks;
-                    continue;
-                }
                 VsmShadowChunk chunk;
                 chunk.Record.Kind = static_cast<uint32_t>(VisibilityBuffer::RecordKind::SkinnedChunk);
                 chunk.Record.TriangleCount = entry.IndexCount / 3u;
@@ -537,10 +666,9 @@ namespace NorvesLib::Core::Rendering
                     chunk.BoundsMin[axis] = worldBounds.Min[axis];
                     chunk.BoundsMax[axis] = worldBounds.Max[axis];
                 }
-                chunk.LevelMask = levelMask;
-                inOutChunks.push_back(chunk);
-                ++inOutStats.SkinnedChunks;
-                bAdded = true;
+                const uint32_t pushed = PushChunkPerGroup(chunk, masks, inOutChunks, inOutStats);
+                inOutStats.SkinnedChunks += pushed;
+                bAdded = bAdded || pushed != 0u;
             }
             inOutStats.SkinnedDraws += bAdded ? 1u : 0u;
         }

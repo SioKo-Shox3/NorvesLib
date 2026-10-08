@@ -48,6 +48,7 @@
 #include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/VirtualShadowMapRaster.h"
 #include "Rendering/VirtualShadowMapSample.h"
+#include "Test/Core/Rendering/VirtualShadowMapWideTestSupport.h"
 #include "Rendering/VisibilityBuffer.h"
 
 #include "RHI/IBuffer.h"
@@ -480,13 +481,14 @@ namespace
         bool bMarked = false;
     };
 
-    bool CreateResources(const DevicePtr& device, uint32_t poolPages, Resources& resources)
+    // ページの表・要求のビット列は sliceCount 個のスライスぶん（既定は太陽の段の数）
+    bool CreateResources(const DevicePtr& device, uint32_t poolPages, Resources& resources, uint32_t sliceCount = VirtualShadowMap::LEVEL_COUNT)
     {
         resources.PoolPages = poolPages;
         const ResourceUsage usage = ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
         resources.Pool = device->CreateBuffer(BufferDesc(VirtualShadowMap::PoolBytes(poolPages), usage, true, "VsmTestPool"));
-        resources.PageTable = device->CreateBuffer(BufferDesc(VirtualShadowMap::PageTableBytes(), usage, true, "VsmTestPageTable"));
-        resources.RequestBits = device->CreateBuffer(BufferDesc(VirtualShadowMap::RequestBitsBytes(), usage, true, "VsmTestRequestBits"));
+        resources.PageTable = device->CreateBuffer(BufferDesc(VirtualShadowMap::PageTableBytes(sliceCount), usage, true, "VsmTestPageTable"));
+        resources.RequestBits = device->CreateBuffer(BufferDesc(VirtualShadowMap::RequestBitsBytes(sliceCount), usage, true, "VsmTestRequestBits"));
         resources.FreeList = device->CreateBuffer(BufferDesc(VirtualShadowMap::FreeListBytes(poolPages), usage, true, "VsmTestFreeList"));
         // 統計は本番と同じ用途（読み戻しのコピー元の TransferSrc を含む）で作る
         resources.Stats = device->CreateBuffer(
@@ -549,6 +551,14 @@ namespace
         buffer->Unmap();
         return true;
     }
+
+    // 33 個以上のスライスの場面で、ページの記録・展開へ渡す入力（スライスの数・外から渡すスライスの表・印付けが選ぶ太陽の段の先頭）
+    struct WideInput
+    {
+        uint32_t SliceCount = 0;
+        const GPUVsmSlice* Slices = nullptr;
+        uint32_t MarkFirstSlice = 0;
+    };
 
     // 記録して読み戻す。depth が null なら深度なし。frameSerial は 0 以外で呼び出しごとに増やす
     bool RunPages(const DevicePtr& device,
@@ -1030,7 +1040,8 @@ namespace
                    const TexturePtr& depth,
                    uint64_t frameSerial,
                    RasterReadback& readback,
-                   const CacheInput* cache = nullptr)
+                   const CacheInput* cache = nullptr,
+                   const WideInput* wide = nullptr)
     {
         CommandListPtr commandList = device->CreateCommandList();
         if (!commandList)
@@ -1067,6 +1078,12 @@ namespace
             std::memcpy(pagesDispatch.CameraPosition, scene.CameraPosition, sizeof(pagesDispatch.CameraPosition));
             SetCameraForward(pagesDispatch, scene);
             pagesDispatch.FovYDegrees = scene.Camera.FieldOfView;
+            if (wide != nullptr)
+            {
+                pagesDispatch.SliceCount = wide->SliceCount;
+                pagesDispatch.Slices = wide->Slices;
+                pagesDispatch.MarkFirstSlice = wide->MarkFirstSlice;
+            }
             // 従来のケースはキャッシュを使わない（毎フレームすべて割り当て直す）。キャッシュの入力があるときだけ使う
             pagesDispatch.bCacheEnabled = cache != nullptr && cache->bEnabled;
             if (cache != nullptr)
@@ -1087,6 +1104,11 @@ namespace
         rasterDispatch.ChunkCount = rasterBuffers.ChunkCount;
         rasterDispatch.Instances = rasterBuffers.Instances;
         rasterDispatch.Draws = rasterBuffers.Draws;
+        if (wide != nullptr)
+        {
+            rasterDispatch.SliceCount = wide->SliceCount;
+            rasterDispatch.Slices = wide->Slices;
+        }
         readback.bRasterRecorded = raster.Record(commandList.get(), rasterDispatch);
         readback.DrawCount = raster.GetLastDrawCount();
         for (const BufferPtr& buffer : buffers)
@@ -1113,8 +1135,9 @@ namespace
         bool bRetry = false;
     };
 
-    // ページの表の割り当て済みの欄から、段・絶対のページ・物理ページを取り出す
-    Container::VariableArray<PageInfo> DecodePages(const Scene& scene, const Container::VariableArray<uint32_t>& pageTable)
+    // ページの表の割り当て済みの欄から、段・絶対のページ・物理ページを取り出す。
+    // firstSlice は太陽の段 0 がスライスの表の何番目か（段 L はスライス firstSlice + L。それより前のスライスの欄は読まない）
+    Container::VariableArray<PageInfo> DecodePages(const Scene& scene, const Container::VariableArray<uint32_t>& pageTable, uint32_t firstSlice = 0u)
     {
         Container::VariableArray<PageInfo> pages;
         const int64_t count = static_cast<int64_t>(VirtualShadowMap::TABLE_DIMENSION);
@@ -1125,8 +1148,12 @@ namespace
             {
                 continue;
             }
+            if (index / VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL < firstSlice)
+            {
+                continue;
+            }
             PageInfo page;
-            page.Level = index / VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+            page.Level = index / VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL - firstSlice;
             const uint32_t address = index % VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
             const int64_t addressY = address / VirtualShadowMap::TABLE_DIMENSION;
             const int64_t addressX = address % VirtualShadowMap::TABLE_DIMENSION;
@@ -1364,7 +1391,7 @@ namespace
                 bool bFound = false;
                 for (const PageInfo& page : pages)
                 {
-                    if (page.bDirty && page.Level == (instance[1] & 15u) && page.Physical == (instance[1] >> 4u) &&
+                    if (page.bDirty && page.Level == (instance[1] & 255u) && page.Physical == (instance[1] >> 8u) &&
                         static_cast<int32_t>(instance[2]) == page.AbsX && static_cast<int32_t>(instance[3]) == page.AbsY)
                     {
                         bFound = true;
@@ -1967,7 +1994,9 @@ namespace
             }
         }
 
-        // 1 回の実行。listCapacity は出力の一覧の容量（クラスタの数）
+        // 1 回の実行。listCapacity は出力の一覧の容量（クラスタの数）。
+        // wideSliceCount が 0 でなければ、スライスを wideSliceCount 個にした合成の場面（先頭の LevelCount 段 + 先頭の段を繰り返した正射影のスライス。
+        // スライス s は 段 s % LevelCount と同じ範囲・texel・dirty のページを持つ）。ページの表・dirty の階層はスライスの数から決める
         bool Run(const DevicePtr& device,
                  VirtualShadowMapMegaCull& cull,
                  const VirtualShadowMapClipmap& clipmap,
@@ -1975,17 +2004,22 @@ namespace
                  uint64_t frameSerial,
                  Outcome& outcome,
                  Container::VariableArray<uint32_t>& expectedDirtyBits,
-                 bool bLeafPageResident = true)
+                 bool bLeafPageResident = true,
+                 uint32_t wideSliceCount = 0u)
         {
             namespace Mega = Core::Rendering::MegaGeometry;
             outcome = Outcome{};
 
+            const bool bWide = wideSliceCount != 0u;
+            // バッファが持つスライスの数と、ページの表へ書くスライスの数（広い場面はスライス全部、従来は段だけ）
+            const uint32_t tableSlices = bWide ? wideSliceCount : VirtualShadowMap::LEVEL_COUNT;
+            const uint32_t writtenSlices = bWide ? wideSliceCount : LevelCount;
             const ResourceUsage storage = ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
-            const BufferPtr pageTable = device->CreateBuffer(BufferDesc(VirtualShadowMap::PageTableBytes(), storage, true, "VsmMegaTestPageTable"));
+            const BufferPtr pageTable = device->CreateBuffer(BufferDesc(VirtualShadowMap::PageTableBytes(tableSlices), storage, true, "VsmMegaTestPageTable"));
             const BufferPtr stats = device->CreateBuffer(
                 BufferDesc(VirtualShadowMap::STATS_BYTES, VirtualShadowMap::StatsBufferUsage() | ResourceUsage::ShaderRead, true, "VsmMegaTestStats"));
             const BufferPtr dirtyBits = device->CreateBuffer(
-                BufferDesc(VirtualShadowMap::MegaDirtyBitsBytes(), VirtualShadowMap::MegaDirtyBitsUsage() | ResourceUsage::ShaderRead, true, "VsmMegaTestDirtyBits"));
+                BufferDesc(VirtualShadowMap::MegaDirtyBitsBytes(tableSlices), VirtualShadowMap::MegaDirtyBitsUsage() | ResourceUsage::ShaderRead, true, "VsmMegaTestDirtyBits"));
             const BufferPtr list = device->CreateBuffer(
                 BufferDesc(VirtualShadowMap::MegaCullListBytes(listCapacity), VirtualShadowMap::MegaCullListUsage() | ResourceUsage::ShaderRead, true, "VsmMegaTestList"));
             const BufferPtr clusters = device->CreateBuffer(
@@ -2088,19 +2122,23 @@ namespace
             }
 
             // VSM のページの表: 0 で埋め、dirty のページ（割り当て済み | dirty）と、割り当て済みで dirty でないページを書く
-            expectedDirtyBits.assign(VirtualShadowMap::MegaDirtyBitsBytes() / sizeof(uint32_t), 0u);
+            expectedDirtyBits.assign(VirtualShadowMap::MegaDirtyBitsBytes(tableSlices) / sizeof(uint32_t), 0u);
             {
-                Container::VariableArray<uint32_t> table(VirtualShadowMap::PageTableBytes() / sizeof(uint32_t), 0u);
+                Container::VariableArray<uint32_t> table(VirtualShadowMap::PageTableBytes(tableSlices) / sizeof(uint32_t), 0u);
                 uint32_t physical = 1u;
+                // 段 level のページを書く。広い場面では、段 level を繰り返したスライス（level, level + LevelCount, …）すべてへ同じページを書く
                 const auto writePage = [&](uint32_t level, int64_t pageX, int64_t pageY, bool bDirty) {
                     const uint32_t torusX = VirtualShadowMapPageTorusAddress(pageX, VirtualShadowMap::TABLE_DIMENSION);
                     const uint32_t torusY = VirtualShadowMapPageTorusAddress(pageY, VirtualShadowMap::TABLE_DIMENSION);
-                    table[level * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL + torusY * VirtualShadowMap::TABLE_DIMENSION + torusX] =
-                        VirtualShadowMap::PAGE_ENTRY_ALLOCATED | (bDirty ? VirtualShadowMap::PAGE_ENTRY_DIRTY : 0u) | (physical++);
-                    if (bDirty)
+                    for (uint32_t slice = level; slice < writtenSlices; slice += LevelCount)
                     {
-                        const VirtualShadowMapClipmapLevel& data = clipmap.Levels[level];
-                        SetExpectedBits(expectedDirtyBits, level, pageX - data.OriginPageX, pageY - data.OriginPageY);
+                        table[slice * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL + torusY * VirtualShadowMap::TABLE_DIMENSION + torusX] =
+                            VirtualShadowMap::PAGE_ENTRY_ALLOCATED | (bDirty ? VirtualShadowMap::PAGE_ENTRY_DIRTY : 0u) | (physical++);
+                        if (bDirty)
+                        {
+                            const VirtualShadowMapClipmapLevel& data = clipmap.Levels[level];
+                            SetExpectedBits(expectedDirtyBits, slice, pageX - data.OriginPageX, pageY - data.OriginPageY);
+                        }
                     }
                 };
                 for (uint32_t level = 0; level < LevelCount; ++level)
@@ -2121,12 +2159,12 @@ namespace
                     const VirtualShadowMapClipmapLevel& first = clipmap.Levels[0];
                     writePage(0u, static_cast<int64_t>(first.OriginPageX) + 3, static_cast<int64_t>(first.OriginPageY) + 3, true);
                 }
-                void* mapped = pageTable->Map(0u, VirtualShadowMap::PageTableBytes());
+                void* mapped = pageTable->Map(0u, VirtualShadowMap::PageTableBytes(tableSlices));
                 if (mapped == nullptr)
                 {
                     return false;
                 }
-                std::memcpy(mapped, table.data(), VirtualShadowMap::PageTableBytes());
+                std::memcpy(mapped, table.data(), VirtualShadowMap::PageTableBytes(tableSlices));
                 pageTable->Unmap();
             }
             // 書かれたかを確かめるため、階層・統計・一覧は見張りの値で埋めておく（階層・一覧の頭・統計の語 8〜10 は記録が 0 にする）
@@ -2165,6 +2203,14 @@ namespace
             dispatch.MegaPageTable = geometryPages;
             dispatch.InstanceCount = InstanceCount;
             dispatch.TotalGroups = totalGroups;
+            // 広い場面は、外から渡すスライスの表（先頭の段 + 繰り返したスライス）で動かす
+            GPUVsmSlice wideSlices[VirtualShadowMapMaxSlices];
+            if (bWide)
+            {
+                VirtualShadowMapWideTest::BuildWideSlices(clipmap, wideSliceCount, wideSlices);
+                dispatch.SliceCount = wideSliceCount;
+                dispatch.Slices = wideSlices;
+            }
 
             CommandListPtr commandList = device->CreateCommandList();
             if (!commandList)
@@ -2236,24 +2282,25 @@ namespace
             return ReadAll(dirtyBits, outcome.DirtyBits);
         }
 
-        // 期待する（インスタンス、段、クラスタ）の一覧（昇順）。段 level のクラスタは高さ level のもの
-        Container::VariableArray<uint64_t> ExpectedEntries(bool bLeafPageResident = true)
+        // 期待する（インスタンス、段、クラスタ）の一覧（昇順）。段 level のクラスタは高さ level のもの。
+        // sliceCount が 0 でなければ広い場面で、スライス s は 段 s % LevelCount と同じクラスタを選ぶ（一覧の段の欄はスライスの番号）
+        Container::VariableArray<uint64_t> ExpectedEntries(bool bLeafPageResident = true, uint32_t sliceCount = 0u)
         {
             Container::VariableArray<uint64_t> expected;
-            const auto add = [&expected, bLeafPageResident](uint32_t instance, uint32_t level) {
+            const auto add = [&expected, bLeafPageResident](uint32_t instance, uint32_t slice) {
                 Container::VariableArray<uint32_t> clusters;
-                ExpectedClusters(level, clusters, bLeafPageResident);
+                ExpectedClusters(slice % LevelCount, clusters, bLeafPageResident);
                 for (const uint32_t cluster : clusters)
                 {
-                    expected.push_back((static_cast<uint64_t>(instance) << 40) | (static_cast<uint64_t>(level) << 32) | cluster);
+                    expected.push_back((static_cast<uint64_t>(instance) << 40) | (static_cast<uint64_t>(slice) << 32) | cluster);
                 }
             };
-            for (uint32_t level = 0; level < LevelCount; ++level)
+            for (uint32_t slice = 0; slice < (sliceCount != 0u ? sliceCount : LevelCount); ++slice)
             {
-                add(0u, level); // インスタンス 0: 全段
-                if (level >= 1u)
+                add(0u, slice); // インスタンス 0: 全段
+                if (slice % LevelCount >= 1u)
                 {
-                    add(1u, level); // インスタンス 1: 段 0 の範囲の外
+                    add(1u, slice); // インスタンス 1: 段 0 の範囲の外
                 }
             }
             std::sort(expected.begin(), expected.end());
@@ -2419,6 +2466,59 @@ namespace
                 Expect(std::find(expected.begin(), expected.end(), entry) != expected.end(), "ケース J2: 書いた件は期待の集合に入らなければならない");
             }
             std::cout << TestName << " ケース J2: 選んだ=" << outcome.Selected << " 溢れ=" << outcome.Overflow << " 書いた=" << actual.size() << std::endl;
+        }
+
+        // ----- J4: スライスが 40 個 -----
+        // 先頭の 4 段の後ろに、先頭の段を繰り返した正射影のスライス 36 個を置く（ページの表の先頭は連続する番地）。
+        // dirty の階層の大きさ・ページの表の大きさ・カリングの dispatch がスライスの数で決まり、後ろのスライスも先頭の段と同じ結果になる:
+        // 階層は CPU の参照と全語一致、判定を通った（インスタンス、スライス）は 8 × 10、選んだクラスタは 22 × 10
+        {
+            constexpr uint32_t wideSlices = 40u;
+            MegaCull::Outcome outcome;
+            Container::VariableArray<uint32_t> expectedBits;
+            if (!MegaCull::Run(device, cull, clipmap, 4096u, frameSerial++, outcome, expectedBits, true, wideSlices))
+            {
+                std::cerr << TestName << " ケース J4 を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(outcome.bRecorded, "ケース J4: カリングを記録しなければならない");
+            Expect(outcome.GroupCount == 6u, "ケース J4: 影を落とす 6 インスタンスぶんの 6 ワークグループを出さなければならない");
+            Expect(outcome.DirtyBits.size() == expectedBits.size() &&
+                       expectedBits.size() == VirtualShadowMap::MegaDirtyBitsBytes(wideSlices) / sizeof(uint32_t),
+                   "ケース J4: dirty の階層の大きさがスライスの数で決まらなければならない");
+            uint32_t differentWords = 0;
+            for (size_t word = 0; word < std::min(outcome.DirtyBits.size(), expectedBits.size()); ++word)
+            {
+                differentWords += outcome.DirtyBits[word] != expectedBits[word] ? 1u : 0u;
+            }
+            Expect(differentWords == 0u, "ケース J4: 後ろのスライスの dirty の階層も CPU の参照と一致しなければならない");
+            const Container::VariableArray<uint64_t> expected = MegaCull::ExpectedEntries(true, wideSlices);
+            const Container::VariableArray<uint64_t> actual = MegaCull::PackEntries(outcome.Entries);
+            Expect(outcome.Selected == expected.size() && outcome.Selected == 220u, "ケース J4: 選んだクラスタは 22 × 10 = 220 件でなければならない");
+            Expect(outcome.Overflow == 0u, "ケース J4: 溢れてはならない");
+            Expect(outcome.InstanceLevels == 80u, "ケース J4: 判定を通った（インスタンス、スライス）は 8 × 10 = 80 でなければならない");
+            Expect(outcome.StatInstances == 80u && outcome.StatClusters == 220u && outcome.StatOverflow == 0u,
+                   "ケース J4: 統計の語 8〜10 が（80, 220, 0）でなければならない");
+            Expect(actual == expected, "ケース J4: 選んだ（インスタンス、スライス、クラスタ）が期待の集合と一致しなければならない");
+            // 後ろのスライスは、先頭の段と同じクラスタを選ぶ（一覧の段の欄だけがスライスの番号）
+            uint32_t differentFromBase = 0;
+            for (const uint64_t entry : actual)
+            {
+                const uint32_t slice = static_cast<uint32_t>((entry >> 32) & 0xFFu);
+                const uint64_t baseEntry = (entry & ~(0xFFull << 32)) | (static_cast<uint64_t>(slice % MegaCull::LevelCount) << 32);
+                differentFromBase += std::find(actual.begin(), actual.end(), baseEntry) == actual.end() ? 1u : 0u;
+            }
+            Expect(differentFromBase == 0u, "ケース J4: 後ろのスライスは先頭の段と同じクラスタを選ばなければならない");
+            for (uint32_t slice = 0; slice < wideSlices; ++slice)
+            {
+                Expect(MegaCull::IsSingleCut(actual, 0u, slice), "ケース J4: インスタンス 0 の選択がどのスライスでも一つの切り口でなければならない");
+                if (slice % MegaCull::LevelCount >= 1u)
+                {
+                    Expect(MegaCull::IsSingleCut(actual, 1u, slice), "ケース J4: インスタンス 1 の選択がどのスライスでも一つの切り口でなければならない");
+                }
+            }
+            std::cout << TestName << " ケース J4: スライス=" << wideSlices << " 選んだクラスタ=" << outcome.Selected << " 通った（インスタンス、スライス）="
+                      << outcome.InstanceLevels << " 階層の語=" << expectedBits.size() << std::endl;
         }
         return true;
     }
@@ -3152,7 +3252,7 @@ namespace
         BufferPtr stats = device->CreateBuffer(BufferDesc(4u * sizeof(uint32_t), usage, true, "VsmSampleProbeStats"));
         BufferPtr table = device->CreateBuffer(BufferDesc(static_cast<uint64_t>(tableWords.size()) * sizeof(uint32_t), usage, true, "VsmSampleProbeTable"));
         BufferPtr pool = device->CreateBuffer(BufferDesc(static_cast<uint64_t>(poolWords.size()) * sizeof(uint32_t), usage, true, "VsmSampleProbePool"));
-        BufferPtr sliceBuffer = device->CreateBuffer(BufferDesc(sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices, usage, true, "VsmSampleProbeSlices"));
+        BufferPtr sliceBuffer = device->CreateBuffer(BufferDesc(sizeof(GPUVsmSlice) * VirtualShadowMapMaxLevels, usage, true, "VsmSampleProbeSlices"));
         DescriptorSetPtr descriptorSet = device->CreateDescriptorSet(probe.Layout);
         CommandListPtr commandList = device->CreateCommandList();
         if (!uniform || !pointBuffer || !results || !stats || !table || !pool || !sliceBuffer || !descriptorSet || !commandList || points.empty())
@@ -3171,8 +3271,8 @@ namespace
         stats->Update(zeroStats, sizeof(zeroStats));
         table->Update(tableWords.data(), static_cast<uint64_t>(tableWords.size()) * sizeof(uint32_t));
         pool->Update(poolWords.data(), static_cast<uint64_t>(poolWords.size()) * sizeof(uint32_t));
-        GPUVsmSlice slices[VirtualShadowMapMaxSlices];
-        BuildVirtualShadowMapSlices(&clipmap, nullptr, slices);
+        GPUVsmSlice slices[VirtualShadowMapMaxLevels];
+        BuildVirtualShadowMapSlices(&clipmap, nullptr, VirtualShadowMapMaxLevels, slices);
         sliceBuffer->Update(slices, sizeof(slices));
 
         descriptorSet->BindConstantBuffer(0, uniform, 0, static_cast<uint32_t>(sizeof(SampleProbeParams)));
@@ -4963,6 +5063,171 @@ namespace
         return true;
     }
 
+    // ========================================
+    // ケース W: スライスが 40 個（太陽の 10 段をスライス 30〜39 に置く）
+    // ========================================
+    //
+    // スライスの表の先頭 30 個は、太陽の段を繰り返した正射影のスライス（ページの表の先頭は連続する番地）。その後ろに太陽の 10 段が並ぶ
+    // （段 L はスライス 30 + L。印付けは MarkFirstSlice = 30）。ケース F と同じ場面を、印付け → 割り当て → 消去 → 展開 → 描画に通して、
+    // 先頭の 10 段に置いたとき（ケース F）と同じ物理ページの texel になることを確かめる:
+    //   - 印・割り当て: 要求がスライス 30 + L の番地（参照のページの番号 + 30 × 128 × 128）に立ち、ページの表・要求のビット列はスライス 40 個ぶん。
+    //     統計は先頭 32 スライスの集合（スライス 30・31 = 段 0・1）と、33 番目以降の使用の有無（段 2 以降）に分かれる
+    //   - 塊の段の印: 境界が触れるスライスの組ごとの印（組 0 = スライス 0〜31、組 1 = 32〜39）。2 つの組にまたがる塊は同じ記録を持つ塊が組ごとに出る
+    //   - 展開・描画: インスタンスのスライスの欄は 8 ビットで、32 以上のスライスと、その物理ページを正しく引く
+    bool RunWideSliceCases(const DevicePtr& device,
+                           VirtualShadowMapPages& pages,
+                           VirtualShadowMapRaster& raster,
+                           const Scene& scene,
+                           const Reference& reference,
+                           const TexturePtr& depth,
+                           const CaseFData& caseF,
+                           uint64_t& frameSerial)
+    {
+        constexpr uint32_t sliceCount = 40u;
+        constexpr uint32_t firstSun = 30u;
+        const VirtualShadowMapClipmap& clipmap = scene.Clipmap;
+        Expect(clipmap.LevelCount + firstSun <= sliceCount, "ケース W: 太陽の段がスライスの表に収まらなければならない");
+
+        GPUVsmSlice slices[VirtualShadowMapMaxSlices];
+        VirtualShadowMapWideTest::BuildSunAtSlices(clipmap, sliceCount, firstSun, slices);
+
+        // 塊の段の印は、本番の関数（SliceMasksForBounds・PushChunkPerGroup）が組ごとに作る
+        ChunkGeometry geometry = BuildChunks(scene, caseF.Shapes);
+        const Container::VariableArray<VsmShadowChunk> originalChunks = geometry.Chunks;
+        Container::VariableArray<VsmShadowChunk> groupedChunks;
+        VirtualShadowMap::CasterStats casterStats;
+        uint32_t groupCounts[2] = {};
+        for (const VsmShadowChunk& chunk : originalChunks)
+        {
+            VirtualShadowMap::CasterBounds bounds;
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                bounds.Min[axis] = chunk.BoundsMin[axis];
+                bounds.Max[axis] = chunk.BoundsMax[axis];
+            }
+            const VirtualShadowMap::SliceMasks masks = VirtualShadowMap::SliceMasksForBounds(slices, sliceCount, bounds);
+            Expect(masks.GroupCount == 2u && masks.IsAny(), "ケース W: 40 スライスの印は 2 つの組で、境界が触れるスライスがなければならない");
+            VirtualShadowMap::PushChunkPerGroup(chunk, masks, groupedChunks, casterStats);
+        }
+        for (const VsmShadowChunk& chunk : groupedChunks)
+        {
+            Expect(chunk.Reserved < 2u && chunk.LevelMask != 0u, "ケース W: 塊の組の番号は 0 か 1 で、印が空であってはならない");
+            ++groupCounts[std::min(chunk.Reserved, 1u)];
+        }
+        Expect(groupCounts[0] == originalChunks.size() && groupCounts[1] == originalChunks.size() && casterStats.DroppedChunks == 0u,
+               "ケース W: 各塊がスライス 0〜31 の組と 32〜39 の組の両方にまたがり、組ごとに 1 つずつ出なければならない");
+        geometry.Chunks = groupedChunks;
+
+        Resources resources;
+        RasterBuffers rasterBuffers;
+        RasterReadback readback;
+        const uint32_t poolPages = static_cast<uint32_t>(reference.Keys.size()) + 24u;
+        const uint32_t instanceCapacity = 4096u;
+        const WideInput wide{sliceCount, slices, firstSun};
+        if (!CreateResources(device, poolPages, resources, sliceCount) || !CreateRasterBuffers(device, geometry, instanceCapacity, rasterBuffers))
+        {
+            std::cerr << TestName << " ケース W の資源を作れませんでした" << std::endl;
+            return false;
+        }
+        Expect(resources.PageTable->GetSize() == VirtualShadowMap::PageTableBytes(sliceCount) &&
+                   resources.RequestBits->GetSize() == VirtualShadowMap::RequestBitsBytes(sliceCount),
+               "ケース W: ページの表・要求のビット列はスライス 40 個ぶんの大きさでなければならない");
+        // 展開が書く統計の語（5〜7）は、呼ぶ前に 0 にする（ページの記録の割り当てが全語を 0 にする）
+        if (!RunRaster(device, &pages, raster, scene, resources, rasterBuffers, depth, frameSerial++, readback, nullptr, &wide))
+        {
+            std::cerr << TestName << " ケース W を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(readback.bPagesRecorded && readback.bRasterRecorded, "ケース W: 印付け・割り当て・消去・展開・描画を記録できなければならない");
+        Expect(readback.PageTable.size() == VirtualShadowMap::PageTableBytes(sliceCount) / sizeof(uint32_t),
+               "ケース W: ページの表の語の数がスライス 40 個ぶんでなければならない");
+
+        // 割り当て済みの欄は、参照のページの番号をスライス 30 だけずらした番地にだけある
+        Container::VariableArray<uint32_t> allocatedKeys;
+        for (uint32_t index = 0; index < readback.PageTable.size(); ++index)
+        {
+            if ((readback.PageTable[index] & VirtualShadowMap::PAGE_ENTRY_ALLOCATED) != 0u)
+            {
+                allocatedKeys.push_back(index);
+            }
+        }
+        Container::VariableArray<uint32_t> expectedKeys = reference.Keys;
+        for (uint32_t& key : expectedKeys)
+        {
+            key += firstSun * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+        }
+        Expect(allocatedKeys == expectedKeys, "ケース W: 割り当て済みの欄が、参照のページをスライス 30 ずらした集合と一致しなければならない");
+        // 統計: 先頭 32 スライスの集合（スライス 30・31）と、33 番目以降の有無
+        const uint32_t expectedLevelsUsed = reference.LevelMask << firstSun;
+        const uint32_t expectedBeyond = (reference.LevelMask >> (32u - firstSun)) != 0u ? 1u : 0u;
+        Expect(readback.Stats.size() == VirtualShadowMap::STATS_WORD_COUNT, "ケース W: 統計の語の数が STATS_WORD_COUNT でなければならない");
+        Expect(readback.Stats[VirtualShadowMap::StatRequested] == reference.Keys.size() &&
+                   readback.Stats[VirtualShadowMap::StatAllocated] == reference.Keys.size() && readback.Stats[VirtualShadowMap::StatOverflow] == 0u,
+               "ケース W: 要求・割り当て・溢れが参照と一致しなければならない");
+        Expect(readback.Stats[VirtualShadowMap::StatLevelsUsed] == expectedLevelsUsed,
+               "ケース W: 先頭 32 スライスのうち要求のあったスライスの集合が参照と一致しなければならない");
+        Expect(expectedBeyond == 1u && readback.Stats[VirtualShadowMap::StatLevelsUsedBeyond] == expectedBeyond,
+               "ケース W: 33 番目以降のスライスに要求があるとき、その印が立たなければならない");
+
+        // 展開・描画: ケース F と同じ形の和の参照と全 texel で一致し、ケース F（先頭の 10 段）と同じページの texel になる
+        const Container::VariableArray<PageInfo> pageInfos = DecodePages(scene, readback.PageTable, firstSun);
+        Expect(pageInfos.size() == reference.Keys.size(), "ケース W: 割り当てたページの数が参照と一致しなければならない");
+        const PoolCheck check = CheckPool("ケース W", scene, caseF.Shapes, pageInfos, readback.Pool, VirtualShadowMap::EMPTY_DEPTH_BITS);
+        Expect(check.Mismatches == 0u && check.Covered > 2000u, "ケース W: 物理ページが形の和の参照と一致しなければならない");
+        uint32_t differentFromCaseF = 0;
+        for (const PageInfo& page : pageInfos)
+        {
+            const PageInfo* base = FindPage(caseF.Pages, page.Level, page.AbsX, page.AbsY);
+            if (base == nullptr)
+            {
+                ++differentFromCaseF;
+                continue;
+            }
+            for (uint32_t word = 0; word < VirtualShadowMap::PAGE_WORDS; ++word)
+            {
+                differentFromCaseF += readback.Pool[static_cast<size_t>(page.Physical) * VirtualShadowMap::PAGE_WORDS + word] !=
+                                              caseF.Pool[static_cast<size_t>(base->Physical) * VirtualShadowMap::PAGE_WORDS + word]
+                                          ? 1u
+                                          : 0u;
+            }
+        }
+        Expect(differentFromCaseF == 0u, "ケース W: 物理ページの texel が先頭の 10 段のとき（ケース F）と一致しなければならない");
+
+        // 展開の統計・引数・インスタンス: 組ごとの塊に分かれていても、書いたインスタンスの数は元の塊ごとの参照の合計と一致する
+        uint32_t expectedInstances = 0;
+        for (const VsmShadowChunk& chunk : originalChunks)
+        {
+            expectedInstances += CountExpectedInstances(scene, chunk, pageInfos);
+        }
+        uint32_t drawnInstances = 0;
+        for (uint32_t chunk = 0; chunk < groupedChunks.size(); ++chunk)
+        {
+            drawnInstances += readback.Draws[VirtualShadowMap::RASTER_DRAWS_HEADER_WORDS + chunk * VirtualShadowMap::RASTER_DRAW_COMMAND_WORDS + 1u];
+        }
+        Expect(readback.DrawCount == groupedChunks.size(), "ケース W: 間接描画は組ごとに出した塊の数だけ記録しなければならない");
+        Expect(readback.Stats[VirtualShadowMap::StatRasterInstances] == expectedInstances && readback.Stats[VirtualShadowMap::StatRasterOverflow] == 0u &&
+                   drawnInstances == expectedInstances && expectedInstances > 0u,
+               "ケース W: 書いたインスタンスの数が参照と一致し、溢れてはならない");
+        uint32_t badInstances = 0;
+        for (uint32_t index = 0; index < expectedInstances && index < readback.Instances.size() / 4u; ++index)
+        {
+            const uint32_t slice = readback.Instances[index * 4u + 1u] & 255u;
+            const uint32_t physical = readback.Instances[index * 4u + 1u] >> 8u;
+            const PageInfo* page = slice >= firstSun
+                                       ? FindPage(pageInfos, slice - firstSun, static_cast<int32_t>(readback.Instances[index * 4u + 2u]),
+                                                  static_cast<int32_t>(readback.Instances[index * 4u + 3u]))
+                                       : nullptr;
+            badInstances += (page == nullptr || !page->bDirty || page->Physical != physical || slice >= sliceCount) ? 1u : 0u;
+        }
+        Expect(badInstances == 0u, "ケース W: インスタンスのスライス（8 ビット）と物理ページが、ページの表と一致しなければならない");
+        std::cout << TestName << " ケース W: スライス=" << sliceCount << "（太陽の段はスライス " << firstSun << " から）ページ=" << pageInfos.size()
+                  << " 塊=" << originalChunks.size() << "→" << groupedChunks.size() << "（組ごと）インスタンス=" << expectedInstances
+                  << " 段の集合=0x" << std::hex << readback.Stats[VirtualShadowMap::StatLevelsUsed] << std::dec << " 33 番目以降="
+                  << readback.Stats[VirtualShadowMap::StatLevelsUsedBeyond] << " 比べた texel=" << check.Compared << " 不一致=" << check.Mismatches
+                  << std::endl;
+        return true;
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -5168,6 +5433,11 @@ namespace
                 }
                 // ----- ケース K: MegaGeometry のクラスタの記録の経路（ケース F と同じ場面） -----
                 if (!RunMegaDrawCase(device, pages, raster, shaderManager, scene, depth, caseF, frameSerial))
+                {
+                    return 1;
+                }
+                // ----- ケース W: スライスが 40 個（太陽の 10 段をスライス 30〜39 に置いた場面を、ケース F と同じ texel で描く） -----
+                if (!RunWideSliceCases(device, pages, raster, scene, reference, depth, caseF, frameSerial))
                 {
                     return 1;
                 }

@@ -19,6 +19,7 @@
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 
@@ -81,8 +82,25 @@ namespace NorvesLib::Core::Rendering
     {
         /** @brief GBuffer.Depth（無い、または Clipmap が使えないときは印付けをせず、要求は 0 のまま割り当てる） */
         RHI::TexturePtr Depth;
-        /** @brief 今フレームのクリップマップ（無効なら印付けをしない） */
+        /** @brief 今フレームのクリップマップ（無効なら印付けをしない）。印付けは先頭の LevelCount 件のスライス（太陽の段）だけを選ぶ */
         const VirtualShadowMapClipmap* Clipmap = nullptr;
+        /**
+         * @brief ページの表・要求のビット列が持つスライスの数（1 〜 VirtualShadowMap::MAX_SLICES）。0 は VirtualShadowMap::LEVEL_COUNT（太陽の段だけ）。
+         *        PageTable・RequestBits は PageTableBytes(SliceCount)・RequestBitsBytes(SliceCount) 以上の大きさにすること。
+         *        割り当て・年齢・無効化・解放は全スライスを走査し、StatLevelsUsed は先頭 32 スライスの集合、StatLevelsUsedBeyond は 33 番目以降の使用の有無
+         */
+        uint32_t SliceCount = 0;
+        /**
+         * @brief 外から渡すスライスの表（SliceCount 件。ページの表の先頭は スライスの番号 × 128 × 128 で連続していること）。
+         *        null ならクリップマップから作る（先頭 LevelCount 件が太陽の段で、残りは空のスライス）。
+         *        渡す表は、前フレームの原点（extra[0..1]）も呼び出し側が入れる。キャッシュを引き継ぐフレームの前フレームの原点との比較に使う
+         */
+        const GPUVsmSlice* Slices = nullptr;
+        /**
+         * @brief 印付けが選ぶ太陽の段の、スライスの表での先頭の番号（段 L はスライス MarkFirstSlice + L）。既定は 0（太陽の段が先頭）。
+         *        MarkFirstSlice + クリップマップの段の数 は SliceCount 以下にすること（超えると印付けをしない）
+         */
+        uint32_t MarkFirstSlice = 0;
         /** @brief シェーダー向け（列優先）の逆ビュー射影行列 */
         float InverseViewProjection[16] = {};
         float CameraPosition[3] = {};
@@ -184,6 +202,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bMarked = false;
 
         // キャッシュの状態（前フレームの記録が見た入力）。資源・段の設定が変わったときは引き継がない
+        uint32_t m_CachedSliceCount = 0;
         bool m_bCacheValid = false;
         bool m_bCacheContinued = false;
         bool m_bInvalidatedAll = false;

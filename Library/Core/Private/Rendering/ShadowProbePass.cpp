@@ -326,7 +326,7 @@ namespace NorvesLib::Core::Rendering
         if (!use.Slices)
         {
             use.Slices = m_Device->CreateBuffer(RHI::BufferDesc(
-                sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices, RHI::ResourceUsage::StorageBuffer, true, "ShadowProbeVsmSlices"));
+                sizeof(GPUVsmSlice) * VirtualShadowMapMaxLevels, RHI::ResourceUsage::StorageBuffer, true, "ShadowProbeVsmSlices"));
         }
         if (!use.DescriptorSet)
         {
@@ -450,8 +450,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr vsmPageTable = m_VsmPageTableHandle.IsValid() ? resources.GetBuffer(m_VsmPageTableHandle) : RHI::BufferPtr{};
         RHI::BufferPtr vsmPool = m_VsmPoolHandle.IsValid() ? resources.GetBuffer(m_VsmPoolHandle) : RHI::BufferPtr{};
         bool bVsm = false;
-        GPUVsmSlice vsmSlices[VirtualShadowMapMaxSlices];
-        BuildVirtualShadowMapSlices(nullptr, nullptr, vsmSlices);
+        GPUVsmSlice vsmSlices[VirtualShadowMapMaxLevels];
+        BuildVirtualShadowMapSlices(nullptr, nullptr, VirtualShadowMapMaxLevels, vsmSlices);
         if (!bCaptureFrame && vsmPageTable && vsmPool && camera->Projection == ProjectionType::Perspective &&
             vsmPageTable->GetSize() >= VirtualShadowMap::PageTableBytes() && vsmPool->GetSize() >= VirtualShadowMap::PAGE_BYTES)
         {
@@ -467,7 +467,7 @@ namespace NorvesLib::Core::Rendering
                                                      params.vsm);
             if (bVsm)
             {
-                BuildVirtualShadowMapSlices(&lighting.SunClipmap, nullptr, vsmSlices);
+                BuildVirtualShadowMapSlices(&lighting.SunClipmap, nullptr, VirtualShadowMapMaxLevels, vsmSlices);
             }
         }
         if (!bVsm)

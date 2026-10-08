@@ -1758,7 +1758,7 @@ namespace NorvesLib::Core::Rendering
         m_VsmSampleBuffer->Update(&disabledVsmParams, sizeof(disabledVsmParams));
 
         // スライスの表。VSM が無効なフレームは読まれないが、束縛は埋める
-        m_VsmSliceBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices,
+        m_VsmSliceBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmSlice) * VirtualShadowMapMaxLevels,
                                                                   RHI::ResourceUsage::StorageBuffer,
                                                                   true,
                                                                   "LightingVsmSlices"));
@@ -1767,8 +1767,8 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("LightingPass", "VSM のスライスの表のバッファを作れませんでした");
             return false;
         }
-        GPUVsmSlice disabledSlices[VirtualShadowMapMaxSlices];
-        BuildVirtualShadowMapSlices(nullptr, nullptr, disabledSlices);
+        GPUVsmSlice disabledSlices[VirtualShadowMapMaxLevels];
+        BuildVirtualShadowMapSlices(nullptr, nullptr, VirtualShadowMapMaxLevels, disabledSlices);
         m_VsmSliceBuffer->Update(disabledSlices, sizeof(disabledSlices));
 
         RHI::SamplerDesc sourceSamplerDesc;
@@ -2950,7 +2950,7 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindStorageBuffer(22, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
         descriptorSet->BindStorageBuffer(23, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
         descriptorSet->BindStorageBuffer(24, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
-        descriptorSet->BindStorageBuffer(25, m_VsmSliceBuffer, 0u, static_cast<uint32_t>(sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices));
+        descriptorSet->BindStorageBuffer(25, m_VsmSliceBuffer, 0u, static_cast<uint32_t>(sizeof(GPUVsmSlice) * VirtualShadowMapMaxLevels));
 
         outDescriptorSet = std::move(descriptorSet);
         return true;
@@ -4261,8 +4261,8 @@ namespace NorvesLib::Core::Rendering
         // 太陽の VSM（--shadow-method=vsm）。クリップマップ・ページの表・プール・カメラが揃ったときだけパラメータを有効にして渡す。
         // 揃わないフレームは無効のパラメータ（control.x = 0）と既定のバッファで、照明は CSM のまま
         GPUVsmSampleParams vsmParams = {};
-        GPUVsmSlice vsmSlices[VirtualShadowMapMaxSlices];
-        BuildVirtualShadowMapSlices(nullptr, nullptr, vsmSlices);
+        GPUVsmSlice vsmSlices[VirtualShadowMapMaxLevels];
+        BuildVirtualShadowMapSlices(nullptr, nullptr, VirtualShadowMapMaxLevels, vsmSlices);
         RHI::BufferPtr boundVsmPageTable = m_DefaultNeuralBRDFWeightBuffer;
         RHI::BufferPtr boundVsmPool = m_DefaultNeuralBRDFWeightBuffer;
         uint32_t boundVsmPageTableBytes = 4u;
@@ -4288,7 +4288,7 @@ namespace NorvesLib::Core::Rendering
                                                   static_cast<uint32_t>(std::min<uint64_t>(poolPages, VirtualShadowMap::MAX_POOL_PAGES)),
                                                   vsmParams))
             {
-                BuildVirtualShadowMapSlices(&context.PhysicalLighting.SunClipmap, nullptr, vsmSlices);
+                BuildVirtualShadowMapSlices(&context.PhysicalLighting.SunClipmap, nullptr, VirtualShadowMapMaxLevels, vsmSlices);
                 boundVsmPageTable = m_FrameVsmPageTable;
                 boundVsmPool = m_FrameVsmPool;
                 boundVsmPageTableBytes = static_cast<uint32_t>(std::min<uint64_t>(

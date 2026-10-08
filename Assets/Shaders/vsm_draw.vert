@@ -6,7 +6,7 @@
 // 太陽の仮想シャドウマップ（VSM）の描画: 影の塊 × ページのインスタンスを、物理ページ 1 枚ぶんの 128×128 のビューポートへ描く
 //
 // 展開（vsm_expand.comp）が作った間接描画の 1 回 = 1 つの塊（塊の番号が counts.x 以上なら MegaGeometry のクラスタの記録 = binding 4）。頂点の番号（0 .. 三角形の数 × 3 - 1）から塊の中の三角形とその頂点を決め、
-// インスタンスの番号（展開が書いた範囲の中の位置）から（段・絶対のページ・物理ページ）を引く。
+// インスタンスの番号（展開が書いた範囲の中の位置）から（スライス・絶対のページ・物理ページ）を引く。インスタンスの y は スライス（下位 8 ビット）| 物理ページ << 8。
 // 頂点の読み方は VisLoadTrianglePositions と同じ（記録の BDA。位置だけを読む）。
 //
 // ライト空間の位置（lx, ly）を、そのページの局所の texel 座標 ((lx - ページの x × ページの幅) / texel の一辺) へ写し、
@@ -86,8 +86,8 @@ void main()
     const vec4 world2 = bMega ? megaChunks[megaIndex].world2 : chunks[instance.x].world2;
     const vec3 world = vec3(dot(world0, local), dot(world1, local), dot(world2, local));
 
-    const uint level = instance.y & 15u;
-    const uint physical = instance.y >> 4u;
+    const uint level = instance.y & 255u;
+    const uint physical = instance.y >> 8u;
     const vec2 page = vec2(float(int(instance.z)), float(int(instance.w)));
     // ページの一辺・texel・投影の行列はスライスの表から引く（正射影の段の行列は、ライト空間の基底）
     const VsmSlice slice = vsmSlices[level];

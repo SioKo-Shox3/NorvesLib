@@ -31,6 +31,7 @@
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
@@ -55,8 +56,10 @@ namespace NorvesLib::Core::Rendering
      * World はローカル空間の位置をワールドへ変える 3×4 行列（行ごとに 4 要素。ワールドの x = World[0..3] と (位置, 1) の内積、y = World[4..7]、z = World[8..11]）。
      * ワールド空間の頂点（スキニングの出力など）は単位行列にする。
      * Bounds はワールドの境界（AABB）で、展開が覆うページを決める。三角形をすべて含むこと。
-     * LevelMask はこの塊を展開する段の集合（ビット L が段 L）。CPU が境界から決めた段だけを展開が処理し、外の段は見ない。
-     * 既定は全段（CPU が絞らない塊は、展開が段ごとに範囲を見て決める）。
+     * LevelMask はこの塊を展開するスライスの集合で、Reserved が組の番号 g（スライス / 32）。ビット b がスライス g × 32 + b。
+     * CPU が境界から決めたスライスだけを展開が処理し、外のスライスは見ない。1 つの投影物が複数の組にまたがるときは、
+     * 同じ描画の記録を持つ塊を組ごとに 1 つずつ出す（組の数は VirtualShadowMap::SliceGroupCount(スライスの数)）。
+     * 既定は組 0 の全スライス（CPU が絞らない塊は、展開が段ごとに範囲を見て決める）。
      */
     struct alignas(16) VsmShadowChunk
     {
@@ -64,6 +67,7 @@ namespace NorvesLib::Core::Rendering
         float BoundsMin[3] = {};
         uint32_t LevelMask = 0xFFFFFFFFu;
         float BoundsMax[3] = {};
+        /** @brief 段の印の組の番号（スライス / 32）。LevelMask のビット b が、スライス Reserved × 32 + b */
         uint32_t Reserved = 0;
         float World[12] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
     };
@@ -125,8 +129,18 @@ namespace NorvesLib::Core::Rendering
      */
     struct VirtualShadowMapRasterDispatch
     {
-        /** @brief 今フレームのクリップマップ（無効なら何も記録しない） */
+        /** @brief 今フレームのクリップマップ（無効なら何も記録しない）。ライトの基底・深度の範囲はここから取る */
         const VirtualShadowMapClipmap* Clipmap = nullptr;
+        /**
+         * @brief ページの表が持つスライスの数（1 〜 VirtualShadowMap::MAX_SLICES）。0 はクリップマップの段の数。
+         *        PageTable は PageTableBytes(SliceCount) 以上の大きさにすること。展開は 0 〜 SliceCount − 1 のスライスを処理する
+         */
+        uint32_t SliceCount = 0;
+        /**
+         * @brief 外から渡すスライスの表（SliceCount 件。ページの表の先頭は スライスの番号 × 128 × 128）。null ならクリップマップから作る。
+         *        ライト空間の基底は Clipmap のものを全スライスで使うので、渡す表のスライスは同じ基底の正射影にすること
+         */
+        const GPUVsmSlice* Slices = nullptr;
         /** @brief 物理ページの数（Pool の大きさと合っていること） */
         uint32_t PoolPages = 0;
         RHI::BufferPtr Pool;
@@ -233,9 +247,10 @@ namespace NorvesLib::Core::Rendering
         /** @brief dirty のページの階層（段ごとのビット列。mip 0 = 128×128 から mip 7 = 1×1）の 1 段あたりの語の数（21845 ビット = 683 語を 16 語へ切り上げ） */
         constexpr uint32_t MEGA_DIRTY_WORDS_PER_LEVEL = 688;
         constexpr uint32_t MEGA_DIRTY_MIP_COUNT = 8;
-        constexpr uint64_t MegaDirtyBitsBytes()
+        /** @brief dirty の階層の大きさ（バイト）。既定は太陽の段の数（LEVEL_COUNT） */
+        constexpr uint64_t MegaDirtyBitsBytes(uint32_t sliceCount = LEVEL_COUNT)
         {
-            return static_cast<uint64_t>(LEVEL_COUNT) * MEGA_DIRTY_WORDS_PER_LEVEL * sizeof(uint32_t);
+            return static_cast<uint64_t>(sliceCount) * MEGA_DIRTY_WORDS_PER_LEVEL * sizeof(uint32_t);
         }
         /** @brief dirty の階層のバッファの用途（計算が atomicOr で書く。毎フレーム 0 へコピーで埋める） */
         inline RHI::ResourceUsage MegaDirtyBitsUsage()
@@ -255,12 +270,19 @@ namespace NorvesLib::Core::Rendering
      */
     struct VirtualShadowMapMegaCullDispatch
     {
-        /** @brief 今フレームのクリップマップ（無効なら何も記録しない） */
+        /** @brief 今フレームのクリップマップ（無効なら何も記録しない）。ライトの基底・深度の範囲はここから取る */
         const VirtualShadowMapClipmap* Clipmap = nullptr;
+        /**
+         * @brief ページの表・dirty の階層が持つスライスの数（1 〜 VirtualShadowMap::MAX_SLICES）。0 はクリップマップの段の数。
+         *        PageTable は PageTableBytes(SliceCount)、DirtyBits は MegaDirtyBitsBytes(SliceCount) 以上の大きさにすること
+         */
+        uint32_t SliceCount = 0;
+        /** @brief 外から渡すスライスの表（SliceCount 件）。null ならクリップマップから作る。基底は Clipmap のものを全スライスで使う */
+        const GPUVsmSlice* Slices = nullptr;
         /** @brief VSM のページの表（dirty の階層を作る入力）と統計（語 8〜10 へ書く。呼ぶ前に 0 にしておくこと） */
         RHI::BufferPtr PageTable;
         RHI::BufferPtr Stats;
-        /** @brief dirty の階層（MegaDirtyBitsBytes 以上）と、出力の一覧（容量は (大きさ − 頭) ÷ 16 バイト） */
+        /** @brief dirty の階層（MegaDirtyBitsBytes(SliceCount) 以上）と、出力の一覧（容量は (大きさ − 頭) ÷ 16 バイト） */
         RHI::BufferPtr DirtyBits;
         RHI::BufferPtr List;
         /**

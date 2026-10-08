@@ -28,9 +28,9 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float lightRight[4];
             float lightUp[4];
-            uint32_t screen[4];  // x = 幅、y = 高さ、z = スライス（段）の数、w = 1 段の一辺のページ数
+            uint32_t screen[4];  // x = 幅、y = 高さ、z = スライスの数、w = 印付けが選ぶ太陽の段の、スライスの表での先頭の番号
             float tuning[4];     // x = PCF の核の半径のうち texel に比例する分（texel）、y = 影の範囲の奥の端（前方への距離 m）、z = 探索・PCF の半径の上限（m）
-            uint32_t control[4]; // x = 段階、y = 物理ページの数、z = 間接 dispatch の x の上限
+            uint32_t control[4]; // x = 段階、y = 物理ページの数、z = 間接 dispatch の x の上限、w = 印付けが段を選ぶ太陽のスライスの数（クリップマップの段の数）
             float thresholds[VirtualShadowMapMaxLevels];
             float view[4];       // x, y, z = カメラの前方（単位ベクトル）、w = 影の範囲の手前の端（前方への距離 m）
             // ここから下は vsm_allocate.comp だけが読む（vsm_mark.comp・vsm_clear.comp の VsmParams はここまでの前半と同じ並び）
@@ -174,12 +174,12 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        // 印付けに使える入力か。使えるなら params へクリップマップ由来の値を書く
-        bool FillMarkParams(const VirtualShadowMapPagesDispatch& dispatch, uint32_t width, uint32_t height, GPUVsmParams& params)
+        // 印付けに使える入力か。使えるなら params へクリップマップ由来の値を書く（太陽の段は先頭の LevelCount 件のスライス）
+        bool FillMarkParams(const VirtualShadowMapPagesDispatch& dispatch, uint32_t sliceCount, uint32_t width, uint32_t height, GPUVsmParams& params)
         {
             const VirtualShadowMapClipmap* clipmap = dispatch.Clipmap;
             if (clipmap == nullptr || !clipmap->bEnabled || clipmap->LevelCount == 0u ||
-                clipmap->LevelCount > VirtualShadowMap::LEVEL_COUNT ||
+                clipmap->LevelCount > VirtualShadowMap::LEVEL_COUNT || dispatch.MarkFirstSlice + clipmap->LevelCount > sliceCount ||
                 clipmap->PagesPerAxis != VirtualShadowMap::TABLE_DIMENSION ||
                 clipmap->Settings.PageResolution != VirtualShadowMap::PAGE_RESOLUTION)
             {
@@ -235,7 +235,8 @@ namespace NorvesLib::Core::Rendering
             params.lightUp[2] = clipmap->LightUp.z;
             params.screen[0] = width;
             params.screen[1] = height;
-            params.screen[2] = clipmap->LevelCount;
+            params.control[3] = clipmap->LevelCount;
+            params.screen[3] = dispatch.MarkFirstSlice;
             params.tuning[0] = dispatch.PcfRadiusTexels;
             params.tuning[1] = shadowFar;
             params.tuning[2] = dispatch.MaxFilterRadiusMeters;
@@ -329,6 +330,7 @@ namespace NorvesLib::Core::Rendering
         m_CachedPageTable = nullptr;
         m_CachedPool = nullptr;
         m_CachedPoolPages = 0;
+        m_CachedSliceCount = 0;
     }
 
     void VirtualShadowMapPages::BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial)
@@ -367,15 +369,16 @@ namespace NorvesLib::Core::Rendering
         // 記録の途中で戻ったとき、古い状態を次の記録が引き継がないよう先に無効にする（最後で入力を残して有効に戻す）
         const bool bCacheWasValid = m_bCacheValid;
         m_bCacheValid = false;
+        const uint32_t sliceCount = dispatch.SliceCount != 0u ? dispatch.SliceCount : VirtualShadowMap::LEVEL_COUNT;
         if (!IsReady() || !commandList || dispatch.PoolPages == 0 || dispatch.PoolPages > VirtualShadowMap::MAX_POOL_PAGES ||
-            !dispatch.Pool || !dispatch.PageTable || !dispatch.RequestBits || !dispatch.FreeList || !dispatch.Stats ||
-            !dispatch.DirtyList)
+            sliceCount > VirtualShadowMap::MAX_SLICES || !dispatch.Pool || !dispatch.PageTable || !dispatch.RequestBits ||
+            !dispatch.FreeList || !dispatch.Stats || !dispatch.DirtyList)
         {
             return false;
         }
         if (dispatch.Pool->GetSize() < VirtualShadowMap::PoolBytes(dispatch.PoolPages) ||
-            dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes() ||
-            dispatch.RequestBits->GetSize() < VirtualShadowMap::RequestBitsBytes() ||
+            dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes(sliceCount) ||
+            dispatch.RequestBits->GetSize() < VirtualShadowMap::RequestBitsBytes(sliceCount) ||
             dispatch.FreeList->GetSize() < VirtualShadowMap::FreeListBytes(dispatch.PoolPages) ||
             dispatch.Stats->GetSize() < VirtualShadowMap::STATS_BYTES ||
             dispatch.DirtyList->GetSize() < VirtualShadowMap::DirtyListBytes(dispatch.PoolPages))
@@ -384,8 +387,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         GPUVsmParams baseParams = {};
-        baseParams.screen[3] = VirtualShadowMap::TABLE_DIMENSION;
-        baseParams.screen[2] = VirtualShadowMap::LEVEL_COUNT;
+        baseParams.screen[2] = sliceCount;
         baseParams.control[1] = dispatch.PoolPages;
         baseParams.control[2] = VirtualShadowMap::GROUP_COUNT_X_LIMIT;
 
@@ -393,10 +395,17 @@ namespace NorvesLib::Core::Rendering
         const uint32_t height = dispatch.Depth ? dispatch.Depth->GetHeight() : 0u;
         GPUVsmParams markParams = baseParams;
         const bool bMark = dispatch.Depth && width != 0u && height != 0u &&
-                           FillMarkParams(dispatch, width, height, markParams);
-        // スライスの表。印付けに使えないフレームは、ページの表の先頭・一辺だけを持つ表（ページの一辺 0 = 何も無い）を渡す
-        GPUVsmSlice markSlices[VirtualShadowMapMaxSlices];
-        BuildVirtualShadowMapSlices(bMark ? dispatch.Clipmap : nullptr, nullptr, markSlices);
+                           FillMarkParams(dispatch, sliceCount, width, height, markParams);
+        // スライスの表。外から渡されなければクリップマップから作る（先頭 LevelCount 件が太陽の段）。
+        // 印付けに使えないフレームは使わない（印付けを記録しない）
+        GPUVsmSlice markSliceStorage[VirtualShadowMapMaxSlices];
+        const GPUVsmSlice* markSlices = dispatch.Slices;
+        if (bMark && markSlices == nullptr)
+        {
+            BuildVirtualShadowMapSlices(dispatch.Clipmap, nullptr, sliceCount, markSliceStorage);
+            markSlices = markSliceStorage;
+        }
+        const uint32_t sliceBytes = sliceCount * static_cast<uint32_t>(sizeof(GPUVsmSlice));
 
         Use* markUse = nullptr;
         Use* allocateUses[StageCount] = {};
@@ -420,17 +429,17 @@ namespace NorvesLib::Core::Rendering
         // ----- 印付け -----
         {
             ScopedGpuTimestamp timestamp(commandList, "VsmMark");
-            ZeroFill(commandList, dispatch.RequestBits, VirtualShadowMap::RequestBitsBytes());
+            ZeroFill(commandList, dispatch.RequestBits, VirtualShadowMap::RequestBitsBytes(sliceCount));
             if (bMark)
             {
                 markUse->Uniform->Update(&markParams, sizeof(markParams));
-                markUse->Slices->Update(markSlices, sizeof(markSlices));
+                markUse->Slices->Update(markSlices, sliceBytes);
                 markUse->DescriptorSet->BindConstantBuffer(BindParams, markUse->Uniform, 0, sizeof(markParams));
-                markUse->DescriptorSet->BindStorageBuffer(BindSlices, markUse->Slices, 0, sizeof(markSlices));
+                markUse->DescriptorSet->BindStorageBuffer(BindSlices, markUse->Slices, 0, sliceBytes);
                 markUse->DescriptorSet->BindTexture(BindDepth, dispatch.Depth);
                 markUse->DescriptorSet->BindSampler(BindDepth, m_PointSampler);
                 markUse->DescriptorSet->BindStorageBuffer(BindRequestBits, dispatch.RequestBits, 0,
-                                                          ClampBindSize(VirtualShadowMap::RequestBitsBytes()));
+                                                          ClampBindSize(VirtualShadowMap::RequestBitsBytes(sliceCount)));
                 markUse->DescriptorSet->Update();
 
                 commandList->SetPipeline(m_MarkPipeline);
@@ -447,6 +456,7 @@ namespace NorvesLib::Core::Rendering
         const bool bCacheWanted = dispatch.bCacheEnabled && bMark;
         const bool bContinue = bCacheWanted && bCacheWasValid && m_CachedPageTable == dispatch.PageTable.get() &&
                                m_CachedPool == dispatch.Pool.get() && m_CachedPoolPages == dispatch.PoolPages &&
+                               m_CachedSliceCount == sliceCount &&
                                IsSameLevelLayout(m_PreviousClipmap, *dispatch.Clipmap);
         bool bInvalidateAll = false;
         if (bContinue)
@@ -466,7 +476,7 @@ namespace NorvesLib::Core::Rendering
             ScopedGpuTimestamp timestamp(commandList, "VsmAllocate");
             if (!bContinue)
             {
-                ZeroFill(commandList, dispatch.PageTable, VirtualShadowMap::PageTableBytes());
+                ZeroFill(commandList, dispatch.PageTable, VirtualShadowMap::PageTableBytes(sliceCount));
             }
             ZeroFill(commandList, dispatch.Stats, VirtualShadowMap::STATS_BYTES);
 
@@ -475,9 +485,18 @@ namespace NorvesLib::Core::Rendering
             allocateParams.cache[1] = VirtualShadowMap::CACHE_CARRY_FRAMES;
             const uint32_t rectCount = bContinue && !bInvalidateAll ? dispatch.InvalidationRectCount : 0u;
             allocateParams.cache[2] = rectCount;
-            // 引き継がないときは、範囲が動いていない（前フレームも今フレームと同じ）ものとして扱う（前の原点が null なら今の原点と同じ）
-            GPUVsmSlice allocateSlices[VirtualShadowMapMaxSlices];
-            BuildVirtualShadowMapSlices(bMark ? dispatch.Clipmap : nullptr, bContinue ? &m_PreviousClipmap : nullptr, allocateSlices);
+            // 引き継がないときは、範囲が動いていない（前フレームも今フレームと同じ）ものとして扱う（前の原点が null なら今の原点と同じ）。
+            // 外から渡されたスライスの表は、そのまま使う（前フレームの原点も呼び出し側が入れる）
+            GPUVsmSlice allocateSliceStorage[VirtualShadowMapMaxSlices];
+            const GPUVsmSlice* allocateSlices = dispatch.Slices;
+            if (allocateSlices == nullptr)
+            {
+                BuildVirtualShadowMapSlices(bMark ? dispatch.Clipmap : nullptr,
+                                            bContinue ? &m_PreviousClipmap : nullptr,
+                                            sliceCount,
+                                            allocateSliceStorage);
+                allocateSlices = allocateSliceStorage;
+            }
             for (uint32_t index = 0; index < rectCount; ++index)
             {
                 const float* rect = dispatch.InvalidationRects + static_cast<size_t>(index) * 4u;
@@ -493,13 +512,13 @@ namespace NorvesLib::Core::Rendering
                 params.control[0] = index;
                 Use& use = *allocateUses[index];
                 use.Uniform->Update(&params, sizeof(params));
-                use.Slices->Update(allocateSlices, sizeof(allocateSlices));
+                use.Slices->Update(allocateSlices, sliceBytes);
                 use.DescriptorSet->BindConstantBuffer(BindParams, use.Uniform, 0, sizeof(params));
-                use.DescriptorSet->BindStorageBuffer(BindSlices, use.Slices, 0, sizeof(allocateSlices));
+                use.DescriptorSet->BindStorageBuffer(BindSlices, use.Slices, 0, sliceBytes);
                 use.DescriptorSet->BindStorageBuffer(BindRequestBits, dispatch.RequestBits, 0,
-                                                     ClampBindSize(VirtualShadowMap::RequestBitsBytes()));
+                                                     ClampBindSize(VirtualShadowMap::RequestBitsBytes(sliceCount)));
                 use.DescriptorSet->BindStorageBuffer(BindPageTable, dispatch.PageTable, 0,
-                                                     ClampBindSize(VirtualShadowMap::PageTableBytes()));
+                                                     ClampBindSize(VirtualShadowMap::PageTableBytes(sliceCount)));
                 use.DescriptorSet->BindStorageBuffer(BindFreeList, dispatch.FreeList, 0,
                                                      ClampBindSize(VirtualShadowMap::FreeListBytes(dispatch.PoolPages)));
                 use.DescriptorSet->BindStorageBuffer(BindStats, dispatch.Stats, 0, ClampBindSize(VirtualShadowMap::STATS_BYTES));
@@ -508,10 +527,10 @@ namespace NorvesLib::Core::Rendering
                 use.DescriptorSet->Update();
             }
 
-            const uint32_t entryGroups = GroupsFor(VirtualShadowMap::LEVEL_COUNT * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL, GroupSize);
+            const uint32_t entryGroups = GroupsFor(sliceCount * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL, GroupSize);
             const uint32_t pageGroups = GroupsFor(dispatch.PoolPages, GroupSize);
-            const uint32_t rectGroups = GroupsFor(rectCount * VirtualShadowMap::LEVEL_COUNT, GroupSize);
-            const uint32_t requestGroups = GroupsFor(VirtualShadowMap::REQUEST_WORDS, GroupSize);
+            const uint32_t rectGroups = GroupsFor(rectCount * sliceCount, GroupSize);
+            const uint32_t requestGroups = GroupsFor(VirtualShadowMap::RequestWords(sliceCount), GroupSize);
             // 段階ごとの dispatch の大きさ（0 は記録しない）
             const uint32_t groups[StageCount] = {
                 entryGroups,   // StageScroll
@@ -572,6 +591,7 @@ namespace NorvesLib::Core::Rendering
             m_CachedPageTable = dispatch.PageTable.get();
             m_CachedPool = dispatch.Pool.get();
             m_CachedPoolPages = dispatch.PoolPages;
+            m_CachedSliceCount = sliceCount;
             m_PreviousClipmap = *dispatch.Clipmap;
         }
         return bCleared;

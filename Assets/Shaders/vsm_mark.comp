@@ -11,6 +11,7 @@
 // （VirtualShadowMapLevelDistanceThresholds）を使う。距離 d の段は「d >= しきい値となる k の数」。
 // 要求のビット列はページの表と同じ並びで、ビットの番号はスライス（段）の表の先頭 + 番地y * 一辺 + 番地x
 // （トーラスの番地 = 絶対のページの座標 mod 一辺。太陽の段は 128 × 128 で、先頭 = 段 × 16384）。
+// 段を選ぶのは control.w 件のスライス（太陽の段。スライスの表の screen.w 番目から並ぶ）だけ。スライスの表はその前後にも件数ぶん続いてよい（点光源の面など）。
 // ページの一辺・texel・範囲の原点・基底はスライスの表（binding 8。Common/VirtualShadowMapSlice.glsl）から引く。
 // ========================================
 
@@ -23,11 +24,11 @@ layout(std140, set = 0, binding = 0) uniform VsmParams
     vec4 cameraPosition;
     vec4 lightRight;
     vec4 lightUp;
-    // x: 画面の幅、y: 画面の高さ、z: スライス（段）の数、w: 1 段の一辺のページ数（128）
+    // x: 画面の幅、y: 画面の高さ、z: スライスの数、w: 段を選ぶ太陽のスライスの、スライスの表での先頭の番号（段 L はスライス w + L）
     uvec4 screen;
     // x: PCF の核の半径のうち texel に比例する分（texel）、y: 影の範囲の奥の端（カメラの前方への距離 m）、z: 探索・PCF の半径の上限（ワールドの長さ m）
     vec4 tuning;
-    // x: 段階、y: 物理ページの数、z: 間接 dispatch の x の上限
+    // x: 段階、y: 物理ページの数、z: 間接 dispatch の x の上限、w: 段を選ぶ太陽のスライスの数（クリップマップの段の数）
     uvec4 control;
     // 段を選ぶ距離のしきい値（16 個。k 番目が [k / 4][k % 4]）
     vec4 thresholds[4];
@@ -85,7 +86,7 @@ void main()
     const float distanceToCamera = length(toReceiver);
 
     uint level = 0u;
-    for (uint index = 0u; index + 1u < params.screen.z; ++index)
+    for (uint index = 0u; index + 1u < params.control.w; ++index)
     {
         if (distanceToCamera >= params.thresholds[index >> 2u][index & 3u])
         {
@@ -93,7 +94,7 @@ void main()
         }
     }
 
-    const VsmSlice slice = vsmSlices[level];
+    const VsmSlice slice = vsmSlices[params.screen.w + level];
     const float pageMeters = slice.info.x;
     // 標本の位置は texel に比例する分（法線の向きへのずれ・画素の大きさ・1 texel）とワールドの長さの分（物理の半影）の和で届く
     const float margin = params.tuning.x * slice.info.y + params.tuning.z;

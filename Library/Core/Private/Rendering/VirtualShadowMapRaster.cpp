@@ -29,7 +29,7 @@ namespace NorvesLib::Core::Rendering
             float lightUp[4];
             float lightDirection[4];
             float depth[4];      // x = 深度の原点、y = 1 / (2 × 深度の範囲)
-            uint32_t counts[4];  // x = 塊の数、y = スライス（段）の数、z = インスタンスの容量
+            uint32_t counts[4];  // x = 塊の数、y = スライスの数、z = インスタンスの容量、w = MegaGeometry のクラスタの記録の容量
         };
         // ページの一辺・texel・範囲の原点・投影の行列はスライスの表（GPUVsmSlice。ExpandBindSlices・DrawBindSlices）にある
         static_assert(sizeof(GPURasterParams) == 80, "vsm_expand.comp・vsm_draw.vert の VsmRasterParams と同じ大きさにすること");
@@ -205,8 +205,23 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        // スライスの数を決める。0 はクリップマップの段の数。使えない数（上限超え・クリップマップの段より少ない）なら 0
+        uint32_t ResolveSliceCount(uint32_t requested, const VirtualShadowMapClipmap* clipmap)
+        {
+            if (clipmap == nullptr)
+            {
+                return 0u;
+            }
+            const uint32_t count = requested != 0u ? requested : clipmap->LevelCount;
+            return count >= clipmap->LevelCount && count <= VirtualShadowMap::MAX_SLICES ? count : 0u;
+        }
+
         // MegaGeometry の投影物のカリングの定数を書く。クリップマップが使えなければ false
-        bool FillMegaCullParams(const VirtualShadowMapClipmap* clipmap, uint32_t listCapacity, uint32_t totalGroups, GPUMegaCullParams& params)
+        bool FillMegaCullParams(const VirtualShadowMapClipmap* clipmap,
+                                uint32_t sliceCount,
+                                uint32_t listCapacity,
+                                uint32_t totalGroups,
+                                GPUMegaCullParams& params)
         {
             if (!IsUsableClipmap(clipmap))
             {
@@ -223,14 +238,14 @@ namespace NorvesLib::Core::Rendering
             params.lightDirection[2] = clipmap->Direction.z;
             params.depth[0] = static_cast<float>(clipmap->DepthCenter);
             params.depth[1] = clipmap->Settings.DepthRangeMeters;
-            params.counts[0] = clipmap->LevelCount;
+            params.counts[0] = sliceCount;
             params.counts[1] = listCapacity;
             params.counts[2] = totalGroups;
             return true;
         }
 
         // クリップマップが使える入力か。使えるなら params へ値を書く
-        bool FillParams(const VirtualShadowMapClipmap* clipmap, GPURasterParams& params)
+        bool FillParams(const VirtualShadowMapClipmap* clipmap, uint32_t sliceCount, GPURasterParams& params)
         {
             if (!IsUsableClipmap(clipmap))
             {
@@ -247,7 +262,7 @@ namespace NorvesLib::Core::Rendering
             params.lightDirection[2] = clipmap->Direction.z;
             params.depth[0] = static_cast<float>(clipmap->DepthCenter);
             params.depth[1] = 0.5f / clipmap->Settings.DepthRangeMeters;
-            params.counts[1] = clipmap->LevelCount;
+            params.counts[1] = sliceCount;
             return true;
         }
     } // namespace
@@ -432,9 +447,10 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        const uint32_t sliceCount = ResolveSliceCount(dispatch.SliceCount, dispatch.Clipmap);
         const uint32_t chunkTotal = dispatch.ChunkCount + (bMega ? dispatch.MegaCapacity : 0u);
-        if (dispatch.Pool->GetSize() < VirtualShadowMap::PoolBytes(dispatch.PoolPages) ||
-            dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes() ||
+        if (sliceCount == 0u || dispatch.Pool->GetSize() < VirtualShadowMap::PoolBytes(dispatch.PoolPages) ||
+            dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes(sliceCount) ||
             dispatch.Stats->GetSize() < VirtualShadowMap::STATS_BYTES ||
             dispatch.Chunks->GetSize() < VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount) ||
             dispatch.Draws->GetSize() < VirtualShadowMap::RasterDrawBytes(chunkTotal) ||
@@ -444,7 +460,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         GPURasterParams params = {};
-        if (!FillParams(dispatch.Clipmap, params))
+        if (!FillParams(dispatch.Clipmap, sliceCount, params))
         {
             return false;
         }
@@ -454,9 +470,15 @@ namespace NorvesLib::Core::Rendering
         params.counts[2] = instanceCapacity > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max()
                                                                                     : static_cast<uint32_t>(instanceCapacity);
 
-        // スライスの表（ページの一辺・texel・範囲の原点・投影の行列）
-        GPUVsmSlice slices[VirtualShadowMapMaxSlices];
-        BuildVirtualShadowMapSlices(dispatch.Clipmap, nullptr, slices);
+        // スライスの表（ページの一辺・texel・範囲の原点・投影の行列）。外から渡されなければクリップマップから作る
+        GPUVsmSlice sliceStorage[VirtualShadowMapMaxSlices];
+        const GPUVsmSlice* slices = dispatch.Slices;
+        if (slices == nullptr)
+        {
+            BuildVirtualShadowMapSlices(dispatch.Clipmap, nullptr, sliceCount, sliceStorage);
+            slices = sliceStorage;
+        }
+        const uint32_t sliceBytes = sliceCount * static_cast<uint32_t>(sizeof(GPUVsmSlice));
 
         Use* use = nullptr;
         if (!AcquireUse(use))
@@ -478,13 +500,13 @@ namespace NorvesLib::Core::Rendering
             }
 
             use->Uniform->Update(&params, sizeof(params));
-            use->Slices->Update(slices, sizeof(slices));
+            use->Slices->Update(slices, sliceBytes);
             use->ExpandSet->BindConstantBuffer(ExpandBindParams, use->Uniform, 0, sizeof(params));
-            use->ExpandSet->BindStorageBuffer(ExpandBindSlices, use->Slices, 0, sizeof(slices));
+            use->ExpandSet->BindStorageBuffer(ExpandBindSlices, use->Slices, 0, sliceBytes);
             use->ExpandSet->BindStorageBuffer(ExpandBindChunks, dispatch.Chunks, 0,
                                               ClampBindSize(VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount)));
             use->ExpandSet->BindStorageBuffer(ExpandBindPageTable, dispatch.PageTable, 0,
-                                              ClampBindSize(VirtualShadowMap::PageTableBytes()));
+                                              ClampBindSize(VirtualShadowMap::PageTableBytes(sliceCount)));
             use->ExpandSet->BindStorageBuffer(ExpandBindDraws, dispatch.Draws, 0, ClampBindSize(dispatch.Draws->GetSize()));
             use->ExpandSet->BindStorageBuffer(ExpandBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
             use->ExpandSet->BindStorageBuffer(ExpandBindStats, dispatch.Stats, 0, ClampBindSize(VirtualShadowMap::STATS_BYTES));
@@ -542,7 +564,7 @@ namespace NorvesLib::Core::Rendering
         {
             ScopedGpuTimestamp timestamp(commandList, "VsmDraw");
             use->DrawSet->BindConstantBuffer(DrawBindParams, use->Uniform, 0, sizeof(params));
-            use->DrawSet->BindStorageBuffer(DrawBindSlices, use->Slices, 0, sizeof(slices));
+            use->DrawSet->BindStorageBuffer(DrawBindSlices, use->Slices, 0, sliceBytes);
             use->DrawSet->BindStorageBuffer(DrawBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
             use->DrawSet->BindStorageBuffer(DrawBindChunks, dispatch.Chunks, 0,
                                             ClampBindSize(VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount)));
@@ -735,9 +757,11 @@ namespace NorvesLib::Core::Rendering
         }
         const uint64_t listBytes = dispatch.List->GetSize();
         const uint64_t headerBytes = static_cast<uint64_t>(VirtualShadowMap::MEGA_CULL_LIST_HEADER_WORDS) * sizeof(uint32_t);
-        if (dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes() ||
+        const uint32_t sliceCount = ResolveSliceCount(dispatch.SliceCount, dispatch.Clipmap);
+        if (sliceCount == 0u || dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes(sliceCount) ||
             dispatch.Stats->GetSize() < VirtualShadowMap::STATS_BYTES ||
-            dispatch.DirtyBits->GetSize() < VirtualShadowMap::MegaDirtyBitsBytes() || listBytes < VirtualShadowMap::MegaCullListBytes(1u))
+            dispatch.DirtyBits->GetSize() < VirtualShadowMap::MegaDirtyBitsBytes(sliceCount) ||
+            listBytes < VirtualShadowMap::MegaCullListBytes(1u))
         {
             return false;
         }
@@ -756,6 +780,7 @@ namespace NorvesLib::Core::Rendering
 
         GPUMegaCullParams params = {};
         if (!FillMegaCullParams(dispatch.Clipmap,
+                                sliceCount,
                                 capacity > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max()
                                                                                 : static_cast<uint32_t>(capacity),
                                 dispatch.TotalGroups,
@@ -780,31 +805,36 @@ namespace NorvesLib::Core::Rendering
 
         ScopedGpuTimestamp timestamp(commandList, "VsmCullMega");
 
-        // 階層と、出力の一覧の頭を 0 にする
-        commandList->BufferBarrier(dispatch.DirtyBits, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest, 0u,
-                                   VirtualShadowMap::MegaDirtyBitsBytes());
-        commandList->FillBuffer(dispatch.DirtyBits, 0u, VirtualShadowMap::MegaDirtyBitsBytes(), 0u);
-        commandList->BufferBarrier(dispatch.DirtyBits, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess, 0u,
-                                   VirtualShadowMap::MegaDirtyBitsBytes());
+        // 階層と、出力の一覧の頭を 0 にする。階層のバッファは専用なので、スライスの数より大きければ全体を 0 にする（使わない部分を残さない）
+        const uint64_t dirtyClearBytes = dispatch.DirtyBits->GetSize() & ~static_cast<uint64_t>(3u);
+        commandList->BufferBarrier(dispatch.DirtyBits, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest, 0u, dirtyClearBytes);
+        commandList->FillBuffer(dispatch.DirtyBits, 0u, dirtyClearBytes, 0u);
+        commandList->BufferBarrier(dispatch.DirtyBits, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess, 0u, dirtyClearBytes);
         commandList->BufferBarrier(dispatch.List, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest, 0u, headerBytes);
         commandList->FillBuffer(dispatch.List, 0u, headerBytes, 0u);
         commandList->BufferBarrier(dispatch.List, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess, 0u, headerBytes);
 
         use->CullUniform->Update(&cullUniform, sizeof(cullUniform));
         use->ParamsUniform->Update(&params, sizeof(params));
-        GPUVsmSlice slices[VirtualShadowMapMaxSlices];
-        BuildVirtualShadowMapSlices(dispatch.Clipmap, nullptr, slices);
-        use->Slices->Update(slices, sizeof(slices));
+        GPUVsmSlice sliceStorage[VirtualShadowMapMaxSlices];
+        const GPUVsmSlice* slices = dispatch.Slices;
+        if (slices == nullptr)
+        {
+            BuildVirtualShadowMapSlices(dispatch.Clipmap, nullptr, sliceCount, sliceStorage);
+            slices = sliceStorage;
+        }
+        const uint32_t sliceBytes = sliceCount * static_cast<uint32_t>(sizeof(GPUVsmSlice));
+        use->Slices->Update(slices, sliceBytes);
 
         // ----- dirty のページの階層: 1 スレッド = 1 ページ（ローカルは 8×8）、段ごとに 16×16 グループ -----
         use->DirtySet->BindConstantBuffer(DirtyBindParams, use->ParamsUniform, 0, sizeof(params));
-        use->DirtySet->BindStorageBuffer(DirtyBindPageTable, dispatch.PageTable, 0, ClampBindSize(VirtualShadowMap::PageTableBytes()));
-        use->DirtySet->BindStorageBuffer(DirtyBindBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes()));
-        use->DirtySet->BindStorageBuffer(DirtyBindSlices, use->Slices, 0, sizeof(slices));
+        use->DirtySet->BindStorageBuffer(DirtyBindPageTable, dispatch.PageTable, 0, ClampBindSize(VirtualShadowMap::PageTableBytes(sliceCount)));
+        use->DirtySet->BindStorageBuffer(DirtyBindBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes(sliceCount)));
+        use->DirtySet->BindStorageBuffer(DirtyBindSlices, use->Slices, 0, sliceBytes);
         use->DirtySet->Update();
         commandList->SetPipeline(m_DirtyPipeline);
         commandList->SetDescriptorSet(use->DirtySet, 0);
-        commandList->Dispatch(VirtualShadowMap::TABLE_DIMENSION / 8u, VirtualShadowMap::TABLE_DIMENSION / 8u, dispatch.Clipmap->LevelCount);
+        commandList->Dispatch(VirtualShadowMap::TABLE_DIMENSION / 8u, VirtualShadowMap::TABLE_DIMENSION / 8u, sliceCount);
         commandList->BufferBarrier(dispatch.DirtyBits, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
 
         // ----- クラスタの選択: x, y = 影の判定のワークグループ（x の上限を超える分は y へ折り返す）、z = 段 -----
@@ -813,11 +843,11 @@ namespace NorvesLib::Core::Rendering
         use->CullSet->BindStorageBuffer(MegaBindPageTable, dispatch.MegaPageTable, 0, ClampBindSize(dispatch.MegaPageTable->GetSize()));
         use->CullSet->BindConstantBuffer(MegaBindParams, use->ParamsUniform, 0, sizeof(params));
         use->CullSet->BindStorageBuffer(MegaBindList, dispatch.List, 0, ClampBindSize(listBytes));
-        use->CullSet->BindStorageBuffer(MegaBindDirtyBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes()));
+        use->CullSet->BindStorageBuffer(MegaBindDirtyBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes(sliceCount)));
         use->CullSet->BindStorageBuffer(MegaBindStats, dispatch.Stats, 0, ClampBindSize(VirtualShadowMap::STATS_BYTES));
         use->CullSet->BindStorageBuffer(MegaBindShadowInstances, dispatch.ShadowInstances, 0, ClampBindSize(dispatch.ShadowInstances->GetSize()));
-        use->CullSet->BindStorageBuffer(MegaBindVsmPageTable, dispatch.PageTable, 0, ClampBindSize(VirtualShadowMap::PageTableBytes()));
-        use->CullSet->BindStorageBuffer(MegaBindSlices, use->Slices, 0, sizeof(slices));
+        use->CullSet->BindStorageBuffer(MegaBindVsmPageTable, dispatch.PageTable, 0, ClampBindSize(VirtualShadowMap::PageTableBytes(sliceCount)));
+        use->CullSet->BindStorageBuffer(MegaBindSlices, use->Slices, 0, sliceBytes);
         use->CullSet->Update();
 
         const uint32_t groupsX = dispatch.TotalGroups < VirtualShadowMap::GROUP_COUNT_X_LIMIT ? dispatch.TotalGroups
@@ -825,7 +855,7 @@ namespace NorvesLib::Core::Rendering
         const uint32_t groupsY = (dispatch.TotalGroups + VirtualShadowMap::GROUP_COUNT_X_LIMIT - 1u) / VirtualShadowMap::GROUP_COUNT_X_LIMIT;
         commandList->SetPipeline(m_CullPipeline);
         commandList->SetDescriptorSet(use->CullSet, 0);
-        commandList->Dispatch(groupsX, groupsY, dispatch.Clipmap->LevelCount);
+        commandList->Dispatch(groupsX, groupsY, sliceCount);
         commandList->BufferBarrier(dispatch.List, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         commandList->BufferBarrier(dispatch.Stats, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         // 溢れたクラスタの範囲のページへ書いた再描画の印を、後続の展開・次フレームの引き継ぎが読めるようにする

@@ -44,8 +44,11 @@ namespace NorvesLib::Core::Rendering
     inline constexpr int32_t VirtualShadowMapSliceProjectionOrtho = 0;
     inline constexpr int32_t VirtualShadowMapSliceProjectionPerspective = 1;
 
-    /** @brief スライスの表に並べられるスライスの数の上限（今は太陽の段の上限と同じ。表の大きさはこの数 × sizeof(GPUVsmSlice)） */
-    inline constexpr uint32_t VirtualShadowMapMaxSlices = VirtualShadowMapMaxLevels;
+    /**
+     * @brief スライスの表に並べられるスライスの数の上限（VirtualShadowMap::MAX_SLICES と同じ。展開のインスタンスの段の欄が 8 ビット）。
+     *        表の大きさはスライスの数 × sizeof(GPUVsmSlice)
+     */
+    inline constexpr uint32_t VirtualShadowMapMaxSlices = 256u;
 
     /**
      * @brief スライスの表（storage buffer）の 1 件。Common/VirtualShadowMapSlice.glsl の VsmSlice（std430）と同じ並び
@@ -69,17 +72,22 @@ namespace NorvesLib::Core::Rendering
     static_assert(sizeof(GPUVsmSlice) == 96, "Common/VirtualShadowMapSlice.glsl の VsmSlice と同じ大きさにすること");
 
     /**
-     * @brief クリップマップ（太陽）から、スライスの表の先頭 VirtualShadowMapMaxSlices 件を作る
+     * @brief クリップマップ（太陽）から、スライスの表の先頭 sliceCount 件を作る
      *
-     * 全件にページの表の先頭・一辺・投影の種類を入れる（クリップマップが無い・無効でも、段の数の上限まで既定の番地になる。
-     * ページの一辺・texel・原点は 0）。使える段（LevelCount 未満）には、ページの一辺・texel・範囲の原点・ライト空間の基底を書く。
-     * previous が非 null なら前フレームの原点を extra に書き、null なら今フレームと同じにする（範囲が動いていない扱い）。
+     * sliceCount 件すべてにページの表の先頭（スライスの番号 × 128 × 128）・一辺・投影の種類を入れる（クリップマップが無い・無効でも、
+     * 既定の番地になる。ページの一辺・texel・原点は 0）。使える段（LevelCount 未満）には、ページの一辺・texel・範囲の原点・
+     * ライト空間の基底を書く。previous が非 null なら前フレームの原点を extra に書き、null なら今フレームと同じにする（範囲が動いていない扱い）。
      * 段が使えない値（原点が int32 に収まらない・ページの一辺が 0 以下）でも false にはせず、その段は 0 のまま残す。
+     * sliceCount は VirtualShadowMapMaxSlices へ切り詰める。クリップマップの段より後ろのスライスは、既定の番地だけを持つ空のスライス。
      *
-     * @param outSlices VirtualShadowMapMaxSlices 件以上の領域
+     * @param sliceCount 作る件数（クリップマップの段の数以上にすること。それより少ないと段の一部だけが入る）
+     * @param outSlices sliceCount 件以上の領域
      * @return 作った（使える）スライスの数
      */
-    uint32_t BuildVirtualShadowMapSlices(const VirtualShadowMapClipmap* clipmap, const VirtualShadowMapClipmap* previous, GPUVsmSlice* outSlices);
+    uint32_t BuildVirtualShadowMapSlices(const VirtualShadowMapClipmap* clipmap,
+                                         const VirtualShadowMapClipmap* previous,
+                                         uint32_t sliceCount,
+                                         GPUVsmSlice* outSlices);
 
     /**
      * @brief 影の距離の範囲・奥の薄めの幅を決める（照明の読み出しと、印付けが同じ値を使う）

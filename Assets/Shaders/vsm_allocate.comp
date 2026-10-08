@@ -26,6 +26,7 @@
 //
 // ページの表と要求のビット列の欄は、スライス（太陽では段）の表（binding 8。Common/VirtualShadowMapSlice.glsl）の先頭から並ぶ。
 // 欄の全体を走査する段階は、同じ大きさ（ENTRIES_PER_LEVEL 欄）のスライスが先頭から詰まっている前提で欄の番号からスライスを求める。
+// スライスの数は params.screen.z（太陽の段の数以上。点光源の面など、後ろに続くスライスも同じ流れで扱う）。
 // ページの一辺・範囲の原点・前フレームの原点はスライスの表から引く。
 //
 // 統計（stats）の語は VirtualShadowMapPass.h の StatWord と同じ。
@@ -40,10 +41,10 @@ layout(std140, set = 0, binding = 0) uniform VsmParams
     vec4 cameraPosition;
     vec4 lightRight;
     vec4 lightUp;
-    // x: 幅、y: 高さ、z: スライス（段）の数、w: 1 段の一辺のページ数
+    // x: 幅、y: 高さ、z: スライスの数、w: 印付けだけが読む（太陽のスライスの先頭の番号）
     uvec4 screen;
     vec4 tuning;
-    // x: 段階、y: 物理ページの数、z: 間接 dispatch の x の上限
+    // x: 段階、y: 物理ページの数、z: 間接 dispatch の x の上限、w: 印付けだけが読む（太陽のスライスの数）
     uvec4 control;
     vec4 thresholds[4];
     // vsm_mark.comp だけが読む（xyz: カメラの前方、w: 影の範囲の手前の端）
@@ -99,6 +100,8 @@ const uint STAT_REQUESTED = 0u;
 const uint STAT_ALLOCATED = 1u;
 const uint STAT_OVERFLOW = 2u;
 const uint STAT_LEVELS_USED = 4u;
+// 33 番目以降のスライスに要求があれば 1（STAT_LEVELS_USED は先頭 32 スライスの集合で、溢れさせない。VirtualShadowMapPass.h の StatLevelsUsedBeyond）
+const uint STAT_LEVELS_USED_BEYOND = 53u;
 const uint STAT_CACHED = 11u;
 const uint STAT_RENDERED = 12u;
 const uint STAT_INVALIDATED = 13u;
@@ -418,7 +421,15 @@ void Allocate()
         return;
     }
 
-    atomicOr(stats[STAT_LEVELS_USED], 1u << (wordIndex / WORDS_PER_LEVEL));
+    const uint slice = wordIndex / WORDS_PER_LEVEL;
+    if (slice < 32u)
+    {
+        atomicOr(stats[STAT_LEVELS_USED], 1u << slice);
+    }
+    else
+    {
+        atomicOr(stats[STAT_LEVELS_USED_BEYOND], 1u);
+    }
     atomicAdd(stats[STAT_REQUESTED], uint(bitCount(bits)));
 
     // この語の、まだ割り当ての無い欄の数。その数ぶんの通し番号を取り、空きの一覧の後ろから順に割り当てる

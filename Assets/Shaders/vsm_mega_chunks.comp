@@ -13,7 +13,7 @@
 //     プールの塊のバッファのアドレス（ビジビリティバッファの visbuffer_records.comp が書く記録と同じ読み方）。
 //   - 境界: クラスタの境界球をワールドへ移した球の外接の AABB。展開が覆うページを決める。
 //   - 変換: インスタンスのワールド行列の 3 行（頂点はローカルのまま引き、描画の頂点シェーダーがワールドへ変える）。
-//   - 展開する段: カリングが選んだ段だけ（levelMask = 1 << 段）。
+//   - 展開するスライス: カリングが選んだスライスだけ（組の番号 reserved = スライス / 32、levelMask = 1 << (スライス % 32)）。
 // 1 スレッド = 1 件。dispatch は一覧の容量ぶんのスレッドを x 方向に並べる（一覧の件数（容量で頭打ち）より後ろのスレッドは何もしない）。
 // 引けないインスタンス（アドレスが 0）は三角形 0 の記録にし、展開は何も描かない。
 // ========================================
@@ -77,9 +77,9 @@ void main()
     chunk.record.address = shadow.addresses;
     chunk.record.previous = uvec4(0u);
     chunk.boundsMin = center - vec3(radius);
-    chunk.levelMask = 1u << entry.y;
+    chunk.levelMask = 1u << (entry.y & 31u);
     chunk.boundsMax = center + vec3(radius);
-    chunk.reserved = 0u;
+    chunk.reserved = entry.y >> 5u;
     // mat4 は列優先。ワールドの位置 = world * (ローカルの位置, 1) の各成分は、行列の行とローカルの位置の内積
     chunk.world0 = vec4(instance.world[0].x, instance.world[1].x, instance.world[2].x, instance.world[3].x);
     chunk.world1 = vec4(instance.world[0].y, instance.world[1].y, instance.world[2].y, instance.world[3].y);

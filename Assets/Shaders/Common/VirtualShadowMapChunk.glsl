@@ -15,7 +15,8 @@
 struct VsmShadowChunk
 {
     VisibilityDrawRecord record;
-    // ワールドの境界と、展開する段の集合（CPU が境界から決めた段。ビット L が段 L）。std430 で vec3 の後ろの uint は同じ 16 バイトに詰まる
+    // ワールドの境界と、展開するスライスの集合（CPU が境界から決めたスライス）。std430 で vec3 の後ろの uint は同じ 16 バイトに詰まる。
+    // levelMask は 32 スライスずつの組の印で、ビット b が スライス reserved × 32 + b（reserved = 組の番号）。複数の組にまたがる投影物は組ごとの塊に分かれる
     vec3 boundsMin;
     uint levelMask;
     vec3 boundsMax;
@@ -41,6 +42,6 @@ const uint VSM_PAGE_INDEX_MASK = (1u << 20) - 1u;
 const uint VSM_DRAWS_HEADER_WORDS = 4u;
 const uint VSM_DRAW_COMMAND_WORDS = 5u;
 
-// 展開が書くインスタンスは uvec4: x = 塊の番号、y = 段 | (物理ページの番号 << 4)、z = 絶対のページの x（int のビット）、w = 絶対のページの y
+// 展開が書くインスタンスは uvec4: x = 塊の番号、y = スライス | (物理ページの番号 << 8)、z = 絶対のページの x（int のビット）、w = 絶対のページの y
 
 #endif // NORVES_VIRTUAL_SHADOW_MAP_CHUNK_GLSL
