@@ -10,6 +10,9 @@
 #include "Object/World.h"
 #include "Rendering/SceneProxy.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cmath>
 #include <iostream>

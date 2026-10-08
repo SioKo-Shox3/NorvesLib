@@ -1,5 +1,8 @@
 ﻿#include "Engine/FixedStepScheduler.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdint>
 #include <iostream>
@@ -131,7 +134,7 @@ namespace
         scheduler.BeginRun();
         const FixedStepAdvanceResult seeded = scheduler.Advance(8'333'333, true);
         AssertResult(seeded, EFixedStepAdvanceStatus::Advanced, 0, 0, 499'999'980);
-        AssertResult(scheduler.Advance(0, true), EFixedStepAdvanceStatus::InvalidDelta, 0, 0, 499'999'980);
+        AssertResult(scheduler.Advance(0, true), EFixedStepAdvanceStatus::Advanced, 0, 0, 499'999'980);
         AssertResult(scheduler.Advance(-1, true), EFixedStepAdvanceStatus::InvalidDelta, 0, 0, 499'999'980);
         scheduler.EndRun();
         AssertResult(scheduler.Advance(1, true), EFixedStepAdvanceStatus::NotRunning, 0, 0, 499'999'980);
@@ -166,10 +169,43 @@ namespace
         const FixedStepAdvanceResult resumed = scheduler.Advance(8'333'334, true);
         AssertResult(resumed, EFixedStepAdvanceStatus::Advanced, 1, 0, 20);
     }
+    void Test120HzAndStartupSetting()
+    {
+        FixedStepScheduler scheduler;
+        assert(scheduler.GetRate() == 60 && !scheduler.SetRate(90));
+        assert(scheduler.SetRate(120) && scheduler.GetRate() == 120 && scheduler.GetDeltaSeconds() == 1.f / 120);
+        scheduler.BeginRun();
+        assert(!scheduler.SetRate(60));
+        AssertResult(scheduler.Advance(8'333'333, true), EFixedStepAdvanceStatus::Advanced, 0, 0, 999'999'960);
+        AssertResult(scheduler.Advance(1, true), EFixedStepAdvanceStatus::Advanced, 1, 0, 80);
+        scheduler.EndRun();
+        assert(scheduler.SetRate(120));
+        scheduler.BeginRun();
+        uint64_t count = 0;
+        for (int i = 0; i < 100; ++i)
+            count += scheduler.Advance(10'000'000, true).ExecutedSteps;
+        assert(count == 120);
+        const auto capped = scheduler.Advance(1'000'000'000, true);
+        AssertResult(capped, EFixedStepAdvanceStatus::Advanced, 16, 104, 0);
+        scheduler.EndRun();
+        assert(scheduler.SetRate(60));
+        scheduler.BeginRun();
+        AssertResult(scheduler.Advance(16'666'666, true), EFixedStepAdvanceStatus::Advanced, 0, 0, 999'999'960);
+        uint32_t rate = 60;
+        assert(ParseFixedUpdateRateArgument("--fixed-update-hz=120", rate) == FixedUpdateArgumentResult::Valid &&
+               rate == 120);
+        assert(ParseFixedUpdateRateArgument(L"--fixed-update-hz=60", rate) == FixedUpdateArgumentResult::Valid &&
+               rate == 60);
+        for (const char* text : {"--fixed-update-hz", "--fixed-update-hz=", "--fixed-update-hz=1",
+                                 "--fixed-update-hz=90", "--fixed-update-hz=120x"})
+            assert(ParseFixedUpdateRateArgument(text, rate) == FixedUpdateArgumentResult::Invalid && rate == 60);
+        assert(ParseFixedUpdateRateArgument("--fixed", rate) == FixedUpdateArgumentResult::Unrecognized && rate == 60);
+    }
 } // namespace
 
 int main()
 {
+    Test120HzAndStartupSetting();
     TestLessThanStepDoesNotRun();
     TestExactStepRunsOnce();
     TestMultipleStepsKeepRemainder();

@@ -254,6 +254,61 @@ namespace
         World World;
     };
 
+    void TestColliderLocalPoseSnapshot()
+    {
+        PhysicsFixture fixture;
+        auto* entity = fixture.CreateSphere(
+            Math::Transform(Math::Vector3(10, 0, 0), Math::Quaternion::Identity, Math::Vector3(2)), .5f);
+        auto* collider = entity->GetComponent<ColliderComponent>();
+        auto* body = fixture.World.CreateComponent<RigidBodyComponent>(entity);
+        assert(body && body->SetBodyType(EPhysicsBodyType::Kinematic) == EPhysicsResult::Success);
+        auto& query = fixture.Engine.GetSceneQuery();
+        fixture.Physics->PreFixedTick(1.f / 60);
+        fixture.Physics->FixedTick(1.f / 60);
+        const auto handle = collider->GetColliderHandle();
+        const auto ownerBefore = entity->GetLocalTransform();
+        PhysicsShapeProxy snapshot;
+        assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics, handle, snapshot));
+        assert(snapshot.Sphere.Center == Math::Vector3(10, 0, 0) && snapshot.Sphere.Radius == 1);
+        uint64_t sequence = 0, after = 0;
+        assert(query.GetPublishedSnapshotSequence(sequence) == EPhysicsSceneQueryResult::Success);
+        Math::Transform local(Math::Vector3(1, .4f, 0));
+        assert(collider->SetLocalPose(local) == EPhysicsResult::Success);
+        assert(entity->GetLocalTransform() == ownerBefore && body->GetLinearVelocity() == Math::Vector3::Zero);
+        assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics, handle, snapshot));
+        assert(snapshot.Sphere.Center == Math::Vector3(10, 0, 0));
+        assert(query.RefreshDynamicSnapshot() == EPhysicsSceneQueryResult::Success);
+        assert(query.GetPublishedSnapshotSequence(after) == EPhysicsSceneQueryResult::Success && after == sequence);
+        assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics, handle, snapshot));
+        assert(snapshot.Sphere.Center == Math::Vector3(12, .8f, 0) && snapshot.Sphere.Radius == 1);
+        const auto stable = collider->GetLocalPose();
+        local.scale = Math::Vector3(2, 1, 1);
+        assert(collider->SetLocalPose(local) == EPhysicsResult::InvalidArgument && collider->GetLocalPose() == stable);
+        EPhysicsResult threadResult = EPhysicsResult::Success;
+        Thread::Thread worker([&]() { threadResult = collider->SetLocalPose(Math::Transform::Identity); });
+        worker.Join();
+        assert(threadResult == EPhysicsResult::WrongThread && collider->GetLocalPose() == stable);
+        assert(collider->SetCapsule(.4f, .5f) == EPhysicsResult::Success);
+        entity->SetLocalScale(Math::Vector3(2, 3, 1));
+        local =
+            Math::Transform(Math::Vector3(1, 0, 0), Math::Quaternion(Math::Vector3::UnitZ, Math::Constants::HALF_PI));
+        assert(collider->SetLocalPose(local) == EPhysicsResult::Success);
+        assert(query.RefreshDynamicSnapshot() == EPhysicsSceneQueryResult::Success);
+        assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics, handle, snapshot));
+        assert(NearlyEqual(snapshot.Capsule.PointA.x, 13) && NearlyEqual(snapshot.Capsule.PointB.x, 11));
+        assert(NearlyEqual(snapshot.Capsule.Radius, 1.2f));
+        entity->SetLocalScale(Math::Vector3(4, 1, 1));
+        assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics, handle, snapshot));
+        assert(NearlyEqual(snapshot.Capsule.Radius, 1.2f));
+        assert(query.RefreshDynamicSnapshot() == EPhysicsSceneQueryResult::Success);
+        assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics, handle, snapshot));
+        assert(NearlyEqual(snapshot.Capsule.PointA.x, 16) && NearlyEqual(snapshot.Capsule.PointB.x, 12));
+        assert(NearlyEqual(snapshot.Capsule.Radius, 1.6f));
+        fixture.Physics->PreFixedTick(1.f / 60);
+        fixture.Physics->FixedTick(1.f / 60);
+        assert(body->GetLinearVelocity() == Math::Vector3::Zero);
+    }
+
     void TestLayerMaskContactsAndEvents()
     {
         PhysicsFixture fixture;
@@ -866,6 +921,7 @@ int main()
     TestLegacyAppendContract();
     TestSnapshotScaleAndRayContract();
     TestColliderMetadataSnapshot();
+    TestColliderLocalPoseSnapshot();
     TestUnifiedPublishedQuery();
     TestPublishedQueryBatch();
     TestLayerMaskCandidatePairs();

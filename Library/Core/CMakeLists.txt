@@ -10,6 +10,10 @@ find_package(Vulkan REQUIRED)
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Math/GeometryIntersection.cpp
+    Private/Camera/CameraCollisionSolver.cpp
+    Private/Camera/SceneCameraProbe.cpp
+    Private/Locomotion/QuadrupedLocomotionModel.cpp
+    Private/Locomotion/QuadrupedLocomotionJson.cpp
     Private/Asset/AssetBlob.cpp
     Private/Asset/CookedAudioLoader.cpp
     Private/Asset/CookedMeshLoader.cpp
@@ -29,6 +33,7 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfMaterialSourceJson.cpp
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/AssetFileReader.cpp
+    Private/Asset/TextAssetReloadTracker.cpp
     Private/Asset/AssetManifest.cpp
     Private/Asset/AssetPath.cpp
     Private/Asset/AssetSystem.cpp
@@ -103,6 +108,7 @@ set(PRIVATE_SOURCES
     Private/Animation/AnimSync.cpp
     Private/Animation/AnimGraphSync.cpp
     Private/Animation/AnimGraphRootMotion.cpp
+    Private/Animation/RootMotionTimeQueue.cpp
     Private/Animation/AnimGraphResource.cpp
     Private/Animation/AnimGraphInstance.cpp
     Private/Component/SocketAttachmentComponent.cpp
@@ -164,6 +170,14 @@ set(PRIVATE_SOURCES
     Private/Engine/NorvesEngine.cpp
     Private/Engine/SkeletalAssetSession.cpp
     Private/Engine/FixedStepScheduler.cpp
+    Private/Engine/TimeScaleMath.cpp
+    Private/Engine/TimeScaleMath.h
+    Private/Engine/TimeScaleFadeMath.cpp
+    Private/Engine/TimeScaleFadeMath.h
+    Private/Engine/TimeSystem.cpp
+    Public/Engine/TimeSystem.h
+    Public/Engine/FixedStepFrameTiming.h
+    Public/Engine/TimeChannels.h
     Private/Scripting/AngelScriptEngineOwner.cpp
     Private/Scripting/ScriptSourceTracker.h
     Private/Scripting/ScriptSourceTracker.cpp
@@ -173,6 +187,7 @@ set(PRIVATE_SOURCES
     Private/Engine/ApplicationProcessor.cpp
     # Scene
     Private/Scene/SceneQuery.cpp
+    Private/Scene/RenderTransformHistory.cpp
     Private/Scene/SceneSerializer.cpp
     # GameMode
     Private/GameMode/GameModeScope.cpp
@@ -432,6 +447,7 @@ set(PUBLIC_HEADERS
     Public/Asset/CookedSkeletalWireFormat.h
     Public/Asset/CookedTextureFormat.h
     Public/Asset/AssetFileReader.h
+    Public/Asset/TextAssetReloadTracker.h
     Public/Asset/AssetManifest.h
     Public/Asset/AssetPackageFormat.h
     Public/Asset/AssetReadRequest.h
@@ -478,6 +494,7 @@ set(PUBLIC_HEADERS
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
     Public/Engine/ApplicationProcessor.h
+    Public/Engine/FixedStepSettings.h
     # Animation
     Public/Animation/AnimationClipResource.h
     Public/Animation/SkeletalAnimationSampler.h
@@ -496,6 +513,7 @@ set(PUBLIC_HEADERS
     Public/Animation/AnimSync.h
     Public/Animation/AnimationEvents.h
     Public/Animation/RootMotion.h
+    Public/Animation/RootMotionTimeQueue.h
     Public/Animation/MotionAnalysis.h
     Public/Animation/PoseModifier.h
     Public/Component/SocketAttachmentComponent.h
@@ -503,6 +521,7 @@ set(PUBLIC_HEADERS
     Public/Component/AnimatorComponent.h
     # Scene
     Public/Scene/SceneQuery.h
+    Public/Scene/RenderTransformHistory.h
     Public/Scene/PhysicsQueryTypes.h
     Public/Scene/SceneSerializer.h
     # Module
@@ -691,6 +710,12 @@ set(PUBLIC_HEADERS
     Public/Math/Vector3.h
     Public/Math/Vector4.h
     Public/Math/VectorUtils.h
+    Public/Math/CriticalDamping.h
+    Public/Camera/CameraCollisionSolver.h
+    Public/Camera/SceneCameraProbe.h
+    Public/Locomotion/QuadrupedLocomotionModel.h
+    Public/Locomotion/QuadrupedLocomotionParams.h
+    Public/Locomotion/QuadrupedLocomotionJson.h
     Public/Math/GeometryTypes.h
     Public/Math/GeometryIntersection.h
     Public/Math/Curves.h

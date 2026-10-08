@@ -325,8 +325,13 @@ namespace NorvesLib::Core::Component
                 return true;
             if (!attachment->IsTickEnabled() || !entity->IsTickEnabled())
                 return true;
+            float dependencyDelta = dt;
+            auto* world = owner->GetWorld();
+            // World経由なら依存先自身のchannel/局所倍率を使う。直接呼出しは従来の完成済みdtを保つ。
+            if (world->HasActiveTickTimeContext() && !world->TryGetComponentTickDelta(*attachment, dependencyDelta))
+                return false;
             if (attachment == this || attachment->IsPendingDestroy() || !attachment->IsActive() ||
-                !attachment->UpdateAttachment(dt, frame, level + 1))
+                !attachment->UpdateAttachment(dependencyDelta, frame, level + 1))
                 return false;
             owner->GetWorld()->UpdateWorldTransforms();
             return true;

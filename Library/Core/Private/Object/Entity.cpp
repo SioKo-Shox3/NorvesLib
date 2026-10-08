@@ -172,6 +172,14 @@ namespace NorvesLib::Core
         Finalize();
     }
 
+    bool Entity::SetCustomTimeDilation(float value)
+    {
+        if (!std::isfinite(value) || value < 0)
+            return false;
+        m_CustomTimeDilation = value;
+        return true;
+    }
+
     void Entity::Initialize()
     {
         Object::Initialize();
@@ -369,6 +377,40 @@ namespace NorvesLib::Core
         }
 
         return m_CachedWorldTransform;
+    }
+
+    void Entity::SetRenderInterpolationEnabled(bool enabled)
+    {
+        m_bRenderInterpolationOverride = true;
+        if (m_bRenderInterpolationEnabled == enabled)
+            return;
+        m_bRenderInterpolationEnabled = enabled;
+        ResetRenderInterpolation();
+    }
+    void Entity::ClearRenderInterpolationOverride()
+    {
+        m_bRenderInterpolationOverride = false;
+        SetDefaultRenderInterpolationEnabled(m_bRenderInterpolationDefault);
+    }
+    void Entity::SetDefaultRenderInterpolationEnabled(bool enabled)
+    {
+        m_bRenderInterpolationDefault = enabled;
+        if (m_bRenderInterpolationOverride || m_bRenderInterpolationEnabled == enabled)
+            return;
+        m_bRenderInterpolationEnabled = enabled;
+        ResetRenderInterpolation();
+    }
+    const Math::Transform& Entity::GetRenderWorldTransform() const
+    {
+        return m_bRenderTransformValid && m_bUsesRenderInterpolation ? m_RenderWorldTransform : GetWorldTransform();
+    }
+    void Entity::ResetRenderInterpolation()
+    {
+        m_RenderHistory.Clear();
+        m_bRenderTransformValid = false;
+        for (auto* inner : GetInners())
+            if (auto* child = CastTo<Entity>(inner))
+                child->ResetRenderInterpolation();
     }
 
     bool Entity::GetWorldAABB(Math::AABB& outAABB) const

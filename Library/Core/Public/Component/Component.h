@@ -2,6 +2,7 @@
 
 #include "Object/Object.h"
 #include "Component/TickGroup.h"
+#include "Engine/TimeChannels.h"
 #include "Object/Entity.h"
 #include "Object/Reflection.h"
 #include "Container/Containers.h"
@@ -79,6 +80,10 @@ namespace NorvesLib::Core::Component
          * @param deltaTime 前フレームからの経過時間
          */
         virtual void Tick(float deltaTime);
+        virtual Engine::TimeChannel GetTimeChannel() const noexcept
+        {
+            return Engine::TimeChannel::World;
+        }
 
         // 既定では主群の呼び出しだけを旧Tickへ渡す。複数群を使う型は上書きする。
         virtual void OnTickGroup(ETickGroup group, float deltaTime);

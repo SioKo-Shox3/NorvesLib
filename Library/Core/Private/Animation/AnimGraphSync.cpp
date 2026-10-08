@@ -106,7 +106,8 @@ namespace NorvesLib::Core::Animation
             }
             const double previous = map.PhaseToTime(group.Phase + m_SyncOffsets[leader]),
                          current = previous + double(dt) * node.PlaybackRate * group.StrideRate;
-            const double phase = map.TimeToPhase(current) - m_SyncOffsets[leader];
+            // 時間が進まない時は往復変換の丸めで位相を動かさず、停止中のpoint再発火を防ぐ。
+            const double phase = current == previous ? group.Phase : map.TimeToPhase(current) - m_SyncOffsets[leader];
             if (!std::isfinite(current) || !std::isfinite(phase) || std::fabs(phase) > 4503599627370496.0)
                 return false;
             for (uint32_t i = 0; i < m_Graph->Nodes.size(); ++i)

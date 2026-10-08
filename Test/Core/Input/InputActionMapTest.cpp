@@ -279,6 +279,91 @@ int main()
         target.Detach();
         source.SetRouter(nullptr);
     }
+    {
+        InputSystem source;
+        InputRouter routes;
+        source.SetRouter(&routes);
+        InputMapper target(source.GetState());
+        auto definitions = Definitions();
+        InputActionDefinition trigger;
+        trigger.Id = "TriggerJump"_id;
+        trigger.Bindings = {Source(EInputBindingSource::GamepadTrigger, 0)};
+        assert(definitions.AddAction("Gameplay"_id, trigger));
+        assert(target.ConfigureWithContext(definitions, "Gameplay"_id));
+        target.Attach(routes);
+        assert(target.SetFixedButtonEventCapture("Jump"_id, true));
+        assert(target.SetFixedButtonEventCapture("TriggerJump"_id, true));
+        assert(!target.SetFixedButtonEventCapture("Move"_id, true));
+        Begin(source, target, 0);
+        for (int i = 0; i < 2; ++i)
+        {
+            source.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+            source.InjectKeyEvent(KeyCode::W, InputAction::Released);
+        }
+        Begin(source, target, .01);
+        Begin(source, target, .02);
+        InputButtonEvent event;
+        for (int i = 0; i < 4; ++i)
+        {
+            assert(target.ConsumeFixedButtonEvent("Jump"_id, event));
+            assert(event.Type == (i % 2 == 0 ? EInputButtonEventType::Pressed : EInputButtonEventType::Released));
+        }
+        assert(!target.ConsumeFixedButtonEvent("Jump"_id, event));
+        GamepadState pad;
+        pad.Connected = true;
+        assert(source.InjectGamepadState(0, pad, EGamepadSampleMode::Baseline));
+        pad.Triggers[0] = 1;
+        assert(source.InjectGamepadState(0, pad));
+        pad.Triggers[0] = 0;
+        assert(source.InjectGamepadState(0, pad));
+        assert(target.ConsumeFixedButtonEvent("TriggerJump"_id, event) && event.Type == EInputButtonEventType::Pressed);
+        assert(target.ConsumeFixedButtonEvent("TriggerJump"_id, event) &&
+               event.Type == EInputButtonEventType::Released);
+        source.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        assert(target.ConfigurePreservingContexts(definitions));
+        assert(!target.ConsumeFixedButtonEvent("Jump"_id, event));
+        source.InjectKeyEvent(KeyCode::W, InputAction::Released);
+        source.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        source.InjectKeyEvent(KeyCode::W, InputAction::Released);
+        assert(target.ConsumeFixedButtonEvent("Jump"_id, event) && event.Type == EInputButtonEventType::Pressed);
+        assert(target.ConsumeFixedButtonEvent("Jump"_id, event) && event.Type == EInputButtonEventType::Released);
+        source.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        const auto generation = target.GetCancellationGeneration();
+        target.SetFocused(false);
+        assert(target.GetCancellationGeneration() != generation);
+        assert(!target.ConsumeFixedButtonEvent("Jump"_id, event));
+        target.SetFocused(true);
+        assert(!target.ConsumeFixedButtonEvent("Jump"_id, event));
+        const auto beforeReconfigure = target.GetCancellationGeneration();
+        assert(target.ConfigurePreservingContexts(definitions));
+        assert(target.GetCancellationGeneration() != beforeReconfigure);
+        const auto beforeReset = target.GetCancellationGeneration();
+        target.CancelAll();
+        assert(target.GetCancellationGeneration() != beforeReset);
+        assert(target.SetFixedButtonEventCapture("Jump"_id, false));
+        target.Detach();
+        source.SetRouter(nullptr);
+    }
+    {
+        InputSystem source;
+        InputRouter routes;
+        InputMapper target(source.GetState());
+        assert(target.ConfigureWithContext(Definitions(), "Gameplay"_id));
+        target.Attach(routes);
+        assert(target.PushContext("Menu"_id));
+        const auto generation = target.GetCancellationGeneration();
+        assert(target.RemoveContext("Gameplay"_id));
+        assert(target.GetActiveContext() == "Menu"_id);
+        assert(target.GetCancellationGeneration() == generation);
+        assert(!target.RemoveContext("Gameplay"_id));
+        assert(target.PopContext() && !target.GetActiveContext().IsValid());
+        assert(target.PushContext("Gameplay"_id));
+        const auto beforeTopRemoval = target.GetCancellationGeneration();
+        assert(target.RemoveContext("Gameplay"_id));
+        assert(!target.GetActiveContext().IsValid());
+        assert(target.GetCancellationGeneration() != beforeTopRemoval);
+        target.Detach();
+    }
     std::cout << "InputActionMapTest passed\n";
     return 0;
 }

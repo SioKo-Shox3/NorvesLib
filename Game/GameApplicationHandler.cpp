@@ -1,20 +1,21 @@
 ﻿#include "GameApplicationHandler.h"
-#include "Input/GameHapticsSettings.h"
-#include "Core/Public/Logging/LogMacros.h"
+#include "Core/Public/Animation/AnimationClipResource.h"
+#include "Core/Public/Animation/SkeletalAssetResource.h"
+#include "Core/Public/Animation/SkeletonResource.h"
 #include "Core/Public/Asset/AssetSystem.h"
 #include "Core/Public/Asset/CookedAudioFormat.h"
 #include "Core/Public/Asset/CookedSkeletalFormat.h"
+#include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Engine/NorvesEngine.h"
-#include "Core/Public/Animation/AnimationClipResource.h"
-#include "Core/Public/Animation/SkeletonResource.h"
-#include "Core/Public/Animation/SkeletalAssetResource.h"
-#include "Core/Public/Object/World.h"
+#include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
-#include "Core/Public/Resource/SkinnedMeshResource.h"
-#include "Core/Public/Component/MeshComponent.h"
+#include "Core/Public/Object/World.h"
 #include "Core/Public/Rendering/RenderResources.h"
 #include "Core/Public/Rendering/RenderWorld.h"
+#include "Core/Public/Resource/SkinnedMeshResource.h"
+#include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
+#include "Input/GameHapticsSettings.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -485,6 +486,9 @@ namespace Game
 
         m_bHasTextureAssetRuntimeConfig = false;
         m_bAnimationDebugRequested = false;
+        m_bDogMovementSmoke = false;
+        m_DogDrive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
+        bool bHasCharacterDrive = false;
         m_bRendering3DTestUseCookedModel = false;
         m_bNoCookedTextures = false;
         m_TextureLooseAssetRoot = {};
@@ -832,6 +836,27 @@ namespace Game
                 continue;
             }
 
+            if (args[i] == TEXT("--dog-movement-smoke"))
+            {
+                if (m_bDogMovementSmoke)
+                {
+                    LOG_ERROR("--dog-movement-smoke が重複しています");
+                    return false;
+                }
+                m_bDogMovementSmoke = true;
+                continue;
+            }
+            const auto driveArgument = Gameplay::ParseCharacterDriveArgument(args[i].c_str(), m_DogDrive);
+            if (driveArgument != Gameplay::CharacterDriveArgumentResult::Unrecognized)
+            {
+                if (driveArgument == Gameplay::CharacterDriveArgumentResult::Invalid || bHasCharacterDrive)
+                {
+                    LOG_ERROR("--character-drive は fixed または variable を1回だけ指定してください");
+                    return false;
+                }
+                bHasCharacterDrive = true;
+                continue;
+            }
             if (args[i] == TEXT("--animation-debug"))
             {
                 m_bAnimationDebugRequested = true;
@@ -1422,6 +1447,11 @@ namespace Game
         // 第2段 B-i: --imgui 不変条件ゲート。値を取らない bare フラグの厳密一致を走査し、
         // NORVES_ENABLE_IMGUI ビルドで指定された場合のみ ImGui モジュールを登録する。
         // フラグ無し or OFF ビルドでは一切登録せず、overlay seam は完全 no-op を保つ。
+        if ((bHasCharacterDrive && !m_bDogMovementSmoke) || (m_bDogMovementSmoke && m_bAnimationDebugRequested))
+        {
+            LOG_ERROR("犬比較用引数は --dog-movement-smoke と組み合わせ、--animation-debug と併用しないでください");
+            return false;
+        }
 #if !defined(NORVES_ENABLE_IMGUI)
         if (m_bAnimationDebugRequested)
         {
@@ -2052,6 +2082,14 @@ namespace Game
         const bool bPhysicsSmoke = s_bRendering3DTestPhysicsSmoke;
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
         const Container::TWeakPtr<CameraLateUpdateSlot> lateCameraSlot = m_CameraLateUpdateSlot;
+        const auto dogDrive = m_DogDrive;
+        stateMachine->Registry().Register(
+            DogMovementSmoke, [lateCameraSlot, dogDrive](const GameModeParams&) -> Container::TUniquePtr<IGameMode> {
+                auto mode = MakeUnique<DogMovementSmokeMode>();
+                mode->GetData().LateSlot = lateCameraSlot;
+                mode->GetData().Drive = dogDrive;
+                return mode;
+            });
         stateMachine->Registry().Register(
             Rendering3DTest,
             [this, bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance,
@@ -2123,9 +2161,9 @@ namespace Game
         params.ModelPath = m_Rendering3DTestModelPath.empty()
                                ? String(kDefaultRendering3DTestModelPath)
                                : m_Rendering3DTestModelPath;
-        stateMachine->Start(Rendering3DTest, params);
+        stateMachine->Start(m_bDogMovementSmoke ? DogMovementSmoke : Rendering3DTest, params);
 
-        LOG_INFO("3Dレンダリングテストモードを開始します");
+        LOG_INFO(m_bDogMovementSmoke ? "犬の移動比較モードを開始します" : "3Dレンダリングテストモードを開始します");
 
         return stateMachine;
     }

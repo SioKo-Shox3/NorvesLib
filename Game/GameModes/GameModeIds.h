@@ -23,6 +23,9 @@ namespace Game::GameModes
     /// 3Dレンダリングテストモードの GameModeId
     inline constexpr NorvesLib::Core::GameMode::GameModeId Rendering3DTest = "Rendering3DTest"_id;
 
+    /// 固定/可変駆動と描画補間の比較用モード。明示フラグ時のみ起動する。
+    inline constexpr NorvesLib::Core::GameMode::GameModeId DogMovementSmoke = "DogMovementSmoke"_id;
+
     /// メモリ寿命テストモードの GameModeId
     inline constexpr NorvesLib::Core::GameMode::GameModeId MemoryAgingTest = "MemoryAgingTest"_id;
 

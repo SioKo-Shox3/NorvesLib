@@ -59,3 +59,37 @@ C≠I の fixture は明示補正式の独立 literal を比較する。補正�
 未写像の中間親・別root、非可換回転、半回転、位置 overflow による late refusal を含める。
 既存 Sampler の凍結 Debug/Release 6095byte と4採取、および旧 cook/managed gate は別途維持する。
 Windows/実GPU/実Blender の未実行結果を host テストで代用しない。
+
+## 動画由来モーションの調整
+
+`AssetCook --retarget-clip` は、role-profile の `time` と `processing` で動画由来の動きを調整できます。元BVH・元glTFは書き換えません。例えば16fps動画由来のBVHには `time: {"mode":"override_fps","source_fps":16}` を指定します。glTFの時刻は秒のため、このfps上書きはBVHだけに使います。
+
+既存profileの `processing` に指定する例:
+
+```json
+{
+  "output_fps": 60,
+  "loop_mode": "auto",
+  "minimum_period": 0.2,
+  "maximum_period": 2.0,
+  "extract_root_motion": true,
+  "spike_threshold_degrees": 35,
+  "spike_window": 2,
+  "smoothing_radius": 1,
+  "average_cycles": true,
+  "time_scale": 1.0,
+  "analyze_contacts": true,
+  "generate_foot_markers": true,
+  "desired_ground_speed": 0,
+  "derive_root_motion": false
+}
+```
+
+- 外れ値除去は周辺の回転との差と中央値/MADを使います。`spike_threshold_degrees: 0` で無効です。
+- `smoothing_radius` は前後のサンプル数です。ループ時は周期の境界をまたいで平滑化し、末尾キーを先頭と揃えます。`average_cycles` は検出した複数周期の関節回転を平均します。根の軌跡は平均しません。
+- `time_scale` は再生時間の倍率です。2なら長さが2倍になります。`desired_ground_speed` が正なら、接地中の足の動きから測った自然速度を目標速度へ合わせて再生時間を調整します。0ならこの補正をしません。
+- 接地解析はtarget roleの4脚のPawを使います。最低の足位置と鉛直速度による平地の推定なので、段差や特殊動作は実際の動きを見て調整してください。足を固定するIKは行いません。
+- `generate_foot_markers` は接地windowをeventへ入れ、既存markerが無い場合だけ `role_down` / `role_up` を生成します。同時刻markerは既存形式で重ねられないため、重なった分を省いた数と全接地windowをreportへ残します。手作業のmarkerは保持します。
+- `derive_root_motion` は前進軌跡がほぼ無い素材にだけ、自然速度から軌跡を導出します。実際の前進軌跡がある素材は保持します。根の抽出も有効にして使ってください。
+
+調整を指定したcookでは、packageと同じ場所に `.motion_report.json` を出力します。スパイク置換数、平滑化、周期平均、接地window、自然速度、足滑りのばらつき、導出軌跡の有無を記録します。`needs_review` は調整の目安で、見た目の合否を自動判定するものではありません。自然速度・接地は素材によって変わるので、上の数値は調整の開始点です。

@@ -8,7 +8,7 @@ on:
         description: '今回まとめて検証するGR'
         required: true
         type: choice
-        options: [GR10, GR11, GR12, GR13]
+        options: [GR02, GR10, GR11, GR12, GR13]
       scope_complete:
         description: '実装・レビュー・関連修正をまとめた区切りである（個別修正の再試行には使わない）'
         required: true
@@ -94,6 +94,23 @@ jobs:
         run: |
           ctest --test-dir build/animation -C Release -V --output-on-failure -R '^(GLTFSkeletalAnalyzerTest|CookedSkeletalAssetTest|SkeletalResourceLifetimeTest|SkeletalFramePacketSnapshotTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/regression-tests.log"
           if ($LASTEXITCODE -ne 0) { throw 'Skeletal regression tests failed' }
+      - name: GR02の時間管理・入力・描画補間をビルドする
+        if: ${{ inputs.gr_id == 'GR02' }}
+        run: |
+          cmake --build build/animation --config Release --target ApplicationFixedStepPipelineTest EntityTreeTest LoggerSinkTest PhysicsDynamicsTest WorldCameraSyncTest CameraComponentProxyTest RenderingGoldenImageTest -- /m:2 2>&1 | Tee-Object "$env:NORVES_CI_LOG/gr02-build.log"
+          if ($LASTEXITCODE -ne 0) { throw 'GR02 build failed' }
+      - name: GR02の時間管理・入力・描画補間をまとめて検証する
+        if: ${{ inputs.gr_id == 'GR02' }}
+        run: |
+          $tests = '^(TimeScaleMathTest|TimeSystemTest|FixedStepSchedulerTest|ApplicationFixedStepPipelineTest|RenderInterpolationCadenceTest|InputFramePipelineTest|WorldTimeChannelTest|WorldRenderInterpolationTest|WorldTickGroupTest|SpringArmComponentTest|RenderTransformHistoryTest|InputButtonStateTest|InputActionRuntimeTest|CameraInputResetTest|PhysicsFixedStepPipelineTest|CharacterDriveOptionsTest|DogMovementSmokeGeometryTest|WorldCameraSyncTest|CameraComponentProxyTest)$'
+          ctest --test-dir build/animation -C Release -V --output-on-failure --no-tests=error --output-junit "$env:NORVES_CI_LOG/gr02-tests.xml" -R $tests 2>&1 | Tee-Object "$env:NORVES_CI_LOG/gr02-tests.log"
+          if ($LASTEXITCODE -ne 0) { throw 'GR02 tests failed' }
+      - name: GR02の既定描画回帰を確認する
+        if: ${{ inputs.gr_id == 'GR02' }}
+        run: |
+          # GPUが無い場合の125はCTestのskipとして記録し、描画検証の成功と区別する。
+          ctest --test-dir build/animation -C Release -V --output-on-failure --no-tests=error --output-junit "$env:NORVES_CI_LOG/gr02-golden-tests.xml" -R '^(RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/gr02-golden-tests.log"
+          if ($LASTEXITCODE -ne 0) { throw 'GR02 golden tests failed' }
       - name: 合成デバッグ画面のGameをビルドする
         run: |
           cmake --build build/animation --config Release --target Game -- /m:2 2>&1 | Tee-Object "$env:NORVES_CI_LOG/game-build.log"

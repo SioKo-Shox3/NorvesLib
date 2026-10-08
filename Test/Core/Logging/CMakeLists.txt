@@ -47,6 +47,12 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER IdentityLiteralTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/IdentityLiteralTest.cpp
     MEMBER JsonWriterTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonWriterTest.cpp
     MEMBER JsonUnicodeScalarTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonUnicodeScalarTest.cpp
+    MEMBER CriticalDampingTest ${CMAKE_SOURCE_DIR}/Test/Core/Math/CriticalDampingTest.cpp
+    MEMBER RenderTransformHistoryTest ${CMAKE_SOURCE_DIR}/Test/Core/Object/RenderTransformHistoryTest.cpp
+    MEMBER RootMotionTimeQueueTest RootMotionTimeQueueTest.cpp
+    MEMBER CameraCollisionSolverTest ${CMAKE_SOURCE_DIR}/Test/Core/Camera/CameraCollisionSolverTest.cpp
+    MEMBER QuadrupedLocomotionModelTest ${CMAKE_SOURCE_DIR}/Test/Core/Locomotion/QuadrupedLocomotionModelTest.cpp
+    MEMBER LocomotionProfileReloadTest ${CMAKE_SOURCE_DIR}/Test/Core/Locomotion/LocomotionProfileReloadTest.cpp
     SOURCES
         ${CMAKE_SOURCE_DIR}/Game/Input/CameraInputCollector.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
@@ -61,3 +67,10 @@ target_include_directories(LoggerSinkTest PRIVATE
 
 include(CTest)
 add_test(NAME LoggerSinkTest COMMAND LoggerSinkTest)
+
+add_test(NAME CriticalDampingTest COMMAND LoggerSinkTest --test=CriticalDampingTest)
+add_test(NAME QuadrupedLocomotionModelTest COMMAND LoggerSinkTest --test=QuadrupedLocomotionModelTest)
+add_test(NAME LocomotionProfileReloadTest COMMAND LoggerSinkTest --test=LocomotionProfileReloadTest)
+add_test(NAME CameraCollisionSolverTest COMMAND LoggerSinkTest --test=CameraCollisionSolverTest)
+add_test(NAME RenderTransformHistoryTest COMMAND LoggerSinkTest --test=RenderTransformHistoryTest)
+add_test(NAME RootMotionTimeQueueTest COMMAND LoggerSinkTest --test=RootMotionTimeQueueTest)

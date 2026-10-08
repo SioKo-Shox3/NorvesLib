@@ -6,6 +6,9 @@
 #include "Rendering/FramePacket.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/ViewRenderPlan.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cmath>
 #include <iostream>

@@ -707,12 +707,31 @@ namespace NorvesLib::Core::Container
             if (pos > m_size)
                 throw std::out_of_range("TString::replace: position out of range");
 
+            if (this == &str)
+            {
+                TString copy(str.size(), CharT{});
+                if (str.size() > 0)
+                    std::memcpy(copy.m_data, str.m_data, str.size() * sizeof(CharT));
+                return replace(pos, count, copy);
+            }
             const size_type actualCount = std::min(count, m_size - pos);
-            const size_type newSize = m_size - actualCount + str.size();
+            const size_type retainedSize = m_size - actualCount;
+            if (str.size() > max_size() - retainedSize)
+                throw std::length_error("TString::replace: result too large");
+            const size_type newSize = retainedSize + str.size();
 
             if (newSize > m_capacity)
             {
-                Reserve(CalculateGrowth(newSize));
+                // 長さ指定の置換では埋込NULも保持する。
+                const size_type capacity = CalculateGrowth(newSize);
+                pointer data = m_allocator.allocate(capacity + 1);
+                if (m_size > 0)
+                    std::memcpy(data, m_data, m_size * sizeof(CharT));
+                data[m_size] = CharT{};
+                if (m_data)
+                    m_allocator.deallocate(m_data, m_capacity + 1);
+                m_data = data;
+                m_capacity = capacity;
             }
 
             // 置換後の部分を後ろに移動
@@ -730,11 +749,13 @@ namespace NorvesLib::Core::Container
             // 新しい文字列をコピー
             if (str.size() > 0)
             {
-                StringCopy(m_data + pos, str.m_data, str.size());
+                // 途中の置換では終端を書かず、後続文字を保持する。
+                std::memcpy(m_data + pos, str.m_data, str.size() * sizeof(CharT));
             }
 
             m_size = newSize;
-            m_data[m_size] = CharT{};
+            if (m_data)
+                m_data[m_size] = CharT{};
 
             return *this;
         }

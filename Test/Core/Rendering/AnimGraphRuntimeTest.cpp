@@ -742,6 +742,45 @@ namespace
         GRAPH_CHECK(!A::AnalyzeFootContacts(context, *f.AClip, {&invalidSpec, 1}, {}, contact));
     }
 
+    void TestSyncHitStopKeepsPointEventsStopped()
+    {
+        GraphFixture f;
+        auto a = f.AClip->GetClip(), b = f.BClip->GetClip();
+        a.Metadata.Markers = {{Identity("left"), 0}, {Identity("right"), .94034773111343384f}};
+        b.Metadata.Markers = {{Identity("left"), 0}, {Identity("right"), .087595060467720032f}};
+        b.Metadata.Events = {{Identity("hitStopEdge"), .87809914350509644f, -1, 0}};
+        a.Metadata.Root.Mode = b.Metadata.Root.Mode = A::RootMotionMode::Extract;
+        a.RootMotionJoint = b.RootMotionJoint = 0;
+        a.RootMotion = {{0, 0, 0, 0}, {.5f, 1234.5, 1452.3, .7}, {1, 1236.5, 1452.3, .9}};
+        b.RootMotion = {{0, 0, 0, 0}, {.5f, 33, 18, .7}, {1, 35, 18, .9}};
+        f.AClip->SetClip(std::move(a));
+        f.BClip->SetClip(std::move(b));
+        auto graph = f.Graph(
+            R"({"version":1,"params":[{"name":"blend","type":"float","value":0.75}],"nodes":[{"id":"a","type":"clip","clip":"a","syncGroup":"gait"},{"id":"b","type":"clip","clip":"b","syncGroup":"gait"},{"id":"mix","type":"blend2","children":["a","b"],"weight":"blend"}],"root":"mix"})");
+        A::AnimGraphInstance instance;
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        unsigned count = 0;
+        instance.Events().OnEvent.Add([&](const A::AnimEventInfo& event) {
+            if (event.Name == Identity("hitStopEdge"))
+                ++count;
+        });
+        GRAPH_CHECK(instance.Update(.87809914350509644f));
+        instance.Events().Dispatch();
+        GRAPH_CHECK(count == 1);
+        (void)instance.ConsumeRootMotion();
+        for (unsigned frame = 0; frame < 100; ++frame)
+        {
+            GRAPH_CHECK(instance.Parameters().SetFloat(0, frame % 2 ? .75f : .25f));
+            GRAPH_CHECK(instance.Update(0));
+            instance.Events().Dispatch();
+            GRAPH_CHECK(count == 1);
+            for (const auto& traversal : instance.GetTraversals())
+                GRAPH_CHECK(traversal.Previous == traversal.Current);
+            const auto root = instance.ConsumeRootMotion();
+            GRAPH_CHECK(root.X == 0 && root.Z == 0 && root.Yaw == 0);
+        }
+    }
+
     void TestAnimationSyncRuntime()
     {
         GraphFixture f;
@@ -1140,6 +1179,70 @@ namespace
         world.Finalize();
     }
 
+    class SocketTimeProbe final : public Component::SocketAttachmentComponent
+    {
+      public:
+        Engine::TimeChannel Channel = Engine::TimeChannel::World;
+        Engine::TimeChannel GetTimeChannel() const noexcept override
+        {
+            return Channel;
+        }
+    };
+    void TestSocketDependencyTimeDilation()
+    {
+        for (bool reverse : {false, true})
+            for (bool frameTimes : {false, true})
+                for (unsigned variant = 0; variant < 3; ++variant)
+                {
+                    GraphFixture f;
+                    A::SocketReport report;
+                    GRAPH_CHECK(f.Skeleton->ApplySocketsJson(
+                        C::String(R"({"sockets":[{"name":"Mouth","parent":"Root"}]})"), report));
+                    World world;
+                    world.Initialize();
+                    auto* first = world.SpawnEntity<Entity>();
+                    auto* second = world.SpawnEntity<Entity>();
+                    auto* a = reverse ? second : first;
+                    auto* t = reverse ? first : second;
+                    auto* q = world.SpawnEntity<Entity>();
+                    for (auto* entity : {a, t, q})
+                    {
+                        auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(entity);
+                        mesh->SetSkeletalAsset(f.Asset);
+                        mesh->SetPlaying(false);
+                    }
+                    GRAPH_CHECK(a->SetCustomTimeDilation(variant == 1 ? 0 : .25f) && t->SetCustomTimeDilation(.5f));
+                    auto* aa = world.CreateComponent<SocketTimeProbe>(a);
+                    auto* ta = world.CreateComponent<SocketTimeProbe>(t);
+                    if (variant == 2)
+                    {
+                        aa->Channel = Engine::TimeChannel::Unscaled;
+                        ta->Channel = Engine::TimeChannel::Animation;
+                    }
+                    q->SetPosition(10, 0, 0);
+                    GRAPH_CHECK(ta->Attach(q->GetObjectId(), Identity("Mouth"), {}, 1));
+                    GRAPH_CHECK(aa->Attach(t->GetObjectId(), Identity("Mouth"), {}, 0));
+                    if (frameTimes)
+                    {
+                        Engine::FrameTimes times;
+                        times.Unscaled = .2f;
+                        times.World = .1f;
+                        times.Animation = .06f;
+                        world.Tick(times);
+                        world.LateTick(times);
+                    }
+                    else
+                    {
+                        world.Tick(.1f);
+                        world.LateTick(.1f);
+                    }
+                    const float expected = frameTimes && variant == 2 ? .3f : .5f;
+                    NearGraph(t->GetWorldTransform().position.x, expected);
+                    NearGraph(a->GetWorldTransform().position.x, expected);
+                    world.Finalize();
+                }
+    }
+
     void TestHoldProfileScript()
     {
         GraphFixture f;
@@ -1239,6 +1342,7 @@ void TestAnimGraphRuntime()
     TestAnimationEventRuntime();
     TestRootMotionRuntime();
     TestAnimationSyncRuntime();
+    TestSyncHitStopKeepsPointEventsStopped();
     TestStrideAndFootSpeed();
     TestRootMotionRegressions();
     TestMotionAnalysisRuntime();
@@ -1251,6 +1355,7 @@ void TestAnimGraphRuntime()
     TestSocketsAndHoldSlots();
     TestSocketAttachmentRuntime();
     TestSocketDependencyOrder();
+    TestSocketDependencyTimeDilation();
     TestHoldProfileScript();
     BenchmarkAnimGraph();
     std::puts("AnimGraphRuntimeTest PASS");

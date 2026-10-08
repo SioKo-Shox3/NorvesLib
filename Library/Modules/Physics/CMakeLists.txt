@@ -1,6 +1,9 @@
 ﻿set(MODULE_NAME NorvesModule_Physics)
 
 set(PHYSICS_PUBLIC_HEADERS
+    Public/Physics/CharacterMoveSettings.h
+    Public/Physics/CharacterBodyTypes.h
+    Public/Physics/CharacterBodyComponent.h
     Public/Physics/ColliderComponent.h
     Public/Physics/IPhysicsModule.h
     Public/Physics/PhysicsTypes.h
@@ -8,6 +11,14 @@ set(PHYSICS_PUBLIC_HEADERS
 )
 
 set(PHYSICS_PRIVATE_SOURCES
+    Private/Physics/CharacterBodyComponent.cpp
+    Private/Physics/CharacterPlatformMotion.h
+    Private/Physics/CharacterPlatformMotion.cpp
+    Private/Physics/PhysicsModuleCharacter.cpp
+    Private/Physics/CharacterMover.h
+    Private/Physics/CharacterMover.cpp
+    Private/Physics/ColliderShapeTransform.h
+    Private/Physics/ColliderShapeTransform.cpp
     Private/Physics/ColliderComponent.cpp
     Private/Physics/PhysicsBroadphase.cpp
     Private/Physics/PhysicsModule.cpp

@@ -1,14 +1,15 @@
 ﻿#pragma once
 
-#include "Object.h"
-#include "Object/EntityHandle.h"
-#include "Reflection.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Math/GeometryTypes.h"
+#include "Math/Quaternion.h"
 #include "Math/Transform.h"
 #include "Math/Vector3.h"
-#include "Math/Quaternion.h"
+#include "Object.h"
+#include "Object/EntityHandle.h"
+#include "Reflection.h"
+#include "Scene/RenderTransformHistory.h"
 #include <cstdint>
 
 namespace NorvesLib::Core
@@ -200,6 +201,22 @@ namespace NorvesLib::Core
          * @brief ワールドトランスフォームを取得
          */
         const Math::Transform& GetWorldTransform() const;
+        // 描画専用。opt-in root以下だけ補間し、物理/joint/AABBのworld姿勢は変更しない。
+        // 明示ON/OFFはsubsystem由来の既定値より優先する。falseの明示も記録する。
+        void SetRenderInterpolationEnabled(bool enabled);
+        void ClearRenderInterpolationOverride();
+        void SetDefaultRenderInterpolationEnabled(bool enabled);
+        bool IsRenderInterpolationEnabled() const
+        {
+            return m_bRenderInterpolationEnabled;
+        }
+        const Math::Transform& GetRenderWorldTransform() const;
+        uint64_t GetRenderTransformVersion() const
+        {
+            return m_RenderTransformVersion;
+        }
+        // Teleport・駆動切替で子孫の履歴も切る。次の捕捉で新姿勢に揃える。
+        void ResetRenderInterpolation();
 
         /**
          * @brief このEntityに属するMeshComponentのワールドAABBを取得
@@ -278,6 +295,12 @@ namespace NorvesLib::Core
          * @param deltaTime 前フレームからの経過時間（秒）
          */
         virtual void Tick(float deltaTime) {}
+        // 実行時の局所倍率。親子へは継承せず、World/Animationだけに適用する。
+        bool SetCustomTimeDilation(float value);
+        float GetCustomTimeDilation() const
+        {
+            return m_CustomTimeDilation;
+        }
 
         /**
          * @brief 更新が有効かどうか
@@ -343,13 +366,24 @@ namespace NorvesLib::Core
         // オブジェクトID（World内でユニーク）
         PROPERTY(uint64_t, ObjectId)
 
+        float m_CustomTimeDilation = 1;
         Math::Transform m_LocalTransform;
         Math::Transform m_CachedWorldTransform;
         bool m_bWorldTransformDirty = true;
         uint64_t m_TransformVersion = 1;
         EntityHandle m_EntityHandle;
+        Scene::RenderTransformHistory m_RenderHistory;
+        Math::Transform m_RenderWorldTransform;
+        bool m_bRenderInterpolationEnabled = false;
+        bool m_bRenderInterpolationDefault = false;
+        bool m_bRenderInterpolationOverride = false;
+        bool m_bRenderInterpolationInherited = false;
+        bool m_bUsesRenderInterpolation = false;
+        bool m_bRenderTransformValid = false;
+        uint64_t m_RenderTransformVersion = 1;
+        uint64_t m_RenderParentId = 0;
 
-    private:
+      private:
         friend class World;
         void RemoveComponentImmediately(Component::Component* component);
         void MarkRenderStateDirtyRecursive();

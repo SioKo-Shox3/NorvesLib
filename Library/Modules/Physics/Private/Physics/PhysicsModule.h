@@ -1,15 +1,17 @@
 ﻿#pragma once
 
+#include "Container/Containers.h"
+#include "Physics/CharacterMover.h"
 #include "Physics/IPhysicsModule.h"
 #include "Physics/PhysicsBroadphase.h"
 #include "Physics/PhysicsTypes.h"
-#include "Container/Containers.h"
 #include "Scene/SceneQuery.h"
 #include "Thread/Thread.h"
 
 namespace NorvesLib::Modules::Physics
 {
     class ColliderComponent;
+    class CharacterBodyComponent;
     class RigidBodyComponent;
     class PhysicsModuleTestAccess;
 
@@ -85,6 +87,11 @@ namespace NorvesLib::Modules::Physics
         };
 
         friend class ColliderComponent;
+        friend class CharacterBodyComponent;
+        EPhysicsResult ValidateCharacterAccess(const CharacterBodyComponent& character) const;
+        void ProcessCharacterBodies(float dt, CharacterBodyComponent* onlyVariable = nullptr);
+        void ProcessVariableCharacter(CharacterBodyComponent& character, float dt);
+        void DispatchCharacterEvents();
         friend class RigidBodyComponent;
         friend class PhysicsModuleTestAccess;
 
@@ -95,6 +102,7 @@ namespace NorvesLib::Modules::Physics
         EPhysicsResult SetColliderSphere(ColliderComponent& component, float radius);
         EPhysicsResult SetColliderBox(ColliderComponent& component, const Math::Vector3& halfExtents);
         EPhysicsResult SetColliderCapsule(ColliderComponent& component, float radius, float halfHeight);
+        EPhysicsResult SetColliderLocalPose(ColliderComponent& component, const Math::Transform& localPose);
         EPhysicsResult SetColliderTrigger(ColliderComponent& component, bool bTrigger);
         EPhysicsResult SetColliderLayer(ColliderComponent& component, Core::Scene::PhysicsCollisionMask layer);
         EPhysicsResult SetColliderMask(ColliderComponent& component, Core::Scene::PhysicsCollisionMask mask);
@@ -116,6 +124,7 @@ namespace NorvesLib::Modules::Physics
         bool IsColliderLifecycleActive(const ColliderSlot& collider) const;
         void DiscardBodyStepState(BodySlot& body);
         void ReconcileActiveStates();
+        void UpdateRenderInterpolationDefault(BodySlot& body);
         void IntegrateDynamics(float fixedDeltaTime);
         void ResolveContacts(float fixedDeltaTime);
         void BuildEventQueue();
@@ -163,10 +172,14 @@ namespace NorvesLib::Modules::Physics
         bool m_bBound = false;
         bool m_bInitialized = false;
         bool m_bFixedTickInProgress = false;
+        bool m_bVariableCharacterInProgress = false;
+        bool m_bCharacterInputInProgress = false;
         bool m_bHasPublishedSnapshot = false;
         uint64_t m_PublishedSnapshotSequence = 0;
         Core::Container::VariableArray<ColliderSlot> m_ColliderSlots;
         Core::Container::VariableArray<BodySlot> m_BodySlots;
+        Core::Container::VariableArray<PhysicsShapeProxy> m_CharacterQueryProxies;
+        CharacterMoveScratch m_CharacterScratch;
         Core::Container::VariableArray<uint32_t> m_FreeColliderSlotIndices;
         Core::Container::VariableArray<uint32_t> m_FreeBodySlotIndices;
         EPhysicsDiagnostic m_LastDiagnostic = EPhysicsDiagnostic::None;

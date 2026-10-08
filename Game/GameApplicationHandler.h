@@ -1,8 +1,9 @@
 ﻿#pragma once
 
-#include <cstdint>
 #include "CameraLateUpdate.h"
+#include "Gameplay/CharacterDriveOptions.h"
 #include "Input/GameInputSettings.h"
+#include <cstdint>
 
 #include "Core/Public/Application/ApplicationHandlerBase.h"
 
@@ -194,6 +195,9 @@ namespace Game
         Game::Bridge::BridgeRuntimeState m_BridgeRuntimeState = Game::Bridge::BridgeRuntimeState::Edit;
 
         bool m_bAnimationDebugRequested = false;
+        bool m_bDogMovementSmoke = false;
+        NorvesLib::Modules::Physics::CharacterDriveMode m_DogDrive =
+            NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
 #if defined(NORVES_ENABLE_IMGUI)
         bool m_bImGuiRequested = false;
         bool m_bEngineStatsImGuiViewRegistered = false;

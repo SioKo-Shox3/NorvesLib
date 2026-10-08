@@ -1000,6 +1000,14 @@ namespace NorvesLib::Core::Engine
             NORVES_LOG_ERROR("SkeletalAssets", "実行中の骨格sessionがあるため再初期化を拒否します");
             return false;
         }
+        uint32_t fixedRate = config.FixedUpdateRateHz;
+        for (const auto& argument : config.Arguments)
+        {
+            if (ParseFixedUpdateRateArgument(argument.c_str(),fixedRate)==FixedUpdateArgumentResult::Invalid)
+            { LOG_ERROR("固定更新の起動引数には60または120を指定してください");return false; }
+        }
+        if (!m_FixedStepScheduler->SetRate(fixedRate))
+        { LOG_ERROR("固定更新の設定が不正か、既に実行中です");return false; }
         GApplicationLifecycleState = {};
         GApplicationLifecycleState.Processor = this;
         ApplicationInitializeTransaction transaction(*this);
@@ -1533,6 +1541,8 @@ namespace NorvesLib::Core::Engine
         {
             GApplicationLifecycleState.bWorld = true;
             GEngine->GetWorld().Initialize();
+            GEngine->GetWorld().SetRenderInterpolationAllowed(!bCaptureDeterministic &&
+                                                              !pathTracingSequenceFrame.bEnabled);
 
             // WorldにメインSceneViewを設定
             auto &coordinator = GEngine->GetRenderWorld().GetRenderingCoordinator();
@@ -1624,6 +1634,11 @@ namespace NorvesLib::Core::Engine
     {
         LOG_ERROR("ApplicationProcessor::Initialize() - initialization threw an exception");
         return false;
+    }
+
+    uint32_t ApplicationProcessor::GetFixedUpdateRateHz() const
+    {
+        return m_FixedStepScheduler->GetRate();
     }
 
     int ApplicationProcessor::Run()
@@ -2420,20 +2435,43 @@ namespace NorvesLib::Core::Engine
         int64_t rawDeltaNanoseconds, float deltaTime, bool bAdvanceSimulation,
         Application::IApplicationHandler* handler)
     {
-        if (bAdvanceSimulation)
+        auto& timeSystem = GEngine->GetTimeSystem();
+        if (timeSystem.BeginFrame(rawDeltaNanoseconds, deltaTime, bAdvanceSimulation) != TimeSystemResult::Success)
         {
-            GEngine->UpdateGameModeStateMachine(deltaTime);
-            GEngine->GetWorld().Tick(deltaTime);
-            GEngine->GetParticleSystem().Tick(deltaTime);
+            LOG_ERROR("時間倍率の計算に失敗したためシミュレーションを停止します");
+            GEngine->RequestExit(1);
+            return {EFixedStepAdvanceStatus::InvalidDelta, 0, 0, m_FixedStepScheduler->GetRemainderScaledUnits()};
         }
-        const FixedStepAdvanceResult result = AdvanceFixedSimulation(rawDeltaNanoseconds, bAdvanceSimulation);
+        const auto times = timeSystem.GetFrameTimes();
+        auto& timing = GEngine->m_FixedStepFrameTiming;
+        if (timing.Serial == std::numeric_limits<uint64_t>::max())
+        {
+            GEngine->RequestExit(1);
+            return {EFixedStepAdvanceStatus::InvalidDelta, 0, 0, m_FixedStepScheduler->GetRemainderScaledUnits()};
+        }
+        const uint64_t serial = timing.Serial + 1;
+        timing = {};
+        timing.Serial = serial;
+        timing.Rate = m_FixedStepScheduler->GetRate();
+        timing.InputNanoseconds = times.PhysicsDeltaNanoseconds;
+        timing.StartRemainderScaledUnits = m_FixedStepScheduler->GetRemainderScaledUnits();
         if (bAdvanceSimulation)
         {
-            GEngine->GetWorld().LateTick(deltaTime);
-            Module::GetModuleRegistry().DispatchLateTick(deltaTime);
+            GEngine->UpdateGameModeStateMachine(times.Unscaled);
+            GEngine->GetWorld().Tick(times);
+            GEngine->GetParticleSystem().Tick(times.Particle);
+        }
+        const FixedStepAdvanceResult result =
+            AdvanceFixedSimulation(times.PhysicsDeltaNanoseconds, bAdvanceSimulation, &timing);
+        (void)GEngine->GetWorld().SetRenderInterpolationAlpha(static_cast<float>(result.RemainderScaledUnits) /
+                                                              1'000'000'000.0f);
+        if (bAdvanceSimulation)
+        {
+            GEngine->GetWorld().LateTick(times);
+            Module::GetModuleRegistry().DispatchLateTick(times.Unscaled);
             if (handler)
             {
-                handler->OnLateUpdate(deltaTime);
+                handler->OnLateUpdate(times.Unscaled);
             }
         }
         return result;
@@ -2492,25 +2530,32 @@ namespace NorvesLib::Core::Engine
 
     FixedStepAdvanceResult ApplicationProcessor::AdvanceFixedSimulation(
         int64_t rawDeltaNanoseconds,
-        bool bAdvanceSimulation)
+        bool bAdvanceSimulation, FixedStepFrameTiming* timing)
     {
         FixedStepAdvanceResult result = m_FixedStepScheduler->Advance(
             rawDeltaNanoseconds,
             bAdvanceSimulation);
+        if (timing)
+        {
+            timing->Advance = result;
+            timing->bScheduled = true;
+        }
         if (result.Status != EFixedStepAdvanceStatus::Advanced || result.ExecutedSteps == 0)
         {
             return result;
         }
 
-        constexpr float FixedDeltaTime = 1.0f / 60.0f;
+        const float FixedDeltaTime = m_FixedStepScheduler->GetDeltaSeconds();
         for (uint64_t step = 0; step < result.ExecutedSteps; ++step)
         {
             World& world = GEngine->GetWorld();
             world.UpdateWorldTransforms();
+            world.PrepareRenderInterpolationStep();
             Module::GetModuleRegistry().DispatchPreFixedTick(FixedDeltaTime);
             world.DispatchFixedTick(FixedDeltaTime);
             Module::GetModuleRegistry().DispatchFixedTick(FixedDeltaTime);
             world.UpdateWorldTransforms();
+            world.CaptureRenderInterpolationStep();
             world.CleanupAfterFixedStep();
         }
 

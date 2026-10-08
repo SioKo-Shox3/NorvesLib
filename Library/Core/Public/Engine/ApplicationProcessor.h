@@ -24,6 +24,7 @@ namespace NorvesLib::Core::Engine
 {
     class FixedStepScheduler;
     struct FixedStepAdvanceResult;
+    struct FixedStepFrameTiming;
     struct ApplicationFixedStepTestAccess;
     struct ApplicationInputFrameTestAccess;
     struct ApplicationInputFocusTestAccess;
@@ -62,6 +63,9 @@ namespace NorvesLib::Core::Engine
          * @return 終了コード
          */
         int Run();
+
+        // 現在の固定更新設定（60または120Hz）。
+        uint32_t GetFixedUpdateRateHz() const;
 
         /**
          * @brief アプリケーションを終了
@@ -114,7 +118,7 @@ namespace NorvesLib::Core::Engine
         float ClampVariableDeltaTime(int64_t rawDeltaNanoseconds) const;
         FixedStepAdvanceResult AdvanceFixedSimulation(
             int64_t rawDeltaNanoseconds,
-            bool bAdvanceSimulation);
+            bool bAdvanceSimulation, FixedStepFrameTiming* timing = nullptr);
 
         /**
          * @brief GEngineを作成・初期化

@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Engine/TimeChannels.h"
 
 #include "Object.h"
 #include "Reflection.h"
@@ -212,8 +213,17 @@ namespace NorvesLib::Core
          * @param deltaTime 前フレームからの経過時間（秒）
          */
         void Tick(float deltaTime);
+        void Tick(const Engine::FrameTimes& times);
         // 同じフレームの収集結果を用い、物理後の群を実行する。再収集はしない。
         void LateTick(float deltaTime);
+        void LateTick(const Engine::FrameTimes& times);
+        // 現在の可変dispatchだけを問い合わせる。dt0は成功、失敗時outは保持する。
+        // 時間解決は更新の許可ではなく、active/tick/pending判定は呼出側が行う。
+        bool TryGetComponentTickDelta(const Component::Component& component, float& out) const;
+        bool HasActiveTickTimeContext() const
+        {
+            return m_bHasActiveTickTime;
+        }
 
         /**
          * @brief 描画先SceneViewを設定
@@ -249,6 +259,13 @@ namespace NorvesLib::Core
          * @brief Entity階層のワールドトランスフォームを更新
          */
         void UpdateWorldTransforms();
+        // 固定stepの前後で呼ぶ。描画alphaの適用はCamera群より前に行う。
+        void PrepareRenderInterpolationStep();
+        void CaptureRenderInterpolationStep();
+        bool SetRenderInterpolationAlpha(float alpha);
+        void SetRenderInterpolationAllowed(bool allowed);
+        void UpdateRenderTransforms();
+
         uint64_t GetTickSerial() const noexcept { return m_TickSerial; }
 
     private:
@@ -260,10 +277,23 @@ namespace NorvesLib::Core
             return m_bDispatchingTicks || m_bCleaningObjects;
         }
         uint64_t m_TickSerial = 0;
+        float m_RenderInterpolationAlpha = 1;
+        bool m_bRenderInterpolationAllowed = true;
+        void UpdateInterpolationHistoryRecursive(Entity& entity, bool capture);
+        void UpdateRenderTransformRecursive(Entity& entity, const Math::Transform& parentRender,
+                                            bool parentInterpolated);
+
         void BuildTickSnapshot();
         void CollectTickEntries(Entity& entity, size_t& ordinal);
         bool CanDispatchEntity(const Entity& entity) const;
-        void DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime);
+        const Engine::FrameTimes* m_ActiveTickTimes = nullptr;
+        float m_ActiveTickDelta = 0;
+        bool m_bHasActiveTickTime = false;
+        bool TryResolveTickDelta(const Entity& owner, const Component::Component* component, float& out) const;
+        void TickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime);
+        void LateTickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime);
+        void DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime,
+                                const Engine::FrameTimes* times = nullptr);
         void InvalidateTickComponent(Component::Component& component);
         void InvalidateTickEntitySubtree(Entity& entity);
         void CollectPendingComponents(Entity& entity, Container::VariableArray<Component::Component*>& output);

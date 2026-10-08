@@ -23,6 +23,10 @@ namespace NorvesLib::Core::Component
         REFLECTION_CLASS(SpringArmComponent, Component)
 
     public:
+      Engine::TimeChannel GetTimeChannel() const noexcept override
+      {
+          return Engine::TimeChannel::Unscaled;
+      }
         SpringArmComponent();
         explicit SpringArmComponent(const FieldInitializer* initializer);
         explicit SpringArmComponent(const IUnknown* sourceObject);
@@ -65,7 +69,7 @@ namespace NorvesLib::Core::Component
 
     protected:
         Math::Vector3 ComputeArmOffset() const;
-        void DriveOwnerTransform(const Entity& pivot);
+        virtual void DriveOwnerTransform(const Entity& pivot);
 
         PROPERTY(uint64_t, PivotObjectId)
         PROPERTY(float, ArmLength)
