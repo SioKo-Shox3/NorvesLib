@@ -203,6 +203,16 @@ namespace Game::GameModes
         auto* world = &ctx.WorldRef;
         auto* render = &ctx.EngineRef.GetRenderWorld();
         auto* engine = &ctx.EngineRef;
+        character->OnLanded.Add(Delegate<void, const P::CharacterBodyState&>([weak, world](const P::CharacterBodyState&) {
+            auto state = weak.lock();
+            if (!state)
+                return;
+            auto* owner = world->FindEntityByObjectId(state->OwnerId);
+            auto* camera = owner ? owner->GetComponent<Gameplay::FollowCameraComponent>() : nullptr;
+            if (camera && camera->GetCameraTickCount())
+                camera->AddTrauma(.15f);
+        }));
+
         data.LateState->Callback = Delegate<void, float>([weak, world, render, engine](float) {
             auto state = weak.lock();
             CameraProxy proxy;

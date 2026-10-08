@@ -1120,6 +1120,7 @@ namespace
         if (follow->GetLastCollisionResult() != Camera::CameraCollisionResult::Success ||
             std::fabs(follow->GetCollisionOutput().EffectiveLength - 1.65f) > .01f)
             return false;
+        if (!follow->SetFollowSmoothing(0, 0)) return false;
         // queryの物理rootはx=0のままでも、Cameraは補間描画位置x=2を読む。
         world.PrepareRenderInterpolationStep();
         subject.Owner->SetPosition({4, subject.Owner->GetPosition().y, 0});

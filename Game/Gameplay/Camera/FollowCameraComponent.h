@@ -1,6 +1,8 @@
 ﻿#pragma once
+#include "Asset/TextAssetReloadTracker.h"
 #include "Camera/CameraCollisionSolver.h"
 #include "Component/SpringArmComponent.h"
+#include "Gameplay/Camera/FollowCameraProfile.h"
 #include "Input/InputMapper.h"
 #include "Math/Transform.h"
 namespace NorvesLib::Core::Scene
@@ -30,6 +32,20 @@ namespace Game::Gameplay
         bool SetSubject(NorvesLib::Core::Entity* visualRoot, NorvesLib::Core::Entity* physicsRoot);
         // 同じInput群の移動処理に最新視線を渡す専用root Entity。実カメラとは別にする。
         bool SetViewSource(NorvesLib::Core::Entity* view);
+        bool SetFollowSmoothing(float horizontalHalfLife, float verticalHalfLife);
+        bool SetProfilePath(NorvesLib::Core::Container::AnsiStringView path);
+        bool SetLockOnTarget(NorvesLib::Core::Entity* target, float radius = 0);
+        bool SetLockOnJoint(NorvesLib::Core::Entity* target, uint32_t jointIndex, float radius = 0);
+        void ClearLockOn()
+        {
+            m_LockOnId = 0;
+            m_LockJoint = UINT32_MAX;
+        }
+        void AddTrauma(float amount);
+        float GetSubjectFade() const
+        {
+            return m_SubjectFade;
+        }
         bool SetCollisionSettings(const NorvesLib::Core::Camera::CameraCollisionSettings& settings);
         // Camera群での更新試行数。late snapshotの姿勢再適用では増やさない。
         uint64_t GetCameraTickCount() const
@@ -51,7 +67,9 @@ namespace Game::Gameplay
 
       private:
         NorvesLib::Core::Entity* Resolve(uint64_t id) const;
-        void ReadLook();
+        void ReadLook(float dt);
+        void ReloadProfile(float dt);
+        float SubjectSpeed() const;
         void UpdateCamera(float dt);
         NorvesLib::Core::Input::InputMapper* m_Input = nullptr;
         const NorvesLib::Core::Scene::SceneQuery* m_Query = nullptr;
@@ -64,5 +82,14 @@ namespace Game::Gameplay
         NorvesLib::Math::Transform m_CachedPose;
         bool m_bHasPose = false;
         uint64_t m_CameraTickCount = 0;
+        FollowCameraProfile m_Profile;
+        NorvesLib::Core::Asset::TextAssetReloadTracker m_ProfileReload;
+        uint64_t m_LockOnId = 0;
+        uint32_t m_LockJoint = UINT32_MAX;
+        float m_LockRadius = 0;
+        NorvesLib::Math::Vector3 m_FollowPosition, m_FollowVelocity;
+        float m_TimeSinceLook = 0, m_YawVelocity = 0, m_FovVelocity = 0, m_FocusVelocity = 0;
+        float m_Trauma = 0, m_ShakeTime = 0, m_SubjectFade = 1;
+        bool m_bFollowInitialized = false, m_bProfileReadFailed = false;
     };
 } // namespace Game::Gameplay

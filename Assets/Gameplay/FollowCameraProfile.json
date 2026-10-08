@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "halfLives": {
+    "xz": 0.08,
+    "y": 0.18,
+    "yaw": 0.3,
+    "fov": 0.2,
+    "focus": 0.2
+  },
+  "yawReturnDelay": 1.5,
+  "minimumYawSpeed": 0.25,
+  "maximumArmLength": 12,
+  "speedEffects": {
+    "vRef": 6,
+    "armGain": 0.5,
+    "fovGain": 6,
+    "baseFov": 60,
+    "strength": 0.5
+  },
+  "collision": {
+    "probeRadius": 0.2,
+    "margin": 0.05,
+    "extendHalfLife": 0.3,
+    "maximumExtendSpeed": 4
+  },
+  "fade": {
+    "start": 0.4,
+    "end": 1
+  },
+  "trauma": {
+    "decay": 1.5,
+    "strength": 0.5,
+    "yaw": 1.5,
+    "pitch": 1,
+    "roll": 0.5
+  },
+  "lockOn": {
+    "maxBias": 0.35,
+    "breakThreshold": 2,
+    "armGain": 0.25
+  },
+  "focus": {
+    "enabled": false,
+    "maximumDistance": 50
+  }
+}
