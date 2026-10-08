@@ -49,10 +49,10 @@ namespace
         RIG_CHECK(resource->GetPoseRevision() == pose && resource->GetSplitSkeleton()->ContentHash == hash &&
                   resource->GetSplitSkeleton()->Sockets[0].Offset.position.x == 1 &&
                   resource->FindSocket(Identity("Mouth"))->Offset.position.x == 9);
-        S::RigV1Limits small;
-        small.MaxJoints = 1;
+        S::RigV1Limits limitedBudget;
+        limitedBudget.MaxJoints = 1;
         const auto stable = withSockets.GetData();
-        RIG_CHECK(!S::WithSkeletonSockets(base, {&socket, 1}, withSockets, report, small) &&
+        RIG_CHECK(!S::WithSkeletonSockets(base, {&socket, 1}, withSockets, report, limitedBudget) &&
                   withSockets.GetData() == stable);
         RIG_CHECK(S::WithSkeletonSockets(withSockets, {}, withSockets, report) &&
                   S::WriteSkeletonV1(withSockets, again, report) && again == original);
