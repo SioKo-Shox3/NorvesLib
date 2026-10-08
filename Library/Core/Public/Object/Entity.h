@@ -1,14 +1,15 @@
 ﻿#pragma once
 
-#include "Object.h"
-#include "Object/EntityHandle.h"
-#include "Reflection.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Math/GeometryTypes.h"
+#include "Math/Quaternion.h"
 #include "Math/Transform.h"
 #include "Math/Vector3.h"
-#include "Math/Quaternion.h"
+#include "Object.h"
+#include "Object/EntityHandle.h"
+#include "Reflection.h"
+#include "Scene/RenderTransformHistory.h"
 #include <cstdint>
 
 namespace NorvesLib::Core
@@ -200,6 +201,19 @@ namespace NorvesLib::Core
          * @brief ワールドトランスフォームを取得
          */
         const Math::Transform& GetWorldTransform() const;
+        // 描画専用。opt-in root以下だけ補間し、物理/joint/AABBのworld姿勢は変更しない。
+        void SetRenderInterpolationEnabled(bool enabled);
+        bool IsRenderInterpolationEnabled() const
+        {
+            return m_bRenderInterpolationEnabled;
+        }
+        const Math::Transform& GetRenderWorldTransform() const;
+        uint64_t GetRenderTransformVersion() const
+        {
+            return m_RenderTransformVersion;
+        }
+        // Teleport・駆動切替で子孫の履歴も切る。次の捕捉で新姿勢に揃える。
+        void ResetRenderInterpolation();
 
         /**
          * @brief このEntityに属するMeshComponentのワールドAABBを取得
@@ -348,8 +362,16 @@ namespace NorvesLib::Core
         bool m_bWorldTransformDirty = true;
         uint64_t m_TransformVersion = 1;
         EntityHandle m_EntityHandle;
+        Scene::RenderTransformHistory m_RenderHistory;
+        Math::Transform m_RenderWorldTransform;
+        bool m_bRenderInterpolationEnabled = false;
+        bool m_bRenderInterpolationInherited = false;
+        bool m_bUsesRenderInterpolation = false;
+        bool m_bRenderTransformValid = false;
+        uint64_t m_RenderTransformVersion = 1;
+        uint64_t m_RenderParentId = 0;
 
-    private:
+      private:
         friend class World;
         void RemoveComponentImmediately(Component::Component* component);
         void MarkRenderStateDirtyRecursive();

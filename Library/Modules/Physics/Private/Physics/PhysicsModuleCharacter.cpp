@@ -66,6 +66,7 @@ namespace NorvesLib::Modules::Physics
             if (c->m_bTeleport)
             {
                 body.Owner->SetPosition(c->m_PendingTeleport);
+                body.Owner->ResetRenderInterpolation();
                 body.Component->m_LinearVelocity = {};
                 body.PreStepPosition = c->m_PendingTeleport;
                 const auto serial = c->m_State.StepSerial;

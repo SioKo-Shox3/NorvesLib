@@ -249,6 +249,13 @@ namespace NorvesLib::Core
          * @brief Entity階層のワールドトランスフォームを更新
          */
         void UpdateWorldTransforms();
+        // 固定stepの前後で呼ぶ。描画alphaの適用はCamera群より前に行う。
+        void PrepareRenderInterpolationStep();
+        void CaptureRenderInterpolationStep();
+        bool SetRenderInterpolationAlpha(float alpha);
+        void SetRenderInterpolationAllowed(bool allowed);
+        void UpdateRenderTransforms();
+
         uint64_t GetTickSerial() const noexcept { return m_TickSerial; }
 
     private:
@@ -260,6 +267,12 @@ namespace NorvesLib::Core
             return m_bDispatchingTicks || m_bCleaningObjects;
         }
         uint64_t m_TickSerial = 0;
+        float m_RenderInterpolationAlpha = 1;
+        bool m_bRenderInterpolationAllowed = true;
+        void UpdateInterpolationHistoryRecursive(Entity& entity, bool capture);
+        void UpdateRenderTransformRecursive(Entity& entity, const Math::Transform& parentRender,
+                                            bool parentInterpolated);
+
         void BuildTickSnapshot();
         void CollectTickEntries(Entity& entity, size_t& ordinal);
         bool CanDispatchEntity(const Entity& entity) const;

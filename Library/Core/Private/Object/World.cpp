@@ -1,22 +1,23 @@
 #include "Object/World.h"
-#include "Object/Entity.h"
-#include "Object/PrefabAsset.h"
-#include "Component/BoardComponent.h"
-#include "Component/TextComponent.h"
 #include "Component/BillboardComponent.h"
+#include "Component/BoardComponent.h"
+#include "Component/LightComponent.h"
+#include "Component/MegaGeometryComponent.h"
 #include "Component/MeshComponent.h"
 #include "Component/SkinnedMeshComponent.h"
-#include "Component/MegaGeometryComponent.h"
-#include "Component/LightComponent.h"
-#include "Engine/NorvesEngine.h"
-#include "Engine/ComponentDataRegistry.h"
-#include "Rendering/IBoardProxySink.h"
-#include "Rendering/CanvasView.h"
-#include "Rendering/SceneView.h"
-#include "Rendering/SceneProxy.h"
-#include "Logging/LogMacros.h"
+#include "Component/TextComponent.h"
 #include "Container/UnorderedSet.h"
+#include "Engine/ComponentDataRegistry.h"
+#include "Engine/NorvesEngine.h"
+#include "Logging/LogMacros.h"
+#include "Object/Entity.h"
+#include "Object/PrefabAsset.h"
+#include "Rendering/CanvasView.h"
+#include "Rendering/IBoardProxySink.h"
+#include "Rendering/SceneProxy.h"
+#include "Rendering/SceneView.h"
 #include <algorithm>
+#include <cmath>
 
 namespace NorvesLib::Core
 {
@@ -610,18 +611,24 @@ namespace NorvesLib::Core
         : Object()
     {
         NextObjectId = 1;
+        m_RenderInterpolationAlpha = 1;
+        m_bRenderInterpolationAllowed = true;
     }
 
     World::World(const FieldInitializer* initializer)
         : Object(initializer)
     {
         NextObjectId = 1;
+        m_RenderInterpolationAlpha = 1;
+        m_bRenderInterpolationAllowed = true;
     }
 
     World::World(const IUnknown* sourceObject)
         : Object(sourceObject)
     {
         NextObjectId = 1;
+        m_RenderInterpolationAlpha = 1;
+        m_bRenderInterpolationAllowed = true;
     }
 
     World::~World()
@@ -639,6 +646,8 @@ namespace NorvesLib::Core
         LOG_INFO("World::Initialize()");
 
         NextObjectId = 1;
+        m_RenderInterpolationAlpha = 1;
+        m_bRenderInterpolationAllowed = true;
         m_SceneView = nullptr;
 
         Object::Initialize();
@@ -689,6 +698,8 @@ namespace NorvesLib::Core
         m_SceneView = nullptr;
         m_ScreenSpaceBoardSink = nullptr;
         NextObjectId = 1;
+        m_RenderInterpolationAlpha = 1;
+        m_bRenderInterpolationAllowed = true;
 
         Object::Finalize();
 
@@ -907,7 +918,7 @@ namespace NorvesLib::Core
         }
         UpdateWorldTransforms();
         DispatchTickGroups(Component::ETickGroup::PostPhysics, Component::ETickGroup::PostPhysics, deltaTime);
-        UpdateWorldTransforms();
+        UpdateRenderTransforms();
         DispatchTickGroups(Component::ETickGroup::Camera, Component::ETickGroup::PreRender, deltaTime);
         CleanupDestroyedObjects();
         m_TickEntries.clear();
@@ -1139,7 +1150,7 @@ namespace NorvesLib::Core
             enabledComponentDataRegistry->BeginFrameCapture();
         }
 
-        UpdateWorldTransforms();
+        UpdateRenderTransforms();
 
         Container::UnorderedSet<uint64_t> liveMeshComponentIds;
         Container::UnorderedSet<uint64_t> liveSkinnedMeshComponentIds;
@@ -1212,6 +1223,107 @@ namespace NorvesLib::Core
         {
             UpdateEntityTransformRecursive(*entity, Math::Transform::Identity);
         }
+    }
+
+    bool World::SetRenderInterpolationAlpha(float alpha)
+    {
+        if (!std::isfinite(alpha) || alpha < 0 || alpha > 1)
+            return false;
+        m_RenderInterpolationAlpha = alpha;
+        return true;
+    }
+    void World::SetRenderInterpolationAllowed(bool allowed)
+    {
+        if (m_bRenderInterpolationAllowed == allowed)
+            return;
+        m_bRenderInterpolationAllowed = allowed;
+        for (auto* inner : GetInners())
+            if (auto* entity = CastTo<Entity>(inner))
+                entity->ResetRenderInterpolation();
+    }
+    void World::PrepareRenderInterpolationStep()
+    {
+        if (!HasFlag(OF_Initialized) || !m_bRenderInterpolationAllowed)
+            return;
+        for (auto* inner : GetInners())
+            if (auto* entity = CastTo<Entity>(inner))
+                UpdateInterpolationHistoryRecursive(*entity, false);
+    }
+    void World::CaptureRenderInterpolationStep()
+    {
+        if (!HasFlag(OF_Initialized) || !m_bRenderInterpolationAllowed)
+            return;
+        for (auto* inner : GetInners())
+            if (auto* entity = CastTo<Entity>(inner))
+                UpdateInterpolationHistoryRecursive(*entity, true);
+    }
+    void World::UpdateInterpolationHistoryRecursive(Entity& entity, bool capture)
+    {
+        if (entity.IsPendingDestroy())
+            return;
+        const auto* parent = entity.GetParentEntity();
+        const auto parentId = parent ? parent->GetObjectId() : 0;
+        if (entity.m_RenderParentId != parentId)
+        {
+            entity.m_RenderHistory.Clear();
+            entity.m_RenderParentId = parentId;
+        }
+        if (entity.m_bRenderInterpolationEnabled)
+        {
+            if (capture)
+                entity.m_RenderHistory.Capture(entity.GetWorldTransform());
+            else
+                entity.m_RenderHistory.Prepare(entity.GetWorldTransform());
+        }
+        for (auto* inner : entity.GetInners())
+            if (auto* child = CastTo<Entity>(inner))
+                UpdateInterpolationHistoryRecursive(*child, capture);
+    }
+    void World::UpdateRenderTransforms()
+    {
+        if (!HasFlag(OF_Initialized))
+            return;
+        UpdateWorldTransforms();
+        for (auto* inner : GetInners())
+            if (auto* entity = CastTo<Entity>(inner))
+                UpdateRenderTransformRecursive(*entity, Math::Transform::Identity, false);
+    }
+    void World::UpdateRenderTransformRecursive(Entity& entity, const Math::Transform& parentRender,
+                                               bool parentInterpolated)
+    {
+        if (entity.IsPendingDestroy())
+            return;
+        const auto* parent = entity.GetParentEntity();
+        const auto parentId = parent ? parent->GetObjectId() : 0;
+        const bool inherited = m_bRenderInterpolationAllowed && parentInterpolated;
+        if (entity.m_RenderParentId != parentId || entity.m_bRenderInterpolationInherited != inherited)
+            entity.m_RenderHistory.Clear();
+        entity.m_RenderParentId = parentId;
+        entity.m_bRenderInterpolationInherited = inherited;
+        const bool interpolated = m_bRenderInterpolationAllowed && (inherited || entity.m_bRenderInterpolationEnabled);
+        Math::Transform render = entity.GetWorldTransform();
+        if (inherited)
+            render = parentRender * entity.GetLocalTransform();
+        else if (interpolated && entity.m_RenderHistory.Prepare(entity.GetWorldTransform()))
+            (void)entity.m_RenderHistory.Evaluate(m_RenderInterpolationAlpha, render);
+        const bool changed = !entity.m_bRenderTransformValid || entity.m_RenderWorldTransform != render;
+        entity.m_RenderWorldTransform = render;
+        entity.m_bRenderTransformValid = true;
+        entity.m_bUsesRenderInterpolation = interpolated;
+        if (changed)
+        {
+            if (entity.m_RenderTransformVersion != UINT64_MAX)
+                ++entity.m_RenderTransformVersion;
+            // simulation版のversionは触らない。alphaだけ変わる0step frameでもproxyを更新する。
+            for (auto* inner : entity.GetInners())
+                if (auto* component = CastTo<Component::Component>(inner))
+                    if (CastTo<Component::MeshComponent>(component) ||
+                        CastTo<Component::SkinnedMeshComponent>(component))
+                        component->MarkRenderStateDirty();
+        }
+        for (auto* inner : entity.GetInners())
+            if (auto* child = CastTo<Entity>(inner))
+                UpdateRenderTransformRecursive(*child, render, interpolated);
     }
 
     void World::UpdateEntityTransformRecursive(Entity& entity, const Math::Transform& parentWorld)

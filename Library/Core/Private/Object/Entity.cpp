@@ -371,6 +371,26 @@ namespace NorvesLib::Core
         return m_CachedWorldTransform;
     }
 
+    void Entity::SetRenderInterpolationEnabled(bool enabled)
+    {
+        if (m_bRenderInterpolationEnabled == enabled)
+            return;
+        m_bRenderInterpolationEnabled = enabled;
+        ResetRenderInterpolation();
+    }
+    const Math::Transform& Entity::GetRenderWorldTransform() const
+    {
+        return m_bRenderTransformValid && m_bUsesRenderInterpolation ? m_RenderWorldTransform : GetWorldTransform();
+    }
+    void Entity::ResetRenderInterpolation()
+    {
+        m_RenderHistory.Clear();
+        m_bRenderTransformValid = false;
+        for (auto* inner : GetInners())
+            if (auto* child = CastTo<Entity>(inner))
+                child->ResetRenderInterpolation();
+    }
+
     bool Entity::GetWorldAABB(Math::AABB& outAABB) const
     {
         const Math::Transform worldTransform = EvaluateWorldTransformNonMutating();

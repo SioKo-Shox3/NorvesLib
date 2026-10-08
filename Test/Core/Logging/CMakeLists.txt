@@ -48,6 +48,7 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER JsonWriterTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonWriterTest.cpp
     MEMBER JsonUnicodeScalarTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonUnicodeScalarTest.cpp
     MEMBER CriticalDampingTest ${CMAKE_SOURCE_DIR}/Test/Core/Math/CriticalDampingTest.cpp
+    MEMBER RenderTransformHistoryTest ${CMAKE_SOURCE_DIR}/Test/Core/Object/RenderTransformHistoryTest.cpp
     MEMBER CameraCollisionSolverTest ${CMAKE_SOURCE_DIR}/Test/Core/Camera/CameraCollisionSolverTest.cpp
     MEMBER QuadrupedLocomotionModelTest ${CMAKE_SOURCE_DIR}/Test/Core/Locomotion/QuadrupedLocomotionModelTest.cpp
     MEMBER LocomotionProfileReloadTest ${CMAKE_SOURCE_DIR}/Test/Core/Locomotion/LocomotionProfileReloadTest.cpp
@@ -70,3 +71,4 @@ add_test(NAME CriticalDampingTest COMMAND LoggerSinkTest --test=CriticalDampingT
 add_test(NAME QuadrupedLocomotionModelTest COMMAND LoggerSinkTest --test=QuadrupedLocomotionModelTest)
 add_test(NAME LocomotionProfileReloadTest COMMAND LoggerSinkTest --test=LocomotionProfileReloadTest)
 add_test(NAME CameraCollisionSolverTest COMMAND LoggerSinkTest --test=CameraCollisionSolverTest)
+add_test(NAME RenderTransformHistoryTest COMMAND LoggerSinkTest --test=RenderTransformHistoryTest)

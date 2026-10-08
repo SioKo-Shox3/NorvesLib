@@ -429,7 +429,13 @@ namespace NorvesLib::Core::Component
             outProxy.Material = outProxy.Materials[0];
         }
         outProxy.AssetLease = mesh->GetRenderAssetLease();
-        outProxy.WorldTransform = BuildOwnerWorldTransform();
+        outProxy.WorldTransform = Math::Matrix4x4::Identity;
+        if (const auto* owner = GetOwner())
+        {
+            const auto& renderWorld = owner->GetRenderWorldTransform();
+            outProxy.WorldTransform =
+                Math::MatrixUtils::CreateWorldRowVector(renderWorld.position, renderWorld.rotation, renderWorld.scale);
+        }
         outProxy.BonePalette = m_Pose.BonePalette;
         outProxy.AnimatedBounds = m_Pose.AnimatedBounds;
         outProxy.bCastShadow = m_bCastShadow;

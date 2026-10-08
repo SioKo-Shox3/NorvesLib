@@ -86,6 +86,8 @@ namespace NorvesLib::Modules::Physics
             ResetMotion(false);
             m_bFixedRequest = false;
             m_DriveMode = mode;
+            if (auto* owner = GetOwner())
+                owner->ResetRenderInterpolation();
         }
         return EPhysicsResult::Success;
     }

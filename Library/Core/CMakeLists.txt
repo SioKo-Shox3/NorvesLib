@@ -178,6 +178,7 @@ set(PRIVATE_SOURCES
     Private/Engine/ApplicationProcessor.cpp
     # Scene
     Private/Scene/SceneQuery.cpp
+    Private/Scene/RenderTransformHistory.cpp
     Private/Scene/SceneSerializer.cpp
     # GameMode
     Private/GameMode/GameModeScope.cpp
@@ -504,6 +505,7 @@ set(PUBLIC_HEADERS
     Public/Component/AnimatorComponent.h
     # Scene
     Public/Scene/SceneQuery.h
+    Public/Scene/RenderTransformHistory.h
     Public/Scene/PhysicsQueryTypes.h
     Public/Scene/SceneSerializer.h
     # Module

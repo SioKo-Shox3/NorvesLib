@@ -1436,6 +1436,8 @@ namespace NorvesLib::Core::Engine
         {
             GApplicationLifecycleState.bWorld = true;
             GEngine->GetWorld().Initialize();
+            GEngine->GetWorld().SetRenderInterpolationAllowed(!bCaptureDeterministic &&
+                                                              !pathTracingSequenceFrame.bEnabled);
 
             // WorldにメインSceneViewを設定
             auto &coordinator = GEngine->GetRenderWorld().GetRenderingCoordinator();
@@ -2335,6 +2337,8 @@ namespace NorvesLib::Core::Engine
             GEngine->GetParticleSystem().Tick(deltaTime);
         }
         const FixedStepAdvanceResult result = AdvanceFixedSimulation(rawDeltaNanoseconds, bAdvanceSimulation);
+        (void)GEngine->GetWorld().SetRenderInterpolationAlpha(static_cast<float>(result.RemainderScaledUnits) /
+                                                              1'000'000'000.0f);
         if (bAdvanceSimulation)
         {
             GEngine->GetWorld().LateTick(deltaTime);
@@ -2415,10 +2419,12 @@ namespace NorvesLib::Core::Engine
         {
             World& world = GEngine->GetWorld();
             world.UpdateWorldTransforms();
+            world.PrepareRenderInterpolationStep();
             Module::GetModuleRegistry().DispatchPreFixedTick(FixedDeltaTime);
             world.DispatchFixedTick(FixedDeltaTime);
             Module::GetModuleRegistry().DispatchFixedTick(FixedDeltaTime);
             world.UpdateWorldTransforms();
+            world.CaptureRenderInterpolationStep();
             world.CleanupAfterFixedStep();
         }
 
