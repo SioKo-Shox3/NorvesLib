@@ -39,7 +39,12 @@ namespace NorvesLib::Core::Engine
       }
         void BeginRun();
         void EndRun();
+        // 倍率0で有効な0nsになるため、0も余り保持のAdvancedとして受理する。
         FixedStepAdvanceResult Advance(int64_t deltaNanoseconds, bool bAdvanceSimulation);
+        uint64_t GetRemainderScaledUnits() const
+        {
+            return m_AccumulatorScaledUnits;
+        }
 
     private:
         Thread::Thread::ThreadId m_OwnerThreadId;

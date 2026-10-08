@@ -18,6 +18,7 @@
 #include "Rendering/SceneView.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace NorvesLib::Core
 {
@@ -900,26 +901,48 @@ namespace NorvesLib::Core
 
     void World::Tick(float deltaTime)
     {
+        TickWithFrameTimes(nullptr, deltaTime);
+    }
+    void World::Tick(const Engine::FrameTimes& times)
+    {
+        if (!times.IsValid())
+            return;
+        const auto snapshot = times;
+        TickWithFrameTimes(&snapshot, 0);
+    }
+    void World::TickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime)
+    {
         if (!HasFlag(OF_Initialized) || IsDeferringObjectRemoval())
         {
             return;
         }
         BuildTickSnapshot();
         UpdateWorldTransforms();
-        DispatchTickGroups(Component::ETickGroup::Input, Component::ETickGroup::PoseFinalize, deltaTime);
+        DispatchTickGroups(Component::ETickGroup::Input, Component::ETickGroup::PoseFinalize, deltaTime, times);
         CleanupDestroyedObjects();
     }
 
     void World::LateTick(float deltaTime)
+    {
+        LateTickWithFrameTimes(nullptr, deltaTime);
+    }
+    void World::LateTick(const Engine::FrameTimes& times)
+    {
+        if (!times.IsValid())
+            return;
+        const auto snapshot = times;
+        LateTickWithFrameTimes(&snapshot, 0);
+    }
+    void World::LateTickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime)
     {
         if (!HasFlag(OF_Initialized) || !m_bHasTickSnapshot || IsDeferringObjectRemoval())
         {
             return;
         }
         UpdateWorldTransforms();
-        DispatchTickGroups(Component::ETickGroup::PostPhysics, Component::ETickGroup::PostPhysics, deltaTime);
+        DispatchTickGroups(Component::ETickGroup::PostPhysics, Component::ETickGroup::PostPhysics, deltaTime, times);
         UpdateRenderTransforms();
-        DispatchTickGroups(Component::ETickGroup::Camera, Component::ETickGroup::PreRender, deltaTime);
+        DispatchTickGroups(Component::ETickGroup::Camera, Component::ETickGroup::PreRender, deltaTime, times);
         CleanupDestroyedObjects();
         m_TickEntries.clear();
         m_FixedTickEntries.clear();
@@ -1012,7 +1035,8 @@ namespace NorvesLib::Core
         return true;
     }
 
-    void World::DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime)
+    void World::DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime,
+                                   const Engine::FrameTimes* times)
     {
         ScopedWorldFlag dispatch(m_bDispatchingTicks);
         auto publishedGroup = Component::ETickGroup::Count;
@@ -1033,9 +1057,21 @@ namespace NorvesLib::Core
             {
                 continue;
             }
+            const auto channel = entry.Target ? entry.Target->GetTimeChannel() : Engine::TimeChannel::World;
+            if (!Engine::IsValidTimeChannel(channel))
+                continue;
+            const float baseDelta = times ? times->GetDelta(channel) : deltaTime;
+            const bool local = channel == Engine::TimeChannel::World || channel == Engine::TimeChannel::Animation;
+            const double scaledDelta = double(baseDelta) * (local ? entry.Owner->GetCustomTimeDilation() : 1.f);
+            if (!std::isfinite(scaledDelta) || scaledDelta < 0 || scaledDelta > std::numeric_limits<float>::max())
+            {
+                LOG_ERROR("局所時間倍率の積が更新dtの範囲外です");
+                continue;
+            }
+            const float tickDelta = static_cast<float>(scaledDelta);
             if (!entry.Target)
             {
-                entry.Owner->Tick(deltaTime);
+                entry.Owner->Tick(tickDelta);
             }
             else if (entry.Target->GetOwner() == entry.Owner && entry.Target->IsActive()
                 && entry.Target->IsTickEnabled() && !entry.Target->IsPendingDestroy())
@@ -1055,7 +1091,7 @@ namespace NorvesLib::Core
                 };
                 try
                 {
-                    entry.Target->OnTickGroup(entry.Group, deltaTime);
+                    entry.Target->OnTickGroup(entry.Group, tickDelta);
                 }
                 catch (...)
                 {

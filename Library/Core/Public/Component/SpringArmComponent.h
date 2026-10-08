@@ -23,6 +23,10 @@ namespace NorvesLib::Core::Component
         REFLECTION_CLASS(SpringArmComponent, Component)
 
     public:
+      Engine::TimeChannel GetTimeChannel() const noexcept override
+      {
+          return Engine::TimeChannel::Unscaled;
+      }
         SpringArmComponent();
         explicit SpringArmComponent(const FieldInitializer* initializer);
         explicit SpringArmComponent(const IUnknown* sourceObject);

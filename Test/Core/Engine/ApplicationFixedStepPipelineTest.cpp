@@ -63,7 +63,7 @@ namespace
 {
     using namespace NorvesLib::Core;
 
-    constexpr uint32_t kCaseCount = 19;
+    constexpr uint32_t kCaseCount = 21;
 
     struct DynamicFixture
     {
@@ -692,6 +692,85 @@ namespace
                component->LastFixedDeltaTime == 1.f / 120 && GFixture->LastModuleFixedDelta == 1.f / 120;
     }
 
+    class TimeChannelProbe final : public Component::Component
+    {
+      public:
+        Engine::TimeChannel Channel = Engine::TimeChannel::World;
+        float Delta = -1, FixedDelta = -1;
+        unsigned Calls = 0, FixedCalls = 0;
+        Engine::TimeChannel GetTimeChannel() const noexcept override
+        {
+            return Channel;
+        }
+        void Tick(float value) override
+        {
+            Delta = value;
+            ++Calls;
+        }
+        void FixedTick(float value) override
+        {
+            FixedDelta = value;
+            ++FixedCalls;
+        }
+    };
+    bool TestHitStopTimeChannels(Engine::ApplicationProcessor& processor, uint32_t rate)
+    {
+        using namespace Engine;
+        if (!ApplicationFixedStepTestAccess::ResetRun(processor, rate))
+            return false;
+        auto& engine = *NorvesLib::Core::Engine::GEngine;
+        auto& world = engine.GetWorld();
+        auto& clock = engine.GetTimeSystem();
+        auto* owner = world.SpawnEntity<Entity>();
+        if (!owner || !owner->SetCustomTimeDilation(.25f))
+            return false;
+        TimeChannelProbe* probes[4]{};
+        const TimeChannel channels[] = {TimeChannel::World, TimeChannel::Animation, TimeChannel::Unscaled,
+                                        TimeChannel::Unscaled};
+        const Component::ETickGroup groups[] = {Component::ETickGroup::Default, Component::ETickGroup::Animation,
+                                                Component::ETickGroup::Input, Component::ETickGroup::Camera};
+        for (unsigned i = 0; i < 4; ++i)
+        {
+            probes[i] = world.CreateComponent<TimeChannelProbe>(owner);
+            if (!probes[i])
+                return false;
+            probes[i]->Channel = channels[i];
+            probes[i]->SetTickGroup(groups[i]);
+        }
+        TimeScaleRequest half;
+        half.Scale = .5;
+        half.DurationSeconds = 10;
+        half.Channels = TimeChannelBit(TimeChannel::Physics);
+        TimeScaleHandle handle;
+        if (clock.PushScale(half, handle) != TimeSystemResult::Success)
+            return false;
+        auto result = ApplicationFixedStepTestAccess::Simulate(processor, 1, true, nullptr);
+        if (result.ExecutedSteps != 0 || clock.GetPhysicsRemainder() != 32768)
+            return false;
+        const auto seed = ApplicationFixedStepTestAccess::Advance(processor, rate == 60 ? 8333333 : 4166666, true);
+        TimeScaleRequest stop;
+        stop.Scale = 0;
+        stop.DurationSeconds = .1;
+        stop.Channels = TimeChannelBit(TimeChannel::World) | TimeChannelBit(TimeChannel::Animation) |
+                        TimeChannelBit(TimeChannel::Physics);
+        if (clock.PushScale(stop, handle) != TimeSystemResult::Success)
+            return false;
+        result = ApplicationFixedStepTestAccess::Simulate(processor, 50000000, true, nullptr);
+        if (result.Status != EFixedStepAdvanceStatus::Advanced || result.ExecutedSteps != 0 ||
+            result.RemainderScaledUnits != seed.RemainderScaledUnits || clock.GetPhysicsRemainder() != 32768 ||
+            probes[0]->Delta != 0 || probes[1]->Delta != 0 || probes[2]->Delta != .05f || probes[3]->Delta != .05f)
+            return false;
+        const auto calls = probes[3]->Calls;
+        result = ApplicationFixedStepTestAccess::Simulate(processor, 100000000, false, nullptr);
+        if (result.Status != EFixedStepAdvanceStatus::Paused ||
+            result.RemainderScaledUnits != seed.RemainderScaledUnits || clock.GetPhysicsRemainder() != 32768 ||
+            probes[3]->Calls != calls)
+            return false;
+        result = ApplicationFixedStepTestAccess::Simulate(processor, rate == 60 ? 17000000 : 8500000, true, nullptr);
+        return result.ExecutedSteps == 1 && probes[0]->FixedCalls == 1 && probes[0]->FixedDelta == 1.f / rate &&
+               probes[0]->Delta > 0 && probes[1]->Delta > 0 && probes[3]->Calls == calls + 1;
+    }
+
     bool RunCase(uint32_t caseIndex, Engine::ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -735,6 +814,10 @@ namespace
             return TestFixedInputEventFrameOrder(processor);
         case 18:
             return Test120HzPipeline(processor);
+        case 19:
+            return TestHitStopTimeChannels(processor, 60);
+        case 20:
+            return TestHitStopTimeChannels(processor, 120);
         default:
             return false;
         }

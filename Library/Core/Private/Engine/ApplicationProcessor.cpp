@@ -2330,22 +2330,30 @@ namespace NorvesLib::Core::Engine
         int64_t rawDeltaNanoseconds, float deltaTime, bool bAdvanceSimulation,
         Application::IApplicationHandler* handler)
     {
+        auto& timeSystem = GEngine->GetTimeSystem();
+        if (timeSystem.BeginFrame(rawDeltaNanoseconds, deltaTime, bAdvanceSimulation) != TimeSystemResult::Success)
+        {
+            LOG_ERROR("時間倍率の計算に失敗したためシミュレーションを停止します");
+            GEngine->RequestExit(1);
+            return {EFixedStepAdvanceStatus::InvalidDelta, 0, 0, m_FixedStepScheduler->GetRemainderScaledUnits()};
+        }
+        const auto times = timeSystem.GetFrameTimes();
         if (bAdvanceSimulation)
         {
-            GEngine->UpdateGameModeStateMachine(deltaTime);
-            GEngine->GetWorld().Tick(deltaTime);
-            GEngine->GetParticleSystem().Tick(deltaTime);
+            GEngine->UpdateGameModeStateMachine(times.Unscaled);
+            GEngine->GetWorld().Tick(times);
+            GEngine->GetParticleSystem().Tick(times.Particle);
         }
-        const FixedStepAdvanceResult result = AdvanceFixedSimulation(rawDeltaNanoseconds, bAdvanceSimulation);
+        const FixedStepAdvanceResult result = AdvanceFixedSimulation(times.PhysicsDeltaNanoseconds, bAdvanceSimulation);
         (void)GEngine->GetWorld().SetRenderInterpolationAlpha(static_cast<float>(result.RemainderScaledUnits) /
                                                               1'000'000'000.0f);
         if (bAdvanceSimulation)
         {
-            GEngine->GetWorld().LateTick(deltaTime);
-            Module::GetModuleRegistry().DispatchLateTick(deltaTime);
+            GEngine->GetWorld().LateTick(times);
+            Module::GetModuleRegistry().DispatchLateTick(times.Unscaled);
             if (handler)
             {
-                handler->OnLateUpdate(deltaTime);
+                handler->OnLateUpdate(times.Unscaled);
             }
         }
         return result;

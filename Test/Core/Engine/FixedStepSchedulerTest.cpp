@@ -131,7 +131,7 @@ namespace
         scheduler.BeginRun();
         const FixedStepAdvanceResult seeded = scheduler.Advance(8'333'333, true);
         AssertResult(seeded, EFixedStepAdvanceStatus::Advanced, 0, 0, 499'999'980);
-        AssertResult(scheduler.Advance(0, true), EFixedStepAdvanceStatus::InvalidDelta, 0, 0, 499'999'980);
+        AssertResult(scheduler.Advance(0, true), EFixedStepAdvanceStatus::Advanced, 0, 0, 499'999'980);
         AssertResult(scheduler.Advance(-1, true), EFixedStepAdvanceStatus::InvalidDelta, 0, 0, 499'999'980);
         scheduler.EndRun();
         AssertResult(scheduler.Advance(1, true), EFixedStepAdvanceStatus::NotRunning, 0, 0, 499'999'980);

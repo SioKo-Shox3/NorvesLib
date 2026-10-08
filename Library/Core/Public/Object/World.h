@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Engine/TimeChannels.h"
 
 #include "Object.h"
 #include "Reflection.h"
@@ -212,8 +213,10 @@ namespace NorvesLib::Core
          * @param deltaTime 前フレームからの経過時間（秒）
          */
         void Tick(float deltaTime);
+        void Tick(const Engine::FrameTimes& times);
         // 同じフレームの収集結果を用い、物理後の群を実行する。再収集はしない。
         void LateTick(float deltaTime);
+        void LateTick(const Engine::FrameTimes& times);
 
         /**
          * @brief 描画先SceneViewを設定
@@ -276,7 +279,10 @@ namespace NorvesLib::Core
         void BuildTickSnapshot();
         void CollectTickEntries(Entity& entity, size_t& ordinal);
         bool CanDispatchEntity(const Entity& entity) const;
-        void DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime);
+        void TickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime);
+        void LateTickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime);
+        void DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime,
+                                const Engine::FrameTimes* times = nullptr);
         void InvalidateTickComponent(Component::Component& component);
         void InvalidateTickEntitySubtree(Entity& entity);
         void CollectPendingComponents(Entity& entity, Container::VariableArray<Component::Component*>& output);

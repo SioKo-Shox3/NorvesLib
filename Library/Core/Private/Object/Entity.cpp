@@ -172,6 +172,14 @@ namespace NorvesLib::Core
         Finalize();
     }
 
+    bool Entity::SetCustomTimeDilation(float value)
+    {
+        if (!std::isfinite(value) || value < 0)
+            return false;
+        m_CustomTimeDilation = value;
+        return true;
+    }
+
     void Entity::Initialize()
     {
         Object::Initialize();

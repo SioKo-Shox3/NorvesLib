@@ -19,6 +19,10 @@ namespace NorvesLib::Core::Component
         REFLECTION_CLASS(CameraComponent, Component)
 
     public:
+      Engine::TimeChannel GetTimeChannel() const noexcept override
+      {
+          return Engine::TimeChannel::Unscaled;
+      }
         CameraComponent();
         explicit CameraComponent(const FieldInitializer* initializer);
         explicit CameraComponent(const IUnknown* sourceObject);

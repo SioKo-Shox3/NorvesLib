@@ -15,6 +15,10 @@ namespace NorvesLib::Core::Component
         REFLECTION_CLASS(SkinnedMeshComponent, Component)
 
     public:
+      Engine::TimeChannel GetTimeChannel() const noexcept override
+      {
+          return Engine::TimeChannel::Animation;
+      }
         SkinnedMeshComponent();
         explicit SkinnedMeshComponent(const FieldInitializer* initializer);
         explicit SkinnedMeshComponent(const IUnknown* sourceObject);

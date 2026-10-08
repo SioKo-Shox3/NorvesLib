@@ -742,6 +742,45 @@ namespace
         GRAPH_CHECK(!A::AnalyzeFootContacts(context, *f.AClip, {&invalidSpec, 1}, {}, contact));
     }
 
+    void TestSyncHitStopKeepsPointEventsStopped()
+    {
+        GraphFixture f;
+        auto a = f.AClip->GetClip(), b = f.BClip->GetClip();
+        a.Metadata.Markers = {{Identity("left"), 0}, {Identity("right"), .94034773111343384f}};
+        b.Metadata.Markers = {{Identity("left"), 0}, {Identity("right"), .087595060467720032f}};
+        b.Metadata.Events = {{Identity("hitStopEdge"), .87809914350509644f, -1, 0}};
+        a.Metadata.Root.Mode = b.Metadata.Root.Mode = A::RootMotionMode::Extract;
+        a.RootMotionJoint = b.RootMotionJoint = 0;
+        a.RootMotion = {{0, 0, 0, 0}, {.5f, 1234.5, 1452.3, .7}, {1, 1236.5, 1452.3, .9}};
+        b.RootMotion = {{0, 0, 0, 0}, {.5f, 33, 18, .7}, {1, 35, 18, .9}};
+        f.AClip->SetClip(std::move(a));
+        f.BClip->SetClip(std::move(b));
+        auto graph = f.Graph(
+            R"({"version":1,"params":[{"name":"blend","type":"float","value":0.75}],"nodes":[{"id":"a","type":"clip","clip":"a","syncGroup":"gait"},{"id":"b","type":"clip","clip":"b","syncGroup":"gait"},{"id":"mix","type":"blend2","children":["a","b"],"weight":"blend"}],"root":"mix"})");
+        A::AnimGraphInstance instance;
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        unsigned count = 0;
+        instance.Events().OnEvent.Add([&](const A::AnimEventInfo& event) {
+            if (event.Name == Identity("hitStopEdge"))
+                ++count;
+        });
+        GRAPH_CHECK(instance.Update(.87809914350509644f));
+        instance.Events().Dispatch();
+        GRAPH_CHECK(count == 1);
+        (void)instance.ConsumeRootMotion();
+        for (unsigned frame = 0; frame < 100; ++frame)
+        {
+            GRAPH_CHECK(instance.Parameters().SetFloat(0, frame % 2 ? .75f : .25f));
+            GRAPH_CHECK(instance.Update(0));
+            instance.Events().Dispatch();
+            GRAPH_CHECK(count == 1);
+            for (const auto& traversal : instance.GetTraversals())
+                GRAPH_CHECK(traversal.Previous == traversal.Current);
+            const auto root = instance.ConsumeRootMotion();
+            GRAPH_CHECK(root.X == 0 && root.Z == 0 && root.Yaw == 0);
+        }
+    }
+
     void TestAnimationSyncRuntime()
     {
         GraphFixture f;
@@ -1239,6 +1278,7 @@ void TestAnimGraphRuntime()
     TestAnimationEventRuntime();
     TestRootMotionRuntime();
     TestAnimationSyncRuntime();
+    TestSyncHitStopKeepsPointEventsStopped();
     TestStrideAndFootSpeed();
     TestRootMotionRegressions();
     TestMotionAnalysisRuntime();

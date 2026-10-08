@@ -292,6 +292,12 @@ namespace NorvesLib::Core
          * @param deltaTime 前フレームからの経過時間（秒）
          */
         virtual void Tick(float deltaTime) {}
+        // 実行時の局所倍率。親子へは継承せず、World/Animationだけに適用する。
+        bool SetCustomTimeDilation(float value);
+        float GetCustomTimeDilation() const
+        {
+            return m_CustomTimeDilation;
+        }
 
         /**
          * @brief 更新が有効かどうか
@@ -357,6 +363,7 @@ namespace NorvesLib::Core
         // オブジェクトID（World内でユニーク）
         PROPERTY(uint64_t, ObjectId)
 
+        float m_CustomTimeDilation = 1;
         Math::Transform m_LocalTransform;
         Math::Transform m_CachedWorldTransform;
         bool m_bWorldTransformDirty = true;

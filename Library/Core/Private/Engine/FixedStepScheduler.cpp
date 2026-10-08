@@ -42,7 +42,7 @@ namespace NorvesLib::Core::Engine
             return {EFixedStepAdvanceStatus::WrongThread, 0, 0, m_AccumulatorScaledUnits};
         }
 
-        if (deltaNanoseconds <= 0)
+        if (deltaNanoseconds < 0)
         {
             return {EFixedStepAdvanceStatus::InvalidDelta, 0, 0, m_AccumulatorScaledUnits};
         }

@@ -37,6 +37,10 @@ namespace NorvesLib::Core::Component
     {
         REFLECTION_CLASS(AnimatorComponent, Component)
       public:
+        Engine::TimeChannel GetTimeChannel() const noexcept override
+        {
+            return Engine::TimeChannel::Animation;
+        }
         AnimatorComponent();
         explicit AnimatorComponent(const FieldInitializer*);
         explicit AnimatorComponent(const IUnknown*);

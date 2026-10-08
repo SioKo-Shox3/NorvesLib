@@ -67,6 +67,7 @@ norves_add_test_bundle(EntityTreeTest
     MEMBER EntityWorldAABBTest EntityWorldAABBTest.cpp
     MEMBER SpringArmComponentTest SpringArmComponentTest.cpp
     MEMBER WorldRenderInterpolationTest WorldRenderInterpolationTest.cpp
+    MEMBER WorldTimeChannelTest WorldTimeChannelTest.cpp
 )
 target_link_libraries(EntityTreeTest PRIVATE Core)
 target_include_directories(EntityTreeTest PRIVATE
@@ -126,3 +127,5 @@ add_test(NAME WorldTickGroupTest COMMAND EntityTreeTest --test=WorldTickGroupTes
 
 add_test(NAME SceneCameraProbeTest COMMAND SceneQueryRaycastTest --test=SceneCameraProbeTest)
 add_test(NAME WorldRenderInterpolationTest COMMAND EntityTreeTest --test=WorldRenderInterpolationTest)
+
+add_test(NAME WorldTimeChannelTest COMMAND EntityTreeTest --test=WorldTimeChannelTest)

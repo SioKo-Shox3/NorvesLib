@@ -2,6 +2,7 @@
 
 #include "Container/PointerTypes.h"
 #include "Engine/DeterministicCapture.h"
+#include "Engine/TimeSystem.h"
 #include "GameMode/IStateMachine.h"
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
@@ -408,6 +409,14 @@ namespace NorvesLib::Core::Engine
         {
             return m_InputRouter;
         }
+        TimeSystem& GetTimeSystem()
+        {
+            return m_TimeSystem;
+        }
+        const TimeSystem& GetTimeSystem() const
+        {
+            return m_TimeSystem;
+        }
         Input::InputMapper& GetInputMapper() { return m_InputMapper; }
         const Input::InputMapper& GetInputMapper() const { return m_InputMapper; }
         Input::InputDebugOverlayController& GetInputDebugOverlay() { return m_InputDebugOverlay; }
@@ -481,6 +490,7 @@ namespace NorvesLib::Core::Engine
         World m_World;
 
         Particle::ParticleSystem m_ParticleSystem;
+        TimeSystem m_TimeSystem;
 
         // シーン空間検索（GEngine配下で実体保持）
         Scene::SceneQuery m_SceneQuery;

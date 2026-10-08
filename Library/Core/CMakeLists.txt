@@ -169,6 +169,13 @@ set(PRIVATE_SOURCES
     Private/Engine/NorvesEngine.cpp
     Private/Engine/SkeletalAssetSession.cpp
     Private/Engine/FixedStepScheduler.cpp
+    Private/Engine/TimeScaleMath.cpp
+    Private/Engine/TimeScaleMath.h
+    Private/Engine/TimeScaleFadeMath.cpp
+    Private/Engine/TimeScaleFadeMath.h
+    Private/Engine/TimeSystem.cpp
+    Public/Engine/TimeSystem.h
+    Public/Engine/TimeChannels.h
     Private/Scripting/AngelScriptEngineOwner.cpp
     Private/Scripting/ScriptSourceTracker.h
     Private/Scripting/ScriptSourceTracker.cpp
