@@ -360,3 +360,57 @@ run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.ex
 - 検証: RelWithDebInfo ビルド（`-1.txt`、EXIT=0）・撮影（`-2.txt`、result=pass）・Debug ビルド（`-3.txt`、EXIT=0）・ctest（`-4.txt`、VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・RenderGraphCompileTest の 4 件が通過）。
 - Notes: `VSM_RASTER` の instances は 933c1fdf（展開で触れるページだけにインスタンスを作る）以降の値で、選ばれるクラスタ数（chunks）はカリング側の変更で変わっていない。
 - Next: TASKS.md の次の `todo`。
+
+## 段9 VTG9-VSM-POINT-DRAW-PERF の測り直し（2026-10-08、完了）
+
+- 結果: 完了。実装は 933c1fdf（展開で三角形が触れるページだけにインスタンスを作る・ページの無効化を 16 本のスレッドで分け合う）。キューブとの差を合否から外した今の文面で測り直し、(a) 2 対のどちらでも VSM のフレーム GPU が 16.6 ms を大きく下回り、(b) `VsmDraw` が開始時の 1.158 ms から 0.506・0.507 ms に縮んだ、の 2 点を満たした。
+- 条件: RelWithDebInfo・`-Night -GpuTimingFrames 300`・`-PointShadowMethod Cube|Vsm`。負荷は `-ViewNames default --stress-mega-instances=300` の 2 対、通常の 3 視点は 1 回の起動で続けて撮った（`cube`・`vsm`）。撮影の直前（Game を動かしていない状態）の `nvidia-smi` 利用率の 10 回の最大を `gpu-util-DRAW-PERF.txt` に記録した。区間の数え方は VTG9-VSM-POINT-GPU-TIME の節と同じ（パスの合計 = 入れ子を除いた一番上の区間の中央値の合計、区間の外 = フレーム − パスの合計）。
+- 証拠: `.harness/runs/20261008-203356/verify-VTG9-VSM-POINT-DRAW-PERF-1.txt`（RelWithDebInfo ビルド、EXIT=0）・`-2`〜`-7`（撮影、result=pass・EXIT=0）・`-8`（Debug ビルド、EXIT=0）・`-9`（ctest 4/4 通過）。撮影は `.harness/runs/startup-capture/VTG9-VSM-POINT-DRAW-PERF-{cube,vsm}-stress-{1,2}`・`-cube`・`-vsm`。`metrics.json` の `failures` は 6 run とも空。
+
+負荷（夜・300 個・既定の視点）の 2 対（ms、中央値）:
+
+| 対 | 方式 | 利用率 最大 % | フレーム | パスの合計 | 区間の外 | p95 | 最大 |
+|---|---|---|---|---|---|---|---|
+| 1 | Cube | 35 | 5.426 | 4.392 | 1.034 | 8.952 | 10.285 |
+| 1 | Vsm | 18 | 6.243 | 5.305 | 0.938 | 8.212 | 10.267 |
+| 2 | Cube | 30 | 4.290 | 4.011 | 0.279 | 4.816 | 9.153 |
+| 2 | Vsm | 39 | 5.454 | 5.150 | 0.304 | 5.847 | 7.256 |
+
+通常の 3 視点（1 回の起動で続けて撮った）:
+
+| 視点 | 方式 | 利用率 最大 % | フレーム | パスの合計 | 区間の外 | p95 | 最大 |
+|---|---|---|---|---|---|---|---|
+| 既定 | Cube | 42 | 2.537 | 2.192 | 0.345 | 3.043 | 4.440 |
+| 既定 | Vsm | 23 | 2.695 | 2.431 | 0.264 | 3.185 | 4.001 |
+| 近接 | Cube | 42 | 2.065 | 1.742 | 0.323 | 2.481 | 2.871 |
+| 近接 | Vsm | 23 | 2.761 | 2.279 | 0.482 | 3.358 | 3.807 |
+| 低角度 | Cube | 42 | 2.113 | 1.862 | 0.251 | 2.465 | 2.715 |
+| 低角度 | Vsm | 23 | 2.708 | 2.347 | 0.361 | 3.218 | 3.561 |
+
+（通常の 3 視点は 1 回の起動なので、利用率は起動前の 1 回の値。）
+
+キューブとの差（VSM − Cube、ms）:
+
+| 場面 | フレーム全体の差 | パスの合計の差 |
+|---|---|---|
+| 負荷 対 1 | +0.817 | +0.913 |
+| 負荷 対 2 | +1.164 | +1.139 |
+| 既定 | +0.158 | +0.239 |
+| 近接 | +0.696 | +0.537 |
+| 低角度 | +0.595 | +0.485 |
+
+区間の中央値（ms）。開始時の基準は 1 回目の反復の `idle-base`（実装前、負荷・既定の視点）:
+
+| run | VirtualShadowMapPass | VsmDraw | VsmCullMega | VsmMark | VsmExpand | VsmAllocate | LightingPass |
+|---|---|---|---|---|---|---|---|
+| 開始時（`idle-base`） | 1.842 | 1.158 | 0.173 | 0.142 | 0.101 | 0.232 | - |
+| 負荷 対 1 Vsm | 1.071 | 0.506 | 0.172 | 0.142 | 0.138 | 0.087 | 0.787 |
+| 負荷 対 2 Vsm | 1.063 | 0.507 | 0.169 | 0.142 | 0.137 | 0.084 | 0.789 |
+| 既定 Vsm | 0.380 | 0.049 | 0.062 | 0.131 | 0.027 | 0.083 | 0.671 |
+| 近接 Vsm | 0.433 | 0.075 | 0.061 | 0.156 | 0.029 | 0.087 | 0.698 |
+| 低角度 Vsm | 0.386 | 0.058 | 0.064 | 0.122 | 0.028 | 0.088 | 0.590 |
+
+- overflow: VSM の 3 run（`vsm-stress-1`・`-2`・`vsm`）の `VSM_PAGES`（305・304・1354 行）・`VSM_RASTER`（338・339・1559 行）・`VSM_MEGA_CULL`（各 6・6・27 行）はすべて 0（Game.log を全行走査）。負荷のインスタンスは 47140〜47144（実装前 約 11.4 万）。
+- 判定: 16.6 ms の見張りには最大の負荷でも 6.24 ms（p95 8.2 ms）で当たらない。`VsmDraw` は 1.158 → 0.506 ms。選ばれるクラスタ・LOD・描かれるページ・texel の深度は変えていない（`VirtualShadowMapVulkanTest` の J・J4・J5・J6・K・R が書き換えなしで通る。ctest は VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・RenderGraphCompileTest の 4/4 通過）。
+- Notes: 区間の外の時間は、今回の run ではキューブ側も 0.25〜1.03 ms と VSM と同じ程度に出ており（静かな時間帯の 0.02〜0.08 ms と違う）、VSM 固有の約 0.35 ms ではなく、常駐のアプリの利用率（18〜42%）によるぶれ。負荷のキューブ 対 1 は区間の外 1.03 ms・p95 8.95 ms とぶれが大きく、差は対 2 のほうが安定している。方式の差はパスの合計の差のほうが安定して読める。差の主な内訳は `VirtualShadowMapPass`（負荷 +1.03、通常 +0.35〜+0.40）と `LightingPass`（+0.13〜+0.15。VSM の 16 点の読み取り）。起動画面・既定の描画経路は変えていない（既定は `--point-shadow-method=cube`）。
+- Next: TASKS.md の次の `todo`。
