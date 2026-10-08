@@ -36,6 +36,7 @@
 #include "Rendering/VirtualShadowMapPages.h"
 #include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/VirtualShadowMapRaster.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/ViewRenderContext.h"
@@ -1196,6 +1197,10 @@ namespace
             {
                 VisBufferSectionMaterials = buffer;
             }
+            if (IsDebugName(desc.DebugName, "LightingVsmSampleParams"))
+            {
+                LightingVsmSampleBuffer = buffer;
+            }
             if (IsDebugName(desc.DebugName, "VisBuffer_RecordUpload"))
             {
                 VisBufferRecordUpload = buffer;
@@ -1370,6 +1375,8 @@ namespace
         Container::VariableArray<BufferCreationRecord> CreatedBuffers;
         /** @brief ビジビリティバッファの「区間から材質の表の番号への対応」のバッファ（最後に作られたもの） */
         RHI::BufferPtr VisBufferSectionMaterials;
+        // 照明が太陽の VSM の読み出しのパラメータを書く定数バッファ（LightingPass が作る）
+        RHI::BufferPtr LightingVsmSampleBuffer;
         /** @brief 影の標本の統計の読み戻し先（作った順）。テストが GPU の書き込みの代わりに値を置く */
         Container::VariableArray<RHI::BufferPtr> ShadowProbeStatsBuffers;
         /** @brief ビジビリティバッファのホストが書く記録の置き場（最後に作られたもの。記録の表へコピーされる元） */
@@ -6236,6 +6243,9 @@ namespace
         RunVsmViewport(run, pass, frameIndex, frameIndex, bConsume);
     }
 
+    // 実際の GBuffer と照明のパスの間に VSM のパスを置いて 2 フレーム回し、照明が VSM と CSM のどちらを読むかを確かめる（定義は照明の VSM の統計のテストの前）
+    void RunVsmPassThroughLighting(VsmRun& run, VirtualShadowMapPass& pass, bool bExpectVsm);
+
     void ShutdownVsmRun(VsmRun& run, VirtualShadowMapPass& pass)
     {
         pass.Shutdown();
@@ -6485,10 +6495,9 @@ namespace
                 assert(CountVsmBufferCreations(*run.Device) == 0);
             }
 
-            // 何も宣言せず、何も埋めず、読むパスを足さない（資源を名前で読む後のパスが無い構成）
-            RunVsmFrame(run, pass, 0, false);
-            RunVsmFrame(run, pass, 1, false);
-            assert(run.Graph.GetDeclaredPassAccessCount(1) == 0);
+            // 何も宣言せず、何も埋めない。実際の照明のパスを後ろに置き、VSM の資源が公開されないので CSM のまま描くことを確かめる
+            //（照明の VSM のパラメータは無効、束縛 22・23 は VSM のバッファではない、CSM のテクスチャは束縛される）
+            RunVsmPassThroughLighting(run, pass, false);
             assert(run.CommandList.VsmFills.empty());
 
 #if NORVES_ENABLE_LOGGING
@@ -6529,8 +6538,7 @@ namespace
         assert(!pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::Pipeline);
         assert(!pass.GetPool() && !pass.GetDirtyList());
         assert(CountVsmBufferCreations(*run.Device) == 0);
-        RunVsmFrame(run, pass, 0, false);
-        assert(run.Graph.GetDeclaredPassAccessCount(1) == 0);
+        RunVsmPassThroughLighting(run, pass, false);
         assert(run.CommandList.VsmFills.empty() && run.CommandList.DispatchGroups.empty());
         assert(std::strcmp(VirtualShadowMap::FallbackReasonName(VirtualShadowMap::FallbackReason::Pipeline), "pipeline") == 0);
 #if NORVES_ENABLE_LOGGING
@@ -7825,6 +7833,105 @@ namespace
         return false;
     }
 
+    // VSM のパスを実際の GBuffer と照明のパスの間に置いて 2 フレーム回し、照明が太陽の影をどちらで描くかを確かめる。
+    // 照明は VSM のページの表・プールが公開されたフレームだけ VSM を読み、公開されなければ CSM のまま描く。確かめる内容:
+    //  - 照明が書く VSM の読み出しのパラメータの control.x（bExpectVsm なら 1、そうでなければ 0）
+    //  - 照明の束縛 22・23 が VSM のページの表・プールか（bExpectVsm のときだけ VSM のバッファ）
+    //  - CSM のテクスチャ配列が束縛 6 に束縛される（VSM の有無に依らず CSM は読まれ続ける）
+    //  - 渡した VSM のパスが、2 フレームとも何も記録しないか（bExpectVsm でなければ）
+    void RunVsmPassThroughLighting(VsmRun& run, VirtualShadowMapPass& pass, bool bExpectVsm)
+    {
+        run.Context.PhysicalLighting.SunClipmap = BuildVirtualShadowMapClipmap(
+            NorvesLib::Math::Vector3(0.35f, -0.8f, 0.45f), 1u, NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), VirtualShadowMapClipmapSettings{});
+        assert(run.Context.PhysicalLighting.SunClipmap.bEnabled);
+        RHI::TextureDesc csmDesc = RHI::TextureDesc::DepthStencil(64, 64, RHI::Format::D32_FLOAT, "TestCsmShadowMap");
+        csmDesc.ArraySize = PhysicalLightingShadowCascadeCount;
+        const RHI::TexturePtr csmTexture = run.Device->CreateTexture(csmDesc);
+        assert(csmTexture && csmTexture->GetArraySize() == PhysicalLightingShadowCascadeCount);
+        run.Context.PhysicalLighting.ShadowMapTexture = csmTexture;
+
+        run.Pool.BeginFrame(0);
+        RenderResources renderResources;
+        assert(renderResources.Initialize(run.Device));
+        SceneRenderer renderer;
+        assert(renderer.Initialize(run.Device.get(), nullptr, &run.Pool));
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+        run.Context.Renderer = &renderer;
+        run.Context.PendingFrameCommands = &pendingFrameCommands;
+        run.Context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        run.Context.Resources.Textures = &renderResources.Textures();
+        run.Context.Resources.Materials = &renderResources.Materials();
+        run.Context.Resources.Meshes = &renderResources.Meshes();
+
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        LightingPass lightingPass;
+
+        for (uint64_t frame = 0; frame < 2u; ++frame)
+        {
+            SetVsmFrame(run, frame);
+            pendingFrameCommands.clear();
+            run.Pool.EndFrame();
+            run.Pool.BeginFrame(frame);
+            run.Graph.BeginFrame(frame);
+            run.Graph.AddPass(&gbufferPass);
+            run.Graph.AddPass(&pass);
+            run.Graph.AddPass(&lightingPass);
+            assert(run.Graph.Compile(run.Context));
+            GLastDescriptorBinding6Texture = nullptr;
+            const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
+            assert(result.bSuccess);
+
+            // VSM のパスが宣言したものの有無（0 番が GBuffer、1 番が VSM、2 番が照明）
+            assert((run.Graph.GetDeclaredPassAccessCount(1) != 0) == bExpectVsm);
+
+            // 照明が書いた VSM の読み出しのパラメータ
+            const FakeBuffer* sampleBuffer = static_cast<const FakeBuffer*>(run.Device->LightingVsmSampleBuffer.get());
+            assert(sampleBuffer != nullptr && sampleBuffer->LastUpdateBytes.size() == sizeof(GPUVsmSampleParams));
+            GPUVsmSampleParams params = {};
+            std::memcpy(&params, sampleBuffer->LastUpdateBytes.data(), sizeof(params));
+            assert(params.control[0] == (bExpectVsm ? 1u : 0u));
+
+            // 照明の記述子セットの束縛 22・23: VSM のページの表・プールか、既定のバッファか
+            bool bFoundLightingSet = false;
+            bool bBoundVsmBuffers = false;
+            bool bBoundAnyVsmBuffer = false;
+            for (const DescriptorBindingRecord& record : GDescriptorBindingRecords)
+            {
+                const char* sampleName = BoundBufferNameAt(record.Buffers, 21);
+                if (sampleName == nullptr || std::strcmp(sampleName, "LightingVsmSampleParams") != 0)
+                {
+                    continue;
+                }
+                bFoundLightingSet = true;
+                const char* pageTableName = BoundBufferNameAt(record.Buffers, 22);
+                const char* poolName = BoundBufferNameAt(record.Buffers, 23);
+                const bool bPageTable = pageTableName != nullptr && std::strcmp(pageTableName, "VSM_PageTable") == 0;
+                const bool bPool = poolName != nullptr && std::strcmp(poolName, "VSM_PhysicalPool") == 0;
+                bBoundVsmBuffers = bBoundVsmBuffers || (bPageTable && bPool);
+                bBoundAnyVsmBuffer = bBoundAnyVsmBuffer || bPageTable || bPool;
+            }
+            assert(bFoundLightingSet);
+            assert(bBoundVsmBuffers == bExpectVsm && bBoundAnyVsmBuffer == bExpectVsm);
+
+            // CSM のテクスチャ配列は、VSM があってもなくても束縛 6 に束縛される
+            assert(GLastDescriptorBinding6Texture == csmTexture.get());
+            assert(run.CommandList.DrawCallCount > 0);
+        }
+
+        lightingPass.Shutdown();
+        gbufferPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        run.Context.Renderer = nullptr;
+        run.Context.PendingFrameCommands = nullptr;
+        run.Context.SnapshotOpaqueCommands = DrawCommandView{};
+        run.Context.Resources.Textures = nullptr;
+        run.Context.Resources.Materials = nullptr;
+        run.Context.Resources.Meshes = nullptr;
+    }
+
     // 太陽の VSM の照明の統計（逃げた標本の数）の読み戻し:
     //  - 照明の描画の後（最後の EndRenderPass の後）に、統計のバッファへ PixelShaderWrite → HostRead のバリアを 1 回だけ記録する。
     //  - 書いたフレームの提出の完了が確かめられた枠（通し番号が CompletedRenderFrameSerial 以下）だけを読んで空ける。
@@ -7960,6 +8067,19 @@ namespace
         renderer.Shutdown();
         renderResources.Shutdown();
         ShutdownVsmRun(run, vsmPass);
+    }
+
+    // 対照: VSM が使える装置では、同じ構成で照明が VSM のページの表・プールを読む（control.x = 1・束縛 22・23 が VSM のバッファ）。
+    // フォールバックのテストが「VSM を読まない」ことを確かめられる構成であることの裏づけ
+    void TestLightingReadsVsmWhenPublished()
+    {
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        VirtualShadowMapPass pass;
+        assert(pass.Initialize(run.Context) && pass.IsActive());
+        RunVsmPassThroughLighting(run, pass, true);
+        ShutdownVsmRun(run, pass);
     }
 
     // include を引用符つきの相対パスで展開する（ShaderManager と同じ規則のテスト用の最小版）
@@ -8458,7 +8578,7 @@ namespace
         }
 
         // MegaGeometry の影の経路を用意できない装置は、MegaGeometry の影だけを欠いた VSM を公開せず、VSM の資源を何も公開しないで CSM へ戻る。
-        // 戻りは VSM_FALLBACK reason=mega_geometry を 1 回だけ出し、パスは何も宣言せず、何も描かない（照明は公開された資源が無いので CSM を読む）
+        // 戻りは VSM_FALLBACK reason=mega_geometry を 1 回だけ出し、パスは何も宣言せず、何も描かない（照明は公開された資源が無いので CSM を読む。実際の照明のパスで確かめる）
         const auto expectMegaFallback = [](VsmRun& run, VirtualShadowMapPass& pass) {
 #if NORVES_ENABLE_LOGGING
             Logging::LogConfig logConfig;
@@ -8478,9 +8598,8 @@ namespace
             assert(!pass.GetPool() && !pass.GetPageTable() && !pass.GetRequestBits() && !pass.GetFreeList() && !pass.GetStats() &&
                    !pass.GetDirtyList());
             assert(!pass.GetMegaCullList() && !pass.GetMegaDirtyBits() && !pass.GetMegaChunks());
-            RunVsmFrame(run, pass, 0, false);
-            RunVsmFrame(run, pass, 1, false);
-            assert(run.Graph.GetDeclaredPassAccessCount(1) == 0);
+            // 実際の照明のパスを後ろに置き、VSM の資源が公開されないので照明が CSM のまま描くことまで確かめる
+            RunVsmPassThroughLighting(run, pass, false);
             assert(run.CommandList.VsmFills.empty() && run.CommandList.DispatchGroups.empty());
 #if NORVES_ENABLE_LOGGING
             assert(logs.Count("VSM_FALLBACK reason=mega_geometry") == 1 && logs.Count("VSM_FALLBACK") == 1);
@@ -14107,6 +14226,7 @@ int main()
     TestVirtualShadowMapPassRecordsCasterRasterAfterSkinning();
     TestVirtualShadowMapPassRecordsMegaCullBetweenMainCullAndExpand();
     TestLightingVsmStatsAreMadeHostVisibleAndReadAfterCompletion();
+    TestLightingReadsVsmWhenPublished();
     TestLightingShaderCountsVsmFallbackIndependentlyOfVtFeedback();
     TestVirtualShadowMapMegaDrawDoesNotUseCsmUniformSlots();
     TestVirtualShadowMapMegaCullStatsReporterLogsEvery60Reports();

@@ -2584,3 +2584,13 @@
 - 検証（`.harness/runs/20261008-100400/`）: `verify-VTG8-FIX-MEGA-FALLBACK-3.txt`（BUILD_EXIT=0、`RenderGraphCompileTest` 1/1 passed、CTEST_EXIT=0）。GPU の撮影は回していない（既定の描画は CSM で、VSM は `--shadow-method=vsm` のときだけ）。
 - Notes: 変異を戻したあと、`Copy-Item` が更新時刻を保って MSBuild が再コンパイルしなかったため、更新時刻を進めて再ビルドした（-3 はその後の結果）。
 - Next: `TASKS.md` の未完の次の項目。
+
+## 反復 7（2026-10-08）: VTG8-FIX-MEGA-FALLBACK 再実装（評価の差し戻し対応・done）
+
+- 差し戻し: 戻りのテストが VSM のパスだけを回しており、照明が CSM を読むことは確かめていなかった。
+- 直し方（テストのみ。製品コードは変更なし）: `RenderGraphCompileTest` に `RunVsmPassThroughLighting` を足した。実際の `GBufferPass` → VSM のパス → `LightingPass` を 2 フレーム回し、(1) 照明が書く `LightingVsmSampleParams` の `control.x`（VSM 公開時 1・フォールバック時 0）、(2) 照明の束縛 22・23 が `VSM_PageTable`・`VSM_PhysicalPool` か（フォールバック時はどちらも VSM のバッファではない）、(3) CSM のテクスチャ配列が束縛 6 に束縛されること、(4) VSM のパスが何も宣言しないこと、を確かめる。`FakeDevice` に `LightingVsmSampleBuffer` を足して照明の定数バッファの更新内容を読めるようにした。
+- 適用先: `DrawIndexedIndirectCount` なし・cull のパイプライン生成の失敗（3 通り）・cull の資源の確保失敗（`VsmMega_List`/`DirtyBits`/`Chunks`）の MegaGeometry の各戻りと、既存の他の理由（`fragment_atomics`・`bda`・`pool_size`・`pipeline`）の戻り。対照として `TestLightingReadsVsmWhenPublished`（VSM が使える装置では同じ構成で `control.x = 1`・束縛 22・23 が VSM のバッファ）を足し、確かめる構成が VSM の公開を見分けられることを裏づけた。
+- 変異: `LightingPass.cpp` で VSM のパラメータを常に有効（`control[0] = 1`）にすると `RenderGraphCompileTest` が落ちる（`verify-VTG8-FIX-MEGA-FALLBACK-mut2.txt`: `params.control[0] == (bExpectVsm ? 1u : 0u)` の assert、CTEST_EXIT=8）。元へ戻して更新時刻を進め、再ビルドした。
+- 検証（`.harness/runs/20261008-100400/`）: `verify-VTG8-FIX-MEGA-FALLBACK-6.txt`（Game・RenderGraphCompileTest のビルド BUILD_EXIT=0、`RenderGraphCompileTest` 1/1 passed、CTEST_EXIT=0）。GPU の撮影は回していない（既定の描画は CSM で、VSM は `--shadow-method=vsm` のときだけ）。
+- Notes: `RenderGraphCompileTest.cpp` は行末が混在しているため、バイトを保ったまま編集した。bash の `/m:1` はパス変換されるので、ビルドは PowerShell で回した。
+- Next: `TASKS.md` の未完の次の項目。
