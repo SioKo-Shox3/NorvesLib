@@ -235,6 +235,19 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-08 親（段の区切りの評価の指摘: 点光源の VSM のパラメータ・スライスの表が 1 本のバッファで Execute ごとに上書きされ、同じ View の 2 つ目のビューポートが提出前の 1 つ目のパラメータを上書きする。同じ descriptor set の再更新は先に記録したコマンドを無効にする）。照明の定数（`m_LightDataBuffer`）・ライトの配列も同じ形なので組に含める。SSAO・SSR・Bloom・トーンマップ・ボリュームも 1 本の定数バッファを Execute ごとに書く形だが、段9の差分ではないので直さず、既知の限界として PROGRESS に書く。危険地帯（RenderThread・GPU の資源の寿命・descriptor set）。
 
+## VTG9-FIX-NIGHT-RTGI-FIREFLIES: 夜の見本の球の暗い側に残る RTGI の橙の粒をなくす
+- status: todo
+- done-when: (1) 切り分け: 夜の低角度で、見本の小さな球の暗い側に出る橙の粒が、RTGI のどの光線の値から来るか（発光の球＝電球に当たった光線・照らされた地面や物に当たった光線・環境に抜けた光線）を、一時的な計装・変異の撮影で確かめ、PROGRESS に表で書く（計装・変異は戻してからコミットする）。(2) 原因に応じて直す。電球のように点光源と発光の物体が同じ光を表すとき、RTGI の光線が発光の面に当たって拾う値は、点光源の直接光と二重に数えることになる。そうであれば、点光源の代わりの発光の面の値を RTGI で拾わない（または点光源と重ならない形にする）。それで足りなければ、RTGI の 1 本の光線の値に上限（ホタルの抑え）を入れ、上限の値と根拠を PROGRESS に書く。(3) 粒の数を測る: 夜の低角度（`-Deterministic -Night -ViewNames low`）の PNG の x 240〜519・y 370〜469 で、輝度（0.2126R + 0.7152G + 0.0722B）の 7×7 の中央値（PIL の `MedianFilter(7)`、8 ビットの輝度に掛ける）を m としたとき、m ≤ 25 かつ 輝度 − m > 12 かつ R − G > 20 の画素（暗い側の粒）の数を 10 未満にする。修正前は 92（`.harness/runs/startup-capture/VTG9-ACCEPT-r2-night/low-night.png`）、RTGI を切った画は 0（`VTG9-DOTS2-rtgi-off/low-night.png`）。同じ領域の m > 25 の画素（照り返しの面）の数も記録する（修正前 137。判定には使わない）。夜の近接の暗い側（x 370〜699・y 100〜599）の R − G > 40 の画素は 0 のまま。(4) 夜の 3 視点と昼の 3 視点（太陽 45°）の PNG を開き、見本の球に RTGI の照り返しが残り（RTGI を切った画のように真っ黒にならない）、天球・地面・球・岩・小屋・電球と電球の影が欠けなく見えることを確かめる。昼の 3 視点の画面の平均輝度の修正前（`VTG9-ACCEPT-r2` の `default-sun45`・`near-sun45`・`low-sun45`）からの変化を PROGRESS に書く。golden 4 本が基準画像・閾値を動かさずに通る。検証レイヤー付きの Debug の夜で `vulkan_validation.error_count` が 0。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest RenderingGoldenImageTest RTGIDiffuseIndirectVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|RTGIDiffuseIndirectVulkanTest|VirtualShadowMapVulkanTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-FIX-NIGHT-RTGI-FIREFLIES-validation -Configuration Debug -Deterministic -Night -ViewNames low`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-FIX-NIGHT-RTGI-FIREFLIES-night -Configuration RelWithDebInfo -Deterministic -Night`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-FIX-NIGHT-RTGI-FIREFLIES-day -Configuration RelWithDebInfo -Deterministic -SunElevations 45`
+- stop-when: 粒が RTGI の光線の値から来ていない、または (2) の直し方で暗い側の粒が 10 未満にならず、照り返しを消さずに抑える方法が無い場合は、切り分けを記録して止める。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game/GameModes/Rendering3DTest, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-09 親（ユーザーの指摘「夜の赤い点は許容できない」の続き）。VTG9-FIX-NIGHT-ENV-SUN の後も、夜の低角度で見本の小さな球の暗い側に橙の点が残る（夕日の修正の前後で同じ）。RTGI を切ると消えるが、球の照り返しも消える（見本の球は大きな球の影の中にあり、RTGI の照り返しだけで見えている）。測り方は修正前 92・RTGI を切った画 0 で校正した（照り返しの面の粒立ちは数えない）。危険地帯（RTGI のシェーダー）。
+
 ## FIX-MEGA-LOD-SHADING: MegaGeometry の粗い段の陰影が LOD0 より暗く・柔らかくなるのを直す
 - status: backlog
 - done-when: 変位のある大きな球の LOD1〜LOD4 で、目地の陰影（法線）が LOD0 と見分けがつかない（既定・低角度の視点の拡大画像で、LOD0 の参照との球の領域の平均の差が撮り直しの雑音と同じ程度）。形の誤差の閾値（1画素）は変えない。
@@ -343,13 +356,13 @@
 - notes: 2026-09-25の全体gate（`.harness/runs/20260925-r7-gate/`）で確認。SkinnedRenderPathContractTestはTEST-SKINNED、R4はR4-REOPEN。
 
 ## CORE-JSON-SURROGATE: JSONの非BMP文字列を整合させる
-- status: todo
+- status: backlog
 - done-when: JsonDocumentのsurrogate pairを単一Unicode scalarへ合成し、生UTF-8/escape表現が同じ名前になることを検証する。
 - verify: escaped emoji/生UTF-8/孤立surrogate/文字列往復の実コード試験と独立レビュー。
 - notes: ParseUnicodeEscapeは現状4桁単位、AppendUtf8は3byteまで。P5Aとは別件。既定game action名はASCIIで進め、汎用JSON整合として後続修正する。
 
 ## GAME-GR130-VFX: 剣のトレイル（リボン）を実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: CPU の試験で、固定ステップの回数が 0・1・2 のどのフレームでも帯の点列が連続で NaN が無いこと、1フレームで90度以上振っても補間で折れ目の角度が上限以下になること、寿命で点が消えて上限を超えないこと。GPU の試験で、既知の軌跡の帯の画素の位置が期待と一致すること。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -359,7 +372,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR131-VFX: 当たりの火花・衝撃（ヒットエフェクト）を実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: 当たり1回で放出の要求がちょうど1回積まれ、位置と法線が当たりの値と一致すること。表面の種類ごとに表のエフェクトが選ばれること。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -369,7 +382,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR132-VFX: シ者を倒したときの赤い血を実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: 撃破の合図から、血・滲み・消滅が時間割どおりの時刻で始まること（固定刻みのクロックで2回撮って一致）。滲みのマスクが時間に対して単調に広がること。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -379,7 +392,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR133-VFX: デカール（地面や体に残る跡）を実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: GPU の試験で、既知の箱のデカールが範囲内の GBuffer の色と法線だけを変え、範囲外の画素が変わらないこと。上限を超えると古いものから消えること。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -389,7 +402,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR134-VFX: メッシュのエフェクトを実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: 粒子の数だけインスタンスが描かれ、時間の値で溶けの閾値が変わること（GPU の試験の画素で確かめる）。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -399,7 +412,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR135-VFX: 空気の歪み（屈折）を実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: 歪みのバッファが空のとき、出力が歪みのパスの有無で画素単位で一致すること。既知のずらしの値で、画素が期待の量だけ動くこと。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -409,7 +422,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR136-VFX: Niagara 相当の VFX システムを実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: スキーマに、エミッタとモジュールの型、値の範囲・単位・既定値が出ること。範囲外の値や型の合わない値の設定が拒否されること。クックしたバイナリを読んだ結果が、元の形式から読んだ結果と一致すること（同じ種と刻みで、粒子の位置の列が一致）。動いているゲームでの値の変更が、次のフレームから反映すること。イベントで起動したエミッタが、起動の位置と時刻どおりに生成すること。フリップブックの取り込み設定どおりの UV の矩形と再生の速さ。雨（GR58）を含む既存の要件のエフェクトを少なくとも1つ、このシステムで組めること。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -419,7 +432,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR137-VFX: 資産の編集・決定的な撮影・言語モデルの口（Bridge の拡張。汎用）を実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: Bridge の試験で、資産を開いて値を設定し、保存して開き直すと値が一致すること。型の合わない値や範囲外の値が拒否されること。同じ引数で2回撮影した画像が一致すること（GPU の試験。GPU の無い環境では飛ばす）。MCP の口から、スキーマの一覧、値の設定、撮影が通ること（NorvesEditor の側の作業なら、NorvesLib の試験の対象外）。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -457,31 +470,31 @@
 - stop-when: mock/source確認を実GPU合格と扱う、ユーザー指定を変えて別環境へ無断移動する。
 
 ## G2-GR79-IMPORT-POLICY-CONNECTION: 材質設定と出所付き診断を接続する
-- status: todo
+- status: backlog
 - done-when: material/asset/asset-setの設定を解決し、発光換算の未設定拒否に資産名・材質名・emissiveNitsPerUnitを表示。AI生成profileを明示的に適用し素材単位overrideを保持する。canonical/hash/cacheとJSON/CLIへ接続する。
 - verify: asset-set単位指定/素材上書き/欠落・不正/発光textureのみ/診断名/設定差cache失効と旧非発光・v0互換を確認する。
 - stop-when: provenanceを拡張子だけで決める、sidecarよりasset-set設定を無言優先、非発光を不必要に拒否、見た目未確認を受入れ済みとする。
 
 ## G2-S6-ASSET-SET: C++一括cookと増分判定を接続する
-- status: doing
+- status: backlog
 - done-when: AssetCook --asset-setへ一括cookと増分判定を集約。origin/main CookTextureAssetSet.ps1 + Rendering3DTestSilverTextures/Rendering3DTestSilverGltfTexturesに対してcooked/manifestのbyte一致を確認。glTF外部ファイルとsidecarを印に含む。
 - verify: 単体CLIの分割前後比較、旧texture spec v1の2spec同値、外部buffer/画像/sidecarの変更・不在・復帰・破損で正しい再cook/拒否、失敗時出力保持。
 - stop-when: 手元確認用CookAssets.ps1/StartupMaterialsを対象に戻す、PS側へ増分判定を重複実装、Windows実byte比較を未実施で完了とする。
 
 ## G2-MATERIAL-SELECTION-INTEGRATION: 共通照合を設定とslot名へ接続する
-- status: todo
+- status: backlog
 - done-when: GR79 ARM/発光、GR78 材質→SurfaceName、GR32 slot名が同じResolveMaterialSelectionを使う。元catalog/生成slotを明示し、全設定の未一致/二重指定をcookと増分preflight双方で拒否。同名GLBは元での改名推奨を資産名付きで警告する。
 - verify: raw無名1/Blender Material_0、逆primitive順/同名/生成名衝突、name+index二重指定、不在、unicode名、incremental skipの検証迂回なし、設定値/SurfaceName/slotへの実到達。
 - stop-when: 未実装SurfaceNameを受理して捨てる、共通核の存在だけで全接続完了とする、元indexとslotindexの混同、旧wire予約領域へ勝手に保存。
 
 ## CORE-STRING-REPLACE-TERMINATOR: 部分置換によるsuffixのNUL破損を修正する
-- status: todo
+- status: backlog
 - done-when: TString::replaceが同長/増加/縮小/末尾/自己参照の置換で意図したbyte列を保ち、終端は末尾だけに置く。
 - verify: 実Coreのchar/wchar/member契約、部分置換直後のsuffix先頭と全size、関連文字列試験。
 - stop-when: StringCopyの全呼出し規約を検証なしに変更、Windows CRTの動作を偽shimで合格扱い。
 
 ## G2-GR82-B4-STATIC-ROOT-FRAME128: 静的なArmature親と作者frameを安全に束縛する
-- status: doing
+- status: backlog
 - done-when: 明示profile2/128で、skin.skeleton省略と静的な非関節祖先を作者importから三role保存/同snapshot読込/既存runtime公開/実CPU poseまで通す。現在ROOTと全作者snapshotの必須AFRMを比較し、同local restでも異なるframeはrest overrideでも拒否する。profile2 clipには失効可能な束縛証明を持たせ、直接Sampleの迂回も拒否する。
 - verify: 合成glTF/GLBのArmature/祖先chain/省略hint/並べ替え、非可換G・M・IBMとimport scale2の独立pose oracle、frame欠落/不正/混在profile/全snapshot差拒否、SetClip・Unload・別targetでproof失効、三NVPKから実runtime/名前指定Sample、確保前の境界予算と失敗out保持。既存profile1のwire/pose・旧71/固定Sampler/cook/CLIを維持し、新Debug/Release常時検査と独立oracleを使う。
 - policy: profile1の既定/bytes/128/Identity ROOTを維持。profile2はroot上の静的直接TRS・正一様scale祖先だけ、joint自体は既存正TRS。joint間非joint/祖先animation/matrix/非一様祖先は拒否。SkeletonIdにprofile/rest/ROOTを混ぜず、別guardでprofile照合。frame全64byte一致、cross-profile自動束縛なし。
