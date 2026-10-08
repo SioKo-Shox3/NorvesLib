@@ -414,3 +414,12 @@ run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.ex
 - 判定: 16.6 ms の見張りには最大の負荷でも 6.24 ms（p95 8.2 ms）で当たらない。`VsmDraw` は 1.158 → 0.506 ms。選ばれるクラスタ・LOD・描かれるページ・texel の深度は変えていない（`VirtualShadowMapVulkanTest` の J・J4・J5・J6・K・R が書き換えなしで通る。ctest は VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・RenderGraphCompileTest の 4/4 通過）。
 - Notes: 区間の外の時間は、今回の run ではキューブ側も 0.25〜1.03 ms と VSM と同じ程度に出ており（静かな時間帯の 0.02〜0.08 ms と違う）、VSM 固有の約 0.35 ms ではなく、常駐のアプリの利用率（18〜42%）によるぶれ。負荷のキューブ 対 1 は区間の外 1.03 ms・p95 8.95 ms とぶれが大きく、差は対 2 のほうが安定している。方式の差はパスの合計の差のほうが安定して読める。差の主な内訳は `VirtualShadowMapPass`（負荷 +1.03、通常 +0.35〜+0.40）と `LightingPass`（+0.13〜+0.15。VSM の 16 点の読み取り）。起動画面・既定の描画経路は変えていない（既定は `--point-shadow-method=cube`）。
 - Next: TASKS.md の次の `todo`。
+
+## 段9 VTG9-ACCEPT（2026-10-08）
+
+- 結果: 段9の受入れを満たす。記録は `Docs/RenderingValidation/VirtualizationAcceptance.md` の「段9（VSM 点光源と全体）」と「段1〜9 の受入れのまとめ」。
+- 検査（`.harness/runs/vtg9-accept/`）: Debug ビルド（`a1-build-debug.txt`、EXIT=0）。ctest 9 本（`a2-ctest.txt`。RenderGraphCompileTest・VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・VideoMemoryBudgetManagerTest・golden 4 本）が 9/9 通過。検証レイヤー付き Debug の夜 3 視点（`a3-validation.txt`、`VTG9-ACCEPT-validation`）は error・warning・vuid 0、溢れ 0。RelWithDebInfo ビルド（`a4`）。撮影は朝・昼・夕（`a5`、`VTG9-ACCEPT`）・夜（`a6`、`VTG9-ACCEPT-night`）・夜の旋回の影の測定（`a7`、`VTG9-ACCEPT-night-orbit`、球の自転を止める）で、`failures` は空。
+- 夜の電球の影（キューブ / VSM）: texel 既定 19.593 / 8.502・近接 16.510 / 2.394・低角度 17.048 / 4.339 mm。縁の帯 0.026249 / 0.002016・0.107684 / 0.010192・0.038117 / 0.003978。mean_abs_delta・flip_ratio はキューブ 0、VSM 0.000003 以下（両方 0.001 未満で同等）。一致 0.999964・0.993166・0.999582。
+- 画: 12 枚と旋回の 1 枚を開いた。天球・地面・球・岩・小屋・見本の帯・電球が欠けなく、電球の影に継ぎ目・欠けは無い。近接の夜の大きな球の赤い点は段8（キューブ）の同じ視点にもある。
+- ログ: 受入れの撮影 18 本の全行で VSM の 3 種の溢れ 0、`VSM_FALLBACK` 0。ERROR は既知の 2 件（Slang SDK が無いための `neural_material_decode.slang`）。
+- Next: 段の区切りの評価、退避した 15 件の状態を戻す、main へマージ。

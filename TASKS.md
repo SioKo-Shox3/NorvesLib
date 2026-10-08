@@ -202,7 +202,7 @@
 - notes: 2026-10-08 親（段9の開始時に詳しくした。計画書 §1「8GB 級の GPU で収まる。開発機では `--vram-budget-mb` の人工的な上限で確かめる」、§5 の段9の受入れ）。段8で VSM の確保量（約 426 MB）は固定の取り置きとして割り振れる量から引くようにした（`VideoMemoryBudgetManager`）。速度の項目の GPU 時間の撮影を兼ねる。危険地帯（メモリ・予算）。
 
 ## VTG9-ACCEPT: 段9（VSM 点光源）と全体の受入れを記録する
-- status: backlog
+- status: done
 - done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` に「## 段9（VSM 点光源と全体）」の節を段8の節と同じ構成で足し、全体のまとめ（段1〜9 の受入れの数値の一覧）を書く。(1) 起動画面の朝・昼・夕・夜（既定の経路）の撮影を開いて確かめた所見。(2) 夜の電球の影: 夜の既定・近接・低角度を `-Deterministic -Night -OrbitDegreesPerSecond 20 -OrbitRenderedFrames 240,320,400 -ShadowProbe`（球の自転を止める）で撮り、同じ run のキューブと VSM の `mean_texel_mm`・`partial_ratio`・`mean_abs_delta`・`flip_ratio`・一致を表にする。判定: 細かさ = VSM の `mean_texel_mm` と `partial_ratio` が 3 組すべてでキューブ以下。ちらつき = VSM の `mean_abs_delta` と `flip_ratio` が 3 組すべてでキューブ以下（両方が 0.001 未満の組は同等とみなす）。一致 = 3 組すべてで 0.98 以上。(3) 全体の負荷モード: VTG9-STRESS-ALL の表（予算の内側・溢れ 0・影の省略 0・穴なし）。(4) GPU 時間は VTG9-VSM-POINT-GPU-TIME と VTG9-STRESS-ALL の表。(5) golden（基準画像を動かしていないこと）と関係する ctest。(6) 既知の限界。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest CameraViewConstantsTest RenderingGoldenImageTest RenderResourcesDomainContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest|VirtualShadowMapVulkanTest|VirtualShadowMapClipmapTest|VirtualShadowMapPointTest|VideoMemoryBudgetManagerTest|RenderingGoldenIndoorVulkanTest|RenderingGoldenOutdoorVulkanTest|RenderingGoldenIndoorGBufferFallbackVulkanTest|RenderingGoldenOutdoorGBufferFallbackVulkanTest)$"`
@@ -212,7 +212,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-ACCEPT-night-orbit -Configuration RelWithDebInfo -Deterministic -Night -OrbitDegreesPerSecond 20 -OrbitRenderedFrames 240,320,400 -ShadowProbe -SphereSpin Off`
 - stop-when: 判定の行が満たせない場合は、測定値を記録して止める（判定を緩めない）。
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-08 親（段9の開始時に詳しくした）。ランナーが止まった後に親が行う（backlog）。段の区切りの評価（Sol）にかける。
+- notes: 2026-10-08 親（段9の開始時に詳しくした）。ランナーが止まった後に親が行う（backlog）。段の区切りの評価（Sol）にかける。 2026-10-08 親: 受入れを記録した（`Docs/RenderingValidation/VirtualizationAcceptance.md` の「段9（VSM 点光源と全体）」と「段1〜9 の受入れのまとめ」）。検査の出力は `.harness/runs/vtg9-accept/`。
 
 ## FIX-MEGA-LOD-SHADING: MegaGeometry の粗い段の陰影が LOD0 より暗く・柔らかくなるのを直す
 - status: backlog
