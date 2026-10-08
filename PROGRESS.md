@@ -465,3 +465,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 段の区切りの評価（1 周目）の指摘: (1) `vsm_expand.comp` の共有メモリの印への非原子的な書き込み → `addc72dc` で直した。(2) 照明のパスの点光源の VSM のパラメータ・スライスの表・descriptor set を同じフレームの複数の Execute が共有する → `VTG9-FIX-LIGHTING-PER-EXECUTE`。(3) 受入れの表の値と撮り直された出力先の不一致 → `11fa107c` で出典と撮り直した値を書いた。
 - ユーザーの指摘: 夜の近接の大きな球の暗い側に橙赤の粒が出るのは許容できない（段8にもあったことは理由にならない）。原因は夜の静的な環境光（夕焼けの HDRI の 0.08 倍）に残った太陽の鏡面反射 → `VTG9-FIX-NIGHT-ENV-SUN`。受入れの記録の「VSM によるものではない」は、この項目の後に直す。
 - ランナーが段9の項目だけを拾うよう、別の作業の todo・doing 16 件を、このブランチの上で再び backlog にした（CORE-JSON-SURROGATE・GAME-GR130〜GR137-VFX・G2-GR79-IMPORT-POLICY-CONNECTION・G2-MATERIAL-SELECTION-INTEGRATION・CORE-STRING-REPLACE-TERMINATOR は todo、G2-S6-ASSET-SET・G2-GR82-B4-STATIC-ROOT-FRAME128・G3-GR10・G3-GR13 は doing）。main へマージする前に main の状態へ戻す。
+
+## VTG9-FIX-NIGHT-ENV-SUN（2026-10-08）
+
+- 結果: 夜の近接の大きな球の暗い側の橙赤の粒がなくなった。証拠は `.harness/runs/20261008-221440/verify-VTG9-FIX-NIGHT-ENV-SUN-1〜5.txt`（Debug ビルド・ctest 6/6・検証レイヤー付き Debug の夜 `error_count` 0・`warning_count` 0・`vuid_count` 0・RelWithDebInfo ビルド・夜 3 視点の撮影、すべて EXIT=0）。追加で RTGIDiffuseIndirectVulkanTest・DDGIProbeRadianceVulkanTest・LightingLightBufferTest も通過（`extra-build.txt`・`extra-ctest.txt`）。
+- 実装: `StaticEnvironmentMaxRadiance`（HDR の値、0 は上限なしで既定）を `RenderWorld::SetStaticEnvironmentMaxRadiance` → `RenderingCoordinator` → FramePacket の `SceneProxy` → `LightingPass`（`GPULightingParams` の旧 `shadowPadding2`、`ViewRenderContext::PhysicalLighting`）へ、`StaticEnvironmentIntensityScale` と同じ経路で渡す。空が無効で静的 HDR を実際に読むフレーム（倍率と同じ条件、検証用の環境は除く）だけ値を渡し、それ以外は 0。倍率を掛ける前の色の最大の成分が上限を超えたら色相を保って上限まで縮める。
+- 効く場所: `lighting.frag`（鏡面の IBL の前計算の値・背景）、`forward_transparent.frag`（半透明の鏡面の IBL。UBO の旧 `padding2`）、`RTGI/DiffuseIndirect.comp`（外れた光線。`RTGIComputeParameters` を 160 → 176 バイト、`environmentParameters.x`）、`DDGI/ProbeRadiance.comp`（外れた光線。`environmentParameters.y`）。経路追跡（`PathTracing/*`）は検証用で静的環境の倍率も使わないので触らない。拡散の IBL の前計算の放射照度は太陽の分を含んだまま（既知の限界。全エネルギーの約 3.7%）。
+- Game: `--night` で上限 10（`kNightStaticEnvironmentMaxRadiance`、根拠は定数の隣）。ほかのモードへは `SetStaticEnvironmentMaxRadiance(0)` で持ち越さない。
+- 切り分け（タスクの前提の訂正）: 粒の原因は鏡面の IBL ではなく **RTGI の外れた光線が太陽に当たること**だった。鏡面の IBL にだけ上限を入れた最初の実装は near-night.png が修正前と 1 画素も違わなかった（`exp-*` は一時的にシェーダーの出力を絞った実験: 直接光の鏡面だけ・直接光の拡散だけでは粒が出ず、環境光だけで粒が出た。RTGI を切った `VTG9-DOTS-rtgi-off` は粒が無い）。RTGI の外れた光線にも上限を入れて消えた（`VTG9-FIX-NIGHT-ENV-SUN-try2`、最終の `-night`・`-validation`）。
+- 粒の数: タスクの指定の測り方（輝度が 9×9 の箱の平均より 10 以上高く R−G>15、x 370〜909・y 100〜599、輝度は床）は修正前 2667 → 修正後 2548（Debug・RelWithDebInfo とも）で、100 未満にならない。この測り方は粒を測れていない: 粒の無い `VTG9-DOTS-rtgi-off` でも 3105 で、レンガの凹凸の縁の橙色を数えている。粒は暗い側（x 370〜699・y 100〜599）で R−G>40 の画素を数えると分けられ、修正前 223・RTGI を切った 0・修正後 0（R−G の最大は 98 → 35）。上の 2548 の残りは RTGI を切った画像と同じレンガの縁で、別の原因ではない。
+- 画: 夜の 3 視点（`VTG9-FIX-NIGHT-ENV-SUN-night`）を開いた。近接は球の暗い側に粒が無く、既定・低角度とも天球・地面・球・岩・小屋・電球と電球の影が欠けなく見える。
+- golden 4 本は基準画像・閾値を動かさずに通る（検証アプリは上限を使わない）。
+- Notes: Edit ツールが混在行末のファイルを正規化して全行を書き換えるため、混在のファイルは行末を保って置換する別の手順で編集した（numstat 2 通りは一致を確認）。受入れの記録（`VirtualizationAcceptance.md`）の「VSM によるものではない」の直しはこの項目の後に行う（段9の受入れの追従）。
+- Next: TASKS.md の次の `todo`。

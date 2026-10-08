@@ -1430,6 +1430,14 @@ namespace Game::GameModes
         // 照度は約 3.9 lx なので、0.08 で約 0.31 lx（満月の夜の地面の目安 0.1〜1 lx）にする。
         constexpr float kNightStaticEnvironmentIntensityScale = 0.08f;
 
+        // --night の静的HDRの鏡面（IBLの前計算の値と背景）の放射輝度の上限（倍率を掛ける前のHDRの値）。
+        // grasslands_sunset_4k は仰角 3.3° の太陽が約 15638（RGB 45824 : 8192 : 512）で、空の輝度の上位 0.1% は
+        // 約 6.0。10 を超える画素は 817 で全エネルギーの約 3.7%。夜の倍率 0.08 を掛けても太陽は約 1250 の
+        // 放射輝度のままで、RTGI の外れた光線がたまたま太陽に当たった画素が橙赤の粒になるので、
+        // 空の上位 0.1% の上に余裕を持たせた 10 で縮める（RTGI・DDGI の外れた光線、鏡面の IBL、背景に効く。
+        // 拡散の IBL の前計算の放射照度は変えない）。
+        constexpr float kNightStaticEnvironmentMaxRadiance = 10.0f;
+
         // 光源球の電球の色（リニアの sRGB、最大の成分を1にした値）。白熱電球の色温度 2850 K（100 W 形の
         // タングステン電球、CIE 標準イルミナント A の 2856 K に近い）の黒体の色度を Kim ほかの3次式の近似で
         // 求め（x = 0.4475、y = 0.4067）、XYZ から sRGB（D65）の行列でリニアの RGB へ直した。
@@ -2615,6 +2623,8 @@ namespace Game::GameModes
             }
             ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(
                 data.m_bStartupNight ? kNightStaticEnvironmentIntensityScale : 1.0f);
+            ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(
+                data.m_bStartupNight ? kNightStaticEnvironmentMaxRadiance : 0.0f);
             ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
 #if NORVES_BUILD_DEVELOPMENT
             // --debug-view: F4・F5 と同じ経路で、起動時のデバッグの表示を選ぶ
@@ -2629,8 +2639,8 @@ namespace Game::GameModes
 #endif
             if (data.m_bStartupNight)
             {
-                LOG_INFO("Rendering3DTest night enabled static_environment_scale=%.3f",
-                         kNightStaticEnvironmentIntensityScale);
+                LOG_INFO("Rendering3DTest night enabled static_environment_scale=%.3f max_radiance=%.1f",
+                         kNightStaticEnvironmentIntensityScale, kNightStaticEnvironmentMaxRadiance);
             }
             else
             {
@@ -3998,6 +4008,7 @@ namespace Game::GameModes
         ctx.EngineRef.GetRenderWorld().SetSkyAtmosphere(data.m_SkyAtmosphere);
         ctx.EngineRef.GetRenderWorld().SetVolumetricFogParameters(MakeDefaultVolumetricFogParameters());
         ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentIntensityScale(1.0f);
+        ctx.EngineRef.GetRenderWorld().SetStaticEnvironmentMaxRadiance(0.0f);
         data.m_LightController.SetTargetLight(nullptr);
         data.m_F4BoardObjects.clear();
         data.m_F4BoardComponents.clear();

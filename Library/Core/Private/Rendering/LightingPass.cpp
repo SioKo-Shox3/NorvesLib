@@ -813,6 +813,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t sampleState[4] = {};
         /// xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比（今のフレーム/履歴）。
         float previousCameraPosition[4] = {};
+        /// x=静的HDR環境の放射輝度の上限（倍率を掛ける前。0は上限なし）。
+        float environmentParameters[4] = {};
     };
 
     struct RTGIInstanceData
@@ -841,7 +843,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t Reserved = 0u;
     };
 
-    static_assert(sizeof(RTGIComputeParameters) == 160u);
+    static_assert(sizeof(RTGIComputeParameters) == 176u);
     static_assert(sizeof(RTGIInstanceData) == 112u);
     static_assert(sizeof(RTGIEmitterEntry) == 16u);
 
@@ -3742,6 +3744,11 @@ namespace NorvesLib::Core::Rendering
                                           context.PhysicalLighting.IBLIntensity > 0.0f
                                       ? context.PhysicalLighting.IBLIntensity
                                       : 0.0f;
+        parameters.environmentParameters[0] =
+            std::isfinite(context.PhysicalLighting.StaticEnvironmentMaxRadiance) &&
+                    context.PhysicalLighting.StaticEnvironmentMaxRadiance > 0.0f
+                ? context.PhysicalLighting.StaticEnvironmentMaxRadiance
+                : 0.0f;
         parameters.temporalState[0] = bHistoryReprojectionValid ? 1u : 0u;
         parameters.temporalState[1] = bLightRevisionMismatch ? 1u : 0u;
         parameters.temporalState[2] = lightWeightLimitedFrames > 0u ? 1u : 0u;
@@ -4810,6 +4817,16 @@ namespace NorvesLib::Core::Rendering
         }
         const bool bStaticEnvironmentIbl =
             m_bIBLAvailable && !bValidationConstantIblAvailable && !bSkyAtmosphereRequested;
+        // 放射輝度の上限は、静的HDRを実際に読むフレーム（倍率と同じ条件）だけ渡す。
+        // 空が有効なフレーム・検証用の環境では0（上限なし）のままにする。
+        params.staticEnvironmentMaxRadiance = 0.0f;
+        if (bStaticEnvironmentIbl && !bValidationRaw250 && !bValidationRaw251 && !bValidationRaw252 &&
+            context.SnapshotScene != nullptr)
+        {
+            const float maxRadiance = context.SnapshotScene->StaticEnvironmentMaxRadiance;
+            params.staticEnvironmentMaxRadiance =
+                std::isfinite(maxRadiance) && maxRadiance > 0.0f ? maxRadiance : 0.0f;
+        }
         const float publishedIblIntensity =
             bValidationConstantIblAvailable ? 1.0f
             : bStaticEnvironmentIbl         ? m_Settings.IBLIntensity * params.staticEnvironmentScale
@@ -4883,7 +4900,8 @@ namespace NorvesLib::Core::Rendering
                 m_DfgSampler,
                 9u,
                 publishedIblIntensity,
-                params.bIBLEnabled != 0u);
+                params.bIBLEnabled != 0u,
+                params.staticEnvironmentMaxRadiance);
             // 透明物も同じキューブの番号で点光源の影を引く（光源バッファと同じフレームの配列）。
             context.PhysicalLighting.PublishPointShadowCubes(
                 m_FramePointShadowCubeTexture ? m_FramePointShadowCubeTexture

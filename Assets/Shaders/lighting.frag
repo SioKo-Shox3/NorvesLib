@@ -28,7 +28,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     float preExposure;
     uint shadowPadding0;
     float staticEnvironmentScale; // 空が無効なときの静的HDRの背景に掛ける倍率（既定1。空が有効なら1）
-    uint shadowPadding2;
+    float staticEnvironmentMaxRadiance; // 静的HDRの鏡面と背景の放射輝度の上限（倍率を掛ける前。0は上限なし）
     vec4 skySunDirectionAndCosRadius; // xyz=太陽方向, w=cos(太陽ディスク角半径)
     vec4 cameraForward; // xyz=CSM分割に使うカメラ前方単位ベクトル
     vec4 ddgiVolumeOrigin; // xyz=DDGI volume原点
@@ -216,11 +216,23 @@ vec2 EquirectangularUV(vec3 dir)
     return uv;
 }
 
+// 静的HDR環境の色の最大の成分が上限を超えたら、色相を保ったまま上限まで縮める（0は上限なし）。
+// 夜の環境光に残った沈みかけの太陽（倍率を掛ける前で約 15638）が、鏡面の反射や背景で極端に明るくなるのを防ぐ。
+vec3 LimitStaticEnvironmentRadiance(vec3 radiance)
+{
+    float peak = max(radiance.r, max(radiance.g, radiance.b));
+    if (params.staticEnvironmentMaxRadiance > 0.0 && peak > params.staticEnvironmentMaxRadiance)
+    {
+        radiance *= params.staticEnvironmentMaxRadiance / peak;
+    }
+    return radiance;
+}
+
 vec3 SamplePrefilteredSpecular(vec3 direction, float roughness)
 {
     float lod = roughness * float(params.prefilteredSpecularMipLevels - 1u);
     vec2 uv = EquirectangularUV(direction);
-    return textureLod(prefilteredSpecular, uv, lod).rgb;
+    return LimitStaticEnvironmentRadiance(textureLod(prefilteredSpecular, uv, lod).rgb);
 }
 
 // ========================================
@@ -915,7 +927,7 @@ void main()
             // 空のradiance LUTは視線の透過率と地平線より下の地面を含むので、そのまま使う。
             vec4 skySample = textureLod(envMap, envUV, 0.0);
             // 静的HDRの背景にはシーンの倍率を掛ける（空が有効なら1）。
-            vec3 skyColor = skySample.rgb * params.staticEnvironmentScale;
+            vec3 skyColor = LimitStaticEnvironmentRadiance(skySample.rgb) * params.staticEnvironmentScale;
             vec4 sunDiskSample = textureLod(skySunDisk, vec2(0.5), 0.0);
             vec3 sunDirection = normalize(params.skySunDirectionAndCosRadius.xyz);
             float sunDiskMask = step(params.skySunDirectionAndCosRadius.w,

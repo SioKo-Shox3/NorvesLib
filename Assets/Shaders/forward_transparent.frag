@@ -30,7 +30,7 @@ layout(set = 0, binding = 0) uniform MVPData
     uint virtualTextureFeedbackNormalParam; // 同じく法線
     uint virtualTextureFeedbackOrmParam; // 同じく ORM（metallicTexture の枠）
     uint virtualTextureFeedbackHeightParam; // 同じく高さ
-    uint padding2;
+    float staticEnvironmentMaxRadiance; // 静的HDRの鏡面の放射輝度の上限（倍率を掛ける前。0は上限なし）
     vec4 cameraForward;
 } mvp;
 
@@ -348,6 +348,12 @@ void main()
                                                  EquirectangularUV(reflectionDirection),
                                                  roughness * mipDenominator).rgb
                                     : sourceRadiance;
+        // 静的HDRの鏡面は、最大の成分が上限を超えたら色相を保ったまま上限まで縮める（0は上限なし）
+        float prefilteredPeak = max(prefilteredColor.r, max(prefilteredColor.g, prefilteredColor.b));
+        if (mvp.staticEnvironmentMaxRadiance > 0.0 && prefilteredPeak > mvp.staticEnvironmentMaxRadiance)
+        {
+            prefilteredColor *= mvp.staticEnvironmentMaxRadiance / prefilteredPeak;
+        }
         vec3 Ed = clamp((F0d * dfg.x + dfg.y) * compensationD,
                         vec3(0.0), vec3(1.0));
         vec3 Ec = clamp((F0c * dfg.x + dfg.y) * compensationC,

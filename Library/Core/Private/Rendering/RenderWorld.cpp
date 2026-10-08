@@ -328,6 +328,11 @@ namespace NorvesLib::Core::Rendering
         m_RenderingCoordinator.SetStaticEnvironmentIntensityScale(scale);
     }
 
+    void RenderWorld::SetStaticEnvironmentMaxRadiance(float maxRadiance)
+    {
+        m_RenderingCoordinator.SetStaticEnvironmentMaxRadiance(maxRadiance);
+    }
+
     void RenderWorld::SetDeterministicCapture(bool bEnabled)
     {
         m_RenderingCoordinator.SetDeterministicCapture(bEnabled);

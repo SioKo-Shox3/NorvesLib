@@ -194,6 +194,12 @@ namespace NorvesLib::Core::Rendering
         void SetStaticEnvironmentIntensityScale(float scale);
 
         /**
+         * @brief 静的HDR環境の鏡面（IBLの前計算の値と背景）の放射輝度の上限を設定する（GameThread）
+         * @param maxRadiance 倍率を掛ける前の最大の成分の上限（0以上の有限の値。0は上限なしで既定）。範囲外は0へ戻す
+         */
+        void SetStaticEnvironmentMaxRadiance(float maxRadiance);
+
+        /**
          * @brief 決定的な撮影（--capture-deterministic）にする（GameThread）
          *
          * 有効な間、FramePacket の経過時間を 1/60 秒に固定する。起動の初期化で一度だけ呼ぶ。

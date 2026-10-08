@@ -56,7 +56,7 @@ namespace NorvesLib::Core::Rendering
             uint32_t virtualTextureFeedbackNormalParam; // 同じく法線
             uint32_t virtualTextureFeedbackOrmParam; // 同じく ORM（metallic の枠）
             uint32_t virtualTextureFeedbackHeightParam; // 同じく高さ
-            uint32_t padding2;
+            float staticEnvironmentMaxRadiance; // 静的HDRの鏡面の放射輝度の上限（倍率を掛ける前。0は上限なし）
             alignas(16) float cameraForward[4];
         };
 
@@ -81,7 +81,7 @@ namespace NorvesLib::Core::Rendering
         static_assert(offsetof(TransparentForwardUBO, virtualTextureFeedbackNormalParam) == 768);
         static_assert(offsetof(TransparentForwardUBO, virtualTextureFeedbackOrmParam) == 772);
         static_assert(offsetof(TransparentForwardUBO, virtualTextureFeedbackHeightParam) == 776);
-        static_assert(offsetof(TransparentForwardUBO, padding2) == 780);
+        static_assert(offsetof(TransparentForwardUBO, staticEnvironmentMaxRadiance) == 780);
         static_assert(offsetof(TransparentForwardUBO, cameraForward) == 784);
         static_assert(sizeof(TransparentForwardUBO) == 800);
 
@@ -1242,6 +1242,7 @@ namespace NorvesLib::Core::Rendering
         transparentFrameTemplate.prefilteredSpecularMipLevels =
             physicalLighting.PrefilteredSpecularMipLevels;
         transparentFrameTemplate.iblIntensity = physicalLighting.IBLIntensity;
+        transparentFrameTemplate.staticEnvironmentMaxRadiance = physicalLighting.StaticEnvironmentMaxRadiance;
 
         auto transparentCommands = MakeShared<Container::VariableArray<DrawCommand>>();
         transparentCommands->reserve(activeTransparentCommands.size());

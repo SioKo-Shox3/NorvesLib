@@ -346,9 +346,17 @@ void main()
         vec3 missRadiance = vec3(0.0);
         if (parameters.sceneCounts.z != 0u)
         {
-            missRadiance = textureLod(environmentRadiance,
-                                      EquirectangularUV(rayDirection),
-                                      0.0).rgb * parameters.environmentParameters.x;
+            vec3 environment = textureLod(environmentRadiance,
+                                          EquirectangularUV(rayDirection),
+                                          0.0).rgb;
+            // 静的HDRの極端に明るい画素（太陽）は、上限（倍率を掛ける前。0は上限なし）まで色相を保って縮める
+            float environmentPeak = max(environment.r, max(environment.g, environment.b));
+            float maximumRadiance = parameters.environmentParameters.y;
+            if (maximumRadiance > 0.0 && environmentPeak > maximumRadiance)
+            {
+                environment *= maximumRadiance / environmentPeak;
+            }
+            missRadiance = environment * parameters.environmentParameters.x;
         }
         results.values[rayIndex].radiance = vec4(max(missRadiance, vec3(0.0)), 1.0);
         return;

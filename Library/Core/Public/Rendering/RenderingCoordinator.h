@@ -366,6 +366,13 @@ namespace NorvesLib::Core::Rendering
         void SetStaticEnvironmentIntensityScale(float scale);
         float GetStaticEnvironmentIntensityScale() const { return m_StaticEnvironmentIntensityScale; }
 
+        /**
+         * @brief 静的HDR環境の鏡面の放射輝度の上限を設定する（GameThread）
+         * @param maxRadiance 0以上の有限の値（0は上限なし）。次のFramePacketへ値コピーする
+         */
+        void SetStaticEnvironmentMaxRadiance(float maxRadiance);
+        float GetStaticEnvironmentMaxRadiance() const { return m_StaticEnvironmentMaxRadiance; }
+
         /** @brief 決定的な撮影にする（GameThread）。FramePacket の経過時間を 1/60 秒に固定する */
         void SetDeterministicCapture(bool bEnabled) { m_bDeterministicCapture = bEnabled; }
 
@@ -573,6 +580,7 @@ namespace NorvesLib::Core::Rendering
         DDGIVolumeParameters m_DDGIVolume;
         VolumetricFogParameters m_VolumetricFog;
         float m_StaticEnvironmentIntensityScale = 1.0f;
+        float m_StaticEnvironmentMaxRadiance = 0.0f;
         bool m_bRTGIEnabled = true;
         uint64_t m_SceneRevision = 1u;
         uint64_t m_LightRevision = 1u;
