@@ -10,6 +10,8 @@ find_package(Vulkan REQUIRED)
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Math/GeometryIntersection.cpp
+    Private/Locomotion/QuadrupedLocomotionModel.cpp
+    Private/Locomotion/QuadrupedLocomotionJson.cpp
     Private/Asset/AssetBlob.cpp
     Private/Asset/CookedAudioLoader.cpp
     Private/Asset/CookedMeshLoader.cpp
@@ -29,6 +31,7 @@ set(PRIVATE_SOURCES
     Private/Resource/GltfMaterialSourceJson.cpp
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/AssetFileReader.cpp
+    Private/Asset/TextAssetReloadTracker.cpp
     Private/Asset/AssetManifest.cpp
     Private/Asset/AssetPath.cpp
     Private/Asset/AssetSystem.cpp
@@ -426,6 +429,7 @@ set(PUBLIC_HEADERS
     Public/Asset/CookedSkeletalWireFormat.h
     Public/Asset/CookedTextureFormat.h
     Public/Asset/AssetFileReader.h
+    Public/Asset/TextAssetReloadTracker.h
     Public/Asset/AssetManifest.h
     Public/Asset/AssetPackageFormat.h
     Public/Asset/AssetReadRequest.h
@@ -678,6 +682,10 @@ set(PUBLIC_HEADERS
     Public/Math/Vector3.h
     Public/Math/Vector4.h
     Public/Math/VectorUtils.h
+    Public/Math/CriticalDamping.h
+    Public/Locomotion/QuadrupedLocomotionModel.h
+    Public/Locomotion/QuadrupedLocomotionParams.h
+    Public/Locomotion/QuadrupedLocomotionJson.h
     Public/Math/GeometryTypes.h
     Public/Math/GeometryIntersection.h
     Public/Math/Curves.h
