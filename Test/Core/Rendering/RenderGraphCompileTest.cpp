@@ -6557,6 +6557,75 @@ namespace
         ShutdownVsmRun(run, pass);
     }
 
+    // 点光源の影の方式（--point-shadow-method）。既定はキューブ。vsm は太陽が VSM のときだけパスへ届き、太陽が CSM のとき・装置が VSM を使えないときは
+    // VSM_FALLBACK reason=point_requires_vsm を 1 回出してキューブのまま描く
+    void TestPointShadowMethodWiringAndFallback()
+    {
+        SceneView defaultView;
+        assert(defaultView.GetPointShadowMethod() == PointShadowMethod::Cube);
+
+        SceneRenderer cubeRenderer;
+        SceneView cubeView;
+        cubeView.SetShadowMethod(ShadowMethod::Vsm);
+        cubeView.SetupDeferredPipeline(&cubeRenderer);
+        const auto* cubePass = static_cast<const VirtualShadowMapPass*>(cubeView.FindPass("VirtualShadowMapPass"));
+        assert(cubePass != nullptr && cubePass->GetPointShadowMethod() == PointShadowMethod::Cube);
+
+        SceneRenderer pointRenderer;
+        SceneView pointView;
+        pointView.SetShadowMethod(ShadowMethod::Vsm);
+        pointView.SetPointShadowMethod(PointShadowMethod::Vsm);
+        pointView.SetupDeferredPipeline(&pointRenderer);
+        const auto* pointPass = static_cast<const VirtualShadowMapPass*>(pointView.FindPass("VirtualShadowMapPass"));
+        assert(pointPass != nullptr && pointPass->GetPointShadowMethod() == PointShadowMethod::Vsm);
+        assert(pointView.GetPassCount() == cubeView.GetPassCount());
+
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+
+        // 太陽が CSM で点光源が vsm: VSM のパスは入らず、point_requires_vsm を 1 回出す
+        {
+            VsmLogCollector logs;
+            logger.AddSink(&logs);
+            SceneRenderer csmRenderer;
+            SceneView csmView;
+            csmView.SetPointShadowMethod(PointShadowMethod::Vsm);
+            csmView.SetupDeferredPipeline(&csmRenderer);
+            assert(csmView.FindPass("VirtualShadowMapPass") == nullptr);
+            assert(logs.Count("VSM_FALLBACK reason=point_requires_vsm") == 1 && logs.Count("VSM_FALLBACK") == 1);
+            logger.RemoveSink(&logs);
+        }
+
+        // 太陽の VSM を作れない装置: 太陽の理由に続けて point_requires_vsm を 1 回出す。点光源がキューブのままなら出さない
+        for (const PointShadowMethod method : {PointShadowMethod::Vsm, PointShadowMethod::Cube})
+        {
+            VsmLogCollector logs;
+            logger.AddSink(&logs);
+            VsmRun run;
+            run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+            InitializeVsmRun(run);
+            run.Device->bFailComputePipelines = true;
+            VirtualShadowMapPass pass;
+            pass.SetPointShadowMethod(method);
+            assert(pass.Initialize(run.Context));
+            assert(!pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::Pipeline);
+            assert(logs.Count("VSM_FALLBACK reason=pipeline") == 1);
+            assert(logs.Count("VSM_FALLBACK reason=point_requires_vsm") == (method == PointShadowMethod::Vsm ? 1 : 0));
+            logger.RemoveSink(&logs);
+            ShutdownVsmRun(run, pass);
+        }
+        logger.Shutdown();
+#endif
+        assert(std::strcmp(VirtualShadowMap::PointRequiresVsmReasonName, "point_requires_vsm") == 0);
+    }
+
     // バリアのうち、バッファ名・前後の状態・記録した時点の CallSequence の長さが一致するものがあるか
     bool HasBufferBarrierAt(const FakeCommandList& commandList,
                             const char* debugName,
@@ -14463,6 +14532,7 @@ int main()
     TestRenderGraphHasBufferIsQuietWithoutVsmPass();
     TestVirtualShadowMapPassFallsBackWhenUnsupported();
     TestVirtualShadowMapPassFallsBackWhenPipelineFails();
+    TestPointShadowMethodWiringAndFallback();
     TestVirtualShadowMapPassRecordsMarkAllocateClearInOrder();
 #if NORVES_ENABLE_LOGGING
     TestVirtualShadowMapPassReadsStatsOnlyAfterFrameFence();

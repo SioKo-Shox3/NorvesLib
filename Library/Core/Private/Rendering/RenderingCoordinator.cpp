@@ -1653,6 +1653,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_MainSceneView->SetShadowProbeEnabled(settings.bShadowProbe);
             m_MainSceneView->SetShadowMethod(settings.SunShadowMethod);
+            m_MainSceneView->SetPointShadowMethod(settings.PointLightShadowMethod);
             m_MainSceneView->SetVsmPoolPages(settings.VsmPoolPages);
             m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer, settings.RasterDirectBrdfMode, settings.VisibilityBuffer,
                                                       settings.SwRaster, settings.SwRasterMaxPixels);

@@ -1,0 +1,431 @@
+﻿// 点光源の仮想シャドウマップ（VSM）の面と解像度の段の CPU の計算を確かめる。
+//
+// 契約: (1) 受け手の面は光源からの向きの主軸で、PointShadowFaceMatrices の面と一致する（その面の行列で写すと NDC が面の範囲に入り、
+// 面の NDC は (sc/軸の距離, tc/軸の距離)、軸の距離は行列の w と同じ）。(2) どの向きもどれかの面に入る。(3) 段の texel（軸の距離 z で 2z ÷ 段の一辺）は
+// 画素の大きさ p(d)·2^b 以下の最も粗い段（段 0 より細かくは選ばない）で、カメラまでの距離について単調。(4) ページの座標は面の範囲に収まる
+// （面の縁・角の向きを含む）。(5) スライスの表は灯 × 6 面 × 段の順で、行が面の座標へ写す。
+#include "Rendering/VirtualShadowMapClipmap.h"
+#include "Rendering/VirtualShadowMapPointLights.h"
+#include "Math/MatrixUtils.h"
+
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <initializer_list>
+
+using namespace NorvesLib::Core::Rendering;
+namespace Math = NorvesLib::Math;
+
+namespace
+{
+    int GFailureCount = 0;
+
+    void Check(bool bCondition, const char* message)
+    {
+        if (!bCondition)
+        {
+            std::printf("失敗: %s\n", message);
+            ++GFailureCount;
+        }
+    }
+
+    bool IsNear(float lhs, float rhs, float tolerance)
+    {
+        return std::fabs(lhs - rhs) <= tolerance;
+    }
+
+    // 再現できる擬似乱数（0 以上 1 未満）
+    class DeterministicRandom
+    {
+    public:
+        float Next()
+        {
+            m_State = m_State * 1664525u + 1013904223u;
+            return static_cast<float>(m_State >> 8) / static_cast<float>(1u << 24);
+        }
+
+        float Range(float minimum, float maximum) { return minimum + (maximum - minimum) * Next(); }
+
+    private:
+        uint32_t m_State = 777u;
+    };
+
+    constexpr float kFovYDegrees = 60.0f;
+    constexpr float kScreenHeight = 720.0f;
+
+    const Math::Vector3 kLightPosition(4.0f, 1.0f, -2.0f);
+    constexpr float kLightRange = 10.0f;
+
+    // 1 灯だけのスナップショットから、点光源のスライスの並びを作る（太陽の 10 段の後ろ）
+    VirtualShadowMapPointLights MakeLights(uint32_t lightCount, uint32_t firstSlice)
+    {
+        PointShadowSnapshot snapshot;
+        for (uint32_t index = 0; index < lightCount; ++index)
+        {
+            PointShadowLightSnapshot& light = snapshot.Lights[index];
+            light.LightId = 100u + index;
+            light.LightIndex = index;
+            light.Position = Math::Vector3(kLightPosition.x + 3.0f * static_cast<float>(index), kLightPosition.y, kLightPosition.z);
+            light.Range = kLightRange;
+            light.Faces = BuildPointShadowFaceMatrices(light.Position, PointShadowNearPlane, light.Range);
+        }
+        snapshot.LightCount = lightCount;
+        return BuildVirtualShadowMapPointLights(snapshot, VirtualShadowMapPointSettings{}, firstSlice);
+    }
+
+    // VulkanDevice::AdjustProjectionForClipSpace(projection, false) と同じ補正（Z の反転、Y は反転しない）
+    Math::Matrix4x4 MakeVulkanFaceClipMatrix(const PointShadowFaceMatrices& faces, uint32_t faceIndex)
+    {
+        const Math::Matrix4x4 vulkanProjection = faces.Projection * Math::MatrixUtils::CreateScale(Math::Vector3(1.0f, 1.0f, -1.0f));
+        return vulkanProjection * faces.Views[faceIndex];
+    }
+
+    Math::Vector3 RandomDirection(DeterministicRandom& random)
+    {
+        for (;;)
+        {
+            const Math::Vector3 candidate(random.Range(-1.0f, 1.0f), random.Range(-1.0f, 1.0f), random.Range(-1.0f, 1.0f));
+            const float length = std::sqrt(candidate.x * candidate.x + candidate.y * candidate.y + candidate.z * candidate.z);
+            if (length > 0.1f && length <= 1.0f)
+            {
+                return Math::Vector3(candidate.x / length, candidate.y / length, candidate.z / length);
+            }
+        }
+    }
+
+    Math::Vector3 PointAlong(const Math::Vector3& direction, float distance)
+    {
+        return Math::Vector3(kLightPosition.x + direction.x * distance,
+                             kLightPosition.y + direction.y * distance,
+                             kLightPosition.z + direction.z * distance);
+    }
+
+    // 光源からの向きの成分の絶対値が最大の軸を、面の番号に直す（テストの側の独立した書き方）
+    uint32_t ExpectedFace(const Math::Vector3& direction)
+    {
+        const float absolute[3] = {std::fabs(direction.x), std::fabs(direction.y), std::fabs(direction.z)};
+        const float signedValue[3] = {direction.x, direction.y, direction.z};
+        uint32_t axis = 0u;
+        for (uint32_t candidate = 1u; candidate < 3u; ++candidate)
+        {
+            if (absolute[candidate] > absolute[axis])
+            {
+                axis = candidate;
+            }
+        }
+        return axis * 2u + (signedValue[axis] >= 0.0f ? 0u : 1u);
+    }
+
+    // (1)(2) 面の選び方が PointShadowFaceMatrices の面と一致し、どの向きもどれかの面に入る
+    void TestFaceSelectionMatchesFaceMatrices()
+    {
+        const VirtualShadowMapPointLights lights = MakeLights(1u, 10u);
+        const PointShadowFaceMatrices faces = BuildPointShadowFaceMatrices(kLightPosition, PointShadowNearPlane, kLightRange);
+        DeterministicRandom random;
+        char message[256];
+        for (uint32_t sample = 0; sample < 4000u; ++sample)
+        {
+            const Math::Vector3 direction = RandomDirection(random);
+            const float distance = random.Range(0.3f, 9.9f);
+            const Math::Vector3 receiver = PointAlong(direction, distance);
+            VirtualShadowMapPointReceiver located;
+            const bool bFound = LocateVirtualShadowMapPointReceiver(lights, 0u, receiver, 3.0f, kFovYDegrees, kScreenHeight, located);
+            std::snprintf(message, sizeof(message), "向き(%.3f, %.3f, %.3f)・距離%.2f がどの面にも入らない", direction.x, direction.y, direction.z, distance);
+            Check(bFound, message);
+            if (!bFound)
+            {
+                continue;
+            }
+            std::snprintf(message, sizeof(message), "向き(%.3f, %.3f, %.3f)の面が%uで、主軸の面%uと違う", direction.x, direction.y, direction.z,
+                          located.Face, ExpectedFace(direction));
+            Check(located.Face == ExpectedFace(direction), message);
+
+            // 選んだ面の行列で写すと、面の範囲に入り、NDC と軸の距離が一致する
+            const Math::Vector4 clip = Math::MatrixUtils::TransformPoint(MakeVulkanFaceClipMatrix(faces, located.Face), receiver);
+            std::snprintf(message, sizeof(message), "面%uの行列で写すと範囲の外（w=%.4f, ndc=%.4f, %.4f）", located.Face, clip.w,
+                          clip.w != 0.0f ? clip.x / clip.w : 0.0f, clip.w != 0.0f ? clip.y / clip.w : 0.0f);
+            Check(clip.w > 0.0f && std::fabs(clip.x / clip.w) <= 1.0f + 1.0e-4f && std::fabs(clip.y / clip.w) <= 1.0f + 1.0e-4f, message);
+            if (clip.w > 0.0f)
+            {
+                std::snprintf(message, sizeof(message), "面%uの NDC が(%.4f, %.4f)で、行列の(%.4f, %.4f)と違う", located.Face, located.NdcX,
+                              located.NdcY, clip.x / clip.w, clip.y / clip.w);
+                Check(IsNear(located.NdcX, clip.x / clip.w, 2.0e-4f) && IsNear(located.NdcY, clip.y / clip.w, 2.0e-4f), message);
+                std::snprintf(message, sizeof(message), "面%uの軸の距離が%.4fで、行列の w=%.4f と違う", located.Face, located.AxialDistance, clip.w);
+                Check(IsNear(located.AxialDistance, clip.w, 1.0e-3f), message);
+            }
+            std::snprintf(message, sizeof(message), "深度%.5fが 軸の距離 ÷ Range = %.5f と違う", located.Depth, located.AxialDistance / kLightRange);
+            Check(located.Depth >= 0.0f && located.Depth <= 1.0f && IsNear(located.Depth, located.AxialDistance / kLightRange, 1.0e-6f), message);
+        }
+
+        // 範囲の外・光源と重なる位置は面に入らない
+        VirtualShadowMapPointReceiver located;
+        Check(!LocateVirtualShadowMapPointReceiver(lights, 0u, PointAlong(Math::Vector3(1.0f, 0.0f, 0.0f), kLightRange + 0.5f), 3.0f,
+                                                   kFovYDegrees, kScreenHeight, located),
+              "Range の外の受け手が面に入った");
+        Check(!LocateVirtualShadowMapPointReceiver(lights, 0u, kLightPosition, 3.0f, kFovYDegrees, kScreenHeight, located),
+              "光源と重なる受け手が面に入った");
+        Check(!LocateVirtualShadowMapPointReceiver(lights, 1u, PointAlong(Math::Vector3(1.0f, 0.0f, 0.0f), 1.0f), 3.0f, kFovYDegrees,
+                                                   kScreenHeight, located),
+              "灯の数を超える番号が面に入った");
+    }
+
+    // (3) 段の texel は画素の大きさ × 2^b 以下の最も粗い段で、距離について単調
+    void TestMipSelection()
+    {
+        const VirtualShadowMapPointSettings settings;
+        char message[256];
+        const float biasScale = std::exp2(settings.BiasLevels);
+
+        for (float axial : {0.1f, 0.5f, 1.0f, 2.0f, 5.0f, 9.0f})
+        {
+            int32_t previousMip = -1;
+            for (float cameraDistance = 0.2f; cameraDistance < 60.0f; cameraDistance *= 1.07f)
+            {
+                const int32_t mip = SelectVirtualShadowMapPointMip(settings, axial, cameraDistance, kFovYDegrees, kScreenHeight);
+                std::snprintf(message, sizeof(message), "軸の距離%.2f・カメラ%.2f で段が選ばれない", axial, cameraDistance);
+                Check(mip >= 0 && mip < static_cast<int32_t>(settings.MipCount), message);
+                if (mip < 0)
+                {
+                    continue;
+                }
+                const float target = VirtualShadowMapScreenPixelMeters(cameraDistance, kFovYDegrees, kScreenHeight) * biasScale;
+                const float texel = VirtualShadowMapPointTexelMeters(settings, static_cast<uint32_t>(mip), axial);
+                if (mip > 0)
+                {
+                    std::snprintf(message, sizeof(message), "軸の距離%.2f・カメラ%.2f の段%dの texel %.6f が目標 %.6f を超える", axial, cameraDistance, mip, texel, target);
+                    Check(texel <= target, message);
+                }
+                if (mip + 1 < static_cast<int32_t>(settings.MipCount))
+                {
+                    const float coarser = VirtualShadowMapPointTexelMeters(settings, static_cast<uint32_t>(mip) + 1u, axial);
+                    std::snprintf(message, sizeof(message), "軸の距離%.2f・カメラ%.2f で段%dより粗い段の texel %.6f が目標 %.6f 以下（最も粗い段でない）", axial,
+                                  cameraDistance, mip, coarser, target);
+                    Check(coarser > target, message);
+                }
+                std::snprintf(message, sizeof(message), "軸の距離%.2f でカメラ%.2f の段%dが手前の段%dより細かい（距離について単調でない）", axial, cameraDistance, mip, previousMip);
+                Check(mip >= previousMip, message);
+                previousMip = mip;
+            }
+        }
+
+        // 軸の距離が遠いほど texel が粗くなるので、同じカメラの距離では段は細かくなる方へ単調
+        for (float cameraDistance : {1.0f, 4.0f, 20.0f})
+        {
+            int32_t previousMip = static_cast<int32_t>(settings.MipCount);
+            for (float axial = 0.06f; axial < 10.0f; axial *= 1.1f)
+            {
+                const int32_t mip = SelectVirtualShadowMapPointMip(settings, axial, cameraDistance, kFovYDegrees, kScreenHeight);
+                std::snprintf(message, sizeof(message), "カメラ%.1f で軸の距離%.3f の段%dが手前の段%dより粗い", cameraDistance, axial, mip, previousMip);
+                Check(mip <= previousMip, message);
+                previousMip = mip;
+            }
+        }
+
+        // 起動画面の電球（地面まで約 2 m・カメラ 4 m）の段 0 は約 1 mm、段 1 は約 2 mm
+        Check(IsNear(VirtualShadowMapPointTexelMeters(settings, 0u, 2.0f), 2.0f * 2.0f / 4096.0f, 1.0e-7f), "段 0 の texel が 2z / 4096 と違う");
+        Check(VirtualShadowMapPointPagesPerAxis(settings, 0u) == 32u && VirtualShadowMapPointPagesPerAxis(settings, 5u) == 1u,
+              "1 段の一辺のページの数が 32 から 1 でない");
+
+        // 値が不正なときは段を選ばない
+        Check(SelectVirtualShadowMapPointMip(settings, -1.0f, 3.0f, kFovYDegrees, kScreenHeight) == -1, "負の軸の距離で段が選ばれた");
+        Check(SelectVirtualShadowMapPointMip(settings, 1.0f, 0.0f, kFovYDegrees, kScreenHeight) == -1, "カメラの距離 0 で段が選ばれた");
+        Check(SelectVirtualShadowMapPointMip(settings, 1.0f, 3.0f, 0.0f, kScreenHeight) == -1, "画角 0 で段が選ばれた");
+        VirtualShadowMapPointSettings invalid;
+        invalid.MipCount = 7u;
+        Check(!IsValidVirtualShadowMapPointSettings(invalid), "最も粗い段がページの一辺より小さい設定が使える値になった");
+        invalid = VirtualShadowMapPointSettings{};
+        invalid.FaceResolution = 3000u;
+        Check(!IsValidVirtualShadowMapPointSettings(invalid), "2 の冪でない解像度が使える値になった");
+        Check(IsValidVirtualShadowMapPointSettings(VirtualShadowMapPointSettings{}), "既定の設定が使える値でない");
+    }
+
+    // (4) ページの座標は面の範囲に収まる（面の縁・角の向きを含む）
+    void TestPageCoordinatesStayInsideFace()
+    {
+        const VirtualShadowMapPointLights lights = MakeLights(1u, 10u);
+        char message[256];
+
+        // 面の縁（2 成分が等しい）・角（3 成分が等しい）・軸の向きの組。符号の全組み合わせ
+        const float values[] = {-1.0f, -0.5f, 0.0f, 0.5f, 1.0f};
+        uint32_t checkedDirections = 0u;
+        for (float x : values)
+        {
+            for (float y : values)
+            {
+                for (float z : values)
+                {
+                    if (x == 0.0f && y == 0.0f && z == 0.0f)
+                    {
+                        continue;
+                    }
+                    const float length = std::sqrt(x * x + y * y + z * z);
+                    const Math::Vector3 direction(x / length, y / length, z / length);
+                    for (float distance : {0.4f, 2.0f, 9.5f})
+                    {
+                        for (float cameraDistance : {0.5f, 3.0f, 40.0f})
+                        {
+                            VirtualShadowMapPointReceiver located;
+                            const bool bFound = LocateVirtualShadowMapPointReceiver(lights, 0u, PointAlong(direction, distance), cameraDistance,
+                                                                                     kFovYDegrees, kScreenHeight, located);
+                            std::snprintf(message, sizeof(message), "縁・角の向き(%.1f, %.1f, %.1f)・距離%.1f が面に入らない", x, y, z, distance);
+                            Check(bFound, message);
+                            if (!bFound)
+                            {
+                                continue;
+                            }
+                            ++checkedDirections;
+                            const uint32_t pagesPerAxis = VirtualShadowMapPointPagesPerAxis(lights.Settings, located.Mip);
+                            std::snprintf(message, sizeof(message), "向き(%.1f, %.1f, %.1f)のページ(%u, %u)が段%uの範囲 0〜%u の外", x, y, z, located.PageX,
+                                          located.PageY, located.Mip, pagesPerAxis);
+                            Check(located.PageX < pagesPerAxis && located.PageY < pagesPerAxis, message);
+                            Check(std::fabs(located.NdcX) <= 1.0f && std::fabs(located.NdcY) <= 1.0f, "NDC が面の範囲の外");
+                            // 面の縁は隣の面の同じ向きと、軸の距離の比が同じ（NDC が ±1）
+                            const uint32_t expected = ExpectedFace(direction);
+                            const float absolute[3] = {std::fabs(x), std::fabs(y), std::fabs(z)};
+                            const float major = std::fmax(absolute[0], std::fmax(absolute[1], absolute[2]));
+                            const uint32_t axis = expected / 2u;
+                            std::snprintf(message, sizeof(message), "向き(%.1f, %.1f, %.1f)の面%uの主軸の成分が最大でない", x, y, z, located.Face);
+                            Check(located.Face / 2u == axis || IsNear(absolute[located.Face / 2u], major, 1.0e-6f), message);
+                        }
+                    }
+                }
+            }
+        }
+        Check(checkedDirections > 1000u, "縁・角の向きを十分に調べていない");
+
+        // 面の 4 つの角（NDC が ±1）は最後のページに収まる
+        for (uint32_t face = 0; face < PointShadowFaceCount; ++face)
+        {
+            const float signs[2] = {-1.0f, 1.0f};
+            for (float sx : signs)
+            {
+                for (float sy : signs)
+                {
+                    Math::Vector3 direction(0.0f, 0.0f, 0.0f);
+                    const uint32_t axis = face / 2u;
+                    const float majorSign = (face % 2u == 0u) ? 1.0f : -1.0f;
+                    // 面ごとに他の 2 軸（x, y, z のうち主軸以外）の符号の組み合わせを全部調べる
+                    const uint32_t other0 = (axis + 1u) % 3u;
+                    const uint32_t other1 = (axis + 2u) % 3u;
+                    float components[3] = {0.0f, 0.0f, 0.0f};
+                    components[axis] = majorSign;
+                    components[other0] = sx;
+                    components[other1] = sy;
+                    direction = Math::Vector3(components[0], components[1], components[2]);
+                    VirtualShadowMapPointReceiver located;
+                    const Math::Vector3 receiver = PointAlong(Math::Vector3(direction.x * 0.5f, direction.y * 0.5f, direction.z * 0.5f), 2.0f);
+                    const bool bFound = LocateVirtualShadowMapPointReceiver(lights, 0u, receiver, 3.0f, kFovYDegrees, kScreenHeight, located);
+                    std::snprintf(message, sizeof(message), "面%uの角(%.0f, %.0f)の受け手が面に入らない", face, sx, sy);
+                    Check(bFound, message);
+                    if (bFound)
+                    {
+                        const uint32_t pagesPerAxis = VirtualShadowMapPointPagesPerAxis(lights.Settings, located.Mip);
+                        Check(located.PageX < pagesPerAxis && located.PageY < pagesPerAxis, "面の角のページが範囲の外");
+                    }
+                }
+            }
+        }
+    }
+
+    // (5) スライスの並びと、スライスの行が面の座標へ写すこと
+    void TestSliceLayout()
+    {
+        const VirtualShadowMapPointLights lights = MakeLights(3u, 10u);
+        Check(lights.LightCount == 3u, "3 灯が並ばない");
+        Check(lights.SlicesPerLight == 36u && lights.SliceCount() == 108u, "スライスの数が 3 灯 × 6 面 × 6 段 = 108 でない");
+        Check(lights.FirstSlice == 10u, "先頭のスライスの番号が 10 でない");
+        Check(VirtualShadowMapPointSliceIndex(lights, 0u, 0u, 0u) == 10u, "先頭のスライスの番号が違う");
+        Check(VirtualShadowMapPointSliceIndex(lights, 2u, 5u, 5u) == 10u + 107u, "最後のスライスの番号が違う");
+        Check(VirtualShadowMapPointSliceIndex(lights, 1u, 2u, 3u) == 10u + (1u * 6u + 2u) * 6u + 3u, "灯 1・面 2・段 3 のスライスの番号が違う");
+
+        // 最大 4 灯 × 36 + 太陽の 10 段 = 154 ≤ 256。上限を超える並びは作らない
+        Check(MakeLights(4u, 10u).LightCount == 4u, "4 灯が並ばない");
+        Check(MakeLights(4u, 112u).LightCount == 4u, "上限ちょうどの並びが作られない");
+        Check(MakeLights(4u, 113u).LightCount == 0u, "上限を超える並びが作られた");
+
+        GPUVsmSlice slices[10 + 108];
+        std::memset(slices, 0xCD, sizeof(slices));
+        Check(BuildVirtualShadowMapPointSlices(lights, slices) == 108u, "書いたスライスの数が 108 でない");
+        char message[256];
+        const uint32_t pagesPerMip[6] = {32u, 16u, 8u, 4u, 2u, 1u};
+        for (uint32_t light = 0; light < lights.LightCount; ++light)
+        {
+            for (uint32_t face = 0; face < PointShadowFaceCount; ++face)
+            {
+                for (uint32_t mip = 0; mip < 6u; ++mip)
+                {
+                    const uint32_t index = VirtualShadowMapPointSliceIndex(lights, light, face, mip);
+                    const GPUVsmSlice& slice = slices[index];
+                    std::snprintf(message, sizeof(message), "スライス%u（灯%u・面%u・段%u）の欄が違う", index, light, face, mip);
+                    Check(slice.extra[2] == VirtualShadowMapSliceProjectionPerspective && slice.origin[3] == static_cast<int32_t>(pagesPerMip[mip]) &&
+                              slice.origin[2] == static_cast<int32_t>(index * 16384u) && slice.origin[0] == 0 && slice.origin[1] == 0 &&
+                              IsNear(slice.info[0], 2.0f / static_cast<float>(pagesPerMip[mip]), 1.0e-7f) &&
+                              IsNear(slice.info[1], 2.0f / static_cast<float>(4096u >> mip), 1.0e-9f),
+                          message);
+                }
+            }
+        }
+
+        // 行が面の座標（sc, tc, 軸の距離）へ写すこと。LocateVirtualShadowMapPointReceiver の NDC・軸の距離と一致する
+        DeterministicRandom random;
+        for (uint32_t sample = 0; sample < 1000u; ++sample)
+        {
+            const uint32_t light = sample % lights.LightCount;
+            const Math::Vector3 direction = RandomDirection(random);
+            const Math::Vector3 receiver(lights.Position[light].x + direction.x * random.Range(0.3f, 9.9f),
+                                         lights.Position[light].y + direction.y * random.Range(0.3f, 9.9f),
+                                         lights.Position[light].z + direction.z * random.Range(0.3f, 9.9f));
+            VirtualShadowMapPointReceiver located;
+            if (!LocateVirtualShadowMapPointReceiver(lights, light, receiver, 3.0f, kFovYDegrees, kScreenHeight, located))
+            {
+                continue;
+            }
+            const GPUVsmSlice& slice = slices[located.Slice];
+            const auto apply = [&receiver](const float* row) { return row[0] * receiver.x + row[1] * receiver.y + row[2] * receiver.z + row[3]; };
+            const float x = apply(slice.axisX);
+            const float y = apply(slice.axisY);
+            const float z = apply(slice.axisZ);
+            std::snprintf(message, sizeof(message), "灯%u・面%u の行が写す面の座標(%.4f, %.4f, %.4f)が NDC(%.4f, %.4f)・軸の距離%.4f と違う", light, located.Face,
+                          x, y, z, located.NdcX, located.NdcY, located.AxialDistance);
+            Check(z > 0.0f && IsNear(z, located.AxialDistance, 2.0e-3f) && IsNear(x / z, located.NdcX, 2.0e-4f) && IsNear(y / z, located.NdcY, 2.0e-4f), message);
+        }
+
+        // 灯の数・位置・Range・LightId が変わったときだけ違うと判定する
+        VirtualShadowMapPointLights changed = lights;
+        Check(!VirtualShadowMapPointLightsDiffer(lights, changed), "同じ並びが違うと判定された");
+        changed.Position[1].x += 0.01f;
+        Check(VirtualShadowMapPointLightsDiffer(lights, changed), "灯の位置の変化を検出しない");
+        changed = lights;
+        changed.Range[2] = 12.0f;
+        Check(VirtualShadowMapPointLightsDiffer(lights, changed), "Range の変化を検出しない");
+        changed = lights;
+        changed.LightCount = 2u;
+        Check(VirtualShadowMapPointLightsDiffer(lights, changed), "灯の数の変化を検出しない");
+        changed = lights;
+        changed.LightId[0] += 1u;
+        Check(VirtualShadowMapPointLightsDiffer(lights, changed), "LightId の変化を検出しない");
+        // 使わない灯（LightCount の後ろ）の値は比べない
+        changed = lights;
+        changed.Position[3].x = 123.0f;
+        Check(!VirtualShadowMapPointLightsDiffer(lights, changed), "使わない灯の値の違いを変化と判定した");
+    }
+} // namespace
+
+int main()
+{
+    std::printf("VirtualShadowMapPointTest start\n");
+
+    TestFaceSelectionMatchesFaceMatrices();
+    TestMipSelection();
+    TestPageCoordinatesStayInsideFace();
+    TestSliceLayout();
+
+    if (GFailureCount != 0)
+    {
+        std::printf("VirtualShadowMapPointTest failed: %d\n", GFailureCount);
+        return 1;
+    }
+    std::printf("VirtualShadowMapPointTest passed\n");
+    return 0;
+}

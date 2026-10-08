@@ -115,6 +115,8 @@ namespace NorvesLib::Core::Rendering
         bool bShadowProbe = false;
         /** @brief 太陽の影の方式（--shadow-method。構造体の既定は CSM。Game の起動引数の既定は VSM） */
         ShadowMethod SunShadowMethod = ShadowMethod::Csm;
+        /** @brief 点光源の影の方式（--point-shadow-method。既定は cube） */
+        PointShadowMethod PointLightShadowMethod = PointShadowMethod::Cube;
         /** @brief VSM の物理ページのプールのページの数（--vsm-pool-pages。0 は既定） */
         uint32_t VsmPoolPages = 0;
     };

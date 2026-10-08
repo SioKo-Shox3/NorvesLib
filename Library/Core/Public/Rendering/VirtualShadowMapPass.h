@@ -27,7 +27,9 @@
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
 #include "Rendering/FrameUseRing.h"
+#include "Rendering/ShadowMethod.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
+#include "Rendering/VirtualShadowMapPointLights.h"
 #include "RHI/DeviceCapabilities.h"
 #include "RHI/ICommandList.h"
 #include "RHI/RHITypes.h"
@@ -219,6 +221,9 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        /** @brief 点光源の VSM が使えない（太陽が VSM でない・装置が VSM を使えない）ときの VSM_FALLBACK reason= の値 */
+        inline constexpr const char* PointRequiresVsmReasonName = "point_requires_vsm";
+
         /** @brief 装置の能力と要求から決めたプールの計画 */
         struct PoolPlan
         {
@@ -344,6 +349,14 @@ namespace NorvesLib::Core::Rendering
         void SetMegaGeometryPass(const MegaGeometryPass* pass) { m_MegaPass = pass; }
         const MegaGeometryPass* GetMegaGeometryPass() const { return m_MegaPass; }
 
+        /**
+         * @brief 点光源の影の方式（--point-shadow-method）。Vsm のとき、毎フレームの点光源の面と解像度の段（VirtualShadowMapPointLights）を
+         *        作り、起動後と灯の数・位置・Range が変わったときに VSM_POINT を出す。装置が VSM を使えないときは VSM_FALLBACK reason=point_requires_vsm を
+         *        1 回出す。描画はまだキューブのまま
+         */
+        void SetPointShadowMethod(PointShadowMethod method) { m_PointShadowMethod = method; }
+        PointShadowMethod GetPointShadowMethod() const { return m_PointShadowMethod; }
+
         /** @brief ページのキャッシュ（動かない物のページを次のフレームへ持ち越す）を使うか。既定は使う（--vsm-cache=off で毎フレームすべて描き直す） */
         void SetCacheEnabled(bool bEnabled) { m_bCacheEnabled = bEnabled; }
         bool IsCacheEnabled() const { return m_bCacheEnabled; }
@@ -407,6 +420,8 @@ namespace NorvesLib::Core::Rendering
         };
 
         void Fallback(VirtualShadowMap::FallbackReason reason);
+        /** @brief 点光源の面と解像度の段を作り、起動後と変化したときに VSM_POINT を出す */
+        void UpdatePointLights(const ViewRenderContext& context);
         void ReleaseResources();
         /** @brief 影を落とす手続きメッシュとスキニングを、塊の記録に集める（CPU。段の範囲に入らない塊は省く） */
         void CollectCasters(ViewRenderContext& context);
@@ -426,6 +441,10 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_RequestedPoolPages = 0;
         uint32_t m_PoolPages = 0;
         bool m_bCacheEnabled = true;
+        PointShadowMethod m_PointShadowMethod = PointShadowMethod::Cube;
+        /** @brief 直近に作った点光源のスライスの並びと、VSM_POINT を出したか */
+        VirtualShadowMapPointLights m_PointLights;
+        bool m_bPointLightsLogged = false;
         RHI::IDevice* m_Device = nullptr;
         GpuResources* m_Gpu = nullptr;
         bool m_bActive = false;

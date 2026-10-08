@@ -233,6 +233,13 @@ param(
     # 太陽の影の方式（既定は Vsm。--shadow-method=csm|vsm を常に渡す）。Csm は従来のカスケードシャドウマップ。
     [ValidateSet('Csm', 'Vsm')]
     [string]$ShadowMethod = 'Vsm',
+    # 点光源の影の方式（既定は Cube。--point-shadow-method=cube|vsm を常に渡す）。Vsm は -ShadowMethod Vsm のときだけ効く（それ以外は Game がキューブのまま描く）。
+    [ValidateSet('Cube', 'Vsm')]
+    [string]$PointShadowMethod = 'Cube',
+    # 起動画面の大きな球の自転（既定 On）。Off のとき環境変数 NORVES_STARTUP_SPHERE_SPIN=0 を Game へ渡して自転を止める。
+    # 影の揺れ・一致の測定は止まった物を前提にするため、そのときは Off にする。
+    [ValidateSet('On', 'Off')]
+    [string]$SphereSpin = 'On',
     # Game へそのまま渡す引数（空白で区切る。例: --texture-asset-root と --texture-asset-manifest で別のクック済みの出力を使う）。
     [string[]]$ExtraGameArguments = @()
 )
@@ -882,6 +889,8 @@ foreach ($view in $shots)
     }
     # 影の方式は Game の既定が vsm だが、撮影の条件を明示するため、どちらでも引数を渡す。
     $arguments += "--shadow-method=$($ShadowMethod.ToLowerInvariant())"
+    # 点光源の影の方式は Game の既定が cube だが、撮影の条件を明示するため、どちらでも引数を渡す。
+    $arguments += "--point-shadow-method=$($PointShadowMethod.ToLowerInvariant())"
     # 影の標本は既定で作らないので、-ShadowProbe のときだけ引数を渡す。
     if ($ShadowProbe)
     {
@@ -928,6 +937,7 @@ foreach ($view in $shots)
     # RTGI を切るときは環境変数で起動画面へ伝える（起動した Game だけが受け継ぐよう、起動の直後に戻す）。
     $previousRtgiSetting = $env:NORVES_STARTUP_RTGI
     $previousGBufferDebugSetting = $env:NORVES_GBUFFER_DEBUG
+    $previousSphereSpinSetting = $env:NORVES_STARTUP_SPHERE_SPIN
     $previousValidationSettings = @{}
     foreach ($validationVariable in @('VK_KHRONOS_VALIDATION_DEBUG_ACTION', 'VK_KHRONOS_VALIDATION_LOG_FILENAME', 'VK_KHRONOS_VALIDATION_REPORT_FLAGS'))
     {
@@ -955,6 +965,14 @@ foreach ($view in $shots)
     {
         Remove-Item Env:NORVES_STARTUP_RTGI -ErrorAction SilentlyContinue
     }
+    if ($SphereSpin -eq 'Off')
+    {
+        $env:NORVES_STARTUP_SPHERE_SPIN = '0'
+    }
+    else
+    {
+        Remove-Item Env:NORVES_STARTUP_SPHERE_SPIN -ErrorAction SilentlyContinue
+    }
     # アセットは作業ディレクトリからの相対パスで読むため、リポジトリのルートで起動する。
     try
     {
@@ -966,6 +984,8 @@ foreach ($view in $shots)
         else { $env:NORVES_STARTUP_RTGI = $previousRtgiSetting }
         if ($null -eq $previousGBufferDebugSetting) { Remove-Item Env:NORVES_GBUFFER_DEBUG -ErrorAction SilentlyContinue }
         else { $env:NORVES_GBUFFER_DEBUG = $previousGBufferDebugSetting }
+        if ($null -eq $previousSphereSpinSetting) { Remove-Item Env:NORVES_STARTUP_SPHERE_SPIN -ErrorAction SilentlyContinue }
+        else { $env:NORVES_STARTUP_SPHERE_SPIN = $previousSphereSpinSetting }
         foreach ($validationVariable in $previousValidationSettings.Keys)
         {
             [Environment]::SetEnvironmentVariable($validationVariable, $previousValidationSettings[$validationVariable])

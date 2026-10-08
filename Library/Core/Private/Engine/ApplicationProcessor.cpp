@@ -545,6 +545,33 @@ namespace
         return false;
     }
 
+    // --point-shadow-method=cube|vsm
+    bool TryParsePointShadowMethodOption(
+        const String& argument,
+        NorvesLib::Core::Rendering::PointShadowMethod& outMethod,
+        bool& bMatched)
+    {
+        const String prefix = TEXT("--point-shadow-method=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        if (value == TEXT("cube"))
+        {
+            outMethod = NorvesLib::Core::Rendering::PointShadowMethod::Cube;
+            return true;
+        }
+        if (value == TEXT("vsm"))
+        {
+            outMethod = NorvesLib::Core::Rendering::PointShadowMethod::Vsm;
+            return true;
+        }
+        return false;
+    }
+
     // --vsm-pool-pages=<n>: VSM の物理ページのプールのページの数（1 以上の整数。装置の上限へは VirtualShadowMapPass が締める）
     bool TryParseVsmPoolPagesOption(const String& argument, uint32_t& outPages, bool& bMatched)
     {
@@ -1082,6 +1109,8 @@ namespace NorvesLib::Core::Engine
         // 既定は BootConfig の値（Game は VSM、検証アプリは CSM）。--shadow-method で上書きする
         Rendering::ShadowMethod shadowMethod = config.DefaultSunShadowMethod;
         bool bInvalidShadowMethod = false;
+        Rendering::PointShadowMethod pointShadowMethod = Rendering::PointShadowMethod::Cube;
+        bool bInvalidPointShadowMethod = false;
         uint32_t vsmPoolPages = 0u;
         bool bInvalidVsmPoolPages = false;
         Rendering::ToneMappingOperator toneMapOperator = Rendering::ToneMappingOperator::ACES;
@@ -1269,6 +1298,19 @@ namespace NorvesLib::Core::Engine
                 LOG_ERROR("ApplicationProcessor の起動引数 --shadow-method の値が不正です: 'csm' か 'vsm' にしてください");
             }
 
+            // --point-shadow-method=cube|vsm: 点光源の影の方式（既定は cube）。vsm は --shadow-method=vsm のときだけ効く。不正な値は起動時のエラー
+            bool bMatchedPointShadowMethod = false;
+            if (TryParsePointShadowMethodOption(args[i], pointShadowMethod, bMatchedPointShadowMethod))
+            {
+                LOG_INFO("ApplicationProcessor runtime option point_shadow_method=%u",
+                         static_cast<unsigned int>(pointShadowMethod));
+            }
+            else if (bMatchedPointShadowMethod)
+            {
+                bInvalidPointShadowMethod = true;
+                LOG_ERROR("ApplicationProcessor の起動引数 --point-shadow-method の値が不正です: 'cube' か 'vsm' にしてください");
+            }
+
             // --vsm-pool-pages=<n>: VSM の物理ページのプールのページの数（既定 4096）。不正な値は起動時のエラー
             bool bMatchedVsmPoolPages = false;
             if (TryParseVsmPoolPagesOption(args[i], vsmPoolPages, bMatchedVsmPoolPages))
@@ -1397,7 +1439,7 @@ namespace NorvesLib::Core::Engine
             LOG_WARNING("ApplicationProcessor runtime option --wait-for-asset-settle ignored without --exit-after-rendered-frames");
         }
 
-        if (bInvalidShadowMethod || bInvalidVsmPoolPages)
+        if (bInvalidShadowMethod || bInvalidPointShadowMethod || bInvalidVsmPoolPages)
         {
             return false;
         }
@@ -1465,6 +1507,7 @@ namespace NorvesLib::Core::Engine
             renderSettings.SwRasterMaxPixels = swRasterMaxPixels;
             renderSettings.bShadowProbe = bShadowProbe;
             renderSettings.SunShadowMethod = shadowMethod;
+            renderSettings.PointLightShadowMethod = pointShadowMethod;
             renderSettings.VsmPoolPages = vsmPoolPages;
 
             if (!GEngine->GetRenderWorld().Initialize(renderSettings))

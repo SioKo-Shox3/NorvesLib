@@ -89,6 +89,7 @@ namespace NorvesLib::Core::Rendering
         coordSettings.SwRasterMaxPixels = settings.SwRasterMaxPixels;
         coordSettings.bShadowProbe = settings.bShadowProbe;
         coordSettings.SunShadowMethod = settings.SunShadowMethod;
+        coordSettings.PointLightShadowMethod = settings.PointLightShadowMethod;
         coordSettings.VsmPoolPages = settings.VsmPoolPages;
 
         if (!m_RenderingCoordinator.Initialize(coordSettings))

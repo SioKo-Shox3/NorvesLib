@@ -180,6 +180,37 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_INFO("VirtualShadowMapPass",
                         "VSM_FALLBACK reason=%s",
                         VirtualShadowMap::FallbackReasonName(reason));
+        if (m_PointShadowMethod == PointShadowMethod::Vsm)
+        {
+            // 点光源の VSM は太陽の VSM の資源の上に乗るので、キューブのまま描く
+            NORVES_LOG_INFO("VirtualShadowMapPass",
+                            "VSM_FALLBACK reason=%s",
+                            VirtualShadowMap::PointRequiresVsmReasonName);
+        }
+    }
+
+    void VirtualShadowMapPass::UpdatePointLights(const ViewRenderContext& context)
+    {
+        PointShadowSnapshot emptySnapshot;
+        const PointShadowSnapshot& snapshot = context.SnapshotPointShadows != nullptr ? *context.SnapshotPointShadows : emptySnapshot;
+        // 点光源のスライスは太陽の段（LEVEL_COUNT 件）の後ろに並べる
+        const VirtualShadowMapPointLights lights =
+            BuildVirtualShadowMapPointLights(snapshot, VirtualShadowMapPointSettings{}, VirtualShadowMap::LEVEL_COUNT);
+        if (!m_bPointLightsLogged || VirtualShadowMapPointLightsDiffer(lights, m_PointLights))
+        {
+            m_bPointLightsLogged = true;
+            m_PointLights = lights;
+            NORVES_LOG_INFO("VirtualShadowMapPass",
+                            "VSM_POINT lights=%u slices=%u face_res=%u mips=%u",
+                            lights.LightCount,
+                            lights.SliceCount(),
+                            lights.Settings.FaceResolution,
+                            lights.Settings.MipCount);
+        }
+        else
+        {
+            m_PointLights = lights;
+        }
     }
 
     void VirtualShadowMapPass::ReleaseResources()
@@ -941,6 +972,11 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::ICommandList* commandList = context.CommandList;
+
+        if (m_PointShadowMethod == PointShadowMethod::Vsm)
+        {
+            UpdatePointLights(context);
+        }
 
         // 統計の読み戻しの枠は、飛行中のフレームの数とは別に、書いたフレームの順に使う。読むのは、通し番号の差が
         // StatsReadbackMinFrameDelay 以上で、そのフレームの提出の完了が確かめられた枠だけ（コーディネーターが渡す

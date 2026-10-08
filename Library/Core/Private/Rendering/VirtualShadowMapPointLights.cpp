@@ -1,0 +1,258 @@
+﻿#include "Rendering/VirtualShadowMapPointLights.h"
+
+#include "Rendering/VirtualShadowMapClipmap.h"
+#include "Rendering/VirtualShadowMapPass.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+namespace NorvesLib::Core::Rendering
+{
+    namespace
+    {
+        constexpr uint32_t MaxMipCount = 16u;
+
+        bool IsPowerOfTwo(uint32_t value)
+        {
+            return value != 0u && (value & (value - 1u)) == 0u;
+        }
+
+        // 面の座標の軸: sc = 前方 × 上、tc = 上、軸 = 前方。PointShadowFaceMatrices のビューの基底と同じ
+        // （ビュー空間の +X が sc、+Y が tc）。キューブの面の選び方（sc/|ma|, tc/|ma|）と一致する
+        struct FaceAxes
+        {
+            Math::Vector3 Sc;
+            Math::Vector3 Tc;
+            Math::Vector3 Major;
+        };
+
+        FaceAxes MakeFaceAxes(uint32_t face)
+        {
+            const PointShadowDetail::PointShadowFaceBasis& basis = PointShadowDetail::GetFaceBasis(face);
+            FaceAxes axes;
+            axes.Major = basis.Forward;
+            axes.Tc = basis.Up;
+            axes.Sc = Math::Vector3(basis.Forward.y * basis.Up.z - basis.Forward.z * basis.Up.y,
+                                    basis.Forward.z * basis.Up.x - basis.Forward.x * basis.Up.z,
+                                    basis.Forward.x * basis.Up.y - basis.Forward.y * basis.Up.x);
+            return axes;
+        }
+
+        void WriteAxisRow(float* row, const Math::Vector3& axis, const Math::Vector3& origin)
+        {
+            row[0] = axis.x;
+            row[1] = axis.y;
+            row[2] = axis.z;
+            row[3] = -(axis.x * origin.x + axis.y * origin.y + axis.z * origin.z);
+        }
+    } // namespace
+
+    bool IsValidVirtualShadowMapPointSettings(const VirtualShadowMapPointSettings& settings)
+    {
+        if (!IsPowerOfTwo(settings.FaceResolution) || !IsPowerOfTwo(settings.PageResolution) ||
+            settings.MipCount == 0u || settings.MipCount > MaxMipCount || !std::isfinite(settings.BiasLevels))
+        {
+            return false;
+        }
+        // 最も粗い段でもページの一辺以上
+        return (settings.FaceResolution >> (settings.MipCount - 1u)) >= settings.PageResolution;
+    }
+
+    uint32_t VirtualShadowMapPointMipResolution(const VirtualShadowMapPointSettings& settings, uint32_t mip)
+    {
+        return mip < 32u ? (settings.FaceResolution >> mip) : 0u;
+    }
+
+    uint32_t VirtualShadowMapPointPagesPerAxis(const VirtualShadowMapPointSettings& settings, uint32_t mip)
+    {
+        return settings.PageResolution != 0u ? VirtualShadowMapPointMipResolution(settings, mip) / settings.PageResolution : 0u;
+    }
+
+    VirtualShadowMapPointLights BuildVirtualShadowMapPointLights(const PointShadowSnapshot& snapshot,
+                                                                 const VirtualShadowMapPointSettings& settings,
+                                                                 uint32_t firstSlice)
+    {
+        VirtualShadowMapPointLights result;
+        result.Settings = settings;
+        result.FirstSlice = firstSlice;
+        if (!IsValidVirtualShadowMapPointSettings(settings))
+        {
+            return result;
+        }
+        result.SlicesPerLight = PointShadowFaceCount * settings.MipCount;
+        const uint32_t lightCount = std::min(snapshot.LightCount, PointShadowMaxLights);
+        if (firstSlice + lightCount * result.SlicesPerLight > VirtualShadowMapMaxSlices)
+        {
+            return result;
+        }
+        result.LightCount = lightCount;
+        for (uint32_t light = 0; light < lightCount; ++light)
+        {
+            result.LightId[light] = snapshot.Lights[light].LightId;
+            result.Position[light] = snapshot.Lights[light].Position;
+            result.Range[light] = snapshot.Lights[light].Range;
+        }
+        return result;
+    }
+
+    uint32_t VirtualShadowMapPointSliceIndex(const VirtualShadowMapPointLights& lights, uint32_t light, uint32_t face, uint32_t mip)
+    {
+        return lights.FirstSlice + (light * PointShadowFaceCount + face) * lights.Settings.MipCount + mip;
+    }
+
+    bool VirtualShadowMapPointLightsDiffer(const VirtualShadowMapPointLights& lhs, const VirtualShadowMapPointLights& rhs)
+    {
+        if (lhs.LightCount != rhs.LightCount || lhs.FirstSlice != rhs.FirstSlice || lhs.SlicesPerLight != rhs.SlicesPerLight ||
+            lhs.Settings.FaceResolution != rhs.Settings.FaceResolution || lhs.Settings.PageResolution != rhs.Settings.PageResolution ||
+            lhs.Settings.MipCount != rhs.Settings.MipCount)
+        {
+            return true;
+        }
+        for (uint32_t light = 0; light < lhs.LightCount; ++light)
+        {
+            if (lhs.LightId[light] != rhs.LightId[light] || lhs.Range[light] != rhs.Range[light] ||
+                lhs.Position[light].x != rhs.Position[light].x || lhs.Position[light].y != rhs.Position[light].y ||
+                lhs.Position[light].z != rhs.Position[light].z)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    uint32_t BuildVirtualShadowMapPointSlices(const VirtualShadowMapPointLights& lights, GPUVsmSlice* outSlices)
+    {
+        uint32_t written = 0u;
+        for (uint32_t light = 0; light < lights.LightCount; ++light)
+        {
+            for (uint32_t face = 0; face < PointShadowFaceCount; ++face)
+            {
+                const FaceAxes axes = MakeFaceAxes(face);
+                for (uint32_t mip = 0; mip < lights.Settings.MipCount; ++mip)
+                {
+                    const uint32_t index = VirtualShadowMapPointSliceIndex(lights, light, face, mip);
+                    GPUVsmSlice& slice = outSlices[index];
+                    std::memset(&slice, 0, sizeof(slice));
+                    WriteAxisRow(slice.axisX, axes.Sc, lights.Position[light]);
+                    WriteAxisRow(slice.axisY, axes.Tc, lights.Position[light]);
+                    WriteAxisRow(slice.axisZ, axes.Major, lights.Position[light]);
+                    const uint32_t pagesPerAxis = VirtualShadowMapPointPagesPerAxis(lights.Settings, mip);
+                    slice.info[0] = 2.0f / static_cast<float>(pagesPerAxis);
+                    slice.info[1] = 2.0f / static_cast<float>(VirtualShadowMapPointMipResolution(lights.Settings, mip));
+                    slice.origin[2] = static_cast<int32_t>(index * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL);
+                    slice.origin[3] = static_cast<int32_t>(pagesPerAxis);
+                    slice.extra[2] = VirtualShadowMapSliceProjectionPerspective;
+                    ++written;
+                }
+            }
+        }
+        return written;
+    }
+
+    uint32_t SelectVirtualShadowMapPointFace(float directionX, float directionY, float directionZ)
+    {
+        const float ax = std::fabs(directionX);
+        const float ay = std::fabs(directionY);
+        const float az = std::fabs(directionZ);
+        if (ax >= ay && ax >= az)
+        {
+            return directionX >= 0.0f ? 0u : 1u;
+        }
+        if (ay >= az)
+        {
+            return directionY >= 0.0f ? 2u : 3u;
+        }
+        return directionZ >= 0.0f ? 4u : 5u;
+    }
+
+    float VirtualShadowMapPointTexelMeters(const VirtualShadowMapPointSettings& settings, uint32_t mip, float axialDistance)
+    {
+        const uint32_t resolution = VirtualShadowMapPointMipResolution(settings, mip);
+        return resolution != 0u ? 2.0f * axialDistance / static_cast<float>(resolution) : 0.0f;
+    }
+
+    int32_t SelectVirtualShadowMapPointMip(const VirtualShadowMapPointSettings& settings,
+                                           float axialDistance,
+                                           float cameraDistance,
+                                           float fovYDegrees,
+                                           float screenHeightPixels)
+    {
+        if (!IsValidVirtualShadowMapPointSettings(settings) || !(axialDistance > 0.0f) || !std::isfinite(axialDistance) ||
+            !(cameraDistance > 0.0f) || !std::isfinite(cameraDistance))
+        {
+            return -1;
+        }
+        const float pixelMeters = VirtualShadowMapScreenPixelMeters(cameraDistance, fovYDegrees, screenHeightPixels);
+        if (!(pixelMeters > 0.0f) || !std::isfinite(pixelMeters))
+        {
+            return -1;
+        }
+        const float targetTexel = pixelMeters * std::exp2(settings.BiasLevels);
+        // 粗い段から順に、texel が目標以下になる最初の段。どの段も超えるときは 0
+        for (uint32_t mip = settings.MipCount; mip-- > 0u;)
+        {
+            if (VirtualShadowMapPointTexelMeters(settings, mip, axialDistance) <= targetTexel)
+            {
+                return static_cast<int32_t>(mip);
+            }
+        }
+        return 0;
+    }
+
+    bool LocateVirtualShadowMapPointReceiver(const VirtualShadowMapPointLights& lights,
+                                             uint32_t light,
+                                             const Math::Vector3& receiverPosition,
+                                             float cameraDistance,
+                                             float fovYDegrees,
+                                             float screenHeightPixels,
+                                             VirtualShadowMapPointReceiver& outReceiver)
+    {
+        outReceiver = VirtualShadowMapPointReceiver{};
+        if (light >= lights.LightCount || !(lights.Range[light] > 0.0f))
+        {
+            return false;
+        }
+        const Math::Vector3 offset(receiverPosition.x - lights.Position[light].x,
+                                   receiverPosition.y - lights.Position[light].y,
+                                   receiverPosition.z - lights.Position[light].z);
+        const float distanceSquared = offset.x * offset.x + offset.y * offset.y + offset.z * offset.z;
+        const float range = lights.Range[light];
+        if (!std::isfinite(distanceSquared) || distanceSquared > range * range)
+        {
+            return false;
+        }
+        const uint32_t face = SelectVirtualShadowMapPointFace(offset.x, offset.y, offset.z);
+        const FaceAxes axes = MakeFaceAxes(face);
+        const float axial = offset.x * axes.Major.x + offset.y * axes.Major.y + offset.z * axes.Major.z;
+        if (!(axial >= PointShadowNearPlane))
+        {
+            return false;
+        }
+        const int32_t mip = SelectVirtualShadowMapPointMip(lights.Settings, axial, cameraDistance, fovYDegrees, screenHeightPixels);
+        if (mip < 0)
+        {
+            return false;
+        }
+        const float sc = offset.x * axes.Sc.x + offset.y * axes.Sc.y + offset.z * axes.Sc.z;
+        const float tc = offset.x * axes.Tc.x + offset.y * axes.Tc.y + offset.z * axes.Tc.z;
+        // 面の縁・角は浮動小数の丸めで 1 をわずかに超えることがあるので [-1,1] に収める
+        const float ndcX = std::clamp(sc / axial, -1.0f, 1.0f);
+        const float ndcY = std::clamp(tc / axial, -1.0f, 1.0f);
+        const uint32_t pagesPerAxis = VirtualShadowMapPointPagesPerAxis(lights.Settings, static_cast<uint32_t>(mip));
+        const auto pageOf = [pagesPerAxis](float ndc) {
+            const float scaled = (ndc * 0.5f + 0.5f) * static_cast<float>(pagesPerAxis);
+            return std::min(static_cast<uint32_t>(std::max(scaled, 0.0f)), pagesPerAxis - 1u);
+        };
+        outReceiver.Face = face;
+        outReceiver.Mip = static_cast<uint32_t>(mip);
+        outReceiver.Slice = VirtualShadowMapPointSliceIndex(lights, light, face, outReceiver.Mip);
+        outReceiver.PageX = pageOf(ndcX);
+        outReceiver.PageY = pageOf(ndcY);
+        outReceiver.NdcX = ndcX;
+        outReceiver.NdcY = ndcY;
+        outReceiver.AxialDistance = axial;
+        outReceiver.Depth = axial / range;
+        return true;
+    }
+} // namespace NorvesLib::Core::Rendering
