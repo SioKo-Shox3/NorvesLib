@@ -10,14 +10,17 @@
 // 読むパラメータを作る）。半透明（forward_transparent.frag）とボリューム（Volumetrics）は CSM のまま。
 // MegaGeometry の投影物（bCastShadow のインスタンス）は、展開の前に VirtualShadowMapMegaCull が段ごとにカリングして
 // （インスタンス、段、クラスタ）の一覧を作る（主の経路の MegaGeometryPass の入力を読み取りだけで使い、主の経路のバッファには書かない）。
+// この経路を用意できない装置・環境では、MegaGeometry の影だけを欠いた VSM にはせず、VSM 全体を使わず CSM のまま描く
+// （CSM は MegaGeometry の投影物を描くので、太陽の影が消えない）。
 //
 // 物理ページのプールは storage buffer（画像ではない）。1 ページ = 128×128 の uint32 = 64 KiB で、ページ順に詰め、ページの中は行順。
 // 値は光源の深度 [0,1]（0 が光源に近い）の float のビット（floatBitsToUint）で、何も無い texel は 1.0 のビット。
 // 画像でなく buffer にするのは、R32_UINT の画像のアトミックの実績がこのエンジンに無く、buffer の 32bit の atomicMin は追加の機能なしで使えるため。
 //
 // 作れない装置（断片シェーダーの storage の書き込み・アトミックが無い、バッファのアドレスが無い、プールが MIN_POOL_PAGES 未満しか取れない）では
-// 資源を作らず、VSM_FALLBACK reason=<fragment_atomics|bda|pool_size|pipeline> を 1 回出して CSM のまま描く
-// （pipeline は印付け・割り当て・消去の計算シェーダーのパイプラインを作れなかったとき）。
+// 資源を作らず、VSM_FALLBACK reason=<fragment_atomics|bda|pool_size|pipeline|mega_geometry> を 1 回出して CSM のまま描く
+// （pipeline は印付け・割り当て・消去・展開・描画のパイプラインを作れなかったとき。mega_geometry は MegaGeometry の影の経路
+// = DrawIndexedIndirectCount・段ごとのカリングのパイプライン・カリングの資源のどれかを用意できなかったとき）。
 
 #include "Container/PointerTypes.h"
 #include "Rendering/IViewPass.h"
@@ -172,6 +175,7 @@ namespace NorvesLib::Core::Rendering
             BufferDeviceAddress,
             PoolSize,
             Pipeline,
+            MegaGeometry,
         };
 
         inline const char* FallbackReasonName(FallbackReason reason)
@@ -186,6 +190,8 @@ namespace NorvesLib::Core::Rendering
                 return "pool_size";
             case FallbackReason::Pipeline:
                 return "pipeline";
+            case FallbackReason::MegaGeometry:
+                return "mega_geometry";
             default:
                 return "none";
             }

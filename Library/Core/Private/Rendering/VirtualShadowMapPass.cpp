@@ -260,24 +260,25 @@ namespace NorvesLib::Core::Rendering
         }
         m_Casters = Container::MakeUnique<VirtualShadowMapCasterState>();
 
-        // MegaGeometry の投影物のカリングと、クラスタの記録（影の塊）を描く仕組み。作れなくても VSM は動く（MegaGeometry の投影物が載らないだけ）。
-        // クラスタの記録は件数を GPU から読む間接描画で描くので、それが使えない装置では作らない
-        if (m_Raster->SupportsMegaCasters())
+        // MegaGeometry の投影物のカリングと、クラスタの記録（影の塊）を描く仕組み。用意できないときは MegaGeometry の影だけを欠いた VSM を
+        // 公開せず、VSM 全体を使わず CSM で描く（照明が CSM へ戻らないと、CSM が描く MegaGeometry の太陽の影が消える）。
+        // クラスタの記録は件数を GPU から読む間接描画で描くので、それが使えない装置でも戻す
+        if (!m_Raster->SupportsMegaCasters())
         {
-            m_MegaCull = Container::MakeUnique<VirtualShadowMapMegaCull>();
-            if (!m_MegaCull->Initialize(m_Device, context.ShaderMgr))
-            {
-                m_MegaCull.reset();
-            }
-            else
-            {
-                m_MegaReporter = Container::MakeUnique<VirtualShadowMapMegaCullStatsReporter>();
-            }
+            NORVES_LOG_WARNING("VirtualShadowMapPass", "MegaGeometry の影の描画に要る DrawIndexedIndirectCount が無いので、VSM を使わない");
+            Fallback(VirtualShadowMap::FallbackReason::MegaGeometry);
+            m_bInitialized = true;
+            return true;
         }
-        else
+        m_MegaCull = Container::MakeUnique<VirtualShadowMapMegaCull>();
+        if (!m_MegaCull->Initialize(m_Device, context.ShaderMgr))
         {
-            NORVES_LOG_WARNING("VirtualShadowMapPass", "MegaGeometry の影の描画に要る DrawIndexedIndirectCount が無いので、VSM に MegaGeometry の投影物を載せない");
+            NORVES_LOG_WARNING("VirtualShadowMapPass", "MegaGeometry の投影物のカリングのパイプラインを作れないので、VSM を使わない");
+            Fallback(VirtualShadowMap::FallbackReason::MegaGeometry);
+            m_bInitialized = true;
+            return true;
         }
+        m_MegaReporter = Container::MakeUnique<VirtualShadowMapMegaCullStatsReporter>();
 
         m_RasterReporter = Container::MakeUnique<VirtualShadowMapRasterStatsReporter>();
 
@@ -288,6 +289,7 @@ namespace NorvesLib::Core::Rendering
 
         // 大きな確保は失敗しうる（装置のメモリ不足・上限）。作れなければ VSM を使わず CSM で描く
         bool bCreated = false;
+        bool bMegaCreated = false;
         try
         {
             m_Pool = m_Device->CreateBuffer(RHI::BufferDesc(
@@ -309,13 +311,13 @@ namespace NorvesLib::Core::Rendering
             // 間接描画の引数は、ホストが書いた塊と、続く MegaGeometry のクラスタの記録（カリングの一覧の容量ぶん）の両方を持つ
             m_Casters->Draws = m_Device->CreateBuffer(RHI::BufferDesc(
                 VirtualShadowMap::RasterDrawBytes(VirtualShadowMap::MAX_CASTER_CHUNKS +
-                                                  (m_MegaCull ? VirtualShadowMap::MEGA_CULL_LIST_CAPACITY : 0u)),
+                                                  VirtualShadowMap::MEGA_CULL_LIST_CAPACITY),
                 VirtualShadowMap::RasterDrawUsage(),
                 false,
                 "VsmRaster_Draws"));
             bCreated = m_Pool && m_PageTable && m_RequestBits && m_FreeList && m_Stats && m_DirtyList && m_Casters->Instances && m_Casters->Draws;
-            // MegaGeometry の投影物のカリングの出力の一覧と、dirty のページの階層（GPU が書く）。作れなければカリングだけを諦める
-            if (m_MegaCull)
+            // MegaGeometry の投影物のカリングの出力の一覧と、dirty のページの階層（GPU が書く）。作れなければ MegaGeometry の影の経路を
+            // 用意できないので、VSM を使わない（下の bMegaCreated の失敗の戻り）
             {
                 m_MegaList = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::MegaCullListBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY),
                                                                     VirtualShadowMap::MegaCullListUsage(),
@@ -327,15 +329,7 @@ namespace NorvesLib::Core::Rendering
                                                                       VirtualShadowMap::MegaChunkUsage(),
                                                                       false,
                                                                       "VsmMega_Chunks"));
-                if (!m_MegaList || !m_MegaDirtyBits || !m_MegaChunks)
-                {
-                    m_MegaList.reset();
-                    m_MegaDirtyBits.reset();
-                    m_MegaChunks.reset();
-                    m_MegaCull->Shutdown();
-                    m_MegaCull.reset();
-                    m_MegaReporter.reset();
-                }
+                bMegaCreated = m_MegaList && m_MegaDirtyBits && m_MegaChunks;
             }
         }
         catch (...)
@@ -345,6 +339,13 @@ namespace NorvesLib::Core::Rendering
         if (!bCreated)
         {
             Fallback(VirtualShadowMap::FallbackReason::PoolSize);
+            m_bInitialized = true;
+            return true;
+        }
+        if (!bMegaCreated)
+        {
+            NORVES_LOG_WARNING("VirtualShadowMapPass", "MegaGeometry の投影物のカリングの資源を作れないので、VSM を使わない");
+            Fallback(VirtualShadowMap::FallbackReason::MegaGeometry);
             m_bInitialized = true;
             return true;
         }
@@ -374,10 +375,9 @@ namespace NorvesLib::Core::Rendering
         m_bActive = true;
         const uint64_t rasterBytes = VirtualShadowMap::RasterInstanceBytes(VirtualShadowMap::RASTER_INSTANCE_CAPACITY) +
                                      m_Casters->Draws->GetSize();
-        const uint64_t megaBytes = m_MegaCull ? VirtualShadowMap::MegaCullListBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY) +
-                                                    VirtualShadowMap::MegaDirtyBitsBytes() +
-                                                    VirtualShadowMap::RasterChunkBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY)
-                                              : 0ull;
+        const uint64_t megaBytes = VirtualShadowMap::MegaCullListBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY) +
+                                   VirtualShadowMap::MegaDirtyBitsBytes() +
+                                   VirtualShadowMap::RasterChunkBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY);
         if (m_Gpu)
         {
             m_Gpu->SetShadowMapPoolBytes(poolBytes + rasterBytes + megaBytes);

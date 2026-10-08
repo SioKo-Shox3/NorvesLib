@@ -1336,12 +1336,20 @@ namespace
             m_Capabilities.MaxStorageBufferRange = maxStorageBufferRange;
             // 影の塊の展開・描画（VirtualShadowMapRaster）が、塊ごとの間接描画の firstInstance を要る
             m_Capabilities.bDrawIndirectFirstInstance = true;
+            // MegaGeometry のクラスタの記録の間接描画（DrawIndexedIndirectCount）も要る。無い装置は VSM を使わず CSM で描く
+            m_Capabilities.bDrawIndirectCount = true;
         }
 
         // DrawIndexedIndirectCount に対応する装置にする（VSM の MegaGeometry のクラスタの記録は、件数を GPU から読むこの間接描画で描く）
         void EnableDrawIndirectCount()
         {
             m_Capabilities.bDrawIndirectCount = true;
+        }
+
+        // DrawIndexedIndirectCount に対応しない装置にする（VSM は MegaGeometry の影を描けず、CSM へ戻る）
+        void DisableDrawIndirectCount()
+        {
+            m_Capabilities.bDrawIndirectCount = false;
         }
 
         // バッファのアドレスに対応しない装置にする（ソフトウェアラスタの計算シェーダーが頂点を引けない）
@@ -6435,6 +6443,10 @@ namespace
             // 確保に失敗する装置（プールを作れない・後ろの資源を作れない）: 作れたぶんも手放し、何も残さない
             {true, true, true, 0xFFFFFFFFull, "VSM_PhysicalPool", VirtualShadowMap::FallbackReason::PoolSize, "pool_size"},
             {true, true, true, 0xFFFFFFFFull, "VSM_Stats", VirtualShadowMap::FallbackReason::PoolSize, "pool_size"},
+            // MegaGeometry の影の経路の資源（カリングの出力の一覧・dirty の階層・クラスタの記録）を作れない装置: 影を欠いた VSM にせず CSM へ戻る
+            {true, true, true, 0xFFFFFFFFull, "VsmMega_List", VirtualShadowMap::FallbackReason::MegaGeometry, "mega_geometry"},
+            {true, true, true, 0xFFFFFFFFull, "VsmMega_DirtyBits", VirtualShadowMap::FallbackReason::MegaGeometry, "mega_geometry"},
+            {true, true, true, 0xFFFFFFFFull, "VsmMega_Chunks", VirtualShadowMap::FallbackReason::MegaGeometry, "mega_geometry"},
         };
 
         for (const Case& testCase : cases)
@@ -8445,29 +8457,61 @@ namespace
             ShutdownVsmMegaScene(scene);
         }
 
-        // DrawIndexedIndirectCount を使えない装置: MegaGeometry のクラスタの記録を描けないので、カリングの資源・パイプラインを作らない（VSM は動く）
+        // MegaGeometry の影の経路を用意できない装置は、MegaGeometry の影だけを欠いた VSM を公開せず、VSM の資源を何も公開しないで CSM へ戻る。
+        // 戻りは VSM_FALLBACK reason=mega_geometry を 1 回だけ出し、パスは何も宣言せず、何も描かない（照明は公開された資源が無いので CSM を読む）
+        const auto expectMegaFallback = [](VsmRun& run, VirtualShadowMapPass& pass) {
+#if NORVES_ENABLE_LOGGING
+            Logging::LogConfig logConfig;
+            logConfig.minLevel = Logging::LogLevel::Trace;
+            logConfig.outputType = Logging::LogOutput::None;
+            logConfig.bAsyncLogging = false;
+            logConfig.bAutoFlush = false;
+            Logging::Logger& logger = Logging::Logger::GetInstance();
+            logger.Shutdown();
+            assert(logger.Initialize(logConfig));
+            VsmLogCollector logs;
+            logger.AddSink(&logs);
+#endif
+            assert(pass.Initialize(run.Context));
+            assert(!pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::MegaGeometry);
+            assert(pass.GetPoolPages() == 0);
+            assert(!pass.GetPool() && !pass.GetPageTable() && !pass.GetRequestBits() && !pass.GetFreeList() && !pass.GetStats() &&
+                   !pass.GetDirtyList());
+            assert(!pass.GetMegaCullList() && !pass.GetMegaDirtyBits() && !pass.GetMegaChunks());
+            RunVsmFrame(run, pass, 0, false);
+            RunVsmFrame(run, pass, 1, false);
+            assert(run.Graph.GetDeclaredPassAccessCount(1) == 0);
+            assert(run.CommandList.VsmFills.empty() && run.CommandList.DispatchGroups.empty());
+#if NORVES_ENABLE_LOGGING
+            assert(logs.Count("VSM_FALLBACK reason=mega_geometry") == 1 && logs.Count("VSM_FALLBACK") == 1);
+            assert(logs.Count("VRAM_LEDGER vsm_pool") == 0 && logs.Count("VRAM_LEDGER vsm_page_table") == 0);
+            logger.RemoveSink(&logs);
+            logger.Shutdown();
+#endif
+        };
+        assert(std::strcmp(VirtualShadowMap::FallbackReasonName(VirtualShadowMap::FallbackReason::MegaGeometry), "mega_geometry") == 0);
+
+        // DrawIndexedIndirectCount を使えない装置: MegaGeometry のクラスタの記録を描けないので、VSM を使わず CSM へ戻る
         {
             VsmRun run;
             run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+            run.Device->DisableDrawIndirectCount();
             InitializeVsmRun(run);
             run.Device->FailComputePipelineCreationNumber = 0xFFFFFFFFu;
             VirtualShadowMapPass pass;
-            assert(pass.Initialize(run.Context));
-            assert(pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::None);
-            assert(!pass.GetMegaCullList() && !pass.GetMegaDirtyBits() && !pass.GetMegaChunks());
-            // 印付け・割り当て・消去・展開・展開の引数の 5 つだけ
+            expectMegaFallback(run, pass);
+            // 印付け・割り当て・消去・展開・展開の引数の 5 つの後は、カリングのパイプラインも資源も作らない
             assert(run.Device->ComputePipelineCreations == 5u);
             assert(CountBufferCreations(*run.Device, "VsmMega_List") == 0 && CountBufferCreations(*run.Device, "VsmMega_Chunks") == 0);
             ShutdownVsmRun(run, pass);
         }
 
-        // カリングのパイプラインを作れない装置: VSM は動き（展開・描画まで）、カリングの資源だけ作らない
+        // カリングのパイプラインを作れない装置: VSM を使わず CSM へ戻る（カリングの資源は作らない）
         {
             uint32_t baseline = 0;
             {
                 VsmRun run;
                 run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
-                run.Device->EnableDrawIndirectCount();
                 InitializeVsmRun(run);
                 // 失敗の番号が 0 でないときだけ作成を数える（届かない番号にして数だけ取る）
                 run.Device->FailComputePipelineCreationNumber = 0xFFFFFFFFu;
@@ -8483,13 +8527,10 @@ namespace
             {
                 VsmRun run;
                 run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
-                run.Device->EnableDrawIndirectCount();
                 InitializeVsmRun(run);
                 run.Device->FailComputePipelineCreationNumber = failNumber;
                 VirtualShadowMapPass pass;
-                assert(pass.Initialize(run.Context));
-                assert(pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::None);
-                assert(!pass.GetMegaCullList() && !pass.GetMegaDirtyBits() && !pass.GetMegaChunks());
+                expectMegaFallback(run, pass);
                 assert(CountBufferCreations(*run.Device, "VsmMega_List") == 0 && CountBufferCreations(*run.Device, "VsmMega_DirtyBits") == 0 &&
                        CountBufferCreations(*run.Device, "VsmMega_Chunks") == 0);
                 ShutdownVsmRun(run, pass);
