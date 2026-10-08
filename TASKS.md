@@ -137,8 +137,10 @@
 - notes: 2026-10-08 親（段9の開始時に詳しくした）。速度の項目の GPU 時間の撮影。`-GpuTimingFrames` は `-Deterministic` と併用できない。夜は太陽が無いので、太陽の VSM のページは 0 になるはず（値を表に入れる）。 2026-10-08 ユーザーの判断: キューブとの差の 2 ms は計画書・段の受入れに無い止め条件の目安だったので合否から外し、GPU 時間は表で示す（フレーム全体の差とパスの合計の差を並べる）。異常に重いときの見張りとして 16.6 ms（60fps の 1 フレーム）を残す。今のコード（CULL-PERF・DRAW-PERF の後）で 4 run を測り直す。
 - 結果: 2026-10-08 完了（評価の差し戻しで、各視点の撮影の直前に Game を止めた状態の GPU の利用率を測って 8 run に撮り直した）。RelWithDebInfo・`-GpuTimingFrames 300`・夜の 8 run（キューブ・VSM × 既定・近接・低角度・負荷の既定）。VSM のフレーム GPU の中央値は 2.30〜2.54 ms（通常 3 視点）・5.41 ms（負荷）で 16.6 ms を大きく下回る。キューブとの差は、フレーム全体で通常 +0.22〜+0.47 ms・負荷 +1.15 ms、パスの合計で通常 +0.30〜+0.47 ms・負荷 +1.02 ms。撮影直前の利用率の最大は 23〜35%。overflow（`VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL`）は VSM の 4 run の全行で 0。VSM の PNG 4 枚に影の欠け・ずれ・継ぎ目は見えない。表と測定の条件は PROGRESS.md の「段9 VTG9-VSM-POINT-GPU-TIME」。
 
+- 結果: 2026-10-08 完了。実装は fcaee6f0。新しい文面での測り直し（RelWithDebInfo・夜・負荷 300 個・既定の視点・`-GpuTimingFrames 300`）で `VsmCullMega` 0.174 ms（測定前 11.72）、フレーム GPU の中央値 6.627 ms（16.6 ms 未満）。VSM の 3 種の overflow は全行 0、`failures` は空。Debug ビルドと ctest の 4 件（VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・RenderGraphCompileTest）が通った。
+
 ## VTG9-VSM-POINT-CULL-PERF: 負荷モードの点光源の VSM のカリング（VsmCullMega）を縮める
-- status: todo
+- status: done
 - done-when: 夜の負荷モード 300 個（既定の視点）の RelWithDebInfo の `-GpuTimingFrames 300` で、`-PointShadowMethod Vsm` の `VsmCullMega` の中央値が測定前の 11.72 ms から縮み、フレーム GPU の中央値が 16.6 ms 未満（測定前は 17.30 ms。キューブは 3.68 ms）。キューブとの差は表で示す（通常の 3 視点は VTG9-VSM-POINT-GPU-TIME の表で示す）。(1) まず `VsmCullMega` の時間を支配するものを切り分ける（点光源の 36 スライスぶんのワークグループの数・インスタンスの判定で落ちる割合・クラスタごとの判定の中身。区間を足して測る）。(2) その上で縮める。案: インスタンスと面の組を先に 1 回で絞り、通った組のワークグループだけを間接 dispatch で出す・灯の Range と面の錐で面ごとにインスタンスを落とす・止まったインスタンスは前のフレームの選び方を引き継ぐ。選んだクラスタと描かれるページは今と同じ（`VirtualShadowMapVulkanTest` の J・J4・J5・K・R が書き換えなしで通る）。VSM の 4 run の 3 種の overflow が全行 0。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-VSM-POINT-CULL-PERF-vsm-stress -Configuration RelWithDebInfo -Night -ViewNames default -GpuTimingFrames 300 -PointShadowMethod Vsm -ExtraGameArguments --stress-mega-instances=300`

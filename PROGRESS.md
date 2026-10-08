@@ -352,3 +352,11 @@ run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.ex
 - 判定: 16.6 ms の見張りには最大の負荷でも 5.4 ms（p95 6.0 ms）で当たらない。止め条件に当たらないので完了。
 - Notes: 近接・低角度の Cube は「区間の外」が 0.18・0.38 ms と既定の Cube（0.02 ms）より大きく、フレーム全体の差が +0.22〜+0.39 ms とパスの合計の差（+0.30〜+0.38 ms）より小さく出る。利用率が 31〜33% の常駐のアプリの影響を含むので、方式の差はパスの合計の差のほうが安定している。キューブとの差の主な内訳は `VirtualShadowMapPass`（通常 +0.34〜+0.39、負荷 +1.03）と `LightingPass`（+0.14〜+0.16、負荷 +0.13。VSM の 16 点の読み取り）。負荷の重い区間は `VsmDraw` 0.51・`VsmCullMega` 0.17・`VsmMark` 0.14・`VsmExpand` 0.14・`VsmCullSelect` 0.10。`VTG9-VSM-POINT-CULL-PERF`・`VTG9-VSM-POINT-DRAW-PERF` は todo のまま（差が合否から外れたので、必要かどうかは人が決める）。撮影の PowerShell は `powershell`（5.1）で動かす（`pwsh` では `Add-Type` の `System.Drawing` が解決できず撮影が失敗する）。
 - Next: TASKS.md の次の `todo`。
+
+## 段9 VTG9-VSM-POINT-CULL-PERF の測り直し（2026-10-08）
+
+- 結果: 完了。実装は fcaee6f0（通る（インスタンス、スライス）の組だけを間接 dispatch で選ぶ）。キューブとの差を合否から外した新しい文面（`VsmCullMega` の縮小とフレーム GPU 16.6 ms 未満）で測り直して満たした。
+- 測定（`.harness/runs/startup-capture/VTG9-VSM-POINT-CULL-PERF-vsm-stress/`、`verify-VTG9-VSM-POINT-CULL-PERF-2.txt`。RelWithDebInfo・夜・負荷 300 個・既定の視点・240 フレーム集計）: フレーム GPU の中央値 6.627 ms（p95 8.924・最大 11.775。測定前 17.30）。`VsmCullMega` 0.174 ms（測定前 11.72。Select 0.107・Dirty 0.033・Chunks 0.019・Pairs 0.010）、`VirtualShadowMapPass` 1.27、`VsmDraw` 0.506。`VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL` の overflow は全行 0、`failures` は空。
+- 検証: RelWithDebInfo ビルド（`-1.txt`、EXIT=0）・撮影（`-2.txt`、result=pass）・Debug ビルド（`-3.txt`、EXIT=0）・ctest（`-4.txt`、VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・RenderGraphCompileTest の 4 件が通過）。
+- Notes: `VSM_RASTER` の instances は 933c1fdf（展開で触れるページだけにインスタンスを作る）以降の値で、選ばれるクラスタ数（chunks）はカリング側の変更で変わっていない。
+- Next: TASKS.md の次の `todo`。
