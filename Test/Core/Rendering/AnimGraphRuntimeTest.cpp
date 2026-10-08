@@ -1,14 +1,15 @@
 ﻿// GR10のJSON拒否、ブレンド、遷移、外部駆動を既存CPU bundleで検証する。
 #include "Animation/AnimGraphInstance.h"
-#include "Animation/SkeletonResource.h"
+#include "Animation/MotionAnalysis.h"
 #include "Animation/SkeletalAssetResource.h"
+#include "Animation/SkeletonResource.h"
 #include "Component/AnimatorComponent.h"
+#include "Component/ScriptComponent.h"
 #include "Component/SkinnedMeshComponent.h"
+#include "Engine/NorvesEngine.h"
+#include "Object/Entity.h"
 #include "Object/ResourceRegistry.h"
 #include "Object/World.h"
-#include "Object/Entity.h"
-#include "Component/ScriptComponent.h"
-#include "Engine/NorvesEngine.h"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -346,11 +347,304 @@ namespace
         GRAPH_CHECK(instance.Update(.25f) && instance.Evaluate());
         NearGraph(instance.GetLocalPose()[0].Translation.x, 1);
     }
+
+    void TestClipMetadataRuntime()
+    {
+        GraphFixture f;
+        A::ClipMetadataReport report;
+        A::ClipMetadata base, overlay;
+        GRAPH_CHECK(A::ParseClipMetadata(
+            C::String(
+                R"({"events":[{"name":"step","phase":0.25},{"name":"attack","t":0.4,"end":0.8}],"markers":[{"name":"left","t":0.1},{"name":"right","t":0.6}],"loop":{"start":0.1,"end":0.9},"rootMotion":{"mode":"extract","x":false}})"),
+            1, true, base, report));
+        GRAPH_CHECK(base.Events.size() == 2 && base.Markers.size() == 2);
+        NearGraph(base.Events[0].Time, .25f);
+        GRAPH_CHECK(A::ApplyClipMetadataOverride(base, C::String(R"({"events":[],"rootMotion":{"yaw":false}})"), 1,
+                                                 overlay, report));
+        GRAPH_CHECK(overlay.Events.empty() && overlay.Markers.size() == 2 && !overlay.Root.bX && !overlay.Root.bYaw &&
+                    overlay.Root.Mode == A::RootMotionMode::Extract);
+        GRAPH_CHECK(!A::ParseClipMetadata(C::String(R"({"events":[{"name":"bad","t":0.5,"phase":0.5}]})"), 1, true,
+                                          overlay, report));
+        GRAPH_CHECK(!A::ParseClipMetadata(C::String(R"({"markers":[{"name":"same","t":0.2},{"name":"same","t":0.4}]})"),
+                                          1, true, overlay, report));
+        GRAPH_CHECK(A::RemapClipMetadataTime(base, 1, .3, .7, 2, overlay, report));
+        GRAPH_CHECK(overlay.Events.size() == 1 && overlay.Markers.size() == 1);
+        NearGraph(overlay.Events[0].Time, .2f);
+        NearGraph(overlay.Events[0].EndTime, .8f);
+        NearGraph(overlay.Markers[0].Time, .6f);
+        A::ClipMetadata window;
+        window.Events.push_back({Identity("window"), 0, 1});
+        window.Root.NominalSpeed = 4;
+        GRAPH_CHECK(A::RemapClipMetadataTime(window, 1, .7, .9, 2, overlay, report));
+        NearGraph(overlay.Events[0].Time, 0);
+        NearGraph(overlay.Events[0].EndTime, .4f);
+        NearGraph(overlay.Root.NominalSpeed, 2);
+        for (const char* bad :
+             {R"({"events":[{"name":"x","phase":1.00000001}]})", R"({"events":[{"name":"x","t":1.00000001}]})",
+              R"({"events":[{"name":"x","t":0,"minWeight":1.00000001}]})",
+              R"({"rootMotion":{"nominalSpeed":-1.00000001}})", R"({"loop":{"start":0,"end":1.00000001}})"})
+            GRAPH_CHECK(!A::ParseClipMetadata(C::String(bad), 1, true, overlay, report));
+        const auto poseRevision = f.AClip->GetPoseRevision();
+        const auto metadataRevision = f.AClip->GetMetadataRevision();
+        GRAPH_CHECK(f.AClip->ApplyMetadataJson(C::String(R"({"events":[{"name":"step","t":0.5}]})"), report));
+        GRAPH_CHECK(f.AClip->GetPoseRevision() == poseRevision && f.AClip->GetMetadataRevision() != metadataRevision &&
+                    f.AClip->GetClip().Metadata.Events.empty());
+        GRAPH_CHECK(f.AClip->ApplyMetadataJson(C::String(R"({"groundOffset":0.2})"), report));
+        GRAPH_CHECK(f.AClip->GetMetadata().Events.empty());
+    }
+    void TestAnimationEventRuntime()
+    {
+        GraphFixture f;
+        A::ClipMetadataReport report;
+        auto apply = [&](AnimationClipResource& clip, const char* json) {
+            GRAPH_CHECK(clip.ApplyMetadataJson(C::String(json), report));
+        };
+        apply(*f.AClip, R"({"events":[{"name":"attack","t":0.2,"end":0.8}]})");
+        apply(*f.BClip, R"({"events":[{"name":"attack","t":0.3,"end":0.7}]})");
+        A::AnimGraphData data;
+        data.Clips = {f.AClip, f.BClip};
+        A::AnimationEventQueue queue;
+        C::VariableArray<A::AnimEventInfo> events;
+        queue.OnEvent.Add([&](const A::AnimEventInfo& event) { events.push_back(event); });
+        const Identity group("locomotion");
+        C::VariableArray<A::AnimClipTraversal> traversals{{0, 0, 0, 1, 1, false, group}, {1, 1, 0, 1, 1, false, group}};
+        queue.Update(data, traversals, 1);
+        GRAPH_CHECK(events.empty());
+        queue.Dispatch();
+        GRAPH_CHECK(events.size() == 2 && events[0].Kind == A::AnimEventKind::Begin &&
+                    events[1].Kind == A::AnimEventKind::End && events[0].WindowToken == events[1].WindowToken);
+        queue.Reset();
+        events.clear();
+        traversals = {{0, 0, 0, .5, 1, false, {}}};
+        queue.Update(data, traversals, .5f);
+        traversals[0] = {0, 0, .5, .6, 0, false, {}};
+        queue.Update(data, traversals, .1f);
+        queue.Dispatch();
+        GRAPH_CHECK(events.size() == 2 && events[0].Batch < events[1].Batch && events[1].bInterrupted);
+        queue.Reset();
+        events.clear();
+        traversals = {{0, 0, .3, 10.3, 1, true, {}}};
+        queue.Update(data, traversals, 10);
+        queue.Dispatch();
+        GRAPH_CHECK(events.size() == 18 && queue.ActiveWindowCount() == 0 && events.back().bInterrupted);
+        queue.Reset();
+        events.clear();
+        apply(*f.AClip, R"({"events":[{"name":"step","t":1}]})");
+        apply(*f.BClip, R"({"events":[{"name":"step","t":0}]})");
+        traversals = {{0, 0, 0, 1, 1, true, group}, {1, 1, 0, 1, 1, true, group}};
+        queue.Update(data, traversals, 1);
+        queue.Dispatch();
+        GRAPH_CHECK(events.size() == 1);
+        queue.Reset();
+        events.clear();
+        traversals = {{0, 0, .1, -.1, 1, true, group, true}, {1, 1, .1, -.1, 1, true, group, true}};
+        queue.Update(data, traversals, .2f);
+        queue.Dispatch();
+        GRAPH_CHECK(events.size() == 1 && events[0].Occurrence == 0);
+        // move後の破棄と通常破棄で同じwindowのEndが重複しない。
+        apply(*f.AClip, R"({"events":[{"name":"attack","t":0.2,"end":0.8}]})");
+        events.clear();
+        auto graph = f.Graph(R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        {
+            A::AnimGraphInstance source;
+            GRAPH_CHECK(source.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+            source.Events().OnEvent.Add([&](const A::AnimEventInfo& event) { events.push_back(event); });
+            GRAPH_CHECK(source.Update(.5f));
+            source.Events().Dispatch();
+            A::AnimGraphInstance moved(std::move(source));
+            GRAPH_CHECK(events.size() == 1);
+        }
+        GRAPH_CHECK(events.size() == 2 && events[1].bInterrupted && events[0].WindowToken == events[1].WindowToken);
+    }
+
+    void TestRootMotionRegressions()
+    {
+        GraphFixture f;
+        A::ClipMetadataReport report;
+        const char* json = R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"b"}],"root":"a"})";
+        auto graph = f.Graph(json);
+        A::AnimGraphInstance instance;
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"mode":"extract"}})"), report));
+        GRAPH_CHECK(instance.Evaluate());
+        NearGraph(instance.GetLocalPose()[0].Translation.x, 10);
+        // 非ゼロの初期headingをEntity移動へ二重に適用しない。
+        auto clip = f.BClip->GetClip();
+        S::SkeletalAnimationChannel rotation;
+        rotation.JointIndex = 0;
+        rotation.Path = S::SkeletalAnimationPath::Rotation;
+        rotation.Samples = {{0, {0, -.7071067811865475f, 0, .7071067811865475f}},
+                            {1, {0, -.7071067811865475f, 0, .7071067811865475f}}};
+        clip.Channels.push_back(rotation);
+        clip.Metadata.Root.Mode = A::RootMotionMode::Extract;
+        f.BClip->SetClip(S::SkeletalAnimationClip(clip));
+        graph = f.Graph(json);
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(instance.Update(.5f) && instance.Evaluate());
+        auto d = instance.ConsumeRootMotion();
+        NearGraph(float(d.X), 1);
+        NearGraph(float(d.Z), 0);
+        NearGraph(instance.GetLocalPose()[0].Translation.x, 10);
+        // 180度ちょうどの区間を二つ繋いでも一周分のyawが失われない。
+        clip.Channels[0].Samples = {{0, {10, 0, 0, 0}}, {1, {10, 0, 0, 0}}};
+        clip.Channels.back().Samples = {{0, {0, 0, 0, 1}}, {.5f, {0, -1, 0, 0}}, {1, {0, 0, 0, -1}}};
+        f.BClip->SetClip(S::SkeletalAnimationClip(clip));
+        graph = f.Graph(json);
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(instance.Update(1));
+        d = instance.ConsumeRootMotion();
+        NearGraph(float(d.Yaw), 6.283185307f);
+        NearGraph(float(d.X), 0);
+        NearGraph(float(d.Z), 0);
+        // 軸ロックは軌跡へ適用し、Updateの分割で変位を変えない。
+        clip.Channels.back().Samples = {{0, {0, 0, 0, 1}}};
+        clip.Channels[0].Samples = {{0, {0, 0, 0, 0}}};
+        clip.RootMotionJoint = 0;
+        clip.RootMotion = {{0, 0, 0, 0}, {1, 1, 0, 1.5707963267948966}};
+        for (unsigned mode = 0; mode < 2; ++mode)
+        {
+            clip.Metadata.Root.bX = mode == 0;
+            clip.Metadata.Root.bYaw = mode != 0;
+            f.BClip->SetClip(S::SkeletalAnimationClip(clip));
+            graph = f.Graph(json);
+            A::AnimGraphInstance split;
+            GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity) &&
+                        split.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+            GRAPH_CHECK(instance.Update(2) && split.Update(1) && split.Update(1));
+            const auto a = instance.ConsumeRootMotion(), b = split.ConsumeRootMotion();
+            NearGraph(float(a.X), float(b.X));
+            NearGraph(float(a.Z), float(b.Z));
+            NearGraph(float(a.Yaw), float(b.Yaw));
+        }
+    }
+    void TestMotionAnalysisRuntime()
+    {
+        GraphFixture f;
+        auto clip = f.AClip->GetClip();
+        clip.Channels.clear();
+        S::SkeletalAnimationChannel foot;
+        foot.JointIndex = 1;
+        foot.Path = S::SkeletalAnimationPath::Translation;
+        foot.Interpolation = S::SkeletalAnimationInterpolation::Step;
+        for (unsigned i = 0; i <= 60; ++i)
+            foot.Samples.push_back({float(i) / 60, {0, i >= 12 && i < 24 ? .1f : .3f, 0, 0}});
+        clip.Channels.push_back(foot);
+        f.AClip->SetClip(S::SkeletalAnimationClip(clip));
+        A::SkeletalPoseContext context;
+        GRAPH_CHECK(A::SkeletalPoseBuilder::Prepare(*f.Skeleton, *f.AClip, *f.Mesh, M::Matrix4x4::Identity, context));
+        const A::FootContactSpec spec{1, Identity("Foot.Left")};
+        A::FootContactReport contact;
+        GRAPH_CHECK(A::AnalyzeFootContacts(context, *f.AClip, {&spec, 1}, {}, contact));
+        GRAPH_CHECK(contact.Windows.size() == 1 && std::fabs(contact.Windows[0].Start - .2f) <= 1.f / 60 + 1e-5f &&
+                    std::fabs(contact.Windows[0].End - .4f) <= 1.f / 60 + 1e-5f);
+        NearGraph(contact.GroundOffset, .1f);
+        GRAPH_CHECK(contact.Confidence > .5f);
+        A::ClipMetadata parsed;
+        A::ClipMetadataReport metadataReport;
+        GRAPH_CHECK(A::ParseClipMetadata(contact.DraftJson, 1, true, parsed, metadataReport) &&
+                    A::SameClipMetadata(parsed, contact.Draft));
+        clip.Channels.clear();
+        clip.DurationSeconds = 3;
+        S::SkeletalAnimationChannel rotation;
+        rotation.JointIndex = 1;
+        rotation.Path = S::SkeletalAnimationPath::Rotation;
+        for (unsigned i = 0; i <= 180; ++i)
+        {
+            const double time = double(i) / 60, angle = .6 * std::sin(6.283185307179586 * time / .75);
+            rotation.Samples.push_back({float(time), {0, 0, float(std::sin(angle * .5)), float(std::cos(angle * .5))}});
+        }
+        clip.Channels.push_back(rotation);
+        f.AClip->SetClip(S::SkeletalAnimationClip(clip));
+        GRAPH_CHECK(A::SkeletalPoseBuilder::Prepare(*f.Skeleton, *f.AClip, *f.Mesh, M::Matrix4x4::Identity, context));
+        A::CycleDetectionOptions options;
+        options.SampleRate = 60;
+        options.MinimumPeriod = .5;
+        options.MaximumPeriod = 1;
+        A::CycleDetectionReport cycle;
+        GRAPH_CHECK(A::DetectCycle(*f.Skeleton, context, *f.AClip, options, cycle));
+        GRAPH_CHECK(cycle.bDetected && std::fabs(cycle.Period - .75) < .025);
+        GRAPH_CHECK(A::ParseClipMetadata(cycle.DraftJson, 3, true, parsed, metadataReport) &&
+                    A::SameClipMetadata(parsed, cycle.Draft));
+        GRAPH_CHECK(f.AClip->GetClip().Metadata.Events.empty() && !f.AClip->GetClip().Metadata.Loop.bEnabled);
+        auto otherSkeleton = f.Registry.CreateTransient<SkeletonResource>("OtherAnalysisSkeleton");
+        otherSkeleton->SetJoints(C::VariableArray<S::SkeletalJoint>(f.Skeleton->GetJoints()));
+        GRAPH_CHECK(otherSkeleton->Load());
+        GRAPH_CHECK(!A::DetectCycle(*otherSkeleton, context, *f.AClip, options, cycle));
+        S::SkeletalAnimationClip still;
+        still.Name = "Still";
+        still.DurationSeconds = .3f;
+        foot.Samples = {{0, {0, .1f, 0, 0}}, {.3f, {0, .1f, 0, 0}}};
+        still.Channels.push_back(foot);
+        f.AClip->SetClip(std::move(still));
+        GRAPH_CHECK(A::SkeletalPoseBuilder::Prepare(*f.Skeleton, *f.AClip, *f.Mesh, M::Matrix4x4::Identity, context));
+        GRAPH_CHECK(A::AnalyzeFootContacts(context, *f.AClip, {&spec, 1}, {}, contact));
+        GRAPH_CHECK(A::ParseClipMetadata(contact.DraftJson, .3f, true, parsed, metadataReport) &&
+                    A::SameClipMetadata(parsed, contact.Draft));
+        C::String longName;
+        for (unsigned i = 0; i < 1025; ++i)
+            longName += 'x';
+        const A::FootContactSpec invalidSpec{1, Identity(longName)};
+        GRAPH_CHECK(!A::AnalyzeFootContacts(context, *f.AClip, {&invalidSpec, 1}, {}, contact));
+    }
+    void TestRootMotionRuntime()
+    {
+        GraphFixture f;
+        A::ClipMetadataReport report;
+        GRAPH_CHECK(f.AClip->ApplyMetadataJson(C::String(R"({"rootMotion":{"mode":"extract"}})"), report));
+        auto graph = f.Graph(R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        A::AnimGraphInstance instance;
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        NearGraph(instance.GetNominalSpeed(0), 2);
+        GRAPH_CHECK(instance.Update(.25f));
+        GRAPH_CHECK(instance.Update(.25f));
+        auto delta = instance.ConsumeRootMotion();
+        NearGraph(float(delta.X), 1);
+        NearGraph(float(instance.ConsumeRootMotion().X), 0);
+        GRAPH_CHECK(instance.Evaluate());
+        NearGraph(instance.GetLocalPose()[0].Translation.x, 0);
+        GRAPH_CHECK(instance.Update(1));
+        NearGraph(float(instance.ConsumeRootMotion().X), 2);
+        auto reverse = f.Graph(R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a","rate":-1}],"root":"a"})");
+        A::AnimGraphInstance backwards;
+        GRAPH_CHECK(backwards.Initialize(*reverse, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(backwards.Update(.25f));
+        NearGraph(float(backwards.ConsumeRootMotion().X), -.5f);
+        GRAPH_CHECK(f.AClip->ApplyMetadataJson(
+            C::String(R"({"rootMotion":{"mode":"extract"},"loop":{"start":0.25,"end":0.75}})"), report));
+        graph = f.Graph(R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(instance.Update(.5f));
+        NearGraph(float(instance.ConsumeRootMotion().X), 1);
+        auto curve = f.AClip->GetClip();
+        for (auto& key : curve.Channels[0].Samples)
+            key.Value.X = 0;
+        curve.RootMotionJoint = 0;
+        curve.RootMotion = {{0, 0, 0, 0}, {1, 1, 0, 1.5707963267948966}};
+        curve.Metadata.Root.Mode = A::RootMotionMode::Extract;
+        f.AClip->SetClip(std::move(curve));
+        graph = f.Graph(R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(instance.Update(4));
+        delta = instance.ConsumeRootMotion();
+        NearGraph(float(delta.X), 0);
+        NearGraph(float(delta.Z), 0);
+        NearGraph(float(delta.Yaw), 6.2831853f);
+        auto velocity = f.Graph(
+            R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"m","type":"stateMachine","states":[{"name":"Walk","node":"a","rootMotion":"velocity"}]}],"root":"m"})");
+        GRAPH_CHECK(instance.Initialize(*velocity, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(instance.Update(.5f));
+        NearGraph(float(instance.ConsumeRootMotion().X), 0);
+    }
 } // namespace
 void TestAnimGraphRuntime()
 {
     TestGraphBlendAndLoad();
     TestGraphNodeKinds();
+    TestClipMetadataRuntime();
+    TestAnimationEventRuntime();
+    TestRootMotionRuntime();
+    TestRootMotionRegressions();
+    TestMotionAnalysisRuntime();
     TestDynamicAdditiveReference();
     TestGraphStateMachine();
     TestGraphPlaybackRegressions();

@@ -52,17 +52,19 @@ namespace NorvesLib::Core::Component
     {
         Detach();
         ClearModifiers();
+        OnEvent.Clear();
         Component::EndPlay();
     }
     void AnimatorComponent::Finalize()
     {
         Detach();
         ClearModifiers();
+        OnEvent.Clear();
         Component::Finalize();
     }
     bool AnimatorComponent::SetGraph(const Container::TSharedPtr<AnimGraphResource>& graph)
     {
-        if (m_bApplyingModifiers)
+        if (m_bApplyingModifiers || m_Instance.Events().IsDispatching())
         {
             return false;
         }
@@ -86,6 +88,9 @@ namespace NorvesLib::Core::Component
         {
             return false;
         }
+        m_Instance.Events().InterruptAll();
+        m_Instance.Events().Dispatch();
+        instance.Events().OnEvent.Add(this, &AnimatorComponent::ForwardEvent);
         m_Instance = std::move(instance);
         m_Graph = graph;
         m_BoundAsset = asset;
@@ -225,9 +230,11 @@ namespace NorvesLib::Core::Component
         {
             (void)UpdateAnimation(dt);
         }
-        else if (group == ETickGroup::PoseFinalize && m_bEvaluate)
+        else if (group == ETickGroup::PoseFinalize)
         {
-            (void)EvaluateAnimation();
+            if (m_bEvaluate)
+                (void)EvaluateAnimation();
+            m_Instance.Events().Dispatch();
         }
     }
     void AnimatorComponent::BuildDebugSnapshot(AnimatorDebugSnapshot& out) const

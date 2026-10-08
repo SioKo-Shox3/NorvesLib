@@ -51,6 +51,15 @@ namespace NorvesLib::Core::Skeletal
             data->Clips = source->Clips;
             for (auto& clip : data->Clips)
             {
+                if (clip.Metadata.Root.Joint != UINT32_MAX)
+                {
+                    if (clip.Metadata.Root.Joint >= rig->Topology.CanonicalToSource.size())
+                    {
+                        report.Status = RigV1Status::InvalidClip;
+                        return false;
+                    }
+                    clip.Metadata.Root.Joint = rig->Topology.CanonicalToSource[clip.Metadata.Root.Joint];
+                }
                 if (!clip.RootMotion.empty())
                 {
                     if (clip.RootMotionJoint >= rig->Topology.CanonicalToSource.size())

@@ -20,6 +20,12 @@ namespace NorvesLib::Core::Animation
         }
     } // namespace
 
+    bool SkeletalPoseBuilder::IsPreparedForSkeleton(const SkeletalPoseContext& context,
+                                                    const SkeletonResource& skeleton)
+    {
+        return context.bValid && context.Skeleton == &skeleton &&
+               context.SkeletonRevision == skeleton.GetPoseRevision();
+    }
     bool SkeletalPoseBuilder::IsPreparedFor(const SkeletalPoseContext& context, const SkeletonResource& skeleton,
                                             const AnimationClipResource& clip, const SkinnedMeshResource& mesh,
                                             const Math::Matrix4x4& transform)
@@ -182,6 +188,45 @@ namespace NorvesLib::Core::Animation
                 }
             }
         }
+        return true;
+    }
+
+    bool SkeletalPoseBuilder::BuildRootModelMatrix(const SkeletalPoseContext& context, const JointTransform& root,
+                                                   Math::Matrix4x4& out)
+    {
+        if (!context.bValid ||
+            !IsPreparedFor(context, *context.Skeleton, *context.Clip, *context.Mesh, context.MeshTransform))
+            return false;
+        auto matrix = ToRowMatrix(root);
+        if (context.bSplit)
+            matrix = matrix * context.RootFrame;
+        matrix = matrix * context.InverseMesh;
+        if (!Detail::IsFiniteMatrix(matrix))
+            return false;
+        out = matrix;
+        return true;
+    }
+    bool SkeletalPoseBuilder::RootModelToLocal(const SkeletalPoseContext& context, const Math::Matrix4x4& model,
+                                               JointTransform& out)
+    {
+        if (!context.bValid || !Detail::IsFiniteMatrix(model) ||
+            !IsPreparedFor(context, *context.Skeleton, *context.Clip, *context.Mesh, context.MeshTransform))
+            return false;
+        auto local = model * context.MeshTransform;
+        if (context.bSplit)
+        {
+            Math::Matrix4x4 inverse;
+            if (!Detail::TryInverseMatrix(context.RootFrame, inverse))
+                return false;
+            local = local * inverse;
+        }
+        const auto candidate = FromRowMatrix(local);
+        const auto restored = ToRowMatrix(candidate);
+        for (size_t i = 0; i < 16; ++i)
+            if (!std::isfinite(restored.values[i]) ||
+                std::fabs(restored.values[i] - local.values[i]) > 1e-4f * std::fmax(1.f, std::fabs(local.values[i])))
+                return false;
+        out = candidate;
         return true;
     }
 

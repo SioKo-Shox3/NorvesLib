@@ -58,11 +58,64 @@ namespace NorvesLib::Core::Animation
             return false;
         }
     } // namespace
+    AnimGraphInstance::~AnimGraphInstance()
+    {
+        Reset();
+    }
+    AnimGraphInstance::AnimGraphInstance(AnimGraphInstance&& other)
+    {
+        if (!other.m_Events.IsDispatching())
+            Swap(other);
+    }
+    AnimGraphInstance& AnimGraphInstance::operator=(AnimGraphInstance&& other)
+    {
+        // 配送中のインスタンスはcallbackが参照しているため移動しない。
+        if (this != &other && !m_Events.IsDispatching() && !other.m_Events.IsDispatching())
+        {
+            Reset();
+            Swap(other);
+        }
+        return *this;
+    }
+    void AnimGraphInstance::Swap(AnimGraphInstance& other)
+    {
+        using std::swap;
+        swap(m_RootClips, other.m_RootClips);
+        swap(m_NodeMotion, other.m_NodeMotion);
+        swap(m_MotionScratch, other.m_MotionScratch);
+        swap(m_MotionModels, other.m_MotionModels);
+        swap(m_PendingRootMotion, other.m_PendingRootMotion);
+        swap(m_Graph, other.m_Graph);
+        swap(m_Parameters, other.m_Parameters);
+        swap(m_Events, other.m_Events);
+        swap(m_Contexts, other.m_Contexts);
+        swap(m_Runtime, other.m_Runtime);
+        swap(m_Poses, other.m_Poses);
+        swap(m_Reference, other.m_Reference);
+        swap(m_Weights, other.m_Weights);
+        swap(m_EvaluationWeights, other.m_EvaluationWeights);
+        swap(m_Durations, other.m_Durations);
+        swap(m_Traversals, other.m_Traversals);
+        swap(m_ResetVisited, other.m_ResetVisited);
+        swap(m_Output, other.m_Output);
+        swap(m_Skeleton, other.m_Skeleton);
+        swap(m_Mesh, other.m_Mesh);
+        swap(m_Transform, other.m_Transform);
+        swap(m_bValid, other.m_bValid);
+    }
     void AnimGraphInstance::Reset()
     {
+        if (m_Events.IsDispatching())
+            return;
+        m_Events.Reset();
         m_bValid = false;
         m_Graph.reset();
         m_Contexts.clear();
+        m_RootClips.clear();
+        m_NodeMotion.clear();
+        m_MotionModels.clear();
+        m_MotionScratch = {};
+        m_PendingRootMotion = {};
         m_Runtime.clear();
         m_Poses.clear();
         m_Reference.clear();
@@ -79,6 +132,8 @@ namespace NorvesLib::Core::Animation
     bool AnimGraphInstance::Initialize(const AnimGraphResource& graph, const SkeletonResource& skeleton,
                                        const SkinnedMeshResource& mesh, const Math::Matrix4x4& transform)
     {
+        if (m_Events.IsDispatching())
+            return false;
         Reset();
         const auto& data = graph.GetData();
         if (!graph.IsLoaded() || !data || data->Nodes.empty() || data->Clips.empty() ||
@@ -135,6 +190,9 @@ namespace NorvesLib::Core::Animation
         {
             auto& rt = m_Runtime[i];
             rt.Current = data->Nodes[i].InitialState;
+            if (data->Nodes[i].Kind == AnimNodeKind::Clip && data->Nodes[i].bLoop &&
+                data->Clips[data->Nodes[i].Clip]->GetMetadata().Loop.bEnabled)
+                rt.Time = data->Clips[data->Nodes[i].Clip]->GetMetadata().Loop.Start;
             if (data->Nodes[i].Kind == AnimNodeKind::Clip && data->Nodes[i].PlaybackRate < 0 && !data->Nodes[i].bLoop)
             {
                 rt.Time = data->Clips[data->Nodes[i].Clip]->GetClip().DurationSeconds;
@@ -162,6 +220,15 @@ namespace NorvesLib::Core::Animation
                     m_Durations[i] = std::max(m_Durations[i], m_Durations[child]);
                 }
             }
+        }
+        m_RootClips.resize(data->Clips.size());
+        m_NodeMotion.resize(count);
+        m_MotionScratch.Resize(joints);
+        m_MotionModels.resize(joints);
+        if (!RefreshRootMetadata(true))
+        {
+            Reset();
+            return false;
         }
         m_bValid = true;
         if (!EvaluateNodes(true))
@@ -200,7 +267,7 @@ namespace NorvesLib::Core::Animation
         }
         m_Contexts = std::move(contexts);
         m_Transform = transform;
-        return EvaluateNodes(true);
+        return RefreshRootMetadata(true) && EvaluateNodes(true);
     }
     bool AnimGraphInstance::ResourcesCurrent() const
     {
@@ -339,6 +406,8 @@ namespace NorvesLib::Core::Animation
             rt.Time = node.Kind == AnimNodeKind::Clip && node.PlaybackRate < 0 && !node.bLoop
                           ? m_Graph->Clips[node.Clip]->GetClip().DurationSeconds
                           : 0;
+            if (node.Kind == AnimNodeKind::Clip && node.bLoop && m_Graph->Clips[node.Clip]->GetMetadata().Loop.bEnabled)
+                rt.Time = m_Graph->Clips[node.Clip]->GetMetadata().Loop.Start;
             rt.StateTime = 0;
             rt.NextStateTime = 0;
             rt.Current = m_Graph->Nodes[i].InitialState;
@@ -397,7 +466,7 @@ namespace NorvesLib::Core::Animation
     }
     bool AnimGraphInstance::Update(float dt)
     {
-        if (!ResourcesCurrent() || !std::isfinite(dt) || dt < 0)
+        if (m_Events.IsDispatching() || !ResourcesCurrent() || !std::isfinite(dt) || dt < 0 || !RefreshRootMetadata())
         {
             return false;
         }
@@ -485,8 +554,12 @@ namespace NorvesLib::Core::Animation
             }
             rt.Time = n.bLoop ? advanced
                               : std::clamp(advanced, 0.0, double(m_Graph->Clips[n.Clip]->GetClip().DurationSeconds));
-            m_Traversals.push_back({index, n.Clip, previous, rt.Time, m_Weights[index], n.bLoop, n.SyncGroup});
+            m_Traversals.push_back(
+                {index, n.Clip, previous, rt.Time, m_Weights[index], n.bLoop, n.SyncGroup, n.PlaybackRate < 0});
         }
+        if (!AdvanceRootMotion())
+            return false;
+        m_Events.Update(*m_Graph, m_Traversals, dt);
         m_Parameters.ConsumeTriggers();
         return true;
     }
@@ -524,19 +597,21 @@ namespace NorvesLib::Core::Animation
                 }
                 double time = rt.Time;
                 const double duration = m_Graph->Clips[n.Clip]->GetClip().DurationSeconds;
-                if (n.bLoop && duration > 0)
+                const auto& loop = m_Graph->Clips[n.Clip]->GetMetadata().Loop;
+                const double start = loop.bEnabled ? loop.Start : 0, end = loop.bEnabled ? loop.End : duration;
+                if (n.bLoop && end > start)
                 {
-                    time = std::fmod(time, duration);
-                    if (time < 0)
-                    {
-                        time += duration;
-                    }
+                    time = start + std::fmod(time - start, end - start);
+                    if (time < start)
+                        time += end - start;
                 }
                 if (!SkeletalPoseBuilder::SampleClipToLocalPose(m_Contexts[n.Clip], *m_Graph->Clips[n.Clip],
                                                                 float(time), m_Poses[index]))
                 {
                     return false;
                 }
+                if (!RemoveRootMotion(n.Clip, m_Poses[index]))
+                    return false;
                 continue;
             }
             // 先頭frame自体は一度だけ読む。複合nodeの基準は現edgeで合成し、選択変更を加算差分にしない。
@@ -604,7 +679,7 @@ namespace NorvesLib::Core::Animation
     }
     bool AnimGraphInstance::Evaluate()
     {
-        if (!ResourcesCurrent() || !EvaluateNodes(false))
+        if (!ResourcesCurrent() || !RefreshRootMetadata() || !EvaluateNodes(false))
         {
             return false;
         }
@@ -636,7 +711,7 @@ namespace NorvesLib::Core::Animation
     }
     bool AnimGraphInstance::RequestState(Identity machine, Identity state, float seconds)
     {
-        if (!ResourcesCurrent() || !std::isfinite(seconds) || seconds < 0)
+        if (!ResourcesCurrent() || !std::isfinite(seconds) || seconds < 0 || !RefreshRootMetadata())
         {
             return false;
         }

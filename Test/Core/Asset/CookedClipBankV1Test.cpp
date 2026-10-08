@@ -11,6 +11,85 @@ namespace C = NorvesLib::Core::Container;
 namespace Cook = NorvesLib::Tools::AssetCook;
 namespace
 {
+
+    void MetadataCodec(F::Fixture& f)
+    {
+        namespace A = NorvesLib::Core::Animation;
+        const auto json = F::Replace(
+            f.Json, "\"name\":\"Wave\"",
+            R"("name":"Wave","extras":{"norves":{"events":[{"name":"step","t":0.2,"value":0.5,"intValue":-7},{"name":"hit","t":0.3,"end":0.8}],"markers":[{"name":"left","t":0.1},{"name":"right","t":0.6}],"rootMotion":{"joint":0,"mode":"extract","nominalSpeed":2},"loop":{"start":0.1,"end":0.9},"groundOffset":0.03}})");
+        auto rig = f.Import(json);
+        const auto& base = rig.GetData()->Geometry.Clips[0].Metadata;
+        RIG_CHECK(base.Events.size() == 2 && base.Markers.size() == 2 && base.Root.Joint == 0);
+        S::ClipBankV1 bank;
+        S::RigV1Report report;
+        F::Bytes bytes;
+        RIG_CHECK(S::BuildClipBankV1({&rig, 1}, bank, report));
+        auto expected = base;
+        expected.Root.Joint = rig.GetData()->Topology.SourceToCanonical[0];
+        RIG_CHECK(A::SameClipMetadata(expected, bank.GetData()->Clips[0].Metadata));
+        RIG_CHECK(S::WriteClipBankV1(bank, bytes, report));
+        RIG_CHECK(S::ParseClipBankV1(F::View(bytes), bank, report));
+        RIG_CHECK(A::SameClipMetadata(expected, bank.GetData()->Clips[0].Metadata));
+        F::Bytes again;
+        RIG_CHECK(S::WriteClipBankV1(bank, again, report) && again == bytes);
+        const auto section = [&](uint32_t code) {
+            for (uint32_t i = 0; i < F::U32(bytes, 28); ++i)
+                if (F::U32(bytes, 256 + i * 32) == code)
+                    return F::SectionOffset(bytes, i);
+            return size_t(0);
+        };
+        const auto event = section(0x544e5645), marker = section(0x4b52414d), meta = section(0x4154454d);
+        RIG_CHECK(event && marker && meta && F::U32(bytes, event + 28) == uint32_t(-7));
+        const auto good = bank.GetData();
+        const auto reject = [&](size_t at, uint32_t value) {
+            auto bad = bytes;
+            F::Put32(bad, at, value);
+            F::Reseal(bad);
+            RIG_CHECK(!S::ParseClipBankV1(F::View(bad), bank, report) && bank.GetData() == good);
+        };
+        reject(meta, 1);
+        reject(meta + 4, 4097);
+        reject(meta + 16, 64);
+        reject(meta + 20, 999);
+        reject(meta + 40, 1);
+        reject(event + 12, 0x7fc00000);
+        reject(event + 8, 0xffffffff);
+        reject(marker + 12, 0x7f800000);
+        NorvesLib::Core::AssetImport::LoadedImportSettings settings;
+        settings.bPresent = true;
+        settings.Settings.Scale = 2;
+        const auto scaled = f.Import(json, "RigV1Fixture/metadata-scaled.gltf", &settings);
+        RIG_CHECK(std::fabs(scaled.GetData()->Geometry.Clips[0].Metadata.GroundOffset - .06f) < 1e-6f &&
+                  scaled.GetData()->Geometry.Clips[0].Metadata.Root.NominalSpeed == 4);
+        S::RigAuthoringCpu ignored;
+        for (const char* joint : {"999", "1"})
+        {
+            const auto broken = F::Replace(json, "\"joint\":0", F::Text("\"joint\":") + joint);
+            RIG_CHECK(!S::DecodeRigAuthoringNativePath(F::View(broken), "RigV1Fixture/rig.gltf", ignored, report));
+        }
+        S::RigV1Limits limits;
+        limits.MaxNameBytes = 8;
+        const auto longName = F::Replace(json, "\"name\":\"step\"", "\"name\":\"step_name_too_long\"");
+        RIG_CHECK(
+            !S::DecodeRigAuthoringNativePath(F::View(longName), "RigV1Fixture/rig.gltf", ignored, report, limits));
+        for (const char* metadata :
+             {R"({"rootMotion":{"mode":"extract"}})", R"({"markers":[{"name":"left","t":0.2}]})"})
+        {
+            const auto one = F::Replace(f.Json, "\"name\":\"Wave\"",
+                                        F::Text("\"name\":\"Wave\",\"extras\":{\"norves\":") + metadata + "}");
+            auto oneRig = f.Import(one);
+            S::ClipBankV1 oneBank;
+            F::Bytes oneBytes;
+            RIG_CHECK(S::BuildClipBankV1({&oneRig, 1}, oneBank, report) &&
+                      S::WriteClipBankV1(oneBank, oneBytes, report) &&
+                      S::ParseClipBankV1(F::View(oneBytes), oneBank, report));
+            RIG_CHECK(A::SameClipMetadata(oneRig.GetData()->Geometry.Clips[0].Metadata,
+                                          oneBank.GetData()->Clips[0].Metadata));
+        }
+        const auto invalid = F::Replace(json, "\"t\":0.2", "\"t\":999");
+        RIG_CHECK(!S::DecodeRigAuthoringNativePath(F::View(invalid), "RigV1Fixture/rig.gltf", ignored, report));
+    }
     void Topology()
     {
         C::VariableArray<S::SkeletalJoint> joints(2);
@@ -513,6 +592,7 @@ int main()
     Topology();
     F::Fixture fixture;
     Codec(fixture);
+    MetadataCodec(fixture);
     AuthorRest(fixture);
     MeshIndependentClips(fixture);
     QuaternionAndScaleDomain(fixture);

@@ -1,20 +1,12 @@
 ﻿#pragma once
 #include "Animation/AnimGraphResource.h"
+#include "Animation/AnimationEvents.h"
+#include "Animation/ClipPlayback.h"
+#include "Animation/RootMotion.h"
 #include "Animation/SkeletalPoseBuilder.h"
 
 namespace NorvesLib::Core::Animation
 {
-    // 折返し前の秒を渡す。GR11はUpdate-onlyでもこの列からイベントとroot deltaを作れる。
-    struct AnimClipTraversal
-    {
-        uint32_t Node = InvalidAnimNode;
-        uint32_t Clip = InvalidAnimNode;
-        double Previous = 0;
-        double Current = 0;
-        float Weight = 0;
-        bool bLoop = true;
-        Identity SyncGroup;
-    };
     struct AnimStateStatus
     {
         Identity Current;
@@ -28,10 +20,31 @@ namespace NorvesLib::Core::Animation
     class AnimGraphInstance
     {
       public:
+        AnimGraphInstance() = default;
+        ~AnimGraphInstance();
+        AnimGraphInstance(const AnimGraphInstance&) = delete;
+        AnimGraphInstance& operator=(const AnimGraphInstance&) = delete;
+        AnimGraphInstance(AnimGraphInstance&&);
+        AnimGraphInstance& operator=(AnimGraphInstance&&);
         [[nodiscard]] bool Initialize(const AnimGraphResource&, const SkeletonResource&, const SkinnedMeshResource&,
                                       const Math::Matrix4x4&);
         // Mだけが変わったときに再準備し、再生時刻・パラメータを保持する。
         [[nodiscard]] bool SetMeshTransform(const Math::Matrix4x4&);
+        AnimationEventQueue& Events()
+        {
+            return m_Events;
+        }
+        const AnimationEventQueue& Events() const
+        {
+            return m_Events;
+        }
+        RootMotionDelta ConsumeRootMotion()
+        {
+            auto value = m_PendingRootMotion;
+            m_PendingRootMotion = {};
+            return value;
+        }
+        [[nodiscard]] float GetNominalSpeed(uint32_t clip) const;
         void Reset();
         AnimParamSet& Parameters()
         {
@@ -64,6 +77,7 @@ namespace NorvesLib::Core::Animation
         [[nodiscard]] bool BuildPose(const LocalPose&, PoseScratch&, SkeletalPoseSnapshot&) const;
 
       private:
+        void Swap(AnimGraphInstance&);
         struct NodeRuntime
         {
             double Time = 0;
@@ -83,8 +97,39 @@ namespace NorvesLib::Core::Animation
                                            AnimInterrupt);
         bool Matches(const AnimTransition&, uint32_t node, uint32_t state) const;
         void ResetSubgraph(uint32_t);
+        struct RootYawKey
+        {
+            float Time = 0;
+            double Raw = 0, Unwrapped = 0;
+        };
+        struct RootClipRuntime
+        {
+            uint32_t Joint = UINT32_MAX;
+            uint64_t MetadataRevision = UINT64_MAX;
+            JointTransform Reference;
+            RootMotionDelta ReferenceModel;
+            bool bCurve = false;
+            float NominalSpeed = 0;
+            Container::VariableArray<RootYawKey> YawKeys;
+        };
+        struct NodeMotion
+        {
+            RootMotionDelta Extracted, Available;
+        };
+        bool RefreshRootMetadata(bool force = false);
+        bool RawRootAt(uint32_t clip, double time, RootMotionDelta&);
+        bool RootAt(uint32_t clip, double time, RootMotionDelta&);
+        bool RootAtUnwrapped(uint32_t clip, double time, bool loop, RootMotionDelta&);
+        bool AdvanceRootMotion();
+        bool RemoveRootMotion(uint32_t clip, LocalPose&) const;
+        Container::VariableArray<RootClipRuntime> m_RootClips;
+        Container::VariableArray<NodeMotion> m_NodeMotion;
+        PoseScratch m_MotionScratch;
+        Container::VariableArray<Math::Matrix4x4> m_MotionModels;
+        RootMotionDelta m_PendingRootMotion;
         Container::TSharedPtr<const AnimGraphData> m_Graph;
         AnimParamSet m_Parameters;
+        AnimationEventQueue m_Events;
         Container::VariableArray<SkeletalPoseContext> m_Contexts;
         Container::VariableArray<NodeRuntime> m_Runtime;
         Container::VariableArray<LocalPose> m_Poses, m_Reference;

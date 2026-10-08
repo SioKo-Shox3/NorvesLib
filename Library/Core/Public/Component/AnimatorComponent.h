@@ -41,6 +41,7 @@ namespace NorvesLib::Core::Component
         void OnTickGroup(ETickGroup, float) override;
         // 同じEntityのSkinnedMeshComponentと有効資産が先に必要。失敗時は前のgraphを維持する。
         [[nodiscard]] bool SetGraph(const Container::TSharedPtr<AnimGraphResource>&);
+        MulticastDelegate<const Animation::AnimEventInfo&> OnEvent;
         const Container::TSharedPtr<AnimGraphResource>& GetGraph() const
         {
             return m_Graph;
@@ -60,6 +61,10 @@ namespace NorvesLib::Core::Component
             m_bFrozen = frozen;
         }
         [[nodiscard]] bool Step(float seconds);
+        Animation::RootMotionDelta ConsumeRootMotion()
+        {
+            return m_Instance.ConsumeRootMotion();
+        }
         void SetEvaluationEnabled(bool enabled)
         {
             m_bEvaluate = enabled;
@@ -71,6 +76,10 @@ namespace NorvesLib::Core::Component
       private:
         SkinnedMeshComponent* Mesh() const;
         void Detach();
+        void ForwardEvent(const Animation::AnimEventInfo& info)
+        {
+            OnEvent.Broadcast(info);
+        }
         Container::TSharedPtr<AnimGraphResource> m_Graph;
         Container::TSharedPtr<SkeletalAssetResource> m_BoundAsset;
         Container::TSharedPtr<SkeletonResource> m_BoundSkeleton;

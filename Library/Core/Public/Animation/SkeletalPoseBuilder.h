@@ -38,11 +38,15 @@ namespace NorvesLib::Core::Animation
         [[nodiscard]] static bool Prepare(const SkeletonResource&, const AnimationClipResource&,
                                           const SkinnedMeshResource&, const Math::Matrix4x4& meshTransform,
                                           SkeletalPoseContext&, const PoseBoundsSettings& = {});
+        [[nodiscard]] static bool IsPreparedForSkeleton(const SkeletalPoseContext&, const SkeletonResource&);
         [[nodiscard]] static bool IsPreparedFor(const SkeletalPoseContext&, const SkeletonResource&,
                                                 const AnimationClipResource&, const SkinnedMeshResource&,
                                                 const Math::Matrix4x4& meshTransform);
         [[nodiscard]] static bool SampleClipToLocalPose(const SkeletalPoseContext&, const AnimationClipResource&,
                                                         float timeSeconds, LocalPose& out);
+        [[nodiscard]] static bool BuildRootModelMatrix(const SkeletalPoseContext&, const JointTransform&,
+                                                       Math::Matrix4x4&);
+        [[nodiscard]] static bool RootModelToLocal(const SkeletalPoseContext&, const Math::Matrix4x4&, JointTransform&);
         // 後段modifier用の遅延FK。palette・頂点境界を計算しない。
         [[nodiscard]] static bool BuildJointModelMatrices(const SkeletalPoseContext&,const LocalPose&,PoseScratch&,
             Container::VariableArray<Math::Matrix4x4>&);

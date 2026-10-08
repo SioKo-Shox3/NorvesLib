@@ -343,6 +343,16 @@ namespace NorvesLib::Core::Animation
                 {
                     return Fail(r, AnimGraphError::UnknownNode, "state_node");
                 }
+                auto rootPolicy = state.FindMember("rootMotion");
+                if (rootPolicy.IsValid())
+                {
+                    if (Word(rootPolicy, "animation"))
+                        s.RootPolicy = AnimRootPolicy::Animation;
+                    else if (Word(rootPolicy, "velocity"))
+                        s.RootPolicy = AnimRootPolicy::Velocity;
+                    else if (!Word(rootPolicy, "inherit"))
+                        return Fail(r, AnimGraphError::InvalidSchema, "state_root_motion");
+                }
                 n.States.push_back(s);
                 n.Children.push_back(s.Node);
             }
@@ -484,6 +494,12 @@ namespace NorvesLib::Core::Animation
                 {
                     return Fail(r, AnimGraphError::InvalidClip, "clip_channels");
                 }
+                ClipMetadataReport metadataReport;
+                if (!ValidateClipMetadata(clip->GetMetadata(), clip->GetClip().DurationSeconds, metadataReport))
+                    return Fail(r, AnimGraphError::InvalidClip, "clip_metadata");
+                const auto rootJoint = clip->GetMetadata().Root.Joint;
+                if (rootJoint != UINT32_MAX && (rootJoint >= d.Parents.size() || d.Parents[rootJoint] != -1))
+                    return Fail(r, AnimGraphError::UnknownJoint, "root_motion_joint");
                 n.Clip = uint32_t(d.Clips.size());
                 d.Clips.push_back(std::move(clip));
                 if (v.HasMember("loop"))

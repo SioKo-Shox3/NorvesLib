@@ -65,10 +65,17 @@ namespace NorvesLib::Core
             AnimInterrupt Interrupt = AnimInterrupt::None;
             Container::VariableArray<AnimCondition> Conditions;
         };
+        enum class AnimRootPolicy : uint8_t
+        {
+            Inherit,
+            Animation,
+            Velocity
+        };
         struct AnimState
         {
             Identity Name;
             uint32_t Node = InvalidAnimNode;
+            AnimRootPolicy RootPolicy = AnimRootPolicy::Inherit;
         };
         struct AnimLayer
         {
