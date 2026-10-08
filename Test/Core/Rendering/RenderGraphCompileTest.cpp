@@ -3186,9 +3186,10 @@ namespace
             vertex.BoneWeights[0] = 1.0f;
         }
         Container::VariableArray<uint32_t> skinIndices;
+        // インデックスは頂点の範囲に収める（範囲外のインデックスを持つ資産は描画のデータとして拒まれ、上限で外す数に入らない）
         skinIndices.push_back(0u);
-        skinIndices.push_back(1u);
-        skinIndices.push_back(2u);
+        skinIndices.push_back(1u % vertexCount);
+        skinIndices.push_back(2u % vertexCount);
         auto assetLease = Container::MakeShared<SkinnedMeshAssetLease>(
             SkinnedMeshHandle{handleIndex, 1}, std::move(skinVertices), std::move(skinIndices));
         scene.SkinnedLeases.push_back(Container::MakeShared<SkinnedMeshFrameLease>(assetLease));
