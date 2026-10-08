@@ -231,3 +231,65 @@ run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.ex
 - 検証: ビルド（`verify-VTG9-VSM-POINT-CACHE-6.txt`、EXIT=0）。ctest（`-9.txt`）は VirtualShadowMapVulkanTest・RenderGraphCompileTest が通った（`-7.txt` も同じ結果）。`VirtualShadowMapVulkanTest` に T8 を足した: 3 灯（識別子 101・102・103。3 灯目は Range 5 m）を 2 フレーム続けて揃えたあと、`[101,102,103] → [102,101]` にする。無効なスライスは末尾の灯の 36、残る 2 灯のページは入れ替わった番号へ移って描き直し 0、末尾の灯のページ（7）は空きへ戻り、`StatPointReleased` と `StatReleased` のどちらも 7 と一致、毎フレーム描き直した結果と全 texel で一致（`-8-verbose.txt`）。変異: 確認範囲を今フレームの灯の数までに戻すと T8 が落ちた（空きへ戻した数 14、期待 7。`-mutation-range.txt`）→ 戻して通過。
 - Notes: 費用の変更はない。T7（先頭の灯を除く）も通過のまま（捨てる 15 ページを数える）。
 - Next: TASKS.md の次の `todo`。
+
+## 段9 VTG9-VSM-POINT-DRAW-PERF（2026-10-08、停止）
+
+- 結果: 2 対のどちらも 2 ms 未満に届かず（+2.14・+2.60 ms）、止め条件に当たったので止める。ここまでの縮みは保存コミット `cb3c6ae8` に入っている（`VirtualShadowMapPass` 1.82 → 1.26 ms）。判断は `blocked/VTG9-VSM-POINT-DRAW-PERF.md`。
+- 実装（選ばれるクラスタ・LOD・描かれるページ・texel の深度は変えていない）:
+  1. `vsm_expand.comp`: 覆うページが 2〜1024 のスライスで、塊の三角形を描画と同じ変換でページの座標へ写し、どの三角形も触れないページにはインスタンスを作らない（触れるページの印は共有メモリ。近い平面をまたぐ三角形・投影が決まらない頂点・1 三角形が 64 ページを超えて覆う場合は、そのスライスは従来どおり範囲の全ページ）。インスタンス 約 11.4 万 → 4.7 万。
+  2. `vsm_allocate.comp` 段階 1（無効化）: 1 組（矩形か球、スライス）を 16 本のスレッドが行ごとに分け合う（負荷モードは電球の範囲の大きな球が毎フレーム無効にし、1 本のスレッドが千ページ近くを順に処理していた）。`VsmAllocate` 0.232 → 0.087 ms。
+- 切り分け（`VsmDraw`。負荷 300 個・夜の既定の視点・RelWithDebInfo・`-GpuTimingFrames 300`。一時的な変異を入れて測り、戻した）:
+
+| run | 変異 | `VsmDraw` ms | 読み取り |
+|---|---|---|---|
+| `idle-base` | なし（実装前） | 1.158 | 基準 |
+| `idle-m1` | 頂点シェーダーが位置を読まず即 return | 1.047 | 頂点の読み取り・計算は 0.11 ms 程度 |
+| `idle-m2` | 断片が `atomicMin` を出さない | 1.158 | 断片の書き込みは時間に効かない |
+| `idle-m3` | 頂点の処理は全部して最後にビューポートの外へ | 1.158 | 変換・出力は効かない |
+| `mut-m6` | 描画ごとの三角形を 1 個にする | 0.227 | 時間は三角形の数に比例（1 インスタンスの固定費は小さい） |
+| `mut-m7` | インデックスを `index % 3`（頂点の再利用を最大に） | 0.823 | 頂点の取得の局所性は 0.33 ms 分 |
+
+  触れる割合（`mut-count`・`mut-count2`。展開で実際に測った）: 描くインスタンス 約 11.4 万・三角形 約 1163 万のうち、ページに触れる三角形は 390 万（33.5%）、1 つでも触れる三角形があるインスタンスは 4.59 万（40%）。→ 支配するのは頂点・断片の処理でなく、触れないページへ送る三角形の数。実装 1 でインスタンスを 4.7 万に絞って `VsmDraw` 0.51 ms になった。
+- 実装後の `VirtualShadowMapPass` の内訳（`vsm-stress-1`。ms）:
+
+| 段 | 実装前（`idle-base`） | 実装後 |
+|---|---|---|
+| VirtualShadowMapPass 合計 | 1.842 | 1.258 |
+| VsmDraw | 1.158 | 0.509 |
+| VsmCullMega | 0.173 | 0.173 |
+| VsmMark | 0.142 | 0.142 |
+| VsmExpand | 0.101 | 0.138 |
+| VsmCullSelect | 0.105 | 0.106 |
+| VsmAllocate | 0.232 | 0.087 |
+| 残り（CullDirty・CullChunks・Clear・CullPairs） | 0.07 | 0.07 |
+
+- 対の差（`gpu_frame_ms_median`、VSM − キューブ。`failures` は全 run で空）:
+
+| 対 | キューブ ms | VSM ms | 差 ms |
+|---|---|---|---|
+| 負荷 1（`cube-stress-1`・`vsm-stress-1`） | 5.183 | 7.325 | +2.142 |
+| 負荷 2（`cube-stress-2`・`vsm-stress-2`） | 5.193 | 7.792 | +2.599 |
+| 追加 1（`pairA1`、前回反復） | 4.949 | 6.991 | +2.042 |
+| 追加 2（`pairA2`、前回反復） | 4.714 | 6.082 | +1.368 |
+| 既定の視点（`cube`・`vsm`） | 2.286 | 3.113 | +0.827 |
+| 近接 | 2.226 | 3.895 | +1.669 |
+| 低角度 | 2.204 | 3.076 | +0.872 |
+
+  負荷の 4 対の平均は +2.04 ms。キューブ側の run ごとのぶれ（`MegaGeometry` 2.26〜2.58 ms、`LightingPass` 0.66〜0.88 ms）が 0.5 ms 近くあり、2 ms の境では合否が run で入れ替わる。差の内訳は `VirtualShadowMapPass` 1.26 ms（キューブ側の同名の段 0.035 ms を引いて 1.22）+ `LightingPass` の +0.30 ms（0.682 → 0.982、VSM の 16 点の読み取り）+ ぶれ。
+- overflow: VSM の 3 run（`vsm-stress-1`・`-2`・`vsm`）の `VSM_PAGES`（304・304・302 行）・`VSM_RASTER`（338・343・330 行）・`VSM_MEGA_CULL`（各 6 行）はすべて 0。
+- 検証: RelWithDebInfo ビルド（`verify-VTG9-VSM-POINT-DRAW-PERF-1.txt`、EXIT=0）。撮影は `-2`〜`-5`（負荷の 2 対）・`-6`・`-7`（通常の 3 視点）で result=pass。Debug ビルド（`-10.txt`、EXIT=0）、ctest（`-11.txt`）は VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・RenderGraphCompileTest が 4/4 通過。`VirtualShadowMapVulkanTest` の J・J4・J5・J6・K・R は書き換えず通った。テストの変更: 展開の参照を「三角形が触れるページだけ」に改めた。変異（透視の触れる判定を壊す `mutation-perspective`、無効化の分割の 2 つの走査を壊す `mutation-split`・`mutation-split2`）で VirtualShadowMapVulkanTest が落ちることを確かめ、戻して通過。
+- Notes: 試して外した案: 断片で手前でなければ `atomicMin` を出さない（`idle-m2` で断片の書き込みが時間に効かないと分かったので作らなかった）。固定費の dispatch の融合は 0.1〜0.2 ms 見込みで、2 ms の境を安定して越えないので未着手。`VTG9-VSM-POINT-CULL-PERF`・`VTG9-VSM-POINT-GPU-TIME` は blocked のまま。
+- Next: 人の判断待ち（`blocked/VTG9-VSM-POINT-DRAW-PERF.md`）。それ以外の未完は TASKS.md の次の `todo`。
+
+## 段9 親の確認: 1 回目の VTG9-VSM-POINT-DRAW-PERF の測定の汚れ（2026-10-08）
+
+- GPU の他の負荷: Game を動かしていない状態で `nvidia-smi` の利用率が 31〜40%（P0、2.0〜2.5 GHz）。常駐のアプリ（プロセスごとの内訳は権限で見えない）。システムのイベントログでは 17:24 にセッションが 6 → 7、17:54 に 7 → 9 へ移った。
+- フレームの区間の外の時間（`gpu_frame_ms_median` − 一番上の区間の中央値の合計）:
+
+| 時間帯 | キューブ | VSM | 負荷のキューブの `MegaGeometry` |
+|---|---|---|---|
+| 17:27〜17:29（VTG9-VSM-POINT-GPU-TIME） | 0.02〜0.03 ms | 0.02〜0.08 ms | 1.93 ms |
+| 17:47〜17:51（VTG9-VSM-POINT-CULL-PERF の後） | 0.03 ms | 0.38〜0.39 ms | 1.93 ms |
+| 18:00 以降（CULL-PERF の対・DRAW-PERF の全 run） | 0.07〜2.32 ms | 0.30〜1.88 ms | 2.26〜7.00 ms |
+
+- 判断: 18 時以降の対の差（+1.37〜+2.60 ms）は他の負荷のぶれを含むので、2 ms の判定に使わない。VTG9-VSM-POINT-DRAW-PERF を todo に戻し、撮影の直前の GPU の利用率を記録して、静かなときの対で判定する。17:47〜17:51 の VSM の区間の外の約 0.35 ms は静かな run でも出ているので、DRAW-PERF で原因を切り分ける。
