@@ -13,6 +13,7 @@
 #include "Object/Entity.h"
 #include "Object/ResourceRegistry.h"
 #include "Object/World.h"
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -216,6 +217,143 @@ namespace
         GRAPH_CHECK(instance.Update(.5f) && instance.Evaluate());
         GRAPH_CHECK(instance.GetState(Identity("machine"), status));
         GRAPH_CHECK(!status.bTransitioning && status.Current == Identity("Idle"));
+    }
+    // 条件の境界と補間曲線は、グラフ内部の計算式を呼ばず独立した数値で固定する。
+    void TestGraphAcceptanceCases()
+    {
+        GraphFixture f;
+        for (bool tie : {false, true})
+        {
+            char json[1024];
+            std::snprintf(
+                json, sizeof(json),
+                R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"m","type":"stateMachine","states":[{"name":"Idle","node":"a"},{"name":"Low","node":"a"},{"name":"High","node":"b"}],"transitions":[{"from":"Idle","to":"Low","priority":%d,"duration":0},{"from":"Idle","to":"High","priority":9,"duration":0}]}],"root":"m"})",
+                tie ? 9 : 1);
+            auto graph = f.Graph(json);
+            A::AnimGraphInstance instance;
+            GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+            GRAPH_CHECK(instance.Update(0) && instance.Evaluate());
+            A::AnimStateStatus status;
+            GRAPH_CHECK(instance.GetState(Identity("m"), status));
+            GRAPH_CHECK(status.Current == Identity(tie ? "Low" : "High"));
+            NearGraph(instance.GetLocalPose()[0].Translation.x, tie ? 0.f : 10.f);
+        }
+        auto exitGraph = f.Graph(
+            R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"m","type":"stateMachine","states":[{"name":"Idle","node":"a"},{"name":"Run","node":"b"}],"transitions":[{"from":"Idle","to":"Run","duration":0,"exitTime":0.5}]}],"root":"m"})");
+        A::AnimGraphInstance exit;
+        GRAPH_CHECK(exit.Initialize(*exitGraph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(exit.Update(.5f) && exit.Evaluate());
+        A::AnimStateStatus status;
+        GRAPH_CHECK(exit.GetState(Identity("m"), status) && status.Current == Identity("Idle"));
+        NearGraph(float(status.NormalizedTime), .5f);
+        NearGraph(exit.GetLocalPose()[0].Translation.x, 1);
+        GRAPH_CHECK(exit.Update(0) && exit.Evaluate());
+        GRAPH_CHECK(exit.GetState(Identity("m"), status) && status.Current == Identity("Run"));
+        NearGraph(exit.GetLocalPose()[0].Translation.x, 10);
+
+        auto smooth = f.Graph(
+            R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"m","type":"stateMachine","states":[{"name":"Idle","node":"a"},{"name":"Run","node":"b"}],"transitions":[{"from":"Idle","to":"Run","duration":1,"curve":"smoothstep"}]}],"root":"m"})");
+        A::AnimGraphInstance curve;
+        GRAPH_CHECK(curve.Initialize(*smooth, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(curve.Update(.25f) && curve.Evaluate());
+        GRAPH_CHECK(curve.GetState(Identity("m"), status));
+        NearGraph(status.Transition, .15625f);
+        NearGraph(curve.GetLocalPose()[0].Translation.x, 2.0625f);
+        GRAPH_CHECK(curve.Update(.5f) && curve.Evaluate());
+        GRAPH_CHECK(curve.GetState(Identity("m"), status));
+        NearGraph(status.Transition, .84375f);
+        NearGraph(curve.GetLocalPose()[0].Translation.x, 9.9375f);
+
+        auto linear = f.Graph(
+            R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"m","type":"stateMachine","states":[{"name":"Idle","node":"a"},{"name":"Run","node":"b"}],"transitions":[{"from":"Idle","to":"Run","duration":1}]}],"root":"m"})");
+        A::AnimGraphInstance whole, split, replay;
+        for (auto* instance : {&whole, &split, &replay})
+            GRAPH_CHECK(instance->Initialize(*linear, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(whole.Update(.5f) && whole.Evaluate());
+        for (auto* instance : {&split, &replay})
+            for (unsigned step = 0; step < 2; ++step)
+                GRAPH_CHECK(instance->Update(.25f) && instance->Evaluate());
+        A::PoseScratch scratch[3];
+        A::SkeletalPoseSnapshot poses[3];
+        A::AnimGraphInstance* instances[] = {&whole, &split, &replay};
+        uint64_t hashes[3] = {};
+        for (unsigned i = 0; i < 3; ++i)
+        {
+            GRAPH_CHECK(instances[i]->GetState(Identity("m"), status) && status.bTransitioning);
+            GRAPH_CHECK(status.Current == Identity("Idle") && status.Next == Identity("Run"));
+            NearGraph(status.Transition, .5f);
+            GRAPH_CHECK(instances[i]->BuildPose(instances[i]->GetLocalPose(), scratch[i], poses[i]));
+            NearGraph(poses[i].BonePalette[0].m30, 6);
+            hashes[i] = 14695981039346656037ull;
+            for (const auto& matrix : poses[i].BonePalette)
+                for (float value : matrix.values)
+                {
+                    const uint32_t bits = std::bit_cast<uint32_t>(value);
+                    for (unsigned byte = 0; byte < 4; ++byte)
+                    {
+                        hashes[i] ^= (bits >> (8 * byte)) & 255;
+                        hashes[i] *= 1099511628211ull;
+                    }
+                }
+        }
+        GRAPH_CHECK(hashes[1] == hashes[2]);
+        GRAPH_CHECK(poses[0].BonePalette.size() == poses[1].BonePalette.size());
+        for (size_t joint = 0; joint < poses[0].BonePalette.size(); ++joint)
+            for (unsigned element = 0; element < 16; ++element)
+                NearGraph(poses[0].BonePalette[joint].values[element], poses[1].BonePalette[joint].values[element]);
+
+        const char* modes[] = {"none", "current", "next", "either"};
+        const char* expectedNext[] = {"B", "C", "D", "D"};
+        for (unsigned mode = 0; mode < 4; ++mode)
+        {
+            char json[1536];
+            std::snprintf(
+                json, sizeof(json),
+                R"({"version":1,"params":[{"name":"Go","type":"bool","value":true},{"name":"Cut","type":"bool","value":false}],"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"m","type":"stateMachine","states":[{"name":"A","node":"a"},{"name":"B","node":"b"},{"name":"C","node":"a"},{"name":"D","node":"b"}],"transitions":[{"from":"A","to":"B","priority":30,"duration":1,"interrupt":"%s","conditions":[{"param":"Go","op":"eq","value":true}]},{"from":"A","to":"C","priority":10,"duration":1,"conditions":[{"param":"Cut","op":"eq","value":true}]},{"from":"B","to":"D","priority":20,"duration":1,"conditions":[{"param":"Cut","op":"eq","value":true}]}]}],"root":"m"})",
+                modes[mode]);
+            auto graph = f.Graph(json);
+            A::AnimGraphInstance instance;
+            GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+            GRAPH_CHECK(instance.Update(.25f) && instance.Evaluate());
+            NearGraph(instance.GetLocalPose()[0].Translation.x, 3);
+            GRAPH_CHECK(instance.Parameters().SetBool(0, false));
+            GRAPH_CHECK(instance.Parameters().SetBool(1, true));
+            GRAPH_CHECK(instance.Update(0) && instance.Evaluate());
+            GRAPH_CHECK(instance.GetState(Identity("m"), status) && status.bTransitioning);
+            GRAPH_CHECK(status.Next == Identity(expectedNext[mode]));
+            NearGraph(instance.GetLocalPose()[0].Translation.x, 3);
+        }
+        float fireTimes[2] = {};
+        const float steps[] = {1.f / 60, 1.f / 30};
+        for (unsigned rate = 0; rate < 2; ++rate)
+        {
+            A::AnimGraphInstance timed;
+            GRAPH_CHECK(timed.Initialize(*exitGraph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+            for (unsigned frame = 1; frame <= 60; ++frame)
+            {
+                GRAPH_CHECK(timed.Update(steps[rate]) && timed.GetState(Identity("m"), status));
+                if (status.Current == Identity("Run"))
+                {
+                    fireTimes[rate] = steps[rate] * frame;
+                    break;
+                }
+            }
+            GRAPH_CHECK(fireTimes[rate] >= .5f && fireTimes[rate] <= .5f + steps[rate] + 1e-5f);
+        }
+        GRAPH_CHECK(std::fabs(fireTimes[0] - fireTimes[1]) <= 1.f / 30 + 1e-5f);
+
+        auto grid = f.Graph(
+            R"({"version":1,"params":[{"name":"X","type":"float"},{"name":"Y","type":"float"}],"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"mix","type":"blend2d","x":"X","y":"Y","axisX":[0,1],"axisY":[0,1],"children":["a","b","b","a"]}],"root":"mix"})");
+        A::AnimGraphInstance gridInstance;
+        GRAPH_CHECK(gridInstance.Initialize(*grid, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        const float samples[][3] = {{-2, 2, 10}, {.25f, -3, 2.5f}, {.25f, 3, 7.5f}};
+        for (const auto& sample : samples)
+        {
+            GRAPH_CHECK(gridInstance.Parameters().SetFloat(0, sample[0]));
+            GRAPH_CHECK(gridInstance.Parameters().SetFloat(1, sample[1]));
+            GRAPH_CHECK(gridInstance.Update(0) && gridInstance.Evaluate());
+            NearGraph(gridInstance.GetLocalPose()[0].Translation.x, sample[2]);
+        }
     }
     struct OffsetModifier final : A::IPoseModifier
     {
@@ -877,8 +1015,8 @@ namespace
         GRAPH_CHECK(slots->Release(Identity("Pair"), item->GetObjectId()) &&
                     slots->Release(Identity("Pair"), second->GetObjectId()));
         unsigned notified = 0;
-        Delegate<const Component::HoldSlotEvent&> once;
-        once = Delegate<const Component::HoldSlotEvent&>([&](const auto&) { slots->OnAcquired.Remove(once); });
+        Delegate<void, const Component::HoldSlotEvent&> once;
+        once = Delegate<void, const Component::HoldSlotEvent&>([&](const auto&) { slots->OnAcquired.Remove(once); });
         slots->OnAcquired.Add(once);
         slots->OnAcquired.Add([&](const auto&) { ++notified; });
         GRAPH_CHECK(slots->TryAcquire(Identity("Pair"), third->GetObjectId(), {}) ==
@@ -1106,6 +1244,7 @@ void TestAnimGraphRuntime()
     TestMotionAnalysisRuntime();
     TestDynamicAdditiveReference();
     TestGraphStateMachine();
+    TestGraphAcceptanceCases();
     TestGraphPlaybackRegressions();
     TestAnimatorConnection();
     TestAnimatorScriptParameter();

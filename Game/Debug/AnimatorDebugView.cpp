@@ -1,7 +1,10 @@
 ﻿#if defined(NORVES_ENABLE_IMGUI)
 #include "AnimatorDebugView.h"
-#include "Core/Public/Object/World.h"
+#include "Core/Public/Animation/SkeletalPoseBounds.h"
+#include "Core/Public/Component/SkinnedMeshComponent.h"
 #include "Core/Public/Object/Entity.h"
+#include "Core/Public/Object/World.h"
+#include "Core/Public/Resource/SkinnedMeshResource.h"
 #include "imgui.h"
 namespace Game::Debug
 {
@@ -23,6 +26,7 @@ namespace Game::Debug
         m_World = nullptr;
         m_EntityId = 0;
         m_Snapshot = {};
+        m_bCompareBounds = false;
     }
     void AnimatorDebugView::OnImGui()
     {
@@ -79,6 +83,33 @@ namespace Game::Debug
                     break;
                 }
                 ImGui::PopID();
+            }
+            ImGui::Checkbox("厳密な境界と比較（全頂点を評価）", &m_bCompareBounds);
+            if (m_bCompareBounds)
+            {
+                auto* mesh = entity->GetComponent<Component::SkinnedMeshComponent>();
+                Rendering::SkinnedMeshProxy proxy;
+                const auto asset = mesh ? mesh->GetSkeletalAsset() : nullptr;
+                NorvesLib::Math::AABB exact;
+                if (asset && asset->GetMesh() && mesh->BuildSkinnedMeshProxy(proxy) && proxy.bHasAnimatedBounds &&
+                    Animation::ComputeExactBounds(asset->GetMesh()->GetVertices(), proxy.BonePalette, true, exact))
+                {
+                    const auto& approximate = proxy.AnimatedBounds;
+                    ImGui::TextUnformatted("メッシュ空間の境界: 最小 / 最大");
+                    ImGui::Text("関節境界: (%.4f, %.4f, %.4f) / (%.4f, %.4f, %.4f)", approximate.Min.x,
+                                approximate.Min.y, approximate.Min.z, approximate.Max.x, approximate.Max.y,
+                                approximate.Max.z);
+                    ImGui::Text("全頂点: (%.4f, %.4f, %.4f) / (%.4f, %.4f, %.4f)", exact.Min.x, exact.Min.y,
+                                exact.Min.z, exact.Max.x, exact.Max.y, exact.Max.z);
+                    constexpr float tolerance = 1e-4f;
+                    const bool contains =
+                        approximate.Min.x <= exact.Min.x + tolerance && approximate.Min.y <= exact.Min.y + tolerance &&
+                        approximate.Min.z <= exact.Min.z + tolerance && approximate.Max.x + tolerance >= exact.Max.x &&
+                        approximate.Max.y + tolerance >= exact.Max.y && approximate.Max.z + tolerance >= exact.Max.z;
+                    ImGui::TextUnformatted(contains ? "包含: OK（許容差 0.0001）" : "包含: 範囲外あり");
+                }
+                else
+                    ImGui::TextUnformatted("比較できる公開姿勢がありません");
             }
             for (const auto& group : m_Snapshot.SyncGroups)
             {

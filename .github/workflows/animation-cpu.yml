@@ -76,6 +76,14 @@ jobs:
         run: |
           ctest --test-dir build/animation -C Release -V --output-on-failure -R '^(CookedClipBankV1Test|SkeletalClipBankBindingTest|CookedSkeletonV1Test)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/cook-tests.log"
           if ($LASTEXITCODE -ne 0) { throw 'Cook animation tests failed' }
+      - name: 骨格の読み込みと寿命の回帰をビルドする
+        run: |
+          cmake --build build/animation --config Release --target GLTFSkeletalAnalyzerTest ResourceRegistryTest SkeletalFramePacketSnapshotTest -- /m:2 2>&1 | Tee-Object "$env:NORVES_CI_LOG/regression-build.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Skeletal regression build failed' }
+      - name: 骨格の既存経路を回帰検証する
+        run: |
+          ctest --test-dir build/animation -C Release -V --output-on-failure -R '^(GLTFSkeletalAnalyzerTest|CookedSkeletalAssetTest|SkeletalResourceLifetimeTest|SkeletalFramePacketSnapshotTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/regression-tests.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Skeletal regression tests failed' }
       - name: 合成デバッグ画面のGameをビルドする
         run: |
           cmake --build build/animation --config Release --target Game -- /m:2 2>&1 | Tee-Object "$env:NORVES_CI_LOG/game-build.log"

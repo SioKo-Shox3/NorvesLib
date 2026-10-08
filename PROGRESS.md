@@ -42,3 +42,13 @@ GR12修正後run37699941320（f5ec362a）は全項目成功。Core・両テス�
 PoseOps、typed parameter、検証付きJSONグラフ、7種ノード、状態遷移と割込時のローカル姿勢保存、Update/Evaluate分離、Animator接続、外部駆動、modifier用の遅延FK、AngelScriptの添字APIとdebug viewを追加中。GR11のmetadata/event/root motion、GR10の同期・歩幅合わせ、明示デモ接続は未実装。GR10の本体はWindowsでまだコンパイル・実行していない。数学部分PoseOpsの単体はg++で通過したが、テスト用allocator adapterでありproductionメモリ系の検証を代替しない。
 
 GR10本体の差分では共有nodeの再生時刻、逆向nonloopの初期時刻、非active機械の割込snapshot、重複名の骨格照合、失効資産の再準備拒否、加算の動的基準姿勢を修正した。loader/graph/外部駆動/スクリプトのCPUケースを既存Sampler bundleへ追加した。本体の実行確認をまとめて行い、GR11のmetadata/event/root motion・GR10の同期は引き続き別の未完部分として扱う。
+
+## G3 GR10 / GR11のCPU受入れ（2026-10-08）
+
+4ae627f4のWindows run37714129004は全項目成功。SkeletalAnimationSamplingTest、SkinnedRenderPathContractTest、CookedClipBankV1Test、SkeletalClipBankBindingTestの4件が通過し、AnimGraphRuntimeTest / RootMotionMathTestの完走を実ログで確認した。metadataのloose/cooked、イベント、root motion、marker同期、歩幅倍率を含む。GR10の合成52関節のUpdate/Evaluate計測はDocs/Performance/AnimationGraphRuntime.mdに記録した。実素材・足滑りの目視品質はこの計測から評価しない。
+
+## G3 GR13と調整画面（2026-10-08、検証中）
+
+6db0ac20にソケット定義・runtime sidecar・任意SOCK節、保持slot、profile補間、同フレーム依存順、解除時の速度、script/event/parameterの共通切替を実装した。component除去後の購読・保持予約の清算をCPU回帰に含める。明示--animation-debug時だけ合成sceneを追加し、ImGuiの状態・位相・profile操作と当frameのsocket軸表示へ接続した。
+
+run37717801857はSamplerテストのDelegate型指定でコンパイル停止。戻り値voidの指定漏れを修正し、実Delegateヘッダの同形式lambdaで構築・呼出しを確認した。再検証には優先度・exitTime・補間曲線・割込規則・dt分割・2D clamp・再生再現性を追加し、既存の読み込み・cooked・資産寿命・FramePacketのCPU回帰4件もまとめた。ImGuiの全頂点による厳密境界との比較は明示ON時だけ実行する。Windowsでの再検証前であり、全9テストとGameビルドはまだ合格と扱わない。GameビルドはGPU起動ではない。実リグ・実クリップ、GUI実操作・録画、既定起動画面の比較は未検証。G3全体は受入れ途中で、mainへ未反映。

@@ -24,6 +24,7 @@ namespace Game::Debug
       private:
         NorvesLib::Core::World* m_World = nullptr;
         uint64_t m_EntityId = 0;
+        bool m_bCompareBounds = false;
         NorvesLib::Core::Component::AnimatorDebugSnapshot m_Snapshot;
     };
 } // namespace Game::Debug

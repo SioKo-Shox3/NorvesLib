@@ -18,7 +18,7 @@ AnimatorはAnimation群でUpdate、PoseFinalize群でEvaluate・modifier・Submi
 - masks: name、root（関節名）、fadeDepth。0は枝の全関節が1、正値は根から深くなるほど1へ立ち上げる。親が後ろに並ぶ骨格も扱う
 - clip: clip（IClipResolverで解決する名前）、loop（既定true）、rate（既定1）。負のnonloopは末尾から開始
 - blend1d: x（float値またはfloatパラメータ名）、samples（position/node）。positionは厳密増加、範囲外はクランプ
-- blend2d: x/y、axisX/axisY（各2点以上の等間隔格子）、children（行優先）。双線形で混ぜる
+- blend2d: x/y、axisX/axisY（各2点以上の等間隔格子）、children（行優先）。双線形で混ぜる。軸は明示値で指定し、公称速度からの自動配置は行わない
 - blend2: childrenが2件、weight（float値またはfloatパラメータ名、既定0.5）
 - layered: base、layers（node、weight、任意mask、mode=override/additive）。加算の基準は各clipの先頭frameを現在の選択・ブレンド重みで合成した姿勢。平行移動・scaleは差分、回転はtarget×inverse(reference)の差を加える
 - select: param（int/bool）、children。intは範囲にクランプ
@@ -107,6 +107,6 @@ Skeleton v1にoptional SOCKを追加する。1件64Bで、STRS名offset u64/size
 
 ### 合成デバッグscene
 
-NORVES_ENABLE_IMGUI=ONでビルドし、Gameへ--animation-debugを付けると合成パネルと保持物を追加する。明示指定時だけImGuiを有効にし、通常の起動画面は変更しない。Animator画面でparameter・状態・同期phase・停止/コマ送り、ソケット画面でprofileとoffsetを調整できる。色付き軸はWorld LateTick後の当frame姿勢から描く。viewはEnter成功直前に登録し、Leave冒頭で解除する。
+NORVES_ENABLE_IMGUI=ONでビルドし、Gameへ--animation-debugを付けると合成パネルと保持物を追加する。明示指定時だけImGuiを有効にし、通常の起動画面は変更しない。Animator画面でparameter・状態・同期phase・停止/コマ送り、ソケット画面でprofileとoffsetを調整できる。厳密境界の比較を有効にすると全頂点をCPUで評価し、関節境界との最小・最大値と包含を比較する。この追加コストは比較を無効にすれば発生しない。色付き軸はWorld LateTick後の当frame姿勢から描く。viewはEnter成功直前に登録し、Leave冒頭で解除する。
 
 このsceneはコード接続と調整のための合成素材。実リグでの見た目、GPUでの実行、録画と既定起動画面の比較は別途確認が必要。
