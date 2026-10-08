@@ -284,6 +284,9 @@ namespace NorvesLib::Core::Animation
             value = {};
         for (const auto& t : m_Traversals)
         {
+            // 同時刻の剛体差分を計算し直すと逆回転の丸めで微小移動が残るため、identityを維持する。
+            if (t.Previous == t.Current)
+                continue;
             const auto& settings = m_Graph->Clips[t.Clip]->GetClipMetadata().Root;
             if (settings.Mode == RootMotionMode::None || (!settings.bX && !settings.bZ && !settings.bYaw))
                 continue;
@@ -356,6 +359,7 @@ namespace NorvesLib::Core::Animation
         if (!candidate.IsFinite())
             return false;
         m_PendingRootMotion = candidate;
+        m_LastRootMotionDelta = m_NodeMotion[m_Graph->Root].Extracted;
         return true;
     }
 } // namespace NorvesLib::Core::Animation

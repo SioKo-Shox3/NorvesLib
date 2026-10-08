@@ -70,7 +70,7 @@ namespace Game
             NorvesLib::Core::Component::CameraComponent* camera = nullptr;
             if (!Resolve(world, owner, arm, camera)) return false;
             // Module Late後のchild pivotと、SpringArmが書くchild cameraの両方を確定する。
-            world.UpdateWorldTransforms();
+            world.UpdateRenderTransforms();
             arm->RefreshOwnerTransform();
             world.UpdateWorldTransforms();
             return camera->BuildCameraProxy(outProxy);

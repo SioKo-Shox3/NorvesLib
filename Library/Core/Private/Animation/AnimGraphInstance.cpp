@@ -89,6 +89,7 @@ namespace NorvesLib::Core::Animation
         swap(m_MotionScratch, other.m_MotionScratch);
         swap(m_MotionModels, other.m_MotionModels);
         swap(m_PendingRootMotion, other.m_PendingRootMotion);
+        swap(m_LastRootMotionDelta, other.m_LastRootMotionDelta);
         swap(m_Graph, other.m_Graph);
         swap(m_Parameters, other.m_Parameters);
         swap(m_Events, other.m_Events);
@@ -124,6 +125,7 @@ namespace NorvesLib::Core::Animation
         m_MotionModels.clear();
         m_MotionScratch = {};
         m_PendingRootMotion = {};
+        m_LastRootMotionDelta = {};
         m_Runtime.clear();
         m_Poses.clear();
         m_Reference.clear();
@@ -560,6 +562,7 @@ namespace NorvesLib::Core::Animation
     }
     bool AnimGraphInstance::Update(float dt)
     {
+        m_LastRootMotionDelta = {};
         if (m_Events.IsDispatching() || !ResourcesCurrent() || !std::isfinite(dt) || dt < 0 || !RefreshRootMetadata() ||
             !RefreshSyncMaps())
         {

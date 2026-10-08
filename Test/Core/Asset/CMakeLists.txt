@@ -97,6 +97,7 @@ norves_add_test_bundle(CookedMeshTest
     MEMBER ArmModeTokenTest ArmModeTokenTest.cpp
     MEMBER UnicodeTextTest UnicodeTextTest.cpp
     MEMBER StringEmptyTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/StringEmptyTest.cpp
+    MEMBER StringReplaceTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/StringReplaceTest.cpp
     MEMBER JsonUnicodeInputTest JsonUnicodeInputTest.cpp
     MEMBER MaterialSelectionTest MaterialSelectionTest.cpp
     MEMBER ArmChannelFoldTest ArmChannelFoldTest.cpp

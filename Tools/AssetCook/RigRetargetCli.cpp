@@ -50,6 +50,10 @@ namespace NorvesLib::Tools::AssetCook::Detail
                     "AssetCook --retarget-clip --input <BVH/glTF/GLB> --skeleton <target glTF/GLB> --role-profile <JSON> --out <new-directory> --logical <animation-path> [--clip <source clip>] [--clip-name <output name>] [--variant <name>]");
                 std::puts(
                     "共有rootへの増分cookはasset-set v2のskeleton_path / role_profile / source_clipを使ってください。");
+                std::puts(
+                    "動画由来の補正はrole-profileのprocessingで指定: spike_threshold_degrees / smoothing_radius / "
+                    "average_cycles / time_scale / analyze_contacts / generate_foot_markers / desired_ground_speed / "
+                    "derive_root_motion。接地の計測結果はpackageと同じ場所の.motion_report.jsonへ出力します。");
                 exitCode = 0;
                 return true;
             }

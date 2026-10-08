@@ -48,6 +48,7 @@ norves_add_test_bundle(SceneQueryRaycastTest
     MEMBER SceneQueryRaycastTest SceneQueryRaycastTest.cpp
     MEMBER SceneQueryOverlapTest SceneQueryOverlapTest.cpp
     MEMBER SceneQueryPhysicsFacadeTest SceneQueryPhysicsFacadeTest.cpp
+    MEMBER SceneCameraProbeTest ${CMAKE_SOURCE_DIR}/Test/Core/Camera/SceneCameraProbeTest.cpp
     MEMBER PhysicsQueryTypesTest PhysicsQueryTypesTest.cpp
 )
 target_link_libraries(SceneQueryRaycastTest PRIVATE Core)
@@ -65,6 +66,8 @@ norves_add_test_bundle(EntityTreeTest
     MEMBER TransformHierarchyTest TransformHierarchyTest.cpp
     MEMBER EntityWorldAABBTest EntityWorldAABBTest.cpp
     MEMBER SpringArmComponentTest SpringArmComponentTest.cpp
+    MEMBER WorldRenderInterpolationTest WorldRenderInterpolationTest.cpp
+    MEMBER WorldTimeChannelTest WorldTimeChannelTest.cpp
 )
 target_link_libraries(EntityTreeTest PRIVATE Core)
 target_include_directories(EntityTreeTest PRIVATE
@@ -121,3 +124,8 @@ add_test(NAME TickGroupConfigurationTest COMMAND EntityTreeTest --test=TickGroup
 
 add_test(NAME TickDispatchTest COMMAND EntityTreeTest --test=TickDispatchTest)
 add_test(NAME WorldTickGroupTest COMMAND EntityTreeTest --test=WorldTickGroupTest)
+
+add_test(NAME SceneCameraProbeTest COMMAND SceneQueryRaycastTest --test=SceneCameraProbeTest)
+add_test(NAME WorldRenderInterpolationTest COMMAND EntityTreeTest --test=WorldRenderInterpolationTest)
+
+add_test(NAME WorldTimeChannelTest COMMAND EntityTreeTest --test=WorldTimeChannelTest)

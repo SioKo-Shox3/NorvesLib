@@ -1,12 +1,14 @@
 ﻿#include "RigRetargetCook.h"
-#include "RigClipBankCook.h"
-#include "SkeletalRoleFileInput.h"
-#include "NativeCookPath.h"
-#include "Resource/RigGltfImportCapture.h"
-#include "Resource/ImportSettingsFile.h"
 #include "Asset/AssetPackageFormat.h"
-#include <fstream>
+#include "Asset/CookedSkeletalNameCodec.h"
+#include "NativeCookPath.h"
+#include "Resource/ImportSettingsFile.h"
+#include "Resource/RigGltfImportCapture.h"
+#include "RigClipBankCook.h"
+#include "RigMotionCleanup.h"
+#include "SkeletalRoleFileInput.h"
 #include <cstdio>
+#include <fstream>
 namespace NorvesLib::Tools::AssetCook::Detail
 {
     namespace C = Core::Container;
@@ -145,6 +147,16 @@ namespace NorvesLib::Tools::AssetCook::Detail
         settings.LoopExcludedRoles = profile.LoopExcludedRoles;
         C::VariableArray<S::SkeletalAnimationClip> clips;
         double sourceFps = 0;
+        const auto& cleanup = settings.Processing;
+        const bool reportCleanup = cleanup.SpikeThresholdRadians > 0 || cleanup.SmoothingRadius > 0 ||
+                                   cleanup.bAverageCycles || cleanup.TimeScale != 1 || cleanup.bAnalyzeContacts ||
+                                   cleanup.bGenerateFootMarkers || cleanup.bDeriveRootMotion ||
+                                   cleanup.DesiredGroundSpeed > 0;
+        Core::JsonWriter motionReport(true);
+        motionReport.BeginObject();
+        motionReport.WriteUInt64("version", 1);
+        motionReport.BeginArray("clips");
+
         const auto convert = [&](const A::SkeletalRetargetClipSource& input)
         {
             S::SkeletalAnimationClip clip;
@@ -152,6 +164,23 @@ namespace NorvesLib::Tools::AssetCook::Detail
             if (!A::RetargetSkeletalClip(input, target, profile, settings, clip, report, error))
             {
                 return false;
+            }
+            if (reportCleanup)
+            {
+                motionReport.BeginObject();
+                motionReport.WriteString("name", clip.Name);
+                motionReport.WriteUInt64("replaced_spikes", report.Processing.ReplacedSpikes);
+                motionReport.WriteUInt64("smoothed_channels", report.Processing.SmoothedChannels);
+                motionReport.WriteUInt64("averaged_cycles", report.Processing.AveragedCycles);
+                motionReport.WriteNumber("seam_before_radians", report.Processing.SeamBeforeRadians);
+                motionReport.WriteNumber("seam_after_radians", report.Processing.SeamAfterRadians);
+                if (!ApplyRigMotionCleanup(target, profile, clip, motionReport, error))
+                    return false;
+                motionReport.WriteNumber("duration_seconds", clip.DurationSeconds);
+                motionReport.WriteUInt64("samples", report.Processing.OutputSamples);
+                motionReport.EndObject();
+                report.Processing.PeriodSeconds =
+                    report.Processing.bLoopDetected || report.Processing.bRangeSelected ? clip.DurationSeconds : 0;
             }
             // 取り込みの測定値だけを出す。未計測のkey/連続曲線誤差を0という合格値にしない。
             std::fprintf(
@@ -162,6 +191,10 @@ namespace NorvesLib::Tools::AssetCook::Detail
                 report.Processing.SeamBeforeRadians, report.Processing.SeamAfterRadians,
                 report.Processing.SeamVelocityDifferenceRadiansPerSecond, report.Processing.PlanarDistanceMeters,
                 report.Processing.AverageSpeedMetersPerSecond, report.RootScale, report.IgnoredTranslationChannels);
+            std::fprintf(stderr,
+                         "motion_cleanup replaced_spikes=%u smoothed_channels=%u averaged_cycles=%u time_scale=%.9g\n",
+                         report.Processing.ReplacedSpikes, report.Processing.SmoothedChannels,
+                         report.Processing.AveragedCycles, settings.Processing.TimeScale);
             for (const auto& correction : report.Corrections)
             {
                 std::fprintf(
@@ -275,6 +308,34 @@ namespace NorvesLib::Tools::AssetCook::Detail
         if (!CaptureCookDependencySnapshot(request, 1, after, error) || after.Fingerprint != dependencies.Fingerprint)
         {
             return Fail(error, "retarget_dependencies_changed");
+        }
+        if (reportCleanup)
+        {
+            motionReport.EndArray();
+            motionReport.WriteNumber("source_fps", sourceFps);
+            motionReport.EndObject();
+            if (!motionReport.IsComplete())
+                return Fail(error, "motion_report_json");
+            const auto text = motionReport.ToString();
+            using Unit = C::String::value_type;
+            const C::Span<const Unit> units{text.data(), text.size()};
+            const auto size = Core::Asset::MeasureSkeletalNameEncoding(2, units);
+            if (!size.Succeeded())
+                return Fail(error, "motion_report_encoding");
+            C::VariableArray<uint8_t> bytes(size.ByteCount);
+            if (!Core::Asset::EncodeSkeletalWireName(2, units, {bytes.data(), bytes.size()}).Succeeded())
+                return Fail(error, "motion_report_encoding");
+            auto path = request.PackagePath;
+            path.replace_extension(".motion_report.json");
+            std::error_code ec;
+            std::filesystem::create_directories(path.parent_path(), ec);
+            if (ec)
+                return Fail(error, "motion_report_directory");
+            std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+            stream.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+            stream.flush();
+            if (!stream)
+                return Fail(error, "motion_report_write");
         }
         return true;
     }

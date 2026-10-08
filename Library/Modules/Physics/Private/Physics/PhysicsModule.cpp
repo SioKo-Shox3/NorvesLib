@@ -1,12 +1,14 @@
 ﻿#include "Physics/PhysicsModule.h"
 
-#include "Physics/ColliderComponent.h"
-#include "Physics/RigidBodyComponent.h"
 #include "CoreTypes.h"
 #include "Engine/Engine.h"
+#include "Math/VectorUtils.h"
 #include "Object/Entity.h"
 #include "Object/IUnknown.h"
-#include "Math/VectorUtils.h"
+#include "Physics/CharacterBodyComponent.h"
+#include "Physics/ColliderComponent.h"
+#include "Physics/ColliderShapeTransform.h"
+#include "Physics/RigidBodyComponent.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -86,6 +88,7 @@ namespace NorvesLib::Modules::Physics
         const Core::IClass* rigidBodyClass = RigidBodyComponent::StaticClass();
         classRegistry.RegisterClass(colliderClass);
         classRegistry.RegisterClass(rigidBodyClass);
+        classRegistry.RegisterClass(CharacterBodyComponent::StaticClass());
     }
 
     bool PhysicsModule::Initialize()
@@ -97,6 +100,8 @@ namespace NorvesLib::Modules::Physics
 
         ResetTransientState();
         m_bInitialized = true;
+        for (auto& body : m_BodySlots)
+            UpdateRenderInterpolationDefault(body);
         return true;
     }
 
@@ -111,6 +116,8 @@ namespace NorvesLib::Modules::Physics
             return;
         }
 
+        if (m_bFixedTickInProgress || m_bVariableCharacterInProgress || m_bCharacterInputInProgress)
+            return;
         for (BodySlot& body : m_BodySlots)
         {
             body.bHadPreStepSnapshot = false;
@@ -132,21 +139,33 @@ namespace NorvesLib::Modules::Physics
         {
             return;
         }
-        if (m_bFixedTickInProgress)
+        if (m_bFixedTickInProgress || m_bVariableCharacterInProgress || m_bCharacterInputInProgress)
         {
             return;
         }
 
-        m_bFixedTickInProgress = true;
+        struct StepGuard
+        {
+            bool& Active;
+            explicit StepGuard(bool& active) : Active(active)
+            {
+                Active = true;
+            }
+            ~StepGuard()
+            {
+                Active = false;
+            }
+        } guard(m_bFixedTickInProgress);
         ReconcileActiveStates();
         IntegrateDynamics(fixedDeltaTime);
+        ProcessCharacterBodies(fixedDeltaTime);
         BuildBroadphase(m_WorkingBroadphase);
         ResolveContacts(fixedDeltaTime);
         BuildEventQueue();
         PublishSnapshot();
         m_bHasPublishedSnapshot = true;
         DispatchEvents();
-        m_bFixedTickInProgress = false;
+        DispatchCharacterEvents();
     }
 
     void PhysicsModule::Shutdown()
@@ -412,7 +431,11 @@ namespace NorvesLib::Modules::Physics
         }
         if (component.m_BodyHandle.IsValid())
         {
-            return ValidateRigidBody(component);
+            const auto result = ValidateRigidBody(component);
+            if (result == EPhysicsResult::Success)
+                if (auto* body = FindBodySlot(component.m_BodyHandle))
+                    UpdateRenderInterpolationDefault(*body);
+            return result;
         }
 
         Core::Entity* owner = component.GetOwner();
@@ -448,6 +471,7 @@ namespace NorvesLib::Modules::Physics
         slot.bOccupied = true;
         slot.bActive = false;
         component.m_BodyHandle = Core::Scene::BodyHandle{index, slot.Generation};
+        UpdateRenderInterpolationDefault(slot);
         return EPhysicsResult::Success;
     }
 
@@ -533,6 +557,43 @@ namespace NorvesLib::Modules::Physics
         return EPhysicsResult::Success;
     }
 
+    EPhysicsResult PhysicsModule::SetColliderLocalPose(ColliderComponent& component, const Math::Transform& localPose)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+            return result;
+        Math::Transform prepared;
+        if (!PrepareColliderLocalPose(localPose, prepared))
+            return EPhysicsResult::InvalidArgument;
+        const Math::Transform owner = GetFreshWorldTransform(*m_ColliderSlots[component.m_ColliderHandle.Index].Owner);
+        if (!IsFiniteVector(owner.TransformPoint(prepared.position)))
+            return EPhysicsResult::InvalidArgument;
+        if (component.m_bHasShape)
+        {
+            EPhysicsProxyShape shape;
+            switch (component.m_Shape)
+            {
+            case ColliderComponent::EColliderShape::Sphere:
+                shape = EPhysicsProxyShape::Sphere;
+                break;
+            case ColliderComponent::EColliderShape::Box:
+                shape = EPhysicsProxyShape::Box;
+                break;
+            case ColliderComponent::EColliderShape::Capsule:
+                shape = EPhysicsProxyShape::Capsule;
+                break;
+            default:
+                return EPhysicsResult::InvalidState;
+            }
+            PhysicsShapeProxy candidate;
+            if (!BuildColliderWorldShape(shape, component.m_Radius, component.m_CapsuleHalfHeight,
+                                         component.m_HalfExtents, owner, prepared, candidate))
+                return EPhysicsResult::InvalidArgument;
+        }
+        component.m_LocalPose = prepared;
+        return EPhysicsResult::Success;
+    }
+
     EPhysicsResult PhysicsModule::SetColliderTrigger(ColliderComponent& component, bool bTrigger)
     {
         const EPhysicsResult result = ValidateCollider(component);
@@ -603,6 +664,8 @@ namespace NorvesLib::Modules::Physics
                 body->PendingImpulse = Math::Vector3();
             }
         }
+        if (auto* body = FindBodySlot(component.m_BodyHandle))
+            UpdateRenderInterpolationDefault(*body);
         return EPhysicsResult::Success;
     }
 
@@ -797,6 +860,15 @@ namespace NorvesLib::Modules::Physics
             && IsFiniteTransform(GetFreshWorldTransform(*collider.Owner));
     }
 
+    void PhysicsModule::UpdateRenderInterpolationDefault(BodySlot& body)
+    {
+        if (!body.bOccupied || !body.Owner)
+            return;
+        const bool dynamic = m_bInitialized && m_bBound && IsBodyLifecycleActive(body) &&
+                             body.Component->m_BodyType == EPhysicsBodyType::Dynamic &&
+                             body.Owner->GetParentEntity() == nullptr;
+        body.Owner->SetDefaultRenderInterpolationEnabled(dynamic);
+    }
     void PhysicsModule::ReconcileActiveStates()
     {
         for (ColliderSlot& collider : m_ColliderSlots)
@@ -814,6 +886,7 @@ namespace NorvesLib::Modules::Physics
                 continue;
             }
 
+            UpdateRenderInterpolationDefault(body);
             body.bActive = false;
             if (!IsBodyLifecycleActive(body))
             {
@@ -1167,42 +1240,24 @@ namespace NorvesLib::Modules::Physics
             proxy.Mask = slot.Component->m_CollisionMask;
             proxy.UserData = slot.Component->m_UserData;
             proxy.bTrigger = slot.Component->m_bTrigger;
-            if (slot.Component->m_Shape == ColliderComponent::EColliderShape::Sphere)
+            EPhysicsProxyShape shape;
+            switch (slot.Component->m_Shape)
             {
-                proxy.Shape = EPhysicsProxyShape::Sphere;
-                proxy.Sphere = Math::Sphere(
-                    transform.TransformPoint(Math::Vector3()),
-                    slot.Component->m_Radius * std::fmaxf(
-                        std::fabs(transform.scale.x),
-                        std::fmaxf(std::fabs(transform.scale.y), std::fabs(transform.scale.z))));
-            }
-            else if (slot.Component->m_Shape == ColliderComponent::EColliderShape::Box)
-            {
-                proxy.Shape = EPhysicsProxyShape::Box;
-                proxy.Box = Math::OBB(
-                    transform.TransformPoint(Math::Vector3()),
-                    Math::Vector3(
-                        slot.Component->m_HalfExtents.x * std::fabs(transform.scale.x),
-                        slot.Component->m_HalfExtents.y * std::fabs(transform.scale.y),
-                        slot.Component->m_HalfExtents.z * std::fabs(transform.scale.z)),
-                    Math::VectorUtils::Normalize(transform.rotation * Math::Vector3::UnitX),
-                    Math::VectorUtils::Normalize(transform.rotation * Math::Vector3::UnitY),
-                    Math::VectorUtils::Normalize(transform.rotation * Math::Vector3::UnitZ));
-            }
-            else if (slot.Component->m_Shape == ColliderComponent::EColliderShape::Capsule)
-            {
-                proxy.Shape = EPhysicsProxyShape::Capsule;
-                proxy.Capsule = Math::Capsule(
-                    transform.TransformPoint(Math::Vector3(0.0f, -slot.Component->m_CapsuleHalfHeight, 0.0f)),
-                    transform.TransformPoint(Math::Vector3(0.0f, slot.Component->m_CapsuleHalfHeight, 0.0f)),
-                    slot.Component->m_Radius * std::fmaxf(
-                        std::fabs(transform.scale.x),
-                        std::fabs(transform.scale.z)));
-            }
-            else
-            {
+            case ColliderComponent::EColliderShape::Sphere:
+                shape = EPhysicsProxyShape::Sphere;
+                break;
+            case ColliderComponent::EColliderShape::Box:
+                shape = EPhysicsProxyShape::Box;
+                break;
+            case ColliderComponent::EColliderShape::Capsule:
+                shape = EPhysicsProxyShape::Capsule;
+                break;
+            default:
                 continue;
             }
+            if (!BuildColliderWorldShape(shape, slot.Component->m_Radius, slot.Component->m_CapsuleHalfHeight,
+                                         slot.Component->m_HalfExtents, transform, slot.Component->m_LocalPose, proxy))
+                continue;
             proxies.push_back(proxy);
         }
         outBroadphase.SetProxies(std::move(proxies));
@@ -1212,6 +1267,15 @@ namespace NorvesLib::Modules::Physics
     {
         for (BodySlot& body : m_BodySlots)
         {
+            if (body.bOccupied && body.Owner)
+            {
+                body.Owner->SetDefaultRenderInterpolationEnabled(false);
+                if (auto* character = body.Owner->GetComponent<CharacterBodyComponent>())
+                {
+                    character->ResetMotion(false);
+                    character->m_bFixedRequest = false;
+                }
+            }
             body.PendingImpulse = Math::Vector3();
             body.PreStepPosition = Math::Vector3();
             body.bHadPreStepSnapshot = false;
@@ -1305,6 +1369,11 @@ namespace NorvesLib::Modules::Physics
     void PhysicsModule::ReleaseColliderSlot(uint32_t index)
     {
         ColliderSlot& slot = m_ColliderSlots[index];
+        if (slot.Owner)
+        {
+            if (auto* character = slot.Owner->GetComponent<CharacterBodyComponent>())
+                character->ResetMotion(true);
+        }
         slot.Component = nullptr;
         slot.Owner = nullptr;
         slot.bOccupied = false;
@@ -1321,6 +1390,12 @@ namespace NorvesLib::Modules::Physics
     void PhysicsModule::ReleaseBodySlot(uint32_t index)
     {
         BodySlot& slot = m_BodySlots[index];
+        if (slot.Owner)
+        {
+            slot.Owner->SetDefaultRenderInterpolationEnabled(false);
+            if (auto* character = slot.Owner->GetComponent<CharacterBodyComponent>())
+                character->ResetMotion(true);
+        }
         slot.Component = nullptr;
         slot.Owner = nullptr;
         slot.bOccupied = false;

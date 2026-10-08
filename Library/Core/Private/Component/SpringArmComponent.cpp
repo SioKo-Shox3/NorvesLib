@@ -271,7 +271,7 @@ namespace NorvesLib::Core::Component
             return;
         }
 
-        const Math::Vector3 target = pivot.GetPosition() + TargetOffset.Get();
+        const Math::Vector3 target = pivot.GetRenderWorldTransform().position + TargetOffset.Get();
         const Math::Vector3 cameraPosition = target + ComputeArmOffset();
         const Math::Vector3 forward = (target - cameraPosition).Normalized();
         const Math::Quaternion rotation =

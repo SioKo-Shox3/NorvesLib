@@ -5,6 +5,7 @@
 #include "Engine/Engine.h"
 #include "Engine/FixedStepScheduler.h"
 #include "Engine/NorvesEngine.h"
+#include "Input/InputButtonState.h"
 #include "Module/IModule.h"
 #include "Module/ModuleRegistry.h"
 #include "Object/World.h"
@@ -21,10 +22,13 @@ namespace NorvesLib::Core::Engine
 {
     struct ApplicationFixedStepTestAccess
     {
-        static void ResetRun(ApplicationProcessor& processor)
+        static bool ResetRun(ApplicationProcessor& processor, uint32_t rate = 60)
         {
             processor.m_FixedStepScheduler->EndRun();
+            if (!processor.m_FixedStepScheduler->SetRate(rate))
+                return false;
             processor.m_FixedStepScheduler->BeginRun();
+            return true;
         }
 
         static void EndRun(ApplicationProcessor& processor)
@@ -59,7 +63,7 @@ namespace
 {
     using namespace NorvesLib::Core;
 
-    constexpr uint32_t kCaseCount = 17;
+    constexpr uint32_t kCaseCount = 21;
 
     struct DynamicFixture
     {
@@ -70,6 +74,7 @@ namespace
         Entity* ObservedChild = nullptr;
         EntityHandle DestroyHandle;
         bool bPostObservedPending = false;
+        float LastModuleFixedDelta = 0;
         uint32_t ParentFixedCount = 0;
         uint32_t ChildObservedLatestCount = 0;
     };
@@ -166,6 +171,7 @@ namespace
                 return;
             }
 
+            GFixture->LastModuleFixedDelta = fixedDeltaTime;
             GFixture->Events.push_back(Container::String(FixedName));
             if (GFixture->DestroyEntity)
             {
@@ -618,6 +624,153 @@ namespace
             GFixture->Events[8] == Container::String("Handler Late");
     }
 
+    class FixedInputEventProbe final : public Component::Component
+    {
+      public:
+        Input::InputButtonState Button;
+        Container::VariableArray<Input::EInputButtonEventType> Consumed;
+        bool bQueuePair = true;
+        uint32_t FixedCalls = 0;
+        void Tick(float) override
+        {
+            Button.BeginFrame();
+            Button.SetFixedEventCapture(true);
+            if (bQueuePair)
+            {
+                Button.SetDown(true);
+                Button.SetDown(false);
+                bQueuePair = false;
+            }
+        }
+        void FixedTick(float) override
+        {
+            ++FixedCalls;
+            Input::InputButtonEvent event;
+            while (Button.ConsumeFixedEvent(event))
+                Consumed.push_back(event.Type);
+        }
+    };
+    bool TestFixedInputEventFrameOrder(Engine::ApplicationProcessor& processor)
+    {
+        auto& world = Engine::GEngine->GetWorld();
+        auto* entity = world.SpawnEntity<Entity>();
+        auto* input = entity ? world.CreateComponent<FixedInputEventProbe>(entity) : nullptr;
+        if (!input || !input->SetTickGroup(Component::ETickGroup::Input))
+            return false;
+        auto result = Engine::ApplicationFixedStepTestAccess::Simulate(processor, 17'000'000, true, nullptr);
+        if (result.ExecutedSteps != 1 || input->Consumed.size() != 2)
+            return false;
+        input->bQueuePair = true;
+        result = Engine::ApplicationFixedStepTestAccess::Simulate(processor, 1'000'000, true, nullptr);
+        if (result.ExecutedSteps != 0 || input->Consumed.size() != 2)
+            return false;
+        result = Engine::ApplicationFixedStepTestAccess::Simulate(processor, 16'000'000, true, nullptr);
+        if (result.ExecutedSteps != 1 || input->Consumed.size() != 4)
+            return false;
+        input->bQueuePair = true;
+        result = Engine::ApplicationFixedStepTestAccess::Simulate(processor, 34'000'000, true, nullptr);
+        if (result.ExecutedSteps != 2 || input->FixedCalls != 4 || input->Consumed.size() != 6)
+            return false;
+        for (size_t i = 0; i < 6; ++i)
+            if (input->Consumed[i] !=
+                (i % 2 == 0 ? Input::EInputButtonEventType::Pressed : Input::EInputButtonEventType::Released))
+                return false;
+        return true;
+    }
+    bool Test120HzPipeline(Engine::ApplicationProcessor& processor)
+    {
+        if (!Engine::ApplicationFixedStepTestAccess::ResetRun(processor, 120) ||
+            processor.GetFixedUpdateRateHz() != 120)
+            return false;
+        auto& world = Engine::GEngine->GetWorld();
+        auto* entity = world.SpawnEntity<Entity>();
+        auto* component = entity ? world.CreateComponent<FixedProbeComponent>(entity) : nullptr;
+        if (!component)
+            return false;
+        const auto result = Engine::ApplicationFixedStepTestAccess::Advance(processor, 16'666'667, true);
+        return result.ExecutedSteps == 2 && component->FixedTickCount == 2 &&
+               component->LastFixedDeltaTime == 1.f / 120 && GFixture->LastModuleFixedDelta == 1.f / 120;
+    }
+
+    class TimeChannelProbe final : public Component::Component
+    {
+      public:
+        Engine::TimeChannel Channel = Engine::TimeChannel::World;
+        float Delta = -1, FixedDelta = -1;
+        unsigned Calls = 0, FixedCalls = 0;
+        Engine::TimeChannel GetTimeChannel() const noexcept override
+        {
+            return Channel;
+        }
+        void Tick(float value) override
+        {
+            Delta = value;
+            ++Calls;
+        }
+        void FixedTick(float value) override
+        {
+            FixedDelta = value;
+            ++FixedCalls;
+        }
+    };
+    bool TestHitStopTimeChannels(Engine::ApplicationProcessor& processor, uint32_t rate)
+    {
+        using namespace Engine;
+        if (!ApplicationFixedStepTestAccess::ResetRun(processor, rate))
+            return false;
+        auto& engine = *NorvesLib::Core::Engine::GEngine;
+        auto& world = engine.GetWorld();
+        auto& clock = engine.GetTimeSystem();
+        auto* owner = world.SpawnEntity<Entity>();
+        if (!owner || !owner->SetCustomTimeDilation(.25f))
+            return false;
+        TimeChannelProbe* probes[4]{};
+        const TimeChannel channels[] = {TimeChannel::World, TimeChannel::Animation, TimeChannel::Unscaled,
+                                        TimeChannel::Unscaled};
+        const Component::ETickGroup groups[] = {Component::ETickGroup::Default, Component::ETickGroup::Animation,
+                                                Component::ETickGroup::Input, Component::ETickGroup::Camera};
+        for (unsigned i = 0; i < 4; ++i)
+        {
+            probes[i] = world.CreateComponent<TimeChannelProbe>(owner);
+            if (!probes[i])
+                return false;
+            probes[i]->Channel = channels[i];
+            probes[i]->SetTickGroup(groups[i]);
+        }
+        TimeScaleRequest half;
+        half.Scale = .5;
+        half.DurationSeconds = 10;
+        half.Channels = TimeChannelBit(TimeChannel::Physics);
+        TimeScaleHandle handle;
+        if (clock.PushScale(half, handle) != TimeSystemResult::Success)
+            return false;
+        auto result = ApplicationFixedStepTestAccess::Simulate(processor, 1, true, nullptr);
+        if (result.ExecutedSteps != 0 || clock.GetPhysicsRemainder() != 32768)
+            return false;
+        const auto seed = ApplicationFixedStepTestAccess::Advance(processor, rate == 60 ? 8333333 : 4166666, true);
+        TimeScaleRequest stop;
+        stop.Scale = 0;
+        stop.DurationSeconds = .1;
+        stop.Channels = TimeChannelBit(TimeChannel::World) | TimeChannelBit(TimeChannel::Animation) |
+                        TimeChannelBit(TimeChannel::Physics);
+        if (clock.PushScale(stop, handle) != TimeSystemResult::Success)
+            return false;
+        result = ApplicationFixedStepTestAccess::Simulate(processor, 50000000, true, nullptr);
+        if (result.Status != EFixedStepAdvanceStatus::Advanced || result.ExecutedSteps != 0 ||
+            result.RemainderScaledUnits != seed.RemainderScaledUnits || clock.GetPhysicsRemainder() != 32768 ||
+            probes[0]->Delta != 0 || probes[1]->Delta != 0 || probes[2]->Delta != .05f || probes[3]->Delta != .05f)
+            return false;
+        const auto calls = probes[3]->Calls;
+        result = ApplicationFixedStepTestAccess::Simulate(processor, 100000000, false, nullptr);
+        if (result.Status != EFixedStepAdvanceStatus::Paused ||
+            result.RemainderScaledUnits != seed.RemainderScaledUnits || clock.GetPhysicsRemainder() != 32768 ||
+            probes[3]->Calls != calls)
+            return false;
+        result = ApplicationFixedStepTestAccess::Simulate(processor, rate == 60 ? 17000000 : 8500000, true, nullptr);
+        return result.ExecutedSteps == 1 && probes[0]->FixedCalls == 1 && probes[0]->FixedDelta == 1.f / rate &&
+               probes[0]->Delta > 0 && probes[1]->Delta > 0 && probes[3]->Calls == calls + 1;
+    }
+
     bool RunCase(uint32_t caseIndex, Engine::ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -657,6 +810,14 @@ namespace
             return TestSimulationLateStages(processor, 1, false);
         case 16:
             return TestSimulationLateStages(processor, 1, false);
+        case 17:
+            return TestFixedInputEventFrameOrder(processor);
+        case 18:
+            return Test120HzPipeline(processor);
+        case 19:
+            return TestHitStopTimeChannels(processor, 60);
+        case 20:
+            return TestHitStopTimeChannels(processor, 120);
         default:
             return false;
         }

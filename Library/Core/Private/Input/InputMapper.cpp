@@ -64,6 +64,11 @@ namespace NorvesLib::Core::Input
             stack.push_back(found);
         }
         CancelAll();
+        for (auto& context : compiled)
+            for (auto& action : context.Actions)
+                for (const auto id : m_FixedEventActions)
+                    if (action.Id == id)
+                        action.Runtime.SetFixedEventCapture(true);
         m_Contexts = std::move(compiled);
         m_Stack = std::move(stack);
         return true;
@@ -110,6 +115,18 @@ namespace NorvesLib::Core::Input
         CancelAll();
         return true;
     }
+    bool InputMapper::RemoveContext(Identity context)
+    {
+        for (size_t i = 0; i < m_Stack.size(); ++i)
+        {
+            if (m_Contexts[m_Stack[i]].Id != context) continue;
+            const bool top = i + 1 == m_Stack.size();
+            m_Stack.erase(m_Stack.begin() + i);
+            if (top) CancelAll();
+            return true;
+        }
+        return false;
+    }
     void InputMapper::ClearContexts()
     {
         m_Stack.clear();
@@ -153,11 +170,17 @@ namespace NorvesLib::Core::Input
         m_bDebugOverlaySuppressed = suppressed;
         CancelAll();
     }
+    void InputMapper::CancelAction(Action& action)
+    {
+        ++action.CancellationGeneration;
+        action.Runtime.Cancel();
+    }
     void InputMapper::CancelAll()
     {
+        ++m_CancellationGeneration;
         m_Armed.Reset();
         for (auto& context : m_Contexts)
-            for (auto& action : context.Actions) action.Runtime.Cancel();
+            for (auto& action : context.Actions) CancelAction(action);
     }
     bool InputMapper::BeginFrame(double time)
     {
@@ -182,7 +205,7 @@ namespace NorvesLib::Core::Input
                     m_State, m_Armed, time, active ? unscaledDeltaSeconds : 0))
                 {
                     // overflowした結果を前frameから持ち越さず、clockも全actionで揃える。
-                    action.Runtime.Cancel();
+                    CancelAction(action);
                     (void)action.Runtime.BeginFrame(time);
                     success = false;
                 }
@@ -206,6 +229,7 @@ namespace NorvesLib::Core::Input
                 if (action.Id != actionId) continue;
                 InputMappedAction value;
                 value.Valid = true;
+                value.CancellationGeneration = action.CancellationGeneration;
                 value.Active = m_Router && m_Focused && !IsInputSuppressed() && &context == Top();
                 value.Type = action.Runtime.GetSettings().Type;
                 value.Button = action.Runtime.GetButton();
@@ -222,12 +246,50 @@ namespace NorvesLib::Core::Input
             if (action.Id == id) return action.Runtime.ConsumeFixedPress();
         return false;
     }
+    bool InputMapper::SetFixedButtonEventCapture(Identity id, bool enabled)
+    {
+        if (!id.IsValid())
+            return false;
+        bool found = false;
+        for (const auto& context : m_Contexts)
+            for (const auto& action : context.Actions)
+                if (action.Id == id && action.Runtime.GetSettings().Type == EInputMappingValueType::Button)
+                    found = true;
+        size_t registered = m_FixedEventActions.size();
+        for (size_t i = 0; i < m_FixedEventActions.size(); ++i)
+            if (m_FixedEventActions[i] == id)
+            {
+                registered = i;
+                break;
+            }
+        const bool wasRegistered = registered < m_FixedEventActions.size();
+        if (enabled && !found)
+            return false;
+        if (enabled && registered == m_FixedEventActions.size())
+            m_FixedEventActions.push_back(id);
+        if (!enabled && registered < m_FixedEventActions.size())
+            m_FixedEventActions.erase(m_FixedEventActions.begin() + registered);
+        for (auto& context : m_Contexts)
+            for (auto& action : context.Actions)
+                if (action.Id == id)
+                    action.Runtime.SetFixedEventCapture(enabled);
+        return found || wasRegistered;
+    }
+    bool InputMapper::ConsumeFixedButtonEvent(Identity id, InputButtonEvent& out)
+    {
+        auto* context = m_Router && m_Focused && !IsInputSuppressed() ? Top() : nullptr;
+        if (context)
+            for (auto& action : context->Actions)
+                if (action.Id == id)
+                    return action.Runtime.ConsumeFixedEvent(out);
+        return false;
+    }
     void InputMapper::SyncActiveButtons()
     {
         auto* context = m_Router && m_Focused && !IsInputSuppressed() ? Top() : nullptr;
         if (!context) return;
         for (auto& action : context->Actions)
-            if (!action.Runtime.SyncButtons(Bindings(action.Bindings), m_State, m_Armed)) action.Runtime.Cancel();
+            if (!action.Runtime.SyncButtons(Bindings(action.Bindings), m_State, m_Armed)) CancelAction(action);
     }
     void InputMapper::AccumulateRelative(EInputBindingSource kind, float x, float y)
     {
@@ -237,7 +299,7 @@ namespace NorvesLib::Core::Input
         {
             const auto bindings = Bindings(action.Bindings);
             if (!action.Runtime.AccumulateRelative(kind, 0, x, bindings, m_State, m_Armed) ||
-                !action.Runtime.AccumulateRelative(kind, 1, y, bindings, m_State, m_Armed)) action.Runtime.Cancel();
+                !action.Runtime.AccumulateRelative(kind, 1, y, bindings, m_State, m_Armed)) CancelAction(action);
         }
     }
     bool InputMapper::OnKey(const KeyEvent& event)
@@ -253,6 +315,12 @@ namespace NorvesLib::Core::Input
     bool InputMapper::OnGamepadButton(const GamepadButtonEvent& event)
     {
         if (m_Router && m_Focused && !IsInputSuppressed() && Top()) { m_Armed.OnGamepadButton(event, m_State); SyncActiveButtons(); }
+        return false;
+    }
+    bool InputMapper::OnGamepadSample(const GamepadSampleEvent& event)
+    {
+        if (event.Mode == EGamepadSampleMode::Live)
+            SyncActiveButtons();
         return false;
     }
     bool InputMapper::OnMouseRawMove(const MouseRawMoveEvent& event)
@@ -280,7 +348,7 @@ namespace NorvesLib::Core::Input
                 auto candidate = action.Runtime;
                 if (candidate.GetSettings().Type == EInputMappingValueType::Button &&
                     candidate.SyncButtons(Bindings(action.Bindings), m_State, m_Armed) && candidate.GetButton().Held) continue;
-                action.Runtime.Cancel();
+                CancelAction(action);
             }
     }
 }

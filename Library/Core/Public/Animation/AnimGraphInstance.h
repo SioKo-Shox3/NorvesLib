@@ -38,6 +38,7 @@ namespace NorvesLib::Core::Animation
         {
             return m_Events;
         }
+        const RootMotionDelta& GetLastRootMotionDelta() const { return m_LastRootMotionDelta; }
         RootMotionDelta ConsumeRootMotion()
         {
             auto value = m_PendingRootMotion;
@@ -153,7 +154,7 @@ namespace NorvesLib::Core::Animation
         Container::VariableArray<NodeMotion> m_NodeMotion;
         PoseScratch m_MotionScratch;
         Container::VariableArray<Math::Matrix4x4> m_MotionModels;
-        RootMotionDelta m_PendingRootMotion;
+        RootMotionDelta m_PendingRootMotion, m_LastRootMotionDelta;
         Container::TSharedPtr<const AnimGraphData> m_Graph;
         AnimParamSet m_Parameters;
         AnimationEventQueue m_Events;

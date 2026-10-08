@@ -65,6 +65,12 @@ namespace NorvesLib::Modules::Physics
         return module ? module->SetColliderCapsule(*this, radius, halfHeight) : EPhysicsResult::NotRegistered;
     }
 
+    EPhysicsResult ColliderComponent::SetLocalPose(const Math::Transform& localPose)
+    {
+        PhysicsModule* module = FindRegisteredPhysicsModule();
+        return module ? module->SetColliderLocalPose(*this, localPose) : EPhysicsResult::NotRegistered;
+    }
+
     EPhysicsResult ColliderComponent::SetTrigger(bool bTrigger)
     {
         PhysicsModule* module = FindRegisteredPhysicsModule();

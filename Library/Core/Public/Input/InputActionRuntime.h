@@ -7,7 +7,7 @@
 
 namespace NorvesLib::Core::Input
 {
-    // Identity/配列所有に依存しない評価核。spanを保持せず、同じcompile済みbindingsを呼出し中だけ読む。
+    // Identityに依存しない評価核。bindingsのspanは保持せず、固定イベントの保存だけopt-inで行う。
     class InputActionRuntime
     {
     public:
@@ -15,6 +15,8 @@ namespace NorvesLib::Core::Input
         {
             if (!IsValidInputActionSettings(settings)) return false;
             InputButtonState button;
+            button.SetFixedEventCapture(m_Button.IsFixedEventCaptureEnabled() &&
+                                        settings.Type == EInputMappingValueType::Button);
             (void)button.SetTiming(settings.ButtonTiming);
             (void)button.AdvanceTo(m_Button.GetTime());
             m_Settings = settings;
@@ -27,6 +29,14 @@ namespace NorvesLib::Core::Input
         const InputActionSettings& GetSettings() const { return m_Settings; }
         const InputButtonSnapshot& GetButton() const { return m_Button.GetState(); }
         Math::Vector2 GetAxis() const { return m_Axis; }
+        void SetFixedEventCapture(bool enabled)
+        {
+            m_Button.SetFixedEventCapture(enabled && m_Settings.Type == EInputMappingValueType::Button);
+        }
+        bool ConsumeFixedEvent(InputButtonEvent& out)
+        {
+            return m_Button.ConsumeFixedEvent(out);
+        }
         bool ConsumeFixedPress() { return m_Button.ConsumeFixedPress(); }
         bool HasPendingFixedPress() const { return m_Button.HasPendingFixedPress(); }
         double GetTime() const { return m_Button.GetTime(); }

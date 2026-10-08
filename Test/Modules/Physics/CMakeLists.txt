@@ -53,6 +53,11 @@ add_test(NAME PhysicsProxyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsPr
 norves_add_test_bundle(PhysicsDynamicsTest
     FOLDER "Test/Modules/Physics"
     MEMBER PhysicsDynamicsTest PhysicsDynamicsTest.cpp
+    MEMBER CharacterDriveOptionsTest CharacterDriveOptionsTest.cpp
+    MEMBER DogMovementSmokeGeometryTest DogMovementSmokeGeometryTest.cpp
+    MEMBER PhysicsCharacterMoveTest PhysicsCharacterMoveTest.cpp
+    MEMBER ColliderLocalPoseTest ColliderLocalPoseTest.cpp
+    MEMBER CharacterPlatformMotionTest CharacterPlatformMotionTest.cpp
     MEMBER PhysicsModuleLinkTest PhysicsModuleLinkTest.cpp
     MEMBER PhysicsBroadphaseQueryTest PhysicsBroadphaseQueryTest.cpp
     MEMBER PhysicsProxyQueryTest PhysicsProxyQueryTest.cpp
@@ -62,10 +67,15 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsLegacyQueryTest PhysicsLegacyQueryTest.cpp
     MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
+    SOURCES
+        ${CMAKE_SOURCE_DIR}/Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Gameplay/Camera/FollowCameraComponent.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Gameplay/Camera/FollowCameraProfile.cpp
 )
 target_link_libraries(PhysicsDynamicsTest PRIVATE Core NorvesModule_Physics)
 target_include_directories(PhysicsDynamicsTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Game
     ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
@@ -87,3 +97,10 @@ add_test(NAME PhysicsRayPrecisionTest COMMAND PhysicsDynamicsTest --test=Physics
 add_test(NAME PhysicsQueryPruningTest COMMAND PhysicsDynamicsTest --test=PhysicsQueryPruningTest)
 
 add_test(NAME PhysicsLegacyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsLegacyQueryTest)
+
+add_test(NAME PhysicsCharacterMoveTest COMMAND PhysicsDynamicsTest --test=PhysicsCharacterMoveTest)
+add_test(NAME ColliderLocalPoseTest COMMAND PhysicsDynamicsTest --test=ColliderLocalPoseTest)
+add_test(NAME CharacterPlatformMotionTest COMMAND PhysicsDynamicsTest --test=CharacterPlatformMotionTest)
+
+add_test(NAME CharacterDriveOptionsTest COMMAND PhysicsDynamicsTest --test=CharacterDriveOptionsTest)
+add_test(NAME DogMovementSmokeGeometryTest COMMAND PhysicsDynamicsTest --test=DogMovementSmokeGeometryTest)

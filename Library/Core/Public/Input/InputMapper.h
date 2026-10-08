@@ -13,6 +13,7 @@ namespace NorvesLib::Core::Input
     {
         bool Valid = false;
         bool Active = false;
+        uint64_t CancellationGeneration = 0;
         EInputMappingValueType Type = EInputMappingValueType::Button;
         InputButtonSnapshot Button;
         Math::Vector2 Axis;
@@ -40,6 +41,8 @@ namespace NorvesLib::Core::Input
         void Detach();
         bool PushContext(Identity context);
         bool PopContext();
+        // 指定contextだけをstackから外す。上に積まれた他contextは維持する。
+        bool RemoveContext(Identity context);
         void ClearContexts();
         Identity GetActiveContext() const;
         ECursorMode GetCursorMode() const;
@@ -53,6 +56,12 @@ namespace NorvesLib::Core::Input
         InputMappedAction GetAction(Identity action) const;
         InputMappedAction GetAction(Identity context, Identity action) const;
         bool ConsumeFixedPress(Identity action);
+        // actionごとの単一消費者向け。旧ConsumeFixedPressと同じactionで混用しない。
+        // capture設定は再Configure後も同じaction IDへ引き継ぎ、保留イベント自体は取消す。
+        bool SetFixedButtonEventCapture(Identity action, bool enabled);
+        bool ConsumeFixedButtonEvent(Identity action, InputButtonEvent& out);
+        // 消費側が0固定frameを跨いで保存した入力も、取消し後に破棄できる世代。
+        uint64_t GetCancellationGeneration() const { return m_CancellationGeneration; }
         void CancelAll();
 
         bool OnKey(const KeyEvent& event) override;
@@ -60,6 +69,7 @@ namespace NorvesLib::Core::Input
         bool OnMouseRawMove(const MouseRawMoveEvent& event) override;
         bool OnMouseScroll(const MouseScrollEvent& event) override;
         bool OnGamepadButton(const GamepadButtonEvent& event) override;
+        bool OnGamepadSample(const GamepadSampleEvent& event) override;
         void OnGamepadConnection(const GamepadConnectionEvent& event) override;
         void OnInputReset() override { CancelAll(); }
         const char* DebugName() const override { return "InputMapper"; }
@@ -77,7 +87,9 @@ namespace NorvesLib::Core::Input
             Identity Id;
             Container::VariableArray<InputBinding> Bindings;
             InputActionRuntime Runtime;
+            uint64_t CancellationGeneration = 0;
         };
+        static void CancelAction(Action& action);
         struct Context
         {
             Identity Id;
@@ -92,10 +104,12 @@ namespace NorvesLib::Core::Input
         const InputState& m_State;
         InputRouter* m_Router = nullptr;
         Container::VariableArray<Context> m_Contexts;
+        Container::VariableArray<Identity> m_FixedEventActions;
         Container::VariableArray<size_t> m_Stack;
         InputArmedState m_Armed;
         double m_Time = 0;
         bool m_Focused = true;
+        uint64_t m_CancellationGeneration = 0;
         InputRebindCaptureManager* m_CaptureOwner = nullptr;
         bool m_bCaptureSuppressed = false;
         InputDebugOverlayController* m_DebugOverlayOwner = nullptr;

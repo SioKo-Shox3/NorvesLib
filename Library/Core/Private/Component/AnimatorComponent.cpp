@@ -33,6 +33,7 @@ namespace NorvesLib::Core::Component
     }
     void AnimatorComponent::Detach()
     {
+        InvalidateRootMotionFrame(true);
         if (m_Graph)
         {
             if (auto* mesh = Mesh())
@@ -102,6 +103,7 @@ namespace NorvesLib::Core::Component
         m_ModifierModels.resize(count);
         mesh->SetExternalAnimationDriven(true);
         m_LastDelta = 0;
+        InvalidateRootMotionFrame(true);
         return true;
     }
     Animation::AnimParamHandle AnimatorComponent::FindParam(Identity name) const
@@ -180,8 +182,41 @@ namespace NorvesLib::Core::Component
         m_Step += seconds;
         return true;
     }
+    void AnimatorComponent::InvalidateRootMotionFrame(bool sourceChanged)
+    {
+        if (sourceChanged && ++m_RootMotionFrame.SourceGeneration == 0)
+            ++m_RootMotionFrame.SourceGeneration;
+        m_RootMotionFrame.bValid = false;
+        m_RootMotionFrame.bConsumed = true;
+        m_RootMotionFrame.Delta = {};
+        m_RootMotionFrame.UpdateSeconds = 0;
+    }
+    bool AnimatorComponent::HasValidRootMotionSource() const
+    {
+        auto* mesh = Mesh();
+        return mesh && m_Graph && m_Graph->IsLoaded() && m_BoundAsset && mesh->GetSkeletalAsset() == m_BoundAsset &&
+               m_BoundAsset->GetSkeleton() == m_BoundSkeleton && m_BoundAsset->GetMesh() == m_BoundMesh &&
+               m_Graph->GetData() == m_Instance.GetGraph();
+    }
+    bool AnimatorComponent::TryConsumeRootMotionFrame(uint64_t serial, Animation::RootMotionDelta& out)
+    {
+        if (!HasValidRootMotionSource())
+        {
+            InvalidateRootMotionFrame(true);
+            return false;
+        }
+        if (!m_RootMotionFrame.bValid || m_RootMotionFrame.bConsumed || serial != m_RootMotionFrame.UpdateSerial)
+            return false;
+        out = m_RootMotionFrame.Delta;
+        m_RootMotionFrame.bConsumed = true;
+        (void)m_Instance.ConsumeRootMotion();
+        return true;
+    }
     bool AnimatorComponent::UpdateAnimation(float dt)
     {
+        InvalidateRootMotionFrame(false);
+        if (++m_RootMotionFrame.UpdateSerial == 0)
+            ++m_RootMotionFrame.UpdateSerial;
         auto* mesh = Mesh();
         if (!mesh || !m_Graph || !m_Graph->IsLoaded() || mesh->GetSkeletalAsset() != m_BoundAsset || !m_BoundAsset ||
             m_BoundAsset->GetSkeleton() != m_BoundSkeleton || m_BoundAsset->GetMesh() != m_BoundMesh ||
@@ -200,6 +235,10 @@ namespace NorvesLib::Core::Component
         }
         m_Step = 0;
         m_LastDelta = step;
+        m_RootMotionFrame.Delta = m_Instance.GetLastRootMotionDelta();
+        m_RootMotionFrame.UpdateSeconds = step;
+        m_RootMotionFrame.bValid = true;
+        m_RootMotionFrame.bConsumed = false;
         return true;
     }
     bool AnimatorComponent::EvaluateAnimation()

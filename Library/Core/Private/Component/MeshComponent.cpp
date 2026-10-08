@@ -369,7 +369,7 @@ namespace NorvesLib::Core::Component
             return;
         }
 
-        const Math::Transform& worldTransform = owner->GetWorldTransform();
+        const Math::Transform& worldTransform = owner->GetRenderWorldTransform();
         outMatrix = Math::MatrixUtils::CreateWorldRowVector(worldTransform.position,
                                                             worldTransform.rotation,
                                                             worldTransform.scale);

@@ -17,6 +17,12 @@ namespace NorvesLib::Core::Animation
         double MinimumPeriod = 0.15, MaximumPeriod = 3;
         double LoopRmsThresholdRadians = 0.05, MinimumMotionRadians = 0.05;
         bool bExtractRootMotion = true;
+        // 動画由来の動きにだけ明示して使う。0の閾値/radiusは従来経路を維持する。
+        double SpikeThresholdRadians = 0, TimeScale = 1;
+        uint32_t SpikeWindowRadius = 2, SmoothingRadius = 0;
+        bool bAverageCycles = false;
+        bool bAnalyzeContacts = false, bGenerateFootMarkers = false, bDeriveRootMotion = false;
+        double DesiredGroundSpeed = 0;
         uint32_t MaximumSamples = 65536, MaximumPoseEvaluations = 262144;
         uint64_t MaximumOutputKeys = uint64_t{1} << 20;
     };
@@ -42,6 +48,7 @@ namespace NorvesLib::Core::Animation
         double SeamVelocityDifferenceRadiansPerSecond = 0;
         double PlanarDistanceMeters = 0, AverageSpeedMetersPerSecond = 0;
         uint32_t PoseEvaluations = 0, OutputSamples = 0;
+        uint32_t ReplacedSpikes = 0, SmoothedChannels = 0, AveragedCycles = 1;
     };
     enum class SkeletalClipProcessingStatus : uint8_t
     {

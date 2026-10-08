@@ -1,0 +1,50 @@
+﻿#pragma once
+#include "Physics/CharacterMoveSettings.h"
+#include "Physics/PhysicsBroadphase.h"
+
+namespace NorvesLib::Modules::Physics
+{
+    struct CharacterMoveRequest
+    {
+        Math::Capsule Shape;
+        Math::Vector3 Displacement;
+        Math::Vector3 PlatformDisplacement;
+        Core::Scene::ColliderHandle PlatformCollider;
+        Core::Scene::PhysicsQueryFilter Filter;
+        bool bWasGrounded = false;
+        bool bAllowGroundSnap = true;
+        bool bAllowStep = true;
+        CharacterMoveRequest()
+        {
+            Filter.TriggerPolicy = Core::Scene::EPhysicsQueryTriggerPolicy::Exclude;
+        }
+    };
+    struct CharacterMoveResult
+    {
+        Math::Capsule Shape;
+        Math::Vector3 Displacement;
+        Math::Vector3 GroundNormal = Math::Vector3::UnitY;
+        Math::Vector3 GroundPoint;
+        Core::Scene::ColliderHandle GroundCollider;
+        Core::Scene::BodyHandle GroundBody;
+        bool bGrounded = false;
+        bool bHitCeiling = false;
+        bool bStepped = false;
+        bool bStuck = false;
+    };
+    struct CharacterMoveScratch
+    {
+        Core::Container::VariableArray<Core::Scene::PhysicsQueryHit> Hits;
+    };
+    class CharacterMover final
+    {
+      public:
+        static bool IsValidSettings(const CharacterMoveSettings& settings);
+        // 入力proxyは同期呼出し中不変。失敗時はoutを変更しない。scratchだけが可変の作業領域。
+        // 足場アンカーの解決、速度積分、イベント、Entityへの適用はここでは行わない。
+        static Core::Scene::EPhysicsSceneQueryResult Move(Core::Container::Span<const PhysicsShapeProxy> proxies,
+                                                          const CharacterMoveSettings& settings,
+                                                          const CharacterMoveRequest& request,
+                                                          CharacterMoveScratch& scratch, CharacterMoveResult& out);
+    };
+} // namespace NorvesLib::Modules::Physics
