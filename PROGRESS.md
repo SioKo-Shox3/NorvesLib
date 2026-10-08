@@ -2539,16 +2539,27 @@
 - 原因: 同じ dispatch の中で別のスレッドが `atomicOr` で書く語を、通常の読み取りで読んでいた箇所が 2 つあった（Vulkan のメモリモデルのデータ競合）。
 - 直し方: (1) `vsm_mark.comp` の `MarkPage` は、読んでから書く形をやめて条件なしの `atomicOr` にした。(2) `vsm_allocate.comp` の `InvalidateRects` は、割り当ての判定の読み取りを `atomicOr(pageTable[entryIndex], 0u)` にした（展開の `PageEntry` と同じ形）。
 - 確かめた箇所（`Assets/Shaders/vsm_*.comp`・`Common/VirtualShadowMap*.glsl`）。`vsm_allocate` の段は 1 段 1 dispatch で、段の間に `BarrierWrites`（`VirtualShadowMapPages.cpp:533`）が入るので、段をまたぐ読み書きは競合しない:
-  - `vsm_mark.comp:57`: 直した（上記 (1)）。
-  - `vsm_allocate.comp:232`（`InvalidateRects`）: 直した（上記 (2)）。ほかのスレッドが `atomicOr` する語は `pageTable` のこの 1 か所だけ。
-  - `vsm_allocate.comp` の `Scroll`・`Age`・`Evict`・`FreeMark`・`DirtyList`: `pageTable` は自分の欄だけを読み書きし、ほかのスレッドが同じ欄を書かない。`stats` は `atomicAdd` のみ。`Evict` の `stats[STAT_EVICT_QUOTA]` の通常の読み取りは、同じ dispatch で書かれない（`EvictPlan` が前の dispatch で書く。同じ dispatch の `atomicAdd` は別の語 `STAT_EVICT_TAKEN`）。
-  - `vsm_allocate.comp` の `FreeReset`・`FreeMark`・`FreeCompact`: `freeList[0]`（`atomicAdd`）・`1 + slot`（一覧）・`UsedFlagIndex`（`1 + pages + physical`）・`AgeIndex` は語の範囲が重ならない。`FreeCompact` の使用済みフラグの読み取りは、前の dispatch（`FreeMark`）が書いたもの。
-  - `vsm_allocate.comp` の `Allocate`: `requestBits` はこの dispatch では書かれない。`pageTable` の 32 欄は 1 スレッドが持つ語の欄で、ほかのスレッドと共有しない。`Finalize`・`EvictPlan` は 1 スレッド。
-  - `vsm_expand.comp`: `pageTable` は `PageEntry`（原子的な読み取り）と再描画の印の `atomicOr` だけ。`draws[0]` は `atomicAdd` のみで、ほかの語は塊ごとに別。`sharedCount`・`sharedCursor` は `atomicAdd` で、通常の読み取りは `barrier()` の後（glslang は `barrier()` に共有メモリの意味を付ける）。`megaListSelected` は別の dispatch（`vsm_mega_cull`）が書いた読み取り専用。
-  - `vsm_expand_args.comp`・`vsm_mega_chunks.comp`・`vsm_dirty_mips.comp`: 読む側は `readonly` で、書く語は `atomicOr`（`dirtyBits`）か 1 スレッド 1 語（`megaChunks`・`draws` の引数）。
-  - `vsm_mega_cull.comp:218-251`: `listSelected`・`listOverflow`・`listInstanceLevels`・`vsmStats` は `atomicAdd` のみで通常の読み取りが無い。`listEntries[slot]` は `atomicAdd` が返した重ならない番号。`dirtyBits` は `readonly`（前の dispatch が書く）。
-  - `vsm_draw.frag:32`: `pool` へは `atomicMin` のみ（通常の読み取りが無い）。`vsm_clear.comp` は前の dispatch で通常の書き込みだけ。
-  - `vsm_sample_probe.comp`: `stats` は `atomicAdd` のみ、`pageTable`・`pool` は `readonly`、結果は 1 スレッド 1 語。
-  - `Common/VirtualShadowMap*.glsl`: 宣言を持たず、`readonly` の `pageTable`・`pool` を読む関数だけ。
+  - `vsm_mark.comp:58-59`（`MarkPage`）: 直した（上記 (1)）。以前は読んでから書く形だったのを、条件なしの `atomicOr(requestBits[word], bit)` にした。
+  - `vsm_allocate.comp:236`（`InvalidateRects`）: 直した（上記 (2)）。判定のための読み取りを `atomicOr(pageTable[entryIndex], 0u)` にした。続く 241 行の `atomicOr(..., PAGE_ENTRY_DIRTY)` と 244 行の `atomicAdd(stats[...])` は原子的。ほかのスレッドが `atomicOr` する語は `pageTable` のこの 1 か所だけ。
+  - `vsm_allocate.comp:157-204`（`Scroll`）: `pageTable[entryIndex]` の読み（164 行）と書き（153 行の `ReleaseEntry`・204 行）は自分の欄だけ。`stats` は 154・197・202 行の `atomicAdd` のみ。競合しない。
+  - `vsm_allocate.comp:250-290`（`Age`）: `pageTable[entryIndex]`（257 行）は自分の欄。`freeList[AgeIndex(physical)]` の読み（281 行）と書き（271・287 行）は物理ページ 1 つにつき 1 欄（割り当て済みの欄と物理ページは 1 対 1）で、ほかのスレッドと共有しない。`stats` は 263・272・288・289 行の `atomicAdd` のみ。競合しない。
+  - `vsm_allocate.comp:292-330`（`EvictPlan`）・`481-500`（`Finalize`）: 1 スレッドだけが実行する（`Finalize` は 483 行で他のスレッドを返す。`freeList[0]`・`dirtyList` は 489-501 行）ので競合しない。`stats[STAT_EVICT_AGE]`・`stats[STAT_EVICT_QUOTA]`（328・329 行）は `Evict` の前の dispatch で書く。
+  - `vsm_allocate.comp:332-358`（`Evict`）: `stats[STAT_EVICT_AGE]`（339 行）・`stats[STAT_EVICT_QUOTA]`（354 行）の通常の読み取りは、この dispatch では書かれない（書くのは `EvictPlan`、前の dispatch）。同じ dispatch で `atomicAdd` する `stats[STAT_EVICT_TAKEN]` は別の語。`pageTable`（344 行）・`freeList[AgeIndex]`（349 行）は自分の欄・自分の物理ページで、`ReleaseEntry` は自分の欄と `stats[STAT_RELEASED]`（`atomicAdd`）だけを書く。競合しない。
+  - `vsm_allocate.comp:360-403`（`FreeReset`・`FreeMark`・`FreeCompact`）: `freeList[0]`（370 行の書き込みは `FreeReset` の dispatch、401 行は `FreeCompact` の `atomicAdd`）。`FreeMark` の `pageTable`（382 行）は読み取りのみ・一覧の語 `1 + slot`（402 行。`atomicAdd` が返した重ならない番号）・使用済みフラグ `UsedFlagIndex`（366 行の初期化は `FreeReset`、390 行の書き込みは `FreeMark`、397 行の読み取りは `FreeCompact` で、それぞれ別の dispatch）・`AgeIndex` は語の範囲が重ならず、段の間に `BarrierWrites` が入る。同じ dispatch で通常に読む語は、同じ dispatch で書かれない。
+  - `vsm_allocate.comp:405-456`（`Allocate`）: `requestBits[wordIndex]`（412 行）はこの dispatch では書かれない（書く `vsm_mark` は前の dispatch）。`pageTable[wordIndex * 32 + bit]`（426・443・451 行）は 1 スレッドが持つ語の 32 欄で、ほかのスレッドと共有しない。`freeList[0]`（436 行）は読み取りのみ、`freeList[freeCount - ordinal]`（450 行）は読み取りのみで、`ordinal` は `atomicAdd(stats[STAT_ALLOC_CURSOR])`（435 行）が返した重ならない範囲から振る。`freeList[AgeIndex(physical)]`（452 行の書き込み）は物理ページ 1 つにつき 1 スレッドしか割り当てない。`stats` は 418・419・435 行の `atomicOr`/`atomicAdd` のみ。競合しない。
+  - `vsm_allocate.comp:458-479`（`DirtyList`）: `pageTable[entryIndex]`（465 行）は読み取りのみで、この dispatch では書かれない。`dirtyList[DIRTY_COUNT]` は 472 行の `atomicAdd`、`dirtyList[DIRTY_FIRST_PAGE + slot]`（473 行）は `atomicAdd` が返した重ならない番号。`stats` は 477 行の `atomicAdd` のみ。競合しない。
+  - `vsm_expand.comp:104-109`（`PageEntry`）・`138`（`MarkRetry`）: `pageTable` の読み取りは `atomicOr(..., 0u)`（109 行）で、書き込みは `atomicOr(..., VSM_PAGE_ENTRY_RETRY)`（138 行）のみ。通常の読み取りは無い。
+  - `vsm_expand.comp:185-186・207・215・221-242・273-275`: `sharedCount`・`sharedCursor` は 207・273 行の `atomicAdd` で、通常の読み取りは `barrier()`（188・211・244 行）の後（215・246・248 行。glslang は `barrier()` に共有メモリの意味を付ける）。`draws[0]` は 221 行の `atomicAdd` のみ、`draws[command + 0..4]`（234-238 行）は塊ごとに別の語で、`command >= VSM_DRAWS_HEADER_WORDS`。`stats` は 225・226・230 行の `atomicAdd` のみ。`instances[sharedBase + slot]`（275 行）は `atomicAdd(sharedCursor)` が返した重ならない番号。`megaChunks[megaIndex]`（163-166 行）・`megaListSelected`（150 行）は `readonly` で、書く `vsm_mega_cull`・`vsm_mega_chunks` は前の dispatch。競合しない。
+  - `vsm_expand_args.comp:43-47`: `megaListSelected`（43 行。`readonly`）を読み、`draws[1..3]`（45-47 行）を 1 スレッドが書く。`draws[0]` は触らない。競合しない。
+  - `vsm_mega_chunks.comp:53-87`: `listSelected`・`listEntries[index]`（53・58 行）は `readonly`、`megaChunks[index]`（87 行）は `writeonly` で 1 スレッド 1 要素。競合しない。
+  - `vsm_dirty_mips.comp:38-50`: `pageTable`（38 行）は `readonly`、書く語は 50 行の `atomicOr(dirtyBits[...])` のみで、`dirtyBits` の通常の読み取りは無い。競合しない。
+  - `vsm_mega_cull.comp:136-251`: `dirtyBits`（136 行）は `readonly`（前の dispatch `vsm_dirty_mips` が書く）。`listInstanceLevels`（218 行）・`listSelected`（242 行）・`listOverflow`（250 行）・`vsmStats`（219・246・251 行）は `atomicAdd` のみで通常の読み取りが無い。`listEntries[slot]`（245 行）は 242 行の `atomicAdd` が返した重ならない番号。競合しない。
+  - `vsm_draw.frag:32`: `pool` へは `atomicMin` のみ（通常の読み取りが無い）。競合しない。
+  - `vsm_clear.comp:59`: `pool[base + offset]` への通常の書き込みのみ（`VsmDirtyList` は `readonly`）。ほかのスレッドと語が重ならず、`vsm_draw.frag` の `atomicMin` は後の描画パス。競合しない。
+  - `vsm_sample_probe.comp:56・68`: `stats[0]` は `atomicAdd`（56 行のマクロ）のみ、`vsmPageTable`・`vsmPool` は `readonly`（43-51 行）、`results[index]`（68 行）は 1 スレッド 1 要素。競合しない。
+  - `Common/VirtualShadowMap.glsl`: バッファの宣言を持たず、`VSM_PAGE_TABLE(i)`・`VSM_POOL(i)` を介して include 側の `readonly` の `pageTable`・`pool`（`vsm_sample_probe.comp` と、ライティングの `Common` 側の宣言）を読む関数だけ。
+  - `Common/VirtualShadowMapParams.glsl`: uniform block のメンバになる構造体の定義だけで、バッファの宣言も読み書きも無い。
+  - `Common/VirtualShadowMapChunk.glsl`: 構造体 `VsmShadowChunk` と補助関数の定義だけで、バッファの宣言も読み書きも無い。
+  - `Common/VirtualShadowMapMegaCull.glsl:51`: `VsmMegaCullParams` の uniform（`std140`）の宣言があるが、uniform は読み取り専用で、storage buffer の読み書きは無い。
 - 検証（`.harness/runs/20261008-100400/`）: `verify-VTG8-FIX-ATOMIC-READS-2.txt`（BUILD_EXIT=0）、`verify-VTG8-FIX-ATOMIC-READS-3.txt`（`VirtualShadowMapVulkanTest`・`RenderGraphCompileTest` が 2/2 passed、CTEST_EXIT=0）。競合はメモリモデルの話で、値の結果は変わらないので、落ちるテストは足していない。GPU の撮影は回していない（既定の描画は CSM）。
 - Next: `TASKS.md` の未完の次の項目。
