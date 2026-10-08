@@ -851,7 +851,7 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG8-ACCEPT-r3/def
 
 ## 段9（VSM 点光源と全体）
 
-判定日: 2026-10-08。ブランチ `feature/vtg-stage9-vsm-point`（main `a2e6dd81` から分岐）。段9の受入れ（計画 5・9）は、夜の電球の影と、8GB 級の上限での全体の負荷モード。検証シーン（golden・R 系）の影は CSM とキューブのまま（計画 2）。
+判定日: 2026-10-09。ブランチ `feature/vtg-stage9-vsm-point`（main `a2e6dd81` から分岐）。段9の受入れ（計画 5・9）は、夜の電球の影と、8GB 級の上限での全体の負荷モード。検証シーン（golden・R 系）の影は CSM とキューブのまま（計画 2）。
 
 段9で入れたもの:
 - VSM の段を「スライス」の表（storage buffer。1 件 96 バイト: 投影の行列・ページの一辺と texel・範囲の原点・ページの表の先頭・投影の種類）に一般化し、上限を 256 にした。太陽の 10 段の後ろに点光源の面を並べる（1 灯 = 6 面 × 6 段 = 36 スライス、面 4096²、ページ 128²、灯は最大 4）。
@@ -861,13 +861,16 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG8-ACCEPT-r3/def
 - 持ち越し: 灯の位置・Range が変わるとその灯のスライスを無効化する。灯の並びが変わると、識別子で対応づけてページの表を新しい番号へ移す。動いた投影物の前後の境界球を面へ写した範囲を無効化する。
 - 既定: Game の起動画面の点光源の影は VSM（`--point-shadow-method=cube` で戻せる。太陽が CSM のときはキューブ）。検証アプリはキューブのまま。半透明（`forward_transparent.frag`）はキューブを読むので、キューブの描画も残る。
 - 負荷モード: CSM と点光源のキューブの定数バッファのスロットを投影物の数に応じて増やし（`DynamicUniformAllocator::SetGrowthLimit`）、負荷モードの影の描画の省略をなくした。テクスチャ・ジオメトリ・MegaGeometry の負荷を同時に有効にできるようにした。
+- 夜の静的な環境光の放射輝度の上限（`StaticEnvironmentMaxRadiance`。Game の `--night` で HDR の値 10）: 夜の環境光（夕焼けの HDRI の 0.08 倍）に残っていた沈みかけの太陽（輝度約 15600）を、鏡面の IBL・背景・RTGI と DDGI の環境に抜けた光線で、色相を保って上限まで縮める。上限なし（既定）の検証アプリと、空が有効な昼には効かない。
+- RTGI の命中面の光線 1 本の値の上限（露出後で白の 4 倍）: 電球のすぐ近くの面に当たった稀な光線が、発光体の標本で桁違いの値を持つホタルを抑える。
+- 照明のパスが同じフレームに複数回描くとき（同じ SceneView の複数のビューポート）、Execute ごとに descriptor set と定数・ライト配列・VSM のバッファの組（最大 4）を使う。
 
 ### 結果の一覧
 
 | 確かめたこと | 方法 | 結果 |
 |---|---|---|
-| 関係する ctest（9 本） | RenderGraphCompileTest・VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・VideoMemoryBudgetManagerTest・golden の Indoor・Outdoor とその予備の経路 | 9/9 passed（`.harness/runs/vtg9-accept/a2-ctest.txt`）。基準画像・閾値は段9で動かしていない |
-| 起動画面（既定 = 太陽・点光源とも VSM） | 朝10°・昼45°・夕3° × 既定・近接・低角度、夜 3 視点（RelWithDebInfo、`-Deterministic`） | 欠けなし（下の所見） |
+| 関係する ctest（14 本） | RenderGraphCompileTest・VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・VideoMemoryBudgetManagerTest・RTGIDiffuseIndirectVulkanTest・スキニングと骨格の 4 本（SkinnedRenderPathContractTest・SkeletalFramePacketSnapshotTest・SkeletalAnimationSamplingTest・SkinnedSubmeshDrawContractTest）・golden の Indoor・Outdoor とその予備の経路 | 14/14 passed（`.harness/runs/vtg9-accept-r3/a2-ctest.txt`、main `1b5e925c` を取り込んだ最終のコード）。基準画像・閾値は段9で動かしていない |
+| 起動画面（既定 = 太陽・点光源とも VSM） | 朝10°・昼45°・夕3° × 既定・近接・低角度、夜 3 視点（RelWithDebInfo、`-Deterministic`） | 欠けなし、夜の橙赤の粒なし（下の所見） |
 | 夜の電球の影 | `--shadow-probe` と視点の旋回（20 度/秒、400 フレーム）、夜の 3 視点、球の自転を止める | 下の節 |
 | 全体の負荷モード | `--vram-budget-mb=6500`、テクスチャ・ジオメトリ・MegaGeometry の負荷を同時に、昼と夜 | 下の節 |
 | 検証レイヤー | Debug の Game、夜の 3 視点（`-Deterministic -ShadowProbe`、球の自転を止める） | `vulkan_validation.error_count`・`warning_count`・`vuid_count` 0、VSM の溢れ 0 |
@@ -875,7 +878,7 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG8-ACCEPT-r3/def
 
 ### 夜の電球の影
 
-`.harness/runs/startup-capture/VTG9-ACCEPT-night-orbit`（`-Deterministic -Night -OrbitDegreesPerSecond 20 -OrbitRenderedFrames 240,320,400 -ShadowProbe -SphereSpin Off`）。標本の道具は段8と同じで、影を持つ最初の灯（電球）の可視度を、同じ標本でキューブと VSM の照明と同じ関数で求める（Range の外・光の当たらない向き・近い平面の内側の標本は数えない）。399 フレーム。値はキューブ / VSM。
+`.harness/runs/startup-capture/VTG9-ACCEPT-r3-night-orbit`（`-Deterministic -Night -OrbitDegreesPerSecond 20 -OrbitRenderedFrames 240,320,400 -ShadowProbe -SphereSpin Off`）。標本の道具は段8と同じで、影を持つ最初の灯（電球）の可視度を、同じ標本でキューブと VSM の照明と同じ関数で求める（Range の外・光の当たらない向き・近い平面の内側の標本は数えない）。399 フレーム。値はキューブ / VSM。
 
 | 視点 | 標本 | texel（mm） | 縁の帯の割合 | mean_abs_delta | flip_ratio | 一致 |
 |---|---|---|---|---|---|---|
@@ -887,7 +890,7 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG8-ACCEPT-r3/def
 - ちらつき: キューブは 0（面がワールドに固定で、標本が毎フレーム同じ texel を読む）。VSM は 0.000003 以下で、カメラとの距離が変わって標本の段・PCF の下限が変わる分。両方とも 0.001 未満。
 - 一致: 0.993〜0.99996。粗い段へ逃げた標本の割合は 0・0・0.000001。
 
-検証レイヤー付き Debug の実行（`.harness/runs/startup-capture/VTG9-ACCEPT-validation`、夜、`-Deterministic -ShadowProbe -SphereSpin Off`）:
+検証レイヤー付き Debug の実行（`.harness/runs/startup-capture/VTG9-ACCEPT-r3-validation`、夜、`-Deterministic -ShadowProbe -SphereSpin Off`）:
 
 | run | texel キューブ / VSM（mm） | 一致 | error_count | VSM の溢れ |
 |---|---|---|---|---|
@@ -940,7 +943,7 @@ RelWithDebInfo、`-GpuTimingFrames 300`、夜、描いた GPU のフレーム 24
 
 ### 起動画面の撮影の所見
 
-PNG を開いて確かめた（`.harness/runs/startup-capture/VTG9-ACCEPT/default-sun45.png`・`near-sun10.png`・`low-sun3.png`、`VTG9-ACCEPT-night/default-night.png`・`near-night.png`・`low-night.png`、旋回の `VTG9-ACCEPT-night-orbit/default-night-orbit-f320.png`）。天球・地面・球・岩・小屋・見本の帯・金色の球・発光の球（電球）が欠けなく見える。昼の太陽の影は段8と同じ見え方。夜は電球の影（見本の球の帯の長い影、大きな球の接地の影、岩の影、近接で岩が石畳に落とす影）が、欠け・ずれ・面やページの継ぎ目なく続く。近接の夜の大きな球の暗い側に出る赤い点は、キューブだった段8の同じ視点（`VTG8-ACCEPT-r3-night/near-night.png`）にも同じ位置にあり、VSM によるものではない。12 枚とも白飛び・黒つぶれの画素率 0、`cooked_missing_count` 0、`failures` は空。
+PNG を開いて確かめた（`.harness/runs/startup-capture/VTG9-ACCEPT-r3/default-sun45.png`・`near-sun10.png`・`low-sun3.png`、`VTG9-ACCEPT-r3-night/default-night.png`・`near-night.png`・`low-night.png`、旋回の `VTG9-ACCEPT-r3-night-orbit/near-night-orbit-f320.png`）。天球・地面・球・岩・小屋・見本の帯・金色の球・発光の球（電球）が欠けなく見える。昼の太陽の影は段8と同じ見え方。夜は電球の影（見本の球の帯の長い影、大きな球の接地の影、岩の影、近接で岩が石畳に落とす影）が、欠け・ずれ・面やページの継ぎ目なく続く。夜の橙赤の粒: 直す前は、夜の近接で大きな球の暗い側に、夜の低角度で見本の小さな球の暗い側に、橙赤の点が散っていた（キューブだった段8の `VTG8-ACCEPT-r3-night/near-night.png` にも同じ位置にあった）。どちらも RTGI の光線の値のホタルで、(1) 環境に抜けた光線が夜の環境光に残った夕日を拾う、(2) 電球のすぐ近くの面に当たった稀な光線が発光体の標本で桁違いの値を持つ、の 2 つ。上の 2 つの上限で消した。暗い側の粒の数（直す前 → 最終）は、近接の大きな球（x 370〜699・y 100〜599 で R − G > 40）が 223 → 0、低角度の見本の球（x 240〜519・y 370〜449 で、輝度の 7×7 の中央値 m ≤ 25・輝度 − m > 12・R − G > 20）が 32 → 2。どちらも RTGI を切った画は 0。直す前の画は `VTG9-ACCEPT-night/near-night.png`・`VTG9-ACCEPT-r2-night/low-night.png`。拡大すると、見本の球の暗い側に暗い細かな粒立ち（孤立した明るい点ではない）が残る。12 枚とも白飛び・黒つぶれの画素率 0、`cooked_missing_count` 0、`failures` は空。
 
 ### golden
 
@@ -950,7 +953,7 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG9-ACCEPT/defaul
 
 - 「夜の電球の影」: 満たす。細かさ: VSM の `mean_texel_mm` と `partial_ratio` が 3 組すべてでキューブ以下（texel 0.15〜0.43 倍、縁の帯 0.08〜0.10 倍）。ちらつき: VSM の `mean_abs_delta`・`flip_ratio` は 0.000003 以下でキューブ（0）より大きいが、3 組すべてで両方とも 0.001 未満なので同等とみなす。一致: 3 組すべてで 0.993 以上（基準 0.98）。
 - 「8GB 級の上限での全体の負荷モード」: 満たす。6500 MB で昼・夜とも予算の内側、プールの使用が目標以下、VSM の溢れ 0、影の描画の省略 0、穴・欠けなし。
-- 起動画面（絶対規則 7）: 満たす。朝・昼・夕・夜で欠けなく見え、Vulkan の検証エラーは 0。
+- 起動画面（絶対規則 7）: 満たす。朝・昼・夕・夜で欠けなく見え、夜の橙赤の粒は消え（上の所見）、Vulkan の検証エラーは 0。
 - GPU 時間: 上の表のとおり（上限は設けない。見張りの 16.6 ms には届かない）。
 
 ### 既知の限界
@@ -962,6 +965,9 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG9-ACCEPT/defaul
 - **全体の負荷モードの測定の時点**: `c6e1cebb`（後の持ち越しの統計の修正と、描画のインスタンスの絞り込みの前）。予算・プールの大きさはその後の変更で変わらない。
 - **GPU 時間の測定環境**: 常駐のアプリが GPU を 23〜35% 使う状態で測った。フレーム全体の差には他のアプリの負荷が混ざる。
 - **測定の前提**: 影の測定の道具は Release では作らない。標本は 4 画素おきの格子。検証レイヤーの範囲は API・状態・スレッドの検証で、同期の検証と GPU 上の検証は有効にしていない。
+- **拡散の IBL は夕日を含んだまま**: 前計算の放射照度は上限の前の HDRI から作るので、夜の環境光の拡散に太陽の分（全エネルギーの約 3.7%）が残る。
+- **RTGI の光線の上限は偏りを持つ**: 白の 4 倍を超える光線を縮めるので、電球のすぐ近くの照り返しがわずかに暗くなる（夜の低角度の画面の平均 67.623 → 67.321、−0.4%。昼の 3 視点は変わらない）。見本の球の暗い側の細かな粒立ちは残る。上の GPU 時間の表は夜の粒を直す前の測定。
+- **同じフレームの複数のビューポート**: 照明のパスは Execute ごとに資源の組を持つが、SSAO・SSR・Bloom・トーンマップ・ボリュームと、照明の中の RTGI・DDGI の計算のパラメータのバッファは 1 本のままで、同じフレームに複数のビューポートを描くと後の Execute が先に記録した値を上書きしうる。照明の組は、前のフレームの提出の完了を待ってから次のフレームを記録する前提（`MAX_FRAMES_IN_FLIGHT = 1`）。
 - **開発機での実測だけ**: RTX 4080（ドライバ 610.88）。
 
 ## 段1〜9 の受入れのまとめ
@@ -976,7 +982,7 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG9-ACCEPT/defaul
 | 6 ビジビリティバッファ | 起動画面と golden が移行前と同等 | 予備の経路との PSNR 48.86〜56.80 dB（12 視点）、平均輝度の差 0.0332 以下。golden pass（Outdoor は再承認） | 満たす |
 | 7 ソフトウェアラスタ | 小さい三角形の多い視点で GPU 時間が下がる | 負荷 300 個で段6より 3.0〜5.1 ms、ソフトなしより 0.11〜0.69 ms 短い | 満たす |
 | 8 VSM（太陽） | 起動画面の太陽の影が CSM 以上に細かく、ちらつかない | texel 0.21〜0.53 倍、縁の帯 0.51〜0.63 倍、変化 0.0001 未満、CSM との一致 0.9992 以上 | 満たす |
-| 9 VSM（点光源）と全体 | 夜の電球の影、8GB 級の上限での全体の負荷モード | texel 0.15〜0.43 倍、縁の帯 0.08〜0.10 倍、変化 0.000003 以下、キューブとの一致 0.993 以上。6500 MB で heap 1.9 GB・溢れ 0・影の省略 0 | 満たす |
+| 9 VSM（点光源）と全体 | 夜の電球の影、8GB 級の上限での全体の負荷モード | texel 0.15〜0.43 倍、縁の帯 0.08〜0.10 倍、変化 0.000003 以下、キューブとの一致 0.993 以上。6500 MB で heap 1.9 GB・溢れ 0・影の省略 0。夜の橙赤の粒 223 → 0・32 → 2 | 満たす |
 
 - 全段を通して、起動画面（天球・地面・球・岩）が朝・昼・夕・夜で欠けなく見え、検証シーンの golden は段6の Outdoor の再承認（`80ec7662`）のほかは基準画像のまま。
 - 計画 1 の目標「8GB 級の GPU で収まる」は、開発機（RTX 4080 16GB）で `--vram-budget-mb` の人工的な上限によって確かめたもので、8GB の実機では測っていない。

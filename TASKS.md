@@ -212,7 +212,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-ACCEPT-night-orbit -Configuration RelWithDebInfo -Deterministic -Night -OrbitDegreesPerSecond 20 -OrbitRenderedFrames 240,320,400 -ShadowProbe -SphereSpin Off`
 - stop-when: 判定の行が満たせない場合は、測定値を記録して止める（判定を緩めない）。
 - paths: Docs/RenderingValidation, TASKS.md, PROGRESS.md
-- notes: 2026-10-08 親（段9の開始時に詳しくした）。ランナーが止まった後に親が行う（backlog）。段の区切りの評価（Sol）にかける。 2026-10-08 親: 受入れを記録した（`Docs/RenderingValidation/VirtualizationAcceptance.md` の「段9（VSM 点光源と全体）」と「段1〜9 の受入れのまとめ」）。検査の出力は `.harness/runs/vtg9-accept/`。
+- notes: 2026-10-08 親（段9の開始時に詳しくした）。ランナーが止まった後に親が行う（backlog）。段の区切りの評価（Sol）にかける。 2026-10-08 親: 受入れを記録した（`Docs/RenderingValidation/VirtualizationAcceptance.md` の「段9（VSM 点光源と全体）」と「段1〜9 の受入れのまとめ」）。検査の出力は `.harness/runs/vtg9-accept/`。2026-10-09 親: 夜の橙赤の粒の修正（VTG9-FIX-NIGHT-ENV-SUN・VTG9-FIX-NIGHT-RTGI-FIREFLIES）と照明のパスの修正（VTG9-FIX-LIGHTING-PER-EXECUTE）、main（`1b5e925c`）の取り込みの後の最終のコードで撮り直し（`.harness/runs/vtg9-accept-r3/`、`VTG9-ACCEPT-r3*`）、記録を最終の値に直した。
 
 ## VTG9-FIX-NIGHT-ENV-SUN: 夜の静的な環境光から夕日を除き、大きな球の暗い側の橙赤の粒をなくす
 - status: done
