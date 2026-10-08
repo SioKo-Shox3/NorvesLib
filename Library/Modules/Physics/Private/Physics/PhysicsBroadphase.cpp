@@ -1,4 +1,5 @@
 ﻿#include "Physics/PhysicsBroadphase.h"
+#include "Physics/TerrainCollision.h"
 
 #include "Math/GeometryIntersection.h"
 #include "Math/VectorUtils.h"
@@ -55,6 +56,8 @@ namespace NorvesLib::Modules::Physics
             const PhysicsShapeProxy& proxy,
             Math::GeometryContact& outContact)
         {
+            if (proxy.Shape == EPhysicsProxyShape::HeightField)
+                return TerrainContact(query, proxy, outContact);
             if (proxy.Shape == EPhysicsProxyShape::Sphere)
             {
                 return Math::ComputeContact(query, proxy.Sphere, outContact);
@@ -78,6 +81,8 @@ namespace NorvesLib::Modules::Physics
             const PhysicsShapeProxy& proxy,
             Math::GeometryContact& outContact)
         {
+            if (proxy.Shape == EPhysicsProxyShape::HeightField)
+                return TerrainContact(query, proxy, outContact);
             if (proxy.Shape == EPhysicsProxyShape::Sphere)
             {
                 if (!Math::ComputeContact(proxy.Sphere, query, outContact))
@@ -105,6 +110,8 @@ namespace NorvesLib::Modules::Physics
             const PhysicsShapeProxy& proxy,
             Math::GeometryContact& outContact)
         {
+            if (proxy.Shape == EPhysicsProxyShape::HeightField)
+                return TerrainContact(query, proxy, outContact);
             if (proxy.Shape == EPhysicsProxyShape::Sphere)
             {
                 return Math::ComputeContact(query, proxy.Sphere, outContact);
@@ -313,6 +320,15 @@ namespace NorvesLib::Modules::Physics
 
         bool RaycastProxy(const Math::Ray& ray, const PhysicsShapeProxy& proxy, double& outDistance)
         {
+            if (proxy.Shape == EPhysicsProxyShape::HeightField)
+            {
+                float distance = 0;
+                Math::Vector3 normal;
+                if (!RaycastTerrain(proxy, ray, FLT_MAX, distance, normal))
+                    return false;
+                outDistance = distance;
+                return true;
+            }
             if (proxy.Shape == EPhysicsProxyShape::Sphere)
             {
                 return RaycastSphere(ray, proxy.Sphere, outDistance);
@@ -326,6 +342,13 @@ namespace NorvesLib::Modules::Physics
 
         Math::Vector3 CalculateRayNormal(const Math::Ray& ray, const PhysicsShapeProxy& proxy, double distance)
         {
+            if (proxy.Shape == EPhysicsProxyShape::HeightField)
+            {
+                float result = 0;
+                Math::Vector3 normal;
+                (void)RaycastTerrain(proxy, ray, float(distance) + .001f, result, normal);
+                return normal;
+            }
             if (distance == 0.0f)
             {
                 return Math::Vector3();
@@ -415,6 +438,8 @@ namespace NorvesLib::Modules::Physics
 
         bool IsValidProxyGeometry(const PhysicsShapeProxy& proxy)
         {
+            if (proxy.Shape == EPhysicsProxyShape::HeightField)
+                return IsValidTerrainProxy(proxy);
             return proxy.Shape == EPhysicsProxyShape::Sphere ? IsValidQueryShape(proxy.Sphere)
                 : proxy.Shape == EPhysicsProxyShape::Box ? IsValidQueryShape(proxy.Box)
                 : proxy.Shape == EPhysicsProxyShape::Capsule && IsValidQueryShape(proxy.Capsule);
@@ -599,6 +624,12 @@ namespace NorvesLib::Modules::Physics
             {
                 includeBox(proxy.Box);
             }
+            else if (proxy.Shape == EPhysicsProxyShape::HeightField)
+            {
+                const auto bounds = TerrainBounds(proxy);
+                includePoint(bounds.Min);
+                includePoint(bounds.Max);
+            }
             else
             {
                 includeCapsule(proxy.Capsule);
@@ -694,6 +725,8 @@ namespace NorvesLib::Modules::Physics
                 return Math::SweepCapsule(shape, proxy.Box, query.Direction, query.MaxDistance, settings);
             case EPhysicsProxyShape::Capsule:
                 return Math::SweepCapsule(shape, proxy.Capsule, query.Direction, query.MaxDistance, settings);
+            case EPhysicsProxyShape::HeightField:
+                return SweepTerrain(shape, proxy, query.Direction, query.MaxDistance, settings);
             }
             Math::GeometrySweepHit result;
             result.Result = Math::EGeometrySweepResult::InvalidArgument;
@@ -1169,6 +1202,8 @@ namespace NorvesLib::Modules::Physics
 
     Math::AABB PhysicsBroadphase::CalculateBounds(const PhysicsShapeProxy& proxy)
     {
+        if (proxy.Shape == EPhysicsProxyShape::HeightField)
+            return TerrainBounds(proxy);
         if (proxy.Shape == EPhysicsProxyShape::Sphere)
         {
             return Math::AABB::FromCenterExtents(proxy.Sphere.Center, Math::Vector3(proxy.Sphere.Radius));
@@ -1202,6 +1237,25 @@ namespace NorvesLib::Modules::Physics
         const PhysicsShapeProxy& second,
         Math::GeometryContact& outContact)
     {
+        if (second.Shape == EPhysicsProxyShape::HeightField)
+        {
+            if (first.Shape == EPhysicsProxyShape::HeightField)
+                return false;
+            return first.Shape == EPhysicsProxyShape::Sphere ? ComputeOverlap(first.Sphere, second, outContact)
+                   : first.Shape == EPhysicsProxyShape::Box  ? ComputeOverlap(first.Box, second, outContact)
+                                                             : ComputeOverlap(first.Capsule, second, outContact);
+        }
+        if (first.Shape == EPhysicsProxyShape::HeightField)
+        {
+            const bool hit =
+                second.Shape == EPhysicsProxyShape::Sphere ? ComputeOverlap(second.Sphere, first, outContact)
+                : second.Shape == EPhysicsProxyShape::Box  ? ComputeOverlap(second.Box, first, outContact)
+                                                           : ComputeOverlap(second.Capsule, first, outContact);
+            if (hit)
+                ReverseContact(outContact);
+            return hit;
+        }
+
         if (first.Shape == EPhysicsProxyShape::Sphere)
         {
             if (second.Shape == EPhysicsProxyShape::Sphere)

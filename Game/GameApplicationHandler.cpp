@@ -487,6 +487,7 @@ namespace Game
         m_bHasTextureAssetRuntimeConfig = false;
         m_bAnimationDebugRequested = false;
         m_bDogMovementSmoke = false;
+        m_bTerrainSmoke = false;
         m_DogDrive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         bool bHasCharacterDrive = false;
         m_bRendering3DTestUseCookedModel = false;
@@ -836,7 +837,7 @@ namespace Game
                 continue;
             }
 
-            if (args[i] == TEXT("--dog-movement-smoke"))
+            if (args[i] == TEXT("--dog-movement-smoke") || args[i] == TEXT("--terrain-smoke"))
             {
                 if (m_bDogMovementSmoke)
                 {
@@ -844,6 +845,7 @@ namespace Game
                     return false;
                 }
                 m_bDogMovementSmoke = true;
+                m_bTerrainSmoke = args[i] == TEXT("--terrain-smoke");
                 continue;
             }
             const auto driveArgument = Gameplay::ParseCharacterDriveArgument(args[i].c_str(), m_DogDrive);
@@ -2083,11 +2085,13 @@ namespace Game
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
         const Container::TWeakPtr<CameraLateUpdateSlot> lateCameraSlot = m_CameraLateUpdateSlot;
         const auto dogDrive = m_DogDrive;
+        const bool terrainSmoke = m_bTerrainSmoke;
         stateMachine->Registry().Register(
-            DogMovementSmoke, [lateCameraSlot, dogDrive](const GameModeParams&) -> Container::TUniquePtr<IGameMode> {
+            DogMovementSmoke, [lateCameraSlot, dogDrive, terrainSmoke](const GameModeParams&) -> Container::TUniquePtr<IGameMode> {
                 auto mode = MakeUnique<DogMovementSmokeMode>();
                 mode->GetData().LateSlot = lateCameraSlot;
                 mode->GetData().Drive = dogDrive;
+                mode->GetData().Terrain = terrainSmoke;
                 return mode;
             });
         stateMachine->Registry().Register(

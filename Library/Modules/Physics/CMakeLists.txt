@@ -21,6 +21,8 @@ set(PHYSICS_PRIVATE_SOURCES
     Private/Physics/ColliderShapeTransform.cpp
     Private/Physics/ColliderComponent.cpp
     Private/Physics/PhysicsBroadphase.cpp
+    Private/Physics/TerrainCollision.h
+    Private/Physics/TerrainCollision.cpp
     Private/Physics/PhysicsModule.cpp
     Private/Physics/RigidBodyComponent.cpp
 )

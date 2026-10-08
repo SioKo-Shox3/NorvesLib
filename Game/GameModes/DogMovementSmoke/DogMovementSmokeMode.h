@@ -20,6 +20,7 @@ namespace Game::GameModes
         uint64_t CharacterId = 0, CameraOwnerId = 0;
         NorvesLib::Core::Engine::TimeScaleHandle HitStop;
         bool PushedContext = false, ReportedReady = false;
+        bool Terrain = false;
     };
     class DogMovementSmokeRoutine
     {

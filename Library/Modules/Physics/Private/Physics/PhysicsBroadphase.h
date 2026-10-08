@@ -1,9 +1,11 @@
 ﻿#pragma once
 
-#include "Container/VariableArray.h"
 #include "Container/Span.h"
+#include "Container/VariableArray.h"
 #include "Math/GeometryTypes.h"
+#include "Math/Transform.h"
 #include "Scene/PhysicsQueryTypes.h"
+#include "Terrain/HeightField.h"
 
 namespace NorvesLib::Modules::Physics
 {
@@ -12,6 +14,7 @@ namespace NorvesLib::Modules::Physics
         Sphere,
         Box,
         Capsule,
+        HeightField,
     };
 
     struct PhysicsShapeProxy
@@ -25,6 +28,8 @@ namespace NorvesLib::Modules::Physics
         Math::OBB Box;
         Math::Capsule Capsule;
         Math::AABB Bounds;
+        Core::Container::TSharedPtr<const Core::Terrain::HeightField> HeightField;
+        Math::Transform TerrainTransform, TerrainLocalPose;
         Core::Scene::PhysicsCollisionMask Layer = Core::Scene::DefaultPhysicsLayer;
         Core::Scene::PhysicsCollisionMask Mask = Core::Scene::AllPhysicsLayers;
         uint64_t UserData = 0;

@@ -4,6 +4,7 @@
 #include "Delegate/Delegate.h"
 #include "Math/Transform.h"
 #include "Physics/PhysicsTypes.h"
+#include "Terrain/HeightField.h"
 
 namespace NorvesLib::Modules::Physics
 {
@@ -14,16 +15,17 @@ namespace NorvesLib::Modules::Physics
         REFLECTION_CLASS(ColliderComponent, Core::Component::Component)
 
     public:
-        EPhysicsResult SetSphere(float radius);
-        EPhysicsResult SetBox(const Math::Vector3& halfExtents);
-        EPhysicsResult SetCapsule(float radius, float halfHeight);
-        // 局所scaleは1。回転なしは既存形状の平行移動、回転ありは非一様scaleを保守的に包む。
-        // 値の変更は次のpublish/明示refreshで反映し、Entityやbody速度は変更しない。
-        EPhysicsResult SetLocalPose(const Math::Transform& localPose);
-        const Math::Transform& GetLocalPose() const
-        {
-            return m_LocalPose;
-        }
+      EPhysicsResult SetHeightField(const Core::Container::TSharedPtr<const Core::Terrain::HeightField>& field);
+      EPhysicsResult SetSphere(float radius);
+      EPhysicsResult SetBox(const Math::Vector3& halfExtents);
+      EPhysicsResult SetCapsule(float radius, float halfHeight);
+      // 局所scaleは1。回転なしは既存形状の平行移動、回転ありは非一様scaleを保守的に包む。
+      // 値の変更は次のpublish/明示refreshで反映し、Entityやbody速度は変更しない。
+      EPhysicsResult SetLocalPose(const Math::Transform& localPose);
+      const Math::Transform& GetLocalPose() const
+      {
+          return m_LocalPose;
+      }
         EPhysicsResult SetTrigger(bool bTrigger);
         // GameThread専用。bit名/割当はゲーム所有。0と複数bitも有効、公開snapshot反映は次のpublish。
         EPhysicsResult SetCollisionLayer(Core::Scene::PhysicsCollisionMask layer);
@@ -50,6 +52,7 @@ namespace NorvesLib::Modules::Physics
             Sphere,
             Box,
             Capsule,
+            HeightField,
         };
 
         struct CallbackSlot
@@ -64,6 +67,7 @@ namespace NorvesLib::Modules::Physics
 
         Core::Scene::ColliderHandle m_ColliderHandle;
         Math::Transform m_LocalPose;
+        Core::Container::TSharedPtr<const Core::Terrain::HeightField> m_HeightField;
         float m_Radius = 0.0f;
         Math::Vector3 m_HalfExtents;
         float m_CapsuleHalfHeight = 0.0f;

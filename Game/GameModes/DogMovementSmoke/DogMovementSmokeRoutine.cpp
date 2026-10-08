@@ -16,6 +16,8 @@
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/RenderWorld.h"
+#include "Terrain/TerrainMesher.h"
+#include <algorithm>
 #include <cmath>
 namespace Game::GameModes
 {
@@ -115,10 +117,31 @@ namespace Game::GameModes
         Container::VariableArray<Mesh3DVertex> vertices;
         Container::VariableArray<uint32_t> indices;
         MeshDataHandle capsuleMesh, planeMesh, sphereMesh, wallMesh;
+        Container::TSharedPtr<const Terrain::HeightField> heightField;
         DogMovementSmokeGeometry::Capsule(vertices, indices);
         if (!RegisterMesh(ctx, vertices, indices, capsuleMesh))
             return GameModeEnterResult::Failed;
-        ProceduralMeshGenerator::GeneratePlane(1, 1, 1, 1, vertices, indices);
+        if (data.Terrain)
+        {
+            // 中央は開始用の平地。外側へ進むと緩い丘と谷へつながる。
+            constexpr uint32_t side = 129;
+            Container::VariableArray<float> heights(side * side);
+            for (uint32_t z = 0; z < side; ++z)
+                for (uint32_t x = 0; x < side; ++x)
+                {
+                    const float px = float(x) * .5f - 32, pz = float(z) * .5f - 32;
+                    const float radius = std::sqrt(px * px + pz * pz);
+                    const float blend = std::clamp((radius - 4.f) / 6.f, 0.f, 1.f);
+                    heights[size_t(z) * side + x] =
+                        blend * blend * (3 - 2 * blend) *
+                        (1.5f * std::sin(px * .18f) * std::cos(pz * .15f) + .4f * std::sin(pz * .5f));
+                }
+            heightField = Terrain::HeightField::Create(side, side, .5f, {heights.data(), heights.size()});
+            if (!heightField || !Terrain::BuildTerrainMesh(*heightField, vertices, indices))
+                return GameModeEnterResult::Failed;
+        }
+        else
+            ProceduralMeshGenerator::GeneratePlane(1, 1, 1, 1, vertices, indices);
         if (!RegisterMesh(ctx, vertices, indices, planeMesh))
             return GameModeEnterResult::Failed;
         ProceduralMeshGenerator::GenerateUVSphere(.08f, 12, 6, vertices, indices);
@@ -144,9 +167,14 @@ namespace Game::GameModes
         auto* wallVisual = ctx.WorldRef.SpawnEntity<Entity>(wall);
         if (!visual || !pose || !nose || !floorVisual || !wallVisual)
             return GameModeEnterResult::Failed;
-        floor->SetPosition({0, -.5f, 0});
-        floorVisual->SetLocalPosition({0, .5f, 0});
-        floorVisual->SetLocalScale({30, 1, 30});
+        if (data.Terrain)
+            floor->SetPosition({-32, 0, -32});
+        else
+        {
+            floor->SetPosition({0, -.5f, 0});
+            floorVisual->SetLocalPosition({0, .5f, 0});
+            floorVisual->SetLocalScale({30, 1, 30});
+        }
         wall->SetPosition({0, 1.5f, -5});
         nose->SetLocalPosition({0, .5f, .34f});
         if (!AttachMesh(ctx, floorVisual, planeMesh, data.Materials[0]) ||
@@ -166,7 +194,9 @@ namespace Game::GameModes
         if (!floorCollider || !wallCollider || !collider || !body || !character || !driver || !follow || !camera ||
             !light)
             return GameModeEnterResult::Failed;
-        if (floorCollider->SetBox({15, .5f, 15}) != P::EPhysicsResult::Success ||
+        const auto floorResult =
+            data.Terrain ? floorCollider->SetHeightField(heightField) : floorCollider->SetBox({15, .5f, 15});
+        if (floorResult != P::EPhysicsResult::Success ||
             wallCollider->SetBox({4, 1.5f, .1f}) != P::EPhysicsResult::Success ||
             collider->SetCapsule(.3f, .1f) != P::EPhysicsResult::Success ||
             collider->SetLocalPose(M::Transform(M::Vector3(0, .4f, 0))) != P::EPhysicsResult::Success ||

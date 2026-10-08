@@ -196,6 +196,7 @@ namespace Game
 
         bool m_bAnimationDebugRequested = false;
         bool m_bDogMovementSmoke = false;
+        bool m_bTerrainSmoke = false;
         NorvesLib::Modules::Physics::CharacterDriveMode m_DogDrive =
             NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
 #if defined(NORVES_ENABLE_IMGUI)

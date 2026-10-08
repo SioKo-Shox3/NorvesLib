@@ -1,4 +1,5 @@
 ﻿#include "Physics/PhysicsModule.h"
+#include "Physics/TerrainCollision.h"
 
 #include "CoreTypes.h"
 #include "Engine/Engine.h"
@@ -501,6 +502,30 @@ namespace NorvesLib::Modules::Physics
         return EPhysicsResult::Success;
     }
 
+    EPhysicsResult PhysicsModule::SetColliderHeightField(
+        ColliderComponent& component, const Core::Container::TSharedPtr<const Core::Terrain::HeightField>& field)
+    {
+        const auto status = ValidateCollider(component);
+        if (status != EPhysicsResult::Success)
+            return status;
+        if (!field || field->GetWidth() < 2 || field->GetDepth() < 2)
+            return EPhysicsResult::InvalidArgument;
+        auto* owner = m_ColliderSlots[component.m_ColliderHandle.Index].Owner;
+        if (auto* body = owner->GetComponent<RigidBodyComponent>())
+            if (body->m_BodyType == EPhysicsBodyType::Dynamic)
+                return EPhysicsResult::InvalidState;
+        PhysicsShapeProxy candidate;
+        candidate.Shape = EPhysicsProxyShape::HeightField;
+        candidate.HeightField = field;
+        candidate.TerrainTransform = GetFreshWorldTransform(*owner);
+        candidate.TerrainLocalPose = component.m_LocalPose;
+        if (!IsValidTerrainProxy(candidate))
+            return EPhysicsResult::InvalidArgument;
+        component.m_HeightField = field;
+        component.m_Shape = ColliderComponent::EColliderShape::HeightField;
+        component.m_bHasShape = true;
+        return EPhysicsResult::Success;
+    }
     EPhysicsResult PhysicsModule::SetColliderSphere(ColliderComponent& component, float radius)
     {
         const EPhysicsResult result = ValidateCollider(component);
@@ -514,6 +539,7 @@ namespace NorvesLib::Modules::Physics
         }
 
         component.m_Radius = radius;
+        component.m_HeightField.reset();
         component.m_Shape = ColliderComponent::EColliderShape::Sphere;
         component.m_bHasShape = true;
         return EPhysicsResult::Success;
@@ -533,6 +559,7 @@ namespace NorvesLib::Modules::Physics
         }
 
         component.m_HalfExtents = halfExtents;
+        component.m_HeightField.reset();
         component.m_Shape = ColliderComponent::EColliderShape::Box;
         component.m_bHasShape = true;
         return EPhysicsResult::Success;
@@ -552,6 +579,7 @@ namespace NorvesLib::Modules::Physics
 
         component.m_Radius = radius;
         component.m_CapsuleHalfHeight = halfHeight;
+        component.m_HeightField.reset();
         component.m_Shape = ColliderComponent::EColliderShape::Capsule;
         component.m_bHasShape = true;
         return EPhysicsResult::Success;
@@ -568,6 +596,18 @@ namespace NorvesLib::Modules::Physics
         const Math::Transform owner = GetFreshWorldTransform(*m_ColliderSlots[component.m_ColliderHandle.Index].Owner);
         if (!IsFiniteVector(owner.TransformPoint(prepared.position)))
             return EPhysicsResult::InvalidArgument;
+        if (component.m_Shape == ColliderComponent::EColliderShape::HeightField)
+        {
+            PhysicsShapeProxy candidate;
+            candidate.Shape = EPhysicsProxyShape::HeightField;
+            candidate.HeightField = component.m_HeightField;
+            candidate.TerrainTransform = owner;
+            candidate.TerrainLocalPose = prepared;
+            if (!IsValidTerrainProxy(candidate))
+                return EPhysicsResult::InvalidArgument;
+            component.m_LocalPose = prepared;
+            return EPhysicsResult::Success;
+        }
         if (component.m_bHasShape)
         {
             EPhysicsProxyShape shape;
@@ -656,6 +696,10 @@ namespace NorvesLib::Modules::Physics
             return EPhysicsResult::InvalidState;
         }
 
+        if (bodyType == EPhysicsBodyType::Dynamic)
+            if (auto* collider = component.GetOwner()->GetComponent<ColliderComponent>())
+                if (collider->m_Shape == ColliderComponent::EColliderShape::HeightField)
+                    return EPhysicsResult::InvalidState;
         component.m_BodyType = bodyType;
         if (bodyType != EPhysicsBodyType::Dynamic)
         {
@@ -1240,6 +1284,16 @@ namespace NorvesLib::Modules::Physics
             proxy.Mask = slot.Component->m_CollisionMask;
             proxy.UserData = slot.Component->m_UserData;
             proxy.bTrigger = slot.Component->m_bTrigger;
+            if (slot.Component->m_Shape == ColliderComponent::EColliderShape::HeightField)
+            {
+                proxy.Shape = EPhysicsProxyShape::HeightField;
+                proxy.HeightField = slot.Component->m_HeightField;
+                proxy.TerrainTransform = transform;
+                proxy.TerrainLocalPose = slot.Component->m_LocalPose;
+                if (IsValidTerrainProxy(proxy))
+                    proxies.push_back(proxy);
+                continue;
+            }
             EPhysicsProxyShape shape;
             switch (slot.Component->m_Shape)
             {

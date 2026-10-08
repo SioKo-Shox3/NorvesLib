@@ -99,6 +99,8 @@ namespace NorvesLib::Modules::Physics
         EPhysicsResult RegisterRigidBody(RigidBodyComponent& component);
         EPhysicsResult UnregisterCollider(ColliderComponent& component);
         EPhysicsResult UnregisterRigidBody(RigidBodyComponent& component);
+        EPhysicsResult SetColliderHeightField(ColliderComponent&,
+                                              const Core::Container::TSharedPtr<const Core::Terrain::HeightField>&);
         EPhysicsResult SetColliderSphere(ColliderComponent& component, float radius);
         EPhysicsResult SetColliderBox(ColliderComponent& component, const Math::Vector3& halfExtents);
         EPhysicsResult SetColliderCapsule(ColliderComponent& component, float radius, float halfHeight);

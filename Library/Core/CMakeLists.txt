@@ -109,6 +109,8 @@ set(PRIVATE_SOURCES
     Private/Animation/AnimGraphSync.cpp
     Private/Animation/AnimGraphRootMotion.cpp
     Private/Animation/RootMotionTimeQueue.cpp
+    Private/Terrain/HeightField.cpp
+    Private/Terrain/TerrainMesher.cpp
     Private/Animation/AnimGraphResource.cpp
     Private/Animation/AnimGraphInstance.cpp
     Private/Component/SocketAttachmentComponent.cpp
@@ -514,6 +516,8 @@ set(PUBLIC_HEADERS
     Public/Animation/AnimationEvents.h
     Public/Animation/RootMotion.h
     Public/Animation/RootMotionTimeQueue.h
+    Public/Terrain/HeightField.h
+    Public/Terrain/TerrainMesher.h
     Public/Animation/MotionAnalysis.h
     Public/Animation/PoseModifier.h
     Public/Component/SocketAttachmentComponent.h

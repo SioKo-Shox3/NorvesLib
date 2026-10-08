@@ -70,3 +70,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 キャラクターのカプセル移動、足場、四足移動モデル、Animationのルート移動をGame側で接続した。カメラは平滑追従、衝突回避、速度に応じたarm/FOV、Entity/関節へのロックオン、任意の自動焦点、揺れ、profileの再読込を持つ。比較シーンは明示起動で、既定のRendering3DTestを維持する。
 
 動画由来クリップの調整をAssetCookのretarget経路へ追加した。role-profileから外れ値除去、周期平滑/平均、時間倍率、接地イベント/marker、自然速度に合わせた時間補正、欠けた前進軌跡の導出を指定できる。処理結果はmotion_report.jsonへ記録する。
+
+## G5 地形の表示と衝突（2026-10-08）
+
+HeightFieldを描画と物理で共有し、通常メッシュへの変換、LOD間引きとskirt、ray/球・箱・capsule overlap/capsule sweepを追加した。Static/Kinematic地形を既存SceneQuery経由でキャラクターとカメラから参照する。--terrain-smokeは中央の平地から丘へ歩ける明示起動のシーン。既定起動は維持する。
+
+関連ソースの構文確認と地形メッシュ・ray・capsule sweepのローカルスモークが成功した。CIは起動していない。G5は層材質・cook・草の実装を継続する。

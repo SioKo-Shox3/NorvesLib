@@ -47,6 +47,12 @@ namespace NorvesLib::Modules::Physics
 
     IMPLEMENT_CLASS(ColliderComponent, Core::Component::Component)
 
+    EPhysicsResult ColliderComponent::SetHeightField(
+        const Core::Container::TSharedPtr<const Core::Terrain::HeightField>& field)
+    {
+        auto* module = FindRegisteredPhysicsModule();
+        return module ? module->SetColliderHeightField(*this, field) : EPhysicsResult::NotRegistered;
+    }
     EPhysicsResult ColliderComponent::SetSphere(float radius)
     {
         PhysicsModule* module = FindRegisteredPhysicsModule();

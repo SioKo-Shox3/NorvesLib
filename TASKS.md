@@ -370,3 +370,9 @@
 - done-when: 既存時間軸/ループ/root抽出に外れ値除去・周期平滑/平均・接地情報・自然速度・時間補正・導出root・reportを接続する。
 - verify: AssetCookとCoreの変更ソースの構文確認。調整値はprofileで変更できる。
 - notes: role-profile processingで明示的に有効化する。足のIK固定や別骨格への再接地は後続項目。
+
+## G5-TERRAIN-BASE: 描画と衝突が共有する地形を接続する
+- status: done
+- done-when: 不変の高さ格子から通常メッシュとLODを生成し、HeightFieldコライダーのray/overlap/sweepを既存SceneQueryへ接続する。明示起動の移動シーンで同じ面を使う。
+- verify: 関連Core/Physics/Gameソースの構文確認と、メッシュ生成・ray・capsule sweepをまとめたローカルスモーク。
+- notes: --terrain-smokeで起伏のある地形を使用。通常起動と--dog-movement-smokeは変更しない。層材質・cook・草はG5の後続実装。
