@@ -188,7 +188,23 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        // 印付けに使える入力か。使えるなら params へクリップマップ由来の値を書く（太陽の段は先頭の LevelCount 件のスライス）
+        // 太陽と点光源に共通の印付けの入力（深度から位置を戻す行列・カメラの位置・画面の大きさ）を書く
+        void FillCommonMarkParams(const VirtualShadowMapPagesDispatch& dispatch, uint32_t width, uint32_t height, GPUVsmParams& params)
+        {
+            for (uint32_t element = 0; element < 16u; ++element)
+            {
+                params.invViewProjection[element] = dispatch.InverseViewProjection[element];
+            }
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                params.cameraPosition[axis] = dispatch.CameraPosition[axis];
+            }
+            params.screen[0] = width;
+            params.screen[1] = height;
+        }
+
+        // 太陽の印付けに使える入力か。使えるなら params へクリップマップ由来の値を書く（太陽の段は先頭の LevelCount 件のスライス）。
+        // 使えないときは太陽の段の数（control[3]）を 0 のままにする（シェーダーは太陽の印付けを飛ばす）
         bool FillMarkParams(const VirtualShadowMapPagesDispatch& dispatch, uint32_t sliceCount, uint32_t width, uint32_t height, GPUVsmParams& params)
         {
             const VirtualShadowMapClipmap* clipmap = dispatch.Clipmap;
@@ -228,27 +244,17 @@ namespace NorvesLib::Core::Rendering
                 shadowNear = 0.0f;
                 shadowFar = clipmap->Settings.MaxShadowDistance;
             }
-            for (uint32_t element = 0; element < 16u; ++element)
-            {
-                params.invViewProjection[element] = dispatch.InverseViewProjection[element];
-            }
             for (uint32_t axis = 0; axis < 3u; ++axis)
             {
                 params.view[axis] = dispatch.CameraForward[axis] / forwardLength;
             }
             params.view[3] = shadowNear;
-            for (uint32_t axis = 0; axis < 3u; ++axis)
-            {
-                params.cameraPosition[axis] = dispatch.CameraPosition[axis];
-            }
             params.lightRight[0] = clipmap->LightRight.x;
             params.lightRight[1] = clipmap->LightRight.y;
             params.lightRight[2] = clipmap->LightRight.z;
             params.lightUp[0] = clipmap->LightUp.x;
             params.lightUp[1] = clipmap->LightUp.y;
             params.lightUp[2] = clipmap->LightUp.z;
-            params.screen[0] = width;
-            params.screen[1] = height;
             params.control[3] = clipmap->LevelCount;
             params.screen[3] = dispatch.MarkFirstSlice;
             params.tuning[0] = dispatch.PcfRadiusTexels;
@@ -453,17 +459,23 @@ namespace NorvesLib::Core::Rendering
         const uint32_t width = dispatch.Depth ? dispatch.Depth->GetWidth() : 0u;
         const uint32_t height = dispatch.Depth ? dispatch.Depth->GetHeight() : 0u;
         GPUVsmParams markParams = baseParams;
-        const bool bMark = dispatch.Depth && width != 0u && height != 0u &&
-                           FillMarkParams(dispatch, sliceCount, width, height, markParams);
+        // 太陽と点光源は別々に使えるか決める（夜は太陽のクリップマップが無効で、点光源だけが印付けをする）
+        const bool bHasDepth = dispatch.Depth && width != 0u && height != 0u;
+        if (bHasDepth)
+        {
+            FillCommonMarkParams(dispatch, width, height, markParams);
+        }
+        const bool bSunMark = bHasDepth && FillMarkParams(dispatch, sliceCount, width, height, markParams);
+        GPUVsmPointParams pointParams = {};
+        const bool bPointMark = bHasDepth && FillPointParams(dispatch, sliceCount, height, pointParams);
+        const bool bMark = bSunMark || bPointMark;
         // スライスの表。外から渡されなければクリップマップから作る（先頭 LevelCount 件が太陽の段）。
         // 印付けに使えないフレームは使わない（印付けを記録しない）
-        GPUVsmPointParams pointParams = {};
-        const bool bPointMark = bMark && FillPointParams(dispatch, sliceCount, height, pointParams);
         GPUVsmSlice markSliceStorage[VirtualShadowMapMaxSlices];
         const GPUVsmSlice* markSlices = dispatch.Slices;
         if (bMark && markSlices == nullptr)
         {
-            BuildVirtualShadowMapSlices(dispatch.Clipmap, nullptr, sliceCount, markSliceStorage);
+            BuildVirtualShadowMapSlices(bSunMark ? dispatch.Clipmap : nullptr, nullptr, sliceCount, markSliceStorage);
             if (bPointMark)
             {
                 BuildVirtualShadowMapPointSlices(*dispatch.PointLights, markSliceStorage);
@@ -520,7 +532,8 @@ namespace NorvesLib::Core::Rendering
         // ----- 前フレームのページの表を引き継げるか -----
         // 引き継ぐには、キャッシュを使い、印付けをして、同じ資源・同じ段の設定で前フレームも記録していること。
         // 引き継がないときは表を 0 にして全部を割り当て直す（資源は未初期化・見張りの値でもよい）
-        const bool bCacheWanted = dispatch.bCacheEnabled && bMark;
+        // キャッシュは太陽のクリップマップの動きを前提にする（点光源のページの無効化は VTG9-VSM-POINT-CACHE）。太陽が無いフレームは引き継がない
+        const bool bCacheWanted = dispatch.bCacheEnabled && bSunMark;
         const bool bContinue = bCacheWanted && bCacheWasValid && m_CachedPageTable == dispatch.PageTable.get() &&
                                m_CachedPool == dispatch.Pool.get() && m_CachedPoolPages == dispatch.PoolPages &&
                                m_CachedSliceCount == sliceCount &&
@@ -558,7 +571,7 @@ namespace NorvesLib::Core::Rendering
             const GPUVsmSlice* allocateSlices = dispatch.Slices;
             if (allocateSlices == nullptr)
             {
-                BuildVirtualShadowMapSlices(bMark ? dispatch.Clipmap : nullptr,
+                BuildVirtualShadowMapSlices(bSunMark ? dispatch.Clipmap : nullptr,
                                             bContinue ? &m_PreviousClipmap : nullptr,
                                             sliceCount,
                                             allocateSliceStorage);

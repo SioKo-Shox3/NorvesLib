@@ -9,8 +9,9 @@
 //
 // 点光源（binding 9 の灯の数が 1 以上のとき）: 同じ位置について、影を持つ灯のうち Range の内側のものごとに、光源からの向きの主軸の面、
 // 面の軸の距離とカメラからの距離で選ぶ解像度の段（CPU の SelectVirtualShadowMapPointMip と同じ式）、面の NDC から求まるページに印を付ける。
-// PCF の核（texel に比例する分 + ワールドの長さの分）は面の座標の 3 × 3 の標本で表し、標本が面の縁を越えるときは向きから選び直した
-// 隣の面の、同じ段のページに印を付ける。面の軸・ページの数・ページの表の先頭はスライスの表から引く。
+// PCF の核（texel に比例する分 + ワールドの長さの分）は受け手の面の接平面上の正方形で表し、各面の錐台で切って、残った部分が
+// 触れるページ（その面の同じ段）のすべてに印を付ける。面の縁をまたぐ核は隣の面の同じ段のページにも付く。
+// 面の軸・ページの数・ページの表の先頭はスライスの表から引く。太陽の段の数（control.w）が 0 のときは点光源だけが印を付ける。
 //
 // 段の選び方は CPU の SelectVirtualShadowMapLevel と同じ結果になるよう、式を写さず、CPU が二分法で求めた距離のしきい値
 // （VirtualShadowMapLevelDistanceThresholds）を使う。距離 d の段は「d >= しきい値となる k の数」。
@@ -98,20 +99,99 @@ uint PointSliceIndex(uint light, uint face, uint mip)
     return points.header.y + (light * POINT_FACE_COUNT + face) * points.header.z + mip;
 }
 
-// 光源からの相対位置 offset（ワールドの向き）の、面 face・段 mip のページに印を付ける。面の軸の距離が近い面より手前なら付けない
-void MarkPointSample(uint light, uint mip, vec3 offset)
+// 面の座標（x, y, 軸の距離 z）での境界の符号つき距離。0 以上が面の錐台の内側
+// （0: 近い面、1〜4: 面の 4 つの縁 z >= |x|, |y|）
+float FaceClipDistance(vec3 p, uint plane)
 {
-    const VsmSlice slice = vsmSlices[PointSliceIndex(light, SelectPointFace(offset), mip)];
-    const float axial = dot(slice.axisZ.xyz, offset);
-    if (!(axial >= points.plane.x))
+    if (plane == 0u)
     {
-        return;
+        return p.z - points.plane.x;
     }
+    if (plane == 1u)
+    {
+        return p.z - p.x;
+    }
+    if (plane == 2u)
+    {
+        return p.z + p.x;
+    }
+    if (plane == 3u)
+    {
+        return p.z - p.y;
+    }
+    return p.z + p.y;
+}
+
+// 四角形を 5 枚の境界で切ると、頂点は 1 枚につき高々 1 つ増える
+const uint MAX_CLIP_VERTICES = 10u;
+
+// 核（光源からの相対位置 offset を中心に、受け手の面の接平面で半径 radius の正方形。axisX・axisY はその接平面の軸）のうち、
+// 面 face の錐台に入る部分を、面 face・段 mip のページへ写して、触れる範囲のすべてのページに印を付ける。
+// 正方形を面の境界で切り（面の縁をまたぐ核は隣の面の側だけが残る）、残った多角形の頂点を面の座標の NDC へ写した外接の範囲を覆う。
+// 平面の多角形の透視による像は凸なので、外接の範囲は取りこぼさない
+void MarkPointFootprint(uint light, uint mip, uint face, vec3 offset, vec3 axisX, vec3 axisY, float radius)
+{
+    const VsmSlice slice = vsmSlices[PointSliceIndex(light, face, mip)];
+    vec3 polygon[MAX_CLIP_VERTICES];
+    vec3 clipped[MAX_CLIP_VERTICES];
+    uint count = 4u;
+    for (uint corner = 0u; corner < 4u; ++corner)
+    {
+        const float sx = (corner == 1u || corner == 2u) ? radius : -radius;
+        const float sy = corner >= 2u ? radius : -radius;
+        const vec3 world = offset + sx * axisX + sy * axisY;
+        polygon[corner] = vec3(dot(slice.axisX.xyz, world), dot(slice.axisY.xyz, world), dot(slice.axisZ.xyz, world));
+    }
+
+    for (uint plane = 0u; plane < 5u; ++plane)
+    {
+        uint clippedCount = 0u;
+        for (uint index = 0u; index < count; ++index)
+        {
+            const vec3 current = polygon[index];
+            const vec3 next = polygon[(index + 1u) % count];
+            const float currentDistance = FaceClipDistance(current, plane);
+            const float nextDistance = FaceClipDistance(next, plane);
+            if (currentDistance >= 0.0)
+            {
+                clipped[clippedCount++] = current;
+            }
+            if ((currentDistance >= 0.0) != (nextDistance >= 0.0))
+            {
+                clipped[clippedCount++] = mix(current, next, currentDistance / (currentDistance - nextDistance));
+            }
+        }
+        if (clippedCount == 0u)
+        {
+            return;
+        }
+        for (uint index = 0u; index < clippedCount; ++index)
+        {
+            polygon[index] = clipped[index];
+        }
+        count = clippedCount;
+    }
+
     // 面の縁・角は丸めで 1 をわずかに超えることがあるので [-1, 1] に収める
-    const vec2 ndc = clamp(vec2(dot(slice.axisX.xyz, offset), dot(slice.axisY.xyz, offset)) / axial, vec2(-1.0), vec2(1.0));
+    vec2 low = vec2(1.0e30);
+    vec2 high = vec2(-1.0e30);
+    for (uint index = 0u; index < count; ++index)
+    {
+        const vec2 ndc = clamp(polygon[index].xy / max(polygon[index].z, 1.0e-6), vec2(-1.0), vec2(1.0));
+        low = min(low, ndc);
+        high = max(high, ndc);
+    }
     const int pageCount = slice.origin.w;
-    const ivec2 page = min(ivec2(max((ndc * 0.5 + 0.5) * float(pageCount), vec2(0.0))), ivec2(pageCount - 1));
-    MarkPage(slice, page.x, page.y);
+    const ivec2 pageLimit = ivec2(pageCount - 1);
+    const ivec2 pageLow = clamp(ivec2(floor((low * 0.5 + 0.5) * float(pageCount))), ivec2(0), pageLimit);
+    const ivec2 pageHigh = clamp(ivec2(floor((high * 0.5 + 0.5) * float(pageCount))), ivec2(0), pageLimit);
+    for (int pageY = pageLow.y; pageY <= pageHigh.y; ++pageY)
+    {
+        for (int pageX = pageLow.x; pageX <= pageHigh.x; ++pageX)
+        {
+            MarkPage(slice, pageX, pageY);
+        }
+    }
 }
 
 void MarkPoints(vec3 world)
@@ -158,13 +238,23 @@ void MarkPoints(vec3 world)
         const VsmSlice slice = vsmSlices[PointSliceIndex(light, face, mip)];
         const float texelMeters = 2.0 * axial / float(points.header.w >> mip);
         const float radius = min(points.tuning.z * texelMeters + points.tuning.w, axial * slice.info.x);
-        for (int row = -1; row <= 1; ++row)
+
+        // 核が届きうる面だけを調べる。核の点は受け手から radius × √2 以内（余裕を見て 1.5 倍）なので、面 f の向きの成分が
+        // 最大の成分より 2 × 余裕 以上小さい面には、どの点も入らない（面は向きの成分が最大の領域）
+        const float reach = 1.5 * radius;
+        const float largest = max(abs(offset.x), max(abs(offset.y), abs(offset.z)));
+        for (uint candidate = 0u; candidate < POINT_FACE_COUNT; ++candidate)
         {
-            for (int column = -1; column <= 1; ++column)
+            if (candidate != face)
             {
-                const vec3 sampleOffset = offset + (float(column) * radius) * slice.axisX.xyz + (float(row) * radius) * slice.axisY.xyz;
-                MarkPointSample(light, mip, sampleOffset);
+                const float component = offset[candidate >> 1u];
+                const float toward = (candidate & 1u) == 0u ? component : -component;
+                if (toward < largest - 2.0 * reach - 1.0e-3 * largest)
+                {
+                    continue;
+                }
             }
+            MarkPointFootprint(light, mip, candidate, offset, slice.axisX.xyz, slice.axisY.xyz, radius);
         }
     }
 }
@@ -230,6 +320,10 @@ void main()
     const vec4 world4 = params.invViewProjection * vec4(uv * 2.0 - 1.0, depth, 1.0);
     const vec3 world = world4.xyz / world4.w;
 
-    MarkSun(world);
+    // 太陽の段の数が 0 のとき（夜など太陽のクリップマップが無効）は太陽の印付けを飛ばす。点光源だけが印を付ける
+    if (params.control.w != 0u)
+    {
+        MarkSun(world);
+    }
     MarkPoints(world);
 }

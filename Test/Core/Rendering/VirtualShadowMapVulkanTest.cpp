@@ -5238,8 +5238,9 @@ namespace
     //
     // 太陽の 5 段（スライス 0〜4）の後ろ（スライス 10 から）に、2 灯 × 6 面 × 6 段のスライスを並べる。合成の深度（床と奥の壁）の各画素について、
     // 影を持つ灯のうち Range の内側のものごとに、面（向きの主軸）・段（面の軸の距離とカメラからの距離）・ページを倍精度で求め、
-    // 核（texel に比例する分）の 3 × 3 の標本が指すページ（面の縁を越える標本は、向きから選んだ隣の面の同じ段のページ）を集める。
-    // 単精度の GPU との差で結果が変わりうる画素（面・段・ページの境目、Range、近い面の端の近く）は空にして除く。
+    // 核（texel に比例する分）= 受け手の面の接平面上の正方形を各面の錐台で切り、残った部分が触れるページ（面の縁をまたぐ核は
+    // 隣の面の同じ段のページ）を集める。単精度の GPU との差で結果が変わりうる画素（面・段・ページの境目、Range、近い面の端の近く、
+    // 核の大きさを少し変えると集合が変わる画素）は空にして除く。
     constexpr double PointAmbiguityMeters = 0.01;
     constexpr double PointAmbiguityRatio = 1.0e-3;
 
@@ -5250,9 +5251,18 @@ namespace
         GPUVsmSlice Slices[VirtualShadowMapMaxSlices] = {};
     };
 
-    PointScene BuildPointScene(const Scene& scene)
+    PointScene BuildPointSceneFrom(const Scene& scene, const PointShadowSnapshot& snapshot)
     {
         PointScene result;
+        result.Lights = BuildVirtualShadowMapPointLights(snapshot, VirtualShadowMapPointSettings{}, VirtualShadowMap::LEVEL_COUNT);
+        result.SliceCount = VirtualShadowMap::LEVEL_COUNT + PointShadowMaxLights * PointShadowFaceCount * VirtualShadowMapPointSettings{}.MipCount;
+        BuildVirtualShadowMapSlices(&scene.Clipmap, nullptr, result.SliceCount, result.Slices);
+        BuildVirtualShadowMapPointSlices(result.Lights, result.Slices);
+        return result;
+    }
+
+    PointScene BuildPointScene(const Scene& scene)
+    {
         PointShadowSnapshot snapshot;
         snapshot.LightCount = 2u;
         // 灯 0: 奥の壁の手前の高い所（床・壁の広い範囲、複数の段）。灯 1: カメラの近くの低い所（Range が短く、床の一部だけ）
@@ -5262,11 +5272,7 @@ namespace
         snapshot.Lights[1].LightId = 102u;
         snapshot.Lights[1].Position = Math::Vector3(-6.0f, 1.0f, -2.0f);
         snapshot.Lights[1].Range = 6.0f;
-        result.Lights = BuildVirtualShadowMapPointLights(snapshot, VirtualShadowMapPointSettings{}, VirtualShadowMap::LEVEL_COUNT);
-        result.SliceCount = VirtualShadowMap::LEVEL_COUNT + PointShadowMaxLights * PointShadowFaceCount * VirtualShadowMapPointSettings{}.MipCount;
-        BuildVirtualShadowMapSlices(&scene.Clipmap, nullptr, result.SliceCount, result.Slices);
-        BuildVirtualShadowMapPointSlices(result.Lights, result.Slices);
-        return result;
+        return BuildPointSceneFrom(scene, snapshot);
     }
 
     double Dot3(const double* a, const double* b)
@@ -5285,6 +5291,226 @@ namespace
         }
         outFace = SelectVirtualShadowMapPointFace(static_cast<float>(v[0]), static_cast<float>(v[1]), static_cast<float>(v[2]));
         return true;
+    }
+
+    // 核の大きさ・ページ番号の境を少し縮めた場合と広げた場合で集合が変わるなら、単精度の GPU と食い違いうるので曖昧な画素にする。
+    // 幅は単精度の誤差（1e-6 程度）より十分大きい
+    constexpr double PointFootprintRadiusSlack = 2.0e-3;
+    constexpr double PointFootprintPageSlack = 2.0e-3;
+    constexpr uint32_t PointClipMaxVertices = 12u;
+
+    struct PointClipPolygon
+    {
+        double Vertices[PointClipMaxVertices][3] = {};
+        uint32_t Count = 0;
+    };
+
+    // 面の座標（x, y, 軸の距離 z）での境界の符号つき距離。0 以上が面の錐台の内側（0: 近い面、1〜4: 面の 4 つの縁。vsm_mark.comp と同じ平面）
+    double PointFaceClipDistance(const double (&p)[3], uint32_t plane)
+    {
+        switch (plane)
+        {
+        case 0u:
+            return p[2] - static_cast<double>(PointShadowNearPlane);
+        case 1u:
+            return p[2] - p[0];
+        case 2u:
+            return p[2] + p[0];
+        case 3u:
+            return p[2] - p[1];
+        default:
+            return p[2] + p[1];
+        }
+    }
+
+    void ClipPointPolygon(PointClipPolygon& polygon)
+    {
+        for (uint32_t plane = 0; plane < 5u && polygon.Count != 0u; ++plane)
+        {
+            PointClipPolygon next;
+            for (uint32_t index = 0; index < polygon.Count; ++index)
+            {
+                const double(&current)[3] = polygon.Vertices[index];
+                const double(&following)[3] = polygon.Vertices[(index + 1u) % polygon.Count];
+                const double currentDistance = PointFaceClipDistance(current, plane);
+                const double followingDistance = PointFaceClipDistance(following, plane);
+                if (currentDistance >= 0.0)
+                {
+                    for (uint32_t axis = 0; axis < 3u; ++axis)
+                    {
+                        next.Vertices[next.Count][axis] = current[axis];
+                    }
+                    ++next.Count;
+                }
+                if ((currentDistance >= 0.0) != (followingDistance >= 0.0))
+                {
+                    const double fraction = currentDistance / (currentDistance - followingDistance);
+                    for (uint32_t axis = 0; axis < 3u; ++axis)
+                    {
+                        next.Vertices[next.Count][axis] = current[axis] + (following[axis] - current[axis]) * fraction;
+                    }
+                    ++next.Count;
+                }
+            }
+            polygon = next;
+        }
+    }
+
+    // 受け手（光源からの相対位置 offset・面 receiverFace・段 mip）の核 = 受け手の面の接平面上の、半径 radius の正方形が触れる点光源のページの鍵
+    // （スライスの番号 × 128 × 128 + 番地）を足す。正方形を各面の錐台で切り、残った多角形の頂点を NDC へ写した外接の範囲のページを集める。
+    // pageSlack はページ番号の境の扱い（ページ単位。正なら範囲を広げ、負なら狭める）。bOwnFaceOnly は受け手の面だけを数える（隣の面へ印を付けない変異）
+    void CollectPointFootprintKeys(const PointScene& pointScene,
+                                   uint32_t light,
+                                   uint32_t receiverFace,
+                                   uint32_t mip,
+                                   const double (&offset)[3],
+                                   double radius,
+                                   double pageSlack,
+                                   bool bOwnFaceOnly,
+                                   Container::VariableArray<uint32_t>& outKeys)
+    {
+        const VirtualShadowMapPointLights& lights = pointScene.Lights;
+        const GPUVsmSlice& receiverSlice = pointScene.Slices[VirtualShadowMapPointSliceIndex(lights, light, receiverFace, mip)];
+        const double tangentX[3] = {receiverSlice.axisX[0], receiverSlice.axisX[1], receiverSlice.axisX[2]};
+        const double tangentY[3] = {receiverSlice.axisY[0], receiverSlice.axisY[1], receiverSlice.axisY[2]};
+        double corners[4][3] = {};
+        for (uint32_t corner = 0; corner < 4u; ++corner)
+        {
+            const double signX = (corner == 1u || corner == 2u) ? radius : -radius;
+            const double signY = corner >= 2u ? radius : -radius;
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                corners[corner][axis] = offset[axis] + signX * tangentX[axis] + signY * tangentY[axis];
+            }
+        }
+        const int32_t pageCount = static_cast<int32_t>(VirtualShadowMapPointPagesPerAxis(lights.Settings, mip));
+        for (uint32_t face = 0; face < PointShadowFaceCount; ++face)
+        {
+            if (bOwnFaceOnly && face != receiverFace)
+            {
+                continue;
+            }
+            const uint32_t sliceIndex = VirtualShadowMapPointSliceIndex(lights, light, face, mip);
+            const GPUVsmSlice& slice = pointScene.Slices[sliceIndex];
+            const double faceX[3] = {slice.axisX[0], slice.axisX[1], slice.axisX[2]};
+            const double faceY[3] = {slice.axisY[0], slice.axisY[1], slice.axisY[2]};
+            const double faceZ[3] = {slice.axisZ[0], slice.axisZ[1], slice.axisZ[2]};
+            PointClipPolygon polygon;
+            polygon.Count = 4u;
+            for (uint32_t corner = 0; corner < 4u; ++corner)
+            {
+                polygon.Vertices[corner][0] = Dot3(faceX, corners[corner]);
+                polygon.Vertices[corner][1] = Dot3(faceY, corners[corner]);
+                polygon.Vertices[corner][2] = Dot3(faceZ, corners[corner]);
+            }
+            ClipPointPolygon(polygon);
+            if (polygon.Count == 0u)
+            {
+                continue;
+            }
+            double low[2] = {1.0e30, 1.0e30};
+            double high[2] = {-1.0e30, -1.0e30};
+            for (uint32_t index = 0; index < polygon.Count; ++index)
+            {
+                for (uint32_t axis = 0; axis < 2u; ++axis)
+                {
+                    const double ndc = std::clamp(polygon.Vertices[index][axis] / std::max(polygon.Vertices[index][2], 1.0e-6), -1.0, 1.0);
+                    low[axis] = std::min(low[axis], ndc);
+                    high[axis] = std::max(high[axis], ndc);
+                }
+            }
+            int32_t pageLow[2] = {};
+            int32_t pageHigh[2] = {};
+            for (uint32_t axis = 0; axis < 2u; ++axis)
+            {
+                pageLow[axis] = std::clamp(static_cast<int32_t>(std::floor((low[axis] * 0.5 + 0.5) * pageCount - pageSlack)), 0, pageCount - 1);
+                pageHigh[axis] = std::clamp(static_cast<int32_t>(std::floor((high[axis] * 0.5 + 0.5) * pageCount + pageSlack)), 0, pageCount - 1);
+            }
+            for (int32_t pageY = pageLow[1]; pageY <= pageHigh[1]; ++pageY)
+            {
+                for (int32_t pageX = pageLow[0]; pageX <= pageHigh[0]; ++pageX)
+                {
+                    outKeys.push_back(sliceIndex * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL + static_cast<uint32_t>(pageY) * static_cast<uint32_t>(pageCount) +
+                                      static_cast<uint32_t>(pageX));
+                }
+            }
+        }
+    }
+
+    // 核を受け手の面の座標の 3 × 3 の標本だけで表した場合のページの鍵（標本が面の縁を越えれば向きから選んだ面の同じ段）。
+    // 標本だけでは隣の面のページを取りこぼす向きがあることを示すためだけに使う（印付けの参照ではない）
+    void CollectPointNineSampleKeys(const PointScene& pointScene,
+                                    uint32_t light,
+                                    uint32_t receiverFace,
+                                    uint32_t mip,
+                                    const double (&offset)[3],
+                                    double radius,
+                                    Container::VariableArray<uint32_t>& outKeys)
+    {
+        const VirtualShadowMapPointLights& lights = pointScene.Lights;
+        const GPUVsmSlice& receiverSlice = pointScene.Slices[VirtualShadowMapPointSliceIndex(lights, light, receiverFace, mip)];
+        const double tangentX[3] = {receiverSlice.axisX[0], receiverSlice.axisX[1], receiverSlice.axisX[2]};
+        const double tangentY[3] = {receiverSlice.axisY[0], receiverSlice.axisY[1], receiverSlice.axisY[2]};
+        const int32_t pageCount = static_cast<int32_t>(VirtualShadowMapPointPagesPerAxis(lights.Settings, mip));
+        for (int32_t row = -1; row <= 1; ++row)
+        {
+            for (int32_t column = -1; column <= 1; ++column)
+            {
+                double sample[3] = {};
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    sample[axis] = offset[axis] + column * radius * tangentX[axis] + row * radius * tangentY[axis];
+                }
+                const uint32_t face = SelectVirtualShadowMapPointFace(static_cast<float>(sample[0]), static_cast<float>(sample[1]), static_cast<float>(sample[2]));
+                const uint32_t sliceIndex = VirtualShadowMapPointSliceIndex(lights, light, face, mip);
+                const GPUVsmSlice& slice = pointScene.Slices[sliceIndex];
+                const double faceX[3] = {slice.axisX[0], slice.axisX[1], slice.axisX[2]};
+                const double faceY[3] = {slice.axisY[0], slice.axisY[1], slice.axisY[2]};
+                const double faceZ[3] = {slice.axisZ[0], slice.axisZ[1], slice.axisZ[2]};
+                const double axial = Dot3(faceZ, sample);
+                if (axial < static_cast<double>(PointShadowNearPlane))
+                {
+                    continue;
+                }
+                int32_t page[2] = {};
+                const double ndc[2] = {std::clamp(Dot3(faceX, sample) / axial, -1.0, 1.0), std::clamp(Dot3(faceY, sample) / axial, -1.0, 1.0)};
+                for (uint32_t axis = 0; axis < 2u; ++axis)
+                {
+                    page[axis] = std::clamp(static_cast<int32_t>(std::floor((ndc[axis] * 0.5 + 0.5) * pageCount)), 0, pageCount - 1);
+                }
+                outKeys.push_back(sliceIndex * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL + static_cast<uint32_t>(page[1]) * static_cast<uint32_t>(pageCount) +
+                                  static_cast<uint32_t>(page[0]));
+            }
+        }
+    }
+
+    // 面の軸の距離 axial の受け手の段: texel（2z ÷ 段の解像度）が目標以下の最も粗い段（どれも超えれば 0）。目標に近い段があれば false
+    bool ChoosePointMip(const VirtualShadowMapPointSettings& settings, double axial, double targetTexel, uint32_t& outMip)
+    {
+        outMip = 0;
+        bool bChosen = false;
+        for (uint32_t candidate = settings.MipCount; candidate-- > 0u;)
+        {
+            const double texel = 2.0 * axial / static_cast<double>(VirtualShadowMapPointMipResolution(settings, candidate));
+            if (std::abs(texel - targetTexel) < PointAmbiguityRatio * targetTexel)
+            {
+                return false;
+            }
+            if (!bChosen && texel <= targetTexel)
+            {
+                outMip = candidate;
+                bChosen = true;
+            }
+        }
+        return true;
+    }
+
+    // 核の半径（ワールドの長さ）: texel に比例する分を、その距離でのページの幅で抑える（vsm_mark.comp と同じ。ワールドの長さの分は既定で 0）
+    double PointKernelRadius(const VirtualShadowMapPointSettings& settings, uint32_t mip, double axial)
+    {
+        const double texelMeters = 2.0 * axial / static_cast<double>(VirtualShadowMapPointMipResolution(settings, mip));
+        return std::min(static_cast<double>(VirtualShadowMap::DEFAULT_PCF_RADIUS_TEXELS) * texelMeters,
+                        axial * 2.0 / static_cast<double>(VirtualShadowMapPointPagesPerAxis(settings, mip)));
     }
 
     struct PointReferenceStats
@@ -5346,8 +5572,6 @@ namespace
                 return PixelKind::Ambiguous;
             }
             const GPUVsmSlice& faceSlice = pointScene.Slices[VirtualShadowMapPointSliceIndex(lights, light, face, 0u)];
-            const double sc[3] = {faceSlice.axisX[0], faceSlice.axisX[1], faceSlice.axisX[2]};
-            const double tc[3] = {faceSlice.axisY[0], faceSlice.axisY[1], faceSlice.axisY[2]};
             const double major[3] = {faceSlice.axisZ[0], faceSlice.axisZ[1], faceSlice.axisZ[2]};
             const double axial = Dot3(major, offset);
             if (std::abs(axial - nearPlane) < PointAmbiguityMeters)
@@ -5361,82 +5585,34 @@ namespace
 
             // 段: texel（2z ÷ 段の解像度）が目標以下の最も粗い段。目標に近い段があれば曖昧
             uint32_t mip = 0;
-            bool bChosen = false;
-            for (uint32_t candidate = settings.MipCount; candidate-- > 0u;)
+            if (!ChoosePointMip(settings, axial, targetTexel, mip))
             {
-                const double texel = 2.0 * axial / static_cast<double>(VirtualShadowMapPointMipResolution(settings, candidate));
-                if (std::abs(texel - targetTexel) < PointAmbiguityRatio * targetTexel)
-                {
-                    return PixelKind::Ambiguous;
-                }
-                if (!bChosen && texel <= targetTexel)
-                {
-                    mip = candidate;
-                    bChosen = true;
-                }
+                return PixelKind::Ambiguous;
             }
-            const uint32_t pageCount = VirtualShadowMapPointPagesPerAxis(settings, mip);
-            const double texelMeters = 2.0 * axial / static_cast<double>(VirtualShadowMapPointMipResolution(settings, mip));
-            const double radius = std::min(static_cast<double>(VirtualShadowMap::DEFAULT_PCF_RADIUS_TEXELS) * texelMeters,
-                                           axial * 2.0 / static_cast<double>(pageCount));
+            const double radius = PointKernelRadius(settings, mip, axial);
             mipMask |= 1u << mip;
             faceMask |= 1u << face;
 
-            for (int32_t row = -1; row <= 1; ++row)
+            // 核の大きさとページ番号の境を縮めた場合と広げた場合で集合が変わるなら曖昧（縮めた側は触れる面が減る・ページが減る）
+            Container::VariableArray<uint32_t> shrunk;
+            Container::VariableArray<uint32_t> expanded;
+            CollectPointFootprintKeys(pointScene, light, face, mip, offset, radius * (1.0 - PointFootprintRadiusSlack), -PointFootprintPageSlack, false, shrunk);
+            CollectPointFootprintKeys(pointScene, light, face, mip, offset, radius * (1.0 + PointFootprintRadiusSlack), PointFootprintPageSlack, false, expanded);
+            SortUnique(shrunk);
+            SortUnique(expanded);
+            if (shrunk != expanded)
             {
-                for (int32_t column = -1; column <= 1; ++column)
-                {
-                    double sample[3] = {};
-                    for (uint32_t axis = 0; axis < 3u; ++axis)
-                    {
-                        sample[axis] = offset[axis] + column * radius * sc[axis] + row * radius * tc[axis];
-                    }
-                    uint32_t sampleFace = 0;
-                    if (!SelectPointFaceChecked(sample, sampleFace))
-                    {
-                        return PixelKind::Ambiguous;
-                    }
-                    if (sampleFace != face)
-                    {
-                        bCross = true;
-                    }
-                    // 変異した印付けと同じに、受け手の面のまま引く場合と、向きから選んだ面を引く場合の両方の鍵を求める
-                    for (const bool bKeepFace : {true, false})
-                    {
-                        const uint32_t useFace = bKeepFace ? face : sampleFace;
-                        const GPUVsmSlice& slice = pointScene.Slices[VirtualShadowMapPointSliceIndex(lights, light, useFace, mip)];
-                        const double faceX[3] = {slice.axisX[0], slice.axisX[1], slice.axisX[2]};
-                        const double faceY[3] = {slice.axisY[0], slice.axisY[1], slice.axisY[2]};
-                        const double faceZ[3] = {slice.axisZ[0], slice.axisZ[1], slice.axisZ[2]};
-                        const double sampleAxial = Dot3(faceZ, sample);
-                        if (!bKeepFace && std::abs(sampleAxial - nearPlane) < PointAmbiguityMeters)
-                        {
-                            return PixelKind::Ambiguous;
-                        }
-                        if (sampleAxial < nearPlane)
-                        {
-                            continue;
-                        }
-                        const double ndc[2] = {std::clamp(Dot3(faceX, sample) / sampleAxial, -1.0, 1.0),
-                                               std::clamp(Dot3(faceY, sample) / sampleAxial, -1.0, 1.0)};
-                        int32_t page[2] = {};
-                        for (uint32_t axis = 0; axis < 2u; ++axis)
-                        {
-                            const double scaled = (ndc[axis] * 0.5 + 0.5) * static_cast<double>(pageCount);
-                            const double fraction = scaled - std::floor(scaled);
-                            // ページの境目からの距離（その距離のワールドの長さ）が許容未満なら曖昧。面の縁（0 と 1 段の一辺）は面の選び方の境目で見ている
-                            if (!bKeepFace && std::min(fraction, 1.0 - fraction) * sampleAxial * 2.0 / static_cast<double>(pageCount) < PointAmbiguityMeters)
-                            {
-                                return PixelKind::Ambiguous;
-                            }
-                            page[axis] = std::min(static_cast<int32_t>(std::max(scaled, 0.0)), static_cast<int32_t>(pageCount) - 1);
-                        }
-                        const uint32_t key = VirtualShadowMapPointSliceIndex(lights, light, useFace, mip) * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL +
-                                             static_cast<uint32_t>(page[1]) * pageCount + static_cast<uint32_t>(page[0]);
-                        (bKeepFace ? noCrossKeys : keys).push_back(key);
-                    }
-                }
+                return PixelKind::Ambiguous;
             }
+            // 隣の面のページが入るか: 鍵のスライスから面を求めて、受け手の面と違えば面をまたぐ核
+            for (const uint32_t key : expanded)
+            {
+                const uint32_t local = key / VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL - lights.FirstSlice;
+                bCross = bCross || (local / settings.MipCount) % PointShadowFaceCount != face;
+            }
+            CollectPointFootprintKeys(pointScene, light, face, mip, offset, radius, 0.0, false, keys);
+            // 変異した印付け（隣の面へ印を付けない）の鍵
+            CollectPointFootprintKeys(pointScene, light, face, mip, offset, radius, 0.0, true, noCrossKeys);
         }
         if (outKeys)
         {
@@ -5514,9 +5690,11 @@ namespace
                           const Container::VariableArray<float>& image,
                           bool bOverflow,
                           bool bFullScene,
-                          uint64_t& frameSerial)
+                          uint64_t& frameSerial,
+                          bool bNoSun = false)
     {
-        const Reference sunReference = BuildReference(scene, image);
+        // 太陽が無い場面（夜）は、太陽のクリップマップを渡さず、要求は点光源の分だけ
+        const Reference sunReference = bNoSun ? Reference{} : BuildReference(scene, image);
         Container::VariableArray<uint32_t> pointKeys;
         PointReferenceStats referenceStats;
         for (uint32_t pixelY = 0; pixelY < ImageHeight; ++pixelY)
@@ -5534,7 +5712,7 @@ namespace
                   << " 面をまたぐ核の画素=" << referenceStats.CrossFacePixels << " 段の集合=0x" << std::hex << referenceStats.MipMask << " 面の集合=0x"
                   << referenceStats.FaceMask << std::dec << " 太陽のページ=" << sunReference.Keys.size() << " 点光源のページ=" << pointKeys.size() << std::endl;
         // 全画素の場面は太陽にも点光源にも要求があり、疎な場面（点光源の隣の面への印だけを見る）は点光源の要求があればよい
-        Expect(pointKeys.size() >= 3u && (!bFullScene || (!sunReference.Keys.empty() && pointKeys.size() >= 6u)),
+        Expect(pointKeys.size() >= 3u && (!bFullScene || ((bNoSun || !sunReference.Keys.empty()) && pointKeys.size() >= 6u)),
                "ケース P: 点光源（全画素の場面では太陽も）に要求がなければならない（場面が退化している）");
 
         const TexturePtr depth = CreateDepthTexture(device, image);
@@ -5543,7 +5721,7 @@ namespace
         const uint32_t requested = static_cast<uint32_t>(expected.size());
         const uint32_t poolPages = bOverflow ? requested / 2u : requested + 24u;
         if (!depth || poolPages == 0u || !CreateResources(device, poolPages, resources, pointScene.SliceCount) ||
-            !RunPages(device, pages, scene, resources, depth, true, frameSerial++, true, readback, &pointScene.Lights, pointScene.SliceCount))
+            !RunPages(device, pages, scene, resources, depth, !bNoSun, frameSerial++, true, readback, &pointScene.Lights, pointScene.SliceCount))
         {
             std::cerr << TestName << " " << label << " を実行できませんでした" << std::endl;
             return false;
@@ -5572,6 +5750,7 @@ namespace
         Container::VariableArray<uint32_t> shared;
         std::set_intersection(sunPhysical.begin(), sunPhysical.end(), pointPhysical.begin(), pointPhysical.end(), std::back_inserter(shared));
         Expect(shared.empty(), "ケース P: 太陽の段のページと点光源の面のページで、物理ページが重なってはならない");
+        Expect(!bNoSun || sunPhysical.empty(), "ケース P: 太陽が無い場面では、太陽の段に割り当ててはならない");
         Expect(readback.Stats[VirtualShadowMap::StatPointRequested] == pointKeys.size(), "ケース P: 点光源の要求の数が参照と一致しなければならない");
         Expect(readback.Stats[VirtualShadowMap::StatPointAllocated] == pointPhysical.size(),
                "ケース P: 点光源の割り当ての数が、ページの表で点光源のスライスに割り当てた欄の数と一致しなければならない");
@@ -5603,6 +5782,151 @@ namespace
         return true;
     }
 
+    // P3: 核を受け手の面の座標の 3 × 3 の標本で表すと隣の面のページを取りこぼす向き（面の縁の近く）で、印が付くページの集合が
+    // 核の全体（正方形を各面の錐台で切った範囲）の参照と一致すること。1 画素について、標本だけでは取りこぼす向きの灯を最大 4 つ、
+    // 光源からその画素への向きが縁の近くになる位置に置く
+    bool RunPointFootprintGapCase(const DevicePtr& device,
+                                  VirtualShadowMapPages& pages,
+                                  const Scene& scene,
+                                  const Container::VariableArray<float>& sunImage,
+                                  uint64_t& frameSerial)
+    {
+        // 地面の安定した画素を 1 つ選ぶ（太陽の曖昧な画素は除いてある）
+        uint32_t pixelX = ImageWidth / 2u + 8u;
+        const uint32_t pixelY = ImageHeight * 3u / 4u;
+        while (pixelX < ImageWidth && !(sunImage[pixelY * ImageWidth + pixelX] < 1.0f))
+        {
+            ++pixelX;
+        }
+        Expect(pixelX < ImageWidth, "ケース P3: 地面の画素が見つからない（場面が退化している）");
+        if (pixelX >= ImageWidth)
+        {
+            return false;
+        }
+        const float depthValue = sunImage[pixelY * ImageWidth + pixelX];
+        double world[3] = {};
+        Unproject(scene, pixelX, pixelY, static_cast<double>(depthValue), world);
+        const double toCamera[3] = {world[0] - scene.CameraPosition[0], world[1] - scene.CameraPosition[1], world[2] - scene.CameraPosition[2]};
+        const double cameraDistance = std::sqrt(Dot3(toCamera, toCamera));
+
+        // 向きの候補（光源から画素への相対位置 = 距離 × (縁の近くの値, y, ±1) の並び）を、光源の位置に依存しない参照の関数で選ぶ。
+        // 4 種類の縁（+Z/±X・-Z/±X）ごとに、標本が取りこぼすページがあり、曖昧でない最初の向きを 1 つ採る
+        const double lightDistance = 40.0;
+        PointShadowSnapshot probeSnapshot;
+        probeSnapshot.LightCount = 1u;
+        probeSnapshot.Lights[0].LightId = 1u;
+        probeSnapshot.Lights[0].Position = Math::Vector3(0.0f, 0.0f, 0.0f);
+        probeSnapshot.Lights[0].Range = 1000.0f;
+        const PointScene probe = BuildPointSceneFrom(scene, probeSnapshot);
+        const VirtualShadowMapPointSettings& settings = probe.Lights.Settings;
+        const double pixelPerMeter = 2.0 * std::tan(static_cast<double>(scene.Camera.FieldOfView) * 3.14159265358979323846 / 360.0) / ImageHeight;
+        const double targetTexel = cameraDistance * pixelPerMeter * std::exp2(static_cast<double>(settings.BiasLevels));
+
+        double chosen[4][3] = {};
+        uint32_t chosenCount = 0;
+        for (uint32_t kind = 0; kind < 4u; ++kind)
+        {
+            const double signX = (kind & 1u) != 0u ? -1.0 : 1.0;
+            const double signZ = (kind & 2u) != 0u ? -1.0 : 1.0;
+            bool bFound = false;
+            for (uint32_t gapIndex = 0; gapIndex < 6u && !bFound; ++gapIndex)
+            {
+                const double gap = 0.0006 + 0.0005 * gapIndex;
+                for (uint32_t yIndex = 0; yIndex < 1800u && !bFound; ++yIndex)
+                {
+                    const double y = -0.9 + 0.001 * yIndex;
+                    const double offset[3] = {signX * (1.0 - gap) * lightDistance, y * lightDistance, signZ * lightDistance};
+                    uint32_t face = 0;
+                    uint32_t mip = 0;
+                    if (!SelectPointFaceChecked(offset, face) || !ChoosePointMip(settings, lightDistance, targetTexel, mip))
+                    {
+                        continue;
+                    }
+                    const double radius = PointKernelRadius(settings, mip, lightDistance);
+                    Container::VariableArray<uint32_t> shrunk;
+                    Container::VariableArray<uint32_t> expanded;
+                    Container::VariableArray<uint32_t> nominal;
+                    Container::VariableArray<uint32_t> nine;
+                    CollectPointFootprintKeys(probe, 0u, face, mip, offset, radius * (1.0 - PointFootprintRadiusSlack), -PointFootprintPageSlack, false, shrunk);
+                    CollectPointFootprintKeys(probe, 0u, face, mip, offset, radius * (1.0 + PointFootprintRadiusSlack), PointFootprintPageSlack, false, expanded);
+                    SortUnique(shrunk);
+                    SortUnique(expanded);
+                    if (shrunk != expanded)
+                    {
+                        continue;
+                    }
+                    nominal = expanded;
+                    CollectPointNineSampleKeys(probe, 0u, face, mip, offset, radius, nine);
+                    SortUnique(nine);
+                    if (std::includes(nine.begin(), nine.end(), nominal.begin(), nominal.end()))
+                    {
+                        continue;
+                    }
+                    for (uint32_t axis = 0; axis < 3u; ++axis)
+                    {
+                        chosen[chosenCount][axis] = offset[axis];
+                    }
+                    ++chosenCount;
+                    bFound = true;
+                }
+            }
+        }
+        Expect(chosenCount >= 3u, "ケース P3: 標本だけでは隣の面のページを取りこぼす向きが見つからない（場面が退化している）");
+        if (chosenCount < 3u)
+        {
+            return false;
+        }
+
+        // 画素から chosen[k] だけ戻した位置に灯を置く
+        PointShadowSnapshot snapshot;
+        snapshot.LightCount = chosenCount;
+        for (uint32_t light = 0; light < chosenCount; ++light)
+        {
+            snapshot.Lights[light].LightId = 201u + light;
+            snapshot.Lights[light].Position = Math::Vector3(static_cast<float>(world[0] - chosen[light][0]),
+                                                            static_cast<float>(world[1] - chosen[light][1]),
+                                                            static_cast<float>(world[2] - chosen[light][2]));
+            snapshot.Lights[light].Range = 200.0f;
+        }
+        const PointScene pointScene = BuildPointSceneFrom(scene, snapshot);
+
+        // 置いた灯でも、標本が取りこぼすページが参照に入っていること（浮動小数の位置の丸めで向きが変わっていないこと）
+        uint32_t gapLights = 0;
+        for (uint32_t light = 0; light < chosenCount; ++light)
+        {
+            const double offset[3] = {world[0] - pointScene.Lights.Position[light].x,
+                                      world[1] - pointScene.Lights.Position[light].y,
+                                      world[2] - pointScene.Lights.Position[light].z};
+            uint32_t face = 0;
+            uint32_t mip = 0;
+            if (!SelectPointFaceChecked(offset, face))
+            {
+                continue;
+            }
+            const GPUVsmSlice& slice = pointScene.Slices[VirtualShadowMapPointSliceIndex(pointScene.Lights, light, face, 0u)];
+            const double major[3] = {slice.axisZ[0], slice.axisZ[1], slice.axisZ[2]};
+            const double axial = Dot3(major, offset);
+            if (!ChoosePointMip(pointScene.Lights.Settings, axial, targetTexel, mip))
+            {
+                continue;
+            }
+            const double radius = PointKernelRadius(pointScene.Lights.Settings, mip, axial);
+            Container::VariableArray<uint32_t> nominal;
+            Container::VariableArray<uint32_t> nine;
+            CollectPointFootprintKeys(pointScene, light, face, mip, offset, radius, 0.0, false, nominal);
+            CollectPointNineSampleKeys(pointScene, light, face, mip, offset, radius, nine);
+            SortUnique(nominal);
+            SortUnique(nine);
+            gapLights += std::includes(nine.begin(), nine.end(), nominal.begin(), nominal.end()) ? 0u : 1u;
+        }
+        Expect(gapLights >= 3u, "ケース P3: 標本だけでは隣の面のページを取りこぼす灯が 3 つ以上なければならない");
+        std::cout << TestName << " ケース P3: 画素=(" << pixelX << "," << pixelY << ") 灯=" << chosenCount << " 標本だけでは取りこぼす灯=" << gapLights << std::endl;
+
+        Container::VariableArray<float> single(ImageWidth * ImageHeight, 1.0f);
+        single[pixelY * ImageWidth + pixelX] = depthValue;
+        return RunPointMarkOnce(device, pages, scene, pointScene, "P3", single, false, false, frameSerial);
+    }
+
     bool RunPointMarkCases(const DevicePtr& device,
                            VirtualShadowMapPages& pages,
                            const Scene& scene,
@@ -5623,7 +5947,7 @@ namespace
             return false;
         }
 
-        // P2: 核が面の縁をまたぐ画素だけ（隣の面の同じ段のページへの印）。受け手の面のまま引く印付け（変異）の鍵より、参照の鍵が多い画素を選ぶ
+        // P2: 核が面の縁をまたぐ画素だけ（隣の面の同じ段のページへの印）。受け手の面だけに印を付ける印付け（変異）の鍵より、参照の鍵が多い画素を選ぶ
         Container::VariableArray<float> sparse(ImageWidth * ImageHeight, 1.0f);
         Container::VariableArray<uint32_t> allKeys;
         Container::VariableArray<uint32_t> allNoCrossKeys;
@@ -5657,7 +5981,14 @@ namespace
                "ケース P2: 核が面の縁をまたぎ、隣の面のページが増える画素が見つからない（場面が退化している）");
         std::cout << TestName << " ケース P2: 選んだ画素=" << picked << " 点光源のページ=" << allKeys.size() << "（隣の面へ印を付けないと " << allNoCrossKeys.size()
                   << "）" << std::endl;
-        return RunPointMarkOnce(device, pages, scene, pointScene, "P2", sparse, false, false, frameSerial);
+        if (!RunPointMarkOnce(device, pages, scene, pointScene, "P2", sparse, false, false, frameSerial))
+        {
+            return false;
+        }
+
+        // P3: 標本だけでは隣の面のページを取りこぼす向き。N1: 太陽が無い場面（夜）でも点光源だけで印付け・割り当てをする
+        return RunPointFootprintGapCase(device, pages, scene, image, frameSerial) &&
+               RunPointMarkOnce(device, pages, scene, pointScene, "N1", image, false, true, frameSerial, true);
     }
 
     int RunTest()
