@@ -41,8 +41,11 @@ namespace NorvesLib::Core::Rendering
             uint32_t control[4]; // x = モード（0 = 標本を固定、1 = 測る）、y = カスケード数、z = 影の有効フラグ、w = 格子の間隔
             float tuning[4];     // x = 深度の一致の許容
             GPUVsmSampleParams vsm; // 太陽の VSM を読むパラメータ（control[0] = 0 なら VSM は測らない）
+            GPUVsmPointSampleParams point; // 点光源の VSM を読むパラメータ
+            uint32_t pointControl[4];      // x = 1 なら点光源（影の灯 0）をキューブと VSM で測る
         };
-        static_assert(sizeof(GPUShadowProbeParams) == 752 + sizeof(GPUVsmSampleParams), "shadow_probe.comp の ProbeParams と同じ大きさにすること");
+        static_assert(sizeof(GPUShadowProbeParams) == 752 + sizeof(GPUVsmSampleParams) + sizeof(GPUVsmPointSampleParams) + 16,
+                      "shadow_probe.comp の ProbeParams と同じ大きさにすること");
 
         // 標本 1 点（位置 + 法線）のバイト数（シェーダーの ProbePoint）
         constexpr uint64_t ProbePointBytes = 32;
@@ -63,8 +66,10 @@ namespace NorvesLib::Core::Rendering
                 RHI::ResourceBindType::RWBuffer,             // 6 統計
                 RHI::ResourceBindType::RWBuffer,             // 7 VSM のページの表
                 RHI::ResourceBindType::RWBuffer,             // 8 VSM の物理ページのプール
+                RHI::ResourceBindType::StructuredBuffer,     // 9 VSM のスライスの表
+                RHI::ResourceBindType::CombinedImageSampler, // 10 点光源のキューブシャドウ
             };
-            for (uint32_t bindingIndex = 0; bindingIndex < 9u; ++bindingIndex)
+            for (uint32_t bindingIndex = 0; bindingIndex < 11u; ++bindingIndex)
             {
                 RHI::DescriptorBinding binding;
                 binding.binding = bindingIndex;
@@ -190,6 +195,7 @@ namespace NorvesLib::Core::Rendering
         m_SceneColorHandle = {};
         m_VsmPageTableHandle = {};
         m_VsmPoolHandle = {};
+        m_PointCubeHandle = {};
         m_bDeclared = false;
         m_bInitialized = false;
     }
@@ -211,6 +217,7 @@ namespace NorvesLib::Core::Rendering
         m_SceneColorHandle = {};
         m_VsmPageTableHandle = {};
         m_VsmPoolHandle = {};
+        m_PointCubeHandle = {};
         m_bDeclared = false;
 
         // 初期化を済ませたのにパイプラインが無いときは何も宣言しない
@@ -257,6 +264,13 @@ namespace NorvesLib::Core::Rendering
                 m_VsmPoolHandle = vsmPool.ToResourceHandle();
             }
         }
+        // 点光源のキューブシャドウ。影を落とす点光源があるフレームだけ公開される（無ければ点光源は測らない）
+        RGTextureHandle pointCube;
+        if (builder.TryGetTexture(RenderGraphResourceNames::PointShadowCubeMap, pointCube) &&
+            builder.TryReadTexture(RenderGraphResourceNames::PointShadowCubeMap, pointCube, RHI::ResourceState::ShaderResource))
+        {
+            m_PointCubeHandle = pointCube;
+        }
         m_bDeclared = true;
         builder.PreserveInsertionOrder();
     }
@@ -283,8 +297,8 @@ namespace NorvesLib::Core::Rendering
                                                                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
                                                                false,
                                                                "ShadowProbe_Points"));
-        // 前のフレームの可視度。前半が CSM、後半が VSM
-        m_StateBuffer = m_Device->CreateBuffer(RHI::BufferDesc(count * 2u * sizeof(float),
+        // 前のフレームの可視度。標本の数ずつ、CSM・太陽の VSM・点光源のキューブ・点光源の VSM の順
+        m_StateBuffer = m_Device->CreateBuffer(RHI::BufferDesc(count * 4u * sizeof(float),
                                                                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
                                                                false,
                                                                "ShadowProbe_State"));
@@ -322,12 +336,17 @@ namespace NorvesLib::Core::Rendering
             use.Uniform = m_Device->CreateBuffer(
                 RHI::BufferDesc(sizeof(GPUShadowProbeParams), RHI::ResourceUsage::ConstantBuffer, true, "ShadowProbeParams"));
         }
+        if (!use.Slices)
+        {
+            use.Slices = m_Device->CreateBuffer(RHI::BufferDesc(
+                sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices, RHI::ResourceUsage::StorageBuffer, true, "ShadowProbeVsmSlices"));
+        }
         if (!use.DescriptorSet)
         {
             use.DescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc());
         }
         outUse = &use;
-        return use.Uniform && use.DescriptorSet;
+        return use.Uniform && use.Slices && use.DescriptorSet;
     }
 
     void ShadowProbePass::HarvestSlot(StatsSlot& slot)
@@ -342,7 +361,14 @@ namespace NorvesLib::Core::Rendering
         }
         else
         {
-            m_Totals.AddMeasuredFrame(slot.Mapped, slot.bVsm);
+            if (slot.bSun)
+            {
+                m_Totals.AddMeasuredFrame(slot.Mapped, slot.bVsm);
+            }
+            if (slot.bPoint)
+            {
+                m_Totals.AddPointFrame(slot.Mapped);
+            }
         }
         slot.bPending = false;
     }
@@ -381,7 +407,17 @@ namespace NorvesLib::Core::Rendering
         const RHI::TexturePtr shadowMap = resources.GetTexture(m_ShadowMapHandle);
         const PhysicalLightingResources& lighting = context.PhysicalLighting;
         const CameraProxy* camera = context.GetActiveCamera();
-        if (!depth || !normal || !shadowMap || !camera || !HasUsableCascadedShadow(lighting))
+        if (!depth || !normal || !shadowMap || !camera)
+        {
+            return;
+        }
+        // 太陽を測るのは、太陽の CSM が使えて、点光源だけを測る指定（--shadow-probe=point）でないとき。そうでなければ（夜・点光源だけの指定）、
+        // 点光源のキューブと VSM があるときに点光源を測る。どちらも測れなければ何もしない
+        const bool bSunUsable = !m_bPointOnly && HasUsableCascadedShadow(lighting);
+        const bool bPointUsable = !bSunUsable && m_PointCubeHandle.IsValid() && lighting.PointShadowCubeTexture &&
+                                  context.SnapshotPointShadows != nullptr &&
+                                  !context.SnapshotPointShadows->IsEmpty() && lighting.PointVsmLights.LightCount != 0u;
+        if (!bSunUsable && !bPointUsable)
         {
             return;
         }
@@ -436,7 +472,7 @@ namespace NorvesLib::Core::Rendering
         params.screen[3] = grid.CountY;
         params.control[0] = bCaptureFrame ? ModeCapture : ModeMeasure;
         params.control[1] = PhysicalLightingShadowCascadeCount;
-        params.control[2] = 1u;
+        params.control[2] = bSunUsable ? 1u : 0u;
         params.control[3] = ShadowProbe::GRID_STEP;
         params.tuning[0] = ShadowProbe::DEPTH_TOLERANCE;
 
@@ -444,28 +480,67 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr vsmPageTable = m_VsmPageTableHandle.IsValid() ? resources.GetBuffer(m_VsmPageTableHandle) : RHI::BufferPtr{};
         RHI::BufferPtr vsmPool = m_VsmPoolHandle.IsValid() ? resources.GetBuffer(m_VsmPoolHandle) : RHI::BufferPtr{};
         bool bVsm = false;
+        bool bPoint = false;
+        GPUVsmSlice vsmSlices[VirtualShadowMapMaxSlices];
+        BuildVirtualShadowMapSlices(nullptr, nullptr, VirtualShadowMapMaxSlices, vsmSlices);
         if (!bCaptureFrame && vsmPageTable && vsmPool && camera->Projection == ProjectionType::Perspective &&
             vsmPageTable->GetSize() >= VirtualShadowMap::PageTableBytes() && vsmPool->GetSize() >= VirtualShadowMap::PAGE_BYTES)
         {
             const float cameraPosition[3] = {camera->PositionX, camera->PositionY, camera->PositionZ};
             const uint64_t poolPages = vsmPool->GetSize() / VirtualShadowMap::PAGE_BYTES;
-            bVsm = BuildVirtualShadowMapSampleParams(&lighting.SunClipmap,
-                                                     cameraPosition,
-                                                     params.cameraForward,
-                                                     lighting.CascadedShadow.SplitDistances,
-                                                     camera->FieldOfView,
-                                                     static_cast<float>(depth->GetHeight()),
-                                                     static_cast<uint32_t>(std::min<uint64_t>(poolPages, VirtualShadowMap::MAX_POOL_PAGES)),
-                                                     params.vsm);
+            const uint32_t clampedPoolPages = static_cast<uint32_t>(std::min<uint64_t>(poolPages, VirtualShadowMap::MAX_POOL_PAGES));
+            if (bSunUsable)
+            {
+                bVsm = BuildVirtualShadowMapSampleParams(&lighting.SunClipmap,
+                                                         cameraPosition,
+                                                         params.cameraForward,
+                                                         lighting.CascadedShadow.SplitDistances,
+                                                         camera->FieldOfView,
+                                                         static_cast<float>(depth->GetHeight()),
+                                                         clampedPoolPages,
+                                                         params.vsm);
+                if (bVsm)
+                {
+                    BuildVirtualShadowMapSlices(&lighting.SunClipmap, nullptr, VirtualShadowMapMaxSlices, vsmSlices);
+                }
+            }
+            if (bPointUsable)
+            {
+                const VirtualShadowMapPointLights& pointLights = lighting.PointVsmLights;
+                bPoint = BuildVirtualShadowMapPointSampleParams(pointLights,
+                                                                cameraPosition,
+                                                                camera->FieldOfView,
+                                                                static_cast<float>(depth->GetHeight()),
+                                                                clampedPoolPages,
+                                                                params.point) &&
+                         vsmPageTable->GetSize() >= VirtualShadowMap::PageTableBytes(pointLights.FirstSlice + pointLights.SliceCount());
+                if (bPoint)
+                {
+                    BuildVirtualShadowMapPointSlices(pointLights, vsmSlices);
+                }
+                else
+                {
+                    std::memset(&params.point, 0, sizeof(params.point));
+                }
+            }
         }
+        if (!bCaptureFrame && !bSunUsable && !bPoint)
+        {
+            return;
+        }
+        params.pointControl[0] = bPoint ? 1u : 0u;
         if (!bVsm)
         {
             std::memset(&params.vsm, 0, sizeof(params.vsm));
-            // 使われない（control.x = 0）ので、別のバッファを置く
+        }
+        if (!bVsm && !bPoint)
+        {
+            // 使われない（control.x = 0・pointControl.x = 0）ので、別のバッファを置く
             vsmPageTable = m_ProbeBuffer;
             vsmPool = m_ProbeBuffer;
         }
         use->Uniform->Update(&params, sizeof(params));
+        use->Slices->Update(vsmSlices, sizeof(vsmSlices));
 
         use->DescriptorSet->BindConstantBuffer(0, use->Uniform, 0, static_cast<uint32_t>(sizeof(params)));
         use->DescriptorSet->BindTexture(1, depth);
@@ -479,6 +554,10 @@ namespace NorvesLib::Core::Rendering
         use->DescriptorSet->BindStorageBuffer(6, slot.Buffer, 0, ShadowProbe::STATS_BYTES);
         use->DescriptorSet->BindStorageBuffer(7, vsmPageTable, 0, static_cast<uint32_t>(std::min<uint64_t>(vsmPageTable->GetSize(), 0xFFFFFFFFull)));
         use->DescriptorSet->BindStorageBuffer(8, vsmPool, 0, static_cast<uint32_t>(std::min<uint64_t>(vsmPool->GetSize(), 0xFFFFFFFFull)));
+        use->DescriptorSet->BindStorageBuffer(9, use->Slices, 0, static_cast<uint32_t>(sizeof(vsmSlices)));
+        // 点光源を測らないフレームは読まれない。照明が公開していないとき（照明が無い構成）は、影の地図を置いて束縛を埋める
+        use->DescriptorSet->BindTexture(10, lighting.PointShadowCubeTexture ? lighting.PointShadowCubeTexture : shadowMap);
+        use->DescriptorSet->BindSampler(10, lighting.PointShadowCubeSampler ? lighting.PointShadowCubeSampler : m_PointSampler);
         use->DescriptorSet->Update();
 
         RHI::ICommandList* commandList = context.CommandList;
@@ -504,6 +583,8 @@ namespace NorvesLib::Core::Rendering
         slot.bPending = true;
         slot.bCapture = bCaptureFrame;
         slot.bVsm = bVsm;
+        slot.bSun = bSunUsable && !bCaptureFrame;
+        slot.bPoint = bPoint;
         if (bCaptureFrame)
         {
             m_bCaptured = true;
@@ -526,21 +607,59 @@ namespace NorvesLib::Core::Rendering
             }
         }
         const ShadowProbe::Totals& totals = m_Totals;
-        NORVES_LOG_INFO("ShadowProbePass",
-                        "SHADOW_PROBE method=csm frames=%llu probes=%llu pairs=%llu mean_abs_delta=%.6f changed_ratio=%.6f flip_ratio=%.6f partial_ratio=%.6f mean_texel_mm=%.3f",
-                        static_cast<unsigned long long>(totals.Frames),
-                        static_cast<unsigned long long>(totals.Probes),
-                        static_cast<unsigned long long>(totals.Pairs),
-                        totals.MeanAbsDelta(),
-                        totals.ChangedRatio(),
-                        totals.FlipRatio(),
-                        totals.PartialRatio(),
-                        totals.MeanTexelMm());
-        // 見えていた標本のうち影の範囲（最初の分割〜最後の分割）の外にあった割合（mean_texel_mm はその分も最後のカスケードで数える）
-        NORVES_LOG_INFO("ShadowProbePass",
-                        "SHADOW_PROBE_DETAIL method=csm visible=%llu out_of_range_ratio=%.6f",
-                        static_cast<unsigned long long>(totals.Visible),
-                        totals.OutOfRangeRatio());
+        // 太陽を測ったフレームがある、または点光源も測らなかったときだけ、太陽（csm）の行を出す（夜・--shadow-probe=point は点光源の行だけ）
+        if (totals.Frames != 0 || totals.PointFrames == 0)
+        {
+            NORVES_LOG_INFO("ShadowProbePass",
+                            "SHADOW_PROBE method=csm frames=%llu probes=%llu pairs=%llu mean_abs_delta=%.6f changed_ratio=%.6f flip_ratio=%.6f partial_ratio=%.6f mean_texel_mm=%.3f",
+                            static_cast<unsigned long long>(totals.Frames),
+                            static_cast<unsigned long long>(totals.Probes),
+                            static_cast<unsigned long long>(totals.Pairs),
+                            totals.MeanAbsDelta(),
+                            totals.ChangedRatio(),
+                            totals.FlipRatio(),
+                            totals.PartialRatio(),
+                            totals.MeanTexelMm());
+            // 見えていた標本のうち影の範囲（最初の分割〜最後の分割）の外にあった割合（mean_texel_mm はその分も最後のカスケードで数える）
+            NORVES_LOG_INFO("ShadowProbePass",
+                            "SHADOW_PROBE_DETAIL method=csm visible=%llu out_of_range_ratio=%.6f",
+                            static_cast<unsigned long long>(totals.Visible),
+                            totals.OutOfRangeRatio());
+        }
+        // 点光源（影を持つ最初の灯）をキューブと VSM で測ったときだけ、light=point の行を出す
+        if (totals.PointFrames != 0)
+        {
+            NORVES_LOG_INFO("ShadowProbePass",
+                            "SHADOW_PROBE light=point method=cube frames=%llu probes=%llu pairs=%llu mean_abs_delta=%.6f changed_ratio=%.6f flip_ratio=%.6f partial_ratio=%.6f mean_texel_mm=%.3f",
+                            static_cast<unsigned long long>(totals.PointFrames),
+                            static_cast<unsigned long long>(totals.Probes),
+                            static_cast<unsigned long long>(totals.PointCubePairs),
+                            totals.PointCubeMeanAbsDelta(),
+                            totals.PointCubeChangedRatio(),
+                            totals.PointCubeFlipRatio(),
+                            totals.PointCubePartialRatio(),
+                            totals.PointCubeMeanTexelMm());
+            NORVES_LOG_INFO("ShadowProbePass",
+                            "SHADOW_PROBE light=point method=vsm frames=%llu probes=%llu pairs=%llu mean_abs_delta=%.6f changed_ratio=%.6f flip_ratio=%.6f partial_ratio=%.6f mean_texel_mm=%.3f",
+                            static_cast<unsigned long long>(totals.PointFrames),
+                            static_cast<unsigned long long>(totals.Probes),
+                            static_cast<unsigned long long>(totals.PointVsmPairs),
+                            totals.PointVsmMeanAbsDelta(),
+                            totals.PointVsmChangedRatio(),
+                            totals.PointVsmFlipRatio(),
+                            totals.PointVsmPartialRatio(),
+                            totals.PointVsmMeanTexelMm());
+            NORVES_LOG_INFO("ShadowProbePass",
+                            "SHADOW_PROBE_AGREE light=point both_definite=%llu agree=%llu ratio=%.6f finer_ratio=%.6f",
+                            static_cast<unsigned long long>(totals.PointBothDefinite),
+                            static_cast<unsigned long long>(totals.PointAgree),
+                            totals.PointAgreeRatio(),
+                            totals.PointFinerRatio());
+            NORVES_LOG_INFO("ShadowProbePass",
+                            "SHADOW_PROBE_DETAIL light=point method=vsm visible=%llu fallback_ratio=%.6f",
+                            static_cast<unsigned long long>(totals.PointVsmVisible),
+                            totals.PointFallbackRatio());
+        }
         // --shadow-method=vsm のとき（VSM を測ったフレームがあるとき）だけ、VSM の行と CSM との一致を出す
         if (totals.VsmFrames != 0)
         {

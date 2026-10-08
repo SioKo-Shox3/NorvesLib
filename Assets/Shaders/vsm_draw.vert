@@ -6,18 +6,26 @@
 // 太陽の仮想シャドウマップ（VSM）の描画: 影の塊 × ページのインスタンスを、物理ページ 1 枚ぶんの 128×128 のビューポートへ描く
 //
 // 展開（vsm_expand.comp）が作った間接描画の 1 回 = 1 つの塊（塊の番号が counts.x 以上なら MegaGeometry のクラスタの記録 = binding 4）。頂点の番号（0 .. 三角形の数 × 3 - 1）から塊の中の三角形とその頂点を決め、
-// インスタンスの番号（展開が書いた範囲の中の位置）から（段・絶対のページ・物理ページ）を引く。
+// インスタンスの番号（展開が書いた範囲の中の位置）から（スライス・絶対のページ・物理ページ）を引く。インスタンスの y は スライス（下位 8 ビット）| 物理ページ << 8。
 // 頂点の読み方は VisLoadTrianglePositions と同じ（記録の BDA。位置だけを読む）。
 //
 // ライト空間の位置（lx, ly）を、そのページの局所の texel 座標 ((lx - ページの x × ページの幅) / texel の一辺) へ写し、
 // 128 texel = NDC の [-1, 1] とする。ページの外はビューポートの外になり、ラスタライザが捨てる。
 // Vulkan のフレームバッファは y が下向きなので、局所の y をそのまま NDC y = 局所 / 64 - 1 とすると、フレームバッファの行が局所の y と一致する。
 // 深度は [0, 1]（0 が光源に近い）で、w = 1 なので画面空間で線形に補間される（正射影）。
+//
+// 点光源の面のスライス（投影の種類が透視）は、ワールドの位置を面の座標（x, y = 面の接線方向、z = 面の軸の向きの距離）へ写し、
+// 面の NDC（x / z, y / z）をページの局所の NDC へ移す。クリップ座標の w は面の軸の距離 z のままにする（xy は NDC × z を線形の式で書く）ので、
+// ラスタライザの透視補間が正しい。z ≤ near の部分は近い平面のクリップで落ち、光源の後ろの頂点を持つ三角形も壊れない。
+// 深度は面の軸の向きの線形の距離 ÷ Range（varying として透視補間される。z はワールドの位置について線形なので補間の誤差が無い）。
 // ========================================
 
 #include "Common/VisibilityBuffer.glsl"
 #include "Common/VisibilityTriangleFetch.glsl"
 #include "Common/VirtualShadowMapChunk.glsl"
+// binding 5: スライスの表（ページの一辺・texel・投影の行列）
+#define VSM_SLICE_BINDING 5
+#include "Common/VirtualShadowMapSlice.glsl"
 
 // std140。VirtualShadowMapRaster.cpp の GPURasterParams と同じ並び
 layout(std140, set = 0, binding = 0) uniform VsmRasterParams
@@ -29,9 +37,6 @@ layout(std140, set = 0, binding = 0) uniform VsmRasterParams
     vec4 depth;
     // x: ホストが書いた塊の数（これ以降の塊の番号は MegaGeometry のクラスタの記録）
     uvec4 counts;
-    // x: ページの一辺（m）、y: texel の一辺（m）
-    vec4 levelInfo[16];
-    ivec4 levelOrigin[16];
 } params;
 
 layout(std430, set = 0, binding = 1) readonly buffer VsmInstances
@@ -86,15 +91,39 @@ void main()
     const vec4 world2 = bMega ? megaChunks[megaIndex].world2 : chunks[instance.x].world2;
     const vec3 world = vec3(dot(world0, local), dot(world1, local), dot(world2, local));
 
-    const uint level = instance.y & 15u;
-    const uint physical = instance.y >> 4u;
+    const uint level = instance.y & 255u;
+    const uint physical = instance.y >> 8u;
     const vec2 page = vec2(float(int(instance.z)), float(int(instance.w)));
-    const float pageMeters = params.levelInfo[level].x;
-    const float texelMeters = params.levelInfo[level].y;
+    // ページの一辺・texel・投影の行列はスライスの表から引く（正射影の段の行列は、ライト空間の基底）
+    const VsmSlice slice = vsmSlices[level];
+    const float pageMeters = slice.info.x;
+    const float texelMeters = slice.info.y;
 
-    const vec2 lightXY = vec2(dot(world, params.lightRight.xyz), dot(world, params.lightUp.xyz));
+    if (uint(slice.extra.z) == VSM_SLICE_PROJECTION_PERSPECTIVE)
+    {
+        // 点光源の面。info.z = Range（m）、info.w = 近い平面の距離（m）。pageMeters・texelMeters は面の NDC の幅（ページ・texel）
+        const float range = slice.info.z;
+        const float nearPlane = slice.info.w;
+        if (!(range > nearPlane) || !(nearPlane >= 0.0))
+        {
+            return;
+        }
+        const vec3 face = vec3(dot(world, slice.axisX.xyz) + slice.axisX.w,
+                               dot(world, slice.axisY.xyz) + slice.axisY.w,
+                               dot(world, slice.axisZ.xyz) + slice.axisZ.w);
+        // ページの局所の NDC = ((面の NDC + 1) - ページ × ページの NDC の幅) / texel の NDC の幅 / 64 - 1。これに w = face.z を掛けた線形の式
+        const vec2 localClip = (face.xy + vec2(face.z) * (1.0 - page * pageMeters)) / (texelMeters * (0.5 * float(VSM_PAGE_RESOLUTION))) - vec2(face.z);
+        // 近い平面 face.z = near で 0、遠い平面 face.z = Range で w と等しくなる線形の深度のクリップ（透視の標準の形）
+        const float clipZ = (face.z - nearPlane) * (range / (range - nearPlane));
+        gl_Position = vec4(localClip, clipZ, face.z);
+        outPhysicalPage = physical;
+        outDepth = face.z / range;
+        return;
+    }
+
+    const vec2 lightXY = vec2(dot(world, slice.axisX.xyz), dot(world, slice.axisY.xyz));
     const vec2 localTexel = (lightXY - page * pageMeters) / texelMeters;
-    const float lightDepth = dot(world, params.lightDirection.xyz);
+    const float lightDepth = dot(world, slice.axisZ.xyz);
     const float depth01 = (lightDepth - params.depth.x) * params.depth.y + 0.5;
 
     gl_Position = vec4(localTexel / (0.5 * float(VSM_PAGE_RESOLUTION)) - vec2(1.0), depth01, 1.0);

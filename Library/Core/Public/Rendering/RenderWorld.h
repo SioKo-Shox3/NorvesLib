@@ -71,8 +71,12 @@ namespace NorvesLib::Core::Rendering
         float SwRasterMaxPixels = DefaultSwRasterMaxPixels;
         /** @brief 太陽の影の標本のパスを足す（--shadow-probe。統計が有効な構成だけで働く） */
         bool bShadowProbe = false;
+        /** @brief 影の標本が太陽ではなく点光源だけを測る（--shadow-probe=point。bShadowProbe が false なら効かない） */
+        bool bShadowProbePointOnly = false;
         /** @brief 太陽の影の方式（--shadow-method=csm|vsm。構造体の既定は CSM。Game の起動引数の既定は VSM） */
         ShadowMethod SunShadowMethod = ShadowMethod::Csm;
+        /** @brief 点光源の影の方式（--point-shadow-method=cube|vsm。既定は cube。vsm は SunShadowMethod が VSM のときだけ効く） */
+        PointShadowMethod PointLightShadowMethod = PointShadowMethod::Cube;
         /** @brief VSM の物理ページのプールのページの数（--vsm-pool-pages。0 は既定の 5120。--shadow-method=vsm のときだけ使う） */
         uint32_t VsmPoolPages = 0;
     };
@@ -188,6 +192,12 @@ namespace NorvesLib::Core::Rendering
          * @param scale 0以上の有限の倍率（1で従来どおり）。次のFramePacketへ値コピーする
          */
         void SetStaticEnvironmentIntensityScale(float scale);
+
+        /**
+         * @brief 静的HDR環境の鏡面（IBLの前計算の値と背景）の放射輝度の上限を設定する（GameThread）
+         * @param maxRadiance 倍率を掛ける前の最大の成分の上限（0以上の有限の値。0は上限なしで既定）。範囲外は0へ戻す
+         */
+        void SetStaticEnvironmentMaxRadiance(float maxRadiance);
 
         /**
          * @brief 決定的な撮影（--capture-deterministic）にする（GameThread）

@@ -33,7 +33,7 @@ namespace NorvesLib::Core::Rendering
         float preExposure;
         uint32_t shadowPadding0;
         float staticEnvironmentScale; // 空が無効なときの静的HDRの背景に掛ける倍率（既定1）
-        uint32_t shadowPadding2;
+        float staticEnvironmentMaxRadiance; // 静的HDRの鏡面と背景の放射輝度の上限（倍率を掛ける前。0は上限なし）
         float skySunDirectionAndCosRadius[4];
         float cameraForward[4];
         GPUDDGILightingParams ddgi;
@@ -71,6 +71,7 @@ namespace NorvesLib::Core::Rendering
     static_assert(offsetof(GPULightingParams, debugViewMode) == 668);
     static_assert(offsetof(GPULightingParams, preExposure) == 672);
     static_assert(offsetof(GPULightingParams, staticEnvironmentScale) == 680);
+    static_assert(offsetof(GPULightingParams, staticEnvironmentMaxRadiance) == 684);
     static_assert(offsetof(GPULightingParams, skySunDirectionAndCosRadius) == 688);
     static_assert(offsetof(GPULightingParams, cameraForward) == 704);
     static_assert(offsetof(GPULightingParams, ddgi) == 720);

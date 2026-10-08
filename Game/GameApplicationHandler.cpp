@@ -2130,6 +2130,7 @@ namespace Game
                 {
                     mode->GetData().m_bStressGeometry = true;
                     mode->GetData().m_StressMegaInstanceCount = s_Rendering3DTestStressGeometryCount;
+                    mode->GetData().m_StressGroundMegaInstanceCount = s_Rendering3DTestStressMegaInstances;
                 }
                 mode->GetData().m_bStartupTemporalAA = s_bRendering3DTestTemporalAA;
                 mode->GetData().m_bStartupNight = s_bRendering3DTestNight;

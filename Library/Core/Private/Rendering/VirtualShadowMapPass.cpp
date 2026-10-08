@@ -24,6 +24,18 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        // ページの表・要求のビット列が持つスライスの数。太陽の段の後ろに、点光源の VSM のとき最大 4 灯 × 6 面 × 解像度の段を並べる
+        // （点光源のスライスは UpdatePointLights が LEVEL_COUNT から並べる）
+        uint32_t SliceCapacityFor(PointShadowMethod method)
+        {
+            return method == PointShadowMethod::Vsm
+                       ? VirtualShadowMap::LEVEL_COUNT + PointShadowMaxLights * PointShadowFaceCount * VirtualShadowMapPointSettings{}.MipCount
+                       : VirtualShadowMap::LEVEL_COUNT;
+        }
+    } // namespace
+
     /**
      * 投影物の塊の記録を作る作業の状態。展開の出力（インスタンス・間接描画の引数）は GPU が書くので全 Execute で 1 つを使い回し、
      * 塊の記録はホストが書くので、フレームの枠（FrameUseRing）ごとに Execute のたびに別のバッファを使う
@@ -51,12 +63,20 @@ namespace NorvesLib::Core::Rendering
         VirtualShadowMap::CasterStats LoggedStats;
         bool bLogged = false;
         uint32_t ReportsSinceLog = 0;
-        /** @brief キャッシュの無効化: 今フレームの投影物の動きの入力・前フレームの記録・無効にするライト空間の矩形 */
+        /** @brief キャッシュの無効化: 今フレームの投影物の動きの入力・前フレームの記録・無効にするライト空間の矩形（太陽の段）と球（点光源の面） */
         Container::VariableArray<VirtualShadowMap::CasterMotionEntry> Motion;
         VirtualShadowMap::CasterMotionTracker MotionTracker;
         Container::VariableArray<VirtualShadowMap::CasterBounds> ChangedBounds;
         Container::VariableArray<float> InvalidationRects;
+        Container::VariableArray<float> InvalidationSpheres;
         bool bInvalidateAll = false;
+        /**
+         * @brief 点光源の VSM のとき（灯が 1 つ以上）に、投影物の集め方と展開が使うスライスの表（太陽の段の後ろに点光源の面を並べたもの）。
+         *        使わないフレーム（bUseSliceTable が false）は、太陽のクリップマップの段だけを見る従来の集め方
+         */
+        GPUVsmSlice SliceTable[VirtualShadowMapMaxSlices];
+        uint32_t SliceTableCount = 0;
+        bool bUseSliceTable = false;
     };
 
     namespace
@@ -180,6 +200,37 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_INFO("VirtualShadowMapPass",
                         "VSM_FALLBACK reason=%s",
                         VirtualShadowMap::FallbackReasonName(reason));
+        if (m_PointShadowMethod == PointShadowMethod::Vsm)
+        {
+            // 点光源の VSM は太陽の VSM の資源の上に乗るので、キューブのまま描く
+            NORVES_LOG_INFO("VirtualShadowMapPass",
+                            "VSM_FALLBACK reason=%s",
+                            VirtualShadowMap::PointRequiresVsmReasonName);
+        }
+    }
+
+    void VirtualShadowMapPass::UpdatePointLights(const ViewRenderContext& context)
+    {
+        PointShadowSnapshot emptySnapshot;
+        const PointShadowSnapshot& snapshot = context.SnapshotPointShadows != nullptr ? *context.SnapshotPointShadows : emptySnapshot;
+        // 点光源のスライスは太陽の段（LEVEL_COUNT 件）の後ろに並べる
+        const VirtualShadowMapPointLights lights =
+            BuildVirtualShadowMapPointLights(snapshot, VirtualShadowMapPointSettings{}, VirtualShadowMap::LEVEL_COUNT);
+        if (!m_bPointLightsLogged || VirtualShadowMapPointLightsDiffer(lights, m_PointLights))
+        {
+            m_bPointLightsLogged = true;
+            m_PointLights = lights;
+            NORVES_LOG_INFO("VirtualShadowMapPass",
+                            "VSM_POINT lights=%u slices=%u face_res=%u mips=%u",
+                            lights.LightCount,
+                            lights.SliceCount(),
+                            lights.Settings.FaceResolution,
+                            lights.Settings.MipCount);
+        }
+        else
+        {
+            m_PointLights = lights;
+        }
     }
 
     void VirtualShadowMapPass::ReleaseResources()
@@ -295,9 +346,10 @@ namespace NorvesLib::Core::Rendering
             m_Pool = m_Device->CreateBuffer(RHI::BufferDesc(
                 poolBytes, storageUsage | RHI::ResourceUsage::BufferDeviceAddress, false, "VSM_PhysicalPool"));
             m_PageTable = m_Device->CreateBuffer(
-                RHI::BufferDesc(VirtualShadowMap::PageTableBytes(), storageUsage, false, "VSM_PageTable"));
+                RHI::BufferDesc(VirtualShadowMap::PageTableBytes(SliceCapacityFor(m_PointShadowMethod)),
+                                storageUsage | RHI::ResourceUsage::TransferSrc, false, "VSM_PageTable"));
             m_RequestBits = m_Device->CreateBuffer(
-                RHI::BufferDesc(VirtualShadowMap::RequestBitsBytes(), storageUsage, false, "VSM_RequestBits"));
+                RHI::BufferDesc(VirtualShadowMap::RequestBitsBytes(SliceCapacityFor(m_PointShadowMethod)), storageUsage, false, "VSM_RequestBits"));
             m_FreeList = m_Device->CreateBuffer(RHI::BufferDesc(freeListBytes, storageUsage, false, "VSM_FreeList"));
             m_Stats = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::STATS_BYTES, statsUsage, false, "VSM_Stats"));
             // 消去するページの一覧は、間接 dispatch の引数としても読まれる
@@ -324,7 +376,10 @@ namespace NorvesLib::Core::Rendering
                                                                     false,
                                                                     "VsmMega_List"));
                 m_MegaDirtyBits = m_Device->CreateBuffer(
-                    RHI::BufferDesc(VirtualShadowMap::MegaDirtyBitsBytes(), VirtualShadowMap::MegaDirtyBitsUsage(), false, "VsmMega_DirtyBits"));
+                    RHI::BufferDesc(VirtualShadowMap::MegaDirtyBitsBytes(SliceCapacityFor(m_PointShadowMethod)),
+                                    VirtualShadowMap::MegaDirtyBitsUsage(),
+                                    false,
+                                    "VsmMega_DirtyBits"));
                 m_MegaChunks = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::RasterChunkBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY),
                                                                       VirtualShadowMap::MegaChunkUsage(),
                                                                       false,
@@ -376,7 +431,7 @@ namespace NorvesLib::Core::Rendering
         const uint64_t rasterBytes = VirtualShadowMap::RasterInstanceBytes(VirtualShadowMap::RASTER_INSTANCE_CAPACITY) +
                                      m_Casters->Draws->GetSize();
         const uint64_t megaBytes = VirtualShadowMap::MegaCullListBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY) +
-                                   VirtualShadowMap::MegaDirtyBitsBytes() +
+                                   VirtualShadowMap::MegaDirtyBitsBytes(SliceCapacityFor(m_PointShadowMethod)) +
                                    VirtualShadowMap::RasterChunkBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY);
         if (m_Gpu)
         {
@@ -389,7 +444,7 @@ namespace NorvesLib::Core::Rendering
                         static_cast<double>(poolBytes) / BytesPerMegabyte);
         NORVES_LOG_INFO("VirtualShadowMapPass",
                         "VRAM_LEDGER vsm_page_table mb=%.3f",
-                        static_cast<double>(VirtualShadowMap::PageTableBytes()) / BytesPerMegabyte);
+                        static_cast<double>(VirtualShadowMap::PageTableBytes(SliceCapacityFor(m_PointShadowMethod))) / BytesPerMegabyte);
         NORVES_LOG_INFO("VirtualShadowMapPass",
                         "VRAM_LEDGER vsm_raster mb=%.3f",
                         static_cast<double>(rasterBytes) / BytesPerMegabyte);
@@ -524,11 +579,24 @@ namespace NorvesLib::Core::Rendering
         state.Chunks.clear();
         state.Motion.clear();
         state.Stats = {};
+        state.bUseSliceTable = false;
+        state.SliceTableCount = 0;
         const VirtualShadowMapClipmap& clipmap = context.PhysicalLighting.SunClipmap;
-        if (!clipmap.bEnabled)
+        // 点光源の VSM で灯があるときは、太陽の段（クリップマップが無効なら空の段）の後ろに点光源の面を並べたスライスの表で、
+        // 投影物が写るスライスを決める（光源の Range の内側で面の錐台と交わる物が記録になる）
+        if (m_PointShadowMethod == PointShadowMethod::Vsm && m_PointLights.LightCount != 0u)
+        {
+            state.SliceTableCount = SliceCapacityFor(m_PointShadowMethod);
+            BuildVirtualShadowMapSlices(clipmap.bEnabled ? &clipmap : nullptr, nullptr, state.SliceTableCount, state.SliceTable);
+            BuildVirtualShadowMapPointSlices(m_PointLights, state.SliceTable);
+            state.bUseSliceTable = true;
+        }
+        if (!clipmap.bEnabled && !state.bUseSliceTable)
         {
             return;
         }
+        const VirtualShadowMap::CasterSliceTable sliceTable{state.SliceTable, state.SliceTableCount};
+        const VirtualShadowMap::CasterSliceTable* slices = state.bUseSliceTable ? &sliceTable : nullptr;
 
         // ----- 手続きメッシュ: 影を落とすメッシュのプロキシ -----
         // 描画コマンドは主カメラの錐台で省かれた後の一覧なので、錐台の外でも VSM の段の範囲に入る投影物を落とす。
@@ -571,7 +639,7 @@ namespace NorvesLib::Core::Rendering
                         ++state.Stats.SkippedDraws;
                         continue;
                     }
-                    VirtualShadowMap::AppendProceduralInstance(input, state.Plan, world, clipmap, state.Chunks, state.Stats);
+                    VirtualShadowMap::AppendProceduralInstance(input, state.Plan, world, clipmap, state.Chunks, state.Stats, slices);
 
                     // キャッシュの無効化の入力: 同じ描画が同じ変換・範囲なら動いていない
                     VirtualShadowMap::CasterMotionEntry motion;
@@ -645,7 +713,8 @@ namespace NorvesLib::Core::Rendering
                         chunk.FirstIndex += instance.SourceFirstIndex;
                     }
                 }
-                VirtualShadowMap::AppendSkinnedInstance(instance.CurrentVertexAddress, indexAddress, bounds, chunks, clipmap, state.Chunks, state.Stats);
+                VirtualShadowMap::AppendSkinnedInstance(
+                    instance.CurrentVertexAddress, indexAddress, bounds, chunks, clipmap, state.Chunks, state.Stats, slices);
 
                 // スキニングは毎フレーム変形するので、毎フレーム動いた物として扱う（鍵はコンポーネントとサブメッシュの範囲ごと）
                 VirtualShadowMap::CasterMotionEntry motion;
@@ -691,21 +760,33 @@ namespace NorvesLib::Core::Rendering
         VirtualShadowMapCasterState& state = *m_Casters;
         state.ChangedBounds.clear();
         state.InvalidationRects.clear();
+        state.InvalidationSpheres.clear();
         state.bInvalidateAll = false;
-        if (!m_bCacheEnabled)
+        // 太陽の段（矩形）も点光源の面（球）も無いフレームは、無効にする範囲が無い
+        const bool bSun = context.PhysicalLighting.SunClipmap.bEnabled;
+        const bool bPoint = state.bUseSliceTable;
+        if (!m_bCacheEnabled || (!bSun && !bPoint))
         {
             state.MotionTracker.Reset();
             return;
         }
         state.MotionTracker.Update(state.Motion, state.ChangedBounds, state.bInvalidateAll);
-        if (!state.bInvalidateAll &&
-            !VirtualShadowMap::BuildInvalidationRects(context.PhysicalLighting.SunClipmap,
-                                                      state.ChangedBounds,
-                                                      VirtualShadowMap::MAX_INVALIDATION_RECTS,
-                                                      state.InvalidationRects))
+        if (state.bInvalidateAll)
         {
-            // 矩形が多すぎる・境界が有限でない: 範囲を絞れないので全ページを無効にする
+            return;
+        }
+        // 太陽の段は動いた境界のライト空間の矩形、点光源の面は境界を覆う球（面の NDC で覆うページ）を無効にする。
+        // 数が多すぎる・境界が有限でない: 範囲を絞れないので全ページを無効にする
+        if ((bSun && !VirtualShadowMap::BuildInvalidationRects(context.PhysicalLighting.SunClipmap,
+                                                               state.ChangedBounds,
+                                                               VirtualShadowMap::MAX_INVALIDATION_RECTS,
+                                                               state.InvalidationRects)) ||
+            (bPoint && !VirtualShadowMap::BuildInvalidationSpheres(state.ChangedBounds,
+                                                                   VirtualShadowMap::MAX_INVALIDATION_RECTS,
+                                                                   state.InvalidationSpheres)))
+        {
             state.InvalidationRects.clear();
+            state.InvalidationSpheres.clear();
             state.bInvalidateAll = true;
         }
     }
@@ -783,6 +864,12 @@ namespace NorvesLib::Core::Rendering
 
         VirtualShadowMapRasterDispatch rasterDispatch;
         rasterDispatch.Clipmap = &context.PhysicalLighting.SunClipmap;
+        if (state.bUseSliceTable)
+        {
+            // 点光源の面を含むスライスの表（CollectCasters が作ったもの）で展開・描画する
+            rasterDispatch.SliceCount = state.SliceTableCount;
+            rasterDispatch.Slices = state.SliceTable;
+        }
         rasterDispatch.PoolPages = m_PoolPages;
         rasterDispatch.Pool = m_Pool;
         rasterDispatch.PageTable = m_PageTable;
@@ -828,6 +915,12 @@ namespace NorvesLib::Core::Rendering
 
         VirtualShadowMapMegaCullDispatch megaDispatch;
         megaDispatch.Clipmap = &context.PhysicalLighting.SunClipmap;
+        if (m_Casters->bUseSliceTable)
+        {
+            // 点光源の面を含むスライスの表（CollectCasters が作ったもの）で、太陽の段と点光源の面を同じ流れでカリングする
+            megaDispatch.SliceCount = m_Casters->SliceTableCount;
+            megaDispatch.Slices = m_Casters->SliceTable;
+        }
         megaDispatch.PageTable = m_PageTable;
         megaDispatch.Stats = m_Stats;
         megaDispatch.DirtyBits = m_MegaDirtyBits;
@@ -859,7 +952,9 @@ namespace NorvesLib::Core::Rendering
         {
             m_MegaReporter->Report(slot.Mapped[VirtualShadowMap::StatMegaInstances],
                                    slot.Mapped[VirtualShadowMap::StatMegaClusters],
-                                   slot.Mapped[VirtualShadowMap::StatMegaOverflow]);
+                                   slot.Mapped[VirtualShadowMap::StatMegaOverflow],
+                                   slot.Mapped[VirtualShadowMap::StatMegaPointInstances],
+                                   slot.Mapped[VirtualShadowMap::StatMegaPointClusters]);
         }
         // 展開の統計（投影物を描かない間は 0 のままで、何も出さない）
         if (m_RasterReporter)
@@ -873,19 +968,25 @@ namespace NorvesLib::Core::Rendering
         {
             m_FramesSinceCacheLog = 0;
             NORVES_LOG_INFO("VirtualShadowMapPass",
-                            "VSM_CACHE cached=%u rendered=%u invalidated=%u released=%u",
+                            "VSM_CACHE cached=%u rendered=%u invalidated=%u released=%u point_cached=%u point_rendered=%u point_invalidated=%u point_released=%u",
                             slot.Mapped[VirtualShadowMap::StatCached],
                             slot.Mapped[VirtualShadowMap::StatRendered],
                             slot.Mapped[VirtualShadowMap::StatInvalidated],
-                            slot.Mapped[VirtualShadowMap::StatReleased]);
+                            slot.Mapped[VirtualShadowMap::StatReleased],
+                            slot.Mapped[VirtualShadowMap::StatPointCached],
+                            slot.Mapped[VirtualShadowMap::StatPointRendered],
+                            slot.Mapped[VirtualShadowMap::StatPointInvalidated],
+                            slot.Mapped[VirtualShadowMap::StatPointReleased]);
         }
-        const uint32_t stats[4] = {slot.Mapped[VirtualShadowMap::StatRequested],
+        const uint32_t stats[6] = {slot.Mapped[VirtualShadowMap::StatRequested],
                                    slot.Mapped[VirtualShadowMap::StatAllocated],
                                    slot.Mapped[VirtualShadowMap::StatOverflow],
-                                   slot.Mapped[VirtualShadowMap::StatLevelsUsed]};
+                                   slot.Mapped[VirtualShadowMap::StatLevelsUsed],
+                                   slot.Mapped[VirtualShadowMap::StatPointRequested],
+                                   slot.Mapped[VirtualShadowMap::StatPointAllocated]};
         ++m_FramesSinceStatsLog;
         bool bChanged = !m_bStatsLogged;
-        for (uint32_t index = 0; index < 4u; ++index)
+        for (uint32_t index = 0; index < 6u; ++index)
         {
             bChanged = bChanged || stats[index] != m_LoggedStats[index];
         }
@@ -893,18 +994,21 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
-        for (uint32_t index = 0; index < 4u; ++index)
+        for (uint32_t index = 0; index < 6u; ++index)
         {
             m_LoggedStats[index] = stats[index];
         }
         m_bStatsLogged = true;
         m_FramesSinceStatsLog = 0;
+        // requested・allocated は太陽と点光源の合計。point_* は点光源の面のページだけ
         NORVES_LOG_INFO("VirtualShadowMapPass",
-                        "VSM_PAGES requested=%u allocated=%u overflow=%u levels_used=0x%x",
+                        "VSM_PAGES requested=%u allocated=%u overflow=%u levels_used=0x%x point_requested=%u point_allocated=%u",
                         stats[0],
                         stats[1],
                         stats[2],
-                        stats[3]);
+                        stats[3],
+                        stats[4],
+                        stats[5]);
     }
 
     void VirtualShadowMapPass::HarvestReadyStats(uint64_t frameSerial, uint64_t completedFrameSerial)
@@ -942,6 +1046,13 @@ namespace NorvesLib::Core::Rendering
 
         RHI::ICommandList* commandList = context.CommandList;
 
+        if (m_PointShadowMethod == PointShadowMethod::Vsm)
+        {
+            UpdatePointLights(context);
+            // 照明・影の測定が同じ並びで点光源の面のページを読む（LightCount が 0 の間はキューブのまま）
+            context.PhysicalLighting.PublishPointVsmLights(m_PointLights);
+        }
+
         // 統計の読み戻しの枠は、飛行中のフレームの数とは別に、書いたフレームの順に使う。読むのは、通し番号の差が
         // StatsReadbackMinFrameDelay 以上で、そのフレームの提出の完了が確かめられた枠だけ（コーディネーターが渡す
         // CompletedRenderFrameSerial）。飛行中のフレームが 1 枠でも 3 枠以上でも、書いた GPU の仕事が終わる前には読まない。
@@ -967,6 +1078,12 @@ namespace NorvesLib::Core::Rendering
         dispatch.FreeList = m_FreeList;
         dispatch.Stats = m_Stats;
         dispatch.DirtyList = m_DirtyList;
+        // 点光源の VSM のときは、太陽の段の後ろに点光源の面を並べたスライスの数で記録する（印付けが点光源の面にも印を付ける）
+        dispatch.SliceCount = SliceCapacityFor(m_PointShadowMethod);
+        if (m_PointShadowMethod == PointShadowMethod::Vsm)
+        {
+            dispatch.PointLights = &m_PointLights;
+        }
         const CameraProxy* camera = context.GetActiveCamera();
         const RHI::TexturePtr depth = m_DepthHandle.IsValid() ? resources.GetTexture(m_DepthHandle) : RHI::TexturePtr{};
         if (depth && camera && camera->Projection == ProjectionType::Perspective)
@@ -1007,7 +1124,9 @@ namespace NorvesLib::Core::Rendering
         }
         // 投影物を集め、前フレームからの動き（無効にするページの範囲）を決める。印付けをするフレームだけ（しなければ記録も要らない）
         bool bCollected = false;
-        if (dispatch.Depth && dispatch.Clipmap && dispatch.Clipmap->bEnabled && m_Raster->IsReady())
+        // 点光源の VSM で灯があれば、太陽が無くても集める・描く（点光源の面にだけ描く）
+        const bool bPointCasters = m_PointShadowMethod == PointShadowMethod::Vsm && m_PointLights.LightCount != 0u;
+        if (dispatch.Depth && dispatch.Clipmap && (dispatch.Clipmap->bEnabled || bPointCasters) && m_Raster->IsReady())
         {
             CollectCasters(context);
             PlanInvalidation(context);
@@ -1015,6 +1134,8 @@ namespace NorvesLib::Core::Rendering
             dispatch.bCacheEnabled = m_bCacheEnabled;
             dispatch.InvalidationRects = m_Casters->InvalidationRects.empty() ? nullptr : m_Casters->InvalidationRects.data();
             dispatch.InvalidationRectCount = static_cast<uint32_t>(m_Casters->InvalidationRects.size() / 4u);
+            dispatch.InvalidationSpheres = m_Casters->InvalidationSpheres.empty() ? nullptr : m_Casters->InvalidationSpheres.data();
+            dispatch.InvalidationSphereCount = static_cast<uint32_t>(m_Casters->InvalidationSpheres.size() / 4u);
             dispatch.bInvalidateAll = m_Casters->bInvalidateAll;
         }
         else
@@ -1033,7 +1154,8 @@ namespace NorvesLib::Core::Rendering
         {
             ReportCasters();
             // MegaGeometry の投影物のカリング（展開の前。出力は VsmMega_List。主の経路のバッファには書かない）
-            m_bMegaCullRecorded = RecordMegaCull(context, frameSerial);
+            // （太陽が無効でも、点光源の面のスライスの表があれば点光源の面を対象に記録する）
+            m_bMegaCullRecorded = (dispatch.Clipmap->bEnabled || m_Casters->bUseSliceTable) && RecordMegaCull(context, frameSerial);
             // ホストが書いた塊がある、または MegaGeometry のクラスタの記録を作ったフレームは、展開・描画を 1 回の流れで記録する
             if (!m_Casters->Chunks.empty() || m_bMegaCullRecorded)
             {

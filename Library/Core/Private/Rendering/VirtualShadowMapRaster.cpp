@@ -6,6 +6,7 @@
 #include "Rendering/ScopedGpuTimestamp.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/VirtualShadowMapPages.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "RHI/DeviceCapabilities.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -28,11 +29,10 @@ namespace NorvesLib::Core::Rendering
             float lightUp[4];
             float lightDirection[4];
             float depth[4];      // x = 深度の原点、y = 1 / (2 × 深度の範囲)
-            uint32_t counts[4];  // x = 塊の数、y = 段の数、z = インスタンスの容量
-            float levelInfo[VirtualShadowMapMaxLevels][4];     // x = ページの一辺（m）、y = texel の一辺（m）
-            int32_t levelOrigin[VirtualShadowMapMaxLevels][4]; // x, y = 範囲の最小の絶対のページの番号
+            uint32_t counts[4];  // x = 塊の数、y = スライスの数、z = インスタンスの容量、w = MegaGeometry のクラスタの記録の容量
         };
-        static_assert(sizeof(GPURasterParams) == 592, "vsm_expand.comp・vsm_draw.vert の VsmRasterParams と同じ大きさにすること");
+        // ページの一辺・texel・範囲の原点・投影の行列はスライスの表（GPUVsmSlice。ExpandBindSlices・DrawBindSlices）にある
+        static_assert(sizeof(GPURasterParams) == 80, "vsm_expand.comp・vsm_draw.vert の VsmRasterParams と同じ大きさにすること");
 
         // 絶対のページの番号を int32 でシェーダーへ渡せる範囲（範囲の端 + 128 ページが溢れない余裕を持つ）
         constexpr int64_t MaxOriginMagnitude = 1ll << 30;
@@ -53,6 +53,8 @@ namespace NorvesLib::Core::Rendering
         // MegaGeometry のクラスタの記録と、カリングの一覧（語 0 = 選んだクラスタの数）
         constexpr uint32_t ExpandBindMegaChunks = 6;
         constexpr uint32_t ExpandBindMegaList = 7;
+        // スライスの表（読み取り専用）
+        constexpr uint32_t ExpandBindSlices = 8;
 
         // vsm_mega_cull.comp・vsm_dirty_mips.comp の VsmMegaCullParams（std140。Common/VirtualShadowMapMegaCull.glsl）と同じ並び
         struct GPUMegaCullParams
@@ -61,18 +63,19 @@ namespace NorvesLib::Core::Rendering
             float lightUp[4];
             float lightDirection[4];
             float depth[4];     // x = 深度の原点、y = 深度の範囲の片側（m）
-            uint32_t counts[4]; // x = 段の数、y = 出力の一覧の容量、z = 影の判定の全ワークグループ数
-            float levelInfo[VirtualShadowMapMaxLevels][4];     // x = ページの一辺（m）、y = texel の一辺（m）
-            int32_t levelOrigin[VirtualShadowMapMaxLevels][4]; // x, y = 範囲の最小の絶対のページの番号
+            uint32_t counts[4]; // x = スライス（段）の数、y = 出力の一覧の容量、z = 影の判定の全ワークグループ数
         };
-        static_assert(sizeof(GPUMegaCullParams) == 592, "Common/VirtualShadowMapMegaCull.glsl の VsmMegaCullParams と同じ大きさにすること");
+        // ページの一辺・texel・範囲の原点はスライスの表（GPUVsmSlice。DirtyBindSlices・MegaBindSlices）にある
+        static_assert(sizeof(GPUMegaCullParams) == 80, "Common/VirtualShadowMapMegaCull.glsl の VsmMegaCullParams と同じ大きさにすること");
 
-        // vsm_dirty_mips.comp: 14 = 定数、15 = VSM のページの表、16 = dirty の階層
+        // vsm_dirty_mips.comp: 14 = 定数、15 = VSM のページの表、16 = dirty の階層、17 = スライスの表
         constexpr uint32_t DirtyBindParams = 14;
         constexpr uint32_t DirtyBindPageTable = 15;
         constexpr uint32_t DirtyBindBits = 16;
+        constexpr uint32_t DirtyBindSlices = 17;
         // vsm_mega_cull.comp: 0 = カリングの定数（CullUniforms）、1 = インスタンスの表、11 = ジオメトリのページの表、
-        // 14 = 定数、15 = 出力の一覧、16 = dirty の階層、17 = 統計、18 = 影の表、19 = VSM のページの表（溢れたクラスタの範囲へ再描画の印を書く）
+        // 14 = 定数、15 = 出力の一覧、16 = dirty の階層、17 = 統計、18 = 影の表、19 = VSM のページの表（溢れたクラスタの範囲へ再描画の印を書く）、
+        // 20 = スライスの表
         constexpr uint32_t MegaBindCullData = 0;
         constexpr uint32_t MegaBindInstances = 1;
         constexpr uint32_t MegaBindPageTable = 11;
@@ -82,7 +85,25 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t MegaBindStats = 17;
         constexpr uint32_t MegaBindShadowInstances = 18;
         constexpr uint32_t MegaBindVsmPageTable = 19;
+        constexpr uint32_t MegaBindSlices = 20;
+        constexpr uint32_t MegaBindPairs = 21;
         // vsm_mega_chunks.comp: 1 = インスタンスの表、14 = 定数、15 = 出力の一覧、18 = 影の表、19 = 影の塊の記録の出力
+        // vsm_mega_cull_pairs.comp: 14 = 定数、15 = 出力の一覧、16 = dirty の階層、17 = 統計、18 = 影の表、20 = スライスの表、21 = 組の一覧
+        // 組の一覧の頭 8 語（組の数・最大のワークグループ数・予約 2 語・間接 dispatch の引数 4 語）。引数は頭から 16 バイト目
+        constexpr uint32_t PairsBindParams = 14;
+        constexpr uint32_t PairsBindList = 15;
+        constexpr uint32_t PairsBindDirtyBits = 16;
+        constexpr uint32_t PairsBindStats = 17;
+        constexpr uint32_t PairsBindShadowInstances = 18;
+        constexpr uint32_t PairsBindSlices = 20;
+        constexpr uint32_t PairsBindPairs = 21;
+        // vsm_mega_cull_args.comp: 21 = 組の一覧（間接 dispatch の引数を書く）
+        constexpr uint32_t ArgsBindPairs = 21;
+        constexpr uint32_t PairsHeaderWords = 8;
+        constexpr uint64_t PairsArgsOffsetBytes = 4u * sizeof(uint32_t);
+        // 組 = (インスタンスの表の番号 << 8) | スライスの番号。スライスの番号が 8 bit に収まり、インスタンスの表の番号が 24 bit に収まること
+        constexpr uint32_t PairsMaxInstances = 1u << 24;
+
         constexpr uint32_t ChunkBindInstances = 1;
         constexpr uint32_t ChunkBindParams = 14;
         constexpr uint32_t ChunkBindList = 15;
@@ -94,6 +115,7 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DrawBindChunks = 2;
         constexpr uint32_t DrawBindPool = 3;
         constexpr uint32_t DrawBindMegaChunks = 4;
+        constexpr uint32_t DrawBindSlices = 5;
 
         RHI::DescriptorBinding MakeBinding(uint32_t binding, RHI::ResourceBindType type, RHI::ShaderStage stages)
         {
@@ -113,6 +135,7 @@ namespace NorvesLib::Core::Rendering
             {
                 desc.bindings.push_back(MakeBinding(binding, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
             }
+            desc.bindings.push_back(MakeBinding(ExpandBindSlices, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
             return desc;
         }
 
@@ -124,6 +147,7 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(DrawBindChunks, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Vertex));
             desc.bindings.push_back(MakeBinding(DrawBindPool, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Pixel));
             desc.bindings.push_back(MakeBinding(DrawBindMegaChunks, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Vertex));
+            desc.bindings.push_back(MakeBinding(DrawBindSlices, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex));
             return desc;
         }
 
@@ -133,6 +157,27 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(DirtyBindParams, RHI::ResourceBindType::ConstantBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(DirtyBindPageTable, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(DirtyBindBits, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(DirtyBindSlices, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
+            return desc;
+        }
+
+        RHI::DescriptorSetDesc MakeMegaPairsLayout()
+        {
+            RHI::DescriptorSetDesc desc;
+            desc.bindings.push_back(MakeBinding(PairsBindParams, RHI::ResourceBindType::ConstantBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(PairsBindList, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(PairsBindDirtyBits, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(PairsBindStats, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(PairsBindShadowInstances, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(PairsBindSlices, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(PairsBindPairs, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
+            return desc;
+        }
+
+        RHI::DescriptorSetDesc MakeMegaArgsLayout()
+        {
+            RHI::DescriptorSetDesc desc;
+            desc.bindings.push_back(MakeBinding(ArgsBindPairs, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
             return desc;
         }
 
@@ -148,6 +193,8 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(MegaBindStats, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(MegaBindShadowInstances, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(MegaBindVsmPageTable, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(MegaBindSlices, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(MegaBindPairs, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
             return desc;
         }
 
@@ -196,20 +243,41 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        // スライスの数を決める。0 はクリップマップの段の数。使えない数（上限超え・クリップマップの段より少ない）なら 0
+        uint32_t ResolveSliceCount(uint32_t requested, const VirtualShadowMapClipmap* clipmap)
+        {
+            if (clipmap == nullptr)
+            {
+                return 0u;
+            }
+            const uint32_t count = requested != 0u ? requested : clipmap->LevelCount;
+            return count >= clipmap->LevelCount && count <= VirtualShadowMap::MAX_SLICES ? count : 0u;
+        }
+
         // MegaGeometry の投影物のカリングの定数を書く。クリップマップが使えなければ false
-        bool FillMegaCullParams(const VirtualShadowMapClipmap* clipmap, uint32_t listCapacity, uint32_t totalGroups, GPUMegaCullParams& params)
+        // クリップマップが使えなくても bAllowNoSun（外から渡したスライスの表で、太陽の段を使わない）なら、基底・深度の範囲を既定にして true
+        // （点光源の面の透視のスライスはこの値を読まず、スライスの行列で判定する。太陽の段の欄は表が空なので何も選ばれない）
+        bool FillMegaCullParams(const VirtualShadowMapClipmap* clipmap,
+                                uint32_t sliceCount,
+                                uint32_t listCapacity,
+                                uint32_t totalGroups,
+                                bool bAllowNoSun,
+                                GPUMegaCullParams& params)
         {
             if (!IsUsableClipmap(clipmap))
             {
-                return false;
-            }
-            for (uint32_t level = 0; level < clipmap->LevelCount; ++level)
-            {
-                const VirtualShadowMapClipmapLevel& data = clipmap->Levels[level];
-                params.levelInfo[level][0] = data.PageMeters;
-                params.levelInfo[level][1] = data.TexelMeters;
-                params.levelOrigin[level][0] = static_cast<int32_t>(data.OriginPageX);
-                params.levelOrigin[level][1] = static_cast<int32_t>(data.OriginPageY);
+                if (!bAllowNoSun)
+                {
+                    return false;
+                }
+                params.lightRight[0] = 1.0f;
+                params.lightUp[1] = 1.0f;
+                params.lightDirection[2] = 1.0f;
+                params.depth[1] = 0.5f;
+                params.counts[0] = sliceCount;
+                params.counts[1] = listCapacity;
+                params.counts[2] = totalGroups;
+                return true;
             }
             params.lightRight[0] = clipmap->LightRight.x;
             params.lightRight[1] = clipmap->LightRight.y;
@@ -222,26 +290,29 @@ namespace NorvesLib::Core::Rendering
             params.lightDirection[2] = clipmap->Direction.z;
             params.depth[0] = static_cast<float>(clipmap->DepthCenter);
             params.depth[1] = clipmap->Settings.DepthRangeMeters;
-            params.counts[0] = clipmap->LevelCount;
+            params.counts[0] = sliceCount;
             params.counts[1] = listCapacity;
             params.counts[2] = totalGroups;
             return true;
         }
 
-        // クリップマップが使える入力か。使えるなら params へ値を書く
-        bool FillParams(const VirtualShadowMapClipmap* clipmap, GPURasterParams& params)
+        // クリップマップが使える入力か。使えるなら params へ値を書く。
+        // 使えなくても bAllowNoSun（外から渡したスライスの表で、太陽の段を使わない）なら、基底・深度の範囲を既定にして true
+        // （点光源の面の透視のスライスはこの値を読まず、スライスの行列で投影する）
+        bool FillParams(const VirtualShadowMapClipmap* clipmap, uint32_t sliceCount, bool bAllowNoSun, GPURasterParams& params)
         {
             if (!IsUsableClipmap(clipmap))
             {
-                return false;
-            }
-            for (uint32_t level = 0; level < clipmap->LevelCount; ++level)
-            {
-                const VirtualShadowMapClipmapLevel& data = clipmap->Levels[level];
-                params.levelInfo[level][0] = data.PageMeters;
-                params.levelInfo[level][1] = data.TexelMeters;
-                params.levelOrigin[level][0] = static_cast<int32_t>(data.OriginPageX);
-                params.levelOrigin[level][1] = static_cast<int32_t>(data.OriginPageY);
+                if (!bAllowNoSun)
+                {
+                    return false;
+                }
+                params.lightRight[0] = 1.0f;
+                params.lightUp[1] = 1.0f;
+                params.lightDirection[2] = 1.0f;
+                params.depth[1] = 0.5f;
+                params.counts[1] = sliceCount;
+                return true;
             }
             params.lightRight[0] = clipmap->LightRight.x;
             params.lightRight[1] = clipmap->LightRight.y;
@@ -254,7 +325,7 @@ namespace NorvesLib::Core::Rendering
             params.lightDirection[2] = clipmap->Direction.z;
             params.depth[0] = static_cast<float>(clipmap->DepthCenter);
             params.depth[1] = 0.5f / clipmap->Settings.DepthRangeMeters;
-            params.counts[1] = clipmap->LevelCount;
+            params.counts[1] = sliceCount;
             return true;
         }
     } // namespace
@@ -403,6 +474,11 @@ namespace NorvesLib::Core::Rendering
             use.Uniform = m_Device->CreateBuffer(
                 RHI::BufferDesc(sizeof(GPURasterParams), RHI::ResourceUsage::ConstantBuffer, true, "VsmRasterParams"));
         }
+        if (!use.Slices)
+        {
+            use.Slices = m_Device->CreateBuffer(RHI::BufferDesc(
+                sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices, RHI::ResourceUsage::StorageBuffer, true, "VsmRasterSlices"));
+        }
         if (!use.ExpandSet)
         {
             use.ExpandSet = m_Device->CreateDescriptorSet(MakeExpandLayout());
@@ -412,7 +488,7 @@ namespace NorvesLib::Core::Rendering
             use.DrawSet = m_Device->CreateDescriptorSet(MakeDrawLayout());
         }
         outUse = &use;
-        return use.Uniform && use.ExpandSet && use.DrawSet;
+        return use.Uniform && use.Slices && use.ExpandSet && use.DrawSet;
     }
 
     bool VirtualShadowMapRaster::Record(RHI::ICommandList* commandList, const VirtualShadowMapRasterDispatch& dispatch)
@@ -434,9 +510,10 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        const uint32_t sliceCount = ResolveSliceCount(dispatch.SliceCount, dispatch.Clipmap);
         const uint32_t chunkTotal = dispatch.ChunkCount + (bMega ? dispatch.MegaCapacity : 0u);
-        if (dispatch.Pool->GetSize() < VirtualShadowMap::PoolBytes(dispatch.PoolPages) ||
-            dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes() ||
+        if (sliceCount == 0u || dispatch.Pool->GetSize() < VirtualShadowMap::PoolBytes(dispatch.PoolPages) ||
+            dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes(sliceCount) ||
             dispatch.Stats->GetSize() < VirtualShadowMap::STATS_BYTES ||
             dispatch.Chunks->GetSize() < VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount) ||
             dispatch.Draws->GetSize() < VirtualShadowMap::RasterDrawBytes(chunkTotal) ||
@@ -446,7 +523,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         GPURasterParams params = {};
-        if (!FillParams(dispatch.Clipmap, params))
+        if (!FillParams(dispatch.Clipmap, sliceCount, dispatch.Slices != nullptr, params))
         {
             return false;
         }
@@ -455,6 +532,16 @@ namespace NorvesLib::Core::Rendering
         params.counts[3] = bMega ? dispatch.MegaCapacity : 0u;
         params.counts[2] = instanceCapacity > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max()
                                                                                     : static_cast<uint32_t>(instanceCapacity);
+
+        // スライスの表（ページの一辺・texel・範囲の原点・投影の行列）。外から渡されなければクリップマップから作る
+        GPUVsmSlice sliceStorage[VirtualShadowMapMaxSlices];
+        const GPUVsmSlice* slices = dispatch.Slices;
+        if (slices == nullptr)
+        {
+            BuildVirtualShadowMapSlices(dispatch.Clipmap, nullptr, sliceCount, sliceStorage);
+            slices = sliceStorage;
+        }
+        const uint32_t sliceBytes = sliceCount * static_cast<uint32_t>(sizeof(GPUVsmSlice));
 
         Use* use = nullptr;
         if (!AcquireUse(use))
@@ -476,11 +563,13 @@ namespace NorvesLib::Core::Rendering
             }
 
             use->Uniform->Update(&params, sizeof(params));
+            use->Slices->Update(slices, sliceBytes);
             use->ExpandSet->BindConstantBuffer(ExpandBindParams, use->Uniform, 0, sizeof(params));
+            use->ExpandSet->BindStorageBuffer(ExpandBindSlices, use->Slices, 0, sliceBytes);
             use->ExpandSet->BindStorageBuffer(ExpandBindChunks, dispatch.Chunks, 0,
                                               ClampBindSize(VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount)));
             use->ExpandSet->BindStorageBuffer(ExpandBindPageTable, dispatch.PageTable, 0,
-                                              ClampBindSize(VirtualShadowMap::PageTableBytes()));
+                                              ClampBindSize(VirtualShadowMap::PageTableBytes(sliceCount)));
             use->ExpandSet->BindStorageBuffer(ExpandBindDraws, dispatch.Draws, 0, ClampBindSize(dispatch.Draws->GetSize()));
             use->ExpandSet->BindStorageBuffer(ExpandBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
             use->ExpandSet->BindStorageBuffer(ExpandBindStats, dispatch.Stats, 0, ClampBindSize(VirtualShadowMap::STATS_BYTES));
@@ -538,6 +627,7 @@ namespace NorvesLib::Core::Rendering
         {
             ScopedGpuTimestamp timestamp(commandList, "VsmDraw");
             use->DrawSet->BindConstantBuffer(DrawBindParams, use->Uniform, 0, sizeof(params));
+            use->DrawSet->BindStorageBuffer(DrawBindSlices, use->Slices, 0, sliceBytes);
             use->DrawSet->BindStorageBuffer(DrawBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
             use->DrawSet->BindStorageBuffer(DrawBindChunks, dispatch.Chunks, 0,
                                             ClampBindSize(VirtualShadowMap::RasterChunkBytes(dispatch.ChunkCount)));
@@ -604,7 +694,7 @@ namespace NorvesLib::Core::Rendering
 
     bool VirtualShadowMapMegaCull::IsReady() const
     {
-        return m_Device != nullptr && m_DirtyPipeline && m_CullPipeline && m_ChunkPipeline;
+        return m_Device != nullptr && m_DirtyPipeline && m_PairsPipeline && m_ArgsPipeline && m_CullPipeline && m_ChunkPipeline;
     }
 
     bool VirtualShadowMapMegaCull::Initialize(RHI::IDevice* device, ShaderManager* shaderManager)
@@ -623,9 +713,11 @@ namespace NorvesLib::Core::Rendering
         m_Device = device;
 
         m_DirtyShader = shaderManager->LoadShader("vsm_dirty_mips.comp", RHI::ShaderStage::Compute);
+        m_PairsShader = shaderManager->LoadShader("vsm_mega_cull_pairs.comp", RHI::ShaderStage::Compute);
+        m_ArgsShader = shaderManager->LoadShader("vsm_mega_cull_args.comp", RHI::ShaderStage::Compute);
         m_CullShader = shaderManager->LoadShader("vsm_mega_cull.comp", RHI::ShaderStage::Compute);
         m_ChunkShader = shaderManager->LoadShader("vsm_mega_chunks.comp", RHI::ShaderStage::Compute);
-        if (!m_DirtyShader || !m_CullShader || !m_ChunkShader)
+        if (!m_DirtyShader || !m_PairsShader || !m_ArgsShader || !m_CullShader || !m_ChunkShader)
         {
             NORVES_LOG_WARNING("VirtualShadowMapMegaCull", "MegaGeometry の投影物のカリングのシェーダーの読み込みに失敗");
             Shutdown();
@@ -638,6 +730,16 @@ namespace NorvesLib::Core::Rendering
             dirtyDesc.computeShader = m_DirtyShader;
             dirtyDesc.descriptorSetLayouts.push_back(MakeDirtyLayout());
             m_DirtyPipeline = device->CreateComputePipeline(dirtyDesc);
+
+            RHI::ComputePipelineDesc pairsDesc;
+            pairsDesc.computeShader = m_PairsShader;
+            pairsDesc.descriptorSetLayouts.push_back(MakeMegaPairsLayout());
+            m_PairsPipeline = device->CreateComputePipeline(pairsDesc);
+
+            RHI::ComputePipelineDesc argsDesc;
+            argsDesc.computeShader = m_ArgsShader;
+            argsDesc.descriptorSetLayouts.push_back(MakeMegaArgsLayout());
+            m_ArgsPipeline = device->CreateComputePipeline(argsDesc);
 
             RHI::ComputePipelineDesc cullDesc;
             cullDesc.computeShader = m_CullShader;
@@ -670,9 +772,13 @@ namespace NorvesLib::Core::Rendering
         m_Uses.Clear();
         m_ChunkPipeline.reset();
         m_CullPipeline.reset();
+        m_ArgsPipeline.reset();
+        m_PairsPipeline.reset();
         m_DirtyPipeline.reset();
         m_ChunkShader.reset();
         m_CullShader.reset();
+        m_ArgsShader.reset();
+        m_PairsShader.reset();
         m_DirtyShader.reset();
         m_Device = nullptr;
         m_LastGroupCount = 0;
@@ -697,9 +803,22 @@ namespace NorvesLib::Core::Rendering
             use.ParamsUniform = m_Device->CreateBuffer(
                 RHI::BufferDesc(sizeof(GPUMegaCullParams), RHI::ResourceUsage::ConstantBuffer, true, "VsmMegaCullParams"));
         }
+        if (!use.Slices)
+        {
+            use.Slices = m_Device->CreateBuffer(RHI::BufferDesc(
+                sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices, RHI::ResourceUsage::StorageBuffer, true, "VsmMegaCullSlices"));
+        }
         if (!use.DirtySet)
         {
             use.DirtySet = m_Device->CreateDescriptorSet(MakeDirtyLayout());
+        }
+        if (!use.PairsSet)
+        {
+            use.PairsSet = m_Device->CreateDescriptorSet(MakeMegaPairsLayout());
+        }
+        if (!use.ArgsSet)
+        {
+            use.ArgsSet = m_Device->CreateDescriptorSet(MakeMegaArgsLayout());
         }
         if (!use.CullSet)
         {
@@ -710,7 +829,29 @@ namespace NorvesLib::Core::Rendering
             use.ChunkSet = m_Device->CreateDescriptorSet(MakeMegaChunksLayout());
         }
         outUse = &use;
-        return use.CullUniform && use.ParamsUniform && use.DirtySet && use.CullSet && use.ChunkSet;
+        return use.CullUniform && use.ParamsUniform && use.Slices && use.DirtySet && use.PairsSet && use.ArgsSet && use.CullSet && use.ChunkSet;
+    }
+
+    bool VirtualShadowMapMegaCull::EnsurePairs(Use& use, uint32_t capacity)
+    {
+        if (use.Pairs && use.PairsCapacity >= capacity)
+        {
+            return true;
+        }
+        // 毎フレーム作り直さないよう、少し多めに（2 のべきの組の数へ切り上げて）確保する
+        uint32_t rounded = 1024u;
+        while (rounded < capacity)
+        {
+            rounded <<= 1u;
+        }
+        const uint64_t bytes = (static_cast<uint64_t>(PairsHeaderWords) + rounded) * sizeof(uint32_t);
+        use.Pairs = m_Device->CreateBuffer(RHI::BufferDesc(
+            bytes,
+            RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst | RHI::ResourceUsage::IndirectBuffer,
+            false,
+            "VsmMegaCullPairs"));
+        use.PairsCapacity = use.Pairs ? rounded : 0u;
+        return use.Pairs != nullptr;
     }
 
     bool VirtualShadowMapMegaCull::Record(RHI::ICommandList* commandList, const VirtualShadowMapMegaCullDispatch& dispatch)
@@ -725,9 +866,11 @@ namespace NorvesLib::Core::Rendering
         }
         const uint64_t listBytes = dispatch.List->GetSize();
         const uint64_t headerBytes = static_cast<uint64_t>(VirtualShadowMap::MEGA_CULL_LIST_HEADER_WORDS) * sizeof(uint32_t);
-        if (dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes() ||
+        const uint32_t sliceCount = ResolveSliceCount(dispatch.SliceCount, dispatch.Clipmap);
+        if (sliceCount == 0u || dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes(sliceCount) ||
             dispatch.Stats->GetSize() < VirtualShadowMap::STATS_BYTES ||
-            dispatch.DirtyBits->GetSize() < VirtualShadowMap::MegaDirtyBitsBytes() || listBytes < VirtualShadowMap::MegaCullListBytes(1u))
+            dispatch.DirtyBits->GetSize() < VirtualShadowMap::MegaDirtyBitsBytes(sliceCount) ||
+            listBytes < VirtualShadowMap::MegaCullListBytes(1u))
         {
             return false;
         }
@@ -746,10 +889,17 @@ namespace NorvesLib::Core::Rendering
 
         GPUMegaCullParams params = {};
         if (!FillMegaCullParams(dispatch.Clipmap,
+                                sliceCount,
                                 capacity > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max()
                                                                                 : static_cast<uint32_t>(capacity),
                                 dispatch.TotalGroups,
+                                dispatch.Slices != nullptr,
                                 params))
+        {
+            return false;
+        }
+        params.counts[3] = dispatch.InstanceCount;
+        if (dispatch.InstanceCount >= PairsMaxInstances || sliceCount > VirtualShadowMapMaxSlices)
         {
             return false;
         }
@@ -763,63 +913,120 @@ namespace NorvesLib::Core::Rendering
         cullUniform.OrthoLod = 1u;
 
         Use* use = nullptr;
-        if (!AcquireUse(use))
+        if (!AcquireUse(use) || !EnsurePairs(*use, dispatch.InstanceCount * sliceCount))
         {
             return false;
         }
 
         ScopedGpuTimestamp timestamp(commandList, "VsmCullMega");
 
-        // 階層と、出力の一覧の頭を 0 にする
-        commandList->BufferBarrier(dispatch.DirtyBits, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest, 0u,
-                                   VirtualShadowMap::MegaDirtyBitsBytes());
-        commandList->FillBuffer(dispatch.DirtyBits, 0u, VirtualShadowMap::MegaDirtyBitsBytes(), 0u);
-        commandList->BufferBarrier(dispatch.DirtyBits, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess, 0u,
-                                   VirtualShadowMap::MegaDirtyBitsBytes());
+        // 階層と、出力の一覧の頭を 0 にする。階層のバッファは専用なので、スライスの数より大きければ全体を 0 にする（使わない部分を残さない）
+        const uint64_t dirtyClearBytes = dispatch.DirtyBits->GetSize() & ~static_cast<uint64_t>(3u);
+        commandList->BufferBarrier(dispatch.DirtyBits, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest, 0u, dirtyClearBytes);
+        commandList->FillBuffer(dispatch.DirtyBits, 0u, dirtyClearBytes, 0u);
+        commandList->BufferBarrier(dispatch.DirtyBits, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess, 0u, dirtyClearBytes);
         commandList->BufferBarrier(dispatch.List, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest, 0u, headerBytes);
         commandList->FillBuffer(dispatch.List, 0u, headerBytes, 0u);
         commandList->BufferBarrier(dispatch.List, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess, 0u, headerBytes);
+        // 組の一覧の頭（組の数・最大のワークグループ数・予約・引数）も 0 にする
+        const uint64_t pairsHeaderBytes = static_cast<uint64_t>(PairsHeaderWords) * sizeof(uint32_t);
+        commandList->BufferBarrier(use->Pairs, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest, 0u, pairsHeaderBytes);
+        commandList->FillBuffer(use->Pairs, 0u, pairsHeaderBytes, 0u);
+        commandList->BufferBarrier(use->Pairs, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess, 0u, pairsHeaderBytes);
 
         use->CullUniform->Update(&cullUniform, sizeof(cullUniform));
         use->ParamsUniform->Update(&params, sizeof(params));
+        GPUVsmSlice sliceStorage[VirtualShadowMapMaxSlices];
+        const GPUVsmSlice* slices = dispatch.Slices;
+        if (slices == nullptr)
+        {
+            BuildVirtualShadowMapSlices(dispatch.Clipmap, nullptr, sliceCount, sliceStorage);
+            slices = sliceStorage;
+        }
+        const uint32_t sliceBytes = sliceCount * static_cast<uint32_t>(sizeof(GPUVsmSlice));
+        use->Slices->Update(slices, sliceBytes);
 
         // ----- dirty のページの階層: 1 スレッド = 1 ページ（ローカルは 8×8）、段ごとに 16×16 グループ -----
         use->DirtySet->BindConstantBuffer(DirtyBindParams, use->ParamsUniform, 0, sizeof(params));
-        use->DirtySet->BindStorageBuffer(DirtyBindPageTable, dispatch.PageTable, 0, ClampBindSize(VirtualShadowMap::PageTableBytes()));
-        use->DirtySet->BindStorageBuffer(DirtyBindBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes()));
+        use->DirtySet->BindStorageBuffer(DirtyBindPageTable, dispatch.PageTable, 0, ClampBindSize(VirtualShadowMap::PageTableBytes(sliceCount)));
+        use->DirtySet->BindStorageBuffer(DirtyBindBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes(sliceCount)));
+        use->DirtySet->BindStorageBuffer(DirtyBindSlices, use->Slices, 0, sliceBytes);
         use->DirtySet->Update();
-        commandList->SetPipeline(m_DirtyPipeline);
-        commandList->SetDescriptorSet(use->DirtySet, 0);
-        commandList->Dispatch(VirtualShadowMap::TABLE_DIMENSION / 8u, VirtualShadowMap::TABLE_DIMENSION / 8u, dispatch.Clipmap->LevelCount);
-        commandList->BufferBarrier(dispatch.DirtyBits, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        {
+            ScopedGpuTimestamp dirtyTimestamp(commandList, "VsmCullDirty");
+            commandList->SetPipeline(m_DirtyPipeline);
+            commandList->SetDescriptorSet(use->DirtySet, 0);
+            commandList->Dispatch(VirtualShadowMap::TABLE_DIMENSION / 8u, VirtualShadowMap::TABLE_DIMENSION / 8u, sliceCount);
+            commandList->BufferBarrier(dispatch.DirtyBits, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        }
 
-        // ----- クラスタの選択: x, y = 影の判定のワークグループ（x の上限を超える分は y へ折り返す）、z = 段 -----
+        // ----- 組の絞り込み: 1 スレッド = 1 つの（インスタンス、スライス）の組。インスタンスの判定を組ごとに 1 回だけ行い、通った組の一覧と
+        // 選択の間接 dispatch の引数を作る -----
+        use->PairsSet->BindConstantBuffer(PairsBindParams, use->ParamsUniform, 0, sizeof(params));
+        use->PairsSet->BindStorageBuffer(PairsBindList, dispatch.List, 0, ClampBindSize(listBytes));
+        use->PairsSet->BindStorageBuffer(PairsBindDirtyBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes(sliceCount)));
+        use->PairsSet->BindStorageBuffer(PairsBindStats, dispatch.Stats, 0, ClampBindSize(VirtualShadowMap::STATS_BYTES));
+        use->PairsSet->BindStorageBuffer(PairsBindShadowInstances, dispatch.ShadowInstances, 0, ClampBindSize(dispatch.ShadowInstances->GetSize()));
+        use->PairsSet->BindStorageBuffer(PairsBindSlices, use->Slices, 0, sliceBytes);
+        use->PairsSet->BindStorageBuffer(PairsBindPairs, use->Pairs, 0, ClampBindSize(use->Pairs->GetSize()));
+        use->PairsSet->Update();
+        {
+            ScopedGpuTimestamp pairsTimestamp(commandList, "VsmCullPairs");
+            constexpr uint32_t PairsGroupSize = 64;
+            commandList->SetPipeline(m_PairsPipeline);
+            commandList->SetDescriptorSet(use->PairsSet, 0);
+            commandList->Dispatch((dispatch.InstanceCount + PairsGroupSize - 1u) / PairsGroupSize, 1u, sliceCount);
+            commandList->BufferBarrier(use->Pairs, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            // 組の数と最大のワークグループ数から、選択の間接 dispatch の引数を作る
+            use->ArgsSet->BindStorageBuffer(ArgsBindPairs, use->Pairs, 0, ClampBindSize(use->Pairs->GetSize()));
+            use->ArgsSet->Update();
+            commandList->SetPipeline(m_ArgsPipeline);
+            commandList->SetDescriptorSet(use->ArgsSet, 0);
+            commandList->Dispatch(1u, 1u, 1u);
+            // 組の一覧は選択が読み、頭の引数は間接 dispatch が読む。出力の一覧の語 2・統計もここで書いた
+            commandList->BufferBarrier(use->Pairs, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+            commandList->BufferBarrier(dispatch.List, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            commandList->BufferBarrier(dispatch.Stats, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        }
+
+        // ----- クラスタの選択: 通った組だけを間接 dispatch で出す。x, y = 組 × 組の最大のワークグループ数（x の上限を超える分は y へ折り返す） -----
         use->CullSet->BindConstantBuffer(MegaBindCullData, use->CullUniform, 0, sizeof(cullUniform));
         use->CullSet->BindStorageBuffer(MegaBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
         use->CullSet->BindStorageBuffer(MegaBindPageTable, dispatch.MegaPageTable, 0, ClampBindSize(dispatch.MegaPageTable->GetSize()));
         use->CullSet->BindConstantBuffer(MegaBindParams, use->ParamsUniform, 0, sizeof(params));
         use->CullSet->BindStorageBuffer(MegaBindList, dispatch.List, 0, ClampBindSize(listBytes));
-        use->CullSet->BindStorageBuffer(MegaBindDirtyBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes()));
+        use->CullSet->BindStorageBuffer(MegaBindDirtyBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes(sliceCount)));
         use->CullSet->BindStorageBuffer(MegaBindStats, dispatch.Stats, 0, ClampBindSize(VirtualShadowMap::STATS_BYTES));
         use->CullSet->BindStorageBuffer(MegaBindShadowInstances, dispatch.ShadowInstances, 0, ClampBindSize(dispatch.ShadowInstances->GetSize()));
-        use->CullSet->BindStorageBuffer(MegaBindVsmPageTable, dispatch.PageTable, 0, ClampBindSize(VirtualShadowMap::PageTableBytes()));
+        use->CullSet->BindStorageBuffer(MegaBindVsmPageTable, dispatch.PageTable, 0, ClampBindSize(VirtualShadowMap::PageTableBytes(sliceCount)));
+        use->CullSet->BindStorageBuffer(MegaBindSlices, use->Slices, 0, sliceBytes);
+        use->CullSet->BindStorageBuffer(MegaBindPairs, use->Pairs, 0, ClampBindSize(use->Pairs->GetSize()));
         use->CullSet->Update();
 
-        const uint32_t groupsX = dispatch.TotalGroups < VirtualShadowMap::GROUP_COUNT_X_LIMIT ? dispatch.TotalGroups
-                                                                                              : VirtualShadowMap::GROUP_COUNT_X_LIMIT;
-        const uint32_t groupsY = (dispatch.TotalGroups + VirtualShadowMap::GROUP_COUNT_X_LIMIT - 1u) / VirtualShadowMap::GROUP_COUNT_X_LIMIT;
-        commandList->SetPipeline(m_CullPipeline);
-        commandList->SetDescriptorSet(use->CullSet, 0);
-        commandList->Dispatch(groupsX, groupsY, dispatch.Clipmap->LevelCount);
-        commandList->BufferBarrier(dispatch.List, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
-        commandList->BufferBarrier(dispatch.Stats, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
-        // 溢れたクラスタの範囲のページへ書いた再描画の印を、後続の展開・次フレームの引き継ぎが読めるようにする
-        commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        bool bSelected = false;
+        {
+            ScopedGpuTimestamp selectTimestamp(commandList, "VsmCullSelect");
+            commandList->SetPipeline(m_CullPipeline);
+            commandList->SetDescriptorSet(use->CullSet, 0);
+            bSelected = commandList->DispatchIndirect(use->Pairs, PairsArgsOffsetBytes);
+            commandList->BufferBarrier(use->Pairs, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
+            commandList->BufferBarrier(dispatch.List, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            commandList->BufferBarrier(dispatch.Stats, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            // 溢れたクラスタの範囲のページへ書いた再描画の印を、後続の展開・次フレームの引き継ぎが読めるようにする
+            commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        }
+        if (!bSelected)
+        {
+            // 間接 dispatch を記録できないコマンドリストでは、選択を走らせられない（組の数が GPU でしか分からない）
+            NORVES_LOG_WARNING("VirtualShadowMapMegaCull", "間接 dispatch を記録できず、MegaGeometry の投影物のカリングの選択を飛ばした");
+            return false;
+        }
         m_LastGroupCount = dispatch.TotalGroups;
 
         // ----- 影の塊の記録: 一覧の 1 件 = 1 スレッド（容量ぶんのスレッドを x 方向に並べ、件数より後ろは何もしない） -----
         if (dispatch.Chunks)
         {
+            ScopedGpuTimestamp chunkTimestamp(commandList, "VsmCullChunks");
             use->ChunkSet->BindStorageBuffer(ChunkBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
             use->ChunkSet->BindConstantBuffer(ChunkBindParams, use->ParamsUniform, 0, sizeof(params));
             use->ChunkSet->BindStorageBuffer(ChunkBindList, dispatch.List, 0, ClampBindSize(listBytes));
@@ -836,7 +1043,8 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool VirtualShadowMapMegaCullStatsReporter::Report(uint32_t instances, uint32_t clusters, uint32_t overflow)
+    bool VirtualShadowMapMegaCullStatsReporter::Report(
+        uint32_t instances, uint32_t clusters, uint32_t overflow, uint32_t pointInstances, uint32_t pointClusters)
     {
         ++m_ReportsSinceLog;
         if (m_bLogged && m_ReportsSinceLog < LogIntervalReports)
@@ -845,7 +1053,13 @@ namespace NorvesLib::Core::Rendering
         }
         m_bLogged = true;
         m_ReportsSinceLog = 0;
-        NORVES_LOG_INFO("VirtualShadowMapMegaCull", "VSM_MEGA_CULL instances=%u clusters=%u overflow=%u", instances, clusters, overflow);
+        NORVES_LOG_INFO("VirtualShadowMapMegaCull",
+                        "VSM_MEGA_CULL instances=%u clusters=%u overflow=%u point_instances=%u point_clusters=%u",
+                        instances,
+                        clusters,
+                        overflow,
+                        pointInstances,
+                        pointClusters);
         return true;
     }
 

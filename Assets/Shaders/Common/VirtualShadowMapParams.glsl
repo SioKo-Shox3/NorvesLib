@@ -23,14 +23,28 @@ struct VsmSampleParams
     vec4 view;
     // x: 影の最小の距離、y: 影の最大の距離、z: 奥の薄めの幅（m）。CSM の最初の分割・最後の分割・最後のカスケードの幅の 10% と同じ
     vec4 range;
-    // x: 1 なら有効、y: 段の数、z: 物理ページの数
+    // x: 1 なら有効、y: スライス（段）の数、z: 物理ページの数
     uvec4 control;
-    // 段を選ぶ距離のしきい値（16 個。k 番目が [k / 4][k % 4]）
+    // 段を選ぶ距離のしきい値（太陽のクリップマップのもの。16 個。k 番目が [k / 4][k % 4]）。
+    // ページの一辺・texel・範囲の原点などスライスごとの値は、スライスの表（Common/VirtualShadowMapSlice.glsl）にある
     vec4 thresholds[4];
-    // x: ページの一辺（m）、y: texel の一辺（m）
-    vec4 levelInfo[16];
-    // x, y: 範囲の最小の絶対のページの番号
-    ivec4 levelOrigin[16];
+};
+
+// 点光源の VSM（--point-shadow-method=vsm）を読むパラメータ。Common/VirtualShadowMapPoint.glsl の評価が使う。
+// std140。Rendering/VirtualShadowMapPointLights.h の GPUVsmPointSampleParams と同じ並び
+struct VsmPointSampleParams
+{
+    // x: 灯の数（0 なら点光源の VSM は読まない）、y: 点光源のスライスの、スライスの表での先頭の番号、z: 解像度の段の数、w: 物理ページの数
+    uvec4 header;
+    // x: カメラからの距離 1 m あたりの画素の大きさ（m）、y: 段を選ぶ目標 texel の係数（2^bias）、
+    // z: PCF の半径の下限の画素数（VirtualShadowMap::PCF_MIN_RADIUS_PIXELS）、w: 予約（0）
+    vec4 tuning;
+    // xyz: カメラの位置
+    vec4 cameraPosition;
+    // x: 面の近い平面の距離（m）、y: 面の段 0 の解像度（texel）
+    vec4 plane;
+    // xyz: 灯の位置、w: Range（影の灯の順。キューブの番号と同じ）
+    vec4 lights[4];
 };
 
 #endif // VIRTUAL_SHADOW_MAP_PARAMS_GLSL

@@ -1,16 +1,24 @@
 ﻿#version 450
 
 // ========================================
-// 太陽の仮想シャドウマップ（VSM）の印付け
+// 仮想シャドウマップ（VSM）の印付け（太陽と点光源）
 //
-// GBuffer.Depth の空でない各画素からワールドの位置を戻し、カメラの前方への距離が影の範囲の内側なら、カメラからの直線距離で
+// 太陽: GBuffer.Depth の空でない各画素からワールドの位置を戻し、カメラの前方への距離が影の範囲の内側なら、カメラからの直線距離で
 // クリップマップの段を選び、その位置のライト空間のページに要求のビットを立てる。照明のブロッカーの探索・PCF の核（params.tuning.x texel と
 // params.tuning.z m を足した半径）がページの境界をまたぐときは、隣のページにも立てる。
 //
+// 点光源（binding 9 の灯の数が 1 以上のとき）: 同じ位置について、影を持つ灯のうち Range の内側のものごとに、光源からの向きの主軸の面、
+// 面の軸の距離とカメラからの距離で選ぶ解像度の段（CPU の SelectVirtualShadowMapPointMip と同じ式）、面の NDC から求まるページに印を付ける。
+// PCF の核（texel に比例する分 + ワールドの長さの分）は受け手の面の接平面上の正方形で表し、各面の錐台で切って、残った部分が
+// 触れるページ（その面の同じ段）のすべてに印を付ける。面の縁をまたぐ核は隣の面の同じ段のページにも付く。
+// 面の軸・ページの数・ページの表の先頭はスライスの表から引く。太陽の段の数（control.w）が 0 のときは点光源だけが印を付ける。
+//
 // 段の選び方は CPU の SelectVirtualShadowMapLevel と同じ結果になるよう、式を写さず、CPU が二分法で求めた距離のしきい値
 // （VirtualShadowMapLevelDistanceThresholds）を使う。距離 d の段は「d >= しきい値となる k の数」。
-// 要求のビット列は 段 × 128 × 128 のページ（トーラスの番地 = 絶対のページの座標 mod 128）で、ビットの番号は
-// 段 * 16384 + 番地y * 128 + 番地x。
+// 要求のビット列はページの表と同じ並びで、ビットの番号はスライス（段）の表の先頭 + 番地y * 一辺 + 番地x
+// （トーラスの番地 = 絶対のページの座標 mod 一辺。太陽の段は 128 × 128 で、先頭 = 段 × 16384）。
+// 段を選ぶのは control.w 件のスライス（太陽の段。スライスの表の screen.w 番目から並ぶ）だけ。スライスの表はその前後にも件数ぶん続いてよい（点光源の面など）。
+// ページの一辺・texel・範囲の原点・基底はスライスの表（binding 8。Common/VirtualShadowMapSlice.glsl）から引く。
 // ========================================
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
@@ -22,21 +30,33 @@ layout(std140, set = 0, binding = 0) uniform VsmParams
     vec4 cameraPosition;
     vec4 lightRight;
     vec4 lightUp;
-    // x: 画面の幅、y: 画面の高さ、z: 段の数、w: 1 段の一辺のページ数（128）
+    // x: 画面の幅、y: 画面の高さ、z: スライスの数、w: 段を選ぶ太陽のスライスの、スライスの表での先頭の番号（段 L はスライス w + L）
     uvec4 screen;
     // x: PCF の核の半径のうち texel に比例する分（texel）、y: 影の範囲の奥の端（カメラの前方への距離 m）、z: 探索・PCF の半径の上限（ワールドの長さ m）
     vec4 tuning;
-    // x: 段階、y: 物理ページの数、z: 間接 dispatch の x の上限
+    // x: 段階、y: 物理ページの数、z: 間接 dispatch の x の上限、w: 段を選ぶ太陽のスライスの数（クリップマップの段の数）
     uvec4 control;
     // 段を選ぶ距離のしきい値（16 個。k 番目が [k / 4][k % 4]）
     vec4 thresholds[4];
-    // x: ページの一辺（m）、y: texel の一辺（m）
-    vec4 levelInfo[16];
-    // x, y: 範囲の最小の絶対のページの番号
-    ivec4 levelOrigin[16];
     // xyz: カメラの前方（単位ベクトル）、w: 影の範囲の手前の端（カメラの前方への距離 m）
     vec4 view;
 } params;
+
+// 点光源（VirtualShadowMapPages.cpp の GPUVsmPointParams と同じ並び）
+const uint MAX_POINT_LIGHTS = 4u;
+const uint POINT_FACE_COUNT = 6u;
+layout(std140, set = 0, binding = 9) uniform VsmPointParams
+{
+    // x: 灯の数、y: 点光源のスライスの、スライスの表での先頭の番号、z: 解像度の段の数、w: 面の段 0 の解像度（texel）
+    uvec4 header;
+    // x: カメラからの距離 1 m あたりの画素の大きさ（m）、y: 段を選ぶ目標 texel の係数（2^bias）、
+    // z: 核の半径のうち texel に比例する分（texel）、w: 核の半径に足すワールドの長さ（m）
+    vec4 tuning;
+    // x: 面の近い面（m）
+    vec4 plane;
+    // xyz: 灯の位置、w: Range
+    vec4 lights[MAX_POINT_LIGHTS];
+} points;
 
 layout(set = 0, binding = 1) uniform sampler2D gbufferDepth;
 
@@ -45,18 +65,240 @@ layout(std430, set = 0, binding = 2) buffer VsmRequestBits
     uint requestBits[];
 };
 
-const uint PAGES_PER_AXIS = 128u;
-const uint ENTRIES_PER_LEVEL = PAGES_PER_AXIS * PAGES_PER_AXIS;
+// スライスの表（ページの一辺・texel・範囲の原点・ページの表の先頭・基底）
+#define VSM_SLICE_BINDING 8
+#include "Common/VirtualShadowMapSlice.glsl"
 
-void MarkPage(uint level, int pageX, int pageY)
+void MarkPage(VsmSlice slice, int pageX, int pageY)
 {
-    const uint addressX = uint(pageX) & (PAGES_PER_AXIS - 1u);
-    const uint addressY = uint(pageY) & (PAGES_PER_AXIS - 1u);
-    const uint index = level * ENTRIES_PER_LEVEL + addressY * PAGES_PER_AXIS + addressX;
+    const uint index = VsmSliceEntryIndex(slice, pageX, pageY);
     const uint word = index >> 5u;
     const uint bit = 1u << (index & 31u);
     // 同じ dispatch の中で別のスレッドが同じ語へ atomicOr するので、読んでから書く形にせず、常に atomicOr する（通常の読み取りはデータ競合になる）
     atomicOr(requestBits[word], bit);
+}
+
+// 光源からの向きの主軸の面（キューブの層の順 +X,-X,+Y,-Y,+Z,-Z）。同じ大きさなら X、次に Y、最後に Z を優先する
+// （CPU の SelectVirtualShadowMapPointFace と同じ）
+uint SelectPointFace(vec3 direction)
+{
+    const vec3 magnitude = abs(direction);
+    if (magnitude.x >= magnitude.y && magnitude.x >= magnitude.z)
+    {
+        return direction.x >= 0.0 ? 0u : 1u;
+    }
+    if (magnitude.y >= magnitude.z)
+    {
+        return direction.y >= 0.0 ? 2u : 3u;
+    }
+    return direction.z >= 0.0 ? 4u : 5u;
+}
+
+uint PointSliceIndex(uint light, uint face, uint mip)
+{
+    return points.header.y + (light * POINT_FACE_COUNT + face) * points.header.z + mip;
+}
+
+// 面の座標（x, y, 軸の距離 z）での境界の符号つき距離。0 以上が面の錐台の内側
+// （0: 近い面、1〜4: 面の 4 つの縁 z >= |x|, |y|）
+float FaceClipDistance(vec3 p, uint plane)
+{
+    if (plane == 0u)
+    {
+        return p.z - points.plane.x;
+    }
+    if (plane == 1u)
+    {
+        return p.z - p.x;
+    }
+    if (plane == 2u)
+    {
+        return p.z + p.x;
+    }
+    if (plane == 3u)
+    {
+        return p.z - p.y;
+    }
+    return p.z + p.y;
+}
+
+// 四角形を 5 枚の境界で切ると、頂点は 1 枚につき高々 1 つ増える
+const uint MAX_CLIP_VERTICES = 10u;
+
+// 核（光源からの相対位置 offset を中心に、受け手の面の接平面で半径 radius の正方形。axisX・axisY はその接平面の軸）のうち、
+// 面 face の錐台に入る部分を、面 face・段 mip のページへ写して、触れる範囲のすべてのページに印を付ける。
+// 正方形を面の境界で切り（面の縁をまたぐ核は隣の面の側だけが残る）、残った多角形の頂点を面の座標の NDC へ写した外接の範囲を覆う。
+// 平面の多角形の透視による像は凸なので、外接の範囲は取りこぼさない
+void MarkPointFootprint(uint light, uint mip, uint face, vec3 offset, vec3 axisX, vec3 axisY, float radius)
+{
+    const VsmSlice slice = vsmSlices[PointSliceIndex(light, face, mip)];
+    vec3 polygon[MAX_CLIP_VERTICES];
+    vec3 clipped[MAX_CLIP_VERTICES];
+    uint count = 4u;
+    for (uint corner = 0u; corner < 4u; ++corner)
+    {
+        const float sx = (corner == 1u || corner == 2u) ? radius : -radius;
+        const float sy = corner >= 2u ? radius : -radius;
+        const vec3 world = offset + sx * axisX + sy * axisY;
+        polygon[corner] = vec3(dot(slice.axisX.xyz, world), dot(slice.axisY.xyz, world), dot(slice.axisZ.xyz, world));
+    }
+
+    for (uint plane = 0u; plane < 5u; ++plane)
+    {
+        uint clippedCount = 0u;
+        for (uint index = 0u; index < count; ++index)
+        {
+            const vec3 current = polygon[index];
+            const vec3 next = polygon[(index + 1u) % count];
+            const float currentDistance = FaceClipDistance(current, plane);
+            const float nextDistance = FaceClipDistance(next, plane);
+            if (currentDistance >= 0.0)
+            {
+                clipped[clippedCount++] = current;
+            }
+            if ((currentDistance >= 0.0) != (nextDistance >= 0.0))
+            {
+                clipped[clippedCount++] = mix(current, next, currentDistance / (currentDistance - nextDistance));
+            }
+        }
+        if (clippedCount == 0u)
+        {
+            return;
+        }
+        for (uint index = 0u; index < clippedCount; ++index)
+        {
+            polygon[index] = clipped[index];
+        }
+        count = clippedCount;
+    }
+
+    // 面の縁・角は丸めで 1 をわずかに超えることがあるので [-1, 1] に収める
+    vec2 low = vec2(1.0e30);
+    vec2 high = vec2(-1.0e30);
+    for (uint index = 0u; index < count; ++index)
+    {
+        const vec2 ndc = clamp(polygon[index].xy / max(polygon[index].z, 1.0e-6), vec2(-1.0), vec2(1.0));
+        low = min(low, ndc);
+        high = max(high, ndc);
+    }
+    const int pageCount = slice.origin.w;
+    const ivec2 pageLimit = ivec2(pageCount - 1);
+    const ivec2 pageLow = clamp(ivec2(floor((low * 0.5 + 0.5) * float(pageCount))), ivec2(0), pageLimit);
+    const ivec2 pageHigh = clamp(ivec2(floor((high * 0.5 + 0.5) * float(pageCount))), ivec2(0), pageLimit);
+    for (int pageY = pageLow.y; pageY <= pageHigh.y; ++pageY)
+    {
+        for (int pageX = pageLow.x; pageX <= pageHigh.x; ++pageX)
+        {
+            MarkPage(slice, pageX, pageY);
+        }
+    }
+}
+
+void MarkPoints(vec3 world)
+{
+    const uint lightCount = min(points.header.x, MAX_POINT_LIGHTS);
+    if (lightCount == 0u)
+    {
+        return;
+    }
+    const float cameraDistance = length(world - params.cameraPosition.xyz);
+    const float targetTexel = cameraDistance * points.tuning.x * points.tuning.y;
+    if (!(targetTexel > 0.0))
+    {
+        return;
+    }
+    for (uint light = 0u; light < lightCount; ++light)
+    {
+        const vec4 lightData = points.lights[light];
+        const vec3 offset = world - lightData.xyz;
+        if (!(dot(offset, offset) <= lightData.w * lightData.w))
+        {
+            continue;
+        }
+        const uint face = SelectPointFace(offset);
+        const VsmSlice faceSlice = vsmSlices[PointSliceIndex(light, face, 0u)];
+        const float axial = dot(faceSlice.axisZ.xyz, offset);
+        if (!(axial >= points.plane.x))
+        {
+            continue;
+        }
+
+        // texel（面の軸の距離 z で 2z ÷ 段の解像度）が目標以下になる最も粗い段。どの段も超えるときは段 0（CPU の SelectVirtualShadowMapPointMip と同じ）
+        uint mip = 0u;
+        for (uint candidate = points.header.z; candidate-- > 0u;)
+        {
+            if (2.0 * axial / float(points.header.w >> candidate) <= targetTexel)
+            {
+                mip = candidate;
+                break;
+            }
+        }
+
+        // 核の半径（ワールドの長さ）。ページの幅（その距離で）を超えると 3 × 3 の標本の間でページを飛ばすので、ページの幅で抑える
+        const VsmSlice slice = vsmSlices[PointSliceIndex(light, face, mip)];
+        const float texelMeters = 2.0 * axial / float(points.header.w >> mip);
+        const float radius = min(points.tuning.z * texelMeters + points.tuning.w, axial * slice.info.x);
+
+        // 核が届きうる面だけを調べる。核の点は受け手から radius × √2 以内（余裕を見て 1.5 倍）なので、面 f の向きの成分が
+        // 最大の成分より 2 × 余裕 以上小さい面には、どの点も入らない（面は向きの成分が最大の領域）
+        const float reach = 1.5 * radius;
+        const float largest = max(abs(offset.x), max(abs(offset.y), abs(offset.z)));
+        for (uint candidate = 0u; candidate < POINT_FACE_COUNT; ++candidate)
+        {
+            if (candidate != face)
+            {
+                const float component = offset[candidate >> 1u];
+                const float toward = (candidate & 1u) == 0u ? component : -component;
+                if (toward < largest - 2.0 * reach - 1.0e-3 * largest)
+                {
+                    continue;
+                }
+            }
+            MarkPointFootprint(light, mip, candidate, offset, slice.axisX.xyz, slice.axisY.xyz, radius);
+        }
+    }
+}
+
+void MarkSun(vec3 world)
+{
+    // 影の範囲は照明（Common/VirtualShadowMap.glsl）と同じカメラの前方への距離で測る。段は直線の距離で選ぶ（照明と同じ）。
+    // 視錐台の端の受け手は、前方の距離が範囲の内側でも直線の距離は範囲を超える
+    const vec3 toReceiver = world - params.cameraPosition.xyz;
+    const float viewDistance = dot(toReceiver, params.view.xyz);
+    if (!(viewDistance >= params.view.w) || !(viewDistance <= params.tuning.y))
+    {
+        return;
+    }
+    const float distanceToCamera = length(toReceiver);
+
+    uint level = 0u;
+    for (uint index = 0u; index + 1u < params.control.w; ++index)
+    {
+        if (distanceToCamera >= params.thresholds[index >> 2u][index & 3u])
+        {
+            ++level;
+        }
+    }
+
+    const VsmSlice slice = vsmSlices[params.screen.w + level];
+    const float pageMeters = slice.info.x;
+    // 標本の位置は texel に比例する分（法線の向きへのずれ・画素の大きさ・1 texel）とワールドの長さの分（物理の半影）の和で届く
+    const float margin = params.tuning.x * slice.info.y + params.tuning.z;
+    const vec2 lightXY = vec2(dot(world, slice.axisX.xyz), dot(world, slice.axisY.xyz));
+    const ivec2 origin = slice.origin.xy;
+    const int count = slice.origin.w;
+    // 必要なページはすべて走査する（範囲は上限と texel から決まる）。スライスの範囲（origin から一辺のページ数）の外には印を付けないので、
+    // 走査も範囲に収めて、1 画素の走査を一辺 x 一辺のページまでに抑える
+    const ivec2 pageMin = max(ivec2(floor((lightXY - margin) / pageMeters)), origin);
+    const ivec2 pageMax = min(ivec2(floor((lightXY + margin) / pageMeters)), origin + ivec2(count - 1));
+
+    for (int pageY = pageMin.y; pageY <= pageMax.y; ++pageY)
+    {
+        for (int pageX = pageMin.x; pageX <= pageMax.x; ++pageX)
+        {
+            MarkPage(slice, pageX, pageY);
+        }
+    }
 }
 
 void main()
@@ -78,41 +320,10 @@ void main()
     const vec4 world4 = params.invViewProjection * vec4(uv * 2.0 - 1.0, depth, 1.0);
     const vec3 world = world4.xyz / world4.w;
 
-    // 影の範囲は照明（Common/VirtualShadowMap.glsl）と同じカメラの前方への距離で測る。段は直線の距離で選ぶ（照明と同じ）。
-    // 視錐台の端の受け手は、前方の距離が範囲の内側でも直線の距離は範囲を超える
-    const vec3 toReceiver = world - params.cameraPosition.xyz;
-    const float viewDistance = dot(toReceiver, params.view.xyz);
-    if (!(viewDistance >= params.view.w) || !(viewDistance <= params.tuning.y))
+    // 太陽の段の数が 0 のとき（夜など太陽のクリップマップが無効）は太陽の印付けを飛ばす。点光源だけが印を付ける
+    if (params.control.w != 0u)
     {
-        return;
+        MarkSun(world);
     }
-    const float distanceToCamera = length(toReceiver);
-
-    uint level = 0u;
-    for (uint index = 0u; index + 1u < params.screen.z; ++index)
-    {
-        if (distanceToCamera >= params.thresholds[index >> 2u][index & 3u])
-        {
-            ++level;
-        }
-    }
-
-    const float pageMeters = params.levelInfo[level].x;
-    // 標本の位置は texel に比例する分（法線の向きへのずれ・画素の大きさ・1 texel）とワールドの長さの分（物理の半影）の和で届く
-    const float margin = params.tuning.x * params.levelInfo[level].y + params.tuning.z;
-    const vec2 lightXY = vec2(dot(world, params.lightRight.xyz), dot(world, params.lightUp.xyz));
-    const ivec2 origin = params.levelOrigin[level].xy;
-    const int count = int(PAGES_PER_AXIS);
-    // 必要なページはすべて走査する（範囲は上限と texel から決まる）。段の範囲（origin から 128 ページ）の外には印を付けないので、
-    // 走査も範囲に収めて、1 画素の走査を 128 x 128 ページまでに抑える
-    const ivec2 pageMin = max(ivec2(floor((lightXY - margin) / pageMeters)), origin);
-    const ivec2 pageMax = min(ivec2(floor((lightXY + margin) / pageMeters)), origin + ivec2(count - 1));
-
-    for (int pageY = pageMin.y; pageY <= pageMax.y; ++pageY)
-    {
-        for (int pageX = pageMin.x; pageX <= pageMax.x; ++pageX)
-        {
-            MarkPage(level, pageX, pageY);
-        }
-    }
+    MarkPoints(world);
 }

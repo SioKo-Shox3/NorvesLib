@@ -1,11 +1,19 @@
 ﻿// LightingPassのRTGI ray-query computeと既存間接光fallbackをGPU readbackで検証する。
 #include "Rendering/FramePacket.h"
+#include "Rendering/FrameCommand.h"
 #include "Rendering/LightingPass.h"
+#include "Rendering/LightingPassGpuTypes.h"
+#include "Rendering/LightingPassLightPacking.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/RTGIContract.h"
+#include "Rendering/PointShadowSnapshot.h"
+#include "Rendering/VirtualShadowMapClipmap.h"
+#include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/VirtualShadowMapPointLights.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "RenderingValidation/GpuTestEnvironment.h"
 
 #include "RHI/ICommandList.h"
@@ -52,6 +60,34 @@ namespace NorvesLib::Core::Rendering
                                    false);
         }
 
+        // 今の Execute が使っている組（ExecuteWithInputs の直後は、その Execute の組）
+        struct ActiveExecuteSet
+        {
+            RHI::BufferPtr LightData;
+            RHI::BufferPtr LightArray;
+            RHI::BufferPtr VsmSample;
+            RHI::BufferPtr VsmPointSample;
+            RHI::BufferPtr VsmSlice;
+            RHI::DescriptorSetPtr DescriptorSet;
+        };
+
+        static ActiveExecuteSet GetActiveExecuteSet(const LightingPass& pass)
+        {
+            return ActiveExecuteSet{pass.m_LightDataBuffer,
+                                    pass.m_LightArrayBuffer,
+                                    pass.m_VsmSampleBuffer,
+                                    pass.m_VsmPointSampleBuffer,
+                                    pass.m_VsmSliceBuffer,
+                                    pass.m_LightingDescriptorSet};
+        }
+
+        // グラフを通さずに Execute を呼ぶ試験が、VSM のページの表とプールを渡す
+        static void SetFrameVsmBuffers(LightingPass& pass, const RHI::BufferPtr& pageTable, const RHI::BufferPtr& pool)
+        {
+            pass.m_FrameVsmPageTable = pageTable;
+            pass.m_FrameVsmPool = pool;
+        }
+
         static RHI::TexturePtr GetSceneColorTexture(const LightingPass& pass)
         {
             return pass.m_SceneColorTexture;
@@ -92,6 +128,14 @@ namespace
     constexpr uint32_t ExpectedInstanceCustomIndex = 17u;
     constexpr uint32_t ExpectedSceneRevision = 41u;
     constexpr uint32_t ExpectedLightRevision = 7u;
+
+    // 提出（Submit）ごとに 1 つ進める描画フレームの通し番号。照明の Execute ごとの資源の組は、通し番号が同じ間は
+    // 同じフレームの別のビューポートとして別の組を使うので、別々に提出する試験の各呼び出しには別の番号を渡す。
+    uint64_t NextRenderFrameSerial()
+    {
+        static uint64_t serial = 1000000u;
+        return ++serial;
+    }
 
     struct Vertex
     {
@@ -560,6 +604,7 @@ namespace
         context.CommandList = commandList.get();
         context.FrameIndex = 0u;
         context.FrameNumber = frameNumber;
+        context.RenderFrameSerial = NextRenderFrameSerial();
         context.SnapshotRayTracingScene = &rayTracingScene;
         context.RTGICapability = rtgiCapability;
         context.bRTGIEnabled = bRTGIEnabled;
@@ -659,6 +704,354 @@ namespace
                         mappedRTGI,
                         static_cast<size_t>(readbackSize));
             rtgiReadback->Unmap();
+        }
+        return true;
+    }
+
+    // 同じフレームの複数の照明の Execute の観測
+    struct ExecutedViewport
+    {
+        RTGIDiffuseIndirectVulkanTestAccess::ActiveExecuteSet Set;
+        // 描画の FrameCommand（提出前に積まれた全画面パス）が束縛する descriptor set
+        DescriptorSetPtr BoundDescriptorSet;
+    };
+
+    uint32_t CountFullscreenPasses(const VariableArray<FrameCommand>& commands)
+    {
+        uint32_t count = 0u;
+        for (const FrameCommand& command : commands)
+        {
+            count += command.Type == FrameCommandType::FullscreenPass ? 1u : 0u;
+        }
+        return count;
+    }
+
+    DescriptorSetPtr LastFullscreenPassDescriptorSet(const VariableArray<FrameCommand>& commands)
+    {
+        for (size_t index = commands.size(); index > 0u; --index)
+        {
+            if (commands[index - 1u].Type == FrameCommandType::FullscreenPass)
+            {
+                return commands[index - 1u].FullscreenPass.DescriptorSet;
+            }
+        }
+        return DescriptorSetPtr{};
+    }
+
+    bool ReadBufferBytes(const BufferPtr& buffer, uint64_t byteCount, VariableArray<uint8_t>& outBytes)
+    {
+        if (!buffer || buffer->GetSize() < byteCount)
+        {
+            return false;
+        }
+        const void* mapped = buffer->Map(0u, byteCount);
+        if (!mapped)
+        {
+            return false;
+        }
+        outBytes.resize(static_cast<size_t>(byteCount));
+        std::memcpy(outBytes.data(), mapped, static_cast<size_t>(byteCount));
+        buffer->Unmap();
+        return true;
+    }
+
+    bool BytesEqual(const VariableArray<uint8_t>& bytes, const void* expected, size_t expectedSize)
+    {
+        return bytes.size() >= expectedSize && std::memcmp(bytes.data(), expected, expectedSize) == 0;
+    }
+
+    // 同じフレームに照明を複数回 Execute する（同じ SceneView の複数のビューポート）。
+    // 実 Vulkan 装置で、Execute ごとに別の descriptor set と定数・ライト配列・VSM のパラメータとスライスの表のバッファの組を使うこと、
+    // 描画が束縛する descriptor set が Execute ごとに別であること、各組のバッファの中身がその Execute のカメラ・ライト・VSM の値のまま
+    // 後の Execute に書き換えられないこと、組の上限（4）を超えた Execute が描かず組を壊さないこと、
+    // フレームが変わると先頭の組から使い直すことを確かめる。
+    bool RunMultiViewportResourceSetTest(const DevicePtr& device,
+                                         const RHI::DeviceCapabilities& capabilities,
+                                         const RTGIRayQueryCapability& rtgiCapability,
+                                         LightingPass& lightingPass,
+                                         SceneRenderer& renderer,
+                                         ViewRenderContext& context,
+                                         const TestGBuffer& gbuffer)
+    {
+        constexpr uint32_t ViewportCount = 4u;
+        constexpr uint64_t FrameNumber = 900u;
+        const Math::Vector3 sunDirection(0.35f, -0.8f, 0.45f);
+
+        // ビューポートごとに別のカメラ・ライト・太陽の VSM のクリップマップ・点光源の VSM の灯
+        CameraProxy cameras[ViewportCount];
+        VariableArray<LightProxy> lightSets[ViewportCount];
+        VirtualShadowMapClipmap clipmaps[ViewportCount];
+        VirtualShadowMapPointLights pointLights[ViewportCount];
+        for (uint32_t viewport = 0u; viewport < ViewportCount; ++viewport)
+        {
+            CameraProxy& camera = cameras[viewport];
+            camera.CameraId = 100u + viewport;
+            camera.PositionX = 3.0f * static_cast<float>(viewport + 1u);
+            camera.PositionY = 1.5f;
+            camera.PositionZ = 2.0f + static_cast<float>(viewport);
+            camera.FieldOfView = 55.0f + static_cast<float>(viewport);
+            camera.AspectRatio = 1.0f;
+            camera.NearPlane = 0.1f;
+            camera.FarPlane = 200.0f;
+            camera.Viewport.Width = static_cast<float>(TestWidth);
+            camera.Viewport.Height = static_cast<float>(TestHeight);
+            for (uint32_t light = 0u; light <= viewport; ++light)
+            {
+                LightProxy point;
+                point.Type = LightType::Point;
+                point.PositionX = static_cast<float>(light + 1u) + 5.0f * static_cast<float>(viewport);
+                point.PositionY = 2.0f;
+                point.PositionZ = 1.0f;
+                point.ColorR = 0.9f;
+                point.ColorG = 0.5f;
+                point.ColorB = 0.2f;
+                point.CanonicalIntensity = 10.0f + 3.0f * static_cast<float>(viewport) + static_cast<float>(light);
+                point.Range = 8.0f;
+                lightSets[viewport].push_back(point);
+            }
+            clipmaps[viewport] = BuildVirtualShadowMapClipmap(
+                sunDirection, 1u, Math::Vector3(camera.PositionX, camera.PositionY, camera.PositionZ), VirtualShadowMapClipmapSettings{});
+            PointShadowSnapshot snapshot;
+            snapshot.LightCount = 1u;
+            snapshot.Lights[0].LightId = 1u;
+            snapshot.Lights[0].Position = Math::Vector3(2.0f * static_cast<float>(viewport) + 1.0f, 2.0f, 3.0f);
+            snapshot.Lights[0].Range = 10.0f + static_cast<float>(viewport);
+            pointLights[viewport] =
+                BuildVirtualShadowMapPointLights(snapshot, VirtualShadowMapPointSettings{}, VirtualShadowMap::LEVEL_COUNT);
+            if (!clipmaps[viewport].bEnabled || pointLights[viewport].LightCount != 1u)
+            {
+                std::cerr << "複数ビューポートの試験: VSM の入力を作れませんでした\n";
+                return false;
+            }
+        }
+
+        // 照明が読む VSM のページの表・プール（中身は 0 で、どのページも未割り当て）
+        const uint64_t pageTableBytes =
+            VirtualShadowMap::PageTableBytes(pointLights[0].FirstSlice + pointLights[0].SliceCount());
+        const uint64_t poolBytes = VirtualShadowMap::PAGE_BYTES * 4u;
+        BufferPtr pageTable = device->CreateBuffer(
+            BufferDesc(pageTableBytes, ResourceUsage::StorageBuffer, true, "RTGIDiffuseIndirectVulkanTest.VsmPageTable"));
+        BufferPtr pool = device->CreateBuffer(
+            BufferDesc(poolBytes, ResourceUsage::StorageBuffer, true, "RTGIDiffuseIndirectVulkanTest.VsmPool"));
+        if (!pageTable || !pool)
+        {
+            std::cerr << "複数ビューポートの試験: VSM のバッファを作れませんでした\n";
+            return false;
+        }
+        {
+            VariableArray<uint8_t> zeros;
+            zeros.resize(static_cast<size_t>(std::max(pageTableBytes, poolBytes)));
+            std::memset(zeros.data(), 0, zeros.size());
+            pageTable->Update(zeros.data(), pageTableBytes);
+            pool->Update(zeros.data(), poolBytes);
+        }
+        RTGIDiffuseIndirectVulkanTestAccess::SetFrameVsmBuffers(lightingPass, pageTable, pool);
+
+        // 1 フレームぶんの Execute を、viewportOrder の順に記録して提出する
+        const auto recordFrame = [&](uint64_t frameNumber,
+                                     const uint32_t* viewportOrder,
+                                     uint32_t executeCount,
+                                     ExecutedViewport* outExecuted,
+                                     uint32_t& outDrawCalls,
+                                     uint32_t& outPassesAddedByLastExecute) -> bool
+        {
+            CommandListPtr commandList = device->CreateCommandList();
+            if (!commandList)
+            {
+                std::cerr << "複数ビューポートの試験: command list を作れませんでした\n";
+                return false;
+            }
+            VariableArray<FrameCommand> pending;
+            context.Device = device.get();
+            context.Capabilities = &capabilities;
+            context.CommandList = commandList.get();
+            context.PendingFrameCommands = &pending;
+            context.FrameIndex = 0u;
+            context.FrameNumber = frameNumber;
+            context.RenderFrameSerial = NextRenderFrameSerial();
+            context.bRTGIEnabled = false;
+            context.bRTGITLASAvailable = false;
+            renderer.ResetStats();
+            commandList->SetFrameIndex(0u);
+            commandList->Begin();
+            for (uint32_t execute = 0u; execute < executeCount; ++execute)
+            {
+                const uint32_t viewport = viewportOrder[execute];
+                context.MainCamera = &cameras[viewport];
+                context.SnapshotLightProxies = &lightSets[viewport];
+                context.PhysicalLighting.Begin(frameNumber, 0u, viewport);
+                context.PhysicalLighting.ConfigureRTGI(
+                    rtgiCapability, false, false, context.SceneRevision, context.LightRevision);
+                context.PhysicalLighting.SunClipmap = clipmaps[viewport];
+                context.PhysicalLighting.PointVsmLights = pointLights[viewport];
+                const uint32_t passesBefore = CountFullscreenPasses(pending);
+                RTGIDiffuseIndirectVulkanTestAccess::ExecuteWithInputs(lightingPass,
+                                                                       context,
+                                                                       gbuffer.Albedo,
+                                                                       gbuffer.Normal,
+                                                                       gbuffer.Material,
+                                                                       gbuffer.Depth,
+                                                                       gbuffer.Velocity,
+                                                                       gbuffer.Emissive,
+                                                                       TexturePtr{});
+                outPassesAddedByLastExecute = CountFullscreenPasses(pending) - passesBefore;
+                if (outExecuted != nullptr && outPassesAddedByLastExecute == 1u)
+                {
+                    outExecuted[execute].Set = RTGIDiffuseIndirectVulkanTestAccess::GetActiveExecuteSet(lightingPass);
+                    outExecuted[execute].BoundDescriptorSet = LastFullscreenPassDescriptorSet(pending);
+                }
+            }
+            // 提出前に、積んだ描画をまとめて記録する（RenderingCoordinator と同じ順）
+            renderer.ExecuteFrameCommands(pending, commandList.get());
+            outDrawCalls = renderer.GetStats().DrawCallCount;
+            commandList->End();
+            commandList->Submit(true);
+            context.PendingFrameCommands = nullptr;
+            context.MainCamera = nullptr;
+            return true;
+        };
+
+        // 組のバッファの中身が、cameraViewport のカメラ・ライト・VSM の値であること
+        const uint32_t clampedPoolPages = static_cast<uint32_t>(
+            std::min<uint64_t>(poolBytes / VirtualShadowMap::PAGE_BYTES, VirtualShadowMap::MAX_POOL_PAGES));
+        const float depthHeight = static_cast<float>(gbuffer.Depth->GetHeight());
+        const auto verifySet = [&](const ExecutedViewport& entry, uint32_t cameraViewport, const char* label) -> bool
+        {
+            const CameraProxy& camera = cameras[cameraViewport];
+            const float cameraPosition[3] = {camera.PositionX, camera.PositionY, camera.PositionZ};
+            const float cameraForward[3] = {camera.ForwardX, camera.ForwardY, camera.ForwardZ};
+            bool bOk = true;
+
+            VariableArray<uint8_t> bytes;
+            // 照明の定数: そのカメラの位置とライトの数
+            GPULightingParams lighting = {};
+            if (!ReadBufferBytes(entry.Set.LightData, sizeof(lighting), bytes))
+            {
+                bOk = false;
+            }
+            else
+            {
+                std::memcpy(&lighting, bytes.data(), sizeof(lighting));
+                bOk = bOk && std::abs(lighting.cameraPosition[0] - cameraPosition[0]) < 1.0e-4f &&
+                      std::abs(lighting.cameraPosition[1] - cameraPosition[1]) < 1.0e-4f &&
+                      std::abs(lighting.cameraPosition[2] - cameraPosition[2]) < 1.0e-4f &&
+                      lighting.lightCount == static_cast<uint32_t>(lightSets[cameraViewport].size());
+            }
+            // ライトの配列
+            VariableArray<GPULightData> expectedLights;
+            const uint32_t expectedLightCount =
+                PackLightingPassLights(Span<const LightProxy>(lightSets[cameraViewport]), expectedLights);
+            const size_t lightBytes = static_cast<size_t>(expectedLightCount) * sizeof(GPULightData);
+            bOk = bOk && expectedLightCount > 0u && ReadBufferBytes(entry.Set.LightArray, lightBytes, bytes) &&
+                  BytesEqual(bytes, expectedLights.data(), lightBytes);
+            // 太陽の VSM のパラメータ
+            GPUVsmSampleParams expectedSample = {};
+            const bool bSun = BuildVirtualShadowMapSampleParams(&clipmaps[cameraViewport],
+                                                                cameraPosition,
+                                                                cameraForward,
+                                                                context.PhysicalLighting.CascadedShadow.SplitDistances,
+                                                                camera.FieldOfView,
+                                                                depthHeight,
+                                                                clampedPoolPages,
+                                                                expectedSample);
+            bOk = bOk && bSun && ReadBufferBytes(entry.Set.VsmSample, sizeof(expectedSample), bytes) &&
+                  BytesEqual(bytes, &expectedSample, sizeof(expectedSample));
+            // 点光源の VSM のパラメータ
+            GPUVsmPointSampleParams expectedPoint = {};
+            const bool bPoint = BuildVirtualShadowMapPointSampleParams(
+                pointLights[cameraViewport], cameraPosition, camera.FieldOfView, depthHeight, clampedPoolPages, expectedPoint);
+            bOk = bOk && bPoint && ReadBufferBytes(entry.Set.VsmPointSample, sizeof(expectedPoint), bytes) &&
+                  BytesEqual(bytes, &expectedPoint, sizeof(expectedPoint));
+            // スライスの表（太陽の段の後ろに点光源のスライス）
+            GPUVsmSlice expectedSlices[VirtualShadowMapMaxSlices];
+            std::memset(expectedSlices, 0, sizeof(expectedSlices));
+            BuildVirtualShadowMapSlices(&clipmaps[cameraViewport], nullptr, VirtualShadowMapMaxSlices, expectedSlices);
+            BuildVirtualShadowMapPointSlices(pointLights[cameraViewport], expectedSlices);
+            bOk = bOk && ReadBufferBytes(entry.Set.VsmSlice, sizeof(expectedSlices), bytes) &&
+                  BytesEqual(bytes, expectedSlices, sizeof(expectedSlices));
+            if (!bOk)
+            {
+                std::cerr << "複数ビューポートの試験: 組のバッファの中身がカメラ " << cameraViewport << " の値と違います（" << label
+                          << "）\n";
+            }
+            return bOk;
+        };
+
+        // フレーム 0: 4 つのビューポート。Execute のたびに別の組が使われ、描画は 4 回
+        const uint32_t order[ViewportCount] = {0u, 1u, 2u, 3u};
+        ExecutedViewport executed[ViewportCount];
+        uint32_t drawCalls = 0u;
+        uint32_t lastAdded = 0u;
+        if (!recordFrame(FrameNumber, order, ViewportCount, executed, drawCalls, lastAdded) || drawCalls != ViewportCount)
+        {
+            std::cerr << "複数ビューポートの試験: 4 ビューポートの描画数が不正です draw_calls=" << drawCalls << "\n";
+            return false;
+        }
+        for (uint32_t viewport = 0u; viewport < ViewportCount; ++viewport)
+        {
+            const ExecutedViewport& entry = executed[viewport];
+            if (!entry.BoundDescriptorSet || entry.BoundDescriptorSet != entry.Set.DescriptorSet)
+            {
+                std::cerr << "複数ビューポートの試験: 描画が束縛する descriptor set が Execute の組と違います viewport=" << viewport
+                          << "\n";
+                return false;
+            }
+            for (uint32_t other = viewport + 1u; other < ViewportCount; ++other)
+            {
+                const RTGIDiffuseIndirectVulkanTestAccess::ActiveExecuteSet& a = entry.Set;
+                const RTGIDiffuseIndirectVulkanTestAccess::ActiveExecuteSet& b = executed[other].Set;
+                if (entry.BoundDescriptorSet == executed[other].BoundDescriptorSet || a.DescriptorSet == b.DescriptorSet ||
+                    a.LightData == b.LightData || a.LightArray == b.LightArray || a.VsmSample == b.VsmSample ||
+                    a.VsmPointSample == b.VsmPointSample || a.VsmSlice == b.VsmSlice)
+                {
+                    std::cerr << "複数ビューポートの試験: 別の Execute が同じ descriptor set またはバッファを使っています viewport="
+                              << viewport << " other=" << other << "\n";
+                    return false;
+                }
+            }
+            if (!verifySet(entry, viewport, "同じフレームの 4 回の後"))
+            {
+                return false;
+            }
+        }
+
+        // 次のフレームで 5 回 Execute する: 先頭の組から使い直し、組の上限を超えた 5 回目は描かず、4 つ目の組を壊さない
+        ExecutedViewport overflow[ViewportCount + 1u];
+        const uint32_t overflowOrder[ViewportCount + 1u] = {0u, 1u, 2u, 3u, 0u};
+        if (!recordFrame(FrameNumber + 1u, overflowOrder, ViewportCount + 1u, overflow, drawCalls, lastAdded) ||
+            drawCalls != ViewportCount || lastAdded != 0u)
+        {
+            std::cerr << "複数ビューポートの試験: 上限を超えた Execute が描いています draw_calls=" << drawCalls
+                      << " added=" << lastAdded << "\n";
+            return false;
+        }
+        for (uint32_t viewport = 0u; viewport < ViewportCount; ++viewport)
+        {
+            if (overflow[viewport].BoundDescriptorSet != executed[viewport].BoundDescriptorSet ||
+                !verifySet(overflow[viewport], viewport, "上限を超えた Execute の後"))
+            {
+                std::cerr << "複数ビューポートの試験: 次のフレームが先頭の組から使い直されていないか、上限超えが組を壊しました viewport="
+                          << viewport << "\n";
+                return false;
+            }
+        }
+
+        // カメラの順を逆にしたフレーム: 各組には、その順番の Execute のカメラの値が入る
+        ExecutedViewport reversed[ViewportCount];
+        const uint32_t reversedOrder[ViewportCount] = {3u, 2u, 1u, 0u};
+        if (!recordFrame(FrameNumber + 2u, reversedOrder, ViewportCount, reversed, drawCalls, lastAdded) || drawCalls != ViewportCount)
+        {
+            std::cerr << "複数ビューポートの試験: 逆順のフレームの描画数が不正です draw_calls=" << drawCalls << "\n";
+            return false;
+        }
+        for (uint32_t execute = 0u; execute < ViewportCount; ++execute)
+        {
+            if (reversed[execute].BoundDescriptorSet != executed[execute].BoundDescriptorSet ||
+                !verifySet(reversed[execute], reversedOrder[execute], "逆順のフレームの後"))
+            {
+                std::cerr << "複数ビューポートの試験: 逆順のフレームの組が不正です execute=" << execute << "\n";
+                return false;
+            }
         }
         return true;
     }
@@ -1450,6 +1843,15 @@ namespace
             std::cerr << "露出の変更で静止の履歴延長が解除されません\n";
             return 1;
         }
+
+        // 同じフレームに照明を複数回 Execute する（同じ SceneView の複数のビューポート）
+        if (!RunMultiViewportResourceSetTest(device, capabilities, rtgiCapability, lightingPass, renderer, context, gbuffer))
+        {
+            std::cerr << "同じフレームの複数の Execute が Execute ごとの組を使っていません\n";
+            return 1;
+        }
+        std::cout << "lighting_execute_sets_per_viewport=true bound_descriptor_sets_distinct=true "
+                     "set_buffers_keep_own_viewport_values=true over_limit_execute_not_drawn=true\n";
 
         std::cout << "rtgi_capability_usable=true tlas_complete=true output_format=R16G16B16A16_FLOAT\n";
         std::cout << "rtgi_hit_miss_readback=finite hit_positive=true miss_zero=true\n";

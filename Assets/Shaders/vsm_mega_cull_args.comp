@@ -1,0 +1,36 @@
+﻿#version 460
+
+// ========================================
+// 仮想シャドウマップ（VSM）の、MegaGeometry の投影物のカリングの選択（vsm_mega_cull.comp）の間接 dispatch の引数を作る
+//
+// vsm_mega_cull_pairs.comp が作った（インスタンス、スライス）の組の一覧（binding 21）の頭の、組の数 pairCount と
+// 通った組のワークグループ数の最大 pairMaxGroups から、VkDispatchIndirectCommand（x, y, z）を pairArgs に書く。
+// x = 組の数 × 最大のワークグループ数を x の上限で頭打ちにした数、y = 上限を超える分を折り返した数、z = 1。
+// 1 ワークグループ（1 スレッド）で出す。
+// ========================================
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+// binding 21: 組の一覧（並びは vsm_mega_cull_pairs.comp と同じ）
+layout(std430, set = 0, binding = 21) buffer VsmMegaPairs
+{
+    uint pairCount;
+    uint pairMaxGroups;
+    uint pairReserved0;
+    uint pairReserved1;
+    uint pairArgs[4];
+    uint pairEntries[];
+};
+
+// 間接 dispatch の x 方向の上限（VirtualShadowMap::GROUP_COUNT_X_LIMIT と同じ）
+const uint DISPATCH_LIMIT = 65535u;
+
+void main()
+{
+    // 組の数 × 最大のワークグループ数が 32 bit に収まらない（x × y の上限にも収まらない）ときは、上限ぶんに丸める
+    const float totalFloat = float(pairCount) * float(pairMaxGroups);
+    const uint total = totalFloat >= 4.0e9 ? 4000000000u : pairCount * pairMaxGroups;
+    pairArgs[0] = min(total, DISPATCH_LIMIT);
+    pairArgs[1] = min((total + (DISPATCH_LIMIT - 1u)) / DISPATCH_LIMIT, DISPATCH_LIMIT);
+    pairArgs[2] = 1u;
+}

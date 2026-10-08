@@ -57,6 +57,15 @@ namespace NorvesLib::Core::Rendering
                         const RHI::DescriptorSetDesc &descriptorSetDesc);
 
         /**
+         * @brief 足りなくなったらスロットを増やせるようにする
+         *
+         * Initialize 済みのあとに呼ぶ。Allocate が事前確保のスロットを使い切ると、上限までスロットを足して返す
+         * （足したスロットは Reset のあとも残る）。呼ばなければ事前確保の数が上限のまま。
+         * @param hardLimit 増やしてよいスロット数の上限（事前確保の数以下なら増やさない）
+         */
+        void SetGrowthLimit(uint32_t hardLimit);
+
+        /**
          * @brief 終了処理
          */
         void Shutdown();
@@ -82,6 +91,11 @@ namespace NorvesLib::Core::Rendering
          */
         uint32_t GetRemainingSlots() const { return m_MaxSlots - m_CurrentIndex; }
 
+        /**
+         * @brief 今あるスロット数（事前確保と、増やした分の合計）
+         */
+        uint32_t GetSlotCount() const { return m_MaxSlots; }
+
     private:
         struct Slot
         {
@@ -89,7 +103,13 @@ namespace NorvesLib::Core::Rendering
             Container::TSharedPtr<RHI::IDescriptorSet> DescriptorSet;
         };
 
+        bool CreateSlot(uint32_t slotIndex);
+        bool Grow();
+
         Container::VariableArray<Slot> m_Slots;
+        RHI::IDevice *m_Device = nullptr;
+        RHI::DescriptorSetDesc m_DescriptorSetDesc;
+        uint32_t m_GrowthLimit = 0;
         uint32_t m_MaxSlots = 0;
         uint32_t m_UBOSize = 0;
         uint32_t m_CurrentIndex = 0;

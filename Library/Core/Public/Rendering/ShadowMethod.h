@@ -16,4 +16,18 @@ namespace NorvesLib::Core::Rendering
         Csm = 0,
         Vsm = 1
     };
+
+    /**
+     * @brief 点光源の影の方式（起動引数 --point-shadow-method=cube|vsm）
+     *
+     * Cube はキューブの配列（面 512²、層 = 灯 × 6 + 面）。SceneView・RenderWorld の構造体の既定で、検証シーン（golden）はこちら。
+     * Vsm は点光源の 6 面 × 解像度の段を太陽と同じ物理ページのプールで持つ。太陽が VSM（ShadowMethod::Vsm）で、VSM が使える装置のときだけ効き、
+     * それ以外は Cube のまま（VSM_FALLBACK reason=point_requires_vsm を 1 回出す）。
+     * Game の既定（BootConfig::DefaultPointShadowMethod。--point-shadow-method=cube でキューブへ戻せる）。
+     */
+    enum class PointShadowMethod : uint32_t
+    {
+        Cube = 0,
+        Vsm = 1
+    };
 } // namespace NorvesLib::Core::Rendering

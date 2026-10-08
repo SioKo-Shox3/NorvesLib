@@ -25,42 +25,88 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        m_Device = device;
+        m_DescriptorSetDesc = descriptorSetDesc;
         m_UBOSize = uboSize;
         m_MaxSlots = maxSlots;
+        m_GrowthLimit = maxSlots;
         m_CurrentIndex = 0;
 
         m_Slots.resize(maxSlots);
 
-        char debugName[128];
         for (uint32_t i = 0; i < maxSlots; ++i)
         {
-            // UBOバッファ作成
-            std::snprintf(debugName, sizeof(debugName), "DynUBO_Slot%u", i);
-            RHI::BufferDesc bufDesc(uboSize, RHI::ResourceUsage::ConstantBuffer, true, debugName);
-            m_Slots[i].UniformBuffer = device->CreateBuffer(bufDesc);
-            if (!m_Slots[i].UniformBuffer)
+            if (!CreateSlot(i))
             {
-                NORVES_LOG_ERROR("DynamicUniformAllocator", "Failed to create UBO for slot %u", i);
                 Shutdown();
                 return false;
             }
-
-            // DescriptorSet作成
-            m_Slots[i].DescriptorSet = device->CreateDescriptorSet(descriptorSetDesc);
-            if (!m_Slots[i].DescriptorSet)
-            {
-                NORVES_LOG_ERROR("DynamicUniformAllocator", "Failed to create DescriptorSet for slot %u", i);
-                Shutdown();
-                return false;
-            }
-
-            // UBOをDescriptorSetのbinding 0にバインド
-            m_Slots[i].DescriptorSet->BindConstantBuffer(0, m_Slots[i].UniformBuffer, 0, uboSize);
-            m_Slots[i].DescriptorSet->Update();
         }
 
         m_bInitialized = true;
         NORVES_LOG_INFO("DynamicUniformAllocator", "Initialized: %u slots, %u bytes/slot", maxSlots, uboSize);
+        return true;
+    }
+
+    bool DynamicUniformAllocator::CreateSlot(uint32_t slotIndex)
+    {
+        char debugName[128];
+        // UBOバッファ作成
+        std::snprintf(debugName, sizeof(debugName), "DynUBO_Slot%u", slotIndex);
+        RHI::BufferDesc bufDesc(m_UBOSize, RHI::ResourceUsage::ConstantBuffer, true, debugName);
+        m_Slots[slotIndex].UniformBuffer = m_Device->CreateBuffer(bufDesc);
+        if (!m_Slots[slotIndex].UniformBuffer)
+        {
+            NORVES_LOG_ERROR("DynamicUniformAllocator", "Failed to create UBO for slot %u", slotIndex);
+            return false;
+        }
+
+        // DescriptorSet作成
+        m_Slots[slotIndex].DescriptorSet = m_Device->CreateDescriptorSet(m_DescriptorSetDesc);
+        if (!m_Slots[slotIndex].DescriptorSet)
+        {
+            NORVES_LOG_ERROR("DynamicUniformAllocator", "Failed to create DescriptorSet for slot %u", slotIndex);
+            return false;
+        }
+
+        // UBOをDescriptorSetのbinding 0にバインド
+        m_Slots[slotIndex].DescriptorSet->BindConstantBuffer(0, m_Slots[slotIndex].UniformBuffer, 0, m_UBOSize);
+        m_Slots[slotIndex].DescriptorSet->Update();
+        return true;
+    }
+
+    void DynamicUniformAllocator::SetGrowthLimit(uint32_t hardLimit)
+    {
+        m_GrowthLimit = hardLimit > m_MaxSlots ? hardLimit : m_MaxSlots;
+    }
+
+    bool DynamicUniformAllocator::Grow()
+    {
+        if (!m_bInitialized || m_MaxSlots >= m_GrowthLimit)
+        {
+            return false;
+        }
+
+        // 1回に足す数は今の半分（最低64）。1フレームの要求が大きくても足す回数が対数で済む。
+        const uint32_t remaining = m_GrowthLimit - m_MaxSlots;
+        uint32_t step = m_MaxSlots / 2u;
+        step = step < 64u ? 64u : step;
+        step = step > remaining ? remaining : step;
+
+        const uint32_t firstNewSlot = m_MaxSlots;
+        m_Slots.resize(m_MaxSlots + step);
+        for (uint32_t i = firstNewSlot; i < firstNewSlot + step; ++i)
+        {
+            if (!CreateSlot(i))
+            {
+                // 作れた所までを残し、作れなかった分は捨てる（以後の確保はその数で頭打ちになる）。
+                m_Slots.resize(i);
+                m_MaxSlots = i;
+                m_GrowthLimit = i;
+                return i > firstNewSlot;
+            }
+        }
+        m_MaxSlots = firstNewSlot + step;
         return true;
     }
 
@@ -72,6 +118,9 @@ namespace NorvesLib::Core::Rendering
             slot.UniformBuffer.reset();
         }
         m_Slots.clear();
+        m_Device = nullptr;
+        m_DescriptorSetDesc = RHI::DescriptorSetDesc{};
+        m_GrowthLimit = 0;
         m_MaxSlots = 0;
         m_UBOSize = 0;
         m_CurrentIndex = 0;
@@ -93,7 +142,7 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
-        if (m_CurrentIndex >= m_MaxSlots)
+        if (m_CurrentIndex >= m_MaxSlots && !Grow())
         {
             NORVES_LOG_ERROR("DynamicUniformAllocator", "Out of slots (%u/%u)", m_CurrentIndex, m_MaxSlots);
             return result;

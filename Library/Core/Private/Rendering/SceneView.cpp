@@ -970,7 +970,13 @@ namespace NorvesLib::Core::Rendering
             virtualShadowMapPass->SetSkinningComputePass(skinningComputePassPtr);
             // MegaGeometry の投影物（bCastShadow のインスタンス）を、展開の前に段ごとにカリングする（主の経路の入力を読み取りだけで使う）
             virtualShadowMapPass->SetMegaGeometryPass(megaGeometryPassPtr);
+            virtualShadowMapPass->SetPointShadowMethod(m_PointShadowMethod);
             AddPass(std::move(virtualShadowMapPass));
+        }
+        else if (m_PointShadowMethod == PointShadowMethod::Vsm)
+        {
+            // 点光源の VSM は太陽の VSM が前提。太陽が CSM のときはキューブのまま描く
+            NORVES_LOG_INFO("VirtualShadowMapPass", "VSM_FALLBACK reason=%s", VirtualShadowMap::PointRequiresVsmReasonName);
         }
 
         // LightingPass: GBuffer→HDRシーンカラー
@@ -992,7 +998,9 @@ namespace NorvesLib::Core::Rendering
         // 照明の後に置く。統計が有効な構成（Debug・RelWithDebInfo）だけで、Release には入れない。
         if (m_bShadowProbeEnabled)
         {
-            AddPass(MakeUnique<ShadowProbePass>());
+            auto shadowProbePass = MakeUnique<ShadowProbePass>();
+            shadowProbePass->SetPointOnly(m_bShadowProbePointOnly);
+            AddPass(std::move(shadowProbePass));
         }
 #endif
 

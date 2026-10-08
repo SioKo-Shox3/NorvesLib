@@ -286,6 +286,7 @@ set(PRIVATE_SOURCES
     Private/Rendering/VirtualShadowMapPages.cpp
     Private/Rendering/VirtualShadowMapRaster.cpp
     Private/Rendering/VirtualShadowMapClipmap.cpp
+    Private/Rendering/VirtualShadowMapPointLights.cpp
     Private/Rendering/VirtualShadowMapSample.cpp
     Private/Rendering/VisibilityRasterPass.cpp
     Private/Rendering/VisibilitySwRaster.cpp
@@ -630,6 +631,7 @@ set(PUBLIC_HEADERS
     Public/Rendering/VirtualShadowMapRaster.h
     Public/Rendering/ShadowMethod.h
     Public/Rendering/VirtualShadowMapClipmap.h
+    Public/Rendering/VirtualShadowMapPointLights.h
     Public/Rendering/VirtualShadowMapSample.h
     Public/Rendering/VisibilityRasterPass.h
     Public/Rendering/VisibilitySwRaster.h

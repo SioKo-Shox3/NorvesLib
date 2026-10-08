@@ -46,11 +46,14 @@ namespace NorvesLib::Core::Rendering
         static_assert(sizeof(PointShadowFaceUBO) == 224);
 
         // 非スキンは面ごとに1枠、スキンはcomponentごと・面ごとに1枠、MegaGeometryは描画ごと・面ごとに1枠。
+        // 事前に確保する数は MegaGeometry を面あたり8描画として見積もり、足りなければ
+        // PointShadowUniformSlotLimit まで DynamicUniformAllocator が増やす（投影物の数で決まる）。
         constexpr uint32_t PointShadowMaxSkinnedComponentsPerFace = SkinnedPointShadowComponentCapacity;
-        constexpr uint32_t PointShadowMaxMegaDrawsPerFace = 8u;
+        constexpr uint32_t PointShadowInitialMegaDrawsPerFace = 8u;
         constexpr uint32_t PointShadowUniformSlotCount =
             PointShadowMaxLights * PointShadowFaceCount *
-            (1u + PointShadowMaxSkinnedComponentsPerFace + PointShadowMaxMegaDrawsPerFace);
+            (1u + PointShadowMaxSkinnedComponentsPerFace + PointShadowInitialMegaDrawsPerFace);
+        constexpr uint32_t PointShadowUniformSlotLimit = 32768u;
 
         // CSMの1カスケード・1描画のUBO（shadow.vertのShadowMVPに対応）
         struct ShadowPerObjectUBO
@@ -501,6 +504,8 @@ namespace NorvesLib::Core::Rendering
             // UBO: lightView(64) + lightProjection(64) + world(64) + worldSource(16) = 208 bytes
             constexpr uint32_t UBO_SIZE = sizeof(ShadowPerObjectUBO);
             constexpr uint32_t MAX_OBJECTS = 256 * CSM_CASCADE_COUNT;
+            // 事前確保を超える分（半透明・ボリューム、MegaGeometry の投影物 × カスケード）は足りなくなったら増やす
+            constexpr uint32_t MAX_OBJECTS_LIMIT = 4096 * CSM_CASCADE_COUNT;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
@@ -528,6 +533,7 @@ namespace NorvesLib::Core::Rendering
                 NORVES_LOG_ERROR("ShadowMapPass", "Failed to initialize DynamicUniformAllocator");
                 return failInitialize();
             }
+            m_UniformAllocator.SetGrowthLimit(MAX_OBJECTS_LIMIT);
         }
 
         // ========================================
@@ -1212,6 +1218,7 @@ namespace NorvesLib::Core::Rendering
         {
             return failPointShadow("uniform allocator");
         }
+        m_PointShadowUniformAllocator.SetGrowthLimit(PointShadowUniformSlotLimit);
 
         RHI::GraphicsPipelineDesc pipelineDesc;
         pipelineDesc.vertexShader = m_PointShadowVertexShader;
@@ -1496,7 +1503,6 @@ namespace NorvesLib::Core::Rendering
                         faceCommands->push_back(drawCommand);
                     }
 
-                    uint32_t megaDrawCount = 0;
                     Container::String faceLevels;
                     for (const MegaShadowCaster& megaCaster : megaCasters)
                     {
@@ -1516,13 +1522,6 @@ namespace NorvesLib::Core::Rendering
                                                           static_cast<float>(m_Settings.PointShadowResolution)
                                                     : 0.0f;
                         const MegaShadowRange range = ResolveMegaShadowRange(megaCaster, texelSize);
-                        if (megaDrawCount >= PointShadowMaxMegaDrawsPerFace)
-                        {
-                            NORVES_LOG_WARNING("ShadowMapPass",
-                                               "点光源の影へ描くMegaGeometryが1面の上限（%u）を超えたため省きます",
-                                               PointShadowMaxMegaDrawsPerFace);
-                            break;
-                        }
                         auto allocation = m_PointShadowUniformAllocator.Allocate();
                         if (!allocation.UniformBuffer)
                         {
@@ -1542,7 +1541,6 @@ namespace NorvesLib::Core::Rendering
                         allocation.DescriptorSet->Update();
                         faceCommands->push_back(MakeMegaShadowDrawCommand(
                             megaCaster, range, m_PointShadowPipeline, allocation.DescriptorSet));
-                        ++megaDrawCount;
                         AppendMegaShadowLevel(faceLevels, megaCaster, range);
                     }
                     if (!megaCasters.empty())

@@ -231,10 +231,16 @@ namespace NorvesLib::Core::Rendering
         /** @brief 太陽の影の標本のパス（--shadow-probe）を足すか。SetupDeferredPipeline の前に決める。統計が無効な構成（Release）では何も足さない */
         void SetShadowProbeEnabled(bool bEnabled) { m_bShadowProbeEnabled = bEnabled; }
         bool IsShadowProbeEnabled() const { return m_bShadowProbeEnabled; }
+        /** @brief 影の標本が太陽ではなく点光源だけを測る（--shadow-probe=point）。SetupDeferredPipeline の前に決める */
+        void SetShadowProbePointOnly(bool bPointOnly) { m_bShadowProbePointOnly = bPointOnly; }
+        bool IsShadowProbePointOnly() const { return m_bShadowProbePointOnly; }
 
         /** @brief 太陽の影の方式（--shadow-method）。SetupDeferredPipeline の前に決め、ShadowMapPass へ渡す。既定は CSM */
         void SetShadowMethod(ShadowMethod method) { m_ShadowMethod = method; }
         ShadowMethod GetShadowMethod() const { return m_ShadowMethod; }
+        /** @brief 点光源の影の方式（--point-shadow-method）。SetupDeferredPipeline の前に決める。既定はキューブ。VSM は太陽が VSM のときだけ効く */
+        void SetPointShadowMethod(PointShadowMethod method) { m_PointShadowMethod = method; }
+        PointShadowMethod GetPointShadowMethod() const { return m_PointShadowMethod; }
 
         /** @brief VSM の物理ページのプールのページの数の要求（0 は既定）。SetupDeferredPipeline の前に決める */
         void SetVsmPoolPages(uint32_t pages) { m_VsmPoolPages = pages; }
@@ -493,7 +499,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_MinInstanceCount = 2;
         bool m_bTemporalAAForced = false;
         bool m_bShadowProbeEnabled = false;
+        bool m_bShadowProbePointOnly = false;
         ShadowMethod m_ShadowMethod = ShadowMethod::Csm;
+        PointShadowMethod m_PointShadowMethod = PointShadowMethod::Cube;
         uint32_t m_VsmPoolPages = 0;
         // TAA のために FXAA を外しているか（TAA を止めたとき戻す）
         bool m_bFXAASuppressedByTemporalAA = false;

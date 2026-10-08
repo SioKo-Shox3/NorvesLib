@@ -51,6 +51,52 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    uint32_t BuildVirtualShadowMapSlices(const VirtualShadowMapClipmap* clipmap,
+                                         const VirtualShadowMapClipmap* previous,
+                                         uint32_t sliceCount,
+                                         GPUVsmSlice* outSlices)
+    {
+        static_assert(VirtualShadowMapMaxSlices == VirtualShadowMap::MAX_SLICES, "スライスの上限は VirtualShadowMap::MAX_SLICES と同じにすること");
+        sliceCount = std::min(sliceCount, VirtualShadowMapMaxSlices);
+        for (uint32_t index = 0; index < sliceCount; ++index)
+        {
+            GPUVsmSlice& slice = outSlices[index];
+            std::memset(&slice, 0, sizeof(slice));
+            slice.origin[2] = static_cast<int32_t>(index * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL);
+            slice.origin[3] = static_cast<int32_t>(VirtualShadowMap::TABLE_DIMENSION);
+            slice.extra[2] = VirtualShadowMapSliceProjectionOrtho;
+        }
+        if (clipmap == nullptr || !clipmap->bEnabled)
+        {
+            return 0u;
+        }
+        uint32_t count = 0u;
+        const uint32_t levelCount = std::min(std::min(clipmap->LevelCount, VirtualShadowMapMaxLevels), sliceCount);
+        for (uint32_t level = 0; level < levelCount; ++level)
+        {
+            const VirtualShadowMapClipmapLevel& data = clipmap->Levels[level];
+            if (data.OriginPageX <= -MaxOriginMagnitude || data.OriginPageX >= MaxOriginMagnitude ||
+                data.OriginPageY <= -MaxOriginMagnitude || data.OriginPageY >= MaxOriginMagnitude || !(data.PageMeters > 0.0f))
+            {
+                continue;
+            }
+            GPUVsmSlice& slice = outSlices[level];
+            // 太陽の段のライト空間の基底（右・上・光の進む向き）。w は原点のずれで、ライト空間の原点はワールドの原点と同じ
+            CopyVector(slice.axisX, clipmap->LightRight);
+            CopyVector(slice.axisY, clipmap->LightUp);
+            CopyVector(slice.axisZ, clipmap->Direction);
+            slice.info[0] = data.PageMeters;
+            slice.info[1] = data.TexelMeters;
+            slice.origin[0] = static_cast<int32_t>(data.OriginPageX);
+            slice.origin[1] = static_cast<int32_t>(data.OriginPageY);
+            const bool bPrevious = previous != nullptr && level < previous->LevelCount;
+            slice.extra[0] = bPrevious ? static_cast<int32_t>(previous->Levels[level].OriginPageX) : slice.origin[0];
+            slice.extra[1] = bPrevious ? static_cast<int32_t>(previous->Levels[level].OriginPageY) : slice.origin[1];
+            ++count;
+        }
+        return count;
+    }
+
     bool BuildVirtualShadowMapSampleParams(const VirtualShadowMapClipmap* clipmap,
                                            const float* cameraPosition,
                                            const float* cameraForward,
@@ -98,10 +144,6 @@ namespace NorvesLib::Core::Rendering
             {
                 return false;
             }
-            params.levelInfo[level][0] = data.PageMeters;
-            params.levelInfo[level][1] = data.TexelMeters;
-            params.levelOrigin[level][0] = static_cast<int32_t>(data.OriginPageX);
-            params.levelOrigin[level][1] = static_cast<int32_t>(data.OriginPageY);
         }
 
         CopyVector(params.lightRight, clipmap->LightRight);

@@ -31,6 +31,7 @@
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
@@ -55,8 +56,10 @@ namespace NorvesLib::Core::Rendering
      * World はローカル空間の位置をワールドへ変える 3×4 行列（行ごとに 4 要素。ワールドの x = World[0..3] と (位置, 1) の内積、y = World[4..7]、z = World[8..11]）。
      * ワールド空間の頂点（スキニングの出力など）は単位行列にする。
      * Bounds はワールドの境界（AABB）で、展開が覆うページを決める。三角形をすべて含むこと。
-     * LevelMask はこの塊を展開する段の集合（ビット L が段 L）。CPU が境界から決めた段だけを展開が処理し、外の段は見ない。
-     * 既定は全段（CPU が絞らない塊は、展開が段ごとに範囲を見て決める）。
+     * LevelMask はこの塊を展開するスライスの集合で、Reserved が組の番号 g（スライス / 32）。ビット b がスライス g × 32 + b。
+     * CPU が境界から決めたスライスだけを展開が処理し、外のスライスは見ない。1 つの投影物が複数の組にまたがるときは、
+     * 同じ描画の記録を持つ塊を組ごとに 1 つずつ出す（組の数は VirtualShadowMap::SliceGroupCount(スライスの数)）。
+     * 既定は組 0 の全スライス（CPU が絞らない塊は、展開が段ごとに範囲を見て決める）。
      */
     struct alignas(16) VsmShadowChunk
     {
@@ -64,6 +67,7 @@ namespace NorvesLib::Core::Rendering
         float BoundsMin[3] = {};
         uint32_t LevelMask = 0xFFFFFFFFu;
         float BoundsMax[3] = {};
+        /** @brief 段の印の組の番号（スライス / 32）。LevelMask のビット b が、スライス Reserved × 32 + b */
         uint32_t Reserved = 0;
         float World[12] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
     };
@@ -125,8 +129,22 @@ namespace NorvesLib::Core::Rendering
      */
     struct VirtualShadowMapRasterDispatch
     {
-        /** @brief 今フレームのクリップマップ（無効なら何も記録しない） */
+        /** @brief 今フレームのクリップマップ（無効なら何も記録しない）。ライトの基底・深度の範囲はここから取る */
         const VirtualShadowMapClipmap* Clipmap = nullptr;
+        /**
+         * @brief ページの表が持つスライスの数（1 〜 VirtualShadowMap::MAX_SLICES）。0 はクリップマップの段の数。
+         *        PageTable は PageTableBytes(SliceCount) 以上の大きさにすること。展開は 0 〜 SliceCount − 1 のスライスを処理する
+         */
+        uint32_t SliceCount = 0;
+        /**
+         * @brief 外から渡すスライスの表（SliceCount 件。ページの表の先頭は スライスの番号 × 128 × 128）。null ならクリップマップから作る。
+         *        正射影のスライスのライト空間の深度の原点・範囲は Clipmap のものを全スライスで使う。展開の範囲の判定はスライスの基底ごとに
+         *        行うが、深度の範囲を共有するので、正射影のスライスは Clipmap と同じ深度の範囲にすること。
+         *        透視のスライス（点光源の面。extra[2] が透視）は、スライスの行列（axisX/Y/Z）・Range（info[2]）・近い平面（info[3]）で投影し、
+         *        深度は面の軸の向きの距離 ÷ Range。塊の境界の外接球が Range の内側で面の錐台と交わるとき、球が覆うページを描く。
+         *        表を渡すときは、Clipmap が使えなくても（点光源だけのフレーム）記録する
+         */
+        const GPUVsmSlice* Slices = nullptr;
         /** @brief 物理ページの数（Pool の大きさと合っていること） */
         uint32_t PoolPages = 0;
         RHI::BufferPtr Pool;
@@ -188,6 +206,8 @@ namespace NorvesLib::Core::Rendering
         struct Use
         {
             RHI::BufferPtr Uniform;
+            /** @brief スライスの表（GPUVsmSlice の配列。ホストが書く storage buffer） */
+            RHI::BufferPtr Slices;
             RHI::DescriptorSetPtr ExpandSet;
             RHI::DescriptorSetPtr DrawSet;
         };
@@ -231,9 +251,10 @@ namespace NorvesLib::Core::Rendering
         /** @brief dirty のページの階層（段ごとのビット列。mip 0 = 128×128 から mip 7 = 1×1）の 1 段あたりの語の数（21845 ビット = 683 語を 16 語へ切り上げ） */
         constexpr uint32_t MEGA_DIRTY_WORDS_PER_LEVEL = 688;
         constexpr uint32_t MEGA_DIRTY_MIP_COUNT = 8;
-        constexpr uint64_t MegaDirtyBitsBytes()
+        /** @brief dirty の階層の大きさ（バイト）。既定は太陽の段の数（LEVEL_COUNT） */
+        constexpr uint64_t MegaDirtyBitsBytes(uint32_t sliceCount = LEVEL_COUNT)
         {
-            return static_cast<uint64_t>(LEVEL_COUNT) * MEGA_DIRTY_WORDS_PER_LEVEL * sizeof(uint32_t);
+            return static_cast<uint64_t>(sliceCount) * MEGA_DIRTY_WORDS_PER_LEVEL * sizeof(uint32_t);
         }
         /** @brief dirty の階層のバッファの用途（計算が atomicOr で書く。毎フレーム 0 へコピーで埋める） */
         inline RHI::ResourceUsage MegaDirtyBitsUsage()
@@ -253,12 +274,19 @@ namespace NorvesLib::Core::Rendering
      */
     struct VirtualShadowMapMegaCullDispatch
     {
-        /** @brief 今フレームのクリップマップ（無効なら何も記録しない） */
+        /** @brief 今フレームのクリップマップ（無効なら何も記録しない）。ライトの基底・深度の範囲はここから取る */
         const VirtualShadowMapClipmap* Clipmap = nullptr;
+        /**
+         * @brief ページの表・dirty の階層が持つスライスの数（1 〜 VirtualShadowMap::MAX_SLICES）。0 はクリップマップの段の数。
+         *        PageTable は PageTableBytes(SliceCount)、DirtyBits は MegaDirtyBitsBytes(SliceCount) 以上の大きさにすること
+         */
+        uint32_t SliceCount = 0;
+        /** @brief 外から渡すスライスの表（SliceCount 件）。null ならクリップマップから作る。基底は Clipmap のものを全スライスで使う */
+        const GPUVsmSlice* Slices = nullptr;
         /** @brief VSM のページの表（dirty の階層を作る入力）と統計（語 8〜10 へ書く。呼ぶ前に 0 にしておくこと） */
         RHI::BufferPtr PageTable;
         RHI::BufferPtr Stats;
-        /** @brief dirty の階層（MegaDirtyBitsBytes 以上）と、出力の一覧（容量は (大きさ − 頭) ÷ 16 バイト） */
+        /** @brief dirty の階層（MegaDirtyBitsBytes(SliceCount) 以上）と、出力の一覧（容量は (大きさ − 頭) ÷ 16 バイト） */
         RHI::BufferPtr DirtyBits;
         RHI::BufferPtr List;
         /**
@@ -281,14 +309,18 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief MegaGeometry の投影物（bCastShadow のインスタンス）を VSM の段ごとにカリングする
      *
-     * 区間（GPU のタイムスタンプの名前）: VsmCullMega（dirty のページの階層の作成と、クラスタの選択の両方）。
+     * 区間（GPU のタイムスタンプの名前）: VsmCullMega（下の 1〜4 の全部）。内訳は VsmCullDirty（1）・VsmCullPairs（2）・VsmCullSelect（3）・
+     * VsmCullChunks（4）。
      *   1. dirty の階層（vsm_dirty_mips.comp）: ページの表の「割り当て済みで dirty」のページから、段ごとのページの mip（128² → 1）の
      *      ビット列を作る。
-     *   2. 選択（vsm_mega_cull.comp。主の経路の Common/MegaGeometryCull.glsl の判定の本体を正射影の LOD で使う）: 1 ワークグループ =
-     *      1 つの（インスタンス、段）の 64 クラスタ。インスタンスの境界のライト空間の矩形が、その段の範囲・深度の範囲に入り、
-     *      dirty のページを含むものだけを残し、残ったクラスタを LOD の判定（自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）で選ぶ。
+     *   2. 組の絞り込み（vsm_mega_cull_pairs.comp）: 1 スレッド = 1 つの（インスタンス、段）の組。インスタンスの境界のライト空間の矩形が、
+     *      その段の範囲・深度の範囲に入り、dirty のページを含む組だけを一覧にし、選択の間接 dispatch の引数を作る。
+     *      組ごとに 1 回だけ判定するので、選択のワークグループがインスタンスの判定を繰り返さない。
+     *      続けて vsm_mega_cull_args.comp（1 スレッド）が、組の数と組のワークグループ数の最大から間接 dispatch の引数を書く。
+     *   3. 選択（vsm_mega_cull.comp。主の経路の Common/MegaGeometryCull.glsl の判定の本体を正射影の LOD で使う）: 通った組だけを間接 dispatch で受け持ち、
+     *      1 ワークグループ = 1 つの組の 64 クラスタ。クラスタを LOD の判定（自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）で選ぶ。
      *      結果は（インスタンスの表の番号・段・クラスタの番号）の一覧と数で、自分のバッファに書く。
-     *   3. 影の塊の記録（vsm_mega_chunks.comp。dispatch.Chunks があるときだけ）: 一覧の 1 件を、手続き・スキニングと同じ形の
+     *   4. 影の塊の記録（vsm_mega_chunks.comp。dispatch.Chunks があるときだけ）: 一覧の 1 件を、手続き・スキニングと同じ形の
      *      VsmShadowChunk（クラスタの境界球の AABB・インスタンスのワールド行列・頂点とインデックスの読み方・展開する段 = 選んだ段）にする。
      * 装置がバッファのアドレスを使えない・シェーダーやパイプラインを作れないときは作れない（IsReady が false。VSM 全体は CSM へ落とさない）。
      */
@@ -313,7 +345,7 @@ namespace NorvesLib::Core::Rendering
          */
         bool Record(RHI::ICommandList* commandList, const VirtualShadowMapMegaCullDispatch& dispatch);
 
-        /** @brief 直前の Record が選択へ出したワークグループの数（x × y。段の数 z は含まない） */
+        /** @brief 直前の Record の入力にあった、影の判定の全ワークグループの数（インスタンスごとの合計。選択が実際に出す数は、通った組ぶんで GPU が決める） */
         uint32_t GetLastGroupCount() const { return m_LastGroupCount; }
         /** @brief 直前の Record が影の塊の記録を作ったか */
         bool WasChunkBuilt() const { return m_bLastChunkBuilt; }
@@ -323,18 +355,31 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr CullUniform;
             RHI::BufferPtr ParamsUniform;
+            /** @brief スライスの表（GPUVsmSlice の配列。ホストが書く storage buffer） */
+            RHI::BufferPtr Slices;
             RHI::DescriptorSetPtr DirtySet;
+            RHI::DescriptorSetPtr PairsSet;
+            RHI::DescriptorSetPtr ArgsSet;
             RHI::DescriptorSetPtr CullSet;
             RHI::DescriptorSetPtr ChunkSet;
+            /** @brief 通った（インスタンス、スライス）の組の一覧。頭 8 語（組の数・最大のワークグループ数・予約 2 語・間接 dispatch の引数 4 語）+ 組 */
+            RHI::BufferPtr Pairs;
+            uint32_t PairsCapacity = 0;
         };
 
         bool AcquireUse(Use*& outUse);
+        /** @brief 組の一覧を capacity 組ぶん持たせる（足りなければ作り直す）。作れなければ false */
+        bool EnsurePairs(Use& use, uint32_t capacity);
 
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_DirtyShader;
+        RHI::ShaderPtr m_PairsShader;
+        RHI::ShaderPtr m_ArgsShader;
         RHI::ShaderPtr m_CullShader;
         RHI::ShaderPtr m_ChunkShader;
         RHI::PipelinePtr m_DirtyPipeline;
+        RHI::PipelinePtr m_PairsPipeline;
+        RHI::PipelinePtr m_ArgsPipeline;
         RHI::PipelinePtr m_CullPipeline;
         RHI::PipelinePtr m_ChunkPipeline;
         FrameUseRing<Use> m_Uses;
@@ -353,8 +398,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief 報告の間隔（回数） */
         static constexpr uint32_t LogIntervalReports = 60;
 
-        /** @brief 報告する。行を出したとき true */
-        bool Report(uint32_t instances, uint32_t clusters, uint32_t overflow);
+        /**
+         * @brief 報告する。行を出したとき true
+         * @param pointInstances 透視のスライス（点光源の面）だけの（インスタンス、スライス）の数（instances に含まれる）
+         * @param pointClusters 透視のスライスだけの書いたクラスタの数（clusters に含まれる）
+         */
+        bool Report(uint32_t instances, uint32_t clusters, uint32_t overflow, uint32_t pointInstances = 0u, uint32_t pointClusters = 0u);
 
     private:
         bool m_bLogged = false;

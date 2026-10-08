@@ -79,6 +79,10 @@
 # -StressGeometry でジオメトリの負荷モード（--stress-geometry=<-StressGeometryCount>。既定 300）で撮る。地面の外側（+Z 側）へ、
 # スキャン資産・岩・小屋・大きな球を、向きと拡大率を替えて格子に並べ、カメラの軸を格子の中心へ移す（資産が無ければ置かずに警告）。
 # 視点は default（0,25,45。格子の手前を斜めに見る）・low（20,-8,8。地面すれすれ）・top（0,70,200。格子の全体を見下ろす）。
+# -StressTextures と -StressGeometry を併せると、ジオメトリの格子はテクスチャの板の奥（z=105〜）へずれ、カメラの軸は地面と板の間（z=60）
+# になる。さらに --stress-mega-instances=<N> を併せると、地面の近く（x±26・z -5〜-27）へスキャン資産を N 個複製する（点光源・太陽の影の負荷）。
+# 視点は default（180,20,160）・low（180,-4,110）・top（180,75,300）で、-Z 側から +Z の向きに地面・板・物を遠くから見る。
+# 板の近景 plates（180,12,40。板の 2〜3 枚を近くから見る）・plates-near（180,35,22。手前の行の板をさらに近くから見下ろす）は -ViewNames plates,plates-near で撮る（テクスチャの解像度の確認用）。
 # 旋回の連続フレームは -OrbitDegreesPerSecond・-OrbitRenderedFrames と併せて撮る。-VramBudgetMb でジオメトリの枠（Geometry の目標）を
 # 絞ると、ページの追い出しが起きる。各撮影のログの STRESS_GEOMETRY_PLACED（並べた数・元の数）と VRAM_POOLS のジオメトリの枠
 # （geometry_target_mb・geometry_used_mb・geometry_evicted_pages）を metrics.json へ書き、並べた数が指定に満たない、または最後の
@@ -90,6 +94,11 @@
 # 反転した割合 flip_ratio・縁の帯の割合 partial_ratio・使ったカスケードの texel の一辺 mean_texel_mm）を、視点ごとに metrics.json の shadow_probe へ書く。
 # 視点を回しながら測るには -OrbitDegreesPerSecond と併せる（太陽と物が止まっていれば、固定の点の可視度は変わらないはずなので、変化がそのまま影の揺れになる）。
 # 統計が有効な構成（Debug・RelWithDebInfo）だけ。Release とは併用しない。
+#
+# 太陽が無い（夜）フレーム、または -ShadowProbeLight Point（--shadow-probe=point。太陽の有無に依らず点光源だけを測る）では、同じ標本点について、
+# 影を持つ最初の点光源の可視度をキューブと点光源の VSM（-PointShadowMethod Vsm）で求めて並べる。終了時のログの
+# SHADOW_PROBE light=point method=cube|vsm の行（太陽と同じ項目）と SHADOW_PROBE_AGREE light=point の行（キューブと VSM が両方確定した標本の一致 ratio・
+# VSM の texel がキューブ以下の割合 finer_ratio）を、視点ごとに metrics.json の shadow_probe_point へ書く。
 #
 # 各撮影のログの GPU_DRIVER（GPU 名とドライバの版）を metrics.json の gpu_driver へ書く（ドライバの更新で画面微分・LOD の挙動が変わる実装があり、
 # 撮影の差の原因を版から引けるようにする）。VT の常駐量は、ログの VRAM_POOLS の vt_used_mb の最大を vram_pools.vt_used_mb_max へ書き、
@@ -230,9 +239,20 @@ param(
     # 固定の後に約 100 フレームを測れるよう 360 を既定にする。
     [ValidateRange(1, 100000)]
     [int]$ShadowProbeRenderedFrames = 360,
+    # -ShadowProbe が測る灯。Auto は太陽が使えるフレームは太陽、太陽が無い（夜）フレームは影を持つ最初の点光源をキューブと VSM で測る。
+    # Point は太陽の有無に依らず点光源だけを測る（--shadow-probe=point。-PointShadowMethod Vsm と併せる）。
+    [ValidateSet('Auto', 'Point')]
+    [string]$ShadowProbeLight = 'Auto',
     # 太陽の影の方式（既定は Vsm。--shadow-method=csm|vsm を常に渡す）。Csm は従来のカスケードシャドウマップ。
     [ValidateSet('Csm', 'Vsm')]
     [string]$ShadowMethod = 'Vsm',
+    # 点光源の影の方式（既定は Vsm。--point-shadow-method=cube|vsm を常に渡す）。Cube は従来のキューブ。Vsm は -ShadowMethod Vsm のときだけ効く（それ以外は Game がキューブのまま描く）。
+    [ValidateSet('Cube', 'Vsm')]
+    [string]$PointShadowMethod = 'Vsm',
+    # 起動画面の大きな球の自転（既定 On）。Off のとき環境変数 NORVES_STARTUP_SPHERE_SPIN=0 を Game へ渡して自転を止める。
+    # 影の揺れ・一致の測定は止まった物を前提にするため、そのときは Off にする。
+    [ValidateSet('On', 'Off')]
+    [string]$SphereSpin = 'On',
     # Game へそのまま渡す引数（空白で区切る。例: --texture-asset-root と --texture-asset-manifest で別のクック済みの出力を使う）。
     [string[]]$ExtraGameArguments = @()
 )
@@ -351,6 +371,30 @@ if ($StressGeometry)
     }
     $views += [pscustomobject]@{ Name = 'top'; Camera = '0,70,200'; NoiseRegions = @() }
 }
+if ($StressTextures -and $StressGeometry)
+{
+    # 2 つの負荷モードを併せるとき、ジオメトリの格子はテクスチャの板の格子の奥（z=105〜）に並び、カメラの軸は地面と板の間（z=60）になる。
+    # 地面（-Z 側。複製したスキャン資産と電球）・板・物がそろって映るよう、-Z 側から +Z の向きに遠くから見る。
+    foreach ($combinedView in $views)
+    {
+        if ($combinedView.Name -eq 'default')
+        {
+            $combinedView.Camera = '180,20,160'
+        }
+        elseif ($combinedView.Name -eq 'low')
+        {
+            $combinedView.Camera = '180,-4,110'
+        }
+        elseif ($combinedView.Name -eq 'top')
+        {
+            $combinedView.Camera = '180,75,300'
+        }
+    }
+    # テクスチャの板の近景。板（手前の行 z=47）の 2〜3 枚が画面の幅いっぱいに映り、テクスチャの解像度（VT のミップ）を判別できる。
+    $views += [pscustomobject]@{ Name = 'plates'; Camera = '180,12,40'; NoiseRegions = @() }
+    # さらに寄り、手前の行の板 1 枚が画面の幅の大半を占める（板 1 枚の幅 12 m に対し、テクスチャ 1 枚は 2 m 前後）。
+    $views += [pscustomobject]@{ Name = 'plates-near'; Camera = '180,35,22'; NoiseRegions = @() }
+}
 $viewNameList = @(($ViewNames -join ',').Split(',', [StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
 if ($viewNameList.Count -gt 0)
 {
@@ -360,7 +404,7 @@ if ($viewNameList.Count -gt 0)
     $unknownViews = @($viewNameList | Where-Object { $_ -notin $views.Name })
     if ($unknownViews.Count -gt 0)
     {
-        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low・top・occ-sphere・occ-cottage・occ-cottage-edge・occ-sphere-orbit・occ-cottage-orbit・scan-d08・scan-d13・scan-d18・scan-d28・scan-d38・scan-d56・scan-d78）"
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low・top・plates・plates-near・occ-sphere・occ-cottage・occ-cottage-edge・occ-sphere-orbit・occ-cottage-orbit・scan-d08・scan-d13・scan-d18・scan-d28・scan-d38・scan-d56・scan-d78）"
         exit 1
     }
     $views = @($views | Where-Object { $_.Name -in $viewNameList })
@@ -760,6 +804,7 @@ if ($CompareOnly)
 $temporalNoise = @()
 $gpuTiming = @()
 $shadowProbeResults = @()
+$shadowProbePointResults = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
 foreach ($view in $shots)
 {
@@ -882,10 +927,12 @@ foreach ($view in $shots)
     }
     # 影の方式は Game の既定が vsm だが、撮影の条件を明示するため、どちらでも引数を渡す。
     $arguments += "--shadow-method=$($ShadowMethod.ToLowerInvariant())"
+    # 点光源の影の方式は Game の既定が vsm だが、撮影の条件を明示するため、どちらでも引数を渡す。
+    $arguments += "--point-shadow-method=$($PointShadowMethod.ToLowerInvariant())"
     # 影の標本は既定で作らないので、-ShadowProbe のときだけ引数を渡す。
     if ($ShadowProbe)
     {
-        $arguments += '--shadow-probe'
+        $arguments += $(if ($ShadowProbeLight -eq 'Point') { '--shadow-probe=point' } else { '--shadow-probe' })
     }
     # デバッグの表示は既定が Normal なので、Clusters・Lod・Wireframe のときだけ引数を渡す。
     if ($DebugView -ne 'Normal')
@@ -928,6 +975,7 @@ foreach ($view in $shots)
     # RTGI を切るときは環境変数で起動画面へ伝える（起動した Game だけが受け継ぐよう、起動の直後に戻す）。
     $previousRtgiSetting = $env:NORVES_STARTUP_RTGI
     $previousGBufferDebugSetting = $env:NORVES_GBUFFER_DEBUG
+    $previousSphereSpinSetting = $env:NORVES_STARTUP_SPHERE_SPIN
     $previousValidationSettings = @{}
     foreach ($validationVariable in @('VK_KHRONOS_VALIDATION_DEBUG_ACTION', 'VK_KHRONOS_VALIDATION_LOG_FILENAME', 'VK_KHRONOS_VALIDATION_REPORT_FLAGS'))
     {
@@ -955,6 +1003,14 @@ foreach ($view in $shots)
     {
         Remove-Item Env:NORVES_STARTUP_RTGI -ErrorAction SilentlyContinue
     }
+    if ($SphereSpin -eq 'Off')
+    {
+        $env:NORVES_STARTUP_SPHERE_SPIN = '0'
+    }
+    else
+    {
+        Remove-Item Env:NORVES_STARTUP_SPHERE_SPIN -ErrorAction SilentlyContinue
+    }
     # アセットは作業ディレクトリからの相対パスで読むため、リポジトリのルートで起動する。
     try
     {
@@ -966,6 +1022,8 @@ foreach ($view in $shots)
         else { $env:NORVES_STARTUP_RTGI = $previousRtgiSetting }
         if ($null -eq $previousGBufferDebugSetting) { Remove-Item Env:NORVES_GBUFFER_DEBUG -ErrorAction SilentlyContinue }
         else { $env:NORVES_GBUFFER_DEBUG = $previousGBufferDebugSetting }
+        if ($null -eq $previousSphereSpinSetting) { Remove-Item Env:NORVES_STARTUP_SPHERE_SPIN -ErrorAction SilentlyContinue }
+        else { $env:NORVES_STARTUP_SPHERE_SPIN = $previousSphereSpinSetting }
         foreach ($validationVariable in $previousValidationSettings.Keys)
         {
             [Environment]::SetEnvironmentVariable($validationVariable, $previousValidationSettings[$validationVariable])
@@ -1000,11 +1058,58 @@ foreach ($view in $shots)
     {
         $probeLines = if (Test-Path -LiteralPath $viewLogPath) { @(Select-String -LiteralPath $viewLogPath -Pattern 'SHADOW_PROBE method=(\S+) frames=(\d+) probes=(\d+) pairs=(\d+) mean_abs_delta=(\S+) changed_ratio=(\S+) flip_ratio=(\S+) partial_ratio=(\S+) mean_texel_mm=(\S+)') } else { @() }
         $probeDetailLines = if (Test-Path -LiteralPath $viewLogPath) { @(Select-String -LiteralPath $viewLogPath -Pattern 'SHADOW_PROBE_DETAIL method=(\S+) visible=(\d+) out_of_range_ratio=(\S+)') } else { @() }
-        if ($probeLines.Count -eq 0)
+        # 点光源（light=point）の行。太陽が無いフレーム・-ShadowProbeLight Point で、キューブと VSM の両方を測ったときに出る
+        $pointProbePattern = 'SHADOW_PROBE light=point method=(cube|vsm) frames=(\d+) probes=(\d+) pairs=(\d+) mean_abs_delta=(\S+) changed_ratio=(\S+) flip_ratio=(\S+) partial_ratio=(\S+) mean_texel_mm=(\S+)'
+        $pointProbeLines = if (Test-Path -LiteralPath $viewLogPath) { @(Select-String -LiteralPath $viewLogPath -Pattern $pointProbePattern) } else { @() }
+        $pointAgreeLines = if (Test-Path -LiteralPath $viewLogPath) { @(Select-String -LiteralPath $viewLogPath -Pattern 'SHADOW_PROBE_AGREE light=point both_definite=(\d+) agree=(\d+) ratio=(\S+) finer_ratio=(\S+)') } else { @() }
+        $pointDetailLines = if (Test-Path -LiteralPath $viewLogPath) { @(Select-String -LiteralPath $viewLogPath -Pattern 'SHADOW_PROBE_DETAIL light=point method=vsm visible=(\d+) fallback_ratio=(\S+)') } else { @() }
+        if ($pointProbeLines.Count -gt 0)
+        {
+            $pointEntry = [ordered]@{ view = $view.Name }
+            foreach ($pointMethod in @('cube', 'vsm'))
+            {
+                $methodLines = @($pointProbeLines | Where-Object { $_.Matches[0].Groups[1].Value -eq $pointMethod })
+                if ($methodLines.Count -eq 0)
+                {
+                    continue
+                }
+                $pointGroups = $methodLines[$methodLines.Count - 1].Matches[0].Groups
+                $pointEntry[$pointMethod] = [ordered]@{
+                    frames = [uint64]$pointGroups[2].Value
+                    probes = [uint64]$pointGroups[3].Value
+                    pairs = [uint64]$pointGroups[4].Value
+                    mean_abs_delta = [double]::Parse($pointGroups[5].Value, $invariant)
+                    changed_ratio = [double]::Parse($pointGroups[6].Value, $invariant)
+                    flip_ratio = [double]::Parse($pointGroups[7].Value, $invariant)
+                    partial_ratio = [double]::Parse($pointGroups[8].Value, $invariant)
+                    mean_texel_mm = [double]::Parse($pointGroups[9].Value, $invariant)
+                }
+            }
+            if ($pointAgreeLines.Count -gt 0)
+            {
+                $agreeGroups = $pointAgreeLines[$pointAgreeLines.Count - 1].Matches[0].Groups
+                $pointEntry.both_definite = [uint64]$agreeGroups[1].Value
+                $pointEntry.agree = [uint64]$agreeGroups[2].Value
+                $pointEntry.agree_ratio = [double]::Parse($agreeGroups[3].Value, $invariant)
+                $pointEntry.finer_ratio = [double]::Parse($agreeGroups[4].Value, $invariant)
+            }
+            if ($pointDetailLines.Count -gt 0)
+            {
+                $pointDetailGroups = $pointDetailLines[$pointDetailLines.Count - 1].Matches[0].Groups
+                $pointEntry.visible = [uint64]$pointDetailGroups[1].Value
+                $pointEntry.fallback_ratio = [double]::Parse($pointDetailGroups[2].Value, $invariant)
+            }
+            $shadowProbePointResults += [pscustomobject]$pointEntry
+            Write-Output ("CAPTURE_STARTUP_SCENE shadow_probe_point view={0} cube_mean_texel_mm={1} vsm_mean_texel_mm={2} agree_ratio={3} finer_ratio={4} fallback_ratio={5}" -f `
+                $view.Name, $(if ($pointEntry.Contains('cube')) { $pointEntry.cube.mean_texel_mm } else { 'none' }), $(if ($pointEntry.Contains('vsm')) { $pointEntry.vsm.mean_texel_mm } else { 'none' }),
+                $(if ($pointEntry.Contains('agree_ratio')) { $pointEntry.agree_ratio } else { 'none' }), $(if ($pointEntry.Contains('finer_ratio')) { $pointEntry.finer_ratio } else { 'none' }),
+                $(if ($pointEntry.Contains('fallback_ratio')) { $pointEntry.fallback_ratio } else { 'none' }))
+        }
+        if ($probeLines.Count -eq 0 -and $pointProbeLines.Count -eq 0)
         {
             $failures += "$($view.Name): SHADOW_PROBE の行がログに無い（--shadow-probe が働かなかった）"
         }
-        else
+        elseif ($probeLines.Count -gt 0)
         {
             $probeGroups = $probeLines[$probeLines.Count - 1].Matches[0].Groups
             $probeEntry = [ordered]@{
@@ -1687,6 +1792,7 @@ $metrics = [ordered]@{
     gpu_timing_frames = $GpuTimingFrames
     gpu_timing = $gpuTiming
     shadow_probe = $shadowProbeResults
+    shadow_probe_point = $shadowProbePointResults
     failures = $failures
 }
 [IO.File]::WriteAllText($metricsPath, ($metrics | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))

@@ -8,6 +8,7 @@
 #include "Rendering/RenderGraph/RenderGraphDump.h"
 #include "Rendering/RTGIContract.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
+#include "Rendering/VirtualShadowMapPointLights.h"
 #include "FrameCommand.h"
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
@@ -98,6 +99,8 @@ namespace NorvesLib::Core::Rendering
         CascadedDirectionalShadowShaderValues CascadedShadow;
         /** @brief 太陽のクリップマップ（--shadow-method=vsm のときだけ ShadowMapPass が毎フレーム公開する。後のパス・照明が読む） */
         VirtualShadowMapClipmap SunClipmap;
+        /** @brief 点光源の VSM（--point-shadow-method=vsm）の面と解像度の段の並び（VirtualShadowMapPass が毎フレーム公開する）。LightCount が 0 なら照明・影の測定はキューブのまま */
+        VirtualShadowMapPointLights PointVsmLights;
 
         RHI::BufferPtr LightBuffer;
         uint32_t LogicalLightCount = 0;
@@ -113,6 +116,8 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr DfgLutSampler;
         uint32_t PrefilteredSpecularMipLevels = 0;
         float IBLIntensity = 0.0f;
+        // 静的HDR環境の鏡面の放射輝度の上限（倍率を掛ける前のHDRの値。0は上限なし）。静的HDRを使うフレームだけ正
+        float StaticEnvironmentMaxRadiance = 0.0f;
         bool bIBLEnabled = false;
 
         RHI::TexturePtr DDGIIrradianceAtlas;
@@ -156,6 +161,7 @@ namespace NorvesLib::Core::Rendering
             DfgLutSampler.reset();
             PrefilteredSpecularMipLevels = 0;
             IBLIntensity = 0.0f;
+            StaticEnvironmentMaxRadiance = 0.0f;
             bIBLEnabled = false;
             DDGIIrradianceAtlas.reset();
             DDGIDistanceAtlas.reset();
@@ -165,6 +171,7 @@ namespace NorvesLib::Core::Rendering
             IndirectLightingSource = RTGIIndirectLightingSource::Raster;
             IndirectLightingFallbackReason = RTGIFallbackReason::Disabled;
             SunClipmap = VirtualShadowMapClipmap{};
+            PointVsmLights = VirtualShadowMapPointLights{};
             CascadedShadow = CascadedDirectionalShadowShaderValues{};
             for (uint32_t index = 0; index < 16; ++index)
             {
@@ -300,6 +307,12 @@ namespace NorvesLib::Core::Rendering
             SunClipmap = clipmap;
         }
 
+        /** @brief 点光源の VSM の並びを公開する（灯が無いときは LightCount = 0 を渡す） */
+        void PublishPointVsmLights(const VirtualShadowMapPointLights& lights)
+        {
+            PointVsmLights = lights;
+        }
+
         bool HasCompleteCascadedShadow() const
         {
             return bActive && bShadowPublished && ShadowMapTexture && ShadowSampler &&
@@ -320,7 +333,8 @@ namespace NorvesLib::Core::Rendering
                              const RHI::SamplerPtr& dfgLutSampler,
                              uint32_t prefilteredSpecularMipLevels,
                              float iblIntensity,
-                             bool bIBLEnabledValue)
+                             bool bIBLEnabledValue,
+                             float staticEnvironmentMaxRadiance = 0.0f)
         {
             LightBuffer = lightBuffer;
             LogicalLightCount = logicalLightCount;
@@ -335,6 +349,7 @@ namespace NorvesLib::Core::Rendering
             DfgLutSampler = dfgLutSampler;
             PrefilteredSpecularMipLevels = prefilteredSpecularMipLevels;
             IBLIntensity = iblIntensity;
+            StaticEnvironmentMaxRadiance = staticEnvironmentMaxRadiance;
             bIBLEnabled = bIBLEnabledValue;
             bLightingPublished = true;
             RefreshIndirectLightingSource();

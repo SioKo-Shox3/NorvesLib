@@ -5,6 +5,9 @@
 //
 // 照明（lighting.frag）と同じ関数を、固定の点列（ワールドの位置・法線）に対して呼び、可視度と使った段の texel の一辺を書く。
 // 粗い段へ逃げた PCF の標本の数は stats[0] に数える。GPU のテスト（VirtualShadowMapVulkanTest）が使う。
+//
+// control.y が 1 のときは点光源の VSM の読み出し（Common/VirtualShadowMapPoint.glsl の VsmSamplePointShadow。照明と同じ関数）を、
+// 影の灯 control.z について評価する。逃げた標本の数は stats[1] に数える。
 // ========================================
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
@@ -14,8 +17,10 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 layout(std140, set = 0, binding = 0) uniform VsmSampleProbeParams
 {
     VsmSampleParams vsm;
-    // x: 点の数
+    // x: 点の数、y: 1 なら点光源の VSM を読む（0 なら太陽の VSM）、z: 点光源の影の灯の番号
     uvec4 control;
+    // 点光源の VSM を読むパラメータ（control.y が 1 のときだけ読む）
+    VsmPointSampleParams point;
 } params;
 
 struct SampleProbePoint
@@ -50,11 +55,19 @@ layout(std430, set = 0, binding = 5) readonly buffer VsmPoolBuffer
     uint vsmPool[];
 };
 
+#define VSM_SLICE_BINDING 6
+#include "Common/VirtualShadowMapSlice.glsl"
+
 #define VSM_PARAMS params.vsm
+#define VSM_SLICE(i) vsmSlices[i]
 #define VSM_PAGE_TABLE(i) vsmPageTable[i]
 #define VSM_POOL(i) vsmPool[i]
 #define VSM_COUNT_FALLBACK() atomicAdd(stats[0], 1u)
 #include "Common/VirtualShadowMap.glsl"
+
+#define VSM_POINT_PARAMS params.point
+#define VSM_COUNT_POINT_FALLBACK() atomicAdd(stats[1], 1u)
+#include "Common/VirtualShadowMapPoint.glsl"
 
 void main()
 {
@@ -64,6 +77,8 @@ void main()
         return;
     }
     float texelMeters = 0.0;
-    const float visibility = VsmSampleSunShadow(points[index].position.xyz, points[index].normal.xyz, texelMeters);
+    const float visibility = params.control.y == 1u
+        ? VsmSamplePointShadow(params.control.z, points[index].position.xyz, points[index].normal.xyz, texelMeters)
+        : VsmSampleSunShadow(points[index].position.xyz, points[index].normal.xyz, texelMeters);
     results[index] = vec4(visibility, texelMeters, 0.0, 0.0);
 }

@@ -88,7 +88,9 @@ namespace NorvesLib::Core::Rendering
         coordSettings.SwRaster = settings.SwRaster;
         coordSettings.SwRasterMaxPixels = settings.SwRasterMaxPixels;
         coordSettings.bShadowProbe = settings.bShadowProbe;
+        coordSettings.bShadowProbePointOnly = settings.bShadowProbePointOnly;
         coordSettings.SunShadowMethod = settings.SunShadowMethod;
+        coordSettings.PointLightShadowMethod = settings.PointLightShadowMethod;
         coordSettings.VsmPoolPages = settings.VsmPoolPages;
 
         if (!m_RenderingCoordinator.Initialize(coordSettings))
@@ -324,6 +326,11 @@ namespace NorvesLib::Core::Rendering
     void RenderWorld::SetStaticEnvironmentIntensityScale(float scale)
     {
         m_RenderingCoordinator.SetStaticEnvironmentIntensityScale(scale);
+    }
+
+    void RenderWorld::SetStaticEnvironmentMaxRadiance(float maxRadiance)
+    {
+        m_RenderingCoordinator.SetStaticEnvironmentMaxRadiance(maxRadiance);
     }
 
     void RenderWorld::SetDeterministicCapture(bool bEnabled)

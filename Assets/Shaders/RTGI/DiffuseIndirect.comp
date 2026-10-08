@@ -17,6 +17,7 @@ layout(set = 0, binding = 1, std140) uniform RTGIComputeParameters
     uvec4 temporalState; // x=履歴有効、y=ライトrevision差、z=weight制限、w=age上限
     uvec4 sampleState; // x=試料系列の番号（RTGIのdispatchごとに1進む）、y=発光instance数、z=発光三角形数
     vec4 previousCameraPosition; // xyz=履歴を書いた前フレームのカメラ位置、w=履歴に掛ける露出の比
+    vec4 environmentParameters; // x=静的HDR環境の放射輝度の上限（倍率を掛ける前。0は上限なし）
 } parameters;
 
 layout(set = 0, binding = 2) uniform sampler2D gbufferNormal;
@@ -133,6 +134,40 @@ vec3 SanitizeUnexposedRadiance(vec3 value)
         return vec3(0.0);
     }
     return max(value, vec3(0.0));
+}
+
+// 静的HDR環境の色の最大の成分が上限を超えたら、色相を保ったまま上限まで縮める（0は上限なし）。
+vec3 LimitStaticEnvironmentRadiance(vec3 radiance)
+{
+    float maximumRadiance = parameters.environmentParameters.x;
+    float peak = max(radiance.r, max(radiance.g, radiance.b));
+    if (maximumRadiance > 0.0 && peak > maximumRadiance)
+    {
+        radiance *= maximumRadiance / peak;
+    }
+    return radiance;
+}
+
+// 1本の光線が運ぶ放射輝度の上限（露出を掛けた後の値。1が表示の白）。命中点の光源標本は、強い発光体（電球）の
+// すぐ近くの面に当たる稀な光線だけが桁違いに大きな値を持ち、少ない光線ではその光線が粒（ホタル）として画素に残る。
+// 白の4倍は、発光体から離れた面の照り返し（露出後でおおむね白以下）を削らず、この稀な値だけを縮める境目として
+// 夜の見本の球の暗い側の粒の数で選んだ（2で0、4で2、8で8、16で18、32で33、上限なしで32）。露出を掛けた後で
+// 比べるので、昼・夜の自動露出の違いで境目が動かない。
+const float RTGI_RAY_RADIANCE_DISPLAY_LIMIT = 4.0;
+
+// 光線1本の放射輝度の最大の成分が上限を超えたら、色相を保ったまま上限まで縮める。
+vec3 LimitRayRadiance(vec3 radiance)
+{
+    float preExposure = IsFiniteScalar(parameters.rayLimits.z) && parameters.rayLimits.z > 0.0
+                            ? clamp(parameters.rayLimits.z, 1.0e-6, 1.0e6)
+                            : 1.0;
+    float maximumRadiance = RTGI_RAY_RADIANCE_DISPLAY_LIMIT / preExposure;
+    float peak = max(radiance.r, max(radiance.g, radiance.b));
+    if (peak > maximumRadiance)
+    {
+        radiance *= maximumRadiance / peak;
+    }
+    return radiance;
 }
 
 vec2 EquirectangularUV(vec3 direction)
@@ -848,9 +883,10 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
     {
         if (parameters.rayLimits.w > 0.0)
         {
-            return textureLod(environmentRadiance,
-                              EquirectangularUV(rayDirection),
-                              0.0).rgb * parameters.rayLimits.w;
+            // 静的HDRの太陽のような極端に明るい画素は、少ない光線では確率的な粒になるので上限で縮める
+            return LimitStaticEnvironmentRadiance(textureLod(environmentRadiance,
+                                                             EquirectangularUV(rayDirection),
+                                                             0.0).rgb) * parameters.rayLimits.w;
         }
         return vec3(0.0);
     }
@@ -874,8 +910,8 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
     hitPosition = rayOrigin + rayDirection * hitDistance;
     hitNormal = triangleNormal;
     hitBaseColor = hitInstance.baseColor.rgb;
-    return ComputeDirectRadiance(hitPosition, hitNormal, hitBaseColor) +
-           hitBaseColor * SampleEmitterIrradiance(hitPosition, hitNormal, pixel, emitterDimension);
+    return LimitRayRadiance(ComputeDirectRadiance(hitPosition, hitNormal, hitBaseColor) +
+                           hitBaseColor * SampleEmitterIrradiance(hitPosition, hitNormal, pixel, emitterDimension));
 }
 
 void main()

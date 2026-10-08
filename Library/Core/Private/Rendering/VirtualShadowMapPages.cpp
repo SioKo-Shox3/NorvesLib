@@ -3,6 +3,7 @@
 #include "Logging/LogMacros.h"
 #include "Rendering/ScopedGpuTimestamp.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -27,20 +28,30 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float lightRight[4];
             float lightUp[4];
-            uint32_t screen[4];  // x = 幅、y = 高さ、z = 段の数、w = 1 段の一辺のページ数
+            uint32_t screen[4];  // x = 幅、y = 高さ、z = スライスの数、w = 印付けが選ぶ太陽の段の、スライスの表での先頭の番号
             float tuning[4];     // x = PCF の核の半径のうち texel に比例する分（texel）、y = 影の範囲の奥の端（前方への距離 m）、z = 探索・PCF の半径の上限（m）
-            uint32_t control[4]; // x = 段階、y = 物理ページの数、z = 間接 dispatch の x の上限
+            uint32_t control[4]; // x = 段階、y = 物理ページの数、z = 間接 dispatch の x の上限、w = 印付けが段を選ぶ太陽のスライスの数（クリップマップの段の数）
             float thresholds[VirtualShadowMapMaxLevels];
-            float levelInfo[VirtualShadowMapMaxLevels][4];   // x = ページの一辺（m）、y = texel の一辺（m）
-            int32_t levelOrigin[VirtualShadowMapMaxLevels][4]; // x, y = 範囲の最小の絶対のページの番号
             float view[4];       // x, y, z = カメラの前方（単位ベクトル）、w = 影の範囲の手前の端（前方への距離 m）
             // ここから下は vsm_allocate.comp だけが読む（vsm_mark.comp・vsm_clear.comp の VsmParams はここまでの前半と同じ並び）
-            uint32_t cache[4];                                  // x = 印（CacheFlag*）、y = 持ち越すフレーム数、z = 無効化の矩形の数
-            int32_t previousOrigin[VirtualShadowMapMaxLevels][4]; // x, y = 前フレームの範囲の最小の絶対のページの番号
+            uint32_t cache[4];                                  // x = 印（CacheFlag*）、y = 持ち越すフレーム数、z = 無効化の矩形の数、w = 無効化の球の数
             float rects[VirtualShadowMap::MAX_INVALIDATION_RECTS][4]; // 無効化の矩形（ライト空間。x, y = 最小、z, w = 最大）
+            float spheres[VirtualShadowMap::MAX_INVALIDATION_RECTS][4]; // 無効化の球（ワールド。xyz = 中心、w = 半径）
         };
-        static_assert(sizeof(GPUVsmParams) == 736 + 16 + 16 + 256 + VirtualShadowMap::MAX_INVALIDATION_RECTS * 16,
+        // ページの一辺・texel・範囲の原点（前フレームの分を含む）はスライスの表（GPUVsmSlice。binding BindSlices）にある
+        static_assert(sizeof(GPUVsmParams) == 224 + 16 + 16 + VirtualShadowMap::MAX_INVALIDATION_RECTS * 16 * 2,
                       "vsm_*.comp の VsmParams と同じ大きさにすること");
+
+        // vsm_mark.comp の VsmPointParams（std140）と同じ並び。点光源の印付けの入力
+        struct GPUVsmPointParams
+        {
+            uint32_t header[4]; // x = 灯の数、y = 点光源のスライスの先頭の番号、z = 解像度の段の数、w = 面の段 0 の解像度（texel）
+            float tuning[4];    // x = カメラからの距離 1 m あたりの画素の大きさ（m）、y = 目標 texel の係数（2^bias）、z = 核の半径の texel の分、w = 核の半径に足す長さ（m）
+            float plane[4];     // x = 面の近い面（m）
+            float lights[PointShadowMaxLights][4]; // xyz = 灯の位置、w = Range
+        };
+        static_assert(sizeof(GPUVsmPointParams) == 48 + PointShadowMaxLights * 16, "vsm_mark.comp の VsmPointParams と同じ大きさにすること");
+        static_assert(PointShadowMaxLights == 4u, "vsm_mark.comp の MAX_POINT_LIGHTS と合わせること");
 
         constexpr uint32_t GroupSize = 256;
         constexpr uint32_t MarkGroupSize = 8;
@@ -59,11 +70,19 @@ namespace NorvesLib::Core::Rendering
             StageDirtyList,
             StageFinalize,
             StageCount,
+            // 点光源のページの表を移し替える直前に 1 回だけ dispatch する段階（StageCount 個の段階の列には入らない）
+            StageRemapCount = StageCount,
+            StageUseCount,
         };
         constexpr uint32_t CacheFlagEnabled = 1u;
         constexpr uint32_t CacheFlagInvalidateAll = 2u;
+        constexpr uint32_t CacheFlagInvalidatePoint = 4u;
+        // スライスの表の extra[3]。立っているスライスは、前フレームのページの内容を引き継げず、全ページに dirty を付ける
+        constexpr int32_t SliceFlagInvalidate = 1;
         // 無効化の矩形の外側へ足す余白（m）。展開の範囲の計算（float）との丸めの差でページを取りこぼさないため
         constexpr float InvalidationMarginMeters = 1.0e-3f;
+        /** vsm_allocate.comp の INVALIDATE_SPLIT と同じ。無効化の 1 組（矩形か球、スライス）を分け合うスレッドの数 */
+        constexpr uint32_t InvalidateSplit = 16;
         // 絶対のページの番号を int32 でシェーダーへ渡せる範囲（範囲の端 + 128 ページが溢れない余裕を持つ）
         constexpr int64_t MaxOriginMagnitude = 1ll << 30;
 
@@ -75,6 +94,10 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t BindStats = 5;
         constexpr uint32_t BindDirtyList = 6;
         constexpr uint32_t BindPool = 7;
+        // vsm_mark.comp・vsm_allocate.comp のスライスの表
+        constexpr uint32_t BindSlices = 8;
+        // vsm_mark.comp の点光源の入力
+        constexpr uint32_t BindPointParams = 9;
 
         RHI::DescriptorBinding MakeBinding(uint32_t binding, RHI::ResourceBindType type)
         {
@@ -91,6 +114,8 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(BindParams, RHI::ResourceBindType::ConstantBuffer));
             desc.bindings.push_back(MakeBinding(BindDepth, RHI::ResourceBindType::CombinedImageSampler));
             desc.bindings.push_back(MakeBinding(BindRequestBits, RHI::ResourceBindType::RWBuffer));
+            desc.bindings.push_back(MakeBinding(BindSlices, RHI::ResourceBindType::StructuredBuffer));
+            desc.bindings.push_back(MakeBinding(BindPointParams, RHI::ResourceBindType::ConstantBuffer));
             return desc;
         }
 
@@ -102,6 +127,7 @@ namespace NorvesLib::Core::Rendering
             {
                 desc.bindings.push_back(MakeBinding(binding, RHI::ResourceBindType::RWBuffer));
             }
+            desc.bindings.push_back(MakeBinding(BindSlices, RHI::ResourceBindType::StructuredBuffer));
             return desc;
         }
 
@@ -171,12 +197,28 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        // 印付けに使える入力か。使えるなら params へクリップマップ由来の値を書く
-        bool FillMarkParams(const VirtualShadowMapPagesDispatch& dispatch, uint32_t width, uint32_t height, GPUVsmParams& params)
+        // 太陽と点光源に共通の印付けの入力（深度から位置を戻す行列・カメラの位置・画面の大きさ）を書く
+        void FillCommonMarkParams(const VirtualShadowMapPagesDispatch& dispatch, uint32_t width, uint32_t height, GPUVsmParams& params)
+        {
+            for (uint32_t element = 0; element < 16u; ++element)
+            {
+                params.invViewProjection[element] = dispatch.InverseViewProjection[element];
+            }
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                params.cameraPosition[axis] = dispatch.CameraPosition[axis];
+            }
+            params.screen[0] = width;
+            params.screen[1] = height;
+        }
+
+        // 太陽の印付けに使える入力か。使えるなら params へクリップマップ由来の値を書く（太陽の段は先頭の LevelCount 件のスライス）。
+        // 使えないときは太陽の段の数（control[3]）を 0 のままにする（シェーダーは太陽の印付けを飛ばす）
+        bool FillMarkParams(const VirtualShadowMapPagesDispatch& dispatch, uint32_t sliceCount, uint32_t width, uint32_t height, GPUVsmParams& params)
         {
             const VirtualShadowMapClipmap* clipmap = dispatch.Clipmap;
             if (clipmap == nullptr || !clipmap->bEnabled || clipmap->LevelCount == 0u ||
-                clipmap->LevelCount > VirtualShadowMap::LEVEL_COUNT ||
+                clipmap->LevelCount > VirtualShadowMap::LEVEL_COUNT || dispatch.MarkFirstSlice + clipmap->LevelCount > sliceCount ||
                 clipmap->PagesPerAxis != VirtualShadowMap::TABLE_DIMENSION ||
                 clipmap->Settings.PageResolution != VirtualShadowMap::PAGE_RESOLUTION)
             {
@@ -196,10 +238,6 @@ namespace NorvesLib::Core::Rendering
                 {
                     return false;
                 }
-                params.levelInfo[level][0] = data.PageMeters;
-                params.levelInfo[level][1] = data.TexelMeters;
-                params.levelOrigin[level][0] = static_cast<int32_t>(data.OriginPageX);
-                params.levelOrigin[level][1] = static_cast<int32_t>(data.OriginPageY);
             }
             const float forwardLength = std::sqrt(dispatch.CameraForward[0] * dispatch.CameraForward[0] +
                                                   dispatch.CameraForward[1] * dispatch.CameraForward[1] +
@@ -215,31 +253,62 @@ namespace NorvesLib::Core::Rendering
                 shadowNear = 0.0f;
                 shadowFar = clipmap->Settings.MaxShadowDistance;
             }
-            for (uint32_t element = 0; element < 16u; ++element)
-            {
-                params.invViewProjection[element] = dispatch.InverseViewProjection[element];
-            }
             for (uint32_t axis = 0; axis < 3u; ++axis)
             {
                 params.view[axis] = dispatch.CameraForward[axis] / forwardLength;
             }
             params.view[3] = shadowNear;
-            for (uint32_t axis = 0; axis < 3u; ++axis)
-            {
-                params.cameraPosition[axis] = dispatch.CameraPosition[axis];
-            }
             params.lightRight[0] = clipmap->LightRight.x;
             params.lightRight[1] = clipmap->LightRight.y;
             params.lightRight[2] = clipmap->LightRight.z;
             params.lightUp[0] = clipmap->LightUp.x;
             params.lightUp[1] = clipmap->LightUp.y;
             params.lightUp[2] = clipmap->LightUp.z;
-            params.screen[0] = width;
-            params.screen[1] = height;
-            params.screen[2] = clipmap->LevelCount;
+            params.control[3] = clipmap->LevelCount;
+            params.screen[3] = dispatch.MarkFirstSlice;
             params.tuning[0] = dispatch.PcfRadiusTexels;
             params.tuning[1] = shadowFar;
             params.tuning[2] = dispatch.MaxFilterRadiusMeters;
+            return true;
+        }
+
+        // 点光源の印付けに使える入力か。使えるなら params を書く（使えないときは灯の数 0 のまま）。
+        // 点光源のスライスはページの表の 128 × 128 の枠に収まり（段 0 の一辺のページが 128 以下）、スライスの表の sliceCount 件に収まること
+        bool FillPointParams(const VirtualShadowMapPagesDispatch& dispatch, uint32_t sliceCount, uint32_t height, GPUVsmPointParams& params)
+        {
+            const VirtualShadowMapPointLights* lights = dispatch.PointLights;
+            if (lights == nullptr || lights->LightCount == 0u || lights->LightCount > PointShadowMaxLights ||
+                !IsValidVirtualShadowMapPointSettings(lights->Settings) ||
+                lights->Settings.PageResolution != VirtualShadowMap::PAGE_RESOLUTION ||
+                lights->SlicesPerLight != PointShadowFaceCount * lights->Settings.MipCount ||
+                VirtualShadowMapPointPagesPerAxis(lights->Settings, 0u) > VirtualShadowMap::TABLE_DIMENSION ||
+                lights->FirstSlice + lights->SliceCount() > sliceCount)
+            {
+                return false;
+            }
+            const float pixelPerMeter = VirtualShadowMapScreenPixelMeters(1.0f, dispatch.FovYDegrees, static_cast<float>(height));
+            if (!(pixelPerMeter > 0.0f) || !std::isfinite(pixelPerMeter) || !std::isfinite(dispatch.PointPcfRadiusTexels) ||
+                !(dispatch.PointPcfRadiusTexels >= 0.0f) || !std::isfinite(dispatch.PointFilterRadiusMeters) ||
+                !(dispatch.PointFilterRadiusMeters >= 0.0f))
+            {
+                return false;
+            }
+            params.header[0] = lights->LightCount;
+            params.header[1] = lights->FirstSlice;
+            params.header[2] = lights->Settings.MipCount;
+            params.header[3] = lights->Settings.FaceResolution;
+            params.tuning[0] = pixelPerMeter;
+            params.tuning[1] = std::exp2(lights->Settings.BiasLevels);
+            params.tuning[2] = dispatch.PointPcfRadiusTexels;
+            params.tuning[3] = dispatch.PointFilterRadiusMeters;
+            params.plane[0] = PointShadowNearPlane;
+            for (uint32_t light = 0; light < lights->LightCount; ++light)
+            {
+                params.lights[light][0] = lights->Position[light].x;
+                params.lights[light][1] = lights->Position[light].y;
+                params.lights[light][2] = lights->Position[light].z;
+                params.lights[light][3] = lights->Range[light];
+            }
             return true;
         }
     } // namespace
@@ -322,14 +391,19 @@ namespace NorvesLib::Core::Rendering
         m_AllocateShader.reset();
         m_ClearShader.reset();
         m_PointSampler.reset();
+        m_RemapScratch.reset();
         m_Device = nullptr;
         m_bMarked = false;
         m_bCacheValid = false;
         m_bCacheContinued = false;
         m_bInvalidatedAll = false;
+        m_PointInvalidatedSlices = 0;
+        m_bPreviousSun = false;
+        m_bPreviousPoint = false;
         m_CachedPageTable = nullptr;
         m_CachedPool = nullptr;
         m_CachedPoolPages = 0;
+        m_CachedSliceCount = 0;
     }
 
     void VirtualShadowMapPages::BeginFrame(uint32_t inFlightIndex, uint64_t frameSerial)
@@ -347,12 +421,67 @@ namespace NorvesLib::Core::Rendering
             use.Uniform = m_Device->CreateBuffer(
                 RHI::BufferDesc(sizeof(GPUVsmParams), RHI::ResourceUsage::ConstantBuffer, true, "VsmParams"));
         }
+        if (!use.PointUniform)
+        {
+            use.PointUniform = m_Device->CreateBuffer(
+                RHI::BufferDesc(sizeof(GPUVsmPointParams), RHI::ResourceUsage::ConstantBuffer, true, "VsmPointParams"));
+        }
+        if (!use.Slices)
+        {
+            use.Slices = m_Device->CreateBuffer(RHI::BufferDesc(
+                sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices, RHI::ResourceUsage::StorageBuffer, true, "VsmSlices"));
+        }
         if (!use.DescriptorSet)
         {
             use.DescriptorSet = m_Device->CreateDescriptorSet(layout);
         }
         outUse = &use;
-        return use.Uniform && use.DescriptorSet;
+        return use.Uniform && use.PointUniform && use.Slices && use.DescriptorSet;
+    }
+
+    void VirtualShadowMapPages::RemapPointPageTable(RHI::ICommandList* commandList,
+                                                    const VirtualShadowMapPagesDispatch& dispatch,
+                                                    const VirtualShadowMapPointRemap& remap)
+    {
+        const VirtualShadowMapPointLights& lights = *dispatch.PointLights;
+        const uint32_t blockCount = std::max(m_PreviousPointLights.LightCount, lights.LightCount);
+        const uint64_t blockBytes = VirtualShadowMap::PageTableBytes(lights.SlicesPerLight);
+        const uint64_t firstByte = VirtualShadowMap::PageTableBytes(lights.FirstSlice);
+        const uint64_t regionBytes = blockBytes * blockCount;
+        const uint64_t scratchBytes = blockBytes * m_PreviousPointLights.LightCount;
+        if (!m_RemapScratch || m_RemapScratch->GetSize() < scratchBytes)
+        {
+            m_RemapScratch = m_Device->CreateBuffer(RHI::BufferDesc(
+                blockBytes * PointShadowMaxLights, RHI::ResourceUsage::TransferSrc | RHI::ResourceUsage::TransferDst, false, "VsmPointRemapScratch"));
+        }
+        if (!m_RemapScratch || blockBytes == 0u || regionBytes == 0u)
+        {
+            return;
+        }
+        // 前フレームの領域をすべて退避してから、今フレームの番号の領域へ書き戻す（入れ替えでも、書く前に読み終える）。
+        // 退避先は直前のフレームの書き戻しが読み終わってから使う（CopySource → CopyDest の遷移が実行順を保証する）
+        commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopySource, firstByte, regionBytes);
+        commandList->BufferBarrier(m_RemapScratch, RHI::ResourceState::CopySource, RHI::ResourceState::CopyDest, 0u, scratchBytes);
+        commandList->CopyBuffer(dispatch.PageTable, m_RemapScratch, scratchBytes, firstByte, 0u);
+        commandList->BufferBarrier(m_RemapScratch, RHI::ResourceState::CopyDest, RHI::ResourceState::CopySource, 0u, scratchBytes);
+        commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::CopySource, RHI::ResourceState::CopyDest, firstByte, regionBytes);
+        for (uint32_t block = 0; block < blockCount; ++block)
+        {
+            const uint32_t source = remap.Source[block];
+            if (source == block)
+            {
+                continue;
+            }
+            if (source == VirtualShadowMapPointNoSource)
+            {
+                commandList->FillBuffer(dispatch.PageTable, firstByte + blockBytes * block, blockBytes, 0u);
+            }
+            else
+            {
+                commandList->CopyBuffer(m_RemapScratch, dispatch.PageTable, blockBytes, blockBytes * source, firstByte + blockBytes * block);
+            }
+        }
+        commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess, firstByte, regionBytes);
     }
 
     bool VirtualShadowMapPages::Record(RHI::ICommandList* commandList, const VirtualShadowMapPagesDispatch& dispatch)
@@ -363,15 +492,16 @@ namespace NorvesLib::Core::Rendering
         // 記録の途中で戻ったとき、古い状態を次の記録が引き継がないよう先に無効にする（最後で入力を残して有効に戻す）
         const bool bCacheWasValid = m_bCacheValid;
         m_bCacheValid = false;
+        const uint32_t sliceCount = dispatch.SliceCount != 0u ? dispatch.SliceCount : VirtualShadowMap::LEVEL_COUNT;
         if (!IsReady() || !commandList || dispatch.PoolPages == 0 || dispatch.PoolPages > VirtualShadowMap::MAX_POOL_PAGES ||
-            !dispatch.Pool || !dispatch.PageTable || !dispatch.RequestBits || !dispatch.FreeList || !dispatch.Stats ||
-            !dispatch.DirtyList)
+            sliceCount > VirtualShadowMap::MAX_SLICES || !dispatch.Pool || !dispatch.PageTable || !dispatch.RequestBits ||
+            !dispatch.FreeList || !dispatch.Stats || !dispatch.DirtyList)
         {
             return false;
         }
         if (dispatch.Pool->GetSize() < VirtualShadowMap::PoolBytes(dispatch.PoolPages) ||
-            dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes() ||
-            dispatch.RequestBits->GetSize() < VirtualShadowMap::RequestBitsBytes() ||
+            dispatch.PageTable->GetSize() < VirtualShadowMap::PageTableBytes(sliceCount) ||
+            dispatch.RequestBits->GetSize() < VirtualShadowMap::RequestBitsBytes(sliceCount) ||
             dispatch.FreeList->GetSize() < VirtualShadowMap::FreeListBytes(dispatch.PoolPages) ||
             dispatch.Stats->GetSize() < VirtualShadowMap::STATS_BYTES ||
             dispatch.DirtyList->GetSize() < VirtualShadowMap::DirtyListBytes(dispatch.PoolPages))
@@ -380,19 +510,40 @@ namespace NorvesLib::Core::Rendering
         }
 
         GPUVsmParams baseParams = {};
-        baseParams.screen[3] = VirtualShadowMap::TABLE_DIMENSION;
-        baseParams.screen[2] = VirtualShadowMap::LEVEL_COUNT;
+        baseParams.screen[2] = sliceCount;
         baseParams.control[1] = dispatch.PoolPages;
         baseParams.control[2] = VirtualShadowMap::GROUP_COUNT_X_LIMIT;
 
         const uint32_t width = dispatch.Depth ? dispatch.Depth->GetWidth() : 0u;
         const uint32_t height = dispatch.Depth ? dispatch.Depth->GetHeight() : 0u;
         GPUVsmParams markParams = baseParams;
-        const bool bMark = dispatch.Depth && width != 0u && height != 0u &&
-                           FillMarkParams(dispatch, width, height, markParams);
+        // 太陽と点光源は別々に使えるか決める（夜は太陽のクリップマップが無効で、点光源だけが印付けをする）
+        const bool bHasDepth = dispatch.Depth && width != 0u && height != 0u;
+        if (bHasDepth)
+        {
+            FillCommonMarkParams(dispatch, width, height, markParams);
+        }
+        const bool bSunMark = bHasDepth && FillMarkParams(dispatch, sliceCount, width, height, markParams);
+        GPUVsmPointParams pointParams = {};
+        const bool bPointMark = bHasDepth && FillPointParams(dispatch, sliceCount, height, pointParams);
+        const bool bMark = bSunMark || bPointMark;
+        // スライスの表。外から渡されなければクリップマップから作る（先頭 LevelCount 件が太陽の段）。
+        // 印付けに使えないフレームは使わない（印付けを記録しない）
+        GPUVsmSlice markSliceStorage[VirtualShadowMapMaxSlices];
+        const GPUVsmSlice* markSlices = dispatch.Slices;
+        if (bMark && markSlices == nullptr)
+        {
+            BuildVirtualShadowMapSlices(bSunMark ? dispatch.Clipmap : nullptr, nullptr, sliceCount, markSliceStorage);
+            if (bPointMark)
+            {
+                BuildVirtualShadowMapPointSlices(*dispatch.PointLights, markSliceStorage);
+            }
+            markSlices = markSliceStorage;
+        }
+        const uint32_t sliceBytes = sliceCount * static_cast<uint32_t>(sizeof(GPUVsmSlice));
 
         Use* markUse = nullptr;
-        Use* allocateUses[StageCount] = {};
+        Use* allocateUses[StageUseCount] = {};
         Use* clearUse = nullptr;
         if (bMark && !AcquireUse(m_MarkUses, MakeMarkLayout(), markUse))
         {
@@ -413,15 +564,19 @@ namespace NorvesLib::Core::Rendering
         // ----- 印付け -----
         {
             ScopedGpuTimestamp timestamp(commandList, "VsmMark");
-            ZeroFill(commandList, dispatch.RequestBits, VirtualShadowMap::RequestBitsBytes());
+            ZeroFill(commandList, dispatch.RequestBits, VirtualShadowMap::RequestBitsBytes(sliceCount));
             if (bMark)
             {
                 markUse->Uniform->Update(&markParams, sizeof(markParams));
+                markUse->Slices->Update(markSlices, sliceBytes);
+                markUse->PointUniform->Update(&pointParams, sizeof(pointParams));
                 markUse->DescriptorSet->BindConstantBuffer(BindParams, markUse->Uniform, 0, sizeof(markParams));
+                markUse->DescriptorSet->BindConstantBuffer(BindPointParams, markUse->PointUniform, 0, sizeof(pointParams));
+                markUse->DescriptorSet->BindStorageBuffer(BindSlices, markUse->Slices, 0, sliceBytes);
                 markUse->DescriptorSet->BindTexture(BindDepth, dispatch.Depth);
                 markUse->DescriptorSet->BindSampler(BindDepth, m_PointSampler);
                 markUse->DescriptorSet->BindStorageBuffer(BindRequestBits, dispatch.RequestBits, 0,
-                                                          ClampBindSize(VirtualShadowMap::RequestBitsBytes()));
+                                                          ClampBindSize(VirtualShadowMap::RequestBitsBytes(sliceCount)));
                 markUse->DescriptorSet->Update();
 
                 commandList->SetPipeline(m_MarkPipeline);
@@ -435,45 +590,95 @@ namespace NorvesLib::Core::Rendering
         // ----- 前フレームのページの表を引き継げるか -----
         // 引き継ぐには、キャッシュを使い、印付けをして、同じ資源・同じ段の設定で前フレームも記録していること。
         // 引き継がないときは表を 0 にして全部を割り当て直す（資源は未初期化・見張りの値でもよい）
-        const bool bCacheWanted = dispatch.bCacheEnabled && bMark;
+        // 太陽の段（正射影）と点光源の面（透視）は、それぞれ印付けをしたフレームだけが前フレームから引き継ぐ。
+        // 前フレームと太陽の印付けの有無が変わった（昼夜の切り替え）フレームは、太陽の段の表の欄が指す範囲の意味が分からないので全部を割り当て直す。
+        // 点光源の灯の有無・並びの変化は、灯ごとのスライスの印（下の pointInvalid）で無効にする
+        const bool bCacheWanted = dispatch.bCacheEnabled && (bSunMark || bPointMark);
         const bool bContinue = bCacheWanted && bCacheWasValid && m_CachedPageTable == dispatch.PageTable.get() &&
                                m_CachedPool == dispatch.Pool.get() && m_CachedPoolPages == dispatch.PoolPages &&
-                               IsSameLevelLayout(m_PreviousClipmap, *dispatch.Clipmap);
-        bool bInvalidateAll = false;
+                               m_CachedSliceCount == sliceCount && m_bPreviousSun == bSunMark &&
+                               (!bSunMark || IsSameLevelLayout(m_PreviousClipmap, *dispatch.Clipmap));
+        bool bInvalidateSun = false;
+        bool bInvalidatePoint = false;
         if (bContinue)
         {
-            const VirtualShadowMapClipmap& current = *dispatch.Clipmap;
-            bInvalidateAll = dispatch.bInvalidateAll || !IsSameDirection(m_PreviousClipmap.Direction, current.Direction) ||
-                             !IsSameDirection(m_PreviousClipmap.LightRight, current.LightRight) ||
-                             !IsSameDirection(m_PreviousClipmap.LightUp, current.LightUp) ||
-                             m_PreviousClipmap.DepthCenter != current.DepthCenter ||
-                             dispatch.InvalidationRectCount > VirtualShadowMap::MAX_INVALIDATION_RECTS;
+            const bool bTooMany = dispatch.InvalidationRectCount > VirtualShadowMap::MAX_INVALIDATION_RECTS ||
+                                  dispatch.InvalidationSphereCount > VirtualShadowMap::MAX_INVALIDATION_RECTS;
+            bInvalidateSun = dispatch.bInvalidateAll || bTooMany;
+            bInvalidatePoint = dispatch.bInvalidateAll || bTooMany;
+            if (bSunMark)
+            {
+                const VirtualShadowMapClipmap& current = *dispatch.Clipmap;
+                bInvalidateSun = bInvalidateSun || !IsSameDirection(m_PreviousClipmap.Direction, current.Direction) ||
+                                 !IsSameDirection(m_PreviousClipmap.LightRight, current.LightRight) ||
+                                 !IsSameDirection(m_PreviousClipmap.LightUp, current.LightUp) ||
+                                 m_PreviousClipmap.DepthCenter != current.DepthCenter;
+            }
         }
+        const bool bInvalidateAll = bInvalidateSun || bInvalidatePoint;
         m_bCacheContinued = bContinue;
         m_bInvalidatedAll = bInvalidateAll;
+
+        // 灯の識別子・位置・Range・並びが前フレームの同じ番号の灯と違うスライスは、全ページを無効にする（スライスの印）
+        bool pointInvalid[VirtualShadowMapMaxSlices] = {};
+        VirtualShadowMapPointRemap pointRemap;
+        m_PointInvalidatedSlices = 0;
+        if (bContinue)
+        {
+            m_PointInvalidatedSlices = BuildVirtualShadowMapPointSliceInvalidation(
+                m_bPreviousPoint ? &m_PreviousPointLights : nullptr, bPointMark ? dispatch.PointLights : nullptr, pointInvalid, &pointRemap);
+        }
 
         // ----- 割り当て -----
         {
             ScopedGpuTimestamp timestamp(commandList, "VsmAllocate");
             if (!bContinue)
             {
-                ZeroFill(commandList, dispatch.PageTable, VirtualShadowMap::PageTableBytes());
+                ZeroFill(commandList, dispatch.PageTable, VirtualShadowMap::PageTableBytes(sliceCount));
             }
             ZeroFill(commandList, dispatch.Stats, VirtualShadowMap::STATS_BYTES);
 
             GPUVsmParams allocateParams = bMark ? markParams : baseParams;
-            allocateParams.cache[0] = (bCacheWanted ? CacheFlagEnabled : 0u) | (bInvalidateAll ? CacheFlagInvalidateAll : 0u);
+            allocateParams.cache[0] = (bCacheWanted ? CacheFlagEnabled : 0u) | (bInvalidateSun ? CacheFlagInvalidateAll : 0u) |
+                                      (bInvalidatePoint ? CacheFlagInvalidatePoint : 0u);
             allocateParams.cache[1] = VirtualShadowMap::CACHE_CARRY_FRAMES;
-            const uint32_t rectCount = bContinue && !bInvalidateAll ? dispatch.InvalidationRectCount : 0u;
+            // 矩形は太陽の段、球は点光源の面のページを無効にする。全ページを無効にするときは、その種類の矩形・球は要らない
+            const uint32_t rectCount = bContinue && bSunMark && !bInvalidateSun ? dispatch.InvalidationRectCount : 0u;
+            const uint32_t sphereCount = bContinue && bPointMark && !bInvalidatePoint ? dispatch.InvalidationSphereCount : 0u;
             allocateParams.cache[2] = rectCount;
-            for (uint32_t level = 0; level < VirtualShadowMapMaxLevels; ++level)
+            allocateParams.cache[3] = sphereCount;
+            // 引き継がないときは、範囲が動いていない（前フレームも今フレームと同じ）ものとして扱う（前の原点が null なら今の原点と同じ）。
+            // 外から渡されたスライスの表は、そのまま使う（前フレームの原点も呼び出し側が入れる）
+            GPUVsmSlice allocateSliceStorage[VirtualShadowMapMaxSlices];
+            const GPUVsmSlice* allocateSlices = dispatch.Slices;
+            if (allocateSlices == nullptr)
             {
-                // 引き継がないときは、範囲が動いていない（前フレームも今フレームと同じ）ものとして扱う
-                const bool bPrevious = bContinue && level < m_PreviousClipmap.LevelCount;
-                allocateParams.previousOrigin[level][0] =
-                    bPrevious ? static_cast<int32_t>(m_PreviousClipmap.Levels[level].OriginPageX) : allocateParams.levelOrigin[level][0];
-                allocateParams.previousOrigin[level][1] =
-                    bPrevious ? static_cast<int32_t>(m_PreviousClipmap.Levels[level].OriginPageY) : allocateParams.levelOrigin[level][1];
+                BuildVirtualShadowMapSlices(bSunMark ? dispatch.Clipmap : nullptr,
+                                            bContinue ? &m_PreviousClipmap : nullptr,
+                                            sliceCount,
+                                            allocateSliceStorage);
+                if (bPointMark)
+                {
+                    BuildVirtualShadowMapPointSlices(*dispatch.PointLights, allocateSliceStorage);
+                }
+                // 引き継げないスライス（灯が動いた・入れ替わった・無くなった）の印。点光源の領域のスライスなので、使わない灯の分も透視の種類にして数える
+                for (uint32_t index = 0; index < sliceCount; ++index)
+                {
+                    if (pointInvalid[index])
+                    {
+                        allocateSliceStorage[index].extra[2] = VirtualShadowMapSliceProjectionPerspective;
+                        allocateSliceStorage[index].extra[3] = SliceFlagInvalidate;
+                    }
+                }
+                allocateSlices = allocateSliceStorage;
+            }
+            for (uint32_t index = 0; index < sphereCount; ++index)
+            {
+                const float* sphere = dispatch.InvalidationSpheres + static_cast<size_t>(index) * 4u;
+                allocateParams.spheres[index][0] = sphere[0];
+                allocateParams.spheres[index][1] = sphere[1];
+                allocateParams.spheres[index][2] = sphere[2];
+                allocateParams.spheres[index][3] = sphere[3] + InvalidationMarginMeters;
             }
             for (uint32_t index = 0; index < rectCount; ++index)
             {
@@ -484,17 +689,51 @@ namespace NorvesLib::Core::Rendering
                 allocateParams.rects[index][3] = rect[3] + InvalidationMarginMeters;
             }
 
-            for (uint32_t index = 0; index < StageCount; ++index)
+            // 点光源の灯の並びが変わると、どの灯にも引き継がれない旧領域の欄は移し替えの上書きで消える。消える前に割り当て済みの欄を解放の統計へ数える
+            const bool bRemapPoint = bContinue && pointRemap.bMoves;
+            uint32_t discardedMask = 0u;
+            uint32_t remapFirstEntry = 0u;
+            uint32_t remapRegionEntries = 0u;
+            uint32_t remapCountGroups = 0u;
+            if (bRemapPoint)
+            {
+                const VirtualShadowMapPointLights& lights = *dispatch.PointLights;
+                const uint32_t previousCount = m_PreviousPointLights.LightCount;
+                // 今フレームの灯の数より後ろの番号も、領域が書き戻しの対象になる（そこで元の領域が残っていれば、後の Age の解放が数えるので、ここでは数えない）
+                const uint32_t blockCount = std::min(std::max(previousCount, lights.LightCount), PointShadowMaxLights);
+                for (uint32_t region = 0; region < previousCount; ++region)
+                {
+                    bool bUsed = false;
+                    for (uint32_t block = 0; block < blockCount; ++block)
+                    {
+                        bUsed = bUsed || pointRemap.Source[block] == region;
+                    }
+                    discardedMask |= bUsed ? 0u : (1u << region);
+                }
+                remapFirstEntry = lights.FirstSlice * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+                remapRegionEntries = lights.SlicesPerLight * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+                remapCountGroups = discardedMask != 0u ? GroupsFor(previousCount * remapRegionEntries, GroupSize) : 0u;
+            }
+
+            for (uint32_t index = 0; index < StageUseCount; ++index)
             {
                 GPUVsmParams params = allocateParams;
                 params.control[0] = index;
+                if (index == StageRemapCount)
+                {
+                    params.control[3] = discardedMask;
+                    params.cache[2] = remapFirstEntry;
+                    params.cache[3] = remapRegionEntries;
+                }
                 Use& use = *allocateUses[index];
                 use.Uniform->Update(&params, sizeof(params));
+                use.Slices->Update(allocateSlices, sliceBytes);
                 use.DescriptorSet->BindConstantBuffer(BindParams, use.Uniform, 0, sizeof(params));
+                use.DescriptorSet->BindStorageBuffer(BindSlices, use.Slices, 0, sliceBytes);
                 use.DescriptorSet->BindStorageBuffer(BindRequestBits, dispatch.RequestBits, 0,
-                                                     ClampBindSize(VirtualShadowMap::RequestBitsBytes()));
+                                                     ClampBindSize(VirtualShadowMap::RequestBitsBytes(sliceCount)));
                 use.DescriptorSet->BindStorageBuffer(BindPageTable, dispatch.PageTable, 0,
-                                                     ClampBindSize(VirtualShadowMap::PageTableBytes()));
+                                                     ClampBindSize(VirtualShadowMap::PageTableBytes(sliceCount)));
                 use.DescriptorSet->BindStorageBuffer(BindFreeList, dispatch.FreeList, 0,
                                                      ClampBindSize(VirtualShadowMap::FreeListBytes(dispatch.PoolPages)));
                 use.DescriptorSet->BindStorageBuffer(BindStats, dispatch.Stats, 0, ClampBindSize(VirtualShadowMap::STATS_BYTES));
@@ -503,10 +742,10 @@ namespace NorvesLib::Core::Rendering
                 use.DescriptorSet->Update();
             }
 
-            const uint32_t entryGroups = GroupsFor(VirtualShadowMap::LEVEL_COUNT * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL, GroupSize);
+            const uint32_t entryGroups = GroupsFor(sliceCount * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL, GroupSize);
             const uint32_t pageGroups = GroupsFor(dispatch.PoolPages, GroupSize);
-            const uint32_t rectGroups = GroupsFor(rectCount * VirtualShadowMap::LEVEL_COUNT, GroupSize);
-            const uint32_t requestGroups = GroupsFor(VirtualShadowMap::REQUEST_WORDS, GroupSize);
+            const uint32_t rectGroups = GroupsFor(std::max(rectCount, sphereCount) * sliceCount * InvalidateSplit, GroupSize);
+            const uint32_t requestGroups = GroupsFor(VirtualShadowMap::RequestWords(sliceCount), GroupSize);
             // 段階ごとの dispatch の大きさ（0 は記録しない）
             const uint32_t groups[StageCount] = {
                 entryGroups,   // StageScroll
@@ -522,6 +761,16 @@ namespace NorvesLib::Core::Rendering
                 1u,            // StageFinalize
             };
             commandList->SetPipeline(m_AllocatePipeline);
+            if (remapCountGroups != 0u)
+            {
+                commandList->SetDescriptorSet(allocateUses[StageRemapCount]->DescriptorSet, 0);
+                commandList->Dispatch(remapCountGroups, 1u, 1u);
+                BarrierWrites(commandList, {dispatch.Stats, dispatch.PageTable});
+            }
+            if (bRemapPoint)
+            {
+                RemapPointPageTable(commandList, dispatch, pointRemap);
+            }
             for (uint32_t index = 0; index < StageCount; ++index)
             {
                 if (groups[index] == 0u)
@@ -567,7 +816,17 @@ namespace NorvesLib::Core::Rendering
             m_CachedPageTable = dispatch.PageTable.get();
             m_CachedPool = dispatch.Pool.get();
             m_CachedPoolPages = dispatch.PoolPages;
-            m_PreviousClipmap = *dispatch.Clipmap;
+            m_CachedSliceCount = sliceCount;
+            m_bPreviousSun = bSunMark;
+            if (bSunMark)
+            {
+                m_PreviousClipmap = *dispatch.Clipmap;
+            }
+            m_bPreviousPoint = bPointMark;
+            if (bPointMark)
+            {
+                m_PreviousPointLights = *dispatch.PointLights;
+            }
         }
         return bCleared;
     }

@@ -27,7 +27,9 @@
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RenderGraph/RenderGraphTypes.h"
 #include "Rendering/FrameUseRing.h"
+#include "Rendering/ShadowMethod.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
+#include "Rendering/VirtualShadowMapPointLights.h"
 #include "RHI/DeviceCapabilities.h"
 #include "RHI/ICommandList.h"
 #include "RHI/RHITypes.h"
@@ -63,9 +65,21 @@ namespace NorvesLib::Core::Rendering
         /** @brief クリップマップの 1 段のページの数（一辺）。ページの表の一辺 */
         constexpr uint32_t TABLE_DIMENSION = 128;
         constexpr uint32_t TABLE_ENTRIES_PER_LEVEL = TABLE_DIMENSION * TABLE_DIMENSION;
-        /** @brief 段の数（クリップマップの既定と同じ） */
+        /** @brief 段の数（クリップマップの既定と同じ）。VSM の資源を作るときの既定のスライスの数でもある */
         constexpr uint32_t LEVEL_COUNT = VirtualShadowMapClipmapSettings{}.LevelCount;
         static_assert(LEVEL_COUNT >= 1 && LEVEL_COUNT <= VirtualShadowMapMaxLevels, "段の数はクリップマップの上限に収まること");
+        /**
+         * @brief 展開のインスタンスと塊の段の印が持てるスライスの数の上限。展開のインスタンスの段の欄は 8 ビット
+         *        （インスタンスの y = スライス | 物理ページ << 8。物理ページは 24 ビットまで）
+         */
+        constexpr uint32_t MAX_SLICES = 256;
+        /** @brief 塊の段の印（VsmShadowChunk::LevelMask。32 ビット）が 1 つの組で持てるスライスの数 */
+        constexpr uint32_t SLICES_PER_GROUP = 32;
+        /** @brief スライスの数が sliceCount のときの、塊の段の印の組の数（ceil(sliceCount / 32)） */
+        constexpr uint32_t SliceGroupCount(uint32_t sliceCount)
+        {
+            return (sliceCount + SLICES_PER_GROUP - 1u) / SLICES_PER_GROUP;
+        }
 
         /**
          * @brief 既定のプールのページの数（5120 ページ = 320 MiB）。--vsm-pool-pages=<n> で替える
@@ -80,6 +94,7 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t PAGE_INDEX_BITS = 20;
         constexpr uint32_t PAGE_INDEX_MASK = (1u << PAGE_INDEX_BITS) - 1u;
         constexpr uint32_t MAX_POOL_PAGES = PAGE_INDEX_MASK;
+        static_assert(PAGE_INDEX_BITS <= 24, "展開のインスタンスの物理ページの欄は 24 ビット（スライスの欄の 8 ビットの上）");
         /** @brief maxStorageBufferRange が不明（0）のときに使う、Vulkan が保証する最小値（2^27） */
         constexpr uint64_t GUARANTEED_MAX_STORAGE_BUFFER_RANGE = 1ull << 27;
 
@@ -100,8 +115,17 @@ namespace NorvesLib::Core::Rendering
          * @brief 統計の語（uint32）の並び: 要求・割り当て・溢れ・描いたページの数・要求のあった段のビットの集合・
          *        展開が描く塊の数・展開が書いたインスタンスの数・展開の容量を超えて書かなかったインスタンスの数・
          *        MegaGeometry の投影物のカリングの（インスタンス、段）の数・書いたクラスタの数・容量を超えて書かなかったクラスタの数
+         *
+         * StatLevelsUsed は先頭 32 スライスのうち要求のあったものの集合（ビット s がスライス s）、StatLevelsUsedBeyond は
+         * 33 番目以降のスライスに要求があれば 1（集合を溢れさせないため）。
+         * StatPointRequested・StatPointAllocated は、投影の種類が透視のスライス（点光源の面）だけの要求・割り当ての数
+         * （StatRequested・StatAllocated は太陽と点光源の合計）。
+         * StatMegaPointInstances・StatMegaPointClusters は、MegaGeometry の投影物のカリングのうち透視のスライス（点光源の面）だけの
+         * （インスタンス、スライス）の数と書いたクラスタの数（StatMegaInstances・StatMegaClusters はこれを含む合計）。
+         * StatPointCached・StatPointRendered・StatPointInvalidated・StatPointReleased は、透視のスライス（点光源の面）だけの
+         * 持ち越した・描いた・無効にした・空きへ戻したページの数（StatCached〜StatReleased は太陽と点光源の合計）。
          */
-        constexpr uint32_t STATS_WORD_COUNT = 53;
+        constexpr uint32_t STATS_WORD_COUNT = 62;
         constexpr uint64_t STATS_BYTES = static_cast<uint64_t>(STATS_WORD_COUNT) * sizeof(uint32_t);
         enum StatWord : uint32_t
         {
@@ -130,10 +154,21 @@ namespace NorvesLib::Core::Rendering
             StatScratchEvictTaken = 19,
             StatScratchAllocCursor = 20,
             StatScratchAgeHistogram = 21,
+            // 年齢ごとの数（STATS_AGE_BINS 個）の後ろ
+            StatLevelsUsedBeyond = StatScratchAgeHistogram + 32,
+            StatPointRequested = StatLevelsUsedBeyond + 1,
+            StatPointAllocated = StatLevelsUsedBeyond + 2,
+            StatMegaPointInstances = StatLevelsUsedBeyond + 3,
+            StatMegaPointClusters = StatLevelsUsedBeyond + 4,
+            StatPointCached = StatLevelsUsedBeyond + 5,
+            StatPointRendered = StatLevelsUsedBeyond + 6,
+            StatPointInvalidated = StatLevelsUsedBeyond + 7,
+            StatPointReleased = StatLevelsUsedBeyond + 8,
         };
         /** @brief 要求されなかったフレーム数ごとの数の語の数（年齢 0〜31） */
         constexpr uint32_t STATS_AGE_BINS = 32;
-        static_assert(STATS_WORD_COUNT == StatScratchAgeHistogram + STATS_AGE_BINS, "統計の語の数が並びと合っていること");
+        static_assert(STATS_WORD_COUNT == StatScratchAgeHistogram + STATS_AGE_BINS + 9u && StatPointReleased == STATS_WORD_COUNT - 1u,
+                      "統計の語の数が並びと合っていること");
         /** @brief 要求されなくなったページを持ち越すフレーム数（これを超えて要求が無ければ空きへ戻す） */
         constexpr uint32_t CACHE_CARRY_FRAMES = 30;
         /** @brief 1 フレームに渡せる無効化の矩形の数（超えたら全ページを無効にする） */
@@ -164,8 +199,11 @@ namespace NorvesLib::Core::Rendering
             commandList.BufferBarrier(stats, RHI::ResourceState::CopySource, RHI::ResourceState::UnorderedAccess);
         }
 
-        /** @brief 今フレームの要求のビット列（段 × 128 × 128 ビット）の語（uint32）の数 */
-        constexpr uint32_t REQUEST_WORDS = LEVEL_COUNT * TABLE_ENTRIES_PER_LEVEL / 32u;
+        /** @brief 今フレームの要求のビット列（スライス × 128 × 128 ビット）の語（uint32）の数 */
+        constexpr uint32_t RequestWords(uint32_t sliceCount)
+        {
+            return sliceCount * TABLE_ENTRIES_PER_LEVEL / 32u;
+        }
 
         /** @brief VSM を作れない理由。名前は VSM_FALLBACK reason= の値 */
         enum class FallbackReason : uint32_t
@@ -196,6 +234,9 @@ namespace NorvesLib::Core::Rendering
                 return "none";
             }
         }
+
+        /** @brief 点光源の VSM が使えない（太陽が VSM でない・装置が VSM を使えない）ときの VSM_FALLBACK reason= の値 */
+        inline constexpr const char* PointRequiresVsmReasonName = "point_requires_vsm";
 
         /** @brief 装置の能力と要求から決めたプールの計画 */
         struct PoolPlan
@@ -246,16 +287,16 @@ namespace NorvesLib::Core::Rendering
             return plan;
         }
 
-        /** @brief ページの表の大きさ（バイト）: 段 × 128 × 128 の uint32 */
-        constexpr uint64_t PageTableBytes()
+        /** @brief ページの表の大きさ（バイト）: スライス × 128 × 128 の uint32。既定は太陽の段の数（LEVEL_COUNT） */
+        constexpr uint64_t PageTableBytes(uint32_t sliceCount = LEVEL_COUNT)
         {
-            return static_cast<uint64_t>(LEVEL_COUNT) * TABLE_ENTRIES_PER_LEVEL * sizeof(uint32_t);
+            return static_cast<uint64_t>(sliceCount) * TABLE_ENTRIES_PER_LEVEL * sizeof(uint32_t);
         }
 
-        /** @brief 今フレームの要求のビット列の大きさ（バイト） */
-        constexpr uint64_t RequestBitsBytes()
+        /** @brief 今フレームの要求のビット列の大きさ（バイト）。既定は太陽の段の数（LEVEL_COUNT） */
+        constexpr uint64_t RequestBitsBytes(uint32_t sliceCount = LEVEL_COUNT)
         {
-            return static_cast<uint64_t>(REQUEST_WORDS) * sizeof(uint32_t);
+            return static_cast<uint64_t>(RequestWords(sliceCount)) * sizeof(uint32_t);
         }
 
         /** @brief 物理ページのプールの大きさ（バイト） */
@@ -295,7 +336,8 @@ namespace NorvesLib::Core::Rendering
      * VSM_MEGA_CULL instances=<n> clusters=<n> overflow=<n> として 60 回ごとに出す。
      * 統計は数フレーム遅れで読み戻し、値が変わったとき（または 60 フレームごと）に
      * VSM_PAGES requested=<n> allocated=<n> overflow=<n> levels_used=<mask> を出す。60 フレームごとに
-     * VSM_CACHE cached=<n> rendered=<n> invalidated=<n> released=<n>（持ち越したページ・描いたページ・無効にしたページ・空きへ戻したページ）も出す。投影物の集めた内訳は
+     * VSM_CACHE cached=<n> rendered=<n> invalidated=<n> released=<n>（持ち越したページ・描いたページ・無効にしたページ・空きへ戻したページ）に、
+     * 点光源の面だけの point_cached=<n> point_rendered=<n> point_invalidated=<n> point_released=<n> を足して出す。投影物の集めた内訳は
      * VSM_CASTERS procedural_chunks=<n> skinned_chunks=<n> culled=<n> dropped=<n> skipped=<n> に出す（値が変わったとき・60 回ごと）。
      * プールの確保量は GpuResources::SetShadowMapPoolBytes で予算の計算（VideoMemoryPool::ShadowMap）へ伝える。
      */
@@ -321,6 +363,14 @@ namespace NorvesLib::Core::Rendering
         /** @brief MegaGeometry の投影物の取り出し元（同じ View の主の経路。null なら MegaGeometry の投影物はカリングしない） */
         void SetMegaGeometryPass(const MegaGeometryPass* pass) { m_MegaPass = pass; }
         const MegaGeometryPass* GetMegaGeometryPass() const { return m_MegaPass; }
+
+        /**
+         * @brief 点光源の影の方式（--point-shadow-method）。Vsm のとき、毎フレームの点光源の面と解像度の段（VirtualShadowMapPointLights）を
+         *        作り、起動後と灯の数・位置・Range が変わったときに VSM_POINT を出す。装置が VSM を使えないときは VSM_FALLBACK reason=point_requires_vsm を
+         *        1 回出す。描画はまだキューブのまま
+         */
+        void SetPointShadowMethod(PointShadowMethod method) { m_PointShadowMethod = method; }
+        PointShadowMethod GetPointShadowMethod() const { return m_PointShadowMethod; }
 
         /** @brief ページのキャッシュ（動かない物のページを次のフレームへ持ち越す）を使うか。既定は使う（--vsm-cache=off で毎フレームすべて描き直す） */
         void SetCacheEnabled(bool bEnabled) { m_bCacheEnabled = bEnabled; }
@@ -385,6 +435,8 @@ namespace NorvesLib::Core::Rendering
         };
 
         void Fallback(VirtualShadowMap::FallbackReason reason);
+        /** @brief 点光源の面と解像度の段を作り、起動後と変化したときに VSM_POINT を出す */
+        void UpdatePointLights(const ViewRenderContext& context);
         void ReleaseResources();
         /** @brief 影を落とす手続きメッシュとスキニングを、塊の記録に集める（CPU。段の範囲に入らない塊は省く） */
         void CollectCasters(ViewRenderContext& context);
@@ -404,6 +456,10 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_RequestedPoolPages = 0;
         uint32_t m_PoolPages = 0;
         bool m_bCacheEnabled = true;
+        PointShadowMethod m_PointShadowMethod = PointShadowMethod::Cube;
+        /** @brief 直近に作った点光源のスライスの並びと、VSM_POINT を出したか */
+        VirtualShadowMapPointLights m_PointLights;
+        bool m_bPointLightsLogged = false;
         RHI::IDevice* m_Device = nullptr;
         GpuResources* m_Gpu = nullptr;
         bool m_bActive = false;
@@ -441,7 +497,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bMegaDrawRecorded = false;
         uint32_t m_LastCasterChunkCount = 0;
         /** @brief 最後に出した統計（変わったときだけ出す）と、出してからのフレーム数 */
-        uint32_t m_LoggedStats[4] = {};
+        uint32_t m_LoggedStats[6] = {};
         bool m_bStatsLogged = false;
         uint32_t m_FramesSinceStatsLog = 0;
         /** @brief VSM_CACHE を出してからの読み戻したフレーム数（60 フレームごとに出す） */

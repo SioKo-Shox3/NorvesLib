@@ -3,19 +3,21 @@
 // （Rendering/VirtualShadowMapRaster.h の GPUMegaCullParams・VirtualShadowMap::MegaCull* と一致）
 //
 // 取り込む側が、binding 14 の定数（megaParams）をここで受け取る。vsm_dirty_mips.comp（dirty の階層を作る）と
-// vsm_mega_cull.comp（階層を引いてクラスタを選ぶ）が取り込む。
+// vsm_mega_cull.comp（階層を引いてクラスタを選ぶ）が取り込む。ページの一辺・texel・範囲の原点・ページの表の先頭は、
+// スライスの表（Common/VirtualShadowMapSlice.glsl）から引く。取り込む側がこのファイルより先に VSM_SLICE_BINDING を定義すると、その binding に表を宣言する。
 //
-// dirty のページの階層: 段ごとに、128×128 のページの格子（mip 0）から 1×1（mip 7）までの「その範囲に dirty で割り当て済みの
-// ページがあるか」のビット列。ビットの座標は、範囲の最小のページ（段の範囲の原点）からの相対の座標（トーラスの番地ではない）。
-// 段の範囲が動いてもトーラスの番地は変わらないが、空間の近さ（階層の範囲）は相対の座標で決まる。
+// dirty のページの階層: スライス（太陽では段）ごとに、128×128 のページの格子（mip 0）から 1×1（mip 7）までの「その範囲に dirty で割り当て済みの
+// ページがあるか」のビット列。ビットの座標は、範囲の最小のページ（スライスの範囲の原点）からの相対の座標（トーラスの番地ではない）。
+// スライスの範囲が動いてもトーラスの番地は変わらないが、空間の近さ（階層の範囲）は相対の座標で決まる。階層の形は 128×128 のスライスを前提にする。
 // ========================================
 
 #ifndef NORVES_VSM_MEGA_CULL_GLSL
 #define NORVES_VSM_MEGA_CULL_GLSL
 
-// ページの表の一辺・1 段のページの数・1 要素の印（Common/VirtualShadowMapChunk.glsl の VSM_* と同じ値）
+#include "Common/VirtualShadowMapSlice.glsl"
+
+// dirty の階層の一辺（ページ。128×128 のスライスを前提にする）と、ページの表の 1 要素の印（Common/VirtualShadowMapChunk.glsl の VSM_* と同じ値）
 const uint VSM_MEGA_TABLE_DIMENSION = 128u;
-const uint VSM_MEGA_TABLE_ENTRIES_PER_LEVEL = VSM_MEGA_TABLE_DIMENSION * VSM_MEGA_TABLE_DIMENSION;
 const uint VSM_MEGA_PAGE_ENTRY_ALLOCATED = 1u << 31;
 const uint VSM_MEGA_PAGE_ENTRY_DIRTY = 1u << 30;
 const uint VSM_MEGA_PAGE_ENTRY_RETRY = 1u << 29;
@@ -56,12 +58,8 @@ layout(std140, set = 0, binding = 14) uniform VsmMegaCullParams
     vec4 lightDirection;
     // x: 深度の原点（ライト空間の深度）、y: 深度の範囲の片側（m）
     vec4 depth;
-    // x: 段の数、y: 出力の一覧の容量（クラスタの数）、z: 影のフラットな判定の全ワークグループの数
+    // x: スライス（段）の数、y: 出力の一覧の容量（クラスタの数）、z: 影のフラットな判定の全ワークグループの数
     uvec4 counts;
-    // x: ページの一辺（m）、y: texel の一辺（m）、z, w: 範囲の最小の角のライト空間の位置（m）
-    vec4 levelInfo[16];
-    // x, y: 範囲の最小の絶対のページの番号
-    ivec4 levelOrigin[16];
 } megaParams;
 
 #endif // NORVES_VSM_MEGA_CULL_GLSL

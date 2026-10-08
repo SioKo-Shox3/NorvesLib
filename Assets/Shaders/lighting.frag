@@ -28,7 +28,7 @@ layout(std140, set = 0, binding = 4) uniform LightingParams
     float preExposure;
     uint shadowPadding0;
     float staticEnvironmentScale; // 空が無効なときの静的HDRの背景に掛ける倍率（既定1。空が有効なら1）
-    uint shadowPadding2;
+    float staticEnvironmentMaxRadiance; // 静的HDRの鏡面と背景の放射輝度の上限（倍率を掛ける前。0は上限なし）
     vec4 skySunDirectionAndCosRadius; // xyz=太陽方向, w=cos(太陽ディスク角半径)
     vec4 cameraForward; // xyz=CSM分割に使うカメラ前方単位ベクトル
     vec4 ddgiVolumeOrigin; // xyz=DDGI volume原点
@@ -85,6 +85,12 @@ layout(std140, set = 0, binding = 21) uniform VsmSampleBlock
 {
     VsmSampleParams vsm;
 } vsmBlock;
+// 点光源の VSM（--point-shadow-method=vsm）。灯の数（header.x）が 0 のときは読まず、点光源の影はキューブ。
+// ページの表・プール・スライスの表は太陽の VSM と同じもの（点光源のスライスは太陽の段の後ろに並ぶ）
+layout(std140, set = 0, binding = 26) uniform VsmPointSampleBlock
+{
+    VsmPointSampleParams point;
+} vsmPointBlock;
 layout(std430, set = 0, binding = 22) readonly buffer VsmPageTableBuffer
 {
     uint vsmPageTable[];
@@ -93,6 +99,9 @@ layout(std430, set = 0, binding = 23) readonly buffer VsmPoolBuffer
 {
     uint vsmPool[];
 };
+// スライスの表（ページの一辺・texel・範囲の原点・ページの表の先頭。無効のときは読まない）
+#define VSM_SLICE_BINDING 25
+#include "Common/VirtualShadowMapSlice.glsl"
 // 太陽の VSM の読み出しで、自分の段のページが無く粗い段へ逃げた PCF の標本の数（[0]）。ホストが数フレーム後に読み戻す。
 // 断片シェーダーの storage の書き込みを使えるデバイス（NORVES_VSM_STATS が定義される。VT のフィードバックとは独立）だけで数える
 #ifdef NORVES_VSM_STATS
@@ -207,11 +216,23 @@ vec2 EquirectangularUV(vec3 dir)
     return uv;
 }
 
+// 静的HDR環境の色の最大の成分が上限を超えたら、色相を保ったまま上限まで縮める（0は上限なし）。
+// 夜の環境光に残った沈みかけの太陽（倍率を掛ける前で約 15638）が、鏡面の反射や背景で極端に明るくなるのを防ぐ。
+vec3 LimitStaticEnvironmentRadiance(vec3 radiance)
+{
+    float peak = max(radiance.r, max(radiance.g, radiance.b));
+    if (params.staticEnvironmentMaxRadiance > 0.0 && peak > params.staticEnvironmentMaxRadiance)
+    {
+        radiance *= params.staticEnvironmentMaxRadiance / peak;
+    }
+    return radiance;
+}
+
 vec3 SamplePrefilteredSpecular(vec3 direction, float roughness)
 {
     float lod = roughness * float(params.prefilteredSpecularMipLevels - 1u);
     vec2 uv = EquirectangularUV(direction);
-    return textureLod(prefilteredSpecular, uv, lod).rgb;
+    return LimitStaticEnvironmentRadiance(textureLod(prefilteredSpecular, uv, lod).rgb);
 }
 
 // ========================================
@@ -261,12 +282,20 @@ float CalculateRangeWindow(float distance, float range)
 
 // 太陽の VSM の評価。ページの表・プール・パラメータの読み方をここで与える。
 #define VSM_PARAMS vsmBlock.vsm
+#define VSM_SLICE(i) vsmSlices[i]
 #define VSM_PAGE_TABLE(i) vsmPageTable[i]
 #define VSM_POOL(i) vsmPool[i]
 #ifdef NORVES_VSM_STATS
 #define VSM_COUNT_FALLBACK() atomicAdd(vsmLightingStats[0], 1u)
 #endif
 #include "Common/VirtualShadowMap.glsl"
+
+// 点光源の VSM の評価。読み方は太陽と同じ（ページの表・プール・スライスの表）。逃げた標本は統計の語 1 に数える
+#define VSM_POINT_PARAMS vsmPointBlock.point
+#ifdef NORVES_VSM_STATS
+#define VSM_COUNT_POINT_FALLBACK() atomicAdd(vsmLightingStats[1], 1u)
+#endif
+#include "Common/VirtualShadowMapPoint.glsl"
 
 // 太陽の影の可視度。--shadow-method=vsm で VSM が使えるときは VSM、それ以外（R5 のハードシャドウの検証表示を含む）は CSM。
 float CalculateSunShadow(vec3 worldPos, vec3 normal)
@@ -898,7 +927,7 @@ void main()
             // 空のradiance LUTは視線の透過率と地平線より下の地面を含むので、そのまま使う。
             vec4 skySample = textureLod(envMap, envUV, 0.0);
             // 静的HDRの背景にはシーンの倍率を掛ける（空が有効なら1）。
-            vec3 skyColor = skySample.rgb * params.staticEnvironmentScale;
+            vec3 skyColor = LimitStaticEnvironmentRadiance(skySample.rgb) * params.staticEnvironmentScale;
             vec4 sunDiskSample = textureLod(skySunDisk, vec2(0.5), 0.0);
             vec3 sunDirection = normalize(params.skySunDirectionAndCosRadius.xyz);
             float sunDiskMask = step(params.skySunDirectionAndCosRadius.w,
@@ -1059,12 +1088,22 @@ void main()
                  lightType > 0.5 && lightType < 1.5 && light.attenuation.w > 0.5 &&
                  NdotL > 0.0)
         {
-            shadow = SamplePointShadow(pointShadowCubes,
-                                       light.attenuation.w - 1.0,
-                                       light.position.xyz,
-                                       light.attenuation.x,
-                                       worldPos,
-                                       N);
+            // --point-shadow-method=vsm で、この灯の面・段のスライスが並んでいるときは VSM、それ以外はキューブ
+            const uint pointShadowIndex = uint(light.attenuation.w - 1.0);
+            if (pointShadowIndex < vsmPointBlock.point.header.x)
+            {
+                float pointTexelMeters = 0.0;
+                shadow = VsmSamplePointShadow(pointShadowIndex, worldPos, N, pointTexelMeters);
+            }
+            else
+            {
+                shadow = SamplePointShadow(pointShadowCubes,
+                                           light.attenuation.w - 1.0,
+                                           light.position.xyz,
+                                           light.attenuation.x,
+                                           worldPos,
+                                           N);
+            }
             if (shadow > 0.0 && attenuation > 0.0)
             {
                 // 光源の手前で止める（光源の球そのものを遮りとみなさない）

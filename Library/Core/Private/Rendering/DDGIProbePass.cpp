@@ -813,6 +813,12 @@ namespace NorvesLib::Core::Rendering
                         physicalLighting.IBLIntensity > 0.0f
                     ? physicalLighting.IBLIntensity
                     : 0.0f;
+            // y=静的HDR環境の放射輝度の上限（倍率を掛ける前。0は上限なし）
+            parameters.EnvironmentParameters[1] =
+                std::isfinite(physicalLighting.StaticEnvironmentMaxRadiance) &&
+                        physicalLighting.StaticEnvironmentMaxRadiance > 0.0f
+                    ? physicalLighting.StaticEnvironmentMaxRadiance
+                    : 0.0f;
             frameResources->ParametersBuffer->Update(&parameters, sizeof(parameters));
 
             DDGIProbeRayInstanceData emptyInstanceData;

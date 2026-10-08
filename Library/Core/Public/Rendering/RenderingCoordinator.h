@@ -113,8 +113,12 @@ namespace NorvesLib::Core::Rendering
         float SwRasterMaxPixels = DefaultSwRasterMaxPixels;
         /** @brief 太陽の影の標本のパスを足す（--shadow-probe。統計が有効な構成だけで働く） */
         bool bShadowProbe = false;
+        /** @brief 影の標本が太陽ではなく点光源だけを測る（--shadow-probe=point。bShadowProbe が false なら効かない） */
+        bool bShadowProbePointOnly = false;
         /** @brief 太陽の影の方式（--shadow-method。構造体の既定は CSM。Game の起動引数の既定は VSM） */
         ShadowMethod SunShadowMethod = ShadowMethod::Csm;
+        /** @brief 点光源の影の方式（--point-shadow-method。既定は cube） */
+        PointShadowMethod PointLightShadowMethod = PointShadowMethod::Cube;
         /** @brief VSM の物理ページのプールのページの数（--vsm-pool-pages。0 は既定） */
         uint32_t VsmPoolPages = 0;
     };
@@ -362,6 +366,13 @@ namespace NorvesLib::Core::Rendering
         void SetStaticEnvironmentIntensityScale(float scale);
         float GetStaticEnvironmentIntensityScale() const { return m_StaticEnvironmentIntensityScale; }
 
+        /**
+         * @brief 静的HDR環境の鏡面の放射輝度の上限を設定する（GameThread）
+         * @param maxRadiance 0以上の有限の値（0は上限なし）。次のFramePacketへ値コピーする
+         */
+        void SetStaticEnvironmentMaxRadiance(float maxRadiance);
+        float GetStaticEnvironmentMaxRadiance() const { return m_StaticEnvironmentMaxRadiance; }
+
         /** @brief 決定的な撮影にする（GameThread）。FramePacket の経過時間を 1/60 秒に固定する */
         void SetDeterministicCapture(bool bEnabled) { m_bDeterministicCapture = bEnabled; }
 
@@ -569,6 +580,7 @@ namespace NorvesLib::Core::Rendering
         DDGIVolumeParameters m_DDGIVolume;
         VolumetricFogParameters m_VolumetricFog;
         float m_StaticEnvironmentIntensityScale = 1.0f;
+        float m_StaticEnvironmentMaxRadiance = 0.0f;
         bool m_bRTGIEnabled = true;
         uint64_t m_SceneRevision = 1u;
         uint64_t m_LightRevision = 1u;

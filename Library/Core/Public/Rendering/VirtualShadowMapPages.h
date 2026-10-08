@@ -15,10 +15,16 @@
 // （トーラスの番地なので、残ったページの番地は変わらない）。太陽の向き・深度の原点が変わったときは全ページを、動いた投影物の矩形は
 // その範囲のページだけを dirty にする。バッファ・段の設定が前フレームと違う、印付けをしなかった、キャッシュを使わない指定のフレームは、
 // ページの表を 0 にして全部を割り当て直す。
+// 点光源の面（透視のスライス）も同じ持ち越しを使う: 灯の識別子・位置・Range・並びが前フレームの同じ番号の灯と違うとき、その灯のスライスの
+// 全ページを dirty にし（灯が無くなったスライスは次の割り当てで空きへ戻る）、動いた投影物は、前後の境界を覆う球が面の NDC で覆うページだけを dirty にする。
+// 太陽の段と点光源の面は無効にする指定が別で、太陽の向きの変化は点光源のページに及ばない。太陽の印付けの有無が前フレームと変わったフレーム
+// （昼夜の切り替え）は、全部を割り当て直す。
 
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/VirtualShadowMapPointLights.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 
@@ -81,8 +87,37 @@ namespace NorvesLib::Core::Rendering
     {
         /** @brief GBuffer.Depth（無い、または Clipmap が使えないときは印付けをせず、要求は 0 のまま割り当てる） */
         RHI::TexturePtr Depth;
-        /** @brief 今フレームのクリップマップ（無効なら印付けをしない） */
+        /** @brief 今フレームのクリップマップ（無効なら印付けをしない）。印付けは先頭の LevelCount 件のスライス（太陽の段）だけを選ぶ */
         const VirtualShadowMapClipmap* Clipmap = nullptr;
+        /**
+         * @brief ページの表・要求のビット列が持つスライスの数（1 〜 VirtualShadowMap::MAX_SLICES）。0 は VirtualShadowMap::LEVEL_COUNT（太陽の段だけ）。
+         *        PageTable・RequestBits は PageTableBytes(SliceCount)・RequestBitsBytes(SliceCount) 以上の大きさにすること。
+         *        割り当て・年齢・無効化・解放は全スライスを走査し、StatLevelsUsed は先頭 32 スライスの集合、StatLevelsUsedBeyond は 33 番目以降の使用の有無
+         */
+        uint32_t SliceCount = 0;
+        /**
+         * @brief 外から渡すスライスの表（SliceCount 件。ページの表の先頭は スライスの番号 × 128 × 128 で連続していること）。
+         *        null ならクリップマップから作る（先頭 LevelCount 件が太陽の段で、残りは空のスライス）。
+         *        渡す表は、前フレームの原点（extra[0..1]）も呼び出し側が入れる。キャッシュを引き継ぐフレームの前フレームの原点との比較に使う。
+         *        灯の変化によるスライスの無効化（extra[3] の印）は Pages が自分で作る表にだけ入るので、外から渡す表では点光源のページを引き継がないこと
+         */
+        const GPUVsmSlice* Slices = nullptr;
+        /**
+         * @brief 印付けが選ぶ太陽の段の、スライスの表での先頭の番号（段 L はスライス MarkFirstSlice + L）。既定は 0（太陽の段が先頭）。
+         *        MarkFirstSlice + クリップマップの段の数 は SliceCount 以下にすること（超えると印付けをしない）
+         */
+        uint32_t MarkFirstSlice = 0;
+        /**
+         * @brief 点光源の VSM（--point-shadow-method=vsm）の灯とスライスの並び。null か灯が 0 件なら点光源の印付けをしない。
+         *        スライスは PointLights->FirstSlice から SliceCount() 件で、SliceCount に収まること（収まらなければ点光源の印付けをしない）。
+         *        Slices が null なら、Pages が太陽の段の後ろへ点光源のスライスを BuildVirtualShadowMapPointSlices で書く。
+         *        外から渡す Slices には、呼び出し側が点光源のスライスも入れること
+         */
+        const VirtualShadowMapPointLights* PointLights = nullptr;
+        /** @brief 点光源の印付けが隣のページへも印を付ける範囲のうち、texel に比例する分（texel）。太陽と同じ段の選び方なので同じ既定 */
+        float PointPcfRadiusTexels = VirtualShadowMap::DEFAULT_PCF_RADIUS_TEXELS;
+        /** @brief 点光源の PCF の半径に足す、ワールドの長さの分（m）。点光源の物理の半影は扱わないので既定は 0 */
+        float PointFilterRadiusMeters = 0.0f;
         /** @brief シェーダー向け（列優先）の逆ビュー射影行列 */
         float InverseViewProjection[16] = {};
         float CameraPosition[3] = {};
@@ -110,7 +145,17 @@ namespace NorvesLib::Core::Rendering
          */
         const float* InvalidationRects = nullptr;
         uint32_t InvalidationRectCount = 0;
-        /** @brief 全ページを無効にする（境界の無い投影物が変わった・矩形が多すぎるとき）。太陽の向き・深度の原点の変化は Pages が自分で見つける */
+        /**
+         * @brief 無効にするワールドの球（x, y, z = 中心、w = 半径。動いた投影物の前フレームと今フレームの境界を覆う球）の並びと数
+         *        （1 球 = 4 つの float）。点光源の面（透視のスライス）の、球が面の NDC で覆う範囲の割り当て済みのページを dirty にする。
+         *        数は MAX_INVALIDATION_RECTS まで。矩形と球は同じ動きから作るが、太陽が無いフレームは矩形が無く、点光源が無いフレームは球が無い
+         */
+        const float* InvalidationSpheres = nullptr;
+        uint32_t InvalidationSphereCount = 0;
+        /**
+         * @brief 全ページを無効にする（境界の無い投影物が変わった・矩形や球が多すぎるとき）。太陽の段と点光源の面の両方が対象。
+         *        太陽の向き・深度の原点の変化（太陽の段だけ）と、点光源の灯の位置・Range・並びの変化（その灯のスライスだけ）は、Pages が自分で見つける
+         */
         bool bInvalidateAll = false;
 
         RHI::BufferPtr Pool;
@@ -149,8 +194,10 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 直前の Record が、前フレームのページの表を引き継いだか（false は表を 0 にして全部を割り当て直した） */
         bool WasCacheContinued() const { return m_bCacheContinued; }
-        /** @brief 直前の Record が、太陽の向き・深度の原点の変化で全ページを無効にしたか */
+        /** @brief 直前の Record が、全ページを無効にしたか（太陽の向き・深度の原点の変化、または呼び出し側の指定） */
         bool WasInvalidatedAll() const { return m_bInvalidatedAll; }
+        /** @brief 直前の Record が、灯の位置・Range・識別子・並びの変化で全ページを無効にした点光源のスライスの数 */
+        uint32_t GetPointInvalidatedSliceCount() const { return m_PointInvalidatedSlices; }
         /** @brief 次の Record で、前フレームのページの表を引き継がず、全部を割り当て直す（資源を作り直したとき・テスト） */
         void DiscardCache() { m_bCacheValid = false; }
 
@@ -158,6 +205,10 @@ namespace NorvesLib::Core::Rendering
         struct Use
         {
             RHI::BufferPtr Uniform;
+            /** @brief 点光源の印付けの入力（vsm_mark.comp の VsmPointParams） */
+            RHI::BufferPtr PointUniform;
+            /** @brief スライスの表（GPUVsmSlice の配列。ホストが書く storage buffer） */
+            RHI::BufferPtr Slices;
             RHI::DescriptorSetPtr DescriptorSet;
         };
 
@@ -168,6 +219,11 @@ namespace NorvesLib::Core::Rendering
                             RHI::PipelinePtr& outPipeline);
         bool AcquireUse(FrameUseRing<Use>& ring, const RHI::DescriptorSetDesc& layout, Use*& outUse);
 
+        /** @brief 灯の番号が入れ替わったとき、点光源のページの表の灯ごとの領域を移し替える（ページの表は UnorderedAccess の状態で呼ぶ） */
+        void RemapPointPageTable(RHI::ICommandList* commandList,
+                                 const VirtualShadowMapPagesDispatch& dispatch,
+                                 const VirtualShadowMapPointRemap& remap);
+
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_MarkShader;
         RHI::ShaderPtr m_AllocateShader;
@@ -176,15 +232,23 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_AllocatePipeline;
         RHI::PipelinePtr m_ClearPipeline;
         RHI::SamplerPtr m_PointSampler;
+        /** @brief 灯の番号が入れ替わったとき、点光源のページの表の領域を一時的に写す退避先（必要になったときに作る） */
+        RHI::BufferPtr m_RemapScratch;
         FrameUseRing<Use> m_MarkUses;
         FrameUseRing<Use> m_AllocateUses;
         FrameUseRing<Use> m_ClearUses;
         bool m_bMarked = false;
 
         // キャッシュの状態（前フレームの記録が見た入力）。資源・段の設定が変わったときは引き継がない
+        uint32_t m_CachedSliceCount = 0;
         bool m_bCacheValid = false;
         bool m_bCacheContinued = false;
         bool m_bInvalidatedAll = false;
+        uint32_t m_PointInvalidatedSlices = 0;
+        /** @brief 前フレームが太陽の印付けをしたか、点光源の印付けをしたか（昼夜や灯の有無が変わったときは、その種類のスライスを引き継がない） */
+        bool m_bPreviousSun = false;
+        bool m_bPreviousPoint = false;
+        VirtualShadowMapPointLights m_PreviousPointLights;
         const void* m_CachedPageTable = nullptr;
         const void* m_CachedPool = nullptr;
         uint32_t m_CachedPoolPages = 0;

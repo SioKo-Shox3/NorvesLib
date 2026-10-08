@@ -34,6 +34,9 @@ namespace Game::Boot
         // 起動画面の太陽の影は VSM（--shadow-method=csm で CSM へ戻せる）
         config.DefaultSunShadowMethod = NorvesLib::Core::Rendering::ShadowMethod::Vsm;
 
+        // 起動画面の点光源の影も VSM（--point-shadow-method=cube でキューブへ戻せる）
+        config.DefaultPointShadowMethod = NorvesLib::Core::Rendering::PointShadowMethod::Vsm;
+
         // ハンドラ作成関数
         config.CreateHandler = &CreateGameHandler;
 

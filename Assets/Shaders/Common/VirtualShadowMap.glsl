@@ -8,7 +8,9 @@
 // include する側が、先に Common/VirtualShadowMapParams.glsl を include して VsmSampleParams をメンバに持つ uniform block とページの表・プールの
 // storage buffer を宣言し、次のマクロを与える（この include より前に定義する）。
 //   VSM_PARAMS               VsmSampleParams の式（std140 の uniform block のメンバ）
-//   VSM_PAGE_TABLE(i)        ページの表の語（uint）。i = 段 * 16384 + 番地 y * 128 + 番地 x
+//   VSM_SLICE(i)             スライスの表の i 番目（VsmSlice。Common/VirtualShadowMapSlice.glsl。ページの一辺・texel・範囲の原点・
+//                            ページの表の先頭を持つ）。表の storage buffer は取り込む側が VSM_SLICE_BINDING を定義して宣言する
+//   VSM_PAGE_TABLE(i)        ページの表の語（uint）。i = スライスの先頭 + 番地 y * 一辺 + 番地 x（VsmSliceEntryIndex）
 //   VSM_POOL(i)              物理ページのプールの語（uint）。i = 物理ページ * 16384 + texel y * 128 + texel x
 // 省略できるマクロ:
 //   VSM_COUNT_FALLBACK()     自分の段のページが無く、粗い段へ逃げた標本 1 つにつき 1 回呼ぶ（統計の数え上げ。既定は何もしない）
@@ -29,15 +31,14 @@
 
 #include "Common/PoissonDisk16.glsl"
 #include "Common/VirtualShadowMapParams.glsl"
+#include "Common/VirtualShadowMapSlice.glsl"
 
 #ifndef VSM_COUNT_FALLBACK
 #define VSM_COUNT_FALLBACK()
 #endif
 
-// 1 ページの一辺（texel）と、ページの表の一辺（VirtualShadowMap::PAGE_RESOLUTION・TABLE_DIMENSION と一致）
+// 1 ページの一辺（texel。VirtualShadowMap::PAGE_RESOLUTION と一致）。ページの表の一辺はスライスが持つ
 const uint VSMS_PAGE_RESOLUTION = 128u;
-const uint VSMS_TABLE_DIMENSION = 128u;
-const uint VSMS_TABLE_ENTRIES_PER_LEVEL = VSMS_TABLE_DIMENSION * VSMS_TABLE_DIMENSION;
 const uint VSMS_PAGE_WORDS = VSMS_PAGE_RESOLUTION * VSMS_PAGE_RESOLUTION;
 // ページの表の 1 要素の印（VirtualShadowMap::PAGE_ENTRY_* と一致）
 const uint VSMS_PAGE_ENTRY_ALLOCATED = 1u << 31;
@@ -69,19 +70,18 @@ uint VsmSelectLevel(float distanceToCamera)
 bool VsmFetchDepthMeters(uint level, vec2 lightXY, out float outDepthMeters)
 {
     outDepthMeters = 0.0;
-    const float pageMeters = VSM_PARAMS.levelInfo[level].x;
-    const float texelMeters = VSM_PARAMS.levelInfo[level].y;
+    const VsmSlice slice = VSM_SLICE(level);
+    const float pageMeters = slice.info.x;
+    const float texelMeters = slice.info.y;
     const ivec2 page = ivec2(floor(lightXY / pageMeters));
-    const ivec2 origin = VSM_PARAMS.levelOrigin[level].xy;
-    const ivec2 count = ivec2(int(VSMS_TABLE_DIMENSION));
+    const ivec2 origin = slice.origin.xy;
+    const ivec2 count = ivec2(slice.origin.w);
     if (any(lessThan(page, origin)) || any(greaterThanEqual(page, origin + count)))
     {
         return false;
     }
-    // ページの表の番地はトーラス（絶対のページの座標 mod 128。負でも 0 以上）
-    const uint addressX = uint(page.x) & (VSMS_TABLE_DIMENSION - 1u);
-    const uint addressY = uint(page.y) & (VSMS_TABLE_DIMENSION - 1u);
-    const uint entry = VSM_PAGE_TABLE(level * VSMS_TABLE_ENTRIES_PER_LEVEL + addressY * VSMS_TABLE_DIMENSION + addressX);
+    // ページの表の番地はスライスの先頭 + トーラスの番地（絶対のページの座標 mod 一辺。負でも 0 以上）
+    const uint entry = VSM_PAGE_TABLE(VsmSliceEntryIndex(slice, page.x, page.y));
     if ((entry & VSMS_PAGE_ENTRY_ALLOCATED) == 0u)
     {
         return false;
@@ -110,7 +110,7 @@ bool VsmFetchDepthWithFallback(uint level, vec2 lightXY, out float outDepthMeter
     {
         if (VsmFetchDepthMeters(candidate, lightXY, outDepthMeters))
         {
-            outTexelMeters = VSM_PARAMS.levelInfo[candidate].y;
+            outTexelMeters = VSM_SLICE(candidate).info.y;
             return true;
         }
         outEscaped = true;
@@ -136,7 +136,7 @@ float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
     const float shadowNear = VSM_PARAMS.range.x;
     const float shadowFar = VSM_PARAMS.range.y;
     const uint level = VsmSelectLevel(distanceToCamera);
-    const float texelMeters = VSM_PARAMS.levelInfo[level].y;
+    const float texelMeters = VSM_SLICE(level).info.y;
     outTexelMeters = texelMeters;
     if (!(viewDistance >= shadowNear) || !(viewDistance <= shadowFar) || !(texelMeters > 0.0))
     {
