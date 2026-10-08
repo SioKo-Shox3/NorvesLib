@@ -48,6 +48,7 @@ norves_add_test_bundle(LoggerSinkTest
     MEMBER JsonWriterTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonWriterTest.cpp
     MEMBER JsonUnicodeScalarTest ${CMAKE_SOURCE_DIR}/Test/Core/Text/JsonUnicodeScalarTest.cpp
     MEMBER CriticalDampingTest ${CMAKE_SOURCE_DIR}/Test/Core/Math/CriticalDampingTest.cpp
+    MEMBER CameraCollisionSolverTest ${CMAKE_SOURCE_DIR}/Test/Core/Camera/CameraCollisionSolverTest.cpp
     MEMBER QuadrupedLocomotionModelTest ${CMAKE_SOURCE_DIR}/Test/Core/Locomotion/QuadrupedLocomotionModelTest.cpp
     MEMBER LocomotionProfileReloadTest ${CMAKE_SOURCE_DIR}/Test/Core/Locomotion/LocomotionProfileReloadTest.cpp
     SOURCES
@@ -68,3 +69,4 @@ add_test(NAME LoggerSinkTest COMMAND LoggerSinkTest)
 add_test(NAME CriticalDampingTest COMMAND LoggerSinkTest --test=CriticalDampingTest)
 add_test(NAME QuadrupedLocomotionModelTest COMMAND LoggerSinkTest --test=QuadrupedLocomotionModelTest)
 add_test(NAME LocomotionProfileReloadTest COMMAND LoggerSinkTest --test=LocomotionProfileReloadTest)
+add_test(NAME CameraCollisionSolverTest COMMAND LoggerSinkTest --test=CameraCollisionSolverTest)

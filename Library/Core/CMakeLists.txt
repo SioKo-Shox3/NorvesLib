@@ -10,6 +10,8 @@ find_package(Vulkan REQUIRED)
 set(PRIVATE_SOURCES
     Private/CoreModule.cpp
     Private/Math/GeometryIntersection.cpp
+    Private/Camera/CameraCollisionSolver.cpp
+    Private/Camera/SceneCameraProbe.cpp
     Private/Locomotion/QuadrupedLocomotionModel.cpp
     Private/Locomotion/QuadrupedLocomotionJson.cpp
     Private/Asset/AssetBlob.cpp
@@ -683,6 +685,8 @@ set(PUBLIC_HEADERS
     Public/Math/Vector4.h
     Public/Math/VectorUtils.h
     Public/Math/CriticalDamping.h
+    Public/Camera/CameraCollisionSolver.h
+    Public/Camera/SceneCameraProbe.h
     Public/Locomotion/QuadrupedLocomotionModel.h
     Public/Locomotion/QuadrupedLocomotionParams.h
     Public/Locomotion/QuadrupedLocomotionJson.h
