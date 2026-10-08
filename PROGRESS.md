@@ -294,3 +294,63 @@ run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.ex
 
 - 判断: 18 時以降の対の差（+1.37〜+2.60 ms）は他の負荷のぶれを含むので、2 ms の判定に使わない。VTG9-VSM-POINT-DRAW-PERF を todo に戻し、撮影の直前の GPU の利用率を記録して、静かなときの対で判定する。17:47〜17:51 の VSM の区間の外の約 0.35 ms は静かな run でも出ているので、DRAW-PERF で原因を切り分ける。
 - 判断の変更（ユーザーの判断）: キューブとの差の 2 ms は計画書・段の受入れに無い止め条件の目安だったので、合否から外して表で示す（フレーム全体の差・パスの合計の差・撮影の直前の GPU の利用率を並べる）。異常の見張りは 16.6 ms（60fps の 1 フレーム）。VTG9-VSM-POINT-GPU-TIME・-CULL-PERF・-DRAW-PERF を todo に戻し、今の文面で測り直す。上の「静かなときの対で判定する」はこれに置き換わる。
+
+## 段9 VTG9-VSM-POINT-GPU-TIME（2026-10-08、完了）
+
+- 条件: RelWithDebInfo・`-Night -GpuTimingFrames 300`・`-PointShadowMethod Cube|Vsm`。負荷は `-ViewNames default` と `--stress-mega-instances=300`。証拠: `.harness/runs/20261008-203356/verify-VTG9-VSM-POINT-GPU-TIME-1〜5.txt`（1 がビルド、2〜5 が撮影。EXIT=0・result=pass）、撮影は `.harness/runs/startup-capture/VTG9-VSM-POINT-GPU-TIME-{cube,vsm,cube-stress,vsm-stress}/`（`metrics.json` の `failures` は 4 run とも空）。
+- 撮影直前の GPU の利用率（Game を動かしていない状態の 10 回の最大。`gpu-util.txt`）: cube 42%・vsm 40%・cube-stress 43%・vsm-stress 32%（常駐のアプリ由来で 24〜43% の範囲）。
+- 区間の数え方: パスの合計 = `pass_median_ms` のうち入れ子の区間（`Vsm*`・`VisRaster*`・`MegaGeometryCull*`・`MegaGeometryDraw*`・`MegaGeometry`。`MegaGeometry` は `VisibilityRasterPass` と同じ時間の入れ子）を除いた一番上の区間の中央値の合計。「区間の外」はフレーム − パスの合計。
+
+フレーム GPU とパスの合計（ms、中央値）:
+
+| 視点 | 方式 | 利用率 最大 % | フレーム | パスの合計 | 区間の外 | p95 | 最大 |
+|---|---|---|---|---|---|---|---|
+| 既定 | Cube | 42 | 1.808 | 1.789 | 0.019 | 2.737 | 3.331 |
+| 既定 | Vsm | 40 | 2.363 | 2.300 | 0.063 | 3.853 | 4.388 |
+| 近接 | Cube | 42 | 1.764 | 1.736 | 0.028 | 2.728 | 3.575 |
+| 近接 | Vsm | 40 | 2.297 | 2.274 | 0.023 | 3.797 | 4.242 |
+| 低角度 | Cube | 42 | 1.765 | 1.715 | 0.050 | 2.595 | 3.673 |
+| 低角度 | Vsm | 40 | 2.384 | 2.265 | 0.119 | 4.077 | 4.438 |
+| 負荷（既定） | Cube | 43 | 4.079 | 3.969 | 0.110 | 5.851 | 6.234 |
+| 負荷（既定） | Vsm | 32 | 5.303 | 4.961 | 0.342 | 7.193 | 7.704 |
+
+（通常の 3 視点は 1 回の起動で続けて撮るので、利用率は cube 側・vsm 側とも 1 つ）
+
+キューブとの差（VSM − Cube、ms）:
+
+| 視点 | フレーム全体の差 | パスの合計の差 |
+|---|---|---|
+| 既定 | +0.555 | +0.511 |
+| 近接 | +0.533 | +0.538 |
+| 低角度 | +0.619 | +0.550 |
+| 負荷（既定） | +1.224 | +0.992 |
+
+区間の中央値（ms）:
+
+| 視点・方式 | ShadowMapPass | VirtualShadowMapPass | VsmDraw | VsmCullMega | VsmMark | VsmExpand | VsmAllocate | VsmCullSelect | VsmCullDirty | VsmClear | 他の Vsm（CullPairs・CullChunks） | LightingPass |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 既定 Cube | 0.079 | 0.035 | - | - | 0.003 | - | 0.027 | - | - | 0.002 | - | 0.532 |
+| 既定 Vsm | 0.078 | 0.379 | 0.048 | 0.064 | 0.132 | 0.027 | 0.086 | 0.013 | 0.034 | 0.010 | 0.008・0.005 | 0.672 |
+| 近接 Cube | 0.077 | 0.034 | - | - | 0.003 | - | 0.025 | - | - | 0.002 | - | 0.536 |
+| 近接 Vsm | 0.077 | 0.430 | 0.076 | 0.061 | 0.156 | 0.027 | 0.088 | 0.010 | 0.033 | 0.010 | 0.008・0.005 | 0.704 |
+| 低角度 Cube | 0.078 | 0.037 | - | - | 0.003 | - | 0.027 | - | - | 0.002 | - | 0.441 |
+| 低角度 Vsm | 0.079 | 0.391 | 0.059 | 0.066 | 0.122 | 0.028 | 0.090 | 0.014 | 0.034 | 0.014 | 0.008・0.005 | 0.592 |
+| 負荷 Cube | 0.171 | 0.035 | - | - | 0.003 | - | 0.026 | - | - | 0.002 | - | 0.661 |
+| 負荷 Vsm | 0.171 | 1.067 | 0.506 | 0.172 | 0.141 | 0.138 | 0.086 | 0.105 | 0.034 | 0.010 | 0.010・0.019 | 0.790 |
+
+（Cube でも `VirtualShadowMapPass` が 0.035 ms 出るのは、点光源の VSM が無い夜でもパスが `VsmMark`・`VsmAllocate`・`VsmClear` を記録するため。`MegaGeometry` は負荷でキューブ 2.120・VSM 1.946、通常は 0.22〜0.23 で、方式の差ではない。）
+
+統計（VSM の run。点光源の分。最大値）:
+
+| 視点 | VSM_POINT | VSM_PAGES point_requested = point_allocated（overflow） | VSM_RASTER chunks・instances（overflow） | VSM_MEGA_CULL point_instances・point_clusters（overflow） | VSM_CACHE point_cached・point_rendered |
+|---|---|---|---|---|---|
+| 既定 | lights=1 slices=36 face_res=4096 mips=6 | 181（0） | 2900・4057（0） | 26・3219（0） | 25・153 |
+| 近接 | 同 | 202（0） | 2513・4370（0） | 15・3143（0） | 0・166 |
+| 低角度 | 同 | 298（0） | 3196・4713（0） | 28・3643（0） | 2・293 |
+| 負荷（既定） | 同 | 183（0） | 46608・55028（0） | 167・42573（0） | 25・155 |
+
+- overflow: `VSM_PAGES`（303・1277・1554・305 行）・`VSM_RASTER`（325・1610・1771・333 行）・`VSM_MEGA_CULL`（6・28・30・6 行）の全行で 0。`VSM_PAGES` の要求は全部が点光源の分（夜は太陽が無い）。
+- 影の目視: VSM の PNG 4 枚（既定・近接・低角度・負荷の既定）を開いた。球・岩・見本の球・小屋の影に欠け・ずれ・面の継ぎ目・ページの継ぎ目は見えない。壊れて見えなかったので、キューブの PNG との画素の差は調べていない（既定は並べて見て同じ見え方）。
+- 判定: 16.6 ms の見張りには最大の負荷でも 5.3 ms（p95 7.2 ms）で当たらない。止め条件に当たらないので完了。
+- Notes: キューブとの差の主な内訳は `VirtualShadowMapPass`（通常 +0.34〜+0.40、負荷 +1.03）と `LightingPass`（+0.14〜+0.17、負荷 +0.13。VSM の 16 点の読み取り）。負荷の重い区間は `VsmDraw` 0.51・`VsmCullMega` 0.17・`VsmMark` 0.14・`VsmExpand` 0.14・`VsmCullSelect` 0.11。負荷の VSM の「区間の外」0.34 ms は他の run より大きい。`VTG9-VSM-POINT-CULL-PERF`・`VTG9-VSM-POINT-DRAW-PERF` は todo のまま（差が合否から外れたので、必要かどうかは人が決める）。
+- Next: TASKS.md の次の `todo`。

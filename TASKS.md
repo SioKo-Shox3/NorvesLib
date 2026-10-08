@@ -125,7 +125,7 @@
 - notes: 2026-10-08 親（段9の開始時に詳しくした）。起動画面の電球（Range 10 m）の範囲に自転する大きな球が入るので、そのページは毎フレーム描き直しになる。危険地帯（GPU の資源の寿命）。 2026-10-08 親: 評価の 2 周目の差し戻し（`NEXT_FINDINGS.md` の反復 10。先頭の灯を除いて残る灯を詰めると、移し替えで捨てる旧領域の割り当て済みページが `released`・`point_released` に数えられない）を直すために todo に戻した。done-when の (3) の統計が返却数と一致すること、`VirtualShadowMapVulkanTest` に先頭の灯を除く場面（空きへの返却数と解放の統計の一致、残る灯の描き直し 0）を足すことが残り。
 
 ## VTG9-VSM-POINT-GPU-TIME: 夜のキューブと点光源の VSM の GPU 時間を測り、ページの数と溢れを確かめる
-- status: todo
+- status: done
 - done-when: RelWithDebInfo の `-GpuTimingFrames 300` で、夜の起動画面（既定・近接・低角度）と夜の負荷モード 300 個（既定の視点）を `-PointShadowMethod Cube` と `-PointShadowMethod Vsm` の 2 通りで測り、フレーム GPU・`ShadowMapPass`・`VirtualShadowMapPass` とその内訳の区間・照明の区間の中央値（撮影の `metrics.json` の `gpu_timing[].gpu_frame_ms_median`・`pass_median_ms` から。trace.csv を自前で集計しない）と、`VSM_POINT`・`VSM_PAGES`（点光源の分）・`VSM_RASTER`・`VSM_MEGA_CULL`・`VSM_CACHE` の値を表にして PROGRESS に書く。キューブとの差は、フレーム全体の差（`gpu_frame_ms_median`）と、パスの合計の差（`pass_median_ms` の一番上の区間の中央値の合計）を並べて表で示す。撮影の直前に、Game を動かしていない状態の GPU の利用率（`nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader -lms 500` の 10 回の最大）を記録して表に入れる（他のアプリが GPU を使うとフレーム全体の差がぶれる）。VSM の 4 run で 3 種の overflow が全行で 0 であることを確かめる。VSM の撮影の PNG を開き、電球の影（球・岩・見本の球・小屋）が欠け・ずれ・面の継ぎ目・ページの継ぎ目なく見えることを確かめる（壊れて見えるときだけキューブの PNG との画素の差を調べる）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-VSM-POINT-GPU-TIME-cube -Configuration RelWithDebInfo -Night -GpuTimingFrames 300 -PointShadowMethod Cube`
@@ -135,6 +135,7 @@
 - stop-when: VSM のフレーム GPU の中央値が、どれかの視点で 16.6 ms（60fps の 1 フレーム）以上の場合は、表と重い区間を記録して止める（対策の項目を TASKS.md に足す）。溢れが 0 にならない場合、影が壊れて見える場合は、記録して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-08 親（段9の開始時に詳しくした）。速度の項目の GPU 時間の撮影。`-GpuTimingFrames` は `-Deterministic` と併用できない。夜は太陽が無いので、太陽の VSM のページは 0 になるはず（値を表に入れる）。 2026-10-08 ユーザーの判断: キューブとの差の 2 ms は計画書・段の受入れに無い止め条件の目安だったので合否から外し、GPU 時間は表で示す（フレーム全体の差とパスの合計の差を並べる）。異常に重いときの見張りとして 16.6 ms（60fps の 1 フレーム）を残す。今のコード（CULL-PERF・DRAW-PERF の後）で 4 run を測り直す。
+- 結果: 2026-10-08 完了。RelWithDebInfo・`-GpuTimingFrames 300`・夜の 4 run（キューブ・VSM の通常 3 視点と、負荷 300 個の既定の視点）。VSM のフレーム GPU の中央値は 2.30〜2.38 ms（通常 3 視点）・5.30 ms（負荷）で 16.6 ms を大きく下回る。キューブとの差は、フレーム全体で通常 +0.53〜+0.62 ms・負荷 +1.22 ms、パスの合計で通常 +0.51〜+0.55 ms・負荷 +0.99 ms。overflow（`VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL`）は VSM の 4 run の全行で 0。VSM の PNG 4 枚に影の欠け・ずれ・継ぎ目は見えない。表と測定の条件は PROGRESS.md の「段9 VTG9-VSM-POINT-GPU-TIME」。
 
 ## VTG9-VSM-POINT-CULL-PERF: 負荷モードの点光源の VSM のカリング（VsmCullMega）を縮める
 - status: todo
