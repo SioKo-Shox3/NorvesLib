@@ -153,7 +153,8 @@ namespace NorvesLib::Modules::Physics
     }
     void CharacterBodyComponent::RequestSimulation(float dt, CharacterDriveMode mode)
     {
-        if (m_DriveMode != mode || !std::isfinite(dt) || dt <= 0 || m_bBeforeSimulationActive)
+        if (m_DriveMode != mode || !std::isfinite(dt) || dt <= 0 || m_bBeforeSimulationActive ||
+            (mode == CharacterDriveMode::Fixed && m_bFixedRequest))
             return;
         auto* module = Module();
         if (!module || module->ValidateCharacterAccess(*this) != EPhysicsResult::Success ||

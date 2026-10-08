@@ -13,6 +13,7 @@ namespace NorvesLib::Core::Input
     {
         bool Valid = false;
         bool Active = false;
+        uint64_t CancellationGeneration = 0;
         EInputMappingValueType Type = EInputMappingValueType::Button;
         InputButtonSnapshot Button;
         Math::Vector2 Axis;
@@ -57,6 +58,8 @@ namespace NorvesLib::Core::Input
         // capture設定は再Configure後も同じaction IDへ引き継ぎ、保留イベント自体は取消す。
         bool SetFixedButtonEventCapture(Identity action, bool enabled);
         bool ConsumeFixedButtonEvent(Identity action, InputButtonEvent& out);
+        // 消費側が0固定frameを跨いで保存した入力も、取消し後に破棄できる世代。
+        uint64_t GetCancellationGeneration() const { return m_CancellationGeneration; }
         void CancelAll();
 
         bool OnKey(const KeyEvent& event) override;
@@ -82,7 +85,9 @@ namespace NorvesLib::Core::Input
             Identity Id;
             Container::VariableArray<InputBinding> Bindings;
             InputActionRuntime Runtime;
+            uint64_t CancellationGeneration = 0;
         };
+        static void CancelAction(Action& action);
         struct Context
         {
             Identity Id;
@@ -102,6 +107,7 @@ namespace NorvesLib::Core::Input
         InputArmedState m_Armed;
         double m_Time = 0;
         bool m_Focused = true;
+        uint64_t m_CancellationGeneration = 0;
         InputRebindCaptureManager* m_CaptureOwner = nullptr;
         bool m_bCaptureSuppressed = false;
         InputDebugOverlayController* m_DebugOverlayOwner = nullptr;

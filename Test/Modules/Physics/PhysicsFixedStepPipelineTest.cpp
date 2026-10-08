@@ -6,7 +6,11 @@
 #include "Engine/ApplicationProcessor.h"
 #include "Engine/Engine.h"
 #include "Engine/FixedStepScheduler.h"
+#include "Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.h"
+#include "Input/InputRouter.h"
+#include "Input/InputSystem.h"
 #include "Module/ModuleRegistry.h"
+#include "Object/ObjectHeap.h"
 #include "Object/Resource.h"
 #include "Object/World.h"
 #include "Physics/CharacterBodyComponent.h"
@@ -163,7 +167,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 13;
+    constexpr uint32_t kCaseCount = 15;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -955,6 +959,116 @@ namespace
                replacement->GetState().StepSerial == 1;
     }
 
+    bool TestGameLocomotionInput(ApplicationProcessor& processor)
+    {
+        using namespace Input;
+        using namespace NorvesLib::Core::literals;
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+            return false;
+        InputSystem source;
+        InputRouter routes;
+        source.SetRouter(&routes);
+        InputMapper mapper(source.GetState());
+        InputBindingSet bindings;
+        InputActionDefinition jump;
+        jump.Id = "Jump"_id;
+        InputBinding key;
+        key.Source = {EInputBindingSource::Key, static_cast<uint16_t>(KeyCode::Space), 0};
+        jump.Bindings = {key};
+        InputActionDefinition move;
+        move.Id = "Move"_id;
+        move.Settings.Type = EInputMappingValueType::Axis2D;
+        key.Source.Code = static_cast<uint16_t>(KeyCode::W);
+        key.Component = EInputAxisComponent::Y;
+        move.Bindings = {key};
+        if (!bindings.AddContext("Gameplay"_id, ECursorMode::Normal) || !bindings.AddAction("Gameplay"_id, jump) ||
+            !bindings.AddAction("Gameplay"_id, move) || !mapper.ConfigureWithContext(bindings, "Gameplay"_id))
+            return false;
+        mapper.Attach(routes);
+        auto* driver = world.CreateComponent<Game::Gameplay::QuadrupedLocomotionComponent>(value.Owner);
+        auto* visual = world.SpawnEntity<Entity>(value.Owner);
+        auto* pose = visual ? world.SpawnEntity<Entity>(visual) : nullptr;
+        if (!driver || !visual || !pose)
+            return false;
+        // 途中で失敗してもMapperより先に非所有接続を解除する。
+        struct Unbind
+        {
+            Game::Gameplay::QuadrupedLocomotionComponent* Driver;
+            ~Unbind()
+            {
+                Driver->BindInput(nullptr);
+            }
+        } unbind{driver};
+        if (!driver->SetVisualRoots(visual, pose))
+            return false;
+        driver->BindInput(&mapper);
+        mapper.BeginFrame(0);
+        mapper.Update(0, 0);
+        world.Tick(kFixedDeltaTime);
+        if (!StepCharacter(processor) || !value.Character->GetState().bReady)
+            return false;
+        const auto pressRelease = [&] {
+            source.InjectKeyEvent(KeyCode::Space, InputAction::Pressed);
+            source.InjectKeyEvent(KeyCode::Space, InputAction::Released);
+        };
+        pressRelease();
+        world.Tick(kFixedDeltaTime);
+        if (driver->GetConsumedJumpEventCount() != 0 ||
+            ApplicationFixedStepTestAccess::Advance(processor, 1'000'000, true).ExecutedSteps != 0)
+            return false;
+        world.Tick(kFixedDeltaTime);
+        if (!StepCharacter(processor) || driver->GetConsumedJumpEventCount() != 2 ||
+            value.Character->GetState().Velocity.y <= 0)
+            return false;
+        if (ApplicationFixedStepTestAccess::Advance(processor, 34'000'000, true).ExecutedSteps != 2 ||
+            driver->GetConsumedJumpEventCount() != 2)
+            return false;
+        // 一旦取り込んだ入力も、0固定frame中のfocus喪失→復帰で取消す。
+        pressRelease();
+        world.Tick(kFixedDeltaTime);
+        mapper.SetFocused(false);
+        mapper.SetFocused(true);
+        mapper.Update(0, 0);
+        if (!StepCharacter(processor) || driver->GetConsumedJumpEventCount() != 2)
+            return false;
+        driver->Disable();
+        pressRelease();
+        driver->Enable();
+        world.Tick(kFixedDeltaTime);
+        if (!StepCharacter(processor) || driver->GetConsumedJumpEventCount() != 2)
+            return false;
+        // 手動の重複FixedTickでもBeforeを二重実行しない。
+        unsigned callbacks = 0;
+        value.Character->BeforeSimulation.Add([&](float) { ++callbacks; });
+        value.Character->FixedTick(kFixedDeltaTime);
+        value.Character->FixedTick(kFixedDeltaTime);
+        const bool once = callbacks == 1 && StepCharacter(processor) && callbacks == 1;
+        value.Character->BeforeSimulation.Clear();
+        return once;
+    }
+
+    bool TestGameLocomotionHeapAfterWorld()
+    {
+        ObjectHeap heap;
+        const auto handle = heap.Create<Game::Gameplay::QuadrupedLocomotionComponent>();
+        auto* driver = heap.Resolve<Game::Gameplay::QuadrupedLocomotionComponent>(handle);
+        if (!driver)
+            return false;
+        {
+            World temporary;
+            temporary.Initialize();
+            auto* owner = temporary.SpawnEntity<Entity>();
+            if (!owner || !temporary.CreateComponent<CharacterBodyComponent>(owner) || !owner->AddComponent(driver))
+                return false;
+            driver->Initialize();
+            driver->OnTickGroup(Component::ETickGroup::Input, kFixedDeltaTime);
+            // Worldはheap所有componentのOuterを解除してpendingにするが、この場では解放しない。
+        }
+        return driver->GetOwner() == nullptr && heap.DestroyNow(handle);
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -985,6 +1099,10 @@ namespace
             return TestCharacterDriveEquality(processor);
         case 12:
             return TestCharacterBeforeSimulationRemoval(processor);
+        case 13:
+            return TestGameLocomotionInput(processor);
+        case 14:
+            return TestGameLocomotionHeapAfterWorld();
         default:
             return false;
         }

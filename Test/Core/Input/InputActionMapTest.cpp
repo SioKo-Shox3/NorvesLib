@@ -328,10 +328,18 @@ int main()
         assert(target.ConsumeFixedButtonEvent("Jump"_id, event) && event.Type == EInputButtonEventType::Pressed);
         assert(target.ConsumeFixedButtonEvent("Jump"_id, event) && event.Type == EInputButtonEventType::Released);
         source.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        const auto generation = target.GetCancellationGeneration();
         target.SetFocused(false);
+        assert(target.GetCancellationGeneration() != generation);
         assert(!target.ConsumeFixedButtonEvent("Jump"_id, event));
         target.SetFocused(true);
         assert(!target.ConsumeFixedButtonEvent("Jump"_id, event));
+        const auto beforeReconfigure = target.GetCancellationGeneration();
+        assert(target.ConfigurePreservingContexts(definitions));
+        assert(target.GetCancellationGeneration() != beforeReconfigure);
+        const auto beforeReset = target.GetCancellationGeneration();
+        target.CancelAll();
+        assert(target.GetCancellationGeneration() != beforeReset);
         assert(target.SetFixedButtonEventCapture("Jump"_id, false));
         target.Detach();
         source.SetRouter(nullptr);

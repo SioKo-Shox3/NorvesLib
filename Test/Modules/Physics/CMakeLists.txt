@@ -65,10 +65,13 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsLegacyQueryTest PhysicsLegacyQueryTest.cpp
     MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
+    SOURCES
+        ${CMAKE_SOURCE_DIR}/Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp
 )
 target_link_libraries(PhysicsDynamicsTest PRIVATE Core NorvesModule_Physics)
 target_include_directories(PhysicsDynamicsTest PRIVATE
     ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Game
     ${CMAKE_SOURCE_DIR}/Library/Modules/Physics/Private
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
 )
