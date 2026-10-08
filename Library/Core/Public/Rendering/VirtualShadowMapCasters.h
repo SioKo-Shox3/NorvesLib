@@ -551,7 +551,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 無効にするワールドの境界を、境界の箱を覆う球（x, y, z = 中心、w = 半径の 4 つの float）の並びにする
          *
-         * 点光源の面のページの無効化に使う。球は箱の中心を中心にした外接球（半径 = 箱の対角線の半分）なので、箱の内側のどの点も、
+         * 点光源の面のページの無効化に使う。球は単精度へ丸めた箱の中心から最も遠い隅までを半径にした外接球なので、箱の内側のどの点も、
          * どの面の NDC でも球の矩形の内側に写る。境界が有限でない・最小が最大を超えるときは false（全ページを無効にする）。
          * 球の数が maxSpheres を超えるときも false。
          * @return false なら、球では足りないので全ページを無効にすること
@@ -567,30 +567,44 @@ namespace NorvesLib::Core::Rendering
             }
             for (const CasterBounds& bounds : changedBounds)
             {
-                double center[3] = {};
-                double halfDiagonalSquared = 0.0;
+                float center[3] = {};
+                double low[3] = {};
+                double high[3] = {};
                 for (uint32_t axis = 0; axis < 3u; ++axis)
                 {
-                    const double low = static_cast<double>(bounds.Min[axis]);
-                    const double high = static_cast<double>(bounds.Max[axis]);
-                    if (!std::isfinite(low) || !std::isfinite(high) || low > high)
+                    low[axis] = static_cast<double>(bounds.Min[axis]);
+                    high[axis] = static_cast<double>(bounds.Max[axis]);
+                    if (!std::isfinite(low[axis]) || !std::isfinite(high[axis]) || low[axis] > high[axis])
                     {
                         return false;
                     }
-                    center[axis] = 0.5 * (low + high);
-                    const double half = 0.5 * (high - low);
-                    halfDiagonalSquared += half * half;
+                    // GPU へ渡す中心は単精度。丸めた中心から箱の最も遠い隅までの距離を半径にする
+                    // （箱の中心から対角線の半分では、中心の丸め誤差ぶん箱の隅を覆えない）
+                    center[axis] = static_cast<float>(0.5 * (low[axis] + high[axis]));
                 }
-                // 単精度へ丸めても球が箱を覆うように、半径をわずかに広げる
-                const double radius = std::sqrt(halfDiagonalSquared) * (1.0 + 1.0e-6) + 1.0e-6;
+                double farthestSquared = 0.0;
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    const double toLow = std::fabs(static_cast<double>(center[axis]) - low[axis]);
+                    const double toHigh = std::fabs(static_cast<double>(center[axis]) - high[axis]);
+                    const double farthest = std::max(toLow, toHigh);
+                    farthestSquared += farthest * farthest;
+                }
+                // 余白を足したうえで、単精度へ外側（大きいほう）に丸める
+                const double radius = std::sqrt(farthestSquared) * (1.0 + 1.0e-6) + 1.0e-6;
                 if (!std::isfinite(radius) || radius > static_cast<double>(std::numeric_limits<float>::max()))
                 {
                     return false;
                 }
-                outSpheres.push_back(static_cast<float>(center[0]));
-                outSpheres.push_back(static_cast<float>(center[1]));
-                outSpheres.push_back(static_cast<float>(center[2]));
-                outSpheres.push_back(static_cast<float>(radius));
+                float radiusFloat = static_cast<float>(radius);
+                if (static_cast<double>(radiusFloat) < radius)
+                {
+                    radiusFloat = std::nextafter(radiusFloat, std::numeric_limits<float>::infinity());
+                }
+                outSpheres.push_back(center[0]);
+                outSpheres.push_back(center[1]);
+                outSpheres.push_back(center[2]);
+                outSpheres.push_back(radiusFloat);
             }
             return true;
         }

@@ -489,7 +489,7 @@ namespace
     bool CreateResources(const DevicePtr& device, uint32_t poolPages, Resources& resources, uint32_t sliceCount = VirtualShadowMap::LEVEL_COUNT)
     {
         resources.PoolPages = poolPages;
-        const ResourceUsage usage = ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
+        const ResourceUsage usage = ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead | ResourceUsage::TransferDst | ResourceUsage::TransferSrc;
         resources.Pool = device->CreateBuffer(BufferDesc(VirtualShadowMap::PoolBytes(poolPages), usage, true, "VsmTestPool"));
         resources.PageTable = device->CreateBuffer(BufferDesc(VirtualShadowMap::PageTableBytes(sliceCount), usage, true, "VsmTestPageTable"));
         resources.RequestBits = device->CreateBuffer(BufferDesc(VirtualShadowMap::RequestBitsBytes(sliceCount), usage, true, "VsmTestRequestBits"));
@@ -7713,8 +7713,10 @@ namespace
     //   T3（投影物が動く）: 動く四角形を横へ動かすと、前後の境界を覆う球が面の NDC で覆うページだけが描き直される。箱を面へ写した範囲のページは必ず
     //       dirty、dirty のページは球の範囲（倍精度の参照）の内側、描いた枚数は全体より少なく、動く四角形の中身が変わる。
     //   T4（灯が動く）: 灯 0 を動かすと、灯 0 のスライスの割り当て済みのページがすべて描き直され（無効にしたスライスは 36）、灯 1 のページは描き直されない。
-    //   T5（灯の並びが変わる）: 灯 0 と灯 1 を入れ替える（識別子が同じでも番号が変わる）と、両方の灯のページがすべて描き直される。
-    //   T6（灯が無くなる）: 灯 1 が無くなると、灯 1 のスライスのページは空きへ戻り、灯 0 のページは描き直されない。
+    //   T5（灯の並びが変わる）: 灯 0 と灯 1 を入れ替える（識別子が同じで番号だけが変わる）と、灯の識別子でページの表の領域を新しい番号へ移し、
+    //       どちらの灯のページも描き直されない（移した後の物理ページが毎フレーム描き直したときと全 texel で一致する）。入れ替えて片方が動くと、
+    //       動いた灯の新しい番号のスライスだけが描き直される。
+    //   T6（灯が無くなる）: 並びを戻しても描き直されず、灯 1 が無くなると、灯 1 のスライスのページは空きへ戻り、灯 0 のページは描き直されない。
 
     struct PointCachePage
     {
@@ -8225,6 +8227,7 @@ namespace
         const Math::Vector3 movedPosition0(2.0f, 2.0f, -12.0f);
         const PointScene sceneMoved = buildLights(movedPosition0, false, 2u);
         const PointScene sceneSwapped = buildLights(position0, true, 2u);
+        const PointScene sceneSwappedMoved = buildLights(movedPosition0, true, 2u);
         const PointScene sceneSingle = buildLights(position0, false, 1u);
 
         // 要求のあるページの参照（プールの大きさと、動く四角形の位置の選択に使う）
@@ -8453,31 +8456,52 @@ namespace
                       << " 描き直した=" << frame4.DirtyOf(1u) << " 無効にしたスライス=" << frame4.InvalidatedSlices << " texel の違い=" << different << std::endl;
         }
 
-        // ----- T5: 灯の並びが変わると（識別子が同じでも番号が変わる）、両方の灯のページが描き直される -----
+        // ----- T5: 灯の並びが変わっても（識別子が同じで番号だけが変わる）、ページは新しい番号へ移り、描き直されない -----
         PointCacheFrame frame5;
-        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneSwapped, movedPolygons, resources, depth, &tracker, frameSerial++, frame5))
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneSwappedMoved, movedPolygons, resources, depth, &tracker, frameSerial++, frame5))
         {
             std::cerr << TestName << " ケース T5 を実行できませんでした" << std::endl;
             return false;
         }
-        Expect(frame5.bContinued && frame5.InvalidatedSlices == 2u * sceneSwapped.Lights.SlicesPerLight,
-               "ケース T5: 入れ替わった 2 灯のスライスがすべて無効になる");
-        Expect(frame5.Pages.size() > 0u && frame5.DirtyCount() == frame5.Pages.size(), "ケース T5: 入れ替わった灯のページは、すべて描き直されなければならない");
+        Expect(frame5.bContinued && frame5.InvalidatedSlices == 0u, "ケース T5: 位置の変わらない灯の入れ替えで、スライスが無効になってはならない");
+        Expect(frame5.Pages.size() > 0u && frame5.DirtyCount() == 0u && frame5.Stat(VirtualShadowMap::StatPointRendered) == 0u,
+               "ケース T5: 入れ替わった灯のページは、描き直されてはならない（新しい番号の領域へ移っている）");
+        Expect(frame5.PagesOf(0u) == frame4.PagesOf(1u) && frame5.PagesOf(1u) == frame4.PagesOf(0u) && frame5.PagesOf(0u) != frame5.PagesOf(1u),
+               "ケース T5: 入れ替わった灯のページの数は、前の番号のものがそのまま移らなければならない");
         {
-            const uint32_t different = CompareWithFreshPointFrame(device, freshPages, raster, scene, sceneSwapped, movedPolygons, poolPages, depth, frame5, frameSerial++);
+            const uint32_t different = CompareWithFreshPointFrame(device, freshPages, raster, scene, sceneSwappedMoved, movedPolygons, poolPages, depth, frame5, frameSerial++);
             Expect(different == 0u, "ケース T5: 灯を入れ替えた後の物理ページが毎フレーム描き直したときと全 texel で一致しなければならない");
             std::cout << TestName << " ケース T5: ページ=" << frame5.Pages.size() << " 描き直した=" << frame5.DirtyCount() << " texel の違い=" << different << std::endl;
         }
 
+        // ----- T5b: 入れ替わったうえで灯 0（番号 1）が動くと、動いた灯の新しい番号のスライスだけが描き直される -----
+        PointCacheFrame frame5b;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneSwapped, movedPolygons, resources, depth, &tracker, frameSerial++, frame5b))
+        {
+            std::cerr << TestName << " ケース T5b を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(frame5b.bContinued && frame5b.InvalidatedSlices == sceneSwapped.Lights.SlicesPerLight,
+               "ケース T5b: 動いた灯の新しい番号のスライスだけ（36）が無効になる");
+        Expect(frame5b.PagesOf(1u) > 0u && frame5b.DirtyOf(1u) == frame5b.PagesOf(1u) && frame5b.PagesOf(0u) > 0u && frame5b.DirtyOf(0u) == 0u,
+               "ケース T5b: 動いた灯のページはすべて描き直され、動かない灯のページは描き直されてはならない");
+        {
+            const uint32_t different = CompareWithFreshPointFrame(device, freshPages, raster, scene, sceneSwapped, movedPolygons, poolPages, depth, frame5b, frameSerial++);
+            Expect(different == 0u, "ケース T5b: 入れ替わって動いた後の物理ページが毎フレーム描き直したときと全 texel で一致しなければならない");
+            std::cout << TestName << " ケース T5b: 動いた灯のページ=" << frame5b.PagesOf(1u) << " 描き直した=" << frame5b.DirtyOf(1u) << " 動かない灯のページ="
+                      << frame5b.PagesOf(0u) << " 描き直した=" << frame5b.DirtyOf(0u) << " texel の違い=" << different << std::endl;
+        }
+
         // ----- T6: 灯が無くなると、その灯のスライスのページは空きへ戻る -----
-        // （T5 で入れ替えた並びから、灯 0 だけの並びへ戻す。スロット 0 の灯が変わるので、灯 0 も描き直されるのは T5 と同じ。灯 1 のスロットは空きへ戻る）
+        // （T5b の並びを元に戻す。位置は同じなので、ページは元の番号へ移って描き直されない。その後、灯 0 だけの並びにすると灯 1 のスロットは空きへ戻る）
         PointCacheFrame frame6a;
         if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneA, movedPolygons, resources, depth, &tracker, frameSerial++, frame6a))
         {
             std::cerr << TestName << " ケース T6（元の並びへ戻す）を実行できませんでした" << std::endl;
             return false;
         }
-        Expect(frame6a.Pages.size() > 0u && frame6a.DirtyCount() == frame6a.Pages.size(), "ケース T6: 並びを戻した 1 フレームは、両方の灯のページが描き直される");
+        Expect(frame6a.bContinued && frame6a.InvalidatedSlices == 0u && frame6a.Pages.size() > 0u && frame6a.DirtyCount() == 0u,
+               "ケース T6: 並びを戻した 1 フレームは、位置が同じなので両方の灯のページが描き直されない");
         PointCacheFrame frame6b;
         if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneSingle, movedPolygons, resources, depth, &tracker, frameSerial++, frame6b))
         {

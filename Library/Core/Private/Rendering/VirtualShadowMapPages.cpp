@@ -386,6 +386,7 @@ namespace NorvesLib::Core::Rendering
         m_AllocateShader.reset();
         m_ClearShader.reset();
         m_PointSampler.reset();
+        m_RemapScratch.reset();
         m_Device = nullptr;
         m_bMarked = false;
         m_bCacheValid = false;
@@ -431,6 +432,51 @@ namespace NorvesLib::Core::Rendering
         }
         outUse = &use;
         return use.Uniform && use.PointUniform && use.Slices && use.DescriptorSet;
+    }
+
+    void VirtualShadowMapPages::RemapPointPageTable(RHI::ICommandList* commandList,
+                                                    const VirtualShadowMapPagesDispatch& dispatch,
+                                                    const VirtualShadowMapPointRemap& remap)
+    {
+        const VirtualShadowMapPointLights& lights = *dispatch.PointLights;
+        const uint32_t blockCount = std::max(m_PreviousPointLights.LightCount, lights.LightCount);
+        const uint64_t blockBytes = VirtualShadowMap::PageTableBytes(lights.SlicesPerLight);
+        const uint64_t firstByte = VirtualShadowMap::PageTableBytes(lights.FirstSlice);
+        const uint64_t regionBytes = blockBytes * blockCount;
+        const uint64_t scratchBytes = blockBytes * m_PreviousPointLights.LightCount;
+        if (!m_RemapScratch || m_RemapScratch->GetSize() < scratchBytes)
+        {
+            m_RemapScratch = m_Device->CreateBuffer(RHI::BufferDesc(
+                blockBytes * PointShadowMaxLights, RHI::ResourceUsage::TransferSrc | RHI::ResourceUsage::TransferDst, false, "VsmPointRemapScratch"));
+        }
+        if (!m_RemapScratch || blockBytes == 0u || regionBytes == 0u)
+        {
+            return;
+        }
+        // 前フレームの領域をすべて退避してから、今フレームの番号の領域へ書き戻す（入れ替えでも、書く前に読み終える）。
+        // 退避先は直前のフレームの書き戻しが読み終わってから使う（CopySource → CopyDest の遷移が実行順を保証する）
+        commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopySource, firstByte, regionBytes);
+        commandList->BufferBarrier(m_RemapScratch, RHI::ResourceState::CopySource, RHI::ResourceState::CopyDest, 0u, scratchBytes);
+        commandList->CopyBuffer(dispatch.PageTable, m_RemapScratch, scratchBytes, firstByte, 0u);
+        commandList->BufferBarrier(m_RemapScratch, RHI::ResourceState::CopyDest, RHI::ResourceState::CopySource, 0u, scratchBytes);
+        commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::CopySource, RHI::ResourceState::CopyDest, firstByte, regionBytes);
+        for (uint32_t block = 0; block < blockCount; ++block)
+        {
+            const uint32_t source = remap.Source[block];
+            if (source == block)
+            {
+                continue;
+            }
+            if (source == VirtualShadowMapPointNoSource)
+            {
+                commandList->FillBuffer(dispatch.PageTable, firstByte + blockBytes * block, blockBytes, 0u);
+            }
+            else
+            {
+                commandList->CopyBuffer(m_RemapScratch, dispatch.PageTable, blockBytes, blockBytes * source, firstByte + blockBytes * block);
+            }
+        }
+        commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess, firstByte, regionBytes);
     }
 
     bool VirtualShadowMapPages::Record(RHI::ICommandList* commandList, const VirtualShadowMapPagesDispatch& dispatch)
@@ -570,11 +616,12 @@ namespace NorvesLib::Core::Rendering
 
         // 灯の識別子・位置・Range・並びが前フレームの同じ番号の灯と違うスライスは、全ページを無効にする（スライスの印）
         bool pointInvalid[VirtualShadowMapMaxSlices] = {};
+        VirtualShadowMapPointRemap pointRemap;
         m_PointInvalidatedSlices = 0;
         if (bContinue)
         {
             m_PointInvalidatedSlices = BuildVirtualShadowMapPointSliceInvalidation(
-                m_bPreviousPoint ? &m_PreviousPointLights : nullptr, bPointMark ? dispatch.PointLights : nullptr, pointInvalid);
+                m_bPreviousPoint ? &m_PreviousPointLights : nullptr, bPointMark ? dispatch.PointLights : nullptr, pointInvalid, &pointRemap);
         }
 
         // ----- 割り当て -----
@@ -585,6 +632,10 @@ namespace NorvesLib::Core::Rendering
                 ZeroFill(commandList, dispatch.PageTable, VirtualShadowMap::PageTableBytes(sliceCount));
             }
             ZeroFill(commandList, dispatch.Stats, VirtualShadowMap::STATS_BYTES);
+            if (bContinue && pointRemap.bMoves)
+            {
+                RemapPointPageTable(commandList, dispatch, pointRemap);
+            }
 
             GPUVsmParams allocateParams = bMark ? markParams : baseParams;
             allocateParams.cache[0] = (bCacheWanted ? CacheFlagEnabled : 0u) | (bInvalidateSun ? CacheFlagInvalidateAll : 0u) |

@@ -219,6 +219,11 @@ namespace NorvesLib::Core::Rendering
                             RHI::PipelinePtr& outPipeline);
         bool AcquireUse(FrameUseRing<Use>& ring, const RHI::DescriptorSetDesc& layout, Use*& outUse);
 
+        /** @brief 灯の番号が入れ替わったとき、点光源のページの表の灯ごとの領域を移し替える（ページの表は UnorderedAccess の状態で呼ぶ） */
+        void RemapPointPageTable(RHI::ICommandList* commandList,
+                                 const VirtualShadowMapPagesDispatch& dispatch,
+                                 const VirtualShadowMapPointRemap& remap);
+
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_MarkShader;
         RHI::ShaderPtr m_AllocateShader;
@@ -227,6 +232,8 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_AllocatePipeline;
         RHI::PipelinePtr m_ClearPipeline;
         RHI::SamplerPtr m_PointSampler;
+        /** @brief 灯の番号が入れ替わったとき、点光源のページの表の領域を一時的に写す退避先（必要になったときに作る） */
+        RHI::BufferPtr m_RemapScratch;
         FrameUseRing<Use> m_MarkUses;
         FrameUseRing<Use> m_AllocateUses;
         FrameUseRing<Use> m_ClearUses;

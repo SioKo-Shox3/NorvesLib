@@ -4,6 +4,7 @@
 // 面の NDC は (sc/軸の距離, tc/軸の距離)、軸の距離は行列の w と同じ）。(2) どの向きもどれかの面に入る。(3) 段の texel（軸の距離 z で 2z ÷ 段の一辺）は
 // 画素の大きさ p(d)·2^b 以下の最も粗い段（段 0 より細かくは選ばない）で、カメラまでの距離について単調。(4) ページの座標は面の範囲に収まる
 // （面の縁・角の向きを含む）。(5) スライスの表は灯 × 6 面 × 段の順で、行が面の座標へ写す。
+#include "Rendering/VirtualShadowMapCasters.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPointLights.h"
 #include "Math/MatrixUtils.h"
@@ -449,15 +450,50 @@ namespace
             Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &current, invalid) == 36u && countRange(10u + 36u, 36u) == 36u, message);
         }
 
-        // 灯が入れ替わる（識別子は同じでも番号が変わる）: 入れ替わった 2 灯の 72 スライス
+        // 灯が入れ替わる（識別子・位置・Range は同じで番号だけが変わる）: 識別子で対応づけて、ページを新しい番号へ移す。無効にするスライスは無い
         {
             VirtualShadowMapPointLights swapped = base;
             std::swap(swapped.LightId[0], swapped.LightId[2]);
             std::swap(swapped.Position[0], swapped.Position[2]);
             std::swap(swapped.Range[0], swapped.Range[2]);
-            Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &swapped, invalid) == 72u && countRange(10u, 36u) == 36u &&
-                      countRange(10u + 72u, 36u) == 36u && countRange(10u + 36u, 36u) == 0u,
-                  "灯 0 と灯 2 の入れ替えで、その 2 灯の 72 スライスだけが無効になるはず");
+            VirtualShadowMapPointRemap remap;
+            Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &swapped, invalid, &remap) == 0u,
+                  "位置の変わらない灯の入れ替えで、スライスが無効になった（ページを移せば描き直しは要らない）");
+            Check(remap.bMoves && remap.Source[0] == 2u && remap.Source[1] == 1u && remap.Source[2] == 0u,
+                  "灯 0 と灯 2 の入れ替えで、領域 0 は前の領域 2 から、領域 2 は前の領域 0 から移すはず");
+
+            // 入れ替わったうえで片方が動く: 動いた灯の新しい番号のスライスだけが無効になる
+            VirtualShadowMapPointLights swappedAndMoved = swapped;
+            swappedAndMoved.Position[0].x += 0.5f;
+            Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &swappedAndMoved, invalid, &remap) == 36u && countRange(10u, 36u) == 36u &&
+                      remap.Source[0] == 2u && remap.Source[2] == 0u,
+                  "入れ替わって動いた灯は、新しい番号のスライスだけが無効になり、ページは移るはず");
+
+            // 同じ識別子が 2 灯に現れても、前フレームの灯のページは 1 つの領域にしか移さない（物理ページの二重所有を避ける）
+            VirtualShadowMapPointLights duplicated = base;
+            duplicated.LightId[1] = duplicated.LightId[0];
+            Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &duplicated, invalid, &remap) == 36u && remap.Source[0] == 0u && remap.Source[1] == 1u,
+                  "同じ識別子の 2 灯目は対応づけず、前フレームの領域のまま無効にするはず");
+        }
+
+        // 先頭の灯が無くなる・先頭に灯が増える: 残る灯のページを詰め直す。移った灯の前の領域は空にする
+        {
+            VirtualShadowMapPointLights removedFirst = base;
+            removedFirst.LightCount = 2u;
+            for (uint32_t light = 0; light < 2u; ++light)
+            {
+                removedFirst.LightId[light] = base.LightId[light + 1u];
+                removedFirst.Position[light] = base.Position[light + 1u];
+                removedFirst.Range[light] = base.Range[light + 1u];
+            }
+            VirtualShadowMapPointRemap remap;
+            Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &removedFirst, invalid, &remap) == 0u && remap.bMoves && remap.Source[0] == 1u &&
+                      remap.Source[1] == 2u && remap.Source[2] == VirtualShadowMapPointNoSource,
+                  "先頭の灯が無くなったとき、残る 2 灯のページを前へ詰め、末尾の領域を空にするはず");
+            // 先頭に灯が増えると、既存の灯のページは後ろの領域へ移り、新しい灯の領域は空になる
+            Check(BuildVirtualShadowMapPointSliceInvalidation(&removedFirst, &base, invalid, &remap) == 0u && remap.bMoves &&
+                      remap.Source[0] == VirtualShadowMapPointNoSource && remap.Source[1] == 0u && remap.Source[2] == 1u,
+                  "先頭に灯が増えたとき、既存の 2 灯のページを後ろの領域へ移し、先頭の領域を空にするはず");
         }
 
         // 灯が減る: 無くなった灯のスライス（前フレームのもの）が無効になる。増える: 新しい灯のスライスが無効になる
@@ -482,6 +518,40 @@ namespace
             VirtualShadowMapPointLights coarser = base;
             coarser.Settings.FaceResolution = 2048u;
             Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &coarser, invalid) == 108u, "面の解像度が変わったとき、108 スライスが無効になるはず");
+        }
+
+        // 境界の箱を覆う球: 単精度へ丸めた中心から最も遠い隅までを半径にするので、中心の丸め誤差が大きい場所の薄い箱も覆う
+        {
+            NorvesLib::Core::Container::VariableArray<VirtualShadowMap::CasterBounds> bounds;
+            VirtualShadowMap::CasterBounds thin;
+            thin.Min[0] = 1048576.0f; thin.Min[1] = 0.0f; thin.Min[2] = 0.5f;
+            thin.Max[0] = 1048576.125f; thin.Max[1] = 0.125f; thin.Max[2] = 0.5f;
+            bounds.push_back(thin);
+            VirtualShadowMap::CasterBounds ordinary;
+            ordinary.Min[0] = -3.3f; ordinary.Min[1] = 0.1f; ordinary.Min[2] = 7.7f;
+            ordinary.Max[0] = 2.9f; ordinary.Max[1] = 4.4f; ordinary.Max[2] = 9.1f;
+            bounds.push_back(ordinary);
+            NorvesLib::Core::Container::VariableArray<float> spheres;
+            Check(VirtualShadowMap::BuildInvalidationSpheres(bounds, 8u, spheres) && spheres.size() == 8u, "境界の球が作れない");
+            for (uint32_t box = 0; box < 2u; ++box)
+            {
+                const VirtualShadowMap::CasterBounds& source = bounds[box];
+                const float* sphere = spheres.data() + box * 4u;
+                bool bContained = true;
+                for (uint32_t corner = 0; corner < 8u; ++corner)
+                {
+                    double distanceSquared = 0.0;
+                    for (uint32_t axis = 0; axis < 3u; ++axis)
+                    {
+                        const double point = static_cast<double>(((corner >> axis) & 1u) != 0u ? source.Max[axis] : source.Min[axis]);
+                        const double delta = point - static_cast<double>(sphere[axis]);
+                        distanceSquared += delta * delta;
+                    }
+                    bContained = bContained && distanceSquared <= static_cast<double>(sphere[3]) * static_cast<double>(sphere[3]);
+                }
+                std::snprintf(message, sizeof(message), "境界の箱 %u の 8 つの隅が球の内側にない", box);
+                Check(bContained, message);
+            }
         }
 
         // 面の解像度の違いなど、ページの内容に関わらない BiasLevels の違いは無効にしない

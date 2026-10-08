@@ -346,7 +346,8 @@ namespace NorvesLib::Core::Rendering
             m_Pool = m_Device->CreateBuffer(RHI::BufferDesc(
                 poolBytes, storageUsage | RHI::ResourceUsage::BufferDeviceAddress, false, "VSM_PhysicalPool"));
             m_PageTable = m_Device->CreateBuffer(
-                RHI::BufferDesc(VirtualShadowMap::PageTableBytes(SliceCapacityFor(m_PointShadowMethod)), storageUsage, false, "VSM_PageTable"));
+                RHI::BufferDesc(VirtualShadowMap::PageTableBytes(SliceCapacityFor(m_PointShadowMethod)),
+                                storageUsage | RHI::ResourceUsage::TransferSrc, false, "VSM_PageTable"));
             m_RequestBits = m_Device->CreateBuffer(
                 RHI::BufferDesc(VirtualShadowMap::RequestBitsBytes(SliceCapacityFor(m_PointShadowMethod)), storageUsage, false, "VSM_RequestBits"));
             m_FreeList = m_Device->CreateBuffer(RHI::BufferDesc(freeListBytes, storageUsage, false, "VSM_FreeList"));

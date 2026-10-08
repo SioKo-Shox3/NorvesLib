@@ -169,11 +169,17 @@ namespace NorvesLib::Core::Rendering
 
     uint32_t BuildVirtualShadowMapPointSliceInvalidation(const VirtualShadowMapPointLights* previous,
                                                          const VirtualShadowMapPointLights* current,
-                                                         bool* outInvalid)
+                                                         bool* outInvalid,
+                                                         VirtualShadowMapPointRemap* outRemap)
     {
         for (uint32_t index = 0; index < VirtualShadowMapMaxSlices; ++index)
         {
             outInvalid[index] = false;
+        }
+        VirtualShadowMapPointRemap remap;
+        for (uint32_t light = 0; light < PointShadowMaxLights; ++light)
+        {
+            remap.Source[light] = light;
         }
         const auto markLight = [&](const VirtualShadowMapPointLights& lights, uint32_t light) {
             for (uint32_t offset = 0; offset < lights.SlicesPerLight; ++offset)
@@ -203,23 +209,65 @@ namespace NorvesLib::Core::Rendering
         }
         else
         {
-            const uint32_t lightCount = std::max(previous->LightCount, current->LightCount);
-            for (uint32_t light = 0; light < lightCount; ++light)
+            // 今フレームの灯 j に、同じ識別子の前フレームの灯を対応づける（前フレームの灯は 1 回だけ使う）
+            const uint32_t previousCount = std::min(previous->LightCount, PointShadowMaxLights);
+            const uint32_t currentCount = std::min(current->LightCount, PointShadowMaxLights);
+            uint32_t source[PointShadowMaxLights];
+            bool bClaimed[PointShadowMaxLights] = {};
+            bool bMovedAway[PointShadowMaxLights] = {};
+            for (uint32_t light = 0; light < currentCount; ++light)
             {
-                const bool bBoth = light < previous->LightCount && light < current->LightCount;
-                if (bBoth && previous->LightId[light] == current->LightId[light] && previous->Range[light] == current->Range[light] &&
-                    previous->Position[light].x == current->Position[light].x && previous->Position[light].y == current->Position[light].y &&
-                    previous->Position[light].z == current->Position[light].z)
+                source[light] = VirtualShadowMapPointNoSource;
+                for (uint32_t candidate = 0; candidate < previousCount; ++candidate)
                 {
-                    continue;
+                    if (!bClaimed[candidate] && previous->LightId[candidate] == current->LightId[light])
+                    {
+                        bClaimed[candidate] = true;
+                        source[light] = candidate;
+                        bMovedAway[candidate] = candidate != light;
+                        break;
+                    }
                 }
-                markLight(light < current->LightCount ? *current : *previous, light);
             }
+            const uint32_t blockCount = std::max(previousCount, currentCount);
+            for (uint32_t light = 0; light < blockCount; ++light)
+            {
+                if (light < currentCount && source[light] != VirtualShadowMapPointNoSource)
+                {
+                    // 対応する灯がある: 内容を（番号が変わっていれば移して）引き継ぎ、位置か Range が変わっていれば全ページを無効にする
+                    const uint32_t old = source[light];
+                    remap.Source[light] = old;
+                    if (previous->Range[old] != current->Range[light] || previous->Position[old].x != current->Position[light].x ||
+                        previous->Position[old].y != current->Position[light].y || previous->Position[old].z != current->Position[light].z)
+                    {
+                        markLight(*current, light);
+                    }
+                }
+                else if (bMovedAway[light])
+                {
+                    // 前フレームのこの番号の灯は別の番号へ移った。ページの二重所有を避けるため、この番号の領域を空にする
+                    remap.Source[light] = VirtualShadowMapPointNoSource;
+                }
+                else
+                {
+                    // 対応する灯が無い（新しい灯に替わった・灯が無くなった）: 古い内容をそのまま dirty にして、要求の無いページは空きへ戻す
+                    markLight(light < previousCount ? *previous : *current, light);
+                }
+            }
+        }
+        remap.bMoves = false;
+        for (uint32_t light = 0; light < PointShadowMaxLights; ++light)
+        {
+            remap.bMoves = remap.bMoves || remap.Source[light] != light;
         }
         uint32_t count = 0u;
         for (uint32_t index = 0; index < VirtualShadowMapMaxSlices; ++index)
         {
             count += outInvalid[index] ? 1u : 0u;
+        }
+        if (outRemap != nullptr)
+        {
+            *outRemap = remap;
         }
         return count;
     }

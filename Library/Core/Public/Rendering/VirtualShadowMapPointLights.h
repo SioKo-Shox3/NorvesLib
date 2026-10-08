@@ -124,23 +124,42 @@ namespace NorvesLib::Core::Rendering
     /** @brief 灯・面・段のスライスの表の番号。FirstSlice + (灯 × 6 + 面) × 段の数 + 段 */
     uint32_t VirtualShadowMapPointSliceIndex(const VirtualShadowMapPointLights& lights, uint32_t light, uint32_t face, uint32_t mip);
 
+    /** @brief VirtualShadowMapPointRemap::Source の値。前フレームに対応する灯が無い（領域を 0 で埋める） */
+    inline constexpr uint32_t VirtualShadowMapPointNoSource = 0xFFFFFFFFu;
+
+    /**
+     * @brief 灯の番号が入れ替わったとき、ページの表の灯ごとの領域（1 灯のスライスぶん）を前フレームのどの領域から移すか
+     *
+     * Source[b] は今フレームの灯 b の領域の出どころ。b ならそのまま、ほかの番号なら前フレームのその番号の領域をコピーする。
+     * VirtualShadowMapPointNoSource は領域を 0（割り当て無し）にする。領域は前フレームの内容を読んでから書く（入れ替えでも壊れない）。
+     */
+    struct VirtualShadowMapPointRemap
+    {
+        uint32_t Source[PointShadowMaxLights] = {0u, 1u, 2u, 3u};
+        /** @brief Source が恒等でない領域がある（ページの表の移し替えが要る） */
+        bool bMoves = false;
+    };
+
     /**
      * @brief 前フレームの点光源の並びと比べて、前フレームのページの内容を引き継げないスライスを求める（ページのキャッシュ）
      *
-     * ページの表の欄はスライスの番号で決まるので、灯 i のスライスは「前フレームの灯 i」の内容を持つ。灯の識別子・位置・Range が前フレームの
-     * 同じ番号の灯と同じなら、スライスは引き継げる。違えば（動いた・別の灯が入った・並びが変わった・灯が無くなった）そのスライスの全ページを無効にする
-     * （要求の無いページは、次の割り当てで空きへ戻る）。先頭の番号・1 灯のスライスの数・面の解像度・ページの一辺・段の数のどれかが違うときは、
-     * 前後どちらかの点光源のスライスをすべて無効にする。点光源のページが無かった（null）フレームの後は、今フレームの灯のスライスをすべて無効にする。
-     * 灯の識別子が同じでも番号が変わった灯は、前の番号のスライスの内容を移さず、新しい番号のスライスを無効にする（描き直す）。
+     * ページの表の欄はスライスの番号で決まるので、灯 i のスライスは「灯の番号 i の領域」の内容を持つ。灯は識別子で前フレームの灯と対応づける。
+     * 対応する灯の位置・Range が同じなら、番号が変わっていてもページを引き継ぐ（outRemap が移し替えを指示する）。位置か Range が違えば
+     * 今フレームの灯のスライスの全ページを無効にする。対応する前フレームの灯が無い領域は、古い内容を無効にする（要求の無いページは、次の割り当てで
+     * 空きへ戻る）。ほかの番号へ移った灯の前の領域は、二重所有を避けるため outRemap が空にする。
+     * 先頭の番号・1 灯のスライスの数・面の解像度・ページの一辺・段の数のどれかが違うときは、前後どちらかの点光源のスライスをすべて無効にする
+     * （移し替えは無い）。点光源のページが無かった（null）フレームの後は、今フレームの灯のスライスをすべて無効にする。
      *
      * @param previous 前フレームの並び（点光源のページを持たなかったフレームは null）
      * @param current 今フレームの並び（点光源のページを持たないフレームは null）
      * @param outInvalid VirtualShadowMapMaxSlices 件以上の領域。スライスの番号ごとに、引き継げないものを true、そうでないものを false にして書く
+     * @param outRemap 領域の移し替え。null なら受け取らない（移し替えが要るときに無視すると、入れ替わった灯のページが別の灯の内容になる）
      * @return true にしたスライスの数
      */
     uint32_t BuildVirtualShadowMapPointSliceInvalidation(const VirtualShadowMapPointLights* previous,
                                                          const VirtualShadowMapPointLights* current,
-                                                         bool* outInvalid);
+                                                         bool* outInvalid,
+                                                         VirtualShadowMapPointRemap* outRemap = nullptr);
 
     /** @brief 灯の数・LightId・位置・Range・設定・先頭の番号のどれかが違うか（VSM_POINT を出し直す判定） */
     bool VirtualShadowMapPointLightsDiffer(const VirtualShadowMapPointLights& lhs, const VirtualShadowMapPointLights& rhs);
