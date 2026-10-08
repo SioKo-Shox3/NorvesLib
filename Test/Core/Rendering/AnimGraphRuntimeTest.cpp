@@ -390,7 +390,7 @@ namespace
         GRAPH_CHECK(f.AClip->GetPoseRevision() == poseRevision && f.AClip->GetMetadataRevision() != metadataRevision &&
                     f.AClip->GetClip().Metadata.Events.empty());
         GRAPH_CHECK(f.AClip->ApplyMetadataJson(C::String(R"({"groundOffset":0.2})"), report));
-        GRAPH_CHECK(f.AClip->GetMetadata().Events.empty());
+        GRAPH_CHECK(f.AClip->GetClipMetadata().Events.empty());
     }
     void TestAnimationEventRuntime()
     {

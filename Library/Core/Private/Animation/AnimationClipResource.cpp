@@ -81,7 +81,7 @@ namespace NorvesLib::Core
         Animation::Detail::BuildClipPoseRuntime(m_Clip, m_PoseRuntime);
     }
 
-    const Animation::ClipMetadata& AnimationClipResource::GetMetadata() const noexcept
+    const Animation::ClipMetadata& AnimationClipResource::GetClipMetadata() const noexcept
     {
         return m_RuntimeMetadata ? *m_RuntimeMetadata : m_Clip.Metadata;
     }

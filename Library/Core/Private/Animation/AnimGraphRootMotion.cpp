@@ -36,13 +36,13 @@ namespace NorvesLib::Core::Animation
             return false;
         Math::Matrix4x4 model;
         return SkeletalPoseBuilder::BuildRootModelMatrix(m_Contexts[clip], m_MotionScratch.Local[joint], model) &&
-               ModelMotion(model, m_Graph->Clips[clip]->GetMetadata().Root.bYaw, out);
+               ModelMotion(model, m_Graph->Clips[clip]->GetClipMetadata().Root.bYaw, out);
     }
     bool AnimGraphInstance::RootAt(uint32_t index, double time, RootMotionDelta& out)
     {
         const auto& clip = m_Graph->Clips[index]->GetClip();
         const auto& runtime = m_RootClips[index];
-        const auto& settings = m_Graph->Clips[index]->GetMetadata().Root;
+        const auto& settings = m_Graph->Clips[index]->GetClipMetadata().Root;
         auto lockAxes = [&]() {
             if (!settings.bX)
                 out.X = 0;
@@ -89,7 +89,7 @@ namespace NorvesLib::Core::Animation
         {
             const auto& resource = *m_Graph->Clips[i];
             const auto& clip = resource.GetClip();
-            const auto& metadata = resource.GetMetadata();
+            const auto& metadata = resource.GetClipMetadata();
             auto& state = m_RootClips[i];
             if (force || state.MetadataRevision != resource.GetMetadataRevision())
             {
@@ -205,7 +205,7 @@ namespace NorvesLib::Core::Animation
             if (n.Kind == AnimNodeKind::Clip)
             {
                 const auto& clip = *m_Graph->Clips[n.Clip];
-                const auto& loop = clip.GetMetadata().Loop;
+                const auto& loop = clip.GetClipMetadata().Loop;
                 const double duration =
                     n.bLoop && loop.bEnabled ? loop.End - loop.Start : clip.GetClip().DurationSeconds;
                 m_Durations[index] = n.PlaybackRate == 0 ? std::numeric_limits<double>::infinity()
@@ -221,7 +221,7 @@ namespace NorvesLib::Core::Animation
     {
         if (!m_Graph || clip >= m_RootClips.size())
             return 0;
-        const float value = m_Graph->Clips[clip]->GetMetadata().Root.NominalSpeed;
+        const float value = m_Graph->Clips[clip]->GetClipMetadata().Root.NominalSpeed;
         return value >= 0 ? value
                : m_RootClips[clip].MetadataRevision == m_Graph->Clips[clip]->GetMetadataRevision()
                    ? m_RootClips[clip].NominalSpeed
@@ -231,7 +231,7 @@ namespace NorvesLib::Core::Animation
     {
         const auto& resource = *m_Graph->Clips[index];
         const auto& clip = resource.GetClip();
-        const auto& metadata = resource.GetMetadata();
+        const auto& metadata = resource.GetClipMetadata();
         const double start = metadata.Loop.bEnabled ? metadata.Loop.Start : 0,
                      end = metadata.Loop.bEnabled ? metadata.Loop.End : clip.DurationSeconds;
         if (!loop || end <= start)
@@ -250,7 +250,7 @@ namespace NorvesLib::Core::Animation
     bool AnimGraphInstance::RemoveRootMotion(uint32_t index, LocalPose& pose) const
     {
         const auto& resource = *m_Graph->Clips[index];
-        const auto& settings = resource.GetMetadata().Root;
+        const auto& settings = resource.GetClipMetadata().Root;
         const auto& runtime = m_RootClips[index];
         // GR84の曲線は既に姿勢から分離済み。二重に引かない。
         if (settings.Mode == RootMotionMode::None || runtime.bCurve || (!settings.bX && !settings.bZ && !settings.bYaw))
@@ -284,7 +284,7 @@ namespace NorvesLib::Core::Animation
             value = {};
         for (const auto& t : m_Traversals)
         {
-            const auto& settings = m_Graph->Clips[t.Clip]->GetMetadata().Root;
+            const auto& settings = m_Graph->Clips[t.Clip]->GetClipMetadata().Root;
             if (settings.Mode == RootMotionMode::None || (!settings.bX && !settings.bZ && !settings.bYaw))
                 continue;
             RootMotionDelta a, b;
@@ -299,7 +299,7 @@ namespace NorvesLib::Core::Animation
         }
         uint32_t root = 0;
         for (size_t i = 0; i < m_RootClips.size(); ++i)
-            if (m_Graph->Clips[i]->GetMetadata().Root.Mode != RootMotionMode::None)
+            if (m_Graph->Clips[i]->GetClipMetadata().Root.Mode != RootMotionMode::None)
             {
                 root = m_RootClips[i].Joint;
                 break;

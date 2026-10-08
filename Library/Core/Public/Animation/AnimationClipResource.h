@@ -30,7 +30,7 @@ namespace NorvesLib::Core
 
         void SetClip(Skeletal::SkeletalAnimationClip&& clip);
         const Skeletal::SkeletalAnimationClip& GetClip() const;
-        const Animation::ClipMetadata& GetMetadata() const noexcept;
+        const Animation::ClipMetadata& GetClipMetadata() const noexcept;
         uint64_t GetMetadataRevision() const noexcept
         {
             return m_MetadataRevision;

@@ -191,8 +191,8 @@ namespace NorvesLib::Core::Animation
             auto& rt = m_Runtime[i];
             rt.Current = data->Nodes[i].InitialState;
             if (data->Nodes[i].Kind == AnimNodeKind::Clip && data->Nodes[i].bLoop &&
-                data->Clips[data->Nodes[i].Clip]->GetMetadata().Loop.bEnabled)
-                rt.Time = data->Clips[data->Nodes[i].Clip]->GetMetadata().Loop.Start;
+                data->Clips[data->Nodes[i].Clip]->GetClipMetadata().Loop.bEnabled)
+                rt.Time = data->Clips[data->Nodes[i].Clip]->GetClipMetadata().Loop.Start;
             if (data->Nodes[i].Kind == AnimNodeKind::Clip && data->Nodes[i].PlaybackRate < 0 && !data->Nodes[i].bLoop)
             {
                 rt.Time = data->Clips[data->Nodes[i].Clip]->GetClip().DurationSeconds;
@@ -406,8 +406,8 @@ namespace NorvesLib::Core::Animation
             rt.Time = node.Kind == AnimNodeKind::Clip && node.PlaybackRate < 0 && !node.bLoop
                           ? m_Graph->Clips[node.Clip]->GetClip().DurationSeconds
                           : 0;
-            if (node.Kind == AnimNodeKind::Clip && node.bLoop && m_Graph->Clips[node.Clip]->GetMetadata().Loop.bEnabled)
-                rt.Time = m_Graph->Clips[node.Clip]->GetMetadata().Loop.Start;
+            if (node.Kind == AnimNodeKind::Clip && node.bLoop && m_Graph->Clips[node.Clip]->GetClipMetadata().Loop.bEnabled)
+                rt.Time = m_Graph->Clips[node.Clip]->GetClipMetadata().Loop.Start;
             rt.StateTime = 0;
             rt.NextStateTime = 0;
             rt.Current = m_Graph->Nodes[i].InitialState;
@@ -597,7 +597,7 @@ namespace NorvesLib::Core::Animation
                 }
                 double time = rt.Time;
                 const double duration = m_Graph->Clips[n.Clip]->GetClip().DurationSeconds;
-                const auto& loop = m_Graph->Clips[n.Clip]->GetMetadata().Loop;
+                const auto& loop = m_Graph->Clips[n.Clip]->GetClipMetadata().Loop;
                 const double start = loop.bEnabled ? loop.Start : 0, end = loop.bEnabled ? loop.End : duration;
                 if (n.bLoop && end > start)
                 {

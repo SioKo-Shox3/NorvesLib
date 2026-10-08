@@ -495,9 +495,9 @@ namespace NorvesLib::Core::Animation
                     return Fail(r, AnimGraphError::InvalidClip, "clip_channels");
                 }
                 ClipMetadataReport metadataReport;
-                if (!ValidateClipMetadata(clip->GetMetadata(), clip->GetClip().DurationSeconds, metadataReport))
+                if (!ValidateClipMetadata(clip->GetClipMetadata(), clip->GetClip().DurationSeconds, metadataReport))
                     return Fail(r, AnimGraphError::InvalidClip, "clip_metadata");
-                const auto rootJoint = clip->GetMetadata().Root.Joint;
+                const auto rootJoint = clip->GetClipMetadata().Root.Joint;
                 if (rootJoint != UINT32_MAX && (rootJoint >= d.Parents.size() || d.Parents[rootJoint] != -1))
                     return Fail(r, AnimGraphError::UnknownJoint, "root_motion_joint");
                 n.Clip = uint32_t(d.Clips.size());

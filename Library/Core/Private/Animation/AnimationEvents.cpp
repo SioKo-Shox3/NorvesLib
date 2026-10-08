@@ -137,7 +137,7 @@ namespace NorvesLib::Core::Animation
                 if (t.Node != w.SourceNode || t.Clip >= graph.Clips.size())
                     continue;
                 const auto& clip = *graph.Clips[t.Clip];
-                const auto& events = clip.GetMetadata().Events;
+                const auto& events = clip.GetClipMetadata().Events;
                 keep = clip.GetMetadataRevision() == w.MetadataRevision && w.SourceEvent < events.size() &&
                        t.Weight >= events[w.SourceEvent].MinWeight;
                 break;
@@ -195,7 +195,7 @@ namespace NorvesLib::Core::Animation
                 !std::isfinite(t.Weight))
                 continue;
             const auto& clip = *graph.Clips[t.Clip];
-            const auto& meta = clip.GetMetadata();
+            const auto& meta = clip.GetClipMetadata();
             const double start = meta.Loop.bEnabled ? meta.Loop.Start : 0;
             const double end = meta.Loop.bEnabled ? meta.Loop.End : clip.GetClip().DurationSeconds;
             const double length = end - start;
@@ -304,7 +304,7 @@ namespace NorvesLib::Core::Animation
                     if (t.Node != w.SourceNode || t.Clip >= graph.Clips.size())
                         continue;
                     const auto& clip = *graph.Clips[t.Clip];
-                    const auto& m = clip.GetMetadata();
+                    const auto& m = clip.GetClipMetadata();
                     if (w.SourceEvent >= m.Events.size())
                         break;
                     const auto& e = m.Events[w.SourceEvent];
