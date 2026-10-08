@@ -505,3 +505,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 他の照明を実行する試験: DDGIProbeRadianceVulkanTest・DDGIProbeRayQueryVulkanTest・PathTracingLightingVulkanTest・LightingLightBufferTest・RenderGraphGPUTimestampScopeTest・RenderingCoordinatorGPUTimestampPublicationTest は通過（`extra-ctest-2.txt`）。`RHIGPUTimestampVulkanTest` は 1 回目に「completed GPU timing batch is missing or dropped」で落ち、単体の再実行で通過（`extra-ctest-3-timestamp.txt`。GPU 計測の取りこぼしで、環境のぶれ）。`RenderGraphTextureUsageContractTest` は `ShadowMapPass::Initialize`（空のシェーダーディレクトリ、150 秒後）の assert で落ちる。LightingPass に入る前の失敗で、この変更とは無関係に見える（基準の状態では未確認）。
 - 既知の限界は前の反復のとおり（SSAO・SSR・Bloom・トーンマップ・ボリューム・RTGI/DDGI の計算のパラメータのバッファは、同じフレームに複数のビューポートを描くと後の Execute が先の dispatch の値を上書きしうる）。
 - Next: TASKS.md の次の `todo`。
+
+## VTG9-FIX-NIGHT-ENV-SUN 反復 3（2026-10-08）
+
+- 結果: 親が直した (4) の測り方（暗い側 x 370〜699・y 100〜599 で R−G>40 の画素数）で合格にした。実装は 2e74630c のまま変えていない。証拠は `.harness/runs/20261008-235324/verify-VTG9-FIX-NIGHT-ENV-SUN-1〜5.txt`（Debug ビルド EXIT=0・ctest 6/6 通過で golden 4 本は基準画像・閾値を動かさず・検証レイヤー付き Debug の夜 `error_count` 0・`warning_count` 0・`vuid_count` 0・RelWithDebInfo ビルド・夜 3 視点の撮影、すべて EXIT=0）。
+- 粒の数（`dots-count.txt`、数えた手順は `count_dots.py`）: 修正前 223（R−G の最大 98）・RTGI を切った画 0・修正後 0（RelWithDebInfo・Debug とも、R−G の最大 35）。10 未満。
+- 画: `VTG9-FIX-NIGHT-ENV-SUN-night` の 3 視点を開いた。近接は球の暗い側に粒が無く、既定・低角度とも天球・地面・球・岩・小屋・電球と電球の影が欠けなく見える。
+- ほかに静的な環境を読むシェーダー: RTGI の外れた光線（`RTGI/DiffuseIndirect.comp`）と DDGI（`DDGI/ProbeRadiance.comp`）にも同じ上限を入れてある。経路追跡（`PathTracing/*`）は検証用で静的環境の倍率も使わないので触らない（前の反復の記録のとおり）。
+- 既知の限界: 拡散の IBL の前計算の放射照度は太陽の分を含んだまま（全エネルギーの約 3.7%）。
+- Next: TASKS.md の次の `todo`。
