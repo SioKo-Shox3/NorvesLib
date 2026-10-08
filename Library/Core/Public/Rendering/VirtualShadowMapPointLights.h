@@ -95,7 +95,7 @@ namespace NorvesLib::Core::Rendering
      *
      * 投影は透視（extra[2] = VirtualShadowMapSliceProjectionPerspective）。axisX/Y/Z は、ワールドの位置 p を面の座標
      * （x = sc の距離、y = tc の距離、z = 面の軸の向きの距離）へ写す行（w は光源の位置の分のずれ）で、NDC は (x / z, y / z)。
-     * info[0] = ページの NDC の幅（2 / 1 段の一辺のページ数）、info[1] = texel の NDC の幅（2 / 段の一辺）。
+     * info[0] = ページの NDC の幅（2 / 1 段の一辺のページ数）、info[1] = texel の NDC の幅（2 / 段の一辺）、info[2] = Range（m）、info[3] = 近い平面の距離（m。PointShadowNearPlane）。
      * origin[0..1] = 0（面の全体がページの範囲）、origin[2] = スライスの番号 × 128 × 128（太陽の段と同じ並べ方）、origin[3] = 1 段の一辺のページ数。
      * extra[0..1] = 0。使わない灯の分は書かない。
      * @return 書いたスライスの数

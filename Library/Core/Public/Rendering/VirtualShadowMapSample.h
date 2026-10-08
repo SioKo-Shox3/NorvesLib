@@ -62,7 +62,7 @@ namespace NorvesLib::Core::Rendering
         float axisX[4];
         float axisY[4];
         float axisZ[4];
-        /** @brief x = ページの一辺（m）、y = texel の一辺（m）、z, w = 予約（0） */
+        /** @brief x = ページの一辺（m）、y = texel の一辺（m）。透視（点光源の面）は ページ・texel の面の NDC の幅、z = Range（m）、w = 近い平面の距離（m）。正射影の z, w = 予約（0） */
         float info[4];
         /** @brief x, y = 範囲の最小の絶対のページの番号、z = ページの表の先頭（要素）、w = ページの表の一辺（ページの数。2 の冪） */
         int32_t origin[4];

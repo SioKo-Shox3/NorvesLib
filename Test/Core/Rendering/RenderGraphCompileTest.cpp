@@ -34,6 +34,7 @@
 #include "Rendering/VirtualShadowMapCasters.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPages.h"
+#include "Rendering/VirtualShadowMapPointLights.h"
 #include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/VirtualShadowMapRaster.h"
 #include "Rendering/VirtualShadowMapSample.h"
@@ -7394,13 +7395,72 @@ namespace
         VirtualShadowMap::CasterBounds notFinite = center;
         notFinite.Max[0] = std::numeric_limits<float>::quiet_NaN();
         assert(!VirtualShadowMap::SliceMasksForBounds(slices, sliceCount, notFinite).IsAny());
-        // 透視のスライスは印を付けない（基底が違うので、点光源の面は後の項目で扱う）
+        // 透視のスライスは、Range・近い平面（info[2]・info[3]）が使える値のときだけ境界の球で判定する（info が 0 のままなら印を付けない）
         {
             GPUVsmSlice perspective[VirtualShadowMapMaxSlices];
             std::memcpy(perspective, slices, sizeof(GPUVsmSlice) * sliceCount);
             perspective[39].extra[2] = VirtualShadowMapSliceProjectionPerspective;
             const VirtualShadowMap::SliceMasks masks = VirtualShadowMap::SliceMasksForBounds(perspective, sliceCount, center);
             assert(masks.Masks[0] == 0xFFFFFFFFu && masks.Masks[1] == 0x7Fu);
+        }
+        // 点光源の面: 光源 (1, 2, 3)・Range 10 の 1 灯。球が Range の内側で面の錐台と交わるスライスにだけ印が付く
+        {
+            PointShadowSnapshot snapshot;
+            snapshot.LightCount = 1u;
+            snapshot.Lights[0].LightId = 1u;
+            snapshot.Lights[0].Position = NorvesLib::Math::Vector3(1.0f, 2.0f, 3.0f);
+            snapshot.Lights[0].Range = 10.0f;
+            const VirtualShadowMapPointLights lights = BuildVirtualShadowMapPointLights(snapshot, VirtualShadowMapPointSettings{}, 0u);
+            GPUVsmSlice pointSlices[VirtualShadowMapMaxSlices];
+            assert(BuildVirtualShadowMapPointSlices(lights, pointSlices) == 36u);
+            const uint32_t mips = lights.Settings.MipCount;
+            const auto faceMask = [&](const VirtualShadowMap::CasterBounds& bounds, uint32_t face) {
+                const VirtualShadowMap::SliceMasks masks = VirtualShadowMap::SliceMasksForBounds(pointSlices, 36u, bounds);
+                uint32_t mask = 0u;
+                for (uint32_t mip = 0; mip < mips; ++mip)
+                {
+                    const uint32_t index = VirtualShadowMapPointSliceIndex(lights, 0u, face, mip);
+                    mask |= ((masks.Masks[index / 32u] >> (index % 32u)) & 1u) << mip;
+                }
+                return mask;
+            };
+            const uint32_t allMips = (1u << mips) - 1u;
+            // +X（面 0）の軸の上、距離 5 の小さな物: 面 0 の全段にだけ印が付く
+            const VirtualShadowMap::CasterBounds ahead = MakeCubeBounds(1.0f + 5.0f, 2.0f, 3.0f, 0.1f);
+            assert(faceMask(ahead, 0u) == allMips);
+            for (uint32_t face = 1; face < PointShadowFaceCount; ++face)
+            {
+                assert(faceMask(ahead, face) == 0u);
+            }
+            // Range の外（距離 30）: どの面にも印が無い
+            assert(!VirtualShadowMap::SliceMasksForBounds(pointSlices, 36u, MakeCubeBounds(1.0f + 30.0f, 2.0f, 3.0f, 0.1f)).IsAny());
+            // 光源を内側に含む大きな物（近い平面をまたぐ）: 全 6 面の全段に印が付く
+            const VirtualShadowMap::CasterBounds around = MakeCubeBounds(1.0f, 2.0f, 3.0f, 2.0f);
+            for (uint32_t face = 0; face < PointShadowFaceCount; ++face)
+            {
+                assert(faceMask(around, face) == allMips);
+            }
+            // 面 0 と隣の面の境（軸と接線が等しい方向）にある小さな物は、両方の面に印が付く。反対側の面には付かない
+            const GPUVsmSlice& face0 = pointSlices[VirtualShadowMapPointSliceIndex(lights, 0u, 0u, 0u)];
+            const VirtualShadowMap::CasterBounds seam = MakeCubeBounds(
+                1.0f + 6.0f * (face0.axisZ[0] + face0.axisX[0]), 2.0f + 6.0f * (face0.axisZ[1] + face0.axisX[1]), 3.0f + 6.0f * (face0.axisZ[2] + face0.axisX[2]), 0.1f);
+            uint32_t seamFaces = 0u;
+            for (uint32_t face = 0; face < PointShadowFaceCount; ++face)
+            {
+                seamFaces += faceMask(seam, face) != 0u ? 1u : 0u;
+            }
+            assert(faceMask(seam, 0u) == allMips && seamFaces == 2u);
+            // 光源の後ろだけにある物（軸の距離がどの面でも近い平面より手前になる向きは無いので、面 0 の反対の面にだけ印が付く）
+            const VirtualShadowMap::CasterBounds behind = MakeCubeBounds(1.0f - 5.0f, 2.0f, 3.0f, 0.1f);
+            assert(faceMask(behind, 0u) == 0u);
+            // 範囲の無い（info が 0 の）透視のスライスと、境界が有限でない場合は印が付かない
+            GPUVsmSlice unset = pointSlices[0];
+            unset.info[2] = 0.0f;
+            unset.info[3] = 0.0f;
+            assert(!VirtualShadowMap::SliceMasksForBounds(&unset, 1u, ahead).IsAny());
+            VirtualShadowMap::CasterBounds nan = ahead;
+            nan.Max[1] = std::numeric_limits<float>::quiet_NaN();
+            assert(!VirtualShadowMap::SliceMasksForBounds(pointSlices, 36u, nan).IsAny());
         }
 
         // 手続きメッシュ: 原点のそばの 1 つの塊が 2 つの組にまたがるので、同じ記録を持つ塊が 2 つ出る

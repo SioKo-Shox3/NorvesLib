@@ -69,6 +69,13 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<VirtualShadowMap::CasterBounds> ChangedBounds;
         Container::VariableArray<float> InvalidationRects;
         bool bInvalidateAll = false;
+        /**
+         * @brief 点光源の VSM のとき（灯が 1 つ以上）に、投影物の集め方と展開が使うスライスの表（太陽の段の後ろに点光源の面を並べたもの）。
+         *        使わないフレーム（bUseSliceTable が false）は、太陽のクリップマップの段だけを見る従来の集め方
+         */
+        GPUVsmSlice SliceTable[VirtualShadowMapMaxSlices];
+        uint32_t SliceTableCount = 0;
+        bool bUseSliceTable = false;
     };
 
     namespace
@@ -567,11 +574,24 @@ namespace NorvesLib::Core::Rendering
         state.Chunks.clear();
         state.Motion.clear();
         state.Stats = {};
+        state.bUseSliceTable = false;
+        state.SliceTableCount = 0;
         const VirtualShadowMapClipmap& clipmap = context.PhysicalLighting.SunClipmap;
-        if (!clipmap.bEnabled)
+        // 点光源の VSM で灯があるときは、太陽の段（クリップマップが無効なら空の段）の後ろに点光源の面を並べたスライスの表で、
+        // 投影物が写るスライスを決める（光源の Range の内側で面の錐台と交わる物が記録になる）
+        if (m_PointShadowMethod == PointShadowMethod::Vsm && m_PointLights.LightCount != 0u)
+        {
+            state.SliceTableCount = SliceCapacityFor(m_PointShadowMethod);
+            BuildVirtualShadowMapSlices(clipmap.bEnabled ? &clipmap : nullptr, nullptr, state.SliceTableCount, state.SliceTable);
+            BuildVirtualShadowMapPointSlices(m_PointLights, state.SliceTable);
+            state.bUseSliceTable = true;
+        }
+        if (!clipmap.bEnabled && !state.bUseSliceTable)
         {
             return;
         }
+        const VirtualShadowMap::CasterSliceTable sliceTable{state.SliceTable, state.SliceTableCount};
+        const VirtualShadowMap::CasterSliceTable* slices = state.bUseSliceTable ? &sliceTable : nullptr;
 
         // ----- 手続きメッシュ: 影を落とすメッシュのプロキシ -----
         // 描画コマンドは主カメラの錐台で省かれた後の一覧なので、錐台の外でも VSM の段の範囲に入る投影物を落とす。
@@ -614,7 +634,7 @@ namespace NorvesLib::Core::Rendering
                         ++state.Stats.SkippedDraws;
                         continue;
                     }
-                    VirtualShadowMap::AppendProceduralInstance(input, state.Plan, world, clipmap, state.Chunks, state.Stats);
+                    VirtualShadowMap::AppendProceduralInstance(input, state.Plan, world, clipmap, state.Chunks, state.Stats, slices);
 
                     // キャッシュの無効化の入力: 同じ描画が同じ変換・範囲なら動いていない
                     VirtualShadowMap::CasterMotionEntry motion;
@@ -688,7 +708,8 @@ namespace NorvesLib::Core::Rendering
                         chunk.FirstIndex += instance.SourceFirstIndex;
                     }
                 }
-                VirtualShadowMap::AppendSkinnedInstance(instance.CurrentVertexAddress, indexAddress, bounds, chunks, clipmap, state.Chunks, state.Stats);
+                VirtualShadowMap::AppendSkinnedInstance(
+                    instance.CurrentVertexAddress, indexAddress, bounds, chunks, clipmap, state.Chunks, state.Stats, slices);
 
                 // スキニングは毎フレーム変形するので、毎フレーム動いた物として扱う（鍵はコンポーネントとサブメッシュの範囲ごと）
                 VirtualShadowMap::CasterMotionEntry motion;
@@ -735,7 +756,8 @@ namespace NorvesLib::Core::Rendering
         state.ChangedBounds.clear();
         state.InvalidationRects.clear();
         state.bInvalidateAll = false;
-        if (!m_bCacheEnabled)
+        // 太陽のクリップマップが無い（点光源だけの）フレームは、無効にするライト空間の矩形が無く、点光源のページのキャッシュは別の項目
+        if (!m_bCacheEnabled || !context.PhysicalLighting.SunClipmap.bEnabled)
         {
             state.MotionTracker.Reset();
             return;
@@ -826,6 +848,12 @@ namespace NorvesLib::Core::Rendering
 
         VirtualShadowMapRasterDispatch rasterDispatch;
         rasterDispatch.Clipmap = &context.PhysicalLighting.SunClipmap;
+        if (state.bUseSliceTable)
+        {
+            // 点光源の面を含むスライスの表（CollectCasters が作ったもの）で展開・描画する
+            rasterDispatch.SliceCount = state.SliceTableCount;
+            rasterDispatch.Slices = state.SliceTable;
+        }
         rasterDispatch.PoolPages = m_PoolPages;
         rasterDispatch.Pool = m_Pool;
         rasterDispatch.PageTable = m_PageTable;
@@ -1066,7 +1094,9 @@ namespace NorvesLib::Core::Rendering
         }
         // 投影物を集め、前フレームからの動き（無効にするページの範囲）を決める。印付けをするフレームだけ（しなければ記録も要らない）
         bool bCollected = false;
-        if (dispatch.Depth && dispatch.Clipmap && dispatch.Clipmap->bEnabled && m_Raster->IsReady())
+        // 点光源の VSM で灯があれば、太陽が無くても集める・描く（点光源の面にだけ描く）
+        const bool bPointCasters = m_PointShadowMethod == PointShadowMethod::Vsm && m_PointLights.LightCount != 0u;
+        if (dispatch.Depth && dispatch.Clipmap && (dispatch.Clipmap->bEnabled || bPointCasters) && m_Raster->IsReady())
         {
             CollectCasters(context);
             PlanInvalidation(context);
@@ -1092,7 +1122,8 @@ namespace NorvesLib::Core::Rendering
         {
             ReportCasters();
             // MegaGeometry の投影物のカリング（展開の前。出力は VsmMega_List。主の経路のバッファには書かない）
-            m_bMegaCullRecorded = RecordMegaCull(context, frameSerial);
+            // （カリングは太陽の段が対象。点光源だけのフレームでは記録しない）
+            m_bMegaCullRecorded = dispatch.Clipmap->bEnabled && RecordMegaCull(context, frameSerial);
             // ホストが書いた塊がある、または MegaGeometry のクラスタの記録を作ったフレームは、展開・描画を 1 回の流れで記録する
             if (!m_Casters->Chunks.empty() || m_bMegaCullRecorded)
             {

@@ -244,12 +244,23 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
-        // クリップマップが使える入力か。使えるなら params へ値を書く
-        bool FillParams(const VirtualShadowMapClipmap* clipmap, uint32_t sliceCount, GPURasterParams& params)
+        // クリップマップが使える入力か。使えるなら params へ値を書く。
+        // 使えなくても bAllowNoSun（外から渡したスライスの表で、太陽の段を使わない）なら、基底・深度の範囲を既定にして true
+        // （点光源の面の透視のスライスはこの値を読まず、スライスの行列で投影する）
+        bool FillParams(const VirtualShadowMapClipmap* clipmap, uint32_t sliceCount, bool bAllowNoSun, GPURasterParams& params)
         {
             if (!IsUsableClipmap(clipmap))
             {
-                return false;
+                if (!bAllowNoSun)
+                {
+                    return false;
+                }
+                params.lightRight[0] = 1.0f;
+                params.lightUp[1] = 1.0f;
+                params.lightDirection[2] = 1.0f;
+                params.depth[1] = 0.5f;
+                params.counts[1] = sliceCount;
+                return true;
             }
             params.lightRight[0] = clipmap->LightRight.x;
             params.lightRight[1] = clipmap->LightRight.y;
@@ -460,7 +471,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         GPURasterParams params = {};
-        if (!FillParams(dispatch.Clipmap, sliceCount, params))
+        if (!FillParams(dispatch.Clipmap, sliceCount, dispatch.Slices != nullptr, params))
         {
             return false;
         }

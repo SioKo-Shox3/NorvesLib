@@ -11,6 +11,9 @@
 // 連続した範囲を取り、同じ走査でインスタンス（塊の番号・段・絶対のページ・物理ページ）を書き（2 回目）、
 // 塊ごとの間接描画の引数（頂点数 = 三角形の数 × 3、instanceCount = ページの数、firstInstance = 範囲の先頭）を作る。
 // ページの表はここで引き、描画は物理ページへ直接書く。
+// 正射影のスライス（太陽の段）の覆うページは、境界のライト空間の矩形から決める。透視のスライス（点光源の面。投影の種類が透視）は、
+// 塊の境界球（AABB の中心と半径）が光源の Range の内側で面の錐台と交わるときだけ、球を面へ透視で写した矩形（球が近い平面 z ≤ near を
+// またぐときは面全体）が覆うページを数える。光源から見て全部が近い平面より手前にある球・Range の外・錐台の外の球は、何も覆わない。
 // スライス（段）は、塊の記録の levelMask（CPU が境界から決めたスライスの集合）に入るものだけを処理する。levelMask は 32 スライスずつの組の印で、
 // 記録の reserved が組の番号 g（スライス / 32）。ビット b が スライス g × 32 + b。複数の組にまたがる投影物は、組ごとの塊に分かれている。
 // インスタンスの y は スライス（下位 8 ビット）| 物理ページ << 8。
@@ -89,10 +92,71 @@ shared uint sharedBase;
 shared uint sharedOk;
 shared uint sharedRetry;
 
-// スライス level の、塊が覆うページの範囲（絶対のページの番号。範囲の外は切り捨てる）。覆わなければ幅・高さが 0
-void PageRange(uint level, vec2 lightMin, vec2 lightMax, out ivec2 pageMin, out uvec2 size)
+// 透視のスライス（点光源の面）の、境界球が覆うページの範囲。覆わなければ幅・高さが 0。
+// CPU の SliceMasksForBounds（VirtualShadowMapCasters.h）の判定と同じ手順（CPU は倍精度で、わずかに広く取る）
+void PerspectivePageRange(VsmSlice slice, vec3 center, float radius, out ivec2 pageMin, out uvec2 size)
+{
+    pageMin = ivec2(0);
+    size = uvec2(0);
+    const float range = slice.info.z;
+    const float nearPlane = slice.info.w;
+    const int pages = slice.origin.w;
+    if (!(range > nearPlane) || !(nearPlane >= 0.0) || pages <= 0 || !(radius >= 0.0))
+    {
+        return;
+    }
+    // 球の中心の面の座標（x, y = 面の接線方向、z = 面の軸の向きの距離）
+    const vec3 c = vec3(dot(center, slice.axisX.xyz) + slice.axisX.w,
+                        dot(center, slice.axisY.xyz) + slice.axisY.w,
+                        dot(center, slice.axisZ.xyz) + slice.axisZ.w);
+    // Range の外
+    const float reach = range + radius;
+    if (!(dot(c, c) <= reach * reach))
+    {
+        return;
+    }
+    // 近い平面より全部手前（光源の後ろ側）・遠い平面の外
+    if (c.z + radius < nearPlane || c.z - radius > range)
+    {
+        return;
+    }
+    // 面の錐台の 4 つの側面（|x| ≤ z, |y| ≤ z。法線 (±1, 0, -1) / √2 など）の外
+    const float side = radius * 1.4142136;
+    if (c.x - c.z > side || -c.x - c.z > side || c.y - c.z > side || -c.y - c.z > side)
+    {
+        return;
+    }
+    // 近い平面をまたぐ球は、透視で写せないので面全体
+    if (c.z - radius <= nearPlane)
+    {
+        size = uvec2(uint(pages));
+        return;
+    }
+    // 球を面の NDC へ写した矩形。原点から球へ引いた接線 x = t z の傾き t が範囲の端
+    // （t² (cz² - r²) - 2 t cx cz + (cx² - r²) = 0 の 2 根。cz > r + near > 0 なので分母は正）
+    const float r2 = radius * radius;
+    const vec2 denominator = vec2(c.z * c.z - r2);
+    const vec2 centerNdc = c.xy * c.z;
+    const vec2 spread = radius * sqrt(max(c.xy * c.xy + vec2(c.z * c.z - r2), vec2(0.0)));
+    const vec2 ndcLow = (centerNdc - spread) / denominator;
+    const vec2 ndcHigh = (centerNdc + spread) / denominator;
+    const float margin = 1.0e-4;
+    const ivec2 low = max(ivec2(floor((ndcLow - vec2(margin)) * (0.5 * float(pages)) + vec2(0.5 * float(pages)))), ivec2(0));
+    const ivec2 high = min(ivec2(floor((ndcHigh + vec2(margin)) * (0.5 * float(pages)) + vec2(0.5 * float(pages)))), ivec2(pages - 1));
+    pageMin = low;
+    size = uvec2(max(high - low + ivec2(1), ivec2(0)));
+}
+
+// スライス level の、塊が覆うページの範囲（絶対のページの番号。範囲の外は切り捨てる）。覆わなければ幅・高さが 0。
+// 正射影のスライスは境界のライト空間の矩形（lightMin・lightMax）、透視のスライスは境界球（center・radius）から決める
+void PageRange(uint level, vec2 lightMin, vec2 lightMax, vec3 center, float radius, out ivec2 pageMin, out uvec2 size)
 {
     const VsmSlice slice = vsmSlices[level];
+    if (slice.extra.z == int(VSM_SLICE_PROJECTION_PERSPECTIVE))
+    {
+        PerspectivePageRange(slice, center, radius, pageMin, size);
+        return;
+    }
     const float pageMeters = slice.info.x;
     const ivec2 origin = slice.origin.xy;
     const ivec2 count = ivec2(slice.origin.w);
@@ -120,7 +184,7 @@ bool IsDrawable(uint entry)
 }
 
 // 溢れて描けなかった塊の範囲の、割り当て済みで dirty のページに再描画の印を付ける（1 回目と同じ走査）
-void MarkRetry(uint levelMask, uint levelBase, vec2 lightMin, vec2 lightMax, uint thread)
+void MarkRetry(uint levelMask, uint levelBase, vec2 lightMin, vec2 lightMax, vec3 center, float radius, uint thread)
 {
     for (uint remaining = levelMask; remaining != 0u; remaining &= remaining - 1u)
     {
@@ -131,7 +195,7 @@ void MarkRetry(uint levelMask, uint levelBase, vec2 lightMin, vec2 lightMax, uin
         }
         ivec2 pageMin;
         uvec2 size;
-        PageRange(level, lightMin, lightMax, pageMin, size);
+        PageRange(level, lightMin, lightMax, center, radius, pageMin, size);
         const uint total = size.x * size.y;
         for (uint index = thread; index < total; index += 64u)
         {
@@ -186,6 +250,8 @@ void main()
     const vec2 lightExtent = vec2(dot(extent, abs(params.lightRight.xyz)), dot(extent, abs(params.lightUp.xyz)));
     const vec2 lightMin = lightCenter - lightExtent;
     const vec2 lightMax = lightCenter + lightExtent;
+    // 透視のスライス（点光源の面）が使う境界球の半径（中心は center）
+    const float boundsRadius = length(extent);
     // 組 levelGroup の先頭のスライスの番号（組の番号が大きすぎるときは、どのスライスにも当たらない）
     const uint levelBase = levelGroup * 32u;
 
@@ -206,7 +272,7 @@ void main()
         }
         ivec2 pageMin;
         uvec2 size;
-        PageRange(level, lightMin, lightMax, pageMin, size);
+        PageRange(level, lightMin, lightMax, center, boundsRadius, pageMin, size);
         const uint total = size.x * size.y;
         for (uint index = thread; index < total; index += 64u)
         {
@@ -257,7 +323,7 @@ void main()
     {
         if (sharedRetry != 0u)
         {
-            MarkRetry(levelMask, levelBase, lightMin, lightMax, thread);
+            MarkRetry(levelMask, levelBase, lightMin, lightMax, center, boundsRadius, thread);
         }
         return;
     }
@@ -272,7 +338,7 @@ void main()
         }
         ivec2 pageMin;
         uvec2 size;
-        PageRange(level, lightMin, lightMax, pageMin, size);
+        PageRange(level, lightMin, lightMax, center, boundsRadius, pageMin, size);
         const uint total = size.x * size.y;
         for (uint index = thread; index < total; index += 64u)
         {

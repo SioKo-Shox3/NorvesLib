@@ -13,6 +13,11 @@
 // 128 texel = NDC の [-1, 1] とする。ページの外はビューポートの外になり、ラスタライザが捨てる。
 // Vulkan のフレームバッファは y が下向きなので、局所の y をそのまま NDC y = 局所 / 64 - 1 とすると、フレームバッファの行が局所の y と一致する。
 // 深度は [0, 1]（0 が光源に近い）で、w = 1 なので画面空間で線形に補間される（正射影）。
+//
+// 点光源の面のスライス（投影の種類が透視）は、ワールドの位置を面の座標（x, y = 面の接線方向、z = 面の軸の向きの距離）へ写し、
+// 面の NDC（x / z, y / z）をページの局所の NDC へ移す。クリップ座標の w は面の軸の距離 z のままにする（xy は NDC × z を線形の式で書く）ので、
+// ラスタライザの透視補間が正しい。z ≤ near の部分は近い平面のクリップで落ち、光源の後ろの頂点を持つ三角形も壊れない。
+// 深度は面の軸の向きの線形の距離 ÷ Range（varying として透視補間される。z はワールドの位置について線形なので補間の誤差が無い）。
 // ========================================
 
 #include "Common/VisibilityBuffer.glsl"
@@ -93,6 +98,28 @@ void main()
     const VsmSlice slice = vsmSlices[level];
     const float pageMeters = slice.info.x;
     const float texelMeters = slice.info.y;
+
+    if (uint(slice.extra.z) == VSM_SLICE_PROJECTION_PERSPECTIVE)
+    {
+        // 点光源の面。info.z = Range（m）、info.w = 近い平面の距離（m）。pageMeters・texelMeters は面の NDC の幅（ページ・texel）
+        const float range = slice.info.z;
+        const float nearPlane = slice.info.w;
+        if (!(range > nearPlane) || !(nearPlane >= 0.0))
+        {
+            return;
+        }
+        const vec3 face = vec3(dot(world, slice.axisX.xyz) + slice.axisX.w,
+                               dot(world, slice.axisY.xyz) + slice.axisY.w,
+                               dot(world, slice.axisZ.xyz) + slice.axisZ.w);
+        // ページの局所の NDC = ((面の NDC + 1) - ページ × ページの NDC の幅) / texel の NDC の幅 / 64 - 1。これに w = face.z を掛けた線形の式
+        const vec2 localClip = (face.xy + vec2(face.z) * (1.0 - page * pageMeters)) / (texelMeters * (0.5 * float(VSM_PAGE_RESOLUTION))) - vec2(face.z);
+        // 近い平面 face.z = near で 0、遠い平面 face.z = Range で w と等しくなる線形の深度のクリップ（透視の標準の形）
+        const float clipZ = (face.z - nearPlane) * (range / (range - nearPlane));
+        gl_Position = vec4(localClip, clipZ, face.z);
+        outPhysicalPage = physical;
+        outDepth = face.z / range;
+        return;
+    }
 
     const vec2 lightXY = vec2(dot(world, slice.axisX.xyz), dot(world, slice.axisY.xyz));
     const vec2 localTexel = (lightXY - page * pageMeters) / texelMeters;

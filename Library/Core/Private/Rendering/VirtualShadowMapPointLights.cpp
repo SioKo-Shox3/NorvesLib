@@ -140,6 +140,8 @@ namespace NorvesLib::Core::Rendering
                     const uint32_t pagesPerAxis = VirtualShadowMapPointPagesPerAxis(lights.Settings, mip);
                     slice.info[0] = 2.0f / static_cast<float>(pagesPerAxis);
                     slice.info[1] = 2.0f / static_cast<float>(VirtualShadowMapPointMipResolution(lights.Settings, mip));
+                    slice.info[2] = lights.Range[light];
+                    slice.info[3] = PointShadowNearPlane;
                     slice.origin[2] = static_cast<int32_t>(index * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL);
                     slice.origin[3] = static_cast<int32_t>(pagesPerAxis);
                     slice.extra[2] = VirtualShadowMapSliceProjectionPerspective;

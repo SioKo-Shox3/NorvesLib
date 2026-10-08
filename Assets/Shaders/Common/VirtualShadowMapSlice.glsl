@@ -22,7 +22,7 @@ struct VsmSlice
     vec4 axisX;
     vec4 axisY;
     vec4 axisZ;
-    // x: ページの一辺（m）、y: texel の一辺（m）、z, w: 予約（0）
+    // x: ページの一辺（m）、y: texel の一辺（m）。透視（点光源の面）は ページ・texel の面の NDC の幅で、z: Range（m）、w: 近い平面の距離（m）。正射影の z, w は予約（0）
     vec4 info;
     // x, y: 範囲の最小の絶対のページの番号、z: ページの表の先頭（要素の番号）、w: ページの表の一辺（ページの数。2 の冪）
     ivec4 origin;

@@ -204,10 +204,81 @@ namespace NorvesLib::Core::Rendering
         };
 
         /**
+         * @brief 境界の球（AABB の外接球）が、透視のスライス（点光源の面）に写るか。展開（vsm_expand.comp の PerspectivePageRange）が
+         *        ページを数える範囲と同じ手順を倍精度で行い、浮動小数の丸めで展開より狭くならないよう球をわずかに広げる
+         *
+         * 球の中心を面の座標（x, y = 面の接線方向、z = 面の軸の向きの距離）へ写し、光源の Range の内側・近い平面と遠い平面の間・
+         * 面の錐台の 4 つの側面の内側で交わるときだけ true。近い平面（z ≤ near）をまたぐ球は面全体に写るので true。
+         * 面の NDC の矩形が [-1, 1]² と重ならないときは false。Range・近い平面が使えない値（info[2] が info[3] 以下）のスライスは false。
+         */
+        inline bool PerspectiveSliceTouchesBounds(const GPUVsmSlice& slice, const CasterBounds& bounds)
+        {
+            const double range = static_cast<double>(slice.info[2]);
+            const double nearPlane = static_cast<double>(slice.info[3]);
+            if (!(range > nearPlane) || !(nearPlane >= 0.0) || slice.origin[3] <= 0)
+            {
+                return false;
+            }
+            double center[3] = {};
+            double extentSquared = 0.0;
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                if (!std::isfinite(bounds.Min[axis]) || !std::isfinite(bounds.Max[axis]) || bounds.Min[axis] > bounds.Max[axis])
+                {
+                    return false;
+                }
+                center[axis] = 0.5 * (static_cast<double>(bounds.Min[axis]) + static_cast<double>(bounds.Max[axis]));
+                const double extent = 0.5 * (static_cast<double>(bounds.Max[axis]) - static_cast<double>(bounds.Min[axis]));
+                extentSquared += extent * extent;
+            }
+            const double radius = std::sqrt(extentSquared) * 1.0001 + 1.0e-3;
+            const float* const rows[3] = {slice.axisX, slice.axisY, slice.axisZ};
+            double c[3] = {};
+            for (uint32_t row = 0; row < 3u; ++row)
+            {
+                c[row] = static_cast<double>(rows[row][0]) * center[0] + static_cast<double>(rows[row][1]) * center[1] +
+                         static_cast<double>(rows[row][2]) * center[2] + static_cast<double>(rows[row][3]);
+            }
+            const double reach = range + radius;
+            if (!(c[0] * c[0] + c[1] * c[1] + c[2] * c[2] <= reach * reach))
+            {
+                return false;
+            }
+            if (c[2] + radius < nearPlane || c[2] - radius > range)
+            {
+                return false;
+            }
+            const double side = radius * 1.4142136;
+            if (c[0] - c[2] > side || -c[0] - c[2] > side || c[1] - c[2] > side || -c[1] - c[2] > side)
+            {
+                return false;
+            }
+            if (c[2] - radius <= nearPlane)
+            {
+                return true;
+            }
+            // 球を面の NDC へ写した矩形が、面（[-1, 1]²）と重なるか
+            const double r2 = radius * radius;
+            const double denominator = c[2] * c[2] - r2;
+            for (uint32_t axis = 0; axis < 2u; ++axis)
+            {
+                const double spread = radius * std::sqrt(std::max(c[axis] * c[axis] + denominator, 0.0));
+                const double low = (c[axis] * c[2] - spread) / denominator;
+                const double high = (c[axis] * c[2] + spread) / denominator;
+                if (high < -1.0 || low > 1.0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
          * @brief 境界が範囲に入るスライスの、組ごとの印。LevelMaskForBounds と同じ判定を、スライスの表の正射影のスライス（投影の種類が正射影で
          *        ページの一辺が正のもの）について行う。ライト空間の基底はスライスごとの axisX・axisY、範囲は [原点, 原点 + 一辺)
          *
-         * 透視のスライスは判定の基底が違うので印を付けない（点光源の面は後の項目で扱う）。境界が有限でなければ空。
+         * 透視のスライス（点光源の面）は、境界の外接球が光源の Range の内側で面の錐台と交わるとき（PerspectiveSliceTouchesBounds）に印を付ける。
+         * 境界が有限でなければ、正射影のスライスの印は空（透視のスライスは境界を見て同じく空）。
          */
         inline SliceMasks SliceMasksForBounds(const GPUVsmSlice* slices, uint32_t sliceCount, const CasterBounds& bounds)
         {
@@ -223,6 +294,14 @@ namespace NorvesLib::Core::Rendering
             for (uint32_t index = 0; slices != nullptr && index < sliceCount; ++index)
             {
                 const GPUVsmSlice& slice = slices[index];
+                if (slice.extra[2] == VirtualShadowMapSliceProjectionPerspective)
+                {
+                    if (slice.info[0] > 0.0f && PerspectiveSliceTouchesBounds(slice, bounds))
+                    {
+                        result.Masks[index / SLICES_PER_GROUP] |= 1u << (index % SLICES_PER_GROUP);
+                    }
+                    continue;
+                }
                 if (slice.extra[2] != VirtualShadowMapSliceProjectionOrtho || !(slice.info[0] > 0.0f) || slice.origin[3] <= 0)
                 {
                     continue;
