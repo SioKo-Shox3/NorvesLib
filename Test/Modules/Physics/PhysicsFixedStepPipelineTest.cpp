@@ -9,11 +9,12 @@
 #include "Module/ModuleRegistry.h"
 #include "Object/Resource.h"
 #include "Object/World.h"
+#include "Physics/CharacterBodyComponent.h"
 #include "Physics/ColliderComponent.h"
 #include "Physics/IPhysicsModule.h"
 #include "Physics/PhysicsModule.h"
-#include "PhysicsModuleTestAccess.h"
 #include "Physics/RigidBodyComponent.h"
+#include "PhysicsModuleTestAccess.h"
 #include "Rendering/FramePacket.h"
 #include "Rendering/SceneView.h"
 #include "Scene/SceneQuery.h"
@@ -162,7 +163,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 8;
+    constexpr uint32_t kCaseCount = 11;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -694,6 +695,170 @@ namespace
         return !std::is_standard_layout_v<FramePacketType> && !std::is_standard_layout_v<SceneProxyType>;
     }
 
+    struct CharacterFixture
+    {
+        Entity* Owner = nullptr;
+        CharacterBodyComponent* Character = nullptr;
+        ColliderComponent* Collider = nullptr;
+        RigidBodyComponent* Body = nullptr;
+    };
+    bool CreateCharacter(CharacterFixture& value, const Math::Vector3& position)
+    {
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        value.Owner = world.SpawnEntity<Entity>();
+        if (!value.Owner)
+            return false;
+        value.Owner->SetPosition(position);
+        // 依存先より先に作っても、最初の固定stepで束縛できる。
+        value.Character = world.CreateComponent<CharacterBodyComponent>(value.Owner);
+        value.Collider = world.CreateComponent<ColliderComponent>(value.Owner);
+        value.Body = world.CreateComponent<RigidBodyComponent>(value.Owner);
+        return value.Character && value.Collider && value.Body &&
+               value.Collider->SetCapsule(.3f, .1f) == EPhysicsResult::Success &&
+               value.Collider->SetLocalPose(Math::Transform(Math::Vector3(0, .4f, 0))) == EPhysicsResult::Success &&
+               value.Body->SetBodyType(EPhysicsBodyType::Kinematic) == EPhysicsResult::Success;
+    }
+    Entity* CreateCharacterFloor(float extent = 100)
+    {
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        auto* floor = world.SpawnEntity<Entity>();
+        if (!floor)
+            return nullptr;
+        floor->SetPosition(Math::Vector3(0, -.5f, 0));
+        auto* collider = world.CreateComponent<ColliderComponent>(floor);
+        if (!collider || collider->SetBox(Math::Vector3(extent, .5f, extent)) != EPhysicsResult::Success)
+            return nullptr;
+        return floor;
+    }
+    bool StepCharacter(ApplicationProcessor& processor)
+    {
+        return ApplicationFixedStepTestAccess::Advance(processor, 16'666'667, true).ExecutedSteps == 1;
+    }
+    class CharacterPlatformTick final : public Component::Component
+    {
+      public:
+        Math::Transform Target;
+        void FixedTick(float) override
+        {
+            GetOwner()->SetWorldTransform(Target);
+        }
+    };
+    class CharacterTeleportTick final : public Component::Component
+    {
+      public:
+        CharacterBodyComponent* Target = nullptr;
+        bool bDone = false;
+        void FixedTick(float) override
+        {
+            if (!bDone && Target)
+            {
+                bDone = Target->Teleport(Math::Vector3(20, 0, 0)) == EPhysicsResult::Success;
+            }
+        }
+    };
+    bool TestCharacterQueuedPlatform(ApplicationProcessor& processor)
+    {
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacter(value, Math::Vector3(1, 0, 0)))
+            return false;
+        // 足場のFixedTickはcharacterより後でも、そのstepの運搬へ反映する。
+        Entity* floor = CreateCharacterFloor(4);
+        auto* body = floor ? world.CreateComponent<RigidBodyComponent>(floor) : nullptr;
+        auto* mover = floor ? world.CreateComponent<CharacterPlatformTick>(floor) : nullptr;
+        if (!body || !mover || body->SetBodyType(EPhysicsBodyType::Kinematic) != EPhysicsResult::Success)
+            return false;
+        mover->Target = Math::Transform(Math::Vector3(0, -.5f, 0));
+        if (!StepCharacter(processor) || !value.Character->GetState().bGrounded)
+            return false;
+        for (unsigned frame = 1; frame <= 120; ++frame)
+        {
+            const float angle = frame * .01f, shift = std::sin(frame * .02f);
+            mover->Target =
+                Math::Transform(Math::Vector3(shift, -.5f, 0), Math::Quaternion(Math::Vector3::UnitY, angle));
+            const auto previous = value.Owner->GetPosition();
+            if (!StepCharacter(processor))
+                return false;
+            const auto actual = value.Owner->GetPosition();
+            const auto velocity = (actual - previous) / kFixedDeltaTime;
+            const auto& state = value.Character->GetState();
+            if (!state.bReady || !state.bGrounded || std::fabs(actual.x - (shift + std::cos(angle))) > .02f ||
+                std::fabs(actual.z + std::sin(angle)) > .02f ||
+                (value.Body->GetLinearVelocity() - velocity).Length() > .005f)
+                return false;
+        }
+        return true;
+    }
+    bool TestCharacterTeleportAndLifecycle(ApplicationProcessor& processor)
+    {
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+            return false;
+        unsigned landed = 0;
+        bool published = true;
+        value.Character->OnLanded.Add([&](const CharacterBodyState&) {
+            ++landed;
+            PhysicsShapeProxy proxy;
+            published = published &&
+                        PhysicsModuleTestAccess::CopyPublishedProxy(*GFixture->Physics,
+                                                                    value.Collider->GetColliderHandle(), proxy) &&
+                        std::fabs(proxy.Capsule.PointA.x - value.Owner->GetPosition().x) < 1e-4f;
+        });
+        if (!StepCharacter(processor) || landed != 1 || !published)
+            return false;
+        auto* teleporter = world.CreateComponent<CharacterTeleportTick>(value.Owner);
+        if (!teleporter)
+            return false;
+        teleporter->Target = value.Character;
+        if (!StepCharacter(processor) || !teleporter->bDone || std::fabs(value.Owner->GetPosition().x - 20) > 1e-4f ||
+            value.Body->GetLinearVelocity().Length() > .001f)
+            return false;
+        const auto oldBody = value.Body->GetBodyHandle();
+        value.Owner->RemoveComponent(value.Body);
+        value.Body = nullptr;
+        if (value.Character->GetState().bReady || value.Character->GetState().bGrounded ||
+            value.Character->Jump(5) != EPhysicsResult::InvalidState)
+            return false;
+        if (value.Character->Teleport(Math::Vector3(3, 0, 0)) != EPhysicsResult::Success)
+            return false;
+        value.Body = world.CreateComponent<RigidBodyComponent>(value.Owner);
+        if (!value.Body || value.Body->SetBodyType(EPhysicsBodyType::Kinematic) != EPhysicsResult::Success ||
+            value.Body->GetBodyHandle() == oldBody || !StepCharacter(processor) ||
+            std::fabs(value.Owner->GetPosition().x - 3) > 1e-4f)
+            return false;
+        value.Collider->Disable();
+        if (value.Character->Teleport(Math::Vector3(6, 0, 0)) != EPhysicsResult::Success || !StepCharacter(processor) ||
+            std::fabs(value.Owner->GetPosition().x - 3) > 1e-4f)
+            return false;
+        value.Collider->Enable();
+        if (!StepCharacter(processor) || std::fabs(value.Owner->GetPosition().x - 6) > 1e-4f)
+            return false;
+        value.Collider->Disable();
+        if (value.Character->MoveDelta(Math::Vector3(1, 0, 0)) != EPhysicsResult::Success || !StepCharacter(processor))
+            return false;
+        value.Collider->Enable();
+        if (!StepCharacter(processor) || std::fabs(value.Owner->GetPosition().x - 7) > 1e-4f ||
+            std::fabs(value.Body->GetLinearVelocity().x - 60) > .01f)
+            return false;
+        return published && value.Character->GetState().bReady;
+    }
+    bool TestCharacterLandedRemoval(ApplicationProcessor& processor)
+    {
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero))
+            return false;
+        unsigned landed = 0;
+        value.Character->OnLanded.Add([&](const CharacterBodyState&) {
+            ++landed;
+            value.Owner->RemoveComponent(value.Character);
+            value.Character = nullptr;
+        });
+        if (!StepCharacter(processor) || landed != 1 || value.Owner->GetComponent<CharacterBodyComponent>())
+            return false;
+        return StepCharacter(processor) && landed == 1;
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -714,6 +879,12 @@ namespace
             return TestFramePacketBoundaryHasNoLivePhysicsPointers();
         case 7:
             return TestSceneQueryRebuildUsesFinalFixedStepTransform(processor);
+        case 8:
+            return TestCharacterQueuedPlatform(processor);
+        case 9:
+            return TestCharacterTeleportAndLifecycle(processor);
+        case 10:
+            return TestCharacterLandedRemoval(processor);
         default:
             return false;
         }

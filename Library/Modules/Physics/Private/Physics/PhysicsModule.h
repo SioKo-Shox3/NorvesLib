@@ -1,15 +1,17 @@
 ﻿#pragma once
 
+#include "Container/Containers.h"
+#include "Physics/CharacterMover.h"
 #include "Physics/IPhysicsModule.h"
 #include "Physics/PhysicsBroadphase.h"
 #include "Physics/PhysicsTypes.h"
-#include "Container/Containers.h"
 #include "Scene/SceneQuery.h"
 #include "Thread/Thread.h"
 
 namespace NorvesLib::Modules::Physics
 {
     class ColliderComponent;
+    class CharacterBodyComponent;
     class RigidBodyComponent;
     class PhysicsModuleTestAccess;
 
@@ -85,6 +87,10 @@ namespace NorvesLib::Modules::Physics
         };
 
         friend class ColliderComponent;
+        friend class CharacterBodyComponent;
+        EPhysicsResult ValidateCharacterAccess(const CharacterBodyComponent& character) const;
+        void ProcessCharacterBodies(float dt);
+        void DispatchCharacterEvents();
         friend class RigidBodyComponent;
         friend class PhysicsModuleTestAccess;
 
@@ -168,6 +174,8 @@ namespace NorvesLib::Modules::Physics
         uint64_t m_PublishedSnapshotSequence = 0;
         Core::Container::VariableArray<ColliderSlot> m_ColliderSlots;
         Core::Container::VariableArray<BodySlot> m_BodySlots;
+        Core::Container::VariableArray<PhysicsShapeProxy> m_CharacterQueryProxies;
+        CharacterMoveScratch m_CharacterScratch;
         Core::Container::VariableArray<uint32_t> m_FreeColliderSlotIndices;
         Core::Container::VariableArray<uint32_t> m_FreeBodySlotIndices;
         EPhysicsDiagnostic m_LastDiagnostic = EPhysicsDiagnostic::None;

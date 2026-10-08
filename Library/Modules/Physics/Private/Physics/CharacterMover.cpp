@@ -24,12 +24,7 @@ namespace NorvesLib::Modules::Physics
         {
             return Finite(r.Shape.PointA) && Finite(r.Shape.PointB) && Finite(r.Displacement) &&
                    Finite(r.PlatformDisplacement) && std::isfinite(r.Shape.Radius) && r.Shape.Radius > 0 &&
-                   r.Filter.IsValid() && std::isfinite(s.SkinWidth) && s.SkinWidth > 0 && std::isfinite(s.StepHeight) &&
-                   s.StepHeight >= 0 && std::isfinite(s.GroundSnapDistance) && s.GroundSnapDistance >= 0 &&
-                   std::isfinite(s.MaximumSlopeDegrees) && s.MaximumSlopeDegrees >= 0 && s.MaximumSlopeDegrees < 90 &&
-                   std::isfinite(s.MaximumDepenetrationDistance) && s.MaximumDepenetrationDistance >= 0 &&
-                   s.SlideIterations > 0 && s.SlideIterations <= 32 && s.DepenetrationIterations > 0 &&
-                   s.DepenetrationIterations <= 32;
+                   r.Filter.IsValid() && CharacterMover::IsValidSettings(s);
         }
         struct Solver
         {
@@ -39,6 +34,7 @@ namespace NorvesLib::Modules::Physics
             CharacterMoveScratch& Scratch;
             EPhysicsSceneQueryResult Error = EPhysicsSceneQueryResult::Success;
             float WalkableCos;
+            bool bPlatformTransfer = false;
 
             bool Query(const Math::Capsule& shape, const Vector3& movement, bool overlap, size_t& count)
             {
@@ -74,6 +70,9 @@ namespace NorvesLib::Modules::Physics
                 for (size_t i = 0; i < count; ++i)
                 {
                     const auto& candidate = Scratch.Hits[i];
+                    if (bPlatformTransfer && Request.PlatformCollider.IsValid() &&
+                        candidate.Collider == Request.PlatformCollider)
+                        continue;
                     if (Vector3::Dot(direction, candidate.Normal) >= -MotionEpsilon)
                         continue;
                     if (!blocked || candidate.Distance < hit.Distance ||
@@ -167,6 +166,7 @@ namespace NorvesLib::Modules::Physics
             {
                 result.bGrounded = true;
                 result.GroundNormal = hit.Normal;
+                result.GroundPoint = hit.Point;
                 result.GroundCollider = hit.Collider;
                 result.GroundBody = hit.Body;
             }
@@ -236,6 +236,15 @@ namespace NorvesLib::Modules::Physics
             }
         };
     } // namespace
+    bool CharacterMover::IsValidSettings(const CharacterMoveSettings& s)
+    {
+        return std::isfinite(s.SkinWidth) && s.SkinWidth > 0 && std::isfinite(s.StepHeight) && s.StepHeight >= 0 &&
+               std::isfinite(s.GroundSnapDistance) && s.GroundSnapDistance >= 0 &&
+               std::isfinite(s.MaximumSlopeDegrees) && s.MaximumSlopeDegrees >= 0 && s.MaximumSlopeDegrees < 90 &&
+               std::isfinite(s.MaximumDepenetrationDistance) && s.MaximumDepenetrationDistance >= 0 &&
+               s.SlideIterations > 0 && s.SlideIterations <= 32 && s.DepenetrationIterations > 0 &&
+               s.DepenetrationIterations <= 32;
+    }
     Core::Scene::EPhysicsSceneQueryResult CharacterMover::Move(Core::Container::Span<const PhysicsShapeProxy> proxies,
                                                                const CharacterMoveSettings& settings,
                                                                const CharacterMoveRequest& request,
@@ -252,8 +261,11 @@ namespace NorvesLib::Modules::Physics
                       std::cos(settings.MaximumSlopeDegrees * Math::Constants::PI / 180.f)};
         CharacterMoveResult result;
         result.Shape = request.Shape;
-        if (!solver.Slide(result.Shape, request.PlatformDisplacement, false) ||
-            !solver.Depenetrate(result.Shape, result.bStuck))
+        solver.bPlatformTransfer = true;
+        if (!solver.Slide(result.Shape, request.PlatformDisplacement, false))
+            return solver.Error;
+        solver.bPlatformTransfer = false;
+        if (!solver.Depenetrate(result.Shape, result.bStuck))
             return solver.Error;
         if (!result.bStuck)
         {
@@ -284,6 +296,7 @@ namespace NorvesLib::Modules::Physics
         if (!result.bGrounded)
         {
             result.GroundNormal = Vector3::UnitY;
+            result.GroundPoint = {};
             result.GroundCollider = {};
             result.GroundBody = {};
         }

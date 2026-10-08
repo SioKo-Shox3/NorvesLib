@@ -55,6 +55,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsDynamicsTest PhysicsDynamicsTest.cpp
     MEMBER PhysicsCharacterMoveTest PhysicsCharacterMoveTest.cpp
     MEMBER ColliderLocalPoseTest ColliderLocalPoseTest.cpp
+    MEMBER CharacterPlatformMotionTest CharacterPlatformMotionTest.cpp
     MEMBER PhysicsModuleLinkTest PhysicsModuleLinkTest.cpp
     MEMBER PhysicsBroadphaseQueryTest PhysicsBroadphaseQueryTest.cpp
     MEMBER PhysicsProxyQueryTest PhysicsProxyQueryTest.cpp
@@ -92,3 +93,4 @@ add_test(NAME PhysicsLegacyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsL
 
 add_test(NAME PhysicsCharacterMoveTest COMMAND PhysicsDynamicsTest --test=PhysicsCharacterMoveTest)
 add_test(NAME ColliderLocalPoseTest COMMAND PhysicsDynamicsTest --test=ColliderLocalPoseTest)
+add_test(NAME CharacterPlatformMotionTest COMMAND PhysicsDynamicsTest --test=CharacterPlatformMotionTest)

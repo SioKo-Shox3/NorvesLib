@@ -5,6 +5,7 @@
 #include "Math/VectorUtils.h"
 #include "Object/Entity.h"
 #include "Object/IUnknown.h"
+#include "Physics/CharacterBodyComponent.h"
 #include "Physics/ColliderComponent.h"
 #include "Physics/ColliderShapeTransform.h"
 #include "Physics/RigidBodyComponent.h"
@@ -87,6 +88,7 @@ namespace NorvesLib::Modules::Physics
         const Core::IClass* rigidBodyClass = RigidBodyComponent::StaticClass();
         classRegistry.RegisterClass(colliderClass);
         classRegistry.RegisterClass(rigidBodyClass);
+        classRegistry.RegisterClass(CharacterBodyComponent::StaticClass());
     }
 
     bool PhysicsModule::Initialize()
@@ -141,12 +143,14 @@ namespace NorvesLib::Modules::Physics
         m_bFixedTickInProgress = true;
         ReconcileActiveStates();
         IntegrateDynamics(fixedDeltaTime);
+        ProcessCharacterBodies(fixedDeltaTime);
         BuildBroadphase(m_WorkingBroadphase);
         ResolveContacts(fixedDeltaTime);
         BuildEventQueue();
         PublishSnapshot();
         m_bHasPublishedSnapshot = true;
         DispatchEvents();
+        DispatchCharacterEvents();
         m_bFixedTickInProgress = false;
     }
 
@@ -1232,6 +1236,14 @@ namespace NorvesLib::Modules::Physics
     {
         for (BodySlot& body : m_BodySlots)
         {
+            if (body.bOccupied && body.Owner)
+            {
+                if (auto* character = body.Owner->GetComponent<CharacterBodyComponent>())
+                {
+                    character->ResetMotion(false);
+                    character->m_bFixedRequest = false;
+                }
+            }
             body.PendingImpulse = Math::Vector3();
             body.PreStepPosition = Math::Vector3();
             body.bHadPreStepSnapshot = false;
@@ -1325,6 +1337,11 @@ namespace NorvesLib::Modules::Physics
     void PhysicsModule::ReleaseColliderSlot(uint32_t index)
     {
         ColliderSlot& slot = m_ColliderSlots[index];
+        if (slot.Owner)
+        {
+            if (auto* character = slot.Owner->GetComponent<CharacterBodyComponent>())
+                character->ResetMotion(true);
+        }
         slot.Component = nullptr;
         slot.Owner = nullptr;
         slot.bOccupied = false;
@@ -1341,6 +1358,11 @@ namespace NorvesLib::Modules::Physics
     void PhysicsModule::ReleaseBodySlot(uint32_t index)
     {
         BodySlot& slot = m_BodySlots[index];
+        if (slot.Owner)
+        {
+            if (auto* character = slot.Owner->GetComponent<CharacterBodyComponent>())
+                character->ResetMotion(true);
+        }
         slot.Component = nullptr;
         slot.Owner = nullptr;
         slot.bOccupied = false;
