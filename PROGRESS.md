@@ -2573,3 +2573,14 @@
 - 検証（`.harness/runs/20261008-100400/`）: `verify-VTG8-FIX-MEGA-OVERFLOW-RETRY-3.txt`（BUILD_EXIT=0）、`-6.txt`（`VirtualShadowMapVulkanTest`・`RenderGraphCompileTest` が 2/2 passed、CTEST_EXIT=0）、`-5.txt`（K2 の出力と `VUID_COUNT=0`・`RESULT=PASS`）。GPU の撮影は回していない（既定の描画は CSM で、VSM は `--shadow-method=vsm` のときだけ）。
 - Notes: (1) 範囲が大きい球は溢れた 1 スレッドが全ページを走査するが、溢れたときだけ通る経路なので許容した。(2) `RenderGraphCompileTest.cpp` は行末が混在しているため、バイトを保ったまま編集した（全体を正規化しない）。(3) 作業開始時点で `TASKS.md` に別項目の `done` → `blocked` の未コミットの差分があり、同じコミットに含めた。
 - Next: `TASKS.md` の未完の次の項目（`VTG8-FIX-MEGA-FALLBACK` ほか）。
+
+## 反復 6（2026-10-08）: VTG8-FIX-MEGA-FALLBACK（done）
+
+- 経緯: 実装本体は直前の「作業途中の保存」(a40864f2) に入っていた。この反復で内容を読み直し、ビルド・テスト・変異で確かめて閉じた。
+- 原因: MegaGeometry の影の経路を用意できないとき（`DrawIndexedIndirectCount` が無い、段ごとの cull のパイプラインを作れない、cull の資源を作れない）、MegaGeometry の影だけを省いた VSM を公開していた。照明が CSM へ戻らないので、CSM が描く MegaGeometry の太陽の影が消えた。
+- 直し方: `VirtualShadowMapPass::Initialize` で、この 3 つのどれかが欠けたら `Fallback(FallbackReason::MegaGeometry)` を呼ぶ（資源を手放し、VSM を公開せず、`VSM_FALLBACK reason=mega_geometry` を 1 回出す）。`FallbackReason::MegaGeometry`（名前 `mega_geometry`）を足した。cull を持たない VSM はなくなったので、`m_MegaCull` を条件にした分岐を外した。
+- テスト: `RenderGraphCompileTest` の「省略を合格にしていた」2 ケース（`DrawIndexedIndirectCount` なし・cull のパイプライン生成の失敗）を、CSM へ戻ることを確かめる形に直した。確かめる内容は、非アクティブ・理由 `MegaGeometry`・VSM の資源が公開されない・パスが何も宣言せず何も描かない・`VSM_FALLBACK reason=mega_geometry` が 1 回だけ・`VRAM_LEDGER` が出ない。確保失敗のケースに `VsmMega_List`・`VsmMega_DirtyBits`・`VsmMega_Chunks` を足した。
+- 変異: `SupportsMegaCasters()` の戻りを外す（`if (false && ...)`）と `RenderGraphCompileTest` が落ちる（`verify-VTG8-FIX-MEGA-FALLBACK-mut.txt`: `!pass.IsActive() && ... == MegaGeometry` の assert、CTEST_EXIT=8）。元へ戻した。
+- 検証（`.harness/runs/20261008-100400/`）: `verify-VTG8-FIX-MEGA-FALLBACK-3.txt`（BUILD_EXIT=0、`RenderGraphCompileTest` 1/1 passed、CTEST_EXIT=0）。GPU の撮影は回していない（既定の描画は CSM で、VSM は `--shadow-method=vsm` のときだけ）。
+- Notes: 変異を戻したあと、`Copy-Item` が更新時刻を保って MSBuild が再コンパイルしなかったため、更新時刻を進めて再ビルドした（-3 はその後の結果）。
+- Next: `TASKS.md` の未完の次の項目。
