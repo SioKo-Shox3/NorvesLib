@@ -105,3 +105,32 @@ run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.ex
 - 検証: ビルド（`verify-VTG9-VSM-POINT-CACHE-15.txt`、EXIT=0）。ctest（`-16.txt`）は VirtualShadowMapVulkanTest・RenderGraphCompileTest・VirtualShadowMapPointTest が通った。ケース T5 は、灯の入れ替え（位置は同じ）でスライスの無効 0・描き直し 0・22 ページが新しい番号へ移り、毎フレーム描き直した結果と全 texel で一致（`-14-vsm-verbose.txt`）。T5b は入れ替わって灯が動くと、動いた灯の 15 ページだけが描き直され、動かない灯の 7 ページは 0、texel の違い 0。T6 は並びを戻しても描き直し 0。`VirtualShadowMapPointTest` に入れ替え・先頭の灯の増減・同じ識別子の重複のときの出どころの検査と、`(1048576, 0, 0.5)`〜`(1048576.125, 0.125, 0.5)` の薄い箱の隅がすべて球の内側にある検査を足した。変異: ページの移し替えを外すと T5・T5b が落ち（`-mutation-remap.txt`）、球の半径を箱の対角線の半分に戻すと `VirtualShadowMapPointTest` が落ちた（`-mutation-sphere.txt`）→ 戻して通過。
 - Notes: 起動画面・Game の実行では確かめていない（既定は `--point-shadow-method=cube`）。灯がカメラに近い順に入れ替わり続けても、位置が同じなら描き直しは起きない。移し替えの費用は点光源のページの表（1 灯 36 スライス × 16384 欄 × 4 バイト ≒ 2.4 MB）の退避と書き戻しで、並びが変わったフレームだけ。
 - Next: `VTG9-VSM-POINT-GPU-TIME`。
+
+## 段9 VTG9-VSM-POINT-GPU-TIME（2026-10-08）
+
+- 結果: 測定は完了。止め条件（負荷モードの VSM のフレーム GPU がキューブより 2 ms 以上遅い）に当たったので、ここで止めて対策の項目 `VTG9-VSM-POINT-CULL-PERF` を TASKS.md に足した。RelWithDebInfo・RTX 4080・`-GpuTimingFrames 300`（240 フレームを集計）・夜。値は撮影の `metrics.json` の `gpu_timing[]`（`gpu_frame_ms_median`・`pass_median_ms`）と各 run の `*.Game.log` の最後の `VSM_*` 行。
+- GPU 時間（中央値 ms。Cube / Vsm）:
+
+| 視点 | フレーム GPU | LightingPass | ShadowMapPass | VirtualShadowMapPass | 内訳 Mark / Allocate / CullMega / Expand / Draw | 差（Vsm − Cube） |
+|---|---|---|---|---|---|---|
+| 既定 | 2.409 / 2.799 | 0.736 / 0.709 | 0.113 / 0.083 | 0.044 / 0.740 | 0.144 / 0.249 / 0.158 / 0.019 / 0.146 | +0.39 |
+| 近接 | 2.335 / 2.878 | 0.736 / 0.753 | 0.111 / 0.084 | 0.045 / 0.868 | 0.174 / 0.254 / 0.160 / 0.020 / 0.235 | +0.54 |
+| 低角度 | 2.421 / 2.859 | 0.698 / 0.648 | 0.122 / 0.088 | 0.046 / 0.832 | 0.139 / 0.274 / 0.163 / 0.021 / 0.206 | +0.44 |
+| 負荷 300 個（既定の視点） | 3.682 / 17.299 | 0.653 / 0.786 | 0.118 / 0.118 | 0.034 / 13.412 | 0.141 / 0.232 / 11.723 / 0.103 / 1.153 | **+13.62** |
+
+  キューブ側の `VirtualShadowMapPass`（0.03〜0.05 ms）は太陽の VSM の空の段で、夜は何も描かない。VSM 側の p95 は 4.5〜4.9 ms（負荷は 18.0 ms）で、負荷の VSM は 16.6 ms の予算を超えるフレームが続く（`gpu_over_budget` の注記では `VsmCullMega` が 10〜12 ms）。
+- ページ・統計（VSM の run の最後の行）:
+
+| 視点 | VSM_POINT | VSM_PAGES（点光源の分）requested / allocated | VSM_RASTER chunks / instances | VSM_MEGA_CULL instances / clusters（点光源の分は同値） | VSM_CACHE cached / rendered / invalidated / released（点光源の分は同値） |
+|---|---|---|---|---|---|
+| 既定 | 1 灯・36 スライス・面 4096・6 段 | 181 / 181 | 3290 / 13873 | 26 / 3217 | 25 / 154 / 156 / 3 |
+| 近接 | 同上 | 165 / 165 | 3177 / 20016 | 15 / 3107 | 0 / 165 / 165 / 0 |
+| 低角度 | 同上 | 296 / 296 | 3670 / 18487 | 28 / 3606 | 2 / 293 / 293 / 5 |
+| 負荷 300 個 | 同上 | 183 / 183 | 42612 / 113929 | 167 / 42536 | 25 / 155 / 158 / 3 |
+
+  夜は太陽が無いので、`VSM_PAGES` の requested・allocated はすべて点光源の分（太陽の分は 0）。キューブの run の `VSM_PAGES`・`VSM_CACHE` は全部 0（VSM を使わない）。
+- 溢れ: VSM の 4 run の全行（`VSM_PAGES` の `overflow`、`VSM_RASTER` の `overflow`、`VSM_MEGA_CULL` の `overflow`）で最大値が 0。`failures` は 8 つの `metrics.json` で空。
+- 画: VSM の 4 枚（既定・近接・低角度・負荷の既定。`.harness/runs/startup-capture/VTG9-VSM-POINT-GPU-TIME-vsm*/`）の PNG を開いた。電球の影は、並んだ小さな球の群れの長い影、大きな球の接地の影、岩（見本の球と岩）の影、近接の大きな球が石畳に落とす影が、欠け・ずれ・面の継ぎ目・ページの継ぎ目なく連続して見える（負荷の既定は岩が増えて電球のまわりの岩にも影が落ち、小屋は電球の光の範囲の外で暗いまま）。壊れて見える箇所は無いので、キューブの PNG との画素の差は取らなかった。
+- 重い区間: 負荷の `VsmCullMega` が 11.7 ms（`VirtualShadowMapPass` 13.4 ms のうち）。通常の場面の同じ区間は 0.16 ms で、選ばれたクラスタが 13 倍（3217 → 42536）に対して時間は約 74 倍なので、選ばれた数ではなく、クラスタごとの判定（点光源の 36 スライスぶんの `LevelOverlapsSphere`・`SphereHasDirtyPage`・LOD）の総量が支配していそう（未確認。シェーダーの構造から: 1 スレッド = 1 クラスタ × 1 スライスで、インスタンスの境界の判定を通ったワークグループだけがクラスタを調べる）。`VsmDraw` は 1.15 ms で問題ない。
+- Notes: `VTG9-VSM-POINT-CACHE` は評価者の 2 周で blocked（`blocked/VTG9-VSM-POINT-CACHE.md`。先頭の灯を消すと `released` が返却数を数えない統計の退行）のまま。この測定は統計の値に影響しない（灯は 1 つ）。測定は VTG9-VSM-POINT-CACHE の最新の実装（c713c80b）で行った。`-Deterministic` は使っていない。出力の日本語は端末の文字コードで化ける。
+- Next: `VTG9-VSM-POINT-CULL-PERF`（負荷の `VsmCullMega` を縮める）。直ったら `VTG9-VSM-POINT-GPU-TIME` を `todo` に戻して負荷の 2 run を測り直す。
