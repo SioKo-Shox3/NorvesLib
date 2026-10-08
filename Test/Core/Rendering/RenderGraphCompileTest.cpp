@@ -1,4 +1,5 @@
 ﻿#include "Rendering/RenderGraph/RenderGraph.h"
+#include "Rendering/DynamicUniformAllocator.h"
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/GBufferPass.h"
 #include "Rendering/HiZPyramidPass.h"
@@ -8726,6 +8727,90 @@ namespace
         assert(many.Dispatches == few.Dispatches);
     }
 
+    // 影の定数バッファのスロット（DynamicUniformAllocator）は、投影物が事前確保の数を超えても上限まで増えて足りる。
+    // 負荷モードの CSM は MegaGeometry の投影物 300 個 × 4 カスケード + 半透明・ボリュームの描画で、事前確保の 1024 を超える。
+    //  - 増やさない設定（既定）は従来どおり 1024 で頭打ちになり、1025 個目は無効な確保を返す。
+    //  - 上限を決めると、4 カスケード × (投影物 300 個 + 64 個) ぶんがすべて別のスロットで取れ、Reset のあとの同じ要求ではバッファを作り足さない。
+    //  - 上限に達すると確保は失敗する。増やす途中でバッファが作れなければ、作れた所までで頭打ちになる。
+    void TestDynamicUniformAllocatorGrowsToCoverShadowCasters()
+    {
+        constexpr uint32_t PreallocatedSlots = 256u * 4u;
+        constexpr uint32_t CascadeCount = 4u;
+        constexpr uint32_t MegaCasters = 300u;
+        constexpr uint32_t OtherDraws = 64u;
+        constexpr uint32_t Needed = CascadeCount * (MegaCasters + OtherDraws);
+        static_assert(Needed > PreallocatedSlots);
+
+        const RHI::DescriptorSetDesc setDesc;
+        {
+            FakeDevice device;
+            DynamicUniformAllocator allocator;
+            assert(allocator.Initialize(&device, 208u, PreallocatedSlots, setDesc));
+            for (uint32_t index = 0; index < PreallocatedSlots; ++index)
+            {
+                assert(allocator.Allocate().UniformBuffer);
+            }
+            assert(!allocator.Allocate().UniformBuffer);
+            assert(allocator.GetSlotCount() == PreallocatedSlots);
+            allocator.Shutdown();
+        }
+        {
+            FakeDevice device;
+            DynamicUniformAllocator allocator;
+            assert(allocator.Initialize(&device, 208u, PreallocatedSlots, setDesc));
+            allocator.SetGrowthLimit(4096u * CascadeCount);
+            allocator.Reset();
+            bool bUnique[Needed] = {};
+            for (uint32_t index = 0; index < Needed; ++index)
+            {
+                const DynamicUniformAllocator::Allocation allocation = allocator.Allocate();
+                assert(allocation.UniformBuffer && allocation.DescriptorSet);
+                assert(allocation.SlotIndex < allocator.GetSlotCount());
+                assert(!bUnique[allocation.SlotIndex]);
+                bUnique[allocation.SlotIndex] = true;
+            }
+            assert(allocator.GetSlotCount() >= Needed);
+            const size_t buffersAfterGrowth = device.CreatedBuffers.size();
+            assert(buffersAfterGrowth == allocator.GetSlotCount());
+            allocator.Reset();
+            for (uint32_t index = 0; index < Needed; ++index)
+            {
+                assert(allocator.Allocate().UniformBuffer);
+            }
+            assert(device.CreatedBuffers.size() == buffersAfterGrowth);
+            allocator.Shutdown();
+        }
+        {
+            FakeDevice device;
+            DynamicUniformAllocator allocator;
+            assert(allocator.Initialize(&device, 208u, 8u, setDesc));
+            allocator.SetGrowthLimit(100u);
+            uint32_t allocated = 0;
+            while (allocator.Allocate().UniformBuffer)
+            {
+                ++allocated;
+                assert(allocated <= 1000u);
+            }
+            assert(allocated == 100u && allocator.GetSlotCount() == 100u);
+            allocator.Shutdown();
+        }
+        {
+            FakeDevice device;
+            device.FailBufferDebugName = "DynUBO_Slot100";
+            DynamicUniformAllocator allocator;
+            assert(allocator.Initialize(&device, 208u, 8u, setDesc));
+            allocator.SetGrowthLimit(1000u);
+            uint32_t allocated = 0;
+            while (allocator.Allocate().UniformBuffer)
+            {
+                ++allocated;
+                assert(allocated <= 1000u);
+            }
+            assert(allocated == 100u && allocator.GetSlotCount() == 100u);
+            allocator.Shutdown();
+        }
+    }
+
     // vsm の構成の 1 フレーム: 主の経路（2 パスの遮蔽。DBIE + HZB の D 7 つ + DBIE）の後に、スキニングの変形 → 印付け・割り当て・消去 →
     // MegaGeometry の投影物のカリング（dirty の階層 = D・組の絞り込み = D・間接 dispatch の引数 = D・クラスタの選択 = J・クラスタの記録 = D）→ 展開 → 描画
     // （DDDDDJ + DDDJD + DD + J + BIIIIE）が並ぶ。
@@ -14934,6 +15019,7 @@ int main()
     TestLightingReadsVsmWhenPublished();
     TestLightingShaderCountsVsmFallbackIndependentlyOfVtFeedback();
     TestVirtualShadowMapMegaDrawDoesNotUseCsmUniformSlots();
+    TestDynamicUniformAllocatorGrowsToCoverShadowCasters();
     TestVirtualShadowMapPassCullsMegaCastersForPointFacesInTheSameFlow();
     TestVirtualShadowMapMegaCullStatsReporterLogsEvery60Reports();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();

@@ -165,3 +165,23 @@ run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.ex
 - 画: 4 枚の PNG を開いた。天球（夜の暗い空と木のシルエット）・地面（石畳と芝とタイル）・大きな球・岩・小屋・見本の小さな球の帯・発光の球（電球）が欠けなく見える。電球の影（見本の球の帯の長い影、大きな球の接地の影、岩の影、近接の球が石畳に落とす影）は欠け・ずれ・面やページの継ぎ目なく連続している。負荷の既定は岩が増え、岩の間にも影が落ちる。キューブの PNG との画素の差は取っていない。
 - Notes: 影の測定の ratio は止まった物の前提なので球の自転を止めて測った（自転する球の細かい影は VSM だけが描く）。深度の比較の余裕・法線のずらしの係数（VTG9-VSM-POINT-SAMPLE の Notes）は、この撮影で浮き・アクネが見えなかったので変えていない。`LightingPassLightPacking` は実キューブが公開されたフレームだけ影の番号を詰める。VSM の構成でもキューブはまだ描いている（GPU-TIME の `ShadowMapPass` 0.08〜0.12 ms）ので、この項目では直していない。GPU 時間は Debug なので見ていない。`VTG9-VSM-POINT-GPU-TIME`・`-CACHE`・`-CULL-PERF` は blocked のまま（人の判断待ち。負荷モードの GPU 時間の基準は `blocked/VTG9-VSM-POINT-CULL-PERF.md`）。
 - Next: 人の判断待ちの 3 件（`blocked/`）。それ以外の未完は TASKS.md の次の `todo`。
+
+## 段9 VTG9-STRESS-SHADOW-SKIPS（2026-10-08）
+
+- 結果: 負荷モード 300 個（RelWithDebInfo・昼の既定の視点・夜の既定の視点）で、影の描画の省略の警告を 0 にした。
+- 原因と実装: CSM の `DynamicUniformAllocator` は 1024 スロット固定で、半透明・ボリュームの描画 + MegaGeometry の投影物 306 個 × 4 カスケードを超えると `Out of slots (1024/1024)` で省いていた。点光源のキューブは MegaGeometry の描画を 1 面 8 個（`PointShadowMaxMegaDrawsPerFace`）で打ち切っていた。`DynamicUniformAllocator::SetGrowthLimit` を足し、事前確保を使い切ると上限までスロットを増やす（足したスロットは Reset のあとも残る。バッファが作れなければ作れた所で頭打ち）。CSM は上限 4096 × 4 カスケード、点光源は 32768。事前確保の数は変えていない。キューブの 1 面あたりの上限は外し、投影物の数と上限のスロット数で決まる。増やさない既定の挙動（GBufferPass など他の利用者）は変わらない。
+- 省略の警告の数（Game ログ。昼 `VTG9-STRESS-SHADOW-SKIPS-day-base` / 夜 `-night-base` が変更前、`-day` / `-night` が変更後）:
+
+| | `Out of slots` | ShadowMapPass の WARN（キューブの 1 面上限・CSM・点光源の UBO 不足） |
+|---|---|---|
+| 昼 変更前 | 343 | 1375（343 + 1032） |
+| 夜 変更前 | 0 | 1032 |
+| 昼 変更後 | 0 | 0 |
+| 夜 変更後 | 0 | 0 |
+
+  変更後の昼の `csm_mega_draws=148,306,306,306`（306 個すべてを 3 カスケードで描く）、夜の `point_mega_levels` は 1 面で 12・13・37 個（従来は 8 個で打ち切り）。
+- フレーム GPU の中央値（`-GpuTimingFrames 300`、240 フレーム。同じ GPU 状態の連続した run）: 昼 10.366 → 10.626 ms（+0.26）、夜 6.128 → 6.203 ms（+0.08）。止め条件の 3 ms 未満。`failures` は 4 つの `metrics.json` で空。
+- 画: 夜の既定の PNG を開いた。小屋・岩・大きな球・石畳・電球が見え、岩と球の影が欠けなく連続している。
+- 検証: Debug ビルド（`verify-VTG9-STRESS-SHADOW-SKIPS-1.txt`、EXIT=0）、ctest RenderGraphCompileTest（`-2.txt`、通過）、RelWithDebInfo ビルド（`-3.txt`）、撮影（`-4.txt`・`-5.txt`、result=pass）。`RenderGraphCompileTest` に `TestDynamicUniformAllocatorGrowsToCoverShadowCasters` を足した（1024 で頭打ちの既定・4 カスケード × (300 + 64) が別スロットで取れる・Reset 後に作り足さない・上限で失敗・増やす途中のバッファ作成失敗で頭打ち）。
+- Notes: 変更前の測定は、同じ作業ツリーで該当の 4 ファイルを stash して RelWithDebInfo を作り直して取った（変更後の撮影が先。比較は連続して取った 2 組）。
+- Next: TASKS.md の次の `todo`。
