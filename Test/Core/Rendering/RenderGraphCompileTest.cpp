@@ -7838,6 +7838,8 @@ namespace
     //  - 照明が書く VSM の読み出しのパラメータの control.x（bExpectVsm なら 1、そうでなければ 0）
     //  - 照明の束縛 22・23 が VSM のページの表・プールか（bExpectVsm のときだけ VSM のバッファ）
     //  - CSM のテクスチャ配列が束縛 6 に束縛される（VSM の有無に依らず CSM は読まれ続ける）
+    //  - CSM が有効なまま描かれる: 影を落とす方向光 1 灯と有効な CSM の公開（影の地図・サンプラー・4 カスケードの行列と分割距離）を
+    //    置き、照明のパラメータが bShadowEnabled = 1・cascadeCount = 4 で、方向光に影の印（attenuation[2] = 1）が付くこと
     //  - 渡した VSM のパスが、2 フレームとも何も記録しないか（bExpectVsm でなければ）
     void RunVsmPassThroughLighting(VsmRun& run, VirtualShadowMapPass& pass, bool bExpectVsm)
     {
@@ -7848,7 +7850,42 @@ namespace
         csmDesc.ArraySize = PhysicalLightingShadowCascadeCount;
         const RHI::TexturePtr csmTexture = run.Device->CreateTexture(csmDesc);
         assert(csmTexture && csmTexture->GetArraySize() == PhysicalLightingShadowCascadeCount);
-        run.Context.PhysicalLighting.ShadowMapTexture = csmTexture;
+
+        // 有効な CSM の公開（ShadowMapPass が公開する内容と同じ形）。4 カスケードの有限の行列と、増える分割距離
+        PhysicalLightingResources& physicalLighting = run.Context.PhysicalLighting;
+        physicalLighting.bShadowPublished = true;
+        physicalLighting.ShadowMapTexture = csmTexture;
+        physicalLighting.ShadowSampler = run.Device->CreateSampler(RHI::SamplerDesc{});
+        assert(physicalLighting.ShadowSampler);
+        CascadedDirectionalShadowShaderValues& cascaded = physicalLighting.CascadedShadow;
+        cascaded.bEnabled = true;
+        cascaded.CascadeCount = PhysicalLightingShadowCascadeCount;
+        for (uint32_t cascade = 0; cascade < PhysicalLightingShadowCascadeCount; ++cascade)
+        {
+            for (uint32_t element = 0; element < 16u; ++element)
+            {
+                cascaded.View[cascade][element] = element % 5 == 0 ? 1.0f : 0.0f;
+                cascaded.Projection[cascade][element] = element % 5 == 0 ? 1.0f : 0.0f;
+            }
+        }
+        const float splitDistances[PhysicalLightingShadowSplitCount] = {0.1f, 10.0f, 20.0f, 40.0f, 80.0f};
+        std::memcpy(cascaded.SplitDistances, splitDistances, sizeof(splitDistances));
+
+        // 影を落とす方向光 1 灯（CSM を掛ける灯に選ばれる条件: 表示される方向光がちょうど 1 つで、影を落とす）
+        Container::VariableArray<LightProxy> lightProxies;
+        LightProxy sunLight;
+        sunLight.LightId = 1;
+        sunLight.Type = LightType::Directional;
+        sunLight.DirectionX = 0.35f;
+        sunLight.DirectionY = -0.8f;
+        sunLight.DirectionZ = 0.45f;
+        sunLight.ColorR = 1.0f;
+        sunLight.ColorG = 1.0f;
+        sunLight.ColorB = 1.0f;
+        sunLight.bCastShadows = true;
+        sunLight.bVisible = true;
+        lightProxies.push_back(sunLight);
+        run.Context.SnapshotLightProxies = &lightProxies;
 
         run.Pool.BeginFrame(0);
         RenderResources renderResources;
@@ -7867,6 +7904,8 @@ namespace
         GBufferPass gbufferPass;
         gbufferPass.SetSceneRenderer(&renderer);
         LightingPass lightingPass;
+        RGResourceHandle publishedShadowMap;
+        NamedShadowMapProducerPass shadowProducer(csmTexture, &publishedShadowMap);
 
         for (uint64_t frame = 0; frame < 2u; ++frame)
         {
@@ -7877,8 +7916,13 @@ namespace
             run.Graph.BeginFrame(frame);
             run.Graph.AddPass(&gbufferPass);
             run.Graph.AddPass(&pass);
-            run.Graph.AddPass(&lightingPass);
+            // CSM の影の地図をグラフへ公開するパス（本物の ShadowMapPass の代わり）。照明より前に置く
+            const uint32_t shadowPassIndex = run.Graph.AddPass(&shadowProducer);
+            const uint32_t lightingPassIndex = run.Graph.AddPass(&lightingPass);
+            assert(run.Graph.AddDependency(shadowPassIndex, lightingPassIndex));
             assert(run.Graph.Compile(run.Context));
+            assert(publishedShadowMap.IsValid());
+            ResetLightingDescriptorCapture();
             GLastDescriptorBinding6Texture = nullptr;
             const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
             assert(result.bSuccess);
@@ -7892,6 +7936,21 @@ namespace
             GPUVsmSampleParams params = {};
             std::memcpy(&params, sampleBuffer->LastUpdateBytes.data(), sizeof(params));
             assert(params.control[0] == (bExpectVsm ? 1u : 0u));
+
+            // CSM が有効なまま描かれる: 照明のパラメータが CSM の影を有効にし、方向光に影の印が付く
+            // （VSM が公開されないフレームは、照明がこの CSM を読んで太陽の影を描く）
+            assert(GLastDescriptorBinding4UpdateBytes.size() == sizeof(GPULightingParams));
+            GPULightingParams lightingParams = {};
+            std::memcpy(&lightingParams, GLastDescriptorBinding4UpdateBytes.data(), sizeof(lightingParams));
+            assert(lightingParams.bShadowEnabled == 1u);
+            assert(lightingParams.cascadeCount == PhysicalLightingShadowCascadeCount);
+            assert(lightingParams.lightCount == 1u);
+            assert(lightingParams.shadowSplitDistances[1] == 10.0f && lightingParams.shadowSplitDistances[4] == 80.0f);
+            assert(GLastDescriptorBinding5UpdateBytes.size() >= sizeof(GPULightData));
+            GPULightData sunPacked = {};
+            std::memcpy(&sunPacked, GLastDescriptorBinding5UpdateBytes.data(), sizeof(sunPacked));
+            assert(sunPacked.position[3] == static_cast<float>(static_cast<int>(LightType::Directional)));
+            assert(sunPacked.attenuation[2] == 1.0f);
 
             // 照明の記述子セットの束縛 22・23: VSM のページの表・プールか、既定のバッファか
             bool bFoundLightingSet = false;
@@ -7927,6 +7986,7 @@ namespace
         run.Context.Renderer = nullptr;
         run.Context.PendingFrameCommands = nullptr;
         run.Context.SnapshotOpaqueCommands = DrawCommandView{};
+        run.Context.SnapshotLightProxies = nullptr;
         run.Context.Resources.Textures = nullptr;
         run.Context.Resources.Materials = nullptr;
         run.Context.Resources.Meshes = nullptr;

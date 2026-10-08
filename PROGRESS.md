@@ -2595,3 +2595,12 @@
 - 検証（`.harness/runs/20261008-100400/`）: `verify-VTG8-FIX-MEGA-FALLBACK-6.txt`（Game・RenderGraphCompileTest のビルド BUILD_EXIT=0、`RenderGraphCompileTest` 1/1 passed、CTEST_EXIT=0）。GPU の撮影は回していない（既定の描画は CSM で、VSM は `--shadow-method=vsm` のときだけ）。
 - Notes: `RenderGraphCompileTest.cpp` は行末が混在しているため、バイトを保ったまま編集した。bash の `/m:1` はパス変換されるので、ビルドは PowerShell で回した。
 - Next: `TASKS.md` の未完の次の項目。
+
+## 反復 8（2026-10-08）: VTG8-FIX-MEGA-FALLBACK 再々実装（評価の差し戻し対応・done）
+
+- 差し戻し: 戻りのテストの場面で CSM が無効のままだった（影の地図のグラフ公開・サンプラー・カスケード・影を落とす方向光が無く、`bShadowEnabled=0`・`cascadeCount=0`・`lightCount=0`）。束縛 6 の確認だけでは照明が CSM を読むことの証明にならなかった。
+- 直し方（テストのみ。製品コードは変更なし）: 共通の補助 `RunVsmPassThroughLighting` の場面に、(1) 有効な CSM の公開（`bShadowPublished`・4 層の影の地図・サンプラー・`CascadedShadow` の有限な 4 カスケードの行列と増える分割距離）、(2) 影を落とす方向光 1 灯（`SnapshotLightProxies`）、(3) 影の地図をグラフへ公開するパス（`NamedShadowMapProducerPass`。照明へ依存を張る）を組み込んだ。各フレームで照明のパラメータが `bShadowEnabled == 1`・`cascadeCount == 4`・`lightCount == 1`・分割距離の反映、梱包された方向光の `attenuation[2] == 1`（影の印）であることを確かめる。既存の VSM の無効（`control.x == 0`）・束縛 22/23・ログの検査はそのまま残した。補助は戻りの全ケース（能力が無い・cull の初期化の失敗・資源の確保の失敗・他の理由）と対照ケース（VSM 公開時は `control.x == 1`、CSM も有効）で共通に使われる。
+- 変異: `VirtualShadowMapPass.cpp` の `SupportsMegaCasters()` の戻りを外す（`if (false && ...)`）と `RenderGraphCompileTest` が落ちる（`verify-VTG8-FIX-MEGA-FALLBACK-mut.txt`: `!pass.IsActive() && ... == MegaGeometry` の assert、CTEST_EXIT=8）。元へ戻して更新時刻を進め、再ビルドした（`git diff` に Library の差分なし）。
+- 検証（`.harness/runs/20261008-111210/`）: `verify-VTG8-FIX-MEGA-FALLBACK-1.txt`（Game・RenderGraphCompileTest のビルド BUILD_EXIT=0）、`-2.txt`（1/1 passed、CTEST_EXIT=0）、`-3.txt`（変異を戻したあとの再ビルド・再実行。1/1 passed、CTEST_EXIT=0）。GPU の撮影は回していない（既定の描画は CSM で、VSM は `--shadow-method=vsm` のときだけ）。
+- Notes: `RenderGraphCompileTest.cpp` は行末が混在しているため、バイトを保ったまま編集した（`git diff --numstat` と `--ignore-cr-at-eol` が一致）。Git Bash の `sed -i` は行末を壊すので、変異はバイト単位の置換で入れた。
+- Next: `TASKS.md` の未完の次の項目。
