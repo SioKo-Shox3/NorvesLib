@@ -24,6 +24,13 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t ParamsBytes = 16;
         constexpr uint64_t OutputVertexBytes = sizeof(SkinnedOutputVertex);
 
+        // 変形の対象を選ぶ描画の一覧。影の描画が読むときは影の描画（CSM）と同じ全描画、でなければ不透明のみ。
+        // Declare と記録で同じ一覧を使う（計画の描画の番号がこの一覧の添字）
+        DrawCommandView SelectCommands(const ViewRenderContext& context, bool bShadowCasterOutput)
+        {
+            return bShadowCasterOutput ? context.GetActiveDrawCommands() : context.GetActiveOpaqueCommands();
+        }
+
         RHI::DescriptorSetDesc MakeDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
@@ -306,16 +313,18 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
-        // 解決が使えず予備の GBuffer の描画へ戻るフレームは、スキニングの頂点を誰も読まない（GBuffer は頂点シェーダーでスキニングする）
-        if (m_ResolvePass && !m_ResolvePass->CanResolve(context->Device, context->GetActiveDebugMode()))
+        // 解決が使えず予備の GBuffer の描画へ戻るフレームは、スキニングの頂点を解決もラスタも読まない（GBuffer は頂点シェーダーで
+        // スキニングする）。影の描画（VSM）が読むときだけは、影を落とす描画に限って変形する
+        const bool bResolveUsable = !m_ResolvePass || m_ResolvePass->CanResolve(context->Device, context->GetActiveDebugMode());
+        if (!bResolveUsable && !m_bShadowCasterOutput)
         {
             return;
         }
 
-        // 不透明描画のうちスキニングの 1 描画（非インスタンス）を集め、頂点を詰めて出力の範囲を割り当てる。
+        // スキニングの 1 描画（非インスタンス）を集め、頂点を詰めて出力の範囲を割り当てる。対象の一覧は SelectCommands。
         // 入力の頂点 1 本の束縛と、出力の今・前のバッファの合計が上限を超えるインスタンスは外し、数を残す。
         constexpr uint64_t MaxInstanceVertices = SKINNING_MAX_BINDING_BYTES / sizeof(SkinnedMeshVertex);
-        const DrawCommandView commands = context->GetActiveOpaqueCommands();
+        const DrawCommandView commands = SelectCommands(*context, m_bShadowCasterOutput);
         uint64_t totalVertices = 0;
         for (uint32_t commandIndex = 0; commandIndex < commands.Count; ++commandIndex)
         {
@@ -323,6 +332,11 @@ namespace NorvesLib::Core::Rendering
             if (command.Draw.PayloadKind != DrawPayloadKind::Skinned || command.Draw.bInstanced ||
                 command.Draw.InstanceCount != 1 ||
                 command.Skinned.FrameLeaseIndex >= context->SnapshotSkinnedMeshFrameLeases->size())
+            {
+                continue;
+            }
+            // 解決が使えないフレームは影の描画だけが読むので、影を落とさない描画は変形しない
+            if (!bResolveUsable && !command.Draw.bCastShadow)
             {
                 continue;
             }
@@ -421,7 +435,8 @@ namespace NorvesLib::Core::Rendering
                                               const RHI::BufferPtr& currentVertices,
                                               const RHI::BufferPtr& previousVertices)
     {
-        const DrawCommandView commands = context.GetActiveOpaqueCommands();
+        const DrawCommandView commands = SelectCommands(context, m_bShadowCasterOutput);
+        const DrawCommandView opaqueCommands = context.GetActiveOpaqueCommands();
         m_Compute.BeginFrame(context.FrameIndex, context.ResolveRenderFrameSerial());
         for (const PlannedInstance& planned : m_Plan)
         {
@@ -482,6 +497,10 @@ namespace NorvesLib::Core::Rendering
             instance.SourceMeshComponentId = source.Draw.SourceMeshComponentId;
             instance.MaterialIndex = source.Draw.MaterialIndex;
             instance.Material = source.Draw.MaterialHandle;
+            instance.bOpaque = &source >= opaqueCommands.Data && &source < opaqueCommands.Data + opaqueCommands.Count;
+            instance.bCastShadow = source.Draw.bCastShadow;
+            instance.SourceFirstIndex = source.Draw.IndexOffset;
+            instance.SourceIndexCount = source.Draw.IndexCount;
             instance.VertexBase = planned.VertexBase;
             instance.VertexCount = planned.VertexCount;
             instance.IndexCount = prepared.IndexCount;

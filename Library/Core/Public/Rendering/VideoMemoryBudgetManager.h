@@ -51,7 +51,9 @@ namespace NorvesLib::Core::Rendering
         uint64_t NonPoolBytes = 0;
         /** @brief プール以外の使用量が見込みか（ヒープの使用量が取れず、上限の一定割合で代えた） */
         bool bNonPoolEstimated = false;
-        /** @brief プール全体へ割り振れる量（バイト）。上限 − プール以外の使用量で、負にはならず 0 で止まる */
+        /** @brief 取り分を持たない（重み 0 の）プールの確保量の合計（バイト）。固定の取り置きとして割り振れる量から引く */
+        uint64_t FixedPoolBytes = 0;
+        /** @brief 取り分のあるプールへ割り振れる量（バイト）。上限 − プール以外の使用量 − 固定の取り置きで、負にはならず 0 で止まる */
         uint64_t AvailableBytes = 0;
         /** @brief プールごとの目標の大きさ（バイト）。bLimited が false のとき全て 0 */
         uint64_t PoolTargetBytes[VideoMemoryPoolCount] = {};
@@ -96,10 +98,16 @@ namespace NorvesLib::Core::Rendering
         {
             VideoMemoryBudgetResult result;
 
+            // 取り分を持たないプール（VSM の物理ページのように大きさが決まっているもの）の確保量は、目標を割り振らずに
+            // 固定の取り置きとして割り振れる量から引く（引かないと、その分を取り分のあるプールへ二重に割り振る）
             uint64_t poolSum = 0;
             for (uint32_t i = 0; i < VideoMemoryPoolCount; ++i)
             {
                 poolSum += input.PoolCapacityBytes[i];
+                if (m_ShareWeights[i] == 0)
+                {
+                    result.FixedPoolBytes += input.PoolCapacityBytes[i];
+                }
             }
 
             // プール以外の使用量: ヒープの使用量が取れるときはそこからプールの確保分を引く
@@ -136,7 +144,8 @@ namespace NorvesLib::Core::Rendering
                 result.NonPoolBytes = result.CeilingBytes / 100 * EstimatedNonPoolPercent +
                                       result.CeilingBytes % 100 * EstimatedNonPoolPercent / 100;
             }
-            result.AvailableBytes = result.CeilingBytes > result.NonPoolBytes ? result.CeilingBytes - result.NonPoolBytes : 0;
+            const uint64_t reservedBytes = result.NonPoolBytes + result.FixedPoolBytes;
+            result.AvailableBytes = result.CeilingBytes > reservedBytes ? result.CeilingBytes - reservedBytes : 0;
 
             uint64_t totalWeight = 0;
             for (uint32_t i = 0; i < VideoMemoryPoolCount; ++i)

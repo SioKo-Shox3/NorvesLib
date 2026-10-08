@@ -2737,6 +2737,8 @@ namespace NorvesLib::RHI::Vulkan
         compiler->SetSparseResidencyShadingEnabled(m_enabledDeviceFeatures.shaderResourceResidency == VK_TRUE);
         // VT の要求を書く材質シェーダーは、descriptor に要求のバッファを束ねられるデバイス（SupportsVirtualTextureFeedback）だけ使う。
         compiler->SetVirtualTextureFeedbackEnabled(m_Capabilities.SupportsVirtualTextureFeedback());
+        // 太陽の VSM の照明の統計は、VT（sparse）とは独立に、断片シェーダーの storage の書き込みが使えるデバイスで数える。
+        compiler->SetVsmLightingStatsEnabled(m_Capabilities.SupportsVsmLightingStats());
         return StaticPointerCast<IShaderCompiler>(compiler);
     }
 
@@ -2871,6 +2873,7 @@ namespace NorvesLib::RHI::Vulkan
                 (m_enabledDeviceFeatures.shaderStorageImageExtendedFormats == VK_TRUE);
             m_Capabilities.bFragmentStoresAndAtomics =
                 (m_enabledDeviceFeatures.fragmentStoresAndAtomics == VK_TRUE);
+            m_Capabilities.MaxStorageBufferRange = m_deviceProperties.limits.maxStorageBufferRange;
 
             // sparse は論理デバイスで有効にできたものだけを載せる（結び付け用のキューが無ければ全て無効）
             const bool bSparseEnabled =

@@ -1,0 +1,88 @@
+﻿#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+// ========================================
+// 太陽の仮想シャドウマップ（VSM）の、MegaGeometry のクラスタの影の塊の記録を作る
+//
+// vsm_mega_cull.comp が選んだ（インスタンス、段、クラスタ）の一覧（binding 15）の 1 件を、手続き・スキニングと同じ形の
+// 影の塊の記録（VsmShadowChunk。Common/VirtualShadowMapChunk.glsl）にして binding 19 へ書く。展開（vsm_expand.comp）・描画
+// （vsm_draw.vert）は、この記録を手続き・スキニングの塊と同じ流れで読む。
+//   - 描画の記録: 種類は MegaGeometry のクラスタ（VIS_KIND_MEGA_CLUSTER）。インデックスの先頭 = インスタンスのインデックスの基点 +
+//     クラスタのインデックスの位置、頂点の基点 = インスタンスの頂点の基点 + クラスタの頂点の位置、アドレス = 影の表（binding 18）の
+//     プールの塊のバッファのアドレス（ビジビリティバッファの visbuffer_records.comp が書く記録と同じ読み方）。
+//   - 境界: クラスタの境界球をワールドへ移した球の外接の AABB。展開が覆うページを決める。
+//   - 変換: インスタンスのワールド行列の 3 行（頂点はローカルのまま引き、描画の頂点シェーダーがワールドへ変える）。
+//   - 展開する段: カリングが選んだ段だけ（levelMask = 1 << 段）。
+// 1 スレッド = 1 件。dispatch は一覧の容量ぶんのスレッドを x 方向に並べる（一覧の件数（容量で頭打ち）より後ろのスレッドは何もしない）。
+// 引けないインスタンス（アドレスが 0）は三角形 0 の記録にし、展開は何も描かない。
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#include "Common/MegaGeometryCull.glsl"
+#include "Common/VisibilityBuffer.glsl"
+#include "Common/VirtualShadowMapChunk.glsl"
+#include "Common/VirtualShadowMapMegaCull.glsl"
+
+// binding 15: カリングの出力の一覧（読み取りだけ）
+layout(std430, set = 0, binding = 15) readonly buffer VsmMegaList
+{
+    uint listSelected;
+    uint listOverflow;
+    uint listInstanceLevels;
+    uint listReserved;
+    uvec4 listEntries[];
+};
+
+// binding 18: 影の表（構造は Common/VirtualShadowMapMegaCull.glsl の ShadowInstance）
+layout(std430, set = 0, binding = 18) readonly buffer ShadowInstanceBuffer
+{
+    ShadowInstance shadowInstances[];
+};
+
+// binding 19: 影の塊の記録（一覧の添字と同じ位置へ書く）
+layout(std430, set = 0, binding = 19) writeonly buffer VsmMegaChunks
+{
+    VsmShadowChunk megaChunks[];
+};
+
+void main()
+{
+    const uint index = gl_GlobalInvocationID.x;
+    if (index >= min(listSelected, megaParams.counts.y))
+    {
+        return;
+    }
+
+    const uvec4 entry = listEntries[index];
+    const MegaInstance instance = instances[entry.x];
+    const ShadowInstance shadow = shadowInstances[entry.x];
+    g_WorldMatrix = instance.world;
+    g_Clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));
+
+    const GPUClusterData cluster = g_Clusters.clusters[entry.z];
+    const vec3 center = TransformClusterCenterToWorld(cluster.boundsSphere.xyz);
+    const float radius = cluster.boundsSphere.w * ComputeWorldRadiusScale();
+
+    const bool bAddressable = (shadow.addresses.x | shadow.addresses.y) != 0u && (shadow.addresses.z | shadow.addresses.w) != 0u;
+    const uint triangles = bAddressable ? min(cluster.indexInfo.y / 3u, VIS_MAX_TRIANGLES_PER_RECORD) : 0u;
+
+    VsmShadowChunk chunk;
+    chunk.record.header = uvec4(VIS_KIND_MEGA_CLUSTER, entry.x, 0u, triangles);
+    chunk.record.source = uvec4(instance.drawInfo.z + cluster.indexInfo.x,
+                                instance.drawInfo.y + cluster.indexInfo.z,
+                                VIS_NO_PREVIOUS_TRANSFORM,
+                                0u);
+    chunk.record.address = shadow.addresses;
+    chunk.record.previous = uvec4(0u);
+    chunk.boundsMin = center - vec3(radius);
+    chunk.levelMask = 1u << entry.y;
+    chunk.boundsMax = center + vec3(radius);
+    chunk.reserved = 0u;
+    // mat4 は列優先。ワールドの位置 = world * (ローカルの位置, 1) の各成分は、行列の行とローカルの位置の内積
+    chunk.world0 = vec4(instance.world[0].x, instance.world[1].x, instance.world[2].x, instance.world[3].x);
+    chunk.world1 = vec4(instance.world[0].y, instance.world[1].y, instance.world[2].y, instance.world[3].y);
+    chunk.world2 = vec4(instance.world[0].z, instance.world[1].z, instance.world[2].z, instance.world[3].z);
+    megaChunks[index] = chunk;
+}

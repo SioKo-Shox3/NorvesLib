@@ -500,6 +500,18 @@ set_tests_properties(IndirectDispatchVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 太陽の VSM の印付け・物理ページの割り当て・消去（vsm_mark.comp・vsm_allocate.comp・vsm_clear.comp）を、合成した深度（既知の平面）とカメラで動かし、
+# 印が付き割り当てられたページの集合が CPU で求めた集合と一致すること（PCF の核が境界をまたぐときの隣のページを含む）、
+# プールを小さくしたときの溢れの数が正しく割り当てた物理ページの番号が重ならないこと、消去の後の物理ページが 1.0 のビットであること、
+# 統計・空きの数・消去の一覧が整合していることを確かめる。validation error 0 件。
+add_test(NAME VirtualShadowMapVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VirtualShadowMapVulkanTest)
+set_tests_properties(VirtualShadowMapVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
@@ -522,6 +534,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER MaterialTileClassifyVulkanTest MaterialTileClassifyVulkanTest.cpp
     MEMBER VisibilityResolveVulkanTest VisibilityResolveVulkanTest.cpp
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
+    MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE
@@ -1275,6 +1288,7 @@ norves_add_test_bundle(CameraViewConstantsTest
     MEMBER CameraViewConstantsTest CameraViewConstantsTest.cpp
     MEMBER OrthographicViewportMatrixTest OrthographicViewportMatrixTest.cpp
     MEMBER PointShadowFaceMatricesTest PointShadowFaceMatricesTest.cpp
+    MEMBER VirtualShadowMapClipmapTest VirtualShadowMapClipmapTest.cpp
     MEMBER AutoExposureMathTest AutoExposureMathTest.cpp
     MEMBER TemporalAAJitterTest TemporalAAJitterTest.cpp
 )
@@ -1311,6 +1325,7 @@ add_test(NAME ViewportCameraIdRenderPlanTest COMMAND ViewportCameraIdRenderPlanT
 
 add_test(NAME OrthographicViewportMatrixTest COMMAND CameraViewConstantsTest --test=OrthographicViewportMatrixTest)
 add_test(NAME PointShadowFaceMatricesTest COMMAND CameraViewConstantsTest --test=PointShadowFaceMatricesTest)
+add_test(NAME VirtualShadowMapClipmapTest COMMAND CameraViewConstantsTest --test=VirtualShadowMapClipmapTest)
 add_test(NAME AutoExposureMathTest COMMAND CameraViewConstantsTest --test=AutoExposureMathTest)
 add_test(NAME TemporalAAJitterTest COMMAND CameraViewConstantsTest --test=TemporalAAJitterTest)
 

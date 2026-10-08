@@ -4,6 +4,8 @@
 #include "SceneRenderer.h"
 #include "DynamicUniformAllocator.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "Rendering/ShadowMethod.h"
+#include "Rendering/VirtualShadowMapClipmap.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -132,6 +134,10 @@ namespace NorvesLib::Core::Rendering
         void SetMaxShadowDistance(float distance) { m_Settings.MaxShadowDistance = distance; }
         float GetMaxShadowDistance() const { return m_Settings.MaxShadowDistance; }
 
+        /** @brief 太陽の影の方式。Vsm のとき、CSM の行列と同じ場所で太陽のクリップマップを毎フレーム作って公開する（描画は CSM のまま） */
+        void SetShadowMethod(ShadowMethod method) { m_ShadowMethod = method; }
+        ShadowMethod GetShadowMethod() const { return m_ShadowMethod; }
+
         RHI::ITexture* GetShadowMapTexture() const { return m_ShadowMapTexture.get(); }
         RGResourceHandle GetShadowMapHandle() const { return m_ShadowMapHandle; }
         RHI::ITexture* GetPointShadowCubeTexture() const { return m_PointShadowCubeTexture.get(); }
@@ -177,6 +183,10 @@ namespace NorvesLib::Core::Rendering
         RHI::IDevice *m_Device = nullptr;
 
         bool m_bRegisterLegacyBridge = true;
+
+        ShadowMethod m_ShadowMethod = ShadowMethod::Csm;
+        // VSM_CLIPMAP / VSM_TEXEL を出したか（起動後に 1 回だけ出す）
+        bool m_bLoggedVsmClipmap = false;
 
         // 最後に記録したCSMの分割の奥（m）。変わったときだけ分割を記録する。
         float m_LoggedCascadeSplitFar = -1.0f;

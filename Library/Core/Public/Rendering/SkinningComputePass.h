@@ -147,10 +147,17 @@ namespace NorvesLib::Core::Rendering
         uint32_t MaterialIndex = 0;
         /** @brief 元の描画（DrawParams）の材質のハンドル（ビジビリティバッファの材質の表が実物の材質を引く） */
         MaterialHandle Material;
+        /** @brief 元の描画が不透明の一覧にあったか。ビジビリティバッファのラスタは不透明の描画だけを描く（半透明の一覧のものは影のためだけ） */
+        bool bOpaque = true;
+        /** @brief 元の描画が影を落とすか */
+        bool bCastShadow = true;
         /** @brief 出力バッファの中の先頭の頂点番号と頂点数（今・前で同じ） */
         uint32_t VertexBase = 0;
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;
+        /** @brief 元の描画（DrawParams）のインデックスの範囲（先頭と数）。数が 0 ならメッシュ全体（サブメッシュに分けない描画） */
+        uint32_t SourceFirstIndex = 0;
+        uint32_t SourceIndexCount = 0;
         /** @brief 入力のインデックスのバッファ（頂点番号は出力の先頭からの相対） */
         RHI::BufferPtr IndexBuffer;
         /** @brief 出力バッファの先頭のアドレスを含む、このインスタンスの先頭頂点のアドレス（BDA が無いときは 0） */
@@ -234,6 +241,15 @@ namespace NorvesLib::Core::Rendering
          */
         void SetResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
         const VisibilityResolvePass* GetResolvePass() const { return m_ResolvePass; }
+        /**
+         * @brief 変形した頂点を影の描画（VSM）が読むか
+         *
+         * true のとき、(1) 解決が使えず予備の GBuffer の描画へ戻るフレームも、影を落とす描画だけを変形する（影の描画が読む）、
+         * (2) 変形の対象を不透明の一覧だけでなく、影の描画（CSM）と同じ全描画の一覧から選ぶ（半透明の一覧のスキニングも影を落とす）。
+         * false（既定）なら、解決が使えないフレームは何も宣言せず、対象は不透明の一覧のスキニングだけ。
+         */
+        void SetShadowCasterOutput(bool bEnabled) { m_bShadowCasterOutput = bEnabled; }
+        bool IsShadowCasterOutput() const { return m_bShadowCasterOutput; }
         RGResourceHandle GetCurrentVerticesHandle() const { return m_CurrentHandle.ToResourceHandle(); }
         RGResourceHandle GetPreviousVerticesHandle() const { return m_PreviousHandle.ToResourceHandle(); }
 
@@ -241,7 +257,6 @@ namespace NorvesLib::Core::Rendering
         void RecordInstances(ViewRenderContext& context,
                              const RHI::BufferPtr& currentVertices,
                              const RHI::BufferPtr& previousVertices);
-
         /** @brief Declare が決めた、不透明描画の中のスキニングの 1 描画と出力の範囲 */
         struct PlannedInstance
         {
@@ -252,6 +267,7 @@ namespace NorvesLib::Core::Rendering
 
         SkinningCompute m_Compute;
         const VisibilityResolvePass* m_ResolvePass = nullptr;
+        bool m_bShadowCasterOutput = false;
         uint32_t m_MaxOutputVertices = SKINNING_MAX_OUTPUT_VERTICES;
         uint32_t m_DroppedInstanceCount = 0;
         uint64_t m_FrameDroppedSerial = 0;

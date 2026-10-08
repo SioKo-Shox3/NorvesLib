@@ -79,6 +79,11 @@ namespace NorvesLib::Core::Rendering
         RHI::IShader *GetRHIShader(ShaderHandle handle) const;
         ResourceStats GetResourceStats() const;
 
+        // VSM の物理ページのプール（VirtualShadowMapPass が確保する storage buffer）の確保量を、予算の計算へ伝える。
+        // ヒープの使用量にはその全部が入っているので、予算の計算がプール以外の使用量から引くために使う（ShadowMap の枠）。
+        // 0 は未確保。RenderThread が書き、GameThread の PollVideoMemoryBudget が読む。
+        void SetShadowMapPoolBytes(uint64_t bytes);
+
     private:
         friend class RenderResources;
 

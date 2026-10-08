@@ -54,12 +54,23 @@ namespace NorvesLib::RHI::Vulkan
          */
         void SetVirtualTextureFeedbackEnabled(bool bEnabled) { m_bVirtualTextureFeedback = bEnabled; }
 
+        /**
+         * @brief 太陽の VSM の照明が読み出しの統計（逃げた標本の数）を storage buffer へ数えるシェーダーを有効にするか
+         *
+         * 有効にすると、シェーダーへ NORVES_VSM_STATS を定義する。VT のフィードバック（NORVES_VT_FEEDBACK。sparse が要る）とは
+         * 独立で、フラグメントシェーダーの storage の書き込みとアトミックが使えるデバイス（VSM が使える条件）なら有効にできる。
+         */
+        void SetVsmLightingStatsEnabled(bool bEnabled) { m_bVsmLightingStats = bEnabled; }
+
     private:
         /** @brief NORVES_SPARSE_RESIDENCY_SHADING を定義するか */
         bool m_bSparseResidencyShading = false;
 
         /** @brief NORVES_VT_FEEDBACK を定義するか */
         bool m_bVirtualTextureFeedback = false;
+
+        /** @brief NORVES_VSM_STATS を定義するか */
+        bool m_bVsmLightingStats = false;
 
         /** @brief shaderc内部コンパイラハンドル（<shaderc/shaderc.hpp>への依存をヘッダーに出さない） */
         void *m_Compiler = nullptr;

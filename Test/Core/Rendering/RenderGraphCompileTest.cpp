@@ -29,12 +29,21 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/VisibilityBuffer.h"
 #include "Rendering/MaterialTileClassifyPass.h"
+#include "Rendering/ShadowProbePass.h"
+#include "Rendering/ProceduralMeshGenerator.h"
+#include "Rendering/VirtualShadowMapCasters.h"
+#include "Rendering/VirtualShadowMapClipmap.h"
+#include "Rendering/VirtualShadowMapPages.h"
+#include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/VirtualShadowMapRaster.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "Rendering/VisibilityRasterPass.h"
 #include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Test/Core/Rendering/GeometryUploadTestSupport.h"
 #include "Container/PointerTypes.h"
 #include "Debug/Stats.h"
+#include "FileStream/FileStream.h"
 #include "Logging/Logger.h"
 #include "Math/MatrixUtils.h"
 #include "RHI/IBuffer.h"
@@ -49,10 +58,12 @@
 #include "RHI/IShaderCompiler.h"
 #include "RHI/ITexture.h"
 #include "RHI/TransientResourcePool.h"
+#include "RHI/Vulkan/VulkanShaderCompiler.h"
 #include <cassert>
 #include <cstddef>
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -132,8 +143,13 @@ namespace
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaInstanceTableUpdates;
     // MegaGeometryPass のカリングの定数バッファ（"MegaGeometry_CullUBO"。パスごとに 1 つ）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaCullUniformUpdates;
+    // VSM の MegaGeometry の投影物のカリングの定数バッファ（"VsmMegaCullUniform"・"VsmMegaCullParams"）の更新の記録（更新ごとの中身）
+    Container::VariableArray<Container::VariableArray<uint8_t>> GVsmMegaCullUniformUpdates;
+    Container::VariableArray<Container::VariableArray<uint8_t>> GVsmMegaCullParamsUpdates;
     // VisibilitySwRaster が dispatch ごとに書く定数バッファ（"VisBuffer_SwRasterParams"）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GSwRasterParamsUpdates;
+    // 影の標本のパスが毎フレーム書く定数（ShadowProbeParams）。--shadow-probe の検査に使う
+    Container::VariableArray<Container::VariableArray<uint8_t>> GShadowProbeParamUpdates;
     Container::VariableArray<uint8_t> GLastDescriptorBinding4UpdateBytes;
     Container::VariableArray<uint8_t> GLastDescriptorBinding5UpdateBytes;
     RHI::IBuffer* GLastDescriptorBinding4Buffer = nullptr;
@@ -274,7 +290,9 @@ namespace
         {
             (void)size;
             // ジオメトリの区画へ書くステージングのリングだけは、写像して書き込めるようにバイト列を持つ
-            if (IsDebugName(m_Desc.DebugName, "TileUploadRing") && m_Desc.Size > 0)
+            if ((IsDebugName(m_Desc.DebugName, "TileUploadRing") || IsDebugName(m_Desc.DebugName, "ShadowProbe_Stats") ||
+                 IsDebugName(m_Desc.DebugName, "VSM_StatsReadback") || IsDebugName(m_Desc.DebugName, "LightingVsmStats")) &&
+                m_Desc.Size > 0)
             {
                 if (MappedBytes.empty())
                 {
@@ -314,6 +332,18 @@ namespace
             {
                 GSwRasterParamsUpdates.push_back(LastUpdateBytes);
             }
+            if (IsDebugName(m_Desc.DebugName, "VsmMegaCullUniform"))
+            {
+                GVsmMegaCullUniformUpdates.push_back(LastUpdateBytes);
+            }
+            if (IsDebugName(m_Desc.DebugName, "VsmMegaCullParams"))
+            {
+                GVsmMegaCullParamsUpdates.push_back(LastUpdateBytes);
+            }
+            if (IsDebugName(m_Desc.DebugName, "ShadowProbeParams"))
+            {
+                GShadowProbeParamUpdates.push_back(LastUpdateBytes);
+            }
             const bool bSkinnedPalette = IsDebugName(m_Desc.DebugName, "SkinnedPalette");
             const bool bSkinnedPreviousPalette = IsDebugName(m_Desc.DebugName, "SkinnedPreviousPalette");
             if (bSkinnedPalette || bSkinnedPreviousPalette)
@@ -349,6 +379,12 @@ namespace
             {
                 return SkinningPreviousVerticesAddress;
             }
+            // 手続きメッシュの頂点・インデックスと、スキニングのインデックス（影の塊の記録が、メッシュのバッファのアドレスを引く）
+            if (IsDebugName(m_Desc.DebugName, "MeshVB") || IsDebugName(m_Desc.DebugName, "MeshIB") ||
+                IsDebugName(m_Desc.DebugName, "SkinnedMeshIB"))
+            {
+                return 0x400000000ull + (static_cast<uint64_t>(reinterpret_cast<uintptr_t>(this)) & 0xFFFFFF0ull);
+            }
             return 0;
         }
 
@@ -367,6 +403,85 @@ namespace
         RHI::BufferDesc m_Desc;
         RHI::TSharedPtr<FakeBufferLifetimeTracker> m_Tracker;
     };
+
+    // 記述子セットへ束縛したバッファの記録（束縛の番号と名前）。計算の dispatch の時点で、どのバッファを読み書きするかの検査に使う
+    struct BoundBufferName
+    {
+        uint32_t Binding = 0;
+        char Name[48] = {};
+    };
+    struct DescriptorBindingRecord
+    {
+        const void* Set = nullptr;
+        Container::VariableArray<BoundBufferName> Buffers;
+    };
+    Container::VariableArray<DescriptorBindingRecord> GDescriptorBindingRecords;
+
+    void RecordDescriptorBufferBinding(const void* set, uint32_t binding, const RHI::BufferPtr& buffer)
+    {
+        DescriptorBindingRecord* record = nullptr;
+        for (DescriptorBindingRecord& candidate : GDescriptorBindingRecords)
+        {
+            if (candidate.Set == set)
+            {
+                record = &candidate;
+                break;
+            }
+        }
+        if (record == nullptr)
+        {
+            GDescriptorBindingRecords.push_back(DescriptorBindingRecord{});
+            record = &GDescriptorBindingRecords.back();
+            record->Set = set;
+        }
+        BoundBufferName* entry = nullptr;
+        for (BoundBufferName& candidate : record->Buffers)
+        {
+            if (candidate.Binding == binding)
+            {
+                entry = &candidate;
+                break;
+            }
+        }
+        if (entry == nullptr)
+        {
+            record->Buffers.push_back(BoundBufferName{});
+            entry = &record->Buffers.back();
+            entry->Binding = binding;
+        }
+        std::memset(entry->Name, 0, sizeof(entry->Name));
+        const FakeBuffer* fake = static_cast<const FakeBuffer*>(buffer.get());
+        const char* name = fake != nullptr ? fake->GetDesc().DebugName : nullptr;
+        if (name != nullptr)
+        {
+            std::memcpy(entry->Name, name, std::min(std::strlen(name), sizeof(entry->Name) - 1));
+        }
+    }
+
+    // 記述子セットを手放したときに記録も消す（同じ番地に別の記述子セットができても、古い束縛が混ざらない）
+    void ClearDescriptorBufferBindings(const void* set)
+    {
+        for (size_t index = 0; index < GDescriptorBindingRecords.size(); ++index)
+        {
+            if (GDescriptorBindingRecords[index].Set == set)
+            {
+                GDescriptorBindingRecords.erase(GDescriptorBindingRecords.begin() + static_cast<std::ptrdiff_t>(index));
+                return;
+            }
+        }
+    }
+
+    Container::VariableArray<BoundBufferName> SnapshotDescriptorBindings(const void* set)
+    {
+        for (const DescriptorBindingRecord& candidate : GDescriptorBindingRecords)
+        {
+            if (candidate.Set == set)
+            {
+                return candidate.Buffers;
+            }
+        }
+        return {};
+    }
 
     class FakeCommandList final : public RHI::ICommandList
     {
@@ -415,6 +530,14 @@ namespace
             size_t SequencePosition = 0;
         };
         Container::VariableArray<Key64Fill> Key64Fills;
+        // VSM の資源（VSM_ で始まるバッファ）の埋め。バッファ名・大きさ・値の順に呼ばれた通りに残す
+        struct VsmFill
+        {
+            char BufferName[32] = {};
+            uint64_t SizeBytes = 0;
+            uint32_t Value = 0;
+        };
+        Container::VariableArray<VsmFill> VsmFills;
         // ソフトウェアラスタの一覧（MegaGeometry_SwRaster）の頭の埋め（0 埋め。大きさ・値・その時点の CallSequence の長さ）
         Container::VariableArray<Key64Fill> SwRasterFills;
         // Draw（頂点だけの描画）が呼ばれた時点の CallSequence の長さ。全画面の合流が render pass（B と E の間）で描かれたかを確かめる
@@ -485,7 +608,7 @@ namespace
         }
         void SetDescriptorSet(RHI::DescriptorSetPtr descriptorSet, uint32_t slot = 0) override
         {
-            (void)descriptorSet;
+            m_LastDescriptorSet = descriptorSet.get();
             (void)slot;
             PushRenderEvent(FakeRenderEvent::CommandSetDescriptorSet);
         }
@@ -580,6 +703,31 @@ namespace
             }
             if (buffer)
             {
+                const char* vsmName = static_cast<const FakeBuffer*>(buffer.get())->GetDesc().DebugName;
+                if (vsmName != nullptr && std::strncmp(vsmName, "VSM_", 4) == 0)
+                {
+                    VsmFill fill;
+                    std::memcpy(fill.BufferName, vsmName, std::min(std::strlen(vsmName), sizeof(fill.BufferName) - 1));
+                    fill.SizeBytes = size;
+                    fill.Value = value;
+                    VsmFills.push_back(fill);
+                }
+            }
+            if (buffer)
+            {
+                const char* megaName = static_cast<const FakeBuffer*>(buffer.get())->GetDesc().DebugName;
+                if (megaName != nullptr && std::strncmp(megaName, "VsmMega_", 8) == 0)
+                {
+                    VsmMegaFill fill;
+                    std::memcpy(fill.BufferName, megaName, std::min(std::strlen(megaName), sizeof(fill.BufferName) - 1));
+                    fill.SizeBytes = size;
+                    fill.Value = value;
+                    fill.SequencePosition = CallSequence.size();
+                    VsmMegaFills.push_back(fill);
+                }
+            }
+            if (buffer)
+            {
                 const char* name = static_cast<const FakeBuffer*>(buffer.get())->GetDesc().DebugName;
                 if (name != nullptr && std::strncmp(name, "MaterialTile_", 13) == 0 && value == 0u)
                 {
@@ -596,14 +744,45 @@ namespace
                       uint32_t threadGroupCountZ) override
         {
             DispatchGroups.push_back({threadGroupCountX, threadGroupCountY, threadGroupCountZ});
+            DispatchBindings.push_back(SnapshotDescriptorBindings(m_LastDescriptorSet));
             ++DispatchCount;
             CallSequence.push_back('D');
+        }
+        // Dispatch ごとの、その時点で最後に設定した記述子セットへ束縛されていたバッファ（DispatchGroups と同じ並び）
+        Container::VariableArray<Container::VariableArray<BoundBufferName>> DispatchBindings;
+        // VSM の MegaGeometry の投影物のカリングの資源（VsmMega_ で始まる名前）への 0 埋めの記録（バッファの名前・大きさ・値・記録した時点の CallSequence の長さ）
+        struct VsmMegaFill
+        {
+            char BufferName[40] = {};
+            uint64_t SizeBytes = 0;
+            uint32_t Value = 0;
+            size_t SequencePosition = 0;
+        };
+        Container::VariableArray<VsmMegaFill> VsmMegaFills;
+        // 最後に SetDescriptorSet へ渡された記述子セット（Dispatch の時点の束縛を引く）
+        const void* m_LastDescriptorSet = nullptr;
+        // GPU タイムスタンプの区間（開いた順の名前と、開いた時点の CallSequence の長さ）
+        struct GpuScopeRecord
+        {
+            Container::String Name;
+            size_t SequencePosition = 0;
+        };
+        Container::VariableArray<GpuScopeRecord> GpuScopes;
+        RHI::GPUTimestampScopeHandle BeginGPUTimestampScope(const char* scopeName) override
+        {
+            GpuScopeRecord record;
+            record.Name = scopeName != nullptr ? scopeName : "";
+            record.SequencePosition = CallSequence.size();
+            GpuScopes.push_back(record);
+            return {};
         }
         // 間接 dispatch の記録（引数のバッファの名前と先頭のバイト位置）。Dispatch とは別に数える（CallSequence では 'J'）
         struct IndirectDispatchRecord
         {
             char BufferName[40] = {};
             uint64_t OffsetBytes = 0;
+            // 記録した時点で最後に設定した記述子セットへ束縛されていたバッファ
+            Container::VariableArray<BoundBufferName> Bindings;
         };
         Container::VariableArray<IndirectDispatchRecord> IndirectDispatches;
         // true なら、間接 dispatch を何も記録せず false で断る（ICommandList の既定の実装と同じ）
@@ -621,6 +800,7 @@ namespace
                 std::memcpy(record.BufferName, name, std::min(std::strlen(name), sizeof(record.BufferName) - 1));
             }
             record.OffsetBytes = offset;
+            record.Bindings = SnapshotDescriptorBindings(m_LastDescriptorSet);
             IndirectDispatches.push_back(record);
             CallSequence.push_back('J');
             return true;
@@ -855,11 +1035,17 @@ namespace
     class FakeDescriptorSet final : public RHI::IDescriptorSet
     {
     public:
+        ~FakeDescriptorSet() override
+        {
+            ClearDescriptorBufferBindings(this);
+        }
+
         void BindConstantBuffer(uint32_t binding,
                                 RHI::BufferPtr buffer,
                                 uint32_t offset,
                                 uint32_t size) override
         {
+            RecordDescriptorBufferBinding(this, binding, buffer);
             if (binding == 4)
             {
                 m_Binding4Buffer = buffer;
@@ -888,6 +1074,7 @@ namespace
                                uint32_t offset,
                                uint32_t size) override
         {
+            RecordDescriptorBufferBinding(this, binding, buffer);
             if (binding == 5)
             {
                 m_Binding5Buffer = buffer;
@@ -1010,9 +1197,17 @@ namespace
             {
                 VisBufferSectionMaterials = buffer;
             }
+            if (IsDebugName(desc.DebugName, "LightingVsmSampleParams"))
+            {
+                LightingVsmSampleBuffer = buffer;
+            }
             if (IsDebugName(desc.DebugName, "VisBuffer_RecordUpload"))
             {
                 VisBufferRecordUpload = buffer;
+            }
+            if (IsDebugName(desc.DebugName, "ShadowProbe_Stats"))
+            {
+                ShadowProbeStatsBuffers.push_back(buffer);
             }
             return buffer;
         }
@@ -1084,6 +1279,7 @@ namespace
         RHI::DescriptorSetPtr CreateDescriptorSet(const RHI::DescriptorSetDesc& desc) override
         {
             LastDescriptorSetDesc = desc;
+            ++DescriptorSetCreations;
             return RHI::MakeShared<FakeDescriptorSet>();
         }
 
@@ -1137,6 +1333,30 @@ namespace
             m_Capabilities.bShaderBufferInt64Atomics = false;
         }
 
+        // VSM の物理ページのプール（storage buffer）が要る機能と、storage buffer 1 つの束縛の上限（0 は不明）を決める
+        void SetVirtualShadowMapCapabilities(bool bFragmentStoresAndAtomics, bool bBufferDeviceAddress, uint64_t maxStorageBufferRange)
+        {
+            m_Capabilities.bFragmentStoresAndAtomics = bFragmentStoresAndAtomics;
+            m_Capabilities.bBufferDeviceAddress = bBufferDeviceAddress;
+            m_Capabilities.MaxStorageBufferRange = maxStorageBufferRange;
+            // 影の塊の展開・描画（VirtualShadowMapRaster）が、塊ごとの間接描画の firstInstance を要る
+            m_Capabilities.bDrawIndirectFirstInstance = true;
+            // MegaGeometry のクラスタの記録の間接描画（DrawIndexedIndirectCount）も要る。無い装置は VSM を使わず CSM で描く
+            m_Capabilities.bDrawIndirectCount = true;
+        }
+
+        // DrawIndexedIndirectCount に対応する装置にする（VSM の MegaGeometry のクラスタの記録は、件数を GPU から読むこの間接描画で描く）
+        void EnableDrawIndirectCount()
+        {
+            m_Capabilities.bDrawIndirectCount = true;
+        }
+
+        // DrawIndexedIndirectCount に対応しない装置にする（VSM は MegaGeometry の影を描けず、CSM へ戻る）
+        void DisableDrawIndirectCount()
+        {
+            m_Capabilities.bDrawIndirectCount = false;
+        }
+
         // バッファのアドレスに対応しない装置にする（ソフトウェアラスタの計算シェーダーが頂点を引けない）
         void DisableBufferDeviceAddress()
         {
@@ -1155,6 +1375,10 @@ namespace
         Container::VariableArray<BufferCreationRecord> CreatedBuffers;
         /** @brief ビジビリティバッファの「区間から材質の表の番号への対応」のバッファ（最後に作られたもの） */
         RHI::BufferPtr VisBufferSectionMaterials;
+        // 照明が太陽の VSM の読み出しのパラメータを書く定数バッファ（LightingPass が作る）
+        RHI::BufferPtr LightingVsmSampleBuffer;
+        /** @brief 影の標本の統計の読み戻し先（作った順）。テストが GPU の書き込みの代わりに値を置く */
+        Container::VariableArray<RHI::BufferPtr> ShadowProbeStatsBuffers;
         /** @brief ビジビリティバッファのホストが書く記録の置き場（最後に作られたもの。記録の表へコピーされる元） */
         RHI::BufferPtr VisBufferRecordUpload;
         RHI::DescriptorSetDesc LastDescriptorSetDesc;
@@ -1171,6 +1395,8 @@ namespace
         // 0 でなければ、数え始めてから n 番目の計算パイプラインの作成だけを失敗させる（ほかは作れる）
         uint32_t FailComputePipelineCreationNumber = 0;
         uint32_t ComputePipelineCreations = 0;
+        // 作った記述子セットの数
+        size_t DescriptorSetCreations = 0;
 
     private:
         RHI::DeviceCapabilities m_Capabilities;
@@ -2960,9 +3186,10 @@ namespace
             vertex.BoneWeights[0] = 1.0f;
         }
         Container::VariableArray<uint32_t> skinIndices;
+        // インデックスは頂点の範囲に収める（範囲外のインデックスを持つ資産は描画のデータとして拒まれ、上限で外す数に入らない）
         skinIndices.push_back(0u);
-        skinIndices.push_back(1u);
-        skinIndices.push_back(2u);
+        skinIndices.push_back(1u % vertexCount);
+        skinIndices.push_back(2u % vertexCount);
         auto assetLease = Container::MakeShared<SkinnedMeshAssetLease>(
             SkinnedMeshHandle{handleIndex, 1}, std::move(skinVertices), std::move(skinIndices));
         scene.SkinnedLeases.push_back(Container::MakeShared<SkinnedMeshFrameLease>(assetLease));
@@ -5312,6 +5539,3316 @@ namespace
         defaultView.SetupDeferredPipeline(&defaultRenderer, RasterDirectBrdf::Analytic, VisibilityBufferMode::On, SwRasterMode::On);
         const auto* defaultMega = static_cast<const MegaGeometryPass*>(defaultView.FindPass("MegaGeometryPass"));
         assert(defaultMega != nullptr && defaultMega->GetSwRasterMaxPixels() == DefaultSwRasterMaxPixels);
+    }
+
+#if NORVES_ENABLE_STATS
+    // 影の標本（--shadow-probe）: SceneView は既定では標本のパスを持たず、足すと照明の後に並ぶ
+    void TestShadowProbeAbsentWithoutOptionAndAfterLightingWhenEnabled()
+    {
+        SceneRenderer renderer;
+        SceneView offView;
+        assert(!offView.IsShadowProbeEnabled());
+        offView.SetupDeferredPipeline(&renderer);
+        assert(offView.FindPass("ShadowProbePass") == nullptr);
+
+        SceneRenderer onRenderer;
+        SceneView onView;
+        onView.SetShadowProbeEnabled(true);
+        onView.SetupDeferredPipeline(&onRenderer);
+        const IViewPass* probe = onView.FindPass("ShadowProbePass");
+        const IViewPass* lighting = onView.FindPass("LightingPass");
+        assert(probe != nullptr && lighting != nullptr);
+        int probeIndex = -1;
+        int lightingIndex = -1;
+        for (uint32_t index = 0; index < onView.GetPassCount(); ++index)
+        {
+            probeIndex = onView.GetPassAt(index) == probe ? static_cast<int>(index) : probeIndex;
+            lightingIndex = onView.GetPassAt(index) == lighting ? static_cast<int>(index) : lightingIndex;
+        }
+        assert(lightingIndex >= 0 && lightingIndex < probeIndex);
+        // 有効にしても、足すのは標本のパス 1 つだけ（ほかのパスの数・順は変えない）
+        assert(onView.GetPassCount() == offView.GetPassCount() + 1);
+    }
+
+    // 影の標本のテストで、GBuffer の深度・法線・影の地図・シーンの色を書くだけのパス（照明の代わり）
+    class ShadowProbeInputsPass final : public IRenderGraphPass
+    {
+    public:
+        explicit ShadowProbeInputsPass(bool bWriteShadowMap = true)
+            : m_bWriteShadowMap(bWriteShadowMap)
+        {
+        }
+        const char* GetName() const override { return "ShadowProbeInputsPass"; }
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            Depth = builder.WriteTexture(RenderGraphResourceNames::GBufferDepth,
+                                         RGTextureDesc::RenderTarget(128, 64, RHI::Format::R32_FLOAT, "Test_Depth"),
+                                         RHI::ResourceState::RenderTarget,
+                                         RHI::ResourceState::ShaderResource);
+            Normal = builder.WriteTexture(RenderGraphResourceNames::GBufferNormal,
+                                          RGTextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "Test_Normal"),
+                                          RHI::ResourceState::RenderTarget,
+                                          RHI::ResourceState::ShaderResource);
+            SceneColor = builder.WriteTexture(RenderGraphResourceNames::SceneColor,
+                                              RGTextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "Test_SceneColor"),
+                                              RHI::ResourceState::RenderTarget,
+                                              RHI::ResourceState::ShaderResource);
+            if (m_bWriteShadowMap)
+            {
+                RGTextureDesc shadowDesc = RGTextureDesc::RenderTarget(64, 64, RHI::Format::R32_FLOAT, "Test_ShadowMap");
+                shadowDesc.ArraySize = 4;
+                ShadowMap = builder.WriteTexture(RenderGraphResourceNames::ShadowMap,
+                                                 shadowDesc,
+                                                 RHI::ResourceState::RenderTarget,
+                                                 RHI::ResourceState::ShaderResource);
+            }
+            builder.PreserveInsertionOrder();
+        }
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+        RGTextureHandle Depth;
+        RGTextureHandle Normal;
+        RGTextureHandle SceneColor;
+        RGTextureHandle ShadowMap;
+
+    private:
+        bool m_bWriteShadowMap = true;
+    };
+
+    // 標本のパスは、照明が書く Scene.Color・GBuffer の深度と法線・CSM の影の地図を読む（RenderGraph の依存で照明の後になる）。
+    // 影の地図が無い構成では何も宣言せず、何も測らない
+    void TestShadowProbeReadsCsmResourcesAfterLighting()
+    {
+        auto device = RHI::MakeShared<FakeDevice>();
+        ShaderManager shaderManager;
+        assert(shaderManager.Initialize(device.get(), TestShaderDirectory));
+        FakeCommandList commandList;
+        ViewRenderContext context;
+        context.Device = device.get();
+        context.CommandList = &commandList;
+        context.ShaderMgr = &shaderManager;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+
+        ShadowProbePass probe;
+        assert(probe.Initialize(context));
+        {
+            ShadowProbeInputsPass inputs;
+            RenderGraph graph;
+            assert(graph.Initialize(nullptr));
+            const uint32_t inputsIndex = graph.AddPass(&inputs);
+            const uint32_t probeIndex = graph.AddPass(&probe);
+            assert(graph.Compile(context));
+            const Container::VariableArray<uint32_t>& order = graph.GetCompiledPassOrder();
+            assert(order.size() == 2 && order[0] == inputsIndex && order[1] == probeIndex);
+
+            bool bReadsShadowMap = false;
+            bool bReadsDepth = false;
+            bool bReadsNormal = false;
+            bool bReadsSceneColor = false;
+            const uint32_t accessCount = graph.GetDeclaredPassAccessCount(probeIndex);
+            assert(accessCount == 4);
+            for (uint32_t access = 0; access < accessCount; ++access)
+            {
+                RGResourceHandle resource;
+                RGAccessMode mode = RGAccessMode::Write;
+                RHI::ResourceState state = RHI::ResourceState::Undefined;
+                RHI::ResourceState finalState = RHI::ResourceState::Undefined;
+                assert(graph.TryGetDeclaredPassAccess(probeIndex, access, resource, mode, state, finalState));
+                assert(mode == RGAccessMode::Read && state == RHI::ResourceState::ShaderResource);
+                bReadsShadowMap = bReadsShadowMap || resource == inputs.ShadowMap.ToResourceHandle();
+                bReadsDepth = bReadsDepth || resource == inputs.Depth.ToResourceHandle();
+                bReadsNormal = bReadsNormal || resource == inputs.Normal.ToResourceHandle();
+                bReadsSceneColor = bReadsSceneColor || resource == inputs.SceneColor.ToResourceHandle();
+            }
+            assert(bReadsShadowMap && bReadsDepth && bReadsNormal && bReadsSceneColor);
+        }
+        {
+            // 影の地図を書くパスが無い構成: 何も宣言しない
+            ShadowProbeInputsPass inputs(false);
+            RenderGraph graph;
+            assert(graph.Initialize(nullptr));
+            graph.AddPass(&inputs);
+            const uint32_t probeIndex = graph.AddPass(&probe);
+            assert(graph.Compile(context));
+            assert(graph.GetDeclaredPassAccessCount(probeIndex) == 0);
+        }
+        probe.Shutdown();
+        shaderManager.Shutdown();
+    }
+
+    uint32_t ReadShadowProbeParamWord(const Container::VariableArray<uint8_t>& bytes, size_t byteOffset)
+    {
+        assert(byteOffset + sizeof(uint32_t) <= bytes.size());
+        uint32_t value = 0;
+        std::memcpy(&value, bytes.data() + byteOffset, sizeof(value));
+        return value;
+    }
+
+    // 影の標本の実行の一式。決定的な撮影の形（エポックの最初のフレームで標本を固定し、以後は測る）か、
+    // そうでない形（起動から一定の実行の後に固定）で毎フレーム RenderGraph を回し、統計の読み戻しは GPU の代わりにテストが置く
+    struct ShadowProbeRun
+    {
+        RHI::TSharedPtr<FakeDevice> Device = RHI::MakeShared<FakeDevice>();
+        ShaderManager ShaderMgr;
+        MockAllocator Allocator;
+        RHI::TransientResourcePool Pool;
+        FakeCommandList CommandList;
+        CameraProxy Camera;
+        ViewRenderContext Context;
+        ShadowProbeInputsPass Inputs;
+        ShadowProbePass Probe;
+        RenderGraph Graph;
+    };
+
+    void InitializeShadowProbeRun(ShadowProbeRun& run, bool bDeterministic)
+    {
+        assert(run.ShaderMgr.Initialize(run.Device.get(), TestShaderDirectory));
+        assert(run.Pool.Initialize(&run.Allocator, 1));
+        run.Camera.Viewport.Width = 128.0f;
+        run.Camera.Viewport.Height = 64.0f;
+        ViewRenderContext& context = run.Context;
+        context.Device = run.Device.get();
+        context.CommandList = &run.CommandList;
+        context.ShaderMgr = &run.ShaderMgr;
+        context.TransientPool = &run.Pool;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.MainCamera = &run.Camera;
+        context.bDeterministicCapture = bDeterministic;
+        assert(run.Graph.Initialize(&run.Pool));
+        assert(run.Probe.Initialize(context));
+    }
+
+    // CSM を公開した状態にする（4 カスケード・有限の行列・増える分割）。false なら影の地図が無い状態にする
+    void PublishShadowProbeCascades(ShadowProbeRun& run, bool bPublished)
+    {
+        PhysicalLightingResources& lighting = run.Context.PhysicalLighting;
+        lighting.bShadowPublished = bPublished;
+        if (!bPublished)
+        {
+            lighting.ShadowMapTexture.reset();
+            return;
+        }
+        RHI::TextureDesc shadowDesc;
+        shadowDesc.Width = 64;
+        shadowDesc.Height = 64;
+        shadowDesc.ArraySize = PhysicalLightingShadowCascadeCount;
+        shadowDesc.TextureFormat = RHI::Format::R32_FLOAT;
+        lighting.ShadowMapTexture = run.Device->CreateTexture(shadowDesc);
+        CascadedDirectionalShadowShaderValues& cascaded = lighting.CascadedShadow;
+        cascaded.bEnabled = true;
+        cascaded.CascadeCount = PhysicalLightingShadowCascadeCount;
+        for (uint32_t cascade = 0; cascade < PhysicalLightingShadowCascadeCount; ++cascade)
+        {
+            for (uint32_t element = 0; element < 16u; ++element)
+            {
+                cascaded.View[cascade][element] = element % 5 == 0 ? 1.0f : 0.0f;
+                cascaded.Projection[cascade][element] = element % 5 == 0 ? 1.0f : 0.0f;
+            }
+        }
+        const float splits[PhysicalLightingShadowSplitCount] = {0.1f, 10.0f, 20.0f, 40.0f, 80.0f};
+        std::memcpy(cascaded.SplitDistances, splits, sizeof(splits));
+    }
+
+    // 1 フレーム回す。frameIndex は 0 から数える（実行の番号は frameIndex + 1）
+    void RunShadowProbeFrame(ShadowProbeRun& run, uint64_t frameIndex, bool bEpochStart)
+    {
+        run.Context.bTemporalEpochStart = bEpochStart;
+        run.Context.FrameIndex = static_cast<uint32_t>(frameIndex % 2);
+        run.Context.RenderFrameSerial = frameIndex + 1;
+        run.Pool.EndFrame();
+        run.Pool.BeginFrame(frameIndex);
+        run.Graph.BeginFrame(frameIndex);
+        run.Graph.AddPass(&run.Inputs);
+        run.Graph.AddPass(&run.Probe);
+        assert(run.Graph.Compile(run.Context));
+        const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
+        assert(result.bSuccess);
+    }
+
+    void ShutdownShadowProbeRun(ShadowProbeRun& run)
+    {
+        run.Probe.Shutdown();
+        run.Graph.Shutdown();
+        run.Pool.EndFrame();
+        run.Pool.Shutdown();
+        run.ShaderMgr.Shutdown();
+    }
+
+    // 決定的な撮影: エポックの前は何も dispatch しない。エポックが来ても影の地図が公開されていなければ測れないので、
+    // 次に測れるフレームで標本を固定する（mode 0）。以後は毎フレーム測る（mode 1）。
+    // 統計は数フレーム遅れて読み戻して足し、2 実行以内の分（GPU が書き終えていないかもしれない）は足さない。
+    // 比は定義どおり: mean_abs_delta・changed・flip は pairs、partial・texel は見えていた標本の延べ数に対する値
+    void TestShadowProbeCapturesAfterEpochThenMeasuresAndAggregates()
+    {
+        ShadowProbeRun run;
+        InitializeShadowProbeRun(run, true);
+        GShadowProbeParamUpdates.clear();
+
+        // フレーム 0〜2: エポックの前（影の地図は公開済み）。dispatch しない
+        PublishShadowProbeCascades(run, true);
+        for (uint64_t frame = 0; frame < 3; ++frame)
+        {
+            RunShadowProbeFrame(run, frame, false);
+        }
+        assert(run.CommandList.DispatchCount == 0 && !run.Probe.HasCapturedProbes());
+
+        // フレーム 3: エポックの最初のフレームだが影の地図が無い。測れない
+        PublishShadowProbeCascades(run, false);
+        RunShadowProbeFrame(run, 3, true);
+        assert(run.CommandList.DispatchCount == 0 && !run.Probe.HasCapturedProbes());
+
+        // フレーム 4: 影の地図が来た最初のフレームで標本を固定する（エポックの合図は 1 回だけ。ここでは立てない）
+        PublishShadowProbeCascades(run, true);
+        RunShadowProbeFrame(run, 4, false);
+        assert(run.CommandList.DispatchCount == 1 && run.Probe.HasCapturedProbes());
+        assert(GShadowProbeParamUpdates.size() == 1);
+        {
+            const Container::VariableArray<uint8_t>& bytes = GShadowProbeParamUpdates.back();
+            // screen（幅・高さ・格子の横・縦）と control（モード・カスケード数・有効・格子の間隔）の位置は std140 で 704・720
+            assert(ReadShadowProbeParamWord(bytes, 704) == 128 && ReadShadowProbeParamWord(bytes, 708) == 64);
+            assert(ReadShadowProbeParamWord(bytes, 712) == 32 && ReadShadowProbeParamWord(bytes, 716) == 16);
+            assert(ReadShadowProbeParamWord(bytes, 720) == 0);
+            assert(ReadShadowProbeParamWord(bytes, 724) == PhysicalLightingShadowCascadeCount);
+            assert(ReadShadowProbeParamWord(bytes, 728) == 1 && ReadShadowProbeParamWord(bytes, 732) == ShadowProbe::GRID_STEP);
+        }
+        assert(run.Device->ShadowProbeStatsBuffers.size() == 4);
+
+        // 実行の番号 = フレーム + 1。標本を固定したのは実行 5 で、統計の置き場は実行の番号 % 4
+        auto statsWords = [&](uint64_t executeIndex) -> uint32_t*
+        {
+            auto* buffer = static_cast<FakeBuffer*>(run.Device->ShadowProbeStatsBuffers[executeIndex % 4].get());
+            assert(buffer->MappedBytes.size() >= ShadowProbe::STATS_BYTES);
+            return reinterpret_cast<uint32_t*>(buffer->MappedBytes.data());
+        };
+        auto fillCapture = [&](uint64_t executeIndex)
+        {
+            uint32_t* words = statsWords(executeIndex);
+            std::memset(words, 0, ShadowProbe::STATS_BYTES);
+            words[ShadowProbe::StatCaptured] = 300;
+        };
+        auto fillMeasure = [&](uint64_t executeIndex, bool bFirst)
+        {
+            uint32_t* words = statsWords(executeIndex);
+            std::memset(words, 0, ShadowProbe::STATS_BYTES);
+            words[ShadowProbe::StatVisible] = 100;
+            words[ShadowProbe::StatPartial] = 20;
+            words[ShadowProbe::StatTexelSum] = 100 * 16 * 40; // 1 点 40 mm
+            if (!bFirst)
+            {
+                words[ShadowProbe::StatPairs] = 90;
+                words[ShadowProbe::StatDeltaSum] = 90 * 1024; // 1 組 0.25
+                words[ShadowProbe::StatChanged] = 45;
+                words[ShadowProbe::StatFlip] = 9;
+            }
+        };
+        fillCapture(5);
+
+        // フレーム 5〜12: 測る（mode 1）。実行 6〜13
+        constexpr uint64_t LastFrame = 12;
+        for (uint64_t frame = 5; frame <= LastFrame; ++frame)
+        {
+            RunShadowProbeFrame(run, frame, false);
+            assert(run.CommandList.DispatchCount == 1 + (frame - 4));
+            assert(ReadShadowProbeParamWord(GShadowProbeParamUpdates.back(), 720) == 1);
+            fillMeasure(frame + 1, frame == 5);
+        }
+
+        // 読み戻せたのは、最後の 2 実行（12・13）を除く固定の 1 回と測った 6 回（実行 6〜11）
+        run.Probe.LogSummary();
+        const ShadowProbe::Totals& totals = run.Probe.GetTotals();
+        assert(totals.Probes == 300);
+        assert(totals.Frames == 6);
+        assert(totals.Visible == 600 && totals.Pairs == 90 * 5);
+        assert(std::abs(totals.MeanAbsDelta() - 0.25) < 1.0e-9);
+        assert(std::abs(totals.ChangedRatio() - 0.5) < 1.0e-9);
+        assert(std::abs(totals.FlipRatio() - 0.1) < 1.0e-9);
+        assert(std::abs(totals.PartialRatio() - 0.2) < 1.0e-9);
+        assert(std::abs(totals.MeanTexelMm() - 40.0) < 1.0e-9);
+
+        ShutdownShadowProbeRun(run);
+    }
+
+    // --shadow-method=vsm の統計の語（9 以降）の合計と比。VSM を測ったフレームだけが VSM の合計へ入る
+    void TestShadowProbeTotalsAggregateVsmWords()
+    {
+        ShadowProbe::Totals totals;
+        uint32_t words[ShadowProbe::STATS_WORD_COUNT] = {};
+        words[ShadowProbe::StatVisible] = 100;
+        words[ShadowProbe::StatVsmVisible] = 100;
+        words[ShadowProbe::StatVsmPairs] = 80;
+        words[ShadowProbe::StatVsmDeltaSum] = 80 * 2048; // 1 組 0.5
+        words[ShadowProbe::StatVsmChanged] = 40;
+        words[ShadowProbe::StatVsmFlip] = 8;
+        words[ShadowProbe::StatVsmPartial] = 10;
+        words[ShadowProbe::StatVsmTexelSum] = 100 * 16 * 20; // 1 点 20 mm
+        words[ShadowProbe::StatBothDefinite] = 50;
+        words[ShadowProbe::StatAgree] = 49;
+        words[ShadowProbe::StatFiner] = 90;
+        words[ShadowProbe::StatVsmFallbackSamples] = 160;
+
+        // VSM を測っていないフレームは、VSM の合計に入らない（csm の構成では VSM の行を出さない）
+        totals.AddMeasuredFrame(words, false);
+        assert(totals.Frames == 1 && totals.VsmFrames == 0 && totals.VsmVisible == 0 && totals.BothDefinite == 0);
+
+        totals.AddMeasuredFrame(words, true);
+        totals.AddMeasuredFrame(words, true);
+        assert(totals.Frames == 3 && totals.VsmFrames == 2);
+        assert(totals.VsmVisible == 200 && totals.VsmPairs == 160 && totals.BothDefinite == 100 && totals.Agree == 98);
+        assert(std::abs(totals.VsmMeanAbsDelta() - 0.5) < 1.0e-9);
+        assert(std::abs(totals.VsmChangedRatio() - 0.5) < 1.0e-9);
+        assert(std::abs(totals.VsmFlipRatio() - 0.1) < 1.0e-9);
+        assert(std::abs(totals.VsmPartialRatio() - 0.1) < 1.0e-9);
+        assert(std::abs(totals.VsmMeanTexelMm() - 20.0) < 1.0e-9);
+        assert(std::abs(totals.AgreeRatio() - 0.98) < 1.0e-9);
+        assert(std::abs(totals.FinerRatio() - 0.9) < 1.0e-9);
+        // 逃げた標本は 1 標本 16 点: 320 / (200 × 16)
+        assert(std::abs(totals.FallbackRatio() - 0.1) < 1.0e-9);
+    }
+
+    // 決定的な撮影のエポックは、読み込みが落ち着くまで何度も始め直される。始まるたびに標本を固定し直し、
+    // それまでに足した合計（読み込み前のシーンで測った値）を捨てる
+    void TestShadowProbeEpochRestartRecapturesAndResetsTotals()
+    {
+        ShadowProbeRun run;
+        InitializeShadowProbeRun(run, true);
+        PublishShadowProbeCascades(run, true);
+        GShadowProbeParamUpdates.clear();
+
+        RunShadowProbeFrame(run, 0, true);
+        assert(run.CommandList.DispatchCount == 1 && run.Probe.HasCapturedProbes());
+        assert(run.Device->ShadowProbeStatsBuffers.size() == 4);
+        for (uint64_t frame = 1; frame <= 8; ++frame)
+        {
+            RunShadowProbeFrame(run, frame, false);
+            // 実行 frame + 1 の置き場に、見えた標本が 10 あったと置く
+            auto* buffer = static_cast<FakeBuffer*>(run.Device->ShadowProbeStatsBuffers[(frame + 1) % 4].get());
+            uint32_t* words = reinterpret_cast<uint32_t*>(buffer->MappedBytes.data());
+            std::memset(words, 0, ShadowProbe::STATS_BYTES);
+            words[ShadowProbe::StatVisible] = 10;
+        }
+        assert(run.CommandList.DispatchCount == 9);
+        assert(ReadShadowProbeParamWord(GShadowProbeParamUpdates.back(), 720) == 1);
+
+        // 2 回目のエポック: その場で固定し直す（mode 0）。それまでの合計は 0 に戻る
+        RunShadowProbeFrame(run, 9, true);
+        assert(run.CommandList.DispatchCount == 10);
+        assert(ReadShadowProbeParamWord(GShadowProbeParamUpdates.back(), 720) == 0);
+        assert(run.Probe.HasCapturedProbes());
+        assert(run.Probe.GetTotals().Frames == 0 && run.Probe.GetTotals().Visible == 0);
+
+        // 固定し直した後は、また測る
+        RunShadowProbeFrame(run, 10, false);
+        assert(run.CommandList.DispatchCount == 11);
+        assert(ReadShadowProbeParamWord(GShadowProbeParamUpdates.back(), 720) == 1);
+        ShutdownShadowProbeRun(run);
+    }
+
+    // 決定的な撮影でない起動: エポックが無いので、起動から FALLBACK_CAPTURE_EXECUTE_COUNT 回目の実行で標本を固定する
+    void TestShadowProbeFallbackCapturesAfterFixedExecuteCount()
+    {
+        ShadowProbeRun run;
+        InitializeShadowProbeRun(run, false);
+        PublishShadowProbeCascades(run, true);
+        const uint64_t captureFrame = ShadowProbe::FALLBACK_CAPTURE_EXECUTE_COUNT - 1;
+        for (uint64_t frame = 0; frame < captureFrame; ++frame)
+        {
+            // エポックの合図は決定的な撮影でなければ無視する
+            RunShadowProbeFrame(run, frame, frame == 7);
+        }
+        assert(run.CommandList.DispatchCount == 0 && !run.Probe.HasCapturedProbes());
+        RunShadowProbeFrame(run, captureFrame, false);
+        assert(run.CommandList.DispatchCount == 1 && run.Probe.HasCapturedProbes());
+        ShutdownShadowProbeRun(run);
+    }
+
+    // 標本の集計の語から、ログの値を定義どおりに求める（ゼロ除算しない）
+    void TestShadowProbeTotalsHandleEmptyDenominators()
+    {
+        ShadowProbe::Totals totals;
+        assert(totals.MeanAbsDelta() == 0.0 && totals.ChangedRatio() == 0.0 && totals.FlipRatio() == 0.0);
+        assert(totals.PartialRatio() == 0.0 && totals.MeanTexelMm() == 0.0 && totals.OutOfRangeRatio() == 0.0);
+        const ShadowProbe::Grid grid = ShadowProbe::ComputeGrid(1280, 720);
+        assert(grid.CountX == 320 && grid.CountY == 180 && grid.Count() == 57600);
+        assert(ShadowProbe::ComputeGrid(1281, 721).CountX == 321);
+        assert(!ShadowProbe::ComputeGrid(0, 720).IsValid());
+    }
+#endif // NORVES_ENABLE_STATS
+
+    // ========================================
+    // 太陽の VSM の資源（VirtualShadowMapPass。--shadow-method=vsm）
+    // ========================================
+
+    // csm（既定）の構成にはパスが無く、vsm の構成では照明の前に 1 つだけ入る（ほかのパスの数・順は変えない）。要求したページの数はパスへ届く
+    void TestVirtualShadowMapPassAbsentForCsmAndBeforeLightingForVsm()
+    {
+        SceneRenderer csmRenderer;
+        SceneView csmView;
+        csmView.SetupDeferredPipeline(&csmRenderer);
+        assert(csmView.GetShadowMethod() == ShadowMethod::Csm);
+        assert(csmView.FindPass("VirtualShadowMapPass") == nullptr);
+
+        SceneRenderer vsmRenderer;
+        SceneView vsmView;
+        vsmView.SetShadowMethod(ShadowMethod::Vsm);
+        vsmView.SetVsmPoolPages(777);
+        vsmView.SetupDeferredPipeline(&vsmRenderer);
+        const auto* vsmPass = static_cast<const VirtualShadowMapPass*>(vsmView.FindPass("VirtualShadowMapPass"));
+        const IViewPass* lighting = vsmView.FindPass("LightingPass");
+        assert(vsmPass != nullptr && lighting != nullptr);
+        assert(vsmPass->GetRequestedPoolPages() == 777);
+        int vsmIndex = -1;
+        int lightingIndex = -1;
+        for (uint32_t index = 0; index < vsmView.GetPassCount(); ++index)
+        {
+            vsmIndex = vsmView.GetPassAt(index) == vsmPass ? static_cast<int>(index) : vsmIndex;
+            lightingIndex = vsmView.GetPassAt(index) == lighting ? static_cast<int>(index) : lightingIndex;
+        }
+        assert(vsmIndex >= 0 && vsmIndex < lightingIndex);
+        // 深度が確定した後: ビジビリティの解決・GBuffer・MegaGeometry のどれよりも後
+        for (const char* earlier : {"GBufferPass", "MegaGeometryPass", "VisibilityResolvePass"})
+        {
+            const IViewPass* earlierPass = vsmView.FindPass(earlier);
+            for (uint32_t index = 0; earlierPass != nullptr && index < vsmView.GetPassCount(); ++index)
+            {
+                if (vsmView.GetPassAt(index) == earlierPass)
+                {
+                    assert(static_cast<int>(index) < vsmIndex);
+                }
+            }
+        }
+        assert(vsmView.GetPassCount() == csmView.GetPassCount() + 1);
+
+        // MegaGeometry の投影物のカリングは、vsm の構成が主の MegaGeometryPass の入力を読む（csm の構成には VSM のパスが無く、カリングも無い）
+        assert(vsmPass->GetMegaGeometryPass() != nullptr);
+        assert(static_cast<const IViewPass*>(vsmPass->GetMegaGeometryPass()) == vsmView.FindPass("MegaGeometryPass"));
+
+        // スキニングの計算は VSM のパスより前（変形した頂点を影の描画が読む）
+        const IViewPass* vsmSkinning = vsmView.FindPass("SkinningComputePass");
+        assert(vsmSkinning != nullptr && vsmSkinning->IsEnabled());
+        int skinningIndex = -1;
+        for (uint32_t index = 0; index < vsmView.GetPassCount(); ++index)
+        {
+            skinningIndex = vsmView.GetPassAt(index) == vsmSkinning ? static_cast<int>(index) : skinningIndex;
+        }
+        assert(skinningIndex >= 0 && skinningIndex < vsmIndex);
+
+        // ビジビリティバッファを使わない構成（off）: csm ではスキニングの計算は無効のままで何も足されず、
+        // vsm では VSM の投影物のために有効になる（VSM のパスより前）
+        SceneRenderer csmOffRenderer;
+        SceneView csmOffView;
+        csmOffView.SetupDeferredPipeline(&csmOffRenderer, RasterDirectBrdf::Analytic, VisibilityBufferMode::Off);
+        const IViewPass* csmOffSkinning = csmOffView.FindPass("SkinningComputePass");
+        assert(csmOffSkinning != nullptr && !csmOffSkinning->IsEnabled());
+        assert(csmOffView.FindPass("VirtualShadowMapPass") == nullptr);
+
+        SceneRenderer vsmOffRenderer;
+        SceneView vsmOffView;
+        vsmOffView.SetShadowMethod(ShadowMethod::Vsm);
+        vsmOffView.SetupDeferredPipeline(&vsmOffRenderer, RasterDirectBrdf::Analytic, VisibilityBufferMode::Off);
+        const IViewPass* vsmOffSkinning = vsmOffView.FindPass("SkinningComputePass");
+        const IViewPass* vsmOffPass = vsmOffView.FindPass("VirtualShadowMapPass");
+        assert(vsmOffSkinning != nullptr && vsmOffSkinning->IsEnabled() && vsmOffPass != nullptr);
+        int offSkinningIndex = -1;
+        int offVsmIndex = -1;
+        for (uint32_t index = 0; index < vsmOffView.GetPassCount(); ++index)
+        {
+            offSkinningIndex = vsmOffView.GetPassAt(index) == vsmOffSkinning ? static_cast<int>(index) : offSkinningIndex;
+            offVsmIndex = vsmOffView.GetPassAt(index) == vsmOffPass ? static_cast<int>(index) : offVsmIndex;
+        }
+        assert(offSkinningIndex >= 0 && offSkinningIndex < offVsmIndex);
+    }
+
+    // VSM のテストで、GBuffer の深度・法線を書くだけのパス（深度の確定の代わり）
+    class VsmInputsPass final : public IRenderGraphPass
+    {
+    public:
+        const char* GetName() const override { return "VsmInputsPass"; }
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            Depth = builder.WriteTexture(RenderGraphResourceNames::GBufferDepth,
+                                         RGTextureDesc::RenderTarget(128, 64, RHI::Format::R32_FLOAT, "Test_Depth"),
+                                         RHI::ResourceState::RenderTarget,
+                                         RHI::ResourceState::ShaderResource);
+            Normal = builder.WriteTexture(RenderGraphResourceNames::GBufferNormal,
+                                          RGTextureDesc::RenderTarget(128, 64, RHI::Format::R16G16B16A16_FLOAT, "Test_Normal"),
+                                          RHI::ResourceState::RenderTarget,
+                                          RHI::ResourceState::ShaderResource);
+            builder.PreserveInsertionOrder();
+        }
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+        RGTextureHandle Depth;
+        RGTextureHandle Normal;
+    };
+
+    // VSM のテストで、公開された 6 つの資源を名前で読む後のパス（後のパス・照明の代わり）
+    class VsmConsumerPass final : public IRenderGraphPass
+    {
+    public:
+        const char* GetName() const override { return "VsmConsumerPass"; }
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            const NorvesLib::Core::Identity names[] = {RenderGraphResourceNames::VsmPhysicalPool,
+                                                         RenderGraphResourceNames::VsmPageTable,
+                                                         RenderGraphResourceNames::VsmRequestBits,
+                                                         RenderGraphResourceNames::VsmFreeList,
+                                                         RenderGraphResourceNames::VsmStats,
+                                                         RenderGraphResourceNames::VsmDirtyList};
+            // 照明・影の標本が読むかどうかを決める問い合わせ（公開の有無を、グラフのエラーにせず返す）
+            bSawPublication = builder.HasBuffer(RenderGraphResourceNames::VsmPageTable) && builder.HasBuffer(RenderGraphResourceNames::VsmPhysicalPool);
+            for (uint32_t index = 0; index < 6; ++index)
+            {
+                Handles[index] = builder.ReadBuffer(names[index], RHI::ResourceState::ShaderResource);
+            }
+            builder.PreserveInsertionOrder();
+        }
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+        RGBufferHandle Handles[6];
+        bool bSawPublication = false;
+    };
+
+    // VSM のパスが無いグラフ（csm の構成・VSM を作れなかった装置）で、公開の問い合わせがグラフをエラーにしないこと
+    // （TryGetBuffer は未公開の名前をグラフのエラーにするので、照明・影の標本は HasBuffer で読むかどうかを決める）
+    class VsmPublicationQueryPass final : public IRenderGraphPass
+    {
+    public:
+        const char* GetName() const override { return "VsmPublicationQueryPass"; }
+        void Declare(RenderGraphBuilder& builder) override
+        {
+            bHasPageTable = builder.HasBuffer(RenderGraphResourceNames::VsmPageTable);
+            bHasPool = builder.HasBuffer(RenderGraphResourceNames::VsmPhysicalPool);
+            builder.PreserveInsertionOrder();
+        }
+        void Execute(RenderGraphResources& resources, ViewRenderContext& context) override
+        {
+            (void)resources;
+            (void)context;
+        }
+
+        bool bHasPageTable = true;
+        bool bHasPool = true;
+    };
+
+#if NORVES_ENABLE_LOGGING
+    // VSM のログ（カテゴリ VirtualShadowMapPass）を残し、部分文字列に一致する行の数を数える
+    struct VsmLogCollector final : Logging::ILogSink
+    {
+        Container::VariableArray<Container::String> Messages;
+
+        void OnLog(const Logging::LogEntry& entry) override
+        {
+            if (entry.category == "VirtualShadowMapPass" || entry.category == "VirtualShadowMapRaster" ||
+                entry.category == "VirtualShadowMapMegaCull")
+            {
+                Messages.push_back(entry.message);
+            }
+        }
+
+        uint32_t Count(const char* needle) const
+        {
+            uint32_t count = 0;
+            for (const Container::String& message : Messages)
+            {
+                count += std::strstr(message.c_str(), needle) != nullptr ? 1u : 0u;
+            }
+            return count;
+        }
+    };
+#endif
+
+    struct VsmRun
+    {
+        RHI::TSharedPtr<FakeDevice> Device = RHI::MakeShared<FakeDevice>();
+        MockAllocator Allocator;
+        RHI::TransientResourcePool Pool;
+        FakeCommandList CommandList;
+        CameraProxy Camera;
+        ShaderManager ShaderMgr;
+        ViewRenderContext Context;
+        VsmInputsPass Inputs;
+        VsmConsumerPass Consumer;
+        RenderGraph Graph;
+        // スワップチェーンの飛行中のフレームの数（製品は 1。FrameIndex は飛行中の番号で、完了済みの通し番号は
+        // 「記録を始めたフレームの 1 つ前から数えて飛行中の数だけ前」までとする）
+        uint32_t FramesInFlight = 2;
+        // 0 以外なら、GPU がこの数だけ遅れて完了するものとして、完了済みの通し番号を渡す（飛行中の数より遅い GPU）
+        uint32_t CompletedLag = 0;
+    };
+
+    void InitializeVsmRun(VsmRun& run)
+    {
+        assert(run.Pool.Initialize(&run.Allocator, 1));
+        run.Camera.Viewport.Width = 128.0f;
+        run.Camera.Viewport.Height = 64.0f;
+        ViewRenderContext& context = run.Context;
+        context.Device = run.Device.get();
+        context.CommandList = &run.CommandList;
+        context.TransientPool = &run.Pool;
+        context.RenderWidth = 128;
+        context.RenderHeight = 64;
+        context.MainCamera = &run.Camera;
+        // 印付け・割り当て・消去の計算シェーダー（vsm_*.comp）を読む
+        assert(run.ShaderMgr.Initialize(run.Device.get(), TestShaderDirectory));
+        context.ShaderMgr = &run.ShaderMgr;
+        assert(run.Graph.Initialize(&run.Pool));
+    }
+
+    // フレームの通し番号・飛行中の番号・完了済みの通し番号を文脈へ入れる。
+    // スワップチェーンのフェンスは、同じ飛行中の番号の前のフレーム（飛行中の数だけ前）の完了を待ってから記録を始めさせる
+    void SetVsmFrame(VsmRun& run, uint64_t frameIndex)
+    {
+        run.Context.FrameIndex = static_cast<uint32_t>(frameIndex % run.FramesInFlight);
+        run.Context.RenderFrameSerial = frameIndex + 1;
+        const uint64_t lag = run.CompletedLag != 0 ? run.CompletedLag : run.FramesInFlight;
+        run.Context.CompletedRenderFrameSerial = run.Context.RenderFrameSerial > lag ? run.Context.RenderFrameSerial - lag : 0;
+    }
+
+    // 1 フレーム回す。入力 → VSM → 読むパスの順に足す。bConsume が false なら読むパスは足さない
+    // 1 つのビューポートの Execute を回す。フレーム（通し番号と飛行中の番号）と、プール・グラフの世代は別に数える
+    // （同じフレームに複数のビューポートを描くとき、フレームは同じでプール・グラフの世代だけが進む）
+    void RunVsmViewport(VsmRun& run, VirtualShadowMapPass& pass, uint64_t frameIndex, uint64_t graphGeneration, bool bConsume)
+    {
+        SetVsmFrame(run, frameIndex);
+        run.Pool.EndFrame();
+        run.Pool.BeginFrame(graphGeneration);
+        run.Graph.BeginFrame(graphGeneration);
+        run.Graph.AddPass(&run.Inputs);
+        run.Graph.AddPass(&pass);
+        if (bConsume)
+        {
+            run.Graph.AddPass(&run.Consumer);
+        }
+        assert(run.Graph.Compile(run.Context));
+        const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
+        assert(result.bSuccess);
+    }
+
+    // 1 フレーム（ビューポート 1 つ）回す。入力 → VSM → 読むパスの順に足す。bConsume が false なら読むパスは足さない
+    void RunVsmFrame(VsmRun& run, VirtualShadowMapPass& pass, uint64_t frameIndex, bool bConsume)
+    {
+        RunVsmViewport(run, pass, frameIndex, frameIndex, bConsume);
+    }
+
+    // 実際の GBuffer と照明のパスの間に VSM のパスを置いて 2 フレーム回し、照明が VSM と CSM のどちらを読むかを確かめる（定義は照明の VSM の統計のテストの前）
+    void RunVsmPassThroughLighting(VsmRun& run, VirtualShadowMapPass& pass, bool bExpectVsm);
+
+    void ShutdownVsmRun(VsmRun& run, VirtualShadowMapPass& pass)
+    {
+        pass.Shutdown();
+        run.ShaderMgr.Shutdown();
+        run.Graph.Shutdown();
+        run.Pool.EndFrame();
+        run.Pool.Shutdown();
+    }
+
+    const BufferCreationRecord* FindBufferCreation(const FakeDevice& device, const char* debugName)
+    {
+        for (const BufferCreationRecord& record : device.CreatedBuffers)
+        {
+            if (IsDebugName(record.Desc.DebugName, debugName))
+            {
+                return &record;
+            }
+        }
+        return nullptr;
+    }
+
+    uint32_t CountVsmBufferCreations(const FakeDevice& device)
+    {
+        uint32_t count = 0;
+        for (const BufferCreationRecord& record : device.CreatedBuffers)
+        {
+            count += record.Desc.DebugName != nullptr && std::strncmp(record.Desc.DebugName, "VSM_", 4) == 0 ? 1u : 0u;
+        }
+        return count;
+    }
+
+    // 対応した装置では、プール（5120 ページ = 320 MiB・1 ページ 64 KiB）・ページの表（段 × 128 × 128 の uint32）・要求のビット列・
+    // 空きページの一覧・統計を 1 回ずつ作り、深度の後・読むパスの前に並べて名前で公開する。
+    // 最初の実行だけがプールを 1.0 のビット・表を 0 で埋め、要求と統計は毎フレーム 0 から数える。台帳（VRAM_LEDGER）は作成時に 1 回ずつ
+    void TestVirtualShadowMapPassCreatesAndPublishesResources()
+    {
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        VsmLogCollector logs;
+        logger.AddSink(&logs);
+#endif
+
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+
+        VirtualShadowMapPass pass;
+        assert(pass.Initialize(run.Context));
+        assert(pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::None);
+        assert(pass.GetPoolPages() == 5120);
+
+        // 資源の大きさと用途
+        struct Expected
+        {
+            const char* Name;
+            uint64_t Bytes;
+        };
+        const Expected expected[] = {
+            {"VSM_PhysicalPool", 5120ull * 65536ull},
+            {"VSM_PageTable", 10ull * 128ull * 128ull * 4ull},
+            {"VSM_RequestBits", 10ull * 128ull * 128ull / 8ull},
+            {"VSM_FreeList", (5120ull * 3ull + 1ull) * 4ull},
+            {"VSM_Stats", 212ull},
+            {"VSM_DirtyList", (5120ull + 4ull) * 4ull},
+        };
+        for (const Expected& entry : expected)
+        {
+            assert(CountBufferCreations(*run.Device, entry.Name) == 1);
+            const BufferCreationRecord* record = FindBufferCreation(*run.Device, entry.Name);
+            assert(record != nullptr && record->Desc.Size == entry.Bytes);
+            assert((record->Desc.Usage & RHI::ResourceUsage::StorageBuffer) == RHI::ResourceUsage::StorageBuffer);
+            assert((record->Desc.Usage & RHI::ResourceUsage::TransferDst) == RHI::ResourceUsage::TransferDst);
+        }
+        assert(VirtualShadowMap::PoolBytes(5120) == 320ull * 1024ull * 1024ull);
+        assert(VirtualShadowMap::PAGE_BYTES == 64ull * 1024ull);
+        // 6 つの資源と、統計の読み戻しの 4 枠
+        assert(CountVsmBufferCreations(*run.Device) == 10);
+        assert(CountBufferCreations(*run.Device, "VSM_StatsReadback") == 4);
+        const BufferCreationRecord* dirtyRecord = FindBufferCreation(*run.Device, "VSM_DirtyList");
+        assert((dirtyRecord->Desc.Usage & RHI::ResourceUsage::IndirectBuffer) == RHI::ResourceUsage::IndirectBuffer);
+        const BufferCreationRecord* poolRecord = FindBufferCreation(*run.Device, "VSM_PhysicalPool");
+        assert((poolRecord->Desc.Usage & RHI::ResourceUsage::BufferDeviceAddress) == RHI::ResourceUsage::BufferDeviceAddress);
+
+        // 空きページの一覧: 先頭が数、続いて 0 〜 5119
+        {
+            const FakeBuffer* freeList = static_cast<const FakeBuffer*>(pass.GetFreeList().get());
+            assert(freeList->UpdateCallCount == 1);
+            assert(freeList->LastUpdateBytes.size() == (5120u * 3u + 1u) * 4u);
+            const uint32_t* words = reinterpret_cast<const uint32_t*>(freeList->LastUpdateBytes.data());
+            assert(words[0] == 5120u);
+            for (uint32_t page = 0; page < 5120u; ++page)
+            {
+                assert(words[page + 1u] == page);
+            }
+        }
+
+#if NORVES_ENABLE_LOGGING
+        // 台帳は作成時に 1 回ずつ。VSM_FALLBACK は出ない
+        assert(logs.Count("VRAM_LEDGER vsm_pool pages=5120 mb=320.000") == 1);
+        assert(logs.Count("VRAM_LEDGER vsm_page_table mb=0.625") == 1);
+        assert(logs.Count("VSM_FALLBACK") == 0);
+#endif
+
+        // 1 フレーム目: 深度 → VSM → 読むパス。6 つの資源が公開され、読むパスが名前で取れる
+        RunVsmFrame(run, pass, 0, true);
+        assert(run.Consumer.bSawPublication);
+        {
+            const Container::VariableArray<uint32_t>& order = run.Graph.GetCompiledPassOrder();
+            assert(order.size() == 3 && order[0] == 0 && order[1] == 1 && order[2] == 2);
+            // 深度・法線の読み 2 つ + 資源 6 つの書き込み
+            assert(run.Graph.GetDeclaredPassAccessCount(1) == 8);
+            assert(run.Graph.GetDeclaredPassAccessCount(2) == 6);
+            for (const RGBufferHandle& handle : run.Consumer.Handles)
+            {
+                assert(handle.IsValid());
+            }
+        }
+        {
+            // 最初の実行だけプールを 1.0 のビットで埋め、続いて毎フレームの記録が要求・ページの表・統計を 0 から数え直す
+            const auto& fills = run.CommandList.VsmFills;
+            assert(fills.size() == 4);
+            assert(IsDebugName(fills[0].BufferName, "VSM_PhysicalPool") && fills[0].SizeBytes == 5120ull * 65536ull &&
+                   fills[0].Value == 0x3F800000u);
+            assert(IsDebugName(fills[1].BufferName, "VSM_RequestBits") && fills[1].SizeBytes == 20480ull && fills[1].Value == 0u);
+            assert(IsDebugName(fills[2].BufferName, "VSM_PageTable") && fills[2].SizeBytes == 655360ull && fills[2].Value == 0u);
+            assert(IsDebugName(fills[3].BufferName, "VSM_Stats") && fills[3].SizeBytes == VirtualShadowMap::STATS_BYTES && fills[3].Value == 0u);
+        }
+
+        // 2 フレーム目: 要求・ページの表・統計だけを 0 から数え直す（プールは埋め直さない。消去は dirty のページだけ）
+        RunVsmFrame(run, pass, 1, true);
+        {
+            const auto& fills = run.CommandList.VsmFills;
+            assert(fills.size() == 7);
+            assert(IsDebugName(fills[4].BufferName, "VSM_RequestBits") && fills[4].Value == 0u);
+            assert(IsDebugName(fills[5].BufferName, "VSM_PageTable") && fills[5].Value == 0u);
+            assert(IsDebugName(fills[6].BufferName, "VSM_Stats") && fills[6].Value == 0u);
+        }
+
+#if NORVES_ENABLE_LOGGING
+        // フレームを描いても台帳は増えない
+        assert(logs.Count("VRAM_LEDGER vsm_pool") == 1 && logs.Count("VRAM_LEDGER vsm_page_table") == 1);
+#endif
+
+        ShutdownVsmRun(run, pass);
+        assert(!pass.IsActive() && pass.GetPoolPages() == 0 && !pass.GetPool());
+
+#if NORVES_ENABLE_LOGGING
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+#endif
+    }
+
+    // VSM のパスが無いグラフでは、公開の問い合わせ（HasBuffer）が false を返すだけで、グラフのコンパイル・実行は成功する
+    void TestRenderGraphHasBufferIsQuietWithoutVsmPass()
+    {
+        VsmRun run;
+        InitializeVsmRun(run);
+        VsmPublicationQueryPass query;
+        run.Context.FrameIndex = 0;
+        run.Context.RenderFrameSerial = 1;
+        run.Pool.EndFrame();
+        run.Pool.BeginFrame(0);
+        run.Graph.BeginFrame(0);
+        run.Graph.AddPass(&run.Inputs);
+        run.Graph.AddPass(&query);
+        assert(run.Graph.Compile(run.Context));
+        const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
+        assert(result.bSuccess);
+        assert(!query.bHasPageTable && !query.bHasPool);
+        run.ShaderMgr.Shutdown();
+        run.Graph.Shutdown();
+        run.Pool.EndFrame();
+        run.Pool.Shutdown();
+    }
+
+    // 作れない装置（断片シェーダーの storage の書き込み・アトミックが無い、BDA が無い、プールが 512 ページ未満しか取れない、確保に失敗する）では、
+    // 資源もパスの宣言も作らず（読むのは深度・法線だけでなく何も宣言しない）、VSM_FALLBACK reason=<…> を 1 回だけ出す。
+    // 何も設定しない Fake の装置（bFragmentStoresAndAtomics が無い）も同じ
+    void TestVirtualShadowMapPassFallsBackWhenUnsupported()
+    {
+        struct Case
+        {
+            bool bConfigure;
+            bool bFragmentStoresAndAtomics;
+            bool bBufferDeviceAddress;
+            uint64_t MaxStorageBufferRange;
+            const char* FailBufferDebugName;
+            VirtualShadowMap::FallbackReason Reason;
+            const char* ReasonText;
+        };
+        const Case cases[] = {
+            {false, false, false, 0, nullptr, VirtualShadowMap::FallbackReason::FragmentAtomics, "fragment_atomics"},
+            {true, false, true, 0xFFFFFFFFull, nullptr, VirtualShadowMap::FallbackReason::FragmentAtomics, "fragment_atomics"},
+            {true, false, false, 0xFFFFFFFFull, nullptr, VirtualShadowMap::FallbackReason::FragmentAtomics, "fragment_atomics"},
+            {true, true, false, 0xFFFFFFFFull, nullptr, VirtualShadowMap::FallbackReason::BufferDeviceAddress, "bda"},
+            {true, true, true, 16ull * 1024ull * 1024ull, nullptr, VirtualShadowMap::FallbackReason::PoolSize, "pool_size"},
+            {true, true, true, 512ull * 65536ull - 1ull, nullptr, VirtualShadowMap::FallbackReason::PoolSize, "pool_size"},
+            // 確保に失敗する装置（プールを作れない・後ろの資源を作れない）: 作れたぶんも手放し、何も残さない
+            {true, true, true, 0xFFFFFFFFull, "VSM_PhysicalPool", VirtualShadowMap::FallbackReason::PoolSize, "pool_size"},
+            {true, true, true, 0xFFFFFFFFull, "VSM_Stats", VirtualShadowMap::FallbackReason::PoolSize, "pool_size"},
+            // MegaGeometry の影の経路の資源（カリングの出力の一覧・dirty の階層・クラスタの記録）を作れない装置: 影を欠いた VSM にせず CSM へ戻る
+            {true, true, true, 0xFFFFFFFFull, "VsmMega_List", VirtualShadowMap::FallbackReason::MegaGeometry, "mega_geometry"},
+            {true, true, true, 0xFFFFFFFFull, "VsmMega_DirtyBits", VirtualShadowMap::FallbackReason::MegaGeometry, "mega_geometry"},
+            {true, true, true, 0xFFFFFFFFull, "VsmMega_Chunks", VirtualShadowMap::FallbackReason::MegaGeometry, "mega_geometry"},
+        };
+
+        for (const Case& testCase : cases)
+        {
+#if NORVES_ENABLE_LOGGING
+            Logging::LogConfig logConfig;
+            logConfig.minLevel = Logging::LogLevel::Trace;
+            logConfig.outputType = Logging::LogOutput::None;
+            logConfig.bAsyncLogging = false;
+            logConfig.bAutoFlush = false;
+            Logging::Logger& logger = Logging::Logger::GetInstance();
+            logger.Shutdown();
+            assert(logger.Initialize(logConfig));
+            VsmLogCollector logs;
+            logger.AddSink(&logs);
+#endif
+            VsmRun run;
+            if (testCase.bConfigure)
+            {
+                run.Device->SetVirtualShadowMapCapabilities(
+                    testCase.bFragmentStoresAndAtomics, testCase.bBufferDeviceAddress, testCase.MaxStorageBufferRange);
+            }
+            run.Device->FailBufferDebugName = testCase.FailBufferDebugName;
+            InitializeVsmRun(run);
+
+            VirtualShadowMapPass pass;
+            assert(pass.Initialize(run.Context));
+            assert(!pass.IsActive());
+            assert(pass.GetFallbackReason() == testCase.Reason);
+            assert(pass.GetPoolPages() == 0);
+            assert(!pass.GetPool() && !pass.GetPageTable() && !pass.GetRequestBits() && !pass.GetFreeList() && !pass.GetStats() &&
+                   !pass.GetDirtyList());
+            // 失敗させた資源の作成は試みても、それが成功した後ろの資源は持たない（作成記録は残るが、パスは何も持たない）
+            if (testCase.FailBufferDebugName == nullptr)
+            {
+                assert(CountVsmBufferCreations(*run.Device) == 0);
+            }
+
+            // 何も宣言せず、何も埋めない。実際の照明のパスを後ろに置き、VSM の資源が公開されないので CSM のまま描くことを確かめる
+            //（照明の VSM のパラメータは無効、束縛 22・23 は VSM のバッファではない、CSM のテクスチャは束縛される）
+            RunVsmPassThroughLighting(run, pass, false);
+            assert(run.CommandList.VsmFills.empty());
+
+#if NORVES_ENABLE_LOGGING
+            char expectedLine[64] = {};
+            std::snprintf(expectedLine, sizeof(expectedLine), "VSM_FALLBACK reason=%s", testCase.ReasonText);
+            assert(logs.Count(expectedLine) == 1);
+            assert(logs.Count("VSM_FALLBACK") == 1);
+            assert(logs.Count("VRAM_LEDGER vsm_pool") == 0 && logs.Count("VRAM_LEDGER vsm_page_table") == 0);
+            logger.RemoveSink(&logs);
+            logger.Shutdown();
+#endif
+            ShutdownVsmRun(run, pass);
+        }
+    }
+
+    // 印付け・割り当て・消去の計算パイプラインを作れない装置では、資源を作らず VSM_FALLBACK reason=pipeline を 1 回出して CSM のまま描く
+    void TestVirtualShadowMapPassFallsBackWhenPipelineFails()
+    {
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        VsmLogCollector logs;
+        logger.AddSink(&logs);
+#endif
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        run.Device->bFailComputePipelines = true;
+
+        VirtualShadowMapPass pass;
+        assert(pass.Initialize(run.Context));
+        assert(!pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::Pipeline);
+        assert(!pass.GetPool() && !pass.GetDirtyList());
+        assert(CountVsmBufferCreations(*run.Device) == 0);
+        RunVsmPassThroughLighting(run, pass, false);
+        assert(run.CommandList.VsmFills.empty() && run.CommandList.DispatchGroups.empty());
+        assert(std::strcmp(VirtualShadowMap::FallbackReasonName(VirtualShadowMap::FallbackReason::Pipeline), "pipeline") == 0);
+#if NORVES_ENABLE_LOGGING
+        assert(logs.Count("VSM_FALLBACK reason=pipeline") == 1 && logs.Count("VSM_FALLBACK") == 1);
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+#endif
+        ShutdownVsmRun(run, pass);
+    }
+
+    // バリアのうち、バッファ名・前後の状態・記録した時点の CallSequence の長さが一致するものがあるか
+    bool HasBufferBarrierAt(const FakeCommandList& commandList,
+                            const char* debugName,
+                            RHI::ResourceState before,
+                            RHI::ResourceState after,
+                            size_t sequencePosition)
+    {
+        for (const BarrierEvent& barrier : CollectBufferBarriers(commandList, debugName))
+        {
+            if (barrier.BeforeState == before && barrier.AfterState == after && barrier.SequencePosition == sequencePosition)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // vsm の構成の 1 フレーム: 印付け（画面を 8x8 で覆う）→ 割り当て（11 段階のうち、無効化の矩形が無いので矩形の段階を除く 10 回）→
+    // 消去（間接 dispatch）の順に記録する。
+    //  - dispatch は 印付け (16, 8, 1)、続けて 引き継ぎ・年齢・計画・古い順に戻す・使用中の印を 0 に・印を付ける・空きへ詰める・割り当て・
+    //    消去の一覧・締める の 10 回（欄は 10 段 × 128 × 128 を 256 で割った 640、物理ページは 5120 ÷ 256、要求の語は REQUEST_WORDS ÷ 256）の後に、
+    //    消去の間接 dispatch が 1 回（引数は VSM_DirtyList の先頭）。
+    //  - その間のバリア: 要求のビット列は印付けの後（割り当てが読む前）、空きの一覧・ページの表・統計・消去の一覧は割り当ての各段階の後、
+    //    消去する一覧は締めた後に GenericRead へ進めてから間接 dispatch が読み、読んだ後に UnorderedAccess へ戻す。物理ページは消去の後。
+    //  - 深度かクリップマップが無い構成では、印付けの dispatch は無く、割り当てと消去だけが走る（要求は 0 のまま、キャッシュは引き継がない）。
+    void TestVirtualShadowMapPassRecordsMarkAllocateClearInOrder()
+    {
+        for (const bool bWithClipmap : {true, false})
+        {
+            VsmRun run;
+            run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+            InitializeVsmRun(run);
+            if (bWithClipmap)
+            {
+                run.Context.PhysicalLighting.SunClipmap = BuildVirtualShadowMapClipmap(
+                    NorvesLib::Math::Vector3(0.35f, -0.8f, 0.45f), 1u, NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), VirtualShadowMapClipmapSettings{});
+                assert(run.Context.PhysicalLighting.SunClipmap.bEnabled);
+            }
+
+            VirtualShadowMapPass pass;
+            assert(pass.Initialize(run.Context));
+            assert(pass.IsActive());
+            RunVsmFrame(run, pass, 0, true);
+
+            const FakeCommandList& commandList = run.CommandList;
+            assert(pass.WasMarked() == bWithClipmap);
+            const size_t markCount = bWithClipmap ? 1u : 0u;
+            constexpr size_t AllocateStageDispatches = 10u;
+            // 順序: [印付け] 割り当ての 10 回、消去（間接）
+            assert(commandList.DispatchGroups.size() == markCount + AllocateStageDispatches);
+            size_t groupIndex = 0;
+            if (bWithClipmap)
+            {
+                const auto& mark = commandList.DispatchGroups[groupIndex++];
+                assert(mark.X == 16u && mark.Y == 8u && mark.Z == 1u);
+            }
+            const uint32_t entryGroups = VirtualShadowMap::LEVEL_COUNT * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL / 256u;
+            const uint32_t pageGroups = 5120u / 256u;
+            const uint32_t requestGroups = VirtualShadowMap::REQUEST_WORDS / 256u;
+            // 引き継ぎ・年齢・計画・古い順に戻す・使用中の印を 0 に・印を付ける・空きへ詰める・割り当てる・消去の一覧・締める
+            const uint32_t expectedGroups[AllocateStageDispatches] = {
+                entryGroups, entryGroups, 1u, entryGroups, pageGroups, entryGroups, pageGroups, requestGroups, entryGroups, 1u,
+            };
+            for (const uint32_t expected : expectedGroups)
+            {
+                const auto& stage = commandList.DispatchGroups[groupIndex++];
+                assert(stage.X == expected && stage.Y == 1u && stage.Z == 1u);
+            }
+            assert(commandList.IndirectDispatches.size() == 1);
+            assert(IsDebugName(commandList.IndirectDispatches[0].BufferName, "VSM_DirtyList") &&
+                   commandList.IndirectDispatches[0].OffsetBytes == 0);
+            // 並び: 印付け（D）・割り当て（D × 10）・消去（J）
+            const char* expectedSequence = bWithClipmap ? "DDDDDDDDDDDJ" : "DDDDDDDDDDJ";
+            assert(commandList.CallSequence.size() == std::strlen(expectedSequence));
+            for (size_t index = 0; index < commandList.CallSequence.size(); ++index)
+            {
+                assert(commandList.CallSequence[index] == expectedSequence[index]);
+            }
+
+            // バリア（SequencePosition は、直前までに記録した B・E・D・J の数）
+            const size_t afterMark = markCount;
+            const size_t afterFreeReset = markCount + 5u;
+            const size_t afterAllocate = markCount + 8u;
+            const size_t afterFinalize = markCount + AllocateStageDispatches;
+            const size_t afterClear = markCount + AllocateStageDispatches + 1u;
+            const RHI::ResourceState uav = RHI::ResourceState::UnorderedAccess;
+            assert(HasBufferBarrierAt(commandList, "VSM_RequestBits", uav, uav, afterMark));
+            assert(HasBufferBarrierAt(commandList, "VSM_FreeList", uav, uav, afterFreeReset));
+            assert(HasBufferBarrierAt(commandList, "VSM_FreeList", uav, uav, afterAllocate));
+            assert(HasBufferBarrierAt(commandList, "VSM_PageTable", uav, uav, afterAllocate));
+            assert(HasBufferBarrierAt(commandList, "VSM_Stats", uav, uav, afterAllocate));
+            assert(HasBufferBarrierAt(commandList, "VSM_DirtyList", uav, uav, afterAllocate));
+            assert(HasBufferBarrierAt(commandList, "VSM_DirtyList", uav, uav, afterFinalize));
+            assert(HasBufferBarrierAt(commandList, "VSM_DirtyList", uav, RHI::ResourceState::GenericRead, afterFinalize));
+            assert(HasBufferBarrierAt(commandList, "VSM_DirtyList", RHI::ResourceState::GenericRead, uav, afterClear));
+            assert(HasBufferBarrierAt(commandList, "VSM_PhysicalPool", uav, uav, afterClear));
+            // 割り当ての前に、要求のビット列は 0 で埋められ（印付けの前）、最初のフレームは前フレームの表が無いのでページの表も 0 で埋められ、
+            // 統計は毎フレーム 0 で埋められる
+            assert(commandList.VsmFills.size() == 4);
+            assert(IsDebugName(commandList.VsmFills[1].BufferName, "VSM_RequestBits"));
+            assert(IsDebugName(commandList.VsmFills[2].BufferName, "VSM_PageTable"));
+            assert(IsDebugName(commandList.VsmFills[3].BufferName, "VSM_Stats"));
+
+            ShutdownVsmRun(run, pass);
+        }
+    }
+
+#if NORVES_ENABLE_LOGGING
+    // 統計の枠へ、GPU が書き終えた体の値を直接書く（偽の装置のコピーは中身を写さない）
+    void WriteVsmReadbackStats(const VirtualShadowMapPass& pass, uint32_t requested, uint32_t allocated, uint32_t overflow, uint32_t levels)
+    {
+        for (uint32_t slotIndex = 0; slotIndex < VirtualShadowMapPass::StatsReadbackSlotCount; ++slotIndex)
+        {
+            const RHI::BufferPtr& buffer = pass.GetStatsReadbackBuffer(slotIndex);
+            assert(buffer);
+            uint32_t* words = reinterpret_cast<uint32_t*>(static_cast<FakeBuffer*>(buffer.get())->MappedBytes.data());
+            words[VirtualShadowMap::StatRequested] = requested;
+            words[VirtualShadowMap::StatAllocated] = allocated;
+            words[VirtualShadowMap::StatOverflow] = overflow;
+            words[VirtualShadowMap::StatLevelsUsed] = levels;
+        }
+    }
+
+    // 統計の読み戻しは、Execute の回数ではなくフレームの通し番号で数える。通し番号の差が 2 以上で、書いたフレームの完了が
+    // 確かめられた枠だけを読む（飛行中が 2 枠のこの場面では、フレーム k がフレーム k - 2 の枠を読む）。
+    // 同じフレームの複数のビューポートは提出前の枠を読まない。
+    // 値が変わったときと、変わらなくても 60 回読むごとに VSM_PAGES を出す。統計のコピー元には TransferSrc が要る
+    void TestVirtualShadowMapPassReadsStatsOnlyAfterFrameFence()
+    {
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        VsmLogCollector logs;
+        logger.AddSink(&logs);
+
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        VirtualShadowMapPass pass;
+        assert(pass.Initialize(run.Context));
+        assert(pass.IsActive());
+
+        // 統計は読み戻しのコピー元になるので TransferSrc を持ち、読み戻し先はコピー先になる
+        const BufferCreationRecord* statsRecord = FindBufferCreation(*run.Device, "VSM_Stats");
+        assert(statsRecord != nullptr);
+        assert((statsRecord->Desc.Usage & RHI::ResourceUsage::TransferSrc) == RHI::ResourceUsage::TransferSrc);
+        const BufferCreationRecord* readbackRecord = FindBufferCreation(*run.Device, "VSM_StatsReadback");
+        assert(readbackRecord != nullptr);
+        assert((readbackRecord->Desc.Usage & RHI::ResourceUsage::TransferDst) == RHI::ResourceUsage::TransferDst);
+
+        const char* const logA = "VSM_PAGES requested=5 allocated=4 overflow=1 levels_used=0x3";
+        const char* const logB = "VSM_PAGES requested=6 allocated=6 overflow=0 levels_used=0x7";
+        uint64_t generation = 0;
+
+        // 枠が前のフレームの値を持っているものとして、同じフレームの 3 つのビューポートが読まないことを確かめる
+        // （Execute の回数で数えると、3 回目が 1 回目の提出前の枠を読む）
+        WriteVsmReadbackStats(pass, 5, 4, 1, 0x3);
+        for (uint32_t viewport = 0; viewport < 3u; ++viewport)
+        {
+            RunVsmViewport(run, pass, 0, generation++, true);
+            assert(logs.Count("VSM_PAGES") == 0);
+        }
+        // フレーム 1（別の飛行中の番号）: 枠にまだ何も写していないので読まない
+        RunVsmViewport(run, pass, 1, generation++, true);
+        assert(logs.Count("VSM_PAGES") == 0);
+        // フレーム 2（フレーム 0 と同じ番号）: フレーム 0 の枠を読む（初回は必ず出す）
+        RunVsmViewport(run, pass, 2, generation++, true);
+        assert(logs.Count("VSM_PAGES") == 1 && logs.Count(logA) == 1);
+        // フレーム 3: フレーム 1 の枠を読む。値は変わらず、60 回に届かないので出さない
+        RunVsmViewport(run, pass, 3, generation++, true);
+        assert(logs.Count("VSM_PAGES") == 1);
+
+        // 値が変わったら次に読んだときに出す。フレーム 4 がフレーム 2 の枠を読む
+        WriteVsmReadbackStats(pass, 6, 6, 0, 0x7);
+        RunVsmViewport(run, pass, 4, generation++, true);
+        assert(logs.Count("VSM_PAGES") == 2 && logs.Count(logB) == 1);
+
+        // 変わらない間は出さず、出してから 60 回目の読み取りで出す（フレーム 4 の次から数えて 59 回までは出ない）
+        for (uint64_t frame = 5; frame <= 63; ++frame)
+        {
+            RunVsmViewport(run, pass, frame, generation++, true);
+            assert(logs.Count("VSM_PAGES") == 2);
+        }
+        RunVsmViewport(run, pass, 64, generation++, true);
+        assert(logs.Count("VSM_PAGES") == 3 && logs.Count(logB) == 2);
+
+        ShutdownVsmRun(run, pass);
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+    }
+
+    // 統計の読み戻しは、スワップチェーンの飛行中のフレームの数に依らず、通し番号の差が 2 以上で、かつ書いたフレームの
+    // GPU の完了が確かめられた枠だけを読む。製品は飛行中が 1 枠（翌フレームに読むと遅れが足りない）、3 枠以上では差が 2 でも
+    // 書いたフレームがまだ終わっていない。GPU が飛行中の数より遅れて完了するときも、完了まで読まない
+    void RunVsmStatsReadbackCase(uint32_t framesInFlight, uint32_t completedLag, uint64_t expectedFirstReadFrame)
+    {
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        VsmLogCollector logs;
+        logger.AddSink(&logs);
+
+        VsmRun run;
+        run.FramesInFlight = framesInFlight;
+        run.CompletedLag = completedLag;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        VirtualShadowMapPass pass;
+        assert(pass.Initialize(run.Context));
+        assert(pass.IsActive());
+
+        const char* const logA = "VSM_PAGES requested=5 allocated=4 overflow=1 levels_used=0x3";
+        WriteVsmReadbackStats(pass, 5, 4, 1, 0x3);
+        uint64_t generation = 0;
+        for (uint64_t frame = 0; frame < expectedFirstReadFrame; ++frame)
+        {
+            RunVsmViewport(run, pass, frame, generation++, true);
+            assert(logs.Count("VSM_PAGES") == 0);
+        }
+        // 最初に読むフレーム: 通し番号の差が 2 以上で、書いたフレーム（フレーム 0）の完了が確かめられている
+        RunVsmViewport(run, pass, expectedFirstReadFrame, generation++, true);
+        assert(logs.Count("VSM_PAGES") == 1 && logs.Count(logA) == 1);
+
+        ShutdownVsmRun(run, pass);
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+    }
+
+    void TestVirtualShadowMapPassStatsReadbackAcrossFlightCounts()
+    {
+        // 飛行中が 1 枠（製品）: フレーム 1 は翌フレームなので読まない。フレーム 2 が、フレーム 0 の統計を読む
+        RunVsmStatsReadbackCase(1, 0, 2);
+        // 飛行中が 2 枠: フレーム 2 が、フレーム 0 の統計を読む
+        RunVsmStatsReadbackCase(2, 0, 2);
+        // 飛行中が 3 枠: フレーム 2 は差が 2 でも、フレーム 0 の完了が確かめられていない。フレーム 3 が読む
+        RunVsmStatsReadbackCase(3, 0, 3);
+        // 飛行中が 4 枠（上限）: フレーム 4 が、フレーム 0 の統計を読む
+        RunVsmStatsReadbackCase(4, 0, 4);
+        // GPU が飛行中の数（2）より遅れて 6 フレーム後に完了する: フレーム 6 まで読まない（差が 2 以上でも完了を待つ）
+        RunVsmStatsReadbackCase(2, 6, 6);
+    }
+
+    // 展開の統計の語（塊・インスタンス・溢れ）は、投影物を描かない間（0 のまま）は VSM_RASTER を出さず、
+    // 0 以外になったとき・値が変わったとき・変わらなくても 60 回読むごとに出す
+    void TestVirtualShadowMapPassReportsRasterStats()
+    {
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        VsmLogCollector logs;
+        logger.AddSink(&logs);
+
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        VirtualShadowMapPass pass;
+        assert(pass.Initialize(run.Context));
+        assert(pass.IsActive());
+
+        auto writeRasterStats = [&pass](uint32_t chunks, uint32_t instances, uint32_t overflow) {
+            for (uint32_t slotIndex = 0; slotIndex < VirtualShadowMapPass::StatsReadbackSlotCount; ++slotIndex)
+            {
+                const RHI::BufferPtr& buffer = pass.GetStatsReadbackBuffer(slotIndex);
+                assert(buffer);
+                uint32_t* words = reinterpret_cast<uint32_t*>(static_cast<FakeBuffer*>(buffer.get())->MappedBytes.data());
+                words[VirtualShadowMap::StatRasterChunks] = chunks;
+                words[VirtualShadowMap::StatRasterInstances] = instances;
+                words[VirtualShadowMap::StatRasterOverflow] = overflow;
+            }
+        };
+
+        uint64_t generation = 0;
+        // 投影物を描かない間（語が 0 のまま）は、60 回を超えて読んでも出さない
+        writeRasterStats(0, 0, 0);
+        for (uint64_t frame = 0; frame < 70; ++frame)
+        {
+            RunVsmViewport(run, pass, frame, generation++, true);
+            assert(logs.Count("VSM_RASTER") == 0);
+        }
+        // 0 以外になったら次に読んだときに出す
+        writeRasterStats(3, 40, 0);
+        RunVsmViewport(run, pass, 70, generation++, true);
+        assert(logs.Count("VSM_RASTER") == 1 && logs.Count("VSM_RASTER chunks=3 instances=40 overflow=0") == 1);
+        // 変わらない間は出さず、出してから 60 回目の読み取りで出す
+        for (uint64_t frame = 71; frame <= 129; ++frame)
+        {
+            RunVsmViewport(run, pass, frame, generation++, true);
+            assert(logs.Count("VSM_RASTER") == 1);
+        }
+        RunVsmViewport(run, pass, 130, generation++, true);
+        assert(logs.Count("VSM_RASTER") == 2);
+        // 溢れが出たら次に読んだときに出す
+        writeRasterStats(3, 40, 7);
+        RunVsmViewport(run, pass, 131, generation++, true);
+        assert(logs.Count("VSM_RASTER") == 3 && logs.Count("VSM_RASTER chunks=3 instances=40 overflow=7") == 1);
+
+        ShutdownVsmRun(run, pass);
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+    }
+#endif
+
+    // 展開の統計の報告の決め方（ログの出力に依らない）: 0 のままなら出さず、0 以外になる・値が変わる・60 回報告するごとに出す。
+    // 一度出したら、0 に戻ったときも出す
+    void TestVirtualShadowMapRasterStatsReporterDecidesWhenToLog()
+    {
+        VirtualShadowMapRasterStatsReporter reporter;
+        for (uint32_t index = 0; index < 100u; ++index)
+        {
+            assert(!reporter.Report(0, 0, 0));
+        }
+        assert(reporter.Report(1, 2, 0));
+        for (uint32_t index = 0; index + 1u < VirtualShadowMapRasterStatsReporter::LogIntervalReports; ++index)
+        {
+            assert(!reporter.Report(1, 2, 0));
+        }
+        assert(reporter.Report(1, 2, 0));
+        assert(!reporter.Report(1, 2, 0));
+        assert(reporter.Report(1, 2, 5));
+        assert(reporter.Report(0, 0, 0));
+        assert(!reporter.Report(0, 0, 0));
+    }
+
+    // ãã¼ã«ã®ãã¼ã¸ã®æ°ã¯、要求（0 は既定の 5120）を装置の maxStorageBufferRange に収まる数へ締める（不明は Vulkan の保証する最小値 2^27）。
+    // 512 ページちょうどは作れ、511 ページしか取れない装置は作れない。表の欄の幅（20 ビット）も超えない
+    void TestVirtualShadowMapPoolPlanClampsToDeviceLimit()
+    {
+        auto makeCaps = [](bool bFragment, bool bBda, uint64_t range)
+        {
+            RHI::DeviceCapabilities caps;
+            caps.bFragmentStoresAndAtomics = bFragment;
+            caps.bBufferDeviceAddress = bBda;
+            caps.MaxStorageBufferRange = range;
+            return caps;
+        };
+        const uint64_t unlimited = 0xFFFFFFFFull;
+
+        VirtualShadowMap::PoolPlan plan = VirtualShadowMap::PlanPool(makeCaps(true, true, unlimited), 0);
+        assert(plan.IsSupported() && plan.Pages == VirtualShadowMap::DEFAULT_POOL_PAGES && plan.Pages == 5120);
+        plan = VirtualShadowMap::PlanPool(makeCaps(true, true, unlimited), 100);
+        assert(plan.IsSupported() && plan.Pages == 100);
+        plan = VirtualShadowMap::PlanPool(makeCaps(true, true, unlimited), 100000);
+        assert(plan.IsSupported() && plan.Pages == 65535);
+        // 不明（0）は保証された最小値 2^27 = 128 MiB = 2048 ページ
+        plan = VirtualShadowMap::PlanPool(makeCaps(true, true, 0), 0);
+        assert(plan.IsSupported() && plan.Pages == 2048);
+        plan = VirtualShadowMap::PlanPool(makeCaps(true, true, 64ull * 1024ull * 1024ull), 4096);
+        assert(plan.IsSupported() && plan.Pages == 1024);
+        // 境界: 512 ページちょうどは作れ、1 バイト足りないと 511 ページで作れない
+        plan = VirtualShadowMap::PlanPool(makeCaps(true, true, 512ull * 65536ull), 4096);
+        assert(plan.IsSupported() && plan.Pages == 512);
+        plan = VirtualShadowMap::PlanPool(makeCaps(true, true, 512ull * 65536ull - 1ull), 4096);
+        assert(!plan.IsSupported() && plan.Reason == VirtualShadowMap::FallbackReason::PoolSize);
+        // 理由の優先: 断片の機能 → BDA → プールの大きさ
+        assert(VirtualShadowMap::PlanPool(makeCaps(false, false, 0), 0).Reason == VirtualShadowMap::FallbackReason::FragmentAtomics);
+        assert(VirtualShadowMap::PlanPool(makeCaps(true, false, 0), 0).Reason == VirtualShadowMap::FallbackReason::BufferDeviceAddress);
+        // 表の欄の幅（20 ビット）を超える束縛の上限でも、ページの数は欄に収まる
+        plan = VirtualShadowMap::PlanPool(makeCaps(true, true, ~0ull), 2000000);
+        assert(plan.IsSupported() && plan.Pages == VirtualShadowMap::MAX_POOL_PAGES);
+        // 理由の名前（VSM_FALLBACK reason= の値）
+        assert(std::strcmp(VirtualShadowMap::FallbackReasonName(VirtualShadowMap::FallbackReason::FragmentAtomics), "fragment_atomics") == 0);
+        assert(std::strcmp(VirtualShadowMap::FallbackReasonName(VirtualShadowMap::FallbackReason::BufferDeviceAddress), "bda") == 0);
+        assert(std::strcmp(VirtualShadowMap::FallbackReasonName(VirtualShadowMap::FallbackReason::PoolSize), "pool_size") == 0);
+
+        // 実際の確保も装置の上限に収まる（64 MiB の上限 → 1024 ページ = 64 MiB）
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 64ull * 1024ull * 1024ull);
+        InitializeVsmRun(run);
+        VirtualShadowMapPass pass(4096);
+        assert(pass.Initialize(run.Context));
+        assert(pass.IsActive() && pass.GetPoolPages() == 1024);
+        const BufferCreationRecord* poolRecord = FindBufferCreation(*run.Device, "VSM_PhysicalPool");
+        assert(poolRecord != nullptr && poolRecord->Desc.Size == 64ull * 1024ull * 1024ull);
+        ShutdownVsmRun(run, pass);
+    }
+
+
+    // ========================================
+    // 影を落とす投影物の塊の記録（VirtualShadowMapCasters.h。VSM の手続きメッシュ・スキニング）
+    // ========================================
+
+    VirtualShadowMapClipmap MakeCasterClipmap()
+    {
+        VirtualShadowMapClipmap clipmap = BuildVirtualShadowMapClipmap(
+            NorvesLib::Math::Vector3(0.35f, -0.8f, 0.45f), 1u, NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), VirtualShadowMapClipmapSettings{});
+        assert(clipmap.bEnabled && clipmap.LevelCount == VirtualShadowMap::LEVEL_COUNT);
+        return clipmap;
+    }
+
+    VirtualShadowMap::CasterBounds MakeCubeBounds(float x, float y, float z, float half)
+    {
+        VirtualShadowMap::CasterBounds bounds;
+        const float center[3] = {x, y, z};
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            bounds.Min[axis] = center[axis] - half;
+            bounds.Max[axis] = center[axis] + half;
+        }
+        return bounds;
+    }
+
+    // 境界がどの段の範囲に入るかは、展開が使う範囲（段ごとの絶対のページの範囲）と同じ判定になる。
+    // ライトの右向きに動かした小さな境界で、段ごとの結果が VirtualShadowMapLevelFindPage（中心の位置が範囲に入るか）と一致し、
+    // 範囲の外（どの段にも入らない）・クリップマップが無効・境界が有限でないときは 0
+    void TestVirtualShadowMapCasterLevelMaskMatchesLevelRanges()
+    {
+        const VirtualShadowMapClipmap clipmap = MakeCasterClipmap();
+        const uint32_t allLevels = (1u << VirtualShadowMap::LEVEL_COUNT) - 1u;
+
+        // 原点のそば: すべての段
+        assert(VirtualShadowMap::LevelMaskForBounds(clipmap, MakeCubeBounds(0.0f, 0.0f, 0.0f, 0.1f)) == allLevels);
+        // 段 0（幅 4 m）の外で段 1（幅 8 m）の内側: 段 0 だけ外れ、粗い段はすべて入る
+        {
+            const NorvesLib::Math::Vector3 right = clipmap.LightRight;
+            const uint32_t mask = VirtualShadowMap::LevelMaskForBounds(clipmap, MakeCubeBounds(right.x * 3.0f, right.y * 3.0f, right.z * 3.0f, 0.01f));
+            assert((mask & 1u) == 0u && (mask & 2u) != 0u && (mask >> 1u) == (allLevels >> 1u));
+        }
+        // 最も粗い段（幅 2048 m）の外: どの段にも入らない
+        {
+            const NorvesLib::Math::Vector3 right = clipmap.LightRight;
+            assert(VirtualShadowMap::LevelMaskForBounds(clipmap, MakeCubeBounds(right.x * 5000.0f, right.y * 5000.0f, right.z * 5000.0f, 1.0f)) == 0u);
+        }
+        // 大きな境界はすべての段にかかる（境界の半幅が範囲を覆う）
+        assert(VirtualShadowMap::LevelMaskForBounds(clipmap, MakeCubeBounds(5000.0f, 0.0f, 0.0f, 20000.0f)) == allLevels);
+
+        // 右向きに掃引: 段ごとの結果が、点の位置が範囲に入るかの判定と一致する
+        uint32_t checkedPoints = 0;
+        for (float distance = -3000.0f; distance <= 3000.0f; distance += 7.31f)
+        {
+            const NorvesLib::Math::Vector3 position(clipmap.LightRight.x * distance, clipmap.LightRight.y * distance, clipmap.LightRight.z * distance);
+            const uint32_t mask = VirtualShadowMap::LevelMaskForBounds(clipmap, MakeCubeBounds(position.x, position.y, position.z, 1.0e-4f));
+            double lightX = 0.0;
+            double lightY = 0.0;
+            double lightDepth = 0.0;
+            VirtualShadowMapWorldToLightSpace(clipmap, position, lightX, lightY, lightDepth);
+            for (uint32_t level = 0; level < VirtualShadowMap::LEVEL_COUNT; ++level)
+            {
+                int64_t pageX = 0;
+                int64_t pageY = 0;
+                // 範囲の縁（ページの境目）の丸めで食い違いうる点は比べない（小さな境界の幅 1e-4 m が縁をまたぐ場合）
+                const double pageMeters = static_cast<double>(clipmap.Levels[level].PageMeters);
+                const double edgeX = std::abs(lightX / pageMeters - std::round(lightX / pageMeters)) * pageMeters;
+                if (edgeX < 1.0e-3)
+                {
+                    continue;
+                }
+                const bool bInRange = VirtualShadowMapLevelFindPage(clipmap, level, lightX, lightY, pageX, pageY);
+                assert(bInRange == (((mask >> level) & 1u) != 0u));
+                ++checkedPoints;
+            }
+        }
+        assert(checkedPoints > 500u);
+
+        VirtualShadowMapClipmap disabled = clipmap;
+        disabled.bEnabled = false;
+        assert(VirtualShadowMap::LevelMaskForBounds(disabled, MakeCubeBounds(0.0f, 0.0f, 0.0f, 0.1f)) == 0u);
+        VirtualShadowMap::CasterBounds notFinite = MakeCubeBounds(0.0f, 0.0f, 0.0f, 0.1f);
+        notFinite.Max[1] = std::numeric_limits<float>::infinity();
+        assert(VirtualShadowMap::LevelMaskForBounds(clipmap, notFinite) == 0u);
+        VirtualShadowMap::CasterBounds inverted = MakeCubeBounds(0.0f, 0.0f, 0.0f, 0.1f);
+        std::swap(inverted.Min[0], inverted.Max[0]);
+        assert(VirtualShadowMap::LevelMaskForBounds(clipmap, inverted) == 0u);
+    }
+
+    // 手続きメッシュを 128 三角形以下の塊（BuildMeshIndexChunks）に分け、塊ごとのローカルの境界を決める。
+    // ブロックの境界があり頂点の基点が 0 のときは、メッシュの先頭から整列した 384 インデックスの境目で区切り、その塊のブロックの境界を使う。
+    // 使えないとき（基点が 0 でない・ブロックの境界が無い・先頭が 3 の倍数でない）はメッシュ全体の境界で、境目で区切らない。
+    // アドレス・メッシュの境界が無いときは塊を作らない
+    void TestVirtualShadowMapCasterPlansProceduralChunks()
+    {
+        BoundingBox meshBounds{-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f};
+        // 900 インデックス（300 三角形）= 384・384・132 の 3 ブロック。ブロックごとに別の境界
+        const BoundingBox blocks[3] = {{0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f}, {2.0f, 2.0f, 2.0f, 3.0f, 3.0f, 3.0f}, {4.0f, 4.0f, 4.0f, 5.0f, 5.0f, 5.0f}};
+
+        VirtualShadowMap::ProceduralDrawInput draw;
+        draw.VertexAddress = 0x1000u;
+        draw.IndexAddress = 0x2000u;
+        draw.FirstIndex = 0u;
+        draw.IndexCount = 900u;
+        draw.MeshBounds = &meshBounds;
+        draw.BlockBounds = blocks;
+        draw.BlockBoundsCount = 3u;
+
+        VirtualShadowMap::ProceduralPlanScratch scratch;
+        Container::VariableArray<VirtualShadowMap::ProceduralChunkPlan> plan;
+        assert(VirtualShadowMap::PlanProceduralChunks(draw, scratch, plan));
+        assert(plan.size() == 3u);
+        assert(plan[0].FirstIndex == 0u && plan[0].TriangleCount == 128u && plan[0].LocalBounds.MaxX == 1.0f);
+        assert(plan[1].FirstIndex == 384u && plan[1].TriangleCount == 128u && plan[1].LocalBounds.MaxX == 3.0f);
+        assert(plan[2].FirstIndex == 768u && plan[2].TriangleCount == 44u && plan[2].LocalBounds.MaxX == 5.0f);
+
+        // 範囲がブロックの途中から始まる（先頭 300 から 480 個）: 境目 384・768 で区切り、塊が 1 つのブロックの中に収まる
+        draw.FirstIndex = 300u;
+        draw.IndexCount = 480u;
+        assert(VirtualShadowMap::PlanProceduralChunks(draw, scratch, plan));
+        assert(plan.size() == 3u);
+        assert(plan[0].FirstIndex == 300u && plan[0].TriangleCount == 28u && plan[0].LocalBounds.MaxX == 1.0f);
+        assert(plan[1].FirstIndex == 384u && plan[1].TriangleCount == 128u && plan[1].LocalBounds.MaxX == 3.0f);
+        assert(plan[2].FirstIndex == 768u && plan[2].TriangleCount == 4u && plan[2].LocalBounds.MaxX == 5.0f);
+        // 全部の三角形をちょうど 1 回ずつ覆う
+        uint32_t covered = 0;
+        for (const VirtualShadowMap::ProceduralChunkPlan& entry : plan)
+        {
+            covered += entry.TriangleCount * 3u;
+        }
+        assert(covered == 480u);
+
+        // 頂点の基点が 0 でない: ブロックの境界は使えず、メッシュ全体の境界で、境目では区切らない（先頭から 384 ずつ）
+        draw.FirstIndex = 300u;
+        draw.IndexCount = 900u;
+        draw.VertexOffset = 5u;
+        assert(VirtualShadowMap::PlanProceduralChunks(draw, scratch, plan));
+        assert(plan.size() == 3u && plan[0].FirstIndex == 300u && plan[0].TriangleCount == 128u && plan[1].FirstIndex == 684u);
+        for (const VirtualShadowMap::ProceduralChunkPlan& entry : plan)
+        {
+            assert(entry.LocalBounds.MinX == -10.0f && entry.LocalBounds.MaxX == 10.0f);
+        }
+        // ブロックの境界が無い・先頭が 3 の倍数でないときも、メッシュ全体の境界
+        draw.VertexOffset = 0u;
+        draw.BlockBounds = nullptr;
+        draw.BlockBoundsCount = 0u;
+        draw.FirstIndex = 0u;
+        assert(VirtualShadowMap::PlanProceduralChunks(draw, scratch, plan) && plan.size() == 3u && plan[1].LocalBounds.MaxX == 10.0f);
+        draw.BlockBounds = blocks;
+        draw.BlockBoundsCount = 3u;
+        draw.FirstIndex = 1u;
+        draw.IndexCount = 600u;
+        assert(VirtualShadowMap::PlanProceduralChunks(draw, scratch, plan) && plan[0].LocalBounds.MaxX == 10.0f);
+
+        // 作れない入力: アドレスが無い・メッシュの境界が無い・三角形が無い
+        draw.FirstIndex = 0u;
+        draw.IndexCount = 900u;
+        VirtualShadowMap::ProceduralDrawInput broken = draw;
+        broken.VertexAddress = 0u;
+        assert(!VirtualShadowMap::PlanProceduralChunks(broken, scratch, plan) && plan.empty());
+        broken = draw;
+        broken.IndexAddress = 0u;
+        assert(!VirtualShadowMap::PlanProceduralChunks(broken, scratch, plan));
+        broken = draw;
+        broken.MeshBounds = nullptr;
+        assert(!VirtualShadowMap::PlanProceduralChunks(broken, scratch, plan));
+        broken = draw;
+        broken.IndexCount = 2u;
+        assert(!VirtualShadowMap::PlanProceduralChunks(broken, scratch, plan));
+    }
+
+    // 手続きメッシュの 1 インスタンスの記録: インスタンスの変換（列優先の 16 個の float）を記録の 3×4 の行へ写し、
+    // 境界をローカルの境界×変換から求め、どの段の範囲にも入らない塊は省き、上限を超えたら書かずに数える
+    void TestVirtualShadowMapCasterAppendsProceduralInstances()
+    {
+        const VirtualShadowMapClipmap clipmap = MakeCasterClipmap();
+        BoundingBox meshBounds{-1.0f, -2.0f, -3.0f, 1.0f, 2.0f, 3.0f};
+        VirtualShadowMap::ProceduralDrawInput draw;
+        draw.VertexAddress = 0xAAAA0000u;
+        draw.IndexAddress = 0xBBBB0000u;
+        draw.FirstIndex = 6u;
+        draw.IndexCount = 12u;
+        draw.VertexOffset = 9u;
+        draw.MeshBounds = &meshBounds;
+        VirtualShadowMap::ProceduralPlanScratch scratch;
+        Container::VariableArray<VirtualShadowMap::ProceduralChunkPlan> plan;
+        assert(VirtualShadowMap::PlanProceduralChunks(draw, scratch, plan) && plan.size() == 1u);
+
+        // x 方向 2 倍・並進 (0.5, 0.25, -0.125) の変換（行ベクトル規約のワールド行列をそのままシェーダーへ渡した並び）
+        const NorvesLib::Math::Matrix4x4 matrix(2.0f, 0.0f, 0.0f, 0.0f,
+                                                0.0f, 1.0f, 0.0f, 0.0f,
+                                                0.0f, 0.0f, 1.0f, 0.0f,
+                                                0.5f, 0.25f, -0.125f, 1.0f);
+        float world[16] = {};
+        NorvesLib::Math::MatrixUtils::CopyToShaderData(matrix, world);
+
+        Container::VariableArray<VsmShadowChunk> chunks;
+        VirtualShadowMap::CasterStats stats;
+        VirtualShadowMap::AppendProceduralInstance(draw, plan, world, clipmap, chunks, stats);
+        assert(chunks.size() == 1u && stats.ProceduralChunks == 1u && stats.ProceduralDraws == 1u && stats.CulledChunks == 0u);
+        const VsmShadowChunk& chunk = chunks[0];
+        assert(chunk.Record.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::ProceduralChunk));
+        assert(chunk.Record.TriangleCount == 4u && chunk.Record.FirstIndex == 6u && chunk.Record.VertexBase == 9u);
+        assert(chunk.Record.VertexAddress == 0xAAAA0000u && chunk.Record.IndexAddress == 0xBBBB0000u);
+        // 境界 = ローカルの境界 × 変換: x は 2 倍して 0.5 を足す
+        assert(chunk.BoundsMin[0] == -1.5f && chunk.BoundsMax[0] == 2.5f);
+        assert(chunk.BoundsMin[1] == -1.75f && chunk.BoundsMax[1] == 2.25f);
+        assert(chunk.BoundsMin[2] == -3.125f && chunk.BoundsMax[2] == 2.875f);
+        // 変換の行: ワールド x = 2·x + 0.5、y = y + 0.25、z = z − 0.125
+        const float expectedRows[12] = {2.0f, 0.0f, 0.0f, 0.5f, 0.0f, 1.0f, 0.0f, 0.25f, 0.0f, 0.0f, 1.0f, -0.125f};
+        assert(std::memcmp(chunk.World, expectedRows, sizeof(expectedRows)) == 0);
+
+        // どの段の範囲にも入らない位置（ライトの右向きに 5000 m）は省く。メッシュ全体の境界で判定するので、塊の境界は見ない
+        float farWorld[16] = {};
+        std::memcpy(farWorld, world, sizeof(farWorld));
+        farWorld[12] += clipmap.LightRight.x * 5000.0f;
+        farWorld[13] += clipmap.LightRight.y * 5000.0f;
+        farWorld[14] += clipmap.LightRight.z * 5000.0f;
+        VirtualShadowMap::AppendProceduralInstance(draw, plan, farWorld, clipmap, chunks, stats);
+        assert(chunks.size() == 1u && stats.CulledChunks == 1u && stats.ProceduralChunks == 1u);
+
+        // 上限: 記録がいっぱいなら書かずに数える（省いた数には入れない）
+        chunks.resize(VirtualShadowMap::MAX_CASTER_CHUNKS);
+        VirtualShadowMap::AppendProceduralInstance(draw, plan, world, clipmap, chunks, stats);
+        assert(chunks.size() == VirtualShadowMap::MAX_CASTER_CHUNKS && stats.DroppedChunks == 1u && stats.ProceduralChunks == 1u);
+
+        // 空の計画・メッシュの境界が無い入力は何もしない
+        Container::VariableArray<VirtualShadowMap::ProceduralChunkPlan> emptyPlan;
+        VirtualShadowMap::CasterStats untouched;
+        Container::VariableArray<VsmShadowChunk> empty;
+        VirtualShadowMap::AppendProceduralInstance(draw, emptyPlan, world, clipmap, empty, untouched);
+        assert(empty.empty() && untouched == VirtualShadowMap::CasterStats{});
+    }
+
+    // スキニングの 1 インスタンスの記録: 塊は同じ描画の境界を持ち、頂点のアドレスはインスタンスの先頭、頂点の基点は 0、変換は単位行列。
+    // 範囲に入らない描画は塊ごと省き、上限を超えたら書かずに数える
+    void TestVirtualShadowMapCasterAppendsSkinnedInstances()
+    {
+        const VirtualShadowMapClipmap clipmap = MakeCasterClipmap();
+        Container::VariableArray<MeshIndexChunk> meshChunks;
+        meshChunks.push_back(MeshIndexChunk{0u, 384u});
+        meshChunks.push_back(MeshIndexChunk{384u, 30u});
+
+        Container::VariableArray<VsmShadowChunk> chunks;
+        VirtualShadowMap::CasterStats stats;
+        const VirtualShadowMap::CasterBounds bounds = MakeCubeBounds(0.25f, 0.5f, 0.75f, 0.5f);
+        VirtualShadowMap::AppendSkinnedInstance(0x3000u, 0x4000u, bounds, meshChunks, clipmap, chunks, stats);
+        assert(chunks.size() == 2u && stats.SkinnedChunks == 2u && stats.SkinnedDraws == 1u);
+        for (const VsmShadowChunk& chunk : chunks)
+        {
+            assert(chunk.Record.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::SkinnedChunk));
+            assert(chunk.Record.VertexBase == 0u && chunk.Record.VertexAddress == 0x3000u && chunk.Record.IndexAddress == 0x4000u);
+            assert(chunk.BoundsMin[0] == -0.25f && chunk.BoundsMax[0] == 0.75f && chunk.BoundsMin[2] == 0.25f && chunk.BoundsMax[2] == 1.25f);
+            const float identity[12] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+            assert(std::memcmp(chunk.World, identity, sizeof(identity)) == 0);
+        }
+        assert(chunks[0].Record.TriangleCount == 128u && chunks[0].Record.FirstIndex == 0u);
+        assert(chunks[1].Record.TriangleCount == 10u && chunks[1].Record.FirstIndex == 384u);
+
+        // 範囲の外: 塊ごと省く
+        const VirtualShadowMap::CasterBounds farBounds = MakeCubeBounds(5000.0f * clipmap.LightRight.x, 5000.0f * clipmap.LightRight.y, 5000.0f * clipmap.LightRight.z, 1.0f);
+        VirtualShadowMap::AppendSkinnedInstance(0x3000u, 0x4000u, farBounds, meshChunks, clipmap, chunks, stats);
+        assert(chunks.size() == 2u && stats.CulledChunks == 2u && stats.SkinnedDraws == 1u);
+
+        // 上限
+        chunks.resize(VirtualShadowMap::MAX_CASTER_CHUNKS - 1u);
+        VirtualShadowMap::AppendSkinnedInstance(0x3000u, 0x4000u, bounds, meshChunks, clipmap, chunks, stats);
+        assert(chunks.size() == VirtualShadowMap::MAX_CASTER_CHUNKS && stats.DroppedChunks == 1u);
+    }
+
+    // 記録は、境界がかかる段の集合（LevelMask）を持つ。展開はこの集合の外の段を処理しない。
+    // 既定（CPU が絞らない塊）は全段。手続き・スキニングとも、境界から LevelMaskForBounds が決めた集合を書く
+    void TestVirtualShadowMapCasterRecordsLevelMask()
+    {
+        const VirtualShadowMapClipmap clipmap = MakeCasterClipmap();
+        assert(VsmShadowChunk{}.LevelMask == 0xFFFFFFFFu);
+
+        // 段 0（幅 4 m）の外で段 1 の内側に置いた、小さな四角形とスキニングの境界
+        const NorvesLib::Math::Vector3 right = clipmap.LightRight;
+        const VirtualShadowMap::CasterBounds placed = MakeCubeBounds(right.x * 3.0f, right.y * 3.0f, right.z * 3.0f, 0.01f);
+        const uint32_t expectedMask = VirtualShadowMap::LevelMaskForBounds(clipmap, placed);
+        assert((expectedMask & 1u) == 0u && (expectedMask & 2u) != 0u);
+
+        BoundingBox meshBounds{-0.01f, -0.01f, -0.01f, 0.01f, 0.01f, 0.01f};
+        VirtualShadowMap::ProceduralDrawInput draw;
+        draw.VertexAddress = 0x1000u;
+        draw.IndexAddress = 0x2000u;
+        draw.IndexCount = 6u;
+        draw.MeshBounds = &meshBounds;
+        VirtualShadowMap::ProceduralPlanScratch scratch;
+        Container::VariableArray<VirtualShadowMap::ProceduralChunkPlan> plan;
+        assert(VirtualShadowMap::PlanProceduralChunks(draw, scratch, plan));
+        const NorvesLib::Math::Matrix4x4 matrix = MakeMarkedMatrix(right.x * 3.0f, right.y * 3.0f, right.z * 3.0f);
+        float world[16] = {};
+        NorvesLib::Math::MatrixUtils::CopyToShaderData(matrix, world);
+        Container::VariableArray<VsmShadowChunk> chunks;
+        VirtualShadowMap::CasterStats stats;
+        VirtualShadowMap::AppendProceduralInstance(draw, plan, world, clipmap, chunks, stats);
+        assert(chunks.size() == 1u && chunks[0].LevelMask == expectedMask);
+
+        Container::VariableArray<MeshIndexChunk> meshChunks;
+        meshChunks.push_back(MeshIndexChunk{0u, 3u});
+        VirtualShadowMap::AppendSkinnedInstance(0x3000u, 0x4000u, placed, meshChunks, clipmap, chunks, stats);
+        assert(chunks.size() == 2u && chunks[1].LevelMask == expectedMask);
+
+        // 原点のそばはすべての段
+        const uint32_t allLevels = (1u << VirtualShadowMap::LEVEL_COUNT) - 1u;
+        VirtualShadowMap::AppendSkinnedInstance(0x3000u, 0x4000u, MakeCubeBounds(0.0f, 0.0f, 0.0f, 0.1f), meshChunks, clipmap, chunks, stats);
+        assert(chunks.size() == 3u && chunks[2].LevelMask == allLevels);
+    }
+
+    // FakeBuffer の Update に渡された塊の記録（VsmShadowChunk の並び）を取り出す
+    Container::VariableArray<VsmShadowChunk> ReadUploadedChunks(const RHI::IBuffer* buffer)
+    {
+        const FakeBuffer* fake = static_cast<const FakeBuffer*>(buffer);
+        assert(fake != nullptr && fake->LastUpdateBytes.size() % sizeof(VsmShadowChunk) == 0u);
+        Container::VariableArray<VsmShadowChunk> chunks;
+        chunks.resize(fake->LastUpdateBytes.size() / sizeof(VsmShadowChunk));
+        if (!chunks.empty())
+        {
+            std::memcpy(chunks.data(), fake->LastUpdateBytes.data(), fake->LastUpdateBytes.size());
+        }
+        return chunks;
+    }
+
+    // 手続きメッシュとスキニングを足した、vsm の構成の 1 つのシーン（スキニングの計算 → 影の塊の記録 → 展開 → 描画）
+    struct VsmCasterScene
+    {
+        VsmRun Run;
+        RenderResources Resources;
+        SkinningComputePass Skinning;
+        VirtualShadowMapPass Pass;
+        /** @brief 描画コマンドの一覧（スキニングの 1 件だけ。手続きメッシュは描画コマンドに載せず、プロキシから集める） */
+        Container::VariableArray<DrawCommand> AllCommands;
+        Container::VariableArray<Container::TSharedPtr<const SkinnedMeshFrameLease>> SkinnedLeases;
+        Container::VariableArray<MeshProxy> MeshProxies;
+        Container::VariableArray<SkinnedMeshProxy> SkinnedProxies;
+        MeshDataHandle Mesh;
+    };
+
+    // 4 頂点の四角形（XZ 平面、半幅 0.4）を登録した手続きメッシュのプロキシ 4 件（MeshProxies）と、スキニングの描画 1 件（AllCommands）を足す。
+    // 手続きメッシュは、主カメラの錐台で省かれた後の描画コマンドの一覧ではなく、カリング前のプロキシの一覧から集める:
+    //   A: 影を落とす。プロキシ 2 つ（原点の近くの (0.5, 0, 0.5) と (-0.5, 0, 0.5)）
+    //   B: 影を落とす。ライトの右向きに 5000 m（どの段の範囲にも入らない）
+    //   C: 影を落とさない
+    //   スキニング: 影を落とす。3 頂点・三角形 1 つ。描画の境界は原点の近く
+    void BuildVsmCasterScene(VsmCasterScene& scene, bool bWithClipmap, bool bSplitSkinnedSubmeshes = false)
+    {
+        VsmRun& run = scene.Run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        if (bWithClipmap)
+        {
+            run.Context.PhysicalLighting.SunClipmap = MakeCasterClipmap();
+        }
+        assert(scene.Resources.Initialize(run.Device));
+        scene.Resources.SkinnedMeshes().BeginFrame(0);
+        run.Context.Resources.Meshes = &scene.Resources.Meshes();
+        run.Context.SkinnedMeshes = &scene.Resources.SkinnedMeshes();
+
+        const Mesh3DVertex vertices[4] = {
+            {{-0.4f, 0.0f, -0.4f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+            {{0.4f, 0.0f, -0.4f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+            {{0.4f, 0.0f, 0.4f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+            {{-0.4f, 0.0f, 0.4f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+        };
+        const uint32_t indices[6] = {0u, 1u, 2u, 0u, 2u, 3u};
+        scene.Mesh.Id = 8801;
+        assert(scene.Resources.Meshes().Register(scene.Mesh, vertices, sizeof(vertices), indices, 6));
+
+        const auto addMeshProxy = [&](float x, float y, float z, bool bCastShadow) {
+            MeshProxy meshProxy;
+            meshProxy.ComponentId = 100 + scene.MeshProxies.size();
+            meshProxy.MeshHandle = scene.Mesh;
+            meshProxy.WorldTransform = MakeMarkedMatrix(x, y, z);
+            meshProxy.bCastShadow = bCastShadow;
+            scene.MeshProxies.push_back(meshProxy);
+        };
+        const NorvesLib::Math::Vector3 right = run.Context.PhysicalLighting.SunClipmap.LightRight;
+        addMeshProxy(0.5f, 0.0f, 0.5f, true);
+        addMeshProxy(-0.5f, 0.0f, 0.5f, true);
+        addMeshProxy(right.x * 5000.0f, right.y * 5000.0f, right.z * 5000.0f, true);
+        addMeshProxy(0.0f, 0.5f, 0.0f, false);
+
+        // スキニングの描画 1 件（SkinningComputePass が頂点を変形する）。持ち主のプロキシ（ComponentId 77）は影を落とし、境界は原点の近く。
+        // bSplitSkinnedSubmeshes のときは、6 頂点・2 三角形のメッシュをサブメッシュごとの 2 件の描画に分ける（main の SkinnedDrawCommands と
+        // 同じ形）: 先頭の範囲（インデックス 0〜2）は影なし、後ろの範囲（3〜5）は影あり
+        const uint32_t skinVertexCount = bSplitSkinnedSubmeshes ? 6u : 3u;
+        Container::VariableArray<SkinnedMeshVertex> skinVertices;
+        skinVertices.resize(skinVertexCount);
+        for (SkinnedMeshVertex& vertex : skinVertices)
+        {
+            vertex.BoneWeights[0] = 1.0f;
+        }
+        Container::VariableArray<uint32_t> skinIndices;
+        for (uint32_t index = 0; index < skinVertexCount; ++index)
+        {
+            skinIndices.push_back(index);
+        }
+        auto assetLease = Container::MakeShared<SkinnedMeshAssetLease>(SkinnedMeshHandle{5, 1}, std::move(skinVertices), std::move(skinIndices));
+        scene.SkinnedLeases.push_back(Container::MakeShared<SkinnedMeshFrameLease>(assetLease));
+        DrawCommand skinned;
+        skinned.Draw.PayloadKind = DrawPayloadKind::Skinned;
+        skinned.Draw.ObjectId = 15;
+        skinned.Draw.SourceMeshComponentId = 77;
+        skinned.Draw.WorldMatrix = MakeMarkedMatrix(-0.5f, 0.0f, 0.25f);
+        skinned.Skinned.FrameLeaseIndex = 0;
+        skinned.Skinned.BonePalette.push_back(MakeMarkedMatrix(0.0f, 0.0f, 0.0f));
+        if (bSplitSkinnedSubmeshes)
+        {
+            DrawCommand noShadow = skinned;
+            noShadow.Draw.SubMeshIndex = 0;
+            noShadow.Draw.IndexOffset = 0;
+            noShadow.Draw.IndexCount = 3;
+            noShadow.Draw.bCastShadow = false;
+            scene.AllCommands.push_back(noShadow);
+            skinned.Draw.SubMeshIndex = 1;
+            skinned.Draw.IndexOffset = 3;
+            skinned.Draw.IndexCount = 3;
+            skinned.Draw.bCastShadow = true;
+        }
+        scene.AllCommands.push_back(skinned);
+        SkinnedMeshProxy proxy;
+        proxy.ComponentId = 77;
+        proxy.bCastShadow = true;
+        proxy.bHasAnimatedBounds = true;
+        proxy.AnimatedBounds.Min = NorvesLib::Math::Vector3(-0.5f, 0.0f, -0.5f);
+        proxy.AnimatedBounds.Max = NorvesLib::Math::Vector3(0.5f, 1.0f, 0.5f);
+        proxy.WorldTransform = MakeMarkedMatrix(-0.5f, 0.0f, 0.25f);
+        scene.SkinnedProxies.push_back(proxy);
+
+        ViewRenderContext& context = run.Context;
+        context.SnapshotDrawCommands = DrawCommandView::FromArray(scene.AllCommands);
+        context.SnapshotOpaqueCommands = DrawCommandView::FromArray(scene.AllCommands);
+        context.SnapshotMeshProxies = &scene.MeshProxies;
+        context.SnapshotSkinnedMeshFrameLeases = &scene.SkinnedLeases;
+        context.SnapshotSkinnedMeshProxies = &scene.SkinnedProxies;
+
+        scene.Skinning.SetEnabled(true);
+        scene.Skinning.SetShadowCasterOutput(true);
+        assert(scene.Skinning.Initialize(context));
+        scene.Pass.SetSkinningComputePass(&scene.Skinning);
+        assert(scene.Pass.Initialize(context));
+        assert(scene.Pass.IsActive());
+    }
+
+    // 1 つのビューポートの Execute を回す（スキニングの計算 → 深度の入力 → VSM の順）。フレームとグラフの世代は別に数える
+    void RunVsmCasterViewport(VsmCasterScene& scene, uint64_t frameIndex, uint64_t graphGeneration)
+    {
+        VsmRun& run = scene.Run;
+        SetVsmFrame(run, frameIndex);
+        run.Pool.EndFrame();
+        run.Pool.BeginFrame(graphGeneration);
+        run.Graph.BeginFrame(graphGeneration);
+        run.Graph.AddPass(&scene.Skinning);
+        run.Graph.AddPass(&run.Inputs);
+        run.Graph.AddPass(&scene.Pass);
+        assert(run.Graph.Compile(run.Context));
+        const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
+        assert(result.bSuccess);
+    }
+
+    void ShutdownVsmCasterScene(VsmCasterScene& scene)
+    {
+        scene.Pass.Shutdown();
+        scene.Skinning.Shutdown();
+        scene.Resources.Shutdown();
+        scene.Run.ShaderMgr.Shutdown();
+        scene.Run.Graph.Shutdown();
+        scene.Run.Pool.EndFrame();
+        scene.Run.Pool.Shutdown();
+    }
+
+    // vsm の構成の 1 フレーム: スキニングの計算（変形の dispatch 1 回）→ 印付け・割り当て・消去（4 回の dispatch と間接 dispatch）→
+    // 投影物の展開（dispatch。グループ数 = 塊の数）→ 描画（render pass の中で塊ごとに 1 回の間接描画）の順に並ぶ。
+    //  - 塊は、影を落とす手続きメッシュ（A の 2 インスタンス。範囲の外の B と、影を落とさない C は含まない）と、スキニング 1 つ。
+    //  - 記録の作成（CPU）は、塊のバッファへ 3 件を書く（手続き 2・スキニング 1）。展開の前に塊・インスタンス・引数が Common → UnorderedAccess、
+    //    展開の後に UnorderedAccess → GenericRead（物理ページは PixelShaderWrite）、描画の後に元へ戻り、最後は Common。
+    //  - スキニングの頂点は、変形の後（VSM の前）から描画の最後まで GenericRead のまま読まれる。
+    //  - 印付けをしない構成（クリップマップが無い）では、展開・描画は記録されない。
+    // main のスキニングの描画はサブメッシュごとに分かれ、影なしのサブメッシュの描画は bCastShadow が偽になる。VSM の投影物は、
+    // 元の描画ごとの影の印とインデックスの範囲だけを塊にする（影なしの範囲の三角形を描かない・メッシュ全体を描かない）
+    void TestVirtualShadowMapPassDrawsOnlyShadowCastingSkinnedSubmeshRanges()
+    {
+        VsmCasterScene scene;
+        BuildVsmCasterScene(scene, true, true);
+        RunVsmCasterViewport(scene, 0, 0);
+
+        // 変形は描画ごと（2 件）。どちらも不透明で、影の印と範囲は元の描画のもの
+        const auto& instances = scene.Skinning.GetInstances();
+        assert(instances.size() == 2u);
+        assert(!instances[0].bCastShadow && instances[0].SourceFirstIndex == 0u && instances[0].SourceIndexCount == 3u);
+        assert(instances[1].bCastShadow && instances[1].SourceFirstIndex == 3u && instances[1].SourceIndexCount == 3u);
+        assert(instances[0].IndexCount == 6u && instances[1].IndexCount == 6u);
+
+        // 塊は手続き 2 件と、影を落とすサブメッシュの範囲の 1 件だけ（影なしの範囲・メッシュ全体の塊は無い）
+        assert(scene.Pass.WasRasterRecorded() && scene.Pass.GetLastCasterChunkCount() == 3u);
+        const Container::VariableArray<BarrierEvent> chunkBarriers = CollectBufferBarriers(scene.Run.CommandList, "VsmRaster_Chunks");
+        assert(!chunkBarriers.empty());
+        const Container::VariableArray<VsmShadowChunk> uploaded = ReadUploadedChunks(chunkBarriers[0].Buffer);
+        assert(uploaded.size() == 3u);
+        uint32_t skinnedChunks = 0;
+        for (const VsmShadowChunk& chunk : uploaded)
+        {
+            if (chunk.Record.Kind != static_cast<uint32_t>(VisibilityBuffer::RecordKind::SkinnedChunk))
+            {
+                continue;
+            }
+            ++skinnedChunks;
+            // 影を落とすサブメッシュ（インデックス 3〜5）の 1 三角形。頂点はそのインスタンスの変形した頂点の先頭
+            assert(chunk.Record.FirstIndex == 3u && chunk.Record.TriangleCount == 1u);
+            assert(chunk.Record.VertexAddress == instances[1].CurrentVertexAddress);
+        }
+        assert(skinnedChunks == 1u);
+        ShutdownVsmCasterScene(scene);
+    }
+
+    void TestVirtualShadowMapPassRecordsCasterRasterAfterSkinning()
+    {
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        VsmLogCollector logs;
+        logger.AddSink(&logs);
+#endif
+
+        {
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            RunVsmCasterViewport(scene, 0, 0);
+
+            const FakeCommandList& commandList = scene.Run.CommandList;
+            assert(scene.Pass.WasMarked() && scene.Pass.WasRasterRecorded() && scene.Pass.GetLastCasterChunkCount() == 3u);
+            assert(scene.Skinning.GetInstances().size() == 1u);
+            assert(scene.Skinning.GetInstances()[0].bOpaque && scene.Skinning.GetInstances()[0].bCastShadow);
+
+            const char* expectedSequence = "DDDDDDDDDDDDJDBIIIE";
+            assert(commandList.CallSequence.size() == std::strlen(expectedSequence));
+            for (size_t index = 0; index < commandList.CallSequence.size(); ++index)
+            {
+                assert(commandList.CallSequence[index] == expectedSequence[index]);
+            }
+            // dispatch: 変形（頂点 3 つ = 1 グループ）・印付け・戻す・割り当て・締める・展開（塊 3 つ = 3 グループ）
+            assert(commandList.DispatchGroups.size() == 13u);
+            assert(commandList.DispatchGroups[0].X == 1u && commandList.DispatchGroups[1].X == 16u && commandList.DispatchGroups[1].Y == 8u);
+            assert(commandList.DispatchGroups[12].X == 3u && commandList.DispatchGroups[12].Y == 1u && commandList.DispatchGroups[12].Z == 1u);
+            assert(commandList.BeginRenderPassCount == 1u && commandList.EndRenderPassCount == 1u);
+            // 間接描画: 塊ごとに 1 回（引数の先頭 = 頭の 4 語の後、塊ごとに 20 バイト、描画の数 1）
+            assert(commandList.IndirectDraws.size() == 3u);
+            for (uint32_t chunk = 0; chunk < 3u; ++chunk)
+            {
+                assert(commandList.IndirectDraws[chunk].OffsetBytes == 16u + chunk * 20u && commandList.IndirectDraws[chunk].MaxDrawCount == 1u);
+            }
+
+            // バリア（SequencePosition は、直前までに記録した B・E・D・I・J の数）
+            const RHI::ResourceState common = RHI::ResourceState::Common;
+            const RHI::ResourceState uav = RHI::ResourceState::UnorderedAccess;
+            const RHI::ResourceState read = RHI::ResourceState::GenericRead;
+            const size_t beforeExpand = 13u;
+            const size_t afterExpand = 14u;
+            const size_t afterDraw = 19u;
+            for (const char* name : {"VsmRaster_Chunks", "VsmRaster_Instances", "VsmRaster_Draws"})
+            {
+                assert(HasBufferBarrierAt(commandList, name, common, uav, beforeExpand));
+                assert(HasBufferBarrierAt(commandList, name, uav, read, afterExpand));
+                assert(HasBufferBarrierAt(commandList, name, read, uav, afterDraw));
+                assert(HasBufferBarrierAt(commandList, name, uav, common, afterDraw));
+            }
+            assert(HasBufferBarrierAt(commandList, "VSM_PhysicalPool", uav, RHI::ResourceState::PixelShaderWrite, afterExpand));
+            assert(HasBufferBarrierAt(commandList, "VSM_PhysicalPool", RHI::ResourceState::PixelShaderWrite, uav, afterDraw));
+            // スキニングの頂点は、変形の dispatch の後（位置 1）に GenericRead へ進み、VSM の記録の間は離れない
+            const Container::VariableArray<BarrierEvent> skinnedBarriers = CollectBufferBarriers(commandList, "Skinning_CurrentVertices");
+            bool bReadable = false;
+            for (const BarrierEvent& barrier : skinnedBarriers)
+            {
+                bReadable = bReadable || (barrier.AfterState == read && barrier.SequencePosition <= 1u);
+                assert(barrier.BeforeState != read);
+            }
+            assert(bReadable);
+            // 変形した頂点の使用は、VSM のパス（3 番目）まで延びる（変形の直後に解放されて、別の資源に使い回されない）
+            bool bLifetimeFound = false;
+            for (const RGCompiledResourceLifetime& lifetime : scene.Run.Graph.GetCompiledResourceLifetimes())
+            {
+                if (lifetime.DebugName != nullptr && IsDebugName(lifetime.DebugName, "Skinning_CurrentVertices"))
+                {
+                    bLifetimeFound = true;
+                    assert(lifetime.FirstUsePassIndex == 0u && lifetime.LastUsePassIndex == 2u);
+                }
+            }
+            assert(bLifetimeFound);
+
+            // 記録の作成: 塊のバッファへ 3 件（手続き 2・スキニング 1）を書く
+            const Container::VariableArray<BarrierEvent> chunkBarriers = CollectBufferBarriers(commandList, "VsmRaster_Chunks");
+            assert(!chunkBarriers.empty());
+            const Container::VariableArray<VsmShadowChunk> uploaded = ReadUploadedChunks(chunkBarriers[0].Buffer);
+            assert(uploaded.size() == 3u);
+            const uint64_t meshVertexAddress = uploaded[0].Record.VertexAddress;
+            const uint64_t meshIndexAddress = uploaded[0].Record.IndexAddress;
+            assert(meshVertexAddress != 0u && meshIndexAddress != 0u);
+            // 手続き: メッシュのバッファのアドレスと変換。インスタンス 0（+0.5, 0, +0.5）と 1（-0.5, 0, +0.5）
+            for (uint32_t instance = 0; instance < 2u; ++instance)
+            {
+                const VsmShadowChunk& chunk = uploaded[instance];
+                const float x = instance == 0u ? 0.5f : -0.5f;
+                assert(chunk.Record.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::ProceduralChunk));
+                assert(chunk.Record.TriangleCount == 2u && chunk.Record.FirstIndex == 0u && chunk.Record.VertexBase == 0u);
+                assert(chunk.Record.VertexAddress == meshVertexAddress && chunk.Record.IndexAddress == meshIndexAddress);
+                // 原点のそばの境界はすべての段にかかる
+                assert(chunk.LevelMask == (1u << VirtualShadowMap::LEVEL_COUNT) - 1u);
+                assert(chunk.World[3] == x && chunk.World[7] == 0.0f && chunk.World[11] == 0.5f);
+                assert(chunk.World[0] == 1.0f && chunk.World[5] == 1.0f && chunk.World[10] == 1.0f);
+                assert(std::abs(chunk.BoundsMin[0] - (x - 0.4f)) < 1.0e-6f && std::abs(chunk.BoundsMax[0] - (x + 0.4f)) < 1.0e-6f);
+                assert(chunk.BoundsMin[1] == 0.0f && chunk.BoundsMax[1] == 0.0f);
+                assert(std::abs(chunk.BoundsMin[2] - 0.1f) < 1.0e-6f && std::abs(chunk.BoundsMax[2] - 0.9f) < 1.0e-6f);
+            }
+            // スキニング: 変形した頂点（インスタンスの先頭）・インデックス・描画の境界・単位行列
+            const VsmShadowChunk& skinnedChunk = uploaded[2];
+            assert(skinnedChunk.Record.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::SkinnedChunk));
+            assert(skinnedChunk.Record.TriangleCount == 1u && skinnedChunk.Record.FirstIndex == 0u && skinnedChunk.Record.VertexBase == 0u);
+            assert(skinnedChunk.Record.VertexAddress == SkinningCurrentVerticesAddress && skinnedChunk.Record.IndexAddress != 0u);
+            assert(std::abs(skinnedChunk.BoundsMin[0] - (-1.0f)) < 1.0e-6f && std::abs(skinnedChunk.BoundsMax[0] - 0.0f) < 1.0e-6f);
+            assert(std::abs(skinnedChunk.BoundsMin[1] - 0.0f) < 1.0e-6f && std::abs(skinnedChunk.BoundsMax[1] - 1.0f) < 1.0e-6f);
+            assert(std::abs(skinnedChunk.BoundsMin[2] - (-0.25f)) < 1.0e-6f && std::abs(skinnedChunk.BoundsMax[2] - 0.75f) < 1.0e-6f);
+            assert(skinnedChunk.World[0] == 1.0f && skinnedChunk.World[3] == 0.0f && skinnedChunk.World[11] == 0.0f);
+
+#if NORVES_ENABLE_LOGGING
+            // 内訳は変わったときだけ 1 回出る
+            assert(logs.Count("VSM_CASTERS") == 1);
+            assert(logs.Count("VSM_CASTERS procedural_chunks=2 skinned_chunks=1 culled=1 dropped=0 skipped=0") == 1);
+#endif
+            ShutdownVsmCasterScene(scene);
+        }
+
+        // 主カメラの錐台で省かれた後の描画コマンドの一覧（現在のビューポートの一覧）が空でも、影を落とす手続きメッシュは
+        // カリング前のプロキシから集める（錐台の外でも VSM の段の範囲に入る投影物の影を落とす）。スキニングの描画は一覧が空なので無い
+        {
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            ViewportRenderPlan viewportPlan;
+            scene.Run.Context.CurrentViewport = &viewportPlan;
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Pass.WasRasterRecorded() && scene.Pass.GetLastCasterChunkCount() == 2u);
+            assert(scene.Skinning.GetInstances().empty());
+            ShutdownVsmCasterScene(scene);
+        }
+
+        // サブメッシュがあっても IndexCount が 0 なら、CSM と同じくメッシュ全体（先頭 0・頂点の基点 0・6 インデックス）として塊に分ける。
+        // 影を落とすプロキシ A の 2 つを、IndexCount 0 のサブメッシュ 1 つに替える（頂点の基点・先頭は 0 以外にしても無視される）
+        {
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            for (uint32_t index = 0; index < 2u; ++index)
+            {
+                scene.MeshProxies[index].SubMeshCount = 1u;
+                scene.MeshProxies[index].SubMeshes[0] = SubMeshRange{3u, 0u, 7u, 0u};
+            }
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Pass.WasRasterRecorded() && scene.Pass.GetLastCasterChunkCount() == 3u);
+            const Container::VariableArray<BarrierEvent> chunkBarriers = CollectBufferBarriers(scene.Run.CommandList, "VsmRaster_Chunks");
+            assert(!chunkBarriers.empty());
+            const Container::VariableArray<VsmShadowChunk> uploaded = ReadUploadedChunks(chunkBarriers[0].Buffer);
+            assert(uploaded.size() == 3u);
+            for (uint32_t instance = 0; instance < 2u; ++instance)
+            {
+                assert(uploaded[instance].Record.Kind == static_cast<uint32_t>(VisibilityBuffer::RecordKind::ProceduralChunk));
+                assert(uploaded[instance].Record.TriangleCount == 2u && uploaded[instance].Record.FirstIndex == 0u && uploaded[instance].Record.VertexBase == 0u);
+            }
+            ShutdownVsmCasterScene(scene);
+        }
+
+        // 解決が使えず予備の GBuffer の描画へ戻るフレームでも、影を落とすスキニングは変形して影に描く。
+        // 影を落とさない描画は変形しない。影の出力を切ると何も宣言しない（今までの動き）
+        {
+            VisibilityResolvePass unusableResolve;
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            scene.Skinning.SetResolvePass(&unusableResolve);
+            assert(!unusableResolve.CanResolve(scene.Run.Device.get()));
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Skinning.GetInstances().size() == 1u && scene.Pass.GetLastCasterChunkCount() == 3u);
+            ShutdownVsmCasterScene(scene);
+        }
+        {
+            VisibilityResolvePass unusableResolve;
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            scene.Skinning.SetResolvePass(&unusableResolve);
+            scene.AllCommands[0].Draw.bCastShadow = false;
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Skinning.GetInstances().empty() && scene.Pass.GetLastCasterChunkCount() == 2u);
+            ShutdownVsmCasterScene(scene);
+        }
+        {
+            VisibilityResolvePass unusableResolve;
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            scene.Skinning.SetResolvePass(&unusableResolve);
+            scene.Skinning.SetShadowCasterOutput(false);
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Skinning.GetInstances().empty() && scene.Pass.GetLastCasterChunkCount() == 2u);
+            ShutdownVsmCasterScene(scene);
+        }
+
+        // 半透明の一覧にあるスキニングの描画も、影の描画と同じ全描画の一覧から変形する（ID のラスタが描かないよう bOpaque は false）
+        {
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            scene.Run.Context.SnapshotOpaqueCommands = DrawCommandView{};
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Skinning.GetInstances().size() == 1u && !scene.Skinning.GetInstances()[0].bOpaque);
+            assert(scene.Pass.GetLastCasterChunkCount() == 3u);
+            ShutdownVsmCasterScene(scene);
+        }
+
+        // 同じフレームの 2 つ目のビューポートは別の塊のバッファへ書き（提出前の記録を上書きしない）、
+        // 次のフレーム（別の飛行中の番号）は別の枠、同じ番号へ戻ったフレームは作り直さない
+        {
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            uint64_t generation = 0;
+            RunVsmCasterViewport(scene, 0, generation++);
+            RunVsmCasterViewport(scene, 0, generation++);
+            assert(CountBufferCreations(*scene.Run.Device, "VsmRaster_Chunks") == 2);
+            RunVsmCasterViewport(scene, 1, generation++);
+            assert(CountBufferCreations(*scene.Run.Device, "VsmRaster_Chunks") == 3);
+            RunVsmCasterViewport(scene, 2, generation++);
+            RunVsmCasterViewport(scene, 3, generation++);
+            assert(CountBufferCreations(*scene.Run.Device, "VsmRaster_Chunks") == 3);
+            ShutdownVsmCasterScene(scene);
+        }
+
+        // クリップマップが無く印付けをしない構成: 割り当て済みのページが無いので、投影物を集めず展開・描画も記録しない
+        {
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, false);
+            RunVsmCasterViewport(scene, 0, 0);
+            const FakeCommandList& commandList = scene.Run.CommandList;
+            assert(!scene.Pass.WasMarked() && !scene.Pass.WasRasterRecorded() && scene.Pass.GetLastCasterChunkCount() == 0u);
+            // 変形（D）の後に、割り当て・消去だけ（戻す・割り当て・締める・間接）
+            const char* expectedSequence = "DDDDDDDDDDDJ";
+            assert(commandList.CallSequence.size() == std::strlen(expectedSequence));
+            for (size_t index = 0; index < commandList.CallSequence.size(); ++index)
+            {
+                assert(commandList.CallSequence[index] == expectedSequence[index]);
+            }
+            assert(commandList.BeginRenderPassCount == 0u && commandList.IndirectDraws.empty());
+            assert(CountBufferCreations(*scene.Run.Device, "VsmRaster_Chunks") == 0);
+            ShutdownVsmCasterScene(scene);
+        }
+
+#if NORVES_ENABLE_LOGGING
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+#endif
+    }
+
+    // ========================================
+    // MegaGeometry の投影物のカリング（VirtualShadowMapMegaCull。vsm の構成だけ）
+    // ========================================
+
+    // 記述子セットの binding の番号に束縛されたバッファの名前（束縛が無ければ nullptr）
+    const char* BoundBufferNameAt(const Container::VariableArray<BoundBufferName>& bindings, uint32_t binding)
+    {
+        for (const BoundBufferName& entry : bindings)
+        {
+            if (entry.Binding == binding)
+            {
+                return entry.Name;
+            }
+        }
+        return nullptr;
+    }
+
+    // 主の経路（MegaGeometryPass）の記録を済ませた、vsm の構成のシーン。VsmCasterScene（手続きメッシュ・スキニングの投影物）に、
+    // MegaGeometry の 3 インスタンスを足し、2 パスの遮蔽の主のカリング（1 回目 → 描画 → HZB 7 段 → 2 回目 → 描画）を同じコマンドリストへ先に記録する
+    //   A: 影を落とす。境界（WorldBounds）は (1, 2, 3)・半径 4
+    //   B: 影を落とさない
+    //   C: 影を落とす。境界が無い（半径 0）ので、メッシュ全体のローカルの境界（中心 (0.5, 0.5, 0)・半径 1.25）をワールドの変換 (5, 0, 0) で移した球が使われる
+    struct VsmMegaScene
+    {
+        VsmCasterScene Base;
+        SharedResourceRegistry Shared;
+        MegaGeometryPass Mega;
+        Container::VariableArray<MegaGeometryProxy> Proxies;
+        RHI::TexturePtr Textures[6];
+        size_t MainSequenceLength = 0;
+        size_t MainDispatchCount = 0;
+        size_t MainBarrierCount = 0;
+        size_t MainIndirectDrawCount = 0;
+    };
+
+    // extraCasters: 影を落とすインスタンスを、A と同じメッシュで何個足すか（CSM のインスタンスごとの定数バッファの数を超える規模を作る）
+    void BuildVsmMegaScene(VsmMegaScene& scene, bool bCasters = true, uint32_t extraCasters = 0)
+    {
+        VsmRun& run = scene.Base.Run;
+        run.Device->EnableMegaGeometryBatchCapabilities();
+        run.Device->EnableDrawIndirectCount();
+        BuildVsmCasterScene(scene.Base, true);
+        RenderResources& resources = scene.Base.Resources;
+        resources.MegaGeometry().SetOcclusionCullingEnabled(true);
+        ViewRenderContext& context = run.Context;
+
+        const RHI::Format formats[6] = {RHI::Format::R8G8B8A8_UNORM, RHI::Format::R16G16B16A16_FLOAT, RHI::Format::R8G8B8A8_UNORM,
+                                        RHI::Format::R16G16B16A16_FLOAT, RHI::Format::D32_FLOAT, RHI::Format::R16G16_FLOAT};
+        const char* names[6] = {"GBuffer_Albedo", "GBuffer_Normal", "GBuffer_Material", "GBuffer_Emissive", "GBuffer_Depth", "GBuffer_Velocity"};
+        for (uint32_t index = 0; index < 6u; ++index)
+        {
+            scene.Textures[index] = index == 4u ? run.Device->CreateTexture(RHI::TextureDesc::DepthStencil(128, 64, formats[index], names[index]))
+                                                : run.Device->CreateTexture(RHI::TextureDesc::RenderTarget(128, 64, formats[index], names[index]));
+            scene.Shared.RegisterTexturePtr(names[index], scene.Textures[index]);
+        }
+        context.SharedResources = &scene.Shared;
+
+        float vertices[12] = {0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f};
+        uint32_t indices[3] = {0, 1, 2};
+        MegaGeometry::MeshCluster cluster;
+        cluster.IndexOffset = 0;
+        cluster.IndexCount = 3;
+        cluster.VertexOffset = 0;
+        cluster.VertexCount = 3;
+        cluster.Bounds.CenterX = 0.5f;
+        cluster.Bounds.CenterY = 0.5f;
+        cluster.Bounds.CenterZ = 0.0f;
+        cluster.Bounds.Radius = 0.75f;
+        cluster.ConeAxisZ = 1.0f;
+        cluster.ConeCutoff = 0.25f;
+        MegaGeometry::MegaMeshCreateInfo createInfo;
+        createInfo.VertexData = vertices;
+        createInfo.VertexDataSize = sizeof(vertices);
+        createInfo.VertexCount = 3;
+        createInfo.VertexStride = 4 * sizeof(float);
+        createInfo.IndexData = indices;
+        createInfo.IndexCount = 3;
+        createInfo.Clusters.push_back(cluster);
+        createInfo.TotalBounds.CenterX = 0.5f;
+        createInfo.TotalBounds.CenterY = 0.5f;
+        createInfo.TotalBounds.CenterZ = 0.0f;
+        createInfo.TotalBounds.Radius = 1.25f;
+        createInfo.bBuildLODHierarchy = false;
+        createInfo.DebugName = "VsmMegaMeshA";
+        const auto meshA = resources.MegaGeometry().CreateMegaMesh(createInfo);
+        createInfo.DebugName = "VsmMegaMeshC";
+        const auto meshC = resources.MegaGeometry().CreateMegaMesh(createInfo);
+        assert(meshA.IsValid() && meshC.IsValid());
+        assert(NorvesLib::Test::GeometryUpload::DrainGeometryUploads(resources));
+
+        MegaGeometryProxy proxyA;
+        proxyA.ObjectId = 1;
+        proxyA.ComponentId = 10;
+        proxyA.MegaMeshHandle = meshA;
+        proxyA.WorldTransform = NorvesLib::Math::Matrix4x4::Identity;
+        proxyA.WorldBounds.CenterX = 1.0f;
+        proxyA.WorldBounds.CenterY = 2.0f;
+        proxyA.WorldBounds.CenterZ = 3.0f;
+        proxyA.WorldBounds.Radius = 4.0f;
+        proxyA.bCastShadow = bCasters;
+        scene.Proxies.push_back(proxyA);
+        MegaGeometryProxy proxyB = proxyA;
+        proxyB.ObjectId = 2;
+        proxyB.ComponentId = 20;
+        proxyB.bCastShadow = false;
+        scene.Proxies.push_back(proxyB);
+        MegaGeometryProxy proxyC = proxyA;
+        proxyC.ObjectId = 3;
+        proxyC.ComponentId = 30;
+        proxyC.MegaMeshHandle = meshC;
+        proxyC.WorldTransform = MakeMarkedMatrix(5.0f, 0.0f, 0.0f);
+        proxyC.PreviousWorldTransform = proxyC.WorldTransform;
+        proxyC.WorldBounds = BoundingSphere{};
+        proxyC.bCastShadow = bCasters;
+        scene.Proxies.push_back(proxyC);
+        for (uint32_t extra = 0; extra < extraCasters; ++extra)
+        {
+            MegaGeometryProxy proxyExtra = proxyA;
+            proxyExtra.ObjectId = 100 + extra;
+            proxyExtra.ComponentId = 1000 + extra;
+            scene.Proxies.push_back(proxyExtra);
+        }
+        context.SnapshotMegaGeometryProxies = &scene.Proxies;
+
+        assert(scene.Mega.Initialize(context));
+        scene.Mega.Setup(context);
+        CameraProxy camera;
+        camera.Viewport.Width = 128.0f;
+        camera.Viewport.Height = 64.0f;
+        RHI::Viewport viewport;
+        viewport.width = 128.0f;
+        viewport.height = 64.0f;
+        viewport.maxDepth = 1.0f;
+        RHI::ScissorRect scissor;
+        scissor.right = 128;
+        scissor.bottom = 64;
+        FrameCommand frameCommand = FrameCommand::CreateMegaGeometryPass(
+            &scene.Mega, &resources.MegaGeometry(), camera, true, viewport, scissor, DebugViewMode::Normal);
+        GMegaCullUniformUpdates.clear();
+        scene.Mega.RecordFrameCommand(frameCommand.MegaGeometry, &run.CommandList);
+        scene.Base.Pass.SetMegaGeometryPass(&scene.Mega);
+        scene.MainSequenceLength = run.CommandList.CallSequence.size();
+        scene.MainDispatchCount = run.CommandList.DispatchGroups.size();
+        scene.MainBarrierCount = run.CommandList.Barriers.size();
+        scene.MainIndirectDrawCount = run.CommandList.IndirectDraws.size();
+    }
+
+    void ShutdownVsmMegaScene(VsmMegaScene& scene)
+    {
+        scene.Mega.Shutdown();
+        ShutdownVsmCasterScene(scene.Base);
+    }
+
+    // 統計の読み戻しの枠へ、GPU が書き終えた体で MegaGeometry の投影物のカリングの統計（語 8〜10）を書く
+    void WriteVsmMegaReadbackStats(const VirtualShadowMapPass& pass, uint32_t instances, uint32_t clusters, uint32_t overflow)
+    {
+        for (uint32_t slotIndex = 0; slotIndex < VirtualShadowMapPass::StatsReadbackSlotCount; ++slotIndex)
+        {
+            const RHI::BufferPtr& buffer = pass.GetStatsReadbackBuffer(slotIndex);
+            assert(buffer);
+            uint32_t* words = reinterpret_cast<uint32_t*>(static_cast<FakeBuffer*>(buffer.get())->MappedBytes.data());
+            words[VirtualShadowMap::StatMegaInstances] = instances;
+            words[VirtualShadowMap::StatMegaClusters] = clusters;
+            words[VirtualShadowMap::StatMegaOverflow] = overflow;
+        }
+    }
+
+    // 主の経路で書かない・読まないバッファの名前か（MegaGeometryPass が間接描画・見えた印・ページの要求・統計・区間などに使う）
+    bool IsMainPathOutputBufferName(const char* name)
+    {
+        if (name == nullptr)
+        {
+            return false;
+        }
+        for (const char* main : {"MegaGeometry_IndirectDraw", "MegaGeometry_DrawCount", "MegaGeometry_DrawInfo", "MegaGeometry_VisibleLastFrame",
+                                 "MegaGeometry_DummyVisibility", "MegaGeometry_DummyStats", "MegaGeometry_SwRaster", "MegaGeometry_SectionTable",
+                                 "MegaGeometry_BvhQueue", "MegaGeometry_BvhCounters", "GeometryPageRequest"})
+        {
+            if (std::strcmp(name, main) == 0)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // VSM のパスを実際の GBuffer と照明のパスの間に置いて 2 フレーム回し、照明が太陽の影をどちらで描くかを確かめる。
+    // 照明は VSM のページの表・プールが公開されたフレームだけ VSM を読み、公開されなければ CSM のまま描く。確かめる内容:
+    //  - 照明が書く VSM の読み出しのパラメータの control.x（bExpectVsm なら 1、そうでなければ 0）
+    //  - 照明の束縛 22・23 が VSM のページの表・プールか（bExpectVsm のときだけ VSM のバッファ）
+    //  - CSM のテクスチャ配列が束縛 6 に束縛される（VSM の有無に依らず CSM は読まれ続ける）
+    //  - CSM が有効なまま描かれる: 影を落とす方向光 1 灯と有効な CSM の公開（影の地図・サンプラー・4 カスケードの行列と分割距離）を
+    //    置き、照明のパラメータが bShadowEnabled = 1・cascadeCount = 4 で、方向光に影の印（attenuation[2] = 1）が付くこと
+    //  - 渡した VSM のパスが、2 フレームとも何も記録しないか（bExpectVsm でなければ）
+    void RunVsmPassThroughLighting(VsmRun& run, VirtualShadowMapPass& pass, bool bExpectVsm)
+    {
+        run.Context.PhysicalLighting.SunClipmap = BuildVirtualShadowMapClipmap(
+            NorvesLib::Math::Vector3(0.35f, -0.8f, 0.45f), 1u, NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), VirtualShadowMapClipmapSettings{});
+        assert(run.Context.PhysicalLighting.SunClipmap.bEnabled);
+        RHI::TextureDesc csmDesc = RHI::TextureDesc::DepthStencil(64, 64, RHI::Format::D32_FLOAT, "TestCsmShadowMap");
+        csmDesc.ArraySize = PhysicalLightingShadowCascadeCount;
+        const RHI::TexturePtr csmTexture = run.Device->CreateTexture(csmDesc);
+        assert(csmTexture && csmTexture->GetArraySize() == PhysicalLightingShadowCascadeCount);
+
+        // 有効な CSM の公開（ShadowMapPass が公開する内容と同じ形）。4 カスケードの有限の行列と、増える分割距離
+        PhysicalLightingResources& physicalLighting = run.Context.PhysicalLighting;
+        physicalLighting.bShadowPublished = true;
+        physicalLighting.ShadowMapTexture = csmTexture;
+        physicalLighting.ShadowSampler = run.Device->CreateSampler(RHI::SamplerDesc{});
+        assert(physicalLighting.ShadowSampler);
+        CascadedDirectionalShadowShaderValues& cascaded = physicalLighting.CascadedShadow;
+        cascaded.bEnabled = true;
+        cascaded.CascadeCount = PhysicalLightingShadowCascadeCount;
+        for (uint32_t cascade = 0; cascade < PhysicalLightingShadowCascadeCount; ++cascade)
+        {
+            for (uint32_t element = 0; element < 16u; ++element)
+            {
+                cascaded.View[cascade][element] = element % 5 == 0 ? 1.0f : 0.0f;
+                cascaded.Projection[cascade][element] = element % 5 == 0 ? 1.0f : 0.0f;
+            }
+        }
+        const float splitDistances[PhysicalLightingShadowSplitCount] = {0.1f, 10.0f, 20.0f, 40.0f, 80.0f};
+        std::memcpy(cascaded.SplitDistances, splitDistances, sizeof(splitDistances));
+
+        // 影を落とす方向光 1 灯（CSM を掛ける灯に選ばれる条件: 表示される方向光がちょうど 1 つで、影を落とす）
+        Container::VariableArray<LightProxy> lightProxies;
+        LightProxy sunLight;
+        sunLight.LightId = 1;
+        sunLight.Type = LightType::Directional;
+        sunLight.DirectionX = 0.35f;
+        sunLight.DirectionY = -0.8f;
+        sunLight.DirectionZ = 0.45f;
+        sunLight.ColorR = 1.0f;
+        sunLight.ColorG = 1.0f;
+        sunLight.ColorB = 1.0f;
+        sunLight.bCastShadows = true;
+        sunLight.bVisible = true;
+        lightProxies.push_back(sunLight);
+        run.Context.SnapshotLightProxies = &lightProxies;
+
+        run.Pool.BeginFrame(0);
+        RenderResources renderResources;
+        assert(renderResources.Initialize(run.Device));
+        SceneRenderer renderer;
+        assert(renderer.Initialize(run.Device.get(), nullptr, &run.Pool));
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+        run.Context.Renderer = &renderer;
+        run.Context.PendingFrameCommands = &pendingFrameCommands;
+        run.Context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        run.Context.Resources.Textures = &renderResources.Textures();
+        run.Context.Resources.Materials = &renderResources.Materials();
+        run.Context.Resources.Meshes = &renderResources.Meshes();
+
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        LightingPass lightingPass;
+        RGResourceHandle publishedShadowMap;
+        NamedShadowMapProducerPass shadowProducer(csmTexture, &publishedShadowMap);
+
+        for (uint64_t frame = 0; frame < 2u; ++frame)
+        {
+            SetVsmFrame(run, frame);
+            pendingFrameCommands.clear();
+            run.Pool.EndFrame();
+            run.Pool.BeginFrame(frame);
+            run.Graph.BeginFrame(frame);
+            run.Graph.AddPass(&gbufferPass);
+            run.Graph.AddPass(&pass);
+            // CSM の影の地図をグラフへ公開するパス（本物の ShadowMapPass の代わり）。照明より前に置く
+            const uint32_t shadowPassIndex = run.Graph.AddPass(&shadowProducer);
+            const uint32_t lightingPassIndex = run.Graph.AddPass(&lightingPass);
+            assert(run.Graph.AddDependency(shadowPassIndex, lightingPassIndex));
+            assert(run.Graph.Compile(run.Context));
+            assert(publishedShadowMap.IsValid());
+            ResetLightingDescriptorCapture();
+            GLastDescriptorBinding6Texture = nullptr;
+            const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
+            assert(result.bSuccess);
+
+            // VSM のパスが宣言したものの有無（0 番が GBuffer、1 番が VSM、2 番が照明）
+            assert((run.Graph.GetDeclaredPassAccessCount(1) != 0) == bExpectVsm);
+
+            // 照明が書いた VSM の読み出しのパラメータ
+            const FakeBuffer* sampleBuffer = static_cast<const FakeBuffer*>(run.Device->LightingVsmSampleBuffer.get());
+            assert(sampleBuffer != nullptr && sampleBuffer->LastUpdateBytes.size() == sizeof(GPUVsmSampleParams));
+            GPUVsmSampleParams params = {};
+            std::memcpy(&params, sampleBuffer->LastUpdateBytes.data(), sizeof(params));
+            assert(params.control[0] == (bExpectVsm ? 1u : 0u));
+
+            // CSM が有効なまま描かれる: 照明のパラメータが CSM の影を有効にし、方向光に影の印が付く
+            // （VSM が公開されないフレームは、照明がこの CSM を読んで太陽の影を描く）
+            assert(GLastDescriptorBinding4UpdateBytes.size() == sizeof(GPULightingParams));
+            GPULightingParams lightingParams = {};
+            std::memcpy(&lightingParams, GLastDescriptorBinding4UpdateBytes.data(), sizeof(lightingParams));
+            assert(lightingParams.bShadowEnabled == 1u);
+            assert(lightingParams.cascadeCount == PhysicalLightingShadowCascadeCount);
+            assert(lightingParams.lightCount == 1u);
+            assert(lightingParams.shadowSplitDistances[1] == 10.0f && lightingParams.shadowSplitDistances[4] == 80.0f);
+            assert(GLastDescriptorBinding5UpdateBytes.size() >= sizeof(GPULightData));
+            GPULightData sunPacked = {};
+            std::memcpy(&sunPacked, GLastDescriptorBinding5UpdateBytes.data(), sizeof(sunPacked));
+            assert(sunPacked.position[3] == static_cast<float>(static_cast<int>(LightType::Directional)));
+            assert(sunPacked.attenuation[2] == 1.0f);
+
+            // 照明の記述子セットの束縛 22・23: VSM のページの表・プールか、既定のバッファか
+            bool bFoundLightingSet = false;
+            bool bBoundVsmBuffers = false;
+            bool bBoundAnyVsmBuffer = false;
+            for (const DescriptorBindingRecord& record : GDescriptorBindingRecords)
+            {
+                const char* sampleName = BoundBufferNameAt(record.Buffers, 21);
+                if (sampleName == nullptr || std::strcmp(sampleName, "LightingVsmSampleParams") != 0)
+                {
+                    continue;
+                }
+                bFoundLightingSet = true;
+                const char* pageTableName = BoundBufferNameAt(record.Buffers, 22);
+                const char* poolName = BoundBufferNameAt(record.Buffers, 23);
+                const bool bPageTable = pageTableName != nullptr && std::strcmp(pageTableName, "VSM_PageTable") == 0;
+                const bool bPool = poolName != nullptr && std::strcmp(poolName, "VSM_PhysicalPool") == 0;
+                bBoundVsmBuffers = bBoundVsmBuffers || (bPageTable && bPool);
+                bBoundAnyVsmBuffer = bBoundAnyVsmBuffer || bPageTable || bPool;
+            }
+            assert(bFoundLightingSet);
+            assert(bBoundVsmBuffers == bExpectVsm && bBoundAnyVsmBuffer == bExpectVsm);
+
+            // CSM のテクスチャ配列は、VSM があってもなくても束縛 6 に束縛される
+            assert(GLastDescriptorBinding6Texture == csmTexture.get());
+            assert(run.CommandList.DrawCallCount > 0);
+        }
+
+        lightingPass.Shutdown();
+        gbufferPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        run.Context.Renderer = nullptr;
+        run.Context.PendingFrameCommands = nullptr;
+        run.Context.SnapshotOpaqueCommands = DrawCommandView{};
+        run.Context.SnapshotLightProxies = nullptr;
+        run.Context.Resources.Textures = nullptr;
+        run.Context.Resources.Materials = nullptr;
+        run.Context.Resources.Meshes = nullptr;
+    }
+
+    // 太陽の VSM の照明の統計（逃げた標本の数）の読み戻し:
+    //  - 照明の描画の後（最後の EndRenderPass の後）に、統計のバッファへ PixelShaderWrite → HostRead のバリアを 1 回だけ記録する。
+    //  - 書いたフレームの提出の完了が確かめられた枠（通し番号が CompletedRenderFrameSerial 以下）だけを読んで空ける。
+    //    完了が未確認の枠は読まず、上書きもしない（GPU が書いているかもしれない）。
+    //  - どの枠も未確認で空きが無いフレームは、統計のバリアを記録せず、読まない置き場へ束ねる（他の資源へ書かない）。
+    void TestLightingVsmStatsAreMadeHostVisibleAndReadAfterCompletion()
+    {
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        run.Context.PhysicalLighting.SunClipmap = BuildVirtualShadowMapClipmap(
+            NorvesLib::Math::Vector3(0.35f, -0.8f, 0.45f), 1u, NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), VirtualShadowMapClipmapSettings{});
+        assert(run.Context.PhysicalLighting.SunClipmap.bEnabled);
+
+        run.Pool.BeginFrame(0);
+        RenderResources renderResources;
+        assert(renderResources.Initialize(run.Device));
+        SceneRenderer renderer;
+        assert(renderer.Initialize(run.Device.get(), nullptr, &run.Pool));
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+        run.Context.Renderer = &renderer;
+        run.Context.PendingFrameCommands = &pendingFrameCommands;
+        run.Context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        run.Context.Resources.Textures = &renderResources.Textures();
+        run.Context.Resources.Materials = &renderResources.Materials();
+        run.Context.Resources.Meshes = &renderResources.Meshes();
+
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        VirtualShadowMapPass vsmPass;
+        assert(vsmPass.Initialize(run.Context));
+        LightingPass lightingPass;
+
+        // 1 フレーム回す。frame は 0 から、通し番号は frame + 1。completed は提出の完了が確かめられた最大の通し番号
+        const auto runFrame = [&](uint64_t frame, uint64_t completed)
+        {
+            run.Context.FrameIndex = static_cast<uint32_t>(frame % 2u);
+            run.Context.RenderFrameSerial = frame + 1u;
+            run.Context.CompletedRenderFrameSerial = completed;
+            pendingFrameCommands.clear();
+            run.CommandList.Barriers.clear();
+            run.CommandList.CallSequence.clear();
+            run.Pool.EndFrame();
+            run.Pool.BeginFrame(frame);
+            run.Graph.BeginFrame(frame);
+            run.Graph.AddPass(&gbufferPass);
+            run.Graph.AddPass(&vsmPass);
+            run.Graph.AddPass(&lightingPass);
+            assert(run.Graph.Compile(run.Context));
+            const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
+            assert(result.bSuccess);
+            assert(pendingFrameCommands.empty());
+        };
+        // そのフレームの統計のバリアの数と、バリアが指すバッファ。バリアは最後の EndRenderPass（照明の描画）より後
+        const auto statsBarrier = [&](RHI::IBuffer*& outBuffer) -> size_t
+        {
+            const Container::VariableArray<BarrierEvent> barriers = CollectBufferBarriers(run.CommandList, "LightingVsmStats");
+            outBuffer = barriers.empty() ? nullptr : barriers[0].Buffer;
+            for (const BarrierEvent& barrier : barriers)
+            {
+                assert(barrier.BeforeState == RHI::ResourceState::PixelShaderWrite);
+                assert(barrier.AfterState == RHI::ResourceState::HostRead);
+                size_t lastEnd = run.CommandList.CallSequence.size();
+                for (size_t index = 0; index < run.CommandList.CallSequence.size(); ++index)
+                {
+                    lastEnd = run.CommandList.CallSequence[index] == 'E' ? index : lastEnd;
+                }
+                assert(lastEnd < run.CommandList.CallSequence.size() && barrier.SequencePosition > lastEnd);
+            }
+            return barriers.size();
+        };
+        // GPU が書き終えた体の値を、枠の先頭の語へ書く（偽の装置の描画は中身を書かない）
+        const auto word0 = [](RHI::IBuffer* buffer) -> uint32_t&
+        {
+            return *reinterpret_cast<uint32_t*>(static_cast<FakeBuffer*>(buffer)->MappedBytes.data());
+        };
+
+        RHI::IBuffer* slotA = nullptr;
+        RHI::IBuffer* slotB = nullptr;
+        RHI::IBuffer* buffer = nullptr;
+
+        // フレーム 0（通し番号 1・完了なし）: 統計の枠 A を使い、描画の後に PixelShaderWrite → HostRead のバリアを 1 回記録する
+        runFrame(0, 0);
+        assert(statsBarrier(slotA) == 1 && slotA != nullptr);
+        word0(slotA) = 5u;
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 0 && lightingPass.GetVsmFallbackSampleCount() == 0);
+
+        // フレーム 1（通し番号 2・完了なし）: 枠 A はまだ GPU の完了が未確認なので読まず、別の枠 B を使う
+        runFrame(1, 0);
+        assert(statsBarrier(slotB) == 1 && slotB != nullptr && slotB != slotA);
+        word0(slotB) = 7u;
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 0 && lightingPass.GetVsmFallbackSampleCount() == 0);
+        assert(word0(slotA) == 5u);
+
+        // フレーム 2（通し番号 3・通し番号 1 まで完了）: 枠 A を読んで空け、0 に戻して再び使う。枠 B は未確認のまま
+        runFrame(2, 1);
+        assert(statsBarrier(buffer) == 1 && buffer == slotA);
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 1 && lightingPass.GetVsmFallbackSampleCount() == 5u);
+        assert(word0(slotA) == 0u && word0(slotB) == 7u);
+        word0(slotA) = 11u;
+
+        // フレーム 3（通し番号 4・通し番号 2 まで完了）: 枠 B を読む。枠 A（通し番号 3）は未確認のまま
+        runFrame(3, 2);
+        assert(statsBarrier(buffer) == 1 && buffer == slotB);
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 2 && lightingPass.GetVsmFallbackSampleCount() == 12u);
+        assert(word0(slotA) == 11u);
+
+        // GPU が止まったまま（完了が 2 のまま）フレームが進むと、空いている枠を順に使い、全 16 枠が埋まる（フレーム 4〜17）
+        for (uint64_t frame = 4; frame <= 17; ++frame)
+        {
+            runFrame(frame, 2);
+            assert(statsBarrier(buffer) == 1 && buffer != nullptr);
+        }
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 2);
+
+        // 空きが無いフレーム 18: 統計のバリアは記録せず、どの枠も上書きしない。読まない置き場（LightingVsmStatsSink）へ束ねる
+        const BufferCreationRecord* sinkBefore = FindBufferCreation(*run.Device, "LightingVsmStatsSink");
+        assert(sinkBefore == nullptr);
+        runFrame(18, 2);
+        assert(statsBarrier(buffer) == 0);
+        assert(FindBufferCreation(*run.Device, "LightingVsmStatsSink") != nullptr);
+        assert(word0(slotA) == 11u);
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 2);
+
+        // 完了が 3 へ進むと、通し番号 3 の枠 A を読んで空け、また使える
+        runFrame(19, 3);
+        assert(statsBarrier(buffer) == 1 && buffer == slotA);
+        assert(lightingPass.GetVsmStatsHarvestedExecuteCount() == 3 && lightingPass.GetVsmFallbackSampleCount() == 23u);
+
+        lightingPass.Shutdown();
+        gbufferPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        ShutdownVsmRun(run, vsmPass);
+    }
+
+    // 対照: VSM が使える装置では、同じ構成で照明が VSM のページの表・プールを読む（control.x = 1・束縛 22・23 が VSM のバッファ）。
+    // フォールバックのテストが「VSM を読まない」ことを確かめられる構成であることの裏づけ
+    void TestLightingReadsVsmWhenPublished()
+    {
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        VirtualShadowMapPass pass;
+        assert(pass.Initialize(run.Context) && pass.IsActive());
+        RunVsmPassThroughLighting(run, pass, true);
+        ShutdownVsmRun(run, pass);
+    }
+
+    // include を引用符つきの相対パスで展開する（ShaderManager と同じ規則のテスト用の最小版）
+    bool ExpandTestShaderIncludes(const char* relativePath, Container::String& expanded, uint32_t depth)
+    {
+        if (depth > 16)
+        {
+            return false;
+        }
+        Container::String fullPath = TestShaderDirectory;
+        fullPath += "/";
+        fullPath += relativePath;
+        auto file = NorvesLib::FileStream::FileStream::CreateUnique(fullPath,
+                                                                   NorvesLib::FileStream::FileMode::Read,
+                                                                   NorvesLib::FileStream::FileAccess::Read,
+                                                                   NorvesLib::FileStream::FileShare::Read);
+        if (!file || !file->IsOpen())
+        {
+            return false;
+        }
+        const int64_t fileSize = file->GetSize();
+        if (fileSize < 0)
+        {
+            return false;
+        }
+        const size_t size = static_cast<size_t>(fileSize);
+        Container::VariableArray<char> text;
+        text.resize(size + 1);
+        if (size > 0 && file->Read(text.data(), size) != size)
+        {
+            return false;
+        }
+        file->Close();
+        text[size] = '\0';
+
+        size_t cursor = (size >= 3 && static_cast<unsigned char>(text[0]) == 0xEF && static_cast<unsigned char>(text[1]) == 0xBB &&
+                         static_cast<unsigned char>(text[2]) == 0xBF)
+                            ? 3u
+                            : 0u;
+        while (cursor < size)
+        {
+            size_t lineEnd = cursor;
+            while (lineEnd < size && text[lineEnd] != '\n')
+            {
+                ++lineEnd;
+            }
+            size_t contentEnd = lineEnd;
+            if (contentEnd > cursor && text[contentEnd - 1] == '\r')
+            {
+                --contentEnd;
+            }
+            size_t head = cursor;
+            while (head < contentEnd && (text[head] == ' ' || text[head] == '\t'))
+            {
+                ++head;
+            }
+            if (contentEnd - head >= 8 && std::strncmp(&text[head], "#include", 8) == 0)
+            {
+                size_t open = head + 8;
+                while (open < contentEnd && text[open] != '"')
+                {
+                    ++open;
+                }
+                size_t close = open + 1;
+                while (close < contentEnd && text[close] != '"')
+                {
+                    ++close;
+                }
+                if (close >= contentEnd || close - open - 1 >= 256)
+                {
+                    return false;
+                }
+                char includePath[256];
+                std::memcpy(includePath, &text[open + 1], close - open - 1);
+                includePath[close - open - 1] = '\0';
+                if (!ExpandTestShaderIncludes(includePath, expanded, depth + 1))
+                {
+                    return false;
+                }
+                expanded += "\n";
+            }
+            else
+            {
+                const char saved = text[contentEnd];
+                text[contentEnd] = '\0';
+                expanded += &text[cursor];
+                text[contentEnd] = saved;
+                expanded += "\n";
+            }
+            cursor = lineEnd + 1;
+        }
+        return true;
+    }
+
+    // SPIR-V の命令（語数 << 16 | opcode）を先頭から数え、opcode の命令の数を返す
+    uint32_t CountSpirvInstructions(const RHI::ShaderCompileResult& result, uint32_t opcode)
+    {
+        assert(result.bSuccess && result.ByteCode.size() >= 20 && result.ByteCode.size() % 4 == 0);
+        const size_t wordCount = result.ByteCode.size() / 4;
+        uint32_t count = 0;
+        size_t index = 5;
+        while (index < wordCount)
+        {
+            uint32_t word = 0;
+            std::memcpy(&word, result.ByteCode.data() + index * 4, sizeof(word));
+            const uint32_t length = word >> 16;
+            assert(length != 0);
+            count += (word & 0xFFFFu) == opcode ? 1u : 0u;
+            index += length;
+        }
+        return count;
+    }
+
+    // 太陽の VSM の照明の逃げた標本の数え上げは、VT のフィードバック（sparse が要る）から独立に有効になる:
+    //  - 能力: fragmentStoresAndAtomics と bufferDeviceAddress と十分な storage の範囲があれば、sparse が無くても VSM は使え、数え上げも有効。
+    //  - シェーダー: NORVES_VSM_STATS だけを定義して lighting.frag をコンパイルすると、アトミックの加算（OpAtomicIAdd）が入る。
+    //    NORVES_VT_FEEDBACK だけでは入らない（VT のフィードバックとは別のマクロ）。
+    void TestLightingShaderCountsVsmFallbackIndependentlyOfVtFeedback()
+    {
+        RHI::DeviceCapabilities noSparse;
+        noSparse.bFragmentStoresAndAtomics = true;
+        noSparse.bBufferDeviceAddress = true;
+        noSparse.MaxStorageBufferRange = 256ull * 1024ull * 1024ull;
+        assert(VirtualShadowMap::PlanPool(noSparse, 0).Pages != 0);
+        assert(!noSparse.SupportsVirtualTextureFeedback());
+        assert(noSparse.SupportsVsmLightingStats());
+        RHI::DeviceCapabilities noAtomics = noSparse;
+        noAtomics.bFragmentStoresAndAtomics = false;
+        assert(VirtualShadowMap::PlanPool(noAtomics, 0).Pages == 0);
+        assert(!noAtomics.SupportsVsmLightingStats());
+
+        constexpr uint32_t OpAtomicIAdd = 234;
+        Container::String source;
+        assert(ExpandTestShaderIncludes("lighting.frag", source, 0));
+        const auto compile = [&](bool bVsmStats, bool bVtFeedback)
+        {
+            RHI::Vulkan::VulkanShaderCompiler compiler;
+            compiler.SetVsmLightingStatsEnabled(bVsmStats);
+            compiler.SetVirtualTextureFeedbackEnabled(bVtFeedback);
+            return compiler.CompileFromSource(source, RHI::ShaderStage::Pixel, "lighting.frag", "main");
+        };
+        const RHI::ShaderCompileResult statsOnly = compile(true, false);
+        assert(statsOnly.bSuccess);
+        assert(CountSpirvInstructions(statsOnly, OpAtomicIAdd) > 0);
+        const RHI::ShaderCompileResult feedbackOnly = compile(false, true);
+        assert(feedbackOnly.bSuccess);
+        assert(CountSpirvInstructions(feedbackOnly, OpAtomicIAdd) == 0);
+        const RHI::ShaderCompileResult neither = compile(false, false);
+        assert(neither.bSuccess);
+        assert(CountSpirvInstructions(neither, OpAtomicIAdd) == 0);
+    }
+
+    // 影を落とす MegaGeometry のインスタンスが、CSM のインスタンスごとの定数バッファ（DynamicUniformAllocator のスロット。1 カスケードあたり 256）を
+    // 超える規模でも、VSM の MegaGeometry の影の描画は定数バッファのスロットを使わず、描画の数が変わらない。
+    //  - VSM の記録（印付け以降）の間接描画は、ホストが書いた塊ごとの 3 回 + MegaGeometry のクラスタの記録の DrawIndexedIndirectCount 1 回のまま。
+    //  - VSM の記録の間に作るバッファの数（定数バッファを含む）は、インスタンスの数に依らない（インスタンスごとに 1 つ作る形ではない）。
+    //  - 一覧・クラスタの記録の容量は一定で、カリングの dispatch の数も変わらない（ワークグループの数だけがインスタンスの数で増える）。
+    void TestVirtualShadowMapMegaDrawDoesNotUseCsmUniformSlots()
+    {
+        constexpr uint32_t CsmUniformSlotsPerCascade = 256;
+        struct Measurement
+        {
+            size_t IndirectDraws = 0;
+            size_t CreatedBuffers = 0;
+            size_t CreatedDescriptorSets = 0;
+            size_t Dispatches = 0;
+            uint32_t CasterCount = 0;
+            uint32_t MaxDrawCount = 0;
+            bool bMegaDraw = false;
+        };
+        const auto measure = [](uint32_t extraCasters) {
+            VsmMegaScene scene;
+            BuildVsmMegaScene(scene, true, extraCasters);
+            FakeCommandList& commandList = scene.Base.Run.CommandList;
+            const size_t buffersBefore = scene.Base.Run.Device->CreatedBuffers.size();
+            const size_t setsBefore = scene.Base.Run.Device->DescriptorSetCreations;
+            RunVsmCasterViewport(scene.Base, 0, 0);
+            Measurement result;
+            result.IndirectDraws = commandList.IndirectDraws.size() - scene.MainIndirectDrawCount;
+            result.CreatedBuffers = scene.Base.Run.Device->CreatedBuffers.size() - buffersBefore;
+            result.CreatedDescriptorSets = scene.Base.Run.Device->DescriptorSetCreations - setsBefore;
+            result.Dispatches = commandList.DispatchGroups.size() - scene.MainDispatchCount;
+            result.CasterCount = scene.Mega.GetShadowCasterInputs().CasterCount;
+            result.MaxDrawCount = commandList.IndirectDraws.empty() ? 0u : commandList.IndirectDraws.back().MaxDrawCount;
+            result.bMegaDraw = scene.Base.Pass.WasMegaDrawRecorded();
+            ShutdownVsmMegaScene(scene);
+            return result;
+        };
+
+        const Measurement few = measure(0);
+        const Measurement many = measure(CsmUniformSlotsPerCascade + 47u);
+        assert(few.CasterCount == 2u);
+        assert(many.CasterCount == 2u + CsmUniformSlotsPerCascade + 47u);
+        assert(few.bMegaDraw && many.bMegaDraw);
+        // 間接描画: 塊ごとの 3 回 + クラスタの記録の 1 回。インスタンスの数に依らない
+        assert(few.IndirectDraws == 4u && many.IndirectDraws == few.IndirectDraws);
+        assert(few.MaxDrawCount == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY && many.MaxDrawCount == few.MaxDrawCount);
+        // 作るバッファ・記述子セット・dispatch の数は、インスタンスの数に依らない
+        assert(many.CreatedBuffers == few.CreatedBuffers);
+        assert(many.CreatedDescriptorSets == few.CreatedDescriptorSets);
+        assert(many.Dispatches == few.Dispatches);
+    }
+
+    // vsm の構成の 1 フレーム: 主の経路（2 パスの遮蔽。DBIE + HZB の D 7 つ + DBIE）の後に、スキニングの変形 → 印付け・割り当て・消去 →
+    // MegaGeometry の投影物のカリング（dirty の階層 = D・クラスタの選択 = D）→ 展開 → 描画（DDDDDJ + DD + D + BIIIE）が並ぶ。
+    //  - カリングは、主のカリング（2 回目）より後・展開より前。dispatch は dirty の階層 (16, 16, 段の数)・選択 (影を落とすインスタンスのワークグループ数 2, 1, 段の数)・
+    //    クラスタの記録 (一覧の容量 ÷ 64, 1, 1。一覧の 1 件 = 1 スレッド)。続く展開は、ホストが書いた塊 3 つの後ろに一覧の容量ぶんのワークグループを足す。
+    //  - 描画は、ホストが書いた塊ごとの間接描画 3 回の後に、MegaGeometry のクラスタの記録を描く DrawIndexedIndirectCount 1 回（一覧の語 0 が数。
+    //    インスタンスごとの定数バッファは使わない）。
+    //  - 読む資源: 主の経路のインスタンスの表・影の表・ジオメトリのページの表（読み取りだけ）と VSM のページの表。書く資源: 自分の dirty の階層・出力の一覧・VSM の統計。
+    //    主の経路の間接描画・カウンタ・描画情報・見えた印・ページの要求・統計・区間の表は束縛せず、記録の間に主のバッファへのバリアも無い。
+    //  - 出力の一覧と dirty の階層は、記録の前に Common → UnorderedAccess、後に UnorderedAccess → Common。それぞれの頭（階層は全体・一覧は先頭 4 語）を 0 で埋めてから dispatch する。
+    //  - 影の表はインスタンスの表と同じ並びで、影を落とさないインスタンスはワークグループを持たず（FirstGroup が次と同じ）、境界が無いものはメッシュの境界から作る。
+    //  - 定数: LOD の許容は 1 texel・正射影の印（OrthoLod）が立ち、ページの要求の容量は 0。主の経路の定数の正射影の印は 0 のまま。
+    //  - 作れなかった構成（影を落とすインスタンスが無い・パイプラインを作れない）では記録せず、VSM は動く。MegaGeometryPass を渡さない構成も同じ。
+    void TestVirtualShadowMapPassRecordsMegaCullBetweenMainCullAndExpand()
+    {
+        {
+            GVsmMegaCullUniformUpdates.clear();
+            GVsmMegaCullParamsUpdates.clear();
+            VsmMegaScene scene;
+            BuildVsmMegaScene(scene);
+            FakeCommandList& commandList = scene.Base.Run.CommandList;
+
+            // 主の経路の記録
+            const char* mainSequence = "DBIEDDDDDDDDBIE";
+            assert(scene.MainSequenceLength == std::strlen(mainSequence));
+            for (size_t index = 0; index < scene.MainSequenceLength; ++index)
+            {
+                assert(commandList.CallSequence[index] == mainSequence[index]);
+            }
+            assert(scene.MainDispatchCount == 9u);
+
+            // 影の入力: 3 インスタンス・影を落とす 2 つ・ワークグループ 2（1 クラスタ = 1 ワークグループ）
+            const MegaGeometryShadowCasterInputs& inputs = scene.Mega.GetShadowCasterInputs();
+            assert(inputs.bValid && inputs.InstanceCount == 3u && inputs.CasterCount == 2u && inputs.TotalGroups == 2u);
+            assert(inputs.InstanceBuffer && inputs.ShadowInstanceBuffer && inputs.PageTableBuffer);
+            assert(IsDebugName(static_cast<const FakeBuffer*>(inputs.InstanceBuffer.get())->GetDesc().DebugName, "MegaGeometry_InstanceTable"));
+            assert(IsDebugName(static_cast<const FakeBuffer*>(inputs.ShadowInstanceBuffer.get())->GetDesc().DebugName, "MegaGeometry_ShadowInstanceTable"));
+            assert(IsDebugName(static_cast<const FakeBuffer*>(inputs.PageTableBuffer.get())->GetDesc().DebugName, "MegaGeometry_PageTable"));
+            {
+                const FakeBuffer* shadowBuffer = static_cast<const FakeBuffer*>(inputs.ShadowInstanceBuffer.get());
+                assert(shadowBuffer->LastUpdateBytes.size() == 3u * sizeof(MegaGeometryShadowInstance));
+                MegaGeometryShadowInstance table[3] = {};
+                std::memcpy(table, shadowBuffer->LastUpdateBytes.data(), sizeof(table));
+                const uint32_t casterWithBounds = MegaGeometryShadowFlagCaster | MegaGeometryShadowFlagBounds;
+                // A: プロキシの境界（中心 (1, 2, 3)・半径 4）と、メッシュ全体の境界（中心 (0.5, 0.5, 0)・半径 1.25）の両方を含む最小の球。
+                //    プロキシの境界だけを信じると、読み込みが済む前の小さな球のまま影のページの無効化・カリングが抜ける。ワークグループは 0 番から
+                assert(table[0].Flags == casterWithBounds && table[0].FirstGroup == 0u);
+                {
+                    const float sources[2][4] = {{1.0f, 2.0f, 3.0f, 4.0f}, {0.5f, 0.5f, 0.0f, 1.25f}};
+                    const float radius = table[0].BoundsSphere[3];
+                    for (const auto& source : sources)
+                    {
+                        const float dx = table[0].BoundsSphere[0] - source[0];
+                        const float dy = table[0].BoundsSphere[1] - source[1];
+                        const float dz = table[0].BoundsSphere[2] - source[2];
+                        assert(std::sqrt(dx * dx + dy * dy + dz * dz) + source[3] <= radius + 1.0e-4f);
+                    }
+                    // 2 つの球の中心の距離 3.391 を使った最小の半径 (3.391 + 4 + 1.25) / 2 = 4.3207
+                    assert(std::abs(radius - 4.3207f) < 1.0e-3f);
+                }
+                // B: 影を落とさない。ワークグループを持たず、FirstGroup は次のインスタンスと同じ
+                assert(table[1].Flags == 0u && table[1].FirstGroup == 1u);
+                // C: 境界が無いのでメッシュの境界（中心 (0.5, 0.5, 0)・半径 1.25）をワールド (5, 0, 0) へ移した球
+                assert(table[2].Flags == casterWithBounds && table[2].FirstGroup == 1u);
+                assert(std::abs(table[2].BoundsSphere[0] - 5.5f) < 1.0e-5f && std::abs(table[2].BoundsSphere[1] - 0.5f) < 1.0e-5f &&
+                       std::abs(table[2].BoundsSphere[2] - 0.0f) < 1.0e-5f && std::abs(table[2].BoundsSphere[3] - 1.25f) < 1.0e-5f);
+            }
+            // 主の経路の定数の正射影の印は 0（主の結果を変えない）
+            assert(!GMegaCullUniformUpdates.empty());
+            for (const Container::VariableArray<uint8_t>& bytes : GMegaCullUniformUpdates)
+            {
+                assert(bytes.size() == sizeof(MegaGeometry::CullUniformData));
+                MegaGeometry::CullUniformData uniform;
+                std::memcpy(&uniform, bytes.data(), sizeof(uniform));
+                assert(uniform.OrthoLod == 0u);
+            }
+
+            RunVsmCasterViewport(scene.Base, 0, 0);
+            assert(scene.Base.Pass.WasMarked() && scene.Base.Pass.WasRasterRecorded() && scene.Base.Pass.WasMegaCullRecorded());
+            assert(scene.Base.Pass.WasMegaDrawRecorded());
+            assert(scene.Base.Pass.GetMegaCullList() && scene.Base.Pass.GetMegaDirtyBits() && scene.Base.Pass.GetMegaChunks());
+
+            // 並び: 主の経路の後に、変形・印付け・割り当て 3 段・消去（J）・階層・選択・クラスタの記録・展開の引数・展開（J。間接）・描画
+            const char* vsmSequence = "DDDDDDDDDDDDJDDDDJBIIIIE";
+            assert(commandList.CallSequence.size() == scene.MainSequenceLength + std::strlen(vsmSequence));
+            for (size_t index = 0; index < std::strlen(vsmSequence); ++index)
+            {
+                assert(commandList.CallSequence[scene.MainSequenceLength + index] == vsmSequence[index]);
+            }
+            // GPU の区間: VsmCullMega は消去の後・展開の前に 1 回だけ開く（階層の作成と選択の両方を含む）
+            {
+                size_t clearScope = commandList.GpuScopes.size();
+                size_t cullScope = commandList.GpuScopes.size();
+                size_t expandScope = commandList.GpuScopes.size();
+                uint32_t cullScopeCount = 0;
+                for (size_t index = 0; index < commandList.GpuScopes.size(); ++index)
+                {
+                    const Container::String& name = commandList.GpuScopes[index].Name;
+                    clearScope = name == "VsmClear" ? index : clearScope;
+                    expandScope = name == "VsmExpand" ? index : expandScope;
+                    if (name == "VsmCullMega")
+                    {
+                        cullScope = index;
+                        ++cullScopeCount;
+                    }
+                }
+                assert(cullScopeCount == 1u);
+                assert(clearScope < cullScope && cullScope < expandScope && expandScope < commandList.GpuScopes.size());
+                // 開いた時点は、消去（J）の後・階層の dispatch の前（直前までに記録した B・E・D・I・J は 6 個）
+                assert(commandList.GpuScopes[cullScope].SequencePosition == scene.MainSequenceLength + 13u);
+            }
+            const size_t dirtyDispatch = scene.MainDispatchCount + 12u;
+            const size_t cullDispatch = scene.MainDispatchCount + 13u;
+            const size_t chunkDispatch = scene.MainDispatchCount + 14u;
+            const size_t expandArgsDispatch = scene.MainDispatchCount + 15u;
+            assert(commandList.DispatchGroups.size() == expandArgsDispatch + 1u);
+            const uint32_t levelCount = VirtualShadowMap::LEVEL_COUNT;
+            assert(commandList.DispatchGroups[dirtyDispatch].X == 16u && commandList.DispatchGroups[dirtyDispatch].Y == 16u &&
+                   commandList.DispatchGroups[dirtyDispatch].Z == levelCount);
+            assert(commandList.DispatchGroups[cullDispatch].X == 2u && commandList.DispatchGroups[cullDispatch].Y == 1u &&
+                   commandList.DispatchGroups[cullDispatch].Z == levelCount);
+            // クラスタの記録: 一覧の容量ぶんのスレッドを 64 ずつ x 方向に並べる
+            assert(commandList.DispatchGroups[chunkDispatch].X == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY / 64u &&
+                   commandList.DispatchGroups[chunkDispatch].Y == 1u && commandList.DispatchGroups[chunkDispatch].Z == 1u);
+            // 展開の引数: 1 スレッドの計算が、一覧の件数から間接 dispatch の引数（間接描画の引数の頭の語 1〜3）を書く
+            assert(commandList.DispatchGroups[expandArgsDispatch].X == 1u && commandList.DispatchGroups[expandArgsDispatch].Y == 1u &&
+                   commandList.DispatchGroups[expandArgsDispatch].Z == 1u);
+            // 展開: 容量ぶんの直接 dispatch でなく、その引数の間接 dispatch 1 回（ホストが書いた塊 + 件数。x の上限を超える分の折り返しは引数の計算が行う）
+            const FakeCommandList::IndirectDispatchRecord& expandIndirect = commandList.IndirectDispatches.back();
+            assert(IsDebugName(expandIndirect.BufferName, "VsmRaster_Draws") && expandIndirect.OffsetBytes == sizeof(uint32_t));
+
+            // 束縛: 階層を作る dispatch は VSM のページの表を読み、階層へ書く。選択の dispatch は主の経路の表を読み、自分の一覧・階層・統計へ書く
+            const Container::VariableArray<BoundBufferName>& dirtyBindings = commandList.DispatchBindings[dirtyDispatch];
+            assert(dirtyBindings.size() == 3u);
+            assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 14u), "VsmMegaCullParams"));
+            assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 15u), "VSM_PageTable"));
+            assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 16u), "VsmMega_DirtyBits"));
+            const Container::VariableArray<BoundBufferName>& cullBindings = commandList.DispatchBindings[cullDispatch];
+            assert(cullBindings.size() == 9u);
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 0u), "VsmMegaCullUniform"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 1u), "MegaGeometry_InstanceTable"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 11u), "MegaGeometry_PageTable"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 14u), "VsmMegaCullParams"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 15u), "VsmMega_List"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 16u), "VsmMega_DirtyBits"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 17u), "VSM_Stats"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 18u), "MegaGeometry_ShadowInstanceTable"));
+            // 溢れて落としたクラスタの範囲のページへ再描画の印を書くため、VSM のページの表も束縛する
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 19u), "VSM_PageTable"));
+            // クラスタの記録: 主の経路のインスタンスの表・影の表と自分の一覧を読み、自分の記録の出力へ書く
+            const Container::VariableArray<BoundBufferName>& chunkBindings = commandList.DispatchBindings[chunkDispatch];
+            assert(chunkBindings.size() == 5u);
+            assert(IsDebugName(BoundBufferNameAt(chunkBindings, 1u), "MegaGeometry_InstanceTable"));
+            assert(IsDebugName(BoundBufferNameAt(chunkBindings, 14u), "VsmMegaCullParams"));
+            assert(IsDebugName(BoundBufferNameAt(chunkBindings, 15u), "VsmMega_List"));
+            assert(IsDebugName(BoundBufferNameAt(chunkBindings, 18u), "MegaGeometry_ShadowInstanceTable"));
+            assert(IsDebugName(BoundBufferNameAt(chunkBindings, 19u), "VsmMega_Chunks"));
+            // 展開は、ホストが書いた塊（束縛 1）に続けて、クラスタの記録（束縛 6）と一覧（束縛 7）を読む
+            const Container::VariableArray<BoundBufferName>& expandArgsBindings = commandList.DispatchBindings[expandArgsDispatch];
+            const Container::VariableArray<BoundBufferName>& expandBindings = expandIndirect.Bindings;
+            assert(expandArgsBindings.size() == 8u && expandBindings.size() == 8u);
+            assert(IsDebugName(BoundBufferNameAt(expandArgsBindings, 3u), "VsmRaster_Draws"));
+            assert(IsDebugName(BoundBufferNameAt(expandArgsBindings, 7u), "VsmMega_List"));
+            assert(IsDebugName(BoundBufferNameAt(expandBindings, 1u), "VsmRaster_Chunks"));
+            assert(IsDebugName(BoundBufferNameAt(expandBindings, 6u), "VsmMega_Chunks"));
+            assert(IsDebugName(BoundBufferNameAt(expandBindings, 7u), "VsmMega_List"));
+            // 主の経路の出力・見えた印・ページの要求は、どの dispatch にも束縛されない
+            for (const Container::VariableArray<BoundBufferName>* bindings : {&dirtyBindings, &cullBindings, &chunkBindings, &expandArgsBindings, &expandBindings})
+            {
+                for (const BoundBufferName& entry : *bindings)
+                {
+                    assert(!IsMainPathOutputBufferName(entry.Name));
+                }
+            }
+
+            // バリア: 記録の間（主の経路の記録の後）に主の経路のバッファへのバリアは無い
+            for (size_t index = scene.MainBarrierCount; index < commandList.Barriers.size(); ++index)
+            {
+                const BarrierEvent& barrier = commandList.Barriers[index];
+                assert(barrier.Kind != RGBarrierKind::Buffer || barrier.Buffer == nullptr ||
+                       !IsMainPathOutputBufferName(static_cast<const FakeBuffer*>(barrier.Buffer)->GetDesc().DebugName));
+            }
+            // 自分の一覧・階層は、カリングの前に Common → UnorderedAccess（dirty の階層の dispatch の前。位置 = 直前までの B・E・D・I・J の数）、後に UnorderedAccess → Common
+            const RHI::ResourceState common = RHI::ResourceState::Common;
+            const RHI::ResourceState uav = RHI::ResourceState::UnorderedAccess;
+            const size_t beforeDirty = scene.MainSequenceLength + 13u;
+            const size_t afterCull = scene.MainSequenceLength + 16u;
+            for (const char* name : {"VsmMega_List", "VsmMega_DirtyBits", "VsmMega_Chunks"})
+            {
+                assert(HasBufferBarrierAt(commandList, name, common, uav, beforeDirty));
+                assert(HasBufferBarrierAt(commandList, name, uav, common, afterCull));
+            }
+            // クラスタの記録を作った後は、記録の書き込みを後の読み取りへ見せる（UnorderedAccess → UnorderedAccess）
+            assert(HasBufferBarrierAt(commandList, "VsmMega_Chunks", uav, uav, afterCull));
+            // 展開・描画は、一覧とクラスタの記録を UnorderedAccess へ遷移し、展開の後に GenericRead（頂点シェーダーと間接描画が読む）、描画の後に戻す
+            {
+                const size_t afterExpand = scene.MainSequenceLength + 18u;
+                const size_t afterDraw = scene.MainSequenceLength + 24u;
+                for (const char* name : {"VsmMega_List", "VsmMega_Chunks"})
+                {
+                    assert(HasBufferBarrierAt(commandList, name, common, uav, afterCull));
+                    assert(HasBufferBarrierAt(commandList, name, uav, RHI::ResourceState::GenericRead, afterExpand));
+                    assert(HasBufferBarrierAt(commandList, name, RHI::ResourceState::GenericRead, uav, afterDraw));
+                    assert(HasBufferBarrierAt(commandList, name, uav, common, afterDraw));
+                }
+            }
+            // 間接描画: ホストが書いた塊ごとに 1 回ずつ（引数の頭 16 バイトの後ろ、1 回 20 バイト）の後に、一覧の件数を数とする 1 回（塊の番号 3 から）
+            {
+                const FakeCommandList::IndirectDrawRecord* draws = commandList.IndirectDraws.data() + scene.MainIndirectDrawCount;
+                assert(commandList.IndirectDraws.size() == scene.MainIndirectDrawCount + 4u);
+                for (uint32_t chunk = 0; chunk < 3u; ++chunk)
+                {
+                    assert(draws[chunk].OffsetBytes == 16u + chunk * 20u && draws[chunk].MaxDrawCount == 1u);
+                }
+                assert(draws[3].OffsetBytes == 16u + 3u * 20u && draws[3].MaxDrawCount == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY);
+            }
+            // 頭を 0 で埋める: 階層は全体、一覧は先頭 4 語。どちらも階層の dispatch の前
+            assert(commandList.VsmMegaFills.size() == 2u);
+            assert(IsDebugName(commandList.VsmMegaFills[0].BufferName, "VsmMega_DirtyBits") && commandList.VsmMegaFills[0].Value == 0u &&
+                   commandList.VsmMegaFills[0].SizeBytes == VirtualShadowMap::MegaDirtyBitsBytes());
+            assert(IsDebugName(commandList.VsmMegaFills[1].BufferName, "VsmMega_List") && commandList.VsmMegaFills[1].Value == 0u &&
+                   commandList.VsmMegaFills[1].SizeBytes == VirtualShadowMap::MEGA_CULL_LIST_HEADER_WORDS * sizeof(uint32_t));
+            assert(commandList.VsmMegaFills[0].SequencePosition == beforeDirty && commandList.VsmMegaFills[1].SequencePosition == beforeDirty);
+
+            // 定数: カリングの定数（LOD の許容 1 texel・正射影・要求なし）と、段の定数
+            assert(GVsmMegaCullUniformUpdates.size() == 1u && GVsmMegaCullParamsUpdates.size() == 1u);
+            {
+                assert(GVsmMegaCullUniformUpdates[0].size() == sizeof(MegaGeometry::CullUniformData));
+                MegaGeometry::CullUniformData uniform;
+                std::memcpy(&uniform, GVsmMegaCullUniformUpdates[0].data(), sizeof(uniform));
+                assert(uniform.OrthoLod == 1u && uniform.LODBias == 1.0f && uniform.PageRequestCapacity == 0u);
+                assert(uniform.InstanceCount == 3u && uniform.TotalGroupCount == 2u);
+                assert(uniform.CullPass == 0u && uniform.bHiZEnabled == 0u && uniform.bSwRasterEnabled == 0u);
+
+                const Container::VariableArray<uint8_t>& params = GVsmMegaCullParamsUpdates[0];
+                assert(params.size() == 592u);
+                uint32_t counts[4] = {};
+                std::memcpy(counts, params.data() + 64, sizeof(counts));
+                assert(counts[0] == levelCount && counts[1] == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY && counts[2] == 2u);
+                const VirtualShadowMapClipmap& clipmap = scene.Base.Run.Context.PhysicalLighting.SunClipmap;
+                for (uint32_t level = 0; level < levelCount; ++level)
+                {
+                    float info[4] = {};
+                    int32_t origin[4] = {};
+                    std::memcpy(info, params.data() + 80 + level * 16u, sizeof(info));
+                    std::memcpy(origin, params.data() + 336 + level * 16u, sizeof(origin));
+                    assert(info[0] == clipmap.Levels[level].PageMeters && info[1] == clipmap.Levels[level].TexelMeters);
+                    assert(origin[0] == static_cast<int32_t>(clipmap.Levels[level].OriginPageX) &&
+                           origin[1] == static_cast<int32_t>(clipmap.Levels[level].OriginPageY));
+                }
+            }
+            ShutdownVsmMegaScene(scene);
+        }
+
+        // 影を落とすインスタンスが無い（全部 bCastShadow = false）: 主の経路は記録するが、影の入力は無効で、カリングを記録しない（VSM は展開・描画まで動く）
+        {
+            VsmMegaScene scene;
+            BuildVsmMegaScene(scene, false);
+            assert(!scene.Mega.GetShadowCasterInputs().bValid);
+            RunVsmCasterViewport(scene.Base, 0, 0);
+            assert(scene.Base.Pass.WasMarked() && scene.Base.Pass.WasRasterRecorded() && !scene.Base.Pass.WasMegaCullRecorded());
+            const char* vsmSequence = "DDDDDDDDDDDDJDBIIIE";
+            const FakeCommandList& commandList = scene.Base.Run.CommandList;
+            assert(commandList.CallSequence.size() == scene.MainSequenceLength + std::strlen(vsmSequence));
+            for (size_t index = 0; index < std::strlen(vsmSequence); ++index)
+            {
+                assert(commandList.CallSequence[scene.MainSequenceLength + index] == vsmSequence[index]);
+            }
+            assert(commandList.VsmMegaFills.empty());
+            ShutdownVsmMegaScene(scene);
+        }
+
+        // MegaGeometryPass を渡さない構成: カリングは記録しない
+        {
+            VsmCasterScene scene;
+            BuildVsmCasterScene(scene, true);
+            RunVsmCasterViewport(scene, 0, 0);
+            assert(scene.Pass.GetMegaGeometryPass() == nullptr && !scene.Pass.WasMegaCullRecorded());
+            const char* expectedSequence = "DDDDDDDDDDDDJDBIIIE";
+            assert(scene.Run.CommandList.CallSequence.size() == std::strlen(expectedSequence));
+            ShutdownVsmCasterScene(scene);
+        }
+
+        // 印付けをしない構成（クリップマップが無い）: カリングは記録しない
+        {
+            VsmMegaScene scene;
+            BuildVsmMegaScene(scene);
+            // 影の入力は有効なまま、クリップマップだけを無効にして回す
+            scene.Base.Run.Context.PhysicalLighting.SunClipmap = VirtualShadowMapClipmap{};
+            RunVsmCasterViewport(scene.Base, 0, 0);
+            assert(!scene.Base.Pass.WasMarked() && !scene.Base.Pass.WasMegaCullRecorded());
+            assert(scene.Base.Run.CommandList.VsmMegaFills.empty());
+            ShutdownVsmMegaScene(scene);
+        }
+
+        // MegaGeometry の影の経路を用意できない装置は、MegaGeometry の影だけを欠いた VSM を公開せず、VSM の資源を何も公開しないで CSM へ戻る。
+        // 戻りは VSM_FALLBACK reason=mega_geometry を 1 回だけ出し、パスは何も宣言せず、何も描かない（照明は公開された資源が無いので CSM を読む。実際の照明のパスで確かめる）
+        const auto expectMegaFallback = [](VsmRun& run, VirtualShadowMapPass& pass) {
+#if NORVES_ENABLE_LOGGING
+            Logging::LogConfig logConfig;
+            logConfig.minLevel = Logging::LogLevel::Trace;
+            logConfig.outputType = Logging::LogOutput::None;
+            logConfig.bAsyncLogging = false;
+            logConfig.bAutoFlush = false;
+            Logging::Logger& logger = Logging::Logger::GetInstance();
+            logger.Shutdown();
+            assert(logger.Initialize(logConfig));
+            VsmLogCollector logs;
+            logger.AddSink(&logs);
+#endif
+            assert(pass.Initialize(run.Context));
+            assert(!pass.IsActive() && pass.GetFallbackReason() == VirtualShadowMap::FallbackReason::MegaGeometry);
+            assert(pass.GetPoolPages() == 0);
+            assert(!pass.GetPool() && !pass.GetPageTable() && !pass.GetRequestBits() && !pass.GetFreeList() && !pass.GetStats() &&
+                   !pass.GetDirtyList());
+            assert(!pass.GetMegaCullList() && !pass.GetMegaDirtyBits() && !pass.GetMegaChunks());
+            // 実際の照明のパスを後ろに置き、VSM の資源が公開されないので照明が CSM のまま描くことまで確かめる
+            RunVsmPassThroughLighting(run, pass, false);
+            assert(run.CommandList.VsmFills.empty() && run.CommandList.DispatchGroups.empty());
+#if NORVES_ENABLE_LOGGING
+            assert(logs.Count("VSM_FALLBACK reason=mega_geometry") == 1 && logs.Count("VSM_FALLBACK") == 1);
+            assert(logs.Count("VRAM_LEDGER vsm_pool") == 0 && logs.Count("VRAM_LEDGER vsm_page_table") == 0);
+            logger.RemoveSink(&logs);
+            logger.Shutdown();
+#endif
+        };
+        assert(std::strcmp(VirtualShadowMap::FallbackReasonName(VirtualShadowMap::FallbackReason::MegaGeometry), "mega_geometry") == 0);
+
+        // DrawIndexedIndirectCount を使えない装置: MegaGeometry のクラスタの記録を描けないので、VSM を使わず CSM へ戻る
+        {
+            VsmRun run;
+            run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+            run.Device->DisableDrawIndirectCount();
+            InitializeVsmRun(run);
+            run.Device->FailComputePipelineCreationNumber = 0xFFFFFFFFu;
+            VirtualShadowMapPass pass;
+            expectMegaFallback(run, pass);
+            // 印付け・割り当て・消去・展開・展開の引数の 5 つの後は、カリングのパイプラインも資源も作らない
+            assert(run.Device->ComputePipelineCreations == 5u);
+            assert(CountBufferCreations(*run.Device, "VsmMega_List") == 0 && CountBufferCreations(*run.Device, "VsmMega_Chunks") == 0);
+            ShutdownVsmRun(run, pass);
+        }
+
+        // カリングのパイプラインを作れない装置: VSM を使わず CSM へ戻る（カリングの資源は作らない）
+        {
+            uint32_t baseline = 0;
+            {
+                VsmRun run;
+                run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+                InitializeVsmRun(run);
+                // 失敗の番号が 0 でないときだけ作成を数える（届かない番号にして数だけ取る）
+                run.Device->FailComputePipelineCreationNumber = 0xFFFFFFFFu;
+                VirtualShadowMapPass pass;
+                assert(pass.Initialize(run.Context) && pass.IsActive());
+                assert(pass.GetMegaCullList() && pass.GetMegaDirtyBits() && pass.GetMegaChunks());
+                baseline = run.Device->ComputePipelineCreations;
+                // 印付け・割り当て・消去・展開・展開の引数の 5 つの後に、階層・選択・クラスタの記録の 3 つ
+                assert(baseline == 8u);
+                ShutdownVsmRun(run, pass);
+            }
+            for (const uint32_t failNumber : {baseline - 2u, baseline - 1u, baseline})
+            {
+                VsmRun run;
+                run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+                InitializeVsmRun(run);
+                run.Device->FailComputePipelineCreationNumber = failNumber;
+                VirtualShadowMapPass pass;
+                expectMegaFallback(run, pass);
+                assert(CountBufferCreations(*run.Device, "VsmMega_List") == 0 && CountBufferCreations(*run.Device, "VsmMega_DirtyBits") == 0 &&
+                       CountBufferCreations(*run.Device, "VsmMega_Chunks") == 0);
+                ShutdownVsmRun(run, pass);
+            }
+        }
+
+#if NORVES_ENABLE_LOGGING
+        // 統計: 記録したフレームの語 8〜10 を、最初の読み戻しと、以後 60 回読むごとに VSM_MEGA_CULL として出す（値が変わっても間は出さない）。
+        // 記録しないフレームの統計は読まない
+        {
+            Logging::LogConfig logConfig;
+            logConfig.minLevel = Logging::LogLevel::Trace;
+            logConfig.outputType = Logging::LogOutput::None;
+            logConfig.bAsyncLogging = false;
+            logConfig.bAutoFlush = false;
+            Logging::Logger& logger = Logging::Logger::GetInstance();
+            logger.Shutdown();
+            assert(logger.Initialize(logConfig));
+            VsmLogCollector logs;
+            logger.AddSink(&logs);
+
+            VsmMegaScene scene;
+            BuildVsmMegaScene(scene);
+            assert(CountBufferCreations(*scene.Base.Run.Device, "VsmMega_List") == 1);
+            const char* const expectedLog = "VSM_MEGA_CULL instances=3 clusters=5 overflow=1";
+            // 枠の読み戻しは同じ番号の次のフレームの最初の Execute（フレーム 2 が最初）。60 回目の次（61 回目の読み戻し = フレーム 62）で 2 回目
+            for (uint64_t frame = 0; frame <= 61u; ++frame)
+            {
+                WriteVsmMegaReadbackStats(scene.Base.Pass, 3, 5, 1);
+                RunVsmCasterViewport(scene.Base, frame, frame);
+                assert(logs.Count(expectedLog) == (frame >= 2u ? 1u : 0u));
+            }
+            WriteVsmMegaReadbackStats(scene.Base.Pass, 3, 5, 1);
+            RunVsmCasterViewport(scene.Base, 62, 62);
+            assert(logs.Count(expectedLog) == 2u && logs.Count("VSM_MEGA_CULL") == 2u);
+            ShutdownVsmMegaScene(scene);
+
+            // 記録しないフレーム（影を落とすインスタンスが無い）の統計は読まない
+            VsmMegaScene noCasters;
+            BuildVsmMegaScene(noCasters, false);
+            for (uint64_t frame = 0; frame < 6u; ++frame)
+            {
+                WriteVsmMegaReadbackStats(noCasters.Base.Pass, 3, 5, 1);
+                RunVsmCasterViewport(noCasters.Base, frame, frame);
+            }
+            assert(logs.Count("VSM_MEGA_CULL") == 2u);
+            ShutdownVsmMegaScene(noCasters);
+
+            logger.RemoveSink(&logs);
+            logger.Shutdown();
+        }
+#endif
+    }
+
+    // 報告の間隔: 最初の報告と、以後 60 回報告するごとに出す。値が変わっても間は出さない
+    void TestVirtualShadowMapMegaCullStatsReporterLogsEvery60Reports()
+    {
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        VsmLogCollector logs;
+        logger.AddSink(&logs);
+#endif
+        VirtualShadowMapMegaCullStatsReporter reporter;
+        assert(reporter.Report(1, 2, 3));
+        for (uint32_t report = 1; report < VirtualShadowMapMegaCullStatsReporter::LogIntervalReports; ++report)
+        {
+            assert(!reporter.Report(report, report * 2u, 0));
+        }
+        assert(reporter.Report(7, 8, 9));
+        assert(!reporter.Report(7, 8, 9));
+#if NORVES_ENABLE_LOGGING
+        assert(logs.Count("VSM_MEGA_CULL instances=1 clusters=2 overflow=3") == 1);
+        assert(logs.Count("VSM_MEGA_CULL instances=7 clusters=8 overflow=9") == 1);
+        assert(logs.Count("VSM_MEGA_CULL") == 2);
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+#endif
     }
 
     // 64bit のバッファは画面の画素数 × 8 バイトの 1 つで、同じ大きさの間は作り直さない。大きさが変わると新しく作り、
@@ -10774,6 +14311,41 @@ int main()
     TestSwRasterListCapacityExceedsOneDimension();
     TestSceneViewWiresSwRasterMode();
     TestSceneViewThresholdReachesCullUniform();
+#if NORVES_ENABLE_STATS
+    TestShadowProbeAbsentWithoutOptionAndAfterLightingWhenEnabled();
+    TestShadowProbeReadsCsmResourcesAfterLighting();
+    TestShadowProbeCapturesAfterEpochThenMeasuresAndAggregates();
+    TestShadowProbeEpochRestartRecapturesAndResetsTotals();
+    TestShadowProbeTotalsAggregateVsmWords();
+    TestShadowProbeFallbackCapturesAfterFixedExecuteCount();
+    TestShadowProbeTotalsHandleEmptyDenominators();
+#endif
+    TestVirtualShadowMapPassAbsentForCsmAndBeforeLightingForVsm();
+    TestVirtualShadowMapPassCreatesAndPublishesResources();
+    TestRenderGraphHasBufferIsQuietWithoutVsmPass();
+    TestVirtualShadowMapPassFallsBackWhenUnsupported();
+    TestVirtualShadowMapPassFallsBackWhenPipelineFails();
+    TestVirtualShadowMapPassRecordsMarkAllocateClearInOrder();
+#if NORVES_ENABLE_LOGGING
+    TestVirtualShadowMapPassReadsStatsOnlyAfterFrameFence();
+    TestVirtualShadowMapPassStatsReadbackAcrossFlightCounts();
+    TestVirtualShadowMapPassReportsRasterStats();
+#endif
+    TestVirtualShadowMapRasterStatsReporterDecidesWhenToLog();
+    TestVirtualShadowMapPoolPlanClampsToDeviceLimit();
+    TestVirtualShadowMapCasterLevelMaskMatchesLevelRanges();
+    TestVirtualShadowMapCasterPlansProceduralChunks();
+    TestVirtualShadowMapCasterAppendsProceduralInstances();
+    TestVirtualShadowMapCasterAppendsSkinnedInstances();
+    TestVirtualShadowMapCasterRecordsLevelMask();
+    TestVirtualShadowMapPassRecordsCasterRasterAfterSkinning();
+    TestVirtualShadowMapPassDrawsOnlyShadowCastingSkinnedSubmeshRanges();
+    TestVirtualShadowMapPassRecordsMegaCullBetweenMainCullAndExpand();
+    TestLightingVsmStatsAreMadeHostVisibleAndReadAfterCompletion();
+    TestLightingReadsVsmWhenPublished();
+    TestLightingShaderCountsVsmFallbackIndependentlyOfVtFeedback();
+    TestVirtualShadowMapMegaDrawDoesNotUseCsmUniformSlots();
+    TestVirtualShadowMapMegaCullStatsReporterLogsEvery60Reports();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();
     TestMaterialTileClassifyDispatchesAndPublishesArgs();

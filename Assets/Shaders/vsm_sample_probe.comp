@@ -1,0 +1,69 @@
+﻿#version 450
+
+// ========================================
+// 太陽の VSM の読み出し（Common/VirtualShadowMap.glsl の VsmSampleSunShadow）を、受け手の点ごとに評価するテスト用の計算シェーダー
+//
+// 照明（lighting.frag）と同じ関数を、固定の点列（ワールドの位置・法線）に対して呼び、可視度と使った段の texel の一辺を書く。
+// 粗い段へ逃げた PCF の標本の数は stats[0] に数える。GPU のテスト（VirtualShadowMapVulkanTest）が使う。
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#include "Common/VirtualShadowMapParams.glsl"
+
+layout(std140, set = 0, binding = 0) uniform VsmSampleProbeParams
+{
+    VsmSampleParams vsm;
+    // x: 点の数
+    uvec4 control;
+} params;
+
+struct SampleProbePoint
+{
+    vec4 position; // xyz = ワールドの位置
+    vec4 normal;   // xyz = ワールドの法線（単位）
+};
+
+layout(std430, set = 0, binding = 1) readonly buffer SampleProbePoints
+{
+    SampleProbePoint points[];
+};
+
+// x = 可視度、y = 選んだ段の texel の一辺（m）
+layout(std430, set = 0, binding = 2) buffer SampleProbeResults
+{
+    vec4 results[];
+};
+
+layout(std430, set = 0, binding = 3) buffer SampleProbeStats
+{
+    uint stats[];
+};
+
+layout(std430, set = 0, binding = 4) readonly buffer VsmPageTableBuffer
+{
+    uint vsmPageTable[];
+};
+
+layout(std430, set = 0, binding = 5) readonly buffer VsmPoolBuffer
+{
+    uint vsmPool[];
+};
+
+#define VSM_PARAMS params.vsm
+#define VSM_PAGE_TABLE(i) vsmPageTable[i]
+#define VSM_POOL(i) vsmPool[i]
+#define VSM_COUNT_FALLBACK() atomicAdd(stats[0], 1u)
+#include "Common/VirtualShadowMap.glsl"
+
+void main()
+{
+    const uint index = gl_GlobalInvocationID.x;
+    if (index >= params.control.x)
+    {
+        return;
+    }
+    float texelMeters = 0.0;
+    const float visibility = VsmSampleSunShadow(points[index].position.xyz, points[index].normal.xyz, texelMeters);
+    results[index] = vec4(visibility, texelMeters, 0.0, 0.0);
+}

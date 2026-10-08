@@ -31,6 +31,9 @@ namespace Game::Boot
         config.bVSync = true;
         config.bEnableDebugConsole = true;
 
+        // 起動画面の太陽の影は VSM（--shadow-method=csm で CSM へ戻せる）
+        config.DefaultSunShadowMethod = NorvesLib::Core::Rendering::ShadowMethod::Vsm;
+
         // ハンドラ作成関数
         config.CreateHandler = &CreateGameHandler;
 

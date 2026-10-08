@@ -1651,6 +1651,9 @@ namespace NorvesLib::Core::Rendering
         }
         else
         {
+            m_MainSceneView->SetShadowProbeEnabled(settings.bShadowProbe);
+            m_MainSceneView->SetShadowMethod(settings.SunShadowMethod);
+            m_MainSceneView->SetVsmPoolPages(settings.VsmPoolPages);
             m_MainSceneView->SetupDeferredPipeline(&m_SceneRenderer, settings.RasterDirectBrdfMode, settings.VisibilityBuffer,
                                                       settings.SwRaster, settings.SwRasterMaxPixels);
             // 被写界深度は半透明を合成した後のSceneColorへ掛ける。カメラのピント距離が0なら働かない。
@@ -1681,6 +1684,30 @@ namespace NorvesLib::Core::Rendering
         m_bInitialized = true;
         LOG_INFO("RenderingCoordinator::Initialize() - Initialization completed successfully");
         return true;
+    }
+
+    void RenderingCoordinator::AdvanceCompletedRenderFrameSerial(uint64_t completedSubmissionSerial)
+    {
+        // スワップチェーンを作り直すと提出 serial の数え直しで値が戻りうる（作り直す前に GPU は待ち終えている）。
+        // 戻ったときは、持っていた提出がすべて完了済みとして扱う
+        const bool bRestarted = completedSubmissionSerial < m_LastCompletedSubmissionSerial;
+        m_LastCompletedSubmissionSerial = completedSubmissionSerial;
+
+        size_t completedCount = 0;
+        for (const SubmittedRenderFrame& frame : m_SubmittedRenderFrames)
+        {
+            if (!bRestarted && frame.SubmissionSerial > completedSubmissionSerial)
+            {
+                break;
+            }
+            m_CompletedRenderFrameSerial = std::max(m_CompletedRenderFrameSerial, frame.RenderFrameSerial);
+            ++completedCount;
+        }
+        if (completedCount > 0)
+        {
+            m_SubmittedRenderFrames.erase(m_SubmittedRenderFrames.begin(),
+                                          m_SubmittedRenderFrames.begin() + static_cast<std::ptrdiff_t>(completedCount));
+        }
     }
 
     void RenderingCoordinator::Shutdown()
@@ -2575,6 +2602,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         const uint32_t frameIndex = ResolveFrameIndex(*swapChain);
+        AdvanceCompletedRenderFrameSerial(swapChain->GetCompletedSubmissionSerial());
         m_CommandList->NotifyGPUTimestampFrameSlotCompleted(
             frameIndex,
             swapChain->GetCompletedSubmissionSerial());
@@ -2753,6 +2781,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.FrameIndex = frameIndex;
         viewContext.FrameNumber = packet->FrameNumber;
         viewContext.RenderFrameSerial = ++m_RenderFrameSerial;
+        viewContext.CompletedRenderFrameSerial = m_CompletedRenderFrameSerial;
         viewContext.ScreenWidth = swapChain->GetWidth();
         viewContext.ScreenHeight = swapChain->GetHeight();
         viewContext.RenderWidth = m_RenderWidth;
@@ -2812,6 +2841,7 @@ namespace NorvesLib::Core::Rendering
                                                                              packet->TransparentCommandRange);
         viewContext.SnapshotSkinnedMeshFrameLeases = &packet->SkinnedMeshFrameLeases;
         viewContext.SnapshotMeshProxies = &packet->Scene.MeshProxies;
+        viewContext.SnapshotInstanceData = &packet->InstanceData;
         viewContext.SnapshotSkinnedMeshProxies = &packet->Scene.SkinnedMeshProxies;
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
         viewContext.SnapshotPointShadows = &packet->PointShadows;
@@ -3112,6 +3142,10 @@ namespace NorvesLib::Core::Rendering
                 m_RenderResources->SkinnedMeshes().AbortFrame();
                 m_RenderResources->AbortRetireFrame();
             }
+        }
+        if (endFrameResult.SubmissionSerial != 0)
+        {
+            m_SubmittedRenderFrames.push_back({viewContext.RenderFrameSerial, endFrameResult.SubmissionSerial});
         }
         if (endFrameResult.HasError())
         {

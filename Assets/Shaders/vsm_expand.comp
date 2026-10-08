@@ -1,0 +1,279 @@
+﻿#version 450
+
+// ========================================
+// 太陽の仮想シャドウマップ（VSM）の展開: 影の塊 × ページのインスタンスを作る
+//
+// 1 ワークグループ（64 スレッド）= 1 塊。塊の番号は、ホストが書いた塊（手続きメッシュ・スキニング。binding 1）が 0 〜 counts.x - 1、
+// それに続いて MegaGeometry のクラスタの記録（vsm_mega_chunks.comp が書く。binding 6）が counts.x から並ぶ。クラスタの記録の数は GPU が決める
+// （カリングの一覧の件数 binding 7 の語 0 を、容量 counts.w で頭打ちにした数）。件数より後ろの塊のワークグループは何もしない。
+// 塊のワールドの境界のライト空間の矩形が覆うページのうち、段ごとに
+// 「範囲の中で、割り当て済みで dirty のもの」を数え（1 回目）、インスタンスの確保の位置（draws の頭の語 0 への atomicAdd）から
+// 連続した範囲を取り、同じ走査でインスタンス（塊の番号・段・絶対のページ・物理ページ）を書き（2 回目）、
+// 塊ごとの間接描画の引数（頂点数 = 三角形の数 × 3、instanceCount = ページの数、firstInstance = 範囲の先頭）を作る。
+// ページの表はここで引き、描画は物理ページへ直接書く。
+// 段は、塊の記録の levelMask（CPU が境界から決めた段の集合）に入るものだけを処理する。
+//
+// 容量（インスタンスの数）を超える塊は、ページを 1 つも描かず（instanceCount 0）、溢れとして数える。
+// 描けなかった塊の範囲の、割り当て済みで dirty のページには再描画の印（VSM_PAGE_ENTRY_RETRY）を付ける。
+// 次フレームの引き継ぎ（vsm_allocate.comp）が dirty を付け直すので、そのページは欠けたまま持ち越されず、描き直される。
+// 統計（stats）の語: 5 = 描く塊の数（1 つ以上のインスタンスがある）、6 = 書いたインスタンスの数、7 = 溢れて書かなかったインスタンスの数。
+// 統計・間接描画の引数の頭は、呼ぶ前に 0 にしておくこと。
+// ========================================
+
+#include "Common/VisibilityBuffer.glsl"
+#include "Common/VirtualShadowMapChunk.glsl"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// std140。VirtualShadowMapRaster.cpp の GPURasterParams と同じ並び
+layout(std140, set = 0, binding = 0) uniform VsmRasterParams
+{
+    vec4 lightRight;
+    vec4 lightUp;
+    vec4 lightDirection;
+    // x: 深度の原点（ライト空間の深度）、y: 1 / (2 × 深度の範囲)
+    vec4 depth;
+    // x: ホストが書いた塊の数、y: 段の数、z: インスタンスの容量、w: MegaGeometry のクラスタの記録の容量（0 なら無し）
+    uvec4 counts;
+    // x: ページの一辺（m）、y: texel の一辺（m）
+    vec4 levelInfo[16];
+    // x, y: 範囲の最小の絶対のページの番号
+    ivec4 levelOrigin[16];
+} params;
+
+layout(std430, set = 0, binding = 1) readonly buffer VsmChunks
+{
+    VsmShadowChunk chunks[];
+};
+
+// 溢れた塊の範囲のページへ再描画の印を atomicOr で書くので、読み取り専用ではない（割り当て済み・dirty・物理ページの番号の欄は変えない）
+layout(std430, set = 0, binding = 2) buffer VsmPageTable
+{
+    uint pageTable[];
+};
+
+layout(std430, set = 0, binding = 3) buffer VsmDraws
+{
+    uint draws[];
+};
+
+layout(std430, set = 0, binding = 4) buffer VsmInstances
+{
+    uvec4 instances[];
+};
+
+layout(std430, set = 0, binding = 5) buffer VsmStats
+{
+    uint stats[];
+};
+
+// MegaGeometry のクラスタの影の塊の記録（vsm_mega_chunks.comp が書く）と、カリングの一覧の頭（語 0 = 選んだクラスタの数）
+layout(std430, set = 0, binding = 6) readonly buffer VsmMegaChunks
+{
+    VsmShadowChunk megaChunks[];
+};
+
+layout(std430, set = 0, binding = 7) readonly buffer VsmMegaListHeader
+{
+    uint megaListSelected;
+};
+
+const uint STAT_RASTER_CHUNKS = 5u;
+const uint STAT_RASTER_INSTANCES = 6u;
+const uint STAT_RASTER_OVERFLOW = 7u;
+
+shared uint sharedCount;
+shared uint sharedCursor;
+shared uint sharedBase;
+shared uint sharedOk;
+shared uint sharedRetry;
+
+// 段 level の、塊が覆うページの範囲（絶対のページの番号。範囲の外は切り捨てる）。覆わなければ幅・高さが 0
+void PageRange(uint level, vec2 lightMin, vec2 lightMax, out ivec2 pageMin, out uvec2 size)
+{
+    const float pageMeters = params.levelInfo[level].x;
+    const ivec2 origin = params.levelOrigin[level].xy;
+    const ivec2 count = ivec2(int(VSM_TABLE_DIMENSION));
+    const ivec2 low = max(ivec2(floor(lightMin / pageMeters)), origin);
+    const ivec2 high = min(ivec2(floor(lightMax / pageMeters)), origin + count - ivec2(1));
+    pageMin = low;
+    size = uvec2(max(high - low + ivec2(1), ivec2(0)));
+}
+
+// ページ (pageX, pageY) の表の欄（トーラスの番地）
+// 別のワークグループが同じ欄へ再描画の印を atomicOr するので、読み取りも原子的にしてデータ競合を避ける
+uint PageEntry(uint level, int pageX, int pageY)
+{
+    const uint addressX = uint(pageX) & (VSM_TABLE_DIMENSION - 1u);
+    const uint addressY = uint(pageY) & (VSM_TABLE_DIMENSION - 1u);
+    return atomicOr(pageTable[level * VSM_TABLE_ENTRIES_PER_LEVEL + addressY * VSM_TABLE_DIMENSION + addressX], 0u);
+}
+
+bool IsDrawable(uint entry)
+{
+    return (entry & VSM_PAGE_ENTRY_ALLOCATED) != 0u && (entry & VSM_PAGE_ENTRY_DIRTY) != 0u;
+}
+
+// 溢れて描けなかった塊の範囲の、割り当て済みで dirty のページに再描画の印を付ける（1 回目と同じ走査）
+void MarkRetry(uint levelMask, vec2 lightMin, vec2 lightMax, uint thread)
+{
+    for (uint level = 0u; level < params.counts.y; ++level)
+    {
+        if ((levelMask & (1u << level)) == 0u)
+        {
+            continue;
+        }
+        ivec2 pageMin;
+        uvec2 size;
+        PageRange(level, lightMin, lightMax, pageMin, size);
+        const uint total = size.x * size.y;
+        for (uint index = thread; index < total; index += 64u)
+        {
+            const int pageX = pageMin.x + int(index % size.x);
+            const int pageY = pageMin.y + int(index / size.x);
+            if (IsDrawable(PageEntry(level, pageX, pageY)))
+            {
+                const uint addressX = uint(pageX) & (VSM_TABLE_DIMENSION - 1u);
+                const uint addressY = uint(pageY) & (VSM_TABLE_DIMENSION - 1u);
+                atomicOr(pageTable[level * VSM_TABLE_ENTRIES_PER_LEVEL + addressY * VSM_TABLE_DIMENSION + addressX], VSM_PAGE_ENTRY_RETRY);
+            }
+        }
+    }
+}
+
+void main()
+{
+    const uint chunkIndex = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    // counts.x 以降は MegaGeometry のクラスタの記録（件数は GPU が決める）。ワークグループ全体で同じ値なので、barrier の前の早い戻りでよい
+    const bool bMega = chunkIndex >= params.counts.x;
+    const uint megaIndex = chunkIndex - params.counts.x;
+    if (bMega && (params.counts.w == 0u || megaIndex >= min(megaListSelected, params.counts.w)))
+    {
+        return;
+    }
+    const uint thread = gl_LocalInvocationID.x;
+
+    // ワールドの境界（AABB）、展開する段の集合、三角形の数
+    vec3 boundsMin;
+    vec3 boundsMax;
+    uint levelMask;
+    uint recordTriangles;
+    if (bMega)
+    {
+        boundsMin = megaChunks[megaIndex].boundsMin;
+        boundsMax = megaChunks[megaIndex].boundsMax;
+        levelMask = megaChunks[megaIndex].levelMask;
+        recordTriangles = VisRecordTriangleCount(megaChunks[megaIndex].record);
+    }
+    else
+    {
+        boundsMin = chunks[chunkIndex].boundsMin;
+        boundsMax = chunks[chunkIndex].boundsMax;
+        // CPU が境界から決めた段の集合。外の段は範囲を見ずに飛ばす
+        levelMask = chunks[chunkIndex].levelMask;
+        recordTriangles = VisRecordTriangleCount(chunks[chunkIndex].record);
+    }
+    const vec3 center = 0.5 * (boundsMin + boundsMax);
+    const vec3 extent = 0.5 * (boundsMax - boundsMin);
+    const vec2 lightCenter = vec2(dot(center, params.lightRight.xyz), dot(center, params.lightUp.xyz));
+    const vec2 lightExtent = vec2(dot(extent, abs(params.lightRight.xyz)), dot(extent, abs(params.lightUp.xyz)));
+    const vec2 lightMin = lightCenter - lightExtent;
+    const vec2 lightMax = lightCenter + lightExtent;
+
+    if (thread == 0u)
+    {
+        sharedCount = 0u;
+        sharedCursor = 0u;
+    }
+    barrier();
+
+    // 1 回目: 描くページの数
+    for (uint level = 0u; level < params.counts.y; ++level)
+    {
+        if ((levelMask & (1u << level)) == 0u)
+        {
+            continue;
+        }
+        ivec2 pageMin;
+        uvec2 size;
+        PageRange(level, lightMin, lightMax, pageMin, size);
+        const uint total = size.x * size.y;
+        for (uint index = thread; index < total; index += 64u)
+        {
+            const int pageX = pageMin.x + int(index % size.x);
+            const int pageY = pageMin.y + int(index / size.x);
+            if (IsDrawable(PageEntry(level, pageX, pageY)))
+            {
+                atomicAdd(sharedCount, 1u);
+            }
+        }
+    }
+    barrier();
+
+    if (thread == 0u)
+    {
+        const uint total = sharedCount;
+        const uint triangles = min(recordTriangles, VIS_MAX_TRIANGLES_PER_RECORD);
+        uint base = 0u;
+        bool bOk = false;
+        if (total != 0u && triangles != 0u)
+        {
+            base = atomicAdd(draws[0], total);
+            bOk = base + total <= params.counts.z && base + total >= base;
+            if (bOk)
+            {
+                atomicAdd(stats[STAT_RASTER_CHUNKS], 1u);
+                atomicAdd(stats[STAT_RASTER_INSTANCES], total);
+            }
+            else
+            {
+                atomicAdd(stats[STAT_RASTER_OVERFLOW], total);
+            }
+        }
+        const uint command = VSM_DRAWS_HEADER_WORDS + chunkIndex * VSM_DRAW_COMMAND_WORDS;
+        draws[command + 0u] = triangles * 3u;
+        draws[command + 1u] = bOk ? total : 0u;
+        draws[command + 2u] = 0u;
+        draws[command + 3u] = 0u;
+        draws[command + 4u] = bOk ? base : 0u;
+        sharedBase = base;
+        sharedOk = bOk ? 1u : 0u;
+        // 描くページがあり三角形もあるのに、容量が足りなかった塊: そのページは次フレームに描き直す
+        sharedRetry = (total != 0u && triangles != 0u && !bOk) ? 1u : 0u;
+    }
+    barrier();
+
+    if (sharedOk == 0u)
+    {
+        if (sharedRetry != 0u)
+        {
+            MarkRetry(levelMask, lightMin, lightMax, thread);
+        }
+        return;
+    }
+
+    // 2 回目: インスタンスを書く
+    for (uint level = 0u; level < params.counts.y; ++level)
+    {
+        if ((levelMask & (1u << level)) == 0u)
+        {
+            continue;
+        }
+        ivec2 pageMin;
+        uvec2 size;
+        PageRange(level, lightMin, lightMax, pageMin, size);
+        const uint total = size.x * size.y;
+        for (uint index = thread; index < total; index += 64u)
+        {
+            const int pageX = pageMin.x + int(index % size.x);
+            const int pageY = pageMin.y + int(index / size.x);
+            const uint entry = PageEntry(level, pageX, pageY);
+            if (IsDrawable(entry))
+            {
+                const uint slot = atomicAdd(sharedCursor, 1u);
+                const uint physical = entry & VSM_PAGE_INDEX_MASK;
+                instances[sharedBase + slot] = uvec4(chunkIndex, level | (physical << 4u), uint(pageX), uint(pageY));
+            }
+        }
+    }
+}

@@ -11,6 +11,8 @@
 #include "Rendering/GBufferDebugPass.h"
 #include "Rendering/VisibilityResolvePass.h"
 #include "Rendering/LightingPass.h"
+#include "Rendering/ShadowProbePass.h"
+#include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/PathTracingPass.h"
 #include "Rendering/VolumetricsPass.h"
 #include "Rendering/ForwardPass.h"
@@ -861,6 +863,7 @@ namespace NorvesLib::Core::Rendering
         shadowMapPass->SetSceneView(this);
         shadowMapPass->SetSceneRenderer(sceneRenderer);
         shadowMapPass->SetRegisterLegacyBridge(false);
+        shadowMapPass->SetShadowMethod(m_ShadowMethod);
         AddPass(std::move(shadowMapPass));
 
         // NeuralMaterialDecodePass: ニューラルマテリアルの事前デコード（Compute）
@@ -870,9 +873,11 @@ namespace NorvesLib::Core::Rendering
         AddPass(std::move(neuralDecodePass));
 
         // SkinningComputePass: スキニングの今・前のフレームの頂点を計算シェーダーで作る。
-        // 今の GBuffer の経路は頂点シェーダーのスキニングのままなので、ビジビリティバッファを使うときまで無効にしておく。
+        // 今の GBuffer の経路は頂点シェーダーのスキニングのままなので、ビジビリティバッファを使うときか、
+        // 太陽の影を VSM で描く（変形した頂点を影の描画が読む）ときまで無効にしておく。
         auto skinningComputePass = MakeUnique<SkinningComputePass>();
-        skinningComputePass->SetEnabled(bVisibilityBuffer);
+        skinningComputePass->SetEnabled(bVisibilityBuffer || m_ShadowMethod == ShadowMethod::Vsm);
+        skinningComputePass->SetShadowCasterOutput(m_ShadowMethod == ShadowMethod::Vsm);
         SkinningComputePass *skinningComputePassPtr = skinningComputePass.get();
         AddPass(std::move(skinningComputePass));
 
@@ -955,6 +960,19 @@ namespace NorvesLib::Core::Rendering
         auto skyAtmospherePass = MakeUnique<SkyAtmospherePass>();
         AddPass(std::move(skyAtmospherePass));
 
+        // VirtualShadowMapPass: 太陽の VSM の物理ページのプールとページの表などを作り、名前で公開し、影を落とす手続きメッシュと
+        // スキニング（SkinningComputePass が変形した頂点）を物理ページへ描く（--shadow-method=vsm のときだけ）。
+        // 深度が確定した後（ビジビリティの解決・GBuffer・MegaGeometry の後）・照明の前に置く。照明はまだ CSM のまま。
+        // 装置が対応しないとき・プールを取れないときは、パスが資源を作らず VSM_FALLBACK を出して CSM で描く
+        if (m_ShadowMethod == ShadowMethod::Vsm)
+        {
+            auto virtualShadowMapPass = MakeUnique<VirtualShadowMapPass>(m_VsmPoolPages);
+            virtualShadowMapPass->SetSkinningComputePass(skinningComputePassPtr);
+            // MegaGeometry の投影物（bCastShadow のインスタンス）を、展開の前に段ごとにカリングする（主の経路の入力を読み取りだけで使う）
+            virtualShadowMapPass->SetMegaGeometryPass(megaGeometryPassPtr);
+            AddPass(std::move(virtualShadowMapPass));
+        }
+
         // LightingPass: GBuffer→HDRシーンカラー
         LightingPassSettings lightingSettings;
         lightingSettings.EnvironmentMapPath = DefaultEnvironmentMapPath;
@@ -968,6 +986,15 @@ namespace NorvesLib::Core::Rendering
         lightingPass->SetSceneView(this);
         lightingPass->SetRegisterLegacyBridge(false);
         AddPass(std::move(lightingPass));
+
+#if NORVES_ENABLE_STATS
+        // ShadowProbePass: ワールドに固定した点の太陽の可視度を毎フレーム測り、影の揺れと細かさの数を出す（--shadow-probe）。
+        // 照明の後に置く。統計が有効な構成（Debug・RelWithDebInfo）だけで、Release には入れない。
+        if (m_bShadowProbeEnabled)
+        {
+            AddPass(MakeUnique<ShadowProbePass>());
+        }
+#endif
 
         // SSR（スクリーンスペース反射、HDR空間で適用）: Lightingが足した環境光の鏡面反射を画面の反射へ置き換え、
         // "SSR.SceneColor" に書く。フォグ・半透明より前に置き、減衰していない照明の色の上で置き換える

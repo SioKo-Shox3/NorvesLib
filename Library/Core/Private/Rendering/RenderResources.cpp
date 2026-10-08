@@ -170,6 +170,8 @@ namespace NorvesLib::Core::Rendering
         // VRAM_POOLS に最後に出した VT の追い出し数・使用量（MB。変わったときにも出し直す）
         uint64_t VtLoggedEvictedTiles = 0;
         uint64_t VtLoggedUsedMb = 0;
+        // VRAM_POOLS に最後に出した VSM のプールの量（MB。変わったときにも出し直す）
+        uint64_t ShadowMapLoggedPoolMb = 0;
         Container::TUniquePtr<SkinnedMeshGpuStore> SkinnedMeshes;
         Container::TUniquePtr<GpuResourceStore> GpuResources;
         Container::TSharedPtr<TextureRegistrationLifetime> AnonymousTextureLifetime;
@@ -180,6 +182,9 @@ namespace NorvesLib::Core::Rendering
         Container::TUniquePtr<ModelAssetRuntime> ModelAssets;
         bool bInitialized = false;
         bool bShuttingDown = false;
+
+        // VSM の物理ページのプールの確保量（バイト。RenderThread が書き、PollVideoMemoryBudget が読む）
+        Thread::Atomic<uint64_t> ShadowMapPoolBytes{0};
 
         // VRAM の上限（MB。0 は上限なし）と、予算ログの間引き状態（GameThread だけが触る）
         uint64_t VideoMemoryCapMb = 0;
@@ -192,6 +197,15 @@ namespace NorvesLib::Core::Rendering
     GpuResources::GpuResources(RenderResources *pOwner)
         : m_pOwner(pOwner)
     {
+    }
+
+    void GpuResources::SetShadowMapPoolBytes(uint64_t bytes)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (impl)
+        {
+            impl->ShadowMapPoolBytes.Store(bytes, std::memory_order_release);
+        }
     }
 
     BufferHandle GpuResources::CreateBuffer(const BufferCreateInfo &createInfo)
@@ -1725,6 +1739,10 @@ namespace NorvesLib::Core::Rendering
                 impl->GeometryBuffers->GetStats().CapacityBytes;
         }
 
+        // VSM の物理ページのプールも、ヒープの使用量に全部入っているので、プール以外から引くために渡す
+        input.PoolCapacityBytes[static_cast<uint32_t>(VideoMemoryPool::ShadowMap)] =
+            impl->ShadowMapPoolBytes.Load(std::memory_order_acquire);
+
         const VideoMemoryBudgetResult result = impl->VideoMemoryBudget.Compute(input);
         impl->VideoMemoryBudgetLast = result;
 
@@ -1764,13 +1782,16 @@ namespace NorvesLib::Core::Rendering
         const uint64_t vtUsedMb = vtUsedBytes / kBytesPerMb;
         const uint64_t evictedTiles = impl->VtStreamer ? impl->VtStreamer->GetStats().EvictedTiles : 0;
         const uint64_t evictedPages = impl->GeometryPageStreaming ? impl->GeometryPageStreaming->GetStats().EvictedPages : 0;
+        const uint64_t shadowMapPoolMb = input.PoolCapacityBytes[static_cast<uint32_t>(VideoMemoryPool::ShadowMap)] / kBytesPerMb;
         const bool bBudgetChanged = impl->VideoMemoryBudget.CommitLogIfChanged(result);
         if (bBudgetChanged || evictedTiles != impl->VtLoggedEvictedTiles ||
-            evictedPages != impl->GeometryLoggedEvictedPages || vtUsedMb != impl->VtLoggedUsedMb)
+            evictedPages != impl->GeometryLoggedEvictedPages || vtUsedMb != impl->VtLoggedUsedMb ||
+            shadowMapPoolMb != impl->ShadowMapLoggedPoolMb)
         {
             impl->VtLoggedEvictedTiles = evictedTiles;
             impl->GeometryLoggedEvictedPages = evictedPages;
             impl->VtLoggedUsedMb = vtUsedMb;
+            impl->ShadowMapLoggedPoolMb = shadowMapPoolMb;
             // ジオメトリの使用量は、プールの区画の合計（外して返却待ちの区画も、提出の完了までは数える）
             const uint64_t geometryUsedBytes = impl->GeometryBuffers ? impl->GeometryBuffers->GetStats().UsedBytes : 0;
             if (result.bLimited)
@@ -1780,7 +1801,7 @@ namespace NorvesLib::Core::Rendering
                     "VRAM_POOLS cap_mb=%llu non_pool_mb=%llu vt_target_mb=%llu "
                     "vt_used_mb=%llu vt_evicted_tiles=%llu source=%s "
                     "geometry_target_mb=%llu geometry_used_mb=%llu "
-                    "geometry_evicted_pages=%llu",
+                    "geometry_evicted_pages=%llu shadow_map_pool_mb=%llu",
                     static_cast<unsigned long long>(result.CeilingBytes / kBytesPerMb),
                     static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb),
                     static_cast<unsigned long long>(result.GetTargetBytes(VideoMemoryPool::VirtualTexture) / kBytesPerMb),
@@ -1789,7 +1810,8 @@ namespace NorvesLib::Core::Rendering
                     result.bNonPoolEstimated ? "estimate" : "heap",
                     static_cast<unsigned long long>(result.GetTargetBytes(VideoMemoryPool::Geometry) / kBytesPerMb),
                     static_cast<unsigned long long>(geometryUsedBytes / kBytesPerMb),
-                    static_cast<unsigned long long>(evictedPages));
+                    static_cast<unsigned long long>(evictedPages),
+                    static_cast<unsigned long long>(shadowMapPoolMb));
             }
             else
             {
@@ -1797,12 +1819,13 @@ namespace NorvesLib::Core::Rendering
                                 "VRAM_POOLS cap_mb=none non_pool_mb=%llu vt_target_mb=none "
                                 "vt_used_mb=%llu vt_evicted_tiles=%llu "
                                 "geometry_target_mb=none geometry_used_mb=%llu "
-                                "geometry_evicted_pages=%llu",
+                                "geometry_evicted_pages=%llu shadow_map_pool_mb=%llu",
                     static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb),
                     static_cast<unsigned long long>(vtUsedBytes / kBytesPerMb),
                     static_cast<unsigned long long>(evictedTiles),
                     static_cast<unsigned long long>(geometryUsedBytes / kBytesPerMb),
-                    static_cast<unsigned long long>(evictedPages));
+                    static_cast<unsigned long long>(evictedPages),
+                    static_cast<unsigned long long>(shadowMapPoolMb));
             }
         }
     }

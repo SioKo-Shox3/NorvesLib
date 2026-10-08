@@ -9,6 +9,7 @@
 #include "RasterDirectBrdf.h"
 #include "VisibilityBufferMode.h"
 #include "SwRasterMode.h"
+#include "ShadowMethod.h"
 #include "Rendering/AutoExposure.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -226,6 +227,18 @@ namespace NorvesLib::Core::Rendering
          */
         void SetTemporalAAForced(bool bForced) { m_bTemporalAAForced = bForced; }
         bool IsTemporalAAForced() const { return m_bTemporalAAForced; }
+
+        /** @brief 太陽の影の標本のパス（--shadow-probe）を足すか。SetupDeferredPipeline の前に決める。統計が無効な構成（Release）では何も足さない */
+        void SetShadowProbeEnabled(bool bEnabled) { m_bShadowProbeEnabled = bEnabled; }
+        bool IsShadowProbeEnabled() const { return m_bShadowProbeEnabled; }
+
+        /** @brief 太陽の影の方式（--shadow-method）。SetupDeferredPipeline の前に決め、ShadowMapPass へ渡す。既定は CSM */
+        void SetShadowMethod(ShadowMethod method) { m_ShadowMethod = method; }
+        ShadowMethod GetShadowMethod() const { return m_ShadowMethod; }
+
+        /** @brief VSM の物理ページのプールのページの数の要求（0 は既定）。SetupDeferredPipeline の前に決める */
+        void SetVsmPoolPages(uint32_t pages) { m_VsmPoolPages = pages; }
+        uint32_t GetVsmPoolPages() const { return m_VsmPoolPages; }
 
         // ========================================
         // パイプライン構築ヘルパー
@@ -479,6 +492,9 @@ namespace NorvesLib::Core::Rendering
         bool m_bEnableInstancing = true;
         uint32_t m_MinInstanceCount = 2;
         bool m_bTemporalAAForced = false;
+        bool m_bShadowProbeEnabled = false;
+        ShadowMethod m_ShadowMethod = ShadowMethod::Csm;
+        uint32_t m_VsmPoolPages = 0;
         // TAA のために FXAA を外しているか（TAA を止めたとき戻す）
         bool m_bFXAASuppressedByTemporalAA = false;
 

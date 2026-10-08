@@ -7,6 +7,7 @@
 #include "Rendering/RenderResourceContexts.h"
 #include "Rendering/RenderGraph/RenderGraphDump.h"
 #include "Rendering/RTGIContract.h"
+#include "Rendering/VirtualShadowMapClipmap.h"
 #include "FrameCommand.h"
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
@@ -95,6 +96,8 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr PointShadowCubeSampler;
         DirectionalShadowShaderValues DirectionalShadow;
         CascadedDirectionalShadowShaderValues CascadedShadow;
+        /** @brief 太陽のクリップマップ（--shadow-method=vsm のときだけ ShadowMapPass が毎フレーム公開する。後のパス・照明が読む） */
+        VirtualShadowMapClipmap SunClipmap;
 
         RHI::BufferPtr LightBuffer;
         uint32_t LogicalLightCount = 0;
@@ -161,6 +164,7 @@ namespace NorvesLib::Core::Rendering
             RTGI.Clear();
             IndirectLightingSource = RTGIIndirectLightingSource::Raster;
             IndirectLightingFallbackReason = RTGIFallbackReason::Disabled;
+            SunClipmap = VirtualShadowMapClipmap{};
             CascadedShadow = CascadedDirectionalShadowShaderValues{};
             for (uint32_t index = 0; index < 16; ++index)
             {
@@ -288,6 +292,12 @@ namespace NorvesLib::Core::Rendering
             CascadedShadow.LightId = lightId;
             CascadedShadow.bEnabled = bEnabledValue &&
                 cascadeCount == PhysicalLightingShadowCascadeCount;
+        }
+
+        /** @brief 太陽のクリップマップを公開する（無効な結果も渡してよい。読む側は bEnabled を見る） */
+        void PublishSunClipmap(const VirtualShadowMapClipmap& clipmap)
+        {
+            SunClipmap = clipmap;
         }
 
         bool HasCompleteCascadedShadow() const
@@ -587,6 +597,9 @@ namespace NorvesLib::Core::Rendering
 
         const Container::VariableArray<MeshProxy>* SnapshotMeshProxies = nullptr;
 
+        /** @brief FramePacket::InstanceData（InstanceDataBuffer へ上げた値の CPU 側。DrawCommand のインスタンスの範囲が指す） */
+        const Container::VariableArray<GPUSceneInstanceData>* SnapshotInstanceData = nullptr;
+
         /** @brief FramePacket::Scene.SkinnedMeshProxies のanimated boundsスナップショット */
         const Container::VariableArray<SkinnedMeshProxy>* SnapshotSkinnedMeshProxies = nullptr;
 
@@ -838,6 +851,14 @@ namespace NorvesLib::Core::Rendering
                                                                   arrayCount));
         }
 
+        /** @brief バッファのバリアを、フレームの記録の順（描画パスの前後）に積む */
+        void EnqueueBufferBarrier(RHI::BufferPtr buffer,
+                                  RHI::ResourceState beforeState,
+                                  RHI::ResourceState afterState)
+        {
+            EnqueueFrameCommand(FrameCommand::CreateBufferBarrier(buffer, beforeState, afterState));
+        }
+
         /**
          * @brief MegaGeometryPass の記録コマンド（今のビューポートのカメラ・描画範囲・表示・フレームの通し番号）を作る
          *
@@ -959,6 +980,15 @@ namespace NorvesLib::Core::Rendering
          * 0 は未設定で、そのときは FrameNumber + 1 を使う（RenderingCoordinator を通さない手組みの文脈）。
          */
         uint64_t RenderFrameSerial = 0;
+
+        /**
+         * @brief GPU の仕事が完了したと確かめられた、最後の RenderFrameSerial（このフレームの記録を始めた時点）
+         *
+         * 提出の serial が完了済みになったフレームのうち、通し番号が最大のもの。飛行中のフレームの数に依らず、
+         * 「その通し番号のフレームが GPU に書かせた読み戻し先は、ホストが読んでよい」を表す。
+         * 0 は未設定（RenderingCoordinator を通さない手組みの文脈）で、完了したフレームが無いものとして扱う。
+         */
+        uint64_t CompletedRenderFrameSerial = 0;
 
         /** @brief FrameUseRing に渡すフレームの通し番号（未設定なら FrameNumber + 1） */
         uint64_t ResolveRenderFrameSerial() const

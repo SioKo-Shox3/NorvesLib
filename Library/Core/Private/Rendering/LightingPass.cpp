@@ -15,6 +15,8 @@
 #include "Rendering/EnvironmentMapSource.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "RHI/IDevice.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -1348,6 +1350,32 @@ namespace NorvesLib::Core::Rendering
         pointShadowCubeBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(pointShadowCubeBinding);
 
+        // 太陽の VSM（--shadow-method=vsm）: 読むパラメータ・ページの表・物理ページのプール
+        RHI::DescriptorBinding vsmSampleBinding;
+        vsmSampleBinding.binding = 21;
+        vsmSampleBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        vsmSampleBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(vsmSampleBinding);
+
+        RHI::DescriptorBinding vsmPageTableBinding;
+        vsmPageTableBinding.binding = 22;
+        vsmPageTableBinding.type = RHI::ResourceBindType::StructuredBuffer;
+        vsmPageTableBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(vsmPageTableBinding);
+
+        RHI::DescriptorBinding vsmPoolBinding;
+        vsmPoolBinding.binding = 23;
+        vsmPoolBinding.type = RHI::ResourceBindType::StructuredBuffer;
+        vsmPoolBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(vsmPoolBinding);
+
+        // 太陽の VSM の読み出しの統計（逃げた標本の数）。断片シェーダーの storage の書き込みを使えるデバイスだけがシェーダーで数える
+        RHI::DescriptorBinding vsmStatsBinding;
+        vsmStatsBinding.binding = 24;
+        vsmStatsBinding.type = RHI::ResourceBindType::RWBuffer;
+        vsmStatsBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(vsmStatsBinding);
+
         return dsDesc;
     }
 
@@ -1359,6 +1387,71 @@ namespace NorvesLib::Core::Rendering
     LightingPass::~LightingPass()
     {
         Shutdown();
+    }
+
+    void LightingPass::HarvestCompletedVsmStats(uint64_t completedSerial)
+    {
+        for (VsmStatsSlot& slot : m_VsmStatsSlots)
+        {
+            // 書いたフレームの提出の完了が確かめられるまで読まない（書いた GPU の仕事が終わる前の値を読まない）
+            if (!slot.bPending || !slot.Mapped || slot.FrameSerial > completedSerial)
+            {
+                continue;
+            }
+            m_VsmFallbackSamples += slot.Mapped[0];
+            ++m_VsmStatsHarvestedExecutes;
+            slot.bPending = false;
+        }
+    }
+
+    RHI::BufferPtr LightingPass::AcquireVsmStatsSlot(uint64_t frameSerial, uint64_t completedSerial)
+    {
+        if (!m_Device)
+        {
+            return {};
+        }
+        HarvestCompletedVsmStats(completedSerial);
+        for (VsmStatsSlot& slot : m_VsmStatsSlots)
+        {
+            if (slot.bPending)
+            {
+                continue;
+            }
+            if (!slot.Buffer)
+            {
+                slot.Buffer = m_Device->CreateBuffer(RHI::BufferDesc(VsmStatsBytes,
+                                                                     RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                                                                     true,
+                                                                     "LightingVsmStats"));
+                slot.Mapped = slot.Buffer ? static_cast<const uint32_t*>(slot.Buffer->Map(0, 0)) : nullptr;
+                if (!slot.Mapped)
+                {
+                    slot = VsmStatsSlot{};
+                    return {};
+                }
+            }
+            // 写像したままのバッファは Update（内部で写像する）を使えないので、写像した領域へ直接 0 を書く（host-coherent）。
+            // 空けた枠は、書いたフレームの提出の完了が確かめられているので、GPU が使っていない
+            std::memset(const_cast<uint32_t*>(slot.Mapped), 0, VsmStatsBytes);
+            slot.bPending = true;
+            slot.FrameSerial = frameSerial;
+            return slot.Buffer;
+        }
+        return {};
+    }
+
+    void LightingPass::HarvestVsmStats()
+    {
+        for (VsmStatsSlot& slot : m_VsmStatsSlots)
+        {
+            if (!slot.bPending || !slot.Mapped)
+            {
+                continue;
+            }
+            m_VsmFallbackSamples += slot.Mapped[0];
+            ++m_VsmStatsHarvestedExecutes;
+            slot.bPending = false;
+        }
     }
 
     namespace
@@ -1644,6 +1737,19 @@ namespace NorvesLib::Core::Rendering
         const uint32_t neuralFallbackValue = 0u;
         m_DefaultNeuralBRDFWeightBuffer->Update(&neuralFallbackValue, sizeof(neuralFallbackValue));
 
+        // 太陽の VSM を読むパラメータ。0 で埋めた値は control.x = 0（無効）で、ページの表・プールは読まれない
+        m_VsmSampleBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmSampleParams),
+                                                                   RHI::ResourceUsage::ConstantBuffer,
+                                                                   true,
+                                                                   "LightingVsmSampleParams"));
+        if (!m_VsmSampleBuffer)
+        {
+            NORVES_LOG_ERROR("LightingPass", "VSM を読むパラメータのバッファを作れませんでした");
+            return false;
+        }
+        const GPUVsmSampleParams disabledVsmParams = {};
+        m_VsmSampleBuffer->Update(&disabledVsmParams, sizeof(disabledVsmParams));
+
         RHI::SamplerDesc sourceSamplerDesc;
         sourceSamplerDesc.filterMin = RHI::FilterMode::Linear;
         sourceSamplerDesc.filterMag = RHI::FilterMode::Linear;
@@ -1786,7 +1892,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_bInitialized && m_Device == nullptr && !m_DefaultBlackTexture &&
             !m_DefaultShadowMapArrayTexture && !m_DefaultPointShadowCubeTexture &&
             !m_DefaultDDGIIrradianceAtlas && !m_DefaultDDGIDistanceAtlas &&
-            !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer &&
+            !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer && !m_VsmSampleBuffer &&
             !m_RTGIComputePipeline && !m_RTGIComputeParametersBuffer &&
             !m_RTGIComputeInstanceDataBuffer && !m_RTGIComputeEmitterBuffer &&
             !m_RTGIDenoiserPipeline &&
@@ -1883,6 +1989,23 @@ namespace NorvesLib::Core::Rendering
         // Neural BRDF resources
         m_NeuralBRDFWeightBuffer.reset();
         m_DefaultNeuralBRDFWeightBuffer.reset();
+        m_VsmSampleBuffer.reset();
+        // 太陽の VSM の読み出しの統計。GPU が書き終えた後に残りを読み、1 度だけ集計を出す
+        HarvestVsmStats();
+        if (m_VsmStatsHarvestedExecutes > 0u)
+        {
+            NORVES_LOG_INFO("LightingPass",
+                            "VSM_LIGHTING_STATS executes=%llu fallback_samples=%llu",
+                            static_cast<unsigned long long>(m_VsmStatsHarvestedExecutes),
+                            static_cast<unsigned long long>(m_VsmFallbackSamples));
+        }
+        for (VsmStatsSlot& slot : m_VsmStatsSlots)
+        {
+            slot = VsmStatsSlot{};
+        }
+        m_VsmStatsSink.reset();
+        m_VsmStatsHarvestedExecutes = 0;
+        m_VsmFallbackSamples = 0;
         m_bNeuralBRDFAvailable = false;
 
         // Samplers are released after descriptor and texture ownership is gone.
@@ -2155,6 +2278,24 @@ namespace NorvesLib::Core::Rendering
             m_PointShadowCubeHandle = pointShadowCubeHandle.ToResourceHandle();
         }
 
+        // 太陽の VSM（--shadow-method=vsm）のページの表・物理ページのプール。VirtualShadowMapPass が公開したフレームだけ読む
+        // （公開が無い csm の構成・VSM を作れなかった装置では何も宣言せず、照明は CSM のまま）。
+        // 読む状態は ShaderResource で、グラフが VSM の書き込みの後・照明の前に遷移（書き込みを読み取りへ見せる）を入れる
+        m_VsmPageTableHandle = {};
+        m_VsmPoolHandle = {};
+        if (builder.HasBuffer(RenderGraphResourceNames::VsmPageTable) && builder.HasBuffer(RenderGraphResourceNames::VsmPhysicalPool))
+        {
+            const RGBufferHandle vsmPageTableBuffer =
+                builder.ReadBuffer(RenderGraphResourceNames::VsmPageTable, RHI::ResourceState::ShaderResource);
+            const RGBufferHandle vsmPoolBuffer =
+                builder.ReadBuffer(RenderGraphResourceNames::VsmPhysicalPool, RHI::ResourceState::ShaderResource);
+            if (vsmPageTableBuffer.IsValid() && vsmPoolBuffer.IsValid())
+            {
+                m_VsmPageTableHandle = vsmPageTableBuffer.ToResourceHandle();
+                m_VsmPoolHandle = vsmPoolBuffer.ToResourceHandle();
+            }
+        }
+
         // R6 RTGIはこのパス内のcomputeが生成し、後段のLightingへ渡す。
         RGTextureHandle rtgiDiffuseIndirectHandle;
         if (builder.TryReadTexture(RenderGraphResourceNames::RTGIDiffuseIndirect,
@@ -2301,6 +2442,14 @@ namespace NorvesLib::Core::Rendering
             rtgiDiffuseIndirectTexture = resources.GetTexture(m_RTGIDiffuseIndirectHandle);
         }
 
+        m_FrameVsmPageTable.reset();
+        m_FrameVsmPool.reset();
+        if (m_VsmPageTableHandle.IsValid() && m_VsmPoolHandle.IsValid())
+        {
+            m_FrameVsmPageTable = resources.GetBuffer(m_VsmPageTableHandle);
+            m_FrameVsmPool = resources.GetBuffer(m_VsmPoolHandle);
+        }
+
         if ((!albedoTexture || !normalTexture || !materialTexture || !depthTexture ||
              !velocityTexture || !emissiveTexture) &&
             m_GBufferPass)
@@ -2408,6 +2557,10 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_WARNING("LightingPass", "Lighting resources not ready, skipping");
             return;
         }
+
+        // RenderGraph を使わない経路は太陽の VSM を読まない（CSM のまま）
+        m_FrameVsmPageTable.reset();
+        m_FrameVsmPool.reset();
 
         RHI::TexturePtr albedoPtr;
         RHI::TexturePtr normalPtr;
@@ -2714,7 +2867,7 @@ namespace NorvesLib::Core::Rendering
             !m_DefaultBlackTexture || !m_DefaultShadowMapArrayTexture ||
             !m_DefaultPointShadowCubeTexture ||
             !m_DefaultDDGIIrradianceAtlas || !m_DefaultDDGIDistanceAtlas ||
-            !m_DefaultNeuralBRDFWeightBuffer ||
+            !m_DefaultNeuralBRDFWeightBuffer || !m_VsmSampleBuffer ||
             !m_GBufferSampler || !m_IBLSampler || !m_DiffuseIrradianceSampler ||
             !m_PrefilteredSpecularSampler || !m_DfgSampler || !m_DDGISampler)
         {
@@ -2771,6 +2924,10 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindSampler(19, m_GBufferSampler);
         descriptorSet->BindTexture(20, m_DefaultPointShadowCubeTexture);
         descriptorSet->BindSampler(20, m_GBufferSampler);
+        descriptorSet->BindConstantBuffer(21, m_VsmSampleBuffer, 0u, static_cast<uint32_t>(sizeof(GPUVsmSampleParams)));
+        descriptorSet->BindStorageBuffer(22, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
+        descriptorSet->BindStorageBuffer(23, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
+        descriptorSet->BindStorageBuffer(24, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
 
         outDescriptorSet = std::move(descriptorSet);
         return true;
@@ -4078,6 +4235,72 @@ namespace NorvesLib::Core::Rendering
             m_LightingDescriptorSet->BindStorageBuffer(11, m_DefaultNeuralBRDFWeightBuffer, 0, 4u);
         }
 
+        // 太陽の VSM（--shadow-method=vsm）。クリップマップ・ページの表・プール・カメラが揃ったときだけパラメータを有効にして渡す。
+        // 揃わないフレームは無効のパラメータ（control.x = 0）と既定のバッファで、照明は CSM のまま
+        GPUVsmSampleParams vsmParams = {};
+        RHI::BufferPtr boundVsmPageTable = m_DefaultNeuralBRDFWeightBuffer;
+        RHI::BufferPtr boundVsmPool = m_DefaultNeuralBRDFWeightBuffer;
+        uint32_t boundVsmPageTableBytes = 4u;
+        uint32_t boundVsmPoolBytes = 4u;
+        RHI::BufferPtr boundVsmStats = m_DefaultNeuralBRDFWeightBuffer;
+        uint32_t boundVsmStatsBytes = 4u;
+        RHI::BufferPtr vsmStatsToHost;
+        const CameraProxy* vsmCamera = context.GetActiveCamera();
+        if (m_FrameVsmPageTable && m_FrameVsmPool && vsmCamera != nullptr && depthTexture &&
+            vsmCamera->Projection == ProjectionType::Perspective &&
+            m_FrameVsmPageTable->GetSize() >= VirtualShadowMap::PageTableBytes() &&
+            m_FrameVsmPool->GetSize() >= VirtualShadowMap::PAGE_BYTES)
+        {
+            const float cameraPosition[3] = {vsmCamera->PositionX, vsmCamera->PositionY, vsmCamera->PositionZ};
+            const float cameraForward[3] = {vsmCamera->ForwardX, vsmCamera->ForwardY, vsmCamera->ForwardZ};
+            const uint64_t poolPages = m_FrameVsmPool->GetSize() / VirtualShadowMap::PAGE_BYTES;
+            if (BuildVirtualShadowMapSampleParams(&context.PhysicalLighting.SunClipmap,
+                                                  cameraPosition,
+                                                  cameraForward,
+                                                  context.PhysicalLighting.CascadedShadow.SplitDistances,
+                                                  vsmCamera->FieldOfView,
+                                                  static_cast<float>(depthTexture->GetHeight()),
+                                                  static_cast<uint32_t>(std::min<uint64_t>(poolPages, VirtualShadowMap::MAX_POOL_PAGES)),
+                                                  vsmParams))
+            {
+                boundVsmPageTable = m_FrameVsmPageTable;
+                boundVsmPool = m_FrameVsmPool;
+                boundVsmPageTableBytes = static_cast<uint32_t>(std::min<uint64_t>(
+                    m_FrameVsmPageTable->GetSize(), std::numeric_limits<uint32_t>::max()));
+                boundVsmPoolBytes = static_cast<uint32_t>(std::min<uint64_t>(
+                    m_FrameVsmPool->GetSize(), std::numeric_limits<uint32_t>::max()));
+                // VSM が有効なフレームは、シェーダーが逃げた標本を数える（VT のフィードバックの有無には依らない）。
+                // 空きの枠が無いときは、読まない置き場へ束ねて他の資源を書かないようにする
+                if (RHI::BufferPtr statsBuffer = AcquireVsmStatsSlot(context.ResolveRenderFrameSerial(),
+                                                                     context.CompletedRenderFrameSerial))
+                {
+                    boundVsmStats = statsBuffer;
+                    boundVsmStatsBytes = VsmStatsBytes;
+                    vsmStatsToHost = statsBuffer;
+                }
+                else
+                {
+                    if (!m_VsmStatsSink)
+                    {
+                        m_VsmStatsSink = m_Device->CreateBuffer(RHI::BufferDesc(VsmStatsBytes,
+                                                                                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
+                                                                                false,
+                                                                                "LightingVsmStatsSink"));
+                    }
+                    if (m_VsmStatsSink)
+                    {
+                        boundVsmStats = m_VsmStatsSink;
+                        boundVsmStatsBytes = VsmStatsBytes;
+                    }
+                }
+            }
+        }
+        m_VsmSampleBuffer->Update(&vsmParams, sizeof(vsmParams));
+        m_LightingDescriptorSet->BindConstantBuffer(21, m_VsmSampleBuffer, 0, static_cast<uint32_t>(sizeof(GPUVsmSampleParams)));
+        m_LightingDescriptorSet->BindStorageBuffer(22, boundVsmPageTable, 0, boundVsmPageTableBytes);
+        m_LightingDescriptorSet->BindStorageBuffer(23, boundVsmPool, 0, boundVsmPoolBytes);
+        m_LightingDescriptorSet->BindStorageBuffer(24, boundVsmStats, 0, boundVsmStatsBytes);
+
         m_LightingDescriptorSet->Update();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();
@@ -4089,6 +4312,14 @@ namespace NorvesLib::Core::Rendering
                                       scissor,
                                       m_LightingPipeline,
                                       m_LightingDescriptorSet);
+
+        // 照明の描画（統計への書き込み）の後に、書き込みをホストの読み取りへ見せる。読むのは提出の完了の後
+        if (vsmStatsToHost)
+        {
+            context.EnqueueBufferBarrier(vsmStatsToHost,
+                                         RHI::ResourceState::PixelShaderWrite,
+                                         RHI::ResourceState::HostRead);
+        }
     }
 
     void LightingPass::RegisterOutputs(ViewRenderContext& context,

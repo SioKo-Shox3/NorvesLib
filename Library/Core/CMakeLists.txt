@@ -247,6 +247,12 @@ set(PRIVATE_SOURCES
     Private/Rendering/HiZPyramidPass.cpp
     Private/Rendering/SkinningComputePass.cpp
     Private/Rendering/MaterialTileClassifyPass.cpp
+    Private/Rendering/ShadowProbePass.cpp
+    Private/Rendering/VirtualShadowMapPass.cpp
+    Private/Rendering/VirtualShadowMapPages.cpp
+    Private/Rendering/VirtualShadowMapRaster.cpp
+    Private/Rendering/VirtualShadowMapClipmap.cpp
+    Private/Rendering/VirtualShadowMapSample.cpp
     Private/Rendering/VisibilityRasterPass.cpp
     Private/Rendering/VisibilitySwRaster.cpp
     Private/Rendering/GBufferDebugPass.h
@@ -565,6 +571,13 @@ set(PUBLIC_HEADERS
     Public/Rendering/HiZPyramidPass.h
     Public/Rendering/SkinningComputePass.h
     Public/Rendering/MaterialTileClassifyPass.h
+    Public/Rendering/ShadowProbePass.h
+    Public/Rendering/VirtualShadowMapPass.h
+    Public/Rendering/VirtualShadowMapPages.h
+    Public/Rendering/VirtualShadowMapRaster.h
+    Public/Rendering/ShadowMethod.h
+    Public/Rendering/VirtualShadowMapClipmap.h
+    Public/Rendering/VirtualShadowMapSample.h
     Public/Rendering/VisibilityRasterPass.h
     Public/Rendering/VisibilitySwRaster.h
     Public/Rendering/VisibilityResolvePass.h

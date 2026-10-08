@@ -84,9 +84,16 @@
 # （geometry_target_mb・geometry_used_mb・geometry_evicted_pages）を metrics.json へ書き、並べた数が指定に満たない、または最後の
 # geometry_used_mb が目標を超えたまま終われば失敗にする。
 #
+# -ShadowProbe で Game を --shadow-probe 付きで起動し、ワールドに固定した点の太陽の影の揺れと細かさを測る。読み込みの完了（-Deterministic ではエポック）
+# の後の最初のフレームで、画面の 4 画素おきの格子から固定の標本点（位置・法線）を保存し、以後の毎フレーム、標本を今のカメラへ投影して見えている点だけの
+# 太陽の可視度（照明と同じ PCSS）を GPU で集計する。終了時のログの SHADOW_PROBE の行（フレーム間の |Δv| の平均 mean_abs_delta・変わった割合 changed_ratio・
+# 反転した割合 flip_ratio・縁の帯の割合 partial_ratio・使ったカスケードの texel の一辺 mean_texel_mm）を、視点ごとに metrics.json の shadow_probe へ書く。
+# 視点を回しながら測るには -OrbitDegreesPerSecond と併せる（太陽と物が止まっていれば、固定の点の可視度は変わらないはずなので、変化がそのまま影の揺れになる）。
+# 統計が有効な構成（Debug・RelWithDebInfo）だけ。Release とは併用しない。
+#
 # 各撮影のログの GPU_DRIVER（GPU 名とドライバの版）を metrics.json の gpu_driver へ書く（ドライバの更新で画面微分・LOD の挙動が変わる実装があり、
 # 撮影の差の原因を版から引けるようにする）。VT の常駐量は、ログの VRAM_POOLS の vt_used_mb の最大を vram_pools.vt_used_mb_max へ書き、
-# -VtUsedLimitMb（既定 64）を超えたら失敗にする（フィードバックの LOD が壊れて全面でミップ 0 を要求すると数百 MB になる。
+# -VtUsedLimitMb（既定 64。-OrbitDegreesPerSecond を使う撮影で省略したときだけ 128 にする。明示した値はそのまま使い、実効値を metrics.json の vt_used_limit_mb へ書く）を超えたら失敗にする（フィードバックの LOD が壊れて全面でミップ 0 を要求すると数百 MB になる。
 # -StressTextures は VT を上限まで使うので検査しない。0 で検査しない）。
 [CmdletBinding()]
 param(
@@ -216,11 +223,30 @@ param(
     [double]$DeterministicPsnrLimit = 45.0,
     # 撮影せず、OutDir に撮った既存の画像を -CompareDeterministicWith と比べて metrics.json へ書き足す。
     [switch]$CompareOnly,
+    # 太陽の影の標本（--shadow-probe）を測る。SHADOW_PROBE の行を metrics.json の shadow_probe へ視点ごとに書く（統計が有効な構成だけ）。
+    [switch]$ShadowProbe,
+    # -ShadowProbe で描画フレーム数を指定しない撮影（-OrbitDegreesPerSecond なし）が、読み込みの完了の後にこの数だけ描いてから撮る。
+    # 標本は起動から 300 回目の実行で固定されるため、最初に撮れた時点で終わると視点によっては（読み込みが早い default など）測るフレームが 0 のまま終わる。
+    # 固定の後に約 100 フレームを測れるよう 360 を既定にする。
+    [ValidateRange(1, 100000)]
+    [int]$ShadowProbeRenderedFrames = 360,
+    # 太陽の影の方式（既定は Vsm。--shadow-method=csm|vsm を常に渡す）。Csm は従来のカスケードシャドウマップ。
+    [ValidateSet('Csm', 'Vsm')]
+    [string]$ShadowMethod = 'Vsm',
     # Game へそのまま渡す引数（空白で区切る。例: --texture-asset-root と --texture-asset-manifest で別のクック済みの出力を使う）。
     [string[]]$ExtraGameArguments = @()
 )
 
 $ErrorActionPreference = 'Stop'
+
+# 長く旋回する撮影は地面の広い範囲を通るので、静止の撮影より VT の常駐量が増える（低角度で 400 フレーム旋回すると 80 MB 台）。
+# フィードバックの LOD が壊れたときの数百 MB とは桁が違うので、旋回で -VtUsedLimitMb を省略したときだけ上限を 128 MB にする。
+# 明示された値は旋回でも変えない（指定した上限が効かなくなるのを避ける）。
+$vtEffectiveLimitMb = $VtUsedLimitMb
+if ($OrbitDegreesPerSecond -gt 0 -and -not $PSBoundParameters.ContainsKey('VtUsedLimitMb') -and $VtUsedLimitMb -gt 0)
+{
+    $vtEffectiveLimitMb = 128
+}
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $gamePath = Join-Path $repoRoot "build\Game\$Configuration\Game.exe"
@@ -371,6 +397,11 @@ if ($GpuTimingFrames -gt 0 -and $GpuTimingFrames -lt 100)
 if ($GpuTimingFrames -gt 0 -and $Configuration -eq 'Release')
 {
     Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=gpu_timing_without_stats（Release は統計が無効で GPU のタイムスタンプを取れない。-Configuration RelWithDebInfo で測る）"
+    exit 1
+}
+if ($ShadowProbe -and $Configuration -eq 'Release')
+{
+    Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=shadow_probe_without_stats（Release は統計が無効で影の標本を測れない。-Configuration RelWithDebInfo で測る）"
     exit 1
 }
 if ($Deterministic -and ($stillFrameList.Count -gt 0 -or $GpuTimingFrames -gt 0))
@@ -728,6 +759,7 @@ if ($CompareOnly)
 }
 $temporalNoise = @()
 $gpuTiming = @()
+$shadowProbeResults = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
 foreach ($view in $shots)
 {
@@ -742,7 +774,7 @@ foreach ($view in $shots)
     }
     else
     {
-        $images += [pscustomobject]@{ Name = $view.Name; RenderedFrames = $null }
+        $images += [pscustomobject]@{ Name = $view.Name; RenderedFrames = $(if ($ShadowProbe -and $GpuTimingFrames -le 0) { $ShadowProbeRenderedFrames } else { $null }) }
     }
     $lastImage = $images[$images.Count - 1]
     $pngPath = Join-Path $outRoot "$($lastImage.Name).png"
@@ -847,6 +879,13 @@ foreach ($view in $shots)
     if ($SwRasterMaxPx -gt 0.0)
     {
         $arguments += ('--sw-raster-max-px=' + $SwRasterMaxPx.ToString('0.###', [System.Globalization.CultureInfo]::InvariantCulture))
+    }
+    # 影の方式は Game の既定が vsm だが、撮影の条件を明示するため、どちらでも引数を渡す。
+    $arguments += "--shadow-method=$($ShadowMethod.ToLowerInvariant())"
+    # 影の標本は既定で作らないので、-ShadowProbe のときだけ引数を渡す。
+    if ($ShadowProbe)
+    {
+        $arguments += '--shadow-probe'
     }
     # デバッグの表示は既定が Normal なので、Clusters・Lod・Wireframe のときだけ引数を渡す。
     if ($DebugView -ne 'Normal')
@@ -953,6 +992,46 @@ foreach ($view in $shots)
     if ($null -ne $exitCode -and $exitCode -ne 0)
     {
         $failures += "$($view.Name): Game の終了コードが $exitCode"
+    }
+
+    # SHADOW_PROBE（--shadow-probe の太陽の影の測定。終了時に 1 行）。視点ごとに metrics.json の shadow_probe へ入れる。
+    # 行が無い（影の標本が働かなかった・ログが無い）のは失敗にする。
+    if ($ShadowProbe)
+    {
+        $probeLines = if (Test-Path -LiteralPath $viewLogPath) { @(Select-String -LiteralPath $viewLogPath -Pattern 'SHADOW_PROBE method=(\S+) frames=(\d+) probes=(\d+) pairs=(\d+) mean_abs_delta=(\S+) changed_ratio=(\S+) flip_ratio=(\S+) partial_ratio=(\S+) mean_texel_mm=(\S+)') } else { @() }
+        $probeDetailLines = if (Test-Path -LiteralPath $viewLogPath) { @(Select-String -LiteralPath $viewLogPath -Pattern 'SHADOW_PROBE_DETAIL method=(\S+) visible=(\d+) out_of_range_ratio=(\S+)') } else { @() }
+        if ($probeLines.Count -eq 0)
+        {
+            $failures += "$($view.Name): SHADOW_PROBE の行がログに無い（--shadow-probe が働かなかった）"
+        }
+        else
+        {
+            $probeGroups = $probeLines[$probeLines.Count - 1].Matches[0].Groups
+            $probeEntry = [ordered]@{
+                view = $view.Name
+                method = $probeGroups[1].Value
+                frames = [uint64]$probeGroups[2].Value
+                probes = [uint64]$probeGroups[3].Value
+                pairs = [uint64]$probeGroups[4].Value
+                mean_abs_delta = [double]::Parse($probeGroups[5].Value, $invariant)
+                changed_ratio = [double]::Parse($probeGroups[6].Value, $invariant)
+                flip_ratio = [double]::Parse($probeGroups[7].Value, $invariant)
+                partial_ratio = [double]::Parse($probeGroups[8].Value, $invariant)
+                mean_texel_mm = [double]::Parse($probeGroups[9].Value, $invariant)
+                visible = $null
+                out_of_range_ratio = $null
+            }
+            if ($probeDetailLines.Count -gt 0)
+            {
+                $probeDetailGroups = $probeDetailLines[$probeDetailLines.Count - 1].Matches[0].Groups
+                $probeEntry.visible = [uint64]$probeDetailGroups[2].Value
+                $probeEntry.out_of_range_ratio = [double]::Parse($probeDetailGroups[3].Value, $invariant)
+            }
+            $shadowProbeResults += [pscustomobject]$probeEntry
+            Write-Output ("CAPTURE_STARTUP_SCENE shadow_probe view={0} method={1} frames={2} probes={3} pairs={4} mean_abs_delta={5} changed_ratio={6} flip_ratio={7} partial_ratio={8} mean_texel_mm={9} out_of_range_ratio={10}" -f `
+                $probeEntry.view, $probeEntry.method, $probeEntry.frames, $probeEntry.probes, $probeEntry.pairs, $probeEntry.mean_abs_delta,
+                $probeEntry.changed_ratio, $probeEntry.flip_ratio, $probeEntry.partial_ratio, $probeEntry.mean_texel_mm, $probeEntry.out_of_range_ratio)
+        }
     }
 
     # 間接光の出どころ（rtgi・ibl など。LightingPass が切り替わりのときだけ記録する）の最後の値。
@@ -1143,9 +1222,9 @@ foreach ($view in $shots)
         {
             $failures += "$($view.Name): $($line.Line.Trim())"
         }
-        if (-not $StressTextures -and $VtUsedLimitMb -gt 0 -and $null -ne $vramPools -and $vramPools.vt_used_mb_max -gt [uint64]$VtUsedLimitMb)
+        if (-not $StressTextures -and $vtEffectiveLimitMb -gt 0 -and $null -ne $vramPools -and $vramPools.vt_used_mb_max -gt [uint64]$vtEffectiveLimitMb)
         {
-            $failures += "$($view.Name): VT の常駐量が上限を超えた（vt_used_mb_max=$($vramPools.vt_used_mb_max) / 上限 $VtUsedLimitMb MB。フィードバックの LOD が壊れていないか確認する。GPU_DRIVER: $gpuDriver）"
+            $failures += "$($view.Name): VT の常駐量が上限を超えた（vt_used_mb_max=$($vramPools.vt_used_mb_max) / 上限 $vtEffectiveLimitMb MB。フィードバックの LOD が壊れていないか確認する。GPU_DRIVER: $gpuDriver）"
         }
         if ($StressTextures)
         {
@@ -1586,7 +1665,7 @@ $metricsPath = Join-Path $outRoot 'metrics.json'
 $metrics = [ordered]@{
     configuration = $Configuration
     gpu_driver = if ($results.Count -gt 0) { $results[0].gpu_driver } else { $null }
-    vt_used_limit_mb = $VtUsedLimitMb
+    vt_used_limit_mb = $vtEffectiveLimitMb
     deterministic = [bool]$Deterministic
     compare_deterministic_with = $CompareDeterministicWith
     deterministic_mean_luminance_limit = $DeterministicMeanLuminanceLimit
@@ -1607,6 +1686,7 @@ $metrics = [ordered]@{
     noise_comparison = $noiseComparison
     gpu_timing_frames = $GpuTimingFrames
     gpu_timing = $gpuTiming
+    shadow_probe = $shadowProbeResults
     failures = $failures
 }
 [IO.File]::WriteAllText($metricsPath, ($metrics | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))

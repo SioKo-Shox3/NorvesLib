@@ -723,6 +723,44 @@ namespace NorvesLib::Core::Rendering
         builder.PreserveInsertionOrder();
     }
 
+    namespace
+    {
+        // 太陽のクリップマップの設定と、受け手の距離ごとの texel の一辺（クリップマップと、同じカメラの CSM のカスケード）を 1 回だけ記録する
+        void LogVirtualShadowMapClipmapOnce(const VirtualShadowMapClipmap& clipmap,
+                                            const CascadedShadowMatrixResult& cascades,
+                                            const CameraProxy& camera,
+                                            uint32_t screenHeight)
+        {
+            const VirtualShadowMapClipmapSettings& settings = clipmap.Settings;
+            NORVES_LOG_INFO("ShadowMapPass",
+                            "VSM_CLIPMAP levels=%u first_width_m=%.3f bias=%.3f depth_range_m=%.1f",
+                            clipmap.LevelCount,
+                            settings.FirstWidthMeters,
+                            settings.BiasLevels,
+                            settings.DepthRangeMeters);
+            constexpr float Distances[] = {1.0f, 2.5f, 5.0f, 10.0f, 20.0f, 40.0f, 80.0f};
+            for (const float distance : Distances)
+            {
+                const int32_t level = SelectVirtualShadowMapLevel(settings, distance, camera.FieldOfView,
+                                                                  static_cast<float>(screenHeight));
+                const float vsmMillimeters =
+                    level >= 0 ? clipmap.Levels[level].TexelMeters * 1000.0f : 0.0f;
+                float csmMillimeters = 0.0f;
+                if (cascades.bEnabled)
+                {
+                    uint32_t cascade = 0u;
+                    while (cascade + 1u < cascades.CascadeCount && distance >= cascades.Cascades[cascade].FarDistance)
+                    {
+                        ++cascade;
+                    }
+                    csmMillimeters = cascades.Cascades[cascade].TexelSize * 1000.0f;
+                }
+                NORVES_LOG_INFO("ShadowMapPass", "VSM_TEXEL d_m=%.1f vsm_mm=%.4f csm_mm=%.4f",
+                                distance, vsmMillimeters, csmMillimeters);
+            }
+        }
+    } // namespace
+
     void ShadowMapPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
     {
         (void)resources;
@@ -840,6 +878,24 @@ namespace NorvesLib::Core::Rendering
             cascadedShadowMatrices.bEnabled ? cascadedShadowMatrices.CascadeCount : 0u,
             cascadedShadowMatrices.LightId,
             cascadedShadowMatrices.bEnabled);
+        // --shadow-method=vsm: 太陽のクリップマップを CSM の行列と同じ太陽・カメラから毎フレーム作って公開する。描画は CSM のまま
+        if (m_ShadowMethod == ShadowMethod::Vsm)
+        {
+            VirtualShadowMapClipmapSettings clipmapSettings;
+            clipmapSettings.MaxShadowDistance = m_Settings.MaxShadowDistance;
+            const CameraProxy* activeCamera = context.GetActiveCamera();
+            const VirtualShadowMapClipmap clipmap =
+                activeCamera != nullptr
+                    ? BuildVirtualShadowMapClipmap(context.SnapshotLightProxies, *activeCamera, clipmapSettings)
+                    : VirtualShadowMapClipmap{};
+            context.PhysicalLighting.PublishSunClipmap(clipmap);
+            if (clipmap.bEnabled && !m_bLoggedVsmClipmap)
+            {
+                m_bLoggedVsmClipmap = true;
+                LogVirtualShadowMapClipmapOnce(clipmap, cascadedShadowMatrices, *activeCamera,
+                                               context.GetActiveRenderHeight());
+            }
+        }
         // R1の単一行列利用者にはcascade 0を公開し、P6移行まで互換性を保つ。
         context.PhysicalLighting.PublishDirectionalShadow(
             lightViewData[0],

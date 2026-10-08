@@ -91,6 +91,10 @@ namespace NorvesLib::RHI::Vulkan
         {
             options.AddMacroDefinition("NORVES_VT_FEEDBACK", "1");
         }
+        if (m_bVsmLightingStats)
+        {
+            options.AddMacroDefinition("NORVES_VSM_STATS", "1");
+        }
 
         shaderc_shader_kind kind = ToShadercKind(stage);
 

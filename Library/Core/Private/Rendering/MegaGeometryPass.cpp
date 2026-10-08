@@ -84,6 +84,117 @@ namespace NorvesLib::Core::Rendering
         // フレームの飛行数は2以下なので、GPUはこれより前に使い終わっている
         constexpr uint64_t RetiredBufferFrames = 8;
 
+        bool IsFiniteSphere(const BoundingSphere &sphere)
+        {
+            return sphere.Radius > 0.0f && std::isfinite(sphere.Radius) && std::isfinite(sphere.CenterX) &&
+                   std::isfinite(sphere.CenterY) && std::isfinite(sphere.CenterZ);
+        }
+
+        /**
+         * @brief 影の判定に使うインスタンスの境界（ワールドの球）を求める
+         *
+         * プロキシの WorldBounds と、メッシュ全体のローカルの境界をワールド行列（行ベクトル規約の列優先の並びのまま = GLSL の mat4 と
+         * 同じ読み方）で移した球の、両方を含む球。プロキシの WorldBounds は、メッシュの読み込みが済む前に決まった値のまま残ることが
+         * あり（既定の小さな球）、それだけを信じると、実際の大きさより小さい境界で影のページの無効化・カリングが抜ける。
+         * どちらか片方だけが使えるならそれ。どちらも無ければ false。
+         */
+        bool ResolveShadowBounds(const float *worldMatrix,
+                                 const BoundingSphere &proxyBounds,
+                                 const BoundingSphere &meshBounds,
+                                 float (&outSphere)[4])
+        {
+            const bool bHasProxy = IsFiniteSphere(proxyBounds);
+            float meshSphere[4] = {};
+            bool bHasMesh = false;
+            if (IsFiniteSphere(meshBounds))
+            {
+                const float local[3] = {meshBounds.CenterX, meshBounds.CenterY, meshBounds.CenterZ};
+                float scale = 0.0f;
+                for (uint32_t axis = 0; axis < 3; ++axis)
+                {
+                    // GLSL の world[axis].xyz（列）。拡大率はその長さの最大
+                    const float *column = worldMatrix + axis * 4;
+                    scale = std::max(scale, std::sqrt(column[0] * column[0] + column[1] * column[1] + column[2] * column[2]));
+                    meshSphere[axis] = worldMatrix[12 + axis] + local[0] * worldMatrix[0 + axis] + local[1] * worldMatrix[4 + axis] +
+                                       local[2] * worldMatrix[8 + axis];
+                }
+                meshSphere[3] = meshBounds.Radius * scale;
+                bHasMesh = std::isfinite(meshSphere[0]) && std::isfinite(meshSphere[1]) && std::isfinite(meshSphere[2]) &&
+                           std::isfinite(meshSphere[3]) && meshSphere[3] > 0.0f;
+            }
+            if (bHasProxy && !bHasMesh)
+            {
+                outSphere[0] = proxyBounds.CenterX;
+                outSphere[1] = proxyBounds.CenterY;
+                outSphere[2] = proxyBounds.CenterZ;
+                outSphere[3] = proxyBounds.Radius;
+                return true;
+            }
+            if (!bHasMesh)
+            {
+                return false;
+            }
+            if (!bHasProxy)
+            {
+                std::memcpy(outSphere, meshSphere, sizeof(meshSphere));
+                return true;
+            }
+            // 2 つの球を含む最小の球（片方がもう片方を含むならその大きいほう）
+            const float proxy[4] = {proxyBounds.CenterX, proxyBounds.CenterY, proxyBounds.CenterZ, proxyBounds.Radius};
+            const float delta[3] = {meshSphere[0] - proxy[0], meshSphere[1] - proxy[1], meshSphere[2] - proxy[2]};
+            const float distance = std::sqrt(delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]);
+            if (distance + meshSphere[3] <= proxy[3])
+            {
+                std::memcpy(outSphere, proxy, sizeof(proxy));
+            }
+            else if (distance + proxy[3] <= meshSphere[3])
+            {
+                std::memcpy(outSphere, meshSphere, sizeof(meshSphere));
+            }
+            else
+            {
+                const float radius = 0.5f * (distance + proxy[3] + meshSphere[3]);
+                const float along = (radius - proxy[3]) / distance;
+                for (uint32_t axis = 0; axis < 3; ++axis)
+                {
+                    outSphere[axis] = proxy[axis] + delta[axis] * along;
+                }
+                outSphere[3] = radius;
+            }
+            return true;
+        }
+
+        // 影を落とすインスタンスの鍵・署名（FNV-1a。値が違えば違う、というだけを期待する）
+        uint64_t MixShadowMotionKey(uint64_t key, uint64_t componentId)
+        {
+            constexpr uint64_t Prime = 1099511628211ull;
+            uint64_t hash = 14695981039346656037ull;
+            for (const uint64_t value : {key, componentId})
+            {
+                for (uint32_t shift = 0; shift < 64u; shift += 8u)
+                {
+                    hash = (hash ^ ((value >> shift) & 0xFFull)) * Prime;
+                }
+            }
+            return hash;
+        }
+
+        uint64_t HashShadowMotionFloats(uint64_t seed, const float *values, uint32_t count)
+        {
+            constexpr uint64_t Prime = 1099511628211ull;
+            uint64_t hash = 14695981039346656037ull ^ seed;
+            for (uint32_t index = 0; index < count; ++index)
+            {
+                uint32_t bits = 0;
+                std::memcpy(&bits, &values[index], sizeof(bits));
+                for (uint32_t shift = 0; shift < 32u; shift += 8u)
+                {
+                    hash = (hash ^ ((bits >> shift) & 0xFFu)) * Prime;
+                }
+            }
+            return hash;
+        }
+
         bool IsMegaGeometryDebugPayloadMode(DebugViewMode mode)
         {
             return mode == DebugViewMode::MegaGeometryClusters ||
@@ -416,6 +527,8 @@ namespace NorvesLib::Core::Rendering
     void MegaGeometryPass::Setup(ViewRenderContext &context)
     {
         m_Instances.clear();
+        // VSM の投影物のカリングの入力は、今フレームの記録が書けたときだけ有効にする（前のフレームのものを残さない）
+        m_ShadowCasterInputs = MegaGeometryShadowCasterInputs{};
 
         if (context.SnapshotMegaGeometryProxies)
         {
@@ -435,6 +548,8 @@ namespace NorvesLib::Core::Rendering
                 instance.Handle = proxy.MegaMeshHandle;
                 std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
                 std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
+                instance.bCastShadow = proxy.bCastShadow;
+                instance.WorldBounds = proxy.WorldBounds;
                 m_Instances.push_back(instance);
             }
         }
@@ -884,6 +999,7 @@ namespace NorvesLib::Core::Rendering
         ReleaseVisibilityDrawBuffers(commandList);
         m_bSwRasterBinned = false;
         m_SwRasterCapacity = 0;
+        m_ShadowCasterInputs = MegaGeometryShadowCasterInputs{};
 
         if (m_Instances.empty() || !m_CullPipeline || !commandList || !command.MegaGeometry || !command.bHasMainCamera)
         {
@@ -1016,9 +1132,16 @@ namespace NorvesLib::Core::Rendering
         VariableArray<Section> sections;
         VariableArray<Drawable> drawables;
         VariableArray<GPUMegaInstance> instanceTable;
+        // 影の表（インスタンスの表と同じ並び）。影を落とすインスタンスだけが、影の判定のワークグループを持つ
+        VariableArray<MegaGeometryShadowInstance> shadowTable;
+        // 影を落とすインスタンスの動き（VSM のキャッシュが、動いた投影物のページだけを描き直すために使う）
+        VariableArray<MegaGeometryShadowMotion> shadowMotions;
+        uint64_t shadowTotalGroups = 0;
+        uint32_t shadowCasterCount = 0;
         VariableArray<VisibilityRequest> visibilityRequests;
         drawables.reserve(m_Instances.size());
         instanceTable.reserve(m_Instances.size());
+        shadowTable.reserve(m_Instances.size());
 
         // グループの BVH を持つメッシュ（NVMESH v1.1）は BVH をたどって判定し、それ以外は平らなクラスタの列で判定する。
         // BVH のインスタンスをインスタンスの表の先頭に並べる（平らな判定のワークグループは、後ろのインスタンスだけが持つ）
@@ -1159,6 +1282,43 @@ namespace NorvesLib::Core::Rendering
             drawables.push_back(drawable);
             instanceTable.push_back(entry);
             visibilityRequests.push_back(request);
+
+            // 影の表: 影を落とすインスタンスだけが、影の判定のワークグループ（64クラスタ）を持つ。BVH のインスタンスも
+            // 平らなクラスタの列として全部見る（影の判定は BVH をたどらない）
+            MegaGeometryShadowInstance shadowEntry{};
+            shadowEntry.FirstGroup = static_cast<uint32_t>(shadowTotalGroups);
+            {
+                // 頂点・インデックスの塊のバッファのアドレス（bAddressable で両方のバッファがあることは確かめてある）
+                const uint64_t vertexAddress = gpuData->VertexBuffer->GetDeviceAddress();
+                const uint64_t indexAddress = gpuData->IndexBuffer->GetDeviceAddress();
+                shadowEntry.VertexAddress[0] = static_cast<uint32_t>(vertexAddress & 0xFFFFFFFFull);
+                shadowEntry.VertexAddress[1] = static_cast<uint32_t>(vertexAddress >> 32);
+                shadowEntry.IndexAddress[0] = static_cast<uint32_t>(indexAddress & 0xFFFFFFFFull);
+                shadowEntry.IndexAddress[1] = static_cast<uint32_t>(indexAddress >> 32);
+            }
+            if (instance.bCastShadow)
+            {
+                shadowEntry.Flags |= MegaGeometryShadowFlagCaster;
+                const bool bHasShadowBounds =
+                    ResolveShadowBounds(instance.WorldMatrix, instance.WorldBounds, gpuData->TotalBounds, shadowEntry.BoundsSphere);
+                if (bHasShadowBounds)
+                {
+                    shadowEntry.Flags |= MegaGeometryShadowFlagBounds;
+                }
+                MegaGeometryShadowMotion motion;
+                motion.Key = MixShadowMotionKey(request.Key, instance.ComponentId);
+                motion.Signature = HashShadowMotionFloats(instance.Handle.Id, instance.WorldMatrix, 16u);
+                motion.bHasBounds = bHasShadowBounds;
+                if (bHasShadowBounds)
+                {
+                    std::memcpy(motion.BoundsSphere, shadowEntry.BoundsSphere, sizeof(motion.BoundsSphere));
+                }
+                motion.bMoved = std::memcmp(instance.WorldMatrix, instance.PreviousWorldMatrix, sizeof(float) * 16) != 0;
+                shadowMotions.push_back(motion);
+                shadowTotalGroups += (static_cast<uint64_t>(gpuData->ClusterCount) + 63u) / 64u;
+                ++shadowCasterCount;
+            }
+            shadowTable.push_back(shadowEntry);
         }
 
         if (instanceTable.empty() || totalGroups > 0xFFFFFFFFull)
@@ -1387,6 +1547,21 @@ namespace NorvesLib::Core::Rendering
 
         // インスタンスの表と区間の表を書く（ホストが書き、カリングと頂点シェーダーが読む）
         frameSlot.InstanceBuffer->Update(instanceTable.data(), instanceTable.size() * sizeof(GPUMegaInstance));
+        // 影の表（インスタンスの表と同じ並び）を書き、VSM の投影物のカリングへ渡す入力を有効にする。
+        // 影を落とすインスタンスが無い・ワークグループの数が 32 ビットに収まらないときは入力を作らない
+        if (frameSlot.ShadowInstanceBuffer && shadowCasterCount > 0 && shadowTotalGroups <= 0xFFFFFFFFull)
+        {
+            frameSlot.ShadowInstanceBuffer->Update(shadowTable.data(), shadowTable.size() * sizeof(MegaGeometryShadowInstance));
+            m_ShadowCasterInputs.bValid = true;
+            m_ShadowCasterInputs.InstanceBuffer = frameSlot.InstanceBuffer;
+            m_ShadowCasterInputs.ShadowInstanceBuffer = frameSlot.ShadowInstanceBuffer;
+            m_ShadowCasterInputs.PageTableBuffer = frameSlot.PageTableBuffer;
+            m_ShadowCasterInputs.PageTableVersion = frameSlot.PageTableVersion;
+            m_ShadowCasterInputs.InstanceCount = static_cast<uint32_t>(instanceTable.size());
+            m_ShadowCasterInputs.CasterCount = shadowCasterCount;
+            m_ShadowCasterInputs.TotalGroups = static_cast<uint32_t>(shadowTotalGroups);
+            m_ShadowCasterInputs.Motions = std::move(shadowMotions);
+        }
         {
             VariableArray<uint32_t> sectionTable;
             sectionTable.reserve(static_cast<size_t>(sectionCount) * passCount * 2u);
@@ -2543,6 +2718,17 @@ namespace NorvesLib::Core::Rendering
             }
             slot.InstanceBuffer = buffer;
             slot.InstanceCapacity = capacity;
+            // 影の表は、インスタンスの表と同じ要素数で作り直す（VSM の投影物のカリングが同じ添字で読む）
+            slot.ShadowInstanceBuffer.reset();
+        }
+        if (!slot.ShadowInstanceBuffer)
+        {
+            RHI::BufferDesc desc(static_cast<uint64_t>(slot.InstanceCapacity) * sizeof(MegaGeometryShadowInstance),
+                                 RHI::ResourceUsage::StorageBuffer,
+                                 true,
+                                 "MegaGeometry_ShadowInstanceTable");
+            // 作れなくても主の描画は止めない（影の入力が無効になるだけ）
+            slot.ShadowInstanceBuffer = m_Device->CreateBuffer(desc);
         }
 
         if (!slot.SectionBuffer || slot.SectionCapacity < sectionTableEntries)

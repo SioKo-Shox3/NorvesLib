@@ -1,0 +1,258 @@
+﻿// 太陽の仮想シャドウマップ（VSM。--shadow-method=vsm）の評価。lighting.frag の太陽の影と、計算シェーダーからの影の測定・テストが
+// 同じ規則で影を引くための共通の include。
+//
+// 受け手の段は CPU の SelectVirtualShadowMapLevel と同じ結果になるよう、式を写さず、CPU が二分法で求めた距離のしきい値を使う
+// （印付け vsm_mark.comp と同じ。カメラからの直線距離）。各標本は自分の位置のページの表を引いて物理ページの texel を読み、
+// 割り当てられていないページ（範囲の外・割り当て前）は粗い段へ順に逃げ、どの段にも無ければ影なしとする。
+//
+// include する側が、先に Common/VirtualShadowMapParams.glsl を include して VsmSampleParams をメンバに持つ uniform block とページの表・プールの
+// storage buffer を宣言し、次のマクロを与える（この include より前に定義する）。
+//   VSM_PARAMS               VsmSampleParams の式（std140 の uniform block のメンバ）
+//   VSM_PAGE_TABLE(i)        ページの表の語（uint）。i = 段 * 16384 + 番地 y * 128 + 番地 x
+//   VSM_POOL(i)              物理ページのプールの語（uint）。i = 物理ページ * 16384 + texel y * 128 + texel x
+// 省略できるマクロ:
+//   VSM_COUNT_FALLBACK()     自分の段のページが無く、粗い段へ逃げた標本 1 つにつき 1 回呼ぶ（統計の数え上げ。既定は何もしない）
+//
+// 入口は VsmSampleSunShadow(worldPos, normal, texelMeters)。可視度（1 = 光が当たる、0 = 影）を返し、標本が実際に読んだ段の
+// texel の一辺（m。粗い段へ逃げた標本はその段の値。読めた標本の平均）を返す。
+//
+// 影の縁は CSM（Common/SunShadowCsm.glsl の PCSSFilter）と同じ考え方で、ブロッカーの探索 → 物理の半影 → PCF の順に引く。
+// 半影の半幅（ワールドの長さ）は 受け手と遮る物の深度の差 × 太陽の角半径の tan で、接するところは鋭く、離れるほどぼける。
+// PCF の半径は r = max(min(物理の半影, 上限), 画素の大きさ p(d), 使う段の 1 texel)。探索の半径は上限と最小の半径の大きいほうで、
+// どちらもワールドの長さ（段に依らない）。探索の標本も、PCF の標本と同じく各自のページの表を引く。
+//
+// 影の距離の範囲・奥の薄めは CSM（Common/SunShadowCsm.glsl の CalculateShadow）と同じ量で測る: カメラの前方への距離が
+// [最初の分割, 最後の分割] の外なら影なし、最後のカスケードの幅の 10% で薄める。段の選び方（カメラからの直線距離）とは別の距離。
+
+#ifndef VIRTUAL_SHADOW_MAP_GLSL
+#define VIRTUAL_SHADOW_MAP_GLSL
+
+#include "Common/PoissonDisk16.glsl"
+#include "Common/VirtualShadowMapParams.glsl"
+
+#ifndef VSM_COUNT_FALLBACK
+#define VSM_COUNT_FALLBACK()
+#endif
+
+// 1 ページの一辺（texel）と、ページの表の一辺（VirtualShadowMap::PAGE_RESOLUTION・TABLE_DIMENSION と一致）
+const uint VSMS_PAGE_RESOLUTION = 128u;
+const uint VSMS_TABLE_DIMENSION = 128u;
+const uint VSMS_TABLE_ENTRIES_PER_LEVEL = VSMS_TABLE_DIMENSION * VSMS_TABLE_DIMENSION;
+const uint VSMS_PAGE_WORDS = VSMS_PAGE_RESOLUTION * VSMS_PAGE_RESOLUTION;
+// ページの表の 1 要素の印（VirtualShadowMap::PAGE_ENTRY_* と一致）
+const uint VSMS_PAGE_ENTRY_ALLOCATED = 1u << 31;
+const uint VSMS_PAGE_INDEX_MASK = (1u << 20) - 1u;
+
+// 法線の向きへのずらしの大きさ（使う段の texel の倍数。面が光に対して斜めなほど大きく、正対すると 0）と、
+// 深度の比較の余裕のうち一定の分（使う段の texel の倍数。CSM の 1.5 texel と同じ）
+const float VSMS_NORMAL_OFFSET_TEXELS = 1.5;
+const float VSMS_CONSTANT_BIAS_TEXELS = 1.5;
+// 受け面の深度の傾きの下限（光と面の法線の余弦。CSM の ComputeReceiverDepthGradient と同じ）
+const float VSMS_MIN_NORMAL_COSINE = 0.05;
+
+// カメラからの直線距離に対する段（CPU の SelectVirtualShadowMapLevel と同じ結果。d >= しきい値となる k の数）
+uint VsmSelectLevel(float distanceToCamera)
+{
+    uint level = 0u;
+    for (uint k = 0u; k + 1u < VSM_PARAMS.control.y; ++k)
+    {
+        if (distanceToCamera >= VSM_PARAMS.thresholds[k >> 2u][k & 3u])
+        {
+            ++level;
+        }
+    }
+    return level;
+}
+
+// 段 level の、ライト空間の位置 lightXY の texel の深度（m。ライト空間の深度）。
+// 位置のページが段の範囲の外、または割り当てられていなければ false
+bool VsmFetchDepthMeters(uint level, vec2 lightXY, out float outDepthMeters)
+{
+    outDepthMeters = 0.0;
+    const float pageMeters = VSM_PARAMS.levelInfo[level].x;
+    const float texelMeters = VSM_PARAMS.levelInfo[level].y;
+    const ivec2 page = ivec2(floor(lightXY / pageMeters));
+    const ivec2 origin = VSM_PARAMS.levelOrigin[level].xy;
+    const ivec2 count = ivec2(int(VSMS_TABLE_DIMENSION));
+    if (any(lessThan(page, origin)) || any(greaterThanEqual(page, origin + count)))
+    {
+        return false;
+    }
+    // ページの表の番地はトーラス（絶対のページの座標 mod 128。負でも 0 以上）
+    const uint addressX = uint(page.x) & (VSMS_TABLE_DIMENSION - 1u);
+    const uint addressY = uint(page.y) & (VSMS_TABLE_DIMENSION - 1u);
+    const uint entry = VSM_PAGE_TABLE(level * VSMS_TABLE_ENTRIES_PER_LEVEL + addressY * VSMS_TABLE_DIMENSION + addressX);
+    if ((entry & VSMS_PAGE_ENTRY_ALLOCATED) == 0u)
+    {
+        return false;
+    }
+    const uint physical = entry & VSMS_PAGE_INDEX_MASK;
+    if (physical >= VSM_PARAMS.control.z)
+    {
+        return false;
+    }
+    const vec2 local = (lightXY - vec2(page) * pageMeters) / texelMeters;
+    const ivec2 texel = clamp(ivec2(floor(local)), ivec2(0), ivec2(int(VSMS_PAGE_RESOLUTION) - 1));
+    const uint word = VSM_POOL(physical * VSMS_PAGE_WORDS + uint(texel.y) * VSMS_PAGE_RESOLUTION + uint(texel.x));
+    const float depth01 = uintBitsToFloat(word);
+    outDepthMeters = (depth01 - 0.5) * VSM_PARAMS.depth.z + VSM_PARAMS.depth.x;
+    return true;
+}
+
+// 段 level から粗い段へ順に引いて、最初に読めた段の深度と、その段の texel の一辺を返す。どの段にも無ければ false。
+// outEscaped は、自分の段のページが無く粗い段へ進んだとき（読めたかどうかに依らない）true
+bool VsmFetchDepthWithFallback(uint level, vec2 lightXY, out float outDepthMeters, out float outTexelMeters, out bool outEscaped)
+{
+    outDepthMeters = 0.0;
+    outTexelMeters = 0.0;
+    outEscaped = false;
+    for (uint candidate = level; candidate < VSM_PARAMS.control.y; ++candidate)
+    {
+        if (VsmFetchDepthMeters(candidate, lightXY, outDepthMeters))
+        {
+            outTexelMeters = VSM_PARAMS.levelInfo[candidate].y;
+            return true;
+        }
+        outEscaped = true;
+    }
+    return false;
+}
+
+// 太陽の可視度（1 = 光が当たる、0 = 影）。outTexelMeters は PCF の標本が実際に読んだ段の texel の一辺（m）の平均。
+// どの標本も読めなかった（無効・影の距離の外・不正な値・どの段にも無い）ときは、受け手の距離から選んだ段の値。
+// 無効・影の距離の外・不正な値は 1（影なし）。
+float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
+{
+    outTexelMeters = 0.0;
+    if (VSM_PARAMS.control.x == 0u || VSM_PARAMS.control.y == 0u)
+    {
+        return 1.0;
+    }
+
+    // 段はカメラからの直線距離で選ぶ（印付けと同じ）。影の範囲・薄めは CSM と同じカメラの前方への距離で測る
+    const vec3 toReceiver = worldPos - VSM_PARAMS.cameraPosition.xyz;
+    const float distanceToCamera = length(toReceiver);
+    const float viewDistance = dot(toReceiver, VSM_PARAMS.view.xyz);
+    const float shadowNear = VSM_PARAMS.range.x;
+    const float shadowFar = VSM_PARAMS.range.y;
+    const uint level = VsmSelectLevel(distanceToCamera);
+    const float texelMeters = VSM_PARAMS.levelInfo[level].y;
+    outTexelMeters = texelMeters;
+    if (!(viewDistance >= shadowNear) || !(viewDistance <= shadowFar) || !(texelMeters > 0.0))
+    {
+        return 1.0;
+    }
+
+    // 法線のライト空間の成分。面が光に斜めなほど（光の向きの成分が小さいほど）法線の向きへずらす
+    const float normalLength = length(normal);
+    if (!(normalLength > 0.5))
+    {
+        return 1.0;
+    }
+    const vec3 unitNormal = normal / normalLength;
+    const vec3 lightNormal = vec3(dot(unitNormal, VSM_PARAMS.lightRight.xyz),
+                                  dot(unitNormal, VSM_PARAMS.lightUp.xyz),
+                                  dot(unitNormal, VSM_PARAMS.lightDirection.xyz));
+    const float sineToLight = min(length(lightNormal.xy), 1.0);
+    const vec3 offsetWorld = worldPos + unitNormal * (VSMS_NORMAL_OFFSET_TEXELS * texelMeters * sineToLight);
+
+    const vec2 lightXY = vec2(dot(offsetWorld, VSM_PARAMS.lightRight.xyz), dot(offsetWorld, VSM_PARAMS.lightUp.xyz));
+    const float receiverDepth = dot(offsetWorld, VSM_PARAMS.lightDirection.xyz);
+
+    // 受け面の深度の傾き（ライト空間の XY 1 m あたりの深度 m）。光に平行に近い面は余弦の下限で抑える
+    const float normalDepth = abs(lightNormal.z) < VSMS_MIN_NORMAL_COSINE
+        ? (lightNormal.z < 0.0 ? -VSMS_MIN_NORMAL_COSINE : VSMS_MIN_NORMAL_COSINE)
+        : lightNormal.z;
+    vec2 slope = vec2(-lightNormal.x / normalDepth, -lightNormal.y / normalDepth);
+    if (isnan(slope.x) || isinf(slope.x) || isnan(slope.y) || isinf(slope.y))
+    {
+        slope = vec2(0.0);
+    }
+
+    // 半径の下限はワールドで連続な量（段の切り替わりで縁の幅が跳ばない）: 画素の大きさ × 係数（pixel.x に掛けて渡される。
+    // VirtualShadowMap::PCF_MIN_RADIUS_PIXELS）と使う段の 1 texel の大きいほう
+    const float minRadius = max(distanceToCamera * VSM_PARAMS.pixel.x, texelMeters);
+    const float maxRadius = max(VSM_PARAMS.pixel.z, minRadius);
+
+    // ブロッカーの探索（CSM の FindBlockerDepth と同じ）: 探索の半径の 16 点のうち、受け手より手前にある標本の深度の平均を求める。
+    // 各標本は自分の位置のページの表を引き、無ければ粗い段へ逃げる（どの段にも無い標本は遮る物なしとして扱う）
+    const float searchSlopeBias = VSMS_CONSTANT_BIAS_TEXELS + abs(slope.x) + abs(slope.y);
+    float blockerSum = 0.0;
+    float blockerCount = 0.0;
+    float searchEscapes = 0.0;
+    float searchTexelSum = 0.0;
+    float searchReadCount = 0.0;
+    for (int index = 0; index < 16; ++index)
+    {
+        const vec2 offset = POISSON_DISK[index] * maxRadius;
+        float sampleDepth = 0.0;
+        float sampleTexel = 0.0;
+        bool bEscaped = false;
+        if (VsmFetchDepthWithFallback(level, lightXY + offset, sampleDepth, sampleTexel, bEscaped))
+        {
+            searchTexelSum += sampleTexel;
+            searchReadCount += 1.0;
+            if (receiverDepth + dot(slope, offset) - searchSlopeBias * sampleTexel > sampleDepth)
+            {
+                blockerSum += sampleDepth;
+                blockerCount += 1.0;
+            }
+        }
+        searchEscapes += bEscaped ? 1.0 : 0.0;
+    }
+    if (blockerCount == 0.0)
+    {
+        // 遮る物が無ければ光が当たる（PCF は引かない）。逃げた標本の数はこの探索のものを数える
+        for (float escaped = 0.0; escaped < searchEscapes; escaped += 1.0)
+        {
+            VSM_COUNT_FALLBACK();
+        }
+        if (searchReadCount > 0.0)
+        {
+            outTexelMeters = searchTexelSum / searchReadCount;
+        }
+        return 1.0;
+    }
+
+    // 物理の半影の半幅 = 受け手と遮る物の深度の差 × 太陽の角半径の tan。上限で抑え、下限（画素・1 texel）より小さくはしない
+    const float penumbra = max(receiverDepth - blockerSum / blockerCount, 0.0) * VSM_PARAMS.pixel.y;
+    const float radius = max(min(penumbra, VSM_PARAMS.pixel.z), minRadius);
+
+    float lit = 0.0;
+    float readTexelSum = 0.0;
+    float readCount = 0.0;
+    for (int index = 0; index < 16; ++index)
+    {
+        const vec2 offset = POISSON_DISK[index] * radius;
+        const float sampleReceiver = receiverDepth + dot(slope, offset);
+
+        // 自分の段から粗い段へ順に引く。どの段にも無ければ影なし
+        float visible = 1.0;
+        float blockerDepth = 0.0;
+        float candidateTexel = 0.0;
+        bool bEscaped = false;
+        if (VsmFetchDepthWithFallback(level, lightXY + offset, blockerDepth, candidateTexel, bEscaped))
+        {
+            const float bias = (VSMS_CONSTANT_BIAS_TEXELS + abs(slope.x) + abs(slope.y)) * candidateTexel;
+            visible = (sampleReceiver - bias > blockerDepth) ? 0.0 : 1.0;
+            readTexelSum += candidateTexel;
+            readCount += 1.0;
+        }
+        if (bEscaped)
+        {
+            VSM_COUNT_FALLBACK();
+        }
+        lit += visible;
+    }
+    if (readCount > 0.0)
+    {
+        outTexelMeters = readTexelSum / readCount;
+    }
+    float shadow = lit / 16.0;
+
+    // 影の最大の距離の手前（最後のカスケードの幅の 10%）で影を薄め、境界で急に消えないようにする（CSM と同じ）
+    shadow = mix(shadow, 1.0, smoothstep(shadowFar - VSM_PARAMS.range.z, shadowFar, viewDistance));
+    return shadow;
+}
+
+#endif // VIRTUAL_SHADOW_MAP_GLSL

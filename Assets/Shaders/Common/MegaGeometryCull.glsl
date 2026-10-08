@@ -23,6 +23,8 @@
 //            親のグループの誤差を親の球から投影した値がしきい値を超えるクラスタを描く。
 //            同じグループのクラスタは球と誤差が同じなので同じ判断になり、どの切り方も閉じたメッシュになる。
 //   それ以外（v0・実行時に構築した階層・手続きの球）: 従来の段の選び方（ShouldDrawCluster）。
+// どちらも、cullData.orthoLod = 1（VSM の影。vsm_mega_cull.comp）のときは正射影の選び方になる: 誤差のワールドの長さを
+// g_OrthoTexelMeters（その段の texel の一辺）で割った大きさを lodBias（texel）と比べる。透視の投影は使わない。
 //
 // ページの常駐（焼き込み済みの階層だけ）:
 //   頂点・インデックスの中身はページ（128 KiB）ごとに常駐し、ページの表（binding 11）が常駐を持つ。クラスタの記録と
@@ -138,6 +140,10 @@ layout(set = 0, binding = 0) uniform CullUniforms
     uint swRasterCapacity;   // パスごとのソフトの一覧の容量（クラスタ数）
     float swRasterMaxPixels; // 振り分ける画面上の半径（画素）のしきい値（以下ならソフト）
     float swRasterNearPlane; // 近平面までの距離（視点から視線方向に測る）。これと交わるクラスタは振り分けない
+    uint orthoLod;           // 1 なら LOD を正射影で選ぶ（VSM の影。誤差 ÷ g_OrthoTexelMeters を lodBias（texel）と比べ、透視の投影を使わない）。0 なら透視（主の経路）
+    uint orthoReserved0;     // 予約（std140 で次の 16 バイトの境まで詰める）
+    uint orthoReserved1;
+    uint orthoReserved2;
 } cullData;
 
 const uint CULL_PASS_SINGLE = 0u;
@@ -267,6 +273,8 @@ const float BVH_LOD_PRUNE_MARGIN = 1.001;
 mat4 g_WorldMatrix;
 vec4 g_LODSphere;
 ClusterArray g_Clusters;
+// 正射影の LOD（cullData.orthoLod = 1）で、誤差を texel へ直すための texel の一辺（m）。影の段ごとに、段を決める側が main の最初に入れる
+float g_OrthoTexelMeters = 1.0;
 
 // ========================================
 // カリング関数
@@ -411,6 +419,17 @@ float ProjectBakedError(vec3 localCenter, float localRadius, float localError)
 }
 
 /**
+ * @brief 正射影（VSM の影）で、メッシュの中の誤差（ローカルの長さ）を texel へ直した大きさ
+ *
+ * 正射影は距離で伸びないので、透視の ProjectBakedError・ComputePerspectiveStretch は使わない。誤差のワールドの長さ
+ * （ローカルの長さ × ワールドの最大の拡大率）を、その段の texel の一辺で割る。親の球・視点に依らない。
+ */
+float ProjectBakedErrorOrtho(float localError)
+{
+    return localError * ComputeWorldRadiusScale() / max(g_OrthoTexelMeters, 1e-9);
+}
+
+/**
  * @brief ページが常駐しているか（ページの表を引く。ページの番号が無い INVALID_PAGE_ID は常駐とみなす）
  */
 bool IsPageResident(uint pageTableBase, uint pageId)
@@ -476,8 +495,18 @@ bool ShouldDrawBakedCluster(GPUClusterData cluster, uint pageTableBase, out uint
     {
         return false; // 自分のページが無い → 親が代わりに描く
     }
-    float selfError = ProjectBakedError(cluster.boundsSphere.xyz, cluster.boundsSphere.w,
-                                        uintBitsToFloat(cluster.lodInfo.y));
+    // 正射影（orthoLod = 1。VSM の影）は、誤差を texel へ直した大きさで比べる。透視の投影（ProjectBakedError）は使わない
+    const bool bOrtho = cullData.orthoLod != 0u;
+    float selfError;
+    if (bOrtho)
+    {
+        selfError = ProjectBakedErrorOrtho(uintBitsToFloat(cluster.lodInfo.y));
+    }
+    else
+    {
+        selfError = ProjectBakedError(cluster.boundsSphere.xyz, cluster.boundsSphere.w,
+                                      uintBitsToFloat(cluster.lodInfo.y));
+    }
     if (selfError > cullData.lodBias)
     {
         // 自分の誤差が大きすぎる → より詳細な段を使う。ただし子のページが無いなら、穴を作らず自分を描く
@@ -492,8 +521,16 @@ bool ShouldDrawBakedCluster(GPUClusterData cluster, uint pageTableBase, out uint
     {
         return true; // 根
     }
-    float parentError = ProjectBakedError(cluster.parentSphere.xyz, cluster.parentSphere.w,
-                                          uintBitsToFloat(cluster.bakedInfo.y));
+    float parentError;
+    if (bOrtho)
+    {
+        parentError = ProjectBakedErrorOrtho(uintBitsToFloat(cluster.bakedInfo.y));
+    }
+    else
+    {
+        parentError = ProjectBakedError(cluster.parentSphere.xyz, cluster.parentSphere.w,
+                                        uintBitsToFloat(cluster.bakedInfo.y));
+    }
     // 親が粗すぎるときだけ自分を描く。NaN なら自分を描く側へ倒す
     return !(parentError <= cullData.lodBias);
 }
@@ -520,7 +557,12 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
     // 視線から外れた点で透視投影が横のずれを伸ばす倍率 1/cos²α の上限を掛けた値を使う
     // （MegaGeometryLODSelection.h の ComputeLODSphereErrorPixelsPerMeter と同じ式）。
     float errorScale;
-    if (g_LODSphere.w > 0.0)
+    if (cullData.orthoLod != 0u)
+    {
+        // 正射影（VSM の影）: 誤差 1（ローカルの長さ）= ワールドの最大の拡大率の長さ = texel の何個か。視点からの距離に依らない
+        errorScale = ComputeWorldRadiusScale() / max(g_OrthoTexelMeters, 1e-9);
+    }
+    else if (g_LODSphere.w > 0.0)
     {
         float worldScale = ComputeWorldRadiusScale();
         vec3 lodCenter = TransformClusterCenterToWorld(g_LODSphere.xyz);
@@ -591,6 +633,26 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
 
     // 親の誤差も許容範囲内 → 親に任せる
     return false;
+}
+
+/**
+ * @brief 影（VSM）の1クラスタの LOD の判定（呼び出し側が cullData.orthoLod = 1・g_OrthoTexelMeters を設定済みのとき）
+ *
+ * 描くのは、自分の誤差（texel）が lodBias 以下で、親の誤差が lodBias を超えるクラスタ。ページの常駐は主の経路と同じで、
+ * 自分のページが非常駐なら描かず、子のページが非常駐で自分が粗すぎるなら自分を描く（常駐している物で描く）。
+ * 主の経路と違い、子のページの要求・使用の印は出さない（影のためにページを読み込まない）。法線の円錐・遮蔽の判定・
+ * ソフトウェアラスタの振り分けも使わない。
+ *
+ * @return true = このクラスタを影へ描く
+ */
+bool ShouldDrawShadowCluster(GPUClusterData cluster, vec3 center, uint pageTableBase)
+{
+    if ((cluster.bakedInfo.x & CLUSTER_FLAG_BAKED_LOD) != 0u)
+    {
+        uint requestPage;
+        return ShouldDrawBakedCluster(cluster, pageTableBase, requestPage);
+    }
+    return ShouldDrawCluster(cluster, center);
 }
 
 uint ComputeDebugPayload(uint clusterIndex, GPUClusterData cluster)

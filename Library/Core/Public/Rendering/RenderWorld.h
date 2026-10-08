@@ -69,6 +69,12 @@ namespace NorvesLib::Core::Rendering
         VisibilityBufferMode VisibilityBuffer = VisibilityBufferMode::On;
         SwRasterMode SwRaster = SwRasterMode::On;
         float SwRasterMaxPixels = DefaultSwRasterMaxPixels;
+        /** @brief 太陽の影の標本のパスを足す（--shadow-probe。統計が有効な構成だけで働く） */
+        bool bShadowProbe = false;
+        /** @brief 太陽の影の方式（--shadow-method=csm|vsm。構造体の既定は CSM。Game の起動引数の既定は VSM） */
+        ShadowMethod SunShadowMethod = ShadowMethod::Csm;
+        /** @brief VSM の物理ページのプールのページの数（--vsm-pool-pages。0 は既定の 5120。--shadow-method=vsm のときだけ使う） */
+        uint32_t VsmPoolPages = 0;
     };
 
     // ========================================

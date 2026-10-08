@@ -53,6 +53,8 @@ namespace NorvesLib::Core::Rendering
         bool PublishTexture(Identity name, RGTextureHandle handle);
         bool PublishTexture(Identity name, RGResourceHandle handle);
         bool PublishBuffer(Identity name, RGBufferHandle handle);
+        // ImportBuffer が返したハンドルをそのまま名前で公開する（永続のバッファ用）
+        bool PublishBuffer(Identity name, RGResourceHandle handle);
         RGTextureHandle ReadTexture(Identity name,
                                     RHI::ResourceState state = RHI::ResourceState::ShaderResource);
         bool TryReadTexture(Identity name,
@@ -113,6 +115,9 @@ namespace NorvesLib::Core::Rendering
                                    uint64_t size);
         bool TryGetTexture(Identity name, RGTextureHandle& outHandle) const;
         bool TryGetBuffer(Identity name, RGBufferHandle& outHandle) const;
+        // 名前のバッファが（この宣言の時点までに）公開されているか。TryGetBuffer と違い、公開が無くてもグラフのエラーにしない
+        // （公開するパスがある構成・無い構成の両方で、読むかどうかを決めるときに使う）
+        bool HasBuffer(Identity name) const;
         bool ExportTexture(Identity name, RGTextureHandle handle);
         bool ExportTexture(Identity name, RGResourceHandle handle);
         void PreserveInsertionOrder();

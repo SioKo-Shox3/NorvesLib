@@ -291,6 +291,7 @@ namespace NorvesLib::Core::Rendering
                                            uint64_t size = 0);
         bool TryGetTextureResource(Identity name, RGTextureHandle& outHandle);
         bool TryGetBufferResource(Identity name, RGBufferHandle& outHandle);
+        bool HasNamedBufferResource(Identity name) const;
         bool ExportTextureResource(Identity name, RGTextureHandle handle);
         bool ExportTextureResource(Identity name, RGResourceHandle handle);
 
