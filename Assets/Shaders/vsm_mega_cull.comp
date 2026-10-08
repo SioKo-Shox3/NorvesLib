@@ -3,13 +3,14 @@
 #extension GL_EXT_buffer_reference_uvec2 : require
 
 // ========================================
-// 太陽の仮想シャドウマップ（VSM）の、MegaGeometry の投影物（bCastShadow のインスタンス）の段ごとのカリング
+// 仮想シャドウマップ（VSM）の、MegaGeometry の投影物（bCastShadow のインスタンス）のスライス（太陽の段・点光源の面）ごとのカリング
 //
 // 主の経路（cluster_cull.comp・cluster_bvh_cull.comp）のインスタンスの表（binding 1）とページの表（binding 11）を読み、
 // （インスタンス、段、クラスタ）の一覧（binding 15）を作る。主の経路の間接描画・見えた印・ページの要求・統計には何も書かない
 // （同じ判定の本体 Common/MegaGeometryCull.glsl の LOD の判定を、cullData.orthoLod = 1 の正射影で使う）。
 //
-// 1 ワークグループ（64 スレッド）= 1 つの（インスタンス、段）の連続した 64 クラスタ。dispatch は (全ワークグループ数を 2 次元に折った x, y, 段の数)。
+// 1 ワークグループ（64 スレッド）= 1 つの（インスタンス、スライス）の連続した 64 クラスタ。dispatch は (全ワークグループ数を 2 次元に折った x, y, スライスの数)。
+// スライスの投影の種類（extra.z）で判定が変わる。太陽の段（正射影）は下の「判定」、点光源の面（透視）は下の「点光源の面」。
 // ワークグループの通し番号から、影の表（binding 18）の firstGroup（そのインスタンスの最初のワークグループの通し番号）を
 // 二分探索して、受け持つインスタンスとクラスタの番号を求める。影を落とさないインスタンスはワークグループを持たない。
 // BVH を持つメッシュも、ここでは平らなクラスタの列として全部見る（BVH をたどる影の判定は後の項目）。
@@ -20,6 +21,13 @@
 //   (2) クラスタ: 境界の球が、その段の範囲・深度の範囲に入り、dirty のページを含み、LOD の判定（ShouldDrawShadowCluster）を通る。
 //       LOD は正射影: 自分の誤差 ÷ その段の texel の一辺 ≤ 1 texel（lodBias）かつ親の誤差 ÷ texel > 1 texel。
 //       子のページが非常駐なら自分を描き、ページの要求は出さない。HZB・法線の円錐・ソフトウェアラスタの振り分けは使わない。
+//
+// 点光源の面（透視のスライス）:
+//   (1)(2) の「段の範囲・深度の範囲に入る」は、球が光源の Range の内側で面の錐台（近い平面・遠い平面・4 つの側面）と交わること、
+//       「dirty のページを含む」は、球を面へ透視で写した矩形（展開と同じ VsmPerspectivePageRange）が覆うページに
+//       dirty のページがあること（面は 128 × 128 のうち一辺 origin.w ページだけを使う。階層は相対の座標 = 面のページの座標）。
+//   LOD は透視: 自分の誤差 ÷ texel ≤ 1 texel かつ親の誤差 ÷ texel > 1 texel。texel は球の最も近い点の面の軸の向きの距離 z での
+//       2z ÷ 段の解像度（光源から遠いほど粗いクラスタを選ぶ）。影のためのページの要求はしない。
 //
 // 一覧の容量を超えて書けなかったクラスタは、そのクラスタの境界が覆う、その段の割り当て済みで dirty のページへ再描画の印
 // （VSM_MEGA_PAGE_ENTRY_RETRY。binding 19 の VSM のページの表へ atomicOr する）を付ける。次フレームの引き継ぎ（vsm_allocate.comp）が
@@ -62,6 +70,9 @@ layout(std430, set = 0, binding = 17) buffer VsmStats
 const uint STAT_MEGA_INSTANCES = 8u;
 const uint STAT_MEGA_CLUSTERS = 9u;
 const uint STAT_MEGA_OVERFLOW = 10u;
+// 透視のスライス（点光源の面）だけの数（STAT_MEGA_INSTANCES・STAT_MEGA_CLUSTERS はこれを含む合計）
+const uint STAT_MEGA_POINT_INSTANCES = 56u;
+const uint STAT_MEGA_POINT_CLUSTERS = 57u;
 
 // binding 18: 影の表（インスタンスの表と同じ並び。構造は Common/VirtualShadowMapMegaCull.glsl の ShadowInstance）
 layout(std430, set = 0, binding = 18) readonly buffer ShadowInstanceBuffer
@@ -82,11 +93,26 @@ vec2 LightXY(vec3 position)
     return vec2(dot(position, megaParams.lightRight.xyz), dot(position, megaParams.lightUp.xyz));
 }
 
+bool IsPerspectiveSlice(VsmSlice slice)
+{
+    return slice.extra.z == int(VSM_SLICE_PROJECTION_PERSPECTIVE);
+}
+
 /**
- * @brief ワールドの球が、段の範囲（ライト空間の XY）と深度の範囲に入るか（球の外接の矩形で保守的に判定する）
+ * @brief ワールドの球が、スライスの範囲に入るか
+ *
+ * 太陽の段は、段の範囲（ライト空間の XY）と深度の範囲に入るか（球の外接の矩形で保守的に判定する）。
+ * 点光源の面は、Range の内側で面の錐台と交わり、球の透視像が面のページを 1 つ以上覆うか。
  */
 bool LevelOverlapsSphere(uint level, vec3 center, float radius)
 {
+    if (IsPerspectiveSlice(vsmSlices[level]))
+    {
+        ivec2 pageMin;
+        uvec2 size;
+        VsmPerspectivePageRange(vsmSlices[level], center, radius, pageMin, size);
+        return size.x != 0u && size.y != 0u;
+    }
     const float lightDepth = dot(center, megaParams.lightDirection.xyz);
     if (abs(lightDepth - megaParams.depth.x) > megaParams.depth.y + radius)
     {
@@ -101,7 +127,33 @@ bool LevelOverlapsSphere(uint level, vec3 center, float radius)
 }
 
 /**
- * @brief ワールドの球のライト空間の矩形が覆うページに、dirty で割り当て済みのものが 1 つでもあるか（dirty の階層で判定する）
+ * @brief ワールドの球が覆うページの範囲を、範囲の最小のページからの相対の座標（両端を含む）で求める。覆うページが範囲に無ければ false
+ *
+ * 太陽の段は球のライト空間の矩形が覆うページ、点光源の面は球の透視像が覆うページ（面の座標。範囲の原点は 0）。範囲の外へはみ出す分は切り捨てる。
+ */
+bool SphereRelativePageRange(VsmSlice slice, vec3 center, float radius, out ivec2 low, out ivec2 high)
+{
+    const ivec2 origin = slice.origin.xy;
+    if (IsPerspectiveSlice(slice))
+    {
+        ivec2 pageMin;
+        uvec2 size;
+        VsmPerspectivePageRange(slice, center, radius, pageMin, size);
+        low = max(pageMin - origin, ivec2(0));
+        high = min(pageMin - origin + ivec2(size) - ivec2(1), ivec2(int(VSM_MEGA_TABLE_DIMENSION) - 1));
+        return size.x != 0u && size.y != 0u && low.x <= high.x && low.y <= high.y;
+    }
+    const float pageMeters = slice.info.x;
+    const vec2 lightCenter = LightXY(center);
+    const vec2 lowPage = clamp(floor((lightCenter - vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
+    const vec2 highPage = clamp(floor((lightCenter + vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
+    low = max(ivec2(lowPage) - origin, ivec2(0));
+    high = min(ivec2(highPage) - origin, ivec2(int(VSM_MEGA_TABLE_DIMENSION) - 1));
+    return low.x <= high.x && low.y <= high.y;
+}
+
+/**
+ * @brief ワールドの球が覆うページ（SphereRelativePageRange）に、dirty で割り当て済みのものが 1 つでもあるか（dirty の階層で判定する）
  *
  * 範囲の最小のページからの相対の座標で、矩形が 2×2 以下のセルに収まる最も細かい mip から始め、そのセルのビットを調べる。
  * ビットが立っていても、セルが矩形からはみ出しているときは矩形の外の dirty のページかもしれないので、子のセルへ下りて
@@ -111,14 +163,9 @@ bool LevelOverlapsSphere(uint level, vec3 center, float radius)
 bool SphereHasDirtyPage(uint level, vec3 center, float radius)
 {
     const VsmSlice slice = vsmSlices[level];
-    const float pageMeters = slice.info.x;
-    const ivec2 origin = slice.origin.xy;
-    const vec2 lightCenter = LightXY(center);
-    const vec2 lowPage = clamp(floor((lightCenter - vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
-    const vec2 highPage = clamp(floor((lightCenter + vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
-    const ivec2 low = max(ivec2(lowPage) - origin, ivec2(0));
-    const ivec2 high = min(ivec2(highPage) - origin, ivec2(int(VSM_MEGA_TABLE_DIMENSION) - 1));
-    if (low.x > high.x || low.y > high.y)
+    ivec2 low;
+    ivec2 high;
+    if (!SphereRelativePageRange(slice, center, radius, low, high))
     {
         return false;
     }
@@ -190,13 +237,13 @@ bool SphereHasDirtyPage(uint level, vec3 center, float radius)
 void MarkRetryPages(uint level, vec3 center, float radius)
 {
     const VsmSlice slice = vsmSlices[level];
-    const float pageMeters = slice.info.x;
     const ivec2 origin = slice.origin.xy;
-    const vec2 lightCenter = LightXY(center);
-    const vec2 lowPage = clamp(floor((lightCenter - vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
-    const vec2 highPage = clamp(floor((lightCenter + vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
-    const ivec2 low = max(ivec2(lowPage) - origin, ivec2(0));
-    const ivec2 high = min(ivec2(highPage) - origin, ivec2(int(VSM_MEGA_TABLE_DIMENSION) - 1));
+    ivec2 low;
+    ivec2 high;
+    if (!SphereRelativePageRange(slice, center, radius, low, high))
+    {
+        return;
+    }
     for (int y = low.y; y <= high.y; ++y)
     {
         for (int x = low.x; x <= high.x; ++x)
@@ -219,6 +266,13 @@ void main()
     {
         return;
     }
+    // 使わないスライス（表に書いていない。ページの一辺が 0）は何も選ばない
+    const VsmSlice levelSlice = vsmSlices[level];
+    if (!(levelSlice.info.x > 0.0))
+    {
+        return;
+    }
+    const bool bPerspective = IsPerspectiveSlice(levelSlice);
     // ワークグループの通し番号（dispatch は x 方向の上限を避けて 2 次元で出す）
     const uint flatGroup = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
     if (flatGroup >= megaParams.counts.z || cullData.instanceCount == 0u)
@@ -263,6 +317,10 @@ void main()
     {
         atomicAdd(listInstanceLevels, 1u);
         atomicAdd(vsmStats[STAT_MEGA_INSTANCES], 1u);
+        if (bPerspective)
+        {
+            atomicAdd(vsmStats[STAT_MEGA_POINT_INSTANCES], 1u);
+        }
     }
 
     // (2) クラスタの判定
@@ -274,7 +332,11 @@ void main()
     g_WorldMatrix = instance.world;
     g_LODSphere = instance.lodSphere;
     g_Clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));
-    g_OrthoTexelMeters = vsmSlices[level].info.y;
+    g_OrthoTexelMeters = levelSlice.info.y;
+    g_ShadowPerspective = bPerspective;
+    g_ShadowAxisZ = levelSlice.axisZ;
+    g_ShadowTexelNdc = levelSlice.info.y;
+    g_ShadowNearPlane = levelSlice.info.w;
 
     const GPUClusterData cluster = g_Clusters.clusters[clusterIndex];
     const vec3 center = TransformClusterCenterToWorld(cluster.boundsSphere.xyz);
@@ -290,6 +352,10 @@ void main()
     {
         listEntries[slot] = uvec4(instanceIndex, level, clusterIndex, 0u);
         atomicAdd(vsmStats[STAT_MEGA_CLUSTERS], 1u);
+        if (bPerspective)
+        {
+            atomicAdd(vsmStats[STAT_MEGA_POINT_CLUSTERS], 1u);
+        }
     }
     else
     {

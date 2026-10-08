@@ -44,4 +44,60 @@ uint VsmSliceEntryIndex(VsmSlice slice, int pageX, int pageY)
     return uint(slice.origin.z) + (uint(pageY) & mask) * uint(slice.origin.w) + (uint(pageX) & mask);
 }
 
+// 透視のスライス（点光源の面）の、境界球が覆うページの範囲（面の全体を [0, 一辺のページ数) としたページの座標）。覆わなければ幅・高さが 0。
+// 展開（vsm_expand.comp）とカリング（vsm_mega_cull.comp）が同じ判定を使う。
+// CPU の SliceMasksForBounds（VirtualShadowMapCasters.h）の判定と同じ手順（CPU は倍精度で、わずかに広く取る）
+void VsmPerspectivePageRange(VsmSlice slice, vec3 center, float radius, out ivec2 pageMin, out uvec2 size)
+{
+    pageMin = ivec2(0);
+    size = uvec2(0);
+    const float range = slice.info.z;
+    const float nearPlane = slice.info.w;
+    const int pages = slice.origin.w;
+    if (!(range > nearPlane) || !(nearPlane >= 0.0) || pages <= 0 || !(radius >= 0.0))
+    {
+        return;
+    }
+    // 球の中心の面の座標（x, y = 面の接線方向、z = 面の軸の向きの距離）
+    const vec3 c = vec3(dot(center, slice.axisX.xyz) + slice.axisX.w,
+                        dot(center, slice.axisY.xyz) + slice.axisY.w,
+                        dot(center, slice.axisZ.xyz) + slice.axisZ.w);
+    // Range の外
+    const float reach = range + radius;
+    if (!(dot(c, c) <= reach * reach))
+    {
+        return;
+    }
+    // 近い平面より全部手前（光源の後ろ側）・遠い平面の外
+    if (c.z + radius < nearPlane || c.z - radius > range)
+    {
+        return;
+    }
+    // 面の錐台の 4 つの側面（|x| ≤ z, |y| ≤ z。法線 (±1, 0, -1) / √2 など）の外
+    const float side = radius * 1.4142136;
+    if (c.x - c.z > side || -c.x - c.z > side || c.y - c.z > side || -c.y - c.z > side)
+    {
+        return;
+    }
+    // 近い平面をまたぐ球は、透視で写せないので面全体
+    if (c.z - radius <= nearPlane)
+    {
+        size = uvec2(uint(pages));
+        return;
+    }
+    // 球を面の NDC へ写した矩形。原点から球へ引いた接線 x = t z の傾き t が範囲の端
+    // （t² (cz² - r²) - 2 t cx cz + (cx² - r²) = 0 の 2 根。cz > r + near > 0 なので分母は正）
+    const float r2 = radius * radius;
+    const vec2 denominator = vec2(c.z * c.z - r2);
+    const vec2 centerNdc = c.xy * c.z;
+    const vec2 spread = radius * sqrt(max(c.xy * c.xy + vec2(c.z * c.z - r2), vec2(0.0)));
+    const vec2 ndcLow = (centerNdc - spread) / denominator;
+    const vec2 ndcHigh = (centerNdc + spread) / denominator;
+    const float margin = 1.0e-4;
+    const ivec2 low = max(ivec2(floor((ndcLow - vec2(margin)) * (0.5 * float(pages)) + vec2(0.5 * float(pages)))), ivec2(0));
+    const ivec2 high = min(ivec2(floor((ndcHigh + vec2(margin)) * (0.5 * float(pages)) + vec2(0.5 * float(pages)))), ivec2(pages - 1));
+    pageMin = low;
+    size = uvec2(max(high - low + ivec2(1), ivec2(0)));
+}
+
 #endif // VIRTUAL_SHADOW_MAP_SLICE_GLSL

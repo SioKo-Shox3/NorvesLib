@@ -97,13 +97,14 @@
 - notes: 2026-10-08 親（段9の開始時に詳しくした）。キューブの経路は断片で距離を書くので早期 Z が効かない。VSM の描画は深度の比較を使わず `atomicMin` なので同じ。危険地帯（描画パス）。
 
 ## VTG9-VSM-POINT-MEGA: MegaGeometry の投影物を点光源の面ごとにカリングして描く
-- status: todo
+- status: done
 - done-when: MegaGeometry の投影物（`bCastShadow`）を点光源の面のスライスごとに GPU で選んで描く。インスタンスの判定は境界球と Range・面の錐台・dirty のページの階層。クラスタの LOD は透視（自分の誤差 ÷ その距離の面の texel（2z ÷ 段の解像度）≤ 1 texel、親の誤差 ÷ texel > 1 texel）。HZB・法線の円錐・ソフトウェアラスタの振り分けは使わず、影のためのページの要求はしない。選んだクラスタは VTG9-VSM-POINT-RASTER の展開・描画で描く。1 面あたりの描画の上限（今のキューブの `PointShadowMaxMegaDrawsPerFace` = 8）は持たない。RenderGraphCompileTest で、点光源のスライスの cull が太陽の段の cull と同じ流れに入り、主の経路のバッファへ書かないことを確かめる。`VirtualShadowMapVulkanTest` か CPU の写しのテストで、透視の LOD の選び方（光源から遠いほど粗い段、選んだクラスタが一つの切り口）を確かめ、変異（親の条件を外す）で落ちることを記録する。`VSM_MEGA_CULL` に点光源の分を足す。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|GeometryPageRequestVulkanTest|RenderGraphCompileTest)$"`
 - stop-when: 1 反復で閉じなければ、cull（選ぶまで）で一度コミットし、描画へのつなぎを `VTG9-VSM-POINT-MEGA-DRAW` として TASKS.md に足す。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-08 親（段9の開始時に詳しくした）。負荷モード（`--stress-mega-instances=300`）でキューブの 1 面あたりの上限（8）を超えて省かれる 1032 回は、VSM の描画では起きない（半透明のために残すキューブの描画では残る）。危険地帯（描画パス）。
+- 結果: 2026-10-08 完了。`vsm_mega_cull.comp` が透視のスライス（点光源の面）も太陽の段と同じ 1 回の dispatch で処理する（スライスの投影の種類で分岐）。インスタンス・クラスタの判定は展開と共有の `VsmPerspectivePageRange`（Common/VirtualShadowMapSlice.glsl へ移した。Range・近い平面・遠い平面・4 側面で球を切り、透視像が覆うページの矩形）で、dirty の階層は面の座標のページ（一辺 origin.w）を引く（`vsm_dirty_mips.comp` はページの表の一辺の外を読まない）。LOD は透視: texel = 球の最も近い点の面の軸の距離 z での 2z ÷ 段の解像度（`ShadowTexelMetersAtSphere`。自分の球・親の球・メッシュ共通の球でそれぞれ求める）で、自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1。HZB・円錐・ソフトラスタ・ページの要求は無く、1 面あたりの描画の上限も無い。`VirtualShadowMapMegaCull` は外から渡すスライスの表があれば太陽が無効でも記録し、Pass は点光源の VSM のとき dirty の階層をスライスの数で作り、スライスの表を渡して太陽が無効な夜のフレームも記録する（選んだクラスタは VTG9-VSM-POINT-RASTER の展開・描画の流れに乗る）。統計の語 56・57（`StatMegaPointInstances`・`StatMegaPointClusters`。`STATS_WORD_COUNT` 58）を足し、`VSM_MEGA_CULL` に `point_instances` `point_clusters` を足した。`VirtualShadowMapVulkanTest` のケース J5（1 灯 × 6 面 × 6 段、太陽なし、面 0 の軸の上 12 m と 40 m に同じ木を置く）: 光源から遠いほど・段が粗いほど粗いクラスタ（12 m は葉 8・4・2・根 1×3、40 m は 2・根 1×5）、一つの切り口、面のページの表（一辺 32〜1）の dirty の階層が倍精度の参照と全語一致、面 0 以外・Range の外・影を落とさない物は選ばれない、溢れたクラスタの範囲のページに再描画の印が付く。変異（親の条件を外す）で J5-1 が落ちた（`verify-VTG9-VSM-POINT-MEGA-mutation.txt`）後、戻して全件通過（`-4.txt`）。RenderGraphCompileTest に `TestVirtualShadowMapPassCullsMegaCastersForPointFacesInTheSameFlow`（太陽あり・なしで、カリングの dispatch が 1 組・z がスライスの数・主の経路のバッファへ束縛もバリアもしない・点光源のスライスの表が渡る）を足した。期待値の書き換えは `VSM_Stats` の大きさ 224 → 232 と統計の語の並びの表明だけ。MegaGeometry のクラスタの記録から点光源の面の物理ページへ描く GPU の通しの検査は、ケース R（手続きの塊）とケース K（太陽）に分かれており、点光源 × MegaGeometry の通しは VTG9-VSM-POINT-GPU-TIME の撮影（`VSM_MEGA_CULL` の point_*）で初めて見る。
 
 ## VTG9-VSM-POINT-SAMPLE: 照明で点光源の VSM を読み、影の測定でも点光源を測る
 - status: todo

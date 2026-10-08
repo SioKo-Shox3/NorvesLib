@@ -217,15 +217,29 @@ namespace NorvesLib::Core::Rendering
         }
 
         // MegaGeometry の投影物のカリングの定数を書く。クリップマップが使えなければ false
+        // クリップマップが使えなくても bAllowNoSun（外から渡したスライスの表で、太陽の段を使わない）なら、基底・深度の範囲を既定にして true
+        // （点光源の面の透視のスライスはこの値を読まず、スライスの行列で判定する。太陽の段の欄は表が空なので何も選ばれない）
         bool FillMegaCullParams(const VirtualShadowMapClipmap* clipmap,
                                 uint32_t sliceCount,
                                 uint32_t listCapacity,
                                 uint32_t totalGroups,
+                                bool bAllowNoSun,
                                 GPUMegaCullParams& params)
         {
             if (!IsUsableClipmap(clipmap))
             {
-                return false;
+                if (!bAllowNoSun)
+                {
+                    return false;
+                }
+                params.lightRight[0] = 1.0f;
+                params.lightUp[1] = 1.0f;
+                params.lightDirection[2] = 1.0f;
+                params.depth[1] = 0.5f;
+                params.counts[0] = sliceCount;
+                params.counts[1] = listCapacity;
+                params.counts[2] = totalGroups;
+                return true;
             }
             params.lightRight[0] = clipmap->LightRight.x;
             params.lightRight[1] = clipmap->LightRight.y;
@@ -795,6 +809,7 @@ namespace NorvesLib::Core::Rendering
                                 capacity > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max()
                                                                                 : static_cast<uint32_t>(capacity),
                                 dispatch.TotalGroups,
+                                dispatch.Slices != nullptr,
                                 params))
         {
             return false;
@@ -892,7 +907,8 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool VirtualShadowMapMegaCullStatsReporter::Report(uint32_t instances, uint32_t clusters, uint32_t overflow)
+    bool VirtualShadowMapMegaCullStatsReporter::Report(
+        uint32_t instances, uint32_t clusters, uint32_t overflow, uint32_t pointInstances, uint32_t pointClusters)
     {
         ++m_ReportsSinceLog;
         if (m_bLogged && m_ReportsSinceLog < LogIntervalReports)
@@ -901,7 +917,13 @@ namespace NorvesLib::Core::Rendering
         }
         m_bLogged = true;
         m_ReportsSinceLog = 0;
-        NORVES_LOG_INFO("VirtualShadowMapMegaCull", "VSM_MEGA_CULL instances=%u clusters=%u overflow=%u", instances, clusters, overflow);
+        NORVES_LOG_INFO("VirtualShadowMapMegaCull",
+                        "VSM_MEGA_CULL instances=%u clusters=%u overflow=%u point_instances=%u point_clusters=%u",
+                        instances,
+                        clusters,
+                        overflow,
+                        pointInstances,
+                        pointClusters);
         return true;
     }
 

@@ -23,8 +23,11 @@
 //            親のグループの誤差を親の球から投影した値がしきい値を超えるクラスタを描く。
 //            同じグループのクラスタは球と誤差が同じなので同じ判断になり、どの切り方も閉じたメッシュになる。
 //   それ以外（v0・実行時に構築した階層・手続きの球）: 従来の段の選び方（ShouldDrawCluster）。
-// どちらも、cullData.orthoLod = 1（VSM の影。vsm_mega_cull.comp）のときは正射影の選び方になる: 誤差のワールドの長さを
-// g_OrthoTexelMeters（その段の texel の一辺）で割った大きさを lodBias（texel）と比べる。透視の投影は使わない。
+// どちらも、cullData.orthoLod = 1（VSM の影。vsm_mega_cull.comp）のときは影の選び方になる: 誤差のワールドの長さを
+// texel の一辺で割った大きさを lodBias（texel）と比べる。主のカメラの透視の投影は使わない。
+// texel の一辺は、太陽の段（正射影）では g_OrthoTexelMeters（その段の定数）、点光源の面（g_ShadowPerspective）では
+// 面の軸の向きの距離 z での 2z ÷ 段の解像度（球の最も近い点の z。ProjectBakedError が最も近い点までの距離を使うのと同じ向きで、
+// 自分の球・親の球・メッシュ共通の球のそれぞれで求める。親の球は子の球を包むので、親の値は子以上のまま切り口が閉じる）。
 //
 // ページの常駐（焼き込み済みの階層だけ）:
 //   頂点・インデックスの中身はページ（128 KiB）ごとに常駐し、ページの表（binding 11）が常駐を持つ。クラスタの記録と
@@ -275,6 +278,13 @@ vec4 g_LODSphere;
 ClusterArray g_Clusters;
 // 正射影の LOD（cullData.orthoLod = 1）で、誤差を texel へ直すための texel の一辺（m）。影の段ごとに、段を決める側が main の最初に入れる
 float g_OrthoTexelMeters = 1.0;
+// 点光源の面（透視のスライス）の LOD。g_ShadowPerspective が真のとき、texel の一辺は面の軸の向きの距離から求める。
+// g_ShadowAxisZ = スライスの axisZ（xyz = 面の軸の向き、w = 光源の位置のずれ。dot(xyz, 位置) + w が軸の距離）、
+// g_ShadowTexelNdc = texel の NDC の幅（2 / 段の解像度）、g_ShadowNearPlane = 近い平面の距離（m）。影の段ごとに main の最初に入れる
+bool g_ShadowPerspective = false;
+vec4 g_ShadowAxisZ = vec4(0.0);
+float g_ShadowTexelNdc = 0.0;
+float g_ShadowNearPlane = 0.0;
 
 // ========================================
 // カリング関数
@@ -419,14 +429,37 @@ float ProjectBakedError(vec3 localCenter, float localRadius, float localError)
 }
 
 /**
- * @brief 正射影（VSM の影）で、メッシュの中の誤差（ローカルの長さ）を texel へ直した大きさ
+ * @brief ワールドの球の位置での、影の texel の一辺（m）
  *
- * 正射影は距離で伸びないので、透視の ProjectBakedError・ComputePerspectiveStretch は使わない。誤差のワールドの長さ
- * （ローカルの長さ × ワールドの最大の拡大率）を、その段の texel の一辺で割る。親の球・視点に依らない。
+ * 太陽の段（正射影）は距離で伸びないので g_OrthoTexelMeters のまま。点光源の面（g_ShadowPerspective）は、球の最も近い点の
+ * 面の軸の向きの距離 z（中心の z − 半径。近い平面より手前にはしない）での 2z ÷ 段の解像度。
  */
-float ProjectBakedErrorOrtho(float localError)
+float ShadowTexelMetersAtSphere(vec3 worldCenter, float worldRadius)
 {
-    return localError * ComputeWorldRadiusScale() / max(g_OrthoTexelMeters, 1e-9);
+    if (!g_ShadowPerspective)
+    {
+        return g_OrthoTexelMeters;
+    }
+    const float axial = dot(g_ShadowAxisZ.xyz, worldCenter) + g_ShadowAxisZ.w;
+    return g_ShadowTexelNdc * max(axial - worldRadius, g_ShadowNearPlane);
+}
+
+/**
+ * @brief 影（VSM）で、メッシュの中の誤差（ローカルの長さ）を texel へ直した大きさ
+ *
+ * 主のカメラの透視の ProjectBakedError・ComputePerspectiveStretch は使わない。誤差のワールドの長さ
+ * （ローカルの長さ × ワールドの最大の拡大率）を、その球の位置での texel の一辺で割る。
+ * 太陽の段では球・視点に依らず一定。点光源の面では、球が光源から遠いほど texel が大きく、同じ誤差でも小さな値になる。
+ */
+float ProjectBakedErrorOrtho(vec3 localCenter, float localRadius, float localError)
+{
+    const float worldScale = ComputeWorldRadiusScale();
+    float texel = g_OrthoTexelMeters;
+    if (g_ShadowPerspective)
+    {
+        texel = ShadowTexelMetersAtSphere(TransformClusterCenterToWorld(localCenter), localRadius * worldScale);
+    }
+    return localError * worldScale / max(texel, 1e-9);
 }
 
 /**
@@ -500,7 +533,7 @@ bool ShouldDrawBakedCluster(GPUClusterData cluster, uint pageTableBase, out uint
     float selfError;
     if (bOrtho)
     {
-        selfError = ProjectBakedErrorOrtho(uintBitsToFloat(cluster.lodInfo.y));
+        selfError = ProjectBakedErrorOrtho(cluster.boundsSphere.xyz, cluster.boundsSphere.w, uintBitsToFloat(cluster.lodInfo.y));
     }
     else
     {
@@ -524,7 +557,7 @@ bool ShouldDrawBakedCluster(GPUClusterData cluster, uint pageTableBase, out uint
     float parentError;
     if (bOrtho)
     {
-        parentError = ProjectBakedErrorOrtho(uintBitsToFloat(cluster.bakedInfo.y));
+        parentError = ProjectBakedErrorOrtho(cluster.parentSphere.xyz, cluster.parentSphere.w, uintBitsToFloat(cluster.bakedInfo.y));
     }
     else
     {
@@ -559,8 +592,16 @@ bool ShouldDrawCluster(GPUClusterData cluster, vec3 center)
     float errorScale;
     if (cullData.orthoLod != 0u)
     {
-        // 正射影（VSM の影）: 誤差 1（ローカルの長さ）= ワールドの最大の拡大率の長さ = texel の何個か。視点からの距離に依らない
-        errorScale = ComputeWorldRadiusScale() / max(g_OrthoTexelMeters, 1e-9);
+        // VSM の影: 誤差 1（ローカルの長さ）= ワールドの最大の拡大率の長さ = texel の何個か。
+        // 太陽の段は視点からの距離に依らない。点光源の面は、メッシュ共通の球（無ければクラスタの中心）の最も近い点での texel
+        float texel = g_OrthoTexelMeters;
+        if (g_ShadowPerspective)
+        {
+            texel = g_LODSphere.w > 0.0
+                        ? ShadowTexelMetersAtSphere(TransformClusterCenterToWorld(g_LODSphere.xyz), g_LODSphere.w * ComputeWorldRadiusScale())
+                        : ShadowTexelMetersAtSphere(center, 0.0);
+        }
+        errorScale = ComputeWorldRadiusScale() / max(texel, 1e-9);
     }
     else if (g_LODSphere.w > 0.0)
     {

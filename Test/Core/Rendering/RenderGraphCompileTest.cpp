@@ -6324,7 +6324,7 @@ namespace
             {"VSM_PageTable", 10ull * 128ull * 128ull * 4ull},
             {"VSM_RequestBits", 10ull * 128ull * 128ull / 8ull},
             {"VSM_FreeList", (5120ull * 3ull + 1ull) * 4ull},
-            {"VSM_Stats", 224ull},
+            {"VSM_Stats", 232ull},
             {"VSM_DirtyList", (5120ull + 4ull) * 4ull},
         };
         for (const Expected& entry : expected)
@@ -7343,9 +7343,10 @@ namespace
         assert(VirtualShadowMap::RequestBitsBytes(40u) == 40ull * 128ull * 128ull / 8ull &&
                VirtualShadowMap::RequestWords(256u) == 256u * 128u * 128u / 32u);
         assert(VirtualShadowMap::MegaDirtyBitsBytes(40u) == 40ull * VirtualShadowMap::MEGA_DIRTY_WORDS_PER_LEVEL * 4ull);
-        // 33 番目以降の使用の有無の語の後ろに、点光源の要求・割り当ての語が続く（最後の語が点光源の割り当て）
+        // 33 番目以降の使用の有無の語の後ろに、点光源の要求・割り当ての語、続けて MegaGeometry のカリングの点光源の分の語が続く（最後の語が点光源のクラスタ）
         assert(VirtualShadowMap::StatPointRequested == VirtualShadowMap::StatLevelsUsedBeyond + 1u &&
-               VirtualShadowMap::STATS_WORD_COUNT == VirtualShadowMap::StatPointAllocated + 1u);
+               VirtualShadowMap::StatMegaPointInstances == VirtualShadowMap::StatPointAllocated + 1u &&
+               VirtualShadowMap::STATS_WORD_COUNT == VirtualShadowMap::StatMegaPointClusters + 1u);
 
         const VirtualShadowMapClipmap clipmap = MakeCasterClipmap();
         constexpr uint32_t sliceCount = 40u;
@@ -7548,7 +7549,10 @@ namespace
     //   B: 影を落とす。ライトの右向きに 5000 m（どの段の範囲にも入らない）
     //   C: 影を落とさない
     //   スキニング: 影を落とす。3 頂点・三角形 1 つ。描画の境界は原点の近く
-    void BuildVsmCasterScene(VsmCasterScene& scene, bool bWithClipmap, bool bSplitSkinnedSubmeshes = false)
+    void BuildVsmCasterScene(VsmCasterScene& scene,
+                             bool bWithClipmap,
+                             bool bSplitSkinnedSubmeshes = false,
+                             PointShadowMethod pointMethod = PointShadowMethod::Cube)
     {
         VsmRun& run = scene.Run;
         run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
@@ -7644,6 +7648,7 @@ namespace
         scene.Skinning.SetShadowCasterOutput(true);
         assert(scene.Skinning.Initialize(context));
         scene.Pass.SetSkinningComputePass(&scene.Skinning);
+        scene.Pass.SetPointShadowMethod(pointMethod);
         assert(scene.Pass.Initialize(context));
         assert(scene.Pass.IsActive());
     }
@@ -8000,12 +8005,15 @@ namespace
     };
 
     // extraCasters: 影を落とすインスタンスを、A と同じメッシュで何個足すか（CSM のインスタンスごとの定数バッファの数を超える規模を作る）
-    void BuildVsmMegaScene(VsmMegaScene& scene, bool bCasters = true, uint32_t extraCasters = 0)
+    void BuildVsmMegaScene(VsmMegaScene& scene,
+                           bool bCasters = true,
+                           uint32_t extraCasters = 0,
+                           PointShadowMethod pointMethod = PointShadowMethod::Cube)
     {
         VsmRun& run = scene.Base.Run;
         run.Device->EnableMegaGeometryBatchCapabilities();
         run.Device->EnableDrawIndirectCount();
-        BuildVsmCasterScene(scene.Base, true);
+        BuildVsmCasterScene(scene.Base, true, false, pointMethod);
         RenderResources& resources = scene.Base.Resources;
         resources.MegaGeometry().SetOcclusionCullingEnabled(true);
         ViewRenderContext& context = run.Context;
@@ -9084,6 +9092,183 @@ namespace
             assert(logs.Count("VSM_MEGA_CULL") == 2u);
             ShutdownVsmMegaScene(noCasters);
 
+            logger.RemoveSink(&logs);
+            logger.Shutdown();
+        }
+#endif
+    }
+
+    // 点光源の VSM（--point-shadow-method=vsm）の MegaGeometry の投影物のカリング: 点光源の面のスライスが太陽の段と同じカリングの流れ
+    // （階層 → 選択 → クラスタの記録 → 展開 → 描画）に入り、スライスの数だけ dispatch の z を広げる。主の経路のバッファへは書かない。
+    // 太陽が無効な（夜の）フレームでも、点光源の面だけを対象に記録する
+    void TestVirtualShadowMapPassCullsMegaCastersForPointFacesInTheSameFlow()
+    {
+        const auto vsmSequenceOf = [](const VsmMegaScene& scene) {
+            Container::VariableArray<char> sequence;
+            const FakeCommandList& commandList = scene.Base.Run.CommandList;
+            for (size_t index = scene.MainSequenceLength; index < commandList.CallSequence.size(); ++index)
+            {
+                sequence.push_back(commandList.CallSequence[index]);
+            }
+            return sequence;
+        };
+        // 太陽だけ（点光源はキューブ）の流れの並び。点光源の VSM でも、MegaGeometry のカリングの dispatch の並びは変わらない
+        Container::VariableArray<char> sunSequence;
+        {
+            VsmMegaScene scene;
+            BuildVsmMegaScene(scene);
+            RunVsmCasterViewport(scene.Base, 0, 0);
+            assert(scene.Base.Pass.WasMegaCullRecorded());
+            sunSequence = vsmSequenceOf(scene);
+            ShutdownVsmMegaScene(scene);
+        }
+
+        // 光源 (1, 2, -6)・Range 30。MegaGeometry のインスタンス A（境界の中心 (1, 2, 3)・半径 4.3）が Range の内側に入る
+        PointShadowSnapshot snapshot;
+        snapshot.LightCount = 1u;
+        snapshot.Lights[0].LightId = 7u;
+        snapshot.Lights[0].Position = NorvesLib::Math::Vector3(1.0f, 2.0f, -6.0f);
+        snapshot.Lights[0].Range = 30.0f;
+        const uint32_t sliceCount = VirtualShadowMap::LEVEL_COUNT + PointShadowMaxLights * PointShadowFaceCount * VirtualShadowMapPointSettings{}.MipCount;
+
+        for (const bool bSun : {true, false})
+        {
+            GVsmMegaCullUniformUpdates.clear();
+            GVsmMegaCullParamsUpdates.clear();
+            GVsmMegaCullSliceUpdates.clear();
+            VsmMegaScene scene;
+            BuildVsmMegaScene(scene, true, 0, PointShadowMethod::Vsm);
+            scene.Base.Run.Context.SnapshotPointShadows = &snapshot;
+            if (!bSun)
+            {
+                scene.Base.Run.Context.PhysicalLighting.SunClipmap = VirtualShadowMapClipmap{};
+            }
+            FakeCommandList& commandList = scene.Base.Run.CommandList;
+            RunVsmCasterViewport(scene.Base, 0, 0);
+            assert(scene.Base.Pass.WasMarked() && scene.Base.Pass.WasRasterRecorded());
+            assert(scene.Base.Pass.WasMegaCullRecorded() && scene.Base.Pass.WasMegaDrawRecorded());
+
+            // 流れ: 点光源の分の印付けで記録の数は変わりうるので、並び全体は比べない。カリングの 3 つの dispatch の並びを下で確かめる
+            assert(!vsmSequenceOf(scene).empty() && !sunSequence.empty());
+            // カリングの dispatch は 1 組だけ（階層・選択・クラスタの記録）。点光源の面のために別の dispatch を足さない
+            size_t dirtyDispatch = commandList.DispatchBindings.size();
+            size_t cullDispatch = commandList.DispatchBindings.size();
+            size_t chunkDispatch = commandList.DispatchBindings.size();
+            uint32_t dirtyCount = 0;
+            uint32_t cullCount = 0;
+            uint32_t chunkCount = 0;
+            for (size_t index = scene.MainDispatchCount; index < commandList.DispatchBindings.size(); ++index)
+            {
+                const Container::VariableArray<BoundBufferName>& bindings = commandList.DispatchBindings[index];
+                if (bindings.size() == 4u && BoundBufferNameAt(bindings, 17u) != nullptr && IsDebugName(BoundBufferNameAt(bindings, 17u), "VsmMegaCullSlices"))
+                {
+                    dirtyDispatch = index;
+                    ++dirtyCount;
+                }
+                if (bindings.size() == 10u && BoundBufferNameAt(bindings, 20u) != nullptr && IsDebugName(BoundBufferNameAt(bindings, 20u), "VsmMegaCullSlices"))
+                {
+                    cullDispatch = index;
+                    ++cullCount;
+                }
+                if (bindings.size() == 5u && BoundBufferNameAt(bindings, 19u) != nullptr && IsDebugName(BoundBufferNameAt(bindings, 19u), "VsmMega_Chunks"))
+                {
+                    chunkDispatch = index;
+                    ++chunkCount;
+                }
+            }
+            assert(dirtyCount == 1u && cullCount == 1u && chunkCount == 1u);
+            assert(dirtyDispatch < cullDispatch && cullDispatch < chunkDispatch);
+            // スライスの数だけ z を広げる（太陽の 10 段 + 4 灯 × 6 面 × 6 段）。ワークグループは影を落とす 2 インスタンスの 2 つ
+            assert(commandList.DispatchGroups[dirtyDispatch].X == 16u && commandList.DispatchGroups[dirtyDispatch].Y == 16u &&
+                   commandList.DispatchGroups[dirtyDispatch].Z == sliceCount);
+            assert(commandList.DispatchGroups[cullDispatch].X == 2u && commandList.DispatchGroups[cullDispatch].Y == 1u &&
+                   commandList.DispatchGroups[cullDispatch].Z == sliceCount);
+            assert(commandList.DispatchGroups[chunkDispatch].X == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY / 64u);
+            // 区間は VsmCullMega の 1 つ（点光源の分も同じ区間に入る）
+            {
+                uint32_t cullScopeCount = 0;
+                for (const auto& scope : commandList.GpuScopes)
+                {
+                    cullScopeCount += scope.Name == "VsmCullMega" ? 1u : 0u;
+                }
+                assert(cullScopeCount == 1u);
+            }
+            // 束縛は太陽の段のカリングと同じで、主の経路の出力・見えた印・ページの要求は束縛しない
+            for (const size_t dispatch : {dirtyDispatch, cullDispatch, chunkDispatch})
+            {
+                for (const BoundBufferName& entry : commandList.DispatchBindings[dispatch])
+                {
+                    assert(!IsMainPathOutputBufferName(entry.Name));
+                }
+            }
+            const Container::VariableArray<BoundBufferName>& cullBindings = commandList.DispatchBindings[cullDispatch];
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 1u), "MegaGeometry_InstanceTable"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 11u), "MegaGeometry_PageTable"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 15u), "VsmMega_List"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 16u), "VsmMega_DirtyBits"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 17u), "VSM_Stats"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 19u), "VSM_PageTable"));
+            for (size_t index = scene.MainBarrierCount; index < commandList.Barriers.size(); ++index)
+            {
+                const BarrierEvent& barrier = commandList.Barriers[index];
+                assert(barrier.Kind != RGBarrierKind::Buffer || barrier.Buffer == nullptr ||
+                       !IsMainPathOutputBufferName(static_cast<const FakeBuffer*>(barrier.Buffer)->GetDesc().DebugName));
+            }
+            // 階層は全スライスぶん 0 で埋める（点光源の面の分も）。一覧は頭の 4 語
+            assert(commandList.VsmMegaFills.size() == 2u);
+            assert(IsDebugName(commandList.VsmMegaFills[0].BufferName, "VsmMega_DirtyBits") &&
+                   commandList.VsmMegaFills[0].SizeBytes == VirtualShadowMap::MegaDirtyBitsBytes(sliceCount));
+
+            // 定数: 太陽の段のカリングと同じ（LOD の許容 1 texel・正射影の印）。スライスの数と、点光源の面の透視のスライスの表
+            assert(GVsmMegaCullUniformUpdates.size() == 1u && GVsmMegaCullParamsUpdates.size() == 1u);
+            {
+                MegaGeometry::CullUniformData uniform;
+                assert(GVsmMegaCullUniformUpdates[0].size() == sizeof(uniform));
+                std::memcpy(&uniform, GVsmMegaCullUniformUpdates[0].data(), sizeof(uniform));
+                assert(uniform.OrthoLod == 1u && uniform.LODBias == 1.0f && uniform.PageRequestCapacity == 0u);
+                assert(uniform.InstanceCount == 3u && uniform.TotalGroupCount == 2u);
+                uint32_t counts[4] = {};
+                assert(GVsmMegaCullParamsUpdates[0].size() == 80u);
+                std::memcpy(counts, GVsmMegaCullParamsUpdates[0].data() + 64, sizeof(counts));
+                assert(counts[0] == sliceCount && counts[1] == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY && counts[2] == 2u);
+
+                assert(GVsmMegaCullSliceUpdates.size() == 1u && GVsmMegaCullSliceUpdates[0].size() == sizeof(GPUVsmSlice) * sliceCount);
+                GPUVsmSlice slices[VirtualShadowMapMaxSlices] = {};
+                std::memcpy(slices, GVsmMegaCullSliceUpdates[0].data(), GVsmMegaCullSliceUpdates[0].size());
+                const VirtualShadowMapPointLights lights = BuildVirtualShadowMapPointLights(snapshot, VirtualShadowMapPointSettings{}, VirtualShadowMap::LEVEL_COUNT);
+                GPUVsmSlice expected[VirtualShadowMapMaxSlices] = {};
+                assert(BuildVirtualShadowMapPointSlices(lights, expected) == 36u);
+                for (uint32_t index = VirtualShadowMap::LEVEL_COUNT; index < VirtualShadowMap::LEVEL_COUNT + 36u; ++index)
+                {
+                    assert(slices[index].extra[2] == VirtualShadowMapSliceProjectionPerspective);
+                    assert(std::memcmp(&slices[index], &expected[index], sizeof(GPUVsmSlice)) == 0);
+                }
+                // 太陽の段は正射影。太陽が無効なら、太陽の段の分は空（ページの一辺 0）で何も選ばれない
+                for (uint32_t level = 0; level < VirtualShadowMap::LEVEL_COUNT; ++level)
+                {
+                    assert(slices[level].extra[2] != VirtualShadowMapSliceProjectionPerspective);
+                    assert(bSun ? slices[0].info[0] > 0.0f : slices[level].info[0] == 0.0f);
+                }
+            }
+            ShutdownVsmMegaScene(scene);
+        }
+
+#if NORVES_ENABLE_LOGGING
+        // VSM_MEGA_CULL に、点光源の面だけの（インスタンス、スライス）とクラスタの数を足す（instances・clusters はその合計）
+        {
+            Logging::LogConfig logConfig;
+            logConfig.minLevel = Logging::LogLevel::Trace;
+            logConfig.outputType = Logging::LogOutput::None;
+            logConfig.bAsyncLogging = false;
+            logConfig.bAutoFlush = false;
+            Logging::Logger& logger = Logging::Logger::GetInstance();
+            logger.Shutdown();
+            assert(logger.Initialize(logConfig));
+            VsmLogCollector logs;
+            logger.AddSink(&logs);
+            VirtualShadowMapMegaCullStatsReporter reporter;
+            assert(reporter.Report(5, 9, 1, 3, 4));
+            assert(logs.Count("VSM_MEGA_CULL instances=5 clusters=9 overflow=1 point_instances=3 point_clusters=4") == 1);
             logger.RemoveSink(&logs);
             logger.Shutdown();
         }
@@ -14618,6 +14803,7 @@ int main()
     TestLightingReadsVsmWhenPublished();
     TestLightingShaderCountsVsmFallbackIndependentlyOfVtFeedback();
     TestVirtualShadowMapMegaDrawDoesNotUseCsmUniformSlots();
+    TestVirtualShadowMapPassCullsMegaCastersForPointFacesInTheSameFlow();
     TestVirtualShadowMapMegaCullStatsReporterLogsEvery60Reports();
     TestVisibilityMergeKeyBufferFollowsResolutionAndRetiresOldBuffers();
     TestMaterialTileListCapacityNeverOverflowsAtDefault();

@@ -38,6 +38,11 @@ void main()
         return;
     }
     const VsmSlice slice = vsmSlices[level];
+    // 使うのはスライスのページの表の一辺（太陽の段は 128、点光源の面は面の段のページの数）の内側だけ。外は別の欄を指す
+    if (torus.x >= uint(slice.origin.w) || torus.y >= uint(slice.origin.w))
+    {
+        return;
+    }
     const uint entry = pageTable[uint(slice.origin.z) + torus.y * uint(slice.origin.w) + torus.x];
     if ((entry & VSM_MEGA_PAGE_ENTRY_ALLOCATED) == 0u || (entry & VSM_MEGA_PAGE_ENTRY_DIRTY) == 0u)
     {

@@ -120,8 +120,10 @@ namespace NorvesLib::Core::Rendering
          * 33 番目以降のスライスに要求があれば 1（集合を溢れさせないため）。
          * StatPointRequested・StatPointAllocated は、投影の種類が透視のスライス（点光源の面）だけの要求・割り当ての数
          * （StatRequested・StatAllocated は太陽と点光源の合計）。
+         * StatMegaPointInstances・StatMegaPointClusters は、MegaGeometry の投影物のカリングのうち透視のスライス（点光源の面）だけの
+         * （インスタンス、スライス）の数と書いたクラスタの数（StatMegaInstances・StatMegaClusters はこれを含む合計）。
          */
-        constexpr uint32_t STATS_WORD_COUNT = 56;
+        constexpr uint32_t STATS_WORD_COUNT = 58;
         constexpr uint64_t STATS_BYTES = static_cast<uint64_t>(STATS_WORD_COUNT) * sizeof(uint32_t);
         enum StatWord : uint32_t
         {
@@ -154,10 +156,12 @@ namespace NorvesLib::Core::Rendering
             StatLevelsUsedBeyond = StatScratchAgeHistogram + 32,
             StatPointRequested = StatLevelsUsedBeyond + 1,
             StatPointAllocated = StatLevelsUsedBeyond + 2,
+            StatMegaPointInstances = StatLevelsUsedBeyond + 3,
+            StatMegaPointClusters = StatLevelsUsedBeyond + 4,
         };
         /** @brief 要求されなかったフレーム数ごとの数の語の数（年齢 0〜31） */
         constexpr uint32_t STATS_AGE_BINS = 32;
-        static_assert(STATS_WORD_COUNT == StatScratchAgeHistogram + STATS_AGE_BINS + 3u && StatPointAllocated == STATS_WORD_COUNT - 1u,
+        static_assert(STATS_WORD_COUNT == StatScratchAgeHistogram + STATS_AGE_BINS + 5u && StatMegaPointClusters == STATS_WORD_COUNT - 1u,
                       "統計の語の数が並びと合っていること");
         /** @brief 要求されなくなったページを持ち越すフレーム数（これを超えて要求が無ければ空きへ戻す） */
         constexpr uint32_t CACHE_CARRY_FRAMES = 30;

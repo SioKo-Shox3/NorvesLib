@@ -18,6 +18,10 @@
 //     段の texel が 2 倍になるごとに選ばれるクラスタが粗くなり（葉 8・中間 4・2・根 1）、どの葉から根への道でもちょうど 1 つが選ばれること
 //     （自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）、インスタンスの判定（段の範囲・深度の範囲・dirty のページの階層）、
 //     出力の一覧の溢れ・統計を確かめる。dirty の階層は CPU の参照と全語一致する。
+//   ケース J5（点光源の面のカリング。透視のスライス）: 1 灯 × 6 面 × 6 段のスライスの表を外から渡し（太陽なし）、同じ木のクラスタを面 0 の軸の上
+//     12 m と 40 m に置いて本番のカリングに通す。texel は球の最も近い点の面の軸の距離 z での 2z ÷ 段の解像度で、光源から遠いほど・段が粗いほど粗いクラスタ
+//     （葉 8・4・2・根 1）が選ばれ、どの葉から根への道でもちょうど 1 つが選ばれること、面のページの表（一辺 32〜1）の dirty の階層が参照と全語一致すること、
+//     面 0 以外・Range の外・影を落とさないインスタンスは選ばれないこと、溢れたクラスタの範囲のページに再描画の印が付くことを確かめる。
 //   ケース K（MegaGeometry のクラスタの記録の経路）: ケース F と同じ場面を、形ごとに MegaGeometry のクラスタ 1 つにして、本番の流れ
 //     （印付け → 割り当て → 消去 → カリング → クラスタの記録 → 展開 → 描画）に通し、物理プールが形の和の参照とケース F の手続きの経路と全 texel で一致すること、
 //     GPU が作ったクラスタの記録（種類・インデックスの先頭・頂点の基点・アドレス・段の集合・変換・境界）と展開の引数が一覧の件と整合することを確かめる。
@@ -1902,7 +1906,8 @@ namespace
             return index == 0u ? 3u : (index <= 2u ? 2u : (index <= 6u ? 1u : 0u));
         }
 
-        void BuildClusters(Core::Rendering::MegaGeometry::GPUClusterData (&clusters)[ClusterCount])
+        // errorUnit は葉の誤差の 1/0.9（高さ h の誤差は 0.9 × errorUnit × 2^h）。既定は段 0 の texel の一辺
+        void BuildClusters(Core::Rendering::MegaGeometry::GPUClusterData (&clusters)[ClusterCount], float errorUnit = FirstTexelMeters)
         {
             namespace Mega = Core::Rendering::MegaGeometry;
             for (uint32_t index = 0; index < ClusterCount; ++index)
@@ -1918,7 +1923,7 @@ namespace
                 cluster.ConeCutoff = -1.0f;
                 cluster.IndexCount = 3;
                 cluster.LODLevel = height;
-                cluster.LODError = 0.9f * FirstTexelMeters * static_cast<float>(1u << height);
+                cluster.LODError = 0.9f * errorUnit * static_cast<float>(1u << height);
                 cluster.Flags = Mega::GPU_CLUSTER_FLAG_BAKED_LOD;
                 if (index != 0u)
                 {
@@ -1926,7 +1931,7 @@ namespace
                     cluster.ParentCenterX = (static_cast<float>(parent % 3u) - 1.0f) * 0.5f;
                     cluster.ParentCenterY = (static_cast<float>((parent / 3u) % 3u) - 1.0f) * 0.5f;
                     cluster.ParentRadius = 0.5f + 0.5f * static_cast<float>(parentHeight);
-                    cluster.ParentError = 0.9f * FirstTexelMeters * static_cast<float>(1u << parentHeight);
+                    cluster.ParentError = 0.9f * errorUnit * static_cast<float>(1u << parentHeight);
                     cluster.GroupId = parent;
                 }
                 else
@@ -2353,6 +2358,655 @@ namespace
         }
     } // namespace MegaCull
 
+    // ========================================
+    // ケース J5: 点光源の面（透視のスライス）の MegaGeometry の投影物のカリング
+    // ========================================
+    //
+    // 1 灯（位置 (3, 4, 5)・Range 50）の 6 面 × 6 段 = 36 スライスを、太陽なし（クリップマップ無効）の外から渡すスライスの表で、本番のカリングに通す。
+    // ケース J と同じ完全二分木のクラスタ（誤差は高さごとに 2 倍。単位は PointMegaCull::ErrorUnit）を、面 0（+X）に置く。
+    // 選ばれるのは「自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1」のクラスタで、texel は球の最も近い点の面の軸の距離 z での 2z ÷ 段の解像度。
+    // 光源から遠いほど、また段が粗いほど粗いクラスタ（葉 8・中間 4・2・根 1）が選ばれ、どの葉から根への道でもちょうど 1 つが選ばれる。
+    //   0: 軸の上 z=12 m → 面 0 の 6 段で選ぶ（段 0 は葉 8、段 1 は高さ 1 の 4、段 2 は 2、段 3〜5 は根 1）
+    //   1: 軸の上 z=40 m → 面 0 の 6 段で選ぶ（段 0 は高さ 2 の 2、段 1〜5 は根 1）
+    //   2: z=12 m・面の座標で横に 7 m（NDC 0.58）→ 中央の dirty のページと重ならない細かい段では何も選ばず、ページが大きい段 3〜5 では根を選ぶ
+    //   3: z=60 m・Range(50) の外 → 何も選ばない
+    //   4: 影を落とさない → 何も選ばない
+    // 面 0 の各段には、中央（NDC ±0.1 に触れるページ）と隅（最後のページ）に dirty のページを置く。面 1〜5 は表が空で、何も選ばない。
+    // 期待は倍精度の参照（ページの範囲・LOD）で、単精度の GPU との差で変わりうる境（ページの境・LOD の比が 1 の近く）は参照が曖昧と判定し、
+    // 場面を直すまでテストを失敗させる。dirty の階層は一辺が面の段のページ数（32〜1）の表を、CPU の参照と全語一致する。
+    namespace PointMegaCull
+    {
+        namespace Mega = Core::Rendering::MegaGeometry;
+
+        constexpr uint32_t InstanceCount = 5;
+        constexpr uint32_t SliceCount = 36;
+        constexpr float ErrorUnit = 0.004f;
+        constexpr double LightPosition[3] = {3.0, 4.0, 5.0};
+        constexpr float LightRange = 50.0f;
+        constexpr double BoundsRadius = 3.0;
+        // LOD の比（誤差 ÷ texel）の自然対数の絶対値がこれ未満なら、単精度の GPU が別の選び方をしうるので曖昧とする
+        constexpr double LodAmbiguity = 0.1;
+        // ページの範囲の判定の余裕（面の NDC）を GPU の 1e-4 から縮めた場合と広げた場合で結果が変わるなら曖昧とする
+        constexpr double GpuPageMargin = 1.0e-4;
+        constexpr double PageAmbiguity = 2.0e-3;
+
+        struct Spec
+        {
+            double Axial;
+            double Sc;
+            double Tc;
+            bool bCaster;
+        };
+
+        const Spec Specs[InstanceCount] = {
+            {12.0, 0.0, 0.0, true},
+            {40.0, 0.0, 0.0, true},
+            {12.0, 7.0, 0.0, true},
+            {60.0, 0.0, 0.0, true},
+            {12.0, 0.0, 0.0, false},
+        };
+
+        // スライスの行（ワールドの位置 → 面の座標）と、LOD・ページの範囲に要る値（倍精度）
+        struct SliceView
+        {
+            double X[4] = {};
+            double Y[4] = {};
+            double Z[4] = {};
+            double TexelNdc = 0.0;
+            double Range = 0.0;
+            double NearPlane = 0.0;
+            int32_t Pages = 0;
+        };
+
+        SliceView ViewOf(const GPUVsmSlice& slice)
+        {
+            SliceView view;
+            for (uint32_t index = 0; index < 4u; ++index)
+            {
+                view.X[index] = slice.axisX[index];
+                view.Y[index] = slice.axisY[index];
+                view.Z[index] = slice.axisZ[index];
+            }
+            view.TexelNdc = slice.info[1];
+            view.Range = slice.info[2];
+            view.NearPlane = slice.info[3];
+            view.Pages = slice.origin[3];
+            return view;
+        }
+
+        void ToFace(const SliceView& view, const double (&position)[3], double (&face)[3])
+        {
+            face[0] = view.X[0] * position[0] + view.X[1] * position[1] + view.X[2] * position[2] + view.X[3];
+            face[1] = view.Y[0] * position[0] + view.Y[1] * position[1] + view.Y[2] * position[2] + view.Y[3];
+            face[2] = view.Z[0] * position[0] + view.Z[1] * position[1] + view.Z[2] * position[2] + view.Z[3];
+        }
+
+        struct Rect
+        {
+            bool bValid = false;
+            int32_t X0 = 0;
+            int32_t Y0 = 0;
+            int32_t X1 = -1;
+            int32_t Y1 = -1;
+        };
+
+        // vsm_expand.comp・vsm_mega_cull.comp の VsmPerspectivePageRange と同じ手順（球が覆う面のページの矩形）
+        Rect PageRect(const SliceView& view, const double (&center)[3], double radius, double margin)
+        {
+            Rect rect;
+            double c[3] = {};
+            ToFace(view, center, c);
+            const double reach = view.Range + radius;
+            if (!(c[0] * c[0] + c[1] * c[1] + c[2] * c[2] <= reach * reach))
+            {
+                return rect;
+            }
+            if (c[2] + radius < view.NearPlane || c[2] - radius > view.Range)
+            {
+                return rect;
+            }
+            const double side = radius * 1.4142136;
+            if (c[0] - c[2] > side || -c[0] - c[2] > side || c[1] - c[2] > side || -c[1] - c[2] > side)
+            {
+                return rect;
+            }
+            const int32_t pages = view.Pages;
+            if (c[2] - radius <= view.NearPlane)
+            {
+                rect = {true, 0, 0, pages - 1, pages - 1};
+                return rect;
+            }
+            int32_t low[2] = {};
+            int32_t high[2] = {};
+            for (uint32_t axis = 0; axis < 2u; ++axis)
+            {
+                const double denominator = c[2] * c[2] - radius * radius;
+                const double centerNdc = c[axis] * c[2];
+                const double spread = radius * std::sqrt(std::max(c[axis] * c[axis] + denominator, 0.0));
+                const double ndcLow = (centerNdc - spread) / denominator;
+                const double ndcHigh = (centerNdc + spread) / denominator;
+                low[axis] = std::max(static_cast<int32_t>(std::floor((ndcLow - margin) * 0.5 * pages + 0.5 * pages)), 0);
+                high[axis] = std::min(static_cast<int32_t>(std::floor((ndcHigh + margin) * 0.5 * pages + 0.5 * pages)), pages - 1);
+            }
+            rect = {high[0] >= low[0] && high[1] >= low[1], low[0], low[1], high[0], high[1]};
+            return rect;
+        }
+
+        // 面 0 の段 mip（一辺 pages ページ）の dirty のページ: 中央（NDC ±0.1 に触れるページ）と、最後のページ（隅）
+        bool IsDirtyPage(int32_t pages, int32_t x, int32_t y)
+        {
+            const int32_t first = 45 * pages / 100;
+            const int32_t last = 55 * pages / 100;
+            return (x >= first && x <= last && y >= first && y <= last) || (x == pages - 1 && y == pages - 1);
+        }
+
+        bool RectHasDirty(const Rect& rect, uint32_t slice, int32_t pages)
+        {
+            if (!rect.bValid || slice >= 6u)
+            {
+                return false;
+            }
+            for (int32_t y = rect.Y0; y <= rect.Y1; ++y)
+            {
+                for (int32_t x = rect.X0; x <= rect.X1; ++x)
+                {
+                    if (IsDirtyPage(pages, x, y))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // 球が覆うページに dirty のページがあるか。余裕を縮めた場合と広げた場合で答えが変われば bAmbiguous
+        bool SphereHasDirty(const SliceView& view, uint32_t slice, const double (&center)[3], double radius, bool& bAmbiguous)
+        {
+            const bool base = RectHasDirty(PageRect(view, center, radius, GpuPageMargin), slice, view.Pages);
+            const bool shrunk = RectHasDirty(PageRect(view, center, radius, GpuPageMargin - PageAmbiguity), slice, view.Pages);
+            const bool widened = RectHasDirty(PageRect(view, center, radius, GpuPageMargin + PageAmbiguity), slice, view.Pages);
+            bAmbiguous = bAmbiguous || base != shrunk || base != widened;
+            return base;
+        }
+
+        // 球の最も近い点の面の軸の距離での texel の一辺（m）
+        double TexelMeters(const SliceView& view, const double (&center)[3], double radius)
+        {
+            double face[3] = {};
+            ToFace(view, center, face);
+            return view.TexelNdc * std::max(face[2] - radius, view.NearPlane);
+        }
+
+        // クラスタを選ぶか（Common/MegaGeometryCull.glsl の ShouldDrawBakedCluster。ページはすべて常駐）。minLogRatio に比の曖昧さを残す
+        bool ClusterSelected(const SliceView& view, const double (&instance)[3], const Mega::GPUClusterData& cluster, double& minLogRatio)
+        {
+            const double center[3] = {instance[0] + cluster.BoundsCenterX, instance[1] + cluster.BoundsCenterY, instance[2] + cluster.BoundsCenterZ};
+            const double selfRatio = static_cast<double>(cluster.LODError) / TexelMeters(view, center, cluster.BoundsRadius);
+            minLogRatio = std::min(minLogRatio, std::abs(std::log(selfRatio)));
+            if (selfRatio > 1.0)
+            {
+                return false;
+            }
+            if (cluster.GroupId == 0xFFFFFFFFu)
+            {
+                return true;
+            }
+            const double parent[3] = {instance[0] + cluster.ParentCenterX, instance[1] + cluster.ParentCenterY, instance[2] + cluster.ParentCenterZ};
+            const double parentRatio = static_cast<double>(cluster.ParentError) / TexelMeters(view, parent, cluster.ParentRadius);
+            minLogRatio = std::min(minLogRatio, std::abs(std::log(parentRatio)));
+            return !(parentRatio <= 1.0);
+        }
+
+        // 期待する（インスタンス、スライス、クラスタ）の一覧（昇順）と、判定を通った（インスタンス、スライス）の数。曖昧な場面は bAmbiguous
+        void BuildExpected(const GPUVsmSlice (&slices)[SliceCount],
+                           const double (&positions)[InstanceCount][3],
+                           Container::VariableArray<uint64_t>& expected,
+                           uint32_t& instanceSlices,
+                           bool& bAmbiguous)
+        {
+            Mega::GPUClusterData clusters[MegaCull::ClusterCount];
+            MegaCull::BuildClusters(clusters, ErrorUnit);
+            expected.clear();
+            instanceSlices = 0;
+            double minLogRatio = 1.0e9;
+            for (uint32_t instance = 0; instance < InstanceCount; ++instance)
+            {
+                if (!Specs[instance].bCaster)
+                {
+                    continue;
+                }
+                for (uint32_t slice = 0; slice < SliceCount; ++slice)
+                {
+                    const SliceView view = ViewOf(slices[slice]);
+                    if (!SphereHasDirty(view, slice, positions[instance], BoundsRadius, bAmbiguous))
+                    {
+                        continue;
+                    }
+                    ++instanceSlices;
+                    for (uint32_t index = 0; index < MegaCull::ClusterCount; ++index)
+                    {
+                        const Mega::GPUClusterData& cluster = clusters[index];
+                        const double center[3] = {positions[instance][0] + cluster.BoundsCenterX,
+                                                  positions[instance][1] + cluster.BoundsCenterY,
+                                                  positions[instance][2] + cluster.BoundsCenterZ};
+                        if (SphereHasDirty(view, slice, center, cluster.BoundsRadius, bAmbiguous) &&
+                            ClusterSelected(view, positions[instance], cluster, minLogRatio))
+                        {
+                            expected.push_back((static_cast<uint64_t>(instance) << 40) | (static_cast<uint64_t>(slice) << 32) | index);
+                        }
+                    }
+                }
+            }
+            bAmbiguous = bAmbiguous || minLogRatio < LodAmbiguity;
+            std::sort(expected.begin(), expected.end());
+        }
+
+        struct Outcome
+        {
+            bool bRecorded = false;
+            uint32_t Selected = 0;
+            uint32_t Overflow = 0;
+            uint32_t InstanceSlices = 0;
+            uint32_t StatInstances = 0;
+            uint32_t StatClusters = 0;
+            uint32_t StatPointInstances = 0;
+            uint32_t StatPointClusters = 0;
+            Container::VariableArray<uint32_t> Entries;
+            Container::VariableArray<uint32_t> DirtyBits;
+            Container::VariableArray<uint32_t> PageTable;
+        };
+
+        // 1 回の実行。listCapacity は出力の一覧の容量（クラスタの数）
+        bool Run(const DevicePtr& device,
+                 VirtualShadowMapMegaCull& cull,
+                 const GPUVsmSlice (&slices)[SliceCount],
+                 const double (&positions)[InstanceCount][3],
+                 uint32_t listCapacity,
+                 uint64_t frameSerial,
+                 Outcome& outcome,
+                 Container::VariableArray<uint32_t>& expectedDirtyBits)
+        {
+            outcome = Outcome{};
+            const ResourceUsage storage = ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
+            const BufferPtr pageTable = device->CreateBuffer(BufferDesc(VirtualShadowMap::PageTableBytes(SliceCount), storage, true, "VsmPointMegaTestPageTable"));
+            const BufferPtr stats = device->CreateBuffer(
+                BufferDesc(VirtualShadowMap::STATS_BYTES, VirtualShadowMap::StatsBufferUsage() | ResourceUsage::ShaderRead, true, "VsmPointMegaTestStats"));
+            const BufferPtr dirtyBits = device->CreateBuffer(BufferDesc(
+                VirtualShadowMap::MegaDirtyBitsBytes(SliceCount), VirtualShadowMap::MegaDirtyBitsUsage() | ResourceUsage::ShaderRead, true, "VsmPointMegaTestDirtyBits"));
+            const BufferPtr list = device->CreateBuffer(BufferDesc(
+                VirtualShadowMap::MegaCullListBytes(listCapacity), VirtualShadowMap::MegaCullListUsage() | ResourceUsage::ShaderRead, true, "VsmPointMegaTestList"));
+            const BufferPtr clusters = device->CreateBuffer(BufferDesc(
+                sizeof(Mega::GPUClusterData) * MegaCull::ClusterCount, ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress, true, "VsmPointMegaTestClusters"));
+            const BufferPtr instances = device->CreateBuffer(
+                BufferDesc(sizeof(MegaCull::TestInstance) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmPointMegaTestInstances"));
+            const BufferPtr shadowInstances = device->CreateBuffer(
+                BufferDesc(sizeof(MegaGeometryShadowInstance) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmPointMegaTestShadowInstances"));
+            const BufferPtr geometryPages = device->CreateBuffer(
+                BufferDesc(sizeof(Mega::GeometryPageTable::Entry) * 4u, ResourceUsage::StorageBuffer, true, "VsmPointMegaTestGeometryPages"));
+            if (!pageTable || !stats || !dirtyBits || !list || !clusters || !instances || !shadowInstances || !geometryPages)
+            {
+                return false;
+            }
+            const uint64_t clusterAddress = clusters->GetDeviceAddress();
+            if (clusterAddress == 0u)
+            {
+                return false;
+            }
+            const auto upload = [](const BufferPtr& buffer, const void* data, uint64_t bytes) {
+                void* mapped = buffer->Map(0u, bytes);
+                if (mapped == nullptr)
+                {
+                    return false;
+                }
+                std::memcpy(mapped, data, static_cast<size_t>(bytes));
+                buffer->Unmap();
+                return true;
+            };
+
+            Mega::GPUClusterData gpuClusters[MegaCull::ClusterCount];
+            MegaCull::BuildClusters(gpuClusters, ErrorUnit);
+            Mega::GeometryPageTable::Entry geometryEntries[4] = {}; // すべて常駐
+            if (!upload(clusters, gpuClusters, sizeof(gpuClusters)) || !upload(geometryPages, geometryEntries, sizeof(geometryEntries)))
+            {
+                return false;
+            }
+
+            MegaCull::TestInstance instanceTable[InstanceCount] = {};
+            MegaGeometryShadowInstance shadowTable[InstanceCount] = {};
+            uint32_t totalGroups = 0;
+            for (uint32_t index = 0; index < InstanceCount; ++index)
+            {
+                MegaCull::TestInstance& instance = instanceTable[index];
+                for (uint32_t axis = 0; axis < 4u; ++axis)
+                {
+                    instance.World[axis * 4u + axis] = 1.0f;
+                    instance.PreviousWorld[axis * 4u + axis] = 1.0f;
+                }
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    instance.World[12 + axis] = static_cast<float>(positions[index][axis]);
+                    instance.PreviousWorld[12 + axis] = static_cast<float>(positions[index][axis]);
+                }
+                instance.ClusterInfo[0] = static_cast<uint32_t>(clusterAddress & 0xFFFFFFFFull);
+                instance.ClusterInfo[1] = static_cast<uint32_t>(clusterAddress >> 32);
+                instance.ClusterInfo[2] = MegaCull::ClusterCount;
+
+                MegaGeometryShadowInstance& shadow = shadowTable[index];
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    shadow.BoundsSphere[axis] = static_cast<float>(positions[index][axis]);
+                }
+                shadow.BoundsSphere[3] = static_cast<float>(BoundsRadius);
+                shadow.FirstGroup = totalGroups;
+                if (Specs[index].bCaster)
+                {
+                    shadow.Flags = MegaGeometryShadowFlagCaster | MegaGeometryShadowFlagBounds;
+                    totalGroups += 1u; // 15 クラスタ = 1 ワークグループ
+                }
+            }
+            if (!upload(instances, instanceTable, sizeof(instanceTable)) || !upload(shadowInstances, shadowTable, sizeof(shadowTable)))
+            {
+                return false;
+            }
+
+            // VSM のページの表: 面 0 の各段（スライス 0〜5。一辺 32 >> 段 ページ）の dirty のページだけを書く。ほかは 0
+            expectedDirtyBits.assign(VirtualShadowMap::MegaDirtyBitsBytes(SliceCount) / sizeof(uint32_t), 0u);
+            {
+                Container::VariableArray<uint32_t> table(VirtualShadowMap::PageTableBytes(SliceCount) / sizeof(uint32_t), 0u);
+                uint32_t physical = 1u;
+                for (uint32_t slice = 0; slice < 6u; ++slice)
+                {
+                    const int32_t pages = static_cast<int32_t>(32u >> slice);
+                    for (int32_t y = 0; y < pages; ++y)
+                    {
+                        for (int32_t x = 0; x < pages; ++x)
+                        {
+                            if (IsDirtyPage(pages, x, y))
+                            {
+                                table[slice * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL + y * pages + x] =
+                                    VirtualShadowMap::PAGE_ENTRY_ALLOCATED | VirtualShadowMap::PAGE_ENTRY_DIRTY | (physical++);
+                                MegaCull::SetExpectedBits(expectedDirtyBits, slice, x, y);
+                            }
+                        }
+                    }
+                }
+                if (!upload(pageTable, table.data(), VirtualShadowMap::PageTableBytes(SliceCount)))
+                {
+                    return false;
+                }
+            }
+            // 書かれたかを確かめるため、階層・一覧は見張りの値で埋める（記録が 0 にする）。統計は呼ぶ前に 0
+            for (const BufferPtr& buffer : {dirtyBits, list})
+            {
+                uint32_t* mapped = static_cast<uint32_t*>(buffer->Map(0u, buffer->GetSize()));
+                if (mapped == nullptr)
+                {
+                    return false;
+                }
+                for (uint64_t word = 0; word < buffer->GetSize() / sizeof(uint32_t); ++word)
+                {
+                    mapped[word] = GarbageWord;
+                }
+                buffer->Unmap();
+            }
+            {
+                uint32_t* mapped = static_cast<uint32_t*>(stats->Map(0u, stats->GetSize()));
+                if (mapped == nullptr)
+                {
+                    return false;
+                }
+                std::memset(mapped, 0, static_cast<size_t>(stats->GetSize()));
+                stats->Unmap();
+            }
+
+            // 太陽なし（クリップマップ無効）。点光源のスライスの表だけを外から渡す
+            const VirtualShadowMapClipmap noSun{};
+            VirtualShadowMapMegaCullDispatch dispatch;
+            dispatch.Clipmap = &noSun;
+            dispatch.SliceCount = SliceCount;
+            dispatch.Slices = slices;
+            dispatch.PageTable = pageTable;
+            dispatch.Stats = stats;
+            dispatch.DirtyBits = dirtyBits;
+            dispatch.List = list;
+            dispatch.Instances = instances;
+            dispatch.ShadowInstances = shadowInstances;
+            dispatch.MegaPageTable = geometryPages;
+            dispatch.InstanceCount = InstanceCount;
+            dispatch.TotalGroups = totalGroups;
+
+            CommandListPtr commandList = device->CreateCommandList();
+            if (!commandList)
+            {
+                return false;
+            }
+            cull.BeginFrame(0u, frameSerial);
+            commandList->Begin();
+            const BufferPtr owned[] = {pageTable, stats, dirtyBits, list};
+            for (const BufferPtr& buffer : owned)
+            {
+                commandList->BufferBarrier(buffer, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, buffer->GetSize());
+            }
+            outcome.bRecorded = cull.Record(commandList.get(), dispatch);
+            for (const BufferPtr& buffer : owned)
+            {
+                commandList->BufferBarrier(buffer, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, buffer->GetSize());
+            }
+            commandList->End();
+            commandList->Submit(true);
+            device->WaitIdle();
+            if (!outcome.bRecorded)
+            {
+                return true;
+            }
+
+            {
+                const uint32_t* words = static_cast<const uint32_t*>(list->Map(0u, list->GetSize()));
+                if (words == nullptr)
+                {
+                    return false;
+                }
+                outcome.Selected = words[0];
+                outcome.Overflow = words[1];
+                outcome.InstanceSlices = words[2];
+                const uint32_t written = std::min(outcome.Selected, listCapacity);
+                for (uint32_t index = 0; index < written; ++index)
+                {
+                    for (uint32_t word = 0; word < 4u; ++word)
+                    {
+                        outcome.Entries.push_back(words[VirtualShadowMap::MEGA_CULL_LIST_HEADER_WORDS + index * 4u + word]);
+                    }
+                }
+                list->Unmap();
+            }
+            {
+                const uint32_t* words = static_cast<const uint32_t*>(stats->Map(0u, stats->GetSize()));
+                if (words == nullptr)
+                {
+                    return false;
+                }
+                outcome.StatInstances = words[VirtualShadowMap::StatMegaInstances];
+                outcome.StatClusters = words[VirtualShadowMap::StatMegaClusters];
+                outcome.StatPointInstances = words[VirtualShadowMap::StatMegaPointInstances];
+                outcome.StatPointClusters = words[VirtualShadowMap::StatMegaPointClusters];
+                stats->Unmap();
+            }
+            return ReadAll(dirtyBits, outcome.DirtyBits) && ReadAll(pageTable, outcome.PageTable);
+        }
+
+        // 選んだクラスタの高さ（インスタンス・スライスの組で 1 つの値だけ。なければ -1、2 種類以上なら -2）
+        int32_t SelectedHeight(const Container::VariableArray<uint64_t>& packed, uint32_t instance, uint32_t slice)
+        {
+            int32_t height = -1;
+            for (const uint64_t entry : packed)
+            {
+                if (static_cast<uint32_t>(entry >> 40) == instance && static_cast<uint32_t>((entry >> 32) & 0xFFu) == slice)
+                {
+                    const int32_t value = static_cast<int32_t>(MegaCull::HeightOf(static_cast<uint32_t>(entry & 0xFFFFFFFFu)));
+                    height = height == -1 || height == value ? value : -2;
+                }
+            }
+            return height;
+        }
+
+        uint32_t SelectedCount(const Container::VariableArray<uint64_t>& packed, uint32_t instance, uint32_t slice)
+        {
+            uint32_t count = 0;
+            for (const uint64_t entry : packed)
+            {
+                count += static_cast<uint32_t>(entry >> 40) == instance && static_cast<uint32_t>((entry >> 32) & 0xFFu) == slice ? 1u : 0u;
+            }
+            return count;
+        }
+    } // namespace PointMegaCull
+
+    // ケース J5 を実行する。実行できなければ false
+    bool RunPointMegaCullCases(const DevicePtr& device, VirtualShadowMapMegaCull& cull, uint64_t& frameSerial)
+    {
+        namespace Point = PointMegaCull;
+        PointShadowSnapshot snapshot;
+        snapshot.LightCount = 1u;
+        snapshot.Lights[0].LightId = 1u;
+        snapshot.Lights[0].Position = Math::Vector3(static_cast<float>(Point::LightPosition[0]),
+                                                    static_cast<float>(Point::LightPosition[1]),
+                                                    static_cast<float>(Point::LightPosition[2]));
+        snapshot.Lights[0].Range = Point::LightRange;
+        const VirtualShadowMapPointLights lights = BuildVirtualShadowMapPointLights(snapshot, VirtualShadowMapPointSettings{}, 0u);
+        Expect(lights.LightCount == 1u && lights.SliceCount() == Point::SliceCount, "ケース J5: 1 灯 × 6 面 × 6 段 = 36 スライスでなければならない");
+        if (lights.SliceCount() != Point::SliceCount)
+        {
+            return false;
+        }
+        GPUVsmSlice slices[Point::SliceCount] = {};
+        BuildVirtualShadowMapPointSlices(lights, slices);
+
+        // インスタンスの位置: 光源から、面 0 の軸の向きへ Axial、面の接線方向へ Sc・Tc
+        double positions[Point::InstanceCount][3] = {};
+        for (uint32_t index = 0; index < Point::InstanceCount; ++index)
+        {
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                positions[index][axis] = Point::LightPosition[axis] + static_cast<double>(slices[0].axisZ[axis]) * Point::Specs[index].Axial +
+                                         static_cast<double>(slices[0].axisX[axis]) * Point::Specs[index].Sc +
+                                         static_cast<double>(slices[0].axisY[axis]) * Point::Specs[index].Tc;
+            }
+        }
+
+        Container::VariableArray<uint64_t> expected;
+        uint32_t expectedInstanceSlices = 0;
+        bool bAmbiguous = false;
+        Point::BuildExpected(slices, positions, expected, expectedInstanceSlices, bAmbiguous);
+        Expect(!bAmbiguous, "ケース J5: 期待に曖昧な境（ページの境・LOD の比が 1 の近く）があってはならない（場面を直すこと）");
+
+        // ----- J5-1: 容量が十分 -----
+        {
+            Point::Outcome outcome;
+            Container::VariableArray<uint32_t> expectedBits;
+            if (!Point::Run(device, cull, slices, positions, 4096u, ++frameSerial, outcome, expectedBits))
+            {
+                std::cerr << TestName << " ケース J5-1 を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(outcome.bRecorded, "ケース J5-1: 太陽が無くても、外から渡した点光源のスライスの表でカリングを記録しなければならない");
+            if (!outcome.bRecorded)
+            {
+                return true;
+            }
+            Expect(outcome.DirtyBits.size() == expectedBits.size(), "ケース J5-1: dirty の階層の大きさがスライスの数で決まらなければならない");
+            uint32_t differentWords = 0;
+            for (size_t word = 0; word < std::min(outcome.DirtyBits.size(), expectedBits.size()); ++word)
+            {
+                differentWords += outcome.DirtyBits[word] != expectedBits[word] ? 1u : 0u;
+            }
+            Expect(differentWords == 0u, "ケース J5-1: 面のページの表（一辺 32〜1）の dirty の階層が CPU の参照と全語一致しなければならない");
+
+            const Container::VariableArray<uint64_t> actual = MegaCull::PackEntries(outcome.Entries);
+            Expect(outcome.Selected == expected.size() && outcome.Overflow == 0u, "ケース J5-1: 選んだクラスタの数が参照と一致し、溢れてはならない");
+            Expect(outcome.InstanceSlices == expectedInstanceSlices, "ケース J5-1: 判定を通った（インスタンス、スライス）の数が参照と一致しなければならない");
+            Expect(actual == expected, "ケース J5-1: 選んだ（インスタンス、スライス、クラスタ）が参照の集合と一致しなければならない");
+            Expect(outcome.StatInstances == expectedInstanceSlices && outcome.StatPointInstances == expectedInstanceSlices,
+                   "ケース J5-1: 統計の（インスタンス、スライス）は全部が点光源の分で、合計と点光源の分が一致しなければならない");
+            Expect(outcome.StatClusters == expected.size() && outcome.StatPointClusters == expected.size(),
+                   "ケース J5-1: 統計のクラスタは全部が点光源の分で、合計と点光源の分が一致しなければならない");
+
+            // 光源から遠いほど、段が粗いほど粗いクラスタ: 面 0 の段 0〜5 で、インスタンス 0（12 m）は葉 8・4・2・根 1、インスタンス 1（40 m）は 2・根 1
+            const int32_t nearHeights[6] = {0, 1, 2, 3, 3, 3};
+            const uint32_t nearCounts[6] = {8, 4, 2, 1, 1, 1};
+            const int32_t farHeights[6] = {2, 3, 3, 3, 3, 3};
+            const uint32_t farCounts[6] = {2, 1, 1, 1, 1, 1};
+            for (uint32_t mip = 0; mip < 6u; ++mip)
+            {
+                Expect(Point::SelectedHeight(actual, 0u, mip) == nearHeights[mip] && Point::SelectedCount(actual, 0u, mip) == nearCounts[mip],
+                       "ケース J5-1: インスタンス 0（光源から 12 m）の選ぶクラスタの高さと数が、段に応じて粗くならなければならない");
+                Expect(Point::SelectedHeight(actual, 1u, mip) == farHeights[mip] && Point::SelectedCount(actual, 1u, mip) == farCounts[mip],
+                       "ケース J5-1: インスタンス 1（光源から 40 m）の選ぶクラスタの高さと数が、同じ段でより粗くならなければならない");
+                if (mip > 0u)
+                {
+                    Expect(Point::SelectedHeight(actual, 0u, mip) >= Point::SelectedHeight(actual, 0u, mip - 1u), "ケース J5-1: 段が粗いほど選ぶ高さが下がってはならない");
+                }
+                Expect(Point::SelectedHeight(actual, 1u, mip) >= Point::SelectedHeight(actual, 0u, mip), "ケース J5-1: 光源から遠いほど選ぶ高さが下がってはならない");
+                Expect(MegaCull::IsSingleCut(actual, 0u, mip) && MegaCull::IsSingleCut(actual, 1u, mip),
+                       "ケース J5-1: 選んだクラスタがどの葉から根への道でもちょうど 1 つ（一つの切り口）でなければならない");
+            }
+            // 面 0 以外・Range の外（3）・影を落とさない（4）は何も選ばない。インスタンス 2 は dirty のページと重ならない細かい段で何も選ばない
+            uint32_t strayEntries = 0;
+            for (const uint64_t entry : actual)
+            {
+                const uint32_t instance = static_cast<uint32_t>(entry >> 40);
+                const uint32_t slice = static_cast<uint32_t>((entry >> 32) & 0xFFu);
+                strayEntries += slice >= 6u || instance >= 3u ? 1u : 0u;
+            }
+            Expect(strayEntries == 0u, "ケース J5-1: 面 0 以外のスライス・Range の外・影を落とさないインスタンスは何も選んではならない");
+            for (uint32_t mip = 0; mip < 3u; ++mip)
+            {
+                Expect(Point::SelectedCount(actual, 2u, mip) == 0u, "ケース J5-1: インスタンス 2 は中央の dirty のページと重ならない細かい段で何も選んではならない");
+            }
+            Expect(Point::SelectedCount(actual, 2u, 5u) == 1u, "ケース J5-1: インスタンス 2 は 1 ページの段（5）では根を選ばなければならない");
+            std::cout << TestName << " ケース J5-1: 選んだクラスタ=" << outcome.Selected << " 通った（インスタンス、スライス）=" << outcome.InstanceSlices
+                      << " 点光源の統計=(" << outcome.StatPointInstances << "," << outcome.StatPointClusters << ")" << std::endl;
+        }
+
+        // ----- J5-2: 出力の一覧の容量が 5（溢れる）。落としたクラスタの範囲の、割り当て済みで dirty のページに再描画の印を付ける -----
+        {
+            Point::Outcome outcome;
+            Container::VariableArray<uint32_t> expectedBits;
+            if (!Point::Run(device, cull, slices, positions, 5u, ++frameSerial, outcome, expectedBits))
+            {
+                std::cerr << TestName << " ケース J5-2 を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(outcome.bRecorded, "ケース J5-2: カリングを記録しなければならない");
+            if (!outcome.bRecorded)
+            {
+                return true;
+            }
+            Expect(outcome.Selected == expected.size() && outcome.Overflow == expected.size() - 5u, "ケース J5-2: 選んだ数は参照と同じで、溢れは容量を超えた分でなければならない");
+            Expect(outcome.StatClusters == 5u && outcome.StatPointClusters == 5u, "ケース J5-2: 統計のクラスタは書いた 5 件でなければならない");
+            const Container::VariableArray<uint64_t> actual = MegaCull::PackEntries(outcome.Entries);
+            Expect(actual.size() == 5u, "ケース J5-2: 容量ぶん（5 件）だけ書かなければならない");
+            for (const uint64_t entry : actual)
+            {
+                Expect(std::find(expected.begin(), expected.end(), entry) != expected.end(), "ケース J5-2: 書いた件は参照の集合に入らなければならない");
+            }
+            uint32_t retryPages = 0;
+            uint32_t badRetryPages = 0;
+            for (size_t index = 0; index < outcome.PageTable.size(); ++index)
+            {
+                const uint32_t entry = outcome.PageTable[index];
+                if ((entry & VirtualShadowMap::PAGE_ENTRY_RETRY) != 0u)
+                {
+                    ++retryPages;
+                    const bool bDrawable = (entry & VirtualShadowMap::PAGE_ENTRY_ALLOCATED) != 0u && (entry & VirtualShadowMap::PAGE_ENTRY_DIRTY) != 0u;
+                    // 面 0 の段 0〜5 の表（スライス 0〜5）の内側だけ
+                    badRetryPages += !bDrawable || index >= 6u * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL ? 1u : 0u;
+                }
+            }
+            Expect(retryPages > 0u && badRetryPages == 0u, "ケース J5-2: 溢れたクラスタの範囲の、割り当て済みで dirty の面のページにだけ再描画の印が付かなければならない");
+            std::cout << TestName << " ケース J5-2: 選んだ=" << outcome.Selected << " 溢れ=" << outcome.Overflow << " 再描画の印のページ=" << retryPages << std::endl;
+        }
+        return true;
+    }
+
     // ケース J を実行する。実行できなければ false
     bool RunMegaCullCases(const DevicePtr& device, ShaderManager& shaderManager, uint64_t& frameSerial)
     {
@@ -2524,7 +3178,9 @@ namespace
             std::cout << TestName << " ケース J4: スライス=" << wideSlices << " 選んだクラスタ=" << outcome.Selected << " 通った（インスタンス、スライス）="
                       << outcome.InstanceLevels << " 階層の語=" << expectedBits.size() << std::endl;
         }
-        return true;
+
+        // ----- J5: 点光源の面（透視のスライス） -----
+        return RunPointMegaCullCases(device, cull, frameSerial);
     }
 
     // ========================================

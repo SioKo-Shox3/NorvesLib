@@ -374,7 +374,10 @@ namespace NorvesLib::Core::Rendering
                                                                     false,
                                                                     "VsmMega_List"));
                 m_MegaDirtyBits = m_Device->CreateBuffer(
-                    RHI::BufferDesc(VirtualShadowMap::MegaDirtyBitsBytes(), VirtualShadowMap::MegaDirtyBitsUsage(), false, "VsmMega_DirtyBits"));
+                    RHI::BufferDesc(VirtualShadowMap::MegaDirtyBitsBytes(SliceCapacityFor(m_PointShadowMethod)),
+                                    VirtualShadowMap::MegaDirtyBitsUsage(),
+                                    false,
+                                    "VsmMega_DirtyBits"));
                 m_MegaChunks = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::RasterChunkBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY),
                                                                       VirtualShadowMap::MegaChunkUsage(),
                                                                       false,
@@ -426,7 +429,7 @@ namespace NorvesLib::Core::Rendering
         const uint64_t rasterBytes = VirtualShadowMap::RasterInstanceBytes(VirtualShadowMap::RASTER_INSTANCE_CAPACITY) +
                                      m_Casters->Draws->GetSize();
         const uint64_t megaBytes = VirtualShadowMap::MegaCullListBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY) +
-                                   VirtualShadowMap::MegaDirtyBitsBytes() +
+                                   VirtualShadowMap::MegaDirtyBitsBytes(SliceCapacityFor(m_PointShadowMethod)) +
                                    VirtualShadowMap::RasterChunkBytes(VirtualShadowMap::MEGA_CULL_LIST_CAPACITY);
         if (m_Gpu)
         {
@@ -899,6 +902,12 @@ namespace NorvesLib::Core::Rendering
 
         VirtualShadowMapMegaCullDispatch megaDispatch;
         megaDispatch.Clipmap = &context.PhysicalLighting.SunClipmap;
+        if (m_Casters->bUseSliceTable)
+        {
+            // 点光源の面を含むスライスの表（CollectCasters が作ったもの）で、太陽の段と点光源の面を同じ流れでカリングする
+            megaDispatch.SliceCount = m_Casters->SliceTableCount;
+            megaDispatch.Slices = m_Casters->SliceTable;
+        }
         megaDispatch.PageTable = m_PageTable;
         megaDispatch.Stats = m_Stats;
         megaDispatch.DirtyBits = m_MegaDirtyBits;
@@ -930,7 +939,9 @@ namespace NorvesLib::Core::Rendering
         {
             m_MegaReporter->Report(slot.Mapped[VirtualShadowMap::StatMegaInstances],
                                    slot.Mapped[VirtualShadowMap::StatMegaClusters],
-                                   slot.Mapped[VirtualShadowMap::StatMegaOverflow]);
+                                   slot.Mapped[VirtualShadowMap::StatMegaOverflow],
+                                   slot.Mapped[VirtualShadowMap::StatMegaPointInstances],
+                                   slot.Mapped[VirtualShadowMap::StatMegaPointClusters]);
         }
         // 展開の統計（投影物を描かない間は 0 のままで、何も出さない）
         if (m_RasterReporter)
@@ -1122,8 +1133,8 @@ namespace NorvesLib::Core::Rendering
         {
             ReportCasters();
             // MegaGeometry の投影物のカリング（展開の前。出力は VsmMega_List。主の経路のバッファには書かない）
-            // （カリングは太陽の段が対象。点光源だけのフレームでは記録しない）
-            m_bMegaCullRecorded = dispatch.Clipmap->bEnabled && RecordMegaCull(context, frameSerial);
+            // （太陽が無効でも、点光源の面のスライスの表があれば点光源の面を対象に記録する）
+            m_bMegaCullRecorded = (dispatch.Clipmap->bEnabled || m_Casters->bUseSliceTable) && RecordMegaCull(context, frameSerial);
             // ホストが書いた塊がある、または MegaGeometry のクラスタの記録を作ったフレームは、展開・描画を 1 回の流れで記録する
             if (!m_Casters->Chunks.empty() || m_bMegaCullRecorded)
             {

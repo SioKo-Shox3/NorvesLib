@@ -383,8 +383,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief 報告の間隔（回数） */
         static constexpr uint32_t LogIntervalReports = 60;
 
-        /** @brief 報告する。行を出したとき true */
-        bool Report(uint32_t instances, uint32_t clusters, uint32_t overflow);
+        /**
+         * @brief 報告する。行を出したとき true
+         * @param pointInstances 透視のスライス（点光源の面）だけの（インスタンス、スライス）の数（instances に含まれる）
+         * @param pointClusters 透視のスライスだけの書いたクラスタの数（clusters に含まれる）
+         */
+        bool Report(uint32_t instances, uint32_t clusters, uint32_t overflow, uint32_t pointInstances = 0u, uint32_t pointClusters = 0u);
 
     private:
         bool m_bLogged = false;
