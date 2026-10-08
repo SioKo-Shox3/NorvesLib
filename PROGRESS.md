@@ -495,3 +495,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 既知の限界（直さない）: 同じ形の「1 本の定数・storage buffer を Execute ごとに書く」資源は SSAO・SSR・Bloom・トーンマップ・ボリュームにも残る。照明の中でも RTGI・DDGI の計算のパラメータのバッファ（`m_RTGIComputeParametersBuffer` など）は組に含めていない（段9の差分ではない）。同じフレームに複数のビューポートを描くと、これらは後の Execute が先に記録した dispatch の読む値を上書きしうる。
 - 撮影はしていない（描画の経路・内容は 1 ビューポートで変わらず、golden 4 本が通る）。
 - Next: TASKS.md の次の `todo`。
+
+## VTG9-FIX-LIGHTING-PER-EXECUTE 反復 4（2026-10-08）
+
+- 評価者の指摘（実 Vulkan の装置で、描画が束縛する descriptor set・5 つのバッファの期待値・2 回目後の 1 組目の保持を確かめていない）に対応した。証拠は `.harness/runs/20261008-221440/verify-VTG9-FIX-LIGHTING-PER-EXECUTE-6-vulkan-test.txt`（通過）・`-6-stdout.txt`（`lighting_execute_sets_per_viewport=true ...`、stderr は空）・`-9-build.txt`（verify の Debug ビルド EXIT=0）・`-9-ctest.txt`（6/6 通過。golden 4 本は基準画像・閾値を動かしていない）。
+- 試験: `RTGIDiffuseIndirectVulkanTest` の末尾に `RunMultiViewportResourceSetTest`（実 Vulkan の装置、検証レイヤー有効）を足した。同じ通し番号で別のカメラ・ライト・太陽のクリップマップ・点光源の灯の 4 ビューポートを回し、描画を提出前の `FrameCommand`（全画面パス）に積んだまま、(1) 積まれた全画面パスが束縛する descriptor set が、その Execute の組の descriptor set と同じで 4 つとも別、(2) 4 組の descriptor set と 5 つのバッファ（照明の定数・ライト配列・太陽の VSM・点光源の VSM・スライスの表）がすべて別、(3) 4 回目の Execute の後、各組のバッファをマップして読み、その Execute のカメラの位置・ライトの数・ライト配列・VSM のパラメータ・スライスの表が、同じ入力から作った期待値（`BuildVirtualShadowMap*`・`PackLightingPassLights`）とバイト単位で一致、を確かめてから、積んだ描画を記録して提出する（描画数 4）。次のフレームで 5 回 Execute すると、先頭の組から使い直し（束縛する descriptor set が前のフレームの同じ番目と同じ）、5 回目は描かず、4 組の中身が壊れていない。カメラの順を逆にしたフレームでは各組の中身がその順番のカメラの値になる。
+- 変異: (a) `AcquireExecuteResourceSet` の組の位置を常に 0 にすると、`-7-mutation-vulkan.txt` のとおり「別の Execute が同じ descriptor set またはバッファを使っています viewport=0 other=1」で落ちる。(b) 点光源の VSM のバッファの `Update` を抜くと、`-8-mutation-content.txt` のとおり中身の検査で落ちる。どちらも戻した（`git diff` は空）。
+- 副産物の修正: `RTGIDiffuseIndirectVulkanTest` の `RunLightingFrame` は、別々に提出する呼び出しの間で `FrameNumber` を使い回していた（通し番号が同じ → 同じフレームの別ビューポート扱いで組が進み、5 回目以降は描かれず、RTGI の出力の layout が合わなくなって検証レイヤーのエラーで落ちた）。前の反復の変更（06227648）で、この試験は verify の対象外のため見逃していた。呼び出しごとに `RenderFrameSerial` を進めるようにした。`TASKS.md` の verify に `RTGIDiffuseIndirectVulkanTest` を足した（ビルドの対象と ctest の対象）。
+- 他の照明を実行する試験: DDGIProbeRadianceVulkanTest・DDGIProbeRayQueryVulkanTest・PathTracingLightingVulkanTest・LightingLightBufferTest・RenderGraphGPUTimestampScopeTest・RenderingCoordinatorGPUTimestampPublicationTest は通過（`extra-ctest-2.txt`）。`RHIGPUTimestampVulkanTest` は 1 回目に「completed GPU timing batch is missing or dropped」で落ち、単体の再実行で通過（`extra-ctest-3-timestamp.txt`。GPU 計測の取りこぼしで、環境のぶれ）。`RenderGraphTextureUsageContractTest` は `ShadowMapPass::Initialize`（空のシェーダーディレクトリ、150 秒後）の assert で落ちる。LightingPass に入る前の失敗で、この変更とは無関係に見える（基準の状態では未確認）。
+- 既知の限界は前の反復のとおり（SSAO・SSR・Bloom・トーンマップ・ボリューム・RTGI/DDGI の計算のパラメータのバッファは、同じフレームに複数のビューポートを描くと後の Execute が先の dispatch の値を上書きしうる）。
+- Next: TASKS.md の次の `todo`。
