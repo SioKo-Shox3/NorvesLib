@@ -478,3 +478,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - golden 4 本は基準画像・閾値を動かさずに通る（検証アプリは上限を使わない）。
 - Notes: Edit ツールが混在行末のファイルを正規化して全行を書き換えるため、混在のファイルは行末を保って置換する別の手順で編集した（numstat 2 通りは一致を確認）。受入れの記録（`VirtualizationAcceptance.md`）の「VSM によるものではない」の直しはこの項目の後に行う（段9の受入れの追従）。
 - Next: TASKS.md の次の `todo`。
+
+## VTG9-FIX-NIGHT-ENV-SUN 反復 2（2026-10-08）
+
+- 評価者の NEEDS_WORK（指定の測り方で 2548、100 未満に届かない）を受け、stop-when に従って BLOCKED にした。理由と選択肢は `blocked/VTG9-FIX-NIGHT-ENV-SUN.md`。
+- 実装は 2e74630c のまま。測り方（レンガの縁を数える）の再定義はユーザー判断なので、基準は変えていない。
+- Next: 人が done-when (4) を直して `status:` を `todo` に戻すと再開。それまで TASKS.md の次の `todo` へ。
