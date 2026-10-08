@@ -221,7 +221,7 @@ void BuildTouchedPages(VisibilityDrawRecord record, vec4 world0, vec4 world1, ve
         }
         if (bAll)
         {
-            sharedTouchAll = 1u;
+            atomicOr(sharedTouchAll, 1u);
             continue;
         }
         // 範囲の中の位置（左下を 0）へ直し、範囲で切る
@@ -234,7 +234,7 @@ void BuildTouchedPages(VisibilityDrawRecord record, vec4 world0, vec4 world1, ve
         const uint cells = uint(cellHigh.x - cellLow.x + 1) * uint(cellHigh.y - cellLow.y + 1);
         if (cells > TOUCH_MAX_CELLS_PER_TRIANGLE)
         {
-            sharedTouchAll = 1u;
+            atomicOr(sharedTouchAll, 1u);
             continue;
         }
         for (int y = cellLow.y; y <= cellHigh.y; ++y)
