@@ -155,6 +155,9 @@ namespace NorvesLib::Core::Rendering
         uint32_t VertexBase = 0;
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;
+        /** @brief 元の描画（DrawParams）のインデックスの範囲（先頭と数）。数が 0 ならメッシュ全体（サブメッシュに分けない描画） */
+        uint32_t SourceFirstIndex = 0;
+        uint32_t SourceIndexCount = 0;
         /** @brief 入力のインデックスのバッファ（頂点番号は出力の先頭からの相対） */
         RHI::BufferPtr IndexBuffer;
         /** @brief 出力バッファの先頭のアドレスを含む、このインスタンスの先頭頂点のアドレス（BDA が無いときは 0） */

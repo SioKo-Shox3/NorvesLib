@@ -7286,7 +7286,7 @@ namespace
     //   B: 影を落とす。ライトの右向きに 5000 m（どの段の範囲にも入らない）
     //   C: 影を落とさない
     //   スキニング: 影を落とす。3 頂点・三角形 1 つ。描画の境界は原点の近く
-    void BuildVsmCasterScene(VsmCasterScene& scene, bool bWithClipmap)
+    void BuildVsmCasterScene(VsmCasterScene& scene, bool bWithClipmap, bool bSplitSkinnedSubmeshes = false)
     {
         VsmRun& run = scene.Run;
         run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
@@ -7324,17 +7324,21 @@ namespace
         addMeshProxy(right.x * 5000.0f, right.y * 5000.0f, right.z * 5000.0f, true);
         addMeshProxy(0.0f, 0.5f, 0.0f, false);
 
-        // スキニングの描画 1 件（SkinningComputePass が頂点を変形する）。持ち主のプロキシ（ComponentId 77）は影を落とし、境界は原点の近く
+        // スキニングの描画 1 件（SkinningComputePass が頂点を変形する）。持ち主のプロキシ（ComponentId 77）は影を落とし、境界は原点の近く。
+        // bSplitSkinnedSubmeshes のときは、6 頂点・2 三角形のメッシュをサブメッシュごとの 2 件の描画に分ける（main の SkinnedDrawCommands と
+        // 同じ形）: 先頭の範囲（インデックス 0〜2）は影なし、後ろの範囲（3〜5）は影あり
+        const uint32_t skinVertexCount = bSplitSkinnedSubmeshes ? 6u : 3u;
         Container::VariableArray<SkinnedMeshVertex> skinVertices;
-        skinVertices.resize(3);
+        skinVertices.resize(skinVertexCount);
         for (SkinnedMeshVertex& vertex : skinVertices)
         {
             vertex.BoneWeights[0] = 1.0f;
         }
         Container::VariableArray<uint32_t> skinIndices;
-        skinIndices.push_back(0u);
-        skinIndices.push_back(1u);
-        skinIndices.push_back(2u);
+        for (uint32_t index = 0; index < skinVertexCount; ++index)
+        {
+            skinIndices.push_back(index);
+        }
         auto assetLease = Container::MakeShared<SkinnedMeshAssetLease>(SkinnedMeshHandle{5, 1}, std::move(skinVertices), std::move(skinIndices));
         scene.SkinnedLeases.push_back(Container::MakeShared<SkinnedMeshFrameLease>(assetLease));
         DrawCommand skinned;
@@ -7344,6 +7348,19 @@ namespace
         skinned.Draw.WorldMatrix = MakeMarkedMatrix(-0.5f, 0.0f, 0.25f);
         skinned.Skinned.FrameLeaseIndex = 0;
         skinned.Skinned.BonePalette.push_back(MakeMarkedMatrix(0.0f, 0.0f, 0.0f));
+        if (bSplitSkinnedSubmeshes)
+        {
+            DrawCommand noShadow = skinned;
+            noShadow.Draw.SubMeshIndex = 0;
+            noShadow.Draw.IndexOffset = 0;
+            noShadow.Draw.IndexCount = 3;
+            noShadow.Draw.bCastShadow = false;
+            scene.AllCommands.push_back(noShadow);
+            skinned.Draw.SubMeshIndex = 1;
+            skinned.Draw.IndexOffset = 3;
+            skinned.Draw.IndexCount = 3;
+            skinned.Draw.bCastShadow = true;
+        }
         scene.AllCommands.push_back(skinned);
         SkinnedMeshProxy proxy;
         proxy.ComponentId = 77;
@@ -7403,6 +7420,43 @@ namespace
     //    展開の後に UnorderedAccess → GenericRead（物理ページは PixelShaderWrite）、描画の後に元へ戻り、最後は Common。
     //  - スキニングの頂点は、変形の後（VSM の前）から描画の最後まで GenericRead のまま読まれる。
     //  - 印付けをしない構成（クリップマップが無い）では、展開・描画は記録されない。
+    // main のスキニングの描画はサブメッシュごとに分かれ、影なしのサブメッシュの描画は bCastShadow が偽になる。VSM の投影物は、
+    // 元の描画ごとの影の印とインデックスの範囲だけを塊にする（影なしの範囲の三角形を描かない・メッシュ全体を描かない）
+    void TestVirtualShadowMapPassDrawsOnlyShadowCastingSkinnedSubmeshRanges()
+    {
+        VsmCasterScene scene;
+        BuildVsmCasterScene(scene, true, true);
+        RunVsmCasterViewport(scene, 0, 0);
+
+        // 変形は描画ごと（2 件）。どちらも不透明で、影の印と範囲は元の描画のもの
+        const auto& instances = scene.Skinning.GetInstances();
+        assert(instances.size() == 2u);
+        assert(!instances[0].bCastShadow && instances[0].SourceFirstIndex == 0u && instances[0].SourceIndexCount == 3u);
+        assert(instances[1].bCastShadow && instances[1].SourceFirstIndex == 3u && instances[1].SourceIndexCount == 3u);
+        assert(instances[0].IndexCount == 6u && instances[1].IndexCount == 6u);
+
+        // 塊は手続き 2 件と、影を落とすサブメッシュの範囲の 1 件だけ（影なしの範囲・メッシュ全体の塊は無い）
+        assert(scene.Pass.WasRasterRecorded() && scene.Pass.GetLastCasterChunkCount() == 3u);
+        const Container::VariableArray<BarrierEvent> chunkBarriers = CollectBufferBarriers(scene.Run.CommandList, "VsmRaster_Chunks");
+        assert(!chunkBarriers.empty());
+        const Container::VariableArray<VsmShadowChunk> uploaded = ReadUploadedChunks(chunkBarriers[0].Buffer);
+        assert(uploaded.size() == 3u);
+        uint32_t skinnedChunks = 0;
+        for (const VsmShadowChunk& chunk : uploaded)
+        {
+            if (chunk.Record.Kind != static_cast<uint32_t>(VisibilityBuffer::RecordKind::SkinnedChunk))
+            {
+                continue;
+            }
+            ++skinnedChunks;
+            // 影を落とすサブメッシュ（インデックス 3〜5）の 1 三角形。頂点はそのインスタンスの変形した頂点の先頭
+            assert(chunk.Record.FirstIndex == 3u && chunk.Record.TriangleCount == 1u);
+            assert(chunk.Record.VertexAddress == instances[1].CurrentVertexAddress);
+        }
+        assert(skinnedChunks == 1u);
+        ShutdownVsmCasterScene(scene);
+    }
+
     void TestVirtualShadowMapPassRecordsCasterRasterAfterSkinning()
     {
 #if NORVES_ENABLE_LOGGING
@@ -14285,6 +14339,7 @@ int main()
     TestVirtualShadowMapCasterAppendsSkinnedInstances();
     TestVirtualShadowMapCasterRecordsLevelMask();
     TestVirtualShadowMapPassRecordsCasterRasterAfterSkinning();
+    TestVirtualShadowMapPassDrawsOnlyShadowCastingSkinnedSubmeshRanges();
     TestVirtualShadowMapPassRecordsMegaCullBetweenMainCullAndExpand();
     TestLightingVsmStatsAreMadeHostVisibleAndReadAfterCompletion();
     TestLightingReadsVsmWhenPublished();

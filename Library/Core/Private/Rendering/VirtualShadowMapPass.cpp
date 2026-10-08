@@ -602,7 +602,8 @@ namespace NorvesLib::Core::Rendering
                 }
                 const uint64_t indexAddress = instance.IndexBuffer->GetDeviceAddress();
                 const SkinnedMeshProxy* proxy = FindSkinnedProxy(*context.SnapshotSkinnedMeshProxies, instance.SourceMeshComponentId);
-                if (proxy && !proxy->bCastShadow)
+                // 影を落とすかは元の描画ごとに見る（サブメッシュに分けた描画は、サブメッシュの影なしの印を含む）
+                if (!instance.bCastShadow || (proxy && !proxy->bCastShadow))
                 {
                     continue;
                 }
@@ -612,21 +613,44 @@ namespace NorvesLib::Core::Rendering
                     ++state.Stats.SkippedDraws;
                     continue;
                 }
-                // 登録時に分けた塊を使い、無ければインデックスの全体を分ける
+                // 元の描画のインデックスの範囲。数が 0 か、メッシュ全体を覆う範囲なら全体として扱う
+                const bool bWholeMesh = instance.SourceIndexCount == 0u ||
+                                        (instance.SourceFirstIndex == 0u && instance.SourceIndexCount >= instance.IndexCount);
                 Container::VariableArray<MeshIndexChunk>& chunks = state.SkinnedChunks;
-                if (!context.SkinnedMeshes || !context.SkinnedMeshes->TryGetChunks(instance.MeshHandle, chunks) || chunks.empty())
+                if (bWholeMesh)
                 {
-                    if (!BuildMeshIndexChunks(instance.IndexCount, nullptr, 0, chunks))
+                    // 登録時に分けた塊を使い、無ければインデックスの全体を分ける
+                    if (!context.SkinnedMeshes || !context.SkinnedMeshes->TryGetChunks(instance.MeshHandle, chunks) || chunks.empty())
+                    {
+                        if (!BuildMeshIndexChunks(instance.IndexCount, nullptr, 0, chunks))
+                        {
+                            ++state.Stats.SkippedDraws;
+                            continue;
+                        }
+                    }
+                }
+                else
+                {
+                    // サブメッシュの範囲だけを塊に分け、塊の先頭をインデックスバッファの中の位置へずらす
+                    if (instance.SourceFirstIndex % 3u != 0u || instance.SourceIndexCount % 3u != 0u ||
+                        instance.SourceFirstIndex > instance.IndexCount ||
+                        instance.SourceIndexCount > instance.IndexCount - instance.SourceFirstIndex ||
+                        !BuildMeshIndexChunks(instance.SourceIndexCount, nullptr, 0, chunks))
                     {
                         ++state.Stats.SkippedDraws;
                         continue;
                     }
+                    for (MeshIndexChunk& chunk : chunks)
+                    {
+                        chunk.FirstIndex += instance.SourceFirstIndex;
+                    }
                 }
                 VirtualShadowMap::AppendSkinnedInstance(instance.CurrentVertexAddress, indexAddress, bounds, chunks, clipmap, state.Chunks, state.Stats);
 
-                // スキニングは毎フレーム変形するので、毎フレーム動いた物として扱う
+                // スキニングは毎フレーム変形するので、毎フレーム動いた物として扱う（鍵はコンポーネントとサブメッシュの範囲ごと）
                 VirtualShadowMap::CasterMotionEntry motion;
-                motion.Key = VirtualShadowMap::CasterHashCombine(0x534B494Eull, instance.SourceMeshComponentId);
+                motion.Key = VirtualShadowMap::CasterHashCombine(VirtualShadowMap::CasterHashCombine(0x534B494Eull, instance.SourceMeshComponentId),
+                                                                 instance.SourceFirstIndex);
                 motion.bAlwaysChanged = true;
                 motion.bHasBounds = true;
                 motion.Bounds = bounds;

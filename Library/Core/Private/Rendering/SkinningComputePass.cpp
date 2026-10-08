@@ -499,6 +499,8 @@ namespace NorvesLib::Core::Rendering
             instance.Material = source.Draw.MaterialHandle;
             instance.bOpaque = &source >= opaqueCommands.Data && &source < opaqueCommands.Data + opaqueCommands.Count;
             instance.bCastShadow = source.Draw.bCastShadow;
+            instance.SourceFirstIndex = source.Draw.IndexOffset;
+            instance.SourceIndexCount = source.Draw.IndexCount;
             instance.VertexBase = planned.VertexBase;
             instance.VertexCount = planned.VertexCount;
             instance.IndexCount = prepared.IndexCount;
