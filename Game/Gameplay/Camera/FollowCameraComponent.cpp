@@ -145,7 +145,7 @@ namespace Game::Gameplay
             SubjectSpeed() >= m_Profile.MinimumYawSpeed)
         {
             const auto forward = physical->GetWorldTransform().rotation * Math::Vector3::UnitZ;
-            const float target = float(std::atan2(forward.x, forward.z) * 57.29577951308232);
+            const float target = float(std::atan2(forward.x, forward.z) * 57.29577951308232 + 180);
             float yaw = GetYaw();
             if (Math::TryCriticalDamp(yaw, m_YawVelocity, yaw + std::remainder(target - yaw, 360.f),
                                       m_Profile.YawHalfLife, dt) &&
@@ -225,7 +225,7 @@ namespace Game::Gameplay
             request.DesiredLength += distance * m_Profile.LockArmGain + m_LockRadius;
             if (offset.x * offset.x + offset.z * offset.z > 1e-6f)
             {
-                const float target = float(std::atan2(offset.x, offset.z) * 57.29577951308232);
+                const float target = float(std::atan2(offset.x, offset.z) * 57.29577951308232 + 180);
                 float yaw = GetYaw();
                 if (Math::TryCriticalDamp(yaw, m_YawVelocity, yaw + std::remainder(target - yaw, 360.f),
                                           m_Profile.YawHalfLife, dt))
