@@ -1,0 +1,105 @@
+name: Animation CPU milestone
+
+on:
+  # 個別変更や失敗修正のpushでは起動しない。GR単位の実装・レビュー・修正をまとめて検証する。
+  workflow_dispatch:
+    inputs:
+      gr_id:
+        description: '今回まとめて検証するGR'
+        required: true
+        type: choice
+        options: [GR10, GR11, GR12, GR13]
+      scope_complete:
+        description: '実装・レビュー・関連修正をまとめた区切りである（個別修正の再試行には使わない）'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: animation-cpu-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pose:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope_complete }}
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SDK_VERSION: 1.4.309.0
+      SDK_ROOT: C:\VulkanSDK\1.4.309.0
+      NORVES_POSE_BENCHMARK: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: 検証環境を記録する
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'NorvesAnimationLogs'
+          New-Item -ItemType Directory -Path $log -Force | Out-Null
+          "NORVES_CI_LOG=$log" >> $env:GITHUB_ENV
+          "commit=$env:GITHUB_SHA`nimage=$env:ImageVersion`nconfiguration=Release" | Set-Content "$log/provenance.txt"
+      - name: 公式Vulkan SDKを検証して配置する
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:SDK_VERSION
+          $file = "VulkanSDK-$version-Installer.exe"
+          $expectedSha = '48b132169b64fe65cdb0f20970195335a65354e73f1ea5373032c2a8bbad4297'
+          $receipt = Invoke-RestMethod "https://vulkan.lunarg.com/sdk/sha/$version/windows/$file.json"
+          if ($receipt.version -ne $version -or $receipt.platform -ne 'windows' -or $receipt.file -ne $file -or $receipt.sha -ne $expectedSha) { throw 'Invalid SDK checksum receipt' }
+          $receipt | ConvertTo-Json | Set-Content "$env:NORVES_CI_LOG/sdk-checksum.json"
+          $installer = Join-Path $env:RUNNER_TEMP 'vulkan_sdk.exe'
+          Invoke-WebRequest "https://sdk.lunarg.com/sdk/download/$version/windows/$file" -OutFile $installer
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne $receipt.sha) { throw 'SDK checksum mismatch' }
+          # 2026-10-04作者承認済み。copy_onlyでシステム登録やPATHの恒久変更を避ける。
+          $install = Start-Process -FilePath $installer -ArgumentList @('--root', $env:SDK_ROOT, '--accept-licenses', '--default-answer', '--confirm-command', 'install', 'com.lunarg.vulkan.debug', 'copy_only=1') -Wait -PassThru -RedirectStandardOutput "$env:NORVES_CI_LOG/sdk-install.stdout.log" -RedirectStandardError "$env:NORVES_CI_LOG/sdk-install.stderr.log"
+          "sdk_exit=$($install.ExitCode)" | Add-Content "$env:NORVES_CI_LOG/provenance.txt"
+          if ($install.ExitCode -ne 0) { throw "SDK install failed: $($install.ExitCode)" }
+          foreach ($relative in @('Include/vulkan/vulkan.h','Lib/vulkan-1.lib','Lib/shaderc_combined.lib','Lib/shaderc_combinedd.lib')) {
+            if (!(Test-Path (Join-Path $env:SDK_ROOT $relative) -PathType Leaf)) { throw "Missing SDK file: $relative" }
+          }
+          "VULKAN_SDK=$env:SDK_ROOT" >> $env:GITHUB_ENV
+          "$env:SDK_ROOT/Bin" >> $env:GITHUB_PATH
+      - name: CPU検証の構成を生成する
+        run: |
+          cmake -S . -B build/animation -G 'Visual Studio 17 2022' -A x64 -DNORVES_BUILD_TESTS=ON -DNORVES_ENABLE_IMGUI=ON 2>&1 | Tee-Object "$env:NORVES_CI_LOG/configure.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
+      - name: 姿勢評価の本体と関連テストをビルドする
+        run: |
+          cmake --build build/animation --config Release --target SkeletalAnimationSamplingTest SkinnedRenderPathContractTest -- /m:2 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Animation build failed' }
+      - name: 独立oracleと再利用領域を検証して計測する
+        run: |
+          ctest --test-dir build/animation -C Release -V --output-on-failure -R '^(SkeletalAnimationSamplingTest|SkinnedRenderPathContractTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/tests.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Animation tests failed' }
+      - name: 保存形式のbundleをビルドする
+        run: |
+          cmake --build build/animation --config Release --target CookedMeshTest -- /m:2 2>&1 | Tee-Object "$env:NORVES_CI_LOG/cook-build.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Cook bundle build failed' }
+      - name: クリップ保存形式と束縛を検証する
+        run: |
+          ctest --test-dir build/animation -C Release -V --output-on-failure -R '^(CookedClipBankV1Test|SkeletalClipBankBindingTest|CookedSkeletonV1Test)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/cook-tests.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Cook animation tests failed' }
+      - name: 骨格の読み込みと寿命の回帰をビルドする
+        run: |
+          cmake --build build/animation --config Release --target GLTFSkeletalAnalyzerTest ResourceRegistryTest SkeletalFramePacketSnapshotTest -- /m:2 2>&1 | Tee-Object "$env:NORVES_CI_LOG/regression-build.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Skeletal regression build failed' }
+      - name: 骨格の既存経路を回帰検証する
+        run: |
+          ctest --test-dir build/animation -C Release -V --output-on-failure -R '^(GLTFSkeletalAnalyzerTest|CookedSkeletalAssetTest|SkeletalResourceLifetimeTest|SkeletalFramePacketSnapshotTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/regression-tests.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Skeletal regression tests failed' }
+      - name: 合成デバッグ画面のGameをビルドする
+        run: |
+          cmake --build build/animation --config Release --target Game -- /m:2 2>&1 | Tee-Object "$env:NORVES_CI_LOG/game-build.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Animation debug Game build failed' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: animation-cpu-logs
+          path: ${{ runner.temp }}/NorvesAnimationLogs

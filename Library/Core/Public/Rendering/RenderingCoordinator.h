@@ -168,6 +168,8 @@ namespace NorvesLib::Core::Rendering
      */
     class RenderingCoordinator
     {
+        // CPUスナップショット試験は公開APIを増やさず、この専用アクセス型を使う。
+        friend struct SkeletalFramePacketTestAccess;
     public:
         /**
          * @brief コンストラクタ

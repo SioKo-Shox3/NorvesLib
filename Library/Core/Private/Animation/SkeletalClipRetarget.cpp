@@ -1,8 +1,9 @@
 ﻿#include "Animation/SkeletalClipRetarget.h"
-#include "Asset/CookedSkeletalNameCodec.h"
-#include "Animation/SkeletalRotationRetargetMath.h"
-#include "Animation/SkeletalClipSampling.h"
 #include "Animation/RigRootFrame.h"
+#include "Animation/SkeletalClipSampling.h"
+#include "Animation/SkeletalRotationRetargetMath.h"
+#include "Asset/CookedSkeletalNameCodec.h"
+#include "Resource/ImportTransform.h"
 #include <algorithm>
 #include <cmath>
 namespace NorvesLib::Core::Animation
@@ -798,6 +799,31 @@ namespace NorvesLib::Core::Animation
         {
             return Fail(error, "clip_processing");
         }
+        ClipMetadataReport metadataReport;
+        if (!RemapClipMetadataTime(source.Clip.Metadata, source.Clip.DurationSeconds, report.Processing.StartSeconds,
+                                   report.Processing.EndSeconds, 1, clip.Metadata, metadataReport))
+            return Fail(error, "clip_metadata_time");
+        if (clip.Metadata.Root.Joint != UINT32_MAX)
+        {
+            bool mapped = false;
+            for (const auto& pair : c.Mapping.Pairs)
+                if (pair.SourceIndex == clip.Metadata.Root.Joint)
+                {
+                    clip.Metadata.Root.Joint = pair.TargetIndex;
+                    mapped = true;
+                    break;
+                }
+            if (!mapped)
+                return Fail(error, "clip_metadata_root");
+        }
+        const double metadataScale = profile.Settings.PositionScale * c.RootScale;
+        if (!AssetImport::TryScaleImportValue(clip.Metadata.GroundOffset, metadataScale, clip.Metadata.GroundOffset) ||
+            (clip.Metadata.Root.NominalSpeed >= 0 &&
+             !AssetImport::TryScaleImportValue(clip.Metadata.Root.NominalSpeed, metadataScale,
+                                               clip.Metadata.Root.NominalSpeed)))
+            return Fail(error, "clip_metadata_scale");
+        if (!ValidateClipMetadata(clip.Metadata, clip.DurationSeconds, metadataReport))
+            return Fail(error, "clip_metadata_scale");
         report.RootScale = c.RootScale;
         report.UnmappedSource = uint32_t(c.Mapping.UnmappedSourceIndices.size());
         report.UnmappedTarget = uint32_t(c.Mapping.UnmappedTargetIndices.size());

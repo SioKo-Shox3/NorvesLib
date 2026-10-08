@@ -484,6 +484,7 @@ namespace Game
         m_M6ScriptSmokeController.Configure(args);
 
         m_bHasTextureAssetRuntimeConfig = false;
+        m_bAnimationDebugRequested = false;
         m_bRendering3DTestUseCookedModel = false;
         m_bNoCookedTextures = false;
         m_TextureLooseAssetRoot = {};
@@ -831,6 +832,11 @@ namespace Game
                 continue;
             }
 
+            if (args[i] == TEXT("--animation-debug"))
+            {
+                m_bAnimationDebugRequested = true;
+                continue;
+            }
             if (args[i] == kStartupSkinnedProbeOption)
             {
                 s_bRendering3DTestSkinnedProbe = true;
@@ -1416,7 +1422,14 @@ namespace Game
         // 第2段 B-i: --imgui 不変条件ゲート。値を取らない bare フラグの厳密一致を走査し、
         // NORVES_ENABLE_IMGUI ビルドで指定された場合のみ ImGui モジュールを登録する。
         // フラグ無し or OFF ビルドでは一切登録せず、overlay seam は完全 no-op を保つ。
-        bool bImGui = false;
+#if !defined(NORVES_ENABLE_IMGUI)
+        if (m_bAnimationDebugRequested)
+        {
+            LOG_ERROR("--animation-debug は NORVES_ENABLE_IMGUI=ON のビルドが必要です");
+            return false;
+        }
+#endif
+        bool bImGui = m_bAnimationDebugRequested;
         for (size_t i = 0; i < args.size(); ++i)
         {
             if (ToStdString(args[i]) == std::basic_string<TCHAR>(kImGuiOption))
@@ -2072,6 +2085,7 @@ namespace Game
                 mode->GetData().m_StartupRenderScale = s_Rendering3DTestRenderScale;
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
                 mode->GetData().m_bStartupSkinnedProbe = s_bRendering3DTestSkinnedProbe;
+                mode->GetData().m_bAnimationDebug = m_bAnimationDebugRequested;
                 mode->GetData().m_bStartupScanProps = s_bRendering3DTestScanProps;
                 mode->GetData().m_StressMegaInstanceCount = s_Rendering3DTestStressMegaInstances;
                 if (s_Rendering3DTestStressGeometryCount > 0u)

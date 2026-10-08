@@ -90,6 +90,25 @@ set(PRIVATE_SOURCES
     Private/Resource/RigSplitAssetLoader.h
     Public/Animation/SkeletalRestPose.h
     Private/Animation/SkeletalJointIndexNative.cpp
+    Private/Animation/SkeletalPoseRuntimeBuild.cpp
+    Private/Animation/SkeletalPoseBuilder.cpp
+    Private/Animation/SkeletalPoseBounds.cpp
+    Private/Animation/PoseTypes.cpp
+    Private/Animation/PoseOps.cpp
+    Private/Animation/AnimParams.cpp
+    Private/Animation/ClipMetadata.cpp
+    Private/Animation/MotionAnalysis.cpp
+    Private/Animation/AnimationEvents.cpp
+    Private/Animation/SocketTypes.cpp
+    Private/Animation/AnimSync.cpp
+    Private/Animation/AnimGraphSync.cpp
+    Private/Animation/AnimGraphRootMotion.cpp
+    Private/Animation/AnimGraphResource.cpp
+    Private/Animation/AnimGraphInstance.cpp
+    Private/Component/SocketAttachmentComponent.cpp
+    Private/Component/HoldSlotComponent.cpp
+    Private/Component/AnimatorComponent.cpp
+    Private/Animation/ClipChannelSampler.cpp
     Private/Animation/SkeletalAnimationSampler.cpp
     Private/Animation/SkeletalSplitSampler.cpp
     Private/Animation/SkeletalSplitSampler.h
@@ -467,6 +486,21 @@ set(PUBLIC_HEADERS
     Public/Animation/RigBindingTypes.h
     Public/Animation/RigSplitAssetRequest.h
     Public/Animation/SkeletonResource.h
+    Public/Animation/PoseOps.h
+    Public/Animation/AnimParams.h
+    Public/Animation/AnimGraphResource.h
+    Public/Animation/AnimGraphInstance.h
+    Public/Animation/ClipMetadata.h
+    Public/Animation/ClipPlayback.h
+    Public/Animation/SocketTypes.h
+    Public/Animation/AnimSync.h
+    Public/Animation/AnimationEvents.h
+    Public/Animation/RootMotion.h
+    Public/Animation/MotionAnalysis.h
+    Public/Animation/PoseModifier.h
+    Public/Component/SocketAttachmentComponent.h
+    Public/Component/HoldSlotComponent.h
+    Public/Component/AnimatorComponent.h
     # Scene
     Public/Scene/SceneQuery.h
     Public/Scene/PhysicsQueryTypes.h

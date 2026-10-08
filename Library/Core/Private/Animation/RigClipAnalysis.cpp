@@ -154,6 +154,10 @@ namespace NorvesLib::Core::Skeletal
             {
                 return false;
             }
+            if (source.Metadata.Root.Joint != UINT32_MAX &&
+                (source.Metadata.Root.Joint >= a->Geometry.Joints.size() ||
+                 a->Geometry.Joints[source.Metadata.Root.Joint].ParentIndex != -1))
+                return false;
             const double factor =
                 options.TimeScale * (options.SourceFps > 0 ? options.AuthoredFps / options.SourceFps : 1);
             const double duration = double(source.DurationSeconds) * factor;
@@ -177,6 +181,11 @@ namespace NorvesLib::Core::Skeletal
             }
             auto clip = source;
             clip.DurationSeconds = float(duration);
+            Animation::ClipMetadataReport metadataReport;
+            if (!Animation::RemapClipMetadataTime(source.Metadata, source.DurationSeconds, 0, source.DurationSeconds,
+                                                  factor, clip.Metadata, metadataReport))
+                return false;
+
             if (duration > 0 && clip.DurationSeconds == 0)
             {
                 return false;

@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Animation/SkeletalPoseBounds.h"
 #include "Rendering/SkinnedMeshTypes.h"
 #include "Object/Reflection.h"
 #include "Object/Resource.h"
@@ -50,11 +51,16 @@ namespace NorvesLib::Core
         void RefreshRenderAssetLease();
         void ReleaseRenderAssetLease();
 
+        const Animation::MeshPoseBounds& GetPoseBounds() const noexcept { return m_PoseBounds; }
+        uint64_t GetPoseRevision() const noexcept { return m_PoseRevision; }
+
     private:
+        uint64_t m_PoseRevision = 0;
+        Animation::MeshPoseBounds m_PoseBounds;
       Container::TSharedPtr<const Skeletal::SkinMeshV1Data> m_SplitMesh;
       bool m_bSplitV1 = false;
       Container::TSharedPtr<Rendering::SkinnedMeshAssetLease> m_RenderAssetLease;
-      uint64_t m_RenderAssetGeneration = 0;
+        uint64_t m_RenderAssetGeneration = 0;
       Container::VariableArray<Skeletal::SkeletalVertex> m_Vertices;
       Container::VariableArray<uint32_t> m_Indices;
       Container::VariableArray<Skeletal::SkeletalSubMesh> m_SubMeshes;

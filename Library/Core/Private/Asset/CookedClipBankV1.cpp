@@ -22,8 +22,10 @@ namespace NorvesLib::Core::Skeletal
         constexpr uint32_t Codes[] = {Four('S', 'T', 'R', 'S'), Four('T', 'J', 'N', 'T'), Four('R', 'S', 'E', 'T'),
                                       Four('A', 'R', 'S', 'T'), Four('C', 'L', 'I', 'P'), Four('C', 'H', 'A', 'N'),
                                       Four('S', 'A', 'M', 'P'), Four('A', 'F', 'R', 'M'), Four('A', 'N', 'L', 'Y'),
-                                      Four('R', 'M', 'T', 'N')};
-        constexpr uint32_t RecordSizes[] = {1, 24, 48, 48, 48, 48, 32, 64, 96, 40};
+                                      Four('R', 'M', 'T', 'N'), Four('E', 'V', 'N', 'T'), Four('M', 'A', 'R', 'K'),
+                                      Four('M', 'E', 'T', 'A')};
+        constexpr uint32_t RecordSizes[] = {1, 24, 48, 48, 48, 48, 32, 64, 96, 40, 32, 16, 48};
+        constexpr uint32_t MaxBankEvents = 262144, MaxBankMarkers = 65536;
         struct Section
         {
             uint32_t Code = 0, Flags = 0, Record = 0, Count = 0;
@@ -161,7 +163,7 @@ namespace NorvesLib::Core::Skeletal
                     }
                 }
             }
-            size_t strings = 0, channels = 0, samples = 0, roots = 0;
+            size_t strings = 0, channels = 0, samples = 0, roots = 0, events = 0, markers = 0;
             const auto addName = [&](const C::AnsiString& name)
             {
                 if (!ValidUtf8(name, limits) || name.size() > limits.MaxStringBytes - strings)
@@ -234,6 +236,30 @@ namespace NorvesLib::Core::Skeletal
                     return RigV1Status::LimitExceeded;
                 }
                 samples += clip.RootMotion.size();
+                Animation::ClipMetadataReport metadataReport;
+                if (!Animation::ValidateClipMetadata(clip.Metadata, clip.DurationSeconds, metadataReport) ||
+                    (clip.Metadata.Root.Joint != UINT32_MAX &&
+                     (clip.Metadata.Root.Joint >= d.Topology.Joints.size() ||
+                      d.Topology.Joints[clip.Metadata.Root.Joint].ParentIndex != -1)))
+                    return RigV1Status::InvalidClip;
+                if (clip.Metadata.Events.size() > MaxBankEvents - events ||
+                    clip.Metadata.Markers.size() > MaxBankMarkers - markers)
+                    return RigV1Status::LimitExceeded;
+                events += clip.Metadata.Events.size();
+                markers += clip.Metadata.Markers.size();
+                for (const auto& event : clip.Metadata.Events)
+                {
+                    C::AnsiString text;
+                    if (!Utf8Name(C::String(event.Name.GetView()), text, limits) || !addName(text))
+                        return RigV1Status::InvalidName;
+                }
+                for (const auto& marker : clip.Metadata.Markers)
+                {
+                    C::AnsiString text;
+                    if (!Utf8Name(C::String(marker.Name.GetView()), text, limits) || !addName(text))
+                        return RigV1Status::InvalidName;
+                }
+
                 usedSnapshots[d.ClipSnapshots[n]] = 1;
                 if (clip.Channels.size() > limits.MaxChannels - channels)
                 {
@@ -437,6 +463,15 @@ namespace NorvesLib::Core::Skeletal
                         }
                         channel.JointIndex = rig->Topology.SourceToCanonical[channel.JointIndex];
                     }
+                    if (owned.Metadata.Root.Joint != UINT32_MAX)
+                    {
+                        if (owned.Metadata.Root.Joint >= rig->Topology.SourceToCanonical.size())
+                        {
+                            report.Status = RigV1Status::InvalidClip;
+                            return false;
+                        }
+                        owned.Metadata.Root.Joint = rig->Topology.SourceToCanonical[owned.Metadata.Root.Joint];
+                    }
                     if (!owned.RootMotion.empty())
                     {
                         if (owned.RootMotionJoint >= rig->Topology.SourceToCanonical.size())
@@ -502,8 +537,19 @@ namespace NorvesLib::Core::Skeletal
             {
                 active.push_back(9);
             }
+            bool hasMetadata = false;
+            for (const auto& clip : d->Clips)
+                hasMetadata |= !Animation::SameClipMetadata(clip.Metadata, Animation::ClipMetadata{});
+            if (hasMetadata)
+            {
+                active.push_back(10);
+                active.push_back(11);
+                active.push_back(12);
+            }
             const uint32_t sectionCount = uint32_t(active.size());
-            uint64_t estimated[10]{};
+            uint64_t estimated[13]{};
+            if (hasMetadata)
+                estimated[12] = d->Clips.size() * 48;
             estimated[9] = rootSamples * 40;
             estimated[8] = d->Analyses.size() * 96;
             if (IsStaticRootFrameProfile(profile))
@@ -528,6 +574,18 @@ namespace NorvesLib::Core::Skeletal
                     Asset::MeasureSkeletalNameEncoding<C::String::value_type>(2, {clip.Name.data(), clip.Name.size()});
                 estimated[0] += measured.ByteCount;
                 estimated[5] += clip.Channels.size() * 48;
+                estimated[10] += clip.Metadata.Events.size() * 32;
+                estimated[11] += clip.Metadata.Markers.size() * 16;
+                const auto countName = [&](Identity identity) {
+                    const auto text = identity.GetView();
+                    estimated[0] +=
+                        Asset::MeasureSkeletalNameEncoding<C::String::value_type>(2, {text.data(), text.size()})
+                            .ByteCount;
+                };
+                for (const auto& event : clip.Metadata.Events)
+                    countName(event.Name);
+                for (const auto& marker : clip.Metadata.Markers)
+                    countName(marker.Name);
                 for (const auto& channel : clip.Channels)
                 {
                     estimated[6] += channel.Samples.size() * 32;
@@ -543,8 +601,8 @@ namespace NorvesLib::Core::Skeletal
                 report.Status = RigV1Status::LimitExceeded;
                 return false;
             }
-            Bytes sections[10];
-            uint32_t counts[10]{};
+            Bytes sections[13];
+            uint32_t counts[13]{};
             C::VariableArray<uint64_t> jointOffsets;
             const auto addString = [&](const C::AnsiString& name)
             {
@@ -674,6 +732,59 @@ namespace NorvesLib::Core::Skeletal
                     W64(sections[9], o + 32, std::bit_cast<uint64_t>(sample.YawRadians));
                 }
             }
+            if (hasMetadata)
+            {
+                for (const auto& clip : d->Clips)
+                {
+                    const auto& m = clip.Metadata;
+                    const size_t o = sections[12].size();
+                    sections[12].resize(o + 48, 0);
+                    W32(sections[12], o, uint32_t(sections[10].size() / 32));
+                    W32(sections[12], o + 4, uint32_t(m.Events.size()));
+                    W32(sections[12], o + 8, uint32_t(sections[11].size() / 16));
+                    W32(sections[12], o + 12, uint32_t(m.Markers.size()));
+                    W32(sections[12], o + 16,
+                        uint32_t(m.Root.Mode) | (m.Loop.bEnabled ? 4u : 0u) | (m.Root.bX ? 8u : 0u) |
+                            (m.Root.bZ ? 16u : 0u) | (m.Root.bYaw ? 32u : 0u));
+                    W32(sections[12], o + 20, m.Root.Joint);
+                    WF(sections[12], o + 24, m.Loop.Start);
+                    WF(sections[12], o + 28, m.Loop.End);
+                    WF(sections[12], o + 32, m.Root.NominalSpeed);
+                    WF(sections[12], o + 36, m.GroundOffset);
+                    for (const auto& event : m.Events)
+                    {
+                        C::AnsiString name;
+                        if (!Utf8Name(C::String(event.Name.GetView()), name, limits))
+                        {
+                            report.Status = RigV1Status::InvalidName;
+                            return false;
+                        }
+                        const size_t e = sections[10].size();
+                        sections[10].resize(e + 32, 0);
+                        W64(sections[10], e, addString(name));
+                        W32(sections[10], e + 8, uint32_t(name.size()));
+                        WF(sections[10], e + 12, event.Time);
+                        WF(sections[10], e + 16, event.EndTime);
+                        WF(sections[10], e + 20, event.MinWeight);
+                        WF(sections[10], e + 24, event.Value);
+                        W32(sections[10], e + 28, std::bit_cast<uint32_t>(event.IntValue));
+                    }
+                    for (const auto& marker : m.Markers)
+                    {
+                        C::AnsiString name;
+                        if (!Utf8Name(C::String(marker.Name.GetView()), name, limits))
+                        {
+                            report.Status = RigV1Status::InvalidName;
+                            return false;
+                        }
+                        const size_t e = sections[11].size();
+                        sections[11].resize(e + 16, 0);
+                        W64(sections[11], e, addString(name));
+                        W32(sections[11], e + 8, uint32_t(name.size()));
+                        WF(sections[11], e + 12, marker.Time);
+                    }
+                }
+            }
             uint64_t total = 256 + sectionCount * 32;
             for (uint32_t i : active)
             {
@@ -777,6 +888,8 @@ namespace NorvesLib::Core::Skeletal
             bool bAnalysis = false;
             Section motionSection{};
             bool bMotion = false;
+            Section metadataSections[3]{};
+            bool metadataFound[3]{};
             bool found[8]{};
             for (uint32_t i = 0; i < count; ++i)
             {
@@ -835,12 +948,21 @@ namespace NorvesLib::Core::Skeletal
                     bMotion = true;
                     motionSection = s;
                 }
-                else if ((s.Flags & 1) || (IsStaticRootFrameProfile(profile) &&
-                                           (s.Code == Four('R', 'O', 'O', 'T') || s.Code == Four('S', 'R', 'E', 'F') ||
-                                            s.Code == Four('V', 'E', 'R', 'T') || s.Code == Four('I', 'N', 'D', 'X') ||
-                                            s.Code == Four('I', 'B', 'M', 'S') || s.Code == Four('M', 'N', 'G', 'T') ||
-                                            s.Code == Four('S', 'U', 'B', 'M') || s.Code == Four('M', 'S', 'L', 'T') ||
-                                            s.Code == Four('M', 'A', 'T', 'S'))))
+                else if (s.Code == Codes[10] || s.Code == Codes[11] || s.Code == Codes[12])
+                {
+                    const unsigned slot = s.Code == Codes[10] ? 0 : (s.Code == Codes[11] ? 1 : 2);
+                    if (s.Flags != 0 || s.Record != RecordSizes[10 + slot])
+                        return fail(RigV1Status::BadWire);
+                    metadataSections[slot] = s;
+                    metadataFound[slot] = true;
+                }
+                else if ((s.Flags & 1) || s.Code == Four('S', 'O', 'C', 'K') ||
+                         (IsStaticRootFrameProfile(profile) &&
+                          (s.Code == Four('R', 'O', 'O', 'T') || s.Code == Four('S', 'R', 'E', 'F') ||
+                           s.Code == Four('V', 'E', 'R', 'T') || s.Code == Four('I', 'N', 'D', 'X') ||
+                           s.Code == Four('I', 'B', 'M', 'S') || s.Code == Four('M', 'N', 'G', 'T') ||
+                           s.Code == Four('S', 'U', 'B', 'M') || s.Code == Four('M', 'S', 'L', 'T') ||
+                           s.Code == Four('M', 'A', 'T', 'S'))))
                 {
                     return fail(RigV1Status::UnsupportedSection);
                 }
@@ -877,6 +999,12 @@ namespace NorvesLib::Core::Skeletal
             {
                 return fail(RigV1Status::LimitExceeded);
             }
+            const bool hasMetadata = metadataFound[2];
+            if (metadataFound[0] != hasMetadata || metadataFound[1] != hasMetadata ||
+                (hasMetadata && metadataSections[2].Count != known[4].Count))
+                return fail(RigV1Status::BadWire);
+            if (metadataSections[0].Count > MaxBankEvents || metadataSections[1].Count > MaxBankMarkers)
+                return fail(RigV1Status::LimitExceeded);
             if (IsStaticRootFrameProfile(profile))
             {
                 if (known[7].Count != known[2].Count)
@@ -1089,6 +1217,56 @@ namespace NorvesLib::Core::Skeletal
                         *values[k] = F64(bytes, o + 8 + k * 8);
                     }
                 }
+            }
+            if (hasMetadata)
+            {
+                uint32_t nextEvent = 0, nextMarker = 0;
+                for (size_t i = 0; i < data->Clips.size(); ++i)
+                {
+                    auto& m = data->Clips[i].Metadata;
+                    const size_t o = size_t(metadataSections[2].Offset) + i * 48;
+                    const uint32_t firstEvent = U32(bytes, o), events = U32(bytes, o + 4),
+                                   firstMarker = U32(bytes, o + 8), markers = U32(bytes, o + 12),
+                                   flags = U32(bytes, o + 16);
+                    if (firstEvent != nextEvent || firstMarker != nextMarker || events > 4096 || markers > 256 ||
+                        events > metadataSections[0].Count - nextEvent ||
+                        markers > metadataSections[1].Count - nextMarker || flags > 63 || (flags & 3) > 2 ||
+                        !Zero(bytes, o + 40, o + 48))
+                        return fail(RigV1Status::BadWire);
+                    nextEvent += events;
+                    nextMarker += markers;
+                    m.Root.Mode = Animation::RootMotionMode(flags & 3);
+                    m.Loop.bEnabled = (flags & 4) != 0;
+                    m.Root.bX = (flags & 8) != 0;
+                    m.Root.bZ = (flags & 16) != 0;
+                    m.Root.bYaw = (flags & 32) != 0;
+                    m.Root.Joint = U32(bytes, o + 20);
+                    m.Loop.Start = F32(bytes, o + 24);
+                    m.Loop.End = F32(bytes, o + 28);
+                    m.Root.NominalSpeed = F32(bytes, o + 32);
+                    m.GroundOffset = F32(bytes, o + 36);
+                    for (uint32_t n = 0; n < events; ++n)
+                    {
+                        const size_t e = size_t(metadataSections[0].Offset) + size_t(firstEvent + n) * 32;
+                        C::AnsiString utf8;
+                        C::String text;
+                        if (!name(U64(bytes, e), U32(bytes, e + 8), utf8) || !NativeName(utf8, text))
+                            return fail(RigV1Status::InvalidName);
+                        m.Events.push_back({Identity(text), F32(bytes, e + 12), F32(bytes, e + 16), F32(bytes, e + 20),
+                                            F32(bytes, e + 24), std::bit_cast<int32_t>(U32(bytes, e + 28))});
+                    }
+                    for (uint32_t n = 0; n < markers; ++n)
+                    {
+                        const size_t e = size_t(metadataSections[1].Offset) + size_t(firstMarker + n) * 16;
+                        C::AnsiString utf8;
+                        C::String text;
+                        if (!name(U64(bytes, e), U32(bytes, e + 8), utf8) || !NativeName(utf8, text))
+                            return fail(RigV1Status::InvalidName);
+                        m.Markers.push_back({Identity(text), F32(bytes, e + 12)});
+                    }
+                }
+                if (nextEvent != metadataSections[0].Count || nextMarker != metadataSections[1].Count)
+                    return fail(RigV1Status::BadWire);
             }
             report.Status = ValidateData(*data, limits);
             if (report.Status != RigV1Status::Success)

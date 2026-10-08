@@ -917,6 +917,10 @@ namespace NorvesLib::Core
 
     void World::BuildTickSnapshot()
     {
+        if (++m_TickSerial == 0)
+        {
+            ++m_TickSerial;
+        }
         m_TickEntries.clear();
         m_FixedTickEntries.clear();
         size_t ordinal = 0;

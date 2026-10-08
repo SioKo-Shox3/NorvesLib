@@ -193,6 +193,7 @@ namespace Game
          */
         Game::Bridge::BridgeRuntimeState m_BridgeRuntimeState = Game::Bridge::BridgeRuntimeState::Edit;
 
+        bool m_bAnimationDebugRequested = false;
 #if defined(NORVES_ENABLE_IMGUI)
         bool m_bImGuiRequested = false;
         bool m_bEngineStatsImGuiViewRegistered = false;

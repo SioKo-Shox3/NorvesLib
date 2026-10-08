@@ -2222,6 +2222,23 @@ namespace NorvesLib::Core::Skeletal
             {
                 return false;
             }
+            const auto extras = animation.FindMember("extras");
+            if (extras.IsObject() && extras.HasMember("norves"))
+            {
+                Animation::ClipMetadataReport metadataReport;
+                if (!Animation::ParseClipMetadataValue(extras.FindMember("norves"), clip.DurationSeconds, false,
+                                                       clip.Metadata, metadataReport))
+                {
+                    status = SkeletalGltfDecodeStatus::InvalidDocument;
+                    return false;
+                }
+            }
+            if (clip.Metadata.Root.Joint != UINT32_MAX && (clip.Metadata.Root.Joint >= outData.Joints.size() ||
+                                                           outData.Joints[clip.Metadata.Root.Joint].ParentIndex != -1))
+            {
+                status = SkeletalGltfDecodeStatus::InvalidDocument;
+                return false;
+            }
             outData.Clips.push_back(std::move(clip));
             return true;
         }
@@ -2290,6 +2307,12 @@ namespace NorvesLib::Core::Skeletal
             {
                 return TryScaleImportValue(value, factor, value);
             };
+            for (auto& clip : data.Clips)
+            {
+                if (!scale(clip.Metadata.GroundOffset) ||
+                    (clip.Metadata.Root.NominalSpeed >= 0 && !scale(clip.Metadata.Root.NominalSpeed)))
+                    return false;
+            }
             // dataはdecoder内の未公開candidate。途中失敗時も外部へ部分適用を返さない。
             for (auto& vertex : data.Vertices)
             {
@@ -2404,7 +2427,7 @@ namespace NorvesLib::Core::Skeletal
                     }
                 }
             }
-            uint64_t channelsTotal = 0, samplesTotal = 0, samplersTotal = 0;
+            uint64_t channelsTotal = 0, samplesTotal = 0, samplersTotal = 0, eventsTotal = 0, markersTotal = 0;
             for (size_t i = 0; i < animations.GetArraySize(); ++i)
             {
                 const auto animation = animations.GetArrayElement(i);
@@ -2412,6 +2435,19 @@ namespace NorvesLib::Core::Skeletal
                 {
                     return false;
                 }
+                const auto metadata = animation.FindMember("extras").FindMember("norves");
+                const auto events = metadata.FindMember("events"), markers = metadata.FindMember("markers");
+                if (events.GetArraySize() > 4096 || markers.GetArraySize() > 256 ||
+                    events.GetArraySize() > 262144 - eventsTotal || markers.GetArraySize() > 65536 - markersTotal)
+                    return exceed();
+                eventsTotal += events.GetArraySize();
+                markersTotal += markers.GetArraySize();
+                for (size_t n = 0; n < events.GetArraySize(); ++n)
+                    if (!retainName(events.GetArrayElement(n).FindMember("name")))
+                        return false;
+                for (size_t n = 0; n < markers.GetArraySize(); ++n)
+                    if (!retainName(markers.GetArrayElement(n).FindMember("name")))
+                        return false;
                 const auto channels = animation.FindMember("channels"), samplers = animation.FindMember("samplers");
                 if (channels.GetArraySize() > limits.MaxChannels - channelsTotal ||
                     samplers.GetArraySize() > limits.MaxChannels - samplersTotal)

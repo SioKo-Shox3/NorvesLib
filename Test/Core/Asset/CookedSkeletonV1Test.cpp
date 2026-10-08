@@ -1,13 +1,65 @@
 ﻿// role1を独立current restとして所有し、geometryやIBMを持ち越さない。
-#include "ClipBankV1Fixture.h"
-#include "RigSplitWireTestFixture.h"
 #include "Asset/CookedSkeletonV1.h"
+#include "Animation/SkeletonResource.h"
 #include "Asset/RigSplitWire.h"
+#include "ClipBankV1Fixture.h"
+#include "Object/ResourceRegistry.h"
+#include "RigSplitWireTestFixture.h"
 namespace F = NorvesLib::Tests::RigV1Fixture;
 namespace S = NorvesLib::Core::Skeletal;
 namespace C = NorvesLib::Core::Container;
 namespace
 {
+
+    void Sockets(F::Fixture& f)
+    {
+        namespace A = NorvesLib::Core::Animation;
+        using NorvesLib::Core::Identity;
+        auto source = f.Import(f.Json);
+        S::SkeletonV1 base, withSockets;
+        S::RigV1Report report;
+        RIG_CHECK(S::BuildSkeletonV1(source, base, report));
+        F::Bytes original, bytes, again;
+        RIG_CHECK(S::WriteSkeletonV1(base, original, report));
+        A::SocketDefinition socket;
+        socket.Name = Identity("Mouth");
+        socket.ParentJoint = 1;
+        socket.Offset.position = {1, 2, 3};
+        RIG_CHECK(S::WithSkeletonSockets(base, {&socket, 1}, withSockets, report));
+        RIG_CHECK(withSockets.GetData()->ContentHash != base.GetData()->ContentHash &&
+                  withSockets.GetData()->Topology.SkeletonId == base.GetData()->Topology.SkeletonId &&
+                  withSockets.GetData()->CurrentRest.RestHash == base.GetData()->CurrentRest.RestHash);
+        RIG_CHECK(S::WriteSkeletonV1(withSockets, bytes, report) && F::U32(bytes, 28) == 6);
+        RIG_CHECK(F::U32(bytes, 256 + 5 * 32) == S::SplitWire::Four('S', 'O', 'C', 'K') &&
+                  F::U32(bytes, 256 + 5 * 32 + 4) == 0 && F::U32(bytes, 256 + 5 * 32 + 24) == 64);
+        RIG_CHECK(S::ParseSkeletonV1(F::View(bytes), withSockets, report) &&
+                  S::WriteSkeletonV1(withSockets, again, report) && bytes == again);
+        RIG_CHECK(withSockets.GetData()->Sockets.size() == 1 && withSockets.GetData()->Sockets[0].Name == socket.Name &&
+                  withSockets.GetData()->Sockets[0].ParentJoint == 1 &&
+                  withSockets.GetData()->Sockets[0].Offset.position.z == 3);
+        NorvesLib::Core::ResourceRegistry registry;
+        RIG_CHECK(registry.Initialize());
+        auto resource = registry.CreateTransient<NorvesLib::Core::SkeletonResource>("SocketSkeleton");
+        RIG_CHECK(resource && resource->SetSplitSkeleton(withSockets) && resource->Load());
+        const auto pose = resource->GetPoseRevision(), hash = resource->GetSplitSkeleton()->ContentHash;
+        RIG_CHECK(resource->FindSocket(Identity("Mouth")) && resource->FindSocket(Identity("Mouth"))->ParentJoint == 1);
+        socket.Offset.position.x = 9;
+        A::SocketReport socketReport;
+        RIG_CHECK(resource->SetSockets({&socket, 1}, socketReport));
+        RIG_CHECK(resource->GetPoseRevision() == pose && resource->GetSplitSkeleton()->ContentHash == hash &&
+                  resource->GetSplitSkeleton()->Sockets[0].Offset.position.x == 1 &&
+                  resource->FindSocket(Identity("Mouth"))->Offset.position.x == 9);
+        S::RigV1Limits limitedBudget;
+        limitedBudget.MaxJoints = 1;
+        const auto stable = withSockets.GetData();
+        RIG_CHECK(!S::WithSkeletonSockets(base, {&socket, 1}, withSockets, report, limitedBudget) &&
+                  withSockets.GetData() == stable);
+        RIG_CHECK(S::WithSkeletonSockets(withSockets, {}, withSockets, report) &&
+                  S::WriteSkeletonV1(withSockets, again, report) && again == original);
+        resource->Unload();
+        RIG_CHECK(resource->GetSockets().empty() && !resource->FindSocket(Identity("Mouth")));
+        std::puts("SKELETON_SOCKET_WIRE result=pass");
+    }
     void Codec(F::Fixture& f)
     {
         auto source = f.Import(f.Json);
@@ -134,6 +186,7 @@ int main()
 {
     F::Fixture fixture;
     Codec(fixture);
+    Sockets(fixture);
     std::printf("SKELETON_V1_WIRE result=pass current_rest_no_mesh_ibm_canonical_topology_content_pin_strict_parse\n");
     return 0;
 }

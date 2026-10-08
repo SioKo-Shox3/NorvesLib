@@ -213,7 +213,7 @@ namespace NorvesLib::Core::ResourceIO
             const auto bits = [](float v) { return std::bit_cast<uint32_t>(v); };
             if (a.Name != b.Name || bits(a.DurationSeconds) != bits(b.DurationSeconds) ||
                 a.Channels.size() != b.Channels.size() || a.RootMotionJoint != b.RootMotionJoint ||
-                a.RootMotion.size() != b.RootMotion.size())
+                a.RootMotion.size() != b.RootMotion.size() || !Animation::SameClipMetadata(a.Metadata, b.Metadata))
             {
                 return false;
             }
@@ -256,7 +256,8 @@ namespace NorvesLib::Core::ResourceIO
         {
             size_t n = clip.Name.size() * sizeof(C::String::value_type) +
                        clip.Channels.capacity() * sizeof(S::SkeletalAnimationChannel) +
-                       clip.RootMotion.capacity() * sizeof(S::SkeletalRootMotionSample);
+                       clip.RootMotion.capacity() * sizeof(S::SkeletalRootMotionSample) +
+                       clip.Metadata.AllocatedBytes();
             for (const auto& c : clip.Channels)
             {
                 n += c.Samples.capacity() * sizeof(S::SkeletalAnimationSample);

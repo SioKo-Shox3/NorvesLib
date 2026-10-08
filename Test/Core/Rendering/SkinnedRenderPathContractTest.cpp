@@ -47,6 +47,18 @@
 #include <crtdbg.h>
 #endif
 
+// Releaseでも検査と初期化の副作用を省略しない。
+#undef assert
+#define assert(expression)                                                                                             \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (!(expression))                                                                                             \
+        {                                                                                                              \
+            std::cerr << "Assertion failed: " << #expression << " at " << __FILE__ << ":" << __LINE__ << "\n"; \
+            std::exit(1);                                                                                              \
+        }                                                                                                              \
+    } while (false)
+
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Rendering;
 namespace Container = NorvesLib::Core::Container;

@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Animation/SkeletalPoseBuilder.h"
 
 #include "Animation/SkeletalAnimationSampler.h"
 #include "Animation/SkeletalAssetResource.h"
@@ -36,6 +37,9 @@ namespace NorvesLib::Core::Component
 
         void SetAnimationTimeSeconds(float timeSeconds);
         float GetAnimationTimeSeconds() const;
+        void SetExternalAnimationDriven(bool enabled);
+        bool IsExternalAnimationDriven() const { return m_bExternalAnimationDriven; }
+        [[nodiscard]] bool SubmitLocalPose(const Animation::LocalPose&);
         void SetPlaying(bool bPlaying);
         bool IsPlaying() const;
         void SetLooping(bool bLooping);
@@ -62,6 +66,8 @@ namespace NorvesLib::Core::Component
         // dirtyな姿勢だけ評価する。成功した再評価ごとにserialを進める。
         // 同じResourceの内容を直接編集した場合はSetSkeletalAssetで再設定して無効化する。
         [[nodiscard]] bool EvaluatePose();
+        [[nodiscard]] bool SetPoseBoundsSettings(const Animation::PoseBoundsSettings& settings);
+        const Animation::PoseBoundsSettings& GetPoseBoundsSettings() const noexcept { return m_PoseBoundsSettings; }
         uint64_t GetPoseSerial() const { return m_PoseSerial; }
         int32_t FindJointIndex(Identity name) const;
         // 自動評価しない。未評価/dirty/無効資産/範囲外はfalseで出力を変更しない。
@@ -71,8 +77,10 @@ namespace NorvesLib::Core::Component
         // CreateWorldRowVectorで再構成できる正のscaleのTRSだけを返す。
         // shear/反転/退化はfalse。完全な行列表現には上の行列APIを使う。
         [[nodiscard]] bool TryGetJointWorldTransform(uint32_t index, Math::Transform& outTransform) const;
+        // 自動評価せず、骨のscale/shearを捨てOwnerのscaleだけを保持する。
+        [[nodiscard]] bool GetSocketWorldTransform(Identity socket, Math::Transform& outTransform) const;
 
-    private:
+      private:
         Container::TSharedPtr<const Rendering::SkinnedMeshAssetLease> GetMaterialBindingLease() const;
         bool HasValidPoseResources() const;
         bool HasCurrentPose() const;
@@ -83,6 +91,9 @@ namespace NorvesLib::Core::Component
         Math::Matrix4x4 m_MeshNodeGlobalTransform;
         bool m_bMeshNodeTransformOverridden = false;
         Animation::SkeletalPoseSnapshot m_Pose;
+        Animation::SkeletalPoseContext m_PoseContext;
+        Animation::PoseScratch m_PoseScratch;
+        Animation::PoseBoundsSettings m_PoseBoundsSettings;
         uint64_t m_PoseSerial = 0;
         Container::TWeakPtr<SkinnedMeshResource> m_EvaluatedMesh;
         Container::TWeakPtr<SkeletonResource> m_EvaluatedSkeleton;
@@ -91,6 +102,7 @@ namespace NorvesLib::Core::Component
         Skeletal::SkeletalMaterialBindings m_SlotMaterials;
         float m_AnimationTimeSeconds = 0.0f;
         float m_PlaybackRate = 1.0f;
+        bool m_bExternalAnimationDriven = false;
         bool m_bPlaying = true;
         bool m_bCastShadow = true;
         bool m_bLooping = true;
