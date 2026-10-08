@@ -148,6 +148,28 @@ vec3 LimitStaticEnvironmentRadiance(vec3 radiance)
     return radiance;
 }
 
+// 1本の光線が運ぶ放射輝度の上限（露出を掛けた後の値。1が表示の白）。命中点の光源標本は、強い発光体（電球）の
+// すぐ近くの面に当たる稀な光線だけが桁違いに大きな値を持ち、少ない光線ではその光線が粒（ホタル）として画素に残る。
+// 白の4倍は、発光体から離れた面の照り返し（露出後でおおむね白以下）を削らず、この稀な値だけを縮める境目として
+// 夜の見本の球の暗い側の粒の数で選んだ（2で0、4で2、8で8、16で18、32で33、上限なしで32）。露出を掛けた後で
+// 比べるので、昼・夜の自動露出の違いで境目が動かない。
+const float RTGI_RAY_RADIANCE_DISPLAY_LIMIT = 4.0;
+
+// 光線1本の放射輝度の最大の成分が上限を超えたら、色相を保ったまま上限まで縮める。
+vec3 LimitRayRadiance(vec3 radiance)
+{
+    float preExposure = IsFiniteScalar(parameters.rayLimits.z) && parameters.rayLimits.z > 0.0
+                            ? clamp(parameters.rayLimits.z, 1.0e-6, 1.0e6)
+                            : 1.0;
+    float maximumRadiance = RTGI_RAY_RADIANCE_DISPLAY_LIMIT / preExposure;
+    float peak = max(radiance.r, max(radiance.g, radiance.b));
+    if (peak > maximumRadiance)
+    {
+        radiance *= maximumRadiance / peak;
+    }
+    return radiance;
+}
+
 vec2 EquirectangularUV(vec3 direction)
 {
     vec2 uv = vec2(atan(direction.z, direction.x),
@@ -888,8 +910,8 @@ vec3 TraceDiffuseRay(vec3 rayOrigin,
     hitPosition = rayOrigin + rayDirection * hitDistance;
     hitNormal = triangleNormal;
     hitBaseColor = hitInstance.baseColor.rgb;
-    return ComputeDirectRadiance(hitPosition, hitNormal, hitBaseColor) +
-           hitBaseColor * SampleEmitterIrradiance(hitPosition, hitNormal, pixel, emitterDimension);
+    return LimitRayRadiance(ComputeDirectRadiance(hitPosition, hitNormal, hitBaseColor) +
+                           hitBaseColor * SampleEmitterIrradiance(hitPosition, hitNormal, pixel, emitterDimension));
 }
 
 void main()
