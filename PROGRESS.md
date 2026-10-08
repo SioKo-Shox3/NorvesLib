@@ -459,3 +459,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - ログ: 受入れの撮影 18 本の全行で VSM の 3 種の溢れ 0、`VSM_FALLBACK` 0。ERROR は既知の 2 件（Slang SDK が無いための `neural_material_decode.slang`）。
 - 段9の開始時に backlog へ退避した 15 件は、main（`3ac00b05`）の今の状態へ戻した（G3-GR12 は main で done）。TASKS.md の main との差は VTG9 の項目だけ。
 - Next: 段の区切りの評価、main へマージ。
+
+## 段9 段の区切りの評価の 1 周目と、夜の粒の指摘への対応（2026-10-08）
+
+- 段の区切りの評価（1 周目）の指摘: (1) `vsm_expand.comp` の共有メモリの印への非原子的な書き込み → `addc72dc` で直した。(2) 照明のパスの点光源の VSM のパラメータ・スライスの表・descriptor set を同じフレームの複数の Execute が共有する → `VTG9-FIX-LIGHTING-PER-EXECUTE`。(3) 受入れの表の値と撮り直された出力先の不一致 → `11fa107c` で出典と撮り直した値を書いた。
+- ユーザーの指摘: 夜の近接の大きな球の暗い側に橙赤の粒が出るのは許容できない（段8にもあったことは理由にならない）。原因は夜の静的な環境光（夕焼けの HDRI の 0.08 倍）に残った太陽の鏡面反射 → `VTG9-FIX-NIGHT-ENV-SUN`。受入れの記録の「VSM によるものではない」は、この項目の後に直す。
+- ランナーが段9の項目だけを拾うよう、別の作業の todo・doing 16 件を、このブランチの上で再び backlog にした（CORE-JSON-SURROGATE・GAME-GR130〜GR137-VFX・G2-GR79-IMPORT-POLICY-CONNECTION・G2-MATERIAL-SELECTION-INTEGRATION・CORE-STRING-REPLACE-TERMINATOR は todo、G2-S6-ASSET-SET・G2-GR82-B4-STATIC-ROOT-FRAME128・G3-GR10・G3-GR13 は doing）。main へマージする前に main の状態へ戻す。
