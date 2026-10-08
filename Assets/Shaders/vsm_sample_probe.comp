@@ -50,7 +50,11 @@ layout(std430, set = 0, binding = 5) readonly buffer VsmPoolBuffer
     uint vsmPool[];
 };
 
+#define VSM_SLICE_BINDING 6
+#include "Common/VirtualShadowMapSlice.glsl"
+
 #define VSM_PARAMS params.vsm
+#define VSM_SLICE(i) vsmSlices[i]
 #define VSM_PAGE_TABLE(i) vsmPageTable[i]
 #define VSM_POOL(i) vsmPool[i]
 #define VSM_COUNT_FALLBACK() atomicAdd(stats[0], 1u)

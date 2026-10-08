@@ -3,6 +3,7 @@
 #include "Logging/LogMacros.h"
 #include "Rendering/ScopedGpuTimestamp.h"
 #include "Rendering/ShaderManager.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -27,19 +28,17 @@ namespace NorvesLib::Core::Rendering
             float cameraPosition[4];
             float lightRight[4];
             float lightUp[4];
-            uint32_t screen[4];  // x = 幅、y = 高さ、z = 段の数、w = 1 段の一辺のページ数
+            uint32_t screen[4];  // x = 幅、y = 高さ、z = スライス（段）の数、w = 1 段の一辺のページ数
             float tuning[4];     // x = PCF の核の半径のうち texel に比例する分（texel）、y = 影の範囲の奥の端（前方への距離 m）、z = 探索・PCF の半径の上限（m）
             uint32_t control[4]; // x = 段階、y = 物理ページの数、z = 間接 dispatch の x の上限
             float thresholds[VirtualShadowMapMaxLevels];
-            float levelInfo[VirtualShadowMapMaxLevels][4];   // x = ページの一辺（m）、y = texel の一辺（m）
-            int32_t levelOrigin[VirtualShadowMapMaxLevels][4]; // x, y = 範囲の最小の絶対のページの番号
             float view[4];       // x, y, z = カメラの前方（単位ベクトル）、w = 影の範囲の手前の端（前方への距離 m）
             // ここから下は vsm_allocate.comp だけが読む（vsm_mark.comp・vsm_clear.comp の VsmParams はここまでの前半と同じ並び）
             uint32_t cache[4];                                  // x = 印（CacheFlag*）、y = 持ち越すフレーム数、z = 無効化の矩形の数
-            int32_t previousOrigin[VirtualShadowMapMaxLevels][4]; // x, y = 前フレームの範囲の最小の絶対のページの番号
             float rects[VirtualShadowMap::MAX_INVALIDATION_RECTS][4]; // 無効化の矩形（ライト空間。x, y = 最小、z, w = 最大）
         };
-        static_assert(sizeof(GPUVsmParams) == 736 + 16 + 16 + 256 + VirtualShadowMap::MAX_INVALIDATION_RECTS * 16,
+        // ページの一辺・texel・範囲の原点（前フレームの分を含む）はスライスの表（GPUVsmSlice。binding BindSlices）にある
+        static_assert(sizeof(GPUVsmParams) == 224 + 16 + 16 + VirtualShadowMap::MAX_INVALIDATION_RECTS * 16,
                       "vsm_*.comp の VsmParams と同じ大きさにすること");
 
         constexpr uint32_t GroupSize = 256;
@@ -75,6 +74,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t BindStats = 5;
         constexpr uint32_t BindDirtyList = 6;
         constexpr uint32_t BindPool = 7;
+        // vsm_mark.comp・vsm_allocate.comp のスライスの表
+        constexpr uint32_t BindSlices = 8;
 
         RHI::DescriptorBinding MakeBinding(uint32_t binding, RHI::ResourceBindType type)
         {
@@ -91,6 +92,7 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(BindParams, RHI::ResourceBindType::ConstantBuffer));
             desc.bindings.push_back(MakeBinding(BindDepth, RHI::ResourceBindType::CombinedImageSampler));
             desc.bindings.push_back(MakeBinding(BindRequestBits, RHI::ResourceBindType::RWBuffer));
+            desc.bindings.push_back(MakeBinding(BindSlices, RHI::ResourceBindType::StructuredBuffer));
             return desc;
         }
 
@@ -102,6 +104,7 @@ namespace NorvesLib::Core::Rendering
             {
                 desc.bindings.push_back(MakeBinding(binding, RHI::ResourceBindType::RWBuffer));
             }
+            desc.bindings.push_back(MakeBinding(BindSlices, RHI::ResourceBindType::StructuredBuffer));
             return desc;
         }
 
@@ -196,10 +199,6 @@ namespace NorvesLib::Core::Rendering
                 {
                     return false;
                 }
-                params.levelInfo[level][0] = data.PageMeters;
-                params.levelInfo[level][1] = data.TexelMeters;
-                params.levelOrigin[level][0] = static_cast<int32_t>(data.OriginPageX);
-                params.levelOrigin[level][1] = static_cast<int32_t>(data.OriginPageY);
             }
             const float forwardLength = std::sqrt(dispatch.CameraForward[0] * dispatch.CameraForward[0] +
                                                   dispatch.CameraForward[1] * dispatch.CameraForward[1] +
@@ -347,12 +346,17 @@ namespace NorvesLib::Core::Rendering
             use.Uniform = m_Device->CreateBuffer(
                 RHI::BufferDesc(sizeof(GPUVsmParams), RHI::ResourceUsage::ConstantBuffer, true, "VsmParams"));
         }
+        if (!use.Slices)
+        {
+            use.Slices = m_Device->CreateBuffer(RHI::BufferDesc(
+                sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices, RHI::ResourceUsage::StorageBuffer, true, "VsmSlices"));
+        }
         if (!use.DescriptorSet)
         {
             use.DescriptorSet = m_Device->CreateDescriptorSet(layout);
         }
         outUse = &use;
-        return use.Uniform && use.DescriptorSet;
+        return use.Uniform && use.Slices && use.DescriptorSet;
     }
 
     bool VirtualShadowMapPages::Record(RHI::ICommandList* commandList, const VirtualShadowMapPagesDispatch& dispatch)
@@ -390,6 +394,9 @@ namespace NorvesLib::Core::Rendering
         GPUVsmParams markParams = baseParams;
         const bool bMark = dispatch.Depth && width != 0u && height != 0u &&
                            FillMarkParams(dispatch, width, height, markParams);
+        // スライスの表。印付けに使えないフレームは、ページの表の先頭・一辺だけを持つ表（ページの一辺 0 = 何も無い）を渡す
+        GPUVsmSlice markSlices[VirtualShadowMapMaxSlices];
+        BuildVirtualShadowMapSlices(bMark ? dispatch.Clipmap : nullptr, nullptr, markSlices);
 
         Use* markUse = nullptr;
         Use* allocateUses[StageCount] = {};
@@ -417,7 +424,9 @@ namespace NorvesLib::Core::Rendering
             if (bMark)
             {
                 markUse->Uniform->Update(&markParams, sizeof(markParams));
+                markUse->Slices->Update(markSlices, sizeof(markSlices));
                 markUse->DescriptorSet->BindConstantBuffer(BindParams, markUse->Uniform, 0, sizeof(markParams));
+                markUse->DescriptorSet->BindStorageBuffer(BindSlices, markUse->Slices, 0, sizeof(markSlices));
                 markUse->DescriptorSet->BindTexture(BindDepth, dispatch.Depth);
                 markUse->DescriptorSet->BindSampler(BindDepth, m_PointSampler);
                 markUse->DescriptorSet->BindStorageBuffer(BindRequestBits, dispatch.RequestBits, 0,
@@ -466,15 +475,9 @@ namespace NorvesLib::Core::Rendering
             allocateParams.cache[1] = VirtualShadowMap::CACHE_CARRY_FRAMES;
             const uint32_t rectCount = bContinue && !bInvalidateAll ? dispatch.InvalidationRectCount : 0u;
             allocateParams.cache[2] = rectCount;
-            for (uint32_t level = 0; level < VirtualShadowMapMaxLevels; ++level)
-            {
-                // 引き継がないときは、範囲が動いていない（前フレームも今フレームと同じ）ものとして扱う
-                const bool bPrevious = bContinue && level < m_PreviousClipmap.LevelCount;
-                allocateParams.previousOrigin[level][0] =
-                    bPrevious ? static_cast<int32_t>(m_PreviousClipmap.Levels[level].OriginPageX) : allocateParams.levelOrigin[level][0];
-                allocateParams.previousOrigin[level][1] =
-                    bPrevious ? static_cast<int32_t>(m_PreviousClipmap.Levels[level].OriginPageY) : allocateParams.levelOrigin[level][1];
-            }
+            // 引き継がないときは、範囲が動いていない（前フレームも今フレームと同じ）ものとして扱う（前の原点が null なら今の原点と同じ）
+            GPUVsmSlice allocateSlices[VirtualShadowMapMaxSlices];
+            BuildVirtualShadowMapSlices(bMark ? dispatch.Clipmap : nullptr, bContinue ? &m_PreviousClipmap : nullptr, allocateSlices);
             for (uint32_t index = 0; index < rectCount; ++index)
             {
                 const float* rect = dispatch.InvalidationRects + static_cast<size_t>(index) * 4u;
@@ -490,7 +493,9 @@ namespace NorvesLib::Core::Rendering
                 params.control[0] = index;
                 Use& use = *allocateUses[index];
                 use.Uniform->Update(&params, sizeof(params));
+                use.Slices->Update(allocateSlices, sizeof(allocateSlices));
                 use.DescriptorSet->BindConstantBuffer(BindParams, use.Uniform, 0, sizeof(params));
+                use.DescriptorSet->BindStorageBuffer(BindSlices, use.Slices, 0, sizeof(allocateSlices));
                 use.DescriptorSet->BindStorageBuffer(BindRequestBits, dispatch.RequestBits, 0,
                                                      ClampBindSize(VirtualShadowMap::RequestBitsBytes()));
                 use.DescriptorSet->BindStorageBuffer(BindPageTable, dispatch.PageTable, 0,

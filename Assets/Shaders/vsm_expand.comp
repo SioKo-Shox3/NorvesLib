@@ -22,6 +22,9 @@
 
 #include "Common/VisibilityBuffer.glsl"
 #include "Common/VirtualShadowMapChunk.glsl"
+// binding 8: スライスの表（ページの一辺・範囲の原点・ページの表の先頭）
+#define VSM_SLICE_BINDING 8
+#include "Common/VirtualShadowMapSlice.glsl"
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -33,12 +36,8 @@ layout(std140, set = 0, binding = 0) uniform VsmRasterParams
     vec4 lightDirection;
     // x: 深度の原点（ライト空間の深度）、y: 1 / (2 × 深度の範囲)
     vec4 depth;
-    // x: ホストが書いた塊の数、y: 段の数、z: インスタンスの容量、w: MegaGeometry のクラスタの記録の容量（0 なら無し）
+    // x: ホストが書いた塊の数、y: スライス（段）の数、z: インスタンスの容量、w: MegaGeometry のクラスタの記録の容量（0 なら無し）
     uvec4 counts;
-    // x: ページの一辺（m）、y: texel の一辺（m）
-    vec4 levelInfo[16];
-    // x, y: 範囲の最小の絶対のページの番号
-    ivec4 levelOrigin[16];
 } params;
 
 layout(std430, set = 0, binding = 1) readonly buffer VsmChunks
@@ -88,25 +87,29 @@ shared uint sharedBase;
 shared uint sharedOk;
 shared uint sharedRetry;
 
-// 段 level の、塊が覆うページの範囲（絶対のページの番号。範囲の外は切り捨てる）。覆わなければ幅・高さが 0
+// スライス level の、塊が覆うページの範囲（絶対のページの番号。範囲の外は切り捨てる）。覆わなければ幅・高さが 0
 void PageRange(uint level, vec2 lightMin, vec2 lightMax, out ivec2 pageMin, out uvec2 size)
 {
-    const float pageMeters = params.levelInfo[level].x;
-    const ivec2 origin = params.levelOrigin[level].xy;
-    const ivec2 count = ivec2(int(VSM_TABLE_DIMENSION));
+    const VsmSlice slice = vsmSlices[level];
+    const float pageMeters = slice.info.x;
+    const ivec2 origin = slice.origin.xy;
+    const ivec2 count = ivec2(slice.origin.w);
     const ivec2 low = max(ivec2(floor(lightMin / pageMeters)), origin);
     const ivec2 high = min(ivec2(floor(lightMax / pageMeters)), origin + count - ivec2(1));
     pageMin = low;
     size = uvec2(max(high - low + ivec2(1), ivec2(0)));
 }
 
-// ページ (pageX, pageY) の表の欄（トーラスの番地）
+// スライス level のページ (pageX, pageY) の表の欄（スライスの先頭 + トーラスの番地）
 // 別のワークグループが同じ欄へ再描画の印を atomicOr するので、読み取りも原子的にしてデータ競合を避ける
+uint PageEntryIndex(uint level, int pageX, int pageY)
+{
+    return VsmSliceEntryIndex(vsmSlices[level], pageX, pageY);
+}
+
 uint PageEntry(uint level, int pageX, int pageY)
 {
-    const uint addressX = uint(pageX) & (VSM_TABLE_DIMENSION - 1u);
-    const uint addressY = uint(pageY) & (VSM_TABLE_DIMENSION - 1u);
-    return atomicOr(pageTable[level * VSM_TABLE_ENTRIES_PER_LEVEL + addressY * VSM_TABLE_DIMENSION + addressX], 0u);
+    return atomicOr(pageTable[PageEntryIndex(level, pageX, pageY)], 0u);
 }
 
 bool IsDrawable(uint entry)
@@ -133,9 +136,7 @@ void MarkRetry(uint levelMask, vec2 lightMin, vec2 lightMax, uint thread)
             const int pageY = pageMin.y + int(index / size.x);
             if (IsDrawable(PageEntry(level, pageX, pageY)))
             {
-                const uint addressX = uint(pageX) & (VSM_TABLE_DIMENSION - 1u);
-                const uint addressY = uint(pageY) & (VSM_TABLE_DIMENSION - 1u);
-                atomicOr(pageTable[level * VSM_TABLE_ENTRIES_PER_LEVEL + addressY * VSM_TABLE_DIMENSION + addressX], VSM_PAGE_ENTRY_RETRY);
+                atomicOr(pageTable[PageEntryIndex(level, pageX, pageY)], VSM_PAGE_ENTRY_RETRY);
             }
         }
     }

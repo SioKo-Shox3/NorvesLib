@@ -21,8 +21,6 @@ layout(std140, set = 0, binding = 0) uniform VsmParams
     // x: 段階、y: 物理ページの数、z: 間接 dispatch の x の上限
     uvec4 control;
     vec4 thresholds[4];
-    vec4 levelInfo[16];
-    ivec4 levelOrigin[16];
     vec4 view;
 } params;
 

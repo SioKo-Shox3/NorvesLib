@@ -18,6 +18,9 @@
 #include "Common/VisibilityBuffer.glsl"
 #include "Common/VisibilityTriangleFetch.glsl"
 #include "Common/VirtualShadowMapChunk.glsl"
+// binding 5: スライスの表（ページの一辺・texel・投影の行列）
+#define VSM_SLICE_BINDING 5
+#include "Common/VirtualShadowMapSlice.glsl"
 
 // std140。VirtualShadowMapRaster.cpp の GPURasterParams と同じ並び
 layout(std140, set = 0, binding = 0) uniform VsmRasterParams
@@ -29,9 +32,6 @@ layout(std140, set = 0, binding = 0) uniform VsmRasterParams
     vec4 depth;
     // x: ホストが書いた塊の数（これ以降の塊の番号は MegaGeometry のクラスタの記録）
     uvec4 counts;
-    // x: ページの一辺（m）、y: texel の一辺（m）
-    vec4 levelInfo[16];
-    ivec4 levelOrigin[16];
 } params;
 
 layout(std430, set = 0, binding = 1) readonly buffer VsmInstances
@@ -89,12 +89,14 @@ void main()
     const uint level = instance.y & 15u;
     const uint physical = instance.y >> 4u;
     const vec2 page = vec2(float(int(instance.z)), float(int(instance.w)));
-    const float pageMeters = params.levelInfo[level].x;
-    const float texelMeters = params.levelInfo[level].y;
+    // ページの一辺・texel・投影の行列はスライスの表から引く（正射影の段の行列は、ライト空間の基底）
+    const VsmSlice slice = vsmSlices[level];
+    const float pageMeters = slice.info.x;
+    const float texelMeters = slice.info.y;
 
-    const vec2 lightXY = vec2(dot(world, params.lightRight.xyz), dot(world, params.lightUp.xyz));
+    const vec2 lightXY = vec2(dot(world, slice.axisX.xyz), dot(world, slice.axisY.xyz));
     const vec2 localTexel = (lightXY - page * pageMeters) / texelMeters;
-    const float lightDepth = dot(world, params.lightDirection.xyz);
+    const float lightDepth = dot(world, slice.axisZ.xyz);
     const float depth01 = (lightDepth - params.depth.x) * params.depth.y + 0.5;
 
     gl_Position = vec4(localTexel / (0.5 * float(VSM_PAGE_RESOLUTION)) - vec2(1.0), depth01, 1.0);

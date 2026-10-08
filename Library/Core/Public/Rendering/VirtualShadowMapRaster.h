@@ -188,6 +188,8 @@ namespace NorvesLib::Core::Rendering
         struct Use
         {
             RHI::BufferPtr Uniform;
+            /** @brief スライスの表（GPUVsmSlice の配列。ホストが書く storage buffer） */
+            RHI::BufferPtr Slices;
             RHI::DescriptorSetPtr ExpandSet;
             RHI::DescriptorSetPtr DrawSet;
         };
@@ -323,6 +325,8 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferPtr CullUniform;
             RHI::BufferPtr ParamsUniform;
+            /** @brief スライスの表（GPUVsmSlice の配列。ホストが書く storage buffer） */
+            RHI::BufferPtr Slices;
             RHI::DescriptorSetPtr DirtySet;
             RHI::DescriptorSetPtr CullSet;
             RHI::DescriptorSetPtr ChunkSet;

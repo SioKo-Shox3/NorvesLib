@@ -229,6 +229,8 @@ namespace NorvesLib::Core::Rendering
         struct Use
         {
             RHI::BufferPtr Uniform;
+            /** @brief 太陽の VSM のスライスの表（GPUVsmSlice の配列。ホストが書く storage buffer） */
+            RHI::BufferPtr Slices;
             RHI::DescriptorSetPtr DescriptorSet;
         };
 

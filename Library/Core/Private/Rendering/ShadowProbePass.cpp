@@ -63,8 +63,9 @@ namespace NorvesLib::Core::Rendering
                 RHI::ResourceBindType::RWBuffer,             // 6 統計
                 RHI::ResourceBindType::RWBuffer,             // 7 VSM のページの表
                 RHI::ResourceBindType::RWBuffer,             // 8 VSM の物理ページのプール
+                RHI::ResourceBindType::StructuredBuffer,     // 9 VSM のスライスの表
             };
-            for (uint32_t bindingIndex = 0; bindingIndex < 9u; ++bindingIndex)
+            for (uint32_t bindingIndex = 0; bindingIndex < 10u; ++bindingIndex)
             {
                 RHI::DescriptorBinding binding;
                 binding.binding = bindingIndex;
@@ -322,12 +323,17 @@ namespace NorvesLib::Core::Rendering
             use.Uniform = m_Device->CreateBuffer(
                 RHI::BufferDesc(sizeof(GPUShadowProbeParams), RHI::ResourceUsage::ConstantBuffer, true, "ShadowProbeParams"));
         }
+        if (!use.Slices)
+        {
+            use.Slices = m_Device->CreateBuffer(RHI::BufferDesc(
+                sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices, RHI::ResourceUsage::StorageBuffer, true, "ShadowProbeVsmSlices"));
+        }
         if (!use.DescriptorSet)
         {
             use.DescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc());
         }
         outUse = &use;
-        return use.Uniform && use.DescriptorSet;
+        return use.Uniform && use.Slices && use.DescriptorSet;
     }
 
     void ShadowProbePass::HarvestSlot(StatsSlot& slot)
@@ -444,6 +450,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr vsmPageTable = m_VsmPageTableHandle.IsValid() ? resources.GetBuffer(m_VsmPageTableHandle) : RHI::BufferPtr{};
         RHI::BufferPtr vsmPool = m_VsmPoolHandle.IsValid() ? resources.GetBuffer(m_VsmPoolHandle) : RHI::BufferPtr{};
         bool bVsm = false;
+        GPUVsmSlice vsmSlices[VirtualShadowMapMaxSlices];
+        BuildVirtualShadowMapSlices(nullptr, nullptr, vsmSlices);
         if (!bCaptureFrame && vsmPageTable && vsmPool && camera->Projection == ProjectionType::Perspective &&
             vsmPageTable->GetSize() >= VirtualShadowMap::PageTableBytes() && vsmPool->GetSize() >= VirtualShadowMap::PAGE_BYTES)
         {
@@ -457,6 +465,10 @@ namespace NorvesLib::Core::Rendering
                                                      static_cast<float>(depth->GetHeight()),
                                                      static_cast<uint32_t>(std::min<uint64_t>(poolPages, VirtualShadowMap::MAX_POOL_PAGES)),
                                                      params.vsm);
+            if (bVsm)
+            {
+                BuildVirtualShadowMapSlices(&lighting.SunClipmap, nullptr, vsmSlices);
+            }
         }
         if (!bVsm)
         {
@@ -466,6 +478,7 @@ namespace NorvesLib::Core::Rendering
             vsmPool = m_ProbeBuffer;
         }
         use->Uniform->Update(&params, sizeof(params));
+        use->Slices->Update(vsmSlices, sizeof(vsmSlices));
 
         use->DescriptorSet->BindConstantBuffer(0, use->Uniform, 0, static_cast<uint32_t>(sizeof(params)));
         use->DescriptorSet->BindTexture(1, depth);
@@ -479,6 +492,7 @@ namespace NorvesLib::Core::Rendering
         use->DescriptorSet->BindStorageBuffer(6, slot.Buffer, 0, ShadowProbe::STATS_BYTES);
         use->DescriptorSet->BindStorageBuffer(7, vsmPageTable, 0, static_cast<uint32_t>(std::min<uint64_t>(vsmPageTable->GetSize(), 0xFFFFFFFFull)));
         use->DescriptorSet->BindStorageBuffer(8, vsmPool, 0, static_cast<uint32_t>(std::min<uint64_t>(vsmPool->GetSize(), 0xFFFFFFFFull)));
+        use->DescriptorSet->BindStorageBuffer(9, use->Slices, 0, static_cast<uint32_t>(sizeof(vsmSlices)));
         use->DescriptorSet->Update();
 
         RHI::ICommandList* commandList = context.CommandList;

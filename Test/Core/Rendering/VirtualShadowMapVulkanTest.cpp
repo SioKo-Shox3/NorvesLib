@@ -3117,7 +3117,8 @@ namespace
         {
             return false;
         }
-        for (uint32_t binding = 0; binding < 6u; ++binding)
+        // 0 = パラメータ、1 = 点、2 = 結果、3 = 統計、4 = ページの表、5 = 物理ページのプール、6 = スライスの表
+        for (uint32_t binding = 0; binding < 7u; ++binding)
         {
             DescriptorBinding entry;
             entry.binding = binding;
@@ -3135,6 +3136,7 @@ namespace
     // 受け手の点を GPU で評価する。pool・table はケース F のページの表・物理プール（またはその変更）の全語
     bool RunSampleProbe(const DevicePtr& device,
                         const SampleProbe& probe,
+                        const VirtualShadowMapClipmap& clipmap,
                         const GPUVsmSampleParams& vsm,
                         const Container::VariableArray<uint32_t>& poolWords,
                         const Container::VariableArray<uint32_t>& tableWords,
@@ -3150,9 +3152,10 @@ namespace
         BufferPtr stats = device->CreateBuffer(BufferDesc(4u * sizeof(uint32_t), usage, true, "VsmSampleProbeStats"));
         BufferPtr table = device->CreateBuffer(BufferDesc(static_cast<uint64_t>(tableWords.size()) * sizeof(uint32_t), usage, true, "VsmSampleProbeTable"));
         BufferPtr pool = device->CreateBuffer(BufferDesc(static_cast<uint64_t>(poolWords.size()) * sizeof(uint32_t), usage, true, "VsmSampleProbePool"));
+        BufferPtr sliceBuffer = device->CreateBuffer(BufferDesc(sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices, usage, true, "VsmSampleProbeSlices"));
         DescriptorSetPtr descriptorSet = device->CreateDescriptorSet(probe.Layout);
         CommandListPtr commandList = device->CreateCommandList();
-        if (!uniform || !pointBuffer || !results || !stats || !table || !pool || !descriptorSet || !commandList || points.empty())
+        if (!uniform || !pointBuffer || !results || !stats || !table || !pool || !sliceBuffer || !descriptorSet || !commandList || points.empty())
         {
             return false;
         }
@@ -3168,6 +3171,9 @@ namespace
         stats->Update(zeroStats, sizeof(zeroStats));
         table->Update(tableWords.data(), static_cast<uint64_t>(tableWords.size()) * sizeof(uint32_t));
         pool->Update(poolWords.data(), static_cast<uint64_t>(poolWords.size()) * sizeof(uint32_t));
+        GPUVsmSlice slices[VirtualShadowMapMaxSlices];
+        BuildVirtualShadowMapSlices(&clipmap, nullptr, slices);
+        sliceBuffer->Update(slices, sizeof(slices));
 
         descriptorSet->BindConstantBuffer(0, uniform, 0, static_cast<uint32_t>(sizeof(SampleProbeParams)));
         descriptorSet->BindStorageBuffer(1, pointBuffer, 0, static_cast<uint32_t>(pointBytes));
@@ -3175,9 +3181,10 @@ namespace
         descriptorSet->BindStorageBuffer(3, stats, 0, static_cast<uint32_t>(stats->GetSize()));
         descriptorSet->BindStorageBuffer(4, table, 0, static_cast<uint32_t>(table->GetSize()));
         descriptorSet->BindStorageBuffer(5, pool, 0, static_cast<uint32_t>(pool->GetSize()));
+        descriptorSet->BindStorageBuffer(6, sliceBuffer, 0, static_cast<uint32_t>(sliceBuffer->GetSize()));
         descriptorSet->Update();
 
-        const BufferPtr storage[] = {pointBuffer, results, stats, table, pool};
+        const BufferPtr storage[] = {pointBuffer, results, stats, table, pool, sliceBuffer};
         commandList->Begin();
         for (const BufferPtr& buffer : storage)
         {
@@ -3229,14 +3236,13 @@ namespace
 
     // 段を固定し（しきい値: 段より下を 0、上を 1e30）、影の距離の範囲を広げ、カメラを受け手から「PCF の半径が 2 texel になる距離」だけ離す
     // （カメラは受け手の +X 側に置き、前方は受け手を向く -X）
-    GPUVsmSampleParams MakeForcedLevelParams(const GPUVsmSampleParams& real, uint32_t level, const SampleProbePoint& receiver)
+    GPUVsmSampleParams MakeForcedLevelParams(const GPUVsmSampleParams& real, uint32_t level, double texel, const SampleProbePoint& receiver)
     {
         GPUVsmSampleParams params = real;
         for (uint32_t index = 0; index < VirtualShadowMapMaxLevels; ++index)
         {
             params.thresholds[index] = index < level ? 0.0f : 1.0e30f;
         }
-        const double texel = static_cast<double>(real.levelInfo[level][1]);
         const double distance = 2.0 * texel / static_cast<double>(real.pixel[0]);
         params.cameraPosition[0] = receiver.Position[0] + static_cast<float>(distance);
         params.cameraPosition[1] = receiver.Position[1];
@@ -3254,6 +3260,7 @@ namespace
     // PCF の半径は常に 2 texel（画素の大きさを、カメラからの直線距離に合わせて決める）
     GPUVsmSampleParams MakeDistanceParams(const GPUVsmSampleParams& real,
                                           uint32_t level,
+                                          double texel,
                                           const SampleProbePoint& receiver,
                                           const double offset[3],
                                           const double viewDirection[3],
@@ -3261,8 +3268,7 @@ namespace
                                           double farDistance,
                                           double fadeWidth)
     {
-        GPUVsmSampleParams params = MakeForcedLevelParams(real, level, receiver);
-        const double texel = static_cast<double>(real.levelInfo[level][1]);
+        GPUVsmSampleParams params = MakeForcedLevelParams(real, level, texel, receiver);
         const double straight = std::sqrt(offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]);
         for (uint32_t axis = 0; axis < 3u; ++axis)
         {
@@ -3531,7 +3537,7 @@ namespace
         }
 
         SampleOutput output;
-        if (!RunSampleProbe(device, probe, params, readback.Pool, readback.PageTable, points, output))
+        if (!RunSampleProbe(device, probe, scene.Clipmap, params, readback.Pool, readback.PageTable, points, output))
         {
             return result;
         }
@@ -3851,7 +3857,7 @@ namespace
                 }
             }
             SampleOutput output;
-            if (points.size() < 200u || !RunSampleProbe(device, probe, realParams, caseF.Pool, caseF.PageTable, points, output))
+            if (points.size() < 200u || !RunSampleProbe(device, probe, scene.Clipmap, realParams, caseF.Pool, caseF.PageTable, points, output))
             {
                 std::cerr << TestName << " ケース L1 を実行できませんでした（点の数 " << points.size() << "）" << std::endl;
                 return false;
@@ -3903,7 +3909,7 @@ namespace
             Container::VariableArray<SampleProbePoint> points;
             points.push_back(receiver);
             SampleOutput output;
-            if (!RunSampleProbe(device, probe, MakeForcedLevelParams(realParams, level, receiver), pool, table, points, output))
+            if (!RunSampleProbe(device, probe, scene.Clipmap, MakeForcedLevelParams(realParams, level, texel, receiver), pool, table, points, output))
             {
                 return false;
             }
@@ -4121,7 +4127,7 @@ namespace
                 Container::VariableArray<SampleProbePoint> points;
                 points.push_back(receiver);
                 SampleOutput output;
-                if (!RunSampleProbe(device, probe, MakeDistanceParams(splitParams, level, receiver, offset, forwardX, splitParams.range[0], splitParams.range[1], splitParams.range[2]),
+                if (!RunSampleProbe(device, probe, scene.Clipmap, MakeDistanceParams(splitParams, level, texel, receiver, offset, forwardX, splitParams.range[0], splitParams.range[1], splitParams.range[2]),
                                     caseF.Pool, caseF.PageTable, points, output))
                 {
                     return false;

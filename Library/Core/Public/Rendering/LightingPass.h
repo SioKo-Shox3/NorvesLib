@@ -482,6 +482,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_DefaultNeuralBRDFWeightBuffer;
         /** @brief 太陽の VSM を読むパラメータ（GPUVsmSampleParams の定数バッファ。VSM が使えないフレームは無効の値） */
         RHI::BufferPtr m_VsmSampleBuffer;
+        /** @brief 太陽の VSM のスライスの表（GPUVsmSlice の配列。ページの一辺・texel・範囲の原点・ページの表の先頭。VSM が使えないフレームは何も無い表） */
+        RHI::BufferPtr m_VsmSliceBuffer;
         /** @brief 今フレームに RenderGraph から解決した太陽の VSM のページの表・物理ページのプール（無ければ null） */
         RHI::BufferPtr m_FrameVsmPageTable;
         RHI::BufferPtr m_FrameVsmPool;

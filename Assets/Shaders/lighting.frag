@@ -93,6 +93,9 @@ layout(std430, set = 0, binding = 23) readonly buffer VsmPoolBuffer
 {
     uint vsmPool[];
 };
+// スライスの表（ページの一辺・texel・範囲の原点・ページの表の先頭。無効のときは読まない）
+#define VSM_SLICE_BINDING 25
+#include "Common/VirtualShadowMapSlice.glsl"
 // 太陽の VSM の読み出しで、自分の段のページが無く粗い段へ逃げた PCF の標本の数（[0]）。ホストが数フレーム後に読み戻す。
 // 断片シェーダーの storage の書き込みを使えるデバイス（NORVES_VSM_STATS が定義される。VT のフィードバックとは独立）だけで数える
 #ifdef NORVES_VSM_STATS
@@ -261,6 +264,7 @@ float CalculateRangeWindow(float distance, float range)
 
 // 太陽の VSM の評価。ページの表・プール・パラメータの読み方をここで与える。
 #define VSM_PARAMS vsmBlock.vsm
+#define VSM_SLICE(i) vsmSlices[i]
 #define VSM_PAGE_TABLE(i) vsmPageTable[i]
 #define VSM_POOL(i) vsmPool[i]
 #ifdef NORVES_VSM_STATS

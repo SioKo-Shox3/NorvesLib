@@ -34,6 +34,8 @@
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 #include "Common/MegaGeometryCull.glsl"
+// binding 20: スライスの表（ページの一辺・texel・範囲の原点・ページの表の先頭）
+#define VSM_SLICE_BINDING 20
 #include "Common/VirtualShadowMapMegaCull.glsl"
 
 // binding 15: 出力の一覧
@@ -90,9 +92,10 @@ bool LevelOverlapsSphere(uint level, vec3 center, float radius)
     {
         return false;
     }
-    const float pageMeters = megaParams.levelInfo[level].x;
-    const vec2 rangeMin = vec2(megaParams.levelOrigin[level].xy) * pageMeters;
-    const vec2 rangeMax = rangeMin + vec2(float(VSM_MEGA_TABLE_DIMENSION) * pageMeters);
+    const VsmSlice slice = vsmSlices[level];
+    const float pageMeters = slice.info.x;
+    const vec2 rangeMin = vec2(slice.origin.xy) * pageMeters;
+    const vec2 rangeMax = rangeMin + vec2(float(slice.origin.w) * pageMeters);
     const vec2 lightCenter = LightXY(center);
     return all(greaterThanEqual(lightCenter + vec2(radius), rangeMin)) && all(lessThan(lightCenter - vec2(radius), rangeMax));
 }
@@ -107,8 +110,9 @@ bool LevelOverlapsSphere(uint level, vec3 center, float radius)
  */
 bool SphereHasDirtyPage(uint level, vec3 center, float radius)
 {
-    const float pageMeters = megaParams.levelInfo[level].x;
-    const ivec2 origin = megaParams.levelOrigin[level].xy;
+    const VsmSlice slice = vsmSlices[level];
+    const float pageMeters = slice.info.x;
+    const ivec2 origin = slice.origin.xy;
     const vec2 lightCenter = LightXY(center);
     const vec2 lowPage = clamp(floor((lightCenter - vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
     const vec2 highPage = clamp(floor((lightCenter + vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
@@ -185,8 +189,9 @@ bool SphereHasDirtyPage(uint level, vec3 center, float radius)
  */
 void MarkRetryPages(uint level, vec3 center, float radius)
 {
-    const float pageMeters = megaParams.levelInfo[level].x;
-    const ivec2 origin = megaParams.levelOrigin[level].xy;
+    const VsmSlice slice = vsmSlices[level];
+    const float pageMeters = slice.info.x;
+    const ivec2 origin = slice.origin.xy;
     const vec2 lightCenter = LightXY(center);
     const vec2 lowPage = clamp(floor((lightCenter - vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
     const vec2 highPage = clamp(floor((lightCenter + vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
@@ -196,10 +201,8 @@ void MarkRetryPages(uint level, vec3 center, float radius)
     {
         for (int x = low.x; x <= high.x; ++x)
         {
-            // 範囲の最小のページからの相対の座標を、絶対のページを経てトーラスの番地へ直す
-            const uint addressX = uint(origin.x + x) & (VSM_MEGA_TABLE_DIMENSION - 1u);
-            const uint addressY = uint(origin.y + y) & (VSM_MEGA_TABLE_DIMENSION - 1u);
-            const uint entryIndex = level * VSM_MEGA_TABLE_ENTRIES_PER_LEVEL + addressY * VSM_MEGA_TABLE_DIMENSION + addressX;
+            // 範囲の最小のページからの相対の座標を、絶対のページを経てページの表の番地（スライスの先頭 + トーラスの番地）へ直す
+            const uint entryIndex = VsmSliceEntryIndex(slice, origin.x + x, origin.y + y);
             const uint entry = atomicOr(vsmPageTable[entryIndex], 0u);
             if ((entry & VSM_MEGA_PAGE_ENTRY_ALLOCATED) != 0u && (entry & VSM_MEGA_PAGE_ENTRY_DIRTY) != 0u)
             {
@@ -271,7 +274,7 @@ void main()
     g_WorldMatrix = instance.world;
     g_LODSphere = instance.lodSphere;
     g_Clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));
-    g_OrthoTexelMeters = megaParams.levelInfo[level].y;
+    g_OrthoTexelMeters = vsmSlices[level].info.y;
 
     const GPUClusterData cluster = g_Clusters.clusters[clusterIndex];
     const vec3 center = TransformClusterCenterToWorld(cluster.boundsSphere.xyz);

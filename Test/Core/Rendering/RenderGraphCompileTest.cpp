@@ -146,6 +146,8 @@ namespace
     // VSM の MegaGeometry の投影物のカリングの定数バッファ（"VsmMegaCullUniform"・"VsmMegaCullParams"）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GVsmMegaCullUniformUpdates;
     Container::VariableArray<Container::VariableArray<uint8_t>> GVsmMegaCullParamsUpdates;
+    // 同じカリングのスライスの表（"VsmMegaCullSlices"。GPUVsmSlice の配列）の更新の記録
+    Container::VariableArray<Container::VariableArray<uint8_t>> GVsmMegaCullSliceUpdates;
     // VisibilitySwRaster が dispatch ごとに書く定数バッファ（"VisBuffer_SwRasterParams"）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GSwRasterParamsUpdates;
     // 影の標本のパスが毎フレーム書く定数（ShadowProbeParams）。--shadow-probe の検査に使う
@@ -339,6 +341,10 @@ namespace
             if (IsDebugName(m_Desc.DebugName, "VsmMegaCullParams"))
             {
                 GVsmMegaCullParamsUpdates.push_back(LastUpdateBytes);
+            }
+            if (IsDebugName(m_Desc.DebugName, "VsmMegaCullSlices"))
+            {
+                GVsmMegaCullSliceUpdates.push_back(LastUpdateBytes);
             }
             if (IsDebugName(m_Desc.DebugName, "ShadowProbeParams"))
             {
@@ -8415,6 +8421,7 @@ namespace
         {
             GVsmMegaCullUniformUpdates.clear();
             GVsmMegaCullParamsUpdates.clear();
+            GVsmMegaCullSliceUpdates.clear();
             VsmMegaScene scene;
             BuildVsmMegaScene(scene);
             FakeCommandList& commandList = scene.Base.Run.CommandList;
@@ -8530,12 +8537,14 @@ namespace
 
             // 束縛: 階層を作る dispatch は VSM のページの表を読み、階層へ書く。選択の dispatch は主の経路の表を読み、自分の一覧・階層・統計へ書く
             const Container::VariableArray<BoundBufferName>& dirtyBindings = commandList.DispatchBindings[dirtyDispatch];
-            assert(dirtyBindings.size() == 3u);
+            assert(dirtyBindings.size() == 4u);
             assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 14u), "VsmMegaCullParams"));
             assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 15u), "VSM_PageTable"));
             assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 16u), "VsmMega_DirtyBits"));
+            // スライスの表（ページの一辺・texel・範囲の原点・ページの表の先頭）
+            assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 17u), "VsmMegaCullSlices"));
             const Container::VariableArray<BoundBufferName>& cullBindings = commandList.DispatchBindings[cullDispatch];
-            assert(cullBindings.size() == 9u);
+            assert(cullBindings.size() == 10u);
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 0u), "VsmMegaCullUniform"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 1u), "MegaGeometry_InstanceTable"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 11u), "MegaGeometry_PageTable"));
@@ -8546,6 +8555,7 @@ namespace
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 18u), "MegaGeometry_ShadowInstanceTable"));
             // 溢れて落としたクラスタの範囲のページへ再描画の印を書くため、VSM のページの表も束縛する
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 19u), "VSM_PageTable"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 20u), "VsmMegaCullSlices"));
             // クラスタの記録: 主の経路のインスタンスの表・影の表と自分の一覧を読み、自分の記録の出力へ書く
             const Container::VariableArray<BoundBufferName>& chunkBindings = commandList.DispatchBindings[chunkDispatch];
             assert(chunkBindings.size() == 5u);
@@ -8557,12 +8567,13 @@ namespace
             // 展開は、ホストが書いた塊（束縛 1）に続けて、クラスタの記録（束縛 6）と一覧（束縛 7）を読む
             const Container::VariableArray<BoundBufferName>& expandArgsBindings = commandList.DispatchBindings[expandArgsDispatch];
             const Container::VariableArray<BoundBufferName>& expandBindings = expandIndirect.Bindings;
-            assert(expandArgsBindings.size() == 8u && expandBindings.size() == 8u);
+            assert(expandArgsBindings.size() == 9u && expandBindings.size() == 9u);
             assert(IsDebugName(BoundBufferNameAt(expandArgsBindings, 3u), "VsmRaster_Draws"));
             assert(IsDebugName(BoundBufferNameAt(expandArgsBindings, 7u), "VsmMega_List"));
             assert(IsDebugName(BoundBufferNameAt(expandBindings, 1u), "VsmRaster_Chunks"));
             assert(IsDebugName(BoundBufferNameAt(expandBindings, 6u), "VsmMega_Chunks"));
             assert(IsDebugName(BoundBufferNameAt(expandBindings, 7u), "VsmMega_List"));
+            assert(IsDebugName(BoundBufferNameAt(expandBindings, 8u), "VsmRasterSlices"));
             // 主の経路の出力・見えた印・ページの要求は、どの dispatch にも束縛されない
             for (const Container::VariableArray<BoundBufferName>* bindings : {&dirtyBindings, &cullBindings, &chunkBindings, &expandArgsBindings, &expandBindings})
             {
@@ -8632,20 +8643,23 @@ namespace
                 assert(uniform.CullPass == 0u && uniform.bHiZEnabled == 0u && uniform.bSwRasterEnabled == 0u);
 
                 const Container::VariableArray<uint8_t>& params = GVsmMegaCullParamsUpdates[0];
-                assert(params.size() == 592u);
+                assert(params.size() == 80u);
                 uint32_t counts[4] = {};
                 std::memcpy(counts, params.data() + 64, sizeof(counts));
                 assert(counts[0] == levelCount && counts[1] == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY && counts[2] == 2u);
+                // 段ごとの値（ページの一辺・texel・範囲の原点・ページの表の先頭）はスライスの表にある
+                assert(GVsmMegaCullSliceUpdates.size() == 1u && GVsmMegaCullSliceUpdates[0].size() == sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices);
+                GPUVsmSlice slices[VirtualShadowMapMaxSlices];
+                std::memcpy(slices, GVsmMegaCullSliceUpdates[0].data(), sizeof(slices));
                 const VirtualShadowMapClipmap& clipmap = scene.Base.Run.Context.PhysicalLighting.SunClipmap;
                 for (uint32_t level = 0; level < levelCount; ++level)
                 {
-                    float info[4] = {};
-                    int32_t origin[4] = {};
-                    std::memcpy(info, params.data() + 80 + level * 16u, sizeof(info));
-                    std::memcpy(origin, params.data() + 336 + level * 16u, sizeof(origin));
-                    assert(info[0] == clipmap.Levels[level].PageMeters && info[1] == clipmap.Levels[level].TexelMeters);
-                    assert(origin[0] == static_cast<int32_t>(clipmap.Levels[level].OriginPageX) &&
-                           origin[1] == static_cast<int32_t>(clipmap.Levels[level].OriginPageY));
+                    assert(slices[level].info[0] == clipmap.Levels[level].PageMeters && slices[level].info[1] == clipmap.Levels[level].TexelMeters);
+                    assert(slices[level].origin[0] == static_cast<int32_t>(clipmap.Levels[level].OriginPageX) &&
+                           slices[level].origin[1] == static_cast<int32_t>(clipmap.Levels[level].OriginPageY));
+                    // 太陽の段は 128 × 128 のページを段の順に先頭から並べる
+                    assert(slices[level].origin[2] == static_cast<int32_t>(level * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL) &&
+                           slices[level].origin[3] == static_cast<int32_t>(VirtualShadowMap::TABLE_DIMENSION));
                 }
             }
             ShutdownVsmMegaScene(scene);

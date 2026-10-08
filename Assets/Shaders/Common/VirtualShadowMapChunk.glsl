@@ -26,10 +26,8 @@ struct VsmShadowChunk
     vec4 world2;
 };
 
-// 1 ページの一辺（texel）と、ページの表の一辺・1 段のページの数（VirtualShadowMap::PAGE_RESOLUTION・TABLE_DIMENSION と一致）
+// 1 ページの一辺（texel。VirtualShadowMap::PAGE_RESOLUTION と一致）。ページの表の一辺・先頭はスライスの表（Common/VirtualShadowMapSlice.glsl）が持つ
 const uint VSM_PAGE_RESOLUTION = 128u;
-const uint VSM_TABLE_DIMENSION = 128u;
-const uint VSM_TABLE_ENTRIES_PER_LEVEL = VSM_TABLE_DIMENSION * VSM_TABLE_DIMENSION;
 const uint VSM_PAGE_WORDS = VSM_PAGE_RESOLUTION * VSM_PAGE_RESOLUTION;
 
 // ページの表の 1 要素の印（VirtualShadowMap::PAGE_ENTRY_* と一致）
