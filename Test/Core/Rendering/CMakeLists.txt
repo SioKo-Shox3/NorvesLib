@@ -2093,6 +2093,10 @@ add_executable(SkeletalFramePacketSnapshotTest
     SkeletalFramePacketSnapshotTest.cpp
 )
 target_link_libraries(SkeletalFramePacketSnapshotTest PRIVATE Core)
+# CoreとWindows SDKの露出範囲を揃え、印刷APIのDeviceCapabilitiesマクロとの型名衝突を避ける。
+if(WIN32)
+    target_compile_definitions(SkeletalFramePacketSnapshotTest PRIVATE WIN32_LEAN_AND_MEAN)
+endif()
 
 add_executable(SkinnedRenderPathContractTest
     SkinnedRenderPathContractTest.cpp
