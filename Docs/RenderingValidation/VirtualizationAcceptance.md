@@ -899,7 +899,7 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG8-ACCEPT-r3/def
 
 ### 全体の負荷モード（8GB 級の上限）
 
-`--vram-budget-mb=6500` で、テクスチャ（`-StressTextures`）・ジオメトリ（`-StressGeometry`）・MegaGeometry（`--stress-mega-instances=300`）の負荷を同時に有効にし、昼（太陽45°、太陽の VSM）と夜（点光源の VSM）の既定の視点で撮った（`.harness/runs/startup-capture/VTG9-STRESS-ALL-day`・`-night`、RelWithDebInfo、`-GpuTimingFrames 300`）。
+`--vram-budget-mb=6500` で、テクスチャ（`-StressTextures`）・ジオメトリ（`-StressGeometry`）・MegaGeometry（`--stress-mega-instances=300`）の負荷を同時に有効にし、昼（太陽45°、太陽の VSM）と夜（点光源の VSM）の既定の視点で撮った（RelWithDebInfo、`-GpuTimingFrames 300`）。表のフレーム GPU は撮影の標準出力 `.harness/runs/20261008-125226/verify-VTG9-STRESS-ALL-6.txt`（昼）・`-7.txt`（夜）の `gpu_timing` の行、予算・溢れ・省略は同じ撮影のログ。出力先の `.harness/runs/startup-capture/VTG9-STRESS-ALL-day`・`-night` は、その後の再検証の run（19:03〜19:04）で撮り直されていて、今の `metrics.json`・ログでは heap_usage 1899・1898 MB、プールの使用・溢れ・省略は表と同じで、フレーム GPU は昼 6.614 / 10.370 ms・夜 4.963 / 9.983 ms（中央値 / p95）。
 
 | | 昼 | 夜 |
 |---|---|---|
@@ -910,14 +910,15 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG8-ACCEPT-r3/def
 | 追い出し（VT のタイル・ジオメトリのページ） | 0・0 | 0・0 |
 | VSM の溢れ（`VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL`） | 0 | 0 |
 | 影の描画の省略（`Out of slots` など） | 0 | 0 |
-| フレーム GPU の中央値 / p95 | 4.699 / 9.138 ms | 3.462 / 7.719 ms |
+| フレーム GPU の中央値 / p95（`verify-VTG9-STRESS-ALL-6.txt`・`-7.txt`） | 4.699 / 9.138 ms | 3.462 / 7.719 ms |
+| フレーム GPU の中央値 / p95（再検証の run、今の `metrics.json`） | 6.614 / 10.370 ms | 4.963 / 9.983 ms |
 
 - PNG: 昼は手前の地面に複製した岩の群れと小屋、奥にテクスチャの板 24 枚、さらに奥にジオメトリの格子（300 個）が並び、穴・欠け・板の抜けは無い。夜は電球が手前の岩の群れと地面を照らし、岩の間の影に欠けは無い。テクスチャの近景（`VTG9-STRESS-ALL-day-plates` の `plates-near-sun45.png`）で、板の細部が鮮明でミップのブロック・タイルの抜けは無い。
 - 6500 MB では VT・ジオメトリの使用が目標よりずっと小さく、追い出しは起きない（この視点で要る量が少ない）。予算を縛る場面は段2（テクスチャ）・段5（ジオメトリ、1100 MB）で確かめ済み。
 
 ### GPU 時間
 
-RelWithDebInfo、`-GpuTimingFrames 300`、夜、描いた GPU のフレーム 240 件の中央値（ms）。視点ごとに別の起動で撮り、撮影の直前に Game を動かしていない状態の GPU の利用率を測った（常駐のアプリが 23〜35% 使っていた）。パスの合計は入れ子を除いた一番上の区間の中央値の合計。値は `PROGRESS.md` の「段9 VTG9-VSM-POINT-GPU-TIME（…完了…）」の節（`.harness/runs/startup-capture/VTG9-VSM-POINT-GPU-TIME-{cube,vsm}-{default,near,low,stress}`）。
+RelWithDebInfo、`-GpuTimingFrames 300`、夜、描いた GPU のフレーム 240 件の中央値（ms）。視点ごとに別の起動で撮り、撮影の直前に Game を動かしていない状態の GPU の利用率を測った（常駐のアプリが 23〜35% 使っていた）。パスの合計は入れ子を除いた一番上の区間の中央値の合計。フレームの値は撮影の標準出力 `.harness/runs/20261008-203356/verify-VTG9-VSM-POINT-GPU-TIME-2.txt`〜`-9.txt` の `gpu_timing` の行、区間の値は `PROGRESS.md` の「段9 VTG9-VSM-POINT-GPU-TIME（…完了…）」の節（同じ撮影の `pass_median_ms`）。負荷の 2 つの出力先（`.harness/runs/startup-capture/VTG9-VSM-POINT-GPU-TIME-{cube,vsm}-stress`）は、評価の再検証（`recheck-VTG9-VSM-POINT-GPU-TIME-2-4.txt`・`-2-5.txt`）で撮り直されていて、今の `metrics.json` はキューブ 4.400・VSM 5.572 ms（差 +1.172）。
 
 | 視点 | フレーム キューブ / VSM | 差 | パスの合計の差 | VirtualShadowMapPass（VSM） | p95（VSM） |
 |---|---|---|---|---|---|
