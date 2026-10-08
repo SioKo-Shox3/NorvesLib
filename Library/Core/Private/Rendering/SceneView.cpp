@@ -998,7 +998,9 @@ namespace NorvesLib::Core::Rendering
         // 照明の後に置く。統計が有効な構成（Debug・RelWithDebInfo）だけで、Release には入れない。
         if (m_bShadowProbeEnabled)
         {
-            AddPass(MakeUnique<ShadowProbePass>());
+            auto shadowProbePass = MakeUnique<ShadowProbePass>();
+            shadowProbePass->SetPointOnly(m_bShadowProbePointOnly);
+            AddPass(std::move(shadowProbePass));
         }
 #endif
 

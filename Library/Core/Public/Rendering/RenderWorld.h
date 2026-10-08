@@ -71,6 +71,8 @@ namespace NorvesLib::Core::Rendering
         float SwRasterMaxPixels = DefaultSwRasterMaxPixels;
         /** @brief 太陽の影の標本のパスを足す（--shadow-probe。統計が有効な構成だけで働く） */
         bool bShadowProbe = false;
+        /** @brief 影の標本が太陽ではなく点光源だけを測る（--shadow-probe=point。bShadowProbe が false なら効かない） */
+        bool bShadowProbePointOnly = false;
         /** @brief 太陽の影の方式（--shadow-method=csm|vsm。構造体の既定は CSM。Game の起動引数の既定は VSM） */
         ShadowMethod SunShadowMethod = ShadowMethod::Csm;
         /** @brief 点光源の影の方式（--point-shadow-method=cube|vsm。既定は cube。vsm は SunShadowMethod が VSM のときだけ効く） */

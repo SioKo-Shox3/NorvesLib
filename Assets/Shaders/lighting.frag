@@ -85,6 +85,12 @@ layout(std140, set = 0, binding = 21) uniform VsmSampleBlock
 {
     VsmSampleParams vsm;
 } vsmBlock;
+// 点光源の VSM（--point-shadow-method=vsm）。灯の数（header.x）が 0 のときは読まず、点光源の影はキューブ。
+// ページの表・プール・スライスの表は太陽の VSM と同じもの（点光源のスライスは太陽の段の後ろに並ぶ）
+layout(std140, set = 0, binding = 26) uniform VsmPointSampleBlock
+{
+    VsmPointSampleParams point;
+} vsmPointBlock;
 layout(std430, set = 0, binding = 22) readonly buffer VsmPageTableBuffer
 {
     uint vsmPageTable[];
@@ -271,6 +277,13 @@ float CalculateRangeWindow(float distance, float range)
 #define VSM_COUNT_FALLBACK() atomicAdd(vsmLightingStats[0], 1u)
 #endif
 #include "Common/VirtualShadowMap.glsl"
+
+// 点光源の VSM の評価。読み方は太陽と同じ（ページの表・プール・スライスの表）。逃げた標本は統計の語 1 に数える
+#define VSM_POINT_PARAMS vsmPointBlock.point
+#ifdef NORVES_VSM_STATS
+#define VSM_COUNT_POINT_FALLBACK() atomicAdd(vsmLightingStats[1], 1u)
+#endif
+#include "Common/VirtualShadowMapPoint.glsl"
 
 // 太陽の影の可視度。--shadow-method=vsm で VSM が使えるときは VSM、それ以外（R5 のハードシャドウの検証表示を含む）は CSM。
 float CalculateSunShadow(vec3 worldPos, vec3 normal)
@@ -1063,12 +1076,22 @@ void main()
                  lightType > 0.5 && lightType < 1.5 && light.attenuation.w > 0.5 &&
                  NdotL > 0.0)
         {
-            shadow = SamplePointShadow(pointShadowCubes,
-                                       light.attenuation.w - 1.0,
-                                       light.position.xyz,
-                                       light.attenuation.x,
-                                       worldPos,
-                                       N);
+            // --point-shadow-method=vsm で、この灯の面・段のスライスが並んでいるときは VSM、それ以外はキューブ
+            const uint pointShadowIndex = uint(light.attenuation.w - 1.0);
+            if (pointShadowIndex < vsmPointBlock.point.header.x)
+            {
+                float pointTexelMeters = 0.0;
+                shadow = VsmSamplePointShadow(pointShadowIndex, worldPos, N, pointTexelMeters);
+            }
+            else
+            {
+                shadow = SamplePointShadow(pointShadowCubes,
+                                           light.attenuation.w - 1.0,
+                                           light.position.xyz,
+                                           light.attenuation.x,
+                                           worldPos,
+                                           N);
+            }
             if (shadow > 0.0 && attenuation > 0.0)
             {
                 // 光源の手前で止める（光源の球そのものを遮りとみなさない）

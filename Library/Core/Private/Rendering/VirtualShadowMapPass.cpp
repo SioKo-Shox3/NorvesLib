@@ -1032,6 +1032,8 @@ namespace NorvesLib::Core::Rendering
         if (m_PointShadowMethod == PointShadowMethod::Vsm)
         {
             UpdatePointLights(context);
+            // 照明・影の測定が同じ並びで点光源の面のページを読む（LightCount が 0 の間はキューブのまま）
+            context.PhysicalLighting.PublishPointVsmLights(m_PointLights);
         }
 
         // 統計の読み戻しの枠は、飛行中のフレームの数とは別に、書いたフレームの順に使う。読むのは、通し番号の差が

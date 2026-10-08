@@ -3851,9 +3851,12 @@ namespace
     struct SampleProbeParams
     {
         GPUVsmSampleParams Vsm;
+        /** @brief x = 点の数、y = 1 なら点光源の VSM を読む、z = 点光源の影の灯の番号 */
         uint32_t Control[4];
+        GPUVsmPointSampleParams Point;
     };
-    static_assert(sizeof(SampleProbeParams) == sizeof(GPUVsmSampleParams) + 16, "vsm_sample_probe.comp の VsmSampleProbeParams と同じ大きさにすること");
+    static_assert(sizeof(SampleProbeParams) == sizeof(GPUVsmSampleParams) + 16 + sizeof(GPUVsmPointSampleParams),
+                  "vsm_sample_probe.comp の VsmSampleProbeParams と同じ大きさにすること");
 
     struct SampleProbe
     {
@@ -3866,7 +3869,7 @@ namespace
     {
         Container::VariableArray<float> Visibility;
         Container::VariableArray<float> TexelMeters;
-        // 粗い段へ逃げた PCF の標本の数（統計の語 0）
+        // 粗い段へ逃げた PCF の標本の数（統計の語 0。点光源は語 1）
         uint32_t Fallback = 0;
     };
 
@@ -3893,15 +3896,17 @@ namespace
         return probe.Pipeline != nullptr;
     }
 
-    // 受け手の点を GPU で評価する。pool・table はケース F のページの表・物理プール（またはその変更）の全語
-    bool RunSampleProbe(const DevicePtr& device,
-                        const SampleProbe& probe,
-                        const VirtualShadowMapClipmap& clipmap,
-                        const GPUVsmSampleParams& vsm,
-                        const Container::VariableArray<uint32_t>& poolWords,
-                        const Container::VariableArray<uint32_t>& tableWords,
-                        const Container::VariableArray<SampleProbePoint>& points,
-                        SampleOutput& out)
+    // 受け手の点を GPU で評価する（スライスの表・パラメータを呼び出し側が与える）。pool・table はページの表・物理プールの全語。
+    // params.Control[0]（点の数）はここで points.size() に置き換える。点光源（Control[1] = 1）の逃げた標本は統計の語 1
+    bool RunSampleProbeWith(const DevicePtr& device,
+                            const SampleProbe& probe,
+                            const GPUVsmSlice* sliceData,
+                            uint32_t sliceCount,
+                            SampleProbeParams params,
+                            const Container::VariableArray<uint32_t>& poolWords,
+                            const Container::VariableArray<uint32_t>& tableWords,
+                            const Container::VariableArray<SampleProbePoint>& points,
+                            SampleOutput& out)
     {
         const ResourceUsage usage = ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead | ResourceUsage::TransferDst;
         const uint64_t pointBytes = static_cast<uint64_t>(points.size()) * sizeof(SampleProbePoint);
@@ -3912,7 +3917,7 @@ namespace
         BufferPtr stats = device->CreateBuffer(BufferDesc(4u * sizeof(uint32_t), usage, true, "VsmSampleProbeStats"));
         BufferPtr table = device->CreateBuffer(BufferDesc(static_cast<uint64_t>(tableWords.size()) * sizeof(uint32_t), usage, true, "VsmSampleProbeTable"));
         BufferPtr pool = device->CreateBuffer(BufferDesc(static_cast<uint64_t>(poolWords.size()) * sizeof(uint32_t), usage, true, "VsmSampleProbePool"));
-        BufferPtr sliceBuffer = device->CreateBuffer(BufferDesc(sizeof(GPUVsmSlice) * VirtualShadowMapMaxLevels, usage, true, "VsmSampleProbeSlices"));
+        BufferPtr sliceBuffer = device->CreateBuffer(BufferDesc(sizeof(GPUVsmSlice) * sliceCount, usage, true, "VsmSampleProbeSlices"));
         DescriptorSetPtr descriptorSet = device->CreateDescriptorSet(probe.Layout);
         CommandListPtr commandList = device->CreateCommandList();
         if (!uniform || !pointBuffer || !results || !stats || !table || !pool || !sliceBuffer || !descriptorSet || !commandList || points.empty())
@@ -3920,8 +3925,6 @@ namespace
             return false;
         }
 
-        SampleProbeParams params = {};
-        params.Vsm = vsm;
         params.Control[0] = static_cast<uint32_t>(points.size());
         uniform->Update(&params, sizeof(params));
         pointBuffer->Update(points.data(), pointBytes);
@@ -3931,9 +3934,7 @@ namespace
         stats->Update(zeroStats, sizeof(zeroStats));
         table->Update(tableWords.data(), static_cast<uint64_t>(tableWords.size()) * sizeof(uint32_t));
         pool->Update(poolWords.data(), static_cast<uint64_t>(poolWords.size()) * sizeof(uint32_t));
-        GPUVsmSlice slices[VirtualShadowMapMaxLevels];
-        BuildVirtualShadowMapSlices(&clipmap, nullptr, VirtualShadowMapMaxLevels, slices);
-        sliceBuffer->Update(slices, sizeof(slices));
+        sliceBuffer->Update(sliceData, sizeof(GPUVsmSlice) * sliceCount);
 
         descriptorSet->BindConstantBuffer(0, uniform, 0, static_cast<uint32_t>(sizeof(SampleProbeParams)));
         descriptorSet->BindStorageBuffer(1, pointBuffer, 0, static_cast<uint32_t>(pointBytes));
@@ -3974,8 +3975,25 @@ namespace
             out.Visibility[index] = WordToFloat(resultWords[index * 4u]);
             out.TexelMeters[index] = WordToFloat(resultWords[index * 4u + 1u]);
         }
-        out.Fallback = statWords[0];
+        out.Fallback = params.Control[1] == 1u ? statWords[1] : statWords[0];
         return true;
+    }
+
+    // 太陽の VSM の読み出し。pool・table はケース F のページの表・物理プール（またはその変更）の全語
+    bool RunSampleProbe(const DevicePtr& device,
+                        const SampleProbe& probe,
+                        const VirtualShadowMapClipmap& clipmap,
+                        const GPUVsmSampleParams& vsm,
+                        const Container::VariableArray<uint32_t>& poolWords,
+                        const Container::VariableArray<uint32_t>& tableWords,
+                        const Container::VariableArray<SampleProbePoint>& points,
+                        SampleOutput& out)
+    {
+        GPUVsmSlice slices[VirtualShadowMapMaxLevels];
+        BuildVirtualShadowMapSlices(&clipmap, nullptr, VirtualShadowMapMaxLevels, slices);
+        SampleProbeParams params = {};
+        params.Vsm = vsm;
+        return RunSampleProbeWith(device, probe, slices, VirtualShadowMapMaxLevels, params, poolWords, tableWords, points, out);
     }
 
     // 受け手の点（ライト空間の位置と深度）のワールドの位置と、光源を向いた法線（光に正対するので法線の向きへのずらしも受け面の傾きも 0）
@@ -6896,7 +6914,451 @@ namespace
                ReadAll(rasterBuffers.Instances, readback.Instances);
     }
 
-    bool RunPointRasterCases(const DevicePtr& device, VirtualShadowMapRaster& raster, const Scene& scene, uint64_t& frameSerial)
+    // ========================================
+    // ケース S: 点光源の VSM の読み出し（Common/VirtualShadowMapPoint.glsl の VsmSamplePointShadow。照明と同じ関数を vsm_sample_probe.comp から呼ぶ）
+    // ========================================
+    //
+    // ケース R の物理ページ（四角形が描かれている）と、その場面の灯・スライスの表を、受け手の点から読む。受け手は光源から見て四角形 Q1（軸の距離 8）の
+    // 真後ろ（軸の距離 12）に、光源を向いた面（法線は面 0 の軸の逆向き。法線の向きへのずらしも受け面の傾きも小さい）として置く。
+    // 縁・影の外の受け手は、光源の後ろへ伸びる三角形 T（面 0 の NDC では (0.167, 0) から右下へ広がる）の影を避けて、NDC の v = 0.3 付近に置く。
+    //   S1（影の中心）: 四角形に覆われた中心の受け手は 0。使った段の texel は受け手の段（段 0）の値。逃げた標本は 0。
+    //   S2（影の外）: 四角形の隙間（Q1 と Q3 の間）の受け手は 1。
+    //   S3（縁）: Q1 の縁（面の NDC u = 0.3125）をまたいで受け手を 0.00025（NDC）刻みで動かす。縁の手前で 0、向こうで 1、帯の中で途中の値になり、
+    //       可視度は u について減らない。各受け手の値は、独立の参照（Poisson の 16 点それぞれの面・ページ・texel を倍精度で求め、多角形との光線の交点で影を判定する）と
+    //       曖昧な標本の数 ÷ 16 の範囲で一致する。
+    //   S4（割り当てのないページ）: 段 0 のページが無い位置（u = -0.45）の受け手は、粗い段（段 2）の値になる。参照も段 2 の多角形の交点で決める。逃げた標本は 16。
+    //       粗い段へ逃げた標本の texel は、読んだ（粗い）段の値。
+    //   S5（どの段にも無い）: 受け手の段を 3 にすると（段 3 以上のページは無い）、影の中心でもキューブの値ではなく影なし（1）。逃げた標本は 16。
+    //   S6（面の境）: 面 0 と隣の面の境（NDC u = 1）をまたぐ PCF の円盤が、両方の面のページを読んで Q3 の影（0）になる。
+
+    struct PointSampleReceiver
+    {
+        double Position[3] = {};
+        double Normal[3] = {};
+    };
+
+    struct PointSampleReference
+    {
+        double Visibility = 1.0;
+        /** @brief 曖昧な標本（texel の中の多角形の縁・遮る物との深度の差が小さい）の数 */
+        uint32_t Ambiguous = 0;
+        /** @brief 自分の段のページが無く粗い段へ進んだ標本の数 */
+        uint32_t Escaped = 0;
+        uint32_t Mip = 0;
+        double ReceiverTexel = 0.0;
+    };
+
+    // 面のスライスのページ (sliceIndex, pageX, pageY) が割り当て済みか（ケース R のページの並び）
+    bool IsPointPageAllocated(const Container::VariableArray<PointRasterPageSpec>& pageSpecs, uint32_t sliceIndex, uint32_t pageX, uint32_t pageY)
+    {
+        for (const PointRasterPageSpec& spec : pageSpecs)
+        {
+            if (spec.Slice == sliceIndex && spec.PageX == pageX && spec.PageY == pageY)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // シェーダーの VsmSamplePointShadow の独立した参照。受け手の面・段・円盤・各標本の面とページを倍精度で求め、標本ごとの遮る物は
+    // 多角形との光線の交点（ClassifyPointTexel。texel の中心を通る光線）で決める。深度の比較の余裕は見ない（遮る物と受け手の差が大きい受け手だけを使う）
+    PointSampleReference ReferencePointVisibility(const PointRasterReference& reference,
+                                                  const PointScene& pointScene,
+                                                  const Container::VariableArray<PointRasterPageSpec>& pageSpecs,
+                                                  const PointSampleReceiver& receiver,
+                                                  double cameraDistance,
+                                                  float fovYDegrees,
+                                                  float screenHeightPixels)
+    {
+        PointSampleReference result;
+        const VirtualShadowMapPointSettings& settings = pointScene.Lights.Settings;
+        const auto sliceOf = [&](uint32_t face, uint32_t mip) { return VirtualShadowMapPointSliceIndex(pointScene.Lights, 0u, face, mip); };
+        double offset[3];
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            offset[axis] = receiver.Position[axis] - reference.Light[axis];
+        }
+        const uint32_t face = SelectVirtualShadowMapPointFace(static_cast<float>(offset[0]), static_cast<float>(offset[1]), static_cast<float>(offset[2]));
+        const GPUVsmSlice& faceSlice = pointScene.Slices[sliceOf(face, 0u)];
+        const double faceAxis[3] = {faceSlice.axisZ[0], faceSlice.axisZ[1], faceSlice.axisZ[2]};
+        const double axial = Dot3(faceAxis, offset);
+        const double pixelPerMeter = static_cast<double>(VirtualShadowMapScreenPixelMeters(1.0f, fovYDegrees, screenHeightPixels));
+        const double target = cameraDistance * pixelPerMeter * std::exp2(static_cast<double>(settings.BiasLevels));
+        uint32_t mip = 0u;
+        for (uint32_t candidate = settings.MipCount; candidate-- > 0u;)
+        {
+            if (2.0 * axial / static_cast<double>(settings.FaceResolution >> candidate) <= target)
+            {
+                mip = candidate;
+                break;
+            }
+        }
+        result.Mip = mip;
+        result.ReceiverTexel = 2.0 * axial / static_cast<double>(settings.FaceResolution >> mip);
+
+        const double distance = std::sqrt(Dot3(offset, offset));
+        const double toLight[3] = {-offset[0] / distance, -offset[1] / distance, -offset[2] / distance};
+        double normal[3] = {receiver.Normal[0], receiver.Normal[1], receiver.Normal[2]};
+        const double normalLength = std::sqrt(Dot3(normal, normal));
+        for (double& component : normal)
+        {
+            component /= normalLength;
+        }
+        double normalDotLight = Dot3(normal, toLight);
+        if (normalDotLight < 0.0)
+        {
+            for (double& component : normal)
+            {
+                component = -component;
+            }
+            normalDotLight = -normalDotLight;
+        }
+        const double normalOffset = result.ReceiverTexel * (0.6 + 1.4 * (1.0 - std::clamp(normalDotLight, 0.0, 1.0)));
+        double receiverPosition[3];
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            receiverPosition[axis] = receiver.Position[axis] + normal[axis] * normalOffset;
+        }
+        const double helper[3] = {std::abs(normal[1]) < 0.99 ? 0.0 : 1.0, std::abs(normal[1]) < 0.99 ? 1.0 : 0.0, 0.0};
+        double tangent[3] = {helper[1] * normal[2] - helper[2] * normal[1], helper[2] * normal[0] - helper[0] * normal[2],
+                             helper[0] * normal[1] - helper[1] * normal[0]};
+        const double tangentLength = std::sqrt(Dot3(tangent, tangent));
+        for (double& component : tangent)
+        {
+            component /= tangentLength;
+        }
+        const double bitangent[3] = {normal[1] * tangent[2] - normal[2] * tangent[1], normal[2] * tangent[0] - normal[0] * tangent[2],
+                                     normal[0] * tangent[1] - normal[1] * tangent[0]};
+        const double radius = std::max(cameraDistance * pixelPerMeter * static_cast<double>(VirtualShadowMap::PCF_MIN_RADIUS_PIXELS), result.ReceiverTexel);
+
+        uint32_t lit = 0;
+        for (uint32_t index = 0; index < 16u; ++index)
+        {
+            double tap[3];
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                tap[axis] = receiverPosition[axis] - reference.Light[axis] + tangent[axis] * ReferencePoissonDisk[index][0] * radius +
+                            bitangent[axis] * ReferencePoissonDisk[index][1] * radius;
+            }
+            const uint32_t tapFace = SelectVirtualShadowMapPointFace(static_cast<float>(tap[0]), static_cast<float>(tap[1]), static_cast<float>(tap[2]));
+            const GPUVsmSlice& tapSlice = pointScene.Slices[sliceOf(tapFace, mip)];
+            const double axisX[3] = {tapSlice.axisX[0], tapSlice.axisX[1], tapSlice.axisX[2]};
+            const double axisY[3] = {tapSlice.axisY[0], tapSlice.axisY[1], tapSlice.axisY[2]};
+            const double axisZ[3] = {tapSlice.axisZ[0], tapSlice.axisZ[1], tapSlice.axisZ[2]};
+            const double tapAxial = Dot3(axisZ, tap);
+            bool bVisible = true;
+            bool bEscaped = false;
+            if (tapAxial >= reference.Near && tapAxial <= reference.Range)
+            {
+                const double ndcX = std::clamp(Dot3(axisX, tap) / tapAxial, -1.0, 1.0);
+                const double ndcY = std::clamp(Dot3(axisY, tap) / tapAxial, -1.0, 1.0);
+                for (uint32_t candidate = mip; candidate < settings.MipCount; ++candidate)
+                {
+                    const uint32_t sliceIndex = sliceOf(tapFace, candidate);
+                    const GPUVsmSlice& candidateSlice = pointScene.Slices[sliceIndex];
+                    const uint32_t pages = static_cast<uint32_t>(candidateSlice.origin[3]);
+                    const double scaledX = (ndcX * 0.5 + 0.5) * pages;
+                    const double scaledY = (ndcY * 0.5 + 0.5) * pages;
+                    const uint32_t pageX = std::min(static_cast<uint32_t>(scaledX), pages - 1u);
+                    const uint32_t pageY = std::min(static_cast<uint32_t>(scaledY), pages - 1u);
+                    if (!IsPointPageAllocated(pageSpecs, sliceIndex, pageX, pageY))
+                    {
+                        bEscaped = true;
+                        continue;
+                    }
+                    const uint32_t texelX = std::min(static_cast<uint32_t>((scaledX - pageX) * VirtualShadowMap::PAGE_RESOLUTION), VirtualShadowMap::PAGE_RESOLUTION - 1u);
+                    const uint32_t texelY = std::min(static_cast<uint32_t>((scaledY - pageY) * VirtualShadowMap::PAGE_RESOLUTION), VirtualShadowMap::PAGE_RESOLUTION - 1u);
+                    double depth = 0.0;
+                    double texelNdcX = 0.0;
+                    double texelNdcY = 0.0;
+                    const PointTexelKind kind = ClassifyPointTexel(reference, candidateSlice, pageX, pageY, texelX, texelY, depth, texelNdcX, texelNdcY);
+                    if (kind == PointTexelKind::Ambiguous)
+                    {
+                        ++result.Ambiguous;
+                    }
+                    else if (kind == PointTexelKind::Covered)
+                    {
+                        const double occluder = depth * reference.Range;
+                        if (std::abs(tapAxial - occluder) < 0.5)
+                        {
+                            ++result.Ambiguous;
+                        }
+                        else if (tapAxial > occluder)
+                        {
+                            bVisible = false;
+                        }
+                    }
+                    break;
+                }
+            }
+            lit += bVisible ? 1u : 0u;
+            result.Escaped += bEscaped ? 1u : 0u;
+        }
+        result.Visibility = static_cast<double>(lit) / 16.0;
+        return result;
+    }
+
+    bool RunPointSampleCases(const DevicePtr& device,
+                             ShaderManager& shaderManager,
+                             const PointRasterReference& reference,
+                             const PointScene& pointScene,
+                             const Container::VariableArray<PointRasterPageSpec>& pageSpecs,
+                             const RasterReadback& readback,
+                             const Resources& resources)
+    {
+        SampleProbe probe;
+        if (!CreateSampleProbe(device, shaderManager, probe))
+        {
+            std::cerr << TestName << " ケース S の計算シェーダーを作れませんでした" << std::endl;
+            return false;
+        }
+        Container::VariableArray<uint32_t> tableWords;
+        if (!ReadAll(resources.PageTable, tableWords))
+        {
+            return false;
+        }
+        const auto sliceOf = [&](uint32_t face, uint32_t mip) { return VirtualShadowMapPointSliceIndex(pointScene.Lights, 0u, face, mip); };
+        const GPUVsmSlice& face0 = pointScene.Slices[sliceOf(0u, 0u)];
+        const double sc[3] = {face0.axisX[0], face0.axisX[1], face0.axisX[2]};
+        const double tc[3] = {face0.axisY[0], face0.axisY[1], face0.axisY[2]};
+        const double major[3] = {face0.axisZ[0], face0.axisZ[1], face0.axisZ[2]};
+        constexpr float FovYDegrees = 60.0f;
+        constexpr float ScreenHeight = 720.0f;
+
+        // 面 0 の NDC (u, v)・軸の距離 axial の受け手。法線は光源を向く（面 0 の軸の逆向き）
+        const auto makeReceiver = [&](double u, double v, double axial) {
+            PointSampleReceiver receiver;
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                receiver.Position[axis] = reference.Light[axis] + axial * (major[axis] + u * sc[axis] + v * tc[axis]);
+                receiver.Normal[axis] = -major[axis];
+            }
+            return receiver;
+        };
+
+        struct SampleBatch
+        {
+            Container::VariableArray<PointSampleReceiver> Receivers;
+            double CameraDistance = 0.0;
+        };
+        // 1 回の評価で使う受け手の組と、カメラまでの距離（受け手の段を決める）。段 0 は受け手から 2 m、段 2 は 30 m、段 3 は 60 m
+        const auto runBatch = [&](const SampleBatch& batch, SampleOutput& out) {
+            Container::VariableArray<SampleProbePoint> points;
+            for (const PointSampleReceiver& receiver : batch.Receivers)
+            {
+                SampleProbePoint point = {};
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    point.Position[axis] = static_cast<float>(receiver.Position[axis]);
+                    point.Normal[axis] = static_cast<float>(receiver.Normal[axis]);
+                }
+                points.push_back(point);
+            }
+            // カメラは先頭の受け手から、世界の +Y へ CameraDistance 離す（受け手の組は互いに近いので、距離の差は段を変えない）
+            const float cameraPosition[3] = {static_cast<float>(batch.Receivers[0].Position[0]),
+                                             static_cast<float>(batch.Receivers[0].Position[1] + batch.CameraDistance),
+                                             static_cast<float>(batch.Receivers[0].Position[2])};
+            SampleProbeParams params = {};
+            if (!BuildVirtualShadowMapPointSampleParams(pointScene.Lights, cameraPosition, FovYDegrees, ScreenHeight, resources.PoolPages, params.Point))
+            {
+                return false;
+            }
+            params.Control[1] = 1u;
+            params.Control[2] = 0u;
+            return RunSampleProbeWith(device, probe, pointScene.Slices, pointScene.SliceCount, params, readback.Pool, tableWords, points, out);
+        };
+        const auto referenceOf = [&](const SampleBatch& batch, size_t index) {
+            return ReferencePointVisibility(reference, pointScene, pageSpecs, batch.Receivers[index], batch.CameraDistance, FovYDegrees, ScreenHeight);
+        };
+
+        // 受け手の段ごとの texel（軸の距離 12）
+        const double texel0 = 2.0 * 12.0 / 4096.0;
+        const double texel2 = 2.0 * 12.0 / 1024.0;
+        const double texel3 = 2.0 * 12.0 / 512.0;
+
+        // ----- S1: 影の中心 -----
+        {
+            SampleBatch batch;
+            batch.CameraDistance = 2.0;
+            const double uv[5][2] = {{-0.1, 0.2}, {0.0, 0.1}, {0.1, -0.05}, {-0.2, 0.3}, {0.2, 0.25}};
+            for (const auto& entry : uv)
+            {
+                batch.Receivers.push_back(makeReceiver(entry[0], entry[1], 12.0));
+            }
+            SampleOutput out;
+            if (!runBatch(batch, out))
+            {
+                std::cerr << TestName << " ケース S1 を実行できませんでした" << std::endl;
+                return false;
+            }
+            bool bAllShadow = true;
+            bool bTexel = true;
+            for (size_t index = 0; index < batch.Receivers.size(); ++index)
+            {
+                bAllShadow = bAllShadow && out.Visibility[index] == 0.0f;
+                bTexel = bTexel && std::abs(static_cast<double>(out.TexelMeters[index]) - texel0) < 0.05 * texel0;
+            }
+            Expect(bAllShadow, "ケース S1: 四角形に覆われた中心の受け手は影（0）でなければならない");
+            Expect(bTexel, "ケース S1: 使った段の texel の一辺は受け手の段（段 0）の値でなければならない");
+            Expect(out.Fallback == 0u, "ケース S1: 段 0 のページが割り当て済みの受け手は、粗い段へ逃げてはならない");
+            std::cout << TestName << " ケース S1: 影の中心 5 点 可視度=" << out.Visibility[0] << " texel=" << out.TexelMeters[0] * 1000.0 << " mm 逃げた=" << out.Fallback << std::endl;
+        }
+
+        // ----- S2: 影の外（Q1 の縁 u = 0.3125 と Q3 の縁 u = 0.375 の間） -----
+        {
+            SampleBatch batch;
+            batch.CameraDistance = 2.0;
+            const double uv[3][2] = {{0.34, 0.3}, {0.34, 0.35}, {0.345, 0.45}};
+            for (const auto& entry : uv)
+            {
+                batch.Receivers.push_back(makeReceiver(entry[0], entry[1], 12.0));
+            }
+            SampleOutput out;
+            if (!runBatch(batch, out))
+            {
+                std::cerr << TestName << " ケース S2 を実行できませんでした" << std::endl;
+                return false;
+            }
+            bool bAllLit = true;
+            for (size_t index = 0; index < batch.Receivers.size(); ++index)
+            {
+                bAllLit = bAllLit && out.Visibility[index] == 1.0f;
+            }
+            Expect(bAllLit, "ケース S2: 四角形の外の受け手は光が当たらなければならない（1）");
+            Expect(out.Fallback == 0u, "ケース S2: 段 0 のページが割り当て済みの受け手は、粗い段へ逃げてはならない");
+        }
+
+        // ----- S3: 縁 -----
+        {
+            SampleBatch batch;
+            batch.CameraDistance = 2.0;
+            constexpr uint32_t EdgeCount = 13;
+            for (uint32_t index = 0; index < EdgeCount; ++index)
+            {
+                batch.Receivers.push_back(makeReceiver(0.3125 + (static_cast<double>(index) - 6.0) * 0.00025, 0.3, 12.0));
+            }
+            SampleOutput out;
+            if (!runBatch(batch, out))
+            {
+                std::cerr << TestName << " ケース S3 を実行できませんでした" << std::endl;
+                return false;
+            }
+            uint32_t partial = 0;
+            bool bMonotonic = true;
+            uint32_t referenceMismatch = 0;
+            for (size_t index = 0; index < batch.Receivers.size(); ++index)
+            {
+                const float value = out.Visibility[index];
+                partial += (value > 0.0f && value < 1.0f) ? 1u : 0u;
+                if (index > 0)
+                {
+                    bMonotonic = bMonotonic && value + 1.0e-6f >= out.Visibility[index - 1];
+                }
+                const PointSampleReference expected = referenceOf(batch, index);
+                const double tolerance = static_cast<double>(expected.Ambiguous) / 16.0 + 1.0e-4;
+                referenceMismatch += std::abs(static_cast<double>(value) - expected.Visibility) > tolerance ? 1u : 0u;
+            }
+            std::cout << TestName << " ケース S3: 縁 13 点の可視度=";
+            for (size_t index = 0; index < batch.Receivers.size(); ++index)
+            {
+                std::cout << out.Visibility[index] << (index + 1 < batch.Receivers.size() ? "," : "");
+            }
+            std::cout << " 途中の値=" << partial << " 参照との不一致=" << referenceMismatch << std::endl;
+            Expect(out.Visibility[0] == 0.0f && out.Visibility[EdgeCount - 1u] == 1.0f, "ケース S3: 縁の手前は影（0）、向こうは光（1）でなければならない");
+            Expect(partial >= 2u, "ケース S3: 縁の帯の中で途中の値（0 と 1 の間）が出なければならない");
+            Expect(bMonotonic, "ケース S3: 縁をまたいで動かすと、可視度は減ってはならない");
+            Expect(referenceMismatch == 0u, "ケース S3: 縁の値は、Poisson の 16 点の面・ページ・texel と多角形との光線の交点から求めた参照と曖昧な標本の範囲で一致しなければならない");
+        }
+
+        // ----- S4: 割り当てのないページ（段 0 のページが無い u = -0.45）は粗い段（段 2）の値 -----
+        {
+            SampleBatch batch;
+            batch.CameraDistance = 2.0;
+            const double uv[3][2] = {{-0.45, 0.3}, {-0.46, 0.35}, {-0.44, 0.4}};
+            for (const auto& entry : uv)
+            {
+                batch.Receivers.push_back(makeReceiver(entry[0], entry[1], 12.0));
+            }
+            SampleOutput out;
+            if (!runBatch(batch, out))
+            {
+                std::cerr << TestName << " ケース S4 を実行できませんでした" << std::endl;
+                return false;
+            }
+            bool bMatches = true;
+            bool bTexel = true;
+            uint32_t escapedReference = 0;
+            for (size_t index = 0; index < batch.Receivers.size(); ++index)
+            {
+                const PointSampleReference expected = referenceOf(batch, index);
+                const double tolerance = static_cast<double>(expected.Ambiguous) / 16.0 + 1.0e-4;
+                bMatches = bMatches && std::abs(static_cast<double>(out.Visibility[index]) - expected.Visibility) <= tolerance;
+                escapedReference += expected.Escaped;
+                bTexel = bTexel && std::abs(static_cast<double>(out.TexelMeters[index]) - texel2) < 0.05 * texel2;
+            }
+            std::cout << TestName << " ケース S4: 段 0 のページ無し 可視度=" << out.Visibility[0] << " texel=" << out.TexelMeters[0] * 1000.0
+                      << " mm 逃げた=" << out.Fallback << "（参照 " << escapedReference << "）" << std::endl;
+            Expect(out.Visibility[0] == 0.0f, "ケース S4: 段 0 のページが無い影の中の受け手は、粗い段（段 2）の値（影 = 0）にならなければならない");
+            Expect(bMatches, "ケース S4: 値は、粗い段の多角形の交点から求めた参照と一致しなければならない");
+            Expect(bTexel, "ケース S4: 粗い段へ逃げた標本の texel の一辺は、読んだ（段 2 の）値でなければならない");
+            Expect(out.Fallback == escapedReference && out.Fallback == 16u * static_cast<uint32_t>(batch.Receivers.size()),
+                   "ケース S4: 逃げた標本の数は、受け手 × 16 点でなければならない");
+        }
+
+        // ----- S5: どの段にも無い（受け手の段 3 以上のページは無い）は影なし -----
+        {
+            SampleBatch batch;
+            batch.CameraDistance = 60.0;
+            const double uv[2][2] = {{-0.1, 0.2}, {0.0, 0.1}};
+            for (const auto& entry : uv)
+            {
+                batch.Receivers.push_back(makeReceiver(entry[0], entry[1], 12.0));
+            }
+            SampleOutput out;
+            if (!runBatch(batch, out))
+            {
+                std::cerr << TestName << " ケース S5 を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(out.Visibility[0] == 1.0f && out.Visibility[1] == 1.0f,
+                   "ケース S5: どの段にもページが無い受け手は、キューブの値ではなく影なし（1）でなければならない");
+            Expect(out.Fallback == 16u * static_cast<uint32_t>(batch.Receivers.size()), "ケース S5: 逃げた標本の数は、受け手 × 16 点でなければならない");
+            Expect(std::abs(static_cast<double>(out.TexelMeters[0]) - texel3) < 0.05 * texel3, "ケース S5: どの標本も読めなかったときの texel の一辺は、受け手の段（段 3）の値でなければならない");
+        }
+
+        // ----- S6: 面 0 と隣の面の境（u = 1）をまたぐ円盤。Q3 の影の中（段 2。全面にページがある） -----
+        {
+            SampleBatch batch;
+            batch.CameraDistance = 30.0;
+            const double uv[3][2] = {{1.0, 0.0}, {0.9995, 0.1}, {1.0005, -0.1}};
+            for (const auto& entry : uv)
+            {
+                batch.Receivers.push_back(makeReceiver(entry[0], entry[1], 12.0));
+            }
+            SampleOutput out;
+            if (!runBatch(batch, out))
+            {
+                std::cerr << TestName << " ケース S6 を実行できませんでした" << std::endl;
+                return false;
+            }
+            bool bMatches = true;
+            for (size_t index = 0; index < batch.Receivers.size(); ++index)
+            {
+                const PointSampleReference expected = referenceOf(batch, index);
+                const double tolerance = static_cast<double>(expected.Ambiguous) / 16.0 + 1.0e-4;
+                bMatches = bMatches && std::abs(static_cast<double>(out.Visibility[index]) - expected.Visibility) <= tolerance;
+            }
+            std::cout << TestName << " ケース S6: 面の境 可視度=" << out.Visibility[0] << "," << out.Visibility[1] << "," << out.Visibility[2] << std::endl;
+            Expect(out.Visibility[0] == 0.0f && out.Visibility[1] == 0.0f && out.Visibility[2] == 0.0f,
+                   "ケース S6: 面の境をまたぐ円盤は、両方の面のページを読んで Q3 の影（0）にならなければならない");
+            Expect(bMatches, "ケース S6: 値は参照と一致しなければならない");
+            Expect(out.Fallback == 0u, "ケース S6: 段 2 は全面でページがあるので、粗い段へ逃げてはならない");
+        }
+        return true;
+    }
+
+    bool RunPointRasterCases(const DevicePtr& device, ShaderManager& shaderManager, VirtualShadowMapRaster& raster, const Scene& scene, uint64_t& frameSerial)
     {
         // ----- 灯とスライスの表（太陽の段 + 1 灯 × 6 面 × 6 段） -----
         PointShadowSnapshot snapshot;
@@ -7233,7 +7695,9 @@ namespace
         Expect(sunless.bRasterRecorded && sunless.Pool == readback.Pool &&
                    sunless.Stats[VirtualShadowMap::StatRasterInstances] == readback.Stats[VirtualShadowMap::StatRasterInstances],
                "ケース R: 太陽のクリップマップが無効でも、スライスの表を渡せば同じ物理ページと同じインスタンスの数でなければならない");
-        return true;
+
+        // ----- ケース S: 同じ物理ページを、照明と同じ関数で受け手の点から読む -----
+        return RunPointSampleCases(device, shaderManager, reference, pointScene, pageSpecs, readback, resources);
     }
 
     int RunTest()
@@ -7465,7 +7929,7 @@ namespace
                     return 1;
                 }
                 // ----- ケース R: 点光源の面のスライスへの展開・描画 -----
-                if (!RunPointRasterCases(device, raster, scene, frameSerial))
+                if (!RunPointRasterCases(device, shaderManager, raster, scene, frameSerial))
                 {
                     return 1;
                 }

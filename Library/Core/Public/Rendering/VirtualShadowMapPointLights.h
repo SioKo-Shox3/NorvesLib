@@ -65,6 +65,43 @@ namespace NorvesLib::Core::Rendering
         float Depth = 0.0f;
     };
 
+    /**
+     * @brief シェーダーの VsmPointSampleParams（std140。Common/VirtualShadowMapParams.glsl）と同じ並び。照明・影の測定・テストが
+     *        点光源の VSM を読む（Common/VirtualShadowMapPoint.glsl）パラメータ
+     */
+    struct GPUVsmPointSampleParams
+    {
+        /** @brief x = 灯の数（0 なら点光源の VSM は読まない）、y = 点光源のスライスの先頭の番号、z = 解像度の段の数、w = 物理ページの数 */
+        uint32_t header[4];
+        /** @brief x = カメラからの距離 1 m あたりの画素の大きさ（m）、y = 段を選ぶ目標 texel の係数（2^bias）、z = PCF の半径の下限の画素数、w = 予約（0） */
+        float tuning[4];
+        /** @brief xyz = カメラの位置 */
+        float cameraPosition[4];
+        /** @brief x = 面の近い平面の距離（m）、y = 面の段 0 の解像度（texel） */
+        float plane[4];
+        /** @brief xyz = 灯の位置、w = Range（灯の順） */
+        float lights[PointShadowMaxLights][4];
+    };
+    static_assert(PointShadowMaxLights == 4u && sizeof(GPUVsmPointSampleParams) == 128,
+                  "Common/VirtualShadowMapParams.glsl の VsmPointSampleParams と同じ大きさにすること");
+
+    /**
+     * @brief 点光源の VSM を読むパラメータを作る
+     *
+     * 灯が無い・設定が不正・カメラや画角が不正・物理ページが 0 のときは、全部 0（header[0] = 0 = 読まない）にして false を返す。
+     * 呼び出し側は無効のパラメータを渡し、キューブのまま描く。印付け（vsm_mark.comp）と同じ式で段を選ぶので、tuning[0] は
+     * 1 m あたりの画素の大きさ（VirtualShadowMapScreenPixelMeters(1, fov, 高さ)）、tuning[1] は 2^BiasLevels。
+     *
+     * @param cameraPosition カメラの位置（ワールド。3 要素）
+     * @param poolPages 物理ページの数
+     */
+    bool BuildVirtualShadowMapPointSampleParams(const VirtualShadowMapPointLights& lights,
+                                                const float* cameraPosition,
+                                                float fovYDegrees,
+                                                float screenHeightPixels,
+                                                uint32_t poolPages,
+                                                GPUVsmPointSampleParams& outParams);
+
     /** @brief 設定が使える値か（解像度・ページの大きさが 2 の冪、段の数が 1 以上で最も粗い段でもページの一辺以上、MipCount が 16 以下） */
     bool IsValidVirtualShadowMapPointSettings(const VirtualShadowMapPointSettings& settings);
 

@@ -8,6 +8,7 @@
 #include "Rendering/RenderGraph/RenderGraphDump.h"
 #include "Rendering/RTGIContract.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
+#include "Rendering/VirtualShadowMapPointLights.h"
 #include "FrameCommand.h"
 #include "ViewportSnapshot.h"
 #include "SceneRenderer.h"
@@ -98,6 +99,8 @@ namespace NorvesLib::Core::Rendering
         CascadedDirectionalShadowShaderValues CascadedShadow;
         /** @brief 太陽のクリップマップ（--shadow-method=vsm のときだけ ShadowMapPass が毎フレーム公開する。後のパス・照明が読む） */
         VirtualShadowMapClipmap SunClipmap;
+        /** @brief 点光源の VSM（--point-shadow-method=vsm）の面と解像度の段の並び（VirtualShadowMapPass が毎フレーム公開する）。LightCount が 0 なら照明・影の測定はキューブのまま */
+        VirtualShadowMapPointLights PointVsmLights;
 
         RHI::BufferPtr LightBuffer;
         uint32_t LogicalLightCount = 0;
@@ -165,6 +168,7 @@ namespace NorvesLib::Core::Rendering
             IndirectLightingSource = RTGIIndirectLightingSource::Raster;
             IndirectLightingFallbackReason = RTGIFallbackReason::Disabled;
             SunClipmap = VirtualShadowMapClipmap{};
+            PointVsmLights = VirtualShadowMapPointLights{};
             CascadedShadow = CascadedDirectionalShadowShaderValues{};
             for (uint32_t index = 0; index < 16; ++index)
             {
@@ -298,6 +302,12 @@ namespace NorvesLib::Core::Rendering
         void PublishSunClipmap(const VirtualShadowMapClipmap& clipmap)
         {
             SunClipmap = clipmap;
+        }
+
+        /** @brief 点光源の VSM の並びを公開する（灯が無いときは LightCount = 0 を渡す） */
+        void PublishPointVsmLights(const VirtualShadowMapPointLights& lights)
+        {
+            PointVsmLights = lights;
         }
 
         bool HasCompleteCascadedShadow() const

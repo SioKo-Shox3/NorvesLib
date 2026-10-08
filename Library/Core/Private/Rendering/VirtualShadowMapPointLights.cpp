@@ -1,6 +1,7 @@
 ﻿#include "Rendering/VirtualShadowMapPointLights.h"
 
 #include "Rendering/VirtualShadowMapClipmap.h"
+#include "Rendering/VirtualShadowMapPages.h"
 #include "Rendering/VirtualShadowMapPass.h"
 
 #include <algorithm>
@@ -94,6 +95,51 @@ namespace NorvesLib::Core::Rendering
             result.Range[light] = snapshot.Lights[light].Range;
         }
         return result;
+    }
+
+    bool BuildVirtualShadowMapPointSampleParams(const VirtualShadowMapPointLights& lights,
+                                                const float* cameraPosition,
+                                                float fovYDegrees,
+                                                float screenHeightPixels,
+                                                uint32_t poolPages,
+                                                GPUVsmPointSampleParams& outParams)
+    {
+        std::memset(&outParams, 0, sizeof(outParams));
+        if (cameraPosition == nullptr || lights.LightCount == 0u || lights.LightCount > PointShadowMaxLights ||
+            !IsValidVirtualShadowMapPointSettings(lights.Settings) || poolPages == 0u || poolPages > VirtualShadowMap::MAX_POOL_PAGES ||
+            lights.FirstSlice + lights.SliceCount() > VirtualShadowMapMaxSlices)
+        {
+            return false;
+        }
+        const float pixelMeters = VirtualShadowMapScreenPixelMeters(1.0f, fovYDegrees, screenHeightPixels);
+        if (!(pixelMeters > 0.0f) || !std::isfinite(pixelMeters) || !std::isfinite(cameraPosition[0]) || !std::isfinite(cameraPosition[1]) ||
+            !std::isfinite(cameraPosition[2]))
+        {
+            return false;
+        }
+        GPUVsmPointSampleParams params;
+        std::memset(&params, 0, sizeof(params));
+        params.header[0] = lights.LightCount;
+        params.header[1] = lights.FirstSlice;
+        params.header[2] = lights.Settings.MipCount;
+        params.header[3] = poolPages;
+        params.tuning[0] = pixelMeters;
+        params.tuning[1] = std::exp2(lights.Settings.BiasLevels);
+        params.tuning[2] = VirtualShadowMap::PCF_MIN_RADIUS_PIXELS;
+        params.cameraPosition[0] = cameraPosition[0];
+        params.cameraPosition[1] = cameraPosition[1];
+        params.cameraPosition[2] = cameraPosition[2];
+        params.plane[0] = PointShadowNearPlane;
+        params.plane[1] = static_cast<float>(lights.Settings.FaceResolution);
+        for (uint32_t light = 0; light < lights.LightCount; ++light)
+        {
+            params.lights[light][0] = lights.Position[light].x;
+            params.lights[light][1] = lights.Position[light].y;
+            params.lights[light][2] = lights.Position[light].z;
+            params.lights[light][3] = lights.Range[light];
+        }
+        outParams = params;
+        return true;
     }
 
     uint32_t VirtualShadowMapPointSliceIndex(const VirtualShadowMapPointLights& lights, uint32_t light, uint32_t face, uint32_t mip)

@@ -1106,6 +1106,7 @@ namespace NorvesLib::Core::Engine
         Rendering::SwRasterMode swRasterMode = Rendering::SwRasterMode::On;
         float swRasterMaxPixels = Rendering::DefaultSwRasterMaxPixels;
         bool bShadowProbe = false;
+        bool bShadowProbePointOnly = false;
         // 既定は BootConfig の値（Game は VSM、検証アプリは CSM）。--shadow-method で上書きする
         Rendering::ShadowMethod shadowMethod = config.DefaultSunShadowMethod;
         bool bInvalidShadowMethod = false;
@@ -1323,11 +1324,18 @@ namespace NorvesLib::Core::Engine
                 LOG_ERROR("ApplicationProcessor の起動引数 --vsm-pool-pages の値が不正です: 1 以上の整数にしてください");
             }
 
-            // --shadow-probe: 太陽の影の標本のパスを足す（統計が有効な構成のみ。Release では無視される）
+            // --shadow-probe: 太陽の影の標本のパスを足す（統計が有効な構成のみ。Release では無視される）。
+            // 太陽が無いフレーム（夜）は点光源を測る。--shadow-probe=point は太陽の有無に依らず点光源だけを測る
             if (args[i] == TEXT("--shadow-probe"))
             {
                 bShadowProbe = true;
                 LOG_INFO("ApplicationProcessor runtime option shadow_probe=1");
+            }
+            else if (args[i] == TEXT("--shadow-probe=point"))
+            {
+                bShadowProbe = true;
+                bShadowProbePointOnly = true;
+                LOG_INFO("ApplicationProcessor runtime option shadow_probe=point");
             }
 
             bool bMatchedToneMap = false;
@@ -1506,6 +1514,7 @@ namespace NorvesLib::Core::Engine
             renderSettings.SwRaster = swRasterMode;
             renderSettings.SwRasterMaxPixels = swRasterMaxPixels;
             renderSettings.bShadowProbe = bShadowProbe;
+            renderSettings.bShadowProbePointOnly = bShadowProbePointOnly;
             renderSettings.SunShadowMethod = shadowMethod;
             renderSettings.PointLightShadowMethod = pointShadowMethod;
             renderSettings.VsmPoolPages = vsmPoolPages;

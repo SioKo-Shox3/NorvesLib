@@ -5919,6 +5919,60 @@ namespace
         assert(std::abs(totals.FallbackRatio() - 0.1) < 1.0e-9);
     }
 
+    // 点光源（太陽が無い・--shadow-probe=point）の統計の語（20 以降）の合計と比。点光源を測ったフレームだけが点光源の合計へ入り、太陽の合計・
+    // 太陽の VSM の語（9〜19）とは別の欄に入る
+    void TestShadowProbeTotalsAggregatePointWords()
+    {
+        ShadowProbe::Totals totals;
+        uint32_t words[ShadowProbe::STATS_WORD_COUNT] = {};
+        words[ShadowProbe::StatVisible] = 7;
+        words[ShadowProbe::StatVsmVisible] = 7;
+        words[ShadowProbe::StatVsmFallbackSamples] = 7;
+        words[ShadowProbe::StatPointCubeVisible] = 100;
+        words[ShadowProbe::StatPointCubePairs] = 80;
+        words[ShadowProbe::StatPointCubeDeltaSum] = 80 * 1024; // 1 組 0.25
+        words[ShadowProbe::StatPointCubeChanged] = 40;
+        words[ShadowProbe::StatPointCubeFlip] = 8;
+        words[ShadowProbe::StatPointCubePartial] = 30;
+        words[ShadowProbe::StatPointCubeTexelSum] = 100 * 16 * 60; // 1 点 60 mm
+        words[ShadowProbe::StatPointVsmVisible] = 100;
+        words[ShadowProbe::StatPointVsmPairs] = 80;
+        words[ShadowProbe::StatPointVsmDeltaSum] = 80 * 2048; // 1 組 0.5
+        words[ShadowProbe::StatPointVsmChanged] = 20;
+        words[ShadowProbe::StatPointVsmFlip] = 4;
+        words[ShadowProbe::StatPointVsmPartial] = 10;
+        words[ShadowProbe::StatPointVsmTexelSum] = 100 * 16 * 15; // 1 点 15 mm
+        words[ShadowProbe::StatPointBothDefinite] = 50;
+        words[ShadowProbe::StatPointAgree] = 45;
+        words[ShadowProbe::StatPointFiner] = 80;
+        words[ShadowProbe::StatPointVsmFallbackSamples] = 160;
+        static_assert(ShadowProbe::StatPointVsmFallbackSamples < ShadowProbe::STATS_WORD_COUNT, "点光源の語は統計の領域に収まること");
+
+        // 太陽を測ったフレームは、点光源の合計に入らない
+        totals.AddMeasuredFrame(words, true);
+        assert(totals.PointFrames == 0 && totals.PointCubeVisible == 0 && totals.PointVsmVisible == 0);
+
+        totals.AddPointFrame(words);
+        totals.AddPointFrame(words);
+        assert(totals.PointFrames == 2 && totals.Frames == 1 && totals.Visible == 7);
+        assert(totals.PointCubeVisible == 200 && totals.PointCubePairs == 160 && totals.PointVsmVisible == 200 && totals.PointVsmPairs == 160);
+        assert(totals.PointBothDefinite == 100 && totals.PointAgree == 90);
+        assert(std::abs(totals.PointCubeMeanAbsDelta() - 0.25) < 1.0e-9);
+        assert(std::abs(totals.PointCubeChangedRatio() - 0.5) < 1.0e-9);
+        assert(std::abs(totals.PointCubeFlipRatio() - 0.1) < 1.0e-9);
+        assert(std::abs(totals.PointCubePartialRatio() - 0.3) < 1.0e-9);
+        assert(std::abs(totals.PointCubeMeanTexelMm() - 60.0) < 1.0e-9);
+        assert(std::abs(totals.PointVsmMeanAbsDelta() - 0.5) < 1.0e-9);
+        assert(std::abs(totals.PointVsmChangedRatio() - 0.25) < 1.0e-9);
+        assert(std::abs(totals.PointVsmFlipRatio() - 0.05) < 1.0e-9);
+        assert(std::abs(totals.PointVsmPartialRatio() - 0.1) < 1.0e-9);
+        assert(std::abs(totals.PointVsmMeanTexelMm() - 15.0) < 1.0e-9);
+        assert(std::abs(totals.PointAgreeRatio() - 0.9) < 1.0e-9);
+        assert(std::abs(totals.PointFinerRatio() - 0.8) < 1.0e-9);
+        // 逃げた標本は 1 標本 16 点: 320 / (200 × 16)
+        assert(std::abs(totals.PointFallbackRatio() - 0.1) < 1.0e-9);
+    }
+
     // 決定的な撮影のエポックは、読み込みが落ち着くまで何度も始め直される。始まるたびに標本を固定し直し、
     // それまでに足した合計（読み込み前のシーンで測った値）を捨てる
     void TestShadowProbeEpochRestartRecapturesAndResetsTotals()
@@ -14773,6 +14827,7 @@ int main()
     TestShadowProbeCapturesAfterEpochThenMeasuresAndAggregates();
     TestShadowProbeEpochRestartRecapturesAndResetsTotals();
     TestShadowProbeTotalsAggregateVsmWords();
+    TestShadowProbeTotalsAggregatePointWords();
     TestShadowProbeFallbackCapturesAfterFixedExecuteCount();
     TestShadowProbeTotalsHandleEmptyDenominators();
 #endif

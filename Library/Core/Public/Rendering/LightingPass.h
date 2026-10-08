@@ -196,6 +196,8 @@ namespace NorvesLib::Core::Rendering
          */
         uint64_t GetVsmStatsHarvestedExecuteCount() const { return m_VsmStatsHarvestedExecutes; }
         uint64_t GetVsmFallbackSampleCount() const { return m_VsmFallbackSamples; }
+        /** @brief 点光源の VSM の読み出しで、粗い段へ逃げた PCF の標本の数の合計（統計の語 1） */
+        uint64_t GetVsmPointFallbackSampleCount() const { return m_VsmPointFallbackSamples; }
 
     private:
         friend struct DDGIProbeRayQueryVulkanTestAccess;
@@ -484,6 +486,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_VsmSampleBuffer;
         /** @brief 太陽の VSM のスライスの表（GPUVsmSlice の配列。ページの一辺・texel・範囲の原点・ページの表の先頭。VSM が使えないフレームは何も無い表） */
         RHI::BufferPtr m_VsmSliceBuffer;
+        /** @brief 点光源の VSM を読むパラメータ（GPUVsmPointSampleParams の定数バッファ。使えないフレームは無効の値 = キューブのまま） */
+        RHI::BufferPtr m_VsmPointSampleBuffer;
         /** @brief 今フレームに RenderGraph から解決した太陽の VSM のページの表・物理ページのプール（無ければ null） */
         RHI::BufferPtr m_FrameVsmPageTable;
         RHI::BufferPtr m_FrameVsmPool;
@@ -491,7 +495,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 太陽の VSM の読み出しの統計の読み戻し先（照明のシェーダーが storage buffer へ数え、ホストが数回後の実行で読む）
          *
-         * [0] = 自分の段のページが無く、粗い段へ逃げた PCF の標本の数。--shadow-probe が無効でも数える。
+         * [0] = 太陽の VSM で自分の段のページが無く、粗い段へ逃げた PCF の標本の数、[1] = 点光源の VSM の同じ数。--shadow-probe が無効でも数える。
          * 書いたフレームの通し番号を持ち、その提出の完了が確かめられた（ViewRenderContext::CompletedRenderFrameSerial 以下）
          * 枠だけを読んで空ける。
          */
@@ -510,6 +514,7 @@ namespace NorvesLib::Core::Rendering
         /** @brief 読み戻した実行の数と、その合計の逃げた標本の数 */
         uint64_t m_VsmStatsHarvestedExecutes = 0;
         uint64_t m_VsmFallbackSamples = 0;
+        uint64_t m_VsmPointFallbackSamples = 0;
 
         /**
          * @brief 次の統計の書き込み先を取り、0 に戻して返す

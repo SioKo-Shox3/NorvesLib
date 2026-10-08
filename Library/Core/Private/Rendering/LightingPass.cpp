@@ -1383,6 +1383,13 @@ namespace NorvesLib::Core::Rendering
         vsmSliceBinding.stages = RHI::ShaderStage::Pixel;
         dsDesc.bindings.push_back(vsmSliceBinding);
 
+        // 点光源の VSM（--point-shadow-method=vsm）を読むパラメータ。ページの表・プール・スライスの表は太陽と共有
+        RHI::DescriptorBinding vsmPointSampleBinding;
+        vsmPointSampleBinding.binding = 26;
+        vsmPointSampleBinding.type = RHI::ResourceBindType::ConstantBuffer;
+        vsmPointSampleBinding.stages = RHI::ShaderStage::Pixel;
+        dsDesc.bindings.push_back(vsmPointSampleBinding);
+
         return dsDesc;
     }
 
@@ -1406,6 +1413,7 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
             m_VsmFallbackSamples += slot.Mapped[0];
+            m_VsmPointFallbackSamples += slot.Mapped[1];
             ++m_VsmStatsHarvestedExecutes;
             slot.bPending = false;
         }
@@ -1456,6 +1464,7 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
             m_VsmFallbackSamples += slot.Mapped[0];
+            m_VsmPointFallbackSamples += slot.Mapped[1];
             ++m_VsmStatsHarvestedExecutes;
             slot.bPending = false;
         }
@@ -1757,8 +1766,21 @@ namespace NorvesLib::Core::Rendering
         const GPUVsmSampleParams disabledVsmParams = {};
         m_VsmSampleBuffer->Update(&disabledVsmParams, sizeof(disabledVsmParams));
 
-        // スライスの表。VSM が無効なフレームは読まれないが、束縛は埋める
-        m_VsmSliceBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmSlice) * VirtualShadowMapMaxLevels,
+        // 点光源の VSM を読むパラメータ。0 で埋めた値は header.x = 0（灯なし）で、点光源の影はキューブのまま
+        m_VsmPointSampleBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmPointSampleParams),
+                                                                        RHI::ResourceUsage::ConstantBuffer,
+                                                                        true,
+                                                                        "LightingVsmPointSampleParams"));
+        if (!m_VsmPointSampleBuffer)
+        {
+            NORVES_LOG_ERROR("LightingPass", "点光源の VSM を読むパラメータのバッファを作れませんでした");
+            return false;
+        }
+        const GPUVsmPointSampleParams disabledVsmPointParams = {};
+        m_VsmPointSampleBuffer->Update(&disabledVsmPointParams, sizeof(disabledVsmPointParams));
+
+        // スライスの表（太陽の段 + 点光源の面）。VSM が無効なフレームは読まれないが、束縛は埋める
+        m_VsmSliceBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices,
                                                                   RHI::ResourceUsage::StorageBuffer,
                                                                   true,
                                                                   "LightingVsmSlices"));
@@ -1913,7 +1935,7 @@ namespace NorvesLib::Core::Rendering
         if (!m_bInitialized && m_Device == nullptr && !m_DefaultBlackTexture &&
             !m_DefaultShadowMapArrayTexture && !m_DefaultPointShadowCubeTexture &&
             !m_DefaultDDGIIrradianceAtlas && !m_DefaultDDGIDistanceAtlas &&
-            !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer && !m_VsmSampleBuffer && !m_VsmSliceBuffer &&
+            !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer && !m_VsmSampleBuffer && !m_VsmSliceBuffer && !m_VsmPointSampleBuffer &&
             !m_RTGIComputePipeline && !m_RTGIComputeParametersBuffer &&
             !m_RTGIComputeInstanceDataBuffer && !m_RTGIComputeEmitterBuffer &&
             !m_RTGIDenoiserPipeline &&
@@ -2012,14 +2034,16 @@ namespace NorvesLib::Core::Rendering
         m_DefaultNeuralBRDFWeightBuffer.reset();
         m_VsmSampleBuffer.reset();
         m_VsmSliceBuffer.reset();
+        m_VsmPointSampleBuffer.reset();
         // 太陽の VSM の読み出しの統計。GPU が書き終えた後に残りを読み、1 度だけ集計を出す
         HarvestVsmStats();
         if (m_VsmStatsHarvestedExecutes > 0u)
         {
             NORVES_LOG_INFO("LightingPass",
-                            "VSM_LIGHTING_STATS executes=%llu fallback_samples=%llu",
+                            "VSM_LIGHTING_STATS executes=%llu fallback_samples=%llu point_fallback_samples=%llu",
                             static_cast<unsigned long long>(m_VsmStatsHarvestedExecutes),
-                            static_cast<unsigned long long>(m_VsmFallbackSamples));
+                            static_cast<unsigned long long>(m_VsmFallbackSamples),
+                            static_cast<unsigned long long>(m_VsmPointFallbackSamples));
         }
         for (VsmStatsSlot& slot : m_VsmStatsSlots)
         {
@@ -2028,6 +2052,7 @@ namespace NorvesLib::Core::Rendering
         m_VsmStatsSink.reset();
         m_VsmStatsHarvestedExecutes = 0;
         m_VsmFallbackSamples = 0;
+        m_VsmPointFallbackSamples = 0;
         m_bNeuralBRDFAvailable = false;
 
         // Samplers are released after descriptor and texture ownership is gone.
@@ -2889,7 +2914,7 @@ namespace NorvesLib::Core::Rendering
             !m_DefaultBlackTexture || !m_DefaultShadowMapArrayTexture ||
             !m_DefaultPointShadowCubeTexture ||
             !m_DefaultDDGIIrradianceAtlas || !m_DefaultDDGIDistanceAtlas ||
-            !m_DefaultNeuralBRDFWeightBuffer || !m_VsmSampleBuffer || !m_VsmSliceBuffer ||
+            !m_DefaultNeuralBRDFWeightBuffer || !m_VsmSampleBuffer || !m_VsmSliceBuffer || !m_VsmPointSampleBuffer ||
             !m_GBufferSampler || !m_IBLSampler || !m_DiffuseIrradianceSampler ||
             !m_PrefilteredSpecularSampler || !m_DfgSampler || !m_DDGISampler)
         {
@@ -2950,7 +2975,8 @@ namespace NorvesLib::Core::Rendering
         descriptorSet->BindStorageBuffer(22, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
         descriptorSet->BindStorageBuffer(23, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
         descriptorSet->BindStorageBuffer(24, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
-        descriptorSet->BindStorageBuffer(25, m_VsmSliceBuffer, 0u, static_cast<uint32_t>(sizeof(GPUVsmSlice) * VirtualShadowMapMaxLevels));
+        descriptorSet->BindStorageBuffer(25, m_VsmSliceBuffer, 0u, static_cast<uint32_t>(sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices));
+        descriptorSet->BindConstantBuffer(26, m_VsmPointSampleBuffer, 0u, static_cast<uint32_t>(sizeof(GPUVsmPointSampleParams)));
 
         outDescriptorSet = std::move(descriptorSet);
         return true;
@@ -4260,9 +4286,11 @@ namespace NorvesLib::Core::Rendering
 
         // 太陽の VSM（--shadow-method=vsm）。クリップマップ・ページの表・プール・カメラが揃ったときだけパラメータを有効にして渡す。
         // 揃わないフレームは無効のパラメータ（control.x = 0）と既定のバッファで、照明は CSM のまま
+        // 点光源の VSM（--point-shadow-method=vsm）は、同じページの表・プール・スライスの表を使う。太陽が無効（夜など）でも点光源だけで読める
         GPUVsmSampleParams vsmParams = {};
-        GPUVsmSlice vsmSlices[VirtualShadowMapMaxLevels];
-        BuildVirtualShadowMapSlices(nullptr, nullptr, VirtualShadowMapMaxLevels, vsmSlices);
+        GPUVsmPointSampleParams vsmPointParams = {};
+        GPUVsmSlice vsmSlices[VirtualShadowMapMaxSlices];
+        BuildVirtualShadowMapSlices(nullptr, nullptr, VirtualShadowMapMaxSlices, vsmSlices);
         RHI::BufferPtr boundVsmPageTable = m_DefaultNeuralBRDFWeightBuffer;
         RHI::BufferPtr boundVsmPool = m_DefaultNeuralBRDFWeightBuffer;
         uint32_t boundVsmPageTableBytes = 4u;
@@ -4279,16 +4307,39 @@ namespace NorvesLib::Core::Rendering
             const float cameraPosition[3] = {vsmCamera->PositionX, vsmCamera->PositionY, vsmCamera->PositionZ};
             const float cameraForward[3] = {vsmCamera->ForwardX, vsmCamera->ForwardY, vsmCamera->ForwardZ};
             const uint64_t poolPages = m_FrameVsmPool->GetSize() / VirtualShadowMap::PAGE_BYTES;
-            if (BuildVirtualShadowMapSampleParams(&context.PhysicalLighting.SunClipmap,
-                                                  cameraPosition,
-                                                  cameraForward,
-                                                  context.PhysicalLighting.CascadedShadow.SplitDistances,
-                                                  vsmCamera->FieldOfView,
-                                                  static_cast<float>(depthTexture->GetHeight()),
-                                                  static_cast<uint32_t>(std::min<uint64_t>(poolPages, VirtualShadowMap::MAX_POOL_PAGES)),
-                                                  vsmParams))
+            const uint32_t clampedPoolPages = static_cast<uint32_t>(std::min<uint64_t>(poolPages, VirtualShadowMap::MAX_POOL_PAGES));
+            const bool bSunVsm = BuildVirtualShadowMapSampleParams(&context.PhysicalLighting.SunClipmap,
+                                                                   cameraPosition,
+                                                                   cameraForward,
+                                                                   context.PhysicalLighting.CascadedShadow.SplitDistances,
+                                                                   vsmCamera->FieldOfView,
+                                                                   static_cast<float>(depthTexture->GetHeight()),
+                                                                   clampedPoolPages,
+                                                                   vsmParams);
+            // 点光源の VSM: VirtualShadowMapPass が灯を公開し、ページの表が点光源のスライスまで届くときだけ
+            const VirtualShadowMapPointLights& pointVsmLights = context.PhysicalLighting.PointVsmLights;
+            const bool bPointVsm =
+                BuildVirtualShadowMapPointSampleParams(pointVsmLights,
+                                                       cameraPosition,
+                                                       vsmCamera->FieldOfView,
+                                                       static_cast<float>(depthTexture->GetHeight()),
+                                                       clampedPoolPages,
+                                                       vsmPointParams) &&
+                m_FrameVsmPageTable->GetSize() >= VirtualShadowMap::PageTableBytes(pointVsmLights.FirstSlice + pointVsmLights.SliceCount());
+            if (!bPointVsm)
             {
-                BuildVirtualShadowMapSlices(&context.PhysicalLighting.SunClipmap, nullptr, VirtualShadowMapMaxLevels, vsmSlices);
+                vsmPointParams = {};
+            }
+            if (bSunVsm || bPointVsm)
+            {
+                if (bSunVsm)
+                {
+                    BuildVirtualShadowMapSlices(&context.PhysicalLighting.SunClipmap, nullptr, VirtualShadowMapMaxSlices, vsmSlices);
+                }
+                if (bPointVsm)
+                {
+                    BuildVirtualShadowMapPointSlices(pointVsmLights, vsmSlices);
+                }
                 boundVsmPageTable = m_FrameVsmPageTable;
                 boundVsmPool = m_FrameVsmPool;
                 boundVsmPageTableBytes = static_cast<uint32_t>(std::min<uint64_t>(
@@ -4322,12 +4373,14 @@ namespace NorvesLib::Core::Rendering
             }
         }
         m_VsmSampleBuffer->Update(&vsmParams, sizeof(vsmParams));
+        m_VsmPointSampleBuffer->Update(&vsmPointParams, sizeof(vsmPointParams));
         m_VsmSliceBuffer->Update(vsmSlices, sizeof(vsmSlices));
         m_LightingDescriptorSet->BindConstantBuffer(21, m_VsmSampleBuffer, 0, static_cast<uint32_t>(sizeof(GPUVsmSampleParams)));
         m_LightingDescriptorSet->BindStorageBuffer(22, boundVsmPageTable, 0, boundVsmPageTableBytes);
         m_LightingDescriptorSet->BindStorageBuffer(23, boundVsmPool, 0, boundVsmPoolBytes);
         m_LightingDescriptorSet->BindStorageBuffer(24, boundVsmStats, 0, boundVsmStatsBytes);
         m_LightingDescriptorSet->BindStorageBuffer(25, m_VsmSliceBuffer, 0, static_cast<uint32_t>(sizeof(vsmSlices)));
+        m_LightingDescriptorSet->BindConstantBuffer(26, m_VsmPointSampleBuffer, 0, static_cast<uint32_t>(sizeof(GPUVsmPointSampleParams)));
 
         m_LightingDescriptorSet->Update();
 

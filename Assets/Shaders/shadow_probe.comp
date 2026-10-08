@@ -20,6 +20,14 @@
 //   9 = VSM の見えていた標本の数、10〜14 = VSM の前のフレームとの変化（10 = 組の数、11 = |Δv| の和、12 = |Δv| > 1/64 の数、13 = |Δv| >= 0.5 の数、14 = 0.02 < v < 0.98 の数）、
 //   15 = VSM の使った段の texel の一辺の和（1/16 mm 単位）、16 = CSM と VSM がどちらも確定（0.02 以下か 0.98 以上）の標本の延べ数、
 //   17 = そのうち同じ側の数、18 = VSM の texel が CSM の texel 以下の標本の延べ数、19 = 粗い段へ逃げた PCF の標本の数（1 標本 16 点）
+//
+// 太陽が無い（夜）か --shadow-probe=point のときは、同じ標本点について、影を持つ最初の点光源（キューブの番号 0）の可視度を、キューブ
+// （Common/PointShadow.glsl の SamplePointShadow）と点光源の VSM（Common/VirtualShadowMapPoint.glsl の VsmSamplePointShadow。照明と同じ関数）で求めて並べる。
+// Range の外・光の当たらない向き（法線が光源と反対）の標本は数えない。語（C++ 側の ShadowProbe::StatWord と同じ並び）:
+//   20〜26 = キューブ（20 = 見えていた標本の数、21〜25 = 前のフレームとの変化の組の数・|Δv| の和・|Δv| > 1/64 の数・|Δv| >= 0.5 の数・0.02 < v < 0.98 の数、
+//            26 = texel の一辺の和（1/16 mm 単位。面の軸の距離 z で 2z ÷ キューブの一辺））、
+//   27〜33 = VSM（同じ並び。33 = 使った段の texel の一辺の和）、34 = どちらも確定の標本の数、35 = そのうち同じ側の数、
+//   36 = VSM の texel がキューブの texel 以下の標本の数、37 = 粗い段へ逃げた PCF の標本の数（1 標本 16 点）
 // ========================================
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
@@ -39,11 +47,15 @@ layout(std140, set = 0, binding = 0) uniform ProbeParams
     uvec4 control;                // x = モード（0 = 標本を固定、1 = 測る）、y = カスケード数、z = 影の有効フラグ、w = 格子の間隔（画素）
     vec4 tuning;                  // x = 深度の一致の許容（線形の深度に対する比）
     VsmSampleParams vsm;          // 太陽の VSM を読むパラメータ（control.x = 0 なら VSM は測らない）
+    VsmPointSampleParams point;   // 点光源の VSM を読むパラメータ
+    uvec4 pointControl;           // x = 1 なら点光源（影の灯 0）をキューブと VSM で測る
 } params;
 
 layout(set = 0, binding = 1) uniform sampler2D gbufferDepth;
 layout(set = 0, binding = 2) uniform sampler2D gbufferNormal;
 layout(set = 0, binding = 3) uniform sampler2DArray shadowMap;
+// 点光源のキューブシャドウ（照明が引くものと同じ配列。点光源を測らないときは使われない）
+layout(set = 0, binding = 10) uniform samplerCubeArray pointShadowCubes;
 
 struct ProbePoint
 {
@@ -56,7 +68,7 @@ layout(std430, set = 0, binding = 4) buffer ProbePoints
     ProbePoint points[];
 };
 
-// 前のフレームの可視度（見えていなかったときは負）。前半が CSM、後半（標本の数だけ後ろ）が VSM
+// 前のフレームの可視度（見えていなかったときは負）。標本の数ずつ、CSM・太陽の VSM・点光源のキューブ・点光源の VSM の順
 layout(std430, set = 0, binding = 5) buffer ProbeState
 {
     float prevVisibility[];
@@ -101,6 +113,12 @@ layout(std430, set = 0, binding = 8) readonly buffer VsmPoolBuffer
 #define VSM_COUNT_FALLBACK() atomicAdd(stats[19], 1u)
 #include "Common/VirtualShadowMap.glsl"
 
+// 点光源の VSM の評価。粗い段へ逃げた標本は統計の語 37 に数える
+#define VSM_POINT_PARAMS params.point
+#define VSM_COUNT_POINT_FALLBACK() atomicAdd(stats[37], 1u)
+#include "Common/VirtualShadowMapPoint.glsl"
+#include "Common/PointShadow.glsl"
+
 const uint STAT_VISIBLE = 0u;
 const uint STAT_PAIRS = 1u;
 const uint STAT_DELTA_SUM = 2u;
@@ -120,6 +138,23 @@ const uint STAT_VSM_TEXEL_SUM = 15u;
 const uint STAT_BOTH_DEFINITE = 16u;
 const uint STAT_AGREE = 17u;
 const uint STAT_FINER = 18u;
+const uint STAT_POINT_CUBE_VISIBLE = 20u;
+const uint STAT_POINT_CUBE_PAIRS = 21u;
+const uint STAT_POINT_CUBE_DELTA_SUM = 22u;
+const uint STAT_POINT_CUBE_CHANGED = 23u;
+const uint STAT_POINT_CUBE_FLIP = 24u;
+const uint STAT_POINT_CUBE_PARTIAL = 25u;
+const uint STAT_POINT_CUBE_TEXEL_SUM = 26u;
+const uint STAT_POINT_VSM_VISIBLE = 27u;
+const uint STAT_POINT_VSM_PAIRS = 28u;
+const uint STAT_POINT_VSM_DELTA_SUM = 29u;
+const uint STAT_POINT_VSM_CHANGED = 30u;
+const uint STAT_POINT_VSM_FLIP = 31u;
+const uint STAT_POINT_VSM_PARTIAL = 32u;
+const uint STAT_POINT_VSM_TEXEL_SUM = 33u;
+const uint STAT_POINT_BOTH_DEFINITE = 34u;
+const uint STAT_POINT_AGREE = 35u;
+const uint STAT_POINT_FINER = 36u;
 
 // 「確定」とみなす可視度の閾値（0.02 以下 = 影、0.98 以上 = 光）
 const float DEFINITE_SHADOW = 0.02;
@@ -153,8 +188,11 @@ void main()
         const float depth = texelFetch(gbufferDepth, pixel, 0).r;
         const vec3 normal = texelFetch(gbufferNormal, pixel, 0).xyz;
         const float normalLength = length(normal);
+        const uint probeCount = params.screen.z * params.screen.w;
         prevVisibility[index] = -1.0;
-        prevVisibility[params.screen.z * params.screen.w + index] = -1.0;
+        prevVisibility[probeCount + index] = -1.0;
+        prevVisibility[2u * probeCount + index] = -1.0;
+        prevVisibility[3u * probeCount + index] = -1.0;
         if (depth > 0.0 && depth < 1.0 && normalLength > 0.5)
         {
             const vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
@@ -172,11 +210,18 @@ void main()
 
     // 測る: 標本点を今のカメラへ投影し、画面の中で、その画素の深度と一致するときだけ見えているとする
     const vec4 probe = points[index].position;
-    const uint vsmStateIndex = params.screen.z * params.screen.w + index;
+    const uint probeCount = params.screen.z * params.screen.w;
+    const uint vsmStateIndex = probeCount + index;
+    const uint cubeStateIndex = 2u * probeCount + index;
+    const uint pointVsmStateIndex = 3u * probeCount + index;
     const float previous = prevVisibility[index];
     const float vsmPrevious = prevVisibility[vsmStateIndex];
+    const float cubePrevious = prevVisibility[cubeStateIndex];
+    const float pointVsmPrevious = prevVisibility[pointVsmStateIndex];
     float visibility = -1.0;
     float vsmVisibility = -1.0;
+    float cubeVisibility = -1.0;
+    float pointVsmVisibility = -1.0;
     if (probe.w > 0.5)
     {
         const vec4 clip = params.viewProjection * vec4(probe.xyz, 1.0);
@@ -195,7 +240,8 @@ void main()
                     const vec3 forward = params.cameraForward.xyz;
                     const float probeDepth = dot(probe.xyz - params.cameraPosition.xyz, forward);
                     const float seenDepth = dot(seen - params.cameraPosition.xyz, forward);
-                    if (probeDepth > 0.0 && seenDepth > 0.0 && abs(probeDepth - seenDepth) <= params.tuning.x * seenDepth)
+                    const bool bSeen = probeDepth > 0.0 && seenDepth > 0.0 && abs(probeDepth - seenDepth) <= params.tuning.x * seenDepth;
+                    if (params.control.z != 0u && bSeen)
                     {
                         visibility = clamp(CalculateShadow(probe.xyz, points[index].normal.xyz), 0.0, 1.0);
 
@@ -270,10 +316,89 @@ void main()
                             }
                         }
                     }
+
+                    // 点光源（影を持つ最初の灯）: 同じ標本点を、キューブと点光源の VSM で測って並べる。
+                    // Range の外・光の当たらない向き（法線が光源と反対）・光源の近い平面の内側の標本は数えない
+                    if (params.pointControl.x != 0u && bSeen)
+                    {
+                        const vec4 pointLight = params.point.lights[0];
+                        const vec3 pointNormal = points[index].normal.xyz;
+                        const vec3 toProbePoint = probe.xyz - pointLight.xyz;
+                        const float pointDistance = length(toProbePoint);
+                        const vec3 absToProbe = abs(toProbePoint);
+                        const float pointAxial = max(absToProbe.x, max(absToProbe.y, absToProbe.z));
+                        if (pointDistance > 1.0e-3 && pointDistance < pointLight.w && pointAxial >= params.point.plane.x &&
+                            dot(pointNormal, -toProbePoint) > 0.0)
+                        {
+                            cubeVisibility = clamp(SamplePointShadow(pointShadowCubes, 0.0, pointLight.xyz, pointLight.w, probe.xyz, pointNormal), 0.0, 1.0);
+                            float pointVsmTexel = 0.0;
+                            pointVsmVisibility = clamp(VsmSamplePointShadow(0u, probe.xyz, pointNormal, pointVsmTexel), 0.0, 1.0);
+                            // キューブの 1 texel（面の軸の距離 z で 2z ÷ 一辺）
+                            const float cubeTexel = 2.0 * pointAxial / float(max(textureSize(pointShadowCubes, 0).x, 1));
+                            atomicAdd(stats[STAT_POINT_CUBE_VISIBLE], 1u);
+                            atomicAdd(stats[STAT_POINT_CUBE_TEXEL_SUM], uint(cubeTexel * 1000.0 * TEXEL_SCALE + 0.5));
+                            atomicAdd(stats[STAT_POINT_VSM_VISIBLE], 1u);
+                            atomicAdd(stats[STAT_POINT_VSM_TEXEL_SUM], uint(pointVsmTexel * 1000.0 * TEXEL_SCALE + 0.5));
+                            if (cubeVisibility > DEFINITE_SHADOW && cubeVisibility < DEFINITE_LIT)
+                            {
+                                atomicAdd(stats[STAT_POINT_CUBE_PARTIAL], 1u);
+                            }
+                            if (pointVsmVisibility > DEFINITE_SHADOW && pointVsmVisibility < DEFINITE_LIT)
+                            {
+                                atomicAdd(stats[STAT_POINT_VSM_PARTIAL], 1u);
+                            }
+                            if (cubePrevious >= 0.0)
+                            {
+                                const float cubeDelta = abs(cubeVisibility - cubePrevious);
+                                atomicAdd(stats[STAT_POINT_CUBE_PAIRS], 1u);
+                                atomicAdd(stats[STAT_POINT_CUBE_DELTA_SUM], uint(cubeDelta * DELTA_SCALE + 0.5));
+                                if (cubeDelta > 1.0 / 64.0)
+                                {
+                                    atomicAdd(stats[STAT_POINT_CUBE_CHANGED], 1u);
+                                }
+                                if (cubeDelta >= 0.5)
+                                {
+                                    atomicAdd(stats[STAT_POINT_CUBE_FLIP], 1u);
+                                }
+                            }
+                            if (pointVsmPrevious >= 0.0)
+                            {
+                                const float pointVsmDelta = abs(pointVsmVisibility - pointVsmPrevious);
+                                atomicAdd(stats[STAT_POINT_VSM_PAIRS], 1u);
+                                atomicAdd(stats[STAT_POINT_VSM_DELTA_SUM], uint(pointVsmDelta * DELTA_SCALE + 0.5));
+                                if (pointVsmDelta > 1.0 / 64.0)
+                                {
+                                    atomicAdd(stats[STAT_POINT_VSM_CHANGED], 1u);
+                                }
+                                if (pointVsmDelta >= 0.5)
+                                {
+                                    atomicAdd(stats[STAT_POINT_VSM_FLIP], 1u);
+                                }
+                            }
+                            const bool cubeShadow = cubeVisibility <= DEFINITE_SHADOW;
+                            const bool cubeLit = cubeVisibility >= DEFINITE_LIT;
+                            const bool pointVsmShadow = pointVsmVisibility <= DEFINITE_SHADOW;
+                            const bool pointVsmLit = pointVsmVisibility >= DEFINITE_LIT;
+                            if ((cubeShadow || cubeLit) && (pointVsmShadow || pointVsmLit))
+                            {
+                                atomicAdd(stats[STAT_POINT_BOTH_DEFINITE], 1u);
+                                if (cubeShadow == pointVsmShadow)
+                                {
+                                    atomicAdd(stats[STAT_POINT_AGREE], 1u);
+                                }
+                            }
+                            if (pointVsmTexel <= cubeTexel)
+                            {
+                                atomicAdd(stats[STAT_POINT_FINER], 1u);
+                            }
+                        }
+                    }
                 }
             }
         }
     }
     prevVisibility[index] = visibility;
     prevVisibility[vsmStateIndex] = vsmVisibility;
+    prevVisibility[cubeStateIndex] = cubeVisibility;
+    prevVisibility[pointVsmStateIndex] = pointVsmVisibility;
 }

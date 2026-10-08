@@ -30,4 +30,21 @@ struct VsmSampleParams
     vec4 thresholds[4];
 };
 
+// 点光源の VSM（--point-shadow-method=vsm）を読むパラメータ。Common/VirtualShadowMapPoint.glsl の評価が使う。
+// std140。Rendering/VirtualShadowMapPointLights.h の GPUVsmPointSampleParams と同じ並び
+struct VsmPointSampleParams
+{
+    // x: 灯の数（0 なら点光源の VSM は読まない）、y: 点光源のスライスの、スライスの表での先頭の番号、z: 解像度の段の数、w: 物理ページの数
+    uvec4 header;
+    // x: カメラからの距離 1 m あたりの画素の大きさ（m）、y: 段を選ぶ目標 texel の係数（2^bias）、
+    // z: PCF の半径の下限の画素数（VirtualShadowMap::PCF_MIN_RADIUS_PIXELS）、w: 予約（0）
+    vec4 tuning;
+    // xyz: カメラの位置
+    vec4 cameraPosition;
+    // x: 面の近い平面の距離（m）、y: 面の段 0 の解像度（texel）
+    vec4 plane;
+    // xyz: 灯の位置、w: Range（影の灯の順。キューブの番号と同じ）
+    vec4 lights[4];
+};
+
 #endif // VIRTUAL_SHADOW_MAP_PARAMS_GLSL
