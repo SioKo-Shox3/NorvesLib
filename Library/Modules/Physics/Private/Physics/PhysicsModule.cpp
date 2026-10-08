@@ -1,12 +1,13 @@
 ﻿#include "Physics/PhysicsModule.h"
 
-#include "Physics/ColliderComponent.h"
-#include "Physics/RigidBodyComponent.h"
 #include "CoreTypes.h"
 #include "Engine/Engine.h"
+#include "Math/VectorUtils.h"
 #include "Object/Entity.h"
 #include "Object/IUnknown.h"
-#include "Math/VectorUtils.h"
+#include "Physics/ColliderComponent.h"
+#include "Physics/ColliderShapeTransform.h"
+#include "Physics/RigidBodyComponent.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -530,6 +531,43 @@ namespace NorvesLib::Modules::Physics
         component.m_CapsuleHalfHeight = halfHeight;
         component.m_Shape = ColliderComponent::EColliderShape::Capsule;
         component.m_bHasShape = true;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderLocalPose(ColliderComponent& component, const Math::Transform& localPose)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+            return result;
+        Math::Transform prepared;
+        if (!PrepareColliderLocalPose(localPose, prepared))
+            return EPhysicsResult::InvalidArgument;
+        const Math::Transform owner = GetFreshWorldTransform(*m_ColliderSlots[component.m_ColliderHandle.Index].Owner);
+        if (!IsFiniteVector(owner.TransformPoint(prepared.position)))
+            return EPhysicsResult::InvalidArgument;
+        if (component.m_bHasShape)
+        {
+            EPhysicsProxyShape shape;
+            switch (component.m_Shape)
+            {
+            case ColliderComponent::EColliderShape::Sphere:
+                shape = EPhysicsProxyShape::Sphere;
+                break;
+            case ColliderComponent::EColliderShape::Box:
+                shape = EPhysicsProxyShape::Box;
+                break;
+            case ColliderComponent::EColliderShape::Capsule:
+                shape = EPhysicsProxyShape::Capsule;
+                break;
+            default:
+                return EPhysicsResult::InvalidState;
+            }
+            PhysicsShapeProxy candidate;
+            if (!BuildColliderWorldShape(shape, component.m_Radius, component.m_CapsuleHalfHeight,
+                                         component.m_HalfExtents, owner, prepared, candidate))
+                return EPhysicsResult::InvalidArgument;
+        }
+        component.m_LocalPose = prepared;
         return EPhysicsResult::Success;
     }
 
@@ -1167,42 +1205,24 @@ namespace NorvesLib::Modules::Physics
             proxy.Mask = slot.Component->m_CollisionMask;
             proxy.UserData = slot.Component->m_UserData;
             proxy.bTrigger = slot.Component->m_bTrigger;
-            if (slot.Component->m_Shape == ColliderComponent::EColliderShape::Sphere)
+            EPhysicsProxyShape shape;
+            switch (slot.Component->m_Shape)
             {
-                proxy.Shape = EPhysicsProxyShape::Sphere;
-                proxy.Sphere = Math::Sphere(
-                    transform.TransformPoint(Math::Vector3()),
-                    slot.Component->m_Radius * std::fmaxf(
-                        std::fabs(transform.scale.x),
-                        std::fmaxf(std::fabs(transform.scale.y), std::fabs(transform.scale.z))));
-            }
-            else if (slot.Component->m_Shape == ColliderComponent::EColliderShape::Box)
-            {
-                proxy.Shape = EPhysicsProxyShape::Box;
-                proxy.Box = Math::OBB(
-                    transform.TransformPoint(Math::Vector3()),
-                    Math::Vector3(
-                        slot.Component->m_HalfExtents.x * std::fabs(transform.scale.x),
-                        slot.Component->m_HalfExtents.y * std::fabs(transform.scale.y),
-                        slot.Component->m_HalfExtents.z * std::fabs(transform.scale.z)),
-                    Math::VectorUtils::Normalize(transform.rotation * Math::Vector3::UnitX),
-                    Math::VectorUtils::Normalize(transform.rotation * Math::Vector3::UnitY),
-                    Math::VectorUtils::Normalize(transform.rotation * Math::Vector3::UnitZ));
-            }
-            else if (slot.Component->m_Shape == ColliderComponent::EColliderShape::Capsule)
-            {
-                proxy.Shape = EPhysicsProxyShape::Capsule;
-                proxy.Capsule = Math::Capsule(
-                    transform.TransformPoint(Math::Vector3(0.0f, -slot.Component->m_CapsuleHalfHeight, 0.0f)),
-                    transform.TransformPoint(Math::Vector3(0.0f, slot.Component->m_CapsuleHalfHeight, 0.0f)),
-                    slot.Component->m_Radius * std::fmaxf(
-                        std::fabs(transform.scale.x),
-                        std::fabs(transform.scale.z)));
-            }
-            else
-            {
+            case ColliderComponent::EColliderShape::Sphere:
+                shape = EPhysicsProxyShape::Sphere;
+                break;
+            case ColliderComponent::EColliderShape::Box:
+                shape = EPhysicsProxyShape::Box;
+                break;
+            case ColliderComponent::EColliderShape::Capsule:
+                shape = EPhysicsProxyShape::Capsule;
+                break;
+            default:
                 continue;
             }
+            if (!BuildColliderWorldShape(shape, slot.Component->m_Radius, slot.Component->m_CapsuleHalfHeight,
+                                         slot.Component->m_HalfExtents, transform, slot.Component->m_LocalPose, proxy))
+                continue;
             proxies.push_back(proxy);
         }
         outBroadphase.SetProxies(std::move(proxies));

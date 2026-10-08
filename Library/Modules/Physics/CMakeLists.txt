@@ -10,6 +10,8 @@ set(PHYSICS_PUBLIC_HEADERS
 set(PHYSICS_PRIVATE_SOURCES
     Private/Physics/CharacterMover.h
     Private/Physics/CharacterMover.cpp
+    Private/Physics/ColliderShapeTransform.h
+    Private/Physics/ColliderShapeTransform.cpp
     Private/Physics/ColliderComponent.cpp
     Private/Physics/PhysicsBroadphase.cpp
     Private/Physics/PhysicsModule.cpp
