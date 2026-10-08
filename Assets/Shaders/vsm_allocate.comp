@@ -231,12 +231,15 @@ void InvalidateRects()
         {
             const uint address = (uint(pageY) & (TABLE_DIMENSION - 1u)) * TABLE_DIMENSION + (uint(pageX) & (TABLE_DIMENSION - 1u));
             const uint entryIndex = level * ENTRIES_PER_LEVEL + address;
-            if ((pageTable[entryIndex] & PAGE_ENTRY_ALLOCATED) == 0u)
+            // 重なる矩形のスレッドが同じ語へ dirty を atomicOr するので、割り当ての判定の読み取りも原子的にする（通常の読み取りはデータ競合になる）。
+            // 割り当て済みのビットはこの dispatch では変わらないので、atomicOr の戻り値（変更前の値）だけで判定できる
+            const uint previous = atomicOr(pageTable[entryIndex], 0u);
+            if ((previous & PAGE_ENTRY_ALLOCATED) == 0u)
             {
                 continue;
             }
-            const uint previous = atomicOr(pageTable[entryIndex], PAGE_ENTRY_DIRTY);
-            if ((previous & PAGE_ENTRY_DIRTY) == 0u)
+            const uint before = atomicOr(pageTable[entryIndex], PAGE_ENTRY_DIRTY);
+            if ((before & PAGE_ENTRY_DIRTY) == 0u)
             {
                 atomicAdd(stats[STAT_INVALIDATED], 1u);
             }

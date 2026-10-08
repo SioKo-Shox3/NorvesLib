@@ -2533,3 +2533,22 @@
 - 変異: 印付けの範囲の判定を `length(toReceiver) <= tuning.y`（直線距離）に戻すと L6 が落ちる（`verify-VTG8-FIX-MARK-RANGE-mut.txt`: 影の側の可視度 1、逃げた標本 32、`RESULT=FAIL`）。窓を 1 画素にしたのは、隣の画素まで入れると直線距離が 80.003 m の画素が混じり、深度の復元の誤差で範囲の内側と判定されて変異で落ちなくなるため。
 - 検証（`.harness/runs/20261008-100400/`）: `verify-VTG8-FIX-MARK-RANGE-5.txt`（BUILD_EXIT=0）、`verify-VTG8-FIX-MARK-RANGE-6.txt`（`VirtualShadowMapVulkanTest`・`VirtualShadowMapClipmapTest`・`RenderGraphCompileTest` が 3/3 passed、CTEST_EXIT=0）。GPU の撮影は回していない（既定の描画は CSM で、VSM は `--shadow-method=vsm` のときだけ）。
 - Next: `TASKS.md` の未完の次の項目（段8の残りの不具合）。
+
+## 反復 2（2026-10-08）: VTG8-FIX-ATOMIC-READS（done）
+
+- 原因: 同じ dispatch の中で別のスレッドが `atomicOr` で書く語を、通常の読み取りで読んでいた箇所が 2 つあった（Vulkan のメモリモデルのデータ競合）。
+- 直し方: (1) `vsm_mark.comp` の `MarkPage` は、読んでから書く形をやめて条件なしの `atomicOr` にした。(2) `vsm_allocate.comp` の `InvalidateRects` は、割り当ての判定の読み取りを `atomicOr(pageTable[entryIndex], 0u)` にした（展開の `PageEntry` と同じ形）。
+- 確かめた箇所（`Assets/Shaders/vsm_*.comp`・`Common/VirtualShadowMap*.glsl`）。`vsm_allocate` の段は 1 段 1 dispatch で、段の間に `BarrierWrites`（`VirtualShadowMapPages.cpp:533`）が入るので、段をまたぐ読み書きは競合しない:
+  - `vsm_mark.comp:57`: 直した（上記 (1)）。
+  - `vsm_allocate.comp:232`（`InvalidateRects`）: 直した（上記 (2)）。ほかのスレッドが `atomicOr` する語は `pageTable` のこの 1 か所だけ。
+  - `vsm_allocate.comp` の `Scroll`・`Age`・`Evict`・`FreeMark`・`DirtyList`: `pageTable` は自分の欄だけを読み書きし、ほかのスレッドが同じ欄を書かない。`stats` は `atomicAdd` のみ。`Evict` の `stats[STAT_EVICT_QUOTA]` の通常の読み取りは、同じ dispatch で書かれない（`EvictPlan` が前の dispatch で書く。同じ dispatch の `atomicAdd` は別の語 `STAT_EVICT_TAKEN`）。
+  - `vsm_allocate.comp` の `FreeReset`・`FreeMark`・`FreeCompact`: `freeList[0]`（`atomicAdd`）・`1 + slot`（一覧）・`UsedFlagIndex`（`1 + pages + physical`）・`AgeIndex` は語の範囲が重ならない。`FreeCompact` の使用済みフラグの読み取りは、前の dispatch（`FreeMark`）が書いたもの。
+  - `vsm_allocate.comp` の `Allocate`: `requestBits` はこの dispatch では書かれない。`pageTable` の 32 欄は 1 スレッドが持つ語の欄で、ほかのスレッドと共有しない。`Finalize`・`EvictPlan` は 1 スレッド。
+  - `vsm_expand.comp`: `pageTable` は `PageEntry`（原子的な読み取り）と再描画の印の `atomicOr` だけ。`draws[0]` は `atomicAdd` のみで、ほかの語は塊ごとに別。`sharedCount`・`sharedCursor` は `atomicAdd` で、通常の読み取りは `barrier()` の後（glslang は `barrier()` に共有メモリの意味を付ける）。`megaListSelected` は別の dispatch（`vsm_mega_cull`）が書いた読み取り専用。
+  - `vsm_expand_args.comp`・`vsm_mega_chunks.comp`・`vsm_dirty_mips.comp`: 読む側は `readonly` で、書く語は `atomicOr`（`dirtyBits`）か 1 スレッド 1 語（`megaChunks`・`draws` の引数）。
+  - `vsm_mega_cull.comp:218-251`: `listSelected`・`listOverflow`・`listInstanceLevels`・`vsmStats` は `atomicAdd` のみで通常の読み取りが無い。`listEntries[slot]` は `atomicAdd` が返した重ならない番号。`dirtyBits` は `readonly`（前の dispatch が書く）。
+  - `vsm_draw.frag:32`: `pool` へは `atomicMin` のみ（通常の読み取りが無い）。`vsm_clear.comp` は前の dispatch で通常の書き込みだけ。
+  - `vsm_sample_probe.comp`: `stats` は `atomicAdd` のみ、`pageTable`・`pool` は `readonly`、結果は 1 スレッド 1 語。
+  - `Common/VirtualShadowMap*.glsl`: 宣言を持たず、`readonly` の `pageTable`・`pool` を読む関数だけ。
+- 検証（`.harness/runs/20261008-100400/`）: `verify-VTG8-FIX-ATOMIC-READS-2.txt`（BUILD_EXIT=0）、`verify-VTG8-FIX-ATOMIC-READS-3.txt`（`VirtualShadowMapVulkanTest`・`RenderGraphCompileTest` が 2/2 passed、CTEST_EXIT=0）。競合はメモリモデルの話で、値の結果は変わらないので、落ちるテストは足していない。GPU の撮影は回していない（既定の描画は CSM）。
+- Next: `TASKS.md` の未完の次の項目。

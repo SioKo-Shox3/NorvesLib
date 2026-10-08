@@ -55,11 +55,8 @@ void MarkPage(uint level, int pageX, int pageY)
     const uint index = level * ENTRIES_PER_LEVEL + addressY * PAGES_PER_AXIS + addressX;
     const uint word = index >> 5u;
     const uint bit = 1u << (index & 31u);
-    // すでに立っているなら、アトミックを使わない（同じページの画素が多い）
-    if ((requestBits[word] & bit) == 0u)
-    {
-        atomicOr(requestBits[word], bit);
-    }
+    // 同じ dispatch の中で別のスレッドが同じ語へ atomicOr するので、読んでから書く形にせず、常に atomicOr する（通常の読み取りはデータ競合になる）
+    atomicOr(requestBits[word], bit);
 }
 
 void main()
