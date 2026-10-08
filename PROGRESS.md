@@ -555,4 +555,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 画: 夜の 3 視点（`VTG9-FIX-NIGHT-RTGI-FIREFLIES-night`）・昼の 3 視点（`-day`）を開いた。見本の球に橙の照り返しが残り（明るい側・地面の楔）、天球・地面・球・岩・小屋・電球と電球の影が欠けなく見える。昼は修正前の画と同じ。3 倍に持ち上げた比較で、球の暗い側の孤立した明るい粒は消え、細かい粒状の濃淡（暗い、孤立していない）だけが残る。
 - 証拠: `.harness/runs/20261009-003040/verify-VTG9-FIX-NIGHT-RTGI-FIREFLIES-1〜6.txt`（Debug ビルド EXIT=0・ctest 7/7 通過で golden 4 本は基準画像・閾値を動かさず・検証レイヤー付き Debug の夜 `error_count` 0・`warning_count` 0・`vuid_count` 0・RelWithDebInfo ビルド・夜 3 視点・昼 3 視点の撮影、すべて EXIT=0）。実験の撮影は `.harness/runs/startup-capture/VTG9-FIX-NIGHT-RTGI-FIREFLIES-exp-*`。
 - Notes: シェーダーは行末が混在しているので、行末を保ったまま挿入・置換した（numstat 2 通りは一致）。実験で書き換えたシェーダーは `git checkout` で戻してから本実装を入れた。Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスとして変換されて MSBuild が失敗する（`MSYS_NO_PATHCONV=1` を付ける）。
-- Next: 人が (3) の測り方を直して `status:` を `todo` に戻すと再開。推奨は `blocked/` の選択肢 A。それまで TASKS.md の次の `todo` へ。
+- Next: 下の「再開」のとおり done。
+
+### 再開（2026-10-09、反復 1・run 20261009-005300）
+
+- (3) の領域が球の中（x 240〜519・y 370〜449）に直って再開。実装（0eb21517、`DiffuseIndirect.comp` の命中面の光線 1 本の値の上限）は変えず、検証を取り直した。証拠: `.harness/runs/20261009-005300/verify-VTG9-FIX-NIGHT-RTGI-FIREFLIES-1〜6.txt`（すべて EXIT=0）、数えた結果は同フォルダの `dots-count.txt`（`count_dots.py`）。
+- Debug ビルド EXIT=0。ctest 7/7 通過（RenderGraphCompileTest・RTGIDiffuseIndirectVulkanTest・VirtualShadowMapVulkanTest・golden 4 本）。基準画像・閾値は動かしていない。検証レイヤー付き Debug の夜（低角度）は `error_count` 0・`warning_count` 0・`vuid_count` 0。
+- 粒の数（夜の低角度、`-Deterministic -Night`、RelWithDebInfo と Debug は画素まで同じ）:
+
+| 画 | 球の中の粒（y 370〜449、m≤25） | 照り返しの面（同領域 m>25） | 球の下の帯の粒（y 450〜469、m≤25） | 帯の m>25 |
+|---|---|---|---|---|
+| 修正前（`VTG9-ACCEPT-r2-night`） | 32 | 12 | 60 | 125 |
+| 修正後（`VTG9-FIX-NIGHT-RTGI-FIREFLIES-night`） | **2**（基準 10 未満） | 8 | 50 | 124 |
+| RTGI を切った画（`VTG9-DOTS2-rtgi-off`） | 0 | 0 | 0 | 0 |
+
+- 夜の近接の暗い側（x 370〜699・y 100〜599）の R−G>40 の画素は 0（修正前も 0）。
+- 昼の 3 視点（太陽 45°）の平均輝度は修正前（`VTG9-ACCEPT-r2`）と完全に一致: default 124.273 → 124.273、near 124.201 → 124.201、low 126.359 → 126.359。夜は default 56.768・near 13.779・low 67.321（低角度は修正前 67.623 → −0.4%）。
+- 画: 夜の 3 視点・昼の 3 視点を開いた。天球・地面・球・岩・小屋・電球と電球の影が欠けず、夜の見本の球（小さい球の列・大きい球）に橙の照り返しが残り、RTGI を切った画のような真っ黒にはなっていない。昼は修正前と同じ見た目。
+- 帯の楔（y 456〜460 の 5 つの塊）は RTGI の正しい照り返しとして残す。地面の照り返しの質は別の項目で見る。
