@@ -23,6 +23,7 @@ layout(std140, set = 0, binding = 0) uniform VsmParams
     vec4 thresholds[4];
     vec4 levelInfo[16];
     ivec4 levelOrigin[16];
+    vec4 view;
 } params;
 
 layout(std430, set = 0, binding = 6) readonly buffer VsmDirtyList

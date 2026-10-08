@@ -1339,7 +1339,7 @@
 - notes: 2026-10-07 親（段8の開始時に詳しくした）。速度の項目の GPU 時間の撮影（ユーザーの撮影の方針の 1 つ目）。`-GpuTimingFrames` は `-Deterministic` と併用できない。`ShadowMapPass` は CSM と点光源の合計で、vsm でも半透明・ボリュームのために CSM の描画は残る。出力先は `.harness/runs/startup-capture/VTG8-VSM-GPU-TIME-*`。VTG8-ACCEPT の GPU 時間の表はここの値を使う。 2026-10-08 親（評価の差し戻し 2 周で blocked になった件）: 残った指摘は表の集計の誤り（trace.csv の `Type=Frame` は CPU のフレームで、GPU の区間の標本になっていない）。VTG8-VSM-DEFAULT-ON（既定の bias の変更）と VTG8-VSM-EXPAND-INDIRECT の後の最終の既定で 6 run を撮り直し、表は撮影の `metrics.json` の `gpu_timing[].gpu_frame_ms_median` と `pass_median_ms`（描いた GPU のフレーム 240 件の集計）から作る。前の表は誤った集計なので置き換える（前の run の値と並べない）。この順にするため、項目を DEFAULT-ON の後へ移した。
 
 ## VTG8-FIX-MARK-RANGE: VSM の印付けの影の範囲の判定を照明と同じ前方への距離にそろえる
-- status: todo
+- status: done
 - done-when: 印付け（`Assets/Shaders/vsm_mark.comp`）の影の範囲の判定を、照明（`Assets/Shaders/Common/VirtualShadowMap.glsl`）と同じ「カメラの前方への距離」にそろえる。今は直線の距離が影の範囲（80 m）を超えると印を付けないので、前方 70 m・横 40 m の受け手（直線 80.62 m）は照明では影の範囲の内側なのにページが要求されない。前方の距離が範囲の内側で直線の距離がそれを超える受け手（視錐台の端）でも、印付けと照明が同じ段を選び、その段が受け手を含むようにする（段のしきい値・段の数が足りなければ広げる）。`VirtualShadowMapVulkanTest` に、斜めの位置の受け手（前方 70 m・横 40 m）とその上の遮る物を、印付け → 割り当て → 消去 → 展開 → 描画 → 照明の関数まで通し、受け手の可視度が 0（影）になることを確かめる場面を足す。変異（印付けを直線の距離の判定に戻す）で落ちることを記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest CameraViewConstantsTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|VirtualShadowMapClipmapTest|RenderGraphCompileTest)$"`

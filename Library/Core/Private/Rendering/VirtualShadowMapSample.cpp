@@ -24,6 +24,33 @@ namespace NorvesLib::Core::Rendering
         }
     } // namespace
 
+    void ResolveVirtualShadowMapViewRange(const VirtualShadowMapClipmapSettings& settings,
+                                          const float* cascadeSplitDistances,
+                                          float& outNear,
+                                          float& outFar,
+                                          float& outFade)
+    {
+        bool bSplitsUsable = cascadeSplitDistances != nullptr;
+        for (uint32_t index = 0; bSplitsUsable && index <= VirtualShadowMapCsmCascadeCount; ++index)
+        {
+            bSplitsUsable = std::isfinite(cascadeSplitDistances[index]) && cascadeSplitDistances[index] >= 0.0f &&
+                            (index == 0u || cascadeSplitDistances[index] > cascadeSplitDistances[index - 1u]);
+        }
+        if (bSplitsUsable)
+        {
+            const float farDistance = cascadeSplitDistances[VirtualShadowMapCsmCascadeCount];
+            outNear = cascadeSplitDistances[0];
+            outFar = farDistance;
+            outFade = std::max((farDistance - cascadeSplitDistances[VirtualShadowMapCsmCascadeCount - 1u]) * 0.1f, 0.001f);
+        }
+        else
+        {
+            outNear = 0.0f;
+            outFar = settings.MaxShadowDistance;
+            outFade = std::max(settings.MaxShadowDistance * settings.FadeRatio, 0.001f);
+        }
+    }
+
     bool BuildVirtualShadowMapSampleParams(const VirtualShadowMapClipmap* clipmap,
                                            const float* cameraPosition,
                                            const float* cameraForward,
@@ -93,25 +120,7 @@ namespace NorvesLib::Core::Rendering
             params.view[axis] = cameraForward[axis] / forwardLength;
         }
         // 影の距離の範囲・薄めは CSM と同じ（CalculateShadow）。分割の距離が使えなければ設定の最大の距離と割合から決める
-        bool bSplitsUsable = cascadeSplitDistances != nullptr;
-        for (uint32_t index = 0; bSplitsUsable && index <= VirtualShadowMapCsmCascadeCount; ++index)
-        {
-            bSplitsUsable = std::isfinite(cascadeSplitDistances[index]) && cascadeSplitDistances[index] >= 0.0f &&
-                            (index == 0u || cascadeSplitDistances[index] > cascadeSplitDistances[index - 1u]);
-        }
-        if (bSplitsUsable)
-        {
-            const float farDistance = cascadeSplitDistances[VirtualShadowMapCsmCascadeCount];
-            params.range[0] = cascadeSplitDistances[0];
-            params.range[1] = farDistance;
-            params.range[2] = std::max((farDistance - cascadeSplitDistances[VirtualShadowMapCsmCascadeCount - 1u]) * 0.1f, 0.001f);
-        }
-        else
-        {
-            params.range[0] = 0.0f;
-            params.range[1] = clipmap->Settings.MaxShadowDistance;
-            params.range[2] = std::max(clipmap->Settings.MaxShadowDistance * clipmap->Settings.FadeRatio, 0.001f);
-        }
+        ResolveVirtualShadowMapViewRange(clipmap->Settings, cascadeSplitDistances, params.range[0], params.range[1], params.range[2]);
         params.pixel[0] = pixelMeters * VirtualShadowMap::PCF_MIN_RADIUS_PIXELS;
         params.pixel[1] = VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS;
         params.pixel[2] = VirtualShadowMap::MAX_FILTER_RADIUS_METERS;

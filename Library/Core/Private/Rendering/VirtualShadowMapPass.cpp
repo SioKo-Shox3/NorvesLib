@@ -15,6 +15,7 @@
 #include "Rendering/VirtualShadowMapCasters.h"
 #include "Rendering/VirtualShadowMapPages.h"
 #include "Rendering/VirtualShadowMapRaster.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
@@ -952,6 +953,16 @@ namespace NorvesLib::Core::Rendering
             dispatch.CameraPosition[0] = camera->PositionX;
             dispatch.CameraPosition[1] = camera->PositionY;
             dispatch.CameraPosition[2] = camera->PositionZ;
+            dispatch.CameraForward[0] = camera->ForwardX;
+            dispatch.CameraForward[1] = camera->ForwardY;
+            dispatch.CameraForward[2] = camera->ForwardZ;
+            // 影の範囲は照明の読み出しと同じ値（CSM の分割）で測る
+            float shadowFade = 0.0f;
+            ResolveVirtualShadowMapViewRange(context.PhysicalLighting.SunClipmap.Settings,
+                                             context.PhysicalLighting.CascadedShadow.SplitDistances,
+                                             dispatch.ShadowNearMeters,
+                                             dispatch.ShadowFarMeters,
+                                             shadowFade);
             dispatch.FovYDegrees = camera->FieldOfView;
             dispatch.Depth = depth;
             dispatch.Clipmap = &context.PhysicalLighting.SunClipmap;

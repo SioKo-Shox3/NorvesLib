@@ -507,6 +507,23 @@ namespace
                 Check(counted == SelectVirtualShadowMapLevel(settings, distance, screen.FovY, screen.Height),
                       "しきい値から数えた段が SelectVirtualShadowMapLevel と違う");
             }
+
+            // 視錐台の端の直線距離（MaxShadowDistance を超える）も、距離の上限を広げた同じ選び方と一致する。
+            // 影の範囲は前方への距離で測るので、範囲の内側の受け手の直線距離は MaxShadowDistance を超えうる
+            VirtualShadowMapClipmapSettings extended = settings;
+            extended.MaxShadowDistance = settings.MaxShadowDistance * VirtualShadowMapThresholdDistanceScale;
+            DeterministicRandom edgeRandom;
+            for (int sample = 0; sample < 20000; ++sample)
+            {
+                const float distance = edgeRandom.Range(settings.MaxShadowDistance, extended.MaxShadowDistance);
+                int32_t counted = 0;
+                for (uint32_t index = 0u; index + 1u < settings.LevelCount; ++index)
+                {
+                    counted += distance >= thresholds[index] ? 1 : 0;
+                }
+                Check(counted == SelectVirtualShadowMapLevel(extended, distance, screen.FovY, screen.Height),
+                      "MaxShadowDistance を超える直線距離で、しきい値から数えた段が距離の上限を広げた選び方と違う");
+            }
         }
         // 不正な設定では書かない
         VirtualShadowMapClipmapSettings invalid;

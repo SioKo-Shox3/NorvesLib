@@ -280,6 +280,14 @@ namespace
                VirtualShadowMapPageTorusAddress(pageX, VirtualShadowMap::TABLE_DIMENSION);
     }
 
+    // 印付けに渡すカメラの前方（影の範囲は前方への距離で測る。範囲は設定の [0, MaxShadowDistance]）
+    void SetCameraForward(VirtualShadowMapPagesDispatch& dispatch, const Scene& scene)
+    {
+        dispatch.CameraForward[0] = scene.Camera.ForwardX;
+        dispatch.CameraForward[1] = scene.Camera.ForwardY;
+        dispatch.CameraForward[2] = scene.Camera.ForwardZ;
+    }
+
     // 画素を分類し、安定した画素ではそのページの集合（核の隣を含む / 画素の位置のページだけ）を返す
     PixelKind ClassifyPixel(const Scene& scene,
                             uint32_t pixelX,
@@ -298,11 +306,30 @@ namespace
         const double offset[3] = {world[0] - scene.CameraPosition[0], world[1] - scene.CameraPosition[1], world[2] - scene.CameraPosition[2]};
         const double distance = std::sqrt(offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]);
 
+        // 影の範囲はカメラの前方への距離で測る（照明と同じ。範囲は [0, MaxShadowDistance]）。端の許容の内側は曖昧
+        const double forwardLength = std::sqrt(static_cast<double>(scene.Camera.ForwardX) * scene.Camera.ForwardX +
+                                               static_cast<double>(scene.Camera.ForwardY) * scene.Camera.ForwardY +
+                                               static_cast<double>(scene.Camera.ForwardZ) * scene.Camera.ForwardZ);
+        const double viewDistance = (offset[0] * scene.Camera.ForwardX + offset[1] * scene.Camera.ForwardY + offset[2] * scene.Camera.ForwardZ) / forwardLength;
+        const double shadowFar = static_cast<double>(scene.Settings.MaxShadowDistance);
+        if (std::abs(viewDistance) < AmbiguityToleranceMeters || std::abs(viewDistance - shadowFar) < AmbiguityToleranceMeters)
+        {
+            return PixelKind::Ambiguous;
+        }
+        if (viewDistance < 0.0 || viewDistance > shadowFar)
+        {
+            return PixelKind::Outside;
+        }
+
+        // 段はカメラからの直線距離で選ぶ。視錐台の端では直線距離が MaxShadowDistance を超えるので、距離の上限を広げた設定で選ぶ
+        // （段の選び方はそれ以外 MaxShadowDistance に依らない）
+        VirtualShadowMapClipmapSettings selectSettings = scene.Settings;
+        selectSettings.MaxShadowDistance *= VirtualShadowMapThresholdDistanceScale;
         const float fovY = scene.Camera.FieldOfView;
         const float height = static_cast<float>(ImageHeight);
-        const int32_t level = SelectVirtualShadowMapLevel(scene.Settings, static_cast<float>(distance), fovY, height);
-        const int32_t levelNear = SelectVirtualShadowMapLevel(scene.Settings, static_cast<float>(distance - AmbiguityToleranceMeters), fovY, height);
-        const int32_t levelFar = SelectVirtualShadowMapLevel(scene.Settings, static_cast<float>(distance + AmbiguityToleranceMeters), fovY, height);
+        const int32_t level = SelectVirtualShadowMapLevel(selectSettings, static_cast<float>(distance), fovY, height);
+        const int32_t levelNear = SelectVirtualShadowMapLevel(selectSettings, static_cast<float>(distance - AmbiguityToleranceMeters), fovY, height);
+        const int32_t levelFar = SelectVirtualShadowMapLevel(selectSettings, static_cast<float>(distance + AmbiguityToleranceMeters), fovY, height);
         if (level != levelNear || level != levelFar)
         {
             return PixelKind::Ambiguous;
@@ -554,6 +581,7 @@ namespace
         dispatch.bCacheEnabled = false;
         std::memcpy(dispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(dispatch.InverseViewProjection));
         std::memcpy(dispatch.CameraPosition, scene.CameraPosition, sizeof(dispatch.CameraPosition));
+        SetCameraForward(dispatch, scene);
         dispatch.FovYDegrees = scene.Camera.FieldOfView;
 
         const BufferPtr buffers[] = {resources.Pool, resources.PageTable, resources.RequestBits,
@@ -1037,6 +1065,7 @@ namespace
             pagesDispatch.Clipmap = &scene.Clipmap;
             std::memcpy(pagesDispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(pagesDispatch.InverseViewProjection));
             std::memcpy(pagesDispatch.CameraPosition, scene.CameraPosition, sizeof(pagesDispatch.CameraPosition));
+            SetCameraForward(pagesDispatch, scene);
             pagesDispatch.FovYDegrees = scene.Camera.FieldOfView;
             // 従来のケースはキャッシュを使わない（毎フレームすべて割り当て直す）。キャッシュの入力があるときだけ使う
             pagesDispatch.bCacheEnabled = cache != nullptr && cache->bEnabled;
@@ -2648,6 +2677,7 @@ namespace
         pagesDispatch.Clipmap = &scene.Clipmap;
         std::memcpy(pagesDispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(pagesDispatch.InverseViewProjection));
         std::memcpy(pagesDispatch.CameraPosition, scene.CameraPosition, sizeof(pagesDispatch.CameraPosition));
+        SetCameraForward(pagesDispatch, scene);
         pagesDispatch.FovYDegrees = scene.Camera.FieldOfView;
         const bool bPages = pages.Record(commandList.get(), pagesDispatch);
 
@@ -3114,8 +3144,9 @@ namespace
         Container::VariableArray<float> Image;
     };
 
-    // cameraDistance: カメラから受け手の平面までの距離。windowHalfPixels: 画面の中心から窓の端までの画素数
-    ReceiverScene BuildReceiverScene(const DevicePtr& device, double cameraDistance, int32_t windowHalfPixels)
+    // cameraDistance: カメラから受け手の平面までの距離（前方への距離）。windowHalfPixels: 窓の中心から窓の端までの画素数。
+    // lateralMeters: 受け手の平面の中心がカメラの正面から右へずれる量（m）。0 でない（視錐台の端の）ときは、窓の中心をその点の画素にする
+    ReceiverScene BuildReceiverScene(const DevicePtr& device, double cameraDistance, int32_t windowHalfPixels, double lateralMeters = 0.0)
     {
         ReceiverScene result;
         Scene& scene = result.Base;
@@ -3134,11 +3165,14 @@ namespace
         for (uint32_t axis = 0; axis < 3u; ++axis)
         {
             center[axis] = right[axis] * result.CenterX + up[axis] * result.CenterY + forward[axis] * result.ReceiverDepth;
-            cameraPosition[axis] = center[axis] - forward[axis] * cameraDistance;
         }
 
         // 前方 = 光の向き、上 = ライト空間の上、右 = 前方 × 上
         const double cameraRight[3] = {forward[1] * up[2] - forward[2] * up[1], forward[2] * up[0] - forward[0] * up[2], forward[0] * up[1] - forward[1] * up[0]};
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            cameraPosition[axis] = center[axis] - forward[axis] * cameraDistance - cameraRight[axis] * lateralMeters;
+        }
         scene.Camera.PositionX = static_cast<float>(cameraPosition[0]);
         scene.Camera.PositionY = static_cast<float>(cameraPosition[1]);
         scene.Camera.PositionZ = static_cast<float>(cameraPosition[2]);
@@ -3168,8 +3202,16 @@ namespace
         result.Image.assign(ImageWidth * ImageHeight, 1.0f);
         result.MinDistance = 1.0e300;
         result.MaxDistance = 0.0;
-        const int32_t centerPixelX = static_cast<int32_t>(ImageWidth / 2u);
+        int32_t centerPixelX = static_cast<int32_t>(ImageWidth / 2u);
         const int32_t centerPixelY = static_cast<int32_t>(ImageHeight / 2u);
+        if (lateralMeters != 0.0)
+        {
+            // 受け手の中心の画素（クリップ座標の x → 画素）
+            const double centerPoint[4] = {center[0], center[1], center[2], 1.0};
+            double centerClip[4] = {};
+            Multiply(scene.ViewProjection, centerPoint, centerClip);
+            centerPixelX = static_cast<int32_t>(std::floor((centerClip[0] / centerClip[3] * 0.5 + 0.5) * ImageWidth));
+        }
         for (int32_t offsetY = -windowHalfPixels; offsetY <= windowHalfPixels; ++offsetY)
         {
             for (int32_t offsetX = -windowHalfPixels; offsetX <= windowHalfPixels; ++offsetX)
@@ -3348,6 +3390,46 @@ namespace
         result.bBand = first >= 0;
         result.Width = result.bBand ? static_cast<double>(last - first + 1) * step : 0.0;
         return result;
+    }
+
+    // ----- L6: 視錐台の端（前方の距離は影の範囲の内側で、直線の距離は範囲を超える）の受け手 -----
+    // 受け手を前方 70 m・横 40 m（直線 80.6 m）に置く。照明は影の範囲を前方への距離で測るので、この受け手は範囲の内側で影を受ける。
+    // 印付けも同じ前方への距離で測らないと、このページが要求されず、割り当てられず、描かれない（照明は粗い段へ逃げても何も読めず影なしになる）。
+    // 本番の流れ（印付け → 割り当て → 消去 → 展開 → 描画）で四角形を描き、縁から離れた影の側・光の側の受け手を照明と同じ関数で読む。
+    bool RunObliqueReceiverCase(const DevicePtr& device, VirtualShadowMapPages& pages, VirtualShadowMapRaster& raster, const SampleProbe& probe, uint64_t& frameSerial)
+    {
+        constexpr double Forward = 70.0;
+        constexpr double Lateral = 40.0;
+        // 窓は受け手の中心の 1 画素だけ。画素は 70 m 先で約 1.1 m なので、隣の画素まで含めると直線距離が影の範囲（80 m）の
+        // 近く（深度の復元の誤差の内側）に入り、範囲の内側と判定される画素が混じる
+        const ReceiverScene receiver = BuildReceiverScene(device, Forward, 0, Lateral);
+        const Scene& scene = receiver.Base;
+        const double straight = std::sqrt(Forward * Forward + Lateral * Lateral);
+        std::cout << TestName << " ケース L6: カメラから受け手まで " << receiver.MinDistance << "〜" << receiver.MaxDistance << " m（前方 " << Forward
+                  << " m・横 " << Lateral << " m = 直線 " << straight << " m） 影の範囲=" << scene.Settings.MaxShadowDistance << " m" << std::endl;
+        Expect(receiver.MinDistance > static_cast<double>(scene.Settings.MaxShadowDistance),
+               "ケース L6: 窓のすべての画素の直線距離が影の範囲を超える場面でなければならない（前方の距離は範囲の内側）");
+        Expect(scene.Clipmap.bEnabled, "ケース L6: クリップマップが有効でなければならない");
+        const TexturePtr depth = CreateDepthTexture(device, receiver.Image);
+        if (!depth)
+        {
+            return false;
+        }
+
+        // 縁（x = 中心 + 0.0731）から 1.5 m 離れた影の側（負）と光の側（正）。半径（最小で画素の大きさ程度）より十分に離す
+        Container::VariableArray<double> offsets;
+        offsets.push_back(-1.5);
+        offsets.push_back(1.5);
+        const ReceiverProbeResult probed = ProbeReceiverEdge(device, pages, raster, probe, receiver, depth, 10.0, frameSerial, offsets);
+        if (!probed.bRan || probed.Visibility.size() != 2u)
+        {
+            return false;
+        }
+        std::cout << TestName << " ケース L6: 可視度(影の側, 光の側)=" << probed.Visibility[0] << ", " << probed.Visibility[1] << " 逃げた標本=" << probed.Fallback << std::endl;
+        Expect(probed.Visibility[0] == 0.0f, "ケース L6: 前方の距離が影の範囲の内側なら、直線距離が範囲を超える受け手も影にならなければならない（印付けが同じ距離で測る）");
+        Expect(probed.Visibility[1] == 1.0f, "ケース L6: 縁の光の側の受け手は光が当たらなければならない");
+        Expect(probed.Fallback == 0u, "ケース L6: 印付けが読む段のページまで要求し、粗い段へ逃げてはならない");
+        return true;
     }
 
     bool RunPenumbraCase(const DevicePtr& device, VirtualShadowMapPages& pages, VirtualShadowMapRaster& raster, const SampleProbe& probe, uint64_t& frameSerial)
@@ -3876,7 +3958,8 @@ namespace
             }
         }
 
-        return RunPenumbraCase(device, pages, raster, probe, frameSerial);
+        return RunPenumbraCase(device, pages, raster, probe, frameSerial) &&
+               RunObliqueReceiverCase(device, pages, raster, probe, frameSerial);
     }
 
     // ========================================
@@ -4495,7 +4578,8 @@ namespace
             Expect(before.Stat(VirtualShadowMap::StatRendered) == 0u && CountAllocated(before) == requested, "ケース M6: 動かす前は落ち着いていなければならない");
 
             const Math::Vector3 right = scene.Clipmap.LightRight;
-            const float shifts[2] = {static_cast<float>(pageMeters), 2500.0f};
+            // 2 つ目は、どの段の範囲（最も粗い段 4 の幅 16384 m の半分）よりも大きく動かす。視錐台の端の画素は粗い段のページも要求する
+            const float shifts[2] = {static_cast<float>(pageMeters), 20000.0f};
             for (uint32_t shiftIndex = 0; shiftIndex < 2u; ++shiftIndex)
             {
                 Scene movedScene = scene;

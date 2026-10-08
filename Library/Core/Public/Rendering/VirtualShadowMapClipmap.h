@@ -134,15 +134,25 @@ namespace NorvesLib::Core::Rendering
                                         float fovYDegrees,
                                         float screenHeightPixels);
 
-    /** @brief VirtualShadowMapLevelDistanceThresholds が、その段へ届く距離が無い（MaxShadowDistance までに選ばれない）ときに入れる値 */
+    /** @brief VirtualShadowMapLevelDistanceThresholds が、その段へ届く距離が無い（調べる距離の上限までに選ばれない）ときに入れる値 */
     inline constexpr float VirtualShadowMapUnreachableDistance = 1.0e30f;
+
+    /**
+     * @brief VirtualShadowMapLevelDistanceThresholds が段を調べる距離の上限の、MaxShadowDistance に対する倍率。
+     *        影の範囲はカメラの前方への距離で測るので、視錐台の端の受け手の直線距離は MaxShadowDistance を超える
+     *        （前方 f・横 l の受け手は √(f² + l²)）。その直線距離でも印付けと照明が同じ段を選び、その段が受け手を含むようにする。
+     *        2 倍は、前方の距離に対する横・縦のずれの比の二乗和が 3 までの視錐台（縦画角 60° で幅が高さの約 2.4 倍）を覆う
+     */
+    inline constexpr float VirtualShadowMapThresholdDistanceScale = 2.0f;
 
     /**
      * @brief 段を選ぶ距離のしきい値。outThresholds[k]（k = 0 .. LevelCount − 2）は、SelectVirtualShadowMapLevel が k + 1 以上を返す最小の距離
      *
-     * 選ぶ段は距離について単調に増えるので、距離 d の段は「d >= outThresholds[k] となる k の数」に等しい（d が MaxShadowDistance 以下のとき）。
-     * 計算シェーダーが段の選び方の式を写さず、CPU の SelectVirtualShadowMapLevel と同じ結果を得るために使う（二分法で求める）。
-     * MaxShadowDistance までに届かない段は VirtualShadowMapUnreachableDistance。設定が不正なら何も書かず false。
+     * 選ぶ段は距離について単調に増えるので、距離 d の段は「d >= outThresholds[k] となる k の数」に等しい。
+     * d が MaxShadowDistance 以下なら SelectVirtualShadowMapLevel と同じ結果で、それを超える d（視錐台の端の直線距離）は
+     * MaxShadowDistance × VirtualShadowMapThresholdDistanceScale までを、距離の上限なしの同じ選び方で数える。
+     * 計算シェーダーが段の選び方の式を写さず、CPU と同じ結果を得るために使う（二分法で求める）。
+     * その上限までに届かない段は VirtualShadowMapUnreachableDistance。設定が不正なら何も書かず false。
      * outThresholds は VirtualShadowMapMaxLevels − 1 個以上の領域。
      */
     bool VirtualShadowMapLevelDistanceThresholds(const VirtualShadowMapClipmapSettings& settings,

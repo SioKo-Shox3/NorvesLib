@@ -2523,3 +2523,13 @@
 - 受入れの途中で入れた変更: (1) 予算の取り置き（`163d39d8`。重み 0 のプールの確保量を割り振れる量から引く）。(2) PCF の半径の下限を画素の大きさの半分に（`739cc27c`。下限が画素 1 つ分だと、CSM の texel が画素より小さい中距離で VSM の縁が CSM より太く、既定の視点で縁の帯が CSM の 1.7 倍だった。一時的な書き換えで画素の半分・1 texel だけの 2 通りを測り、画素の半分を採った）。
 - 測定の条件: 細かさ・ちらつき・一致の判定は大きな球の自転を止めた run（`NORVES_STARTUP_SPHERE_SPIN=0`）で行った。自転したままの run も同じ表に並べた（近接の視点では、VSM だけが描く石の目地の影が球と一緒に動くので、変化と縁の帯が大きく、一致が 0.972〜0.979 になる）。理由は TASKS.md の VTG8-ACCEPT の notes。
 - 検証（`.harness/runs/vtg8-accept/`）: `r2-build-debug.txt`（BUILD_EXIT=0）、`r2-ctest-debug.txt`（8/8 passed。golden 4 本は基準画像・閾値を動かさずに通る）、`r2-cap-validation.txt`・`r2-cap-validation-stress.txt`（検証レイヤー付き Debug、error_count 0、VSM の溢れ 0）、`r2-build-rel.txt`（BUILD_EXIT=0）、`r2-cap-day.txt`・`r2-cap-night.txt`・`r2-cap-orbit.txt`・`r2-cap-orbit-nospin.txt`（すべて result=pass）。GPU 時間は VTG8-VSM-GPU-TIME の表（反復 19）。
+
+## 反復 1（2026-10-08）: VTG8-FIX-MARK-RANGE（done）
+
+- 原因: `vsm_mark.comp` が影の範囲をカメラからの直線距離（`<= 80 m`）で判定していたのに対し、照明（`Common/VirtualShadowMap.glsl`）は CSM と同じ前方への距離で判定していた。前方 70 m・横 40 m（直線 80.62 m）の受け手は照明では範囲の内側だが、ページが要求されず、割り当てられず、描かれなかった。
+- 直し方: (1) 印付けのパラメータに前方（`GPUVsmParams::view`。全 `vsm_*.comp` の `VsmParams` の前半に足した）と影の範囲 `[ShadowNearMeters, ShadowFarMeters]` を渡し、`VirtualShadowMapPass` が照明と同じ `ResolveVirtualShadowMapViewRange`（`VirtualShadowMapSample.cpp` に切り出した）で CSM の分割から決める。(2) 段は照明と同じく直線距離で選ぶまま。ただし段のしきい値を `MaxShadowDistance × VirtualShadowMapThresholdDistanceScale`（2 倍）の直線距離まで求めるようにした（`VirtualShadowMapLevelDistanceThresholds`）。視錐台の端の受け手は直線距離が範囲を超えるので、従来は一番上の段に張り付いて、その段が受け手を含む保証が無かった。`SelectVirtualShadowMapLevel` の意味（範囲の外は -1）は変えていない。
+- テスト: `VirtualShadowMapVulkanTest` にケース L6（前方 70 m・横 40 m の受け手と遮る物を、印付け → 割り当て → 消去 → 展開 → 描画 → 照明の関数まで通し、影の側が 0・光の側が 1・粗い段へ逃げた標本 0）を足した。`VirtualShadowMapClipmapTest` に `MaxShadowDistance` を超える直線距離でもしきい値が距離の上限を広げた選び方と一致する検査を足した。CPU の参照 `ClassifyPixel` は影の範囲を前方への距離で判定し、段は距離の上限を広げた設定で選ぶようにした。
+- 既存ケースの変化: 視錐台の端の画素（前方 40 m 以内・直線 40 m 超）が要求されるようになり、シーンの要求ページが 14 → 18 に増えた（段 3 が加わる）。ケース M6 の「範囲より大きく動く」移動量を 2500 m → 20000 m にした（段 3 の範囲が 2500 m の移動後も新しい範囲に残るため）。
+- 変異: 印付けの範囲の判定を `length(toReceiver) <= tuning.y`（直線距離）に戻すと L6 が落ちる（`verify-VTG8-FIX-MARK-RANGE-mut.txt`: 影の側の可視度 1、逃げた標本 32、`RESULT=FAIL`）。窓を 1 画素にしたのは、隣の画素まで入れると直線距離が 80.003 m の画素が混じり、深度の復元の誤差で範囲の内側と判定されて変異で落ちなくなるため。
+- 検証（`.harness/runs/20261008-100400/`）: `verify-VTG8-FIX-MARK-RANGE-5.txt`（BUILD_EXIT=0）、`verify-VTG8-FIX-MARK-RANGE-6.txt`（`VirtualShadowMapVulkanTest`・`VirtualShadowMapClipmapTest`・`RenderGraphCompileTest` が 3/3 passed、CTEST_EXIT=0）。GPU の撮影は回していない（既定の描画は CSM で、VSM は `--shadow-method=vsm` のときだけ）。
+- Next: `TASKS.md` の未完の次の項目（段8の残りの不具合）。

@@ -40,6 +40,19 @@ namespace NorvesLib::Core::Rendering
     static_assert(sizeof(GPUVsmSampleParams) == 720, "Common/VirtualShadowMap.glsl の VsmSampleParams と同じ大きさにすること");
 
     /**
+     * @brief 影の距離の範囲・奥の薄めの幅を決める（照明の読み出しと、印付けが同じ値を使う）
+     *
+     * カメラの前方への距離が [outNear, outFar] の外なら影なし、outFade の幅で奥を薄める。
+     * cascadeSplitDistances（5 個）が使えれば CSM の分割（最初・最後・最後のカスケードの幅の 10%）、
+     * nullptr または不正（非有限・負・増加しない）なら [0, MaxShadowDistance]・MaxShadowDistance × FadeRatio。
+     */
+    void ResolveVirtualShadowMapViewRange(const VirtualShadowMapClipmapSettings& settings,
+                                          const float* cascadeSplitDistances,
+                                          float& outNear,
+                                          float& outFar,
+                                          float& outFade);
+
+    /**
      * @brief クリップマップとカメラから、VSM を読むパラメータを作る
      *
      * 使えない入力（クリップマップが無効・段の数やページの大きさが資源と合わない・物理ページが 0・画角や画面の高さが不正）なら、

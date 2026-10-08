@@ -28,17 +28,18 @@ namespace NorvesLib::Core::Rendering
             float lightRight[4];
             float lightUp[4];
             uint32_t screen[4];  // x = 幅、y = 高さ、z = 段の数、w = 1 段の一辺のページ数
-            float tuning[4];     // x = PCF の核の半径のうち texel に比例する分（texel）、y = 影の最大の距離（m）、z = 探索・PCF の半径の上限（m）
+            float tuning[4];     // x = PCF の核の半径のうち texel に比例する分（texel）、y = 影の範囲の奥の端（前方への距離 m）、z = 探索・PCF の半径の上限（m）
             uint32_t control[4]; // x = 段階、y = 物理ページの数、z = 間接 dispatch の x の上限
             float thresholds[VirtualShadowMapMaxLevels];
             float levelInfo[VirtualShadowMapMaxLevels][4];   // x = ページの一辺（m）、y = texel の一辺（m）
             int32_t levelOrigin[VirtualShadowMapMaxLevels][4]; // x, y = 範囲の最小の絶対のページの番号
+            float view[4];       // x, y, z = カメラの前方（単位ベクトル）、w = 影の範囲の手前の端（前方への距離 m）
             // ここから下は vsm_allocate.comp だけが読む（vsm_mark.comp・vsm_clear.comp の VsmParams はここまでの前半と同じ並び）
             uint32_t cache[4];                                  // x = 印（CacheFlag*）、y = 持ち越すフレーム数、z = 無効化の矩形の数
             int32_t previousOrigin[VirtualShadowMapMaxLevels][4]; // x, y = 前フレームの範囲の最小の絶対のページの番号
             float rects[VirtualShadowMap::MAX_INVALIDATION_RECTS][4]; // 無効化の矩形（ライト空間。x, y = 最小、z, w = 最大）
         };
-        static_assert(sizeof(GPUVsmParams) == 736 + 16 + 256 + VirtualShadowMap::MAX_INVALIDATION_RECTS * 16,
+        static_assert(sizeof(GPUVsmParams) == 736 + 16 + 16 + 256 + VirtualShadowMap::MAX_INVALIDATION_RECTS * 16,
                       "vsm_*.comp の VsmParams と同じ大きさにすること");
 
         constexpr uint32_t GroupSize = 256;
@@ -200,10 +201,29 @@ namespace NorvesLib::Core::Rendering
                 params.levelOrigin[level][0] = static_cast<int32_t>(data.OriginPageX);
                 params.levelOrigin[level][1] = static_cast<int32_t>(data.OriginPageY);
             }
+            const float forwardLength = std::sqrt(dispatch.CameraForward[0] * dispatch.CameraForward[0] +
+                                                  dispatch.CameraForward[1] * dispatch.CameraForward[1] +
+                                                  dispatch.CameraForward[2] * dispatch.CameraForward[2]);
+            if (!std::isfinite(forwardLength) || !(forwardLength > 1.0e-5f))
+            {
+                return false;
+            }
+            float shadowNear = dispatch.ShadowNearMeters;
+            float shadowFar = dispatch.ShadowFarMeters;
+            if (!(std::isfinite(shadowNear) && std::isfinite(shadowFar) && shadowFar > shadowNear))
+            {
+                shadowNear = 0.0f;
+                shadowFar = clipmap->Settings.MaxShadowDistance;
+            }
             for (uint32_t element = 0; element < 16u; ++element)
             {
                 params.invViewProjection[element] = dispatch.InverseViewProjection[element];
             }
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                params.view[axis] = dispatch.CameraForward[axis] / forwardLength;
+            }
+            params.view[3] = shadowNear;
             for (uint32_t axis = 0; axis < 3u; ++axis)
             {
                 params.cameraPosition[axis] = dispatch.CameraPosition[axis];
@@ -218,7 +238,7 @@ namespace NorvesLib::Core::Rendering
             params.screen[1] = height;
             params.screen[2] = clipmap->LevelCount;
             params.tuning[0] = dispatch.PcfRadiusTexels;
-            params.tuning[1] = clipmap->Settings.MaxShadowDistance;
+            params.tuning[1] = shadowFar;
             params.tuning[2] = dispatch.MaxFilterRadiusMeters;
             return true;
         }

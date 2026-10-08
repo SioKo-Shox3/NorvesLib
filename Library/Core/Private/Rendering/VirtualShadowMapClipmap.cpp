@@ -134,33 +134,49 @@ namespace NorvesLib::Core::Rendering
         return std::max(settings.BiasLevels, VirtualShadowMapCoverageBiasLevels(settings, fovYDegrees, screenHeightPixels));
     }
 
+    namespace
+    {
+        // 距離の上限を設けずに段を選ぶ（SelectVirtualShadowMapLevel とそのしきい値の計算の共通部分）
+        int32_t SelectLevelUnbounded(const VirtualShadowMapClipmapSettings& settings,
+                                     float distance,
+                                     float fovYDegrees,
+                                     float screenHeightPixels)
+        {
+            if (!IsValidVirtualShadowMapClipmapSettings(settings) || !std::isfinite(distance) || distance < 0.0f)
+            {
+                return -1;
+            }
+            const float pixelMeters = VirtualShadowMapScreenPixelMeters(distance, fovYDegrees, screenHeightPixels);
+            if (!(pixelMeters > 0.0f) && distance > 0.0f)
+            {
+                return -1;
+            }
+            const float targetTexel =
+                pixelMeters * std::exp2(VirtualShadowMapEffectiveBiasLevels(settings, fovYDegrees, screenHeightPixels));
+
+            // texel は段ごとに 2 倍になるので、目標以下の最も粗い段。目標が段 0 の texel より小さくても段 0 より細かくは選ばない
+            int32_t selected = 0;
+            for (uint32_t level = 1u; level < settings.LevelCount; ++level)
+            {
+                if (VirtualShadowMapLevelTexelMeters(settings, level) <= targetTexel)
+                {
+                    selected = static_cast<int32_t>(level);
+                }
+            }
+            return selected;
+        }
+    } // namespace
+
     int32_t SelectVirtualShadowMapLevel(const VirtualShadowMapClipmapSettings& settings,
                                         float distance,
                                         float fovYDegrees,
                                         float screenHeightPixels)
     {
-        if (!IsValidVirtualShadowMapClipmapSettings(settings) || !std::isfinite(distance) ||
-            distance < 0.0f || distance > settings.MaxShadowDistance)
+        if (!IsValidVirtualShadowMapClipmapSettings(settings) || distance > settings.MaxShadowDistance)
         {
             return -1;
         }
-        const float pixelMeters = VirtualShadowMapScreenPixelMeters(distance, fovYDegrees, screenHeightPixels);
-        if (!(pixelMeters > 0.0f) && distance > 0.0f)
-        {
-            return -1;
-        }
-        const float targetTexel = pixelMeters * std::exp2(VirtualShadowMapEffectiveBiasLevels(settings, fovYDegrees, screenHeightPixels));
-
-        // texel は段ごとに 2 倍になるので、目標以下の最も粗い段。目標が段 0 の texel より小さくても段 0 より細かくは選ばない
-        int32_t selected = 0;
-        for (uint32_t level = 1u; level < settings.LevelCount; ++level)
-        {
-            if (VirtualShadowMapLevelTexelMeters(settings, level) <= targetTexel)
-            {
-                selected = static_cast<int32_t>(level);
-            }
-        }
-        return selected;
+        return SelectLevelUnbounded(settings, distance, fovYDegrees, screenHeightPixels);
     }
 
     bool VirtualShadowMapLevelDistanceThresholds(const VirtualShadowMapClipmapSettings& settings,
@@ -172,13 +188,15 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
-        const float maxDistance = settings.MaxShadowDistance;
+        // 視錐台の端（前方の距離が影の範囲の内側で、横にずれた受け手）の直線距離まで同じ規則で段を選べるよう、
+        // MaxShadowDistance を超える距離も上限なしの選び方で調べる
+        const float maxDistance = settings.MaxShadowDistance * VirtualShadowMapThresholdDistanceScale;
         for (uint32_t index = 0u; index + 1u < settings.LevelCount; ++index)
         {
             const int32_t target = static_cast<int32_t>(index) + 1;
             auto reaches = [&](float distance)
             {
-                return SelectVirtualShadowMapLevel(settings, distance, fovYDegrees, screenHeightPixels) >= target;
+                return SelectLevelUnbounded(settings, distance, fovYDegrees, screenHeightPixels) >= target;
             };
             if (!reaches(maxDistance))
             {

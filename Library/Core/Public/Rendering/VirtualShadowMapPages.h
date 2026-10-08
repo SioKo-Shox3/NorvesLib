@@ -86,6 +86,14 @@ namespace NorvesLib::Core::Rendering
         /** @brief シェーダー向け（列優先）の逆ビュー射影行列 */
         float InverseViewProjection[16] = {};
         float CameraPosition[3] = {};
+        /** @brief カメラの前方（ワールド。長さは問わない。0・非有限なら印付けをしない）。影の範囲を前方への距離で測るのに使う */
+        float CameraForward[3] = {};
+        /**
+         * @brief 影の距離の範囲（カメラの前方への距離。照明の読み出しと同じ ResolveVirtualShadowMapViewRange の値）。
+         *        ShadowFarMeters が ShadowNearMeters 以下なら、クリップマップの設定の [0, MaxShadowDistance]
+         */
+        float ShadowNearMeters = 0.0f;
+        float ShadowFarMeters = 0.0f;
         /** @brief 垂直の画角（度）。段の選び方（画面上の 1 画素の大きさ）に使う */
         float FovYDegrees = 0.0f;
         /** @brief PCF の核の半径のうち、texel に比例する分（texel） */

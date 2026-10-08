@@ -46,6 +46,8 @@ layout(std140, set = 0, binding = 0) uniform VsmParams
     vec4 levelInfo[16];
     // x, y: 範囲の最小の絶対のページの番号
     ivec4 levelOrigin[16];
+    // vsm_mark.comp だけが読む（xyz: カメラの前方、w: 影の範囲の手前の端）
+    vec4 view;
     // x: 印（1 = キャッシュを使う、2 = 全ページを無効にする）、y: 持ち越すフレーム数、z: 無効化の矩形の数
     uvec4 cache;
     // x, y: 前フレームの、範囲の最小の絶対のページの番号
