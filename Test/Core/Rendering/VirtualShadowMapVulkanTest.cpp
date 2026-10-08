@@ -7700,6 +7700,805 @@ namespace
         return RunPointSampleCases(device, shaderManager, reference, pointScene, pageSpecs, readback, resources);
     }
 
+    // ========================================
+    // ケース T: 点光源の面のページの持ち越し（灯の移動・投影物の移動による無効化。太陽なし）
+    // ========================================
+    //
+    // 2 灯（ケース P と同じ場面。灯 0 は Range 30、灯 1 は Range 6）の面のページを、深度から印を付けて割り当て、ワールドの多角形
+    // （各灯の各面の軸に垂直な背景の四角形 12 枚と、灯 0 のある面のページの内側に置いた小さな動く四角形）を展開 → 描画する。
+    // どのフレームも、同じ場面をキャッシュを使わない別の記録（別の VirtualShadowMapPages・別の資源）で描き直した物理ページと、全 texel で比べる。
+    //   T1: 最初のフレームは全ページを描き、持ち越しは 0。
+    //   T2（止まった灯と投影物）: 2 フレーム目は点光源のページが 1 枚も描かれず（描いたページ 0・無効にしたページ 0）、持ち越しが要求の数で、
+    //       展開が描くインスタンスも 0、物理プールの中身が不変。
+    //   T3（投影物が動く）: 動く四角形を横へ動かすと、前後の境界を覆う球が面の NDC で覆うページだけが描き直される。箱を面へ写した範囲のページは必ず
+    //       dirty、dirty のページは球の範囲（倍精度の参照）の内側、描いた枚数は全体より少なく、動く四角形の中身が変わる。
+    //   T4（灯が動く）: 灯 0 を動かすと、灯 0 のスライスの割り当て済みのページがすべて描き直され（無効にしたスライスは 36）、灯 1 のページは描き直されない。
+    //   T5（灯の並びが変わる）: 灯 0 と灯 1 を入れ替える（識別子が同じでも番号が変わる）と、両方の灯のページがすべて描き直される。
+    //   T6（灯が無くなる）: 灯 1 が無くなると、灯 1 のスライスのページは空きへ戻り、灯 0 のページは描き直されない。
+
+    struct PointCachePage
+    {
+        uint32_t Slice = 0;
+        uint32_t Light = 0;
+        uint32_t PageX = 0;
+        uint32_t PageY = 0;
+        uint32_t Physical = 0;
+        bool bDirty = false;
+    };
+
+    struct PointCacheFrame
+    {
+        RasterReadback Readback;
+        Container::VariableArray<PointCachePage> Pages;
+        bool bContinued = false;
+        uint32_t InvalidatedSlices = 0;
+        uint32_t SphereCount = 0;
+
+        uint32_t Stat(VirtualShadowMap::StatWord word) const { return Readback.Stats[word]; }
+        uint32_t DirtyCount() const
+        {
+            uint32_t count = 0;
+            for (const PointCachePage& page : Pages)
+            {
+                count += page.bDirty ? 1u : 0u;
+            }
+            return count;
+        }
+        uint32_t PagesOf(uint32_t light) const
+        {
+            uint32_t count = 0;
+            for (const PointCachePage& page : Pages)
+            {
+                count += page.Light == light ? 1u : 0u;
+            }
+            return count;
+        }
+        uint32_t DirtyOf(uint32_t light) const
+        {
+            uint32_t count = 0;
+            for (const PointCachePage& page : Pages)
+            {
+                count += (page.Light == light && page.bDirty) ? 1u : 0u;
+            }
+            return count;
+        }
+    };
+
+    // ページの表の割り当て済みの欄から、点光源のスライスのページを取り出す
+    Container::VariableArray<PointCachePage> DecodePointPages(const PointScene& pointScene, const Container::VariableArray<uint32_t>& pageTable)
+    {
+        Container::VariableArray<PointCachePage> pages;
+        const VirtualShadowMapPointLights& lights = pointScene.Lights;
+        for (uint32_t index = 0; index < pageTable.size(); ++index)
+        {
+            const uint32_t entry = pageTable[index];
+            if ((entry & VirtualShadowMap::PAGE_ENTRY_ALLOCATED) == 0u)
+            {
+                continue;
+            }
+            const uint32_t slice = index / VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+            if (slice < lights.FirstSlice)
+            {
+                continue;
+            }
+            const uint32_t address = index % VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+            const uint32_t dimension = static_cast<uint32_t>(pointScene.Slices[slice].origin[3]);
+            PointCachePage page;
+            page.Slice = slice;
+            page.Light = (slice - lights.FirstSlice) / lights.SlicesPerLight;
+            page.PageX = address % dimension;
+            page.PageY = address / dimension;
+            page.Physical = entry & VirtualShadowMap::PAGE_INDEX_MASK;
+            page.bDirty = (entry & VirtualShadowMap::PAGE_ENTRY_DIRTY) != 0u;
+            pages.push_back(page);
+        }
+        return pages;
+    }
+
+    // 灯 light の面 face の基底（光源・軸・接線 2 本）。面の座標の行はスライスの行列のまま
+    struct PointFaceBasis
+    {
+        double Light[3] = {};
+        double Axis[3] = {};
+        double Tangent[3] = {};
+        double Bitangent[3] = {};
+    };
+
+    PointFaceBasis MakePointFaceBasis(const PointScene& pointScene, uint32_t light, uint32_t face)
+    {
+        const GPUVsmSlice& slice = pointScene.Slices[VirtualShadowMapPointSliceIndex(pointScene.Lights, light, face, 0u)];
+        PointFaceBasis basis;
+        basis.Light[0] = pointScene.Lights.Position[light].x;
+        basis.Light[1] = pointScene.Lights.Position[light].y;
+        basis.Light[2] = pointScene.Lights.Position[light].z;
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            basis.Axis[axis] = slice.axisZ[axis];
+            basis.Tangent[axis] = slice.axisX[axis];
+            basis.Bitangent[axis] = slice.axisY[axis];
+        }
+        return basis;
+    }
+
+    // 面の軸の距離 axial の平面の、接線方向 [a0, a1] × [b0, b1] の四角形（光源からの距離。接線 a, b は軸の距離 1 あたりでなく長さ）
+    PointPolygon MakePointQuad(const PointFaceBasis& basis, double axial, double a0, double a1, double b0, double b1, const char* name)
+    {
+        PointPolygon polygon;
+        polygon.Count = 4u;
+        polygon.Name = name;
+        const double corners[4][2] = {{a0, b0}, {a1, b0}, {a1, b1}, {a0, b1}};
+        for (uint32_t corner = 0; corner < 4u; ++corner)
+        {
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                polygon.P[corner][axis] = basis.Light[axis] + axial * basis.Axis[axis] + corners[corner][0] * basis.Tangent[axis] +
+                                          corners[corner][1] * basis.Bitangent[axis];
+            }
+        }
+        return polygon;
+    }
+
+    void PolygonBounds(const PointPolygon& polygon, float (&outMin)[3], float (&outMax)[3])
+    {
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            outMin[axis] = 1.0e30f;
+            outMax[axis] = -1.0e30f;
+            for (uint32_t corner = 0; corner < polygon.Count; ++corner)
+            {
+                outMin[axis] = std::min(outMin[axis], static_cast<float>(polygon.P[corner][axis]));
+                outMax[axis] = std::max(outMax[axis], static_cast<float>(polygon.P[corner][axis]));
+            }
+        }
+    }
+
+    // 多角形の塊（組ごとの印は本番の関数）→ 点光源のページの印付け・割り当て・消去 → 展開 → 描画を 1 フレーム分走らせる。
+    // tracker が null ならキャッシュを使わない。null でなければ、多角形の動きから無効化の球を作ってページの記録へ渡す
+    bool RunPointCacheFrame(const DevicePtr& device,
+                            VirtualShadowMapPages& pages,
+                            VirtualShadowMapRaster& raster,
+                            const Scene& scene,
+                            const PointScene& pointScene,
+                            const Container::VariableArray<PointPolygon>& polygons,
+                            const Resources& resources,
+                            const TexturePtr& depth,
+                            VirtualShadowMap::CasterMotionTracker* tracker,
+                            uint64_t frameSerial,
+                            PointCacheFrame& out)
+    {
+        // 太陽の段のスライスは空にして、点光源の面の印だけを見る
+        GPUVsmSlice pointOnlySlices[VirtualShadowMapMaxSlices];
+        std::memcpy(pointOnlySlices, pointScene.Slices, sizeof(GPUVsmSlice) * pointScene.SliceCount);
+        for (uint32_t level = 0; level < VirtualShadowMap::LEVEL_COUNT; ++level)
+        {
+            std::memset(&pointOnlySlices[level], 0, sizeof(GPUVsmSlice));
+        }
+        ChunkGeometry geometry = BuildPointPolygonChunks(polygons);
+        const Container::VariableArray<VsmShadowChunk> originalChunks = geometry.Chunks;
+        Container::VariableArray<VsmShadowChunk> groupedChunks;
+        VirtualShadowMap::CasterStats casterStats;
+        for (const VsmShadowChunk& source : originalChunks)
+        {
+            VirtualShadowMap::CasterBounds bounds;
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                bounds.Min[axis] = source.BoundsMin[axis];
+                bounds.Max[axis] = source.BoundsMax[axis];
+            }
+            const VirtualShadowMap::SliceMasks masks = VirtualShadowMap::SliceMasksForBounds(pointOnlySlices, pointScene.SliceCount, bounds);
+            if (masks.IsAny())
+            {
+                VirtualShadowMap::PushChunkPerGroup(source, masks, groupedChunks, casterStats);
+            }
+        }
+        geometry.Chunks = groupedChunks;
+        RasterBuffers rasterBuffers;
+        if (groupedChunks.empty() || !CreateRasterBuffers(device, geometry, 65536u, rasterBuffers))
+        {
+            return false;
+        }
+
+        // 投影物の動き（多角形ごとに 1 件。署名 = 頂点の座標、境界 = 多角形の箱）から、無効にする球を作る
+        Container::VariableArray<float> spheres;
+        bool bInvalidateAll = false;
+        if (tracker != nullptr)
+        {
+            Container::VariableArray<VirtualShadowMap::CasterMotionEntry> entries;
+            for (uint32_t index = 0; index < polygons.size(); ++index)
+            {
+                float vertices[12] = {};
+                for (uint32_t corner = 0; corner < polygons[index].Count; ++corner)
+                {
+                    for (uint32_t axis = 0; axis < 3u; ++axis)
+                    {
+                        vertices[corner * 3u + axis] = static_cast<float>(polygons[index].P[corner][axis]);
+                    }
+                }
+                VirtualShadowMap::CasterMotionEntry entry;
+                entry.Key = static_cast<uint64_t>(index) + 1u;
+                entry.Signature = VirtualShadowMap::CasterHashFloats(1469598103934665603ull, vertices, 12u);
+                entry.bHasBounds = true;
+                float boundsMin[3];
+                float boundsMax[3];
+                PolygonBounds(polygons[index], boundsMin, boundsMax);
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    entry.Bounds.Min[axis] = boundsMin[axis];
+                    entry.Bounds.Max[axis] = boundsMax[axis];
+                }
+                entries.push_back(entry);
+            }
+            Container::VariableArray<VirtualShadowMap::CasterBounds> changed;
+            tracker->Update(entries, changed, bInvalidateAll);
+            if (!bInvalidateAll && !VirtualShadowMap::BuildInvalidationSpheres(changed, VirtualShadowMap::MAX_INVALIDATION_RECTS, spheres))
+            {
+                bInvalidateAll = true;
+                spheres.clear();
+            }
+            out.SphereCount = static_cast<uint32_t>(spheres.size() / 4u);
+        }
+
+        CommandListPtr commandList = device->CreateCommandList();
+        if (!commandList)
+        {
+            return false;
+        }
+        const BufferPtr buffers[] = {resources.Pool,      resources.PageTable, resources.RequestBits, resources.FreeList,
+                                     resources.Stats,     resources.DirtyList, rasterBuffers.Chunks,   rasterBuffers.Instances,
+                                     rasterBuffers.Draws};
+        pages.BeginFrame(0, frameSerial);
+        raster.BeginFrame(0, frameSerial);
+        commandList->Begin();
+        for (const BufferPtr& buffer : buffers)
+        {
+            commandList->BufferBarrier(buffer, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, buffer->GetSize());
+        }
+        VirtualShadowMapPagesDispatch pagesDispatch;
+        pagesDispatch.PoolPages = resources.PoolPages;
+        pagesDispatch.Pool = resources.Pool;
+        pagesDispatch.PageTable = resources.PageTable;
+        pagesDispatch.RequestBits = resources.RequestBits;
+        pagesDispatch.FreeList = resources.FreeList;
+        pagesDispatch.Stats = resources.Stats;
+        pagesDispatch.DirtyList = resources.DirtyList;
+        pagesDispatch.Depth = depth;
+        // 太陽なし（夜）: クリップマップを渡さず、点光源だけで印付けをする
+        pagesDispatch.Clipmap = nullptr;
+        pagesDispatch.PointLights = &pointScene.Lights;
+        pagesDispatch.SliceCount = pointScene.SliceCount;
+        std::memcpy(pagesDispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(pagesDispatch.InverseViewProjection));
+        std::memcpy(pagesDispatch.CameraPosition, scene.CameraPosition, sizeof(pagesDispatch.CameraPosition));
+        SetCameraForward(pagesDispatch, scene);
+        pagesDispatch.FovYDegrees = scene.Camera.FieldOfView;
+        pagesDispatch.bCacheEnabled = tracker != nullptr;
+        pagesDispatch.InvalidationSpheres = spheres.empty() ? nullptr : spheres.data();
+        pagesDispatch.InvalidationSphereCount = static_cast<uint32_t>(spheres.size() / 4u);
+        pagesDispatch.bInvalidateAll = bInvalidateAll;
+        out.Readback.bPagesRecorded = pages.Record(commandList.get(), pagesDispatch);
+
+        VirtualShadowMapClipmap noSun = scene.Clipmap;
+        noSun.bEnabled = false;
+        VirtualShadowMapRasterDispatch rasterDispatch;
+        rasterDispatch.Clipmap = &noSun;
+        rasterDispatch.SliceCount = pointScene.SliceCount;
+        rasterDispatch.Slices = pointScene.Slices;
+        rasterDispatch.PoolPages = resources.PoolPages;
+        rasterDispatch.Pool = resources.Pool;
+        rasterDispatch.PageTable = resources.PageTable;
+        rasterDispatch.Stats = resources.Stats;
+        rasterDispatch.Chunks = rasterBuffers.Chunks;
+        rasterDispatch.ChunkCount = rasterBuffers.ChunkCount;
+        rasterDispatch.Instances = rasterBuffers.Instances;
+        rasterDispatch.Draws = rasterBuffers.Draws;
+        out.Readback.bRasterRecorded = raster.Record(commandList.get(), rasterDispatch);
+        out.Readback.DrawCount = raster.GetLastDrawCount();
+        for (const BufferPtr& buffer : buffers)
+        {
+            commandList->BufferBarrier(buffer, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, buffer->GetSize());
+        }
+        commandList->End();
+        commandList->Submit(true);
+        device->WaitIdle();
+
+        if (!ReadAll(resources.Pool, out.Readback.Pool) || !ReadAll(resources.PageTable, out.Readback.PageTable) ||
+            !ReadAll(resources.FreeList, out.Readback.FreeList) || !ReadAll(resources.Stats, out.Readback.Stats) ||
+            !ReadAll(rasterBuffers.Draws, out.Readback.Draws) || !ReadAll(rasterBuffers.Instances, out.Readback.Instances))
+        {
+            return false;
+        }
+        out.Pages = DecodePointPages(pointScene, out.Readback.PageTable);
+        out.bContinued = pages.WasCacheContinued();
+        out.InvalidatedSlices = pages.GetPointInvalidatedSliceCount();
+        return out.Readback.bPagesRecorded && out.Readback.bRasterRecorded;
+    }
+
+    const PointCachePage* FindPointPage(const Container::VariableArray<PointCachePage>& pages, uint32_t slice, uint32_t pageX, uint32_t pageY)
+    {
+        for (const PointCachePage& page : pages)
+        {
+            if (page.Slice == slice && page.PageX == pageX && page.PageY == pageY)
+            {
+                return &page;
+            }
+        }
+        return nullptr;
+    }
+
+    // 2 つの結果が、同じ（スライス・ページ）の集合を持ち、全 texel の語が一致する（物理ページの番号は違ってよい）。違った語の数を返す（集合が違えば最大）
+    uint32_t CountPointPoolDifferences(const PointCacheFrame& cached, const PointCacheFrame& fresh)
+    {
+        if (cached.Pages.size() != fresh.Pages.size())
+        {
+            return 0xFFFFFFFFu;
+        }
+        uint32_t different = 0;
+        for (const PointCachePage& page : cached.Pages)
+        {
+            const PointCachePage* counterpart = FindPointPage(fresh.Pages, page.Slice, page.PageX, page.PageY);
+            if (counterpart == nullptr)
+            {
+                return 0xFFFFFFFFu;
+            }
+            const size_t baseCached = static_cast<size_t>(page.Physical) * VirtualShadowMap::PAGE_WORDS;
+            const size_t baseFresh = static_cast<size_t>(counterpart->Physical) * VirtualShadowMap::PAGE_WORDS;
+            for (uint32_t word = 0; word < VirtualShadowMap::PAGE_WORDS; ++word)
+            {
+                different += cached.Readback.Pool[baseCached + word] != fresh.Readback.Pool[baseFresh + word] ? 1u : 0u;
+            }
+        }
+        return different;
+    }
+
+    // 同じ場面を、キャッシュを使わない別の記録（別の VirtualShadowMapPages・別の資源）で描き直し、キャッシュを使った結果と全 texel で比べる。違った語の数を返す
+    uint32_t CompareWithFreshPointFrame(const DevicePtr& device,
+                                        VirtualShadowMapPages& freshPages,
+                                        VirtualShadowMapRaster& raster,
+                                        const Scene& scene,
+                                        const PointScene& pointScene,
+                                        const Container::VariableArray<PointPolygon>& polygons,
+                                        uint32_t poolPages,
+                                        const TexturePtr& depth,
+                                        const PointCacheFrame& cached,
+                                        uint64_t frameSerial)
+    {
+        Resources resources;
+        PointCacheFrame fresh;
+        if (!CreateResources(device, poolPages, resources, pointScene.SliceCount) ||
+            !RunPointCacheFrame(device, freshPages, raster, scene, pointScene, polygons, resources, depth, nullptr, frameSerial, fresh))
+        {
+            return 0xFFFFFFFFu;
+        }
+        return CountPointPoolDifferences(cached, fresh);
+    }
+
+    // 点光源のスライスの面で、球が覆うページの範囲（面の全体を [0, 一辺のページ数) としたページの座標。VsmPerspectivePageRange と同じ手順を倍精度で行う）
+    struct PointPageRange
+    {
+        bool bValid = false;
+        int32_t MinX = 0;
+        int32_t MinY = 0;
+        int32_t MaxX = -1;
+        int32_t MaxY = -1;
+
+        bool Contains(uint32_t pageX, uint32_t pageY) const
+        {
+            return bValid && static_cast<int32_t>(pageX) >= MinX && static_cast<int32_t>(pageX) <= MaxX && static_cast<int32_t>(pageY) >= MinY &&
+                   static_cast<int32_t>(pageY) <= MaxY;
+        }
+    };
+
+    void SliceCoordinates(const GPUVsmSlice& slice, const double (&point)[3], double (&out)[3])
+    {
+        const float* rows[3] = {slice.axisX, slice.axisY, slice.axisZ};
+        for (uint32_t row = 0; row < 3u; ++row)
+        {
+            out[row] = static_cast<double>(rows[row][0]) * point[0] + static_cast<double>(rows[row][1]) * point[1] +
+                       static_cast<double>(rows[row][2]) * point[2] + static_cast<double>(rows[row][3]);
+        }
+    }
+
+    PointPageRange ReferenceSphereRange(const GPUVsmSlice& slice, const double (&center)[3], double radius, double ndcMargin)
+    {
+        PointPageRange range;
+        const double rangeMeters = slice.info[2];
+        const double nearPlane = slice.info[3];
+        const int32_t pages = slice.origin[3];
+        double c[3];
+        SliceCoordinates(slice, center, c);
+        if (!(rangeMeters > nearPlane) || c[0] * c[0] + c[1] * c[1] + c[2] * c[2] > (rangeMeters + radius) * (rangeMeters + radius) ||
+            c[2] + radius < nearPlane || c[2] - radius > rangeMeters)
+        {
+            return range;
+        }
+        const double side = radius * 1.4142135623730951;
+        if (c[0] - c[2] > side || -c[0] - c[2] > side || c[1] - c[2] > side || -c[1] - c[2] > side)
+        {
+            return range;
+        }
+        range.bValid = true;
+        if (c[2] - radius <= nearPlane)
+        {
+            range.MinX = 0;
+            range.MinY = 0;
+            range.MaxX = pages - 1;
+            range.MaxY = pages - 1;
+            return range;
+        }
+        const double denominator = c[2] * c[2] - radius * radius;
+        int32_t low[2];
+        int32_t high[2];
+        for (uint32_t axis = 0; axis < 2u; ++axis)
+        {
+            const double spread = radius * std::sqrt(std::max(c[axis] * c[axis] + denominator, 0.0));
+            const double ndcLow = (c[axis] * c[2] - spread) / denominator - ndcMargin;
+            const double ndcHigh = (c[axis] * c[2] + spread) / denominator + ndcMargin;
+            low[axis] = std::max(static_cast<int32_t>(std::floor(ndcLow * 0.5 * pages + 0.5 * pages)), 0);
+            high[axis] = std::min(static_cast<int32_t>(std::floor(ndcHigh * 0.5 * pages + 0.5 * pages)), pages - 1);
+        }
+        range.MinX = low[0];
+        range.MinY = low[1];
+        range.MaxX = high[0];
+        range.MaxY = high[1];
+        return range;
+    }
+
+    // 箱の 8 隅を面の NDC へ写した範囲。箱の全体が近い平面の手前・Range の内側にあるときだけ有効（箱の中のどの点もこの範囲のページに写る）
+    PointPageRange ReferenceBoxRange(const GPUVsmSlice& slice, const float (&boxMin)[3], const float (&boxMax)[3])
+    {
+        PointPageRange range;
+        const double rangeMeters = slice.info[2];
+        const double nearPlane = slice.info[3];
+        const int32_t pages = slice.origin[3];
+        double ndcMin[2] = {1.0e30, 1.0e30};
+        double ndcMax[2] = {-1.0e30, -1.0e30};
+        for (uint32_t corner = 0; corner < 8u; ++corner)
+        {
+            const double point[3] = {static_cast<double>((corner & 1u) ? boxMax[0] : boxMin[0]), static_cast<double>((corner & 2u) ? boxMax[1] : boxMin[1]),
+                                     static_cast<double>((corner & 4u) ? boxMax[2] : boxMin[2])};
+            double c[3];
+            SliceCoordinates(slice, point, c);
+            if (!(c[2] > nearPlane + 0.05) || std::sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]) > rangeMeters)
+            {
+                return range;
+            }
+            for (uint32_t axis = 0; axis < 2u; ++axis)
+            {
+                ndcMin[axis] = std::min(ndcMin[axis], c[axis] / c[2]);
+                ndcMax[axis] = std::max(ndcMax[axis], c[axis] / c[2]);
+            }
+        }
+        range.bValid = true;
+        // 縁の近くのページは含めない（単精度の GPU との差で落ちうる）。箱の NDC を内側へ縮めた範囲のページは必ず含まれる
+        const double shrink = 2.0e-3;
+        range.MinX = static_cast<int32_t>(std::floor((ndcMin[0] + shrink) * 0.5 * pages + 0.5 * pages));
+        range.MinY = static_cast<int32_t>(std::floor((ndcMin[1] + shrink) * 0.5 * pages + 0.5 * pages));
+        range.MaxX = static_cast<int32_t>(std::floor((ndcMax[0] - shrink) * 0.5 * pages + 0.5 * pages));
+        range.MaxY = static_cast<int32_t>(std::floor((ndcMax[1] - shrink) * 0.5 * pages + 0.5 * pages));
+        range.MinX = std::max(range.MinX, 0);
+        range.MinY = std::max(range.MinY, 0);
+        range.MaxX = std::min(range.MaxX, pages - 1);
+        range.MaxY = std::min(range.MaxY, pages - 1);
+        return range;
+    }
+
+    bool RunPointCacheCases(const DevicePtr& device,
+                            ShaderManager& shaderManager,
+                            VirtualShadowMapRaster& raster,
+                            const Scene& scene,
+                            const Container::VariableArray<float>& sunImage,
+                            uint64_t& frameSerial)
+    {
+        VirtualShadowMapPages cachedPages;
+        VirtualShadowMapPages freshPages;
+        if (!cachedPages.Initialize(device.get(), &shaderManager) || !freshPages.Initialize(device.get(), &shaderManager))
+        {
+            std::cerr << TestName << " ケース T: ページのパイプラインを初期化できませんでした" << std::endl;
+            return false;
+        }
+
+        // ----- 灯の並びと、印付けに使う深度 -----
+        const PointScene sceneA = BuildPointScene(scene);
+        Container::VariableArray<float> image = sunImage;
+        RemoveAmbiguousPointPixels(scene, sceneA, image);
+        const TexturePtr depth = CreateDepthTexture(device, image);
+        if (!depth)
+        {
+            std::cerr << TestName << " ケース T: 深度のテクスチャを作れませんでした" << std::endl;
+            return false;
+        }
+        const auto buildLights = [&](const Math::Vector3& position0, bool bSwap, uint32_t lightCount) {
+            PointShadowSnapshot snapshot;
+            snapshot.LightCount = lightCount;
+            snapshot.Lights[0].LightId = 101u;
+            snapshot.Lights[0].Position = position0;
+            snapshot.Lights[0].Range = 30.0f;
+            snapshot.Lights[1].LightId = 102u;
+            snapshot.Lights[1].Position = Math::Vector3(-6.0f, 1.0f, -2.0f);
+            snapshot.Lights[1].Range = 6.0f;
+            if (bSwap)
+            {
+                std::swap(snapshot.Lights[0], snapshot.Lights[1]);
+            }
+            return BuildPointSceneFrom(scene, snapshot);
+        };
+        const Math::Vector3 position0(1.5f, 2.0f, -12.0f);
+        const Math::Vector3 movedPosition0(2.0f, 2.0f, -12.0f);
+        const PointScene sceneMoved = buildLights(movedPosition0, false, 2u);
+        const PointScene sceneSwapped = buildLights(position0, true, 2u);
+        const PointScene sceneSingle = buildLights(position0, false, 1u);
+
+        // 要求のあるページの参照（プールの大きさと、動く四角形の位置の選択に使う）
+        const auto collectKeys = [&](const PointScene& pointScene) {
+            Container::VariableArray<uint32_t> keys;
+            for (uint32_t pixelY = 0; pixelY < ImageHeight; ++pixelY)
+            {
+                for (uint32_t pixelX = 0; pixelX < ImageWidth; ++pixelX)
+                {
+                    ClassifyPointPixel(scene, pointScene, pixelX, pixelY, image[pixelY * ImageWidth + pixelX], &keys, nullptr, nullptr);
+                }
+            }
+            SortUnique(keys);
+            return keys;
+        };
+        const Container::VariableArray<uint32_t> keysA = collectKeys(sceneA);
+        const Container::VariableArray<uint32_t> keysMoved = collectKeys(sceneMoved);
+        Expect(keysA.size() >= 20u && keysMoved.size() >= 20u, "ケース T: 点光源のページに要求がなければならない（場面が退化している）");
+        const uint32_t poolPages = static_cast<uint32_t>(std::max(keysA.size(), keysMoved.size()) * 5u / 4u) + 64u;
+        std::cout << TestName << " ケース T: 要求の参照=" << keysA.size() << "（灯を動かすと " << keysMoved.size() << "）プール=" << poolPages << std::endl;
+
+        // ----- 多角形: 各灯の各面の背景の四角形と、灯 0 の要求のあるページの内側に置いた動く四角形 -----
+        Container::VariableArray<PointPolygon> polygons;
+        for (uint32_t light = 0; light < sceneA.Lights.LightCount; ++light)
+        {
+            const double depthMeters = 0.5 * sceneA.Lights.Range[light];
+            for (uint32_t face = 0; face < PointShadowFaceCount; ++face)
+            {
+                const double half = 1.3 * depthMeters;
+                polygons.push_back(MakePointQuad(MakePointFaceBasis(sceneA, light, face), depthMeters, -half, half, -half, half, "Backdrop"));
+            }
+        }
+        const uint32_t backdropCount = static_cast<uint32_t>(polygons.size());
+        // 灯 0 の面のページのうち、要求のある最も細かい段（ページの数が最も多い段）の最初のページ
+        uint32_t moverFace = 0;
+        uint32_t moverPages = 0;
+        double moverNdc[2] = {};
+        bool bFound = false;
+        for (const uint32_t key : keysA)
+        {
+            const uint32_t slice = key / VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+            const uint32_t local = slice - sceneA.Lights.FirstSlice;
+            const uint32_t pagesPerAxis = static_cast<uint32_t>(sceneA.Slices[slice].origin[3]);
+            if (local / sceneA.Lights.SlicesPerLight != 0u || pagesPerAxis <= moverPages)
+            {
+                continue;
+            }
+            moverFace = (local % sceneA.Lights.SlicesPerLight) / sceneA.Lights.Settings.MipCount;
+            moverPages = pagesPerAxis;
+            const uint32_t address = key % VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+            moverNdc[0] = ((address % moverPages) + 0.5) / moverPages * 2.0 - 1.0;
+            moverNdc[1] = ((address / moverPages) + 0.5) / moverPages * 2.0 - 1.0;
+            bFound = true;
+        }
+        Expect(bFound, "ケース T: 灯 0 の要求のあるページが見つからない（場面が退化している）");
+        if (!bFound)
+        {
+            return false;
+        }
+        const double moverDepth = 0.25 * sceneA.Lights.Range[0];
+        const double pageMeters = 2.0 / moverPages * moverDepth;
+        const PointFaceBasis moverBasis = MakePointFaceBasis(sceneA, 0u, moverFace);
+        const double moverCenter[2] = {moverNdc[0] * moverDepth, moverNdc[1] * moverDepth};
+        const auto makeMover = [&](double shiftPages) {
+            const double half = 0.15 * pageMeters;
+            const double shift = shiftPages * pageMeters;
+            return MakePointQuad(moverBasis, moverDepth, moverCenter[0] + shift - half, moverCenter[0] + shift + half, moverCenter[1] - half,
+                                 moverCenter[1] + half, "Mover");
+        };
+        polygons.push_back(makeMover(0.0));
+        const uint32_t moverIndex = backdropCount;
+
+        Resources resources;
+        VirtualShadowMap::CasterMotionTracker tracker;
+        if (!CreateResources(device, poolPages, resources, sceneA.SliceCount))
+        {
+            std::cerr << TestName << " ケース T: 資源を作れませんでした" << std::endl;
+            return false;
+        }
+
+        // ----- T1: 最初のフレームは全ページを描く -----
+        PointCacheFrame frame1;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneA, polygons, resources, depth, &tracker, frameSerial++, frame1))
+        {
+            std::cerr << TestName << " ケース T1 を実行できませんでした" << std::endl;
+            return false;
+        }
+        const uint32_t pointPages = static_cast<uint32_t>(frame1.Pages.size());
+        Expect(!frame1.bContinued, "ケース T1: 最初のフレームは前フレームの表を引き継がない");
+        Expect(frame1.Stat(VirtualShadowMap::StatOverflow) == 0u && frame1.Stat(VirtualShadowMap::StatRasterOverflow) == 0u,
+               "ケース T1: ページの溢れも展開の溢れも出てはならない");
+        Expect(pointPages >= 20u && frame1.PagesOf(0u) > 0u && frame1.PagesOf(1u) > 0u, "ケース T1: 2 灯どちらにも割り当て済みのページがなければならない");
+        Expect(frame1.Stat(VirtualShadowMap::StatPointRequested) == pointPages && frame1.DirtyCount() == pointPages &&
+                   frame1.Stat(VirtualShadowMap::StatPointRendered) == pointPages && frame1.Stat(VirtualShadowMap::StatPointCached) == 0u,
+               "ケース T1: 最初のフレームは点光源のページをすべて描き、持ち越しは 0 でなければならない");
+        {
+            uint32_t covered = 0;
+            for (const PointCachePage& page : frame1.Pages)
+            {
+                for (uint32_t word = 0; word < VirtualShadowMap::PAGE_WORDS; ++word)
+                {
+                    covered += frame1.Readback.Pool[static_cast<size_t>(page.Physical) * VirtualShadowMap::PAGE_WORDS + word] != VirtualShadowMap::EMPTY_DEPTH_BITS ? 1u : 0u;
+                }
+            }
+            Expect(covered > 20000u, "ケース T1: 背景の四角形が点光源のページに描かれていなければならない（場面が退化している）");
+        }
+        std::cout << TestName << " ケース T1: 点光源のページ=" << pointPages << "（灯 0 が " << frame1.PagesOf(0u) << "、灯 1 が " << frame1.PagesOf(1u)
+                  << "）描いた=" << frame1.Stat(VirtualShadowMap::StatPointRendered) << std::endl;
+
+        // ----- T2: 止まった灯と投影物の 2 フレーム目は、点光源のページが描かれない -----
+        PointCacheFrame frame2;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneA, polygons, resources, depth, &tracker, frameSerial++, frame2))
+        {
+            std::cerr << TestName << " ケース T2 を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(frame2.bContinued && frame2.InvalidatedSlices == 0u && frame2.SphereCount == 0u,
+               "ケース T2: 止まった場面は前フレームの表を引き継ぎ、スライスも球も無効にしない");
+        Expect(frame2.Stat(VirtualShadowMap::StatPointRendered) == 0u && frame2.Stat(VirtualShadowMap::StatPointCached) == pointPages &&
+                   frame2.Stat(VirtualShadowMap::StatPointInvalidated) == 0u && frame2.Stat(VirtualShadowMap::StatPointReleased) == 0u &&
+                   frame2.Stat(VirtualShadowMap::StatRendered) == 0u,
+               "ケース T2: 止まった場面の 2 フレーム目に描かれる点光源のページが 0、持ち越しが要求の数でなければならない");
+        Expect(frame2.Stat(VirtualShadowMap::StatRasterInstances) == 0u && frame2.DirtyCount() == 0u, "ケース T2: dirty のページが無いので、描くインスタンスが 0 でなければならない");
+        Expect(frame2.Readback.Pool == frame1.Readback.Pool, "ケース T2: 持ち越したページの物理プールの中身が変わってはならない");
+        for (const PointCachePage& page : frame1.Pages)
+        {
+            const PointCachePage* same = FindPointPage(frame2.Pages, page.Slice, page.PageX, page.PageY);
+            Expect(same != nullptr && same->Physical == page.Physical, "ケース T2: 持ち越したページが同じ物理ページを保たなければならない");
+        }
+
+        // ----- T3: 投影物が動くと、前後の境界を覆う球が面の NDC で覆うページだけが描き直される -----
+        const float shiftPages = 0.9f;
+        Container::VariableArray<PointPolygon> movedPolygons = polygons;
+        movedPolygons[moverIndex] = makeMover(shiftPages);
+        PointCacheFrame frame3;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneA, movedPolygons, resources, depth, &tracker, frameSerial++, frame3))
+        {
+            std::cerr << TestName << " ケース T3 を実行できませんでした" << std::endl;
+            return false;
+        }
+        const uint32_t dirty3 = frame3.DirtyCount();
+        Expect(frame3.bContinued && frame3.InvalidatedSlices == 0u && frame3.SphereCount == 2u,
+               "ケース T3: 動いた四角形の前後の境界 2 つが球になり、スライスは無効にならない");
+        Expect(frame3.Pages.size() == pointPages && frame3.Stat(VirtualShadowMap::StatPointRendered) == dirty3 &&
+                   frame3.Stat(VirtualShadowMap::StatPointInvalidated) == dirty3 && frame3.Stat(VirtualShadowMap::StatPointCached) == pointPages - dirty3,
+               "ケース T3: 描いた・無効にした・持ち越したページの数が、ページの表の dirty と一致しなければならない");
+        Expect(dirty3 > 0u && dirty3 * 2u < pointPages, "ケース T3: 動いた範囲の一部のページだけが描き直されなければならない");
+        {
+            float oldMin[3];
+            float oldMax[3];
+            float newMin[3];
+            float newMax[3];
+            PolygonBounds(polygons[moverIndex], oldMin, oldMax);
+            PolygonBounds(movedPolygons[moverIndex], newMin, newMax);
+            const float* boxes[2][2] = {{oldMin, oldMax}, {newMin, newMax}};
+            uint32_t tightRequired = 0;
+            uint32_t missing = 0;
+            uint32_t outside = 0;
+            for (const PointCachePage& page : frame3.Pages)
+            {
+                const GPUVsmSlice& slice = sceneA.Slices[page.Slice];
+                bool bTight = false;
+                bool bLoose = false;
+                for (const auto& box : boxes)
+                {
+                    float boxMin[3] = {box[0][0], box[0][1], box[0][2]};
+                    float boxMax[3] = {box[1][0], box[1][1], box[1][2]};
+                    bTight = bTight || ReferenceBoxRange(slice, boxMin, boxMax).Contains(page.PageX, page.PageY);
+                    const double center[3] = {0.5 * (static_cast<double>(boxMin[0]) + boxMax[0]), 0.5 * (static_cast<double>(boxMin[1]) + boxMax[1]),
+                                              0.5 * (static_cast<double>(boxMin[2]) + boxMax[2])};
+                    const double radius = 0.5 * std::sqrt((static_cast<double>(boxMax[0]) - boxMin[0]) * (static_cast<double>(boxMax[0]) - boxMin[0]) +
+                                                          (static_cast<double>(boxMax[1]) - boxMin[1]) * (static_cast<double>(boxMax[1]) - boxMin[1]) +
+                                                          (static_cast<double>(boxMax[2]) - boxMin[2]) * (static_cast<double>(boxMax[2]) - boxMin[2]));
+                    bLoose = bLoose || ReferenceSphereRange(slice, center, radius + 0.01, 2.0e-3).Contains(page.PageX, page.PageY);
+                }
+                tightRequired += bTight ? 1u : 0u;
+                missing += (bTight && !page.bDirty) ? 1u : 0u;
+                outside += (page.bDirty && !bLoose) ? 1u : 0u;
+            }
+            Expect(tightRequired > 0u, "ケース T3: 動いた四角形を面へ写した範囲に、割り当て済みのページがなければならない（場面が退化している）");
+            Expect(missing == 0u, "ケース T3: 動いた四角形の箱を面へ写した範囲の割り当て済みのページは、すべて描き直されなければならない");
+            Expect(outside == 0u, "ケース T3: 描き直されたページは、前後の境界を覆う球が面の NDC で覆う範囲の内側でなければならない");
+            std::cout << TestName << " ケース T3: 動かしたページ幅=" << shiftPages << " 描き直したページ=" << dirty3 << "/" << pointPages << "（箱の範囲 " << tightRequired
+                      << "、球の範囲の外 " << outside << "、取りこぼし " << missing << "）球=" << frame3.SphereCount << std::endl;
+        }
+        {
+            // 動いた四角形の中身が変わる（描き直さないと古い影が残る）
+            uint32_t changed = 0;
+            for (const PointCachePage& page : frame3.Pages)
+            {
+                const PointCachePage* before = FindPointPage(frame2.Pages, page.Slice, page.PageX, page.PageY);
+                for (uint32_t word = 0; before != nullptr && word < VirtualShadowMap::PAGE_WORDS; ++word)
+                {
+                    changed += frame3.Readback.Pool[static_cast<size_t>(page.Physical) * VirtualShadowMap::PAGE_WORDS + word] !=
+                                       frame2.Readback.Pool[static_cast<size_t>(before->Physical) * VirtualShadowMap::PAGE_WORDS + word]
+                                   ? 1u
+                                   : 0u;
+                }
+            }
+            Expect(changed > 100u, "ケース T3: 動いた四角形のぶん、描き直したページの texel が変わらなければならない");
+        }
+        {
+            const uint32_t different = CompareWithFreshPointFrame(device, freshPages, raster, scene, sceneA, movedPolygons, poolPages, depth, frame3, frameSerial++);
+            Expect(different == 0u, "ケース T3: 物理ページが毎フレーム描き直したときと全 texel で一致しなければならない");
+            std::cout << TestName << " ケース T3: 毎フレーム描き直した結果との texel の違い=" << different << std::endl;
+        }
+
+        // ----- T4: 灯 0 が動くと、灯 0 のスライスの全ページが描き直される -----
+        PointCacheFrame frame4;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneMoved, movedPolygons, resources, depth, &tracker, frameSerial++, frame4))
+        {
+            std::cerr << TestName << " ケース T4 を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(frame4.bContinued && frame4.InvalidatedSlices == sceneMoved.Lights.SlicesPerLight && frame4.SphereCount == 0u,
+               "ケース T4: 動いた灯 0 のスライスだけ（6 面 × 6 段 = 36）が無効になる");
+        Expect(frame4.PagesOf(0u) > 0u && frame4.DirtyOf(0u) == frame4.PagesOf(0u),
+               "ケース T4: 動いた灯 0 の割り当て済みのページは、すべて描き直されなければならない");
+        Expect(frame4.PagesOf(1u) > 0u && frame4.DirtyOf(1u) == 0u, "ケース T4: 動かない灯 1 のページは描き直されてはならない");
+        Expect(frame4.Stat(VirtualShadowMap::StatPointRendered) == frame4.DirtyCount() && frame4.Stat(VirtualShadowMap::StatOverflow) == 0u,
+               "ケース T4: 描いた点光源のページの数が dirty と一致し、溢れが出てはならない");
+        {
+            const uint32_t different = CompareWithFreshPointFrame(device, freshPages, raster, scene, sceneMoved, movedPolygons, poolPages, depth, frame4, frameSerial++);
+            Expect(different == 0u, "ケース T4: 灯を動かした後の物理ページが毎フレーム描き直したときと全 texel で一致しなければならない");
+            std::cout << TestName << " ケース T4: 灯 0 のページ=" << frame4.PagesOf(0u) << " 描き直した=" << frame4.DirtyOf(0u) << " 灯 1 のページ=" << frame4.PagesOf(1u)
+                      << " 描き直した=" << frame4.DirtyOf(1u) << " 無効にしたスライス=" << frame4.InvalidatedSlices << " texel の違い=" << different << std::endl;
+        }
+
+        // ----- T5: 灯の並びが変わると（識別子が同じでも番号が変わる）、両方の灯のページが描き直される -----
+        PointCacheFrame frame5;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneSwapped, movedPolygons, resources, depth, &tracker, frameSerial++, frame5))
+        {
+            std::cerr << TestName << " ケース T5 を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(frame5.bContinued && frame5.InvalidatedSlices == 2u * sceneSwapped.Lights.SlicesPerLight,
+               "ケース T5: 入れ替わった 2 灯のスライスがすべて無効になる");
+        Expect(frame5.Pages.size() > 0u && frame5.DirtyCount() == frame5.Pages.size(), "ケース T5: 入れ替わった灯のページは、すべて描き直されなければならない");
+        {
+            const uint32_t different = CompareWithFreshPointFrame(device, freshPages, raster, scene, sceneSwapped, movedPolygons, poolPages, depth, frame5, frameSerial++);
+            Expect(different == 0u, "ケース T5: 灯を入れ替えた後の物理ページが毎フレーム描き直したときと全 texel で一致しなければならない");
+            std::cout << TestName << " ケース T5: ページ=" << frame5.Pages.size() << " 描き直した=" << frame5.DirtyCount() << " texel の違い=" << different << std::endl;
+        }
+
+        // ----- T6: 灯が無くなると、その灯のスライスのページは空きへ戻る -----
+        // （T5 で入れ替えた並びから、灯 0 だけの並びへ戻す。スロット 0 の灯が変わるので、灯 0 も描き直されるのは T5 と同じ。灯 1 のスロットは空きへ戻る）
+        PointCacheFrame frame6a;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneA, movedPolygons, resources, depth, &tracker, frameSerial++, frame6a))
+        {
+            std::cerr << TestName << " ケース T6（元の並びへ戻す）を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(frame6a.Pages.size() > 0u && frame6a.DirtyCount() == frame6a.Pages.size(), "ケース T6: 並びを戻した 1 フレームは、両方の灯のページが描き直される");
+        PointCacheFrame frame6b;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneSingle, movedPolygons, resources, depth, &tracker, frameSerial++, frame6b))
+        {
+            std::cerr << TestName << " ケース T6 を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(frame6b.bContinued && frame6b.InvalidatedSlices == sceneSingle.Lights.SlicesPerLight,
+               "ケース T6: 無くなった灯 1 のスライス（36）だけが無効になる");
+        Expect(frame6b.PagesOf(0u) == frame6a.PagesOf(0u) && frame6b.PagesOf(1u) == 0u && frame6b.DirtyCount() == 0u,
+               "ケース T6: 無くなった灯 1 のページは空きへ戻り、残った灯 0 のページは描き直されない");
+        Expect(frame6b.Stat(VirtualShadowMap::StatPointReleased) == frame6a.PagesOf(1u) && frame6b.Stat(VirtualShadowMap::StatPointRendered) == 0u,
+               "ケース T6: 空きへ戻した点光源のページの数が、無くなった灯 1 のページの数と一致しなければならない");
+        {
+            const uint32_t different = CompareWithFreshPointFrame(device, freshPages, raster, scene, sceneSingle, movedPolygons, poolPages, depth, frame6b, frameSerial++);
+            Expect(different == 0u, "ケース T6: 灯が減った後の物理ページが毎フレーム描き直したときと全 texel で一致しなければならない");
+            std::cout << TestName << " ケース T6: 残ったページ=" << frame6b.Pages.size() << " 空きへ戻した=" << frame6b.Stat(VirtualShadowMap::StatPointReleased)
+                      << " texel の違い=" << different << std::endl;
+        }
+        return true;
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -7935,6 +8734,11 @@ namespace
                 }
                 // ----- ケース M: ページのキャッシュ（持ち越し・無効化・古い順の解放） -----
                 if (!RunCacheCases(device, shaderManager, raster, scene, reference, image, depth, frameSerial))
+                {
+                    return 1;
+                }
+                // ----- ケース T: 点光源の面のページの持ち越し（灯の移動・投影物の移動による無効化） -----
+                if (!RunPointCacheCases(device, shaderManager, raster, scene, image, frameSerial))
                 {
                     return 1;
                 }

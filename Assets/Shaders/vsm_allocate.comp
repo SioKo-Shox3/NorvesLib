@@ -9,9 +9,11 @@
 //
 //   段階 0（引き継ぎ）: ページの表の割り当て済みの欄ごとに 1 スレッド。dirty を外す。キャッシュを使わない、または段の範囲が
 //     動いて欄のトーラスの番地が指す絶対のページが変わった（範囲の外へ出た）欄は、空きへ戻す（欄を 0 にする）。
-//     全ページを無効にする指定（太陽の向き・深度の原点が変わった）なら、残った欄に dirty を付ける。
+//     全ページを無効にする指定（太陽の向き・深度の原点が変わった）なら、残った欄に dirty を付ける。太陽の段（正射影）と点光源の面
+//     （透視）は指定が別で、灯の位置・Range などが変わったスライスは、スライスの印（extra.w の SLICE_FLAG_INVALIDATE）で全ページに dirty を付ける。
 //   段階 1（無効化）: 無効化の矩形（ライト空間。動いた投影物の前フレームと今フレームの境界）× 段ごとに 1 スレッド。
-//     矩形が覆う、範囲の中の割り当て済みのページに dirty を付ける。
+//     矩形が覆う、範囲の中の割り当て済みのページに dirty を付ける。透視のスライス（点光源の面）は、矩形の代わりに無効化の球
+//     （動いた投影物の前後の境界を覆う球。ワールド）を使い、球が面の NDC で覆うページに dirty を付ける。
 //   段階 2（年齢）: 欄ごとに 1 スレッド。要求のあるページは年齢を 0 にする。要求の無いページは、dirty なら（描き直しても使われないので）
 //     空きへ戻し、そうでなければ年齢を 1 足して、持ち越しの上限を超えたら空きへ戻す。要求があるのに割り当ての無い欄の数（新しく要るページの数）と、
 //     使用中のページの数、年齢ごとの数を数える。
@@ -49,10 +51,13 @@ layout(std140, set = 0, binding = 0) uniform VsmParams
     vec4 thresholds[4];
     // vsm_mark.comp だけが読む（xyz: カメラの前方、w: 影の範囲の手前の端）
     vec4 view;
-    // x: 印（1 = キャッシュを使う、2 = 全ページを無効にする）、y: 持ち越すフレーム数、z: 無効化の矩形の数
+    // x: 印（1 = キャッシュを使う、2 = 太陽の段の全ページを無効にする、4 = 点光源の面の全ページを無効にする）、
+    // y: 持ち越すフレーム数、z: 無効化の矩形の数（太陽の段）、w: 無効化の球の数（点光源の面）
     uvec4 cache;
     // 無効化の矩形（ライト空間。x, y = 最小、z, w = 最大）
     vec4 rects[256];
+    // 無効化の球（ワールド。xyz = 中心、w = 半径）
+    vec4 spheres[256];
 } params;
 
 layout(std430, set = 0, binding = 2) buffer VsmRequestBits
@@ -105,6 +110,11 @@ const uint STAT_LEVELS_USED_BEYOND = 53u;
 // 投影の種類が透視のスライス（点光源の面）だけの要求・割り当ての数（STAT_REQUESTED・STAT_ALLOCATED は太陽と点光源の合計）
 const uint STAT_POINT_REQUESTED = 54u;
 const uint STAT_POINT_ALLOCATED = 55u;
+// 透視のスライス（点光源の面）だけの持ち越し・描いた・無効にした・空きへ戻したページの数（STAT_CACHED 〜 STAT_RELEASED は太陽と点光源の合計）
+const uint STAT_POINT_CACHED = 58u;
+const uint STAT_POINT_RENDERED = 59u;
+const uint STAT_POINT_INVALIDATED = 60u;
+const uint STAT_POINT_RELEASED = 61u;
 const int SLICE_PROJECTION_PERSPECTIVE = 1;
 const uint STAT_CACHED = 11u;
 const uint STAT_RENDERED = 12u;
@@ -121,6 +131,9 @@ const uint AGE_BINS = 32u;
 
 const uint CACHE_FLAG_ENABLED = 1u;
 const uint CACHE_FLAG_INVALIDATE_ALL = 2u;
+const uint CACHE_FLAG_INVALIDATE_POINT = 4u;
+// スライスの表の extra.w。立っているスライスは、前フレームのページの内容を引き継げない（灯の位置・Range・並びが変わった）ので、全ページに dirty を付ける
+const int SLICE_FLAG_INVALIDATE = 1;
 
 const uint PAGE_ENTRY_ALLOCATED = 1u << 31;
 const uint PAGE_ENTRY_DIRTY = 1u << 30;
@@ -155,11 +168,31 @@ bool IsRequested(uint entryIndex)
     return ((requestBits[entryIndex >> 5u] >> (entryIndex & 31u)) & 1u) != 0u;
 }
 
+// 欄が透視のスライス（点光源の面）のものか
+bool IsPointEntry(uint entryIndex)
+{
+    return vsmSlices[entryIndex / ENTRIES_PER_LEVEL].extra.z == SLICE_PROJECTION_PERSPECTIVE;
+}
+
 // 欄を空きへ戻す（その欄だけが持つ物理ページなので、ほかのスレッドと競合しない）
 void ReleaseEntry(uint entryIndex)
 {
     pageTable[entryIndex] = 0u;
     atomicAdd(stats[STAT_RELEASED], 1u);
+    if (IsPointEntry(entryIndex))
+    {
+        atomicAdd(stats[STAT_POINT_RELEASED], 1u);
+    }
+}
+
+// 無効にした欄を数える
+void CountInvalidated(bool bPoint)
+{
+    atomicAdd(stats[STAT_INVALIDATED], 1u);
+    if (bPoint)
+    {
+        atomicAdd(stats[STAT_POINT_INVALIDATED], 1u);
+    }
 }
 
 void Scroll()
@@ -183,6 +216,7 @@ void Scroll()
     // 欄のトーラスの番地が、前フレームの範囲・今フレームの範囲で指す絶対のページ。違えば範囲の外へ出た（同じ番地が新しいページになった）
     const uint level = entryIndex / ENTRIES_PER_LEVEL;
     const VsmSlice slice = vsmSlices[level];
+    const bool bPoint = slice.extra.z == SLICE_PROJECTION_PERSPECTIVE;
     const uint dimension = uint(slice.origin.w);
     const uint local = entryIndex - uint(slice.origin.z);
     const ivec2 address = ivec2(int(local % dimension), int(local / dimension));
@@ -201,17 +235,44 @@ void Scroll()
     // 前フレームの展開が容量の溢れで描けなかった塊の範囲のページ（再描画の印）は、欠けたまま持ち越さないよう dirty を付け直す
     const bool bRetry = (entry & PAGE_ENTRY_RETRY) != 0u;
     entry &= ~(PAGE_ENTRY_DIRTY | PAGE_ENTRY_RETRY);
-    if ((params.cache.x & CACHE_FLAG_INVALIDATE_ALL) != 0u)
+    const uint invalidateAllFlag = bPoint ? CACHE_FLAG_INVALIDATE_POINT : CACHE_FLAG_INVALIDATE_ALL;
+    if ((params.cache.x & invalidateAllFlag) != 0u || (slice.extra.w & SLICE_FLAG_INVALIDATE) != 0 || bRetry)
     {
         entry |= PAGE_ENTRY_DIRTY;
-        atomicAdd(stats[STAT_INVALIDATED], 1u);
-    }
-    else if (bRetry)
-    {
-        entry |= PAGE_ENTRY_DIRTY;
-        atomicAdd(stats[STAT_INVALIDATED], 1u);
+        CountInvalidated(bPoint);
     }
     pageTable[entryIndex] = entry;
+}
+
+// 欄が割り当て済みなら dirty を付ける（重なる矩形・球のスレッドが同じ語へ dirty を atomicOr するので、割り当ての判定の読み取りも原子的にする。
+// 通常の読み取りはデータ競合になる。割り当て済みのビットはこの dispatch では変わらないので、atomicOr の戻り値（変更前の値）だけで判定できる）
+void InvalidateEntry(uint entryIndex, bool bPoint)
+{
+    const uint previous = atomicOr(pageTable[entryIndex], 0u);
+    if ((previous & PAGE_ENTRY_ALLOCATED) == 0u)
+    {
+        return;
+    }
+    const uint before = atomicOr(pageTable[entryIndex], PAGE_ENTRY_DIRTY);
+    if ((before & PAGE_ENTRY_DIRTY) == 0u)
+    {
+        CountInvalidated(bPoint);
+    }
+}
+
+// 透視のスライス（点光源の面）の、球が面の NDC で覆うページに dirty を付ける。球の範囲の判定は展開・カリングと同じ（VsmPerspectivePageRange）
+void InvalidateSphere(VsmSlice slice, vec4 sphere)
+{
+    ivec2 pageMin;
+    uvec2 size;
+    VsmPerspectivePageRange(slice, sphere.xyz, sphere.w, pageMin, size);
+    for (uint offsetY = 0u; offsetY < size.y; ++offsetY)
+    {
+        for (uint offsetX = 0u; offsetX < size.x; ++offsetX)
+        {
+            InvalidateEntry(VsmSliceEntryIndex(slice, pageMin.x + int(offsetX), pageMin.y + int(offsetY)), true);
+        }
+    }
 }
 
 void InvalidateRects()
@@ -220,12 +281,20 @@ void InvalidateRects()
     const uint id = gl_GlobalInvocationID.x;
     const uint rectIndex = id / levels;
     const uint level = id % levels;
+    const VsmSlice slice = vsmSlices[level];
+    if (slice.extra.z == SLICE_PROJECTION_PERSPECTIVE)
+    {
+        if (rectIndex < params.cache.w)
+        {
+            InvalidateSphere(slice, params.spheres[rectIndex]);
+        }
+        return;
+    }
     if (rectIndex >= params.cache.z)
     {
         return;
     }
     const vec4 rect = params.rects[rectIndex];
-    const VsmSlice slice = vsmSlices[level];
     const float pageMeters = slice.info.x;
     if (!(pageMeters > 0.0))
     {
@@ -240,19 +309,7 @@ void InvalidateRects()
     {
         for (int pageX = low.x; pageX <= high.x; ++pageX)
         {
-            const uint entryIndex = VsmSliceEntryIndex(slice, pageX, pageY);
-            // 重なる矩形のスレッドが同じ語へ dirty を atomicOr するので、割り当ての判定の読み取りも原子的にする（通常の読み取りはデータ競合になる）。
-            // 割り当て済みのビットはこの dispatch では変わらないので、atomicOr の戻り値（変更前の値）だけで判定できる
-            const uint previous = atomicOr(pageTable[entryIndex], 0u);
-            if ((previous & PAGE_ENTRY_ALLOCATED) == 0u)
-            {
-                continue;
-            }
-            const uint before = atomicOr(pageTable[entryIndex], PAGE_ENTRY_DIRTY);
-            if ((before & PAGE_ENTRY_DIRTY) == 0u)
-            {
-                atomicAdd(stats[STAT_INVALIDATED], 1u);
-            }
+            InvalidateEntry(VsmSliceEntryIndex(slice, pageX, pageY), false);
         }
     }
 }
@@ -500,14 +557,23 @@ void DirtyList()
     {
         return;
     }
+    const bool bPoint = IsPointEntry(entryIndex);
     if ((entry & PAGE_ENTRY_DIRTY) != 0u)
     {
         const uint slot = atomicAdd(dirtyList[DIRTY_COUNT], 1u);
         dirtyList[DIRTY_FIRST_PAGE + slot] = entry & PAGE_INDEX_MASK;
+        if (bPoint)
+        {
+            atomicAdd(stats[STAT_POINT_RENDERED], 1u);
+        }
     }
     else if (IsRequested(entryIndex))
     {
         atomicAdd(stats[STAT_CACHED], 1u);
+        if (bPoint)
+        {
+            atomicAdd(stats[STAT_POINT_CACHED], 1u);
+        }
     }
 }
 

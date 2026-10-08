@@ -124,6 +124,24 @@ namespace NorvesLib::Core::Rendering
     /** @brief 灯・面・段のスライスの表の番号。FirstSlice + (灯 × 6 + 面) × 段の数 + 段 */
     uint32_t VirtualShadowMapPointSliceIndex(const VirtualShadowMapPointLights& lights, uint32_t light, uint32_t face, uint32_t mip);
 
+    /**
+     * @brief 前フレームの点光源の並びと比べて、前フレームのページの内容を引き継げないスライスを求める（ページのキャッシュ）
+     *
+     * ページの表の欄はスライスの番号で決まるので、灯 i のスライスは「前フレームの灯 i」の内容を持つ。灯の識別子・位置・Range が前フレームの
+     * 同じ番号の灯と同じなら、スライスは引き継げる。違えば（動いた・別の灯が入った・並びが変わった・灯が無くなった）そのスライスの全ページを無効にする
+     * （要求の無いページは、次の割り当てで空きへ戻る）。先頭の番号・1 灯のスライスの数・面の解像度・ページの一辺・段の数のどれかが違うときは、
+     * 前後どちらかの点光源のスライスをすべて無効にする。点光源のページが無かった（null）フレームの後は、今フレームの灯のスライスをすべて無効にする。
+     * 灯の識別子が同じでも番号が変わった灯は、前の番号のスライスの内容を移さず、新しい番号のスライスを無効にする（描き直す）。
+     *
+     * @param previous 前フレームの並び（点光源のページを持たなかったフレームは null）
+     * @param current 今フレームの並び（点光源のページを持たないフレームは null）
+     * @param outInvalid VirtualShadowMapMaxSlices 件以上の領域。スライスの番号ごとに、引き継げないものを true、そうでないものを false にして書く
+     * @return true にしたスライスの数
+     */
+    uint32_t BuildVirtualShadowMapPointSliceInvalidation(const VirtualShadowMapPointLights* previous,
+                                                         const VirtualShadowMapPointLights* current,
+                                                         bool* outInvalid);
+
     /** @brief 灯の数・LightId・位置・Range・設定・先頭の番号のどれかが違うか（VSM_POINT を出し直す判定） */
     bool VirtualShadowMapPointLightsDiffer(const VirtualShadowMapPointLights& lhs, const VirtualShadowMapPointLights& rhs);
 

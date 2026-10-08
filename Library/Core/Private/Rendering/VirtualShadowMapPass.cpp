@@ -63,11 +63,12 @@ namespace NorvesLib::Core::Rendering
         VirtualShadowMap::CasterStats LoggedStats;
         bool bLogged = false;
         uint32_t ReportsSinceLog = 0;
-        /** @brief キャッシュの無効化: 今フレームの投影物の動きの入力・前フレームの記録・無効にするライト空間の矩形 */
+        /** @brief キャッシュの無効化: 今フレームの投影物の動きの入力・前フレームの記録・無効にするライト空間の矩形（太陽の段）と球（点光源の面） */
         Container::VariableArray<VirtualShadowMap::CasterMotionEntry> Motion;
         VirtualShadowMap::CasterMotionTracker MotionTracker;
         Container::VariableArray<VirtualShadowMap::CasterBounds> ChangedBounds;
         Container::VariableArray<float> InvalidationRects;
+        Container::VariableArray<float> InvalidationSpheres;
         bool bInvalidateAll = false;
         /**
          * @brief 点光源の VSM のとき（灯が 1 つ以上）に、投影物の集め方と展開が使うスライスの表（太陽の段の後ろに点光源の面を並べたもの）。
@@ -758,22 +759,33 @@ namespace NorvesLib::Core::Rendering
         VirtualShadowMapCasterState& state = *m_Casters;
         state.ChangedBounds.clear();
         state.InvalidationRects.clear();
+        state.InvalidationSpheres.clear();
         state.bInvalidateAll = false;
-        // 太陽のクリップマップが無い（点光源だけの）フレームは、無効にするライト空間の矩形が無く、点光源のページのキャッシュは別の項目
-        if (!m_bCacheEnabled || !context.PhysicalLighting.SunClipmap.bEnabled)
+        // 太陽の段（矩形）も点光源の面（球）も無いフレームは、無効にする範囲が無い
+        const bool bSun = context.PhysicalLighting.SunClipmap.bEnabled;
+        const bool bPoint = state.bUseSliceTable;
+        if (!m_bCacheEnabled || (!bSun && !bPoint))
         {
             state.MotionTracker.Reset();
             return;
         }
         state.MotionTracker.Update(state.Motion, state.ChangedBounds, state.bInvalidateAll);
-        if (!state.bInvalidateAll &&
-            !VirtualShadowMap::BuildInvalidationRects(context.PhysicalLighting.SunClipmap,
-                                                      state.ChangedBounds,
-                                                      VirtualShadowMap::MAX_INVALIDATION_RECTS,
-                                                      state.InvalidationRects))
+        if (state.bInvalidateAll)
         {
-            // 矩形が多すぎる・境界が有限でない: 範囲を絞れないので全ページを無効にする
+            return;
+        }
+        // 太陽の段は動いた境界のライト空間の矩形、点光源の面は境界を覆う球（面の NDC で覆うページ）を無効にする。
+        // 数が多すぎる・境界が有限でない: 範囲を絞れないので全ページを無効にする
+        if ((bSun && !VirtualShadowMap::BuildInvalidationRects(context.PhysicalLighting.SunClipmap,
+                                                               state.ChangedBounds,
+                                                               VirtualShadowMap::MAX_INVALIDATION_RECTS,
+                                                               state.InvalidationRects)) ||
+            (bPoint && !VirtualShadowMap::BuildInvalidationSpheres(state.ChangedBounds,
+                                                                   VirtualShadowMap::MAX_INVALIDATION_RECTS,
+                                                                   state.InvalidationSpheres)))
+        {
             state.InvalidationRects.clear();
+            state.InvalidationSpheres.clear();
             state.bInvalidateAll = true;
         }
     }
@@ -955,11 +967,15 @@ namespace NorvesLib::Core::Rendering
         {
             m_FramesSinceCacheLog = 0;
             NORVES_LOG_INFO("VirtualShadowMapPass",
-                            "VSM_CACHE cached=%u rendered=%u invalidated=%u released=%u",
+                            "VSM_CACHE cached=%u rendered=%u invalidated=%u released=%u point_cached=%u point_rendered=%u point_invalidated=%u point_released=%u",
                             slot.Mapped[VirtualShadowMap::StatCached],
                             slot.Mapped[VirtualShadowMap::StatRendered],
                             slot.Mapped[VirtualShadowMap::StatInvalidated],
-                            slot.Mapped[VirtualShadowMap::StatReleased]);
+                            slot.Mapped[VirtualShadowMap::StatReleased],
+                            slot.Mapped[VirtualShadowMap::StatPointCached],
+                            slot.Mapped[VirtualShadowMap::StatPointRendered],
+                            slot.Mapped[VirtualShadowMap::StatPointInvalidated],
+                            slot.Mapped[VirtualShadowMap::StatPointReleased]);
         }
         const uint32_t stats[6] = {slot.Mapped[VirtualShadowMap::StatRequested],
                                    slot.Mapped[VirtualShadowMap::StatAllocated],
@@ -1117,6 +1133,8 @@ namespace NorvesLib::Core::Rendering
             dispatch.bCacheEnabled = m_bCacheEnabled;
             dispatch.InvalidationRects = m_Casters->InvalidationRects.empty() ? nullptr : m_Casters->InvalidationRects.data();
             dispatch.InvalidationRectCount = static_cast<uint32_t>(m_Casters->InvalidationRects.size() / 4u);
+            dispatch.InvalidationSpheres = m_Casters->InvalidationSpheres.empty() ? nullptr : m_Casters->InvalidationSpheres.data();
+            dispatch.InvalidationSphereCount = static_cast<uint32_t>(m_Casters->InvalidationSpheres.size() / 4u);
             dispatch.bInvalidateAll = m_Casters->bInvalidateAll;
         }
         else

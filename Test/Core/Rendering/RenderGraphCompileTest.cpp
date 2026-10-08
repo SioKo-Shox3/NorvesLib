@@ -6378,7 +6378,7 @@ namespace
             {"VSM_PageTable", 10ull * 128ull * 128ull * 4ull},
             {"VSM_RequestBits", 10ull * 128ull * 128ull / 8ull},
             {"VSM_FreeList", (5120ull * 3ull + 1ull) * 4ull},
-            {"VSM_Stats", 232ull},
+            {"VSM_Stats", 248ull},
             {"VSM_DirtyList", (5120ull + 4ull) * 4ull},
         };
         for (const Expected& entry : expected)
@@ -7397,10 +7397,14 @@ namespace
         assert(VirtualShadowMap::RequestBitsBytes(40u) == 40ull * 128ull * 128ull / 8ull &&
                VirtualShadowMap::RequestWords(256u) == 256u * 128u * 128u / 32u);
         assert(VirtualShadowMap::MegaDirtyBitsBytes(40u) == 40ull * VirtualShadowMap::MEGA_DIRTY_WORDS_PER_LEVEL * 4ull);
-        // 33 番目以降の使用の有無の語の後ろに、点光源の要求・割り当ての語、続けて MegaGeometry のカリングの点光源の分の語が続く（最後の語が点光源のクラスタ）
+        // 33 番目以降の使用の有無の語の後ろに、点光源の要求・割り当ての語、続けて MegaGeometry のカリングの点光源の分の語、点光源のキャッシュの語が続く（最後の語が点光源の空きへ戻した数）
         assert(VirtualShadowMap::StatPointRequested == VirtualShadowMap::StatLevelsUsedBeyond + 1u &&
                VirtualShadowMap::StatMegaPointInstances == VirtualShadowMap::StatPointAllocated + 1u &&
-               VirtualShadowMap::STATS_WORD_COUNT == VirtualShadowMap::StatMegaPointClusters + 1u);
+               VirtualShadowMap::StatPointCached == VirtualShadowMap::StatMegaPointClusters + 1u &&
+               VirtualShadowMap::StatPointRendered == VirtualShadowMap::StatPointCached + 1u &&
+               VirtualShadowMap::StatPointInvalidated == VirtualShadowMap::StatPointRendered + 1u &&
+               VirtualShadowMap::StatPointReleased == VirtualShadowMap::StatPointInvalidated + 1u &&
+               VirtualShadowMap::STATS_WORD_COUNT == VirtualShadowMap::StatPointReleased + 1u);
 
         const VirtualShadowMapClipmap clipmap = MakeCasterClipmap();
         constexpr uint32_t sliceCount = 40u;

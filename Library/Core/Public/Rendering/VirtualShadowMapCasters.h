@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -543,6 +544,53 @@ namespace NorvesLib::Core::Rendering
                 outRects.push_back(static_cast<float>(lightMin[1]));
                 outRects.push_back(static_cast<float>(lightMax[0]));
                 outRects.push_back(static_cast<float>(lightMax[1]));
+            }
+            return true;
+        }
+
+        /**
+         * @brief 無効にするワールドの境界を、境界の箱を覆う球（x, y, z = 中心、w = 半径の 4 つの float）の並びにする
+         *
+         * 点光源の面のページの無効化に使う。球は箱の中心を中心にした外接球（半径 = 箱の対角線の半分）なので、箱の内側のどの点も、
+         * どの面の NDC でも球の矩形の内側に写る。境界が有限でない・最小が最大を超えるときは false（全ページを無効にする）。
+         * 球の数が maxSpheres を超えるときも false。
+         * @return false なら、球では足りないので全ページを無効にすること
+         */
+        inline bool BuildInvalidationSpheres(const Container::VariableArray<CasterBounds>& changedBounds,
+                                             uint32_t maxSpheres,
+                                             Container::VariableArray<float>& outSpheres)
+        {
+            outSpheres.clear();
+            if (changedBounds.size() > maxSpheres)
+            {
+                return false;
+            }
+            for (const CasterBounds& bounds : changedBounds)
+            {
+                double center[3] = {};
+                double halfDiagonalSquared = 0.0;
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    const double low = static_cast<double>(bounds.Min[axis]);
+                    const double high = static_cast<double>(bounds.Max[axis]);
+                    if (!std::isfinite(low) || !std::isfinite(high) || low > high)
+                    {
+                        return false;
+                    }
+                    center[axis] = 0.5 * (low + high);
+                    const double half = 0.5 * (high - low);
+                    halfDiagonalSquared += half * half;
+                }
+                // 単精度へ丸めても球が箱を覆うように、半径をわずかに広げる
+                const double radius = std::sqrt(halfDiagonalSquared) * (1.0 + 1.0e-6) + 1.0e-6;
+                if (!std::isfinite(radius) || radius > static_cast<double>(std::numeric_limits<float>::max()))
+                {
+                    return false;
+                }
+                outSpheres.push_back(static_cast<float>(center[0]));
+                outSpheres.push_back(static_cast<float>(center[1]));
+                outSpheres.push_back(static_cast<float>(center[2]));
+                outSpheres.push_back(static_cast<float>(radius));
             }
             return true;
         }

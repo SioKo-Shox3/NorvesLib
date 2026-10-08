@@ -122,8 +122,10 @@ namespace NorvesLib::Core::Rendering
          * （StatRequested・StatAllocated は太陽と点光源の合計）。
          * StatMegaPointInstances・StatMegaPointClusters は、MegaGeometry の投影物のカリングのうち透視のスライス（点光源の面）だけの
          * （インスタンス、スライス）の数と書いたクラスタの数（StatMegaInstances・StatMegaClusters はこれを含む合計）。
+         * StatPointCached・StatPointRendered・StatPointInvalidated・StatPointReleased は、透視のスライス（点光源の面）だけの
+         * 持ち越した・描いた・無効にした・空きへ戻したページの数（StatCached〜StatReleased は太陽と点光源の合計）。
          */
-        constexpr uint32_t STATS_WORD_COUNT = 58;
+        constexpr uint32_t STATS_WORD_COUNT = 62;
         constexpr uint64_t STATS_BYTES = static_cast<uint64_t>(STATS_WORD_COUNT) * sizeof(uint32_t);
         enum StatWord : uint32_t
         {
@@ -158,10 +160,14 @@ namespace NorvesLib::Core::Rendering
             StatPointAllocated = StatLevelsUsedBeyond + 2,
             StatMegaPointInstances = StatLevelsUsedBeyond + 3,
             StatMegaPointClusters = StatLevelsUsedBeyond + 4,
+            StatPointCached = StatLevelsUsedBeyond + 5,
+            StatPointRendered = StatLevelsUsedBeyond + 6,
+            StatPointInvalidated = StatLevelsUsedBeyond + 7,
+            StatPointReleased = StatLevelsUsedBeyond + 8,
         };
         /** @brief 要求されなかったフレーム数ごとの数の語の数（年齢 0〜31） */
         constexpr uint32_t STATS_AGE_BINS = 32;
-        static_assert(STATS_WORD_COUNT == StatScratchAgeHistogram + STATS_AGE_BINS + 5u && StatMegaPointClusters == STATS_WORD_COUNT - 1u,
+        static_assert(STATS_WORD_COUNT == StatScratchAgeHistogram + STATS_AGE_BINS + 9u && StatPointReleased == STATS_WORD_COUNT - 1u,
                       "統計の語の数が並びと合っていること");
         /** @brief 要求されなくなったページを持ち越すフレーム数（これを超えて要求が無ければ空きへ戻す） */
         constexpr uint32_t CACHE_CARRY_FRAMES = 30;
@@ -330,7 +336,8 @@ namespace NorvesLib::Core::Rendering
      * VSM_MEGA_CULL instances=<n> clusters=<n> overflow=<n> として 60 回ごとに出す。
      * 統計は数フレーム遅れで読み戻し、値が変わったとき（または 60 フレームごと）に
      * VSM_PAGES requested=<n> allocated=<n> overflow=<n> levels_used=<mask> を出す。60 フレームごとに
-     * VSM_CACHE cached=<n> rendered=<n> invalidated=<n> released=<n>（持ち越したページ・描いたページ・無効にしたページ・空きへ戻したページ）も出す。投影物の集めた内訳は
+     * VSM_CACHE cached=<n> rendered=<n> invalidated=<n> released=<n>（持ち越したページ・描いたページ・無効にしたページ・空きへ戻したページ）に、
+     * 点光源の面だけの point_cached=<n> point_rendered=<n> point_invalidated=<n> point_released=<n> を足して出す。投影物の集めた内訳は
      * VSM_CASTERS procedural_chunks=<n> skinned_chunks=<n> culled=<n> dropped=<n> skipped=<n> に出す（値が変わったとき・60 回ごと）。
      * プールの確保量は GpuResources::SetShadowMapPoolBytes で予算の計算（VideoMemoryPool::ShadowMap）へ伝える。
      */

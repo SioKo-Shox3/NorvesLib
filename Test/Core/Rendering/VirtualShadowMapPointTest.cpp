@@ -410,6 +410,87 @@ namespace
         changed.Position[3].x = 123.0f;
         Check(!VirtualShadowMapPointLightsDiffer(lights, changed), "使わない灯の値の違いを変化と判定した");
     }
+
+    // 前フレームの並びと比べて、引き継げないスライス（灯の識別子・位置・Range・並び・設定が違う灯のスライス）だけが true になる
+    void TestSliceInvalidation()
+    {
+        char message[256];
+        const VirtualShadowMapPointLights base = MakeLights(3u, 10u);
+        bool invalid[VirtualShadowMapMaxSlices];
+        const auto countRange = [&](uint32_t firstSlice, uint32_t count) {
+            uint32_t flagged = 0;
+            for (uint32_t index = firstSlice; index < firstSlice + count; ++index)
+            {
+                flagged += invalid[index] ? 1u : 0u;
+            }
+            return flagged;
+        };
+
+        // 同じ並び: 何も無効にしない
+        Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &base, invalid) == 0u, "同じ並びでスライスが無効になった");
+
+        // 灯 1 の位置・Range・識別子が変わる: 灯 1 の 36 スライスだけ
+        for (uint32_t kind = 0; kind < 3u; ++kind)
+        {
+            VirtualShadowMapPointLights current = base;
+            if (kind == 0u)
+            {
+                current.Position[1].z += 0.001f;
+            }
+            else if (kind == 1u)
+            {
+                current.Range[1] += 0.5f;
+            }
+            else
+            {
+                current.LightId[1] += 100u;
+            }
+            std::snprintf(message, sizeof(message), "灯 1 の変化（種類 %u）で無効になるスライスが灯 1 の 36 件だけでない", kind);
+            Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &current, invalid) == 36u && countRange(10u + 36u, 36u) == 36u, message);
+        }
+
+        // 灯が入れ替わる（識別子は同じでも番号が変わる）: 入れ替わった 2 灯の 72 スライス
+        {
+            VirtualShadowMapPointLights swapped = base;
+            std::swap(swapped.LightId[0], swapped.LightId[2]);
+            std::swap(swapped.Position[0], swapped.Position[2]);
+            std::swap(swapped.Range[0], swapped.Range[2]);
+            Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &swapped, invalid) == 72u && countRange(10u, 36u) == 36u &&
+                      countRange(10u + 72u, 36u) == 36u && countRange(10u + 36u, 36u) == 0u,
+                  "灯 0 と灯 2 の入れ替えで、その 2 灯の 72 スライスだけが無効になるはず");
+        }
+
+        // 灯が減る: 無くなった灯のスライス（前フレームのもの）が無効になる。増える: 新しい灯のスライスが無効になる
+        {
+            VirtualShadowMapPointLights fewer = base;
+            fewer.LightCount = 2u;
+            Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &fewer, invalid) == 36u && countRange(10u + 72u, 36u) == 36u, "無くなった灯 2 の 36 スライスだけが無効になるはず");
+            Check(BuildVirtualShadowMapPointSliceInvalidation(&fewer, &base, invalid) == 36u && countRange(10u + 72u, 36u) == 36u, "増えた灯 2 の 36 スライスだけが無効になるはず");
+        }
+
+        // 点光源のページが無かった（null）フレームの前後: 灯のスライスをすべて無効にする
+        Check(BuildVirtualShadowMapPointSliceInvalidation(nullptr, &base, invalid) == 108u, "前フレームに点光源が無かったとき、今フレームの 108 スライスが無効になるはず");
+        Check(BuildVirtualShadowMapPointSliceInvalidation(&base, nullptr, invalid) == 108u, "今フレームに点光源が無いとき、前フレームの 108 スライスが無効になるはず");
+        Check(BuildVirtualShadowMapPointSliceInvalidation(nullptr, nullptr, invalid) == 0u, "どちらも無ければ何も無効にしない");
+
+        // 先頭の番号・設定が変わる: 前後どちらのスライスも無効にする
+        {
+            VirtualShadowMapPointLights moved = base;
+            moved.FirstSlice = 14u;
+            const uint32_t flagged = BuildVirtualShadowMapPointSliceInvalidation(&base, &moved, invalid);
+            Check(flagged == 108u + 4u && countRange(10u, 112u) == flagged, "先頭の番号が変わったとき、前後のスライスの和集合（112 件）が無効になるはず");
+            VirtualShadowMapPointLights coarser = base;
+            coarser.Settings.FaceResolution = 2048u;
+            Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &coarser, invalid) == 108u, "面の解像度が変わったとき、108 スライスが無効になるはず");
+        }
+
+        // 面の解像度の違いなど、ページの内容に関わらない BiasLevels の違いは無効にしない
+        {
+            VirtualShadowMapPointLights biased = base;
+            biased.Settings.BiasLevels += 1.0f;
+            Check(BuildVirtualShadowMapPointSliceInvalidation(&base, &biased, invalid) == 0u, "BiasLevels の違いでスライスが無効になった");
+        }
+    }
 } // namespace
 
 int main()
@@ -420,6 +501,7 @@ int main()
     TestMipSelection();
     TestPageCoordinatesStayInsideFace();
     TestSliceLayout();
+    TestSliceInvalidation();
 
     if (GFailureCount != 0)
     {

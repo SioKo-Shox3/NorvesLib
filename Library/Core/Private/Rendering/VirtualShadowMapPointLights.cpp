@@ -167,6 +167,63 @@ namespace NorvesLib::Core::Rendering
         return false;
     }
 
+    uint32_t BuildVirtualShadowMapPointSliceInvalidation(const VirtualShadowMapPointLights* previous,
+                                                         const VirtualShadowMapPointLights* current,
+                                                         bool* outInvalid)
+    {
+        for (uint32_t index = 0; index < VirtualShadowMapMaxSlices; ++index)
+        {
+            outInvalid[index] = false;
+        }
+        const auto markLight = [&](const VirtualShadowMapPointLights& lights, uint32_t light) {
+            for (uint32_t offset = 0; offset < lights.SlicesPerLight; ++offset)
+            {
+                const uint32_t index = lights.FirstSlice + light * lights.SlicesPerLight + offset;
+                if (index < VirtualShadowMapMaxSlices)
+                {
+                    outInvalid[index] = true;
+                }
+            }
+        };
+        const bool bSameLayout = previous != nullptr && current != nullptr && previous->FirstSlice == current->FirstSlice &&
+                                 previous->SlicesPerLight == current->SlicesPerLight &&
+                                 previous->Settings.FaceResolution == current->Settings.FaceResolution &&
+                                 previous->Settings.PageResolution == current->Settings.PageResolution &&
+                                 previous->Settings.MipCount == current->Settings.MipCount;
+        if (!bSameLayout)
+        {
+            // 並べ方が違えば、同じ番号のスライスでも内容の意味が違う。前後どちらのスライスも引き継がない
+            for (const VirtualShadowMapPointLights* lights : {previous, current})
+            {
+                for (uint32_t light = 0; lights != nullptr && light < lights->LightCount; ++light)
+                {
+                    markLight(*lights, light);
+                }
+            }
+        }
+        else
+        {
+            const uint32_t lightCount = std::max(previous->LightCount, current->LightCount);
+            for (uint32_t light = 0; light < lightCount; ++light)
+            {
+                const bool bBoth = light < previous->LightCount && light < current->LightCount;
+                if (bBoth && previous->LightId[light] == current->LightId[light] && previous->Range[light] == current->Range[light] &&
+                    previous->Position[light].x == current->Position[light].x && previous->Position[light].y == current->Position[light].y &&
+                    previous->Position[light].z == current->Position[light].z)
+                {
+                    continue;
+                }
+                markLight(light < current->LightCount ? *current : *previous, light);
+            }
+        }
+        uint32_t count = 0u;
+        for (uint32_t index = 0; index < VirtualShadowMapMaxSlices; ++index)
+        {
+            count += outInvalid[index] ? 1u : 0u;
+        }
+        return count;
+    }
+
     uint32_t BuildVirtualShadowMapPointSlices(const VirtualShadowMapPointLights& lights, GPUVsmSlice* outSlices)
     {
         uint32_t written = 0u;
