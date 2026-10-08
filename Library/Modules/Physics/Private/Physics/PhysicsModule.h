@@ -89,7 +89,8 @@ namespace NorvesLib::Modules::Physics
         friend class ColliderComponent;
         friend class CharacterBodyComponent;
         EPhysicsResult ValidateCharacterAccess(const CharacterBodyComponent& character) const;
-        void ProcessCharacterBodies(float dt);
+        void ProcessCharacterBodies(float dt, CharacterBodyComponent* onlyVariable = nullptr);
+        void ProcessVariableCharacter(CharacterBodyComponent& character, float dt);
         void DispatchCharacterEvents();
         friend class RigidBodyComponent;
         friend class PhysicsModuleTestAccess;
@@ -170,6 +171,8 @@ namespace NorvesLib::Modules::Physics
         bool m_bBound = false;
         bool m_bInitialized = false;
         bool m_bFixedTickInProgress = false;
+        bool m_bVariableCharacterInProgress = false;
+        bool m_bCharacterInputInProgress = false;
         bool m_bHasPublishedSnapshot = false;
         uint64_t m_PublishedSnapshotSequence = 0;
         Core::Container::VariableArray<ColliderSlot> m_ColliderSlots;

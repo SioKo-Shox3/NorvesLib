@@ -1,5 +1,7 @@
 ﻿#include "Physics/CharacterBodyComponent.h"
 #include "Module/ModuleRegistry.h"
+#include "Object/Entity.h"
+#include "Object/World.h"
 #include "Physics/CharacterMover.h"
 #include "Physics/IPhysicsModule.h"
 #include "Physics/PhysicsModule.h"
@@ -52,7 +54,39 @@ namespace NorvesLib::Modules::Physics
         if (m_Mode != CharacterMovementMode::Walking || !m_State.bGrounded)
             return EPhysicsResult::InvalidState;
         m_JumpSpeed = speed;
+        m_bLaunch = false;
         m_bJump = true;
+        return EPhysicsResult::Success;
+    }
+    EPhysicsResult CharacterBodyComponent::LaunchVertical(float speed)
+    {
+        auto* module = Module();
+        const auto result = module ? module->ValidateCharacterAccess(*this) : EPhysicsResult::NotRegistered;
+        if (result != EPhysicsResult::Success)
+            return result;
+        if (!std::isfinite(speed) || speed <= 0)
+            return EPhysicsResult::InvalidArgument;
+        if (m_Mode != CharacterMovementMode::Walking || !m_State.bReady)
+            return EPhysicsResult::InvalidState;
+        m_JumpSpeed = speed;
+        m_bJump = true;
+        m_bLaunch = true;
+        return EPhysicsResult::Success;
+    }
+    EPhysicsResult CharacterBodyComponent::SetDriveMode(CharacterDriveMode mode)
+    {
+        auto* module = Module();
+        const auto result = module ? module->ValidateCharacterAccess(*this) : EPhysicsResult::NotRegistered;
+        if (result != EPhysicsResult::Success)
+            return result;
+        if (mode != CharacterDriveMode::Fixed && mode != CharacterDriveMode::Variable)
+            return EPhysicsResult::InvalidArgument;
+        if (m_DriveMode != mode)
+        {
+            ResetMotion(false);
+            m_bFixedRequest = false;
+            m_DriveMode = mode;
+        }
         return EPhysicsResult::Success;
     }
     EPhysicsResult CharacterBodyComponent::MoveDelta(const Math::Vector3& displacement, float yaw)
@@ -82,6 +116,7 @@ namespace NorvesLib::Modules::Physics
         m_PendingTeleport = position;
         m_bTeleport = true;
         m_bJump = false;
+        m_bLaunch = false;
         m_PendingDisplacement = {};
         m_PendingYaw = 0;
         return EPhysicsResult::Success;
@@ -101,10 +136,78 @@ namespace NorvesLib::Modules::Physics
         }
         return EPhysicsResult::Success;
     }
+    void CharacterBodyComponent::Initialize()
+    {
+        Core::Component::Component::Initialize();
+        SetTickGroup(Core::Component::ETickGroup::Movement);
+    }
+    void CharacterBodyComponent::Tick(float dt)
+    {
+        RequestSimulation(dt, CharacterDriveMode::Variable);
+    }
     void CharacterBodyComponent::FixedTick(float dt)
     {
-        if (std::isfinite(dt) && dt > 0)
-            m_bFixedRequest = true;
+        RequestSimulation(dt, CharacterDriveMode::Fixed);
+    }
+    void CharacterBodyComponent::RequestSimulation(float dt, CharacterDriveMode mode)
+    {
+        if (m_DriveMode != mode || !std::isfinite(dt) || dt <= 0 || m_bBeforeSimulationActive)
+            return;
+        auto* module = Module();
+        if (!module || module->ValidateCharacterAccess(*this) != EPhysicsResult::Success ||
+            module->m_bFixedTickInProgress || module->m_bVariableCharacterInProgress ||
+            module->m_bCharacterInputInProgress)
+            return;
+        auto* owner = GetOwner();
+        auto* world = owner->GetWorld();
+        const auto ownerId = owner->GetObjectId(), componentId = GetComponentId();
+        const auto listeners = BeforeSimulation;
+        m_bFixedRequest = true;
+        m_bBeforeSimulationActive = true;
+        const auto resolve = [world, ownerId, componentId]() -> CharacterBodyComponent* {
+            auto* entity = world->FindEntityByObjectId(ownerId);
+            if (!entity || entity->IsPendingDestroy())
+                return nullptr;
+            auto* character = entity->GetComponent<CharacterBodyComponent>();
+            return character && character->GetComponentId() == componentId ? character : nullptr;
+        };
+        try
+        {
+            struct InputGuard
+            {
+                bool& Active;
+                explicit InputGuard(bool& active) : Active(active)
+                {
+                    Active = true;
+                }
+                ~InputGuard()
+                {
+                    Active = false;
+                }
+            } guard(module->m_bCharacterInputInProgress);
+            listeners.Broadcast(dt);
+        }
+        catch (...)
+        {
+            if (auto* live = resolve())
+            {
+                live->m_bBeforeSimulationActive = false;
+                live->m_bFixedRequest = false;
+            }
+            throw;
+        }
+        auto* live = resolve();
+        if (!live)
+            return;
+        live->m_bBeforeSimulationActive = false;
+        if (live->m_DriveMode != mode || !live->IsActive() || live->HasFlag(Core::OF_PendingDestroy))
+        {
+            live->m_bFixedRequest = false;
+            return;
+        }
+        if (mode == CharacterDriveMode::Variable)
+            if (auto* currentModule = Module())
+                currentModule->ProcessVariableCharacter(*live, dt);
     }
     void CharacterBodyComponent::ResetSimulationState()
     {
@@ -122,6 +225,7 @@ namespace NorvesLib::Modules::Physics
         m_PendingYaw = 0;
         m_JumpSpeed = 0;
         m_bJump = false;
+        m_bLaunch = false;
         m_bTeleport = false;
         if (clearIntent)
         {
@@ -135,12 +239,14 @@ namespace NorvesLib::Modules::Physics
     {
         ResetMotion(true);
         OnLanded.Clear();
+        BeforeSimulation.Clear();
         Core::Component::Component::EndPlay();
     }
     void CharacterBodyComponent::Finalize()
     {
         ResetMotion(true);
         OnLanded.Clear();
+        BeforeSimulation.Clear();
         Core::Component::Component::Finalize();
     }
 } // namespace NorvesLib::Modules::Physics

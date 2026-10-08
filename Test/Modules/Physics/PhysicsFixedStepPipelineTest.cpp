@@ -163,7 +163,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 11;
+    constexpr uint32_t kCaseCount = 13;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -859,6 +859,102 @@ namespace
         return StepCharacter(processor) && landed == 1;
     }
 
+    bool TestCharacterDriveEquality(ApplicationProcessor& processor)
+    {
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        auto* floor = CreateCharacterFloor();
+        CharacterFixture fixed, variable;
+        if (!floor || !CreateCharacter(fixed, Math::Vector3::Zero) || !CreateCharacter(variable, Math::Vector3::Zero))
+            return false;
+        if (floor->GetComponent<ColliderComponent>()->SetCollisionLayer(4) != EPhysicsResult::Success ||
+            fixed.Collider->SetCollisionLayer(1) != EPhysicsResult::Success ||
+            variable.Collider->SetCollisionLayer(2) != EPhysicsResult::Success ||
+            fixed.Collider->SetCollisionMask(4) != EPhysicsResult::Success ||
+            variable.Collider->SetCollisionMask(4) != EPhysicsResult::Success ||
+            variable.Character->SetDriveMode(CharacterDriveMode::Variable) != EPhysicsResult::Success)
+            return false;
+        auto* wall = world.SpawnEntity<Entity>();
+        auto* wallCollider = wall ? world.CreateComponent<ColliderComponent>(wall) : nullptr;
+        if (!wallCollider || wallCollider->SetBox(Math::Vector3(.05f, .8f, 1)) != EPhysicsResult::Success ||
+            wallCollider->SetCollisionLayer(4) != EPhysicsResult::Success)
+            return false;
+        wall->SetPosition(Math::Vector3(3, .8f, 0));
+        unsigned frame = 0, fixedCalls = 0, variableCalls = 0;
+        bool commands = true;
+        const auto drive = [&](CharacterBodyComponent* character, float dt) {
+            commands = commands && character->SetDesiredVelocity(Math::Vector3(2, 0, 0)) == EPhysicsResult::Success;
+            commands = commands && character->MoveDelta(Math::Vector3::Zero, .05f * dt) == EPhysicsResult::Success;
+            if (frame == 30)
+                commands = commands && character->MoveDelta(Math::Vector3(.2f, 0, 0), .1f) == EPhysicsResult::Success;
+            if (frame == 60 || frame == 61)
+                commands = commands && character->LaunchVertical(frame == 60 ? 4.f : 2.f) == EPhysicsResult::Success;
+            if (frame == 120)
+            {
+                commands = commands && character->Teleport(Math::Vector3(-5, 0, 0)) == EPhysicsResult::Success;
+                commands = commands && character->MoveDelta(Math::Vector3(.5f, 0, 0)) == EPhysicsResult::Success;
+            }
+        };
+        fixed.Character->BeforeSimulation.Add([&](float dt) {
+            ++fixedCalls;
+            drive(fixed.Character, dt);
+        });
+        variable.Character->BeforeSimulation.Add([&](float dt) {
+            ++variableCalls;
+            drive(variable.Character, dt);
+        });
+        for (frame = 0; frame < 240; ++frame)
+        {
+            world.Tick(kFixedDeltaTime);
+            if (!StepCharacter(processor) || !commands)
+                return false;
+            if ((fixed.Owner->GetPosition() - variable.Owner->GetPosition()).Length() > 1e-5f ||
+                fixed.Character->GetState().bGrounded != variable.Character->GetState().bGrounded ||
+                fixed.Character->GetState().StepSerial != variable.Character->GetState().StepSerial)
+                return false;
+        }
+        if (fixedCalls != 240 || variableCalls != 240)
+            return false;
+        const auto before = variable.Owner->GetPosition();
+        const auto serial = variable.Character->GetState().StepSerial;
+        const auto observed = variable.Character->GetState().Velocity;
+        if (ApplicationFixedStepTestAccess::Advance(processor, 1'000'000, true).ExecutedSteps != 0 ||
+            ApplicationFixedStepTestAccess::Advance(processor, 34'000'000, true).ExecutedSteps != 2)
+            return false;
+        return variable.Owner->GetPosition() == before && variable.Character->GetState().StepSerial == serial &&
+               variable.Character->GetState().Velocity == observed && variableCalls == 240;
+    }
+    bool TestCharacterBeforeSimulationRemoval(ApplicationProcessor& processor)
+    {
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        CharacterFixture value;
+        if (!CreateCharacterFloor() || !CreateCharacter(value, Math::Vector3::Zero) ||
+            value.Character->SetDriveMode(CharacterDriveMode::Variable) != EPhysicsResult::Success)
+            return false;
+        unsigned calls = 0;
+        auto* character = value.Character;
+        character->BeforeSimulation.Add([&](float) {
+            ++calls;
+            value.Owner->RemoveComponent(character);
+            value.Character = nullptr;
+        });
+        world.Tick(kFixedDeltaTime);
+        if (calls != 1 || value.Character || value.Owner->GetComponent<CharacterBodyComponent>())
+            return false;
+        world.Tick(kFixedDeltaTime);
+        auto* replacement = world.CreateComponent<CharacterBodyComponent>(value.Owner);
+        if (!replacement)
+            return false;
+        bool guarded = true;
+        replacement->BeforeSimulation.Add([&](float dt) {
+            const auto serial = replacement->GetState().StepSerial;
+            GFixture->Physics->PreFixedTick(dt);
+            GFixture->Physics->FixedTick(dt);
+            guarded = guarded && replacement->GetState().StepSerial == serial;
+        });
+        return StepCharacter(processor) && calls == 1 && guarded && replacement->GetState().bReady &&
+               replacement->GetState().StepSerial == 1;
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -885,6 +981,10 @@ namespace
             return TestCharacterTeleportAndLifecycle(processor);
         case 10:
             return TestCharacterLandedRemoval(processor);
+        case 11:
+            return TestCharacterDriveEquality(processor);
+        case 12:
+            return TestCharacterBeforeSimulationRemoval(processor);
         default:
             return false;
         }

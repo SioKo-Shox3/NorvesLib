@@ -3,6 +3,11 @@
 #include "Physics/PhysicsTypes.h"
 namespace NorvesLib::Modules::Physics
 {
+    enum class CharacterDriveMode : uint8_t
+    {
+        Fixed,
+        Variable
+    };
     enum class CharacterMovementMode : uint8_t
     {
         Walking,

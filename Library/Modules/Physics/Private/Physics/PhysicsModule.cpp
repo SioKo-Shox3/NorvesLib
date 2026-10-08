@@ -114,6 +114,8 @@ namespace NorvesLib::Modules::Physics
             return;
         }
 
+        if (m_bFixedTickInProgress || m_bVariableCharacterInProgress || m_bCharacterInputInProgress)
+            return;
         for (BodySlot& body : m_BodySlots)
         {
             body.bHadPreStepSnapshot = false;
@@ -135,12 +137,23 @@ namespace NorvesLib::Modules::Physics
         {
             return;
         }
-        if (m_bFixedTickInProgress)
+        if (m_bFixedTickInProgress || m_bVariableCharacterInProgress || m_bCharacterInputInProgress)
         {
             return;
         }
 
-        m_bFixedTickInProgress = true;
+        struct StepGuard
+        {
+            bool& Active;
+            explicit StepGuard(bool& active) : Active(active)
+            {
+                Active = true;
+            }
+            ~StepGuard()
+            {
+                Active = false;
+            }
+        } guard(m_bFixedTickInProgress);
         ReconcileActiveStates();
         IntegrateDynamics(fixedDeltaTime);
         ProcessCharacterBodies(fixedDeltaTime);
@@ -151,7 +164,6 @@ namespace NorvesLib::Modules::Physics
         m_bHasPublishedSnapshot = true;
         DispatchEvents();
         DispatchCharacterEvents();
-        m_bFixedTickInProgress = false;
     }
 
     void PhysicsModule::Shutdown()
