@@ -12,6 +12,7 @@
 #include "Object/World.h"
 #include <chrono>
 #include <cmath>
+#include <source_location>
 #include <cstdio>
 #include <cstdlib>
 
@@ -31,9 +32,13 @@ namespace
             std::abort();                                                                                              \
         }                                                                                                              \
     } while (false)
-    void NearGraph(float a, float b)
+    void NearGraph(float a, float b, const std::source_location& where=std::source_location::current())
     {
-        GRAPH_CHECK(std::fabs(a - b) < 1e-4f);
+        if(!(std::fabs(a-b)<1e-4f))
+        {
+            std::fprintf(stderr,"AnimGraph near %s:%u actual=%.9g expected=%.9g\n",where.file_name(),where.line(),double(a),double(b));
+            std::abort();
+        }
     }
     struct GraphFixture : A::IClipResolver
     {
@@ -496,7 +501,7 @@ namespace
         NearGraph(instance.GetLocalPose()[0].Translation.x, 10);
         // 180度ちょうどの区間を二つ繋いでも一周分のyawが失われない。
         clip.Channels[0].Samples = {{0, {10, 0, 0, 0}}, {1, {10, 0, 0, 0}}};
-        clip.Channels.back().Samples = {{0, {0, 0, 0, 1}}, {.5f, {0, -1, 0, 0}}, {1, {0, 0, 0, -1}}};
+        clip.Channels.back().Samples = {{0, {0, 0, 0, 1}}, {.5f, {0, 1, 0, 0}}, {1, {0, 0, 0, -1}}};
         f.BClip->SetClip(S::SkeletalAnimationClip(clip));
         graph = f.Graph(json);
         GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
