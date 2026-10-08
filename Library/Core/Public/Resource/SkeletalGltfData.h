@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Animation/ClipMetadata.h"
 #include "Resource/SkeletalSubMesh.h"
 
 #include "Resource/SkeletalImportOptions.h"
@@ -87,6 +88,7 @@ namespace NorvesLib::Core::Skeletal
         // GR84で抽出した先頭基準の軌跡。runtimeへの適用はAnimator側が明示する。
         uint32_t RootMotionJoint = UINT32_MAX;
         Container::VariableArray<SkeletalRootMotionSample> RootMotion;
+        Animation::ClipMetadata Metadata;
     };
 
     // slot名のみを所有する。材質係数/textureの共有recordはGR79/v1で扱う。

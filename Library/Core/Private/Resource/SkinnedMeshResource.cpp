@@ -58,6 +58,8 @@ namespace NorvesLib::Core
 
     void SkinnedMeshResource::Unload()
     {
+        ++m_PoseRevision;
+        m_PoseBounds = {};
         m_SplitMesh.reset();
         ReleaseRenderAssetLease();
         m_Vertices.clear();
@@ -72,6 +74,7 @@ namespace NorvesLib::Core
         size_t size = sizeof(SkinnedMeshResource) + m_Vertices.size() * sizeof(Skeletal::SkeletalVertex) +
             m_Indices.size() * sizeof(uint32_t) + m_SubMeshes.size() * sizeof(Skeletal::SkeletalSubMesh) +
             m_MaterialSlots.size() * sizeof(Skeletal::SkeletalMaterialSlot);
+        size += m_PoseBounds.AllocatedBytes();
         for (const auto& slot : m_MaterialSlots)
         {
             size += slot.Name.size() * sizeof(Container::String::value_type);
@@ -121,8 +124,10 @@ namespace NorvesLib::Core
         m_Indices.clear();
         m_SubMeshes.clear();
         m_MaterialSlots = std::move(slots);
+        ++m_PoseRevision;
         m_SplitMesh = mesh.m_Data;
         m_bSplitV1 = true;
+        Animation::BuildMeshPoseBounds(m_SplitMesh->Vertices, 0, m_PoseBounds);
         return true;
     }
     bool SkinnedMeshResource::IsSplitV1() const noexcept
@@ -139,7 +144,9 @@ namespace NorvesLib::Core
         {
             return;
         }
+        ++m_PoseRevision;
         m_Vertices = std::move(vertices);
+        Animation::BuildMeshPoseBounds(m_Vertices, 0, m_PoseBounds);
     }
 
     void SkinnedMeshResource::SetIndices(Container::VariableArray<uint32_t>&& indices)
@@ -178,6 +185,7 @@ namespace NorvesLib::Core
         {
             return;
         }
+        ++m_PoseRevision;
         m_MeshNodeGlobalTransform = transform;
     }
 

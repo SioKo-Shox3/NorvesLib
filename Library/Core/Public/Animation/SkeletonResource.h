@@ -1,11 +1,13 @@
 ﻿#pragma once
 
+#include "Animation/SkeletalPoseRuntime.h"
+#include "Animation/SkeletalRestPose.h"
+#include "Animation/SocketTypes.h"
 #include "Container/UnorderedMap.h"
-#include "Text/IdentityPool.h"
 #include "Object/Reflection.h"
 #include "Object/Resource.h"
 #include "Resource/SkeletalGltfData.h"
-#include "Animation/SkeletalRestPose.h"
+#include "Text/IdentityPool.h"
 
 namespace NorvesLib::Core::Skeletal
 {
@@ -43,7 +45,26 @@ namespace NorvesLib::Core
         // 空名/未発見は-1、重複名は先頭を返す。SetJointsで索引を再構築する。
         int32_t FindJointIndex(Identity name) const;
 
+        const Animation::SkeletonPoseRuntime& GetPoseRuntime() const noexcept { return m_PoseRuntime; }
+        uint64_t GetPoseRevision() const noexcept { return m_PoseRevision; }
+        [[nodiscard]] bool SetSockets(Container::Span<const Animation::SocketDefinition>, Animation::SocketReport&);
+        [[nodiscard]] bool ApplySocketsJson(const Container::String&, Animation::SocketReport&);
+        [[nodiscard]] bool ApplySocketsFile(const Container::String&, Animation::SocketReport&);
+        const Animation::SocketDefinition* FindSocket(Identity) const;
+        Container::Span<const Animation::SocketDefinition> GetSockets() const
+        {
+            return m_Sockets;
+        }
+        uint64_t GetSocketRevision() const noexcept
+        {
+            return m_SocketRevision;
+        }
+
     private:
+      Container::VariableArray<Animation::SocketDefinition> m_Sockets;
+      uint64_t m_SocketRevision = 0;
+      Animation::SkeletonPoseRuntime m_PoseRuntime;
+      uint64_t m_PoseRevision = 0;
       Container::TSharedPtr<const Skeletal::SkeletonV1Data> m_SplitSkeleton;
       bool m_bSplitV1 = false;
       Container::VariableArray<Skeletal::SkeletalJoint> m_Joints;

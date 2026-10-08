@@ -1808,6 +1808,7 @@ if(NORVES_BRIDGE_SDK_DIR)
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestDebugDraw.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestDebugInput.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/AnimationDebugScene.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/M9WorldAcceptance.cpp
     )
@@ -2092,8 +2093,16 @@ add_test(NAME GLTFSkeletalAnalyzerTest COMMAND GLTFSkeletalAnalyzerTest)
 add_executable(SkeletalAnimationSamplingTest
     SkeletalAnimationSamplingTest.cpp
     SkeletalSamplerBaseline.cpp
+    AnimPoseOpsTest.cpp
+    AnimGraphRuntimeTest.cpp
+    RootMotionMathTest.cpp
+    PoseEvaluationTest.cpp
+    ClipChannelSearchTest.cpp
+    LegacyPoseOracle.cpp
+    LegacySplitPoseOracle.cpp
 )
 target_link_libraries(SkeletalAnimationSamplingTest PRIVATE Core)
+target_include_directories(SkeletalAnimationSamplingTest PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/Library/Core/Private)
 set_target_properties(SkeletalAnimationSamplingTest PROPERTIES FOLDER "Test/Core/Rendering")
 add_test(NAME SkeletalAnimationSamplingTest COMMAND SkeletalAnimationSamplingTest)
 

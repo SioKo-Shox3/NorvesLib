@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "CameraLateUpdate.h"
+#include "GameModes/Rendering3DTest/AnimationDebugScene.h"
 
 #include "Core/Public/Container/Containers.h"
 #include "Core/Public/Delegate/Delegate.h"
@@ -286,6 +287,8 @@ namespace Game::GameModes
         bool m_bDebugDrawTestLines = false;
         // --startup-skinned-probe の指定で true にする。検証用の骨付きのパネルを地面の上へ 2 体置く（既定は置かない）。
         bool m_bStartupSkinnedProbe = false;
+        bool m_bAnimationDebug = false;
+        NorvesLib::Core::Container::TSharedPtr<AnimationDebugScene> m_AnimationDebug;
         NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::SkeletalAssetResource> m_StartupSkinnedProbeAsset;
         NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Component::SkinnedMeshComponent *> m_StartupSkinnedProbeComponents;
         // 地面の外周に高ポリのスキャン資産を置くか（--startup-scan-props=off で false。既定は true）。

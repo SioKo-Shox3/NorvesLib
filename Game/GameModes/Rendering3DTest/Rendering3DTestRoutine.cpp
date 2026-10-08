@@ -3251,11 +3251,21 @@ namespace Game::GameModes
                 state->bSmokeSyncEmitted = true;
             }
         });
+        if (data.m_bAnimationDebug)
+        {
+            data.m_AnimationDebug = NorvesLib::Core::Container::MakeShared<AnimationDebugScene>();
+            if (!data.m_AnimationDebug->Prepare(ctx, data.m_CobbleStoneMaterial))
+            {
+                LOG_ERROR("ANIMATION_DEBUG 合成sceneの準備に失敗しました");
+                return GameModeEnterResult::Failed;
+            }
+        }
         m9FailureGuard.bCommitted = true;
         // 決定的な撮影では、組み立てが終わるまで読み込み中として扱う（最初の
         // Tick が判定する）。
         ctx.EngineRef.GetDeterministicCapture().SetSceneReady(false);
 
+        if (data.m_AnimationDebug) data.m_AnimationDebug->ActivateViews(ctx.WorldRef);
         return GameModeEnterResult::Succeeded;
     }
 
@@ -3848,6 +3858,8 @@ namespace Game::GameModes
 
     void Rendering3DTestRoutine::Leave(GameModeContext &ctx, Rendering3DTestData &data, GameModeExitReason reason)
     {
+        if (data.m_AnimationDebug) data.m_AnimationDebug->Stop();
+        data.m_AnimationDebug.reset();
         (void)reason;
         data.m_LateCameraState.reset();
 

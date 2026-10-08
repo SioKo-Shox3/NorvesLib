@@ -14,11 +14,13 @@ namespace NorvesLib::Core::Skeletal::SplitWire
     {
         uint32_t Code = 0, Record = 0, Count = 0;
         uint64_t Offset = 0, Size = 0;
+        bool Required = true;
     };
     struct OutputSection
     {
         uint32_t Code = 0, Record = 0;
         Bytes Data;
+        bool Required = true;
     };
     uint32_t U32(View, size_t);
     uint64_t U64(View, size_t);
