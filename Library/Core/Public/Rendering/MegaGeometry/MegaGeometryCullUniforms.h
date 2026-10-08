@@ -18,7 +18,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float ViewMatrix[16];
         float ProjectionMatrix[16];
         float CameraPosition[4];   // xyz + pad
-        float FrustumPlanes[6][4]; // 6 planes, each (nx, ny, nz, d)
+        float FrustumPlanes[6][4]; // 錐台の 6 平面。各平面は (nx, ny, nz, d)
         uint32_t InstanceCount;    // インスタンスの表の要素数
         uint32_t TotalGroupCount;  // 全インスタンスのワークグループ（64クラスタ）の数
         float LODBias;

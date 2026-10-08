@@ -42,6 +42,7 @@
 #include "Test/Core/Rendering/GeometryUploadTestSupport.h"
 #include "Container/PointerTypes.h"
 #include "Debug/Stats.h"
+#include "FileStream/FileStream.h"
 #include "Logging/Logger.h"
 #include "Math/MatrixUtils.h"
 #include "RHI/IBuffer.h"
@@ -7959,16 +7960,27 @@ namespace
         Container::String fullPath = TestShaderDirectory;
         fullPath += "/";
         fullPath += relativePath;
-        std::ifstream file(fullPath.c_str(), std::ios::binary | std::ios::ate);
-        if (!file.is_open())
+        auto file = NorvesLib::FileStream::FileStream::CreateUnique(fullPath,
+                                                                   NorvesLib::FileStream::FileMode::Read,
+                                                                   NorvesLib::FileStream::FileAccess::Read,
+                                                                   NorvesLib::FileStream::FileShare::Read);
+        if (!file || !file->IsOpen())
         {
             return false;
         }
-        const size_t size = static_cast<size_t>(file.tellg());
-        file.seekg(0, std::ios::beg);
+        const int64_t fileSize = file->GetSize();
+        if (fileSize < 0)
+        {
+            return false;
+        }
+        const size_t size = static_cast<size_t>(fileSize);
         Container::VariableArray<char> text;
         text.resize(size + 1);
-        file.read(text.data(), static_cast<std::streamsize>(size));
+        if (size > 0 && file->Read(text.data(), size) != size)
+        {
+            return false;
+        }
+        file->Close();
         text[size] = '\0';
 
         size_t cursor = (size >= 3 && static_cast<unsigned char>(text[0]) == 0xEF && static_cast<unsigned char>(text[1]) == 0xBB &&

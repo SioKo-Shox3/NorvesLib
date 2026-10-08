@@ -804,7 +804,7 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG7-SW-DEFAULT-ON
 
 ### GPU 時間
 
-RelWithDebInfo、`-GpuTimingFrames 300`、太陽45°、描いた GPU のフレーム 240 件の中央値（ms）。`.harness/runs/startup-capture/VTG8-VSM-GPU-TIME-*`（`7a73978c`・`4a6f3927` の後に測った。予算の取り置きと PCF の下限の変更は GPU の仕事を変えない）。
+RelWithDebInfo、`-GpuTimingFrames 300`、太陽45°、描いた GPU のフレーム 240 件の中央値（ms）。値の根拠は、`7a73978c`・`4a6f3927` の後の撮影の標準出力 `.harness/runs/20261008-073209/verify-VTG8-VSM-GPU-TIME-2-csm.txt`〜`-7-vsm-stress.txt`（`gpu_timing` の行。区間の値は同じ撮影の `pass_median_ms`）。出力先 `.harness/runs/startup-capture/VTG8-VSM-GPU-TIME-*` は後の再検証で撮り直されており、今の `metrics.json` は別の run の値（既定の VSM 2.722 ms など。run 間の揺れの範囲）。予算の取り置きと PCF の下限の変更は GPU の仕事を変えない。
 
 | 視点 | CSM | VSM（持ち越しあり、既定） | 差 | VSM（持ち越しなし） | VirtualShadowMapPass（既定） |
 |---|---|---|---|---|---|
