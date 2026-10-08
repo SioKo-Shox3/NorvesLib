@@ -8,6 +8,7 @@ norves_add_test_bundle(ApplicationFixedStepPipelineTest
     MEMBER FixedStepSchedulerTest FixedStepSchedulerTest.cpp
     MEMBER TimeScaleMathTest TimeScaleMathTest.cpp
     MEMBER TimeSystemTest TimeSystemTest.cpp
+    MEMBER RenderInterpolationCadenceTest RenderInterpolationCadenceTest.cpp
     MEMBER RawMouseMotionTrackerTest RawMouseMotionTrackerTest.cpp
     MEMBER WindowsKeyRepeatGateTest WindowsKeyRepeatGateTest.cpp
     MEMBER InputFocusPipelineTest InputFocusPipelineTest.cpp
@@ -34,3 +35,4 @@ add_test(NAME HapticsFramePipelineTest COMMAND ApplicationFixedStepPipelineTest 
 
 add_test(NAME TimeScaleMathTest COMMAND ApplicationFixedStepPipelineTest --test=TimeScaleMathTest)
 add_test(NAME TimeSystemTest COMMAND ApplicationFixedStepPipelineTest --test=TimeSystemTest)
+add_test(NAME RenderInterpolationCadenceTest COMMAND ApplicationFixedStepPipelineTest --test=RenderInterpolationCadenceTest)

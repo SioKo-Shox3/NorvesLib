@@ -100,6 +100,8 @@ namespace NorvesLib::Modules::Physics
 
         ResetTransientState();
         m_bInitialized = true;
+        for (auto& body : m_BodySlots)
+            UpdateRenderInterpolationDefault(body);
         return true;
     }
 
@@ -429,7 +431,11 @@ namespace NorvesLib::Modules::Physics
         }
         if (component.m_BodyHandle.IsValid())
         {
-            return ValidateRigidBody(component);
+            const auto result = ValidateRigidBody(component);
+            if (result == EPhysicsResult::Success)
+                if (auto* body = FindBodySlot(component.m_BodyHandle))
+                    UpdateRenderInterpolationDefault(*body);
+            return result;
         }
 
         Core::Entity* owner = component.GetOwner();
@@ -465,6 +471,7 @@ namespace NorvesLib::Modules::Physics
         slot.bOccupied = true;
         slot.bActive = false;
         component.m_BodyHandle = Core::Scene::BodyHandle{index, slot.Generation};
+        UpdateRenderInterpolationDefault(slot);
         return EPhysicsResult::Success;
     }
 
@@ -657,6 +664,8 @@ namespace NorvesLib::Modules::Physics
                 body->PendingImpulse = Math::Vector3();
             }
         }
+        if (auto* body = FindBodySlot(component.m_BodyHandle))
+            UpdateRenderInterpolationDefault(*body);
         return EPhysicsResult::Success;
     }
 
@@ -851,6 +860,15 @@ namespace NorvesLib::Modules::Physics
             && IsFiniteTransform(GetFreshWorldTransform(*collider.Owner));
     }
 
+    void PhysicsModule::UpdateRenderInterpolationDefault(BodySlot& body)
+    {
+        if (!body.bOccupied || !body.Owner)
+            return;
+        const bool dynamic = m_bInitialized && m_bBound && IsBodyLifecycleActive(body) &&
+                             body.Component->m_BodyType == EPhysicsBodyType::Dynamic &&
+                             body.Owner->GetParentEntity() == nullptr;
+        body.Owner->SetDefaultRenderInterpolationEnabled(dynamic);
+    }
     void PhysicsModule::ReconcileActiveStates()
     {
         for (ColliderSlot& collider : m_ColliderSlots)
@@ -868,6 +886,7 @@ namespace NorvesLib::Modules::Physics
                 continue;
             }
 
+            UpdateRenderInterpolationDefault(body);
             body.bActive = false;
             if (!IsBodyLifecycleActive(body))
             {
@@ -1250,6 +1269,7 @@ namespace NorvesLib::Modules::Physics
         {
             if (body.bOccupied && body.Owner)
             {
+                body.Owner->SetDefaultRenderInterpolationEnabled(false);
                 if (auto* character = body.Owner->GetComponent<CharacterBodyComponent>())
                 {
                     character->ResetMotion(false);
@@ -1372,6 +1392,7 @@ namespace NorvesLib::Modules::Physics
         BodySlot& slot = m_BodySlots[index];
         if (slot.Owner)
         {
+            slot.Owner->SetDefaultRenderInterpolationEnabled(false);
             if (auto* character = slot.Owner->GetComponent<CharacterBodyComponent>())
                 character->ResetMotion(true);
         }

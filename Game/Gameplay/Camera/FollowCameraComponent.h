@@ -31,6 +31,11 @@ namespace Game::Gameplay
         // 同じInput群の移動処理に最新視線を渡す専用root Entity。実カメラとは別にする。
         bool SetViewSource(NorvesLib::Core::Entity* view);
         bool SetCollisionSettings(const NorvesLib::Core::Camera::CameraCollisionSettings& settings);
+        // Camera群での更新試行数。late snapshotの姿勢再適用では増やさない。
+        uint64_t GetCameraTickCount() const
+        {
+            return m_CameraTickCount;
+        }
         const NorvesLib::Core::Camera::CameraCollisionOutput& GetCollisionOutput() const
         {
             return m_Output;
@@ -58,5 +63,6 @@ namespace Game::Gameplay
             NorvesLib::Core::Camera::CameraCollisionResult::ProbeFailed;
         NorvesLib::Math::Transform m_CachedPose;
         bool m_bHasPose = false;
+        uint64_t m_CameraTickCount = 0;
     };
 } // namespace Game::Gameplay

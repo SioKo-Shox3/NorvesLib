@@ -46,6 +46,18 @@ namespace NorvesLib::Core::Engine
             processor.m_FixedStepScheduler->BeginRun();
         }
 
+        static bool SetRate(ApplicationProcessor& processor, uint32_t rate)
+        {
+            processor.m_FixedStepScheduler->EndRun();
+            if (!processor.m_FixedStepScheduler->SetRate(rate))
+                return false;
+            processor.m_FixedStepScheduler->BeginRun();
+            return true;
+        }
+        static FixedStepAdvanceResult Simulate(ApplicationProcessor& processor, int64_t raw)
+        {
+            return processor.TickSimulation(raw, processor.ClampVariableDeltaTime(raw), true, nullptr);
+        }
         static void EndRun(ApplicationProcessor& processor)
         {
             processor.m_FixedStepScheduler->EndRun();
@@ -168,7 +180,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 16;
+    constexpr uint32_t kCaseCount = 19;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -1127,9 +1139,11 @@ namespace
             return false;
         const auto pose = cameraOwner->GetWorldTransform();
         const auto length = follow->GetCollisionOutput().EffectiveLength;
+        const auto cameraTicks = follow->GetCameraTickCount();
         follow->RefreshOwnerTransform();
         follow->RefreshOwnerTransform();
-        if (cameraOwner->GetWorldTransform() != pose || follow->GetCollisionOutput().EffectiveLength != length)
+        if (cameraOwner->GetWorldTransform() != pose || follow->GetCollisionOutput().EffectiveLength != length ||
+            follow->GetCameraTickCount() != cameraTicks)
             return false;
         follow->BindSceneQuery(nullptr);
         follow->SetYaw(90);
@@ -1145,6 +1159,143 @@ namespace
             cameraOwner->GetWorldTransform() != pose)
             return false;
         return !follow->SetSubject(subject.Owner, subject.Owner);
+    }
+
+    bool TestDynamicRenderInterpolationDefault(ApplicationProcessor& processor)
+    {
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        auto* owner = world.SpawnEntity<Entity>();
+        auto* collider = owner ? world.CreateComponent<ColliderComponent>(owner) : nullptr;
+        auto* body = owner ? world.CreateComponent<RigidBodyComponent>(owner) : nullptr;
+        if (!body || !collider || collider->SetSphere(.3f) != EPhysicsResult::Success ||
+            body->SetBodyType(EPhysicsBodyType::Dynamic) != EPhysicsResult::Success ||
+            body->SetGravityScale(0) != EPhysicsResult::Success ||
+            body->SetLinearVelocity({60, 0, 0}) != EPhysicsResult::Success || !owner->IsRenderInterpolationEnabled())
+            return false;
+        world.Tick(kFixedDeltaTime);
+        if (!StepCharacter(processor))
+            return false;
+        world.SetRenderInterpolationAlpha(.5f);
+        world.LateTick(kFixedDeltaTime);
+        if (std::fabs(owner->GetPosition().x - 1) > 1e-4f ||
+            std::fabs(owner->GetRenderWorldTransform().position.x - .5f) > 1e-4f)
+            return false;
+        owner->SetRenderInterpolationEnabled(false);
+        world.Tick(kFixedDeltaTime);
+        if (!StepCharacter(processor))
+            return false;
+        world.SetRenderInterpolationAlpha(.5f);
+        world.LateTick(kFixedDeltaTime);
+        if (owner->GetRenderWorldTransform() != owner->GetWorldTransform())
+            return false;
+        owner->ClearRenderInterpolationOverride();
+        if (!owner->IsRenderInterpolationEnabled())
+            return false;
+        auto* other = world.SpawnEntity<Entity>();
+        if (!other)
+            return false;
+        // false既定と同じ値でも、明示OFFをDynamic既定で上書きしない。
+        other->SetRenderInterpolationEnabled(false);
+        auto* second = world.CreateComponent<RigidBodyComponent>(other);
+        if (!second || second->SetBodyType(EPhysicsBodyType::Dynamic) != EPhysicsResult::Success ||
+            other->IsRenderInterpolationEnabled())
+            return false;
+        other->ClearRenderInterpolationOverride();
+        if (!other->IsRenderInterpolationEnabled() ||
+            second->SetBodyType(EPhysicsBodyType::Kinematic) != EPhysicsResult::Success ||
+            other->IsRenderInterpolationEnabled())
+            return false;
+        other->SetRenderInterpolationEnabled(true);
+        if (second->SetBodyType(EPhysicsBodyType::Dynamic) != EPhysicsResult::Success)
+            return false;
+        second->Finalize();
+        if (!other->IsRenderInterpolationEnabled())
+            return false;
+        other->ClearRenderInterpolationOverride();
+        if (other->IsRenderInterpolationEnabled())
+            return false;
+        second->Initialize();
+        if (!other->IsRenderInterpolationEnabled())
+            return false;
+        EPhysicsResult fromWorker = EPhysicsResult::Success;
+        Thread::Thread worker([&] { fromWorker = second->SetBodyType(EPhysicsBodyType::Kinematic); });
+        worker.Join();
+        if (fromWorker != EPhysicsResult::WrongThread || !other->IsRenderInterpolationEnabled())
+            return false;
+        auto* parent = world.SpawnEntity<Entity>();
+        if (!parent || !world.ReparentEntity(other, parent) || !StepCharacter(processor) ||
+            other->IsRenderInterpolationEnabled())
+            return false;
+        if (second->SetBodyType(EPhysicsBodyType::Dynamic) != EPhysicsResult::InvalidState ||
+            other->IsRenderInterpolationEnabled())
+            return false;
+        if (!world.ReparentEntity(other, nullptr) || !StepCharacter(processor) ||
+            !other->IsRenderInterpolationEnabled())
+            return false;
+        second->Disable();
+        if (!StepCharacter(processor) || other->IsRenderInterpolationEnabled())
+            return false;
+        second->Enable();
+        if (!StepCharacter(processor) || !other->IsRenderInterpolationEnabled())
+            return false;
+        GFixture->Physics->Shutdown();
+        if (owner->IsRenderInterpolationEnabled() || other->IsRenderInterpolationEnabled() ||
+            !GFixture->Physics->Initialize() || !owner->IsRenderInterpolationEnabled() ||
+            !other->IsRenderInterpolationEnabled())
+            return false;
+        world.SetRenderInterpolationAllowed(false);
+        world.Tick(kFixedDeltaTime);
+        if (!StepCharacter(processor))
+            return false;
+        world.SetRenderInterpolationAlpha(.5f);
+        world.LateTick(kFixedDeltaTime);
+        return owner->GetRenderWorldTransform() == owner->GetWorldTransform();
+    }
+
+    bool TestDynamicInterpolationAt144Hz(ApplicationProcessor& processor, uint32_t rate)
+    {
+        if (!ApplicationFixedStepTestAccess::SetRate(processor, rate))
+            return false;
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        Entity* entities[2]{};
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            entities[i] = world.SpawnEntity<Entity>();
+            if (!entities[i])
+                return false;
+            entities[i]->SetPosition({0, 0, float(i) * 10});
+            auto* collider = world.CreateComponent<ColliderComponent>(entities[i]);
+            auto* body = world.CreateComponent<RigidBodyComponent>(entities[i]);
+            if (!collider || !body || collider->SetSphere(.2f) != EPhysicsResult::Success ||
+                body->SetBodyType(EPhysicsBodyType::Dynamic) != EPhysicsResult::Success ||
+                body->SetGravityScale(0) != EPhysicsResult::Success ||
+                body->SetLinearVelocity({1, 0, 0}) != EPhysicsResult::Success)
+                return false;
+        }
+        entities[1]->SetRenderInterpolationEnabled(false);
+        float previousOn = 0, previousOff = 0;
+        unsigned unsmoothedZeroFrames = 0;
+        for (int64_t frame = 0; frame < 144; ++frame)
+        {
+            const int64_t raw = (frame + 1) * 1000000000 / 144 - frame * 1000000000 / 144;
+            const auto result = ApplicationFixedStepTestAccess::Simulate(processor, raw);
+            if (result.Status != EFixedStepAdvanceStatus::Advanced)
+                return false;
+            const float on = entities[0]->GetRenderWorldTransform().position.x;
+            const float off = entities[1]->GetRenderWorldTransform().position.x;
+            if (frame > 5)
+            {
+                if (std::fabs((on - previousOn) - 1.f / 144) > 1e-5f)
+                    return false;
+                if (std::fabs(off - previousOff) < 1e-7f)
+                    ++unsmoothedZeroFrames;
+            }
+            if (entities[0]->GetPosition().x != entities[1]->GetPosition().x)
+                return false;
+            previousOn = on;
+            previousOff = off;
+        }
+        return unsmoothedZeroFrames >= (rate == 60 ? 65u : 15u);
     }
 
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
@@ -1183,6 +1334,12 @@ namespace
             return TestGameLocomotionHeapAfterWorld();
         case 15:
             return TestFollowCameraRenderBinding(processor);
+        case 16:
+            return TestDynamicRenderInterpolationDefault(processor);
+        case 17:
+            return TestDynamicInterpolationAt144Hz(processor, 60);
+        case 18:
+            return TestDynamicInterpolationAt144Hz(processor, 120);
         default:
             return false;
         }

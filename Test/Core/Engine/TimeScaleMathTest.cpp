@@ -70,4 +70,5 @@ int main()
     assert(AccumulateTimeSegments({sumOverflow, 2}, carry, out) == TimeScaleMathResult::Overflow && out == 99 &&
            carry == 123);
     std::cout << "TimeScaleMathTest passed\n";
+    return 0;
 }

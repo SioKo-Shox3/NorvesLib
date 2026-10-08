@@ -1,5 +1,8 @@
 ﻿#include "Engine/FixedStepScheduler.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdint>
 #include <iostream>

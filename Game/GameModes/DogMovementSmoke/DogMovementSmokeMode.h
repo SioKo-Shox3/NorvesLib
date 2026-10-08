@@ -6,10 +6,15 @@
 #include "Rendering/RenderTypes.h"
 namespace Game::GameModes
 {
+    struct DogMovementSmokeLateState : Game::CameraLateUpdateState
+    {
+        uint64_t CharacterId = 0, PreviousBodyStep = 0, PreviousCameraTick = 0;
+        bool HasPrevious = false, ObservedStop = false;
+    };
     struct DogMovementSmokeData
     {
         NorvesLib::Core::Container::TWeakPtr<Game::CameraLateUpdateSlot> LateSlot;
-        NorvesLib::Core::Container::TSharedPtr<Game::CameraLateUpdateState> LateState;
+        NorvesLib::Core::Container::TSharedPtr<DogMovementSmokeLateState> LateState;
         NorvesLib::Modules::Physics::CharacterDriveMode Drive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         NorvesLib::Core::Rendering::MaterialHandle Materials[3];
         uint64_t CharacterId = 0, CameraOwnerId = 0;

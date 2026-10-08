@@ -381,7 +381,21 @@ namespace NorvesLib::Core
 
     void Entity::SetRenderInterpolationEnabled(bool enabled)
     {
+        m_bRenderInterpolationOverride = true;
         if (m_bRenderInterpolationEnabled == enabled)
+            return;
+        m_bRenderInterpolationEnabled = enabled;
+        ResetRenderInterpolation();
+    }
+    void Entity::ClearRenderInterpolationOverride()
+    {
+        m_bRenderInterpolationOverride = false;
+        SetDefaultRenderInterpolationEnabled(m_bRenderInterpolationDefault);
+    }
+    void Entity::SetDefaultRenderInterpolationEnabled(bool enabled)
+    {
+        m_bRenderInterpolationDefault = enabled;
+        if (m_bRenderInterpolationOverride || m_bRenderInterpolationEnabled == enabled)
             return;
         m_bRenderInterpolationEnabled = enabled;
         ResetRenderInterpolation();

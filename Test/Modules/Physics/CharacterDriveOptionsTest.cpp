@@ -40,4 +40,5 @@ int main()
         assert(mode == CharacterDriveMode::Fixed);
     }
     std::cout << "CharacterDriveOptionsTest passed\n";
+    return 0;
 }

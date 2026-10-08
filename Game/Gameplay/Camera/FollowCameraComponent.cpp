@@ -84,7 +84,11 @@ namespace Game::Gameplay
         if (group == Core::Component::ETickGroup::Input)
             ReadLook();
         else if (group == Core::Component::ETickGroup::Camera)
+        {
+            if (m_CameraTickCount != UINT64_MAX)
+                ++m_CameraTickCount;
             UpdateCamera(dt);
+        }
     }
     void FollowCameraComponent::ReadLook()
     {

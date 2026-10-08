@@ -29,12 +29,25 @@ namespace
         Engine::TimeChannel Channel = Engine::TimeChannel::World;
         float Delta = -1;
         unsigned Calls = 0;
+        bool Throw = false;
+        Component* Foreign = nullptr;
         Engine::TimeChannel GetTimeChannel() const noexcept override
         {
             return Channel;
         }
         void Tick(float delta) override
         {
+            auto* world = GetOwner()->GetWorld();
+            float queried = -1;
+            assert(world->HasActiveTickTimeContext() && world->TryGetComponentTickDelta(*this, queried) &&
+                   queried == delta);
+            if (Foreign)
+            {
+                float untouched = 42;
+                assert(!world->TryGetComponentTickDelta(*Foreign, untouched) && untouched == 42);
+            }
+            if (Throw)
+                throw 1;
             Delta = delta;
             ++Calls;
         }
@@ -58,7 +71,7 @@ int main()
                                             Engine::TimeChannel::Unscaled, Engine::TimeChannel::Particle,
                                             Engine::TimeChannel::Unscaled};
     const Component::ETickGroup groups[] = {Component::ETickGroup::Default, Component::ETickGroup::Animation,
-                                            Component::ETickGroup::Input, Component::ETickGroup::Default,
+                                            Component::ETickGroup::Input, Component::ETickGroup::PostPhysics,
                                             Component::ETickGroup::Camera};
     for (unsigned i = 0; i < 5; ++i)
     {
@@ -67,6 +80,15 @@ int main()
         probes[i]->Channel = channels[i];
         assert(probes[i]->SetTickGroup(groups[i]));
     }
+    World foreignWorld;
+    foreignWorld.Initialize();
+    auto* foreignEntity = foreignWorld.SpawnEntity<Entity>();
+    auto* foreignProbe = foreignWorld.CreateComponent<TimeProbe>(foreignEntity);
+    assert(foreignEntity && foreignProbe);
+    probes[0]->Foreign = foreignProbe;
+    float untouched = 42;
+    assert(!world.HasActiveTickTimeContext() && !world.TryGetComponentTickDelta(*probes[0], untouched) &&
+           untouched == 42);
     Engine::FrameTimes times;
     times.Unscaled = .08f;
     times.World = .04f;
@@ -98,6 +120,25 @@ int main()
            skinned.GetTimeChannel() == Engine::TimeChannel::Animation);
     assert(camera.GetTimeChannel() == Engine::TimeChannel::Unscaled &&
            arm.GetTimeChannel() == Engine::TimeChannel::Unscaled);
+    assert(!world.HasActiveTickTimeContext() && !world.TryGetComponentTickDelta(*probes[0], untouched) &&
+           untouched == 42);
+    probes[0]->Throw = true;
+    bool caught = false;
+    try
+    {
+        world.Tick(times);
+    }
+    catch (int)
+    {
+        caught = true;
+    }
+    assert(caught && !world.HasActiveTickTimeContext() && !world.TryGetComponentTickDelta(*probes[0], untouched) &&
+           untouched == 42);
+    probes[0]->Throw = false;
+    world.Tick(times);
+    world.LateTick(times);
     world.Finalize();
+    foreignWorld.Finalize();
     std::cout << "WorldTimeChannelTest passed\n";
+    return 0;
 }

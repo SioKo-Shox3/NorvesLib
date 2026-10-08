@@ -124,6 +124,7 @@ namespace NorvesLib::Modules::Physics
         bool IsColliderLifecycleActive(const ColliderSlot& collider) const;
         void DiscardBodyStepState(BodySlot& body);
         void ReconcileActiveStates();
+        void UpdateRenderInterpolationDefault(BodySlot& body);
         void IntegrateDynamics(float fixedDeltaTime);
         void ResolveContacts(float fixedDeltaTime);
         void BuildEventQueue();

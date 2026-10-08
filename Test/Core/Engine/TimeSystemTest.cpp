@@ -184,4 +184,5 @@ int main()
         assert(plain.GetPhysicsRemainder() == identityFade.GetPhysicsRemainder());
     }
     std::cout << "TimeSystemTest passed\n";
+    return 0;
 }

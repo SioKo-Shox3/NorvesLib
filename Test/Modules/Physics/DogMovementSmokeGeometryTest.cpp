@@ -68,4 +68,5 @@ int main()
         assert(std::fabs(v.Position[0]) <= 4.00001f && std::fabs(v.Position[1]) <= 1.50001f &&
                std::fabs(v.Position[2]) <= .10001f);
     std::cout << "DogMovementSmokeGeometryTest passed\n";
+    return 0;
 }

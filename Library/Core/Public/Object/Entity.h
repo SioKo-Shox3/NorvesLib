@@ -202,7 +202,10 @@ namespace NorvesLib::Core
          */
         const Math::Transform& GetWorldTransform() const;
         // 描画専用。opt-in root以下だけ補間し、物理/joint/AABBのworld姿勢は変更しない。
+        // 明示ON/OFFはsubsystem由来の既定値より優先する。falseの明示も記録する。
         void SetRenderInterpolationEnabled(bool enabled);
+        void ClearRenderInterpolationOverride();
+        void SetDefaultRenderInterpolationEnabled(bool enabled);
         bool IsRenderInterpolationEnabled() const
         {
             return m_bRenderInterpolationEnabled;
@@ -372,6 +375,8 @@ namespace NorvesLib::Core
         Scene::RenderTransformHistory m_RenderHistory;
         Math::Transform m_RenderWorldTransform;
         bool m_bRenderInterpolationEnabled = false;
+        bool m_bRenderInterpolationDefault = false;
+        bool m_bRenderInterpolationOverride = false;
         bool m_bRenderInterpolationInherited = false;
         bool m_bUsesRenderInterpolation = false;
         bool m_bRenderTransformValid = false;

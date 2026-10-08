@@ -217,6 +217,13 @@ namespace NorvesLib::Core
         // 同じフレームの収集結果を用い、物理後の群を実行する。再収集はしない。
         void LateTick(float deltaTime);
         void LateTick(const Engine::FrameTimes& times);
+        // 現在の可変dispatchだけを問い合わせる。dt0は成功、失敗時outは保持する。
+        // 時間解決は更新の許可ではなく、active/tick/pending判定は呼出側が行う。
+        bool TryGetComponentTickDelta(const Component::Component& component, float& out) const;
+        bool HasActiveTickTimeContext() const
+        {
+            return m_bHasActiveTickTime;
+        }
 
         /**
          * @brief 描画先SceneViewを設定
@@ -279,6 +286,10 @@ namespace NorvesLib::Core
         void BuildTickSnapshot();
         void CollectTickEntries(Entity& entity, size_t& ordinal);
         bool CanDispatchEntity(const Entity& entity) const;
+        const Engine::FrameTimes* m_ActiveTickTimes = nullptr;
+        float m_ActiveTickDelta = 0;
+        bool m_bHasActiveTickTime = false;
+        bool TryResolveTickDelta(const Entity& owner, const Component::Component* component, float& out) const;
         void TickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime);
         void LateTickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime);
         void DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime,

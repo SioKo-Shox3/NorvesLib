@@ -194,18 +194,54 @@ namespace Game::GameModes
         lightOwner->SetRotation(M::QuaternionUtils::LookRotation(M::Vector3(-.4f, -1, -.3f), M::Vector3::UnitY));
         light->SetLightColor(1, .95f, .85f);
         light->SetIntensity(60000);
-        data.LateState = Container::MakeShared<Game::CameraLateUpdateState>();
+        data.LateState = Container::MakeShared<DogMovementSmokeLateState>();
+        data.LateState->CharacterId = physical->GetObjectId();
         data.LateState->OwnerId = cameraOwner->GetObjectId();
         data.LateState->SpringArmId = follow->GetComponentId();
         data.LateState->CameraId = camera->GetComponentId();
-        const Container::TWeakPtr<Game::CameraLateUpdateState> weak = data.LateState;
+        const Container::TWeakPtr<DogMovementSmokeLateState> weak = data.LateState;
         auto* world = &ctx.WorldRef;
         auto* render = &ctx.EngineRef.GetRenderWorld();
-        data.LateState->Callback = Delegate<void, float>([weak, world, render](float) {
+        auto* engine = &ctx.EngineRef;
+        data.LateState->Callback = Delegate<void, float>([weak, world, render, engine](float) {
             auto state = weak.lock();
             CameraProxy proxy;
-            if (state && state->BuildSnapshot(*world, proxy))
-                render->SetMainCamera(proxy);
+            if (!state || !state->BuildSnapshot(*world, proxy))
+                return;
+            render->SetMainCamera(proxy);
+            auto* characterOwner = world->FindEntityByObjectId(state->CharacterId);
+            auto* cameraOwner = world->FindEntityByObjectId(state->OwnerId);
+            auto* body = characterOwner ? characterOwner->GetComponent<P::CharacterBodyComponent>() : nullptr;
+            auto* follow = cameraOwner ? cameraOwner->GetComponent<Gameplay::FollowCameraComponent>() : nullptr;
+            if (!body || !body->GetState().bReady || !follow)
+                return;
+            const auto& times = engine->GetTimeSystem().GetFrameTimes();
+            const auto step = body->GetState().StepSerial, cameraTick = follow->GetCameraTickCount();
+            const bool stopped =
+                times.World == 0 && times.Animation == 0 && times.PhysicsDeltaNanoseconds == 0 && times.Unscaled > 0;
+            const bool cameraAdvanced = state->HasPrevious && cameraTick > state->PreviousCameraTick;
+            if (stopped && state->HasPrevious && !state->ObservedStop)
+            {
+                NORVES_LOG_INFO("DogMovementSmoke",
+                                "DOG_MOVEMENT_SMOKE stage=hitstop_active world_dt=%g animation_dt=%g physics_ns=%lld "
+                                "unscaled_dt=%g body_step_held=%d camera_tick_advanced=%d camera_result=%u",
+                                double(times.World), double(times.Animation),
+                                static_cast<long long>(times.PhysicsDeltaNanoseconds), double(times.Unscaled),
+                                int(step == state->PreviousBodyStep), int(cameraAdvanced),
+                                static_cast<unsigned>(follow->GetLastCollisionResult()));
+                state->ObservedStop = true;
+            }
+            else if (!stopped && state->ObservedStop && step > state->PreviousBodyStep)
+            {
+                NORVES_LOG_INFO("DogMovementSmoke",
+                                "DOG_MOVEMENT_SMOKE stage=hitstop_resumed body_step_advanced=1 camera_tick_advanced=%d "
+                                "physics_ns=%lld",
+                                int(cameraAdvanced), static_cast<long long>(times.PhysicsDeltaNanoseconds));
+                state->ObservedStop = false;
+            }
+            state->PreviousBodyStep = step;
+            state->PreviousCameraTick = cameraTick;
+            state->HasPrevious = true;
         });
         ctx.WorldRef.UpdateWorldTransforms();
         CameraProxy initial;

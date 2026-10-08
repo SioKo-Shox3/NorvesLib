@@ -1035,10 +1035,51 @@ namespace NorvesLib::Core
         return true;
     }
 
+    bool World::TryResolveTickDelta(const Entity& owner, const Component::Component* component, float& out) const
+    {
+        if (!m_bHasActiveTickTime || owner.GetWorld() != this)
+            return false;
+        const auto channel = component ? component->GetTimeChannel() : Engine::TimeChannel::World;
+        if (!Engine::IsValidTimeChannel(channel))
+            return false;
+        const float base = m_ActiveTickTimes ? m_ActiveTickTimes->GetDelta(channel) : m_ActiveTickDelta;
+        const bool local = channel == Engine::TimeChannel::World || channel == Engine::TimeChannel::Animation;
+        const double delta = double(base) * (local ? owner.GetCustomTimeDilation() : 1.f);
+        if (!std::isfinite(delta) || delta < 0 || delta > std::numeric_limits<float>::max())
+            return false;
+        out = static_cast<float>(delta);
+        return true;
+    }
+    bool World::TryGetComponentTickDelta(const Component::Component& component, float& out) const
+    {
+        const auto* owner = component.GetOwner();
+        return owner && TryResolveTickDelta(*owner, &component, out);
+    }
     void World::DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime,
                                    const Engine::FrameTimes* times)
     {
         ScopedWorldFlag dispatch(m_bDispatchingTicks);
+        struct TickTimeContext
+        {
+            World& Owner;
+            const Engine::FrameTimes* PreviousTimes;
+            float PreviousDelta;
+            bool PreviousActive;
+            TickTimeContext(World& owner, const Engine::FrameTimes* times, float delta)
+                : Owner(owner), PreviousTimes(owner.m_ActiveTickTimes), PreviousDelta(owner.m_ActiveTickDelta),
+                  PreviousActive(owner.m_bHasActiveTickTime)
+            {
+                owner.m_ActiveTickTimes = times;
+                owner.m_ActiveTickDelta = delta;
+                owner.m_bHasActiveTickTime = true;
+            }
+            ~TickTimeContext()
+            {
+                Owner.m_ActiveTickTimes = PreviousTimes;
+                Owner.m_ActiveTickDelta = PreviousDelta;
+                Owner.m_bHasActiveTickTime = PreviousActive;
+            }
+        } context(*this, times, deltaTime);
         auto publishedGroup = Component::ETickGroup::Count;
         for (const TickDispatchEntry& slot : m_TickEntries)
         {
@@ -1057,32 +1098,25 @@ namespace NorvesLib::Core
             {
                 continue;
             }
-            const auto channel = entry.Target ? entry.Target->GetTimeChannel() : Engine::TimeChannel::World;
-            if (!Engine::IsValidTimeChannel(channel))
-                continue;
-            const float baseDelta = times ? times->GetDelta(channel) : deltaTime;
-            const bool local = channel == Engine::TimeChannel::World || channel == Engine::TimeChannel::Animation;
-            const double scaledDelta = double(baseDelta) * (local ? entry.Owner->GetCustomTimeDilation() : 1.f);
-            if (!std::isfinite(scaledDelta) || scaledDelta < 0 || scaledDelta > std::numeric_limits<float>::max())
-            {
-                LOG_ERROR("局所時間倍率の積が更新dtの範囲外です");
-                continue;
-            }
-            const float tickDelta = static_cast<float>(scaledDelta);
             if (!entry.Target)
             {
+                float tickDelta = 0;
+                if (!TryResolveTickDelta(*entry.Owner, nullptr, tickDelta))
+                    continue;
                 entry.Owner->Tick(tickDelta);
             }
-            else if (entry.Target->GetOwner() == entry.Owner && entry.Target->IsActive()
-                && entry.Target->IsTickEnabled() && !entry.Target->IsPendingDestroy())
+            else if (entry.Target->GetOwner() == entry.Owner && entry.Target->IsActive() &&
+                     entry.Target->IsTickEnabled() && !entry.Target->IsPendingDestroy())
             {
+                float tickDelta = 0;
+                if (!TryGetComponentTickDelta(*entry.Target, tickDelta))
+                    continue;
                 const auto previousGroup = entry.Target->m_DispatchPrimaryGroup;
                 const bool bPrevious = entry.Target->m_bHasDispatchPrimaryGroup;
                 entry.Target->m_DispatchPrimaryGroup = entry.PrimaryGroup;
                 entry.Target->m_bHasDispatchPrimaryGroup = true;
                 // callback自身がheapから破棄されても、その後にTargetを参照解除しない。
-                auto restore = [&]()
-                {
+                auto restore = [&]() {
                     if (slot.Owner == entry.Owner && slot.Target == entry.Target)
                     {
                         entry.Target->m_DispatchPrimaryGroup = previousGroup;
