@@ -2557,11 +2557,12 @@
   - `vsm_draw.frag:32`: `pool` へは `atomicMin` のみ（通常の読み取りが無い）。競合しない。
   - `vsm_clear.comp:59`: `pool[base + offset]` への通常の書き込みのみ（`VsmDirtyList` は `readonly`）。ほかのスレッドと語が重ならず、`vsm_draw.frag` の `atomicMin` は後の描画パス。競合しない。
   - `vsm_sample_probe.comp:56・68`: `stats[0]` は `atomicAdd`（56 行のマクロ）のみ、`vsmPageTable`・`vsmPool` は `readonly`（43-51 行）、`results[index]`（68 行）は 1 スレッド 1 要素。競合しない。
-  - `Common/VirtualShadowMap.glsl`: バッファの宣言を持たず、`VSM_PAGE_TABLE(i)`・`VSM_POOL(i)` を介して include 側の `readonly` の `pageTable`・`pool`（`vsm_sample_probe.comp` と、ライティングの `Common` 側の宣言）を読む関数だけ。
-  - `Common/VirtualShadowMapParams.glsl`: uniform block のメンバになる構造体の定義だけで、バッファの宣言も読み書きも無い。
-  - `Common/VirtualShadowMapChunk.glsl`: 構造体 `VsmShadowChunk` と補助関数の定義だけで、バッファの宣言も読み書きも無い。
-  - `Common/VirtualShadowMapMegaCull.glsl:51`: `VsmMegaCullParams` の uniform（`std140`）の宣言があるが、uniform は読み取り専用で、storage buffer の読み書きは無い。
+  - `Common/VirtualShadowMap.glsl:84・96`: バッファの宣言を持たず、`VSM_PAGE_TABLE(i)`（84 行。ページの表の読み取り）・`VSM_POOL(i)`（96 行。プールの読み取り）を介して include 側の `readonly` の `pageTable`・`pool`（`vsm_sample_probe.comp` と、ライティングの `Common` 側の宣言）を読む関数だけ。書き込みは無い。
+  - `Common/VirtualShadowMapParams.glsl:8-34`: uniform block のメンバになる構造体 `VsmSampleParams` の定義だけで、バッファの宣言も読み書きも無い。
+  - `Common/VirtualShadowMapChunk.glsl:15-44`: 構造体 `VsmShadowChunk`（15-27 行）と定数（30-44 行）の定義だけで、バッファの宣言も読み書きも無い。
+  - `Common/VirtualShadowMapMegaCull.glsl:52`: `VsmMegaCullParams` の uniform（`std140`）の宣言があるが、uniform は読み取り専用で、storage buffer の読み書きは無い。
 - 検証（`.harness/runs/20261008-100400/`）: `verify-VTG8-FIX-ATOMIC-READS-2.txt`（BUILD_EXIT=0）、`verify-VTG8-FIX-ATOMIC-READS-3.txt`（`VirtualShadowMapVulkanTest`・`RenderGraphCompileTest` が 2/2 passed、CTEST_EXIT=0）。競合はメモリモデルの話で、値の結果は変わらないので、落ちるテストは足していない。GPU の撮影は回していない（既定の描画は CSM）。
+- 反復 5（差し戻しの対応）: 共通 GLSL ４項目に実ソースの行番号（`VirtualShadowMap.glsl:84・96`、`VirtualShadowMapParams.glsl:8-34`、`VirtualShadowMapChunk.glsl:15-44`、`VirtualShadowMapMegaCull.glsl:52`）を開いて確かめて書き足した。再検証は `.harness/runs/20261008-111210/verify-VTG8-FIX-ATOMIC-READS-1.txt`（BUILD_EXIT=0）・`-2.txt`（2/2 passed、CTEST_EXIT=0）。
 - Next: `TASKS.md` の未完の次の項目。
 
 ## 反復 4（2026-10-08）: VTG8-FIX-MEGA-OVERFLOW-RETRY（done）
