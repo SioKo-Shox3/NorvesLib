@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "CameraLateUpdate.h"
+#include "Engine/TimeSystem.h"
 #include "GameMode/TGameMode.h"
 #include "Physics/CharacterBodyTypes.h"
 #include "Rendering/RenderTypes.h"
@@ -12,6 +13,7 @@ namespace Game::GameModes
         NorvesLib::Modules::Physics::CharacterDriveMode Drive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         NorvesLib::Core::Rendering::MaterialHandle Materials[3];
         uint64_t CharacterId = 0, CameraOwnerId = 0;
+        NorvesLib::Core::Engine::TimeScaleHandle HitStop;
         bool PushedContext = false, ReportedReady = false;
     };
     class DogMovementSmokeRoutine

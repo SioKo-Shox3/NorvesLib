@@ -49,6 +49,9 @@ namespace Game::GameModes
     void DogMovementSmokeRoutine::Stop(GameModeContext& ctx, DogMovementSmokeData& data)
     {
         data.LateState.reset();
+        if (data.HitStop.IsValid())
+            (void)ctx.EngineRef.GetTimeSystem().RemoveScale(data.HitStop);
+        data.HitStop = {};
         if (auto slot = data.LateSlot.lock())
             slot->Reset();
         if (auto* owner = ctx.WorldRef.FindEntityByObjectId(data.CharacterId))
@@ -216,6 +219,27 @@ namespace Game::GameModes
     {
         if (auto slot = data.LateSlot.lock())
             slot->Arm(data.LateState);
+        // 比較用にBiteの押下で100ms停止する。噛みつきの本実装ではなく、Camera/Input継続の確認用。
+        const auto bite = ctx.EngineRef.GetInputMapper().GetAction(InputActions::GameplayContext, InputActions::Bite);
+        if (bite.Active && bite.Button.Pressed)
+        {
+            Engine::TimeScaleRequest request;
+            request.Channels = Engine::TimeChannelBit(Engine::TimeChannel::World) |
+                               Engine::TimeChannelBit(Engine::TimeChannel::Animation) |
+                               Engine::TimeChannelBit(Engine::TimeChannel::Physics);
+            request.Scale = 0;
+            request.DurationSeconds = .1;
+            request.Tag = InputActions::Bite;
+            Engine::TimeScaleHandle next;
+            if (ctx.EngineRef.GetTimeSystem().PushScale(request, next) == Engine::TimeSystemResult::Success)
+            {
+                if (data.HitStop.IsValid())
+                    (void)ctx.EngineRef.GetTimeSystem().RemoveScale(data.HitStop);
+                data.HitStop = next;
+                NORVES_LOG_INFO("DogMovementSmoke", "DOG_MOVEMENT_SMOKE stage=hitstop duration_ms=100");
+            }
+        }
+
         auto* owner = ctx.WorldRef.FindEntityByObjectId(data.CharacterId);
         auto* cameraOwner = ctx.WorldRef.FindEntityByObjectId(data.CameraOwnerId);
         auto* body = owner ? owner->GetComponent<P::CharacterBodyComponent>() : nullptr;
