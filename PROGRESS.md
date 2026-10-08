@@ -147,3 +147,21 @@ run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.ex
 - 検証: ビルド（`verify-VTG9-VSM-POINT-CULL-PERF-final-build.txt`、EXIT=0）。撮影（`-final-stress.txt`・`-final-views.txt`、result=pass）。Debug ビルド（`-13.txt`、EXIT=0）と ctest（`-14.txt`）は VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・RenderGraphCompileTest が通った。VirtualShadowMapVulkanTest の J・J4・J5・K・R は書き換えなしで通った。`VirtualShadowMapVulkanTest` にケース J6（影を落とすインスタンスのワークグループ数が 1・2・1・2・3・1 で違う場面。選ばれる集合・通った組の数・統計が J1 と同じ）を足した（`-16.txt`）。変異（組の番号を求める割り算を `max(最大 - 1, 1)` にする）で J6 だけが落ち、戻して通過（`-mutation.txt`・`-17.txt`）。`RenderGraphCompileTest` は dispatch の並び（`DDDDDDDDDDDDJDDDJDDJBIIIIE`）・束縛・バリアの位置・区間の内訳・パイプラインの作成数（8 → 10）を新しい流れに合わせた。
 - Notes: 実行時のコンパイラ（shaderc）が、`0xFFFFFFFFu / maxGroups` と `%` を含む 1 スレッドのシェーダー（`barrier()` と shared 変数を使う「最後のワークグループが引数を書く」方式も同様）でこの環境の `vkCreateComputePipelines` を失敗させたため、引数のシェーダーは浮動小数の上限判定と定数での割り算だけにした。`GetLastGroupCount` は従来どおり入力の `TotalGroups`（選択が実際に出すのは通った組ぶん）。GPU のぶれがある間は、フレーム GPU の差ではなく VSM が足す区間の合計（上の 1.91〜1.93 ms）で見るのがよい。
 - Next: 人の判断待ち（`blocked/VTG9-VSM-POINT-CULL-PERF.md`）。
+
+## 段9 VTG9-VSM-POINT-DEFAULT-ON（2026-10-08）
+
+- Done: `BootConfig::DefaultPointShadowMethod`（構造体の既定はキューブ）を足し、`ApplicationProcessor` が `--point-shadow-method` の既定をこの値にした。`GameBoot.cpp` が VSM を設定する（`--point-shadow-method=cube` でキューブへ戻せる）。`SceneView`・`RenderWorld` の構造体の既定はキューブのままなので、検証アプリ（golden）は引数を変えずにキューブ（と CSM）。`Scripts/CaptureStartupScene.ps1` の `-PointShadowMethod` の既定を Vsm にした。
+- 検証: ビルド（`verify-VTG9-VSM-POINT-DEFAULT-ON-1.txt`、EXIT=0）。ctest（`-2.txt`）は RenderGraphCompileTest・VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VirtualShadowMapPointTest・golden 4 本（Indoor・Outdoor・各 GBufferFallback）が 8/8 通過。基準画像・閾値は動かしていない。撮影（`-3.txt`・`-4.txt`、どちらも result=pass、`failures` 空）。Game のログで `point_shadow_method=1`（引数なしの既定ではなく撮影が明示した値だが、既定の経路は ps1 の既定値と GameBoot の設定で同じ Vsm になる）を確認。
+- 測定（Debug・検証レイヤー付き・`-Deterministic -Night -ShadowProbe -SphereSpin Off`。`.harness/runs/startup-capture/VTG9-VSM-POINT-DEFAULT-ON-validation{,-stress}/metrics.json`）:
+
+| run | `vulkan_validation` error / warning | 点光源 `SHADOW_PROBE_AGREE` ratio | mean_texel_mm（キューブ / VSM） | 溢れ |
+|---|---|---|---|---|
+| 既定の視点 | 0 / 0 | 0.999961 | 19.844 / 7.730 | 0 |
+| 近接 | 0 / 0 | 0.994926 | 16.601 / 3.009 | 0 |
+| 低角度 | 0 / 0 | 0.999814 | 18.708 / 2.822 | 0 |
+| 負荷 300 個（既定の視点） | 0 / 0 | 0.993496 | 19.885 / 8.055 | 0 |
+
+  `fallback_ratio` は 4 run とも 0、`VSM_LIGHTING_STATS` の `fallback_samples`・`point_fallback_samples` も 0。ログの `overflow=` は 1932 行すべて 0（`VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL`）。VSM のページは 4 run とも点光源の分（requested = allocated = 165〜296）。
+- 画: 4 枚の PNG を開いた。天球（夜の暗い空と木のシルエット）・地面（石畳と芝とタイル）・大きな球・岩・小屋・見本の小さな球の帯・発光の球（電球）が欠けなく見える。電球の影（見本の球の帯の長い影、大きな球の接地の影、岩の影、近接の球が石畳に落とす影）は欠け・ずれ・面やページの継ぎ目なく連続している。負荷の既定は岩が増え、岩の間にも影が落ちる。キューブの PNG との画素の差は取っていない。
+- Notes: 影の測定の ratio は止まった物の前提なので球の自転を止めて測った（自転する球の細かい影は VSM だけが描く）。深度の比較の余裕・法線のずらしの係数（VTG9-VSM-POINT-SAMPLE の Notes）は、この撮影で浮き・アクネが見えなかったので変えていない。`LightingPassLightPacking` は実キューブが公開されたフレームだけ影の番号を詰める。VSM の構成でもキューブはまだ描いている（GPU-TIME の `ShadowMapPass` 0.08〜0.12 ms）ので、この項目では直していない。GPU 時間は Debug なので見ていない。`VTG9-VSM-POINT-GPU-TIME`・`-CACHE`・`-CULL-PERF` は blocked のまま（人の判断待ち。負荷モードの GPU 時間の基準は `blocked/VTG9-VSM-POINT-CULL-PERF.md`）。
+- Next: 人の判断待ちの 3 件（`blocked/`）。それ以外の未完は TASKS.md の次の `todo`。

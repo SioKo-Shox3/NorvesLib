@@ -242,9 +242,9 @@ param(
     # 太陽の影の方式（既定は Vsm。--shadow-method=csm|vsm を常に渡す）。Csm は従来のカスケードシャドウマップ。
     [ValidateSet('Csm', 'Vsm')]
     [string]$ShadowMethod = 'Vsm',
-    # 点光源の影の方式（既定は Cube。--point-shadow-method=cube|vsm を常に渡す）。Vsm は -ShadowMethod Vsm のときだけ効く（それ以外は Game がキューブのまま描く）。
+    # 点光源の影の方式（既定は Vsm。--point-shadow-method=cube|vsm を常に渡す）。Cube は従来のキューブ。Vsm は -ShadowMethod Vsm のときだけ効く（それ以外は Game がキューブのまま描く）。
     [ValidateSet('Cube', 'Vsm')]
-    [string]$PointShadowMethod = 'Cube',
+    [string]$PointShadowMethod = 'Vsm',
     # 起動画面の大きな球の自転（既定 On）。Off のとき環境変数 NORVES_STARTUP_SPHERE_SPIN=0 を Game へ渡して自転を止める。
     # 影の揺れ・一致の測定は止まった物を前提にするため、そのときは Off にする。
     [ValidateSet('On', 'Off')]
@@ -899,7 +899,7 @@ foreach ($view in $shots)
     }
     # 影の方式は Game の既定が vsm だが、撮影の条件を明示するため、どちらでも引数を渡す。
     $arguments += "--shadow-method=$($ShadowMethod.ToLowerInvariant())"
-    # 点光源の影の方式は Game の既定が cube だが、撮影の条件を明示するため、どちらでも引数を渡す。
+    # 点光源の影の方式は Game の既定が vsm だが、撮影の条件を明示するため、どちらでも引数を渡す。
     $arguments += "--point-shadow-method=$($PointShadowMethod.ToLowerInvariant())"
     # 影の標本は既定で作らないので、-ShadowProbe のときだけ引数を渡す。
     if ($ShadowProbe)

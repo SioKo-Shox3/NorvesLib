@@ -1110,7 +1110,8 @@ namespace NorvesLib::Core::Engine
         // 既定は BootConfig の値（Game は VSM、検証アプリは CSM）。--shadow-method で上書きする
         Rendering::ShadowMethod shadowMethod = config.DefaultSunShadowMethod;
         bool bInvalidShadowMethod = false;
-        Rendering::PointShadowMethod pointShadowMethod = Rendering::PointShadowMethod::Cube;
+        // 既定は BootConfig の値（Game は VSM、検証アプリはキューブ）。--point-shadow-method で上書きする
+        Rendering::PointShadowMethod pointShadowMethod = config.DefaultPointShadowMethod;
         bool bInvalidPointShadowMethod = false;
         uint32_t vsmPoolPages = 0u;
         bool bInvalidVsmPoolPages = false;
@@ -1299,7 +1300,7 @@ namespace NorvesLib::Core::Engine
                 LOG_ERROR("ApplicationProcessor の起動引数 --shadow-method の値が不正です: 'csm' か 'vsm' にしてください");
             }
 
-            // --point-shadow-method=cube|vsm: 点光源の影の方式（既定は cube）。vsm は --shadow-method=vsm のときだけ効く。不正な値は起動時のエラー
+            // --point-shadow-method=cube|vsm: 点光源の影の方式（既定は BootConfig::DefaultPointShadowMethod）。vsm は --shadow-method=vsm のときだけ効く。不正な値は起動時のエラー
             bool bMatchedPointShadowMethod = false;
             if (TryParsePointShadowMethodOption(args[i], pointShadowMethod, bMatchedPointShadowMethod))
             {

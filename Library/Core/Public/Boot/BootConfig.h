@@ -83,6 +83,13 @@ namespace NorvesLib::Core::Boot
          */
         Rendering::ShadowMethod DefaultSunShadowMethod = Rendering::ShadowMethod::Csm;
 
+        /**
+         * @brief 点光源の影の方式の既定（起動引数 --point-shadow-method で上書きされる）
+         *
+         * 検証アプリ（golden など）は既定のキューブのまま、Game は VSM にする。VSM は太陽が VSM のときだけ効く。
+         */
+        Rendering::PointShadowMethod DefaultPointShadowMethod = Rendering::PointShadowMethod::Cube;
+
         // ========== RHI設定 ==========
 
         /**
