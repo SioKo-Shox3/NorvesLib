@@ -7770,6 +7770,8 @@ namespace
     //   T6（灯が無くなる）: 並びを戻しても描き直されず、灯 1 が無くなると、灯 1 のスライスのページは空きへ戻り、灯 0 のページは描き直されない。
     //   T7（先頭の灯が無くなる）: 先頭の灯を除いて残る灯が番号 0 へ詰まると、残る灯のページは新しい番号へ移って描き直されず、
     //     消えた灯のページ（領域の移し替えで上書きされる）が空きへ戻り、解放の統計（全体・点光源）の数と一致する。
+    //   T8（入れ替え＋末尾の灯が無くなる）: 3 灯から 2 灯を入れ替えて末尾を除くと、残る灯のページは移って描き直されず、末尾の灯のページは
+    //     年齢の段階で 1 回だけ空きへ戻り、解放の統計（全体・点光源）の数と一致する（移し替えの集計と二重に数えない）。
 
     struct PointCachePage
     {
@@ -8301,7 +8303,23 @@ namespace
         const Container::VariableArray<uint32_t> keysA = collectKeys(sceneA);
         const Container::VariableArray<uint32_t> keysMoved = collectKeys(sceneMoved);
         Expect(keysA.size() >= 20u && keysMoved.size() >= 20u, "ケース T: 点光源のページに要求がなければならない（場面が退化している）");
-        const uint32_t poolPages = static_cast<uint32_t>(std::max(keysA.size(), keysMoved.size()) * 5u / 4u) + 64u;
+        // 3 灯目（T8 用。Range が短く、カメラの近くの床の一部だけが要求する）を足した並び
+        const PointScene sceneThree = [&]() {
+            PointShadowSnapshot snapshot;
+            snapshot.LightCount = 3u;
+            snapshot.Lights[0].LightId = 101u;
+            snapshot.Lights[0].Position = position0;
+            snapshot.Lights[0].Range = 30.0f;
+            snapshot.Lights[1].LightId = 102u;
+            snapshot.Lights[1].Position = Math::Vector3(-6.0f, 1.0f, -2.0f);
+            snapshot.Lights[1].Range = 6.0f;
+            snapshot.Lights[2].LightId = 103u;
+            snapshot.Lights[2].Position = Math::Vector3(3.0f, 1.0f, -3.0f);
+            snapshot.Lights[2].Range = 5.0f;
+            return BuildPointSceneFrom(scene, snapshot);
+        }();
+        const Container::VariableArray<uint32_t> keysThree = collectKeys(sceneThree);
+        const uint32_t poolPages = static_cast<uint32_t>(std::max(std::max(keysA.size(), keysMoved.size()), keysThree.size()) * 5u / 4u) + 64u;
         std::cout << TestName << " ケース T: 要求の参照=" << keysA.size() << "（灯を動かすと " << keysMoved.size() << "）プール=" << poolPages << std::endl;
 
         // ----- 多角形: 各灯の各面の背景の四角形と、灯 0 の要求のあるページの内側に置いた動く四角形 -----
@@ -8604,6 +8622,42 @@ namespace
             Expect(different == 0u, "ケース T7: 先頭の灯を除いた後の物理ページが毎フレーム描き直したときと全 texel で一致しなければならない");
             std::cout << TestName << " ケース T7: 残ったページ=" << frame7b.Pages.size() << " 空きへ戻した=" << frame7b.Stat(VirtualShadowMap::StatPointReleased)
                       << "（消えた灯のページ=" << frame7a.PagesOf(0u) << "） texel の違い=" << different << std::endl;
+        }
+
+        // ----- T8: 3 灯から「入れ替え＋末尾の灯の削除」をしても、末尾の灯のページは 1 回だけ解放の統計に数えられる -----
+        // （[101, 102, 103] → [102, 101]。末尾（番号 2）の領域は移し替えのあとも残り、年齢の段階で空きへ戻る。移し替えの集計は数えない）
+        PointCacheFrame frame8a;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneThree, movedPolygons, resources, depth, &tracker, frameSerial++, frame8a))
+        {
+            std::cerr << TestName << " ケース T8（3 灯にする）を実行できませんでした" << std::endl;
+            return false;
+        }
+        PointCacheFrame frame8b;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneThree, movedPolygons, resources, depth, &tracker, frameSerial++, frame8b))
+        {
+            std::cerr << TestName << " ケース T8（3 灯を揃える）を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(frame8b.bContinued && frame8b.PagesOf(0u) > 0u && frame8b.PagesOf(1u) > 0u && frame8b.PagesOf(2u) > 0u && frame8b.DirtyCount() == 0u,
+               "ケース T8: 3 灯の並びを 2 フレーム続けると、3 灯すべてのページを持ち、描き直されない");
+        PointCacheFrame frame8c;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneSwapped, movedPolygons, resources, depth, &tracker, frameSerial++, frame8c))
+        {
+            std::cerr << TestName << " ケース T8 を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(frame8c.bContinued && frame8c.InvalidatedSlices == sceneSwapped.Lights.SlicesPerLight,
+               "ケース T8: 無くなった末尾の灯のスライス（36）だけが無効になる");
+        Expect(frame8c.PagesOf(0u) == frame8b.PagesOf(1u) && frame8c.PagesOf(1u) == frame8b.PagesOf(0u) && frame8c.PagesOf(2u) == 0u &&
+                   frame8c.DirtyCount() == 0u && frame8c.Stat(VirtualShadowMap::StatPointRendered) == 0u,
+               "ケース T8: 残る 2 灯のページは入れ替わった番号へ移って描き直されず、末尾の灯のページは空きへ戻る");
+        Expect(frame8c.Stat(VirtualShadowMap::StatPointReleased) == frame8b.PagesOf(2u) && frame8c.Stat(VirtualShadowMap::StatReleased) == frame8b.PagesOf(2u),
+               "ケース T8: 空きへ戻した数（点光源・全体）が、末尾の灯のページの数と一致しなければならない（二重に数えない）");
+        {
+            const uint32_t different = CompareWithFreshPointFrame(device, freshPages, raster, scene, sceneSwapped, movedPolygons, poolPages, depth, frame8c, frameSerial++);
+            Expect(different == 0u, "ケース T8: 入れ替えて末尾の灯を除いた後の物理ページが毎フレーム描き直したときと全 texel で一致しなければならない");
+            std::cout << TestName << " ケース T8: 末尾の灯のページ=" << frame8b.PagesOf(2u) << " 空きへ戻した=" << frame8c.Stat(VirtualShadowMap::StatPointReleased)
+                      << " 全体=" << frame8c.Stat(VirtualShadowMap::StatReleased) << " texel の違い=" << different << std::endl;
         }
         return true;
     }

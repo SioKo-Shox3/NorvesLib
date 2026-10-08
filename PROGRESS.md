@@ -224,3 +224,10 @@ run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.ex
 - 検証: ビルド（`verify-VTG9-VSM-POINT-CACHE-4.txt`、EXIT=0）。ctest（`-5.txt`）は VirtualShadowMapVulkanTest・RenderGraphCompileTest が通った。`VirtualShadowMapVulkanTest` に T7（先頭の灯を除く）を足した: 灯 0・灯 1 の両方のページが揃った 1 フレームのあと、灯 1 だけを番号 0 へ詰める。無効なスライス 0・残る灯の 7 ページは番号 0 へ移って描き直し 0（`StatPointRendered` 0）・空きへ戻した数が `StatPointReleased` と `StatReleased` のどちらも消えた灯の 15 ページと一致・毎フレーム描き直した結果と全 texel で一致（`-3-verbose.txt`）。変異: 段階 11 の dispatch を外すと T7 が落ちた（空きへ戻した数 0、期待 15。`-mutation-remapcount.txt`）→ 戻して通過。
 - Notes: 費用は並びが変わって移し替えるフレームだけ（捨てる領域がある場合に、点光源の領域の欄を 1 回走査する）。起動画面・Game の実行では確かめていない（既定は `--point-shadow-method=cube`）。
 - Next: TASKS.md の次の `todo`。
+
+## 段9 VTG9-VSM-POINT-CACHE 解放の統計の二重計上の修正（2026-10-08）
+
+- 評価者の指摘（3 灯から「入れ替え＋末尾の灯の削除」をすると、移し替えのあとも残る末尾の領域が、新しい集計段階と Age の解放で二重に `released`・`point_released` へ数えられる）を直した。`VirtualShadowMapPages::Record` の捨てる領域の集合は、`Source` を今フレームの灯の数までしか調べなかったため、今フレームの灯の数より後ろの番号に残る領域（`Source[block] == block`）を捨てるものと誤っていた。確認範囲を `min(max(前フレームの灯の数, 今フレームの灯の数), PointShadowMaxLights)` へ広げ、書き戻しの対象のどのブロックの元にもならない領域だけを捨てる領域にした。残る末尾の領域は Age の解放だけが数える。
+- 検証: ビルド（`verify-VTG9-VSM-POINT-CACHE-6.txt`、EXIT=0）。ctest（`-9.txt`）は VirtualShadowMapVulkanTest・RenderGraphCompileTest が通った（`-7.txt` も同じ結果）。`VirtualShadowMapVulkanTest` に T8 を足した: 3 灯（識別子 101・102・103。3 灯目は Range 5 m）を 2 フレーム続けて揃えたあと、`[101,102,103] → [102,101]` にする。無効なスライスは末尾の灯の 36、残る 2 灯のページは入れ替わった番号へ移って描き直し 0、末尾の灯のページ（7）は空きへ戻り、`StatPointReleased` と `StatReleased` のどちらも 7 と一致、毎フレーム描き直した結果と全 texel で一致（`-8-verbose.txt`）。変異: 確認範囲を今フレームの灯の数までに戻すと T8 が落ちた（空きへ戻した数 14、期待 7。`-mutation-range.txt`）→ 戻して通過。
+- Notes: 費用の変更はない。T7（先頭の灯を除く）も通過のまま（捨てる 15 ページを数える）。
+- Next: TASKS.md の次の `todo`。

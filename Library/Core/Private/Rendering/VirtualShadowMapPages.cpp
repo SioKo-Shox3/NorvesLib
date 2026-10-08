@@ -697,10 +697,12 @@ namespace NorvesLib::Core::Rendering
             {
                 const VirtualShadowMapPointLights& lights = *dispatch.PointLights;
                 const uint32_t previousCount = m_PreviousPointLights.LightCount;
+                // 今フレームの灯の数より後ろの番号も、領域が書き戻しの対象になる（そこで元の領域が残っていれば、後の Age の解放が数えるので、ここでは数えない）
+                const uint32_t blockCount = std::min(std::max(previousCount, lights.LightCount), PointShadowMaxLights);
                 for (uint32_t region = 0; region < previousCount; ++region)
                 {
                     bool bUsed = false;
-                    for (uint32_t block = 0; block < lights.LightCount; ++block)
+                    for (uint32_t block = 0; block < blockCount; ++block)
                     {
                         bUsed = bUsed || pointRemap.Source[block] == region;
                     }
