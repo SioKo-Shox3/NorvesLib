@@ -484,3 +484,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 評価者の NEEDS_WORK（指定の測り方で 2548、100 未満に届かない）を受け、stop-when に従って BLOCKED にした。理由と選択肢は `blocked/VTG9-FIX-NIGHT-ENV-SUN.md`。
 - 実装は 2e74630c のまま。測り方（レンガの縁を数える）の再定義はユーザー判断なので、基準は変えていない。
 - Next: 人が done-when (4) を直して `status:` を `todo` に戻すと再開。それまで TASKS.md の次の `todo` へ。
+
+## VTG9-FIX-LIGHTING-PER-EXECUTE（2026-10-08）
+
+- 結果: 照明のパスが 1 フレームに複数回 Execute されても、Execute ごとに自分の descriptor set と、Execute ごとに書くバッファ（`m_LightDataBuffer`・`m_LightArrayBuffer`・`m_VsmSampleBuffer`・`m_VsmPointSampleBuffer`・`m_VsmSliceBuffer`）の組を使う。証拠は `.harness/runs/20261008-221440/verify-VTG9-FIX-LIGHTING-PER-EXECUTE-1.txt`（Debug ビルド EXIT=0）・`-5.txt`（再ビルドと ctest 6/6 通過: RenderGraphCompileTest・VirtualShadowMapVulkanTest・golden 4 本。基準画像・閾値は動かしていない）。`-3.txt` は既存テストのヘルパー修正後の RenderGraphCompileTest、`-2.txt` は修正前に RenderGraphCompileTest が落ちた記録。
+- 前提の確認（stop-when）: タスクの文面の `VulkanCommandList::Begin` は描画の経路では使われない（`RenderingCoordinator` は `BeginRecording` で記録を始める）。前のフレームの提出の完了は `VulkanSwapChain::BeginFrame` が `m_inFlightFences[m_currentFrame]` を待つことで保証され（`MAX_FRAMES_IN_FLIGHT = 1`）、`RenderingCoordinator::RenderFrame` はその後に記録を始める。したがって通し番号が変わった時点で、前のフレームの組を読む GPU の仕事は終わっている。フレームをまたぐ使い方ではないので止めない。`MAX_FRAMES_IN_FLIGHT` を 2 以上にする変更をするときは、組を飛行中のフレームの番号ごとに持つ（`FrameUseRing` の形）必要がある（`LightingPass.h` の組の説明に書いた）。
+- 実装: `LightingPass` に `ExecuteResourceSet`（5 つのバッファ・descriptor set・ライト配列の容量）を最大 4 組（`MaxExecuteResourceSets`）持たせた。`ExecuteWithInputs` が GBuffer の入力の確認の直後に `AcquireExecuteResourceSet(context.ResolveRenderFrameSerial())` で組を選ぶ。通し番号が前回と違えば先頭の組から使い直し、同じ間は Execute のたびに次の組へ進む。組は要るときに作る（組 0 は Initialize が作ったもの）。以降の本体のコード（`m_LightDataBuffer` などの参照）は、選んだ組が載った「現在の枠」をそのまま使う。4 つを超えた Execute は `LIGHTING_EXECUTE_SETS_EXCEEDED limit=4` を 1 回だけ出して描かない（`TryEnqueueNativeTransitionPass` だけ記録）。組を作れなかったときは現在の枠を元の組へ戻し、次の Execute でやり直す。1 ビューポートの描画（起動画面）は常に組 0 で、今までと同じ資源・同じ内容。
+- テスト: `RenderGraphCompileTest` の `TestLightingExecutesInOneFrameUseSeparateResourceSets`。同じ通し番号で別のカメラの位置の 4 ビューポートを回し、(1) Execute のたびに照明の descriptor set が 1 つずつ増える、(2) 4 組の descriptor set と 5 つのバッファ（束縛 4・5・21・25・26）がすべて別、(3) 各組のバッファの中身がその Execute のカメラの値（`GPUVsmSampleParams` の `cameraPosition`）で、後の Execute の後も変わらない、(4) 5 つ目・6 つ目は描かず（描画数が 1 ビューポートぶん減る）組を増やさず、エラーは 1 回、(5) 通し番号が変わると先頭の組から使い直し、2 番目の組は触られない、を確かめる。変異（`AcquireExecuteResourceSet` の組の位置を常に 0 にする）では `sets.size() == viewport + 1u` の assert で落ちる（`-4-mutation.txt`）。変異は戻した。
+- 既存テストの修正: `ExecuteLightingGraphWithLights`（ライト配列の増減のテスト）は呼び出しごとに「別のフレーム」を表すのに通し番号を変えておらず、同じフレームの別ビューポートとして別の組を作って assert が落ちた。呼び出しごとに `RenderFrameSerial = frameIndex + 1` を渡すようにした（検査の内容は変えていない）。
+- 既知の限界（直さない）: 同じ形の「1 本の定数・storage buffer を Execute ごとに書く」資源は SSAO・SSR・Bloom・トーンマップ・ボリュームにも残る。照明の中でも RTGI・DDGI の計算のパラメータのバッファ（`m_RTGIComputeParametersBuffer` など）は組に含めていない（段9の差分ではない）。同じフレームに複数のビューポートを描くと、これらは後の Execute が先に記録した dispatch の読む値を上書きしうる。
+- 撮影はしていない（描画の経路・内容は 1 ビューポートで変わらず、golden 4 本が通る）。
+- Next: TASKS.md の次の `todo`。

@@ -418,6 +418,8 @@ namespace
     {
         uint32_t Binding = 0;
         char Name[48] = {};
+        // 束縛されたバッファそのもの（名前が同じ複数のバッファを区別するのに使う）
+        const RHI::IBuffer* Buffer = nullptr;
     };
     struct DescriptorBindingRecord
     {
@@ -459,6 +461,7 @@ namespace
             entry->Binding = binding;
         }
         std::memset(entry->Name, 0, sizeof(entry->Name));
+        entry->Buffer = buffer.get();
         const FakeBuffer* fake = static_cast<const FakeBuffer*>(buffer.get());
         const char* name = fake != nullptr ? fake->GetDesc().DebugName : nullptr;
         if (name != nullptr)
@@ -6208,6 +6211,30 @@ namespace
     };
 
 #if NORVES_ENABLE_LOGGING
+    // 照明のログ（カテゴリ LightingPass）を残し、部分文字列に一致する行の数を数える
+    struct LightingLogCollector final : Logging::ILogSink
+    {
+        Container::VariableArray<Container::String> Messages;
+
+        void OnLog(const Logging::LogEntry& entry) override
+        {
+            if (entry.category == "LightingPass")
+            {
+                Messages.push_back(entry.message);
+            }
+        }
+
+        uint32_t Count(const char* needle) const
+        {
+            uint32_t count = 0;
+            for (const Container::String& message : Messages)
+            {
+                count += std::strstr(message.c_str(), needle) != nullptr ? 1u : 0u;
+            }
+            return count;
+        }
+    };
+
     // VSM のログ（カテゴリ VirtualShadowMapPass）を残し、部分文字列に一致する行の数を数える
     struct VsmLogCollector final : Logging::ILogSink
     {
@@ -8374,6 +8401,233 @@ namespace
         run.Context.Resources.Textures = nullptr;
         run.Context.Resources.Materials = nullptr;
         run.Context.Resources.Meshes = nullptr;
+    }
+
+    // 記述子セットに束縛された、名前つきのバッファ（束縛が無ければ nullptr）
+    const FakeBuffer* BoundFakeBufferAt(const Container::VariableArray<BoundBufferName>& bindings, uint32_t binding)
+    {
+        for (const BoundBufferName& entry : bindings)
+        {
+            if (entry.Binding == binding)
+            {
+                return static_cast<const FakeBuffer*>(entry.Buffer);
+            }
+        }
+        return nullptr;
+    }
+
+    // 照明の記述子セット（束縛 21 が LightingVsmSampleParams のもの）の番地を、作られた順に集める
+    Container::VariableArray<const void*> CollectLightingDescriptorSets()
+    {
+        Container::VariableArray<const void*> sets;
+        for (const DescriptorBindingRecord& record : GDescriptorBindingRecords)
+        {
+            const char* sampleName = BoundBufferNameAt(record.Buffers, 21);
+            if (sampleName != nullptr && std::strcmp(sampleName, "LightingVsmSampleParams") == 0)
+            {
+                sets.push_back(record.Set);
+            }
+        }
+        return sets;
+    }
+
+    // 照明の 1 つの記述子セットが束縛した、Execute ごとに書かれるバッファと、その時点の中身
+    struct LightingSetContents
+    {
+        const void* Set = nullptr;
+        // 束縛 4（照明の定数）・5（ライトの配列）・21（太陽の VSM）・25（スライスの表）・26（点光源の VSM）
+        const FakeBuffer* Buffers[5] = {};
+        Container::VariableArray<uint8_t> Bytes[5];
+    };
+    constexpr uint32_t LightingSetBindings[5] = {4u, 5u, 21u, 25u, 26u};
+
+    bool SameBytes(const Container::VariableArray<uint8_t>& lhs, const Container::VariableArray<uint8_t>& rhs)
+    {
+        return lhs.size() == rhs.size() && (lhs.empty() || std::memcmp(lhs.data(), rhs.data(), lhs.size()) == 0);
+    }
+
+    LightingSetContents CaptureLightingSet(const void* set)
+    {
+        LightingSetContents contents;
+        contents.Set = set;
+        const Container::VariableArray<BoundBufferName> bindings = SnapshotDescriptorBindings(set);
+        for (uint32_t index = 0; index < 5u; ++index)
+        {
+            contents.Buffers[index] = BoundFakeBufferAt(bindings, LightingSetBindings[index]);
+            assert(contents.Buffers[index] != nullptr);
+            contents.Bytes[index] = contents.Buffers[index]->LastUpdateBytes;
+        }
+        return contents;
+    }
+
+    // 同じフレームに照明が複数回 Execute される（同じ SceneView の複数のビューポート）とき、
+    //  - Execute ごとに別の記述子セットと、別の定数・ライトの配列・VSM のパラメータとスライスの表のバッファを使う
+    //  - 後の Execute が、先の Execute の組のバッファの中身（その時のカメラの値）を書き換えない
+    //  - 組は 4 つまで。超えた Execute はエラーを 1 回だけ出して描かず、組を増やさない
+    //  - 通し番号が変わると先頭の組から使い直し、組を増やさない
+    void TestLightingExecutesInOneFrameUseSeparateResourceSets()
+    {
+#if NORVES_ENABLE_LOGGING
+        Logging::LogConfig logConfig;
+        logConfig.minLevel = Logging::LogLevel::Trace;
+        logConfig.outputType = Logging::LogOutput::None;
+        logConfig.bAsyncLogging = false;
+        logConfig.bAutoFlush = false;
+        Logging::Logger& logger = Logging::Logger::GetInstance();
+        logger.Shutdown();
+        assert(logger.Initialize(logConfig));
+        LightingLogCollector logs;
+        logger.AddSink(&logs);
+#endif
+
+        VsmRun run;
+        run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
+        InitializeVsmRun(run);
+        run.Context.PhysicalLighting.SunClipmap = BuildVirtualShadowMapClipmap(
+            NorvesLib::Math::Vector3(0.35f, -0.8f, 0.45f), 1u, NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), VirtualShadowMapClipmapSettings{});
+        assert(run.Context.PhysicalLighting.SunClipmap.bEnabled);
+
+        run.Pool.BeginFrame(0);
+        RenderResources renderResources;
+        assert(renderResources.Initialize(run.Device));
+        SceneRenderer renderer;
+        assert(renderer.Initialize(run.Device.get(), nullptr, &run.Pool));
+        Container::VariableArray<DrawCommand> opaqueCommands;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+        run.Context.Renderer = &renderer;
+        run.Context.PendingFrameCommands = &pendingFrameCommands;
+        run.Context.SnapshotOpaqueCommands = DrawCommandView::FromArray(opaqueCommands);
+        run.Context.Resources.Textures = &renderResources.Textures();
+        run.Context.Resources.Materials = &renderResources.Materials();
+        run.Context.Resources.Meshes = &renderResources.Meshes();
+
+        GBufferPass gbufferPass;
+        gbufferPass.SetSceneRenderer(&renderer);
+        VirtualShadowMapPass vsmPass;
+        assert(vsmPass.Initialize(run.Context));
+        LightingPass lightingPass;
+
+        // 1 つのビューポートを回す。フレーム（通し番号）は frame、グラフ・プールの世代は generation（同じフレームでは世代だけが進む）。
+        // カメラの位置だけを変える（VSM を読むパラメータはカメラの位置を含む）
+        uint64_t generation = 0;
+        const auto runViewport = [&](uint64_t frame, float cameraX)
+        {
+            run.Camera.PositionX = cameraX;
+            SetVsmFrame(run, frame);
+            pendingFrameCommands.clear();
+            run.Pool.EndFrame();
+            run.Pool.BeginFrame(generation);
+            run.Graph.BeginFrame(generation);
+            ++generation;
+            run.Graph.AddPass(&gbufferPass);
+            run.Graph.AddPass(&vsmPass);
+            run.Graph.AddPass(&lightingPass);
+            assert(run.Graph.Compile(run.Context));
+            const RenderGraphExecutionResult result = run.Graph.ExecuteWithResult(run.Context);
+            assert(result.bSuccess);
+        };
+
+        // フレーム 0 の 4 つのビューポート。Execute のたびに照明の記述子セットが 1 つずつ増え、各組のバッファの中身はその時のカメラの値
+        const float cameraXs[4] = {0.0f, 10.0f, 20.0f, 30.0f};
+        LightingSetContents expected[4];
+        uint32_t drawsPerViewport = 0;
+        for (uint32_t viewport = 0; viewport < 4u; ++viewport)
+        {
+            const uint32_t drawsBefore = run.CommandList.DrawCallCount;
+            runViewport(0, cameraXs[viewport]);
+            drawsPerViewport = run.CommandList.DrawCallCount - drawsBefore;
+            const Container::VariableArray<const void*> sets = CollectLightingDescriptorSets();
+            assert(sets.size() == viewport + 1u);
+            expected[viewport] = CaptureLightingSet(sets[viewport]);
+            // この Execute の VSM のパラメータはこのカメラの値
+            GPUVsmSampleParams params = {};
+            assert(expected[viewport].Bytes[2].size() == sizeof(params));
+            std::memcpy(&params, expected[viewport].Bytes[2].data(), sizeof(params));
+            assert(params.control[0] == 1u && params.cameraPosition[0] == cameraXs[viewport]);
+        }
+        assert(drawsPerViewport > 0u);
+
+        // 組どうしは、記述子セットも 5 つのバッファもすべて別
+        for (uint32_t first = 0; first < 4u; ++first)
+        {
+            for (uint32_t second = first + 1u; second < 4u; ++second)
+            {
+                assert(expected[first].Set != expected[second].Set);
+                for (uint32_t index = 0; index < 5u; ++index)
+                {
+                    assert(expected[first].Buffers[index] != expected[second].Buffers[index]);
+                }
+            }
+        }
+        // 後の Execute が先の組を書き換えていない: 各組のバッファの今の中身が、その Execute の直後に撮った中身のまま
+        for (uint32_t viewport = 0; viewport < 4u; ++viewport)
+        {
+            for (uint32_t index = 0; index < 5u; ++index)
+            {
+                assert(SameBytes(expected[viewport].Buffers[index]->LastUpdateBytes, expected[viewport].Bytes[index]));
+            }
+        }
+        // カメラが違えば VSM のパラメータは違う（この検査が空振りでないことの裏づけ）
+        assert(!SameBytes(expected[0].Bytes[2], expected[1].Bytes[2]));
+        assert(!SameBytes(expected[0].Bytes[2], expected[3].Bytes[2]));
+
+        // 組の数の上限を超えた Execute: 描かず、組を増やさず、エラーは 1 回だけ
+#if NORVES_ENABLE_LOGGING
+        assert(logs.Count("LIGHTING_EXECUTE_SETS_EXCEEDED") == 0);
+#endif
+        {
+            const uint32_t drawsBefore = run.CommandList.DrawCallCount;
+            runViewport(0, 40.0f);
+            assert(run.CommandList.DrawCallCount - drawsBefore < drawsPerViewport);
+            runViewport(0, 50.0f);
+            assert(CollectLightingDescriptorSets().size() == 4u);
+            for (uint32_t viewport = 0; viewport < 4u; ++viewport)
+            {
+                for (uint32_t index = 0; index < 5u; ++index)
+                {
+                    assert(SameBytes(expected[viewport].Buffers[index]->LastUpdateBytes, expected[viewport].Bytes[index]));
+                }
+            }
+        }
+#if NORVES_ENABLE_LOGGING
+        assert(logs.Count("LIGHTING_EXECUTE_SETS_EXCEEDED") == 1);
+#endif
+
+        // 通し番号が変わると先頭の組から使い直す: 組は増えず、先頭の組へ新しいカメラの値が入り、2 番目の組は触られない
+        runViewport(1, 5.0f);
+        assert(CollectLightingDescriptorSets().size() == 4u);
+        {
+            const Container::VariableArray<const void*> sets = CollectLightingDescriptorSets();
+            const LightingSetContents reused = CaptureLightingSet(sets[0]);
+            assert(reused.Set == expected[0].Set);
+            GPUVsmSampleParams params = {};
+            assert(reused.Bytes[2].size() == sizeof(params));
+            std::memcpy(&params, reused.Bytes[2].data(), sizeof(params));
+            assert(params.cameraPosition[0] == 5.0f);
+            for (uint32_t index = 0; index < 5u; ++index)
+            {
+                assert(SameBytes(expected[1].Buffers[index]->LastUpdateBytes, expected[1].Bytes[index]));
+            }
+        }
+        runViewport(1, 15.0f);
+        assert(CollectLightingDescriptorSets().size() == 4u);
+        {
+            const LightingSetContents second = CaptureLightingSet(CollectLightingDescriptorSets()[1]);
+            assert(second.Set == expected[1].Set);
+            GPUVsmSampleParams params = {};
+            std::memcpy(&params, second.Bytes[2].data(), sizeof(params));
+            assert(params.cameraPosition[0] == 15.0f);
+        }
+
+        lightingPass.Shutdown();
+        gbufferPass.Shutdown();
+        renderer.Shutdown();
+        renderResources.Shutdown();
+        ShutdownVsmRun(run, vsmPass);
+#if NORVES_ENABLE_LOGGING
+        logger.RemoveSink(&logs);
+        logger.Shutdown();
+#endif
     }
 
     // 太陽の VSM の照明の統計（逃げた標本の数）の読み戻し:
@@ -12737,6 +12991,8 @@ namespace
         context.Resources.Textures = &renderResources.Textures();
         context.Resources.Materials = &renderResources.Materials();
         context.Resources.Meshes = &renderResources.Meshes();
+        // 呼び出しごとに別のフレーム。通し番号が同じだと、照明は同じフレームの別のビューポートとして別の資源の組を使う
+        context.RenderFrameSerial = frameIndex + 1u;
 
         ResetLightingDescriptorCapture();
         assert(graph.Compile(context));
@@ -15015,6 +15271,7 @@ int main()
     TestVirtualShadowMapPassRecordsCasterRasterAfterSkinning();
     TestVirtualShadowMapPassDrawsOnlyShadowCastingSkinnedSubmeshRanges();
     TestVirtualShadowMapPassRecordsMegaCullBetweenMainCullAndExpand();
+    TestLightingExecutesInOneFrameUseSeparateResourceSets();
     TestLightingVsmStatsAreMadeHostVisibleAndReadAfterCompletion();
     TestLightingReadsVsmWhenPublished();
     TestLightingShaderCountsVsmFallbackIndependentlyOfVtFeedback();

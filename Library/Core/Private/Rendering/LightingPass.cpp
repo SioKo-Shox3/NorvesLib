@@ -1923,6 +1923,12 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
         m_LightingDescriptorSet = std::move(initialDescriptorSet);
+        // ここまでに作った現在の枠が組 0。以後の Execute は通し番号ごとに先頭の組から使う
+        m_ExecuteResourceSetCount = 1u;
+        m_ActiveExecuteResourceSet = 0u;
+        m_ExecuteResourceSetCursor = 0u;
+        m_ExecuteResourceSetFrameSerial = 0u;
+        m_bExecuteResourceSetOverflowLogged = false;
 
         initializationRollback.Commit();
         m_bInitialized = true;
@@ -1948,6 +1954,15 @@ namespace NorvesLib::Core::Rendering
 
         // Descriptor bindings own references to buffers, textures, and samplers.
         m_LightingDescriptorSet.reset();
+        for (ExecuteResourceSet& set : m_ExecuteResourceSets)
+        {
+            set = ExecuteResourceSet{};
+        }
+        m_ExecuteResourceSetCount = 0u;
+        m_ActiveExecuteResourceSet = 0u;
+        m_ExecuteResourceSetCursor = 0u;
+        m_ExecuteResourceSetFrameSerial = 0u;
+        m_bExecuteResourceSetOverflowLogged = false;
 
         // Release dependents before the resources they reference.
         m_LightingPipeline.reset();
@@ -3000,6 +3015,129 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    void LightingPass::StoreActiveExecuteResourceSet()
+    {
+        ExecuteResourceSet& set = m_ExecuteResourceSets[m_ActiveExecuteResourceSet];
+        set.LightData = m_LightDataBuffer;
+        set.LightArray = m_LightArrayBuffer;
+        set.VsmSample = m_VsmSampleBuffer;
+        set.VsmPointSample = m_VsmPointSampleBuffer;
+        set.VsmSlice = m_VsmSliceBuffer;
+        set.DescriptorSet = m_LightingDescriptorSet;
+        set.LightArrayCapacity = m_LightArrayCapacity;
+    }
+
+    void LightingPass::LoadExecuteResourceSet(uint32_t index)
+    {
+        const ExecuteResourceSet& set = m_ExecuteResourceSets[index];
+        m_LightDataBuffer = set.LightData;
+        m_LightArrayBuffer = set.LightArray;
+        m_VsmSampleBuffer = set.VsmSample;
+        m_VsmPointSampleBuffer = set.VsmPointSample;
+        m_VsmSliceBuffer = set.VsmSlice;
+        m_LightingDescriptorSet = set.DescriptorSet;
+        m_LightArrayCapacity = set.LightArrayCapacity;
+        m_ActiveExecuteResourceSet = index;
+    }
+
+    bool LightingPass::CreateExecuteResourceSet()
+    {
+        if (!m_Device)
+        {
+            return false;
+        }
+
+        m_LightDataBuffer = m_Device->CreateBuffer(
+            RHI::BufferDesc(LIGHTING_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "LightingParamsUBO"));
+        if (!m_LightDataBuffer)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Execute 用の照明パラメータのバッファを作れませんでした");
+            return false;
+        }
+        if (!EnsureLightArrayBufferCapacity(1))
+        {
+            NORVES_LOG_ERROR("LightingPass", "Execute 用のライト配列のバッファを作れませんでした");
+            return false;
+        }
+
+        m_VsmSampleBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmSampleParams),
+                                                                   RHI::ResourceUsage::ConstantBuffer,
+                                                                   true,
+                                                                   "LightingVsmSampleParams"));
+        m_VsmPointSampleBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmPointSampleParams),
+                                                                        RHI::ResourceUsage::ConstantBuffer,
+                                                                        true,
+                                                                        "LightingVsmPointSampleParams"));
+        m_VsmSliceBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices,
+                                                                  RHI::ResourceUsage::StorageBuffer,
+                                                                  true,
+                                                                  "LightingVsmSlices"));
+        if (!m_VsmSampleBuffer || !m_VsmPointSampleBuffer || !m_VsmSliceBuffer)
+        {
+            NORVES_LOG_ERROR("LightingPass", "Execute 用の VSM のバッファを作れませんでした");
+            return false;
+        }
+        // Execute が全部書き直すが、書く前の内容も無効の値にそろえておく
+        const GPUVsmSampleParams disabledVsmParams = {};
+        m_VsmSampleBuffer->Update(&disabledVsmParams, sizeof(disabledVsmParams));
+        const GPUVsmPointSampleParams disabledVsmPointParams = {};
+        m_VsmPointSampleBuffer->Update(&disabledVsmPointParams, sizeof(disabledVsmPointParams));
+        GPUVsmSlice disabledSlices[VirtualShadowMapMaxLevels];
+        BuildVirtualShadowMapSlices(nullptr, nullptr, VirtualShadowMapMaxLevels, disabledSlices);
+        m_VsmSliceBuffer->Update(disabledSlices, sizeof(disabledSlices));
+
+        return CreateLightingDescriptorSet(m_LightingDescriptorSet);
+    }
+
+    bool LightingPass::AcquireExecuteResourceSet(uint64_t frameSerial)
+    {
+        if (m_ExecuteResourceSetCount == 0u)
+        {
+            // Initialize を通らずに揃った現在の枠は、組 0 として扱う
+            m_ExecuteResourceSetCount = 1u;
+            m_ActiveExecuteResourceSet = 0u;
+        }
+        if (frameSerial != m_ExecuteResourceSetFrameSerial)
+        {
+            m_ExecuteResourceSetFrameSerial = frameSerial;
+            m_ExecuteResourceSetCursor = 0u;
+        }
+        if (m_ExecuteResourceSetCursor >= MaxExecuteResourceSets)
+        {
+            if (!m_bExecuteResourceSetOverflowLogged)
+            {
+                m_bExecuteResourceSetOverflowLogged = true;
+                NORVES_LOG_ERROR("LightingPass",
+                                 "LIGHTING_EXECUTE_SETS_EXCEEDED limit=%u 1 フレームの照明の Execute が上限を超えたため、超えた分は描きません",
+                                 MaxExecuteResourceSets);
+            }
+            return false;
+        }
+
+        const uint32_t index = m_ExecuteResourceSetCursor;
+        if (index >= m_ExecuteResourceSetCount)
+        {
+            // 組は先頭から順に足すので、足りないのは常に末尾の次。作れなければ現在の枠を元の組へ戻し、次の Execute でやり直す
+            const uint32_t previous = m_ActiveExecuteResourceSet;
+            StoreActiveExecuteResourceSet();
+            m_ExecuteResourceSets[index] = ExecuteResourceSet{};
+            LoadExecuteResourceSet(index);
+            if (!CreateExecuteResourceSet())
+            {
+                LoadExecuteResourceSet(previous);
+                return false;
+            }
+            m_ExecuteResourceSetCount = index + 1u;
+        }
+        else if (index != m_ActiveExecuteResourceSet)
+        {
+            StoreActiveExecuteResourceSet();
+            LoadExecuteResourceSet(index);
+        }
+        ++m_ExecuteResourceSetCursor;
+        return true;
+    }
+
     bool LightingPass::EnsureLightingPipeline()
     {
         if (m_LightingPipeline)
@@ -4017,6 +4155,13 @@ namespace NorvesLib::Core::Rendering
         if (!albedoTexture || !normalTexture || !materialTexture || !depthTexture)
         {
             NORVES_LOG_WARNING("LightingPass", "GBuffer textures not available, skipping lighting");
+            TryEnqueueNativeTransitionPass(context);
+            return;
+        }
+
+        // 同じフレームの別の Execute が記録した描画が読む資源を書き換えないよう、この Execute 専用の組へ切り替える
+        if (!AcquireExecuteResourceSet(context.ResolveRenderFrameSerial()))
+        {
             TryEnqueueNativeTransitionPass(context);
             return;
         }

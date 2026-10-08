@@ -275,6 +275,20 @@ namespace NorvesLib::Core::Rendering
                                        const LightingOutputTargets& targets);
         bool CreateLightingDescriptorSet(RHI::DescriptorSetPtr& outDescriptorSet);
         bool EnsureLightingDescriptorSet();
+        /**
+         * @brief この Execute が使う資源の組を選び、組の資源を m_LightDataBuffer などの現在の枠へ載せる
+         *
+         * 通し番号が前回と違えば先頭の組から使い直し、同じ間は Execute のたびに次の組へ進む。組が足りなければ作る。
+         * 上限（MaxExecuteResourceSets）を超えたとき・組を作れないときは false（呼び出し側は描かない）。
+         * @param frameSerial 今のフレームの通し番号（ViewRenderContext::ResolveRenderFrameSerial）
+         */
+        bool AcquireExecuteResourceSet(uint64_t frameSerial);
+        /** @brief 現在の枠（m_LightDataBuffer などと m_LightingDescriptorSet）を組の配列の active の位置へ書き戻す */
+        void StoreActiveExecuteResourceSet();
+        /** @brief 組の配列の index の位置の組を現在の枠へ載せ、active を index にする */
+        void LoadExecuteResourceSet(uint32_t index);
+        /** @brief 現在の枠が空のとき、ライトの定数・配列・VSM の 3 つのバッファと descriptor set を作る */
+        bool CreateExecuteResourceSet();
         bool EnsureLightingPipeline();
         void ExecuteWithInputs(ViewRenderContext& context,
                                const RHI::TexturePtr& albedoTexture,
@@ -436,6 +450,41 @@ namespace NorvesLib::Core::Rendering
         bool m_bRTGIDenoiserUnavailable = false;
         DDGIProbePass m_DDGIProbePass;
         RayTracingShadowPass m_RayTracingShadowPass;
+        /**
+         * @brief 1 回の Execute が自分で使う、書き換えるバッファと descriptor set の組
+         *
+         * 同じ SceneView が 1 フレームに複数のビューポートを描くと LightingPass が複数回 Execute される。
+         * 照明の定数・ライトの配列・VSM のパラメータとスライスの表は Execute ごとに書き換えるうえ、descriptor set は
+         * 記録済みのコマンドが参照するので、提出前に次の Execute が同じ資源を書くと先に記録した描画を壊す。
+         * そのため Execute ごとに別の組を使う。
+         */
+        struct ExecuteResourceSet
+        {
+            RHI::BufferPtr LightData;
+            RHI::BufferPtr LightArray;
+            RHI::BufferPtr VsmSample;
+            RHI::BufferPtr VsmPointSample;
+            RHI::BufferPtr VsmSlice;
+            RHI::DescriptorSetPtr DescriptorSet;
+            uint32_t LightArrayCapacity = 0;
+        };
+        /** @brief 1 フレームに描ける Execute の数の上限（超えた Execute はエラーを 1 回出して描かない） */
+        static constexpr uint32_t MaxExecuteResourceSets = 4;
+        /**
+         * @brief 組の配列。m_ActiveExecuteResourceSet の位置は古く、現在の枠（下の 7 つのメンバ）が最新
+         *
+         * 組は通し番号が変わったときだけ先頭から使い直す。前のフレームの提出は、スワップチェーンの BeginFrame が
+         * 飛行中のフェンスを待つ（飛行中のフレームは 1 つ）ことで、次の記録の開始までに完了している。
+         */
+        ExecuteResourceSet m_ExecuteResourceSets[MaxExecuteResourceSets];
+        uint32_t m_ExecuteResourceSetCount = 0;
+        uint32_t m_ActiveExecuteResourceSet = 0;
+        /** @brief 今のフレーム（m_ExecuteResourceSetFrameSerial）で渡した組の数 */
+        uint32_t m_ExecuteResourceSetCursor = 0;
+        uint64_t m_ExecuteResourceSetFrameSerial = 0;
+        bool m_bExecuteResourceSetOverflowLogged = false;
+
+        // 現在の枠（Execute が使っている組）。組の取り替えで差し替わる
         RHI::BufferPtr m_LightDataBuffer;
         RHI::BufferPtr m_LightArrayBuffer;
         Container::VariableArray<RHI::BufferPtr> m_RetiredLightArrayBuffers;
