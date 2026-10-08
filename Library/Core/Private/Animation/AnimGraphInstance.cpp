@@ -80,6 +80,10 @@ namespace NorvesLib::Core::Animation
     void AnimGraphInstance::Swap(AnimGraphInstance& other)
     {
         using std::swap;
+        swap(m_SyncClips, other.m_SyncClips);
+        swap(m_SyncGroups, other.m_SyncGroups);
+        swap(m_SyncPhases, other.m_SyncPhases);
+        swap(m_SyncOffsets, other.m_SyncOffsets);
         swap(m_RootClips, other.m_RootClips);
         swap(m_NodeMotion, other.m_NodeMotion);
         swap(m_MotionScratch, other.m_MotionScratch);
@@ -111,6 +115,10 @@ namespace NorvesLib::Core::Animation
         m_bValid = false;
         m_Graph.reset();
         m_Contexts.clear();
+        m_SyncClips.clear();
+        m_SyncGroups.clear();
+        m_SyncPhases.clear();
+        m_SyncOffsets.clear();
         m_RootClips.clear();
         m_NodeMotion.clear();
         m_MotionModels.clear();
@@ -221,11 +229,15 @@ namespace NorvesLib::Core::Animation
                 }
             }
         }
+        m_SyncClips.resize(count);
+        m_SyncOffsets.resize(count, 0);
+        m_SyncGroups.resize(data->SyncGroups.size());
+        m_SyncPhases.resize(data->SyncGroups.size(), 0);
         m_RootClips.resize(data->Clips.size());
         m_NodeMotion.resize(count);
         m_MotionScratch.Resize(joints);
         m_MotionModels.resize(joints);
-        if (!RefreshRootMetadata(true))
+        if (!RefreshRootMetadata(true) || !RefreshSyncMaps())
         {
             Reset();
             return false;
@@ -236,6 +248,13 @@ namespace NorvesLib::Core::Animation
             Reset();
             return false;
         }
+        m_Weights = m_EvaluationWeights;
+        if (!AdvanceSyncGroups(0) || !EvaluateNodes(false))
+        {
+            Reset();
+            return false;
+        }
+        m_Traversals.clear();
         m_Output = m_Poses[data->Root];
         return true;
     }
@@ -408,6 +427,8 @@ namespace NorvesLib::Core::Animation
                           : 0;
             if (node.Kind == AnimNodeKind::Clip && node.bLoop && m_Graph->Clips[node.Clip]->GetClipMetadata().Loop.bEnabled)
                 rt.Time = m_Graph->Clips[node.Clip]->GetClipMetadata().Loop.Start;
+            m_SyncOffsets[i] = 0;
+            SeedSyncNode(i);
             rt.StateTime = 0;
             rt.NextStateTime = 0;
             rt.Current = m_Graph->Nodes[i].InitialState;
@@ -423,7 +444,8 @@ namespace NorvesLib::Core::Animation
         visit(visit, root);
     }
     bool AnimGraphInstance::StartTransition(uint32_t index, uint32_t target, float duration, AnimTransitionCurve curve,
-                                            AnimInterrupt interrupt)
+                                            AnimInterrupt interrupt, Identity sourceMarker, Identity targetMarker,
+                                            uint32_t sourceState)
     {
         auto& rt = m_Runtime[index];
         const auto& n = m_Graph->Nodes[index];
@@ -437,6 +459,59 @@ namespace NorvesLib::Core::Animation
         {
             return false;
         }
+        Container::VariableArray<double> sourceOffsets;
+        Container::VariableArray<float> sourceWeights;
+        if (sourceMarker.IsValid())
+        {
+            sourceOffsets.resize(m_SyncGroups.size(), 0);
+            sourceWeights.resize(m_SyncGroups.size(), 0);
+            Container::VariableArray<float> weights(m_Graph->Nodes.size(), 0);
+            const uint32_t source = sourceState == InvalidAnimNode ? rt.Current : sourceState;
+            if (source >= n.States.size())
+                return false;
+            weights[n.States[source].Node] = 1;
+            for (size_t order = m_Graph->EvaluationOrder.size(); order > 0; --order)
+            {
+                const auto i = m_Graph->EvaluationOrder[order - 1];
+                const auto& node = m_Graph->Nodes[i];
+                if (weights[i] <= 0)
+                    continue;
+                if (node.SyncGroupIndex != InvalidAnimNode && !m_SyncClips[i].Map.bMarkerFallback &&
+                    weights[i] > sourceWeights[node.SyncGroupIndex])
+                {
+                    sourceWeights[node.SyncGroupIndex] = weights[i];
+                    sourceOffsets[node.SyncGroupIndex] = m_SyncOffsets[i];
+                }
+                for (size_t edge = 0; edge < node.Children.size(); ++edge)
+                    weights[node.Children[edge]] += weights[i] * m_Runtime[i].Edges[edge];
+            }
+        }
+        if (sourceMarker.IsValid())
+        {
+            Container::VariableArray<uint8_t> visited(m_Graph->Nodes.size(), 0);
+            auto validate = [&](auto&& self, uint32_t id) -> bool {
+                if (visited[id])
+                    return true;
+                visited[id] = 1;
+                const auto& node = m_Graph->Nodes[id];
+                if (node.SyncGroupIndex != InvalidAnimNode)
+                {
+                    const auto group = node.SyncGroupIndex;
+                    const auto& names = m_Graph->SyncGroups[group].Markers;
+                    if (m_SyncClips[id].Map.bMarkerFallback || sourceWeights[group] <= 0 ||
+                        !m_SyncGroups[group].bInitialized ||
+                        std::find(names.begin(), names.end(), sourceMarker) == names.end() ||
+                        std::find(names.begin(), names.end(), targetMarker) == names.end())
+                        return false;
+                }
+                for (auto child : node.Children)
+                    if (!self(self, child))
+                        return false;
+                return true;
+            };
+            if (!validate(validate, n.States[target].Node))
+                return false;
+        }
         if (rt.Next != InvalidAnimNode)
         {
             rt.Saved = m_Poses[index];
@@ -448,6 +523,25 @@ namespace NorvesLib::Core::Animation
             rt.bSnapshot = false;
         }
         ResetSubgraph(n.States[target].Node);
+        if (sourceMarker.IsValid())
+        {
+            for (uint32_t i = 0; i < m_Graph->Nodes.size(); ++i)
+            {
+                const auto& child = m_Graph->Nodes[i];
+                if (!m_ResetVisited[i] || m_EvaluationWeights[i] > 0 || child.SyncGroupIndex == InvalidAnimNode)
+                    continue;
+                const auto& names = m_Graph->SyncGroups[child.SyncGroupIndex].Markers;
+                const auto from = std::find(names.begin(), names.end(), sourceMarker),
+                           to = std::find(names.begin(), names.end(), targetMarker);
+                if (from == names.end() || to == names.end())
+                    return false;
+                if (sourceWeights[child.SyncGroupIndex] <= 0 || !m_SyncGroups[child.SyncGroupIndex].bInitialized)
+                    return false;
+                m_SyncOffsets[i] = sourceOffsets[child.SyncGroupIndex] + double(to - from) / double(names.size());
+                SeedSyncNode(i);
+            }
+        }
+
         rt.Next = target;
         rt.Elapsed = 0;
         rt.Duration = duration;
@@ -466,7 +560,8 @@ namespace NorvesLib::Core::Animation
     }
     bool AnimGraphInstance::Update(float dt)
     {
-        if (m_Events.IsDispatching() || !ResourcesCurrent() || !std::isfinite(dt) || dt < 0 || !RefreshRootMetadata())
+        if (m_Events.IsDispatching() || !ResourcesCurrent() || !std::isfinite(dt) || dt < 0 || !RefreshRootMetadata() ||
+            !RefreshSyncMaps())
         {
             return false;
         }
@@ -488,6 +583,7 @@ namespace NorvesLib::Core::Animation
                 for (unsigned chain = 0; chain < 4; ++chain)
                 {
                     const AnimTransition* selected = nullptr;
+                    uint32_t selectedSource = InvalidAnimNode;
                     for (const auto& t : n.Transitions)
                     {
                         const bool transitioning = rt.Next != InvalidAnimNode;
@@ -499,9 +595,16 @@ namespace NorvesLib::Core::Animation
                                              rt.Interrupt == AnimInterrupt::Either;
                         const bool next = transitioning && (rt.Interrupt == AnimInterrupt::Next ||
                                                             rt.Interrupt == AnimInterrupt::Either);
-                        if ((current && Matches(t, index, rt.Current)) || (next && Matches(t, index, rt.Next)))
+                        if (current && Matches(t, index, rt.Current))
                         {
                             selected = &t;
+                            selectedSource = rt.Current;
+                            break;
+                        }
+                        if (next && Matches(t, index, rt.Next))
+                        {
+                            selected = &t;
+                            selectedSource = rt.Next;
                             break;
                         }
                     }
@@ -509,7 +612,8 @@ namespace NorvesLib::Core::Animation
                     {
                         break;
                     }
-                    if (!StartTransition(index, selected->To, selected->Duration, selected->Curve, selected->Interrupt))
+                    if (!StartTransition(index, selected->To, selected->Duration, selected->Curve, selected->Interrupt,
+                                         selected->SourceMarker, selected->TargetMarker, selectedSource))
                     {
                         return false;
                     }
@@ -538,11 +642,13 @@ namespace NorvesLib::Core::Animation
                 m_Weights[n.Children[edge]] += m_Weights[index] * rt.Edges[edge];
             }
         }
+        if (!AdvanceSyncGroups(dt))
+            return false;
         for (uint32_t index : m_Graph->EvaluationOrder)
         {
             const auto& n = m_Graph->Nodes[index];
             auto& rt = m_Runtime[index];
-            if (n.Kind != AnimNodeKind::Clip || m_Weights[index] <= 0)
+            if (n.Kind != AnimNodeKind::Clip || n.SyncGroupIndex != InvalidAnimNode || m_Weights[index] <= 0)
             {
                 continue;
             }
@@ -679,7 +785,7 @@ namespace NorvesLib::Core::Animation
     }
     bool AnimGraphInstance::Evaluate()
     {
-        if (!ResourcesCurrent() || !RefreshRootMetadata() || !EvaluateNodes(false))
+        if (!ResourcesCurrent() || !RefreshRootMetadata() || !RefreshSyncMaps() || !EvaluateNodes(false))
         {
             return false;
         }
@@ -711,7 +817,8 @@ namespace NorvesLib::Core::Animation
     }
     bool AnimGraphInstance::RequestState(Identity machine, Identity state, float seconds)
     {
-        if (!ResourcesCurrent() || !std::isfinite(seconds) || seconds < 0 || !RefreshRootMetadata())
+        if (!ResourcesCurrent() || !std::isfinite(seconds) || seconds < 0 || !RefreshRootMetadata() ||
+            !RefreshSyncMaps())
         {
             return false;
         }

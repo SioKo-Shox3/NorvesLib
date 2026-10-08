@@ -62,7 +62,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
       - name: 姿勢評価の本体と関連テストをビルドする
         run: |
-          cmake --build build/animation --config Release --target SkeletalAnimationSamplingTest SkinnedRenderPathContractTest CookedClipBankV1Test SkeletalClipBankBindingTest -- /m:2 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
+          cmake --build build/animation --config Release --target SkeletalAnimationSamplingTest SkinnedRenderPathContractTest CookedMeshTest -- /m:2 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
           if ($LASTEXITCODE -ne 0) { throw 'Animation build failed' }
       - name: 独立oracleと再利用領域を検証して計測する
         run: |

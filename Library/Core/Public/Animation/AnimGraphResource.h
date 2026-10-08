@@ -64,6 +64,7 @@ namespace NorvesLib::Core
             AnimTransitionCurve Curve = AnimTransitionCurve::Linear;
             AnimInterrupt Interrupt = AnimInterrupt::None;
             Container::VariableArray<AnimCondition> Conditions;
+            Identity SourceMarker, TargetMarker;
         };
         enum class AnimRootPolicy : uint8_t
         {
@@ -99,12 +100,22 @@ namespace NorvesLib::Core
             Container::VariableArray<AnimState> States;
             Container::VariableArray<AnimTransition> Transitions;
             uint32_t InitialState = 0;
-            // GR11のmetadataを使う同期を後付けするための名前。空なら独立再生。
+            // 空名は独立再生。添字はコンパイル時に束縛する。
             Identity SyncGroup;
+            uint32_t SyncGroupIndex = InvalidAnimNode;
+        };
+        struct AnimSyncGroupDefinition
+        {
+            Identity Name;
+            AnimScalar DriveSpeed;
+            float MinimumStrideRate = .5f, MaximumStrideRate = 2;
+            bool bStrideEnabled = false;
+            Container::VariableArray<Identity> Markers;
         };
         struct AnimGraphData
         {
             Container::VariableArray<AnimParamDefinition> Parameters;
+            Container::VariableArray<AnimSyncGroupDefinition> SyncGroups;
             Container::VariableArray<BoneMask> Masks;
             Container::VariableArray<Identity> MaskNames;
             Container::VariableArray<AnimGraphNode> Nodes;

@@ -206,6 +206,7 @@ namespace NorvesLib::Core::Component
         Animation::PoseModifierContext context(m_BoundAsset->GetSkeleton()->GetPoseRuntime(), m_LastDelta,
                                                m_Instance.Parameters(), m_Instance, m_FinalPose, m_ModifierScratch,
                                                m_ModifierModels);
+        context.SyncPhases = m_Instance.GetSyncPhases();
         m_bApplyingModifiers = true;
         bool applied = true;
         for (const auto& modifier : m_Modifiers)

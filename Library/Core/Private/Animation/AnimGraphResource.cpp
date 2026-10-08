@@ -1,4 +1,5 @@
 ﻿#include "Animation/AnimGraphResource.h"
+#include "Animation/AnimSync.h"
 #include "Animation/SkeletonResource.h"
 #include "Asset/CookedSkeletonV1.h"
 #include "Asset/RigSplitWire.h"
@@ -395,6 +396,12 @@ namespace NorvesLib::Core::Animation
                 {
                     return Fail(r, AnimGraphError::InvalidTransition, "transition_target");
                 }
+                if (value.HasMember("sourceMarker") || value.HasMember("targetMarker"))
+                {
+                    if (!Name(value.FindMember("sourceMarker"), t.SourceMarker) ||
+                        !Name(value.FindMember("targetMarker"), t.TargetMarker))
+                        return Fail(r, AnimGraphError::InvalidTransition, "transition_markers");
+                }
                 if (value.HasMember("duration") &&
                     (!Number(value.FindMember("duration"), t.Duration) || t.Duration < 0))
                 {
@@ -674,6 +681,126 @@ namespace NorvesLib::Core::Animation
             }
             return true;
         }
+        bool ReadSyncGroups(JsonValue value, AnimGraphData& d, AnimGraphReport& r)
+        {
+            if (value.IsValid())
+            {
+                if (!value.IsArray() || value.GetArraySize() > 64)
+                    return Fail(r, AnimGraphError::InvalidSchema, "sync_groups");
+                for (size_t i = 0; i < value.GetArraySize(); ++i)
+                {
+                    auto object = value.GetArrayElement(i);
+                    AnimSyncGroupDefinition group;
+                    if (!UniqueObject(object) || !Name(object.FindMember("name"), group.Name))
+                        return Fail(r, AnimGraphError::InvalidSchema, "sync_group_name");
+                    if (Find(d.SyncGroups, group.Name, [](const auto& x) { return x.Name; }) != InvalidAnimNode)
+                        return Fail(r, AnimGraphError::DuplicateName, "sync_group_name");
+                    if (object.HasMember("speed"))
+                    {
+                        group.bStrideEnabled = true;
+                        if (!Scalar(d, object.FindMember("speed"), group.DriveSpeed, r))
+                            return false;
+                    }
+                    if ((object.HasMember("minRate") &&
+                         !Number(object.FindMember("minRate"), group.MinimumStrideRate)) ||
+                        (object.HasMember("maxRate") &&
+                         !Number(object.FindMember("maxRate"), group.MaximumStrideRate)) ||
+                        group.MinimumStrideRate < 0 || group.MaximumStrideRate < group.MinimumStrideRate ||
+                        group.MaximumStrideRate > 8)
+                        return Fail(r, AnimGraphError::InvalidSchema, "sync_stride_rate");
+                    d.SyncGroups.push_back(std::move(group));
+                }
+            }
+            for (auto& node : d.Nodes)
+            {
+                if (!node.SyncGroup.IsValid())
+                    continue;
+                if (!node.bLoop || d.Clips[node.Clip]->GetClip().DurationSeconds <= 0)
+                    return Fail(r, AnimGraphError::InvalidClip, "sync_loop");
+                auto index = Find(d.SyncGroups, node.SyncGroup, [](const auto& x) { return x.Name; });
+                if (index == InvalidAnimNode)
+                {
+                    if (d.SyncGroups.size() >= 64)
+                        return Fail(r, AnimGraphError::InvalidSchema, "sync_group_limit");
+                    index = uint32_t(d.SyncGroups.size());
+                    AnimSyncGroupDefinition group;
+                    group.Name = node.SyncGroup;
+                    d.SyncGroups.push_back(std::move(group));
+                }
+                node.SyncGroupIndex = index;
+                auto& group = d.SyncGroups[index];
+                if (group.Markers.empty())
+                    for (const auto& marker : d.Clips[node.Clip]->GetClipMetadata().Markers)
+                        group.Markers.push_back(marker.Name);
+            }
+            for (const auto& node : d.Nodes)
+            {
+                if (node.SyncGroupIndex == InvalidAnimNode)
+                    continue;
+                const auto& clip = *d.Clips[node.Clip];
+                AnimSyncMap map;
+                if (!BuildAnimSyncMap(clip.GetClipMetadata(), clip.GetClip().DurationSeconds,
+                                      d.SyncGroups[node.SyncGroupIndex].Markers, map))
+                    return Fail(r, AnimGraphError::MarkerMismatch, "sync_markers");
+            }
+            for (const auto& machine : d.Nodes)
+                for (const auto& transition : machine.Transitions)
+                {
+                    if (!transition.SourceMarker.IsValid())
+                        continue;
+                    Container::VariableArray<uint8_t> visited(d.Nodes.size(), 0);
+                    bool found = false;
+                    auto visit = [&](auto&& self, uint32_t index) -> bool {
+                        if (visited[index])
+                            return true;
+                        visited[index] = 1;
+                        const auto& node = d.Nodes[index];
+                        if (node.SyncGroupIndex != InvalidAnimNode)
+                        {
+                            if (d.Clips[node.Clip]->GetClipMetadata().Markers.empty())
+                                return false;
+                            const auto hasSource = [&](uint32_t state) {
+                                Container::VariableArray<uint8_t> seen(d.Nodes.size(), 0);
+                                auto search = [&](auto&& recurse, uint32_t id) -> bool {
+                                    if (seen[id])
+                                        return false;
+                                    seen[id] = 1;
+                                    const auto& source = d.Nodes[id];
+                                    if (source.SyncGroupIndex == node.SyncGroupIndex &&
+                                        !d.Clips[source.Clip]->GetClipMetadata().Markers.empty())
+                                        return true;
+                                    for (auto child : source.Children)
+                                        if (recurse(recurse, child))
+                                            return true;
+                                    return false;
+                                };
+                                return search(search, machine.States[state].Node);
+                            };
+                            if (transition.From != InvalidAnimNode)
+                            {
+                                if (!hasSource(transition.From))
+                                    return false;
+                            }
+                            else
+                                for (uint32_t state = 0; state < machine.States.size(); ++state)
+                                    if (state != transition.To && !hasSource(state))
+                                        return false;
+                            const auto& names = d.SyncGroups[node.SyncGroupIndex].Markers;
+                            if (std::find(names.begin(), names.end(), transition.SourceMarker) == names.end() ||
+                                std::find(names.begin(), names.end(), transition.TargetMarker) == names.end())
+                                return false;
+                            found = true;
+                        }
+                        for (auto child : node.Children)
+                            if (!self(self, child))
+                                return false;
+                        return true;
+                    };
+                    if (!visit(visit, machine.States[transition.To].Node) || !found)
+                        return Fail(r, AnimGraphError::MarkerMismatch, "transition_markers");
+                }
+            return true;
+        }
     } // namespace
     bool CompileAnimGraph(const Container::String& json, const SkeletonResource& skeleton,
                           const IClipResolver& resolver, Container::TSharedPtr<const AnimGraphData>& out,
@@ -753,6 +880,8 @@ namespace NorvesLib::Core::Animation
                 return false;
             }
         }
+        if (!ReadSyncGroups(root.FindMember("syncGroups"), *d, report))
+            return false;
         Identity rootName;
         if (!Name(root.FindMember("root"), rootName))
         {
@@ -862,6 +991,9 @@ namespace NorvesLib::Core
                  m_Data->EvaluationOrder.capacity() * sizeof(uint32_t) +
                  m_Data->Clips.capacity() * sizeof(Container::TSharedPtr<AnimationClipResource>) +
                  m_Data->Parents.capacity() * sizeof(int32_t) + m_Data->JointNames.capacity() * sizeof(Identity);
+        bytes += m_Data->SyncGroups.capacity() * sizeof(AnimSyncGroupDefinition);
+        for (const auto& group : m_Data->SyncGroups)
+            bytes += group.Markers.capacity() * sizeof(Identity);
         for (const auto& mask : m_Data->Masks)
         {
             bytes += mask.Weights.capacity() * sizeof(float);

@@ -10,6 +10,7 @@
 #include "Object/Entity.h"
 #include "Object/ResourceRegistry.h"
 #include "Object/World.h"
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -41,7 +42,7 @@ namespace
         C::TSharedPtr<SkinnedMeshResource> Mesh;
         C::TSharedPtr<AnimationClipResource> AClip, BClip;
         C::TSharedPtr<SkeletalAssetResource> Asset;
-        GraphFixture()
+        explicit GraphFixture(uint32_t jointCount = 2)
         {
             GRAPH_CHECK(Registry.Initialize());
             Skeleton = Registry.CreateTransient<SkeletonResource>("GraphSkeleton");
@@ -50,10 +51,18 @@ namespace
             BClip = Registry.CreateTransient<AnimationClipResource>("GraphB");
             Asset = Registry.CreateTransient<SkeletalAssetResource>("GraphAsset");
             GRAPH_CHECK(Skeleton && Mesh && AClip && BClip && Asset);
-            C::VariableArray<S::SkeletalJoint> joints(2);
+            C::VariableArray<S::SkeletalJoint> joints(jointCount);
             joints[0].Name = "Root";
             joints[1].Name = "Child";
             joints[1].ParentIndex = 0;
+            for (uint32_t i = 2; i < jointCount; ++i)
+            {
+                char name[32];
+                std::snprintf(name, sizeof(name), "Joint%u", i);
+                joints[i].Name = name;
+                joints[i].ParentIndex = int32_t(i - 1);
+            }
+
             for (auto& joint : joints)
             {
                 joint.InverseBindMatrix.fill(0);
@@ -586,6 +595,200 @@ namespace
         const A::FootContactSpec invalidSpec{1, Identity(longName)};
         GRAPH_CHECK(!A::AnalyzeFootContacts(context, *f.AClip, {&invalidSpec, 1}, {}, contact));
     }
+
+    void TestAnimationSyncRuntime()
+    {
+        GraphFixture f;
+        auto a = f.AClip->GetClip(), b = f.BClip->GetClip();
+        a.Metadata.Markers = {{Identity("left"), 0}, {Identity("right"), .4f}};
+        a.Metadata.Events = {{Identity("left"), 0}, {Identity("right"), .4f}};
+        b.DurationSeconds = 2;
+        b.Channels[0].Samples = {{0, {0, 0, 0, 0}}, {2, {4, 0, 0, 0}}};
+        b.Metadata.Markers = {{Identity("left"), .2f}, {Identity("right"), 1.4f}};
+        b.Metadata.Events = {{Identity("left"), .2f}, {Identity("right"), 1.4f}};
+        f.AClip->SetClip(S::SkeletalAnimationClip(a));
+        f.BClip->SetClip(S::SkeletalAnimationClip(b));
+        auto graph = f.Graph(
+            R"({"version":1,"params":[{"name":"blend","type":"float","value":0.5}],"nodes":[{"id":"a","type":"clip","clip":"a","syncGroup":"gait"},{"id":"b","type":"clip","clip":"b","syncGroup":"gait"},{"id":"mix","type":"blend2","children":["a","b"],"weight":"blend"}],"root":"mix"})");
+        A::AnimGraphInstance instance;
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(instance.FindSyncGroup(Identity("gait")) == 0 && instance.GetSyncPhases().size() == 1);
+        C::VariableArray<A::AnimEventInfo> events;
+        instance.Events().OnEvent.Add([&](const auto& e) { events.push_back(e); });
+        A::AnimSyncMap am, bm;
+        C::VariableArray<Identity> names{Identity("left"), Identity("right")};
+        GRAPH_CHECK(A::BuildAnimSyncMap(a.Metadata, 1, names, am) && A::BuildAnimSyncMap(b.Metadata, 2, names, bm));
+        for (double phase : {-2.1, -1., -.25, 0., .5, .999, 1., 2.5})
+        {
+            GRAPH_CHECK(std::fabs(am.TimeToPhase(am.PhaseToTime(phase)) - phase) < 1e-8 &&
+                        std::fabs(bm.TimeToPhase(bm.PhaseToTime(phase)) - phase) < 1e-8);
+        }
+        GRAPH_CHECK(instance.Update(.5f));
+        instance.Events().Dispatch();
+        GRAPH_CHECK(events.size() == 1 && events[0].Name == Identity("right") &&
+                    std::fabs(events[0].OffsetSeconds - .4) < 1e-5);
+        const auto phaseBefore = instance.GetSyncPhases()[0];
+        GRAPH_CHECK(instance.Parameters().SetFloat(0, .9f) && instance.Update(0));
+        NearGraph(instance.GetSyncPhases()[0], phaseBefore);
+        for (unsigned i = 0; i < 60; ++i)
+        {
+            GRAPH_CHECK(instance.Update(1.f / 60));
+            const auto& ts = instance.GetTraversals();
+            GRAPH_CHECK(ts.size() == 2);
+            const double ap = am.TimeToPhase(ts[0].Current), bp = bm.TimeToPhase(ts[1].Current);
+            GRAPH_CHECK(std::fabs(ap - bp) < 1e-6);
+        }
+        instance.Events().Dispatch();
+        // metadata更新でも標準位相は保持し、不整合な集合は公開前に拒否する。
+        A::ClipMetadataReport report;
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"markers":[]})"), report));
+        const auto saved = instance.GetSyncPhases()[0];
+        GRAPH_CHECK(instance.Update(0));
+        NearGraph(instance.GetSyncPhases()[0], saved);
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"markers":[{"name":"unknown","t":0.1}]})"), report));
+        GRAPH_CHECK(!instance.Update(0) && !instance.Evaluate());
+        f.Reject(
+            R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a","syncGroup":"g"},{"id":"b","type":"clip","clip":"b","syncGroup":"g"},{"id":"mix","type":"blend2","children":["a","b"]}],"root":"mix"})",
+            A::AnimGraphError::MarkerMismatch);
+        f.BClip->ClearRuntimeMetadata();
+        // 遷移先へのseekは当該フレームのroot/event区間へ混ぜない。
+        auto machine = f.Graph(
+            R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a","syncGroup":"g"},{"id":"b","type":"clip","clip":"b","syncGroup":"g"},{"id":"m","type":"stateMachine","states":[{"name":"A","node":"a"},{"name":"B","node":"b"}]}],"root":"m"})");
+        GRAPH_CHECK(instance.Initialize(*machine, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(instance.Update(.3f));
+        const float beforeTransition = instance.GetSyncPhases()[0];
+        GRAPH_CHECK(instance.RequestState(Identity("m"), Identity("B"), 0) && instance.Update(0));
+        NearGraph(instance.GetSyncPhases()[0], beforeTransition);
+        GRAPH_CHECK(instance.GetTraversals().size() == 1 &&
+                    instance.GetTraversals()[0].Previous == instance.GetTraversals()[0].Current);
+
+        auto marked = f.Graph(
+            R"({"version":1,"params":[{"name":"go","type":"trigger"}],"nodes":[{"id":"a","type":"clip","clip":"a","syncGroup":"g"},{"id":"b","type":"clip","clip":"b","syncGroup":"g"},{"id":"m","type":"stateMachine","states":[{"name":"A","node":"a"},{"name":"B","node":"b"}],"transitions":[{"from":"A","to":"B","duration":0,"sourceMarker":"left","targetMarker":"right","conditions":[{"param":"go","op":"eq","value":true}]}]}],"root":"m"})");
+        GRAPH_CHECK(instance.Initialize(*marked, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(instance.Update(.1f) && instance.Parameters().SetTrigger(0) && instance.Update(0));
+        const auto& transition = instance.GetTraversals()[0];
+        GRAPH_CHECK(std::fabs(bm.TimeToPhase(transition.Current) - double(instance.GetSyncPhases()[0]) - .5) < 1e-6);
+        GRAPH_CHECK(transition.Previous == transition.Current);
+        instance.Events().Dispatch();
+
+        GRAPH_CHECK(instance.Initialize(*marked, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        GRAPH_CHECK(f.BClip->ApplyMetadataJson(C::String(R"({"markers":[]})"), report));
+        GRAPH_CHECK(instance.Parameters().SetTrigger(0) && !instance.Update(0));
+        A::AnimStateStatus unchanged;
+        GRAPH_CHECK(instance.GetState(Identity("m"), unchanged) && unchanged.Current == Identity("A") &&
+                    !unchanged.bTransitioning);
+        f.BClip->ClearRuntimeMetadata();
+        auto chain = f.Graph(
+            R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a","syncGroup":"g"},{"id":"b","type":"clip","clip":"b","syncGroup":"g"},{"id":"c","type":"clip","clip":"a","syncGroup":"g"},{"id":"m","type":"stateMachine","states":[{"name":"A","node":"a"},{"name":"B","node":"b"},{"name":"C","node":"c"}],"transitions":[{"from":"A","to":"B","duration":0,"sourceMarker":"left","targetMarker":"right"},{"from":"B","to":"C","duration":0,"sourceMarker":"left","targetMarker":"right"}]}],"root":"m"})");
+        GRAPH_CHECK(instance.Initialize(*chain, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity) && instance.Update(0));
+        GRAPH_CHECK(instance.GetState(Identity("m"), unchanged) && unchanged.Current == Identity("C"));
+        GRAPH_CHECK(std::fabs(am.TimeToPhase(instance.GetTraversals()[0].Current) -
+                              double(instance.GetSyncPhases()[0]) - 1) < 1e-6);
+        instance.Events().Dispatch();
+        f.Reject(
+            R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b","syncGroup":"g"},{"id":"m","type":"stateMachine","states":[{"name":"A","node":"a"},{"name":"B","node":"b"}],"transitions":[{"from":"A","to":"B","sourceMarker":"left","targetMarker":"right"}]}],"root":"m"})",
+            A::AnimGraphError::MarkerMismatch);
+        // fallbackの倍率も設定上限内に収める。
+        auto bounded = f.Graph(
+            R"({"version":1,"syncGroups":[{"name":"g","speed":1,"minRate":0,"maxRate":0.25}],"nodes":[{"id":"a","type":"clip","clip":"a","syncGroup":"g"}],"root":"a"})");
+        GRAPH_CHECK(instance.Initialize(*bounded, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity) &&
+                    instance.Update(.5f));
+        GRAPH_CHECK(instance.GetTraversals()[0].Current <= .125 + 1e-6);
+        instance.Events().Dispatch();
+        A::ClipMetadata three;
+        three.Markers = {{Identity("a"), 0}, {Identity("c"), .3f}, {Identity("b"), .6f}};
+        const C::VariableArray<Identity> ordered{Identity("a"), Identity("b"), Identity("c")};
+        GRAPH_CHECK(!A::BuildAnimSyncMap(three, 1, ordered, am));
+    }
+    void TestStrideAndFootSpeed()
+    {
+        GraphFixture f;
+        for (auto resource : {f.AClip, f.BClip})
+        {
+            auto clip = resource->GetClip();
+            clip.DurationSeconds = resource == f.AClip ? 1 : 2;
+            clip.Channels[0].Samples = {{0, {0, 0, 0, 0}}, {clip.DurationSeconds, {2 * clip.DurationSeconds, 0, 0, 0}}};
+            S::SkeletalAnimationChannel foot;
+            foot.JointIndex = 1;
+            foot.Path = S::SkeletalAnimationPath::Translation;
+            foot.Samples = {{0, {0, 0, 0, 0}}, {clip.DurationSeconds, {-2 * clip.DurationSeconds, 0, 0, 0}}};
+            clip.Channels.push_back(foot);
+            clip.Metadata.Root.Mode = A::RootMotionMode::Extract;
+            resource->SetClip(std::move(clip));
+        }
+        auto graph = f.Graph(
+            R"({"version":1,"params":[{"name":"speed","type":"float","bind":"speed"}],"syncGroups":[{"name":"g","speed":"speed","minRate":0,"maxRate":2}],"nodes":[{"id":"a","type":"clip","clip":"a","syncGroup":"g"},{"id":"b","type":"clip","clip":"b","syncGroup":"g"},{"id":"mix","type":"blend2","children":["a","b"],"weight":0.5}],"root":"mix"})");
+        A::AnimGraphInstance instance;
+        GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+        A::AnimDriveSignals signals;
+        signals.Speed = 6;
+        GRAPH_CHECK(instance.Parameters().ApplyDriveSignals(signals));
+        A::PoseScratch scratch;
+        C::VariableArray<M::Matrix4x4> models;
+        double entityX = 0;
+        for (unsigned i = 0; i < 4; ++i)
+        {
+            GRAPH_CHECK(instance.Update(.05f) && instance.Evaluate());
+            entityX += instance.ConsumeRootMotion().X;
+            GRAPH_CHECK(instance.BuildJointModelMatrices(instance.GetLocalPose(), scratch, models));
+            NearGraph(float(entityX + models[1].m30), 0);
+        }
+        NearGraph(float(entityX), 1.2f);
+        signals.Speed = 0;
+        GRAPH_CHECK(instance.Parameters().ApplyDriveSignals(signals));
+        const auto phase = instance.GetSyncPhases()[0];
+        GRAPH_CHECK(instance.Update(.25f));
+        NearGraph(instance.GetSyncPhases()[0], phase);
+        NearGraph(float(instance.ConsumeRootMotion().X), 0);
+    }
+
+    void BenchmarkAnimGraph()
+    {
+        if (!std::getenv("NORVES_POSE_BENCHMARK"))
+            return;
+        GraphFixture f(52);
+        for (auto resource : {f.AClip, f.BClip})
+        {
+            auto clip = resource->GetClip();
+            for (uint32_t i = 1; i < 52; ++i)
+            {
+                S::SkeletalAnimationChannel channel;
+                channel.JointIndex = i;
+                channel.Path = S::SkeletalAnimationPath::Rotation;
+                channel.Samples = {{0, {0, 0, 0, 1}}, {1, {0, 0, .1f, .994987437f}}};
+                clip.Channels.push_back(std::move(channel));
+            }
+            resource->SetClip(std::move(clip));
+        }
+        const char* json[] = {
+            R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"mix","type":"blend2","children":["a","b"]}],"root":"mix"})",
+            R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"c","type":"clip","clip":"a"},{"id":"d","type":"clip","clip":"b"},{"id":"ab","type":"blend2","children":["a","b"]},{"id":"cd","type":"blend2","children":["c","d"]},{"id":"m","type":"stateMachine","states":[{"name":"A","node":"ab"},{"name":"B","node":"cd"}]}],"root":"m"})",
+            R"({"version":1,"nodes":[{"id":"a","type":"clip","clip":"a"},{"id":"b","type":"clip","clip":"b"},{"id":"layer","type":"layered","base":"a","layers":[{"node":"b","mode":"additive","weight":0.5}]}],"root":"layer"})"};
+        const char* labels[] = {"two_clip", "four_clip_transition", "additive_layer"};
+        constexpr unsigned iterations = 5000;
+        using Clock = std::chrono::steady_clock;
+        for (unsigned kind = 0; kind < 3; ++kind)
+        {
+            auto graph = f.Graph(json[kind]);
+            A::AnimGraphInstance instance;
+            GRAPH_CHECK(instance.Initialize(*graph, *f.Skeleton, *f.Mesh, M::Matrix4x4::Identity));
+            if (kind == 1)
+                GRAPH_CHECK(instance.RequestState(Identity("m"), Identity("B"), 1000));
+            for (unsigned i = 0; i < 100; ++i)
+                GRAPH_CHECK(instance.Update(1.f / 60) && instance.Evaluate());
+            auto begin = Clock::now();
+            for (unsigned i = 0; i < iterations; ++i)
+                GRAPH_CHECK(instance.Update(1.f / 60));
+            const double update = std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
+            begin = Clock::now();
+            for (unsigned i = 0; i < iterations; ++i)
+                GRAPH_CHECK(instance.Evaluate());
+            const double evaluate = std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
+            std::printf(
+                "ANIM_GRAPH_BENCHMARK case=%s joints=52 iterations=%u update_ms=%.3f evaluate_ms=%.3f synthetic=1\n",
+                labels[kind], iterations, update, evaluate);
+        }
+    }
     void TestRootMotionRuntime()
     {
         GraphFixture f;
@@ -643,6 +846,8 @@ void TestAnimGraphRuntime()
     TestClipMetadataRuntime();
     TestAnimationEventRuntime();
     TestRootMotionRuntime();
+    TestAnimationSyncRuntime();
+    TestStrideAndFootSpeed();
     TestRootMotionRegressions();
     TestMotionAnalysisRuntime();
     TestDynamicAdditiveReference();
@@ -650,5 +855,6 @@ void TestAnimGraphRuntime()
     TestGraphPlaybackRegressions();
     TestAnimatorConnection();
     TestAnimatorScriptParameter();
+    BenchmarkAnimGraph();
     std::puts("AnimGraphRuntimeTest PASS");
 }

@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "Animation/AnimGraphResource.h"
+#include "Animation/AnimSync.h"
 namespace NorvesLib::Core::Animation
 {
     // 折返し前の秒を渡す。GR11はUpdate-onlyでもこの列からイベントとroot
@@ -14,5 +15,6 @@ namespace NorvesLib::Core::Animation
         bool bLoop = true;
         Identity SyncGroup;
         bool bReverse = false;
+        AnimSyncTiming Timing;
     };
 } // namespace NorvesLib::Core::Animation

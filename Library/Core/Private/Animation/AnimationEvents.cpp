@@ -214,7 +214,8 @@ namespace NorvesLib::Core::Animation
                 ++m_Dropped;
             }
             auto offset = [&](double time) {
-                return movement == 0 ? 0 : std::clamp((time - previous) / movement, 0.0, 1.0) * dt;
+                return t.Timing.Clip ? t.Timing.OffsetAt(time, dt)
+                                     : (movement == 0 ? 0 : std::clamp((time - previous) / movement, 0.0, 1.0) * dt);
             };
             auto crossed = [&](double time) {
                 return forward ? time > previous && time <= current : time >= current && time < previous;
@@ -241,6 +242,8 @@ namespace NorvesLib::Core::Animation
                     phase = end;
                     --info.Occurrence;
                 }
+                if (t.Timing.Clip)
+                    info.Occurrence = t.Timing.OccurrenceAt(event.Time + double(info.Occurrence) * length);
                 if (event.EndTime >= 0 && FindWindow(t.Node, index) == Capacity &&
                     (forward ? (phase >= event.Time && phase < event.EndTime)
                              : (phase > event.Time && phase <= event.EndTime)))
@@ -257,6 +260,8 @@ namespace NorvesLib::Core::Animation
                     const int64_t cycle = forward ? first + k : last - k;
                     const double shift = loop ? double(cycle) * length : 0;
                     info.Occurrence = cycle + (loop && event.EndTime < 0 && event.Time == end ? 1 : 0);
+                    if (t.Timing.Clip)
+                        info.Occurrence = t.Timing.OccurrenceAt(event.Time + shift);
                     const double begin = (forward || event.EndTime < 0 ? event.Time : event.EndTime) + shift;
                     const double finish = (forward ? event.EndTime : event.Time) + shift;
                     if (crossed(begin))
@@ -325,6 +330,8 @@ namespace NorvesLib::Core::Animation
                             --occurrence;
                         }
                     }
+                    if (t.Timing.Clip)
+                        occurrence = t.Timing.OccurrenceAt(e.Time + double(occurrence) * (end - start));
                     inside = occurrence == w.Info.Occurrence && (forward ? (phase >= e.Time && phase < e.EndTime)
                                                                          : (phase > e.Time && phase <= e.EndTime));
                     break;

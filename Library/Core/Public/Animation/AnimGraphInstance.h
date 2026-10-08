@@ -46,6 +46,12 @@ namespace NorvesLib::Core::Animation
         }
         [[nodiscard]] float GetNominalSpeed(uint32_t clip) const;
         void Reset();
+        Container::Span<const float> GetSyncPhases() const
+        {
+            return m_SyncPhases;
+        }
+        uint32_t FindSyncGroup(Identity) const;
+
         AnimParamSet& Parameters()
         {
             return m_Parameters;
@@ -78,6 +84,26 @@ namespace NorvesLib::Core::Animation
 
       private:
         void Swap(AnimGraphInstance&);
+        struct SyncClipRuntime
+        {
+            AnimSyncMap Map;
+            uint64_t Revision = UINT64_MAX;
+        };
+        struct SyncGroupRuntime
+        {
+            double Phase = 0;
+            uint32_t Leader = InvalidAnimNode;
+            float StrideRate = 1;
+            bool bInitialized = false;
+        };
+        Container::VariableArray<SyncClipRuntime> m_SyncClips;
+        Container::VariableArray<SyncGroupRuntime> m_SyncGroups;
+        Container::VariableArray<float> m_SyncPhases;
+        Container::VariableArray<double> m_SyncOffsets;
+        bool RefreshSyncMaps();
+        bool AdvanceSyncGroups(float dt);
+        void SeedSyncNode(uint32_t);
+
         struct NodeRuntime
         {
             double Time = 0;
@@ -94,7 +120,8 @@ namespace NorvesLib::Core::Animation
         void Edges(uint32_t);
         [[nodiscard]] bool EvaluateNodes(bool reference, uint32_t requiredRoot = InvalidAnimNode);
         [[nodiscard]] bool StartTransition(uint32_t, uint32_t target, float duration, AnimTransitionCurve,
-                                           AnimInterrupt);
+                                           AnimInterrupt, Identity sourceMarker = {}, Identity targetMarker = {},
+                                           uint32_t sourceState = InvalidAnimNode);
         bool Matches(const AnimTransition&, uint32_t node, uint32_t state) const;
         void ResetSubgraph(uint32_t);
         struct RootYawKey
