@@ -82,6 +82,7 @@
 # -StressTextures と -StressGeometry を併せると、ジオメトリの格子はテクスチャの板の奥（z=105〜）へずれ、カメラの軸は地面と板の間（z=60）
 # になる。さらに --stress-mega-instances=<N> を併せると、地面の近く（x±26・z -5〜-27）へスキャン資産を N 個複製する（点光源・太陽の影の負荷）。
 # 視点は default（180,20,160）・low（180,-4,110）・top（180,75,300）で、-Z 側から +Z の向きに地面・板・物を遠くから見る。
+# 板の近景 plates（180,12,40。板の 2〜3 枚を近くから見る）・plates-near（180,35,22。手前の行の板をさらに近くから見下ろす）は -ViewNames plates,plates-near で撮る（テクスチャの解像度の確認用）。
 # 旋回の連続フレームは -OrbitDegreesPerSecond・-OrbitRenderedFrames と併せて撮る。-VramBudgetMb でジオメトリの枠（Geometry の目標）を
 # 絞ると、ページの追い出しが起きる。各撮影のログの STRESS_GEOMETRY_PLACED（並べた数・元の数）と VRAM_POOLS のジオメトリの枠
 # （geometry_target_mb・geometry_used_mb・geometry_evicted_pages）を metrics.json へ書き、並べた数が指定に満たない、または最後の
@@ -389,6 +390,10 @@ if ($StressTextures -and $StressGeometry)
             $combinedView.Camera = '180,75,300'
         }
     }
+    # テクスチャの板の近景。板（手前の行 z=47）の 2〜3 枚が画面の幅いっぱいに映り、テクスチャの解像度（VT のミップ）を判別できる。
+    $views += [pscustomobject]@{ Name = 'plates'; Camera = '180,12,40'; NoiseRegions = @() }
+    # さらに寄り、手前の行の板 1 枚が画面の幅の大半を占める（板 1 枚の幅 12 m に対し、テクスチャ 1 枚は 2 m 前後）。
+    $views += [pscustomobject]@{ Name = 'plates-near'; Camera = '180,35,22'; NoiseRegions = @() }
 }
 $viewNameList = @(($ViewNames -join ',').Split(',', [StringSplitOptions]::RemoveEmptyEntries) | ForEach-Object { $_.Trim() })
 if ($viewNameList.Count -gt 0)
@@ -399,7 +404,7 @@ if ($viewNameList.Count -gt 0)
     $unknownViews = @($viewNameList | Where-Object { $_ -notin $views.Name })
     if ($unknownViews.Count -gt 0)
     {
-        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low・top・occ-sphere・occ-cottage・occ-cottage-edge・occ-sphere-orbit・occ-cottage-orbit・scan-d08・scan-d13・scan-d18・scan-d28・scan-d38・scan-d56・scan-d78）"
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=unknown_view value=$($unknownViews -join ',')（default・near・low・top・plates・plates-near・occ-sphere・occ-cottage・occ-cottage-edge・occ-sphere-orbit・occ-cottage-orbit・scan-d08・scan-d13・scan-d18・scan-d28・scan-d38・scan-d56・scan-d78）"
         exit 1
     }
     $views = @($views | Where-Object { $_.Name -in $viewNameList })
