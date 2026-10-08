@@ -116,13 +116,13 @@
 - notes: 2026-10-08 親（段9の開始時に詳しくした）。電球の物理の半影（光源の半径）は段9では扱わず、今のキューブと同じ PCF の考え方にそろえる（今のキューブの見た目から大きく変えない。絶対規則7）。この項目では起動画面を撮らない（VTG9-VSM-POINT-GPU-TIME の撮影と VTG9-VSM-POINT-DEFAULT-ON の検証の実行で初めて画を見る）。危険地帯（照明のシェーダー）。
 
 ## VTG9-VSM-POINT-CACHE: 点光源の面のページを次のフレームへ持ち越す
-- status: blocked
+- status: todo
 - done-when: 点光源の面のスライスでも段8の持ち越しを使う。(1) 灯の位置・Range が変わったら、その灯のスライスのページをすべて無効にする（灯の並びが変わったときは、灯の識別子で前のフレームのスライスと対応づけ、対応の無いスライスは空きへ戻す）。(2) 動いた投影物の前後の境界球を、Range の内側の灯の各面へ写した矩形のページを dirty にする。(3) `VSM_CACHE` に点光源の分を足す。(4) `VirtualShadowMapVulkanTest` に、止まった灯と投影物の 2 フレーム目に点光源のページが描かれない、投影物を動かすとその面の範囲だけが描き直され texel が毎フレーム描き直したときと一致する、灯を動かすとその灯の全ページが描き直される、を確かめる場面を足す。変異（灯の移動の判定を外す）で落ちることを記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`
 - stop-when: なし。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-08 親（段9の開始時に詳しくした）。起動画面の電球（Range 10 m）の範囲に自転する大きな球が入るので、そのページは毎フレーム描き直しになる。危険地帯（GPU の資源の寿命）。
+- notes: 2026-10-08 親（段9の開始時に詳しくした）。起動画面の電球（Range 10 m）の範囲に自転する大きな球が入るので、そのページは毎フレーム描き直しになる。危険地帯（GPU の資源の寿命）。 2026-10-08 親: 評価の 2 周目の差し戻し（`NEXT_FINDINGS.md` の反復 10。先頭の灯を除いて残る灯を詰めると、移し替えで捨てる旧領域の割り当て済みページが `released`・`point_released` に数えられない）を直すために todo に戻した。done-when の (3) の統計が返却数と一致すること、`VirtualShadowMapVulkanTest` に先頭の灯を除く場面（空きへの返却数と解放の統計の一致、残る灯の描き直し 0）を足すことが残り。
 
 ## VTG9-VSM-POINT-GPU-TIME: 夜のキューブと点光源の VSM の GPU 時間を測り、ページの数と溢れを確かめる
 - status: blocked
@@ -146,6 +146,22 @@
 - stop-when: 2 ms 未満に届かない場合は、切り分けの測定と試した案の結果を記録して止める。選ばれるクラスタ・描かれるページが変わる案は採らない（変わるなら止めて理由を記録する）。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-08 VTG9-VSM-POINT-GPU-TIME の測定から追加（`PROGRESS.md` の同名の節に表）。直ったら VTG9-VSM-POINT-GPU-TIME を `todo` に戻して 4 run を測り直す。負荷モードは最悪の場面で、起動画面の既定・近接・低角度は +0.4〜0.5 ms で済んでいる。危険地帯（GPU のカリングのシェーダー）。
+
+## VTG9-VSM-POINT-DRAW-PERF: 負荷モードの点光源の VSM の描画（VsmDraw）と段の固定費を縮め、フレーム GPU の差を 2 ms 未満にする
+- status: todo
+- done-when: 夜の負荷モード 300 個（既定の視点）の RelWithDebInfo の `-GpuTimingFrames 300` を、`-PointShadowMethod Cube` と `-PointShadowMethod Vsm` の対で 2 回撮り、2 対のどちらでも VSM のフレーム GPU の中央値（撮影の `metrics.json` の `gpu_timing[].gpu_frame_ms_median`）が同じ対のキューブより 2 ms 未満しか遅くない（開始時は静かな対で +2.27 ms。`VirtualShadowMapPass` 1.82 ms のうち `VsmDraw` 1.15・`VsmAllocate` 0.23・`VsmCullMega` 0.17・`VsmMark` 0.14・`VsmExpand` 0.10）。(1) まず `VsmDraw` の時間を支配するものを切り分ける（頂点の処理か断片の `atomicMin` か。影の塊 × ページのインスタンス約 11.4 万のうち、塊の三角形が実際に触れるページの割合。一時的な変異の run や区間で測り、表にして PROGRESS に書く）。(2) その上で縮める。案: 塊の境界から描くページの範囲をきつくしてインスタンスを減らす・ページの外の三角形を頂点シェーダーで落とす・断片で手前でなければ `atomicMin` を出さない（他の断片がアトミックに書く語を通常の読み取りで読まない。VTG8-FIX-ATOMIC-READS の規則。原子的な読み取りを使う）・VSM の段の固定費（`VsmAllocate`・`VsmMark`・`VsmExpand` の dispatch）をまとめる。選ばれるクラスタ・LOD・描かれるページ・物理ページの texel の深度は今と同じ（`VirtualShadowMapVulkanTest` の J・J4・J5・J6・K・R が書き換えなしで通る）。通常の 3 視点（夜の既定・近接・低角度）の VSM のフレーム GPU はキューブとの差 2 ms 未満のまま。VSM の run の 3 種の overflow（`VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL`）が全行 0。一時的な変異・区間は戻してからコミットする（区間を残す場合は RelWithDebInfo の計測の区間として残す）。done にするときに `VTG9-VSM-POINT-CULL-PERF` と `VTG9-VSM-POINT-GPU-TIME` の status を `todo` に戻す（それぞれの verify で測り直す）。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-VSM-POINT-DRAW-PERF-cube-stress-1 -Configuration RelWithDebInfo -Night -ViewNames default -GpuTimingFrames 300 -PointShadowMethod Cube -ExtraGameArguments --stress-mega-instances=300`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-VSM-POINT-DRAW-PERF-vsm-stress-1 -Configuration RelWithDebInfo -Night -ViewNames default -GpuTimingFrames 300 -PointShadowMethod Vsm -ExtraGameArguments --stress-mega-instances=300`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-VSM-POINT-DRAW-PERF-cube-stress-2 -Configuration RelWithDebInfo -Night -ViewNames default -GpuTimingFrames 300 -PointShadowMethod Cube -ExtraGameArguments --stress-mega-instances=300`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-VSM-POINT-DRAW-PERF-vsm-stress-2 -Configuration RelWithDebInfo -Night -ViewNames default -GpuTimingFrames 300 -PointShadowMethod Vsm -ExtraGameArguments --stress-mega-instances=300`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-VSM-POINT-DRAW-PERF-cube -Configuration RelWithDebInfo -Night -GpuTimingFrames 300 -PointShadowMethod Cube`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-VSM-POINT-DRAW-PERF-vsm -Configuration RelWithDebInfo -Night -GpuTimingFrames 300 -PointShadowMethod Vsm`
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|VirtualShadowMapClipmapTest|VirtualShadowMapPointTest|RenderGraphCompileTest)$"`
+- stop-when: 2 対のどちらかで 2 ms 未満に届かない場合は、切り分けの表と試した案の結果を記録して止める。選ばれるクラスタ・LOD・描かれるページ・texel の深度が変わる案は採らない（影の細かさとキューブとの一致に関わる。要るなら止めて理由を記録する）。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-08 親（VTG9-VSM-POINT-CULL-PERF の停止から追加。カリングは 11.72 → 0.17 ms に縮んだが、残りは描画と段の固定費）。親の測り直し（`.harness/runs/startup-capture/VTG9-PARENT-stress-{Cube,Vsm}-1`）は +1.62 ms だったが、キューブの run の `MegaGeometry` が 0.63 ms 高く（VSM と無関係のぶれ）、ぶれを除くと約 +2.25 ms で変わらない。そのため 2 対で確かめる。負荷モードの描き直しは 183 ページのうち 155 ページで、電球の範囲の自転する大きな球が毎フレーム無効にする。VSM の構成でキューブを描かない案は ForwardPass（半透明）がキューブを読むので採らない。危険地帯（GPU の描画のシェーダー・ページの資源）。
 
 ## VTG9-VSM-POINT-DEFAULT-ON: 起動画面の点光源の影を既定で VSM にする
 - status: done
