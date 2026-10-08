@@ -309,14 +309,18 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief MegaGeometry の投影物（bCastShadow のインスタンス）を VSM の段ごとにカリングする
      *
-     * 区間（GPU のタイムスタンプの名前）: VsmCullMega（dirty のページの階層の作成と、クラスタの選択の両方）。
+     * 区間（GPU のタイムスタンプの名前）: VsmCullMega（下の 1〜4 の全部）。内訳は VsmCullDirty（1）・VsmCullPairs（2）・VsmCullSelect（3）・
+     * VsmCullChunks（4）。
      *   1. dirty の階層（vsm_dirty_mips.comp）: ページの表の「割り当て済みで dirty」のページから、段ごとのページの mip（128² → 1）の
      *      ビット列を作る。
-     *   2. 選択（vsm_mega_cull.comp。主の経路の Common/MegaGeometryCull.glsl の判定の本体を正射影の LOD で使う）: 1 ワークグループ =
-     *      1 つの（インスタンス、段）の 64 クラスタ。インスタンスの境界のライト空間の矩形が、その段の範囲・深度の範囲に入り、
-     *      dirty のページを含むものだけを残し、残ったクラスタを LOD の判定（自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）で選ぶ。
+     *   2. 組の絞り込み（vsm_mega_cull_pairs.comp）: 1 スレッド = 1 つの（インスタンス、段）の組。インスタンスの境界のライト空間の矩形が、
+     *      その段の範囲・深度の範囲に入り、dirty のページを含む組だけを一覧にし、選択の間接 dispatch の引数を作る。
+     *      組ごとに 1 回だけ判定するので、選択のワークグループがインスタンスの判定を繰り返さない。
+     *      続けて vsm_mega_cull_args.comp（1 スレッド）が、組の数と組のワークグループ数の最大から間接 dispatch の引数を書く。
+     *   3. 選択（vsm_mega_cull.comp。主の経路の Common/MegaGeometryCull.glsl の判定の本体を正射影の LOD で使う）: 通った組だけを間接 dispatch で受け持ち、
+     *      1 ワークグループ = 1 つの組の 64 クラスタ。クラスタを LOD の判定（自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）で選ぶ。
      *      結果は（インスタンスの表の番号・段・クラスタの番号）の一覧と数で、自分のバッファに書く。
-     *   3. 影の塊の記録（vsm_mega_chunks.comp。dispatch.Chunks があるときだけ）: 一覧の 1 件を、手続き・スキニングと同じ形の
+     *   4. 影の塊の記録（vsm_mega_chunks.comp。dispatch.Chunks があるときだけ）: 一覧の 1 件を、手続き・スキニングと同じ形の
      *      VsmShadowChunk（クラスタの境界球の AABB・インスタンスのワールド行列・頂点とインデックスの読み方・展開する段 = 選んだ段）にする。
      * 装置がバッファのアドレスを使えない・シェーダーやパイプラインを作れないときは作れない（IsReady が false。VSM 全体は CSM へ落とさない）。
      */
@@ -341,7 +345,7 @@ namespace NorvesLib::Core::Rendering
          */
         bool Record(RHI::ICommandList* commandList, const VirtualShadowMapMegaCullDispatch& dispatch);
 
-        /** @brief 直前の Record が選択へ出したワークグループの数（x × y。段の数 z は含まない） */
+        /** @brief 直前の Record の入力にあった、影の判定の全ワークグループの数（インスタンスごとの合計。選択が実際に出す数は、通った組ぶんで GPU が決める） */
         uint32_t GetLastGroupCount() const { return m_LastGroupCount; }
         /** @brief 直前の Record が影の塊の記録を作ったか */
         bool WasChunkBuilt() const { return m_bLastChunkBuilt; }
@@ -354,17 +358,28 @@ namespace NorvesLib::Core::Rendering
             /** @brief スライスの表（GPUVsmSlice の配列。ホストが書く storage buffer） */
             RHI::BufferPtr Slices;
             RHI::DescriptorSetPtr DirtySet;
+            RHI::DescriptorSetPtr PairsSet;
+            RHI::DescriptorSetPtr ArgsSet;
             RHI::DescriptorSetPtr CullSet;
             RHI::DescriptorSetPtr ChunkSet;
+            /** @brief 通った（インスタンス、スライス）の組の一覧。頭 8 語（組の数・最大のワークグループ数・予約 2 語・間接 dispatch の引数 4 語）+ 組 */
+            RHI::BufferPtr Pairs;
+            uint32_t PairsCapacity = 0;
         };
 
         bool AcquireUse(Use*& outUse);
+        /** @brief 組の一覧を capacity 組ぶん持たせる（足りなければ作り直す）。作れなければ false */
+        bool EnsurePairs(Use& use, uint32_t capacity);
 
         RHI::IDevice* m_Device = nullptr;
         RHI::ShaderPtr m_DirtyShader;
+        RHI::ShaderPtr m_PairsShader;
+        RHI::ShaderPtr m_ArgsShader;
         RHI::ShaderPtr m_CullShader;
         RHI::ShaderPtr m_ChunkShader;
         RHI::PipelinePtr m_DirtyPipeline;
+        RHI::PipelinePtr m_PairsPipeline;
+        RHI::PipelinePtr m_ArgsPipeline;
         RHI::PipelinePtr m_CullPipeline;
         RHI::PipelinePtr m_ChunkPipeline;
         FrameUseRing<Use> m_Uses;

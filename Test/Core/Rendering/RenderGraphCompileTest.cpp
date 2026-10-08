@@ -8727,9 +8727,11 @@ namespace
     }
 
     // vsm の構成の 1 フレーム: 主の経路（2 パスの遮蔽。DBIE + HZB の D 7 つ + DBIE）の後に、スキニングの変形 → 印付け・割り当て・消去 →
-    // MegaGeometry の投影物のカリング（dirty の階層 = D・クラスタの選択 = D）→ 展開 → 描画（DDDDDJ + DD + D + BIIIE）が並ぶ。
-    //  - カリングは、主のカリング（2 回目）より後・展開より前。dispatch は dirty の階層 (16, 16, 段の数)・選択 (影を落とすインスタンスのワークグループ数 2, 1, 段の数)・
-    //    クラスタの記録 (一覧の容量 ÷ 64, 1, 1。一覧の 1 件 = 1 スレッド)。続く展開は、ホストが書いた塊 3 つの後ろに一覧の容量ぶんのワークグループを足す。
+    // MegaGeometry の投影物のカリング（dirty の階層 = D・組の絞り込み = D・間接 dispatch の引数 = D・クラスタの選択 = J・クラスタの記録 = D）→ 展開 → 描画
+    // （DDDDDJ + DDDJD + DD + J + BIIIIE）が並ぶ。
+    //  - カリングは、主のカリング（2 回目）より後・展開より前。dispatch は dirty の階層 (16, 16, 段の数)・組の絞り込み (ceil(インスタンスの数 ÷ 64), 1, 段の数)・
+    //    引数 (1, 1, 1)・クラスタの記録 (一覧の容量 ÷ 64, 1, 1。一覧の 1 件 = 1 スレッド)。クラスタの選択は、通った（インスタンス、段）の組の一覧の
+    //    頭にある引数（先頭から 16 バイト目）の間接 dispatch。続く展開は、ホストが書いた塊 3 つの後ろに一覧の容量ぶんのワークグループを足す。
     //  - 描画は、ホストが書いた塊ごとの間接描画 3 回の後に、MegaGeometry のクラスタの記録を描く DrawIndexedIndirectCount 1 回（一覧の語 0 が数。
     //    インスタンスごとの定数バッファは使わない）。
     //  - 読む資源: 主の経路のインスタンスの表・影の表・ジオメトリのページの表（読み取りだけ）と VSM のページの表。書く資源: 自分の dirty の階層・出力の一覧・VSM の統計。
@@ -8808,14 +8810,36 @@ namespace
             assert(scene.Base.Pass.WasMegaDrawRecorded());
             assert(scene.Base.Pass.GetMegaCullList() && scene.Base.Pass.GetMegaDirtyBits() && scene.Base.Pass.GetMegaChunks());
 
-            // 並び: 主の経路の後に、変形・印付け・割り当て 3 段・消去（J）・階層・選択・クラスタの記録・展開の引数・展開（J。間接）・描画
-            const char* vsmSequence = "DDDDDDDDDDDDJDDDDJBIIIIE";
+            // 並び: 主の経路の後に、変形・印付け・割り当て 3 段・消去（J）・階層・組の絞り込み・引数・選択（J。間接）・クラスタの記録・展開の引数・展開（J。間接）・描画
+            const char* vsmSequence = "DDDDDDDDDDDDJDDDJDDJBIIIIE";
             assert(commandList.CallSequence.size() == scene.MainSequenceLength + std::strlen(vsmSequence));
             for (size_t index = 0; index < std::strlen(vsmSequence); ++index)
             {
                 assert(commandList.CallSequence[scene.MainSequenceLength + index] == vsmSequence[index]);
             }
-            // GPU の区間: VsmCullMega は消去の後・展開の前に 1 回だけ開く（階層の作成と選択の両方を含む）
+            // GPU の区間: VsmCullMega は消去の後・展開の前に 1 回だけ開く（階層の作成・組の絞り込み・選択・クラスタの記録を含む）。
+            // 内訳の区間（VsmCullDirty・VsmCullPairs・VsmCullSelect・VsmCullChunks）はそれぞれ 1 回で、この順に開く
+            {
+                size_t innerScopes[4] = {};
+                uint32_t innerCounts[4] = {};
+                const char* innerNames[4] = {"VsmCullDirty", "VsmCullPairs", "VsmCullSelect", "VsmCullChunks"};
+                for (size_t index = 0; index < commandList.GpuScopes.size(); ++index)
+                {
+                    for (uint32_t inner = 0; inner < 4u; ++inner)
+                    {
+                        if (commandList.GpuScopes[index].Name == innerNames[inner])
+                        {
+                            innerScopes[inner] = index;
+                            ++innerCounts[inner];
+                        }
+                    }
+                }
+                for (uint32_t inner = 0; inner < 4u; ++inner)
+                {
+                    assert(innerCounts[inner] == 1u);
+                    assert(inner == 0u || innerScopes[inner - 1u] < innerScopes[inner]);
+                }
+            }
             {
                 size_t clearScope = commandList.GpuScopes.size();
                 size_t cullScope = commandList.GpuScopes.size();
@@ -8838,15 +8862,20 @@ namespace
                 assert(commandList.GpuScopes[cullScope].SequencePosition == scene.MainSequenceLength + 13u);
             }
             const size_t dirtyDispatch = scene.MainDispatchCount + 12u;
-            const size_t cullDispatch = scene.MainDispatchCount + 13u;
-            const size_t chunkDispatch = scene.MainDispatchCount + 14u;
-            const size_t expandArgsDispatch = scene.MainDispatchCount + 15u;
+            const size_t pairsDispatch = scene.MainDispatchCount + 13u;
+            const size_t argsDispatch = scene.MainDispatchCount + 14u;
+            const size_t chunkDispatch = scene.MainDispatchCount + 15u;
+            const size_t expandArgsDispatch = scene.MainDispatchCount + 16u;
             assert(commandList.DispatchGroups.size() == expandArgsDispatch + 1u);
             const uint32_t levelCount = VirtualShadowMap::LEVEL_COUNT;
             assert(commandList.DispatchGroups[dirtyDispatch].X == 16u && commandList.DispatchGroups[dirtyDispatch].Y == 16u &&
                    commandList.DispatchGroups[dirtyDispatch].Z == levelCount);
-            assert(commandList.DispatchGroups[cullDispatch].X == 2u && commandList.DispatchGroups[cullDispatch].Y == 1u &&
-                   commandList.DispatchGroups[cullDispatch].Z == levelCount);
+            // 組の絞り込み: 1 スレッド = 1 つの（インスタンス、段）の組。3 インスタンスは 1 グループに収まる
+            assert(commandList.DispatchGroups[pairsDispatch].X == 1u && commandList.DispatchGroups[pairsDispatch].Y == 1u &&
+                   commandList.DispatchGroups[pairsDispatch].Z == levelCount);
+            // 間接 dispatch の引数: 1 スレッド
+            assert(commandList.DispatchGroups[argsDispatch].X == 1u && commandList.DispatchGroups[argsDispatch].Y == 1u &&
+                   commandList.DispatchGroups[argsDispatch].Z == 1u);
             // クラスタの記録: 一覧の容量ぶんのスレッドを 64 ずつ x 方向に並べる
             assert(commandList.DispatchGroups[chunkDispatch].X == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY / 64u &&
                    commandList.DispatchGroups[chunkDispatch].Y == 1u && commandList.DispatchGroups[chunkDispatch].Z == 1u);
@@ -8856,6 +8885,10 @@ namespace
             // 展開: 容量ぶんの直接 dispatch でなく、その引数の間接 dispatch 1 回（ホストが書いた塊 + 件数。x の上限を超える分の折り返しは引数の計算が行う）
             const FakeCommandList::IndirectDispatchRecord& expandIndirect = commandList.IndirectDispatches.back();
             assert(IsDebugName(expandIndirect.BufferName, "VsmRaster_Draws") && expandIndirect.OffsetBytes == sizeof(uint32_t));
+            // 選択: 通った組の一覧のバッファの先頭から 16 バイト目の引数の間接 dispatch 1 回（消去の間接 dispatch と展開の間にある）
+            assert(commandList.IndirectDispatches.size() >= 3u);
+            const FakeCommandList::IndirectDispatchRecord& cullIndirect = commandList.IndirectDispatches[commandList.IndirectDispatches.size() - 2u];
+            assert(IsDebugName(cullIndirect.BufferName, "VsmMegaCullPairs") && cullIndirect.OffsetBytes == 4u * sizeof(uint32_t));
 
             // 束縛: 階層を作る dispatch は VSM のページの表を読み、階層へ書く。選択の dispatch は主の経路の表を読み、自分の一覧・階層・統計へ書く
             const Container::VariableArray<BoundBufferName>& dirtyBindings = commandList.DispatchBindings[dirtyDispatch];
@@ -8865,8 +8898,22 @@ namespace
             assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 16u), "VsmMega_DirtyBits"));
             // スライスの表（ページの一辺・texel・範囲の原点・ページの表の先頭）
             assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 17u), "VsmMegaCullSlices"));
-            const Container::VariableArray<BoundBufferName>& cullBindings = commandList.DispatchBindings[cullDispatch];
-            assert(cullBindings.size() == 10u);
+            // 組の絞り込み: スライスの表・影の表・dirty の階層を読み、自分の組の一覧・出力の一覧の語 2・統計へ書く
+            const Container::VariableArray<BoundBufferName>& pairsBindings = commandList.DispatchBindings[pairsDispatch];
+            assert(pairsBindings.size() == 7u);
+            assert(IsDebugName(BoundBufferNameAt(pairsBindings, 14u), "VsmMegaCullParams"));
+            assert(IsDebugName(BoundBufferNameAt(pairsBindings, 15u), "VsmMega_List"));
+            assert(IsDebugName(BoundBufferNameAt(pairsBindings, 16u), "VsmMega_DirtyBits"));
+            assert(IsDebugName(BoundBufferNameAt(pairsBindings, 17u), "VSM_Stats"));
+            assert(IsDebugName(BoundBufferNameAt(pairsBindings, 18u), "MegaGeometry_ShadowInstanceTable"));
+            assert(IsDebugName(BoundBufferNameAt(pairsBindings, 20u), "VsmMegaCullSlices"));
+            assert(IsDebugName(BoundBufferNameAt(pairsBindings, 21u), "VsmMegaCullPairs"));
+            // 引数: 組の一覧だけ
+            const Container::VariableArray<BoundBufferName>& argsBindings = commandList.DispatchBindings[argsDispatch];
+            assert(argsBindings.size() == 1u);
+            assert(IsDebugName(BoundBufferNameAt(argsBindings, 21u), "VsmMegaCullPairs"));
+            const Container::VariableArray<BoundBufferName>& cullBindings = cullIndirect.Bindings;
+            assert(cullBindings.size() == 11u);
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 0u), "VsmMegaCullUniform"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 1u), "MegaGeometry_InstanceTable"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 11u), "MegaGeometry_PageTable"));
@@ -8878,6 +8925,7 @@ namespace
             // 溢れて落としたクラスタの範囲のページへ再描画の印を書くため、VSM のページの表も束縛する
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 19u), "VSM_PageTable"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 20u), "VsmMegaCullSlices"));
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 21u), "VsmMegaCullPairs"));
             // クラスタの記録: 主の経路のインスタンスの表・影の表と自分の一覧を読み、自分の記録の出力へ書く
             const Container::VariableArray<BoundBufferName>& chunkBindings = commandList.DispatchBindings[chunkDispatch];
             assert(chunkBindings.size() == 5u);
@@ -8897,7 +8945,8 @@ namespace
             assert(IsDebugName(BoundBufferNameAt(expandBindings, 7u), "VsmMega_List"));
             assert(IsDebugName(BoundBufferNameAt(expandBindings, 8u), "VsmRasterSlices"));
             // 主の経路の出力・見えた印・ページの要求は、どの dispatch にも束縛されない
-            for (const Container::VariableArray<BoundBufferName>* bindings : {&dirtyBindings, &cullBindings, &chunkBindings, &expandArgsBindings, &expandBindings})
+            for (const Container::VariableArray<BoundBufferName>* bindings :
+                 {&dirtyBindings, &pairsBindings, &argsBindings, &cullBindings, &chunkBindings, &expandArgsBindings, &expandBindings})
             {
                 for (const BoundBufferName& entry : *bindings)
                 {
@@ -8916,7 +8965,7 @@ namespace
             const RHI::ResourceState common = RHI::ResourceState::Common;
             const RHI::ResourceState uav = RHI::ResourceState::UnorderedAccess;
             const size_t beforeDirty = scene.MainSequenceLength + 13u;
-            const size_t afterCull = scene.MainSequenceLength + 16u;
+            const size_t afterCull = scene.MainSequenceLength + 18u;
             for (const char* name : {"VsmMega_List", "VsmMega_DirtyBits", "VsmMega_Chunks"})
             {
                 assert(HasBufferBarrierAt(commandList, name, common, uav, beforeDirty));
@@ -8926,8 +8975,8 @@ namespace
             assert(HasBufferBarrierAt(commandList, "VsmMega_Chunks", uav, uav, afterCull));
             // 展開・描画は、一覧とクラスタの記録を UnorderedAccess へ遷移し、展開の後に GenericRead（頂点シェーダーと間接描画が読む）、描画の後に戻す
             {
-                const size_t afterExpand = scene.MainSequenceLength + 18u;
-                const size_t afterDraw = scene.MainSequenceLength + 24u;
+                const size_t afterExpand = scene.MainSequenceLength + 20u;
+                const size_t afterDraw = scene.MainSequenceLength + 26u;
                 for (const char* name : {"VsmMega_List", "VsmMega_Chunks"})
                 {
                     assert(HasBufferBarrierAt(commandList, name, common, uav, afterCull));
@@ -9090,11 +9139,11 @@ namespace
                 assert(pass.Initialize(run.Context) && pass.IsActive());
                 assert(pass.GetMegaCullList() && pass.GetMegaDirtyBits() && pass.GetMegaChunks());
                 baseline = run.Device->ComputePipelineCreations;
-                // 印付け・割り当て・消去・展開・展開の引数の 5 つの後に、階層・選択・クラスタの記録の 3 つ
-                assert(baseline == 8u);
+                // 印付け・割り当て・消去・展開・展開の引数の 5 つの後に、階層・組の絞り込み・引数・選択・クラスタの記録の 5 つ
+                assert(baseline == 10u);
                 ShutdownVsmRun(run, pass);
             }
-            for (const uint32_t failNumber : {baseline - 2u, baseline - 1u, baseline})
+            for (const uint32_t failNumber : {baseline - 4u, baseline - 3u, baseline - 2u, baseline - 1u, baseline})
             {
                 VsmRun run;
                 run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
@@ -9206,14 +9255,16 @@ namespace
             assert(scene.Base.Pass.WasMarked() && scene.Base.Pass.WasRasterRecorded());
             assert(scene.Base.Pass.WasMegaCullRecorded() && scene.Base.Pass.WasMegaDrawRecorded());
 
-            // 流れ: 点光源の分の印付けで記録の数は変わりうるので、並び全体は比べない。カリングの 3 つの dispatch の並びを下で確かめる
+            // 流れ: 点光源の分の印付けで記録の数は変わりうるので、並び全体は比べない。カリングの dispatch の並びを下で確かめる
             assert(!vsmSequenceOf(scene).empty() && !sunSequence.empty());
-            // カリングの dispatch は 1 組だけ（階層・選択・クラスタの記録）。点光源の面のために別の dispatch を足さない
+            // カリングの dispatch は 1 組だけ（階層・組の絞り込み・引数・選択（間接）・クラスタの記録）。点光源の面のために別の dispatch を足さない
             size_t dirtyDispatch = commandList.DispatchBindings.size();
-            size_t cullDispatch = commandList.DispatchBindings.size();
+            size_t pairsDispatch = commandList.DispatchBindings.size();
+            size_t argsDispatch = commandList.DispatchBindings.size();
             size_t chunkDispatch = commandList.DispatchBindings.size();
             uint32_t dirtyCount = 0;
-            uint32_t cullCount = 0;
+            uint32_t pairsCount = 0;
+            uint32_t argsCount = 0;
             uint32_t chunkCount = 0;
             for (size_t index = scene.MainDispatchCount; index < commandList.DispatchBindings.size(); ++index)
             {
@@ -9223,10 +9274,15 @@ namespace
                     dirtyDispatch = index;
                     ++dirtyCount;
                 }
-                if (bindings.size() == 10u && BoundBufferNameAt(bindings, 20u) != nullptr && IsDebugName(BoundBufferNameAt(bindings, 20u), "VsmMegaCullSlices"))
+                if (bindings.size() == 7u && BoundBufferNameAt(bindings, 21u) != nullptr && IsDebugName(BoundBufferNameAt(bindings, 21u), "VsmMegaCullPairs"))
                 {
-                    cullDispatch = index;
-                    ++cullCount;
+                    pairsDispatch = index;
+                    ++pairsCount;
+                }
+                if (bindings.size() == 1u && BoundBufferNameAt(bindings, 21u) != nullptr && IsDebugName(BoundBufferNameAt(bindings, 21u), "VsmMegaCullPairs"))
+                {
+                    argsDispatch = index;
+                    ++argsCount;
                 }
                 if (bindings.size() == 5u && BoundBufferNameAt(bindings, 19u) != nullptr && IsDebugName(BoundBufferNameAt(bindings, 19u), "VsmMega_Chunks"))
                 {
@@ -9234,13 +9290,25 @@ namespace
                     ++chunkCount;
                 }
             }
-            assert(dirtyCount == 1u && cullCount == 1u && chunkCount == 1u);
-            assert(dirtyDispatch < cullDispatch && cullDispatch < chunkDispatch);
-            // スライスの数だけ z を広げる（太陽の 10 段 + 4 灯 × 6 面 × 6 段）。ワークグループは影を落とす 2 インスタンスの 2 つ
+            assert(dirtyCount == 1u && pairsCount == 1u && argsCount == 1u && chunkCount == 1u);
+            assert(dirtyDispatch < pairsDispatch && pairsDispatch < argsDispatch && argsDispatch < chunkDispatch);
+            // 選択の間接 dispatch は 1 回で、通った組の一覧の頭の引数を読む（消去の間接 dispatch は組の一覧を読まない）
+            size_t cullIndirectCount = 0;
+            const FakeCommandList::IndirectDispatchRecord* cullIndirect = nullptr;
+            for (const FakeCommandList::IndirectDispatchRecord& record : commandList.IndirectDispatches)
+            {
+                if (IsDebugName(record.BufferName, "VsmMegaCullPairs"))
+                {
+                    cullIndirect = &record;
+                    ++cullIndirectCount;
+                }
+            }
+            assert(cullIndirectCount == 1u && cullIndirect->OffsetBytes == 4u * sizeof(uint32_t));
+            // スライスの数だけ z を広げる（太陽の 10 段 + 4 灯 × 6 面 × 6 段）。組の絞り込みは 3 インスタンスの 1 グループ
             assert(commandList.DispatchGroups[dirtyDispatch].X == 16u && commandList.DispatchGroups[dirtyDispatch].Y == 16u &&
                    commandList.DispatchGroups[dirtyDispatch].Z == sliceCount);
-            assert(commandList.DispatchGroups[cullDispatch].X == 2u && commandList.DispatchGroups[cullDispatch].Y == 1u &&
-                   commandList.DispatchGroups[cullDispatch].Z == sliceCount);
+            assert(commandList.DispatchGroups[pairsDispatch].X == 1u && commandList.DispatchGroups[pairsDispatch].Y == 1u &&
+                   commandList.DispatchGroups[pairsDispatch].Z == sliceCount);
             assert(commandList.DispatchGroups[chunkDispatch].X == VirtualShadowMap::MEGA_CULL_LIST_CAPACITY / 64u);
             // 区間は VsmCullMega の 1 つ（点光源の分も同じ区間に入る）
             {
@@ -9252,14 +9320,18 @@ namespace
                 assert(cullScopeCount == 1u);
             }
             // 束縛は太陽の段のカリングと同じで、主の経路の出力・見えた印・ページの要求は束縛しない
-            for (const size_t dispatch : {dirtyDispatch, cullDispatch, chunkDispatch})
+            for (const size_t dispatch : {dirtyDispatch, pairsDispatch, argsDispatch, chunkDispatch})
             {
                 for (const BoundBufferName& entry : commandList.DispatchBindings[dispatch])
                 {
                     assert(!IsMainPathOutputBufferName(entry.Name));
                 }
             }
-            const Container::VariableArray<BoundBufferName>& cullBindings = commandList.DispatchBindings[cullDispatch];
+            const Container::VariableArray<BoundBufferName>& cullBindings = cullIndirect->Bindings;
+            for (const BoundBufferName& entry : cullBindings)
+            {
+                assert(!IsMainPathOutputBufferName(entry.Name));
+            }
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 1u), "MegaGeometry_InstanceTable"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 11u), "MegaGeometry_PageTable"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 15u), "VsmMega_List"));

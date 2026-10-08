@@ -1,0 +1,99 @@
+﻿#version 460
+
+// ========================================
+// 仮想シャドウマップ（VSM）の、MegaGeometry の投影物のカリングの事前の絞り込み
+//
+// vsm_mega_cull.comp は 1 ワークグループ = 1 つの（インスタンス、スライス）の 64 クラスタを受け持つ。インスタンスの境界で落ちる組が
+// ほとんどの場面（点光源は 1 灯でも 36 スライスあり、インスタンスが多いほど組の数が増える）で、落ちる組のワークグループまで
+// 全部出すと、ワークグループの数 × スライスの数だけ同じ判定を繰り返すことになる。ここで組ごとに 1 回だけ判定し、
+// 通った組だけを一覧にして、vsm_mega_cull.comp を間接 dispatch で出す。
+//
+// 1 スレッド = 1 つの（インスタンス、スライス）の組。dispatch は (ceil(インスタンスの数 / 64), 1, スライスの数)。
+// 判定は vsm_mega_cull.comp の（1）と同じ: 影を落とすインスタンスで、ワークグループを持ち、境界が無いか、境界の球が
+// スライスの範囲・深度の範囲に入り dirty のページを含む。使わないスライス（ページの一辺が 0）は何も通さない。
+// 通った組は binding 21 の一覧へ (インスタンスの表の番号 << 8) | スライスの番号 で追加し、組の最大のワークグループ数を持つ。
+// 間接 dispatch の引数（組の数 × 最大のワークグループ数）は、続けて呼ぶ vsm_mega_cull_args.comp が書く。
+// 呼ぶ前に、一覧の頭の 8 語を 0 にしておくこと。
+// 統計（binding 17）の語 8（と点光源の語 56）・出力の一覧（binding 15）の語 2 は、通った組の数をここで数える。
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// binding 20: スライスの表（ページの一辺・texel・範囲の原点・ページの表の先頭）
+#define VSM_SLICE_BINDING 20
+#include "Common/VirtualShadowMapMegaCull.glsl"
+#include "Common/VirtualShadowMapMegaSphere.glsl"
+
+// binding 15: 出力の一覧（語 2 = 通った組の数だけをここで書く）
+layout(std430, set = 0, binding = 15) buffer VsmMegaList
+{
+    uint listSelected;
+    uint listOverflow;
+    uint listInstanceLevels;
+    uint listReserved;
+    uvec4 listEntries[];
+};
+
+// binding 17: VSM の統計
+layout(std430, set = 0, binding = 17) buffer VsmStats
+{
+    uint vsmStats[];
+};
+const uint STAT_MEGA_INSTANCES = 8u;
+// 透視のスライス（点光源の面）だけの数（STAT_MEGA_INSTANCES はこれを含む合計）
+const uint STAT_MEGA_POINT_INSTANCES = 56u;
+
+// binding 18: 影の表（インスタンスの表と同じ並び。構造は Common/VirtualShadowMapMegaCull.glsl の ShadowInstance）
+layout(std430, set = 0, binding = 18) readonly buffer ShadowInstanceBuffer
+{
+    ShadowInstance shadowInstances[];
+};
+
+// binding 21: （インスタンス、スライス）の組の一覧。頭の 8 語は vsm_mega_cull_args.comp と同じ並び（pairArgs は間接 dispatch の引数）
+layout(std430, set = 0, binding = 21) buffer VsmMegaPairs
+{
+    uint pairCount;
+    uint pairMaxGroups;
+    uint pairReserved0;
+    uint pairReserved1;
+    uint pairArgs[4];
+    uint pairEntries[];
+};
+
+void main()
+{
+    const uint level = gl_WorkGroupID.z;
+    const uint instanceIndex = gl_GlobalInvocationID.x;
+    const uint instanceCount = megaParams.counts.w;
+
+    bool bPassed = false;
+    uint groups = 0u;
+    if (level < megaParams.counts.x && vsmSlices[level].info.x > 0.0 && instanceIndex < instanceCount)
+    {
+        const ShadowInstance shadow = shadowInstances[instanceIndex];
+        // そのインスタンスのワークグループの数は、次のインスタンスの最初のワークグループの番号との差（最後のインスタンスは全体の数との差）
+        const uint endGroup = instanceIndex + 1u < instanceCount ? shadowInstances[instanceIndex + 1u].info.x : megaParams.counts.z;
+        groups = endGroup - shadow.info.x;
+        if (groups > 0u && (shadow.info.y & SHADOW_FLAG_CASTER) != 0u)
+        {
+            bPassed = true;
+            if ((shadow.info.y & SHADOW_FLAG_BOUNDS) != 0u)
+            {
+                bPassed = LevelOverlapsSphere(level, shadow.boundsSphere.xyz, shadow.boundsSphere.w) &&
+                          SphereHasDirtyPage(level, shadow.boundsSphere.xyz, shadow.boundsSphere.w);
+            }
+        }
+    }
+    if (bPassed)
+    {
+        const uint slot = atomicAdd(pairCount, 1u);
+        pairEntries[slot] = (instanceIndex << 8u) | level;
+        atomicMax(pairMaxGroups, groups);
+        atomicAdd(listInstanceLevels, 1u);
+        atomicAdd(vsmStats[STAT_MEGA_INSTANCES], 1u);
+        if (IsPerspectiveSlice(vsmSlices[level]))
+        {
+            atomicAdd(vsmStats[STAT_MEGA_POINT_INSTANCES], 1u);
+        }
+    }
+}

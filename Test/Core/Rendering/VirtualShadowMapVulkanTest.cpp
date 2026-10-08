@@ -2014,10 +2014,17 @@ namespace
                  Outcome& outcome,
                  Container::VariableArray<uint32_t>& expectedDirtyBits,
                  bool bLeafPageResident = true,
-                 uint32_t wideSliceCount = 0u)
+                 uint32_t wideSliceCount = 0u,
+                 uint32_t groupSpread = 0u)
         {
             namespace Mega = Core::Rendering::MegaGeometry;
             outcome = Outcome{};
+
+            // groupSpread が 0 でなければ、影を落とすインスタンス i のワークグループ数を 1 + (i % (groupSpread + 1)) にする。
+            // クラスタの数をワークグループ数 × 64 にし、15 個の木の後ろは選ばれない詰め物（自分の誤差が無限大）で埋める。
+            // 選ばれるクラスタは 0 のときと同じで、ワークグループ数の違う組がインスタンスと取り違えられないこと（組の番号 ÷ 最大数）を確かめる
+            const auto groupsOfInstance = [groupSpread](uint32_t index) { return groupSpread == 0u ? 1u : 1u + (index % (groupSpread + 1u)); };
+            const uint32_t clusterArrayCount = groupSpread == 0u ? ClusterCount : std::max(ClusterCount, (1u + groupSpread) * 64u);
 
             const bool bWide = wideSliceCount != 0u;
             // バッファが持つスライスの数と、ページの表へ書くスライスの数（広い場面はスライス全部、従来は段だけ）
@@ -2032,7 +2039,7 @@ namespace
             const BufferPtr list = device->CreateBuffer(
                 BufferDesc(VirtualShadowMap::MegaCullListBytes(listCapacity), VirtualShadowMap::MegaCullListUsage() | ResourceUsage::ShaderRead, true, "VsmMegaTestList"));
             const BufferPtr clusters = device->CreateBuffer(
-                BufferDesc(sizeof(Mega::GPUClusterData) * ClusterCount, ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress, true, "VsmMegaTestClusters"));
+                BufferDesc(sizeof(Mega::GPUClusterData) * clusterArrayCount, ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress, true, "VsmMegaTestClusters"));
             const BufferPtr instances = device->CreateBuffer(
                 BufferDesc(sizeof(TestInstance) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmMegaTestInstances"));
             const BufferPtr shadowInstances = device->CreateBuffer(
@@ -2053,12 +2060,30 @@ namespace
             Mega::GPUClusterData gpuClusters[ClusterCount];
             BuildClusters(gpuClusters);
             {
-                void* mapped = clusters->Map(0u, sizeof(gpuClusters));
+                Container::VariableArray<Mega::GPUClusterData> upload(clusterArrayCount);
+                for (uint32_t index = 0; index < clusterArrayCount; ++index)
+                {
+                    if (index < ClusterCount)
+                    {
+                        upload[index] = gpuClusters[index];
+                        continue;
+                    }
+                    // 詰め物: 自分の誤差が無限大なので、どの段でも選ばれない
+                    Mega::GPUClusterData padding{};
+                    padding.ConeCutoff = -1.0f;
+                    padding.IndexCount = 3;
+                    padding.LODError = 3.402823466e+38f;
+                    padding.ParentError = 3.402823466e+38f;
+                    padding.GroupId = 0xFFFFFFFFu;
+                    padding.Flags = Mega::GPU_CLUSTER_FLAG_BAKED_LOD;
+                    upload[index] = padding;
+                }
+                void* mapped = clusters->Map(0u, sizeof(Mega::GPUClusterData) * clusterArrayCount);
                 if (mapped == nullptr)
                 {
                     return false;
                 }
-                std::memcpy(mapped, gpuClusters, sizeof(gpuClusters));
+                std::memcpy(mapped, upload.data(), sizeof(Mega::GPUClusterData) * clusterArrayCount);
                 clusters->Unmap();
             }
             // ジオメトリのページの表: ページ 0 は常駐（区画 0）。ページ 1（葉）は bLeafPageResident が偽なら非常駐
@@ -2098,7 +2123,8 @@ namespace
                 instance.PreviousWorld[14] = position.z;
                 instance.ClusterInfo[0] = static_cast<uint32_t>(clusterAddress & 0xFFFFFFFFull);
                 instance.ClusterInfo[1] = static_cast<uint32_t>(clusterAddress >> 32);
-                instance.ClusterInfo[2] = ClusterCount;
+                const uint32_t instanceGroups = spec.bCaster ? groupsOfInstance(index) : 1u;
+                instance.ClusterInfo[2] = instanceGroups > 1u ? instanceGroups * 64u : ClusterCount;
                 instance.BvhInfo[3] = 0u;
 
                 MegaGeometryShadowInstance& shadow = shadowTable[index];
@@ -2110,7 +2136,7 @@ namespace
                 if (spec.bCaster)
                 {
                     shadow.Flags = MegaGeometryShadowFlagCaster | MegaGeometryShadowFlagBounds;
-                    totalGroups += 1u; // 15 クラスタ = 1 ワークグループ
+                    totalGroups += instanceGroups; // 15 クラスタ = 1 ワークグループ（groupSpread があれば 1 + (index % (groupSpread + 1))）
                 }
             }
             {
@@ -3124,6 +3150,31 @@ namespace
                 Expect(std::find(expected.begin(), expected.end(), entry) != expected.end(), "ケース J2: 書いた件は期待の集合に入らなければならない");
             }
             std::cout << TestName << " ケース J2: 選んだ=" << outcome.Selected << " 溢れ=" << outcome.Overflow << " 書いた=" << actual.size() << std::endl;
+        }
+
+        // ----- J6: インスタンスごとにワークグループ数が違う -----
+        // 影を落とすインスタンスのワークグループ数を 1 + 添字 % 3 にする（クラスタの数 = 15 / 128 / 192、15 個の木の後ろは選ばれない詰め物）。
+        // 通った組の一覧は、ワークグループ数の最大（3）ぶんずつの間隔で選択の dispatch に並ぶ。J1 と選ばれる集合・通った組の数が同じでなければならず、
+        // ワークグループ数の少ない組の余りのワークグループが、ほかの組のクラスタを選んだり重複して選んだりしてはならない
+        {
+            MegaCull::Outcome outcome;
+            Container::VariableArray<uint32_t> expectedBits;
+            if (!MegaCull::Run(device, cull, clipmap, 1024u, frameSerial++, outcome, expectedBits, true, 0u, 2u))
+            {
+                std::cerr << TestName << " ケース J6 を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(outcome.bRecorded, "ケース J6: カリングを記録しなければならない");
+            // 影を落とす 6 インスタンス（添字 0・1・3・4・5・6）のワークグループ数 1・2・1・2・3・1 の合計
+            Expect(outcome.GroupCount == 10u, "ケース J6: 影を落とす 6 インスタンスぶんの 10 ワークグループを出さなければならない");
+            const Container::VariableArray<uint64_t> expected = MegaCull::ExpectedEntries();
+            const Container::VariableArray<uint64_t> actual = MegaCull::PackEntries(outcome.Entries);
+            Expect(outcome.Selected == 22u && outcome.Overflow == 0u, "ケース J6: 選んだクラスタは 22 件・溢れ 0 でなければならない");
+            Expect(outcome.InstanceLevels == 8u && outcome.StatInstances == 8u && outcome.StatClusters == 22u,
+                   "ケース J6: 判定を通った（インスタンス、段）は 8、統計は（8, 22）でなければならない");
+            Expect(actual == expected, "ケース J6: 選んだ（インスタンス、段、クラスタ）が J1 の期待の集合と一致しなければならない");
+            std::cout << TestName << " ケース J6: 選んだクラスタ=" << outcome.Selected << " 通った（インスタンス、段）=" << outcome.InstanceLevels
+                      << " ワークグループ=" << outcome.GroupCount << std::endl;
         }
 
         // ----- J4: スライスが 40 個 -----
