@@ -14,6 +14,8 @@
 //   ケース G（ページの表を直接書く）: 段 0 の 24 ページ（うち 1 ページは dirty でなく、触られない）と段 1 の 4 ページに、縁がページの中を斜めに通る
 //     大きな三角形（24 ページ以上をまたぐ）と、その縁をまたぐ遠い四角形を描き、全 texel が参照と一致すること。
 //     ケース H: インスタンスの容量が 1 足りないとき、描かずに溢れとして数え（物理ページは触らない）、ちょうど足りるときは描くこと。
+//     展開のインスタンスは、塊の境界の矩形が覆うページのうち、塊の三角形のライト空間の広がり（0.002 ページの余裕つき）が触れるページだけに作る
+//     （段の範囲のページが 2〜1024 のとき。参照は CountExpectedInstances が CPU の倍精度で同じ手順で求める）。点光源の面（ケース R）は texel の比較で確かめる。
 //   ケース J（MegaGeometry の投影物のカリング。vsm_dirty_mips.comp・vsm_mega_cull.comp）: 合成した完全二分木のクラスタを本番のカリングに通し、
 //     段の texel が 2 倍になるごとに選ばれるクラスタが粗くなり（葉 8・中間 4・2・根 1）、どの葉から根への道でもちょうど 1 つが選ばれること
 //     （自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）、インスタンスの判定（段の範囲・深度の範囲・dirty のページの階層）、
@@ -1176,9 +1178,19 @@ namespace
         return pages;
     }
 
-    // 展開の参照: 塊のワールドの境界のライト空間の矩形（シェーダーと同じ、中心と半幅の式）が覆うページのうち、割り当て済みで dirty のものの数
-    uint32_t CountExpectedInstances(const Scene& scene, const VsmShadowChunk& chunk, const Container::VariableArray<PageInfo>& pages)
+    // 展開の参照: 塊のワールドの境界のライト空間の矩形（シェーダーと同じ、中心と半幅の式）が覆うページのうち、割り当て済みで dirty のものの数。
+    // 段の範囲（矩形を段の範囲で切ったもの）のページが 2 つ以上 1024 以下のとき、塊の三角形（source の記録が geometry の頂点・インデックスを指す）を
+    // ライト空間のページの座標へ写した広がり（0.002 ページの余裕つき）が触れないページは数えない（vsm_expand.comp の三角形の判定と同じ手順。
+    // 三角形が 64 を超えるセルに広がるときは、その段の全ページを数える）
+    uint32_t CountExpectedInstances(const Scene& scene,
+                                    const VsmShadowChunk& chunk,
+                                    const Container::VariableArray<PageInfo>& pages,
+                                    const ChunkGeometry& geometry,
+                                    const VsmShadowChunk& source)
     {
+        constexpr double TouchMargin = 0.002;
+        constexpr int64_t TouchMaxPages = 1024;
+        constexpr int64_t TouchMaxCellsPerTriangle = 64;
         const VirtualShadowMapClipmap& clipmap = scene.Clipmap;
         const double right[3] = {clipmap.LightRight.x, clipmap.LightRight.y, clipmap.LightRight.z};
         const double up[3] = {clipmap.LightUp.x, clipmap.LightUp.y, clipmap.LightUp.z};
@@ -1195,6 +1207,30 @@ namespace
             extentRight += extent * std::abs(right[axis]);
             extentUp += extent * std::abs(up[axis]);
         }
+
+        // 三角形ごとのライト空間（右・上）の座標
+        const uint32_t triangleCount = std::min(source.Record.TriangleCount, 128u);
+        Container::VariableArray<double> triangleLight;
+        for (uint32_t triangle = 0; triangle < triangleCount; ++triangle)
+        {
+            for (uint32_t corner = 0; corner < 3u; ++corner)
+            {
+                const uint32_t index = geometry.Indices[source.Record.FirstIndex + triangle * 3u + corner] + source.Record.VertexBase;
+                double world[3] = {};
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    world[axis] = static_cast<double>(source.World[axis * 4u + 3u]);
+                    for (uint32_t inner = 0; inner < 3u; ++inner)
+                    {
+                        world[axis] += static_cast<double>(source.World[axis * 4u + inner]) *
+                                       static_cast<double>(geometry.Vertices[static_cast<size_t>(index) * 8u + inner]);
+                    }
+                }
+                triangleLight.push_back(world[0] * right[0] + world[1] * right[1] + world[2] * right[2]);
+                triangleLight.push_back(world[0] * up[0] + world[1] * up[1] + world[2] * up[2]);
+            }
+        }
+
         uint32_t count = 0;
         for (const PageInfo& page : pages)
         {
@@ -1202,15 +1238,66 @@ namespace
             {
                 continue;
             }
-            const double pageMeters = static_cast<double>(clipmap.Levels[page.Level].PageMeters);
+            const VirtualShadowMapClipmapLevel& level = clipmap.Levels[page.Level];
+            const double pageMeters = static_cast<double>(level.PageMeters);
             const int64_t minX = static_cast<int64_t>(std::floor((centerRight - extentRight) / pageMeters));
             const int64_t maxX = static_cast<int64_t>(std::floor((centerRight + extentRight) / pageMeters));
             const int64_t minY = static_cast<int64_t>(std::floor((centerUp - extentUp) / pageMeters));
             const int64_t maxY = static_cast<int64_t>(std::floor((centerUp + extentUp) / pageMeters));
-            if (page.AbsX >= minX && page.AbsX <= maxX && page.AbsY >= minY && page.AbsY <= maxY)
+            if (!(page.AbsX >= minX && page.AbsX <= maxX && page.AbsY >= minY && page.AbsY <= maxY))
+            {
+                continue;
+            }
+
+            // 段の範囲（矩形を段のページの表の範囲で切ったもの）
+            const int64_t dimension = static_cast<int64_t>(VirtualShadowMap::TABLE_DIMENSION);
+            const int64_t rangeMinX = std::max(minX, static_cast<int64_t>(level.OriginPageX));
+            const int64_t rangeMinY = std::max(minY, static_cast<int64_t>(level.OriginPageY));
+            const int64_t rangeMaxX = std::min(maxX, static_cast<int64_t>(level.OriginPageX) + dimension - 1);
+            const int64_t rangeMaxY = std::min(maxY, static_cast<int64_t>(level.OriginPageY) + dimension - 1);
+            const int64_t rangeWidth = std::max<int64_t>(rangeMaxX - rangeMinX + 1, 0);
+            const int64_t rangeHeight = std::max<int64_t>(rangeMaxY - rangeMinY + 1, 0);
+            const int64_t total = rangeWidth * rangeHeight;
+            if (total < 2 || total > TouchMaxPages || triangleCount == 0u)
             {
                 ++count;
+                continue;
             }
+
+            bool bTouched = false;
+            for (uint32_t triangle = 0; triangle < triangleCount && !bTouched; ++triangle)
+            {
+                double lowX = 1.0e30;
+                double lowY = 1.0e30;
+                double highX = -1.0e30;
+                double highY = -1.0e30;
+                for (uint32_t corner = 0; corner < 3u; ++corner)
+                {
+                    const double x = triangleLight[(triangle * 3u + corner) * 2u] / pageMeters;
+                    const double y = triangleLight[(triangle * 3u + corner) * 2u + 1u] / pageMeters;
+                    lowX = std::min(lowX, x);
+                    lowY = std::min(lowY, y);
+                    highX = std::max(highX, x);
+                    highY = std::max(highY, y);
+                }
+                const int64_t cellLowX = std::max(static_cast<int64_t>(std::floor(lowX - TouchMargin)) - rangeMinX, int64_t{0});
+                const int64_t cellLowY = std::max(static_cast<int64_t>(std::floor(lowY - TouchMargin)) - rangeMinY, int64_t{0});
+                const int64_t cellHighX = std::min(static_cast<int64_t>(std::floor(highX + TouchMargin)) - rangeMinX, rangeWidth - 1);
+                const int64_t cellHighY = std::min(static_cast<int64_t>(std::floor(highY + TouchMargin)) - rangeMinY, rangeHeight - 1);
+                if (cellHighX < cellLowX || cellHighY < cellLowY)
+                {
+                    continue;
+                }
+                if ((cellHighX - cellLowX + 1) * (cellHighY - cellLowY + 1) > TouchMaxCellsPerTriangle)
+                {
+                    bTouched = true;
+                    break;
+                }
+                const int64_t cellX = page.AbsX - rangeMinX;
+                const int64_t cellY = page.AbsY - rangeMinY;
+                bTouched = cellX >= cellLowX && cellX <= cellHighX && cellY >= cellLowY && cellY <= cellHighY;
+            }
+            count += bTouched ? 1u : 0u;
         }
         return count;
     }
@@ -1335,7 +1422,7 @@ namespace
         Container::VariableArray<uint32_t> perChunk;
         for (const VsmShadowChunk& chunk : geometry.Chunks)
         {
-            perChunk.push_back(CountExpectedInstances(scene, chunk, pages));
+            perChunk.push_back(CountExpectedInstances(scene, chunk, pages, geometry, chunk));
         }
         // 確保の順は塊の処理の順で決まるので、容量に収まる場合（溢れの無い構成）だけ確保の位置まで確かめる
         uint32_t totalDemand = 0;
@@ -1754,7 +1841,7 @@ namespace
             Expect(pageInfos.size() == 28u, "ケース G: 合成したページの表の割り当て済みの数が 28 でなければならない");
             CheckExpansion("ケース G", scene, geometry, pageInfos, readback, instanceCapacity);
             // 大きな三角形が段 0 の 16 ページ以上を覆うこと（シーンの前提）
-            Expect(CountExpectedInstances(scene, geometry.Chunks[0], pageInfos) >= 16u, "ケース G: 大きな三角形が 16 ページ以上を覆わなければならない");
+            Expect(CountExpectedInstances(scene, geometry.Chunks[0], pageInfos, geometry, geometry.Chunks[0]) >= 16u, "ケース G: 大きな三角形が 16 ページ以上を覆わなければならない");
             const PoolCheck check = CheckPool("ケース G", scene, allShapes, pageInfos, readback.Pool, VirtualShadowMap::EMPTY_DEPTH_BITS);
             std::cout << TestName << " ケース G: 比べた texel=" << check.Compared << " 形に覆われた texel=" << check.Covered
                       << " 比べなかった縁の texel=" << check.Skipped << " 不一致=" << check.Mismatches << std::endl;
@@ -1779,7 +1866,7 @@ namespace
                     return false;
                 }
                 expectedPages = DecodePages(scene, table);
-                needed = CountExpectedInstances(scene, geometry.Chunks[0], expectedPages);
+                needed = CountExpectedInstances(scene, geometry.Chunks[0], expectedPages, geometry, geometry.Chunks[0]);
             }
             Expect(needed >= 16u, "ケース H: 三角形の必要なインスタンスの数が 16 以上でなければならない");
             for (const uint32_t instanceCapacity : {needed - 1u, needed})
@@ -3610,7 +3697,7 @@ namespace
                     levelPages.push_back(page);
                 }
             }
-            const uint32_t expectedInstances = CountExpectedInstances(scene, made, levelPages);
+            const uint32_t expectedInstances = CountExpectedInstances(scene, made, levelPages, geometry, source);
             expectedInstanceTotal += expectedInstances;
             const uint32_t* command = &drawWords[VirtualShadowMap::RASTER_DRAWS_HEADER_WORDS + entryIndex * VirtualShadowMap::RASTER_DRAW_COMMAND_WORDS];
             if (command[0] != source.Record.TriangleCount * 3u || command[1] != expectedInstances)
@@ -5926,7 +6013,7 @@ namespace
         uint32_t expectedInstances = 0;
         for (const VsmShadowChunk& chunk : originalChunks)
         {
-            expectedInstances += CountExpectedInstances(scene, chunk, pageInfos);
+            expectedInstances += CountExpectedInstances(scene, chunk, pageInfos, geometry, chunk);
         }
         uint32_t drawnInstances = 0;
         for (uint32_t chunk = 0; chunk < groupedChunks.size(); ++chunk)

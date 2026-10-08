@@ -81,6 +81,8 @@ namespace NorvesLib::Core::Rendering
         constexpr int32_t SliceFlagInvalidate = 1;
         // 無効化の矩形の外側へ足す余白（m）。展開の範囲の計算（float）との丸めの差でページを取りこぼさないため
         constexpr float InvalidationMarginMeters = 1.0e-3f;
+        /** vsm_allocate.comp の INVALIDATE_SPLIT と同じ。無効化の 1 組（矩形か球、スライス）を分け合うスレッドの数 */
+        constexpr uint32_t InvalidateSplit = 16;
         // 絶対のページの番号を int32 でシェーダーへ渡せる範囲（範囲の端 + 128 ページが溢れない余裕を持つ）
         constexpr int64_t MaxOriginMagnitude = 1ll << 30;
 
@@ -742,7 +744,7 @@ namespace NorvesLib::Core::Rendering
 
             const uint32_t entryGroups = GroupsFor(sliceCount * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL, GroupSize);
             const uint32_t pageGroups = GroupsFor(dispatch.PoolPages, GroupSize);
-            const uint32_t rectGroups = GroupsFor(std::max(rectCount, sphereCount) * sliceCount, GroupSize);
+            const uint32_t rectGroups = GroupsFor(std::max(rectCount, sphereCount) * sliceCount * InvalidateSplit, GroupSize);
             const uint32_t requestGroups = GroupsFor(VirtualShadowMap::RequestWords(sliceCount), GroupSize);
             // 段階ごとの dispatch の大きさ（0 は記録しない）
             const uint32_t groups[StageCount] = {

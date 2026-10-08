@@ -11,7 +11,7 @@
 //     動いて欄のトーラスの番地が指す絶対のページが変わった（範囲の外へ出た）欄は、空きへ戻す（欄を 0 にする）。
 //     全ページを無効にする指定（太陽の向き・深度の原点が変わった）なら、残った欄に dirty を付ける。太陽の段（正射影）と点光源の面
 //     （透視）は指定が別で、灯の位置・Range などが変わったスライスは、スライスの印（extra.w の SLICE_FLAG_INVALIDATE）で全ページに dirty を付ける。
-//   段階 1（無効化）: 無効化の矩形（ライト空間。動いた投影物の前フレームと今フレームの境界）× 段ごとに 1 スレッド。
+//   段階 1（無効化）: 無効化の矩形（ライト空間。動いた投影物の前フレームと今フレームの境界）× 段ごとに INVALIDATE_SPLIT 本のスレッド（ページの行を分け合う）。
 //     矩形が覆う、範囲の中の割り当て済みのページに dirty を付ける。透視のスライス（点光源の面）は、矩形の代わりに無効化の球
 //     （動いた投影物の前後の境界を覆う球。ワールド）を使い、球が面の NDC で覆うページに dirty を付ける。
 //   段階 2（年齢）: 欄ごとに 1 スレッド。要求のあるページは年齢を 0 にする。要求の無いページは、dirty なら（描き直しても使われないので）
@@ -93,6 +93,8 @@ layout(std430, set = 0, binding = 6) buffer VsmDirtyList
 
 const uint STAGE_SCROLL = 0u;
 const uint STAGE_RECTS = 1u;
+// 段階 1 の 1 組（矩形か球、スライス）あたりのスレッド数（VirtualShadowMapPages.cpp の InvalidateSplit と同じ）
+const uint INVALIDATE_SPLIT = 16u;
 const uint STAGE_AGE = 2u;
 const uint STAGE_EVICT_PLAN = 3u;
 const uint STAGE_EVICT = 4u;
@@ -264,13 +266,14 @@ void InvalidateEntry(uint entryIndex, bool bPoint)
     }
 }
 
-// 透視のスライス（点光源の面）の、球が面の NDC で覆うページに dirty を付ける。球の範囲の判定は展開・カリングと同じ（VsmPerspectivePageRange）
-void InvalidateSphere(VsmSlice slice, vec4 sphere)
+// 透視のスライス（点光源の面）の、球が面の NDC で覆うページに dirty を付ける。球の範囲の判定は展開・カリングと同じ（VsmPerspectivePageRange）。
+// 1 組（球、スライス）を INVALIDATE_SPLIT 本のスレッドが行ごとに分け合う（大きな球が 1 本のスレッドで千ページ近くを順に処理して待たせないため）
+void InvalidateSphere(VsmSlice slice, vec4 sphere, uint part)
 {
     ivec2 pageMin;
     uvec2 size;
     VsmPerspectivePageRange(slice, sphere.xyz, sphere.w, pageMin, size);
-    for (uint offsetY = 0u; offsetY < size.y; ++offsetY)
+    for (uint offsetY = part; offsetY < size.y; offsetY += INVALIDATE_SPLIT)
     {
         for (uint offsetX = 0u; offsetX < size.x; ++offsetX)
         {
@@ -282,7 +285,9 @@ void InvalidateSphere(VsmSlice slice, vec4 sphere)
 void InvalidateRects()
 {
     const uint levels = max(params.screen.z, 1u);
-    const uint id = gl_GlobalInvocationID.x;
+    // 1 組（矩形か球、スライス）に INVALIDATE_SPLIT 本のスレッド。part が行の分担
+    const uint part = gl_GlobalInvocationID.x % INVALIDATE_SPLIT;
+    const uint id = gl_GlobalInvocationID.x / INVALIDATE_SPLIT;
     const uint rectIndex = id / levels;
     const uint level = id % levels;
     const VsmSlice slice = vsmSlices[level];
@@ -290,7 +295,7 @@ void InvalidateRects()
     {
         if (rectIndex < params.cache.w)
         {
-            InvalidateSphere(slice, params.spheres[rectIndex]);
+            InvalidateSphere(slice, params.spheres[rectIndex], part);
         }
         return;
     }
@@ -309,7 +314,7 @@ void InvalidateRects()
     const vec2 highPage = clamp(floor(rect.zw / pageMeters), vec2(-1.0e9), vec2(1.0e9));
     const ivec2 low = max(ivec2(lowPage), origin);
     const ivec2 high = min(ivec2(highPage), origin + ivec2(slice.origin.w - 1));
-    for (int pageY = low.y; pageY <= high.y; ++pageY)
+    for (int pageY = low.y + int(part); pageY <= high.y; pageY += int(INVALIDATE_SPLIT))
     {
         for (int pageX = low.x; pageX <= high.x; ++pageX)
         {

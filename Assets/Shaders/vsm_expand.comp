@@ -1,4 +1,6 @@
 ﻿#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
 
 // ========================================
 // 太陽の仮想シャドウマップ（VSM）の展開: 影の塊 × ページのインスタンスを作る
@@ -18,6 +20,11 @@
 // 記録の reserved が組の番号 g（スライス / 32）。ビット b が スライス g × 32 + b。複数の組にまたがる投影物は、組ごとの塊に分かれている。
 // インスタンスの y は スライス（下位 8 ビット）| 物理ページ << 8。
 //
+// 覆うページが 2 つ以上（1024 以下）のスライスでは、塊の三角形を描画と同じ変換でページの座標へ写し、どの三角形も触れないページには
+// インスタンスを作らない（境界球の矩形は三角形の広がりより広く、ページの端の三角形の無い所にもインスタンスができて、
+// 三角形ぶんの頂点とプリミティブの処理が無駄になるため）。触れるページの印は共有メモリに持ち、スライスごとに作る
+// （スライスが 1 つの塊は 1 回目に作った印を 2 回目も使う）。近い平面をまたぐ三角形・投影を決められない頂点・覆うページが多い三角形があれば、
+// そのスライスは判定を使わない（従来どおり範囲の全ページ）。
 // 容量（インスタンスの数）を超える塊は、ページを 1 つも描かず（instanceCount 0）、溢れとして数える。
 // 描けなかった塊の範囲の、割り当て済みで dirty のページには再描画の印（VSM_PAGE_ENTRY_RETRY）を付ける。
 // 次フレームの引き継ぎ（vsm_allocate.comp）が dirty を付け直すので、そのページは欠けたまま持ち越されず、描き直される。
@@ -27,6 +34,7 @@
 
 #include "Common/VisibilityBuffer.glsl"
 #include "Common/VirtualShadowMapChunk.glsl"
+#include "Common/VisibilityTriangleFetch.glsl"
 // binding 8: スライスの表（ページの一辺・範囲の原点・ページの表の先頭）
 #define VSM_SLICE_BINDING 8
 #include "Common/VirtualShadowMapSlice.glsl"
@@ -91,6 +99,13 @@ shared uint sharedCursor;
 shared uint sharedBase;
 shared uint sharedOk;
 shared uint sharedRetry;
+// 三角形が触れるページの印（範囲の中の位置 index がビット index。覆うページが TOUCH_MAX_PAGES 以下のスライスだけが使う）と、判定を使わない印
+const uint TOUCH_MAX_PAGES = 1024u;
+const uint TOUCH_MAX_CELLS_PER_TRIANGLE = 64u;
+// 三角形の広がりへ足す余裕（ページ単位。1/4 texel）。変換の丸めの差で端のページを落とさない
+const float TOUCH_MARGIN = 0.002;
+shared uint sharedTouched[TOUCH_MAX_PAGES / 32u];
+shared uint sharedTouchAll;
 
 // スライス level の、塊が覆うページの範囲（絶対のページの番号。範囲の外は切り捨てる）。覆わなければ幅・高さが 0。
 // 正射影のスライスは境界のライト空間の矩形（lightMin・lightMax）、透視のスライスは境界球（center・radius）から決める
@@ -154,6 +169,122 @@ void MarkRetry(uint levelMask, uint levelBase, vec2 lightMin, vec2 lightMax, vec
     }
 }
 
+// 塊の三角形が触れるページの印を作る（スライス level。範囲は pageMin・size）。全スレッドが呼び、終わりに barrier を張る。
+// ページの座標は描画（vsm_draw.vert）と同じ式: 透視は (面の NDC + 1) / pageMeters、正射影は ライト空間の座標 / pageMeters
+void BuildTouchedPages(VisibilityDrawRecord record, vec4 world0, vec4 world1, vec4 world2,
+                       uint level, ivec2 pageMin, uvec2 size, uint triangles, uint thread)
+{
+    const VsmSlice slice = vsmSlices[level];
+    const bool bPerspective = slice.extra.z == int(VSM_SLICE_PROJECTION_PERSPECTIVE);
+    const float pageMeters = slice.info.x;
+    const float nearPlane = slice.info.w;
+    const ivec2 sizeI = ivec2(size);
+    for (uint triangle = thread; triangle < triangles; triangle += 64u)
+    {
+        vec3 localPosition[3];
+        if (!VisLoadTrianglePositions(record, triangle, localPosition))
+        {
+            continue;
+        }
+        vec2 low = vec2(1.0e30);
+        vec2 high = vec2(-1.0e30);
+        bool bAll = false;
+        for (uint corner = 0u; corner < 3u; ++corner)
+        {
+            const vec4 local = vec4(localPosition[corner], 1.0);
+            const vec3 world = vec3(dot(world0, local), dot(world1, local), dot(world2, local));
+            vec2 page;
+            if (bPerspective)
+            {
+                const vec3 face = vec3(dot(world, slice.axisX.xyz) + slice.axisX.w,
+                                       dot(world, slice.axisY.xyz) + slice.axisY.w,
+                                       dot(world, slice.axisZ.xyz) + slice.axisZ.w);
+                // 近い平面より手前（光源の後ろ側）の頂点を持つ三角形は、近い平面のクリップで形が変わるので範囲の全ページ
+                if (!(face.z > nearPlane))
+                {
+                    bAll = true;
+                    break;
+                }
+                page = (face.xy / face.z + vec2(1.0)) / pageMeters;
+            }
+            else
+            {
+                page = vec2(dot(world, slice.axisX.xyz), dot(world, slice.axisY.xyz)) / pageMeters;
+            }
+            if (!(abs(page.x) < 1.0e6) || !(abs(page.y) < 1.0e6))
+            {
+                bAll = true;
+                break;
+            }
+            low = min(low, page);
+            high = max(high, page);
+        }
+        if (bAll)
+        {
+            sharedTouchAll = 1u;
+            continue;
+        }
+        // 範囲の中の位置（左下を 0）へ直し、範囲で切る
+        const ivec2 cellLow = max(ivec2(floor(low - vec2(TOUCH_MARGIN))) - pageMin, ivec2(0));
+        const ivec2 cellHigh = min(ivec2(floor(high + vec2(TOUCH_MARGIN))) - pageMin, sizeI - ivec2(1));
+        if (cellHigh.x < cellLow.x || cellHigh.y < cellLow.y)
+        {
+            continue;
+        }
+        const uint cells = uint(cellHigh.x - cellLow.x + 1) * uint(cellHigh.y - cellLow.y + 1);
+        if (cells > TOUCH_MAX_CELLS_PER_TRIANGLE)
+        {
+            sharedTouchAll = 1u;
+            continue;
+        }
+        for (int y = cellLow.y; y <= cellHigh.y; ++y)
+        {
+            for (int x = cellLow.x; x <= cellHigh.x; ++x)
+            {
+                const uint index = uint(y) * size.x + uint(x);
+                atomicOr(sharedTouched[index >> 5u], 1u << (index & 31u));
+            }
+        }
+    }
+    barrier();
+}
+
+// スライス level で三角形の判定を使うか（使うとき sharedTouched・sharedTouchAll が level のものになる）。
+// builtLevel・bBuiltFilter は直前に作ったスライスとその結果で、同じスライスなら作り直さない（全スレッドで同じ値。呼び出しはワークグループで揃っている）
+bool PrepareTouched(inout uint builtLevel, inout bool bBuiltFilter, VisibilityDrawRecord record, vec4 world0, vec4 world1, vec4 world2,
+                    uint level, ivec2 pageMin, uvec2 size, uint triangles, uint thread)
+{
+    if (builtLevel == level)
+    {
+        return bBuiltFilter;
+    }
+    const uint total = size.x * size.y;
+    const bool bFilter = total >= 2u && total <= TOUCH_MAX_PAGES && triangles != 0u && VisRecordHasAddresses(record);
+    if (bFilter)
+    {
+        // 前のスライスの印の読み手が終わってから消す
+        barrier();
+        if (thread < TOUCH_MAX_PAGES / 32u)
+        {
+            sharedTouched[thread] = 0u;
+        }
+        if (thread == 0u)
+        {
+            sharedTouchAll = 0u;
+        }
+        barrier();
+        BuildTouchedPages(record, world0, world1, world2, level, pageMin, size, triangles, thread);
+    }
+    builtLevel = level;
+    bBuiltFilter = bFilter;
+    return bFilter;
+}
+
+bool IsTouched(bool bFilter, uint index)
+{
+    return !bFilter || sharedTouchAll != 0u || ((sharedTouched[index >> 5u] >> (index & 31u)) & 1u) != 0u;
+}
+
 void main()
 {
     const uint chunkIndex = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
@@ -172,6 +303,10 @@ void main()
     uint levelMask;
     uint levelGroup;
     uint recordTriangles;
+    VisibilityDrawRecord chunkRecord;
+    vec4 chunkWorld0;
+    vec4 chunkWorld1;
+    vec4 chunkWorld2;
     if (bMega)
     {
         boundsMin = megaChunks[megaIndex].boundsMin;
@@ -179,6 +314,10 @@ void main()
         levelMask = megaChunks[megaIndex].levelMask;
         levelGroup = megaChunks[megaIndex].reserved;
         recordTriangles = VisRecordTriangleCount(megaChunks[megaIndex].record);
+        chunkRecord = megaChunks[megaIndex].record;
+        chunkWorld0 = megaChunks[megaIndex].world0;
+        chunkWorld1 = megaChunks[megaIndex].world1;
+        chunkWorld2 = megaChunks[megaIndex].world2;
     }
     else
     {
@@ -188,6 +327,10 @@ void main()
         levelMask = chunks[chunkIndex].levelMask;
         levelGroup = chunks[chunkIndex].reserved;
         recordTriangles = VisRecordTriangleCount(chunks[chunkIndex].record);
+        chunkRecord = chunks[chunkIndex].record;
+        chunkWorld0 = chunks[chunkIndex].world0;
+        chunkWorld1 = chunks[chunkIndex].world1;
+        chunkWorld2 = chunks[chunkIndex].world2;
     }
     const vec3 center = 0.5 * (boundsMin + boundsMax);
     const vec3 extent = 0.5 * (boundsMax - boundsMin);
@@ -199,6 +342,10 @@ void main()
     const float boundsRadius = length(extent);
     // 組 levelGroup の先頭のスライスの番号（組の番号が大きすぎるときは、どのスライスにも当たらない）
     const uint levelBase = levelGroup * 32u;
+    const uint touchTriangles = min(recordTriangles, VIS_MAX_TRIANGLES_PER_RECORD);
+    // 三角形が触れるページの印を最後に作ったスライス（無ければ ~0）と、その結果
+    uint builtLevel = ~0u;
+    bool bBuiltFilter = false;
 
     if (thread == 0u)
     {
@@ -219,11 +366,13 @@ void main()
         uvec2 size;
         PageRange(level, lightMin, lightMax, center, boundsRadius, pageMin, size);
         const uint total = size.x * size.y;
+        const bool bFilter = PrepareTouched(builtLevel, bBuiltFilter, chunkRecord, chunkWorld0, chunkWorld1, chunkWorld2,
+                                            level, pageMin, size, touchTriangles, thread);
         for (uint index = thread; index < total; index += 64u)
         {
             const int pageX = pageMin.x + int(index % size.x);
             const int pageY = pageMin.y + int(index / size.x);
-            if (IsDrawable(PageEntry(level, pageX, pageY)))
+            if (IsTouched(bFilter, index) && IsDrawable(PageEntry(level, pageX, pageY)))
             {
                 atomicAdd(sharedCount, 1u);
             }
@@ -285,8 +434,14 @@ void main()
         uvec2 size;
         PageRange(level, lightMin, lightMax, center, boundsRadius, pageMin, size);
         const uint total = size.x * size.y;
+        const bool bFilter = PrepareTouched(builtLevel, bBuiltFilter, chunkRecord, chunkWorld0, chunkWorld1, chunkWorld2,
+                                            level, pageMin, size, touchTriangles, thread);
         for (uint index = thread; index < total; index += 64u)
         {
+            if (!IsTouched(bFilter, index))
+            {
+                continue;
+            }
             const int pageX = pageMin.x + int(index % size.x);
             const int pageY = pageMin.y + int(index / size.x);
             const uint entry = PageEntry(level, pageX, pageY);
