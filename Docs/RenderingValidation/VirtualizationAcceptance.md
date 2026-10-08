@@ -745,6 +745,7 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG7-SW-DEFAULT-ON
 - 「影の塊（MegaGeometry のクラスタ、手続きメッシュ・スキニングの 128 三角形以下の塊）× ページ」を 1 インスタンスとして 128×128 のビューポートへ描き、断片シェーダーが物理ページへ深度を `atomicMin` で書く描画。MegaGeometry は段ごとに GPU で cull（正射影の LOD・dirty のページの階層で省く）する。
 - 照明の読み: 段の選び方は印付けと同じ。ブロッカーの探索と物理の半影（太陽の角半径、上限 0.5 m）、16 点の PCF。半径の下限は画素の大きさの半分と段の 1 texel の大きいほう（距離に対して連続で、段の切り替わりで縁の幅が跳ばない）。割り当てのないページは粗い段へ逃げる。
 - 動かない物のページの持ち越し（要求されないページは 30 フレーム後に空きへ。段の中心の移動・深度の原点のスナップ・太陽の向きの変化・動いた投影物の前後の境界で無効化）。
+- 影の範囲は、印付けも照明もカメラの前方への距離で判定する（視錐台の端の受け手も同じ段を選ぶ）。MegaGeometry の段ごとの cull の一覧から容量で落ちたクラスタ・展開から溢れた塊のページは、次のフレームに描き直す。同じ dispatch の中で他のスレッドがアトミックに書く語は、原子的に読む。
 - 既定: Game の起動画面は VSM（`--shadow-method=csm` で戻せる）。検証アプリは CSM のまま。半透明（`forward_transparent.frag`）とボリュームは CSM を読む。
 - 予算: VSM の確保量（プール・展開の一覧・cull の一覧・ページの表、合計 426 MB）を、取り分を持たない固定の取り置きとして割り振れる量から引く（`VRAM_POOLS shadow_map_pool_mb=426`。VT・ジオメトリの目標がその分減る）。
 
@@ -752,7 +753,7 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG7-SW-DEFAULT-ON
 
 | 確かめたこと | 方法 | 結果 |
 |---|---|---|
-| 関係する ctest（8 本） | RenderGraphCompileTest・VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VideoMemoryBudgetManagerTest・golden の Indoor・Outdoor とその予備の経路 | 8/8 passed（`.harness/runs/vtg8-accept/r2-ctest-debug.txt`）。基準画像・閾値は段8で動かしていない |
+| 関係する ctest（8 本） | RenderGraphCompileTest・VirtualShadowMapVulkanTest・VirtualShadowMapClipmapTest・VideoMemoryBudgetManagerTest・golden の Indoor・Outdoor とその予備の経路 | 8/8 passed（`.harness/runs/vtg8-accept/r3-ctest-debug.txt`）。基準画像・閾値は段8で動かしていない |
 | 起動画面（既定 = VSM） | 朝10°・昼45°・夕3° × 既定・近接・低角度、夜（`-Deterministic`） | 欠けなし（下の所見） |
 | 細かさ・ちらつき | `--shadow-probe` と視点の旋回（20 度/秒、400 フレーム）、既定・近接・低角度 × 太陽 45°・10° | 下の節 |
 | 検証レイヤー | Debug の Game、起動画面 3 視点と負荷モード 300 個（`-Deterministic -ShadowProbe`） | `vulkan_validation.error_count`・`warning_count`・`vuid_count` 0、VSM の溢れ 0 |
@@ -760,7 +761,7 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG7-SW-DEFAULT-ON
 
 ### 細かさとちらつき
 
-標本の道具は「太陽と物が止まっていれば、ワールドに固定した点の可視度は視点が回っても変わらない」を前提にする。起動画面の大きな球は自転し、VSM だけが描く石の目地の自己影が球と一緒に動くので、自転したままでは近接の視点で本当に動く影が揺れとして数えられる。判定は球の自転を止めた run（`NORVES_STARTUP_SPHERE_SPIN=0`、`.harness/runs/startup-capture/VTG8-ACCEPT-orbit-nospin`）で行い、自転したままの run（`VTG8-ACCEPT-orbit`）も下に並べる。値は CSM / VSM（同じ run・同じ標本）。
+標本の道具は「太陽と物が止まっていれば、ワールドに固定した点の可視度は視点が回っても変わらない」を前提にする。起動画面の大きな球は自転し、VSM だけが描く石の目地の自己影が球と一緒に動くので、自転したままでは近接の視点で本当に動く影が揺れとして数えられる。判定は球の自転を止めた run（`NORVES_STARTUP_SPHERE_SPIN=0`、`.harness/runs/startup-capture/VTG8-ACCEPT-r3-orbit-nospin`）で行い、自転したままの run（`VTG8-ACCEPT-r3-orbit`）も下に並べる。値は CSM / VSM（同じ run・同じ標本）。
 
 球の自転を止めた run（判定に使う）:
 
@@ -791,7 +792,7 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG7-SW-DEFAULT-ON
 
 ### 検証レイヤー付き Debug の実行
 
-`.harness/runs/startup-capture/VTG8-ACCEPT-validation`・`-validation-stress`（太陽45°、`-Deterministic -ShadowProbe`、球は自転したまま）。
+`.harness/runs/startup-capture/VTG8-ACCEPT-r3-validation`・`VTG8-ACCEPT-r3-validation-stress`（太陽45°、`-Deterministic -ShadowProbe`、球は自転したまま）。
 
 | run | texel CSM / VSM（mm） | 一致 | error_count | VSM の溢れ |
 |---|---|---|---|---|
@@ -825,7 +826,7 @@ RelWithDebInfo、`-GpuTimingFrames 300`、太陽45°、描いた GPU のフレ�
 
 ### 起動画面の撮影の所見
 
-PNG を開いて確かめた（`.harness/runs/startup-capture/VTG8-ACCEPT/default-sun10.png`・`near-sun45.png`・`low-sun3.png`・`default-sun45.png`、`VTG8-ACCEPT-night/default-night.png`、旋回の `VTG8-ACCEPT-orbit-nospin/near-sun45-orbit-f240.png`・`-f400.png`・`low-sun10-orbit-f320.png`、`VTG8-ACCEPT-orbit/default-sun45-orbit-f400.png`）。天球・地面・球・岩・小屋・見本の帯・金色の球・発光の球が欠けなく見え、太陽の影にページの継ぎ目・欠け・ずれ・光の漏れは無い。夕3°の低角度は段7（CSM）の同じ視点と見分けがつかない。夜は太陽が無く、点光源の影は今までどおりキューブ（段9で VSM にする）。
+PNG を開いて確かめた（`.harness/runs/startup-capture/VTG8-ACCEPT-r3/default-sun45.png`・`near-sun10.png`・`low-sun3.png`、`VTG8-ACCEPT-r3-night/near-night.png`、旋回の `VTG8-ACCEPT-r3-orbit-nospin/default-sun10-orbit-f320.png`、負荷モードの `VTG8-ACCEPT-r3-validation-stress/default-sun45.png`）。天球・地面・球・岩・小屋・見本の帯・金色の球・発光の球が欠けなく見え、太陽の影にページの継ぎ目・欠け・ずれ・光の漏れは無い。夕3°の低角度は段7（CSM）の同じ視点と見分けがつかない。夜は太陽が無く、点光源の影は今までどおりキューブ（段9で VSM にする）。
 
 ### golden
 
@@ -843,7 +844,7 @@ PNG を開いて確かめた（`.harness/runs/startup-capture/VTG8-ACCEPT/defaul
 - **半透明・ボリュームは CSM のまま**: 画面の深度に無い位置のページに印が付かないため。CSM の描画も残り、VSM の分だけ GPU 時間が増える（起動画面 +0.07〜+0.71 ms、負荷 300 個 +1.58 ms）。
 - **負荷モード（300 個）の CSM の UBO の省略は CSM 側に残る**（`Out of slots (1024/1024)`、既定の視点で 343 回）。VSM の描画では起きない。省略は半透明・ボリュームの影に効く。点光源の影の 1 面あたりの上限（8）による省略（1032 回）は段9。
 - **自転する大きな球**: VSM は球の石の目地の自己影を描くので、球の周りのページは毎フレーム描き直しになる（近接で `VsmAllocate`＋`VsmDraw` 約 1.1 ms）。ワールドに固定した点の測定では、動く影として揺れに数えられる（上の参考の表）。
-- **VSM の段の数と影の距離**: 10 段（4〜2048 m）、影の距離は CSM と同じ 80 m。VSM を使えない装置（断片シェーダーの storage の書き込み・アトミック、バッファのアドレスが無い、プールが 512 ページ未満）では CSM で描く（`VSM_FALLBACK reason=<理由>`）。
+- **VSM の段の数と影の距離**: 10 段（4〜2048 m）、影の距離は CSM と同じ 80 m。VSM を使えない装置（断片シェーダーの storage の書き込み・アトミック、バッファのアドレス、`DrawIndexedIndirectCount` が無い、プールが 512 ページ未満、MegaGeometry の段ごとの cull の初期化・資源の確保に失敗）では CSM で描く（`VSM_FALLBACK reason=<理由>`）。
 - **VRAM**: VSM の確保量 426 MB は固定（プールの大きさは `--vsm-pool-pages`）。起動画面の低角度で要求 1774 ページ、前の既定の bias（-1）では 4735 ページ。
 - **測定の前提**: 影の測定の道具は止まった物を前提にし、Release では作らない。標本は 4 画素おきの格子。検証レイヤーの範囲は API・状態・スレッドの検証で、同期の検証と GPU 上の検証は有効にしていない。
 - **開発機での実測だけ**: RTX 4080（ドライバ 610.88）。

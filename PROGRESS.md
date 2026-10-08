@@ -2604,3 +2604,8 @@
 - 検証（`.harness/runs/20261008-111210/`）: `verify-VTG8-FIX-MEGA-FALLBACK-1.txt`（Game・RenderGraphCompileTest のビルド BUILD_EXIT=0）、`-2.txt`（1/1 passed、CTEST_EXIT=0）、`-3.txt`（変異を戻したあとの再ビルド・再実行。1/1 passed、CTEST_EXIT=0）。GPU の撮影は回していない（既定の描画は CSM で、VSM は `--shadow-method=vsm` のときだけ）。
 - Notes: `RenderGraphCompileTest.cpp` は行末が混在しているため、バイトを保ったまま編集した（`git diff --numstat` と `--ignore-cr-at-eol` が一致）。Git Bash の `sed -i` は行末を壊すので、変異はバイト単位の置換で入れた。
 - Next: `TASKS.md` の未完の次の項目。
+
+## 親（2026-10-08）: 段8の区切りの評価への対応
+
+- 指摘への対応: 印付けの影の範囲を前方への距離に（`37cfd8dd`）、アトミックに書かれる語の原子的な読み取り（`ce123a9a`・`ffa83a7f`・`5c192db5`）、MegaGeometry の cull の一覧の溢れのページの描き直し（`79ea8007`）、MegaGeometry の影の経路を用意できないときの CSM への戻り（`d1f99488`・`3b5a895d`・`c3bc2fe9`）、テストの補助の `std::ifstream` を `FileStream` に・英語のコメント・受入れの記録の GPU 時間の根拠（`e3d0beff`）。
+- 最終の HEAD での確かめ（`.harness/runs/vtg8-accept/r3-*`）: Debug のビルドと ctest 8/8 passed（golden 4 本は基準画像・閾値のまま）、検証レイヤー付き Debug の 4 run で error_count 0・VSM の溢れ 0、RelWithDebInfo の朝・昼・夕・夜と旋回の撮影はすべて result=pass。影の測定の値は前の撮影（r2）と同じ（決定的な撮影で、修正はこれらの視点の結果を変えない）。受入れの記録の証拠の場所を `VTG8-ACCEPT-r3*` に差し替えた。
