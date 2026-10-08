@@ -1348,13 +1348,13 @@
 - notes: 2026-10-08 親（段8の区切りの評価の blocking 1。`vsm_mark.comp:82` と `Common/VirtualShadowMap.glsl:132` の判定の違い）。既存の場面（L4）は割り当て済みのプールを読むので、この欠けを検出できなかった。危険地帯（描画パス）。
 
 ## VTG8-FIX-ATOMIC-READS: VSM の計算シェーダーで、他のスレッドがアトミックに書く語を通常の読み取りで読まない
-- status: blocked
+- status: todo
 - done-when: 同じ dispatch の中で他のスレッドが `atomic*` で書く語を、通常の読み取りで読む箇所をなくす（Vulkan のメモリモデルのデータ競合）。(1) 印付け（`vsm_mark.comp:57` 付近）の要求のビットは、読んでから書くのでなく条件なしの `atomicOr` にする。(2) 割り当ての無効化（`vsm_allocate.comp:232` 付近。重なる無効化の矩形が同じ語を `atomicOr` する）で、判定のために読むところを原子的な読み取り（`atomicOr(value, 0u)` など。展開の `PageEntry` の読み方と同じ）にする。(3) ほかの VSM の計算シェーダー（`Assets/Shaders/vsm_*.comp`、`Common/VirtualShadowMap*.glsl`）でも同じ形の箇所を洗い出して直し、確かめた箇所の一覧（ファイル:行と、競合しない理由または直し方）を PROGRESS に書く。`VirtualShadowMapVulkanTest`・`RenderGraphCompileTest` が通る。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`
 - stop-when: なし。
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-08 親（段8の区切りの評価の blocking 2）。dispatch の間のバリアでは同じ dispatch の中の競合は解消しない。危険地帯（描画パス）。
+- notes: 2026-10-08 親（段8の区切りの評価の blocking 2）。dispatch の間のバリアでは同じ dispatch の中の競合は解消しない。危険地帯（描画パス）。 2026-10-08 親（評価の差し戻し 2 周で blocked になった件）: 残りは (3) の一覧の共通の GLSL の 3 項目（`Common/VirtualShadowMap.glsl` のページの表・プールの読み取り、`Common/VirtualShadowMapParams.glsl` の構造体、`Common/VirtualShadowMapChunk.glsl` の構造体・定数）に、今のソースの行番号を書くことだけ。行番号を開いて確かめてから書く。BLOCKED にせず閉じる。
 
 ## VTG8-FIX-MEGA-OVERFLOW-RETRY: MegaGeometry の cull の一覧から落ちたクラスタのページを次のフレームで描き直す
 - status: done
@@ -1366,13 +1366,13 @@
 - notes: 2026-10-08 親（段8の区切りの評価の blocking 3。`vsm_mega_cull.comp:248`、`vsm_allocate.comp:188`）。危険地帯（描画パス・GPU の資源の寿命）。
 
 ## VTG8-FIX-MEGA-FALLBACK: MegaGeometry の影の経路を用意できないときは VSM を使わず CSM で描く
-- status: blocked
+- status: todo
 - done-when: MegaGeometry の影の経路を用意できない場合（装置に `DrawIndexedIndirectCount` が無い、MegaGeometry の段ごとの cull の初期化・資源の確保に失敗した）は、VSM を公開せずに CSM で描き、`VSM_FALLBACK reason=<理由>` を 1 回出す（今は MegaGeometry の影だけを省いた VSM を公開し、照明が CSM へ戻らないので、描かれている MegaGeometry の太陽の影が消える。`Library/Core/Private/Rendering/VirtualShadowMapPass.cpp:262`・`:329` 付近）。今その省略を合格にしている RenderGraphCompileTest のケースを、CSM へ戻ること（VSM の資源が公開されず、照明が CSM を読み、`VSM_FALLBACK` が出る）を確かめる形に直す。変異（戻りを外す）で落ちることを記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest)$"`
 - stop-when: なし。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-08 親（段8の区切りの評価の blocking 4）。危険地帯（RHI の能力・描画の経路の選択）。
+- notes: 2026-10-08 親（段8の区切りの評価の blocking 4）。危険地帯（RHI の能力・描画の経路の選択）。 2026-10-08 親（評価の差し戻し 2 周で blocked になった件）: 戻りの実装（`d1f99488`）はそのまま。残りはテストの場面で CSM を有効にすること: 戻りの 3 つのケース（能力が無い・cull の初期化の失敗・資源の確保の失敗）の共通の補助に、影を落とす方向光と有効な CSM（グラフへの影の地図の公開・サンプラー・カスケードの行列と分割の距離。本物の `ShadowMapPass` かテスト用のパス）を組み込み、`GPULightingParams.bShadowEnabled == 1`・`cascadeCount == 4`・方向光の影の印・照明の束縛 6 が CSM の影の地図であること・VSM の読みが無効（`control.x == 0`）であることを確かめる。今の VSM の無効・束縛・ログの検査は残す。変異（戻りを外す）で落ちることを記録し直す。BLOCKED にせず閉じる。
 
 ## VTG8-ACCEPT: 段8（VSM 太陽）の受入れを記録する
 - status: done
