@@ -1366,7 +1366,7 @@
 - notes: 2026-10-08 親（段8の区切りの評価の blocking 3。`vsm_mega_cull.comp:248`、`vsm_allocate.comp:188`）。危険地帯（描画パス・GPU の資源の寿命）。
 
 ## VTG8-FIX-MEGA-FALLBACK: MegaGeometry の影の経路を用意できないときは VSM を使わず CSM で描く
-- status: done
+- status: blocked
 - done-when: MegaGeometry の影の経路を用意できない場合（装置に `DrawIndexedIndirectCount` が無い、MegaGeometry の段ごとの cull の初期化・資源の確保に失敗した）は、VSM を公開せずに CSM で描き、`VSM_FALLBACK reason=<理由>` を 1 回出す（今は MegaGeometry の影だけを省いた VSM を公開し、照明が CSM へ戻らないので、描かれている MegaGeometry の太陽の影が消える。`Library/Core/Private/Rendering/VirtualShadowMapPass.cpp:262`・`:329` 付近）。今その省略を合格にしている RenderGraphCompileTest のケースを、CSM へ戻ること（VSM の資源が公開されず、照明が CSM を読み、`VSM_FALLBACK` が出る）を確かめる形に直す。変異（戻りを外す）で落ちることを記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest)$"`
