@@ -78,13 +78,14 @@
 - notes: 2026-10-08 親（段9の開始時に詳しくした）。今の点光源の影はキューブの配列（面 512²、層 = 灯 × 6 + 面、値は距離 ÷ Range、`Common/PointShadow.glsl` の 16 タップ PCF）。起動画面の夜の電球は 1 灯（位置 (4,1,0)、Range 10 m、`Rendering3DTestRoutine.cpp`）で、地面まで約 2 m。キューブの texel は 2 m で約 7.8 mm、VSM の段 0 は約 1 mm。半透明（`forward_transparent.frag`）はキューブのまま（段8の太陽と同じ扱い）。
 
 ## VTG9-VSM-POINT-MARK: 点光源の面のページに印を付け、太陽と同じプールから割り当てる
-- status: todo
+- status: done
 - done-when: `--point-shadow-method=vsm` のとき、印付けの計算で、深度の各画素について影を持つ点光源のうち Range の内側のものごとに、面・段・ページを VTG9-VSM-POINT-SETUP の選び方で求めて要求のビットを立てる（照明の PCF の核が面の中でページの境界をまたぐときは隣のページにも。面の縁をまたぐ核は隣の面の同じ段のページにも印を付ける）。割り当て・消去は太陽と同じプール・空きの一覧で行い、溢れは数える。`VSM_PAGES` に点光源の分（`point_requested=<n> point_allocated=<n>`）を足す。`VirtualShadowMapVulkanTest` に、合成の深度（光源の近くの床と壁）と 1 灯から印が付くページの集合が CPU で求めた集合と一致し、太陽の段のページと物理ページが重ならないことを確かめる場面を足す。変異（面の縁の隣の面への印を外す）で落ちることを記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`
 - stop-when: なし。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-08 親（段9の開始時に詳しくした）。危険地帯（描画パス）。
+- 結果: 2026-10-08 完了。`vsm_mark.comp` が太陽の印付けの後に点光源の印付けをする（binding 9 の `VsmPointParams`: 灯の数・先頭スライス・段の数・面の解像度・画素の大きさ・核の半径・灯の位置と Range）。灯ごとに Range の内側の画素から面（主軸）・段（CPU の `SelectVirtualShadowMapPointMip` と同じ式）を選び、核を面の座標の 3 × 3 の標本で表して、標本ごとに向きから面を選び直した同じ段のページに印を付ける（面の縁を越える標本は隣の面のページ）。割り当て・消去は太陽と同じ経路で、`vsm_allocate.comp` が投影の種類が透視のスライスの要求・割り当てを `StatPointRequested`・`StatPointAllocated`（`STATS_WORD_COUNT` 56）に数え、`VSM_PAGES` に `point_requested`・`point_allocated` を足した。点光源の VSM のとき Pass はページの表・要求のビット列を 154 スライス（太陽 10 + 4 灯 × 6 面 × 6 段）で作り、`PointLights` を Pages へ渡す。`VirtualShadowMapVulkanTest` のケース P（P1 全画素・P1b プール不足・P2 面の縁をまたぐ画素だけ）は合成の深度と 2 灯から印の集合が倍精度の参照と一致し、太陽と点光源の物理ページが重ならず、点光源の統計が合うことを確かめる。変異（標本が受け手の面のまま引く = 隣の面への印を外す）で P2 が落ちる（`verify-VTG9-VSM-POINT-MARK-mutation.txt`）。
 
 ## VTG9-VSM-POINT-RASTER: 点光源の面へ、影の塊 × ページの単位で深度を描く
 - status: todo

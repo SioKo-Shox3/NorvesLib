@@ -1,11 +1,16 @@
 ﻿#version 450
 
 // ========================================
-// 太陽の仮想シャドウマップ（VSM）の印付け
+// 仮想シャドウマップ（VSM）の印付け（太陽と点光源）
 //
-// GBuffer.Depth の空でない各画素からワールドの位置を戻し、カメラの前方への距離が影の範囲の内側なら、カメラからの直線距離で
+// 太陽: GBuffer.Depth の空でない各画素からワールドの位置を戻し、カメラの前方への距離が影の範囲の内側なら、カメラからの直線距離で
 // クリップマップの段を選び、その位置のライト空間のページに要求のビットを立てる。照明のブロッカーの探索・PCF の核（params.tuning.x texel と
 // params.tuning.z m を足した半径）がページの境界をまたぐときは、隣のページにも立てる。
+//
+// 点光源（binding 9 の灯の数が 1 以上のとき）: 同じ位置について、影を持つ灯のうち Range の内側のものごとに、光源からの向きの主軸の面、
+// 面の軸の距離とカメラからの距離で選ぶ解像度の段（CPU の SelectVirtualShadowMapPointMip と同じ式）、面の NDC から求まるページに印を付ける。
+// PCF の核（texel に比例する分 + ワールドの長さの分）は面の座標の 3 × 3 の標本で表し、標本が面の縁を越えるときは向きから選び直した
+// 隣の面の、同じ段のページに印を付ける。面の軸・ページの数・ページの表の先頭はスライスの表から引く。
 //
 // 段の選び方は CPU の SelectVirtualShadowMapLevel と同じ結果になるよう、式を写さず、CPU が二分法で求めた距離のしきい値
 // （VirtualShadowMapLevelDistanceThresholds）を使う。距離 d の段は「d >= しきい値となる k の数」。
@@ -36,6 +41,22 @@ layout(std140, set = 0, binding = 0) uniform VsmParams
     vec4 view;
 } params;
 
+// 点光源（VirtualShadowMapPages.cpp の GPUVsmPointParams と同じ並び）
+const uint MAX_POINT_LIGHTS = 4u;
+const uint POINT_FACE_COUNT = 6u;
+layout(std140, set = 0, binding = 9) uniform VsmPointParams
+{
+    // x: 灯の数、y: 点光源のスライスの、スライスの表での先頭の番号、z: 解像度の段の数、w: 面の段 0 の解像度（texel）
+    uvec4 header;
+    // x: カメラからの距離 1 m あたりの画素の大きさ（m）、y: 段を選ぶ目標 texel の係数（2^bias）、
+    // z: 核の半径のうち texel に比例する分（texel）、w: 核の半径に足すワールドの長さ（m）
+    vec4 tuning;
+    // x: 面の近い面（m）
+    vec4 plane;
+    // xyz: 灯の位置、w: Range
+    vec4 lights[MAX_POINT_LIGHTS];
+} points;
+
 layout(set = 0, binding = 1) uniform sampler2D gbufferDepth;
 
 layout(std430, set = 0, binding = 2) buffer VsmRequestBits
@@ -56,25 +77,100 @@ void MarkPage(VsmSlice slice, int pageX, int pageY)
     atomicOr(requestBits[word], bit);
 }
 
-void main()
+// 光源からの向きの主軸の面（キューブの層の順 +X,-X,+Y,-Y,+Z,-Z）。同じ大きさなら X、次に Y、最後に Z を優先する
+// （CPU の SelectVirtualShadowMapPointFace と同じ）
+uint SelectPointFace(vec3 direction)
 {
-    const uvec2 pixel = gl_GlobalInvocationID.xy;
-    if (pixel.x >= params.screen.x || pixel.y >= params.screen.y)
+    const vec3 magnitude = abs(direction);
+    if (magnitude.x >= magnitude.y && magnitude.x >= magnitude.z)
+    {
+        return direction.x >= 0.0 ? 0u : 1u;
+    }
+    if (magnitude.y >= magnitude.z)
+    {
+        return direction.y >= 0.0 ? 2u : 3u;
+    }
+    return direction.z >= 0.0 ? 4u : 5u;
+}
+
+uint PointSliceIndex(uint light, uint face, uint mip)
+{
+    return points.header.y + (light * POINT_FACE_COUNT + face) * points.header.z + mip;
+}
+
+// 光源からの相対位置 offset（ワールドの向き）の、面 face・段 mip のページに印を付ける。面の軸の距離が近い面より手前なら付けない
+void MarkPointSample(uint light, uint mip, vec3 offset)
+{
+    const VsmSlice slice = vsmSlices[PointSliceIndex(light, SelectPointFace(offset), mip)];
+    const float axial = dot(slice.axisZ.xyz, offset);
+    if (!(axial >= points.plane.x))
     {
         return;
     }
+    // 面の縁・角は丸めで 1 をわずかに超えることがあるので [-1, 1] に収める
+    const vec2 ndc = clamp(vec2(dot(slice.axisX.xyz, offset), dot(slice.axisY.xyz, offset)) / axial, vec2(-1.0), vec2(1.0));
+    const int pageCount = slice.origin.w;
+    const ivec2 page = min(ivec2(max((ndc * 0.5 + 0.5) * float(pageCount), vec2(0.0))), ivec2(pageCount - 1));
+    MarkPage(slice, page.x, page.y);
+}
 
-    // 空（深度 1.0）と不正な深度は印を付けない
-    const float depth = texelFetch(gbufferDepth, ivec2(pixel), 0).r;
-    if (!(depth < 1.0))
+void MarkPoints(vec3 world)
+{
+    const uint lightCount = min(points.header.x, MAX_POINT_LIGHTS);
+    if (lightCount == 0u)
     {
         return;
     }
+    const float cameraDistance = length(world - params.cameraPosition.xyz);
+    const float targetTexel = cameraDistance * points.tuning.x * points.tuning.y;
+    if (!(targetTexel > 0.0))
+    {
+        return;
+    }
+    for (uint light = 0u; light < lightCount; ++light)
+    {
+        const vec4 lightData = points.lights[light];
+        const vec3 offset = world - lightData.xyz;
+        if (!(dot(offset, offset) <= lightData.w * lightData.w))
+        {
+            continue;
+        }
+        const uint face = SelectPointFace(offset);
+        const VsmSlice faceSlice = vsmSlices[PointSliceIndex(light, face, 0u)];
+        const float axial = dot(faceSlice.axisZ.xyz, offset);
+        if (!(axial >= points.plane.x))
+        {
+            continue;
+        }
 
-    const vec2 uv = (vec2(pixel) + 0.5) / vec2(params.screen.xy);
-    const vec4 world4 = params.invViewProjection * vec4(uv * 2.0 - 1.0, depth, 1.0);
-    const vec3 world = world4.xyz / world4.w;
+        // texel（面の軸の距離 z で 2z ÷ 段の解像度）が目標以下になる最も粗い段。どの段も超えるときは段 0（CPU の SelectVirtualShadowMapPointMip と同じ）
+        uint mip = 0u;
+        for (uint candidate = points.header.z; candidate-- > 0u;)
+        {
+            if (2.0 * axial / float(points.header.w >> candidate) <= targetTexel)
+            {
+                mip = candidate;
+                break;
+            }
+        }
 
+        // 核の半径（ワールドの長さ）。ページの幅（その距離で）を超えると 3 × 3 の標本の間でページを飛ばすので、ページの幅で抑える
+        const VsmSlice slice = vsmSlices[PointSliceIndex(light, face, mip)];
+        const float texelMeters = 2.0 * axial / float(points.header.w >> mip);
+        const float radius = min(points.tuning.z * texelMeters + points.tuning.w, axial * slice.info.x);
+        for (int row = -1; row <= 1; ++row)
+        {
+            for (int column = -1; column <= 1; ++column)
+            {
+                const vec3 sampleOffset = offset + (float(column) * radius) * slice.axisX.xyz + (float(row) * radius) * slice.axisY.xyz;
+                MarkPointSample(light, mip, sampleOffset);
+            }
+        }
+    }
+}
+
+void MarkSun(vec3 world)
+{
     // 影の範囲は照明（Common/VirtualShadowMap.glsl）と同じカメラの前方への距離で測る。段は直線の距離で選ぶ（照明と同じ）。
     // 視錐台の端の受け手は、前方の距離が範囲の内側でも直線の距離は範囲を超える
     const vec3 toReceiver = world - params.cameraPosition.xyz;
@@ -113,4 +209,27 @@ void main()
             MarkPage(slice, pageX, pageY);
         }
     }
+}
+
+void main()
+{
+    const uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= params.screen.x || pixel.y >= params.screen.y)
+    {
+        return;
+    }
+
+    // 空（深度 1.0）と不正な深度は印を付けない
+    const float depth = texelFetch(gbufferDepth, ivec2(pixel), 0).r;
+    if (!(depth < 1.0))
+    {
+        return;
+    }
+
+    const vec2 uv = (vec2(pixel) + 0.5) / vec2(params.screen.xy);
+    const vec4 world4 = params.invViewProjection * vec4(uv * 2.0 - 1.0, depth, 1.0);
+    const vec3 world = world4.xyz / world4.w;
+
+    MarkSun(world);
+    MarkPoints(world);
 }

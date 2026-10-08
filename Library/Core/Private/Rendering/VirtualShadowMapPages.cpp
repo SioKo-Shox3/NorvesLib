@@ -41,6 +41,17 @@ namespace NorvesLib::Core::Rendering
         static_assert(sizeof(GPUVsmParams) == 224 + 16 + 16 + VirtualShadowMap::MAX_INVALIDATION_RECTS * 16,
                       "vsm_*.comp の VsmParams と同じ大きさにすること");
 
+        // vsm_mark.comp の VsmPointParams（std140）と同じ並び。点光源の印付けの入力
+        struct GPUVsmPointParams
+        {
+            uint32_t header[4]; // x = 灯の数、y = 点光源のスライスの先頭の番号、z = 解像度の段の数、w = 面の段 0 の解像度（texel）
+            float tuning[4];    // x = カメラからの距離 1 m あたりの画素の大きさ（m）、y = 目標 texel の係数（2^bias）、z = 核の半径の texel の分、w = 核の半径に足す長さ（m）
+            float plane[4];     // x = 面の近い面（m）
+            float lights[PointShadowMaxLights][4]; // xyz = 灯の位置、w = Range
+        };
+        static_assert(sizeof(GPUVsmPointParams) == 48 + PointShadowMaxLights * 16, "vsm_mark.comp の VsmPointParams と同じ大きさにすること");
+        static_assert(PointShadowMaxLights == 4u, "vsm_mark.comp の MAX_POINT_LIGHTS と合わせること");
+
         constexpr uint32_t GroupSize = 256;
         constexpr uint32_t MarkGroupSize = 8;
         // vsm_allocate.comp の段階（control.x）。この順に 1 回ずつ dispatch する
@@ -76,6 +87,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t BindPool = 7;
         // vsm_mark.comp・vsm_allocate.comp のスライスの表
         constexpr uint32_t BindSlices = 8;
+        // vsm_mark.comp の点光源の入力
+        constexpr uint32_t BindPointParams = 9;
 
         RHI::DescriptorBinding MakeBinding(uint32_t binding, RHI::ResourceBindType type)
         {
@@ -93,6 +106,7 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(BindDepth, RHI::ResourceBindType::CombinedImageSampler));
             desc.bindings.push_back(MakeBinding(BindRequestBits, RHI::ResourceBindType::RWBuffer));
             desc.bindings.push_back(MakeBinding(BindSlices, RHI::ResourceBindType::StructuredBuffer));
+            desc.bindings.push_back(MakeBinding(BindPointParams, RHI::ResourceBindType::ConstantBuffer));
             return desc;
         }
 
@@ -242,6 +256,46 @@ namespace NorvesLib::Core::Rendering
             params.tuning[2] = dispatch.MaxFilterRadiusMeters;
             return true;
         }
+
+        // 点光源の印付けに使える入力か。使えるなら params を書く（使えないときは灯の数 0 のまま）。
+        // 点光源のスライスはページの表の 128 × 128 の枠に収まり（段 0 の一辺のページが 128 以下）、スライスの表の sliceCount 件に収まること
+        bool FillPointParams(const VirtualShadowMapPagesDispatch& dispatch, uint32_t sliceCount, uint32_t height, GPUVsmPointParams& params)
+        {
+            const VirtualShadowMapPointLights* lights = dispatch.PointLights;
+            if (lights == nullptr || lights->LightCount == 0u || lights->LightCount > PointShadowMaxLights ||
+                !IsValidVirtualShadowMapPointSettings(lights->Settings) ||
+                lights->Settings.PageResolution != VirtualShadowMap::PAGE_RESOLUTION ||
+                lights->SlicesPerLight != PointShadowFaceCount * lights->Settings.MipCount ||
+                VirtualShadowMapPointPagesPerAxis(lights->Settings, 0u) > VirtualShadowMap::TABLE_DIMENSION ||
+                lights->FirstSlice + lights->SliceCount() > sliceCount)
+            {
+                return false;
+            }
+            const float pixelPerMeter = VirtualShadowMapScreenPixelMeters(1.0f, dispatch.FovYDegrees, static_cast<float>(height));
+            if (!(pixelPerMeter > 0.0f) || !std::isfinite(pixelPerMeter) || !std::isfinite(dispatch.PointPcfRadiusTexels) ||
+                !(dispatch.PointPcfRadiusTexels >= 0.0f) || !std::isfinite(dispatch.PointFilterRadiusMeters) ||
+                !(dispatch.PointFilterRadiusMeters >= 0.0f))
+            {
+                return false;
+            }
+            params.header[0] = lights->LightCount;
+            params.header[1] = lights->FirstSlice;
+            params.header[2] = lights->Settings.MipCount;
+            params.header[3] = lights->Settings.FaceResolution;
+            params.tuning[0] = pixelPerMeter;
+            params.tuning[1] = std::exp2(lights->Settings.BiasLevels);
+            params.tuning[2] = dispatch.PointPcfRadiusTexels;
+            params.tuning[3] = dispatch.PointFilterRadiusMeters;
+            params.plane[0] = PointShadowNearPlane;
+            for (uint32_t light = 0; light < lights->LightCount; ++light)
+            {
+                params.lights[light][0] = lights->Position[light].x;
+                params.lights[light][1] = lights->Position[light].y;
+                params.lights[light][2] = lights->Position[light].z;
+                params.lights[light][3] = lights->Range[light];
+            }
+            return true;
+        }
     } // namespace
 
     VirtualShadowMapPages::VirtualShadowMapPages() = default;
@@ -348,6 +402,11 @@ namespace NorvesLib::Core::Rendering
             use.Uniform = m_Device->CreateBuffer(
                 RHI::BufferDesc(sizeof(GPUVsmParams), RHI::ResourceUsage::ConstantBuffer, true, "VsmParams"));
         }
+        if (!use.PointUniform)
+        {
+            use.PointUniform = m_Device->CreateBuffer(
+                RHI::BufferDesc(sizeof(GPUVsmPointParams), RHI::ResourceUsage::ConstantBuffer, true, "VsmPointParams"));
+        }
         if (!use.Slices)
         {
             use.Slices = m_Device->CreateBuffer(RHI::BufferDesc(
@@ -358,7 +417,7 @@ namespace NorvesLib::Core::Rendering
             use.DescriptorSet = m_Device->CreateDescriptorSet(layout);
         }
         outUse = &use;
-        return use.Uniform && use.Slices && use.DescriptorSet;
+        return use.Uniform && use.PointUniform && use.Slices && use.DescriptorSet;
     }
 
     bool VirtualShadowMapPages::Record(RHI::ICommandList* commandList, const VirtualShadowMapPagesDispatch& dispatch)
@@ -398,11 +457,17 @@ namespace NorvesLib::Core::Rendering
                            FillMarkParams(dispatch, sliceCount, width, height, markParams);
         // スライスの表。外から渡されなければクリップマップから作る（先頭 LevelCount 件が太陽の段）。
         // 印付けに使えないフレームは使わない（印付けを記録しない）
+        GPUVsmPointParams pointParams = {};
+        const bool bPointMark = bMark && FillPointParams(dispatch, sliceCount, height, pointParams);
         GPUVsmSlice markSliceStorage[VirtualShadowMapMaxSlices];
         const GPUVsmSlice* markSlices = dispatch.Slices;
         if (bMark && markSlices == nullptr)
         {
             BuildVirtualShadowMapSlices(dispatch.Clipmap, nullptr, sliceCount, markSliceStorage);
+            if (bPointMark)
+            {
+                BuildVirtualShadowMapPointSlices(*dispatch.PointLights, markSliceStorage);
+            }
             markSlices = markSliceStorage;
         }
         const uint32_t sliceBytes = sliceCount * static_cast<uint32_t>(sizeof(GPUVsmSlice));
@@ -434,7 +499,9 @@ namespace NorvesLib::Core::Rendering
             {
                 markUse->Uniform->Update(&markParams, sizeof(markParams));
                 markUse->Slices->Update(markSlices, sliceBytes);
+                markUse->PointUniform->Update(&pointParams, sizeof(pointParams));
                 markUse->DescriptorSet->BindConstantBuffer(BindParams, markUse->Uniform, 0, sizeof(markParams));
+                markUse->DescriptorSet->BindConstantBuffer(BindPointParams, markUse->PointUniform, 0, sizeof(pointParams));
                 markUse->DescriptorSet->BindStorageBuffer(BindSlices, markUse->Slices, 0, sliceBytes);
                 markUse->DescriptorSet->BindTexture(BindDepth, dispatch.Depth);
                 markUse->DescriptorSet->BindSampler(BindDepth, m_PointSampler);
@@ -495,6 +562,10 @@ namespace NorvesLib::Core::Rendering
                                             bContinue ? &m_PreviousClipmap : nullptr,
                                             sliceCount,
                                             allocateSliceStorage);
+                if (bPointMark)
+                {
+                    BuildVirtualShadowMapPointSlices(*dispatch.PointLights, allocateSliceStorage);
+                }
                 allocateSlices = allocateSliceStorage;
             }
             for (uint32_t index = 0; index < rectCount; ++index)

@@ -569,7 +569,9 @@ namespace
                   bool bPassClipmap,
                   uint64_t frameSerial,
                   bool bFirstUse,
-                  Readback& readback)
+                  Readback& readback,
+                  const VirtualShadowMapPointLights* pointLights = nullptr,
+                  uint32_t sliceCount = 0)
     {
         CommandListPtr commandList = device->CreateCommandList();
         if (!commandList)
@@ -578,6 +580,8 @@ namespace
             return false;
         }
         VirtualShadowMapPagesDispatch dispatch;
+        dispatch.SliceCount = sliceCount;
+        dispatch.PointLights = pointLights;
         dispatch.PoolPages = resources.PoolPages;
         dispatch.Pool = resources.Pool;
         dispatch.PageTable = resources.PageTable;
@@ -5228,6 +5232,434 @@ namespace
         return true;
     }
 
+    // ========================================
+    // ケース P: 点光源の面のページへの印付けと、太陽と同じプールからの割り当て
+    // ========================================
+    //
+    // 太陽の 5 段（スライス 0〜4）の後ろ（スライス 10 から）に、2 灯 × 6 面 × 6 段のスライスを並べる。合成の深度（床と奥の壁）の各画素について、
+    // 影を持つ灯のうち Range の内側のものごとに、面（向きの主軸）・段（面の軸の距離とカメラからの距離）・ページを倍精度で求め、
+    // 核（texel に比例する分）の 3 × 3 の標本が指すページ（面の縁を越える標本は、向きから選んだ隣の面の同じ段のページ）を集める。
+    // 単精度の GPU との差で結果が変わりうる画素（面・段・ページの境目、Range、近い面の端の近く）は空にして除く。
+    constexpr double PointAmbiguityMeters = 0.01;
+    constexpr double PointAmbiguityRatio = 1.0e-3;
+
+    struct PointScene
+    {
+        VirtualShadowMapPointLights Lights;
+        uint32_t SliceCount = 0;
+        GPUVsmSlice Slices[VirtualShadowMapMaxSlices] = {};
+    };
+
+    PointScene BuildPointScene(const Scene& scene)
+    {
+        PointScene result;
+        PointShadowSnapshot snapshot;
+        snapshot.LightCount = 2u;
+        // 灯 0: 奥の壁の手前の高い所（床・壁の広い範囲、複数の段）。灯 1: カメラの近くの低い所（Range が短く、床の一部だけ）
+        snapshot.Lights[0].LightId = 101u;
+        snapshot.Lights[0].Position = Math::Vector3(1.5f, 2.0f, -12.0f);
+        snapshot.Lights[0].Range = 30.0f;
+        snapshot.Lights[1].LightId = 102u;
+        snapshot.Lights[1].Position = Math::Vector3(-6.0f, 1.0f, -2.0f);
+        snapshot.Lights[1].Range = 6.0f;
+        result.Lights = BuildVirtualShadowMapPointLights(snapshot, VirtualShadowMapPointSettings{}, VirtualShadowMap::LEVEL_COUNT);
+        result.SliceCount = VirtualShadowMap::LEVEL_COUNT + PointShadowMaxLights * PointShadowFaceCount * VirtualShadowMapPointSettings{}.MipCount;
+        BuildVirtualShadowMapSlices(&scene.Clipmap, nullptr, result.SliceCount, result.Slices);
+        BuildVirtualShadowMapPointSlices(result.Lights, result.Slices);
+        return result;
+    }
+
+    double Dot3(const double* a, const double* b)
+    {
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    }
+
+    // 向き v の主軸の面。最大の成分と次に大きい成分の差が許容以内なら false（単精度の GPU が別の面を選びうる）
+    bool SelectPointFaceChecked(const double (&v)[3], uint32_t& outFace)
+    {
+        double magnitude[3] = {std::abs(v[0]), std::abs(v[1]), std::abs(v[2])};
+        std::sort(magnitude, magnitude + 3);
+        if (magnitude[2] - magnitude[1] < PointAmbiguityMeters)
+        {
+            return false;
+        }
+        outFace = SelectVirtualShadowMapPointFace(static_cast<float>(v[0]), static_cast<float>(v[1]), static_cast<float>(v[2]));
+        return true;
+    }
+
+    struct PointReferenceStats
+    {
+        uint32_t StablePixels = 0;
+        // 点光源のページに印が付く画素の数、核の標本が別の面を指した画素の数
+        uint32_t MarkedPixels = 0;
+        uint32_t CrossFacePixels = 0;
+        uint32_t MipMask = 0;
+        uint32_t FaceMask = 0;
+    };
+
+    // 画素を分類し、安定した画素では点光源のページの鍵（スライスの番号 × 128 × 128 + ページの番地）を返す。
+    // outNoCrossKeys は、核の標本が面の縁を越えても隣の面を引かず、受け手の面の縁のページに収めたとき（変異した印付け）の鍵
+    PixelKind ClassifyPointPixel(const Scene& scene,
+                                 const PointScene& pointScene,
+                                 uint32_t pixelX,
+                                 uint32_t pixelY,
+                                 float depth,
+                                 Container::VariableArray<uint32_t>* outKeys,
+                                 Container::VariableArray<uint32_t>* outNoCrossKeys,
+                                 PointReferenceStats* outStats)
+    {
+        if (!(depth < 1.0f))
+        {
+            return PixelKind::Sky;
+        }
+        double world[3] = {};
+        Unproject(scene, pixelX, pixelY, static_cast<double>(depth), world);
+        const double toCamera[3] = {world[0] - scene.CameraPosition[0], world[1] - scene.CameraPosition[1], world[2] - scene.CameraPosition[2]};
+        const double cameraDistance = std::sqrt(Dot3(toCamera, toCamera));
+        const VirtualShadowMapPointLights& lights = pointScene.Lights;
+        const VirtualShadowMapPointSettings& settings = lights.Settings;
+        const double pixelPerMeter = 2.0 * std::tan(static_cast<double>(scene.Camera.FieldOfView) * 3.14159265358979323846 / 360.0) / ImageHeight;
+        const double targetTexel = cameraDistance * pixelPerMeter * std::exp2(static_cast<double>(settings.BiasLevels));
+        const double nearPlane = static_cast<double>(PointShadowNearPlane);
+
+        Container::VariableArray<uint32_t> keys;
+        Container::VariableArray<uint32_t> noCrossKeys;
+        uint32_t mipMask = 0;
+        uint32_t faceMask = 0;
+        bool bCross = false;
+        for (uint32_t light = 0; light < lights.LightCount; ++light)
+        {
+            const double offset[3] = {world[0] - lights.Position[light].x, world[1] - lights.Position[light].y, world[2] - lights.Position[light].z};
+            const double range = static_cast<double>(lights.Range[light]);
+            const double distance = std::sqrt(Dot3(offset, offset));
+            if (std::abs(distance - range) < PointAmbiguityMeters)
+            {
+                return PixelKind::Ambiguous;
+            }
+            if (distance > range)
+            {
+                continue;
+            }
+            uint32_t face = 0;
+            if (!SelectPointFaceChecked(offset, face))
+            {
+                return PixelKind::Ambiguous;
+            }
+            const GPUVsmSlice& faceSlice = pointScene.Slices[VirtualShadowMapPointSliceIndex(lights, light, face, 0u)];
+            const double sc[3] = {faceSlice.axisX[0], faceSlice.axisX[1], faceSlice.axisX[2]};
+            const double tc[3] = {faceSlice.axisY[0], faceSlice.axisY[1], faceSlice.axisY[2]};
+            const double major[3] = {faceSlice.axisZ[0], faceSlice.axisZ[1], faceSlice.axisZ[2]};
+            const double axial = Dot3(major, offset);
+            if (std::abs(axial - nearPlane) < PointAmbiguityMeters)
+            {
+                return PixelKind::Ambiguous;
+            }
+            if (axial < nearPlane)
+            {
+                continue;
+            }
+
+            // 段: texel（2z ÷ 段の解像度）が目標以下の最も粗い段。目標に近い段があれば曖昧
+            uint32_t mip = 0;
+            bool bChosen = false;
+            for (uint32_t candidate = settings.MipCount; candidate-- > 0u;)
+            {
+                const double texel = 2.0 * axial / static_cast<double>(VirtualShadowMapPointMipResolution(settings, candidate));
+                if (std::abs(texel - targetTexel) < PointAmbiguityRatio * targetTexel)
+                {
+                    return PixelKind::Ambiguous;
+                }
+                if (!bChosen && texel <= targetTexel)
+                {
+                    mip = candidate;
+                    bChosen = true;
+                }
+            }
+            const uint32_t pageCount = VirtualShadowMapPointPagesPerAxis(settings, mip);
+            const double texelMeters = 2.0 * axial / static_cast<double>(VirtualShadowMapPointMipResolution(settings, mip));
+            const double radius = std::min(static_cast<double>(VirtualShadowMap::DEFAULT_PCF_RADIUS_TEXELS) * texelMeters,
+                                           axial * 2.0 / static_cast<double>(pageCount));
+            mipMask |= 1u << mip;
+            faceMask |= 1u << face;
+
+            for (int32_t row = -1; row <= 1; ++row)
+            {
+                for (int32_t column = -1; column <= 1; ++column)
+                {
+                    double sample[3] = {};
+                    for (uint32_t axis = 0; axis < 3u; ++axis)
+                    {
+                        sample[axis] = offset[axis] + column * radius * sc[axis] + row * radius * tc[axis];
+                    }
+                    uint32_t sampleFace = 0;
+                    if (!SelectPointFaceChecked(sample, sampleFace))
+                    {
+                        return PixelKind::Ambiguous;
+                    }
+                    if (sampleFace != face)
+                    {
+                        bCross = true;
+                    }
+                    // 変異した印付けと同じに、受け手の面のまま引く場合と、向きから選んだ面を引く場合の両方の鍵を求める
+                    for (const bool bKeepFace : {true, false})
+                    {
+                        const uint32_t useFace = bKeepFace ? face : sampleFace;
+                        const GPUVsmSlice& slice = pointScene.Slices[VirtualShadowMapPointSliceIndex(lights, light, useFace, mip)];
+                        const double faceX[3] = {slice.axisX[0], slice.axisX[1], slice.axisX[2]};
+                        const double faceY[3] = {slice.axisY[0], slice.axisY[1], slice.axisY[2]};
+                        const double faceZ[3] = {slice.axisZ[0], slice.axisZ[1], slice.axisZ[2]};
+                        const double sampleAxial = Dot3(faceZ, sample);
+                        if (!bKeepFace && std::abs(sampleAxial - nearPlane) < PointAmbiguityMeters)
+                        {
+                            return PixelKind::Ambiguous;
+                        }
+                        if (sampleAxial < nearPlane)
+                        {
+                            continue;
+                        }
+                        const double ndc[2] = {std::clamp(Dot3(faceX, sample) / sampleAxial, -1.0, 1.0),
+                                               std::clamp(Dot3(faceY, sample) / sampleAxial, -1.0, 1.0)};
+                        int32_t page[2] = {};
+                        for (uint32_t axis = 0; axis < 2u; ++axis)
+                        {
+                            const double scaled = (ndc[axis] * 0.5 + 0.5) * static_cast<double>(pageCount);
+                            const double fraction = scaled - std::floor(scaled);
+                            // ページの境目からの距離（その距離のワールドの長さ）が許容未満なら曖昧。面の縁（0 と 1 段の一辺）は面の選び方の境目で見ている
+                            if (!bKeepFace && std::min(fraction, 1.0 - fraction) * sampleAxial * 2.0 / static_cast<double>(pageCount) < PointAmbiguityMeters)
+                            {
+                                return PixelKind::Ambiguous;
+                            }
+                            page[axis] = std::min(static_cast<int32_t>(std::max(scaled, 0.0)), static_cast<int32_t>(pageCount) - 1);
+                        }
+                        const uint32_t key = VirtualShadowMapPointSliceIndex(lights, light, useFace, mip) * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL +
+                                             static_cast<uint32_t>(page[1]) * pageCount + static_cast<uint32_t>(page[0]);
+                        (bKeepFace ? noCrossKeys : keys).push_back(key);
+                    }
+                }
+            }
+        }
+        if (outKeys)
+        {
+            outKeys->insert(outKeys->end(), keys.begin(), keys.end());
+        }
+        if (outNoCrossKeys)
+        {
+            outNoCrossKeys->insert(outNoCrossKeys->end(), noCrossKeys.begin(), noCrossKeys.end());
+        }
+        if (outStats)
+        {
+            ++outStats->StablePixels;
+            outStats->MarkedPixels += keys.empty() ? 0u : 1u;
+            outStats->CrossFacePixels += bCross ? 1u : 0u;
+            outStats->MipMask |= mipMask;
+            outStats->FaceMask |= faceMask;
+        }
+        return PixelKind::Stable;
+    }
+
+    // 点光源の分の曖昧な画素を空にする
+    uint32_t RemoveAmbiguousPointPixels(const Scene& scene, const PointScene& pointScene, Container::VariableArray<float>& image)
+    {
+        uint32_t removed = 0;
+        for (uint32_t pixelY = 0; pixelY < ImageHeight; ++pixelY)
+        {
+            for (uint32_t pixelX = 0; pixelX < ImageWidth; ++pixelX)
+            {
+                float& depth = image[pixelY * ImageWidth + pixelX];
+                if (ClassifyPointPixel(scene, pointScene, pixelX, pixelY, depth, nullptr, nullptr, nullptr) == PixelKind::Ambiguous)
+                {
+                    depth = 1.0f;
+                    ++removed;
+                }
+            }
+        }
+        return removed;
+    }
+
+    // 要求の鍵（スライスの番号 × 128 × 128 + 番地）の集合から、先頭 32 スライスの集合と、33 番目以降の有無
+    uint32_t LowSliceMask(const Container::VariableArray<uint32_t>& keys, uint32_t& outBeyond)
+    {
+        uint32_t mask = 0;
+        outBeyond = 0;
+        for (const uint32_t key : keys)
+        {
+            const uint32_t slice = key / VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+            if (slice < 32u)
+            {
+                mask |= 1u << slice;
+            }
+            else
+            {
+                outBeyond = 1u;
+            }
+        }
+        return mask;
+    }
+
+    // 点光源の分の鍵に太陽の分を足した、要求の集合（昇順・重複なし）
+    Container::VariableArray<uint32_t> UnionKeys(const Container::VariableArray<uint32_t>& sunKeys, const Container::VariableArray<uint32_t>& pointKeys)
+    {
+        Container::VariableArray<uint32_t> all = sunKeys;
+        all.insert(all.end(), pointKeys.begin(), pointKeys.end());
+        SortUnique(all);
+        return all;
+    }
+
+    // 1 回の実行: 資源を作って記録し、印・割り当て・統計・太陽と点光源の物理ページの重なりを確かめる。bOverflow なら、プールを要求の約半分にする
+    bool RunPointMarkOnce(const DevicePtr& device,
+                          VirtualShadowMapPages& pages,
+                          const Scene& scene,
+                          const PointScene& pointScene,
+                          const char* label,
+                          const Container::VariableArray<float>& image,
+                          bool bOverflow,
+                          bool bFullScene,
+                          uint64_t& frameSerial)
+    {
+        const Reference sunReference = BuildReference(scene, image);
+        Container::VariableArray<uint32_t> pointKeys;
+        PointReferenceStats referenceStats;
+        for (uint32_t pixelY = 0; pixelY < ImageHeight; ++pixelY)
+        {
+            for (uint32_t pixelX = 0; pixelX < ImageWidth; ++pixelX)
+            {
+                ClassifyPointPixel(scene, pointScene, pixelX, pixelY, image[pixelY * ImageWidth + pixelX], &pointKeys, nullptr, &referenceStats);
+            }
+        }
+        SortUnique(pointKeys);
+        const Container::VariableArray<uint32_t> expected = UnionKeys(sunReference.Keys, pointKeys);
+        uint32_t expectedBeyond = 0;
+        const uint32_t expectedMask = LowSliceMask(expected, expectedBeyond);
+        std::cout << TestName << " " << label << ": 安定した画素=" << referenceStats.StablePixels << " 点光源のページが付く画素=" << referenceStats.MarkedPixels
+                  << " 面をまたぐ核の画素=" << referenceStats.CrossFacePixels << " 段の集合=0x" << std::hex << referenceStats.MipMask << " 面の集合=0x"
+                  << referenceStats.FaceMask << std::dec << " 太陽のページ=" << sunReference.Keys.size() << " 点光源のページ=" << pointKeys.size() << std::endl;
+        // 全画素の場面は太陽にも点光源にも要求があり、疎な場面（点光源の隣の面への印だけを見る）は点光源の要求があればよい
+        Expect(pointKeys.size() >= 3u && (!bFullScene || (!sunReference.Keys.empty() && pointKeys.size() >= 6u)),
+               "ケース P: 点光源（全画素の場面では太陽も）に要求がなければならない（場面が退化している）");
+
+        const TexturePtr depth = CreateDepthTexture(device, image);
+        Resources resources;
+        Readback readback;
+        const uint32_t requested = static_cast<uint32_t>(expected.size());
+        const uint32_t poolPages = bOverflow ? requested / 2u : requested + 24u;
+        if (!depth || poolPages == 0u || !CreateResources(device, poolPages, resources, pointScene.SliceCount) ||
+            !RunPages(device, pages, scene, resources, depth, true, frameSerial++, true, readback, &pointScene.Lights, pointScene.SliceCount))
+        {
+            std::cerr << TestName << " " << label << " を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(readback.bMarked, "ケース P: 印付けを記録しなければならない");
+        Expect(readback.PageTable.size() == VirtualShadowMap::PageTableBytes(pointScene.SliceCount) / sizeof(uint32_t),
+               "ケース P: ページの表はスライスの数ぶんの大きさでなければならない");
+        CheckAllocation(label, readback, expected, poolPages, expectedMask, true);
+        Expect(readback.Stats[VirtualShadowMap::StatLevelsUsedBeyond] == expectedBeyond, "ケース P: 33 番目以降のスライスの使用の有無が参照と一致しなければならない");
+
+        // 太陽の段と点光源の面は同じプールの別の物理ページ。点光源の分の統計は、点光源のスライスだけを数える
+        Container::VariableArray<uint32_t> sunPhysical;
+        Container::VariableArray<uint32_t> pointPhysical;
+        for (uint32_t index = 0; index < readback.PageTable.size(); ++index)
+        {
+            const uint32_t entry = readback.PageTable[index];
+            if ((entry & VirtualShadowMap::PAGE_ENTRY_ALLOCATED) == 0u)
+            {
+                continue;
+            }
+            const bool bPoint = index / VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL >= pointScene.Lights.FirstSlice;
+            (bPoint ? pointPhysical : sunPhysical).push_back(entry & VirtualShadowMap::PAGE_INDEX_MASK);
+        }
+        std::sort(sunPhysical.begin(), sunPhysical.end());
+        std::sort(pointPhysical.begin(), pointPhysical.end());
+        Container::VariableArray<uint32_t> shared;
+        std::set_intersection(sunPhysical.begin(), sunPhysical.end(), pointPhysical.begin(), pointPhysical.end(), std::back_inserter(shared));
+        Expect(shared.empty(), "ケース P: 太陽の段のページと点光源の面のページで、物理ページが重なってはならない");
+        Expect(readback.Stats[VirtualShadowMap::StatPointRequested] == pointKeys.size(), "ケース P: 点光源の要求の数が参照と一致しなければならない");
+        Expect(readback.Stats[VirtualShadowMap::StatPointAllocated] == pointPhysical.size(),
+               "ケース P: 点光源の割り当ての数が、ページの表で点光源のスライスに割り当てた欄の数と一致しなければならない");
+        Expect(readback.Stats[VirtualShadowMap::StatRequested] == requested && readback.Stats[VirtualShadowMap::StatAllocated] == sunPhysical.size() + pointPhysical.size(),
+               "ケース P: 要求・割り当ては太陽と点光源の合計でなければならない");
+        if (bOverflow)
+        {
+            Expect(readback.Stats[VirtualShadowMap::StatOverflow] == requested - poolPages && readback.Stats[VirtualShadowMap::StatOverflow] > 0u,
+                   "ケース P: プールが足りないとき、溢れを数えなければならない");
+            Expect(readback.Stats[VirtualShadowMap::StatPointAllocated] <= readback.Stats[VirtualShadowMap::StatPointRequested],
+                   "ケース P: 点光源の割り当ては要求を超えてはならない");
+        }
+        else
+        {
+            Expect(readback.Stats[VirtualShadowMap::StatPointAllocated] == readback.Stats[VirtualShadowMap::StatPointRequested],
+                   "ケース P: プールが十分なとき、点光源の要求がすべて割り当てられなければならない");
+        }
+        if (bFullScene && !bOverflow)
+        {
+            Expect(referenceStats.MipMask != 0u && (referenceStats.MipMask & (referenceStats.MipMask - 1u)) != 0u &&
+                       (referenceStats.MipMask & (referenceStats.MipMask - 1u) & ((referenceStats.MipMask & (referenceStats.MipMask - 1u)) - 1u)) != 0u,
+                   "ケース P: 3 つ以上の段が使われる場面でなければならない");
+            Expect(referenceStats.FaceMask != 0u && (referenceStats.FaceMask & (referenceStats.FaceMask - 1u)) != 0u, "ケース P: 複数の面が使われる場面でなければならない");
+            Expect(referenceStats.CrossFacePixels > 0u, "ケース P: 核が面の縁をまたぐ画素がなければならない（隣の面への印の検査）");
+        }
+        std::cout << TestName << " " << label << ": 要求=" << readback.Stats[VirtualShadowMap::StatRequested] << " 割り当て=" << readback.Stats[VirtualShadowMap::StatAllocated]
+                  << " 溢れ=" << readback.Stats[VirtualShadowMap::StatOverflow] << " 点光源の要求=" << readback.Stats[VirtualShadowMap::StatPointRequested]
+                  << " 点光源の割り当て=" << readback.Stats[VirtualShadowMap::StatPointAllocated] << std::endl;
+        return true;
+    }
+
+    bool RunPointMarkCases(const DevicePtr& device,
+                           VirtualShadowMapPages& pages,
+                           const Scene& scene,
+                           const Container::VariableArray<float>& sunImage,
+                           uint64_t& frameSerial)
+    {
+        const PointScene pointScene = BuildPointScene(scene);
+        Expect(pointScene.Lights.LightCount == 2u && pointScene.Lights.SliceCount() == 72u, "ケース P: 2 灯 × 6 面 × 6 段のスライスが並ばなければならない");
+
+        Container::VariableArray<float> image = sunImage;
+        const uint32_t removed = RemoveAmbiguousPointPixels(scene, pointScene, image);
+        std::cout << TestName << " ケース P: 点光源の分で除いた曖昧な画素=" << removed << std::endl;
+
+        // P1: 全画素。P1b: プールが要求の約半分（溢れ）
+        if (!RunPointMarkOnce(device, pages, scene, pointScene, "P1", image, false, true, frameSerial) ||
+            !RunPointMarkOnce(device, pages, scene, pointScene, "P1b", image, true, true, frameSerial))
+        {
+            return false;
+        }
+
+        // P2: 核が面の縁をまたぐ画素だけ（隣の面の同じ段のページへの印）。受け手の面のまま引く印付け（変異）の鍵より、参照の鍵が多い画素を選ぶ
+        Container::VariableArray<float> sparse(ImageWidth * ImageHeight, 1.0f);
+        Container::VariableArray<uint32_t> allKeys;
+        Container::VariableArray<uint32_t> allNoCrossKeys;
+        uint32_t picked = 0;
+        for (uint32_t pixelY = 0; pixelY < ImageHeight && picked < 6u; pixelY += 2u)
+        {
+            for (uint32_t pixelX = 0; pixelX < ImageWidth && picked < 6u; pixelX += 3u)
+            {
+                Container::VariableArray<uint32_t> keys;
+                Container::VariableArray<uint32_t> noCrossKeys;
+                const float depthValue = image[pixelY * ImageWidth + pixelX];
+                if (ClassifyPointPixel(scene, pointScene, pixelX, pixelY, depthValue, &keys, &noCrossKeys, nullptr) != PixelKind::Stable)
+                {
+                    continue;
+                }
+                SortUnique(keys);
+                SortUnique(noCrossKeys);
+                if (keys == noCrossKeys)
+                {
+                    continue;
+                }
+                sparse[pixelY * ImageWidth + pixelX] = depthValue;
+                allKeys.insert(allKeys.end(), keys.begin(), keys.end());
+                allNoCrossKeys.insert(allNoCrossKeys.end(), noCrossKeys.begin(), noCrossKeys.end());
+                ++picked;
+            }
+        }
+        SortUnique(allKeys);
+        SortUnique(allNoCrossKeys);
+        Expect(picked >= 3u && allKeys != allNoCrossKeys && allKeys.size() > allNoCrossKeys.size(),
+               "ケース P2: 核が面の縁をまたぎ、隣の面のページが増える画素が見つからない（場面が退化している）");
+        std::cout << TestName << " ケース P2: 選んだ画素=" << picked << " 点光源のページ=" << allKeys.size() << "（隣の面へ印を付けないと " << allNoCrossKeys.size()
+                  << "）" << std::endl;
+        return RunPointMarkOnce(device, pages, scene, pointScene, "P2", sparse, false, false, frameSerial);
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -5448,6 +5880,11 @@ namespace
                 }
                 // ----- ケース C2: 隣のページへの印の範囲が、ページの何枚分にもなるとき -----
                 if (!RunWideMarginMarkingCase(device, pages, frameSerial))
+                {
+                    return 1;
+                }
+                // ----- ケース P: 点光源の面のページへの印付けと、太陽と同じプールからの割り当て -----
+                if (!RunPointMarkCases(device, pages, scene, image, frameSerial))
                 {
                     return 1;
                 }

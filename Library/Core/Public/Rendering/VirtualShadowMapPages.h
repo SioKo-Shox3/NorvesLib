@@ -19,6 +19,7 @@
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/VirtualShadowMapClipmap.h"
 #include "Rendering/VirtualShadowMapPass.h"
+#include "Rendering/VirtualShadowMapPointLights.h"
 #include "Rendering/VirtualShadowMapSample.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
@@ -101,6 +102,17 @@ namespace NorvesLib::Core::Rendering
          *        MarkFirstSlice + クリップマップの段の数 は SliceCount 以下にすること（超えると印付けをしない）
          */
         uint32_t MarkFirstSlice = 0;
+        /**
+         * @brief 点光源の VSM（--point-shadow-method=vsm）の灯とスライスの並び。null か灯が 0 件なら点光源の印付けをしない。
+         *        スライスは PointLights->FirstSlice から SliceCount() 件で、SliceCount に収まること（収まらなければ点光源の印付けをしない）。
+         *        Slices が null なら、Pages が太陽の段の後ろへ点光源のスライスを BuildVirtualShadowMapPointSlices で書く。
+         *        外から渡す Slices には、呼び出し側が点光源のスライスも入れること
+         */
+        const VirtualShadowMapPointLights* PointLights = nullptr;
+        /** @brief 点光源の印付けが隣のページへも印を付ける範囲のうち、texel に比例する分（texel）。太陽と同じ段の選び方なので同じ既定 */
+        float PointPcfRadiusTexels = VirtualShadowMap::DEFAULT_PCF_RADIUS_TEXELS;
+        /** @brief 点光源の PCF の半径に足す、ワールドの長さの分（m）。点光源の物理の半影は扱わないので既定は 0 */
+        float PointFilterRadiusMeters = 0.0f;
         /** @brief シェーダー向け（列優先）の逆ビュー射影行列 */
         float InverseViewProjection[16] = {};
         float CameraPosition[3] = {};
@@ -176,6 +188,8 @@ namespace NorvesLib::Core::Rendering
         struct Use
         {
             RHI::BufferPtr Uniform;
+            /** @brief 点光源の印付けの入力（vsm_mark.comp の VsmPointParams） */
+            RHI::BufferPtr PointUniform;
             /** @brief スライスの表（GPUVsmSlice の配列。ホストが書く storage buffer） */
             RHI::BufferPtr Slices;
             RHI::DescriptorSetPtr DescriptorSet;

@@ -6323,7 +6323,7 @@ namespace
             {"VSM_PageTable", 10ull * 128ull * 128ull * 4ull},
             {"VSM_RequestBits", 10ull * 128ull * 128ull / 8ull},
             {"VSM_FreeList", (5120ull * 3ull + 1ull) * 4ull},
-            {"VSM_Stats", 216ull},
+            {"VSM_Stats", 224ull},
             {"VSM_DirtyList", (5120ull + 4ull) * 4ull},
         };
         for (const Expected& entry : expected)
@@ -6799,6 +6799,8 @@ namespace
         // フレーム 2（フレーム 0 と同じ番号）: フレーム 0 の枠を読む（初回は必ず出す）
         RunVsmViewport(run, pass, 2, generation++, true);
         assert(logs.Count("VSM_PAGES") == 1 && logs.Count(logA) == 1);
+        // 点光源の分（読み戻した統計の点光源の語）も同じ行に出る
+        assert(logs.Count("point_requested=0 point_allocated=0") == 1);
         // フレーム 3: フレーム 1 の枠を読む。値は変わらず、60 回に届かないので出さない
         RunVsmViewport(run, pass, 3, generation++, true);
         assert(logs.Count("VSM_PAGES") == 1);
@@ -7340,7 +7342,9 @@ namespace
         assert(VirtualShadowMap::RequestBitsBytes(40u) == 40ull * 128ull * 128ull / 8ull &&
                VirtualShadowMap::RequestWords(256u) == 256u * 128u * 128u / 32u);
         assert(VirtualShadowMap::MegaDirtyBitsBytes(40u) == 40ull * VirtualShadowMap::MEGA_DIRTY_WORDS_PER_LEVEL * 4ull);
-        assert(VirtualShadowMap::STATS_WORD_COUNT == VirtualShadowMap::StatLevelsUsedBeyond + 1u);
+        // 33 番目以降の使用の有無の語の後ろに、点光源の要求・割り当ての語が続く（最後の語が点光源の割り当て）
+        assert(VirtualShadowMap::StatPointRequested == VirtualShadowMap::StatLevelsUsedBeyond + 1u &&
+               VirtualShadowMap::STATS_WORD_COUNT == VirtualShadowMap::StatPointAllocated + 1u);
 
         const VirtualShadowMapClipmap clipmap = MakeCasterClipmap();
         constexpr uint32_t sliceCount = 40u;

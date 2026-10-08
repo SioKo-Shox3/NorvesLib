@@ -24,6 +24,18 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    namespace
+    {
+        // ページの表・要求のビット列が持つスライスの数。太陽の段の後ろに、点光源の VSM のとき最大 4 灯 × 6 面 × 解像度の段を並べる
+        // （点光源のスライスは UpdatePointLights が LEVEL_COUNT から並べる）
+        uint32_t SliceCapacityFor(PointShadowMethod method)
+        {
+            return method == PointShadowMethod::Vsm
+                       ? VirtualShadowMap::LEVEL_COUNT + PointShadowMaxLights * PointShadowFaceCount * VirtualShadowMapPointSettings{}.MipCount
+                       : VirtualShadowMap::LEVEL_COUNT;
+        }
+    } // namespace
+
     /**
      * 投影物の塊の記録を作る作業の状態。展開の出力（インスタンス・間接描画の引数）は GPU が書くので全 Execute で 1 つを使い回し、
      * 塊の記録はホストが書くので、フレームの枠（FrameUseRing）ごとに Execute のたびに別のバッファを使う
@@ -326,9 +338,9 @@ namespace NorvesLib::Core::Rendering
             m_Pool = m_Device->CreateBuffer(RHI::BufferDesc(
                 poolBytes, storageUsage | RHI::ResourceUsage::BufferDeviceAddress, false, "VSM_PhysicalPool"));
             m_PageTable = m_Device->CreateBuffer(
-                RHI::BufferDesc(VirtualShadowMap::PageTableBytes(), storageUsage, false, "VSM_PageTable"));
+                RHI::BufferDesc(VirtualShadowMap::PageTableBytes(SliceCapacityFor(m_PointShadowMethod)), storageUsage, false, "VSM_PageTable"));
             m_RequestBits = m_Device->CreateBuffer(
-                RHI::BufferDesc(VirtualShadowMap::RequestBitsBytes(), storageUsage, false, "VSM_RequestBits"));
+                RHI::BufferDesc(VirtualShadowMap::RequestBitsBytes(SliceCapacityFor(m_PointShadowMethod)), storageUsage, false, "VSM_RequestBits"));
             m_FreeList = m_Device->CreateBuffer(RHI::BufferDesc(freeListBytes, storageUsage, false, "VSM_FreeList"));
             m_Stats = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::STATS_BYTES, statsUsage, false, "VSM_Stats"));
             // 消去するページの一覧は、間接 dispatch の引数としても読まれる
@@ -420,7 +432,7 @@ namespace NorvesLib::Core::Rendering
                         static_cast<double>(poolBytes) / BytesPerMegabyte);
         NORVES_LOG_INFO("VirtualShadowMapPass",
                         "VRAM_LEDGER vsm_page_table mb=%.3f",
-                        static_cast<double>(VirtualShadowMap::PageTableBytes()) / BytesPerMegabyte);
+                        static_cast<double>(VirtualShadowMap::PageTableBytes(SliceCapacityFor(m_PointShadowMethod))) / BytesPerMegabyte);
         NORVES_LOG_INFO("VirtualShadowMapPass",
                         "VRAM_LEDGER vsm_raster mb=%.3f",
                         static_cast<double>(rasterBytes) / BytesPerMegabyte);
@@ -910,13 +922,15 @@ namespace NorvesLib::Core::Rendering
                             slot.Mapped[VirtualShadowMap::StatInvalidated],
                             slot.Mapped[VirtualShadowMap::StatReleased]);
         }
-        const uint32_t stats[4] = {slot.Mapped[VirtualShadowMap::StatRequested],
+        const uint32_t stats[6] = {slot.Mapped[VirtualShadowMap::StatRequested],
                                    slot.Mapped[VirtualShadowMap::StatAllocated],
                                    slot.Mapped[VirtualShadowMap::StatOverflow],
-                                   slot.Mapped[VirtualShadowMap::StatLevelsUsed]};
+                                   slot.Mapped[VirtualShadowMap::StatLevelsUsed],
+                                   slot.Mapped[VirtualShadowMap::StatPointRequested],
+                                   slot.Mapped[VirtualShadowMap::StatPointAllocated]};
         ++m_FramesSinceStatsLog;
         bool bChanged = !m_bStatsLogged;
-        for (uint32_t index = 0; index < 4u; ++index)
+        for (uint32_t index = 0; index < 6u; ++index)
         {
             bChanged = bChanged || stats[index] != m_LoggedStats[index];
         }
@@ -924,18 +938,21 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
-        for (uint32_t index = 0; index < 4u; ++index)
+        for (uint32_t index = 0; index < 6u; ++index)
         {
             m_LoggedStats[index] = stats[index];
         }
         m_bStatsLogged = true;
         m_FramesSinceStatsLog = 0;
+        // requested・allocated は太陽と点光源の合計。point_* は点光源の面のページだけ
         NORVES_LOG_INFO("VirtualShadowMapPass",
-                        "VSM_PAGES requested=%u allocated=%u overflow=%u levels_used=0x%x",
+                        "VSM_PAGES requested=%u allocated=%u overflow=%u levels_used=0x%x point_requested=%u point_allocated=%u",
                         stats[0],
                         stats[1],
                         stats[2],
-                        stats[3]);
+                        stats[3],
+                        stats[4],
+                        stats[5]);
     }
 
     void VirtualShadowMapPass::HarvestReadyStats(uint64_t frameSerial, uint64_t completedFrameSerial)
@@ -1003,6 +1020,12 @@ namespace NorvesLib::Core::Rendering
         dispatch.FreeList = m_FreeList;
         dispatch.Stats = m_Stats;
         dispatch.DirtyList = m_DirtyList;
+        // 点光源の VSM のときは、太陽の段の後ろに点光源の面を並べたスライスの数で記録する（印付けが点光源の面にも印を付ける）
+        dispatch.SliceCount = SliceCapacityFor(m_PointShadowMethod);
+        if (m_PointShadowMethod == PointShadowMethod::Vsm)
+        {
+            dispatch.PointLights = &m_PointLights;
+        }
         const CameraProxy* camera = context.GetActiveCamera();
         const RHI::TexturePtr depth = m_DepthHandle.IsValid() ? resources.GetTexture(m_DepthHandle) : RHI::TexturePtr{};
         if (depth && camera && camera->Projection == ProjectionType::Perspective)

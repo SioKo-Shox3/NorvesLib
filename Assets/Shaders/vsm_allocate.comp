@@ -102,6 +102,10 @@ const uint STAT_OVERFLOW = 2u;
 const uint STAT_LEVELS_USED = 4u;
 // 33 番目以降のスライスに要求があれば 1（STAT_LEVELS_USED は先頭 32 スライスの集合で、溢れさせない。VirtualShadowMapPass.h の StatLevelsUsedBeyond）
 const uint STAT_LEVELS_USED_BEYOND = 53u;
+// 投影の種類が透視のスライス（点光源の面）だけの要求・割り当ての数（STAT_REQUESTED・STAT_ALLOCATED は太陽と点光源の合計）
+const uint STAT_POINT_REQUESTED = 54u;
+const uint STAT_POINT_ALLOCATED = 55u;
+const int SLICE_PROJECTION_PERSPECTIVE = 1;
 const uint STAT_CACHED = 11u;
 const uint STAT_RENDERED = 12u;
 const uint STAT_INVALIDATED = 13u;
@@ -430,7 +434,13 @@ void Allocate()
     {
         atomicOr(stats[STAT_LEVELS_USED_BEYOND], 1u);
     }
-    atomicAdd(stats[STAT_REQUESTED], uint(bitCount(bits)));
+    const uint requestedHere = uint(bitCount(bits));
+    atomicAdd(stats[STAT_REQUESTED], requestedHere);
+    const bool bPoint = vsmSlices[slice].extra.z == SLICE_PROJECTION_PERSPECTIVE;
+    if (bPoint)
+    {
+        atomicAdd(stats[STAT_POINT_REQUESTED], requestedHere);
+    }
 
     // この語の、まだ割り当ての無い欄の数。その数ぶんの通し番号を取り、空きの一覧の後ろから順に割り当てる
     uint unallocated = 0u;
@@ -441,6 +451,11 @@ void Allocate()
         {
             ++unallocated;
         }
+    }
+    // 点光源の割り当ての数: 割り当て済みの欄は数え、新しく割り当てる欄は下で数える
+    if (bPoint && requestedHere > unallocated)
+    {
+        atomicAdd(stats[STAT_POINT_ALLOCATED], requestedHere - unallocated);
     }
     if (unallocated == 0u)
     {
@@ -464,6 +479,10 @@ void Allocate()
             const uint physical = freeList[freeCount - ordinal];
             pageTable[entryIndex] = PAGE_ENTRY_ALLOCATED | PAGE_ENTRY_DIRTY | physical;
             freeList[AgeIndex(physical)] = 0u;
+            if (bPoint)
+            {
+                atomicAdd(stats[STAT_POINT_ALLOCATED], 1u);
+            }
         }
         ++ordinal;
     }
