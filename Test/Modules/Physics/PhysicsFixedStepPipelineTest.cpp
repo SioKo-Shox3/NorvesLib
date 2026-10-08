@@ -6,6 +6,7 @@
 #include "Engine/ApplicationProcessor.h"
 #include "Engine/Engine.h"
 #include "Engine/FixedStepScheduler.h"
+#include "Game/Gameplay/Camera/FollowCameraComponent.h"
 #include "Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.h"
 #include "Input/InputRouter.h"
 #include "Input/InputSystem.h"
@@ -167,7 +168,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 15;
+    constexpr uint32_t kCaseCount = 16;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -1069,6 +1070,83 @@ namespace
         return driver->GetOwner() == nullptr && heap.DestroyNow(handle);
     }
 
+    bool TestFollowCameraRenderBinding(ApplicationProcessor& processor)
+    {
+        auto& engine = *NorvesLib::Core::Engine::GEngine;
+        auto& world = engine.GetWorld();
+        CharacterFixture subject;
+        if (!CreateCharacterFloor() || !CreateCharacter(subject, Math::Vector3::Zero))
+            return false;
+        auto* visual = world.SpawnEntity<Entity>(subject.Owner);
+        auto* cameraOwner = world.SpawnEntity<Entity>();
+        auto* viewSource = world.SpawnEntity<Entity>();
+        auto* wall = world.SpawnEntity<Entity>();
+        auto* trigger = world.SpawnEntity<Entity>();
+        if (!visual || !cameraOwner || !viewSource || !wall || !trigger)
+            return false;
+        wall->SetPosition({0, 2, 2});
+        trigger->SetPosition({0, 2, 1});
+        auto* wallCollider = world.CreateComponent<ColliderComponent>(wall);
+        auto* triggerCollider = world.CreateComponent<ColliderComponent>(trigger);
+        auto* follow = world.CreateComponent<Game::Gameplay::FollowCameraComponent>(cameraOwner);
+        if (!wallCollider || !triggerCollider || !follow ||
+            wallCollider->SetBox({20, 2, .1f}) != EPhysicsResult::Success ||
+            triggerCollider->SetBox({20, 2, .1f}) != EPhysicsResult::Success ||
+            triggerCollider->SetTrigger(true) != EPhysicsResult::Success ||
+            !follow->SetSubject(visual, subject.Owner) || !follow->SetViewSource(viewSource))
+            return false;
+        follow->BindSceneQuery(&engine.GetSceneQuery());
+        follow->SetPitch(0);
+        follow->SetYaw(0);
+        follow->SetArmLength(5);
+        follow->SetTargetOffset({0, .4f, 0});
+        visual->SetRenderInterpolationEnabled(true);
+        if (!StepCharacter(processor))
+            return false;
+        world.Tick(kFixedDeltaTime);
+        world.LateTick(kFixedDeltaTime);
+        if (follow->GetLastCollisionResult() != Camera::CameraCollisionResult::Success ||
+            std::fabs(follow->GetCollisionOutput().EffectiveLength - 1.65f) > .01f)
+            return false;
+        // queryの物理rootはx=0のままでも、Cameraは補間描画位置x=2を読む。
+        world.PrepareRenderInterpolationStep();
+        subject.Owner->SetPosition({4, subject.Owner->GetPosition().y, 0});
+        world.UpdateWorldTransforms();
+        world.CaptureRenderInterpolationStep();
+        world.SetRenderInterpolationAlpha(.5f);
+        world.Tick(kFixedDeltaTime);
+        world.LateTick(kFixedDeltaTime);
+        if (std::fabs(cameraOwner->GetPosition().x - 2) > 1e-4f || subject.Owner->GetPosition().x != 4)
+            return false;
+        wall->SetPosition({0, 2, 20});
+        if (GFixture->Physics->RefreshDynamicSnapshot() != EPhysicsSceneQueryResult::Success)
+            return false;
+        world.Tick(kFixedDeltaTime);
+        world.LateTick(kFixedDeltaTime);
+        if (follow->GetCollisionOutput().EffectiveLength <= 1.65f || follow->GetCollisionOutput().EffectiveLength >= 5)
+            return false;
+        const auto pose = cameraOwner->GetWorldTransform();
+        const auto length = follow->GetCollisionOutput().EffectiveLength;
+        follow->RefreshOwnerTransform();
+        follow->RefreshOwnerTransform();
+        if (cameraOwner->GetWorldTransform() != pose || follow->GetCollisionOutput().EffectiveLength != length)
+            return false;
+        follow->BindSceneQuery(nullptr);
+        follow->SetYaw(90);
+        world.Tick(kFixedDeltaTime);
+        world.LateTick(kFixedDeltaTime);
+        if (cameraOwner->GetWorldTransform() != pose)
+            return false;
+        follow->BindSceneQuery(&engine.GetSceneQuery());
+        follow->SetPivotObjectId(cameraOwner->GetObjectId());
+        world.Tick(kFixedDeltaTime);
+        world.LateTick(kFixedDeltaTime);
+        if (follow->GetLastCollisionResult() != Camera::CameraCollisionResult::ProbeFailed ||
+            cameraOwner->GetWorldTransform() != pose)
+            return false;
+        return !follow->SetSubject(subject.Owner, subject.Owner);
+    }
+
     bool RunCase(uint32_t caseIndex, ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -1103,6 +1181,8 @@ namespace
             return TestGameLocomotionInput(processor);
         case 14:
             return TestGameLocomotionHeapAfterWorld();
+        case 15:
+            return TestFollowCameraRenderBinding(processor);
         default:
             return false;
         }

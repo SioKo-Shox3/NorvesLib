@@ -65,7 +65,7 @@ namespace NorvesLib::Core::Component
 
     protected:
         Math::Vector3 ComputeArmOffset() const;
-        void DriveOwnerTransform(const Entity& pivot);
+        virtual void DriveOwnerTransform(const Entity& pivot);
 
         PROPERTY(uint64_t, PivotObjectId)
         PROPERTY(float, ArmLength)

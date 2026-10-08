@@ -67,6 +67,7 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
     SOURCES
         ${CMAKE_SOURCE_DIR}/Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Gameplay/Camera/FollowCameraComponent.cpp
 )
 target_link_libraries(PhysicsDynamicsTest PRIVATE Core NorvesModule_Physics)
 target_include_directories(PhysicsDynamicsTest PRIVATE
