@@ -45,6 +45,16 @@ namespace NorvesLib::Modules::Physics
         Core::MulticastDelegate<float> BeforeSimulation;
         Core::MulticastDelegate<const CharacterBodyState&> OnLanded;
         void Initialize() override;
+        // root motionだけAnimation後へ移す。切替はMovement群でそのframe分を確定する。
+        void SetVariableTickAfterAnimation(bool enabled)
+        {
+            m_bVariableAfterAnimation = enabled;
+        }
+        uint64_t GetMotionGeneration() const
+        {
+            return m_MotionGeneration;
+        }
+        void OnTickGroup(Core::Component::ETickGroup group, float dt) override;
         void Tick(float dt) override;
         void FixedTick(float dt) override;
         void EndPlay() override;
@@ -59,6 +69,8 @@ namespace NorvesLib::Modules::Physics
         CharacterBodyState m_State;
         CharacterDriveMode m_DriveMode = CharacterDriveMode::Fixed;
         bool m_bBeforeSimulationActive = false;
+        bool m_bVariableAfterAnimation = false, m_bFrameAfterAnimation = false;
+        uint64_t m_MotionGeneration = 1;
         bool m_bLaunch = false;
         CharacterMovementMode m_Mode = CharacterMovementMode::Walking;
         Math::Vector3 m_DesiredVelocity;

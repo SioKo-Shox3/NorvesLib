@@ -359,6 +359,7 @@ namespace NorvesLib::Core::Animation
         if (!candidate.IsFinite())
             return false;
         m_PendingRootMotion = candidate;
+        m_LastRootMotionDelta = m_NodeMotion[m_Graph->Root].Extracted;
         return true;
     }
 } // namespace NorvesLib::Core::Animation

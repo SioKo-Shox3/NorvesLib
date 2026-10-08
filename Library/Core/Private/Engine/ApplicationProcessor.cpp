@@ -2338,13 +2338,26 @@ namespace NorvesLib::Core::Engine
             return {EFixedStepAdvanceStatus::InvalidDelta, 0, 0, m_FixedStepScheduler->GetRemainderScaledUnits()};
         }
         const auto times = timeSystem.GetFrameTimes();
+        auto& timing = GEngine->m_FixedStepFrameTiming;
+        if (timing.Serial == std::numeric_limits<uint64_t>::max())
+        {
+            GEngine->RequestExit(1);
+            return {EFixedStepAdvanceStatus::InvalidDelta, 0, 0, m_FixedStepScheduler->GetRemainderScaledUnits()};
+        }
+        const uint64_t serial = timing.Serial + 1;
+        timing = {};
+        timing.Serial = serial;
+        timing.Rate = m_FixedStepScheduler->GetRate();
+        timing.InputNanoseconds = times.PhysicsDeltaNanoseconds;
+        timing.StartRemainderScaledUnits = m_FixedStepScheduler->GetRemainderScaledUnits();
         if (bAdvanceSimulation)
         {
             GEngine->UpdateGameModeStateMachine(times.Unscaled);
             GEngine->GetWorld().Tick(times);
             GEngine->GetParticleSystem().Tick(times.Particle);
         }
-        const FixedStepAdvanceResult result = AdvanceFixedSimulation(times.PhysicsDeltaNanoseconds, bAdvanceSimulation);
+        const FixedStepAdvanceResult result =
+            AdvanceFixedSimulation(times.PhysicsDeltaNanoseconds, bAdvanceSimulation, &timing);
         (void)GEngine->GetWorld().SetRenderInterpolationAlpha(static_cast<float>(result.RemainderScaledUnits) /
                                                               1'000'000'000.0f);
         if (bAdvanceSimulation)
@@ -2412,11 +2425,16 @@ namespace NorvesLib::Core::Engine
 
     FixedStepAdvanceResult ApplicationProcessor::AdvanceFixedSimulation(
         int64_t rawDeltaNanoseconds,
-        bool bAdvanceSimulation)
+        bool bAdvanceSimulation, FixedStepFrameTiming* timing)
     {
         FixedStepAdvanceResult result = m_FixedStepScheduler->Advance(
             rawDeltaNanoseconds,
             bAdvanceSimulation);
+        if (timing)
+        {
+            timing->Advance = result;
+            timing->bScheduled = true;
+        }
         if (result.Status != EFixedStepAdvanceStatus::Advanced || result.ExecutedSteps == 0)
         {
             return result;

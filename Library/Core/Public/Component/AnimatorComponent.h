@@ -33,6 +33,14 @@ namespace NorvesLib::Core::Component
         bool bFrozen = false;
         bool bReady = false;
     };
+    // 最新のUpdate一回分。累積Consumeと消費権を共有し、二重適用しない。
+    struct AnimatorRootMotionFrame
+    {
+        Animation::RootMotionDelta Delta;
+        uint64_t SourceGeneration = 1, UpdateSerial = 0;
+        float UpdateSeconds = 0;
+        bool bValid = false, bConsumed = true;
+    };
     class AnimatorComponent : public Component
     {
         REFLECTION_CLASS(AnimatorComponent, Component)
@@ -69,13 +77,22 @@ namespace NorvesLib::Core::Component
         void ClearModifiers();
         void SetFrozen(bool frozen)
         {
+            if (m_bFrozen != frozen)
+                InvalidateRootMotionFrame(true);
             m_bFrozen = frozen;
         }
         [[nodiscard]] bool Step(float seconds);
         Animation::RootMotionDelta ConsumeRootMotion()
         {
+            m_RootMotionFrame.bConsumed = true;
             return m_Instance.ConsumeRootMotion();
         }
+        const AnimatorRootMotionFrame& GetRootMotionFrame() const
+        {
+            return m_RootMotionFrame;
+        }
+        // 取り逃した古い累積分は破棄し、指定した最新Updateだけを取得する。
+        bool TryConsumeRootMotionFrame(uint64_t serial, Animation::RootMotionDelta& out);
         void SetEvaluationEnabled(bool enabled)
         {
             m_bEvaluate = enabled;
@@ -87,6 +104,9 @@ namespace NorvesLib::Core::Component
       private:
         SkinnedMeshComponent* Mesh() const;
         void Detach();
+        void InvalidateRootMotionFrame(bool sourceChanged);
+        bool HasValidRootMotionSource() const;
+        AnimatorRootMotionFrame m_RootMotionFrame;
         void ForwardEvent(const Animation::AnimEventInfo& info)
         {
             // 配送先が別のリスナーを解除しても反復を失効させない。

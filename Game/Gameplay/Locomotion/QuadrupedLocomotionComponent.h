@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Animation/RootMotionTimeQueue.h"
 #include "Asset/TextAssetReloadTracker.h"
 #include "Component/Component.h"
 #include "Delegate/Delegate.h"
@@ -7,6 +8,11 @@
 #include "Physics/CharacterBodyComponent.h"
 namespace Game::Gameplay
 {
+    enum class LocomotionMotionSource
+    {
+        Procedural,
+        Animation
+    };
     // 同じEntityのCharacterBodyを駆動するGame側の接着層。入力・設定・見た目を物理moduleへ持ち込まない。
     class QuadrupedLocomotionComponent : public NorvesLib::Core::Component::Component
     {
@@ -27,6 +33,7 @@ namespace Game::Gameplay
         void BindInput(NorvesLib::Core::Input::InputMapper* mapper);
         bool SetProfilePath(NorvesLib::Core::Container::AnsiStringView path);
         bool SetDriveMode(NorvesLib::Modules::Physics::CharacterDriveMode mode);
+        bool SetMotionSource(LocomotionMotionSource source);
         // VisualRootはownerの子、VisualPoseはその子孫。可変の傾きはPose側へ置き補間履歴を切らない。
         bool SetVisualRoots(NorvesLib::Core::Entity* visualRoot, NorvesLib::Core::Entity* visualPose);
         bool SetViewSource(NorvesLib::Core::Entity* view);
@@ -49,6 +56,9 @@ namespace Game::Gameplay
         bool EnsureBinding();
         void Detach();
         void CollectInput(float dt);
+        void CaptureRootMotion();
+        void FinishRootMotionFrame();
+        void ResetRootMotion();
         void Simulate(float dt);
         void PublishVisual(float dt);
         void ClearIntent();
@@ -68,6 +78,10 @@ namespace Game::Gameplay
         NorvesLib::Modules::Physics::CharacterDriveMode m_LastDrive =
             NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         NorvesLib::Math::Quaternion m_VisualBaseRotation;
+        LocomotionMotionSource m_MotionSource = LocomotionMotionSource::Procedural;
+        NorvesLib::Core::Animation::RootMotionTimeQueue m_RootMotion;
+        uint64_t m_AnimationSerialAtInput = 0, m_RootAnimatorId = 0, m_RootSourceGeneration = 0;
+        uint64_t m_RootBodyGeneration = 0, m_RootCaptureTick = 0, m_RootFinishedTick = 0;
         bool m_bProfileReadFailed = false;
     };
 } // namespace Game::Gameplay

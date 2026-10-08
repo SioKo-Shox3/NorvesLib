@@ -1,11 +1,13 @@
 ﻿#include "Gameplay/Locomotion/QuadrupedLocomotionComponent.h"
 #include "Component/AnimatorComponent.h"
+#include "Engine/Engine.h"
 #include "Game/Input/GameInputActions.h"
 #include "Locomotion/QuadrupedLocomotionJson.h"
 #include "Logging/LogMacros.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
 #include <cmath>
+#include <limits>
 namespace Game::Gameplay
 {
     namespace Core = NorvesLib::Core;
@@ -23,7 +25,8 @@ namespace Game::Gameplay
         Core::Component::Component::Initialize();
         using namespace Core::Component;
         SetTickGroup(ETickGroup::Input);
-        SetTickGroupMask(TickGroupBit(ETickGroup::Input) | TickGroupBit(ETickGroup::PostPhysics));
+        SetTickGroupMask(TickGroupBit(ETickGroup::Input) | TickGroupBit(ETickGroup::PoseFinalize) |
+                         TickGroupBit(ETickGroup::PostPhysics));
         (void)m_Profile.SetPath("Gameplay/DogLocomotion.json");
     }
     Physics::CharacterBodyComponent* QuadrupedLocomotionComponent::Body() const
@@ -72,6 +75,7 @@ namespace Game::Gameplay
         if (!body || body->SetDriveMode(mode) != Physics::EPhysicsResult::Success)
             return false;
         m_LastDrive = mode;
+        ResetRootMotion();
         m_State = {};
         ClearIntent();
         if (auto* visual = Resolve(m_VisualRootId))
@@ -95,6 +99,7 @@ namespace Game::Gameplay
             return false;
         if (auto* previous = Resolve(m_VisualRootId))
             previous->SetRenderInterpolationEnabled(false);
+        ResetRootMotion();
         m_VisualRootId = root->GetObjectId();
         if (m_VisualPoseId != pose->GetObjectId())
             m_VisualBaseRotation = pose->GetLocalTransform().rotation;
@@ -150,7 +155,11 @@ namespace Game::Gameplay
             if (owner->GetObjectId() == m_BoundOwnerId)
                 if (auto* body = owner->GetComponent<Physics::CharacterBodyComponent>())
                     if (body->GetComponentId() == m_BoundBodyId)
+                    {
                         body->BeforeSimulation.Remove(m_Before);
+                        body->SetVariableTickAfterAnimation(false);
+                    }
+        ResetRootMotion();
         m_BoundOwnerId = m_BoundBodyId = 0;
         m_Before = {};
         BindInput(nullptr);
@@ -178,14 +187,20 @@ namespace Game::Gameplay
             (void)m_Input->SetFixedButtonEventCapture(InputActions::Jump, false);
         ClearIntent();
         m_State = {};
+        ResetRootMotion();
         Core::Component::Component::Disable();
     }
     void QuadrupedLocomotionComponent::OnTickGroup(Core::Component::ETickGroup group, float dt)
     {
         if (group == Core::Component::ETickGroup::Input)
             CollectInput(dt);
+        else if (group == Core::Component::ETickGroup::PoseFinalize)
+            CaptureRootMotion();
         else if (group == Core::Component::ETickGroup::PostPhysics)
+        {
+            FinishRootMotionFrame();
             PublishVisual(dt);
+        }
     }
     bool QuadrupedLocomotionComponent::ValidateInput()
     {
@@ -215,9 +230,14 @@ namespace Game::Gameplay
         if (!std::isfinite(dt) || dt < 0 || !EnsureBinding())
             return;
         auto* body = Body();
+        body->SetVariableTickAfterAnimation(m_MotionSource == LocomotionMotionSource::Animation);
+        auto* pose = Resolve(m_VisualPoseId);
+        auto* animator = pose ? pose->GetComponent<Core::Component::AnimatorComponent>() : nullptr;
+        m_AnimationSerialAtInput = animator ? animator->GetRootMotionFrame().UpdateSerial : 0;
         if (body->GetDriveMode() != m_LastDrive)
         {
             m_LastDrive = body->GetDriveMode();
+            ResetRootMotion();
             m_State = {};
             ClearIntent();
         }
@@ -255,12 +275,149 @@ namespace Game::Gameplay
         while (m_Input->ConsumeFixedButtonEvent(InputActions::Jump, event))
             m_JumpEvents.push_back(event);
     }
+    bool QuadrupedLocomotionComponent::SetMotionSource(LocomotionMotionSource source)
+    {
+        if (source != LocomotionMotionSource::Procedural && source != LocomotionMotionSource::Animation)
+            return false;
+        if (m_MotionSource != source)
+        {
+            m_MotionSource = source;
+            ResetRootMotion();
+        }
+        if (auto* body = Body())
+            body->SetVariableTickAfterAnimation(source == LocomotionMotionSource::Animation);
+        return true;
+    }
+    void QuadrupedLocomotionComponent::ResetRootMotion()
+    {
+        m_RootMotion.Clear();
+        m_RootAnimatorId = m_RootSourceGeneration = m_RootBodyGeneration = 0;
+    }
+    void QuadrupedLocomotionComponent::CaptureRootMotion()
+    {
+        auto* owner = GetOwner();
+        auto* world = owner ? owner->GetWorld() : nullptr;
+        auto* body = Body();
+        if (!world || !body || m_RootCaptureTick == world->GetTickSerial())
+            return;
+        m_RootCaptureTick = world->GetTickSerial();
+        auto* pose = Resolve(m_VisualPoseId);
+        auto* animator = pose ? pose->GetComponent<Core::Component::AnimatorComponent>() : nullptr;
+        if (!animator || !animator->IsActive())
+        {
+            ResetRootMotion();
+            return;
+        }
+        if (m_MotionSource == LocomotionMotionSource::Procedural)
+        {
+            (void)animator->ConsumeRootMotion();
+            ResetRootMotion();
+            return;
+        }
+        const auto frame = animator->GetRootMotionFrame();
+        if (!frame.bValid || frame.UpdateSerial == m_AnimationSerialAtInput)
+        {
+            (void)animator->ConsumeRootMotion();
+            ResetRootMotion();
+            return;
+        }
+        Core::Animation::RootMotionDelta delta;
+        if (!animator->TryConsumeRootMotionFrame(frame.UpdateSerial, delta))
+        {
+            ResetRootMotion();
+            return;
+        }
+        const auto* engine = Core::Engine::GEngine;
+        const bool fixed = body->GetDriveMode() == Physics::CharacterDriveMode::Fixed;
+        if (fixed && (!engine || !engine->GetFixedStepFrameTiming().Serial))
+        {
+            ResetRootMotion();
+            return;
+        }
+        if (m_RootAnimatorId != animator->GetComponentId() || m_RootSourceGeneration != frame.SourceGeneration ||
+            m_RootBodyGeneration != body->GetMotionGeneration())
+        {
+            ResetRootMotion();
+            m_RootAnimatorId = animator->GetComponentId();
+            m_RootSourceGeneration = frame.SourceGeneration;
+            m_RootBodyGeneration = body->GetMotionGeneration();
+            if (fixed && engine->GetFixedStepFrameTiming().StartRemainderScaledUnits)
+                (void)m_RootMotion.Push({}, engine->GetFixedStepFrameTiming().StartRemainderScaledUnits);
+        }
+        uint64_t duration = 1000000000;
+        if (fixed)
+        {
+            const auto& timing = engine->GetFixedStepFrameTiming();
+            if (timing.InputNanoseconds <= 0)
+                return;
+            if (uint64_t(timing.InputNanoseconds) > std::numeric_limits<uint64_t>::max() / timing.Rate)
+            {
+                ResetRootMotion();
+                return;
+            }
+            duration = uint64_t(timing.InputNanoseconds) * timing.Rate;
+        }
+        else
+        {
+            m_RootMotion.Clear();
+            float dt = 0;
+            if (!world->TryGetComponentTickDelta(*body, dt) || dt <= 0)
+                return;
+        }
+        if (!m_RootMotion.Push(delta, duration))
+        {
+            NORVES_LOG_WARNING("Locomotion", "ルート移動の時間区間を保持できないため、この区間を破棄します");
+            ResetRootMotion();
+        }
+    }
+    void QuadrupedLocomotionComponent::FinishRootMotionFrame()
+    {
+        auto* body = Body();
+        auto* owner = GetOwner();
+        auto* world = owner ? owner->GetWorld() : nullptr;
+        auto* engine = Core::Engine::GEngine;
+        if (!world || !engine || !body || m_MotionSource != LocomotionMotionSource::Animation ||
+            body->GetDriveMode() != Physics::CharacterDriveMode::Fixed || m_RootFinishedTick == world->GetTickSerial())
+            return;
+        m_RootFinishedTick = world->GetTickSerial();
+        const auto& timing = engine->GetFixedStepFrameTiming();
+        if (!timing.bScheduled)
+            return;
+        const auto dropped = timing.Advance.DroppedSteps;
+        m_RootMotion.Discard(dropped > std::numeric_limits<uint64_t>::max() / 1000000000
+                                 ? std::numeric_limits<uint64_t>::max()
+                                 : dropped * 1000000000);
+        const auto remainder = timing.Advance.RemainderScaledUnits;
+        // 未準備/無効化で実行されなかった時間も繰り越さず、schedulerの端数だけを残す。
+        if (m_RootMotion.GetRemainingTime() != remainder)
+        {
+            m_RootMotion.Clear();
+            if (remainder)
+                (void)m_RootMotion.Push({}, remainder);
+        }
+    }
     void QuadrupedLocomotionComponent::Simulate(float dt)
     {
         (void)ValidateInput();
         auto* body = Body();
         auto* owner = GetOwner();
-        if (!body || !owner || !body->GetState().bReady || !std::isfinite(dt) || dt <= 0)
+        if (!body || !owner || !std::isfinite(dt) || dt <= 0)
+            return;
+        Core::Animation::RootMotionDelta rootDelta;
+        if (m_MotionSource == LocomotionMotionSource::Animation)
+        {
+            if (m_RootBodyGeneration != body->GetMotionGeneration())
+                ResetRootMotion();
+            const uint64_t duration = body->GetDriveMode() == Physics::CharacterDriveMode::Fixed
+                                          ? 1000000000
+                                          : m_RootMotion.GetRemainingTime();
+            if (!m_RootMotion.Consume(duration, rootDelta))
+            {
+                ResetRootMotion();
+                return;
+            }
+        }
+        if (!body->GetState().bReady)
             return;
         const auto observed = body->GetState();
         Locomotion::LocomotionGroundInfo ground;
@@ -282,6 +439,18 @@ namespace Game::Gameplay
             return;
         auto delta = output.PlanarDisplacement;
         float yaw = output.DeltaYaw;
+        if (m_MotionSource == LocomotionMotionSource::Animation)
+        {
+            const double startYaw = std::atan2(forward.x, forward.z);
+            const double c = std::cos(startYaw), s = std::sin(startYaw);
+            delta =
+                Math::Vector3(float(c * rootDelta.X + s * rootDelta.Z), 0, float(-s * rootDelta.X + c * rootDelta.Z));
+            yaw = float(rootDelta.Yaw);
+            candidate.Yaw = std::atan2(forward.x, forward.z) + yaw;
+            output.Yaw = candidate.Yaw;
+            output.DeltaYaw = yaw;
+            output.TurnRate = yaw / dt;
+        }
         if (body->SetDesiredVelocity(Math::Vector3::Zero) != Physics::EPhysicsResult::Success ||
             body->MoveDelta(delta, yaw) != Physics::EPhysicsResult::Success)
             return;

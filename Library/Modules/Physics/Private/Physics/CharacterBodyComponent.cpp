@@ -115,6 +115,8 @@ namespace NorvesLib::Modules::Physics
             return result;
         if (!Finite(position))
             return EPhysicsResult::InvalidArgument;
+        if (++m_MotionGeneration == 0)
+            ++m_MotionGeneration;
         m_PendingTeleport = position;
         m_bTeleport = true;
         m_bJump = false;
@@ -142,6 +144,20 @@ namespace NorvesLib::Modules::Physics
     {
         Core::Component::Component::Initialize();
         SetTickGroup(Core::Component::ETickGroup::Movement);
+        SetTickGroupMask(Core::Component::TickGroupBit(Core::Component::ETickGroup::Movement) |
+                         Core::Component::TickGroupBit(Core::Component::ETickGroup::PoseFinalize));
+        SetTickPriority(10);
+    }
+    void CharacterBodyComponent::OnTickGroup(Core::Component::ETickGroup group, float dt)
+    {
+        if (group == Core::Component::ETickGroup::Movement)
+        {
+            m_bFrameAfterAnimation = m_bVariableAfterAnimation;
+            if (!m_bFrameAfterAnimation)
+                Tick(dt);
+        }
+        else if (group == Core::Component::ETickGroup::PoseFinalize && m_bFrameAfterAnimation)
+            Tick(dt);
     }
     void CharacterBodyComponent::Tick(float dt)
     {
@@ -223,6 +239,8 @@ namespace NorvesLib::Modules::Physics
     }
     void CharacterBodyComponent::ResetMotion(bool clearIntent)
     {
+        if (++m_MotionGeneration == 0)
+            ++m_MotionGeneration;
         ResetSimulationState();
         m_PendingDisplacement = {};
         m_PendingYaw = 0;

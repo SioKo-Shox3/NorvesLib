@@ -3,6 +3,7 @@
 #include "Container/PointerTypes.h"
 #include "Engine/DeterministicCapture.h"
 #include "Engine/TimeSystem.h"
+#include "Engine/FixedStepFrameTiming.h"
 #include "GameMode/IStateMachine.h"
 #include "Application/IApplication.h"
 #include "Application/IWindow.h"
@@ -215,6 +216,11 @@ namespace NorvesLib::Core::Engine
         }
 
         // ========== フレーム情報 ==========
+
+        const FixedStepFrameTiming& GetFixedStepFrameTiming() const
+        {
+            return m_FixedStepFrameTiming;
+        }
 
         /**
          * @brief デルタタイムを設定
@@ -446,6 +452,8 @@ namespace NorvesLib::Core::Engine
         bool FlushHaptics() noexcept;
 
     private:
+        friend class ApplicationProcessor;
+        FixedStepFrameTiming m_FixedStepFrameTiming;
         class HapticsDeviceOutput;
         bool FlushHapticsInternal() noexcept;
         bool StopInputDevicesInternal() noexcept;

@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Engine/FixedStepFrameTiming.h"
 #include "Engine/FixedStepSettings.h"
 #include "Thread/Thread.h"
 
@@ -7,23 +8,6 @@
 
 namespace NorvesLib::Core::Engine
 {
-    enum class EFixedStepAdvanceStatus
-    {
-        Advanced,
-        Paused,
-        InvalidDelta,
-        NotRunning,
-        WrongThread
-    };
-
-    struct FixedStepAdvanceResult
-    {
-        EFixedStepAdvanceStatus Status = EFixedStepAdvanceStatus::NotRunning;
-        uint64_t ExecutedSteps = 0;
-        uint64_t DroppedSteps = 0;
-        uint64_t RemainderScaledUnits = 0;
-    };
-
     class FixedStepScheduler
     {
     public:
