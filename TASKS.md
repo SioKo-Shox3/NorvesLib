@@ -1338,6 +1338,42 @@
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-07 親（段8の開始時に詳しくした）。速度の項目の GPU 時間の撮影（ユーザーの撮影の方針の 1 つ目）。`-GpuTimingFrames` は `-Deterministic` と併用できない。`ShadowMapPass` は CSM と点光源の合計で、vsm でも半透明・ボリュームのために CSM の描画は残る。出力先は `.harness/runs/startup-capture/VTG8-VSM-GPU-TIME-*`。VTG8-ACCEPT の GPU 時間の表はここの値を使う。 2026-10-08 親（評価の差し戻し 2 周で blocked になった件）: 残った指摘は表の集計の誤り（trace.csv の `Type=Frame` は CPU のフレームで、GPU の区間の標本になっていない）。VTG8-VSM-DEFAULT-ON（既定の bias の変更）と VTG8-VSM-EXPAND-INDIRECT の後の最終の既定で 6 run を撮り直し、表は撮影の `metrics.json` の `gpu_timing[].gpu_frame_ms_median` と `pass_median_ms`（描いた GPU のフレーム 240 件の集計）から作る。前の表は誤った集計なので置き換える（前の run の値と並べない）。この順にするため、項目を DEFAULT-ON の後へ移した。
 
+## VTG8-FIX-MARK-RANGE: VSM の印付けの影の範囲の判定を照明と同じ前方への距離にそろえる
+- status: todo
+- done-when: 印付け（`Assets/Shaders/vsm_mark.comp`）の影の範囲の判定を、照明（`Assets/Shaders/Common/VirtualShadowMap.glsl`）と同じ「カメラの前方への距離」にそろえる。今は直線の距離が影の範囲（80 m）を超えると印を付けないので、前方 70 m・横 40 m の受け手（直線 80.62 m）は照明では影の範囲の内側なのにページが要求されない。前方の距離が範囲の内側で直線の距離がそれを超える受け手（視錐台の端）でも、印付けと照明が同じ段を選び、その段が受け手を含むようにする（段のしきい値・段の数が足りなければ広げる）。`VirtualShadowMapVulkanTest` に、斜めの位置の受け手（前方 70 m・横 40 m）とその上の遮る物を、印付け → 割り当て → 消去 → 展開 → 描画 → 照明の関数まで通し、受け手の可視度が 0（影）になることを確かめる場面を足す。変異（印付けを直線の距離の判定に戻す）で落ちることを記録する。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest CameraViewConstantsTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|VirtualShadowMapClipmapTest|RenderGraphCompileTest)$"`
+- stop-when: なし。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-08 親（段8の区切りの評価の blocking 1。`vsm_mark.comp:82` と `Common/VirtualShadowMap.glsl:132` の判定の違い）。既存の場面（L4）は割り当て済みのプールを読むので、この欠けを検出できなかった。危険地帯（描画パス）。
+
+## VTG8-FIX-ATOMIC-READS: VSM の計算シェーダーで、他のスレッドがアトミックに書く語を通常の読み取りで読まない
+- status: todo
+- done-when: 同じ dispatch の中で他のスレッドが `atomic*` で書く語を、通常の読み取りで読む箇所をなくす（Vulkan のメモリモデルのデータ競合）。(1) 印付け（`vsm_mark.comp:57` 付近）の要求のビットは、読んでから書くのでなく条件なしの `atomicOr` にする。(2) 割り当ての無効化（`vsm_allocate.comp:232` 付近。重なる無効化の矩形が同じ語を `atomicOr` する）で、判定のために読むところを原子的な読み取り（`atomicOr(value, 0u)` など。展開の `PageEntry` の読み方と同じ）にする。(3) ほかの VSM の計算シェーダー（`Assets/Shaders/vsm_*.comp`、`Common/VirtualShadowMap*.glsl`）でも同じ形の箇所を洗い出して直し、確かめた箇所の一覧（ファイル:行と、競合しない理由または直し方）を PROGRESS に書く。`VirtualShadowMapVulkanTest`・`RenderGraphCompileTest` が通る。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`
+- stop-when: なし。
+- paths: Assets/Shaders, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-08 親（段8の区切りの評価の blocking 2）。dispatch の間のバリアでは同じ dispatch の中の競合は解消しない。危険地帯（描画パス）。
+
+## VTG8-FIX-MEGA-OVERFLOW-RETRY: MegaGeometry の cull の一覧から落ちたクラスタのページを次のフレームで描き直す
+- status: todo
+- done-when: MegaGeometry の段ごとの cull（`Assets/Shaders/vsm_mega_cull.comp`）が一覧の容量を超えて落としたクラスタについて、そのクラスタの境界が覆う、その段の割り当て済みのページへ `PAGE_ENTRY_RETRY`（展開の溢れで使っている印）を付け、次のフレームでそのページを描き直す（今は数えるだけで、次のフレームには dirty が外れ、静止した場面で欠けた影が持ち越される）。`VirtualShadowMapVulkanTest` に、一覧の容量を小さくして溢れさせたフレームの後、容量が十分な静止したフレームで、物理プールの中身が毎フレームすべて描き直したとき（持ち越しなし）と texel で一致する（欠けが回復する）ことを確かめる場面を足す。今の溢れの件数だけを見る場面（J2）はそのまま残す。変異（RETRY の印を付けない）で落ちることを記録する。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`
+- stop-when: なし。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-08 親（段8の区切りの評価の blocking 3。`vsm_mega_cull.comp:248`、`vsm_allocate.comp:188`）。危険地帯（描画パス・GPU の資源の寿命）。
+
+## VTG8-FIX-MEGA-FALLBACK: MegaGeometry の影の経路を用意できないときは VSM を使わず CSM で描く
+- status: todo
+- done-when: MegaGeometry の影の経路を用意できない場合（装置に `DrawIndexedIndirectCount` が無い、MegaGeometry の段ごとの cull の初期化・資源の確保に失敗した）は、VSM を公開せずに CSM で描き、`VSM_FALLBACK reason=<理由>` を 1 回出す（今は MegaGeometry の影だけを省いた VSM を公開し、照明が CSM へ戻らないので、描かれている MegaGeometry の太陽の影が消える。`Library/Core/Private/Rendering/VirtualShadowMapPass.cpp:262`・`:329` 付近）。今その省略を合格にしている RenderGraphCompileTest のケースを、CSM へ戻ること（VSM の資源が公開されず、照明が CSM を読み、`VSM_FALLBACK` が出る）を確かめる形に直す。変異（戻りを外す）で落ちることを記録する。
+- verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(RenderGraphCompileTest)$"`
+- stop-when: なし。
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-08 親（段8の区切りの評価の blocking 4）。危険地帯（RHI の能力・描画の経路の選択）。
+
 ## VTG8-ACCEPT: 段8（VSM 太陽）の受入れを記録する
 - status: done
 - done-when: `Docs/RenderingValidation/VirtualizationAcceptance.md` に「## 段8（VSM 太陽）」の節を段7の節と同じ構成で足す。(1) 起動画面の朝・昼・夕・夜（`-SunElevations 10,45,3` と `-Night`、既定の経路 = VSM）の撮影を開いて確かめた所見。(2) 細かさとちらつき: 既定・近接・低角度 × 太陽 45 度・10 度を `-Deterministic -OrbitDegreesPerSecond 20 -OrbitRenderedFrames 240,320,400 -ShadowProbe` で撮り、同じ run の CSM と VSM の `mean_texel_mm`・`partial_ratio`・`mean_abs_delta`・`changed_ratio`・`flip_ratio`・`SHADOW_PROBE_AGREE` を表にし、VTG8-SHADOW-PROBE の CSM だけの基準値とも並べる。旋回の 3 枚（f240・f320・f400）を開いて、影の縁の揺れ・ページの継ぎ目が無いことを確かめる。(3) GPU 時間は VTG8-VSM-GPU-TIME の表。(4) `VSM_PAGES`・`VSM_CACHE`・VRAM（`vsm_pool`）。(5) golden（基準画像を動かしていないこと）と関係する ctest の結果。(6) 判定の行: 細かさ = VSM の `mean_texel_mm` と `partial_ratio` が 6 つの組すべてで同じ run の CSM 以下。ちらつき = VSM の `mean_abs_delta` と `flip_ratio` が 6 つの組すべてで同じ run の CSM 以下（両方が 0.001 未満の組は同等とみなす）。一致 = 太陽 45 度の 3 視点で `SHADOW_PROBE_AGREE` の ratio が 0.98 以上。起動画面（絶対規則7）。(7) 既知の限界（半透明・ボリュームは CSM のまま・CSM の描画も残る、負荷モードの CSM の UBO の省略は CSM 側に残る、点光源は段9、測定は開発機の RTX 4080・ドライバ 610.88 だけ、など）。
