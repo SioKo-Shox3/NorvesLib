@@ -2516,3 +2516,10 @@
 - 受入れの準備で見つけた予算の計算の誤り: `ShadowMap` の枠は取り分の重みが 0 なので、VSM の確保量（`SetShadowMapPoolBytes`。プール 320 MiB と展開・cull の一覧など）を `PoolCapacityBytes` で渡すと、プール以外の使用量から引かれるだけで割り振れる量が同じだけ増え、VT・ジオメトリの目標がその分増えていた（`VideoMemoryBudgetManagerTest` も「256 MB を渡すと VT・ジオメトリが 128 MB ずつ増える」を期待していた）。プール以外・VSM・VT・ジオメトリの計画の合計が上限を VSM の分だけ超える。
 - 直し方: `VideoMemoryBudgetManager::Compute` で、重み 0 のプールの確保量の合計を `FixedPoolBytes`（固定の取り置き）とし、割り振れる量 = 上限 − プール以外 − 取り置き（0 で止まる）にした。VSM の確保量を渡しても渡さなくても VT・ジオメトリの目標は同じになり（どちらもヒープの使用量の中にあるため）、プール以外・取り置き・目標の合計が上限を超えない。ヒープの使用量が取れない見込みのときも取り置きを引く。重みを与えたプールは今までどおり取り分を受け取る。
 - 検証: `VideoMemoryBudgetManagerTest` 1/1 Passed（`.harness/runs/vtg8-accept/budget-ctest2.txt`）。取り置きを引く行を外す変異で落ちる（`budget-mut-ctest.txt`、1 failed）。起動画面の VT・ジオメトリの目標はヒープの予算（約 15 GB）に対して使用量が小さいので、この変更で起動画面の描画は変わらない。
+
+## 親（2026-10-08）: VTG8-ACCEPT（done）
+
+- `Docs/RenderingValidation/VirtualizationAcceptance.md` に「## 段8（VSM 太陽）」の節を足した。判定: 細かさ（texel は全 12 組で VSM が CSM の 0.21〜0.53 倍、縁の帯の割合は判定に使う 6 組で 0.51〜0.63 倍）、ちらつき（判定に使う 6 組で CSM・VSM とも `mean_abs_delta`・`flip_ratio` が 0.0001 未満）、太陽45°の一致 0.9992 以上、起動画面（朝・昼・夕・夜で欠けなし、検証エラー 0）。
+- 受入れの途中で入れた変更: (1) 予算の取り置き（`163d39d8`。重み 0 のプールの確保量を割り振れる量から引く）。(2) PCF の半径の下限を画素の大きさの半分に（`739cc27c`。下限が画素 1 つ分だと、CSM の texel が画素より小さい中距離で VSM の縁が CSM より太く、既定の視点で縁の帯が CSM の 1.7 倍だった。一時的な書き換えで画素の半分・1 texel だけの 2 通りを測り、画素の半分を採った）。
+- 測定の条件: 細かさ・ちらつき・一致の判定は大きな球の自転を止めた run（`NORVES_STARTUP_SPHERE_SPIN=0`）で行った。自転したままの run も同じ表に並べた（近接の視点では、VSM だけが描く石の目地の影が球と一緒に動くので、変化と縁の帯が大きく、一致が 0.972〜0.979 になる）。理由は TASKS.md の VTG8-ACCEPT の notes。
+- 検証（`.harness/runs/vtg8-accept/`）: `r2-build-debug.txt`（BUILD_EXIT=0）、`r2-ctest-debug.txt`（8/8 passed。golden 4 本は基準画像・閾値を動かさずに通る）、`r2-cap-validation.txt`・`r2-cap-validation-stress.txt`（検証レイヤー付き Debug、error_count 0、VSM の溢れ 0）、`r2-build-rel.txt`（BUILD_EXIT=0）、`r2-cap-day.txt`・`r2-cap-night.txt`・`r2-cap-orbit.txt`・`r2-cap-orbit-nospin.txt`（すべて result=pass）。GPU 時間は VTG8-VSM-GPU-TIME の表（反復 19）。
