@@ -53,6 +53,8 @@ add_test(NAME PhysicsProxyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsPr
 norves_add_test_bundle(PhysicsDynamicsTest
     FOLDER "Test/Modules/Physics"
     MEMBER PhysicsDynamicsTest PhysicsDynamicsTest.cpp
+    MEMBER CharacterDriveOptionsTest CharacterDriveOptionsTest.cpp
+    MEMBER DogMovementSmokeGeometryTest DogMovementSmokeGeometryTest.cpp
     MEMBER PhysicsCharacterMoveTest PhysicsCharacterMoveTest.cpp
     MEMBER ColliderLocalPoseTest ColliderLocalPoseTest.cpp
     MEMBER CharacterPlatformMotionTest CharacterPlatformMotionTest.cpp
@@ -98,3 +100,6 @@ add_test(NAME PhysicsLegacyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsL
 add_test(NAME PhysicsCharacterMoveTest COMMAND PhysicsDynamicsTest --test=PhysicsCharacterMoveTest)
 add_test(NAME ColliderLocalPoseTest COMMAND PhysicsDynamicsTest --test=ColliderLocalPoseTest)
 add_test(NAME CharacterPlatformMotionTest COMMAND PhysicsDynamicsTest --test=CharacterPlatformMotionTest)
+
+add_test(NAME CharacterDriveOptionsTest COMMAND PhysicsDynamicsTest --test=CharacterDriveOptionsTest)
+add_test(NAME DogMovementSmokeGeometryTest COMMAND PhysicsDynamicsTest --test=DogMovementSmokeGeometryTest)

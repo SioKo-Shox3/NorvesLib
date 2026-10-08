@@ -344,6 +344,26 @@ int main()
         target.Detach();
         source.SetRouter(nullptr);
     }
+    {
+        InputSystem source;
+        InputRouter routes;
+        InputMapper target(source.GetState());
+        assert(target.ConfigureWithContext(Definitions(), "Gameplay"_id));
+        target.Attach(routes);
+        assert(target.PushContext("Menu"_id));
+        const auto generation = target.GetCancellationGeneration();
+        assert(target.RemoveContext("Gameplay"_id));
+        assert(target.GetActiveContext() == "Menu"_id);
+        assert(target.GetCancellationGeneration() == generation);
+        assert(!target.RemoveContext("Gameplay"_id));
+        assert(target.PopContext() && !target.GetActiveContext().IsValid());
+        assert(target.PushContext("Gameplay"_id));
+        const auto beforeTopRemoval = target.GetCancellationGeneration();
+        assert(target.RemoveContext("Gameplay"_id));
+        assert(!target.GetActiveContext().IsValid());
+        assert(target.GetCancellationGeneration() != beforeTopRemoval);
+        target.Detach();
+    }
     std::cout << "InputActionMapTest passed\n";
     return 0;
 }

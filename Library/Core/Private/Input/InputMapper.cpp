@@ -115,6 +115,18 @@ namespace NorvesLib::Core::Input
         CancelAll();
         return true;
     }
+    bool InputMapper::RemoveContext(Identity context)
+    {
+        for (size_t i = 0; i < m_Stack.size(); ++i)
+        {
+            if (m_Contexts[m_Stack[i]].Id != context) continue;
+            const bool top = i + 1 == m_Stack.size();
+            m_Stack.erase(m_Stack.begin() + i);
+            if (top) CancelAll();
+            return true;
+        }
+        return false;
+    }
     void InputMapper::ClearContexts()
     {
         m_Stack.clear();

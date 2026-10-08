@@ -41,6 +41,8 @@ namespace NorvesLib::Core::Input
         void Detach();
         bool PushContext(Identity context);
         bool PopContext();
+        // 指定contextだけをstackから外す。上に積まれた他contextは維持する。
+        bool RemoveContext(Identity context);
         void ClearContexts();
         Identity GetActiveContext() const;
         ECursorMode GetCursorMode() const;
