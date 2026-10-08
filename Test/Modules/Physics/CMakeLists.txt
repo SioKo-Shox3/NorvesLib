@@ -53,6 +53,7 @@ add_test(NAME PhysicsProxyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsPr
 norves_add_test_bundle(PhysicsDynamicsTest
     FOLDER "Test/Modules/Physics"
     MEMBER PhysicsDynamicsTest PhysicsDynamicsTest.cpp
+    MEMBER PhysicsCharacterMoveTest PhysicsCharacterMoveTest.cpp
     MEMBER PhysicsModuleLinkTest PhysicsModuleLinkTest.cpp
     MEMBER PhysicsBroadphaseQueryTest PhysicsBroadphaseQueryTest.cpp
     MEMBER PhysicsProxyQueryTest PhysicsProxyQueryTest.cpp
@@ -87,3 +88,5 @@ add_test(NAME PhysicsRayPrecisionTest COMMAND PhysicsDynamicsTest --test=Physics
 add_test(NAME PhysicsQueryPruningTest COMMAND PhysicsDynamicsTest --test=PhysicsQueryPruningTest)
 
 add_test(NAME PhysicsLegacyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsLegacyQueryTest)
+
+add_test(NAME PhysicsCharacterMoveTest COMMAND PhysicsDynamicsTest --test=PhysicsCharacterMoveTest)
