@@ -169,7 +169,8 @@ float VsmSampleSunShadow(vec3 worldPos, vec3 normal, out float outTexelMeters)
         slope = vec2(0.0);
     }
 
-    // 半径の下限はワールドで連続な量（段の切り替わりで縁の幅が跳ばない）: 画素の大きさと使う段の 1 texel の大きいほう
+    // 半径の下限はワールドで連続な量（段の切り替わりで縁の幅が跳ばない）: 画素の大きさ × 係数（pixel.x に掛けて渡される。
+    // VirtualShadowMap::PCF_MIN_RADIUS_PIXELS）と使う段の 1 texel の大きいほう
     const float minRadius = max(distanceToCamera * VSM_PARAMS.pixel.x, texelMeters);
     const float maxRadius = max(VSM_PARAMS.pixel.z, minRadius);
 

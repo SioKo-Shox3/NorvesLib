@@ -112,7 +112,7 @@ namespace NorvesLib::Core::Rendering
             params.range[1] = clipmap->Settings.MaxShadowDistance;
             params.range[2] = std::max(clipmap->Settings.MaxShadowDistance * clipmap->Settings.FadeRatio, 0.001f);
         }
-        params.pixel[0] = pixelMeters;
+        params.pixel[0] = pixelMeters * VirtualShadowMap::PCF_MIN_RADIUS_PIXELS;
         params.pixel[1] = VirtualShadowMap::SUN_TAN_ANGULAR_RADIUS;
         params.pixel[2] = VirtualShadowMap::MAX_FILTER_RADIUS_METERS;
         params.control[0] = 1u;

@@ -39,11 +39,20 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 印付けが隣のページへも印を付ける範囲のうち、texel に比例する分（texel。ページの境界からこの範囲の標本が、隣のページを読む）の既定
          *
-         * 照明（Common/VirtualShadowMap.glsl）の標本の半径は max(物理の半影, 画素の大きさ, 段の 1 texel) で、画素の大きさと 1 texel の
-         * 側は、段を選ぶ式（bias -0.5）では texel の 2.83 倍未満。標本の位置は法線の向きへ最大 1.5 texel ずれるので、合わせて 4.33 texel。
-         * 余裕を持たせて 5 texel とする。物理の半影の側（上限 MAX_FILTER_RADIUS_METERS）は、ワールドの長さとして別に足す。
+         * 照明（Common/VirtualShadowMap.glsl）の標本の半径は max(物理の半影, 画素の大きさ × PCF_MIN_RADIUS_PIXELS, 段の 1 texel) で、
+         * 画素の大きさと 1 texel の側は、段を選ぶ式（bias -0.5）では texel の 2.83 倍未満（係数 0.5 では 1.42 倍未満）。標本の位置は法線の
+         * 向きへ最大 1.5 texel ずれるので、合わせて 4.33 texel 未満。余裕を持たせて 5 texel とする。物理の半影の側（上限
+         * MAX_FILTER_RADIUS_METERS）は、ワールドの長さとして別に足す。
          */
         constexpr float DEFAULT_PCF_RADIUS_TEXELS = 5.0f;
+        /**
+         * @brief PCF の半径の下限のうち、画素の大きさに比例する分の係数（下限 = 画素の大きさ × この値。段の 1 texel より小さくはしない）
+         *
+         * 下限を画素の大きさで決めるのは、段の切り替わりで縁の幅が跳ばないようにするため。画素 1 つ分にすると、CSM の texel が画素より
+         * 小さくなる中距離（各カスケードの奥）で縁が CSM より太くなる。半分にすると、起動画面の縁の帯は CSM の約半分になり、
+         * ワールドに固定した点の揺れも小さいまま（`--shadow-probe` の測定）。
+         */
+        constexpr float PCF_MIN_RADIUS_PIXELS = 0.5f;
         /**
          * @brief ブロッカーの探索と PCF の半径の上限（ワールドの長さ m。段に依らない）の既定
          *
