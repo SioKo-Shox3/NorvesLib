@@ -135,7 +135,7 @@
 - stop-when: VSM のフレーム GPU の中央値が、どれかの視点で 16.6 ms（60fps の 1 フレーム）以上の場合は、表と重い区間を記録して止める（対策の項目を TASKS.md に足す）。溢れが 0 にならない場合、影が壊れて見える場合は、記録して止める。
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Scripts/CaptureStartupScene.ps1, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-08 親（段9の開始時に詳しくした）。速度の項目の GPU 時間の撮影。`-GpuTimingFrames` は `-Deterministic` と併用できない。夜は太陽が無いので、太陽の VSM のページは 0 になるはず（値を表に入れる）。 2026-10-08 ユーザーの判断: キューブとの差の 2 ms は計画書・段の受入れに無い止め条件の目安だったので合否から外し、GPU 時間は表で示す（フレーム全体の差とパスの合計の差を並べる）。異常に重いときの見張りとして 16.6 ms（60fps の 1 フレーム）を残す。今のコード（CULL-PERF・DRAW-PERF の後）で 4 run を測り直す。
-- 結果: 2026-10-08 完了。RelWithDebInfo・`-GpuTimingFrames 300`・夜の 4 run（キューブ・VSM の通常 3 視点と、負荷 300 個の既定の視点）。VSM のフレーム GPU の中央値は 2.30〜2.38 ms（通常 3 視点）・5.30 ms（負荷）で 16.6 ms を大きく下回る。キューブとの差は、フレーム全体で通常 +0.53〜+0.62 ms・負荷 +1.22 ms、パスの合計で通常 +0.51〜+0.55 ms・負荷 +0.99 ms。overflow（`VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL`）は VSM の 4 run の全行で 0。VSM の PNG 4 枚に影の欠け・ずれ・継ぎ目は見えない。表と測定の条件は PROGRESS.md の「段9 VTG9-VSM-POINT-GPU-TIME」。
+- 結果: 2026-10-08 完了（評価の差し戻しで、各視点の撮影の直前に Game を止めた状態の GPU の利用率を測って 8 run に撮り直した）。RelWithDebInfo・`-GpuTimingFrames 300`・夜の 8 run（キューブ・VSM × 既定・近接・低角度・負荷の既定）。VSM のフレーム GPU の中央値は 2.30〜2.54 ms（通常 3 視点）・5.41 ms（負荷）で 16.6 ms を大きく下回る。キューブとの差は、フレーム全体で通常 +0.22〜+0.47 ms・負荷 +1.15 ms、パスの合計で通常 +0.30〜+0.47 ms・負荷 +1.02 ms。撮影直前の利用率の最大は 23〜35%。overflow（`VSM_PAGES`・`VSM_RASTER`・`VSM_MEGA_CULL`）は VSM の 4 run の全行で 0。VSM の PNG 4 枚に影の欠け・ずれ・継ぎ目は見えない。表と測定の条件は PROGRESS.md の「段9 VTG9-VSM-POINT-GPU-TIME」。
 
 ## VTG9-VSM-POINT-CULL-PERF: 負荷モードの点光源の VSM のカリング（VsmCullMega）を縮める
 - status: todo
