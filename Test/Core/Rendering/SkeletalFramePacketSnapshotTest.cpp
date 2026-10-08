@@ -1,8 +1,5 @@
 ﻿#include "Animation/SkeletalAssetResource.h"
-#define _ALLOW_KEYWORD_MACROS
-#define private public
 #include "Rendering/RenderingCoordinator.h"
-#undef private
 
 #include "Animation/AnimationClipResource.h"
 #include "Animation/SkeletonResource.h"
@@ -36,6 +33,26 @@ using namespace NorvesLib::Core::Rendering;
 namespace Container = NorvesLib::Core::Container;
 namespace Math = NorvesLib::Math;
 namespace Skeletal = NorvesLib::Core::Skeletal;
+
+namespace NorvesLib::Core::Rendering
+{
+    struct SkeletalFramePacketTestAccess
+    {
+        static void Generate(RenderingCoordinator& coordinator,
+                             const Container::TSharedPtr<SceneView>& sceneView, FramePacket& packet)
+        {
+            coordinator.m_bInitialized = true;
+            coordinator.m_MaxDrawCallsPerFrame = 16;
+            coordinator.m_MainSceneView = sceneView;
+            coordinator.m_CurrentPacket = &packet;
+            // Core側のデバイス無し経路を使い、SDKマクロで変わりうる型を境界へ渡さない。
+            coordinator.GenerateDrawCommands();
+            coordinator.m_CurrentPacket = nullptr;
+            coordinator.m_MainSceneView.reset();
+            coordinator.m_bInitialized = false;
+        }
+    };
+}
 
 namespace
 {
@@ -188,14 +205,7 @@ namespace
                                 const Container::TSharedPtr<SceneView>& sceneView,
                                 FramePacket& packet)
     {
-        coordinator.m_bInitialized = true;
-        coordinator.m_MaxDrawCallsPerFrame = 16;
-        coordinator.m_MainSceneView = sceneView;
-        coordinator.m_CurrentPacket = &packet;
-        coordinator.GenerateDrawCommands(NorvesLib::RHI::DeviceCapabilities{});
-        coordinator.m_CurrentPacket = nullptr;
-        coordinator.m_MainSceneView.reset();
-        coordinator.m_bInitialized = false;
+        SkeletalFramePacketTestAccess::Generate(coordinator, sceneView, packet);
     }
 } // namespace
 
