@@ -148,6 +148,8 @@ add_library(AssetCookLib STATIC
     RigSplitFileCook.cpp
     RigSingleCook.cpp
     RigRetargetCook.cpp
+    RigMotionCleanup.cpp
+    RigMotionCleanup.h
     RigRetargetCli.cpp
     RigRetargetCook.h
     RigSingleCook.h

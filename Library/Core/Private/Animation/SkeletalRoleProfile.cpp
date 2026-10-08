@@ -334,9 +334,12 @@ namespace NorvesLib::Core::Animation
             if (root.HasMember("processing"))
             {
                 const auto processing = root.FindMember("processing");
-                constexpr const char* keys[] = {"output_fps",          "loop_mode",      "start_seconds",
-                                                "end_seconds",         "minimum_period", "maximum_period",
-                                                "extract_root_motion", "exclude_roles"};
+                constexpr const char* keys[] = {"output_fps",          "loop_mode",           "start_seconds",
+                                                "end_seconds",         "minimum_period",      "maximum_period",
+                                                "extract_root_motion", "exclude_roles",       "spike_threshold_degrees",
+                                                "spike_window",        "smoothing_radius",    "time_scale",
+                                                "average_cycles",      "analyze_contacts",    "generate_foot_markers",
+                                                "derive_root_motion",  "desired_ground_speed"};
                 auto result = Object(processing, keys, "processing");
                 if (!result.Succeeded())
                 {
@@ -365,6 +368,42 @@ namespace NorvesLib::Core::Animation
                 {
                     return Fail(Status::InvalidSettings, "processing");
                 }
+                double spikeDegrees = 0, spikeWindow = p.SpikeWindowRadius, smoothing = p.SmoothingRadius;
+                if (!read("spike_threshold_degrees", spikeDegrees) || !read("spike_window", spikeWindow) ||
+                    !read("smoothing_radius", smoothing) || !read("time_scale", p.TimeScale) || spikeDegrees < 0 ||
+                    spikeDegrees > 180 || spikeWindow < 1 || spikeWindow > 16 || smoothing < 0 || smoothing > 16 ||
+                    std::floor(spikeWindow) != spikeWindow || std::floor(smoothing) != smoothing || p.TimeScale <= 0 ||
+                    p.TimeScale > 1000)
+                    return Fail(Status::InvalidSettings, "processing.cleanup");
+                p.SpikeThresholdRadians = spikeDegrees * 3.14159265358979323846 / 180;
+                p.SpikeWindowRadius = uint32_t(spikeWindow);
+                p.SmoothingRadius = uint32_t(smoothing);
+                if (processing.HasMember("average_cycles"))
+                {
+                    const auto average = processing.FindMember("average_cycles");
+                    if (!average.IsBoolean())
+                        return Fail(Status::InvalidSettings, "processing.average_cycles");
+                    p.bAverageCycles = average.AsBool();
+                }
+                struct Flag
+                {
+                    const char* Name;
+                    bool* Value;
+                };
+                for (const auto flag : {Flag{"analyze_contacts", &p.bAnalyzeContacts},
+                                        Flag{"generate_foot_markers", &p.bGenerateFootMarkers},
+                                        Flag{"derive_root_motion", &p.bDeriveRootMotion}})
+                {
+                    if (!processing.HasMember(flag.Name))
+                        continue;
+                    const auto value = processing.FindMember(flag.Name);
+                    if (!value.IsBoolean())
+                        return Fail(Status::InvalidSettings, "processing.cleanup_flag");
+                    *flag.Value = value.AsBool();
+                }
+                if (!read("desired_ground_speed", p.DesiredGroundSpeed) || p.DesiredGroundSpeed < 0 ||
+                    p.DesiredGroundSpeed > 1000)
+                    return Fail(Status::InvalidSettings, "processing.desired_ground_speed");
                 if (processing.HasMember("loop_mode"))
                 {
                     const auto mode = processing.FindMember("loop_mode");
@@ -421,6 +460,8 @@ namespace NorvesLib::Core::Animation
                         return Fail(Status::InvalidSettings, "processing.extract_root_motion");
                     }
                     p.bExtractRootMotion = value.AsBool();
+                    if (!p.bExtractRootMotion && p.bDeriveRootMotion)
+                        return Fail(Status::InvalidSettings, "processing.derive_root_motion");
                 }
             }
             return {Status::Success};

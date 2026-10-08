@@ -63,6 +63,80 @@ namespace NorvesLib::Core::Animation
             {
             }
         };
+        struct CleanupSamples
+        {
+            C::VariableArray<Pose> Frames;
+            double Interval = 0;
+            static bool Sample(double time, C::Span<S::SkeletalValue> rotations, S::SkeletalPosition& position,
+                               void* context)
+            {
+                const auto& cache = *static_cast<CleanupSamples*>(context);
+                const double index = std::clamp(time / cache.Interval, 0.0, double(cache.Frames.size() - 1));
+                const size_t left = size_t(index), right = std::min(left + 1, cache.Frames.size() - 1);
+                const float alpha = float(index - left);
+                for (size_t j = 0; j < rotations.size(); ++j)
+                    rotations[j] = Value(Detail::Slerp(Quaternion(cache.Frames[left].Rotations[j]),
+                                                       Quaternion(cache.Frames[right].Rotations[j]), alpha));
+                const auto& a = cache.Frames[left].Translation;
+                const auto& z = cache.Frames[right].Translation;
+                position = {a.X + (z.X - a.X) * alpha, a.Y + (z.Y - a.Y) * alpha, a.Z + (z.Z - a.Z) * alpha};
+                return true;
+            }
+        };
+        double Median(C::VariableArray<double> values)
+        {
+            std::sort(values.begin(), values.end());
+            return values[values.size() / 2];
+        }
+        void SmoothChannels(S::SkeletalAnimationClip& clip, uint32_t radius, bool loop, uint32_t& count)
+        {
+            if (!radius)
+                return;
+            for (auto& channel : clip.Channels)
+            {
+                const auto original = channel.Samples;
+                const size_t samples = original.size() - (loop ? 1 : 0);
+                if (samples < 2)
+                    continue;
+                for (size_t i = 0; i < samples; ++i)
+                {
+                    double x = 0, y = 0, z = 0, w = 0, total = 0;
+                    const auto anchor = Quaternion(original[i].Value);
+                    for (int k = -int(radius); k <= int(radius); ++k)
+                    {
+                        int64_t index = int64_t(i) + k;
+                        index = loop ? (index % int64_t(samples) + samples) % samples
+                                     : std::clamp<int64_t>(index, 0, samples - 1);
+                        const double weight = radius + 1 - std::abs(k);
+                        auto value = original[size_t(index)].Value;
+                        if (channel.Path == S::SkeletalAnimationPath::Rotation)
+                        {
+                            const auto q = Quaternion(value);
+                            const double sign =
+                                anchor.x * q.x + anchor.y * q.y + anchor.z * q.z + anchor.w * q.w < 0 ? -1 : 1;
+                            value = Value(q);
+                            value.X *= sign;
+                            value.Y *= sign;
+                            value.Z *= sign;
+                            value.W *= sign;
+                        }
+                        x += value.X * weight;
+                        y += value.Y * weight;
+                        z += value.Z * weight;
+                        w += value.W * weight;
+                        total += weight;
+                    }
+                    channel.Samples[i].Value =
+                        channel.Path == S::SkeletalAnimationPath::Rotation
+                            ? Value(Detail::NormalizeQuaternion(
+                                  Q(float(x / total), float(y / total), float(z / total), float(w / total))))
+                            : S::SkeletalValue{float(x / total), float(y / total), float(z / total), float(w / total)};
+                }
+                if (loop)
+                    channel.Samples.back().Value = channel.Samples.front().Value;
+                ++count;
+            }
+        }
         struct Evaluator
         {
             const SkeletalClipPoseSource& Source;
@@ -279,10 +353,79 @@ namespace NorvesLib::Core::Animation
             settings.MinimumPeriod <= 0 || settings.MaximumPeriod <= settings.MinimumPeriod ||
             !std::isfinite(settings.LoopRmsThresholdRadians) || settings.LoopRmsThresholdRadians <= 0 ||
             !std::isfinite(settings.MinimumMotionRadians) || settings.MinimumMotionRadians <= 0 ||
+            !std::isfinite(settings.SpikeThresholdRadians) || settings.SpikeThresholdRadians < 0 ||
+            settings.SpikeThresholdRadians > Pi || settings.SpikeWindowRadius > 16 || settings.SmoothingRadius > 16 ||
+            !std::isfinite(settings.TimeScale) || settings.TimeScale <= 0 || settings.TimeScale > 1000 ||
             settings.MaximumSamples < 2 || settings.MaximumSamples > 65536 || settings.MaximumPoseEvaluations < 2 ||
             settings.MaximumPoseEvaluations > 1048576 || settings.MaximumOutputKeys > (uint64_t{1} << 22))
         {
             return Status::InvalidSettings;
+        }
+        if (settings.SpikeThresholdRadians > 0)
+        {
+            const double frameCount = std::ceil(source.DurationSeconds / source.SourceIntervalSeconds) + 1;
+            if (frameCount > settings.MaximumSamples || frameCount + 2 > settings.MaximumPoseEvaluations ||
+                frameCount * source.JointIndices.size() > settings.MaximumOutputKeys)
+                return Status::LimitExceeded;
+            CleanupSamples cache;
+            const size_t count = size_t(frameCount);
+            cache.Interval = source.DurationSeconds / (count - 1);
+            cache.Frames.reserve(count);
+            for (size_t i = 0; i < count; ++i)
+            {
+                cache.Frames.emplace_back(source.JointIndices.size());
+                auto& pose = cache.Frames.back();
+                if (!source.Sample(i + 1 == count ? source.DurationSeconds : i * cache.Interval, pose.Rotations,
+                                   pose.Translation, source.Context))
+                    return Status::SourceRejected;
+            }
+            uint32_t replaced = 0;
+            for (size_t joint = 0; joint < source.JointIndices.size(); ++joint)
+            {
+                C::VariableArray<Q> quaternions;
+                quaternions.reserve(count);
+                for (const auto& pose : cache.Frames)
+                    quaternions.push_back(Quaternion(pose.Rotations[joint]));
+                C::VariableArray<double> errors(count, 0);
+                for (size_t i = 1; i + 1 < count; ++i)
+                    errors[i] = Distance(quaternions[i], Detail::Slerp(quaternions[i - 1], quaternions[i + 1], .5f));
+                for (size_t i = 1; i + 1 < count; ++i)
+                {
+                    C::VariableArray<double> neighborhood;
+                    const size_t first = i > settings.SpikeWindowRadius ? i - settings.SpikeWindowRadius : 0;
+                    const size_t last = std::min(count - 1, i + settings.SpikeWindowRadius);
+                    for (size_t k = first; k <= last; ++k)
+                        neighborhood.push_back(errors[k]);
+                    const double median = Median(neighborhood);
+                    for (auto& value : neighborhood)
+                        value = std::abs(value - median);
+                    const double threshold =
+                        std::max(settings.SpikeThresholdRadians, median + 3 * 1.4826 * Median(neighborhood));
+                    if (errors[i] > threshold)
+                    {
+                        cache.Frames[i].Rotations[joint] =
+                            Value(Detail::Slerp(quaternions[i - 1], quaternions[i + 1], .5f));
+                        ++replaced;
+                    }
+                }
+            }
+            auto cleaned = source;
+            cleaned.Context = &cache;
+            cleaned.Sample = &CleanupSamples::Sample;
+            cleaned.SourceIntervalSeconds = cache.Interval;
+            auto options = settings;
+            options.SpikeThresholdRadians = 0;
+            options.MaximumPoseEvaluations -= uint32_t(count);
+            S::SkeletalAnimationClip clip;
+            SkeletalClipProcessingReport report;
+            const auto status = ProcessSkeletalClip(cleaned, options, clip, report);
+            if (status != Status::Success)
+                return status;
+            report.ReplacedSpikes = replaced;
+            report.PoseEvaluations += uint32_t(count);
+            out = std::move(clip);
+            outReport = report;
+            return Status::Success;
         }
         Evaluator eval{source, settings};
         if (!eval.Initialize())
@@ -421,11 +564,12 @@ namespace NorvesLib::Core::Animation
             }
         }
         const double duration = report.EndSeconds - report.StartSeconds;
-        const double grid = std::ceil(duration * settings.OutputFps);
+        const double outputDuration = duration * settings.TimeScale;
+        const double grid = std::ceil(outputDuration * settings.OutputFps);
         if (!std::isfinite(grid) || grid < 1 || grid + 1 > settings.MaximumSamples ||
             (grid + 1) * (source.JointIndices.size() + 1 + (settings.bExtractRootMotion ? 1 : 0)) >
                 settings.MaximumOutputKeys ||
-            duration > std::numeric_limits<float>::max())
+            outputDuration > std::numeric_limits<float>::max())
         {
             return Status::LimitExceeded;
         }
@@ -435,7 +579,7 @@ namespace NorvesLib::Core::Animation
             return eval.Failure;
         }
         const bool loop = report.bLoopDetected || report.bRangeSelected;
-        report.PeriodSeconds = loop ? duration : 0;
+        report.PeriodSeconds = loop ? outputDuration : 0;
         report.SeamBeforeRadians = eval.Error(start, finish);
         report.SeamVelocityDifferenceRadiansPerSecond = eval.VelocityError(report.StartSeconds, report.EndSeconds);
         if (eval.Failure != Status::Success)
@@ -444,7 +588,7 @@ namespace NorvesLib::Core::Animation
         }
         S::SkeletalAnimationClip clip;
         clip.Name = source.Name;
-        clip.DurationSeconds = float(duration);
+        clip.DurationSeconds = float(outputDuration);
         clip.Channels.resize(source.JointIndices.size() + 1);
         for (size_t i = 0; i < source.JointIndices.size(); ++i)
         {
@@ -462,13 +606,20 @@ namespace NorvesLib::Core::Animation
             clip.RootMotionJoint = source.RootJoint;
             clip.RootMotion.reserve(samples);
         }
+        const uint32_t cycles =
+            settings.bAverageCycles && loop
+                ? uint32_t(std::clamp(std::floor((source.DurationSeconds - report.StartSeconds) / duration), 1.0, 16.0))
+                : 1;
+        report.AveragedCycles = cycles;
+        Pose cyclePose(source.JointIndices.size());
         double lastYaw = start.Heading, unwrapped = 0, previousX = 0, previousZ = 0;
         const double headingAngle = eval.BindYaw - start.Heading;
         const double headingCos = std::cos(headingAngle), headingSin = std::sin(headingAngle);
         for (size_t sample = 0; sample < samples; ++sample)
         {
-            const double t = sample + 1 == samples ? duration : sample / settings.OutputFps;
-            const float stored = float(t);
+            const double outputTime = sample + 1 == samples ? outputDuration : sample / settings.OutputFps;
+            const double t = outputTime / settings.TimeScale;
+            const float stored = float(outputTime);
             if (!std::isfinite(stored) || (sample && stored <= translation.Samples.back().TimeSeconds))
             {
                 return Status::LimitExceeded;
@@ -476,6 +627,15 @@ namespace NorvesLib::Core::Animation
             if (!eval.At(report.StartSeconds + t, a))
             {
                 return eval.Failure;
+            }
+            for (uint32_t cycle = 1; cycle < cycles; ++cycle)
+            {
+                if (!eval.At(std::min(source.DurationSeconds, report.StartSeconds + cycle * duration + t), cyclePose))
+                    return eval.Failure;
+                for (size_t joint = 0; joint < source.JointIndices.size(); ++joint)
+                    if (joint != eval.RootSlot)
+                        a.Rotations[joint] = Value(Detail::Slerp(
+                            Quaternion(a.Rotations[joint]), Quaternion(cyclePose.Rotations[joint]), 1.f / (cycle + 1)));
             }
             const float alpha = float(t / duration);
             for (size_t i = 0; i < source.JointIndices.size(); ++i)
@@ -538,8 +698,9 @@ namespace NorvesLib::Core::Animation
                 previousZ = dz;
             }
         }
+        SmoothChannels(clip, settings.SmoothingRadius, loop, report.SmoothedChannels);
         report.SeamAfterRadians = loop ? 0 : report.SeamBeforeRadians;
-        report.AverageSpeedMetersPerSecond = report.PlanarDistanceMeters / duration;
+        report.AverageSpeedMetersPerSecond = report.PlanarDistanceMeters / outputDuration;
         report.PoseEvaluations = eval.Count;
         report.OutputSamples = uint32_t(samples);
         out = std::move(clip);
