@@ -136,6 +136,10 @@ Docs/Plans/
 .claude/settings.local.json
 .claude/worktrees/
 
+# 実行時の個人入力設定と交換用temp
+InputBindings.json
+InputBindings.json.tmp.*
+
 # Scripts/FetchPolyHavenTextures.ps1 が落とす Poly Haven のテクスチャ（git に入れない）
 /Assets/Textures/PolyHaven/
 

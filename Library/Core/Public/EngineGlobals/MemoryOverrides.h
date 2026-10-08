@@ -19,6 +19,7 @@
 #include <cstring>
 #include <new>
 #include <type_traits>
+#include <utility>
 
 // 前方宣言
 namespace NorvesLib::Memory

@@ -80,6 +80,7 @@ function Test-M9CleanupSourceContract([string]$RepoRoot)
     $source = [IO.File]::ReadAllText($routinePath)
     $cleanup = Get-M9BraceBlock $source '(?m)^\s*void\s+CleanupM9WorldAcceptance\s*\(' "M9 transactional cleanup"
     Assert-M9OrderedTokens $cleanup @(
+        'Preparation.Cancel()',
         'UnregisterController(&data.m_CameraController)',
         'audio.Shutdown()',
         'ReleaseBakedAtlas',
@@ -88,7 +89,7 @@ function Test-M9CleanupSourceContract([string]$RepoRoot)
         'data.m_M9WorldAcceptance->SkeletalAsset.reset()',
         'data.m_M9EffectVoice = {}',
         'data.m_M9StatsHistory.clear()') "M9 transactional cleanup order"
-    foreach ($reason in @('skeletal_assets_not_ready', 'xaudio2_module_or_clip_unavailable', 'xaudio2_play_failed'))
+    foreach ($reason in @('skeletal_load_failed', 'skeletal_clip_selection_failed', 'skeletal_attach_failed', 'xaudio2_module_or_clip_unavailable', 'xaudio2_play_failed'))
     {
         $escapedReason = [regex]::Escape($reason)
         $pattern = 'CleanupM9WorldAcceptance\(ctx, data\);\s*FailM9WorldSmoke\(ctx, "{0}"\);' -f $escapedReason

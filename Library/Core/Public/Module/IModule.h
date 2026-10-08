@@ -61,6 +61,8 @@ namespace NorvesLib::Core::Module
         virtual void PreFixedTick(float fixedDeltaTime) {}
         // Component FixedTick後に登録順で呼ぶ固定更新。Transform書き戻しはここで可能。
         virtual void FixedTick(float fixedDeltaTime) {}
+        // 物理後のWorld LateTickに続き、描画同期前に呼ぶ。停止中は進めない。
+        virtual void LateTick(float deltaTime) {}
         // Initialize の逆。RenderThread 静止後に駆動される(寿命順序は Registry が保証)。
         virtual void Shutdown() = 0;
         // Install の逆。最小実装では空で良い。

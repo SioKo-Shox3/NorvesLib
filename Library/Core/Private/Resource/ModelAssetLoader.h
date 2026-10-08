@@ -11,7 +11,7 @@ namespace NorvesLib::Core::Asset
     class AssetSystem;
 }
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     struct CookedModelLoadPlan
     {
@@ -44,4 +44,4 @@ namespace NorvesLib::Core::Resource
     [[nodiscard]] bool LoadCookedModelForWorker(const CookedModelLoadPlan& plan,
                                                 uint32_t requestId,
                                                 CookedModelCpuLoadResult& outResult);
-} // namespace NorvesLib::Core::Resource
+} // namespace NorvesLib::Core::ResourceIO

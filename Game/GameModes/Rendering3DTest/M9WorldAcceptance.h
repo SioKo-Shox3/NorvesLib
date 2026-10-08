@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Core/Public/Container/PointerTypes.h"
+#include "GameModes/Rendering3DTest/M9SkeletalPreparation.h"
 
 namespace NorvesLib::Core
 {
@@ -22,6 +23,10 @@ namespace Game::GameModes
     {
         bool bRequested = false;
         bool bAssetsReady = false;
+        NorvesLib::Core::Container::AnsiString SkeletalPath = "Models/M9Skinned/ValidU8Float.gltf";
+        NorvesLib::Core::Container::String ClipName = _T("Wave");
+        M9SkeletalPreparation Preparation;
+        NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::AnimationClipResource> SelectedClip;
         NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::SkeletalAssetResource> SkeletalAsset;
 
 #if defined(NORVES_GAME_AUDIO)

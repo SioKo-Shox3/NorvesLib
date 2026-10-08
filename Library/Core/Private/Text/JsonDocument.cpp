@@ -1,4 +1,7 @@
-#include "Text/JsonDocument.h"
+﻿#include "Text/JsonDocument.h"
+#include "Text/JsonUnicodeScalar.h"
+#include "Text/UnicodeText.h"
+#include <charconv>
 
 #include <cctype>
 #include <cstdlib>
@@ -43,7 +46,7 @@ namespace NorvesLib::Core
                 return SetError("Unexpected end of input");
             }
 
-            char ch = Peek();
+            const auto ch = Peek();
             switch (ch)
             {
             case '{':
@@ -59,7 +62,7 @@ namespace NorvesLib::Core
             case 'n':
                 return ParseLiteral("null", JsonType::Null, outNodeIndex, false);
             default:
-                if (ch == '-' || std::isdigit(static_cast<unsigned char>(ch)))
+                if (ch == '-' || TextDetail::IsJsonDigit(ch))
                 {
                     return ParseNumberValue(outNodeIndex);
                 }
@@ -191,9 +194,9 @@ namespace NorvesLib::Core
             {
                 Advance();
             }
-            else if (std::isdigit(static_cast<unsigned char>(Peek())))
+            else if (TextDetail::IsJsonDigit(Peek()))
             {
-                while (!IsAtEnd() && std::isdigit(static_cast<unsigned char>(Peek())))
+                while (!IsAtEnd() && TextDetail::IsJsonDigit(Peek()))
                 {
                     Advance();
                 }
@@ -206,12 +209,12 @@ namespace NorvesLib::Core
             if (!IsAtEnd() && Peek() == '.')
             {
                 Advance();
-                if (IsAtEnd() || !std::isdigit(static_cast<unsigned char>(Peek())))
+                if (IsAtEnd() || !TextDetail::IsJsonDigit(Peek()))
                 {
                     return SetError("Invalid fractional part");
                 }
 
-                while (!IsAtEnd() && std::isdigit(static_cast<unsigned char>(Peek())))
+                while (!IsAtEnd() && TextDetail::IsJsonDigit(Peek()))
                 {
                     Advance();
                 }
@@ -225,27 +228,41 @@ namespace NorvesLib::Core
                     Advance();
                 }
 
-                if (IsAtEnd() || !std::isdigit(static_cast<unsigned char>(Peek())))
+                if (IsAtEnd() || !TextDetail::IsJsonDigit(Peek()))
                 {
                     return SetError("Invalid exponent");
                 }
 
-                while (!IsAtEnd() && std::isdigit(static_cast<unsigned char>(Peek())))
+                while (!IsAtEnd() && TextDetail::IsJsonDigit(Peek()))
                 {
                     Advance();
                 }
             }
 
-            Container::String numberLiteral = m_Text.substr(numberStart, m_Position - numberStart);
-            char* endPointer = nullptr;
-            double numberValue = std::strtod(numberLiteral.c_str(), &endPointer);
-            if (endPointer == numberLiteral.c_str())
+            Container::AnsiString numberLiteral;
+            numberLiteral.reserve(m_Position - numberStart);
+            for (size_t index = numberStart; index < m_Position; ++index)
             {
-                return SetError("Failed to parse number");
+                numberLiteral.push_back(static_cast<char>(m_Text[index]));
+            }
+            double numberValue = 0.0;
+            const char* begin = numberLiteral.data();
+            const char* end = begin + numberLiteral.size();
+            // C localeに依存せず、overflow/underflowとtoken途中までの変換を拒否する。
+            const auto parsed = std::from_chars(begin, end, numberValue, std::chars_format::general);
+            if (parsed.ec != std::errc{} || parsed.ptr != end)
+            {
+                return SetError("JSON数値がdoubleの範囲外または不正です");
             }
 
             outNodeIndex = m_Document.CreateNode(JsonType::Number);
             m_Document.m_Nodes[outNodeIndex].NumberValue = numberValue;
+            bool bIntegerLiteral = true;
+            for (const auto unit : numberLiteral)
+            {
+                if (unit == '.' || unit == 'e' || unit == 'E') bIntegerLiteral = false;
+            }
+            m_Document.m_Nodes[outNodeIndex].bIntegerLiteral = bIntegerLiteral;
             return true;
         }
 
@@ -275,17 +292,32 @@ namespace NorvesLib::Core
                 return SetError("Expected string");
             }
 
+            // Stringの再確保時のNUL終端copyを避け、この文字列だけのsource長を先に確保する。
+            // escapeの出力code unit数は元表現以下。ファイル残り全体を各文字列へ確保しない。
+            size_t payloadLength = 0;
+            bool escaped = false;
+            while (payloadLength < m_Text.size() - m_Position)
+            {
+                const auto unit = m_Text[m_Position + payloadLength];
+                if (!escaped && unit == '"')
+                {
+                    break;
+                }
+                escaped = !escaped && unit == '\\';
+                ++payloadLength;
+            }
             outString.clear();
+            outString.reserve(payloadLength);
 
             while (!IsAtEnd())
             {
-                char ch = Advance();
+                const auto ch = Advance();
                 if (ch == '"')
                 {
                     return true;
                 }
 
-                if (static_cast<unsigned char>(ch) < 0x20)
+                if (static_cast<std::make_unsigned_t<Container::String::value_type>>(ch) < 0x20)
                 {
                     return SetError("Control character in string");
                 }
@@ -301,7 +333,7 @@ namespace NorvesLib::Core
                     return SetError("Unterminated escape sequence");
                 }
 
-                char escape = Advance();
+                const auto escape = Advance();
                 switch (escape)
                 {
                 case '"':
@@ -331,7 +363,7 @@ namespace NorvesLib::Core
                     {
                         return false;
                     }
-                    AppendUtf8(outString, codePoint);
+                    AppendUnicodeScalar(outString, codePoint);
                     break;
                 }
                 default:
@@ -344,60 +376,29 @@ namespace NorvesLib::Core
 
         bool ParseUnicodeEscape(uint32_t& outCodePoint)
         {
-            outCodePoint = 0;
-
-            for (int index = 0; index < 4; ++index)
+            TextDetail::JsonUnicodeEscape decoded;
+            if (!TextDetail::DecodeJsonUnicodeEscape<Container::String::value_type>(
+                    {m_Text.data() + m_Position, m_Text.size() - m_Position}, decoded))
             {
-                if (IsAtEnd())
-                {
-                    return SetError("Incomplete unicode escape");
-                }
-
-                char ch = Advance();
-                outCodePoint <<= 4;
-                if (ch >= '0' && ch <= '9')
-                {
-                    outCodePoint |= static_cast<uint32_t>(ch - '0');
-                }
-                else if (ch >= 'a' && ch <= 'f')
-                {
-                    outCodePoint |= static_cast<uint32_t>(10 + ch - 'a');
-                }
-                else if (ch >= 'A' && ch <= 'F')
-                {
-                    outCodePoint |= static_cast<uint32_t>(10 + ch - 'A');
-                }
-                else
-                {
-                    return SetError("Invalid unicode escape");
-                }
+                return SetError("不正または不完全なUnicodeエスケープです");
             }
-
+            m_Position += decoded.Consumed;
+            outCodePoint = decoded.Scalar;
             return true;
         }
 
-        void AppendUtf8(Container::String& outString, uint32_t codePoint) const
+        void AppendUnicodeScalar(Container::String& outString, uint32_t codePoint) const
         {
-            if (codePoint <= 0x7F)
+            const auto encoded = TextDetail::EncodeJsonUnicodeScalar<Container::String::value_type>(codePoint);
+            for (size_t index = 0; index < encoded.Count; ++index)
             {
-                outString.push_back(static_cast<char>(codePoint));
-            }
-            else if (codePoint <= 0x7FF)
-            {
-                outString.push_back(static_cast<char>(0xC0 | ((codePoint >> 6) & 0x1F)));
-                outString.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
-            }
-            else
-            {
-                outString.push_back(static_cast<char>(0xE0 | ((codePoint >> 12) & 0x0F)));
-                outString.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
-                outString.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+                outString.push_back(encoded.Units[index]);
             }
         }
 
         void SkipWhitespace()
         {
-            while (!IsAtEnd() && std::isspace(static_cast<unsigned char>(Peek())))
+            while (!IsAtEnd() && TextDetail::IsJsonWhitespace(Peek()))
             {
                 Advance();
             }
@@ -429,12 +430,12 @@ namespace NorvesLib::Core
             return m_Position >= m_Text.size();
         }
 
-        char Peek() const
+        Container::String::value_type Peek() const
         {
             return m_Text[m_Position];
         }
 
-        char Advance()
+        Container::String::value_type Advance()
         {
             return m_Text[m_Position++];
         }
@@ -448,6 +449,16 @@ namespace NorvesLib::Core
     bool JsonDocument::TryParse(const Container::String& text, JsonDocument& outDocument,
                                 Container::String* pOutError)
     {
+        if (!TextDetail::ForEachUnicodeScalar<Container::String::value_type>(
+                {text.data(), text.size()}, [](uint32_t) {}))
+        {
+            outDocument.Reset();
+            if (pOutError)
+            {
+                *pOutError = TEXT("JSON入力のUnicode表現が不正です");
+            }
+            return false;
+        }
         JsonDocument parsedDocument;
         JsonDocumentParser parser(text, parsedDocument, pOutError);
         if (!parser.Parse())
@@ -458,6 +469,30 @@ namespace NorvesLib::Core
 
         outDocument = std::move(parsedDocument);
         return true;
+    }
+
+    bool JsonDocument::TryParseUtf8(Container::Span<const uint8_t> bytes, JsonDocument& outDocument,
+                                    Container::String* pOutError)
+    {
+        Container::String text;
+        const bool valid = TextDetail::ForEachUnicodeScalar<uint8_t>(bytes, [&text](uint32_t scalar)
+        {
+            const auto encoded = TextDetail::EncodeJsonUnicodeScalar<Container::String::value_type>(scalar);
+            for (size_t index = 0; index < encoded.Count; ++index)
+            {
+                text.push_back(encoded.Units[index]);
+            }
+        });
+        if (!valid)
+        {
+            outDocument.Reset();
+            if (pOutError)
+            {
+                *pOutError = TEXT("JSON入力のUTF8表現が不正です");
+            }
+            return false;
+        }
+        return TryParse(text, outDocument, pOutError);
     }
 
     void JsonDocument::Reset()

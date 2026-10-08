@@ -1,7 +1,9 @@
 ﻿#include "Component/SkinnedMeshComponent.h"
 
 #include "Math/MatrixUtils.h"
+#include "Math/QuaternionUtils.h"
 #include "Object/Entity.h"
+#include "Asset/CookedSkeletalNameCodec.h"
 
 #include <cmath>
 
@@ -21,16 +23,24 @@ namespace NorvesLib::Core::Component
 
     IMPLEMENT_CLASS(SkinnedMeshComponent, Component)
 
-    SkinnedMeshComponent::SkinnedMeshComponent() = default;
+    SkinnedMeshComponent::SkinnedMeshComponent()
+    {
+        SetTickGroup(ETickGroup::Animation);
+        SetTickGroupMask(TickGroupBit(ETickGroup::Animation) | TickGroupBit(ETickGroup::PoseFinalize));
+    }
 
     SkinnedMeshComponent::SkinnedMeshComponent(const FieldInitializer* initializer)
         : Component(initializer)
     {
+        SetTickGroup(ETickGroup::Animation);
+        SetTickGroupMask(TickGroupBit(ETickGroup::Animation) | TickGroupBit(ETickGroup::PoseFinalize));
     }
 
     SkinnedMeshComponent::SkinnedMeshComponent(const IUnknown* sourceObject)
         : Component(sourceObject)
     {
+        SetTickGroup(ETickGroup::Animation);
+        SetTickGroupMask(TickGroupBit(ETickGroup::Animation) | TickGroupBit(ETickGroup::PoseFinalize));
     }
 
     SkinnedMeshComponent::~SkinnedMeshComponent() = default;
@@ -46,18 +56,31 @@ namespace NorvesLib::Core::Component
     {
         m_Pose.Clear();
         m_SkeletalAsset.reset();
+        m_SelectedClip.reset();
         Component::Finalize();
+    }
+
+    void SkinnedMeshComponent::OnTickGroup(ETickGroup group, float deltaTime)
+    {
+        if (group == ETickGroup::Animation)
+        {
+            Tick(deltaTime);
+        }
+        else if (group == ETickGroup::PoseFinalize)
+        {
+            (void)EvaluatePose();
+        }
     }
 
     void SkinnedMeshComponent::Tick(float deltaTime)
     {
-        if (!m_bPlaying || !std::isfinite(deltaTime) || !std::isfinite(m_PlaybackRate) ||
-            !m_SkeletalAsset || !m_SkeletalAsset->GetAnimationClip())
+        if (!m_bPlaying || !std::isfinite(deltaTime) || !std::isfinite(m_PlaybackRate) || !m_SkeletalAsset ||
+            !GetAnimationClip())
         {
             return;
         }
 
-        const float duration = m_SkeletalAsset->GetAnimationClip()->GetClip().DurationSeconds;
+        const float duration = GetAnimationClip()->GetClip().DurationSeconds;
         if (!std::isfinite(duration) || duration <= Math::Constants::EPSILON)
         {
             return;
@@ -81,7 +104,14 @@ namespace NorvesLib::Core::Component
 
     void SkinnedMeshComponent::SetSkeletalAsset(const Container::TSharedPtr<SkeletalAssetResource>& asset)
     {
+        if (m_SkeletalAsset != asset)
+        {
+            m_SlotMaterials.Clear();
+        }
         m_SkeletalAsset = asset;
+        m_SelectedClip.reset();
+        m_bMeshNodeTransformOverridden = false;
+        m_Pose.Clear();
         m_MeshNodeGlobalTransform = asset && asset->GetMesh()
             ? LoadMeshNodeGlobalTransform(asset->GetMesh()->GetMeshNodeGlobalTransform())
             : Math::Matrix4x4::Identity;
@@ -94,9 +124,61 @@ namespace NorvesLib::Core::Component
         return m_SkeletalAsset;
     }
 
+    bool SkinnedMeshComponent::SetAnimationClip(const Container::TSharedPtr<AnimationClipResource>& clip)
+    {
+        if (!m_SkeletalAsset || !m_SkeletalAsset->IsLoaded() || !m_SkeletalAsset->IsValid() || !clip ||
+            !clip->IsLoaded() || !clip->IsValid())
+        {
+            return false;
+        }
+        bool bMember = false;
+        for (size_t i = 0; i < m_SkeletalAsset->GetClipCount(); ++i)
+        {
+            if (m_SkeletalAsset->GetClip(i) == clip)
+            {
+                bMember = true;
+                break;
+            }
+        }
+        if (!bMember)
+        {
+            return false;
+        }
+        m_SelectedClip = clip;
+        m_Pose.Clear();
+        m_bPoseDirty = true;
+        MarkRenderStateDirty();
+        return true;
+    }
+
+    Container::TSharedPtr<AnimationClipResource> SkinnedMeshComponent::GetAnimationClip() const
+    {
+        if (!m_SkeletalAsset)
+        {
+            return {};
+        }
+        if (!m_SelectedClip)
+        {
+            return m_SkeletalAsset->GetAnimationClip();
+        }
+        if (!m_SelectedClip->IsLoaded() || !m_SelectedClip->IsValid())
+        {
+            return {};
+        }
+        for (size_t i = 0; i < m_SkeletalAsset->GetClipCount(); ++i)
+        {
+            if (m_SkeletalAsset->GetClip(i) == m_SelectedClip)
+            {
+                return m_SelectedClip;
+            }
+        }
+        return {};
+    }
+
     void SkinnedMeshComponent::SetMeshNodeGlobalTransform(const Math::Matrix4x4& transform)
     {
         m_MeshNodeGlobalTransform = transform;
+        m_bMeshNodeTransformOverridden = true;
         m_bPoseDirty = true;
         MarkRenderStateDirty();
     }
@@ -170,6 +252,135 @@ namespace NorvesLib::Core::Component
         return m_Material;
     }
 
+    bool SkinnedMeshComponent::SetMaterial(uint32_t slot, Rendering::MaterialHandle material)
+    {
+        return SetSlotMaterial(slot, material);
+    }
+
+    Rendering::MaterialHandle SkinnedMeshComponent::GetMaterial(uint32_t slot) const
+    {
+        Rendering::MaterialHandle material;
+        (void)TryGetSlotMaterial(slot, material);
+        return material;
+    }
+
+    Container::TSharedPtr<const Rendering::SkinnedMeshAssetLease> SkinnedMeshComponent::GetMaterialBindingLease() const
+    {
+        if (!m_SkeletalAsset || !m_SkeletalAsset->GetMesh() || !m_SkeletalAsset->GetMesh()->IsLoaded())
+        {
+            return {};
+        }
+        return m_SkeletalAsset->GetMesh()->GetRenderAssetLease();
+    }
+
+    uint32_t SkinnedMeshComponent::GetMaterialSlotCount() const
+    {
+        const auto lease = GetMaterialBindingLease();
+        if (!lease || !lease->GetHandle().IsValid())
+        {
+            return 0;
+        }
+        return lease->GetMaterialSlotNames().empty() ? 1u : static_cast<uint32_t>(lease->GetMaterialSlotNames().size());
+    }
+
+    int32_t SkinnedMeshComponent::FindMaterialSlot(Container::StringView name) const
+    {
+        const auto lease = GetMaterialBindingLease();
+        if (!lease || !lease->GetHandle().IsValid())
+        {
+            return -1;
+        }
+        const auto& names = lease->GetMaterialSlotNames();
+        if (names.size() > Skeletal::MaximumMaterialSlotCount)
+        {
+            return -1;
+        }
+        // native文字幅はここでUTF8へ揃える。名前の照合や正規化は行わない。
+        const auto encode = [](Container::StringView input, Container::VariableArray<uint8_t>& bytes)
+        {
+            using Char = Container::String::value_type;
+            const Container::Span<const Char> source{input.data(), input.size()};
+            const auto measured = Asset::MeasureSkeletalNameEncoding(2, source);
+            if (!measured.Succeeded())
+            {
+                return false;
+            }
+            bytes.resize(measured.ByteCount);
+            return Asset::EncodeSkeletalWireName(2, source, {bytes.data(), bytes.size()}).Succeeded();
+        };
+        Container::VariableArray<uint8_t> query;
+        if (!encode(name, query))
+        {
+            return -1;
+        }
+        const uint32_t count = names.empty() ? 1u : static_cast<uint32_t>(names.size());
+        MaterialIdentityView slots[Skeletal::MaximumMaterialSlotCount]{};
+        Container::VariableArray<uint8_t> encoded[Skeletal::MaximumMaterialSlotCount];
+        constexpr uint8_t defaultName[] = {'D','e','f','a','u','l','t'};
+        for (uint32_t slot = 0; slot < count; ++slot)
+        {
+            slots[slot].IdentityIndex = slot;
+            if (names.empty())
+            {
+                slots[slot].Name = {defaultName, sizeof(defaultName)};
+            }
+            else
+            {
+                if (!encode({names[slot].data(), names[slot].size()}, encoded[slot]))
+                {
+                    return -1;
+                }
+                slots[slot].Name = {encoded[slot].data(), encoded[slot].size()};
+            }
+        }
+        return Skeletal::FindSkeletalMaterialSlot({slots, count}, {query.data(), query.size()});
+    }
+
+    bool SkinnedMeshComponent::SetSlotMaterial(uint32_t slot, Rendering::MaterialHandle material)
+    {
+        const auto lease = GetMaterialBindingLease();
+        if (!lease)
+        {
+            return false;
+        }
+        const auto handle = lease->GetHandle();
+        const uint32_t count = lease->GetMaterialSlotNames().empty() ? 1u : static_cast<uint32_t>(lease->GetMaterialSlotNames().size());
+        if (!m_SlotMaterials.Set(handle.Id, handle.Generation, count, slot, slot == 0 ? 0 : material.Id))
+        {
+            return false;
+        }
+        if (slot == 0)
+        {
+            m_Material = material;
+        }
+        MarkRenderStateDirty();
+        return true;
+    }
+
+    bool SkinnedMeshComponent::SetSlotMaterial(Container::StringView name, Rendering::MaterialHandle material)
+    {
+        const int32_t slot = FindMaterialSlot(name);
+        return slot >= 0 && SetSlotMaterial(static_cast<uint32_t>(slot), material);
+    }
+
+    bool SkinnedMeshComponent::TryGetSlotMaterial(uint32_t slot, Rendering::MaterialHandle& out) const
+    {
+        const auto lease = GetMaterialBindingLease();
+        if (!lease)
+        {
+            return false;
+        }
+        const auto handle = lease->GetHandle();
+        const uint32_t count = lease->GetMaterialSlotNames().empty() ? 1u : static_cast<uint32_t>(lease->GetMaterialSlotNames().size());
+        uint64_t id = 0;
+        if (!m_SlotMaterials.TryGet(handle.Id, handle.Generation, count, slot, m_Material.Id, id))
+        {
+            return false;
+        }
+        out = Rendering::MaterialHandle{id};
+        return true;
+    }
+
     void SkinnedMeshComponent::SetCastShadow(bool bCastShadow)
     {
         m_bCastShadow = bCastShadow;
@@ -183,7 +394,7 @@ namespace NorvesLib::Core::Component
 
     bool SkinnedMeshComponent::BuildSkinnedMeshProxy(Rendering::SkinnedMeshProxy& outProxy)
     {
-        if (!IsVisible() || !RefreshPose())
+        if (!IsVisible() || !EvaluatePose())
         {
             return false;
         }
@@ -193,6 +404,26 @@ namespace NorvesLib::Core::Component
         const Container::TSharedPtr<SkinnedMeshResource>& mesh = m_SkeletalAsset->GetMesh();
         outProxy.MeshHandle = mesh->GetRenderMeshHandle();
         outProxy.Material = m_Material;
+        const uint32_t slotCount = GetMaterialSlotCount();
+        if (slotCount == 0 || slotCount > Rendering::MAX_MATERIAL_SLOTS)
+        {
+            outProxy = {};
+            return false;
+        }
+        outProxy.MaterialCount = slotCount;
+        for (uint32_t slot = 0; slot < slotCount; ++slot)
+        {
+            if (!TryGetSlotMaterial(slot, outProxy.Materials[slot]))
+            {
+                outProxy = {};
+                return false;
+            }
+        }
+        // 旧単一draw経路にもslot0のoverrideを反映する。
+        if (slotCount != 0)
+        {
+            outProxy.Material = outProxy.Materials[0];
+        }
         outProxy.AssetLease = mesh->GetRenderAssetLease();
         outProxy.WorldTransform = BuildOwnerWorldTransform();
         outProxy.BonePalette = m_Pose.BonePalette;
@@ -203,30 +434,114 @@ namespace NorvesLib::Core::Component
         return outProxy.IsValid();
     }
 
-    bool SkinnedMeshComponent::RefreshPose()
+    bool SkinnedMeshComponent::EvaluatePose()
     {
-        if (!m_bPoseDirty)
+        if (!HasValidPoseResources())
         {
-            return !m_Pose.BonePalette.empty();
-        }
-        m_Pose.Clear();
-        if (!m_SkeletalAsset || !m_SkeletalAsset->IsLoaded() || !m_SkeletalAsset->GetMesh() ||
-            !m_SkeletalAsset->GetSkeleton() || !m_SkeletalAsset->GetAnimationClip())
-        {
+            m_Pose.Clear();
+            m_bPoseDirty = true;
+            MarkRenderStateDirty();
             return false;
         }
+        if (HasCurrentPose())
+        {
+            return true;
+        }
+        m_Pose.Clear();
+        m_bPoseDirty = true;
+        MarkRenderStateDirty();
+        if (!m_bMeshNodeTransformOverridden)
+        {
+            m_MeshNodeGlobalTransform = LoadMeshNodeGlobalTransform(m_SkeletalAsset->GetMesh()->GetMeshNodeGlobalTransform());
+        }
         const bool bSampled = Animation::SkeletalAnimationSampler::Sample(
-            *m_SkeletalAsset->GetSkeleton(),
-            *m_SkeletalAsset->GetAnimationClip(),
-            *m_SkeletalAsset->GetMesh(),
-            m_AnimationTimeSeconds,
-            m_MeshNodeGlobalTransform,
-            m_Pose);
+            *m_SkeletalAsset->GetSkeleton(), *GetAnimationClip(), *m_SkeletalAsset->GetMesh(), m_AnimationTimeSeconds,
+            m_MeshNodeGlobalTransform, m_Pose);
         if (bSampled)
         {
             m_bPoseDirty = false;
+            m_EvaluatedMesh = m_SkeletalAsset->GetMesh();
+            m_EvaluatedSkeleton = m_SkeletalAsset->GetSkeleton();
+            m_EvaluatedClip = GetAnimationClip();
+            ++m_PoseSerial;
         }
         return bSampled;
+    }
+
+    bool SkinnedMeshComponent::HasValidPoseResources() const
+    {
+        if (!m_SkeletalAsset || !m_SkeletalAsset->IsLoaded() || !m_SkeletalAsset->IsValid()) return false;
+        const auto& mesh = m_SkeletalAsset->GetMesh();
+        const auto& skeleton = m_SkeletalAsset->GetSkeleton();
+        const auto& clip = GetAnimationClip();
+        return mesh && mesh->IsLoaded() && mesh->IsValid() && skeleton && skeleton->IsLoaded() &&
+            skeleton->IsValid() && clip && clip->IsLoaded() && clip->IsValid();
+    }
+
+    bool SkinnedMeshComponent::HasCurrentPose() const
+    {
+        return !m_bPoseDirty && HasValidPoseResources() && !m_Pose.JointModelMatrices.empty() &&
+               m_EvaluatedMesh.lock() == m_SkeletalAsset->GetMesh() &&
+               m_EvaluatedSkeleton.lock() == m_SkeletalAsset->GetSkeleton() &&
+               m_EvaluatedClip.lock() == GetAnimationClip();
+    }
+
+    int32_t SkinnedMeshComponent::FindJointIndex(Identity name) const
+    {
+        return HasValidPoseResources() ? m_SkeletalAsset->GetSkeleton()->FindJointIndex(name) : -1;
+    }
+
+    bool SkinnedMeshComponent::TryGetJointModelMatrix(uint32_t index, Math::Matrix4x4& outMatrix) const
+    {
+        if (!HasCurrentPose() || index >= m_Pose.JointModelMatrices.size()) return false;
+        outMatrix = m_Pose.JointModelMatrices[index];
+        return true;
+    }
+
+    bool SkinnedMeshComponent::TryGetJointWorldMatrix(uint32_t index, Math::Matrix4x4& outMatrix) const
+    {
+        Math::Matrix4x4 model;
+        if (!GetOwner() || !TryGetJointModelMatrix(index, model)) return false;
+        const Math::Matrix4x4 world = model * BuildOwnerWorldTransform();
+        for (size_t row = 0; row < 4; ++row)
+            for (size_t column = 0; column < 4; ++column)
+                if (!std::isfinite(world.m[row][column])) return false;
+        outMatrix = world;
+        return true;
+    }
+
+    bool SkinnedMeshComponent::TryGetJointWorldTransform(uint32_t index, Math::Transform& outTransform) const
+    {
+        Math::Matrix4x4 matrix;
+        if (!TryGetJointWorldMatrix(index, matrix)) return false;
+        // EngineのCreateWorldRowVectorは列ごとのscale。Sampler局所行列の行scaleと区別する。
+        Math::Matrix4x4 rotation = Math::Matrix4x4::Identity;
+        float scales[3]{};
+        for (size_t column = 0; column < 3; ++column)
+        {
+            const double x = matrix.m[0][column], y = matrix.m[1][column], z = matrix.m[2][column];
+            scales[column] = static_cast<float>(std::sqrt(x*x + y*y + z*z));
+            if (!std::isfinite(scales[column]) || scales[column] <= Math::Constants::EPSILON) return false;
+            for (size_t row = 0; row < 3; ++row) rotation.m[row][column] = matrix.m[row][column] / scales[column];
+        }
+        const float determinant = rotation.m00 * (rotation.m11*rotation.m22 - rotation.m12*rotation.m21) -
+            rotation.m01 * (rotation.m10*rotation.m22 - rotation.m12*rotation.m20) +
+            rotation.m02 * (rotation.m10*rotation.m21 - rotation.m11*rotation.m20);
+        if (std::fabs(determinant - 1.0f) > 1e-4f) return false;
+        Math::Quaternion quaternion = Math::QuaternionUtils::FromRotationMatrix(rotation);
+        const float length = std::sqrt(quaternion.x*quaternion.x + quaternion.y*quaternion.y +
+            quaternion.z*quaternion.z + quaternion.w*quaternion.w);
+        if (!std::isfinite(length) || length <= Math::Constants::EPSILON) return false;
+        quaternion = Math::Quaternion(quaternion.x/length, quaternion.y/length, quaternion.z/length, quaternion.w/length);
+        const Math::Transform result(matrix.GetTranslationRow(), quaternion,
+            Math::Vector3(scales[0], scales[1], scales[2]));
+        const auto reconstructed = Math::MatrixUtils::CreateWorldRowVector(result.position, result.rotation, result.scale);
+        for (size_t row = 0; row < 4; ++row)
+            for (size_t column = 0; column < 4; ++column)
+                if (std::fabs(reconstructed.m[row][column] - matrix.m[row][column]) >
+                    1e-5f * std::fmax(1.0f, std::fabs(matrix.m[row][column]))) return false;
+        outTransform = result;
+        return true;
     }
 
     Math::Matrix4x4 SkinnedMeshComponent::BuildOwnerWorldTransform() const

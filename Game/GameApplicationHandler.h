@@ -1,15 +1,17 @@
 ﻿#pragma once
 
 #include <cstdint>
+#include "CameraLateUpdate.h"
+#include "Input/GameInputSettings.h"
 
 #include "Core/Public/Application/ApplicationHandlerBase.h"
 
 #include "Bridge/BridgeRuntimeState.h"
 #include "Bridge/BridgeServerHost.h"
 #include "Bridge/NorvesLibBridgeAdapter.h"
-#include "Scripting/M6ScriptSmokeController.h"
 #include "Debug/SequenceFrameCapture.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
+#include "Scripting/M6ScriptSmokeController.h"
 
 #if defined(NORVES_ENABLE_IMGUI)
 #include "Debug/EngineStatsImGuiView.h"
@@ -40,6 +42,7 @@ namespace Game
         virtual bool OnInitialize() override;
         virtual void OnPostInitialize() override;
         virtual void OnUpdate(float deltaTime) override;
+        void OnLateUpdate(float deltaTime) override;
         virtual void OnPreRender() override;
         virtual void OnPostRender() override;
         virtual void OnPreShutdown() override;
@@ -96,12 +99,18 @@ namespace Game
         bool ReloadConfiguredAssetManifest();
 
         /**
-         * @brief クック済みのマニフェストを使えないとき、マニフェストの無い AssetSystem を「クック済みを使う前提」で入れる。
-         * @note ばらの元画像の root（m_TextureLooseAssetRoot）を読み、読んだ各パスに TEXTURE_COOKED_MISSING を1回ずつ警告する。
+         * @brief クック済みのマニフェストを使えないとき、マニフェストの無い
+         * AssetSystem を「クック済みを使う前提」で入れる。
+         * @note ばらの元画像の
+         * root（m_TextureLooseAssetRoot）を読み、読んだ各パスに
+         * TEXTURE_COOKED_MISSING を1回ずつ警告する。
          */
         void InstallCookedManifestUnavailableAssetSystem();
 
         bool PrepareM9WorldAssets();
+        bool HasPendingAssetConsumers() const override;
+        Game::Input::GameInputSettings& GetInputSettings() { return m_InputSettings; }
+        const Game::Input::GameInputSettings& GetInputSettings() const { return m_InputSettings; }
 
         /**
          * @brief Bridge 読み取り用の immutable asset snapshot を取得する。
@@ -112,12 +121,17 @@ namespace Game
         GetAssetSystemSnapshot() const;
 
         /**
-         * @brief クック済みのマニフェストに、テクスチャの論理パス（"Assets/..." でもよい）の項目があるか。
-         * @note マニフェストを読んでいない（クック済みを使わない）ときは常に false。
+         * @brief クック済みのマニフェストに、テクスチャの論理パス（"Assets/..."
+         * でもよい）の項目があるか。
+         * @note マニフェストを読んでいない（クック済みを使わない）ときは常に
+         * false。
          */
         bool IsTextureCooked(const NorvesLib::Core::Container::String &logicalPath) const;
 
     private:
+        Game::Input::GameInputSettings m_InputSettings;
+        NorvesLib::Core::Container::TSharedPtr<CameraLateUpdateSlot> m_CameraLateUpdateSlot =
+            NorvesLib::Core::Container::MakeShared<CameraLateUpdateSlot>();
         /**
          * @brief --bridge-port を解析する（OnPreInitialize から呼ぶ）。無効値は
          *        m_bBridgeEnabled=false のまま（Bridge 無効）にして警告ログを出すのみで、
@@ -128,8 +142,11 @@ namespace Game
             const NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Container::String>& args);
 
         /**
-         * @brief 非同期の読み込みが落ち着いた最初の描画の後に、テクスチャとバッファの確保量を VRAM_LEDGER として1回ログへ出す。
-         * @note 読み込み中を一度も見ないまま一定フレームが過ぎたときも、その時点で1回出す。
+         * @brief
+         * 非同期の読み込みが落ち着いた最初の描画の後に、テクスチャとバッファの確保量を
+         * VRAM_LEDGER として1回ログへ出す。
+         * @note
+         * 読み込み中を一度も見ないまま一定フレームが過ぎたときも、その時点で1回出す。
          */
         void LogVramLedgerOnce();
 

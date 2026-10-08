@@ -1,42 +1,43 @@
 ﻿#include "Rendering/MegaGeometryPass.h"
+#include "Debug/DebugConfig.h"
+#include "Debug/Stats.h"
+#include "Logging/LogMacros.h"
+#include "Math/MatrixUtils.h"
+#include "RHI/DeviceCapabilities.h"
+#include "RHI/IBuffer.h"
+#include "RHI/ICommandList.h"
+#include "RHI/IDescriptorSet.h"
+#include "RHI/IDevice.h"
+#include "RHI/IFramebuffer.h"
+#include "RHI/IGPUResourceAllocator.h"
+#include "RHI/ISampler.h"
+#include "RHI/ITexture.h"
+#include "Rendering/CameraViewConstants.h"
+#include "Rendering/ConstantMaterialTextureCache.h"
 #include "Rendering/FrameCommand.h"
-#include "Rendering/SparseResidencyShading.h"
-#include "Rendering/VirtualTextureFeedbackMaterial.h"
-#include "Rendering/ViewRenderContext.h"
-#include "Rendering/RenderResources.h"
-#include "Rendering/SceneView.h"
-#include "Rendering/SceneRenderer.h"
-#include "Rendering/ScopedGpuTimestamp.h"
-#include "Rendering/ShaderManager.h"
-#include "Rendering/SharedResourceRegistry.h"
-#include "Rendering/VisibilityRasterPass.h"
-#include "Rendering/VisibilityResolvePass.h"
+#include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
+#include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
-#include "Rendering/ProceduralMeshGenerator.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/SceneProxy.h"
-#include "Rendering/CameraViewConstants.h"
-#include "Debug/DebugConfig.h"
-#include "Debug/Stats.h"
-#include "Math/MatrixUtils.h"
-#include "RHI/IDevice.h"
-#include "RHI/ICommandList.h"
-#include "RHI/IBuffer.h"
-#include "RHI/IFramebuffer.h"
-#include "RHI/ITexture.h"
-#include "RHI/IDescriptorSet.h"
-#include "RHI/ISampler.h"
-#include "RHI/IGPUResourceAllocator.h"
-#include "RHI/DeviceCapabilities.h"
+#include "Rendering/SceneRenderer.h"
+#include "Rendering/SceneView.h"
+#include "Rendering/ScopedGpuTimestamp.h"
+#include "Rendering/ShaderManager.h"
+#include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/SparseResidencyShading.h"
+#include "Rendering/ViewRenderContext.h"
+#include "Rendering/VirtualTextureFeedbackMaterial.h"
 #include "Rendering/VisibilityMerge.h"
+#include "Rendering/VisibilityRasterPass.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "Text/IdentityPool.h"
-#include "Logging/LogMacros.h"
-#include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
-#include <cmath>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -302,7 +303,8 @@ namespace NorvesLib::Core::Rendering
             if (!initCaps.bBufferDeviceAddress || !initCaps.bDrawIndirectFirstInstance)
             {
                 NORVES_LOG_ERROR("MegaGeometryPass",
-                                 "MEGA_BATCH_UNSUPPORTED buffer_device_address=%d draw_indirect_first_instance=%d "
+                                 "MEGA_BATCH_UNSUPPORTED buffer_device_address=%d "
+                                 "draw_indirect_first_instance=%d "
                                  "まとめたカリング・描画に対応しないため、パスは無効化されます",
                                  initCaps.bBufferDeviceAddress ? 1 : 0,
                                  initCaps.bDrawIndirectFirstInstance ? 1 : 0);
@@ -357,8 +359,8 @@ namespace NorvesLib::Core::Rendering
         }
         if (!m_BvhCullPipeline)
         {
-            NORVES_LOG_WARNING("MegaGeometryPass",
-                               "MEGA_BVH_UNAVAILABLE BVH をたどるカリングを作れないため、平らなクラスタの列で判定します");
+            NORVES_LOG_WARNING("MegaGeometryPass", "MEGA_BVH_UNAVAILABLE BVH "
+                                                   "をたどるカリングを作れないため、平らなクラスタの列で判定します");
         }
 
         // 遮蔽カリング（2パス）の HZB。作れなければ従来の1回の判定で描く
@@ -507,6 +509,7 @@ namespace NorvesLib::Core::Rendering
         m_DefaultWhiteTexture.reset();
         m_DefaultFlatNormalTexture.reset();
         m_DefaultBlackTexture.reset();
+        m_ConstantMaterialTextures.reset();
         m_DefaultLinearSampler.reset();
 
         m_Instances.clear();
@@ -952,18 +955,13 @@ namespace NorvesLib::Core::Rendering
                     return false;
                 }
             }
-            return a.EmissiveLuminanceNits == b.EmissiveLuminanceNits &&
-                   a.AlbedoTexture == b.AlbedoTexture &&
-                   a.NormalTexture == b.NormalTexture &&
-                   a.MetallicTexture == b.MetallicTexture &&
-                   a.RoughnessTexture == b.RoughnessTexture &&
-                   a.AOTexture == b.AOTexture &&
-                   a.ORMTexture == b.ORMTexture &&
-                   a.HeightTexture == b.HeightTexture &&
-                   a.bNormalTwoChannel == b.bNormalTwoChannel &&
-                   a.HeightScale == b.HeightScale &&
-                   a.bHasHeightMap == b.bHasHeightMap &&
-                   a.DisplacementUVSpacing == b.DisplacementUVSpacing;
+            return a.Metallic == b.Metallic && a.Roughness == b.Roughness &&
+                   a.OcclusionStrength == b.OcclusionStrength && a.EmissiveLuminanceNits == b.EmissiveLuminanceNits &&
+                   a.AlbedoTexture == b.AlbedoTexture && a.NormalTexture == b.NormalTexture &&
+                   a.MetallicTexture == b.MetallicTexture && a.RoughnessTexture == b.RoughnessTexture &&
+                   a.AOTexture == b.AOTexture && a.ORMTexture == b.ORMTexture && a.HeightTexture == b.HeightTexture &&
+                   a.bNormalTwoChannel == b.bNormalTwoChannel && a.HeightScale == b.HeightScale &&
+                   a.bHasHeightMap == b.bHasHeightMap && a.DisplacementUVSpacing == b.DisplacementUVSpacing;
         }
 
         // 材質の区間ごとの定数（megageometry.vert/frag の MVPData と一致。ワールド変換はインスタンスの表にある）
@@ -1061,7 +1059,8 @@ namespace NorvesLib::Core::Rendering
             !m_bMegaGeometryDebugPayloadUnsupportedWarned)
         {
             NORVES_LOG_WARNING("MegaGeometryPass",
-                               "%s debug view requires DrawIndirectFirstInstance; using normal MegaGeometry shading",
+                               "%s debug view requires DrawIndirectFirstInstance; "
+                               "using normal MegaGeometry shading",
                                DebugViewModeToString(command.DebugMode));
             m_bMegaGeometryDebugPayloadUnsupportedWarned = true;
         }
@@ -1089,8 +1088,9 @@ namespace NorvesLib::Core::Rendering
             if (!m_bUnsetFrameSerialWarned)
             {
                 m_bUnsetFrameSerialWarned = true;
-                NORVES_LOG_WARNING("MegaGeometryPass",
-                                   "FRAME_SERIAL_UNSET フレームの通し番号が無いコマンドです。記録ごとに別のフレームとして扱います");
+                NORVES_LOG_WARNING("MegaGeometryPass", "FRAME_SERIAL_UNSET "
+                                                       "フレームの通し番号が無いコマンドです。記録ごとに"
+                                                       "別のフレームとして扱います");
             }
             frameSerial = m_OcclusionFrameCount;
         }
@@ -1195,10 +1195,11 @@ namespace NorvesLib::Core::Rendering
                 if (!m_bBatchUnsupportedLogged)
                 {
                     NORVES_LOG_ERROR("MegaGeometryPass",
-                                     "MEGA_BATCH_INSTANCE_SKIPPED mesh=\"%s\" addressable=%d aligned=%d "
-                                     "メッシュの区画をまとめた描画で引けないため、このメッシュは描きません",
-                                     gpuData->DebugName.empty() ? "" : gpuData->DebugName.c_str(),
-                                     bAddressable ? 1 : 0,
+                                     "MEGA_BATCH_INSTANCE_SKIPPED mesh=\"%s\" addressable=%d "
+                                     "aligned=%d "
+                                     "メッシュの区画をまとめた描画で引けないため、このメッシュは描き"
+                                     "ません",
+                                     gpuData->DebugName.empty() ? "" : gpuData->DebugName.c_str(), bAddressable ? 1 : 0,
                                      bAligned ? 1 : 0);
                     m_bBatchUnsupportedLogged = true;
                 }
@@ -1356,7 +1357,8 @@ namespace NorvesLib::Core::Rendering
             m_LoggedBvhLevels = bvhLevelCount;
             m_LoggedFlatInstances = static_cast<uint32_t>(instanceTable.size()) - bvhInstanceCount;
             NORVES_LOG_INFO("MegaGeometryPass",
-                            "MEGA_BVH bvh_instances=%u flat_instances=%u levels=%u leaf_capacity=%llu queue_entries=%llu "
+                            "MEGA_BVH bvh_instances=%u flat_instances=%u levels=%u "
+                            "leaf_capacity=%llu queue_entries=%llu "
                             "flat_groups=%llu dispatches_per_pass=%u",
                             bvhInstanceCount,
                             static_cast<uint32_t>(instanceTable.size()) - bvhInstanceCount,
@@ -1379,7 +1381,8 @@ namespace NorvesLib::Core::Rendering
             }
             else
             {
-                NORVES_LOG_ERROR("MegaGeometryPass", "見えたビットのバッファを作れませんでした。遮蔽カリングを使わずに描きます");
+                NORVES_LOG_ERROR("MegaGeometryPass", "見えたビットのバッファを作れませんでした。遮蔽カリ"
+                                                     "ングを使わずに描きます");
                 bTwoPass = false;
             }
         }
@@ -1439,7 +1442,8 @@ namespace NorvesLib::Core::Rendering
                     if (!m_bStatsLoggedOnce || bSampleFrame || m_Settings.bStatsEveryFrame)
                     {
                         NORVES_LOG_INFO("MegaGeometryPass",
-                                        "MEGA_OCCLUSION frame=%llu epoch_frame=%lld pass1=%u pass2_tested=%u pass2_drawn=%u occluded=%u",
+                                        "MEGA_OCCLUSION frame=%llu epoch_frame=%lld pass1=%u "
+                                        "pass2_tested=%u pass2_drawn=%u occluded=%u",
                                         static_cast<unsigned long long>(slot.RenderFrame),
                                         static_cast<long long>(slot.EpochFrame),
                                         slot.Mapped[0],
@@ -1450,14 +1454,11 @@ namespace NorvesLib::Core::Rendering
                         {
                             // 振り分けの結果。ソフトのラスタが無い間は、ハードがすべてのクラスタを描く（hw は一覧へ積まなかった数）
                             NORVES_LOG_INFO("MegaGeometryPass",
-                                            "SW_RASTER_BIN pass1=%u pass2=%u hw=%u overflow=%u zeroed=%u sw_groups=%u sw_dispatches=%u frame=%llu epoch_frame=%lld",
-                                            slot.Mapped[4],
-                                            slot.Mapped[5],
-                                            slot.Mapped[6],
-                                            slot.Mapped[7],
-                                            slot.Mapped[8],
-                                            slot.Mapped[10],
-                                            slot.SwDispatches,
+                                            "SW_RASTER_BIN pass1=%u pass2=%u hw=%u overflow=%u "
+                                            "zeroed=%u sw_groups=%u sw_dispatches=%u frame=%llu "
+                                            "epoch_frame=%lld",
+                                            slot.Mapped[4], slot.Mapped[5], slot.Mapped[6], slot.Mapped[7],
+                                            slot.Mapped[8], slot.Mapped[10], slot.SwDispatches,
                                             static_cast<unsigned long long>(slot.RenderFrame),
                                             static_cast<long long>(slot.EpochFrame));
                             // ソフトが 1 スレッド 1 三角形で走査する矩形（一辺の上限は振り分けのしきい値から max(64, ceil(2 × しきい値) + 2) 画素で決める）を超えて描かなかった三角形の数。振り分けのしきい値が保守的なら 0
@@ -1629,13 +1630,37 @@ namespace NorvesLib::Core::Rendering
             uniform.MaterialParams[0] = orm ? 1.0f : 0.0f;
             uniform.MaterialParams[1] = mat.bNormalTwoChannel ? 1.0f : 0.0f;
 
+            if (!std::isfinite(mat.Metallic) || !std::isfinite(mat.Roughness) || !std::isfinite(mat.OcclusionStrength))
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass", "材質の定数が有限値ではありません");
+                continue;
+            }
+            const auto constant = [&](float value) -> RHI::TexturePtr
+            {
+                if (!m_ConstantMaterialTextures)
+                {
+                    m_ConstantMaterialTextures = Container::MakeUnique<ConstantMaterialTextureCache>();
+                }
+                return m_ConstantMaterialTextures->GetOrCreate(m_Device, value);
+            };
             // PBRテクスチャ
             auto albedo = resolveTexture(mat.AlbedoTexture, m_DefaultWhiteTexture);
             auto normal = resolveTexture(mat.NormalTexture, m_DefaultFlatNormalTexture);
-            auto metallic = orm ? orm : resolveTexture(mat.MetallicTexture, m_DefaultBlackTexture);
-            auto roughness = orm ? orm : resolveTexture(mat.RoughnessTexture, m_DefaultWhiteTexture);
-            auto ao = orm ? orm : resolveTexture(mat.AOTexture, m_DefaultWhiteTexture);
+            auto metallic = orm ? orm
+                                : resolveTexture(mat.MetallicTexture,
+                                                 mat.Metallic >= 0 ? constant(mat.Metallic) : m_DefaultBlackTexture);
+            auto roughness = orm ? orm
+                                 : resolveTexture(mat.RoughnessTexture,
+                                                  mat.Roughness >= 0 ? constant(mat.Roughness) : m_DefaultWhiteTexture);
+            auto ao = orm ? orm
+                          : resolveTexture(mat.AOTexture, mat.OcclusionStrength == 1 ? m_DefaultWhiteTexture
+                                                                                     : constant(mat.OcclusionStrength));
             auto height = resolveTexture(mat.HeightTexture, m_DefaultBlackTexture);
+            if (!metallic || !roughness || !ao)
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass", "材質の定数テクスチャを準備できません");
+                continue;
+            }
 
             // 張るテクスチャに sparse（VT）が1枚でもあれば、シェーダーは常駐しないタイルを読まず粗いミップへ逃げる。
             uniform.MaterialParams[2] = AnySparseTexture(albedo, normal, metallic, roughness, ao, height) ? 1.0f : 0.0f;
@@ -2070,22 +2095,19 @@ namespace NorvesLib::Core::Rendering
                 // 非対応の場合は区間のコマンドの最大数をそのまま使用（積まれなかった分は instanceCount=0 で空振り）。
                 const uint64_t commandOffsetBytes =
                     (static_cast<uint64_t>(passIndex) * commandsPerPass + section.CommandBase) * IndirectCommandBytes;
-                if (caps.bDrawIndirectCount)
-                {
-                    cmdList->DrawIndexedIndirectCount(
-                        m_IndirectDrawBuffer, commandOffsetBytes,
-                        m_DrawCountBuffer, static_cast<uint64_t>(passIndex * sectionCount + sectionIndex) * sizeof(uint32_t),
-                        section.Capacity,
-                        IndirectCommandBytes);
-                }
-                else
-                {
-                    cmdList->DrawIndexedIndirect(
-                        m_IndirectDrawBuffer, commandOffsetBytes,
-                        section.Capacity,
-                        IndirectCommandBytes);
-                }
+            if (caps.bDrawIndirectCount)
+            {
+                    cmdList->DrawIndexedIndirectCount(m_IndirectDrawBuffer, commandOffsetBytes, m_DrawCountBuffer,
+                                                      static_cast<uint64_t>(passIndex * sectionCount + sectionIndex) *
+                                                          sizeof(uint32_t),
+                                                      section.Capacity, IndirectCommandBytes);
             }
+            else
+            {
+                    cmdList->DrawIndexedIndirect(m_IndirectDrawBuffer, commandOffsetBytes, section.Capacity,
+                        IndirectCommandBytes);
+            }
+        }
 
             cmdList->EndRenderPass();
         };
@@ -2334,8 +2356,10 @@ namespace NorvesLib::Core::Rendering
         const MegaGeometry::MegaMeshLevelRange &range = gpuData.LevelRanges[level];
         const bool bHasCoarser = level + 1u < gpuData.LevelRanges.size();
         NORVES_LOG_INFO("MegaGeometryPass",
-                        "mega_lod_select mesh=\"%s\" level=%u level_triangles=%u camera_to_lod_center_m=%.3f "
-                        "lod_radius_m=%.3f center_depth_m=%.3f perspective_stretch=%.3f threshold_px=%.2f "
+                        "mega_lod_select mesh=\"%s\" level=%u level_triangles=%u "
+                        "camera_to_lod_center_m=%.3f "
+                        "lod_radius_m=%.3f center_depth_m=%.3f perspective_stretch=%.3f "
+                        "threshold_px=%.2f "
                         "level_error_px=%.3f coarser_level_error_px=%.3f",
                         gpuData.DebugName.empty() ? "" : gpuData.DebugName.c_str(),
                         level,
@@ -2948,7 +2972,8 @@ namespace NorvesLib::Core::Rendering
             }
             if (!m_SecondGBufferRenderPass || !m_SecondGBufferFramebuffer)
             {
-                NORVES_LOG_WARNING("MegaGeometryPass", "2パス目のGBuffer互換レンダーパスの作成に失敗。遮蔽カリングは使いません");
+                NORVES_LOG_WARNING("MegaGeometryPass", "2パス目のGBuffer互換レンダーパスの作成に失敗。"
+                                                       "遮蔽カリングは使いません");
             }
         }
 

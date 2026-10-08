@@ -11,13 +11,13 @@
 
 namespace NorvesLib::Core::Rendering
 {
-    using Resource::CookedModelLoadPlan;
-    using Resource::ModelAsyncLoadQueue;
-    using Resource::ModelCacheAcquireResult;
-    using Resource::ModelCacheHandleBatch;
-    using Resource::ModelCachePublishResult;
-    using Resource::ModelCacheReleaseResult;
-    namespace ModelStaging = Resource::ModelStaging;
+    using ResourceIO::CookedModelLoadPlan;
+    using ResourceIO::ModelAsyncLoadQueue;
+    using ResourceIO::ModelCacheAcquireResult;
+    using ResourceIO::ModelCacheHandleBatch;
+    using ResourceIO::ModelCachePublishResult;
+    using ResourceIO::ModelCacheReleaseResult;
+    namespace ModelStaging = ResourceIO::ModelStaging;
     namespace
     {
         bool BuildNormalizedPathAndKey(const Container::String& logicalPath,

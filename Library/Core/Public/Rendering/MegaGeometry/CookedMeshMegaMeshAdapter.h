@@ -35,10 +35,12 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     /**
      * @brief クック済みメッシュから MegaMeshCreateInfo を作る
      *
-     * VertexData・IndexData は cooked の配列を指すので、cooked は CreateMegaMesh が終わるまで生かしておく。
-     * v0 は従来の1段のメッシュ（bBakedLODHierarchy=false、フォールバック無し）。
-     * v1 は全段のクラスタとグループの表、フォールバックの範囲を渡す（bBuildLODHierarchy は false のまま）。
-     * 材質（テクスチャ）は含まない。呼び出し側が Material へ入れる。
+     * VertexData・IndexData は cooked の配列を指すので、cooked は CreateMegaMesh
+     * が終わるまで生かしておく。 v0
+     * は従来の1段のメッシュ（bBakedLODHierarchy=false、フォールバック無し）。 v1
+     * は全段のクラスタとグループの表、フォールバックの範囲を渡す（bBuildLODHierarchy
+     * は false のまま）。 材質（テクスチャ）は含まない。呼び出し側が Material
+     * へ入れる。
      *
      * @return 頂点・インデックス・クラスタのどれかが空なら false
      */
@@ -80,7 +82,7 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
             cluster.ParentStart = cookedCluster.ParentStart;
             cluster.ParentCount = cookedCluster.ParentCount;
             cluster.MaterialIndex = cookedCluster.MaterialIndex;
-            if (cooked.FormatMajor >= 1)
+            if (cooked.Layout == Asset::CookedMeshLayout::LodGraphV1)
             {
                 cluster.ParentBounds = ToSphere(cookedCluster.ParentBoundsCenter, cookedCluster.ParentBoundsRadius);
                 cluster.ParentError = cookedCluster.ParentError;
@@ -95,12 +97,12 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         outCreateInfo.GroupBVH.clear();
         outCreateInfo.Pages.clear();
         outCreateInfo.PageSource = nullptr;
-        outCreateInfo.bBakedLODHierarchy = cooked.FormatMajor >= 1;
+        outCreateInfo.bBakedLODHierarchy = cooked.Layout == Asset::CookedMeshLayout::LodGraphV1;
         outCreateInfo.BakedLODLevelCount = cooked.LODLevelCount;
         outCreateInfo.FallbackIndexOffset = 0;
         outCreateInfo.FallbackIndexCount = 0;
         outCreateInfo.FallbackError = 0.0f;
-        if (cooked.FormatMajor >= 1)
+        if (cooked.Layout == Asset::CookedMeshLayout::LodGraphV1)
         {
             outCreateInfo.ClusterGroups.reserve(cooked.Groups.size());
             for (const Asset::CookedMeshClusterGroup &cookedGroup : cooked.Groups)

@@ -7,6 +7,17 @@
 namespace NorvesLib::Core::Input
 {
 
+    void LightController::OnInputReset()
+    {
+        m_bHoldYawNeg = false;
+        m_bHoldYawPos = false;
+        m_bHoldPitchNeg = false;
+        m_bHoldPitchPos = false;
+        m_bHoldIntensityUp = false;
+        m_bHoldIntensityDown = false;
+        m_bHoldShift = false;
+    }
+
     LightController::LightController()
         : m_TargetLight(nullptr), m_Yaw(45.0f), m_Pitch(-45.0f), m_RotationSpeed(90.0f), m_IntensitySpeed(1.0f), m_KeyYawNeg(KeyCode::Left), m_KeyYawPos(KeyCode::Right), m_KeyPitchNeg(KeyCode::Down), m_KeyPitchPos(KeyCode::Up), m_KeyIntensityUp(KeyCode::Equal), m_KeyIntensityDown(KeyCode::Minus)
     {

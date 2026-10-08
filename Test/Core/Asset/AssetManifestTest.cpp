@@ -155,6 +155,33 @@ int main()
         assert(reference.SkeletalMetadata.IndexCount == 36);
         assert(reference.SkeletalMetadata.JointCount == 4);
         assert(reference.SkeletalMetadata.ClipCount == 2);
+        assert(!reference.SkeletalMetadata.bHasSubmeshCounts && reference.SkeletalMetadata.SubmeshCount == 0 &&
+            reference.SkeletalMetadata.MaterialSlotCount == 0);
+    }
+
+    for (const TCHAR* fields : {_T("\"clip_count\":2,\"submesh_count\":1,\"material_slot_count\":1"),
+        _T("\"clip_count\":2,\"submesh_count\":2,\"material_slot_count\":2"),
+        _T("\"clip_count\":2,\"submesh_count\":8,\"material_slot_count\":8")})
+    {
+        AssetManifest manifest;
+        assert(LoadManifestText(Replace(SkeletalManifest(),_T("\"clip_count\":2"),fields),manifest));
+        const auto& metadata = manifest.GetReference(0).SkeletalMetadata;
+        assert(metadata.bHasSubmeshCounts && metadata.SubmeshCount == metadata.MaterialSlotCount);
+    }
+    for (const TCHAR* fields : {_T("\"clip_count\":2,\"submesh_count\":1"),
+        _T("\"clip_count\":2,\"material_slot_count\":1"),
+        _T("\"clip_count\":2,\"submesh_count\":0,\"material_slot_count\":1"),
+        _T("\"clip_count\":2,\"submesh_count\":9,\"material_slot_count\":1"),
+        _T("\"clip_count\":2,\"submesh_count\":1,\"material_slot_count\":9"),
+        _T("\"clip_count\":2,\"submesh_count\":-1,\"material_slot_count\":1"),
+        _T("\"clip_count\":2,\"submesh_count\":1.5,\"material_slot_count\":1"),
+        _T("\"clip_count\":2,\"submesh_count\":null,\"material_slot_count\":1"),
+        _T("\"clip_count\":2,\"submesh_count\":\"1\",\"material_slot_count\":1"),
+        _T("\"clip_count\":2,\"submesh_count\":4294967296,\"material_slot_count\":1")})
+    {
+        AssetManifest manifest;
+        assert(!LoadManifestText(Replace(SkeletalManifest(),_T("\"clip_count\":2"),fields),manifest));
+        assert(manifest.GetParseStatus() == AssetManifestParseStatus::InvalidField);
     }
 
     {

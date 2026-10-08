@@ -1,5 +1,9 @@
 ﻿#pragma once
 
+#include "Resource/SkeletalSubMesh.h"
+
+#include "Resource/SkeletalImportOptions.h"
+
 #include "Container/Containers.h"
 
 #include <cstdint>
@@ -70,11 +74,25 @@ namespace NorvesLib::Core::Skeletal
         Container::VariableArray<SkeletalAnimationSample> Samples;
     };
 
+    struct SkeletalRootMotionSample
+    {
+        float TimeSeconds = 0;
+        double TranslationX = 0, TranslationZ = 0, YawRadians = 0;
+    };
     struct SkeletalAnimationClip
     {
         Container::String Name;
         float DurationSeconds = 0.0f;
         Container::VariableArray<SkeletalAnimationChannel> Channels;
+        // GR84で抽出した先頭基準の軌跡。runtimeへの適用はAnimator側が明示する。
+        uint32_t RootMotionJoint = UINT32_MAX;
+        Container::VariableArray<SkeletalRootMotionSample> RootMotion;
+    };
+
+    // slot名のみを所有する。材質係数/textureの共有recordはGR79/v1で扱う。
+    struct SkeletalMaterialSlot
+    {
+        Container::String Name;
     };
 
     struct SkeletalGltfData
@@ -88,6 +106,9 @@ namespace NorvesLib::Core::Skeletal
         Container::VariableArray<uint32_t> Indices;
         Container::VariableArray<SkeletalJoint> Joints;
         Container::VariableArray<SkeletalAnimationClip> Clips;
+        // 両表空は旧データの全index/slot0を表す。片側だけ空は不正。
+        Container::VariableArray<SkeletalSubMesh> SubMeshes;
+        Container::VariableArray<SkeletalMaterialSlot> MaterialSlots;
     };
 
     enum class SkeletalGltfDecodeStatus : uint8_t
@@ -106,13 +127,23 @@ namespace NorvesLib::Core::Skeletal
         JointLimitExceeded,
         InvalidSkeleton,
         InvalidAnimation,
-        UnsupportedSparseAccessor
+        UnsupportedSparseAccessor,
+        InfluenceLimitExceeded,
+        InvalidImportOptions,
+        InfluenceReductionExceeded,
+        CubicBakeFailed,
+        SubmeshLimitExceeded,
+        MaterialSlotLimitExceeded,
+        InvalidSubMesh,
+        UnsupportedAuthorRest,
+        ImportLimitExceeded
     };
 
     struct SkeletalGltfDecodeResult
     {
         SkeletalGltfDecodeStatus Status = SkeletalGltfDecodeStatus::InvalidDocument;
         SkeletalGltfData Data;
+        SkeletalGltfDecodeReport Report;
 
         [[nodiscard]] bool Succeeded() const
         {

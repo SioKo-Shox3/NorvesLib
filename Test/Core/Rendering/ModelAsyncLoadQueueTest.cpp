@@ -10,11 +10,11 @@ using namespace NorvesLib::Core;
 
 namespace
 {
-    Resource::CookedModelLoadPlan MakePlan(
+    ResourceIO::CookedModelLoadPlan MakePlan(
         const Container::TSharedPtr<const Asset::AssetSystem>& snapshot,
         const Container::String& key)
     {
-        Resource::CookedModelLoadPlan plan;
+        ResourceIO::CookedModelLoadPlan plan;
         plan.AssetSystem = snapshot;
         plan.RequestPath = "models/a.glb";
         plan.NormalizedLogicalPath = "models/a.glb";
@@ -28,15 +28,15 @@ int main()
 {
     NorvesLib::Thread::JobSystem::Get().Initialize(1, NorvesLib::Thread::JobSystem::EXECUTION_SIMPLE);
 
-    Resource::ModelAsyncLoadQueue queue;
+    ResourceIO::ModelAsyncLoadQueue queue;
     assert(queue.GetPendingCount() == 0);
     auto snapshot = Container::MakeShared<Asset::AssetSystem>();
     Container::TWeakPtr<const Asset::AssetSystem> weakSnapshot = snapshot;
-    Resource::CookedModelLoadPlan plan = MakePlan(snapshot, "asset:7:default:models/a.glb");
+    ResourceIO::CookedModelLoadPlan plan = MakePlan(snapshot, "asset:7:default:models/a.glb");
     snapshot.reset();
 
     bool bFirstCalled = false;
-    Resource::ModelAsyncLoadQueue::Callback firstCallback(
+    ResourceIO::ModelAsyncLoadQueue::Callback firstCallback(
         [&bFirstCalled](Rendering::ModelHandle)
         {
             bFirstCalled = true;
@@ -48,7 +48,7 @@ int main()
     assert(!weakSnapshot.expired());
 
     bool bDuplicateCalled = false;
-    Resource::ModelAsyncLoadQueue::Callback duplicateCallback(
+    ResourceIO::ModelAsyncLoadQueue::Callback duplicateCallback(
         [&bDuplicateCalled](Rendering::ModelHandle)
         {
             bDuplicateCalled = true;
@@ -79,7 +79,7 @@ int main()
 
     auto secondSnapshot = Container::MakeShared<Asset::AssetSystem>();
     Container::TWeakPtr<const Asset::AssetSystem> weakSecondSnapshot = secondSnapshot;
-    Resource::CookedModelLoadPlan secondPlan = MakePlan(secondSnapshot, "asset:7:default:models/cancel.glb");
+    ResourceIO::CookedModelLoadPlan secondPlan = MakePlan(secondSnapshot, "asset:7:default:models/cancel.glb");
     bool bCancelledCallbackCalled = false;
     auto cancelledRequest = queue.CreateRequest(
         secondPlan,
@@ -109,7 +109,7 @@ int main()
     assert(weakSecondSnapshot.expired());
 
     {
-        Resource::ModelAsyncLoadQueue::CallbackContextGuard callbackContext;
+        ResourceIO::ModelAsyncLoadQueue::CallbackContextGuard callbackContext;
         assert(!queue.CloseCancelAllAndWait());
     }
     assert(queue.CloseCancelAllAndWait());

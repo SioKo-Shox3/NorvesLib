@@ -71,6 +71,24 @@ namespace NorvesLib::Modules::Physics
         return module ? module->SetColliderTrigger(*this, bTrigger) : EPhysicsResult::NotRegistered;
     }
 
+    EPhysicsResult ColliderComponent::SetCollisionLayer(Core::Scene::PhysicsCollisionMask layer)
+    {
+        PhysicsModule* module = FindRegisteredPhysicsModule();
+        return module ? module->SetColliderLayer(*this, layer) : EPhysicsResult::NotRegistered;
+    }
+
+    EPhysicsResult ColliderComponent::SetCollisionMask(Core::Scene::PhysicsCollisionMask mask)
+    {
+        PhysicsModule* module = FindRegisteredPhysicsModule();
+        return module ? module->SetColliderMask(*this, mask) : EPhysicsResult::NotRegistered;
+    }
+
+    EPhysicsResult ColliderComponent::SetUserData(uint64_t userData)
+    {
+        PhysicsModule* module = FindRegisteredPhysicsModule();
+        return module ? module->SetColliderUserData(*this, userData) : EPhysicsResult::NotRegistered;
+    }
+
     Core::Scene::ColliderHandle ColliderComponent::GetColliderHandle() const
     {
         return m_ColliderHandle;

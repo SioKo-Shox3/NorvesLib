@@ -4,6 +4,7 @@
 #include "Object/ObjectCast.h"
 #include "Component/Component.h"
 #include "Component/MeshComponent.h"
+#include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core
 {
@@ -183,9 +184,28 @@ namespace NorvesLib::Core
             return;
         }
 
+        if (World* world = GetWorld())
+        {
+            if (world->IsDeferringObjectRemoval())
+            {
+                MarkForDestroy();
+                return;
+            }
+        }
         while (!m_Inners.empty())
         {
             IUnknown *inner = m_Inners.back();
+            if (World* world = GetWorld())
+            {
+                if (auto* child = CastTo<Entity>(inner))
+                {
+                    world->InvalidateTickEntitySubtree(*child);
+                }
+                else if (auto* component = CastTo<Component::Component>(inner))
+                {
+                    world->InvalidateTickComponent(*component);
+                }
+            }
             if (!DestroyContextOwnedInner(*this, inner))
             {
                 RemoveInner(inner);
@@ -228,6 +248,39 @@ namespace NorvesLib::Core
     bool Entity::IsInWorld() const
     {
         return GetWorld() != nullptr;
+    }
+
+    bool Entity::RemoveInner(IUnknown* inner)
+    {
+        if (!inner)
+        {
+            return false;
+        }
+        bool bFound = false;
+        for (IUnknown* candidate : m_Inners)
+        {
+            if (candidate == inner)
+            {
+                bFound = true;
+                break;
+            }
+        }
+        if (!bFound)
+        {
+            return false;
+        }
+        if (World* world = GetWorld())
+        {
+            if (auto* component = CastTo<Component::Component>(inner))
+            {
+                world->InvalidateTickComponent(*component);
+            }
+            else if (auto* child = CastTo<Entity>(inner))
+            {
+                world->InvalidateTickEntitySubtree(*child);
+            }
+        }
+        return UnknownImpl::RemoveInner(inner);
     }
 
     bool Entity::AddInner(IUnknown* inner)
@@ -498,7 +551,28 @@ namespace NorvesLib::Core
         return true;
     }
 
-    void Entity::RemoveComponent(Component::Component *component)
+    void Entity::RemoveComponent(Component::Component* component)
+    {
+        if (!component || component->GetOwner() != this)
+        {
+            return;
+        }
+        if (World* world = GetWorld())
+        {
+            if (world->IsDeferringObjectRemoval())
+            {
+                component->MarkForDestroy();
+#ifndef NDEBUG
+                NORVES_LOG_WARNING("World", "TICK_DEFERRED_REMOVE_COMPONENT id=%llu",
+                    static_cast<uint64_t>(component->GetComponentId()));
+#endif
+                return;
+            }
+        }
+        RemoveComponentImmediately(component);
+    }
+
+    void Entity::RemoveComponentImmediately(Component::Component *component)
     {
         if (!component)
         {
@@ -510,6 +584,10 @@ namespace NorvesLib::Core
         {
             if (inner == component)
             {
+                if (World* world = GetWorld())
+                {
+                    world->InvalidateTickComponent(*component);
+                }
                 // Innerから除去して破棄する
                 if (!DestroyContextOwnedInner(*this, component))
                 {

@@ -4,6 +4,7 @@
 #include "Reflection.h"
 #include "Entity.h"
 #include "Component/Component.h"
+#include "Component/TickDispatch.h"
 #include "Container/Containers.h"
 #include <cstdint>
 #include <type_traits>
@@ -211,6 +212,8 @@ namespace NorvesLib::Core
          * @param deltaTime 前フレームからの経過時間（秒）
          */
         void Tick(float deltaTime);
+        // 同じフレームの収集結果を用い、物理後の群を実行する。再収集はしない。
+        void LateTick(float deltaTime);
 
         /**
          * @brief 描画先SceneViewを設定
@@ -249,6 +252,26 @@ namespace NorvesLib::Core
 
     private:
         friend class Engine::ApplicationProcessor;
+        friend class Entity;
+        friend struct WorldTickGroupTestAccess;
+        bool IsDeferringObjectRemoval() const
+        {
+            return m_bDispatchingTicks || m_bCleaningObjects;
+        }
+        void BuildTickSnapshot();
+        void CollectTickEntries(Entity& entity, size_t& ordinal);
+        bool CanDispatchEntity(const Entity& entity) const;
+        void DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime);
+        void InvalidateTickComponent(Component::Component& component);
+        void InvalidateTickEntitySubtree(Entity& entity);
+        void CollectPendingComponents(Entity& entity, Container::VariableArray<Component::Component*>& output);
+        Container::VariableArray<TickDispatchEntry> m_TickEntries;
+        Container::VariableArray<TickDispatchEntry> m_FixedTickEntries;
+        Container::VariableArray<Component::Component*> m_PendingTickComponents;
+        Container::VariableArray<Entity*> m_PendingTickEntities;
+        bool m_bHasTickSnapshot = false;
+        bool m_bDispatchingTicks = false;
+        bool m_bCleaningObjects = false;
 
         void CleanupDestroyedObjects();
         void DispatchFixedTick(float fixedDeltaTime);

@@ -17,21 +17,21 @@ namespace NorvesLib::Tools::AssetCook
 {
     namespace
     {
-        using NorvesLib::Core::Container::AnsiStringView;
-        using NorvesLib::Core::Container::TUniquePtr;
-        using NorvesLib::Core::Container::VariableArray;
-        using NorvesLib::Core::Asset::ComputeCookedTextureFullMipCount;
         using NorvesLib::Core::Asset::ComputeCookedTextureFirstTailMip;
+        using NorvesLib::Core::Asset::ComputeCookedTextureFullMipCount;
         using NorvesLib::Core::Asset::ComputeCookedTexturePayloadHash;
         using NorvesLib::Core::Asset::ComputeCookedTextureTileGrid;
         using NorvesLib::Core::Asset::ComputeCookedTextureTileRect;
+        using NorvesLib::Core::Asset::CookedTextureColorSpace;
+        using NorvesLib::Core::Asset::CookedTexturePixelFormat;
         using NorvesLib::Core::Asset::CookedTextureTileRect;
         using NorvesLib::Core::Asset::CookedTextureTileShape;
         using NorvesLib::Core::Asset::GatherCookedTextureTile;
-        using NorvesLib::Core::Asset::GetCookedTextureStandardTileShape;
-        using NorvesLib::Core::Asset::CookedTextureColorSpace;
-        using NorvesLib::Core::Asset::CookedTexturePixelFormat;
         using NorvesLib::Core::Asset::GetCookedTextureBytesPerPixel;
+        using NorvesLib::Core::Asset::GetCookedTextureStandardTileShape;
+        using NorvesLib::Core::Container::AnsiStringView;
+        using NorvesLib::Core::Container::TUniquePtr;
+        using NorvesLib::Core::Container::VariableArray;
         namespace Format = NorvesLib::Core::Asset::CookedTextureFormatV0;
         namespace HeaderOffset = NorvesLib::Core::Asset::CookedTextureFormatV0::HeaderOffset;
         namespace MipRecordOffset = NorvesLib::Core::Asset::CookedTextureFormatV0::MipRecordOffset;
@@ -1270,4 +1270,103 @@ namespace NorvesLib::Tools::AssetCook
 
         return CookBlockCompressedUsage(source, orm, params, outResult, error);
     }
+    bool DecodeTextureRgba8(Core::Container::Span<const uint8_t> encoded, DecodedTextureRgba8& out,
+                            Core::Container::AnsiString& error)
+    {
+        error.clear();
+        if (!encoded.data() || encoded.empty() || encoded.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        {
+            error = "material_image: invalid_encoded_input";
+            return false;
+        }
+        int width = 0, height = 0, channels = 0;
+        size_t count = 0, bytes = 0;
+        if (!stbi_info_from_memory(encoded.data(), static_cast<int>(encoded.size()), &width, &height, &channels) ||
+            width <= 0 || height <= 0 ||
+            !CheckedMultiply(static_cast<size_t>(width), static_cast<size_t>(height), count) ||
+            !CheckedMultiply(count, size_t{4}, bytes) || bytes > MaximumMaterialImageDecodedBytes)
+        {
+            error = "material_image: invalid_dimensions_or_limit";
+            return false;
+        }
+        struct Pixels
+        {
+            stbi_uc* Data = nullptr;
+            ~Pixels()
+            {
+                stbi_image_free(Data);
+            }
+            Pixels() = default;
+            Pixels(const Pixels&) = delete;
+            Pixels& operator=(const Pixels&) = delete;
+        } pixels;
+        int decodedWidth = 0, decodedHeight = 0;
+        pixels.Data = stbi_load_from_memory(encoded.data(), static_cast<int>(encoded.size()), &decodedWidth,
+                                            &decodedHeight, &channels, 4);
+        if (!pixels.Data || decodedWidth != width || decodedHeight != height)
+        {
+            error = "material_image: decode_failed_or_dimensions_changed";
+            return false;
+        }
+        DecodedTextureRgba8 candidate;
+        candidate.Width = static_cast<uint32_t>(width);
+        candidate.Height = static_cast<uint32_t>(height);
+        candidate.Pixels.assign(pixels.Data, pixels.Data + bytes);
+        out = std::move(candidate);
+        return true;
+    }
+    bool CookRgba8ToNvtex(Core::Container::Span<const uint8_t> pixels, uint32_t width, uint32_t height,
+                          Core::Container::AnsiStringView format, TextureCookResult& out,
+                          Core::Container::AnsiString& error)
+    {
+        error.clear();
+        size_t count = 0, bytes = 0, outputBytes = 0;
+        TextureFormatInfo info;
+        if (!width || !height || !pixels.data() || !CheckedMultiply(size_t{width}, size_t{height}, count) ||
+            !CheckedMultiply(count, size_t{4}, bytes) || bytes != pixels.size() ||
+            bytes > MaximumMaterialImageDecodedBytes || !ParseTextureFormat({format.data(), format.size()}, info) ||
+            !CheckedMultiply(count, size_t{info.OutputChannels}, outputBytes))
+        {
+            error = "material_image: invalid_raw_rgba_or_format";
+            return false;
+        }
+        MipImage base;
+        base.Width = width;
+        base.Height = height;
+        base.Bytes.resize(outputBytes);
+        for (size_t i = 0; i < count; ++i)
+        {
+            for (uint32_t channel = 0; channel < info.OutputChannels; ++channel)
+            {
+                base.Bytes[i * info.OutputChannels + channel] = pixels[i * 4 + channel];
+            }
+        }
+        Core::Container::VariableArray<MipImage> mips;
+        if (!BuildMipChain(std::move(base), info, mips, error))
+        {
+            return false;
+        }
+        TextureCookResult candidate;
+        candidate.Width = width;
+        candidate.Height = height;
+        candidate.MipCount = static_cast<uint32_t>(mips.size());
+        candidate.BytesPerPixel = info.OutputChannels;
+        if (!BuildNvtexBytes(mips, info.PixelFormat, info.ColorSpace, Format::VersionMinor, candidate.NvtexBytes,
+                             error))
+        {
+            return false;
+        }
+        out = std::move(candidate);
+        return true;
+    }
+    // 既存単体/埋込画像のcodec境界は旧std引数を維持する。bytesとエラーは所有型へ変換して委譲する。
+    bool CookTextureToNvtex(const uint8_t *sourceBytes, size_t sourceSize, std::string_view format,
+                            std::string_view sourceName, TextureCookResult &outResult, std::string &error)
+    {
+        const ErrorString name(Core::Container::AnsiStringView(sourceName.data(), sourceName.size()));
+        ErrorString reason;
+        const bool result = CookTextureToNvtex(sourceBytes, sourceSize, format, name, outResult, reason);
+        error.assign(reason.data(), reason.size());
+        return result;
+}
 }

@@ -19,6 +19,7 @@
 #include "Resource/FontAtlas.h"
 #include "Module/ModuleRegistry.h"
 #include "RHI/RHIDeviceFactory.h"
+#include "Platform/PlatformInputDevices.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include "Thread/JobSystem.h"
@@ -87,6 +88,7 @@ namespace
         NorvesLib::Core::Engine::ApplicationProcessor* Processor = nullptr;
         bool bJobSystem = false;
         bool bEngine = false;
+        bool bSkeletalSession = false;
         bool bHandler = false;
         bool bPlatform = false;
         bool bWindow = false;
@@ -971,7 +973,7 @@ namespace NorvesLib::Core::Engine
     {
     }
 
-    ApplicationProcessor::~ApplicationProcessor() = default;
+    ApplicationProcessor::~ApplicationProcessor() { DisconnectInputWindow(); }
 
     ApplicationProcessor &ApplicationProcessor::GetInstance()
     {
@@ -992,6 +994,12 @@ namespace NorvesLib::Core::Engine
     bool ApplicationProcessor::Initialize(const Boot::BootConfig &config) try
     {
         LOG_INFO("ApplicationProcessor::Initialize() - Starting initialization");
+        // active sessionを初期化receiptの上書きで失わない。
+        if (NorvesLib::Core::GEngine.GetSkeletalAssetSession().IsActive())
+        {
+            NORVES_LOG_ERROR("SkeletalAssets", "実行中の骨格sessionがあるため再初期化を拒否します");
+            return false;
+        }
         GApplicationLifecycleState = {};
         GApplicationLifecycleState.Processor = this;
         ApplicationInitializeTransaction transaction(*this);
@@ -1008,6 +1016,14 @@ namespace NorvesLib::Core::Engine
             return false;
         }
         GApplicationLifecycleState.bEngine = true;
+        GApplicationLifecycleState.bSkeletalSession = true;
+        if (NorvesLib::Core::GEngine.GetSkeletalAssetSession().Begin(
+                NorvesLib::Core::GEngine.GetResourceRegistry(), Thread::JobSystem::Get(),
+                Thread::Thread::GetCurrentThreadId()) != SkeletalRuntimeStatus::Success)
+        {
+            NORVES_LOG_ERROR("SkeletalAssets", "owner骨格sessionの開始に失敗しました");
+            return false;
+        }
 
         // ターゲットフレームレートを設定
         if (config.TargetFrameRate > 0.0f)
@@ -1213,7 +1229,8 @@ namespace NorvesLib::Core::Engine
             }
             else if (bMatchedVisibilityBuffer)
             {
-                LOG_WARNING("ApplicationProcessor runtime option --visibility-buffer ignored: value must be 'off', 'on' or 'debug'");
+                LOG_WARNING("ApplicationProcessor runtime option --visibility-buffer "
+                            "ignored: value must be 'off', 'on' or 'debug'");
             }
 
             bool bMatchedSwRaster = false;
@@ -1224,7 +1241,8 @@ namespace NorvesLib::Core::Engine
             }
             else if (bMatchedSwRaster)
             {
-                LOG_WARNING("ApplicationProcessor の起動引数 --sw-raster を無視します: 値は 'off' か 'on' にしてください");
+                LOG_WARNING("ApplicationProcessor の起動引数 --sw-raster "
+                            "を無視します: 値は 'off' か 'on' にしてください");
             }
 
             bool bMatchedSwRasterMaxPixels = false;
@@ -1234,7 +1252,8 @@ namespace NorvesLib::Core::Engine
             }
             else if (bMatchedSwRasterMaxPixels)
             {
-                LOG_WARNING("ApplicationProcessor の起動引数 --sw-raster-max-px を無視します: 値は正の数にしてください");
+                LOG_WARNING("ApplicationProcessor の起動引数 --sw-raster-max-px "
+                            "を無視します: 値は正の数にしてください");
             }
 
             // --shadow-method=csm|vsm: 太陽の影の方式（既定は BootConfig::DefaultSunShadowMethod）。不正な値は起動時のエラー
@@ -1330,7 +1349,8 @@ namespace NorvesLib::Core::Engine
         {
             if (m_CapturePngPath.empty())
             {
-                LOG_WARNING("ApplicationProcessor runtime option --capture-deterministic は --capture-png が無いので無視する");
+                LOG_WARNING("ApplicationProcessor runtime option --capture-deterministic "
+                            "は --capture-png が無いので無視する");
                 bCaptureDeterministic = false;
             }
             else
@@ -1340,7 +1360,8 @@ namespace NorvesLib::Core::Engine
                 {
                     bEnableMultiThreadedRendering = false;
                 }
-                LOG_INFO("ApplicationProcessor runtime option capture_deterministic=1 render_thread=st fixed_delta_s=%.6f",
+                LOG_INFO("ApplicationProcessor runtime option capture_deterministic=1 "
+                         "render_thread=st fixed_delta_s=%.6f",
                          static_cast<double>(DeterministicCapture::FixedDeltaSeconds));
             }
         }
@@ -1583,6 +1604,15 @@ namespace NorvesLib::Core::Engine
             handler->OnPostInitialize();
         }
 
+        // Handlerが差替padを登録していなければ標準backendを所有する。
+        if (!GEngine->HasGamepadInputDevice() &&
+            !GEngine->AddInputDevice(Platform::CreateGamepadDevice()))
+        {
+            LOG_ERROR("ゲームパッド入力deviceの生成に失敗しました");
+            return false;
+        }
+        // Handler/モジュールの初期化後に購読し、通知はmessage処理外へ遅延する。
+        ConnectInputWindow(GEngine->GetMainWindowShared());
         GEngine->SetRunning(true);
         GApplicationLifecycleState.bRunning = true;
         transaction.Commit();
@@ -1598,10 +1628,44 @@ namespace NorvesLib::Core::Engine
 
     int ApplicationProcessor::Run()
     {
+        struct RunCleanup
+        {
+            FixedStepScheduler& Scheduler;
+            ~RunCleanup()
+            {
+                // PumpMessages/OnUpdate例外でもheld/fixedPressを残さない。
+                if (GEngine)
+                {
+                    (void)GEngine->ShutdownInputDevices();
+                    GEngine->GetInputRebindCapture().Detach();
+                    GEngine->GetInputDebugOverlay().Detach();
+                    GEngine->GetInputMapper().CancelAll();
+                    if(auto window=GEngine->GetMainWindowShared()) (void)window->SetCursorMode(ECursorMode::Normal);
+                }
+                Scheduler.EndRun();
+            }
+        } cleanup{*m_FixedStepScheduler};
         LOG_INFO("ApplicationProcessor::Run() - Starting main loop");
 
         m_LastFrameTimeNanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (GEngine)
+        {
+            GEngine->GetInputMapper().CancelAll();
+            if (!GEngine->GetInputDebugOverlay().Attach() || !GEngine->GetInputRebindCapture().Attach())
+            {
+                LOG_ERROR("入力controllerの配線が一致しないためRunを開始できません");
+                return -1;
+            }
+        }
+        (void)ApplyPendingInputDeviceFocus();
+        if (GEngine && !GEngine->InitializeInputDevices())
+        {
+            LOG_ERROR("入力deviceの開始に失敗しました");
+            return -1;
+        }
+        bool inputDeviceWarning = false;
+        m_HapticsFailureWarned = false;
         m_FixedStepScheduler->BeginRun();
 
         while (GEngine && GEngine->IsRunning() && !GEngine->IsExitRequested())
@@ -1609,19 +1673,36 @@ namespace NorvesLib::Core::Engine
             // 入力システムのフレーム開始（前フレーム状態保存、累積値リセット）
             // ※ProcessPlatformMessagesの前に呼ぶこと。
             //   メッセージ処理中にInjectされた入力をOnUpdateで参照するため。
-            GEngine->GetInputSystem().BeginFrame();
+            const int64_t inputFrameTime = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (!BeginInputFrame(inputFrameTime))
+            {
+                GEngine->GetInputMapper().CancelAll();
+                LOG_WARNING("入力frameの開始時刻が不正なため操作を取り消しました");
+            }
 
+            (void)SynchronizeInputCursorMode();
             // プラットフォームメッセージ処理
             if (!ProcessPlatformMessages())
             {
                 break;
             }
 
+            // 最新のfocus messageを反映した後、Mapper評価前に同frameのpadを供給する。
+            const double inputDeviceTime = std::chrono::duration<double>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            const bool inputDevicesHealthy = GEngine->PollInputDevices(inputDeviceTime);
+            (void)ApplyPendingInputDeviceFocus();
+            if (!inputDevicesHealthy && !inputDeviceWarning)
+            {
+                LOG_WARNING("入力deviceが未回復のerrorを報告しています");
+            }
+            inputDeviceWarning = !inputDevicesHealthy;
             // 1フレームの処理
             Tick();
+            (void)SynchronizeInputCursorMode();
         }
 
-        m_FixedStepScheduler->EndRun();
         LOG_INFO("ApplicationProcessor::Run() - Main loop ended");
 
         return GEngine ? GEngine->GetExitCode() : 0;
@@ -1636,9 +1717,38 @@ namespace NorvesLib::Core::Engine
         {
             return;
         }
+        if (lifecycle.bSkeletalSession)
+        {
+            auto& skeletal = NorvesLib::Core::GEngine.GetSkeletalAssetSession();
+            const auto closed = skeletal.Close();
+            const auto drained = skeletal.Drain();
+            if (drained == SkeletalRuntimeStatus::Deferred)
+            {
+                // callback内では依存をまだ解体しない。Run外側のShutdownで完了する。
+                if (GEngine)
+                {
+                    GEngine->RequestExit();
+                }
+                return;
+            }
+            if (closed != SkeletalRuntimeStatus::Success || drained != SkeletalRuntimeStatus::Drained)
+            {
+                NORVES_LOG_ERROR("SkeletalAssets", "owner骨格sessionの終了境界に到達できませんでした");
+                std::abort();
+            }
+        }
+        DisconnectInputWindow();
 
         if (GEngine && lifecycle.bEngine)
         {
+            // Handler/World/windowの破棄より先に入力操作とRouter登録を解除する。
+            if (!GEngine->ShutdownInputDevices())
+            {
+                LOG_WARNING("入力deviceの終了に失敗し、所有者破棄時に再試行します");
+            }
+            GEngine->GetInputRebindCapture().Detach();
+            GEngine->GetInputDebugOverlay().Detach();
+            GEngine->GetInputMapper().Detach();
             auto *handler = GEngine->GetApplicationHandler();
 
             if (lifecycle.bRunning)
@@ -1774,6 +1884,17 @@ namespace NorvesLib::Core::Engine
             }
         }
 
+        // 全consumer・renderer解体後、取得したRegistryだけを最後に終了する。
+        if (lifecycle.bSkeletalSession)
+        {
+            if (!NorvesLib::Core::GEngine.GetSkeletalAssetSession().End())
+            {
+                NORVES_LOG_ERROR("SkeletalAssets", "骨格sessionの所有を終了できませんでした");
+                std::abort();
+            }
+            lifecycle.bSkeletalSession = false;
+        }
+
         // GEngineを破棄
         if (lifecycle.bEngine)
         {
@@ -1813,6 +1934,12 @@ namespace NorvesLib::Core::Engine
             bDeterministicCapture ? DeterministicCapture::FixedDeltaNanoseconds : measuredDeltaNanoseconds;
         const float deltaTime = ClampVariableDeltaTime(rawDeltaNanoseconds);
         GEngine->SetDeltaTime(deltaTime);
+        // 入力はゲーム用100ms clampの前の実dtで評価し、OnUpdateから同frame値を読める。
+        if (!UpdateInputFrame(m_LastFrameTimeNanoseconds, rawDeltaNanoseconds))
+        {
+            GEngine->GetInputMapper().CancelAll();
+            LOG_WARNING("入力actionの評価に失敗したため操作を取り消しました");
+        }
         deterministicCapture.AdvanceFrame();
 
 #if NORVES_ENABLE_STATS
@@ -1824,14 +1951,23 @@ namespace NorvesLib::Core::Engine
 
         // 注: BeginFrame()はRun()ループ内でProcessPlatformMessagesの前に呼ばれている
 
-        auto *handler = GEngine->GetApplicationHandler();
+        auto handlerOwner = GEngine->GetApplicationHandlerShared();
+        auto* handler = handlerOwner.get();
 
         // OnUpdate呼び出し
         // 注: OnUpdate はシミュレーション進行ゲートの影響を受けない。Bridge ポーズ中も
         // 受信フレーム処理（DrainInbound）を回し続ける必要があるため、ここはガードしない。
-        if (handler)
+        auto& skeletalSession = NorvesLib::Core::GEngine.GetSkeletalAssetSession();
+        if (m_bWaitForAssetSettle)
         {
-            handler->OnUpdate(deltaTime);
+            Detail::ObservePendingAssets(HasPendingSkeletalConsumers(skeletalSession, handler),
+                                         m_bObservedPendingAssets, m_bAssetSettleBaselineLatched);
+        }
+        const auto skeletalTick = TickSkeletalOwnerAssetsAndHandler(skeletalSession, handler, deltaTime);
+        if (skeletalTick.Status != SkeletalRuntimeStatus::Success)
+        {
+            GEngine->RequestExit(skeletalTick.Status == SkeletalRuntimeStatus::Closed ? 0 : 1);
+            return;
         }
 
         if (NorvesLib::Core::GEngine.GetScriptRuntime().BeginFrameMaintenance(deltaTime) !=
@@ -1840,24 +1976,7 @@ namespace NorvesLib::Core::Engine
             LOG_ERROR("ScriptRuntime BeginFrameMaintenance failed");
         }
 
-        // シミュレーション進行ゲート。false の間は GameMode 更新と World Tick を止める
-        // （ポーズ）。SyncToSceneView と描画は止めず、最後の画面を描き続ける。
-        const bool bAdvanceSim = (handler != nullptr) ? handler->ShouldAdvanceSimulation() : true;
-
-        // GameModeの更新
-        if (bAdvanceSim)
-        {
-            GEngine->UpdateGameModeStateMachine(deltaTime);
-        }
-
-        // ゲームワールドのTick更新
-        if (bAdvanceSim)
-        {
-            GEngine->GetWorld().Tick(deltaTime);
-            GEngine->GetParticleSystem().Tick(deltaTime);
-        }
-
-        AdvanceFixedSimulation(rawDeltaNanoseconds, bAdvanceSim);
+        TickSimulationAndHaptics(rawDeltaNanoseconds, deltaTime, handler);
 
         // ワールドからSceneViewへProxy同期
         GEngine->GetWorld().SyncToSceneView(
@@ -1916,10 +2035,10 @@ namespace NorvesLib::Core::Engine
                 const bool bSceneAssembling = bDeterministicCapture && !deterministicCapture.IsSceneReady();
                 if (m_bWaitForAssetSettle)
                 {
-                    Detail::ObservePendingAssets(
-                        renderWorld.HasPendingAsyncAssets() || bSceneAssembling,
-                        m_bObservedPendingAssets,
-                        m_bAssetSettleBaselineLatched);
+                    Detail::ObservePendingAssets(renderWorld.HasPendingAsyncAssets() ||
+                                                     HasPendingSkeletalConsumers(skeletalSession, handler) ||
+                                                     bSceneAssembling,
+                                                 m_bObservedPendingAssets, m_bAssetSettleBaselineLatched);
                 }
                 renderWorld.BeginFrame();
                 // BeginFrame で書き込み中パケットが確保された後に overlay 集合を載せる
@@ -1936,12 +2055,10 @@ namespace NorvesLib::Core::Engine
                         const bool bWasLatched = m_bAssetSettleBaselineLatched;
                         const uint64_t previousBaseline = m_AssetSettleRenderedBaseline;
                         bRenderedExitReached = Detail::EvaluateSettledRenderedExit(
-                            renderWorld.HasPendingAsyncAssets() || bSceneAssembling,
-                            renderedFrameCount,
-                            m_ExitAfterRenderedFrames,
-                            m_bObservedPendingAssets,
-                            m_bAssetSettleBaselineLatched,
-                            m_AssetSettleRenderedBaseline);
+                            renderWorld.HasPendingAsyncAssets() ||
+                                HasPendingSkeletalConsumers(skeletalSession, handler) || bSceneAssembling,
+                            renderedFrameCount, m_ExitAfterRenderedFrames, m_bObservedPendingAssets,
+                            m_bAssetSettleBaselineLatched, m_AssetSettleRenderedBaseline);
                         if (m_bAssetSettleBaselineLatched &&
                             (!bWasLatched || previousBaseline != m_AssetSettleRenderedBaseline))
                         {
@@ -1952,7 +2069,8 @@ namespace NorvesLib::Core::Engine
                                 // 読み込み完了の時点から、時間・TAA・RTGI・自動露出を数え直す（次のフレームが 0 番）。
                                 deterministicCapture.BeginEpoch();
                                 renderWorld.BeginDeterministicEpoch();
-                                LOG_INFO("ApplicationProcessor capture_deterministic epoch begin rendered=%llu",
+                                LOG_INFO("ApplicationProcessor capture_deterministic "
+                                         "epoch begin rendered=%llu",
                                          static_cast<unsigned long long>(renderedFrameCount));
                             }
                         }
@@ -2059,23 +2177,294 @@ namespace NorvesLib::Core::Engine
 #endif
     }
 
-    bool ApplicationProcessor::ProcessPlatformMessages()
+    void ApplicationProcessor::ConnectInputWindow(Container::TSharedPtr<NorvesLib::IWindow> window)
     {
-        auto* platformApp = GEngine ? GEngine->GetPlatformApp() : nullptr;
-        if (!platformApp)
+        DisconnectInputWindow();
+        if(!GEngine || !window) return;
+        m_InputFocusSubscription.Bind(this,&ApplicationProcessor::OnWindowInputFocusChanged);
+        window->OnInputFocusChanged().Add(m_InputFocusSubscription);
+        m_InputWindow=std::move(window);m_InputEngine=GEngine;
+        OnWindowInputFocusChanged(m_InputWindow->IsInputFocused());
+        if(!m_InputWindow->SetRawMouseEnabled(true))
+            LOG_WARNING("Raw mouseを登録できないためlegacy入力で起動します");
+    }
+
+    void ApplicationProcessor::DisconnectInputWindow()
+    {
+        m_PendingRouterInputFocus.clear();
+        if (GEngine && GEngine == m_InputEngine)
+        {
+            GEngine->GetInputRebindCapture().Abort();
+            QueueInputDeviceFocus(false, m_ApplyingInputDeviceFocus || !GEngine->CanUpdateInputDeviceFocus());
+        }
+        if(m_InputWindow)
+        {
+            (void)m_InputWindow->SetCursorMode(ECursorMode::Normal);
+            (void)m_InputWindow->SetRawMouseEnabled(false);
+            m_InputWindow->OnInputFocusChanged().Remove(m_InputFocusSubscription);
+        }
+        m_InputFocusSubscription.Clear();
+        m_InputWindow.reset();m_InputEngine=nullptr;m_PendingInputFocus.clear();m_HasInputFocus=false;
+        ++m_InputFocusConnectionSerial;
+    }
+
+    void ApplicationProcessor::OnWindowInputFocusChanged(bool focused)
+    {
+        if(!GEngine || GEngine!=m_InputEngine || !m_InputWindow ||
+            GEngine->GetMainWindow()!=m_InputWindow.get()) return;
+        if(m_HasInputFocus && m_InputFocused==focused) return;
+        m_HasInputFocus=true;m_InputFocused=focused;
+        GEngine->GetInputMapper().SetFocused(focused);
+        GEngine->GetInputSystem().SetInputFocused(focused);
+        if (!focused)
+        {
+            // rawは即時中立化し、observerへの通知はfocus適用batchで一度だけ行う。
+            GEngine->GetInputSystem().DeferReleaseAll();
+        }
+        // 通知callbackが次のfocusを生む場合も、要求の発生順を先に記録する。
+        m_PendingInputFocus.push_back(focused);
+        QueueInputDeviceFocus(focused, !focused, true);
+    }
+
+    void ApplicationProcessor::QueueInputDeviceFocus(bool focused, bool resetOperations, bool notifyRouter)
+    {
+        if (!GEngine)
+        {
+            return;
+        }
+        if (m_PendingInputDeviceFocusEngine && m_PendingInputDeviceFocusEngine != GEngine)
+        {
+            m_PendingInputDeviceFocusLoss = false;
+            m_PendingInputDeviceFocusReset = false;
+            m_PendingRouterInputFocus.clear();
+        }
+        if (m_HasPendingInputDeviceFocus && m_PendingInputDeviceFocusSerial != m_InputFocusConnectionSerial)
+        {
+            m_PendingRouterInputFocus.clear();
+        }
+        m_PendingInputDeviceFocusEngine = GEngine;
+        m_PendingInputDeviceFocusSerial = m_InputFocusConnectionSerial;
+        if (notifyRouter)
+        {
+            m_PendingRouterInputFocus.push_back(focused);
+        }
+        m_HasPendingInputDeviceFocus = true;
+        m_PendingInputDeviceFocus = focused;
+        m_PendingInputDeviceFocusLoss = m_PendingInputDeviceFocusLoss || !focused;
+        m_PendingInputDeviceFocusReset = m_PendingInputDeviceFocusReset || resetOperations;
+        (void)ApplyPendingInputDeviceFocus();
+    }
+    bool ApplicationProcessor::ApplyPendingInputDeviceFocus()
+    {
+        if (!m_HasPendingInputDeviceFocus)
         {
             return true;
         }
-
-        platformApp->PumpMessages();
-
-        if (platformApp->IsExitRequested())
+        if (m_ApplyingInputDeviceFocus)
         {
-            GEngine->RequestExit(platformApp->GetExitCode());
             return false;
         }
+        auto* engine = m_PendingInputDeviceFocusEngine;
+        if (!GEngine || GEngine != engine)
+        {
+            m_HasPendingInputDeviceFocus = false;
+            m_PendingInputDeviceFocusEngine = nullptr;
+            m_PendingInputDeviceFocusLoss = false;
+            m_PendingInputDeviceFocusReset = false;
+            m_PendingRouterInputFocus.clear();
+            return false;
+        }
+        if (!engine->CanUpdateInputDeviceFocus())
+        {
+            return false;
+        }
+        struct ApplyGuard
+        {
+            explicit ApplyGuard(bool& applying) : Applying(applying) { Applying = true; }
+            ~ApplyGuard() { Applying = false; }
+            bool& Applying;
+        } guard(m_ApplyingInputDeviceFocus);
+        // 対象batchをcallbackより先に取り出す。途中の新通知は次batchへ残す。
+        const bool lostFocus = m_PendingInputDeviceFocusLoss;
+        const bool targetFocus = m_PendingInputDeviceFocus;
+        const bool reset = m_PendingInputDeviceFocusReset;
+        const auto connectionSerial = m_PendingInputDeviceFocusSerial;
+        Container::VariableArray<bool> routerFocus;
+        routerFocus.swap(m_PendingRouterInputFocus);
+        m_HasPendingInputDeviceFocus = false;
+        m_PendingInputDeviceFocusEngine = nullptr;
+        m_PendingInputDeviceFocusLoss = false;
+        m_PendingInputDeviceFocusReset = false;
+        // 同一poll中の喪失→復帰でも、一度は取消/zero/復帰baselineを通す。
+        if (lostFocus)
+        {
+            (void)engine->SetInputDevicesFocused(false);
+        }
+        if (targetFocus || !lostFocus)
+        {
+            (void)engine->SetInputDevicesFocused(targetFocus);
+        }
+        if (reset)
+        {
+            // 喪失後に同じpollの残りslotから入った値も、安全な配送外で取り消す。
+            engine->GetInputMapper().CancelAll();
+            engine->GetInputSystem().ReleaseAll();
+        }
+        for (bool focused : routerFocus)
+        {
+            if (GEngine != engine || m_InputFocusConnectionSerial != connectionSerial)
+            {
+                break;
+            }
+            engine->GetInputRouter().NotifyInputFocusChanged(focused);
+        }
+        return !m_HasPendingInputDeviceFocus;
+    }
 
+    bool ApplicationProcessor::SynchronizeInputCursorMode()
+    {
+        if(!GEngine) return false;
+        const auto window=GEngine->GetMainWindowShared();
+        if(!window) return true;
+        const bool success=window->SetCursorMode(GEngine->GetInputMapper().GetRequestedCursorMode());
+        if(!success && !m_CursorFailureWarned) LOG_WARNING("カーソルmodeを適用できません。次frameで再試行します");
+        m_CursorFailureWarned=!success;
+        return success;
+    }
+
+    void ApplicationProcessor::DispatchInputFocusEvents()
+    {
+        if(!GEngine || GEngine!=m_InputEngine || !m_InputWindow ||
+            GEngine->GetMainWindow()!=m_InputWindow.get())
+        {
+            m_PendingInputFocus.clear();return;
+        }
+        if(m_DispatchingInputFocus) return;
+        struct DispatchGuard
+        {
+            bool& Active;
+            explicit DispatchGuard(bool& active):Active(active) { Active=true; }
+            ~DispatchGuard() { Active=false; }
+        } guard(m_DispatchingInputFocus);
+        const auto sourceWindow=m_InputWindow;
+        auto* sourceEngine=m_InputEngine;
+        const auto sourceSerial=m_InputFocusConnectionSerial;
+        Container::VariableArray<bool> pending;
+        pending.swap(m_PendingInputFocus);
+        const auto handler=GEngine->GetApplicationHandlerShared();
+        for(bool focused : pending)
+        {
+            if(!handler || !GEngine || GEngine!=sourceEngine || m_InputFocusConnectionSerial!=sourceSerial ||
+                GEngine->GetMainWindow()!=sourceWindow.get()) break;
+            if(focused) handler->OnFocusGained();
+            else handler->OnFocusLost();
+        }
+    }
+
+    bool ApplicationProcessor::ProcessPlatformMessages()
+    {
+        auto* sourceEngine=GEngine;
+        auto* platformApp=sourceEngine ? sourceEngine->GetPlatformApp() : nullptr;
+        bool exitRequested=false;int exitCode=0;
+        if(platformApp)
+        {
+            platformApp->PumpMessages();
+            exitRequested=platformApp->IsExitRequested();
+            if(exitRequested) exitCode=platformApp->GetExitCode();
+        }
+        // focus通知中に生まれた次batchも、Handlerへ渡す前の安全地点で適用する。
+        (void)ApplyPendingInputDeviceFocus();
+        // Handlerはここでwindow/platformを破棄し得るので、以後借用platformへ触れない。
+        DispatchInputFocusEvents();
+        if(!GEngine || GEngine!=sourceEngine) return false;
+        if(exitRequested)
+        {
+            GEngine->RequestExit(exitCode);return false;
+        }
+        return !GEngine->IsExitRequested();
+    }
+
+    void ApplicationProcessor::TickSimulationAndHaptics(int64_t rawDeltaNanoseconds, float deltaTime,
+        Application::IApplicationHandler* handler)
+    {
+        if (!GEngine)
+        {
+            return;
+        }
+        (void)ApplyPendingInputDeviceFocus();
+        // pause中も描画を維持する。gateは同frameで一度だけ取得する。
+        const bool bAdvanceSim = handler ? handler->ShouldAdvanceSimulation() : true;
+        // simulationが発行するPlayより前にpauseを反映し、停止はこの地点で送信する。
+        (void)GEngine->SetHapticsPaused(!bAdvanceSim);
+        TickSimulation(rawDeltaNanoseconds, deltaTime, bAdvanceSim, handler);
+        const bool hapticsHealthy = UpdateHapticsFrame(rawDeltaNanoseconds);
+        if (!hapticsHealthy && !m_HapticsFailureWarned)
+        {
+            LOG_WARNING("振動出力が未回復のerrorを報告しています");
+        }
+        m_HapticsFailureWarned = !hapticsHealthy;
+    }
+
+    bool ApplicationProcessor::UpdateHapticsFrame(int64_t rawDeltaNanoseconds)
+    {
+        if (!GEngine || rawDeltaNanoseconds < 0)
+        {
+            return false;
+        }
+        const bool healthy = GEngine->UpdateHaptics(static_cast<double>(rawDeltaNanoseconds) * 1e-9);
+        (void)ApplyPendingInputDeviceFocus();
+        return healthy;
+    }
+
+    FixedStepAdvanceResult ApplicationProcessor::TickSimulation(
+        int64_t rawDeltaNanoseconds, float deltaTime, bool bAdvanceSimulation,
+        Application::IApplicationHandler* handler)
+    {
+        if (bAdvanceSimulation)
+        {
+            GEngine->UpdateGameModeStateMachine(deltaTime);
+            GEngine->GetWorld().Tick(deltaTime);
+            GEngine->GetParticleSystem().Tick(deltaTime);
+        }
+        const FixedStepAdvanceResult result = AdvanceFixedSimulation(rawDeltaNanoseconds, bAdvanceSimulation);
+        if (bAdvanceSimulation)
+        {
+            GEngine->GetWorld().LateTick(deltaTime);
+            Module::GetModuleRegistry().DispatchLateTick(deltaTime);
+            if (handler)
+            {
+                handler->OnLateUpdate(deltaTime);
+            }
+        }
+        return result;
+    }
+
+    bool ApplicationProcessor::BeginInputFrame(int64_t timeNanoseconds)
+    {
+        if (!GEngine || timeNanoseconds < 0) return false;
+        const double time = static_cast<double>(timeNanoseconds) / 1'000'000'000.0;
+        if (!GEngine->GetInputSystem().CanBeginFrame(time))
+        {
+            return false;
+        }
+        if (!GEngine->GetInputMapper().BeginFrame(time)) return false;
+        // Mapperの時刻検証成功後、message配送前に正本の前frame保存/累積解除も行う。
+        if (!GEngine->GetInputSystem().BeginFrame(time))
+        {
+            return false;
+        }
+        GEngine->GetInputRebindCapture().BeginFrame();
         return true;
+    }
+    bool ApplicationProcessor::UpdateInputFrame(int64_t timeNanoseconds, int64_t rawDeltaNanoseconds)
+    {
+        if (!GEngine || timeNanoseconds < 0) return false;
+        const double time = static_cast<double>(timeNanoseconds) / 1'000'000'000.0;
+        const double dt = rawDeltaNanoseconds > 0
+            ? static_cast<double>(rawDeltaNanoseconds) / 1'000'000'000.0 : 0.0;
+        GEngine->GetInputDebugOverlay().Advance();
+        GEngine->GetInputRebindCapture().Advance();
+        return GEngine->GetInputMapper().Update(time, dt);
     }
 
     int64_t ApplicationProcessor::CalculateRawDeltaTimeNanoseconds()

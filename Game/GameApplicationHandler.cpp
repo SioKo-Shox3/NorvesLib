@@ -1,4 +1,5 @@
 ﻿#include "GameApplicationHandler.h"
+#include "Input/GameHapticsSettings.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Asset/AssetSystem.h"
 #include "Core/Public/Asset/CookedAudioFormat.h"
@@ -650,7 +651,8 @@ namespace Game
             {
                 if (!TryParseBoundedFloat(heightFogFalloffValue, 0.0f, 1.0f, s_Rendering3DTestHeightFogFalloff))
                 {
-                    LOG_ERROR("Rendering3DTest command line parse failed: --height-fog-falloff は 0〜1 で指定する");
+                    LOG_ERROR("Rendering3DTest command line parse failed: "
+                              "--height-fog-falloff は 0〜1 で指定する");
                     return false;
                 }
                 s_bRendering3DTestHasHeightFogFalloff = true;
@@ -690,7 +692,8 @@ namespace Game
                 }
                 else
                 {
-                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --debug-view は normal・clusters・lod・wireframe のどれかで指定する");
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --debug-view は "
+                              "normal・clusters・lod・wireframe のどれかで指定する");
                     return false;
                 }
                 continue;
@@ -709,7 +712,8 @@ namespace Game
                 }
                 else
                 {
-                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --virtual-texture は on か off で指定する");
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: "
+                              "--virtual-texture は on か off で指定する");
                     return false;
                 }
                 continue;
@@ -728,7 +732,9 @@ namespace Game
                 }
                 else
                 {
-                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --rendering3dtest-model-source は cooked か gltf で指定する");
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: "
+                              "--rendering3dtest-model-source は cooked か gltf "
+                              "で指定する");
                     return false;
                 }
                 continue;
@@ -747,7 +753,9 @@ namespace Game
                 }
                 else
                 {
-                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --rendering3dtest-big-sphere-source は cooked か runtime で指定する");
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: "
+                              "--rendering3dtest-big-sphere-source は cooked か "
+                              "runtime で指定する");
                     return false;
                 }
                 continue;
@@ -766,7 +774,8 @@ namespace Game
                 }
                 else
                 {
-                    LOG_ERROR("Game command line parse failed: --mega-occlusion は on か off で指定する");
+                    LOG_ERROR("Game command line parse failed: --mega-occlusion は "
+                              "on か off で指定する");
                     return false;
                 }
                 continue;
@@ -785,7 +794,8 @@ namespace Game
                 }
                 else
                 {
-                    LOG_ERROR("Game command line parse failed: --geometry-streaming は on か off で指定する");
+                    LOG_ERROR("Game command line parse failed: "
+                              "--geometry-streaming は on か off で指定する");
                     return false;
                 }
                 continue;
@@ -796,7 +806,8 @@ namespace Game
             {
                 if (!TryParseBoundedFloat(renderScaleValue, 0.5f, 1.0f, s_Rendering3DTestRenderScale))
                 {
-                    LOG_ERROR("Rendering3DTest command line parse failed: --render-scale は 0.5〜1 で指定する");
+                    LOG_ERROR("Rendering3DTest command line parse failed: "
+                              "--render-scale は 0.5〜1 で指定する");
                     return false;
                 }
                 continue;
@@ -807,7 +818,8 @@ namespace Game
             {
                 if (!TryParseUInt32(vramBudgetValue, s_VramBudgetCapMb))
                 {
-                    LOG_ERROR("Game command line parse failed: --vram-budget-mb は 0 以上の整数（MB）で指定する");
+                    LOG_ERROR("Game command line parse failed: --vram-budget-mb は "
+                              "0 以上の整数（MB）で指定する");
                     return false;
                 }
                 continue;
@@ -842,7 +854,8 @@ namespace Game
                 if (!TryParseUInt32(stressGeometryValue, s_Rendering3DTestStressGeometryCount) ||
                     s_Rendering3DTestStressGeometryCount == 0u || s_Rendering3DTestStressGeometryCount > 4096u)
                 {
-                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --stress-geometry は個数を付けるなら 1〜4096 の整数で指定する");
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --stress-geometry "
+                              "は個数を付けるなら 1〜4096 の整数で指定する");
                     return false;
                 }
                 continue;
@@ -854,7 +867,8 @@ namespace Game
                 if (!TryParseUInt32(stressMegaInstancesValue, s_Rendering3DTestStressMegaInstances) ||
                     s_Rendering3DTestStressMegaInstances > 4096u)
                 {
-                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --stress-mega-instances は 0〜4096 の整数で指定する");
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: "
+                              "--stress-mega-instances は 0〜4096 の整数で指定する");
                     return false;
                 }
                 continue;
@@ -873,7 +887,8 @@ namespace Game
                 }
                 else
                 {
-                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: --startup-scan-props は on か off で指定する");
+                    LOG_ERROR("Rendering3DTest の引数の解析に失敗: "
+                              "--startup-scan-props は on か off で指定する");
                     return false;
                 }
                 continue;
@@ -897,7 +912,9 @@ namespace Game
                     if (!TryParseUInt32(captureSequenceRenderedFramesValue.substr(begin, end - begin), frames) ||
                         frames == 0)
                     {
-                        LOG_ERROR("Game command line parse failed: --capture-sequence-rendered-frames は 1 以上の整数をカンマで区切って指定する");
+                        LOG_ERROR("Game command line parse failed: "
+                                  "--capture-sequence-rendered-frames は 1 "
+                                  "以上の整数をカンマで区切って指定する");
                         return false;
                     }
                     captureSequenceRenderedFrames.push_back(frames);
@@ -911,7 +928,8 @@ namespace Game
             {
                 if (captureSequenceValue.empty())
                 {
-                    LOG_ERROR("Game command line parse failed: --capture-sequence の接頭辞が空");
+                    LOG_ERROR("Game command line parse failed: --capture-sequence "
+                              "の接頭辞が空");
                     return false;
                 }
                 captureSequencePrefix = captureSequenceValue;
@@ -1246,7 +1264,8 @@ namespace Game
         const bool bHasManifest = !m_TextureAssetManifestPath.empty();
         if (!bHasRoot && bHasManifest)
         {
-            LOG_ERROR("テクスチャ資産の引数を解析できません: --texture-asset-manifest には --texture-asset-root の指定も必要です");
+            LOG_ERROR("テクスチャ資産の引数を解析できません: --texture-asset-manifest "
+                      "には --texture-asset-root の指定も必要です");
             return false;
         }
 
@@ -1293,7 +1312,8 @@ namespace Game
             }
             else
             {
-                LOG_WARNING_F("COOKED_ASSETS_MISSING manifest=\"%s\" ばらの元画像を無圧縮で読みます"
+                LOG_WARNING_F("COOKED_ASSETS_MISSING manifest=\"%s\" "
+                              "ばらの元画像を無圧縮で読みます"
                               "（ビルド対象 CookAssets でクック済みを作れます）",
                               cookedManifest.c_str());
                 // 読む各パスに TEXTURE_COOKED_MISSING を出すため、ばらの元画像の root を持ち、起動後に入れ直す。
@@ -1421,7 +1441,8 @@ namespace Game
 
         if (captureSequencePrefix.empty() != captureSequenceRenderedFrames.empty())
         {
-            LOG_ERROR("Game command line parse failed: --capture-sequence と --capture-sequence-rendered-frames は併せて指定する");
+            LOG_ERROR("Game command line parse failed: --capture-sequence と "
+                      "--capture-sequence-rendered-frames は併せて指定する");
             return false;
         }
         m_SequenceFrameCapture.Configure(captureSequencePrefix, captureSequenceRenderedFrames);
@@ -1435,6 +1456,35 @@ namespace Game
     bool GameApplicationHandler::OnInitialize()
     {
         LOG_INFO("GameApplicationHandler::OnInitialize()");
+
+        if (auto* engine = NorvesLib::Core::Engine::GEngine)
+        {
+            NorvesLib::Core::Container::String hapticsError;
+            if (!Game::Input::InitializeGameHaptics(engine->GetHapticsService(), hapticsError))
+            {
+                LOG_WARNING_F("振動効果を適用できません。既存設定で続行します: %s",
+                    hapticsError.empty() ? "" : hapticsError.c_str());
+            }
+            if (!m_InputSettings.Initialize(engine->GetInputMapper()))
+            {
+                const auto& error = m_InputSettings.GetLastError();
+                LOG_WARNING_F("入力設定を適用できません。既存camera操作で続行します: %s", error.empty() ? "" : error.c_str());
+            }
+            else
+            {
+                const auto& configuration = m_InputSettings.GetConfiguration();
+                if (configuration.UserStatus == NorvesLib::Core::Input::EInputBindingUserStatus::Invalid)
+                {
+                    const auto& error = configuration.UserReport.Error;
+                    LOG_WARNING_F("user入力設定が不正なため既定を使います: %s", error.empty() ? "" : error.c_str());
+                }
+                else if (configuration.UserStatus == NorvesLib::Core::Input::EInputBindingUserStatus::ReadError)
+                {
+                    const auto& error = configuration.StoreError;
+                    LOG_WARNING_F("user入力設定を読めないため既定を使います: %s", error.empty() ? "" : error.c_str());
+                }
+            }
+        }
 
         // ========================================
         // ライトコントローラーの初期化
@@ -1493,16 +1543,18 @@ namespace Game
             if (!m_TextureLooseAssetRoot.empty())
             {
                 // 既定のクック済みの設定が読めないときは、終了せずばらの元画像で続ける。
-                LOG_WARNING("COOKED_ASSETS_UNUSABLE クック済みのマニフェストを読めないため、ばらの元画像を無圧縮で読みます");
+                LOG_WARNING("COOKED_ASSETS_UNUSABLE "
+                            "クック済みのマニフェストを読めないため、ばらの元画像を"
+                            "無圧縮で読みます");
                 m_bCookedManifestUnavailable = true;
             }
             else
+        {
+            if (NorvesLib::Core::Engine::GEngine)
             {
-                if (NorvesLib::Core::Engine::GEngine)
-                {
-                    NorvesLib::Core::Engine::GEngine->RequestExit(1);
-                }
-                return;
+                NorvesLib::Core::Engine::GEngine->RequestExit(1);
+            }
+            return;
             }
         }
 
@@ -1563,6 +1615,12 @@ namespace Game
         if (!NorvesLib::Core::Engine::GEngine)
         {
             LOG_ERROR("Asset runtime snapshot reload failed: GEngine is null");
+            return false;
+        }
+
+        if (NorvesLib::Core::GEngine.GetSkeletalAssetSession().HasPinnedSnapshot())
+        {
+            NORVES_LOG_WARNING("SkeletalAssets", "snapshotの変更を拒否します reason=skeletal_snapshot_pinned");
             return false;
         }
 
@@ -1651,7 +1709,9 @@ namespace Game
             !NorvesLib::Core::Engine::GEngine->GetRenderResources().Textures().SetTextureAssetFallbackMode(
                 NorvesLib::Core::Rendering::TextureAssetFallbackMode::DebugAllowLooseFallback))
         {
-            LOG_WARNING("COOKED_FALLBACK_NOT_SET クック済みのパッケージが無いときにばらの元画像へ戻す設定を反映できませんでした");
+            LOG_WARNING("COOKED_FALLBACK_NOT_SET "
+                        "クック済みのパッケージが無いときにばらの元画像へ戻す設定"
+                        "を反映できませんでした");
         }
 
         m_AssetSystemSnapshot = immutableCandidate;
@@ -1677,7 +1737,8 @@ namespace Game
                 m_TextureLooseAssetRoot,
                 immutableCandidate))
         {
-            LOG_WARNING("COOKED_MISSING_WARN_NOT_SET マニフェストが無いときの警告の設定を反映できませんでした");
+            LOG_WARNING("COOKED_MISSING_WARN_NOT_SET "
+                        "マニフェストが無いときの警告の設定を反映できませんでした");
         }
     }
 
@@ -1700,7 +1761,7 @@ namespace Game
     bool GameApplicationHandler::PrepareM9WorldAssets()
     {
         if (!m_M9WorldAcceptance || !m_M9WorldAcceptance->bRequested || !m_AssetSystemSnapshot ||
-            !NorvesLib::Core::Engine::GEngine)
+            !NorvesLib::Core::Engine::GEngine || !m_M9WorldAcceptance->Preparation.CanPrepare())
         {
             return false;
         }
@@ -1708,48 +1769,21 @@ namespace Game
 #if !defined(NORVES_GAME_AUDIO)
         return false;
 #else
-        const Asset::AssetResolveResult skeletalResult = m_AssetSystemSnapshot->ResolveAsset(
-            "Models/M9Skinned/ValidU8Float.gltf", Asset::AssetKind::Model);
         const Asset::AssetResolveResult effectResult = m_AssetSystemSnapshot->ResolveAsset(
             "Audio/M9/effect.wav", Asset::AssetKind::Audio);
         const Asset::AssetResolveResult loopResult = m_AssetSystemSnapshot->ResolveAsset(
             "Audio/M9/loop.wav", Asset::AssetKind::Audio);
-        if (!skeletalResult.UsedCooked() || !effectResult.UsedCooked() || !loopResult.UsedCooked())
+        if (!effectResult.UsedCooked() || !loopResult.UsedCooked())
         {
-            LOG_ERROR("M9_WORLD_SMOKE asset resolution requires all three cooked assets");
+            LOG_ERROR("M9_WORLD_SMOKE audio resolution requires both cooked assets");
             return false;
         }
 
-        Asset::CookedSkeletalParseResult skeletal = Asset::ParseCookedSkeletal(skeletalResult.Blob);
         Asset::CookedAudioParseResult effect = Asset::ParseCookedAudio(effectResult.Blob);
         Asset::CookedAudioParseResult loop = Asset::ParseCookedAudio(loopResult.Blob);
-        if (!skeletal.Succeeded() || !effect.Succeeded() || !loop.Succeeded() || skeletal.Data.Skeletal.Clips.empty())
+        if (!effect.Succeeded() || !loop.Succeeded())
         {
             LOG_ERROR("M9_WORLD_SMOKE cooked asset parsing failed");
-            return false;
-        }
-
-        auto& resources = NorvesLib::Core::GEngine.GetResourceRegistry();
-        auto mesh = resources.CreateTransient<SkinnedMeshResource>("M9WorldSkinnedMesh");
-        auto skeleton = resources.CreateTransient<SkeletonResource>("M9WorldSkeleton");
-        auto clip = resources.CreateTransient<AnimationClipResource>("M9WorldClip");
-        auto skeletalAsset = resources.CreateTransient<SkeletalAssetResource>("M9WorldAsset");
-        if (!mesh || !skeleton || !clip || !skeletalAsset)
-        {
-            return false;
-        }
-        mesh->SetMeshNodeGlobalTransform(skeletal.Data.Skeletal.MeshNodeGlobalTransform);
-        mesh->SetVertices(std::move(skeletal.Data.Skeletal.Vertices));
-        mesh->SetIndices(std::move(skeletal.Data.Skeletal.Indices));
-        skeleton->SetJoints(std::move(skeletal.Data.Skeletal.Joints));
-        clip->SetClip(std::move(skeletal.Data.Skeletal.Clips[0]));
-        if (!mesh->Load() || !skeleton->Load() || !clip->Load())
-        {
-            return false;
-        }
-        skeletalAsset->SetResources(mesh, skeleton, clip);
-        if (!skeletalAsset->IsLoaded())
-        {
             return false;
         }
 
@@ -1774,13 +1808,23 @@ namespace Game
             return false;
         }
 
-        m_M9WorldAcceptance->SkeletalAsset = skeletalAsset;
         m_M9WorldAcceptance->EffectClip = effectClip;
         m_M9WorldAcceptance->LoopClip = loopClip;
-        m_M9WorldAcceptance->bAssetsReady = true;
-        LOG_INFO("M9_WORLD_SMOKE stage=assets_ready prepared=3 snapshot=1");
-        Game::GameModes::EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=assets_ready prepared=3 snapshot=1");
-        return true;
+        m_M9WorldAcceptance->bAssetsReady = false;
+        auto& session = NorvesLib::Core::GEngine.GetSkeletalAssetSession();
+        const auto bound = session.BindSnapshot(m_AssetSystemSnapshot);
+        if (bound != SkeletalRuntimeStatus::Success && bound != SkeletalRuntimeStatus::Unchanged)
+        {
+            return false;
+        }
+        auto* runtime = session.GetRuntime();
+        if (!runtime)
+        {
+            return false;
+        }
+        const auto admitted = m_M9WorldAcceptance->Preparation.Start(
+            *runtime, m_M9WorldAcceptance->SkeletalPath, Container::StringView(m_M9WorldAcceptance->ClipName));
+        return admitted.Status == SkeletalRuntimeStatus::Accepted;
 #endif
     }
 
@@ -1843,6 +1887,7 @@ namespace Game
 
     void GameApplicationHandler::OnUpdate(float deltaTime)
     {
+        m_CameraLateUpdateSlot->Reset();
         // シーンの更新（カメラ・入力・ライト）はGameMode（Rendering3DTest）へ移動した。
         // ApplicationHandlerはアプリ全体の責務（boot/コマンドライン/テクスチャ設定/
         // レジストリ・初期モード選択/フォーカス）に集中する。
@@ -1855,6 +1900,11 @@ namespace Game
             m_BridgeHost.DrainInbound();
         }
         m_M6ScriptSmokeController.Update();
+    }
+
+    void GameApplicationHandler::OnLateUpdate(float deltaTime)
+    {
+        m_CameraLateUpdateSlot->Dispatch(deltaTime);
     }
 
     void GameApplicationHandler::OnPreRender()
@@ -1942,9 +1992,20 @@ namespace Game
         // - 設定の保存
     }
 
+    bool GameApplicationHandler::HasPendingAssetConsumers() const
+    {
+        return m_M9WorldAcceptance && m_M9WorldAcceptance->bRequested &&
+               m_M9WorldAcceptance->Preparation.HasPendingWork();
+    }
+
     void GameApplicationHandler::OnShutdown()
     {
         LOG_INFO("GameApplicationHandler::OnShutdown()");
+        // Enter前の失敗でも、runtime終了より先に借用取消先とeventを解放する。
+        if (m_M9WorldAcceptance)
+        {
+            m_M9WorldAcceptance->Preparation.Cancel();
+        }
 
         // ゲーム固有の終了処理
         // - リソースの解放
@@ -1977,11 +2038,14 @@ namespace Game
         const bool bUseCookedModel = m_bRendering3DTestUseCookedModel;
         const bool bPhysicsSmoke = s_bRendering3DTestPhysicsSmoke;
         const TSharedPtr<M9WorldAcceptanceConfig> m9WorldAcceptance = m_M9WorldAcceptance;
+        const Container::TWeakPtr<CameraLateUpdateSlot> lateCameraSlot = m_CameraLateUpdateSlot;
         stateMachine->Registry().Register(
             Rendering3DTest,
-            [this, bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance](const GameModeParams& params) -> Container::TUniquePtr<IGameMode>
+            [this, bUseCookedModel, bPhysicsSmoke, m9WorldAcceptance,
+             lateCameraSlot](const GameModeParams &params) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<Rendering3DTestMode>();
+                mode->GetData().m_LateCameraSlot = lateCameraSlot;
                 mode->GetData().m_ModelPath = params.ModelPath;
                 mode->GetData().m_bUseCookedModel = bUseCookedModel;
                 mode->GetData().m_BoardSmokeCount = s_Rendering3DTestBoardSmokeCount;

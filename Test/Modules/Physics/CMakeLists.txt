@@ -47,6 +47,7 @@ include(CTest)
 add_test(NAME PhysicsModuleLinkTest COMMAND PhysicsDynamicsTest --test=PhysicsModuleLinkTest)
 
 add_test(NAME PhysicsBroadphaseQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsBroadphaseQueryTest)
+add_test(NAME PhysicsProxyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsProxyQueryTest)
 
 
 norves_add_test_bundle(PhysicsDynamicsTest
@@ -54,6 +55,11 @@ norves_add_test_bundle(PhysicsDynamicsTest
     MEMBER PhysicsDynamicsTest PhysicsDynamicsTest.cpp
     MEMBER PhysicsModuleLinkTest PhysicsModuleLinkTest.cpp
     MEMBER PhysicsBroadphaseQueryTest PhysicsBroadphaseQueryTest.cpp
+    MEMBER PhysicsProxyQueryTest PhysicsProxyQueryTest.cpp
+    MEMBER PhysicsProxyVisitorTest PhysicsProxyVisitorTest.cpp
+    MEMBER PhysicsRayPrecisionTest PhysicsRayPrecisionTest.cpp
+    MEMBER PhysicsQueryPruningTest PhysicsQueryPruningTest.cpp
+    MEMBER PhysicsLegacyQueryTest PhysicsLegacyQueryTest.cpp
     MEMBER PhysicsLifecycleEventTest PhysicsLifecycleEventTest.cpp
     MEMBER PhysicsFixedStepPipelineTest PhysicsFixedStepPipelineTest.cpp
 )
@@ -73,3 +79,11 @@ add_test(NAME PhysicsLifecycleEventTest COMMAND PhysicsDynamicsTest --test=Physi
 add_test(NAME PhysicsFixedStepPipelineTest COMMAND PhysicsDynamicsTest --test=PhysicsFixedStepPipelineTest)
 set_tests_properties(PhysicsFixedStepPipelineTest PROPERTIES TIMEOUT 90)
 
+
+add_test(NAME PhysicsProxyVisitorTest COMMAND PhysicsDynamicsTest --test=PhysicsProxyVisitorTest)
+
+add_test(NAME PhysicsRayPrecisionTest COMMAND PhysicsDynamicsTest --test=PhysicsRayPrecisionTest)
+
+add_test(NAME PhysicsQueryPruningTest COMMAND PhysicsDynamicsTest --test=PhysicsQueryPruningTest)
+
+add_test(NAME PhysicsLegacyQueryTest COMMAND PhysicsDynamicsTest --test=PhysicsLegacyQueryTest)

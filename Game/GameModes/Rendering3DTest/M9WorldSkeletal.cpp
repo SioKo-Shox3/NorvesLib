@@ -12,21 +12,70 @@
 
 namespace Game::GameModes
 {
+    bool AttachM9SkeletalAsset(
+        NorvesLib::Core::World& world, NorvesLib::Core::GameMode::GameModeScope& scope,
+        const NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::SkeletalAssetResource>& asset,
+        const NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::AnimationClipResource>& clip,
+        NorvesLib::Core::Entity*& outObject, NorvesLib::Core::Component::SkinnedMeshComponent*& outComponent)
+    {
+        if (outObject || outComponent || !asset || !clip)
+        {
+            return false;
+        }
+        auto* object = world.SpawnObject<NorvesLib::Core::Entity>();
+        if (!object)
+        {
+            return false;
+        }
+        try
+        {
+            scope.TrackObject(object);
+        }
+        catch (...)
+        {
+            world.RemoveObject(object);
+            return false;
+        }
+        try
+        {
+            auto* component = world.CreateComponent<NorvesLib::Core::Component::SkinnedMeshComponent>(object);
+            if (!component)
+            {
+                return false;
+            }
+            component->SetSkeletalAsset(asset);
+            if (!component->SetAnimationClip(clip))
+            {
+                return false;
+            }
+            object->SetPosition(-1.25f, 0.0f, 0.0f);
+            component->SetPlaying(false);
+            component->SetAnimationTimeSeconds(0.0f);
+            outObject = object;
+            outComponent = component;
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
     bool InitializeM9WorldSkeletal(NorvesLib::Core::GameMode::GameModeContext& ctx,
                                    Rendering3DTestData& data)
     {
         if (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bAssetsReady ||
-            !data.m_M9WorldAcceptance->SkeletalAsset)
+            !data.m_M9WorldAcceptance->SkeletalAsset || !data.m_M9WorldAcceptance->SelectedClip)
         {
             return false;
         }
 
-        data.m_pM9SkinnedObject = ctx.WorldRef.SpawnObject<NorvesLib::Core::Entity>();
-        ctx.ScopeRef.TrackObject(data.m_pM9SkinnedObject);
-        data.m_pM9SkinnedObject->SetPosition(-1.25f, 0.0f, 0.0f);
-        data.m_pM9SkinnedMeshComponent =
-            ctx.WorldRef.CreateComponent<NorvesLib::Core::Component::SkinnedMeshComponent>(data.m_pM9SkinnedObject);
-        data.m_pM9SkinnedMeshComponent->SetSkeletalAsset(data.m_M9WorldAcceptance->SkeletalAsset);
+        if (!AttachM9SkeletalAsset(ctx.WorldRef, ctx.ScopeRef, data.m_M9WorldAcceptance->SkeletalAsset,
+                                   data.m_M9WorldAcceptance->SelectedClip, data.m_pM9SkinnedObject,
+                                   data.m_pM9SkinnedMeshComponent))
+        {
+            return false;
+        }
         const auto& mesh = data.m_M9WorldAcceptance->SkeletalAsset->GetMesh();
         if (!mesh)
         {
@@ -43,8 +92,6 @@ namespace Game::GameModes
             "M9_WORLD_SMOKE stage=skeletal_binding resource_translation_x=%f component_translation_x=%f",
             resourceTranslationX,
             componentTranslationX);
-        data.m_pM9SkinnedMeshComponent->SetPlaying(false);
-        data.m_pM9SkinnedMeshComponent->SetAnimationTimeSeconds(0.0f);
         return true;
     }
 

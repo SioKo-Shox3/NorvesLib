@@ -5,7 +5,7 @@
 #include "Text/IdentityPool.h"
 #include "Thread/Mutex.h"
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     struct ModelCacheAcquireResult
     {
@@ -54,4 +54,4 @@ namespace NorvesLib::Core::Resource
         Container::Map<uint64_t, Entry> m_Retired;
         Container::Set<uint64_t> m_ManagedIds;
     };
-} // namespace NorvesLib::Core::Resource
+} // namespace NorvesLib::Core::ResourceIO

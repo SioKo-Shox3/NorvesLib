@@ -44,7 +44,7 @@
 using namespace NorvesLib::Core::Rendering;
 using NorvesLib::Core::Container::MakeShared;
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     struct GLTFAnalyzerShutdownTestAccess
     {
@@ -298,8 +298,8 @@ namespace
 
     void TestLegacyGLTFAdmission(RenderResources& manager)
     {
-        using NorvesLib::Core::Resource::GLTFAnalyzer;
-        using NorvesLib::Core::Resource::GLTFAnalyzerShutdownTestAccess;
+        using NorvesLib::Core::ResourceIO::GLTFAnalyzer;
+        using NorvesLib::Core::ResourceIO::GLTFAnalyzerShutdownTestAccess;
 
         GLTFAnalyzerShutdownTestAccess::Reopen();
         assert(GLTFAnalyzerShutdownTestAccess::IsOpen());

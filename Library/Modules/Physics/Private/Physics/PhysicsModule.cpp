@@ -9,6 +9,7 @@
 #include "Math/VectorUtils.h"
 
 #include <cmath>
+#include <stdexcept>
 
 namespace NorvesLib::Modules::Physics
 {
@@ -39,49 +40,6 @@ namespace NorvesLib::Modules::Physics
                     + transform.rotation.w * transform.rotation.w > Math::Constants::EPSILON;
         }
 
-        bool IsFiniteRay(const Math::Ray& ray)
-        {
-            return IsFiniteVector(ray.Origin) && IsFiniteVector(ray.Direction);
-        }
-
-        bool NormalizeFiniteNonZeroDirection(const Math::Vector3& direction, Math::Vector3& outDirection)
-        {
-            const float maximumComponent = std::fmaxf(
-                std::fabs(direction.x),
-                std::fmaxf(std::fabs(direction.y), std::fabs(direction.z)));
-            if (maximumComponent == 0.0f)
-            {
-                return false;
-            }
-
-            const Math::Vector3 scaledDirection = direction / maximumComponent;
-            const float length = std::sqrt(Math::VectorUtils::LengthSquared(scaledDirection));
-            if (length == 0.0f)
-            {
-                return false;
-            }
-
-            outDirection = scaledDirection / length;
-            return true;
-        }
-
-        bool IsFiniteSphere(const Math::Sphere& sphere)
-        {
-            return IsFiniteVector(sphere.Center) && std::isfinite(sphere.Radius) && sphere.Radius >= 0.0f;
-        }
-
-        bool IsFiniteBox(const Math::OBB& box)
-        {
-            return IsFiniteVector(box.Center) && IsFiniteVector(box.HalfExtents)
-                && box.HalfExtents.x >= 0.0f && box.HalfExtents.y >= 0.0f && box.HalfExtents.z >= 0.0f
-                && IsFiniteVector(box.Axes[0]) && IsFiniteVector(box.Axes[1]) && IsFiniteVector(box.Axes[2]);
-        }
-
-        bool IsFiniteCapsule(const Math::Capsule& capsule)
-        {
-            return IsFiniteVector(capsule.PointA) && IsFiniteVector(capsule.PointB)
-                && std::isfinite(capsule.Radius) && capsule.Radius >= 0.0f;
-        }
     } // namespace
 
     PhysicsModule::PhysicsModule()
@@ -237,82 +195,134 @@ namespace NorvesLib::Modules::Physics
         m_bInitialized = false;
     }
 
-    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::Raycast(
-        const Math::Ray& ray,
-        float maxDistance,
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::RefreshDynamicSnapshot()
+    {
+        const auto readiness = GetReadinessResult();
+        if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
+        {
+            return readiness;
+        }
+        if (m_bFixedTickInProgress)
+        {
+            return Core::Scene::EPhysicsSceneQueryResult::NotReady;
+        }
+        PhysicsBroadphase candidate;
+        BuildBroadphase(candidate, true);
+        // 確保/構築完了後だけquery公開値を交換し、simulationの作業値には触れない。
+        static_assert(noexcept(m_PublishedBroadphase = std::move(candidate)));
+        m_PublishedBroadphase = std::move(candidate);
+        return Core::Scene::EPhysicsSceneQueryResult::Success;
+    }
+
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::ExecuteBatch(Core::Container::Span<const Core::Scene::PhysicsQueryDesc> queries,
+        Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits,
+        Core::Container::VariableArray<Core::Scene::PhysicsQueryBatchResult>& outResults) const
+    {
+        using Result = Core::Scene::EPhysicsSceneQueryResult;
+        outHits.clear();
+        outResults.clear();
+        const auto readiness = GetReadinessResult();
+        if (readiness != Result::Success)
+        {
+            return readiness;
+        }
+        if (queries.size() != 0 && queries.data() == nullptr)
+        {
+            return Result::InvalidArgument;
+        }
+        Core::Container::VariableArray<Core::Scene::PhysicsQueryHit> hits, itemHits;
+        Core::Container::VariableArray<Core::Scene::PhysicsQueryBatchResult> results;
+        results.reserve(queries.size());
+        // 確保/評価が途中で失敗しても、呼出元へ部分結果を公開しない。
+        for (size_t index = 0; index < queries.size(); ++index)
+        {
+            const auto& query = queries[index];
+            const auto result = m_PublishedBroadphase.ExecuteQuery(query, itemHits);
+            const size_t first = hits.size();
+            const size_t count = result == Result::Success ? itemHits.size() : 0;
+            if (count > hits.max_size() - first)
+            {
+                throw std::length_error("物理query batchのhit数が上限を超えました");
+            }
+            if (count != 0)
+            {
+                hits.insert(hits.end(), itemHits.begin(), itemHits.end());
+            }
+            results.push_back(Core::Scene::PhysicsQueryBatchResult{result, first, count});
+        }
+        static_assert(noexcept(outHits.swap(hits)) && noexcept(outResults.swap(results)));
+        outHits.swap(hits);
+        outResults.swap(results);
+        return Result::Success;
+    }
+
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::ExecuteQuery(const Core::Scene::PhysicsQueryDesc& query,
+        Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits) const
+    {
+        outHits.clear();
+        const auto readiness = GetReadinessResult();
+        if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
+        {
+            return readiness;
+        }
+        return m_PublishedBroadphase.ExecuteQuery(query, outHits);
+    }
+
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::Raycast(const Math::Ray& ray, float maxDistance,
         Core::Scene::PhysicsRaycastHit& outHit) const
     {
-        outHit = Core::Scene::PhysicsRaycastHit{};
-        const Core::Scene::EPhysicsSceneQueryResult readiness = GetReadinessResult();
+        outHit = {};
+        const auto readiness = GetReadinessResult();
         if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
         {
             return readiness;
         }
-        Math::Vector3 normalizedDirection;
-        if (!IsFiniteRay(ray) || !std::isfinite(maxDistance) || maxDistance < 0.0f
-            || !NormalizeFiniteNonZeroDirection(ray.Direction, normalizedDirection))
-        {
-            return Core::Scene::EPhysicsSceneQueryResult::InvalidArgument;
-        }
-
-        const Math::Ray normalizedRay(ray.Origin, normalizedDirection);
-        return m_PublishedBroadphase.Raycast(normalizedRay, maxDistance, outHit)
-            ? Core::Scene::EPhysicsSceneQueryResult::Success
-            : Core::Scene::EPhysicsSceneQueryResult::NoHit;
+        return m_PublishedBroadphase.RaycastQuery(ray,maxDistance,outHit);
     }
 
-    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::OverlapSphere(
-        const Math::Sphere& sphere,
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::OverlapSphere(const Math::Sphere& sphere,
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const
     {
         outHits.clear();
-        const Core::Scene::EPhysicsSceneQueryResult readiness = GetReadinessResult();
+        const auto readiness = GetReadinessResult();
         if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
         {
             return readiness;
         }
-        if (!IsFiniteSphere(sphere))
-        {
-            return Core::Scene::EPhysicsSceneQueryResult::InvalidArgument;
-        }
-        m_PublishedBroadphase.OverlapSphere(sphere, outHits);
-        return outHits.empty() ? Core::Scene::EPhysicsSceneQueryResult::NoHit : Core::Scene::EPhysicsSceneQueryResult::Success;
+        Core::Scene::PhysicsQueryDesc query;
+        query.Kind = Core::Scene::EPhysicsQueryKind::OverlapSphere;
+        query.Sphere = sphere;
+        return m_PublishedBroadphase.AppendOverlapQuery(query,outHits);
     }
 
-    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::OverlapBox(
-        const Math::OBB& box,
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::OverlapBox(const Math::OBB& box,
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const
     {
         outHits.clear();
-        const Core::Scene::EPhysicsSceneQueryResult readiness = GetReadinessResult();
+        const auto readiness = GetReadinessResult();
         if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
         {
             return readiness;
         }
-        if (!IsFiniteBox(box))
-        {
-            return Core::Scene::EPhysicsSceneQueryResult::InvalidArgument;
-        }
-        m_PublishedBroadphase.OverlapBox(box, outHits);
-        return outHits.empty() ? Core::Scene::EPhysicsSceneQueryResult::NoHit : Core::Scene::EPhysicsSceneQueryResult::Success;
+        Core::Scene::PhysicsQueryDesc query;
+        query.Kind = Core::Scene::EPhysicsQueryKind::OverlapBox;
+        query.Box = box;
+        return m_PublishedBroadphase.AppendOverlapQuery(query,outHits);
     }
 
-    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::OverlapCapsule(
-        const Math::Capsule& capsule,
+    Core::Scene::EPhysicsSceneQueryResult PhysicsModule::OverlapCapsule(const Math::Capsule& capsule,
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit>& outHits) const
     {
         outHits.clear();
-        const Core::Scene::EPhysicsSceneQueryResult readiness = GetReadinessResult();
+        const auto readiness = GetReadinessResult();
         if (readiness != Core::Scene::EPhysicsSceneQueryResult::Success)
         {
             return readiness;
         }
-        if (!IsFiniteCapsule(capsule))
-        {
-            return Core::Scene::EPhysicsSceneQueryResult::InvalidArgument;
-        }
-        m_PublishedBroadphase.OverlapCapsule(capsule, outHits);
-        return outHits.empty() ? Core::Scene::EPhysicsSceneQueryResult::NoHit : Core::Scene::EPhysicsSceneQueryResult::Success;
+        Core::Scene::PhysicsQueryDesc query;
+        query.Kind = Core::Scene::EPhysicsQueryKind::OverlapCapsule;
+        query.Capsule = capsule;
+        return m_PublishedBroadphase.AppendOverlapQuery(query,outHits);
     }
 
     Core::Scene::EPhysicsSceneQueryResult PhysicsModule::IsAlive(
@@ -535,6 +545,39 @@ namespace NorvesLib::Modules::Physics
         return EPhysicsResult::Success;
     }
 
+    EPhysicsResult PhysicsModule::SetColliderLayer(ColliderComponent& component, Core::Scene::PhysicsCollisionMask layer)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        component.m_CollisionLayer = layer;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderMask(ColliderComponent& component, Core::Scene::PhysicsCollisionMask mask)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        component.m_CollisionMask = mask;
+        return EPhysicsResult::Success;
+    }
+
+    EPhysicsResult PhysicsModule::SetColliderUserData(ColliderComponent& component, uint64_t userData)
+    {
+        const EPhysicsResult result = ValidateCollider(component);
+        if (result != EPhysicsResult::Success)
+        {
+            return result;
+        }
+        component.m_UserData = userData;
+        return EPhysicsResult::Success;
+    }
+
     EPhysicsResult PhysicsModule::SetBodyType(RigidBodyComponent& component, EPhysicsBodyType bodyType)
     {
         const EPhysicsResult result = ValidateRigidBody(component);
@@ -745,18 +788,22 @@ namespace NorvesLib::Modules::Physics
         body.bHadPreStepSnapshot = false;
     }
 
+    bool PhysicsModule::IsColliderLifecycleActive(const ColliderSlot& collider) const
+    {
+        return collider.bOccupied && collider.Component != nullptr && collider.Owner != nullptr
+            && collider.Component->m_bHasShape
+            && collider.Component->IsActive() && collider.Owner->IsActive()
+            && !collider.Component->HasFlag(Core::OF_PendingDestroy) && !collider.Owner->IsPendingDestroy()
+            && IsFiniteTransform(GetFreshWorldTransform(*collider.Owner));
+    }
+
     void PhysicsModule::ReconcileActiveStates()
     {
         for (ColliderSlot& collider : m_ColliderSlots)
         {
             if (collider.bOccupied)
             {
-                collider.bActive = collider.Component->m_bHasShape
-                    && collider.Component->IsActive()
-                    && collider.Owner->IsActive()
-                    && !collider.Component->HasFlag(Core::OF_PendingDestroy)
-                    && !collider.Owner->IsPendingDestroy()
-                    && IsFiniteTransform(GetFreshWorldTransform(*collider.Owner));
+                collider.bActive = IsColliderLifecycleActive(collider);
             }
         }
 
@@ -861,6 +908,11 @@ namespace NorvesLib::Modules::Physics
                 }
             }
             if (!firstProxy || !secondProxy)
+            {
+                continue;
+            }
+            // 候補生成の実装が差し替わっても、接触/trigger生成前に対称規則を守る。
+            if (!Core::Scene::CanPhysicsLayersInteract(firstProxy->Layer, firstProxy->Mask, secondProxy->Layer, secondProxy->Mask))
             {
                 continue;
             }
@@ -1095,12 +1147,12 @@ namespace NorvesLib::Modules::Physics
         }
     }
 
-    void PhysicsModule::BuildBroadphase(PhysicsBroadphase& outBroadphase) const
+    void PhysicsModule::BuildBroadphase(PhysicsBroadphase& outBroadphase, bool bRefreshLifecycle) const
     {
         Core::Container::VariableArray<PhysicsShapeProxy> proxies;
         for (const ColliderSlot& slot : m_ColliderSlots)
         {
-            if (!slot.bOccupied || !slot.bActive)
+            if (!slot.bOccupied || (bRefreshLifecycle ? !IsColliderLifecycleActive(slot) : !slot.bActive))
             {
                 continue;
             }
@@ -1108,9 +1160,13 @@ namespace NorvesLib::Modules::Physics
             const Math::Transform transform = GetFreshWorldTransform(*slot.Owner);
             PhysicsShapeProxy proxy;
             proxy.Collider = slot.Component->m_ColliderHandle;
-            proxy.Body = FindBodyHandle(*slot.Owner);
+            proxy.Body = FindBodyHandle(*slot.Owner, bRefreshLifecycle);
             proxy.Entity = slot.Owner->GetEntityHandle();
             proxy.bHasEntity = proxy.Entity.IsValid();
+            proxy.Layer = slot.Component->m_CollisionLayer;
+            proxy.Mask = slot.Component->m_CollisionMask;
+            proxy.UserData = slot.Component->m_UserData;
+            proxy.bTrigger = slot.Component->m_bTrigger;
             if (slot.Component->m_Shape == ColliderComponent::EColliderShape::Sphere)
             {
                 proxy.Shape = EPhysicsProxyShape::Sphere;
@@ -1185,11 +1241,19 @@ namespace NorvesLib::Modules::Physics
         return GetFreshWorldTransform(*parent) * localTransform;
     }
 
-    Core::Scene::BodyHandle PhysicsModule::FindBodyHandle(const Core::Entity& owner) const
+    Core::Scene::BodyHandle PhysicsModule::FindBodyHandle(const Core::Entity& owner, bool bRefreshLifecycle) const
     {
         for (const BodySlot& slot : m_BodySlots)
         {
-            if (slot.bOccupied && slot.bActive && slot.Owner == &owner)
+            if (!slot.bOccupied || slot.Owner != &owner)
+            {
+                continue;
+            }
+            // refreshでは当該ownerの有効colliderが既に確認済み。simulation cacheは書き換えない。
+            const bool bActive = bRefreshLifecycle
+                ? IsBodyLifecycleActive(slot) && !(slot.Component->m_BodyType == EPhysicsBodyType::Dynamic && owner.GetParentEntity() != nullptr)
+                : slot.bActive;
+            if (bActive)
             {
                 return slot.Component->m_BodyHandle;
             }

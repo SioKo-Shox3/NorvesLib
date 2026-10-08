@@ -3,7 +3,7 @@
 #include "Asset/AssetSystem.h"
 #include "Container/StringView.h"
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     Asset::AssetResolveResult ResolveCookedModel(
         const Asset::AssetSystem& assetSystem,
@@ -15,4 +15,4 @@ namespace NorvesLib::Core::Resource
             Asset::AssetManifest::DefaultVariant,
             Asset::AssetFallbackMode::FailOnCookedFailure);
     }
-} // namespace NorvesLib::Core::Resource
+} // namespace NorvesLib::Core::ResourceIO

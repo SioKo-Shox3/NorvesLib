@@ -1,0 +1,33 @@
+# 分離骨格資産の非同期CPU公開
+
+## 要求と同一性
+
+GR82のSkeleton、SkinnedMesh、順序付きClipBank群を、既存GR83のSkeletalAssetRuntimeから要求する。LoadRigSplitAsyncは論理path・variant・束縛方針・解析/package予算だけを受け取る。snapshot、Registry、明示ownerはBind済みのinstanceから与える。
+
+要求はschema/mode、Registry session/domain、snapshot generation、全pathとBank順、全manifest参照、要求したrest許容値とoverride、全入力予算で識別する。数値は固定幅、文字列は長さ付き、ゼロの許容値は正のゼロへ正準化する。split専用keyは最大256KiB。既存統合modeのpath/key上限は変えない。
+
+manifest参照は既存列挙APIから借用して長さを先に検査し、全記述が予算内であることを確認してから所有copyする。FindCookedVariantの戻り値を無制限にcopyしてから検査する経路にはしない。snapshotの別mutable aliasからの変更は従来どおり非対応。未登録参照は有効な要求のtyped失敗として配送し、成功cacheを引かない。
+
+Identity hashは索引だけで、完全keyとsnapshot参照を照合する。overrideが実際には不要だった場合も、要求のoverride=trueとstrictは別group/cacheになる。Bankの並べ替え、許容値、解析予算、内容、variant、snapshot世代も分ける。
+
+## 一つのworkerと公開核
+
+入力modeが増えるだけで、Task、intrusive ready、handoff ack、Flush batch、cancel/close/drain、owner sessionは既存のものを共用する。workerはB2 loaderを一度呼び、実ResolveAssetの参照とfull-entry hashをそのread内で採取する。受理時参照との全field一致とparsed Skeleton/Mesh内容hashを照合する。Bankはfull-entry hashとpayload hashを混同しない。
+
+成功receiptは外部から内容を作れない所有値で、要求identity、validated CPU、実read証拠、全Bankのrest差診断を保持する。owner組立で全Resourceを未登録のままLoadし、成功した組立診断を含むreceiptをaggregateへ取り付ける。BundleUriはrole/path/順序/variantを表し、sessionやpolicyを含むcache keyとは分ける。
+
+登録は既存4型shadow poolの全部またはゼロのswap核を使う。N clipならResourceはN+3、path登録はaggregateだけ1。swap列には新しい確保、callback、Unloadを入れない。取消の最終検査から公開まではState mutex→Registry mutexの順を維持する。
+
+## cacheと寿命
+
+取得時は完全identity、元URI、実typed child handles、immutable Skeleton/Meshの所有値、全clip名・duration・channel・sample値を照合する。LoadedのclipへSetClipで別内容を入れても、名前やIDだけを見てcache成功にしない。壊れたcacheは拒否し、CacheMissに読み替えて上書きしない。成功callback内から同groupへ再購読する場合も同じ公開済み検査を通し、直前callbackのclip変更やreceipt消去を見逃さない。新しい要求の拒否で既存subscriberを取り消さず、未改変の再入は次Flushへ送る。
+
+receiptはaggregateとともに解放され、snapshot pinやCPU証拠を永久mapへ残さない。会計にはBank/snapshot/clip/診断とdescriptorの追加所有を含める。childと共有するSkeleton/Mesh本文および外部snapshot全manifestを二重加算しない。会計はprocess RSSの厳密値ではない。
+
+同じ骨格内容を持つ複数bundleでも、各bundleのSkeletonResource wrapper/IDは独立。既登録childと新childを混ぜる汎用DAG transactionやcross-bundle ID重複排除は実装しない。
+
+## 受入境界
+
+新しい公開/非同期試験では、実packageから名前指定のCPU姿勢までを通し、strict/overrideの分離、全clip改変、失敗時の既存pool保持、取消、混在legacy、実Sessionのpause外配送を反証する。検証結果はTASKS/PROGRESSに別途記録する。
+
+CPU成功は描画成功ではない。split Meshは全MATSをCPU所有するがrender leaseを発行しない。新CLI・複数file公開・GPU staging・Armature/clip-only/256joint・DCCの実物品質は別境界。mutable Resource一般の並行変更、全allocator OOM、任意入力のCPU時間やRSS、任意並行Registry破棄も保証しない。shadow公開はcold追加ごとに既存poolのcopyが必要で、全clip cache検査もsample数に比例する。

@@ -250,6 +250,16 @@ namespace
         materialChangedPacket.Scene.SkinnedMeshProxies[0].Material = MaterialHandle{99u};
         assert(ComputeSceneRevisionHash(materialChangedPacket) != baselineHash);
 
+        FramePacket slotChangedPacket;
+        PopulateSceneRevisionPacket(slotChangedPacket);
+        slotChangedPacket.Scene.SkinnedMeshProxies[0].MaterialCount = 2;
+        slotChangedPacket.Scene.SkinnedMeshProxies[0].Materials[0] = MaterialHandle{41u};
+        slotChangedPacket.Scene.SkinnedMeshProxies[0].Materials[1] = MaterialHandle{42u};
+        const auto slotHash = ComputeSceneRevisionHash(slotChangedPacket);
+        assert(slotHash != baselineHash);
+        slotChangedPacket.Scene.SkinnedMeshProxies[0].Materials[1] = MaterialHandle{99u};
+        assert(ComputeSceneRevisionHash(slotChangedPacket) != slotHash);
+
         FramePacket environmentChangedPacket;
         PopulateSceneRevisionPacket(environmentChangedPacket);
         environmentChangedPacket.Scene.SkyAtmosphere.SunAltitudeDegrees += 1.0f;

@@ -1,6 +1,9 @@
 ﻿#include "Delegate/Delegate.h"
 #include "Delegate/MulticastDelegate.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <iostream>
 #include <type_traits>
@@ -147,6 +150,29 @@ namespace
         assert(invocationCount == 1);
     }
 
+    int FreeTotal=0;
+    void FreeAdd(int value) { FreeTotal+=value; }
+    void FreeDouble(int value) { FreeTotal+=value*2; }
+    void TestMulticastRemovalIdentity()
+    {
+        NorvesLib::Core::MulticastDelegate<int> multicast;
+        MemberTarget first,second;
+        multicast.Add(&first,&MemberTarget::Add).Add(&second,&MemberTarget::Add);
+        multicast.Remove(&first,&MemberTarget::Add);
+        assert(multicast.GetSize()==1);
+        multicast.Broadcast(3);assert(first.Total==0 && second.Total==3);
+        multicast.Clear();FreeTotal=0;
+        multicast.Add(FreeAdd).Add(FreeDouble).Add(FreeAdd);
+        multicast.Remove(FreeAdd);assert(multicast.GetSize()==1);
+        multicast.Broadcast(3);assert(FreeTotal==6);
+        multicast.Clear();
+        auto make=[](int& total) { return [&total](int n) { total+=n; }; };
+        VoidDelegate one(make(first.Total)),two(make(second.Total)),handle(one);
+        multicast.Add(one).Add(two).Add(one);
+        one.Clear();multicast.Remove(handle);assert(multicast.GetSize()==1);
+        multicast.Broadcast(4);assert(first.Total==0 && second.Total==7);
+    }
+
     void TestExistingDelegateConstruction()
     {
         ReturnDelegate lambda([](int value)
@@ -173,6 +199,7 @@ int main()
     TestVoidDelegateCopyAssignment();
     TestMulticastDelegateAddsNonConstLvalue();
     TestExistingDelegateConstruction();
+    TestMulticastRemovalIdentity();
     std::cout << "DelegateCopyTest passed\n";
     return 0;
 }

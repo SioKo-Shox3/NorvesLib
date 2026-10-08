@@ -1,19 +1,7 @@
 ﻿#include "Rendering/VisibilityResolvePass.h"
+#include <cmath>
 
 #include "Logging/LogMacros.h"
-#include "Rendering/CameraViewConstants.h"
-#include "Rendering/RenderResources.h"
-#include "Rendering/RenderGraph/RenderGraphBuilder.h"
-#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
-#include "Rendering/RenderGraph/RenderGraphResources.h"
-#include "Rendering/ShaderManager.h"
-#include "Rendering/SkinningComputePass.h"
-#include "Rendering/MaterialTileClassifyPass.h"
-#include "Rendering/ViewRenderContext.h"
-#include "Rendering/VisibilityBuffer.h"
-#include "Rendering/VirtualTextureFeedbackMaterial.h"
-#include "Rendering/VisibilityRasterPass.h"
-#include "Rendering/VisibilityResolveMaterialBuild.h"
 #include "RHI/DeviceCapabilities.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -22,6 +10,19 @@
 #include "RHI/IPipeline.h"
 #include "RHI/ISampler.h"
 #include "RHI/ITexture.h"
+#include "Rendering/CameraViewConstants.h"
+#include "Rendering/MaterialTileClassifyPass.h"
+#include "Rendering/RenderGraph/RenderGraphBuilder.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/RenderGraph/RenderGraphResources.h"
+#include "Rendering/RenderResources.h"
+#include "Rendering/ShaderManager.h"
+#include "Rendering/SkinningComputePass.h"
+#include "Rendering/ViewRenderContext.h"
+#include "Rendering/VirtualTextureFeedbackMaterial.h"
+#include "Rendering/VisibilityBuffer.h"
+#include "Rendering/VisibilityRasterPass.h"
+#include "Rendering/VisibilityResolveMaterialBuild.h"
 
 #include <cstring>
 #include <limits>
@@ -158,12 +159,17 @@ namespace NorvesLib::Core::Rendering
             material.AO = ResolveMaterialTexture(textures, ao);
             material.ORM = ResolveMaterialTexture(textures, orm);
             material.Height = ResolveMaterialTexture(textures, height);
-            // スカラー値は、そのテクスチャの指定（ハンドル）が無いときだけ 1x1 のテクスチャにする
-            if (entry.Scalars[0] >= 0.0f && !metallic.IsValid())
+            if (material.bMegaGeometry)
+            {
+                std::memcpy(&material.AOConstant, &entry.TexturesD[2], sizeof(float));
+            }
+            // スカラー値は、そのテクスチャの指定（ハンドル）が無いときだけ 1x1
+            // のテクスチャにする
+            if (entry.Scalars[0] >= 0.0f && (material.bMegaGeometry ? !material.Metallic : !metallic.IsValid()))
             {
                 material.MetallicConstant = entry.Scalars[0];
             }
-            if (entry.Scalars[1] >= 0.0f && !roughness.IsValid())
+            if (entry.Scalars[1] >= 0.0f && (material.bMegaGeometry ? !material.Roughness : !roughness.IsValid()))
             {
                 material.RoughnessConstant = entry.Scalars[1];
             }
@@ -299,7 +305,8 @@ namespace NorvesLib::Core::Rendering
             }
             if (!m_TilePipeline)
             {
-                NORVES_LOG_WARNING("VisibilityResolve", "ビジビリティバッファの幾何の解決（材質ごとのタイル）の計算パイプラインの作成に失敗");
+                NORVES_LOG_WARNING("VisibilityResolve", "ビジビリティバッファの幾何の解決（材質ごとのタイル）"
+                                                        "の計算パイプラインの作成に失敗");
                 Shutdown();
                 return false;
             }
@@ -430,6 +437,10 @@ namespace NorvesLib::Core::Rendering
 
     RHI::TexturePtr VisibilityResolve::GetConstantGrayTexture(float value)
     {
+        if (!std::isfinite(value))
+        {
+            return nullptr;
+        }
         const float clamped = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
         const uint32_t level = static_cast<uint32_t>(clamped * 255.0f + 0.5f);
         const auto found = m_ConstantGrayTextures.find(level);
@@ -623,7 +634,16 @@ namespace NorvesLib::Core::Rendering
             bound.Textures[1] = input.Normal ? input.Normal : m_DefaultFlatNormal;
             bound.Textures[2] = input.Metallic ? input.Metallic : metallicDefault;
             bound.Textures[3] = input.Roughness ? input.Roughness : roughnessDefault;
-            bound.Textures[4] = input.AO ? input.AO : m_DefaultWhite;
+            RHI::TexturePtr aoDefault = m_DefaultWhite;
+            if (input.AOConstant != 1.0f && !input.AO)
+            {
+                aoDefault = GetConstantGrayTexture(input.AOConstant);
+                if (!aoDefault)
+                {
+                    return false;
+                }
+            }
+            bound.Textures[4] = input.AO ? input.AO : aoDefault;
             if (input.ORM)
             {
                 // シェーダーは ORM のとき金属度の枠だけを読むが、3 つの枠は同じテクスチャで埋める
@@ -744,7 +764,8 @@ namespace NorvesLib::Core::Rendering
             if (!bReady)
             {
                 NORVES_LOG_WARNING("VisibilityResolvePass",
-                                   "VISBUFFER_RESOLVE_TILES used=0 reason=tile_pipeline_unavailable 材質ごとの解決を使えないので、画面全体の解決へ戻します");
+                                   "VISBUFFER_RESOLVE_TILES used=0 reason=tile_pipeline_unavailable "
+                                   "材質ごとの解決を使えないので、画面全体の解決へ戻します");
             }
         }
         if (!bReady)
@@ -841,7 +862,9 @@ namespace NorvesLib::Core::Rendering
             {
                 m_bLoggedFallback = true;
                 NORVES_LOG_WARNING("VisibilityResolvePass",
-                                   "VISBUFFER_FALLBACK reason=%s ビジビリティバッファの解決を使えないので、従来の GBuffer の描画のまま動かします",
+                                   "VISBUFFER_FALLBACK reason=%s "
+                                   "ビジビリティバッファの解決を使えないので、従来の GBuffer "
+                                   "の描画のまま動かします",
                                    VisibilityResolveGeometry::GetFallbackReasonName(fallbackReason));
             }
             return;
@@ -1076,7 +1099,8 @@ namespace NorvesLib::Core::Rendering
             else
             {
                 NORVES_LOG_WARNING("VisibilityResolvePass",
-                                   "VISBUFFER_RESOLVE_TILES used=0 reason=%s 画面全体の解決（直接 dispatch）で記録しました",
+                                   "VISBUFFER_RESOLVE_TILES used=0 reason=%s "
+                                   "画面全体の解決（直接 dispatch）で記録しました",
                                    tileReason ? tileReason : "none");
             }
         }

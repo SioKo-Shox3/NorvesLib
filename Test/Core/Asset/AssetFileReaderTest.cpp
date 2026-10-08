@@ -66,6 +66,19 @@ int main()
     {
         AssetReadRequest request;
         request.InputPath = "Textures/a.bin";
+        request.MaxReadBytes = 2;
+        assert(!reader.Read(request).Succeeded());
+        const auto range = reader.ReadRange(request, 1, 2);
+        assert(range.Succeeded() && range.FileSize == 3 && range.BytesRead == 2);
+        assert(range.Blob.GetData()[0] == 2 && range.Blob.GetData()[1] == 3);
+        request.MaxReadBytes = 1;
+        assert(!reader.ReadRange(request, 1, 2).Succeeded());
+        assert(!reader.ReadRange(request, 3, 1).Succeeded());
+    }
+
+    {
+        AssetReadRequest request;
+        request.InputPath = "Textures/a.bin";
         request.AssetRoot = rootPath.c_str();
         const AssetReadResult result = reader.Read(request);
         assert(result.Succeeded());

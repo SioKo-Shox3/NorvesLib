@@ -1,0 +1,48 @@
+cmake_minimum_required(VERSION 3.14)
+if(NOT DEFINED ASSET_COOK_EXE OR NOT DEFINED SOURCE_ROOT OR NOT DEFINED SMOKE_DIR)
+    message(FATAL_ERROR "AssetCookInspectSmoke requires ASSET_COOK_EXE, SOURCE_ROOT and SMOKE_DIR")
+endif()
+set(RUN_DIR "${SMOKE_DIR}/Inspect")
+file(REMOVE_RECURSE "${RUN_DIR}")
+file(MAKE_DIRECTORY "${RUN_DIR}")
+set(MODEL "${RUN_DIR}/model.glb")
+set(SIDECAR "${MODEL}.import.json")
+configure_file("${SOURCE_ROOT}/Test/Core/Asset/Fixtures/AssetCook/embedded_tri.glb" "${MODEL}" COPYONLY)
+# 診断はsidecarを適用せず、破損した設定も読まない。
+file(WRITE "${SIDECAR}" "invalid settings")
+file(SHA256 "${MODEL}" source_before)
+file(SHA256 "${SIDECAR}" settings_before)
+file(GLOB_RECURSE files_before "${RUN_DIR}/*")
+execute_process(COMMAND "${ASSET_COOK_EXE}" --inspect "${MODEL}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "inspect failed: ${error}")
+endif()
+foreach(expected IN ITEMS "position_space=mesh_local_before_import" "import_settings_applied=false"
+    "vertex_count=3" "triangle_count=1" "welded_vertex_count=3" "component_count=1" "zero_normal_count=0"
+    "bounds.X.min=0" "bounds.X.max=1" "length.Y=1" "image_count=3" "image[0].width=1"
+    "image[0].height=1" "image[0].channels=4" "image[0].bits=8" "image[0].channel[0].mean=100"
+    "material_count=1" "material[0].metallic=1" "material[0].roughness=1" "material[0].alpha_mode=OPAQUE"
+    "forward_sign=manual" "settings_template_requires_manual_units_and_axes=true" "settings_template={")
+    string(FIND "${output}" "${expected}" found)
+    if(found EQUAL -1)
+        message(FATAL_ERROR "missing inspect value ${expected}: ${output}")
+    endif()
+endforeach()
+execute_process(COMMAND "${ASSET_COOK_EXE}" "--inspect=${MODEL}"
+    RESULT_VARIABLE equals_result OUTPUT_VARIABLE equals_output ERROR_VARIABLE equals_error)
+if(NOT equals_result EQUAL 0 OR NOT output STREQUAL equals_output)
+    message(FATAL_ERROR "inspect option spelling differs: ${equals_error}")
+endif()
+execute_process(COMMAND "${ASSET_COOK_EXE}" --inspect "${MODEL}" --out "${RUN_DIR}/forbidden.nvpkg"
+    RESULT_VARIABLE mixed_result ERROR_VARIABLE mixed_error)
+if(mixed_result EQUAL 0)
+    message(FATAL_ERROR "inspect accepted cook output arguments")
+endif()
+file(SHA256 "${MODEL}" source_after)
+file(SHA256 "${SIDECAR}" settings_after)
+file(GLOB_RECURSE files_after "${RUN_DIR}/*")
+if(NOT source_before STREQUAL source_after OR NOT settings_before STREQUAL settings_after OR NOT files_before STREQUAL files_after)
+    message(FATAL_ERROR "inspect changed source/settings or wrote output files")
+endif()
+message(STATUS "AssetCookInspectSmoke passed")

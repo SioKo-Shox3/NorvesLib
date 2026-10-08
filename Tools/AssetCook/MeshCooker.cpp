@@ -1,13 +1,31 @@
 ﻿#include "MeshCooker.h"
+#include "SkeletalBvhCook.h"
+#include "MeshMaterialV1Plan.h"
+#include "Resource/GltfNativePath.h"
+#include "ModelInspection.h"
 
+#include "Asset/AssetPackageFormat.h"
 #include "Asset/CookedMeshFormat.h"
-#include "CookMeshDag.h"
 #include "Asset/CookedSkeletalFormat.h"
+#include "Asset/CookedSkeletalNameCodec.h"
 #include "Container/FixedArray.h"
+#include "CookMeshDag.h"
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
 #include "Rendering/MegaGeometry/ProceduralMegaSphere.h"
 #include "Rendering/MegaGeometry/StartupBigSphereSpec.h"
+#include "Resource/GltfBufferFile.h"
+#include "Resource/GltfBufferJson.h"
+#include "Resource/GltfDocumentProfile.h"
+#include "Resource/GltfImageSource.h"
+#include "Resource/ImportSettingsFile.h"
+#include "Resource/ImportSettingsHash.h"
+#include "Resource/ImportTransform.h"
 #include "Resource/SkeletalGltfDecode.h"
+#include "Resource/SkeletalImportPolicy.h"
+#include "Resource/SkeletalInfluenceAttributes.h"
+#include "Resource/SkeletalLimits.h"
+#include "Resource/SkeletalSubmeshBounds.h"
+#include "Resource/SkeletalSubmeshLayout.h"
 #include "Text/JsonDocument.h"
 
 #include <algorithm>
@@ -17,9 +35,8 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <limits>
-#include <system_error>
+#include <type_traits>
 #include <utility>
 
 #include "stb_image.h"
@@ -40,6 +57,8 @@ namespace NorvesLib::Tools::AssetCook
         using NorvesLib::Core::Container::VariableArray;
         using NorvesLib::Core::Rendering::MegaGeometry::MeshCluster;
         using NorvesLib::Core::Rendering::MegaGeometry::MeshClusterizer;
+        namespace Gltf = NorvesLib::Core::Gltf;
+        namespace AssetImport = NorvesLib::Core::AssetImport;
         namespace ClusterRecordOffset = NorvesLib::Core::Asset::CookedMeshFormatV0::ClusterRecordOffset;
         namespace Format = NorvesLib::Core::Asset::CookedMeshFormatV0;
         namespace HeaderOffset = NorvesLib::Core::Asset::CookedMeshFormatV0::HeaderOffset;
@@ -57,8 +76,10 @@ namespace NorvesLib::Tools::AssetCook
         constexpr size_t GltfMinimumByteStride = 4;
         constexpr size_t GltfMaximumByteStride = 252;
         constexpr AnsiStringView SupportedMeshFormat = "nvmesh.v0.mesh3d.pnt.u32.clustered";
-        // LOD の階層(クラスタの DAG)を焼く NVMESH v1。v0 の形式名を指定した従来のクックは変わらない。
-        constexpr AnsiStringView SupportedMeshFormatV1 = "nvmesh.v1.mesh3d.pnt.u32.lodgraph";
+        constexpr AnsiStringView SupportedMeshFormatV1 = "nvmesh.v1.mesh3d.pnt.u32.clustered";
+        // LOD の階層(クラスタの DAG)を焼く NVMESH v1。v0
+        // の形式名を指定した従来のクックは変わらない。
+        constexpr AnsiStringView SupportedMeshFormatLodGraph = "nvmesh.v1.mesh3d.pnt.u32.lodgraph";
         constexpr AnsiStringView SupportedSkeletalFormat = "nvskel.v0.skinned.pnujiw.u32";
 
         using MeshByteArray = NorvesLib::Core::Container::VariableArray<uint8_t>;
@@ -96,12 +117,6 @@ namespace NorvesLib::Tools::AssetCook
             size_t ByteLength = 0;
             size_t ByteStride = 0;
             bool bHasByteStride = false;
-        };
-
-        struct BufferInfo
-        {
-            AnsiString Uri;
-            size_t ByteLength = 0;
         };
 
         struct PrimitiveInfo
@@ -225,19 +240,21 @@ namespace NorvesLib::Tools::AssetCook
             return Fnv1a64Update(hash, bytes, sizeof(bytes));
         }
 
-        // Hashes the complete glTF source: the JSON bytes (BOM included) plus every external
-        // buffer, each prefixed by its little-endian 64-bit byte length so that a byte moving
-        // across a boundary cannot collide with an unchanged source.
+        // 埋込みbufferは元sourceに含まれる。外部bufferは余剰を含む全量をJSON順で加える。
         uint64_t ComputeGltfSourceHash(const uint8_t* sourceBytes, size_t sourceSize,
-                                       const VariableArray<VariableArray<uint8_t>>& bufferBytes)
+                                       const Gltf::BufferSet& buffers)
         {
             uint64_t hash = Format::Fnv1a64OffsetBasis;
             hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(sourceSize));
             hash = Fnv1a64Update(hash, sourceBytes, sourceSize);
-            for (const VariableArray<uint8_t>& bytes : bufferBytes)
+            for (size_t index = 0; index < buffers.GetCount(); ++index)
             {
-                hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(bytes.size()));
-                hash = Fnv1a64Update(hash, bytes.data(), bytes.size());
+                if (buffers.GetSourceKind(index) == Gltf::BufferStorageKind::ExternalFile)
+                {
+                    const auto bytes = buffers.GetSourceBytes(index);
+                    hash = Fnv1a64UpdateLe64(hash, static_cast<uint64_t>(bytes.size()));
+                    hash = Fnv1a64Update(hash, bytes.data(), bytes.size());
+                }
             }
             return hash;
         }
@@ -260,20 +277,6 @@ namespace NorvesLib::Tools::AssetCook
                    (static_cast<uint32_t>(pData[2]) << 16) | (static_cast<uint32_t>(pData[3]) << 24);
         }
 
-        String ToCoreString(AnsiStringView value)
-        {
-            String result;
-            result.reserve(value.size());
-#if defined(UNICODE)
-            for (const unsigned char character : value)
-            {
-                result.push_back(static_cast<wchar_t>(character));
-            }
-#else
-            result.append(value.data(), value.size());
-#endif
-            return result;
-        }
 
         template <typename T>
         AnsiString FormatInteger(T value)
@@ -477,52 +480,6 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool IsPathWithin(const std::filesystem::path& directory, const std::filesystem::path& candidate)
-        {
-            auto directoryIterator = directory.begin();
-            auto candidateIterator = candidate.begin();
-            for (; directoryIterator != directory.end(); ++directoryIterator, ++candidateIterator)
-            {
-                if (candidateIterator == candidate.end() || *directoryIterator != *candidateIterator)
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        bool ReadBinaryFile(const std::filesystem::path& path, VariableArray<uint8_t>& outBytes, AnsiString& error)
-        {
-            std::ifstream input(path, std::ios::binary);
-            if (!input.is_open())
-            {
-                error = AnsiString("failed to open glTF buffer: ") + path.string().c_str();
-                return false;
-            }
-
-            input.seekg(0, std::ios::end);
-            const std::streamoff fileSize = input.tellg();
-            if (fileSize < 0 || static_cast<uint64_t>(fileSize) > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
-                static_cast<uint64_t>(fileSize) > static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max()))
-            {
-                error = AnsiString("invalid glTF buffer file size: ") + path.string().c_str();
-                return false;
-            }
-
-            outBytes.resize(static_cast<size_t>(fileSize));
-            input.seekg(0, std::ios::beg);
-            if (!outBytes.empty())
-            {
-                input.read(reinterpret_cast<char*>(outBytes.data()), static_cast<std::streamsize>(outBytes.size()));
-                if (input.gcount() != static_cast<std::streamsize>(outBytes.size()))
-                {
-                    error = AnsiString("failed to read glTF buffer: ") + path.string().c_str();
-                    return false;
-                }
-            }
-            return true;
-        }
-
         bool ParseAccessors(const JsonValue& root, VariableArray<AccessorInfo>& outAccessors, AnsiString& error)
         {
             const JsonValue accessors = root.FindMember("accessors");
@@ -588,37 +545,8 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool ParseBuffers(const JsonValue& root, VariableArray<BufferInfo>& outBuffers, AnsiString& error)
-        {
-            const JsonValue buffers = root.FindMember("buffers");
-            if (!buffers.IsArray() || buffers.GetArraySize() == 0)
-            {
-                error = "glTF buffers must be a non-empty array";
-                return false;
-            }
-
-            outBuffers.clear();
-            outBuffers.reserve(buffers.GetArraySize());
-            for (size_t index = 0; index < buffers.GetArraySize(); ++index)
-            {
-                const JsonValue value = buffers.GetArrayElement(index);
-                BufferInfo buffer;
-                if (!value.IsObject() || !TryConvertAsciiString(value.FindMember("uri"), buffer.Uri) ||
-                    !TryReadRequiredSize(value, "byteLength", buffer.ByteLength) ||
-                    !ValidateRelativePath(buffer.Uri, "buffer URI", error))
-                {
-                    if (error.empty())
-                    {
-                        error = AnsiString("invalid glTF buffer at index ") + FormatInteger(index);
-                    }
-                    return false;
-                }
-                outBuffers.push_back(std::move(buffer));
-            }
-            return true;
-        }
-
-        bool ParsePrimitive(const JsonValue& root, PrimitiveInfo& outPrimitive, AnsiString& error)
+        bool ParsePrimitive(const JsonValue& root, PrimitiveInfo& outPrimitive, AnsiString& error,
+                            size_t primitiveIndex = 0, bool bMultiple = false)
         {
             const JsonValue meshes = root.FindMember("meshes");
             if (!meshes.IsArray() || meshes.GetArraySize() != 1)
@@ -629,13 +557,15 @@ namespace NorvesLib::Tools::AssetCook
 
             const JsonValue mesh = meshes.GetArrayElement(0);
             const JsonValue primitives = mesh.FindMember("primitives");
-            if (!mesh.IsObject() || !primitives.IsArray() || primitives.GetArraySize() != 1)
+            if (!mesh.IsObject() || !primitives.IsArray() || primitives.GetArraySize() == 0 ||
+                primitives.GetArraySize() > UINT32_MAX || primitiveIndex >= primitives.GetArraySize() ||
+                (!bMultiple && primitives.GetArraySize() != 1))
             {
                 error = "NVMESH v0 requires exactly one glTF primitive";
                 return false;
             }
 
-            const JsonValue primitive = primitives.GetArrayElement(0);
+            const JsonValue primitive = primitives.GetArrayElement(primitiveIndex);
             const JsonValue attributes = primitive.FindMember("attributes");
             uint32_t mode = GltfTrianglesMode;
             if (!primitive.IsObject() || !attributes.IsObject() ||
@@ -652,83 +582,115 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
+        bool ParsePrimitiveSet(const JsonValue& root, VariableArray<PrimitiveInfo>& primitives,
+                               VariableArray<uint64_t>& materialKeys, AnsiString& error)
+        {
+            PrimitiveInfo first;
+            if (!ParsePrimitive(root, first, error, 0, true))
+            {
+                return false;
+            }
+            const auto count = root.FindMember("meshes").GetArrayElement(0).FindMember("primitives").GetArraySize();
+            for (size_t i = 0; i < count; ++i)
+            {
+                PrimitiveInfo primitive;
+                if (!ParsePrimitive(root, primitive, error, i, true))
+                {
+                    return false;
+                }
+                primitives.push_back(primitive);
+                materialKeys.push_back(primitive.bHasMaterial ? primitive.MaterialIndex : ImplicitMeshMaterialIndex);
+            }
+            std::sort(materialKeys.begin(), materialKeys.end());
+            materialKeys.erase(std::unique(materialKeys.begin(), materialKeys.end()), materialKeys.end());
+            return true;
+        }
+
+        bool HasMultiplePrimitives(const JsonValue& root)
+        {
+            const auto meshes = root.FindMember("meshes");
+            return meshes.IsArray() && meshes.GetArraySize() == 1 &&
+                   meshes.GetArrayElement(0).FindMember("primitives").GetArraySize() > 1;
+        }
+
         bool ValidateRequiredExtensions(const JsonValue& root, AnsiString& error)
         {
-            const JsonValue extensionsRequired = root.FindMember("extensionsRequired");
-            if (!extensionsRequired.IsValid())
+            const auto status = Gltf::CheckRequiredExtensions(root);
+            if (status != Gltf::RequiredExtensionsStatus::Success)
+            {
+                error = Gltf::RequiredExtensionsError(status);
+                return false;
+            }
+            return true;
+        }
+
+        std::filesystem::path LegacyModelLocator(AnsiStringView sourcePath)
+        {
+            if (sourcePath.empty())
+            {
+                return {};
+            }
+            return std::filesystem::path(sourcePath.begin(), sourcePath.end());
+        }
+
+        bool ValidateNativeCookPaths(const std::filesystem::path& sourcePath,
+                                     const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+                                     AnsiString& error)
+        {
+            if (!Core::Gltf::IsValidNativeSourcePath(sourcePath) ||
+                (importOptions && !Core::Gltf::IsValidNativeSourcePath(importOptions->OverridePath)))
+            {
+                error = "model locator contains invalid Unicode or NUL";
+                return false;
+            }
+            return true;
+        }
+
+        bool ResolveCookBuffers(const JsonValue& root, const Gltf::ContainerView& container,
+                                const std::filesystem::path& sourcePath, Gltf::BufferSet& buffers, AnsiString& error)
+        {
+            Gltf::BufferFileContext context{sourcePath};
+            const auto outcome = Gltf::ResolveJsonBuffers(root, container, Gltf::ReadBufferFile, &context, buffers);
+            if (outcome.Result == Gltf::BufferResolveResult::Success)
             {
                 return true;
             }
-            if (!extensionsRequired.IsArray())
+            // 既存の相対path診断を維持し、percent復号後の違反は共有resolverの結果で拒否する。
+            if (outcome.Result == Gltf::BufferResolveResult::InvalidUri)
             {
-                error = "glTF extensionsRequired must be an array of strings";
-                return false;
-            }
-            for (size_t index = 0; index < extensionsRequired.GetArraySize(); ++index)
-            {
-                if (!extensionsRequired.GetArrayElement(index).IsString())
-                {
-                    error = "glTF extensionsRequired must be an array of strings";
-                    return false;
-                }
-            }
-            if (extensionsRequired.GetArraySize() != 0)
-            {
-                error = "glTF required extensions are not supported";
-                return false;
-            }
-            return true;
-        }
-
-        bool LoadBuffers(const VariableArray<BufferInfo>& buffers, const std::filesystem::path& sourcePath,
-                         VariableArray<VariableArray<uint8_t>>& outBufferBytes, AnsiString& error)
-        {
-            std::error_code errorCode;
-            const std::filesystem::path absoluteSource = std::filesystem::absolute(sourcePath, errorCode);
-            if (errorCode)
-            {
-                error = "failed to make glTF source path absolute";
-                return false;
-            }
-
-            const std::filesystem::path sourceDirectory =
-                std::filesystem::weakly_canonical(absoluteSource.parent_path(), errorCode);
-            if (errorCode)
-            {
-                error = "failed to canonicalize glTF source directory";
-                return false;
-            }
-
-            outBufferBytes.clear();
-            outBufferBytes.resize(buffers.size());
-            for (size_t index = 0; index < buffers.size(); ++index)
-            {
-                const std::filesystem::path candidate = std::filesystem::weakly_canonical(
-                    sourceDirectory / std::filesystem::path(buffers[index].Uri.begin(), buffers[index].Uri.end()),
-                    errorCode);
-                if (errorCode || !IsPathWithin(sourceDirectory, candidate))
-                {
-                    error = "glTF buffer URI escapes the input directory";
-                    return false;
-                }
-
-                if (!ReadBinaryFile(candidate, outBufferBytes[index], error))
+                AnsiString uri;
+                const JsonValue descriptors = root.FindMember("buffers");
+                if (outcome.BufferIndex < descriptors.GetArraySize() &&
+                    TryConvertAsciiString(descriptors.GetArrayElement(outcome.BufferIndex).FindMember("uri"), uri) &&
+                    !StartsWithDataUri(AnsiStringView(uri)) && !ValidateRelativePath(uri, "buffer URI", error))
                 {
                     return false;
                 }
-
-                if (outBufferBytes[index].size() < buffers[index].ByteLength)
-                {
-                    error = "glTF buffer file is smaller than its declared byteLength";
-                    return false;
-                }
+                error = "invalid glTF buffer URI";
             }
-            return true;
+            else if (outcome.Result == Gltf::BufferResolveResult::SourceTooShort)
+            {
+                error = "glTF buffer file is smaller than its declared byteLength";
+            }
+            else if (outcome.Result == Gltf::BufferResolveResult::ExternalReadFailure)
+            {
+                error = outcome.ReadError == Gltf::ExternalBufferReadResult::OutsideDirectory
+                    ? "glTF buffer URI escapes the input directory" : "failed to read glTF buffer";
+            }
+            else if (outcome.Result == Gltf::BufferResolveResult::InvalidEmbeddedData ||
+                     outcome.Result == Gltf::BufferResolveResult::UnsupportedDataMime)
+            {
+                error = "invalid glTF embedded buffer data";
+            }
+            else
+            {
+                error = "invalid glTF buffer descriptor";
+            }
+            return false;
         }
 
         bool ValidateAccessorLayout(const AccessorInfo& accessor, const VariableArray<BufferViewInfo>& bufferViews,
-                                    const VariableArray<BufferInfo>& buffers,
-                                    const VariableArray<VariableArray<uint8_t>>& bufferBytes,
+                                    const Gltf::BufferSet& buffers,
                                     uint32_t requiredComponentType, AnsiStringView requiredType, size_t componentCount,
                                     const char* label, AccessorUsage usage, AccessorLayout& outLayout, AnsiString& error)
         {
@@ -745,7 +707,7 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             const BufferViewInfo& bufferView = bufferViews[accessor.BufferView];
-            if (bufferView.Buffer >= buffers.size() || bufferView.Buffer >= bufferBytes.size())
+            if (bufferView.Buffer >= buffers.GetCount())
             {
                 error = AnsiString(label) + " bufferView buffer is out of range";
                 return false;
@@ -799,7 +761,7 @@ namespace NorvesLib::Tools::AssetCook
 
             size_t bufferViewEnd = 0;
             if (!CheckedAdd(bufferView.ByteOffset, bufferView.ByteLength, bufferViewEnd) ||
-                bufferViewEnd > buffers[bufferView.Buffer].ByteLength || bufferViewEnd > bufferBytes[bufferView.Buffer].size())
+                bufferViewEnd > buffers.GetDeclaredByteLength(bufferView.Buffer) || bufferViewEnd > buffers.GetBytes(bufferView.Buffer).size())
             {
                 error = AnsiString(label) + " bufferView range is invalid";
                 return false;
@@ -838,21 +800,20 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             size_t absoluteEnd = 0;
-            if (!CheckedAdd(startOffset, requiredBytes, absoluteEnd) || absoluteEnd > buffers[bufferView.Buffer].ByteLength ||
-                absoluteEnd > bufferBytes[bufferView.Buffer].size())
+            if (!CheckedAdd(startOffset, requiredBytes, absoluteEnd) || absoluteEnd > buffers.GetDeclaredByteLength(bufferView.Buffer) ||
+                absoluteEnd > buffers.GetBytes(bufferView.Buffer).size())
             {
                 error = AnsiString(label) + " accessor exceeds its buffer";
                 return false;
             }
 
-            outLayout.pData = bufferBytes[bufferView.Buffer].data() + startOffset;
+            outLayout.pData = buffers.GetBytes(bufferView.Buffer).data() + startOffset;
             outLayout.Stride = stride;
             return true;
         }
 
         bool ExtractMesh(const VariableArray<AccessorInfo>& accessors, const VariableArray<BufferViewInfo>& bufferViews,
-                         const VariableArray<BufferInfo>& buffers,
-                         const VariableArray<VariableArray<uint8_t>>& bufferBytes, const PrimitiveInfo& primitive,
+                         const Gltf::BufferSet& buffers, const PrimitiveInfo& primitive,
                          VariableArray<MeshVertexPnt>& outVertices, VariableArray<uint32_t>& outIndices,
                          AnsiString& error)
         {
@@ -882,11 +843,11 @@ namespace NorvesLib::Tools::AssetCook
             AccessorLayout normalLayout;
             AccessorLayout texCoordLayout;
             AccessorLayout indexLayout;
-            if (!ValidateAccessorLayout(positions, bufferViews, buffers, bufferBytes, GltfFloatComponent, "VEC3", 3, "POSITION",
+            if (!ValidateAccessorLayout(positions, bufferViews, buffers, GltfFloatComponent, "VEC3", 3, "POSITION",
                                         AccessorUsage::VertexAttribute, positionLayout, error) ||
-                !ValidateAccessorLayout(normals, bufferViews, buffers, bufferBytes, GltfFloatComponent, "VEC3", 3, "NORMAL",
+                !ValidateAccessorLayout(normals, bufferViews, buffers, GltfFloatComponent, "VEC3", 3, "NORMAL",
                                         AccessorUsage::VertexAttribute, normalLayout, error) ||
-                !ValidateAccessorLayout(texCoords, bufferViews, buffers, bufferBytes, GltfFloatComponent, "VEC2", 2,
+                !ValidateAccessorLayout(texCoords, bufferViews, buffers, GltfFloatComponent, "VEC2", 2,
                                         "TEXCOORD_0", AccessorUsage::VertexAttribute, texCoordLayout, error))
             {
                 return false;
@@ -897,7 +858,7 @@ namespace NorvesLib::Tools::AssetCook
                 error = "indices accessor componentType must be uint16 or uint32";
                 return false;
             }
-            if (!ValidateAccessorLayout(indices, bufferViews, buffers, bufferBytes, indices.ComponentType, "SCALAR", 1,
+            if (!ValidateAccessorLayout(indices, bufferViews, buffers, indices.ComponentType, "SCALAR", 1,
                                         "indices", AccessorUsage::Index, indexLayout, error))
             {
                 return false;
@@ -987,7 +948,9 @@ namespace NorvesLib::Tools::AssetCook
         }
 
         bool ResolveTextureReference(const JsonValue& root, const JsonValue& textureInfo, AnsiStringView logicalPath,
-                                     const char* label, AnsiString& outReference, AnsiString& error)
+                                     const char* label, MeshImageRole role, const Gltf::BufferSet& buffers,
+                                     VariableArray<MeshEmbeddedImage>& embeddedImages,
+                                     AnsiString& outReference, AnsiString& error)
         {
             outReference.clear();
             if (!textureInfo.IsValid())
@@ -1000,8 +963,7 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            // NVMESH v0 stores a single UV set. A missing texCoord means 0; an explicit 0 is fine;
-            // anything else would silently bind the wrong UV channel.
+            // NVMESH v0のUV setは1つ。texCoord省略/明示0を許可し、他のUVへの誤結合を拒否する。
             uint32_t texCoord = 0;
             if (!TryReadOptionalUInt32(textureInfo, "texCoord", 0, texCoord))
             {
@@ -1014,7 +976,7 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            // KHR_texture_transform and friends rewrite UV semantics that this cooker cannot bake.
+            // このcookerではUV変換を焼き込めないため、KHR_texture_transform等を拒否する。
             if (textureInfo.FindMember("extensions").IsValid())
             {
                 error = AnsiString(label) + " texture info extensions are not supported";
@@ -1040,17 +1002,69 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            const JsonValue image = images.GetArrayElement(imageIndex);
-            AnsiString imageUri;
-            if (!image.IsObject() || !TryConvertAsciiString(image.FindMember("uri"), imageUri) || imageUri.empty())
+            Gltf::ImageSource image;
+            const auto imageResult = Gltf::ImageSource::Resolve(root, imageIndex, buffers, image);
+            if (imageResult != Gltf::ImageSourceResult::Success)
             {
-                error = AnsiString(label) + " image URI is required";
+                error = AnsiString(label) + " image source is invalid";
                 return false;
             }
-            return BuildLogicalTextureReference(logicalPath, imageUri, label, outReference, error);
+            if (image.GetKind() == Gltf::ImageSourceKind::ExternalFile)
+            {
+                const auto uri = image.GetExternalUri();
+                return BuildLogicalTextureReference(logicalPath,
+                    AnsiStringView(reinterpret_cast<const char*>(uri.data()), uri.size()), label, outReference, error);
+            }
+
+            const AnsiStringView textureFormat = role == MeshImageRole::Albedo
+                ? "nvtex.v0.rgba8.srgb" : "nvtex.v0.rgba8.linear";
+            for (auto& existing : embeddedImages)
+            {
+                if (existing.ImageIndex == imageIndex)
+                {
+                    if (AnsiStringView(existing.Format) != textureFormat)
+                    {
+                        error = "embedded image roles require conflicting texture formats";
+                        return false;
+                    }
+                    existing.Roles |= static_cast<uint8_t>(role);
+                    outReference = existing.LogicalPath;
+                    return true;
+                }
+            }
+            MeshEmbeddedImage entry;
+            entry.ImageIndex = imageIndex;
+            entry.Roles = static_cast<uint8_t>(role);
+            entry.Format = AnsiString(textureFormat);
+            entry.LogicalPath = AnsiString(logicalPath) + ".img" + FormatInteger(imageIndex) +
+                (image.GetMime() == Gltf::DataUriMime::Png ? ".png" : ".jpg");
+            if (!ValidateRelativePath(entry.LogicalPath, "embedded image logical path", error))
+            {
+                return false;
+            }
+            const auto bytes = image.GetBytes(buffers);
+            if (!Gltf::MatchesEmbeddedImageMime(bytes, image.GetMime()))
+            {
+                error = Gltf::ProbeEmbeddedImageMime(bytes) == Gltf::DataUriMime::Unknown
+                    ? "embedded image must contain PNG or JPEG bytes"
+                    : "embedded image MIME does not match signature";
+                return false;
+            }
+            const bool bBorrowGlb = image.GetKind() == Gltf::ImageSourceKind::BufferView &&
+                buffers.GetSourceKind(image.GetBufferIndex()) == Gltf::BufferStorageKind::GlbBin;
+            if (!entry.SetBytes(bytes, bBorrowGlb))
+            {
+                error = "embedded image bytes are empty or invalid";
+                return false;
+            }
+            entry.SourceHash = Core::Asset::ComputeAssetPackagePayloadHash(bytes.data(), bytes.size());
+            outReference = entry.LogicalPath;
+            embeddedImages.push_back(std::move(entry));
+            return true;
         }
 
         bool ResolveMaterialReferences(const JsonValue& root, const PrimitiveInfo& primitive, AnsiStringView logicalPath,
+                                       const Gltf::BufferSet& buffers, VariableArray<MeshEmbeddedImage>& embeddedImages,
                                        MaterialReferences& outReferences, AnsiString& error)
         {
             outReferences = {};
@@ -1074,7 +1088,7 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             if (!ResolveTextureReference(root, material.FindMember("normalTexture"), logicalPath, "normal",
-                                         outReferences.Normal, error))
+                                         MeshImageRole::Normal, buffers, embeddedImages, outReferences.Normal, error))
             {
                 return false;
             }
@@ -1091,9 +1105,9 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             return ResolveTextureReference(root, pbr.FindMember("baseColorTexture"), logicalPath, "albedo",
-                                           outReferences.Albedo, error) &&
+                                           MeshImageRole::Albedo, buffers, embeddedImages, outReferences.Albedo, error) &&
                    ResolveTextureReference(root, pbr.FindMember("metallicRoughnessTexture"), logicalPath, "ARM",
-                                           outReferences.Arm, error);
+                                           MeshImageRole::Arm, buffers, embeddedImages, outReferences.Arm, error);
         }
 
         BoundsSphere CalculateBounds(const VariableArray<MeshVertexPnt>& vertices)
@@ -1414,8 +1428,24 @@ namespace NorvesLib::Tools::AssetCook
         bool BuildNvmeshBytes(const VariableArray<MeshVertexPnt>& vertices,
                               const NorvesLib::Core::Container::VariableArray<MeshCluster>& clusters,
                               const NorvesLib::Core::Container::VariableArray<uint32_t>& indices,
-                              const MaterialReferences& materialReferences, MeshByteArray& outBytes, AnsiString& error)
+                              const MaterialReferences& materialReferences, MeshByteArray& outBytes, AnsiString& error,
+                              const MeshMaterialV1Plan* materialV1 = nullptr,
+                              const MeshMaterialV1SetPlan* materialSet = nullptr,
+                              Core::Container::Span<const Core::Asset::CookedMeshSubmesh> submeshes = {})
         {
+            const bool bV1 = materialV1 || materialSet;
+            const size_t materialCount = materialSet ? materialSet->Materials.size() : 1;
+            const size_t submeshCount = materialSet ? submeshes.size() : 1;
+            if ((materialV1 && materialSet) || materialCount == 0 || materialCount > UINT32_MAX || submeshCount == 0 ||
+                submeshCount > UINT32_MAX)
+            {
+                error = "invalid mesh material/submesh counts";
+                return false;
+            }
+            const size_t materialRecordSize =
+                bV1 ? Core::Asset::CookedMaterialFormatV1::RecordSize : Format::MaterialRecordSize;
+            const size_t clusterRecordSize =
+                bV1 ? Core::Asset::CookedMeshClusteredFormatV1::ClusterRecordSize : Format::ClusterRecordSize;
             if (vertices.empty() || vertices.size() > UINT32_MAX || clusters.empty() || clusters.size() > UINT32_MAX ||
                 indices.empty() || indices.size() > UINT32_MAX)
             {
@@ -1430,11 +1460,37 @@ namespace NorvesLib::Tools::AssetCook
             StringRefWire albedoReference;
             StringRefWire normalReference;
             StringRefWire armReference;
-            if (!AppendStringReference(materialReferences.Albedo, stringTable, albedoReference, error) ||
-                !AppendStringReference(materialReferences.Normal, stringTable, normalReference, error) ||
-                !AppendStringReference(materialReferences.Arm, stringTable, armReference, error))
+            StringRefWire emissiveReference;
+            VariableArray<Core::Asset::CookedMaterialRecord> records;
+            if (materialSet)
             {
-                return false;
+                for (const auto& entry : materialSet->Materials)
+                {
+                    auto record = entry.Material;
+                    Core::Asset::CookedMaterialStringRef* refs[] = {&record.Albedo, &record.Normal, &record.Arm,
+                                                                    &record.Emissive};
+                    for (size_t role = 0; role < 4; ++role)
+                    {
+                        StringRefWire wire;
+                        if (!AppendStringReference(entry.Textures[role], stringTable, wire, error))
+                        {
+                            return false;
+                        }
+                        *refs[role] = {wire.Offset, wire.Length};
+                    }
+                    records.push_back(record);
+                }
+            }
+            else
+            {
+                if (!AppendStringReference(materialReferences.Albedo, stringTable, albedoReference, error) ||
+                    !AppendStringReference(materialReferences.Normal, stringTable, normalReference, error) ||
+                    !AppendStringReference(materialReferences.Arm, stringTable, armReference, error) ||
+                    (materialV1 &&
+                     !AppendStringReference(materialV1->Textures[3], stringTable, emissiveReference, error)))
+                {
+                    return false;
+                }
             }
 
             if (stringTable.size() > UINT32_MAX)
@@ -1443,10 +1499,13 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
+            size_t submeshTableSize = 0, materialTableSize = 0;
             size_t clusterTableSize = 0;
             size_t vertexPayloadSize = 0;
             size_t indexPayloadSize = 0;
-            if (!CheckedMultiply(clusters.size(), Format::ClusterRecordSize, clusterTableSize) ||
+            if (!CheckedMultiply(submeshCount, Format::SubmeshRecordSize, submeshTableSize) ||
+                !CheckedMultiply(materialCount, materialRecordSize, materialTableSize) ||
+                !CheckedMultiply(clusters.size(), clusterRecordSize, clusterTableSize) ||
                 !CheckedMultiply(vertices.size(), Format::VertexRecordSize, vertexPayloadSize) ||
                 !CheckedMultiply(indices.size(), sizeof(uint32_t), indexPayloadSize))
             {
@@ -1462,9 +1521,9 @@ namespace NorvesLib::Tools::AssetCook
             size_t indexPayloadOffset = 0;
             size_t fileSize = 0;
             size_t sectionEnd = 0;
-            if (!CheckedAdd(submeshTableOffset, Format::SubmeshRecordSize, sectionEnd) ||
+            if (!CheckedAdd(submeshTableOffset, submeshTableSize, sectionEnd) ||
                 !AlignUp(sectionEnd, Format::SectionAlignment, materialTableOffset) ||
-                !CheckedAdd(materialTableOffset, Format::MaterialRecordSize, sectionEnd) ||
+                !CheckedAdd(materialTableOffset, materialTableSize, sectionEnd) ||
                 !AlignUp(sectionEnd, Format::SectionAlignment, clusterTableOffset) ||
                 !CheckedAdd(clusterTableOffset, clusterTableSize, sectionEnd) ||
                 !AlignUp(sectionEnd, Format::SectionAlignment, stringTableOffset) ||
@@ -1487,21 +1546,23 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             outBytes.assign(fileSize, 0);
-            std::memcpy(outBytes.data() + HeaderOffset::Magic, Format::Magic, Format::MagicSize);
+            std::memcpy(outBytes.data() + HeaderOffset::Magic,
+                        bV1 ? Core::Asset::CookedMeshClusteredFormatV1::Magic : Format::Magic, Format::MagicSize);
             WriteLe32(outBytes, HeaderOffset::HeaderSize, static_cast<uint32_t>(Format::HeaderSize));
-            WriteLe16(outBytes, HeaderOffset::VersionMajor, Format::VersionMajor);
+            WriteLe16(outBytes, HeaderOffset::VersionMajor,
+                      bV1 ? Core::Asset::CookedMeshClusteredFormatV1::VersionMajor : Format::VersionMajor);
             WriteLe16(outBytes, HeaderOffset::VersionMinor, Format::VersionMinor);
             WriteLe32(outBytes, HeaderOffset::EndianMarker, Format::EndianMarker);
             WriteLe32(outBytes, HeaderOffset::VertexRecordSize, static_cast<uint32_t>(Format::VertexRecordSize));
             WriteLe32(outBytes, HeaderOffset::SubmeshRecordSize, static_cast<uint32_t>(Format::SubmeshRecordSize));
-            WriteLe32(outBytes, HeaderOffset::MaterialRecordSize, static_cast<uint32_t>(Format::MaterialRecordSize));
-            WriteLe32(outBytes, HeaderOffset::ClusterRecordSize, static_cast<uint32_t>(Format::ClusterRecordSize));
+            WriteLe32(outBytes, HeaderOffset::MaterialRecordSize, static_cast<uint32_t>(materialRecordSize));
+            WriteLe32(outBytes, HeaderOffset::ClusterRecordSize, static_cast<uint32_t>(clusterRecordSize));
             WriteLe32(outBytes, HeaderOffset::StringRefRecordSize, static_cast<uint32_t>(Format::StringRefRecordSize));
             WriteLe64(outBytes, HeaderOffset::FileSize, static_cast<uint64_t>(fileSize));
             WriteLe64(outBytes, HeaderOffset::SubmeshTableOffset, static_cast<uint64_t>(submeshTableOffset));
-            WriteLe64(outBytes, HeaderOffset::SubmeshTableSize, Format::SubmeshRecordSize);
+            WriteLe64(outBytes, HeaderOffset::SubmeshTableSize, submeshTableSize);
             WriteLe64(outBytes, HeaderOffset::MaterialTableOffset, static_cast<uint64_t>(materialTableOffset));
-            WriteLe64(outBytes, HeaderOffset::MaterialTableSize, Format::MaterialRecordSize);
+            WriteLe64(outBytes, HeaderOffset::MaterialTableSize, materialTableSize);
             WriteLe64(outBytes, HeaderOffset::ClusterTableOffset, static_cast<uint64_t>(clusterTableOffset));
             WriteLe64(outBytes, HeaderOffset::ClusterTableSize, static_cast<uint64_t>(clusterTableSize));
             WriteLe64(outBytes, HeaderOffset::StringTableOffset, static_cast<uint64_t>(stringTableOffset));
@@ -1512,8 +1573,8 @@ namespace NorvesLib::Tools::AssetCook
             WriteLe64(outBytes, HeaderOffset::IndexPayloadSize, static_cast<uint64_t>(indexPayloadSize));
             WriteLe32(outBytes, HeaderOffset::VertexCount, static_cast<uint32_t>(vertices.size()));
             WriteLe32(outBytes, HeaderOffset::IndexCount, static_cast<uint32_t>(indices.size()));
-            WriteLe32(outBytes, HeaderOffset::SubmeshCount, 1);
-            WriteLe32(outBytes, HeaderOffset::MaterialCount, 1);
+            WriteLe32(outBytes, HeaderOffset::SubmeshCount, static_cast<uint32_t>(submeshCount));
+            WriteLe32(outBytes, HeaderOffset::MaterialCount, static_cast<uint32_t>(materialCount));
             WriteLe32(outBytes, HeaderOffset::ClusterCount, static_cast<uint32_t>(clusters.size()));
             WriteLe32(outBytes, HeaderOffset::StringByteCount, static_cast<uint32_t>(stringTable.size()));
             WriteFloat32(outBytes, HeaderOffset::TotalBoundsCenterX, totalBounds.CenterX);
@@ -1526,26 +1587,85 @@ namespace NorvesLib::Tools::AssetCook
             WriteLe32(outBytes, HeaderOffset::ClusterMaxVertices, Format::ClusterMaxVertices);
             WriteLe32(outBytes, HeaderOffset::ClusterSettingsFlags, Format::ClusterSettingsFlags);
 
-            WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::IndexOffset, 0);
-            WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::IndexCount, static_cast<uint32_t>(indices.size()));
-            WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::VertexOffset, 0);
-            WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::VertexCount, static_cast<uint32_t>(vertices.size()));
-            WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::MaterialIndex, 0);
-            WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::ClusterOffset, 0);
-            WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::ClusterCount, static_cast<uint32_t>(clusters.size()));
-            WriteFloat32(outBytes, submeshTableOffset + SubmeshRecordOffset::BoundsCenterX, totalBounds.CenterX);
-            WriteFloat32(outBytes, submeshTableOffset + SubmeshRecordOffset::BoundsCenterY, totalBounds.CenterY);
-            WriteFloat32(outBytes, submeshTableOffset + SubmeshRecordOffset::BoundsCenterZ, totalBounds.CenterZ);
-            WriteFloat32(outBytes, submeshTableOffset + SubmeshRecordOffset::BoundsRadius, totalBounds.Radius);
+            if (materialSet)
+            {
+                for (size_t i = 0; i < submeshes.size(); ++i)
+                {
+                    const auto& submesh = submeshes[i];
+                    const auto offset = submeshTableOffset + i * Format::SubmeshRecordSize;
+                    WriteLe32(outBytes, offset + SubmeshRecordOffset::IndexOffset, submesh.IndexOffset);
+                    WriteLe32(outBytes, offset + SubmeshRecordOffset::IndexCount, submesh.IndexCount);
+                    WriteLe32(outBytes, offset + SubmeshRecordOffset::VertexOffset, submesh.VertexOffset);
+                    WriteLe32(outBytes, offset + SubmeshRecordOffset::VertexCount, submesh.VertexCount);
+                    WriteLe32(outBytes, offset + SubmeshRecordOffset::MaterialIndex, submesh.MaterialIndex);
+                    WriteLe32(outBytes, offset + SubmeshRecordOffset::ClusterOffset, submesh.ClusterOffset);
+                    WriteLe32(outBytes, offset + SubmeshRecordOffset::ClusterCount, submesh.ClusterCount);
+                    WriteFloat32(outBytes, offset + SubmeshRecordOffset::BoundsCenterX, submesh.BoundsCenter.X);
+                    WriteFloat32(outBytes, offset + SubmeshRecordOffset::BoundsCenterY, submesh.BoundsCenter.Y);
+                    WriteFloat32(outBytes, offset + SubmeshRecordOffset::BoundsCenterZ, submesh.BoundsCenter.Z);
+                    WriteFloat32(outBytes, offset + SubmeshRecordOffset::BoundsRadius, submesh.BoundsRadius);
+                }
+            }
+            else
+            {
+                WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::IndexOffset, 0);
+                WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::IndexCount,
+                          static_cast<uint32_t>(indices.size()));
+                WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::VertexOffset, 0);
+                WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::VertexCount,
+                          static_cast<uint32_t>(vertices.size()));
+                WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::MaterialIndex, 0);
+                WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::ClusterOffset, 0);
+                WriteLe32(outBytes, submeshTableOffset + SubmeshRecordOffset::ClusterCount,
+                          static_cast<uint32_t>(clusters.size()));
+                WriteFloat32(outBytes, submeshTableOffset + SubmeshRecordOffset::BoundsCenterX, totalBounds.CenterX);
+                WriteFloat32(outBytes, submeshTableOffset + SubmeshRecordOffset::BoundsCenterY, totalBounds.CenterY);
+                WriteFloat32(outBytes, submeshTableOffset + SubmeshRecordOffset::BoundsCenterZ, totalBounds.CenterZ);
+                WriteFloat32(outBytes, submeshTableOffset + SubmeshRecordOffset::BoundsRadius, totalBounds.Radius);
+            }
 
-            WriteStringReference(outBytes, materialTableOffset + MaterialRecordOffset::AlbedoTexture, albedoReference);
-            WriteStringReference(outBytes, materialTableOffset + MaterialRecordOffset::NormalTexture, normalReference);
-            WriteStringReference(outBytes, materialTableOffset + MaterialRecordOffset::ArmTexture, armReference);
+            if (materialSet)
+            {
+                for (size_t i = 0; i < records.size(); ++i)
+                {
+                    if (Core::Asset::WriteCookedMaterialRecord(
+                            records[i], stringTable.size(),
+                            {outBytes.data() + materialTableOffset + i * materialRecordSize, materialRecordSize}) !=
+                        Core::Asset::CookedMaterialStatus::Success)
+                    {
+                        error = "NVMESH v1 material set writer rejected values";
+                        return false;
+                    }
+                }
+            }
+            else if (materialV1)
+            {
+                auto material = materialV1->Material;
+                material.Albedo = {albedoReference.Offset, albedoReference.Length};
+                material.Normal = {normalReference.Offset, normalReference.Length};
+                material.Arm = {armReference.Offset, armReference.Length};
+                material.Emissive = {emissiveReference.Offset, emissiveReference.Length};
+                if (Core::Asset::WriteCookedMaterialRecord(
+                        material, stringTable.size(), {outBytes.data() + materialTableOffset, materialRecordSize}) !=
+                    Core::Asset::CookedMaterialStatus::Success)
+                {
+                    error = "NVMESH v1 material writer rejected values";
+                    return false;
+                }
+            }
+            else
+            {
+                WriteStringReference(outBytes, materialTableOffset + MaterialRecordOffset::AlbedoTexture,
+                                     albedoReference);
+                WriteStringReference(outBytes, materialTableOffset + MaterialRecordOffset::NormalTexture,
+                                     normalReference);
+                WriteStringReference(outBytes, materialTableOffset + MaterialRecordOffset::ArmTexture, armReference);
+            }
 
             for (size_t clusterIndex = 0; clusterIndex < clusters.size(); ++clusterIndex)
             {
                 const MeshCluster& cluster = clusters[clusterIndex];
-                const size_t recordOffset = clusterTableOffset + clusterIndex * Format::ClusterRecordSize;
+                const size_t recordOffset = clusterTableOffset + clusterIndex * clusterRecordSize;
                 WriteFloat32(outBytes, recordOffset + ClusterRecordOffset::BoundsCenterX, cluster.Bounds.CenterX);
                 WriteFloat32(outBytes, recordOffset + ClusterRecordOffset::BoundsCenterY, cluster.Bounds.CenterY);
                 WriteFloat32(outBytes, recordOffset + ClusterRecordOffset::BoundsCenterZ, cluster.Bounds.CenterZ);
@@ -1594,7 +1714,664 @@ namespace NorvesLib::Tools::AssetCook
             WriteLe64(outBytes, HeaderOffset::PayloadHash, payloadHash);
             return true;
         }
-        // LOD の階層を焼いて NVMESH v1 を作る。頂点の溶接・クラスタ化・簡略化の繰り返しは CookMeshDag が行い、
+        bool InspectOptionalNumber(const JsonValue& object, const char* key, double minimum,
+            double maximum, double& out)
+        {
+            const auto value=object.FindMember(key);
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            if (!value.IsNumber())
+            {
+                return false;
+            }
+            const double number=value.AsNumber();
+            if (!std::isfinite(number) || number<minimum || number>maximum)
+            {
+                return false;
+            }
+            out=number;
+            return true;
+        }
+        template<size_t N>
+        bool InspectOptionalFactor(const JsonValue& object,const char* key,double (&out)[N])
+        {
+            const auto value=object.FindMember(key);
+            if (!value.IsValid())
+            {
+                return true;
+            }
+            if (!value.IsArray() || value.GetArraySize()!=N)
+            {
+                return false;
+            }
+            for (size_t index=0;index<N;++index)
+            {
+                const auto item=value.GetArrayElement(index);
+                if (!item.IsNumber() || !std::isfinite(item.AsNumber()) || item.AsNumber()<0 || item.AsNumber()>1)
+                {
+                    return false;
+                }
+                out[index]=item.AsNumber();
+            }
+            return true;
+        }
+        bool InspectMaterial(const JsonValue& material,MaterialInspection& out)
+        {
+            if (!material.IsObject())
+            {
+                return false;
+            }
+            const auto pbr=material.FindMember("pbrMetallicRoughness");
+            if (pbr.IsValid() && (!pbr.IsObject() || !InspectOptionalFactor(pbr,"baseColorFactor",out.BaseColor) ||
+                !InspectOptionalNumber(pbr,"metallicFactor",0,1,out.Metallic) ||
+                !InspectOptionalNumber(pbr,"roughnessFactor",0,1,out.Roughness)))
+            {
+                return false;
+            }
+            if (!InspectOptionalFactor(material,"emissiveFactor",out.Emissive) ||
+                !InspectOptionalNumber(material,"alphaCutoff",0,std::numeric_limits<double>::max(),out.AlphaCutoff))
+            {
+                return false;
+            }
+            const auto alpha=material.FindMember("alphaMode");
+            if (alpha.IsValid())
+            {
+                AnsiString mode;
+                if (!TryConvertAsciiString(alpha,mode))
+                {
+                    return false;
+                }
+                if (mode=="OPAQUE")
+                {
+                    out.AlphaMode=InspectionAlphaMode::Opaque;
+                }
+                else if (mode=="MASK")
+                {
+                    out.AlphaMode=InspectionAlphaMode::Mask;
+                }
+                else if (mode=="BLEND")
+                {
+                    out.AlphaMode=InspectionAlphaMode::Blend;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            const auto doubleSided=material.FindMember("doubleSided");
+            if (doubleSided.IsValid())
+            {
+                if (!doubleSided.IsBoolean())
+                {
+                    return false;
+                }
+                out.bDoubleSided=doubleSided.AsBool();
+            }
+            const auto normal=material.FindMember("normalTexture");
+            const auto occlusion=material.FindMember("occlusionTexture");
+            if ((normal.IsValid() && (!normal.IsObject() || !InspectOptionalNumber(normal,"scale",
+                    -std::numeric_limits<double>::max(),std::numeric_limits<double>::max(),out.NormalScale))) ||
+                (occlusion.IsValid() && (!occlusion.IsObject() || !InspectOptionalNumber(occlusion,"strength",0,1,out.OcclusionStrength))))
+            {
+                return false;
+            }
+            const auto extensions=material.FindMember("extensions");
+            if (extensions.IsValid())
+            {
+                if (!extensions.IsObject())
+                {
+                    return false;
+                }
+                const auto emissive=extensions.FindMember("KHR_materials_emissive_strength");
+                if (emissive.IsValid() && (!emissive.IsObject() || !InspectOptionalNumber(emissive,"emissiveStrength",
+                    0,std::numeric_limits<double>::max(),out.EmissiveStrength)))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool InspectGltfModelInternal(const uint8_t* sourceBytes,size_t sourceSize,const std::filesystem::path& sourcePath,
+            ModelInspection& outInspection,AnsiString& error)
+        {
+            if (!sourceBytes || sourceSize==0)
+            {
+                error="inspect input is empty";
+                return false;
+            }
+            Gltf::ContainerView container;
+            const auto parsed=Gltf::ParseContainer({sourceBytes,sourceSize},container);
+            if ((parsed!=Gltf::ContainerParseResult::Success && parsed!=Gltf::ContainerParseResult::NotGlb) ||
+                container.Json.empty() || std::find(container.Json.begin(),container.Json.end(),uint8_t{0})!=container.Json.end())
+            {
+                error="invalid inspect glTF container";
+                return false;
+            }
+            JsonDocument document;
+            if (!JsonDocument::TryParseUtf8(container.Json,document) || !ValidateRequiredExtensions(document.GetRoot(),error))
+            {
+                error="invalid inspect glTF document";
+                return false;
+            }
+            const auto root=document.GetRoot();
+            VariableArray<AccessorInfo> accessors;
+            VariableArray<BufferViewInfo> views;
+            PrimitiveInfo primitive;
+            Gltf::BufferSet buffers;
+            VariableArray<MeshVertexPnt> vertices;
+            VariableArray<uint32_t> indices;
+            if (!ParseAccessors(root,accessors,error) || !ParseBufferViews(root,views,error) ||
+                !ParsePrimitive(root,primitive,error) || !ResolveCookBuffers(root,container,sourcePath,buffers,error) ||
+                !ExtractMesh(accessors,views,buffers,primitive,vertices,indices,error))
+            {
+                return false;
+            }
+            ModelInspection result;
+            VariableArray<InspectionVertex> inspectionVertices(vertices.size());
+            VariableArray<uint32_t> order(vertices.size()),representatives(vertices.size()),parents(vertices.size());
+            for (size_t index=0;index<vertices.size();++index)
+            {
+                for (size_t axis=0;axis<3;++axis)
+                {
+                    inspectionVertices[index].Position[axis]=vertices[index].Position[axis];
+                    inspectionVertices[index].Normal[axis]=vertices[index].Normal[axis];
+                }
+            }
+            if (!InspectGeometry(inspectionVertices,indices,order,representatives,parents,result.Geometry))
+            {
+                error="inspect geometry failed";
+                return false;
+            }
+            const auto images=root.FindMember("images");
+            if (images.IsValid() && !images.IsArray())
+            {
+                error="inspect images must be an array";
+                return false;
+            }
+            Gltf::BufferFileContext imageContext{sourcePath};
+            for (size_t index=0;index<images.GetArraySize();++index)
+            {
+                Gltf::ImageSource image;
+                if (Gltf::ImageSource::Resolve(root,index,buffers,image)!=Gltf::ImageSourceResult::Success)
+                {
+                    error="inspect image source is invalid: "+FormatInteger(index);
+                    return false;
+                }
+                VariableArray<uint8_t> fileBytes;
+                auto bytes=image.GetBytes(buffers);
+                if (image.GetKind()==Gltf::ImageSourceKind::ExternalFile)
+                {
+                    if (Gltf::ReadBufferFile(image.GetExternalUri(),fileBytes,&imageContext)!=Gltf::ExternalBufferReadResult::Success)
+                    {
+                        error="inspect image file could not be read: "+FormatInteger(index);
+                        return false;
+                    }
+                    bytes={fileBytes.data(),fileBytes.size()};
+                }
+                if (image.GetMime()!=Gltf::DataUriMime::Unknown && !Gltf::MatchesEmbeddedImageMime(bytes,image.GetMime()))
+                {
+                    error="inspect image MIME does not match signature: "+FormatInteger(index);
+                    return false;
+                }
+                ImageInspection inspection;
+                const auto status=InspectImage(bytes,inspection);
+                if (status!=ImageInspectionStatus::Success)
+                {
+                    error="inspect image decode failed: image="+FormatInteger(index)+" status="+FormatInteger(static_cast<int>(status));
+                    return false;
+                }
+                result.Images.push_back(inspection);
+            }
+            const auto materials=root.FindMember("materials");
+            if (materials.IsValid() && !materials.IsArray())
+            {
+                error="inspect materials must be an array";
+                return false;
+            }
+            if (primitive.bHasMaterial && primitive.MaterialIndex>=materials.GetArraySize())
+            {
+                error="inspect primitive material is out of range";
+                return false;
+            }
+            result.bHasMaterial=primitive.bHasMaterial;
+            result.MaterialIndex=primitive.MaterialIndex;
+            for (size_t index=0;index<materials.GetArraySize();++index)
+            {
+                MaterialInspection material;
+                if (!InspectMaterial(materials.GetArrayElement(index),material))
+                {
+                    error="inspect material coefficients are invalid: "+FormatInteger(index);
+                    return false;
+                }
+                result.Materials.push_back(material);
+            }
+            outInspection=std::move(result);
+            return true;
+        }
+
+        bool LoadCookImportSettings(const std::filesystem::path& sourcePath,
+            const AssetImport::ImportSettingsFileOptions* importOptions,
+            AssetImport::LoadedImportSettings& loadedImport, AnsiString& error)
+        {
+            const AssetImport::ImportSettingsFileOptions automaticImport;
+            const auto& effectiveImport = importOptions != nullptr ? *importOptions : automaticImport;
+            AssetImport::SettingsFileOutcome outcome;
+            // source locator無しの自己完結入力はauto探索だけ省略する。
+            if (!sourcePath.empty() || effectiveImport.bRequired || !effectiveImport.OverridePath.empty())
+            {
+                outcome = AssetImport::LoadImportSettingsFile(
+                    sourcePath, effectiveImport, loadedImport);
+            }
+            if (outcome.Result != AssetImport::SettingsFileResult::Success)
+            {
+                error = AnsiString("import settings rejected: file=") +
+                    FormatInteger(static_cast<int>(outcome.Result)) + " validation=" +
+                    FormatInteger(static_cast<int>(outcome.Validation));
+                return false;
+            }
+            return true;
+        }
+
+        bool CookMultiPrimitiveV1(const JsonValue& root, const Gltf::BufferSet& buffers,
+                                  const std::filesystem::path& sourcePath, AnsiStringView logicalPath,
+                                  uint64_t gltfSourceHash, const AssetImport::ImportSettingsFileOptions* importOptions,
+                                  const VariableArray<AccessorInfo>& accessors,
+                                  const VariableArray<BufferViewInfo>& bufferViews, MeshCookResult& out,
+                                  AnsiString& error)
+        {
+            VariableArray<PrimitiveInfo> primitives;
+            VariableArray<uint64_t> keys;
+            MeshMaterialV1SetPlan materials;
+            if (!ParsePrimitiveSet(root, primitives, keys, error) ||
+                !PrepareMeshMaterialV1Set(root, buffers, sourcePath, logicalPath, keys, gltfSourceHash, importOptions,
+                                          materials, error))
+            {
+                return false;
+            }
+            struct PrimitiveRange
+            {
+                uint32_t VertexStart = 0, VertexCount = 0, IndexStart = 0, IndexCount = 0, Material = 0;
+            };
+            VariableArray<PrimitiveRange> ranges;
+            VariableArray<MeshVertexPnt> vertices;
+            VariableArray<uint32_t> indices;
+            for (const auto& primitive : primitives)
+            {
+                VariableArray<MeshVertexPnt> localVertices;
+                VariableArray<uint32_t> localIndices;
+                if (!ExtractMesh(accessors, bufferViews, buffers, primitive, localVertices, localIndices, error))
+                {
+                    return false;
+                }
+                if (localVertices.size() > UINT32_MAX - vertices.size() ||
+                    localIndices.size() > UINT32_MAX - indices.size())
+                {
+                    error = "NVMESH v1 combined geometry exceeds 32-bit limits";
+                    return false;
+                }
+                const uint64_t key = primitive.bHasMaterial ? primitive.MaterialIndex : ImplicitMeshMaterialIndex;
+                const auto slot = std::lower_bound(keys.begin(), keys.end(), key) - keys.begin();
+                PrimitiveRange range{static_cast<uint32_t>(vertices.size()),
+                                     static_cast<uint32_t>(localVertices.size()), static_cast<uint32_t>(indices.size()),
+                                     static_cast<uint32_t>(localIndices.size()), static_cast<uint32_t>(slot)};
+                vertices.insert(vertices.end(), localVertices.begin(), localVertices.end());
+                for (uint32_t index : localIndices)
+                {
+                    indices.push_back(range.VertexStart + index);
+                }
+                ranges.push_back(range);
+            }
+            if (vertices.size() > SIZE_MAX / sizeof(MeshVertexPnt))
+            {
+                error = "NVMESH v1 vertex byte size overflow";
+                return false;
+            }
+            if (materials.Import.bPresent)
+            {
+                const AssetImport::ImportVertexLayout layout{sizeof(MeshVertexPnt), offsetof(MeshVertexPnt, Position),
+                                                             offsetof(MeshVertexPnt, Normal),
+                                                             offsetof(MeshVertexPnt, TexCoord)};
+                const auto transformed = AssetImport::ApplyImportTransform(
+                    {reinterpret_cast<uint8_t*>(vertices.data()), vertices.size() * sizeof(MeshVertexPnt)},
+                    vertices.size(), layout, indices, materials.Import.Settings.Geometry);
+                if (transformed.Result != AssetImport::TransformResult::Success)
+                {
+                    error = "NVMESH v1 combined import transform rejected";
+                    return false;
+                }
+            }
+            if (std::any_of(materials.Materials.begin(), materials.Materials.end(),
+                            [](const auto& material)
+                            {
+                                return material.Sidedness == AssetImport::DoubleSidedSetting::Auto;
+                            }))
+            {
+                // 材質で分割された閉曲面を開口と誤認しないよう、mesh全体で溶接する。
+                VariableArray<InspectionVertex> inspect(vertices.size());
+                for (size_t i = 0; i < vertices.size(); ++i)
+                {
+                    for (size_t axis = 0; axis < 3; ++axis)
+                    {
+                        inspect[i].Position[axis] = vertices[i].Position[axis];
+                        inspect[i].Normal[axis] = vertices[i].Normal[axis];
+                    }
+                }
+                VariableArray<uint32_t> order(vertices.size()), representatives(vertices.size()),
+                    parents(vertices.size());
+                VariableArray<GeometryClosureEdge> edges(indices.size());
+                GeometryClosureInspection closed;
+                if (!InspectGeometryClosure(inspect, indices, order, representatives, parents, edges, materials.Closure,
+                                            closed))
+                {
+                    error = "NVMESH v1 combined geometry closure analysis failed";
+                    return false;
+                }
+                if (!closed.bAlmostClosed)
+                {
+                    for (auto& material : materials.Materials)
+                    {
+                        if (material.Sidedness == AssetImport::DoubleSidedSetting::Auto)
+                        {
+                            material.Material.Flags |= Core::Asset::CookedMaterialFormatV1::DoubleSided;
+                        }
+                    }
+                }
+            }
+            VariableArray<MeshCluster> clusters;
+            VariableArray<uint32_t> finalIndices;
+            VariableArray<Core::Asset::CookedMeshSubmesh> submeshes;
+            for (const auto& range : ranges)
+            {
+                const VariableArray<MeshVertexPnt> boundedVertices(
+                    vertices.begin() + range.VertexStart, vertices.begin() + range.VertexStart + range.VertexCount);
+                VariableArray<uint32_t> sourceIndices(indices.begin() + range.IndexStart,
+                                                      indices.begin() + range.IndexStart + range.IndexCount);
+                for (auto& index : sourceIndices)
+                {
+                    index -= range.VertexStart;
+                }
+                VariableArray<MeshCluster> coarseClusters, localClusters;
+                VariableArray<uint32_t> coarseIndices, localIndices;
+                MeshClusterizer::Clusterize(boundedVertices.data(), range.VertexCount, sizeof(MeshVertexPnt),
+                                            sourceIndices.data(), static_cast<uint32_t>(sourceIndices.size()),
+                                            coarseClusters, coarseIndices);
+                if (!ValidateCoarseClusters(sourceIndices, coarseClusters, coarseIndices, range.VertexCount, error) ||
+                    !RefineClusters(boundedVertices, coarseClusters, coarseIndices, localClusters, localIndices,
+                                    error) ||
+                    !ValidateFinalClusters(coarseIndices, localClusters, localIndices, range.VertexCount, error))
+                {
+                    return false;
+                }
+                if (localClusters.size() > UINT32_MAX - clusters.size() ||
+                    localIndices.size() > UINT32_MAX - finalIndices.size())
+                {
+                    error = "NVMESH v1 combined cluster counts overflow";
+                    return false;
+                }
+                const auto bounds = CalculateBounds(boundedVertices);
+                Core::Asset::CookedMeshSubmesh submesh;
+                submesh.IndexOffset = static_cast<uint32_t>(finalIndices.size());
+                submesh.IndexCount = static_cast<uint32_t>(localIndices.size());
+                submesh.VertexCount = static_cast<uint32_t>(vertices.size());
+                submesh.MaterialIndex = range.Material;
+                submesh.ClusterOffset = static_cast<uint32_t>(clusters.size());
+                submesh.ClusterCount = static_cast<uint32_t>(localClusters.size());
+                submesh.BoundsCenter = {bounds.CenterX, bounds.CenterY, bounds.CenterZ};
+                submesh.BoundsRadius = bounds.Radius;
+                for (auto& cluster : localClusters)
+                {
+                    cluster.IndexOffset += submesh.IndexOffset;
+                    cluster.VertexCount = submesh.VertexCount;
+                    cluster.MaterialIndex = range.Material;
+                    clusters.push_back(cluster);
+                }
+                for (uint32_t index : localIndices)
+                {
+                    finalIndices.push_back(range.VertexStart + index);
+                }
+                submeshes.push_back(submesh);
+            }
+            MeshCookResult result;
+            if (!BuildNvmeshBytes(vertices, clusters, finalIndices, {}, result.NvmeshBytes, error, nullptr, &materials,
+                                  submeshes))
+            {
+                return false;
+            }
+            const auto parsed =
+                ParseCookedMesh(AssetBlob::CopyBytes(result.NvmeshBytes, "AssetCook multi mesh validation"));
+            if (!parsed.Succeeded())
+            {
+                error = "generated multi NVMESH failed self-validation: status=" +
+                        FormatInteger(static_cast<int>(parsed.Status));
+                return false;
+            }
+            result.VersionMajor = 1;
+            result.SourceHash = materials.SourceHash;
+            result.ImportSettingsHash = materials.SettingsHash;
+            result.bHasImportSettings = materials.Import.bPresent;
+            result.ImportSettingsPath = std::move(materials.Import.Path);
+            result.DuplicateMaterialNameGroups = materials.DuplicateMaterialNameGroups;
+            result.FirstDuplicateMaterialIndex = materials.FirstDuplicateMaterialIndex;
+            result.SecondDuplicateMaterialIndex = materials.SecondDuplicateMaterialIndex;
+            result.EmbeddedImages = std::move(materials.Images);
+            result.VertexCount = static_cast<uint32_t>(vertices.size());
+            result.IndexCount = static_cast<uint32_t>(finalIndices.size());
+            result.ClusterCount = static_cast<uint32_t>(clusters.size());
+            out = std::move(result);
+            return true;
+        }
+
+        bool FingerprintModelCookSourceInternal(const uint8_t* sourceBytes, size_t sourceSize,
+            AnsiStringView format, const std::filesystem::path& sourcePath, AnsiStringView logicalPath,
+            ModelCookFingerprint& outResult, AnsiString& error,
+            const AssetImport::ImportSettingsFileOptions* importOptions,
+            const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+        {
+            if (format != SupportedMeshFormat && format != SupportedMeshFormatV1 && format != SupportedSkeletalFormat)
+            {
+                error = "unsupported model fingerprint format";
+                return false;
+            }
+            const Core::Skeletal::SkeletalGltfDecodeOptions options = decodeOptions ? *decodeOptions : Core::Skeletal::SkeletalGltfDecodeOptions{};
+            if ((format != SupportedSkeletalFormat && decodeOptions != nullptr) ||
+                !Core::Skeletal::IsValidSkeletalGltfDecodeOptions(options))
+            {
+                error = "骨格import指定が不正、または静的meshには対応していません";
+                return false;
+            }
+            if (!sourceBytes || sourceSize==0)
+            {
+                error = "glTF source input is empty";
+                return false;
+            }
+            Gltf::ContainerView container;
+            const auto parsed = Gltf::ParseContainer({sourceBytes,sourceSize},container);
+            if ((parsed != Gltf::ContainerParseResult::Success && parsed != Gltf::ContainerParseResult::NotGlb) ||
+                container.Json.empty() || std::find(container.Json.begin(),container.Json.end(),uint8_t{0})!=container.Json.end())
+            {
+                error = "invalid glTF container for fingerprint";
+                return false;
+            }
+            if (!ValidateRelativePath(logicalPath,"model logical path",error))
+            {
+                return false;
+            }
+            JsonDocument document;
+            if (!JsonDocument::TryParseUtf8(container.Json,document) || !ValidateRequiredExtensions(document.GetRoot(),error))
+            {
+                error = "invalid glTF document for fingerprint";
+                return false;
+            }
+            const auto root = document.GetRoot();
+            Gltf::BufferSet buffers;
+            if (format == SupportedMeshFormatV1)
+            {
+                if (HasMultiplePrimitives(root))
+                {
+                    VariableArray<PrimitiveInfo> primitives;
+                    VariableArray<uint64_t> keys;
+                    MeshMaterialV1SetPlan materials;
+                    if (!ResolveCookBuffers(root, container, sourcePath, buffers, error) ||
+                        !ParsePrimitiveSet(root, primitives, keys, error) ||
+                        !PrepareMeshMaterialV1Set(root, buffers, sourcePath, logicalPath, keys,
+                                                  ComputeGltfSourceHash(sourceBytes, sourceSize, buffers),
+                                                  importOptions, materials, error))
+                    {
+                        return false;
+                    }
+                    ModelCookFingerprint result;
+                    result.SourceHash = materials.SourceHash;
+                    result.ImportSettingsHash = materials.SettingsHash;
+                    result.bHasImportSettings = materials.Import.bPresent;
+                    result.ImportSettingsPath = std::move(materials.Import.Path);
+                    result.DuplicateMaterialNameGroups = materials.DuplicateMaterialNameGroups;
+                    result.FirstDuplicateMaterialIndex = materials.FirstDuplicateMaterialIndex;
+                    result.SecondDuplicateMaterialIndex = materials.SecondDuplicateMaterialIndex;
+                    for (auto& image : materials.Images)
+                    {
+                        result.EmbeddedImages.push_back({image.ImageIndex, std::move(image.LogicalPath),
+                                                         std::move(image.Format), image.SourceHash});
+                    }
+                    outResult = std::move(result);
+                    return true;
+                }
+                PrimitiveInfo primitive;
+                MeshMaterialV1Plan material;
+                if (!ResolveCookBuffers(root, container, sourcePath, buffers, error) ||
+                    !ParsePrimitive(root, primitive, error) ||
+                    !PrepareMeshMaterialV1(
+                        root, buffers, sourcePath, logicalPath, primitive.bHasMaterial, primitive.MaterialIndex,
+                        ComputeGltfSourceHash(sourceBytes, sourceSize, buffers), importOptions, material, error))
+                {
+                    return false;
+                }
+                ModelCookFingerprint result;
+                result.SourceHash = material.SourceHash;
+                result.ImportSettingsHash = material.SettingsHash;
+                result.bHasImportSettings = material.Import.bPresent;
+                result.ImportSettingsPath = material.Import.Path;
+                result.DuplicateMaterialNameGroups = material.Resolved.DuplicateNameGroups;
+                result.FirstDuplicateMaterialIndex = material.Resolved.FirstDuplicateMaterialIndex;
+                result.SecondDuplicateMaterialIndex = material.Resolved.SecondDuplicateMaterialIndex;
+                for (auto& image : material.Images)
+                {
+                    result.EmbeddedImages.push_back(
+                        {image.ImageIndex, std::move(image.LogicalPath), std::move(image.Format), image.SourceHash});
+                }
+                outResult = std::move(result);
+                return true;
+            }
+            AssetImport::LoadedImportSettings settings;
+            if (!ResolveCookBuffers(root,container,sourcePath,buffers,error) ||
+                !LoadCookImportSettings(sourcePath,importOptions,settings,error))
+            {
+                return false;
+            }
+            if (format==SupportedSkeletalFormat && settings.bPresent &&
+                !AssetImport::SupportsSkeletalScaleImport(settings.Settings))
+            {
+                error = "skeletal import supports only uniform scale/fit; axes, mirror, origin and mesh changes are unsupported";
+                return false;
+            }
+            if (format==SupportedSkeletalFormat)
+            {
+                if (options.MorphPolicy == Core::Skeletal::SkeletalMorphPolicy::Reject && Gltf::HasMorphData(root))
+                {
+                    error = "骨格morphは既定で拒否します。除去する場合は明示Dropが必要です";
+                    return false;
+                }
+                const auto meshes = root.FindMember("meshes");
+                if (!meshes.IsArray() || meshes.GetArraySize() != 1)
+                {
+                    error = "骨格mesh数は1件である必要があります";
+                    return false;
+                }
+                const auto primitives = meshes.GetArrayElement(0).FindMember("primitives");
+                if (!primitives.IsArray() || primitives.GetArraySize() == 0 || primitives.GetArraySize() > Core::Skeletal::MaximumSubmeshCount)
+                {
+                    error = "骨格primitive数は1〜8件である必要があります";
+                    return false;
+                }
+                for (size_t primitiveIndex = 0; primitiveIndex < primitives.GetArraySize(); ++primitiveIndex)
+                {
+                    const auto attributes = primitives.GetArrayElement(primitiveIndex).FindMember("attributes");
+                    if (options.InfluencePolicy == Core::Skeletal::SkeletalInfluencePolicy::Strict)
+                    {
+                        const auto strict = Core::Skeletal::ValidateStrictInfluenceAttributes(attributes);
+                        if (strict != Core::Skeletal::StrictInfluenceStatus::Success)
+                        {
+                            error = "skeletal strict influences rejected: status=" + FormatInteger(static_cast<int>(strict));
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        VariableArray<Core::Skeletal::SkeletalInfluenceSet> sets;
+                        if (Core::Skeletal::CollectSkeletalInfluenceSets(attributes, sets) != Core::Skeletal::InfluenceSetCollectionStatus::Success)
+                        {
+                            error = "骨格のjoint/weightセット記述が不正です";
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            ModelCookFingerprint result;
+            if (format==SupportedMeshFormat)
+            {
+                PrimitiveInfo primitive;
+                MaterialReferences references;
+                VariableArray<MeshEmbeddedImage> images;
+                if (!ParsePrimitive(root,primitive,error) ||
+                    !ResolveMaterialReferences(root,primitive,logicalPath,buffers,images,references,error))
+                {
+                    return false;
+                }
+                for (auto& image : images)
+                {
+                    ModelImageFingerprint metadata;
+                    metadata.ImageIndex=image.ImageIndex;
+                    metadata.LogicalPath=std::move(image.LogicalPath);
+                    metadata.Format=std::move(image.Format);
+                    metadata.SourceHash=image.SourceHash;
+                    result.EmbeddedImages.push_back(std::move(metadata));
+                }
+                std::sort(result.EmbeddedImages.begin(),result.EmbeddedImages.end(),[](const auto& a,const auto& b)
+                {
+                    return a.ImageIndex<b.ImageIndex;
+                });
+            }
+            const auto hash = AssetImport::AppendImportSettingsHash(
+                ComputeGltfSourceHash(sourceBytes,sourceSize,buffers),settings.bPresent,settings.Settings);
+            if (!hash.bValid)
+            {
+                error = "invalid import settings hash";
+                return false;
+            }
+            const auto policyHash = Core::Skeletal::AppendSkeletalImportPolicyHash(hash.Value, options);
+            if (!policyHash.bValid)
+            {
+                error = "骨格importのpolicy hashを生成できません";
+                return false;
+            }
+            result.SourceHash = policyHash.Value;
+            result.bHasImportSettings=settings.bPresent;
+            result.ImportSettingsPath=settings.Path;
+            if (settings.bPresent)
+            {
+                result.ImportSettingsHash=AssetImport::AppendImportSettingsHash(
+                    Format::Fnv1a64OffsetBasis,true,settings.Settings).Value;
+            }
+            outResult=std::move(result);
+            return true;
+        }
+
+        // LOD の階層を焼いて NVMESH v1
+        // を作る。頂点の溶接・クラスタ化・簡略化の繰り返しは CookMeshDag
+        // が行い、
         // ここでは入力の変換・材質の参照・書き出し・読み込みでの自己検証を受け持つ。
         bool CookLodGraphMesh(const VariableArray<MeshVertexPnt>& vertices, const VariableArray<uint32_t>& indices,
                               const MaterialReferences& materialReferences, MeshCookResult& outResult,
@@ -1658,6 +2435,7 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             result.FormatMajor = 1;
+            result.VersionMajor = 1;
             result.LODLevelCount = dag.Stats.LODLevelCount;
             result.VertexCount = static_cast<uint32_t>(dag.Output.Vertices.size());
             result.IndexCount =
@@ -1678,11 +2456,14 @@ namespace NorvesLib::Tools::AssetCook
             return true;
         }
 
-        bool CookGltfToNvmeshInternal(const uint8_t* sourceBytes, size_t sourceSize, AnsiStringView format,
-                                      AnsiStringView sourcePath, AnsiStringView logicalPath, MeshCookResult& outResult,
-                                      AnsiString& error, uint32_t fallbackMinTriangles)
+        bool CookGltfToNvmeshInternal(const uint8_t *sourceBytes, size_t sourceSize, AnsiStringView format,
+                                      const std::filesystem::path &sourcePath, AnsiStringView logicalPath,
+                                      MeshCookResult &outResult, AnsiString &error,
+                                      const AssetImport::ImportSettingsFileOptions *importOptions,
+                                      uint32_t fallbackMinTriangles)
         {
-            if (format != SupportedMeshFormat && format != SupportedMeshFormatV1)
+            if (format != SupportedMeshFormat && format != SupportedMeshFormatV1 &&
+                format != SupportedMeshFormatLodGraph)
             {
                 error = AnsiString("unsupported mesh format: ") + AnsiString(format);
                 return false;
@@ -1692,7 +2473,20 @@ namespace NorvesLib::Tools::AssetCook
                 error = "glTF JSON input is empty";
                 return false;
             }
-            if (std::find(sourceBytes, sourceBytes + sourceSize, uint8_t{0}) != sourceBytes + sourceSize)
+            Gltf::ContainerView container;
+            const auto containerResult = Gltf::ParseContainer({sourceBytes, sourceSize}, container);
+            if (containerResult != Gltf::ContainerParseResult::Success &&
+                containerResult != Gltf::ContainerParseResult::NotGlb)
+            {
+                error = "invalid GLB container";
+                return false;
+            }
+            if (container.Json.empty())
+            {
+                error = "glTF JSON input is empty";
+                return false;
+            }
+            if (std::find(container.Json.begin(), container.Json.end(), uint8_t{0}) != container.Json.end())
             {
                 error = "glTF JSON input contains an embedded NUL byte";
                 return false;
@@ -1702,23 +2496,10 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            // The BOM is stripped for parsing only: the source hash still covers the original bytes.
-            size_t jsonOffset = 0;
-            if (sourceSize >= 3 && sourceBytes[0] == 0xefu && sourceBytes[1] == 0xbbu && sourceBytes[2] == 0xbfu)
-            {
-                jsonOffset = 3;
-            }
-            if (jsonOffset == sourceSize)
-            {
-                error = "glTF JSON input is empty";
-                return false;
-            }
-
-            const AnsiString jsonText(AnsiStringView(reinterpret_cast<const char*>(sourceBytes) + jsonOffset,
-                                                     sourceSize - jsonOffset));
+            // JSONだけを厳密UTF8で解析し、BINは元sourceから借用する。hashにはBOMも残す。
             JsonDocument document;
             NorvesLib::Core::Container::String parseError;
-            if (!JsonDocument::TryParse(ToCoreString(AnsiStringView(jsonText)), document, &parseError))
+            if (!JsonDocument::TryParseUtf8(container.Json, document, &parseError))
             {
                 error = "failed to parse glTF JSON";
                 return false;
@@ -1737,41 +2518,143 @@ namespace NorvesLib::Tools::AssetCook
 
             VariableArray<AccessorInfo> accessors;
             VariableArray<BufferViewInfo> bufferViews;
-            VariableArray<BufferInfo> buffers;
+            const bool bMultiple = format == SupportedMeshFormatV1 && HasMultiplePrimitives(root);
             PrimitiveInfo primitive;
             if (!ParseAccessors(root, accessors, error) || !ParseBufferViews(root, bufferViews, error) ||
-                !ParseBuffers(root, buffers, error) || !ParsePrimitive(root, primitive, error))
+                (!bMultiple && !ParsePrimitive(root, primitive, error)))
             {
                 return false;
             }
 
-            VariableArray<VariableArray<uint8_t>> bufferBytes;
-            if (!LoadBuffers(buffers, std::filesystem::path(sourcePath.begin(), sourcePath.end()), bufferBytes, error))
+            Gltf::BufferSet buffers;
+            if (!ResolveCookBuffers(root, container, sourcePath, buffers, error))
             {
                 return false;
+            }
+
+            if (bMultiple)
+            {
+                return CookMultiPrimitiveV1(root, buffers, sourcePath, logicalPath,
+                                            ComputeGltfSourceHash(sourceBytes, sourceSize, buffers), importOptions,
+                                            accessors, bufferViews, outResult, error);
             }
 
             VariableArray<MeshVertexPnt> vertices;
             VariableArray<uint32_t> indices;
-            if (!ExtractMesh(accessors, bufferViews, buffers, bufferBytes, primitive, vertices, indices, error))
+            if (!ExtractMesh(accessors, bufferViews, buffers, primitive, vertices, indices, error))
             {
                 return false;
             }
 
+            const bool bV1 = format == SupportedMeshFormatV1;
+            MeshMaterialV1Plan materialV1;
+            AssetImport::LoadedImportSettings loadedImport;
+            if (bV1)
+            {
+                if (!PrepareMeshMaterialV1(
+                        root, buffers, sourcePath, logicalPath, primitive.bHasMaterial, primitive.MaterialIndex,
+                        ComputeGltfSourceHash(sourceBytes, sourceSize, buffers), importOptions, materialV1, error))
+                {
+                    return false;
+                }
+                loadedImport.Settings = materialV1.Import.Settings.Geometry;
+                loadedImport.Path = materialV1.Import.Path;
+                loadedImport.bPresent = materialV1.Import.bPresent;
+            }
+            else if (!LoadCookImportSettings(sourcePath, importOptions, loadedImport, error))
+            {
+                return false;
+            }
+            if (loadedImport.bPresent)
+            {
+                if (vertices.size() > std::numeric_limits<size_t>::max() / sizeof(MeshVertexPnt))
+                {
+                    error = "import vertex byte size overflow";
+                    return false;
+                }
+                const AssetImport::ImportVertexLayout layout{sizeof(MeshVertexPnt),
+                    offsetof(MeshVertexPnt, Position), offsetof(MeshVertexPnt, Normal), offsetof(MeshVertexPnt, TexCoord)};
+                const auto transformed = AssetImport::ApplyImportTransform(
+                    {reinterpret_cast<uint8_t*>(vertices.data()), vertices.size() * sizeof(MeshVertexPnt)},
+                    vertices.size(), layout, indices, loadedImport.Settings);
+                if (transformed.Result != AssetImport::TransformResult::Success)
+                {
+                    error = AnsiString("import transform rejected: status=") + FormatInteger(static_cast<int>(transformed.Result));
+                    return false;
+                }
+            }
+
+            MeshCookResult result;
             MaterialReferences materialReferences;
-            if (!ResolveMaterialReferences(root, primitive, logicalPath, materialReferences, error))
+            if (bV1)
+            {
+                materialReferences = {materialV1.Textures[0], materialV1.Textures[1], materialV1.Textures[2]};
+                result.EmbeddedImages = std::move(materialV1.Images);
+                result.VersionMajor = 1;
+                result.DuplicateMaterialNameGroups = materialV1.Resolved.DuplicateNameGroups;
+                result.FirstDuplicateMaterialIndex = materialV1.Resolved.FirstDuplicateMaterialIndex;
+                result.SecondDuplicateMaterialIndex = materialV1.Resolved.SecondDuplicateMaterialIndex;
+                if (materialV1.Sidedness == AssetImport::DoubleSidedSetting::Auto)
+                {
+                    VariableArray<InspectionVertex> inspect(vertices.size());
+                    for (size_t i = 0; i < vertices.size(); ++i)
+                    {
+                        for (size_t axis = 0; axis < 3; ++axis)
+                        {
+                            inspect[i].Position[axis] = vertices[i].Position[axis];
+                            inspect[i].Normal[axis] = vertices[i].Normal[axis];
+                        }
+                    }
+                    VariableArray<uint32_t> order(vertices.size()), representatives(vertices.size()),
+                        parents(vertices.size());
+                    VariableArray<GeometryClosureEdge> edges(indices.size());
+                    GeometryClosureInspection closed;
+                    if (!InspectGeometryClosure(inspect, indices, order, representatives, parents, edges,
+                                                materialV1.Closure, closed))
+                    {
+                        error = "NVMESH v1 doubleSided auto geometry analysis failed";
+                        return false;
+                    }
+                    if (!closed.bAlmostClosed)
+                    {
+                        materialV1.Material.Flags |= Core::Asset::CookedMaterialFormatV1::DoubleSided;
+                    }
+                }
+            }
+            else if (!ResolveMaterialReferences(root, primitive, logicalPath, buffers, result.EmbeddedImages,
+                                                materialReferences, error))
             {
                 return false;
             }
 
-            if (format == SupportedMeshFormatV1)
+            std::sort(result.EmbeddedImages.begin(), result.EmbeddedImages.end(),
+                      [](const auto &left, const auto &right) { return left.ImageIndex < right.ImageIndex; });
+
+            if (format == SupportedMeshFormatLodGraph)
             {
                 MeshCookResult v1Result;
                 if (!CookLodGraphMesh(vertices, indices, materialReferences, v1Result, error, fallbackMinTriangles))
                 {
                     return false;
                 }
-                v1Result.SourceHash = ComputeGltfSourceHash(sourceBytes, sourceSize, bufferBytes);
+                const auto sourceHash =
+                    AssetImport::AppendImportSettingsHash(ComputeGltfSourceHash(sourceBytes, sourceSize, buffers),
+                                                          loadedImport.bPresent, loadedImport.Settings);
+                if (!sourceHash.bValid)
+                {
+                    error = "invalid import settings hash";
+                    return false;
+                }
+                v1Result.SourceHash = sourceHash.Value;
+                v1Result.EmbeddedImages = std::move(result.EmbeddedImages);
+                v1Result.bHasImportSettings = loadedImport.bPresent;
+                v1Result.ImportSettingsPath = loadedImport.Path;
+                if (loadedImport.bPresent)
+                {
+                    v1Result.ImportSettingsHash =
+                        AssetImport::AppendImportSettingsHash(Format::Fnv1a64OffsetBasis, true, loadedImport.Settings)
+                            .Value;
+                }
                 outResult = std::move(v1Result);
                 return true;
             }
@@ -1797,8 +2680,8 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            MeshCookResult result;
-            if (!BuildNvmeshBytes(vertices, finalClusters, finalIndices, materialReferences, result.NvmeshBytes, error))
+            if (!BuildNvmeshBytes(vertices, finalClusters, finalIndices, materialReferences, result.NvmeshBytes, error,
+                                  bV1 ? &materialV1 : nullptr))
             {
                 return false;
             }
@@ -1813,7 +2696,25 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            result.SourceHash = ComputeGltfSourceHash(sourceBytes, sourceSize, bufferBytes);
+            const auto sourceHash = AssetImport::AppendImportSettingsHash(
+                ComputeGltfSourceHash(sourceBytes, sourceSize, buffers), loadedImport.bPresent, loadedImport.Settings);
+            if (!sourceHash.bValid)
+            {
+                error = "invalid import settings hash";
+                return false;
+            }
+            result.SourceHash = bV1 ? materialV1.SourceHash : sourceHash.Value;
+            result.bHasImportSettings = loadedImport.bPresent;
+            result.ImportSettingsPath = loadedImport.Path;
+            if (loadedImport.bPresent)
+            {
+                result.ImportSettingsHash = AssetImport::AppendImportSettingsHash(
+                    Format::Fnv1a64OffsetBasis, true, loadedImport.Settings).Value;
+            }
+            if (bV1)
+            {
+                result.ImportSettingsHash = materialV1.SettingsHash;
+            }
             result.VertexCount = static_cast<uint32_t>(vertices.size());
             result.IndexCount = static_cast<uint32_t>(finalIndices.size());
             result.ClusterCount = static_cast<uint32_t>(finalClusters.size());
@@ -1835,9 +2736,10 @@ namespace NorvesLib::Tools::AssetCook
             using NorvesLib::Core::Rendering::MegaGeometry::ProceduralMegaSphereHeightField;
             using NorvesLib::Core::Rendering::MegaGeometry::ProceduralMegaSphereSettings;
 
-            if (format != SupportedMeshFormatV1)
+            if (format != SupportedMeshFormatLodGraph)
             {
-                error = "displaced-sphere は NVMESH v1 の形式（nvmesh.v1.mesh3d.pnt.u32.lodgraph）だけを焼けます";
+                error = "displaced-sphere は NVMESH v1 "
+                        "の形式（nvmesh.v1.mesh3d.pnt.u32.lodgraph）だけを焼けます";
                 return false;
             }
             if (heightMapBytes == nullptr || heightMapSize == 0 || heightMapSize > static_cast<size_t>(0x7fffffff))
@@ -1868,7 +2770,8 @@ namespace NorvesLib::Tools::AssetCook
             stbi_image_free(pixels);
             if (!bHeightFieldOk)
             {
-                error = "高さマップは 2 の累乗の正方形の 16 ビットのグレーにしてください";
+                error = "高さマップは 2 の累乗の正方形の 16 "
+                        "ビットのグレーにしてください";
                 return false;
             }
 
@@ -1938,52 +2841,93 @@ namespace NorvesLib::Tools::AssetCook
                                   SkeletalStringReference& outReference,
                                   AnsiString& error)
         {
-            if (value.size() > UINT32_MAX || stringTable.size() > UINT32_MAX - value.size())
+            using Char = String::value_type;
+            const auto measured = Core::Asset::MeasureSkeletalNameEncoding<Char>(2, {value.data(), value.size()});
+            if (!measured.Succeeded() || stringTable.size() > UINT32_MAX - measured.ByteCount)
             {
-                error = "skeletal string table exceeds the NVSKEL v0 32-bit limit";
+                error = "骨格名のUTF-8変換または32bit文字列表上限の検査に失敗しました";
                 return false;
             }
-            outReference.Offset = stringTable.size();
-            outReference.Length = static_cast<uint32_t>(value.size());
-            for (const auto character : value)
+            const size_t offset = stringTable.size();
+            stringTable.resize(offset + measured.ByteCount);
+            uint8_t* destination = measured.ByteCount == 0 ? nullptr : stringTable.data() + offset;
+            if (!Core::Asset::EncodeSkeletalWireName<Char>(2, {value.data(), value.size()},
+                    {destination, measured.ByteCount}).Succeeded())
             {
-                const uint32_t codePoint = static_cast<uint32_t>(character);
-                if (codePoint < 0x20u || codePoint > 0x7eu)
-                {
-                    error = "NVSKEL v0 names must contain printable ASCII only";
-                    return false;
-                }
-                stringTable.push_back(static_cast<uint8_t>(codePoint));
+                stringTable.resize(offset);
+                error = "骨格名をUTF-8へ変換できません";
+                return false;
             }
+            outReference = {offset, static_cast<uint32_t>(measured.ByteCount)};
             return true;
         }
 
         bool BuildNvskelBytes(const NorvesLib::Core::Skeletal::SkeletalGltfData& skeletal,
                               MeshByteArray& outBytes,
-                              AnsiString& error)
+                              AnsiString& error, uint64_t maxBytes = UINT64_MAX)
         {
+            for (const auto& clip : skeletal.Clips)
+            {
+                if (!clip.RootMotion.empty())
+                {
+                    error = "root_motion_requires_clipbank_v1";
+                    return false;
+                }
+            }
             namespace SkeletalFormat = NorvesLib::Core::Asset::CookedSkeletalFormatV0;
             namespace SkeletalHeader = SkeletalFormat::HeaderOffset;
+            namespace V02 = Core::Asset::CookedSkeletalFormatV02;
+            const auto layout = Core::Skeletal::ResolveSkeletalSubmeshLayout(
+                {skeletal.SubMeshes.data(), skeletal.SubMeshes.size()}, skeletal.Indices.size(), skeletal.MaterialSlots.size());
+            if (!layout.Succeeded())
+            {
+                error = "骨格submesh/材質slotの所有範囲が不正です";
+                return false;
+            }
+            VariableArray<Core::Skeletal::SkeletalSubMesh> submeshes = skeletal.SubMeshes;
+            VariableArray<Core::Skeletal::SkeletalMaterialSlot> slots = skeletal.MaterialSlots;
+            if (layout.bUsesImplicitSingleSubmesh)
+            {
+                submeshes.push_back(layout.ImplicitSubmesh);
+                Core::Skeletal::SkeletalMaterialSlot slot;
+                slot.Name = "Default";
+                slots.push_back(std::move(slot));
+            }
             if (skeletal.Vertices.empty() || skeletal.Indices.empty() || skeletal.Joints.empty() ||
-                skeletal.Clips.size() != 1 || skeletal.Joints.size() > 128 ||
+                (skeletal.Clips.empty() || skeletal.Clips.size() > UINT32_MAX) || skeletal.Joints.size() > Core::Skeletal::LegacyMaximumJointCount ||
                 skeletal.Vertices.size() > UINT32_MAX || skeletal.Indices.size() > UINT32_MAX)
             {
                 error = "skeletal data exceeds the NVSKEL v0 count contract";
                 return false;
             }
 
+            // 最終scale済み頂点から保存boundsを計算する。
+            for (auto& submesh : submeshes)
+            {
+                if (!Core::Skeletal::ComputeSkeletalSubmeshBounds(
+                        {skeletal.Indices.data() + submesh.IndexStart, submesh.IndexCount}, skeletal.Vertices.size(),
+                        [&skeletal](uint32_t index)
+                        {
+                            return skeletal.Vertices[index].Position;
+                        }, submesh))
+                {
+                    error = "骨格submeshのindex/座標/boundsが不正です";
+                    return false;
+                }
+            }
+
             size_t channelCount = 0;
             size_t sampleCount = 0;
             for (const NorvesLib::Core::Skeletal::SkeletalAnimationClip& clip : skeletal.Clips)
             {
-                if (!CheckedAdd(channelCount, clip.Channels.size(), channelCount))
+                if (clip.Channels.empty() || !CheckedAdd(channelCount, clip.Channels.size(), channelCount))
                 {
                     error = "skeletal channel count overflow";
                     return false;
                 }
                 for (const NorvesLib::Core::Skeletal::SkeletalAnimationChannel& channel : clip.Channels)
                 {
-                    if (!CheckedAdd(sampleCount, channel.Samples.size(), sampleCount))
+                    if (channel.Samples.empty() || !CheckedAdd(sampleCount, channel.Samples.size(), sampleCount))
                     {
                         error = "skeletal sample count overflow";
                         return false;
@@ -2014,6 +2958,15 @@ namespace NorvesLib::Tools::AssetCook
                 }
             }
 
+            VariableArray<SkeletalStringReference> slotNames(slots.size());
+            for (size_t slotIndex = 0; slotIndex < slots.size(); ++slotIndex)
+            {
+                if (!AppendSkeletalString(slots[slotIndex].Name, stringTable, slotNames[slotIndex], error))
+                {
+                    return false;
+                }
+            }
+
             size_t vertexSize = 0;
             size_t indexSize = 0;
             size_t jointSize = 0;
@@ -2031,13 +2984,17 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            const size_t vertexOffset = SkeletalFormat::HeaderSize;
+            const size_t submeshSize = submeshes.size() * V02::SubmeshRecordSize;
+            const size_t slotSize = slots.size() * V02::MaterialSlotRecordSize;
+            const size_t vertexOffset = V02::HeaderSize;
             size_t sectionEnd = 0;
             size_t indexOffset = 0;
             size_t jointOffset = 0;
             size_t clipOffset = 0;
             size_t channelOffset = 0;
             size_t sampleOffset = 0;
+            size_t submeshOffset = 0;
+            size_t slotOffset = 0;
             size_t stringOffset = 0;
             size_t fileSize = 0;
             if (!CheckedAdd(vertexOffset, vertexSize, sectionEnd) ||
@@ -2051,18 +3008,25 @@ namespace NorvesLib::Tools::AssetCook
                 !CheckedAdd(channelOffset, channelSize, sectionEnd) ||
                 !AlignUp(sectionEnd, SkeletalFormat::SectionAlignment, sampleOffset) ||
                 !CheckedAdd(sampleOffset, sampleSize, sectionEnd) ||
-                !AlignUp(sectionEnd, SkeletalFormat::SectionAlignment, stringOffset) ||
+                !AlignUp(sectionEnd, SkeletalFormat::SectionAlignment, submeshOffset) ||
+                !CheckedAdd(submeshOffset, submeshSize, slotOffset) ||
+                !CheckedAdd(slotOffset, slotSize, stringOffset) ||
                 !CheckedAdd(stringOffset, stringTable.size(), fileSize))
             {
                 error = "skeletal section offset overflow";
                 return false;
             }
 
+            if (fileSize > maxBytes)
+            {
+                error = "BVH cookのNVSKEL出力byte予算を超えました";
+                return false;
+            }
             outBytes.assign(fileSize, 0);
             std::memcpy(outBytes.data() + SkeletalHeader::Magic, SkeletalFormat::Magic, SkeletalFormat::MagicSize);
-            WriteLe32(outBytes, SkeletalHeader::HeaderSize, static_cast<uint32_t>(SkeletalFormat::HeaderSize));
+            WriteLe32(outBytes, SkeletalHeader::HeaderSize, static_cast<uint32_t>(V02::HeaderSize));
             WriteLe16(outBytes, SkeletalHeader::VersionMajor, SkeletalFormat::VersionMajor);
-            WriteLe16(outBytes, SkeletalHeader::VersionMinor, SkeletalFormat::VersionMinor);
+            WriteLe16(outBytes, SkeletalHeader::VersionMinor, V02::VersionMinor);
             WriteLe32(outBytes, SkeletalHeader::EndianMarker, SkeletalFormat::EndianMarker);
             WriteLe32(outBytes, SkeletalHeader::VertexRecordSize,
                       static_cast<uint32_t>(SkeletalFormat::VertexRecordSize));
@@ -2095,6 +3059,14 @@ namespace NorvesLib::Tools::AssetCook
             WriteLe32(outBytes, SkeletalHeader::ClipCount, static_cast<uint32_t>(skeletal.Clips.size()));
             WriteLe32(outBytes, SkeletalHeader::ChannelCount, static_cast<uint32_t>(channelCount));
             WriteLe32(outBytes, SkeletalHeader::SampleCount, static_cast<uint32_t>(sampleCount));
+            WriteLe32(outBytes, V02::HeaderOffset::SubmeshRecordSize, V02::SubmeshRecordSize);
+            WriteLe32(outBytes, V02::HeaderOffset::MaterialSlotRecordSize, V02::MaterialSlotRecordSize);
+            WriteLe64(outBytes, V02::HeaderOffset::SubmeshOffset, submeshOffset);
+            WriteLe64(outBytes, V02::HeaderOffset::SubmeshSize, submeshSize);
+            WriteLe64(outBytes, V02::HeaderOffset::MaterialSlotOffset, slotOffset);
+            WriteLe64(outBytes, V02::HeaderOffset::MaterialSlotSize, slotSize);
+            WriteLe32(outBytes, V02::HeaderOffset::SubmeshCount, static_cast<uint32_t>(submeshes.size()));
+            WriteLe32(outBytes, V02::HeaderOffset::MaterialSlotCount, static_cast<uint32_t>(slots.size()));
             for (size_t element = 0; element < 16; ++element)
             {
                 WriteFloat32(outBytes,
@@ -2189,10 +3161,31 @@ namespace NorvesLib::Tools::AssetCook
                 std::memcpy(outBytes.data() + stringOffset, stringTable.data(), stringTable.size());
             }
 
-            const uint64_t payloadHash = NorvesLib::Core::Asset::ComputeCookedSkeletalV01Hash(
+            for (size_t index = 0; index < submeshes.size(); ++index)
+            {
+                const auto& submesh = submeshes[index];
+                const size_t record = submeshOffset + index * V02::SubmeshRecordSize;
+                WriteLe32(outBytes, record, submesh.IndexStart);
+                WriteLe32(outBytes, record + 4, submesh.IndexCount);
+                WriteLe32(outBytes, record + 12, submesh.VertexCount);
+                WriteLe32(outBytes, record + 16, submesh.MaterialSlot);
+                WriteLe32(outBytes, record + 20, submesh.bNoShadow ? V02::SubmeshFlagNoShadow : 0);
+                for (size_t axis = 0; axis < 3; ++axis)
+                {
+                    WriteFloat32(outBytes, record + 24 + axis * 4, submesh.BoundsCenter[axis]);
+                }
+                WriteFloat32(outBytes, record + 36, submesh.BoundsRadius);
+            }
+            for (size_t index = 0; index < slots.size(); ++index)
+            {
+                const size_t record = slotOffset + index * V02::MaterialSlotRecordSize;
+                WriteLe64(outBytes, record, slotNames[index].Offset);
+                WriteLe32(outBytes, record + 8, slotNames[index].Length);
+            }
+            const uint64_t payloadHash = NorvesLib::Core::Asset::ComputeCookedSkeletalV02Hash(
                 outBytes.data() + SkeletalHeader::MeshNodeGlobalTransform,
-                outBytes.data() + SkeletalFormat::HeaderSize,
-                outBytes.size() - SkeletalFormat::HeaderSize);
+                outBytes.data() + 256, outBytes.data() + V02::HeaderSize,
+                outBytes.size() - V02::HeaderSize);
             WriteLe64(outBytes, SkeletalHeader::PayloadHash, payloadHash);
             return true;
         }
@@ -2200,41 +3193,95 @@ namespace NorvesLib::Tools::AssetCook
         bool CookGltfToNvskelInternal(const uint8_t* sourceBytes,
                                       size_t sourceSize,
                                       AnsiStringView format,
-                                      AnsiStringView sourcePath,
+                                      const std::filesystem::path& sourcePath,
                                       SkeletalCookResult& outResult,
-                                      AnsiString& error)
+                                      AnsiString& error,
+                          const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+                          const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions, SkeletalCookDiagnostics& diagnostics,
+                          const SkeletalBvhCookRequest* bvhRequest = nullptr, SkeletalBvhCookResult* bvhResult = nullptr)
         {
             if (format != SupportedSkeletalFormat)
             {
                 error = AnsiString("unsupported skeletal format: ") + AnsiString(format);
                 return false;
             }
-            if (sourceBytes == nullptr || sourceSize == 0 ||
-                std::find(sourceBytes, sourceBytes + sourceSize, uint8_t{0}) != sourceBytes + sourceSize)
+            if (sourceBytes == nullptr || sourceSize == 0)
             {
-                error = "glTF JSON input is empty or contains an embedded NUL byte";
+                error = "glTF source input is empty";
                 return false;
             }
-
-            size_t jsonOffset = 0;
-            if (sourceSize >= 3 && sourceBytes[0] == 0xefu && sourceBytes[1] == 0xbbu && sourceBytes[2] == 0xbfu)
+            const Core::Skeletal::SkeletalGltfDecodeOptions options = decodeOptions ? *decodeOptions : Core::Skeletal::SkeletalGltfDecodeOptions{};
+            if (!Core::Skeletal::IsValidSkeletalGltfDecodeOptions(options))
             {
-                jsonOffset = 3;
+                error = "骨格import指定が不正です";
+                return false;
             }
-            const String jsonText = ToCoreString(
-                AnsiStringView(reinterpret_cast<const char*>(sourceBytes) + jsonOffset, sourceSize - jsonOffset));
-            NorvesLib::Core::Skeletal::SkeletalGltfSourceBuffers sourceBuffers;
-            const auto decoded = NorvesLib::Core::Skeletal::DecodeSkeletalGltf(
-                jsonText, ToCoreString(sourcePath), &sourceBuffers);
+            AssetImport::LoadedImportSettings loadedImport;
+            if (!LoadCookImportSettings(sourcePath, importOptions, loadedImport, error))
+            {
+                return false;
+            }
+            if (loadedImport.bPresent && !AssetImport::SupportsSkeletalScaleImport(loadedImport.Settings))
+            {
+                error = "skeletal import supports only uniform scale/fit; axes, mirror, origin and mesh changes are unsupported";
+                return false;
+            }
+            Gltf::BufferSet sourceBuffers;
+            auto decoded = bvhRequest != nullptr
+                ? Core::Skeletal::DecodeBvhTargetRigGltfNativePath(
+                    {sourceBytes, sourceSize}, sourcePath, &sourceBuffers, &loadedImport, &options)
+                : Core::Skeletal::DecodeRigGltfNativePath(
+                    {sourceBytes, sourceSize}, sourcePath, &sourceBuffers, &loadedImport, &options);
+            diagnostics.bDecodeAttempted = true;
+            diagnostics.DecodeStatus = static_cast<uint32_t>(decoded.Status);
+            diagnostics.Report = decoded.Report;
             if (!decoded.Succeeded())
             {
                 error = AnsiString("skeletal glTF decode failed: status=") +
                         FormatInteger(static_cast<int>(decoded.Status));
+                if (options.InfluencePolicy == Core::Skeletal::SkeletalInfluencePolicy::ReduceToFour)
+                {
+                    error += " processed_vertices=" + FormatInteger(decoded.Report.ProcessedVertexCount);
+                    if (decoded.Report.FailedVertexIndex != UINT64_MAX)
+                        error += " failed_vertex=" + FormatInteger(decoded.Report.FailedVertexIndex);
+                    if (decoded.Report.bHasFailedVertexDroppedWeight)
+                    {
+                        char number[64] = {};
+                        const auto converted = std::to_chars(number, number + sizeof(number),
+                            decoded.Report.FailedVertexDroppedWeight, std::chars_format::general,
+                            std::numeric_limits<double>::max_digits10);
+                        if (converted.ec == std::errc{})
+                            error += " dropped_weight=" + AnsiString(AnsiStringView(number, static_cast<size_t>(converted.ptr - number)));
+                    }
+                }
+                if (options.CubicSplinePolicy == Core::Skeletal::SkeletalCubicSplinePolicy::Bake && decoded.Report.bCubicScanStarted)
+                {
+                    error += " processed_channels=" + FormatInteger(decoded.Report.ProcessedAnimationChannelCount);
+                    if (decoded.Report.FailedAnimationChannelIndex != UINT64_MAX)
+                    {
+                        error += " failed_channel=" + FormatInteger(decoded.Report.FailedAnimationChannelIndex);
+                    }
+                    if (decoded.Report.bHasCubicBakeFailure)
+                    {
+                        error += " cubic_bake_status=" + FormatInteger(decoded.Report.FailedCubicBakeStatus);
+                    }
+                }
+                if (options.MorphPolicy == Core::Skeletal::SkeletalMorphPolicy::Drop && decoded.Report.bMorphScanComplete)
+                {
+                    error += " morph_validated_targets=" + FormatInteger(decoded.Report.DroppedMorphTargetCount);
+                    error += " morph_validated_channels=" + FormatInteger(decoded.Report.DroppedMorphAnimationChannelCount);
+                }
                 return false;
             }
 
+            if (bvhRequest != nullptr &&
+                !Detail::ApplyBvhCookRequest(*bvhRequest, decoded.Data, bvhResult->Report, bvhResult->ClipIndex, error))
+            {
+                return false;
+            }
             SkeletalCookResult result;
-            if (!BuildNvskelBytes(decoded.Data, result.NvskelBytes, error))
+            if (!BuildNvskelBytes(decoded.Data, result.NvskelBytes, error,
+                    bvhRequest != nullptr ? bvhRequest->MaxNvskelBytes : UINT64_MAX))
             {
                 return false;
             }
@@ -2249,30 +3296,218 @@ namespace NorvesLib::Tools::AssetCook
                 return false;
             }
 
-            result.SourceHash = ComputeGltfSourceHash(sourceBytes, sourceSize, sourceBuffers);
+            // 新しい表とUTF名を再parse後に照合し、形式が妥当でも情報が消えた出力を拒否する。
+            const auto& roundtrip = parsed.Data.Skeletal;
+            if (parsed.Data.VersionMinor != Core::Asset::CookedSkeletalFormatV02::VersionMinor ||
+                roundtrip.SubMeshes.size() != decoded.Data.SubMeshes.size() ||
+                roundtrip.MaterialSlots.size() != decoded.Data.MaterialSlots.size() ||
+                roundtrip.Clips.size() != decoded.Data.Clips.size() || roundtrip.Joints.size() != decoded.Data.Joints.size())
+            {
+                error = "NVSKEL0.2の表数量が再読込後に一致しません";
+                return false;
+            }
+            for (size_t index = 0; index < decoded.Data.SubMeshes.size(); ++index)
+            {
+                const auto& expected = decoded.Data.SubMeshes[index];
+                const auto& actual = roundtrip.SubMeshes[index];
+                if (expected.IndexStart != actual.IndexStart || expected.IndexCount != actual.IndexCount ||
+                    expected.MaterialSlot != actual.MaterialSlot || expected.bNoShadow != actual.bNoShadow ||
+                    expected.VertexCount != actual.VertexCount)
+                {
+                    error = "NVSKEL0.2のsubmesh情報が再読込後に一致しません";
+                    return false;
+                }
+            }
+            for (size_t index = 0; index < decoded.Data.MaterialSlots.size(); ++index)
+            {
+                if (decoded.Data.MaterialSlots[index].Name != roundtrip.MaterialSlots[index].Name)
+                {
+                    error = "NVSKEL0.2の材質名が再読込後に一致しません";
+                    return false;
+                }
+            }
+            for (size_t index = 0; index < decoded.Data.Clips.size(); ++index)
+            {
+                if (decoded.Data.Clips[index].Name != roundtrip.Clips[index].Name)
+                {
+                    error = "NVSKEL0.2のclip名が再読込後に一致しません";
+                    return false;
+                }
+            }
+            for (size_t index = 0; index < decoded.Data.Joints.size(); ++index)
+            {
+                if (decoded.Data.Joints[index].Name != roundtrip.Joints[index].Name)
+                {
+                    error = "NVSKEL0.2の関節名が再読込後に一致しません";
+                    return false;
+                }
+            }
+
+            const auto sourceHash = AssetImport::AppendImportSettingsHash(
+                ComputeGltfSourceHash(sourceBytes, sourceSize, sourceBuffers), loadedImport.bPresent, loadedImport.Settings);
+            if (!sourceHash.bValid)
+            {
+                error = "invalid import settings hash";
+                return false;
+            }
+            const auto policyHash = Core::Skeletal::AppendSkeletalImportPolicyHash(sourceHash.Value, options);
+            if (!policyHash.bValid)
+            {
+                error = "骨格importのpolicy hashを生成できません";
+                return false;
+            }
+            result.SourceHash = policyHash.Value;
+            if (bvhRequest != nullptr)
+            {
+                if (!Detail::AppendBvhCookHash(result.SourceHash, *bvhRequest, result.SourceHash))
+                {
+                    error = "BVH cook要求のhashを生成できません";
+                    return false;
+                }
+                // 新旧全clipの値を再読込後も保持する。構造paddingは比較しない。
+                for (size_t index = 0; index < decoded.Data.Clips.size(); ++index)
+                {
+                    if (!Detail::EqualBvhCookClip(decoded.Data.Clips[index], roundtrip.Clips[index]))
+                    {
+                        error = "BVH cookのclip値がNVSKEL再読込後に一致しません";
+                        return false;
+                    }
+                }
+            }
+            result.DecodeReport = decoded.Report;
+            result.bHasImportSettings = loadedImport.bPresent;
+            result.ImportSettingsPath = loadedImport.Path;
+            if (loadedImport.bPresent)
+            {
+                result.ImportSettingsHash = AssetImport::AppendImportSettingsHash(
+                    Format::Fnv1a64OffsetBasis, true, loadedImport.Settings).Value;
+            }
             result.VertexCount = static_cast<uint32_t>(decoded.Data.Vertices.size());
             result.IndexCount = static_cast<uint32_t>(decoded.Data.Indices.size());
             result.JointCount = static_cast<uint32_t>(decoded.Data.Joints.size());
             result.ClipCount = static_cast<uint32_t>(decoded.Data.Clips.size());
+            result.SubmeshCount = static_cast<uint32_t>(parsed.Data.Skeletal.SubMeshes.size());
+            result.MaterialSlotCount = static_cast<uint32_t>(parsed.Data.Skeletal.MaterialSlots.size());
             outResult = std::move(result);
             return true;
         }
     } // namespace
 
-    bool IsSupportedMeshCookFormat(NorvesLib::Core::Container::AnsiStringView format) noexcept
+    MeshEmbeddedImage& MeshEmbeddedImage::operator=(const MeshEmbeddedImage& other)
     {
-        return format == SupportedMeshFormat || format == SupportedMeshFormatV1;
+        if (this != &other)
+        {
+            MeshEmbeddedImage candidate(other);
+            Swap(candidate);
+        }
+        return *this;
+    }
+    void MeshEmbeddedImage::Swap(MeshEmbeddedImage& other) noexcept
+    {
+        std::swap(ImageIndex, other.ImageIndex);
+        std::swap(Roles, other.Roles);
+        std::swap(Payload, other.Payload);
+        std::swap(Width, other.Width);
+        std::swap(Height, other.Height);
+        std::swap(LogicalPath, other.LogicalPath);
+        std::swap(Format, other.Format);
+        std::swap(SourceHash, other.SourceHash);
+        m_OwnedBytes.swap(other.m_OwnedBytes);
+        std::swap(m_BorrowedBytes, other.m_BorrowedBytes);
+    }
+    bool MeshEmbeddedImage::SetBytes(Core::Container::Span<const uint8_t> bytes, bool bBorrow)
+    {
+        if (bytes.empty() || bytes.data() == nullptr)
+        {
+            return false;
+        }
+        if (bBorrow)
+        {
+            // 自己所有bytesを借用へ切り替えると解放後にdanglingになるため拒否する。
+            const auto begin = reinterpret_cast<uintptr_t>(bytes.data());
+            const auto owned = reinterpret_cast<uintptr_t>(m_OwnedBytes.data());
+            if (!m_OwnedBytes.empty() &&
+                (begin >= owned ? begin - owned < m_OwnedBytes.size() : owned - begin < bytes.size()))
+            {
+                return false;
+            }
+            Core::Container::VariableArray<uint8_t> empty;
+            m_OwnedBytes.swap(empty);
+            m_BorrowedBytes = bytes;
+        }
+        else
+        {
+            Core::Container::VariableArray<uint8_t> candidate(bytes.begin(), bytes.end());
+            m_OwnedBytes.swap(candidate);
+            m_BorrowedBytes = {};
+        }
+        Payload = MeshImagePayload::Encoded;
+        Width = Height = 0;
+        return true;
+    }
+    bool MeshEmbeddedImage::SetRawRgba8(Core::Container::Span<const uint8_t> bytes, uint32_t width, uint32_t height)
+    {
+        if (!width || !height || static_cast<size_t>(width) > std::numeric_limits<size_t>::max() / height ||
+            static_cast<size_t>(width) * height > std::numeric_limits<size_t>::max() / 4 ||
+            bytes.size() != static_cast<size_t>(width) * height * 4 || !SetBytes(bytes, false))
+        {
+            return false;
+        }
+        Payload = MeshImagePayload::RawRgba8;
+        Width = width;
+        Height = height;
+        return true;
+    }
+    Core::Container::Span<const uint8_t> MeshEmbeddedImage::GetBytes() const noexcept
+    {
+        return IsBorrowed() ? m_BorrowedBytes : Core::Container::Span<const uint8_t>(m_OwnedBytes.data(), m_OwnedBytes.size());
+    }
+    bool MeshEmbeddedImage::IsBorrowed() const noexcept
+    {
+        return !m_BorrowedBytes.empty();
     }
 
-    bool CookGltfToNvmesh(const uint8_t* sourceBytes, size_t sourceSize,
-                          NorvesLib::Core::Container::AnsiStringView format,
-                          NorvesLib::Core::Container::AnsiStringView sourcePath,
-                          NorvesLib::Core::Container::AnsiStringView logicalPath, MeshCookResult& outResult,
-                          NorvesLib::Core::Container::AnsiString& error, uint32_t fallbackMinTriangles)
+    bool InspectGltfModelNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+                                    const std::filesystem::path& sourcePath, ModelInspection& outInspection,
+                                    Core::Container::AnsiString& error)
     {
+        if (!ValidateNativeCookPaths(sourcePath, nullptr, error))
+        {
+            return false;
+        }
+        return InspectGltfModelInternal(sourceBytes, sourceSize, sourcePath, outInspection, error);
+    }
+
+    bool FingerprintModelCookSourceNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+                                              Core::Container::AnsiStringView format,
+                                              const std::filesystem::path& sourcePath,
+                                              Core::Container::AnsiStringView logicalPath,
+                                              ModelCookFingerprint& outResult, Core::Container::AnsiString& error,
+                                              const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+                                              const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+    {
+        if (!ValidateNativeCookPaths(sourcePath, importOptions, error))
+        {
+            return false;
+        }
+        return FingerprintModelCookSourceInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult,
+                                                  error, importOptions, decodeOptions);
+    }
+
+    bool CookGltfToNvmeshNativePath(const uint8_t *sourceBytes, size_t sourceSize,
+                                    Core::Container::AnsiStringView format, const std::filesystem::path &sourcePath,
+                                    Core::Container::AnsiStringView logicalPath, MeshCookResult &outResult,
+                                    Core::Container::AnsiString &error,
+                                    const Core::AssetImport::ImportSettingsFileOptions *importOptions,
+                                    uint32_t fallbackMinTriangles)
+    {
+        if (!ValidateNativeCookPaths(sourcePath, importOptions, error))
+        {
+            return false;
+        }
         AnsiString internalError;
-        if (!CookGltfToNvmeshInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult, internalError,
-                                      fallbackMinTriangles))
+        if (!CookGltfToNvmeshInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult,
+                                      internalError, importOptions, fallbackMinTriangles))
         {
             error = internalError.c_str();
             return false;
@@ -2280,8 +3515,98 @@ namespace NorvesLib::Tools::AssetCook
         return true;
     }
 
-    bool CookDisplacedSphereToNvmesh(const uint8_t* heightMapBytes,
-                                     size_t heightMapSize,
+    bool CookGltfToNvskelNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+                                    Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
+                                    SkeletalCookResult& outResult, Core::Container::AnsiString& error,
+                                    const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+                                    const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
+                                    SkeletalCookDiagnostics* outDiagnostics)
+    {
+        if (outDiagnostics)
+        {
+            *outDiagnostics = {};
+        }
+        if (!ValidateNativeCookPaths(sourcePath, importOptions, error))
+        {
+            return false;
+        }
+        AnsiString internalError;
+        SkeletalCookDiagnostics diagnostics;
+        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, outResult, internalError,
+                                      importOptions, decodeOptions, diagnostics))
+        {
+            if (outDiagnostics)
+            {
+                *outDiagnostics = diagnostics;
+            }
+            error = internalError;
+            return false;
+        }
+        if (outDiagnostics)
+        {
+            *outDiagnostics = diagnostics;
+        }
+        return true;
+    }
+
+    bool CookGltfWithBvhToNvskelNativePath(const uint8_t* sourceBytes, size_t sourceSize,
+        Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
+        const SkeletalBvhCookRequest& request, SkeletalBvhCookResult& outResult,
+        Core::Container::AnsiString& error, const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+        const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+    {
+        if (!ValidateNativeCookPaths(sourcePath, importOptions, error))
+        {
+            return false;
+        }
+        SkeletalBvhCookResult candidate;
+        SkeletalCookDiagnostics diagnostics;
+        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, candidate.Cook, error,
+                importOptions, decodeOptions, diagnostics, &request, &candidate))
+        {
+            return false;
+        }
+        static_assert(std::is_nothrow_move_assignable_v<SkeletalBvhCookResult>);
+        outResult = std::move(candidate);
+        return true;
+    }
+
+    // 既存narrow呼出元のASCII互換境界。native APIと同名overloadを増やさず、literal/{}を曖昧にしない。
+    bool InspectGltfModel(const uint8_t* sourceBytes, size_t sourceSize, Core::Container::AnsiStringView sourcePath,
+                          ModelInspection& outInspection, Core::Container::AnsiString& error)
+    {
+        return InspectGltfModelNativePath(sourceBytes, sourceSize, LegacyModelLocator(sourcePath), outInspection,
+                                          error);
+    }
+
+    bool FingerprintModelCookSource(const uint8_t* sourceBytes, size_t sourceSize,
+                                    Core::Container::AnsiStringView format, Core::Container::AnsiStringView sourcePath,
+                                    Core::Container::AnsiStringView logicalPath, ModelCookFingerprint& outResult,
+                                    Core::Container::AnsiString& error,
+                                    const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+                                    const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
+    {
+        return FingerprintModelCookSourceNativePath(sourceBytes, sourceSize, format, LegacyModelLocator(sourcePath),
+                                                    logicalPath, outResult, error, importOptions, decodeOptions);
+    }
+
+    bool IsSupportedMeshCookFormat(Core::Container::AnsiStringView format) noexcept
+    {
+        return format == SupportedMeshFormat || format == SupportedMeshFormatV1 ||
+               format == SupportedMeshFormatLodGraph;
+    }
+
+    bool CookGltfToNvmesh(const uint8_t* sourceBytes, size_t sourceSize, Core::Container::AnsiStringView format,
+                          Core::Container::AnsiStringView sourcePath, Core::Container::AnsiStringView logicalPath,
+                          MeshCookResult &outResult, Core::Container::AnsiString &error,
+                          const Core::AssetImport::ImportSettingsFileOptions *importOptions,
+                          uint32_t fallbackMinTriangles)
+    {
+        return CookGltfToNvmeshNativePath(sourceBytes, sourceSize, format, LegacyModelLocator(sourcePath), logicalPath,
+                                          outResult, error, importOptions, fallbackMinTriangles);
+    }
+
+    bool CookDisplacedSphereToNvmesh(const uint8_t *heightMapBytes, size_t heightMapSize,
                                      NorvesLib::Core::Container::AnsiStringView format,
                                      NorvesLib::Core::Container::AnsiStringView logicalPath,
                                      MeshCookResult& outResult,
@@ -2303,19 +3628,14 @@ namespace NorvesLib::Tools::AssetCook
         return format == SupportedSkeletalFormat;
     }
 
-    bool CookGltfToNvskel(const uint8_t* sourceBytes,
-                          size_t sourceSize,
-                          NorvesLib::Core::Container::AnsiStringView format,
-                          NorvesLib::Core::Container::AnsiStringView sourcePath,
-                          SkeletalCookResult& outResult,
-                          NorvesLib::Core::Container::AnsiString& error)
+    bool CookGltfToNvskel(const uint8_t* sourceBytes, size_t sourceSize, Core::Container::AnsiStringView format,
+                          Core::Container::AnsiStringView sourcePath, SkeletalCookResult& outResult,
+                          Core::Container::AnsiString& error,
+                          const Core::AssetImport::ImportSettingsFileOptions* importOptions,
+                          const Core::Skeletal::SkeletalGltfDecodeOptions* decodeOptions,
+                          SkeletalCookDiagnostics* outDiagnostics)
     {
-        AnsiString internalError;
-        if (!CookGltfToNvskelInternal(sourceBytes, sourceSize, format, sourcePath, outResult, internalError))
-        {
-            error = internalError;
-            return false;
-        }
-        return true;
+        return CookGltfToNvskelNativePath(sourceBytes, sourceSize, format, LegacyModelLocator(sourcePath), outResult,
+                                          error, importOptions, decodeOptions, outDiagnostics);
     }
 } // namespace NorvesLib::Tools::AssetCook

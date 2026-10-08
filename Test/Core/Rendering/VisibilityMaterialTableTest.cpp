@@ -1,11 +1,15 @@
 ﻿// ビジビリティバッファの材質の表の契約テスト（GPU を使わない）。
-// 記録の材質の番号がフレームで一意な表の番号になること: 同じ材質の手続きメッシュ・スキニングの描画が同じ番号に、
-// 違う材質が違う番号になること、MegaGeometry の区間の材質は値が同じでも別の件（標本の規則を選ぶ印）になること、
-// 番号が 0 から詰まっていること、上限を超えたときに予備の番号へ寄せること、表の件のテクスチャの枠が用途どおりの位置から
-// 読めること、MegaGeometry の記録を作る計算シェーダーが区間の番号ではなく表の番号を書くことを確かめる。
+// 記録の材質の番号がフレームで一意な表の番号になること:
+// 同じ材質の手続きメッシュ・スキニングの描画が同じ番号に、
+// 違う材質が違う番号になること、MegaGeometry
+// の区間の材質は値が同じでも別の件（標本の規則を選ぶ印）になること、 番号が 0
+// から詰まっていること、上限を超えたときに予備の番号へ寄せること、表の件のテクスチャの枠が用途どおりの位置から
+// 読めること、MegaGeometry
+// の記録を作る計算シェーダーが区間の番号ではなく表の番号を書くことを確かめる。
+#include "Rendering/VisibilityMaterialTable.h"
+#include "Rendering/VisibilityResolveMaterialBuild.h"
 #include "Rendering/MaterialTypes.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
-#include "Rendering/VisibilityMaterialTable.h"
 
 #include <cstdint>
 #include <cstring>
@@ -87,6 +91,28 @@ void TestSameMaterialSharesIndexAcrossDrawKinds()
     Expect(table.Add(VB::MakeMaterialEntry(&other)) != procedural0, "値の違う材質は別の番号");
 }
 
+        void TestImportedScalarValues()
+        {
+            MegaGeometry::MegaMeshMaterial material;
+            material.Metallic = 0.25f;
+            material.Roughness = 0.75f;
+            material.OcclusionStrength = 0.6f;
+            const auto entry = VB::MakeMaterialEntry(material);
+            float ao = 0;
+            std::memcpy(&ao, &entry.TexturesD[2], sizeof(ao));
+            Expect(entry.Scalars[0] == 0.25f && entry.Scalars[1] == 0.75f && ao == 0.6f,
+                   "取り込んだ金属度・粗さ・AO の定数を保持する");
+            VB::MaterialTable table;
+        material.MetallicTexture.Id = 987;
+        material.RoughnessTexture.Id = 988;
+        const auto resolved = VisibilityResolveGeometry::MakeResolveMaterial(nullptr, VB::MakeMaterialEntry(material), {});
+        Expect(resolved.MetallicConstant == 0.25f && resolved.RoughnessConstant == 0.75f && resolved.AOConstant == 0.6f,
+               "解決できないハンドルではラスタと同じ材質定数へ戻る");
+            const auto first = table.Add(entry);
+            material.OcclusionStrength = 1;
+            Expect(first != table.Add(VB::MakeMaterialEntry(material)), "AO の異なる材質を同一視しない");
+        }
+
 void TestMegaGeometryMaterialIsSeparateEntry()
 {
     // MegaGeometry の区間の材質は、MegaGeometryPass のラスタ（等方の Linear のサンプラー・粗さの既定は白）と同じ規則で
@@ -151,7 +177,8 @@ void TestTextureSlotsRoundTrip()
     data.AOTexture.Id = high | 55ull;
     data.ORMTexture.Id = high | 66ull;
     data.HeightTexture.Id = high | 77ull;
-    check(VB::MakeMaterialEntry(&data), "手続き・スキニングの材質の表の件から、用途ごとのテクスチャのハンドルを読める");
+            check(VB::MakeMaterialEntry(&data), "手続き・スキニングの材質の表の件から、用"
+                                                "途ごとのテクスチャのハンドルを読める");
 
     MegaGeometry::MegaMeshMaterial mega;
     mega.AlbedoTexture = data.AlbedoTexture;
@@ -161,7 +188,8 @@ void TestTextureSlotsRoundTrip()
     mega.AOTexture = data.AOTexture;
     mega.ORMTexture = data.ORMTexture;
     mega.HeightTexture = data.HeightTexture;
-    check(VB::MakeMaterialEntry(mega), "MegaGeometry の材質の表の件から、用途ごとのテクスチャのハンドルを読める");
+            check(VB::MakeMaterialEntry(mega), "MegaGeometry "
+                                               "の材質の表の件から、用途ごとのテクスチャのハンドルを読める");
 
     // 指定の無い枠は無効なハンドルのまま（隣の枠のハンドルが漏れない）
     MaterialResourceData onlyRoughness;
@@ -443,6 +471,7 @@ int RunTest()
     static_assert(VB::MATERIAL_LIMIT <= MaterialTiles::DEFAULT_MAX_MATERIALS, "上限は材質のタイルの分類の材質の数以下");
 
     TestSameMaterialSharesIndexAcrossDrawKinds();
+            TestImportedScalarValues();
     TestMegaGeometryMaterialIsSeparateEntry();
     TestTextureSlotsRoundTrip();
     TestDifferentMaterialsGetDifferentIndices();

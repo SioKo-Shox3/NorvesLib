@@ -500,6 +500,37 @@ inline bool CapsuleIntersectsAABB(const Capsule& capsule, const AABB& aabb)
     return distanceSq <= capsule.Radius * capsule.Radius;
 }
 
+/**
+ * @brief カプセル（両端が等しければ球）と相手形状の分離を計算する。
+ * 入力は有限、半径・半径長は非負、OBB の軸は正規直交であること。
+ * 既存 ComputeContact の結果や法線規約は変更しない。
+ */
+GeometrySeparation ComputeSeparation(const Capsule& a, const Sphere& b);
+GeometrySeparation ComputeSeparation(const Capsule& a, const OBB& b);
+GeometrySeparation ComputeSeparation(const Capsule& a, const Capsule& b);
+
+// 掃引本体と候補検証が共有するOBB条件。Gram誤差はdoubleで1e-4以内。
+bool IsValidSweepBox(const OBB& shape);
+
+/**
+ * @brief カプセルを direction に maxDistance だけ並進させる。回転掃引は行わない。
+ * direction は内部で正規化する。maxDistance==0 ではゼロ方向も許し、初期重なりだけを返す。
+ * 半径・距離・許容は非負、全数値は有限、OBB軸は正規直交であること。
+ * 反復上限や数値上の停滞は IterationLimit。確定したヒットとして使わないこと。
+ */
+GeometrySweepHit SweepCapsule(const Capsule& a, const Sphere& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings = {});
+GeometrySweepHit SweepCapsule(const Capsule& a, const OBB& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings = {});
+GeometrySweepHit SweepCapsule(const Capsule& a, const Capsule& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings = {});
+GeometrySweepHit SweepSphere(const Sphere& a, const Sphere& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings = {});
+GeometrySweepHit SweepSphere(const Sphere& a, const OBB& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings = {});
+GeometrySweepHit SweepSphere(const Sphere& a, const Capsule& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings = {});
+
 bool ComputeContact(const Sphere& a, const Sphere& b, GeometryContact& outContact);
 bool ComputeContact(const Sphere& a, const OBB& b, GeometryContact& outContact);
 bool ComputeContact(const OBB& a, const OBB& b, GeometryContact& outContact);

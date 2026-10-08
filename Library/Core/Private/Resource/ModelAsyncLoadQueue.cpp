@@ -6,7 +6,7 @@
 #include <utility>
 #include <cassert>
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     namespace
     {
@@ -445,4 +445,4 @@ namespace NorvesLib::Core::Resource
         Thread::ScopedLock lock(state->Mutex);
         state->WaitHookForTesting = std::move(hook);
     }
-} // namespace NorvesLib::Core::Resource
+} // namespace NorvesLib::Core::ResourceIO

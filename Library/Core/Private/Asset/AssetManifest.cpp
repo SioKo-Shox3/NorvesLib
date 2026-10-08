@@ -2,6 +2,7 @@
 
 #include "Asset/AssetPath.h"
 #include "Text/JsonDocument.h"
+#include "Resource/SkeletalLimits.h"
 
 #include <algorithm>
 #include <cctype>
@@ -116,6 +117,78 @@ namespace NorvesLib::Core::Asset
             return true;
         }
 
+        bool ReadRigSplitMetadata(const JsonValue& metadata, AssetCookedReference& reference, uint32_t role)
+        {
+            const AssetKind kinds[] = {AssetKind::Unknown, AssetKind::Skeleton, AssetKind::Model, AssetKind::Animation};
+            const AssetPackageFourCC types[] = {0, MakeAssetPackageFourCC('S', 'k', 'e', '1'),
+                                                MakeAssetPackageFourCC('S', 'k', 'm', '1'),
+                                                MakeAssetPackageFourCC('A', 'n', 'm', '1')};
+            if (!metadata.IsObject() || reference.Kind != kinds[role] || reference.EntryType != types[role] ||
+                reference.CookedVersion != 1)
+            {
+                return false;
+            }
+            auto& m = reference.RigSplitMetadata;
+            Container::AnsiString skeletonId;
+            if (!TryReadStringMember(metadata, "skeleton_id", skeletonId) ||
+                !TryParseAssetHashHex(skeletonId, m.SkeletonId) ||
+                !TryReadUInt32Member(metadata, "profile", m.Profile) ||
+                (m.Profile != 1 && m.Profile != 2 && m.Profile != 3) ||
+                !TryReadUInt32Member(metadata, "joint_count", m.JointCount) || !m.JointCount ||
+                m.JointCount > (m.Profile == 3 ? 256u : 128u))
+            {
+                return false;
+            }
+            if (role == 2)
+            {
+                if (!TryReadUInt32Member(metadata, "vertex_count", m.VertexCount) || !m.VertexCount ||
+                    m.VertexCount > 1048576 || !TryReadUInt32Member(metadata, "index_count", m.IndexCount) ||
+                    !m.IndexCount || m.IndexCount > 3145728 ||
+                    !TryReadUInt32Member(metadata, "submesh_count", m.SubmeshCount) ||
+                    !TryReadUInt32Member(metadata, "material_slot_count", m.MaterialSlotCount) ||
+                    !TryReadUInt32Member(metadata, "material_count", m.MaterialCount) || !m.MaterialCount ||
+                    m.MaterialCount > 8 ||
+                    !Skeletal::IsValidSkeletalTableMetadata(m.SubmeshCount, m.MaterialSlotCount, m.IndexCount))
+                {
+                    return false;
+                }
+            }
+            if (role == 3)
+            {
+                if (!TryReadUInt32Member(metadata, "clip_count", m.ClipCount) || !m.ClipCount || m.ClipCount > 256 ||
+                    !TryReadUInt32Member(metadata, "snapshot_count", m.SnapshotCount) || !m.SnapshotCount ||
+                    m.SnapshotCount > m.ClipCount || !TryReadUInt32Member(metadata, "channel_count", m.ChannelCount) ||
+                    m.ChannelCount > 32768 || !TryReadUInt32Member(metadata, "sample_count", m.SampleCount) ||
+                    m.SampleCount > 1048576)
+                {
+                    return false;
+                }
+            }
+            // 他roleの数量を紛れ込ませず、誤字も未解決設定として止める。
+            for (size_t i = 0; i < metadata.GetObjectSize(); ++i)
+            {
+                const auto name = JsonStringToAnsi(metadata.GetMemberName(i));
+                bool allowed = name == "skeleton_id" || name == "profile" || name == "joint_count";
+                if (role == 2)
+                {
+                    allowed = allowed || name == "vertex_count" || name == "index_count" || name == "submesh_count" ||
+                              name == "material_slot_count" || name == "material_count";
+                }
+                if (role == 3)
+                {
+                    allowed = allowed || name == "clip_count" || name == "snapshot_count" || name == "channel_count" ||
+                              name == "sample_count";
+                }
+                if (!allowed)
+                {
+                    return false;
+                }
+            }
+            m.Role = role;
+            reference.bHasRigSplitMetadata = true;
+            return true;
+        }
+
         bool IsValidLogicalManifestPath(Container::AnsiStringView input, Container::AnsiString &outNormalized)
         {
             const AssetPath path = AssetPath::Normalize(input);
@@ -172,6 +245,16 @@ namespace NorvesLib::Core::Asset
             return true;
         }
 
+        if (text == Container::AnsiStringView("skeleton"))
+        {
+            outKind = AssetKind::Skeleton;
+            return true;
+        }
+        if (text == Container::AnsiStringView("animation"))
+        {
+            outKind = AssetKind::Animation;
+            return true;
+        }
         outKind = AssetKind::Unknown;
         return false;
     }
@@ -180,6 +263,10 @@ namespace NorvesLib::Core::Asset
     {
         switch (kind)
         {
+        case AssetKind::Skeleton:
+            return Container::AnsiString("skeleton");
+        case AssetKind::Animation:
+            return Container::AnsiString("animation");
         case AssetKind::Texture:
             return Container::AnsiString("texture");
         case AssetKind::Model:
@@ -445,7 +532,20 @@ namespace NorvesLib::Core::Asset
             }
 
             const JsonValue metadata = assetValue.FindMember("metadata");
-            if (reference.Kind == AssetKind::Model && metadata.IsValid())
+            const uint32_t splitRole = reference.Format == "nvskel.v1.skeleton"              ? 1
+                                       : reference.Format == "nvskel.v1.skinmesh.pnujiw.u32" ? 2
+                                       : reference.Format == "nvskel.v1.clips"               ? 3
+                                                                                             : 0;
+            if (splitRole)
+            {
+                if (!ReadRigSplitMetadata(metadata, reference, splitRole))
+                {
+                    SetParseFailure(AssetManifestParseStatus::InvalidField,
+                                    Container::AnsiStringView("分離骨格v1のrole/数量metadataが不正です"));
+                    return false;
+                }
+            }
+            else if (reference.Kind == AssetKind::Model && metadata.IsValid())
             {
                 if (!metadata.IsObject() ||
                     !TryReadUInt32Member(metadata, "vertex_count", reference.SkeletalMetadata.VertexCount) ||
@@ -456,6 +556,22 @@ namespace NorvesLib::Core::Asset
                     SetParseFailure(AssetManifestParseStatus::InvalidField,
                                     Container::AnsiStringView("skeletal metadata is incomplete or invalid"));
                     return false;
+                }
+                const bool bHasSubmesh = metadata.FindMember("submesh_count").IsValid();
+                const bool bHasSlots = metadata.FindMember("material_slot_count").IsValid();
+                if (bHasSubmesh || bHasSlots)
+                {
+                    if (!bHasSubmesh || !bHasSlots ||
+                        !TryReadUInt32Member(metadata, "submesh_count", reference.SkeletalMetadata.SubmeshCount) ||
+                        !TryReadUInt32Member(metadata, "material_slot_count", reference.SkeletalMetadata.MaterialSlotCount) ||
+                        !Skeletal::IsValidSkeletalTableMetadata(reference.SkeletalMetadata.SubmeshCount,
+                            reference.SkeletalMetadata.MaterialSlotCount, reference.SkeletalMetadata.IndexCount))
+                    {
+                        SetParseFailure(AssetManifestParseStatus::InvalidField,
+                            Container::AnsiStringView("骨格submesh/材質slotの数量metadataが不正です"));
+                        return false;
+                    }
+                    reference.SkeletalMetadata.bHasSubmeshCounts = true;
                 }
                 reference.bHasSkeletalMetadata = true;
             }

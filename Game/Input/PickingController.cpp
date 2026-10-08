@@ -24,6 +24,18 @@ namespace
 namespace Game::Input
 {
 
+    void PickingController::OnInputReset()
+    {
+        // 進行中のsphereだけがpreview。確定済みのsphere表示は維持する。
+        if(m_bSphereSelecting) m_bHasSelectionSphere = false;
+        m_bLeftPressed = false;
+        m_bBoxSelecting = false;
+        m_bSphereSelecting = false;
+        m_PressX = m_PressY = 0.0f;
+        m_BoxStartX = m_BoxStartY = 0.0f;
+        m_SphereCenterX = m_SphereCenterY = 0.0f;
+    }
+
     void PickingController::SetFallbackSelectionDepth(float depth)
     {
         m_FallbackSelectionDepth = depth;

@@ -555,7 +555,8 @@ VisMaterialSurface VisFlatMaterialSurface(vec3 objectColor, VisMaterialEntry ent
     const bool bMegaGeometry = bHasMaterial && (entry.header.x & VIS_MATERIAL_FLAG_MEGA_GEOMETRY) != 0u;
     const float roughness = (bHasMaterial && entry.scalars.y >= 0.0) ? VisQuantize8(entry.scalars.y)
                                                                       : (bMegaGeometry ? 1.0 : 128.0 / 255.0);
-    surface.material = vec3(metallic, roughness, 1.0);
+    const float ao = bMegaGeometry ? VisQuantize8(uintBitsToFloat(entry.texturesD.z)) : 1.0;
+    surface.material = vec3(metallic, roughness, ao);
     return surface;
 }
 

@@ -261,8 +261,10 @@ namespace NorvesLib::Core::Asset
         packageReadRequest.InputPath = result.CookedReference.CookedPackage;
         packageReadRequest.AssetRoot = {};
         packageReadRequest.bAllowAbsolutePath = false;
+        packageReadRequest.MaxReadBytes = request.MaxCookedPackageBytes;
         const AssetReadResult packageRead = m_FileReader.Read(packageReadRequest);
         result.PackageReadStatus = packageRead.Status;
+        result.PackageBytesRead = packageRead.BytesRead;
         if (!packageRead.Succeeded())
         {
             const Container::AnsiString reason = MakeReadFailureReason(

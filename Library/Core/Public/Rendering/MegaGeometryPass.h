@@ -16,6 +16,7 @@
 
 namespace NorvesLib::Core::Rendering
 {
+    class ConstantMaterialTextureCache;
     class SceneView;
     class SceneRenderer;
     class VisibilityRasterPass;
@@ -739,6 +740,7 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle m_GBufferVelocityHandle;
 
         // デフォルトPBRテクスチャ（マテリアル未設定時のフォールバック）
+        Container::TUniquePtr<ConstantMaterialTextureCache> m_ConstantMaterialTextures;
         RHI::TexturePtr m_DefaultWhiteTexture;      // 1x1 白 — Albedo/AO/Roughnessデフォルト
         RHI::TexturePtr m_DefaultFlatNormalTexture; // 1x1 フラット法線 (128,128,255) — Normalデフォルト
         RHI::TexturePtr m_DefaultBlackTexture;      // 1x1 黒 — Metallic/Heightデフォルト

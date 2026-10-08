@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Math/GeometryTypes.h"
+#include "Scene/PhysicsQueryTypes.h"
 #include "Container/Containers.h"
 #include "Container/Span.h"
 #include "Object/EntityHandle.h"
@@ -16,88 +17,34 @@ namespace NorvesLib::Core
 
 namespace NorvesLib::Core::Scene
 {
-    enum class EPhysicsSceneQueryResult : uint8_t
-    {
-        Success,
-        NoHit,
-        Unavailable,
-        NotReady,
-        InvalidArgument,
-        WrongThread,
-        AlreadyBound,
-        ProviderMismatch
-    };
-
-    struct ColliderHandle
-    {
-        static constexpr uint32_t InvalidIndex = UINT32_MAX;
-
-        uint32_t Index = InvalidIndex;
-        uint32_t Generation = 0;
-
-        constexpr bool IsValid() const
-        {
-            return Index != InvalidIndex && Generation != 0;
-        }
-
-        constexpr bool operator==(const ColliderHandle& other) const
-        {
-            return Index == other.Index && Generation == other.Generation;
-        }
-
-        constexpr bool operator<(const ColliderHandle& other) const
-        {
-            return Index < other.Index || (Index == other.Index && Generation < other.Generation);
-        }
-    };
-
-    struct BodyHandle
-    {
-        static constexpr uint32_t InvalidIndex = UINT32_MAX;
-
-        uint32_t Index = InvalidIndex;
-        uint32_t Generation = 0;
-
-        constexpr bool IsValid() const
-        {
-            return Index != InvalidIndex && Generation != 0;
-        }
-
-        constexpr bool operator==(const BodyHandle& other) const
-        {
-            return Index == other.Index && Generation == other.Generation;
-        }
-
-        constexpr bool operator<(const BodyHandle& other) const
-        {
-            return Index < other.Index || (Index == other.Index && Generation < other.Generation);
-        }
-    };
-
-    struct PhysicsRaycastHit
-    {
-        ColliderHandle Collider;
-        BodyHandle Body;
-        EntityHandle Entity;
-        bool bHasEntity = false;
-        Math::Vector3 Point;
-        Math::Vector3 Normal;
-        float Distance = 0.0f;
-    };
-
-    struct PhysicsOverlapHit
-    {
-        ColliderHandle Collider;
-        BodyHandle Body;
-        EntityHandle Entity;
-        bool bHasEntity = false;
-        Math::GeometryContact Contact;
-    };
-
     class IPhysicsSceneQueryProvider
     {
     public:
         virtual ~IPhysicsSceneQueryProvider() = default;
+
+        // 未対応の既存providerもsource互換を維持する。非Successは出力を空にする。
+        virtual EPhysicsSceneQueryResult ExecuteQuery(const PhysicsQueryDesc&,
+            Container::VariableArray<PhysicsQueryHit>& outHits) const
+        {
+            outHits.clear();
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
+        // Successはbatch成立。個別成否はoutResultsで返す。未対応providerは空/Unavailable。
+        virtual EPhysicsSceneQueryResult ExecuteBatch(Container::Span<const PhysicsQueryDesc>,
+            Container::VariableArray<PhysicsQueryHit>& outHits,
+            Container::VariableArray<PhysicsQueryBatchResult>& outResults) const
+        {
+            outHits.clear();
+            outResults.clear();
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
+
+        // 明示query更新。未対応providerはUnavailable。固定更新を進めない。
+        virtual EPhysicsSceneQueryResult RefreshDynamicSnapshot()
+        {
+            return EPhysicsSceneQueryResult::Unavailable;
+        }
 
         virtual EPhysicsSceneQueryResult Raycast(
             const Math::Ray& ray,
@@ -155,6 +102,21 @@ namespace NorvesLib::Core::Scene
         void QueryFrustum(const Math::Frustum& frustum, Container::VariableArray<Entity*>& outEntities) const;
         size_t GetEntryCount() const;
 
+        // GameThread上で同じ公開snapshotを読む。非Successとprovider例外でoutHitsを空にする。
+        // 例外は出力をclearして再送出。入力/出力の格納領域は重ならないこと。
+        EPhysicsSceneQueryResult ExecuteQuery(const PhysicsQueryDesc& query,
+            Container::VariableArray<PhysicsQueryHit>& outHits) const;
+
+        // 要求順のResult/FirstHit/HitCount。個別失敗は0hitで継続、全体失敗/例外は両出力をclear。
+        // 準備済み空batchはSuccess。入力と出力の格納領域は重ならず、同期呼出し中有効なこと。
+        EPhysicsSceneQueryResult ExecuteBatch(Container::Span<const PhysicsQueryDesc> queries,
+            Container::VariableArray<PhysicsQueryHit>& outHits,
+            Container::VariableArray<PhysicsQueryBatchResult>& outResults) const;
+
+        // GameThread専用。固定step sequenceを進めずqueryだけ更新。GR09までは全proxy再構築。
+        // 同sequence内でも内容が変わるため、呼出側は自身のquery cacheを無効化すること。
+        EPhysicsSceneQueryResult RefreshDynamicSnapshot();
+
         EPhysicsSceneQueryResult BindPhysicsProvider(IPhysicsSceneQueryProvider& provider);
         EPhysicsSceneQueryResult UnbindPhysicsProvider(IPhysicsSceneQueryProvider& provider);
         EPhysicsSceneQueryResult Raycast(
@@ -173,7 +135,7 @@ namespace NorvesLib::Core::Scene
         EPhysicsSceneQueryResult IsAlive(ColliderHandle collider, bool& outAlive) const;
         EPhysicsSceneQueryResult IsAlive(BodyHandle body, bool& outAlive) const;
         /**
-         * @brief 最後に公開された physics query snapshot の単調増加 sequence を取得する。
+         * @brief 最後の固定更新で公開された physics query snapshot のsequenceを取得する（明示refreshでは増加しない）。
          * @param outSequence Success 時は 1 以上。失敗時は 0 に初期化される。
          */
         EPhysicsSceneQueryResult GetPublishedSnapshotSequence(uint64_t& outSequence) const;

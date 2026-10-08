@@ -1,0 +1,352 @@
+# 入力基盤の契約
+
+## 選定
+
+2026-10-02作者承認: S4=a（Raw Input＋cursor固定/非表示・非active解除）、S5=a（XInputを交換可能なdeviceの背後へ）、S8=a（暫定working directory下のuser bindings、IInputBindingStore抽象、GR76で保存先を統合）。実装が済んだことは意味しない。
+
+## InputStateの一括解除
+
+- ReleaseAllは現在の全キー/マウスボタンをupにし、mouse deltaとscroll累積を消去する。modifierも解除される。
+- 解除時にdownだった入力は、同frameで押されたものも含めてReleasedを次のBeginFrameまで保持する。反復ReleaseAllはedgeを翌frameへ延長しない。
+- Releasedは照会で消費しない。一frame中は何度読んでもtrueで、次のBeginFrameでfalseになる。同frame再押下時にはDownとReleasedが共にtrueになり得る。
+- Pressedは既存のcurrent/previous比較を維持する。そのため前frame held→解除→同frame再押下のPressedはfalse。後続MapperはRouterイベントを併用し、同frame内の短いtapや再押下を取り逃さない。
+- 絶対位置は保持し、次のSetMousePositionで基準を再設定してInputStateの移動ジャンプを防ぐ。以降は通常の差分累積に戻る。
+- この段階は状態APIだけ。InputSystemのevent.Delta、Windowのfocus/cursor、controller内のdrag/armedの解除は未接続で、OSでフォーカス問題を解消したとは扱わない。
+
+## 正規化軸と視点単位
+
+- InputAxisResponseはdeadzone [0,1)、Linear/Power/Expo、Gamma > 0、Expo [0,1]を持つ。全パラメータのfinite/範囲とcurve enumを検証する。
+- 1Dは符号を保ち、2Dは半径にdeadzoneとcurveを適用する。成分別のcurveで方向を変えない。有限の範囲外入力は長さ1へ制限する。
+- deadzone後の長さは (min(length,1)-deadzone)/(1-deadzone)。PowerはそのGamma乗、Expoはx*(1-e)+x^3*e。2Dは元の方向へ戻す。
+- この応答は正規化stick/移動軸用。マウスのframe変位を[-1,1]へ丸めない。
+- TryComputeLookDeltaはmouse変位×度/単位 ＋ 正規化stick×度/秒×実時間秒を度/frameで返す。反転は入力符号へ適用する。移動入力値を一律この視点APIへ通さない。
+- 無効値/無効設定/結果overflowはfalseかつ出力0。radial関数は入力と出力が同一Vector2でもよい。計算途中はdoubleを使い、有限float巨大入力の正規化を壊さない。
+- この段階はMapperが使う数理で、入力注入やGame操作への接続は後続。30/60/144Hzで同じ総マウス変位/同じstick時間の結果が一致する試験を持つ。
+
+## ボタンの時間状態
+
+- InputButtonStateは、Mapperが複数bindingを集約したdownを受ける。最初のbindingの押下でPressed、最後のbindingの解除でReleasedになるよう、呼出側がORしたdownの遷移を渡す。
+- BeginFrameはPressed/Released/Tap/DoubleTap/HoldStartedなどの瞬間状態だけを消す。HeldとHoldのlevel、時刻、待機fixedPressは維持する。
+- AdvanceToはfiniteで非負・単調な絶対実時間秒を受ける。逆行や非finiteは状態を一切変えずfalse。入力イベントの時刻粒度は呼出側が決め、kernelが勝手に時刻を取得しない。
+- HeldDurationはdown中の経過時間、ReleasedHeldDurationはrelease時の経過時間をそのframeだけ保持する。HoldSecondsに達するとHold levelとHoldStarted edgeが立つ。
+- release時にduration<=TapMaxSecondsかつHold未発火ならTap。release間のgap<=DoubleTapMaxGapSecondsの2tapを非重複の組としてDoubleTapにする。3tap目は新しい組の1回目。
+- 同frameの押下→解除もPressed/Released/Tapを残す。snapshotのlevelとedgeは同時に成立し得る。各edgeの照会は消費操作ではない。
+- fixedPressはbool latchで、固定stepが0回のframeでも消えず、ConsumeFixedPressで一度だけ消える。未消費中の複数押下は1つへ合流する。全押下回数のキューではない。
+- Cancelはfocus/context喪失用。downならReleasedを残すが、Pressed/Tap/DoubleTap/HoldStarted・doubletap履歴・待機fixedPressを取り消す。通常releaseと違い、操作完了としてTapを発火させない。
+- 閾値は仮の既定値を持つ設定。Tap/gapは非負、Holdは正、全finite。SetTimingはheld中と不正設定を拒否し、受理時はdoubletap履歴を消す。ゲームの操作意味は後続bindingsデータで決める。
+- 現段階ではMapper/Router/Windowへの配線は未実装。純kernelの成功を実機入力の受入れ完了とは扱わない。
+- 時間閾値はstart＋intervalの絶対deadlineと比較する。0.2/0.3等でduration差分の丸めがinclusive境界を反転させないため。deadline加算が+Infになる場合、有限時刻ではHoldに未到達、Tap/gapの上限内として扱う。正のintervalが同じ時刻へ丸められても、0経過ではHoldにしない。
+
+## UI消費後の押下許可（armed）
+
+- InputStateのキー/マウスrelease serialはdown→upごとに進む。ReleaseAllも含み、重複upでは増えず、BeginFrameでも消えない。uint64の周回比較なので2^64回を観測間に跨ぐことは保証外。
+- InputArmedStateはInputSystem正本更新後、Routerで到達したPressedを受けたときだけ許可を記録する。Repeatは新規許可しない。生のDelegateを購読してUI consumeを迂回しない。
+- 読み取りはarmedかつ正本downかつ許可時のrelease serial一致が必要。UIがreleaseと再pressを同じframeで両方消費し、正本の最終状態がdownでも旧許可は失効する。
+- Shift/Ctrl/Altも左右それぞれのrouted許可を用いる。物理的にdownなだけの修飾キーからchordを成立させない。
+- Resetはfocus/context/binding変更用に全許可を忘れる。heldのまま戻ってもRepeatでは復活せず、新しい到達Pressedを待つ。Reconcileは失効済みの記録を掃除するが、呼ぶ前でも照会は正本/serialを照合する。
+- 配送済みイベントの処理を後から最終InputStateだけで再現する口ではない。Mapperは即時callbackで許可と順序を保持し、短いpress/releaseもボタンkernelへ渡す。
+- Keyboard/Mouseから始めたkernelをPadにも拡張したが、Router/Mapperへの接着は後続。Linux試験は実InputStateと実armed処理へcallback欠落を与える試験で、ImGuiの実機操作を検証したものではない。
+
+- 同じInputState正本を継続して使うことが前提。別正本への差替え/再初期化時はResetする。serialは正本内の履歴であり、別instanceを識別するIDではない。
+
+## 物理入力元とbinding値型
+
+- GamepadTypesは4slot、14buttonの独自mask、4つの[-1,1]axis、2つの[0,1]trigger、接続状態とpacket番号を持つ。Windows SDK型を公開しない。未接続はbutton/axis/triggerが0で、packetは履歴値を許す。
+- GamepadButtonのbinding codeは有効な単独bitだけ。StateのButtonsはその組合せを許し、予約bitを拒否する。正規化と実device pollingは後続XInput adapterの責務。
+- InputPhysicalSourceはKey/MouseButton/MouseDelta/MouseWheel/GamepadButton/GamepadAxis/GamepadTrigger、code、slotを持つ。MouseDeltaはX=0/Y=1、Wheelはvertical=0/horizontal=1。Gamepad以外のslotは0。
+- codeは狭いenumへcastする前に範囲検証する。Key None/Count、Mouse Count、未知source、複合button code、不正slotを拒否する。
+- InputBindingはtarget X/Y、finite scale、invert、Shift/Ctrl/Altの修飾mask、[0,1]のbutton thresholdを持つ。Axis1D/Buttonではtarget Xだけ、Axis2DではX/Yを許す。scale 0は無寄与、負scaleとinvertは符号指定。
+- Button/Axis1D/Axis2Dは既存のInputAction（Pressed/Released/Repeat）とは別の型。軸の出力はNormalizedまたはFrameDeltaで、MouseDelta/WheelをNormalizedへ暗黙に丸めない。Buttonの変位sourceは後続で瞬間impulseとして扱う。
+- 値型の宣言/検証は実deviceの実装を意味しない。XInput、Mapper、JSONへの接続はまだ行っていない。
+
+## パッド入力の正本
+
+- InputStateはslotごとの現/前frameのGamepadStateを値として返す。SetGamepadStateはslotと全値を検証してから一括更新し、invalidではsnapshot/edge/serialを何も変えない。
+- PadのPressed/Releasedはframe内の遷移をラッチする。同frame短押下/解除でも両方trueになる。BeginFrameは前stateを保存してedgeだけを消す。
+- 切断はneutralなsnapshotだけを受け付け、Pressedを取り消してReleasedを残す。ReleaseAllもPressedを取り消し、物理接続フラグとpacketは保持してbutton/axis/triggerだけneutral化する。
+- buttonごとのrelease serialはdown→upで進み、frame/切断/再接続を跨いで維持する。Padのarmedも到達Pressedと現在down/serial一致で判定し、Repeatでは再許可しない。ResetGamepadは指定slotだけを忘れる。
+- invalid slot/button/axis/triggerの照会は空値/false/0。snapshotは値返しで、可変内部配列の参照を外へ保持させない。
+- InputSystemでのpad event配送、XInput polling、振動、UIと実機の接続は未実装。この段階は実InputStateにsnapshotを供給する純ロジック試験まで。
+
+## 設定の所有と変更
+
+- InputBindingSetはIdentityをキーとしてcontext/action/binding配列を所有する。同context内の重複actionと重複contextを拒否し、contextが違えば同じaction名を別定義できる。
+- Add/Replace/SetBindings/SetContextCursorModeは既知対象と全値を検証してから変更する。不正設定・未知対象では既存設定を維持する。空bindingsは明示unbindであり有効。
+- InputActionSettingsは型/出力、axis response、button timing、mouse/rate感度を持つ。全settingsを検証し、未使用型の設定でも非finiteや不正範囲を受け付けない。
+- Find/Getは借用viewで、次の変更/破棄で失効するものとして扱う。Mapperは長期pointerを保持せず、設定をcompile/copyしてruntimeを所有する。SetBindings/ReplaceActionは内部viewを入力に渡した場合も先にcopyしてから置き換える。
+- 設定全体のcopyは配列をdeep copyする。Identity文字列は既存pool/literalの寿命契約を使う。JSON文字列からはinternしたIdentityを作り、parserのborrowed viewを設定内に保存しない。
+- CursorModeはNormal/Hidden/Confined/Lockedの値型だけを追加した段階で、IWindowやOS状態を変更していない。
+- Settings/cursorの純検証はLinuxで実行。InputBindingSetの所有/copy試験は既存bundleへ追加したが、Identity→StringのWindows.h依存でコンパイル・実行は未検証。純検証の合格を所有/Mapper統合の合格とは扱わない。
+
+- 所有APIのboolはvalidation拒否を表し、allocation失敗は例外として伝播する。copy assignmentの強い例外保証は約束しない。JSON等の全体更新は候補を構築・検証し、成功時だけmoveで入れ替える。
+
+## アクション評価核
+
+- InputActionRuntimeはsettings/ボタン時間状態/軸/相対変位だけを所有する。binding span・InputState・armedは呼出中だけ借用し、保持しない。Configure後は同じcompile済みbindingsを渡し続け、再設定時は外側でCancel/armedのResetを行う。
+- Configureは成功時に全入力状態を初期化し、単調時刻だけ維持する。不正settingsは非変更。旧Releasedを通知したい場合はConfigure前にCancelの結果を読む。
+- BeginFrameは単調な実時刻でedge/変位/軸を初期化する。SyncButtonsをRouter到達イベント直後に呼び、全persistent bindingのORを反映して同frame短tapを保持する。相対sourceのButtonは到達時にpress/release impulseを作る。
+- modifierにもarmedを使う。相対変位は到達イベント時の修飾条件で加算し、frame末のmodifier状態で遡って削除しない。正本のglobal mouse累積を読んでUIを迂回しない。
+- persistent laneはscale→invert後に合計し、1D clamp/2D長さ制限とdeadzone/curveを一度適用する。FrameDeltaだけが相対変位×mouse感度＋正規化lane×rate感度×unscaled dtを出す。相対laneへcurve/dtは掛けない。
+- Buttonは変換後valueが正かつthreshold以上でdownになる。複数bindingのORと持続中の相対impulseは不要なreleaseを出さない。Pad axis/triggerは正本のpolling値で、context/focusの遮断は外側Mapperの責務。
+- Updateは現在frame時刻でbuttonを同期した後、指定時刻まで進める。eventの精度は呼出側のframe時刻粒度。invalid/計算overflowはfalseで既存結果/時刻/蓄積を保持し、再評価やCancelが可能。外側は失敗を無視せず安全にCancelすること。
+- Cancelは通常release完了と区別し、Tap/DoubleTap/Hold/固定step待ち押下/軸/変位を消す。focus/context切替時はarmedもResetして押しっぱなしを再許可しない。
+- このkernelはOS/Router/Identityから独立して実行検証する。InputMapper・JSON・Engine・Raw Input・XInputの接続と実機受入は引き続き別段階。
+
+- 軸の合計はcurveまでdoubleで保ち、最後だけfloatへ変換する。先に正規化したfloatの半径を再評価すると、巨大Gammaで長さ1の入力が0へ落ちたり、微小入力がcurve前に消えるため禁止する。
+
+## Raw・Pad・全解除の配送口
+
+- MouseStateは絶対位置差分とRawDeltaXYを別に持つ。rawと縦横wheelはfinite/float範囲を検証して成分を一括加算し、BeginFrame/ReleaseAllで消す。失敗時は正本も通知も変えない。
+- InjectRawMouseDelta/InjectMouseScrollAxes/InjectGamepadStateは正本更新→Delegate→Router。Raw/Pad buttonは優先度順にconsume可能。ImGuiはRawをWantCaptureMouseで遮断し、絶対位置と二重供給しない。横wheelとX1/X2はImGuiの対応入力へ渡す。
+- Padはsnapshot全体を検証後に更新し、接続変更を全controllerへ通知してから、新Pressed→旧Releasedの順で配送する。切断通知はconsume不能なので、Mapperが通常releaseのTap完了より先にCancelできる。
+- InputSystem::ReleaseAllは正本をneutral化し、全controllerへOnInputResetを通知する。通常Releasedを合成しない。Delegateを含む通知callback内からの再入Inject/ReleaseAll、Router登録変更は禁止。
+- InjectMouseMoveのevent deltaは正本の累積前後差とし、初期化/ReleaseAll後の初回絶対座標で大きく飛ばないよう一致させる。
+- OSのRaw/XInput供給、focus喪失からReleaseAllへの呼出し、legacy各controllerのReset対応、Mapperの接続は次段。配送口の実装だけでフォーカス解除や実機入力が動いたとは扱わない。
+
+## InputMapperとcontext stack
+
+- Mapperは正本InputStateを生存中借用し、IInputControllerとしてRouterへAttach/Detachする。正本とRouterはMapperより長く生存させ、GameThreadの配送外で接続・設定・stack変更する。copy/moveは禁止。destructorは登録解除する。
+- Configureはcontext/action/bindingsを独自配列へcopyし、runtimeをcompileして候補完成後に入れ替える。成功時はstackが空、旧入力は取消し、時刻だけ維持する。validation失敗は非変更、allocation例外は伝播。同一RouterへのAttachは冪等で優先度を変更しない。
+- PushContextは既知・未pushだけ、Pop/Clearは全Cancelとarmed Reset。top contextだけを評価する。下位contextのheld/fixedPressを復帰させず、キーは新しい到達Pressedを要する。Pad axis/triggerは復帰後の現在polling値を使う。
+- GetActionは独立値snapshot。通常はtopからIdentityで引き、明示context照会ではmask時のReleasedも読める。Validは定義の存在、Activeは接続中・focused・topであること。固定step押下はactive topだけConsumeできる。
+- BeginFrameをmessage/polling前、UpdateをゲームOnUpdate前に呼ぶ。全actionのclockを単調な実時間へ揃え、topだけのbindingsを評価する。時間/引数invalidは全体非変更。個別actionの計算overflowはそのactionをCancelしてfalseを返し、正常actionは継続する。
+- 到達Key/MouseButton/PadButtonをarmedへ反映し直ちにOR buttonを同期、Raw/Wheelだけを相対laneに足す。全callbackはfalseを返し、既存camera等の下位controllerへイベントを透過する。絶対MouseMoveをRawの代用にしない。
+- InputReset、focus変更、Detachでは全Cancel。未接続/非focus時は正本のanalog値も評価しない。focus復帰で旧key heldを合成しない。cursor modeは接続中focused topの値、それ以外はNormalを返すだけでOSはまだ変更しない。
+- Pad断線ではそのslotのarmedを消す。影響するbutton actionに別bindingのheldが残るなら維持し、残らないならCancelしてTap完了にしない。axisは取消後のUpdateで残sourceを再評価する。
+- InputActionMapTestは実System/Router/Mapperを使うEngine非依存の試験としてbundleへ登録。現在のLinux環境ではIdentity→String→Windows.h依存でcompile/実行未確認。portable runtime試験と独立静的レビューを統合実行PASSに読み替えない。Engine/App/JSON/rebind/OSへの実接続は後続。
+
+## Engineとframe境界
+
+- EngineがInputSystem→InputRouter→InputMapperの順に所有し、constructorで正本を借用してAttachする。destructor bodyで先にDetach/SetRouter(nullptr)し、MapperはRouter/正本より先に破棄する。
+- Runはmessage処理前にsteady_clockの絶対nanosecondsをsecondsへ変換し、Mapper.BeginFrame成功後にInputSystem.BeginFrameを呼ぶ。両方ともmessage/device供給より前で、同frameのedge/累積を読む。
+- TickはCalculateRawDeltaTimeNanosecondsの同じclockで、OnUpdateより前にMapper.Updateを呼ぶ。dtはゲーム用100ms上限適用前の実経過秒で、ゲーム時間のclampと入力速度・Hold判定を混同しない。
+- Run開始/終了で操作を取消し、Shutdownはhandler/World/window破棄より先にDetachする。時刻/評価失敗時はApplicationProcessorが警告と全Cancelで安全側に倒す。
+- InputFramePipelineTestは既存Engine試験bundleで、Engineごとの正本/登録、raw dtとclampの分離、同frame短tap、fixed latch、時間拒否のhelperを検証する。Run/Tick内の実呼出位置とShutdown経路は静的レビュー対象。現在はWindows依存でこの統合試験自体のcompile/実行は未確認。
+- Mapperが未設定・stack空の間は既存controllerへ透過し、Rendering3DTestの既定操作と画面は切り替えない。OS Raw/XInput/cursor/focusの供給、Game既定JSONのロードとcontext選択は後続。
+
+- Run終了取消はscope-exitで保証し、PumpMessages/OnUpdateがthrowした場合もHeld/固定press/相対結果を消してFixedStepSchedulerをEndRunする。例外そのものは呼出側へ伝播し、アプリ全体のShutdownをここで代行するものではない。試験には偽platformから実Runを通るPump/OnUpdate例外と通常終了を追加する。
+
+## bindings.v1 JSON
+
+- InputBindingJsonは既存JsonDocument/JsonWriterを使い、schema="bindings.v1"、contexts→actions→bindingsを読み書きする。Identityは名前文字列で保存し、64bit hashをJSON numberへ変換しない。空/制御文字を含むidは拒否。UTF-8 BOMは受け入れる。
+- 既定はcontextのid/actionsとactionのid/type/bindingsが必須。cursorはnormal、その他はInputActionSettings/InputBindingの既定を使う。typeはbutton/axis1d/axis2d、outputはnormalized/frame_delta、curveはlinear/power/expo。
+- 感度はmouse_sensitivity/rate_sensitivity、時間はtiming.tap/double_tap_gap/hold（秒）。bindingはsource/code/slot/component/scale/invert/modifiers/threshold。modifiersはshift/ctrl/alt配列、componentはx/y。既存型検証で組合せ・範囲も確認する。
+- sourceはkey/mouse_button/mouse_delta/mouse_wheel/gamepad_button/gamepad_axis/gamepad_trigger。codeはKey enum名（W/Space等）、mouse button left/right/middle/x1/x2、delta x/y、wheel vertical/horizontal、pad axis left_x/left_y/right_x/right_y、trigger left/right、pad button a/b等の安定名を使う。code/slotの数値入力もfinite/整数/範囲を検証してから狭い型へ入れる。名前は大文字小文字を区別する。
+- ParseDefaultsは候補全体を検証して成功時だけ置換し、失敗時outを維持する。ApplyOverridesは既存context/actionだけを変更し、失敗時outをdefaults copyへ戻す。defaultsとoutのaliasも許す。allocation例外はbool失敗とは別に伝播する。
+- overrideではabsent bindingsが既定保持、[]が明示unbind。感度/曲線/時間/cursorの部分変更を許すが、actionのtype/output種別は既定と同じでなければ拒否する。未知field/context/actionは警告して無視し、既知fieldやidの重複は拒否する。未知override名はinternせず、既定name viewへ照合する。
+- WriteDefaultsは自己完結設定、WriteOverridesは変わった設定field/bindingsだけを出す。構造（context/action追加削除）やtype/outputを差分では変えない。書出失敗時はout textを維持する。
+- 読込前にtextを1MiB、入れ子を64段までに制限する。文字列内の括弧は数えない。書出textも1MiBまで。警告数は全件返すがログ出力は最初16件まで。壊れた既知overrideの途中適用はしない。
+- JsonValueへ借用object列挙APIを追加し、未知fieldを検査する。既存strtodのlocale依存/部分変換を避け、JsonDocumentの数値はfrom_charsでtoken全体とdouble範囲を検証する。範囲外のoverflow/underflowはparse失敗とする。
+- 名前/数値変換はportable実コードで全source/codeと境界を試験する。JSON/Identity統合試験は既存bundleへ追加したが、現LinuxではWindows.h依存でcompile/実行未確認。ファイル保存・Gameの設定ロード・rebind捕捉は次段。
+
+- float fieldはdoubleの意味範囲を検証してから変換し、変換後も範囲を守る。1を僅かに超えるthreshold/expoや極小負感度が丸めで有効化されることを防ぐ。空の未知field名は空C文字列へ置換して安全に警告する。
+
+## 設定のStore境界と保存
+
+- IInputBindingStoreはLoad/Saveの結果を値で返し、読込をLoaded/Missing/Errorに分ける。LoadInputBindingConfigurationは既定JSONが正しい場合だけStoreを読む。user未保存/不正/IOエラーではCurrentを既定に保ち、状態と診断を返す。起動読込から自動保存は行わない。
+- SaveInputBindingOverridesは全差分の書出に成功してからStoreへ明示保存する。差分構造が不正ならStoreを呼ばない。IO失敗とallocation例外は区別する。
+- 暫定Windows adapterはfactory生成時にworking directoryのInputBindings.jsonを絶対pathへ一度解決して固定する。Unicode directoryはW API、長い絶対pathはextended形式で扱う。非対応platformはfactoryがnullを返し、GR76ではこのStore実装を置換する。
+- Loadは読取＋delete共有で開き、1MiB上限・全read・終端を確認する。Saveは同directoryのCREATE_NEW tempを確保し、全write→FlushFileBuffers→close後に置換する。targetを先にtruncateせず、自分が作成できたtempだけをRAIIで後始末する。処理はGameThread専用、複数process同時保存では最後に成功した内容を採用する。
+- native APIの根拠: [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)、[FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers)、[MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)、[GetFullPathNameW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfullpathnamew)。MOVEFILE_COPY_ALLOWEDは使わず、同directory内の置換に限定する。
+- 個人設定とtempはgitignoreへ追加。PersistenceのFakeStore試験とWindows temp-directory内だけのnative IO試験を既存bundleへ登録する。現在のLinuxではString→Windows.h依存でcompile/実行未確認であり、file IO成功を実測した扱いにはしない。Gameの既定Asset JSON/初期化配線は次段。
+
+## Game起動時の設定ロード
+
+- Game/Input/GameInputActions.hはGame側の暫定参照IDだけを定義し、型/キー/Pad binding/感度はAssets/Config/DefaultInputBindings.jsonへ置く。CoreはGame固有のaction名を持たない。
+- GameInputSettingsはGameHandlerに所有され、AssetFileReaderのcompiled rootからConfig/DefaultInputBindings.jsonを読む。既定検証→user差分読込→Mapper設定/初期contextの順で反映し、起動中に保存しない。userの破損/読取失敗は既定へ退避して警告、既定自体の失敗は旧mapperを保ちlegacy起動を継続する。
+- 起動contextはDebug/Normalで、Move/Lookの値を公開する。Gameplay/LockedのMove/Look/Sprint/Bite/Swing/Jump/Sniff、Menu/NormalのConfirm/Cancel、Cutscene/Normal空は後続game用の暫定data。実際のゲーム操作体系は確定仕様として固定しない。Rendering3DTestのMaya経路へはイベントを透過する。
+- ConfigureWithContextはcompiled設定と初期stackを候補で確保してから一括反映する。無効/未知contextやvalidation失敗で旧runtime/stackを変更しない。従来Configureは初期stackを空にする契約を維持する。
+- GameInputSettingsは一度の初期化だけを受け付け、Mapper参照を保持しない。GetConfigurationはconst借用、Saveは明示呼出しだけ。GR68のUI/hot reloadをこの段階で自動追加しない。
+- GameInputSettingsTestはFakeStoreを注入し、実ユーザーの設定に触らず実default Asset/差分/fallback/初期context/明示Saveを検証する形で既存bundleへ登録。現LinuxではWindows依存で統合compile/実行未確認。JSON syntax/ID整合と、JSONから取り出した全bindingの実portable型/名前/runtime検証は実施する（実JsonDocumentロードの実行とは区別）。
+
+## 入力取消と既存コントローラー
+InputSystem::ReleaseAllは正本のneutral化後、Routerの全controllerへOnInputResetを通知する。CameraInputCollectorは修飾/drag/累積deltaを解除、MayaCameraControllerはdrag buttonだけ、LightControllerはheld keyだけを解除し姿勢/値/感度を維持する。PickingControllerは未完了click/box/sphereを中止し、確定selectionを残す。ImGuiは未処理event queueと現在のkey/mouse状態を消去し、queued pressの復活を防ぐ。通常のReleased通知を合成しないので、取消をclick/selectとして扱わない。OS focus通知の供給は別途必要。
+
+## 入力フォーカスの配送
+IWindowのkeyboard input focusはactivationと区別し、WindowsのWM_ACTIVATE/WM_SETFOCUS/WM_KILLFOCUSで遷移通知する。非focusのlegacy入力と復帰時の古いRepeatは注入しない。ApplicationProcessorは初期化完了後に購読し、loss直後にMapper停止とReleaseAll、全controllerへのfocus通知を行う。Game handlerのOnFocusLost/Gainedは順序queueをPumpMessages後に配送し、WM_KILLFOCUS内でwindowを表示/activateする危険を避ける。handlerの共有寿命とwindow購読世代を保持し、再入通知は次batchへ送る。shutdown/destructorでは保存済みDelegateでallocationを伴わず購読解除する。ImGuiへもAddFocusEventを供給する。
+Win32の根拠: https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-killfocus 、 https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-activate 、 https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-setfocus 。
+
+キーrepeatの抑止はWndProcだけでなくTranslateMessageの前にも行う。WindowsKeyRepeatGateはエンジンのKeyCodeへ変換されないIME/OEMキーもnative VKで追跡し、focus後の新しいkeydownが無いrepeatを文字生成へ渡さない。WM_CHARによる確定文字の既存経路自体は維持する。
+
+## Windows Raw mouse供給
+Processorがmain windowにRaw mouseを明示enableし、disconnectでdisableする。同processのmouse usage classが既に他の登録で使用されている場合は上書きせず失敗する。失敗時は警告してlegacy入力で起動する。解除は自分のtarget/flagsが残っている時だけ行う。legacy button/wheelを残し、Rawからはmotionだけを注入して二重操作を防ぐ。WM_INPUTのforeground cleanupはDefWindowProcへ渡す。X1/X2、横wheel、signed client座標もlegacy経路へ供給する。
+absolute motionはdeviceごとに初回をseedし、focus/geometry/device removal/mode変更で古い基準を再利用しない。履歴は最大16deviceで、追い出したdeviceは次回seed扱いとなる。絶対座標0..65535はdesktopの0..(size-1)pixelへ換算する。RDP/実mouse/native登録の実行確認はWindows環境で行う。
+Win32根拠: https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-input 、 https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerrawinputdevices 、 https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-rawmouse 。
+
+Raw登録の競合にはGeneric Desktop page全体のPAGEONLY登録も含める。disableはnative解除の失敗時も論理配送を即座に止め、別のownership情報を保持して破棄時等に解除を再試行する。foreign page-wide登録と自分のexact mouse登録の検索は分離し、解除時にforeignへ触れない。
+
+## カーソル要求と有効mode
+Mapperのcontext要求はfocus停止中も保持し、Processorがmessage前とTick後にWindowへ同期する。Windowは非focus/非表示/minimized時にNormalへ退避し、要求自体は保持する。Confined/Lockedはscreen座標のclient RECTへClipCursor、Hidden/Lockedは自client上のWM_SETCURSORでSetCursor(nullptr)を使い、ShowCursor counterは変更しない。move/size/DPI/display変化でclipを再適用する。適用失敗はfalseで返し、GetCursorModeは最後に成功した状態を返す。Processorは次frameで再試行し、失敗開始時だけ警告する。Run終了/例外/Disconnect/DestroyではNormalを要求する。
+Locked中も絶対位置はUIへ配送するが、絶対deltaは0にする。mode/clip変更ではabsolute基準だけを再seedし、Raw/wheel/buttonsは保持する。非累積配送のevent deltaを明示0にし、累積deltaのクリアが逆向きイベントにならないようにする。Windows nativeの表示/clip成功は実機確認と区別する。
+Win32根拠: https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-clipcursor 、 https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setcursor 、 https://learn.microsoft.com/en-us/windows/win32/menurc/wm-setcursor 。
+
+shared clipはGetClipCursorで保存矩形と照合し、外部変更時は所有を放棄して他者の矩形を解除しない。再適用は実GetFocus/GetForegroundWindowも確認する。WM_SETCURSORはtarget HWNDが自windowの時だけ処理し、childから転送された通知を上書きしない。Win32には所有tokenがないため同processのcursor操作はGameThreadへ直列化する。
+
+## リバインド設定の明示反映
+GameInputSettings::ApplyActionBindingsはCurrentの候補を作り、Mapperのcontext stackをIdentity順に維持して再構築した後だけ保存対象へ反映する。成功時は旧held/fixedPress等を取消し、unknown/invalidやstackのcontext不足では両方を変更しない。空bindingsは明示unbind。内部設定から借用したbinding配列を渡しても安全だが、更新成功後の借用viewは失効する。ResetActionBindingsは対象のbindingだけ、ResetAllToDefaultsは感度等も含むCurrent全体を戻す。startup UserStatus/Reportは読込履歴であり、runtime更新の状態として再利用しない。変更や復帰だけでは保存せず、Saveを明示呼出しする。
+
+## Provider sampleと操作取消の区別
+InputStateのGetLastGamepadSample/GetGamepadSampleSerialは最後に受理したprovider値と受理回数を返す履歴であり、現在の操作状態とは別。ReleaseAllは従来の正本をneutral化するが履歴は書き換えず、物理的なreleaseを捏造しない。成功したInjectGamepadStateは同値でもconnection/新Pressed/旧Releasedの後にGamepadSampleEventをDelegate→優先Routerへ配送する。invalidとReleaseAllはsampleを通知しない。captureは開始時の実sampleと後続sampleからheld/analogの解除を判定できる。注入引数はcallback前に値copyし、呼出元の可変値がcallbackで変わっても通知snapshotを保つ。通常のゲーム操作は引き続き正本/Mapperを使う。
+
+
+### 物理入力リバインドの値状態（GR03）
+
+InputRebindCaptureStateはGameThread上でRouter到達イベントから物理source・修飾mask・操作方向を捕捉する。Identity、Router、Store、OSの所有は持たず、最終bindingのScale/Invert/Componentの決定と設定反映は呼出側へ残す。Idle→Capturing→AwaitingNeutral→Finishedと進み、FinishedかつCapturedの場合だけ結果を適用できる。EscapeまたはCancelは解除待ちを経たCancelled、外部focus喪失/reset/破棄のAbortは即時Cancelledになる。
+
+BeginFrame→正本更新後のイベント群→Advanceの順で同じInputStateを渡す。開始時heldと接続直後のpad sampleは候補にせず、修飾単独は到達した押下に対応するrelease世代でのみ確定する。修飾chordはInputArmedStateで照合し、上位UIがrelease/repressを消費したキーを混入させない。source maskは捕捉対象だけを絞り、解除待ちは他のheldも含む。MouseDeltaは誤捕捉防止のため既定無効。明示的に有効化した場合は累積変位の優勢軸が閾値へ届いた時に捕捉し、wheelと共に同sourceの静止frameを待つ。
+
+padはprovider受理serialの新しいsampleだけを使い、操作取消でneutral化された正本とは区別する。軸/triggerはneutral帯からactivation閾値を超えた最強成分を選ぶ。同値sampleも解除確認に使い、重複/古いsampleは無視する。上位UIが消費したsampleとserial欠落後のsampleはneutral再準備だけに使い、候補を生成しない。
+
+開始直後の内部ReleaseAllでは開始時key/mouseのheld記録を消さない。この初期heldの物理Releasedは必ず捕捉側へ配送すること。配送できないままcaptureを破棄する場合はAbortを使う（人工的なupから物理解除を推測しない）。開始後の任意resetはAbortする契約であり、進行中resetを通常releaseと同一視してはならない。実InputStateを使うportable kernel試験と、Engine/Router/Windowsへの接続検証は別の検証範囲である。
+
+相対入力の静止判定では、到達イベントに加えてInputStateのRaw/wheel別activity serialを用いる。受理した非zero入力だけを計数し、無効入力/zeroは増やさず、BeginFrame/ReleaseAllでも巻き戻さない。上位UIがconsumeした動きや同frameの±相殺も活動として残す。BeginFrame(raw)で基準を取り、候補生成には使わず解除待ちだけで参照する。
+
+
+### 捕捉中の入力停止とEngineへの接続（GR03）
+
+InputRebindCaptureManagerはEngineがInputMapperの後に所有する。Systemの正本とRouter/Mapperの配線が一致する時だけ、単一ownerとして予約最高優先度PriorityInputCaptureへ常設登録する。この順位は他controllerへ使わない。Attach/Detach/Begin/Advanceと配線変更は入力配送外で行う。捕捉を始めるたびに登録を変更しない。
+
+Beginは非focus/重複/invalid要求を拒否し、成功時だけ単調request IDを発行する。古いIDのCancel/結果取得は失敗し、別要求を変更しない。capture開始時のheld記録後にReleaseAllで旧操作を止める。捕捉中は文字と絶対mouseを含む全通常Router eventをconsumeし、Mapperもpolling/fixedPress/Active/要求cursorを抑止する。Delegateの低位観測通知は従来通り発火するので、Game操作はRouter/Mapperを使う。
+
+内部resetのguard以外のOnInputReset、focus喪失、window切断はAbortする。Advanceはイベント配送の後、Mapper.Updateの前に呼び、kernelのFinishedを確認してから残留edge/相対量/legacy状態をresetし、Mapper抑止を解く。その後だけTryGetResultが値結果を返す。設定変更と保存は自動では行わない。
+
+Engineのdestructor bodyとShutdownではmanagerをMapperより先にDetachする。Run終了/例外もDetachし、次Runの開始時に再Attachする。Detachは進行中要求を中止し、同じ配線の正本だけを通知なしで中立化する。Beginでlegacyはreset済み、捕捉中の通常eventは未配送なので、所有終了中に新たなobserver callbackを起動しない。実機のない環境ではkernel回帰と静的接続確認までを検証範囲とし、Windows依存の統合試験は別途実行する。
+
+
+### Game側の捕捉requestと設定適用（GR03）
+
+GameInputSettings::BeginRebindCaptureはcontext/action/slot、出力component・倍率・反転・threshold、設定revisionを不透明なGameInputRebindRequestへ値保持する。slot==bindings.size()は末尾追加、小さいslotは置換。出力の意図は呼出側が明示し、選択中slotの古いsourceから暗黙推定しない。Normalize軸へrelative sourceを捕捉しないようmaskを絞り、拒否時は渡されたrequestを保持する。requestはmanager/Mapper/設定ownerの借用pointerを持たない。
+
+BuildGameInputRebindBindingは純粋な値変換で、SourceとRequiredModifiersを捕捉値から取得する。既定の方向整列では負の軸/変位入力を正方向へ向け、出力側Invertとxorで合成する。整列を無効にすればsourceの符号をそのまま扱う。Key/Button/Triggerの負方向やEscape、無効source/型/数値は拒否し、失敗時は出力を保持する。
+
+ApplyRebindCaptureは設定revisionとcaptureのrequest ID、managerが使うMapper、完了結果、対象slotを再照合する。Pending/Applied/Cancelled/Stale/Invalidを区別し、成功時だけP7Aの一括設定更新を通す。既定復帰や別の設定更新後、二重適用、別設定owner/managerの結果は適用しない。Mapper側のcontext維持に失敗した場合もCurrent/revisionは変わらず、修復後に同じ値requestを再試行できる。変更だけでは保存せずSaveを別に呼ぶ。
+
+request IDと設定revisionは各々process内で単調に採番し、instanceの再生成でも再利用しない。既存Delegate登録識別と同じAtomicカウンタ方式で、0/上限到達は失敗、失敗時の欠番は許す。設定revisionの公開は更新commitの後だけ。requestは実行中だけの値で、設定JSONへ保存する対象ではない。UIはGame側から開始/中止/適用を配送外で要求する。
+
+
+### ImGuiデバッグ操作中の入力マスク（GR03）
+
+--imguiのInstallがEngine所有InputDebugOverlayControllerをenableし、Uninstallでdisableする。既定起動ではdisabledのため入力と描画は変わらない。有効時だけF1を予約し、ImGuiはこのキーを供給/consumeせず専用controllerへ透過する。新規Pressedだけで切り替え、repeatや押下中の重複Pressedでは反転しない。リバインドcaptureは最高優先度なので、F1を含めてこちらより先に受け取る。
+
+Controllerの順位はOverlayより下/Gameより上。UIにイベントを届けた後でGameへの通常eventを止めるため、UI窓の外でもデバッグ操作中にGameのカメラ等は動かない。Mapperはcaptureとは独立したdebug-overlay抑止理由を持ち、いずれかが有効ならpolling/event/fixedPress/Activeを止め、要求cursorをNormalにする。context stackとJSON設定は変更せず、F1を再度押すと元contextの要求へ戻る。
+
+入力callbackでは要求だけを更新し、入る途中/出る途中もmaskを保つ。Processorは配送後、debug.Advance→capture.Advance→Mapper.Updateの順に処理し、mode変更時にReleaseAllでlegacyのheld/ドラッグも解除する。この入力更新はsimulation pauseの外で行われる。focus/resetではF1押下履歴だけを解除し、選択中のUI modeは保持する。
+
+Engine/Shutdown/Run終了はcapture→debug→mapperの順に解除する。debugのDetachはmode中の正本だけを通知なしで中立化し、残るcapture ownerにはAbortを伝えて人工的なupを完了判定へ使わせない。次Runでは再Attachし、moduleのenableは維持するがUI modeは閉じて始める。既定起動画面やImGuiの描画内容は変更しない。F1のロック解除/復帰とAlt+Tabのnative挙動はWindows実機で別途確認する。
+
+自己mode適用のresetでは内部guardによりF1の押下履歴を保持し、物理Released前の重複Pressedを抑止する。外部reset/focus喪失は押下履歴を解除する。未適用enterで終了するとlegacyの解除通知がまだ無いため、DetachはMapper.CancelAllを明示し、InputSystemへ通知reset待ちを残す。次の安全なAttachまたはInputSystem.BeginFrameがReleaseAll通知を回収する。待ちはcontroller外に保持し、controllerの破棄/差し替えでも失わない。cleanup中にobserverを起動しない契約は維持する。
+
+
+### XInput値の変換境界（GR04）
+
+XInputStateConversionはWindowsヘッダに依存しない整数packetを受け、API成功時の入力だけをGamepadStateへ変換する。軸は負側32768/正側32767で除して端点を±1へ合わせ、triggerは255分率、未定義button bitは除去する。packet番号を保持し、deadzone/曲線はMapperへ残す。motorは有限な0..1を両channel検証してから0..65535へ丸め、失敗時は出力を変えない。native API呼出しと接続状態の判定はこの値変換の外側で扱う。
+
+入力構造体の仕様: https://learn.microsoft.com/en-us/windows/win32/api/xinput/ns-xinput-xinput_gamepad 。出力仕様: https://learn.microsoft.com/en-us/windows/win32/api/xinput/ns-xinput-xinput_vibration 。整数raw型をnative構造体へreinterpretせず、backend adapterで各fieldを明示転記する。
+
+
+### padの通常・復帰基準・背景sample（GR04）
+
+InjectGamepadState/SetGamepadStateの既定Liveは従来の通知を維持する。Baselineは操作正本を実値へ同期するがPressedラッチと通常buttonイベントを生成しない。BackgroundはConnected/Packetだけを操作正本に残してneutral化し、Pressedも消す。全modeで最後の物理sampleと受理serialは実値を保持するため、操作取消を物理解除と取り違えない。Released/解除世代は操作正本のdown→upを記録する。
+
+Connectionと値sampleは非Liveでも通知し、GamepadSampleEvent.Modeで配送意図を伝える。capture kernelは非Liveを基準化にだけ使い、focus復帰直後のheld/analogを候補にしない。背景で正本がneutralでも物理sampleがheldなら解除待ちを続ける。invalid slot/state/modeでは正本・履歴・serial・通知を変更しない。
+
+これらは全体focus制御の代用ではない。focus loss時にはMapper.SetFocused(false)とSystem.ReleaseAllで操作を先にCancelし、復帰時の最初のsampleをBaselineにする。既に持っているdigital押下を新規armedにせず、release後の新しいLive押下で再開する。analogは復帰後の連続値としてMapperの曲線/deadzoneへ戻す。
+
+
+### XInputのポーリング状態（GR04）
+
+XInputPollingStateはSDK非依存のIXInputApiと呼出中だけ借用するIGamepadSampleSinkを使う。接続済み/配送再試行中は毎Poll、未接続はslotごと前回probeから1秒以上空け、1Pollにつき最大1slotをround-robinで読む。初回未probeは最初の4frameで巡回し、長いframe停止後もcatch-upで連打しない。時計はfinite・非負・単調を要求し、不正時はAPI/sinkも呼ばない。同packetでも実sampleは配送する。
+
+初回・focus復帰・再接続の成功値をBaseline、非focusをBackground、以後をLiveで配送する。Read失敗は利用不可のdisconnected値へ退避し、focus中は既存のconnection取消→通常Releasedの経路を維持する。Errorと未知statusはhealth=falseを次の既知応答まで保持し、他slotの正常処理は継続する。これは入力streamの利用可否で、物理USB切断の診断ではない。
+
+sinkが拒否した接続/初回baselineは受理済みへ進めず、次frameで再試行する。APIはstateより長命、sinkや渡したsampleへの参照を保持しない。Initializeは既存状態を壊さず、Shutdown後のInitializeはclock/slotを初期化する。focusの操作CancelとShutdown時のInputSystem解除は所有者側の責務であり、この読み取り状態だけでは実行しない。native adapter/Engineの接続と振動は別の実装範囲である。
+
+### XInput実APIとdevice境界（GR04）
+- Platform::CreateGamepadDeviceは未初期化IInputDeviceを返す。生成だけではXInputGetStateを呼ばない。WindowsのadapterはSDK構造体から全fieldを明示copyし、ERROR_SUCCESS以外のpacketを破棄する。slot範囲を検証し、GetLastErrorには依存しない。
+- XInputDeviceはAPIを独占所有し、poll stateがその参照を借用する。null生成を拒否、copy/moveは禁止。InputSystemはpoll内のsinkだけが借用し保持しない。
+- IInputDeviceには時刻付きbool poll、focus hook、全pad slot供給の識別を追加。旧void poll実装は既定委譲で互換を保つ。時刻付き/旧pollは同じ初期化期間で混用しない。XInputの旧入口はsteady_clockを使う。
+- 全操作はGameThreadで、配送callbackから再入/自己破棄しない。停止は通知しないためowner側で操作取消を行う。API所有は停止後も維持し再初期化できる。WindowsではXinputをリンクする。
+- この境界は入力専用。Engineの登録/寿命/frame呼出しと振動は後続。実System注入を使う統合試験とXInputDevice.cppのsyntax検査は成功。実System/Routerを含むリンク試行はContainers.hのWindows.h依存で停止し、統合実行・native APIのcompile/実機確認は未実施。
+
+### Engineによる入力device所有（GR04）
+- AddInputDeviceは未開始時だけ所有権を受け取り、全pad slotを供給するdeviceは1つだけに制限する。拒否時も渡されたpointerは呼出側へ返さず破棄する。Windows標準factoryはApplicationProcessorのhandler初期化後、pad未登録時にだけ追加する。Engine生成単体はnative APIを触らない。
+- Run開始でdeviceを登録順Initialize、試行前に終了義務を記録する。false/例外は試行済み全てを逆順停止する。Shutdownがthrowしたdeviceは所有と終了義務を保持し、再Shutdown可能、再Initialize/追加は拒否。Run終了・例外・application終了・Engine破棄時にも停止する。物理device側が停止に失敗した場合、破棄時の再試行までしか保証できない。
+- 全操作はGameThread、busy中の登録/開始/停止/poll/focus変更を拒否。callbackからEngine破棄やinput再配送をしない。poll時刻はfinite非負単調秒で、invalidはdeviceを呼ばず内部時刻も維持する。deviceのfalseでも他deviceをpoll、例外はRun cleanupへ伝播する。
+- frame順はBeginInputFrame→platform message/focus取消→device poll→Mapper更新/handler。focus lossではMapper停止/ReleaseAllがdevice hookより先。Background/Baselineの選択はproviderが担当する。
+- 停止時はcapture中止/Mapper取消/正本neutralを即時実施し、legacy reset通知はInputSystem::DeferReleaseAllで次の安全なBeginFrame/Attachへ保留する。Shutdown callbackから入力を通知しない契約。debug overlayの所有終了も同じ保留口を使う。
+- fake deviceで所有/順序/部分失敗/例外/再試行/単調時刻/再入拒否/Run cleanupを既存Engine bundleへ追加。Windows依存によりEngine統合実行・native実機は未検証。
+
+### 振動の包絡線/混合/出力ACK（GR04）
+- HapticsEffectViewはduration/loop/priorityと左右keyの呼出中借用。durationは有限正、keyは時間0..durationの厳密昇順・値0..1。空channelは0、最初/最後のkey外は端点値、区間は線形補間。非loopはduration到達で0、loopはfmodで先頭へ戻し巨大時間のcatch-upを避ける。invalidは出力非変更。
+- MixHapticsSamplesはslotごとに最高priorityのactive効果だけを採用し、同priorityをchannel別MaximumまたはAddClampで合成。最高priority効果が一時0でも下位を通さない。設定倍率0..1はclamp後に適用。inactiveも含め入力値を全て検証してから出力する。
+- HapticsOutputStateは送信成功ACKだけを更新する。左右どちらかの変化が1/255以上なら送るが、各motorの非zero→zeroは微小差でも必ず送る。未ACK/失敗後は再試行。同値成功ACKの不要再送は省略する。
+- 失敗した非zero試行も作動した可能性として追跡し、成功zero ACKまでMayBeActiveを保持。失敗を成功扱いせず、値状態は実APIの停止保証ではない。ownerは停止義務が残る間に状態を破棄しない。
+- この段は純評価/混合/ACK判定。voice所有、実motor送信、haptics.v1、focus/pause/Engine接続は後続。HapticsMixerTestは実コードを通常/O2/ASan・UBSanとbundle objectで検証している。
+
+### XInputの振動送信と停止義務（GR04）
+- IInputDevice::SetVibrationは0..1の低/高周波値を受け、今回の送信受理をboolで返す。未対応はfalse。XInput adapterは量子化済み左右WORDをXINPUT_VIBRATIONへcopyし、XInputSetStateのERROR_SUCCESSだけを成功とする。
+- XInputVibrationStateは非zero試行をAPI呼出し前に潜在作動として記録。送信失敗は停止義務を保持し、次のnonzeroより先にzeroを送る。focus喪失/終了は所有slotを全て止め、1slot失敗でも他slotを処理する。成功zeroまで義務を捨てず、停止後の再Initializeは残留停止を回収できない限り拒否する。
+- XInputDeviceは有効clockのpoll時に保留zeroを再試行し、停止失敗でも入力pollを継続してhealth=false。不正clock/停止中は入力も出力も呼ばない。非focusのnonzeroは拒否する。差分1/255の間引きはservice側の責務で、backendは有効な送信要求を間引かない。
+- EngineはTryShutdownのboolで終了義務を保持する。既存deviceは既定TryShutdownが旧Shutdownの例外をfalseへ変換。XInputの旧Shutdown入口は停止失敗時に例外で通知、destructorはnoexceptのTryShutdownを最後に試みる。API/デバイス切断でzeroに失敗した場合、実機停止が成功したとは保証できない。
+- 実出力stateの通常/O2/ASan・UBSan/bundleと既存poll回帰、device/統合試験のobject compileを検証。Windows native API/Engine統合/実機振動は未検証。pause、効果voice、JSONとserviceの接続は後続。
+
+### HapticsServiceの再生所有（GR04）
+- ConfigureはIdentity付き効果/keyをコピー所有し、全検証/確保成功後に交換する。重複ID/無効値/確保例外では旧効果/voiceを保持する。成功した再設定は全voiceを取消し、出力ACKは残して次の送信で停止する。借用GetEffectsは次のConfigure/破棄まで。
+- Playは最大64voice、枠不足/無効/非focus/paused/disabledなら0、成功はprocess内で非wrapのhandle。別serviceや再構成後の古いhandleでは停止できない。既存voiceの自動追い出しは行わない。voiceは効果index/slot/gain/経過時間を値で保持する。
+- Updateは有限非負の実dtを受け、巨大dtでもoverflowしない残り時間比較/loop剰余で進める。新規voiceの最初のUpdateは時刻0を評価し、Play以前のframe dtを遡って足さない。短い効果もframeごとの標本評価であり、frame間の山の再生までは保証しない。FlushOutputsは時刻を進めない。
+- frame内の評価/混合は固定scratch配列で計算後にvoiceをcommitする。最高priority/max・add-clamp/gain/全体strength（既定0.5）を適用し、成功ACK差分で送信する。同値は省略、最終zeroと失敗は再試行。切断slotのvoiceは取消し、出力義務が残れば切断中もzeroを試みる。
+- focus喪失/pause/無効化はvoiceを取消し、復帰時に旧効果を再開しない。Stopや設定変更だけではAPIを呼ばず、次のUpdate/Flushで反映。ownerがfocus/pause/終了時に直ちにFlushする。sinkは同期借用で保持せず、sink中の公開操作再入はfalse/0で拒否、本体破棄は禁止。
+- 純時間kernelの通常/O2/ASan・UBSan/bundleと既存混合/出力回帰を実行。実serviceの所有/制御/失敗/再入試験は既存bundleへ追加しているが、IdentityPoolのWindows.h依存でcompile/実行未確認。Engine接続とhaptics.v1は後続。
+- serviceの送信ACKは同じ実backend/slot対応にだけ有効。同期sink wrapperのinstanceは変えてよいが、動的backend交換は範囲外。交換時は旧serviceをStopAll/Flushして旧deviceを停止し、新serviceを使う。外部から任意のmotor値を書き換えず、ownerの強制zeroはserviceの取消/Flushと組にする。
+
+### Engineの振動frame/即時停止（GR04）
+- EngineがHapticsServiceを値所有し、固定のpad providerに内部同期sinkで送る。sinkは公開guardへ再入しない。開始済みproviderと入力正本のConnectedを照合し、device寿命を越える参照は持たない。効果設定/Play/StopはGetHapticsService、focus/pauseはEngine owner APIを使う。
+- ApplicationProcessorはsimulation進行gateを決めた後、TickSimulationより先にSetHapticsPausedを適用。pauseならその地点で取消/Flushする。simulation後にclamp前のrawDeltaNanosecondsを秒へ変換しUpdateする。ゲーム用deltaTimeや時間倍率を振動へ流用しない。
+- focus lossではservice取消/Flushをdevice SetFocused(false)より先に試み、service送信が失敗してもbackend自身のzeroを必ず呼ぶ。終了もStopAll/Flushを先行し、最後は全slotを扱うTryShutdownの成否で停止義務を判定する。失敗した場合は再開始を拒否し再Shutdown可能。旧voiceは再Runで復活しない。
+- Engine入力ownerのbusyとserviceのbusyを両方確認して登録/開始/停止/制御/更新の再入を拒否。serviceの非確保Update/Flush/取消操作はnoexceptを明示し、OS focus callbackとcleanupへ接続する。
+- fake providerによる複数slot・倍率・実2秒・pause/focus即時zero・失敗再試行・Run例外cleanup/再Runを既存Engine bundleへ追加。純時間/混合/出力回帰は実行できるが、Engine統合testのcompile/実行はString.hのWindows.h依存で未確認。効果JSONと既定assetのGame起動読込みは後続。
+- ゲームパッド/device配送や振動sinkの途中でfocus通知が来た場合は、最新要求と喪失の履歴をProcessorで保留する。raw/Mapperは即時取消、reset/Router通知は安全なbatchで行う。同一pollの喪失→復帰でもfalse取消を通し、残りslotの再注入値も再resetする。要求batchをcallback前に取り出し、新通知を上書きせず次batchへ残す。Run開始・message後・poll後・振動更新前後に回収し、window購読serial/Engine一致で古い通知を除外する。
+
+### haptics.v1と起動時の既定効果（GR04）
+- CoreのHapticsJsonはschema=haptics.v1、effects配列を必須とする。各effectのname/duration/low/highは必須、loop/priorityは省略時false/0。keyはt/vを持つ。任意settingsはenabled/strength/mix_mode（maximumまたはadd_clamp）、省略時は有効・0.5・maximum。
+- 既知field重複/不正型/非有限/範囲外/名前の制御文字/Identity重複/key時刻の重複や降順を拒否。未知fieldは警告して無視する。JSONは1MiB/深さ64、効果256、各curve256key、名前128byteを上限とし、UTF-8 BOMを受理する。数値はdouble範囲を確認してからfloat/int32へ変換する。
+- Parse/Writeは全候補成功後だけ出力を更新。HapticsServiceのConfigure overloadは効果と全体設定を一括反映し、失敗/確保例外では旧設定とvoiceを維持、成功で旧voiceを取消する。送信は次Update/Flushで行う。
+- Game起動でAssetFileReaderからConfig/HapticsEffects.jsonを読み、失敗時は警告して旧設定で起動を続ける。Footstep/Hit/BiteHoldは仮の控えめな既定効果で、読込みだけでは再生しない。実際の呼出しはGR05/戦闘/GR20の責務。Rendering3DTestの入力/画面は変えない。
+- 強度/onoffはruntime APIとJSONで扱える。user設定の保存先とUIはGR76/GR68へ接続し、この段で暗黙の保存先や自動保存は追加しない。
+- 既定assetは実Pythonで型/範囲/curve/ID/上限を確認。実JSON codec/roundtrip/拒否/旧値保持/Game適用の試験は既存bundleへ追加したが、Windows.h依存でcompile/実行は未確認。既存pure hapticsの回帰は実行可能。
+- 名前のIdentity化後に元のJSON名とのbyte一致を検査し、既存poolの別名hash衝突を黙って採用しない。Parseの診断は読了後に公開するため入力がreport.Error自身でも先に消さない。通常のI/O/validation失敗は起動継続、確保例外は上位へ伝播して起動失敗になり得る。1MiBはJSON解析前の制限で、既存AssetFileReaderによる全file確保より前の制限ではない。
+
+### 使用中の入力種別を選ぶ値状態（GR04）
+- ActiveDeviceKindStateは表示用KeyboardMouse/Gamepadのみを選び、操作正本の値/deadzoneは変更しない。既定はKeyboardMouse、最初の別種別への有効入力は即時、以後の切替は既定0.3秒以上。抑制された活動は予約しない。
+- 有限非負・非減少の非scaled時刻をBeginFrameで渡す。未設定時/非focusは活動を採用せず、focus変更で種別は保持して累積移動だけ捨てる。設定の全検証成功後だけ更新し、種別/clock/直前切替は維持する。
+- 新しいkey/mouse button押下、有効文字、非zero wheelを活動とする。repeat/held/releaseは活動にしない。mouseはframe内の経路長2px以上、Rawとabsoluteを別に累積しmaxで判定して同一移動を二重加算しない。
+- padはLiveの新buttonまたは有意なanalog変位だけを採用。Baseline/Backgroundは基準同期のみ、切断は基準破棄。stick半径とtrigger閾値でnoiseを除外し、slotごとの最後の有意な位置からの変位で緩やかな操作も拾う。活動を検出した位置は切替cooldown中でも更新し、静止heldで後から奪い返さない。
+- 純状態の通常/O2-NDEBUG/ASan・UBSan（LeakSanitizer除外）/bundle MEMBER objectを検証。InputSystemの公開Get/通知とEngineの時刻・focus接続は後続で、この状態単体ではUIを切り替えない。
+
+### InputSystemへの使用中入力方式の接続（GR04）
+- GetActiveDeviceKindとConfigureDeviceActivity/GetDeviceActivitySettings、OnActiveDeviceKindChangedを公開。入力正本が受理した値を通常Delegate/Routerより前に評価し、UIが消費しても表示用の活動は取得できる。padの比較元は操作正本ではなくGetLastGamepadSampleの物理履歴で、ReleaseAll後のheldを新しい活動にしない。
+- BeginFrame(double)は有限非負・非減少の非scaled秒を要求し、不正なら前frame保存/累積解除/保留reset通知を行わない。初回BeginFrame以前の入力は従来通り受理するがkind判定外。旧BeginFrame()はsteady_clock、明示入口と異なる時刻原点を混用しない。ProcessorはSystem clockを先に検証し、MapperのBeginFrame成功後に同じframe時刻をSystemへ渡す。
+- focusはProcessorのOS通知時に即時、Engineのdevice focus適用時にもSystemへ供給する。喪失/復帰/reset自身でkind変更を合成せず、非focus活動を無視する。復帰Baseline後の物理heldも通知を合成しない。
+- kind取得は即時更新、変更Delegateは既存EndFrameで最後の通知値との差だけまとめて通知する。同frameで元へ戻ったときは通知なし。通知値をcallback前に確定し、再入EndFrameは防御的に無視する。callbackはGameThread上、frame再入/本体破棄/例外送出は禁止で、購読変更は既存Delegate規約に従う。
+- 実System/Router統合試験を既存bundleへ追加。Windows.hへの既存依存によりcompile/実行は未確認。公開System headerのsyntaxと純活動判定の回帰を実行し、Core/Engine/Windowsの実受入れとは区別する。
+
+## G1共通曲線と後続入力機能の再利用契約
+
+- Math/Curves.hを区分線形/イージングの共通入口にする。CurveKeyframeはdouble Time/float Value、時間は非負で厳密昇順、値は有限。既存HapticsKeyframeも同じfield型を持つため、型の置換やコピーなしで同じtemplateを使う
+- IsValidPiecewiseLinearCurveとTryEvaluatePiecewiseLinearは非有限値・重複時刻・逆行・非空null spanを拒否する。空曲線は0、単一key/区間外は端点保持、有限の負の照会時間は先頭値。Try系は失敗時に出力を保持する。EvaluatePiecewiseLinearUncheckedは検証済みのkey列と有限時間が前提で、所有/キャッシュ/割当てを行わない
+- TryEvaluateEasingは[0,1]入力にLinear/Power/Expo/SmoothStepを適用する。Powerのparameterは正、Expoは[0,1]、未使用でもparameterは有限。後続GR10/GR57/GR66/GR75はここを拡張し、GR23はCatmull-Rom等を追加する。補間/時計/ループ/寿命の責務を混ぜない
+- InputAxisMathは従来のdeadzoneと半径正規化の後に共通イージングを一度適用する。EInputResponseCurve/JSONはLinear/Power/Expoのまま、SmoothStepを勝手に選択肢へ追加しない。無効入力のfalse/出力0、既定値、符号/方向は維持する
+- HapticsEnvelopeMathは共通のkey検証/区分線形評価を使い、値[0,1]・duration内・非loop終了0/loop時刻の規則は振動側に保つ。JSONや効果の所有型、既定assetは変更しない
+
+### GR119・GR121が拡張する既存入口
+
+| 責務 | G1の入口と現在の契約 |
+|---|---|
+| 入力の一括解除 | InputSystem::ReleaseAll。安全な通知時点へ保留する場合はDeferReleaseAll。操作意味の取消はMapper/Routerの既存reset経路を使う |
+| フォーカス | IApplicationHandler::OnFocusLost/OnFocusGained、InputSystem::SetInputFocused、Engine/Processorの既存通知回収。WindowsはWM_ACTIVATE/WM_SETFOCUS/WM_KILLFOCUSを共通状態へ集約する。ロードマップのWM_ACTIVATEAPPという例示名のために別系統を増やさない |
+| カーソル | IWindow::SetCursorMode/GetCursorMode。失敗時に要求を適用済みとしない。focus喪失時解除とdebug overlayの既存経路を使う |
+| device poll | IInputDevice::PollEvents(InputSystem&, double)を共通の非scaled frame時刻で呼ぶ。既存の単引数virtualは互換用 |
+| 使用中入力方式 | InputSystem::GetActiveDeviceKind、OnActiveDeviceKindChanged。受理済み入力の活動から選び、EndFrameで最終値を通知する |
+| 表示切替の閾値 | InputDeviceActivitySettingsをConfigureDeviceActivity/GetDeviceActivitySettingsで扱う。既定は最短切替0.3秒、mouse移動2、左/右stick deadzone 0.24/0.27、trigger 0.12、analog変位0.02。操作軸のdeadzoneとは別の表示判定 |
+
+GR119・GR121はこの入口と設定を拡張する。別名の解除/焦点/poll/入力方式stateや異なる既定値を新設しない。前節の段階別「未接続」は実装時点の記録であり、現在の接続状況は各後続節と本表を参照する。CPUの純数理試験とWindows/実機入力の受入れは別に扱う。

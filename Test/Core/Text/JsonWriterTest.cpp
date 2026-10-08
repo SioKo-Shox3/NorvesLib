@@ -56,6 +56,27 @@ namespace
         assert(text.AsString() == "He said \"hi\"\\ \n\t\x01");
     }
 
+    void TestUnicodeEscapePairs()
+    {
+        JsonDocument document;
+        Container::String error;
+        assert(JsonDocument::TryParse(R"json({"name":"\u9aa8\ud83d\udc3a"})json",document,&error));
+        const auto value = document.GetRoot().FindMember("name").AsString();
+        const unsigned char expected[] = {0xe9,0xaa,0xa8,0xf0,0x9f,0x90,0xba};
+        if constexpr (sizeof(Container::String::value_type) == 1)
+        {
+            assert(value.size() == 7);
+            for (size_t index = 0; index < 7; ++index)
+            {
+                assert(static_cast<unsigned char>(value[index]) == expected[index]);
+            }
+        }
+        for (const char* invalid : {R"json("\ud800")json",R"json("\udc00")json",R"json("\ud800\u0000")json",R"json("\ud800\ud800")json"})
+        {
+            assert(!JsonDocument::TryParse(invalid,document,&error));
+        }
+    }
+
     void TestPrettyOutput()
     {
         JsonWriter writer(true);
@@ -166,6 +187,7 @@ int main()
 
     TestCompactObjectOutput();
     TestStringEscapes();
+    TestUnicodeEscapePairs();
     TestPrettyOutput();
     TestRoundTripThroughJsonDocument();
     TestUInt64NumberPrecisionPolicy();

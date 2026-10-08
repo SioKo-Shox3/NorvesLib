@@ -82,11 +82,13 @@ namespace NorvesLib::Core::Rendering::VisibilityBuffer
             entry.Emissive[channel] = material.EmissiveColor[channel];
         }
         entry.Emissive[3] = material.EmissiveLuminanceNits;
-        // MegaGeometry の材質は金属度・粗さのスカラーを持たない（未指定）
-        entry.Scalars[0] = -1.0f;
-        entry.Scalars[1] = -1.0f;
+        // MegaGeometry の材質が持つ定数を、従来の未指定値も含めて保存する
+        entry.Scalars[0] = material.Metallic;
+        entry.Scalars[1] = material.Roughness;
         entry.Scalars[2] = material.HeightScale;
         entry.Scalars[3] = material.DisplacementUVSpacing;
+        // MegaGeometry の定数 AO を予約語へ格納する。ハンドルの領域とは重ならない。
+        std::memcpy(&entry.TexturesD[2], &material.OcclusionStrength, sizeof(float));
         entry.Header[0] = (material.bNormalTwoChannel ? MATERIAL_FLAG_NORMAL_TWO_CHANNEL : 0u) |
                           (material.bHasHeightMap ? MATERIAL_FLAG_HAS_HEIGHT : 0u) | MATERIAL_FLAG_MEGA_GEOMETRY;
         entry.Header[1] = static_cast<uint32_t>(ShadingModel::DefaultLit);

@@ -1,18 +1,37 @@
 ﻿#include "Resource/ModelAssetLoader.h"
+#include "Resource/ImportedOpaqueRuntime.h"
 
 #include "Asset/AssetSystem.h"
 #include "Container/StringView.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include "Resource/ModelAssetResolver.h"
+#include <utility>
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     namespace
     {
         Container::String ToOwnedString(Container::AnsiStringView value)
         {
             return Container::String(Container::StringView(value.data(), value.size()));
+        }
+        bool MatchesImportedVersion(const Asset::AssetResolveResult& resolved, const Asset::CookedMeshData& mesh)
+        {
+            const auto& reference = resolved.CookedReference;
+            const bool bV1 = mesh.VersionMajor == 1 || reference.CookedVersion != 0 ||
+                             reference.Format == "nvmesh.v1.mesh3d.pnt.u32.clustered" ||
+                             reference.Format == "nvmesh.v1.mesh3d.pnt.u32.lodgraph";
+            if (!bV1)
+            {
+                return true;
+            }
+            const char *format = mesh.Layout == Asset::CookedMeshLayout::ClusteredV1
+                                     ? "nvmesh.v1.mesh3d.pnt.u32.clustered"
+                                     : "nvmesh.v1.mesh3d.pnt.u32.lodgraph";
+            return mesh.VersionMajor == 1 && mesh.Layout != Asset::CookedMeshLayout::LegacyV0 &&
+                   reference.CookedVersion == 1 && reference.Format == format &&
+                   reference.EntryType == Asset::MakeAssetPackageFourCC('M', 's', 'h', '0');
         }
     } // namespace
 
@@ -23,6 +42,45 @@ namespace NorvesLib::Core::Resource
         ModelStaging::ModelStagingData& outStaging)
     {
         outStaging = {};
+        // 手組みv0の空表互換を保ち、v1は対応する1材質subsetだけを受理する。
+        if (cooked.VersionMajor > 1 || cooked.Layout == Asset::CookedMeshLayout::LodGraphV1 ||
+            cooked.Submeshes.size() > 1 || cooked.Materials.size() > 1)
+        {
+            NORVES_LOG_ERROR("ModelAsset",
+                             "NVMESH "
+                             "v%u・submesh=%zu・material=%zuのruntime材質接続は未対応です",
+                             static_cast<unsigned>(cooked.VersionMajor), cooked.Submeshes.size(),
+                             cooked.Materials.size());
+            return false;
+        }
+
+        ModelStaging::ImportedMaterialStaging imported;
+        if (cooked.VersionMajor == 1)
+        {
+            Container::AnsiString reason;
+            if (cooked.Submeshes.size() != 1 || cooked.Materials.size() != 1 ||
+                cooked.Submeshes[0].MaterialIndex != 0 || cooked.Vertices.empty() || cooked.Indices.empty() ||
+                cooked.Clusters.empty() ||
+                ModelStaging::BuildImportedMaterialStaging(cooked, 0, imported) !=
+                    ModelStaging::MaterialStagingStatus::Success ||
+                !ModelStaging::ValidateImportedOpaqueMaterial(imported, reason))
+            {
+                NORVES_LOG_ERROR("ModelAsset", "asset=%s material=0 unsupported_v1_profile %s", debugName.c_str(),
+                                 reason.c_str());
+                return false;
+            }
+            for (const auto& cluster : cooked.Clusters)
+            {
+                if (cluster.MaterialIndex != 0 || cluster.LODLevel != 0 || cluster.LODError != 0 ||
+                    cluster.ParentStart != 0 || cluster.ParentCount != 0)
+                {
+                    NORVES_LOG_ERROR("ModelAsset", "asset=%s material=0 unsupported_cluster_profile",
+                                     debugName.c_str());
+                    return false;
+                }
+            }
+        }
+
         outStaging.Vertices.reserve(cooked.Vertices.size());
         for (const Asset::CookedMeshVertex& cookedVertex : cooked.Vertices)
         {
@@ -70,7 +128,8 @@ namespace NorvesLib::Core::Resource
         outStaging.DebugName = debugName;
         outStaging.ResolvedPath = resolvedPath;
 
-        if (!cooked.Materials.empty())
+        outStaging.ImportedMaterial = std::move(imported);
+        if (cooked.VersionMajor == 0 && !cooked.Materials.empty())
         {
             const Asset::CookedMeshMaterial& material = cooked.Materials[0];
             outStaging.TextureReferences.Albedo.RequestPath = ToOwnedString(cooked.GetString(material.AlbedoTexture));
@@ -116,7 +175,8 @@ namespace NorvesLib::Core::Resource
             resolveResult.NormalizedLogicalPath.data(),
             static_cast<unsigned int>(parseResult.Status),
             parseResult.Status == Asset::CookedMeshParseStatus::Success ? 1 : 0);
-        if (parseResult.Status != Asset::CookedMeshParseStatus::Success)
+        if (parseResult.Status != Asset::CookedMeshParseStatus::Success ||
+            !MatchesImportedVersion(resolveResult, parseResult.Mesh))
         {
             return Rendering::ModelHandle::Invalid();
         }
@@ -182,7 +242,8 @@ namespace NorvesLib::Core::Resource
             resolveResult.NormalizedLogicalPath.data(),
             static_cast<unsigned int>(parseResult.Status),
             parseResult.Status == Asset::CookedMeshParseStatus::Success ? 1 : 0);
-        if (parseResult.Status != Asset::CookedMeshParseStatus::Success)
+        if (parseResult.Status != Asset::CookedMeshParseStatus::Success ||
+            !MatchesImportedVersion(resolveResult, parseResult.Mesh))
         {
             return false;
         }
@@ -197,4 +258,4 @@ namespace NorvesLib::Core::Resource
             outResult.Staging);
         return outResult.bSuccess;
     }
-} // namespace NorvesLib::Core::Resource
+} // namespace NorvesLib::Core::ResourceIO

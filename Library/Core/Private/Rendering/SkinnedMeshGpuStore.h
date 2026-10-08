@@ -51,7 +51,15 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr Buffer;
             // 直前のフレームの変換とパレット（無ければ空）。Buffer と同じ寿命で保つ。
             RHI::BufferPtr PreviousBuffer;
-            Container::TWeakPtr<const SkinnedMeshFrameLease> FrameLease;
+            Container::VariableArray<Container::TWeakPtr<const SkinnedMeshFrameLease>> FrameLeases;
+            uint64_t ComponentId = 0;
+            uint64_t Epoch = 0;
+            SkinnedMeshHandle Handle;
+            Math::Matrix4x4 World;
+            Container::VariableArray<Math::Matrix4x4> Bones;
+            Math::Matrix4x4 PreviousWorld;
+            Container::VariableArray<Math::Matrix4x4> PreviousBones;
+            bool bPreviousAttempted = false;
             uint64_t LastSubmittedSerial = 0;
         };
 
@@ -66,7 +74,7 @@ namespace NorvesLib::Core::Rendering
             bool bChunksValid = false;
             Container::TWeakPtr<const SkinnedMeshAssetLease> AssetLease;
             Container::VariableArray<Container::TWeakPtr<const SkinnedMeshFrameLease>> FrameLeases;
-            Container::VariableArray<PaletteUse> PaletteUses;
+            Container::VariableArray<Container::TSharedPtr<PaletteUse>> PaletteUses;
             uint64_t LastSubmittedSerial = 0;
         };
 
@@ -86,6 +94,9 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::IDevice> m_Device;
         Container::Map<SkinnedMeshHandle, Entry> m_Entries;
         Container::VariableArray<PendingUse> m_PendingUses;
+        // この表の所有は準備用。GPU/packet寿命はEntry::PaletteUsesで別に保持する。
+        Container::Map<uint64_t, Container::TSharedPtr<PaletteUse>> m_ActivePalettes;
+        uint64_t m_PreparationEpoch = 0;
         uint64_t m_CompletedSubmissionSerial = 0;
         bool m_bFrameOpen = false;
         MeshIndexChunkBuilder m_ChunkBuilder = nullptr;

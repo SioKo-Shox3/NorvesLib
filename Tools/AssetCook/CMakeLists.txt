@@ -1,11 +1,3 @@
-add_executable(AssetCook
-    AudioCooker.cpp
-    AudioCooker.h
-    Main.cpp
-    MeshCooker.cpp
-    MeshCooker.h
-)
-
 # BC エンコーダ(bc7enc_rdo)は AssetCook だけがリンクする。Core・Game には入れない。
 add_subdirectory(${CMAKE_SOURCE_DIR}/Library/ThirdParty/bc7enc_rdo
     ${CMAKE_BINARY_DIR}/ThirdParty/bc7enc_rdo)
@@ -44,13 +36,146 @@ target_include_directories(AssetCookTextureCooker
 )
 set_target_properties(AssetCookTextureCooker PROPERTIES FOLDER "Tools")
 
-target_link_libraries(AssetCook PRIVATE Core AssetCookBlockCompressor AssetCookTextureCooker AssetCookMeshOptimizer)
+
+# CLIと直接リンクする試験で同じcooker実装を共有する。
+add_library(AssetCookLib STATIC
+    CookStateFile.cpp
+    CookStateFile.h
+    CookStateFileTestAccess.h
+    CookManagedBootstrap.cpp
+    CookManagedUpdate.cpp
+    CookManagedUpdate.h
+    CookManagedUpdateTestAccess.h
+    CookManagedTransactionController.cpp
+    CookManagedTransactionController.h
+    CookManagedBootstrap.h
+    CookManagedOutputs.h
+    CookBatchReport.cpp
+    CookBatchWorkers.cpp
+    CookBatchWorkers.h
+    CookBatchReport.h
+    CookManagedBootstrapTestAccess.h
+    CookManagedStoreNative.h
+    CookManagedStoreAccess.h
+    CookManagedTransactionIntent.cpp
+    CookManagedTransactionIntent.h
+    CookInventoryValues.h
+    CookReferenceValues.h
+    CookManagedStoreIndex.cpp
+    CookManagedStoreIndex.h
+    ManagedStoreJson.h
+    CookManagedStoreInitialization.h
+    CookManagedStoreInitializationTestAccess.h
+    CookManagedStoreObservation.cpp
+    CookManagedStoreObservation.h
+    CookManagedUpdateInventory.cpp
+    CookManagedUpdateInventory.h
+    CookDestinationLock.cpp
+    CookDestinationLock.h
+    CookDestinationLockTestAccess.h
+    CookOwnerResolver.cpp
+    CookOwnerResolver.h
+    CookOwnerBinding.cpp
+    CookOwnerBinding.h
+    CookOwnedState.cpp
+    CookOwnedState.h
+    NativeCookPath.h
+    CookCacheDecision.cpp
+    CookCacheDecision.h
+    CookOutputPlan.h
+    CookOutputSetGuard.h
+    CookOutputSetGuardTestAccess.h
+    CookPathIdentity.cpp
+    CookPathIdentity.h
+    CookCacheDecisionTestAccess.h
+    CookOutputPaths.h
+    CookOutputPackage.cpp
+    CookRigPayload.cpp
+    CookRigPayload.h
+    CookOutputPackage.h
+    CookDependencySnapshot.cpp
+    CookDependencySnapshot.h
+    TextureAssetSetCook.cpp
+    TextureAssetSetCook.h
+    TextureAssetSetCli.cpp
+    TextureAssetSetOutput.cpp
+    TextureAssetSetOutput.h
+    TextureAssetSetSpec.cpp
+    TextureAssetSetSpec.h
+    AssetCookOutput.cpp
+    AssetCookOutput.h
+    AssetCookLegacyOptions.h
+    SingleAssetCook.cpp
+    SingleAssetCook.h
+    AudioCooker.cpp
+    AudioCooker.h
+    MeshCooker.cpp
+    SkeletalBvhCook.cpp
+    RigClipBankCook.cpp
+    RigClipBankCook.h
+    SkeletalRoleProfileCook.cpp
+    SkeletalRoleFileInput.cpp
+    SkeletalRoleFileCook.cpp
+    SkeletalRoleFileCook.h
+    SkeletalRoleFileCookTestAccess.h
+    SkeletalRoleFileReport.cpp
+    SkeletalRoleFileReport.h
+    SkeletalRoleFileCli.cpp
+    SkeletalRoleFileCli.h
+    SkeletalRoleFileCliTestAccess.h
+    SkeletalRoleFileInputTestAccess.h
+    SkeletalRoleFileInput.h
+    SkeletalRoleFileRequest.h
+    SkeletalRoleProfileCook.h
+    SkeletalBvhCook.h
+    MeshMaterialV1Plan.cpp
+    MeshMaterialV1Plan.h
+    MeshCooker.h
+    MaterialImport.cpp
+    MaterialImport.h
+    SkeletalImportReport.cpp
+    SkeletalImportReport.h
+    ModelInspection.h
+    ModelCookCache.cpp
+    ModelCookCache.h
+    GeometryInspection.cpp
+    GeometryInspection.h
+    ImageInspection.cpp
+    ImageInspection.h
+    RigSplitImageDecode.cpp
+    RigSplitImageInputs.cpp
+    RigSplitImageInputs.h
+    RigSplitFileCook.cpp
+    RigSingleCook.cpp
+    RigRetargetCook.cpp
+    RigRetargetCli.cpp
+    RigRetargetCook.h
+    RigSingleCook.h
+    RigSplitFileCook.h
+    RigSplitFileCli.cpp
+    NativeCookArguments.h
+    RigSplitCook.cpp
+    RigSplitCook.h
+)
+target_link_libraries(AssetCookLib PUBLIC Core AssetCookTextureCooker AssetCookMeshOptimizer)
+if(WIN32)
+    target_link_libraries(AssetCookLib PRIVATE bcrypt shell32)
+endif()
+target_include_directories(AssetCookLib
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/Library/Core/Private
+        ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
+)
+
+add_executable(AssetCook Main.cpp)
+target_link_libraries(AssetCook PRIVATE AssetCookLib)
 target_include_directories(AssetCook PRIVATE
     ${CMAKE_SOURCE_DIR}/Library/Core/Private
     ${CMAKE_SOURCE_DIR}/Library/ThirdParty/stb
 )
 
-set_target_properties(AssetCook PROPERTIES FOLDER "Tools")
+set_target_properties(AssetCook AssetCookLib PROPERTIES FOLDER "Tools")
 
 # ブロック圧縮のスモーク。AssetCook をビルドするときに一緒にビルドされるよう依存を張る。
 add_executable(AssetCookBlockCompressSmoke AssetCookBlockCompressSmoke.cpp)
@@ -114,18 +239,27 @@ add_test(NAME AssetCookAudioSmoke
         -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookAudioSmoke.cmake.in"
 )
 
-# 起動画面の材質などを差分クックして build/CookedAssets/ へ書く(ALL に含めない)。
-# 差分の判定(元画像・一覧の項目・AssetCook の実行ファイル)は Scripts/CookAssets.ps1 が項目ごとの印で行い、
-# 変わらない項目は焼き直さない。AssetCook が変わったら全項目を焼き直す。
-add_custom_target(CookAssets
-    COMMAND powershell -NoProfile -ExecutionPolicy Bypass
-        -File "${CMAKE_SOURCE_DIR}/Scripts/CookAssets.ps1"
-        -AssetCookExe "$<TARGET_FILE:AssetCook>"
-        -SpecDir "${CMAKE_SOURCE_DIR}/Assets/AssetSets"
-        -RuntimeRoot "${CMAKE_BINARY_DIR}/CookedAssets"
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    COMMENT "AssetSets の一覧を build/CookedAssets へ差分クックする"
-    VERBATIM
+set(ASSET_COOK_GLB_SMOKE_DIR "${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Glb")
+add_test(NAME AssetCookGlbSmoke
+    COMMAND ${CMAKE_COMMAND}
+        -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DSMOKE_DIR=${ASSET_COOK_GLB_SMOKE_DIR}
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookGlbSmoke.cmake.in"
 )
-add_dependencies(CookAssets AssetCook)
-set_target_properties(CookAssets PROPERTIES FOLDER "Tools")
+
+add_test(NAME AssetCookImportSmoke
+    COMMAND ${CMAKE_COMMAND}
+        -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DSMOKE_DIR=${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Import
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookImportSmoke.cmake.in"
+)
+
+add_test(NAME AssetCookInspectSmoke
+    COMMAND ${CMAKE_COMMAND}
+        -DASSET_COOK_EXE=$<TARGET_FILE:AssetCook>
+        -DSOURCE_ROOT=${CMAKE_SOURCE_DIR}
+        -DSMOKE_DIR=${CMAKE_BINARY_DIR}/AssetCookSmoke/$<CONFIG>/Inspect
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/AssetCookInspectSmoke.cmake.in"
+)

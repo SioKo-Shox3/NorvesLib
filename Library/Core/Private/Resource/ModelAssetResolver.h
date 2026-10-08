@@ -8,9 +8,9 @@ namespace NorvesLib::Core::Asset
     class AssetSystem;
 }
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     [[nodiscard]] Asset::AssetResolveResult ResolveCookedModel(
         const Asset::AssetSystem& assetSystem,
         const Container::String& logicalPath);
-} // namespace NorvesLib::Core::Resource
+} // namespace NorvesLib::Core::ResourceIO

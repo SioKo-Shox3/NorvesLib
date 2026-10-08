@@ -16,6 +16,8 @@ namespace Game::Input
         void SetFallbackSelectionDepth(float depth);
         void DrawSelection();
         void ClearSelection();
+        /// 進行中の選択操作を中止し、確定済みselectionは維持する。
+        void OnInputReset() override;
 
         const char* DebugName() const override
         {
@@ -23,6 +25,7 @@ namespace Game::Input
         }
 
     private:
+        friend struct PickingInputResetTestAccess;
         void PerformPick(float screenX, float screenY);
         void PerformBoxSelect(float x0, float y0, float x1, float y1);
         void PerformSphereSelect(float centerX, float centerY, float edgeX, float edgeY);

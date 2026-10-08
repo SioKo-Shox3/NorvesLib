@@ -1,52 +1,53 @@
 ﻿#include "Rendering/RenderingCoordinator.h"
-#include "Rendering/CanvasView.h"
-#include "Rendering/FrameUseRing.h"
-#include "Rendering/RenderingCoordinatorDiagnostics.h"
-#include "Rendering/CompositePass.h"
-#include "Rendering/DepthOfFieldPass.h"
-#include "Rendering/MotionBlurPass.h"
-#include "Rendering/Screen.h"
-#include "Rendering/SceneView.h"
-#include "Rendering/View.h"
-#include "Rendering/Viewport.h"
-#include "Rendering/InstanceBufferRing.h"
-#include "Rendering/DrawCommand.h"
-#include "Rendering/FramePacket.h"
-#include "Rendering/ViewRenderContext.h"
-#include "Rendering/SharedResourceRegistry.h"
-#include "Rendering/RenderResources.h"
-#include "Rendering/ShaderManager.h"
-#include "Rendering/PresentationComposer.h"
-#include "Rendering/PresentationPass.h"
-#include "Rendering/RenderFrameExecutor.h"
-#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
-#include "Rendering/FrameCaptureReadbackHelper.h"
-#include "Rendering/FrameCaptureAssignmentGuard.h"
-#include "Rendering/IViewPass.h"
-#include "Rendering/PathTracingPass.h"
-#include "Rendering/RayTracingSceneSubsystem.h"
-#include "Rendering/SkySunLight.h"
-#include "Rendering/SkinningComputePass.h"
-#include "Rendering/ProceduralMeshGenerator.h"
+#include "Debug/Stats.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
-#include "RHI/ISampler.h"
-#include "RHI/IDevice.h"
-#include "RHI/ISwapChain.h"
-#include "RHI/ICommandList.h"
-#include "RHI/IRenderPass.h"
-#include "RHI/IFramebuffer.h"
-#include "RHI/IPipeline.h"
-#include "RHI/IShader.h"
-#include "RHI/IBuffer.h"
-#include "RHI/ITexture.h"
-#include "RHI/IDescriptorSet.h"
-#include "RHI/IGPUResourceAllocator.h"
-#include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
+#include "RHI/IBuffer.h"
+#include "RHI/ICommandList.h"
+#include "RHI/IDescriptorSet.h"
+#include "RHI/IDevice.h"
+#include "RHI/IFramebuffer.h"
+#include "RHI/IGPUResourceAllocator.h"
+#include "RHI/IPipeline.h"
+#include "RHI/IRenderPass.h"
+#include "RHI/ISampler.h"
+#include "RHI/IShader.h"
+#include "RHI/ISwapChain.h"
+#include "RHI/ITexture.h"
+#include "Rendering/CanvasView.h"
+#include "Rendering/CompositePass.h"
+#include "Rendering/DepthOfFieldPass.h"
+#include "Rendering/DrawCommand.h"
+#include "Rendering/FrameCaptureAssignmentGuard.h"
+#include "Rendering/FrameCaptureReadbackHelper.h"
+#include "Rendering/FramePacket.h"
+#include "Rendering/FrameUseRing.h"
+#include "Rendering/IViewPass.h"
+#include "Rendering/InstanceBufferRing.h"
+#include "Rendering/MotionBlurPass.h"
+#include "Rendering/PathTracingPass.h"
+#include "Rendering/PresentationComposer.h"
+#include "Rendering/PresentationPass.h"
+#include "Rendering/ProceduralMeshGenerator.h"
+#include "Rendering/RayTracingSceneSubsystem.h"
+#include "Rendering/RenderFrameExecutor.h"
+#include "Rendering/RenderGraph/RenderGraphResourceNames.h"
+#include "Rendering/RenderResources.h"
+#include "Rendering/RenderingCoordinatorDiagnostics.h"
+#include "Rendering/SceneView.h"
+#include "Rendering/Screen.h"
+#include "Rendering/ShaderManager.h"
+#include "Rendering/SharedResourceRegistry.h"
+#include "Rendering/SkinnedDrawCommands.h"
+#include "Rendering/SkinningComputePass.h"
+#include "Rendering/SkySunLight.h"
+#include "Rendering/View.h"
+#include "Rendering/ViewRenderContext.h"
+#include "Rendering/Viewport.h"
+#include <algorithm>
 #include <cassert>
 #include <chrono>
-#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -164,6 +165,11 @@ namespace NorvesLib::Core::Rendering
             hash = HashRevisionValue(hash, proxy.MeshHandle.Id);
             hash = HashRevisionValue(hash, proxy.MeshHandle.Generation);
             hash = HashRevisionValue(hash, proxy.Material.Id);
+            hash = HashRevisionValue(hash, proxy.MaterialCount);
+            for (uint32_t slot = 0; slot < proxy.MaterialCount && slot < MAX_MATERIAL_SLOTS; ++slot)
+            {
+                hash = HashRevisionValue(hash, proxy.Materials[slot].Id);
+            }
             hash = HashRevisionValue(hash, proxy.ObjectId);
             hash = HashRevisionValue(hash, proxy.ComponentId);
             hash = HashRevisionValue(hash, proxy.bCastShadow);
@@ -480,58 +486,6 @@ namespace NorvesLib::Core::Rendering
             return range;
         }
 
-        CommandRange AppendSkinnedDrawCommands(
-            FramePacket* packet,
-            const Container::VariableArray<SkinnedMeshProxy>& proxies)
-        {
-            CommandRange range;
-            if (!packet || proxies.empty())
-            {
-                return range;
-            }
-
-            range.First = static_cast<uint32_t>(packet->DrawCommands.size());
-            for (const SkinnedMeshProxy& proxy : proxies)
-            {
-                if (!proxy.IsValid())
-                {
-                    continue;
-                }
-
-                Container::TSharedPtr<const SkinnedMeshAssetLease> assetLease = proxy.AssetLease.lock();
-                if (!assetLease)
-                {
-                    continue;
-                }
-                auto frameLease = Container::MakeShared<SkinnedMeshFrameLease>(assetLease);
-                if (!frameLease || !frameLease->IsValid())
-                {
-                    continue;
-                }
-
-                const uint32_t frameLeaseIndex =
-                    static_cast<uint32_t>(packet->SkinnedMeshFrameLeases.size());
-                packet->SkinnedMeshFrameLeases.push_back(frameLease);
-
-                DrawCommand command = DrawCommand::CreateDrawIndexed();
-                command.Draw.PayloadKind = DrawPayloadKind::Skinned;
-                command.Draw.MaterialHandle = proxy.Material;
-                command.Draw.MaterialBlendMode = BlendMode::Opaque;
-                command.Draw.ObjectId = proxy.ObjectId;
-                command.Draw.SourceMeshComponentId = proxy.ComponentId;
-                command.Draw.WorldMatrix = proxy.WorldTransform;
-                command.Draw.InstanceCount = 1;
-                command.Draw.FirstInstance = 0;
-                command.Draw.bInstanced = false;
-                command.Draw.bCastShadow = proxy.bCastShadow;
-                command.Skinned.FrameLeaseIndex = frameLeaseIndex;
-                command.Skinned.BonePalette = proxy.BonePalette;
-                packet->DrawCommands.push_back(command);
-                ++range.Count;
-            }
-            return range;
-        }
-
         CommandRange CombineCommandRanges(const CommandRange &opaqueRange,
                                           const CommandRange &transparentRange)
         {
@@ -626,7 +580,8 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 登録するカメラの GameThread 側の識別子を決める
          *
-         * SourceCameraId があればそれ（GetMainCamera の値を渡し直したときも保たれる）、無ければ渡された
+         * SourceCameraId があればそれ（GetMainCamera
+         * の値を渡し直したときも保たれる）、無ければ渡された
          * CameraId（CameraComponent の ID など）を使う。
          */
         uint64_t ResolveSourceCameraId(const CameraProxy& camera)
@@ -1629,9 +1584,9 @@ namespace NorvesLib::Core::Rendering
         {
             // 飛行中のフレームの番号が FrameUseRing の枠より多いと、別のフレームの資源を上書きする
             NORVES_LOG_ERROR("RenderingCoordinator",
-                             "飛行中のフレーム数 %u がフレームごとの資源の枠の上限 %u を超えています",
-                             swapChain->GetMaxFramesInFlight(),
-                             FrameUseRingMaxInFlightSlots);
+                             "飛行中のフレーム数 %u "
+                             "がフレームごとの資源の枠の上限 %u を超えています",
+                             swapChain->GetMaxFramesInFlight(), FrameUseRingMaxInFlightSlots);
             ReleaseInitializedResources();
             return false;
         }
@@ -1834,7 +1789,7 @@ namespace NorvesLib::Core::Rendering
         m_PreviousMainCamera = CameraProxy{};
         m_bPreviousMainCameraValid = false;
         m_PreviousMegaGeometryWorlds.clear();
-        m_PreviousSkinnedStates.clear();
+        m_PreviousSkinnedStates.Reset();
         m_bPreviousObjectStateValid = false;
         if (m_RenderedObjectRebasedFrameCount > 0u)
         {
@@ -2113,6 +2068,16 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+        const RHI::DeviceCapabilities noDeviceCapabilities{};
+        GenerateDrawCommands(m_Device ? m_Device->GetCapabilities() : noDeviceCapabilities);
+    }
+
+    void RenderingCoordinator::GenerateDrawCommands(const RHI::DeviceCapabilities& capabilities)
+    {
+        if (!m_bInitialized)
+        {
+            return;
+        }
 
         NORVES_STAT_TIME_START(cmdGen);
 
@@ -2149,10 +2114,7 @@ namespace NorvesLib::Core::Rendering
                 m_CurrentPacket->Scene.LightProxies = m_MainSceneView->GetLightProxies();
                 m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
             }
-            // GPU デバイスが無いとき（契約のテスト）は、何も対応しない能力として写す。
-            const RHI::DeviceCapabilities noDeviceCapabilities{};
-            SnapshotSceneParameters(*m_CurrentPacket,
-                                    m_Device ? m_Device->GetCapabilities() : noDeviceCapabilities);
+            SnapshotSceneParameters(*m_CurrentPacket, capabilities);
             // 影を落とす点光源の選択と6面の行列は、空の太陽を加えた後の光源表とメインカメラから作る。
             BuildPointShadowSnapshot(m_CurrentPacket->Scene.LightProxies,
                                      m_CurrentPacket->bHasMainCamera
@@ -2344,8 +2306,8 @@ namespace NorvesLib::Core::Rendering
                     materialResources,
                     megaGeometryResources))
             {
-                NORVES_LOG_WARNING("RayTracingSceneSubsystem",
-                                   "FramePacketのレイトレーシングscene snapshotを構築できませんでした");
+                NORVES_LOG_WARNING("RayTracingSceneSubsystem", "FramePacketのレイトレーシングscene "
+                                                               "snapshotを構築できませんでした");
             }
             // 連番の1フレームの間は、どのパケットにも同じ前のカメラ・instance変換を書く。
             ApplyPathTracingSequenceCarry(*m_CurrentPacket, m_PacketManager.GetSequenceCarry());
@@ -2373,45 +2335,14 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         }
-        for (DrawCommand& command : packet.DrawCommands)
-        {
-            if (command.Draw.PayloadKind != DrawPayloadKind::Skinned)
-            {
-                continue;
-            }
-            command.Skinned.bHasPrevious = false;
-            command.Skinned.PreviousBonePalette.clear();
-            command.Skinned.PreviousWorldMatrix = command.Draw.WorldMatrix;
-            if (!bHasPrevious)
-            {
-                continue;
-            }
-            const auto found = m_PreviousSkinnedStates.find(command.Draw.SourceMeshComponentId);
-            // 骨の数が変わった（別のアセットに替わった）ときは前の値を使わない。
-            if (found != m_PreviousSkinnedStates.end() &&
-                found->second.BonePalette.size() == command.Skinned.BonePalette.size())
-            {
-                command.Skinned.PreviousWorldMatrix = found->second.WorldMatrix;
-                command.Skinned.PreviousBonePalette = found->second.BonePalette;
-                command.Skinned.bHasPrevious = true;
-            }
-        }
+        m_PreviousSkinnedStates.Apply(packet,bHasPrevious);
 
         m_PreviousMegaGeometryWorlds.clear();
         for (const MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
         {
             m_PreviousMegaGeometryWorlds[proxy.ComponentId] = proxy.WorldTransform;
         }
-        m_PreviousSkinnedStates.clear();
-        for (const DrawCommand& command : packet.DrawCommands)
-        {
-            if (command.Draw.PayloadKind == DrawPayloadKind::Skinned)
-            {
-                PreviousSkinnedState& state = m_PreviousSkinnedStates[command.Draw.SourceMeshComponentId];
-                state.WorldMatrix = command.Draw.WorldMatrix;
-                state.BonePalette = command.Skinned.BonePalette;
-            }
-        }
+        m_PreviousSkinnedStates.Record(packet);
         m_PreviousObjectStateFrameNumber = packet.FrameNumber;
         m_bPreviousObjectStateValid = true;
     }

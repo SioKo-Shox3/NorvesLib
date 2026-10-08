@@ -1,6 +1,9 @@
 ﻿#pragma once
 
 #include "Container/Containers.h"
+#include "RHI/ICommandList.h"
+#include "RHI/IDevice.h"
+#include "RHI/RHITypes.h"
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/MegaGeometryPass.h"
@@ -12,9 +15,6 @@
 #include "Rendering/VisibilityMaterialTable.h"
 #include "Rendering/VisibilityMerge.h"
 #include "Rendering/VisibilitySwRaster.h"
-#include "RHI/ICommandList.h"
-#include "RHI/IDevice.h"
-#include "RHI/RHITypes.h"
 
 #include <cstdint>
 
@@ -30,7 +30,8 @@ namespace NorvesLib::Core::Rendering
      */
     struct VisibilityRasterFrameStats
     {
-        /** @brief MegaGeometry のクラスタの記録の枠の数（全パスのコマンドの数。GPU が積んだぶんだけ書かれる） */
+        /** @brief MegaGeometry のクラスタの記録の枠の数（全パスのコマンドの数。GPU
+         * が積んだぶんだけ書かれる） */
         uint32_t MegaCommandSlots = 0;
         /** @brief 手続きメッシュの塊の記録の数（描画の数と同じ） */
         uint32_t ProceduralRecords = 0;
@@ -40,7 +41,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t TotalSlots = 0;
         /** @brief 容量を超えた・使えない記録で描かなかった塊の数 */
         uint32_t DroppedChunks = 0;
-        /** @brief フレームの材質の表に足した、値の違う材質の数（上限を超えても数える） */
+        /** @brief
+         * フレームの材質の表に足した、値の違う材質の数（上限を超えても数える） */
         uint32_t MaterialUnique = 0;
         /** @brief 材質の表の件数の上限（予備の番号を含む） */
         uint32_t MaterialLimit = 0;
@@ -48,51 +50,78 @@ namespace NorvesLib::Core::Rendering
         uint32_t MaterialOverflowed = 0;
         /** @brief ID を書いたか（false なら何も描かずに戻った） */
         bool bRendered = false;
-        /** @brief 64bit のバッファ（深度 + ID）を空で埋め、ID・深度へ合流させたか（対応しない装置・予備の経路では false） */
+        /** @brief 64bit のバッファ（深度 +
+         * ID）を空で埋め、ID・深度へ合流させたか（対応しない装置・予備の経路では
+         * false） */
         bool bMerged = false;
-        /** @brief 64bit のバッファの ID・深度への合流を記録した回数（2 パスの遮蔽は HZB の前と 2 パス目の後の 2 回、1 回の判定は 1 回） */
+        /** @brief 64bit のバッファの ID・深度への合流を記録した回数（2 パスの遮蔽は
+         * HZB の前と 2 パス目の後の 2 回、1 回の判定は 1 回） */
         uint32_t MergeCount = 0;
         /** @brief 64bit のバッファのバイト数（画面の画素数 × 8。持たないときは 0） */
         uint64_t KeyBufferBytes = 0;
-        /** @brief ソフトウェアラスタの dispatch を記録した回数（1 パス目・2 パス目で 1 回ずつ。走らないフレームは 0） */
+        /** @brief ソフトウェアラスタの dispatch を記録した回数（1 パス目・2 パス目で
+         * 1 回ずつ。走らないフレームは 0） */
         uint32_t SwRasterDispatchCount = 0;
     };
 
     /**
-     * @brief 不透明の描画のすべてを、画素ごとの ID（VisBuffer.Id）と深度（GBuffer.Depth）へ描く RenderGraph のパス
+     * @brief 不透明の描画のすべてを、画素ごとの
+     * ID（VisBuffer.Id）と深度（GBuffer.Depth）へ描く RenderGraph のパス
      *
-     * 描くもの（今の GBuffer の描画は変えず、その後ろに足す。深度は GBuffer と同じ式で、LessEqual で比べる）:
-     *  - MegaGeometry のクラスタ: MegaGeometryPass のカリング（2パスの遮蔽・BVH・ページの経路のまま）が積んだ
-     *    IndirectDraw コマンドを、位置だけを読む頂点シェーダーでもう一度描く。記録の番号は 1 + コマンドの通しの位置で、
-     *    記録は GPU（visbuffer_records.comp）が、そのフレームに積まれたコマンドから書く。
-     *  - 手続きメッシュの塊: 不透明の描画のインデックスの範囲を128三角形以下の塊に分け、塊ごとに1回描く。
-     *  - スキニングの塊: SkinningComputePass が変形した頂点（ワールド空間）を読み、同じく塊ごとに1回描く。
-     * 記録の番号は描画ごとの値（頂点シェーダーが開始インスタンスから渡す）、記録の中の三角形は gl_PrimitiveID。
+     * 描くもの（今の GBuffer の描画は変えず、その後ろに足す。深度は GBuffer
+     * と同じ式で、LessEqual で比べる）:
+     *  - MegaGeometry のクラスタ: MegaGeometryPass
+     * のカリング（2パスの遮蔽・BVH・ページの経路のまま）が積んだ IndirectDraw
+     * コマンドを、位置だけを読む頂点シェーダーでもう一度描く。記録の番号は 1 +
+     * コマンドの通しの位置で、 記録は
+     * GPU（visbuffer_records.comp）が、そのフレームに積まれたコマンドから書く。
+     *  - 手続きメッシュの塊:
+     * 不透明の描画のインデックスの範囲を128三角形以下の塊に分け、塊ごとに1回描く。
+     *  - スキニングの塊: SkinningComputePass
+     * が変形した頂点（ワールド空間）を読み、同じく塊ごとに1回描く。
+     * 記録の番号は描画ごとの値（頂点シェーダーが開始インスタンスから渡す）、記録の中の三角形は
+     * gl_PrimitiveID。
      *
-     * 記録の表（storage buffer）は、0 番が空、1 番から MegaGeometry のコマンド、その後ろに手続き・スキニングの塊を置く。
-     * 表はこのパスが持つフレームごとのバッファで、書いた後は GenericRead のまま残る（検証表示が読む）。
+     * 記録の表（storage buffer）は、0 番が空、1 番から MegaGeometry
+     * のコマンド、その後ろに手続き・スキニングの塊を置く。
+     * 表はこのパスが持つフレームごとのバッファで、書いた後は GenericRead
+     * のまま残る（検証表示が読む）。
      *
-     * MegaGeometry の 2 パスの遮蔽は、HZB を ID・深度の 1 パス目から作る。幾何の解決が GBuffer を書くとき（GBuffer の描画を止めるので、
-     * 深度は ID のラスタだけが書く）、MegaGeometryPass は記録をこのパスの Execute へ移し（MegaGeometryPass::IsFrameRecordDeferred）、
+     * MegaGeometry の 2 パスの遮蔽は、HZB を ID・深度の 1
+     * パス目から作る。幾何の解決が GBuffer を書くとき（GBuffer の描画を止めるので、
+     * 深度は ID のラスタだけが書く）、MegaGeometryPass は記録をこのパスの Execute
+     * へ移し（MegaGeometryPass::IsFrameRecordDeferred）、
      * 次の順で互いを呼ぶ（MegaGeometryPass::IDrawSink）:
-     *   1 パス目のカリング → [ID の render pass: 手続き・スキニングの塊 → MegaGeometry の 1 パス目] → HZB（深度から）
-     *   → 2 パス目のカリング → 記録を書く計算 → [ID の render pass: MegaGeometry の 2 パス目]
-     * 1 回の判定のとき・移さないとき（GBuffer が先に描く構成）は、MegaGeometry の全部と塊を 1 回の render pass で描く。
+     *   1 パス目のカリング → [ID の render pass: 手続き・スキニングの塊 →
+     * MegaGeometry の 1 パス目] → HZB（深度から） → 2 パス目のカリング →
+     * 記録を書く計算 → [ID の render pass: MegaGeometry の 2 パス目] 1
+     * 回の判定のとき・移さないとき（GBuffer が先に描く構成）は、MegaGeometry
+     * の全部と塊を 1 回の render pass で描く。
      *
      * ソフトウェアラスタが有効（SetSwRasterEnabled。--sw-raster=on）で、装置がソフトウェアラスタを使えるとき
-     * （VisibilitySwRaster::IsSupported。64bit のバッファへの atomicMin とバッファのアドレス）は、ソフトウェアラスタの結果を受ける
-     * 64bit のバッファ（画面の画素数 × uint64。深度 + ID）を 1 つ持ち、フレームの最初に空で埋め、合流のパス（VisibilityMerge。
-     * 全画面で、空でない画素だけ LessOrEqual で ID・深度へ書く）を「1 回目の render pass の後・HZB の前」と「2 回目の
-     * render pass の後」に走らせる（1 回の判定では描画の後に 1 回）。
+     * （VisibilitySwRaster::IsSupported。64bit のバッファへの atomicMin
+     * とバッファのアドレス）は、ソフトウェアラスタの結果を受ける 64bit
+     * のバッファ（画面の画素数 × uint64。深度 + ID）を 1
+     * つ持ち、フレームの最初に空で埋め、合流のパス（VisibilityMerge。
+     * 全画面で、空でない画素だけ LessOrEqual で ID・深度へ書く）を「1 回目の render
+     * pass の後・HZB の前」と「2 回目の render pass の後」に走らせる（1
+     * 回の判定では描画の後に 1 回）。
      * ソフトウェアラスタが無効（既定）・対応しない装置（バッファのアドレスが無い装置を含む）・予備の経路（ビジビリティバッファが無効）では、資源もパスも作らない。
      *
-     * 2 パスの遮蔽で 64bit のバッファを使えるフレーム（IsSwRasterAvailable）は、MegaGeometryPass のカリングが画面上で小さいクラスタを
-     * ソフトの一覧へ積み、そのハードのコマンドを空振りにする。ソフトの dispatch（VisibilitySwRaster。1 ワークグループ = 1 クラスタ）は
-     * 1 パス目: [記録を書く計算 → 64bit のバッファを書き込みへ → dispatch → 読み取りへ] → 合流（HZB の前）、
-     * 2 パス目: 記録を書く計算（全パス。1 パス目のぶんは同じ値で書き直される）→ [ID の render pass: 2 パス目のハードの描画]
-     * → [64bit のバッファを書き込みへ → dispatch → 読み取りへ] → 合流 の順に記録する（ソフトの dispatch は、記録とハードの描画の後ろに置く）。
+     * 2 パスの遮蔽で 64bit
+     * のバッファを使えるフレーム（IsSwRasterAvailable）は、MegaGeometryPass
+     * のカリングが画面上で小さいクラスタを
+     * ソフトの一覧へ積み、そのハードのコマンドを空振りにする。ソフトの
+     * dispatch（VisibilitySwRaster。1 ワークグループ = 1 クラスタ）は 1 パス目:
+     * [記録を書く計算 → 64bit のバッファを書き込みへ → dispatch → 読み取りへ] →
+     * 合流（HZB の前）、 2 パス目: 記録を書く計算（全パス。1
+     * パス目のぶんは同じ値で書き直される）→ [ID の render pass: 2
+     * パス目のハードの描画] → [64bit のバッファを書き込みへ → dispatch →
+     * 読み取りへ] → 合流 の順に記録する（ソフトの dispatch
+     * は、記録とハードの描画の後ろに置く）。
      *
-     * 既定は無効（SceneView::SetupDeferredPipeline の VisibilityBufferMode が Off）。
+     * 既定は無効（SceneView::SetupDeferredPipeline の VisibilityBufferMode が
+     * Off）。
      */
     class VisibilityRasterPass final : public IViewPass, public IRenderGraphPass, private MegaGeometryPass::IDrawSink
     {
@@ -110,65 +139,102 @@ namespace NorvesLib::Core::Rendering
         void Declare(RenderGraphBuilder& builder) override;
         void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
 
-        /** @brief MegaGeometry のカリング結果の取り出し元（同じ View のパス。null なら MegaGeometry は描かない） */
-        void SetMegaGeometryPass(MegaGeometryPass* pass) { m_MegaGeometryPass = pass; }
-        /** @brief スキニングの変形結果の取り出し元（同じ View のパス。null ならスキニングは描かない） */
-        void SetSkinningComputePass(const SkinningComputePass* pass) { m_SkinningComputePass = pass; }
+        /** @brief MegaGeometry のカリング結果の取り出し元（同じ View のパス。null
+         * なら MegaGeometry は描かない） */
+        void SetMegaGeometryPass(MegaGeometryPass *pass)
+        {
+            m_MegaGeometryPass = pass;
+        }
+        /** @brief スキニングの変形結果の取り出し元（同じ View のパス。null
+         * ならスキニングは描かない） */
+        void SetSkinningComputePass(const SkinningComputePass *pass)
+        {
+            m_SkinningComputePass = pass;
+        }
         /**
-         * @brief 解決が使えるかの問い合わせ先（同じ View の VisibilityResolvePass。null なら問い合わせない）
+         * @brief 解決が使えるかの問い合わせ先（同じ View の
+         * VisibilityResolvePass。null なら問い合わせない）
          *
-         * 渡すと、解決が使えない（GetFallbackReason が None 以外）フレームは Declare が何も宣言しない。ID は解決と分類だけが読み、
-         * 予備の GBuffer の描画へ戻っている間は誰も読まないので、描いても GPU の時間を使うだけになる。
-         * 解決を持たない構成（検証表示の Debug）では渡さず、従来どおり描く。
+         * 渡すと、解決が使えない（GetFallbackReason が None 以外）フレームは Declare
+         * が何も宣言しない。ID は解決と分類だけが読み、 予備の GBuffer
+         * の描画へ戻っている間は誰も読まないので、描いても GPU
+         * の時間を使うだけになる。 解決を持たない構成（検証表示の
+         * Debug）では渡さず、従来どおり描く。
          */
         void SetResolvePass(const VisibilityResolvePass* pass) { m_ResolvePass = pass; }
         const VisibilityResolvePass* GetResolvePass() const { return m_ResolvePass; }
 
         /**
-         * @brief ソフトウェアラスタを使うか（既定は使わない。Initialize の前に決める）
+         * @brief ソフトウェアラスタを使うか（既定は使わない。Initialize
+         * の前に決める）
          *
-         * false の間は、64bit のバッファとその埋め・合流のパスを作らない（1280x720 で約 7 MB と毎フレーム約 0.03 ms を使わない）。
+         * false の間は、64bit のバッファとその埋め・合流のパスを作らない（1280x720
+         * で約 7 MB と毎フレーム約 0.03 ms を使わない）。
          */
         void SetSwRasterEnabled(bool bEnabled) { m_bSwRasterEnabled = bEnabled; }
         bool IsSwRasterEnabled() const { return m_bSwRasterEnabled; }
 
-        /** @brief 64bit のバッファの合流（無効・対応しない装置・初期化に失敗したときは IsReady が false） */
-        const VisibilityMerge& GetMerge() const { return m_Merge; }
-        /** @brief ソフトウェアラスタの計算（無効・対応しない装置・初期化に失敗したときは IsReady が false） */
-        const VisibilitySwRaster& GetSwRaster() const { return m_SwRaster; }
+        /** @brief 64bit
+         * のバッファの合流（無効・対応しない装置・初期化に失敗したときは IsReady が
+         * false） */
+        const VisibilityMerge &GetMerge() const
+        {
+            return m_Merge;
+        }
+        /** @brief
+         * ソフトウェアラスタの計算（無効・対応しない装置・初期化に失敗したときは
+         * IsReady が false） */
+        const VisibilitySwRaster &GetSwRaster() const
+        {
+            return m_SwRaster;
+        }
 
         /** @brief 最後の Execute の内訳 */
         const VisibilityRasterFrameStats& GetLastFrameStats() const { return m_Stats; }
 
         /**
-         * @brief ID を描けるか（初期化を済ませ、render pass と 4 つのパイプラインが揃っている）
+         * @brief ID を描けるか（初期化を済ませ、render pass と 4
+         * つのパイプラインが揃っている）
          *
-         * false の間は Declare が ID を宣言せず、Execute も何も描かない。ID を読む解決は使えないので、
-         * 解決が GBuffer を書く構成でもこの間は GBuffer の描画を止めてはならない。
+         * false の間は Declare が ID を宣言せず、Execute も何も描かない。ID
+         * を読む解決は使えないので、 解決が GBuffer を書く構成でもこの間は GBuffer
+         * の描画を止めてはならない。
          *
-         * mode が Wireframe のときは、三角形を線で描くパイプライン（PolygonMode::Line。MegaGeometry・手続き・スキニングの
-         * 3 種）も揃っていることを求める。線のパイプラインが作れていない装置では false になり、従来の GBuffer の
-         * ワイヤーフレームの描画へ戻る（development ビルドだけ。Release は表示を Normal に丸めるので線のパイプラインを作らない）。
+         * mode が Wireframe
+         * のときは、三角形を線で描くパイプライン（PolygonMode::Line。MegaGeometry・手続き・スキニングの
+         * 3 種）も揃っていることを求める。線のパイプラインが作れていない装置では
+         * false になり、従来の GBuffer の ワイヤーフレームの描画へ戻る（development
+         * ビルドだけ。Release は表示を Normal
+         * に丸めるので線のパイプラインを作らない）。
          */
         bool IsDrawReady(DebugViewMode mode = DebugViewMode::Normal) const;
 
-        /** @brief 最後の Execute が書いた記録の表（GenericRead の状態。書かなかったフレームは null） */
-        const RHI::BufferPtr& GetRecordTable() const { return m_LastRecordTable; }
+        /** @brief 最後の Execute が書いた記録の表（GenericRead
+         * の状態。書かなかったフレームは null） */
+        const RHI::BufferPtr &GetRecordTable() const
+        {
+            return m_LastRecordTable;
+        }
         /** @brief 記録の表の、使っている範囲のバイト数 */
         uint64_t GetRecordTableBytes() const { return m_LastRecordTableBytes; }
 
         /**
-         * @brief 最後の Execute が書いた、フレームの材質の表（VisibilityBuffer::MaterialEntry の並び。書かなかったフレームは null）
+         * @brief 最後の Execute
+         * が書いた、フレームの材質の表（VisibilityBuffer::MaterialEntry
+         * の並び。書かなかったフレームは null）
          *
-         * 記録の MaterialIndex（0 から詰めた番号）がこの表の添え字。ホストが書いたままの storage buffer。
+         * 記録の MaterialIndex（0
+         * から詰めた番号）がこの表の添え字。ホストが書いたままの storage buffer。
          */
         const RHI::BufferPtr& GetMaterialTable() const { return m_LastMaterialTable; }
         /** @brief 材質の表の、使っている範囲の件数 */
         uint32_t GetMaterialTableCount() const { return m_LastMaterialTableCount; }
         /**
-         * @brief 最後の Execute が GPU の表へ書いた材質の中身（CPU 側のコピー。添え字が GPU の表と同じ）
+         * @brief 最後の Execute が GPU の表へ書いた材質の中身（CPU
+         * 側のコピー。添え字が GPU の表と同じ）
          *
-         * 材質の解決が、材質ごとにテクスチャ（ハンドル → RHI のテクスチャ）を張るために引く。書かなかったフレームは空。
+         * 材質の解決が、材質ごとにテクスチャ（ハンドル → RHI
+         * のテクスチャ）を張るために引く。書かなかったフレームは空。
          */
         const Container::VariableArray<VisibilityBuffer::MaterialEntry>& GetMaterialEntries() const
         {
@@ -176,9 +242,12 @@ namespace NorvesLib::Core::Rendering
         }
 
         /**
-         * @brief 最後の Execute が描いた MegaGeometry のインスタンスの表（書かなかった・MegaGeometry を描かなかったフレームは null）
+         * @brief 最後の Execute が描いた MegaGeometry
+         * のインスタンスの表（書かなかった・MegaGeometry を描かなかったフレームは
+         * null）
          *
-         * 記録の InstanceIndex（MegaGeometry のクラスタ）がこの表の添え字。表の中身は MegaGeometryPass のフレームごとのバッファで、
+         * 記録の InstanceIndex（MegaGeometry のクラスタ）がこの表の添え字。表の中身は
+         * MegaGeometryPass のフレームごとのバッファで、
          * 幾何の解決が変換（今・前）を引くために読む。使っている範囲のバイト数も返す。
          */
         const RHI::BufferPtr& GetMegaInstanceBuffer() const { return m_LastMegaInstanceBuffer; }
@@ -188,14 +257,21 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle GetDepthHandle() const { return m_DepthHandle; }
 
         /**
-         * @brief このフレームに Execute で ID・深度を描く見込みか（Declare が ID と深度を宣言した）
+         * @brief このフレームに Execute で ID・深度を描く見込みか（Declare が ID
+         * と深度を宣言した）
          *
-         * MegaGeometryPass が、記録をこのパスの Execute へ移してよいかの判定に使う（Declare は全パスの Execute より前に済む）。
+         * MegaGeometryPass が、記録をこのパスの Execute
+         * へ移してよいかの判定に使う（Declare は全パスの Execute より前に済む）。
          */
         bool IsExecutionPlanned() const { return m_IdHandle.IsValid() && m_DepthHandle.IsValid(); }
 
-        /** @brief 手続きメッシュの塊の作業配列が持っている容量（毎フレームの確保をしない確認用。最初の Execute の後は増えない） */
-        size_t GetProceduralChunkScratchCapacity() const { return m_ProceduralChunkScratch.capacity(); }
+        /** @brief
+         * 手続きメッシュの塊の作業配列が持っている容量（毎フレームの確保をしない確認用。最初の
+         * Execute の後は増えない） */
+        size_t GetProceduralChunkScratchCapacity() const
+        {
+            return m_ProceduralChunkScratch.capacity();
+        }
         /** @brief スキニングのメッシュの塊の作業配列が持っている容量（同上） */
         size_t GetSkinnedChunkScratchCapacity() const { return m_SkinnedChunkScratch.capacity(); }
         /** @brief 材質の表を GPU へ上げる並びの作業配列が持っている容量（同上） */
@@ -218,15 +294,17 @@ namespace NorvesLib::Core::Rendering
         };
 
         /**
-         * @brief 1回の Execute が使う資源の組（GPU が前のフレームで読んでいるかもしれないため、Execute のたびに
-         *        FrameUseRing から別の組を受け取る）
+         * @brief 1回の Execute が使う資源の組（GPU
+         * が前のフレームで読んでいるかもしれないため、Execute のたびに FrameUseRing
+         * から別の組を受け取る）
          */
         struct FrameSlot
         {
             /**
-             * 記録の表。GPU 専用のメモリに置く（MegaGeometry の範囲を計算が書くので、ホスト可視のメモリだと
-             * PCIe 越しの書き込みが時間の大半になる）。MegaGeometry の範囲は GPU が、残りはホストが
-             * RecordUpload へ書いたものをコピーして作る
+             * 記録の表。GPU 専用のメモリに置く（MegaGeometry
+             * の範囲を計算が書くので、ホスト可視のメモリだと PCIe
+             * 越しの書き込みが時間の大半になる）。MegaGeometry の範囲は GPU
+             * が、残りはホストが RecordUpload へ書いたものをコピーして作る
              */
             RHI::BufferPtr RecordTable;
             uint32_t RecordCapacity = 0; // 要素数
@@ -261,7 +339,8 @@ namespace NorvesLib::Core::Rendering
             Failed,
         };
 
-        /** @brief 1 回の Execute の描画の準備と状態（Execute の間だけ使う。Execute のたびに作り直す） */
+        /** @brief 1 回の Execute の描画の準備と状態（Execute の間だけ使う。Execute
+         * のたびに作り直す） */
         struct FrameWork
         {
             ViewRenderContext* Context = nullptr;
@@ -272,7 +351,8 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr SkinnedVertices;
             FrameSlot* Slot = nullptr;
             uint64_t TableBytes = 0;
-            /** @brief RecordUpload から記録の表へコピーするバイト数（0 ならコピーしない）と、表の中の書き込み先の位置 */
+            /** @brief RecordUpload から記録の表へコピーするバイト数（0
+             * ならコピーしない）と、表の中の書き込み先の位置 */
             uint64_t UploadBytes = 0;
             uint64_t UploadDstOffset = 0;
             bool bHasMegaDraw = false;
@@ -285,18 +365,26 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<ChunkDraw> MeshDraws;
             Container::VariableArray<ChunkDraw> SkinnedDraws;
             Container::VariableArray<uint32_t> SectionAddresses;
-            /** @brief MegaGeometry のコマンド・カウンタの今の状態（描画の写しがあるときの戻しに渡す） */
+            /** @brief MegaGeometry
+             * のコマンド・カウンタの今の状態（描画の写しがあるときの戻しに渡す） */
             RHI::ResourceState IndirectState = RHI::ResourceState::IndirectArgument;
-            /** @brief 描画の写しのインスタンスの表（FinishFrame が最後の Execute の値として公開する） */
+            /** @brief 描画の写しのインスタンスの表（FinishFrame が最後の Execute
+             * の値として公開する） */
             RHI::BufferPtr MegaInstanceBuffer;
             uint64_t MegaInstanceBytes = 0;
-            /** @brief MegaGeometryPass の記録が、2 パスの途中で呼び出し（IDrawSink）を使ったか */
+            /** @brief MegaGeometryPass の記録が、2
+             * パスの途中で呼び出し（IDrawSink）を使ったか */
             bool bSinkUsed = false;
-            /** @brief 1 回目の呼び出しで描画の準備が済み、2 回目の呼び出しで MegaGeometry の 2 パス目を描けるか */
+            /** @brief 1 回目の呼び出しで描画の準備が済み、2 回目の呼び出しで
+             * MegaGeometry の 2 パス目を描けるか */
             bool bStagedReady = false;
-            /** @brief 64bit のバッファを使えるフレームか（合流が準備でき、画面の大きさのバッファを用意できた） */
+            /** @brief 64bit
+             * のバッファを使えるフレームか（合流が準備でき、画面の大きさのバッファを用意できた）
+             */
             bool bMerge = false;
-            /** @brief ソフトの dispatch と合流の資源（2 パス分）をカリングの前（PrepareSwRaster）に作れたか（偽ならハードの描画を空振りにしない） */
+            /** @brief ソフトの dispatch と合流の資源（2
+             * パス分）をカリングの前（PrepareSwRaster）に作れたか（偽ならハードの描画を空振りにしない）
+             */
             bool bSwRasterResources = false;
         };
 
@@ -304,32 +392,45 @@ namespace NorvesLib::Core::Rendering
         bool CreatePipelines(ViewRenderContext& context);
 
         /**
-         * @brief 描画の準備（記録・材質の表・描画のディスクリプタセットを作り、ホストが書く資源を書く）
+         * @brief
+         * 描画の準備（記録・材質の表・描画のディスクリプタセットを作り、ホストが書く資源を書く）
          * @param plan MegaGeometry の描画の写し（null なら MegaGeometry は描かない）
          */
-        PrepareResult PrepareFrame(const MegaGeometryPass::VisibilityDrawPlan* plan);
-        /** @brief ID を空で消すだけの render pass（描くものが無い・準備できなかったフレーム） */
+        PrepareResult PrepareFrame(const MegaGeometryPass::VisibilityDrawPlan *plan);
+        /** @brief ID を空で消すだけの render
+         * pass（描くものが無い・準備できなかったフレーム） */
         void RecordClearOnlyRenderPass();
         /**
-         * @brief ホストが書いた記録（手続き・スキニング）を、記録の表へコピーして読める状態にする（render pass の外で呼ぶ）
-         * @return コピーを記録して GenericRead まで進めたか（コピーが無いときは何もせず false）
+         * @brief
+         * ホストが書いた記録（手続き・スキニング）を、記録の表へコピーして読める状態にする（render
+         * pass の外で呼ぶ）
+         * @return コピーを記録して GenericRead
+         * まで進めたか（コピーが無いときは何もせず false）
          */
         bool RecordCpuRecordUpload();
-        /** @brief MegaGeometry のコマンド・カウンタを読める状態にし、記録を書く計算を dispatch する */
-        void RecordMegaRecords(const MegaGeometryPass::VisibilityDrawPlan& plan, const char* timestampName = "VisRasterRecords");
-        /** @brief MegaGeometry のクラスタを、パスの番号 firstPass から endPass の手前まで描く（render pass の中で呼ぶ） */
-        void RecordMegaDraws(const MegaGeometryPass::VisibilityDrawPlan& plan, uint32_t firstPass, uint32_t endPass);
+        /** @brief MegaGeometry のコマンド・カウンタを読める状態にし、記録を書く計算を
+         * dispatch する */
+        void RecordMegaRecords(const MegaGeometryPass::VisibilityDrawPlan &plan,
+                               const char *timestampName = "VisRasterRecords");
+        /** @brief MegaGeometry のクラスタを、パスの番号 firstPass から endPass
+         * の手前まで描く（render pass の中で呼ぶ） */
+        void RecordMegaDraws(const MegaGeometryPass::VisibilityDrawPlan &plan, uint32_t firstPass, uint32_t endPass);
         /** @brief 手続きメッシュとスキニングの塊を描く（render pass の中で呼ぶ） */
         void RecordChunkDraws();
-        /** @brief 64bit のバッファを空で埋める（render pass の外で呼ぶ。使えないフレームは何もしない） */
+        /** @brief 64bit のバッファを空で埋める（render pass
+         * の外で呼ぶ。使えないフレームは何もしない） */
         void RecordMergeClear();
-        /** @brief 64bit のバッファを ID・深度へ合流させる render pass を記録する（render pass の外で呼ぶ。2 回目の render pass の形） */
-        void RecordMergePass(const char* timestampName);
+        /** @brief 64bit のバッファを ID・深度へ合流させる render pass
+         * を記録する（render pass の外で呼ぶ。2 回目の render pass の形） */
+        void RecordMergePass(const char *timestampName);
         /**
-         * @brief ソフトの一覧のパス passIndex を、計算シェーダーで 64bit のバッファへ描く（render pass の外で呼ぶ）
+         * @brief ソフトの一覧のパス passIndex を、計算シェーダーで 64bit
+         * のバッファへ描く（render pass の外で呼ぶ）
          *
-         * 64bit のバッファは GenericRead から UnorderedAccess を経て GenericRead へ戻る。一覧は UnorderedAccess から GenericRead
-         * （間接 dispatch の引数と読み取り）を経て UnorderedAccess へ戻る。記録の表は GenericRead のまま読む。
+         * 64bit のバッファは GenericRead から UnorderedAccess を経て GenericRead
+         * へ戻る。一覧は UnorderedAccess から GenericRead （間接 dispatch
+         * の引数と読み取り）を経て UnorderedAccess へ戻る。記録の表は GenericRead
+         * のまま読む。
          * @return 記録したら true（この呼び出しが使えないフレームは何もせず false）
          */
         bool RecordSwRaster(const MegaGeometryPass::VisibilityDrawPlan& plan, uint32_t passIndex, const char* timestampName);
@@ -347,7 +448,8 @@ namespace NorvesLib::Core::Rendering
         void RecordSecondPassDraws(RHI::ICommandList* commandList,
                                    const MegaGeometryPass::VisibilityDrawPlan& plan) override;
 
-        /** @brief 3 種の線のパイプラインが揃っているか（development ビルド以外では常に false） */
+        /** @brief 3 種の線のパイプラインが揃っているか（development
+         * ビルド以外では常に false） */
         bool HasWireframePipelines() const;
         bool EnsureFramebuffer(const RHI::TexturePtr& idTexture, const RHI::TexturePtr& depthTexture);
         bool EnsureFrameSlot(FrameSlot& slot,
@@ -359,18 +461,18 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 塊に分けられなかった通知を、パスの寿命の中で一度だけ出す */
         void LogChunkFailureOnce();
-        /** @brief 不透明の描画から手続きメッシュの塊の記録と描画を集める（材質は materials へ足した番号で記録する） */
-        void CollectProceduralChunks(ViewRenderContext& context,
-                                     uint32_t recordBase,
-                                     VisibilityBuffer::MaterialTable& materials,
-                                     Container::VariableArray<VisibilityBuffer::DrawRecord>& records,
-                                     Container::VariableArray<ChunkDraw>& draws);
-        /** @brief SkinningComputePass の変形結果からスキニングの塊の記録と描画を集める */
-        void CollectSkinnedChunks(ViewRenderContext& context,
-                                  uint32_t recordBase,
-                                  VisibilityBuffer::MaterialTable& materials,
-                                  Container::VariableArray<VisibilityBuffer::DrawRecord>& records,
-                                  Container::VariableArray<ChunkDraw>& draws);
+        /** @brief 不透明の描画から手続きメッシュの塊の記録と描画を集める（材質は
+         * materials へ足した番号で記録する） */
+        void CollectProceduralChunks(ViewRenderContext &context, uint32_t recordBase,
+                                     VisibilityBuffer::MaterialTable &materials,
+                                     Container::VariableArray<VisibilityBuffer::DrawRecord> &records,
+                                     Container::VariableArray<ChunkDraw> &draws);
+        /** @brief SkinningComputePass
+         * の変形結果からスキニングの塊の記録と描画を集める */
+        void CollectSkinnedChunks(ViewRenderContext &context, uint32_t recordBase,
+                                  VisibilityBuffer::MaterialTable &materials,
+                                  Container::VariableArray<VisibilityBuffer::DrawRecord> &records,
+                                  Container::VariableArray<ChunkDraw> &draws);
 
         RHI::IDevice* m_Device = nullptr;
         MegaGeometryPass* m_MegaGeometryPass = nullptr;
@@ -430,6 +532,7 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_LastMaterialTable;
         uint32_t m_LastMaterialTableCount = 0;
         Container::VariableArray<VisibilityBuffer::MaterialEntry> m_LastMaterialEntries;
+        Container::VariableArray<Container::TSharedPtr<const void>> m_LastMaterialOwners;
         RHI::BufferPtr m_LastMegaInstanceBuffer;
         uint64_t m_LastMegaInstanceBytes = 0;
         // そのフレームの材質の表の積み上げ（Execute のたびに空にする）
@@ -448,11 +551,13 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
-     * @brief VisBuffer.Id の検証表示（画素の ID を色にして、最後のシーンの色へ重ねずに書き込む）
+     * @brief VisBuffer.Id の検証表示（画素の ID
+     * を色にして、最後のシーンの色へ重ねずに書き込む）
      *
      * 記録の番号（描画）ごとに色相を散らし、種類（MegaGeometry・手続き・スキニング）で色相の帯を分ける。
      * 記録の表から種類を引けない画素はマゼンタ、何も描かれていない画素は暗い灰色。
-     * ビジビリティバッファの検証用（--visibility-buffer=debug のときだけ追加される）。
+     * ビジビリティバッファの検証用（--visibility-buffer=debug
+     * のときだけ追加される）。
      */
     class VisibilityDebugPass final : public IViewPass, public IRenderGraphPass
     {

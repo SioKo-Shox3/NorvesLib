@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Container/Containers.h"
 #include <cstdint>
@@ -46,6 +46,8 @@ namespace NorvesLib::Core
         bool IsString() const;
         bool IsNumber() const;
         bool IsBoolean() const;
+        // 小数点・指数を含まない整数tokenか。値の範囲保証ではない。
+        bool IsIntegerLiteral() const;
 
         /**
          * @brief Returns the array size.
@@ -69,6 +71,10 @@ namespace NorvesLib::Core
          * @param key Member key.
          */
         bool HasMember(const char* key) const;
+        // objectの借用列挙。名前/valueはdocumentのReset/再parse/代入/破棄で失効する。
+        size_t GetObjectSize() const;
+        const Container::String& GetMemberName(size_t index) const;
+        JsonValue GetMemberValue(size_t index) const;
 
         /**
          * @brief Returns the string value.
@@ -127,6 +133,10 @@ namespace NorvesLib::Core
          */
         static bool TryParse(const Container::String& text, JsonDocument& outDocument,
                              Container::String* pOutError = nullptr);
+        // 厳密UTF8 bytesをnative文字へ変換して解析する。BOMは入口側で処理する。
+        // 既存TryParseと同様、失敗時outDocumentをResetする。
+        static bool TryParseUtf8(Container::Span<const uint8_t> text, JsonDocument& outDocument,
+                                 Container::String* pOutError = nullptr);
 
         /**
          * @brief Resets the document.
@@ -157,6 +167,7 @@ namespace NorvesLib::Core
             JsonType Type = JsonType::Invalid;
             Container::String StringValue;
             double NumberValue = 0.0;
+            bool bIntegerLiteral = false;
             bool bBoolValue = false;
             Container::VariableArray<size_t> ArrayChildren;
             Container::VariableArray<JsonObjectEntry> ObjectChildren;
@@ -188,6 +199,11 @@ namespace NorvesLib::Core
         }
 
         return m_pDocument->m_Nodes[m_NodeIndex].Type;
+    }
+
+    inline bool JsonValue::IsIntegerLiteral() const
+    {
+        return IsNumber() && m_pDocument->m_Nodes[m_NodeIndex].bIntegerLiteral;
     }
 
     inline bool JsonValue::IsNull() const
@@ -268,6 +284,22 @@ namespace NorvesLib::Core
     inline bool JsonValue::HasMember(const char* key) const
     {
         return FindMember(key).IsValid();
+    }
+
+    inline size_t JsonValue::GetObjectSize() const
+    {
+        return IsObject() ? m_pDocument->m_Nodes[m_NodeIndex].ObjectChildren.size() : 0;
+    }
+    inline const Container::String& JsonValue::GetMemberName(size_t index) const
+    {
+        static const Container::String EmptyString;
+        if (!IsObject() || index >= GetObjectSize()) return EmptyString;
+        return m_pDocument->m_Nodes[m_NodeIndex].ObjectChildren[index].Key;
+    }
+    inline JsonValue JsonValue::GetMemberValue(size_t index) const
+    {
+        if (!IsObject() || index >= GetObjectSize()) return {};
+        return JsonValue(m_pDocument, m_pDocument->m_Nodes[m_NodeIndex].ObjectChildren[index].NodeIndex);
     }
 
     inline const Container::String& JsonValue::AsString() const

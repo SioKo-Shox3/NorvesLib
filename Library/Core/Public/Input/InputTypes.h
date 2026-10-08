@@ -184,7 +184,10 @@ namespace NorvesLib::Core::Input
         float PositionY = 0.0f;   ///< マウスY座標（クライアント座標）
         float DeltaX = 0.0f;      ///< 前フレームからのX移動量
         float DeltaY = 0.0f;      ///< 前フレームからのY移動量
-        float ScrollDelta = 0.0f; ///< ホイール回転量
+        float ScrollDelta = 0.0f; ///< 縦ホイール回転量
+        float HorizontalScrollDelta = 0.0f; ///< 横ホイール回転量
+        float RawDeltaX = 0.0f; ///< OS相対入力の累積。絶対位置差分とは別。
+        float RawDeltaY = 0.0f;
     };
 
     // ========================================
@@ -227,7 +230,14 @@ namespace NorvesLib::Core::Input
      */
     struct MouseScrollEvent
     {
-        float Delta = 0.0f;
+        float Delta = 0.0f; ///< 縦。既存aggregate初期化の先頭を維持。
+        float HorizontalDelta = 0.0f;
+    };
+
+    struct MouseRawMoveEvent
+    {
+        float DeltaX = 0.0f;
+        float DeltaY = 0.0f;
     };
 
     /**

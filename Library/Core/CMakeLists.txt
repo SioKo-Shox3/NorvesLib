@@ -13,7 +13,20 @@ set(PRIVATE_SOURCES
     Private/Asset/AssetBlob.cpp
     Private/Asset/CookedAudioLoader.cpp
     Private/Asset/CookedMeshLoader.cpp
+    Private/Asset/CookedMeshWireValidation.cpp
     Private/Asset/CookedSkeletalLoader.cpp
+    Private/Asset/CookedSkeletalWireValidation.h
+    Private/Asset/CookedSkeletalWireValidation.cpp
+    Private/Asset/CookedSkeletalNameCodec.h
+    Private/Asset/CookedSkeletalNameCodec.cpp
+    Private/Asset/CookedMaterialFormat.cpp
+    Private/Resource/MaterialSelection.cpp
+    Private/Resource/MaterialImportPolicy.cpp
+    Private/Resource/MaterialImportDocument.cpp
+    Private/Resource/MaterialImportSettings.cpp
+    Private/Resource/MaterialImportSettingsJson.cpp
+    Private/Resource/GltfMaterialSource.cpp
+    Private/Resource/GltfMaterialSourceJson.cpp
     Private/Asset/CookedTextureLoader.cpp
     Private/Asset/AssetFileReader.cpp
     Private/Asset/AssetManifest.cpp
@@ -35,11 +48,78 @@ set(PRIVATE_SOURCES
     Private/Particle/ParticleSystem.cpp
     # Animation
     Private/Animation/AnimationClipResource.cpp
+    Private/Animation/SkeletalJointIndex.h
+    Private/Animation/SkeletalJointIndex.cpp
+    Private/Animation/RigClipAnalysis.cpp
+    Private/Animation/SkeletalClipProcessing.cpp
+    Private/Animation/SkeletalClipRetarget.cpp
+    Private/Animation/SkeletalClipRetarget.h
+    Private/Animation/SkeletalClipProcessing.h
+    Private/Animation/SkeletalRootMotion.h
+    Private/Animation/RigClipAnalysis.h
+    Private/Animation/RigV1Types.cpp
+    Private/Animation/RigRootFrame.cpp
+    Private/Animation/RigRootFrame.h
+    Private/Animation/RigBoundClipProof.cpp
+    Private/Animation/RigBoundClipProof.h
+    Private/Animation/RigV1Types.h
+    Private/Animation/ClipBankBinding.cpp
+    Private/Animation/ClipBankBinding.h
+    Private/Animation/ClipBankRestComparison.h
+    Private/Animation/ClipBankRestComparison.cpp
+    Private/Animation/RigSplitBinding.h
+    Private/Animation/RigSplitBindingTestAccess.h
+    Private/Animation/RigSplitBinding.cpp
+    Private/Animation/ClipBankBindingTestAccess.h
+    Private/Asset/CookedClipBankV1.cpp
+    Private/Asset/CookedClipBankV1.h
+    Private/Asset/RigSplitWire.h
+    Private/Asset/RigSplitAllocationTestAccess.h
+    Private/Asset/RigSplitAllocationTestAccess.cpp
+    Private/Asset/RigSplitWire.cpp
+    Private/Asset/CookedSkeletonV1.h
+    Private/Asset/CookedSkeletonV1.cpp
+    Private/Asset/CookedSkinMeshV1.h
+    Private/Asset/CookedSkinMeshV1.cpp
+    Private/Resource/RigAuthoring.cpp
+    Private/Resource/RigAuthoring.h
+    Private/Resource/RigGltfImportCapture.h
+    Private/Resource/RigSplitAssetLoader.cpp
+    Private/Resource/RigSplitPublicationIdentity.cpp
+    Private/Resource/RigSplitPublicationIdentity.h
+    Private/Resource/RigSplitAssetLoader.h
+    Public/Animation/SkeletalRestPose.h
+    Private/Animation/SkeletalJointIndexNative.cpp
     Private/Animation/SkeletalAnimationSampler.cpp
+    Private/Animation/SkeletalSplitSampler.cpp
+    Private/Animation/SkeletalSplitSampler.h
+    Private/Animation/SkeletalSamplingMath.h
+    Private/Animation/SkeletalClipSampling.h
+    Private/Animation/SkeletalBindRowMath.h
+    Private/Animation/SkeletalJointGlobalRowMath.h
+    Private/Animation/SkeletalJointMapping.h
+    Private/Animation/SkeletalJointMapping.cpp
+    Private/Animation/SkeletalCoordinateConversion.h
+    Private/Animation/SkeletalCoordinateConversion.cpp
+    Private/Animation/SkeletalFloatEnvironment.h
+    Private/Animation/SkeletalRotationRetarget.h
+    Private/Animation/SkeletalRotationRetarget.cpp
+    Private/Animation/SkeletalRotationRetargetMath.h
+    Private/Animation/SkeletalRotationRetargetNative.h
+    Private/Animation/SkeletalRotationRetargetNative.cpp
+    Private/Animation/SkeletalBvhClipTime.h
+    Private/Animation/SkeletalBvhClipImport.h
+    Private/Animation/SkeletalBvhClipImport.cpp
+    Private/Animation/SkeletalRoleProfile.h
+    Private/Animation/SkeletalRoleProfile.cpp
     Private/Animation/SkeletalAssetResource.cpp
     Private/Animation/SkeletonResource.cpp
     Private/Text/IdentityPool.cpp
     Private/Text/JsonDocument.cpp
+    Private/Text/UnicodeText.h
+    Private/Text/JsonUnicodeScalar.h
+    Private/Text/Base64.h
+    Private/Text/Base64.cpp
     Private/Text/JsonWriter.cpp
     Private/Logging/Logger.cpp
     Private/Logging/LogTypes.cpp
@@ -47,6 +127,13 @@ set(PRIVATE_SOURCES
     Private/Debug/Stats.cpp
     Private/EngineGlobals/MemoryOverrides.cpp
     Private/Platform/Windows/WindowsApplication.cpp
+    Private/Platform/Windows/XInputStateConversion.h
+    Private/Platform/Windows/IXInputApi.h
+    Private/Platform/Windows/XInputPollingState.h
+    Private/Platform/Windows/XInputVibrationState.h
+    Private/Platform/Windows/XInputDevice.h
+    Private/Platform/Windows/XInputDevice.cpp
+    Private/Platform/Windows/WindowsXInputApi.cpp
     Private/Platform/Windows/WindowsPlatformApplicationFactory.cpp
     Private/Platform/Windows/WindowsWindow.cpp
     Private/Platform/Windows/WindowsEntryPoint.cpp
@@ -56,6 +143,7 @@ set(PRIVATE_SOURCES
     Private/Boot/AppLauncher.cpp
     Private/Engine/Engine.cpp
     Private/Engine/NorvesEngine.cpp
+    Private/Engine/SkeletalAssetSession.cpp
     Private/Engine/FixedStepScheduler.cpp
     Private/Scripting/AngelScriptEngineOwner.cpp
     Private/Scripting/ScriptSourceTracker.h
@@ -106,6 +194,9 @@ set(PRIVATE_SOURCES
     Private/Rendering/ImpostorMath.cpp
     Private/Rendering/TextureAssetRuntime.cpp
     Private/Rendering/SkinnedMeshGpuStore.cpp
+    Private/Rendering/SkinnedMeshTypes.cpp
+    Private/Rendering/SkinnedDrawCommands.cpp
+    Private/Rendering/SkinnedDrawCommands.h
     Private/Rendering/MegaGeometryResourceStore.cpp
     Private/Rendering/ProceduralMeshGpuStore.cpp
     Private/Rendering/RenderMaterialStore.cpp
@@ -175,13 +266,64 @@ set(PRIVATE_SOURCES
     Private/Resource/MaterialResource.cpp
     Private/Resource/GLTFAnalyzer.cpp
     Private/Resource/SkeletalGltfDecode.cpp
+    Private/Resource/SkeletalInfluenceAttributes.h
+    Private/Resource/SkeletalInfluenceAttributes.cpp
+    Private/Resource/SkeletalInfluenceReduction.h
+    Private/Resource/SkeletalInfluenceReduction.cpp
+    Private/Resource/SkeletalImportPolicy.h
+    Private/Resource/SkeletalImportPolicy.cpp
+    Private/Resource/SkeletalSubmeshLayout.h
+    Private/Resource/SkeletalSubmeshBounds.h
+    Private/Resource/SkeletalSubmeshLayout.cpp
+    Private/Resource/SkeletalDrawRange.cpp
+    Private/Resource/SkeletalDrawRange.h
+    Private/Resource/SkeletalCubicBounds.h
+    Private/Resource/SkeletalCubicBounds.cpp
+    Private/Resource/SkeletalCubicBake.h
+    Private/Resource/SkeletalCubicBake.cpp
+    Private/Resource/GltfAccessorRange.h
+    Private/Resource/ImportTransform.h
+    Private/Resource/ImportTransform.cpp
+    Private/Resource/ImportSettingsFile.h
+    Private/Resource/ImportSettingsFile.cpp
+    Private/Resource/ImportSettingsHash.h
+    Private/Resource/ImportSettingsHash.cpp
+    Private/Resource/ImportSettings.h
+    Private/Resource/ImportSettings.cpp
+    Private/Resource/ImportSettingsJson.cpp
+    Private/Resource/GltfDocumentProfile.h
+    Private/Resource/GltfDocumentProfile.cpp
+    Private/Resource/GltfContainer.h
+    Private/Resource/GltfContainer.cpp
+    Private/Resource/GltfBufferSource.h
+    Private/Resource/GltfBufferSource.cpp
+    Private/Resource/BvhDecode.h
+    Private/Resource/BvhEvaluate.h
+    Private/Resource/BvhRotationSource.h
+    Private/Resource/BvhEvaluate.cpp
+    Private/Resource/BvhDecode.cpp
+    Private/Resource/GltfBufferSet.h
+    Private/Resource/GltfBufferSet.cpp
+    Private/Resource/GltfNativePath.h
+    Private/Resource/GltfBufferFile.h
+    Private/Resource/GltfBufferFile.cpp
+    Private/Resource/GltfBufferJson.h
+    Private/Resource/GltfImageSource.h
+    Private/Resource/GltfImageSource.cpp
+    Private/Resource/GltfBufferJson.cpp
     Private/Resource/SkinnedMeshResource.cpp
     Private/Resource/FontAtlas.cpp
     Private/Resource/ModelAssetLoader.cpp
+    Private/Resource/SkeletalAssetLoader.cpp
+    Private/Resource/SkeletalAssetPublication.cpp
+    Private/Resource/SkeletalAssetRuntime.cpp
     Private/Resource/ModelAssetRuntime.cpp
     Private/Resource/ModelAsyncLoadQueue.cpp
     Private/Resource/ModelHandleCache.cpp
     Private/Resource/ModelAssetResolver.cpp
+    Private/Rendering/ConstantMaterialTextureCache.cpp
+    Private/Resource/ImportedOpaqueRuntime.cpp
+    Private/Resource/ModelMaterialStaging.cpp
     Private/Resource/ModelStaging.cpp
     # Component
     Private/Component/Component.cpp
@@ -233,7 +375,16 @@ set(PRIVATE_SOURCES
     Private/Memory/ThreadLocalCache.cpp
     # Input
     Private/Input/InputState.cpp
+    Private/Input/InputBindingSet.cpp
+    Private/Input/InputBindingJson.cpp
+    Private/Input/InputBindingPersistence.cpp
+    Private/Input/WorkingDirectoryInputBindingStore.cpp
+    Private/Input/InputMapper.cpp
+    Private/Input/InputRebindCaptureManager.cpp
+    Private/Input/InputDebugOverlayController.cpp
     Private/Input/InputSystem.cpp
+    Private/Input/HapticsService.cpp
+    Private/Input/HapticsJson.cpp
     Private/Input/InputRouter.cpp
     Private/Input/MayaCameraController.cpp
     Private/Input/LightController.cpp
@@ -258,6 +409,8 @@ set(PUBLIC_HEADERS
     Public/Asset/CookedAudioFormat.h
     Public/Asset/CookedMeshFormat.h
     Public/Asset/CookedSkeletalFormat.h
+    Public/Asset/CookedMaterialFormat.h
+    Public/Asset/CookedSkeletalWireFormat.h
     Public/Asset/CookedTextureFormat.h
     Public/Asset/AssetFileReader.h
     Public/Asset/AssetManifest.h
@@ -294,12 +447,14 @@ set(PUBLIC_HEADERS
     Public/Platform/NativeWindowHandle.h
     Public/Platform/PlatformGraphics.h
     Public/Platform/PlatformApplicationFactory.h
+    Public/Platform/PlatformInputDevices.h
     Public/Platform/PlatformProcess.h
     Public/Platform/PlatformConsole.h
     Public/Boot/AppLauncher.h
     Public/Boot/BootConfig.h
     Public/Boot/EntryPoint.h
     Public/Application/IApplicationHandler.h
+    Public/Application/CursorMode.h
     Public/Application/ApplicationHandlerBase.h
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
@@ -308,9 +463,13 @@ set(PUBLIC_HEADERS
     Public/Animation/AnimationClipResource.h
     Public/Animation/SkeletalAnimationSampler.h
     Public/Animation/SkeletalAssetResource.h
+    Public/Animation/SkeletalAssetRuntime.h
+    Public/Animation/RigBindingTypes.h
+    Public/Animation/RigSplitAssetRequest.h
     Public/Animation/SkeletonResource.h
     # Scene
     Public/Scene/SceneQuery.h
+    Public/Scene/PhysicsQueryTypes.h
     Public/Scene/SceneSerializer.h
     # Module
     Public/Module/ModuleExport.h
@@ -453,6 +612,7 @@ set(PUBLIC_HEADERS
     Public/Component/SpringArmTypes.h
     # Engine
     Public/Engine/NorvesEngine.h
+    Public/Engine/SkeletalAssetSession.h
     Public/Scripting/ScriptRuntime.h
     Public/Component/ScriptComponent.h
     Public/Engine/IEngine.h
@@ -463,10 +623,16 @@ set(PUBLIC_HEADERS
     Public/Resource/MaterialResource.h
     Public/Resource/GLTFAnalyzer.h
     Public/Resource/SkeletalGltfData.h
+    Public/Resource/SkeletalImportOptions.h
+    Public/Resource/SkeletalLimits.h
+    Public/Resource/SkeletalSubMesh.h
+    Public/Resource/SkeletalMaterialBindings.h
     Public/Resource/SkinnedMeshResource.h
     Public/Resource/FontAtlas.h
     # Component
     Public/Component/Component.h
+    Public/Component/TickGroup.h
+    Public/Component/TickDispatch.h
     Public/Component/BoardComponent.h
     Public/Component/TextComponent.h
     Public/Component/BillboardComponent.h
@@ -493,6 +659,7 @@ set(PUBLIC_HEADERS
     Public/Math/VectorUtils.h
     Public/Math/GeometryTypes.h
     Public/Math/GeometryIntersection.h
+    Public/Math/Curves.h
     # Thread
     Public/Thread/Atomic.h
     Public/Thread/ConditionVariable.h
@@ -547,11 +714,34 @@ set(PUBLIC_HEADERS
     Public/FileStream/Package.h
     # Input
     Public/Input/InputTypes.h
+    Public/Input/InputAxisMath.h
+    Public/Input/InputButtonState.h
+    Public/Input/InputArmedState.h
+    Public/Input/InputRebindCaptureState.h
+    Public/Input/GamepadTypes.h
+    Public/Input/ActiveDeviceKind.h
+    Public/Input/InputBindingTypes.h
+    Public/Input/InputActionSettings.h
+    Public/Input/InputActionRuntime.h
+    Public/Input/InputBindingSet.h
+    Public/Input/InputBindingNames.h
+    Public/Input/InputBindingJson.h
+    Public/Input/IInputBindingStore.h
+    Public/Input/InputBindingPersistence.h
+    Public/Input/InputMapper.h
+    Public/Input/InputRebindCaptureManager.h
+    Public/Input/InputDebugOverlayController.h
+    Public/Input/InputDebugOverlayState.h
     Public/Input/InputState.h
     Public/Input/InputSystem.h
     Public/Input/IInputController.h
     Public/Input/InputRouter.h
     Public/Input/IInputDevice.h
+    Public/Input/HapticsEnvelopeMath.h
+    Public/Input/HapticsOutputState.h
+    Public/Input/HapticsPlaybackTime.h
+    Public/Input/HapticsService.h
+    Public/Input/HapticsJson.h
     Public/Input/MayaCameraController.h
     Public/Input/LightController.h
     Public/Rendering/PathTracingExrOutput.h
@@ -663,6 +853,7 @@ target_compile_features(${MODULE_NAME} PUBLIC cxx_std_23)
 
 # Windows固有の設定
 if(WIN32)
+    target_link_libraries(${MODULE_NAME} PRIVATE Xinput)
     target_compile_definitions(${MODULE_NAME} PRIVATE
         NOMINMAX
         WIN32_LEAN_AND_MEAN

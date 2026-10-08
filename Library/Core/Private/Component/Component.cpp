@@ -77,6 +77,14 @@ namespace NorvesLib::Core::Component
         (void)deltaTime;
     }
 
+    void Component::OnTickGroup(ETickGroup group, float deltaTime)
+    {
+        if (group == (m_bHasDispatchPrimaryGroup ? m_DispatchPrimaryGroup : GetTickGroup()))
+        {
+            Tick(deltaTime);
+        }
+    }
+
     void Component::FixedTick(float fixedDeltaTime)
     {
         (void)fixedDeltaTime;

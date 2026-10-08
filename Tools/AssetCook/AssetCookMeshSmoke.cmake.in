@@ -1684,7 +1684,7 @@ expect_model_cook_failure("explicit_mode_not_triangles" "${invalid_mode_path}"
 
 set(data_uri_path "${INVALID_DIR}/data_uri_buffer.gltf")
 expect_model_cook_failure("data_uri_buffer" "${data_uri_path}"
-    "buffer URI data URI is not supported")
+    "glTF buffer file is smaller than its declared byteLength")
 
 set(traversal_path "${INVALID_DIR}/buffer_path_traversal.gltf")
 expect_model_cook_failure("buffer_path_traversal" "${traversal_path}"

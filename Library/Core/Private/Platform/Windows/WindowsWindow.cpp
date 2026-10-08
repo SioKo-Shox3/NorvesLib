@@ -2,7 +2,10 @@
 #include "Platform/Windows/WindowsKeyMap.h"
 #include "Engine/Engine.h"
 #include "Input/InputSystem.h"
+#include "Logging/LogMacros.h"
 #include <stdexcept>
+#include <windowsx.h>
+#include <cstddef>
 
 using namespace NorvesLib::Core::Container;
 
@@ -45,6 +48,7 @@ namespace NorvesLib
                     // ウィンドウ作成時にインスタンスを設定
                     CREATESTRUCT *createStruct = reinterpret_cast<CREATESTRUCT *>(lParam);
                     pThis = static_cast<WindowsWindow *>(createStruct->lpCreateParams);
+                    pThis->m_hWnd = hWnd;
 
                     // ウィンドウにインスタンスを関連付け
                     SetWindowLongPtr(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pThis));
@@ -56,10 +60,11 @@ namespace NorvesLib
                 }
 
                 // InputSystemへの入力注入ヘルパー
-                auto *inputSystem = []()
+                auto *inputSystem = [pThis]()
                     -> NorvesLib::Core::Input::InputSystem *
                 {
-                    if (NorvesLib::Core::Engine::GEngine)
+                    if (NorvesLib::Core::Engine::GEngine &&
+                        NorvesLib::Core::Engine::GEngine->GetMainWindow()==pThis)
                     {
                         return &NorvesLib::Core::Engine::GEngine->GetInputSystem();
                     }
@@ -73,23 +78,76 @@ namespace NorvesLib
                     if (pThis)
                     {
                         pThis->m_isActive = (LOWORD(wParam) != WA_INACTIVE);
+                        pThis->SetInputFocused(pThis->m_isActive && HIWORD(wParam)==0 && GetFocus()==hWnd);
                     }
                     break;
 
+                case WM_SETFOCUS:
+                    if(pThis) pThis->SetInputFocused(pThis->m_isActive && !IsIconic(hWnd));
+                    return 0;
+                case WM_KILLFOCUS:
+                    if(pThis) pThis->SetInputFocused(false);
+                    return 0;
+                case WM_NCDESTROY:
+                    if(pThis)
+                    {
+                        pThis->SetInputFocused(false);
+                        (void)pThis->SetCursorMode(ECursorMode::Normal);
+                        (void)pThis->SetRawMouseEnabled(false);
+                        pThis->m_isActive=false;pThis->m_hWnd=nullptr;
+                        SetWindowLongPtr(hWnd,GWLP_USERDATA,0);
+                    }
+                    break;
                 case WM_DESTROY:
+                    if(pThis) pThis->SetInputFocused(false);
                     // ウィンドウの破棄
                     PostQuitMessage(0);
                     return 0;
 
+                case WM_SETCURSOR:
+                    if(pThis && reinterpret_cast<HWND>(wParam)==hWnd && pThis->HasNativeInputFocus() && LOWORD(lParam)==HTCLIENT &&
+                        (pThis->m_EffectiveCursorMode==ECursorMode::Hidden || pThis->m_EffectiveCursorMode==ECursorMode::Locked))
+                    {
+                        SetCursor(nullptr);return TRUE;
+                    }
+                    break;
+                case WM_MOVE:
+                case WM_SIZE:
+                case WM_DPICHANGED:
+                case WM_DISPLAYCHANGE:
+                    if(pThis) (void)pThis->ApplyCursorMode(true);
+                    break;
+
+                case WM_INPUT:
+                    if(inputSystem && pThis && pThis->m_InputFocused && pThis->m_RawMouseEnabled)
+                    {
+                        try { pThis->HandleRawMouseInput(reinterpret_cast<HRAWINPUT>(lParam),*inputSystem); }
+                        catch(...)
+                        {
+                            if(Engine::GEngine) Engine::GEngine->RequestExit(1);
+                            try { NORVES_LOG_ERROR("WindowsWindow","Raw mouse配送に失敗したため終了を要求しました"); }
+                            catch(...) {}
+                        }
+                    }
+                    // foreground RIM_INPUTも必ず末尾のDefWindowProcでcleanupする。
+                    break;
+                case WM_INPUT_DEVICE_CHANGE:
+                    if(pThis && wParam==GIDC_REMOVAL)
+                        pThis->m_RawMouseTracker.Forget(static_cast<uintptr_t>(lParam));
+                    break;
+
                 // ========== キーボード入力 ==========
                 case WM_KEYDOWN:
                 case WM_SYSKEYDOWN:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
+                        const bool bRepeat = (lParam & 0x40000000) != 0;
+                        if(wParam>=256 || !pThis->m_KeyRepeatGate.AcceptPress(static_cast<uint32_t>(wParam),bRepeat)) break;
                         auto keyCode = TranslateWindowsKeyCode(wParam);
                         if (keyCode != Input::KeyCode::None)
                         {
-                            bool bRepeat = (lParam & 0x40000000) != 0;
+                            // focus復帰後、押し続けた旧キーのrepeatだけで操作を再開しない。
+                            if(bRepeat && !inputSystem->GetState().IsKeyDown(keyCode)) break;
                             inputSystem->InjectKeyEvent(
                                 keyCode,
                                 bRepeat ? Input::InputAction::Repeat : Input::InputAction::Pressed);
@@ -99,8 +157,9 @@ namespace NorvesLib
 
                 case WM_KEYUP:
                 case WM_SYSKEYUP:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
+                        if(wParam<256) pThis->m_KeyRepeatGate.Release(static_cast<uint32_t>(wParam));
                         auto keyCode = TranslateWindowsKeyCode(wParam);
                         if (keyCode != Input::KeyCode::None)
                         {
@@ -111,7 +170,7 @@ namespace NorvesLib
 
                 // ========== 文字入力（IME 確定後の Unicode 文字） ==========
                 case WM_CHAR:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
                         // wParam は UTF-16 コードユニット。BMP 範囲はそのままコードポイント。
                         // サロゲートペア（U+10000 以上）は 2 メッセージに分割されて届くが、
@@ -128,72 +187,91 @@ namespace NorvesLib
 
                 // ========== マウスボタン入力 ==========
                 case WM_LBUTTONDOWN:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
-                        float mx = static_cast<float>(LOWORD(lParam));
-                        float my = static_cast<float>(HIWORD(lParam));
+                        float mx = static_cast<float>(GET_X_LPARAM(lParam));
+                        float my = static_cast<float>(GET_Y_LPARAM(lParam));
                         inputSystem->InjectMouseButton(Input::MouseButton::Left, Input::InputAction::Pressed, mx, my);
                     }
                     break;
 
                 case WM_LBUTTONUP:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
-                        float mx = static_cast<float>(LOWORD(lParam));
-                        float my = static_cast<float>(HIWORD(lParam));
+                        float mx = static_cast<float>(GET_X_LPARAM(lParam));
+                        float my = static_cast<float>(GET_Y_LPARAM(lParam));
                         inputSystem->InjectMouseButton(Input::MouseButton::Left, Input::InputAction::Released, mx, my);
                     }
                     break;
 
                 case WM_RBUTTONDOWN:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
-                        float mx = static_cast<float>(LOWORD(lParam));
-                        float my = static_cast<float>(HIWORD(lParam));
+                        float mx = static_cast<float>(GET_X_LPARAM(lParam));
+                        float my = static_cast<float>(GET_Y_LPARAM(lParam));
                         inputSystem->InjectMouseButton(Input::MouseButton::Right, Input::InputAction::Pressed, mx, my);
                     }
                     break;
 
                 case WM_RBUTTONUP:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
-                        float mx = static_cast<float>(LOWORD(lParam));
-                        float my = static_cast<float>(HIWORD(lParam));
+                        float mx = static_cast<float>(GET_X_LPARAM(lParam));
+                        float my = static_cast<float>(GET_Y_LPARAM(lParam));
                         inputSystem->InjectMouseButton(Input::MouseButton::Right, Input::InputAction::Released, mx, my);
                     }
                     break;
 
                 case WM_MBUTTONDOWN:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
-                        float mx = static_cast<float>(LOWORD(lParam));
-                        float my = static_cast<float>(HIWORD(lParam));
+                        float mx = static_cast<float>(GET_X_LPARAM(lParam));
+                        float my = static_cast<float>(GET_Y_LPARAM(lParam));
                         inputSystem->InjectMouseButton(Input::MouseButton::Middle, Input::InputAction::Pressed, mx, my);
                     }
                     break;
 
                 case WM_MBUTTONUP:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
-                        float mx = static_cast<float>(LOWORD(lParam));
-                        float my = static_cast<float>(HIWORD(lParam));
+                        float mx = static_cast<float>(GET_X_LPARAM(lParam));
+                        float my = static_cast<float>(GET_Y_LPARAM(lParam));
                         inputSystem->InjectMouseButton(Input::MouseButton::Middle, Input::InputAction::Released, mx, my);
                     }
                     break;
 
+                case WM_XBUTTONDOWN:
+                case WM_XBUTTONUP:
+                    if(inputSystem && pThis && pThis->m_InputFocused)
+                    {
+                        const auto nativeButton=GET_XBUTTON_WPARAM(wParam);
+                        if(nativeButton!=XBUTTON1 && nativeButton!=XBUTTON2) break;
+                        const auto button=nativeButton==XBUTTON1 ? Input::MouseButton::X1 : Input::MouseButton::X2;
+                        inputSystem->InjectMouseButton(button,message==WM_XBUTTONDOWN ? Input::InputAction::Pressed : Input::InputAction::Released,
+                            static_cast<float>(GET_X_LPARAM(lParam)),static_cast<float>(GET_Y_LPARAM(lParam)));
+                    }
+                    return TRUE;
+
                 // ========== マウス移動 ==========
                 case WM_MOUSEMOVE:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
-                        float mx = static_cast<float>(LOWORD(lParam));
-                        float my = static_cast<float>(HIWORD(lParam));
-                        inputSystem->InjectMouseMove(mx, my);
+                        float mx = static_cast<float>(GET_X_LPARAM(lParam));
+                        float my = static_cast<float>(GET_Y_LPARAM(lParam));
+                        inputSystem->InjectMouseMove(mx, my, pThis->m_EffectiveCursorMode!=ECursorMode::Locked);
                     }
                     break;
 
                 // ========== マウススクロール ==========
+                case WM_MOUSEHWHEEL:
+                    if(inputSystem && pThis && pThis->m_InputFocused)
+                    {
+                        const float delta=static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam))/static_cast<float>(WHEEL_DELTA);
+                        (void)inputSystem->InjectMouseScrollAxes(0,delta);
+                    }
+                    break;
                 case WM_MOUSEWHEEL:
-                    if (inputSystem)
+                    if (inputSystem && pThis && pThis->m_InputFocused)
                     {
                         float delta = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA);
                         inputSystem->InjectMouseScroll(delta);
@@ -203,6 +281,177 @@ namespace NorvesLib
 
                 // 標準のウィンドウプロシージャを呼び出す
                 return DefWindowProc(hWnd, message, wParam, lParam);
+            }
+
+            bool WindowsWindow::SetCursorMode(ECursorMode mode) noexcept
+            {
+                if(!IsValidCursorMode(mode)) return false;
+                m_RequestedCursorMode=mode;
+                return ApplyCursorMode();
+            }
+
+            bool WindowsWindow::HasNativeInputFocus() const noexcept
+            {
+                return m_hWnd && m_InputFocused && GetFocus()==m_hWnd && GetForegroundWindow()==m_hWnd;
+            }
+
+            bool WindowsWindow::ApplyCursorMode(bool forceClip) noexcept
+            {
+                // Clipは共有resource。外部変更された矩形を自分のものとして解除しない。
+                if(m_OwnsCursorClip)
+                {
+                    RECT current{};
+                    if(!GetClipCursor(&current)) return false;
+                    if(!EqualRect(&current,&m_LastCursorClip)) m_OwnsCursorClip=false;
+                }
+                // message処理前の同期でも、別applicationが既にforegroundなら再獲得しない。
+                auto mode=HasNativeInputFocus() && IsWindowVisible(m_hWnd) && !IsIconic(m_hWnd)
+                    ? m_RequestedCursorMode : ECursorMode::Normal;
+                RECT clip{};
+                bool confine=mode==ECursorMode::Confined || mode==ECursorMode::Locked;
+                if(confine)
+                {
+                    if(!GetClientRect(m_hWnd,&clip)) return false;
+                    if(clip.right<=clip.left || clip.bottom<=clip.top) { mode=ECursorMode::Normal;confine=false; }
+                    else
+                    {
+                        POINT topLeft{clip.left,clip.top},bottomRight{clip.right,clip.bottom};
+                        if(!ClientToScreen(m_hWnd,&topLeft) || !ClientToScreen(m_hWnd,&bottomRight)) return false;
+                        clip={topLeft.x,topLeft.y,bottomRight.x,bottomRight.y};
+                    }
+                }
+                const bool geometryChanged=confine && (forceClip || !m_OwnsCursorClip || !EqualRect(&clip,&m_LastCursorClip));
+                if(confine)
+                {
+                    if(geometryChanged && !ClipCursor(&clip)) return false;
+                    m_OwnsCursorClip=true;m_LastCursorClip=clip;
+                }
+                else if(m_OwnsCursorClip)
+                {
+                    if(!ClipCursor(nullptr)) return false;
+                    m_OwnsCursorClip=false;
+                }
+                const bool modeChanged=m_EffectiveCursorMode!=mode;
+                m_EffectiveCursorMode=mode;
+                if(modeChanged || geometryChanged)
+                {
+                    // Clipによる自動移動を次のlegacy入力で物理移動として扱わない。
+                    if(Engine::GEngine && Engine::GEngine->GetMainWindow()==this)
+                        Engine::GEngine->GetInputSystem().ResetAbsoluteMouseTracking();
+                    UpdateCursorAppearance();
+                }
+                return true;
+            }
+
+            void WindowsWindow::UpdateCursorAppearance() noexcept
+            {
+                POINT screen{};
+                if(!m_hWnd || !GetCursorPos(&screen) || WindowFromPoint(screen)!=m_hWnd) return;
+                POINT client=screen;RECT bounds{};
+                if(!ScreenToClient(m_hWnd,&client) || !GetClientRect(m_hWnd,&bounds) || !PtInRect(&bounds,client)) return;
+                if(HasNativeInputFocus() && (m_EffectiveCursorMode==ECursorMode::Hidden || m_EffectiveCursorMode==ECursorMode::Locked))
+                    SetCursor(nullptr);
+                else
+                {
+                    auto cursor=reinterpret_cast<HCURSOR>(GetClassLongPtr(m_hWnd,GCLP_HCURSOR));
+                    if(!cursor) cursor=LoadCursor(nullptr,IDC_ARROW);
+                    SetCursor(cursor);
+                }
+            }
+
+            bool WindowsWindow::SetRawMouseEnabled(bool enabled) noexcept
+            {
+                // OSの解除に失敗しても、disconnect後の入力配送は即座に止める。
+                m_RawMouseEnabled=false;m_RawMouseTracker.Clear();
+                if(!enabled && !m_OwnsRawMouseRegistration) return true;
+                if(enabled && (!m_hWnd || !Engine::GEngine || Engine::GEngine->GetMainWindow()!=this)) return false;
+                RAWINPUTDEVICE devices[256]{};
+                UINT capacity=256;
+                const UINT count=GetRegisteredRawInputDevices(devices,&capacity,sizeof(RAWINPUTDEVICE));
+                if(count==static_cast<UINT>(-1) || count>256) return false;
+                const RAWINPUTDEVICE* mouse=nullptr;
+                bool pageWide=false;
+                for(UINT i=0;i<count;++i)
+                {
+                    if(devices[i].usUsagePage!=1) continue;
+                    if(devices[i].usUsage==2) mouse=&devices[i];
+                    if(devices[i].usUsage==0 && (devices[i].dwFlags & RIDEV_PAGEONLY)!=0) pageWide=true;
+                }
+                const bool owns=mouse && m_OwnsRawMouseRegistration && mouse->hwndTarget==m_hWnd && mouse->dwFlags==RIDEV_DEVNOTIFY;
+                if(!owns) m_OwnsRawMouseRegistration=false;
+                if(!enabled)
+                {
+                    // page-wide/foreign登録には触れず、一致した自分のmouse entryだけ解除する。
+                    if(owns)
+                    {
+                        RAWINPUTDEVICE remove{1,2,RIDEV_REMOVE,nullptr};
+                        if(!RegisterRawInputDevices(&remove,1,sizeof(remove))) return false;
+                    }
+                    m_OwnsRawMouseRegistration=false;return true;
+                }
+                if(pageWide) return false; // PAGEONLYもmouse classを包含する。
+                if(mouse)
+                {
+                    m_RawMouseEnabled=owns;return owns;
+                }
+                RAWINPUTDEVICE request{1,2,RIDEV_DEVNOTIFY,m_hWnd};
+                if(!RegisterRawInputDevices(&request,1,sizeof(request))) return false;
+                m_OwnsRawMouseRegistration=true;m_RawMouseEnabled=true;return true;
+            }
+
+            void WindowsWindow::HandleRawMouseInput(HRAWINPUT handle,Input::InputSystem& input)
+            {
+                RAWINPUT raw{};
+                UINT size=sizeof(raw);
+                const UINT read=GetRawInputData(handle,RID_INPUT,&raw,&size,sizeof(RAWINPUTHEADER));
+                if(read==static_cast<UINT>(-1) || read>sizeof(raw) ||
+                    read<offsetof(RAWINPUT,data)+sizeof(RAWMOUSE) || raw.header.dwSize!=read || raw.header.dwType!=RIM_TYPEMOUSE) return;
+                const auto device=reinterpret_cast<uintptr_t>(raw.header.hDevice);
+                RawMouseDelta delta;
+                if((raw.data.mouse.usFlags & MOUSE_ATTRIBUTES_CHANGED)!=0) m_RawMouseTracker.Forget(device);
+                if((raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE)!=0)
+                {
+                    const bool virtualDesktop=(raw.data.mouse.usFlags & MOUSE_VIRTUAL_DESKTOP)!=0;
+                    RawMouseDesktop desktop;
+                    desktop.Virtual=virtualDesktop;
+                    desktop.Left=virtualDesktop ? GetSystemMetrics(SM_XVIRTUALSCREEN) : 0;
+                    desktop.Top=virtualDesktop ? GetSystemMetrics(SM_YVIRTUALSCREEN) : 0;
+                    desktop.Width=GetSystemMetrics(virtualDesktop ? SM_CXVIRTUALSCREEN : SM_CXSCREEN);
+                    desktop.Height=GetSystemMetrics(virtualDesktop ? SM_CYVIRTUALSCREEN : SM_CYSCREEN);
+                    if(!m_RawMouseTracker.Absolute(device,raw.data.mouse.lLastX,raw.data.mouse.lLastY,desktop,delta))
+                    {
+                        m_RawMouseTracker.Forget(device);return;
+                    }
+                }
+                else delta=m_RawMouseTracker.Relative(device,raw.data.mouse.lLastX,raw.data.mouse.lLastY);
+                // button/wheelはlegacy messageで一度だけ供給する。
+                if(delta.X!=0 || delta.Y!=0) (void)input.InjectRawMouseDelta(delta.X,delta.Y);
+            }
+
+            bool WindowsWindow::ShouldTranslateKeyMessage(WPARAM key,LPARAM flags) const
+            {
+                if(!m_InputFocused || key>=256 || !Engine::GEngine || Engine::GEngine->GetMainWindow()!=this) return false;
+                const bool repeat=(flags & 0x40000000)!=0;
+                if(!m_KeyRepeatGate.CanTranslate(static_cast<uint32_t>(key),repeat)) return false;
+                const auto code=TranslateWindowsKeyCode(key);
+                return !repeat || code==Input::KeyCode::None || Engine::GEngine->GetInputSystem().GetState().IsKeyDown(code);
+            }
+
+            void WindowsWindow::SetInputFocused(bool focused) noexcept
+            {
+                if(m_InputFocused==focused) return;
+                m_InputFocused=focused;
+                m_KeyRepeatGate.Clear();
+                m_RawMouseTracker.Clear();
+                (void)ApplyCursorMode();
+                try { NotifyInputFocusChanged(focused); }
+                catch(...)
+                {
+                    // 新しいfocus配送の例外をWin32のcallback境界から出さない。
+                    if(Engine::GEngine) Engine::GEngine->RequestExit(1);
+                    try { NORVES_LOG_ERROR("WindowsWindow","入力focus通知に失敗したため終了を要求しました"); }
+                    catch(...) {}
+                }
             }
 
             bool WindowsWindow::RegisterWindowClass()
@@ -304,6 +553,9 @@ namespace NorvesLib
 
             void WindowsWindow::Destroy()
             {
+                SetInputFocused(false);
+                (void)SetCursorMode(ECursorMode::Normal);
+                (void)SetRawMouseEnabled(false);
                 // ウィンドウが存在する場合のみ
                 if (m_hWnd)
                 {
@@ -323,6 +575,7 @@ namespace NorvesLib
 
             void WindowsWindow::Hide()
             {
+                SetInputFocused(false);
                 if (m_hWnd)
                 {
                     ShowWindow(m_hWnd, SW_HIDE);

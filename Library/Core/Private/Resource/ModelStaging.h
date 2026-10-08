@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Container/Containers.h"
+#include "ModelMaterialStaging.h"
 #include "Rendering/GpuResourceTypes.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/ProceduralMeshGenerator.h"
@@ -12,7 +13,12 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace NorvesLib::Core::Resource::ModelStaging
+namespace NorvesLib::Core::AssetImport
+{
+    struct ImportSettingsFileOptions;
+}
+
+namespace NorvesLib::Core::ResourceIO::ModelStaging
 {
     struct TextureReference
     {
@@ -68,6 +74,7 @@ namespace NorvesLib::Core::Resource::ModelStaging
         Container::String DebugName;
         Container::String ResolvedPath;
         MaterialTextureInfo TextureReferences;
+        ImportedMaterialStaging ImportedMaterial;
 
         StagedTextureData AlbedoTexture;
         StagedTextureData NormalTexture;
@@ -76,9 +83,32 @@ namespace NorvesLib::Core::Resource::ModelStaging
         StagedTextureData MetallicTexture;
     };
 
+    // GPUを作らずloose glTFをCPU stagingへ変換する。成功時だけ出力を置換する。
+    bool BuildModelStagingFromLooseGltf(const Container::String& requestPath,
+                                      const Container::String& resolvedPath,
+                                      ModelStagingData& outStaging,
+                                      const char* role,
+                                      uint32_t requestId,
+                                      const AssetImport::ImportSettingsFileOptions* importOptions = nullptr);
+
     size_t GetStagedLooseTextureBytes(const ModelStagingData& staging);
     uint32_t GetStagedPreparedTextureCount(const ModelStagingData& staging);
     uint32_t GetStagedTextureCount(const ModelStagingData& staging);
+
+    // PNG/JPEG bytesを所有CPU stagingへ復号する。GPUは作らず、falseでは既存出力を保つ。
+    bool StageStandardTextureBytes(Container::Span<const uint8_t> bytes,
+                                   const Container::String& debugName,
+                                   StagedTextureData& outTexture,
+                                   const char* role,
+                                   uint32_t requestId);
+    // ARMの3出力は互いに異なるobjectを指定する。
+    bool StageArmTextureBytes(Container::Span<const uint8_t> bytes,
+                              const Container::String& debugNamePrefix,
+                              StagedTextureData& outAOTexture,
+                              StagedTextureData& outRoughnessTexture,
+                              StagedTextureData& outMetallicTexture,
+                              const char* role,
+                              uint32_t requestId);
 
     bool StageStandardTexture(const TextureReference& textureReference,
                               const Container::String& debugName,
@@ -97,8 +127,14 @@ namespace NorvesLib::Core::Resource::ModelStaging
                         const char* role,
                         uint32_t requestId,
                         const char* stage);
+    enum class ModelFinalizeStatus : uint8_t
+    {
+        Failed,
+        Success,
+        UnsupportedImportedMaterial
+    };
+    // outStatusは呼出結果で置換する。未対応材質の早期拒否を、resource失敗と区別できる。
     Rendering::ModelHandle FinalizeModelStaging(const ModelStagingData& staging,
-                                                Rendering::ModelLoadResourceContext resources,
-                                                const char* role,
-                                                uint32_t requestId);
-} // namespace NorvesLib::Core::Resource::ModelStaging
+                                                Rendering::ModelLoadResourceContext resources, const char* role,
+                                                uint32_t requestId, ModelFinalizeStatus* outStatus = nullptr);
+} // namespace NorvesLib::Core::ResourceIO::ModelStaging

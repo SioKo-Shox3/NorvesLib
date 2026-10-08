@@ -1,0 +1,343 @@
+name: AssetCook Windows CLI
+
+on:
+  # 手動操作か、ロードマップの区切りを明示したcommitだけを検証する。
+  workflow_dispatch:
+  push:
+    branches: [feature/game-asset-import]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: windows-assetcook-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cli-baseline:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[validate-assets]') || contains(github.event.head_commit.message, '[validate-merge]') }}
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONUTF8: '1'
+      NORVES_MERGE_VALIDATION: ${{ contains(github.event.head_commit.message, '[validate-merge]') }}
+      SDK_VERSION: 1.4.309.0
+      SDK_ROOT: C:\VulkanSDK\1.4.309.0
+    steps:
+      # 外部actionも版を固定し、checkoutの認証を作業treeに残さない。
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          submodules: recursive
+          fetch-depth: 1
+      - name: 検証環境を記録する
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'NorvesWindowsLogs'
+          New-Item -ItemType Directory -Path $log -Force | Out-Null
+          "NORVES_CI_LOG=$log" >> $env:GITHUB_ENV
+          $capture = Join-Path $env:RUNNER_TEMP "NorvesCliBefore-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          "NORVES_CI_CAPTURE=$capture" >> $env:GITHUB_ENV
+          "NORVES_CI_BASELINE=$(Join-Path $env:RUNNER_TEMP 'NorvesCliBaseline')" >> $env:GITHUB_ENV
+          "commit=$env:GITHUB_SHA`nimage=$env:ImageVersion`nconfiguration=Release" | Set-Content "$log/provenance.txt"
+          git rev-parse HEAD | Tee-Object -FilePath "$log/provenance.txt" -Append
+          if ($LASTEXITCODE -ne 0) { throw 'git rev-parse failed' }
+          git submodule status --recursive | Tee-Object -FilePath "$log/provenance.txt" -Append
+          if ($LASTEXITCODE -ne 0) { throw 'submodule status failed' }
+          cmake --version | Tee-Object -FilePath "$log/provenance.txt" -Append
+          if ($LASTEXITCODE -ne 0) { throw 'cmake unavailable' }
+          python --version | Tee-Object -FilePath "$log/provenance.txt" -Append
+          if ($LASTEXITCODE -ne 0) { throw 'python unavailable' }
+          $PSVersionTable.PSVersion.ToString() | Add-Content "$log/provenance.txt"
+      - name: 固定した分割前基準を取得する
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          artifact-ids: '11302304928'
+          run-id: '37200047966'
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/NorvesCliFrozenBefore
+      - name: 基準snapshotと実行ファイルを固定hashで照合する
+        run: |
+          $receipt = Get-Content Docs/AssetCookCliFrozenBaseline.json -Raw | ConvertFrom-Json
+          $reference = Join-Path $env:RUNNER_TEMP 'NorvesCliFrozenBefore'
+          if ($receipt.run_id -ne 37200047966 -or $receipt.before_artifact_id -ne 11302304928) { throw 'Frozen baseline identity mismatch' }
+          if ((Get-FileHash "$reference/snapshot/snapshot.json" -Algorithm SHA256).Hash -ne $receipt.snapshot_sha256) { throw 'Frozen snapshot hash mismatch' }
+          if ((Get-FileHash "$reference/AssetCook.exe" -Algorithm SHA256).Hash -ne $receipt.asset_cook_sha256) { throw 'Frozen AssetCook hash mismatch' }
+          if ((Get-FileHash "$reference/CookedMeshTest.exe" -Algorithm SHA256).Hash -ne $receipt.test_executable_sha256) { throw 'Frozen test executable hash mismatch' }
+      - name: 基準payloadとWindows入力recipeを先行検証する
+        run: |
+          @'
+          import os, runpy
+          from pathlib import Path
+          p = runpy.run_path("Scripts/AssetCookCliParity.py")
+          source = Path.cwd()
+          meta, files = p["load_snapshot"](Path(os.environ["RUNNER_TEMP"]) / "NorvesCliFrozenBefore/snapshot")
+          scripts = [source / "Tools/AssetCook" / f"AssetCook{x}Smoke.cmake.in" for x in p["SMOKES"]]
+          scripts.append(source / "Test/Core/Asset/CookedSkeletalAssetTest.cmake.in")
+          if len(files) != 79:
+              raise SystemExit("Frozen payload inventory mismatch")
+          # G2分割の旧bytes一致はc1690c/run37652726746で確定済み。
+          # mainはクラスタ化を変更しているので、統合では旧出力同一性ではなく現在のCLI smokeを検証する。
+          if os.environ.get("NORVES_MERGE_VALIDATION") != "true":
+              if meta["recipe"] != p["build_recipe"](source, scripts):
+                  raise SystemExit("Frozen recipe mismatch")
+              print("Frozen 79-file snapshot and Windows recipe verified")
+          else:
+              print("Frozen 79-file snapshot verified; merged CLI behavior uses current smoke contracts")
+          '@ | python - 2>&1 | Tee-Object "$env:NORVES_CI_LOG/frozen-preflight.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen baseline preflight failed' }
+      - name: 固定した旧texture spec基準を取得する
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          artifact-ids: '11303728946'
+          run-id: '37205025949'
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/NorvesTextureLegacyReference
+      - name: 公式Vulkan SDKを検証して配置する
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:SDK_VERSION
+          $file = "VulkanSDK-$version-Installer.exe"
+          $expectedSha = '48b132169b64fe65cdb0f20970195335a65354e73f1ea5373032c2a8bbad4297'
+          $receipt = Invoke-RestMethod "https://vulkan.lunarg.com/sdk/sha/$version/windows/$file.json"
+          if ($receipt.version -ne $version -or $receipt.platform -ne 'windows' -or $receipt.file -ne $file -or $receipt.sha -ne $expectedSha) { throw 'Invalid SDK checksum receipt' }
+          $receipt | ConvertTo-Json | Set-Content "$env:NORVES_CI_LOG/sdk-checksum.json"
+          $installer = Join-Path $env:RUNNER_TEMP 'vulkan_sdk.exe'
+          Invoke-WebRequest "https://sdk.lunarg.com/sdk/download/$version/windows/$file" -OutFile $installer
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne $receipt.sha) { throw 'SDK checksum mismatch' }
+          # 2026-10-04作者承認済み。copy_onlyでシステム登録やPATHの恒久変更を避ける。
+          $install = Start-Process -FilePath $installer -ArgumentList @('--root', $env:SDK_ROOT, '--accept-licenses', '--default-answer', '--confirm-command', 'install', 'com.lunarg.vulkan.debug', 'copy_only=1') -Wait -PassThru -RedirectStandardOutput "$env:NORVES_CI_LOG/sdk-install.stdout.log" -RedirectStandardError "$env:NORVES_CI_LOG/sdk-install.stderr.log"
+          "sdk_exit=$($install.ExitCode)" | Add-Content "$env:NORVES_CI_LOG/provenance.txt"
+          if ($install.ExitCode -ne 0) { throw "SDK install failed: $($install.ExitCode)" }
+          foreach ($relative in @('Include/vulkan/vulkan.h','Lib/vulkan-1.lib','Lib/shaderc_combined.lib','Lib/shaderc_combinedd.lib')) {
+            if (!(Test-Path (Join-Path $env:SDK_ROOT $relative) -PathType Leaf)) { throw "Missing SDK file: $relative" }
+          }
+          "VULKAN_SDK=$env:SDK_ROOT" >> $env:GITHUB_ENV
+          "$env:SDK_ROOT/Bin" >> $env:GITHUB_PATH
+      - name: 比較器の単体試験を実行する
+        run: |
+          python Test/Tools/AssetCookCliParityTest.py -v 2>&1 | Tee-Object "$env:NORVES_CI_LOG/comparator.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Comparator tests failed' }
+          python -O Test/Tools/AssetCookCliParityTest.py -q 2>&1 | Tee-Object -Append "$env:NORVES_CI_LOG/comparator.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized comparator tests failed' }
+      - name: native texture比較器の拒否契約を検証する
+        run: |
+          python -B Test/Tools/TextureAssetSetVerifyTest.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Texture comparator tests failed' }
+          python -B -O Test/Tools/TextureAssetSetVerifyTest.py -q
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized texture comparator tests failed' }
+          python -B Test/Tools/TextureManagedEvidenceTest.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Managed metadata verifier tests failed' }
+          python -B -O Test/Tools/TextureManagedEvidenceTest.py -q
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized managed metadata verifier tests failed' }
+      - name: 実Coreを含む構成を生成する
+        run: |
+          cmake -S . -B build/windows-cli -G 'Visual Studio 17 2022' -A x64 -DNORVES_BUILD_TESTS=ON 2>&1 | Tee-Object "$env:NORVES_CI_LOG/configure.log"
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed' }
+      - name: AssetCookとテストbundleをビルドする
+        id: native_build
+        run: |
+          cmake --build build/windows-cli --config Release --target AssetCook AssetSystemTest RenderResourcesDomainContractTest JobSystemShutdownTest CookedMeshTest ResourceRegistryTest MegaGeometryResourcesTest ModelResourcesAssetRuntimeTest SkeletalAnimationSamplingTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/build.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Native build failed' }
+      - name: CPU契約を実行する
+        run: |
+          $env:NORVES_CLIPBANK_V1_OUTPUT = "$env:NORVES_CI_LOG/clipbank-v1-Release"
+          $env:NORVES_RIG_SPLIT_V1_OUTPUT = "$env:NORVES_CI_LOG/rig-split-v1-Release"
+          $env:NORVES_ROOT_FRAME_V2_OUTPUT = "$env:NORVES_CI_LOG/root-frame-v2-Release"
+          ctest --test-dir build/windows-cli -C Release --output-on-failure --no-tests=error -R '^(AssetFileReaderTest|VisibilityMaterialTableTest|AssetCookTextureSmoke|AssetCookMeshSmoke|JobSystemShutdownTest|SkeletalAnimationSamplingTest|CookedMeshTest|CookedMeshV1Test|CookedTextureTest|AudioCookedAssetTest|MaterialSelectionTest|ArmChannelFoldTest|MaterialImportSettingsJsonTest|GltfMaterialSourceJsonTest|UnicodeTextTest|StringEmptyTest|JsonUnicodeInputTest|MaterialImportDocumentTest|SingleAssetCookServiceTest|TextureAssetSetSpecTest|TextureManagedCliTest|SkeletalJointIndexTest|SkeletalBindRowMathTest|SkeletalJointGlobalRowMathTest|SkeletalJointMappingTest|SkeletalCoordinateConversionTest|SkeletalRotationRetargetTest|SkeletalRotationRetargetNativeTest|SkeletalBvhClipTimeTest|SkeletalBvhClipImportTest|SkeletalBvhCookBridgeTest|SkeletalAssetLoaderTest|SkeletalAssetPublicationTest|SkeletalAssetRuntimeTest|SkeletalAssetSessionTest|CookedClipBankV1Test|SkeletalClipBankBindingTest|CookedSkeletonV1Test|CookedSkinMeshV1Test|RigSplitCookTest|SkeletalSplitAssetLoaderTest|SkeletalSplitPublicationTest|SkeletalSplitRuntimeTest|RigStaticRootFrameImportTest|RigStaticRootFrameWireTest|RigStaticRootFrameRuntimeTest|ResourceRegistryTest|ResourceMetadataTest|SkeletalResourceLifetimeTest|SkeletalAssetResourceTest|BvhEvaluateTest|BvhDecodeTest|GltfMaterialCookV1Test|ImportedMaterialStagingTest|ImportedOpaqueRuntimeTest|MegaGeometryResourcesTest|ModelResourcesAssetRuntimeTest|TextureAssetSetOutputTest|ImportStaticIntegrationTest|CookManagedBootstrapTest|CookManagedUpdateTest|CookManagedTransactionIntentTest|CookManagedStoreInitializationTest|CookManagedStoreObservationTest|CookManagedUpdateInventoryTest|CookDestinationLockTest|CookOwnerResolverTest|CookOwnerBindingTest|CookOutputSetGuardTest|CookOutputPlanTest|CookStateFileTest|CookOwnedStateTest|ModelNativePathTest|CookCacheDecisionTest|CookOutputPackageTest|CookDependencySnapshotTest|ImportSettingsFileTest|GltfBufferSetTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/ctest.log"
+          if ($LASTEXITCODE -ne 0) { throw 'CPU contracts failed' }
+          Remove-Item Env:NORVES_CLIPBANK_V1_OUTPUT
+          Remove-Item Env:NORVES_RIG_SPLIT_V1_OUTPUT
+          Remove-Item Env:NORVES_ROOT_FRAME_V2_OUTPUT
+      - name: 分離rigの実CLIを確認する
+        if: ${{ !cancelled() && steps.native_build.outcome == 'success' }}
+        run: |
+          python -B Test/Tools/AssetCookRigSplitSmoke.py --assetcook build/windows-cli/Tools/AssetCook/Release/AssetCook.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Rig split CLI smoke failed' }
+      - name: Role Profileの実Windows CLIを検証する
+        run: |
+          python -B Scripts/AssetCookRoleProfileSmoke.py --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --output "$env:RUNNER_TEMP/NorvesRoleProfileCli" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/role-profile-cli.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Role Profile real CLI contracts failed' }
+      - name: Role Profileの専用出力と記録を保存する
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: role-profile-cli-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/NorvesRoleProfileCli/
+      - name: 分割後の実CLI出力を採取する
+        if: env.NORVES_MERGE_VALIDATION != 'true'
+        id: capture
+        run: |
+          python Scripts/AssetCookCliParity.py capture --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --skeletal-test-exe build/windows-cli/Test/Core/Asset/Release/CookedMeshTest.exe --output "$env:NORVES_CI_CAPTURE" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/capture.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Actual CLI capture failed' }
+          $snapshot = Get-Content "$env:NORVES_CI_CAPTURE/snapshot/snapshot.json" -Raw | ConvertFrom-Json
+          $exe = 'build/windows-cli/Tools/AssetCook/Release/AssetCook.exe'
+          $test = 'build/windows-cli/Test/Core/Asset/Release/CookedMeshTest.exe'
+          if ((Get-FileHash $exe -Algorithm SHA256).Hash -ne $snapshot.metadata.asset_cook_sha256 -or (Get-FileHash $test -Algorithm SHA256).Hash -ne $snapshot.metadata.skeletal_test_sha256) { throw 'Captured executable hash changed' }
+          New-Item -ItemType Directory "$env:NORVES_CI_BASELINE" | Out-Null
+          Copy-Item "$env:NORVES_CI_CAPTURE/snapshot" "$env:NORVES_CI_BASELINE/snapshot" -Recurse
+          Copy-Item $exe,$test,"$env:NORVES_CI_LOG/provenance.txt","$env:NORVES_CI_LOG/sdk-checksum.json" "$env:NORVES_CI_BASELINE/"
+      - name: 分割前後の全出力をbyte比較する
+        if: env.NORVES_MERGE_VALIDATION != 'true'
+        id: parity
+        run: |
+          python Scripts/AssetCookCliParity.py compare "$env:RUNNER_TEMP/NorvesCliFrozenBefore/snapshot" "$env:NORVES_CI_CAPTURE/snapshot" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/parity.log"
+          if ($LASTEXITCODE -ne 0) { throw 'CLI byte parity failed' }
+      - name: native asset-setを旧PS1の全出力と比較する
+        id: texture_parity
+        run: |
+          python -B Scripts/VerifyTextureAssetSet.py --source . --exe build/windows-cli/Tools/AssetCook/Release/AssetCook.exe --reference "$env:RUNNER_TEMP/NorvesTextureLegacyReference" --output "$env:RUNNER_TEMP/NorvesTextureNative" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/texture-native.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Native texture asset-set contracts failed' }
+      - name: native asset-setの一致した出力と記録を保存する
+        if: steps.texture_parity.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: texture-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/NorvesTextureNative/native1/Rendering3DTestSilverTextures/
+            ${{ runner.temp }}/NorvesTextureNative/native1/Rendering3DTestSilverGltfTextures/
+            ${{ runner.temp }}/NorvesTextureNative/managed/
+            ${{ runner.temp }}/NorvesTextureNative/verification.json
+            ${{ runner.temp }}/NorvesTextureNative/ascii-ps51.json
+            ${{ runner.temp }}/NorvesTextureNative/ascii-probe/manifest.json
+      - name: SamplerのDebugとReleaseを固定した旧出力と比較する
+        run: |
+          python -B Test/Tools/SkeletalSamplerBaselineTest.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Sampler snapshot verifier tests failed' }
+          python -B -O Test/Tools/SkeletalSamplerBaselineTest.py -q
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized sampler snapshot verifier tests failed' }
+          python -B Test/Tools/SkeletalSamplerCompareTest.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Sampler frozen comparator tests failed' }
+          python -B -O Test/Tools/SkeletalSamplerCompareTest.py -q
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized sampler frozen comparator tests failed' }
+          cmake --build build/windows-cli --config Debug --target SkeletalAnimationSamplingTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/sampler-build-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Sampler Debug build failed' }
+          foreach ($config in @('Debug', 'Release')) {
+            $exe = "build/windows-cli/Test/Core/Rendering/$config/SkeletalAnimationSamplingTest.exe"
+            foreach ($repeat in @(1, 2)) {
+              & $exe --capture-pose-snapshot "$env:NORVES_CI_LOG/sampler-$config-$repeat.bin" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/sampler-$config-$repeat.log"
+              if ($LASTEXITCODE -ne 0) { throw "Sampler $config capture failed" }
+            }
+            python -B Scripts/SkeletalSamplerCompare.py --source . --build build/windows-cli --configuration $config --first "$env:NORVES_CI_LOG/sampler-$config-1.bin" --second "$env:NORVES_CI_LOG/sampler-$config-2.bin" --exe $exe --core "build/windows-cli/Library/Core/$config/Core.lib" --output "$env:NORVES_CI_LOG/sampler-$config-receipt.json" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/sampler-$config-receipt.log"
+            if ($LASTEXITCODE -ne 0) { throw "Sampler $config provenance failed" }
+          }
+      - name: 移動した日本語診断のUTF-8 byteを照合する
+        run: |
+          @'
+          import json, os
+          from pathlib import Path
+          receipt = json.loads(Path("Docs/AssetCookCliFrozenBaseline.json").read_text(encoding="utf-8"))
+          before = (Path(os.environ["RUNNER_TEMP"]) / "NorvesCliFrozenBefore/AssetCook.exe").read_bytes()
+          after = Path("build/windows-cli/Tools/AssetCook/Release/AssetCook.exe").read_bytes()
+          for encoded in receipt["diagnostic_utf8_hex"]:
+              literal = bytes.fromhex(encoded) + b"\0"
+              if before.count(literal) != 1 or after.count(literal) != 1:
+                  raise SystemExit("Moved diagnostic UTF-8 byte mismatch")
+          print("All 5 moved diagnostic literals preserve frozen UTF-8 bytes")
+          '@ | python - 2>&1 | Tee-Object "$env:NORVES_CI_LOG/diagnostic-parity.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic byte parity failed' }
+      - name: 骨格ローダのDebug契約とprofileログを検証する
+        run: |
+          cmake --build build/windows-cli --config Debug --target CookedMeshTest ResourceRegistryTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/skeletal-loader-build-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Skeletal loader Debug build failed' }
+          & build/windows-cli/Test/Core/Asset/Debug/CookedMeshTest.exe --test=SkeletalAssetLoaderTest 2>&1 | Tee-Object "$env:NORVES_CI_LOG/skeletal-loader-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Skeletal loader Debug contracts failed' }
+          & build/windows-cli/Test/Core/Asset/Debug/CookedMeshTest.exe --test=SkeletalAssetPublicationTest 2>&1 | Tee-Object "$env:NORVES_CI_LOG/skeletal-publication-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Skeletal publication Debug contracts failed' }
+          & build/windows-cli/Test/Core/Asset/Debug/CookedMeshTest.exe --test=SkeletalAssetRuntimeTest 2>&1 | Tee-Object "$env:NORVES_CI_LOG/skeletal-runtime-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Skeletal event runtime Debug contracts failed' }
+          & build/windows-cli/Test/Core/Asset/Debug/CookedMeshTest.exe --test=SkeletalAssetSessionTest 2>&1 | Tee-Object "$env:NORVES_CI_LOG/skeletal-owner-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Skeletal owner lifecycle Debug contracts failed' }
+          $env:NORVES_CLIPBANK_V1_OUTPUT = "$env:NORVES_CI_LOG/clipbank-v1-Debug"
+          & build/windows-cli/Test/Core/Asset/Debug/CookedMeshTest.exe --test=CookedClipBankV1Test 2>&1 | Tee-Object "$env:NORVES_CI_LOG/clipbank-v1-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'ClipBank v1 wire Debug contracts failed' }
+          & build/windows-cli/Test/Core/Asset/Debug/CookedMeshTest.exe --test=SkeletalClipBankBindingTest 2>&1 | Tee-Object "$env:NORVES_CI_LOG/clipbank-binding-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'ClipBank v1 binding Debug contracts failed' }
+          Remove-Item Env:NORVES_CLIPBANK_V1_OUTPUT
+          $env:NORVES_RIG_SPLIT_V1_OUTPUT = "$env:NORVES_CI_LOG/rig-split-v1-Debug"
+          foreach ($member in @('CookedSkeletonV1Test','CookedSkinMeshV1Test','RigSplitCookTest','SkeletalSplitAssetLoaderTest','SkeletalSplitPublicationTest','SkeletalSplitRuntimeTest')) {
+            & build/windows-cli/Test/Core/Asset/Debug/CookedMeshTest.exe "--test=$member" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/$member-Debug.log"
+            if ($LASTEXITCODE -ne 0) { throw "Split rig Debug failed: $member" }
+          }
+          Remove-Item Env:NORVES_RIG_SPLIT_V1_OUTPUT
+          $env:NORVES_ROOT_FRAME_V2_OUTPUT = "$env:NORVES_CI_LOG/root-frame-v2-Debug"
+          foreach ($member in @('RigStaticRootFrameImportTest','RigStaticRootFrameWireTest','RigStaticRootFrameRuntimeTest')) {
+            & build/windows-cli/Test/Core/Asset/Debug/CookedMeshTest.exe "--test=$member" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/$member-Debug.log"
+            if ($LASTEXITCODE -ne 0) { throw "Root-frame profile Debug failed: $member" }
+          }
+          Remove-Item Env:NORVES_ROOT_FRAME_V2_OUTPUT
+          python -B Test/Tools/RigRootFrameV2Oracle.py --self-test --skeleton "$env:NORVES_CI_LOG/root-frame-v2-Release/skeleton-p2.nvskel" --skeleton "$env:NORVES_CI_LOG/root-frame-v2-Debug/skeleton-p2.nvskel" --mesh "$env:NORVES_CI_LOG/root-frame-v2-Release/mesh-p2.nvskel" --mesh "$env:NORVES_CI_LOG/root-frame-v2-Debug/mesh-p2.nvskel" --bank "$env:NORVES_CI_LOG/root-frame-v2-Release/bank-p2.nvclip" --bank "$env:NORVES_CI_LOG/root-frame-v2-Debug/bank-p2.nvclip" --pose "$env:NORVES_CI_LOG/root-frame-v2-Release/root-frame-pose.json" --pose "$env:NORVES_CI_LOG/root-frame-v2-Debug/root-frame-pose.json" --general-pose "$env:NORVES_CI_LOG/root-frame-v2-Release/root-frame-general.json" --general-pose "$env:NORVES_CI_LOG/root-frame-v2-Debug/root-frame-general.json" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/root-frame-v2-oracle.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Root-frame profile independent oracle failed' }
+          python -B -O Test/Tools/RigRootFrameV2Oracle.py --self-test --skeleton "$env:NORVES_CI_LOG/root-frame-v2-Release/skeleton-p2.nvskel" --skeleton "$env:NORVES_CI_LOG/root-frame-v2-Debug/skeleton-p2.nvskel" --mesh "$env:NORVES_CI_LOG/root-frame-v2-Release/mesh-p2.nvskel" --mesh "$env:NORVES_CI_LOG/root-frame-v2-Debug/mesh-p2.nvskel" --bank "$env:NORVES_CI_LOG/root-frame-v2-Release/bank-p2.nvclip" --bank "$env:NORVES_CI_LOG/root-frame-v2-Debug/bank-p2.nvclip" --pose "$env:NORVES_CI_LOG/root-frame-v2-Release/root-frame-pose.json" --pose "$env:NORVES_CI_LOG/root-frame-v2-Debug/root-frame-pose.json" --general-pose "$env:NORVES_CI_LOG/root-frame-v2-Release/root-frame-general.json" --general-pose "$env:NORVES_CI_LOG/root-frame-v2-Debug/root-frame-general.json" 2>&1 | Tee-Object -Append "$env:NORVES_CI_LOG/root-frame-v2-oracle.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Root-frame profile independent oracle failed' }
+          python -B Test/Tools/RigSplitV1Oracle.py --self-test --skeleton "$env:NORVES_CI_LOG/rig-split-v1-Release/skeleton-v1.nvskel" --skeleton "$env:NORVES_CI_LOG/rig-split-v1-Debug/skeleton-v1.nvskel" --mesh "$env:NORVES_CI_LOG/rig-split-v1-Release/skinmesh-v1.nvskel" --mesh "$env:NORVES_CI_LOG/rig-split-v1-Debug/skinmesh-v1.nvskel" --pose "$env:NORVES_CI_LOG/rig-split-v1-Release/split-pose.json" --pose "$env:NORVES_CI_LOG/rig-split-v1-Debug/split-pose.json" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/rig-split-v1-oracle.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Split rig oracle failed' }
+          python -B -O Test/Tools/RigSplitV1Oracle.py --self-test --skeleton "$env:NORVES_CI_LOG/rig-split-v1-Release/skeleton-v1.nvskel" --skeleton "$env:NORVES_CI_LOG/rig-split-v1-Debug/skeleton-v1.nvskel" --mesh "$env:NORVES_CI_LOG/rig-split-v1-Release/skinmesh-v1.nvskel" --mesh "$env:NORVES_CI_LOG/rig-split-v1-Debug/skinmesh-v1.nvskel" --pose "$env:NORVES_CI_LOG/rig-split-v1-Release/split-pose.json" --pose "$env:NORVES_CI_LOG/rig-split-v1-Debug/split-pose.json" 2>&1 | Tee-Object -Append "$env:NORVES_CI_LOG/rig-split-v1-oracle.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Split rig optimized oracle failed' }
+          python -B Test/Tools/ClipBankV1Oracle.py --self-test --bank "$env:NORVES_CI_LOG/clipbank-v1-Release/clipbank-v1.nvclip" --bank "$env:NORVES_CI_LOG/clipbank-v1-Debug/clipbank-v1.nvclip" --binding "$env:NORVES_CI_LOG/clipbank-v1-Release/rest-binding.json" --binding "$env:NORVES_CI_LOG/clipbank-v1-Debug/rest-binding.json" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/clipbank-v1-oracle.log"
+          if ($LASTEXITCODE -ne 0) { throw 'ClipBank v1 independent oracle failed' }
+          python -B -O Test/Tools/ClipBankV1Oracle.py --self-test --bank "$env:NORVES_CI_LOG/clipbank-v1-Release/clipbank-v1.nvclip" --bank "$env:NORVES_CI_LOG/clipbank-v1-Debug/clipbank-v1.nvclip" --binding "$env:NORVES_CI_LOG/clipbank-v1-Release/rest-binding.json" --binding "$env:NORVES_CI_LOG/clipbank-v1-Debug/rest-binding.json" 2>&1 | Tee-Object -Append "$env:NORVES_CI_LOG/clipbank-v1-oracle.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized ClipBank v1 independent oracle failed' }
+          foreach ($test in @('ResourceRegistryTest','ResourceMetadataTest','SkeletalResourceLifetimeTest','SkeletalAssetResourceTest')) {
+            & build/windows-cli/Test/Core/Object/Debug/ResourceRegistryTest.exe "--test=$test" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/$test-Debug.log"
+            if ($LASTEXITCODE -ne 0) { throw "Registry Debug contract failed: $test" }
+          }
+      - name: 有限ジョブ投入と既存非同期経路をDebugで検証する
+        run: |
+          cmake --build build/windows-cli --config Debug --target JobSystemShutdownTest ModelResourcesAssetRuntimeTest AssetRuntimeSnapshotReloadTest -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/finite-submit-build-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Finite submission Debug build failed' }
+          & build/windows-cli/Test/Thread/Debug/JobSystemShutdownTest.exe 2>&1 | Tee-Object "$env:NORVES_CI_LOG/finite-submit-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Finite submission Debug contracts failed' }
+          foreach ($test in @('ModelResourcesAssetRuntimeTest','ModelAsyncLoadQueueTest')) {
+            & build/windows-cli/Test/Core/Rendering/Debug/ModelResourcesAssetRuntimeTest.exe "--test=$test" 2>&1 | Tee-Object "$env:NORVES_CI_LOG/$test-Debug.log"
+            if ($LASTEXITCODE -ne 0) { throw "Model async Debug contract failed: $test" }
+          }
+          & build/windows-cli/Test/Core/Rendering/Debug/AssetRuntimeSnapshotReloadTest.exe 2>&1 | Tee-Object "$env:NORVES_CI_LOG/AssetRuntimeSnapshotReloadTest-Debug.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Snapshot reload Debug contracts failed' }
+      - name: 製品owner配線のsource契約とGameを検証する
+        run: |
+          python -B Test/Tools/SkeletalOwnerWiringTest.py -v 2>&1 | Tee-Object "$env:NORVES_CI_LOG/skeletal-owner-source.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Skeletal owner source contracts failed' }
+          python -B -O Test/Tools/SkeletalOwnerWiringTest.py -v 2>&1 | Tee-Object -Append "$env:NORVES_CI_LOG/skeletal-owner-source.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized skeletal owner source contracts failed' }
+          & Scripts/Test-M9World.ps1 -ContractOnly -ReviewContract All 2>&1 | Tee-Object "$env:NORVES_CI_LOG/m9-source-contract.log"
+          $record = @{ schema = 'norves.gr83.game-build.v1'; head = $env:GITHUB_SHA; execution = 'not_run'; configurations = @() }
+          foreach ($configuration in @('Release','Debug')) {
+            cmake --build build/windows-cli --config $configuration --target Game -- /m:1 2>&1 | Tee-Object "$env:NORVES_CI_LOG/game-build-$configuration.log"
+            if ($LASTEXITCODE -ne 0) { throw "Game build failed: $configuration" }
+            $exe = "build/windows-cli/Game/$configuration/Game.exe"
+            $record.configurations += @{ configuration = $configuration; bytes = (Get-Item $exe).Length; sha256 = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant() }
+          }
+          $record | ConvertTo-Json -Depth 5 | Set-Content "$env:NORVES_CI_LOG/game-build-evidence.json" -Encoding utf8
+          Write-Output 'SKELETAL_OWNER_GAME_BUILD result=pass configurations=Debug,Release execution=not_run source=8x2 cleanup_contract=pass'
+      - name: 検証ログを保存する
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-cli-logs-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/NorvesWindowsLogs/
+            ${{ runner.temp }}/NorvesTextureNative/logs/
+            ${{ runner.temp }}/NorvesCliBefore-${{ github.run_id }}-${{ github.run_attempt }}/logs/
+            build/windows-cli/CMakeCache.txt
+            build/windows-cli/CMakeFiles/CMakeConfigureLog.yaml
+            build/windows-cli/Testing/Temporary/LastTest.log
+      - name: 7smoke成功時の比較対象を保存する
+        if: always() && steps.capture.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-cli-candidate-${{ steps.parity.outcome }}-Release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: error
+          path: ${{ env.NORVES_CI_BASELINE }}/

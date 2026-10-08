@@ -497,6 +497,8 @@ namespace NorvesLib::Core::Rendering
     private:
         friend struct DDGISnapshotContractTestAccess;
 
+        // CPUのpacket生成は実capability値を受け取る。GPU操作は行わない。
+        void GenerateDrawCommands(const RHI::DeviceCapabilities& capabilities);
         void SnapshotSceneParameters(FramePacket& packet,
                                      const RHI::DeviceCapabilities& capabilities) const;
         void UpdateFrameRevisions(FramePacket& packet);
@@ -584,13 +586,8 @@ namespace NorvesLib::Core::Rendering
 
         // 直前のゲームのフレームのパケットに書いた MegaGeometry の変換と、スキニングの変換・パレット
         // （ComponentId ごと）。次のパケットの前の値（velocity 用）にする。
-        struct PreviousSkinnedState
-        {
-            Math::Matrix4x4 WorldMatrix;
-            Container::VariableArray<Math::Matrix4x4> BonePalette;
-        };
         Container::UnorderedMap<uint64_t, Math::Matrix4x4> m_PreviousMegaGeometryWorlds;
-        Container::UnorderedMap<uint64_t, PreviousSkinnedState> m_PreviousSkinnedStates;
+        SkinnedPoseHistory m_PreviousSkinnedStates;
         uint64_t m_PreviousObjectStateFrameNumber = 0;
         bool m_bPreviousObjectStateValid = false;
         // RenderThread が記録したフレームの通し番号（ViewRenderContext::RenderFrameSerial に渡す。GameThread のフレーム番号と

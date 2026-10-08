@@ -28,12 +28,15 @@ namespace NorvesLib::Core::Animation
     struct SkeletalPoseSnapshot
     {
         Container::VariableArray<Math::Matrix4x4> BonePalette;
+        // inverse bindを含まない、Entity空間の行ベクトル行列。
+        Container::VariableArray<Math::Matrix4x4> JointModelMatrices;
         Math::AABB AnimatedBounds;
         bool bHasAnimatedBounds = false;
 
         void Clear()
         {
             BonePalette.clear();
+            JointModelMatrices.clear();
             AnimatedBounds = Math::AABB{};
             bHasAnimatedBounds = false;
         }

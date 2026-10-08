@@ -2,6 +2,7 @@
 
 #include "CoreTypes.h"
 #include "Input/InputTypes.h"
+#include "Input/GamepadTypes.h"
 
 #include <cstdint>
 
@@ -28,6 +29,10 @@ namespace NorvesLib::Core::Input
     public:
         /// オーバーレイ UI 向けの標準優先度。ゲームより上位。
         static constexpr int32_t PriorityOverlay = 1000;
+        // capture manager専用の予約順位。他controllerをこの順位へ登録しない。
+        static constexpr int32_t PriorityInputCapture = 0x7fffffff;
+        // Debug overlayのGame入力mask専用。UIはOverlay以上、GameはGame順位以下に置く。
+        static constexpr int32_t PriorityDebugOverlayMask = PriorityOverlay - 1;
         /// ゲームロジック（カメラ等）向けの標準優先度。
         static constexpr int32_t PriorityGame = 0;
 
@@ -62,6 +67,13 @@ namespace NorvesLib::Core::Input
         void DispatchMouseScroll(const MouseScrollEvent &event);
         void DispatchKey(const KeyEvent &event);
         void DispatchChar(const CharEvent &event);
+        void DispatchMouseRawMove(const MouseRawMoveEvent& event);
+        void DispatchGamepadButton(const GamepadButtonEvent& event);
+        void DispatchGamepadSample(const GamepadSampleEvent& event);
+        // 全controllerへ通知。配送中の登録/解除/再入配送は禁止。
+        void NotifyGamepadConnection(const GamepadConnectionEvent& event);
+        void NotifyInputReset();
+        void NotifyInputFocusChanged(bool focused);
 
     private:
         struct Entry

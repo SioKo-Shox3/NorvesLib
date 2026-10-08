@@ -4,8 +4,11 @@
 #include "Container/String.h"
 #include "Container/VariableArray.h"
 #include "RHI/RHITypes.h"
+#include "Delegate/Delegate.h"
 
 #include <cstdint>
+
+namespace NorvesLib { class IWindow; }
 
 namespace NorvesLib::Core::Application
 {
@@ -22,6 +25,9 @@ namespace NorvesLib::Core::Engine
     class FixedStepScheduler;
     struct FixedStepAdvanceResult;
     struct ApplicationFixedStepTestAccess;
+    struct ApplicationInputFrameTestAccess;
+    struct ApplicationInputFocusTestAccess;
+    class Engine;
 
     /**
      * @brief アプリケーション処理クラス
@@ -74,6 +80,16 @@ namespace NorvesLib::Core::Engine
 
     private:
         friend struct ApplicationFixedStepTestAccess;
+        friend struct ApplicationInputFrameTestAccess;
+        friend struct ApplicationInputFocusTestAccess;
+        friend struct ApplicationHapticsTestAccess;
+        void ConnectInputWindow(Container::TSharedPtr<NorvesLib::IWindow> window);
+        void DisconnectInputWindow();
+        void OnWindowInputFocusChanged(bool focused);
+        void QueueInputDeviceFocus(bool focused, bool resetOperations, bool notifyRouter = false);
+        bool ApplyPendingInputDeviceFocus();
+        void DispatchInputFocusEvents();
+        bool SynchronizeInputCursorMode();
 
         /**
          * @brief 1フレームの処理を実行
@@ -86,6 +102,14 @@ namespace NorvesLib::Core::Engine
          */
         bool ProcessPlatformMessages();
 
+        // handlerは呼出元が全フレーム中保持する借用参照。描画/OS処理を含まない。
+        FixedStepAdvanceResult TickSimulation(int64_t rawDeltaNanoseconds, float deltaTime,
+            bool bAdvanceSimulation, Application::IApplicationHandler* handler);
+        bool BeginInputFrame(int64_t timeNanoseconds);
+        bool UpdateInputFrame(int64_t timeNanoseconds, int64_t rawDeltaNanoseconds);
+        bool UpdateHapticsFrame(int64_t rawDeltaNanoseconds);
+        void TickSimulationAndHaptics(int64_t rawDeltaNanoseconds, float deltaTime,
+            Application::IApplicationHandler* handler);
         int64_t CalculateRawDeltaTimeNanoseconds();
         float ClampVariableDeltaTime(int64_t rawDeltaNanoseconds) const;
         FixedStepAdvanceResult AdvanceFixedSimulation(
@@ -120,6 +144,24 @@ namespace NorvesLib::Core::Engine
     private:
         // ApplicationProcessor がデバイス寿命を管理。RenderWorld 終了後に解放。
         RHI::DevicePtr m_Device;
+        Container::TSharedPtr<NorvesLib::IWindow> m_InputWindow;
+        Delegate<void,bool> m_InputFocusSubscription;
+        Engine* m_InputEngine = nullptr; // GEngineとの一致確認用。非所有。
+        Container::VariableArray<bool> m_PendingInputFocus;
+        bool m_HasInputFocus = false;
+        bool m_InputFocused = false;
+        bool m_DispatchingInputFocus = false;
+        Engine* m_PendingInputDeviceFocusEngine = nullptr;
+        Container::VariableArray<bool> m_PendingRouterInputFocus;
+        bool m_HasPendingInputDeviceFocus = false;
+        bool m_PendingInputDeviceFocus = false;
+        bool m_PendingInputDeviceFocusLoss = false;
+        bool m_PendingInputDeviceFocusReset = false;
+        bool m_ApplyingInputDeviceFocus = false;
+        uint64_t m_PendingInputDeviceFocusSerial = 0;
+        bool m_CursorFailureWarned = false;
+        bool m_HapticsFailureWarned = false;
+        uint64_t m_InputFocusConnectionSerial = 0;
         Container::TUniquePtr<FixedStepScheduler> m_FixedStepScheduler;
         int64_t m_LastFrameTimeNanoseconds = 0;
         float m_TargetFrameTime = 1.0f / 60.0f; // デフォルト60FPS

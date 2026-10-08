@@ -38,6 +38,11 @@ namespace NorvesLib::Core::Application
             (void)deltaTime;
         }
 
+        void OnLateUpdate(float deltaTime) override
+        {
+            (void)deltaTime;
+        }
+
         bool ShouldAdvanceSimulation() const override
         {
             return true;

@@ -1,8 +1,17 @@
-#include "Resource/GLTFAnalyzer.h"
+﻿#include "Resource/GLTFAnalyzer.h"
 #include "Resource/ModelStaging.h"
+#include "Resource/GltfAccessorRange.h"
+#include "Resource/GltfDocumentProfile.h"
+#include "Resource/GltfBufferJson.h"
+#include "Resource/GltfBufferFile.h"
+#include "Resource/GltfImageSource.h"
+#include "Resource/ImportSettingsFile.h"
+#include "Resource/ImportSettingsHash.h"
+#include "Resource/ImportTransform.h"
+#include "Asset/AssetPackageFormat.h"
+#include <limits>
 #include "Resource/SkeletalGltfDecode.h"
 
-#include "FileStream/FileStream.h"
 #include "Logging/LogMacros.h"
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
 #include "Rendering/ProceduralMeshGenerator.h"
@@ -20,10 +29,10 @@
 #include <filesystem>
 #include <utility>
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     using namespace NorvesLib::Core::Container;
-    using namespace NorvesLib::Core::Resource::ModelStaging;
+    using namespace NorvesLib::Core::ResourceIO::ModelStaging;
 
     namespace
     {
@@ -59,12 +68,6 @@ namespace NorvesLib::Core::Resource
             size_t ByteLength = 0;
             size_t ByteOffset = 0;
             size_t ByteStride = 0;
-        };
-
-        struct BufferInfo
-        {
-            String Uri;
-            size_t ByteLength = 0;
         };
 
         struct PrimitiveInfo
@@ -190,43 +193,6 @@ namespace NorvesLib::Core::Resource
             return reference;
         }
 
-        bool ReadTextFile(const String& path,
-                          String& outContent,
-                          const char* role,
-                          uint32_t requestId,
-                          const char* stage)
-        {
-            auto readStartTime = LoadProfileNow();
-            auto fileStream = NorvesLib::FileStream::FileStream::Create(
-                path,
-                NorvesLib::FileStream::FileMode::Read,
-                NorvesLib::FileStream::FileAccess::Read,
-                NorvesLib::FileStream::FileShare::Read);
-            if (!fileStream || !fileStream->IsOpen())
-            {
-                NORVES_LOG_INFO("AssetLoadProfile",
-                                "stage=%s role=%s request_id=%u path=\"%s\" bytes=0 ms=%.3f success=0",
-                                stage,
-                                role,
-                                static_cast<unsigned int>(requestId),
-                                path.c_str(),
-                                LoadProfileElapsedMs(readStartTime));
-                return false;
-            }
-
-            outContent = fileStream->ReadString();
-            fileStream->Close();
-            NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=%s role=%s request_id=%u path=\"%s\" bytes=%zu ms=%.3f success=1",
-                            stage,
-                            role,
-                            static_cast<unsigned int>(requestId),
-                            path.c_str(),
-                            outContent.size(),
-                            LoadProfileElapsedMs(readStartTime));
-            return true;
-        }
-
         size_t GetComponentSize(uint32_t componentType)
         {
             switch (componentType)
@@ -274,31 +240,19 @@ namespace NorvesLib::Core::Resource
 
         bool ValidateAccessorBounds(const AccessorInfo& accessor,
                                     const BufferViewInfo& bufferView,
-                                    const VariableArray<uint8_t>& bufferData,
+                                    Container::Span<const uint8_t> bufferData,
+                                    size_t declaredBufferSize,
                                     const char* label)
         {
-            size_t elementSize = GetComponentSize(accessor.ComponentType) * GetComponentCount(accessor.Type);
-            size_t stride = GetAccessorStride(accessor, bufferView);
-            size_t startOffset = bufferView.ByteOffset + accessor.ByteOffset;
-
-            if (elementSize == 0 || stride < elementSize)
+            const size_t elementSize = GetComponentSize(accessor.ComponentType) * GetComponentCount(accessor.Type);
+            const size_t stride = GetAccessorStride(accessor, bufferView);
+            const auto range = Gltf::ComputeAccessorByteRange(bufferData.size(), declaredBufferSize,
+                bufferView.ByteOffset, bufferView.ByteLength, accessor.ByteOffset, accessor.Count, elementSize, stride);
+            if (!range.bValid)
             {
-                NORVES_LOG_ERROR("GLTFAnalyzer", "Invalid accessor layout: %s", label);
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Invalid accessor layout or declared range: %s", label);
                 return false;
             }
-
-            if (accessor.Count == 0)
-            {
-                return true;
-            }
-
-            size_t requiredSize = startOffset + (static_cast<size_t>(accessor.Count) - 1) * stride + elementSize;
-            if (requiredSize > bufferData.size())
-            {
-                NORVES_LOG_ERROR("GLTFAnalyzer", "Accessor range exceeds buffer: %s", label);
-                return false;
-            }
-
             return true;
         }
 
@@ -388,77 +342,6 @@ namespace NorvesLib::Core::Resource
             return true;
         }
 
-        bool ParseBuffers(const JsonValue& root, VariableArray<BufferInfo>& outBuffers)
-        {
-            JsonValue buffersValue = root.FindMember("buffers");
-            if (!buffersValue.IsArray())
-            {
-                NORVES_LOG_ERROR("GLTFAnalyzer", "Missing buffers array");
-                return false;
-            }
-
-            outBuffers.clear();
-            outBuffers.reserve(buffersValue.GetArraySize());
-
-            for (size_t index = 0; index < buffersValue.GetArraySize(); ++index)
-            {
-                JsonValue bufferValue = buffersValue.GetArrayElement(index);
-                if (!bufferValue.IsObject())
-                {
-                    NORVES_LOG_ERROR("GLTFAnalyzer", "buffers[%zu] is not an object", index);
-                    return false;
-                }
-
-                BufferInfo buffer;
-                buffer.Uri = bufferValue.FindMember("uri").AsString();
-                buffer.ByteLength = static_cast<size_t>(bufferValue.FindMember("byteLength").AsUInt32());
-                outBuffers.push_back(std::move(buffer));
-            }
-
-            return true;
-        }
-
-        bool LoadBuffers(const VariableArray<BufferInfo>& buffers,
-                         const std::filesystem::path& gltfDirectory,
-                         VariableArray<VariableArray<uint8_t>>& outBufferData,
-                         const char* role,
-                         uint32_t requestId)
-        {
-            outBufferData.clear();
-            outBufferData.resize(buffers.size());
-
-            for (size_t index = 0; index < buffers.size(); ++index)
-            {
-                const BufferInfo& buffer = buffers[index];
-                if (buffer.Uri.empty())
-                {
-                    NORVES_LOG_ERROR("GLTFAnalyzer", "buffers[%zu].uri is empty", index);
-                    return false;
-                }
-
-                if (IsDataUri(buffer.Uri))
-                {
-                    NORVES_LOG_ERROR("GLTFAnalyzer", "data URI buffers are not supported");
-                    return false;
-                }
-
-                String bufferPath = NormalizePath(gltfDirectory / buffer.Uri.c_str());
-                if (!ModelStaging::ReadBinaryFile(bufferPath, outBufferData[index], role, requestId, "gltf_buffer_read"))
-                {
-                    NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to read buffer file: %s", bufferPath.c_str());
-                    return false;
-                }
-
-                if (outBufferData[index].size() < buffer.ByteLength)
-                {
-                    NORVES_LOG_ERROR("GLTFAnalyzer", "Buffer file is smaller than expected: %s", bufferPath.c_str());
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
         bool ParsePrimitiveInfo(const JsonValue& root, PrimitiveInfo& outPrimitiveInfo)
         {
             JsonValue meshesValue = root.FindMember("meshes");
@@ -503,112 +386,92 @@ namespace NorvesLib::Core::Resource
             return true;
         }
 
-        bool ResolveTextureReference(const VariableArray<TextureReference>& imageReferences,
-                                     const VariableArray<uint32_t>& textureSources,
-                                     uint32_t textureIndex,
-                                     TextureReference& outReference)
+        struct MaterialImageSources
         {
-            if (textureIndex >= textureSources.size())
+            Gltf::ImageSource Albedo;
+            Gltf::ImageSource Normal;
+            Gltf::ImageSource Arm;
+        };
+
+        bool ResolveMaterialImage(const JsonValue& root, const JsonValue& textureInfo,
+                                  const Gltf::BufferSet& buffers, const String& requestPath,
+                                  const std::filesystem::path& directory, TextureReference& reference,
+                                  Gltf::ImageSource& source)
+        {
+            if (!textureInfo.IsObject())
+            {
+                return true;
+            }
+            const auto textureIndex = textureInfo.FindMember("index").AsUInt32(INVALID_GLTF_INDEX);
+            const auto textures = root.FindMember("textures");
+            if (!textures.IsArray() || textureIndex >= textures.GetArraySize())
             {
                 return false;
             }
-
-            uint32_t imageIndex = textureSources[textureIndex];
-            if (imageIndex >= imageReferences.size())
+            const auto imageIndex = textures.GetArrayElement(textureIndex).FindMember("source").AsUInt32(INVALID_GLTF_INDEX);
+            if (Gltf::ImageSource::Resolve(root, imageIndex, buffers, source) != Gltf::ImageSourceResult::Success)
             {
                 return false;
             }
-
-            outReference = imageReferences[imageIndex];
-            return outReference.HasReference();
+            if (source.GetKind() == Gltf::ImageSourceKind::ExternalFile)
+            {
+                String uri;
+                for (const uint8_t value : source.GetExternalUri())
+                {
+                    uri.push_back(static_cast<String::value_type>(value));
+                }
+                reference = BuildTextureReference(requestPath, directory, uri);
+                return reference.HasReference();
+            }
+            // 埋込み画像のRequestPathは空のままにし、finalize時のmanifest検索へ渡さない。
+            const auto bytes = source.GetBytes(buffers);
+            return Gltf::MatchesEmbeddedImageMime(bytes, source.GetMime());
         }
 
         bool ParseMaterialTextures(const JsonValue& root,
                                    const String& gltfRequestPath,
                                    const std::filesystem::path& gltfDirectory,
-                                   uint32_t materialIndex,
-                                   MaterialTextureInfo& outMaterialInfo)
+                                   uint32_t materialIndex, const Gltf::BufferSet& buffers,
+                                   MaterialTextureInfo& outMaterialInfo, MaterialImageSources& outImages)
         {
             outMaterialInfo = {};
-
-            VariableArray<TextureReference> imageReferences;
-            JsonValue imagesValue = root.FindMember("images");
-            if (imagesValue.IsArray())
-            {
-                imageReferences.reserve(imagesValue.GetArraySize());
-                for (size_t index = 0; index < imagesValue.GetArraySize(); ++index)
-                {
-                    JsonValue imageValue = imagesValue.GetArrayElement(index);
-                    String uri = imageValue.FindMember("uri").AsString();
-                    if (uri.empty() || IsDataUri(uri))
-                    {
-                        imageReferences.push_back({});
-                        continue;
-                    }
-
-                    imageReferences.push_back(BuildTextureReference(gltfRequestPath, gltfDirectory, uri));
-                }
-            }
-
-            VariableArray<uint32_t> textureSources;
-            JsonValue texturesValue = root.FindMember("textures");
-            if (texturesValue.IsArray())
-            {
-                textureSources.reserve(texturesValue.GetArraySize());
-                for (size_t index = 0; index < texturesValue.GetArraySize(); ++index)
-                {
-                    JsonValue textureValue = texturesValue.GetArrayElement(index);
-                    textureSources.push_back(textureValue.FindMember("source").AsUInt32(INVALID_GLTF_INDEX));
-                }
-            }
-
-            JsonValue materialsValue = root.FindMember("materials");
-            if (!materialsValue.IsArray() || materialsValue.GetArraySize() == 0)
+            const auto materials = root.FindMember("materials");
+            if (!materials.IsArray() || materials.GetArraySize() == 0)
             {
                 return true;
             }
-
-            size_t resolvedMaterialIndex = materialIndex == INVALID_GLTF_INDEX ? 0 : static_cast<size_t>(materialIndex);
-            if (resolvedMaterialIndex >= materialsValue.GetArraySize())
+            const size_t selected = materialIndex == INVALID_GLTF_INDEX ? 0 : materialIndex;
+            if (selected >= materials.GetArraySize())
             {
                 NORVES_LOG_WARNING("GLTFAnalyzer", "Material index is out of range: %u", materialIndex);
                 return true;
             }
+            const auto material = materials.GetArrayElement(selected);
+            outMaterialInfo.bDoubleSided = material.FindMember("doubleSided").AsBool(false);
+            const auto pbr = material.FindMember("pbrMetallicRoughness");
+            return ResolveMaterialImage(root, material.FindMember("normalTexture"), buffers,
+                       gltfRequestPath, gltfDirectory, outMaterialInfo.Normal, outImages.Normal) &&
+                   ResolveMaterialImage(root, pbr.FindMember("baseColorTexture"), buffers,
+                       gltfRequestPath, gltfDirectory, outMaterialInfo.Albedo, outImages.Albedo) &&
+                   ResolveMaterialImage(root, pbr.FindMember("metallicRoughnessTexture"), buffers,
+                       gltfRequestPath, gltfDirectory, outMaterialInfo.Arm, outImages.Arm);
+        }
 
-            JsonValue materialValue = materialsValue.GetArrayElement(resolvedMaterialIndex);
-            outMaterialInfo.bDoubleSided = materialValue.FindMember("doubleSided").AsBool(false);
-
-            JsonValue normalTextureValue = materialValue.FindMember("normalTexture");
-            if (normalTextureValue.IsObject())
+        bool StageMaterialImage(const Gltf::ImageSource& image, const Gltf::BufferSet& buffers,
+                                const TextureReference& reference, const String& name,
+                                StagedTextureData& outTexture, const char* role, uint32_t requestId)
+        {
+            if (image.GetKind() == Gltf::ImageSourceKind::DataUri ||
+                image.GetKind() == Gltf::ImageSourceKind::BufferView)
             {
-                uint32_t normalTextureIndex = normalTextureValue.FindMember("index").AsUInt32(INVALID_GLTF_INDEX);
-                ResolveTextureReference(imageReferences, textureSources, normalTextureIndex, outMaterialInfo.Normal);
+                return StageStandardTextureBytes(image.GetBytes(buffers), name, outTexture, role, requestId);
             }
-
-            JsonValue pbrValue = materialValue.FindMember("pbrMetallicRoughness");
-            if (pbrValue.IsObject())
-            {
-                JsonValue baseColorTextureValue = pbrValue.FindMember("baseColorTexture");
-                if (baseColorTextureValue.IsObject())
-                {
-                    uint32_t albedoTextureIndex = baseColorTextureValue.FindMember("index").AsUInt32(INVALID_GLTF_INDEX);
-                    ResolveTextureReference(imageReferences, textureSources, albedoTextureIndex, outMaterialInfo.Albedo);
-                }
-
-                JsonValue armTextureValue = pbrValue.FindMember("metallicRoughnessTexture");
-                if (armTextureValue.IsObject())
-                {
-                    uint32_t armTextureIndex = armTextureValue.FindMember("index").AsUInt32(INVALID_GLTF_INDEX);
-                    ResolveTextureReference(imageReferences, textureSources, armTextureIndex, outMaterialInfo.Arm);
-                }
-            }
-
-            return true;
+            return StageStandardTexture(reference, name, outTexture, role, requestId);
         }
 
         bool ExtractMeshData(const VariableArray<AccessorInfo>& accessors,
                              const VariableArray<BufferViewInfo>& bufferViews,
-                             const VariableArray<VariableArray<uint8_t>>& bufferData,
+                             const Gltf::BufferSet& buffers,
                              const PrimitiveInfo& primitiveInfo,
                              VariableArray<Rendering::Mesh3DVertex>& outVertices,
                              VariableArray<uint32_t>& outIndices)
@@ -641,19 +504,18 @@ namespace NorvesLib::Core::Resource
             const BufferViewInfo& texCoordBufferView = bufferViews[texCoordAccessor.BufferView];
             const BufferViewInfo& indexBufferView = bufferViews[indexAccessor.BufferView];
 
-            if (positionBufferView.Buffer >= bufferData.size() ||
-                normalBufferView.Buffer >= bufferData.size() ||
-                texCoordBufferView.Buffer >= bufferData.size() ||
-                indexBufferView.Buffer >= bufferData.size())
+            if (positionBufferView.Buffer >= buffers.GetCount() ||
+                normalBufferView.Buffer >= buffers.GetCount() ||
+                texCoordBufferView.Buffer >= buffers.GetCount() ||
+                indexBufferView.Buffer >= buffers.GetCount())
             {
                 NORVES_LOG_ERROR("GLTFAnalyzer", "buffer index is invalid");
                 return false;
             }
-
-            const auto& positionBuffer = bufferData[positionBufferView.Buffer];
-            const auto& normalBuffer = bufferData[normalBufferView.Buffer];
-            const auto& texCoordBuffer = bufferData[texCoordBufferView.Buffer];
-            const auto& indexBuffer = bufferData[indexBufferView.Buffer];
+            const auto positionBuffer = buffers.GetBytes(positionBufferView.Buffer);
+            const auto normalBuffer = buffers.GetBytes(normalBufferView.Buffer);
+            const auto texCoordBuffer = buffers.GetBytes(texCoordBufferView.Buffer);
+            const auto indexBuffer = buffers.GetBytes(indexBufferView.Buffer);
 
             if (positionAccessor.ComponentType != GLTF_FLOAT_COMPONENT || positionAccessor.Type != "VEC3" ||
                 normalAccessor.ComponentType != GLTF_FLOAT_COMPONENT || normalAccessor.Type != "VEC3" ||
@@ -670,10 +532,14 @@ namespace NorvesLib::Core::Resource
                 return false;
             }
 
-            if (!ValidateAccessorBounds(positionAccessor, positionBufferView, positionBuffer, "POSITION") ||
-                !ValidateAccessorBounds(normalAccessor, normalBufferView, normalBuffer, "NORMAL") ||
-                !ValidateAccessorBounds(texCoordAccessor, texCoordBufferView, texCoordBuffer, "TEXCOORD_0") ||
-                !ValidateAccessorBounds(indexAccessor, indexBufferView, indexBuffer, "indices"))
+            if (!ValidateAccessorBounds(positionAccessor, positionBufferView, positionBuffer,
+                                        buffers.GetDeclaredByteLength(positionBufferView.Buffer), "POSITION") ||
+                !ValidateAccessorBounds(normalAccessor, normalBufferView, normalBuffer,
+                                        buffers.GetDeclaredByteLength(normalBufferView.Buffer), "NORMAL") ||
+                !ValidateAccessorBounds(texCoordAccessor, texCoordBufferView, texCoordBuffer,
+                                        buffers.GetDeclaredByteLength(texCoordBufferView.Buffer), "TEXCOORD_0") ||
+                !ValidateAccessorBounds(indexAccessor, indexBufferView, indexBuffer,
+                                        buffers.GetDeclaredByteLength(indexBufferView.Buffer), "indices"))
             {
                 return false;
             }
@@ -728,7 +594,13 @@ namespace NorvesLib::Core::Resource
                 return false;
             }
 
-            // Match the engine's clockwise front-face convention.
+            if (!Gltf::ValidateVertexIndices(outIndices, outVertices.size()))
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Mesh index exceeds vertex count");
+                return false;
+            }
+
+            // エンジンの時計回りfront-face規則に合わせる。
             for (uint32_t index = 0; index + 2 < outIndices.size(); index += 3)
             {
                 std::swap(outIndices[index + 1], outIndices[index + 2]);
@@ -767,27 +639,36 @@ namespace NorvesLib::Core::Resource
                                const String& resolvedGltfPath,
                                ModelStagingData& outStaging,
                                const char* role,
-                               uint32_t requestId)
+                               uint32_t requestId,
+                               const AssetImport::ImportSettingsFileOptions* importOptions = nullptr)
         {
             auto totalStartTime = LoadProfileNow();
-            String jsonContent;
-            if (!ReadTextFile(resolvedGltfPath, jsonContent, role, requestId, "gltf_text_read"))
+            VariableArray<uint8_t> sourceBytes;
+            if (!ModelStaging::ReadBinaryFile(resolvedGltfPath, sourceBytes, role, requestId, "gltf_source_read"))
             {
-                NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to open glTF file: %s", resolvedGltfPath.c_str());
                 return false;
             }
-
+            Gltf::ContainerView container;
+            const auto parsed = Gltf::ParseContainer(sourceBytes, container);
+            if ((parsed != Gltf::ContainerParseResult::Success && parsed != Gltf::ContainerParseResult::NotGlb) ||
+                container.Json.empty() ||
+                std::find(container.Json.begin(), container.Json.end(), uint8_t{0}) != container.Json.end())
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Invalid glTF/GLB container or JSON bytes");
+                return false;
+            }
+            // JSONを厳密UTF8で解析し、BINはsourceBytesから借用する。
             JsonDocument document;
             String parseError;
             auto jsonParseStartTime = LoadProfileNow();
-            if (!JsonDocument::TryParse(jsonContent, document, &parseError))
+            if (!JsonDocument::TryParseUtf8(container.Json, document, &parseError))
             {
                 NORVES_LOG_INFO("AssetLoadProfile",
                                 "stage=gltf_json_parse role=%s request_id=%u path=\"%s\" json_bytes=%zu ms=%.3f success=0",
                                 role,
                                 static_cast<unsigned int>(requestId),
                                 resolvedGltfPath.c_str(),
-                                jsonContent.size(),
+                                container.Json.size(),
                                 LoadProfileElapsedMs(jsonParseStartTime));
                 NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to parse glTF JSON: %s", parseError.c_str());
                 return false;
@@ -797,7 +678,7 @@ namespace NorvesLib::Core::Resource
                             role,
                             static_cast<unsigned int>(requestId),
                             resolvedGltfPath.c_str(),
-                            jsonContent.size(),
+                            container.Json.size(),
                             LoadProfileElapsedMs(jsonParseStartTime));
 
             JsonValue root = document.GetRoot();
@@ -807,70 +688,49 @@ namespace NorvesLib::Core::Resource
                 return false;
             }
 
+            const auto extensionStatus = Gltf::CheckRequiredExtensions(root);
+            if (extensionStatus != Gltf::RequiredExtensionsStatus::Success)
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "%s", Gltf::RequiredExtensionsError(extensionStatus));
+                return false;
+            }
+
             std::filesystem::path gltfFilePath(resolvedGltfPath.c_str());
             std::filesystem::path gltfDirectory = gltfFilePath.parent_path();
 
             VariableArray<AccessorInfo> accessors;
             VariableArray<BufferViewInfo> bufferViews;
-            VariableArray<BufferInfo> buffers;
-            auto metadataParseStartTime = LoadProfileNow();
-            if (!ParseAccessors(root, accessors) ||
-                !ParseBufferViews(root, bufferViews) ||
-                !ParseBuffers(root, buffers))
-            {
-                NORVES_LOG_INFO("AssetLoadProfile",
-                                "stage=gltf_buffer_metadata_parse role=%s request_id=%u path=\"%s\" accessors=%zu buffer_views=%zu buffers=%zu ms=%.3f success=0",
-                                role,
-                                static_cast<unsigned int>(requestId),
-                                resolvedGltfPath.c_str(),
-                                accessors.size(),
-                                bufferViews.size(),
-                                buffers.size(),
-                                LoadProfileElapsedMs(metadataParseStartTime));
-                return false;
-            }
+            const auto metadataStart = LoadProfileNow();
+            const bool bMetadataSuccess = ParseAccessors(root, accessors) && ParseBufferViews(root, bufferViews);
             NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=gltf_buffer_metadata_parse role=%s request_id=%u path=\"%s\" accessors=%zu buffer_views=%zu buffers=%zu ms=%.3f success=1",
-                            role,
-                            static_cast<unsigned int>(requestId),
-                            resolvedGltfPath.c_str(),
-                            accessors.size(),
-                            bufferViews.size(),
-                            buffers.size(),
-                            LoadProfileElapsedMs(metadataParseStartTime));
-
-            VariableArray<VariableArray<uint8_t>> bufferData;
-            auto bufferReadTotalStartTime = LoadProfileNow();
-            if (!LoadBuffers(buffers, gltfDirectory, bufferData, role, requestId))
+                "stage=gltf_buffer_metadata_parse role=%s request_id=%u path=\"%s\" accessors=%zu buffer_views=%zu buffers=%zu ms=%.3f success=%d",
+                role, static_cast<unsigned int>(requestId), resolvedGltfPath.c_str(), accessors.size(), bufferViews.size(),
+                root.FindMember("buffers").GetArraySize(), LoadProfileElapsedMs(metadataStart), bMetadataSuccess ? 1 : 0);
+            if (!bMetadataSuccess)
             {
-                size_t bufferBytes = 0;
-                for (const auto& buffer : bufferData)
-                {
-                    bufferBytes += buffer.size();
-                }
-                NORVES_LOG_INFO("AssetLoadProfile",
-                                "stage=gltf_buffer_read_total role=%s request_id=%u path=\"%s\" buffers=%zu bytes=%zu ms=%.3f success=0",
-                                role,
-                                static_cast<unsigned int>(requestId),
-                                resolvedGltfPath.c_str(),
-                                buffers.size(),
-                                bufferBytes,
-                                LoadProfileElapsedMs(bufferReadTotalStartTime));
                 return false;
             }
+            Gltf::BufferSet buffers;
+            Gltf::BufferFileContext bufferContext{gltfFilePath};
+            const auto bufferStart = LoadProfileNow();
+            const auto bufferResult = Gltf::ResolveJsonBuffers(root, container,
+                Gltf::ReadBufferFile, &bufferContext, buffers);
+            const bool bBuffersSuccess = bufferResult.Result == Gltf::BufferResolveResult::Success;
             size_t bufferBytes = 0;
-            for (const auto& buffer : bufferData)
+            for (size_t index = 0; index < buffers.GetCount(); ++index)
             {
-                bufferBytes += buffer.size();
+                bufferBytes += buffers.GetSourceBytes(index).size();
             }
             NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=gltf_buffer_read_total role=%s request_id=%u path=\"%s\" buffers=%zu bytes=%zu ms=%.3f success=1",
-                            role,
-                            static_cast<unsigned int>(requestId),
-                            resolvedGltfPath.c_str(),
-                            buffers.size(),
-                            bufferBytes,
-                            LoadProfileElapsedMs(bufferReadTotalStartTime));
+                "stage=gltf_buffer_read_total role=%s request_id=%u path=\"%s\" buffers=%zu bytes=%zu ms=%.3f success=%d",
+                role, static_cast<unsigned int>(requestId), resolvedGltfPath.c_str(), buffers.GetCount(),
+                bufferBytes, LoadProfileElapsedMs(bufferStart), bBuffersSuccess ? 1 : 0);
+            if (!bBuffersSuccess)
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Failed to resolve glTF buffer: index=%zu result=%u",
+                    bufferResult.BufferIndex, static_cast<unsigned int>(bufferResult.Result));
+                return false;
+            }
 
             PrimitiveInfo primitiveInfo;
             auto primitiveParseStartTime = LoadProfileNow();
@@ -896,7 +756,7 @@ namespace NorvesLib::Core::Resource
             VariableArray<Rendering::Mesh3DVertex> vertices;
             VariableArray<uint32_t> indices;
             auto meshExtractStartTime = LoadProfileNow();
-            if (!ExtractMeshData(accessors, bufferViews, bufferData, primitiveInfo, vertices, indices))
+            if (!ExtractMeshData(accessors, bufferViews, buffers, primitiveInfo, vertices, indices))
             {
                 NORVES_LOG_INFO("AssetLoadProfile",
                                 "stage=gltf_mesh_extract role=%s request_id=%u path=\"%s\" vertices=%zu indices=%zu ms=%.3f success=0",
@@ -918,6 +778,44 @@ namespace NorvesLib::Core::Resource
                             vertices.size() * sizeof(Rendering::Mesh3DVertex),
                             indices.size() * sizeof(uint32_t),
                             LoadProfileElapsedMs(meshExtractStartTime));
+
+            AssetImport::LoadedImportSettings loadedImport;
+            const AssetImport::ImportSettingsFileOptions automaticImport;
+            const auto settingsResult = AssetImport::LoadImportSettingsFile(gltfFilePath,
+                importOptions != nullptr ? *importOptions : automaticImport, loadedImport);
+            if (settingsResult.Result != AssetImport::SettingsFileResult::Success)
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Import settings rejected: file=%u validation=%u",
+                    static_cast<unsigned int>(settingsResult.Result), static_cast<unsigned int>(settingsResult.Validation));
+                return false;
+            }
+            uint64_t settingsHash = 0;
+            if (loadedImport.bPresent)
+            {
+                if (vertices.size() > std::numeric_limits<size_t>::max() / sizeof(Rendering::Mesh3DVertex))
+                {
+                    return false;
+                }
+                const AssetImport::ImportVertexLayout layout{sizeof(Rendering::Mesh3DVertex),
+                    offsetof(Rendering::Mesh3DVertex, Position), offsetof(Rendering::Mesh3DVertex, Normal),
+                    offsetof(Rendering::Mesh3DVertex, TexCoord)};
+                const auto transformed = AssetImport::ApplyImportTransform(
+                    {reinterpret_cast<uint8_t*>(vertices.data()), vertices.size() * sizeof(Rendering::Mesh3DVertex)},
+                    vertices.size(), layout, indices, loadedImport.Settings);
+                if (transformed.Result != AssetImport::TransformResult::Success)
+                {
+                    NORVES_LOG_ERROR("GLTFAnalyzer", "Import transform rejected: status=%u",
+                        static_cast<unsigned int>(transformed.Result));
+                    return false;
+                }
+                settingsHash = AssetImport::AppendImportSettingsHash(
+                    Asset::AssetPackageFormatV1::Fnv1a64OffsetBasis, true, loadedImport.Settings).Value;
+            }
+            const AnsiString sidecarPath(loadedImport.Path.generic_string().c_str());
+            NORVES_LOG_INFO("AssetLoadProfile",
+                "stage=gltf_import_settings role=%s request_id=%u sidecar=\"%s\" present=%d settings_hash=%llu",
+                role, static_cast<unsigned int>(requestId), sidecarPath.c_str(),
+                loadedImport.bPresent ? 1 : 0, static_cast<unsigned long long>(settingsHash));
 
             VariableArray<Rendering::MegaGeometry::MeshCluster> clusters;
             VariableArray<uint32_t> clusterizedIndices;
@@ -955,6 +853,31 @@ namespace NorvesLib::Core::Resource
                             clusterizedIndices.size() * sizeof(uint32_t),
                             LoadProfileElapsedMs(clusterizeStartTime));
 
+            const auto finiteBounds = [](const Rendering::BoundingSphere& bounds)
+            {
+                return std::isfinite(bounds.CenterX) && std::isfinite(bounds.CenterY) &&
+                    std::isfinite(bounds.CenterZ) && std::isfinite(bounds.Radius) && bounds.Radius >= 0.0f;
+            };
+            const auto totalBounds = CalculateBoundingSphere(vertices);
+            if (loadedImport.bPresent)
+            {
+                if (!finiteBounds(totalBounds))
+                {
+                    NORVES_LOG_ERROR("GLTFAnalyzer", "Imported model bounds are not representable");
+                    return false;
+                }
+                for (const auto& cluster : clusters)
+                {
+                    if (!finiteBounds(cluster.Bounds) || !std::isfinite(cluster.ConeAxisX) ||
+                        !std::isfinite(cluster.ConeAxisY) || !std::isfinite(cluster.ConeAxisZ) ||
+                        !std::isfinite(cluster.ConeCutoff) || !std::isfinite(cluster.LODError))
+                    {
+                        NORVES_LOG_ERROR("GLTFAnalyzer", "Imported cluster data is not representable");
+                        return false;
+                    }
+                }
+            }
+
             String debugName = primitiveInfo.MeshName;
             if (debugName.empty())
             {
@@ -962,53 +885,59 @@ namespace NorvesLib::Core::Resource
             }
 
             MaterialTextureInfo materialInfo;
+            MaterialImageSources materialImages;
             auto materialTextureParseStartTime = LoadProfileNow();
             bool bMaterialTextureParseSuccess = ParseMaterialTextures(
                 root,
                 gltfRequestPath,
                 gltfDirectory,
-                primitiveInfo.MaterialIndex,
-                materialInfo);
+                primitiveInfo.MaterialIndex, buffers,
+                materialInfo, materialImages);
             NORVES_LOG_INFO("AssetLoadProfile",
                             "stage=gltf_material_texture_parse role=%s request_id=%u path=\"%s\" albedo=%d normal=%d arm=%d ms=%.3f success=%d",
                             role,
                             static_cast<unsigned int>(requestId),
                             resolvedGltfPath.c_str(),
-                            materialInfo.Albedo.HasReference() ? 1 : 0,
-                            materialInfo.Normal.HasReference() ? 1 : 0,
-                            materialInfo.Arm.HasReference() ? 1 : 0,
+                            (materialInfo.Albedo.HasReference() || materialImages.Albedo.GetKind() != Gltf::ImageSourceKind::Unknown) ? 1 : 0,
+                            (materialInfo.Normal.HasReference() || materialImages.Normal.GetKind() != Gltf::ImageSourceKind::Unknown) ? 1 : 0,
+                            (materialInfo.Arm.HasReference() || materialImages.Arm.GetKind() != Gltf::ImageSourceKind::Unknown) ? 1 : 0,
                             LoadProfileElapsedMs(materialTextureParseStartTime),
                             bMaterialTextureParseSuccess ? 1 : 0);
+
+            if (!bMaterialTextureParseSuccess)
+            {
+                NORVES_LOG_ERROR("GLTFAnalyzer", "Invalid material image source");
+                return false;
+            }
 
             outStaging.Vertices = std::move(vertices);
             outStaging.ClusterizedIndices = std::move(clusterizedIndices);
             outStaging.Clusters = std::move(clusters);
-            outStaging.TotalBounds = CalculateBoundingSphere(outStaging.Vertices);
+            outStaging.TotalBounds = totalBounds;
             outStaging.DebugName = debugName;
             outStaging.ResolvedPath = resolvedGltfPath;
             outStaging.TextureReferences = materialInfo;
 
             auto textureStagingStartTime = LoadProfileNow();
-            bool bAlbedoStagingSuccess = StageStandardTexture(
-                materialInfo.Albedo,
+            bool bAlbedoStagingSuccess = StageMaterialImage(
+                materialImages.Albedo, buffers, materialInfo.Albedo,
                 debugName + "_Albedo",
                 outStaging.AlbedoTexture,
                 role,
                 requestId);
-            bool bNormalStagingSuccess = StageStandardTexture(
-                materialInfo.Normal,
+            bool bNormalStagingSuccess = StageMaterialImage(
+                materialImages.Normal, buffers, materialInfo.Normal,
                 debugName + "_Normal",
                 outStaging.NormalTexture,
                 role,
                 requestId);
-            bool bArmStagingSuccess = StageArmTextures(
-                materialInfo.Arm,
-                debugName,
-                outStaging.AOTexture,
-                outStaging.RoughnessTexture,
-                outStaging.MetallicTexture,
-                role,
-                requestId);
+            const bool bEmbeddedArm = materialImages.Arm.GetKind() == Gltf::ImageSourceKind::DataUri ||
+                materialImages.Arm.GetKind() == Gltf::ImageSourceKind::BufferView;
+            const bool bArmStagingSuccess = bEmbeddedArm
+                ? StageArmTextureBytes(materialImages.Arm.GetBytes(buffers), debugName,
+                    outStaging.AOTexture, outStaging.RoughnessTexture, outStaging.MetallicTexture, role, requestId)
+                : StageArmTextures(materialInfo.Arm, debugName,
+                    outStaging.AOTexture, outStaging.RoughnessTexture, outStaging.MetallicTexture, role, requestId);
             bool bTextureStagingSuccess =
                 bAlbedoStagingSuccess &&
                 bNormalStagingSuccess &&
@@ -1051,17 +980,34 @@ namespace NorvesLib::Core::Resource
         }
     } // anonymous namespace
 
-    Skeletal::SkeletalGltfDecodeResult GLTFAnalyzer::AnalyzeSkeletal(const String& gltfPath)
+    bool ModelStaging::BuildModelStagingFromLooseGltf(const String& requestPath,
+                                                    const String& resolvedPath,
+                                                    ModelStagingData& outStaging,
+                                                    const char* role,
+                                                    uint32_t requestId,
+                                                    const AssetImport::ImportSettingsFileOptions* importOptions)
+    {
+        ModelStagingData candidate;
+        if (!BuildModelStaging(requestPath, resolvedPath, candidate, role, requestId, importOptions))
+        {
+            return false;
+        }
+        outStaging = std::move(candidate);
+        return true;
+    }
+
+    Skeletal::SkeletalGltfDecodeResult GLTFAnalyzer::AnalyzeSkeletal(const String& gltfPath,
+        const Skeletal::SkeletalGltfDecodeOptions* decodeOptions)
     {
         const String resolvedPath = ResolveAssetPath(gltfPath);
-        String jsonText;
-        if (!ReadTextFile(resolvedPath, jsonText, "skeletal", 0, "gltf_skeletal_json_read"))
+        Container::VariableArray<uint8_t> sourceBytes;
+        if (!ModelStaging::ReadBinaryFile(resolvedPath, sourceBytes, "skeletal", 0, "gltf_skeletal_source_read"))
         {
             Skeletal::SkeletalGltfDecodeResult result;
             result.Status = Skeletal::SkeletalGltfDecodeStatus::FileReadFailed;
             return result;
         }
-        return Skeletal::DecodeSkeletalGltf(jsonText, resolvedPath);
+        return Skeletal::DecodeSkeletalGltf({sourceBytes.data(), sourceBytes.size()}, resolvedPath, nullptr, nullptr, decodeOptions);
     }
 
     Rendering::ModelHandle GLTFAnalyzer::LoadModel(const String& gltfPath,
@@ -1394,4 +1340,4 @@ namespace NorvesLib::Core::Resource
         return g_bAsyncModelLoadAdmissionOpen;
     }
 
-} // namespace NorvesLib::Core::Resource
+} // namespace NorvesLib::Core::ResourceIO

@@ -96,6 +96,9 @@ namespace NorvesLib::Modules::Physics
         EPhysicsResult SetColliderBox(ColliderComponent& component, const Math::Vector3& halfExtents);
         EPhysicsResult SetColliderCapsule(ColliderComponent& component, float radius, float halfHeight);
         EPhysicsResult SetColliderTrigger(ColliderComponent& component, bool bTrigger);
+        EPhysicsResult SetColliderLayer(ColliderComponent& component, Core::Scene::PhysicsCollisionMask layer);
+        EPhysicsResult SetColliderMask(ColliderComponent& component, Core::Scene::PhysicsCollisionMask mask);
+        EPhysicsResult SetColliderUserData(ColliderComponent& component, uint64_t userData);
         EPhysicsResult SetBodyType(RigidBodyComponent& component, EPhysicsBodyType bodyType);
         EPhysicsResult SetBodyMass(RigidBodyComponent& component, float mass);
         EPhysicsResult SetBodyGravityScale(RigidBodyComponent& component, float gravityScale);
@@ -110,6 +113,7 @@ namespace NorvesLib::Modules::Physics
         void PrepareBodyGenerationWrap(RigidBodyComponent& component);
         void PrepareOverlapBeginGenerationWrap(ColliderComponent& component, PhysicsCallbackHandle& handle);
         bool IsBodyLifecycleActive(const BodySlot& body) const;
+        bool IsColliderLifecycleActive(const ColliderSlot& collider) const;
         void DiscardBodyStepState(BodySlot& body);
         void ReconcileActiveStates();
         void IntegrateDynamics(float fixedDeltaTime);
@@ -117,10 +121,10 @@ namespace NorvesLib::Modules::Physics
         void BuildEventQueue();
         void DispatchEvents();
         void PublishSnapshot();
-        void BuildBroadphase(PhysicsBroadphase& outBroadphase) const;
+        void BuildBroadphase(PhysicsBroadphase& outBroadphase, bool bRefreshLifecycle = false) const;
         void ResetTransientState();
         Math::Transform GetFreshWorldTransform(const Core::Entity& entity) const;
-        Core::Scene::BodyHandle FindBodyHandle(const Core::Entity& owner) const;
+        Core::Scene::BodyHandle FindBodyHandle(const Core::Entity& owner, bool bRefreshLifecycle = false) const;
         ColliderSlot* FindColliderSlot(Core::Scene::ColliderHandle handle);
         const ColliderSlot* FindColliderSlot(Core::Scene::ColliderHandle handle) const;
         BodySlot* FindBodySlot(Core::Scene::BodyHandle handle);
@@ -128,6 +132,12 @@ namespace NorvesLib::Modules::Physics
         void ReleaseColliderSlot(uint32_t index);
         void ReleaseBodySlot(uint32_t index);
 
+        Core::Scene::EPhysicsSceneQueryResult RefreshDynamicSnapshot() override;
+        Core::Scene::EPhysicsSceneQueryResult ExecuteBatch(Core::Container::Span<const Core::Scene::PhysicsQueryDesc> queries,
+            Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits,
+            Core::Container::VariableArray<Core::Scene::PhysicsQueryBatchResult>& outResults) const override;
+        Core::Scene::EPhysicsSceneQueryResult ExecuteQuery(const Core::Scene::PhysicsQueryDesc& query,
+            Core::Container::VariableArray<Core::Scene::PhysicsQueryHit>& outHits) const override;
         Core::Scene::EPhysicsSceneQueryResult Raycast(
             const Math::Ray& ray,
             float maxDistance,

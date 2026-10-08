@@ -8,6 +8,7 @@
 #include "Rendering/RenderTypes.h"
 #include "RHI/RHITypes.h"
 #include "Thread/Atomic.h"
+#include "Resource/SkeletalSubMesh.h"
 
 #include <cstdint>
 #include <utility>
@@ -61,11 +62,25 @@ namespace NorvesLib::Core::Rendering
     public:
         SkinnedMeshAssetLease(SkinnedMeshHandle handle,
                               Container::VariableArray<SkinnedMeshVertex>&& vertices,
-                              Container::VariableArray<uint32_t>&& indices)
-            : m_Handle(handle),
-              m_Vertices(std::move(vertices)),
-              m_Indices(std::move(indices))
+                              Container::VariableArray<uint32_t>&& indices);
+        SkinnedMeshAssetLease(SkinnedMeshHandle handle,
+                              Container::VariableArray<SkinnedMeshVertex>&& vertices,
+                              Container::VariableArray<uint32_t>&& indices,
+                              Container::VariableArray<Skeletal::SkeletalSubMesh>&& submeshes,
+                              Container::VariableArray<Container::String>&& slotNames);
+        [[nodiscard]] bool HasValidRenderData() const
         {
+            return m_bValidRenderData;
+        }
+
+        [[nodiscard]] const Container::VariableArray<Skeletal::SkeletalSubMesh>& GetSubMeshes() const
+        {
+            return m_SubMeshes;
+        }
+
+        [[nodiscard]] const Container::VariableArray<Container::String>& GetMaterialSlotNames() const
+        {
+            return m_MaterialSlotNames;
         }
 
         [[nodiscard]] SkinnedMeshHandle GetHandle() const
@@ -97,23 +112,27 @@ namespace NorvesLib::Core::Rendering
         SkinnedMeshHandle m_Handle;
         Container::VariableArray<SkinnedMeshVertex> m_Vertices;
         Container::VariableArray<uint32_t> m_Indices;
+        Container::VariableArray<Skeletal::SkeletalSubMesh> m_SubMeshes;
+        Container::VariableArray<Container::String> m_MaterialSlotNames;
+        bool m_bValidRenderData = false;
         Thread::Atomic<bool> m_bAssetLeaseActive{true};
     };
 
     struct SkinnedMeshFrameLease
     {
-        explicit SkinnedMeshFrameLease(Container::TSharedPtr<const SkinnedMeshAssetLease> assetLease)
-            : AssetLease(std::move(assetLease))
+        explicit SkinnedMeshFrameLease(Container::TSharedPtr<const SkinnedMeshAssetLease> assetLease, uint64_t componentId = 0)
+            : AssetLease(std::move(assetLease)), ComponentId(componentId)
         {
         }
 
         [[nodiscard]] bool IsValid() const
         {
-            return AssetLease && AssetLease->GetHandle().IsValid() &&
-                   !AssetLease->GetVertices().empty() && !AssetLease->GetIndices().empty();
+            // 完了待ちのframeはasset非active化後も値を保持する。
+            return AssetLease && AssetLease->GetHandle().IsValid() && AssetLease->HasValidRenderData();
         }
 
         Container::TSharedPtr<const SkinnedMeshAssetLease> AssetLease;
+        uint64_t ComponentId = 0; // 0は従来の手組みframe互換。
     };
 
     enum class SkinnedMeshPassKind : uint8_t
@@ -133,6 +152,10 @@ namespace NorvesLib::Core::Rendering
         // 前の値を求めなかった描画（影など）では空。
         RHI::BufferPtr PreviousPaletteBuffer;
         uint32_t IndexCount = 0;
+        // 非0 componentだけフレーム内共有する。旧匿名preparedの跨フレーム互換は維持する。
+        uint64_t ComponentId = 0;
+        uint64_t PreparationEpoch = 0;
+        bool bUsesPreviousPalette = false;
 
         [[nodiscard]] bool IsValid() const
         {
@@ -153,6 +176,9 @@ namespace NorvesLib::Core::Rendering
     {
         SkinnedMeshHandle MeshHandle;
         MaterialHandle Material;
+        // componentから値コピーしたslot材質。未設定はslot0を解決済み。
+        MaterialHandle Materials[MAX_MATERIAL_SLOTS]{};
+        uint32_t MaterialCount = 0;
         Container::TWeakPtr<const SkinnedMeshAssetLease> AssetLease;
         uint64_t ObjectId = 0;
         uint64_t ComponentId = 0;

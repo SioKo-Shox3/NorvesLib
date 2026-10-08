@@ -1,5 +1,8 @@
 ﻿#include "Input/InputState.h"
 #include <cstring>
+#include <bit>
+#include <cmath>
+#include <limits>
 
 namespace NorvesLib::Core::Input
 {
@@ -40,7 +43,7 @@ namespace NorvesLib::Core::Input
         {
             return false;
         }
-        return !m_KeyStates[index] && m_PrevKeyStates[index];
+        return m_KeyReleasedByReset[index] || (!m_KeyStates[index] && m_PrevKeyStates[index]);
     }
 
     bool InputState::IsMouseButtonDown(MouseButton button) const
@@ -70,7 +73,7 @@ namespace NorvesLib::Core::Input
         {
             return false;
         }
-        return !m_MouseButtonStates[index] && m_PrevMouseButtonStates[index];
+        return m_MouseReleasedByReset[index] || (!m_MouseButtonStates[index] && m_PrevMouseButtonStates[index]);
     }
 
     const MouseState &InputState::GetMouseState() const
@@ -99,8 +102,142 @@ namespace NorvesLib::Core::Input
         std::memcpy(m_PrevKeyStates, m_KeyStates, sizeof(m_KeyStates));
         std::memcpy(m_PrevMouseButtonStates, m_MouseButtonStates, sizeof(m_MouseButtonStates));
 
+        std::memset(m_KeyReleasedByReset, 0, sizeof(m_KeyReleasedByReset));
+        std::memset(m_MouseReleasedByReset, 0, sizeof(m_MouseReleasedByReset));
+
+        for (uint8_t slot = 0; slot < GamepadSlotCount; ++slot)
+        {
+            m_PrevGamepadStates[slot] = m_GamepadStates[slot];
+            m_GamepadPressed[slot] = 0;
+            m_GamepadReleased[slot] = 0;
+        }
+
         // フレーム間累積値をリセット
         ResetFrameAccumulators();
+    }
+
+    void InputState::ReleaseAll()
+    {
+        for (uint32_t index = 0; index < KEY_COUNT; ++index)
+        {
+            if (m_KeyStates[index]) ++m_KeyReleaseSerial[index];
+            m_KeyReleasedByReset[index] = m_KeyReleasedByReset[index] || m_KeyStates[index];
+            m_KeyStates[index] = false;
+        }
+        for (uint32_t index = 0; index < MOUSE_BUTTON_COUNT; ++index)
+        {
+            if (m_MouseButtonStates[index]) ++m_MouseReleaseSerial[index];
+            m_MouseReleasedByReset[index] = m_MouseReleasedByReset[index] || m_MouseButtonStates[index];
+            m_MouseButtonStates[index] = false;
+        }
+        for (uint8_t slot = 0; slot < GamepadSlotCount; ++slot)
+        {
+            GamepadState neutral;
+            neutral.Connected = m_GamepadStates[slot].Connected;
+            neutral.PacketNumber = m_GamepadStates[slot].PacketNumber;
+            ApplyGamepadState(slot, neutral);
+            m_GamepadPressed[slot] = 0;
+        }
+        ResetFrameAccumulators();
+        m_bFirstMouseUpdate = true;
+    }
+
+    uint64_t InputState::GetKeyReleaseSerial(KeyCode code) const
+    {
+        const auto index = static_cast<uint32_t>(code);
+        return index < KEY_COUNT ? m_KeyReleaseSerial[index] : 0;
+    }
+
+    uint64_t InputState::GetMouseButtonReleaseSerial(MouseButton button) const
+    {
+        const auto index = static_cast<uint32_t>(button);
+        return index < MOUSE_BUTTON_COUNT ? m_MouseReleaseSerial[index] : 0;
+    }
+
+    bool InputState::SetGamepadState(uint8_t slot, const GamepadState& state, EGamepadSampleMode mode)
+    {
+        if (slot >= GamepadSlotCount || !IsValidGamepadSampleMode(mode) || !IsValidGamepadState(state))
+        {
+            return false;
+        }
+        GamepadState operation = state;
+        if (mode == EGamepadSampleMode::Background)
+        {
+            operation = {};
+            operation.Connected = state.Connected;
+            operation.PacketNumber = state.PacketNumber;
+        }
+        m_LastGamepadSamples[slot] = state;
+        ++m_GamepadSampleSerial[slot];
+        ApplyGamepadState(slot, operation);
+        if (mode != EGamepadSampleMode::Live)
+        {
+            m_GamepadPressed[slot] = 0;
+        }
+        return true;
+    }
+    void InputState::ApplyGamepadState(uint8_t slot, const GamepadState& state)
+    {
+        const uint16_t oldButtons = m_GamepadStates[slot].Buttons;
+        const uint16_t pressed = static_cast<uint16_t>(state.Buttons & ~oldButtons);
+        const uint16_t released = static_cast<uint16_t>(oldButtons & ~state.Buttons);
+        m_GamepadPressed[slot] |= pressed;
+        m_GamepadReleased[slot] |= released;
+        for (uint32_t bit = 0; bit < 16; ++bit)
+            if ((released & (1u << bit)) != 0) ++m_GamepadReleaseSerial[slot][bit];
+        m_GamepadStates[slot] = state;
+        if (!state.Connected) m_GamepadPressed[slot] = 0;
+    }
+
+    GamepadState InputState::GetGamepadState(uint8_t slot) const
+    {
+        return slot < GamepadSlotCount ? m_GamepadStates[slot] : GamepadState{};
+    }
+    GamepadState InputState::GetPreviousGamepadState(uint8_t slot) const
+    {
+        return slot < GamepadSlotCount ? m_PrevGamepadStates[slot] : GamepadState{};
+    }
+    GamepadState InputState::GetLastGamepadSample(uint8_t slot) const
+    {
+        return slot<GamepadSlotCount ? m_LastGamepadSamples[slot] : GamepadState{};
+    }
+    uint64_t InputState::GetGamepadSampleSerial(uint8_t slot) const
+    {
+        return slot<GamepadSlotCount ? m_GamepadSampleSerial[slot] : 0;
+    }
+    bool InputState::IsGamepadButtonDown(uint8_t slot, GamepadButton button) const
+    {
+        const auto code = static_cast<uint16_t>(button);
+        return slot < GamepadSlotCount && IsValidGamepadButton(code) && m_GamepadStates[slot].Connected &&
+            (m_GamepadStates[slot].Buttons & code) != 0;
+    }
+    bool InputState::IsGamepadButtonPressed(uint8_t slot, GamepadButton button) const
+    {
+        const auto code = static_cast<uint16_t>(button);
+        return slot < GamepadSlotCount && IsValidGamepadButton(code) && (m_GamepadPressed[slot] & code) != 0;
+    }
+    bool InputState::IsGamepadButtonReleased(uint8_t slot, GamepadButton button) const
+    {
+        const auto code = static_cast<uint16_t>(button);
+        return slot < GamepadSlotCount && IsValidGamepadButton(code) && (m_GamepadReleased[slot] & code) != 0;
+    }
+    uint64_t InputState::GetGamepadButtonReleaseSerial(uint8_t slot, GamepadButton button) const
+    {
+        const auto code = static_cast<uint16_t>(button);
+        return slot < GamepadSlotCount && IsValidGamepadButton(code)
+            ? m_GamepadReleaseSerial[slot][std::countr_zero(code)] : 0;
+    }
+    float InputState::GetGamepadAxis(uint8_t slot, GamepadAxis axis) const
+    {
+        const auto index = static_cast<uint8_t>(axis);
+        return slot < GamepadSlotCount && index < static_cast<uint8_t>(GamepadAxis::Count) &&
+            m_GamepadStates[slot].Connected ? m_GamepadStates[slot].Axes[index] : 0.0f;
+    }
+    float InputState::GetGamepadTrigger(uint8_t slot, GamepadTrigger trigger) const
+    {
+        const auto index = static_cast<uint8_t>(trigger);
+        return slot < GamepadSlotCount && index < static_cast<uint8_t>(GamepadTrigger::Count) &&
+            m_GamepadStates[slot].Connected ? m_GamepadStates[slot].Triggers[index] : 0.0f;
     }
 
     void InputState::SetKeyState(KeyCode code, bool bDown)
@@ -108,6 +245,7 @@ namespace NorvesLib::Core::Input
         uint32_t index = static_cast<uint32_t>(code);
         if (index < KEY_COUNT)
         {
+            if (m_KeyStates[index] && !bDown) ++m_KeyReleaseSerial[index];
             m_KeyStates[index] = bDown;
         }
     }
@@ -117,12 +255,26 @@ namespace NorvesLib::Core::Input
         uint32_t index = static_cast<uint32_t>(button);
         if (index < MOUSE_BUTTON_COUNT)
         {
+            if (m_MouseButtonStates[index] && !bDown) ++m_MouseReleaseSerial[index];
             m_MouseButtonStates[index] = bDown;
         }
     }
 
-    void InputState::SetMousePosition(float x, float y)
+    void InputState::ResetAbsoluteMouseTracking()
     {
+        m_MouseState.DeltaX=0;m_MouseState.DeltaY=0;m_bFirstMouseUpdate=true;
+    }
+
+    void InputState::SetMousePosition(float x, float y, bool accumulateDelta)
+    {
+        if(!std::isfinite(x) || !std::isfinite(y)) return;
+        if(!accumulateDelta)
+        {
+            ResetAbsoluteMouseTracking();
+            m_MouseState.PositionX=x;m_MouseState.PositionY=y;
+            m_PrevMouseX=x;m_PrevMouseY=y;
+            return;
+        }
         if (m_bFirstMouseUpdate)
         {
             m_PrevMouseX = x;
@@ -140,9 +292,49 @@ namespace NorvesLib::Core::Input
         m_PrevMouseY = y;
     }
 
+    namespace
+    {
+        bool TryAccumulatePair(float oldX, float oldY, float x, float y, float& outX, float& outY)
+        {
+            if (!std::isfinite(x) || !std::isfinite(y)) return false;
+            const double nextX = static_cast<double>(oldX) + x;
+            const double nextY = static_cast<double>(oldY) + y;
+            const double limit = std::numeric_limits<float>::max();
+            if (!std::isfinite(nextX) || !std::isfinite(nextY) || std::fabs(nextX)>limit || std::fabs(nextY)>limit) return false;
+            outX = static_cast<float>(nextX);
+            outY = static_cast<float>(nextY);
+            return true;
+        }
+    }
     void InputState::AddMouseScroll(float delta)
     {
-        m_MouseState.ScrollDelta += delta;
+        (void)AddMouseScrollAxes(delta, 0.0f);
+    }
+    bool InputState::AddMouseScrollAxes(float vertical, float horizontal)
+    {
+        if (!TryAccumulatePair(m_MouseState.ScrollDelta, m_MouseState.HorizontalScrollDelta,
+            vertical, horizontal, m_MouseState.ScrollDelta, m_MouseState.HorizontalScrollDelta))
+        {
+            return false;
+        }
+        if (vertical != 0 || horizontal != 0)
+        {
+            ++m_MouseScrollActivitySerial;
+        }
+        return true;
+    }
+    bool InputState::AddRawMouseDelta(float x, float y)
+    {
+        if (!TryAccumulatePair(m_MouseState.RawDeltaX, m_MouseState.RawDeltaY,
+            x, y, m_MouseState.RawDeltaX, m_MouseState.RawDeltaY))
+        {
+            return false;
+        }
+        if (x != 0 || y != 0)
+        {
+            ++m_RawMouseActivitySerial;
+        }
+        return true;
     }
 
     void InputState::ResetFrameAccumulators()
@@ -150,6 +342,9 @@ namespace NorvesLib::Core::Input
         m_MouseState.DeltaX = 0.0f;
         m_MouseState.DeltaY = 0.0f;
         m_MouseState.ScrollDelta = 0.0f;
+        m_MouseState.HorizontalScrollDelta = 0.0f;
+        m_MouseState.RawDeltaX = 0.0f;
+        m_MouseState.RawDeltaY = 0.0f;
     }
 
 } // namespace NorvesLib::Core::Input

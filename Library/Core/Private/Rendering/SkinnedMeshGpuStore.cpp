@@ -17,7 +17,7 @@ namespace NorvesLib::Core::Rendering
 
     void SkinnedMeshGpuStore::BeginFrame(uint64_t completedSubmissionSerial)
     {
-        if (!m_PendingUses.empty())
+        if (m_bFrameOpen)
         {
             AbortFrame();
         }
@@ -25,6 +25,14 @@ namespace NorvesLib::Core::Rendering
         {
             m_CompletedSubmissionSerial = completedSubmissionSerial;
         }
+        m_ActivePalettes.clear();
+        // epochを再利用すると古いpreparedが通るため、枯渇時は新規フレームを開かない。
+        if (m_PreparationEpoch == UINT64_MAX)
+        {
+            m_bFrameOpen = false;
+            return;
+        }
+        ++m_PreparationEpoch;
         m_bFrameOpen = true;
         CollectReleased();
     }
@@ -44,77 +52,151 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        const bool wantsPrevious = previousBonePalette || previousWorldTransform;
+        const auto& effectivePreviousBones = previousBonePalette ? *previousBonePalette : bonePalette;
+        const auto& effectivePreviousWorld = previousWorldTransform ? *previousWorldTransform : worldTransform;
+        const auto sameMatrix = [](const Math::Matrix4x4& lhs, const Math::Matrix4x4& rhs)
+        {
+            return std::memcmp(lhs.values,rhs.values,sizeof(lhs.values)) == 0;
+        };
+        const auto sameBones = [&](const auto& lhs, const auto& rhs)
+        {
+            if (lhs.size() != rhs.size())
+            {
+                return false;
+            }
+            for (size_t index = 0; index < lhs.size(); ++index)
+            {
+                if (!sameMatrix(lhs[index],rhs[index]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        Container::TSharedPtr<PaletteUse> use;
+        bool createCurrent = true;
+        if (frameLease->ComponentId != 0)
+        {
+            const auto found = m_ActivePalettes.find(frameLease->ComponentId);
+            if (found != m_ActivePalettes.end())
+            {
+                use = found->second;
+                if (use->Handle != frameLease->AssetLease->GetHandle() ||
+                    !sameMatrix(use->World,worldTransform) || !sameBones(use->Bones,bonePalette))
+                {
+                    return false;
+                }
+                createCurrent = false;
+            }
+        }
         Entry* entry = FindOrUpload(frameLease);
         if (!entry)
         {
             return false;
         }
-
-        Container::VariableArray<float> uploadMatrices;
-        uploadMatrices.resize((2 + bonePalette.size() * 2) * 16);
-        Math::MatrixUtils::CopyToShaderData(worldTransform, uploadMatrices.data());
-        const Math::Matrix4x4 worldNormal = Math::MatrixUtils::CreateNormalMatrix(worldTransform);
-        Math::MatrixUtils::CopyToShaderData(worldNormal, uploadMatrices.data() + 16);
-        for (size_t matrixIndex = 0; matrixIndex < bonePalette.size(); ++matrixIndex)
+        if (createCurrent)
         {
-            const Math::Matrix4x4& source = bonePalette[matrixIndex];
-            float* positionDestination = uploadMatrices.data() + (2 + matrixIndex * 2) * 16;
-            float* normalDestination = positionDestination + 16;
-            Math::MatrixUtils::CopyToShaderData(source, positionDestination);
-            const Math::Matrix4x4 normal = Math::MatrixUtils::CreateNormalMatrix(source);
-            Math::MatrixUtils::CopyToShaderData(normal, normalDestination);
-        }
-
-        RHI::BufferDesc paletteDesc;
-        paletteDesc.Size = static_cast<uint64_t>(uploadMatrices.size() * sizeof(float));
-        paletteDesc.Usage = RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::ShaderRead;
-        paletteDesc.CPUAccessible = true;
-        paletteDesc.DebugName = "SkinnedPalette";
-        RHI::BufferPtr paletteBuffer = m_Device->CreateBuffer(paletteDesc);
-        if (!paletteBuffer)
-        {
-            return false;
-        }
-        paletteBuffer->Update(uploadMatrices.data(), paletteDesc.Size, 0);
-
-        // 直前のフレームの変換と骨ごとの位置の行列（velocity 用。法線の行列は要らない）。
-        RHI::BufferPtr previousPaletteBuffer;
-        if (previousBonePalette || previousWorldTransform)
-        {
-            const Container::VariableArray<Math::Matrix4x4>& previousPalette =
-                previousBonePalette ? *previousBonePalette : bonePalette;
-            Container::VariableArray<float> previousMatrices;
-            previousMatrices.resize((1 + previousPalette.size()) * 16);
-            Math::MatrixUtils::CopyToShaderData(previousWorldTransform ? *previousWorldTransform : worldTransform,
-                                                previousMatrices.data());
-            for (size_t matrixIndex = 0; matrixIndex < previousPalette.size(); ++matrixIndex)
+            use = Container::MakeShared<PaletteUse>();
+            use->ComponentId = frameLease->ComponentId;
+            use->Epoch = m_PreparationEpoch;
+            use->Handle = entry->Handle;
+            use->World = worldTransform;
+            use->Bones = bonePalette;
+            entry->PaletteUses.push_back(use);
+            if (use->ComponentId != 0)
             {
-                Math::MatrixUtils::CopyToShaderData(previousPalette[matrixIndex],
-                                                    previousMatrices.data() + (1 + matrixIndex) * 16);
+                m_ActivePalettes[use->ComponentId] = use;
             }
-            RHI::BufferDesc previousDesc = paletteDesc;
-            previousDesc.Size = static_cast<uint64_t>(previousMatrices.size() * sizeof(float));
-            previousDesc.DebugName = "SkinnedPreviousPalette";
-            previousPaletteBuffer = m_Device->CreateBuffer(previousDesc);
-            if (!previousPaletteBuffer)
+            Container::VariableArray<float> uploadMatrices;
+            uploadMatrices.resize((2 + bonePalette.size() * 2) * 16);
+            Math::MatrixUtils::CopyToShaderData(worldTransform, uploadMatrices.data());
+            const Math::Matrix4x4 worldNormal = Math::MatrixUtils::CreateNormalMatrix(worldTransform);
+            Math::MatrixUtils::CopyToShaderData(worldNormal, uploadMatrices.data() + 16);
+            for (size_t matrixIndex = 0; matrixIndex < bonePalette.size(); ++matrixIndex)
+            {
+                const Math::Matrix4x4& source = bonePalette[matrixIndex];
+                float* positionDestination = uploadMatrices.data() + (2 + matrixIndex * 2) * 16;
+                float* normalDestination = positionDestination + 16;
+                Math::MatrixUtils::CopyToShaderData(source, positionDestination);
+                const Math::Matrix4x4 normal = Math::MatrixUtils::CreateNormalMatrix(source);
+                Math::MatrixUtils::CopyToShaderData(normal, normalDestination);
+            }
+
+            RHI::BufferDesc paletteDesc;
+            paletteDesc.Size = static_cast<uint64_t>(uploadMatrices.size() * sizeof(float));
+            paletteDesc.Usage = RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::ShaderRead;
+            paletteDesc.CPUAccessible = true;
+            paletteDesc.DebugName = "SkinnedPalette";
+            RHI::BufferPtr paletteBuffer = m_Device->CreateBuffer(paletteDesc);
+            if (!paletteBuffer)
             {
                 return false;
             }
-            previousPaletteBuffer->Update(previousMatrices.data(), previousDesc.Size, 0);
+            paletteBuffer->Update(uploadMatrices.data(), paletteDesc.Size, 0);
+            use->Buffer = paletteBuffer;
+        }
+        if (!use->Buffer)
+        {
+            return false;
+        }
+
+        // GBufferが初めて要求した時だけpreviousを作る。影のpreparedは常にprevious無し。
+        if (wantsPrevious)
+        {
+            if (use->bPreviousAttempted)
+            {
+                if (!use->PreviousBuffer || !sameMatrix(use->PreviousWorld,effectivePreviousWorld) ||
+                    !sameBones(use->PreviousBones,effectivePreviousBones))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                use->bPreviousAttempted = true;
+                use->PreviousWorld = effectivePreviousWorld;
+                use->PreviousBones = effectivePreviousBones;
+                Container::VariableArray<float> previousMatrices;
+                previousMatrices.resize((1 + effectivePreviousBones.size()) * 16);
+                Math::MatrixUtils::CopyToShaderData(effectivePreviousWorld,previousMatrices.data());
+                for (size_t index = 0; index < effectivePreviousBones.size(); ++index)
+                {
+                    Math::MatrixUtils::CopyToShaderData(effectivePreviousBones[index],previousMatrices.data() + (1 + index)*16);
+                }
+                RHI::BufferDesc desc;
+                desc.Size = static_cast<uint64_t>(previousMatrices.size()*sizeof(float));
+                desc.Usage = RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::ShaderRead;
+                desc.CPUAccessible = true;
+                desc.DebugName = "SkinnedPreviousPalette";
+                use->PreviousBuffer = m_Device->CreateBuffer(desc);
+                if (!use->PreviousBuffer)
+                {
+                    return false;
+                }
+                use->PreviousBuffer->Update(previousMatrices.data(),desc.Size,0);
+            }
         }
 
         TrackFrameLease(*entry, frameLease);
-        PaletteUse paletteUse;
-        paletteUse.Buffer = paletteBuffer;
-        paletteUse.PreviousBuffer = previousPaletteBuffer;
-        paletteUse.FrameLease = frameLease;
-        entry->PaletteUses.push_back(paletteUse);
+        bool tracked = false;
+        for (const auto& weak : use->FrameLeases)
+        {
+            tracked = tracked || weak.lock().get() == frameLease.get();
+        }
+        if (!tracked)
+        {
+            use->FrameLeases.push_back(frameLease);
+        }
 
         outPrepared.MeshHandle = entry->Handle;
         outPrepared.VertexBuffer = entry->VertexBuffer;
         outPrepared.IndexBuffer = entry->IndexBuffer;
-        outPrepared.PaletteBuffer = paletteBuffer;
-        outPrepared.PreviousPaletteBuffer = previousPaletteBuffer;
+        outPrepared.PaletteBuffer = use->Buffer;
+        outPrepared.PreviousPaletteBuffer = wantsPrevious ? use->PreviousBuffer : RHI::BufferPtr{};
+        outPrepared.ComponentId = use->ComponentId;
+        outPrepared.PreparationEpoch = use->ComponentId != 0 ? use->Epoch : 0;
+        outPrepared.bUsesPreviousPalette = wantsPrevious;
         outPrepared.IndexCount = entry->IndexCount;
         return true;
     }
@@ -136,11 +218,35 @@ namespace NorvesLib::Core::Rendering
         }
 
         Entry& entry = entryIt->second;
-        TrackFrameLease(entry, frameLease);
-        for (PaletteUse& paletteUse : entry.PaletteUses)
+        if (entry.VertexBuffer != prepared.VertexBuffer || entry.IndexBuffer != prepared.IndexBuffer || entry.IndexCount != prepared.IndexCount ||
+            entry.AssetLease.lock().get() != frameLease->AssetLease.get())
         {
+            return false;
+        }
+        for (const auto& palettePtr : entry.PaletteUses)
+        {
+            PaletteUse& paletteUse = *palettePtr;
             if (paletteUse.Buffer == prepared.PaletteBuffer)
             {
+                bool registered = false;
+                for (const auto& weak : paletteUse.FrameLeases)
+                {
+                    registered = registered || weak.lock().get() == frameLease.get();
+                }
+                if (paletteUse.ComponentId != frameLease->ComponentId || prepared.ComponentId != paletteUse.ComponentId ||
+                    (paletteUse.ComponentId == 0 && paletteUse.PreviousBuffer != prepared.PreviousPaletteBuffer) ||
+                    (paletteUse.ComponentId != 0 && (!registered || paletteUse.Epoch != m_PreparationEpoch ||
+                        prepared.PreparationEpoch != paletteUse.Epoch)) ||
+                    (prepared.bUsesPreviousPalette ? (!paletteUse.PreviousBuffer || paletteUse.PreviousBuffer != prepared.PreviousPaletteBuffer)
+                        : bool(prepared.PreviousPaletteBuffer)))
+                {
+                    return false;
+                }
+                if (!registered)
+                {
+                    paletteUse.FrameLeases.push_back(frameLease);
+                }
+                TrackFrameLease(entry, frameLease);
                 for (const PendingUse& pending : m_PendingUses)
                 {
                     if (pending.Handle == prepared.MeshHandle &&
@@ -180,16 +286,21 @@ namespace NorvesLib::Core::Rendering
             {
                 entry.LastSubmittedSerial = submissionSerial;
             }
-            for (PaletteUse& paletteUse : entry.PaletteUses)
+            for (const auto& palettePtr : entry.PaletteUses)
             {
+                PaletteUse& paletteUse = *palettePtr;
                 if (paletteUse.Buffer == pending.PaletteBuffer)
                 {
-                    paletteUse.LastSubmittedSerial = submissionSerial;
+                    if (submissionSerial > paletteUse.LastSubmittedSerial)
+                    {
+                        paletteUse.LastSubmittedSerial = submissionSerial;
+                    }
                     break;
                 }
             }
         }
         m_PendingUses.clear();
+        m_ActivePalettes.clear();
         m_bFrameOpen = false;
         return true;
     }
@@ -197,6 +308,7 @@ namespace NorvesLib::Core::Rendering
     void SkinnedMeshGpuStore::AbortFrame()
     {
         m_PendingUses.clear();
+        m_ActivePalettes.clear();
         m_bFrameOpen = false;
         CollectReleased();
     }
@@ -259,6 +371,7 @@ namespace NorvesLib::Core::Rendering
     void SkinnedMeshGpuStore::ForceClearAfterWaitIdle()
     {
         m_PendingUses.clear();
+        m_ActivePalettes.clear();
         m_Entries.clear();
         m_CompletedSubmissionSerial = 0;
         m_bFrameOpen = false;
@@ -272,7 +385,7 @@ namespace NorvesLib::Core::Rendering
         auto entryIt = m_Entries.find(handle);
         if (entryIt != m_Entries.end())
         {
-            return &entryIt->second;
+            return entryIt->second.AssetLease.lock().get() == assetLease.get() ? &entryIt->second : nullptr;
         }
 
         const auto& vertices = assetLease->GetVertices();
@@ -368,8 +481,14 @@ namespace NorvesLib::Core::Rendering
 
             for (auto paletteIt = entry.PaletteUses.begin(); paletteIt != entry.PaletteUses.end();)
             {
-                if (paletteIt->FrameLease.expired() &&
-                    IsSubmissionComplete(paletteIt->LastSubmittedSerial))
+                auto& use = **paletteIt;
+                bool hasLease = false;
+                for (const auto& weak : use.FrameLeases)
+                {
+                    hasLease = hasLease || !weak.expired();
+                }
+                if (!hasLease && !(m_bFrameOpen && use.ComponentId != 0 && use.Epoch == m_PreparationEpoch) &&
+                    IsSubmissionComplete(use.LastSubmittedSerial))
                 {
                     paletteIt = entry.PaletteUses.erase(paletteIt);
                 }

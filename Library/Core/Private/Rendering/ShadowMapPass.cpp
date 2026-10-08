@@ -1,4 +1,6 @@
 ﻿#include "Rendering/ShadowMapPass.h"
+#include "Rendering/SkinnedShadowComponentBindings.h"
+#include "Rendering/SkinnedShadowStorage.h"
 #include "Rendering/DirectionalShadowLightMatrices.h"
 #include "Rendering/CascadedShadowLightMatrices.h"
 #include "Rendering/PointShadowSnapshot.h"
@@ -43,12 +45,12 @@ namespace NorvesLib::Core::Rendering
         };
         static_assert(sizeof(PointShadowFaceUBO) == 224);
 
-        // 非スキンの描画は面ごとに1スロット、スキンとMegaGeometryの描画は描画ごと・面ごとに1スロットを使う。
-        constexpr uint32_t PointShadowMaxSkinnedDrawsPerFace = 16u;
+        // 非スキンは面ごとに1枠、スキンはcomponentごと・面ごとに1枠、MegaGeometryは描画ごと・面ごとに1枠。
+        constexpr uint32_t PointShadowMaxSkinnedComponentsPerFace = SkinnedPointShadowComponentCapacity;
         constexpr uint32_t PointShadowMaxMegaDrawsPerFace = 8u;
         constexpr uint32_t PointShadowUniformSlotCount =
             PointShadowMaxLights * PointShadowFaceCount *
-            (1u + PointShadowMaxSkinnedDrawsPerFace + PointShadowMaxMegaDrawsPerFace);
+            (1u + PointShadowMaxSkinnedComponentsPerFace + PointShadowMaxMegaDrawsPerFace);
 
         // CSMの1カスケード・1描画のUBO（shadow.vertのShadowMVPに対応）
         struct ShadowPerObjectUBO
@@ -1432,6 +1434,7 @@ namespace NorvesLib::Core::Rendering
 
                     // 非スキンの描画はこの面のUBOとインスタンスを1つの記述子セットで共有する。
                     RHI::DescriptorSetPtr sharedFaceSet;
+                    SkinnedShadowComponentBindings<RHI::DescriptorSetPtr> skinnedFaceSets;
                     for (const PointShadowCaster& caster : casters)
                     {
                         if (caster.bHasBounds &&
@@ -1443,26 +1446,30 @@ namespace NorvesLib::Core::Rendering
                         DrawCommand drawCommand = caster.Command;
                         if (caster.bSkinned)
                         {
-                            auto allocation = m_PointShadowUniformAllocator.Allocate();
-                            if (!allocation.UniformBuffer)
+                            const auto& prepared = drawCommand.Skinned.Prepared;
+                            const SkinnedShadowBindingKey key{prepared.ComponentId,prepared.PreparationEpoch,
+                                prepared.MeshHandle.Id,prepared.MeshHandle.Generation,
+                                prepared.PaletteBuffer.get(),prepared.VertexBuffer.get()};
+                            const auto createSet = [&]() -> RHI::DescriptorSetPtr
                             {
-                                NORVES_LOG_WARNING("ShadowMapPass",
-                                                   "点光源の影のUBOが足りないためスキンの描画を省きます");
+                                auto allocation = m_PointShadowUniformAllocator.Allocate();
+                                if (!allocation.UniformBuffer || !allocation.DescriptorSet)
+                                {
+                                    NORVES_LOG_WARNING("ShadowMapPass",
+                                        "点光源の影のUBOが足りないためcomponent全体を省きます");
+                                    return {};
+                                }
+                                allocation.UniformBuffer->Update(&faceData,sizeof(faceData));
+                                if (!BindSkinnedShadowStorage(prepared,allocation.DescriptorSet.get()))
+                                {
+                                    return {};
+                                }
+                                return allocation.DescriptorSet;
+                            };
+                            if (!skinnedFaceSets.TryGet(key,createSet,drawCommand.DescriptorSet))
+                            {
                                 continue;
                             }
-                            allocation.UniformBuffer->Update(&faceData, sizeof(faceData));
-                            allocation.DescriptorSet->BindStorageBuffer(
-                                8,
-                                drawCommand.Skinned.Prepared.PaletteBuffer,
-                                0,
-                                static_cast<uint32_t>(drawCommand.Skinned.Prepared.PaletteBuffer->GetSize()));
-                            allocation.DescriptorSet->BindStorageBuffer(
-                                9,
-                                drawCommand.Skinned.Prepared.VertexBuffer,
-                                0,
-                                static_cast<uint32_t>(drawCommand.Skinned.Prepared.VertexBuffer->GetSize()));
-                            allocation.DescriptorSet->Update();
-                            drawCommand.DescriptorSet = allocation.DescriptorSet;
                         }
                         else
                         {
@@ -1586,6 +1593,10 @@ namespace NorvesLib::Core::Rendering
 
         const auto& frameLease =
             (*context.SnapshotSkinnedMeshFrameLeases)[source.Skinned.FrameLeaseIndex];
+        if (!frameLease || (frameLease->ComponentId != 0 && frameLease->ComponentId != source.Draw.SourceMeshComponentId))
+        {
+            return false;
+        }
         SkinnedMeshPreparedDraw prepared;
         if (!context.SkinnedMeshes->PrepareDraw(frameLease,
                                                 source.Skinned.BonePalette,

@@ -14,7 +14,7 @@ namespace NorvesLib::Core::Rendering::VisibilityResolveGeometry
      * @brief 材質の表の 1 件から、GBufferPass の材質の descriptor が張るのと同じテクスチャ・スカラー値・VT の要求のパラメータを引く
      *
      * textures が null のときは、テクスチャはすべて null（VT の要求のパラメータは 0）。スカラー値は、そのテクスチャの
-     * 指定（ハンドル）が無いときだけ採る。MegaGeometry の印（MATERIAL_FLAG_MEGA_GEOMETRY）は bMegaGeometry へ写す。
+     * 指定（ハンドル）が無いときに採る。MegaGeometry は解決不能なハンドルも定数へ戻す。MegaGeometry の印（MATERIAL_FLAG_MEGA_GEOMETRY）は bMegaGeometry へ写す。
      */
     VisibilityResolveMaterial MakeResolveMaterial(const TextureResources* textures,
                                                   const VisibilityBuffer::MaterialEntry& entry,

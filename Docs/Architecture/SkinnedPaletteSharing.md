@@ -1,0 +1,48 @@
+# スキン描画パレットのフレーム内共有
+
+## 作成単位
+
+非0 ComponentIdごとに、BeginFrameからCommit/Abortまでを1準備epochとする。
+同componentのasset handle/generation・asset lease実体・world・bone行列のビット列が一致するときだけ現在パレットを共有する。
+異なる値を同epochへ混在させた場合は拒否し、2個目を作らない。
+SkinnedPaletteは1回作成。SkinnedPreviousPaletteはGBufferが初めてpreviousを要求した時に最大1回作成する。
+影はpreviousを要求せず、GBufferが先に作成済みでも影のpreparedへは渡さない。
+影→GBuffer→影記録、GBuffer→影の両方で現在パレットを共有する。
+previousの値は要求する呼び出し間でだけ一致を確認する。作成失敗は当epochで再試行せず、currentが成功済みなら影は継続できる。
+RHIとshaderのbinding配置は変更しない。
+
+## 寿命と記録
+
+共有recordには、Prepare成功した全frame leaseをweak参照で登録する。
+別viewportが作ったleaseもPrepareを経由すれば共有可能。未登録leaseへの差し替えは拒否する。
+preparedのcomponent/epoch・使用有無・buffer組とVB/IB/count/asset実体を記録前に照合する。
+非0componentの古いepochは記録できない。ComponentId=0は既存の非共有経路と跨フレームprepared互換を維持する。
+Begin/Commit/Abortで準備表を破棄しても、全frame lease消滅と最後のsubmitted serial完了の両方までGPU資源を保持する。
+Abortはsubmitted serialを進めない。ForceClearAfterWaitIdleでもepochを巻き戻さない。
+
+## 検証範囲
+
+独立SkinnedSubmeshDrawContractTestへ、両パス順序・1/2/8範囲・複数viewport・別component・pose/世代衝突・失敗時作成回数・epoch失効・全leaseとGPU serialの寿命・旧匿名互換を登録する。
+このクラウドではCoreのWindows.h依存によりnative実行は未検証。CPU RHI doubleはGPU表示・readbackの代用にはしない。
+前姿勢の世代照合は下記の共通履歴で扱う。
+
+## 点光源影のcomponent枠
+
+light/faceごとに16component枠を持ち、同componentの全submeshが1個のUBO/descriptorを共有する。
+17番目以降はcomponent全体を省略する。確保失敗も枠を予約して後続submeshで再試行しない。
+同componentのepoch/mesh世代/current palette/VBが異なる場合は共有を拒否する。
+匿名の旧preparedはpalette実体で区別し、ComponentId=0を一括共有しない。
+faceを跨いで表は再利用せず、descriptorの行列を後から別faceへ上書きしない。
+影用storage設定はbinding8=current、9=VBのみ。previous使用preparedは設定前に拒否する。
+純共有表は16component×8submesh×6face、容量超過、失敗固定、identity/旧匿名を通常・最適化・ASan/UBSan（LSan除外）で検証。
+実Coreの独立契約へ6face×128 DrawIndexed・descriptor16/face・binding10無しも登録するが、Windows依存でnative/GPUは未実行。
+
+## 前姿勢と資産世代
+
+GameThreadの直前packet履歴とRenderThreadの最後に描いたpacket履歴は、共通SkinnedPoseHistoryを使う。
+componentIdだけでなくasset handle/generation・不変asset lease実体・骨数が一致した場合だけ前姿勢を渡す。
+同骨数のreload、別資産、同handleを名乗る別lease、未登録frame、匿名componentは前姿勢無しへ戻す。
+同componentのsubmesh/viewportは最初の姿勢を1回保存し、残りは一致だけを確認する。不一致が混在した履歴は次frameで使わない。
+履歴はassetをweak参照し、Resourceやpacketの寿命を延長しない。
+GameThreadは従来どおり直前frameのみ、RenderThreadは従来どおり描画gapのときだけ付け替える。velocityの時間基準は変えない。
+実Core契約へ同骨数世代変更・別資産/実体・2viewport×8submesh・衝突・不正frame・gap・weak寿命を登録。native/GPU未実行。

@@ -1659,6 +1659,10 @@ namespace NorvesLib::Core::Rendering
         // velocity 用に直前のフレームの変換とパレットも載せる（無ければ現在と同じにして、物体の動きを0にする）。
         const bool bHasPrevious = source.Skinned.bHasPrevious &&
                                   source.Skinned.PreviousBonePalette.size() == source.Skinned.BonePalette.size();
+        if (!frameLease || (frameLease->ComponentId != 0 && frameLease->ComponentId != source.Draw.SourceMeshComponentId))
+        {
+            return false;
+        }
         SkinnedMeshPreparedDraw prepared;
         if (!context.SkinnedMeshes->PrepareDraw(frameLease,
                                                 source.Skinned.BonePalette,

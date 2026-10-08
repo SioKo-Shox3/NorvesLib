@@ -1,0 +1,26 @@
+# 有限ジョブ投入の計上境界
+
+GR83の非同期ロードが利用するJobSystemの投入準備を対象とする。一般Taskの例外処理やschedulerは変更しない。
+
+## 契約
+
+- finite submissionごとに独立ticketを確保し、未計上の状態でOnCompleteへ登録する
+- queue pushの成功後、同じadmission gate内でticketをarmする。完了観測と計上印、OutstandingFiniteTasksは同じ世代StateのMutexで管理する
+- OnCompleteはterminal Taskへの登録時に同期実行され得る。先行完了を観測したticketはarmで加算せず、arm済みticketだけが完了時に一度減算する
+- ticket/handler/queue準備の例外はcallerへ伝播する。失敗ticketが後から完了しても別submissionのcountには触らない。以前受理済みの同Taskを誤って取り消さないため、この例外経路でCancelしない
+- false拒否時の既存Cancelはgate外のまま。persistentはfinite ticketを持たない。重複Taskの受理は維持し、Task自身のCASで関数の実行を一度に制限する
+- 失敗Taskを保持すれば未arm handler/ticket/旧Stateの参照も残り得る。完了/取消/破棄で解放し、count leakと区別する
+
+## 成立条件と限界
+
+有効な同期オブジェクト、表現可能なcount、正しいTask shared ownership、実行中のmode変更なしを前提とする。globalのvector/priority queueは非throwing TaskPtr操作とscalar priority比較、local queueはpush_back完了後にbottomを公開する。push成功後は確保・外部callback・throwing test hookを置かない。OS同期障害や任意captureの異常destructorまで復旧保証に含めない。
+
+Drainはterminal通知に基づく有限計上の完了だけを待つ。全handlerの復帰、queue空、consumer配送完了とは異なる。worker本体がthrowした場合や先行OnComplete handlerがthrowして後続handlerを飛ばす場合は既存Taskの範囲外のまま。骨格queueではprivate Task、workerの外側catch、確保不要のready slotとhand-off ack、owner側delegate例外隔離が別途必要になる。
+
+## 検証
+
+JobSystemShutdownTestに常時有効なCHECKと子process watchdogを使う境界注入を追加する。simple global、構築直後のwork-stealing fallback、稼働中localの3経路、bad_alloc/非std例外、遅い失敗handlerと別仕事、同Task成功/失敗重複・RUNNING/terminal、arm前後、Drain admission fence、handler登録後のStop/Shutdown競合（成功/例外）とclose先行拒否、取消handlerの再入、再初期化世代・weak寿命を検査する。
+
+注入は各確保境界の直前に行う制御フロー反証であり、実allocatorのOOM全域走査ではない。JobSystem束はDebug/Releaseで実行する。既存model非同期3束はDebugで実行する。特にSnapshotReloadのInitialize/manifest読込、ModelAsyncLoadQueueのCloseがassert式内にあり、NDEBUG構成ではその処理自体が省略されるため、新しいRelease受入ゲートには加えない。既存のRelease試験集合は保持し、assert契約の実証はDebugに限定する。
+
+試験の競合順序は、callerの呼出前signalだけでなく、Stop/Shutdown/Drainがresize lock内へ入った非throwing通知で確認する。投入がadmission gateを保持している間にその通知へ到達させ、arm前の穴と登録後例外を反証する。

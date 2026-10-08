@@ -1,6 +1,15 @@
 ﻿#include "Rendering/VisibilityRasterPass.h"
 
 #include "Logging/LogMacros.h"
+#include "RHI/DeviceCapabilities.h"
+#include "RHI/IBuffer.h"
+#include "RHI/ICommandList.h"
+#include "RHI/IDescriptorSet.h"
+#include "RHI/IDevice.h"
+#include "RHI/IFramebuffer.h"
+#include "RHI/IPipeline.h"
+#include "RHI/ISampler.h"
+#include "RHI/ITexture.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/FrameCommand.h"
 #include "Rendering/MegaGeometryPass.h"
@@ -16,15 +25,6 @@
 #include "Rendering/SkinningComputePass.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/VisibilityResolvePass.h"
-#include "RHI/DeviceCapabilities.h"
-#include "RHI/IBuffer.h"
-#include "RHI/ICommandList.h"
-#include "RHI/IDescriptorSet.h"
-#include "RHI/IDevice.h"
-#include "RHI/IFramebuffer.h"
-#include "RHI/IPipeline.h"
-#include "RHI/ISampler.h"
-#include "RHI/ITexture.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -467,7 +467,8 @@ namespace NorvesLib::Core::Rendering
             if (!m_bLoggedUnsupported)
             {
                 NORVES_LOG_WARNING("VisibilityRasterPass",
-                                   "VIS_RASTER_UNSUPPORTED geometry_shader=%d draw_indirect_first_instance=%d "
+                                   "VIS_RASTER_UNSUPPORTED geometry_shader=%d "
+                                   "draw_indirect_first_instance=%d "
                                    "ビジビリティバッファの描画に対応しないため、このパスは何もしません",
                                    caps.bGeometryShader ? 1 : 0,
                                    caps.bDrawIndirectFirstInstance ? 1 : 0);
@@ -485,7 +486,8 @@ namespace NorvesLib::Core::Rendering
         if (!m_MegaVertexShader || !m_MeshVertexShader || !m_SkinnedVertexShader || !m_FragmentShader ||
             !m_RecordsShader || !m_RecordArgsShader)
         {
-            NORVES_LOG_WARNING("VisibilityRasterPass", "ビジビリティバッファのシェーダーの読み込みに失敗。このパスは何もしません");
+            NORVES_LOG_WARNING("VisibilityRasterPass", "ビジビリティバッファのシェーダーの読み込みに失敗。この"
+                                                       "パスは何もしません");
             return true;
         }
 
@@ -499,7 +501,8 @@ namespace NorvesLib::Core::Rendering
             m_MegaWireframePipeline.reset();
             m_MeshWireframePipeline.reset();
             m_SkinnedWireframePipeline.reset();
-            NORVES_LOG_WARNING("VisibilityRasterPass", "ビジビリティバッファのパイプラインの作成に失敗。このパスは何もしません");
+            NORVES_LOG_WARNING("VisibilityRasterPass", "ビジビリティバッファのパイプラインの作成に失敗。このパ"
+                                                       "スは何もしません");
             return true;
         }
 
@@ -539,6 +542,8 @@ namespace NorvesLib::Core::Rendering
 
     void VisibilityRasterPass::Shutdown()
     {
+        m_LastMaterialOwners.clear();
+        m_LastMaterialEntries.clear();
         m_SwRaster.Shutdown();
         m_Merge.Shutdown();
         m_FrameSlots.Clear();
@@ -707,8 +712,8 @@ namespace NorvesLib::Core::Rendering
             m_MegaWireframePipeline.reset();
             m_MeshWireframePipeline.reset();
             m_SkinnedWireframePipeline.reset();
-            NORVES_LOG_WARNING("VisibilityRasterPass",
-                               "VIS_RASTER_WIREFRAME_UNAVAILABLE 線の描き方のパイプラインを作れません。"
+            NORVES_LOG_WARNING("VisibilityRasterPass", "VIS_RASTER_WIREFRAME_UNAVAILABLE "
+                                                       "線の描き方のパイプラインを作れません。"
                                "ワイヤーフレームの表示では従来の GBuffer の描画を使います");
         }
 #endif
@@ -977,7 +982,8 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         m_bLoggedChunkFailure = true;
-        NORVES_LOG_WARNING("VisibilityRasterPass", "インデックスを塊に分けられないメッシュがあります。そのメッシュはビジビリティバッファへ描きません");
+        NORVES_LOG_WARNING("VisibilityRasterPass", "インデックスを塊に分けられないメッシュがあります。そのメ"
+                                                   "ッシュはビジビリティバッファへ描きません");
     }
 
     void VisibilityRasterPass::CollectProceduralChunks(ViewRenderContext& context,
@@ -1174,6 +1180,10 @@ namespace NorvesLib::Core::Rendering
             for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan->Sections)
             {
                 sectionMaterials.push_back(m_MaterialTable.Add(VisibilityBuffer::MakeMaterialEntry(section.Material)));
+                for (const auto &owner : section.Material.TextureOwners)
+                {
+                    m_LastMaterialOwners.push_back(owner);
+                }
             }
         }
         if (camera)
@@ -1379,7 +1389,8 @@ namespace NorvesLib::Core::Rendering
                 m_bLoggedRecordsDirectFallback = true;
                 NORVES_LOG_WARNING("VisibilityRasterPass",
                                    "VIS_RASTER_RECORDS_DIRECT_FALLBACK groups=%llu "
-                                   "間接 dispatch を断られたため、記録の計算を直接の dispatch で走らせます",
+                                   "間接 dispatch を断られたため、記録の計算を直接の "
+                                   "dispatch で走らせます",
                                    static_cast<unsigned long long>(groupLimit));
             }
         }
@@ -1710,7 +1721,8 @@ namespace NorvesLib::Core::Rendering
         {
             m_bLoggedMaterialOverflow = true;
             NORVES_LOG_WARNING("VisibilityRasterPass",
-                               "VISBUFFER_MATERIAL_OVERFLOW unique=%u limit=%u overflowed=%u 材質の数が表の上限を超えました。"
+                               "VISBUFFER_MATERIAL_OVERFLOW unique=%u limit=%u "
+                               "overflowed=%u 材質の数が表の上限を超えました。"
                                "溢れた材質は予備の番号（%u）へ寄せます",
                                m_Stats.MaterialUnique,
                                m_Stats.MaterialLimit,
@@ -1727,7 +1739,8 @@ namespace NorvesLib::Core::Rendering
             m_LoggedStats = m_Stats;
             m_bLoggedStats = true;
             NORVES_LOG_INFO("VisibilityRasterPass",
-                            "VIS_RASTER mega_command_slots=%u procedural_chunks=%u skinned_chunks=%u dropped_chunks=%u "
+                            "VIS_RASTER mega_command_slots=%u procedural_chunks=%u "
+                            "skinned_chunks=%u dropped_chunks=%u "
                             "record_slots=%u",
                             m_Stats.MegaCommandSlots,
                             m_Stats.ProceduralRecords,
@@ -1745,6 +1758,7 @@ namespace NorvesLib::Core::Rendering
         m_LastMaterialTable.reset();
         m_LastMaterialTableCount = 0;
         m_LastMaterialEntries.clear();
+        m_LastMaterialOwners.clear();
         m_LastMegaInstanceBuffer.reset();
         m_LastMegaInstanceBytes = 0;
         m_Work = FrameWork{};

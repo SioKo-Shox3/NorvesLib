@@ -9,7 +9,13 @@
 #include "Object/World.h"
 #include "Scene/SceneQuery.h"
 #include "Input/InputSystem.h"
+#include "Input/IInputDevice.h"
+#include "Input/HapticsService.h"
+#include "Container/VariableArray.h"
 #include "Input/InputRouter.h"
+#include "Input/InputMapper.h"
+#include "Input/InputRebindCaptureManager.h"
+#include "Input/InputDebugOverlayController.h"
 #include "Particle/ParticleSystem.h"
 #include "Thread/Atomic.h"
 
@@ -402,8 +408,45 @@ namespace NorvesLib::Core::Engine
         {
             return m_InputRouter;
         }
+        Input::InputMapper& GetInputMapper() { return m_InputMapper; }
+        const Input::InputMapper& GetInputMapper() const { return m_InputMapper; }
+        Input::InputDebugOverlayController& GetInputDebugOverlay() { return m_InputDebugOverlay; }
+        const Input::InputDebugOverlayController& GetInputDebugOverlay() const { return m_InputDebugOverlay; }
+        Input::InputRebindCaptureManager& GetInputRebindCapture() { return m_InputRebindCapture; }
+        const Input::InputRebindCaptureManager& GetInputRebindCapture() const { return m_InputRebindCapture; }
+
+        // 全操作はGameThread・input配送外。callbackから再入/Engine破棄しない。
+        // Addは未開始時だけ。失敗時も引数の所有権は呼出側へ戻さない。
+        bool AddInputDevice(Container::TUniquePtr<Input::IInputDevice> device);
+        bool HasGamepadInputDevice() const noexcept;
+        bool InitializeInputDevices();
+        bool PollInputDevices(double unscaledTimeSeconds);
+        bool SetInputDevicesFocused(bool focused) noexcept;
+        bool CanUpdateInputDeviceFocus() const noexcept
+        {
+            return !m_bInputDevicesBusy && !m_HapticsService.IsBusy();
+        }
+        // 全deviceを逆順停止。失敗したdeviceは次回Shutdownで再試行し、再開始を拒否する。
+        bool ShutdownInputDevices() noexcept;
+        bool AreInputDevicesInitialized() const noexcept { return m_bInputDevicesStarted; }
+        // 効果設定/Play/Stopはserviceへ。Engine所有時のfocus/pauseは下記owner APIを使う。
+        Input::HapticsService& GetHapticsService() noexcept { return m_HapticsService; }
+        const Input::HapticsService& GetHapticsService() const noexcept { return m_HapticsService; }
+        bool SetHapticsPaused(bool paused) noexcept;
+        bool UpdateHaptics(double unscaledDeltaSeconds) noexcept;
+        bool FlushHaptics() noexcept;
 
     private:
+        class HapticsDeviceOutput;
+        bool FlushHapticsInternal() noexcept;
+        bool StopInputDevicesInternal() noexcept;
+        bool HasPendingInputDeviceShutdown() const noexcept;
+        struct InputDeviceEntry
+        {
+            Container::TUniquePtr<Input::IInputDevice> Device;
+            bool bGamepadProvider = false;
+            bool bNeedsShutdown = false;
+        };
         static constexpr uint64_t ExitRequestedMask = uint64_t{1} << 63;
         static constexpr uint64_t ExitCodeMask = 0xFFFFFFFFull;
 
@@ -447,6 +490,19 @@ namespace NorvesLib::Core::Engine
 
         // 入力ルーター（GEngine配下で実体保持・InputSystem からの配送先）
         Input::InputRouter m_InputRouter;
+        // 借用先の正本/Routerより後に宣言し、先に破棄する。
+        Input::InputMapper m_InputMapper;
+        Input::InputDebugOverlayController m_InputDebugOverlay;
+        Input::InputRebindCaptureManager m_InputRebindCapture;
+        // 入力System/Mapperより先に停止・破棄する。deviceはこれらを長期借用しない。
+        Input::HapticsService m_HapticsService;
+        Container::VariableArray<InputDeviceEntry> m_InputDevices;
+        bool m_bHapticsPaused = false;
+        bool m_bInputDevicesStarted = false;
+        bool m_bInputDevicesBusy = false;
+        bool m_bInputDevicesFocused = true;
+        bool m_bInputDevicesHaveTime = false;
+        double m_InputDeviceTime = 0;
 
         // 実行状態
         bool m_bIsRunning = false;

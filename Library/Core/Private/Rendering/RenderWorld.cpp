@@ -105,7 +105,7 @@ namespace NorvesLib::Core::Rendering
             NORVES_LOG_ERROR("Rendering", "Failed to initialize RenderResources");
             return false;
         }
-        Resource::GLTFAnalyzer::ReopenAsyncAssetLoadAdmission();
+        ResourceIO::GLTFAnalyzer::ReopenAsyncAssetLoadAdmission();
 
         // RenderingCoordinatorにRenderResourcesを設定
         m_RenderingCoordinator.SetRenderResources(&m_RenderResources);
@@ -177,7 +177,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        Resource::GLTFAnalyzer::CloseAsyncAssetLoadAdmissionAndWait();
+        ResourceIO::GLTFAnalyzer::CloseAsyncAssetLoadAdmissionAndWait();
         m_RenderResources.CloseAsyncAssetLoadAdmissionAndWait();
         m_bAsyncAssetProducersQuiesced = true;
     }
@@ -241,7 +241,7 @@ namespace NorvesLib::Core::Rendering
             ModelLoadResourceContext modelLoadContext{
                 m_RenderResources.Textures(),
                 m_RenderResources.MegaGeometry()};
-            uint32_t modelFlushProcessed = Resource::GLTFAnalyzer::FlushCompletedModelLoads(modelLoadContext);
+            uint32_t modelFlushProcessed = ResourceIO::GLTFAnalyzer::FlushCompletedModelLoads(modelLoadContext);
             double modelFlushMs = LoadProfileElapsedMs(modelFlushStartTime);
             if (modelFlushProcessed > 0)
             {
@@ -390,7 +390,7 @@ namespace NorvesLib::Core::Rendering
     {
         return m_RenderResources.Textures().GetPendingAsyncLoadCount() > 0 ||
                m_RenderResources.MegaGeometry().GetPendingAsyncModelLoadCount() > 0 ||
-               Resource::GLTFAnalyzer::GetPendingAsyncModelLoadCount() > 0;
+               ResourceIO::GLTFAnalyzer::GetPendingAsyncModelLoadCount() > 0;
     }
 
     bool RenderWorld::HasPendingAsyncAssets() const

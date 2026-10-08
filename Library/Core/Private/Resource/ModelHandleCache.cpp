@@ -1,6 +1,6 @@
 ﻿#include "Resource/ModelHandleCache.h"
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     ModelCacheAcquireResult ModelHandleCache::Acquire(const Container::String& key, bool bAddExternalLease)
     {
@@ -136,4 +136,4 @@ namespace NorvesLib::Core::Resource
         m_Retired.clear();
         return batch;
     }
-} // namespace NorvesLib::Core::Resource
+} // namespace NorvesLib::Core::ResourceIO

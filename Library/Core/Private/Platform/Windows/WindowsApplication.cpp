@@ -112,7 +112,21 @@ namespace NorvesLib
                         return;
                     }
 
-                    TranslateMessage(&msg);
+                    bool translate=true;
+                    if(msg.message==WM_KEYDOWN || msg.message==WM_SYSKEYDOWN)
+                    {
+                        for(const auto& window:m_windows)
+                        {
+                            auto* native=dynamic_cast<WindowsWindow*>(window.get());
+                            if(native && native->GetHWND()==msg.hwnd)
+                            {
+                                translate=native->ShouldTranslateKeyMessage(msg.wParam,msg.lParam);
+                                break;
+                            }
+                        }
+                    }
+                    // WndProcで捨てる旧repeatから先にWM_CHARを生成しない。
+                    if(translate) TranslateMessage(&msg);
                     DispatchMessage(&msg);
                 }
             }

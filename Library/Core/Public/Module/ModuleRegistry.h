@@ -84,6 +84,7 @@ namespace NorvesLib::Core::Module
         void RollbackInstalled(Engine::Engine &engine, size_t count);
         void DispatchPreFixedTick(float fixedDeltaTime);
         void DispatchFixedTick(float fixedDeltaTime);
+        void DispatchLateTick(float deltaTime);
 
         Container::VariableArray<Container::TUniquePtr<IModule>> m_Modules; // 登録順=所有
         Container::VariableArray<IRenderModule *> m_RenderModules;          // 非所有ビュー

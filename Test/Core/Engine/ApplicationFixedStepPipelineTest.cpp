@@ -1,4 +1,5 @@
-﻿#include "Component/Component.h"
+﻿#include "Application/ApplicationHandlerBase.h"
+#include "Component/Component.h"
 #include "Component/PointLightComponent.h"
 #include "Engine/ApplicationProcessor.h"
 #include "Engine/Engine.h"
@@ -39,6 +40,14 @@ namespace NorvesLib::Core::Engine
             return processor.AdvanceFixedSimulation(rawDeltaNanoseconds, bAdvanceSimulation);
         }
 
+        static FixedStepAdvanceResult Simulate(
+            ApplicationProcessor& processor, int64_t rawDeltaNanoseconds,
+            bool bAdvanceSimulation, Application::IApplicationHandler* handler)
+        {
+            return processor.TickSimulation(rawDeltaNanoseconds,
+                processor.ClampVariableDeltaTime(rawDeltaNanoseconds), bAdvanceSimulation, handler);
+        }
+
         static float ClampVariableDeltaTime(ApplicationProcessor& processor, int64_t rawDeltaNanoseconds)
         {
             return processor.ClampVariableDeltaTime(rawDeltaNanoseconds);
@@ -50,7 +59,7 @@ namespace
 {
     using namespace NorvesLib::Core;
 
-    constexpr uint32_t kCaseCount = 11;
+    constexpr uint32_t kCaseCount = 17;
 
     struct DynamicFixture
     {
@@ -169,6 +178,15 @@ namespace
             }
         }
 
+        void LateTick(float) override
+        {
+            if (GFixture)
+            {
+                GFixture->Events.push_back(Container::String(LateName));
+            }
+        }
+
+        const char* LateName = "";
         uint32_t PreFixedTickCount = 0;
         uint32_t FixedTickCount = 0;
         float LastFixedDeltaTime = 0.0f;
@@ -184,11 +202,13 @@ namespace
         moduleA->Name = "FixedProbeModuleA";
         moduleA->PreName = "ModuleA Pre";
         moduleA->FixedName = "ModuleA Fixed";
+        moduleA->LateName = "ModuleA Late";
         moduleA->bObserveChildWorldTransform = true;
         FixedProbeModule* moduleB = new FixedProbeModule();
         moduleB->Name = "FixedProbeModuleB";
         moduleB->PreName = "ModuleB Pre";
         moduleB->FixedName = "ModuleB Fixed";
+        moduleB->LateName = "ModuleB Late";
 
         Module::ModuleRegistry& registry = Module::GetModuleRegistry();
         return registry.Register(Container::TUniquePtr<Module::IModule>(moduleA)) == moduleA &&
@@ -196,12 +216,12 @@ namespace
             registry.InstallAll(*Engine::GEngine);
     }
 
-    bool SetupDynamicFixture(DynamicFixture& fixture, Engine::ApplicationProcessor& processor)
+    bool SetupDynamicFixture(DynamicFixture& fixture, Engine::ApplicationProcessor& processor, bool bRegisterModules = true)
     {
         GFixture = &fixture;
         Engine::GEngine = new Engine::Engine();
         Engine::GEngine->GetWorld().Initialize();
-        if (!RegisterModules())
+        if (bRegisterModules && !RegisterModules())
         {
             return false;
         }
@@ -477,6 +497,127 @@ namespace
         return variableDelta == 0.1f && fixed.ExecutedSteps == 8;
     }
 
+    class StageProbeComponent final : public Component::Component
+    {
+    public:
+        void Tick(float) override
+        {
+            GFixture->Events.push_back(Container::String(Name));
+            ObservedWorldX = GetOwner()->GetPosition().x;
+        }
+        const char* Name = "";
+        float ObservedWorldX = -1.0f;
+    };
+
+    class LateProbeHandler final : public Application::ApplicationHandlerBase
+    {
+    public:
+        void OnLateUpdate(float) override
+        {
+            ++CallCount;
+            GFixture->Events.push_back(Container::String("Handler Late"));
+        }
+        uint32_t CallCount = 0;
+    };
+
+    bool TestSimulationLateStages(Engine::ApplicationProcessor& processor,
+        uint32_t stepCount, bool bModulesRunning)
+    {
+        World& world = Engine::GEngine->GetWorld();
+        Entity* root = world.SpawnEntity<Entity>();
+        FixedProbeComponent* mover = root ? world.CreateComponent<FixedProbeComponent>(root) : nullptr;
+        if (!mover) return false;
+        root->SetLocalPosition(3.0f, 0.0f, 0.0f);
+        mover->Name = "Mover Fixed";
+        mover->bMoveOwner = true;
+        const Component::ETickGroup groups[] = { Component::ETickGroup::Input,
+            Component::ETickGroup::Movement, Component::ETickGroup::Default,
+            Component::ETickGroup::Animation, Component::ETickGroup::PoseFinalize,
+            Component::ETickGroup::PostPhysics, Component::ETickGroup::Camera, Component::ETickGroup::PreRender };
+        const char* names[] = { "World Input", "World Movement", "World Default", "World Animation",
+            "World PoseFinalize", "World PostPhysics", "World Camera", "World PreRender" };
+        StageProbeComponent* camera = nullptr;
+        StageProbeComponent* early = nullptr;
+        // 登録順の逆順でも群順で実行されることを確認する。
+        for (uint32_t remaining = 8; remaining > 0; --remaining)
+        {
+            const uint32_t index = remaining - 1;
+            StageProbeComponent* probe = world.CreateComponent<StageProbeComponent>(root);
+            if (!probe || !probe->SetTickGroup(groups[index])) return false;
+            probe->Name = names[index];
+            if (index == 6) camera = probe;
+            if (index == 2) early = probe;
+        }
+        world.UpdateWorldTransforms();
+        LateProbeHandler handler;
+        const int64_t rawDelta = stepCount == 0 ? 1'000'000 : (stepCount == 1 ? 17'000'000 : 34'000'000);
+        const auto result = Engine::ApplicationFixedStepTestAccess::Simulate(processor, rawDelta, true, &handler);
+        Container::VariableArray<Container::String> expected;
+        expected.push_back(Container::String("World Input"));
+        expected.push_back(Container::String("World Movement"));
+        expected.push_back(Container::String("World Default"));
+        expected.push_back(Container::String("World Animation"));
+        expected.push_back(Container::String("World PoseFinalize"));
+        for (uint32_t step = 0; step < stepCount; ++step)
+        {
+            if (bModulesRunning)
+            {
+                expected.push_back(Container::String("ModuleA Pre"));
+                expected.push_back(Container::String("ModuleB Pre"));
+            }
+            expected.push_back(Container::String("Mover Fixed"));
+            if (bModulesRunning)
+            {
+                expected.push_back(Container::String("ModuleA Fixed"));
+                expected.push_back(Container::String("ModuleB Fixed"));
+            }
+        }
+        expected.push_back(Container::String("World PostPhysics"));
+        expected.push_back(Container::String("World Camera"));
+        expected.push_back(Container::String("World PreRender"));
+        if (bModulesRunning)
+        {
+            expected.push_back(Container::String("ModuleA Late"));
+            expected.push_back(Container::String("ModuleB Late"));
+        }
+        expected.push_back(Container::String("Handler Late"));
+        if (result.ExecutedSteps != stepCount || handler.CallCount != 1 ||
+            camera->ObservedWorldX != (stepCount == 0 ? 3.0f : static_cast<float>(stepCount)) ||
+            early->ObservedWorldX != 3.0f ||
+            GFixture->Events.size() != expected.size()) return false;
+        for (size_t index = 0; index < expected.size(); ++index)
+        {
+            if (GFixture->Events[index] != expected[index]) return false;
+        }
+        return true;
+    }
+
+    bool TestSimulationPauseSuppressesLateStages(Engine::ApplicationProcessor& processor)
+    {
+        const auto seeded = Engine::ApplicationFixedStepTestAccess::Advance(processor, 10'000'000, true);
+        World& world = Engine::GEngine->GetWorld();
+        Entity* entity = world.SpawnEntity<Entity>();
+        StageProbeComponent* early = entity ? world.CreateComponent<StageProbeComponent>(entity) : nullptr;
+        StageProbeComponent* late = entity ? world.CreateComponent<StageProbeComponent>(entity) : nullptr;
+        if (!early || !late || !early->SetTickGroup(Component::ETickGroup::Input) ||
+            !late->SetTickGroup(Component::ETickGroup::Camera)) return false;
+        early->Name = "Paused Input";
+        late->Name = "Paused Camera";
+        LateProbeHandler handler;
+        GFixture->Events.clear();
+        const auto paused = Engine::ApplicationFixedStepTestAccess::Simulate(processor, 1'000'000'000, false, &handler);
+        if (paused.Status != Engine::EFixedStepAdvanceStatus::Paused || paused.ExecutedSteps != 0 ||
+            paused.RemainderScaledUnits != seeded.RemainderScaledUnits ||
+            !GFixture->Events.empty() || handler.CallCount != 0) return false;
+        const auto resumed = Engine::ApplicationFixedStepTestAccess::Simulate(processor, 7'000'000, true, &handler);
+        return resumed.ExecutedSteps == 1 && handler.CallCount == 1 && GFixture->Events.size() == 9 &&
+            GFixture->Events[0] == Container::String("Paused Input") &&
+            GFixture->Events[5] == Container::String("Paused Camera") &&
+            GFixture->Events[6] == Container::String("ModuleA Late") &&
+            GFixture->Events[7] == Container::String("ModuleB Late") &&
+            GFixture->Events[8] == Container::String("Handler Late");
+    }
+
     bool RunCase(uint32_t caseIndex, Engine::ApplicationProcessor& processor)
     {
         switch (caseIndex)
@@ -503,6 +644,19 @@ namespace
             return TestWorkerThreadCannotEnterApplicationFixedStepPath(processor);
         case 10:
             return TestVariableDeltaRemainsClampedWhileFixedUsesRawDelta(processor);
+        case 11:
+            return TestSimulationLateStages(processor, 0, true);
+        case 12:
+            return TestSimulationLateStages(processor, 1, true);
+        case 13:
+            return TestSimulationLateStages(processor, 2, true);
+        case 14:
+            return TestSimulationPauseSuppressesLateStages(processor);
+        case 15:
+            Module::GetModuleRegistry().ShutdownAll(*Engine::GEngine);
+            return TestSimulationLateStages(processor, 1, false);
+        case 16:
+            return TestSimulationLateStages(processor, 1, false);
         default:
             return false;
         }
@@ -512,7 +666,7 @@ namespace
     {
         DynamicFixture fixture;
         Engine::ApplicationProcessor processor;
-        if (!SetupDynamicFixture(fixture, processor))
+        if (!SetupDynamicFixture(fixture, processor, caseIndex != 16))
         {
             TeardownDynamicFixture(processor);
             return false;

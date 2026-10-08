@@ -16,12 +16,29 @@
 #include "Rendering/SceneProxy.h"
 #include "Logging/LogMacros.h"
 #include "Container/UnorderedSet.h"
+#include <algorithm>
 
 namespace NorvesLib::Core
 {
     namespace
     {
         constexpr uint32_t MaxPrefabNestedDepth = 16;
+
+        class ScopedWorldFlag
+        {
+        public:
+            explicit ScopedWorldFlag(bool& flag) : m_Flag(flag), m_Previous(flag)
+            {
+                flag = true;
+            }
+            ~ScopedWorldFlag()
+            {
+                m_Flag = m_Previous;
+            }
+        private:
+            bool& m_Flag;
+            bool m_Previous;
+        };
 
         struct PrefabLiveObject
         {
@@ -634,6 +651,14 @@ namespace NorvesLib::Core
             return;
         }
 
+        if (IsDeferringObjectRemoval())
+        {
+            LOG_ERROR("World::Finalize cannot run during update or cleanup");
+            return;
+        }
+        m_TickEntries.clear();
+        m_FixedTickEntries.clear();
+        m_bHasTickSnapshot = false;
         LOG_INFO("World::Finalize() - Destroying %llu objects",
                  static_cast<uint64_t>(GetObjectCount()));
 
@@ -743,6 +768,11 @@ namespace NorvesLib::Core
             return;
         }
 
+        if (IsDeferringObjectRemoval())
+        {
+            object->MarkForDestroy();
+            return;
+        }
         DestroyEntitySubtree(*object);
 
         NORVES_LOG_DEBUG("World", "Object removed, remaining: %llu",
@@ -756,6 +786,11 @@ namespace NorvesLib::Core
             return false;
         }
 
+        if (IsDeferringObjectRemoval())
+        {
+            entity->MarkForDestroy();
+            return true;
+        }
         return DestroyEntitySubtree(*entity);
     }
 
@@ -854,18 +889,205 @@ namespace NorvesLib::Core
 
     void World::Tick(float deltaTime)
     {
-        if (!HasFlag(OF_Initialized))
+        if (!HasFlag(OF_Initialized) || IsDeferringObjectRemoval())
         {
             return;
         }
-
-        auto roots = GetRootEntities();
-        for (auto* entity : roots)
-        {
-            TickEntityRecursive(*entity, deltaTime);
-        }
-
+        BuildTickSnapshot();
+        UpdateWorldTransforms();
+        DispatchTickGroups(Component::ETickGroup::Input, Component::ETickGroup::PoseFinalize, deltaTime);
         CleanupDestroyedObjects();
+    }
+
+    void World::LateTick(float deltaTime)
+    {
+        if (!HasFlag(OF_Initialized) || !m_bHasTickSnapshot || IsDeferringObjectRemoval())
+        {
+            return;
+        }
+        UpdateWorldTransforms();
+        DispatchTickGroups(Component::ETickGroup::PostPhysics, Component::ETickGroup::PostPhysics, deltaTime);
+        UpdateWorldTransforms();
+        DispatchTickGroups(Component::ETickGroup::Camera, Component::ETickGroup::PreRender, deltaTime);
+        CleanupDestroyedObjects();
+        m_TickEntries.clear();
+        m_FixedTickEntries.clear();
+        m_bHasTickSnapshot = false;
+    }
+
+    void World::BuildTickSnapshot()
+    {
+        m_TickEntries.clear();
+        m_FixedTickEntries.clear();
+        size_t ordinal = 0;
+        for (IUnknown* inner : GetInners())
+        {
+            if (auto* entity = CastTo<Entity>(inner))
+            {
+                CollectTickEntries(*entity, ordinal);
+            }
+        }
+        std::sort(m_TickEntries.begin(), m_TickEntries.end(), TickDispatchLess);
+        m_bHasTickSnapshot = true;
+    }
+
+    void World::CollectTickEntries(Entity& entity, size_t& ordinal)
+    {
+        if (entity.IsPendingDestroy())
+        {
+            return;
+        }
+        int16_t entityPriority = 0;
+        bool bFoundDefault = false;
+        for (IUnknown* inner : entity.GetInners())
+        {
+            if (auto* component = CastTo<Component::Component>(inner))
+            {
+                if ((component->GetTickGroupMask() & Component::TickGroupBit(Component::ETickGroup::Default)) != 0)
+                {
+                    if (!bFoundDefault || component->GetTickPriority() < entityPriority)
+                    {
+                        entityPriority = component->GetTickPriority();
+                    }
+                    bFoundDefault = true;
+                }
+            }
+        }
+        m_TickEntries.push_back({&entity, nullptr, Component::ETickGroup::Default,
+            Component::ETickGroup::Default, entityPriority, ordinal++});
+        for (IUnknown* inner : entity.GetInners())
+        {
+            if (auto* component = CastTo<Component::Component>(inner))
+            {
+                const size_t order = ordinal++;
+                const auto primary = component->GetTickGroup();
+                m_FixedTickEntries.push_back({&entity, component, Component::ETickGroup::Default, primary, 0, order});
+                for (uint8_t index = 0; index < Component::TickGroupCount; ++index)
+                {
+                    const auto group = static_cast<Component::ETickGroup>(index);
+                    if ((component->GetTickGroupMask() & Component::TickGroupBit(group)) != 0)
+                    {
+                        m_TickEntries.push_back({&entity, component, group, primary, component->GetTickPriority(), order});
+                    }
+                }
+            }
+        }
+        for (IUnknown* inner : entity.GetInners())
+        {
+            if (auto* child = CastTo<Entity>(inner))
+            {
+                CollectTickEntries(*child, ordinal);
+            }
+        }
+    }
+
+    bool World::CanDispatchEntity(const Entity& entity) const
+    {
+        if (entity.GetWorld() != this || !entity.IsTickEnabled())
+        {
+            return false;
+        }
+        for (const Entity* current = &entity; current; current = current->GetParentEntity())
+        {
+            if (!current->IsActive() || current->IsPendingDestroy())
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void World::DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime)
+    {
+        ScopedWorldFlag dispatch(m_bDispatchingTicks);
+        auto publishedGroup = Component::ETickGroup::Count;
+        for (const TickDispatchEntry& slot : m_TickEntries)
+        {
+            const TickDispatchEntry entry = slot;
+            if (entry.Group < first || entry.Group > last)
+            {
+                continue;
+            }
+            if (publishedGroup != Component::ETickGroup::Count && entry.Group != publishedGroup)
+            {
+                // 前の群で変更された親の姿勢を子階層へ公開する。同群内では確定しない。
+                UpdateWorldTransforms();
+            }
+            publishedGroup = entry.Group;
+            if (!entry.Owner || !CanDispatchEntity(*entry.Owner))
+            {
+                continue;
+            }
+            if (!entry.Target)
+            {
+                entry.Owner->Tick(deltaTime);
+            }
+            else if (entry.Target->GetOwner() == entry.Owner && entry.Target->IsActive()
+                && entry.Target->IsTickEnabled() && !entry.Target->IsPendingDestroy())
+            {
+                const auto previousGroup = entry.Target->m_DispatchPrimaryGroup;
+                const bool bPrevious = entry.Target->m_bHasDispatchPrimaryGroup;
+                entry.Target->m_DispatchPrimaryGroup = entry.PrimaryGroup;
+                entry.Target->m_bHasDispatchPrimaryGroup = true;
+                // callback自身がheapから破棄されても、その後にTargetを参照解除しない。
+                auto restore = [&]()
+                {
+                    if (slot.Owner == entry.Owner && slot.Target == entry.Target)
+                    {
+                        entry.Target->m_DispatchPrimaryGroup = previousGroup;
+                        entry.Target->m_bHasDispatchPrimaryGroup = bPrevious;
+                    }
+                };
+                try
+                {
+                    entry.Target->OnTickGroup(entry.Group, deltaTime);
+                }
+                catch (...)
+                {
+                    restore();
+                    throw;
+                }
+                restore();
+            }
+        }
+    }
+
+    void World::InvalidateTickComponent(Component::Component& component)
+    {
+        component.m_bHasDispatchPrimaryGroup = false;
+        for (auto& pending : m_PendingTickComponents)
+        {
+            if (pending == &component)
+            {
+                pending = nullptr;
+            }
+        }
+        InvalidateTickTarget(Container::Span<TickDispatchEntry>(m_TickEntries.data(), m_TickEntries.size()), &component);
+        InvalidateTickTarget(Container::Span<TickDispatchEntry>(m_FixedTickEntries.data(), m_FixedTickEntries.size()), &component);
+    }
+
+    void World::InvalidateTickEntitySubtree(Entity& entity)
+    {
+        for (auto& pending : m_PendingTickEntities)
+        {
+            if (pending == &entity)
+            {
+                pending = nullptr;
+            }
+        }
+        InvalidateTickOwner(Container::Span<TickDispatchEntry>(m_TickEntries.data(), m_TickEntries.size()), &entity);
+        InvalidateTickOwner(Container::Span<TickDispatchEntry>(m_FixedTickEntries.data(), m_FixedTickEntries.size()), &entity);
+        for (IUnknown* inner : entity.GetInners())
+        {
+            if (auto* child = CastTo<Entity>(inner))
+            {
+                InvalidateTickEntitySubtree(*child);
+            }
+            else if (auto* component = CastTo<Component::Component>(inner))
+            {
+                InvalidateTickComponent(*component);
+            }
+        }
     }
 
     void World::SetSceneView(Rendering::SceneView* sceneView)
@@ -1288,14 +1510,33 @@ namespace NorvesLib::Core
 
     void World::DispatchFixedTick(float fixedDeltaTime)
     {
-        if (!HasFlag(OF_Initialized))
+        if (!HasFlag(OF_Initialized) || IsDeferringObjectRemoval())
         {
             return;
         }
-
-        for (Entity* entity : GetRootEntities())
+        const bool bStandalone = !m_bHasTickSnapshot;
+        if (bStandalone)
         {
-            FixedTickEntityRecursive(*entity, fixedDeltaTime);
+            BuildTickSnapshot();
+        }
+        {
+            ScopedWorldFlag dispatch(m_bDispatchingTicks);
+            for (const TickDispatchEntry& slot : m_FixedTickEntries)
+            {
+                const TickDispatchEntry entry = slot;
+                if (entry.Owner && entry.Target && CanDispatchEntity(*entry.Owner)
+                    && entry.Target->GetOwner() == entry.Owner && entry.Target->IsActive()
+                    && entry.Target->IsTickEnabled() && !entry.Target->IsPendingDestroy())
+                {
+                    entry.Target->FixedTick(fixedDeltaTime);
+                }
+            }
+        }
+        if (bStandalone)
+        {
+            m_TickEntries.clear();
+            m_FixedTickEntries.clear();
+            m_bHasTickSnapshot = false;
         }
     }
 
@@ -1353,8 +1594,31 @@ namespace NorvesLib::Core
 
     void World::CleanupDestroyedObjects()
     {
-        Container::VariableArray<Entity*> toRemove;
+        if (IsDeferringObjectRemoval())
+        {
+            return;
+        }
+        ScopedWorldFlag cleaning(m_bCleaningObjects);
+        auto& pendingComponents = m_PendingTickComponents;
+        pendingComponents.clear();
         auto roots = GetRootEntities();
+        for (Entity* root : roots)
+        {
+            CollectPendingComponents(*root, pendingComponents);
+        }
+        for (Component::Component* component : pendingComponents)
+        {
+            if (!component)
+            {
+                continue;
+            }
+            if (Entity* owner = component->GetOwner())
+            {
+                owner->RemoveComponentImmediately(component);
+            }
+        }
+        auto& toRemove = m_PendingTickEntities;
+        toRemove.clear();
         for (auto* entity : roots)
         {
             CollectPendingDestroyRecursive(*entity, toRemove);
@@ -1372,6 +1636,28 @@ namespace NorvesLib::Core
         {
             NORVES_LOG_DEBUG("World", "Cleaned up %llu destroyed objects",
                              static_cast<uint64_t>(toRemove.size()));
+        }
+    }
+
+    void World::CollectPendingComponents(Entity& entity, Container::VariableArray<Component::Component*>& output)
+    {
+        if (entity.IsPendingDestroy())
+        {
+            return;
+        }
+        for (IUnknown* inner : entity.GetInners())
+        {
+            if (auto* component = CastTo<Component::Component>(inner))
+            {
+                if (component->IsPendingDestroy())
+                {
+                    output.push_back(component);
+                }
+            }
+            else if (auto* child = CastTo<Entity>(inner))
+            {
+                CollectPendingComponents(*child, output);
+            }
         }
     }
 
@@ -1492,10 +1778,12 @@ namespace NorvesLib::Core
             return false;
         }
 
+        ScopedWorldFlag removing(m_bCleaningObjects);
         UnregisterEntitySubtreeForComponentData(entity);
 
         RemoveEntitySubtreeProxies(entity);
         NotifyEntitySubtreeRemoved(entity);
+        InvalidateTickEntitySubtree(entity);
 
         EraseInnerReference(*owner, entity);
         SetOuterReference(entity, nullptr);

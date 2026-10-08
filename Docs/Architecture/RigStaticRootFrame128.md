@@ -1,0 +1,41 @@
+# 静的な非関節親を持つ128関節profile
+
+## 選択と互換
+
+NVSKEL v1のprofile2（StaticRootFrame128）は明示選択でのみ使う。既定profile1（DirectTrs128）の128関節・外部親なし・Identity ROOTと旧wire bytesは維持する。profileはSkeletonIdへ混ぜず、全role/bankを同じprofileで揃える別guardにする。profile1から2へ暗黙に移行しない。
+
+明示importはmesh付き1mesh/1skinを対象にする。skin.skeletonの省略はjoint集合とnode graphから唯一のroot jointを決める。指定時はroot jointまたはその祖先である必要がある。名前Armatureによる特例は無い。joint間の非joint中間親、複数joint root、cycle、重複親、選択sceneから到達しないjointは拒否する。
+
+root上の非joint祖先は静的な直接TRSで、正の一様scaleのみ。祖先matrix、非一様/負/ゼロscale、祖先へのanimation、計算不能なquaternionや行列は拒否する。joint自体は既存v1と同じ正TRS。mesh無しclip-onlyや256関節は別profile/入力境界であり、この選択では受けない。
+
+## ROOTと作者frame
+
+Gはroot joint自身を含めない親globalであり、joint local restやroot channelへ焼かない。Gのlinear部をimport scale倍せず、translationだけを他のtranslationと同じ一様import scaleで一度変換する。CPU式はIBM * jointGlobal * G * inverse(M)、joint modelはjointGlobal * G * inverse(M)。
+
+保存frameはfinite affine、正向き、近似一様直交、既存逆算helperの有限domainを要求する。doubleの平均行二乗長で正規化した長さ差と行dotは各1e-5以内。これはstatic uniform TRSの丸め幅であり、shearや非一様祖先を許す利用者向け閾値ではない。sourceのscale三成分は同じfloat値である必要がある。生成frameのゼロは+0へ正準化し、wireの-0を拒否する。
+
+Skeleton2は既存ROOT64に現在frameを持つ。Bank2は各作者snapshotに作成時frameを必須所有する。現在ROOT、IBM、clipのt=0を作者frameの代用品にしない。再exportで失われた過去の状態を復元できるとは扱わない。
+
+## wire
+
+outer header256/LE/section directory32/alignment16、topology algorithm1は共通。header.profile、RSET.profile、Mesh SREF.profileを2にする。Skeleton2とMesh2のsection/recordサイズはprofile1のまま。
+
+Bank2は既存7節STRS/TJNT/RSET/ARST/CLIP/CHAN/SAMPの順序・recordを保ち、必須AFRMを末尾へ追加する。AFRMはstride64、count=RSET countで、snapshot nの作者frameをf32[16]で持つ。CLIP.snapshotIndexがrestとframeの両方を選ぶ。欠落・optional化・重複・件数不一致・不正frameを拒否する。profile2ではAFRMを別roleへ混ぜることも拒否する。profile1の既存unknown optional規則にはこの新しい意味を遡及しない。
+
+ROOT/AFRMの比較は64bit hashだけでなく全64byte一致。全作者snapshotを検査し、frame差は専用FrameMismatchとsnapshot別のhash/最大行列差で報告する。joint rest比較とは別の完了flagを持ち、frame mismatchをrest overrideでは通さない。frameが同じ場合だけ従来の全joint rest検査・許容・明示overrideを適用する。
+
+## 束縛証明とruntime
+
+明示profile2要求を同じB3 loader/identity/runtime/四型公開へ流す。profile2のkey/BundleUriには専用namespaceとframe契約revisionを入れ、profile1の既存keyは保つ。同readの実参照と全blob hash、MeshのSkeleton content/rest/ROOT pin、全clip cache照合は残す。
+
+profile2のAnimationClipResourceはvalidated CPU束縛結果からだけ発行するprivate proofを持つ。proofは検査したimmutable Skeleton値を共有所有し、直接Sampleもその値とのidentity一致を要求する。別にparseした同内容のSkeletonへ持ち替えるには再bindが必要。同じimmutable値を共有するwrapperは同じ対象として扱える。
+
+SetClip/Unloadでproofを失効させ、Loadだけでは復元しない。無証明・別target・setter後のprofile2 Sampleはfalse/空out。profile1/legacyの手作りclip APIは変更しない。cache取得もproofを確認し、全clip本文一致だけで証明を失ったclipを成功扱いしない。
+
+## 検証と範囲
+
+合成祖先は非可換な行列積から独立に期待値を固定する。三roleの実byte列と全jointのpalette/model行列・頂点・診断をPythonの独立literal/行列へ照合し、既存profile1の704/1360/992byteと旧Sampler/cook/CLIを保持する。新profileのnative結果はTASKS/PROGRESSに別途記録する。
+
+CPU合成試験をBlender/実犬/GPU/Game実行の受入とみなさない。描画lease、file公開、任意frame間のrebase/retarget、clip-only、256関節、loop/root-motion要約はこの境界の対象外。有限数量/事前検査は一般allocator OOM、process RSS、任意入力時間の保証ではない。
+
+非対角の静的Gに対し、rootのT/R/Sチャンネルを同時に評価する独立行列ケースも保持する。主wire literalの正確な全byte照合と、非対角ケースのf32算術をdouble期待へ1e-4以内で照合する検証は別物として扱う。

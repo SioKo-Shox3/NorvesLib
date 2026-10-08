@@ -236,6 +236,7 @@ namespace NorvesLib::Modules::Gui
                 // イベントは下位(カメラ=PriorityGame)へ配送されないため、ImGui 窓上の操作は
                 // カメラへ届かない。本モジュールが借用ポインタとして渡り、Uninstall で解除する。
                 engine.GetInputRouter().RegisterController(this, Core::Input::InputRouter::PriorityOverlay);
+                engine.GetInputDebugOverlay().SetEnabled(true);
                 NORVES_LOG_INFO(kLogCategory, "ImGuiModule Install");
                 return true;
             }
@@ -450,6 +451,7 @@ namespace NorvesLib::Modules::Gui
             void Uninstall(Core::Engine::Engine &engine) override
             {
                 // C3: ルーターから登録解除(冪等)。借用ポインタを破棄前に必ず外す。
+                engine.GetInputDebugOverlay().SetEnabled(false);
                 engine.GetInputRouter().UnregisterController(this);
                 NORVES_LOG_INFO(kLogCategory, "ImGuiModule Uninstall");
             }
@@ -494,8 +496,13 @@ namespace NorvesLib::Modules::Gui
                 case Core::Input::MouseButton::Middle:
                     idx = 2;
                     break;
+                case Core::Input::MouseButton::X1:
+                    idx = 3;
+                    break;
+                case Core::Input::MouseButton::X2:
+                    idx = 4;
+                    break;
                 default:
-                    // X1/X2 等は ImGui のマウスボタン 0..2 に対応しないため供給せず伝播。
                     return false;
                 }
                 io.AddMouseButtonEvent(idx, event.Action == Core::Input::InputAction::Pressed);
@@ -514,6 +521,14 @@ namespace NorvesLib::Modules::Gui
                 return io.WantCaptureMouse;
             }
 
+            bool OnMouseRawMove(const Core::Input::MouseRawMoveEvent&) override
+            {
+                if (m_Context == nullptr) return false;
+                ::ImGui::SetCurrentContext(m_Context);
+                // ImGuiへは絶対座標を別経路で供給し、Rawは捕捉判定だけ行う。
+                return ::ImGui::GetIO().WantCaptureMouse;
+            }
+
             bool OnMouseScroll(const Core::Input::MouseScrollEvent &event) override
             {
                 if (m_Context == nullptr)
@@ -522,12 +537,18 @@ namespace NorvesLib::Modules::Gui
                 }
                 ::ImGui::SetCurrentContext(m_Context);
                 ImGuiIO &io = ::ImGui::GetIO();
-                io.AddMouseWheelEvent(0.0f, event.Delta);
+                io.AddMouseWheelEvent(event.HorizontalDelta, event.Delta);
                 return io.WantCaptureMouse;
             }
 
             bool OnKey(const Core::Input::KeyEvent &event) override
             {
+                // F1はdebug cursor解除用。ImGuiへ供給せず下位の専用controllerへ渡す。
+                // リバインド捕捉はさらに上位にあり、この予約キーも捕捉できる。
+                if (event.Code == Core::Input::KeyCode::F1)
+                {
+                    return false;
+                }
                 if (m_Context == nullptr)
                 {
                     return false;
@@ -559,6 +580,24 @@ namespace NorvesLib::Modules::Gui
                     io.AddInputCharacter(event.Codepoint);
                 }
                 return io.WantCaptureKeyboard;
+            }
+
+            void OnInputFocusChanged(bool focused) override
+            {
+                if (m_Context == nullptr) return;
+                ::ImGui::SetCurrentContext(m_Context);
+                ::ImGui::GetIO().AddFocusEvent(focused);
+            }
+
+            void OnInputReset() override
+            {
+                if (m_Context == nullptr) return;
+                ::ImGui::SetCurrentContext(m_Context);
+                ImGuiIO& io = ::ImGui::GetIO();
+                // 未処理の押下も破棄し、次のNewFrameで復活させない。
+                io.ClearEventsQueue();
+                io.ClearInputKeys();
+                io.ClearInputMouse();
             }
 
             const char *DebugName() const override

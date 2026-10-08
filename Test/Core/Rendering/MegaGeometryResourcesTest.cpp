@@ -4,9 +4,12 @@
 #include "Container/Map.h"
 #include "Container/Span.h"
 #include "Container/VariableArray.h"
+#include "Library/Core/Private/Resource/ModelAssetLoader.h"
+#include "Library/Core/Private/Resource/ModelStaging.h"
+#include "RHI/IBuffer.h"
+#include "RHI/IDevice.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/GeometryPool.h"
-#include "Rendering/RenderResources.h"
 #include "Rendering/MegaGeometry/CookedMeshMegaMeshAdapter.h"
 #include "Rendering/MegaGeometry/GeometryPageLinks.h"
 #include "Rendering/MegaGeometry/GeometryPageRequestSet.h"
@@ -14,17 +17,14 @@
 #include "Rendering/MegaGeometry/MegaGeometryBvhSelection.h"
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
 #include "Rendering/MegaGeometry/ProceduralMegaSphere.h"
-#include "RHI/IBuffer.h"
-#include "RHI/IDevice.h"
-#include "Library/Core/Private/Resource/ModelAssetLoader.h"
-#include "Library/Core/Private/Resource/ModelStaging.h"
+#include "Rendering/RenderResources.h"
 #include "Test/Core/Asset/CookedModelTestSupport.h"
 #include "Test/Core/Rendering/GeometryUploadTestSupport.h"
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cmath>
-#include <algorithm>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -53,8 +53,8 @@ using NorvesLib::Core::Container::MakeShared;
 namespace Container = NorvesLib::Core::Container;
 namespace AssetFormat = NorvesLib::Core::Asset;
 namespace CookedModelSupport = NorvesLib::Test::CookedModelSupport;
-namespace ModelAssetLoader = NorvesLib::Core::Resource;
-namespace ModelStaging = NorvesLib::Core::Resource::ModelStaging;
+namespace ModelAssetLoader = NorvesLib::Core::ResourceIO;
+namespace ModelStaging = NorvesLib::Core::ResourceIO::ModelStaging;
 namespace GeometryUpload = NorvesLib::Test::GeometryUpload;
 
 namespace
@@ -341,6 +341,16 @@ namespace
         assert(InitializeWithSmallPool(manager, device));
 
         MeshFixture mesh("InvalidMega");
+        float* scalars[] = {&mesh.CreateInfo.Material.Metallic, &mesh.CreateInfo.Material.Roughness,
+                            &mesh.CreateInfo.Material.OcclusionStrength};
+        for (float* scalar : scalars)
+        {
+            const float saved = *scalar;
+            *scalar = std::numeric_limits<float>::quiet_NaN();
+            assert(!manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo).IsValid());
+            assert(device->CreatedBufferDescs.empty());
+            *scalar = saved;
+        }
         mesh.CreateInfo.VertexDataSize = 0;
 
         const auto handle = manager.MegaGeometry().CreateMegaMesh(mesh.CreateInfo);
@@ -1473,6 +1483,8 @@ namespace
         constexpr uint32_t levelCount = 5;
         AssetFormat::CookedMeshData &cooked = mesh.Cooked;
         cooked.FormatMajor = 1;
+        cooked.VersionMajor = 1;
+        cooked.Layout = NorvesLib::Core::Asset::CookedMeshLayout::LodGraphV1;
         cooked.FormatMinor = 1;
         cooked.LODLevelCount = levelCount;
 

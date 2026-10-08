@@ -1,4 +1,5 @@
 ﻿#include "Rendering/SceneRenderer.h"
+#include "Resource/SkeletalDrawRange.h"
 #include "Rendering/MegaGeometryPass.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/PersistentResourceCache.h"
@@ -514,10 +515,30 @@ namespace NorvesLib::Core::Rendering
         if (!commandList || !skinnedMeshResources ||
             command.Draw.PayloadKind != DrawPayloadKind::Skinned ||
             command.Draw.bInstanced || command.Draw.InstanceCount != 1 ||
-            command.Skinned.PassKind == SkinnedMeshPassKind::None ||
+            (command.Skinned.PassKind != SkinnedMeshPassKind::GBuffer && command.Skinned.PassKind != SkinnedMeshPassKind::Shadow) ||
             !command.Pipeline || !descriptorSet ||
             !command.Skinned.FrameLease || !command.Skinned.FrameLease->IsValid() ||
             !command.Skinned.Prepared.IsValid())
+        {
+            return false;
+        }
+
+        const auto& asset = command.Skinned.FrameLease->AssetLease;
+        Skeletal::SkeletalDrawRange range;
+        if (command.Skinned.Prepared.MeshHandle != asset->GetHandle() ||
+            command.Skinned.Prepared.IndexCount != asset->GetIndices().size() ||
+            (command.Skinned.FrameLease->ComponentId != 0 && command.Skinned.FrameLease->ComponentId != command.Draw.SourceMeshComponentId) ||
+            !Skeletal::ResolveSkeletalDrawRange({asset->GetSubMeshes().data(),asset->GetSubMeshes().size()},
+                asset->GetIndices().size(),command.Draw.SubMeshIndex,command.Draw.MaterialIndex,
+                command.Draw.IndexOffset,command.Draw.IndexCount,command.Draw.VertexOffset,
+                command.Skinned.PassKind == SkinnedMeshPassKind::Shadow,command.Draw.bCastShadow,range))
+        {
+            return false;
+        }
+
+        // tagged preparedはパスの使用契約も照合する。旧匿名GBufferは従来互換を保つ。
+        if (command.Skinned.Prepared.ComponentId != 0 &&
+            (command.Skinned.Prepared.bUsesPreviousPalette != (command.Skinned.PassKind == SkinnedMeshPassKind::GBuffer)))
         {
             return false;
         }
@@ -530,10 +551,10 @@ namespace NorvesLib::Core::Rendering
         commandList->SetDescriptorSet(descriptorSet, descriptorSetSlot);
         commandList->SetVertexBuffer(command.Skinned.Prepared.VertexBuffer, 0, 0);
         commandList->SetIndexBuffer(command.Skinned.Prepared.IndexBuffer, 0, RHI::IndexType::Uint32);
-        commandList->DrawIndexed(command.Skinned.Prepared.IndexCount, 0, 0);
+        commandList->DrawIndexed(range.IndexCount, range.IndexOffset, 0);
 
         ++m_Stats.DrawCallCount;
-        m_Stats.TriangleCount += command.Skinned.Prepared.IndexCount / 3;
+        m_Stats.TriangleCount += range.IndexCount / 3;
         if (command.Skinned.PassKind == SkinnedMeshPassKind::GBuffer)
         {
             ++m_Stats.SkinnedGBufferDrawCallCount;

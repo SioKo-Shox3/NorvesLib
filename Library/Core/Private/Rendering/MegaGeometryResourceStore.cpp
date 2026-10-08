@@ -129,6 +129,13 @@ namespace NorvesLib::Core::Rendering
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
 
+        if (!std::isfinite(createInfo.Material.Metallic) || !std::isfinite(createInfo.Material.Roughness) ||
+            !std::isfinite(createInfo.Material.OcclusionStrength))
+        {
+            NORVES_LOG_ERROR("MegaGeometryResources", "材質の定数が有限値ではありません");
+            return MegaGeometry::MegaMeshHandle::Invalid();
+        }
+
         float canonicalEmissiveColor[3] = {0.0f, 0.0f, 0.0f};
         float canonicalEmissiveLuminanceNits = 0.0f;
         if (!TryBuildCanonicalEmissive(createInfo.Material.EmissiveColor,
@@ -264,7 +271,8 @@ namespace NorvesLib::Core::Rendering
             if (pageLinks.SplitGroups > 0 || pageLinks.AmbiguousClusters > 0)
             {
                 NORVES_LOG_WARNING("MegaGeometryResources",
-                                   "ページの親子の関係を決められない箇所があります（該当のページは常駐のまま固定します）: %s split_groups=%u ambiguous_clusters=%u pinned_pages=%u",
+                                   "ページの親子の関係を決められない箇所があります（該当のページは常駐のまま固定します"
+                                   "）: %s split_groups=%u ambiguous_clusters=%u pinned_pages=%u",
                                    createInfo.DebugName.c_str(), pageLinks.SplitGroups, pageLinks.AmbiguousClusters,
                                    static_cast<uint32_t>(pageLinks.PinnedPages.size()));
             }
@@ -336,15 +344,15 @@ namespace NorvesLib::Core::Rendering
         GeometryPool::RegionLease lease = m_Pool->Allocate(regionBytes, RegionAlignmentBytes);
         if (!lease.IsValid())
         {
-            NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%llu index_bytes=%llu cluster_bytes=%llu vertex_ms=0.000 index_ms=0.000 cluster_ms=0.000 success=0",
-                            createInfo.DebugName.c_str(),
-                            static_cast<unsigned long long>(vertexBytes),
-                            static_cast<unsigned long long>(indexBytes),
-                            static_cast<unsigned long long>(clusterBytes));
-            NORVES_LOG_ERROR("MegaGeometryResources", "ジオメトリのプールに MegaMesh の区画を確保できません: %s (%llu バイト)",
-                             createInfo.DebugName.c_str(),
-                             static_cast<unsigned long long>(regionBytes));
+            NORVES_LOG_INFO(
+                "AssetLoadProfile",
+                "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%llu index_bytes=%llu "
+                "cluster_bytes=%llu vertex_ms=0.000 index_ms=0.000 cluster_ms=0.000 success=0",
+                createInfo.DebugName.c_str(), static_cast<unsigned long long>(vertexBytes),
+                static_cast<unsigned long long>(indexBytes), static_cast<unsigned long long>(clusterBytes));
+            NORVES_LOG_ERROR("MegaGeometryResources",
+                             "ジオメトリのプールに MegaMesh の区画を確保できません: %s (%llu バイト)",
+                             createInfo.DebugName.c_str(), static_cast<unsigned long long>(regionBytes));
             return MegaGeometry::MegaMeshHandle::Invalid();
         }
         // クラスタの storage buffer の範囲のオフセットは 32 ビット（ディスクリプタの更新の引数）に収める
@@ -672,7 +680,8 @@ namespace NorvesLib::Core::Rendering
                                          .RegionBytes;
             }
             NORVES_LOG_INFO("MegaGeometryResources",
-                            "GEOMETRY_PAGES_STREAMED mesh=\"%s\" pages=%u root_pages=%u root_region_bytes=%llu streamed_page_bytes=%llu",
+                            "GEOMETRY_PAGES_STREAMED mesh=\"%s\" pages=%u root_pages=%u root_region_bytes=%llu "
+                            "streamed_page_bytes=%llu",
                             createInfo.DebugName.c_str(), static_cast<uint32_t>(createInfo.Pages.size()),
                             rootExtent.PageCount, static_cast<unsigned long long>(regionBytes),
                             static_cast<unsigned long long>(streamedPageBytes));
@@ -686,14 +695,11 @@ namespace NorvesLib::Core::Rendering
                         static_cast<uint32_t>(createInfo.Clusters.size()));
 
         NORVES_LOG_INFO("AssetLoadProfile",
-                        "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%llu index_bytes=%llu cluster_bytes=%llu vertex_ms=%.3f index_ms=%.3f cluster_ms=%.3f success=1",
-                        createInfo.DebugName.c_str(),
-                        static_cast<unsigned long long>(vertexBytes),
-                        static_cast<unsigned long long>(indexBytes),
-                        static_cast<unsigned long long>(clusterBytes),
-                        vertexUploadMs,
-                        indexUploadMs,
-                        clusterUploadMs);
+                        "stage=megamesh_gpu_upload role=main_render debug_name=\"%s\" vertex_bytes=%llu "
+                        "index_bytes=%llu cluster_bytes=%llu vertex_ms=%.3f index_ms=%.3f cluster_ms=%.3f success=1",
+                        createInfo.DebugName.c_str(), static_cast<unsigned long long>(vertexBytes),
+                        static_cast<unsigned long long>(indexBytes), static_cast<unsigned long long>(clusterBytes),
+                        vertexUploadMs, indexUploadMs, clusterUploadMs);
 
         return handle;
     }

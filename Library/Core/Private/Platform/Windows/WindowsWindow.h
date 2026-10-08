@@ -1,6 +1,8 @@
 ﻿#pragma once
 
 #include "Application/IWindow.h"
+#include "Platform/Windows/WindowsKeyRepeatGate.h"
+#include "Platform/Windows/RawMouseMotionTracker.h"
 #include "Platform/NativeWindowHandle.h"
 #include "Container/String.h"
 #include "Container/PointerTypes.h"
@@ -9,6 +11,8 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+
+namespace NorvesLib::Core::Input { class InputSystem; }
 
 namespace NorvesLib
 {
@@ -44,6 +48,12 @@ namespace NorvesLib
                 virtual void SetTitle(const Container::String &title) override;
                 virtual void Resize(int width, int height) override;
                 virtual bool IsActive() const override;
+                bool IsInputFocused() const override { return m_InputFocused; }
+                bool SetRawMouseEnabled(bool enabled) noexcept override;
+                bool IsRawMouseEnabled() const noexcept override { return m_RawMouseEnabled; }
+                bool SetCursorMode(ECursorMode mode) noexcept override;
+                ECursorMode GetRequestedCursorMode() const noexcept override { return m_RequestedCursorMode; }
+                ECursorMode GetCursorMode() const noexcept override { return m_EffectiveCursorMode; }
                 virtual NativeWindowHandle GetNativeHandle() const override;
 
                 /**
@@ -51,6 +61,7 @@ namespace NorvesLib
                  * @return ウィンドウハンドル
                  */
                 HWND GetHWND() const;
+                bool ShouldTranslateKeyMessage(WPARAM key,LPARAM flags) const;
 
             private:
                 /**
@@ -63,6 +74,11 @@ namespace NorvesLib
                  * @return 登録の成否
                  */
                 bool RegisterWindowClass();
+                void SetInputFocused(bool focused) noexcept;
+                void HandleRawMouseInput(HRAWINPUT handle,Input::InputSystem& input);
+                bool HasNativeInputFocus() const noexcept;
+                bool ApplyCursorMode(bool forceClip = false) noexcept;
+                void UpdateCursorAppearance() noexcept;
 
                 /**
                  * @brief ウィンドウクラス名を取得
@@ -83,6 +99,15 @@ namespace NorvesLib
                 static bool s_classRegistered; // ウィンドウクラス登録フラグ
                 HWND m_hWnd;                   // ウィンドウハンドル
                 HINSTANCE m_hInstance;         // アプリケーションインスタンスハンドル
+                bool m_InputFocused = false;
+                WindowsKeyRepeatGate m_KeyRepeatGate;
+                bool m_RawMouseEnabled = false;
+                bool m_OwnsRawMouseRegistration = false;
+                RawMouseMotionTracker m_RawMouseTracker;
+                ECursorMode m_RequestedCursorMode=ECursorMode::Normal;
+                ECursorMode m_EffectiveCursorMode=ECursorMode::Normal;
+                bool m_OwnsCursorClip=false;
+                RECT m_LastCursorClip{};
                 bool m_isActive;               // アクティブ状態フラグ
                 Container::String m_title;     // ウィンドウタイトル
                 int m_width;                   // ウィンドウ幅

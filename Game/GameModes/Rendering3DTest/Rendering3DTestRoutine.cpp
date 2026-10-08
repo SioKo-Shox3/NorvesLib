@@ -1,36 +1,36 @@
 ﻿#include "Rendering3DTestRoutine.h"
-#include "Core/Public/Logging/LogMacros.h"
-#include "Core/Public/Engine/Engine.h"
-#include "Core/Public/Object/World.h"
-#include "Core/Public/Object/Entity.h"
-#include "Core/Public/Component/BoardComponent.h"
-#include "Core/Public/Component/TextComponent.h"
 #include "Core/Public/Component/BillboardComponent.h"
-#include "Core/Public/Component/ImpostorComponent.h"
-#include "Core/Public/Component/MeshComponent.h"
-#include "Core/Public/Component/MegaGeometryComponent.h"
-#include "Core/Public/Component/LightComponent.h"
-#include "Core/Public/Component/PointLightComponent.h"
+#include "Core/Public/Component/BoardComponent.h"
 #include "Core/Public/Component/CameraComponent.h"
+#include "Core/Public/Component/ImpostorComponent.h"
+#include "Core/Public/Component/LightComponent.h"
+#include "Core/Public/Component/MegaGeometryComponent.h"
+#include "Core/Public/Component/MeshComponent.h"
+#include "Core/Public/Component/PointLightComponent.h"
 #include "Core/Public/Component/SpringArmComponent.h"
-#include "Core/Public/Rendering/RenderWorld.h"
+#include "Core/Public/Component/TextComponent.h"
+#include "Core/Public/Debug/DebugConfig.h"
+#include "Core/Public/Engine/Engine.h"
+#include "Core/Public/GameMode/GameModeScope.h"
+#include "Core/Public/Input/InputRouter.h"
+#include "Core/Public/Input/InputState.h"
+#include "Core/Public/Input/InputSystem.h"
+#include "Core/Public/Logging/LogMacros.h"
+#include "Core/Public/Module/ModuleRegistry.h"
+#include "Core/Public/Object/Entity.h"
+#include "Core/Public/Object/World.h"
+#include "Core/Public/Particle/ParticleSystem.h"
+#include "Core/Public/Rendering/CanvasView.h"
+#include "Core/Public/Rendering/ImpostorBake.h"
+#include "Core/Public/Rendering/MegaGeometryPass.h"
+#include "Core/Public/Rendering/ProceduralMeshGenerator.h"
 #include "Core/Public/Rendering/RenderResourceContexts.h"
 #include "Core/Public/Rendering/RenderResources.h"
-#include "Core/Public/Rendering/CanvasView.h"
-#include "Core/Public/Input/InputSystem.h"
-#include "Core/Public/Input/InputState.h"
-#include "Core/Public/Input/InputRouter.h"
-#include "Core/Public/Rendering/ProceduralMeshGenerator.h"
-#include "Core/Public/Rendering/ImpostorBake.h"
+#include "Core/Public/Rendering/RenderWorld.h"
+#include "Core/Public/Rendering/RenderingCoordinator.h"
 #include "Core/Public/Rendering/SceneProxy.h"
 #include "Core/Public/Rendering/SceneView.h"
-#include "Core/Public/Rendering/RenderingCoordinator.h"
-#include "Core/Public/GameMode/GameModeScope.h"
-#include "Core/Public/Debug/DebugConfig.h"
-#include "Core/Public/Rendering/MegaGeometryPass.h"
 #include "Core/Public/Resource/GLTFAnalyzer.h"
-#include "Core/Public/Particle/ParticleSystem.h"
-#include "Core/Public/Module/ModuleRegistry.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "GameModes/Rendering3DTest/M9WorldSkeletal.h"
 #include "GameModes/Rendering3DTest/StartupSkinnedProbe.h"
@@ -50,27 +50,27 @@
 #include "Core/Public/GameMode/IGameModeController.h"  // RequestPushSubRoutine の完全定義
 #include "GameModes/Rendering3DTest/DirectionalLightEditSubRoutine.h"
 #endif
-#include "GameModes/Rendering3DTest/SkySunControl.h"
-#include "Core/Public/Rendering/VolumetricFog.h"
 #include "Core/Public/Asset/AssetFileReader.h"
 #include "Core/Public/Asset/AssetSystem.h"
 #include "Core/Public/Asset/CookedMeshFormat.h"
+#include "Core/Public/RHI/ITexture.h"
 #include "Core/Public/Rendering/MegaGeometry/CookedMeshMegaMeshAdapter.h"
 #include "Core/Public/Rendering/MegaGeometry/CookedMeshPageSource.h"
 #include "Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h"
-#include "Core/Public/RHI/ITexture.h"
+#include "Core/Public/Rendering/VolumetricFog.h"
 #include "Core/Public/Thread/JobSystem.h"
 #include "Core/Public/Thread/Task.h"
+#include "GameModes/Rendering3DTest/SkySunControl.h"
 
 #include "stb_image.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <limits>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <system_error>
 #include <utility>
 
@@ -246,7 +246,8 @@ namespace Game::GameModes
                             return;
                         }
                         NORVES_LOG_WARNING("Rendering3DTest",
-                                           "VT_FALLBACK path=%s VTのミップテイルが常駐しないため、全常駐で読み直します",
+                                           "VT_FALLBACK path=%s "
+                                           "VTのミップテイルが常駐しないため、全常駐で読み直します",
                                            path.c_str());
                         LoadMaterialSlot(textures, update, paths, path, member, kind, false, onComplete);
                     });
@@ -442,10 +443,9 @@ namespace Game::GameModes
             if (!bHeightFieldOk)
             {
                 NORVES_LOG_WARNING("Rendering3DTest",
-                                   "大きな球の高さマップを読めませんでした（変位なしの球にします）: %s (%dx%d)",
-                                   heightMapPath.c_str(),
-                                   width,
-                                   height);
+                                   "大きな球の高さマップを読めませんでした（変位なしの"
+                                   "球にします）: %s (%dx%d)",
+                                   heightMapPath.c_str(), width, height);
             }
 
             const auto meshStartTime = std::chrono::steady_clock::now();
@@ -463,13 +463,15 @@ namespace Game::GameModes
             if (!BuildProceduralMegaSphere(sphereSettings, outData))
             {
                 outData = ProceduralMegaSphereData{};
-                NORVES_LOG_ERROR("Rendering3DTest", "大きな球の高ポリのMegaGeometryを作れませんでした（通常のメッシュの球のまま）");
+                NORVES_LOG_ERROR("Rendering3DTest", "大きな球の高ポリのMegaGeometryを作れませんでした（通"
+                                                    "常のメッシュの球のまま）");
                 return;
             }
             const double meshMs = ElapsedMilliseconds(meshStartTime);
 
             NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=big_sphere_cluster_lod_build build_ms=%.1f heightmap_decode_ms=%.1f heightfield_ms=%.1f "
+                            "stage=big_sphere_cluster_lod_build build_ms=%.1f "
+                            "heightmap_decode_ms=%.1f heightfield_ms=%.1f "
                             "mesh_ms=%.1f vertices=%u triangles=%u clusters=%u levels=%u",
                             ElapsedMilliseconds(buildStartTime),
                             decodeMs,
@@ -479,9 +481,12 @@ namespace Game::GameModes
                             static_cast<uint32_t>(outData.Indices.size() / 3u),
                             static_cast<uint32_t>(outData.Clusters.size()),
                             static_cast<uint32_t>(outData.LevelTriangleCounts.size()));
-            NORVES_LOG_INFO("Rendering3DTest",
-                            "big_sphere_displacement displaced=%d depth_m=%.4f max_depth_m=%.4f pole_fade_sin=%.2f..%.2f "
-                            "uv_spacing=%.6f normal_fallbacks=%u seam_pole_mismatches=%u max_normal_tilt_deg_full=%.1f "
+            NORVES_LOG_INFO(
+                "Rendering3DTest",
+                "big_sphere_displacement displaced=%d depth_m=%.4f max_depth_m=%.4f "
+                "pole_fade_sin=%.2f..%.2f "
+                "uv_spacing=%.6f normal_fallbacks=%u seam_pole_mismatches=%u "
+                "max_normal_tilt_deg_full=%.1f "
                             "max_normal_tilt_deg_pole_fade=%.1f heightmap=%dx%d channels=%d",
                             bHeightFieldOk ? 1 : 0,
                             bHeightFieldOk ? static_cast<double>(kBigSphereDisplacementDepth) : 0.0,
@@ -499,7 +504,8 @@ namespace Game::GameModes
             for (uint32_t level = 0; level < outData.LevelTriangleCounts.size(); ++level)
             {
                 NORVES_LOG_INFO("Rendering3DTest",
-                                "big_sphere_lod level=%u triangles=%u clusters=%u avg_triangles_per_cluster=%.1f "
+                                "big_sphere_lod level=%u triangles=%u clusters=%u "
+                                "avg_triangles_per_cluster=%.1f "
                                 "lod_error_m=%.3g displacement_error_m=%.3g",
                                 level,
                                 outData.LevelTriangleCounts[level],
@@ -606,14 +612,18 @@ namespace Game::GameModes
             if (!IsTextureCooked(data, paths.Albedo) || !IsTextureCooked(data, paths.Normal) ||
                 !IsTextureCooked(data, paths.Orm))
             {
-                NORVES_LOG_WARNING("Rendering3DTest", "COOKED_MODEL_TEXTURES_MISSING path=%s 材質のクック済みのテクスチャがそろっていません",
+                NORVES_LOG_WARNING("Rendering3DTest",
+                                   "COOKED_MODEL_TEXTURES_MISSING path=%s "
+                                   "材質のクック済みのテクスチャがそろっていません",
                                    meshPath);
                 return false;
             }
             Asset::CookedMeshParseResult parsed = Asset::ParseCookedMesh(resolved.Blob);
             if (!parsed.Succeeded() || parsed.Mesh.Clusters.empty())
             {
-                NORVES_LOG_WARNING("Rendering3DTest", "COOKED_MODEL_INVALID path=%s status=%u クック済みのメッシュを解析できません",
+                NORVES_LOG_WARNING("Rendering3DTest",
+                                   "COOKED_MODEL_INVALID path=%s status=%u "
+                                   "クック済みのメッシュを解析できません",
                                    meshPath, static_cast<unsigned int>(parsed.Status));
                 return false;
             }
@@ -648,9 +658,9 @@ namespace Game::GameModes
             load.Material->CreateData.DebugName = debugName;
 
             NORVES_LOG_INFO("Rendering3DTest",
-                            "COOKED_MODEL path=%s format_major=%u vertices=%u indices=%u clusters=%u lod_levels=%u fallback_indices=%u",
-                            meshPath,
-                            static_cast<unsigned int>(load.Mesh->FormatMajor),
+                            "COOKED_MODEL path=%s format_major=%u vertices=%u indices=%u "
+                            "clusters=%u lod_levels=%u fallback_indices=%u",
+                            meshPath, static_cast<unsigned int>(load.Mesh->FormatMajor),
                             static_cast<unsigned int>(load.Mesh->Vertices.size()),
                             static_cast<unsigned int>(load.Mesh->Indices.size()),
                             static_cast<unsigned int>(load.Mesh->Clusters.size()),
@@ -672,7 +682,7 @@ namespace Game::GameModes
                                        uint32_t &outRequestId)
         {
             ModelLoadResourceContext loadContext{ctx.RenderResourcesRef.Textures(), ctx.RenderResourcesRef.MegaGeometry()};
-            outRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
+            outRequestId = ResourceIO::GLTFAnalyzer::LoadModelAsync(
                 logicalPath,
                 loadContext,
                 [state](ModelHandle handle)
@@ -715,8 +725,10 @@ namespace Game::GameModes
                 if (!loadedMaterial.AlbedoTexture.IsValid() || !loadedMaterial.NormalTexture.IsValid() ||
                     !loadedMaterial.ORMTexture.IsValid())
                 {
-                    NORVES_LOG_WARNING("Rendering3DTest",
-                                       "COOKED_MODEL_TEXTURES_FAILED path=%s 材質のクック済みのテクスチャを読めないため、"
+                    NORVES_LOG_WARNING(
+                        "Rendering3DTest",
+                        "COOKED_MODEL_TEXTURES_FAILED path=%s "
+                        "材質のクック済みのテクスチャを読めないため、"
                                        "%s（albedo=%d normal=%d orm=%d）",
                                        load.LogicalPath.c_str(),
                                        load.bAllowGltfFallback ? "glTF の実行時の経路で読みます" : "この資産は置きません",
@@ -779,9 +791,9 @@ namespace Game::GameModes
                 }
 
                 NORVES_LOG_INFO("AssetLoadProfile",
-                                "stage=cooked_startup_model_create name=%s create_ms=%.1f vertices=%u clusters=%u success=%d",
-                                load.DebugName.c_str(),
-                                ElapsedMilliseconds(createStartTime),
+                                "stage=cooked_startup_model_create name=%s "
+                                "create_ms=%.1f vertices=%u clusters=%u success=%d",
+                                load.DebugName.c_str(), ElapsedMilliseconds(createStartTime),
                                 static_cast<unsigned int>(load.Mesh->Vertices.size()),
                                 static_cast<unsigned int>(load.Mesh->Clusters.size()),
                                 modelHandle.IsValid() ? 1 : 0);
@@ -817,8 +829,10 @@ namespace Game::GameModes
                                                  false, state, false))
                 {
                     NORVES_LOG_WARNING("Rendering3DTest",
-                                       "SCAN_PROP_MISSING id=%s クック済みのスキャン資産が無いため置きません"
-                                       "（Scripts/FetchPolyHavenModels.ps1 で落とし、CookAssets の対象を実行すると焼けます）",
+                                       "SCAN_PROP_MISSING id=%s "
+                                       "クック済みのスキャン資産が無いため置きません"
+                                       "（Scripts/FetchPolyHavenModels.ps1 で落とし、CookAssets "
+                                       "の対象を実行すると焼けます）",
                                        spec.AssetId);
                     continue;
                 }
@@ -913,7 +927,9 @@ namespace Game::GameModes
             constexpr uint32_t kExpectedSourceCount = 6u; // スキャン資産 3 + 岩 + 小屋 + 大きな球
             if (data.m_StressMegaSources.size() < kExpectedSourceCount)
             {
-                NORVES_LOG_WARNING("Rendering3DTest", "STRESS_GEOMETRY_SOURCES_PARTIAL sources=%zu of %u 読めなかった資産は並べません",
+                NORVES_LOG_WARNING("Rendering3DTest",
+                                   "STRESS_GEOMETRY_SOURCES_PARTIAL sources=%zu of %u "
+                                   "読めなかった資産は並べません",
                                    static_cast<size_t>(data.m_StressMegaSources.size()), kExpectedSourceCount);
             }
 
@@ -972,8 +988,10 @@ namespace Game::GameModes
             if (data.m_StressMegaSources.empty())
             {
                 NORVES_LOG_WARNING("Rendering3DTest", data.m_bStressGeometry
-                                                          ? "STRESS_GEOMETRY_SKIPPED 複製する資産が置かれていないため並べません"
-                                                          : "STRESS_MEGA_INSTANCES_SKIPPED スキャン資産が置かれていないため複製できません");
+                                                          ? "STRESS_GEOMETRY_SKIPPED "
+                                                            "複製する資産が置かれていないため並べません"
+                                                          : "STRESS_MEGA_INSTANCES_SKIPPED "
+                                                            "スキャン資産が置かれていないため複製できません");
                 return;
             }
             if (data.m_bStressGeometry)
@@ -1025,7 +1043,8 @@ namespace Game::GameModes
             if (!resolved.UsedCooked())
             {
                 NORVES_LOG_WARNING("Rendering3DTest",
-                                   "COOKED_BIG_SPHERE_MISSING path=%s クック済みの大きな球が無いため、実行時に生成します",
+                                   "COOKED_BIG_SPHERE_MISSING path=%s "
+                                   "クック済みの大きな球が無いため、実行時に生成します",
                                    meshPath);
                 return false;
             }
@@ -1033,7 +1052,8 @@ namespace Game::GameModes
             if (!parsed.Succeeded() || parsed.Mesh.Clusters.empty() || parsed.Mesh.FormatMajor < 1)
             {
                 NORVES_LOG_WARNING("Rendering3DTest",
-                                   "COOKED_BIG_SPHERE_INVALID path=%s status=%u クック済みの大きな球を解析できないため、"
+                                   "COOKED_BIG_SPHERE_INVALID path=%s status=%u "
+                                   "クック済みの大きな球を解析できないため、"
                                    "実行時に生成します",
                                    meshPath,
                                    static_cast<unsigned int>(parsed.Status));
@@ -1050,7 +1070,8 @@ namespace Game::GameModes
             }
             outCooked = std::move(parsed.Mesh);
             NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=cooked_big_sphere_load load_ms=%.1f format_major=%u vertices=%u indices=%u clusters=%u "
+                            "stage=cooked_big_sphere_load load_ms=%.1f "
+                            "format_major=%u vertices=%u indices=%u clusters=%u "
                             "lod_levels=%u fallback_indices=%u",
                             ElapsedMilliseconds(loadStartTime),
                             static_cast<unsigned int>(outCooked.FormatMajor),
@@ -1106,8 +1127,8 @@ namespace Game::GameModes
                 // 影・レイトレは常駐のフォールバックの段を使う。球は常に変位しているので、頂点の間隔は仕様から求める。
                 if (!BuildMegaMeshCreateInfoFromCookedMesh(*cookedSphere, createInfo))
                 {
-                    NORVES_LOG_ERROR("Rendering3DTest",
-                                     "クック済みの大きな球からMegaMeshの入力を作れませんでした（仮の球のまま）");
+                    NORVES_LOG_ERROR("Rendering3DTest", "クック済みの大きな球からMegaMeshの入力を作れません"
+                                                        "でした（仮の球のまま）");
                     return;
                 }
                 createInfo.PageSource = cookedSpherePageSource;
@@ -1159,7 +1180,8 @@ namespace Game::GameModes
             if (!modelHandle.IsValid())
             {
                 megaGeometry.ReleaseMegaMesh(megaMeshHandle);
-                NORVES_LOG_ERROR("Rendering3DTest", "大きな球のMegaMeshをモデルとして登録できませんでした（仮の球のまま）");
+                NORVES_LOG_ERROR("Rendering3DTest", "大きな球のMegaMeshをモデルとして登録できませんでした"
+                                                    "（仮の球のまま）");
                 return;
             }
             ctx.ScopeRef.TrackModel(modelHandle);
@@ -1195,11 +1217,9 @@ namespace Game::GameModes
             }
 
             NORVES_LOG_INFO("AssetLoadProfile",
-                            "stage=big_sphere_megamesh_create cooked=%d create_ms=%.1f vertices=%u triangles=%u clusters=%u",
-                            bCooked ? 1 : 0,
-                            createMs,
-                            createInfo.VertexCount,
-                            createInfo.IndexCount / 3u,
+                            "stage=big_sphere_megamesh_create cooked=%d "
+                            "create_ms=%.1f vertices=%u triangles=%u clusters=%u",
+                            bCooked ? 1 : 0, createMs, createInfo.VertexCount, createInfo.IndexCount / 3u,
                             static_cast<uint32_t>(createInfo.Clusters.size()));
         }
 
@@ -1446,7 +1466,7 @@ namespace Game::GameModes
             data.m_pCameraObject = nullptr;
             data.m_pSpringArmComponent = nullptr;
             data.m_pCameraComponent = nullptr;
-            data.m_bCameraSmokeSyncEmitted = false;
+            data.m_LateCameraState.reset();
             data.m_bCameraSmokeCompleteEmitted = false;
         }
 
@@ -1454,7 +1474,7 @@ namespace Game::GameModes
         {
             data.m_CameraController.Initialize(Math::Vector3(0.0f, 0.0f, 0.0f), 5.0f, 0.0f, 30.0f);
             data.m_CameraInputCollector.ResetAll();
-            data.m_bCameraSmokeSyncEmitted = false;
+            data.m_LateCameraState.reset();
             data.m_bCameraSmokeCompleteEmitted = false;
 
             auto& inputRouter = ctx.EngineRef.GetInputRouter();
@@ -1586,6 +1606,12 @@ namespace Game::GameModes
 
         void CleanupM9WorldAcceptance(GameModeContext& ctx, Rendering3DTestData& data)
         {
+            // 未配送weak eventを最初に失効させる。runtimeはapplication Endまで生存する。
+            if (data.m_M9WorldAcceptance)
+            {
+                data.m_M9WorldAcceptance->Preparation.Cancel();
+            }
+            data.m_bM9Attached = false;
             auto& inputRouter = ctx.EngineRef.GetInputRouter();
             inputRouter.UnregisterController(&data.m_CameraController);
             inputRouter.UnregisterController(&data.m_CameraInputCollector);
@@ -1645,6 +1671,7 @@ namespace Game::GameModes
             data.m_StartupSkinnedProbeComponents.clear();
             if (data.m_M9WorldAcceptance)
             {
+                data.m_M9WorldAcceptance->SelectedClip.reset();
                 data.m_M9WorldAcceptance->SkeletalAsset.reset();
 #if defined(NORVES_GAME_AUDIO)
                 data.m_M9WorldAcceptance->EffectClip.reset();
@@ -1672,6 +1699,84 @@ namespace Game::GameModes
             data.m_bM9AudioComplete = false;
             data.m_bM9Completed = false;
         }
+
+#if defined(NORVES_GAME_AUDIO)
+        bool ConsumeM9WorldCompletion(GameModeContext& ctx, Rendering3DTestData& data)
+        {
+            if (!data.m_M9WorldAcceptance || !data.m_M9WorldAcceptance->bRequested || data.m_bM9Attached)
+            {
+                return true;
+            }
+            M9SkeletalEvent event;
+            if (!data.m_M9WorldAcceptance->Preparation.TakeEvent(event))
+            {
+                return true;
+            }
+            if (event.bClipSelectionFailed)
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "skeletal_clip_selection_failed");
+                return false;
+            }
+            if (!event.bReady)
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "skeletal_load_failed");
+                return false;
+            }
+            data.m_M9WorldAcceptance->SkeletalAsset = std::move(event.Asset);
+            data.m_M9WorldAcceptance->SelectedClip = std::move(event.Clip);
+            data.m_M9WorldAcceptance->bAssetsReady = true;
+            auto* audioModule =
+                NorvesLib::Modules::Audio::FindAudioModule(NorvesLib::Core::Module::GetModuleRegistry());
+            if (audioModule == nullptr || !data.m_M9WorldAcceptance->EffectClip || !data.m_M9WorldAcceptance->LoopClip)
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "xaudio2_module_or_clip_unavailable");
+                return false;
+            }
+            LOG_INFO("M9_WORLD_SMOKE stage=assets_ready prepared=3 snapshot=1");
+            EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=assets_ready prepared=3 snapshot=1");
+            if (!InitializeM9WorldSkeletal(ctx, data))
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "skeletal_attach_failed");
+                return false;
+            }
+            auto& audio = audioModule->GetAudioService();
+            if (audio.CreateVoice(data.m_M9WorldAcceptance->EffectClip, data.m_M9EffectVoice) !=
+                    NorvesLib::Modules::Audio::AudioResult::Success ||
+                audio.CreateVoice(data.m_M9WorldAcceptance->LoopClip, data.m_M9LoopVoice) !=
+                    NorvesLib::Modules::Audio::AudioResult::Success ||
+                audio.StartVoice(data.m_M9EffectVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
+                audio.StartVoice(data.m_M9LoopVoice) != NorvesLib::Modules::Audio::AudioResult::Success)
+            {
+                CleanupM9WorldAcceptance(ctx, data);
+                FailM9WorldSmoke(ctx, "xaudio2_play_failed");
+                return false;
+            }
+            data.m_bM9AudioStarted = true;
+            LOG_INFO("M9_WORLD_SMOKE stage=audio_play effect=1 loop=1 backend=XAudio2");
+            EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=audio_play effect=1 loop=1 backend=XAudio2");
+            data.m_bM9Attached = true;
+            data.m_M9TickCount = 0;
+            return true;
+        }
+#endif
+        struct M9EnterFailureGuard
+        {
+            GameModeContext& Context;
+            Rendering3DTestData& Data;
+            bool bCommitted = false;
+            ~M9EnterFailureGuard()
+            {
+                if (!bCommitted && Data.m_M9WorldAcceptance && Data.m_M9WorldAcceptance->bRequested)
+                {
+                    CleanupM9WorldAcceptance(Context, Data);
+                    FailM9WorldSmoke(Context, "enter_failed");
+                }
+            }
+        };
 
         bool EvaluateM9PixelDelta(const NorvesLib::Core::Rendering::CapturedFrame& first,
                                   const NorvesLib::Core::Rendering::CapturedFrame& second,
@@ -1741,6 +1846,12 @@ namespace Game::GameModes
 
     GameModeEnterResult Rendering3DTestRoutine::Enter(GameModeContext &ctx, Rendering3DTestData &data)
     {
+        M9EnterFailureGuard m9FailureGuard{ctx, data};
+        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested &&
+            !data.m_M9WorldAcceptance->Preparation.CanEnter())
+        {
+            return GameModeEnterResult::Failed;
+        }
         if (data.m_bPhysicsSmoke && !data.m_M8MinimalPhysicsSmoke.Enter(ctx))
         {
             return GameModeEnterResult::Failed;
@@ -1849,8 +1960,10 @@ namespace Game::GameModes
                     if (swatchIndex >= 0 && !AreGroundSwatchTexturesPresent(data, kGroundSwatches[swatchIndex]))
                     {
                         NORVES_LOG_WARNING("Rendering3DTest",
-                                           "地面の見本の材質のテクスチャが無いので、その帯は石畳で描きます: %s"
-                                           "（Scripts/FetchPolyHavenTextures.ps1 で Assets/Textures/PolyHaven へ落とせます）",
+                                           "地面の見本の材質のテクスチャが無いので、"
+                                           "その帯は石畳で描きます: %s"
+                                           "（Scripts/FetchPolyHavenTextures.ps1 で "
+                                           "Assets/Textures/PolyHaven へ落とせます）",
                                            kGroundSwatches[swatchIndex].AssetId);
                         swatchIndex = -1;
                     }
@@ -2090,12 +2203,18 @@ namespace Game::GameModes
                 };
 
                 MaterialTexturePaths cobblePaths;
-                cobblePaths.Albedo = "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png";
-                cobblePaths.Normal = "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_dx_4k.png";
-                cobblePaths.Orm = "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_orm_4k";
-                cobblePaths.Roughness = "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_rough_4k.png";
-                cobblePaths.AO = "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_ao_4k.png";
-                cobblePaths.Height = "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_disp_4k.png";
+                cobblePaths.Albedo = "Assets/Textures/CobbleStoneFloor/"
+                                     "cobblestone_floor_09_diff_4k.png";
+                cobblePaths.Normal = "Assets/Textures/CobbleStoneFloor/"
+                                     "cobblestone_floor_09_nor_dx_4k.png";
+                cobblePaths.Orm = "Assets/Textures/CobbleStoneFloor/"
+                                  "cobblestone_floor_09_orm_4k";
+                cobblePaths.Roughness = "Assets/Textures/CobbleStoneFloor/"
+                                        "cobblestone_floor_09_rough_4k.png";
+                cobblePaths.AO = "Assets/Textures/CobbleStoneFloor/"
+                                 "cobblestone_floor_09_ao_4k.png";
+                cobblePaths.Height = "Assets/Textures/CobbleStoneFloor/"
+                                     "cobblestone_floor_09_disp_4k.png";
                 RequestMaterialTextures(data, textures, cobbleUpdate, cobblePaths, finishCobbleStone);
 
                 data.m_PendingMaterialUpdates.push_back(cobbleUpdate);
@@ -2186,8 +2305,10 @@ namespace Game::GameModes
                     if (!AreGroundSwatchTexturesPresent(data, textureSpec))
                     {
                         NORVES_LOG_WARNING("Rendering3DTest",
-                                           "負荷モードの材質のテクスチャが無いので、その板は置きません: %s"
-                                           "（Scripts/FetchPolyHavenTextures.ps1 -StressSet で落とし、CookAssets で焼けます）",
+                                           "負荷モードの材質のテクスチャが無いので、その板は置きませ"
+                                           "ん: %s"
+                                           "（Scripts/FetchPolyHavenTextures.ps1 -StressSet "
+                                           "で落とし、CookAssets で焼けます）",
                                            stressSpec.AssetId);
                         data.m_StressMaterials.push_back(MaterialHandle::Invalid());
                         continue;
@@ -2460,7 +2581,8 @@ namespace Game::GameModes
             if (data.m_StartupDebugViewMode != NorvesLib::Core::Rendering::DebugViewMode::Normal)
             {
                 ctx.EngineRef.GetRenderWorld().SetDebugViewModeAll(data.m_StartupDebugViewMode);
-                LOG_INFO("Rendering3DTest DEBUG_VIEW 起動時のデバッグの表示=%s 反映=%s",
+                LOG_INFO("Rendering3DTest DEBUG_VIEW 起動時のデバッグの表示=%s "
+                         "反映=%s",
                          NorvesLib::Core::Rendering::DebugViewModeToString(data.m_StartupDebugViewMode),
                          NorvesLib::Core::Rendering::DebugViewModeToString(ctx.EngineRef.GetRenderWorld().GetMainViewportDebugViewMode()));
             }
@@ -2965,7 +3087,9 @@ namespace Game::GameModes
                 if (!bBoulderCooked)
                 {
                     NORVES_LOG_WARNING("Rendering3DTest",
-                                       "COOKED_MODEL_MISSING path=%s クック済みのモデルが無いため、glTF の実行時の経路で読みます"
+                                       "COOKED_MODEL_MISSING path=%s "
+                                       "クック済みのモデルが無いため、glTF "
+                                       "の実行時の経路で読みます"
                                        "（CookAssets の対象を実行すると焼けます）",
                                        kStartupBoulderMeshPath);
                 }
@@ -2992,7 +3116,7 @@ namespace Game::GameModes
             }
             else
             {
-                data.m_BoulderLoadRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
+                data.m_BoulderLoadRequestId = ResourceIO::GLTFAnalyzer::LoadModelAsync(
                     modelPath,
                     modelLoadContext,
                     std::move(modelLoadedCallback));
@@ -3028,7 +3152,9 @@ namespace Game::GameModes
                 else
                 {
                     NORVES_LOG_WARNING("Rendering3DTest",
-                                       "COOKED_MODEL_MISSING path=%s クック済みのモデルが無いため、glTF の実行時の経路で読みます"
+                                       "COOKED_MODEL_MISSING path=%s "
+                                       "クック済みのモデルが無いため、glTF "
+                                       "の実行時の経路で読みます"
                                        "（CookAssets の対象を実行すると焼けます）",
                                        kStartupCottageMeshPath);
                 }
@@ -3037,7 +3163,7 @@ namespace Game::GameModes
             {
                 auto cottageState = MakeShared<BoulderAsyncState>();
                 data.m_CottageAsyncState = cottageState;
-                data.m_CottageLoadRequestId = Resource::GLTFAnalyzer::LoadModelAsync(
+                data.m_CottageLoadRequestId = ResourceIO::GLTFAnalyzer::LoadModelAsync(
                     String("Assets/Models/Cottage_Clean/Cottage_Clean.gltf"),
                     modelLoadContext,
                     [cottageState](ModelHandle handle)
@@ -3061,40 +3187,33 @@ namespace Game::GameModes
             }
         }
 
-#if defined(NORVES_GAME_AUDIO)
-        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested)
-        {
-            if (!InitializeM9WorldSkeletal(ctx, data))
-            {
-                CleanupM9WorldAcceptance(ctx, data);
-                FailM9WorldSmoke(ctx, "skeletal_assets_not_ready");
-                return GameModeEnterResult::Failed;
-            }
-            auto* audioModule = NorvesLib::Modules::Audio::FindAudioModule(
-                NorvesLib::Core::Module::GetModuleRegistry());
-            if (audioModule == nullptr || !data.m_M9WorldAcceptance->EffectClip || !data.m_M9WorldAcceptance->LoopClip)
-            {
-                CleanupM9WorldAcceptance(ctx, data);
-                FailM9WorldSmoke(ctx, "xaudio2_module_or_clip_unavailable");
-                return GameModeEnterResult::Failed;
-            }
-            auto& audio = audioModule->GetAudioService();
-            if (audio.CreateVoice(data.m_M9WorldAcceptance->EffectClip, data.m_M9EffectVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
-                audio.CreateVoice(data.m_M9WorldAcceptance->LoopClip, data.m_M9LoopVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
-                audio.StartVoice(data.m_M9EffectVoice) != NorvesLib::Modules::Audio::AudioResult::Success ||
-                audio.StartVoice(data.m_M9LoopVoice) != NorvesLib::Modules::Audio::AudioResult::Success)
-            {
-                CleanupM9WorldAcceptance(ctx, data);
-                FailM9WorldSmoke(ctx, "xaudio2_play_failed");
-                return GameModeEnterResult::Failed;
-            }
-            data.m_bM9AudioStarted = true;
-            LOG_INFO("M9_WORLD_SMOKE stage=audio_play effect=1 loop=1 backend=XAudio2");
-            EmitM9WorldSmokeMarker("M9_WORLD_SMOKE stage=audio_play effect=1 loop=1 backend=XAudio2");
-        }
-#endif
 
-        // 決定的な撮影では、組み立てが終わるまで読み込み中として扱う（最初の Tick が判定する）。
+        data.m_LateCameraState = MakeShared<Game::CameraLateUpdateState>();
+        data.m_LateCameraState->OwnerId = data.m_pCameraObject->GetObjectId();
+        data.m_LateCameraState->SpringArmId = data.m_pSpringArmComponent->GetComponentId();
+        data.m_LateCameraState->CameraId = data.m_pCameraComponent->GetComponentId();
+        const TWeakPtr<Game::CameraLateUpdateState> weakState = data.m_LateCameraState;
+        auto* world = &ctx.EngineRef.GetWorld();
+        auto* renderWorld = &ctx.EngineRef.GetRenderWorld();
+        data.m_LateCameraState->Callback = Delegate<void, float>([weakState, world, renderWorld](float)
+        {
+            const auto state = weakState.lock();
+            CameraProxy cameraProxy;
+            if (!state || !state->BuildSnapshot(*world, cameraProxy)) return;
+            ApplyStartupGrading(cameraProxy, state->bLensEffects, state->bLookLut);
+            renderWorld->SetMainCamera(cameraProxy);
+            if (!state->bSmokeSyncEmitted)
+            {
+                LOG_INFO("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
+                EmitM9WorldSmokeMarker("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
+                LOG_INFO("TICK_STAGE_SMOKE order=ok stage=late_camera");
+                EmitM9WorldSmokeMarker("TICK_STAGE_SMOKE order=ok stage=late_camera");
+                state->bSmokeSyncEmitted = true;
+            }
+        });
+        m9FailureGuard.bCommitted = true;
+        // 決定的な撮影では、組み立てが終わるまで読み込み中として扱う（最初の
+        // Tick が判定する）。
         ctx.EngineRef.GetDeterministicCapture().SetSceneReady(false);
 
         return GameModeEnterResult::Succeeded;
@@ -3102,6 +3221,26 @@ namespace Game::GameModes
 
     void Rendering3DTestRoutine::Tick(GameModeContext &ctx, Rendering3DTestData &data, float deltaTime)
     {
+#if defined(NORVES_GAME_AUDIO)
+        if (!ConsumeM9WorldCompletion(ctx, data))
+        {
+            return;
+        }
+        if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested && !data.m_bM9Attached)
+        {
+            return;
+        }
+#endif
+        // Bridge等による通常Tick前の削除にも、IDから再解決して対応する。
+        data.m_pCameraObject = nullptr;
+        data.m_pSpringArmComponent = nullptr;
+        data.m_pCameraComponent = nullptr;
+        if (data.m_LateCameraState)
+        {
+            data.m_LateCameraState->Resolve(ctx.WorldRef, data.m_pCameraObject,
+                data.m_pSpringArmComponent, data.m_pCameraComponent);
+        }
+
         if (data.m_bPhysicsSmoke)
         {
             data.m_M8MinimalPhysicsSmoke.Update(ctx);
@@ -3222,8 +3361,6 @@ namespace Game::GameModes
                 yaw = std::fmod(yaw, 360.0f);
                 data.m_pSpringArmComponent->SetYaw(yaw);
             }
-            data.m_CameraInputCollector.ResetFrame();
-            data.m_pSpringArmComponent->RefreshOwnerTransform();
             data.m_PickingController.SetFallbackSelectionDepth(
                 data.m_pSpringArmComponent->GetArmLength());
 
@@ -3236,7 +3373,7 @@ namespace Game::GameModes
                     : Math::Vector3(0.0f, 0.0f, 0.0f);
                 NORVES_LOG_DEBUG(
                     "Input",
-                    "ScrollDelta={:.3f}, ArmLength={:.3f}, CamPos=({:.2f}, {:.2f}, {:.2f})",
+                    "ScrollDelta={:.3f}, ArmLength={:.3f}, CamPosBeforeLate=({:.2f}, {:.2f}, {:.2f})",
                     scroll,
                     armLength,
                     cameraPosition.x,
@@ -3244,20 +3381,18 @@ namespace Game::GameModes
                     cameraPosition.z);
             }
 
-            CameraProxy cameraProxy;
-            if (data.m_pCameraComponent->BuildCameraProxy(cameraProxy))
+            if (auto slot = data.m_LateCameraSlot.lock())
             {
-                ApplyStartupGrading(cameraProxy, data.m_bLensEffects, data.m_bLookLut);
-                ctx.EngineRef.GetRenderWorld().SetMainCamera(cameraProxy);
-                if (!data.m_bCameraSmokeSyncEmitted)
+                if (data.m_LateCameraState)
                 {
-                    LOG_INFO("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
-                    EmitM9WorldSmokeMarker("CAMERA_COMPONENT_SMOKE stage=sync snapshot=1");
-                    data.m_bCameraSmokeSyncEmitted = true;
+                    data.m_LateCameraState->bLensEffects = data.m_bLensEffects;
+                    data.m_LateCameraState->bLookLut = data.m_bLookLut;
                 }
+                slot->Arm(data.m_LateCameraState);
             }
         }
 
+        data.m_CameraInputCollector.ResetFrame();
         data.m_PickingController.DrawSelection();
         if (data.m_bDebugDrawTestLines)
         {
@@ -3638,9 +3773,9 @@ namespace Game::GameModes
                     data.m_BigSphereBuildTask->Wait();
                 }
                 NORVES_LOG_INFO("AssetLoadProfile",
-                                "stage=big_sphere_build_wait completed_before_wait=%d wait_ms=%.1f",
-                                bWasCompleted ? 1 : 0,
-                                ElapsedMilliseconds(waitStartTime));
+                                "stage=big_sphere_build_wait "
+                                "completed_before_wait=%d wait_ms=%.1f",
+                                bWasCompleted ? 1 : 0, ElapsedMilliseconds(waitStartTime));
                 data.m_BigSphereBuildTask.reset();
             }
             CreateBigSphereMegaGeometry(ctx, data);
@@ -3669,12 +3804,12 @@ namespace Game::GameModes
             UpdateVirtualTextureSettle(ctx, data);
             ctx.EngineRef.GetDeterministicCapture().SetSceneReady(IsStartupSceneAssembled(data));
         }
-
     }
 
     void Rendering3DTestRoutine::Leave(GameModeContext &ctx, Rendering3DTestData &data, GameModeExitReason reason)
     {
         (void)reason;
+        data.m_LateCameraState.reset();
 
         if (data.m_bPhysicsSmoke)
         {
@@ -3736,7 +3871,7 @@ namespace Game::GameModes
             }
             else
             {
-                Resource::GLTFAnalyzer::CancelModelLoad(data.m_BoulderLoadRequestId);
+                ResourceIO::GLTFAnalyzer::CancelModelLoad(data.m_BoulderLoadRequestId);
             }
             data.m_BoulderLoadRequestId = 0;
         }
@@ -3754,7 +3889,7 @@ namespace Game::GameModes
         }
         if (data.m_CottageLoadRequestId != 0)
         {
-            Resource::GLTFAnalyzer::CancelModelLoad(data.m_CottageLoadRequestId);
+            ResourceIO::GLTFAnalyzer::CancelModelLoad(data.m_CottageLoadRequestId);
             data.m_CottageLoadRequestId = 0;
         }
 

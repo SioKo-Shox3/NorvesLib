@@ -1,10 +1,10 @@
 ﻿#pragma once
 
-#include "Rendering/RenderTypes.h"
-#include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "RHI/RHITypes.h"
 #include "Rendering/MegaGeometry/GeometryPageSource.h"
+#include "Rendering/RenderTypes.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering::MegaGeometry
@@ -75,21 +75,29 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t ChildPageId;
         uint32_t PageReserved[3];
     };
-    static_assert(sizeof(GPUClusterData) == 112, "Common/MegaGeometryCull.glsl の GPUClusterData と大きさが一致しません");
+    static_assert(sizeof(GPUClusterData) == 112, "Common/MegaGeometryCull.glsl の GPUClusterData "
+                                                 "と大きさが一致しません");
 
-    /** @brief GPUClusterData::Flags: 焼き込み済みの階層のクラスタ（親のグループの球と誤差で段を選ぶ） */
+    /** @brief GPUClusterData::Flags:
+     * 焼き込み済みの階層のクラスタ（親のグループの球と誤差で段を選ぶ） */
     constexpr uint32_t GPU_CLUSTER_FLAG_BAKED_LOD = 1u;
 
-    /** @brief ページの番号が無いこと（最も細かい段のクラスタの ChildPageId）。Common/MegaGeometryCull.glsl の INVALID_PAGE_ID と同じ */
+    /** @brief ページの番号が無いこと（最も細かい段のクラスタの
+     * ChildPageId）。Common/MegaGeometryCull.glsl の INVALID_PAGE_ID と同じ */
     constexpr uint32_t INVALID_PAGE_ID = 0xFFFFFFFFu;
 
     /**
-     * @brief クラスタのグループの BVH の1節（NVMESH v1.1 の CookedMeshGroupBVHNode と同じ内容。GPU の節の並び）
+     * @brief クラスタのグループの BVH の1節（NVMESH v1.1 の
+     * CookedMeshGroupBVHNode と同じ内容。GPU の節の並び）
      *
-     * 内部の節は子の節の連続した範囲（First から Count 個）を、葉はクラスタの連続した範囲（First から Count 個）を持つ。
-     * 節は幅優先の並びで、根が 0 番。境界球は下のクラスタの球と親の球をすべて包み、MaxParentError は下の
-     * クラスタの親の誤差の最大以上（根のクラスタを持つ節は最大値）。節の球から投影した MaxParentError が許容以下なら、
-     * 下のどのクラスタも描かれないので、枝ごと切れる。cluster_bvh_cull.comp の BvhNode と一致させる。
+     * 内部の節は子の節の連続した範囲（First から Count
+     * 個）を、葉はクラスタの連続した範囲（First から Count 個）を持つ。
+     * 節は幅優先の並びで、根が 0
+     * 番。境界球は下のクラスタの球と親の球をすべて包み、MaxParentError は下の
+     * クラスタの親の誤差の最大以上（根のクラスタを持つ節は最大値）。節の球から投影した
+     * MaxParentError が許容以下なら、
+     * 下のどのクラスタも描かれないので、枝ごと切れる。cluster_bvh_cull.comp の
+     * BvhNode と一致させる。
      */
     struct alignas(16) GPUGroupBVHNode
     {
@@ -106,7 +114,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
 
     /** @brief GPUGroupBVHNode::Flags: 葉（First から Count 個のクラスタを持つ） */
     constexpr uint32_t GPU_GROUP_BVH_NODE_FLAG_LEAF = 1u;
-    /** @brief 葉が持つクラスタの最大数・内部の節が持つ子の最大数・BVH の段の最大数（NVMESH v1.1 と同じ） */
+    /** @brief 葉が持つクラスタの最大数・内部の節が持つ子の最大数・BVH
+     * の段の最大数（NVMESH v1.1 と同じ） */
     constexpr uint32_t GROUP_BVH_MAX_LEAF_CLUSTERS = 8;
     constexpr uint32_t GROUP_BVH_MAX_CHILDREN = 8;
     constexpr uint32_t GROUP_BVH_MAX_LEVELS = 16;
@@ -185,16 +194,22 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t GroupId = 0xFFFFFFFFu;
         uint32_t PageId = 0; // このクラスタを持つページの番号（NVMESH v1.1 の Pages の添字。v1.0 以前は 0）
         /**
-         * @brief このクラスタを作ったグループ（1つ細かい段）の番号（ClusterGroups の添字）。無ければ 0xFFFFFFFF
+         * @brief
+         * このクラスタを作ったグループ（1つ細かい段）の番号（ClusterGroups
+         * の添字）。無ければ 0xFFFFFFFF
          *
-         * 焼き込み時に記録された番号。ある間は ComputeGeometryPageLinks が値の照合をせずに、そのグループのページを子のページにする。
+         * 焼き込み時に記録された番号。ある間は ComputeGeometryPageLinks
+         * が値の照合をせずに、そのグループのページを子のページにする。
          * 最も細かい段のクラスタと、番号を持たない旧い資産は無し（境界球と誤差の値の照合へ戻る）。
          */
         uint32_t SourceGroupId = 0xFFFFFFFFu;
         /**
-         * @brief このクラスタを作ったグループ（もっと細かい子のクラスタ）を持つページの番号。無ければ INVALID_PAGE_ID
+         * @brief
+         * このクラスタを作ったグループ（もっと細かい子のクラスタ）を持つページの番号。無ければ
+         * INVALID_PAGE_ID
          *
-         * CreateMegaMesh がグループの表から求める（ComputeGeometryPageLinks）。呼び出し側は設定しない。
+         * CreateMegaMesh
+         * がグループの表から求める（ComputeGeometryPageLinks）。呼び出し側は設定しない。
          */
         uint32_t ChildPageId = 0xFFFFFFFFu;
     };
@@ -205,10 +220,13 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     /**
      * @brief メッシュのページ 1 つ（NVMESH v1.1 のページの表の 1 行に対応する）
      *
-     * 範囲は MegaMeshCreateInfo の全体の配列（Clusters・VertexData・IndexData）の中の位置。
-     * 根のページ（bRoot）は 0 番から連続して並び、メッシュを作るときに区画へ書いて常駐させる。
+     * 範囲は MegaMeshCreateInfo
+     * の全体の配列（Clusters・VertexData・IndexData）の中の位置。
+     * 根のページ（bRoot）は 0
+     * 番から連続して並び、メッシュを作るときに区画へ書いて常駐させる。
      * それ以外のページは、頂点とインデックスをストリーマが要求から読んで区画へ書く。
-     * IndexData の範囲はクラスタのインデックスだけで、フォールバックのインデックスは含まない。
+     * IndexData
+     * の範囲はクラスタのインデックスだけで、フォールバックのインデックスは含まない。
      */
     struct MeshPageInfo
     {
@@ -289,9 +307,13 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      */
     struct MegaMeshMaterial
     {
-        float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};     // ベースカラー RGBA
-        float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};       // Y=1 chromaticity
-        float EmissiveLuminanceNits = 0.0f;                 // 輝度(nits)
+        // 材質のコピーとともに匿名テクスチャの登録を保持する。名前付きキャッシュは別所有。
+        VariableArray<TSharedPtr<const void>> TextureOwners;
+        float BaseColor[4] = {1.0f, 1.0f, 1.0f, 1.0f}; // ベースカラー RGBA
+        float EmissiveColor[3] = {0.0f, 0.0f, 0.0f};   // Y=1 chromaticity
+        float EmissiveLuminanceNits = 0.0f;            // 輝度(nits)
+        // 負のmetal/roughは従来の黒/白。textureがあればscalarを再乗算しない。
+        float Metallic = -1.0f, Roughness = -1.0f, OcclusionStrength = 1.0f;
 
         // PBRテクスチャ（無効なハンドルの場合はデフォルトテクスチャを使用）
         TextureHandle AlbedoTexture;
@@ -310,7 +332,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         bool bHasHeightMap = false;
 
         /**
-         * @brief 高さの場で変位させたメッシュの、LOD0の頂点の間隔（UV単位。0以下なら変位していない）
+         * @brief
+         * 高さの場で変位させたメッシュの、LOD0の頂点の間隔（UV単位。0以下なら変位していない）
          *
          * 正なら、法線マップのうち頂点の間隔より粗い傾き（形で表した分）を差し引いた細部だけを、
          * 変位した形の法線の上に載せる（同じ凹凸の傾きを二重に掛けない）。
@@ -360,14 +383,18 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
          */
         BoundingSphere LODBounds;
 
-        /** @brief 影とレイトレーシングに使うLODの段（その段のクラスタが統合インデックスで連続している必要がある） */
+        /** @brief
+         * 影とレイトレーシングに使うLODの段（その段のクラスタが統合インデックスで連続している必要がある）
+         */
         uint32_t ShadowLODLevel = 0;
 
         /**
          * @brief 焼き込み済みのLOD階層（NVMESH v1）を渡すとき true
          *
-         * true なら Clusters は全段のクラスタ（ParentBounds・ParentError・GroupId つき）で、ClusterGroups が
-         * グループの表。bBuildLODHierarchy は false のまま。IndexData には、クラスタのインデックスの後ろに
+         * true なら Clusters
+         * は全段のクラスタ（ParentBounds・ParentError・GroupId
+         * つき）で、ClusterGroups が グループの表。bBuildLODHierarchy は false
+         * のまま。IndexData には、クラスタのインデックスの後ろに
          * フォールバックの段のインデックスが続く。
          */
         bool bBakedLODHierarchy = false;
@@ -375,28 +402,35 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint32_t BakedLODLevelCount = 1;
 
         /**
-         * @brief クラスタのグループの BVH（NVMESH v1.1。焼き込み済みの階層だけ。空なら平らなクラスタの列で判定する）
+         * @brief クラスタのグループの BVH（NVMESH
+         * v1.1。焼き込み済みの階層だけ。空なら平らなクラスタの列で判定する）
          *
-         * 幅優先の並びで、葉の範囲は Clusters の添字。構造（子の位置・葉の範囲・全クラスタがちょうど1つの葉に入ること）が
+         * 幅優先の並びで、葉の範囲は Clusters
+         * の添字。構造（子の位置・葉の範囲・全クラスタがちょうど1つの葉に入ること）が
          * 正しくなければ CreateMegaMesh が拒否する。
          */
         VariableArray<GPUGroupBVHNode> GroupBVH;
 
         /**
-         * @brief ページごとの範囲（NVMESH v1.1。焼き込み済みの階層だけ。空ならページに分けず全部を常駐させる）
+         * @brief ページごとの範囲（NVMESH
+         * v1.1。焼き込み済みの階層だけ。空ならページに分けず全部を常駐させる）
          *
-         * Pages と PageSource の両方があり、ページが 2 つ以上ある（かつ SetPageStreamingEnabled が有効な）ときだけ、
-         * 根のページの頂点・インデックスだけを区画へ書き、残りのページは PageSource から読んでストリーミングする。
-         * そうでなければ VertexData・IndexData の全体を書く。
+         * Pages と PageSource の両方があり、ページが 2 つ以上ある（かつ
+         * SetPageStreamingEnabled が有効な）ときだけ、
+         * 根のページの頂点・インデックスだけを区画へ書き、残りのページは
+         * PageSource から読んでストリーミングする。 そうでなければ
+         * VertexData・IndexData の全体を書く。
          */
         VariableArray<MeshPageInfo> Pages;
         /** @brief ページの中身の読み込み元。null ならストリーミングしない */
         TSharedPtr<IGeometryPageSource> PageSource;
 
         /**
-         * @brief RTと影のための常駐の粗い段のインデックスの範囲（IndexData の要素の位置と数。基点の頂点は 0）
+         * @brief RTと影のための常駐の粗い段のインデックスの範囲（IndexData
+         * の要素の位置と数。基点の頂点は 0）
          *
-         * Count が 0 なら無し（従来の段の選び方）。FallbackError はその段のローカル空間の誤差。
+         * Count が 0 なら無し（従来の段の選び方）。FallbackError
+         * はその段のローカル空間の誤差。
          */
         uint32_t FallbackIndexOffset = 0;
         uint32_t FallbackIndexCount = 0;
@@ -419,7 +453,8 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
     {
         uint32_t FirstIndex = 0;
         uint32_t IndexCount = 0;
-        /** @brief その段のLODの誤差（クラスタの LODError の最大。ローカル空間の長さ） */
+        /** @brief その段のLODの誤差（クラスタの LODError
+         * の最大。ローカル空間の長さ） */
         float Error = 0.0f;
     };
 
@@ -430,8 +465,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
      *
      * 頂点・インデックス・クラスタは、ジオメトリの共有プール（GeometryPool）の1つの区画に並べて置く。
      * 3つのバッファのハンドルはどれも同じプールの塊のバッファを指し、メッシュの領域はそれぞれ
-     * 〜OffsetBytes（塊のバッファの先頭からのバイト）と 〜Bytes（その領域の大きさ）で表す。
-     * バッファの GetSize() は塊の大きさなので、メッシュの大きさには使わない。
+     * 〜OffsetBytes（塊のバッファの先頭からのバイト）と
+     * 〜Bytes（その領域の大きさ）で表す。 バッファの GetSize()
+     * は塊の大きさなので、メッシュの大きさには使わない。
      */
     struct MegaMeshGPUData
     {
@@ -439,7 +475,9 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         RHI::BufferPtr IndexBuffer;   // 統合インデックスを持つプールの塊のバッファ
         RHI::BufferPtr ClusterBuffer; // クラスタデータ（SSBO）を持つプールの塊のバッファ
 
-        /** @brief 塊のバッファの中での各領域の先頭（バイト）。頂点は頂点バッファのオフセット、インデックスはインデックスバッファのオフセットに使う */
+        /** @brief
+         * 塊のバッファの中での各領域の先頭（バイト）。頂点は頂点バッファのオフセット、インデックスはインデックスバッファのオフセットに使う
+         */
         uint64_t VertexBufferOffsetBytes = 0;
         uint64_t IndexBufferOffsetBytes = 0;
         uint64_t ClusterBufferOffsetBytes = 0;
@@ -449,48 +487,66 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         uint64_t ClusterBufferBytes = 0;
 
         /**
-         * @brief クラスタのグループの BVH の領域（塊のバッファの先頭からのバイトと大きさ。BVH が無ければ大きさ 0）
+         * @brief クラスタのグループの BVH
+         * の領域（塊のバッファの先頭からのバイトと大きさ。BVH が無ければ大きさ
+         * 0）
          *
-         * クラスタ・頂点・インデックスと同じ塊のバッファにあり、GPU はデバイスアドレス（塊の先頭 + オフセット）で引く。
+         * クラスタ・頂点・インデックスと同じ塊のバッファにあり、GPU
+         * はデバイスアドレス（塊の先頭 + オフセット）で引く。
          */
         uint64_t GroupBVHBufferOffsetBytes = 0;
         uint64_t GroupBVHBufferBytes = 0;
         uint32_t GroupBVHNodeCount = 0;
         uint32_t GroupBVHLeafCount = 0;
-        /** @brief BVH の段ごとの節の数（添字が段。段 k の節は幅優先の並びで連続する。BVH が無ければ空） */
+        /** @brief BVH の段ごとの節の数（添字が段。段 k
+         * の節は幅優先の並びで連続する。BVH が無ければ空） */
         VariableArray<uint32_t> GroupBVHLevelNodeCounts;
 
         /**
-         * @brief ページの表（全メッシュ共通。GeometryPageTable）の中の、このメッシュのページの範囲
+         * @brief
+         * ページの表（全メッシュ共通。GeometryPageTable）の中の、このメッシュのページの範囲
          *
-         * メッシュの中のページの番号 p の表の位置は PageTableBase + p。PageCount はクラスタの PageId の最大 + 1
-         * （ページを持たないメッシュは 1 で、常駐のまま）。
+         * メッシュの中のページの番号 p の表の位置は PageTableBase + p。PageCount
+         * はクラスタの PageId の最大 + 1 （ページを持たないメッシュは 1
+         * で、常駐のまま）。
          */
         uint32_t PageTableBase = 0;
         uint32_t PageCount = 0;
-        /** @brief 常駐のまま固定したページの数（子のページの生成元を決められないグループのページ。GeometryPageLinks.h） */
+        /** @brief
+         * 常駐のまま固定したページの数（子のページの生成元を決められないグループのページ。GeometryPageLinks.h）
+         */
         uint32_t PinnedPageCount = 0;
-        /** @brief 根のページだけを常駐させ、残りのページをストリーマが読み込むメッシュか */
+        /** @brief
+         * 根のページだけを常駐させ、残りのページをストリーマが読み込むメッシュか
+         */
         bool bPagesStreamed = false;
 
         /**
          * @brief プールの区画の共有の持ち主（型を消した参照）
          *
-         * 区画はこの参照が全部消え、かつ最後に使った GPU の提出が完了するまで空きへ戻らない。
-         * FramePacket のレイトレーシングのスナップショットは、フレームが消えるまで区画を使うので、これを複製して持つ。
+         * 区画はこの参照が全部消え、かつ最後に使った GPU
+         * の提出が完了するまで空きへ戻らない。 FramePacket
+         * のレイトレーシングのスナップショットは、フレームが消えるまで区画を使うので、これを複製して持つ。
          */
         TSharedPtr<void> RegionOwner;
 
         uint32_t VertexCount = 0;
         uint32_t IndexCount = 0;
         uint32_t ClusterCount = 0;
-        /** @brief 影とレイトレーシングで使うLODの段の、統合インデックスでの開始位置 */
+        /** @brief
+         * 影とレイトレーシングで使うLODの段の、統合インデックスでの開始位置 */
         uint32_t ShadowFirstIndex = 0;
-        /** @brief 影とレイトレーシングで使うLODの段のインデックス数（0なら影へ描かない） */
+        /** @brief
+         * 影とレイトレーシングで使うLODの段のインデックス数（0なら影へ描かない）
+         */
         uint32_t ShadowIndexCount = 0;
-        /** @brief 影に使う最も細かい段（MegaMeshCreateInfo::ShadowLODLevel。焼き込み済みの階層ではフォールバックの段） */
+        /** @brief
+         * 影に使う最も細かい段（MegaMeshCreateInfo::ShadowLODLevel。焼き込み済みの階層ではフォールバックの段）
+         */
         uint32_t ShadowLODLevel = 0;
-        /** @brief 段ごとの描画の範囲と誤差（添え字が段。影へテクセルに見合う段を選ぶのに使う。焼き込み済みの階層では末尾にフォールバックの段が付く） */
+        /** @brief
+         * 段ごとの描画の範囲と誤差（添え字が段。影へテクセルに見合う段を選ぶのに使う。焼き込み済みの階層では末尾にフォールバックの段が付く）
+         */
         VariableArray<MegaMeshLevelRange> LevelRanges;
 
         BoundingSphere TotalBounds;

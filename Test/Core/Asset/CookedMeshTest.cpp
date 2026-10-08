@@ -1264,7 +1264,7 @@ int main()
         { WriteLe64(bytes, V1::HeaderOffset::GroupTableSize, ReadLe64(bytes, V1::HeaderOffset::GroupTableSize) + 8); },
         CookedMeshParseStatus::InvalidCounts);
     ExpectV1Mutation([](ByteArray& bytes) { WriteLe32(bytes, V1::HeaderOffset::ClusterAlgorithmId, 1); },
-                     CookedMeshParseStatus::UnsupportedV1Feature);
+                     CookedMeshParseStatus::UnsupportedVersion);
     ExpectV1Mutation(
         [](ByteArray& bytes)
         {

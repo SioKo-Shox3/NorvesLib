@@ -12,7 +12,7 @@
 
 #include <cstdint>
 
-namespace NorvesLib::Core::Resource
+namespace NorvesLib::Core::ResourceIO
 {
     struct ModelAsyncLoadRequest
     {
@@ -94,4 +94,4 @@ namespace NorvesLib::Core::Resource
     private:
         Container::TSharedPtr<State> m_State;
     };
-} // namespace NorvesLib::Core::Resource
+} // namespace NorvesLib::Core::ResourceIO

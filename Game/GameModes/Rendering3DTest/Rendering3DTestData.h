@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include "CameraLateUpdate.h"
+
 #include "Core/Public/Container/Containers.h"
 #include "Core/Public/Delegate/Delegate.h"
 #include "Core/Public/Container/PointerTypes.h"
@@ -249,7 +251,8 @@ namespace Game::GameModes
 
         // メッシュ登録済みフラグ
         bool m_bMeshesRegistered = false;
-        bool m_bCameraSmokeSyncEmitted = false;
+        TWeakPtr<Game::CameraLateUpdateSlot> m_LateCameraSlot;
+        TSharedPtr<Game::CameraLateUpdateState> m_LateCameraState;
         bool m_bCameraSmokeCompleteEmitted = false;
         // --startup-camera で指定した起動時のカメラ（SpringArm の yaw・pitch[度]と腕の長さ）
         bool m_bHasStartupCamera = false;
@@ -373,6 +376,7 @@ namespace Game::GameModes
         TSharedPtr<M9WorldAcceptanceConfig> m_M9WorldAcceptance;
         NorvesLib::Core::Entity *m_pM9SkinnedObject = nullptr;
         NorvesLib::Core::Component::SkinnedMeshComponent *m_pM9SkinnedMeshComponent = nullptr;
+        bool m_bM9Attached = false;
         uint32_t m_M9TickCount = 0;
         uint32_t m_M9CapturePhase = 0;
         uint32_t m_M9StatsWaitTicks = 0;

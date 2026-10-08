@@ -92,6 +92,77 @@ namespace
         assert(asset.GetAnimationClip()->GetClip().DurationSeconds == 1.5f);
         assert(asset.GetAnimationClip()->GetClip().Channels[0].Samples[0].Value.Y == 2.0f);
     }
+    void TestSubmeshLeaseOwnership()
+    {
+        ResourceRegistry registry;
+        assert(registry.Initialize());
+        auto mesh = registry.CreateTransient<SkinnedMeshResource>("SubmeshLeaseOwnership");
+        assert(mesh);
+        SeedMesh(mesh);
+        assert(mesh->Load());
+        auto legacyLease = mesh->GetRenderAssetLease();
+        assert(legacyLease && legacyLease->GetSubMeshes().empty() && legacyLease->GetMaterialSlotNames().empty());
+        Rendering::SkinnedMeshFrameLease legacyFrame(legacyLease);
+        assert(legacyFrame.IsValid());
+        const auto legacyHandle = legacyLease->GetHandle();
+        auto previousHandle = legacyHandle;
+        Container::TSharedPtr<Rendering::SkinnedMeshAssetLease> retainedTables;
+        for (uint32_t count : {1u,2u,8u})
+        {
+            Container::VariableArray<uint32_t> indices(count * 3,0);
+            Container::VariableArray<Skeletal::SkeletalSubMesh> submeshes;
+            Container::VariableArray<Skeletal::SkeletalMaterialSlot> slots;
+            for (uint32_t index = 0; index < count; ++index)
+            {
+                Skeletal::SkeletalSubMesh submesh{index*3,3,index};
+                submesh.bNoShadow = index == 1;
+                submesh.VertexCount = 1;
+                submesh.BoundsCenter[0] = 7;
+                submeshes.push_back(submesh);
+                Skeletal::SkeletalMaterialSlot slot;
+                slot.Name = index == 0 ? "Body" : "Other";
+                slots.push_back(std::move(slot));
+            }
+            mesh->SetIndices(std::move(indices));
+            mesh->SetSubmeshTables(std::move(submeshes),std::move(slots));
+            assert(legacyLease->GetSubMeshes().empty());
+            assert(mesh->Load());
+            auto lease = mesh->GetRenderAssetLease();
+            assert(lease && lease->GetHandle().Id == legacyHandle.Id && lease->GetHandle().Generation > previousHandle.Generation);
+            assert(lease->GetSubMeshes().size() == count && lease->GetMaterialSlotNames().size() == count);
+            assert(lease->GetMaterialSlotNames()[0] == "Body" && lease->GetSubMeshes()[0].BoundsCenter[0] == 7);
+            assert(mesh->GetSubMeshes().size() == count && mesh->GetMaterialSlots()[0].Name == "Body");
+            Rendering::SkinnedMeshFrameLease frame(lease);
+            assert(frame.IsValid()); // 検証済みimmutable表を範囲drawへ渡せる。
+            const auto handle = lease->GetHandle();
+            previousHandle = handle;
+            retainedTables = lease;
+            Container::VariableArray<Skeletal::SkeletalSubMesh> badRanges = mesh->GetSubMeshes();
+            Container::VariableArray<Skeletal::SkeletalMaterialSlot> badSlots = mesh->GetMaterialSlots();
+            badRanges[0].MaterialSlot = count;
+            mesh->SetSubmeshTables(std::move(badRanges),std::move(badSlots));
+            assert(lease->GetSubMeshes()[0].MaterialSlot == 0); // 元resourceの変更を受けない。
+            assert(!mesh->Load() && !mesh->GetRenderAssetLease());
+            assert(!lease->IsAssetLeaseActive() && lease->GetHandle() == handle && lease->GetMaterialSlotNames()[0] == "Body");
+        }
+        Container::VariableArray<Skeletal::SkeletalSubMesh> ranges{{0,24,0}};
+        Container::VariableArray<Skeletal::SkeletalMaterialSlot> slots(1);
+        slots[0].Name = "Bad"; slots[0].Name.push_back('\0');
+        mesh->SetSubmeshTables(std::move(ranges),std::move(slots));
+        assert(!mesh->Load() && !mesh->GetRenderAssetLease());
+        mesh->SetSubmeshTables({},{});
+        assert(mesh->Load() && mesh->GetSubMeshes().empty());
+        auto finalLease = mesh->GetRenderAssetLease();
+        mesh->Unload();
+        assert(mesh->GetSubMeshes().empty() && mesh->GetMaterialSlots().empty() && !mesh->GetRenderAssetLease());
+        assert(!finalLease->IsAssetLeaseActive() && finalLease->GetIndices().size() == 24);
+        assert(retainedTables && retainedTables->GetSubMeshes().size() == 8 &&
+            retainedTables->GetMaterialSlotNames()[0] == "Body" && retainedTables->GetSubMeshes()[1].bNoShadow);
+        mesh.reset();
+        assert(registry.CollectGarbage() == 1);
+        registry.Shutdown();
+        assert(legacyLease->GetVertices()[0].Position[0] == 7 && legacyFrame.IsValid());
+    }
 } // namespace
 
 int main()
@@ -102,6 +173,7 @@ int main()
 #endif
 
     std::cout << "SkeletalResourceLifetimeTest start\n";
+    TestSubmeshLeaseOwnership();
     ResourceRegistry registry;
     assert(registry.Initialize());
 

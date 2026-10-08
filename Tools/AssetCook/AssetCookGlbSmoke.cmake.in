@@ -1,0 +1,253 @@
+cmake_minimum_required(VERSION 3.14)
+
+if(NOT DEFINED ASSET_COOK_EXE OR NOT DEFINED SOURCE_ROOT OR NOT DEFINED SMOKE_DIR)
+    message(FATAL_ERROR "AssetCookGlbSmoke requires ASSET_COOK_EXE, SOURCE_ROOT and SMOKE_DIR")
+endif()
+set(RUN_DIR "${SMOKE_DIR}/Embedded")
+set(FIXTURE_DIR "${SOURCE_ROOT}/Test/Core/Asset/Fixtures/AssetCook")
+file(REMOVE_RECURSE "${RUN_DIR}")
+file(MAKE_DIRECTORY "${RUN_DIR}/Cooked")
+set(MANIFEST "${RUN_DIR}/manifest.json")
+set(PACKAGE "${RUN_DIR}/Cooked/model.nvpkg")
+# 無関係な骨格entryは解決対象にせず、既存metadataの保存だけを検査する。
+file(WRITE "${MANIFEST}" [=[{
+  "version":1,
+  "assets":[{
+    "logical_path":"Models/M9.glb","kind":"model","source_hash":"0000000000000001",
+    "variant":"default","format":"nvskel.v0","cooked_package":"Cooked/m9.nvpkg",
+    "entry_name":"m9.nvskel","entry_type":"Skl0","cooked_hash":"0000000000000002",
+    "metadata":{"vertex_count":24,"index_count":36,"joint_count":4,"clip_count":2},"cooked_version":0
+  }]
+}
+]=])
+
+function(cook_glb input expected_success)
+    execute_process(COMMAND "${ASSET_COOK_EXE}"
+        --input "${input}" --out "${PACKAGE}" --manifest "${MANIFEST}"
+        --logical "Models/embedded_tri.glb" --kind model --entry "__mesh__" --entry-type Msh0
+        --format "nvmesh.v0.mesh3d.pnt.u32.clustered" --variant default
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    if(expected_success)
+        if(NOT result EQUAL 0)
+            message(FATAL_ERROR "GLB cook failed: ${result}\n${output}\n${error}")
+        endif()
+    else()
+        if(result EQUAL 0)
+            message(FATAL_ERROR "invalid embedded image was accepted")
+        endif()
+        if(ARGC GREATER 2)
+            set(expected_reason "${ARGV2}")
+        else()
+            set(expected_reason "embedded image must contain PNG or JPEG bytes")
+        endif()
+        string(FIND "${error}" "${expected_reason}" reason)
+        if(reason EQUAL -1)
+            message(FATAL_ERROR "unexpected embedded image failure: ${error}")
+        endif()
+    endif()
+endfunction()
+
+set(VERIFY_SCRIPT "${RUN_DIR}/verify.ps1")
+file(WRITE "${VERIFY_SCRIPT}" [=[param([string]$Manifest,[string]$Root,[string]$Mode)
+$ErrorActionPreference = 'Stop'
+$doc = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
+$assets = @($doc.assets)
+if ($assets.Count -ne 5) { throw 'manifest must retain one skeletal entry and contain model+3 textures' }
+$keys = @{}
+foreach ($asset in $assets) {
+    $key = "$($asset.logical_path)|$($asset.kind)|$($asset.variant)"
+    if ($keys.ContainsKey($key)) { throw 'duplicate manifest key' }
+    $keys[$key] = $true
+}
+$preserved = @($assets | Where-Object { $_.logical_path -eq 'Models/M9.glb' })
+if ($preserved.Count -ne 1 -or $preserved[0].metadata.vertex_count -ne 24 -or
+    $preserved[0].metadata.index_count -ne 36 -or $preserved[0].metadata.joint_count -ne 4 -or
+    $preserved[0].metadata.clip_count -ne 2 -or $preserved[0].cooked_hash -ne '0000000000000002') {
+    throw 'unrelated skeletal metadata changed'
+}
+if ($preserved[0].metadata.PSObject.Properties.Name -contains 'submesh_count' -or
+    $preserved[0].metadata.PSObject.Properties.Name -contains 'material_slot_count') {
+    throw 'omitted skeletal table counts must stay unknown during merge'
+}
+$model = @($assets | Where-Object { $_.logical_path -eq 'Models/embedded_tri.glb' })
+if ($model.Count -ne 1 -or $model[0].kind -ne 'model' -or $model[0].entry_type -ne 'Msh0') { throw 'missing model' }
+$textures = @()
+for ($i=0; $i -lt 3; ++$i) {
+    $logical = "Models/embedded_tri.glb.img$i.png"
+    $entry = @($assets | Where-Object { $_.logical_path -eq $logical })
+    $format = if ($i -eq 0) { 'nvtex.v0.rgba8.srgb' } else { 'nvtex.v0.rgba8.linear' }
+    if ($entry.Count -ne 1 -or $entry[0].kind -ne 'texture' -or $entry[0].variant -ne 'default' -or
+        $entry[0].format -ne $format -or $entry[0].entry_type -ne 'Tex0') { throw "invalid texture $i" }
+    if (-not [IO.File]::Exists((Join-Path $Root $entry[0].cooked_package))) { throw "missing texture package $i" }
+    $textures += $entry[0]
+}
+if (-not [IO.File]::Exists((Join-Path $Root $model[0].cooked_package))) { throw 'missing model package' }
+$stateFile = Join-Path $Root 'baseline.json'
+if ($Mode -eq 'initial') {
+    @{ model=$model[0]; textures=$textures; manifest_hash=(Get-FileHash -LiteralPath $Manifest -Algorithm SHA256).Hash } |
+        ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $stateFile -Encoding UTF8
+} else {
+    $before = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+    if ($Mode -eq 'repeat') {
+        if ((Get-FileHash -LiteralPath $Manifest -Algorithm SHA256).Hash -ne $before.manifest_hash) { throw 'repeat changed manifest bytes' }
+    } elseif ($Mode -eq 'changed') {
+        if ($model[0].source_hash -eq $before.model.source_hash -or $model[0].cooked_hash -ne $before.model.cooked_hash) {
+            throw 'image change must alter model source hash but keep model payload hash'
+        }
+        for ($i=0; $i -lt 3; ++$i) {
+            if ($textures[$i].source_hash -eq $before.textures[$i].source_hash -or
+                $textures[$i].cooked_hash -eq $before.textures[$i].cooked_hash) { throw "texture $i hashes unchanged" }
+        }
+    } elseif ($Mode -eq 'duplicate') {
+        $doc.assets = @($doc.assets) + @($doc.assets[0])
+        [IO.File]::WriteAllText($Manifest, ($doc | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding($false)))
+    } else { throw 'unknown verification mode' }
+}
+Write-Output "AssetCookGlbSmoke manifest PASS: $Mode"
+]=])
+function(verify_manifest mode)
+    execute_process(COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass
+        -File "${VERIFY_SCRIPT}" -Manifest "${MANIFEST}" -Root "${RUN_DIR}" -Mode "${mode}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "GLB manifest verification failed: ${output}\n${error}")
+    endif()
+    message(STATUS "${output}")
+endfunction()
+
+cook_glb("${FIXTURE_DIR}/embedded_tri.glb" TRUE)
+verify_manifest(initial)
+cook_glb("${FIXTURE_DIR}/embedded_tri.glb" TRUE)
+verify_manifest(repeat)
+cook_glb("${FIXTURE_DIR}/embedded_tri_changed.glb" TRUE)
+verify_manifest(changed)
+file(SHA256 "${MANIFEST}" manifest_before)
+file(SHA256 "${PACKAGE}" package_before)
+cook_glb("${FIXTURE_DIR}/embedded_tri_invalid_image.glb" FALSE)
+cook_glb("${FIXTURE_DIR}/embedded_tri_mismatched_mime.glb" FALSE "embedded image MIME does not match signature")
+file(SHA256 "${MANIFEST}" manifest_after)
+file(SHA256 "${PACKAGE}" package_after)
+if(NOT manifest_before STREQUAL manifest_after OR NOT package_before STREQUAL package_after)
+    message(FATAL_ERROR "invalid embedded image changed previous manifest/model")
+endif()
+# 既存manifestの同key重複も失敗し、不正な入力manifestを勝手に書き換えない。
+file(READ "${MANIFEST}" good_manifest)
+verify_manifest(duplicate)
+file(SHA256 "${MANIFEST}" duplicate_before)
+cook_glb("${FIXTURE_DIR}/embedded_tri.glb" FALSE "existing manifest is invalid")
+file(SHA256 "${MANIFEST}" duplicate_after)
+if(NOT duplicate_before STREQUAL duplicate_after)
+    message(FATAL_ERROR "duplicate manifest was modified")
+endif()
+file(WRITE "${MANIFEST}" "${good_manifest}")
+
+if(WIN32)
+    # どちらも未作成でも、派生textureとmanifestの大小文字aliasを拒否する。
+    set(alias_package "${RUN_DIR}/Alias/model.nvpkg")
+    set(alias_manifest "${RUN_DIR}/Alias/MODEL.NVPKG.IMG0.NVPKG")
+    execute_process(COMMAND "${ASSET_COOK_EXE}"
+        --input "${FIXTURE_DIR}/embedded_tri.glb" --out "${alias_package}" --manifest "${alias_manifest}"
+        --logical "Models/embedded_tri.glb" --kind model --entry "__mesh__" --entry-type Msh0
+        --format "nvmesh.v0.mesh3d.pnt.u32.clustered" --variant default
+        RESULT_VARIABLE alias_result ERROR_VARIABLE alias_error)
+    string(FIND "${alias_error}" "must not alias source or manifest" alias_reason)
+    if(alias_result EQUAL 0 OR alias_reason EQUAL -1 OR EXISTS "${alias_package}" OR EXISTS "${alias_manifest}")
+        message(FATAL_ERROR "output/manifest case alias was not rejected before writes: ${alias_error}")
+    endif()
+endif()
+# 実audio packageを暗黙のimg0出力と同じpathへ用意し、既存assetを保護する。
+set(GUARD_DIR "${RUN_DIR}/Retained")
+file(MAKE_DIRECTORY "${GUARD_DIR}/Cooked")
+set(WAVE_SCRIPT "${GUARD_DIR}/write-wave.ps1")
+file(WRITE "${WAVE_SCRIPT}" [=[param([string]$Path)
+$ErrorActionPreference = 'Stop'
+$hex = '524946462C00000057415645666D7420100000000100010044AC0000885801000200100064617461080000000000010002000300'
+[byte[]]$bytes = for ($i=0; $i -lt $hex.Length; $i+=2) { [Convert]::ToByte($hex.Substring($i,2),16) }
+[IO.File]::WriteAllBytes($Path,$bytes)
+]=])
+execute_process(COMMAND powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass
+    -File "${WAVE_SCRIPT}" -Path "${GUARD_DIR}/tone.wav" RESULT_VARIABLE wave_result)
+if(NOT wave_result EQUAL 0)
+    message(FATAL_ERROR "failed to create retained audio fixture")
+endif()
+set(guard_package "${GUARD_DIR}/Cooked/model.nvpkg.img0.nvpkg")
+set(guard_manifest "${GUARD_DIR}/manifest.json")
+execute_process(COMMAND "${ASSET_COOK_EXE}"
+    --input "${GUARD_DIR}/tone.wav" --out "${guard_package}" --manifest "${guard_manifest}"
+    --logical "Audio/A.wav" --kind audio --entry "a.nvaud" --entry-type Aud0
+    --format "nvaud.v0.pcm16" --variant default
+    RESULT_VARIABLE audio_result ERROR_VARIABLE audio_error)
+if(NOT audio_result EQUAL 0)
+    message(FATAL_ERROR "failed to create retained audio package: ${audio_error}")
+endif()
+file(SHA256 "${guard_package}" guard_package_before)
+file(SHA256 "${guard_manifest}" guard_manifest_before)
+execute_process(COMMAND "${ASSET_COOK_EXE}"
+    --input "${FIXTURE_DIR}/embedded_tri.glb" --out "${GUARD_DIR}/Cooked/model.nvpkg" --manifest "${guard_manifest}"
+    --logical "Models/embedded_tri.glb" --kind model --entry "__mesh__" --entry-type Msh0
+    --format "nvmesh.v0.mesh3d.pnt.u32.clustered" --variant default
+    RESULT_VARIABLE guard_result ERROR_VARIABLE guard_error)
+string(FIND "${guard_error}" "referenced by another asset key" guard_reason)
+file(SHA256 "${guard_package}" guard_package_after)
+file(SHA256 "${guard_manifest}" guard_manifest_after)
+if(guard_result EQUAL 0 OR guard_reason EQUAL -1 OR
+    NOT guard_package_before STREQUAL guard_package_after OR NOT guard_manifest_before STREQUAL guard_manifest_after OR
+    EXISTS "${GUARD_DIR}/Cooked/model.nvpkg" OR EXISTS "${GUARD_DIR}/Cooked/model.nvpkg.img1.nvpkg")
+    message(FATAL_ERROR "retained asset package was not protected: ${guard_error}")
+endif()
+# 採用sidecarの正本をpackage/manifest/派生textureで上書きしない。
+set(SETTINGS_DIR "${RUN_DIR}/SettingsGuard")
+file(MAKE_DIRECTORY "${SETTINGS_DIR}/Cooked")
+set(SETTINGS_MODEL "${SETTINGS_DIR}/protected.glb")
+configure_file("${FIXTURE_DIR}/embedded_tri.glb" "${SETTINGS_MODEL}" COPYONLY)
+set(SETTINGS_PATH "${SETTINGS_MODEL}.import.json")
+file(WRITE "${SETTINGS_PATH}" "{\"version\":1,\"units\":{\"scale\":2}}")
+file(SHA256 "${SETTINGS_PATH}" settings_before)
+
+function(expect_settings_guard output manifest)
+    execute_process(COMMAND "${ASSET_COOK_EXE}"
+        --input "${SETTINGS_MODEL}" --out "${output}" --manifest "${manifest}"
+        --logical "Models/protected.glb" --kind model --entry "__mesh__" --entry-type Msh0
+        --format "nvmesh.v0.mesh3d.pnt.u32.clustered" --variant default
+        RESULT_VARIABLE result ERROR_VARIABLE error)
+    string(FIND "${error}" "output must not alias import settings" reason)
+    file(SHA256 "${SETTINGS_PATH}" settings_after)
+    if(result EQUAL 0 OR reason EQUAL -1 OR NOT settings_before STREQUAL settings_after)
+        message(FATAL_ERROR "import settings were not protected: ${error}")
+    endif()
+endfunction()
+
+set(settings_package "${SETTINGS_DIR}/Cooked/model.nvpkg")
+set(settings_manifest "${SETTINGS_DIR}/manifest.json")
+expect_settings_guard("${SETTINGS_PATH}" "${settings_manifest}")
+expect_settings_guard("${settings_package}" "${SETTINGS_PATH}")
+if(EXISTS "${settings_package}" OR EXISTS "${settings_manifest}")
+    message(FATAL_ERROR "sidecar alias rejection wrote an unrelated output")
+endif()
+execute_process(COMMAND "${ASSET_COOK_EXE}"
+    --input "${SETTINGS_MODEL}" --out "${settings_package}" --manifest "${settings_manifest}"
+    --logical "Models/protected.glb" --kind model --entry "__mesh__" --entry-type Msh0
+    --format "nvmesh.v0.mesh3d.pnt.u32.clustered" --variant default
+    RESULT_VARIABLE settings_result ERROR_VARIABLE settings_error)
+file(SHA256 "${SETTINGS_PATH}" settings_after_success)
+if(NOT settings_result EQUAL 0 OR NOT settings_before STREQUAL settings_after_success)
+    message(FATAL_ERROR "normal sidecar cook failed: ${settings_error}")
+endif()
+# file(CREATE_LINK)は3.14以降。link非対応filesystemはそのcaseだけを明示skipする。
+set(settings_texture "${settings_package}.img0.nvpkg")
+file(REMOVE "${settings_texture}")
+file(CREATE_LINK "${SETTINGS_PATH}" "${settings_texture}" RESULT settings_link_result)
+if(settings_link_result STREQUAL "0")
+    file(SHA256 "${settings_package}" settings_model_before)
+    file(SHA256 "${settings_manifest}" settings_manifest_before)
+    expect_settings_guard("${settings_package}" "${settings_manifest}")
+    file(SHA256 "${settings_package}" settings_model_after)
+    file(SHA256 "${settings_manifest}" settings_manifest_after)
+    if(NOT settings_model_before STREQUAL settings_model_after OR NOT settings_manifest_before STREQUAL settings_manifest_after)
+        message(FATAL_ERROR "derived sidecar alias changed model or manifest")
+    endif()
+else()
+    message(STATUS "sidecar hardlink case skipped: ${settings_link_result}")
+endif()
+
+message(STATUS "AssetCookGlbSmoke PASS: package validation, model+3 textures, metadata preservation, repeat, image update, failure")

@@ -1,4 +1,5 @@
-﻿#include "Component/SpringArmComponent.h"
+﻿#include "../../../Game/CameraLateUpdate.h"
+#include "Component/SpringArmComponent.h"
 #include "Component/SpringArmTypes.h"
 #include "Input/InputState.h"
 #include "Input/MayaCameraController.h"
@@ -6,6 +7,9 @@
 #include "Math/Vector3.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -40,6 +44,155 @@ namespace
                IsNearlyEqual(lhs.y, rhs.y, tolerance) &&
                IsNearlyEqual(lhs.z, rhs.z, tolerance) &&
                IsNearlyEqual(lhs.w, rhs.w, tolerance);
+    }
+
+    class FixedPivotMover final : public NorvesLib::Core::Component::Component
+    {
+    public:
+        void FixedTick(float) override
+        {
+            GetOwner()->SetLocalPosition(static_cast<float>(++Steps), 0, 0);
+        }
+        uint32_t Steps = 0;
+    };
+
+    void TestLateCameraReadsFinalPhysicsAndChildTransforms()
+    {
+        SpringArmComponent direct;
+        SpringArmComponent initialized(static_cast<const FieldInitializer*>(nullptr));
+        SpringArmComponent copied(static_cast<const IUnknown*>(nullptr));
+        assert(direct.GetTickGroup() == ETickGroup::Camera);
+        assert(initialized.GetTickGroup() == ETickGroup::Camera);
+        assert(copied.GetTickGroup() == ETickGroup::Camera);
+        for (uint32_t steps = 0; steps <= 2; ++steps)
+        {
+            World world;
+            world.Initialize();
+            Entity* pivotParent = world.SpawnEntity<Entity>();
+            Entity* pivot = world.SpawnEntity<Entity>(pivotParent);
+            Entity* cameraParent = world.SpawnEntity<Entity>();
+            Entity* owner = world.SpawnEntity<Entity>(cameraParent);
+            assert(pivotParent && pivot && cameraParent && owner);
+            pivotParent->SetLocalPosition(10, 0, 0);
+            pivot->SetLocalPosition(2, 0, 0);
+            cameraParent->SetLocalPosition(20, 0, 0);
+            auto* arm = world.CreateComponent<SpringArmComponent>(owner);
+            auto* camera = world.CreateComponent<CameraComponent>(owner);
+            auto* mover = world.CreateComponent<FixedPivotMover>(pivot);
+            assert(arm && camera && mover && arm->SetPivot(pivot));
+            arm->SetYaw(0); arm->SetPitch(0); arm->SetArmLength(4);
+            camera->SetActiveCamera(true);
+            Game::CameraLateUpdateState state;
+            state.OwnerId = owner->GetObjectId();
+            state.SpringArmId = arm->GetComponentId();
+            state.CameraId = camera->GetComponentId();
+            world.UpdateWorldTransforms();
+            const auto initialPosition = owner->GetPosition();
+            world.Tick(0.016f);
+            assert(IsNearlyEqual(owner->GetPosition(), initialPosition));
+            for (uint32_t step = 0; step < steps; ++step)
+            {
+                world.DispatchFixedTick(1.0f / 60.0f);
+                world.UpdateWorldTransforms();
+                world.CleanupAfterFixedStep();
+            }
+            world.LateTick(0.016f);
+            // helperの追加refreshに頼らず、Camera群自体がchildのlocalへ書いたことを確認する。
+            assert(IsNearlyEqual(owner->GetLocalPosition().x,
+                -10.0f + (steps == 0 ? 2.0f : static_cast<float>(steps))));
+            assert(IsNearlyEqual(owner->GetLocalPosition().z, 4.0f));
+            Rendering::CameraProxy proxy;
+            assert(state.BuildSnapshot(world, proxy));
+            assert(IsNearlyEqual(proxy.PositionX, 10.0f + (steps == 0 ? 2.0f : static_cast<float>(steps))));
+            assert(IsNearlyEqual(proxy.PositionZ, 4.0f));
+            // Module Late相当の書込みを、childのcache確定前でも拾う。
+            pivotParent->SetLocalPosition(30, 0, 0);
+            assert(state.BuildSnapshot(world, proxy));
+            assert(IsNearlyEqual(proxy.PositionX, 30.0f + (steps == 0 ? 2.0f : static_cast<float>(steps))));
+            camera->SetActiveCamera(false);
+            const float oldX = proxy.PositionX;
+            assert(!state.BuildSnapshot(world, proxy) && proxy.PositionX == oldX);
+            camera->SetActiveCamera(true);
+            owner->SetTickEnabled(false);
+            assert(!state.BuildSnapshot(world, proxy));
+            owner->SetTickEnabled(true);
+            arm->SetTickEnabled(false);
+            assert(!state.BuildSnapshot(world, proxy));
+            arm->SetTickEnabled(true);
+            arm->Disable();
+            assert(!state.BuildSnapshot(world, proxy));
+            arm->Enable();
+            camera->Disable();
+            assert(!state.BuildSnapshot(world, proxy));
+            camera->Enable();
+            assert(state.BuildSnapshot(world, proxy));
+            world.Finalize();
+        }
+    }
+
+    void TestLateCameraRejectsRemovedReferences()
+    {
+        for (uint32_t removed = 0; removed < 4; ++removed)
+        {
+            World world;
+            world.Initialize();
+            Entity* pivot = world.SpawnEntity<Entity>();
+            Entity* owner = world.SpawnEntity<Entity>();
+            auto* arm = world.CreateComponent<SpringArmComponent>(owner);
+            auto* camera = world.CreateComponent<CameraComponent>(owner);
+            assert(arm && camera && arm->SetPivot(pivot));
+            camera->SetActiveCamera(true);
+            Game::CameraLateUpdateState state;
+            state.OwnerId = owner->GetObjectId();
+            state.SpringArmId = arm->GetComponentId();
+            state.CameraId = camera->GetComponentId();
+            Rendering::CameraProxy proxy;
+            assert(state.BuildSnapshot(world, proxy));
+            if (removed == 0) world.RemoveEntity(owner);
+            if (removed == 1) owner->RemoveComponent(camera);
+            if (removed == 2) owner->RemoveComponent(arm);
+            if (removed == 3) world.RemoveEntity(pivot);
+            assert(!state.BuildSnapshot(world, proxy));
+            world.Finalize();
+        }
+    }
+
+    void TestOneShotLateCameraDelegateLifetime()
+    {
+        auto slot = Container::MakeShared<Game::CameraLateUpdateSlot>();
+        auto lifetime = Container::MakeShared<Game::CameraLateUpdateState>();
+        int calls = 0;
+        lifetime->Callback = Delegate<void, float>([&calls](float) { ++calls; });
+        slot->Arm(lifetime);
+        slot->Dispatch(0.016f);
+        slot->Dispatch(0.016f);
+        assert(calls == 1);
+        slot->Arm(lifetime);
+        slot->Reset(); // pause/通常Tick無しの次フレームは古い予約を使わない。
+        slot->Dispatch(0.016f);
+        assert(calls == 1);
+        slot->Arm(lifetime);
+        lifetime.reset(); // Leave/failed Enter/Data破棄でweak pendingも失効。
+        slot->Dispatch(0.016f);
+        assert(calls == 1);
+        const Container::TWeakPtr<Game::CameraLateUpdateSlot> weakSlot = slot;
+        slot.reset(); // Handler破棄でcreatorから注入したweak slotも失効。
+        assert(weakSlot.expired());
+        Game::CameraLateUpdateSlot reentrant;
+        auto first = Container::MakeShared<Game::CameraLateUpdateBinding>();
+        auto second = Container::MakeShared<Game::CameraLateUpdateBinding>();
+        second->Callback = Delegate<void, float>([&](float) { calls += 10; });
+        first->Callback = Delegate<void, float>([&](float) { ++calls; reentrant.Arm(second); });
+        reentrant.Arm(first);
+        reentrant.Dispatch(0.016f);
+        assert(calls == 2); // 新予約は同じDispatchでは実行しない。
+        reentrant.Reset();
+        reentrant.Dispatch(0.016f);
+        assert(calls == 2);
+        reentrant.Arm(first);
+        reentrant.Arm(second); // 同一frameの予約は最後のcameraを採用する。
+        reentrant.Dispatch(0.016f);
+        assert(calls == 12);
     }
 
     void TestWorldLookupCoversHierarchyAndSkipsPendingDestroy()
@@ -334,6 +487,9 @@ namespace
 int main()
 {
     std::cout << "SpringArmComponentTest start\n";
+    TestLateCameraReadsFinalPhysicsAndChildTransforms();
+    TestLateCameraRejectsRemovedReferences();
+    TestOneShotLateCameraDelegateLifetime();
     TestWorldLookupCoversHierarchyAndSkipsPendingDestroy();
     TestPivotRejectsForeignWorldAndOwner();
     TestOwnerWorldTransformAndIntentAreAppliedByValue();

@@ -13,13 +13,21 @@ namespace NorvesLib::Core
 
     bool ResourceRegistry::Initialize()
     {
-        if (m_bInitialized)
         {
-            return true;
+            Thread::ScopedLock lock(m_Mutex);
+            if (m_bInitialized)
+            {
+                return true;
+            }
+            if (m_SessionEpoch == std::numeric_limits<uint64_t>::max())
+            {
+                return false;
+            }
+            ++m_SessionEpoch;
+            m_NextSkeletalCacheDomain = 1;
+            m_NextResourceId.Store(1);
+            m_bInitialized = true;
         }
-
-        m_NextResourceId.Store(1);
-        m_bInitialized = true;
 
         NORVES_LOG_INFO("ResourceRegistry", "ResourceRegistry initialized");
         return true;
@@ -37,9 +45,8 @@ namespace NorvesLib::Core
         {
             Thread::ScopedLock lock(m_Mutex);
             m_TypePools.clear();
+            m_bInitialized = false;
         }
-
-        m_bInitialized = false;
 
         NORVES_LOG_INFO("ResourceRegistry", "ResourceRegistry shutdown");
     }

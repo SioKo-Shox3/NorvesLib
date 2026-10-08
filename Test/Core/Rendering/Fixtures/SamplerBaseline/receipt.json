@@ -1,0 +1,500 @@
+﻿{
+  "schema": 1,
+  "baseline_commit": "3cd8c479fa30eb0fafe52cb6aabc4c7ef226e690",
+  "run_id": 37373318284,
+  "attempt": 1,
+  "job_id": 111975595995,
+  "summary_sha256": "f48f5d2fe309c7207d67d8788179ad9cf2147301f023e73b42db50648a7323c4",
+  "configurations": {
+    "Debug": {
+      "schema": 1,
+      "result": "pass",
+      "purpose": "pre_refactor_characterization_only",
+      "commit": "3cd8c479fa30eb0fafe52cb6aabc4c7ef226e690",
+      "tree": "4853154229da00c8c49fdc51dd89ee2474b79ee1",
+      "runtime_base": "585d7004505af6cbaf917b2e466b9061aee4853c",
+      "unchanged_library_tree": "59e5b593a248f555928a7f13e9939192fd263ce7",
+      "configuration": "Debug",
+      "platform": "x64",
+      "run_id": "37373318284",
+      "attempt": "1",
+      "image_version": "20260927.320.1",
+      "os": "Windows",
+      "sdk_version": "1.4.309.0",
+      "compiler_version": "19.44.35229.0",
+      "compiler_sha256": "fe251ef50a1545b1b0835ee17b1e785459712b38d79e45b5c1d3d28970a36619",
+      "compiler_cmake": "set(CMAKE_CXX_COMPILER \"C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe\")\nset(CMAKE_CXX_COMPILER_ARG1 \"\")\nset(CMAKE_CXX_COMPILER_ID \"MSVC\")\nset(CMAKE_CXX_COMPILER_VERSION \"19.44.35229.0\")\nset(CMAKE_CXX_COMPILER_VERSION_INTERNAL \"\")\nset(CMAKE_CXX_COMPILER_WRAPPER \"\")\nset(CMAKE_CXX_STANDARD_COMPUTED_DEFAULT \"14\")\nset(CMAKE_CXX_EXTENSIONS_COMPUTED_DEFAULT \"OFF\")\nset(CMAKE_CXX_STANDARD_LATEST \"23\")\nset(CMAKE_CXX_COMPILE_FEATURES \"cxx_std_98;cxx_template_template_parameters;cxx_std_11;cxx_alias_templates;cxx_alignas;cxx_alignof;cxx_attributes;cxx_auto_type;cxx_constexpr;cxx_decltype;cxx_decltype_incomplete_return_types;cxx_default_function_template_args;cxx_defaulted_functions;cxx_defaulted_move_initializers;cxx_delegating_constructors;cxx_deleted_functions;cxx_enum_forward_declarations;cxx_explicit_conversions;cxx_extended_friend_declarations;cxx_extern_templates;cxx_final;cxx_func_identifier;cxx_generalized_initializers;cxx_inheriting_constructors;cxx_inline_namespaces;cxx_lambdas;cxx_local_type_template_args;cxx_long_long_type;cxx_noexcept;cxx_nonstatic_member_init;cxx_nullptr;cxx_override;cxx_range_for;cxx_raw_string_literals;cxx_reference_qualified_functions;cxx_right_angle_brackets;cxx_rvalue_references;cxx_sizeof_member;cxx_static_assert;cxx_strong_enums;cxx_thread_local;cxx_trailing_return_types;cxx_unicode_literals;cxx_uniform_initialization;cxx_unrestricted_unions;cxx_user_literals;cxx_variadic_macros;cxx_variadic_templates;cxx_std_14;cxx_aggregate_default_initializers;cxx_attribute_deprecated;cxx_binary_literals;cxx_contextual_conversions;cxx_decltype_auto;cxx_digit_separators;cxx_generic_lambdas;cxx_lambda_init_captures;cxx_relaxed_constexpr;cxx_return_type_deduction;cxx_variable_templates;cxx_std_17;cxx_std_20;cxx_std_23\")\nset(CMAKE_CXX98_COMPILE_FEATURES \"cxx_std_98;cxx_template_template_parameters\")\nset(CMAKE_CXX11_COMPILE_FEATURES \"cxx_std_11;cxx_alias_templates;cxx_alignas;cxx_alignof;cxx_attributes;cxx_auto_type;cxx_constexpr;cxx_decltype;cxx_decltype_incomplete_return_types;cxx_default_function_template_args;cxx_defaulted_functions;cxx_defaulted_move_initializers;cxx_delegating_constructors;cxx_deleted_functions;cxx_enum_forward_declarations;cxx_explicit_conversions;cxx_extended_friend_declarations;cxx_extern_templates;cxx_final;cxx_func_identifier;cxx_generalized_initializers;cxx_inheriting_constructors;cxx_inline_namespaces;cxx_lambdas;cxx_local_type_template_args;cxx_long_long_type;cxx_noexcept;cxx_nonstatic_member_init;cxx_nullptr;cxx_override;cxx_range_for;cxx_raw_string_literals;cxx_reference_qualified_functions;cxx_right_angle_brackets;cxx_rvalue_references;cxx_sizeof_member;cxx_static_assert;cxx_strong_enums;cxx_thread_local;cxx_trailing_return_types;cxx_unicode_literals;cxx_uniform_initialization;cxx_unrestricted_unions;cxx_user_literals;cxx_variadic_macros;cxx_variadic_templates\")\nset(CMAKE_CXX14_COMPILE_FEATURES \"cxx_std_14;cxx_aggregate_default_initializers;cxx_attribute_deprecated;cxx_binary_literals;cxx_contextual_conversions;cxx_decltype_auto;cxx_digit_separators;cxx_generic_lambdas;cxx_lambda_init_captures;cxx_relaxed_constexpr;cxx_return_type_deduction;cxx_variable_templates\")\nset(CMAKE_CXX17_COMPILE_FEATURES \"cxx_std_17\")\nset(CMAKE_CXX20_COMPILE_FEATURES \"cxx_std_20\")\nset(CMAKE_CXX23_COMPILE_FEATURES \"cxx_std_23\")\nset(CMAKE_CXX26_COMPILE_FEATURES \"\")\n\nset(CMAKE_CXX_PLATFORM_ID \"Windows\")\nset(CMAKE_CXX_SIMULATE_ID \"\")\nset(CMAKE_CXX_COMPILER_FRONTEND_VARIANT \"MSVC\")\nset(CMAKE_CXX_SIMULATE_VERSION \"\")\nset(CMAKE_CXX_COMPILER_ARCHITECTURE_ID x64)\n\nset(MSVC_CXX_ARCHITECTURE_ID x64)\n\nset(CMAKE_AR \"C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/lib.exe\")\nset(CMAKE_CXX_COMPILER_AR \"\")\nset(CMAKE_RANLIB \":\")\nset(CMAKE_CXX_COMPILER_RANLIB \"\")\nset(CMAKE_LINKER \"C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/link.exe\")\nset(CMAKE_LINKER_LINK \"C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/link.exe\")\nset(CMAKE_LINKER_LLD \"C:/Program Files/LLVM/bin/lld-link.exe\")\nset(CMAKE_CXX_COMPILER_LINKER \"C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/HostX64/x64/link.exe\")\nset(CMAKE_CXX_COMPILER_LINKER_ID \"MSVC\")\nset(CMAKE_CXX_COMPILER_LINKER_VERSION 14.44.35229.0)\nset(CMAKE_CXX_COMPILER_LINKER_FRONTEND_VARIANT MSVC)\nset(CMAKE_MT \"CMAKE_MT-NOTFOUND\")\nset(CMAKE_TAPI \"\")\nset(CMAKE_COMPILER_IS_GNUCXX )\nset(CMAKE_CXX_COMPILER_LOADED 1)\nset(CMAKE_CXX_COMPILER_WORKS TRUE)\nset(CMAKE_CXX_ABI_COMPILED TRUE)\n\nset(CMAKE_CXX_COMPILER_ENV_VAR \"CXX\")\n\nset(CMAKE_CXX_COMPILER_ID_RUN 1)\nset(CMAKE_CXX_SOURCE_FILE_EXTENSIONS C;M;c++;cc;cpp;cxx;m;mm;mpp;CPP;ixx;cppm;ccm;cxxm;c++m)\nset(CMAKE_CXX_IGNORE_EXTENSIONS inl;h;hpp;HPP;H;o;O;obj;OBJ;def;DEF;rc;RC)\n\nforeach (lang IN ITEMS C OBJC OBJCXX)\n  if (CMAKE_${lang}_COMPILER_ID_RUN)\n    foreach(extension IN LISTS CMAKE_${lang}_SOURCE_FILE_EXTENSIONS)\n      list(REMOVE_ITEM CMAKE_CXX_SOURCE_FILE_EXTENSIONS ${extension})\n    endforeach()\n  endif()\nendforeach()\n\nset(CMAKE_CXX_LINKER_PREFERENCE 30)\nset(CMAKE_CXX_LINKER_PREFERENCE_PROPAGATES 1)\nset(CMAKE_CXX_LINKER_DEPFILE_SUPPORTED )\n\n# Save compiler ABI information.\nset(CMAKE_CXX_SIZEOF_DATA_PTR \"8\")\nset(CMAKE_CXX_COMPILER_ABI \"\")\nset(CMAKE_CXX_BYTE_ORDER \"LITTLE_ENDIAN\")\nset(CMAKE_CXX_LIBRARY_ARCHITECTURE \"\")\n\nif(CMAKE_CXX_SIZEOF_DATA_PTR)\n  set(CMAKE_SIZEOF_VOID_P \"${CMAKE_CXX_SIZEOF_DATA_PTR}\")\nendif()\n\nif(CMAKE_CXX_COMPILER_ABI)\n  set(CMAKE_INTERNAL_PLATFORM_ABI \"${CMAKE_CXX_COMPILER_ABI}\")\nendif()\n\nif(CMAKE_CXX_LIBRARY_ARCHITECTURE)\n  set(CMAKE_LIBRARY_ARCHITECTURE \"\")\nendif()\n\nset(CMAKE_CXX_CL_SHOWINCLUDES_PREFIX \"\")\nif(CMAKE_CXX_CL_SHOWINCLUDES_PREFIX)\n  set(CMAKE_CL_SHOWINCLUDES_PREFIX \"${CMAKE_CXX_CL_SHOWINCLUDES_PREFIX}\")\nendif()\n\n\n\n\n\nset(CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES \"\")\nset(CMAKE_CXX_IMPLICIT_LINK_LIBRARIES \"\")\nset(CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES \"\")\nset(CMAKE_CXX_IMPLICIT_LINK_FRAMEWORK_DIRECTORIES \"\")\nset(CMAKE_CXX_COMPILER_CLANG_RESOURCE_DIR \"\")\n\nset(CMAKE_CXX_COMPILER_IMPORT_STD \"\")\n### Imported target for C++23 standard library\nset(CMAKE_CXX23_COMPILER_IMPORT_STD_NOT_FOUND_MESSAGE \"Unsupported generator: Visual Studio 17 2022\")\n\n\n\n",
+      "cmake_cache_sha256": "f5b08dd58c05f8633204ee045aaabdca3aebbf6f419ef820350c13ebf81aa81a",
+      "projects": [
+        {
+          "file": "Debug-Core.vcxproj",
+          "sha256": "0cf8a5f64e5423f44980b7b838ed050b968b14dd9cdf14343f2d8ab48a08241d",
+          "windows_sdk": "10.0.26100.0",
+          "compile_options": {
+            "AdditionalIncludeDirectories": "D:\\a\\NorvesLib\\NorvesLib\\Library;D:\\a\\NorvesLib\\NorvesLib\\Library\\Core\\Public;D:\\a\\NorvesLib\\NorvesLib\\Library\\Core\\Private;D:\\a\\NorvesLib\\NorvesLib\\Library\\ThirdParty\\stb;D:\\a\\NorvesLib\\NorvesLib\\Library\\ThirdParty\\tinyexr\\include;D:\\a\\NorvesLib\\NorvesLib\\Library\\ThirdParty\\angelscript\\upstream\\sdk\\angelscript\\include;D:\\a\\NorvesLib\\NorvesLib\\build\\windows-cli\\Library\\ThirdParty\\freetype\\include;D:\\a\\NorvesLib\\NorvesLib\\Library\\ThirdParty\\freetype\\include;%(AdditionalIncludeDirectories)",
+            "AdditionalOptions": "%(AdditionalOptions) /external:I \"C:/VulkanSDK/1.4.309.0/Include\"",
+            "AssemblerListingLocation": "$(IntDir)",
+            "BasicRuntimeChecks": "EnableFastChecks",
+            "DebugInformationFormat": "ProgramDatabase",
+            "ExceptionHandling": "Sync",
+            "ExternalWarningLevel": "TurnOffAllWarnings",
+            "InlineFunctionExpansion": "Disabled",
+            "LanguageStandard": "stdcpplatest",
+            "MinimalRebuild": null,
+            "Optimization": "Disabled",
+            "PrecompiledHeader": "NotUsing",
+            "RuntimeLibrary": "MultiThreadedDebugDLL",
+            "RuntimeTypeInfo": "true",
+            "SupportJustMyCode": null,
+            "UseFullPaths": "false",
+            "WarningLevel": "Level3",
+            "PreprocessorDefinitions": "%(PreprocessorDefinitions);WIN32;_WINDOWS;NORVES_BUILD_DEBUG=1;NORVES_BUILD_DEVELOPMENT=1;NORVES_BUILD_RELEASE=0;NORVES_ENABLE_LOGGING=1;NORVES_ENABLE_DEBUG_OUTPUT=1;NORVES_ENABLE_STATS=1;NORVES_ENABLE_RENDERGRAPH_DUMP=1;NORVES_ENABLE_PROFILING=1;NORVES_ENABLE_COMPONENT_DATA_REGISTRY=1;NORVES_ENABLE_CORE_TEXT=1;VULKAN_HPP_NO_EXCEPTIONS;NORVES_SHADER_DIR=\"D:/a/NorvesLib/NorvesLib/Assets/Shaders\";NORVES_ASSET_DIR=\"D:/a/NorvesLib/NorvesLib/Assets\";NOMINMAX;WIN32_LEAN_AND_MEAN;CMAKE_INTDIR=\"Debug\"",
+            "ObjectFileName": "$(IntDir)",
+            "ScanSourceForModuleDependencies": "true"
+          }
+        },
+        {
+          "file": "Debug-SkeletalAnimationSamplingTest.vcxproj",
+          "sha256": "d370c551a979967f622d783c6eca52e888a5c358229cfc28f0d458b4de7022d9",
+          "windows_sdk": "10.0.26100.0",
+          "compile_options": {
+            "AdditionalIncludeDirectories": "D:\\a\\NorvesLib\\NorvesLib\\Library;D:\\a\\NorvesLib\\NorvesLib\\Library\\Core\\Public;%(AdditionalIncludeDirectories)",
+            "AdditionalOptions": "%(AdditionalOptions) /external:I \"C:/VulkanSDK/1.4.309.0/Include\"",
+            "AssemblerListingLocation": "$(IntDir)",
+            "BasicRuntimeChecks": "EnableFastChecks",
+            "DebugInformationFormat": "ProgramDatabase",
+            "ExceptionHandling": "Sync",
+            "ExternalWarningLevel": "TurnOffAllWarnings",
+            "InlineFunctionExpansion": "Disabled",
+            "LanguageStandard": "stdcpplatest",
+            "MinimalRebuild": null,
+            "Optimization": "Disabled",
+            "PrecompiledHeader": "NotUsing",
+            "RuntimeLibrary": "MultiThreadedDebugDLL",
+            "RuntimeTypeInfo": "true",
+            "SupportJustMyCode": null,
+            "UseFullPaths": "false",
+            "WarningLevel": "Level3",
+            "PreprocessorDefinitions": "%(PreprocessorDefinitions);WIN32;_WINDOWS;NOMINMAX;NORVES_BUILD_DEBUG=1;NORVES_BUILD_DEVELOPMENT=1;NORVES_BUILD_RELEASE=0;NORVES_ENABLE_LOGGING=1;NORVES_ENABLE_DEBUG_OUTPUT=1;NORVES_ENABLE_STATS=1;NORVES_ENABLE_RENDERGRAPH_DUMP=1;NORVES_ENABLE_PROFILING=1;NORVES_ENABLE_COMPONENT_DATA_REGISTRY=1;NORVES_ENABLE_CORE_TEXT=1;CMAKE_INTDIR=\"Debug\"",
+            "ObjectFileName": "$(IntDir)",
+            "ScanSourceForModuleDependencies": "false"
+          }
+        }
+      ],
+      "submodules": "42608f77f20749dd6ddc9e0536788eaad70ea4b5 Library/ThirdParty/freetype (42608f7)\n 72dfcc858c040c54a6a0b88fcb7e70ee186d3167 Library/ThirdParty/freetype/subprojects/dlg (72dfcc8)",
+      "harness": {
+        "Test/Core/Rendering/SkeletalSamplerBaseline.cpp": "4481f77023f632f60f7cc70129f38263fdd66529c970a35f89c0bfca66307a9a",
+        "Test/Core/Rendering/SkeletalAnimationSamplingTest.cpp": "100908a9d232e7d1f5020d18461a94def3c6dde2301224e237d71ac5a53a51f8",
+        "Test/Core/Rendering/CMakeLists.txt": "a81b19a724802e22c37ae47a897e92173759bd3eab88f21cb0b3165b4f6eb6b5",
+        "Scripts/SkeletalSamplerBaseline.py": "03a9eac0e76451dd0a370628023b61d25d8b7b2618566d2b475e6a5b05e7c711"
+      },
+      "runtime": {
+        "Library/Core/Private/Animation/SkeletalAnimationSampler.cpp": "8531f2fc5cff8c064ee34ea29676fedecacbb0af727a93a95bc61d74aec43037",
+        "Library/Core/Private/Animation/SkeletalSamplingMath.h": "412a463c4c486ca5138419d51b7b5e7102a02a8a4c6869b60d865fd32749bbc2",
+        "Library/Core/Public/Animation/SkeletalAnimationSampler.h": "c1e0946af8097cbd9c6a538976bed072051fef120c737d1c93ab7bacd0036a21"
+      },
+      "executable_sha256": "0516f9f87ce10b01e9bfdcfc1f8abdaedddede133c75b50d0afb2296fd62abf1",
+      "core_sha256": "c689ffcaab26df2f8ba9fee584a11e36dc553155169a1caba3d29277e7568e44",
+      "snapshot_sha256": "a5b0a90496e9064c2808692706b69f8a11936fea9af3031f25eb909ab33e62d4",
+      "snapshot_bytes": 6095,
+      "repeat_sha256": "a5b0a90496e9064c2808692706b69f8a11936fea9af3031f25eb909ab33e62d4",
+      "cases": [
+        {
+          "id": 1,
+          "name": "identity_bind",
+          "success": true
+        },
+        {
+          "id": 2,
+          "name": "scaled_rotated_bind",
+          "success": true
+        },
+        {
+          "id": 3,
+          "name": "partial_translation",
+          "success": true
+        },
+        {
+          "id": 4,
+          "name": "linear_before",
+          "success": true
+        },
+        {
+          "id": 5,
+          "name": "linear_middle",
+          "success": true
+        },
+        {
+          "id": 6,
+          "name": "linear_after",
+          "success": true
+        },
+        {
+          "id": 7,
+          "name": "step_before",
+          "success": true
+        },
+        {
+          "id": 8,
+          "name": "step_key",
+          "success": true
+        },
+        {
+          "id": 9,
+          "name": "step_after",
+          "success": true
+        },
+        {
+          "id": 10,
+          "name": "noncommutative_hierarchy",
+          "success": true
+        },
+        {
+          "id": 11,
+          "name": "empty_mesh",
+          "success": true
+        },
+        {
+          "id": 12,
+          "name": "nan_time",
+          "success": false
+        },
+        {
+          "id": 13,
+          "name": "parent_cycle",
+          "success": false
+        },
+        {
+          "id": 14,
+          "name": "duplicate_key_time",
+          "success": false
+        },
+        {
+          "id": 15,
+          "name": "singular_ibm",
+          "success": false
+        },
+        {
+          "id": 16,
+          "name": "singular_mesh",
+          "success": false
+        },
+        {
+          "id": 17,
+          "name": "fk_overflow",
+          "success": false
+        },
+        {
+          "id": 18,
+          "name": "parent_after_child",
+          "success": true
+        },
+        {
+          "id": 19,
+          "name": "multiple_roots",
+          "success": true
+        },
+        {
+          "id": 20,
+          "name": "empty_and_out_of_range_channels",
+          "success": true
+        },
+        {
+          "id": 21,
+          "name": "duplicate_channels",
+          "success": true
+        },
+        {
+          "id": 22,
+          "name": "sheared_bind",
+          "success": true
+        },
+        {
+          "id": 23,
+          "name": "reflected_bind",
+          "success": true
+        },
+        {
+          "id": 24,
+          "name": "extreme_bind",
+          "success": false
+        },
+        {
+          "id": 25,
+          "name": "extreme_bind_with_overrides",
+          "success": true
+        },
+        {
+          "id": 26,
+          "name": "extreme_ibm_and_clip",
+          "success": false
+        },
+        {
+          "id": 27,
+          "name": "nonfinite_ibm",
+          "success": false
+        },
+        {
+          "id": 28,
+          "name": "nonfinite_mesh",
+          "success": false
+        },
+        {
+          "id": 29,
+          "name": "empty_skeleton",
+          "success": false
+        },
+        {
+          "id": 30,
+          "name": "success_after_failures",
+          "success": true
+        }
+      ]
+    },
+    "Release": {
+      "schema": 1,
+      "result": "pass",
+      "purpose": "pre_refactor_characterization_only",
+      "commit": "3cd8c479fa30eb0fafe52cb6aabc4c7ef226e690",
+      "tree": "4853154229da00c8c49fdc51dd89ee2474b79ee1",
+      "runtime_base": "585d7004505af6cbaf917b2e466b9061aee4853c",
+      "unchanged_library_tree": "59e5b593a248f555928a7f13e9939192fd263ce7",
+      "configuration": "Release",
+      "platform": "x64",
+      "run_id": "37373318284",
+      "attempt": "1",
+      "image_version": "20260927.320.1",
+      "os": "Windows",
+      "sdk_version": "1.4.309.0",
+      "compiler_version": "19.44.35229.0",
+      "compiler_sha256": "fe251ef50a1545b1b0835ee17b1e785459712b38d79e45b5c1d3d28970a36619",
+      "compiler_cmake": "set(CMAKE_CXX_COMPILER \"C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe\")\nset(CMAKE_CXX_COMPILER_ARG1 \"\")\nset(CMAKE_CXX_COMPILER_ID \"MSVC\")\nset(CMAKE_CXX_COMPILER_VERSION \"19.44.35229.0\")\nset(CMAKE_CXX_COMPILER_VERSION_INTERNAL \"\")\nset(CMAKE_CXX_COMPILER_WRAPPER \"\")\nset(CMAKE_CXX_STANDARD_COMPUTED_DEFAULT \"14\")\nset(CMAKE_CXX_EXTENSIONS_COMPUTED_DEFAULT \"OFF\")\nset(CMAKE_CXX_STANDARD_LATEST \"23\")\nset(CMAKE_CXX_COMPILE_FEATURES \"cxx_std_98;cxx_template_template_parameters;cxx_std_11;cxx_alias_templates;cxx_alignas;cxx_alignof;cxx_attributes;cxx_auto_type;cxx_constexpr;cxx_decltype;cxx_decltype_incomplete_return_types;cxx_default_function_template_args;cxx_defaulted_functions;cxx_defaulted_move_initializers;cxx_delegating_constructors;cxx_deleted_functions;cxx_enum_forward_declarations;cxx_explicit_conversions;cxx_extended_friend_declarations;cxx_extern_templates;cxx_final;cxx_func_identifier;cxx_generalized_initializers;cxx_inheriting_constructors;cxx_inline_namespaces;cxx_lambdas;cxx_local_type_template_args;cxx_long_long_type;cxx_noexcept;cxx_nonstatic_member_init;cxx_nullptr;cxx_override;cxx_range_for;cxx_raw_string_literals;cxx_reference_qualified_functions;cxx_right_angle_brackets;cxx_rvalue_references;cxx_sizeof_member;cxx_static_assert;cxx_strong_enums;cxx_thread_local;cxx_trailing_return_types;cxx_unicode_literals;cxx_uniform_initialization;cxx_unrestricted_unions;cxx_user_literals;cxx_variadic_macros;cxx_variadic_templates;cxx_std_14;cxx_aggregate_default_initializers;cxx_attribute_deprecated;cxx_binary_literals;cxx_contextual_conversions;cxx_decltype_auto;cxx_digit_separators;cxx_generic_lambdas;cxx_lambda_init_captures;cxx_relaxed_constexpr;cxx_return_type_deduction;cxx_variable_templates;cxx_std_17;cxx_std_20;cxx_std_23\")\nset(CMAKE_CXX98_COMPILE_FEATURES \"cxx_std_98;cxx_template_template_parameters\")\nset(CMAKE_CXX11_COMPILE_FEATURES \"cxx_std_11;cxx_alias_templates;cxx_alignas;cxx_alignof;cxx_attributes;cxx_auto_type;cxx_constexpr;cxx_decltype;cxx_decltype_incomplete_return_types;cxx_default_function_template_args;cxx_defaulted_functions;cxx_defaulted_move_initializers;cxx_delegating_constructors;cxx_deleted_functions;cxx_enum_forward_declarations;cxx_explicit_conversions;cxx_extended_friend_declarations;cxx_extern_templates;cxx_final;cxx_func_identifier;cxx_generalized_initializers;cxx_inheriting_constructors;cxx_inline_namespaces;cxx_lambdas;cxx_local_type_template_args;cxx_long_long_type;cxx_noexcept;cxx_nonstatic_member_init;cxx_nullptr;cxx_override;cxx_range_for;cxx_raw_string_literals;cxx_reference_qualified_functions;cxx_right_angle_brackets;cxx_rvalue_references;cxx_sizeof_member;cxx_static_assert;cxx_strong_enums;cxx_thread_local;cxx_trailing_return_types;cxx_unicode_literals;cxx_uniform_initialization;cxx_unrestricted_unions;cxx_user_literals;cxx_variadic_macros;cxx_variadic_templates\")\nset(CMAKE_CXX14_COMPILE_FEATURES \"cxx_std_14;cxx_aggregate_default_initializers;cxx_attribute_deprecated;cxx_binary_literals;cxx_contextual_conversions;cxx_decltype_auto;cxx_digit_separators;cxx_generic_lambdas;cxx_lambda_init_captures;cxx_relaxed_constexpr;cxx_return_type_deduction;cxx_variable_templates\")\nset(CMAKE_CXX17_COMPILE_FEATURES \"cxx_std_17\")\nset(CMAKE_CXX20_COMPILE_FEATURES \"cxx_std_20\")\nset(CMAKE_CXX23_COMPILE_FEATURES \"cxx_std_23\")\nset(CMAKE_CXX26_COMPILE_FEATURES \"\")\n\nset(CMAKE_CXX_PLATFORM_ID \"Windows\")\nset(CMAKE_CXX_SIMULATE_ID \"\")\nset(CMAKE_CXX_COMPILER_FRONTEND_VARIANT \"MSVC\")\nset(CMAKE_CXX_SIMULATE_VERSION \"\")\nset(CMAKE_CXX_COMPILER_ARCHITECTURE_ID x64)\n\nset(MSVC_CXX_ARCHITECTURE_ID x64)\n\nset(CMAKE_AR \"C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/lib.exe\")\nset(CMAKE_CXX_COMPILER_AR \"\")\nset(CMAKE_RANLIB \":\")\nset(CMAKE_CXX_COMPILER_RANLIB \"\")\nset(CMAKE_LINKER \"C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/link.exe\")\nset(CMAKE_LINKER_LINK \"C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/link.exe\")\nset(CMAKE_LINKER_LLD \"C:/Program Files/LLVM/bin/lld-link.exe\")\nset(CMAKE_CXX_COMPILER_LINKER \"C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.44.35207/bin/HostX64/x64/link.exe\")\nset(CMAKE_CXX_COMPILER_LINKER_ID \"MSVC\")\nset(CMAKE_CXX_COMPILER_LINKER_VERSION 14.44.35229.0)\nset(CMAKE_CXX_COMPILER_LINKER_FRONTEND_VARIANT MSVC)\nset(CMAKE_MT \"CMAKE_MT-NOTFOUND\")\nset(CMAKE_TAPI \"\")\nset(CMAKE_COMPILER_IS_GNUCXX )\nset(CMAKE_CXX_COMPILER_LOADED 1)\nset(CMAKE_CXX_COMPILER_WORKS TRUE)\nset(CMAKE_CXX_ABI_COMPILED TRUE)\n\nset(CMAKE_CXX_COMPILER_ENV_VAR \"CXX\")\n\nset(CMAKE_CXX_COMPILER_ID_RUN 1)\nset(CMAKE_CXX_SOURCE_FILE_EXTENSIONS C;M;c++;cc;cpp;cxx;m;mm;mpp;CPP;ixx;cppm;ccm;cxxm;c++m)\nset(CMAKE_CXX_IGNORE_EXTENSIONS inl;h;hpp;HPP;H;o;O;obj;OBJ;def;DEF;rc;RC)\n\nforeach (lang IN ITEMS C OBJC OBJCXX)\n  if (CMAKE_${lang}_COMPILER_ID_RUN)\n    foreach(extension IN LISTS CMAKE_${lang}_SOURCE_FILE_EXTENSIONS)\n      list(REMOVE_ITEM CMAKE_CXX_SOURCE_FILE_EXTENSIONS ${extension})\n    endforeach()\n  endif()\nendforeach()\n\nset(CMAKE_CXX_LINKER_PREFERENCE 30)\nset(CMAKE_CXX_LINKER_PREFERENCE_PROPAGATES 1)\nset(CMAKE_CXX_LINKER_DEPFILE_SUPPORTED )\n\n# Save compiler ABI information.\nset(CMAKE_CXX_SIZEOF_DATA_PTR \"8\")\nset(CMAKE_CXX_COMPILER_ABI \"\")\nset(CMAKE_CXX_BYTE_ORDER \"LITTLE_ENDIAN\")\nset(CMAKE_CXX_LIBRARY_ARCHITECTURE \"\")\n\nif(CMAKE_CXX_SIZEOF_DATA_PTR)\n  set(CMAKE_SIZEOF_VOID_P \"${CMAKE_CXX_SIZEOF_DATA_PTR}\")\nendif()\n\nif(CMAKE_CXX_COMPILER_ABI)\n  set(CMAKE_INTERNAL_PLATFORM_ABI \"${CMAKE_CXX_COMPILER_ABI}\")\nendif()\n\nif(CMAKE_CXX_LIBRARY_ARCHITECTURE)\n  set(CMAKE_LIBRARY_ARCHITECTURE \"\")\nendif()\n\nset(CMAKE_CXX_CL_SHOWINCLUDES_PREFIX \"\")\nif(CMAKE_CXX_CL_SHOWINCLUDES_PREFIX)\n  set(CMAKE_CL_SHOWINCLUDES_PREFIX \"${CMAKE_CXX_CL_SHOWINCLUDES_PREFIX}\")\nendif()\n\n\n\n\n\nset(CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES \"\")\nset(CMAKE_CXX_IMPLICIT_LINK_LIBRARIES \"\")\nset(CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES \"\")\nset(CMAKE_CXX_IMPLICIT_LINK_FRAMEWORK_DIRECTORIES \"\")\nset(CMAKE_CXX_COMPILER_CLANG_RESOURCE_DIR \"\")\n\nset(CMAKE_CXX_COMPILER_IMPORT_STD \"\")\n### Imported target for C++23 standard library\nset(CMAKE_CXX23_COMPILER_IMPORT_STD_NOT_FOUND_MESSAGE \"Unsupported generator: Visual Studio 17 2022\")\n\n\n\n",
+      "cmake_cache_sha256": "f5b08dd58c05f8633204ee045aaabdca3aebbf6f419ef820350c13ebf81aa81a",
+      "projects": [
+        {
+          "file": "Release-Core.vcxproj",
+          "sha256": "0cf8a5f64e5423f44980b7b838ed050b968b14dd9cdf14343f2d8ab48a08241d",
+          "windows_sdk": "10.0.26100.0",
+          "compile_options": {
+            "AdditionalIncludeDirectories": "D:\\a\\NorvesLib\\NorvesLib\\Library;D:\\a\\NorvesLib\\NorvesLib\\Library\\Core\\Public;D:\\a\\NorvesLib\\NorvesLib\\Library\\Core\\Private;D:\\a\\NorvesLib\\NorvesLib\\Library\\ThirdParty\\stb;D:\\a\\NorvesLib\\NorvesLib\\Library\\ThirdParty\\tinyexr\\include;D:\\a\\NorvesLib\\NorvesLib\\Library\\ThirdParty\\angelscript\\upstream\\sdk\\angelscript\\include;D:\\a\\NorvesLib\\NorvesLib\\build\\windows-cli\\Library\\ThirdParty\\freetype\\include;D:\\a\\NorvesLib\\NorvesLib\\Library\\ThirdParty\\freetype\\include;%(AdditionalIncludeDirectories)",
+            "AdditionalOptions": "%(AdditionalOptions) /external:I \"C:/VulkanSDK/1.4.309.0/Include\"",
+            "AssemblerListingLocation": "$(IntDir)",
+            "BasicRuntimeChecks": "Default",
+            "ExceptionHandling": "Sync",
+            "ExternalWarningLevel": "TurnOffAllWarnings",
+            "InlineFunctionExpansion": "AnySuitable",
+            "LanguageStandard": "stdcpplatest",
+            "MinimalRebuild": null,
+            "Optimization": "MaxSpeed",
+            "PrecompiledHeader": "NotUsing",
+            "RuntimeLibrary": "MultiThreadedDLL",
+            "RuntimeTypeInfo": "true",
+            "SupportJustMyCode": null,
+            "UseFullPaths": "false",
+            "WarningLevel": "Level3",
+            "PreprocessorDefinitions": "%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;NORVES_BUILD_DEBUG=0;NORVES_BUILD_DEVELOPMENT=0;NORVES_BUILD_RELEASE=1;NORVES_ENABLE_LOGGING=0;NORVES_ENABLE_DEBUG_OUTPUT=0;NORVES_ENABLE_STATS=0;NORVES_ENABLE_RENDERGRAPH_DUMP=0;NORVES_ENABLE_PROFILING=0;NORVES_ENABLE_COMPONENT_DATA_REGISTRY=0;NORVES_ENABLE_CORE_TEXT=1;VULKAN_HPP_NO_EXCEPTIONS;NORVES_SHADER_DIR=\"D:/a/NorvesLib/NorvesLib/Assets/Shaders\";NORVES_ASSET_DIR=\"D:/a/NorvesLib/NorvesLib/Assets\";NOMINMAX;WIN32_LEAN_AND_MEAN;CMAKE_INTDIR=\"Release\"",
+            "ObjectFileName": "$(IntDir)",
+            "DebugInformationFormat": "\n      ",
+            "ScanSourceForModuleDependencies": "true"
+          }
+        },
+        {
+          "file": "Release-SkeletalAnimationSamplingTest.vcxproj",
+          "sha256": "d370c551a979967f622d783c6eca52e888a5c358229cfc28f0d458b4de7022d9",
+          "windows_sdk": "10.0.26100.0",
+          "compile_options": {
+            "AdditionalIncludeDirectories": "D:\\a\\NorvesLib\\NorvesLib\\Library;D:\\a\\NorvesLib\\NorvesLib\\Library\\Core\\Public;%(AdditionalIncludeDirectories)",
+            "AdditionalOptions": "%(AdditionalOptions) /external:I \"C:/VulkanSDK/1.4.309.0/Include\"",
+            "AssemblerListingLocation": "$(IntDir)",
+            "BasicRuntimeChecks": "Default",
+            "ExceptionHandling": "Sync",
+            "ExternalWarningLevel": "TurnOffAllWarnings",
+            "InlineFunctionExpansion": "AnySuitable",
+            "LanguageStandard": "stdcpplatest",
+            "MinimalRebuild": null,
+            "Optimization": "MaxSpeed",
+            "PrecompiledHeader": "NotUsing",
+            "RuntimeLibrary": "MultiThreadedDLL",
+            "RuntimeTypeInfo": "true",
+            "SupportJustMyCode": null,
+            "UseFullPaths": "false",
+            "WarningLevel": "Level3",
+            "PreprocessorDefinitions": "%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;NOMINMAX;NORVES_BUILD_DEBUG=0;NORVES_BUILD_DEVELOPMENT=0;NORVES_BUILD_RELEASE=1;NORVES_ENABLE_LOGGING=0;NORVES_ENABLE_DEBUG_OUTPUT=0;NORVES_ENABLE_STATS=0;NORVES_ENABLE_RENDERGRAPH_DUMP=0;NORVES_ENABLE_PROFILING=0;NORVES_ENABLE_COMPONENT_DATA_REGISTRY=0;NORVES_ENABLE_CORE_TEXT=1;CMAKE_INTDIR=\"Release\"",
+            "ObjectFileName": "$(IntDir)",
+            "DebugInformationFormat": "\n      ",
+            "ScanSourceForModuleDependencies": "false"
+          }
+        }
+      ],
+      "submodules": "42608f77f20749dd6ddc9e0536788eaad70ea4b5 Library/ThirdParty/freetype (42608f7)\n 72dfcc858c040c54a6a0b88fcb7e70ee186d3167 Library/ThirdParty/freetype/subprojects/dlg (72dfcc8)",
+      "harness": {
+        "Test/Core/Rendering/SkeletalSamplerBaseline.cpp": "4481f77023f632f60f7cc70129f38263fdd66529c970a35f89c0bfca66307a9a",
+        "Test/Core/Rendering/SkeletalAnimationSamplingTest.cpp": "100908a9d232e7d1f5020d18461a94def3c6dde2301224e237d71ac5a53a51f8",
+        "Test/Core/Rendering/CMakeLists.txt": "a81b19a724802e22c37ae47a897e92173759bd3eab88f21cb0b3165b4f6eb6b5",
+        "Scripts/SkeletalSamplerBaseline.py": "03a9eac0e76451dd0a370628023b61d25d8b7b2618566d2b475e6a5b05e7c711"
+      },
+      "runtime": {
+        "Library/Core/Private/Animation/SkeletalAnimationSampler.cpp": "8531f2fc5cff8c064ee34ea29676fedecacbb0af727a93a95bc61d74aec43037",
+        "Library/Core/Private/Animation/SkeletalSamplingMath.h": "412a463c4c486ca5138419d51b7b5e7102a02a8a4c6869b60d865fd32749bbc2",
+        "Library/Core/Public/Animation/SkeletalAnimationSampler.h": "c1e0946af8097cbd9c6a538976bed072051fef120c737d1c93ab7bacd0036a21"
+      },
+      "executable_sha256": "a284fb967f8971b79296f8b818ca789d2f716de5bfaba6f359b06b38ebb9e32e",
+      "core_sha256": "25585e507bb586eecf08822d2d780cea5d7051d94dcd8c0ff99c08042a4e6600",
+      "snapshot_sha256": "a5b0a90496e9064c2808692706b69f8a11936fea9af3031f25eb909ab33e62d4",
+      "snapshot_bytes": 6095,
+      "repeat_sha256": "a5b0a90496e9064c2808692706b69f8a11936fea9af3031f25eb909ab33e62d4",
+      "cases": [
+        {
+          "id": 1,
+          "name": "identity_bind",
+          "success": true
+        },
+        {
+          "id": 2,
+          "name": "scaled_rotated_bind",
+          "success": true
+        },
+        {
+          "id": 3,
+          "name": "partial_translation",
+          "success": true
+        },
+        {
+          "id": 4,
+          "name": "linear_before",
+          "success": true
+        },
+        {
+          "id": 5,
+          "name": "linear_middle",
+          "success": true
+        },
+        {
+          "id": 6,
+          "name": "linear_after",
+          "success": true
+        },
+        {
+          "id": 7,
+          "name": "step_before",
+          "success": true
+        },
+        {
+          "id": 8,
+          "name": "step_key",
+          "success": true
+        },
+        {
+          "id": 9,
+          "name": "step_after",
+          "success": true
+        },
+        {
+          "id": 10,
+          "name": "noncommutative_hierarchy",
+          "success": true
+        },
+        {
+          "id": 11,
+          "name": "empty_mesh",
+          "success": true
+        },
+        {
+          "id": 12,
+          "name": "nan_time",
+          "success": false
+        },
+        {
+          "id": 13,
+          "name": "parent_cycle",
+          "success": false
+        },
+        {
+          "id": 14,
+          "name": "duplicate_key_time",
+          "success": false
+        },
+        {
+          "id": 15,
+          "name": "singular_ibm",
+          "success": false
+        },
+        {
+          "id": 16,
+          "name": "singular_mesh",
+          "success": false
+        },
+        {
+          "id": 17,
+          "name": "fk_overflow",
+          "success": false
+        },
+        {
+          "id": 18,
+          "name": "parent_after_child",
+          "success": true
+        },
+        {
+          "id": 19,
+          "name": "multiple_roots",
+          "success": true
+        },
+        {
+          "id": 20,
+          "name": "empty_and_out_of_range_channels",
+          "success": true
+        },
+        {
+          "id": 21,
+          "name": "duplicate_channels",
+          "success": true
+        },
+        {
+          "id": 22,
+          "name": "sheared_bind",
+          "success": true
+        },
+        {
+          "id": 23,
+          "name": "reflected_bind",
+          "success": true
+        },
+        {
+          "id": 24,
+          "name": "extreme_bind",
+          "success": false
+        },
+        {
+          "id": 25,
+          "name": "extreme_bind_with_overrides",
+          "success": true
+        },
+        {
+          "id": 26,
+          "name": "extreme_ibm_and_clip",
+          "success": false
+        },
+        {
+          "id": 27,
+          "name": "nonfinite_ibm",
+          "success": false
+        },
+        {
+          "id": 28,
+          "name": "nonfinite_mesh",
+          "success": false
+        },
+        {
+          "id": 29,
+          "name": "empty_skeleton",
+          "success": false
+        },
+        {
+          "id": 30,
+          "name": "success_after_failures",
+          "success": true
+        }
+      ]
+    }
+  }
+}

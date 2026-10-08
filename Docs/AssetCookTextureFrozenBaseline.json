@@ -1,0 +1,14 @@
+{
+  "upstream_sha": "b8c5df1dbf9c76d2cfcb36d1f82a889293969dde",
+  "run_id": 37205025949,
+  "run_url": "https://github.com/SioKo-Shox3/NorvesLib/actions/runs/37205025949",
+  "feature_sha": "0893a213d8a278f65ca77895ea0cf8e681225f11",
+  "baseline_artifact_id": 11303728946,
+  "baseline_zip_sha256": "16cee473c0b905ba8f478030b84da9d250b565da99a92492ace9caf2df902642",
+  "snapshot_sha256": "9e20e823c0c518c5b6dc34f5d561472ebcf10ac4dc5acd0042627d8e5bfe96e2",
+  "powershell_version": "5.1.20348.5622",
+  "powershell_sha256": "38f4384643b3fa0de714d2367b712c2e0fa1c89e2cfd131ae6b831ad962b1033",
+  "file_count": 10,
+  "payload_bytes": 296408686,
+  "asset_cook_sha256": "7ac890ce40434bf9e1c062ca0fe0ee0f5f2b49d79fbf40ca7b81662a01b50079"
+}

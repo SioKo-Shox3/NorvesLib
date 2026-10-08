@@ -19,7 +19,9 @@ namespace NorvesLib::Core::Asset
         Texture = 1,
         Model = 2,
         Raw = 3,
-        Audio = 4
+        Audio = 4,
+        Skeleton = 5,
+        Animation = 6
     };
 
     enum class AssetManifestParseStatus : uint8_t
@@ -72,8 +74,21 @@ namespace NorvesLib::Core::Asset
         uint32_t IndexCount = 0;
         uint32_t JointCount = 0;
         uint32_t ClipCount = 0;
+        // 旧manifestの省略は未知。数量が判明している場合だけtrue。
+        bool bHasSubmeshCounts = false;
+        uint32_t SubmeshCount = 0;
+        uint32_t MaterialSlotCount = 0;
     };
 
+    // 分離v1はformat別の必須数量を持つ。旧Model metadataとは混用しない。
+    struct AssetRigSplitMetadata
+    {
+        uint32_t Role = 0, Profile = 0;
+        uint64_t SkeletonId = 0;
+        uint32_t JointCount = 0, VertexCount = 0, IndexCount = 0;
+        uint32_t SubmeshCount = 0, MaterialSlotCount = 0, MaterialCount = 0;
+        uint32_t ClipCount = 0, SnapshotCount = 0, ChannelCount = 0, SampleCount = 0;
+    };
     struct AssetCookedReference
     {
         Container::AnsiString LogicalPath;
@@ -91,6 +106,8 @@ namespace NorvesLib::Core::Asset
         uint32_t CookedVersion = 0;
         bool bHasSkeletalMetadata = false;
         AssetSkeletalMetadata SkeletalMetadata;
+        bool bHasRigSplitMetadata = false;
+        AssetRigSplitMetadata RigSplitMetadata;
     };
 
     struct AssetManifestResolveResult

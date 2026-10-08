@@ -1,23 +1,23 @@
 ﻿#pragma once
 
+#include "Container/PointerTypes.h"
+#include "Delegate/Delegate.h"
 #include "Rendering/GpuResourceTypes.h"
 #include "Rendering/ITextureHandleRegistrar.h"
 #include "Rendering/MaterialTypes.h"
-#include "Rendering/MeshIndexChunks.h"
 #include "Rendering/MegaGeometry/GeometryPageRequestSet.h"
 #include "Rendering/MegaGeometry/GeometryPageTable.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
+#include "Rendering/MeshIndexChunks.h"
 #include "Rendering/NeuralMaterialResource.h"
 #include "Rendering/ProceduralMeshGPUData.h"
-#include "Rendering/SkinnedMeshTypes.h"
 #include "Rendering/RenderResourcesFwd.h"
 #include "Rendering/RenderTypes.h"
+#include "Rendering/SkinnedMeshTypes.h"
 #include "Rendering/TextureAssetTypes.h"
 #include "Rendering/TextureAsyncTypes.h"
-#include "Rendering/VideoMemoryBudgetManager.h"
 #include "Rendering/VertexLayout.h"
-#include "Container/PointerTypes.h"
-#include "Delegate/Delegate.h"
+#include "Rendering/VideoMemoryBudgetManager.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -99,6 +99,9 @@ namespace NorvesLib::Core::Rendering
         TextureHandle CreateTexture(const TextureCreateInfo &createInfo,
                                     const void *data,
                                     size_t dataSize);
+        // 新しく作った匿名・非 VT テクスチャの登録を一度だけ引き取る。
+        // 最後の所有者で登録を解放する。キャッシュが所有するハンドルには使用しない。
+        Container::TSharedPtr<const void> AdoptAnonymousTexture(TextureHandle handle);
         TextureHandle LoadTexture(const Container::String &path);
         uint32_t LoadTextureAsync(const Container::String &path,
                                   NorvesLib::Core::Delegate<void, TextureHandle> callback = {});

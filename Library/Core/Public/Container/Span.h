@@ -48,9 +48,14 @@ namespace NorvesLib::Core::Container
             static_assert(Extent == -1 || Extent == count, "Size mismatch in fixed-size Span");
         }
 
-        // 範囲指定コンストラクタ
-        constexpr Span(pointer first, pointer last) noexcept : data_(first), size_(last - first) {
-            static_assert(Extent == -1 || Extent == (last - first), "Size mismatch in fixed-size Span");
+        // 末尾型を推論して制約し、(pointer, 0)をcount指定として一意に扱う。
+        template <typename End, std::enable_if_t<std::is_convertible_v<End, pointer>, int> = 0>
+        constexpr Span(pointer first, End last) noexcept
+            : data_(first), size_(first == static_cast<pointer>(last) ? 0 :
+                static_cast<size_type>(static_cast<pointer>(last) - first))
+        {
+            static_assert(Extent == -1 || Extent == (static_cast<pointer>(last) - first),
+                "Size mismatch in fixed-size Span");
         }
 
         // 配列からのコンストラクタ

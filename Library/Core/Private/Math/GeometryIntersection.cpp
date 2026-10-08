@@ -644,4 +644,433 @@ bool ComputeContact(const Capsule& a, const Capsule& b, GeometryContact& outCont
     return true;
 }
 
+namespace
+{
+    // 小さい線分でも長さの二乗を絶対閾値でゼロにしない。
+    double SeparationDot(const Vector3& a, const Vector3& b)
+    {
+        return static_cast<double>(a.x) * b.x
+            + static_cast<double>(a.y) * b.y
+            + static_cast<double>(a.z) * b.z;
+    }
+
+    Vector3 SeparationUnit(const Vector3& value)
+    {
+        const double length = std::sqrt(SeparationDot(value, value));
+        if (length == 0.0)
+        {
+            return Vector3(1.0f, 0.0f, 0.0f);
+        }
+        return Vector3(static_cast<float>(value.x / length),
+            static_cast<float>(value.y / length), static_cast<float>(value.z / length));
+    }
+
+    Vector3 SeparationPerpendicular(const Vector3& segment)
+    {
+        if (SeparationDot(segment, segment) == 0.0)
+        {
+            return Vector3(1.0f, 0.0f, 0.0f);
+        }
+        const Vector3 unit = SeparationUnit(segment);
+        const Vector3 axis = std::fabs(unit.x) < std::fabs(unit.y)
+            ? Vector3(1.0f, 0.0f, 0.0f) : Vector3(0.0f, 1.0f, 0.0f);
+        return SeparationUnit(axis - unit * VectorUtils::Dot(axis, unit));
+    }
+
+    // 区分二次距離の各区間を倍精度で最小化する。旧接触判定の閾値は変更しない。
+    void SeparationSegmentOBB(const Capsule& capsule, const OBB& box, Vector3& pointA, Vector3& pointB)
+    {
+        const Vector3 localA = ToLocal(box, capsule.PointA);
+        const Vector3 localB = ToLocal(box, capsule.PointB);
+        const double start[3] = {localA.x, localA.y, localA.z};
+        const double direction[3] = {static_cast<double>(localB.x) - localA.x,
+            static_cast<double>(localB.y) - localA.y, static_cast<double>(localB.z) - localA.z};
+        const double extent[3] = {box.HalfExtents.x, box.HalfExtents.y, box.HalfExtents.z};
+        double candidates[8] = {0.0, 1.0};
+        int count = 2;
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            if (direction[axis] == 0.0)
+            {
+                continue;
+            }
+            for (int sign = -1; sign <= 1; sign += 2)
+            {
+                const double t = (sign * extent[axis] - start[axis]) / direction[axis];
+                if (t > 0.0 && t < 1.0)
+                {
+                    candidates[count++] = t;
+                }
+            }
+        }
+        for (int i = 1; i < count; ++i)
+        {
+            const double value = candidates[i];
+            int j = i;
+            while (j > 0 && candidates[j - 1] > value)
+            {
+                candidates[j] = candidates[j - 1];
+                --j;
+            }
+            candidates[j] = value;
+        }
+        double bestDistance = DBL_MAX;
+        double bestT = 0.0;
+        auto evaluate = [&](double t)
+        {
+            double distance = 0.0;
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const double coordinate = start[axis] + direction[axis] * t;
+                const double gap = coordinate - std::fmax(-extent[axis], std::fmin(coordinate, extent[axis]));
+                distance += gap * gap;
+            }
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                bestT = t;
+            }
+        };
+        for (int i = 0; i < count; ++i)
+        {
+            evaluate(candidates[i]);
+        }
+        for (int i = 0; i + 1 < count; ++i)
+        {
+            const double midpoint = (candidates[i] + candidates[i + 1]) * 0.5;
+            double numerator = 0.0;
+            double denominator = 0.0;
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const double coordinate = start[axis] + direction[axis] * midpoint;
+                if (coordinate < -extent[axis] || coordinate > extent[axis])
+                {
+                    const double side = coordinate < -extent[axis] ? -extent[axis] : extent[axis];
+                    numerator += direction[axis] * (start[axis] - side);
+                    denominator += direction[axis] * direction[axis];
+                }
+            }
+            if (denominator > 0.0)
+            {
+                evaluate(std::fmax(candidates[i], std::fmin(-numerator / denominator, candidates[i + 1])));
+            }
+        }
+        const Vector3 localPoint(static_cast<float>(start[0] + direction[0] * bestT),
+            static_cast<float>(start[1] + direction[1] * bestT),
+            static_cast<float>(start[2] + direction[2] * bestT));
+        pointA = ToWorld(box, localPoint);
+        pointB = ToWorld(box, ClosestPointOnAABB(localPoint, box.HalfExtents));
+    }
+
+    double ClampSeparationParameter(double value)
+    {
+        return std::fmax(0.0, std::fmin(1.0, value));
+    }
+
+    void SeparationSegmentPoints(const Capsule& a, const Capsule& b, Vector3& pointA, Vector3& pointB)
+    {
+        const Vector3 d1 = a.PointB - a.PointA;
+        const Vector3 d2 = b.PointB - b.PointA;
+        const Vector3 offset = a.PointA - b.PointA;
+        const double aa = SeparationDot(d1, d1);
+        const double bb = SeparationDot(d2, d2);
+        const double ab = SeparationDot(d1, d2);
+        const double ar = SeparationDot(d1, offset);
+        const double br = SeparationDot(d2, offset);
+        double s = 0.0;
+        double t = 0.0;
+        if (aa == 0.0)
+        {
+            if (bb > 0.0)
+            {
+                t = ClampSeparationParameter(br / bb);
+            }
+        }
+        else if (bb == 0.0)
+        {
+            s = ClampSeparationParameter(-ar / aa);
+        }
+        else
+        {
+            // Gram 行列の差ではなく外積を使い、近平行の桁落ちを避ける。
+            const double cross[3] = {
+                static_cast<double>(d1.y) * d2.z - static_cast<double>(d1.z) * d2.y,
+                static_cast<double>(d1.z) * d2.x - static_cast<double>(d1.x) * d2.z,
+                static_cast<double>(d1.x) * d2.y - static_cast<double>(d1.y) * d2.x};
+            const double offsetCross[3] = {
+                static_cast<double>(d2.y) * offset.z - static_cast<double>(d2.z) * offset.y,
+                static_cast<double>(d2.z) * offset.x - static_cast<double>(d2.x) * offset.z,
+                static_cast<double>(d2.x) * offset.y - static_cast<double>(d2.y) * offset.x};
+            const double denominator = cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2];
+            if (denominator > 0.0)
+            {
+                const double numerator = offsetCross[0] * cross[0] + offsetCross[1] * cross[1] + offsetCross[2] * cross[2];
+                s = ClampSeparationParameter(numerator / denominator);
+            }
+            t = (ab * s + br) / bb;
+            if (t < 0.0)
+            {
+                t = 0.0;
+                s = ClampSeparationParameter(-ar / aa);
+            }
+            else if (t > 1.0)
+            {
+                t = 1.0;
+                s = ClampSeparationParameter((ab - ar) / aa);
+            }
+        }
+        pointA = a.PointA + d1 * static_cast<float>(s);
+        pointB = b.PointA + d2 * static_cast<float>(t);
+    }
+
+    GeometrySeparation SeparationFromPoints(
+        const Vector3& pointA, float radiusA, const Vector3& pointB, float radiusB,
+        const Vector3& fallbackNormal)
+    {
+        const Vector3 offset = pointB - pointA;
+        const float length = static_cast<float>(std::sqrt(SeparationDot(offset, offset)));
+        GeometrySeparation result;
+        result.NormalAToB = length > 0.0f ? SeparationUnit(offset) : fallbackNormal;
+        result.Distance = length - radiusA - radiusB;
+        result.PointA = pointA + result.NormalAToB * radiusA;
+        result.PointB = pointB - result.NormalAToB * radiusB;
+        result.bPenetrating = result.Distance <= 0.0f;
+        return result;
+    }
+}
+
+GeometrySeparation ComputeSeparation(const Capsule& a, const Sphere& b)
+{
+    Vector3 pointA;
+    Vector3 pointB;
+    SeparationSegmentPoints(a, Capsule(b.Center, b.Center, b.Radius), pointA, pointB);
+    return SeparationFromPoints(pointA, a.Radius, pointB, b.Radius,
+        SeparationPerpendicular(a.PointB - a.PointA));
+}
+
+GeometrySeparation ComputeSeparation(const Capsule& a, const Capsule& b)
+{
+    Vector3 pointA;
+    Vector3 pointB;
+    SeparationSegmentPoints(a, b, pointA, pointB);
+    const Vector3 d1 = a.PointB - a.PointA;
+    const Vector3 d2 = b.PointB - b.PointA;
+    const double cx = static_cast<double>(d1.y) * d2.z - static_cast<double>(d1.z) * d2.y;
+    const double cy = static_cast<double>(d1.z) * d2.x - static_cast<double>(d1.x) * d2.z;
+    const double cz = static_cast<double>(d1.x) * d2.y - static_cast<double>(d1.y) * d2.x;
+    const double crossLength = std::sqrt(cx * cx + cy * cy + cz * cz);
+    const Vector3 fallback = crossLength > 0.0
+        ? Vector3(static_cast<float>(cx / crossLength), static_cast<float>(cy / crossLength), static_cast<float>(cz / crossLength))
+        : SeparationPerpendicular(SeparationDot(d1, d1) > 0.0 ? d1 : d2);
+    return SeparationFromPoints(pointA, a.Radius, pointB, b.Radius, fallback);
+}
+
+GeometrySeparation ComputeSeparation(const Capsule& a, const OBB& b)
+{
+    Vector3 pointA;
+    Vector3 pointB;
+    SeparationSegmentOBB(a, b, pointA, pointB);
+    GeometrySeparation result = SeparationFromPoints(pointA, a.Radius, pointB, 0.0f,
+        GetInteriorNormal(b, pointA));
+    if (SeparationDot(pointB - pointA, pointB - pointA) == 0.0)
+    {
+        // 中心線が箱を横切る場合は既存の接触軸の近似を使う。
+        const Vector3 centerOffset = b.Center - (a.PointA + a.PointB) * 0.5f;
+        const Vector3 segment = a.PointB - a.PointA;
+        float depth = FLT_MAX;
+        Vector3 normal(1.0f, 0.0f, 0.0f);
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            TestCapsuleOBBAxis(a, b, centerOffset, b.Axes[axis], depth, normal);
+            TestCapsuleOBBAxis(a, b, centerOffset, VectorUtils::Cross(segment, b.Axes[axis]), depth, normal);
+        }
+        result.Distance = -depth;
+        result.NormalAToB = normal;
+        result.PointA = GetCapsuleSupportPoint(a, normal);
+        result.PointB = GetSupportPoint(b, -1.0f * normal);
+        result.bPenetrating = true;
+    }
+    return result;
+}
+
+bool IsValidSweepBox(const OBB& shape)
+{
+    const auto finite = [](const Vector3& value)
+    {
+        return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+    };
+    if (!finite(shape.Center) || !finite(shape.HalfExtents)
+        || shape.HalfExtents.x < 0.0f || shape.HalfExtents.y < 0.0f || shape.HalfExtents.z < 0.0f)
+    {
+        return false;
+    }
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        if (!finite(shape.Axes[axis])
+            || std::fabs(SeparationDot(shape.Axes[axis], shape.Axes[axis]) - 1.0) > 1e-4
+            || std::fabs(SeparationDot(shape.Axes[axis], shape.Axes[(axis + 1) % 3])) > 1e-4)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+namespace
+{
+    bool IsFiniteSweepVector(const Vector3& value)
+    {
+        return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+    }
+
+    bool IsValidSweepShape(const Sphere& shape)
+    {
+        return IsFiniteSweepVector(shape.Center) && std::isfinite(shape.Radius) && shape.Radius >= 0.0f;
+    }
+
+    bool IsValidSweepShape(const Capsule& shape)
+    {
+        return IsFiniteSweepVector(shape.PointA) && IsFiniteSweepVector(shape.PointB)
+            && std::isfinite(shape.Radius) && shape.Radius >= 0.0f;
+    }
+
+    bool IsValidSweepShape(const OBB& shape)
+    {
+        return IsValidSweepBox(shape);
+    }
+
+    float SweepCoordinateScale(const Vector3& point)
+    {
+        return std::fmax(std::fabs(point.x), std::fmax(std::fabs(point.y), std::fabs(point.z)));
+    }
+
+    GeometrySweepHit MakeSweepResult(EGeometrySweepResult status, float distance,
+        const GeometrySeparation& separation, bool bInitial = false)
+    {
+        GeometrySweepHit result;
+        result.Result = status;
+        result.Distance = distance;
+        result.Point = separation.PointB;
+        result.Normal = -1.0f * separation.NormalAToB;
+        result.Depth = std::fmax(0.0f, -separation.Distance);
+        result.bStartPenetrating = bInitial;
+        return result;
+    }
+
+    template<typename Target>
+    GeometrySweepHit SweepCapsuleImpl(const Capsule& shape, const Target& target,
+        const Vector3& direction, float maxDistance, const GeometrySweepSettings& settings)
+    {
+        GeometrySweepHit invalid;
+        invalid.Result = EGeometrySweepResult::InvalidArgument;
+        if (!IsValidSweepShape(shape) || !IsValidSweepShape(target) || !IsFiniteSweepVector(direction)
+            || !std::isfinite(maxDistance) || maxDistance < 0.0f
+            || !std::isfinite(settings.DistanceTolerance) || settings.DistanceTolerance < 0.0f
+            || !std::isfinite(settings.RelativeTolerance) || settings.RelativeTolerance < 0.0f
+            || settings.MaxIterations == 0)
+        {
+            return invalid;
+        }
+        if (maxDistance > 0.0f && SeparationDot(direction, direction) == 0.0)
+        {
+            return invalid;
+        }
+        const Vector3 unit = SeparationUnit(direction);
+        float distance = 0.0f;
+        GeometrySeparation previous;
+        float previousDistance = 0.0f;
+        for (uint32_t iteration = 0; iteration < settings.MaxIterations; ++iteration)
+        {
+            const Vector3 offset = unit * distance;
+            const Capsule moved(shape.PointA + offset, shape.PointB + offset, shape.Radius);
+            if (!IsValidSweepShape(moved))
+            {
+                return invalid;
+            }
+            const GeometrySeparation separation = ComputeSeparation(moved, target);
+            if (!std::isfinite(separation.Distance) || !IsFiniteSweepVector(separation.NormalAToB)
+                || !IsFiniteSweepVector(separation.PointA) || !IsFiniteSweepVector(separation.PointB))
+            {
+                return invalid;
+            }
+            const float scale = std::fmax(SweepCoordinateScale(separation.PointA), SweepCoordinateScale(separation.PointB));
+            const float tolerance = std::fmax(settings.DistanceTolerance, settings.RelativeTolerance * scale);
+            if (!std::isfinite(tolerance))
+            {
+                return invalid;
+            }
+            if (iteration == 0 && separation.Distance <= 0.0f)
+            {
+                return settings.bReportStartOverlap
+                    ? MakeSweepResult(EGeometrySweepResult::Hit, 0.0f, separation, true)
+                    : GeometrySweepHit{};
+            }
+            if (maxDistance == 0.0f)
+            {
+                return {};
+            }
+            if (iteration > 0 && separation.Distance < -tolerance)
+            {
+                // 並進の丸め等で侵入した場合は最後の安全位置へ戻して未確定を返す。
+                return MakeSweepResult(EGeometrySweepResult::IterationLimit, previousDistance, previous);
+            }
+            const double approach = SeparationDot(unit, separation.NormalAToB);
+            if (separation.Distance <= tolerance && (iteration > 0 || approach > 0.0))
+            {
+                return MakeSweepResult(EGeometrySweepResult::Hit, distance, separation);
+            }
+            if (distance >= maxDistance || approach <= 0.0)
+            {
+                return {};
+            }
+            const double step = separation.Distance / approach;
+            const float nextDistance = static_cast<float>(std::fmin(static_cast<double>(maxDistance), distance + step));
+            if (nextDistance <= distance || iteration + 1 == settings.MaxIterations)
+            {
+                return MakeSweepResult(EGeometrySweepResult::IterationLimit, distance, separation);
+            }
+            previous = separation;
+            previousDistance = distance;
+            distance = nextDistance;
+        }
+        return invalid;
+    }
+}
+
+GeometrySweepHit SweepCapsule(const Capsule& a, const Sphere& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings)
+{
+    return SweepCapsuleImpl(a, b, direction, maxDistance, settings);
+}
+
+GeometrySweepHit SweepCapsule(const Capsule& a, const OBB& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings)
+{
+    return SweepCapsuleImpl(a, b, direction, maxDistance, settings);
+}
+
+GeometrySweepHit SweepCapsule(const Capsule& a, const Capsule& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings)
+{
+    return SweepCapsuleImpl(a, b, direction, maxDistance, settings);
+}
+
+GeometrySweepHit SweepSphere(const Sphere& a, const Sphere& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings)
+{
+    return SweepCapsule(Capsule(a.Center, a.Center, a.Radius), b, direction, maxDistance, settings);
+}
+
+GeometrySweepHit SweepSphere(const Sphere& a, const OBB& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings)
+{
+    return SweepCapsule(Capsule(a.Center, a.Center, a.Radius), b, direction, maxDistance, settings);
+}
+
+GeometrySweepHit SweepSphere(const Sphere& a, const Capsule& b, const Vector3& direction,
+    float maxDistance, const GeometrySweepSettings& settings)
+{
+    return SweepCapsule(Capsule(a.Center, a.Center, a.Radius), b, direction, maxDistance, settings);
+}
+
 } // namespace NorvesLib::Math

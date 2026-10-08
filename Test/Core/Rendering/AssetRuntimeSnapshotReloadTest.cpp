@@ -85,7 +85,7 @@ namespace NorvesLib::Core::Rendering
                 state.ModelGeneration = pModelRuntime->m_Generation;
             }
 
-            Resource::CookedModelLoadPlan modelPlan;
+            ResourceIO::CookedModelLoadPlan modelPlan;
             if (pModelRuntime->TryBuildPlan(modelProbe, modelPlan))
             {
                 state.bModelProbeCached = pModelRuntime->m_Cache.Acquire(
@@ -116,7 +116,7 @@ namespace NorvesLib::Core::Rendering
                 assert(pTextureRuntime->m_TextureHandleCache->Find(keys.Texture).IsValid());
             }
 
-            Resource::CookedModelLoadPlan modelPlan;
+            ResourceIO::CookedModelLoadPlan modelPlan;
             assert(pModelRuntime->TryBuildPlan(modelProbe, modelPlan));
             assert(!modelPlan.CacheKey.empty());
             keys.Model = modelPlan.CacheKey;

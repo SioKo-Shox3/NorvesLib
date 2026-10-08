@@ -31,6 +31,8 @@ namespace NorvesLib::Core::Input
     public:
         MayaCameraController();
         ~MayaCameraController() override = default;
+        /// 押下中の操作だけを取り消し、姿勢・設定・対象は維持する。
+        void OnInputReset() override;
 
         // ========================================
         // 初期化

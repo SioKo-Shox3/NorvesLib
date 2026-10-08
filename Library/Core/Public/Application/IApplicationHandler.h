@@ -45,10 +45,22 @@ namespace NorvesLib::Core::Application
          */
         virtual void OnUpdate(float deltaTime) = 0;
 
+        // 配送済みだがsimulation側でまだconsumeしていないasset eventもsettle待ちに含める。
+        virtual bool HasPendingAssetConsumers() const
+        {
+            return false;
+        }
+
+        // WorldとModuleの物理後更新の後、描画同期の前。シミュレーション停止中は呼ばない。
+        virtual void OnLateUpdate(float deltaTime)
+        {
+            (void)deltaTime;
+        }
+
         /**
          * @brief シミュレーション更新を進めてよいか
          *
-         * false の間は当該フレームでシミュレーション更新（GameMode 更新・World Tick）を
+         * false の間は当該フレームでシミュレーション更新（GameMode・World/Module LateTick・OnLateUpdateを含む）を
          * 進めない（OnUpdate・描画は継続）。既定実装は ApplicationHandlerBase が true を
          * 返す。
          * @return シミュレーションを進める場合 true

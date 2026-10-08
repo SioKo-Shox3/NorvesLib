@@ -1,30 +1,30 @@
 ﻿#include "Rendering/RenderResources.h"
 
 #include "Asset/AssetSystem.h"
+#include "Logging/LogMacros.h"
+#include "RHI/IBuffer.h"
+#include "RHI/IDevice.h"
+#include "RHI/IShader.h"
+#include "RHI/ITexture.h"
 #include "Rendering/CookedVirtualTexture.h"
 #include "Rendering/GeometryPageRequestRing.h"
 #include "Rendering/GeometryPageStreamer.h"
 #include "Rendering/GeometryPool.h"
 #include "Rendering/GpuResourceStore.h"
 #include "Rendering/GpuRetireQueue.h"
-#include "Rendering/SparsePagePool.h"
-#include "Rendering/TileUploader.h"
-#include "Rendering/VirtualTextureFeedbackRing.h"
-#include "Rendering/VirtualTextureRequestSet.h"
-#include "Rendering/VirtualTextureStreamer.h"
-#include "Rendering/SkinnedMeshGpuStore.h"
-#include "Rendering/VideoMemoryBudgetLogGate.h"
-#include "Rendering/VideoMemoryBudgetManager.h"
 #include "Rendering/MegaGeometryResourceStore.h"
 #include "Rendering/ProceduralMeshGpuStore.h"
 #include "Rendering/RenderMaterialStore.h"
-#include "Rendering/TextureAssetRuntime.h"
+#include "Rendering/SkinnedMeshGpuStore.h"
+#include "Rendering/SparsePagePool.h"
 #include "Rendering/TextureAssetResolver.h"
-#include "Logging/LogMacros.h"
-#include "RHI/IBuffer.h"
-#include "RHI/IDevice.h"
-#include "RHI/IShader.h"
-#include "RHI/ITexture.h"
+#include "Rendering/TextureAssetRuntime.h"
+#include "Rendering/TileUploader.h"
+#include "Rendering/VideoMemoryBudgetLogGate.h"
+#include "Rendering/VideoMemoryBudgetManager.h"
+#include "Rendering/VirtualTextureFeedbackRing.h"
+#include "Rendering/VirtualTextureRequestSet.h"
+#include "Rendering/VirtualTextureStreamer.h"
 #include "Resource/ModelAssetLoader.h"
 #include "Resource/ModelAssetRuntime.h"
 #include "Thread/Atomic.h"
@@ -36,8 +36,33 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
-        // 1フレームにジオメトリの区画の中身をリングへ積む量の上限（バイト）。リング（32 MiB）に収まる提出中の
-        // 数フレーム分とテクスチャのタイルの分を残すため、フレームのコピー量の上限（24 MiB）より小さくする。
+        struct TextureRegistrationLifetime
+        {
+            Thread::Mutex Mutex;
+            GpuResourceStore *Store = nullptr;
+        };
+
+        struct AnonymousTextureOwner
+        {
+            Container::TSharedPtr<TextureRegistrationLifetime> Lifetime;
+            TextureHandle Handle;
+            ~AnonymousTextureOwner()
+            {
+                if (Lifetime)
+                {
+                    Thread::ScopedLock lock(Lifetime->Mutex);
+                    if (Lifetime->Store)
+                    {
+                        Lifetime->Store->ReleaseTexture(Handle);
+                    }
+                }
+            }
+        };
+
+        // 1フレームにジオメトリの区画の中身をリングへ積む量の上限（バイト）。リング（32
+        // MiB）に収まる提出中の
+        // 数フレーム分とテクスチャのタイルの分を残すため、フレームのコピー量の上限（24
+        // MiB）より小さくする。
         constexpr uint64_t MegaGeometryUploadBytesPerFrame = 8ull * 1024ull * 1024ull;
 
         bool IsPreparedTextureAssetLooseFallbackStatus(PreparedTextureAssetStatus status)
@@ -149,6 +174,7 @@ namespace NorvesLib::Core::Rendering
         uint64_t ShadowMapLoggedPoolMb = 0;
         Container::TUniquePtr<SkinnedMeshGpuStore> SkinnedMeshes;
         Container::TUniquePtr<GpuResourceStore> GpuResources;
+        Container::TSharedPtr<TextureRegistrationLifetime> AnonymousTextureLifetime;
         Container::TUniquePtr<ProceduralMeshGpuStore> ProceduralMeshes;
         Container::TUniquePtr<RenderMaterialStore> MaterialStore;
         Container::TUniquePtr<MegaGeometryResourceStore> MegaGeometryResources;
@@ -420,7 +446,8 @@ namespace NorvesLib::Core::Rendering
             if (completion.bTimedOut)
             {
                 NORVES_LOG_ERROR("RenderResources",
-                                 "VTのミップテイルが常駐しないため、VTを解放して全常駐へ戻します handle=%llu",
+                                 "VTのミップテイルが常駐しないため、VTを解放して全常駐へ戻します"
+                                 " handle=%llu",
                                  static_cast<unsigned long long>(completion.Handle.Id));
                 ReleaseTexture(completion.Handle);
                 result = TextureHandle::Invalid();
@@ -548,6 +575,27 @@ namespace NorvesLib::Core::Rendering
         return impl->GpuResources->RegisterExternalTexture(std::move(rhiTexture), debugName);
     }
 
+    Container::TSharedPtr<const void> TextureResources::AdoptAnonymousTexture(TextureHandle handle)
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        if (!impl || !impl->bInitialized || !impl->AnonymousTextureLifetime || !handle.IsValid())
+        {
+            return {};
+        }
+        try
+        {
+            auto owner = Container::MakeShared<AnonymousTextureOwner>();
+            owner->Lifetime = impl->AnonymousTextureLifetime;
+            owner->Handle = handle;
+            return owner;
+        }
+        catch (...)
+        {
+            impl->GpuResources->ReleaseTexture(handle);
+            throw;
+        }
+    }
+
     void TextureResources::ReleaseTexture(TextureHandle handle)
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
@@ -598,7 +646,8 @@ namespace NorvesLib::Core::Rendering
         if (!impl->TextureAssets->ResolveCookedTextureRange(path, range, assetSystem, &reason))
         {
             NORVES_LOG_ERROR("RenderResources",
-                             "VTを作れません: クック済みのテクスチャの位置を求められません texture=%s reason=%s",
+                             "VTを作れません: クック済みのテクスチャの位置を求められません "
+                             "texture=%s reason=%s",
                              path.c_str(), reason.c_str());
             return TextureHandle::Invalid();
         }
@@ -609,7 +658,8 @@ namespace NorvesLib::Core::Rendering
                                          path, plan, &reason, assetSystem->GetTreatSrgbTexturesAsLinear()))
         {
             NORVES_LOG_ERROR("RenderResources",
-                             "VTを作れません: クック済みのテクスチャを開けません texture=%s reason=%s",
+                             "VTを作れません: クック済みのテクスチャを開けません "
+                             "texture=%s reason=%s",
                              path.c_str(), reason.c_str());
             return TextureHandle::Invalid();
         }
@@ -640,8 +690,9 @@ namespace NorvesLib::Core::Rendering
         }
         {
             const RHI::ITexture *created = impl->GpuResources->GetRHITexture(handle);
-            LOG_INFO("VT_CREATE path=%s size=%ux%u mips=%u rhi_format=%u create_format=%u index=%u", path.c_str(),
-                     static_cast<unsigned>(created ? created->GetWidth() : 0),
+            LOG_INFO("VT_CREATE path=%s size=%ux%u mips=%u rhi_format=%u "
+                     "create_format=%u index=%u",
+                     path.c_str(), static_cast<unsigned>(created ? created->GetWidth() : 0),
                      static_cast<unsigned>(created ? created->GetHeight() : 0),
                      static_cast<unsigned>(created ? created->GetMipLevels() : 0),
                      static_cast<unsigned>(created ? created->GetFormat() : RHI::Format::UNKNOWN),
@@ -652,7 +703,9 @@ namespace NorvesLib::Core::Rendering
         if (!EnableVirtualTextureFeedback())
         {
             NORVES_LOG_ERROR("RenderResources",
-                             "VTを作れません: フィードバックを有効にできないため、VTを解放します texture=%s", path.c_str());
+                             "VTを作れません: "
+                             "フィードバックを有効にできないため、VTを解放します texture=%s",
+                             path.c_str());
             ReleaseTexture(handle);
             return TextureHandle::Invalid();
         }
@@ -1174,7 +1227,7 @@ namespace NorvesLib::Core::Rendering
             return ModelHandle::Invalid();
         }
 
-        return Resource::LoadCookedModel(
+        return ResourceIO::LoadCookedModel(
             assetSystem,
             logicalPath,
             ModelLoadResourceContext{m_pOwner->Textures(), *this});
@@ -1254,7 +1307,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        Resource::ModelCacheReleaseResult released = impl->ModelAssets->ReleaseManagedModel(handle);
+        ResourceIO::ModelCacheReleaseResult released = impl->ModelAssets->ReleaseManagedModel(handle);
         if (!released.bManaged)
         {
             ReleaseModelUnmanaged(handle);
@@ -1307,7 +1360,11 @@ namespace NorvesLib::Core::Rendering
 
         m_Impl->GpuResources = Container::MakeUnique<GpuResourceStore>(m_Impl->Device, m_Impl->NextHandleId);
         m_Impl->GpuResources->SetRetireQueue(&m_Impl->RetireQueue);
-        // ステージングのリング。VT のタイルとジオメトリの区画の両方が使うので、sparse の対応に関わらず作る（リングのバッファは最初の書き込みまで作らない）
+        m_Impl->AnonymousTextureLifetime = Container::MakeShared<TextureRegistrationLifetime>();
+        m_Impl->AnonymousTextureLifetime->Store = m_Impl->GpuResources.get();
+        // ステージングのリング。VT
+        // のタイルとジオメトリの区画の両方が使うので、sparse
+        // の対応に関わらず作る（リングのバッファは最初の書き込みまで作らない）
         m_Impl->TileUpload = Container::MakeUnique<TileUploader>(m_Impl->Device);
         {
             const RHI::SparseCapabilities &sparse = m_Impl->Device->GetCapabilities().Sparse;
@@ -1390,6 +1447,12 @@ namespace NorvesLib::Core::Rendering
 
         m_Impl->ProceduralMeshes.reset();
         m_Impl->MegaGeometryResources.reset();
+        if (m_Impl->AnonymousTextureLifetime)
+        {
+            Thread::ScopedLock lock(m_Impl->AnonymousTextureLifetime->Mutex);
+            m_Impl->AnonymousTextureLifetime->Store = nullptr;
+        }
+        m_Impl->AnonymousTextureLifetime.reset();
         m_Impl->GpuResources.reset();
         m_Impl->Device.reset();
         m_Impl->bInitialized = false;
@@ -1527,7 +1590,8 @@ namespace NorvesLib::Core::Rendering
             const VirtualTextureStreamerStats stats = impl.VtStreamer->GetStats();
             if (stats.ResidentTiles != impl.VtLoggedResident)
             {
-                LOG_INFO("VT_STREAMER textures=%u resident=%u reading=%u ready=%u wanted=%u failed=%u bind_failures=%llu",
+                LOG_INFO("VT_STREAMER textures=%u resident=%u reading=%u ready=%u "
+                         "wanted=%u failed=%u bind_failures=%llu",
                          static_cast<unsigned>(stats.TextureCount), static_cast<unsigned>(stats.ResidentTiles),
                          static_cast<unsigned>(stats.ReadingTiles), static_cast<unsigned>(stats.ReadyTiles),
                          static_cast<unsigned>(stats.WantedTiles), static_cast<unsigned>(stats.FailedTiles),
@@ -1562,8 +1626,10 @@ namespace NorvesLib::Core::Rendering
             if (stats.ResidentPages != impl.GeometryPageLoggedResident)
             {
                 constexpr double BytesPerMb = 1024.0 * 1024.0;
-                LOG_INFO("GEOMETRY_PAGES resident=%u uploading=%u ready=%u reading=%u wanted=%u failed=%u "
-                         "resident_mb=%.2f evicted=%llu budget_blocked=%llu parent_wait=%llu",
+                LOG_INFO("GEOMETRY_PAGES resident=%u uploading=%u ready=%u "
+                         "reading=%u wanted=%u failed=%u "
+                         "resident_mb=%.2f evicted=%llu budget_blocked=%llu "
+                         "parent_wait=%llu",
                          static_cast<unsigned>(stats.ResidentPages), static_cast<unsigned>(stats.UploadingPages),
                          static_cast<unsigned>(stats.ReadyPages), static_cast<unsigned>(stats.ReadingPages),
                          static_cast<unsigned>(stats.WantedPages), static_cast<unsigned>(stats.FailedPages),
@@ -1633,9 +1699,9 @@ namespace NorvesLib::Core::Rendering
         {
             if (impl->VideoMemoryCapMb > 0)
             {
-                NORVES_LOG_INFO(
-                    "RenderResources",
-                    "VRAM_BUDGET heap_budget_mb=%llu heap_usage_mb=%llu cap_mb=%llu source=%s",
+                NORVES_LOG_INFO("RenderResources",
+                                "VRAM_BUDGET heap_budget_mb=%llu heap_usage_mb=%llu cap_mb=%llu "
+                                "source=%s",
                     static_cast<unsigned long long>(budgetBytes / kBytesPerMb),
                     static_cast<unsigned long long>(usageBytes / kBytesPerMb),
                     static_cast<unsigned long long>(impl->VideoMemoryCapMb),
@@ -1643,9 +1709,9 @@ namespace NorvesLib::Core::Rendering
             }
             else
             {
-                NORVES_LOG_INFO(
-                    "RenderResources",
-                    "VRAM_BUDGET heap_budget_mb=%llu heap_usage_mb=%llu cap_mb=none source=%s",
+                NORVES_LOG_INFO("RenderResources",
+                                "VRAM_BUDGET heap_budget_mb=%llu heap_usage_mb=%llu cap_mb=none "
+                                "source=%s",
                     static_cast<unsigned long long>(budgetBytes / kBytesPerMb),
                     static_cast<unsigned long long>(usageBytes / kBytesPerMb),
                     budget.bValid ? "ext" : "none");
@@ -1732,8 +1798,10 @@ namespace NorvesLib::Core::Rendering
             {
                 NORVES_LOG_INFO(
                     "RenderResources",
-                    "VRAM_POOLS cap_mb=%llu non_pool_mb=%llu vt_target_mb=%llu vt_used_mb=%llu vt_evicted_tiles=%llu source=%s "
-                    "geometry_target_mb=%llu geometry_used_mb=%llu geometry_evicted_pages=%llu shadow_map_pool_mb=%llu",
+                    "VRAM_POOLS cap_mb=%llu non_pool_mb=%llu vt_target_mb=%llu "
+                    "vt_used_mb=%llu vt_evicted_tiles=%llu source=%s "
+                    "geometry_target_mb=%llu geometry_used_mb=%llu "
+                    "geometry_evicted_pages=%llu shadow_map_pool_mb=%llu",
                     static_cast<unsigned long long>(result.CeilingBytes / kBytesPerMb),
                     static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb),
                     static_cast<unsigned long long>(result.GetTargetBytes(VideoMemoryPool::VirtualTexture) / kBytesPerMb),
@@ -1747,10 +1815,11 @@ namespace NorvesLib::Core::Rendering
             }
             else
             {
-                NORVES_LOG_INFO(
-                    "RenderResources",
-                    "VRAM_POOLS cap_mb=none non_pool_mb=%llu vt_target_mb=none vt_used_mb=%llu vt_evicted_tiles=%llu "
-                    "geometry_target_mb=none geometry_used_mb=%llu geometry_evicted_pages=%llu shadow_map_pool_mb=%llu",
+                NORVES_LOG_INFO("RenderResources",
+                                "VRAM_POOLS cap_mb=none non_pool_mb=%llu vt_target_mb=none "
+                                "vt_used_mb=%llu vt_evicted_tiles=%llu "
+                                "geometry_target_mb=none geometry_used_mb=%llu "
+                                "geometry_evicted_pages=%llu shadow_map_pool_mb=%llu",
                     static_cast<unsigned long long>(result.NonPoolBytes / kBytesPerMb),
                     static_cast<unsigned long long>(vtUsedBytes / kBytesPerMb),
                     static_cast<unsigned long long>(evictedTiles),
@@ -1806,7 +1875,7 @@ namespace NorvesLib::Core::Rendering
 
         TextureAssetRuntime& textureRuntime = *m_Impl->TextureAssets;
         ModelAssetRuntime& modelRuntime = *m_Impl->ModelAssets;
-        Resource::ModelCacheHandleBatch retired;
+        ResourceIO::ModelCacheHandleBatch retired;
         const char* pRejectedReason = nullptr;
         uint64_t textureGeneration = 0;
         uint64_t modelGeneration = 0;

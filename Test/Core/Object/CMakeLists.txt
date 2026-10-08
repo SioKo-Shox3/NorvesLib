@@ -21,6 +21,7 @@ norves_add_test_bundle(ResourceRegistryTest
     MEMBER ResourceRegistryTest ResourceRegistryTest.cpp
     MEMBER ResourceMetadataTest ResourceMetadataTest.cpp
     MEMBER SkeletalResourceLifetimeTest SkeletalResourceLifetimeTest.cpp
+    MEMBER SkeletalAssetResourceTest SkeletalAssetResourceTest.cpp
 )
 target_link_libraries(ResourceRegistryTest PRIVATE Core)
 target_include_directories(ResourceRegistryTest PRIVATE
@@ -47,6 +48,7 @@ norves_add_test_bundle(SceneQueryRaycastTest
     MEMBER SceneQueryRaycastTest SceneQueryRaycastTest.cpp
     MEMBER SceneQueryOverlapTest SceneQueryOverlapTest.cpp
     MEMBER SceneQueryPhysicsFacadeTest SceneQueryPhysicsFacadeTest.cpp
+    MEMBER PhysicsQueryTypesTest PhysicsQueryTypesTest.cpp
 )
 target_link_libraries(SceneQueryRaycastTest PRIVATE Core)
 target_include_directories(SceneQueryRaycastTest PRIVATE
@@ -56,6 +58,9 @@ target_include_directories(SceneQueryRaycastTest PRIVATE
 norves_add_test_bundle(EntityTreeTest
     FOLDER "Test/Core/Object"
     MEMBER EntityTreeTest EntityTreeTest.cpp
+    MEMBER TickGroupConfigurationTest TickGroupConfigurationTest.cpp
+    MEMBER TickDispatchTest TickDispatchTest.cpp
+    MEMBER WorldTickGroupTest WorldTickGroupTest.cpp
     MEMBER LightComponentBuildProxyTest LightComponentBuildProxyTest.cpp
     MEMBER TransformHierarchyTest TransformHierarchyTest.cpp
     MEMBER EntityWorldAABBTest EntityWorldAABBTest.cpp
@@ -106,5 +111,13 @@ add_test(NAME SceneSerializerTest COMMAND SceneSerializerTest)
 add_test(NAME SceneFileRoundTripTest COMMAND SceneSerializerTest --test=SceneFileRoundTripTest)
 
 add_test(NAME SkeletalResourceLifetimeTest COMMAND ResourceRegistryTest --test=SkeletalResourceLifetimeTest)
+add_test(NAME SkeletalAssetResourceTest COMMAND ResourceRegistryTest --test=SkeletalAssetResourceTest)
 
 add_test(NAME SpringArmComponentTest COMMAND EntityTreeTest --test=SpringArmComponentTest)
+
+add_test(NAME PhysicsQueryTypesTest COMMAND SceneQueryRaycastTest --test=PhysicsQueryTypesTest)
+
+add_test(NAME TickGroupConfigurationTest COMMAND EntityTreeTest --test=TickGroupConfigurationTest)
+
+add_test(NAME TickDispatchTest COMMAND EntityTreeTest --test=TickDispatchTest)
+add_test(NAME WorldTickGroupTest COMMAND EntityTreeTest --test=WorldTickGroupTest)

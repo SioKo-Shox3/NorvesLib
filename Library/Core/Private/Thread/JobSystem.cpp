@@ -135,6 +135,10 @@ namespace NorvesLib::Thread
 
             {
                 ScopedLock resizeLock(m_resizeMutex);
+                if (m_admissionFenceHook)
+                {
+                    m_admissionFenceHook(m_admissionFenceContext);
+                }
                 ScopedLock workerLock(m_workerThreadMutex);
                 ScopedLock queueLock(m_queueMutex);
                 m_lifecycleState = LifecycleState::ShuttingDown;
@@ -217,132 +221,128 @@ namespace NorvesLib::Thread
         return SubmitTaskInternal(std::move(task), false);
     }
 
+    void JobSystem::ProbeSubmitPreparation(SubmitPreparationPoint point)
+    {
+        if (m_submitPreparationHook)
+        {
+            m_submitPreparationHook(point, m_submitPreparationContext);
+        }
+    }
+
+    JobSystem::FiniteTicketPtr JobSystem::PrepareFiniteSubmission(const TaskPtr& task)
+    {
+        ProbeSubmitPreparation(SubmitPreparationPoint::BeforeTicket);
+        auto ticket = Core::Container::MakeShared<FiniteSubmissionTicket>();
+        ticket->State = m_currentFiniteDrainState;
+        ProbeSubmitPreparation(SubmitPreparationPoint::BeforeHandler);
+        task->OnComplete(
+            [ticket](const TaskPtr&)
+            {
+                bool bNotify = false;
+                {
+                    ScopedLock lock(ticket->State->Mutex);
+                    ticket->bCompletionObserved = true;
+                    if (ticket->bCounted)
+                    {
+                        ticket->bCounted = false;
+                        assert(ticket->State->OutstandingFiniteTasks > 0);
+                        ticket->State->OutstandingFiniteTasks--;
+                        bNotify = ticket->State->OutstandingFiniteTasks == 0;
+                    }
+                }
+                if (bNotify)
+                {
+                    ticket->State->Condition.NotifyAll();
+                }
+            });
+        ProbeSubmitPreparation(SubmitPreparationPoint::AfterHandler);
+        return ticket;
+    }
+
+    void JobSystem::ArmFiniteSubmission(const FiniteTicketPtr& ticket)
+    {
+        if (ticket)
+        {
+            ScopedLock lock(ticket->State->Mutex);
+            // OnCompleteは登録caller上でも同期実行される。先行完了を再計上しない。
+            if (!ticket->bCompletionObserved)
+            {
+                assert(!ticket->bCounted);
+                ticket->State->OutstandingFiniteTasks++;
+                ticket->bCounted = true;
+            }
+        }
+    }
+
     bool JobSystem::SubmitTaskInternal(TaskPtr task, bool bFiniteTask)
     {
         if (!task)
         {
             return false;
         }
-
         bool bAccepted = false;
-
         const ExecutionMode mode = m_executionMode.Load();
-
         if (mode == ExecutionMode::EXECUTION_SIMPLE)
         {
-            // シンプルモード - グローバルキューに追加
+            ScopedLock lock(m_queueMutex);
+            if (!m_shutdownRequested && m_bAcceptingTasks)
             {
-                ScopedLock lock(m_queueMutex);
-
-                if (m_shutdownRequested || !m_bAcceptingTasks)
+                auto ticket = bFiniteTask ? PrepareFiniteSubmission(task) : FiniteTicketPtr{};
+                ProbeSubmitPreparation(SubmitPreparationPoint::BeforeGlobalPush);
+                m_taskQueue.push(task);
+                // push成功以後は確保しない。同gate内でarmしてDrainに計上前の穴を見せない。
+                if (m_submitBeforeArmHook)
                 {
-                    bAccepted = false;
+                    m_submitBeforeArmHook(m_submitBeforeArmContext);
                 }
-                else
-                {
-                    if (bFiniteTask)
-                    {
-                        Core::Container::TSharedPtr<FiniteDrainState> finiteDrainState = m_currentFiniteDrainState;
-                        {
-                            ScopedLock finiteLock(finiteDrainState->Mutex);
-                            finiteDrainState->OutstandingFiniteTasks++;
-                        }
-                        task->OnComplete([finiteDrainState](const TaskPtr&)
-                        {
-                            bool bNotify = false;
-                            {
-                                ScopedLock finiteLock(finiteDrainState->Mutex);
-                                if (finiteDrainState->OutstandingFiniteTasks > 0)
-                                {
-                                    finiteDrainState->OutstandingFiniteTasks--;
-                                    bNotify = finiteDrainState->OutstandingFiniteTasks == 0;
-                                }
-                            }
-
-                            if (bNotify)
-                            {
-                                finiteDrainState->Condition.NotifyAll();
-                            }
-                        });
-                    }
-
-                    m_taskQueue.push(task);
-                    m_queuedTaskCount++;
-                    bAccepted = true;
-                }
+                ArmFiniteSubmission(ticket);
+                m_queuedTaskCount++;
+                bAccepted = true;
             }
         }
         else
         {
-            // ワークスチーリングモード - ランダムなワーカーのローカルキューに追加
             ScopedLock lock(m_workerThreadMutex);
-
-            if (m_shutdownRequested || !m_bAcceptingTasks)
+            if (!m_shutdownRequested && m_bAcceptingTasks)
             {
-                bAccepted = false;
-            }
-            else
-            {
-                if (bFiniteTask)
-                {
-                    Core::Container::TSharedPtr<FiniteDrainState> finiteDrainState = m_currentFiniteDrainState;
-                    {
-                        ScopedLock finiteLock(finiteDrainState->Mutex);
-                        finiteDrainState->OutstandingFiniteTasks++;
-                    }
-                    task->OnComplete([finiteDrainState](const TaskPtr&)
-                    {
-                        bool bNotify = false;
-                        {
-                            ScopedLock finiteLock(finiteDrainState->Mutex);
-                            if (finiteDrainState->OutstandingFiniteTasks > 0)
-                            {
-                                finiteDrainState->OutstandingFiniteTasks--;
-                                bNotify = finiteDrainState->OutstandingFiniteTasks == 0;
-                            }
-                        }
-
-                        if (bNotify)
-                        {
-                            finiteDrainState->Condition.NotifyAll();
-                        }
-                    });
-                }
-
+                auto ticket = bFiniteTask ? PrepareFiniteSubmission(task) : FiniteTicketPtr{};
                 if (m_localQueues.empty())
                 {
                     ScopedLock queueLock(m_queueMutex);
+                    ProbeSubmitPreparation(SubmitPreparationPoint::BeforeGlobalPush);
                     m_taskQueue.push(task);
-                    m_queuedTaskCount++;
                 }
                 else
                 {
                     std::uniform_int_distribution<size_t> dist(0, m_localQueues.size() - 1);
-                    size_t queueIndex = dist(m_randomGenerator);
-
+                    const size_t queueIndex = dist(m_randomGenerator);
                     if (queueIndex < m_localQueues.size() && m_localQueues[queueIndex])
                     {
+                        ProbeSubmitPreparation(SubmitPreparationPoint::BeforeLocalPush);
                         m_localQueues[queueIndex]->Push(task);
-                        m_queuedTaskCount++;
                     }
                     else
                     {
                         ScopedLock queueLock(m_queueMutex);
+                        ProbeSubmitPreparation(SubmitPreparationPoint::BeforeGlobalPush);
                         m_taskQueue.push(task);
-                        m_queuedTaskCount++;
                     }
                 }
-
+                if (m_submitBeforeArmHook)
+                {
+                    m_submitBeforeArmHook(m_submitBeforeArmContext);
+                }
+                ArmFiniteSubmission(ticket);
+                m_queuedTaskCount++;
                 bAccepted = true;
             }
         }
-
         if (!bAccepted)
         {
+            // 既存契約通りgate外で取消す。例外時は既存受理分を壊さずcallerへ伝播する。
             task->Cancel();
             return false;
         }
-
         m_conditionVar.NotifyOne();
         return true;
     }
@@ -350,6 +350,10 @@ namespace NorvesLib::Thread
     void JobSystem::StopAcceptingTasks()
     {
         ScopedLock resizeLock(m_resizeMutex);
+        if (m_admissionFenceHook)
+        {
+            m_admissionFenceHook(m_admissionFenceContext);
+        }
         ScopedLock workerLock(m_workerThreadMutex);
         ScopedLock queueLock(m_queueMutex);
         m_bAcceptingTasks = false;
@@ -360,6 +364,10 @@ namespace NorvesLib::Thread
         Core::Container::TSharedPtr<FiniteDrainState> finiteDrainState;
         {
             ScopedLock resizeLock(m_resizeMutex);
+            if (m_admissionFenceHook)
+            {
+                m_admissionFenceHook(m_admissionFenceContext);
+            }
             ScopedLock workerLock(m_workerThreadMutex);
             ScopedLock queueLock(m_queueMutex);
             finiteDrainState = m_currentFiniteDrainState;
