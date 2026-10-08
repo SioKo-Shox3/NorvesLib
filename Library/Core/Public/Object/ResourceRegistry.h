@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Object/Resource.h"
 #include "Container/Containers.h"

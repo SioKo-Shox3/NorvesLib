@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Asset/AssetPackageFormat.h"
 #include "Container/String.h"

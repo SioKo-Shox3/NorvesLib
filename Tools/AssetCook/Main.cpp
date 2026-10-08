@@ -1,4 +1,4 @@
-#include "AssetCookLegacyOptions.h"
+﻿#include "AssetCookLegacyOptions.h"
 #include "AssetCookOutput.h"
 #include "RigRetargetCook.h"
 #include "RigSplitFileCook.h"
