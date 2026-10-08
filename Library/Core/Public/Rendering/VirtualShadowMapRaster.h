@@ -248,6 +248,8 @@ namespace NorvesLib::Core::Rendering
      * 自分のバッファ（PageTable・Stats・DirtyBits・List）は UnorderedAccess の状態で渡し、同じ状態で戻る。
      * 主の経路のバッファ（Instances・ShadowInstances・MegaPageTable）は、ホストが書いたままの host-visible で、読み取りだけに使う
      * （状態の遷移は要らない）。主の経路の間接描画・見えた印・ページの要求・統計は渡さない（書かない）。
+     * PageTable へは、出力の一覧の容量を超えて落としたクラスタの範囲の、割り当て済みで dirty のページに再描画の印（PAGE_ENTRY_RETRY）だけを書く
+     * （次フレームの引き継ぎが dirty を付け直し、欠けた影を持ち越さない）。
      */
     struct VirtualShadowMapMegaCullDispatch
     {

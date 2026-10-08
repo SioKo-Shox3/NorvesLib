@@ -18,6 +18,7 @@ const uint VSM_MEGA_TABLE_DIMENSION = 128u;
 const uint VSM_MEGA_TABLE_ENTRIES_PER_LEVEL = VSM_MEGA_TABLE_DIMENSION * VSM_MEGA_TABLE_DIMENSION;
 const uint VSM_MEGA_PAGE_ENTRY_ALLOCATED = 1u << 31;
 const uint VSM_MEGA_PAGE_ENTRY_DIRTY = 1u << 30;
+const uint VSM_MEGA_PAGE_ENTRY_RETRY = 1u << 29;
 
 // dirty の階層の mip の数（128² → 1 = 8 段）と、1 段あたりの語（uint32）の数（21845 ビット = 683 語を 16 語の境へ切り上げ）
 const uint VSM_MEGA_DIRTY_MIP_COUNT = 8u;

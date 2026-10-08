@@ -72,7 +72,7 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t DirtyBindPageTable = 15;
         constexpr uint32_t DirtyBindBits = 16;
         // vsm_mega_cull.comp: 0 = カリングの定数（CullUniforms）、1 = インスタンスの表、11 = ジオメトリのページの表、
-        // 14 = 定数、15 = 出力の一覧、16 = dirty の階層、17 = 統計、18 = 影の表
+        // 14 = 定数、15 = 出力の一覧、16 = dirty の階層、17 = 統計、18 = 影の表、19 = VSM のページの表（溢れたクラスタの範囲へ再描画の印を書く）
         constexpr uint32_t MegaBindCullData = 0;
         constexpr uint32_t MegaBindInstances = 1;
         constexpr uint32_t MegaBindPageTable = 11;
@@ -81,6 +81,7 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t MegaBindDirtyBits = 16;
         constexpr uint32_t MegaBindStats = 17;
         constexpr uint32_t MegaBindShadowInstances = 18;
+        constexpr uint32_t MegaBindVsmPageTable = 19;
         // vsm_mega_chunks.comp: 1 = インスタンスの表、14 = 定数、15 = 出力の一覧、18 = 影の表、19 = 影の塊の記録の出力
         constexpr uint32_t ChunkBindInstances = 1;
         constexpr uint32_t ChunkBindParams = 14;
@@ -146,6 +147,7 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(MegaBindDirtyBits, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(MegaBindStats, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(MegaBindShadowInstances, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(MegaBindVsmPageTable, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
             return desc;
         }
 
@@ -800,6 +802,7 @@ namespace NorvesLib::Core::Rendering
         use->CullSet->BindStorageBuffer(MegaBindDirtyBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes()));
         use->CullSet->BindStorageBuffer(MegaBindStats, dispatch.Stats, 0, ClampBindSize(VirtualShadowMap::STATS_BYTES));
         use->CullSet->BindStorageBuffer(MegaBindShadowInstances, dispatch.ShadowInstances, 0, ClampBindSize(dispatch.ShadowInstances->GetSize()));
+        use->CullSet->BindStorageBuffer(MegaBindVsmPageTable, dispatch.PageTable, 0, ClampBindSize(VirtualShadowMap::PageTableBytes()));
         use->CullSet->Update();
 
         const uint32_t groupsX = dispatch.TotalGroups < VirtualShadowMap::GROUP_COUNT_X_LIMIT ? dispatch.TotalGroups
@@ -810,6 +813,8 @@ namespace NorvesLib::Core::Rendering
         commandList->Dispatch(groupsX, groupsY, dispatch.Clipmap->LevelCount);
         commandList->BufferBarrier(dispatch.List, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         commandList->BufferBarrier(dispatch.Stats, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        // 溢れたクラスタの範囲のページへ書いた再描画の印を、後続の展開・次フレームの引き継ぎが読めるようにする
+        commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         m_LastGroupCount = dispatch.TotalGroups;
 
         // ----- 影の塊の記録: 一覧の 1 件 = 1 スレッド（容量ぶんのスレッドを x 方向に並べ、件数より後ろは何もしない） -----

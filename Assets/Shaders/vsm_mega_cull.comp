@@ -21,6 +21,10 @@
 //       LOD は正射影: 自分の誤差 ÷ その段の texel の一辺 ≤ 1 texel（lodBias）かつ親の誤差 ÷ texel > 1 texel。
 //       子のページが非常駐なら自分を描き、ページの要求は出さない。HZB・法線の円錐・ソフトウェアラスタの振り分けは使わない。
 //
+// 一覧の容量を超えて書けなかったクラスタは、そのクラスタの境界が覆う、その段の割り当て済みで dirty のページへ再描画の印
+// （VSM_MEGA_PAGE_ENTRY_RETRY。binding 19 の VSM のページの表へ atomicOr する）を付ける。次フレームの引き継ぎ（vsm_allocate.comp）が
+// 印のあるページへ dirty を付け直すので、欠けた影が静止した場面で持ち越されず、描き直される。
+//
 // 出力（binding 15）の並び: [0] = 選んだクラスタの数（容量を超えた分を含む。書いた件数は min(値, 容量)）、[1] = 容量を超えて
 // 書かなかった数、[2] = 判定（1）を通った（インスタンス、段）の数、[3] = 予約。続いて uvec4（x = インスタンスの表の番号、
 // y = 段、z = クラスタの番号、w = 0）が並ぶ。呼ぶ前に、頭の 4 語を 0 にしておくこと。
@@ -61,6 +65,13 @@ const uint STAT_MEGA_OVERFLOW = 10u;
 layout(std430, set = 0, binding = 18) readonly buffer ShadowInstanceBuffer
 {
     ShadowInstance shadowInstances[];
+};
+
+// binding 19: VSM のページの表。溢れて書けなかったクラスタの範囲のページへ再描画の印を atomicOr で書く
+// （割り当て済み・dirty・物理ページの番号の欄は変えない。MegaGeometryCull.glsl の pageTable（binding 11。ジオメトリのページの表）とは別のバッファ）
+layout(std430, set = 0, binding = 19) buffer VsmPageTable
+{
+    uint vsmPageTable[];
 };
 
 // ワールドの位置のライト空間の XY
@@ -166,6 +177,38 @@ bool SphereHasDirtyPage(uint level, vec3 center, float radius)
     return false;
 }
 
+/**
+ * @brief 溢れて一覧に書けなかったクラスタの球が覆う、割り当て済みで dirty のページへ再描画の印を付ける
+ *
+ * 覆うページの範囲は SphereHasDirtyPage と同じ（範囲の外へはみ出す分は切り捨てる）。ほかのスレッドも同じ欄へ印を書くので、
+ * 判定の読み取りも atomicOr で行う。溢れたときだけ通る経路なので、範囲を 1 スレッドで走査する。
+ */
+void MarkRetryPages(uint level, vec3 center, float radius)
+{
+    const float pageMeters = megaParams.levelInfo[level].x;
+    const ivec2 origin = megaParams.levelOrigin[level].xy;
+    const vec2 lightCenter = LightXY(center);
+    const vec2 lowPage = clamp(floor((lightCenter - vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
+    const vec2 highPage = clamp(floor((lightCenter + vec2(radius)) / pageMeters), vec2(-1.0e9), vec2(1.0e9));
+    const ivec2 low = max(ivec2(lowPage) - origin, ivec2(0));
+    const ivec2 high = min(ivec2(highPage) - origin, ivec2(int(VSM_MEGA_TABLE_DIMENSION) - 1));
+    for (int y = low.y; y <= high.y; ++y)
+    {
+        for (int x = low.x; x <= high.x; ++x)
+        {
+            // 範囲の最小のページからの相対の座標を、絶対のページを経てトーラスの番地へ直す
+            const uint addressX = uint(origin.x + x) & (VSM_MEGA_TABLE_DIMENSION - 1u);
+            const uint addressY = uint(origin.y + y) & (VSM_MEGA_TABLE_DIMENSION - 1u);
+            const uint entryIndex = level * VSM_MEGA_TABLE_ENTRIES_PER_LEVEL + addressY * VSM_MEGA_TABLE_DIMENSION + addressX;
+            const uint entry = atomicOr(vsmPageTable[entryIndex], 0u);
+            if ((entry & VSM_MEGA_PAGE_ENTRY_ALLOCATED) != 0u && (entry & VSM_MEGA_PAGE_ENTRY_DIRTY) != 0u)
+            {
+                atomicOr(vsmPageTable[entryIndex], VSM_MEGA_PAGE_ENTRY_RETRY);
+            }
+        }
+    }
+}
+
 void main()
 {
     const uint level = gl_WorkGroupID.z;
@@ -249,5 +292,6 @@ void main()
     {
         atomicAdd(listOverflow, 1u);
         atomicAdd(vsmStats[STAT_MEGA_OVERFLOW], 1u);
+        MarkRetryPages(level, center, radius);
     }
 }

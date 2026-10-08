@@ -2563,3 +2563,13 @@
   - `Common/VirtualShadowMapMegaCull.glsl:51`: `VsmMegaCullParams` の uniform（`std140`）の宣言があるが、uniform は読み取り専用で、storage buffer の読み書きは無い。
 - 検証（`.harness/runs/20261008-100400/`）: `verify-VTG8-FIX-ATOMIC-READS-2.txt`（BUILD_EXIT=0）、`verify-VTG8-FIX-ATOMIC-READS-3.txt`（`VirtualShadowMapVulkanTest`・`RenderGraphCompileTest` が 2/2 passed、CTEST_EXIT=0）。競合はメモリモデルの話で、値の結果は変わらないので、落ちるテストは足していない。GPU の撮影は回していない（既定の描画は CSM）。
 - Next: `TASKS.md` の未完の次の項目。
+
+## 反復 4（2026-10-08）: VTG8-FIX-MEGA-OVERFLOW-RETRY（done）
+
+- 原因: `vsm_mega_cull.comp` は、一覧の容量を超えて落としたクラスタを数えるだけで、そのクラスタが覆うページには何も印を付けなかった。次のフレームには dirty が外れ、静止した場面では落としたクラスタの影が欠けたまま持ち越された（展開の溢れには `PAGE_ENTRY_RETRY` の仕組みが既にあった）。
+- 直し方: (1) `vsm_mega_cull.comp` に VSM のページの表（binding 19。`vsmPageTable`。binding 11 のジオメトリのページの表 `pageTable` とは別）を足し、溢れた分岐で `MarkRetryPages` が、クラスタの球が覆う（`SphereHasDirtyPage` と同じ範囲の）その段の、割り当て済みで dirty のページへ `atomicOr` で再描画の印を付ける。判定の読み取りも `atomicOr(..., 0u)`。(2) `VirtualShadowMapMegaCull` の記述子の並びに binding 19 を足して `dispatch.PageTable` を束縛し、カリングの後に PageTable の UAV バリアを足した。`Common/VirtualShadowMapMegaCull.glsl` に `VSM_MEGA_PAGE_ENTRY_RETRY` を足した。
+- テスト: `VirtualShadowMapVulkanTest` にケース K2 を足した。容量 2 のカリングの 1 フレーム目（選んだ 8・溢れ 6）で物理ページから欠けたページが 5 枚あり、その 5 枚すべてに再描画の印が付く（印の無い欠け 0・dirty でないページへの印 0）。容量が十分な 2 フレーム目は前フレームの表を引き継ぎ、印のある 5 ページだけ描き直して印が外れ、物理プールがケース F（毎フレーム描き直したとき）と全 texel で一致する（違うページ 0）。J2（件数だけを見る場面）はそのまま。`RenderGraphCompileTest` のカリングの束縛の数を 8 → 9 にし、binding 19 が `VSM_PageTable` であることを確かめるようにした。
+- 変異: `MarkRetryPages` の呼び出しを外すと K2 が落ちる（`verify-VTG8-FIX-MEGA-OVERFLOW-RETRY-mut.txt`: 再描画の印 0・印の無い欠け 5・描き直したページ 0・ケース F と違うページ 5、`RESULT=FAIL`）。シェーダーは元へ戻した。
+- 検証（`.harness/runs/20261008-100400/`）: `verify-VTG8-FIX-MEGA-OVERFLOW-RETRY-3.txt`（BUILD_EXIT=0）、`-6.txt`（`VirtualShadowMapVulkanTest`・`RenderGraphCompileTest` が 2/2 passed、CTEST_EXIT=0）、`-5.txt`（K2 の出力と `VUID_COUNT=0`・`RESULT=PASS`）。GPU の撮影は回していない（既定の描画は CSM で、VSM は `--shadow-method=vsm` のときだけ）。
+- Notes: (1) 範囲が大きい球は溢れた 1 スレッドが全ページを走査するが、溢れたときだけ通る経路なので許容した。(2) `RenderGraphCompileTest.cpp` は行末が混在しているため、バイトを保ったまま編集した（全体を正規化しない）。(3) 作業開始時点で `TASKS.md` に別項目の `done` → `blocked` の未コミットの差分があり、同じコミットに含めた。
+- Next: `TASKS.md` の未完の次の項目（`VTG8-FIX-MEGA-FALLBACK` ほか）。

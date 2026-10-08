@@ -8288,7 +8288,7 @@ namespace
             assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 15u), "VSM_PageTable"));
             assert(IsDebugName(BoundBufferNameAt(dirtyBindings, 16u), "VsmMega_DirtyBits"));
             const Container::VariableArray<BoundBufferName>& cullBindings = commandList.DispatchBindings[cullDispatch];
-            assert(cullBindings.size() == 8u);
+            assert(cullBindings.size() == 9u);
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 0u), "VsmMegaCullUniform"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 1u), "MegaGeometry_InstanceTable"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 11u), "MegaGeometry_PageTable"));
@@ -8297,6 +8297,8 @@ namespace
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 16u), "VsmMega_DirtyBits"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 17u), "VSM_Stats"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 18u), "MegaGeometry_ShadowInstanceTable"));
+            // 溢れて落としたクラスタの範囲のページへ再描画の印を書くため、VSM のページの表も束縛する
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 19u), "VSM_PageTable"));
             // クラスタの記録: 主の経路のインスタンスの表・影の表と自分の一覧を読み、自分の記録の出力へ書く
             const Container::VariableArray<BoundBufferName>& chunkBindings = commandList.DispatchBindings[chunkDispatch];
             assert(chunkBindings.size() == 5u);

@@ -1348,7 +1348,7 @@
 - notes: 2026-10-08 親（段8の区切りの評価の blocking 1。`vsm_mark.comp:82` と `Common/VirtualShadowMap.glsl:132` の判定の違い）。既存の場面（L4）は割り当て済みのプールを読むので、この欠けを検出できなかった。危険地帯（描画パス）。
 
 ## VTG8-FIX-ATOMIC-READS: VSM の計算シェーダーで、他のスレッドがアトミックに書く語を通常の読み取りで読まない
-- status: done
+- status: blocked
 - done-when: 同じ dispatch の中で他のスレッドが `atomic*` で書く語を、通常の読み取りで読む箇所をなくす（Vulkan のメモリモデルのデータ競合）。(1) 印付け（`vsm_mark.comp:57` 付近）の要求のビットは、読んでから書くのでなく条件なしの `atomicOr` にする。(2) 割り当ての無効化（`vsm_allocate.comp:232` 付近。重なる無効化の矩形が同じ語を `atomicOr` する）で、判定のために読むところを原子的な読み取り（`atomicOr(value, 0u)` など。展開の `PageEntry` の読み方と同じ）にする。(3) ほかの VSM の計算シェーダー（`Assets/Shaders/vsm_*.comp`、`Common/VirtualShadowMap*.glsl`）でも同じ形の箇所を洗い出して直し、確かめた箇所の一覧（ファイル:行と、競合しない理由または直し方）を PROGRESS に書く。`VirtualShadowMapVulkanTest`・`RenderGraphCompileTest` が通る。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`
@@ -1357,7 +1357,7 @@
 - notes: 2026-10-08 親（段8の区切りの評価の blocking 2）。dispatch の間のバリアでは同じ dispatch の中の競合は解消しない。危険地帯（描画パス）。
 
 ## VTG8-FIX-MEGA-OVERFLOW-RETRY: MegaGeometry の cull の一覧から落ちたクラスタのページを次のフレームで描き直す
-- status: todo
+- status: done
 - done-when: MegaGeometry の段ごとの cull（`Assets/Shaders/vsm_mega_cull.comp`）が一覧の容量を超えて落としたクラスタについて、そのクラスタの境界が覆う、その段の割り当て済みのページへ `PAGE_ENTRY_RETRY`（展開の溢れで使っている印）を付け、次のフレームでそのページを描き直す（今は数えるだけで、次のフレームには dirty が外れ、静止した場面で欠けた影が持ち越される）。`VirtualShadowMapVulkanTest` に、一覧の容量を小さくして溢れさせたフレームの後、容量が十分な静止したフレームで、物理プールの中身が毎フレームすべて描き直したとき（持ち越しなし）と texel で一致する（欠けが回復する）ことを確かめる場面を足す。今の溢れの件数だけを見る場面（J2）はそのまま残す。変異（RETRY の印を付けない）で落ちることを記録する。
 - verify: `cmake --build build --config Debug --target Game RenderGraphCompileTest RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^(VirtualShadowMapVulkanTest|RenderGraphCompileTest)$"`

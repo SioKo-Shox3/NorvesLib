@@ -2850,6 +2850,206 @@ namespace
                   << " ケース F との違い（語）=" << differentWords << std::endl;
         Expect(check.Mismatches == 0u && check.Covered > 2000u, "ケース K: MegaGeometry のクラスタの経路で描いた物理ページが形の和の参照と一致しなければならない");
         Expect(differentWords == 0u, "ケース K: MegaGeometry のクラスタの経路で描いた texel が、ケース F の手続きの経路と同じでなければならない");
+
+        // ----- ケース K2: カリングの一覧の容量を超えて落としたクラスタのページは、欠けたまま持ち越さず、次のフレームで描き直す -----
+        // 一覧の容量を小さくしたフレーム（最初のフレーム。全ページが dirty）は、落としたクラスタの形が物理ページに描かれず欠ける。
+        // 落としたクラスタの範囲の、割り当て済みで dirty のページには再描画の印が付き、次のフレーム（同じ場面・容量は十分）が
+        // 前フレームの表を引き継いで、印のあるページだけを描き直す。結果の物理プールが、ケース F（毎フレーム描き直したときと同じ）の全 texel と一致する
+        {
+            constexpr uint32_t OverflowCapacity = 2;
+            const BufferPtr smallList = device->CreateBuffer(
+                BufferDesc(VirtualShadowMap::MegaCullListBytes(OverflowCapacity), VirtualShadowMap::MegaCullListUsage() | readable, true, "VsmMegaRetryTestList"));
+            const BufferPtr smallChunks = device->CreateBuffer(
+                BufferDesc(VirtualShadowMap::RasterChunkBytes(OverflowCapacity), VirtualShadowMap::MegaChunkUsage() | readable, true, "VsmMegaRetryTestMegaChunks"));
+            Resources retryResources;
+            VirtualShadowMapPages retryPages;
+            if (!smallList || !smallChunks || !CreateResources(device, caseF.PoolPages, retryResources) ||
+                !retryPages.Initialize(device.get(), &shaderManager))
+            {
+                std::cerr << TestName << " ケース K2: 資源を作れませんでした" << std::endl;
+                return false;
+            }
+
+            struct RetryFrame
+            {
+                Container::VariableArray<uint32_t> Pool;
+                Container::VariableArray<uint32_t> PageTable;
+                Container::VariableArray<uint32_t> Stats;
+                Container::VariableArray<uint32_t> List;
+                Container::VariableArray<PageInfo> Infos;
+            };
+            // 印付け → 割り当て（キャッシュを使う）→ 消去 → カリング → クラスタの記録 → 展開 → 描画を 1 フレーム分走らせ、結果を読み戻す
+            const auto runFrame = [&](const BufferPtr& frameList, const BufferPtr& frameChunks, uint32_t capacity, RetryFrame& out) -> bool
+            {
+                const uint64_t frameId = frameSerial++;
+                retryPages.BeginFrame(0, frameId);
+                cull.BeginFrame(0, frameId);
+                raster.BeginFrame(0, frameId);
+                CommandListPtr retryCommands = device->CreateCommandList();
+                if (!retryCommands)
+                {
+                    return false;
+                }
+                const BufferPtr frameBuffers[] = {retryResources.Pool,      retryResources.PageTable, retryResources.RequestBits, retryResources.FreeList,
+                                                  retryResources.Stats,     retryResources.DirtyList, dirtyBits,                  frameList,
+                                                  frameChunks,              hostChunks,               instances,                  draws};
+                retryCommands->Begin();
+                for (const BufferPtr& buffer : frameBuffers)
+                {
+                    retryCommands->BufferBarrier(buffer, ResourceState::Undefined, ResourceState::UnorderedAccess, 0u, buffer->GetSize());
+                }
+                VirtualShadowMapPagesDispatch frameDispatch;
+                frameDispatch.PoolPages = retryResources.PoolPages;
+                frameDispatch.Pool = retryResources.Pool;
+                frameDispatch.PageTable = retryResources.PageTable;
+                frameDispatch.RequestBits = retryResources.RequestBits;
+                frameDispatch.FreeList = retryResources.FreeList;
+                frameDispatch.Stats = retryResources.Stats;
+                frameDispatch.DirtyList = retryResources.DirtyList;
+                frameDispatch.Depth = depth;
+                frameDispatch.Clipmap = &scene.Clipmap;
+                std::memcpy(frameDispatch.InverseViewProjection, scene.InverseViewProjection, sizeof(frameDispatch.InverseViewProjection));
+                std::memcpy(frameDispatch.CameraPosition, scene.CameraPosition, sizeof(frameDispatch.CameraPosition));
+                SetCameraForward(frameDispatch, scene);
+                frameDispatch.FovYDegrees = scene.Camera.FieldOfView;
+                frameDispatch.bCacheEnabled = true;
+                const bool bFramePages = retryPages.Record(retryCommands.get(), frameDispatch);
+
+                VirtualShadowMapMegaCullDispatch frameCull;
+                frameCull.Clipmap = &scene.Clipmap;
+                frameCull.PageTable = retryResources.PageTable;
+                frameCull.Stats = retryResources.Stats;
+                frameCull.DirtyBits = dirtyBits;
+                frameCull.List = frameList;
+                frameCull.Chunks = frameChunks;
+                frameCull.Instances = instanceBuffer;
+                frameCull.ShadowInstances = shadowBuffer;
+                frameCull.MegaPageTable = geometryPages;
+                frameCull.InstanceCount = shapeCount;
+                frameCull.TotalGroups = shapeCount;
+                const bool bFrameCull = cull.Record(retryCommands.get(), frameCull);
+
+                VirtualShadowMapRasterDispatch frameRaster;
+                frameRaster.Clipmap = &scene.Clipmap;
+                frameRaster.PoolPages = retryResources.PoolPages;
+                frameRaster.Pool = retryResources.Pool;
+                frameRaster.PageTable = retryResources.PageTable;
+                frameRaster.Stats = retryResources.Stats;
+                frameRaster.Chunks = hostChunks;
+                frameRaster.ChunkCount = 0u;
+                frameRaster.Instances = instances;
+                frameRaster.Draws = draws;
+                frameRaster.MegaChunks = frameChunks;
+                frameRaster.MegaList = frameList;
+                frameRaster.MegaCapacity = capacity;
+                const bool bFrameRaster = raster.Record(retryCommands.get(), frameRaster);
+                for (const BufferPtr& buffer : frameBuffers)
+                {
+                    retryCommands->BufferBarrier(buffer, ResourceState::UnorderedAccess, ResourceState::HostRead, 0u, buffer->GetSize());
+                }
+                retryCommands->End();
+                retryCommands->Submit(true);
+                device->WaitIdle();
+                if (!bFramePages || !bFrameCull || !bFrameRaster || !ReadAll(retryResources.Pool, out.Pool) ||
+                    !ReadAll(retryResources.PageTable, out.PageTable) || !ReadAll(retryResources.Stats, out.Stats) || !ReadAll(frameList, out.List))
+                {
+                    return false;
+                }
+                out.Infos = DecodePages(scene, out.PageTable);
+                return true;
+            };
+            // ケース F の同じ（段・絶対のページ）のページ。無ければ null
+            const auto counterpartOf = [&](const PageInfo& page) -> const PageInfo*
+            {
+                for (const PageInfo& candidate : caseF.Pages)
+                {
+                    if (candidate.Level == page.Level && candidate.AbsX == page.AbsX && candidate.AbsY == page.AbsY)
+                    {
+                        return &candidate;
+                    }
+                }
+                return nullptr;
+            };
+            const auto pageDiffers = [&](const RetryFrame& frame, const PageInfo& page, const PageInfo& counterpart) -> bool
+            {
+                const size_t baseFrame = static_cast<size_t>(page.Physical) * VirtualShadowMap::PAGE_WORDS;
+                const size_t baseF = static_cast<size_t>(counterpart.Physical) * VirtualShadowMap::PAGE_WORDS;
+                for (uint32_t word = 0; word < VirtualShadowMap::PAGE_WORDS; ++word)
+                {
+                    if (frame.Pool[baseFrame + word] != caseF.Pool[baseF + word])
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            RetryFrame overflowFrame;
+            if (!runFrame(smallList, smallChunks, OverflowCapacity, overflowFrame))
+            {
+                std::cerr << TestName << " ケース K2（溢れるフレーム）を実行できませんでした" << std::endl;
+                return false;
+            }
+            Expect(overflowFrame.List[0] > OverflowCapacity && overflowFrame.List[1] == overflowFrame.List[0] - OverflowCapacity &&
+                       overflowFrame.Stats[VirtualShadowMap::StatMegaOverflow] == overflowFrame.List[1],
+                   "ケース K2: 容量が小さいカリングは、選んだ数のうち容量を超えた分を溢れとして数えなければならない");
+            Expect(overflowFrame.Infos.size() == caseF.Pages.size(), "ケース K2: 溢れるフレームの割り当てたページの数がケース F と同じでなければならない");
+            uint32_t incompletePages = 0;
+            uint32_t retryCount = 0;
+            uint32_t unmarkedIncomplete = 0;
+            uint32_t retryOnClean = 0;
+            for (const PageInfo& page : overflowFrame.Infos)
+            {
+                const PageInfo* counterpart = counterpartOf(page);
+                Expect(counterpart != nullptr, "ケース K2: ケース F と同じページが割り当てられなければならない");
+                if (counterpart == nullptr)
+                {
+                    continue;
+                }
+                const bool bIncomplete = pageDiffers(overflowFrame, page, *counterpart);
+                incompletePages += bIncomplete ? 1u : 0u;
+                retryCount += page.bRetry ? 1u : 0u;
+                // 落としたクラスタの形が欠けたページには、必ず再描画の印が付く（印は dirty のページにだけ付く）
+                unmarkedIncomplete += bIncomplete && !page.bRetry ? 1u : 0u;
+                retryOnClean += page.bRetry && !page.bDirty ? 1u : 0u;
+            }
+            std::cout << TestName << " ケース K2: 選んだ=" << overflowFrame.List[0] << " 溢れ=" << overflowFrame.List[1] << " 欠けたページ=" << incompletePages
+                      << " 再描画の印=" << retryCount << " 印の無い欠け=" << unmarkedIncomplete << std::endl;
+            Expect(incompletePages > 0u, "ケース K2: 容量を超えて落としたクラスタの形が、物理ページから欠けた場面でなければならない");
+            Expect(retryCount > 0u && unmarkedIncomplete == 0u && retryOnClean == 0u,
+                   "ケース K2: 落としたクラスタの形が欠けたページ（割り当て済みで dirty）には、すべて再描画の印が付かなければならない");
+
+            RetryFrame recoverFrame;
+            if (!runFrame(list, megaChunks, ListCapacity, recoverFrame))
+            {
+                std::cerr << TestName << " ケース K2（描き直すフレーム）を実行できませんでした" << std::endl;
+                return false;
+            }
+            uint32_t remainingRetry = 0;
+            for (const PageInfo& page : recoverFrame.Infos)
+            {
+                remainingRetry += page.bRetry ? 1u : 0u;
+            }
+            Expect(recoverFrame.List[1] == 0u && recoverFrame.Stats[VirtualShadowMap::StatMegaOverflow] == 0u,
+                   "ケース K2: 描き直すフレームは容量が十分で、溢れてはならない");
+            Expect(recoverFrame.Stats[VirtualShadowMap::StatRendered] == retryCount && recoverFrame.Stats[VirtualShadowMap::StatInvalidated] == retryCount &&
+                       remainingRetry == 0u,
+                   "ケース K2: 再描画の印のあるページだけが dirty になって描き直され、印は外れなければならない");
+            Expect(recoverFrame.Infos.size() == caseF.Pages.size(), "ケース K2: 描き直すフレームの割り当てたページの数がケース F と同じでなければならない");
+            uint32_t differentPages = 0;
+            for (const PageInfo& page : recoverFrame.Infos)
+            {
+                const PageInfo* counterpart = counterpartOf(page);
+                if (counterpart == nullptr || pageDiffers(recoverFrame, page, *counterpart))
+                {
+                    ++differentPages;
+                }
+            }
+            std::cout << TestName << " ケース K2: 描き直したページ=" << recoverFrame.Stats[VirtualShadowMap::StatRendered]
+                      << " ケース F と違うページ=" << differentPages << std::endl;
+            Expect(differentPages == 0u,
+                   "ケース K2: 描き直した後の物理プールが、毎フレーム描き直したとき（ケース F）と全 texel で一致しなければならない（欠けを持ち越さない）");
+        }
         return true;
     }
 
