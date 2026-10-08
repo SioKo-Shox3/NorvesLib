@@ -956,12 +956,13 @@ namespace NorvesLib::Core::Skeletal
                     metadataSections[slot] = s;
                     metadataFound[slot] = true;
                 }
-                else if ((s.Flags & 1) || (IsStaticRootFrameProfile(profile) &&
-                                           (s.Code == Four('R', 'O', 'O', 'T') || s.Code == Four('S', 'R', 'E', 'F') ||
-                                            s.Code == Four('V', 'E', 'R', 'T') || s.Code == Four('I', 'N', 'D', 'X') ||
-                                            s.Code == Four('I', 'B', 'M', 'S') || s.Code == Four('M', 'N', 'G', 'T') ||
-                                            s.Code == Four('S', 'U', 'B', 'M') || s.Code == Four('M', 'S', 'L', 'T') ||
-                                            s.Code == Four('M', 'A', 'T', 'S'))))
+                else if ((s.Flags & 1) || s.Code == Four('S', 'O', 'C', 'K') ||
+                         (IsStaticRootFrameProfile(profile) &&
+                          (s.Code == Four('R', 'O', 'O', 'T') || s.Code == Four('S', 'R', 'E', 'F') ||
+                           s.Code == Four('V', 'E', 'R', 'T') || s.Code == Four('I', 'N', 'D', 'X') ||
+                           s.Code == Four('I', 'B', 'M', 'S') || s.Code == Four('M', 'N', 'G', 'T') ||
+                           s.Code == Four('S', 'U', 'B', 'M') || s.Code == Four('M', 'S', 'L', 'T') ||
+                           s.Code == Four('M', 'A', 'T', 'S'))))
                 {
                     return fail(RigV1Status::UnsupportedSection);
                 }

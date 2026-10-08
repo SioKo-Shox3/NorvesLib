@@ -143,11 +143,12 @@ namespace NorvesLib::Core::Skeletal::SplitWire
     {
         bool KnownRoleTable(uint32_t code, RigImportProfile profile)
         {
-            constexpr uint32_t codes[] = {
-                Four('S', 'T', 'R', 'S'), Four('T', 'J', 'N', 'T'), Four('R', 'S', 'E', 'T'), Four('A', 'R', 'S', 'T'),
-                Four('R', 'O', 'O', 'T'), Four('S', 'R', 'E', 'F'), Four('V', 'E', 'R', 'T'), Four('I', 'N', 'D', 'X'),
-                Four('I', 'B', 'M', 'S'), Four('M', 'N', 'G', 'T'), Four('S', 'U', 'B', 'M'), Four('M', 'S', 'L', 'T'),
-                Four('M', 'A', 'T', 'S'), Four('C', 'L', 'I', 'P'), Four('C', 'H', 'A', 'N'), Four('S', 'A', 'M', 'P')};
+            constexpr uint32_t codes[] = {Four('S', 'T', 'R', 'S'), Four('T', 'J', 'N', 'T'), Four('R', 'S', 'E', 'T'),
+                                          Four('A', 'R', 'S', 'T'), Four('R', 'O', 'O', 'T'), Four('S', 'R', 'E', 'F'),
+                                          Four('V', 'E', 'R', 'T'), Four('I', 'N', 'D', 'X'), Four('I', 'B', 'M', 'S'),
+                                          Four('M', 'N', 'G', 'T'), Four('S', 'U', 'B', 'M'), Four('M', 'S', 'L', 'T'),
+                                          Four('M', 'A', 'T', 'S'), Four('C', 'L', 'I', 'P'), Four('C', 'H', 'A', 'N'),
+                                          Four('S', 'A', 'M', 'P'), Four('S', 'O', 'C', 'K')};
             return (IsStaticRootFrameProfile(profile) && code == Four('A', 'F', 'R', 'M')) ||
                    std::find(std::begin(codes), std::end(codes), code) != std::end(codes);
         }
@@ -173,7 +174,11 @@ namespace NorvesLib::Core::Skeletal::SplitWire
             return RigV1Status::UnsupportedVersion;
         }
         const uint32_t count = U32(b, 28);
-        if (U32(b, 8) != 256 || U32(b, 16) != 0x01020304 || U32(b, 24) || count < expected.size() || count > 16 ||
+        size_t required = 0;
+        for (const auto& section : expected)
+            if (section.Required)
+                ++required;
+        if (U32(b, 8) != 256 || U32(b, 16) != 0x01020304 || U32(b, 24) || count < required || count > 16 ||
             U64(b, 32) != 256 || U64(b, 40) != b.size() || !Zero(b, 72, 256) || 256ull + count * 32ull > b.size())
         {
             return RigV1Status::BadWire;
@@ -213,10 +218,11 @@ namespace NorvesLib::Core::Skeletal::SplitWire
             }
             if (index < expected.size())
             {
-                if (flags != 1 || s.Record != expected[index].Record)
+                if (flags != (expected[index].Required ? 1u : 0u) || s.Record != expected[index].Record)
                 {
                     return RigV1Status::BadWire;
                 }
+                s.Required = expected[index].Required;
                 resolved[index] = s;
                 found[index] = true;
             }
@@ -249,14 +255,21 @@ namespace NorvesLib::Core::Skeletal::SplitWire
         }
         for (size_t i = 0; i < expected.size(); ++i)
         {
-            if (!found[i])
+            if (!found[i] && expected[i].Required)
             {
                 return RigV1Status::BadWire;
             }
         }
         for (size_t i = 0; i < expected.size(); ++i)
         {
-            expected[i] = resolved[i];
+            if (found[i])
+                expected[i] = resolved[i];
+            else
+            {
+                expected[i].Offset = 0;
+                expected[i].Size = 0;
+                expected[i].Count = 0;
+            }
         }
         return RigV1Status::Success;
     }
@@ -300,7 +313,7 @@ namespace NorvesLib::Core::Skeletal::SplitWire
             cursor = (cursor + 15) & ~size_t{15};
             const size_t o = 256 + i * 32;
             W32(bytes, o, s.Code);
-            W32(bytes, o + 4, 1);
+            W32(bytes, o + 4, s.Required ? 1 : 0);
             W64(bytes, o + 8, cursor);
             W64(bytes, o + 16, s.Data.size());
             W32(bytes, o + 24, s.Record);

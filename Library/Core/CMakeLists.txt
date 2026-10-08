@@ -99,11 +99,14 @@ set(PRIVATE_SOURCES
     Private/Animation/ClipMetadata.cpp
     Private/Animation/MotionAnalysis.cpp
     Private/Animation/AnimationEvents.cpp
+    Private/Animation/SocketTypes.cpp
     Private/Animation/AnimSync.cpp
     Private/Animation/AnimGraphSync.cpp
     Private/Animation/AnimGraphRootMotion.cpp
     Private/Animation/AnimGraphResource.cpp
     Private/Animation/AnimGraphInstance.cpp
+    Private/Component/SocketAttachmentComponent.cpp
+    Private/Component/HoldSlotComponent.cpp
     Private/Component/AnimatorComponent.cpp
     Private/Animation/ClipChannelSampler.cpp
     Private/Animation/SkeletalAnimationSampler.cpp
@@ -483,11 +486,14 @@ set(PUBLIC_HEADERS
     Public/Animation/AnimGraphInstance.h
     Public/Animation/ClipMetadata.h
     Public/Animation/ClipPlayback.h
+    Public/Animation/SocketTypes.h
     Public/Animation/AnimSync.h
     Public/Animation/AnimationEvents.h
     Public/Animation/RootMotion.h
     Public/Animation/MotionAnalysis.h
     Public/Animation/PoseModifier.h
+    Public/Component/SocketAttachmentComponent.h
+    Public/Component/HoldSlotComponent.h
     Public/Component/AnimatorComponent.h
     # Scene
     Public/Scene/SceneQuery.h

@@ -79,3 +79,34 @@ Clip nodeのsyncGroupを指定したときだけ同期する。対象は正の�
 通常遷移の非共有clipは現在の標準位相へseedする。transitionのsourceMarker/targetMarker対を指定した場合は、実際に条件を満たした遷移元stateの寄与clipから位相offsetを採り、指定名の位相差を遷移先へ加える。group本体の位相は変えず、0秒の連鎖でもoffsetを合成する。両側に同groupの実markerが必要で、markerlessへ変更された場合は遷移開始前に拒否する。共有されて現在寄与中のnodeはseekしない。
 
 seedによるseekはイベントとroot deltaの移動区間に含めない。イベントのframe内時刻はclip秒→標準位相→leader秒へ戻し、区分境界を跨いでも同時markerの配送を揃える。周回番号も標準位相に合わせる。GetSyncPhasesはgroup定義順の正規化位相、FindSyncGroupは名前から添字を返す。PoseModifierContextにも同じ位相列を渡す。
+
+## ソケットと保持
+
+SkeletonResourceはSetSockets／ApplySocketsJson／ApplySocketsFileで実行時のソケット定義を置換する。失敗時は旧定義を保持する。名前は一意、親は既存joint、offsetは有限な剛体変換（scale=1、単位Quaternion）。JSONの親は関節名、C++のParentJointは現在のresourceの添字。runtime置換はpose revisionとimmutable cooked hashを変更せず、SetJoints／SetSplitSkeleton／Unloadで定義を更新・破棄する。FindSocket/GetSocketsの借用は置換まで有効。
+
+同じ明示ファイルに次の配列を置き、それぞれの所有者へ適用できる。UTF-8/BOM、最大1MiB、JSON深さ32、各object最大64キー。自動探索や書き戻しは行わない。
+
+- sockets: name、parent、任意position[3]、rotation[4]、scale[3]。最大256件
+- holdSlots: name、capacity（既定1、最大32）、acceptTags。最大64slot、tagはslotごと最大64件
+- attachProfiles: name、任意position/rotation/scale。最大64件
+- grip: 保持物のlocal剛体変換。静的な保持物でも使える
+
+SkinnedMeshComponent.GetSocketWorldTransformは公開済みjoint modelを読み、自動評価しない。骨basisをX軸から直交化してscale/shearを除去し、平行移動を保持する。反転・軸退化は失敗。最後にOwnerの正のEntity scaleを適用する。行ベクトルの合成順はinverse(grip)×profile×socketOffset×rigidJointModel×ownerWorld。
+
+SocketAttachmentComponentは保持物に付け、targetをObjectIdで毎回解決する。初回のworld姿勢から位置Lerp・回転Slerpで補間し、profile切替もその時点のoffsetから補間する。AttachStateはDetached/Blending/Attached。Detachは現在姿勢を保持し、直近差分のLinear/Angular velocityを返す。最大sample dtと平滑秒数は設定可能で、長い空白では速度の基準を取り直す。物理bodyへ速度は自動適用しない。
+
+PostPhysicsではOwner親とtarget親の依存を祖先から更新し、各依存のWorld変換を確定する。同じWorld TickSerialで重複評価せず、Entity親とattachmentを合わせた循環を拒否する。tick停止中の依存は姿勢を保持する。現実装は依存ごとにWorld変換走査を行うため、大量の追従物では走査の集約が必要。
+
+HoldSlotComponentは取得直後から容量を予約する。acceptTagsが空なら全て、指定時はいずれかのtag一致が必要。保持物ID・質量倍率をOnAcquired/OnReleasedへ渡す。同じ物の二重取得、満杯、tag不一致、遷移中を区別する。通常Releaseも遷移中は拒否し、attachmentの中断・終了・component除去は内部清算で予約を解放する。Outer解除後のFinalizeでも、World生存中の保存済みowner IDを使って購読と予約を清算する。
+
+profile切替は直接API、target AnimatorのInt parameter、Hold.ProfileイベントのIntValue、EntityRef.SetHoldProfileByIndexから行える。共通setterがbound Intも更新するため、script/event/UIからの選択が直後のparameter読出しで戻らない。EntityRef.DetachHeldItemも同じ寿命検証を通す。
+
+### cooked SOCK
+
+Skeleton v1にoptional SOCKを追加する。1件64Bで、STRS名offset u64/size u32、正準ParentJoint u32、position3f/rotation4f/scale3f、予約8B。空定義では節を出さず旧bytesを保持する。WithSkeletonSocketsは新しい所有Skeletonを返し、SOCKを含むContentHashへ更新する。この変更後はSkinMeshも新しいSkeletonContentHashに合わせて再構築する。runtime overlayはそのhashへ含めない。
+
+### 合成デバッグscene
+
+NORVES_ENABLE_IMGUI=ONでビルドし、Gameへ--animation-debugを付けると合成パネルと保持物を追加する。明示指定時だけImGuiを有効にし、通常の起動画面は変更しない。Animator画面でparameter・状態・同期phase・停止/コマ送り、ソケット画面でprofileとoffsetを調整できる。色付き軸はWorld LateTick後の当frame姿勢から描く。viewはEnter成功直前に登録し、Leave冒頭で解除する。
+
+このsceneはコード接続と調整のための合成素材。実リグでの見た目、GPUでの実行、録画と既定起動画面の比較は別途確認が必要。

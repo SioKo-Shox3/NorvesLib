@@ -1,5 +1,6 @@
 ﻿#pragma once
 // Mesh固有のIBMを含まない、検証済みのcurrent Skeleton。
+#include "Animation/SocketTypes.h"
 #include "Asset/CookedClipBankV1.h"
 namespace NorvesLib::Core
 {
@@ -13,6 +14,7 @@ namespace NorvesLib::Core::Skeletal
         RigTopology Topology;
         RigClipSnapshot CurrentRest;
         Container::FixedArray<float, 16> RootTransform{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        Container::VariableArray<Animation::SocketDefinition> Sockets;
         uint64_t PayloadHash = 0, ContentHash = 0, RootHash = 0;
     };
     class SkeletonV1
@@ -33,6 +35,10 @@ namespace NorvesLib::Core::Skeletal
     };
     [[nodiscard]] bool BuildSkeletonV1(const RigAuthoringCpu&, SkeletonV1& out, RigV1Report&, const RigV1Limits& = {},
                                        RigImportProfile = RigImportProfile::DirectTrs128);
+    // ParentJointはこのSkeletonの正準添字。新しいContentHashを持つ所有値を返す。
+    [[nodiscard]] bool WithSkeletonSockets(const SkeletonV1&, Container::Span<const Animation::SocketDefinition>,
+                                           SkeletonV1&, RigV1Report&, const RigV1Limits& = {},
+                                           RigImportProfile = RigImportProfile::DirectTrs128);
     [[nodiscard]] bool WriteSkeletonV1(const SkeletonV1&, Container::VariableArray<uint8_t>& out, RigV1Report&,
                                        const RigV1Limits& = {}, RigImportProfile = RigImportProfile::DirectTrs128);
     [[nodiscard]] bool ParseSkeletonV1(Container::Span<const uint8_t>, SkeletonV1& out, RigV1Report&,

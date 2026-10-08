@@ -77,8 +77,10 @@ namespace NorvesLib::Core::Component
         // CreateWorldRowVectorで再構成できる正のscaleのTRSだけを返す。
         // shear/反転/退化はfalse。完全な行列表現には上の行列APIを使う。
         [[nodiscard]] bool TryGetJointWorldTransform(uint32_t index, Math::Transform& outTransform) const;
+        // 自動評価せず、骨のscale/shearを捨てOwnerのscaleだけを保持する。
+        [[nodiscard]] bool GetSocketWorldTransform(Identity socket, Math::Transform& outTransform) const;
 
-    private:
+      private:
         Container::TSharedPtr<const Rendering::SkinnedMeshAssetLease> GetMaterialBindingLease() const;
         bool HasValidPoseResources() const;
         bool HasCurrentPose() const;

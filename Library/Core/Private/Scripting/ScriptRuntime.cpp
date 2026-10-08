@@ -1,13 +1,14 @@
 ﻿#include "Scripting/ScriptRuntime.h"
 
-#include "Component/ScriptComponent.h"
 #include "Component/AnimatorComponent.h"
+#include "Component/ScriptComponent.h"
+#include "Component/SocketAttachmentComponent.h"
+#include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include "Object/Entity.h"
 #include "Scripting/AngelScriptEngineOwner.h"
 #include "Scripting/ScriptSourceTracker.h"
 #include "Thread/Thread.h"
-#include "Debug/Stats.h"
 
 #include <angelscript.h>
 
@@ -264,9 +265,19 @@ namespace NorvesLib::Core
                 ? engine->RegisterObjectMethod("EntityRef", "bool SetAnimBoolByIndex(uint, bool)", asFUNCTION(EntityRefSetAnimBool), asCALL_CDECL_OBJLAST) : animInt;
             const int animTrigger = animBool >= 0
                 ? engine->RegisterObjectMethod("EntityRef", "bool SetAnimTriggerByIndex(uint)", asFUNCTION(EntityRefSetAnimTrigger), asCALL_CDECL_OBJLAST) : animBool;
-            if(animTrigger < 0)
+            const int holdProfile =
+                animTrigger >= 0
+                    ? engine->RegisterObjectMethod("EntityRef", "bool SetHoldProfileByIndex(uint)",
+                                                   asFUNCTION(EntityRefSetHoldProfile), asCALL_CDECL_OBJLAST)
+                    : animTrigger;
+            const int detachHold =
+                holdProfile >= 0 ? engine->RegisterObjectMethod("EntityRef", "bool DetachHeldItem()",
+                                                                asFUNCTION(EntityRefDetachHold), asCALL_CDECL_OBJLAST)
+                                 : holdProfile;
+            if (detachHold < 0)
             {
-                NORVES_LOG_ERROR("Scripting", "Animatorのスクリプト入口を登録できません: code=%d", animTrigger);
+                NORVES_LOG_ERROR("Scripting", "アニメーション・保持のスクリプト入口を登録できません: code=%d",
+                                 detachHold);
                 return false;
             }
             if (setPosition < 0)
@@ -362,6 +373,28 @@ namespace NorvesLib::Core
             return false;
         }
 
+        static Component::SocketAttachmentComponent* ResolveAttachment(EntityRef* reference)
+        {
+            Entity* owner = nullptr;
+            if (!reference || !reference->Runtime ||
+                !static_cast<Impl*>(reference->Runtime)->ResolveEntityRef(*reference, owner))
+                return nullptr;
+            auto* attachment = owner->GetComponent<Component::SocketAttachmentComponent>();
+            return attachment && !attachment->IsPendingDestroy() ? attachment : nullptr;
+        }
+        static bool EntityRefSetHoldProfile(uint32_t index, EntityRef* reference)
+        {
+            auto* attachment = ResolveAttachment(reference);
+            return attachment && attachment->SetProfileByIndex(index);
+        }
+        static bool EntityRefDetachHold(EntityRef* reference)
+        {
+            auto* attachment = ResolveAttachment(reference);
+            if (!attachment)
+                return false;
+            attachment->Detach();
+            return true;
+        }
         static Component::AnimatorComponent* ResolveAnimator(EntityRef* reference)
         {
             Entity* owner=nullptr;

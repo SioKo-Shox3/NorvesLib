@@ -598,6 +598,17 @@ namespace NorvesLib::Core::Component
         return true;
     }
 
+    bool SkinnedMeshComponent::GetSocketWorldTransform(Identity name, Math::Transform& out) const
+    {
+        if (!GetOwner() || !HasCurrentPose() || !m_SkeletalAsset || !m_SkeletalAsset->GetSkeleton())
+            return false;
+        const auto* socket = m_SkeletalAsset->GetSkeleton()->FindSocket(name);
+        if (!socket)
+            return false;
+        Math::Matrix4x4 joint;
+        return TryGetJointModelMatrix(socket->ParentJoint, joint) &&
+               Animation::BuildSocketWorldTransform(joint, socket->Offset, GetOwner()->GetWorldTransform(), out);
+    }
     Math::Matrix4x4 SkinnedMeshComponent::BuildOwnerWorldTransform() const
     {
         const Entity* owner = GetOwner();

@@ -4,17 +4,20 @@
 #include "Animation/SkeletalAssetResource.h"
 #include "Animation/SkeletonResource.h"
 #include "Component/AnimatorComponent.h"
+#include "Component/HoldSlotComponent.h"
 #include "Component/ScriptComponent.h"
 #include "Component/SkinnedMeshComponent.h"
+#include "Component/SocketAttachmentComponent.h"
 #include "Engine/NorvesEngine.h"
+#include "Math/MatrixUtils.h"
 #include "Object/Entity.h"
 #include "Object/ResourceRegistry.h"
 #include "Object/World.h"
 #include <chrono>
 #include <cmath>
-#include <source_location>
 #include <cstdio>
 #include <cstdlib>
+#include <source_location>
 
 namespace
 {
@@ -745,6 +748,17 @@ namespace
         GRAPH_CHECK(instance.Update(.25f));
         NearGraph(instance.GetSyncPhases()[0], phase);
         NearGraph(float(instance.ConsumeRootMotion().X), 0);
+        const auto* phaseData = instance.GetSyncPhases().data();
+        const auto* traversalData = instance.GetTraversals().data();
+        const auto traversalCapacity = instance.GetTraversals().capacity();
+        const auto* poseData = instance.GetLocalPose().data();
+        for (unsigned i = 0; i < 1000; ++i)
+        {
+            GRAPH_CHECK(instance.Update(.01f) && instance.Evaluate());
+            GRAPH_CHECK(
+                instance.GetSyncPhases().data() == phaseData && instance.GetTraversals().data() == traversalData &&
+                instance.GetTraversals().capacity() == traversalCapacity && instance.GetLocalPose().data() == poseData);
+        }
     }
 
     void BenchmarkAnimGraph()
@@ -793,6 +807,241 @@ namespace
                 "ANIM_GRAPH_BENCHMARK case=%s joints=52 iterations=%u update_ms=%.3f evaluate_ms=%.3f synthetic=1\n",
                 labels[kind], iterations, update, evaluate);
         }
+    }
+
+    void TestSocketsAndHoldSlots()
+    {
+        GraphFixture f;
+        A::SocketReport report;
+        const auto revision = f.Skeleton->GetPoseRevision();
+        GRAPH_CHECK(f.Skeleton->ApplySocketsJson(
+            C::String(R"({"version":1,"sockets":[{"name":"Mouth","parent":"Root","position":[1,0,0]}]})"), report));
+        GRAPH_CHECK(f.Skeleton->GetPoseRevision() == revision && f.Skeleton->FindSocket(Identity("Mouth")));
+        GRAPH_CHECK(
+            !f.Skeleton->ApplySocketsJson(C::String(R"({"sockets":[{"name":"Bad","parent":"Missing"}]})"), report));
+        GRAPH_CHECK(f.Skeleton->FindSocket(Identity("Mouth")));
+        auto clip = f.AClip->GetClip();
+        clip.Channels[0].Samples = {{0, {0, 0, 0, 0}}};
+        S::SkeletalAnimationChannel rotation;
+        rotation.JointIndex = 0;
+        rotation.Path = S::SkeletalAnimationPath::Rotation;
+        rotation.Samples = {{0, {0, 0, .7071067811865475f, .7071067811865475f}}};
+        clip.Channels.push_back(rotation);
+        f.AClip->SetClip(std::move(clip));
+        World world;
+        world.Initialize();
+        auto* owner = world.SpawnEntity<Entity>();
+        auto* item = world.SpawnEntity<Entity>();
+        auto* second = world.SpawnEntity<Entity>();
+        auto* third = world.SpawnEntity<Entity>();
+        auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(owner);
+        mesh->SetSkeletalAsset(f.Asset);
+        mesh->SetPlaying(false);
+        owner->SetLocalScale(M::Vector3(2, 3, 4));
+        world.Tick(0);
+        world.LateTick(0);
+        M::Transform socket;
+        GRAPH_CHECK(mesh->GetSocketWorldTransform(Identity("Mouth"), socket));
+        A::SkeletalPoseSnapshot oracle;
+        GRAPH_CHECK(
+            A::SkeletalAnimationSampler::Sample(*f.Skeleton, *f.AClip, *f.Mesh, 0, M::Matrix4x4::Identity, oracle));
+        const auto& palette = oracle.BonePalette[0];
+        NearGraph(socket.position.x, (palette.m00 + palette.m30) * 2);
+        NearGraph(socket.position.y, (palette.m01 + palette.m31) * 3);
+        NearGraph(socket.position.z, (palette.m02 + palette.m32) * 4);
+        NearGraph(socket.scale.x, 2);
+        NearGraph(socket.scale.y, 3);
+        NearGraph(socket.scale.z, 4);
+        auto* slots = world.CreateComponent<Component::HoldSlotComponent>(owner);
+        C::VariableArray<Component::HoldSlotDefinition> definitions{{Identity("Mouth"), 1, {Identity("Weapon")}},
+                                                                    {Identity("Pair"), 2, {}}};
+        GRAPH_CHECK(slots->SetSlots(definitions));
+        const Identity weapon("Weapon"), wrong("Food");
+        GRAPH_CHECK(slots->TryAcquire(Identity("Mouth"), item->GetObjectId(), {&wrong, 1}) ==
+                    Component::HoldAcquireResult::DeniedTags);
+        GRAPH_CHECK(slots->TryAcquire(Identity("Mouth"), item->GetObjectId(), {&weapon, 1}, 1, true) ==
+                    Component::HoldAcquireResult::Granted);
+        GRAPH_CHECK(!slots->Release(Identity("Mouth"), item->GetObjectId()));
+        GRAPH_CHECK(slots->TryAcquire(Identity("Mouth"), item->GetObjectId(), {&weapon, 1}) ==
+                    Component::HoldAcquireResult::DeniedTransition);
+        GRAPH_CHECK(slots->TryAcquire(Identity("Mouth"), second->GetObjectId(), {&weapon, 1}) ==
+                    Component::HoldAcquireResult::DeniedOccupied);
+        GRAPH_CHECK(slots->SetTransitioning(Identity("Mouth"), item->GetObjectId(), false) &&
+                    slots->Release(Identity("Mouth"), item->GetObjectId()));
+        GRAPH_CHECK(slots->TryAcquire(Identity("Pair"), item->GetObjectId(), {}) ==
+                    Component::HoldAcquireResult::Granted);
+        GRAPH_CHECK(slots->TryAcquire(Identity("Pair"), second->GetObjectId(), {}) ==
+                    Component::HoldAcquireResult::Granted);
+        GRAPH_CHECK(slots->TryAcquire(Identity("Pair"), third->GetObjectId(), {}) ==
+                    Component::HoldAcquireResult::DeniedOccupied);
+        GRAPH_CHECK(slots->Release(Identity("Pair"), item->GetObjectId()) &&
+                    slots->Release(Identity("Pair"), second->GetObjectId()));
+        unsigned notified = 0;
+        Delegate<const Component::HoldSlotEvent&> once;
+        once = Delegate<const Component::HoldSlotEvent&>([&](const auto&) { slots->OnAcquired.Remove(once); });
+        slots->OnAcquired.Add(once);
+        slots->OnAcquired.Add([&](const auto&) { ++notified; });
+        GRAPH_CHECK(slots->TryAcquire(Identity("Pair"), third->GetObjectId(), {}) ==
+                        Component::HoldAcquireResult::Granted &&
+                    notified == 1);
+        world.Finalize();
+    }
+    void TestSocketAttachmentRuntime()
+    {
+        GraphFixture f;
+        A::SocketReport report;
+        GRAPH_CHECK(f.Skeleton->ApplySocketsJson(
+            C::String(R"({"sockets":[{"name":"Mouth","parent":"Root","position":[1,0,0]}]})"), report));
+        World world;
+        world.Initialize();
+        auto* sword = world.SpawnEntity<Entity>();
+        auto* owner = world.SpawnEntity<Entity>();
+        auto* attachment = world.CreateComponent<Component::SocketAttachmentComponent>(sword);
+        auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(owner);
+        mesh->SetSkeletalAsset(f.Asset);
+        mesh->SetPlaying(false);
+        auto* animator = world.CreateComponent<Component::AnimatorComponent>(owner);
+        auto* slots = world.CreateComponent<Component::HoldSlotComponent>(owner);
+        const Component::HoldSlotDefinition slot{Identity("Mouth"), 1, {}};
+        GRAPH_CHECK(slots->SetSlots({&slot, 1}));
+        owner->SetLocalPosition(10, 0, 0);
+        GRAPH_CHECK(attachment->ApplySettingsJson(
+            C::String(R"({"attachProfiles":[{"name":"Along"},{"name":"Side","position":[2,0,0]}]})"), report));
+        GRAPH_CHECK(slots->TryAcquire(Identity("Mouth"), sword->GetObjectId(), {}) ==
+                    Component::HoldAcquireResult::Granted);
+        GRAPH_CHECK(attachment->SetVelocitySampling(.2f, 0) &&
+                    attachment->Attach(owner->GetObjectId(), Identity("Mouth"), Identity("Mouth"), .1f));
+        GRAPH_CHECK(!slots->Release(Identity("Mouth"), sword->GetObjectId()));
+        world.Tick(.05f);
+        world.LateTick(.05f);
+        NearGraph(sword->GetWorldTransform().position.x, 5.5f);
+        world.Tick(.05f);
+        world.LateTick(.05f);
+        NearGraph(sword->GetWorldTransform().position.x, 11);
+        GRAPH_CHECK(attachment->GetAttachState() == Component::AttachState::Attached);
+        GRAPH_CHECK(attachment->SetProfile(Identity("Side"), .2f));
+        world.Tick(.1f);
+        world.LateTick(.1f);
+        NearGraph(sword->GetWorldTransform().position.x, 12);
+        GRAPH_CHECK(attachment->SetProfile(Identity("Along"), .2f));
+        world.Tick(0);
+        world.LateTick(0);
+        NearGraph(sword->GetWorldTransform().position.x, 12);
+        world.Tick(.1f);
+        world.LateTick(.1f);
+        NearGraph(sword->GetWorldTransform().position.x, 11.5f);
+        world.Tick(.1f);
+        world.LateTick(.1f);
+        owner->SetLocalPosition(11, 0, 0);
+        world.Tick(.1f);
+        world.LateTick(.1f);
+        attachment->Detach();
+        NearGraph(sword->GetWorldTransform().position.x, 12);
+        NearGraph(attachment->GetReleaseVelocity().Linear.x, 10);
+        GRAPH_CHECK(slots->GetOccupancy(Identity("Mouth")) == 0);
+        GRAPH_CHECK(attachment->Attach(owner->GetObjectId(), Identity("Mouth"), Identity("Mouth"), .1f));
+        GRAPH_CHECK(animator->OnEvent.GetSize() == 1);
+        // 正規のcomponent削除ではOuterが先に解除されても、購読と予約を清算する。
+        sword->RemoveComponent(attachment);
+        GRAPH_CHECK(slots->GetOccupancy(Identity("Mouth")) == 0 && animator->OnEvent.IsEmpty());
+        world.Finalize();
+    }
+    void TestSocketDependencyOrder()
+    {
+        GraphFixture f;
+        A::SocketReport report;
+        GRAPH_CHECK(f.Skeleton->ApplySocketsJson(
+            C::String(R"({"sockets":[{"name":"Mouth","parent":"Root","position":[1,0,0]}]})"), report));
+        World world;
+        world.Initialize();
+        auto* a = world.SpawnEntity<Entity>();
+        auto* p = world.SpawnEntity<Entity>();
+        auto* t = world.SpawnEntity<Entity>(p);
+        auto* q = world.SpawnEntity<Entity>();
+        auto* r = world.SpawnEntity<Entity>();
+        for (auto* entity : {a, p, t, q, r})
+        {
+            auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(entity);
+            mesh->SetSkeletalAsset(f.Asset);
+            mesh->SetPlaying(false);
+        }
+        auto* aa = world.CreateComponent<Component::SocketAttachmentComponent>(a);
+        auto* ta = world.CreateComponent<Component::SocketAttachmentComponent>(t);
+        auto* pa = world.CreateComponent<Component::SocketAttachmentComponent>(p);
+        q->SetLocalPosition(20, 0, 0);
+        r->SetLocalPosition(10, 0, 0);
+        GRAPH_CHECK(pa->Attach(r->GetObjectId(), Identity("Mouth"), {}, 0) &&
+                    ta->Attach(q->GetObjectId(), Identity("Mouth"), {}, 0) &&
+                    aa->Attach(t->GetObjectId(), Identity("Mouth"), {}, 0));
+        world.Tick(.1f);
+        world.LateTick(.1f);
+        NearGraph(p->GetWorldTransform().position.x, 11);
+        NearGraph(t->GetWorldTransform().position.x, 21);
+        NearGraph(a->GetWorldTransform().position.x, 22);
+        r->SetLocalPosition(15, 0, 0);
+        q->SetLocalPosition(25, 0, 0);
+        world.Tick(.1f);
+        world.LateTick(.1f);
+        NearGraph(p->GetWorldTransform().position.x, 16);
+        NearGraph(t->GetWorldTransform().position.x, 26);
+        NearGraph(a->GetWorldTransform().position.x, 27);
+        pa->SetTickEnabled(false);
+        r->SetLocalPosition(25, 0, 0);
+        world.Tick(.1f);
+        world.LateTick(.1f);
+        NearGraph(p->GetWorldTransform().position.x, 16);
+        NearGraph(t->GetWorldTransform().position.x, 26);
+        NearGraph(a->GetWorldTransform().position.x, 27);
+        pa->SetTickEnabled(true);
+        world.Tick(.1f);
+        world.LateTick(.1f);
+        NearGraph(p->GetWorldTransform().position.x, 26);
+        NearGraph(t->GetWorldTransform().position.x, 26);
+        aa->Detach();
+        GRAPH_CHECK(!aa->Attach(a->GetObjectId(), Identity("Mouth"), {}, 0));
+        world.Finalize();
+    }
+
+    void TestHoldProfileScript()
+    {
+        GraphFixture f;
+        A::SocketReport report;
+        GRAPH_CHECK(
+            f.Skeleton->ApplySocketsJson(C::String(R"({"sockets":[{"name":"Mouth","parent":"Root"}]})"), report));
+        auto graph = f.Graph(
+            R"({"version":1,"params":[{"name":"Profile","type":"int"}],"nodes":[{"id":"a","type":"clip","clip":"a"}],"root":"a"})");
+        World world;
+        world.Initialize();
+        GRAPH_CHECK(GEngine.GetScriptRuntime().Initialize(world) == EScriptRuntimeResult::Success);
+        auto* owner = world.SpawnEntity<Entity>();
+        auto* target = world.SpawnEntity<Entity>();
+        auto* mesh = world.CreateComponent<Component::SkinnedMeshComponent>(target);
+        mesh->SetSkeletalAsset(f.Asset);
+        auto* animator = world.CreateComponent<Component::AnimatorComponent>(target);
+        GRAPH_CHECK(animator->SetGraph(graph));
+        auto* attachment = world.CreateComponent<Component::SocketAttachmentComponent>(owner);
+        GRAPH_CHECK(attachment->ApplySettingsJson(C::String(R"({"attachProfiles":[{"name":"Along"},{"name":"Side"}]})"),
+                                                  report));
+        attachment->BindProfileParameter(Identity("Profile"));
+        GRAPH_CHECK(attachment->Attach(target->GetObjectId(), Identity("Mouth"), {}, 0));
+        auto* script = new Component::ScriptComponent();
+        script->getScriptPath() = C::String("Scripts/Test/HoldProfileSetter.as");
+        script->getScriptClassName() = C::String("HoldProfileSetter");
+        GRAPH_CHECK(owner->AddComponent(script));
+        world.Tick(.01f);
+        world.LateTick(.01f);
+        int32_t value = -1;
+        GRAPH_CHECK(attachment->GetProfileIndex() == 1 && animator->GetInt(0, value) && value == 1);
+        script->SetTickEnabled(false);
+        A::AnimEventInfo event;
+        event.Name = Identity("Hold.Profile");
+        event.IntValue = 0;
+        animator->OnEvent.Broadcast(event);
+        world.Tick(.01f);
+        world.LateTick(.01f);
+        GRAPH_CHECK(attachment->GetProfileIndex() == 0 && animator->GetInt(0, value) && value == 0);
+        world.Finalize();
+        GRAPH_CHECK(GEngine.GetScriptRuntime().Shutdown() == EScriptRuntimeResult::Success);
     }
     void TestRootMotionRuntime()
     {
@@ -860,6 +1109,10 @@ void TestAnimGraphRuntime()
     TestGraphPlaybackRegressions();
     TestAnimatorConnection();
     TestAnimatorScriptParameter();
+    TestSocketsAndHoldSlots();
+    TestSocketAttachmentRuntime();
+    TestSocketDependencyOrder();
+    TestHoldProfileScript();
     BenchmarkAnimGraph();
     std::puts("AnimGraphRuntimeTest PASS");
 }

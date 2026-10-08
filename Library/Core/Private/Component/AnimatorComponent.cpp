@@ -116,6 +116,16 @@ namespace NorvesLib::Core::Component
     {
         return m_Instance.Parameters().SetInt(h, value);
     }
+    bool AnimatorComponent::GetInt(Animation::AnimParamHandle handle, int32_t& out) const
+    {
+        const auto& params = m_Instance.Parameters();
+        const auto* definition = params.Definition(handle);
+        const auto* value = params.Get(handle);
+        if (!definition || !value || definition->Type != Animation::AnimParamType::Int)
+            return false;
+        out = value->Int;
+        return true;
+    }
     bool AnimatorComponent::SetBool(Animation::AnimParamHandle h, bool value)
     {
         return m_Instance.Parameters().SetBool(h, value);
@@ -242,6 +252,7 @@ namespace NorvesLib::Core::Component
     {
         out.Parameters.clear();
         out.Nodes.clear();
+        out.SyncGroups.clear();
         out.bFrozen = m_bFrozen;
         out.bReady = bool(m_Graph && m_Graph->IsLoaded());
         if (!m_Instance.GetGraph())
@@ -255,6 +266,10 @@ namespace NorvesLib::Core::Component
         }
         const auto& graph = *m_Instance.GetGraph();
         const auto& weights = m_Instance.GetNodeWeights();
+        const auto phases = m_Instance.GetSyncPhases();
+        for (size_t i = 0; i < graph.SyncGroups.size() && i < phases.size(); ++i)
+            out.SyncGroups.push_back({graph.SyncGroups[i].Name, phases[i]});
+
         for (size_t i = 0; i < graph.Nodes.size(); ++i)
         {
             AnimatorDebugNode node;

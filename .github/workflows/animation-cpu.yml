@@ -58,7 +58,7 @@ jobs:
           "$env:SDK_ROOT/Bin" >> $env:GITHUB_PATH
       - name: CPU検証の構成を生成する
         run: |
-          cmake -S . -B build/animation -G 'Visual Studio 17 2022' -A x64 -DNORVES_BUILD_TESTS=ON 2>&1 | Tee-Object "$env:NORVES_CI_LOG/configure.log"
+          cmake -S . -B build/animation -G 'Visual Studio 17 2022' -A x64 -DNORVES_BUILD_TESTS=ON -DNORVES_ENABLE_IMGUI=ON 2>&1 | Tee-Object "$env:NORVES_CI_LOG/configure.log"
           if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
       - name: 姿勢評価の本体と関連テストをビルドする
         run: |
@@ -74,8 +74,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Cook bundle build failed' }
       - name: クリップ保存形式と束縛を検証する
         run: |
-          ctest --test-dir build/animation -C Release -V --output-on-failure -R '^(CookedClipBankV1Test|SkeletalClipBankBindingTest)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/cook-tests.log"
+          ctest --test-dir build/animation -C Release -V --output-on-failure -R '^(CookedClipBankV1Test|SkeletalClipBankBindingTest|CookedSkeletonV1Test)$' 2>&1 | Tee-Object "$env:NORVES_CI_LOG/cook-tests.log"
           if ($LASTEXITCODE -ne 0) { throw 'Cook animation tests failed' }
+      - name: 合成デバッグ画面のGameをビルドする
+        run: |
+          cmake --build build/animation --config Release --target Game -- /m:2 2>&1 | Tee-Object "$env:NORVES_CI_LOG/game-build.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Animation debug Game build failed' }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

@@ -249,6 +249,7 @@ namespace NorvesLib::Core
          * @brief Entity階層のワールドトランスフォームを更新
          */
         void UpdateWorldTransforms();
+        uint64_t GetTickSerial() const noexcept { return m_TickSerial; }
 
     private:
         friend class Engine::ApplicationProcessor;
@@ -258,6 +259,7 @@ namespace NorvesLib::Core
         {
             return m_bDispatchingTicks || m_bCleaningObjects;
         }
+        uint64_t m_TickSerial = 0;
         void BuildTickSnapshot();
         void CollectTickEntries(Entity& entity, size_t& ordinal);
         bool CanDispatchEntity(const Entity& entity) const;

@@ -54,6 +54,8 @@ namespace NorvesLib::Core
         ++m_PoseRevision;
         m_PoseRuntime = {};
         m_SplitSkeleton.reset();
+        m_Sockets.clear();
+        ++m_SocketRevision;
         m_Joints.clear();
         m_AuthorRestPose.clear();
         m_JointIndices.clear();
@@ -67,13 +69,14 @@ namespace NorvesLib::Core
         {
             size += joint.Name.size();
         }
-        size += m_PoseRuntime.AllocatedBytes();
+        size += m_PoseRuntime.AllocatedBytes() + m_Sockets.capacity() * sizeof(Animation::SocketDefinition);
         size += m_JointIndices.size() * (sizeof(Identity) + sizeof(uint32_t));
         size += m_AuthorRestPose.size() * sizeof(Skeletal::SkeletalRestTransform);
         if (m_SplitSkeleton)
         {
             size += sizeof(Skeletal::SkeletonV1Data) +
-                    m_SplitSkeleton->CurrentRest.Rest.size() * sizeof(Skeletal::SkeletalRestTransform);
+                    m_SplitSkeleton->CurrentRest.Rest.size() * sizeof(Skeletal::SkeletalRestTransform) +
+                    m_SplitSkeleton->Sockets.capacity() * sizeof(Animation::SocketDefinition);
             size += m_SplitSkeleton->Topology.CanonicalBytes.size() + m_SplitSkeleton->CurrentRest.Label.size();
             for (const auto& joint : m_SplitSkeleton->Topology.Joints)
             {
@@ -103,10 +106,48 @@ namespace NorvesLib::Core
         m_Joints.clear();
         m_AuthorRestPose.clear();
         m_SplitSkeleton = skeleton.m_Data;
+        m_Sockets = m_SplitSkeleton->Sockets;
+        ++m_SocketRevision;
         m_bSplitV1 = true;
         ++m_PoseRevision;
         Animation::Detail::BuildSplitSkeletonPoseRuntime(*m_SplitSkeleton, m_PoseRuntime);
         return true;
+    }
+
+    bool SkeletonResource::SetSockets(Container::Span<const Animation::SocketDefinition> sockets,
+                                      Animation::SocketReport& report)
+    {
+        if (!Animation::ValidateSockets(sockets, m_PoseRuntime.Parents.size(), report))
+        {
+            NORVES_LOG_WARNING("Animation", "ソケット定義を拒否しました: error=%u", unsigned(report.Error));
+            return false;
+        }
+        Container::VariableArray<Animation::SocketDefinition> candidate(sockets.begin(), sockets.end());
+        m_Sockets = std::move(candidate);
+        ++m_SocketRevision;
+        return true;
+    }
+    bool SkeletonResource::ApplySocketsJson(const Container::String& json, Animation::SocketReport& report)
+    {
+        Container::VariableArray<Animation::SocketDefinition> candidate;
+        if (!Animation::ParseSockets(json, *this, candidate, report))
+            return false;
+        m_Sockets = std::move(candidate);
+        ++m_SocketRevision;
+        return true;
+    }
+    bool SkeletonResource::ApplySocketsFile(const Container::String& path, Animation::SocketReport& report)
+    {
+        Container::String json;
+        return Animation::ReadSocketSettingsFile(path, json, report) && ApplySocketsJson(json, report);
+    }
+    const Animation::SocketDefinition* SkeletonResource::FindSocket(Identity name) const
+    {
+        if (name.IsValid())
+            for (const auto& socket : m_Sockets)
+                if (socket.Name == name)
+                    return &socket;
+        return nullptr;
     }
     bool SkeletonResource::IsSplitV1() const noexcept
     {
@@ -126,6 +167,8 @@ namespace NorvesLib::Core
         m_PoseRuntime = {};
         m_AuthorRestPose.clear();
         m_Joints = std::move(joints);
+        m_Sockets.clear();
+        ++m_SocketRevision;
         m_JointIndices.clear();
         for (size_t index = 0; index < m_Joints.size(); ++index)
         {

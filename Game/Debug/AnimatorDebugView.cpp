@@ -80,6 +80,12 @@ namespace Game::Debug
                 }
                 ImGui::PopID();
             }
+            for (const auto& group : m_Snapshot.SyncGroups)
+            {
+                const auto name = group.Name.ToString();
+                ImGui::Text("同期: %s", name.c_str());
+                ImGui::ProgressBar(group.Phase);
+            }
             for (const auto& node : m_Snapshot.Nodes)
             {
                 const auto name = node.Name.ToString();
@@ -93,6 +99,23 @@ namespace Game::Debug
                     {
                         ImGui::ProgressBar(node.State.Transition);
                     }
+                    ImGui::PushID(name.c_str());
+                    const auto graph = animator->GetGraph();
+                    if (graph && graph->GetData())
+                        for (const auto& definition : graph->GetData()->Nodes)
+                        {
+                            if (definition.Name != node.Name)
+                                continue;
+                            for (const auto& state : definition.States)
+                            {
+                                const auto target = state.Name.ToString();
+                                if (ImGui::SmallButton(target.c_str()))
+                                    (void)animator->RequestState(definition.Name, state.Name, .15f);
+                                ImGui::SameLine();
+                            }
+                            ImGui::NewLine();
+                        }
+                    ImGui::PopID();
                 }
             }
         }

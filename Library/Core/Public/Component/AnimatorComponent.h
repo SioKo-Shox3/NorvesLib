@@ -20,10 +20,16 @@ namespace NorvesLib::Core::Component
         Animation::AnimStateStatus State;
         bool bStateMachine = false;
     };
+    struct AnimatorDebugSync
+    {
+        Identity Name;
+        float Phase = 0;
+    };
     struct AnimatorDebugSnapshot
     {
         Container::VariableArray<AnimatorDebugParam> Parameters;
         Container::VariableArray<AnimatorDebugNode> Nodes;
+        Container::VariableArray<AnimatorDebugSync> SyncGroups;
         bool bFrozen = false;
         bool bReady = false;
     };
@@ -49,6 +55,7 @@ namespace NorvesLib::Core::Component
         Animation::AnimParamHandle FindParam(Identity) const;
         [[nodiscard]] bool SetFloat(Animation::AnimParamHandle, float);
         [[nodiscard]] bool SetInt(Animation::AnimParamHandle, int32_t);
+        [[nodiscard]] bool GetInt(Animation::AnimParamHandle, int32_t&) const;
         [[nodiscard]] bool SetBool(Animation::AnimParamHandle, bool);
         [[nodiscard]] bool SetTrigger(Animation::AnimParamHandle);
         [[nodiscard]] bool SetDriveSignals(const Animation::AnimDriveSignals&);
@@ -78,7 +85,9 @@ namespace NorvesLib::Core::Component
         void Detach();
         void ForwardEvent(const Animation::AnimEventInfo& info)
         {
-            OnEvent.Broadcast(info);
+            // 配送先が別のリスナーを解除しても反復を失効させない。
+            const auto listeners = OnEvent;
+            listeners.Broadcast(info);
         }
         Container::TSharedPtr<AnimGraphResource> m_Graph;
         Container::TSharedPtr<SkeletalAssetResource> m_BoundAsset;
