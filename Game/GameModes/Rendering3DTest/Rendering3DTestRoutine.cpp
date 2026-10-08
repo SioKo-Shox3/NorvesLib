@@ -384,6 +384,15 @@ namespace Game::GameModes
         constexpr float kStressGeometryJitter = 1.5f;
         constexpr float kStressGeometryFirstRowZ = 42.0f;
         constexpr float kStressGeometryGridCenterX = 0.0f;
+        // テクスチャの負荷モードと併せるとき、ジオメトリの格子はテクスチャの板の格子（z 41〜95）の奥へ 10 m 空けて始める
+        // （重ねると板が物で隠れ、物の手前の行しか視野に入らない）。カメラの軸は地面と板の間（z=60）へ移し、地面・板・物がそろって映るよう遠くから見る。
+        constexpr float kStressGeometryFirstRowWithTexturesZ = 105.0f;
+        constexpr float kStressCombinedPivotZ = 60.0f;
+
+        float GetStressGeometryFirstRowZ(bool withStressTextures)
+        {
+            return withStressTextures ? kStressGeometryFirstRowWithTexturesZ : kStressGeometryFirstRowZ;
+        }
 
         float GetStressGeometryGridCenterZ(uint32_t instanceCount)
         {
@@ -894,6 +903,7 @@ namespace Game::GameModes
 
                 StressMegaInstanceSource source;
                 source.Handle = megaMeshHandle;
+                source.bScanProp = true;
                 source.PositionY = positionY;
                 source.Scale = spec.Scale;
                 source.BoundsMinY = state->m_BoundsMinY;
@@ -952,7 +962,7 @@ namespace Game::GameModes
                 const float x = kStressGeometryGridCenterX +
                                 (static_cast<float>(column) - 0.5f * static_cast<float>(kStressGeometryColumns - 1u)) * kStressGeometryPitch +
                                 (StressUnitFloat(hashJitterX) - 0.5f) * 2.0f * kStressGeometryJitter;
-                const float z = kStressGeometryFirstRowZ + static_cast<float>(row) * kStressGeometryPitch +
+                const float z = GetStressGeometryFirstRowZ(data.m_bStressTextures) + static_cast<float>(row) * kStressGeometryPitch +
                                 (StressUnitFloat(hashJitterZ) - 0.5f) * 2.0f * kStressGeometryJitter;
                 const float y = -1.0f - source.BoundsMinY * scale - source.SinkMeters;
 
@@ -972,6 +982,54 @@ namespace Game::GameModes
         // --stress-mega-instances: スキャン資産の読み込みが終わったら、そのメッシュを指定の数だけ地面の奥へ格子に複製して置く
         // （既定の視点は +Z 側から -Z 側を見るので、x -26〜26・z -5〜-27 に並べて視野に入れる）。
         // 同じメッシュ・材質のインスタンスが増える負荷で、MegaGeometry のカリング・描画の時間を測るための一時の機構。
+        // 複製元はスキャン資産だけ（--stress-geometry と併せるときは、岩・小屋・大きな球の元が混ざるので除く）。
+        void PlaceGroundMegaInstances(GameModeContext &ctx, Rendering3DTestData &data, uint32_t instanceCount)
+        {
+            if (instanceCount == 0u)
+            {
+                return;
+            }
+            VariableArray<uint32_t> scanSourceIndices;
+            for (uint32_t sourceIndex = 0; sourceIndex < static_cast<uint32_t>(data.m_StressMegaSources.size()); ++sourceIndex)
+            {
+                if (data.m_StressMegaSources[sourceIndex].bScanProp)
+                {
+                    scanSourceIndices.push_back(sourceIndex);
+                }
+            }
+            if (scanSourceIndices.empty())
+            {
+                NORVES_LOG_WARNING("Rendering3DTest", "STRESS_MEGA_INSTANCES_SKIPPED "
+                                                      "スキャン資産が置かれていないため複製できません");
+                return;
+            }
+
+            constexpr uint32_t kColumns = 25u;
+            constexpr float kPitchX = 2.2f;
+            constexpr float kPitchZ = 2.0f;
+            auto &world = ctx.WorldRef;
+            const NorvesLib::Math::Vector3 yAxis(0.0f, 1.0f, 0.0f);
+            for (uint32_t index = 0; index < instanceCount; ++index)
+            {
+                const StressMegaInstanceSource &source =
+                    data.m_StressMegaSources[scanSourceIndices[index % static_cast<uint32_t>(scanSourceIndices.size())]];
+                const float x = (static_cast<float>(index % kColumns) - 0.5f * static_cast<float>(kColumns - 1u)) * kPitchX;
+                const float z = -5.0f - static_cast<float>(index / kColumns) * kPitchZ;
+                const float yawDegrees = static_cast<float>((index * 37u) % 360u);
+
+                Entity *object = world.SpawnObject<Entity>();
+                ctx.ScopeRef.TrackObject(object);
+                object->SetPosition(x, source.PositionY, z);
+                object->SetScale(source.Scale, source.Scale, source.Scale);
+                object->SetRotation(NorvesLib::Math::Quaternion(yAxis, yawDegrees * (3.14159265f / 180.0f)));
+                auto *component = world.CreateComponent<Component::MegaGeometryComponent>(object);
+                component->SetMegaMeshHandle(source.Handle);
+                component->SetCastShadow(true);
+            }
+            NORVES_LOG_INFO("Rendering3DTest", "STRESS_MEGA_INSTANCES_PLACED count=%u sources=%zu", instanceCount,
+                            static_cast<size_t>(scanSourceIndices.size()));
+        }
+
         void PlaceStressMegaInstances(GameModeContext &ctx, Rendering3DTestData &data)
         {
             if (data.m_StressMegaInstanceCount == 0 || data.m_bStressMegaInstancesPlaced || !data.m_ScanPropLoads.empty())
@@ -997,32 +1055,10 @@ namespace Game::GameModes
             if (data.m_bStressGeometry)
             {
                 PlaceStressGeometryInstances(ctx, data);
+                PlaceGroundMegaInstances(ctx, data, data.m_StressGroundMegaInstanceCount);
                 return;
             }
-
-            constexpr uint32_t kColumns = 25u;
-            constexpr float kPitchX = 2.2f;
-            constexpr float kPitchZ = 2.0f;
-            auto &world = ctx.WorldRef;
-            const NorvesLib::Math::Vector3 yAxis(0.0f, 1.0f, 0.0f);
-            for (uint32_t index = 0; index < data.m_StressMegaInstanceCount; ++index)
-            {
-                const StressMegaInstanceSource &source = data.m_StressMegaSources[index % data.m_StressMegaSources.size()];
-                const float x = (static_cast<float>(index % kColumns) - 0.5f * static_cast<float>(kColumns - 1u)) * kPitchX;
-                const float z = -5.0f - static_cast<float>(index / kColumns) * kPitchZ;
-                const float yawDegrees = static_cast<float>((index * 37u) % 360u);
-
-                Entity *object = world.SpawnObject<Entity>();
-                ctx.ScopeRef.TrackObject(object);
-                object->SetPosition(x, source.PositionY, z);
-                object->SetScale(source.Scale, source.Scale, source.Scale);
-                object->SetRotation(NorvesLib::Math::Quaternion(yAxis, yawDegrees * (3.14159265f / 180.0f)));
-                auto *component = world.CreateComponent<Component::MegaGeometryComponent>(object);
-                component->SetMegaMeshHandle(source.Handle);
-                component->SetCastShadow(true);
-            }
-            NORVES_LOG_INFO("Rendering3DTest", "STRESS_MEGA_INSTANCES_PLACED count=%u sources=%zu",
-                            data.m_StressMegaInstanceCount, static_cast<size_t>(data.m_StressMegaSources.size()));
+            PlaceGroundMegaInstances(ctx, data, data.m_StressMegaInstanceCount);
         }
 
         // 大きな球のクック済みのメッシュ（NVMESH v1。AssetSets の一覧が焼く）を解決・解析して outCooked に入れる。
@@ -1495,7 +1531,11 @@ namespace Game::GameModes
             }
 
             // 負荷モードは、カメラの軸を格子の中心へ移す（視点の引数はその周りの角度と距離になる）
-            if (data.m_bStressTextures)
+            if (data.m_bStressTextures && data.m_bStressGeometry)
+            {
+                data.m_pCameraPivotObject->SetPosition(kStressGridCenterX, 0.0f, kStressCombinedPivotZ);
+            }
+            else if (data.m_bStressTextures)
             {
                 data.m_pCameraPivotObject->SetPosition(kStressGridCenterX, 0.0f, kStressGridCenterZ);
             }

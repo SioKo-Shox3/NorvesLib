@@ -185,3 +185,34 @@ run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.ex
 - 検証: Debug ビルド（`verify-VTG9-STRESS-SHADOW-SKIPS-1.txt`、EXIT=0）、ctest RenderGraphCompileTest（`-2.txt`、通過）、RelWithDebInfo ビルド（`-3.txt`）、撮影（`-4.txt`・`-5.txt`、result=pass）。`RenderGraphCompileTest` に `TestDynamicUniformAllocatorGrowsToCoverShadowCasters` を足した（1024 で頭打ちの既定・4 カスケード × (300 + 64) が別スロットで取れる・Reset 後に作り足さない・上限で失敗・増やす途中のバッファ作成失敗で頭打ち）。
 - Notes: 変更前の測定は、同じ作業ツリーで該当の 4 ファイルを stash して RelWithDebInfo を作り直して取った（変更後の撮影が先。比較は連続して取った 2 組）。
 - Next: TASKS.md の次の `todo`。
+
+## 段9 VTG9-STRESS-ALL（2026-10-08）
+
+- 結果: `--vram-budget-mb=6500` でテクスチャ・ジオメトリ・MegaGeometry の 3 つの負荷を同時に有効にした全体の負荷モードを、昼（太陽45°）と夜（点光源の VSM）の既定の視点で撮った。予算の内側・VSM の溢れ 0・影の描画の省略 0・穴なし。止め条件には当たっていない。
+- 同時に有効にするための変更（Game の負荷モードだけ。Core は触っていない）: 変更前は (1) `--stress-geometry` が `--stress-mega-instances` の個数を上書きして、地面の近くへ複製する負荷が効かない、(2) ジオメトリの格子（z 42〜210）がテクスチャの板の格子（z 41〜95）と重なり、板が物で隠れる、(3) カメラの軸がテクスチャ側（z=68）だけで、ジオメトリの手前 6 行ほどしか映らない、(4) 夜は電球から遠い格子だけが映り、点光源の VSM が 0 ページだった。変更後は、`--stress-geometry` と併せた `--stress-mega-instances=<N>` を別の個数（`m_StressGroundMegaInstanceCount`）として地面の近く（x±26・z -5〜-27。複製元はスキャン資産 3 種だけ。`StressMegaInstanceSource::bScanProp`）へ複製する。テクスチャの負荷と併せるときはジオメトリの格子を z=105 から始め、カメラの軸を z=60（地面と板の間）へ置く。`CaptureStartupScene.ps1` は併用のとき default `180,20,160`・low `180,-4,110`・top `180,75,300`（-Z 側から +Z の向きに、地面・板・物を遠くから見る）にする。引数なしの起動画面・どちらか片方の負荷モードの配置は変えていない（複製を作る処理は関数に切り出しただけで、スキャン資産だけの元の扱いも同じ）。
+- 予算とプール（Game ログ。`VTG9-STRESS-ALL-day`・`-night`。cap 6500 MB）:
+
+| | 昼 | 夜 |
+|---|---|---|
+| `VRAM_BUDGET` heap_usage（最大 / cap） | 1899 / 6500 MB | 1898 / 6500 MB |
+| VT（使用 最大 / 目標） | 8 / 3690〜4806 MB | 8 / 3690〜4806 MB |
+| ジオメトリ（使用 最大 / 目標） | 29 / 1230〜1602 MB | 34 / 1230〜1602 MB |
+| VSM のプール（`shadow_map_pool_mb`） | 427 MB | 427 MB |
+| 追い出し（VT のタイル・ジオメトリのページ） | 0・0 | 0・0 |
+| `VRAM_POOLS` の使用 > 目標（全 6 行） | 0 行 | 0 行 |
+| VSM の溢れ（`VSM_PAGES` 217・173 行 / `VSM_RASTER` 45・42 行 / `VSM_MEGA_CULL` 6・6 行） | 最大 0 | 最大 0 |
+| `Out of slots`・影の描画の省略の警告 | 0 | 0 |
+| VSM の要求ページ（点光源） | 最大 31（14） | 最大 14（14） |
+
+  `metrics.json` の `failures` は 2 つとも空。ログの WARN は 4 件で、どちらも影と無関係の既知（`ResourceCache is null`、Slang SDK が無いための `neural_material_decode.slang`）。置いた数は `STRESS_TEXTURES materials=24 of 24`・`STRESS_GEOMETRY_PLACED count=300 sources=6`・`STRESS_MEGA_INSTANCES_PLACED count=300 sources=3`。
+- フレーム GPU（RelWithDebInfo・`-GpuTimingFrames 300`・240 フレーム・既定の視点）:
+
+| | 中央値 ms | p95 ms | 内訳の上位（中央値 ms） |
+|---|---|---|---|
+| 昼 | 4.699 | 9.138 | VisibilityRasterPass 1.50（MegaGeometry）・ShadowMapPass 1.18・VirtualShadowMapPass 0.65・LightingPass 0.31 |
+| 夜 | 3.462 | 7.719 | VisibilityRasterPass 1.51・VirtualShadowMapPass 0.65・LightingPass 0.25 |
+
+- 画: 昼・夜の PNG を開いた。昼は、手前の地面に複製した岩の群れと小屋、その奥にテクスチャの板（24 枚）、さらに奥にジオメトリの格子（小屋・岩・球 300 個）が並び、穴・欠け・板の抜けは無い。夜は電球が手前の岩の群れと地面の板を照らし、岩の間の影に欠けは見えない。板・ジオメトリの格子は電球の光の範囲の外で暗い。板は遠景（板 1 枚が横 40 px ほど）で、テクスチャの解像度の崩れはこの視点では判定できない（近景の確認は段2の `-StressTextures`）。
+- Notes: (1) 8GB 級の上限（6500 MB）では VT・ジオメトリの使用量が目標よりずっと小さく（8 / 29〜34 MB）、追い出しは起きなかった。この視点で要るタイル・ページが少ないため。予算を縛るのは段2・段5の絞った上限（`VTG2-STRESS-TEXTURES`・段5）で確かめ済み。(2) `heap_usage` 約 1.9 GB のうち `non_pool_mb` が約 1.15 GB、VSM のプールが 427 MB。(3) 夜のジオメトリの格子は光源の外なので、点光源の影の負荷は地面の近くの複製 300 個が受け持つ（`point_requested` 14）。(4) 昼の `VSM_PAGES` の要求は最大 31（うち点光源 14）。
+- 検証: ビルド（`verify-VTG9-STRESS-ALL-5.txt`、EXIT=0）。昼・夜の撮影（`verify-VTG9-STRESS-ALL-6.txt`・`-7.txt`、result=pass、EXIT=0）。変更前の昼の挙動（併用がジオメトリの手前の行だけを映し、複製が効かない）は `try0-day.txt`・`VTG9-STRESS-ALL-day-try0/` に残した。
+- Next: TASKS.md の次の `todo`。

@@ -172,7 +172,7 @@
 - notes: 2026-10-08 親（段9の開始時に詳しくした）。段9の受入れ「8GB 級の上限での全体の負荷モード」で影の描画を省いたまま測らないため。速度の項目の GPU 時間の撮影。危険地帯（描画パス・GPU の資源）。
 
 ## VTG9-STRESS-ALL: 8GB 級の上限で、テクスチャ・ジオメトリ・影の全体の負荷モードを昼と夜に通す
-- status: todo
+- status: done
 - done-when: `--vram-budget-mb=6500`（段2・段5と同じ 8GB 級の模し方）で、テクスチャの負荷（`-StressTextures`）・ジオメトリの負荷（`-StressGeometry`）・MegaGeometry の負荷（`--stress-mega-instances=300`）を同時に有効にした全体の負荷モードを、昼（太陽45°、太陽の VSM）と夜（点光源の VSM）の既定の視点で RelWithDebInfo の `-GpuTimingFrames 300` で撮る。3 つの負荷を同時に有効にできない（引数がぶつかる・カメラの軸が片方だけになる・起動が失敗する）場合は、同時に有効にできるように直す（カメラは両方の負荷の物が映る視点）。ログで、`VRAM_POOLS` の vt_used ≤ vt_target・geometry_used ≤ geometry_target（追い出しは起きてよい）、`VRAM_BUDGET` の heap_usage が cap（6500 MB）以下、VSM の 3 種の overflow が 0、影の描画の省略が 0 であることを確かめ、PNG を開いて穴・欠け・テクスチャの解像度の崩れが無いことを確かめる。フレーム GPU の中央値・p95 と、VT・ジオメトリ・VSM の VRAM を表にして PROGRESS に書く。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/VTG9-STRESS-ALL-day -Configuration RelWithDebInfo -SunElevations 45 -ViewNames default -GpuTimingFrames 300 -VramBudgetMb 6500 -StressTextures -StressGeometry -ExtraGameArguments --stress-mega-instances=300`
