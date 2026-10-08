@@ -1,9 +1,19 @@
 name: Animation CPU milestone
 
 on:
+  # 個別変更や失敗修正のpushでは起動しない。GR単位の実装・レビュー・修正をまとめて検証する。
   workflow_dispatch:
-  push:
-    branches: [feature/game-animation-runtime]
+    inputs:
+      gr_id:
+        description: '今回まとめて検証するGR'
+        required: true
+        type: choice
+        options: [GR10, GR11, GR12, GR13]
+      scope_complete:
+        description: '実装・レビュー・関連修正をまとめた区切りである（個別修正の再試行には使わない）'
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -14,7 +24,7 @@ concurrency:
 
 jobs:
   pose:
-    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[validate-animation]') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scope_complete }}
     runs-on: windows-2022
     timeout-minutes: 60
     defaults:
