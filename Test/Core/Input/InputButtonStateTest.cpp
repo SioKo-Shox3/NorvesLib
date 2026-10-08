@@ -208,8 +208,67 @@ namespace
     }
 }
 
+namespace
+{
+    void TestFixedEventFifo()
+    {
+        InputButtonState button;
+        InputButtonEvent event;
+        button.SetDown(true);
+        button.SetDown(false);
+        assert(!button.ConsumeFixedEvent(event));
+        button.SetFixedEventCapture(true);
+        assert(button.AdvanceTo(1));
+        button.SetDown(true);
+        button.SetDown(true);
+        assert(button.AdvanceTo(1.01));
+        button.SetDown(false);
+        button.BeginFrame();
+        button.BeginFrame();
+        button.SetDown(true);
+        button.SetDown(false);
+        for (unsigned i = 0; i < 4; ++i)
+        {
+            assert(button.ConsumeFixedEvent(event));
+            assert(event.Type == (i % 2 == 0 ? EInputButtonEventType::Pressed : EInputButtonEventType::Released));
+            if (i == 1)
+                assert(std::fabs(event.HeldDuration - .01) < 1e-12);
+        }
+        event.UnscaledTimeSeconds = 123;
+        assert(!button.ConsumeFixedEvent(event) && event.UnscaledTimeSeconds == 123);
+        button.SetDown(true);
+        button.Cancel();
+        assert(!button.ConsumeFixedEvent(event));
+        assert(button.IsFixedEventCaptureEnabled());
+        button.SetDown(true);
+        button.SetDown(false);
+        button.SetFixedEventCapture(false);
+        assert(!button.ConsumeFixedEvent(event));
+        button.SetFixedEventCapture(true);
+        button.SetDown(true);
+        button.SetDown(false);
+        assert(button.ConsumeFixedEvent(event));
+        InputButtonState moved(std::move(button));
+        assert(!button.ConsumeFixedEvent(event));
+        button.SetDown(true);
+        assert(button.ConsumeFixedEvent(event) && event.Type == EInputButtonEventType::Pressed);
+        assert(moved.ConsumeFixedEvent(event) && event.Type == EInputButtonEventType::Released);
+        button.Cancel();
+        for (int i = 0; i < 1000; ++i)
+        {
+            button.SetDown(true);
+            button.SetDown(false);
+            button.BeginFrame();
+        }
+        for (int i = 0; i < 2000; ++i)
+            assert(button.ConsumeFixedEvent(event));
+        assert(!button.ConsumeFixedEvent(event));
+    }
+} // namespace
+
 int main()
 {
+    TestFixedEventFifo();
     TestHoldAndFixedPress();
     TestTapAndDoubleTap();
     TestAggregateAndCancel();

@@ -279,6 +279,63 @@ int main()
         target.Detach();
         source.SetRouter(nullptr);
     }
+    {
+        InputSystem source;
+        InputRouter routes;
+        source.SetRouter(&routes);
+        InputMapper target(source.GetState());
+        auto definitions = Definitions();
+        InputActionDefinition trigger;
+        trigger.Id = "TriggerJump"_id;
+        trigger.Bindings = {Source(EInputBindingSource::GamepadTrigger, 0)};
+        assert(definitions.AddAction("Gameplay"_id, trigger));
+        assert(target.ConfigureWithContext(definitions, "Gameplay"_id));
+        target.Attach(routes);
+        assert(target.SetFixedButtonEventCapture("Jump"_id, true));
+        assert(target.SetFixedButtonEventCapture("TriggerJump"_id, true));
+        assert(!target.SetFixedButtonEventCapture("Move"_id, true));
+        Begin(source, target, 0);
+        for (int i = 0; i < 2; ++i)
+        {
+            source.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+            source.InjectKeyEvent(KeyCode::W, InputAction::Released);
+        }
+        Begin(source, target, .01);
+        Begin(source, target, .02);
+        InputButtonEvent event;
+        for (int i = 0; i < 4; ++i)
+        {
+            assert(target.ConsumeFixedButtonEvent("Jump"_id, event));
+            assert(event.Type == (i % 2 == 0 ? EInputButtonEventType::Pressed : EInputButtonEventType::Released));
+        }
+        assert(!target.ConsumeFixedButtonEvent("Jump"_id, event));
+        GamepadState pad;
+        pad.Connected = true;
+        assert(source.InjectGamepadState(0, pad, EGamepadSampleMode::Baseline));
+        pad.Triggers[0] = 1;
+        assert(source.InjectGamepadState(0, pad));
+        pad.Triggers[0] = 0;
+        assert(source.InjectGamepadState(0, pad));
+        assert(target.ConsumeFixedButtonEvent("TriggerJump"_id, event) && event.Type == EInputButtonEventType::Pressed);
+        assert(target.ConsumeFixedButtonEvent("TriggerJump"_id, event) &&
+               event.Type == EInputButtonEventType::Released);
+        source.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        assert(target.ConfigurePreservingContexts(definitions));
+        assert(!target.ConsumeFixedButtonEvent("Jump"_id, event));
+        source.InjectKeyEvent(KeyCode::W, InputAction::Released);
+        source.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        source.InjectKeyEvent(KeyCode::W, InputAction::Released);
+        assert(target.ConsumeFixedButtonEvent("Jump"_id, event) && event.Type == EInputButtonEventType::Pressed);
+        assert(target.ConsumeFixedButtonEvent("Jump"_id, event) && event.Type == EInputButtonEventType::Released);
+        source.InjectKeyEvent(KeyCode::W, InputAction::Pressed);
+        target.SetFocused(false);
+        assert(!target.ConsumeFixedButtonEvent("Jump"_id, event));
+        target.SetFocused(true);
+        assert(!target.ConsumeFixedButtonEvent("Jump"_id, event));
+        assert(target.SetFixedButtonEventCapture("Jump"_id, false));
+        target.Detach();
+        source.SetRouter(nullptr);
+    }
     std::cout << "InputActionMapTest passed\n";
     return 0;
 }

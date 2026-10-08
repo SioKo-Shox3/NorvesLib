@@ -63,6 +63,9 @@ namespace NorvesLib::Core::Engine
          */
         int Run();
 
+        // 現在の固定更新設定（60または120Hz）。
+        uint32_t GetFixedUpdateRateHz() const;
+
         /**
          * @brief アプリケーションを終了
          */

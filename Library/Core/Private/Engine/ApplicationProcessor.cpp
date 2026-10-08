@@ -941,6 +941,14 @@ namespace NorvesLib::Core::Engine
             NORVES_LOG_ERROR("SkeletalAssets", "実行中の骨格sessionがあるため再初期化を拒否します");
             return false;
         }
+        uint32_t fixedRate = config.FixedUpdateRateHz;
+        for (const auto& argument : config.Arguments)
+        {
+            if (ParseFixedUpdateRateArgument(argument.c_str(),fixedRate)==FixedUpdateArgumentResult::Invalid)
+            { LOG_ERROR("固定更新の起動引数には60または120を指定してください");return false; }
+        }
+        if (!m_FixedStepScheduler->SetRate(fixedRate))
+        { LOG_ERROR("固定更新の設定が不正か、既に実行中です");return false; }
         GApplicationLifecycleState = {};
         GApplicationLifecycleState.Processor = this;
         ApplicationInitializeTransaction transaction(*this);
@@ -1519,6 +1527,11 @@ namespace NorvesLib::Core::Engine
     {
         LOG_ERROR("ApplicationProcessor::Initialize() - initialization threw an exception");
         return false;
+    }
+
+    uint32_t ApplicationProcessor::GetFixedUpdateRateHz() const
+    {
+        return m_FixedStepScheduler->GetRate();
     }
 
     int ApplicationProcessor::Run()
@@ -2397,7 +2410,7 @@ namespace NorvesLib::Core::Engine
             return result;
         }
 
-        constexpr float FixedDeltaTime = 1.0f / 60.0f;
+        const float FixedDeltaTime = m_FixedStepScheduler->GetDeltaSeconds();
         for (uint64_t step = 0; step < result.ExecutedSteps; ++step)
         {
             World& world = GEngine->GetWorld();

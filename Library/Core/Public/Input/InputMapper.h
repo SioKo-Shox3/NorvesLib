@@ -53,6 +53,10 @@ namespace NorvesLib::Core::Input
         InputMappedAction GetAction(Identity action) const;
         InputMappedAction GetAction(Identity context, Identity action) const;
         bool ConsumeFixedPress(Identity action);
+        // actionごとの単一消費者向け。旧ConsumeFixedPressと同じactionで混用しない。
+        // capture設定は再Configure後も同じaction IDへ引き継ぎ、保留イベント自体は取消す。
+        bool SetFixedButtonEventCapture(Identity action, bool enabled);
+        bool ConsumeFixedButtonEvent(Identity action, InputButtonEvent& out);
         void CancelAll();
 
         bool OnKey(const KeyEvent& event) override;
@@ -60,6 +64,7 @@ namespace NorvesLib::Core::Input
         bool OnMouseRawMove(const MouseRawMoveEvent& event) override;
         bool OnMouseScroll(const MouseScrollEvent& event) override;
         bool OnGamepadButton(const GamepadButtonEvent& event) override;
+        bool OnGamepadSample(const GamepadSampleEvent& event) override;
         void OnGamepadConnection(const GamepadConnectionEvent& event) override;
         void OnInputReset() override { CancelAll(); }
         const char* DebugName() const override { return "InputMapper"; }
@@ -92,6 +97,7 @@ namespace NorvesLib::Core::Input
         const InputState& m_State;
         InputRouter* m_Router = nullptr;
         Container::VariableArray<Context> m_Contexts;
+        Container::VariableArray<Identity> m_FixedEventActions;
         Container::VariableArray<size_t> m_Stack;
         InputArmedState m_Armed;
         double m_Time = 0;

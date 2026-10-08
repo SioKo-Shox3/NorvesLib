@@ -4,6 +4,7 @@
 #include "Container/VariableArray.h"
 #include "Container/PointerTypes.h"
 #include "Debug/DebugConfig.h"
+#include "Engine/FixedStepSettings.h"
 #include "RHI/RHIDeviceDesc.h"
 
 namespace NorvesLib::Core::Application
@@ -69,6 +70,9 @@ namespace NorvesLib::Core::Boot
          * 0以下の場合は無制限
          */
         float TargetFrameRate = 60.0f;
+
+        // 物理/キャラクターの固定更新。描画FPSとは独立、比較用に60/120を選ぶ。
+        uint32_t FixedUpdateRateHz = Engine::DefaultFixedUpdateRateHz;
 
         /**
          * @brief デバッグコンソール有効（Windowsのみ）

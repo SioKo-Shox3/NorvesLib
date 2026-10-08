@@ -64,6 +64,11 @@ namespace NorvesLib::Core::Input
             stack.push_back(found);
         }
         CancelAll();
+        for (auto& context : compiled)
+            for (auto& action : context.Actions)
+                for (const auto id : m_FixedEventActions)
+                    if (action.Id == id)
+                        action.Runtime.SetFixedEventCapture(true);
         m_Contexts = std::move(compiled);
         m_Stack = std::move(stack);
         return true;
@@ -222,6 +227,44 @@ namespace NorvesLib::Core::Input
             if (action.Id == id) return action.Runtime.ConsumeFixedPress();
         return false;
     }
+    bool InputMapper::SetFixedButtonEventCapture(Identity id, bool enabled)
+    {
+        if (!id.IsValid())
+            return false;
+        bool found = false;
+        for (const auto& context : m_Contexts)
+            for (const auto& action : context.Actions)
+                if (action.Id == id && action.Runtime.GetSettings().Type == EInputMappingValueType::Button)
+                    found = true;
+        size_t registered = m_FixedEventActions.size();
+        for (size_t i = 0; i < m_FixedEventActions.size(); ++i)
+            if (m_FixedEventActions[i] == id)
+            {
+                registered = i;
+                break;
+            }
+        const bool wasRegistered = registered < m_FixedEventActions.size();
+        if (enabled && !found)
+            return false;
+        if (enabled && registered == m_FixedEventActions.size())
+            m_FixedEventActions.push_back(id);
+        if (!enabled && registered < m_FixedEventActions.size())
+            m_FixedEventActions.erase(m_FixedEventActions.begin() + registered);
+        for (auto& context : m_Contexts)
+            for (auto& action : context.Actions)
+                if (action.Id == id)
+                    action.Runtime.SetFixedEventCapture(enabled);
+        return found || wasRegistered;
+    }
+    bool InputMapper::ConsumeFixedButtonEvent(Identity id, InputButtonEvent& out)
+    {
+        auto* context = m_Router && m_Focused && !IsInputSuppressed() ? Top() : nullptr;
+        if (context)
+            for (auto& action : context->Actions)
+                if (action.Id == id)
+                    return action.Runtime.ConsumeFixedEvent(out);
+        return false;
+    }
     void InputMapper::SyncActiveButtons()
     {
         auto* context = m_Router && m_Focused && !IsInputSuppressed() ? Top() : nullptr;
@@ -253,6 +296,12 @@ namespace NorvesLib::Core::Input
     bool InputMapper::OnGamepadButton(const GamepadButtonEvent& event)
     {
         if (m_Router && m_Focused && !IsInputSuppressed() && Top()) { m_Armed.OnGamepadButton(event, m_State); SyncActiveButtons(); }
+        return false;
+    }
+    bool InputMapper::OnGamepadSample(const GamepadSampleEvent& event)
+    {
+        if (event.Mode == EGamepadSampleMode::Live)
+            SyncActiveButtons();
         return false;
     }
     bool InputMapper::OnMouseRawMove(const MouseRawMoveEvent& event)

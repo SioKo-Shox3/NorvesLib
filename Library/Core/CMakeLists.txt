@@ -478,6 +478,7 @@ set(PUBLIC_HEADERS
     Public/Engine/Engine.h
     Public/Particle/ParticleSystem.h
     Public/Engine/ApplicationProcessor.h
+    Public/Engine/FixedStepSettings.h
     # Animation
     Public/Animation/AnimationClipResource.h
     Public/Animation/SkeletalAnimationSampler.h
