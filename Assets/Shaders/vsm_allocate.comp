@@ -25,6 +25,8 @@
 //     「割り当て済み・dirty・物理ページの番号」を書き、年齢を 0 にする。空きが尽きたら割り当てない（溢れ）。
 //   段階 9（消去の一覧）: 欄ごとに 1 スレッド。dirty の物理ページを消去する一覧へ足し、要求があって dirty でない欄を持ち越しとして数える。
 //   段階 10（締める）: 1 スレッド。統計（割り当て・溢れ・描いたページ）と空きの数・間接 dispatch の引数を決める。
+//   段階 11（捨てる領域の数え）: 点光源の灯の並びが変わって、ページの表の領域を移し替えるフレームだけ、移し替えの直前に 1 回 dispatch する。
+//     どの灯にも引き継がれず上書きで消える旧領域の割り当て済みの欄を、解放の統計へ数える（欄は書かない）。
 //
 // ページの表と要求のビット列の欄は、スライス（太陽では段）の表（binding 8。Common/VirtualShadowMapSlice.glsl）の先頭から並ぶ。
 // 欄の全体を走査する段階は、同じ大きさ（ENTRIES_PER_LEVEL 欄）のスライスが先頭から詰まっている前提で欄の番号からスライスを求める。
@@ -100,6 +102,8 @@ const uint STAGE_FREE_COMPACT = 7u;
 const uint STAGE_ALLOCATE = 8u;
 const uint STAGE_DIRTY_LIST = 9u;
 const uint STAGE_FINALIZE = 10u;
+// 点光源のページの表を移し替える直前に 1 回だけ dispatch する（捨てる領域の割り当て済みページを解放の統計へ数える）
+const uint STAGE_REMAP_COUNT = 11u;
 
 const uint STAT_REQUESTED = 0u;
 const uint STAT_ALLOCATED = 1u;
@@ -600,6 +604,30 @@ void Finalize()
     dirtyList[2] = 1u;
 }
 
+// 点光源のページの表の移し替えで捨てる旧領域（control.w のビットが立つ番号の領域）の割り当て済みの欄を、解放の統計へ数える。
+// 欄そのものは移し替えの上書きで消えるので書かない（物理ページは空きの一覧を作り直す段階で空きへ戻る）。
+// cache.z = 点光源の領域の先頭の欄、cache.w = 1 灯の領域の欄の数
+void CountDiscardedRegions()
+{
+    const uint id = gl_GlobalInvocationID.x;
+    const uint regionEntries = params.cache.w;
+    if (regionEntries == 0u)
+    {
+        return;
+    }
+    const uint region = id / regionEntries;
+    const uint entryIndex = params.cache.z + id;
+    if (region >= 32u || ((params.control.w >> region) & 1u) == 0u || entryIndex >= TotalEntries())
+    {
+        return;
+    }
+    if ((pageTable[entryIndex] & PAGE_ENTRY_ALLOCATED) != 0u)
+    {
+        atomicAdd(stats[STAT_RELEASED], 1u);
+        atomicAdd(stats[STAT_POINT_RELEASED], 1u);
+    }
+}
+
 void main()
 {
     const uint stage = params.control.x;
@@ -646,5 +674,9 @@ void main()
     else if (stage == STAGE_FINALIZE)
     {
         Finalize();
+    }
+    else if (stage == STAGE_REMAP_COUNT)
+    {
+        CountDiscardedRegions();
     }
 }

@@ -7768,6 +7768,8 @@ namespace
     //       どちらの灯のページも描き直されない（移した後の物理ページが毎フレーム描き直したときと全 texel で一致する）。入れ替えて片方が動くと、
     //       動いた灯の新しい番号のスライスだけが描き直される。
     //   T6（灯が無くなる）: 並びを戻しても描き直されず、灯 1 が無くなると、灯 1 のスライスのページは空きへ戻り、灯 0 のページは描き直されない。
+    //   T7（先頭の灯が無くなる）: 先頭の灯を除いて残る灯が番号 0 へ詰まると、残る灯のページは新しい番号へ移って描き直されず、
+    //     消えた灯のページ（領域の移し替えで上書きされる）が空きへ戻り、解放の統計（全体・点光源）の数と一致する。
 
     struct PointCachePage
     {
@@ -8280,6 +8282,8 @@ namespace
         const PointScene sceneSwapped = buildLights(position0, true, 2u);
         const PointScene sceneSwappedMoved = buildLights(movedPosition0, true, 2u);
         const PointScene sceneSingle = buildLights(position0, false, 1u);
+        // 先頭の灯（識別子 101）を除いて、残る灯（識別子 102）を番号 0 へ詰めた並び
+        const PointScene sceneFirstRemoved = buildLights(position0, true, 1u);
 
         // 要求のあるページの参照（プールの大きさと、動く四角形の位置の選択に使う）
         const auto collectKeys = [&](const PointScene& pointScene) {
@@ -8570,6 +8574,36 @@ namespace
             Expect(different == 0u, "ケース T6: 灯が減った後の物理ページが毎フレーム描き直したときと全 texel で一致しなければならない");
             std::cout << TestName << " ケース T6: 残ったページ=" << frame6b.Pages.size() << " 空きへ戻した=" << frame6b.Stat(VirtualShadowMap::StatPointReleased)
                       << " texel の違い=" << different << std::endl;
+        }
+
+        // ----- T7: 先頭の灯が無くなって残る灯が番号 0 へ詰まると、残る灯のページは移り、消えた灯のページは空きへ戻って解放の統計に数えられる -----
+        // （T6 で灯 0 だけになった並びへ灯 1 を戻し、両方のページが揃った 1 フレームのあと、先頭の灯を除く。消えた灯の領域は移し替えで上書きされる）
+        PointCacheFrame frame7a;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneA, movedPolygons, resources, depth, &tracker, frameSerial++, frame7a))
+        {
+            std::cerr << TestName << " ケース T7（灯を戻す）を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(frame7a.bContinued && frame7a.PagesOf(0u) > 0u && frame7a.PagesOf(1u) > 0u,
+               "ケース T7: 灯を戻した 1 フレームは、両方の灯のページを持たなければならない");
+        PointCacheFrame frame7b;
+        if (!RunPointCacheFrame(device, cachedPages, raster, scene, sceneFirstRemoved, movedPolygons, resources, depth, &tracker, frameSerial++, frame7b))
+        {
+            std::cerr << TestName << " ケース T7 を実行できませんでした" << std::endl;
+            return false;
+        }
+        Expect(frame7b.bContinued && frame7b.InvalidatedSlices == 0u,
+               "ケース T7: 残る灯の位置・Range が同じなので、無効なスライスはない");
+        Expect(frame7b.PagesOf(0u) == frame7a.PagesOf(1u) && frame7b.PagesOf(1u) == 0u && frame7b.DirtyCount() == 0u &&
+                   frame7b.Stat(VirtualShadowMap::StatPointRendered) == 0u,
+               "ケース T7: 残る灯のページは番号 0 へ移り、描き直されてはならない");
+        Expect(frame7b.Stat(VirtualShadowMap::StatPointReleased) == frame7a.PagesOf(0u) && frame7b.Stat(VirtualShadowMap::StatReleased) == frame7a.PagesOf(0u),
+               "ケース T7: 空きへ戻した数（点光源・全体）が、消えた先頭の灯のページの数と一致しなければならない");
+        {
+            const uint32_t different = CompareWithFreshPointFrame(device, freshPages, raster, scene, sceneFirstRemoved, movedPolygons, poolPages, depth, frame7b, frameSerial++);
+            Expect(different == 0u, "ケース T7: 先頭の灯を除いた後の物理ページが毎フレーム描き直したときと全 texel で一致しなければならない");
+            std::cout << TestName << " ケース T7: 残ったページ=" << frame7b.Pages.size() << " 空きへ戻した=" << frame7b.Stat(VirtualShadowMap::StatPointReleased)
+                      << "（消えた灯のページ=" << frame7a.PagesOf(0u) << "） texel の違い=" << different << std::endl;
         }
         return true;
     }

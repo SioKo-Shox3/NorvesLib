@@ -217,3 +217,10 @@ run95（37690973847）のReleaseでCore.lib、AssetCook.exe、AssetSystemTest.ex
 - Notes: (1) 8GB 級の上限（6500 MB）では VT・ジオメトリの使用量が目標よりずっと小さく（8 / 29〜34 MB）、追い出しは起きなかった。この視点で要るタイル・ページが少ないため。予算を縛るのは段2・段5の絞った上限（`VTG2-STRESS-TEXTURES`・段5）で確かめ済み。(2) `heap_usage` 約 1.9 GB のうち `non_pool_mb` が約 1.15 GB、VSM のプールが 427 MB。(3) 夜のジオメトリの格子は光源の外なので、点光源の影の負荷は地面の近くの複製 300 個が受け持つ（`point_requested` 14）。(4) 昼の `VSM_PAGES` の要求は最大 31（うち点光源 14）。
 - 検証: ビルド（`verify-VTG9-STRESS-ALL-5.txt`、EXIT=0）。昼・夜の撮影（`verify-VTG9-STRESS-ALL-6.txt`・`-7.txt`、result=pass、EXIT=0）。変更前の昼の挙動（併用がジオメトリの手前の行だけを映し、複製が効かない）は `try0-day.txt`・`VTG9-STRESS-ALL-day-try0/` に残した。 近景の撮影は `verify-VTG9-STRESS-ALL-9.txt`（`plates`・`plates-near`、result=pass、EXIT=0）。`-8.txt` は `plates` だけを撮った最初の回。
 - Next: TASKS.md の次の `todo`。
+
+## 段9 VTG9-VSM-POINT-CACHE 解放の統計の修正（2026-10-08）
+
+- 評価者の指摘（先頭の灯を除いて残る灯を詰めると、移し替えで捨てる旧領域の割り当て済みページが `released`・`point_released` に数えられない）を直した。`vsm_allocate.comp` に段階 11（`STAGE_REMAP_COUNT`）を足し、点光源のページの表を移し替えるフレームだけ、移し替えの直前に 1 回 dispatch する。どの灯にも引き継がれない旧領域（`Source` に現れない番号）の割り当て済みの欄を `STAT_RELEASED`・`STAT_POINT_RELEASED` へ数える（欄は書かない。物理ページは空きの一覧を作り直す段階で空きへ戻る）。`VirtualShadowMapPages::Record` は捨てる領域の集合を作って段階 11 に渡し、移し替え（`RemapPointPageTable`）は統計を零にした後・段階 11 の後へ移した。
+- 検証: ビルド（`verify-VTG9-VSM-POINT-CACHE-4.txt`、EXIT=0）。ctest（`-5.txt`）は VirtualShadowMapVulkanTest・RenderGraphCompileTest が通った。`VirtualShadowMapVulkanTest` に T7（先頭の灯を除く）を足した: 灯 0・灯 1 の両方のページが揃った 1 フレームのあと、灯 1 だけを番号 0 へ詰める。無効なスライス 0・残る灯の 7 ページは番号 0 へ移って描き直し 0（`StatPointRendered` 0）・空きへ戻した数が `StatPointReleased` と `StatReleased` のどちらも消えた灯の 15 ページと一致・毎フレーム描き直した結果と全 texel で一致（`-3-verbose.txt`）。変異: 段階 11 の dispatch を外すと T7 が落ちた（空きへ戻した数 0、期待 15。`-mutation-remapcount.txt`）→ 戻して通過。
+- Notes: 費用は並びが変わって移し替えるフレームだけ（捨てる領域がある場合に、点光源の領域の欄を 1 回走査する）。起動画面・Game の実行では確かめていない（既定は `--point-shadow-method=cube`）。
+- Next: TASKS.md の次の `todo`。

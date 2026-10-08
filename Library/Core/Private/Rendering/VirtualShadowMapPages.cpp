@@ -70,6 +70,9 @@ namespace NorvesLib::Core::Rendering
             StageDirtyList,
             StageFinalize,
             StageCount,
+            // 点光源のページの表を移し替える直前に 1 回だけ dispatch する段階（StageCount 個の段階の列には入らない）
+            StageRemapCount = StageCount,
+            StageUseCount,
         };
         constexpr uint32_t CacheFlagEnabled = 1u;
         constexpr uint32_t CacheFlagInvalidateAll = 2u;
@@ -538,7 +541,7 @@ namespace NorvesLib::Core::Rendering
         const uint32_t sliceBytes = sliceCount * static_cast<uint32_t>(sizeof(GPUVsmSlice));
 
         Use* markUse = nullptr;
-        Use* allocateUses[StageCount] = {};
+        Use* allocateUses[StageUseCount] = {};
         Use* clearUse = nullptr;
         if (bMark && !AcquireUse(m_MarkUses, MakeMarkLayout(), markUse))
         {
@@ -632,10 +635,6 @@ namespace NorvesLib::Core::Rendering
                 ZeroFill(commandList, dispatch.PageTable, VirtualShadowMap::PageTableBytes(sliceCount));
             }
             ZeroFill(commandList, dispatch.Stats, VirtualShadowMap::STATS_BYTES);
-            if (bContinue && pointRemap.bMoves)
-            {
-                RemapPointPageTable(commandList, dispatch, pointRemap);
-            }
 
             GPUVsmParams allocateParams = bMark ? markParams : baseParams;
             allocateParams.cache[0] = (bCacheWanted ? CacheFlagEnabled : 0u) | (bInvalidateSun ? CacheFlagInvalidateAll : 0u) |
@@ -688,10 +687,40 @@ namespace NorvesLib::Core::Rendering
                 allocateParams.rects[index][3] = rect[3] + InvalidationMarginMeters;
             }
 
-            for (uint32_t index = 0; index < StageCount; ++index)
+            // 点光源の灯の並びが変わると、どの灯にも引き継がれない旧領域の欄は移し替えの上書きで消える。消える前に割り当て済みの欄を解放の統計へ数える
+            const bool bRemapPoint = bContinue && pointRemap.bMoves;
+            uint32_t discardedMask = 0u;
+            uint32_t remapFirstEntry = 0u;
+            uint32_t remapRegionEntries = 0u;
+            uint32_t remapCountGroups = 0u;
+            if (bRemapPoint)
+            {
+                const VirtualShadowMapPointLights& lights = *dispatch.PointLights;
+                const uint32_t previousCount = m_PreviousPointLights.LightCount;
+                for (uint32_t region = 0; region < previousCount; ++region)
+                {
+                    bool bUsed = false;
+                    for (uint32_t block = 0; block < lights.LightCount; ++block)
+                    {
+                        bUsed = bUsed || pointRemap.Source[block] == region;
+                    }
+                    discardedMask |= bUsed ? 0u : (1u << region);
+                }
+                remapFirstEntry = lights.FirstSlice * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+                remapRegionEntries = lights.SlicesPerLight * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+                remapCountGroups = discardedMask != 0u ? GroupsFor(previousCount * remapRegionEntries, GroupSize) : 0u;
+            }
+
+            for (uint32_t index = 0; index < StageUseCount; ++index)
             {
                 GPUVsmParams params = allocateParams;
                 params.control[0] = index;
+                if (index == StageRemapCount)
+                {
+                    params.control[3] = discardedMask;
+                    params.cache[2] = remapFirstEntry;
+                    params.cache[3] = remapRegionEntries;
+                }
                 Use& use = *allocateUses[index];
                 use.Uniform->Update(&params, sizeof(params));
                 use.Slices->Update(allocateSlices, sliceBytes);
@@ -728,6 +757,16 @@ namespace NorvesLib::Core::Rendering
                 1u,            // StageFinalize
             };
             commandList->SetPipeline(m_AllocatePipeline);
+            if (remapCountGroups != 0u)
+            {
+                commandList->SetDescriptorSet(allocateUses[StageRemapCount]->DescriptorSet, 0);
+                commandList->Dispatch(remapCountGroups, 1u, 1u);
+                BarrierWrites(commandList, {dispatch.Stats, dispatch.PageTable});
+            }
+            if (bRemapPoint)
+            {
+                RemapPointPageTable(commandList, dispatch, pointRemap);
+            }
             for (uint32_t index = 0; index < StageCount; ++index)
             {
                 if (groups[index] == 0u)
