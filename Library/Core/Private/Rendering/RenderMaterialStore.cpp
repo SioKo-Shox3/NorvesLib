@@ -125,6 +125,12 @@ namespace NorvesLib::Core::Rendering
         return nullptr;
     }
 
+    size_t RenderMaterialStore::GetMaterialCount() const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        return m_Materials.size();
+    }
+
     bool RenderMaterialStore::UpdateMaterial(MaterialHandle handle, const MaterialCreateData &createInfo)
     {
         MaterialResourceData data;

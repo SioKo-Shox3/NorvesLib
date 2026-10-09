@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "Rendering/MaterialTypes.h"
 #include "Rendering/NeuralMaterialResource.h"
@@ -32,6 +32,8 @@ namespace NorvesLib::Core::Rendering
         const MaterialResourceData *GetMaterialData(MaterialHandle handle) const;
         bool UpdateMaterial(MaterialHandle handle, const MaterialCreateData &createInfo);
         void ReleaseMaterial(MaterialHandle handle, ITextureHandleRegistrar &textureRegistrar);
+        // 登録中の材質の数（観測用。ニューラル材質も数える）
+        size_t GetMaterialCount() const;
 
         MaterialHandle CreateNeuralMaterial(RHI::IDevice *device,
                                             ITextureHandleRegistrar &textureRegistrar,

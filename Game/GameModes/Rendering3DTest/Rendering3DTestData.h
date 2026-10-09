@@ -68,6 +68,7 @@ namespace Game::GameModes
         NorvesLib::Core::Rendering::MaterialHandle TargetMaterial;
         NorvesLib::Core::Rendering::MaterialCreateData CreateData;
         uint32_t PendingTextureCount = 0; ///< 残り読み込み中テクスチャ数
+        bool bCancelled = false;          ///< シーンを出た。以降に届く読み込みの結果は材質へ入れず、VT なら返す
     };
 
     /**

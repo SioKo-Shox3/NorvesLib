@@ -256,6 +256,12 @@ namespace NorvesLib::Core::Rendering
         m_Meshes.erase(handle.Id);
     }
 
+    size_t ProceduralMeshGpuStore::GetMeshCount() const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        return m_Meshes.size();
+    }
+
     void ProceduralMeshGpuStore::Clear()
     {
         Thread::ScopedLock lock(m_Mutex);

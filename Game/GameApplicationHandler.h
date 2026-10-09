@@ -12,6 +12,7 @@
 #include "Bridge/NorvesLibBridgeAdapter.h"
 #include "Debug/SequenceFrameCapture.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
+#include "Scenes/SceneCycleSmoke.h"
 #include "Scripting/M6ScriptSmokeController.h"
 
 #if defined(NORVES_ENABLE_IMGUI)
@@ -22,6 +23,11 @@ namespace NorvesLib::Core::Asset
 {
     class AssetSystem;
 } // namespace NorvesLib::Core::Asset
+
+namespace NorvesLib::Core::GameMode
+{
+    class GameModeStateMachine;
+} // namespace NorvesLib::Core::GameMode
 
 namespace Game
 {
@@ -209,6 +215,10 @@ namespace Game
         NorvesLib::Core::Container::String m_StartupSceneView;
         /// --scene-report=<path> で指定された、シーンの解決結果（未知の id・視点、欠けた資産）の出力先。空なら書かない
         NorvesLib::Core::Container::String m_SceneReportPath;
+        /// --scene-cycle-smoke=<id,...> の検査（ホームのモードとシーンの間を周回して、資源が増えないことを確かめる）
+        Game::Scenes::SceneCycleSmoke m_SceneCycle;
+        /// CreateGameModeStateMachine が作ったステートマシン（非所有。Engine が所有する。OnPreShutdown で外す）
+        NorvesLib::Core::GameMode::GameModeStateMachine *m_pGameModeStateMachine = nullptr;
         NorvesLib::Modules::Physics::CharacterDriveMode m_DogDrive =
             NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
 #if defined(NORVES_ENABLE_IMGUI)

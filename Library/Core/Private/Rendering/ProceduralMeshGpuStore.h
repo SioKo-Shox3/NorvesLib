@@ -46,6 +46,8 @@ namespace NorvesLib::Core::Rendering
         // 登録した頂点から求めたローカル空間のAABB（求められなかったメッシュは false）
         bool TryGetLocalBounds(MeshDataHandle handle, BoundingBox &outBounds) const;
         void UnregisterMesh(MeshDataHandle handle);
+        // 登録中のメッシュの数（観測用）
+        size_t GetMeshCount() const;
         void Clear();
 
     private:

@@ -93,6 +93,8 @@ namespace NorvesLib::Core::Rendering
                                   const Container::String &sourcePath = "");
         MegaGeometry::MegaMeshHandle GetModelMegaMeshHandle(ModelHandle handle) const;
         void ReleaseModel(ModelHandle handle);
+        /** @brief 登録中の Model の数（観測用） */
+        size_t GetModelCount() const;
 
         /**
          * @brief 書き込み待ちのメッシュの中身を、上限の範囲でステージングのリングへ積む（RenderThread。RecordCopies の直前）

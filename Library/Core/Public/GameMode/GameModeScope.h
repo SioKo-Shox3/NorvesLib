@@ -32,6 +32,8 @@ namespace NorvesLib::Core::GameMode
      *   1) World::RemoveObject      — SceneView プロキシを除去
      *   2) MeshResources::Unregister — GPU メッシュデータを解放
      *   3) MegaGeometryResources::ReleaseModel — MegaGeometry モデルを解放
+     *   4) MaterialResources::Release — 材質を解放（材質が持つ VT も返す）
+     *   5) TextureResources::ReleaseTexture — 追跡したテクスチャを解放
      *
      * 非コピー設計（二重 Cleanup 防止）。
      *
@@ -98,6 +100,25 @@ namespace NorvesLib::Core::GameMode
         void TrackModel(NorvesLib::Core::Rendering::ModelHandle handle);
 
         /**
+         * @brief MaterialHandle を追跡リストへ追加
+         *
+         * Cleanup() が呼ばれると MaterialResources::Release が呼ばれる。材質が参照する VT（仮想テクスチャ）は
+         * 材質ごとに作られて誰も共有しないため、材質と一緒に返す。パスで読んだテクスチャは
+         * テクスチャのキャッシュが所有するので返さない。
+         * @param handle 追跡対象の材質ハンドル
+         */
+        void TrackMaterial(NorvesLib::Core::Rendering::MaterialHandle handle);
+
+        /**
+         * @brief TextureHandle を追跡リストへ追加
+         *
+         * Cleanup() が呼ばれると TextureResources::ReleaseTexture が呼ばれる。CreateTexture などで
+         * シーンが作った匿名のテクスチャに使う。キャッシュが所有するハンドルは追跡しない。
+         * @param handle 追跡対象のテクスチャハンドル
+         */
+        void TrackTexture(NorvesLib::Core::Rendering::TextureHandle handle);
+
+        /**
          * @brief 既に呼び出し側が World から除去済みの Entity を追跡対象から外す
          *
          * 呼び出し側が自前で World::RemoveObject 済みのオブジェクトを追跡から外す。
@@ -113,6 +134,8 @@ namespace NorvesLib::Core::GameMode
          * 1) 追跡 Entity を World から除去（root は RemoveObject、child は RemoveEntity）
          * 2) 全 MeshDataHandle を MeshResources::Unregister で解放
          * 3) 全 ModelHandle を MegaGeometryResources::ReleaseModel で解放
+         * 4) 全 MaterialHandle を MaterialResources::Release で解放（材質の VT も返す）
+         * 5) 追跡したテクスチャを TextureResources::ReleaseTexture で解放
          *
          * m_pWorld / m_pRenderResources が nullptr の場合はその処理をスキップ（冪等）。
          */
@@ -137,6 +160,10 @@ namespace NorvesLib::Core::GameMode
             m_TrackedMeshes;
         NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::ModelHandle>
             m_TrackedModels;
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::MaterialHandle>
+            m_TrackedMaterials;
+        NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Rendering::TextureHandle>
+            m_TrackedTextures;
     };
 
 } // namespace NorvesLib::Core::GameMode

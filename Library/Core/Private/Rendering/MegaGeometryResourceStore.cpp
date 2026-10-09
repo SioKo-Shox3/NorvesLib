@@ -938,6 +938,12 @@ namespace NorvesLib::Core::Rendering
         return it->second.MegaMesh;
     }
 
+    size_t MegaGeometryResourceStore::GetModelCount() const
+    {
+        Thread::ScopedLock lock(m_Mutex);
+        return m_Models.size();
+    }
+
     void MegaGeometryResourceStore::ReleaseModel(ModelHandle handle)
     {
         if (!handle.IsValid())

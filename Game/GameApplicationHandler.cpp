@@ -34,6 +34,7 @@
 #include "GameModes/GameModeIds.h"
 #include "GameModes/Rendering3DTest/Rendering3DTestMode.h"
 #include "GameModes/MemoryAgingTest/MemoryAgingTestMode.h"
+#include "GameModes/SceneCycleHome/SceneCycleHomeMode.h"
 #include "Scenes/SceneCatalog.h"
 
 // モジュールシステム第1段1C-ii: --dummy-overlay ゲートで描画ダミーモジュールを登録する。
@@ -105,6 +106,10 @@ namespace Game
         // --scene-report=<path>: シーンの解決結果（未知の id・視点、欠けた資産）をテキストで書き出す。
         // ログを書かない構成（Release）でも撮影スクリプトが資産の欠けを検査できるよう、ログとは別に出す。
         constexpr const TCHAR *kSceneReportOption = TEXT("--scene-report=");
+        // --scene-cycle-smoke=<id,...>: ホームのモードと指定のシーンの間を周回し、資源の数が増えないことを確かめる。
+        // --scene-cycle-count=<n>: その周回数（既定 3。2 以上で1周目と比べる）。
+        constexpr const TCHAR *kSceneCycleSmokeOption = TEXT("--scene-cycle-smoke=");
+        constexpr const TCHAR *kSceneCycleCountOption = TEXT("--scene-cycle-count=");
         // --startup-camera=<yaw>,<pitch>,<arm>: 起動時のカメラ（SpringArm の角度[度]と腕の長さ）。
         constexpr const TCHAR *kStartupCameraOption = TEXT("--startup-camera=");
         bool s_bRendering3DTestHasStartupCamera = false;
@@ -901,6 +906,30 @@ namespace Game
                     return false;
                 }
                 m_SceneReportPath = sceneValue;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kSceneCycleSmokeOption, sceneValue))
+            {
+                if (m_SceneCycle.IsEnabled())
+                {
+                    LOG_ERROR("--scene-cycle-smoke が重複しています");
+                    return false;
+                }
+                if (!m_SceneCycle.ParseScenes(sceneValue.c_str()))
+                {
+                    return false;
+                }
+                continue;
+            }
+            if (TryStripPrefix(args[i], kSceneCycleCountOption, sceneValue))
+            {
+                uint32_t cycleCount = 0;
+                if (!TryParseUInt32(sceneValue, cycleCount) || cycleCount == 0 || cycleCount > 1000)
+                {
+                    LOG_ERROR("--scene-cycle-count には 1〜1000 の整数を指定してください");
+                    return false;
+                }
+                m_SceneCycle.SetCycleCount(cycleCount);
                 continue;
             }
             const auto driveArgument = Gameplay::ParseCharacterDriveArgument(args[i].c_str(), m_DogDrive);
@@ -2004,6 +2033,11 @@ namespace Game
             m_BridgeHost.DrainInbound();
         }
         m_M6ScriptSmokeController.Update();
+
+        if (m_SceneCycle.IsEnabled() && m_pGameModeStateMachine != nullptr && NorvesLib::Core::Engine::GEngine)
+        {
+            m_SceneCycle.Update(*NorvesLib::Core::Engine::GEngine, *m_pGameModeStateMachine);
+        }
     }
 
     void GameApplicationHandler::OnLateUpdate(float deltaTime)
@@ -2074,6 +2108,7 @@ namespace Game
 
     void GameApplicationHandler::OnPreShutdown()
     {
+        m_pGameModeStateMachine = nullptr;
         m_M6ScriptSmokeController.Shutdown();
         LOG_INFO("GameApplicationHandler::OnPreShutdown()");
 
@@ -2139,7 +2174,17 @@ namespace Game
                 LOG_ERROR("--scene・--scene-view は --dog-movement-smoke と併用できません");
                 return false;
             }
+            if (m_SceneCycle.IsEnabled())
+            {
+                LOG_ERROR("--scene-cycle-smoke は --dog-movement-smoke と併用できません");
+                return false;
+            }
             return true;
+        }
+        if (m_SceneCycle.IsEnabled() && (!m_StartupSceneId.empty() || !m_StartupSceneView.empty()))
+        {
+            LOG_ERROR("--scene・--scene-view は --scene-cycle-smoke と併用できません");
+            return false;
         }
 
         // 解決結果のレポート（--scene-report）。ログとは別に、未知の id・視点と欠けた資産を行ごとに残す。
@@ -2309,6 +2354,12 @@ namespace Game
                 return mode;
             });
         stateMachine->Registry().Register(
+            SceneCycleHome,
+            [](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                return MakeUnique<SceneCycleHomeMode>();
+            });
+        stateMachine->Registry().Register(
             MemoryAgingTest,
             [](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
@@ -2326,15 +2377,26 @@ namespace Game
         {
             startMode = DogMovementSmoke;
         }
+        else if (m_SceneCycle.IsEnabled())
+        {
+            // 周回の検査は、何も置かないホームから始める（シーンへは検査が RequestChange で入る）
+            startMode = SceneCycleHome;
+            m_SceneCycle.SetModeParams(params);
+        }
         else if (startupScene != nullptr)
         {
             startMode = startupScene->Mode;
         }
         stateMachine->Start(startMode, params);
+        m_pGameModeStateMachine = stateMachine.get();
 
         if (m_bDogMovementSmoke)
         {
             LOG_INFO("犬の移動比較モードを開始します");
+        }
+        else if (m_SceneCycle.IsEnabled())
+        {
+            LOG_INFO_F("シーンの周回の検査を開始します（周回数 %u）", m_SceneCycle.GetCycleCount());
         }
         else if (startMode == Rendering3DTest)
         {

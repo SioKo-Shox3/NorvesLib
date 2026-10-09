@@ -878,6 +878,12 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    size_t MaterialResources::GetCount() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MaterialStore ? impl->MaterialStore->GetMaterialCount() : 0;
+    }
+
     MaterialHandle MaterialResources::CreateNeural(const NeuralMaterialDesc &desc)
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
@@ -977,6 +983,12 @@ namespace NorvesLib::Core::Rendering
         {
             impl->ProceduralMeshes->UnregisterMesh(handle);
         }
+    }
+
+    size_t MeshResources::GetCount() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->ProceduralMeshes ? impl->ProceduralMeshes->GetMeshCount() : 0;
     }
 
     SkinnedMeshResources::SkinnedMeshResources(RenderResources* pOwner)
@@ -1291,6 +1303,12 @@ namespace NorvesLib::Core::Rendering
         return impl && impl->MegaGeometryResources
                    ? impl->MegaGeometryResources->GetModelMegaMeshHandle(handle)
                    : MegaGeometry::MegaMeshHandle::Invalid();
+    }
+
+    size_t MegaGeometryResources::GetModelCount() const
+    {
+        auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
+        return impl && impl->MegaGeometryResources ? impl->MegaGeometryResources->GetModelCount() : 0;
     }
 
     void MegaGeometryResources::ReleaseModel(ModelHandle handle)

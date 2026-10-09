@@ -195,6 +195,8 @@ namespace NorvesLib::Core::Rendering
         const MaterialResourceData *GetData(MaterialHandle handle) const;
         bool Update(MaterialHandle handle, const MaterialCreateData &createInfo);
         void Release(MaterialHandle handle);
+        // 登録中の材質の数（観測用）
+        size_t GetCount() const;
 
         MaterialHandle CreateNeural(const NeuralMaterialDesc &desc);
         Container::VariableArray<NeuralMaterialResource *> GetNeuralResources() const;
@@ -234,6 +236,8 @@ namespace NorvesLib::Core::Rendering
          */
         bool TryGetLocalBounds(MeshDataHandle handle, BoundingBox &outBounds) const;
         void Unregister(MeshDataHandle handle);
+        // 登録中のメッシュの数（観測用）
+        size_t GetCount() const;
 
     private:
         friend class RenderResources;
@@ -329,6 +333,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t GetPendingAsyncModelLoadCount() const;
         MegaGeometry::MegaMeshHandle GetModelMegaMeshHandle(ModelHandle handle) const;
         void ReleaseModel(ModelHandle handle);
+        // 登録中の Model の数（観測用）
+        size_t GetModelCount() const;
 
         // MegaGeometry の遮蔽カリング（2パス）を使うか。既定は有効。起動引数 --mega-occlusion=off で無効にすると、
         // 遮蔽の判定なしの従来の1回の判定で描く。起動時（最初のフレームの前）に設定する。

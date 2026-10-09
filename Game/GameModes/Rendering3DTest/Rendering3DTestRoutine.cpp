@@ -194,6 +194,17 @@ namespace Game::GameModes
         {
             auto onLoaded = [&textures, update, paths, path, member, kind, onComplete](TextureHandle handle)
             {
+                if (update->bCancelled)
+                {
+                    // シーンを出た後に届いた結果。材質はもう無いので、材質ごとに作った VT だけ返す
+                    // （パスで読んだテクスチャはキャッシュが所有する）。
+                    uint32_t virtualIndex = 0;
+                    if (handle.IsValid() && textures.TryGetVirtualTextureIndex(handle, virtualIndex))
+                    {
+                        textures.ReleaseTexture(handle);
+                    }
+                    return;
+                }
                 update->CreateData.*member = handle;
                 if (kind == MaterialSlotKind::Normal)
                 {
@@ -241,7 +252,7 @@ namespace Game::GameModes
                     path,
                     [&textures, update, paths, path, member, kind, onComplete, onLoaded](TextureHandle handle)
                     {
-                        if (handle.IsValid())
+                        if (handle.IsValid() || update->bCancelled)
                         {
                             onLoaded(handle);
                             return;
@@ -788,6 +799,22 @@ namespace Game::GameModes
                     createInfo.Material.ORMTexture = material.ORMTexture;
                     createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
                     createInfo.DebugName = load.DebugName;
+
+                    // MegaMesh は材質のテクスチャを所有しない。材質ごとに作った VT は、シーンの範囲で追跡して
+                    // Leave 後にモデルと一緒に返す（パスで読んだテクスチャはキャッシュが所有するので追跡しない）。
+                    {
+                        auto &textures = ctx.RenderResourcesRef.Textures();
+                        for (const TextureHandle texture : {material.AlbedoTexture, material.NormalTexture,
+                                                            material.MetallicTexture, material.RoughnessTexture,
+                                                            material.AOTexture, material.ORMTexture})
+                        {
+                            uint32_t virtualIndex = 0;
+                            if (texture.IsValid() && textures.TryGetVirtualTextureIndex(texture, virtualIndex))
+                            {
+                                ctx.ScopeRef.TrackTexture(texture);
+                            }
+                        }
+                    }
 
                     const MegaMeshHandle megaMeshHandle = megaGeometry.CreateMegaMesh(createInfo);
                     if (megaMeshHandle.IsValid())
@@ -2178,6 +2205,8 @@ namespace Game::GameModes
 
             if (data.m_CheckerTextureHandle.IsValid())
             {
+                // 匿名のテクスチャなので、シーンの範囲で追跡して Leave 後に返す
+                ctx.ScopeRef.TrackTexture(data.m_CheckerTextureHandle);
                 NORVES_LOG_INFO("Rendering3DTest", "Checkerboard texture created (256x256)");
             }
             else
@@ -2193,12 +2222,19 @@ namespace Game::GameModes
             auto &renderResources = ctx.RenderResourcesRef;
             auto &textures = renderResources.Textures();
             auto &materials = renderResources.Materials();
+            // 作った材質はシーンの範囲で追跡し、Leave 後の Cleanup で返す（材質が持つ VT も一緒に返る）
+            auto createMaterial = [&materials, &ctx](const MaterialCreateData &createInfo)
+            {
+                const MaterialHandle handle = materials.Create(createInfo);
+                ctx.ScopeRef.TrackMaterial(handle);
+                return handle;
+            };
 
             // --- Silver PBRマテリアル（テクスチャなしで先に作成、後で差し替え） ---
             {
                 MaterialCreateData silverMatInfo;
                 silverMatInfo.DebugName = "SilverPBR";
-                data.m_SilverMaterial = materials.Create(silverMatInfo);
+                data.m_SilverMaterial = createMaterial(silverMatInfo);
 
                 auto silverUpdate = MakeShared<PendingMaterialUpdate>();
                 silverUpdate->TargetMaterial = data.m_SilverMaterial;
@@ -2228,11 +2264,11 @@ namespace Game::GameModes
                 MaterialCreateData cobbleMatInfo;
                 cobbleMatInfo.HeightScale = 0.05f;
                 cobbleMatInfo.DebugName = "CobbleStoneFloor";
-                data.m_CobbleStoneMaterial = materials.Create(cobbleMatInfo);
+                data.m_CobbleStoneMaterial = createMaterial(cobbleMatInfo);
 
                 MaterialCreateData groundMatInfo;
                 groundMatInfo.DebugName = "Ground";
-                data.m_GroundMaterial = materials.Create(groundMatInfo);
+                data.m_GroundMaterial = createMaterial(groundMatInfo);
 
                 auto cobbleUpdate = MakeShared<PendingMaterialUpdate>();
                 cobbleUpdate->TargetMaterial = data.m_CobbleStoneMaterial;
@@ -2284,7 +2320,7 @@ namespace Game::GameModes
                         showcaseMatInfo.Metallic = metallic;
                         showcaseMatInfo.Roughness = roughness;
                         showcaseMatInfo.DebugName = "ShowcaseSphere";
-                        data.m_ShowcaseMaterials.push_back(materials.Create(showcaseMatInfo));
+                        data.m_ShowcaseMaterials.push_back(createMaterial(showcaseMatInfo));
                     }
                 }
             }
@@ -2312,7 +2348,7 @@ namespace Game::GameModes
                     // 視差の深さ（m）を、テクスチャ1枚の実寸に対する割合（高さのスケール）へ直す
                     swatchMatInfo.HeightScale = bHasHeight ? spec.HeightDepthMeters / spec.TileMeters : 0.0f;
                     swatchMatInfo.DebugName = spec.AssetId;
-                    const MaterialHandle swatchMaterial = materials.Create(swatchMatInfo);
+                    const MaterialHandle swatchMaterial = createMaterial(swatchMatInfo);
                     data.m_GroundSwatchMaterials.push_back(swatchMaterial);
 
                     auto swatchUpdate = MakeShared<PendingMaterialUpdate>();
@@ -2365,7 +2401,7 @@ namespace Game::GameModes
 
                     MaterialCreateData stressMatInfo;
                     stressMatInfo.DebugName = stressSpec.AssetId;
-                    const MaterialHandle stressMaterial = materials.Create(stressMatInfo);
+                    const MaterialHandle stressMaterial = createMaterial(stressMatInfo);
                     data.m_StressMaterials.push_back(stressMaterial);
                     ++stressPresentCount;
 
@@ -2403,7 +2439,7 @@ namespace Game::GameModes
             // GBufferへはプリエクスポージャ後の値を書くため、昼・夕の露出では半精度の範囲に十分収まる。
             lightSphereMatInfo.EmissiveLuminanceNits = 150000.0f;
             lightSphereMatInfo.DebugName = "LightSphere";
-            data.m_LightSphereMaterial = materials.Create(lightSphereMatInfo);
+            data.m_LightSphereMaterial = createMaterial(lightSphereMatInfo);
         }
 
         // ========================================
@@ -4025,7 +4061,37 @@ namespace Game::GameModes
         data.m_BoulderModelHandle = ModelHandle::Invalid();
         data.m_bBoulderModelLoadPending = false;
 
-        // 非同期マテリアル更新のクリア
+        // 非同期マテリアル更新のクリア。まだ材質へ入れていない VT は材質のデータに無く、GameModeScope の
+        // Cleanup が見つけられないので、ここで返す。以降に届く読み込みの結果は bCancelled で捨てる。
+        {
+            TextureResources &textures = ctx.RenderResourcesRef.Textures();
+            for (const TSharedPtr<PendingMaterialUpdate> &update : data.m_PendingMaterialUpdates)
+            {
+                if (!update)
+                {
+                    continue;
+                }
+                update->bCancelled = true;
+                if (update->PendingTextureCount == 0 && update->TargetMaterial.IsValid())
+                {
+                    continue; // 完了して材質のデータに入った。Cleanup が返す
+                }
+                const TextureHandle unapplied[] = {
+                    update->CreateData.AlbedoTexture,   update->CreateData.NormalTexture,
+                    update->CreateData.MetallicTexture, update->CreateData.RoughnessTexture,
+                    update->CreateData.AOTexture,       update->CreateData.ORMTexture,
+                    update->CreateData.HeightTexture,
+                };
+                for (const TextureHandle texture : unapplied)
+                {
+                    uint32_t virtualIndex = 0;
+                    if (texture.IsValid() && textures.TryGetVirtualTextureIndex(texture, virtualIndex))
+                    {
+                        textures.ReleaseTexture(texture);
+                    }
+                }
+            }
+        }
         data.m_PendingMaterialUpdates.clear();
         data.m_CookedStartupModelLoads.clear();
 
