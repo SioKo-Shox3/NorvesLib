@@ -229,6 +229,11 @@ namespace Game
         NorvesLib::Core::Container::String m_CameraScriptPath;
         /// --camera-path-time=<秒> で指定された、起動時にカメラパスの途中へ置く時刻。負なら置かない
         float m_CameraPathTime = -1.0f;
+        /// --banana-count=<n> で指定された、バナナのシーンの本数（指定が無ければ既定）
+        uint32_t m_BananaCount = 4096;
+        bool m_bBananaCountSet = false;
+        /// --open-scene-info（開発ビルドだけ）: バナナのシーンを情報表示を出した状態で始める
+        bool m_bOpenSceneInfo = false;
         /// --scene-cycle-smoke=<id,...> の検査（ランチャーとシーンの間を周回して、資源が増えないことを確かめる）
         Game::Scenes::SceneCycleSmoke m_SceneCycle;
         /// ポーズメニュー（ランチャー以外のシーンで Esc・Start で開く。ランチャーは入場でこれを無効にする）

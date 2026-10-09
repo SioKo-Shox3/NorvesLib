@@ -105,6 +105,42 @@ namespace Game::Scenes
         "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf",
     };
 
+    /// バナナのシーンの視点。床に敷いたバナナの全体・手前の山・床すれすれ（座標は +Z 向きが Yaw 0）
+    inline constexpr SceneViewDescriptor kMegaBananasViews[] = {
+        // 床の手前の上から、敷き詰めたバナナと手前の山を見渡す視点。起動時の既定
+        {"overview", SceneViewKind::FreePose, 0.0f, -17.0f, 0.0f, {0.0f, 2.6f, -5.5f}},
+        // 手前の山の斜面へ数十 cm まで寄る視点
+        {"close", SceneViewKind::FreePose, 0.0f, -14.0f, 0.0f, {0.3f, 0.45f, 2.0f}},
+        // 床すれすれから、並んだバナナと山を見る視点
+        {"low", SceneViewKind::FreePose, 8.0f, 2.0f, 0.0f, {-0.5f, 0.1f, -0.5f}},
+    };
+
+    // 手前の山（原点の前方 3 m）を囲む一周のデモ飛行。位置は山の中心から 6 m の円（高さ 1.6〜2.2 m）を 2.5 秒ごとに
+    // 45° ずつ進み（周期 20 秒）、注視点は山の中心の周り 1.2 m の円（高さ 0.3 m）を、位置より 90° 先の向きで動く。
+    inline constexpr NorvesLib::Core::Input::CameraPathKey kMegaBananasPathKeys[] = {
+        {0.0f, {0.0000f, 1.6f, -3.0000f}, {1.2000f, 0.3f, 3.0000f}},
+        {2.5f, {4.2426f, 2.2f, -1.2426f}, {0.8485f, 0.3f, 3.8485f}},
+        {5.0f, {6.0000f, 1.6f, 3.0000f}, {0.0000f, 0.3f, 4.2000f}},
+        {7.5f, {4.2426f, 2.2f, 7.2426f}, {-0.8485f, 0.3f, 3.8485f}},
+        {10.0f, {0.0000f, 1.6f, 9.0000f}, {-1.2000f, 0.3f, 3.0000f}},
+        {12.5f, {-4.2426f, 2.2f, 7.2426f}, {-0.8485f, 0.3f, 2.1515f}},
+        {15.0f, {-6.0000f, 1.6f, 3.0000f}, {0.0000f, 0.3f, 1.8000f}},
+        {17.5f, {-4.2426f, 2.2f, -1.2426f}, {0.8485f, 0.3f, 2.1515f}},
+    };
+
+    inline constexpr ScenePathDescriptor kMegaBananasPath = {
+        kMegaBananasPathKeys,
+        sizeof(kMegaBananasPathKeys) / sizeof(kMegaBananasPathKeys[0]),
+        true,
+        20.0f,
+    };
+
+    /// バナナのシーンの id と、読み込めないとシーンが成り立たない資産（生成した GLB。ComfyUI で作る）
+    inline constexpr const char *kMegaBananasSceneId = "mega-bananas";
+    inline constexpr const char *kMegaBananasRequiredAssets[] = {
+        "Assets/Models/Generated/banana/banana.glb",
+    };
+
     /// 確認用の sandbox の id。シーンの一覧に載るのは開発ビルドだけ
     inline constexpr const char *kSandboxSceneId = "sandbox";
 
@@ -153,6 +189,19 @@ namespace Game::Scenes
             sizeof(kRendering3DTestRequiredAssets) / sizeof(kRendering3DTestRequiredAssets[0]),
             nullptr,
             nullptr,
+        },
+        {
+            kMegaBananasSceneId,
+            "バナナの山",
+            "生成した高ポリのバナナを、仮想化ジオメトリで床いっぱいに敷き詰めるシーン。近づくほど細かい形が出る。",
+            "Assets/Launcher/Thumbnails/mega-bananas.png",
+            Game::GameModes::MegaBananas,
+            kMegaBananasViews,
+            sizeof(kMegaBananasViews) / sizeof(kMegaBananasViews[0]),
+            kMegaBananasRequiredAssets,
+            sizeof(kMegaBananasRequiredAssets) / sizeof(kMegaBananasRequiredAssets[0]),
+            "python Scripts/GenerateSceneModels.py --ids banana",
+            &kMegaBananasPath,
         },
 #if NORVES_BUILD_DEVELOPMENT
         // 開発ビルドだけ。ランチャーの先頭のシーンにはしない（並びの最後に置く）

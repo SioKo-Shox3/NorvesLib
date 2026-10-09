@@ -35,4 +35,7 @@ namespace Game::GameModes
     /// 空と平らな地面だけの確認用シーン（開発ビルドだけランチャーに出る）。自由飛行カメラの確認に使う
     inline constexpr NorvesLib::Core::GameMode::GameModeId Sandbox = "Sandbox"_id;
 
+    /// 仮想化ジオメトリ（MegaGeometry）で生成したバナナを床いっぱいに敷き詰めるシーン
+    inline constexpr NorvesLib::Core::GameMode::GameModeId MegaBananas = "MegaBananas"_id;
+
 } // namespace Game::GameModes

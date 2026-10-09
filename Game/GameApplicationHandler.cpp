@@ -39,6 +39,7 @@
 #include "GameModes/Rendering3DTest/Rendering3DTestMode.h"
 #include "GameModes/MemoryAgingTest/MemoryAgingTestMode.h"
 #include "GameModes/Launcher/LauncherMode.h"
+#include "GameModes/MegaBananas/MegaBananasMode.h"
 #include "GameModes/Sandbox/SandboxMode.h"
 #include "Scenes/SceneCatalog.h"
 
@@ -127,6 +128,11 @@ namespace Game
         constexpr const TCHAR *kCameraScriptOption = TEXT("--camera-script=");
         // --camera-path-time=<秒>: カメラパスを持つシーンで、起動時の視点をパスのこの時刻の位置と向きにする（停止した状態。撮影用）。
         constexpr const TCHAR *kCameraPathTimeOption = TEXT("--camera-path-time=");
+        // --banana-count=<n>: mega-bananas のバナナの本数（1〜kMaxBananaCount。既定 kDefaultBananaCount）。
+        constexpr const TCHAR *kBananaCountOption = TEXT("--banana-count=");
+        // --open-scene-info: mega-bananas を起動時から情報表示（H キーの表示）を出した状態にする（開発ビルドだけ。値を取らない）。
+        // 撮影の起動は ImGui を使わないが、この指定があれば撮影でも使い、表示を撮れる。
+        constexpr const TCHAR *kOpenSceneInfoOption = TEXT("--open-scene-info");
         // --scene-cycle-smoke=<id,...>: ランチャーと指定のシーンの間を周回し、資源の数が増えないことを確かめる。
         // --scene-cycle-count=<n>: その周回数（既定 3。2 以上で1周目と比べる）。
         constexpr const TCHAR *kSceneCycleSmokeOption = TEXT("--scene-cycle-smoke=");
@@ -526,6 +532,9 @@ namespace Game
         m_SceneReportPath = {};
         m_CameraScriptPath = {};
         m_CameraPathTime = -1.0f;
+        m_BananaCount = Game::GameModes::kDefaultBananaCount;
+        m_bBananaCountSet = false;
+        m_bOpenSceneInfo = false;
         m_DogDrive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         bool bHasCharacterDrive = false;
         m_bRendering3DTestUseCookedModel = false;
@@ -948,6 +957,24 @@ namespace Game
                     return false;
                 }
                 m_CameraPathTime = pathTime;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kBananaCountOption, sceneValue))
+            {
+                uint32_t bananaCount = 0;
+                if (m_bBananaCountSet)
+                {
+                    LOG_ERROR("--banana-count が重複しています");
+                    return false;
+                }
+                if (!TryParseUInt32(sceneValue, bananaCount) || bananaCount == 0 ||
+                    bananaCount > Game::GameModes::kMaxBananaCount)
+                {
+                    LOG_ERROR_F("--banana-count は 1〜%u の整数で指定してください", Game::GameModes::kMaxBananaCount);
+                    return false;
+                }
+                m_BananaCount = bananaCount;
+                m_bBananaCountSet = true;
                 continue;
             }
             if (TryStripPrefix(args[i], kCameraScriptOption, sceneValue))
@@ -1629,6 +1656,7 @@ namespace Game
         bool bImGui = m_bAnimationDebugRequested;
         bool bAutomatedRun = !captureSequencePrefix.empty();
         bool bOpenPauseMenu = false;
+        bool bOpenSceneInfo = false;
         for (size_t i = 0; i < args.size(); ++i)
         {
             String ignoredValue;
@@ -1639,6 +1667,10 @@ namespace Game
             else if (ToStdString(args[i]) == std::basic_string<TCHAR>(kOpenPauseMenuOption))
             {
                 bOpenPauseMenu = true;
+            }
+            else if (ToStdString(args[i]) == std::basic_string<TCHAR>(kOpenSceneInfoOption))
+            {
+                bOpenSceneInfo = true;
             }
             else if (TryStripPrefix(args[i], kCapturePngOption, ignoredValue) ||
                      TryStripPrefix(args[i], kExitAfterFramesOption, ignoredValue))
@@ -1652,17 +1684,25 @@ namespace Game
             LOG_WARNING("起動オプション --open-pause-menu は開発ビルドでのみ有効なので無視しました");
             bOpenPauseMenu = false;
         }
+        if (bOpenSceneInfo)
+        {
+            LOG_WARNING("起動オプション --open-scene-info は開発ビルドでのみ有効なので無視しました");
+            bOpenSceneInfo = false;
+        }
 #endif
+        m_bOpenSceneInfo = bOpenSceneInfo;
         // ImGui モジュールは、デバッグ用の窓（--imgui）のほかに、ランチャーのメニューのためにも登録する。
         // デバッグ用の窓（EngineStats など）は m_bImGuiRequested のときだけ出す。
 #if defined(NORVES_ENABLE_IMGUI)
         // ポーズメニュー（Esc）のためにも登録する。撮影・自動実行の起動は、描画やキー割り当てを変えないよう使わない。
         m_bPauseMenuWanted = !bAutomatedRun || bOpenPauseMenu;
         m_bOpenPauseMenuAtStartup = bOpenPauseMenu;
-        if (bImGui || m_bLauncherStartup || m_bPauseMenuWanted)
+        if (bImGui || m_bLauncherStartup || m_bPauseMenuWanted || bOpenSceneInfo)
         {
             NorvesLib::Core::Module::RegisterImGuiModule(
                 NorvesLib::Core::Module::GetModuleRegistry());
+            // バナナのシーンの情報表示（H キー）の文字。シーンは ImGui モジュールがあるときだけ表示を登録する
+            Game::GameModes::RegisterBananasInfoDisplayText();
             if (m_bLauncherStartup)
             {
                 // ランチャーの文字を表示用フォントへ載せる。ImGui モジュールの Initialize より前に渡す。
@@ -2632,6 +2672,24 @@ namespace Game
             [](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 return MakeUnique<MemoryAgingTestMode>();
+            });
+        // バナナのシーン。本数・視点・台本は起動引数から渡す。
+        stateMachine->Registry().Register(
+            MegaBananas,
+            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+             bananaCount = m_BananaCount, bShowInfo = m_bOpenSceneInfo, pauseMenu = &m_PauseMenu,
+             getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
+                -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<MegaBananasMode>();
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_BananaCount = bananaCount;
+                mode->GetData().m_bShowInfoAtStart = bShowInfo;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_GetAssetSystem = getAssetSystem;
+                return mode;
             });
 #if NORVES_BUILD_DEVELOPMENT
         // 確認用の sandbox は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
