@@ -190,6 +190,15 @@ vec3 ApplySceneColorPreExposure(vec3 sceneColor)
     return sceneColor;
 }
 
+// アルベドをそのまま見せるデバッグ表示（Unlit・ワイヤーフレーム・クラスタ・LOD）。
+bool IsAlbedoDebugView()
+{
+    return params.debugViewMode == DEBUG_VIEW_MODE_UNLIT ||
+           params.debugViewMode == DEBUG_VIEW_MODE_WIREFRAME ||
+           params.debugViewMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS ||
+           params.debugViewMode == DEBUG_VIEW_MODE_LOD_LEVEL;
+}
+
 // GBufferの発光は書き込み時に同じフレームのプリエクスポージャ（params.preExposure と同じ値）を
 // 掛けてある。露出を掛ける表示ではそのまま足し、掛けない表示では物理の値へ戻す。
 vec3 ResolveGBufferEmissiveSceneColor(vec3 preExposedEmissive)
@@ -932,7 +941,10 @@ void main()
             vec3 sunDirection = normalize(params.skySunDirectionAndCosRadius.xyz);
             float sunDiskMask = step(params.skySunDirectionAndCosRadius.w,
                                      dot(rayDir, sunDirection));
-            vec3 preExposedSkyColor = ApplySceneColorPreExposure(skyColor);
+            // アルベドを見せるデバッグ表示はトーンマップを通らないので、空にも露出を掛けて表示の範囲へ入れる
+            // （掛けないと物理の輝度のまま画面が白く飛ぶ）。
+            vec3 preExposedSkyColor = IsAlbedoDebugView() ? skyColor * params.preExposure
+                                                          : ApplySceneColorPreExposure(skyColor);
             preExposedSkyColor += sunDiskSample.rgb * sunDiskMask;
             preExposedSkyColor = max(preExposedSkyColor, vec3(0.0));
 
@@ -945,10 +957,7 @@ void main()
         return;
     }
 
-    if (params.debugViewMode == DEBUG_VIEW_MODE_UNLIT ||
-        params.debugViewMode == DEBUG_VIEW_MODE_WIREFRAME ||
-        params.debugViewMode == DEBUG_VIEW_MODE_MEGA_GEOMETRY_CLUSTERS ||
-        params.debugViewMode == DEBUG_VIEW_MODE_LOD_LEVEL)
+    if (IsAlbedoDebugView())
     {
         outColor = vec4(albedoSample.rgb, 1.0);
         return;

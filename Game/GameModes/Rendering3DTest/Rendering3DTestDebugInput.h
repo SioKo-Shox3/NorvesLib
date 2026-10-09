@@ -19,12 +19,13 @@ namespace Game::GameModes
      * 共存する。ImGui がキーボードを掴んでいる間は上位で consume されるため
      * ここへは届かない（排他）。
      *
-     * 写像（従来 inline と同一）:
-     * - F1: Normal
+     * 写像:
+     * - F1: Normal（--imgui ではデバッグのカーソル解除に予約され、ここへは届かない）
      * - F2: Unlit
      * - F3: Wireframe
      * - F4: MegaGeometryClusters
      * - F5: 次モードへ巡回
+     * F2-F4 は今の表示と同じキーをもう一度押すと Normal へ戻る。
      *
      * Alt 押下中は従来の `!IsAltDown()` ガードを踏襲し切替を抑止する
      * （Alt はカメラ操作等と競合するため）。Alt 自体は記録のみで透過する。
