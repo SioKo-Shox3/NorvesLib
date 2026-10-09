@@ -55,6 +55,12 @@ namespace Game::GameModes
         {
             const DebugViewMode currentDebugViewMode = m_pRenderWorld->GetMainViewportDebugViewMode();
             DebugViewMode nextDebugViewMode = currentDebugViewMode;
+            // F2-F4 は今の表示と同じキーをもう一度押すと Normal へ戻す。--imgui では F1 が
+            // デバッグのカーソル解除に予約されてここへ届かないため、F1 無しでも戻れるようにする。
+            const auto toggleFromNormal = [currentDebugViewMode](DebugViewMode mode)
+            {
+                return currentDebugViewMode == mode ? DebugViewMode::Normal : mode;
+            };
 
             switch (event.Code)
             {
@@ -62,13 +68,13 @@ namespace Game::GameModes
                 nextDebugViewMode = DebugViewMode::Normal;
                 break;
             case KeyCode::F2:
-                nextDebugViewMode = DebugViewMode::Unlit;
+                nextDebugViewMode = toggleFromNormal(DebugViewMode::Unlit);
                 break;
             case KeyCode::F3:
-                nextDebugViewMode = DebugViewMode::Wireframe;
+                nextDebugViewMode = toggleFromNormal(DebugViewMode::Wireframe);
                 break;
             case KeyCode::F4:
-                nextDebugViewMode = DebugViewMode::MegaGeometryClusters;
+                nextDebugViewMode = toggleFromNormal(DebugViewMode::MegaGeometryClusters);
                 break;
             case KeyCode::F5:
             {
