@@ -32,4 +32,7 @@ namespace Game::GameModes
     /// ランチャー（シーン選択）。引数なしの起動で入り、--scene-cycle-smoke がシーンと行き来する相手でもある
     inline constexpr NorvesLib::Core::GameMode::GameModeId Launcher = "Launcher"_id;
 
+    /// 空と平らな地面だけの確認用シーン（開発ビルドだけランチャーに出る）。自由飛行カメラの確認に使う
+    inline constexpr NorvesLib::Core::GameMode::GameModeId Sandbox = "Sandbox"_id;
+
 } // namespace Game::GameModes

@@ -422,6 +422,7 @@ set(PRIVATE_SOURCES
     Private/Input/HapticsJson.cpp
     Private/Input/InputRouter.cpp
     Private/Input/MayaCameraController.cpp
+    Private/Input/FreeFlyCameraController.cpp
     Private/Input/LightController.cpp
     # Random
     Private/Random/Random.cpp
@@ -804,6 +805,7 @@ set(PUBLIC_HEADERS
     Public/Input/HapticsService.h
     Public/Input/HapticsJson.h
     Public/Input/MayaCameraController.h
+    Public/Input/FreeFlyCameraController.h
     Public/Input/LightController.h
     Public/Rendering/PathTracingExrOutput.h
 )

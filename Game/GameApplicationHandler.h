@@ -225,6 +225,8 @@ namespace Game
         NorvesLib::Core::Container::String m_StartupSceneView;
         /// --scene-report=<path> で指定された、シーンの解決結果（未知の id・視点、欠けた資産）の出力先。空なら書かない
         NorvesLib::Core::Container::String m_SceneReportPath;
+        /// --camera-script=<file>（開発ビルドだけ）で指定された、自由飛行カメラへ流す入力の台本。空なら流さない
+        NorvesLib::Core::Container::String m_CameraScriptPath;
         /// --scene-cycle-smoke=<id,...> の検査（ランチャーとシーンの間を周回して、資源が増えないことを確かめる）
         Game::Scenes::SceneCycleSmoke m_SceneCycle;
         /// ポーズメニュー（ランチャー以外のシーンで Esc・Start で開く。ランチャーは入場でこれを無効にする）

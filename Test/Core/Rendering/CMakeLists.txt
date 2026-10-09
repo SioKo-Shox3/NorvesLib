@@ -1798,6 +1798,9 @@ if(NORVES_BRIDGE_SDK_DIR)
         ${CMAKE_SOURCE_DIR}/Game/Scenes/SceneCycleSmoke.cpp
     ${CMAKE_SOURCE_DIR}/Game/Scripting/M6ScriptSmokeController.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/CameraInputCollector.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Input/CameraScript.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Scenes/FreeCameraRig.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/Sandbox/SandboxRoutine.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
         ${CMAKE_SOURCE_DIR}/Game/Bridge/NorvesLibBridgeAdapter.cpp
         ${CMAKE_SOURCE_DIR}/Game/Bridge/BridgeBase64.cpp

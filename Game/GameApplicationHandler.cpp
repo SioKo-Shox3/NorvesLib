@@ -39,6 +39,7 @@
 #include "GameModes/Rendering3DTest/Rendering3DTestMode.h"
 #include "GameModes/MemoryAgingTest/MemoryAgingTestMode.h"
 #include "GameModes/Launcher/LauncherMode.h"
+#include "GameModes/Sandbox/SandboxMode.h"
 #include "Scenes/SceneCatalog.h"
 
 // モジュールシステム第1段1C-ii: --dummy-overlay ゲートで描画ダミーモジュールを登録する。
@@ -121,6 +122,9 @@ namespace Game
         // --scene-report=<path>: シーンの解決結果（未知の id・視点、欠けた資産）をテキストで書き出す。
         // ログを書かない構成（Release）でも撮影スクリプトが資産の欠けを検査できるよう、ログとは別に出す。
         constexpr const TCHAR *kSceneReportOption = TEXT("--scene-report=");
+        // --camera-script=<file>: 自由飛行カメラへ決まった入力を流す台本（開発ビルドだけ。書式は Input/CameraScript.h）。
+        // 撮影で「この操作でここへ動く」を再現するのに使う。
+        constexpr const TCHAR *kCameraScriptOption = TEXT("--camera-script=");
         // --scene-cycle-smoke=<id,...>: ランチャーと指定のシーンの間を周回し、資源の数が増えないことを確かめる。
         // --scene-cycle-count=<n>: その周回数（既定 3。2 以上で1周目と比べる）。
         constexpr const TCHAR *kSceneCycleSmokeOption = TEXT("--scene-cycle-smoke=");
@@ -518,6 +522,7 @@ namespace Game
         m_StartupSceneId = {};
         m_StartupSceneView = {};
         m_SceneReportPath = {};
+        m_CameraScriptPath = {};
         m_DogDrive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         bool bHasCharacterDrive = false;
         m_bRendering3DTestUseCookedModel = false;
@@ -924,6 +929,41 @@ namespace Game
                     return false;
                 }
                 m_SceneReportPath = sceneValue;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kCameraScriptOption, sceneValue))
+            {
+                if (!m_CameraScriptPath.empty())
+                {
+                    LOG_ERROR("--camera-script が重複しています");
+                    return false;
+                }
+                if (sceneValue.empty())
+                {
+                    LOG_ERROR("--camera-script には台本のパスを指定してください");
+                    return false;
+                }
+#if NORVES_BUILD_DEVELOPMENT
+                m_CameraScriptPath = sceneValue;
+#if defined(NORVES_SOURCE_ASSET_DIR)
+                {
+                    // 作業ディレクトリは実行ファイルのディレクトリなので、相対パスで見つからなければリポジトリのルートを基準に探す。
+                    std::error_code existsError;
+                    const std::filesystem::path given(sceneValue.c_str());
+                    if (given.is_relative() && !std::filesystem::exists(given, existsError))
+                    {
+                        const std::filesystem::path fromRepo =
+                            std::filesystem::path(NORVES_SOURCE_ASSET_DIR).parent_path() / given;
+                        if (std::filesystem::exists(fromRepo, existsError))
+                        {
+                            m_CameraScriptPath = String(fromRepo.string().c_str());
+                        }
+                    }
+                }
+#endif
+#else
+                LOG_WARNING("--camera-script は開発ビルドだけで使えます。無視します");
+#endif
                 continue;
             }
             if (TryStripPrefix(args[i], kSceneCycleSmokeOption, sceneValue))
@@ -2396,6 +2436,20 @@ namespace Game
         }
         m_StartupSceneId = String(scene->Id);
 
+        // 視点の一覧。先頭が既定の視点。撮影スクリプトが -Views を省いたときに、全視点を撮るのに読む。
+        {
+            String viewList;
+            for (std::size_t index = 0; index < scene->ViewCount; ++index)
+            {
+                if (index > 0)
+                {
+                    viewList += ",";
+                }
+                viewList += scene->Views[index].Name;
+            }
+            sceneReport += "views=" + viewList + "\n";
+        }
+
         if (!m_StartupSceneView.empty())
         {
             const Scenes::SceneViewDescriptor *view = Scenes::FindSceneView(*scene, m_StartupSceneView.c_str());
@@ -2406,7 +2460,7 @@ namespace Game
                 sceneReport += "unknown_view=" + m_StartupSceneView + "\n";
                 m_StartupSceneView = {};
             }
-            else if (view->bHasCamera)
+            else if (view->Kind == Scenes::SceneViewKind::SpringArm)
             {
                 if (s_bRendering3DTestHasStartupCamera)
                 {
@@ -2560,6 +2614,20 @@ namespace Game
             {
                 return MakeUnique<MemoryAgingTestMode>();
             });
+#if NORVES_BUILD_DEVELOPMENT
+        // 確認用の sandbox は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
+        stateMachine->Registry().Register(
+            Sandbox,
+            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+             pauseMenu = &m_PauseMenu](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<SandboxMode>();
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                return mode;
+            });
+#endif
 
         // 起動するモード: 犬の比較は専用の引数、ランチャーから始めるときはランチャー、それ以外は --scene のシーンの GameMode。
         const Scenes::SceneDescriptor *startupScene = Scenes::FindScene(m_StartupSceneId.c_str());

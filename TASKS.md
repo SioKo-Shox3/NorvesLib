@@ -56,7 +56,7 @@
 - notes: ImGui の登録は `GameApplicationHandler.cpp` 1462〜1482 行付近（今は `--imgui` のときだけ）。`IImGuiView`（`Library/Modules/ImGui/Public/ImGuiModule/IImGuiView.h`）。NotoSansJP は `ImGuiModule.cpp` 632・671 行付近でマージ済み。入力の Menu の文脈（Confirm=Enter/パッド a、Cancel=Escape/パッド b）は `Assets/Config/DefaultInputBindings.json` 217 行付近。見本画像を ImGui のテクスチャとして描く手段が無ければ足す（画像は SCN-THUMBNAILS で作る）。Release にデバッグ機能（GPU 計測・ログ）を入れない。
 
 ## SCN-PAUSE-MENU: Esc のポーズメニューからランチャーへ戻れるようにする
-- status: done
+- status: blocked
 - done-when: ランチャー以外の全シーンで Esc（ゲームパッドの Start）を押すとポーズメニュー（続ける／ランチャーへ戻る／ゲームを終了）が出て、もう一度 Esc か「続ける」で閉じる。「ランチャーへ戻る」で `RequestChange(launcher)`。メニューが出ている間はカメラ操作などシーン側の入力を止めてマウスカーソルを出す。Rendering3DTest の F1〜F5 のデバッグ表示や Alt のカメラ操作と衝突しない。見た目はランチャーと同じ作り（半透明の暗幕と中央のパネル）。撮影（`--capture-png`）の起動では出さない。開発ビルドだけの `--open-pause-menu` で開いた状態を撮り（`CaptureScene.ps1 -GameArgs open-pause-menu`）、開いて確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene rendering3dtest -GameArgs open-pause-menu -OutDir .harness/runs/scene-capture/SCN-PAUSE-MENU`

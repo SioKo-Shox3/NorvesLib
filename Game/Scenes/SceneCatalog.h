@@ -10,6 +10,7 @@
 // 文字列は UTF-8 の固定の文字列で、実行中に書き換えない。
 // ---------------------------------------------------------------------------
 
+#include "Core/Public/Debug/DebugConfig.h"
 #include "GameModes/GameModeIds.h"
 
 #include <cstddef>
@@ -18,19 +19,39 @@
 namespace Game::Scenes
 {
 
-    /// 名前付き視点（--scene-view=<name> で選ぶ）。Rendering3DTest は SpringArm の角度と腕の長さで表す。
+    /// 名前付き視点の表し方
+    enum class SceneViewKind
+    {
+        /// 起動時のカメラを替えない（そのシーンの既定のカメラのまま）
+        SceneDefault,
+        /// SpringArm の角度と腕の長さ（Rendering3DTest の Maya 式の軌道カメラ）
+        SpringArm,
+        /// 自由飛行カメラの位置と向き
+        FreePose,
+    };
+
+    /// 名前付き視点（--scene-view=<name> で選ぶ）
     struct SceneViewDescriptor
     {
         /// 視点の名前（機械が照合する識別子）
         const char *Name;
-        /// 起動時のカメラを替えるか。false なら、そのシーンの既定のカメラのまま
-        bool bHasCamera;
-        /// SpringArm の方位角[度]
+        SceneViewKind Kind;
+        /// SpringArm の方位角[度]、または自由飛行カメラの Yaw[度]（0 度は +Z 向き、増えると画面の右へ回る）
         float Yaw;
-        /// SpringArm の仰角[度]
+        /// SpringArm の仰角[度]、または自由飛行カメラの Pitch[度]（正で上向き）
         float Pitch;
-        /// SpringArm の腕の長さ[m]
+        /// SpringArm の腕の長さ[m]（SpringArm の視点だけ）
         float ArmLength;
+        /// 自由飛行カメラの位置[m]（FreePose の視点だけ）
+        float Position[3];
+    };
+
+    /// 自由飛行カメラの初期の視点
+    struct FreeCameraPose
+    {
+        float Position[3];
+        float Yaw;
+        float Pitch;
     };
 
     /// シーン1件の定義
@@ -59,16 +80,30 @@ namespace Game::Scenes
 
     inline constexpr SceneViewDescriptor kRendering3DTestViews[] = {
         // 起動時の既定のカメラ
-        {"default", false, 0.0f, 0.0f, 0.0f},
+        {"default", SceneViewKind::SceneDefault, 0.0f, 0.0f, 0.0f, {0.0f, 0.0f, 0.0f}},
         // 球（中心 y=0.5・半径1）へ寄り、輪郭が画面の中央の周りに来る視点
-        {"near", true, 0.0f, 5.0f, 2.5f},
+        {"near", SceneViewKind::SpringArm, 0.0f, 5.0f, 2.5f, {0.0f, 0.0f, 0.0f}},
         // カメラの高さ約 -0.84（地面は y=-1）から地面すれすれに見る視点
-        {"low", true, 20.0f, -8.0f, 6.0f},
+        {"low", SceneViewKind::SpringArm, 20.0f, -8.0f, 6.0f, {0.0f, 0.0f, 0.0f}},
     };
 
     inline constexpr const char *kRendering3DTestRequiredAssets[] = {
         "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf",
     };
+
+    /// 確認用の sandbox の id。シーンの一覧に載るのは開発ビルドだけ
+    inline constexpr const char *kSandboxSceneId = "sandbox";
+
+#if NORVES_BUILD_DEVELOPMENT
+    inline constexpr SceneViewDescriptor kSandboxViews[] = {
+        // 地面の手前から奥の地平線まで見渡す視点。起動時の既定
+        {"overview", SceneViewKind::FreePose, 0.0f, -15.0f, 0.0f, {0.0f, 4.0f, -12.0f}},
+        // 地面すれすれから斜めに見る視点
+        {"low", SceneViewKind::FreePose, 35.0f, 3.0f, 0.0f, {0.0f, 0.6f, -5.0f}},
+        // 真上から地面の格子を見下ろす視点（画面の上が +Z、右が -X）
+        {"top", SceneViewKind::FreePose, 0.0f, -89.0f, 0.0f, {0.0f, 24.0f, 0.0f}},
+    };
+#endif
 
     inline constexpr SceneDescriptor kSceneCatalog[] = {
         {
@@ -83,6 +118,21 @@ namespace Game::Scenes
             sizeof(kRendering3DTestRequiredAssets) / sizeof(kRendering3DTestRequiredAssets[0]),
             nullptr,
         },
+#if NORVES_BUILD_DEVELOPMENT
+        // 開発ビルドだけ。ランチャーの先頭のシーンにはしない（並びの最後に置く）
+        {
+            kSandboxSceneId,
+            "サンドボックス",
+            "空と平らな地面だけの確認用シーン。自由飛行カメラの動きを確かめる。開発ビルドだけ。",
+            "Assets/Launcher/Thumbnails/sandbox.png",
+            Game::GameModes::Sandbox,
+            kSandboxViews,
+            sizeof(kSandboxViews) / sizeof(kSandboxViews[0]),
+            nullptr,
+            0,
+            nullptr,
+        },
+#endif
     };
 
     inline constexpr std::size_t kSceneCatalogCount = sizeof(kSceneCatalog) / sizeof(kSceneCatalog[0]);
@@ -132,6 +182,39 @@ namespace Game::Scenes
             }
         }
         return nullptr;
+    }
+
+    /// 自由飛行カメラの初期の視点を、視点の名前から求める。名前が空・未知・自由飛行の視点でないときは、
+    /// そのシーンで最初の自由飛行の視点にする。自由飛行の視点がひとつも無ければ false
+    inline bool ResolveFreeCameraPose(const SceneDescriptor &scene, const char *viewName, FreeCameraPose &outPose)
+    {
+        const SceneViewDescriptor *view = nullptr;
+        if (viewName != nullptr && viewName[0] != '\0')
+        {
+            view = FindSceneView(scene, viewName);
+        }
+        if (view == nullptr || view->Kind != SceneViewKind::FreePose)
+        {
+            view = nullptr;
+            for (std::size_t index = 0; index < scene.ViewCount; ++index)
+            {
+                if (scene.Views[index].Kind == SceneViewKind::FreePose)
+                {
+                    view = &scene.Views[index];
+                    break;
+                }
+            }
+        }
+        if (view == nullptr)
+        {
+            return false;
+        }
+        outPose.Position[0] = view->Position[0];
+        outPose.Position[1] = view->Position[1];
+        outPose.Position[2] = view->Position[2];
+        outPose.Yaw = view->Yaw;
+        outPose.Pitch = view->Pitch;
+        return true;
     }
 
 } // namespace Game::Scenes

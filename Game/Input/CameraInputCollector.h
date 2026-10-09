@@ -19,6 +19,8 @@ namespace Game::Input
         bool OnMouseMove(const NorvesLib::Core::Input::MouseMoveEvent& event) override;
         bool OnMouseScroll(const NorvesLib::Core::Input::MouseScrollEvent& event) override;
         bool OnKey(const NorvesLib::Core::Input::KeyEvent& event) override;
+        /// ゲームパッドのスティック・トリガーの値を保持する（自由飛行カメラ用。消費しない）
+        bool OnGamepadSample(const NorvesLib::Core::Input::GamepadSampleEvent& event) override;
 
         NorvesLib::Core::Input::InputState BuildFrameInputState() const;
         void ResetFrame();
@@ -31,6 +33,12 @@ namespace Game::Input
         }
 
     private:
+        /// 自由飛行カメラが読むキー（WASD・QE・Shift）。Alt は Maya 式のカメラ用に別に持つ
+        static constexpr int kTrackedKeyCount = 8;
+        static const NorvesLib::Core::Input::KeyCode kTrackedKeys[kTrackedKeyCount];
+
+        bool m_bTrackedKeyDown[kTrackedKeyCount] = {};
+        NorvesLib::Core::Input::GamepadState m_GamepadStates[NorvesLib::Core::Input::GamepadSlotCount] = {};
         bool m_bLeftDown = false;
         bool m_bMiddleDown = false;
         bool m_bRightDown = false;

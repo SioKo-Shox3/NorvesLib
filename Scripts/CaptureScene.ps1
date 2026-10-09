@@ -5,8 +5,9 @@
 #   clipped_white_ratio … R・G・B がすべて 255 の画素の割合
 #   crushed_black_ratio … R・G・B がすべて 0 の画素の割合
 #
-# -Views を省くと既定の視点の1枚（default.png）を撮る。与えると視点ごとに --scene-view=<名前> で1回ずつ起動して
-# <名前>.png を撮る（視点の名前は Game/Scenes/SceneCatalog.h のシーンの定義）。
+# -Views を省くと、そのシーンの全視点を撮る。まず既定の視点を default.png に撮り、Game が --scene-report に書く視点の一覧
+# （views=）から残りの視点を <名前>.png に撮る（既定の視点の実際の名前は metrics.json の scene_view に入る）。
+# -Views を与えると、その視点だけを --scene-view=<名前> で1回ずつ起動して撮る（視点の名前は Game/Scenes/SceneCatalog.h のシーンの定義）。
 # -Width と -Height は両方を与えると --window-size=<幅>x<高さ> で窓とバックバッファの大きさを替える。
 # -GameArgs は Game へ足す引数を、先頭の -- を除いてカンマ区切りで与える（例: -GameArgs night,sun-elevation=10）。
 #   値にカンマを含む引数（startup-camera=0,5,2.5）は、カンマの次が英字で始まらない限り分けない。
@@ -74,16 +75,18 @@ if (@($viewNames | Select-Object -Unique).Count -ne $viewNames.Count)
     Write-Output 'CAPTURE_SCENE result=fail reason=duplicate_view'
     exit 1
 }
-$shots = @()
-if ($viewNames.Count -eq 0)
+$shots = New-Object System.Collections.ArrayList
+# -Views を省いたときは、既定の視点を撮った後の報告（views=）で残りの視点を足す
+$expandViews = ($viewNames.Count -eq 0)
+if ($expandViews)
 {
-    $shots += [pscustomobject]@{ Name = 'default'; SceneView = '' }
+    [void]$shots.Add([pscustomobject]@{ Name = 'default'; SceneView = ''; DefaultViewName = '' })
 }
 else
 {
     foreach ($viewName in $viewNames)
     {
-        $shots += [pscustomobject]@{ Name = $viewName; SceneView = $viewName }
+        [void]$shots.Add([pscustomobject]@{ Name = $viewName; SceneView = $viewName; DefaultViewName = '' })
     }
 }
 
@@ -172,8 +175,9 @@ New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
 $failures = @()
 $results = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
-foreach ($shot in $shots)
+for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
 {
+    $shot = $shots[$shotIndex]
     $pngPath = Join-Path $outRoot "$($shot.Name).png"
     $viewLogPath = Join-Path $outRoot "$($shot.Name).Game.log"
     $viewValidationLogPath = Join-Path $outRoot "$($shot.Name).Validation.log"
@@ -256,6 +260,16 @@ foreach ($shot in $shots)
             {
                 $missingAssets += $reportLine.Trim()
             }
+            elseif ($reportLine -match '^views=(.+)$' -and $expandViews -and $shotIndex -eq 0)
+            {
+                # 先頭が既定の視点（今撮っているもの）。残りの視点を撮る列へ足す
+                $sceneViews = @($Matches[1].Trim() -split ',' | Where-Object { $_ -ne '' })
+                $shot.DefaultViewName = $sceneViews[0]
+                foreach ($otherView in @($sceneViews | Select-Object -Skip 1))
+                {
+                    [void]$shots.Add([pscustomobject]@{ Name = $otherView; SceneView = $otherView; DefaultViewName = '' })
+                }
+            }
         }
     }
     elseif ($null -ne $exitCode -and $exitCode -eq 0)
@@ -278,7 +292,7 @@ foreach ($shot in $shots)
         {
             $failures += "$($shot.Name): $($line.Line.Trim())"
         }
-        $unknownLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SCENE_UNKNOWN|SCENE_VIEW_UNKNOWN|SCENE_CATALOG_INVALID')
+        $unknownLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'SCENE_UNKNOWN|SCENE_VIEW_UNKNOWN|SCENE_CATALOG_INVALID|CAMERA_SCRIPT_INVALID')
         foreach ($line in $unknownLines)
         {
             $failures += "$($shot.Name): $($line.Line.Trim())"
@@ -340,7 +354,7 @@ foreach ($shot in $shots)
     }
     $result = [ordered]@{
         view = $shot.Name
-        scene_view = $shot.SceneView
+        scene_view = if ($shot.SceneView -ne '') { $shot.SceneView } else { $shot.DefaultViewName }
         png = "$($shot.Name).png"
         scene_report = if (Test-Path -LiteralPath $viewReportPath) { "$($shot.Name).SceneReport.txt" } else { $null }
         game_log = if (Test-Path -LiteralPath $viewLogPath) { "$($shot.Name).Game.log" } else { $null }
