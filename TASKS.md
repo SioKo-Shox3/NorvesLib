@@ -45,7 +45,7 @@
 - notes: 危険地帯（RHI/Vulkan・RenderThread）。SCN-R3D-REENTRY の周回スモークで見つかった。2周目以降の Enter（描画中）で、チェッカー等の `CreateTexture(info, data, size)` が `UploadTextureData` 内で `m_Device->CreateCommandList()` を GameThread から呼び、RenderThread が使う VkCommandPool と同時に触れる（検証レイヤーの Threading エラー、`vkFreeCommandBuffers` など）。ランチャーから各シーンへ入るたびに起きるので、SCN-LAUNCHER より前に直したい。評価者を通す。
 
 ## SCN-LAUNCHER: 起動するとランチャーが出て、カードから各シーンへ入れるようにする
-- status: todo
+- status: done
 - done-when: 引数なしで Game を起動すると `launcher` モードに入り、ImGui の全画面のメニューが出る: 背景は物理空の夕景（地物は無くてよい）、上にタイトル「NorvesLib」と副題、シーンの一覧から作ったカード（見本画像の枠・表示名・説明 1〜2 行・必要な資産が足りないときは取得のコマンド）を並べ、選んでいるカードを強調する。矢印キー・WASD・マウス（ホバーとクリック）・ゲームパッド（十字キーと左スティック・A）で選び、Enter・クリック・A で `RequestChange` する。「ゲームを終了」がある。見本画像が無いカードは暗いグラデーションにシーン名を出す。ImGui は `--imgui` が無くてもランチャーのために使えるようにし（デバッグ用の窓は今どおり `--imgui` のときだけ）、Debug・RelWithDebInfo・Release で出る。日本語は NotoSansJP、字の大きさは窓の大きさから決めて 1280×720 と 1920×1080 で読める。`CaptureScene.ps1 -Scene launcher` を 1280×720 と 1920×1080 で撮って開き、デバッグ窓に見えない（ImGui の既定の灰色の窓・タイトルバー・スクロールバーが出ていない）ことを確かめる。`RunSceneCycleSmoke.ps1` の周回がランチャーを通る形になり、`rendering3dtest` の3周が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `cmake --build build --config Release --target Game -- /m:1`

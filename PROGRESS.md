@@ -629,3 +629,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 修正（RHI/Vulkan。`paths` の `Library/RHI` は旧称で、実体は `Library/Core/Private/RHI/Vulkan`）: (1) `VulkanCommandList` はリストごとに専用のコマンドプールを持つ（`CreateExclusiveCommandPool`、解体で破棄）。(2) 単発コマンド（`BeginSingleTimeCommands`/`EndSingleTimeCommands`）は呼んだスレッドごとのプール（`GetSingleTimeCommandPool`、デバイスの破棄まで保持）。共有の `GetCommandPool`/`m_commandPool` は廃止。(3) プールを分けたあとに出た `VkQueue` の競合（`vkQueueSubmit` とゲームスレッドの `vkQueueWaitIdle`・`vkDeviceWaitIdle`・描画スレッドの `vkQueuePresentKHR`）を、`GetGraphicsQueueMutex`（提出の窓口と同じミューテックス）の下でプレゼント・キュー待機・デバイス待機を行うことで直した。
 - 証拠: `.harness/runs/20261009-233224/verify-SCN-RHI-UPLOAD-THREAD-1.txt`（Debug ビルド EXIT=0）、`-2.txt`・`-3.txt`（`RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3` が 2 回とも `result=pass`、Validation.log は 0 バイト。修正前は `UNASSIGNED-Threading-MultipleThreads-Write` が 3 件）、`-4.txt`（`CaptureScene.ps1 -Scene rendering3dtest` pass、平均輝度 124.143、default.png を開いて天球・地面・球・岩・小屋・電球が欠けないことを確認）。
 - Notes: 周回スモークは競合が時間依存なので、2 回の pass で再現しなかったことを確かめた（保証ではない）。デバイス待機をミューテックスの下で行うので、`GraphicsSubmitScope` を持ったまま `WaitIdle` を呼ぶと自己待ちになる（現在の呼び出し元は Commit 後か窓口の外）。これで `SCN-R3D-REENTRY`（blocked）を `todo` に戻せる。
+
+### SCN-LAUNCHER（2026-10-10、反復 9・run 20261009-233224）
+
+- 引数なしの起動（と `--scene=launcher`・`--scene-cycle-smoke`）で `Launcher` モードに入り、ImGui の全画面メニューを出す（`Game/GameModes/Launcher/`）。背景は物理空の夕景、左上にタイトル「NorvesLib」と副題、`SceneCatalog` から作ったカード（見本画像の枠・表示名・説明・資産が足りないときの取得コマンド）、「ゲームを終了」。見本画像が無いカードは暗いグラデーションにシーン名。選択は矢印・WASD・マウスのホバーとクリック・パッドの十字キーと左スティック、決定は Enter・クリック・A（Menu の入力文脈）。ImGui は `--imgui` が無くてもランチャーのために登録し、デバッグ窓は今どおり `--imgui` のときだけ。字の大きさは窓の大きさから決める。`SceneCycleHome` は廃止し、周回スモークはランチャーを通る。
+- 証拠: `.harness/runs/20261009-233224/verify-SCN-LAUNCHER-1.txt`（Debug ビルド EXIT=0）、`-2.txt`（Release ビルド EXIT=0）、`-3.txt`（1280×720 の撮影 pass）、`-3b.txt`（1920×1080 の撮影 pass）、`-4.txt`（周回スモーク rendering3dtest 3 周 `result=pass`、Validation.log 0 バイト）、`-5.txt`（`CaptureStartupScene.ps1` 3 視点 pass、平均輝度 124.043・123.863・125.962）。
+- 画: 両サイズの `default.png` を開いた。ImGui の既定の灰色の窓・タイトルバー・スクロールバーは出ておらず、タイトル・副題・カード（選択の橙の枠）・終了ボタン・操作の案内が読める。
+- Notes: 見本画像の実物は SCN-THUMBNAILS で作る（今はグラデーションの代用）。1920×1080 では説明文が改行でカードの右端に近づく（読める範囲）。
