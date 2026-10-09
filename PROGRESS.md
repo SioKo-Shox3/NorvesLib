@@ -713,3 +713,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-BANANAS-SCENE-1.txt`（Debug の Game ビルド EXIT=0）、`-2.txt`（`CaptureScene.ps1 -Scene mega-bananas -RequireAssets` 3 視点 pass。平均輝度 default 121.027・close 123.239・low 109.206）、`-3.txt`（周回スモーク 3 周 `result=pass`。3 周とも textures=6・texture_bytes=134217804 で同じ）、`-4.txt`（`-Views close -GameArgs open-scene-info` 情報表示の撮影 pass）、`-6.txt`（`-GameArgs open-scene-info,trace,...` で GPU 時間 2.93 ms の撮影 pass）、`-5.txt`（直前のビルド）。
 - 画: 3 視点の PNG（`scene-capture/SCN-BANANAS-SCENE/default.png`・`close.png`・`low.png`）を開いた。overview は手前から奥へ升目に並んだバナナと 3 つの山、床の板目、遠景の物理空。close は山の斜面を数十 cm から見て、反り・茎・先端の傷・皮の筋が出ていて（高ポリの形）、1 本ごとに床へ影が落ちる。low は床すれすれでバナナの断面（先端の切り口）まで見え、影が長く伸びる。情報表示の撮影（`scene-capture/SCN-BANANAS-SCENE-info/close.png`・`-trace/close.png`）は左上のパネルに 4,096・417・99,722・408,461,312・2,105（10 段）・GPU 時間・描いたクラスタ数 90,717 が出る。
 - Notes: 山の高さは物理で積まず 1 段 5 cm の升目なので、山の上のバナナの重なりは近景で少し食い込んで見える所がある（遠景は自然）。`Test/Game/Bridge` の `NorvesLibBridgeAdapterScriptComponentTest` は今回の変更と無関係な既存のリンク不足（`DogMovementSmokeRoutine`・`GameInputSettings`・`SequenceFrameCapture`・`M9SkeletalPreparation` などの未解決。バナナ関連は無し）で、このターゲットのビルドは Game と別に直す必要がある（`MegaBananasRoutine.cpp` は両テスト束のソース一覧に足してある）。ランチャーのサムネイル（`Assets/Launcher/Thumbnails/mega-bananas.png`）は他のシーンと同じく未配置。SCN-MEGA-10K で上限を 1 万へ上げる。
+
+### SCN-BANANAS-SCENE（2026-10-10、反復 21・run 20261009-233224）
+
+- 評価者の差し戻し（向きのばらしと接地・重なり）に対応。原因は `SpawnBanana` の回転の合成 `turn * roll`。描画側は行ベクトル規約（四元数は逆回転として点へ作用する）なので、先にヨーが掛かって長手（ローカル Y）に何も起きず、そのあと全個体が同じ向きへ倒れ、乱数の角度が反りを上下へ回していた（床へ食い込む）。`roll * turn` へ直し、理由をコメントに残した。
+- 検算（`verify-SCN-BANANAS-SCENE-21-geometry.txt`）: 生成 GLB の頂点 59,755 個に、描画の規約（共役の回転）で 5 つのヨーを掛けた高さの範囲。`roll * turn` は最下点 -0.027373 m（= 太さの最大 x。コードの持ち上げ量と一致するので、沈み込み 2 mm だけで床に接する）、旧順序は ±0.07 m で床を貫く。
+- 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-BANANAS-SCENE-21-1.txt`（Debug の Game ビルド EXIT=0）、`-21-2.txt`（`CaptureScene.ps1 -Scene mega-bananas -RequireAssets` 3 視点 pass。平均輝度 default 121.535・close 122.22・low 112.512）、`-21-3.txt`（周回スモーク 3 周 `result=pass`）。
+- 画: 再撮影した 3 視点を開いた。overview は 1 本ごとに向きが違うバナナが升目に並び、3 つの山が見える。close は手前のバナナが床に横たわって影を落とし、山の斜面は食い込みの見えない積み方になった（反・茎・先端の傷も出る）。low は床すれすれで、バナナが板の上に載っている。
+- Notes: 山は物理で積まず 1 段 5 cm の升目なので、近景で隣と軽く触れる所はある（太さ約 5.5 cm に対し段差 5 cm）。ランチャーのサムネイルは未配置のまま。

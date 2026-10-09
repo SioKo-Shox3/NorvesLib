@@ -410,7 +410,9 @@ namespace Game::GameModes
             const Math::Vector3 zAxis(0.0f, 0.0f, 1.0f);
             const Math::Quaternion roll(zAxis, 0.5f * kPi);
             const Math::Quaternion turn(yAxis, yaw);
-            const Math::Quaternion rotation = turn * roll;
+            // 描画側は行ベクトル規約なので、先に倒して（roll）から水平に回す（turn）には roll * turn と書く。
+            // 逆順だと長手が全個体で (1,0,0) に固定され、乱数の角度が反りを上下へ回して床へ食い込む
+            const Math::Quaternion rotation = roll * turn;
 
             Entity *object = ctx.ScopeRef.SpawnObject<Entity>();
             if (object == nullptr)
