@@ -9,12 +9,16 @@
 //   Enter : Enter を呼ぶ（初期の視点は SceneCatalog の名前付き視点。GetCamera() で露出などを設定する）
 //   Tick  : Tick を毎フレーム呼ぶ（ポーズメニューが開いている間は bSuspended を真にする）
 //   Leave : Leave を呼ぶ（入力の登録を外す。実体は GameModeScope::Cleanup が返す）
+// カメラパス（シーンのデモ飛行。SceneCatalog の ScenePathDescriptor）を持つシーンでは、P キー（ゲームパッドは Y）で
+// 再生・停止する。再生中に自由飛行の入力（移動・視点）があると止まり、その位置から自由飛行へ戻る。
+// 止めたあとの再生は、止めたパスの時刻へ戻って続ける。--camera-path-time=<秒> は起動時にパスの途中へ置く（撮影用）。
 // 開発ビルドだけ、--camera-script=<file> の台本（Input/CameraScript.h）を自由飛行カメラへ流せる。台本を流している間は
 // 実際の入力を無視し、1フレームを固定刻み（1/60 秒）で進める。台本が終わるまで IsScriptRunning() が真になる。
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Debug/DebugConfig.h"
 #include "Core/Public/GameMode/GameModeContext.h"
+#include "Core/Public/Input/CameraPath.h"
 #include "Core/Public/Input/FreeFlyCameraController.h"
 #include "Core/Public/Rendering/SceneProxy.h"
 #include "Input/CameraInputCollector.h"
@@ -38,6 +42,13 @@ namespace Game::Scenes
     public:
         /// 台本を流すときの 1 フレームの長さ（秒）。決定的な撮影の固定刻みと同じ
         static constexpr float kScriptFrameSeconds = 1.0f / 60.0f;
+
+        /**
+         * @brief シーンのカメラパスを設定する（Enter の前に呼ぶ）
+         * @param pPath シーンのカメラパスの定義。nullptr か不正なキー列ならパスなし
+         * @param startTimeSeconds 0 以上なら、Enter で最初の視点を使わずパスのこの時刻に置く（停止したまま）。負なら使わない
+         */
+        void ConfigurePath(const Game::Scenes::ScenePathDescriptor *pPath, float startTimeSeconds);
 
         /**
          * @brief カメラを作って入力を登録する
@@ -74,6 +85,12 @@ namespace Game::Scenes
             return m_ProxyTemplate;
         }
 
+        /// カメラパスを再生中か
+        bool IsPathPlaying() const
+        {
+            return m_bPathPlaying;
+        }
+
         const NorvesLib::Core::Input::FreeFlyCameraController &GetController() const
         {
             return m_Controller;
@@ -82,6 +99,10 @@ namespace Game::Scenes
     private:
         void Publish(NorvesLib::Core::GameMode::GameModeContext &ctx);
         void LogPose(const char *phase) const;
+        /// パスの時刻 time の位置と向きへカメラを置く
+        void PlaceOnPath(float time);
+        void StartPath();
+        void StopPath(const char *reason);
 
         NorvesLib::Core::Input::FreeFlyCameraController m_Controller;
         Game::Input::CameraInputCollector m_Collector;
@@ -93,6 +114,13 @@ namespace Game::Scenes
         Game::Input::CameraScript m_Script;
         bool m_bScriptActive = false;
         uint32_t m_ScriptFramesPlayed = 0;
+
+        NorvesLib::Core::Input::CameraPath m_Path;
+        /// Enter でパスの途中へ置く時刻[秒]。負なら置かない
+        float m_PathStartTime = -1.0f;
+        bool m_bPathPlaying = false;
+        /// 再生中のパスの時刻[秒]
+        float m_PathTime = 0.0f;
     };
 
 } // namespace Game::Scenes

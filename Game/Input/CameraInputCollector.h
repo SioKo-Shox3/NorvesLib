@@ -19,10 +19,14 @@ namespace Game::Input
         bool OnMouseMove(const NorvesLib::Core::Input::MouseMoveEvent& event) override;
         bool OnMouseScroll(const NorvesLib::Core::Input::MouseScrollEvent& event) override;
         bool OnKey(const NorvesLib::Core::Input::KeyEvent& event) override;
+        /// ゲームパッドの Y ボタンの押下を、カメラパスの再生・停止の要求として覚える（消費しない）
+        bool OnGamepadButton(const NorvesLib::Core::Input::GamepadButtonEvent& event) override;
         /// ゲームパッドのスティック・トリガーの値を保持する（自由飛行カメラ用。消費しない）
         bool OnGamepadSample(const NorvesLib::Core::Input::GamepadSampleEvent& event) override;
 
         NorvesLib::Core::Input::InputState BuildFrameInputState() const;
+        /// P キー（ゲームパッドは Y）が押されていたら true を返し、要求を下ろす。押しっぱなしの繰り返しは数えない
+        bool ConsumePathToggleRequest();
         void ResetFrame();
         void ResetAll();
         void OnInputReset() override { ResetAll(); }
@@ -44,6 +48,7 @@ namespace Game::Input
         bool m_bRightDown = false;
         bool m_bLeftAltDown = false;
         bool m_bRightAltDown = false;
+        bool m_bPathToggleRequested = false;
         float m_AccumDeltaX = 0.0f;
         float m_AccumDeltaY = 0.0f;
         float m_AccumScrollDelta = 0.0f;

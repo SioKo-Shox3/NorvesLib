@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Debug/DebugConfig.h"
+#include "Core/Public/Input/CameraPath.h"
 #include "GameModes/GameModeIds.h"
 
 #include <cstddef>
@@ -54,6 +55,17 @@ namespace Game::Scenes
         float Pitch;
     };
 
+    /// シーンのカメラパス（デモ飛行）。位置と注視点のキーを時刻に沿って滑らかにつなぐ（Input/CameraPath.h）
+    struct ScenePathDescriptor
+    {
+        const NorvesLib::Core::Input::CameraPathKey *Keys;
+        std::size_t KeyCount;
+        /// 一周して繰り返すか。真のとき最初のキーの時刻は 0
+        bool bLoop;
+        /// bLoop のときの周期[秒]。最後のキーの時刻より大きい値
+        float LoopSeconds;
+    };
+
     /// シーン1件の定義
     struct SceneDescriptor
     {
@@ -76,6 +88,8 @@ namespace Game::Scenes
         /// 必要な資産が欠けているときにランチャーのカードへ出す取得のコマンド（リポジトリのルートから実行する）。
         /// 資産がリポジトリに入っているシーンは nullptr
         const char *FetchCommand;
+        /// カメラパス（P キー・ゲームパッドの Y で再生する）。持たないシーンは nullptr
+        const ScenePathDescriptor *CameraPath;
     };
 
     inline constexpr SceneViewDescriptor kRendering3DTestViews[] = {
@@ -103,6 +117,27 @@ namespace Game::Scenes
         // 真上から地面の格子を見下ろす視点（画面の上が +Z、右が -X）
         {"top", SceneViewKind::FreePose, 0.0f, -89.0f, 0.0f, {0.0f, 24.0f, 0.0f}},
     };
+
+    // 地面を囲む一周のデモ飛行。位置は原点から 16 m の円（高さ 4〜5 m）を 2.5 秒ごとに 45° ずつ進み（周期 20 秒）、
+    // 注視点は原点の周り 4 m の円（高さ 1 m）を、位置より 90° 先の向きで動く。位置の角度 θ は -Z 向きを 0 とし、
+    // 位置 = (16 sinθ, 高さ, -16 cosθ)、注視点 = (4 sin(θ+90°), 1, -4 cos(θ+90°))。
+    inline constexpr NorvesLib::Core::Input::CameraPathKey kSandboxPathKeys[] = {
+        {0.0f, {0.0f, 4.0f, -16.0f}, {4.0f, 1.0f, 0.0f}},
+        {2.5f, {11.3137f, 5.0f, -11.3137f}, {2.8284f, 1.0f, 2.8284f}},
+        {5.0f, {16.0f, 4.0f, 0.0f}, {0.0f, 1.0f, 4.0f}},
+        {7.5f, {11.3137f, 5.0f, 11.3137f}, {-2.8284f, 1.0f, 2.8284f}},
+        {10.0f, {0.0f, 4.0f, 16.0f}, {-4.0f, 1.0f, 0.0f}},
+        {12.5f, {-11.3137f, 5.0f, 11.3137f}, {-2.8284f, 1.0f, -2.8284f}},
+        {15.0f, {-16.0f, 4.0f, 0.0f}, {0.0f, 1.0f, -4.0f}},
+        {17.5f, {-11.3137f, 5.0f, -11.3137f}, {2.8284f, 1.0f, -2.8284f}},
+    };
+
+    inline constexpr ScenePathDescriptor kSandboxPath = {
+        kSandboxPathKeys,
+        sizeof(kSandboxPathKeys) / sizeof(kSandboxPathKeys[0]),
+        true,
+        20.0f,
+    };
 #endif
 
     inline constexpr SceneDescriptor kSceneCatalog[] = {
@@ -116,6 +151,7 @@ namespace Game::Scenes
             sizeof(kRendering3DTestViews) / sizeof(kRendering3DTestViews[0]),
             kRendering3DTestRequiredAssets,
             sizeof(kRendering3DTestRequiredAssets) / sizeof(kRendering3DTestRequiredAssets[0]),
+            nullptr,
             nullptr,
         },
 #if NORVES_BUILD_DEVELOPMENT
@@ -131,6 +167,7 @@ namespace Game::Scenes
             nullptr,
             0,
             nullptr,
+            &kSandboxPath,
         },
 #endif
     };

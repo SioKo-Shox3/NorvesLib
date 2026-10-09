@@ -676,3 +676,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 
 - 評価者の差し戻し（Rendering3DTest に `overview` が無い）に対応。`SceneCatalog.h` の Rendering3DTest の先頭視点（Maya 式の既定のカメラ）の名前を `default` から `overview` に改め、視点は `overview・near・low` になった。`FindSceneView` は `default` を先頭視点の別名として受け付ける（従来の `--scene-view=default` も効く）。カメラの中身は変えていない。
 - 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-FREE-CAMERA-15-1.txt`（Debug の Game ビルド EXIT=0）、`-15-2.txt`（`CaptureScene.ps1 -Scene sandbox` pass）、`-15-3.txt`（rendering3dtest 全視点 pass。平均輝度 124.143・123.973・126.023 で反復 14 と同一。`default.SceneReport.txt` が `views=overview,near,low`）、`-15-4.txt`（`-Views overview` pass、平均輝度 124.143、`unknown_view` なし）。
+
+### SCN-CAMERA-PATH（2026-10-10、反復 16・run 20261009-233224）
+
+- カメラパス `CameraPath`（`Library/Core/Public/Input/CameraPath.h`。キー列は呼ぶ側の静的配列で所有しない）を足した。キー = 時刻・カメラの位置・注視点。位置と注視点をそれぞれ、キーの時刻に合わせたエルミート補間（接線は両隣の差 ÷ 時刻の差。間隔が不均一でも速度がつながる）でつなぐ。一周する（最初のキーの時刻 0、周期 > 最後のキーの時刻）か、端に留まるかを選べる。注視点から Yaw/Pitch を求める `LookAngles` は自由飛行カメラの角度の約束と同じ。
+- シーンごとの定義は `SceneDescriptor::CameraPath`（`ScenePathDescriptor`）。`sandbox` に、原点の周り 16 m の円（高さ 4〜5 m）を 2.5 秒ごと 45° ずつ進む周期 20 秒の一周パスを置いた（注視点は周り 4 m の円で位置の 90° 先）。Rendering3DTest は nullptr（見た目は不変）。
+- 操作: `FreeCameraRig` が P キー（ゲームパッドは Y。`CameraInputCollector` が押下の要求を覚える）で再生・停止。再生中に自由飛行の入力（WASD・QE・右ボタン・ホイール・スティック・トリガー。Shift と左ボタンだけは含めない。`FreeFlyCameraController::HasMoveOrLookInput`）があると止まり、そのフレームの入力で自由飛行へ戻る。止めたあとの再生はパスの時刻から続け（カメラはパスへ戻る）、一周しないパスは終わると停止して次は最初から。ポーズメニュー中は時刻が進まない。台本（`--camera-script`）の間は実入力と同様に P も無視する。
+- `--camera-path-time=<秒>`（`GameApplicationHandler`）: 起動時にパスのその時刻の位置・向きへ停止したまま置く（最初の視点より優先）。ログに `CAMERA_PATH state=placed time=…`、`FREE_CAMERA_POSE phase=start`。
+- 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-CAMERA-PATH-1.txt`（Debug の Game ビルド EXIT=0）、`-2.txt`（`CaptureScene.ps1 -Scene sandbox -GameArgs camera-path-time=5` pass。3 視点とも同じパスの時刻 5 なので同じ画像）、`-3-t11.txt`・`-3-t16.txt`（`-Views overview` で時刻 11・16 の撮影 pass）、`-flow.txt`（実機の流れ）。
+- 画: t=5・11・16 の 3 枚（`scene-capture/SCN-CAMERA-PATH/default.png`・`-t11/overview.png`・`-t16/overview.png`）を開いた。ログの姿勢は独立に計算したエルミート補間と一致（t=5: (16, 4, 0)・yaw 75.964°・pitch -10.309° = キー 2 のちょうど真ん中、t=11: (-4.844, 4.352, 15.118)・yaw -176.272°・pitch -11.576°、t=16: (-15.118, 4.352, -4.844)・yaw -86.272°・pitch -11.576°）。画像は、t=5 で +X 側から -X へ向き（青の行が奥へ伸び、8 m 手前に赤の列と黄の升）、t=11 で +Z 側から -Z へ向き（赤の列が 2 本、左右の距離比が 3.2 : 4.8 m と合う）、t=16 で -X 側から +X へ向く（青の行が 2 本、比が 3.2 : 4.8 m）。パスに沿って位置と向きが変わっている。
+- 実機の流れ（`-flow.txt` と同名の `.Game.log`）: `--scene=sandbox` を起動し、ウィンドウへ WM_KEYDOWN を送った。P で `state=playing time=0.000`、約 3 秒後に W を押すと `state=stopped reason=input time=3.087 position=(13.066, 4.861, -9.114)`（キー 1 とキー 2 の間）、もう一度 P で `playing time=3.087`（止めた時刻から再開）、P で `stopped reason=toggle time=5.138 position=(15.982, 4.009, 0.632)`（キー 2 の直後）。
+- Notes: ゲームパッドの Y は実機で試していない（接続機が無い。P と同じ要求の経路）。`CameraPath` の単体テストは足していない（補間は撮影の姿勢と独立計算の一致で確かめた）。

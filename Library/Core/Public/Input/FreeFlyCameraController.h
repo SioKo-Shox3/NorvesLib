@@ -62,6 +62,17 @@ namespace NorvesLib::Core::Input
          */
         void Initialize(const Math::Vector3 &position, float yawDegrees, float pitchDegrees);
 
+        /// 位置と向きだけを置き直す（移動の速さは変えない。カメラパスの再生が毎フレーム呼ぶ）
+        void SetPose(const Math::Vector3 &position, float yawDegrees, float pitchDegrees);
+
+        /**
+         * @brief そのフレームの入力が、カメラの移動か視点の操作を含むか
+         *
+         * WASD・QE、右ボタン、ホイール、スティックとトリガー（不感帯の外）が対象。Shift だけの入力や
+         * 左ボタンは含まない。カメラパスの再生中に、利用者が自由飛行へ戻った印として使う。
+         */
+        bool HasMoveOrLookInput(const InputState &input) const;
+
         /**
          * @brief 1フレーム分の入力で位置と向きを進める
          * @param input そのフレームの値状態（マウスの移動量・ホイール量はフレームの累積）

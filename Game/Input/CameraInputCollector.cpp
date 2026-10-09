@@ -65,7 +65,28 @@ namespace Game::Input
                 m_bTrackedKeyDown[index] = bDown;
             }
         }
+        if (event.Code == NorvesLib::Core::Input::KeyCode::P && event.Action == NorvesLib::Core::Input::InputAction::Pressed)
+        {
+            m_bPathToggleRequested = true;
+        }
         return false;
+    }
+
+    bool CameraInputCollector::OnGamepadButton(const NorvesLib::Core::Input::GamepadButtonEvent& event)
+    {
+        if (event.Button == NorvesLib::Core::Input::GamepadButton::Y &&
+            event.Action == NorvesLib::Core::Input::InputAction::Pressed)
+        {
+            m_bPathToggleRequested = true;
+        }
+        return false;
+    }
+
+    bool CameraInputCollector::ConsumePathToggleRequest()
+    {
+        const bool bRequested = m_bPathToggleRequested;
+        m_bPathToggleRequested = false;
+        return bRequested;
     }
 
     bool CameraInputCollector::OnGamepadSample(const NorvesLib::Core::Input::GamepadSampleEvent& event)
@@ -126,6 +147,7 @@ namespace Game::Input
         m_bRightDown = false;
         m_bLeftAltDown = false;
         m_bRightAltDown = false;
+        m_bPathToggleRequested = false;
         for (bool& bDown : m_bTrackedKeyDown)
         {
             bDown = false;

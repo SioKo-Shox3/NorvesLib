@@ -125,6 +125,8 @@ namespace Game
         // --camera-script=<file>: 自由飛行カメラへ決まった入力を流す台本（開発ビルドだけ。書式は Input/CameraScript.h）。
         // 撮影で「この操作でここへ動く」を再現するのに使う。
         constexpr const TCHAR *kCameraScriptOption = TEXT("--camera-script=");
+        // --camera-path-time=<秒>: カメラパスを持つシーンで、起動時の視点をパスのこの時刻の位置と向きにする（停止した状態。撮影用）。
+        constexpr const TCHAR *kCameraPathTimeOption = TEXT("--camera-path-time=");
         // --scene-cycle-smoke=<id,...>: ランチャーと指定のシーンの間を周回し、資源の数が増えないことを確かめる。
         // --scene-cycle-count=<n>: その周回数（既定 3。2 以上で1周目と比べる）。
         constexpr const TCHAR *kSceneCycleSmokeOption = TEXT("--scene-cycle-smoke=");
@@ -523,6 +525,7 @@ namespace Game
         m_StartupSceneView = {};
         m_SceneReportPath = {};
         m_CameraScriptPath = {};
+        m_CameraPathTime = -1.0f;
         m_DogDrive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         bool bHasCharacterDrive = false;
         m_bRendering3DTestUseCookedModel = false;
@@ -929,6 +932,22 @@ namespace Game
                     return false;
                 }
                 m_SceneReportPath = sceneValue;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kCameraPathTimeOption, sceneValue))
+            {
+                float pathTime = 0.0f;
+                if (m_CameraPathTime >= 0.0f)
+                {
+                    LOG_ERROR("--camera-path-time が重複しています");
+                    return false;
+                }
+                if (!TryParseBoundedFloat(sceneValue, 0.0f, 100000.0f, pathTime))
+                {
+                    LOG_ERROR("--camera-path-time は 0 以上の秒数で指定してください");
+                    return false;
+                }
+                m_CameraPathTime = pathTime;
                 continue;
             }
             if (TryStripPrefix(args[i], kCameraScriptOption, sceneValue))
@@ -2618,12 +2637,13 @@ namespace Game
         // 確認用の sandbox は開発ビルドだけ（ランチャーのカードも同じ）。視点と台本は起動引数から渡す。
         stateMachine->Registry().Register(
             Sandbox,
-            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath,
+            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              pauseMenu = &m_PauseMenu](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<SandboxMode>();
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 return mode;
             });

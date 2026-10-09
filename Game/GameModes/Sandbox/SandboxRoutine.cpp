@@ -198,6 +198,7 @@ namespace Game::GameModes
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
         }
+        data.m_Rig.ConfigurePath(scene->CameraPath, data.m_CameraPathTime);
         if (!data.m_Rig.Enter(ctx, pose, data.m_CameraScriptPath.c_str()))
         {
             LOG_ERROR("sandbox: カメラを作れませんでした");

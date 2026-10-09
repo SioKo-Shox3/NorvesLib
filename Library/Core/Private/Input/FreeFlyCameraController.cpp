@@ -39,6 +39,39 @@ namespace NorvesLib::Core::Input
         m_MoveSpeed = std::clamp(m_Settings.InitialMoveSpeed, m_Settings.MinMoveSpeed, m_Settings.MaxMoveSpeed);
     }
 
+    void FreeFlyCameraController::SetPose(const Math::Vector3 &position, float yawDegrees, float pitchDegrees)
+    {
+        m_Position = position;
+        m_Yaw = WrapDegrees(yawDegrees);
+        m_Pitch = std::clamp(pitchDegrees, -PitchLimitDegrees, PitchLimitDegrees);
+    }
+
+    bool FreeFlyCameraController::HasMoveOrLookInput(const InputState &input) const
+    {
+        constexpr KeyCode kMoveKeys[] = {KeyCode::W, KeyCode::A, KeyCode::S, KeyCode::D, KeyCode::Q, KeyCode::E};
+        for (const KeyCode key : kMoveKeys)
+        {
+            if (input.IsKeyDown(key))
+            {
+                return true;
+            }
+        }
+        if (input.IsMouseButtonDown(MouseButton::Right) || input.GetMouseState().ScrollDelta != 0.0f)
+        {
+            return true;
+        }
+        constexpr GamepadAxis kAxes[] = {GamepadAxis::LeftX, GamepadAxis::LeftY, GamepadAxis::RightX,
+                                         GamepadAxis::RightY};
+        for (const GamepadAxis axis : kAxes)
+        {
+            if (GetPadAxis(input, axis) != 0.0f)
+            {
+                return true;
+            }
+        }
+        return GetPadTrigger(input, GamepadTrigger::Left) > 0.0f || GetPadTrigger(input, GamepadTrigger::Right) > 0.0f;
+    }
+
     void FreeFlyCameraController::SetSettings(const FreeFlyCameraSettings &settings)
     {
         m_Settings = settings;

@@ -7,6 +7,7 @@
 // 動きを撮影で確かめるのに使う。格子は 1 m の升目で、x が 8 m の倍数の升目は赤、z が 8 m の倍数の升目は青、
 // 両方が重なる升目は黄にして、動いた向きと距離を画像から読めるようにしてある。
 // 視点は SceneCatalog.h の kSandboxViews（overview・low・top）。--camera-script=<file> で入力の台本を流せる。
+// 地面を囲む一周のカメラパス（kSandboxPath）を持ち、P キー（ゲームパッドは Y）で再生・停止する。
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Container/String.h"
@@ -25,6 +26,8 @@ namespace Game::GameModes
         NorvesLib::Core::Container::String m_ViewName;
         /// 入力の台本のパス（--camera-script。空なら流さない）
         NorvesLib::Core::Container::String m_CameraScriptPath;
+        /// 起動時にカメラパスの途中へ置く時刻[秒]（--camera-path-time）。負なら置かない
+        float m_CameraPathTime = -1.0f;
         /// ポーズメニュー（非所有）。開いている間はカメラを動かさない。無いなら nullptr
         const Game::Pause::PauseMenu *m_pPauseMenu = nullptr;
 

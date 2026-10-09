@@ -74,7 +74,7 @@
 - notes: 今のカメラは `Library/Core/Public/Input/MayaCameraController.h`（軌道カメラ）だけ。入力の収集は `Game/Input/CameraInputCollector.h`、入力の割り当ては `Assets/Config/DefaultInputBindings.json`（Debug の文脈に WASD の Move がある）。
 
 ## SCN-CAMERA-PATH: カメラパスのデモ飛行を足す
-- status: todo
+- status: done
 - done-when: シーンごとにカメラパス（位置・注視点のキーと時刻。Catmull-Rom 等で滑らかにつなぐ）を定義でき、P キー（ゲームパッドの Y）で再生・停止、再生中に自由飛行の入力をすると止まる。`--camera-path-time=<秒>` で起動時にパスの途中の視点に置ける（撮影用）。`sandbox` に一周するパスを置き、時刻を変えた3枚の撮影を開いて、パスに沿った位置と向きであることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene sandbox -GameArgs camera-path-time=5 -OutDir .harness/runs/scene-capture/SCN-CAMERA-PATH`
