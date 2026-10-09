@@ -636,3 +636,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠: `.harness/runs/20261009-233224/verify-SCN-LAUNCHER-1.txt`（Debug ビルド EXIT=0）、`-2.txt`（Release ビルド EXIT=0）、`-3.txt`（1280×720 の撮影 pass）、`-3b.txt`（1920×1080 の撮影 pass）、`-4.txt`（周回スモーク rendering3dtest 3 周 `result=pass`、Validation.log 0 バイト）、`-5.txt`（`CaptureStartupScene.ps1` 3 視点 pass、平均輝度 124.043・123.863・125.962）。
 - 画: 両サイズの `default.png` を開いた。ImGui の既定の灰色の窓・タイトルバー・スクロールバーは出ておらず、タイトル・副題・カード（選択の橙の枠）・終了ボタン・操作の案内が読める。
 - Notes: 見本画像の実物は SCN-THUMBNAILS で作る（今はグラデーションの代用）。1920×1080 では説明文が改行でカードの右端に近づく（読める範囲）。
+
+### SCN-LAUNCHER（2026-10-10、反復 10・run 20261009-233224）
+
+- 評価者の差し戻し 2 点に対応。(1) `LauncherMenu` の方向入力と決定（Enter・Space・A）を同じキューに積み、`ApplyNavigation` が配送順に処理する。決定は、それより前に積まれた移動を適用した後の選択を対象にする（同じフレームの「下、Enter」は移動後の項目を決定。「Enter、下」は移動前の項目を決定し、その後に移動する）。マウスのクリックは添字を指す `RequestActivate` のまま。非ブロッキングの英語コメントも日本語にした。(2) RelWithDebInfo の Game をビルドして撮影した。
+- 入力順を反証する検査 `LauncherMenuTest`（`Test/Game/Bridge/LauncherMenuTest.cpp`）を足した。Core にリンクしない小さな実行ファイル（`LauncherMenu.cpp` だけ）。4 ケース: キーボードの下→Enter、Enter→下、パッドの十字キー下×N→A（終了を決定）、ApplyNavigation 前は決定が確定しない。
+- 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-LAUNCHER-6-menu-test.txt`（LauncherMenuTest passed、EXIT=0）、`-6-1.txt`（Debug ビルド EXIT=0）、`-6-2.txt`（Release）、`-6-2r.txt`（RelWithDebInfo）、`-6-3.txt`・`-6-3b.txt`（Debug の 1280×720・1920×1080 撮影 pass）、`-6-3r.txt`（RelWithDebInfo 撮影 pass）、`-6-3rel.txt`（Release 撮影 pass）、`-6-4.txt`（周回スモーク rendering3dtest 3 周 `result=pass`）、`-6-5.txt`（`CaptureStartupScene.ps1` 3 視点 pass）。RelWithDebInfo の `default.png` を開き、灰色の窓・タイトルバー・スクロールバーが無く、タイトル・カード・終了ボタンが読めることを確かめた。
+- Notes: `NorvesLibBridgeAdapterScriptComponentTest`（Test/Game/Bridge の束）は、ソース一覧が Game の増えた分（M9SkeletalPreparation・StartupSkinnedProbe・SequenceFrameCapture・DogMovementSmokeRoutine・GameHapticsSettings・GameInputSettings・QuadrupedLocomotion ほか）に追いついておらず、このコミットより前から Debug でリンクできない。範囲外なので触らず、`LauncherMenuTest` を独立させた。

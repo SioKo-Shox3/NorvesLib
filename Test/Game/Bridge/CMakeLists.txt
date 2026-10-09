@@ -64,3 +64,21 @@ set_tests_properties(
     NorvesLibBridgeAdapterNumericEntityRegressionTest
     PROPERTIES TIMEOUT 300
 )
+
+# ランチャーの入力順の検査。LauncherMenu は入力の型だけに依存するので、Core にはリンクしない小さな実行ファイルにする。
+add_executable(LauncherMenuTest
+    LauncherMenuTest.cpp
+    ${CMAKE_SOURCE_DIR}/Game/GameModes/Launcher/LauncherMenu.cpp
+)
+set_target_properties(LauncherMenuTest PROPERTIES FOLDER "Test/Game/Bridge")
+target_include_directories(LauncherMenuTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Game
+    ${CMAKE_SOURCE_DIR}/Library
+    ${CMAKE_SOURCE_DIR}/Library/Core
+    ${CMAKE_SOURCE_DIR}/Library/Core/Public
+)
+if(MSVC)
+    target_compile_options(LauncherMenuTest PRIVATE /utf-8)
+endif()
+add_test(NAME LauncherMenuTest COMMAND LauncherMenuTest)

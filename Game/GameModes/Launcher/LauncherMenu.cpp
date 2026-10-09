@@ -41,12 +41,36 @@ namespace Game::GameModes
         }
     }
 
+    void LauncherMenu::PushStep(Step step)
+    {
+        if (m_PendingCount < kMaxPendingSteps)
+        {
+            m_Pending[m_PendingCount++] = step;
+        }
+    }
+
     void LauncherMenu::PushDirection(Direction direction)
     {
-        if (m_PendingCount < kMaxPendingDirections)
+        switch (direction)
         {
-            m_Pending[m_PendingCount++] = direction;
+        case Direction::Up:
+            PushStep(Step::Up);
+            break;
+        case Direction::Down:
+            PushStep(Step::Down);
+            break;
+        case Direction::Left:
+            PushStep(Step::Left);
+            break;
+        case Direction::Right:
+            PushStep(Step::Right);
+            break;
         }
+    }
+
+    void LauncherMenu::PushActivate()
+    {
+        PushStep(Step::Activate);
     }
 
     void LauncherMenu::ApplyNavigation(int columns)
@@ -61,19 +85,19 @@ namespace Game::GameModes
         {
             switch (m_Pending[index])
             {
-            case Direction::Left:
+            case Step::Left:
                 if (m_Selected > 0 && m_Selected < quit)
                 {
                     --m_Selected;
                 }
                 break;
-            case Direction::Right:
+            case Step::Right:
                 if (m_Selected < cardCount - 1)
                 {
                     ++m_Selected;
                 }
                 break;
-            case Direction::Up:
+            case Step::Up:
                 if (m_Selected == quit)
                 {
                     if (cardCount > 0)
@@ -86,7 +110,7 @@ namespace Game::GameModes
                     m_Selected -= columns;
                 }
                 break;
-            case Direction::Down:
+            case Step::Down:
                 if (m_Selected < quit)
                 {
                     if (m_Selected + columns < cardCount)
@@ -99,6 +123,10 @@ namespace Game::GameModes
                         m_Selected = quit;
                     }
                 }
+                break;
+            case Step::Activate:
+                // ここまでの移動を適用した後の選択を決定する
+                RequestActivate(m_Selected);
                 break;
             }
             if (m_Selected < quit)
@@ -168,7 +196,7 @@ namespace Game::GameModes
         case KeyCode::Space:
             if (bPressed)
             {
-                RequestActivate(m_Selected);
+                PushActivate();
             }
             return true;
         default:
@@ -197,7 +225,7 @@ namespace Game::GameModes
             PushDirection(Direction::Right);
             return true;
         case GamepadButton::A:
-            RequestActivate(m_Selected);
+            PushActivate();
             return true;
         default:
             return false;
@@ -213,7 +241,7 @@ namespace Game::GameModes
         // 左スティック。Y は上が正。倒した瞬間に1回だけ方向の入力にする。
         const float x = event.State.Axes[static_cast<uint8_t>(GamepadAxis::LeftX)];
         const float y = event.State.Axes[static_cast<uint8_t>(GamepadAxis::LeftY)];
-        const float values[4] = {y, -y, -x, x}; // Up, Down, Left, Right
+        const float values[4] = {y, -y, -x, x}; // 上、下、左、右の順
         const Direction directions[4] = {Direction::Up, Direction::Down, Direction::Left, Direction::Right};
         for (int index = 0; index < 4; ++index)
         {

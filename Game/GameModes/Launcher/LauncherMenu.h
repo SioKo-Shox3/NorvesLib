@@ -6,7 +6,8 @@
 // 項目は「シーンのカード（Scenes::kSceneCatalog の並び）」の後ろに「ゲームを終了」を1つ足した並び。
 // キーボード（矢印・WASD・Enter・Space）とゲームパッド（十字キー・左スティック・A）は IInputController として
 // 受け、マウス（ホバーとクリック）は描画側（LauncherView）が ImGui から受けて同じ状態を更新する。
-// 項目の並べ方（列の数）は描画側が決めるので、方向の入力は積んでおき、描画側が ApplyNavigation で適用する。
+// 項目の並べ方（列の数）は描画側が決めるので、方向の入力と決定（Enter・A）は同じキューに積んでおき、
+// 描画側が ApplyNavigation で配送順に適用する（同じフレームの「下、Enter」は移動後の項目を決定する）。
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Input/IInputController.h"
@@ -50,10 +51,14 @@ namespace Game::GameModes
         /// 方向の入力を積む
         void PushDirection(Direction direction);
 
-        /// 積んだ方向の入力を、カードを columns 列に並べた前提で選択へ反映する
+        /// 選択中の項目の決定（Enter・A）を、方向の入力と同じキューに積む
+        void PushActivate();
+
+        /// 積んだ入力を、カードを columns 列に並べた前提で配送順に反映する。
+        /// 決定は、それより前に積まれた方向の入力を適用した後の選択を対象にする
         void ApplyNavigation(int columns);
 
-        /// 項目の決定を要求する（Enter・クリック・A）
+        /// 添字を指して項目の決定を要求する（マウスのクリック）
         void RequestActivate(int index);
 
         /// 決定の要求があれば添字を返して消す
@@ -70,14 +75,26 @@ namespace Game::GameModes
         }
 
     private:
-        static constexpr int kMaxPendingDirections = 16;
+        /// キューに積む入力。方向の移動と、選択中の項目の決定
+        enum class Step : uint8_t
+        {
+            Up,
+            Down,
+            Left,
+            Right,
+            Activate,
+        };
+
+        static constexpr int kMaxPendingSteps = 16;
+
+        void PushStep(Step step);
 
         int m_ItemCount = 0;
         int m_Selected = 0;
         /// 「ゲームを終了」から上へ戻るときのカード
         int m_ReturnCard = 0;
         int m_ActivateIndex = -1;
-        Direction m_Pending[kMaxPendingDirections] = {};
+        Step m_Pending[kMaxPendingSteps] = {};
         int m_PendingCount = 0;
         /// 左スティックが各方向へ倒れているか（倒した瞬間だけ方向の入力にする）
         bool m_StickHeld[4] = {};
