@@ -164,6 +164,7 @@ const uint STAT_SW_HARDWARE = 6u;  // 一覧へ積まず、ハードのラスタ
 const uint STAT_SW_OVERFLOW = 7u;  // 小さいが一覧が満杯で積めなかったクラスタ（両パスの合計）
 const uint STAT_SW_ZEROED = 8u;    // ハードのコマンドを空振り（instanceCount = 0）にしたクラスタ（両パスの合計。swRasterEnabled=2 のときだけ）
 // 9・10 は visbuffer_sw_raster.comp が数える（9 = 矩形の上限を超えて描かなかった三角形、10 = 走ったワークグループ）
+const uint STAT_DRAW_DROPPED = 11u; // 区間の描画コマンドの上限（section.y）を超えて積めなかった可視クラスタ（両パスの合計）
 
 const uint DEBUG_PAYLOAD_MODE_NONE = 0u;
 const uint DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
@@ -828,6 +829,11 @@ void EmitDrawCommand(uint instanceIndex, MegaInstance instance, uint clusterInde
                 }
             }
         }
+    }
+    else if (cullData.bStatsEnabled != 0u)
+    {
+        // 上限を超えて描かれないクラスタの数（0 でなければ MaxDrawCount を上げる）
+        atomicAdd(stats[STAT_DRAW_DROPPED], 1u);
     }
 }
 

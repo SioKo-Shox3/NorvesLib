@@ -62,7 +62,8 @@ namespace NorvesLib::Core::Rendering
 
         // 統計（cluster_cull.comp の stats[12]）のバイト数。0〜3 は pass1・pass2_tested・pass2_drawn・occluded、
         // 4〜7 はソフトウェアラスタの振り分け（pass1 の一覧・pass2 の一覧・ハードだけ・一覧が満杯で積めなかった数）、
-        // 8 はハードのコマンドを空振りにした数、9・10 は visbuffer_sw_raster.comp が数える（矩形の上限を超えた三角形・走ったワークグループ）。11 は予備
+        // 8 はハードのコマンドを空振りにした数、9・10 は visbuffer_sw_raster.comp が数える（矩形の上限を超えた三角形・走ったワークグループ）、
+        // 11 は区間の描画コマンドの上限（MaxDrawCount）を超えて積めなかった可視クラスタの数（両パスの合計）
         constexpr uint32_t StatsBufferWords = 12u;
         constexpr uint32_t StatsBufferBytes = StatsBufferWords * sizeof(uint32_t);
 
@@ -273,6 +274,26 @@ namespace NorvesLib::Core::Rendering
         if (statsEveryFrameValue != nullptr && std::strcmp(statsEveryFrameValue, "1") == 0)
         {
             m_Settings.bStatsEveryFrame = true;
+        }
+
+        // 区間のコマンドの最大数を環境変数で替えられるようにする（本数を増やした測定で、描かれないクラスタを出さないため）
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4996)
+#endif
+        const char *maxDrawValue = std::getenv("NORVES_MEGA_MAX_DRAW_COUNT");
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+        if (maxDrawValue != nullptr && maxDrawValue[0] != '\0')
+        {
+            char *end = nullptr;
+            const unsigned long long maxDraw = std::strtoull(maxDrawValue, &end, 10);
+            // コマンドは 2 パス分が 1 本のバッファに並び、バイト位置が 31 ビットに収まる範囲に限る
+            if (end != maxDrawValue && *end == '\0' && maxDraw > 0 && maxDraw <= (0x7FFFFFFFull / sizeof(MegaGeometry::DrawIndexedIndirectCommand)) / 2u)
+            {
+                m_Settings.MaxDrawCount = static_cast<uint32_t>(maxDraw);
+            }
         }
     }
 
@@ -1468,6 +1489,23 @@ namespace NorvesLib::Core::Rendering
                                             static_cast<unsigned long long>(slot.RenderFrame),
                                             static_cast<long long>(slot.EpochFrame));
                         }
+                        // 描かれなかったクラスタの数（0 が合格）と、インスタンス数に比例して膨らむバッファの大きさ
+                        const auto bufferBytes = [](const RHI::BufferPtr &buffer) -> unsigned long long
+                        { return buffer ? static_cast<unsigned long long>(buffer->GetSize()) : 0ull; };
+                        NORVES_LOG_INFO("MegaGeometryPass",
+                                        "MEGA_CAPACITY draw_dropped=%u max_draw_count=%u command_capacity=%u "
+                                        "visibility_bytes=%llu indirect_bytes=%llu draw_info_bytes=%llu "
+                                        "bvh_queue_bytes=%llu sw_raster_bytes=%llu frame=%llu epoch_frame=%lld",
+                                        slot.Mapped[11],
+                                        m_Settings.MaxDrawCount,
+                                        m_CommandCapacity,
+                                        bufferBytes(m_VisibilityBuffer),
+                                        bufferBytes(m_IndirectDrawBuffer),
+                                        bufferBytes(m_DrawInfoBuffer),
+                                        bufferBytes(m_BvhQueueBuffer),
+                                        bufferBytes(m_SwRasterBuffer),
+                                        static_cast<unsigned long long>(slot.RenderFrame),
+                                        static_cast<long long>(slot.EpochFrame));
                         m_bStatsLoggedOnce = true;
                     }
                     slot.bPending = false;

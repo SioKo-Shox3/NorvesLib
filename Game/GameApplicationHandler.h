@@ -230,7 +230,7 @@ namespace Game
         /// --camera-path-time=<秒> で指定された、起動時にカメラパスの途中へ置く時刻。負なら置かない
         float m_CameraPathTime = -1.0f;
         /// --banana-count=<n> で指定された、バナナのシーンの本数（指定が無ければ既定）
-        uint32_t m_BananaCount = 4096;
+        uint32_t m_BananaCount = 10000;
         bool m_bBananaCountSet = false;
         /// --open-scene-info（開発ビルドだけ）: バナナのシーンを情報表示を出した状態で始める
         bool m_bOpenSceneInfo = false;

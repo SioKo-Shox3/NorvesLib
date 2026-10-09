@@ -6,7 +6,7 @@
 // 昼の物理空と太陽の影の下、ComfyUI で生成した高ポリのバナナ（約 10 万三角形。Assets/Models/Generated/banana）を
 // MegaGeometry で床いっぱいに敷き詰める。同じバナナの全インスタンスは 1 つの Model（MegaMesh）を共有し、
 // 向きと大きさだけをばらす。手前には数段の山（ピラミッド）を積む。
-// 本数は --banana-count=<n>（既定 4096）。視点は SceneCatalog.h の kMegaBananasViews（overview・close・low）、
+// 本数は --banana-count=<n>（既定 10000）。視点は SceneCatalog.h の kMegaBananasViews（overview・close・low）、
 // カメラパスは kMegaBananasPath（P キー・ゲームパッドの Y で再生・停止）。
 // H キーで情報（本数・1 本の三角形数・元の三角形の総数。開発ビルドは MegaGeometry の GPU 時間も）を出し入れする。
 // 資産（生成した GLB・クック済みのメッシュ）が無いときは警告して、バナナ抜きの床だけで続ける。
@@ -44,8 +44,8 @@ namespace Game::GameModes
     struct BananaAssembly;
 
     /// --banana-count の既定値と上限
-    inline constexpr uint32_t kDefaultBananaCount = 4096;
-    inline constexpr uint32_t kMaxBananaCount = 4096;
+    inline constexpr uint32_t kDefaultBananaCount = 10000;
+    inline constexpr uint32_t kMaxBananaCount = 65536;
 
     /// H キーで情報の表示を出し入れする入力の受け手（キーを消費しない）
     class BananasInfoToggle final : public NorvesLib::Core::Input::IInputController

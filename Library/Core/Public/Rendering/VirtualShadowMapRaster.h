@@ -236,8 +236,9 @@ namespace NorvesLib::Core::Rendering
     {
         /** @brief MegaGeometry の投影物のカリングの出力の一覧の頭（語）: 選んだクラスタの数・溢れて書かなかった数・判定を通った（インスタンス、段）の数・予約 */
         constexpr uint32_t MEGA_CULL_LIST_HEADER_WORDS = 4;
-        /** @brief 出力の一覧の既定の容量（クラスタの数）。1 件は uvec4（インスタンスの表の番号・段・クラスタの番号・予約）= 16 バイト */
-        constexpr uint32_t MEGA_CULL_LIST_CAPACITY = 524288;
+        /** @brief 出力の一覧の既定の容量（クラスタの数）。1 件は uvec4（インスタンスの表の番号・段・クラスタの番号・予約）= 16 バイト。
+         *        バナナ 1 万本の見渡しの視点は、全ページが新しく割り当てられる最初の約 30 フレームに最大約 100 万件を選ぶ（旧容量 524288 では溢れた）ので、その 1.5 倍にする */
+        constexpr uint32_t MEGA_CULL_LIST_CAPACITY = 1572864;
         constexpr uint64_t MegaCullListBytes(uint32_t capacity)
         {
             return (static_cast<uint64_t>(MEGA_CULL_LIST_HEADER_WORDS) + static_cast<uint64_t>(capacity == 0u ? 1u : capacity) * 4u) *

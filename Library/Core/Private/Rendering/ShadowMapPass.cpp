@@ -505,7 +505,8 @@ namespace NorvesLib::Core::Rendering
             constexpr uint32_t UBO_SIZE = sizeof(ShadowPerObjectUBO);
             constexpr uint32_t MAX_OBJECTS = 256 * CSM_CASCADE_COUNT;
             // 事前確保を超える分（半透明・ボリューム、MegaGeometry の投影物 × カスケード）は足りなくなったら増やす
-            constexpr uint32_t MAX_OBJECTS_LIMIT = 4096 * CSM_CASCADE_COUNT;
+            // 上限は MegaGeometry の本数の上限（バナナの --banana-count の最大 65536）× カスケード。使った分だけ増える
+            constexpr uint32_t MAX_OBJECTS_LIMIT = 65536 * CSM_CASCADE_COUNT;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
@@ -952,6 +953,8 @@ namespace NorvesLib::Core::Rendering
 
         uint32_t megaDrawCounts[PhysicalLightingShadowCascadeCount] = {};
         uint32_t megaTriangleCounts[PhysicalLightingShadowCascadeCount] = {};
+        // UBO の枠が足りず、影を描けなかったMegaGeometryの数（カスケードごと）
+        uint32_t megaOmittedCounts[PhysicalLightingShadowCascadeCount] = {};
         // カスケードごとに描いたMegaGeometryの段（「c0=メッシュ名:段/三角形数,...」）
         Container::String csmMegaLevels;
         for (uint32_t cascadeIndex = 0;
@@ -1042,8 +1045,9 @@ namespace NorvesLib::Core::Rendering
                 csmMegaLevels += static_cast<char>('0' + cascadeIndex);
                 csmMegaLevels += "=";
                 Container::String cascadeLevels;
-                for (const MegaShadowCaster& megaCaster : megaCasters)
+                for (size_t casterIndex = 0; casterIndex < megaCasters.size(); ++casterIndex)
                 {
+                    const MegaShadowCaster& megaCaster = megaCasters[casterIndex];
                     if (!CascadedShadowCascadeMayContainCaster(cascade, megaCaster.Bounds))
                     {
                         continue;
@@ -1052,8 +1056,14 @@ namespace NorvesLib::Core::Rendering
                     auto allocation = m_UniformAllocator.Allocate();
                     if (!allocation.UniformBuffer)
                     {
-                        NORVES_LOG_WARNING("ShadowMapPass",
-                                           "CSMのUBOが足りないためMegaGeometryの描画を省きます");
+                        // 残りのこのカスケードにかかる投影物は影を描かれない。数を数えて記録に出す（0 が合格）
+                        for (size_t omittedIndex = casterIndex; omittedIndex < megaCasters.size(); ++omittedIndex)
+                        {
+                            if (CascadedShadowCascadeMayContainCaster(cascade, megaCasters[omittedIndex].Bounds))
+                            {
+                                ++megaOmittedCounts[cascadeIndex];
+                            }
+                        }
                         break;
                     }
                     ShadowPerObjectUBO megaUboData = {};
@@ -1096,7 +1106,9 @@ namespace NorvesLib::Core::Rendering
         {
             bMegaCountsChanged = bMegaCountsChanged ||
                                  megaDrawCounts[cascadeIndex] != m_LoggedCsmMegaDraws[cascadeIndex] ||
-                                 megaTriangleCounts[cascadeIndex] != m_LoggedCsmMegaTriangles[cascadeIndex];
+                                 megaTriangleCounts[cascadeIndex] != m_LoggedCsmMegaTriangles[cascadeIndex] ||
+                                 megaOmittedCounts[cascadeIndex] != m_LoggedCsmMegaOmitted[cascadeIndex];
+            m_LoggedCsmMegaOmitted[cascadeIndex] = megaOmittedCounts[cascadeIndex];
             m_LoggedCsmMegaDraws[cascadeIndex] = megaDrawCounts[cascadeIndex];
             m_LoggedCsmMegaTriangles[cascadeIndex] = megaTriangleCounts[cascadeIndex];
         }
@@ -1109,12 +1121,17 @@ namespace NorvesLib::Core::Rendering
         {
             NORVES_LOG_INFO("ShadowMapPass",
                             "CSMへ描くMegaGeometry: csm_mega_casters=%u "
-                            "csm_mega_draws=%u,%u,%u,%u csm_mega_triangles=%u,%u,%u,%u csm_mega_levels=\"%s\"",
+                            "csm_mega_draws=%u,%u,%u,%u csm_mega_omitted=%u,%u,%u,%u "
+                            "csm_mega_triangles=%u,%u,%u,%u csm_mega_levels=\"%s\"",
                             static_cast<uint32_t>(megaCasters.size()),
                             megaDrawCounts[0],
                             megaDrawCounts[1],
                             megaDrawCounts[2],
                             megaDrawCounts[3],
+                            megaOmittedCounts[0],
+                            megaOmittedCounts[1],
+                            megaOmittedCounts[2],
+                            megaOmittedCounts[3],
                             megaTriangleCounts[0],
                             megaTriangleCounts[1],
                             megaTriangleCounts[2],
