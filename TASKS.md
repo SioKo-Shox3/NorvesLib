@@ -17,7 +17,7 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## SCN-SCENE-ARG: シーンの一覧と `--scene` 引数を足し、撮影スクリプトをシーン指定にする
-- status: todo
+- status: done
 - done-when: Game にシーンの一覧（id・日本語の表示名・説明・見本画像のパス・対応する GameMode・名前付き視点・必要な資産）を1か所に定義し、`--scene=<id>` で起動直後にそのシーンへ入る（`rendering3dtest` は今の Rendering3DTest）。未知の id はエラーをログに出して既定へ落ちる。この項目の時点の既定（引数なし）はまだ Rendering3DTest。`Scripts/CaptureStartupScene.ps1` と、Game.exe を起動して Rendering3DTest を前提にする他のスクリプト（`Test-CameraWorld.ps1`・`Test-M6AngelScriptHotReload.ps1`・`Test-M8MinimalPhysics.ps1`・`Test-M9World.ps1`・`RunCookedTextureGameSmoke.ps1`・`RunCookedModelGameProfile.ps1` を読んで判断）が `--scene=rendering3dtest` を渡す。新しい `Scripts/CaptureScene.ps1 -Scene <id> -OutDir <dir> [-Views <名前,...>] [-Configuration Debug|RelWithDebInfo|Release] [-Width <px> -Height <px>] [-GameArgs <先頭の -- を除いた引数,...>] [-RequireAssets]` が指定のシーンを撮って視点ごとの PNG と `metrics.json`（平均輝度・白飛び・黒つぶれの画素率）を出し、Game の起動失敗・PNG の欠け・Game.log のエラー（シェーダーのコンパイル失敗・検証レイヤーのエラー・`-RequireAssets` のときの資産の欠け）で非 0、成功で `CAPTURE_SCENE result=pass` を出す（名前付き視点が入るまでは既定の1枚）。シーンの組み立てが終わった印（SceneReady）を `--capture-deterministic` で待つ仕組みを全シーン共通にする。窓の大きさを変える引数が無ければ足す（`-Width/-Height` が使う）。`CaptureStartupScene.ps1` の 3 視点を撮り、main の撮影と並べて開いて同じ見た目であることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-SCENE-ARG`

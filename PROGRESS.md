@@ -586,3 +586,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - ユーザーの決定: 起動するとランチャー（作り込んだ ImGui のメニュー）、シーンは Rendering3DTest・仮想化ジオメトリのバナナ 1万本・荒野の前哨地（地形・材質の混ぜ合わせ・遠くまでの影・空気遠近・雲・枯れ草・砂塵）・夜の集落・材質ギャラリー・室内の光。岩は Poly Haven、建物・小物・家具・バナナは手元の TRELLIS.2 で生成。重い処理は許可済み。計画書は `Docs/Plans/SceneLauncherPlan.md`、項目は TASKS.md の `SCN-`（34 件）。
 - 開始時の確認: main `4974821a` から分岐。`cmake --build build --config Debug --target Game -- /m:1` は成功（`.harness/runs/scn-start-build.log`）。
 - 走行の間、他の系の未完の項目 14 件（todo 12・doing 2）を `backlog` に退避した。一覧は TASKS.md の冒頭。main へマージする前に元の status へ戻す。
+
+### SCN-SCENE-ARG（2026-10-10、反復 2・run 20261009-233224）
+
+- `Game/Scenes/SceneCatalog.h` にシーンの一覧（id・表示名・説明・見本画像・GameMode・名前付き視点・必要な資産）を1か所に定義し、`--scene=<id>`・`--scene-view=<name>` で起動直後にそのシーンへ入る。未知の id は `SCENE_UNKNOWN` を、未知の視点は `SCENE_VIEW_UNKNOWN` をエラーログに出して既定へ落ちる。引数なしの既定はまだ Rendering3DTest。`Game/Scenes/SceneReadiness.h` が SceneReady（`SCENE_READY scene=<id>`）を `--capture-deterministic` へ伝える全シーン共通の窓口。窓の大きさの引数は `ApplicationProcessor.cpp` に足した。
+- `Scripts/CaptureScene.ps1`（`-Scene`・`-Views`・`-Configuration`・`-Width/-Height`・`-GameArgs`・`-RequireAssets`）を追加。Game の起動失敗・PNG の欠け・Game.log のエラー・SCENE_READY の欠けで非 0、成功で `CAPTURE_SCENE result=pass`。`CaptureStartupScene.ps1` と Rendering3DTest 前提の他のスクリプト 6 本は `--scene=rendering3dtest` を渡す。
+- 証拠: `.harness/runs/20261009-233224/verify-SCN-SCENE-ARG-1〜3.txt`（すべて EXIT=0）。Debug の Game ビルド成功、`CaptureStartupScene.ps1` の 3 視点（平均輝度 124.087・123.784・125.951、白飛び・黒つぶれ 0）、`CaptureScene.ps1 -Scene rendering3dtest`（pass）。
+- 決定的な撮影（`-Deterministic`）で main の撮影と画素を比べた（`png-compare.txt`）: 差のある画素は視点ごとに 0〜11 個・差は最大 3（浮動小数の揺れ）で、平均輝度は main と完全に一致。非決定の撮影の `default`・`near`・`low` を main の撮影と並べて開き、天球・地面・球・岩・小屋が同じ見た目であることを確かめた（球の自転の位相の差だけ）。
+- 負の確認: 未知の id（`scene-unknown.txt`）・未知の視点（`scene-badview.txt`）で `result=fail`、`-Width 960 -Height 540`（`scene-size.txt`）で 960×540 の PNG、`-Views default,near,low`（`scene-views.txt`）で 3 枚。
+- Notes: `Test/Game/Bridge` の `NorvesLibBridgeAdapterScriptComponentTest` は M9SkeletalPreparation などの既存ソースが `CMakeLists.txt` に無くリンクできない（この項目の前から。新しいソースはヘッダのみなので CMake へ足す物は無い）。Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパス変換で壊れるので PowerShell から呼ぶ。
