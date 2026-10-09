@@ -1806,6 +1806,7 @@ if(NORVES_BRIDGE_SDK_DIR)
         ${CMAKE_SOURCE_DIR}/Game/Bridge/ReadyHandshake.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Launcher/LauncherMenu.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Launcher/LauncherRoutine.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Pause/PauseMenu.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/MemoryAgingTest/MemoryAgingTestRoutine.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/DirectionalLightEditSubRoutine.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestDebugDraw.cpp

@@ -140,6 +140,11 @@ namespace Game::GameModes
     GameModeEnterResult LauncherRoutine::Enter(GameModeContext &ctx, LauncherData &data)
     {
         LOG_INFO("ランチャーを開始します");
+        // ランチャーには戻る先が無いので、Esc のポーズメニューは使わない
+        if (data.m_pPauseMenu != nullptr)
+        {
+            data.m_pPauseMenu->SetEnabled(false);
+        }
         data.m_bLeaving = false;
         data.m_bFallbackToFirstScene = false;
         data.m_TickCount = 0;
@@ -249,6 +254,10 @@ namespace Game::GameModes
         // カメラの実体は GameModeScope::Cleanup が返す。
         ResetEnvironment(ctx);
         ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGIEnabled(data.m_bPreviousRTGI);
+        if (data.m_pPauseMenu != nullptr)
+        {
+            data.m_pPauseMenu->SetEnabled(true);
+        }
         data.m_pCameraPivot = nullptr;
         data.m_pCameraObject = nullptr;
         data.m_pSpringArm = nullptr;

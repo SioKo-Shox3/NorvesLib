@@ -21,6 +21,7 @@ norves_add_test_bundle(NorvesLibBridgeAdapterScriptComponentTest
         ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Launcher/LauncherMenu.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Launcher/LauncherRoutine.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Pause/PauseMenu.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/MemoryAgingTest/MemoryAgingTestRoutine.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/DirectionalLightEditSubRoutine.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/Rendering3DTestDebugDraw.cpp
@@ -82,3 +83,21 @@ if(MSVC)
     target_compile_options(LauncherMenuTest PRIVATE /utf-8)
 endif()
 add_test(NAME LauncherMenuTest COMMAND LauncherMenuTest)
+
+# ポーズメニューの入力の契約の検査（開閉・開いている間の入力の遮断・移動後の決定）。LauncherMenuTest と同じく Core にはリンクしない。
+add_executable(PauseMenuTest
+    PauseMenuTest.cpp
+    ${CMAKE_SOURCE_DIR}/Game/Pause/PauseMenu.cpp
+)
+set_target_properties(PauseMenuTest PROPERTIES FOLDER "Test/Game/Bridge")
+target_include_directories(PauseMenuTest PRIVATE
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/Game
+    ${CMAKE_SOURCE_DIR}/Library
+    ${CMAKE_SOURCE_DIR}/Library/Core
+    ${CMAKE_SOURCE_DIR}/Library/Core/Public
+)
+if(MSVC)
+    target_compile_options(PauseMenuTest PRIVATE /utf-8)
+endif()
+add_test(NAME PauseMenuTest COMMAND PauseMenuTest)

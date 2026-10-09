@@ -12,11 +12,13 @@
 #include "Bridge/NorvesLibBridgeAdapter.h"
 #include "Debug/SequenceFrameCapture.h"
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
+#include "Pause/PauseMenu.h"
 #include "Scenes/SceneCycleSmoke.h"
 #include "Scripting/M6ScriptSmokeController.h"
 
 #if defined(NORVES_ENABLE_IMGUI)
 #include "Debug/EngineStatsImGuiView.h"
+#include "Pause/PauseMenuView.h"
 #endif
 
 namespace NorvesLib::Core::Asset
@@ -164,6 +166,12 @@ namespace Game
          */
         void LogVramLedgerOnce();
 
+        /**
+         * @brief ポーズメニューの開閉をエンジンへ反映し、決定された項目を実行する（OnUpdate から呼ぶ）。
+         * @note 開いた間は入力の文脈をメニューにしてカーソルを出し、閉じたら戻す。
+         */
+        void UpdatePauseMenu();
+
         // ゲーム固有のメンバー変数
         bool m_bIsPaused = false;
         bool m_bHasTextureAssetRuntimeConfig = false;
@@ -219,6 +227,23 @@ namespace Game
         NorvesLib::Core::Container::String m_SceneReportPath;
         /// --scene-cycle-smoke=<id,...> の検査（ランチャーとシーンの間を周回して、資源が増えないことを確かめる）
         Game::Scenes::SceneCycleSmoke m_SceneCycle;
+        /// ポーズメニュー（ランチャー以外のシーンで Esc・Start で開く。ランチャーは入場でこれを無効にする）
+        Game::Pause::PauseMenu m_PauseMenu;
+        /// ポーズメニューを使う起動か。ImGui が使え、撮影・自動実行（--capture-png・--exit-after-frames）でないとき。
+        /// --open-pause-menu（開発ビルドだけ）の起動は撮影でも使う
+        bool m_bPauseMenuWanted = false;
+        /// ポーズメニューを入力ルーターと ImGui へ登録済みか
+        bool m_bPauseMenuRegistered = false;
+        /// ポーズメニューが開いた状態をエンジン（入力文脈・カーソル・撮影への重ね）へ反映済みか
+        bool m_bPauseMenuApplied = false;
+        /// 反映のためにメニュー用の入力文脈を積んだか（閉じるときに外す）
+        bool m_bPauseMenuPushedContext = false;
+        /// --open-pause-menu: 起動して数フレーム後に開く（開発ビルドだけ。撮影で開いた状態を確かめるのに使う）
+        bool m_bOpenPauseMenuAtStartup = false;
+        uint32_t m_PauseMenuTickCount = 0;
+#if defined(NORVES_ENABLE_IMGUI)
+        Game::Pause::PauseMenuView m_PauseMenuView{&m_PauseMenu};
+#endif
         /// CreateGameModeStateMachine が作ったステートマシン（非所有。Engine が所有する。OnPreShutdown で外す）
         NorvesLib::Core::GameMode::GameModeStateMachine *m_pGameModeStateMachine = nullptr;
         NorvesLib::Modules::Physics::CharacterDriveMode m_DogDrive =

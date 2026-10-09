@@ -14,6 +14,7 @@
 #include "Core/Public/GameMode/IGameMode.h"
 #include "Core/Public/GameMode/TGameMode.h"
 #include "GameModes/Launcher/LauncherMenu.h"
+#include "Pause/PauseMenu.h"
 
 #if defined(NORVES_ENABLE_IMGUI)
 #include "GameModes/Launcher/LauncherView.h"
@@ -37,6 +38,8 @@ namespace Game::GameModes
         /// 選んだシーンの GameMode へ渡す引数
         NorvesLib::Core::GameMode::GameModeParams m_SceneParams;
         LauncherMenu m_Menu;
+        /// ポーズメニュー（非所有。GameApplicationHandler が持つ）。ランチャーの間は無効にする。無いなら nullptr
+        Game::Pause::PauseMenu *m_pPauseMenu = nullptr;
 
         NorvesLib::Core::Entity *m_pCameraPivot = nullptr;
         NorvesLib::Core::Entity *m_pCameraObject = nullptr;

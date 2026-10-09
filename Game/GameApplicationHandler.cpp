@@ -8,6 +8,9 @@
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Engine/NorvesEngine.h"
+#include "Core/Public/Input/InputMapper.h"
+#include "Core/Public/Input/InputRouter.h"
+#include "Core/Public/Input/InputSystem.h"
 #include "Core/Public/Logging/LogMacros.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Object/World.h"
@@ -16,6 +19,7 @@
 #include "Core/Public/Resource/SkinnedMeshResource.h"
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
 #include "Input/GameHapticsSettings.h"
+#include "Input/GameInputActions.h"
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -91,6 +95,17 @@ namespace Game
         // 値を取らない bare フラグ(第2段 B-i)。指定時のみ ImGui モジュールを登録する
         // 不変条件ゲート。NORVES_ENABLE_IMGUI ビルドでのみ有効に処理される。
         constexpr const TCHAR *kImGuiOption = TEXT("--imgui");
+        // --open-pause-menu: 起動して数フレーム後にポーズメニューを開く（開発ビルドだけ。値を取らない）。
+        // 撮影の起動はポーズメニューを出さないが、この指定があれば撮影でも使い、開いた状態を撮れる。
+        constexpr const TCHAR *kOpenPauseMenuOption = TEXT("--open-pause-menu");
+        // 撮影・自動実行の起動（--capture-png・--capture-sequence・--exit-after-frames）はポーズメニューを出さない。
+        constexpr const TCHAR *kCapturePngOption = TEXT("--capture-png=");
+        constexpr const TCHAR *kExitAfterFramesOption = TEXT("--exit-after-frames=");
+        // --open-pause-menu で開くまでに待つ OnUpdate の回数（シーンの入場とフォントの用意を待つ）
+        constexpr uint32_t kPauseMenuStartupOpenTick = 3;
+        // ポーズメニューの入力の優先度。シーンの入力（PriorityGame とその上のピッキング）より上、
+        // デバッグの入力マスク（PriorityDebugOverlayMask）より下
+        constexpr int32_t kPauseMenuInputPriority = NorvesLib::Core::Input::InputRouter::PriorityGame + 100;
         constexpr const TCHAR *kDefaultRendering3DTestModelPath = TEXT("Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf");
         constexpr uint32_t kRendering3DTestMaxInstancedMeshCount = 200u;
         uint32_t s_Rendering3DTestBoardSmokeCount = 0;
@@ -509,6 +524,8 @@ namespace Game
         m_bNoCookedTextures = false;
         m_TextureLooseAssetRoot = {};
         m_bLauncherStartup = false;
+        m_bPauseMenuWanted = false;
+        m_bOpenPauseMenuAtStartup = false;
 #if defined(NORVES_ENABLE_IMGUI)
         m_bImGuiRequested = false;
 #endif
@@ -1551,18 +1568,39 @@ namespace Game
         }
 #endif
         bool bImGui = m_bAnimationDebugRequested;
+        bool bAutomatedRun = !captureSequencePrefix.empty();
+        bool bOpenPauseMenu = false;
         for (size_t i = 0; i < args.size(); ++i)
         {
+            String ignoredValue;
             if (ToStdString(args[i]) == std::basic_string<TCHAR>(kImGuiOption))
             {
                 bImGui = true;
-                break;
+            }
+            else if (ToStdString(args[i]) == std::basic_string<TCHAR>(kOpenPauseMenuOption))
+            {
+                bOpenPauseMenu = true;
+            }
+            else if (TryStripPrefix(args[i], kCapturePngOption, ignoredValue) ||
+                     TryStripPrefix(args[i], kExitAfterFramesOption, ignoredValue))
+            {
+                bAutomatedRun = true;
             }
         }
+#if !NORVES_BUILD_DEVELOPMENT
+        if (bOpenPauseMenu)
+        {
+            LOG_WARNING("Game runtime option --open-pause-menu ignored: development build only");
+            bOpenPauseMenu = false;
+        }
+#endif
         // ImGui モジュールは、デバッグ用の窓（--imgui）のほかに、ランチャーのメニューのためにも登録する。
         // デバッグ用の窓（EngineStats など）は m_bImGuiRequested のときだけ出す。
 #if defined(NORVES_ENABLE_IMGUI)
-        if (bImGui || m_bLauncherStartup)
+        // ポーズメニュー（Esc）のためにも登録する。撮影・自動実行の起動は、描画やキー割り当てを変えないよう使わない。
+        m_bPauseMenuWanted = !bAutomatedRun || bOpenPauseMenu;
+        m_bOpenPauseMenuAtStartup = bOpenPauseMenu;
+        if (bImGui || m_bLauncherStartup || m_bPauseMenuWanted)
         {
             NorvesLib::Core::Module::RegisterImGuiModule(
                 NorvesLib::Core::Module::GetModuleRegistry());
@@ -1571,7 +1609,12 @@ namespace Game
                 // ランチャーの文字を表示用フォントへ載せる。ImGui モジュールの Initialize より前に渡す。
                 Game::GameModes::RegisterLauncherDisplayText();
             }
-            LOG_INFO_F("ImGuiModule registered debug=%d launcher=%d", bImGui ? 1 : 0, m_bLauncherStartup ? 1 : 0);
+            if (m_bPauseMenuWanted)
+            {
+                Game::Pause::RegisterPauseMenuDisplayText();
+            }
+            LOG_INFO_F("ImGuiModule registered debug=%d launcher=%d pause=%d", bImGui ? 1 : 0,
+                       m_bLauncherStartup ? 1 : 0, m_bPauseMenuWanted ? 1 : 0);
         }
 #else
         if (bImGui)
@@ -1581,6 +1624,9 @@ namespace Game
 #endif
 #if defined(NORVES_ENABLE_IMGUI)
         m_bImGuiRequested = bImGui;
+#else
+        m_bPauseMenuWanted = false;
+        m_bOpenPauseMenuAtStartup = false;
 #endif
 
         if (captureSequencePrefix.empty() != captureSequenceRenderedFrames.empty())
@@ -1742,6 +1788,18 @@ namespace Game
             NorvesLib::Modules::Gui::RegisterImGuiView(&m_EngineStatsImGuiView);
             m_bEngineStatsImGuiViewRegistered = true;
             LOG_INFO("EngineStats ImGui view registered");
+        }
+
+        // ポーズメニュー。ImGui モジュールが無い（登録に失敗した）ときは使わず、Esc は従来どおり何もしない。
+        if (m_bPauseMenuWanted && NorvesLib::Core::Engine::GEngine != nullptr &&
+            Module::GetModuleRegistry().FindModule(Identity("NorvesImGuiModule")) != nullptr)
+        {
+            NorvesLib::Core::Engine::GEngine->GetInputRouter().RegisterController(&m_PauseMenu,
+                                                                                  kPauseMenuInputPriority);
+            NorvesLib::Modules::Gui::RegisterImGuiView(&m_PauseMenuView);
+            m_PauseMenu.SetEnabled(true);
+            m_bPauseMenuRegistered = true;
+            LOG_INFO("ポーズメニューを登録しました");
         }
 #endif
     }
@@ -2044,6 +2102,7 @@ namespace Game
             m_BridgeHost.DrainInbound();
         }
         m_M6ScriptSmokeController.Update();
+        UpdatePauseMenu();
 
         if (m_SceneCycle.IsEnabled() && m_pGameModeStateMachine != nullptr && NorvesLib::Core::Engine::GEngine)
         {
@@ -2104,6 +2163,73 @@ namespace Game
                  static_cast<double>(stats.TotalBufferMemory) / kBytesPerMb);
     }
 
+    void GameApplicationHandler::UpdatePauseMenu()
+    {
+#if defined(NORVES_ENABLE_IMGUI)
+        if (!m_bPauseMenuRegistered || NorvesLib::Core::Engine::GEngine == nullptr)
+        {
+            return;
+        }
+        NorvesLib::Core::Engine::Engine &engine = *NorvesLib::Core::Engine::GEngine;
+
+        ++m_PauseMenuTickCount;
+        if (m_bOpenPauseMenuAtStartup && m_PauseMenuTickCount >= kPauseMenuStartupOpenTick &&
+            m_PauseMenu.IsEnabled())
+        {
+            m_bOpenPauseMenuAtStartup = false;
+            m_PauseMenu.Open();
+        }
+
+        // 決定された項目を実行する。閉じてから遷移や終了を要求する（開いた状態を次のシーンへ持ち越さない）
+        Game::Pause::PauseMenu::Item item = Game::Pause::PauseMenu::Item::Resume;
+        if (m_PauseMenu.IsOpen() && m_PauseMenu.ConsumeActivation(item))
+        {
+            m_PauseMenu.Close();
+            switch (item)
+            {
+            case Game::Pause::PauseMenu::Item::Resume:
+                LOG_INFO("PAUSE_MENU action=resume");
+                break;
+            case Game::Pause::PauseMenu::Item::ReturnToLauncher:
+                LOG_INFO("PAUSE_MENU action=return_to_launcher");
+                if (m_pGameModeStateMachine != nullptr)
+                {
+                    m_pGameModeStateMachine->RequestChange(Game::GameModes::Launcher);
+                }
+                break;
+            case Game::Pause::PauseMenu::Item::Quit:
+                LOG_INFO("PAUSE_MENU action=quit");
+                engine.RequestExit(0);
+                break;
+            }
+        }
+
+        // 開閉をエンジンへ反映する。入力イベントの配送中は入力文脈を替えられないので、ここ（更新）で行う。
+        const bool bOpen = m_PauseMenu.IsOpen();
+        if (bOpen && !m_bPauseMenuApplied)
+        {
+            m_bPauseMenuApplied = true;
+            // メニューの入力文脈（カーソルを出す。シーンの移動・視点・攻撃などの写像を止める）を積む
+            m_bPauseMenuPushedContext = engine.GetInputMapper().PushContext(Game::InputActions::MenuContext);
+            // 開く前に押していたキー・ボタンの状態を捨てる（カメラ操作の Alt などが押しっぱなしにならないように）
+            engine.GetInputSystem().ReleaseAll();
+            NorvesLib::Modules::Gui::SetImGuiOverlayInCapture(true);
+            LOG_INFO("PAUSE_MENU state=open");
+        }
+        else if (!bOpen && m_bPauseMenuApplied)
+        {
+            m_bPauseMenuApplied = false;
+            if (m_bPauseMenuPushedContext)
+            {
+                (void)engine.GetInputMapper().RemoveContext(Game::InputActions::MenuContext);
+                m_bPauseMenuPushedContext = false;
+            }
+            NorvesLib::Modules::Gui::SetImGuiOverlayInCapture(false);
+            LOG_INFO("PAUSE_MENU state=closed");
+        }
+#endif
+    }
+
     bool GameApplicationHandler::ShouldAdvanceSimulation() const
     {
         // Bridge 無効なら従来挙動（常に進行）。
@@ -2131,6 +2257,16 @@ namespace Game
             m_bEngineStatsImGuiViewRegistered = false;
         }
         m_EngineStatsImGuiView.ClearRenderingCoordinator();
+        if (m_bPauseMenuRegistered)
+        {
+            m_PauseMenu.SetEnabled(false);
+            NorvesLib::Modules::Gui::UnregisterImGuiView(&m_PauseMenuView);
+            if (NorvesLib::Core::Engine::GEngine != nullptr)
+            {
+                NorvesLib::Core::Engine::GEngine->GetInputRouter().UnregisterController(&m_PauseMenu);
+            }
+            m_bPauseMenuRegistered = false;
+        }
 #endif
 
         // Bridge を World/RenderWorld 破棄より前に停止する（close→join、冪等）。
@@ -2403,10 +2539,11 @@ namespace Game
                                : m_Rendering3DTestModelPath;
         stateMachine->Registry().Register(
             Launcher,
-            [params](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            [params, pauseMenu = &m_PauseMenu](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<LauncherMode>();
                 mode->GetData().m_SceneParams = params;
+                mode->GetData().m_pPauseMenu = pauseMenu;
                 return mode;
             });
         stateMachine->Registry().Register(
