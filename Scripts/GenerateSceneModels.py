@@ -7,9 +7,10 @@
 
 使い方:
   python Scripts/GenerateSceneModels.py --ids banana            生成(ComfyUI が動いていなければ起動し、終わったら止める)
+  python Scripts/GenerateSceneModels.py --ids banana --refit    既存の GLB を定義の実寸(height_m)へ合わせ直す(GPU 不使用)
   python Scripts/GenerateSceneModels.py --ids banana --preview  Blender のヘッドレスで GLB を 3 方向から描く
   python Scripts/GenerateSceneModels.py --verify [--require-cooked] [--ids banana]
-                                                                GPU を使わず、定義・manifest・実ファイルの MD5 の一致を確かめる
+                                                                GPU を使わず、定義・manifest・実ファイルの MD5 と GLB の実寸の一致を確かめる
 
 生成は GPU を占有する。Game を撮る前に ComfyUI が止まっていること(このスクリプトは終了時に降ろして止める)。
 """
@@ -139,6 +140,71 @@ def glb_statistics(path):
         if "occlusionTexture" in material:
             textures.add("occlusion")
     return {"triangles": triangles, "textures": sorted(textures), "bounds_min": bounds_min, "bounds_max": bounds_max}
+
+
+def glb_height(path):
+    """GLB の位置の範囲から、高さ(Y 方向の長さ)を返す。範囲が無ければ None。"""
+    statistics = glb_statistics(path)
+    if statistics["bounds_min"] is None:
+        return None
+    return statistics["bounds_max"][1] - statistics["bounds_min"][1]
+
+
+def fit_glb_height(path, height_m):
+    """GLB の頂点位置を一様に拡縮して、Y 方向の高さを height_m に合わせる。倍率を返す(合っていれば 1.0)。
+
+    生成物の大きさは元の単位のまま(高さ約 1)なので、定義の実寸へここで合わせる。
+    原点まわりの拡縮なので位置の中心は動かない。法線・接線・UV は一様拡縮で変わらない。
+    """
+    current = glb_height(path)
+    if current is None or current <= 0.0:
+        raise PipelineError("GLB に位置の範囲がなく、実寸へ合わせられません: %s" % path)
+    scale = float(height_m) / current
+    if abs(scale - 1.0) < 1e-4:
+        return 1.0
+    with open(path, "rb") as stream:
+        data = bytearray(stream.read())
+    json_length, json_type = struct.unpack_from("<II", data, 12)
+    if json_type != 0x4E4F534A:
+        raise PipelineError("GLB の先頭チャンクが JSON ではありません: %s" % path)
+    json_start = 20
+    bin_header = json_start + json_length
+    bin_length, bin_type = struct.unpack_from("<II", data, bin_header)
+    if bin_type != 0x004E4942:
+        raise PipelineError("GLB の 2 番目のチャンクが BIN ではありません: %s" % path)
+    bin_start = bin_header + 8
+    gltf = json.loads(bytes(data[json_start:bin_header]).decode("utf-8"))
+    for node in gltf.get("nodes", []):
+        if any(key in node for key in ("matrix", "translation", "rotation", "scale")):
+            raise PipelineError("ノードに変換があり、頂点の拡縮では合わせられません: %s" % path)
+    if gltf.get("skins") or gltf.get("animations"):
+        raise PipelineError("スキンかアニメーションがあり、頂点の拡縮では合わせられません: %s" % path)
+    accessors = gltf["accessors"]
+    views = gltf["bufferViews"]
+    position_ids = sorted({p["attributes"]["POSITION"] for m in gltf.get("meshes", []) for p in m.get("primitives", [])})
+    for accessor_id in position_ids:
+        accessor = accessors[accessor_id]
+        if accessor["componentType"] != 5126 or accessor["type"] != "VEC3" or "sparse" in accessor:
+            raise PipelineError("POSITION が float の VEC3 ではありません: %s" % path)
+        view = views[accessor["bufferView"]]
+        stride = view.get("byteStride", 12)
+        base = bin_start + view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+        for index in range(accessor["count"]):
+            offset = base + index * stride
+            x, y, z = struct.unpack_from("<3f", data, offset)
+            struct.pack_into("<3f", data, offset, x * scale, y * scale, z * scale)
+        accessor["min"] = [v * scale for v in accessor["min"]]
+        accessor["max"] = [v * scale for v in accessor["max"]]
+    # JSON チャンクの長さを変えない(末尾の空白で埋める)。BIN の位置がずれないようにする
+    encoded = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > json_length:
+        raise PipelineError("JSON チャンクが元より長くなり、書き戻せません: %s" % path)
+    data[json_start:bin_header] = encoded + b" " * (json_length - len(encoded))
+    temporary = path + ".tmp"
+    with open(temporary, "wb") as stream:
+        stream.write(data)
+    os.replace(temporary, path)
+    return scale
 
 
 # ---------------------------------------------------------------------------------------------
@@ -356,6 +422,8 @@ def command_generate(args, models):
                 log("GEN reference_only %s -> %s" % (model["id"], reference_path))
                 continue
             generate_glb(server, model, reference_path, glb_path)
+            scale = fit_glb_height(glb_path, model["height_m"])
+            log("GEN fit_height id=%s height_m=%s scale=%.6f" % (model["id"], model["height_m"], scale))
             manifest = write_manifest(model, directory)
             log("GEN done id=%s faces=%d textures=%s glb_md5=%s"
                 % (model["id"], manifest["face_count"], ",".join(manifest["textures"]), manifest["glb"]["md5"]))
@@ -368,6 +436,19 @@ def command_generate(args, models):
 # ---------------------------------------------------------------------------------------------
 # プレビュー・検証
 # ---------------------------------------------------------------------------------------------
+
+def command_refit(args, models):
+    """既存の GLB を定義の実寸へ合わせ直し、manifest を書き直す(GPU・ComfyUI 不使用)。"""
+    for model in models:
+        directory = model_dir(model["id"])
+        glb_path = os.path.join(directory, model["id"] + ".glb")
+        if not os.path.isfile(glb_path) or not os.path.isfile(os.path.join(directory, "reference.png")):
+            raise PipelineError("GLB か参照画像がありません(先に生成してください): %s" % directory)
+        scale = fit_glb_height(glb_path, model["height_m"])
+        manifest = write_manifest(model, directory)
+        log("REFIT id=%s height_m=%s scale=%.6f glb_md5=%s" % (model["id"], model["height_m"], scale, manifest["glb"]["md5"]))
+    return 0
+
 
 def command_preview(args, models):
     if not os.path.isfile(args.blender):
@@ -400,7 +481,7 @@ def verify_model(model, require_cooked, cooked_paths):
         return ["manifest.json がありません: %s" % manifest_path]
     with open(manifest_path, "r", encoding="utf-8") as stream:
         manifest = json.load(stream)
-    for key, expected in (("prompt", model["prompt"]), ("seed", int(model["seed"])),
+    for key, expected in (("id", model["id"]), ("usage", model["usage"]), ("prompt", model["prompt"]), ("seed", int(model["seed"])),
                           ("target_faces", int(model["target_faces"])), ("texture_size", int(model["texture_size"])),
                           ("height_m", float(model["height_m"]))):
         if manifest.get(key) != expected:
@@ -412,6 +493,12 @@ def verify_model(model, require_cooked, cooked_paths):
             problems.append("%s がありません: %s" % (key, path))
         elif md5_of(path) != entry.get("md5"):
             problems.append("%s の MD5 が manifest と一致しません: %s" % (key, path))
+    glb_path = os.path.join(directory, model["id"] + ".glb")
+    if os.path.isfile(glb_path):
+        height = glb_height(glb_path)
+        expected_height = float(model["height_m"])
+        if height is None or abs(height - expected_height) > expected_height * 0.01:
+            problems.append("GLB の高さが実寸と合いません(定義 %s m / GLB %s。--refit で合わせ直せます)" % (expected_height, height))
     for key in ("face_count", "generated_at"):
         if key not in manifest:
             problems.append("manifest に %s がありません" % key)
@@ -468,6 +555,7 @@ def main():
     parser.add_argument("--verify", action="store_true", help="定義・manifest・実ファイルの一致を確かめる(GPU 不使用)")
     parser.add_argument("--require-cooked", action="store_true", help="--verify でクック済みの出力も要求する")
     parser.add_argument("--preview", action="store_true", help="Blender のヘッドレスで GLB を 3 方向から描く(生成はしない)")
+    parser.add_argument("--refit", action="store_true", help="既存の GLB を定義の実寸へ合わせ直し、manifest を書き直す(GPU 不使用)")
     parser.add_argument("--reference-only", action="store_true", help="参照画像だけ作る(seed の選び直し用)")
     parser.add_argument("--reuse-reference", action="store_true", help="参照画像があればそれを使い、3D だけ作り直す")
     parser.add_argument("--comfy-root", default=DEFAULT_COMFY_ROOT)
@@ -479,6 +567,8 @@ def main():
         models = select_models(load_definitions(), ids)
         if args.verify:
             return command_verify(args, models)
+        if args.refit:
+            return command_refit(args, models)
         if args.preview:
             return command_preview(args, models)
         return command_generate(args, models)
