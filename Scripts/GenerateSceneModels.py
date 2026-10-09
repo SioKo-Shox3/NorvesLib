@@ -1,0 +1,491 @@
+﻿# -*- coding: utf-8 -*-
+"""手元の ComfyUI で、シーン用の 3D モデル(GLB)を生成・検証するスクリプト。標準ライブラリだけで動く。
+
+定義: Assets/AssetSets/GeneratedModels.json(id・英語のプロンプト・seed・目標面数・テクスチャの大きさ・実寸の高さ・用途)
+ワークフロー: Tools/ComfyWorkflows/(API 形式。文字→画像と画像→3D)
+出力: Assets/Models/Generated/<id>/(<id>.glb・reference.png・manifest.json。git 管理外)
+
+使い方:
+  python Scripts/GenerateSceneModels.py --ids banana            生成(ComfyUI が動いていなければ起動し、終わったら止める)
+  python Scripts/GenerateSceneModels.py --ids banana --preview  Blender のヘッドレスで GLB を 3 方向から描く
+  python Scripts/GenerateSceneModels.py --verify [--require-cooked] [--ids banana]
+                                                                GPU を使わず、定義・manifest・実ファイルの MD5 の一致を確かめる
+
+生成は GPU を占有する。Game を撮る前に ComfyUI が止まっていること(このスクリプトは終了時に降ろして止める)。
+"""
+import argparse
+import datetime
+import hashlib
+import json
+import os
+import struct
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+DEFINITION_PATH = os.path.join(REPO_ROOT, "Assets", "AssetSets", "GeneratedModels.json")
+WORKFLOW_DIR = os.path.join(REPO_ROOT, "Tools", "ComfyWorkflows")
+TEXT_TO_IMAGE_WORKFLOW = os.path.join(WORKFLOW_DIR, "text_to_image_zimage_turbo_api.json")
+IMAGE_TO_3D_WORKFLOW = os.path.join(WORKFLOW_DIR, "image_to_3d_trellis2_api.json")
+OUTPUT_ROOT = os.path.join(REPO_ROOT, "Assets", "Models", "Generated")
+COOKED_MANIFEST = os.path.join(REPO_ROOT, "build", "CookedAssets", "manifest.json")
+BLENDER_PREVIEW_SCRIPT = os.path.join(os.path.dirname(__file__), "BlenderPreviewGlb.py")
+
+DEFAULT_COMFY_ROOT = r"Y:\ComfyUI\ComfyUI_windows_portable"
+DEFAULT_BLENDER = r"Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe"
+DEFAULT_PORT = 8188
+
+# 参照画像の被写体の置き方。背景除去が効きやすいよう、単色の背景・影なしを求める。
+PROMPT_SUFFIX = ", centered, isolated on a plain light grey background, studio lighting, no shadow, sharp focus, photorealistic"
+
+REQUIRED_FIELDS = ("id", "prompt", "seed", "target_faces", "texture_size", "height_m", "usage")
+
+
+class PipelineError(RuntimeError):
+    pass
+
+
+def log(message):
+    print(message, flush=True)
+
+
+def md5_of(path):
+    digest = hashlib.md5()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_definitions():
+    with open(DEFINITION_PATH, "r", encoding="utf-8-sig") as stream:
+        data = json.load(stream)
+    models = data.get("models")
+    if not isinstance(models, list) or not models:
+        raise PipelineError("%s の models は空でない配列にしてください" % DEFINITION_PATH)
+    seen = set()
+    for model in models:
+        for field in REQUIRED_FIELDS:
+            if field not in model:
+                raise PipelineError("%s: 定義 %r に %s がありません" % (DEFINITION_PATH, model.get("id"), field))
+        if model["id"] in seen:
+            raise PipelineError("%s: id が重複しています: %s" % (DEFINITION_PATH, model["id"]))
+        seen.add(model["id"])
+    return models
+
+
+def select_models(models, ids):
+    if not ids:
+        return models
+    by_id = {m["id"]: m for m in models}
+    unknown = [i for i in ids if i not in by_id]
+    if unknown:
+        raise PipelineError("定義に無い id: %s(定義: %s)" % (", ".join(unknown), ", ".join(by_id)))
+    return [by_id[i] for i in ids]
+
+
+def model_dir(model_id):
+    return os.path.join(OUTPUT_ROOT, model_id)
+
+
+def read_glb(path):
+    """GLB の JSON 部を返す。"""
+    with open(path, "rb") as stream:
+        header = stream.read(12)
+        if len(header) < 12 or header[:4] != b"glTF":
+            raise PipelineError("GLB ではありません: %s" % path)
+        chunk_length, chunk_type = struct.unpack("<II", stream.read(8))
+        if chunk_type != 0x4E4F534A:
+            raise PipelineError("GLB の先頭チャンクが JSON ではありません: %s" % path)
+        return json.loads(stream.read(chunk_length).decode("utf-8"))
+
+
+def glb_statistics(path):
+    """三角形数・材質テクスチャの種類・位置の範囲(メートル相当の単位のまま)を返す。"""
+    gltf = read_glb(path)
+    accessors = gltf.get("accessors", [])
+    triangles = 0
+    bounds_min = None
+    bounds_max = None
+    for mesh in gltf.get("meshes", []):
+        for primitive in mesh.get("primitives", []):
+            if primitive.get("mode", 4) != 4:
+                continue
+            if "indices" in primitive:
+                triangles += accessors[primitive["indices"]]["count"] // 3
+            else:
+                triangles += accessors[primitive["attributes"]["POSITION"]]["count"] // 3
+            position = accessors[primitive["attributes"]["POSITION"]]
+            if "min" in position and "max" in position:
+                if bounds_min is None:
+                    bounds_min, bounds_max = list(position["min"]), list(position["max"])
+                else:
+                    bounds_min = [min(a, b) for a, b in zip(bounds_min, position["min"])]
+                    bounds_max = [max(a, b) for a, b in zip(bounds_max, position["max"])]
+    textures = set()
+    for material in gltf.get("materials", []):
+        pbr = material.get("pbrMetallicRoughness", {})
+        if "baseColorTexture" in pbr:
+            textures.add("base_color")
+        if "metallicRoughnessTexture" in pbr:
+            textures.add("metallic_roughness")
+        if "normalTexture" in material:
+            textures.add("normal")
+        if "occlusionTexture" in material:
+            textures.add("occlusion")
+    return {"triangles": triangles, "textures": sorted(textures), "bounds_min": bounds_min, "bounds_max": bounds_max}
+
+
+# ---------------------------------------------------------------------------------------------
+# ComfyUI
+# ---------------------------------------------------------------------------------------------
+
+class ComfyServer:
+    """ComfyUI の起動・停止・API 呼び出し。自分で起動したものだけ止める。"""
+
+    def __init__(self, comfy_root, port):
+        self.comfy_root = comfy_root
+        self.port = port
+        self.base = "http://127.0.0.1:%d" % port
+        self.process = None
+        self.client_id = uuid.uuid4().hex
+
+    def _request(self, path, data=None, timeout=60, raw=False):
+        request = urllib.request.Request(self.base + path, data=data)
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read()
+        return body if raw else json.loads(body.decode("utf-8"))
+
+    def is_alive(self):
+        try:
+            self._request("/system_stats", timeout=3)
+            return True
+        except (urllib.error.URLError, OSError, ValueError):
+            return False
+
+    def ensure_running(self, startup_timeout=300):
+        if self.is_alive():
+            log("COMFY already_running port=%d(止めずに使う)" % self.port)
+            return
+        python = os.path.join(self.comfy_root, "python_embeded", "python.exe")
+        main = os.path.join(self.comfy_root, "ComfyUI", "main.py")
+        if not (os.path.isfile(python) and os.path.isfile(main)):
+            raise PipelineError("ComfyUI が見つかりません: %s" % self.comfy_root)
+        log("COMFY starting port=%d" % self.port)
+        log_path = os.path.join(REPO_ROOT, "build", "ComfyUI.log")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        log_file = open(log_path, "wb")
+        self.process = subprocess.Popen(
+            [python, "-s", main, "--windows-standalone-build", "--disable-auto-launch", "--port", str(self.port)],
+            cwd=self.comfy_root, stdout=log_file, stderr=subprocess.STDOUT,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        deadline = time.time() + startup_timeout
+        while time.time() < deadline:
+            if self.process.poll() is not None:
+                raise PipelineError("ComfyUI が起動中に終了しました(ログ: %s)" % log_path)
+            if self.is_alive():
+                log("COMFY started")
+                return
+            time.sleep(2)
+        raise PipelineError("ComfyUI の起動が %d 秒で終わりませんでした(ログ: %s)" % (startup_timeout, log_path))
+
+    def release_models(self):
+        """モデルと確保メモリを降ろす(VRAM を空ける)。"""
+        try:
+            body = json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8")
+            self._request("/free", data=body, timeout=30, raw=True)
+            log("COMFY models_released")
+        except (urllib.error.URLError, OSError, ValueError) as error:
+            log("COMFY release_failed %s" % error)
+
+    def stop(self):
+        if self.process is None:
+            return
+        subprocess.run(["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        try:
+            self.process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            pass
+        self.process = None
+        log("COMFY stopped")
+
+    def upload_image(self, path):
+        boundary = uuid.uuid4().hex
+        name = os.path.basename(path)
+        with open(path, "rb") as stream:
+            content = stream.read()
+        parts = [
+            ("--%s\r\nContent-Disposition: form-data; name=\"image\"; filename=\"%s\"\r\n"
+             "Content-Type: image/png\r\n\r\n" % (boundary, name)).encode("utf-8"),
+            content,
+            ("\r\n--%s\r\nContent-Disposition: form-data; name=\"overwrite\"\r\n\r\ntrue\r\n--%s--\r\n"
+             % (boundary, boundary)).encode("utf-8"),
+        ]
+        request = urllib.request.Request(self.base + "/upload/image", data=b"".join(parts))
+        request.add_header("Content-Type", "multipart/form-data; boundary=" + boundary)
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return json.loads(response.read().decode("utf-8"))["name"]
+
+    def run_workflow(self, workflow, timeout, label):
+        """ワークフローを投入して完了まで待ち、history の outputs を返す。"""
+        body = json.dumps({"prompt": workflow, "client_id": self.client_id}).encode("utf-8")
+        request = urllib.request.Request(self.base + "/prompt", data=body)
+        request.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                prompt_id = json.loads(response.read().decode("utf-8"))["prompt_id"]
+        except urllib.error.HTTPError as error:
+            raise PipelineError("ワークフローを受け付けませんでした(%s): %s" % (label, error.read().decode("utf-8", "replace")[:2000]))
+        log("COMFY queued %s prompt_id=%s" % (label, prompt_id))
+        started = time.time()
+        next_report = started + 60
+        while time.time() - started < timeout:
+            history = self._request("/history/" + prompt_id)
+            if prompt_id in history:
+                entry = history[prompt_id]
+                status = entry.get("status", {})
+                if status.get("status_str") == "error":
+                    messages = [m for m in status.get("messages", []) if m and m[0] == "execution_error"]
+                    raise PipelineError("ワークフローが失敗しました(%s): %s" % (label, json.dumps(messages, ensure_ascii=False)[:3000]))
+                if entry.get("outputs") is not None and status.get("completed", True):
+                    log("COMFY done %s %.0fs" % (label, time.time() - started))
+                    return entry["outputs"]
+            if time.time() >= next_report:
+                log("COMFY waiting %s %.0fs" % (label, time.time() - started))
+                next_report += 60
+            time.sleep(3)
+        raise PipelineError("ワークフローが %d 秒で終わりませんでした(%s)" % (timeout, label))
+
+    def fetch_output(self, outputs, node_id, destination):
+        """出力ノードのファイルを destination へ保存する。"""
+        files = []
+        for value in outputs.get(node_id, {}).values():
+            if isinstance(value, list):
+                files += [v for v in value if isinstance(v, dict) and "filename" in v]
+        if not files:
+            raise PipelineError("出力ノード %s にファイルがありません: %s" % (node_id, json.dumps(outputs, ensure_ascii=False)[:1500]))
+        item = files[-1]
+        query = urllib.parse.urlencode({"filename": item["filename"], "subfolder": item.get("subfolder", ""), "type": item.get("type", "output")})
+        data = self._request("/view?" + query, timeout=300, raw=True)
+        with open(destination, "wb") as stream:
+            stream.write(data)
+        return item["filename"]
+
+
+def load_workflow(path):
+    with open(path, "r", encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def generate_reference(server, model, destination):
+    workflow = load_workflow(TEXT_TO_IMAGE_WORKFLOW)
+    workflow["4"]["inputs"]["text"] = model["prompt"] + PROMPT_SUFFIX
+    workflow["8"]["inputs"]["seed"] = int(model["seed"])
+    workflow["10"]["inputs"]["filename_prefix"] = "generated/%s_reference" % model["id"]
+    outputs = server.run_workflow(workflow, timeout=900, label="%s:image" % model["id"])
+    server.fetch_output(outputs, "10", destination)
+
+
+def generate_glb(server, model, reference_path, destination):
+    uploaded = server.upload_image(reference_path)
+    workflow = load_workflow(IMAGE_TO_3D_WORKFLOW)
+    size = int(model["texture_size"])
+    workflow["122"]["inputs"]["image"] = uploaded
+    workflow["186"]["inputs"]["target_face_count"] = int(model["target_faces"])
+    workflow["288"]["inputs"]["value"] = size
+    workflow["224"]["inputs"]["resolution"] = min(size, 2048)
+    workflow["233"]["inputs"]["resolution"] = min(size, 2048)
+    for node in ("3", "12", "18", "23"):
+        workflow[node]["inputs"]["seed"] = int(model["seed"])
+    workflow["322"]["inputs"]["filename_prefix"] = "3d/generated_%s" % model["id"]
+    outputs = server.run_workflow(workflow, timeout=3600, label="%s:3d" % model["id"])
+    server.fetch_output(outputs, "322", destination)
+
+
+def write_manifest(model, directory):
+    glb_path = os.path.join(directory, model["id"] + ".glb")
+    reference_path = os.path.join(directory, "reference.png")
+    statistics = glb_statistics(glb_path)
+    manifest = {
+        "version": 1,
+        "id": model["id"],
+        "prompt": model["prompt"],
+        "seed": int(model["seed"]),
+        "target_faces": int(model["target_faces"]),
+        "texture_size": int(model["texture_size"]),
+        "height_m": float(model["height_m"]),
+        "usage": model["usage"],
+        "face_count": statistics["triangles"],
+        "textures": statistics["textures"],
+        "bounds_min": statistics["bounds_min"],
+        "bounds_max": statistics["bounds_max"],
+        "glb": {"file": os.path.basename(glb_path), "md5": md5_of(glb_path)},
+        "reference": {"file": os.path.basename(reference_path), "md5": md5_of(reference_path)},
+        "workflows": {
+            "text_to_image": md5_of(TEXT_TO_IMAGE_WORKFLOW),
+            "image_to_3d": md5_of(IMAGE_TO_3D_WORKFLOW),
+        },
+        "generated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    with open(os.path.join(directory, "manifest.json"), "w", encoding="utf-8", newline="\n") as stream:
+        json.dump(manifest, stream, indent=2, ensure_ascii=False)
+        stream.write("\n")
+    return manifest
+
+
+def command_generate(args, models):
+    server = ComfyServer(args.comfy_root, args.port)
+    try:
+        server.ensure_running()
+        for model in models:
+            directory = model_dir(model["id"])
+            glb_path = os.path.join(directory, model["id"] + ".glb")
+            reference_path = os.path.join(directory, "reference.png")
+            os.makedirs(directory, exist_ok=True)
+            if args.reuse_reference and os.path.isfile(reference_path):
+                log("GEN reuse_reference %s" % model["id"])
+            else:
+                generate_reference(server, model, reference_path)
+            if args.reference_only:
+                log("GEN reference_only %s -> %s" % (model["id"], reference_path))
+                continue
+            generate_glb(server, model, reference_path, glb_path)
+            manifest = write_manifest(model, directory)
+            log("GEN done id=%s faces=%d textures=%s glb_md5=%s"
+                % (model["id"], manifest["face_count"], ",".join(manifest["textures"]), manifest["glb"]["md5"]))
+    finally:
+        server.release_models()
+        server.stop()
+    return 0
+
+
+# ---------------------------------------------------------------------------------------------
+# プレビュー・検証
+# ---------------------------------------------------------------------------------------------
+
+def command_preview(args, models):
+    if not os.path.isfile(args.blender):
+        raise PipelineError("Blender が見つかりません: %s" % args.blender)
+    for model in models:
+        directory = model_dir(model["id"])
+        glb_path = os.path.join(directory, model["id"] + ".glb")
+        if not os.path.isfile(glb_path):
+            raise PipelineError("GLB がありません(先に生成してください): %s" % glb_path)
+        prefix = os.path.join(directory, "preview")
+        command = [args.blender, "--background", "--factory-startup", "--python", BLENDER_PREVIEW_SCRIPT,
+                   "--", glb_path, prefix]
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+        if result.returncode != 0:
+            raise PipelineError("Blender が失敗しました(%d):\n%s" % (result.returncode, result.stdout[-3000:]))
+        views = [prefix + "_" + name + ".png" for name in ("front", "side", "top")]
+        missing = [v for v in views if not os.path.isfile(v)]
+        if missing:
+            raise PipelineError("プレビューが出ませんでした: %s\n%s" % (missing, result.stdout[-3000:]))
+        log("PREVIEW id=%s %s" % (model["id"], " ".join(views)))
+    return 0
+
+
+def verify_model(model, require_cooked, cooked_paths):
+    """問題の一覧を返す(空なら合格)。GPU も ComfyUI も使わない。"""
+    problems = []
+    directory = model_dir(model["id"])
+    manifest_path = os.path.join(directory, "manifest.json")
+    if not os.path.isfile(manifest_path):
+        return ["manifest.json がありません: %s" % manifest_path]
+    with open(manifest_path, "r", encoding="utf-8") as stream:
+        manifest = json.load(stream)
+    for key, expected in (("prompt", model["prompt"]), ("seed", int(model["seed"])),
+                          ("target_faces", int(model["target_faces"])), ("texture_size", int(model["texture_size"])),
+                          ("height_m", float(model["height_m"]))):
+        if manifest.get(key) != expected:
+            problems.append("定義と manifest が食い違い: %s(定義 %r / manifest %r)" % (key, expected, manifest.get(key)))
+    for key, filename in (("glb", model["id"] + ".glb"), ("reference", "reference.png")):
+        entry = manifest.get(key, {})
+        path = os.path.join(directory, filename)
+        if not os.path.isfile(path):
+            problems.append("%s がありません: %s" % (key, path))
+        elif md5_of(path) != entry.get("md5"):
+            problems.append("%s の MD5 が manifest と一致しません: %s" % (key, path))
+    for key in ("face_count", "generated_at"):
+        if key not in manifest:
+            problems.append("manifest に %s がありません" % key)
+    if "face_count" in manifest and int(manifest["face_count"]) <= 0:
+        problems.append("面数が 0 です")
+    if require_cooked:
+        problems += verify_cooked(model, cooked_paths)
+    return problems
+
+
+def cooked_logical_path(model):
+    return "Models/Generated/%s/%s.glb" % (model["id"], model["id"])
+
+
+def verify_cooked(model, cooked_paths):
+    """クック済みのマニフェストに、この id のモデルの項目と実ファイルがあることを確かめる。"""
+    if not os.path.isfile(COOKED_MANIFEST):
+        return ["クックのマニフェストがありません: %s(Scripts/CookAssets.ps1 を実行してください)" % COOKED_MANIFEST]
+    with open(COOKED_MANIFEST, "r", encoding="utf-8-sig") as stream:
+        assets = json.load(stream).get("assets", [])
+    logical = cooked_logical_path(model)
+    entries = [a for a in assets if a.get("logical_path") == logical and a.get("kind") == "model"]
+    if not entries:
+        return ["クック済みの項目がありません: %s" % logical]
+    problems = []
+    # GLB 内蔵のテクスチャは <論理パス>.img<n>.png の項目として一緒に焼かれる。モデルの項目と同様に実ファイルを確かめる
+    embedded = [a for a in assets if a.get("kind") == "texture" and a.get("logical_path", "").startswith(logical + ".")]
+    if not embedded:
+        problems.append("クック済みの内蔵テクスチャがありません: %s.img<n>.png" % logical)
+    for entry in entries + embedded:
+        package = os.path.join(os.path.dirname(COOKED_MANIFEST), entry.get("cooked_package", "").replace("/", os.sep))
+        if not os.path.isfile(package):
+            problems.append("クック済みのパッケージがありません: %s" % package)
+    return problems
+
+
+def command_verify(args, models):
+    failed = 0
+    for model in models:
+        problems = verify_model(model, args.require_cooked, None)
+        if problems:
+            failed += 1
+            for problem in problems:
+                log("VERIFY_FAIL id=%s %s" % (model["id"], problem))
+        else:
+            log("VERIFY_OK id=%s%s" % (model["id"], " cooked" if args.require_cooked else ""))
+    log("VERIFY %s" % ("failed=%d" % failed if failed else "pass"))
+    return 1 if failed else 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description="ComfyUI でシーン用の 3D モデルを生成・検証する")
+    parser.add_argument("--ids", nargs="+", default=[], help="対象の id(空白かカンマ区切り。省略時は定義の全部)")
+    parser.add_argument("--verify", action="store_true", help="定義・manifest・実ファイルの一致を確かめる(GPU 不使用)")
+    parser.add_argument("--require-cooked", action="store_true", help="--verify でクック済みの出力も要求する")
+    parser.add_argument("--preview", action="store_true", help="Blender のヘッドレスで GLB を 3 方向から描く(生成はしない)")
+    parser.add_argument("--reference-only", action="store_true", help="参照画像だけ作る(seed の選び直し用)")
+    parser.add_argument("--reuse-reference", action="store_true", help="参照画像があればそれを使い、3D だけ作り直す")
+    parser.add_argument("--comfy-root", default=DEFAULT_COMFY_ROOT)
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--blender", default=DEFAULT_BLENDER)
+    args = parser.parse_args()
+    ids = [i for chunk in args.ids for i in chunk.split(",") if i]
+    try:
+        models = select_models(load_definitions(), ids)
+        if args.verify:
+            return command_verify(args, models)
+        if args.preview:
+            return command_preview(args, models)
+        return command_generate(args, models)
+    except PipelineError as error:
+        log("ERROR %s" % error)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

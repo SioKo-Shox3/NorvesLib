@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "MegaBananasModels",
+  "package_root": "Cooked/MegaBananas",
+  "default_variant": "default",
+  "cook_assets": true,
+  "textures": [],
+  "models": [
+    {
+      "logical_path": "Assets/Models/Generated/banana/banana.glb",
+      "source_path": "Assets/Models/Generated/banana/banana.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "Banana/banana.nvpkg",
+      "entry_name": "Assets/Models/Generated/banana/banana.nvmesh"
+    }
+  ]
+}

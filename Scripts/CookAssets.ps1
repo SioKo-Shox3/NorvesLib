@@ -188,7 +188,11 @@ function Invoke-CookEntry {
             $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
             if (($state.stamp -eq $stamp) -and ($null -ne $state.asset)) {
                 $script:skippedCount++
-                return $state.asset
+                $previous = @($state.asset)
+                if ($null -ne $state.embedded_assets) {
+                    $previous += @($state.embedded_assets)
+                }
+                return $previous
             }
         }
         catch {
@@ -217,20 +221,29 @@ function Invoke-CookEntry {
 
     $cookedManifest = Get-Content -LiteralPath $script:TemporaryManifestPath -Raw | ConvertFrom-Json
     $cookedAssets = @($cookedManifest.assets)
-    if ($cookedAssets.Count -ne 1) {
-        throw "AssetCook のマニフェストは 1 項目のはずが $($cookedAssets.Count) 項目です: $LogicalPath"
+    if ($cookedAssets.Count -lt 1) {
+        throw "AssetCook のマニフェストが空です: $LogicalPath"
     }
     $asset = $cookedAssets[0]
     if (($asset.logical_path -ne $LogicalPath) -or ($asset.cooked_package -ne $CookedPackage)) {
         throw "AssetCook のマニフェストが一覧と食い違います: $LogicalPath"
     }
+    # GLB に内蔵された画像は、AssetCook がモデルと同じ呼び出しでテクスチャとして焼き、2 項目目以降に並べる
+    # （logical_path が <モデル>.img<n>.png、cooked_package が <モデルのパッケージ>.img<n>.nvpkg）。
+    $embeddedAssets = @($cookedAssets | Select-Object -Skip 1)
+    foreach ($embedded in $embeddedAssets) {
+        if (($embedded.kind -ne "texture") -or (-not $embedded.logical_path.StartsWith("$LogicalPath.")) `
+                -or (-not $embedded.cooked_package.StartsWith("$CookedPackage."))) {
+            throw "AssetCook のマニフェストに一覧に無い項目があります: $($embedded.logical_path)"
+        }
+    }
     Remove-Item -LiteralPath $script:TemporaryManifestPath -ErrorAction SilentlyContinue
 
-    $stateJson = [ordered]@{ stamp = $stamp; asset = $asset } | ConvertTo-Json -Depth 16
+    $stateJson = [ordered]@{ stamp = $stamp; asset = $asset; embedded_assets = $embeddedAssets } | ConvertTo-Json -Depth 16
     Write-TextUtf8 -Path $statePath -Text $stateJson
 
     $script:cookedCount++
-    return $asset
+    return @($asset) + $embeddedAssets
 }
 
 $AssetCookPath = Resolve-RepoPath $AssetCookExe

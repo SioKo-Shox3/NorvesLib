@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "GeneratedModels",
+  "models": [
+    {
+      "id": "banana",
+      "prompt": "a single ripe yellow banana with small brown freckles and a dark brown stem tip, gently curved, whole fruit, three-quarter view",
+      "seed": 1001,
+      "target_faces": 100000,
+      "texture_size": 2048,
+      "height_m": 0.2,
+      "usage": "mega-bananas"
+    }
+  ]
+}

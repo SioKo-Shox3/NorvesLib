@@ -81,7 +81,7 @@
 - paths: Library/Core/Public/Input, Library/Core/Private/Input, Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/CMakeLists.txt, Game, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
 
 ## SCN-GEN-PIPELINE: 手元の ComfyUI で3Dモデルを生成するスクリプトを作り、バナナを生成してクックする
-- status: todo
+- status: done
 - done-when: `python Scripts/GenerateSceneModels.py --ids banana` が、ComfyUI（`Y:\ComfyUI\ComfyUI_windows_portable`）が動いていなければ起動し、Z-Image Turbo で定義のプロンプトから参照画像を作り、背景を除いて TRELLIS.2 で GLB（色・金属・粗さ・AO・法線の焼き込み付き）を作り、`Assets/Models/Generated/<id>/` に GLB・参照画像・manifest（プロンプト・seed・面数・MD5・生成日時）を置き、最後にモデルを降ろして自分が起動した ComfyUI を止める。`--preview` で Blender のヘッドレスが GLB を3方向から描いた PNG を出す。`--verify` は GPU を使わず、定義と manifest と実ファイルの MD5 の一致を確かめ、`--require-cooked` のときクック済みの出力があることも確かめる。定義は `Assets/AssetSets/GeneratedModels.json`（id・英語のプロンプト・seed・目標面数・テクスチャの大きさ・実寸の高さ m・用途）、ワークフローは `Tools/ComfyWorkflows/`（API 形式の JSON。文字→画像と画像→3D）に置いて追跡し、`.gitignore` に `/Assets/Models/Generated/` を足す。バナナ（約10万面、テクスチャ 2048、実寸 約 0.2 m）の参照画像とプレビューを開いて、バナナの形と色であることを確かめる（崩れていたら seed を変えて作り直し、定義の seed を更新する）。クックの一覧 `Assets/AssetSets/MegaBananasModels.json` を足し、`Scripts/CookAssets.ps1` でクックが通る。
 - verify: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids banana`
 - paths: Scripts, Tools/ComfyWorkflows, Assets/AssetSets, .gitignore, TASKS.md, PROGRESS.md

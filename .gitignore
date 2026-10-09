@@ -145,3 +145,6 @@ InputBindings.json.tmp.*
 
 # Scripts/FetchPolyHavenModels.ps1 が落とす Poly Haven のスキャン資産（git に入れない）
 /Assets/Models/PolyHaven/
+
+# 生成した3Dモデル(Scripts/GenerateSceneModels.py が作る。定義と ComfyUI のワークフローから再生成できる)
+/Assets/Models/Generated/
