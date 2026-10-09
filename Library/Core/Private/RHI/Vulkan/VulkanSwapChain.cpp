@@ -122,7 +122,12 @@ namespace NorvesLib::RHI::Vulkan
         presentInfo.pImageIndices = &m_currentImageIndex;
 
         // プレゼント実行
-        vk::Result presentResult = m_device->GetPresentQueue().presentKHR(presentInfo);
+        vk::Result presentResult;
+        {
+            // 提出と同じキューなので、描画の提出・待機と同時に触らない
+            Thread::ScopedLock queueLock(m_device->GetGraphicsQueueMutex());
+            presentResult = m_device->GetPresentQueue().presentKHR(presentInfo);
+        }
 
         // スワップチェーンの再作成が必要な場合
         if (presentResult == vk::Result::eErrorOutOfDateKHR || presentResult == vk::Result::eSuboptimalKHR)
@@ -335,7 +340,12 @@ namespace NorvesLib::RHI::Vulkan
         presentInfo.pSwapchains = &m_swapChain;
         presentInfo.pImageIndices = &m_currentImageIndex;
 
-        vk::Result presentResult = m_device->GetPresentQueue().presentKHR(presentInfo);
+        vk::Result presentResult;
+        {
+            // 提出と同じキューなので、描画の提出・待機と同時に触らない
+            Thread::ScopedLock queueLock(m_device->GetGraphicsQueueMutex());
+            presentResult = m_device->GetPresentQueue().presentKHR(presentInfo);
+        }
 
         if (presentResult == vk::Result::eErrorOutOfDateKHR || presentResult == vk::Result::eSuboptimalKHR)
         {

@@ -37,7 +37,7 @@
 - notes: 危険地帯（Object/Resource の寿命）。`GameModeScope`（`Library/Core/Private/GameMode/GameModeScope.cpp` 79〜128 行付近）は Entity・Mesh・Model だけを返し、材質とテクスチャは対象外。`Rendering3DTestRoutine.cpp` の Leave（3869〜4035 行付近）は `materials.Create`（2200 行付近〜）とチェッカー（`m_CheckerTextureHandle`、2175 行付近）を返していない。`RequestChange` はキューに積まれ次の Update の先頭で Leave→Cleanup→Enter（`GameModeStateMachine.cpp` 39〜48 行付近）。RenderThread が使い終わるまで破棄を待つ仕組み（`RenderResources.h` 377〜385 行付近の retire）を守る。資源の数を返す API が無ければ足す。
 
 ## SCN-RHI-UPLOAD-THREAD: 描画中のシーン入場で、テクスチャの初期データの転送が共有コマンドプールを競合しないようにする
-- status: todo
+- status: done
 - done-when: `Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3` が Validation.log の `UNASSIGNED-Threading-MultipleThreads-Write` 0 件で pass する。`GpuResourceStore::UploadTextureData` が GameThread から共有のコマンドプールでコマンドリストを作る経路（ミップ生成・`CreateCommandList`）を、RenderThread が同じプールで記録していても競合しない形（専用プール・RenderThread への依頼など）にする。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3`

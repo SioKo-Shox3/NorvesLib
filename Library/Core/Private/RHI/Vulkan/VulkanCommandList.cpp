@@ -281,15 +281,20 @@ namespace NorvesLib::RHI::Vulkan
     VulkanCommandList::VulkanCommandList(TSharedPtr<VulkanDevice> device)
         : m_device(device)
     {
+        // コマンドプールはリストごとに専用で持つ。描画スレッドが記録しているプールへ、
+        // 別のスレッドが確保・解放・記録で触れないようにするため。
+        m_commandPool = m_device->CreateExclusiveCommandPool();
+
         // フレームごとのコマンドバッファを割り当て
         vk::CommandBufferAllocateInfo allocInfo;
-        allocInfo.commandPool = m_device->GetCommandPool();
+        allocInfo.commandPool = m_commandPool;
         allocInfo.level = vk::CommandBufferLevel::ePrimary;
         allocInfo.commandBufferCount = MAX_COMMAND_BUFFERS;
 
         auto result = m_device->GetVkDevice().allocateCommandBuffers(allocInfo);
         if (result.result != vk::Result::eSuccess)
         {
+            m_device->GetVkDevice().destroyCommandPool(m_commandPool);
             throw std::runtime_error("コマンドバッファの割り当てに失敗しました");
         }
 
@@ -353,10 +358,11 @@ namespace NorvesLib::RHI::Vulkan
         if (m_commandBuffers.size() > 0)
         {
             m_device->GetVkDevice().freeCommandBuffers(
-                m_device->GetCommandPool(),
+                m_commandPool,
                 static_cast<uint32_t>(m_commandBuffers.size()),
                 m_commandBuffers.data());
         }
+        m_device->GetVkDevice().destroyCommandPool(m_commandPool);
     }
 
     void VulkanCommandList::Begin()

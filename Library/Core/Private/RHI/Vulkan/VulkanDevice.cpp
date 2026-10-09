@@ -817,7 +817,6 @@ namespace NorvesLib::RHI::Vulkan
         }
 #endif
         m_ResourceAllocator = MakeUnique<VulkanGPUResourceAllocator>(this);
-        CreateCommandPool();
         InitFormatMaps();
         DetectCapabilities();
     }
@@ -870,11 +869,12 @@ namespace NorvesLib::RHI::Vulkan
             m_renderTimeline = nullptr;
         }
 
-        // コマンドプールを破棄
-        if (m_commandPool)
+        // 単発コマンド用のコマンドプールを破棄
+        for (const SingleTimePoolEntry &entry : m_singleTimePools)
         {
-            m_device.destroyCommandPool(m_commandPool);
+            m_device.destroyCommandPool(entry.Pool);
         }
+        m_singleTimePools.clear();
 
         // デバイスを破棄
         if (m_device)
@@ -1446,8 +1446,8 @@ namespace NorvesLib::RHI::Vulkan
         }
     }
 
-    // コマンドプールの作成
-    void VulkanDevice::CreateCommandPool()
+    // コマンドプールの作成（呼び出し側が所有し、破棄する）
+    vk::CommandPool VulkanDevice::CreateExclusiveCommandPool()
     {
         vk::CommandPoolCreateInfo poolInfo{};
         poolInfo.queueFamilyIndex = m_graphicsQueueFamilyIndex;
@@ -1458,7 +1458,26 @@ namespace NorvesLib::RHI::Vulkan
         {
             throw std::runtime_error("コマンドプールの作成に失敗しました");
         }
-        m_commandPool = result.value;
+        return result.value;
+    }
+
+    // 呼んだスレッド用の単発コマンドのプール。スレッドごとに初回に作り、デバイスの破棄まで持つ。
+    vk::CommandPool VulkanDevice::GetSingleTimeCommandPool()
+    {
+        const Thread::Thread::ThreadId self = Thread::Thread::GetCurrentThreadId();
+
+        Thread::ScopedLock lock(m_singleTimePoolMutex);
+        for (const SingleTimePoolEntry &entry : m_singleTimePools)
+        {
+            if (entry.Owner == self)
+            {
+                return entry.Pool;
+            }
+        }
+
+        const vk::CommandPool pool = CreateExclusiveCommandPool();
+        m_singleTimePools.push_back({self, pool});
+        return pool;
     }
 
     // フォーマット変換マップの初期化
@@ -1802,7 +1821,7 @@ namespace NorvesLib::RHI::Vulkan
     {
         vk::CommandBufferAllocateInfo allocInfo{};
         allocInfo.level = vk::CommandBufferLevel::ePrimary;
-        allocInfo.commandPool = m_commandPool;
+        allocInfo.commandPool = GetSingleTimeCommandPool();
         allocInfo.commandBufferCount = 1;
 
         auto allocResult = m_device.allocateCommandBuffers(allocInfo);
@@ -1828,6 +1847,8 @@ namespace NorvesLib::RHI::Vulkan
     // 単発コマンドバッファ終了
     void VulkanDevice::EndSingleTimeCommands(vk::CommandBuffer commandBuffer)
     {
+        // Begin と同じスレッドで呼ぶので、確保したプールと同じものが返る
+        const vk::CommandPool commandPool = GetSingleTimeCommandPool();
         uint32_t failurePoint = 0;
         if (g_testFailureDevice == this)
         {
@@ -1860,7 +1881,7 @@ namespace NorvesLib::RHI::Vulkan
             {
                 g_textureUpdateLayoutRollbackRequested = true;
             }
-            m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+            m_device.freeCommandBuffers(commandPool, 1, &commandBuffer);
             throw std::runtime_error("単発コマンドバッファの終了に失敗しました");
         }
 
@@ -1874,7 +1895,7 @@ namespace NorvesLib::RHI::Vulkan
             {
                 g_textureUpdateLayoutRollbackRequested = true;
             }
-            m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+            m_device.freeCommandBuffers(commandPool, 1, &commandBuffer);
             throw;
         }
 
@@ -1916,7 +1937,7 @@ namespace NorvesLib::RHI::Vulkan
             {
                 ReportDeviceFaultOnce();
             }
-            m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+            m_device.freeCommandBuffers(commandPool, 1, &commandBuffer);
             throw std::runtime_error("キューへの送信に失敗しました");
         }
 
@@ -1924,15 +1945,21 @@ namespace NorvesLib::RHI::Vulkan
             failurePoint == static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::Wait) ||
             failurePoint == static_cast<uint32_t>(SingleTimeCommandFailurePointForTesting::WaitAndFallback);
         g_queueWaitIdleCallCount.fetch_add(1, std::memory_order_relaxed);
-        const vk::Result queueWaitResult = bInjectWaitFailure
-            ? vk::Result::eErrorOutOfHostMemory
-            : m_graphicsQueue.waitIdle();
+        // 提出の窓口は Commit で手放してあるので、待機は改めてキューのミューテックスを取る
+        // （描画スレッドの提出・プレゼントと同じキューを同時に触らない）
+        vk::Result queueWaitResult = vk::Result::eSuccess;
+        {
+            Thread::ScopedLock queueLock(m_sparseBindMutex);
+            queueWaitResult = bInjectWaitFailure
+                ? vk::Result::eErrorOutOfHostMemory
+                : m_graphicsQueue.waitIdle();
+        }
         if (queueWaitResult != vk::Result::eSuccess)
         {
             if (queueWaitResult == vk::Result::eErrorDeviceLost)
             {
                 CancelDeferredCommandBufferSlot();
-                m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+                m_device.freeCommandBuffers(commandPool, 1, &commandBuffer);
                 ReportDeviceFaultOnce();
                 throw std::runtime_error("キューの完了待機に失敗しました");
             }
@@ -1944,7 +1971,7 @@ namespace NorvesLib::RHI::Vulkan
             if (deviceWaitResult == VK_SUCCESS || deviceWaitResult == VK_ERROR_DEVICE_LOST)
             {
                 CancelDeferredCommandBufferSlot();
-                m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+                m_device.freeCommandBuffers(commandPool, 1, &commandBuffer);
                 if (deviceWaitResult == VK_ERROR_DEVICE_LOST)
                 {
                     ReportDeviceFaultOnce();
@@ -1952,7 +1979,7 @@ namespace NorvesLib::RHI::Vulkan
             }
             else
             {
-                DeferSingleTimeCommandBuffer(m_device, m_commandPool, commandBuffer);
+                DeferSingleTimeCommandBuffer(m_device, commandPool, commandBuffer);
                 if (bIsTextureUpdate && bHasTextureUpdateStagingResources)
                 {
                     g_textureUpdateStagingDeferralRequested = true;
@@ -1962,7 +1989,7 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         CancelDeferredCommandBufferSlot();
-        m_device.freeCommandBuffers(m_commandPool, 1, &commandBuffer);
+        m_device.freeCommandBuffers(commandPool, 1, &commandBuffer);
     }
 
     // サポートするフォーマットを検索
@@ -2607,6 +2634,8 @@ namespace NorvesLib::RHI::Vulkan
         }
         else
         {
+            // vkDeviceWaitIdle は全キューの外部同期を要求するので、提出・プレゼントと同じミューテックスの下で待つ
+            Thread::ScopedLock queueLock(m_sparseBindMutex);
             result = WaitIdleWithoutResultCheck(m_device, "VulkanDevice::WaitIdle");
         }
         if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST)

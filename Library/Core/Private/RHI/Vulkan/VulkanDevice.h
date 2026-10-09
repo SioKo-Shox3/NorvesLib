@@ -16,6 +16,7 @@
 #include "FileStream/FileStream.h"
 #include "Thread/Atomic.h"
 #include "Thread/Mutex.h"
+#include "Thread/Thread.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -172,6 +173,11 @@ namespace NorvesLib::RHI::Vulkan
             bool m_bAcquired = false;
         };
 
+        // グラフィックスのキュー（プレゼントも同じキュー）は、提出・プレゼント・待機のどれも外部同期が要る。
+        // 提出は GraphicsSubmitScope が同じミューテックスで守る。それ以外にキューを触る操作
+        // （プレゼント・キューやデバイスの待機）は、このミューテックスを取ってから行う。
+        Thread::Mutex &GetGraphicsQueueMutex() { return m_sparseBindMutex; }
+
         uint32_t GetGraphicsQueueFamilyIndex() const { return m_graphicsQueueFamilyIndex; }
         // VK_QUEUE_SPARSE_BINDING_BIT を持つ族（無ければ UINT32_MAX）。グラフィックスの族が持てばそれを使う。
         uint32_t GetSparseBindingQueueFamilyIndex() const { return m_sparseQueueFamilyIndex; }
@@ -188,7 +194,11 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         // コマンドプール
-        vk::CommandPool GetCommandPool() const { return m_commandPool; }
+        // プールは外部同期が要る（確保・解放・記録の全部が同じプールへの書き込みになる）ので、
+        // スレッドをまたいで共有しない。長寿命のコマンドリストは専用のプールを1つずつ持ち、
+        // 単発コマンドは呼んだスレッドごとのプールを使う。
+        vk::CommandPool CreateExclusiveCommandPool();
+        vk::CommandPool GetSingleTimeCommandPool();
 
         // 単発コマンドバッファ用ユーティリティ
         vk::CommandBuffer BeginSingleTimeCommands();
@@ -279,8 +289,14 @@ namespace NorvesLib::RHI::Vulkan
         vk::Queue m_transferQueue;
         vk::Queue m_presentQueue;
 
-        // コマンドプール
-        vk::CommandPool m_commandPool;
+        // 単発コマンド用のコマンドプール（スレッドごと。登録の操作だけをミューテックスで守る）
+        struct SingleTimePoolEntry
+        {
+            Thread::Thread::ThreadId Owner;
+            vk::CommandPool Pool;
+        };
+        VariableArray<SingleTimePoolEntry> m_singleTimePools;
+        Thread::Mutex m_singleTimePoolMutex;
 
         // GPUリソースアロケーター
         TUniquePtr<VulkanGPUResourceAllocator> m_ResourceAllocator;
@@ -301,7 +317,6 @@ namespace NorvesLib::RHI::Vulkan
         void SetupDebugMessenger();
         void PickPhysicalDevice();
         void CreateLogicalDevice();
-        void CreateCommandPool();
         void InitFormatMaps();
         void DetectCapabilities();
         void DetectSparseFormatProperties();

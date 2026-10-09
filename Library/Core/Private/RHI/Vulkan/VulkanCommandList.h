@@ -627,6 +627,7 @@ namespace NorvesLib::RHI::Vulkan
         void CommitPendingAccelerationStructureBuilds(uint32_t frameSlotIndex);
 
         TSharedPtr<VulkanDevice> m_device;
+        vk::CommandPool m_commandPool;                     ///< このリスト専用のコマンドプール
         vk::CommandBuffer m_commandBuffer;                 ///< 現在のフレームのコマンドバッファ（m_commandBuffersの要素を参照）
         VariableArray<vk::CommandBuffer> m_commandBuffers; ///< フレームごとのコマンドバッファ
         uint32_t m_currentFrameIndex = 0;
