@@ -262,6 +262,27 @@ namespace NorvesLib::Core::Rendering
         return m_Meshes.size();
     }
 
+    void ProceduralMeshGpuStore::GetBufferUsage(uint32_t &outBufferCount, size_t &outBufferBytes) const
+    {
+        outBufferCount = 0;
+        outBufferBytes = 0;
+        Thread::ScopedLock lock(m_Mutex);
+        for (const auto &entry : m_Meshes)
+        {
+            const ProceduralMeshGPUData &data = entry.second;
+            if (data.VertexBuffer)
+            {
+                ++outBufferCount;
+                outBufferBytes += static_cast<size_t>(data.VertexBuffer->GetSize());
+            }
+            if (data.IndexBuffer)
+            {
+                ++outBufferCount;
+                outBufferBytes += static_cast<size_t>(data.IndexBuffer->GetSize());
+            }
+        }
+    }
+
     void ProceduralMeshGpuStore::Clear()
     {
         Thread::ScopedLock lock(m_Mutex);

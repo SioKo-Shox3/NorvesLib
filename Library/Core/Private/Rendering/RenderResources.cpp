@@ -349,6 +349,16 @@ namespace NorvesLib::Core::Rendering
             stats.SparsePoolCapacityBytes = static_cast<size_t>(pool.CapacityBytes);
             stats.SparsePoolUsedBytes = static_cast<size_t>(pool.UsedBytes);
         }
+        if (impl->GeometryBuffers)
+        {
+            const GeometryPoolStats pool = impl->GeometryBuffers->GetStats();
+            stats.GeometryPoolCapacityBytes = static_cast<size_t>(pool.CapacityBytes);
+            stats.GeometryPoolUsedBytes = static_cast<size_t>(pool.UsedBytes);
+        }
+        if (impl->ProceduralMeshes)
+        {
+            impl->ProceduralMeshes->GetBufferUsage(stats.MeshBufferCount, stats.MeshBufferBytes);
+        }
         return stats;
     }
 

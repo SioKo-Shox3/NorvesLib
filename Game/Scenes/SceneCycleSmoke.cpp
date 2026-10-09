@@ -34,6 +34,7 @@ namespace Game::Scenes
         constexpr const char *kFieldNames[SceneCycleSmoke::kFieldCount] = {
             "materials", "textures", "meshes", "models", "entities",
             "buffers", "texture_bytes", "buffer_bytes", "sparse_used_bytes",
+            "geometry_pool_capacity_bytes", "geometry_pool_used_bytes", "mesh_buffer_bytes",
         };
 
         std::size_t CountEntities(const NorvesLib::Core::Entity *entity)
@@ -261,6 +262,9 @@ namespace Game::Scenes
         now.Values[6] = stats.TextureBytes;
         now.Values[7] = stats.TotalBufferMemory;
         now.Values[8] = stats.SparsePoolUsedBytes;
+        now.Values[9] = stats.GeometryPoolCapacityBytes;
+        now.Values[10] = stats.GeometryPoolUsedBytes;
+        now.Values[11] = stats.MeshBufferBytes;
 
         const bool bQuiet = !engine.GetRenderWorld().HasPendingAsyncAssets() && resources.GetPendingRetireCount() == 0;
         if (m_bHasLast && now == m_Last && bQuiet)

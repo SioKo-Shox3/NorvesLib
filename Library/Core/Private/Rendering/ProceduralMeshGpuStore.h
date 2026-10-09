@@ -48,6 +48,8 @@ namespace NorvesLib::Core::Rendering
         void UnregisterMesh(MeshDataHandle handle);
         // 登録中のメッシュの数（観測用）
         size_t GetMeshCount() const;
+        // 登録中のメッシュが持つ頂点・インデックスのバッファの本数と合計の大きさ（観測用）
+        void GetBufferUsage(uint32_t &outBufferCount, size_t &outBufferBytes) const;
         void Clear();
 
     private:

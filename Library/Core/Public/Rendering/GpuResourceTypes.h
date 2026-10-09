@@ -178,5 +178,12 @@ namespace NorvesLib::Core::Rendering
         // 結んだ量（= 貸し出し中のページ）が TextureBytes に入るので、UsedBytes は TextureBytes の内数になる。
         size_t SparsePoolCapacityBytes = 0;
         size_t SparsePoolUsedBytes = 0;
+        // ジオメトリのプール（GeometryPool）が持つ量と、区画として貸し出し中の量。プールの塊は GpuResourceStore を通らずに
+        // 作られるので BufferCount・TotalBufferMemory には入らない。
+        size_t GeometryPoolCapacityBytes = 0;
+        size_t GeometryPoolUsedBytes = 0;
+        // 手続きメッシュが頂点・インデックスとして直接作ったバッファの本数と合計の大きさ（同じく GpuResourceStore を通らない）
+        uint32_t MeshBufferCount = 0;
+        size_t MeshBufferBytes = 0;
     };
 }

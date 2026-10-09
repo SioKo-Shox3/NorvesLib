@@ -53,7 +53,7 @@ namespace Game::Scenes
         void Update(NorvesLib::Core::Engine::Engine &engine, NorvesLib::Core::GameMode::IGameModeController &controller);
 
         /// 測る値の数
-        static constexpr std::size_t kFieldCount = 9;
+        static constexpr std::size_t kFieldCount = 12;
 
         /// 測った値の1組
         struct Snapshot

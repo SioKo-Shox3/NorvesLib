@@ -6,7 +6,7 @@
 #
 # 失敗にするもの（終了コード 1）: Game の起動失敗・終了コードが0でない・タイムアウト、SCENE_CYCLE_SMOKE の行が無い・fail、
 # 周回のサンプル（SCENE_CYCLE_SAMPLE）の数が シーン数 × 周回数 と違う、Game.log のシェーダーのコンパイル失敗
-# （Slang SDK 未設定の neural_material_decode.slang だけは既知として除外）、Debug の検証レイヤーのエラー。
+# （Slang SDK 未設定の neural_material_decode.slang だけは既知として除外）、Debug の検証レイヤーのエラー（スレッド競合を含め、除外しない）。
 # -Configuration Release はログが無効で Game.log を書かないため使えない（Debug か RelWithDebInfo を使う）。
 # -Cycles は 2 以上（1周目と比べるため）。-OutDir を省くと .harness/runs/scene-cycle-smoke へ Game.log を残す。
 # 成功すると SCENE_CYCLE_SMOKE_RUN result=pass を出す。
@@ -20,9 +20,7 @@ param(
     [string]$Configuration = 'Debug',
     [string]$OutDir = '',
     [ValidateRange(10, 7200)]
-    [int]$TimeoutSeconds = 900,
-    # 既知のスレッド競合の検証エラー（UNASSIGNED-Threading-MultipleThreads）も失敗にする。付けないときは警告として数える
-    [switch]$StrictValidation
+    [int]$TimeoutSeconds = 900
 )
 
 $ErrorActionPreference = 'Stop'
@@ -182,25 +180,9 @@ if (Test-Path -LiteralPath $validationLogPath)
 {
     $validationLines = @(Get-Content -LiteralPath $validationLogPath -Encoding Default | Where-Object { $_ -match '\S' })
     $errorLines = @($validationLines | Where-Object { $_ -match 'Validation Error:' })
-    # 2周目以降の Enter は RenderThread が描いている最中に GameThread が CreateTexture の初期データの転送
-    # （GpuResourceStore::UploadTextureData が共有のコマンドプールからコマンドリストを作る）を行うため、
-    # 同じコマンドプールへのスレッド競合が出る。解放した資源の使用を示す他の検証エラーと区別して警告にする。
-    $threadingErrors = @($errorLines | Where-Object { $_ -match 'UNASSIGNED-Threading-MultipleThreads' })
-    $otherErrors = @($errorLines | Where-Object { $_ -notmatch 'UNASSIGNED-Threading-MultipleThreads' })
-    if ($otherErrors.Count -gt 0)
+    if ($errorLines.Count -gt 0)
     {
-        $failures += "検証レイヤーのエラーが $($otherErrors.Count) 件ある（Validation.log。先頭: $($otherErrors[0]))"
-    }
-    if ($threadingErrors.Count -gt 0)
-    {
-        if ($StrictValidation)
-        {
-            $failures += "検証レイヤーのスレッド競合のエラーが $($threadingErrors.Count) 件ある（Validation.log）"
-        }
-        else
-        {
-            Write-Output "SCENE_CYCLE_SMOKE_RUN warning: 検証レイヤーのスレッド競合のエラーが $($threadingErrors.Count) 件ある（Validation.log。既知。-StrictValidation で失敗にする）"
-        }
+        $failures += "検証レイヤーのエラーが $($errorLines.Count) 件ある（Validation.log。先頭: $($errorLines[0]))"
     }
 }
 elseif ($Configuration -eq 'Debug')

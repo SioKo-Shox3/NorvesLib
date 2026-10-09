@@ -1795,6 +1795,7 @@ if(NORVES_BRIDGE_SDK_DIR)
     add_executable(AssetManifestReloadBridgeLoopbackTest
         AssetManifestReloadBridgeLoopbackTest.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameApplicationHandler.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Scenes/SceneCycleSmoke.cpp
     ${CMAKE_SOURCE_DIR}/Game/Scripting/M6ScriptSmokeController.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/CameraInputCollector.cpp
         ${CMAKE_SOURCE_DIR}/Game/Input/PickingController.cpp
