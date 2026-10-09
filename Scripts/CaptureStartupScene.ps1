@@ -831,7 +831,7 @@ foreach ($view in $shots)
     Remove-Item -LiteralPath $viewLogPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $gameLogPath -Force -ErrorAction SilentlyContinue
 
-    $arguments = @("--capture-png=`"$pngPath`"")
+    $arguments = @('--scene=rendering3dtest', "--capture-png=`"$pngPath`"")
     if ($view.Camera -ne '')
     {
         $arguments += "--startup-camera=$($view.Camera)"

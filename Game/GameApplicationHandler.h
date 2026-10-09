@@ -109,6 +109,13 @@ namespace Game
         void InstallCookedManifestUnavailableAssetSystem();
 
         bool PrepareM9WorldAssets();
+
+        /**
+         * @brief --scene・--scene-view の指定をシーンの一覧と照合して確定する（OnPreInitialize の最後に呼ぶ）。
+         * @return 起動を続けてよいなら true。未知の id・視点はエラーをログに出して既定へ落とし、true を返す。
+         *         --dog-movement-smoke との併用など、解決できない指定だけ false。
+         */
+        bool ResolveStartupScene();
         bool HasPendingAssetConsumers() const override;
         Game::Input::GameInputSettings& GetInputSettings() { return m_InputSettings; }
         const Game::Input::GameInputSettings& GetInputSettings() const { return m_InputSettings; }
@@ -196,6 +203,10 @@ namespace Game
 
         bool m_bAnimationDebugRequested = false;
         bool m_bDogMovementSmoke = false;
+        /// --scene=<id> で指定された起動シーンの id。空なら既定のシーン（ResolveStartupScene が決める）
+        NorvesLib::Core::Container::String m_StartupSceneId;
+        /// --scene-view=<name> で指定された名前付き視点。空ならシーンの既定の視点
+        NorvesLib::Core::Container::String m_StartupSceneView;
         NorvesLib::Modules::Physics::CharacterDriveMode m_DogDrive =
             NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
 #if defined(NORVES_ENABLE_IMGUI)

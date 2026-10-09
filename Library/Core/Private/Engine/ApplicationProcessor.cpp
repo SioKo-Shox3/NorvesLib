@@ -650,6 +650,53 @@ namespace
         return true;
     }
 
+    // --window-size=<幅>x<高さ>: ウィンドウとバックバッファの大きさ[px]。撮影の解像度の指定に使う。
+    // 範囲は幅 64〜7680・高さ 64〜4320。範囲外・書式の不正は不正（false）で、呼び出し側が無視する。
+    bool TryParseWindowSizeOption(const String& argument, int& outWidth, int& outHeight, bool& bMatched)
+    {
+        const String prefix = TEXT("--window-size=");
+        bMatched = argument.size() >= prefix.size() &&
+                   argument.substr(0, prefix.size()) == prefix;
+        if (!bMatched)
+        {
+            return false;
+        }
+        const String value = argument.substr(prefix.size());
+        int numbers[2] = {0, 0};
+        int numberIndex = 0;
+        bool bHasDigit = false;
+        for (size_t i = 0; i < value.size(); ++i)
+        {
+            const char ch = value[i];
+            if (ch >= '0' && ch <= '9')
+            {
+                numbers[numberIndex] = numbers[numberIndex] * 10 + (ch - '0');
+                bHasDigit = true;
+                if (numbers[numberIndex] > 100000)
+                {
+                    return false;
+                }
+            }
+            else if ((ch == 'x' || ch == 'X') && numberIndex == 0 && bHasDigit)
+            {
+                numberIndex = 1;
+                bHasDigit = false;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        if (numberIndex != 1 || !bHasDigit || numbers[0] < 64 || numbers[0] > 7680 || numbers[1] < 64 ||
+            numbers[1] > 4320)
+        {
+            return false;
+        }
+        outWidth = numbers[0];
+        outHeight = numbers[1];
+        return true;
+    }
+
     // --capture-deterministic: 同じコードを2回撮ると一致する撮影（値を取らない。--capture-png と併せて使う）。
     bool IsCaptureDeterministicOption(const String& argument)
     {
@@ -1130,6 +1177,8 @@ namespace NorvesLib::Core::Engine
         bool bFilmGrainRequested = false;
         Rendering::PathTracingSequenceFrameSettings pathTracingSequenceFrame;
         const VariableArray<String> &args = config.Arguments;
+        int windowWidth = config.WindowWidth;
+        int windowHeight = config.WindowHeight;
         for (size_t i = 0; i < args.size(); ++i)
         {
             bool bParsedMultiThreadedRendering = false;
@@ -1400,6 +1449,16 @@ namespace NorvesLib::Core::Engine
             {
                 bCaptureDeterministic = true;
             }
+
+            bool bMatchedWindowSize = false;
+            if (TryParseWindowSizeOption(args[i], windowWidth, windowHeight, bMatchedWindowSize))
+            {
+                LOG_INFO("ApplicationProcessor runtime option window_size=%dx%d", windowWidth, windowHeight);
+            }
+            else if (bMatchedWindowSize)
+            {
+                LOG_WARNING("ApplicationProcessor runtime option --window-size ignored: <幅>x<高さ>（幅は 64 から 7680、高さは 64 から 4320）で指定する");
+            }
         }
 
         // 決定的な撮影: 経過時間を 1/60 秒に固定し、描画は1フレームずつGameThreadで行う（RenderThread が
@@ -1477,8 +1536,11 @@ namespace NorvesLib::Core::Engine
         }
         GApplicationLifecycleState.bPlatform = true;
 
-        // メインウィンドウを作成
-        if (!CreateMainWindow(config))
+        // メインウィンドウを作成（--window-size があれば、その大きさで）
+        Boot::BootConfig windowConfig = config;
+        windowConfig.WindowWidth = windowWidth;
+        windowConfig.WindowHeight = windowHeight;
+        if (!CreateMainWindow(windowConfig))
         {
             LOG_ERROR("Failed to create main window");
             return false;
@@ -1506,8 +1568,8 @@ namespace NorvesLib::Core::Engine
             Rendering::RenderWorldSettings renderSettings;
             renderSettings.Device = m_Device;
             renderSettings.WindowHandle = GEngine->GetMainWindow()->GetNativeHandle();
-            renderSettings.Width = config.WindowWidth;
-            renderSettings.Height = config.WindowHeight;
+            renderSettings.Width = windowConfig.WindowWidth;
+            renderSettings.Height = windowConfig.WindowHeight;
             renderSettings.BackBufferCount = 2;
             renderSettings.bVSync = true;
             renderSettings.bEnableMultiThreadedRendering = bEnableMultiThreadedRendering;

@@ -34,6 +34,7 @@
 #include "GameModes/GameModeIds.h"
 #include "GameModes/Rendering3DTest/Rendering3DTestMode.h"
 #include "GameModes/MemoryAgingTest/MemoryAgingTestMode.h"
+#include "Scenes/SceneCatalog.h"
 
 // モジュールシステム第1段1C-ii: --dummy-overlay ゲートで描画ダミーモジュールを登録する。
 // 別 static lib(NorvesModule_Dummy)の自由関数を明示参照し、Core 在駐の ModuleRegistry へ
@@ -97,6 +98,10 @@ namespace Game
         uint32_t s_Rendering3DTestInstancedMeshCount = 0;
         bool s_bRendering3DTestLayerCompositeSmoke = false;
         bool s_bRendering3DTestPhysicsSmoke = false;
+        // --scene=<id>: ランチャーを飛ばして直接入るシーン（Scenes/SceneCatalog.h の id）。
+        // --scene-view=<name>: そのシーンの名前付き視点。どちらも未知の値はエラーをログに出して既定へ落ちる。
+        constexpr const TCHAR *kSceneOption = TEXT("--scene=");
+        constexpr const TCHAR *kSceneViewOption = TEXT("--scene-view=");
         // --startup-camera=<yaw>,<pitch>,<arm>: 起動時のカメラ（SpringArm の角度[度]と腕の長さ）。
         constexpr const TCHAR *kStartupCameraOption = TEXT("--startup-camera=");
         bool s_bRendering3DTestHasStartupCamera = false;
@@ -487,6 +492,8 @@ namespace Game
         m_bHasTextureAssetRuntimeConfig = false;
         m_bAnimationDebugRequested = false;
         m_bDogMovementSmoke = false;
+        m_StartupSceneId = {};
+        m_StartupSceneView = {};
         m_DogDrive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         bool bHasCharacterDrive = false;
         m_bRendering3DTestUseCookedModel = false;
@@ -844,6 +851,37 @@ namespace Game
                     return false;
                 }
                 m_bDogMovementSmoke = true;
+                continue;
+            }
+            String sceneValue;
+            if (TryStripPrefix(args[i], kSceneOption, sceneValue))
+            {
+                if (!m_StartupSceneId.empty())
+                {
+                    LOG_ERROR("--scene が重複しています");
+                    return false;
+                }
+                if (sceneValue.empty())
+                {
+                    LOG_ERROR("--scene にはシーンの id を指定してください");
+                    return false;
+                }
+                m_StartupSceneId = sceneValue;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kSceneViewOption, sceneValue))
+            {
+                if (!m_StartupSceneView.empty())
+                {
+                    LOG_ERROR("--scene-view が重複しています");
+                    return false;
+                }
+                if (sceneValue.empty())
+                {
+                    LOG_ERROR("--scene-view には視点の名前を指定してください");
+                    return false;
+                }
+                m_StartupSceneView = sceneValue;
                 continue;
             }
             const auto driveArgument = Gameplay::ParseCharacterDriveArgument(args[i].c_str(), m_DogDrive);
@@ -1447,6 +1485,10 @@ namespace Game
         // 第2段 B-i: --imgui 不変条件ゲート。値を取らない bare フラグの厳密一致を走査し、
         // NORVES_ENABLE_IMGUI ビルドで指定された場合のみ ImGui モジュールを登録する。
         // フラグ無し or OFF ビルドでは一切登録せず、overlay seam は完全 no-op を保つ。
+        if (!ResolveStartupScene())
+        {
+            return false;
+        }
         if ((bHasCharacterDrive && !m_bDogMovementSmoke) || (m_bDogMovementSmoke && m_bAnimationDebugRequested))
         {
             LOG_ERROR("犬比較用引数は --dog-movement-smoke と組み合わせ、--animation-debug と併用しないでください");
@@ -2069,6 +2111,86 @@ namespace Game
         // m_bIsPaused = true;
     }
 
+    bool GameApplicationHandler::ResolveStartupScene()
+    {
+        if (m_bDogMovementSmoke)
+        {
+            if (!m_StartupSceneId.empty() || !m_StartupSceneView.empty())
+            {
+                LOG_ERROR("--scene・--scene-view は --dog-movement-smoke と併用できません");
+                return false;
+            }
+            return true;
+        }
+
+        const Scenes::SceneDescriptor *scene = nullptr;
+        if (!m_StartupSceneId.empty())
+        {
+            scene = Scenes::FindScene(m_StartupSceneId.c_str());
+            if (scene == nullptr)
+            {
+                LOG_ERROR_F("SCENE_UNKNOWN id=\"%s\" 既定のシーン（%s）で起動します", m_StartupSceneId.c_str(),
+                            Scenes::kDefaultSceneId);
+                m_StartupSceneView = {};
+            }
+        }
+        if (scene == nullptr)
+        {
+            scene = Scenes::FindScene(Scenes::kDefaultSceneId);
+        }
+        if (scene == nullptr)
+        {
+            LOG_ERROR_F("SCENE_CATALOG_INVALID 既定のシーン（%s）が一覧に無い", Scenes::kDefaultSceneId);
+            return false;
+        }
+        m_StartupSceneId = String(scene->Id);
+
+        if (!m_StartupSceneView.empty())
+        {
+            const Scenes::SceneViewDescriptor *view = Scenes::FindSceneView(*scene, m_StartupSceneView.c_str());
+            if (view == nullptr)
+            {
+                LOG_ERROR_F("SCENE_VIEW_UNKNOWN scene=%s view=\"%s\" シーンの既定の視点で起動します", scene->Id,
+                            m_StartupSceneView.c_str());
+                m_StartupSceneView = {};
+            }
+            else if (view->bHasCamera)
+            {
+                if (s_bRendering3DTestHasStartupCamera)
+                {
+                    LOG_WARNING_F("SCENE_VIEW_OVERRIDDEN scene=%s view=%s --startup-camera の指定を優先します",
+                                  scene->Id, view->Name);
+                }
+                else
+                {
+                    s_bRendering3DTestHasStartupCamera = true;
+                    s_Rendering3DTestStartupCamera[0] = view->Yaw;
+                    s_Rendering3DTestStartupCamera[1] = view->Pitch;
+                    s_Rendering3DTestStartupCamera[2] = view->ArmLength;
+                }
+            }
+        }
+
+        for (std::size_t index = 0; index < scene->RequiredAssetCount; ++index)
+        {
+            std::error_code existsError;
+            const char *assetPath = scene->RequiredAssets[index];
+            std::filesystem::path resolvedPath(assetPath);
+#if defined(NORVES_SOURCE_ASSET_DIR)
+            // 作業ディレクトリは実行ファイルのディレクトリなので、リポジトリの Assets を基準に探す。
+            resolvedPath = std::filesystem::path(NORVES_SOURCE_ASSET_DIR).parent_path() / resolvedPath;
+#endif
+            if (!std::filesystem::exists(resolvedPath, existsError) || existsError)
+            {
+                LOG_WARNING_F("SCENE_ASSET_MISSING scene=%s path=%s", scene->Id, assetPath);
+            }
+        }
+
+        LOG_INFO_F("SCENE_SELECTED id=%s view=%s", scene->Id,
+                   m_StartupSceneView.empty() ? scene->Views[0].Name : m_StartupSceneView.c_str());
+        return true;
+    }
+
     NorvesLib::Core::Container::TUniquePtr<NorvesLib::Core::GameMode::IStateMachine>
     GameApplicationHandler::CreateGameModeStateMachine()
     {
@@ -2162,9 +2284,31 @@ namespace Game
         params.ModelPath = m_Rendering3DTestModelPath.empty()
                                ? String(kDefaultRendering3DTestModelPath)
                                : m_Rendering3DTestModelPath;
-        stateMachine->Start(m_bDogMovementSmoke ? DogMovementSmoke : Rendering3DTest, params);
+        // 起動するモード: 犬の比較は専用の引数、それ以外は --scene（無指定なら既定のシーン）の GameMode。
+        const Scenes::SceneDescriptor *startupScene = Scenes::FindScene(m_StartupSceneId.c_str());
+        NorvesLib::Core::GameMode::GameModeId startMode = Rendering3DTest;
+        if (m_bDogMovementSmoke)
+        {
+            startMode = DogMovementSmoke;
+        }
+        else if (startupScene != nullptr)
+        {
+            startMode = startupScene->Mode;
+        }
+        stateMachine->Start(startMode, params);
 
-        LOG_INFO(m_bDogMovementSmoke ? "犬の移動比較モードを開始します" : "3Dレンダリングテストモードを開始します");
+        if (m_bDogMovementSmoke)
+        {
+            LOG_INFO("犬の移動比較モードを開始します");
+        }
+        else if (startMode == Rendering3DTest)
+        {
+            LOG_INFO("3Dレンダリングテストモードを開始します");
+        }
+        else
+        {
+            LOG_INFO_F("シーン %s を開始します", m_StartupSceneId.c_str());
+        }
 
         return stateMachine;
     }

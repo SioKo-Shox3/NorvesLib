@@ -76,7 +76,7 @@ function Invoke-CameraWorldGame(
 {
     $stdoutPath = Join-Path $RunDirectory "stdout.txt"
     $stderrPath = Join-Path $RunDirectory "stderr.txt"
-    $arguments = @("--render-thread=st", "--exit-after-rendered-frames=120")
+    $arguments = @("--scene=rendering3dtest", "--render-thread=st", "--exit-after-rendered-frames=120")
     $process = Start-Process -FilePath $GamePath -ArgumentList $arguments -WorkingDirectory $RunDirectory -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
     $rootProcessId = [int]$process.Id
     [void]$process.Handle

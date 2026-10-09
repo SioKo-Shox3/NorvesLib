@@ -372,6 +372,7 @@ function Invoke-GameProfileRun {
     }
 
     $arguments = @(
+        '--scene=rendering3dtest',
         '--render-thread=mt',
         '--wait-for-asset-settle',
         "--exit-after-rendered-frames=$RenderedFrameCount",

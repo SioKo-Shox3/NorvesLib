@@ -359,7 +359,7 @@ try
         $baselineStdout = Join-Path $externalCwd "no-option.stdout.txt"
         $baselineStderr = Join-Path $externalCwd "no-option.stderr.txt"
         $baselineLog = Join-Path $externalCwd "Game.log"
-        $baselineProcess = Start-Process -FilePath $gamePath -ArgumentList "--exit-after-frames=2","--render-thread=st" -WorkingDirectory $externalCwd -WindowStyle Hidden -PassThru -RedirectStandardOutput $baselineStdout -RedirectStandardError $baselineStderr
+        $baselineProcess = Start-Process -FilePath $gamePath -ArgumentList "--scene=rendering3dtest","--exit-after-frames=2","--render-thread=st" -WorkingDirectory $externalCwd -WindowStyle Hidden -PassThru -RedirectStandardOutput $baselineStdout -RedirectStandardError $baselineStderr
         $null = $baselineProcess.Handle
         $baselineProcess.WaitForExit()
         Assert-M6 ($baselineProcess.ExitCode -eq 0) "no-option Game exit=$($baselineProcess.ExitCode)"
@@ -374,7 +374,7 @@ try
     }
     $stdout = Join-Path $externalCwd "stdout.txt"
     $stderr = Join-Path $externalCwd "stderr.txt"
-    $process = Start-Process -FilePath $gamePath -ArgumentList "--m6-script-smoke=$tempAssetLeaf/M6AngelScriptDemo.scene.json","--render-thread=st" -WorkingDirectory $externalCwd -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $process = Start-Process -FilePath $gamePath -ArgumentList "--scene=rendering3dtest","--m6-script-smoke=$tempAssetLeaf/M6AngelScriptDemo.scene.json","--render-thread=st" -WorkingDirectory $externalCwd -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     $null = $process.Handle
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $logPath = Join-Path $externalCwd "Game.log"

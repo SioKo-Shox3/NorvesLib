@@ -109,11 +109,11 @@ try
 
     $normalDirectory = Join-Path $runRoot "normal"
     New-Item -ItemType Directory -Path $normalDirectory | Out-Null
-    $normalRun = Invoke-M8Game $gamePath @("--exit-after-rendered-frames=120") $normalDirectory $TimeoutSeconds
+    $normalRun = Invoke-M8Game $gamePath @("--scene=rendering3dtest", "--exit-after-rendered-frames=120") $normalDirectory $TimeoutSeconds
 
     $smokeDirectory = Join-Path $runRoot "smoke"
     New-Item -ItemType Directory -Path $smokeDirectory | Out-Null
-    $smokeRun = Invoke-M8Game $gamePath @("--rendering3dtest-physics-smoke", "--render-thread=mt", "--exit-after-rendered-frames=120") $smokeDirectory $TimeoutSeconds
+    $smokeRun = Invoke-M8Game $gamePath @("--scene=rendering3dtest", "--rendering3dtest-physics-smoke", "--render-thread=mt", "--exit-after-rendered-frames=120") $smokeDirectory $TimeoutSeconds
 
     if ($Configuration -eq "Debug")
     {

@@ -34,6 +34,7 @@
 #include "GameModes/Rendering3DTest/M9WorldAcceptance.h"
 #include "GameModes/Rendering3DTest/M9WorldSkeletal.h"
 #include "GameModes/Rendering3DTest/StartupSkinnedProbe.h"
+#include "Scenes/SceneReadiness.h"
 
 #if defined(NORVES_GAME_AUDIO)
 #include "Audio/IAudioModule.h"
@@ -3273,7 +3274,7 @@ namespace Game::GameModes
         m9FailureGuard.bCommitted = true;
         // 決定的な撮影では、組み立てが終わるまで読み込み中として扱う（最初の
         // Tick が判定する）。
-        ctx.EngineRef.GetDeterministicCapture().SetSceneReady(false);
+        Game::Scenes::BeginSceneAssembly(ctx.EngineRef);
 
         if (data.m_AnimationDebug) data.m_AnimationDebug->ActivateViews(ctx.WorldRef);
         return GameModeEnterResult::Succeeded;
@@ -3862,12 +3863,13 @@ namespace Game::GameModes
         if (ctx.EngineRef.GetDeterministicCapture().IsEnabled())
         {
             UpdateVirtualTextureSettle(ctx, data);
-            ctx.EngineRef.GetDeterministicCapture().SetSceneReady(IsStartupSceneAssembled(data));
+            Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, "rendering3dtest", IsStartupSceneAssembled(data));
         }
     }
 
     void Rendering3DTestRoutine::Leave(GameModeContext &ctx, Rendering3DTestData &data, GameModeExitReason reason)
     {
+        Game::Scenes::EndSceneAssembly(ctx.EngineRef);
         if (data.m_AnimationDebug) data.m_AnimationDebug->Stop();
         data.m_AnimationDebug.reset();
         (void)reason;
