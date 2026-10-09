@@ -1,0 +1,15 @@
+﻿# sandbox の自由飛行カメラへ流すキーボードとマウスの入力（--camera-script=Scripts/CameraScripts/sandbox-walk.txt）。
+# 書式は Game/Input/CameraScript.h。1 フレームは 1/60 秒、移動の速さは初期値の 4 m/s。
+# 視点 overview（位置 (0, 4, -12)・Yaw 0°・Pitch -15°）から始めたときの、終わりの視点は
+# 位置 (-4, 3.93, -4.27)・Yaw 27°・Pitch -15° になる。
+
+# W で前へ 2 秒（視線の向き＝やや下向きに 8 m）
+120 keys=W
+# D で画面の右へ 1 秒（4 m。右は -X 側）
+60 keys=D
+# 右ボタンを押したまま、マウスを右へ 6 px ずつ 30 フレーム（0.15°/px で 27° 右へ回す）
+30 rmb mouse=6,0
+# E で上へ 0.5 秒（2 m）
+30 keys=E
+# 動かさずに 5 フレーム待つ
+5

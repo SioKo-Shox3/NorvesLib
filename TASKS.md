@@ -66,7 +66,7 @@
 - notes: Escape を処理する箇所は今の Game に無い（`Game/Input/GameInputRebindTypes.h` 36 行付近のリバインド取消のみ）。F1〜F5 は `Game/GameModes/Rendering3DTest/Rendering3DTestDebugInput.cpp`。
 
 ## SCN-FREE-CAMERA: 自由飛行カメラと、シーンごとの名前付き視点を足す
-- status: todo
+- status: done
 - done-when: 自由飛行カメラ（右ボタンを押している間マウスで視点、WASD で前後左右・QE で上下、Shift で速く、ホイールで移動の速さ、ゲームパッドの左スティックで移動・右スティックで視点・LT/RT で上下）を Library の入力の部品として足し、新しいシーンが既定で使う（Rendering3DTest は今の Maya 式のまま）。シーンの一覧の各シーンの名前付き視点（位置と向き。最低 `overview`）を `--scene-view=<name>` で起動時に選べ、`CaptureScene.ps1` の `-Views` 省略時はそのシーンの全視点を撮る。確認用に空と平らな地面だけの `sandbox` シーン（開発ビルドだけランチャーに出る）を足し、決まった入力を流す手段（例 開発ビルドだけの `--camera-script=<file>`）で自由飛行カメラを動かした前後の撮影を開いて、指定どおりに視点が動いたことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene sandbox -OutDir .harness/runs/scene-capture/SCN-FREE-CAMERA`
