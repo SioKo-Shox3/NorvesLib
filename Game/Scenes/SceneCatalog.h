@@ -80,7 +80,7 @@ namespace Game::Scenes
 
     inline constexpr SceneViewDescriptor kRendering3DTestViews[] = {
         // 起動時の既定のカメラ
-        {"default", SceneViewKind::SceneDefault, 0.0f, 0.0f, 0.0f, {0.0f, 0.0f, 0.0f}},
+        {"overview", SceneViewKind::SceneDefault, 0.0f, 0.0f, 0.0f, {0.0f, 0.0f, 0.0f}},
         // 球（中心 y=0.5・半径1）へ寄り、輪郭が画面の中央の周りに来る視点
         {"near", SceneViewKind::SpringArm, 0.0f, 5.0f, 2.5f, {0.0f, 0.0f, 0.0f}},
         // カメラの高さ約 -0.84（地面は y=-1）から地面すれすれに見る視点
@@ -171,9 +171,14 @@ namespace Game::Scenes
         return nullptr;
     }
 
-    /// シーンの名前付き視点を探す。無ければ nullptr
+    /// シーンの名前付き視点を探す。無ければ nullptr。
+    /// "default" は先頭の視点（起動時の既定）の別名として受け付ける
     inline constexpr const SceneViewDescriptor *FindSceneView(const SceneDescriptor &scene, const char *name)
     {
+        if (scene.ViewCount > 0 && SceneTextEquals("default", name))
+        {
+            return &scene.Views[0];
+        }
         for (std::size_t index = 0; index < scene.ViewCount; ++index)
         {
             if (SceneTextEquals(scene.Views[index].Name, name))

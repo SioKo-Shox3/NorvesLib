@@ -671,3 +671,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-FREE-CAMERA-14-1.txt`（Debug の Game ビルド EXIT=0）、`-14-2.txt`（`CaptureScene.ps1 -Scene sandbox` 全視点 default(overview)・low・top が pass）、`-14-3.txt`（walk 台本）、`-14-4.txt`（pad 台本）、`-14-5.txt`（rendering3dtest 3 視点 pass、平均輝度 124.143・123.973・126.023）、`-14-6.txt`（`CaptureStartupScene.ps1` 3 視点 pass、124.024・123.744・125.939）、`-14-7.txt`（Release の Game ビルド EXIT=0）。
 - 画: 前（`scene-capture/SCN-FREE-CAMERA/default.png`、位置 (0, 4, -12)・Yaw 0°・Pitch -15°）と後の2枚を開いた。walk は W 前進 8 m（やや下向き）・D 右へ 4 m・右ボタンでマウスを右へ 27° 回転・E 上へ 2 m で、ログの終わりの姿勢が (-4, 3.929, -4.273)・Yaw 27°・Pitch -15° と台本の見込みに一致し、画像も赤い線の消失点が画面の左へ寄って、手前の黄の升が右下へ動いている。pad は左スティックの前進・右・右スティックで 90° 右へ回転・RT 上昇で (-4, 5.929, -4.273)・Yaw 90°・Pitch -15° に一致し、画像は赤の行（Z 軸の線）が水平になり、青の線が中央へ収束して視線が -X を向いている。`top` は真上から見た格子で、赤の列が縦・青の行が横。
 - Notes: 実機のマウス・キー・パッド（現物の入力）での操作は未試験（台本は `InputState` を直に流すので、`CameraInputCollector` から `InputState` への写しは撮影で確かめていない）。型の振る舞いは台本の終端姿勢で確かめた。
+
+### SCN-FREE-CAMERA（2026-10-10、反復 15・run 20261009-233224）
+
+- 評価者の差し戻し（Rendering3DTest に `overview` が無い）に対応。`SceneCatalog.h` の Rendering3DTest の先頭視点（Maya 式の既定のカメラ）の名前を `default` から `overview` に改め、視点は `overview・near・low` になった。`FindSceneView` は `default` を先頭視点の別名として受け付ける（従来の `--scene-view=default` も効く）。カメラの中身は変えていない。
+- 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-FREE-CAMERA-15-1.txt`（Debug の Game ビルド EXIT=0）、`-15-2.txt`（`CaptureScene.ps1 -Scene sandbox` pass）、`-15-3.txt`（rendering3dtest 全視点 pass。平均輝度 124.143・123.973・126.023 で反復 14 と同一。`default.SceneReport.txt` が `views=overview,near,low`）、`-15-4.txt`（`-Views overview` pass、平均輝度 124.143、`unknown_view` なし）。
