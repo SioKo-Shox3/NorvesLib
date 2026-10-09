@@ -154,12 +154,6 @@ public static class SceneCaptureMetrics
 }
 '@
 
-# Slang SDK を組み込んでいないビルドで neural_material_decode.slang が読めない場合だけを許す。
-function Test-AllowedShaderFailure([string]$Line)
-{
-    return $Line -match 'Failed to compile shader \[neural_material_decode\.slang\]: Slang SDK not available\.'
-}
-
 function Stop-OwnedProcessTree([int]$ProcessId)
 {
     & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
@@ -279,8 +273,7 @@ foreach ($shot in $shots)
         {
             $failures += "$($shot.Name): SCENE_READY（シーンの組み立ての完了）がログに無い"
         }
-        $shaderFailures = @(Select-String -LiteralPath $viewLogPath -Pattern 'Failed to compile shader' -SimpleMatch |
-            Where-Object { -not (Test-AllowedShaderFailure $_.Line) })
+        $shaderFailures = @(Select-String -LiteralPath $viewLogPath -Pattern 'Failed to compile shader' -SimpleMatch)
         foreach ($line in $shaderFailures)
         {
             $failures += "$($shot.Name): $($line.Line.Trim())"

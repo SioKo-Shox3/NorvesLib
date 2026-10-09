@@ -2745,6 +2745,11 @@ namespace NorvesLib::RHI::Vulkan
     ShaderCompilerPtr VulkanDevice::CreateSlangShaderCompiler()
     {
         auto compiler = MakeShared<VulkanSlangCompiler>();
+        // Slang SDK を組み込んでいないビルドでは、.slang を読む側（ShaderManager）が失敗を出し続けないよう nullptr を返す。
+        if (!compiler->IsAvailable())
+        {
+            return nullptr;
+        }
         return StaticPointerCast<IShaderCompiler>(compiler);
     }
 

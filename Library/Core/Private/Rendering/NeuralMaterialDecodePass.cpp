@@ -55,6 +55,16 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // Slang コンパイラが無い（SDK 未組み込み）ビルドでは、デコード用の .slang を読もうとせずパスを飛ばす。
+        if (!context.ShaderMgr->HasSlangCompiler())
+        {
+            NORVES_LOG_INFO("NeuralMaterialDecodePass",
+                            "Slang compiler not available - pass will be skipped");
+            m_bCooperativeVectorSupported = false;
+            m_bInitialized = true;
+            return true;
+        }
+
         if (!m_Decoder.Initialize(m_Device, context.ShaderMgr))
         {
             NORVES_LOG_WARNING("NeuralMaterialDecodePass",

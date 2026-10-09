@@ -766,13 +766,6 @@ public static class StartupCaptureMetrics
 }
 '@
 
-# Slang SDK を組み込んでいないビルドで neural_material_decode.slang が読めない場合だけを許す。
-# 同じシェーダーでも別の理由の失敗や、ほかのシェーダーの失敗は検出する。
-function Test-AllowedShaderFailure([string]$Line)
-{
-    return $Line -match 'Failed to compile shader \[neural_material_decode\.slang\]: Slang SDK not available\.'
-}
-
 function Stop-OwnedProcessTree([int]$ProcessId)
 {
     & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
@@ -1321,8 +1314,7 @@ foreach ($view in $shots)
         {
             $indirectLighting = $indirectSources[$indirectSources.Count - 1]
         }
-        $shaderFailures = @(Select-String -LiteralPath $viewLogPath -Pattern 'Failed to compile shader' -SimpleMatch |
-            Where-Object { -not (Test-AllowedShaderFailure $_.Line) })
+        $shaderFailures = @(Select-String -LiteralPath $viewLogPath -Pattern 'Failed to compile shader' -SimpleMatch)
         foreach ($line in $shaderFailures)
         {
             $failures += "$($view.Name): $($line.Line.Trim())"

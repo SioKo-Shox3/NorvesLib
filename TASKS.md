@@ -19,7 +19,7 @@
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
 
 ## SCN-SCENE-ARG: シーンの一覧と `--scene` 引数を足し、撮影スクリプトをシーン指定にする
-- status: todo
+- status: done
 - done-when: Game にシーンの一覧（id・日本語の表示名・説明・見本画像のパス・対応する GameMode・名前付き視点・必要な資産）を1か所に定義し、`--scene=<id>` で起動直後にそのシーンへ入る（`rendering3dtest` は今の Rendering3DTest）。未知の id はエラーをログに出して既定へ落ちる。この項目の時点の既定（引数なし）はまだ Rendering3DTest。`Scripts/CaptureStartupScene.ps1` と、Game.exe を起動して Rendering3DTest を前提にする他のスクリプト（`Test-CameraWorld.ps1`・`Test-M6AngelScriptHotReload.ps1`・`Test-M8MinimalPhysics.ps1`・`Test-M9World.ps1`・`RunCookedTextureGameSmoke.ps1`・`RunCookedModelGameProfile.ps1` を読んで判断）が `--scene=rendering3dtest` を渡す。新しい `Scripts/CaptureScene.ps1 -Scene <id> -OutDir <dir> [-Views <名前,...>] [-Configuration Debug|RelWithDebInfo|Release] [-Width <px> -Height <px>] [-GameArgs <先頭の -- を除いた引数,...>] [-RequireAssets]` が指定のシーンを撮って視点ごとの PNG と `metrics.json`（平均輝度・白飛び・黒つぶれの画素率）を出し、Game の起動失敗・PNG の欠け・Game.log のエラー（シェーダーのコンパイル失敗・検証レイヤーのエラー・`-RequireAssets` のときの資産の欠け）で非 0、成功で `CAPTURE_SCENE result=pass` を出す（名前付き視点が入るまでは既定の1枚）。シーンの組み立てが終わった印（SceneReady）を `--capture-deterministic` で待つ仕組みを全シーン共通にする。窓の大きさを変える引数が無ければ足す（`-Width/-Height` が使う）。`CaptureStartupScene.ps1` の 3 視点を撮り、main の撮影と並べて開いて同じ見た目であることを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-SCENE-ARG`
@@ -28,7 +28,7 @@
 - notes: 計画書 `Docs/Plans/SceneLauncherPlan.md`。モードの登録は `Game/GameApplicationHandler.cpp` の `CreateGameModeStateMachine`（2073〜2167 行付近。`Start` は 2165 行付近）で、起動フラグは static の `s_*` を Creator ラムダが `Rendering3DTestData` へ写している（2095〜2151 行付近）。`Test/Game/Bridge/CMakeLists.txt` と `Test/Core/Rendering/CMakeLists.txt` は Game のソースを直接取り込むので、`GameApplicationHandler.cpp` から参照する新しいソースはそちらにも足す。撮影は `ApplicationProcessor.cpp` の `--capture-png`（634〜660 行付近）と SceneReady（`Rendering3DTestRoutine.cpp` 3276・3865 行付近）。 2026-10-10 再開: `blocked/SCN-SCENE-ARG.md` の推奨の案1（Slang SDK が無いときは `CreateSlangShaderCompiler` が nullptr を返し、`NeuralMaterialDecodePass::Initialize` が読み込みを試みない。そのうえで `CaptureScene.ps1`・`CaptureStartupScene.ps1` のシェーダー失敗の例外を外す）で進める（ユーザー不在のため親が推奨を採った）。
 
 ## SCN-R3D-REENTRY: シーンの出入りで作った資源を返し、出入りを繰り返しても増えないことを確かめる
-- status: doing
+- status: blocked
 - done-when: `--scene-cycle-smoke=<id,...>`・`--scene-cycle-count=<n>`（形は実装で決めてよい）で、Game が別のモード（この項目では空のモード、SCN-LAUNCHER の後はランチャー）とシーンの間を `RequestChange` で周回し、各周回の後に資源の数（材質・テクスチャ・メッシュ・Model・Entity）と GPU の割り当て量をログへ出し、2周目以降が1周目と同じ（GPU の割り当ては遅延解放が済むのを待って比べる）なら `SCENE_CYCLE_SMOKE result=pass`、増えたら `result=fail` と増えた種類を出す。`Rendering3DTestRoutine::Leave` が Enter で作った材質・チェッカーのテクスチャ・負荷用の資源などをすべて返し、`rendering3dtest` で3周して pass になる。材質とテクスチャもシーンの範囲（`GameModeScope`）で追跡して Leave で返せるようにし、後のシーンはそれを使う。`Scripts/RunSceneCycleSmoke.ps1 -Scenes <id,...> -Cycles <n> [-Configuration ...]` がこれを走らせて Game.log を照合し、pass で 0 を返す。Rendering3DTest の撮影の見た目は変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3`
