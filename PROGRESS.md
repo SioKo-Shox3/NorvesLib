@@ -595,3 +595,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 決定的な撮影（`-Deterministic`）で main の撮影と画素を比べた（`png-compare.txt`）: 差のある画素は視点ごとに 0〜11 個・差は最大 3（浮動小数の揺れ）で、平均輝度は main と完全に一致。非決定の撮影の `default`・`near`・`low` を main の撮影と並べて開き、天球・地面・球・岩・小屋が同じ見た目であることを確かめた（球の自転の位相の差だけ）。
 - 負の確認: 未知の id（`scene-unknown.txt`）・未知の視点（`scene-badview.txt`）で `result=fail`、`-Width 960 -Height 540`（`scene-size.txt`）で 960×540 の PNG、`-Views default,near,low`（`scene-views.txt`）で 3 枚。
 - Notes: `Test/Game/Bridge` の `NorvesLibBridgeAdapterScriptComponentTest` は M9SkeletalPreparation などの既存ソースが `CMakeLists.txt` に無くリンクできない（この項目の前から。新しいソースはヘッダのみなので CMake へ足す物は無い）。Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパス変換で壊れるので PowerShell から呼ぶ。
+
+### SCN-SCENE-ARG（2026-10-10、反復 3・run 20261009-233224）
+
+- 評価者の指摘 2（Release では `-RequireAssets` の検査が省略される）を直した。`Game` に `--scene-report=<path>` を足し、`ResolveStartupScene` が未知の id・視点（`unknown_scene=`・`unknown_view=`）と欠けた必要資産（`missing_asset=`）をログとは別にテキストで書く。`CaptureScene.ps1` は視点ごとに報告を読み、未知の id・視点を失敗に、`-RequireAssets` のとき欠けを失敗にする（Game.log が無い Release でも効く）。報告が無いのに Game が正常終了したときも失敗。Rendering3DTest の読み込み失敗の印（`COOKED_MODEL_MISSING` など）は引き続きログからだけ拾う。
+- 証拠: Debug ビルド EXIT=0（`verify-SCN-SCENE-ARG-1.txt`）、`CaptureStartupScene.ps1` の 3 視点 pass（平均輝度 124.095・123.74・125.973、`-2.txt`）、`CaptureScene.ps1 -Scene rendering3dtest` pass（`-3.txt`、報告は `scene=rendering3dtest` のみ）。負の確認: boulder の gltf を一時退避して `-RequireAssets` で `missing_asset=` により fail（`neg-require-assets.txt`、退避は戻した）、未知の id で `unknown_scene=` により fail（`neg-unknown-scene.txt`）。Release のビルドは回していない（報告は std::ofstream で書き、ログのマクロに依存しない）。
+- 指摘 1（neural_material_decode.slang のコンパイル失敗の除外）は、直す場所が `paths` の外（RHI/Vulkan・Rendering の危険地帯）なので進めず、`blocked/SCN-SCENE-ARG.md` に選択肢と推奨を書いた。スクリプトの例外はそのまま。

@@ -10,13 +10,16 @@
 # -Width と -Height は両方を与えると --window-size=<幅>x<高さ> で窓とバックバッファの大きさを替える。
 # -GameArgs は Game へ足す引数を、先頭の -- を除いてカンマ区切りで与える（例: -GameArgs night,sun-elevation=10）。
 #   値にカンマを含む引数（startup-camera=0,5,2.5）は、カンマの次が英字で始まらない限り分けない。
-# -RequireAssets を付けると、資産の欠け（SCENE_ASSET_MISSING・COOKED_MODEL_MISSING など）を失敗にする。
-#   付けないときは欠けを metrics.json の missing_assets に数えて警告として出す。
+# -RequireAssets を付けると、資産の欠けを失敗にする。付けないときは欠けを metrics.json の missing_assets に数えて警告として出す。
+#   欠けの検出は2つ。シーンの定義の必要な資産は Game が --scene-report で書く報告（<視点>.SceneReport.txt）から読むので、
+#   ログを書かない Release でも検査できる。Rendering3DTest が読み込み失敗で出す印（COOKED_MODEL_MISSING など）は
+#   Game.log からだけ読むので、Debug・RelWithDebInfo で効く。
 #
 # 失敗にするもの（終了コード 1）: Game の起動失敗・終了コードが0でない・タイムアウト、PNG が無い・大きさが違う、
 # Game.log のシェーダーのコンパイル失敗（Slang SDK 未設定の neural_material_decode.slang だけは既知として除外）、
-# 未知のシーン・視点の指定（SCENE_UNKNOWN・SCENE_VIEW_UNKNOWN）、SCENE_READY が無い、Debug の検証レイヤーのエラー。
-# -Configuration Release はログが無効で Game.log を書かないため、ログの検査を飛ばす。
+# 未知のシーン・視点の指定、シーンの報告が無い、SCENE_READY が無い、Debug の検証レイヤーのエラー。
+# -Configuration Release はログが無効で Game.log を書かないため、ログの検査（シェーダーのコンパイル失敗・SCENE_READY・
+# Rendering3DTest の読み込み失敗の印）を飛ばす。未知のシーン・視点と必要な資産の欠けは報告から検査するので Release でも効く。
 # 成功すると CAPTURE_SCENE result=pass を出す。
 param(
     [Parameter(Mandatory = $true)]
@@ -180,12 +183,13 @@ foreach ($shot in $shots)
     $pngPath = Join-Path $outRoot "$($shot.Name).png"
     $viewLogPath = Join-Path $outRoot "$($shot.Name).Game.log"
     $viewValidationLogPath = Join-Path $outRoot "$($shot.Name).Validation.log"
-    foreach ($stale in @($pngPath, $viewLogPath, $viewValidationLogPath, $gameLogPath))
+    $viewReportPath = Join-Path $outRoot "$($shot.Name).SceneReport.txt"
+    foreach ($stale in @($pngPath, $viewLogPath, $viewValidationLogPath, $viewReportPath, $gameLogPath))
     {
         Remove-Item -LiteralPath $stale -Force -ErrorAction SilentlyContinue
     }
 
-    $arguments = @("--scene=$Scene", "--capture-png=`"$pngPath`"", '--capture-deterministic')
+    $arguments = @("--scene=$Scene", "--capture-png=`"$pngPath`"", "--scene-report=`"$viewReportPath`"", '--capture-deterministic')
     if ($shot.SceneView -ne '')
     {
         $arguments += "--scene-view=$($shot.SceneView)"
@@ -243,9 +247,31 @@ foreach ($shot in $shots)
         $failures += "$($shot.Name): Game の終了コードが $exitCode"
     }
 
+    # シーンの報告（--scene-report）の検査。ログとは別に Game が書くので、Release でも未知のシーン・視点と必要な資産の欠けを検査できる。
+    # 報告は ResolveStartupScene が必ず書くので、Game が正常に終わったのに無いなら失敗にする。
+    $missingAssets = @()
+    if (Test-Path -LiteralPath $viewReportPath)
+    {
+        foreach ($reportLine in @(Get-Content -LiteralPath $viewReportPath -Encoding UTF8 | Where-Object { $_ -match '\S' }))
+        {
+            if ($reportLine -match '^(unknown_scene|unknown_view)=')
+            {
+                $failures += "$($shot.Name): シーンの報告: $($reportLine.Trim())"
+            }
+            elseif ($reportLine -match '^missing_asset=')
+            {
+                $missingAssets += $reportLine.Trim()
+            }
+        }
+    }
+    elseif ($null -ne $exitCode -and $exitCode -eq 0)
+    {
+        $failures += "$($shot.Name): シーンの報告（$($shot.Name).SceneReport.txt）が無い"
+    }
+
     # Game.log の検査。Release はログが無効（NORVES_ENABLE_LOGGING=0）で Game.log を書かないため飛ばす。
     $sceneReady = $null
-    $missingAssets = @()
+    $logMissingAssets = @()
     if (Test-Path -LiteralPath $viewLogPath)
     {
         $sceneReady = @(Select-String -LiteralPath $viewLogPath -Pattern "SCENE_READY scene=$Scene\s*$").Count -gt 0
@@ -264,22 +290,26 @@ foreach ($shot in $shots)
         {
             $failures += "$($shot.Name): $($line.Line.Trim())"
         }
-        $missingAssets = @(Select-String -LiteralPath $viewLogPath -Pattern $missingAssetPattern | ForEach-Object { $_.Line.Trim() })
-        foreach ($line in $missingAssets)
-        {
-            if ($RequireAssets)
-            {
-                $failures += "$($shot.Name): 資産の欠け: $line"
-            }
-            else
-            {
-                Write-Output "CAPTURE_SCENE warning view=$($shot.Name) missing_asset=$line"
-            }
-        }
+        # シーンの定義の欠け（SCENE_ASSET_MISSING）は報告で数えたので、ログからは Rendering3DTest の読み込み失敗の印だけを拾う。
+        $logMissingAssets = @(Select-String -LiteralPath $viewLogPath -Pattern $missingAssetPattern |
+            Where-Object { $_.Line -notmatch 'SCENE_ASSET_MISSING' } | ForEach-Object { $_.Line.Trim() })
     }
     elseif ($Configuration -ne 'Release')
     {
         $failures += "$($shot.Name): Game.log が無い"
+    }
+
+    $missingAssets = @($missingAssets) + @($logMissingAssets)
+    foreach ($line in $missingAssets)
+    {
+        if ($RequireAssets)
+        {
+            $failures += "$($shot.Name): 資産の欠け: $line"
+        }
+        else
+        {
+            Write-Output "CAPTURE_SCENE warning view=$($shot.Name) missing_asset=$line"
+        }
     }
 
     # 検証レイヤーのログ。"Validation Error:" の見出しの行を数え、1 件でもあれば失敗にする。
@@ -319,6 +349,7 @@ foreach ($shot in $shots)
         view = $shot.Name
         scene_view = $shot.SceneView
         png = "$($shot.Name).png"
+        scene_report = if (Test-Path -LiteralPath $viewReportPath) { "$($shot.Name).SceneReport.txt" } else { $null }
         game_log = if (Test-Path -LiteralPath $viewLogPath) { "$($shot.Name).Game.log" } else { $null }
         width = [int]$measured[0]
         height = [int]$measured[1]

@@ -102,6 +102,9 @@ namespace Game
         // --scene-view=<name>: そのシーンの名前付き視点。どちらも未知の値はエラーをログに出して既定へ落ちる。
         constexpr const TCHAR *kSceneOption = TEXT("--scene=");
         constexpr const TCHAR *kSceneViewOption = TEXT("--scene-view=");
+        // --scene-report=<path>: シーンの解決結果（未知の id・視点、欠けた資産）をテキストで書き出す。
+        // ログを書かない構成（Release）でも撮影スクリプトが資産の欠けを検査できるよう、ログとは別に出す。
+        constexpr const TCHAR *kSceneReportOption = TEXT("--scene-report=");
         // --startup-camera=<yaw>,<pitch>,<arm>: 起動時のカメラ（SpringArm の角度[度]と腕の長さ）。
         constexpr const TCHAR *kStartupCameraOption = TEXT("--startup-camera=");
         bool s_bRendering3DTestHasStartupCamera = false;
@@ -494,6 +497,7 @@ namespace Game
         m_bDogMovementSmoke = false;
         m_StartupSceneId = {};
         m_StartupSceneView = {};
+        m_SceneReportPath = {};
         m_DogDrive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         bool bHasCharacterDrive = false;
         m_bRendering3DTestUseCookedModel = false;
@@ -882,6 +886,21 @@ namespace Game
                     return false;
                 }
                 m_StartupSceneView = sceneValue;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kSceneReportOption, sceneValue))
+            {
+                if (!m_SceneReportPath.empty())
+                {
+                    LOG_ERROR("--scene-report が重複しています");
+                    return false;
+                }
+                if (sceneValue.empty())
+                {
+                    LOG_ERROR("--scene-report には出力先のパスを指定してください");
+                    return false;
+                }
+                m_SceneReportPath = sceneValue;
                 continue;
             }
             const auto driveArgument = Gameplay::ParseCharacterDriveArgument(args[i].c_str(), m_DogDrive);
@@ -2123,12 +2142,15 @@ namespace Game
             return true;
         }
 
+        // 解決結果のレポート（--scene-report）。ログとは別に、未知の id・視点と欠けた資産を行ごとに残す。
+        String sceneReport;
         const Scenes::SceneDescriptor *scene = nullptr;
         if (!m_StartupSceneId.empty())
         {
             scene = Scenes::FindScene(m_StartupSceneId.c_str());
             if (scene == nullptr)
             {
+                sceneReport += "unknown_scene=" + m_StartupSceneId + "\n";
                 LOG_ERROR_F("SCENE_UNKNOWN id=\"%s\" 既定のシーン（%s）で起動します", m_StartupSceneId.c_str(),
                             Scenes::kDefaultSceneId);
                 m_StartupSceneView = {};
@@ -2152,6 +2174,7 @@ namespace Game
             {
                 LOG_ERROR_F("SCENE_VIEW_UNKNOWN scene=%s view=\"%s\" シーンの既定の視点で起動します", scene->Id,
                             m_StartupSceneView.c_str());
+                sceneReport += "unknown_view=" + m_StartupSceneView + "\n";
                 m_StartupSceneView = {};
             }
             else if (view->bHasCamera)
@@ -2183,6 +2206,18 @@ namespace Game
             if (!std::filesystem::exists(resolvedPath, existsError) || existsError)
             {
                 LOG_WARNING_F("SCENE_ASSET_MISSING scene=%s path=%s", scene->Id, assetPath);
+                sceneReport += String("missing_asset=") + assetPath + "\n";
+            }
+        }
+
+        if (!m_SceneReportPath.empty())
+        {
+            const String reportBody = String("scene=") + scene->Id + "\n" + sceneReport;
+            std::ofstream reportOutput(m_SceneReportPath.c_str(), std::ios::binary | std::ios::trunc);
+            if (!reportOutput.write(reportBody.c_str(), static_cast<std::streamsize>(reportBody.size())))
+            {
+                LOG_ERROR_F("SCENE_REPORT_WRITE_FAILED path=%s", m_SceneReportPath.c_str());
+                return false;
             }
         }
 

@@ -207,6 +207,8 @@ namespace Game
         NorvesLib::Core::Container::String m_StartupSceneId;
         /// --scene-view=<name> で指定された名前付き視点。空ならシーンの既定の視点
         NorvesLib::Core::Container::String m_StartupSceneView;
+        /// --scene-report=<path> で指定された、シーンの解決結果（未知の id・視点、欠けた資産）の出力先。空なら書かない
+        NorvesLib::Core::Container::String m_SceneReportPath;
         NorvesLib::Modules::Physics::CharacterDriveMode m_DogDrive =
             NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
 #if defined(NORVES_ENABLE_IMGUI)
