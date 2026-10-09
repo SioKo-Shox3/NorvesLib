@@ -66,8 +66,18 @@ namespace NorvesLib::Core::Rendering
             return desc;
         }
 
-        // SceneColor にプリエクスポージャが掛かっている描画モードだけ、その逆数で絶対輝度へ戻す
-        // （ForwardPass の bApplySceneColorPreExposure と同じ条件）。
+        // SceneColor にプリエクスポージャが掛かっている描画モードか（ForwardPass の
+        // bApplySceneColorPreExposure と同じ条件）。それ以外のデバッグ表示はアルベド・法線・深度などで輝度でない。
+        bool IsSceneColorPreExposed(DebugViewMode debugMode)
+        {
+            const uint32_t debugModeValue = static_cast<uint32_t>(debugMode);
+            return debugMode == DebugViewMode::Normal ||
+                   debugModeValue == 252u ||
+                   debugModeValue == 253u ||
+                   debugModeValue == 254u;
+        }
+
+        // SceneColor にプリエクスポージャが掛かっている描画モードだけ、その逆数で絶対輝度へ戻す。
         float ResolveInversePreExposure(const ViewRenderContext& context)
         {
             const CameraProxy* camera = context.GetActiveCamera();
@@ -75,13 +85,7 @@ namespace NorvesLib::Core::Rendering
             {
                 return 1.0f;
             }
-            const DebugViewMode debugMode = context.GetActiveDebugMode();
-            const uint32_t debugModeValue = static_cast<uint32_t>(debugMode);
-            const bool bPreExposed = debugMode == DebugViewMode::Normal ||
-                                     debugModeValue == 252u ||
-                                     debugModeValue == 253u ||
-                                     debugModeValue == 254u;
-            if (!bPreExposed)
+            if (!IsSceneColorPreExposed(context.GetActiveDebugMode()))
             {
                 return 1.0f;
             }
@@ -467,6 +471,12 @@ namespace NorvesLib::Core::Rendering
     void AutoExposurePass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
         if (!m_bInitialized && !Initialize(context))
+        {
+            return;
+        }
+        // 輝度でないデバッグ表示は測らず、順応もその間止める。測ると露出がデバッグの画へ順応し、
+        // Normal へ戻った直後に何秒も白飛びする。読み戻し待ちの測定は Normal へ戻ったときに読む。
+        if (!AutoExposurePassDetail::IsSceneColorPreExposed(context.GetActiveDebugMode()))
         {
             return;
         }
