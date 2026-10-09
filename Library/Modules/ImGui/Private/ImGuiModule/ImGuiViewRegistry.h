@@ -19,4 +19,9 @@ namespace NorvesLib::Modules::Gui
      * 配列は非所有(借用)で、寿命は登録側が持つ。GameThread 単一スレッド前提でロック不要。
      */
     Core::Container::VariableArray<IImGuiView *> &GetRegisteredImGuiViews();
+
+    /**
+     * @brief AddImGuiDisplayText で足された文字（UTF-8 の連結）を返す（モジュール内部用）
+     */
+    const Core::Container::AnsiString &GetImGuiDisplayText();
 } // namespace NorvesLib::Modules::Gui

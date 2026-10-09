@@ -71,4 +71,43 @@ namespace NorvesLib::Modules::Gui
     {
         return GetViewRegistry();
     }
+
+    namespace
+    {
+        // Display* のフォントへ載せる文字と撮影への載せ方（GameThread 単一スレッド）。
+        Core::Container::AnsiString &GetDisplayTextStorage()
+        {
+            static Core::Container::AnsiString text;
+            return text;
+        }
+
+        bool &GetOverlayInCaptureStorage()
+        {
+            static bool bInCapture = false;
+            return bInCapture;
+        }
+    } // namespace
+
+    void AddImGuiDisplayText(const char *utf8Text)
+    {
+        if (utf8Text != nullptr)
+        {
+            GetDisplayTextStorage() += utf8Text;
+        }
+    }
+
+    const Core::Container::AnsiString &GetImGuiDisplayText()
+    {
+        return GetDisplayTextStorage();
+    }
+
+    void SetImGuiOverlayInCapture(bool bInCapture)
+    {
+        GetOverlayInCaptureStorage() = bInCapture;
+    }
+
+    bool IsImGuiOverlayInCapture()
+    {
+        return GetOverlayInCaptureStorage();
+    }
 } // namespace NorvesLib::Modules::Gui

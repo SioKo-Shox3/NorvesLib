@@ -52,7 +52,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -OutDir .harness/runs/scene-capture/SCN-LAUNCHER`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-LAUNCHER`
-- paths: Game, Library/Modules/ImGui, Assets/Config, Assets/Textures/Launcher, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- paths: Game, Library/Modules/ImGui, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Module/IRenderModule.h, Assets/Config, Assets/Textures/Launcher, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
 - notes: ImGui の登録は `GameApplicationHandler.cpp` 1462〜1482 行付近（今は `--imgui` のときだけ）。`IImGuiView`（`Library/Modules/ImGui/Public/ImGuiModule/IImGuiView.h`）。NotoSansJP は `ImGuiModule.cpp` 632・671 行付近でマージ済み。入力の Menu の文脈（Confirm=Enter/パッド a、Cancel=Escape/パッド b）は `Assets/Config/DefaultInputBindings.json` 217 行付近。見本画像を ImGui のテクスチャとして描く手段が無ければ足す（画像は SCN-THUMBNAILS で作る）。Release にデバッグ機能（GPU 計測・ログ）を入れない。
 
 ## SCN-PAUSE-MENU: Esc のポーズメニューからランチャーへ戻れるようにする

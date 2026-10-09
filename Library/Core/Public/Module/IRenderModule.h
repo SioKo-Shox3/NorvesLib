@@ -32,5 +32,16 @@ namespace NorvesLib::Core::Module
          * IViewPass::Initialize/Shutdown を駆動する責務はモジュール側にある。
          */
         virtual Rendering::IViewPass *GetOverlayPass() = 0;
+
+        /**
+         * @brief 撮影（--capture-png）の最終出力へ overlay を載せるか
+         *
+         * 既定は載せない（デバッグ用の窓が撮影に写り込まないようにする）。ランチャーのように、
+         * overlay そのものが画面の本体であるときだけ true を返す。
+         */
+        virtual bool WantsOverlayInCapture() const
+        {
+            return false;
+        }
     };
 } // namespace NorvesLib::Core::Module

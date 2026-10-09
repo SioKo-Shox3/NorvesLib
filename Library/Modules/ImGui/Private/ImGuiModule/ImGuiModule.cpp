@@ -54,6 +54,11 @@ namespace NorvesLib::Modules::Gui
         // フォント基準サイズ(px)。DPI スケールを乗じて実ラスタサイズにする。
         constexpr float kBaseFontSize = 16.0f;
 
+        // 表示用フォント(ImGuiFontSlot::DisplayTitle..DisplayCaption)の基準サイズ(px)。窓の高さ 1080 を等倍にして
+        // DPI スケールを乗じる。並びは ImGuiFontSlot の 1..4 と同じ。
+        constexpr int kDisplayFontCount = 4;
+        constexpr float kDisplayFontBaseSizes[kDisplayFontCount] = {76.0f, 32.0f, 23.0f, 19.0f};
+
         /**
          * @brief NORVES_ASSET_DIR からフォントファイルの絶対パスを組み立てる
          *
@@ -463,6 +468,12 @@ namespace NorvesLib::Modules::Gui
                 return &m_OverlayPass;
             }
 
+            bool WantsOverlayInCapture() const override
+            {
+                // overlay が画面の本体のビュー(ランチャー)が居るときだけ、撮影に写す。
+                return IsImGuiOverlayInCapture();
+            }
+
             // --- IInputController イベント供給 + consume(C3) ---
             // 各 On* は受け取ったイベントをライブ ImGui コンテキストの io へ供給し、ImGui が
             // その種別の入力をキャプチャしているか(WantCaptureMouse/WantCaptureKeyboard)を
@@ -694,6 +705,43 @@ namespace NorvesLib::Modules::Gui
                 NORVES_LOG_INFO(kLogCategory,
                                 "SetupFonts: Inter + FontAwesome + NotoSansJP merged (FreeType, size=%.1fpx)",
                                 fontSize);
+
+                // (d) 表示用フォント(ImGuiFontSlot::Display*)。画面の本体として UI を描くビュー(ランチャー)向けの
+                //     NotoSansJP を大きさ違いで4つ足す。載せる文字は AddImGuiDisplayText で渡された文字と ASCII だけで、
+                //     常用漢字の全体を大きな字で焼くことによるアトラスの肥大を避ける。大きさは窓の高さに比例する。
+                {
+                    ImFontGlyphRangesBuilder rangesBuilder;
+                    rangesBuilder.AddRanges(io.Fonts->GetGlyphRangesDefault());
+                    rangesBuilder.AddText(GetImGuiDisplayText().c_str());
+                    m_DisplayRanges.clear();
+                    rangesBuilder.BuildRanges(&m_DisplayRanges);
+
+                    // 窓が小さいときは字が小さくなりすぎないよう、1080 未満の縮み方を緩める(720 で 0.85 倍)。
+                    const float displayScale = m_DpiScale < 1.0f ? 0.55f + 0.45f * m_DpiScale : m_DpiScale;
+                    for (int slot = 0; slot < kDisplayFontCount; ++slot)
+                    {
+                        const float displaySize = kDisplayFontBaseSizes[slot] * displayScale;
+                        ImFontConfig displayCfg;
+                        displayCfg.OversampleH = 2;
+                        displayCfg.OversampleV = 1;
+                        ImFont *displayFont = io.Fonts->AddFontFromFileTTF(
+                            jpPath.c_str(), displaySize, &displayCfg, m_DisplayRanges.Data);
+                        if (displayFont == nullptr)
+                        {
+                            NORVES_LOG_ERROR(kLogCategory, "SetupFonts failed: AddFont display %d (%s)", slot,
+                                             jpPath.c_str());
+                            return false;
+                        }
+                        m_DisplayFonts[slot] = displayFont;
+                        m_DisplayFontSizes[slot] = displaySize;
+                    }
+                }
+
+                if (!io.Fonts->Build())
+                {
+                    NORVES_LOG_ERROR(kLogCategory, "SetupFonts failed: io.Fonts->Build() (display fonts)");
+                    return false;
+                }
                 return true;
             }
 
@@ -757,6 +805,34 @@ namespace NorvesLib::Modules::Gui
                         for (unsigned int c = ranges[0]; c <= ranges[1] && c <= IM_UNICODE_CODEPOINT_MAX; ++c)
                         {
                             baked->FindGlyph(static_cast<ImWchar>(c));
+                            ++bakedCount;
+                        }
+                    }
+                }
+
+                // 表示用フォントも同じ手順で、渡された文字を全て materialize する。
+                for (int slot = 0; slot < kDisplayFontCount; ++slot)
+                {
+                    ImFont *displayFont = m_DisplayFonts[slot];
+                    if (displayFont == nullptr)
+                    {
+                        continue;
+                    }
+                    ImFontBaked *displayBaked = displayFont->GetFontBaked(m_DisplayFontSizes[slot]);
+                    if (displayBaked == nullptr)
+                    {
+                        NORVES_LOG_WARNING(kLogCategory, "ForceBakeAllGlyphs: display font %d GetFontBaked returned null", slot);
+                        continue;
+                    }
+                    if (displayFont->FallbackChar != 0)
+                    {
+                        displayBaked->FindGlyph(displayFont->FallbackChar);
+                    }
+                    for (const ImWchar *ranges = m_DisplayRanges.Data; ranges != nullptr && ranges[0] != 0; ranges += 2)
+                    {
+                        for (unsigned int c = ranges[0]; c <= ranges[1] && c <= IM_UNICODE_CODEPOINT_MAX; ++c)
+                        {
+                            displayBaked->FindGlyph(static_cast<ImWchar>(c));
                             ++bakedCount;
                         }
                     }
@@ -860,6 +936,12 @@ namespace NorvesLib::Modules::Gui
             // Sources/GlyphRanges を走査して全グリフを materialize するのに使う(SetupFonts で確定)。
             ImFont *m_BaseFont = nullptr;
             float m_BakedFontSize = kBaseFontSize;
+
+            // 表示用フォント(ImGuiFontSlot::Display*)。GlyphRanges はフォント生存中ポインタ有効が必須なので
+            // モジュールが寿命を持つ。
+            ImVector<ImWchar> m_DisplayRanges;
+            ImFont *m_DisplayFonts[kDisplayFontCount] = {};
+            float m_DisplayFontSizes[kDisplayFontCount] = {};
         };
     } // namespace
 } // namespace NorvesLib::Modules::Gui

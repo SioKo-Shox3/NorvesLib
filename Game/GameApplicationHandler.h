@@ -211,11 +211,13 @@ namespace Game
         bool m_bDogMovementSmoke = false;
         /// --scene=<id> で指定された起動シーンの id。空なら既定のシーン（ResolveStartupScene が決める）
         NorvesLib::Core::Container::String m_StartupSceneId;
+        /// ランチャーから始めるか（--scene を省いた起動、--scene=launcher、--scene-cycle-smoke）。ResolveStartupScene が決める
+        bool m_bLauncherStartup = false;
         /// --scene-view=<name> で指定された名前付き視点。空ならシーンの既定の視点
         NorvesLib::Core::Container::String m_StartupSceneView;
         /// --scene-report=<path> で指定された、シーンの解決結果（未知の id・視点、欠けた資産）の出力先。空なら書かない
         NorvesLib::Core::Container::String m_SceneReportPath;
-        /// --scene-cycle-smoke=<id,...> の検査（ホームのモードとシーンの間を周回して、資源が増えないことを確かめる）
+        /// --scene-cycle-smoke=<id,...> の検査（ランチャーとシーンの間を周回して、資源が増えないことを確かめる）
         Game::Scenes::SceneCycleSmoke m_SceneCycle;
         /// CreateGameModeStateMachine が作ったステートマシン（非所有。Engine が所有する。OnPreShutdown で外す）
         NorvesLib::Core::GameMode::GameModeStateMachine *m_pGameModeStateMachine = nullptr;

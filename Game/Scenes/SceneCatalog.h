@@ -52,6 +52,9 @@ namespace Game::Scenes
         /// 読み込めないとシーンが成り立たない資産（リポジトリのルートからの相対パス）
         const char *const *RequiredAssets;
         std::size_t RequiredAssetCount;
+        /// 必要な資産が欠けているときにランチャーのカードへ出す取得のコマンド（リポジトリのルートから実行する）。
+        /// 資産がリポジトリに入っているシーンは nullptr
+        const char *FetchCommand;
     };
 
     inline constexpr SceneViewDescriptor kRendering3DTestViews[] = {
@@ -78,12 +81,16 @@ namespace Game::Scenes
             sizeof(kRendering3DTestViews) / sizeof(kRendering3DTestViews[0]),
             kRendering3DTestRequiredAssets,
             sizeof(kRendering3DTestRequiredAssets) / sizeof(kRendering3DTestRequiredAssets[0]),
+            nullptr,
         },
     };
 
     inline constexpr std::size_t kSceneCatalogCount = sizeof(kSceneCatalog) / sizeof(kSceneCatalog[0]);
 
-    /// 引数なしで起動したときに入るシーンの id
+    /// --scene=<id> で直接入る、カードの無い「シーン」の id。ランチャーそのもの（引数なしの起動で入る）
+    inline constexpr const char *kLauncherSceneId = "launcher";
+
+    /// ランチャーを使えないビルド（ImGui なし）と、--scene を省いたデバッグ用の引数（--animation-debug）で入るシーンの id
     inline constexpr const char *kDefaultSceneId = "rendering3dtest";
 
     /// 2つの C 文字列が等しいか（標準ライブラリの文字列型を使わない比較）

@@ -2737,13 +2737,16 @@ namespace Game::GameModes
             // MakeUnique<派生>(=std::make_unique)の prvalue は ISubRoutine の仮想デストラクタにより
             // TUniquePtr<ISubRoutine>(=std::unique_ptr<ISubRoutine>)の値引数へ暗黙 upcast move される。
 #if defined(NORVES_ENABLE_IMGUI)
-            ctx.ControllerRef.RequestPushSubRoutine(
-                MakeUnique<DirectionalLightEditSubRoutine>(&data.m_LightController, &data.m_ExposureEV100,
-                                                          &data.m_bAutoExposure,
-                                                          &data.m_AutoExposureMeasurement,
-                                                          &data.m_bTemporalAA,
-                                                          &data.m_bLensEffects,
-                                                          &data.m_bLookLut));
+            if (data.m_bDebugImGui)
+            {
+                ctx.ControllerRef.RequestPushSubRoutine(
+                    MakeUnique<DirectionalLightEditSubRoutine>(&data.m_LightController, &data.m_ExposureEV100,
+                                                              &data.m_bAutoExposure,
+                                                              &data.m_AutoExposureMeasurement,
+                                                              &data.m_bTemporalAA,
+                                                              &data.m_bLensEffects,
+                                                              &data.m_bLookLut));
+            }
 #endif
         }
 

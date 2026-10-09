@@ -1,5 +1,5 @@
 ﻿# シーンの出入りを繰り返しても資源が増えないことを確かめる。
-# Game を --scene-cycle-smoke=<id,...> --scene-cycle-count=<n> 付きで起動する。Game は何も置かないホームのモードと
+# Game を --scene-cycle-smoke=<id,...> --scene-cycle-count=<n> 付きで起動する。Game はランチャーと
 # 指定のシーンの間を周回し、周回ごとに資源の数（材質・テクスチャ・メッシュ・Model・Entity）と GPU の割り当て量を
 # Game.log へ出す。2周目以降の値が1周目と同じなら Game が SCENE_CYCLE_SMOKE result=pass を出して終了コード 0 で終わる。
 # このスクリプトは Game.log を照合して結果を確かめ、pass のときだけ 0 を返す。

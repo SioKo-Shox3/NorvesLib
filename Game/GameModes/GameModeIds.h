@@ -29,7 +29,7 @@ namespace Game::GameModes
     /// メモリ寿命テストモードの GameModeId
     inline constexpr NorvesLib::Core::GameMode::GameModeId MemoryAgingTest = "MemoryAgingTest"_id;
 
-    /// 何も置かないモード。--scene-cycle-smoke がシーンと行き来する相手
-    inline constexpr NorvesLib::Core::GameMode::GameModeId SceneCycleHome = "SceneCycleHome"_id;
+    /// ランチャー（シーン選択）。引数なしの起動で入り、--scene-cycle-smoke がシーンと行き来する相手でもある
+    inline constexpr NorvesLib::Core::GameMode::GameModeId Launcher = "Launcher"_id;
 
 } // namespace Game::GameModes

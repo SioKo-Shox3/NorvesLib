@@ -34,7 +34,7 @@
 #include "GameModes/GameModeIds.h"
 #include "GameModes/Rendering3DTest/Rendering3DTestMode.h"
 #include "GameModes/MemoryAgingTest/MemoryAgingTestMode.h"
-#include "GameModes/SceneCycleHome/SceneCycleHomeMode.h"
+#include "GameModes/Launcher/LauncherMode.h"
 #include "Scenes/SceneCatalog.h"
 
 // モジュールシステム第1段1C-ii: --dummy-overlay ゲートで描画ダミーモジュールを登録する。
@@ -99,14 +99,14 @@ namespace Game
         uint32_t s_Rendering3DTestInstancedMeshCount = 0;
         bool s_bRendering3DTestLayerCompositeSmoke = false;
         bool s_bRendering3DTestPhysicsSmoke = false;
-        // --scene=<id>: ランチャーを飛ばして直接入るシーン（Scenes/SceneCatalog.h の id）。
+        // --scene=<id>: ランチャーを飛ばして直接入るシーン（Scenes/SceneCatalog.h の id。launcher でランチャー）。引数なしの起動はランチャー。
         // --scene-view=<name>: そのシーンの名前付き視点。どちらも未知の値はエラーをログに出して既定へ落ちる。
         constexpr const TCHAR *kSceneOption = TEXT("--scene=");
         constexpr const TCHAR *kSceneViewOption = TEXT("--scene-view=");
         // --scene-report=<path>: シーンの解決結果（未知の id・視点、欠けた資産）をテキストで書き出す。
         // ログを書かない構成（Release）でも撮影スクリプトが資産の欠けを検査できるよう、ログとは別に出す。
         constexpr const TCHAR *kSceneReportOption = TEXT("--scene-report=");
-        // --scene-cycle-smoke=<id,...>: ホームのモードと指定のシーンの間を周回し、資源の数が増えないことを確かめる。
+        // --scene-cycle-smoke=<id,...>: ランチャーと指定のシーンの間を周回し、資源の数が増えないことを確かめる。
         // --scene-cycle-count=<n>: その周回数（既定 3。2 以上で1周目と比べる）。
         constexpr const TCHAR *kSceneCycleSmokeOption = TEXT("--scene-cycle-smoke=");
         constexpr const TCHAR *kSceneCycleCountOption = TEXT("--scene-cycle-count=");
@@ -508,6 +508,7 @@ namespace Game
         m_bRendering3DTestUseCookedModel = false;
         m_bNoCookedTextures = false;
         m_TextureLooseAssetRoot = {};
+        m_bLauncherStartup = false;
 #if defined(NORVES_ENABLE_IMGUI)
         m_bImGuiRequested = false;
 #endif
@@ -1558,16 +1559,26 @@ namespace Game
                 break;
             }
         }
-        if (bImGui)
-        {
+        // ImGui モジュールは、デバッグ用の窓（--imgui）のほかに、ランチャーのメニューのためにも登録する。
+        // デバッグ用の窓（EngineStats など）は m_bImGuiRequested のときだけ出す。
 #if defined(NORVES_ENABLE_IMGUI)
+        if (bImGui || m_bLauncherStartup)
+        {
             NorvesLib::Core::Module::RegisterImGuiModule(
                 NorvesLib::Core::Module::GetModuleRegistry());
-            LOG_INFO("Module runtime option --imgui: ImGuiModule registered");
-#else
-            LOG_WARNING("Module runtime option --imgui ignored: build without NORVES_ENABLE_IMGUI");
-#endif
+            if (m_bLauncherStartup)
+            {
+                // ランチャーの文字を表示用フォントへ載せる。ImGui モジュールの Initialize より前に渡す。
+                Game::GameModes::RegisterLauncherDisplayText();
+            }
+            LOG_INFO_F("ImGuiModule registered debug=%d launcher=%d", bImGui ? 1 : 0, m_bLauncherStartup ? 1 : 0);
         }
+#else
+        if (bImGui)
+        {
+            LOG_WARNING("Module runtime option --imgui ignored: build without NORVES_ENABLE_IMGUI");
+        }
+#endif
 #if defined(NORVES_ENABLE_IMGUI)
         m_bImGuiRequested = bImGui;
 #endif
@@ -2189,6 +2200,35 @@ namespace Game
 
         // 解決結果のレポート（--scene-report）。ログとは別に、未知の id・視点と欠けた資産を行ごとに残す。
         String sceneReport;
+
+        // ランチャーから始める: --scene=launcher、--scene を省いた起動、--scene-cycle-smoke（ランチャーと行き来する）。
+        // --animation-debug は Rendering3DTest の機能なので、--scene を省いても既定のシーンへ入る。
+        const bool bExplicitLauncher = Scenes::SceneTextEquals(m_StartupSceneId.c_str(), Scenes::kLauncherSceneId);
+        const bool bImplicitLauncher = m_StartupSceneId.empty() && !m_bAnimationDebugRequested;
+        if (bExplicitLauncher || bImplicitLauncher || m_SceneCycle.IsEnabled())
+        {
+            m_bLauncherStartup = true;
+            if (!m_StartupSceneView.empty())
+            {
+                LOG_ERROR_F("SCENE_VIEW_UNKNOWN scene=%s view=\"%s\" ランチャーに名前付き視点はありません",
+                            Scenes::kLauncherSceneId, m_StartupSceneView.c_str());
+                sceneReport += "unknown_view=" + m_StartupSceneView + "\n";
+                m_StartupSceneView = {};
+            }
+            if (!m_SceneReportPath.empty())
+            {
+                const String reportBody = String("scene=") + Scenes::kLauncherSceneId + "\n" + sceneReport;
+                std::ofstream reportOutput(m_SceneReportPath.c_str(), std::ios::binary | std::ios::trunc);
+                if (!reportOutput.write(reportBody.c_str(), static_cast<std::streamsize>(reportBody.size())))
+                {
+                    LOG_ERROR_F("SCENE_REPORT_WRITE_FAILED path=%s", m_SceneReportPath.c_str());
+                    return false;
+                }
+            }
+            LOG_INFO_F("SCENE_SELECTED id=%s view=default", Scenes::kLauncherSceneId);
+            return true;
+        }
+
         const Scenes::SceneDescriptor *scene = nullptr;
         if (!m_StartupSceneId.empty())
         {
@@ -2326,6 +2366,9 @@ namespace Game
                 mode->GetData().m_bDebugDrawTestLines = s_bRendering3DTestDebugDrawTestLines;
                 mode->GetData().m_bStartupSkinnedProbe = s_bRendering3DTestSkinnedProbe;
                 mode->GetData().m_bAnimationDebug = m_bAnimationDebugRequested;
+#if defined(NORVES_ENABLE_IMGUI)
+                mode->GetData().m_bDebugImGui = m_bImGuiRequested;
+#endif
                 mode->GetData().m_bStartupScanProps = s_bRendering3DTestScanProps;
                 mode->GetData().m_StressMegaInstanceCount = s_Rendering3DTestStressMegaInstances;
                 if (s_Rendering3DTestStressGeometryCount > 0u)
@@ -2353,11 +2396,18 @@ namespace Game
                 };
                 return mode;
             });
+        // ランチャーがシーンへ渡す引数（Rendering3DTest の岩のパスなど）。シーンから戻ってきたときも同じ値を渡す。
+        GameModeParams params;
+        params.ModelPath = m_Rendering3DTestModelPath.empty()
+                               ? String(kDefaultRendering3DTestModelPath)
+                               : m_Rendering3DTestModelPath;
         stateMachine->Registry().Register(
-            SceneCycleHome,
-            [](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+            Launcher,
+            [params](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
-                return MakeUnique<SceneCycleHomeMode>();
+                auto mode = MakeUnique<LauncherMode>();
+                mode->GetData().m_SceneParams = params;
+                return mode;
             });
         stateMachine->Registry().Register(
             MemoryAgingTest,
@@ -2366,11 +2416,7 @@ namespace Game
                 return MakeUnique<MemoryAgingTestMode>();
             });
 
-        GameModeParams params;
-        params.ModelPath = m_Rendering3DTestModelPath.empty()
-                               ? String(kDefaultRendering3DTestModelPath)
-                               : m_Rendering3DTestModelPath;
-        // 起動するモード: 犬の比較は専用の引数、それ以外は --scene（無指定なら既定のシーン）の GameMode。
+        // 起動するモード: 犬の比較は専用の引数、ランチャーから始めるときはランチャー、それ以外は --scene のシーンの GameMode。
         const Scenes::SceneDescriptor *startupScene = Scenes::FindScene(m_StartupSceneId.c_str());
         NorvesLib::Core::GameMode::GameModeId startMode = Rendering3DTest;
         if (m_bDogMovementSmoke)
@@ -2379,9 +2425,13 @@ namespace Game
         }
         else if (m_SceneCycle.IsEnabled())
         {
-            // 周回の検査は、何も置かないホームから始める（シーンへは検査が RequestChange で入る）
-            startMode = SceneCycleHome;
+            // 周回の検査は、ランチャーから始める（シーンへは検査が RequestChange で入る）
+            startMode = Launcher;
             m_SceneCycle.SetModeParams(params);
+        }
+        else if (m_bLauncherStartup)
+        {
+            startMode = Launcher;
         }
         else if (startupScene != nullptr)
         {
@@ -2397,6 +2447,10 @@ namespace Game
         else if (m_SceneCycle.IsEnabled())
         {
             LOG_INFO_F("シーンの周回の検査を開始します（周回数 %u）", m_SceneCycle.GetCycleCount());
+        }
+        else if (m_bLauncherStartup)
+        {
+            LOG_INFO("ランチャーから開始します");
         }
         else if (startMode == Rendering3DTest)
         {

@@ -63,4 +63,37 @@ namespace NorvesLib::Modules::Gui
      * 前に必ず呼び、以後 OnImGui() が呼ばれないようにする。GameThread 前提のためロック不要。
      */
     void UnregisterImGuiView(IImGuiView *view);
+
+    /**
+     * @brief ImGui のフォントスロット（ImGui::GetIO().Fonts->Fonts[スロット] で引く）
+     *
+     * Body は本文（Inter + FontAwesome + NotoSansJP の常用漢字）。Display* は画面の本体として UI を描く
+     * ビュー（ランチャー）向けの NotoSansJP で、AddImGuiDisplayText で渡した文字だけを載せる。
+     * 大きさは窓の高さ（1080 を等倍）に比例して初期化時に決まる。
+     */
+    enum class ImGuiFontSlot : int
+    {
+        Body = 0,
+        DisplayTitle = 1,   ///< 見出しの大文字（基準 76px）
+        DisplayHeading = 2, ///< カードの名前など（基準 32px）
+        DisplayBody = 3,    ///< 説明文（基準 23px）
+        DisplayCaption = 4, ///< 注記・操作の案内（基準 19px）
+    };
+
+    /**
+     * @brief Display* のフォントへ載せる文字（UTF-8）を足す
+     *
+     * ImGui モジュールの Initialize より前に呼ぶ（以後に足した文字はフォントに載らない）。
+     * ASCII は常に載る。足した文字のうち NotoSansJP が持つものだけが載る。GameThread 専用。
+     */
+    void AddImGuiDisplayText(const char *utf8Text);
+
+    /**
+     * @brief 撮影（--capture-png）の最終出力へ ImGui の overlay を載せるかを決める
+     *
+     * 既定は載せない。ランチャーのように overlay が画面の本体のビューが、入場で true・退場で false にする。
+     * GameThread 専用。
+     */
+    void SetImGuiOverlayInCapture(bool bInCapture);
+    bool IsImGuiOverlayInCapture();
 } // namespace NorvesLib::Modules::Gui

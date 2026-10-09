@@ -289,6 +289,9 @@ namespace Game::GameModes
         // --startup-skinned-probe の指定で true にする。検証用の骨付きのパネルを地面の上へ 2 体置く（既定は置かない）。
         bool m_bStartupSkinnedProbe = false;
         bool m_bAnimationDebug = false;
+        /// --imgui のとき true。デバッグ用の ImGui の窓（空の太陽の編集）を出す。ランチャーのために ImGui モジュールが
+        /// 登録されていても、--imgui が無ければ出さない
+        bool m_bDebugImGui = false;
         NorvesLib::Core::Container::TSharedPtr<AnimationDebugScene> m_AnimationDebug;
         NorvesLib::Core::Container::TSharedPtr<NorvesLib::Core::SkeletalAssetResource> m_StartupSkinnedProbeAsset;
         NorvesLib::Core::Container::VariableArray<NorvesLib::Core::Component::SkinnedMeshComponent *> m_StartupSkinnedProbeComponents;

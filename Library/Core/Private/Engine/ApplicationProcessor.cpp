@@ -2133,11 +2133,12 @@ namespace NorvesLib::Core::Engine
 
         // 描画モジュールの overlay パスを収集(借用ポインタ・非 null のみ)。
         // RenderThread が直接 registry を読まないよう、この集合を書き込み中パケットへ焼く。
-        // 撮影時は overlay（ImGui）を最終出力へ載せない。
+        // 撮影時は overlay（ImGui）を最終出力へ載せない。ただし overlay が画面の本体のモジュール
+        // （ランチャー）は WantsOverlayInCapture で載せる。
         Container::VariableArray<Rendering::IViewPass *> overlayPasses;
         for (Module::IRenderModule *renderModule : Module::GetModuleRegistry().GetRenderModules())
         {
-            if (!renderModule || !m_CapturePngPath.empty())
+            if (!renderModule || (!m_CapturePngPath.empty() && !renderModule->WantsOverlayInCapture()))
             {
                 continue;
             }

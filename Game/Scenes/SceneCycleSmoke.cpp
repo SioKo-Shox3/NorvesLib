@@ -21,7 +21,7 @@ namespace Game::Scenes
     {
         /// 値が続けて同じであるべきフレーム数（読み込みと遅延解放が落ち着いたとみなす）
         constexpr uint32_t kStableFrames = 90;
-        /// ホームに最低限とどまるフレーム数（Leave 要求が適用されるまでの余裕）
+        /// ランチャーに最低限とどまるフレーム数（Leave 要求が適用されるまでの余裕）
         constexpr uint32_t kMinHomeFrames = 60;
         /// シーンに最低限とどまるフレーム数（組み立てを始めさせる）
         constexpr uint32_t kMinDwellFrames = 240;
@@ -295,7 +295,7 @@ namespace Game::Scenes
             {
                 LOG_INFO_F("SCENE_CYCLE_LEAVE cycle=%u scene=%s settled=%d frames=%u", m_Cycle + 1,
                            m_Scenes[m_SceneIndex]->Id, bStable ? 1 : 0, m_PhaseFrames);
-                controller.RequestChange(Game::GameModes::SceneCycleHome);
+                controller.RequestChange(Game::GameModes::Launcher);
                 EnterPhase(Phase::SettleHome);
             }
             break;
