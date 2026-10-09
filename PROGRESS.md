@@ -654,3 +654,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 実機の流れ（`-flow.txt` と同名の `.Game.log`）: `--scene=rendering3dtest` を撮影なしで起動し、ウィンドウへ WM_KEYDOWN を送った。Esc で `state=open`、F2 を挟んで Esc で `state=closed`、Esc→下→Enter で `action=return_to_launcher` からランチャー開始、ランチャーで Esc を押しても開かず、ランチャーの Enter でシーンへ入り直した後の Esc で再び開く。
 - `PauseMenuTest`（`Test/Game/Bridge/PauseMenuTest.cpp`、Core にリンクしない小さな実行ファイル）: 開閉、無効なとき開かない、開いている間に F1〜F5・Alt・マウスを消費し離した入力は通す、Start・B、下→Enter が移動後の項目を決定。
 - Notes: `Test/Game/Bridge`・`Test/Core/Rendering` の `GameApplicationHandler.cpp` を含む束に `Pause/PauseMenu.cpp` を足した（`PauseMenuView.cpp` は ImGui 無効のそれらの束では要らない）。実機でのキー送信は WM_KEYDOWN の投函で、ゲームパッドとマウスのクリックは実機で試していない（入力の型は `PauseMenuTest`、描画は撮影で確認）。
+
+### SCN-PAUSE-MENU（2026-10-10、反復 12・run 20261009-233224）
+
+- 評価者の差し戻し 2 点に対応。(1) F1 との衝突: ImGui モジュールは Install で入力デバッグのマスク（F1 で下位の入力を止める予約。優先度 999）を有効にする。ランチャーやポーズメニューのためだけに登録した通常起動でも有効になり、F2→F1→Esc で F1 が Rendering3DTest に届かず、続く Esc もポーズメニューの手前で消費されていた。`GameApplicationHandler` は `--imgui` が無いとき、登録後にこの予約を外す（`GetInputDebugOverlay().SetEnabled(false)`）。`--imgui` のときは従来どおり。(2) Start の押しっぱなし: 開いた直後の `ReleaseAll()` でパッドの状態が 0 になり、次のサンプルが押し続けの Start を新しい押下と判定してメニューが閉じていた。`PauseMenu` は Start の押下を受けるとラッチし、離した通知か、Start が上がったサンプルを見るまで再押下を受け付けない（開く側・閉じる側とも）。
+- 検査: `PauseMenuTest` に `TestStartHeldAcrossInputReset` を足した（Start 押下→ReleaseAll 相当→同じ押下と押しっぱなしのサンプルを繰り返しても開いたまま、離したあとの押し直しで閉じる、離しの通知が無くてもサンプルで外れる）。InputSystem は Core に依存するのでリンクせず、InputSystem が配る順（ボタンの変化の後にサンプル）を並べて模擬した。英語だった起動オプションの警告と、触ったテストの診断文は日本語にした。
+- 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-PAUSE-MENU-12-test.txt`（`PauseMenuTest passed`、EXIT=0）、`-12-1.txt`（Debug の Game ビルド EXIT=0）、`-12-2.txt`（`CaptureScene.ps1 -Scene rendering3dtest -GameArgs open-pause-menu` pass、平均輝度 70.646。`default.png` を開き、暗幕・中央のパネル・3 項目・案内を確認）、`-12-3.txt`（周回スモーク 3 周 `result=pass`）、`-12-4.txt`（`CaptureStartupScene.ps1` 3 視点 pass、平均輝度 124.03・123.769・125.964）、`-12-flow.txt`（実機: `--scene=rendering3dtest` で F2→F1→Esc の後に `state=open`、もう一度 Esc で `state=closed`。ログ `ImGuiModule registered debug=0 launcher=0 pause=1`）。
+- Notes: パッドの Start 押しっぱなしの実機試験は未実施（接続機が無い。入力の型は `PauseMenuTest`）。

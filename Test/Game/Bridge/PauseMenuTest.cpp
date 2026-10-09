@@ -10,6 +10,7 @@ namespace
     using Game::Pause::PauseMenu;
     using NorvesLib::Core::Input::GamepadButton;
     using NorvesLib::Core::Input::GamepadButtonEvent;
+    using NorvesLib::Core::Input::GamepadSampleEvent;
     using NorvesLib::Core::Input::InputAction;
     using NorvesLib::Core::Input::KeyCode;
     using NorvesLib::Core::Input::KeyEvent;
@@ -103,15 +104,74 @@ namespace
         return bPassed;
     }
 
+    GamepadButtonEvent PadRelease(GamepadButton button)
+    {
+        GamepadButtonEvent event;
+        event.Button = button;
+        event.Action = InputAction::Released;
+        return event;
+    }
+
+    /// InputSystem がボタン状態の変化の後に配る Live サンプル（押しているボタンの集合）
+    GamepadSampleEvent LiveSample(uint16_t buttons)
+    {
+        GamepadSampleEvent event;
+        event.Mode = NorvesLib::Core::Input::EGamepadSampleMode::Live;
+        event.State.Connected = true;
+        event.State.Buttons = buttons;
+        return event;
+    }
+
+    constexpr uint16_t kStartMask = static_cast<uint16_t>(GamepadButton::Start);
+
     bool TestGamepadStartAndB()
     {
         PauseMenu menu;
         menu.SetEnabled(true);
-        bool bPassed = Check(menu.OnGamepadButton(PadPress(GamepadButton::Start)) && menu.IsOpen(), "Start opens");
-        bPassed = Check(menu.OnGamepadButton(PadPress(GamepadButton::Start)) && !menu.IsOpen(), "Start closes") &&
+        bool bPassed = Check(menu.OnGamepadButton(PadPress(GamepadButton::Start)) && menu.IsOpen(), "Start で開く");
+        menu.OnGamepadButton(PadRelease(GamepadButton::Start));
+        bPassed = Check(menu.OnGamepadButton(PadPress(GamepadButton::Start)) && !menu.IsOpen(), "Start を離して押し直すと閉じる") &&
                   bPassed;
+        menu.OnGamepadButton(PadRelease(GamepadButton::Start));
         menu.OnGamepadButton(PadPress(GamepadButton::Start));
-        bPassed = Check(menu.OnGamepadButton(PadPress(GamepadButton::B)) && !menu.IsOpen(), "B closes") && bPassed;
+        bPassed = Check(menu.OnGamepadButton(PadPress(GamepadButton::B)) && !menu.IsOpen(), "B で閉じる") && bPassed;
+        return bPassed;
+    }
+
+    /// Start を押し続けている間に入力状態が捨てられ（ReleaseAll）、次のサンプルで同じ押下が新しい押下に見えても、
+    /// 開いたメニューがすぐ閉じない。物理的に離したあとの押し直しでは閉じる。
+    bool TestStartHeldAcrossInputReset()
+    {
+        PauseMenu menu;
+        menu.SetEnabled(true);
+        bool bPassed = Check(menu.OnGamepadButton(PadPress(GamepadButton::Start)) && menu.IsOpen(), "Start で開く");
+        menu.OnGamepadSample(LiveSample(kStartMask));
+
+        for (int frame = 0; frame < 3; ++frame)
+        {
+            // GameApplicationHandler が開いた直後の更新で行う ReleaseAll と、その次のサンプル（押しっぱなし）。
+            menu.OnInputReset();
+            menu.OnGamepadButton(PadPress(GamepadButton::Start));
+            menu.OnGamepadSample(LiveSample(kStartMask));
+            bPassed = Check(menu.IsOpen(), "Start を押し続けている間は開いたままになる") && bPassed;
+        }
+
+        // 離した通知が来ない（ReleaseAll で状態が 0 になった後に離した）場合も、サンプルでラッチが外れる。
+        menu.OnInputReset();
+        menu.OnGamepadSample(LiveSample(0));
+        bPassed = Check(menu.OnGamepadButton(PadPress(GamepadButton::Start)) && !menu.IsOpen(),
+                        "離した後の Start の押し直しで閉じる") &&
+                  bPassed;
+
+        // 閉じるときの Start を押し続けても、すぐ開き直さない。
+        menu.OnInputReset();
+        menu.OnGamepadButton(PadPress(GamepadButton::Start));
+        menu.OnGamepadSample(LiveSample(kStartMask));
+        bPassed = Check(!menu.IsOpen(), "閉じた Start を押し続けても開き直さない") && bPassed;
+        menu.OnGamepadButton(PadRelease(GamepadButton::Start));
+        menu.OnGamepadSample(LiveSample(0));
+        bPassed = Check(menu.OnGamepadButton(PadPress(GamepadButton::Start)) && menu.IsOpen(), "離した後の Start で開く") &&
+                  bPassed;
         return bPassed;
     }
 
@@ -163,6 +223,7 @@ int main()
     bPassed = TestDisabledMenuDoesNotOpen() && bPassed;
     bPassed = TestOpenMenuBlocksSceneInput() && bPassed;
     bPassed = TestGamepadStartAndB() && bPassed;
+    bPassed = TestStartHeldAcrossInputReset() && bPassed;
     bPassed = TestMoveThenActivate() && bPassed;
     bPassed = TestReopenStartsOnContinue() && bPassed;
     if (!bPassed)

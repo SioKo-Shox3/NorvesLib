@@ -165,10 +165,22 @@ namespace Game::Pause
     {
         const bool bPressed = event.Action == InputAction::Pressed;
 
+        // Start を離したら、次の押下を受け付けられるようにする。
+        if (event.Button == GamepadButton::Start && event.Action == InputAction::Released)
+        {
+            m_bStartLatched = false;
+        }
+
         if (!m_bOpen)
         {
             if (m_bEnabled && event.Button == GamepadButton::Start && bPressed)
             {
+                // 押しっぱなしの間に入力状態が捨てられて再押下に見えても、開き直さない。
+                if (m_bStartLatched)
+                {
+                    return true;
+                }
+                m_bStartLatched = true;
                 Open();
                 return true;
             }
@@ -185,6 +197,13 @@ namespace Game::Pause
             switch (event.Button)
             {
             case GamepadButton::Start:
+                // 開いた Start を押したままにしている間の再押下（入力状態の破棄で生じる）は無視する。
+                if (!m_bStartLatched)
+                {
+                    m_bStartLatched = true;
+                    Close();
+                }
+                break;
             case GamepadButton::B:
                 Close();
                 break;
@@ -206,6 +225,12 @@ namespace Game::Pause
 
     bool PauseMenu::OnGamepadSample(const NorvesLib::Core::Input::GamepadSampleEvent &event)
     {
+        // 入力状態の破棄（ReleaseAll）で離した通知が来なくても、サンプルで Start が上がったのを見てラッチを外す。
+        if (!event.State.Connected ||
+            (event.State.Buttons & static_cast<uint16_t>(GamepadButton::Start)) == 0)
+        {
+            m_bStartLatched = false;
+        }
         if (!m_bOpen || event.Mode != NorvesLib::Core::Input::EGamepadSampleMode::Live || !event.State.Connected)
         {
             return false;

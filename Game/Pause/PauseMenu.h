@@ -89,6 +89,8 @@ namespace Game::Pause
         /// 左スティックが上・下へ倒れているか（倒した瞬間だけ移動にする）
         bool m_StickUpHeld = false;
         bool m_StickDownHeld = false;
+        /// Start の押下を受けてから、物理的に離れたのを見るまで true。押しっぱなしの再押下で閉じ直さないため
+        bool m_bStartLatched = false;
     };
 
 } // namespace Game::Pause

@@ -1590,7 +1590,7 @@ namespace Game
 #if !NORVES_BUILD_DEVELOPMENT
         if (bOpenPauseMenu)
         {
-            LOG_WARNING("Game runtime option --open-pause-menu ignored: development build only");
+            LOG_WARNING("起動オプション --open-pause-menu は開発ビルドでのみ有効なので無視しました");
             bOpenPauseMenu = false;
         }
 #endif
@@ -1788,6 +1788,14 @@ namespace Game
             NorvesLib::Modules::Gui::RegisterImGuiView(&m_EngineStatsImGuiView);
             m_bEngineStatsImGuiViewRegistered = true;
             LOG_INFO("EngineStats ImGui view registered");
+        }
+
+        // ImGui モジュールは入力ルーターの最上位で F1 を予約し、解除中は下位の入力を止める（--imgui のデバッグ用）。
+        // ランチャーやポーズメニューのためだけに登録したときは、この予約を外す。
+        // 外さないと F1 が Rendering3DTest のデバッグ表示へ届かず、続く Esc もポーズメニューへ届かない。
+        if (!m_bImGuiRequested && NorvesLib::Core::Engine::GEngine != nullptr)
+        {
+            NorvesLib::Core::Engine::GEngine->GetInputDebugOverlay().SetEnabled(false);
         }
 
         // ポーズメニュー。ImGui モジュールが無い（登録に失敗した）ときは使わず、Esc は従来どおり何もしない。
