@@ -1,5 +1,7 @@
 ﻿# TASKS — NorvesLib
 
+2026-10-09 ランチャーと見せるシーン（ブランチ `feature/scene-launcher`、ユーザー決定）: 起動するとランチャー（シーン選択）が出て、Rendering3DTest・仮想化ジオメトリのバナナ1万本・荒野の前哨地・夜の集落・材質ギャラリー・室内の光へ入り、Esc のポーズメニューからランチャーへ戻れるようにする。決定事項・設計・資産の作り方・受入れは計画書 `Docs/Plans/SceneLauncherPlan.md` が正本で、`SCN-` の項目で上から順に進める。重い処理（ComfyUI での3D生成・クック・撮影と計測）はこの計画でユーザーが許可済み。GPU を使う処理は同時に1本（ComfyUI は生成スクリプトが止めてから Game を撮る）。Rendering3DTest の見た目は変えない（`CaptureStartupScene.ps1` の撮影で確かめる）。新しい描画機能はシーンごとに有効にし、既定では効かせない。新しいシーンの見た目は `Scripts/CaptureScene.ps1`（SCN-SCENE-ARG で入る）の撮影を開いて確かめる。 走行の間、他の系の未完の項目は `backlog` に退避している。main へマージする前に元の status へ戻す（todo: CORE-JSON-SURROGATE・GAME-GR130-VFX・GAME-GR131-VFX・GAME-GR132-VFX・GAME-GR133-VFX・GAME-GR134-VFX・GAME-GR135-VFX・GAME-GR136-VFX・GAME-GR137-VFX・G2-GR79-IMPORT-POLICY-CONNECTION・G2-MATERIAL-SELECTION-INTEGRATION・CORE-STRING-REPLACE-TERMINATOR、doing: G2-S6-ASSET-SET・G2-GR82-B4-STATIC-ROOT-FRAME128）。
+
 起動画面（Rendering3DTest）の描画改善（2026-09-27、ユーザー決定）。物理空と空の太陽による昼の屋外、点光源のキューブシャドウ、自動露出・ミップチェーンのブルーム・TAA・GTAO・コンタクトシャドウ・色収差・レンズダート・グレーディングLUT・RTGIの既定化、展示物の追加、視差オクルージョンと影の不具合の修正を `SS-` の項目で進める。見た目の証拠は `Scripts/CaptureStartupScene.ps1` の撮影を開いて確かめる。起動画面の見た目を変えることはこの計画でユーザーが承認済み。検証シーン（Indoor/Outdoorのgolden、R系の受入れ）は、項目に書いた場合を除き結果を変えない。
 
 2026-09-30 再開: 止めていた4項目（SS-DAYLIGHT-P1・P2、SS-POINT-SHADOW-P2、SS-EMISSIVE-GLOW）は各 `blocked/<ID>.md` の推奨の選択肢で再開し、空のモデル（SS-SKY-MODEL-P1・P2）と発光の露出（SS-EMISSIVE-PREEXPOSE）を足した。この3項目は、項目に書いたとおり空を使う検証（R2・R7屋外）とgoldenの結果を変えうる。
@@ -13,6 +15,286 @@
 2026-10-04 続き4（段1はブランチ `feature/vtg-stage1-bc`）: ユーザーと決めた全体計画 `Docs/Plans/VirtualizedTextureGeometryPlan.md`（テクスチャとジオメトリの仮想化。BC圧縮・sparse のVT・2パスの遮蔽カリング・LODの階層の焼き込み・ページのストリーミング・ビジビリティバッファ・ソフトウェアラスタ・VSM）を `VTG<段>-` の項目で進める。決定事項・設計・段の受入れは計画書が正本。1段ずつ回し、今の段だけ `todo`、後の段は `backlog`。段が終わると親が受入れを確かめて main へマージ・プッシュし、次の段の項目を詳しくしてから `todo` にする。8GB級のGPUで収まるのが目標で、開発機では `--vram-budget-mb` の上限で確かめる。起動画面（天球・地面・球・岩）が見える状態は全段で保つ。
 
 それより下はR0〜R8と関連の修正の記録。R8までの完了後に残った `todo` は、起動画面の作業を先に進めるため `backlog`（ループが拾わない）にしてある。再開するときは `todo` へ戻す。
+
+## SCN-SCENE-ARG: シーンの一覧と `--scene` 引数を足し、撮影スクリプトをシーン指定にする
+- status: todo
+- done-when: Game にシーンの一覧（id・日本語の表示名・説明・見本画像のパス・対応する GameMode・名前付き視点・必要な資産）を1か所に定義し、`--scene=<id>` で起動直後にそのシーンへ入る（`rendering3dtest` は今の Rendering3DTest）。未知の id はエラーをログに出して既定へ落ちる。この項目の時点の既定（引数なし）はまだ Rendering3DTest。`Scripts/CaptureStartupScene.ps1` と、Game.exe を起動して Rendering3DTest を前提にする他のスクリプト（`Test-CameraWorld.ps1`・`Test-M6AngelScriptHotReload.ps1`・`Test-M8MinimalPhysics.ps1`・`Test-M9World.ps1`・`RunCookedTextureGameSmoke.ps1`・`RunCookedModelGameProfile.ps1` を読んで判断）が `--scene=rendering3dtest` を渡す。新しい `Scripts/CaptureScene.ps1 -Scene <id> -OutDir <dir> [-Views <名前,...>] [-Configuration Debug|RelWithDebInfo|Release] [-Width <px> -Height <px>] [-GameArgs <先頭の -- を除いた引数,...>] [-RequireAssets]` が指定のシーンを撮って視点ごとの PNG と `metrics.json`（平均輝度・白飛び・黒つぶれの画素率）を出し、Game の起動失敗・PNG の欠け・Game.log のエラー（シェーダーのコンパイル失敗・検証レイヤーのエラー・`-RequireAssets` のときの資産の欠け）で非 0、成功で `CAPTURE_SCENE result=pass` を出す（名前付き視点が入るまでは既定の1枚）。シーンの組み立てが終わった印（SceneReady）を `--capture-deterministic` で待つ仕組みを全シーン共通にする。窓の大きさを変える引数が無ければ足す（`-Width/-Height` が使う）。`CaptureStartupScene.ps1` の 3 視点を撮り、main の撮影と並べて開いて同じ見た目であることを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-SCENE-ARG`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene rendering3dtest -OutDir .harness/runs/scene-capture/SCN-SCENE-ARG`
+- paths: Game, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Engine, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: 計画書 `Docs/Plans/SceneLauncherPlan.md`。モードの登録は `Game/GameApplicationHandler.cpp` の `CreateGameModeStateMachine`（2073〜2167 行付近。`Start` は 2165 行付近）で、起動フラグは static の `s_*` を Creator ラムダが `Rendering3DTestData` へ写している（2095〜2151 行付近）。`Test/Game/Bridge/CMakeLists.txt` と `Test/Core/Rendering/CMakeLists.txt` は Game のソースを直接取り込むので、`GameApplicationHandler.cpp` から参照する新しいソースはそちらにも足す。撮影は `ApplicationProcessor.cpp` の `--capture-png`（634〜660 行付近）と SceneReady（`Rendering3DTestRoutine.cpp` 3276・3865 行付近）。
+
+## SCN-R3D-REENTRY: シーンの出入りで作った資源を返し、出入りを繰り返しても増えないことを確かめる
+- status: todo
+- done-when: `--scene-cycle-smoke=<id,...>`・`--scene-cycle-count=<n>`（形は実装で決めてよい）で、Game が別のモード（この項目では空のモード、SCN-LAUNCHER の後はランチャー）とシーンの間を `RequestChange` で周回し、各周回の後に資源の数（材質・テクスチャ・メッシュ・Model・Entity）と GPU の割り当て量をログへ出し、2周目以降が1周目と同じ（GPU の割り当ては遅延解放が済むのを待って比べる）なら `SCENE_CYCLE_SMOKE result=pass`、増えたら `result=fail` と増えた種類を出す。`Rendering3DTestRoutine::Leave` が Enter で作った材質・チェッカーのテクスチャ・負荷用の資源などをすべて返し、`rendering3dtest` で3周して pass になる。材質とテクスチャもシーンの範囲（`GameModeScope`）で追跡して Leave で返せるようにし、後のシーンはそれを使う。`Scripts/RunSceneCycleSmoke.ps1 -Scenes <id,...> -Cycles <n> [-Configuration ...]` がこれを走らせて Game.log を照合し、pass で 0 を返す。Rendering3DTest の撮影の見た目は変わらない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-R3D-REENTRY`
+- paths: Game, Library/Core/Public/GameMode, Library/Core/Private/GameMode, Library/Core/Public/Rendering/RenderResources.h, Library/Core/Private/Rendering, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: 危険地帯（Object/Resource の寿命）。`GameModeScope`（`Library/Core/Private/GameMode/GameModeScope.cpp` 79〜128 行付近）は Entity・Mesh・Model だけを返し、材質とテクスチャは対象外。`Rendering3DTestRoutine.cpp` の Leave（3869〜4035 行付近）は `materials.Create`（2200 行付近〜）とチェッカー（`m_CheckerTextureHandle`、2175 行付近）を返していない。`RequestChange` はキューに積まれ次の Update の先頭で Leave→Cleanup→Enter（`GameModeStateMachine.cpp` 39〜48 行付近）。RenderThread が使い終わるまで破棄を待つ仕組み（`RenderResources.h` 377〜385 行付近の retire）を守る。資源の数を返す API が無ければ足す。
+
+## SCN-LAUNCHER: 起動するとランチャーが出て、カードから各シーンへ入れるようにする
+- status: todo
+- done-when: 引数なしで Game を起動すると `launcher` モードに入り、ImGui の全画面のメニューが出る: 背景は物理空の夕景（地物は無くてよい）、上にタイトル「NorvesLib」と副題、シーンの一覧から作ったカード（見本画像の枠・表示名・説明 1〜2 行・必要な資産が足りないときは取得のコマンド）を並べ、選んでいるカードを強調する。矢印キー・WASD・マウス（ホバーとクリック）・ゲームパッド（十字キーと左スティック・A）で選び、Enter・クリック・A で `RequestChange` する。「ゲームを終了」がある。見本画像が無いカードは暗いグラデーションにシーン名を出す。ImGui は `--imgui` が無くてもランチャーのために使えるようにし（デバッグ用の窓は今どおり `--imgui` のときだけ）、Debug・RelWithDebInfo・Release で出る。日本語は NotoSansJP、字の大きさは窓の大きさから決めて 1280×720 と 1920×1080 で読める。`CaptureScene.ps1 -Scene launcher` を 1280×720 と 1920×1080 で撮って開き、デバッグ窓に見えない（ImGui の既定の灰色の窓・タイトルバー・スクロールバーが出ていない）ことを確かめる。`RunSceneCycleSmoke.ps1` の周回がランチャーを通る形になり、`rendering3dtest` の3周が pass。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `cmake --build build --config Release --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -OutDir .harness/runs/scene-capture/SCN-LAUNCHER`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-LAUNCHER`
+- paths: Game, Library/Modules/ImGui, Assets/Config, Assets/Textures/Launcher, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: ImGui の登録は `GameApplicationHandler.cpp` 1462〜1482 行付近（今は `--imgui` のときだけ）。`IImGuiView`（`Library/Modules/ImGui/Public/ImGuiModule/IImGuiView.h`）。NotoSansJP は `ImGuiModule.cpp` 632・671 行付近でマージ済み。入力の Menu の文脈（Confirm=Enter/パッド a、Cancel=Escape/パッド b）は `Assets/Config/DefaultInputBindings.json` 217 行付近。見本画像を ImGui のテクスチャとして描く手段が無ければ足す（画像は SCN-THUMBNAILS で作る）。Release にデバッグ機能（GPU 計測・ログ）を入れない。
+
+## SCN-PAUSE-MENU: Esc のポーズメニューからランチャーへ戻れるようにする
+- status: todo
+- done-when: ランチャー以外の全シーンで Esc（ゲームパッドの Start）を押すとポーズメニュー（続ける／ランチャーへ戻る／ゲームを終了）が出て、もう一度 Esc か「続ける」で閉じる。「ランチャーへ戻る」で `RequestChange(launcher)`。メニューが出ている間はカメラ操作などシーン側の入力を止めてマウスカーソルを出す。Rendering3DTest の F1〜F5 のデバッグ表示や Alt のカメラ操作と衝突しない。見た目はランチャーと同じ作り（半透明の暗幕と中央のパネル）。撮影（`--capture-png`）の起動では出さない。開発ビルドだけの `--open-pause-menu` で開いた状態を撮り（`CaptureScene.ps1 -GameArgs open-pause-menu`）、開いて確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene rendering3dtest -GameArgs open-pause-menu -OutDir .harness/runs/scene-capture/SCN-PAUSE-MENU`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-PAUSE-MENU`
+- paths: Game, Assets/Config, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: Escape を処理する箇所は今の Game に無い（`Game/Input/GameInputRebindTypes.h` 36 行付近のリバインド取消のみ）。F1〜F5 は `Game/GameModes/Rendering3DTest/Rendering3DTestDebugInput.cpp`。
+
+## SCN-FREE-CAMERA: 自由飛行カメラと、シーンごとの名前付き視点を足す
+- status: todo
+- done-when: 自由飛行カメラ（右ボタンを押している間マウスで視点、WASD で前後左右・QE で上下、Shift で速く、ホイールで移動の速さ、ゲームパッドの左スティックで移動・右スティックで視点・LT/RT で上下）を Library の入力の部品として足し、新しいシーンが既定で使う（Rendering3DTest は今の Maya 式のまま）。シーンの一覧の各シーンの名前付き視点（位置と向き。最低 `overview`）を `--scene-view=<name>` で起動時に選べ、`CaptureScene.ps1` の `-Views` 省略時はそのシーンの全視点を撮る。確認用に空と平らな地面だけの `sandbox` シーン（開発ビルドだけランチャーに出る）を足し、決まった入力を流す手段（例 開発ビルドだけの `--camera-script=<file>`）で自由飛行カメラを動かした前後の撮影を開いて、指定どおりに視点が動いたことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene sandbox -OutDir .harness/runs/scene-capture/SCN-FREE-CAMERA`
+- paths: Library/Core/Public/Input, Library/Core/Private/Input, Library/Core/CMakeLists.txt, Game, Assets/Config, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: 今のカメラは `Library/Core/Public/Input/MayaCameraController.h`（軌道カメラ）だけ。入力の収集は `Game/Input/CameraInputCollector.h`、入力の割り当ては `Assets/Config/DefaultInputBindings.json`（Debug の文脈に WASD の Move がある）。
+
+## SCN-CAMERA-PATH: カメラパスのデモ飛行を足す
+- status: todo
+- done-when: シーンごとにカメラパス（位置・注視点のキーと時刻。Catmull-Rom 等で滑らかにつなぐ）を定義でき、P キー（ゲームパッドの Y）で再生・停止、再生中に自由飛行の入力をすると止まる。`--camera-path-time=<秒>` で起動時にパスの途中の視点に置ける（撮影用）。`sandbox` に一周するパスを置き、時刻を変えた3枚の撮影を開いて、パスに沿った位置と向きであることを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene sandbox -GameArgs camera-path-time=5 -OutDir .harness/runs/scene-capture/SCN-CAMERA-PATH`
+- paths: Library/Core/Public/Input, Library/Core/Private/Input, Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/CMakeLists.txt, Game, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+
+## SCN-GEN-PIPELINE: 手元の ComfyUI で3Dモデルを生成するスクリプトを作り、バナナを生成してクックする
+- status: todo
+- done-when: `python Scripts/GenerateSceneModels.py --ids banana` が、ComfyUI（`Y:\ComfyUI\ComfyUI_windows_portable`）が動いていなければ起動し、Z-Image Turbo で定義のプロンプトから参照画像を作り、背景を除いて TRELLIS.2 で GLB（色・金属・粗さ・AO・法線の焼き込み付き）を作り、`Assets/Models/Generated/<id>/` に GLB・参照画像・manifest（プロンプト・seed・面数・MD5・生成日時）を置き、最後にモデルを降ろして自分が起動した ComfyUI を止める。`--preview` で Blender のヘッドレスが GLB を3方向から描いた PNG を出す。`--verify` は GPU を使わず、定義と manifest と実ファイルの MD5 の一致を確かめ、`--require-cooked` のときクック済みの出力があることも確かめる。定義は `Assets/AssetSets/GeneratedModels.json`（id・英語のプロンプト・seed・目標面数・テクスチャの大きさ・実寸の高さ m・用途）、ワークフローは `Tools/ComfyWorkflows/`（API 形式の JSON。文字→画像と画像→3D）に置いて追跡し、`.gitignore` に `/Assets/Models/Generated/` を足す。バナナ（約10万面、テクスチャ 2048、実寸 約 0.2 m）の参照画像とプレビューを開いて、バナナの形と色であることを確かめる（崩れていたら seed を変えて作り直し、定義の seed を更新する）。クックの一覧 `Assets/AssetSets/MegaBananasModels.json` を足し、`Scripts/CookAssets.ps1` でクックが通る。
+- verify: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids banana`
+- paths: Scripts, Tools/ComfyWorkflows, Assets/AssetSets, .gitignore, TASKS.md, PROGRESS.md
+- notes: 計画書の「資産」の節。保存済みのワークフロー `Y:\ComfyUI\ComfyUI_windows_portable\ComfyUI\user\default\doggame\pixal3d_trellis2_api.json`（ノード 316 の真偽で TRELLIS.2/Pixal3D を切り替え、`LoadImage` 122 が入力、`RemoveBackground` 192、`DecimateMesh` 186 の面数、`PrimitiveInt` 288 がテクスチャの大きさ、`Save3DAdvanced` 322 が出力）を元にする。文字→画像は ComfyUI 0.38 の Z-Image のノードで組む（`Y:\ComfyUI\models` に `z_image_turbo_bf16`・`qwen_3_4b`・`ae`）。Python は `C:\Python314\python.exe`（標準ライブラリだけで書く）。生成は GPU を占有するので、ComfyUI を止めてから Game を撮る。Blender は `Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe`。クックの入口は `Scripts/CookAssets.ps1`（`-SpecDir`・`-RuntimeRoot`、出力は `build/CookedAssets`）。
+
+## SCN-BANANAS-SCENE: 仮想化ジオメトリのバナナのシーンを作る
+- status: todo
+- done-when: `mega-bananas` シーン: 昼の物理空と太陽の影の下、生成したバナナを MegaGeometry で `--banana-count=<n>`（この項目の既定は今の上限内の 4096。SCN-MEGA-10K で 1万へ上げる）本、広い床（Poly Haven の木の床か土）に向き・わずかな大きさをばらして敷き詰め、手前に数段の山を作る（物理で積まなくてよいが、重なりが不自然に見えない配置）。H キーの情報表示に本数・1本の三角形数・元の三角形の総数、開発ビルドでは MegaGeometry の GPU 時間と描いたクラスタ数も出す。名前付き視点 `overview`（全体を見渡す）・`close`（手前の山を数十 cm から）・`low`（床すれすれ）とカメラパスを持ち、ランチャーに載る。資産が無ければ警告し、ランチャーのカードに `python Scripts/GenerateSceneModels.py --ids banana` を出す。3視点の撮影を開いて、バナナが並ぶ・近くで高ポリの形に見える・影が落ちていることを確かめる。`mega-bananas` の cycle smoke 3周が pass。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -OutDir .harness/runs/scene-capture/SCN-BANANAS-SCENE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas -Cycles 3`
+- paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: 配置の手順は `Rendering3DTestRoutine.cpp` 889〜900・1208〜1242 行付近（CreateMegaMesh→RegisterModel→TrackModel→SpawnObject→CreateComponent<MegaGeometryComponent>→SetMegaMeshHandle→SetCastShadow）。同じバナナのインスタンスは1つの Model を共有する。
+
+## SCN-MEGA-10K: バナナ1万本で、描かれないクラスタ・影の欠け・過大なメモリが無いようにする
+- status: todo
+- done-when: `mega-bananas` を `--banana-count=10000`（引数は 65536 程度まで受ける）で起動し、`overview`・`close`・`low` の各視点で、区間ごとの描画コマンドの上限（`MaxDrawCount`）を超えて捨てたクラスタの数、影で省いたインスタンスの数（VSM。CSM に切り替えたときは UBO の枠）、MegaGeometry のバッファ（2パス遮蔽の可視ビットなど）の大きさを開発ビルドのログに出し、捨てた数・省いた数が 0。0 にならない上限は、必要な分だけ大きくするか、可視ビットを 1 クラスタ 1 bit に詰めるなどインスタンス数に比例して膨らむ量を抑えて直す。1万本の既定を `--banana-count` の既定にする。1万本の撮影を開いて、穴（地面が透けて見える欠け）や影の欠けが無いことを確かめる。Rendering3DTest の撮影と、`--stress-geometry=300` を付けた Rendering3DTest の撮影が変わらない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-10K`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-MEGA-10K`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, Docs/RenderingValidation, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画・メモリ）。`MegaGeometryPass.h` 98〜105 行付近（`MaxDrawCount = 262144`。超えた可視クラスタは描かれない）、`MegaGeometryPass.cpp` 1488 行付近（Capacity）、3157〜3169・3296〜3299 行付近（可視ビット 4 B × 全インスタンスのクラスタ数の総和、0x3FFFFFFF の上限）、`DynamicUniformAllocator.cpp` 147 行付近（CSM の UBO 枠 1024）。引数の上限は `GameApplicationHandler.cpp` 134〜142 行付近。1フレームの GPU 転送は 8 MB 上限（`RenderResources.cpp` 66 行付近）。
+
+## SCN-BANANAS-PERF: バナナ 1万・2万・3万本の GPU 時間とメモリを測って記録する
+- status: todo
+- done-when: RelWithDebInfo・1920×1080 で、`mega-bananas` の `overview` と `close` を 1万・2万・3万本で測り、MegaGeometry の GPU 時間・フレームの GPU 時間・VRAM（MegaGeometry のプールとバッファ）・描いたクラスタ数を `Docs/RenderingValidation/SceneLauncherAcceptance.md`（無ければ作る）のバナナの節に表で書く。1万本の `overview` のフレームの GPU 時間が 16.6 ms を超えるときは内訳（どのパスが重いか）を書き、直せるものは直し、直さないものは既知の限界として書く。測った視点の撮影を開いて、本数が増えても穴が無いことを確かめる。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs banana-count=30000 -OutDir .harness/runs/scene-capture/SCN-BANANAS-PERF`
+- paths: Docs/RenderingValidation, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+- notes: 性能は RelWithDebInfo で測る（Release にデバッグ機能を入れない）。測り方は `Docs/RenderingValidation/VirtualizationAcceptance.md` の段5・段6の GPU 時間に合わせる。
+
+## SCN-PH-WASTELAND: 荒野用の Poly Haven の岩・崖と地形のテクスチャを落とす
+- status: todo
+- done-when: `Scripts/FetchPolyHavenModels.ps1 -Set wasteland` が乾燥地に合う岩・崖・枯れ木などのモデル 5〜8 種（Poly Haven の API のカテゴリとタグから選ぶ。CC0）を、`Scripts/FetchPolyHavenTextures.ps1 -Set wasteland` が地形の 3 層（砂・ひび割れた乾いた土・岩肌）と石の床（材質ギャラリー・夜の集落の道）のテクスチャを、既存と同じ形（4K、MD5 で照合、git 管理外）で落とす。引数なしの既定の組（起動画面の分）は変わらない。選んだ id と理由（色・形が荒野に合う）を計画書の資産の節に書き足す（計画書は git 管理外）。岩・崖のクックの一覧 `Assets/AssetSets/WastelandModels.json` を足してクックが通り、岩のプレビュー（`GenerateSceneModels.py --preview` の Blender の描画を流用してよい）を開いて荒野に合う見た目を確かめる。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenModels.ps1 -Set wasteland`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenTextures.ps1 -Set wasteland`
+- paths: Scripts, Assets/AssetSets, TASKS.md, PROGRESS.md
+
+## SCN-GEN-BUILDINGS-1: 荒野の建物を3種生成する（崩れた日干し煉瓦の家・見張り塔・石のアーチ）
+- status: todo
+- done-when: `GeneratedModels.json` に3種（荒野の前哨地に合う、単体で地面に立つ形の英語のプロンプト。50〜70 万面、テクスチャ 4096、実寸の高さ）を足して生成し、参照画像とプレビューを開いて、建物として形が崩れていない（壁が抜けていない・浮いた破片が少ない・底が平ら）ことを確かめる。崩れたものは seed かプロンプトを変えて作り直す。クックの一覧 `Assets/AssetSets/WastelandBuildingsModels.json` に足し、クックが通る。
+- verify: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids adobe_ruin,watchtower,stone_arch`
+- paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, TASKS.md, PROGRESS.md
+
+## SCN-GEN-BUILDINGS-2: 荒野の建物を3種生成する（風車・給水塔・木造の小屋）
+- status: todo
+- done-when: SCN-GEN-BUILDINGS-1 と同じ形で、風車（`windmill`）・給水塔（`water_tower`）・木造の小屋（`wooden_shack`）を生成・確認・クックする。
+- verify: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids windmill,water_tower,wooden_shack`
+- paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, TASKS.md, PROGRESS.md
+
+## SCN-TERRAIN-GEN: 起伏のある地形の高さ場を作り、MegaGeometry に焼いて描く
+- status: todo
+- done-when: 共有の高さ場（seed と関数で決まる。Game が同じ関数で任意の (x,z) の高さと法線を引ける）を Library に足し、AssetCook の `--generate` で約2km四方・0.5〜1m 間隔の地形メッシュ（中央に前哨地の平らな盆地 約200m、周りに砂丘とメサ、外周に稜線。UV はワールドの XZ から）を NVMESH v1（クラスタ・LOD の階層）に焼く。`wasteland` シーン（この項目では地形・物理空・太陽・高さフォグだけ。材質は Poly Haven の砂 1 種でよい）に置き、名前付き視点 `overview`（盆地を見下ろし遠くの稜線まで）・`ground`（人の目の高さ）・`ridge`（稜線から盆地）を持たせる。撮影を開いて、地平線が平らな板でなく起伏がある・遠くの地形に LOD の切り替えの穴やクラックが無いことを確かめる。高さ場に CPU のテスト `TerrainHeightfieldTest`（同じ seed で同じ高さ・盆地が平ら・焼いたメッシュの頂点と関数の高さの一致）を既存の束へ足す。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^TerrainHeightfieldTest$"`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-TERRAIN-GEN`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/CMakeLists.txt, Tools/AssetCook, Assets/AssetSets, Game, Scripts, Test/Core/Rendering, Test/TestBundle, Test/Game/Bridge/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: 危険地帯（アセットのクック）。手本は球の手続き生成（`Library/Core/Public/Rendering/MegaGeometry/ProceduralMegaSphere.h` 34・234 行付近）と `Assets/AssetSets/Rendering3DTestStartupModels.json` の `generate=displaced-sphere`。地形は1つのメッシュでも区画に分けてもよい（クラスタ単位で外される）。カメラの遠クリップは既定 1000 m（`CameraComponent.cpp` 320 行付近）なので、シーンで延ばす。
+
+## SCN-TERRAIN-BLEND: 地形の材質を 3 層（砂・乾いた土・岩肌）の混ぜ合わせにする
+- status: todo
+- done-when: 地形用の材質（3 層のアルベド・法線・ORM と、傾斜・高さ・低周波ノイズで決める混ぜ方の値）を足し、MegaGeometry の描画経路（使っている経路すべて。ハードのラスタと可視バッファ・ソフトラスタ）で効く。平らな所は砂、少し傾いた所は乾いた土、急な斜面とメサの崖は岩肌になり、境目はノイズで揺らぎ、高さ（凹凸）で重みを付けて砂が岩のくぼみに溜まるように見える。`wasteland` の地形にこの材質を使う。他の材質（Rendering3DTest・バナナ）の見た目は変わらない。`wasteland` の撮影を開いて層の分かれ方を確かめ、Rendering3DTest の撮影が変わらない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-TERRAIN-BLEND`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-TERRAIN-BLEND`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Assets/AssetSets, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画）。今の材質は1材質1組（`MaterialTypes.h` 288〜310 行付近）で、シェーダーは各テクスチャ1枚ずつ（`gbuffer.frag` 30〜35 行付近）。テクスチャの焼き込みは既存の usage（albedo|normal|orm）、VT と束縛数の上限に注意。
+
+## SCN-TERRAIN-DETAIL: 地形の岩肌をトライプラナーにし、タイルの繰り返しを見せない
+- status: todo
+- done-when: 岩肌の層を急斜面でトライプラナー（引き伸ばされない）にし、広い範囲の色・明るさの揺らぎ（数十〜数百 m の低周波）と、距離で UV の倍率を変える混ぜ方（近くは細かく、遠くは大きく）で、`overview` の撮影で同じ模様の格子状の繰り返しが目立たない。メサの崖を見る名前付き視点 `cliff` を足し、縦に伸びた縞が無いことを撮影を開いて確かめる。開発ビルドの GPU 計測で地形の描画の時間の増分を PROGRESS に書く。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-TERRAIN-DETAIL`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-TERRAIN-DETAIL`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+
+## SCN-SHADOW-DISTANCE: シーンごとに太陽の影の到達距離を設定できるようにする
+- status: todo
+- done-when: GameThread 側（RenderWorld。RenderThread へは FramePacket 越し）に、シーンごとの太陽の影の到達距離を設定する API を足し、VSM（クリップマップの使う段）と CSM（`MaxShadowDistance`）の両方に効く。既定は今の 80 m で、Rendering3DTest の撮影は変わらない。`wasteland` で 500 m 程度にし、`overview` の撮影を開いて、80 m より先の地形の起伏・メサ・岩にも影が落ちている、近くの影の細かさが目に見えて落ちていないことを確かめる。VSM の GPU 時間の増分を PROGRESS に書く。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-SHADOW-DISTANCE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-SHADOW-DISTANCE`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画・RenderThread）。`ShadowMapPass.h` 47・134 行付近（`MaxShadowDistance` 既定 80、`SetMaxShadowDistance` はどこからも呼ばれていない）、`CascadedShadowLightMatrices.cpp` 669 行付近、`VirtualShadowMapClipmap.h` 32〜40 行付近（10 段、第1段 4 m、段ごとに 2 倍、DepthRange 1000 m）。
+
+## SCN-WASTELAND-LAYOUT: 荒野の前哨地に岩・崖・建物を置き、夕方の光を決める
+- status: todo
+- done-when: `wasteland` に Poly Haven の岩・崖（大きさと向きをばらし、地形に少し埋めて、数十〜百数十個。遠くのメサの足元にも）と生成した建物 6 種（盆地の中央に小さな前哨地として道に沿って向きを揃え、地面に埋めて浮かせない）を高さ場の関数で置く。太陽は夕方寄り（仰角 15〜25° 程度）で長い影、露出とグレーディングを夕景に合わせる（Rendering3DTest のグレーディングは変えない）。名前付き視点 `outpost`（前哨地の建物の間）を足す。`overview`・`ground`・`outpost`・`ridge` の撮影を開いて、ゲームの風景に見える（建物が浮いていない・岩が地形に馴染む・白飛びや黒つぶれが広がっていない）ことを確かめる。`wasteland` の cycle smoke 3周が pass。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WASTELAND-LAYOUT`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3`
+- paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+
+## SCN-AERIAL-PERSPECTIVE: 遠景に空気遠近の霞を掛ける
+- status: todo
+- done-when: 物理空の LUT（透過率と散乱）から、カメラからの距離に応じた散乱光と透過率を不透明物に掛ける処理（GBuffer の合成・可視バッファの両方の経路）を足してシーンごとに有効にでき、`wasteland` で有効にする。遠くの稜線とメサが空の色に溶け、近くは変わらない。`wasteland` の高さフォグの値も霞として馴染むように調整する（Rendering3DTest の霧は変えない）。`overview`・`ridge` の撮影を開いて遠景の霞を確かめ、Rendering3DTest の撮影が変わらない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-AERIAL-PERSPECTIVE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-AERIAL-PERSPECTIVE`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画）。`SkyAtmosphere.h` 24〜36 行付近、`RenderWorld::SetSkyAtmosphere`（`RenderWorld.cpp` 311 行付近）。高さフォグは `VolumetricFog.h` 11〜17 行付近（Rendering3DTest は密度 0.02・falloff 1.0）。
+
+## SCN-CLOUDS: 空に雲の層を足す
+- status: todo
+- done-when: 空の描画に、高度帯（例 1.5〜4 km）の雲の層を 3D ノイズ（Perlin-Worley 等。起動時に生成）の密度で光線を進めて描く処理を足してシーンごとに有効にでき、`wasteland` で有効にする。太陽側の縁が明るく（前方散乱）、底面が影で暗く、空の環境光で持ち上がり、時間でゆっくり流れる。雲の影は範囲外（太陽を遮らない）。雲を空からの IBL に入れるかを決めて記録する。`overview`・`ridge` の撮影を開いて、地平線近くまで雲が自然に並ぶ（板やタイルの繰り返しに見えない）ことを確かめる。開発ビルドの GPU 計測で雲の時間を PROGRESS に書く。Rendering3DTest の撮影が変わらない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-CLOUDS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-CLOUDS`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画）。空から IBL を作る箇所は `LightingPass.cpp` 4653 行付近。雲は今は無い。
+
+## SCN-CLOUDS-TEMPORAL: 雲を低解像度と時間方向の蓄積で軽くする
+- status: todo
+- done-when: 雲を画面の 1/4〜1/2 の解像度で描き、前のフレームへの再投影で蓄積して、1920×1080・RelWithDebInfo の `wasteland` `overview` で雲の GPU 時間が 1.5 ms 以下（超えるなら計測値と理由を記録）。カメラパスの再生中の連続撮影（`--capture-sequence`）の数枚を開いて、カメラを動かしても雲の縁がちらつかず残像を引かないことを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-CLOUDS-TEMPORAL`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+
+## SCN-GRASS-RENDER: 枯れ草の株をインスタンスで描き、風で揺らす
+- status: todo
+- done-when: 曲がった細い葉を数〜十数枚束ねた枯れ草の株のメッシュ（手続き生成。アルファ抜きを使わない）を、インスタンスの配列（位置・向き・大きさ・色の揺らぎ）から少ない回数の描画（間接描画かインスタンス描画）で描く経路を足し、頂点シェーダーで風（時間と低周波ノイズ。根元は動かず先ほど揺れる）で揺らす。色は乾いた黄土〜灰褐色で、裏面も描く（両面）。影は受ける。`wasteland` の一角に数千株を置いた名前付き視点 `grass` を足し、撮影を開いて草に見える（板やトゲに見えない）こと、時刻を変えた2枚で揺れていることを確かめる。Rendering3DTest の撮影が変わらない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -Views grass -OutDir .harness/runs/scene-capture/SCN-GRASS-RENDER`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-GRASS-RENDER`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/CMakeLists.txt, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画）。今のシェーダーに discard が無く、`bTwoSided`（`RenderMaterialStore.cpp` 50 行付近）がカリングに効いているかは未確認。インスタンスを束ねる既存の仕組みは `DrawCommand::AddInstance`（`DrawCommand.h` 421 行付近）。
+
+## SCN-GRASS-SCATTER: 地形に枯れ草を撒き、区画ごとに間引く
+- status: todo
+- done-when: 高さ場の傾斜・高さ・ノイズで密度を決めて `wasteland` の盆地と砂丘の麓に枯れ草を撒き（建物の足元・道・急斜面には生えない）、区画ごとに視錐台で外し、距離で密度を下げて 80〜120 m 先で消す（消え方が線にならないよう株ごとのしきい値でフェード）。`ground`・`outpost`・`overview` の撮影を開いて、近くは草むら、遠くは自然に薄くなることを確かめる。1920×1080・RelWithDebInfo の `ground` で草の GPU 時間を測って PROGRESS に書く（目安 2 ms 以下）。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-GRASS-SCATTER`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+
+## SCN-DUST: ワールド空間の砂塵を足す
+- status: todo
+- done-when: 粒子の仕組みにワールド空間のビルボード（カメラを向く板、深度で柔らかく消える、太陽と環境光で明るさが決まる、風で流れる、寿命で薄れる）を足し、`wasteland` に地面すれすれを流れる砂塵と、遠くで舞い上がる砂の柱（数本、ゆっくり）を置く。画面空間の既存の粒子（Rendering3DTest の橙の粒）は変わらない。`ground`・`overview` の撮影と時刻を変えた2枚を開いて、砂塵が地形に溶け込み（板の縁の切れ目が見えない）流れていることを確かめる。Rendering3DTest の撮影が変わらない。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-DUST`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-DUST`
+- paths: Library/Core/Public/Particle, Library/Core/Private/Particle, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画）。今の粒子は画面空間のボードだけ（`ParticleSystem.cpp` 166〜191 行付近）。半透明の描画順と TAA との兼ね合いに注意。
+
+## SCN-WASTELAND-POLISH: 荒野をゲームの風景として仕上げ、カメラパスと性能を決める
+- status: todo
+- done-when: `wasteland` のカメラパス（前哨地へ近づいて建物の間を抜け、稜線へ上がる 40〜60 秒）を決め、グレーディング・露出・霧・雲・草・砂塵の量を整える。全視点とカメラパスの途中 6 時刻の撮影を開いて、デバッグ画面に見えない（格子・単色の板・浮いた物・タイルの繰り返し・LOD の穴が目立たない）ことを確かめ、気になったものを直す。1920×1080・RelWithDebInfo で `overview`・`ground`・`outpost` のフレームの GPU 時間とパスごとの内訳を測って受入れ文書の荒野の節に書く（目安 16.6 ms。超えるなら重いパスを下げる設定を探し、残りは既知の限界として書く）。`wasteland` の cycle smoke 3周が pass。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-WASTELAND-POLISH`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes wasteland -Cycles 3`
+- paths: Game, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Assets/AssetSets, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
+
+## SCN-GEN-VILLAGE-PROPS: 夜の集落の小物を生成する（街灯・松明の柱・焚き火の囲い・樽・木箱・荷車・井戸）
+- status: todo
+- done-when: SCN-GEN-BUILDINGS-1 と同じ形で、`street_lamp`・`torch_post`・`campfire_ring`・`barrel`・`crate`・`cart`・`well` を 10〜20 万面・テクスチャ 2048 で生成し、参照画像とプレビューを開いて形を確かめ、クックの一覧 `Assets/AssetSets/NightVillageModels.json` に足してクックが通る。灯りの部分（ランタンのガラス・火）は発光させたい部分としてプレビューで位置を確かめ、計画書に書く。
+- verify: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids street_lamp,torch_post,campfire_ring,barrel,crate,cart,well`
+- paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, TASKS.md, PROGRESS.md
+
+## SCN-NIGHT-VILLAGE: 夜の集落を組む
+- status: todo
+- done-when: `night-village` シーン: 荒野の高さ場の一角に、生成した建物と小物で道沿いの集落（建物 8〜12 棟。同じ建物は向きと大きさを変えて使い回す）を組む。太陽は地平線の下、月明かり（青白い弱い平行光と影）、夜の空、露出は自動露出で夜に合わせる（Rendering3DTest の `--night` の値の扱いを参考にする）。名前付き視点 `overview`・`street`（道の上の目の高さ）・`square`（焚き火の広場）。撮影を開いて、暗すぎず明るすぎず夜に見えることを確かめる。`night-village` の cycle smoke 3周が pass。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene night-village -RequireAssets -OutDir .harness/runs/scene-capture/SCN-NIGHT-VILLAGE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes night-village -Cycles 3`
+- paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+
+## SCN-NIGHT-LIGHTS: 夜の集落に灯りを入れる
+- status: todo
+- done-when: 街灯・松明・焚き火の点光源（暖色。影付きは VSM の点光源の上限の 4 灯までを手前の主役に、残りは影無し）、灯りのガラスと窓の発光（ブルーム）、焚き火の明るさの揺らぎ（時間で揺れる）、RTGI による壁や地面への照り返しを入れる。`street`・`square` の撮影を開いて、灯りの周りが照らされ影が落ちる・窓が光る・白飛びが広がりすぎないことを確かめる。1920×1080・RelWithDebInfo の `street` の GPU 時間を受入れ文書に書く。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene night-village -RequireAssets -OutDir .harness/runs/scene-capture/SCN-NIGHT-LIGHTS`
+- paths: Game, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Docs/RenderingValidation, Scripts, TASKS.md, PROGRESS.md
+- notes: 点光源の影は 4 灯まで（`PointShadowSnapshot.h` 19 行付近）。
+
+## SCN-MATERIAL-GALLERY: 材質ギャラリーを作る
+- status: todo
+- done-when: `material-gallery` シーン: 石の床（Poly Haven）の展示場（屋外か、壁の無い屋根付きの回廊）に台座の列を並べ、手元の Poly Haven の地面・壁のテクスチャ（約30種と SCN-PH-WASTELAND の分）を台座の上の傾けた板（視差オクルージョン付き）と球で見せ、別の一角に金属度 0〜1 × 粗さ 0〜1 の格子（6×6 程度）の球を並べる。各台座に名札（テクスチャの id）を付ける（ワールド空間の文字か、画面に投影した ImGui の文字）。光は物理空の昼。名前付き視点 `overview`・`textures`・`spheres`・`close`（板の視差）。撮影を開いて、テクスチャが正しく貼られ（色・法線の向き・ORM の並び）、名札が読めることを確かめる。`material-gallery` の cycle smoke 3周が pass。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene material-gallery -RequireAssets -OutDir .harness/runs/scene-capture/SCN-MATERIAL-GALLERY`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes material-gallery -Cycles 3`
+- paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+
+## SCN-GEN-FURNITURE: 室内の家具を生成する（机・椅子・本棚・ソファ・植木鉢・ランプ・ラグ）
+- status: todo
+- done-when: SCN-GEN-BUILDINGS-1 と同じ形で、`wooden_table`・`wooden_chair`・`bookshelf`・`sofa`・`potted_plant`・`floor_lamp`・`rug` を 10〜20 万面・テクスチャ 2048 で生成し、参照画像とプレビューを開いて形を確かめ、クックの一覧 `Assets/AssetSets/InteriorLightModels.json` に足してクックが通る。
+- verify: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids wooden_table,wooden_chair,bookshelf,sofa,potted_plant,floor_lamp,rug`
+- paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, TASKS.md, PROGRESS.md
+
+## SCN-INTERIOR-ROOM: 室内の光のシーンを組む
+- status: todo
+- done-when: `interior-light` シーン: 約 12×8×5 m の部屋（床は木の板、壁は漆喰かレンガ、天井の梁。手続きの箱と Poly Haven のテクスチャ）の一面に大きな窓（開口）を開け、低い夕日が差し込む。生成した家具を置き、赤いラグか色の強い壁で色移り（RTGI）が分かる配置にする。床は少し艶があり反射（SSR）が見える。窓の外に地面と空が見える。名前付き視点 `overview`・`window`（窓へ向かう逆光）・`corner`（奥の隅）。撮影を開いて、窓から入る光と影の形、奥の隅の照り返し、白飛び・黒つぶれを確かめる。`interior-light` の cycle smoke 3周が pass。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-ROOM`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes interior-light -Cycles 3`
+- paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+
+## SCN-INTERIOR-SHAFTS: 窓から入る光の筋を出す
+- status: todo
+- done-when: ボリュメトリックフォグの散乱が太陽の影（既定の VSM）で遮られ、窓から入る光の筋が見える。シーンごとにフォグの密度・範囲を設定でき、`interior-light` で室内に薄い霧を入れる（Rendering3DTest の霧は変えない）。`overview`・`window` の撮影を開いて光の筋を確かめ、Rendering3DTest の撮影が変わらない。GPU 時間の増分を PROGRESS に書く。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene interior-light -RequireAssets -OutDir .harness/runs/scene-capture/SCN-INTERIOR-SHAFTS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-INTERIOR-SHAFTS`
+- paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画）。`Assets/Shaders/volumetrics.frag` 103〜135 行付近は CSM の影の地図（`cascadedShadowMap`）を読む。太陽の影が VSM のときに霧の影が効いているかを先に確かめる。
+
+## SCN-THUMBNAILS: ランチャーのカードに各シーンの見本画像を出す
+- status: todo
+- done-when: `Scripts/CaptureLauncherThumbnails.ps1` が各シーンの見本用の視点（シーンの一覧に書く。既定は `overview`）を撮って 640×360 程度に縮め、`Assets/Textures/Launcher/<id>.png` に書く（追跡する）。ランチャーが読み込んでカードに出す。ランチャーの撮影を開いて、見本画像が正しいカードに出て、選択の強調が分かることを確かめる。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -OutDir .harness/runs/scene-capture/SCN-THUMBNAILS`
+- paths: Game, Scripts, Assets/Textures/Launcher, TASKS.md, PROGRESS.md
+
+## SCN-ACCEPT: ランチャーと全シーンの受入れを記録する
+- status: todo
+- done-when: 計画書の受入れの節の全項目を確かめて `Docs/RenderingValidation/SceneLauncherAcceptance.md` に書く: Debug・RelWithDebInfo・Release で引数なしの起動がランチャー（撮影を開いて確認）、全シーンの cycle smoke（各3周）が pass、全シーンの全視点の撮影を開いた所見、1920×1080・RelWithDebInfo の各シーンの GPU 時間、Rendering3DTest の撮影が main と見た目で変わらないこと、生成と Poly Haven の資産の一覧（id・出典・ライセンス・作り方）。見つけた不具合は直すか、`SCN-FIX-<名前>` の項目として TASKS.md に足す。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `cmake --build build --config Release --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest,mega-bananas,wasteland,night-village,material-gallery,interior-light -Cycles 3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -Configuration Release -OutDir .harness/runs/scene-capture/SCN-ACCEPT-release`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-ACCEPT`
+- paths: Docs/RenderingValidation, Game, Library, Assets, Scripts, Test, TASKS.md, PROGRESS.md
 
 ## PT-NONUNIFORM-SAMPLER: パストレーサーの材質のテクスチャの添字の一様でない印を、標本の関数の中まで届ける
 - status: backlog
@@ -356,13 +638,13 @@
 - notes: 2026-09-25の全体gate（`.harness/runs/20260925-r7-gate/`）で確認。SkinnedRenderPathContractTestはTEST-SKINNED、R4はR4-REOPEN。
 
 ## CORE-JSON-SURROGATE: JSONの非BMP文字列を整合させる
-- status: todo
+- status: backlog
 - done-when: JsonDocumentのsurrogate pairを単一Unicode scalarへ合成し、生UTF-8/escape表現が同じ名前になることを検証する。
 - verify: escaped emoji/生UTF-8/孤立surrogate/文字列往復の実コード試験と独立レビュー。
 - notes: ParseUnicodeEscapeは現状4桁単位、AppendUtf8は3byteまで。P5Aとは別件。既定game action名はASCIIで進め、汎用JSON整合として後続修正する。
 
 ## GAME-GR130-VFX: 剣のトレイル（リボン）を実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: CPU の試験で、固定ステップの回数が 0・1・2 のどのフレームでも帯の点列が連続で NaN が無いこと、1フレームで90度以上振っても補間で折れ目の角度が上限以下になること、寿命で点が消えて上限を超えないこと。GPU の試験で、既知の軌跡の帯の画素の位置が期待と一致すること。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -372,7 +654,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR131-VFX: 当たりの火花・衝撃（ヒットエフェクト）を実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: 当たり1回で放出の要求がちょうど1回積まれ、位置と法線が当たりの値と一致すること。表面の種類ごとに表のエフェクトが選ばれること。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -382,7 +664,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR132-VFX: シ者を倒したときの赤い血を実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: 撃破の合図から、血・滲み・消滅が時間割どおりの時刻で始まること（固定刻みのクロックで2回撮って一致）。滲みのマスクが時間に対して単調に広がること。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -392,7 +674,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR133-VFX: デカール（地面や体に残る跡）を実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: GPU の試験で、既知の箱のデカールが範囲内の GBuffer の色と法線だけを変え、範囲外の画素が変わらないこと。上限を超えると古いものから消えること。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -402,7 +684,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR134-VFX: メッシュのエフェクトを実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: 粒子の数だけインスタンスが描かれ、時間の値で溶けの閾値が変わること（GPU の試験の画素で確かめる）。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -412,7 +694,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR135-VFX: 空気の歪み（屈折）を実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: 歪みのバッファが空のとき、出力が歪みのパスの有無で画素単位で一致すること。既知のずらしの値で、画素が期待の量だけ動くこと。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -422,7 +704,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR136-VFX: Niagara 相当の VFX システムを実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: スキーマに、エミッタとモジュールの型、値の範囲・単位・既定値が出ること。範囲外の値や型の合わない値の設定が拒否されること。クックしたバイナリを読んだ結果が、元の形式から読んだ結果と一致すること（同じ種と刻みで、粒子の位置の列が一致）。動いているゲームでの値の変更が、次のフレームから反映すること。イベントで起動したエミッタが、起動の位置と時刻どおりに生成すること。フリップブックの取り込み設定どおりの UV の矩形と再生の速さ。雨（GR58）を含む既存の要件のエフェクトを少なくとも1つ、このシステムで組めること。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -432,7 +714,7 @@
 - notes: 2026-10-02追加。未着手の後続作業で、前提と選定課題を解決してから実装タスクへ細分化する。NorvesLib/Editorの境界とVFX-S1〜S5はロードマップ参照。
 
 ## GAME-GR137-VFX: 資産の編集・決定的な撮影・言語モデルの口（Bridge の拡張。汎用）を実装する
-- status: todo
+- status: backlog
 - done-when: 着手時に完了条件案を確定し、実装と検証を完了する。原文の案: Bridge の試験で、資産を開いて値を設定し、保存して開き直すと値が一致すること。型の合わない値や範囲外の値が拒否されること。同じ引数で2回撮影した画像が一致すること（GPU の試験。GPU の無い環境では飛ばす）。MCP の口から、スキーマの一覧、値の設定、撮影が通ること（NorvesEditor の側の作業なら、NorvesLib の試験の対象外）。
 - verify: 要件原文のCPU/GPU/Bridge試験を着手計画へ分解し、実行済みと未実行を分離して記録。実機/SDKが必要な確認は代替stubで合格扱いしない。
 - stop-when: 作者判断が未決の方式を確定扱いする、前提GR未完のまま完了宣言、範囲外repoの無承認変更、blocking未解消。
@@ -470,31 +752,31 @@
 - stop-when: mock/source確認を実GPU合格と扱う、ユーザー指定を変えて別環境へ無断移動する。
 
 ## G2-GR79-IMPORT-POLICY-CONNECTION: 材質設定と出所付き診断を接続する
-- status: todo
+- status: backlog
 - done-when: material/asset/asset-setの設定を解決し、発光換算の未設定拒否に資産名・材質名・emissiveNitsPerUnitを表示。AI生成profileを明示的に適用し素材単位overrideを保持する。canonical/hash/cacheとJSON/CLIへ接続する。
 - verify: asset-set単位指定/素材上書き/欠落・不正/発光textureのみ/診断名/設定差cache失効と旧非発光・v0互換を確認する。
 - stop-when: provenanceを拡張子だけで決める、sidecarよりasset-set設定を無言優先、非発光を不必要に拒否、見た目未確認を受入れ済みとする。
 
 ## G2-S6-ASSET-SET: C++一括cookと増分判定を接続する
-- status: doing
+- status: backlog
 - done-when: AssetCook --asset-setへ一括cookと増分判定を集約。origin/main CookTextureAssetSet.ps1 + Rendering3DTestSilverTextures/Rendering3DTestSilverGltfTexturesに対してcooked/manifestのbyte一致を確認。glTF外部ファイルとsidecarを印に含む。
 - verify: 単体CLIの分割前後比較、旧texture spec v1の2spec同値、外部buffer/画像/sidecarの変更・不在・復帰・破損で正しい再cook/拒否、失敗時出力保持。
 - stop-when: 手元確認用CookAssets.ps1/StartupMaterialsを対象に戻す、PS側へ増分判定を重複実装、Windows実byte比較を未実施で完了とする。
 
 ## G2-MATERIAL-SELECTION-INTEGRATION: 共通照合を設定とslot名へ接続する
-- status: todo
+- status: backlog
 - done-when: GR79 ARM/発光、GR78 材質→SurfaceName、GR32 slot名が同じResolveMaterialSelectionを使う。元catalog/生成slotを明示し、全設定の未一致/二重指定をcookと増分preflight双方で拒否。同名GLBは元での改名推奨を資産名付きで警告する。
 - verify: raw無名1/Blender Material_0、逆primitive順/同名/生成名衝突、name+index二重指定、不在、unicode名、incremental skipの検証迂回なし、設定値/SurfaceName/slotへの実到達。
 - stop-when: 未実装SurfaceNameを受理して捨てる、共通核の存在だけで全接続完了とする、元indexとslotindexの混同、旧wire予約領域へ勝手に保存。
 
 ## CORE-STRING-REPLACE-TERMINATOR: 部分置換によるsuffixのNUL破損を修正する
-- status: todo
+- status: backlog
 - done-when: TString::replaceが同長/増加/縮小/末尾/自己参照の置換で意図したbyte列を保ち、終端は末尾だけに置く。
 - verify: 実Coreのchar/wchar/member契約、部分置換直後のsuffix先頭と全size、関連文字列試験。
 - stop-when: StringCopyの全呼出し規約を検証なしに変更、Windows CRTの動作を偽shimで合格扱い。
 
 ## G2-GR82-B4-STATIC-ROOT-FRAME128: 静的なArmature親と作者frameを安全に束縛する
-- status: doing
+- status: backlog
 - done-when: 明示profile2/128で、skin.skeleton省略と静的な非関節祖先を作者importから三role保存/同snapshot読込/既存runtime公開/実CPU poseまで通す。現在ROOTと全作者snapshotの必須AFRMを比較し、同local restでも異なるframeはrest overrideでも拒否する。profile2 clipには失効可能な束縛証明を持たせ、直接Sampleの迂回も拒否する。
 - verify: 合成glTF/GLBのArmature/祖先chain/省略hint/並べ替え、非可換G・M・IBMとimport scale2の独立pose oracle、frame欠落/不正/混在profile/全snapshot差拒否、SetClip・Unload・別targetでproof失効、三NVPKから実runtime/名前指定Sample、確保前の境界予算と失敗out保持。既存profile1のwire/pose・旧71/固定Sampler/cook/CLIを維持し、新Debug/Release常時検査と独立oracleを使う。
 - policy: profile1の既定/bytes/128/Identity ROOTを維持。profile2はroot上の静的直接TRS・正一様scale祖先だけ、joint自体は既存正TRS。joint間非joint/祖先animation/matrix/非一様祖先は拒否。SkeletonIdにprofile/rest/ROOTを混ぜず、別guardでprofile照合。frame全64byte一致、cross-profile自動束縛なし。

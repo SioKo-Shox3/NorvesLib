@@ -580,3 +580,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 最終のコード（夜の粒と照明のパスの修正、main `1b5e925c` の取り込みの後）で受入れを撮り直した（`.harness/runs/vtg9-accept-r3/`）。Debug ビルド・ctest 14 本（`a2-ctest.txt`、14/14）・検証レイヤー付き Debug の夜 3 視点（error・warning・vuid 0）・RelWithDebInfo ビルド・朝昼夕・夜・夜の旋回の撮影、すべて EXIT=0、`failures` は空。18 本のログで VSM の溢れ・`VSM_FALLBACK`・`LIGHTING_EXECUTE_SETS_EXCEEDED` は 0、ERROR は既知の 2 件だけ。
 - 夜の電球の影の測定と検証レイヤーの run の値は前の撮影と同じ。夜の粒は、近接の大きな球の暗い側（R − G > 40）0、低角度の見本の球（暗い側の粒）2。昼の 9 枚の平均輝度は前の撮影と同じ。夜の画面の平均は既定 56.768・近接 13.779・低角度 67.321。
 - 受入れの記録（`VirtualizationAcceptance.md`）の段9の節を最終の値に直し、「VSM によるものではない」の一文を、粒の原因（RTGI のホタル 2 つ）・直し方・数に置き換えた。
+
+## ランチャーと見せるシーン（2026-10-09 開始、ブランチ `feature/scene-launcher`）
+
+- ユーザーの決定: 起動するとランチャー（作り込んだ ImGui のメニュー）、シーンは Rendering3DTest・仮想化ジオメトリのバナナ 1万本・荒野の前哨地（地形・材質の混ぜ合わせ・遠くまでの影・空気遠近・雲・枯れ草・砂塵）・夜の集落・材質ギャラリー・室内の光。岩は Poly Haven、建物・小物・家具・バナナは手元の TRELLIS.2 で生成。重い処理は許可済み。計画書は `Docs/Plans/SceneLauncherPlan.md`、項目は TASKS.md の `SCN-`（34 件）。
+- 開始時の確認: main `4974821a` から分岐。`cmake --build build --config Debug --target Game -- /m:1` は成功（`.harness/runs/scn-start-build.log`）。
+- 走行の間、他の系の未完の項目 14 件（todo 12・doing 2）を `backlog` に退避した。一覧は TASKS.md の冒頭。main へマージする前に元の status へ戻す。
