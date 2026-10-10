@@ -763,3 +763,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-PH-WASTELAND-5.txt`（`-Set wasteland` モデル `result=pass`・EXIT=0。最終の 7 種）、`-2.txt`（`-Set wasteland` テクスチャ `result=pass downloaded=25`・EXIT=0）、`-4-default.txt`（既定の組と再実行の結果）、`-6-cook.txt`（クック EXIT=0）。`-1.txt` は差し替え前の 7 種（`boulders_01` 入り）の取得、`-3-cook.txt` は 1 メッシュでない失敗の記録。
 - 画: `ph-wasteland-preview/contact_front.png`（Blender の `BlenderPreviewGlb.py` で 7 種を描いた）を開いた。茶・黄土・赤みの岩と橙の地衣類の岩、積み重なった岩の崖、層状に割れた崖の壁、白く風化した枯れ幹で、乾燥地に合う。
 - Notes: `CookAssets` という CMake ターゲットはこのビルドツリーに無く、`Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe` で呼ぶ（RelWithDebInfo の `AssetCook.exe` は 10/5 のままで古く、GLB を読めずバナナで落ちる。差分クックの印が Debug 版のものなので Debug 版を使う）。`build/CookedAssets` には外した `boulders_01` のテクスチャ 3 件がマニフェスト外で残っている（害は無い）。
+
+### SCN-R3D-REENTRY（2026-10-10、反復 6・run 20261010-132327）
+
+- SCN-RHI-UPLOAD-THREAD（スレッドごとのコマンドプール）が入ったので、検証レイヤーの除外なしで周回スモークを再検証した。実装の変更は無い（`RunSceneCycleSmoke.ps1` は `Validation Error:` を 1 件でも失敗にする）。
+- 証拠（`.harness/runs/20261010-132327/`）: `verify-SCN-R3D-REENTRY-1.txt`（Debug の Game ビルド EXIT=0）、`-2.txt`（`RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3` が `result=pass`・EXIT=0。3 周とも materials=0 textures=0 meshes=0 models=0 entities=2 buffers=0 で一致、`geometry_pool_capacity_bytes=268435456`）、`-3.txt`（`CaptureStartupScene.ps1` 3 視点 pass。平均輝度 124.09・123.716・125.968）。
+- 確認: `.harness/runs/scene-cycle-smoke/Validation.log` は 0 バイト（検証エラー 0 件。ファイルはあるので検証レイヤーは動いている）。`default.png` を開いて天球・地面・球・岩・小屋・電球が欠けないことを確かめた。
+- Notes: `blocked/SCN-R3D-REENTRY.md` の理由（共有コマンドプールの競合）は解消した。競合は時間依存なので 1 回の pass は保証ではない（反復 5 の記録と同じ）。
