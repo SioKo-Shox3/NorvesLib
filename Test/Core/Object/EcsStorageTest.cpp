@@ -77,6 +77,25 @@ namespace
         assert(world.GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(mismatch, 2)) == kInvalidEcsArchetype);
         assert(world.CreateEntity(kInvalidEcsArchetype).IsNull());
         assert(world.GetArchetypeCount() == 2);
+
+        // 既存のアーキタイプと列の数・タグが違っても、記述は型の登録と照合される
+        EcsColumnInfo wrongAlign = EcsColumnInfoOf<Health>();
+        wrongAlign.Align = 16;
+        const EcsColumnInfo wrongAlignColumns[] = {wrongAlign};
+        assert(world.GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(wrongAlignColumns, 1)) == kInvalidEcsArchetype);
+        const EcsColumnInfo healthOnly[] = {EcsColumnInfoOf<Health>()};
+        const EcsArchetypeId healthTag0 = world.GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(healthOnly, 1), 0);
+        assert(healthTag0 != kInvalidEcsArchetype);
+        EcsColumnInfo shrunk = EcsColumnInfoOf<Health>();
+        shrunk.Size = 1;
+        const EcsColumnInfo shrunkColumns[] = {shrunk};
+        assert(world.GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(shrunkColumns, 1), 1) == kInvalidEcsArchetype);
+        const EcsColumnInfo shrunkWithOther[] = {EcsColumnInfoOf<Position>(), shrunk};
+        assert(world.GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(shrunkWithOther, 2), 0) == kInvalidEcsArchetype);
+        // 登録されていない型の番号は拒む
+        const EcsColumnInfo unregistered[] = {EcsColumnInfo{0x7FFFFFF0u, 4, 4}};
+        assert(world.GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(unregistered, 1)) == kInvalidEcsArchetype);
+        assert(world.GetArchetypeCount() == 3);
     }
 
     void TestChunkLayout()
@@ -244,6 +263,70 @@ namespace
         assert(world.GetChunkPoolBytes() == poolBytes);
     }
 
+    void TestReleasedBlocksAreReusedAfterSlabExhausted()
+    {
+        EcsWorld world;
+        const EcsArchetypeId archetype = MakeMovingArchetype(world);
+        const uint32_t capacity = world.GetArchetypeChunkCapacity(archetype);
+        const size_t initialPoolBytes = world.GetChunkPoolBytes();
+
+        // 最初のスラブ（16 ブロック）を使い切って、プールを広げさせる
+        constexpr uint32_t kChunks = 40;
+        world.CreateEntities(archetype, capacity * kChunks);
+        assert(world.GetChunkCount() == kChunks);
+        const size_t grownPoolBytes = world.GetChunkPoolBytes();
+        assert(grownPoolBytes > initialPoolBytes);
+
+        Container::VariableArray<EcsChunk *> before;
+        for (EcsChunk *chunk : world.GetArchetypeChunks(archetype))
+        {
+            before.push_back(chunk);
+        }
+
+        // 末尾の 10 チャンクを 1 つずつ空にして解放し、その後の作成が解放したブロックだけを使うことを確かめる
+        constexpr uint32_t kReleased = 10;
+        for (uint32_t i = 0; i < kReleased * capacity; ++i)
+        {
+            const auto chunks = world.GetArchetypeChunks(archetype);
+            EcsChunk *last = chunks[chunks.size() - 1];
+            assert(world.DestroyEntity(last->GetEntities()[last->Count - 1]));
+        }
+        assert(world.GetChunkCount() == kChunks - kReleased);
+
+        world.CreateEntities(archetype, capacity * kReleased);
+        assert(world.GetChunkCount() == kChunks);
+        assert(world.GetChunkPoolBytes() == grownPoolBytes);
+        const auto after = world.GetArchetypeChunks(archetype);
+        for (size_t i = 0; i < after.size(); ++i)
+        {
+            bool bFound = false;
+            for (EcsChunk *chunk : before)
+            {
+                bFound = bFound || chunk == after[i];
+            }
+            assert(bFound);
+        }
+        // 同じブロックを二重に渡していない
+        for (size_t i = 0; i < after.size(); ++i)
+        {
+            for (size_t j = i + 1; j < after.size(); ++j)
+            {
+                assert(after[i] != after[j]);
+            }
+        }
+
+        // 全部消してから作り直しても、プールは増えない
+        while (world.GetArchetypeRowCount(archetype) > 0)
+        {
+            const auto chunks = world.GetArchetypeChunks(archetype);
+            EcsChunk *last = chunks[chunks.size() - 1];
+            assert(world.DestroyEntity(last->GetEntities()[last->Count - 1]));
+        }
+        assert(world.GetChunkCount() == 0);
+        world.CreateEntities(archetype, capacity * kChunks);
+        assert(world.GetChunkCount() == kChunks && world.GetChunkPoolBytes() == grownPoolBytes);
+    }
+
     void TestMillionRowsReturnToZero()
     {
         EcsWorld world;
@@ -292,7 +375,8 @@ int main()
     TestGenerationRejectsStaleIdentifiers();
     TestSwapRemovalKeepsValues();
     TestChunkReleaseAndReuse();
+    TestReleasedBlocksAreReusedAfterSlabExhausted();
     TestMillionRowsReturnToZero();
-    std::cout << "EcsStorageTest passed\n";
+    std::cout << "EcsStorageTest 合格\n";
     return 0;
 }

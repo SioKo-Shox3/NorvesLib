@@ -61,7 +61,8 @@ namespace NorvesLib::Core::Ecs
          * @brief 列の組とタグから、アーキタイプを取得する（無ければ作る）
          * @param columns 列の記述。順序は問わない（型の番号の昇順に並べて照合する）
          * @param tags タグのビット（列を持たない印。アーキタイプの同一性に含む）
-         * @return アーキタイプの番号。同じ型が重複する・行が 16 KB に収まらない・型の大きさが食い違うときは kInvalidEcsArchetype
+         * @return アーキタイプの番号。同じ型が重複する・行が 16 KB に収まらない・
+         *         型が TypeRegistry に無い、または大きさ・配置が登録と食い違うときは kInvalidEcsArchetype（タグや列の組が違っても毎回照合する）
          */
         EcsArchetypeId GetOrCreateArchetype(Container::Span<const EcsColumnInfo> columns, uint64_t tags = 0);
 

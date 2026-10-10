@@ -26,6 +26,13 @@ namespace NorvesLib::Core::Ecs
         {
             return a.Type == b.Type && a.Size == b.Size && a.Align == b.Align;
         }
+
+        /// 記述の大きさと配置が、型の登録（TypeRegistry）と一致するか。タグや列の組に関わらず、毎回照合する。
+        bool MatchesRegisteredType(const EcsColumnInfo &info)
+        {
+            const TypeInfo *registered = TypeRegistry::Get().Find(info.Type);
+            return registered != nullptr && registered->Size == info.Size && registered->Alignment == info.Align;
+        }
     }
 
     EcsWorld::EcsWorld()
@@ -42,7 +49,7 @@ namespace NorvesLib::Core::Ecs
                   { return a.Type < b.Type; });
         for (size_t i = 0; i < sorted.size(); ++i)
         {
-            if (!IsValidColumn(sorted[i]) || (i > 0 && sorted[i].Type == sorted[i - 1].Type))
+            if (!IsValidColumn(sorted[i]) || !MatchesRegisteredType(sorted[i]) || (i > 0 && sorted[i].Type == sorted[i - 1].Type))
             {
                 return kInvalidEcsArchetype;
             }
