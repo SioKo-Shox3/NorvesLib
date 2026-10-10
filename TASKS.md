@@ -8,7 +8,7 @@
 
 2026-10-10 仮想化ジオメトリの規模の引き上げ（ユーザー決定）: バナナ 100万本（と一般のゲームの負荷 mega-stress）で GPU・ゲームスレッド・レンダースレッドの median と p95 が 16.6 ms 以下（RTX 4080・1920×1080・RelWithDebInfo）を `SCN-MEGA-` の項目で、荒野より先に進める。バナナ専用ではなく、席（GPU Scene）・変化の通知・差分の転送・ストリーミングで実際のゲームにも効く形にする。設計は計画者の計画を GPT（Sol）が 2 周批評したものを親がまとめた（計画書 `Docs/Plans/SceneLauncherPlan.md` の「仮想化ジオメトリの規模の引き上げ」）。準備の項目は新旧の一致（mismatch=0）が取れるまで切替へ進まない。切替の項目は旧経路へ戻す引数を残す。
 
-2026-10-10 計測の方針（ユーザー指示「毎変更ごとにビルドしてゲームをつけて計測していたら終わらない。計測が必要なタイミングを考える」）: 実装の項目の検証は、RelWithDebInfo のビルド 1 回と、正しさを見る短い起動 1〜2 本（新旧の一致・溢れ・送った量などの検査のカウンタ。0 でなければ ERROR を出して撮影が落ちる）だけにし、GPU 時間（`-GpuTimingFrames`）は測らない。性能の数値と Debug の検証レイヤーは節目の計測の項目（`SCN-MEGA-MEASURE-*`・`SCN-MEGA-SCALE-300K`・`SCN-MEGA-ACCEPT-1M`。調べる段の PROBE と SETUP-LINEAR は計測そのものが目的）でまとめて見る。反復の中でも、小さな変更のたびにビルドしてゲームを起動しない。コードを読んで考え、変更をまとめてから起動 1 回で確かめる。CPU のテストで確かめられる契約はゲームを起動せずに確かめる。 計測の項目の verify は、反復の中で 1 回撮った結果を `Scripts/CheckCaptureMetrics.py`（結果が揃い、失敗・溢れが無く、計測の値があり、いまの Game.exe より後に撮られたこと）で検査し、ランナーは重い撮影をやり直さない。1 回の撮影が 10 分を超える規模（古い経路での 10万本以上など）は、ECS の大量の軽い実体が入るまで測らない。 2026-10-10 追記（ユーザー指摘「改善が確定している土台で測って意味があるのか」）: 作り変えが決まっている経路の改修前の計測はしない。節目の計測の合否は目標の絶対値（16.6 ms などの閾値）で決め、改修前の値との比は合否に使わない。改修の前に測るのは、結果で設計や作るかどうかが変わる診断（PROBE-ROOT・PROBE-100K のような）だけ。正しさの比較（描いたクラスタ数・画像の一致）は別で、これは続ける。ECS 前の mega-stress の値は、既に撮った分を PROGRESS に参考値として残した（そのために撮り直さない）。
+2026-10-10 計測の方針（ユーザー指示「毎変更ごとにビルドしてゲームをつけて計測していたら終わらない。計測が必要なタイミングを考える」）: 実装の項目の検証は、RelWithDebInfo のビルド 1 回と、正しさを見る短い起動 1〜2 本（新旧の一致・溢れ・送った量などの検査のカウンタ。0 でなければ ERROR を出して撮影が落ちる）だけにし、GPU 時間（`-GpuTimingFrames`）は測らない。性能の数値と Debug の検証レイヤーは節目の計測の項目（`SCN-MEGA-MEASURE-*`・`SCN-MEGA-SCALE-300K`・`SCN-MEGA-ACCEPT-1M`。調べる段の PROBE と SETUP-LINEAR は計測そのものが目的）でまとめて見る。反復の中でも、小さな変更のたびにビルドしてゲームを起動しない。コードを読んで考え、変更をまとめてから起動 1 回で確かめる。CPU のテストで確かめられる契約はゲームを起動せずに確かめる。 計測の項目の verify は、反復の中で 1 回撮った結果を `Scripts/CheckCaptureMetrics.py`（結果が揃い、失敗・溢れが無く、計測の値があり、いまの Game.exe より後に撮られたこと）で検査し、ランナーは重い撮影をやり直さない。1 回の撮影が 10 分を超える規模（古い経路での 10万本以上など）は、ECS の大量の軽い実体が入るまで測らない。 2026-10-10 追記（ユーザー指摘「改善が確定している土台で測って意味があるのか」）: 作り変えが決まっている経路の改修前の計測はしない。節目の計測の合否は目標の絶対値（16.6 ms などの閾値）で決め、改修前の値との比は合否に使わない。改修の前に測るのは、結果で設計や作るかどうかが変わる診断（PROBE-ROOT・PROBE-100K のような）だけ。正しさの比較（描いたクラスタ数・画像の一致）は別で、これは続ける。ECS 前の mega-stress の値は、既に撮った分を PROGRESS に参考値として残した（そのために撮り直さない）。 2026-10-10 追記（ユーザー指摘「全体の負荷だけ測っても効果が分からない。GPU はパスごと、CPU は関数単位の内訳が要る」）: 節目の計測の項目は、問いと、それに答える区間（CPU）・パス（GPU）の名前を done-when に書き、その値で判断する。全体の gt・rt・GPU だけで合否を決めるのは受入れ（SCALE-300K・ACCEPT-1M）だけ。GPU のパスごとの時間は撮影が既に出している。CPU は ECS のスケジューラが系ごとの区間を自動で記録する（SCN-ECS-SCHEDULER）。区間の名前の決まり: 段 `Ecs.Stage.<段>`、系 `Ecs.Sys.<系>`、同期点 `Ecs.Sync.<段>`、同期点の中のコマンドの適用・破棄の回収・変換の伝播は `Ecs.Sync.Commands`・`Ecs.Sync.Cleanup`・`Ecs.Sync.TransformPropagate`、描画の変換の系は `Ecs.Sys.RenderTransform`、SceneQuery の更新は `Ecs.Sys.SceneQuery`、RenderGraph のパスの記録は `RG.Record.<パス>`。系や段を作る項目はこの名前を使う。タイムラインのビューア（Insights のようなもの）は今は作らない。
 
 2026-10-10 ECS の決定（ユーザー決定）: Entity はオブジェクト管理の器として残し、更新（Tick・変換・描画への同期・ゲームロジック）のデータと処理を ECS 型（自前のアーキタイプ型、値の実体は列に置き Object の読み書きはそこを通す、大量の物は Object を持たない軽い実体、ロジックはすべてシステムへ、ジョブで並列）に作り変え、レンダースレッドもコマンドの並列記録まで並列化する。100万本の改修に組み込む。設計の正本は `Docs/Plans/EcsUpdatePathPlan.md`（計画者の計画を GPT が 2 周批評し、親が追記した。項目の notes の「§」はこの文書の節）。`SCN-ECS-` の項目と、ECS 前提で置き換えた `SCN-MEGA-` の項目を、計画書の §2 の順に並べた。ワールドの全走査を直す旧案（WORLD-TICK-CACHE・WORLD-TRANSFORM-NOTIFY・WORLD-TRANSFORM-INTERP・WORLD-RENDER-DIRTY・INSTANCE-BATCH）は ECS の項目に置き換えて消した。戻すときは、戻す項目とそれに依存する後続の項目を新しい順に revert する（単独では戻さない）。
 
@@ -277,10 +277,10 @@
 
 ## SCN-ECS-SCHEDULER: 段・波・順序付きの GameThread 系のスケジューラを足す
 - status: todo
-- done-when: 設計 1.7 の SystemDesc・波・順序付きの GameThread 系・参加の番号が入る。`EcsSchedulerTest` が次を確かめる: 衝突するシステムが同時に走らない、波の仕事が全システムのチャンクにまたがる、GameThreadOnly が呼び手のスレッドで単独で走る、RenderThreadOnly と循環する After を拒む、段の中の構造変更が同期点まで見えない、同じフレームに足した行が次の Tick まで呼ばれない、順序付きの系の順が TickDispatchLess と一致する。
+- done-when: 設計 1.7 の SystemDesc・波・順序付きの GameThread 系・参加の番号が入る。`EcsSchedulerTest` が次を確かめる: 衝突するシステムが同時に走らない、波の仕事が全システムのチャンクにまたがる、GameThreadOnly が呼び手のスレッドで単独で走る、RenderThreadOnly と循環する After を拒む、段の中の構造変更が同期点まで見えない、同じフレームに足した行が次の Tick まで呼ばれない、順序付きの系の順が TickDispatchLess と一致する。統計が有効な構成（Debug・RelWithDebInfo）では、スケジューラが段・系・同期点の実行を、冒頭の方針の名前（`Ecs.Stage.<段>`・`Ecs.Sys.<系>`・`Ecs.Sync.<段>`）で `Debug/Stats.h` の区間としてトレースに記録する。ワーカーで走ったチャンクの仕事は、そのワーカーのスレッドの番号で系の名前の区間に入る。名前は系の登録時に決めた文字列を使い、フレームごとに文字列を作らない。統計が無効な構成（Release）では何も記録しない。`EcsSchedulerTest` が、区間の名前・入れ子・ワーカーのスレッドの番号が記録されることを確かめる。
 - verify: `cmake --build build --config Debug --target EntityTreeTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(EcsSchedulerTest|TickDispatchTest)$" --no-tests=error --output-on-failure --timeout 180`
-- paths: Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/CMakeLists.txt, Test/Core/Object/CMakeLists.txt, Test/Core/Object/EcsSchedulerTest.cpp, TASKS.md, PROGRESS.md
+- paths: Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Debug/Stats.h, Library/Core/Private/Debug, Library/Core/CMakeLists.txt, Test/Core/Object/CMakeLists.txt, Test/Core/Object/EcsSchedulerTest.cpp, TASKS.md, PROGRESS.md
 - notes: 親の追記（GPT 2 周目）: 更新への参加の番号は「次の収集」の番号とし、通常の Tick と単独で回る `DispatchFixedTick`（World.cpp 1703 行付近）の両方で進める。同じフレームの複数の固定ステップでは番号を共有する。
 
 ## SCN-ECS-WORLD-SCHEDULE: World の更新を段で回す（中身は今の処理のまま）
@@ -292,6 +292,16 @@
 - paths: Library/Core/Public/Object/World.h, Library/Core/Private/Object/World.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
 - notes: 親の追記（GPT 2 周目）: 更新への参加の番号は「次の収集」の番号とし、通常の Tick と単独で回る `DispatchFixedTick`（World.cpp 1703 行付近）の両方で進める。同じフレームの複数の固定ステップでは番号を共有する。
 
+
+
+## SCN-ECS-SCOPE-METRICS: 撮影が CPU の区間と GPU のパスの値を名前ごとに出し、名前で検査できるようにする
+- status: todo
+- done-when: `CaptureScene.ps1` の計測（`-GpuTimingFrames`）が、トレースの全部の区間について、名前ごとのフレームあたりの合計（全スレッド）の median・p95・max と、区間が出たスレッドの数を metrics.json の `cpu_scope_ms` に書く（今の上位 15 だけをやめる）。名前の先頭 2 つの部分ごとの合計（`Ecs.Stage.*`・`Ecs.Sys.*`・`Ecs.Sync.*`・`RG.Record.*`）も書く。GPU のパスは今の median・p95・max を `gpu_pass_ms` に全部書く。`CheckCaptureMetrics.py` に `--require-scope <名前>`・`--require-pass <名前>`（無ければ失敗）と `--max-scope-median-ms <名前>=<ms>`・`--max-scope-p95-ms`・`--max-pass-median-ms`・`--max-pass-p95-ms`（繰り返し可）を足す。2000 個の短い計測で `Ecs.Stage.*` と各段の区間が出る。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 120 -GameArgs stress-entities=2000 -OutDir .harness/runs/scene-capture/SCN-ECS-SCOPE-METRICS`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-SCOPE-METRICS --views overview --timing --min-frames 120 --require-scope Ecs.Stage.* --require-scope Ecs.Sync.* --require-pass MegaGeometry`
+- verify: `python -c "import subprocess,sys; r=subprocess.run([sys.executable,'Scripts/CheckCaptureMetrics.py','.harness/runs/scene-capture/SCN-ECS-SCOPE-METRICS','--views','overview','--timing','--require-scope','Ecs.Sys.NoSuchSystem']); sys.exit(0 if r.returncode==1 else 1)"`
+- paths: Scripts/CaptureScene.ps1, Scripts/CheckCaptureMetrics.py, TASKS.md, PROGRESS.md
+- notes: 2026-10-10 親が足した（ユーザー指摘: 全体の負荷だけでは効果が分からない。CPU は関数単位の内訳が要る）。区間の記録はスケジューラ（SCN-ECS-SCHEDULER）と World の段（SCN-ECS-WORLD-SCHEDULE）が入れる。この項目はスクリプトだけを変える。1 本目の verify の撮影は短い（2000 個・120 フレーム）。
 ## SCN-ECS-CLEANUP-LIST: 破棄の回収を、破棄予約の一覧だけにする
 - status: todo
 - done-when: `MarkForDestroy`・`Object::Destroy`・Component の破棄予約を World の一覧に積み、`CleanupDestroyedObjects` は一覧だけを処理する（World.cpp:1781-1828 の全木の 2 回の走査をやめる）。検査 `WORLD_CLEANUP`（全木を走査して見つけた予約と一覧が一致）が pass する。破棄の契約のテストと周回が pass する。
@@ -520,8 +530,8 @@
 
 ## SCN-MEGA-MEASURE-CPU: 節目の計測: ECS 化した CPU（ワールド・同期・ロジック）の効果を測る
 - status: todo
-- done-when: - 測る負荷: 5万個の静止・1% 移動・1% 移動 + 64 m 区画と、バナナ 1万本 overview・10万本 horizon。 - 測る値: gt・rt・GPU の median と p95、スコープの上位。PROGRESS の表に書く（合否は下の閾値で決め、改修前の値は撮らない）。 - 合格の条件: - 5万個の静止で、ゲームスレッドの段の合計 ≤ 2 ms（変換の伝播・描画の変換・RenderSync・SceneQuery・cleanup はそれぞれ ≤ 0.1 ms）。 - 1% 移動での増分が「変わった行 + 影響する子孫 + 補間の部分木」の数に比例する（数をログに出し、比を表に書く）。 - 10万本と 1万本の gt の差 ≤ 0.5 ms。 - 届かないスコープは `SCN-MEGA-FIX-<名前>` として足す。Debug の起動画面で検証レイヤーのエラーが 0。
-- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static --timing --min-frames 300 --max-gt-p95-ms 16.6`
+- done-when: - 測る負荷: 5万個の静止・1% 移動・1% 移動 + 64 m 区画と、バナナ 1万本 overview・10万本 horizon。 - 問い: ECS 化した段・系・同期点のそれぞれが、本数と変化の数に対してどれだけかかり、並列の系がワーカーに広がっているか。 - 測る値: 段・系・同期点の区間（冒頭の方針の名前）ごとの median と p95、並列の系の区間が出たスレッドの数。全体の gt・rt・GPU は添える。PROGRESS の表に書く（合否は下の閾値で決め、改修前の値は撮らない）。 - 合格の条件: - 5万個の静止で、ゲームスレッドの段の合計 ≤ 2 ms（変換の伝播・描画の変換・RenderSync・SceneQuery・cleanup はそれぞれ ≤ 0.1 ms）。 - 1% 移動での増分が「変わった行 + 影響する子孫 + 補間の部分木」の数に比例する（数をログに出し、比を表に書く）。 - 10万本と 1万本の gt の差 ≤ 0.5 ms。 - 届かないスコープは `SCN-MEGA-FIX-<名前>` として足す。Debug の起動画面で検証レイヤーのエラーが 0。
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static --timing --min-frames 300 --max-gt-p95-ms 16.6 --require-scope Ecs.Stage.* --require-scope Ecs.Sync.TransformPropagate --require-scope Ecs.Sys.RenderTransform --require-scope Ecs.Stage.RenderSync --require-scope Ecs.Sys.SceneQuery --require-scope Ecs.Sync.Cleanup`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-CPU-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
 - notes: 計測だけ。反復の中で 1 回撮る: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static`（他の負荷も同じ形で、出力先だけ変える）
@@ -634,7 +644,7 @@
 
 ## SCN-ECS-RT-GRAPH: RenderGraph をパスの区間ごとに記録できるようにする
 - status: todo
-- done-when: 記録の方針（既定は Serial）と区間ごとの記録（区間ごとの context・保留コマンド・リスト、RT-PLAN の計画を使う、提出はグラフの順）が入る。`RenderGraphParallelRecordTest` が、偽のリストで次を確かめる: 区間の分け方、バリアが入る区間、Serial だけのグラフが今と同じ 1 本の記録になる。どのパスもまだ Parallel を宣言しない。
+- done-when: 記録の方針（既定は Serial）と区間ごとの記録（区間ごとの context・保留コマンド・リスト、RT-PLAN の計画を使う、提出はグラフの順）が入る。`RenderGraphParallelRecordTest` が、偽のリストで次を確かめる: 区間の分け方、バリアが入る区間、Serial だけのグラフが今と同じ 1 本の記録になる。どのパスもまだ Parallel を宣言しない。各パスの記録（Execute）を、記録したスレッドの番号で `RG.Record.<パス>` の区間として残す（Serial でも区間ごとの記録でも。名前はパスの登録時の文字列）。
 - verify: `cmake --build build --config Debug --target RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(RenderGraphParallelRecordTest|RenderGraphParallelPlanTest)$" --no-tests=error --output-on-failure --timeout 180`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-GRAPH`
@@ -649,8 +659,8 @@
 
 ## SCN-ECS-MEASURE-RT: 節目の計測: 並列の記録の効果と安全を測る
 - status: todo
-- done-when: バナナ 1万本 overview と mega-stress 5万個で、on と off の rt の median と p95、`RenderGraph.Execute`、GPU、ワーカーの統計（JobSystem.h:133）を PROGRESS の表に書く。合格は、on の rt の p95 が off 以下で、Debug の起動画面（on）で検証レイヤーのエラーが 0（Threading を含む）。外れたら off を既定にし、`SCN-ECS-FIX-<名前>` を足す。
-- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-MEASURE-RT/on --timing --min-frames 300`
+- done-when: バナナ 1万本 overview と mega-stress 5万個で、on と off の rt の median と p95、`RenderGraph.Execute`、GPU、ワーカーの統計（JobSystem.h:133）、`RG.Record.*` の区間ごとの時間と記録したスレッドの数を PROGRESS の表に書く。合格は、on の rt の p95 が off 以下で、Debug の起動画面（on）で検証レイヤーのエラーが 0（Threading を含む）。外れたら off を既定にし、`SCN-ECS-FIX-<名前>` を足す。
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-MEASURE-RT/on --timing --min-frames 300 --require-scope RG.Record.*`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -OutDir .harness/runs/startup-capture/SCN-ECS-MEASURE-RT-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
 - notes: 計測だけ。反復の中で on と off を撮る（`CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000[,render-parallel-record=off] -OutDir .harness/runs/scene-capture/SCN-ECS-MEASURE-RT/<on|off>`）。
