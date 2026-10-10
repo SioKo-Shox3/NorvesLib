@@ -1008,3 +1008,7 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - テスト: `EcsMoveTest`（EntityTreeTest の束、ctest 登録済み）が、移動の前後の値と実体の識別子の保持、初期値あり・なし、列を外して元のアーキタイプの番号へ戻ること、拒否された変更が何も変えないこと、移動元の入れ替え（中ほど・末尾・全部移してチャンク解放）と実体の表・チャンクの実体配列の整合、複数チャンクにまたがる 3 チャンク超の移動と戻し、タグの保持と列 0 本のアーキタイプ、並列の中の未登録の検出（回数・入れ子・登録後は報告なし）を確かめる。
 - 結果: `verify-SCN-ECS-CORE-MOVE-2.txt`（EntityTreeTest のビルド EXIT=0、警告 0 件）、`-3-ctest.txt`（`EcsStorageTest`・`EcsMoveTest` Passed、`100% tests passed`）、`-4-direct.txt`（`EcsMoveTest` 合格。端末の文字コードで化けて記録されている）。`-1.txt` は `[[nodiscard]]` の警告が 1 件あった最初のビルド（テストの `(void)` で解消）。
 - Notes: RelWithDebInfo では `assert` が無効なので、並列の中の未登録の検出は回数（`EcsGetUnregisteredColumnReportCount`）だけが残る。移動のたびに `GetOrCreateArchetype` で行き先を引く（毎回ソートと線形の照合）ので、大量の構造変更で目立てば、アーキタイプごとの「列を足す・外す」の辺のキャッシュを足す。
+
+- 反復 6（評価者の差し戻しへの対応）: 並列の中の未登録の型は、`NORVES_BUILD_DEVELOPMENT` なら `NDEBUG` に依らず stderr へ `ECS_UNREGISTERED_COLUMN ...` を出して `std::abort()` する（`assert` をやめた。RelWithDebInfo でも止まる）。`EcsSetUnregisteredColumnHandler` のハンドラを差した場合は従来どおり数えて戻る。`EcsMoveTest` に、ハンドラなしの既定の動作を別プロセスで確かめるケースを足した（自分自身を `--test=EcsMoveTest --unregistered-column-child` で起動し、終了コードが 0 でないことと出力に `ECS_UNREGISTERED_COLUMN` があることを照合。開発ビルドのみ）。
+- 結果: `verify-SCN-ECS-CORE-MOVE-6.txt`（EntityTreeTest のビルド EXIT=0、警告・エラー 0 件）、`-6-ctest.txt`（`EcsStorageTest`・`EcsMoveTest` Passed、`100% tests passed`）、`-6-child.txt`（子を直接起動: 終了コード 3、`ECS_UNREGISTERED_COLUMN` を出力）。
+- Notes: 上の反復 5 までの Notes の「RelWithDebInfo では assert が無効で回数だけが残る」は、この反復で解消した。

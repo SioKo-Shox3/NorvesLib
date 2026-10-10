@@ -1,6 +1,8 @@
 ﻿#include "Ecs/EcsTypes.h"
 
 #include <cassert>
+#include <cstdio>
+#include <cstdlib>
 
 namespace NorvesLib::Core::Ecs
 {
@@ -39,7 +41,10 @@ namespace NorvesLib::Core::Ecs
                 return;
             }
 #if NORVES_BUILD_DEVELOPMENT
-            assert(false && "未登録の ECS の列の型を並列の中で使った。EcsRegisterColumn<T>() を並列の前に呼ぶこと");
+            // RelWithDebInfo は NDEBUG で assert が消えるため、assert に頼らず止める
+            std::fputs("ECS_UNREGISTERED_COLUMN 未登録の ECS の列の型を並列の中で使った。EcsRegisterColumn<T>() を並列の前に呼ぶこと\n", stderr);
+            std::fflush(stderr);
+            std::abort();
 #endif
         }
     }

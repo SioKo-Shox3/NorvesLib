@@ -1,9 +1,14 @@
-﻿#include "Ecs/EcsWorld.h"
+﻿#include "Debug/DebugConfig.h"
+#include "Ecs/EcsWorld.h"
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <iostream>
 
 using namespace NorvesLib::Core;
@@ -318,10 +323,54 @@ namespace
         }
         EcsSetUnregisteredColumnHandler(previous);
     }
+
+    constexpr const char *kChildFlag = "--unregistered-column-child";
+    constexpr const char *kChildOutput = "EcsMoveTest_child_output.txt";
+
+    /// 子プロセス側。ハンドラを差さずに、並列の中で未登録の型を使う（既定の動作＝停止を起こす）
+    int RunUnregisteredChild()
+    {
+#ifdef _WIN32
+        // abort のダイアログと障害報告で子が止まらないようにする
+        _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+        EcsParallelScope scope;
+        (void)EcsColumnInfoOf<NeverRegistered>();
+        // ここへ来たら停止しなかった
+        return 0;
+    }
+
+    /// 既定の動作（ハンドラなし）で、開発ビルドでは NDEBUG の有無に依らず停止することを別プロセスで確かめる
+    void TestUnregisteredColumnAbortsByDefault(const char *self)
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        std::remove(kChildOutput);
+        char command[1024];
+        const int length = std::snprintf(command, sizeof(command), "\"\"%s\" --test=EcsMoveTest %s > \"%s\" 2>&1\"",
+                                         self, kChildFlag, kChildOutput);
+        assert(length > 0 && static_cast<size_t>(length) < sizeof(command));
+        const int exitCode = std::system(command);
+        assert(exitCode != 0);
+
+        char text[2048] = {};
+        {
+            std::ifstream stream(kChildOutput, std::ios::binary);
+            stream.read(text, sizeof(text) - 1);
+        }
+        assert(std::strstr(text, "ECS_UNREGISTERED_COLUMN") != nullptr);
+        std::remove(kChildOutput);
+#else
+        (void)self;
+#endif
+    }
 }
 
-int main()
+int main(int argc, char **argv)
 {
+    if (argc > 1 && std::strcmp(argv[1], kChildFlag) == 0)
+    {
+        return RunUnregisteredChild();
+    }
     TestRegisterFixesTheTypeNumber();
     TestAddColumnKeepsValuesAndEntity();
     TestRejectedChangesDoNothing();
@@ -329,6 +378,7 @@ int main()
     TestMoveAcrossManyChunks();
     TestTagsAreKept();
     TestUnregisteredColumnIsDetectedInParallel();
+    TestUnregisteredColumnAbortsByDefault(argv[0]);
     std::cout << "EcsMoveTest 合格\n";
     return 0;
 }
