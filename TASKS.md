@@ -169,10 +169,10 @@
 - notes: 危険地帯（RenderThread）。対象は `MegaGeometryPass.cpp` 581〜599 行付近。鍵（1293 行付近と同じ式）の `Container::UnorderedSet` を 1 回だけ作って引く。
 
 ## SCN-MEGA-PROBE-100K: 10万本（1本1Entity のまま）で、目の高さの視点のインスタンス判定と描く量を測る
-- status: todo
+- status: done
 - done-when: `kMaxBananaCount` を 1,048,576 にし（`MegaBananasMode.h` 49 行付近）、視点 `horizon`（目の高さ 1.7 m から地平線を見る）を足す。10万本 horizon で、BVH の段ごとの GPU 時間（段ごとのタイムスタンプを足す）・描いたクラスタ数・`VisRasterSw1`・gt/rt を記録する。根の球とメッシュの球の半径を開発ログに出す。段 0 が 0.5 ms を超えるかで、範囲（セル）の判定が要るかを PROGRESS に書く。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000 -OutDir .harness/runs/scene-capture/SCN-MEGA-PROBE-100K`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 120 -TimeoutSeconds 2400 -GameArgs banana-count=100000 -OutDir .harness/runs/scene-capture/SCN-MEGA-PROBE-100K`
 - paths: Game/GameModes/MegaBananas, Game/Scenes/SceneCatalog.h, Library/Core/Private/Rendering/MegaGeometryPass.cpp, TASKS.md, PROGRESS.md
 - notes: 計測だけ。CPU は遅くてよい。この項目の結果では止めない（25 ms の打切りは改修後の規模の確認にだけ使う）。
 

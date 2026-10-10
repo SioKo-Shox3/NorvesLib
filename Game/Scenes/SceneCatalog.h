@@ -113,6 +113,8 @@ namespace Game::Scenes
         {"close", SceneViewKind::FreePose, 0.0f, -14.0f, 0.0f, {0.3f, 0.45f, 2.0f}},
         // 床すれすれから、並んだバナナと山を見る視点
         {"low", SceneViewKind::FreePose, 8.0f, 2.0f, 0.0f, {-0.5f, 0.1f, -0.5f}},
+        // 目の高さ（1.7 m）から、敷き詰めたバナナの先の地平線を見る視点。10 万本級の規模で、遠くまで並ぶ本数を見る
+        {"horizon", SceneViewKind::FreePose, 0.0f, 0.0f, 0.0f, {0.0f, 1.7f, -15.0f}},
     };
 
     // 手前の山（原点の前方 3 m）を囲む一周のデモ飛行。位置は山の中心から 6 m の円（高さ 1.6〜2.2 m）を 2.5 秒ごとに

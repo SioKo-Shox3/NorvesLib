@@ -7,7 +7,7 @@
 // MegaGeometry で床いっぱいに敷き詰める。同じバナナの全インスタンスは 1 つの Model（MegaMesh）を共有し、
 // 向きと大きさと位置をばらす（位置はポアソン円盤で、升目の並びは出ない）。手前には中央が盛り上がった塚を 3 つ積む
 // （物理は使わず、下の形の上に初めて触れる高さへ置く）。
-// 本数は --banana-count=<n>（既定 10000）。視点は SceneCatalog.h の kMegaBananasViews（overview・close・low）、
+// 本数は --banana-count=<n>（既定 10000）。視点は SceneCatalog.h の kMegaBananasViews（overview・close・low・horizon）、
 // カメラパスは kMegaBananasPath（P キー・ゲームパッドの Y で再生・停止）。
 // H キーで情報（本数・1 本の三角形数・元の三角形の総数。開発ビルドは MegaGeometry の GPU 時間も）を出し入れする。
 // 資産（生成した GLB・クック済みのメッシュ）が無いときは警告して、バナナ抜きの床だけで続ける。
@@ -46,7 +46,7 @@ namespace Game::GameModes
 
     /// --banana-count の既定値と上限
     inline constexpr uint32_t kDefaultBananaCount = 10000;
-    inline constexpr uint32_t kMaxBananaCount = 65536;
+    inline constexpr uint32_t kMaxBananaCount = 1048576;
 
     /// H キーで情報の表示を出し入れする入力の受け手（キーを消費しない）
     class BananasInfoToggle final : public NorvesLib::Core::Input::IInputController

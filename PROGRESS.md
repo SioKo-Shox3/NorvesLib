@@ -871,3 +871,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 比較: バナナ 1 万本は `SCN-MEGA-BASE` と pass（PSNR 65.35 dB、輝度差 0.0001、`-3.txt`）、起動画面の決定的比較は 3 視点とも pass（輝度差 0、PSNR 100、`-4.txt`）。
 - Notes: ビルド（`-1.txt`）は PowerShell から実行（Git Bash は `/m:1` をパスに変換して失敗する）。3万本の gt は 548 ms と GameThread 側が重い（別の線形処理が残っている可能性。このタスクの範囲外）。
 - 反復 13（評価者の差し戻しへの対応）: 起動画面の比較は `CaptureStartupScene.ps1` の既定の Debug の `Game.exe` を撮るが、直前の Debug は変更前の実装だった（`MegaGeometryPass.obj` が古い）。`cmake --build build --config Debug --target Game -- /m:1` で再ビルドしてから（obj 17:58:40・exe 17:58:49 でソース 17:40:50 より新しい）、起動画面の決定的比較を再実行した。3 視点とも pass（輝度差 0、PSNR 100、不一致画素率は最大 1.1E-05・最大チャネル差 1）。`TASKS.md` の verify に Debug ビルドを足した。証拠: `verify-SCN-MEGA-SETUP-LINEAR-13-debugbuild.txt`（EXIT=0）、`-13-startup.txt`（`result=pass`）。実装コードは変えていない。
+
+### SCN-MEGA-PROBE-100K（2026-10-10、反復 14・run 20261010-132327）
+
+- 変更: `kMaxBananaCount` を 1,048,576 に（`MegaBananasMode.h`）。視点 `horizon`（目の高さ 1.7 m、位置 (0, 1.7, -15)、ヨー・ピッチ 0）を `SceneCatalog.h` の `kMegaBananasViews` に足した。`MegaGeometryPass.cpp` の BVH の段ごとの dispatch に GPU タイムスタンプを足した（`NORVES_ENABLE_STATS` の構成だけ。名前は 1 パス目 `MegaBvhC1S<段>`・`MegaBvhC1Leaf`、2 パス目 `MegaBvhC2S<段>`・`MegaBvhC2Leaf`。段 0 = インスタンスごとの根の判定、Leaf = 葉のクラスタの判定）。開発ビルドの `MegaBananasRoutine.cpp` が、根の球・メッシュの球の半径を `MEGA_BANANAS_SPHERES` でログへ出す。
+- 実走の引数: 10 万本はゲームスレッドが 1 フレーム約 7 秒かかり、指定の `-GpuTimingFrames 300` では 300 秒の既定のタイムアウトに入りきらない（初回の実走は 45 フレームで打切り、`verify-...-2.txt`）。そこで `-GpuTimingFrames 120 -TimeoutSeconds 2400`（窓は 60 フレーム）に替え、`TASKS.md` の verify も同じにした。
+- 10 万本 horizon（RelWithDebInfo、1920x1080、窓 60 フレーム、`verify-SCN-MEGA-PROBE-100K-3.txt`・`-4-stages.txt`）:
+  - 全体: GPU フレーム median 213.7 ms（p95 263.4）、gt median 7,167.6 ms（p95 7,778）、rt median 189.2 ms（p95 233.3）。`RenderGraph.Execute` 135.9 ms、`RecordFrameCommand` 29.5 ms。
+  - 描いたクラスタ数 3,880,187（1 本あたり 38.8）、`VisRasterSw1` 35.75 ms（9.2 ns/クラスタ）、`MegaGeometry` 139.5 ms、`VirtualShadowMapPass` 64.7 ms。draw_dropped 0。
+  - BVH の段（median / p95、ms）: 1 パス目 S0 4.115/7.509・S1 2.220/4.047・S2 2.407/4.406・S3 1.912/5.524・Leaf 26.328/34.238（Cull1 全体 36.56）。2 パス目 S0 4.012/6.989・S1 1.583/3.628・S2 1.408/4.231・S3 1.591/5.112・Leaf 18.846/31.761（Cull2 全体 30.27）。
+  - 球の半径（バナナのローカル、`MEGA_BANANAS_SPHERES`）: 根の節 0.1818、メッシュ全体 0.1032、根のクラスタの最大 0.1800、LOD 用の共通球は無効（0）、BVH の節 564。根の節がメッシュの球より大きいのは、下のクラスタと親の球をすべて包むため。
+  - 他: `bvh_queue_bytes` 1,073,741,824（1 GiB）、`visbuffer_records_mb` 1024、`MEGA_BVH` は 10 万インスタンス・levels=4・葉の容量 49,100,000。
+- **範囲（セル）の判定が要るか: 要る。** 段 0 は 1 パスあたり 4.0〜4.1 ms（2 パス合計 8.1 ms）で、基準の 0.5 ms の約 8 倍。段 0 は 10 万インスタンスの根の判定を全部やり直すため、本数に比例する。さらに段 1〜3 と Leaf を含む BVH の判定は 1 パス目で 36.6 ms、2 パス目で 30.3 ms と、MegaGeometry 全体（139.5 ms）の約 48%。視点の外の本数を、セル単位で先に落とす判定が要る。
+- 補足: ゲームスレッドの 7 秒/フレームは今回の変更によるものではない（変更はログとタイムスタンプだけ）。3 万本で 548 ms だった gt が 10 万本で 7 秒になっており、本数に対して線形より重い。次のタスクの対象の候補。水平線の先に、敷き詰めの端（奥行き約 70 m）の外の床が帯で見える。
+- 証拠（`.harness/runs/20261010-132327/`）: `verify-SCN-MEGA-PROBE-100K-1.txt`（RelWithDebInfo の Game ビルド EXIT=0）、`-2.txt`（300 フレームの初回。300 秒で打切り）、`-3.txt`（実走。pass・EXIT=0）、`-4-stages.txt`（metrics.json からの段ごとの表）。撮影の出力は `scene-capture/SCN-MEGA-PROBE-100K/`（`horizon.png`・`metrics.json`・`horizon.Game.log`）。

@@ -835,6 +835,36 @@ namespace Game::GameModes
             return placed;
         }
 
+#if NORVES_BUILD_DEVELOPMENT
+        /// 根の球（BVH の根の節。段 0 のインスタンス判定が使う）・メッシュ全体の球・根のクラスタの球の最大を、
+        /// ローカル空間の半径でログへ出す。インスタンスの拡大率はかけていない
+        void LogBananaBoundingSpheres(const MegaMeshCreateInfo &createInfo)
+        {
+            float rootNodeRadius = 0.0f;
+            if (!createInfo.GroupBVH.empty())
+            {
+                rootNodeRadius = createInfo.GroupBVH[0].BoundsRadius;
+            }
+            uint32_t topLevel = 0;
+            for (const MeshCluster &cluster : createInfo.Clusters)
+            {
+                topLevel = std::max(topLevel, cluster.LODLevel);
+            }
+            float rootClusterRadius = 0.0f;
+            for (const MeshCluster &cluster : createInfo.Clusters)
+            {
+                if (cluster.LODLevel == topLevel)
+                {
+                    rootClusterRadius = std::max(rootClusterRadius, cluster.Bounds.Radius);
+                }
+            }
+            LOG_INFO_F("MEGA_BANANAS_SPHERES root_node_radius=%.4f mesh_radius=%.4f root_cluster_max_radius=%.4f "
+                       "lod_sphere_radius=%.4f bvh_nodes=%u",
+                       rootNodeRadius, createInfo.TotalBounds.Radius, rootClusterRadius, createInfo.LODBounds.Radius,
+                       static_cast<uint32_t>(createInfo.GroupBVH.size()));
+        }
+#endif
+
         /// バナナの材質がそろったら MegaMesh を作り、モデルとして登録して、バナナを置く
         void FinishBananaLoad(GameModeContext &ctx, MegaBananasData &data)
         {
@@ -864,6 +894,9 @@ namespace Game::GameModes
                 createInfo.Material.ORMTexture = material.ORMTexture;
                 createInfo.Material.bNormalTwoChannel = material.bNormalTwoChannel;
                 createInfo.DebugName = "Banana";
+#if NORVES_BUILD_DEVELOPMENT
+                LogBananaBoundingSpheres(createInfo);
+#endif
                 megaMesh = megaGeometry.CreateMegaMesh(createInfo);
                 if (megaMesh.IsValid())
                 {

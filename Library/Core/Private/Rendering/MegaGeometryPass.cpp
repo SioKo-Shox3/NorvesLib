@@ -37,6 +37,7 @@
 #include "Text/IdentityPool.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -1994,6 +1995,21 @@ namespace NorvesLib::Core::Rendering
                     {
                         continue;
                     }
+
+#if NORVES_ENABLE_STATS
+                    // 段ごとの GPU 時間（段 0 = インスタンスごとの根の判定。最後の段 = 葉のクラスタの判定）。
+                    // 名前は 1 パス目が MegaBvhC1S<段>、2 パス目が MegaBvhC2S<段>、葉のクラスタの段は S<段> の代わりに Leaf
+                    char stageTimestampName[32] = {};
+                    if (bClusterStage)
+                    {
+                        std::snprintf(stageTimestampName, sizeof(stageTimestampName), "MegaBvhC%uLeaf", passIndex + 1u);
+                    }
+                    else
+                    {
+                        std::snprintf(stageTimestampName, sizeof(stageTimestampName), "MegaBvhC%uS%u", passIndex + 1u, stage);
+                    }
+                    ScopedGpuTimestamp stageTimestamp(cmdList, stageTimestampName);
+#endif
 
                     CullUniformData stageUniform = uniformData;
                     stageUniform.BvhStage = bClusterStage ? BvhStageClusters : stage;
