@@ -269,7 +269,7 @@
 - paths: Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/CMakeLists.txt, Test/Core/Object/CMakeLists.txt, Test/Core/Object/EcsCommandTest.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-JOBS: JobSystem に、バッチ専用のカーソルで働く ParallelFor を足す
-- status: todo
+- status: done
 - done-when: 設計 1.7 の ParallelFor が入る。`JobParallelForTest`（JobSystemShutdownTest の束）が次を確かめる: 全ワーカーを長いタスクで塞いでも呼び手だけで終わる、各番号がちょうど 1 回走る、返った後に起きた補助が関数を呼ばない、StopAcceptingTasks の後でも終わる、入れ子、例外の投げ直し。既存の JobSystemShutdownTest も通る。
 - verify: `cmake --build build --config Debug --target JobSystemShutdownTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(JobParallelForTest|JobSystemShutdownTest)$" --no-tests=error --output-on-failure --timeout 180`

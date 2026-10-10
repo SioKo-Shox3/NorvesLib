@@ -1046,3 +1046,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 反復 10（評価者の差し戻しへの対応）: `Clear()` 後に旧札が新しい予約に作用した（Buffer・Index が同じになるため）。`EcsCreateTicket` に `Generation` を足し、バッファの世代（`m_Generation`）を `Clear()` ごとに進め、`CancelCreate`・`ResolveCreate`・コマンドを積むときの対象解決（`OwnsTicket`）で照合するようにした。Clear 前の札は取り消せず、札宛てのコマンドは積んでも再生で捨てられ（`DiscardedStale`）、新予約の再生後も旧札では解決できない。`EcsCommandTest` に `TestTicketFromBeforeClearDoesNotAffectNewReservation` を足した。
 - 結果: `verify-SCN-ECS-CORE-COMMANDS-10a.txt`（EntityTreeTest のビルド exit=0）、`-10b.txt`（`EcsStorageTest`・`EcsChangeTest`・`EcsCommandTest` Passed、`100% tests passed`）。
 - Notes: Git Bash から verify を走らせるときは `MSYS_NO_PATHCONV=1` を付ければ `/m:1` が通る。
+
+### SCN-ECS-JOBS（2026-10-11、反復 11・run 20261010-223034）
+
+- 変更: `JobSystem::ParallelFor(count, grain, fn)`（`fn(size_t index)`）を足した（`JobSystem.h/.cpp`。まだどこからも使わない）。1 回の呼び出しごとに共有の文脈（`TSharedPtr`。原子のカーソル・終わった数・最初の例外・呼び手の関数への参照）を作り、呼び手と補助タスクはこのカーソルからだけ区間（grain 個）を CAS で取る。他のキューの仕事は手伝わない。補助は `min(ワーカー数, 区間数 - 1)` 個を HIGH で `SubmitTask` し、拒まれたら以降は出さず呼び手が残りを行う。呼び手はカーソルが尽きた後、他のスレッドが取った区間の終わりを専用の条件変数で待つ（`WaitForAll` は使わない）。カーソルは Count を超えて進まないので、返った後に起きた補助は関数に触れずに抜ける。例外は区間ごとに捕まえて最初の 1 件を保持し、以後まだ始めていない区間は呼ばずに数えだけ進め、全部の終わりを待ってから呼び手で投げ直す。入れ子（`thread_local` の目印）と区間が 1 つだけの場合は、補助を出さずその場で番号の順に直列で実行する（例外はそのまま伝わる）。
+- テスト: `JobParallelForTest`（JobSystemShutdownTest の束、ctest 登録済み。ワークスチーリングと単純の両モード）が、個数・区間幅の組ごとに各番号がちょうど 1 回、全ワーカーを長いタスクで塞いでも呼び手のスレッドだけで終わり補助の数がワーカー数以内、返った後に塞ぎを解いて起きた補助が関数を呼ばない、`StopAcceptingTasks` の後でも呼び手だけで終わる、入れ子が同じスレッドで昇順に直列（3 重も）、ワーカーのタスクの中から呼べる、例外の投げ直し（走っている分の終わりを待つ・返った後に何も走らない・全番号が投げても 1 件・`std::exception` でない型・直列の経路・塞がれた呼び手のみ・投げた後も再利用できる）を確かめる。検査は NDEBUG に依らず止まる自前の関数。
+- 結果: `verify-SCN-ECS-JOBS-1.txt`（JobSystemShutdownTest のビルド EXIT=0、`JobSystem.cpp`・`JobParallelForTest.cpp` に警告なし）、`-2.txt`（`JobParallelForTest`・`JobSystemShutdownTest` Passed、`100% tests passed`）、`-3-repeat.txt`（直接 40 回、失敗 0）。
+- Notes: 補助は 1 区間も取れずに終わることがある（呼び手が先に尽くした場合）。fn の中で `WaitForAll` のようにプール全体を待つ呼び出しはしない前提。`ParallelFor` が使う補助は有限タスク（`SubmitTask`）なので `DrainAcceptedFiniteTasks` の対象になるが、塞がれたキューで待たされるのは補助の後始末だけで、呼び手の完了には影響しない。

@@ -7,6 +7,7 @@ find_package(Threads REQUIRED)
 norves_add_test_bundle(JobSystemShutdownTest
     FOLDER "Test/Thread"
     MEMBER JobSystemShutdownTest JobSystemShutdownTest.cpp
+    MEMBER JobParallelForTest JobParallelForTest.cpp
     MEMBER RingBufferTest RingBufferTest.cpp
     MEMBER ThreadLocalStorageTest ThreadLocalStorageTest.cpp
 )
@@ -17,6 +18,7 @@ target_include_directories(JobSystemShutdownTest PRIVATE
 
 # テストの登録（CTestを使用する場合）
 include(CTest)
+add_test(NAME JobParallelForTest COMMAND JobSystemShutdownTest --test=JobParallelForTest)
 add_test(NAME RingBufferTest COMMAND JobSystemShutdownTest --test=RingBufferTest)
 add_test(NAME JobSystemShutdownTest COMMAND JobSystemShutdownTest)
 add_test(NAME ThreadLocalStorageTest COMMAND JobSystemShutdownTest --test=ThreadLocalStorageTest)

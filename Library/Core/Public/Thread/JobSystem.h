@@ -96,6 +96,27 @@ namespace NorvesLib::Thread
         void WaitForAll();
 
         /**
+         * @brief ParallelFor が各番号に対して呼ぶ関数の型
+         */
+        using ParallelForFunction = std::function<void(size_t)>;
+
+        /**
+         * @brief 0 以上 count 未満の番号それぞれに fn を 1 回ずつ呼び、全部が終わってから返る
+         * @param count 番号の個数
+         * @param grain 1 回の取り出しで割り当てる番号の個数（0 は 1 として扱う）
+         * @param fn 各番号に対して呼ぶ関数（複数のスレッドから同時に呼ばれる）
+         *
+         * バッチごとに専用のカーソルを持ち、呼び手と補助タスクはこのカーソルからだけ仕事を取る。
+         * 他のキューの仕事は手伝わないので、ワーカーが長いタスクで塞がっていても呼び手だけで最後まで進む。
+         * 補助タスクは最大でワーカーの数だけ HIGH 優先度で積み、返った後に起きた補助はカーソルが尽きているので fn に触れない。
+         * 提出を拒まれた場合（StopAcceptingTasks の後など）は呼び手が全部を行う。
+         * fn が例外を投げたら、まだ始めていない番号は呼ばず、走っている分の終わりを待ってから最初の例外を呼び手で投げ直す。
+         * ParallelFor の中（fn の中）から呼ばれた場合は、その場で番号の順に直列で実行する。
+         * WaitForAll は使わないので、他の仕事の有無に待ちが左右されない。
+         */
+        void ParallelFor(size_t count, size_t grain, const ParallelForFunction &fn);
+
+        /**
          * @brief タスクキューに存在するタスク数を取得
          * @return 現在のタスク数
          */

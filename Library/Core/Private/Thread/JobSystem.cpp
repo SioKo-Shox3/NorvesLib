@@ -5,6 +5,8 @@
 #include <random>
 #include <chrono>
 #include <thread>
+#include <exception>
+#include <functional>
 
 namespace NorvesLib::Thread
 {
@@ -475,6 +477,151 @@ namespace NorvesLib::Thread
                 // 少し待ってCPUを解放
                 std::this_thread::yield();
             }
+        }
+    }
+
+    namespace
+    {
+        // ParallelFor の関数の中で立つ。入れ子の呼び出しをその場の直列実行へ切り替える目印。
+        thread_local bool t_bInParallelFor = false;
+
+        struct ParallelForScope
+        {
+            ParallelForScope() : bPrevious(t_bInParallelFor) { t_bInParallelFor = true; }
+            ~ParallelForScope() { t_bInParallelFor = bPrevious; }
+            ParallelForScope(const ParallelForScope &) = delete;
+            ParallelForScope &operator=(const ParallelForScope &) = delete;
+
+            bool bPrevious;
+        };
+
+        // 1 回の ParallelFor が持つ共有の文脈。補助タスクが返った後に起きても、カーソルが尽きていれば Fn に触れない。
+        struct ParallelForBatch
+        {
+            size_t Count = 0;
+            size_t Grain = 1;
+            const JobSystem::ParallelForFunction *Fn = nullptr; // 呼び手の関数。カーソルが尽きた後は参照しない
+            Atomic<size_t> Cursor{0};                           // 次に割り当てる番号（Count を超えない）
+            Atomic<size_t> Finished{0};                         // 終わった（または呼ばずに捨てた）番号の数
+            Atomic<bool> bFailed{false};
+            Mutex Lock;
+            ConditionVariable Done;
+            std::exception_ptr FirstException;
+        };
+
+        // カーソルから区間を取り出す。尽きていれば false。CAS なので Count を超えて進まず、巻き戻りも起きない。
+        bool ClaimParallelForRange(ParallelForBatch &batch, size_t &first, size_t &last)
+        {
+            size_t cursor = batch.Cursor.Load();
+            size_t next = 0;
+            do
+            {
+                if (cursor >= batch.Count)
+                {
+                    return false;
+                }
+                next = (batch.Count - cursor > batch.Grain) ? cursor + batch.Grain : batch.Count;
+            } while (!batch.Cursor.CompareExchangeWeak(cursor, next));
+            first = cursor;
+            last = next;
+            return true;
+        }
+
+        // 呼び手と補助タスクが共通で回す。取り出した区間は必ず Finished に数え、最後の 1 回が呼び手を起こす。
+        void RunParallelForBatch(ParallelForBatch &batch)
+        {
+            ParallelForScope scope;
+            size_t first = 0;
+            size_t last = 0;
+            while (ClaimParallelForRange(batch, first, last))
+            {
+                if (!batch.bFailed.Load())
+                {
+                    try
+                    {
+                        for (size_t index = first; index < last; ++index)
+                        {
+                            (*batch.Fn)(index);
+                        }
+                    }
+                    catch (...)
+                    {
+                        ScopedLock lock(batch.Lock);
+                        if (!batch.FirstException)
+                        {
+                            batch.FirstException = std::current_exception();
+                        }
+                        batch.bFailed.Store(true);
+                    }
+                }
+
+                const size_t claimed = last - first;
+                if (batch.Finished.FetchAdd(claimed) + claimed == batch.Count)
+                {
+                    ScopedLock lock(batch.Lock);
+                    batch.Done.NotifyAll();
+                }
+            }
+        }
+    } // namespace
+
+    void JobSystem::ParallelFor(size_t count, size_t grain, const ParallelForFunction &fn)
+    {
+        if (count == 0 || !fn)
+        {
+            return;
+        }
+        if (grain == 0)
+        {
+            grain = 1;
+        }
+        if (grain > count)
+        {
+            grain = count;
+        }
+        const size_t chunkCount = count / grain + ((count % grain) != 0 ? 1 : 0);
+
+        // 入れ子、または区間が 1 つだけなら、補助を出さずにその場で順に実行する。
+        if (t_bInParallelFor || chunkCount == 1)
+        {
+            ParallelForScope scope;
+            for (size_t index = 0; index < count; ++index)
+            {
+                fn(index);
+            }
+            return;
+        }
+
+        auto batch = Core::Container::MakeShared<ParallelForBatch>();
+        batch->Count = count;
+        batch->Grain = grain;
+        batch->Fn = &fn;
+
+        // 補助は最大でワーカーの数。提出を拒まれたら以降は出さず、呼び手が残りを行う。
+        const size_t helperCount = std::min(GetWorkerThreadCount(), chunkCount - 1);
+        for (size_t helper = 0; helper < helperCount; ++helper)
+        {
+            const bool bAccepted = SubmitTask(Task::Create([batch]()
+                                                           { RunParallelForBatch(*batch); },
+                                                           TaskPriority::HIGH));
+            if (!bAccepted)
+            {
+                break;
+            }
+        }
+
+        RunParallelForBatch(*batch);
+
+        // 他のスレッドが取った区間の終わりを待つ。他のキューの仕事は待たない。
+        {
+            ScopedLock lock(batch->Lock);
+            batch->Done.Wait(batch->Lock, [&batch]()
+                             { return batch->Finished.Load() == batch->Count; });
+        }
+
+        if (batch->FirstException)
+        {
+            std::rethrow_exception(batch->FirstException);
         }
     }
 
