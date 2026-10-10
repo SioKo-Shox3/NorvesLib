@@ -158,7 +158,7 @@
 - notes: 計測と調査だけ。
 
 ## SCN-MEGA-SETUP-LINEAR: MegaGeometryPass::Setup の、区画ごとに全インスタンスを探す二重ループを無くす
-- status: todo
+- status: done
 - done-when: 3万本 overview で `RenderGraph.Execute` の中央値 ≤ 60 ms（前は 313.9）、`rt` の median の 3万/1万 比が 3.5 以下。バナナと起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=30000 -OutDir .harness/runs/scene-capture/SCN-MEGA-SETUP-LINEAR`

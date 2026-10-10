@@ -1,4 +1,5 @@
 ﻿#include "Rendering/MegaGeometryPass.h"
+#include "Container/UnorderedSet.h"
 #include "Debug/DebugConfig.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
@@ -578,21 +579,18 @@ namespace NorvesLib::Core::Rendering
         // スナップショットから外れたインスタンスの見えたビットは、全インスタンスが消えて記録を省くフレームでも
         // 引き継げないものにする（記録の中だけで連続性を見ると、空のフレームを挟んだ再追加が引き継ぎに見える）。
         // LastUsedFrame を0にすると、次の記録の連続の条件（LastUsedFrame + 1 == 記録のフレーム数）を満たさない。
+        // 鍵は 1 回だけ集めて引く（区画ごとに全インスタンスを探すと、区画数×インスタンス数の二重ループになる）
+        Container::UnorderedSet<uint64_t> presentKeys;
+        presentKeys.reserve(m_Instances.size());
+        for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
+        {
+            const uint64_t objectId = m_Instances[instanceIndex].ObjectId;
+            presentKeys.insert(objectId != 0 ? objectId : (0x8000000000000000ull | instanceIndex));
+        }
+
         for (VisibilityEntry &entry : m_VisibilityEntries)
         {
-            bool bPresent = false;
-            for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
-            {
-                const uint64_t objectId = m_Instances[instanceIndex].ObjectId;
-                const uint64_t key = objectId != 0 ? objectId : (0x8000000000000000ull | instanceIndex);
-                if (key == entry.Key)
-                {
-                    bPresent = true;
-                    break;
-                }
-            }
-
-            if (!bPresent)
+            if (presentKeys.find(entry.Key) == presentKeys.end())
             {
                 entry.LastUsedFrame = 0;
             }

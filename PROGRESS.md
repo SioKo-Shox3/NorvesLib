@@ -862,3 +862,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261010-132327/`）: `verify-SCN-MEGA-PROBE-ROOT-1.txt`（RelWithDebInfo の Game ビルド EXIT=0）、`-2-px1.txt`・`-2-root.txt`（`CaptureScene.ps1 ... banana-count=10000,mega-lod-error-px=1|100000` が各 pass。`mega_stats` と `gpu_pass_median` はこの行）、`-3-cookbuild.txt`（AssetCook のビルド EXIT=0）、`-4-cook.txt`（クックの段ごとの記録）。撮影の出力は `scene-capture/SCN-MEGA-PROBE-ROOT/{px1,root}/`。
 - 反復 11（評価者の差し戻しへの対応）: (1) `--mega-lod-error-px` の検査を含む分岐全体と定数を `#if NORVES_BUILD_DEVELOPMENT` の中へ移した（リリース系では引数を扱わず、従来どおり）。(2) 検査を `std::string`/`strtof` から既存の `TryParseBoundedFloat`（下限 1e-6・上限 1e9）に替え、環境変数へは `snprintf` した固定長バッファで渡す。(3) クックのトレースを `std::fprintf` から `NORVES_LOG_WARNING` に替えた。AssetCook はロガーを初期化せず、フォーマッタが空だとログが捨てられ、コンソールの既定は Warning 以上なので、トレースを有効にしたときだけ標準フォーマッタを 1 回入れ、Warning で出す（Info では 0 行になることを実走で確認した）。再実走: `verify-SCN-MEGA-PROBE-ROOT-11-cook.out.txt` に `COOK_DAG` が 10 行出て、段 0 = 780/99,722、段 9（根）= 44/4,112・減少 10.3%・`decision=min-progress` で前回と同じ。`-11-build.txt`（Game の RelWithDebInfo ビルド EXIT=0）、`-11-cookexebuild.txt`（AssetCook のビルド EXIT=0）、`-11-capture.txt`（`mega-lod-error-px=100000` の撮影が pass。`clusters_drawn_last=112804`、`VisRasterSw1` 0.942 ms ≒ 8.35 ns/クラスタ。前回の 7.87 ns とは run 間の揺れの範囲で、結論は変わらない）。
 - Notes: 製品の挙動は変えていない（新しい起動引数と環境変数つきの記録は、指定したときだけ効く）。次の手: 根の段数と rejected を減らす案（MinProgressPercent の見直し、rejected の原因の調査）は別タスクで。
+
+### SCN-MEGA-SETUP-LINEAR（2026-10-10、反復 12・run 20261010-132327）
+
+- `MegaGeometryPass::Setup` の、区画（`m_VisibilityEntries`）ごとに全インスタンスを探していた二重ループを、鍵（`ObjectId`、0 のときは `0x8000000000000000 | インスタンス番号`。`VisibilityRequest::Key` と同じ式）の `Container::UnorderedSet` を 1 回だけ作って引く形に替えた（`MegaGeometryPass.cpp`）。見つからない区画の `LastUsedFrame = 0` は従来どおり。
+- 3万本 overview（RelWithDebInfo、1920x1080、240 フレーム、`verify-SCN-MEGA-SETUP-LINEAR-2.txt`）: `RenderGraph.Execute` 中央値 28.545 ms（前は 313.9、基準 ≤ 60）、`RecordFrameCommand` 6.843 ms、`rt` median 40.308 ms。
+- 1 万本の同条件（`-2-ref10k.txt`）: `RenderGraph.Execute` 8.646 ms、`rt` median 12.872 ms → `rt` の 3万/1万 比 = 3.13（基準 ≤ 3.5）。
+- 比較: バナナ 1 万本は `SCN-MEGA-BASE` と pass（PSNR 65.35 dB、輝度差 0.0001、`-3.txt`）、起動画面の決定的比較は 3 視点とも pass（輝度差 0、PSNR 100、`-4.txt`）。
+- Notes: ビルド（`-1.txt`）は PowerShell から実行（Git Bash は `/m:1` をパスに変換して失敗する）。3万本の gt は 548 ms と GameThread 側が重い（別の線形処理が残っている可能性。このタスクの範囲外）。
