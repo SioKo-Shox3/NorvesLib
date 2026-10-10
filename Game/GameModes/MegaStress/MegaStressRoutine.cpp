@@ -624,7 +624,8 @@ namespace Game::GameModes
             }
 
             auto movers = MakeShared<StressMovers>();
-            const uint32_t movingThreshold = static_cast<uint32_t>(data.m_MovingPercent * 10000.0f + 0.5f);
+            // 置いた Entity のうち動かす候補（割合が 0 より大きいときだけ溜め、置き終わってから正確な個数を選ぶ）
+            StressMovers candidates;
             uint32_t placed = 0;
             uint32_t columns = 0;
             uint32_t rows = 0;
@@ -653,12 +654,39 @@ namespace Game::GameModes
                     {
                         ++load.PlacedCount;
                         ++placed;
-                        // 動かす Entity は番号のハッシュで決める（100 万分率の閾値。実行ごとに同じ）
-                        if (HashIndex(index * 3266489917u + 0x165667b1u) % 1000000u < movingThreshold)
+                        if (data.m_MovingPercent > 0.0f)
                         {
-                            movers->Items.push_back(MakeMover(entity, index, load, x, z, yaw));
+                            candidates.Items.push_back(MakeMover(entity, index, load, x, z, yaw));
                         }
                     }
+                }
+            }
+
+            // 動かす個数は置けた数 × 割合を四捨五入した値に揃え、どれを動かすかは番号のハッシュの小さい順に決める（実行ごとに同じ）
+            if (!candidates.Items.empty())
+            {
+                struct MoverKey
+                {
+                    uint32_t Hash;
+                    uint32_t Ordinal;
+                };
+                VariableArray<MoverKey> keys;
+                for (size_t ordinal = 0; ordinal < candidates.Items.size(); ++ordinal)
+                {
+                    keys.push_back({HashIndex(static_cast<uint32_t>(ordinal) * 3266489917u + 0x165667b1u),
+                                    static_cast<uint32_t>(ordinal)});
+                }
+                std::sort(keys.begin(), keys.end(), [](const MoverKey &a, const MoverKey &b) {
+                    return a.Hash != b.Hash ? a.Hash < b.Hash : a.Ordinal < b.Ordinal;
+                });
+                const double rawCount = static_cast<double>(candidates.Items.size()) * static_cast<double>(data.m_MovingPercent) / 100.0;
+                const size_t moverCount = std::min(candidates.Items.size(), static_cast<size_t>(rawCount + 0.5));
+                // 選んだ分を置いた順に並べ直す
+                std::sort(keys.begin(), keys.begin() + static_cast<std::ptrdiff_t>(moverCount),
+                          [](const MoverKey &a, const MoverKey &b) { return a.Ordinal < b.Ordinal; });
+                for (size_t i = 0; i < moverCount; ++i)
+                {
+                    movers->Items.push_back(candidates.Items[keys[i].Ordinal]);
                 }
             }
 
