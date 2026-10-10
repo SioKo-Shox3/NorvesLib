@@ -139,6 +139,37 @@ namespace
         assert(CountRowsWith<Ecs::EcsRenderTransform>(world) == 0);
         world.Finalize();
     }
+
+    // 親が破棄予約になったら、回収前でも補間する子孫の履歴・描画の変換・版を更新しない（旧の再帰と同じ）
+    void TestPendingDestroyAncestorKeepsRender()
+    {
+        World world;
+        world.Initialize();
+        auto* parent = world.SpawnEntity<Entity>();
+        auto* child = world.SpawnEntity<Entity>(parent);
+        child->SetRenderInterpolationEnabled(true);
+        UpdateAndVerify(world);
+        world.PrepareRenderInterpolationStep();
+        child->SetLocalPosition(10, 0, 0);
+        world.UpdateWorldTransforms();
+        world.CaptureRenderInterpolationStep();
+        assert(world.SetRenderInterpolationAlpha(.25f));
+        UpdateAndVerify(world);
+        assert(Near(child->GetRenderWorldTransform().position.x, 2.5f));
+        const uint64_t version = child->GetRenderTransformVersion();
+        parent->MarkForDestroy();
+        assert(world.SetRenderInterpolationAlpha(.75f));
+        world.UpdateRenderTransforms();
+        assert(Near(child->GetRenderWorldTransform().position.x, 2.5f));
+        assert(child->GetRenderTransformVersion() == version);
+        // 固定ステップの Prepare/Capture も、破棄予約の部分木の履歴を進めない
+        world.PrepareRenderInterpolationStep();
+        world.CaptureRenderInterpolationStep();
+        world.UpdateRenderTransforms();
+        assert(Near(child->GetRenderWorldTransform().position.x, 2.5f));
+        assert(child->GetRenderTransformVersion() == version);
+        world.Finalize();
+    }
 } // namespace
 int main()
 {
@@ -242,6 +273,7 @@ int main()
     assert(visual->GetRenderWorldTransform() == visual->GetWorldTransform());
     world.Finalize();
     TestRenderRowsAreIncremental();
+    TestPendingDestroyAncestorKeepsRender();
     std::cout << "WorldRenderInterpolationTest PASS\n";
     return 0;
 }

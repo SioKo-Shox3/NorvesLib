@@ -2055,7 +2055,8 @@ namespace NorvesLib::Core
                 propagated->bRenderQueued = 0;
             Entity* entity = ResolveRenderEntity(row);
             // 補間する行とその子孫は UpdateRenderRows が見る。破棄予約の部分木は旧と同じく触らない
-            if (!entity || entity->IsPendingDestroy() || ecs.GetColumnValue<Ecs::EcsRenderTransform>(row) != nullptr)
+            if (!entity || entity->IsPendingDestroy() || HasPendingEntityAncestor(*entity) ||
+                ecs.GetColumnValue<Ecs::EcsRenderTransform>(row) != nullptr)
                 continue;
             NoteRenderTransformChanged(*entity);
         }
@@ -2077,7 +2078,7 @@ namespace NorvesLib::Core
             if (!history)
                 continue;
             Entity* entity = ResolveRenderEntity(row);
-            if (!entity || entity->IsPendingDestroy())
+            if (!entity || entity->IsPendingDestroy() || HasPendingEntityAncestor(*entity))
                 continue;
             const Entity* parent = entity->GetParentEntity();
             const uint64_t parentId = parent ? parent->GetObjectId() : 0;
@@ -2124,7 +2125,7 @@ namespace NorvesLib::Core
                 continue;
             }
             Ecs::EcsRenderTransform* render = ecs.GetColumnValue<Ecs::EcsRenderTransform>(row);
-            if (!render || entity->IsPendingDestroy())
+            if (!render || entity->IsPendingDestroy() || HasPendingEntityAncestor(*entity))
                 continue;
             Ecs::EcsTransformHistory* history = ecs.GetColumnValue<Ecs::EcsTransformHistory>(row);
             const bool bTag = ecs.GetColumnValue<Ecs::EcsRenderInterpolated>(row) != nullptr;

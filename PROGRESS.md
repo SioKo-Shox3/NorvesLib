@@ -1322,3 +1322,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 構造変更（列の付け外し）は `UpdateRenderTransforms`・Prepare・Capture の中だけで行う。段の最中に要求を変えても、行が動くのは次の呼び出しから。
   - `WorldSyncDifferentialTest` は別の項目で直す（`!bNeedsSync` 側の更新は、非同期の読み込みの完了を拾うための意図的な再構築かもしれない。テストの前提のほうが古い可能性が高い）。
   - 行末: `World.cpp`・`World.h` は混在。Edit ツールは混在ファイルを LF にしてしまうので、編集のたびに HEAD の行末を基準に difflib で直した（numstat 2 通りが一致）。
+
+### SCN-ECS-INTERP 差し戻し対応（2026-10-11、反復 33・run 20261010-223034）
+
+- 差し戻し: 補間の更新が自身の破棄予約しか見ず、親が破棄予約の間（回収前）も子孫の履歴・描画の変換・版を更新していた（旧の再帰は部分木ごと飛ばす）。
+- 変更: `World.cpp` の `FlushRenderChangedRows`・`StepRenderHistory`・`UpdateRenderRows` の 3 箇所で `HasPendingEntityAncestor` も確かめ、破棄予約の部分木を触らないようにした。
+- テスト: `WorldRenderInterpolationTest` に `TestPendingDestroyAncestorKeepsRender`（補間しない親を `MarkForDestroy` した後、alpha を変えて更新・Prepare/Capture しても、子の描画位置 2.5 と版が変わらない）を足した。`World.cpp` を HEAD に戻して再ビルドすると、このテストが落ちる（assert でタイムアウト）ことを確かめた。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-INTERP-10.txt`（3 ターゲットのビルド EXIT=0）、`-11.txt`（ctest 3/3 Passed）、`-12-startup.txt`（`ECS_RENDER_TRANSFORM` が default 9・near 11・low 8、fail 0。3 視点とも `within_limits=True`）。`-8`・`-9` は同じ内容の途中版で証拠にしない。
+- Notes: 物理テスト 2 ファイル（`PhysicsModuleTestAccess.h`・`PhysicsFixedStepPipelineTest.cpp`）の修正は反復 32 のコミットに入っている。履歴を書き換えて分離はしない。
