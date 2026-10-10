@@ -1286,3 +1286,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - テスト（`EcsHierarchyTest`）: `TestSpawnedChildReparentKeepsPosition`（段の最中に作った子の付け替えで座標 12、旧と一致）、`TestAncestorStopSuppressesDescendantsImmediately`（親の SetActive(false)・MarkForDestroy の後に子・孫が呼ばれない、旧と一致）。修正を外すと、前者は `propagated == legacy`、後者は `RunAncestorStop(false, …) == 0` で落ちることを確かめた。
 - 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-TRANSFORM-SWITCH-8.txt`（EntityTreeTest・ApplicationFixedStepPipelineTest のビルド EXIT=0）、`-9.txt`（5 件の ctest 5/5 Passed）、`-10-startup.txt`（起動画面の決定論の比較 `result=pass`、3 視点とも `within_limits=True`）。`-6`・`-7` はテストの前提の誤り（破棄予約で Entity が解放された後に Count を読んだ）の版で、証拠にしない。
 - Notes: `HasUnpropagatedFlagChanges` が true の間（例: 伝播の前に Entity を作った直後）は祖先をたどるので、その間の判定は旧の経路と同じ費用になる。次の伝播で戻る。
+
+### SCN-ECS-TRANSFORM-SWITCH 再検証の失敗への対応（2026-10-11、反復 31・run 20261010-223034）
+
+- 状況: 再実行で `EcsHierarchyTest` が `RunAncestorStop(false, bDestroy) == 0` の assert で止まった（Debug の assert ダイアログ待ちで 180 秒のタイムアウト）。反復 30 の保存（-9）は 5/5 Passed だった。
+- 調べたこと: コミット済みのソース（作業ツリーはクリーン）で同じ失敗を再現できたが、`CanDispatchEntity` に診断出力を足して World.cpp を再コンパイルすると通り、診断を外して再コンパイルしても通った。失敗した時点の Debug のバイナリがソースと食い違っていた可能性が高い（World.cpp・EcsHierarchyTest.cpp の再コンパイルで解消した。確証はない）。診断の結果、新経路では親の `SetActive(false)` の直後に `HasUnpropagatedFlagChanges` が true になり、祖先をたどって子・孫が呼ばれない（count=0）ことを、Active・破棄予約の両方で確かめた。
+- 変更: ソースの変更なし（診断用の出力は戻した）。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-TRANSFORM-SWITCH-11.txt`（EntityTreeTest・ApplicationFixedStepPipelineTest のビルド EXIT=0）、`-12.txt`（5 件の ctest 5/5 Passed）、`-13-startup.txt`（起動画面の決定論の比較 `result=pass`、3 視点とも `within_limits=True`）。再コンパイル後の `EcsHierarchyTest` を 30 回続けて実行し、失敗 0 回。
+- Notes: 食い違ったバイナリになった原因は特定できていない。同じ症状が再発したら、World.cpp を再コンパイルしてから疑うこと。
