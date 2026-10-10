@@ -298,17 +298,17 @@ namespace NorvesLib::Debug
             return;
         }
 
-        if (m_FrameProfile.Events.size() >= Detail::MaxFrameProfileEvents)
-        {
-            return;
-        }
-
         ProfileEvent event;
         event.Name = name ? String(name) : String{};
         event.Category = category ? String(category) : String{};
         event.DurationMs = durationMs;
         event.ThreadId = GetCurrentProfileThreadId();
-        m_FrameProfile.Events.push_back(event);
+        // FrameProfile::Events は先頭の MaxFrameProfileEvents 件までしか持たない。
+        // トレースへは全件を書く（系・チャンクごとの区間を、名前ごとに集計できるようにするため）
+        if (m_FrameProfile.Events.size() < Detail::MaxFrameProfileEvents)
+        {
+            m_FrameProfile.Events.push_back(event);
+        }
         WriteScopeTraceLine(event);
 #else
         (void)name;

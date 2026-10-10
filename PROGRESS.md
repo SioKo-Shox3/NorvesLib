@@ -1059,3 +1059,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 確認: 提出ループの捕捉を `catch (int)` に変えた変異版では `callsAfterReturn.load() == 0` の検査で失敗して止まること、戻すと通ることを見た。最初に破棄済みの関数を使う形で書いたテストは変異版でも偶然通ったため、関数を生かして数える形に直した。
 - 結果: `verify-SCN-ECS-JOBS-12-3.txt`（JobSystemShutdownTest のビルド EXIT=0、`JobSystem.cpp`・`JobParallelForTest.cpp` に警告なし）、`-12-4.txt`（`JobParallelForTest`・`JobSystemShutdownTest` Passed、`100% tests passed`）、`-12-repeat.txt`（直接 30 回、失敗 0。変異の記録も同じファイル）。
 - Notes: 復元したファイルの更新時刻が古いとビルドが変異版のオブジェクトを使い回す。変異を戻したら `LastWriteTime` を進めてから再ビルドする。
+
+### SCN-ECS-SCHEDULER（2026-10-11、反復 13・run 20261010-223034）
+
+- 変更（新規 `Ecs/EcsScheduler.h`・`Private/Ecs/EcsScheduler.cpp`、`Library/Core/CMakeLists.txt` に登録。まだどこからも使わない）:
+  - `SystemScheduler(EcsWorld&)`: 段（`AddStage`、足した順に走る）・`SystemDesc{Name, Stage, Reads, Writes, Thread, After, TimeChannel, Query, Run/RunChunk, User}`・`RegisterSystem`・`AddAfter`。衝突は同じ列への W-W・R-W（登録順。直接の After があればそれに従う）。GameThreadOnly はすべてと衝突して単独の波になる。RenderThreadOnly・空/重複の名前・未登録/後ろの段の After・循環する After（`AddAfter` が拒む。段の波を求め直して循環を検出）は拒む。波は依存の深さで決め、波の中は登録順。
+  - 実行（`RunStage(段, channelごとのdelta)`）: 波ごとに、チャンクのシステムは全システムの対象チャンクを 1 つの `JobSystem::ParallelFor`（`EcsParallelScope` の中）にまとめ、GameThreadOnly は呼び手のスレッドで単独で走る。システム 1 回ぶんごとに `AdvanceVersion`、波の後に仕事の順で `CommitChanges`。構造変更は仕事ごと（GameThread 系はシステムごと）の `EcsCommandBuffer` に積み、段の終わりの同期点で（システムの登録順 → チャンクの順）に再生してから `SetSyncHook` の関数を呼ぶ。例外は積んだコマンドを捨てて投げ直す（次の実行は正常）。再入は false。
+  - 順序付きの GameThread 系（`RegisterOrderedSystem`、呼び先は `AddOrderedEntry`/`RemoveOrderedEntry`/`SetOrderedEntryKey`）: 呼び先を `TickDispatchLess`（群 → 優先度 → 順番、同値は足した順）の順に呼ぶ。群の mask で絞れる。順の一覧を作り直すのは、足す・外す・付け替えがあったときの次の収集の先頭だけ（`SchedulerStats::OrderRebuilds`）。外した呼び先は走っている収集の中でもすぐ呼ばれなくなる。
+  - 収集と参加の番号: `BeginCollection`/`EndCollection`/`EcsCollectionScope`。最も外側で番号が進み入れ子は共有する（同じフレームの複数の固定ステップを 1 つの外側の収集で包めば番号を共有できる）。収集の外から `RunStage` を単独で呼ぶと 1 つの収集（単独の固定ステップ相当）。参加の番号 = 「次の収集」の番号（`GetNextCollectionSerial`、呼び先ごとに `GetOrderedEntryJoinSerial`）。収集の中で足した呼び先は次の収集まで呼ばれない。
+  - トレース: 統計が有効な構成で、`Ecs.Stage.<段>`・`Ecs.Sys.<系>`・`Ecs.Sync.<段>`（カテゴリ `Ecs`）を `Debug::ScopedStat` で記録する。チャンクの仕事は走ったスレッドで系の名前の区間に入る。名前は登録時に 1 度だけ作った `String`（`GetSystemScopeName` の c_str が変わらない）。統計が無効な構成では `ScopedStat` が何もしない。
+  - `paths:` の内側の変更 `Library/Core/Private/Debug/Stats.cpp`: `RecordScope` が `FrameProfile::Events` の上限（256 件）で打ち切ると、トレースにも書かれなくなっていた。上限は Events の保持だけにして、トレースへは全件を書くようにした（チャンクごとの区間が 1 フレームで 256 を超えるため）。
+- テスト: `EcsSchedulerTest`（EntityTreeTest の束、ctest 登録済み）が、衝突するシステムが同時に走らない（システムごとの稼働数で W-W・W-R を検査。独立と R-R は同じ波）、波の仕事が 2 システムの 70 チャンクを 1 回の ParallelFor にまたがり各チャンクがちょうど 1 回・版と channel の delta が渡る、GameThreadOnly が呼び手のスレッドで単独（稼働中のチャンクが 0）、RenderThreadOnly と循環する After と重複・未登録を拒む（登録順と逆の After は循環しなければ受け入れる）、段の中の構造変更が同期点まで見えず再生は登録順 → チャンクの順で次の段には見える・例外後も復帰、仕事の書き込みが変更ログに版つきで 1 回ずつ入る、足した呼び先が次の収集まで呼ばれず参加の番号が合う、作り直しが変更のときだけ・付け替えは次の収集から・外した呼び先はすぐ呼ばれない・古い持ち手は効かない、300 件の呼び先の順が `TickDispatchLess` と一致（群の mask 付きと同値の足した順も）、トレースの区間（名前・段の中の入れ子・ワーカーのスレッドの番号が仕事を走らせたスレッドと一致・256 件超でも全件）を確かめる。統計が無効な構成の分岐（トレースが始まらず何も記録されない）も書いた（Debug 構成で一度 `#if 0` に替えてコンパイルが通ることを確認）。
+- 確認: 変異で落ちること、戻して通ることを見た（`verify-SCN-ECS-SCHEDULER-mutations.txt`）。W-R の衝突の判定を外す → `GetSystemWave(sysC) == 2` で停止、`RecordScope` の上限の打ち切りを戻す → 300 件のトレースの検査で停止、参加の番号を「いまの収集」にする → `GetOrderedEntryJoinSerial == 1` で停止。
+- 結果: `verify-SCN-ECS-SCHEDULER-5.txt`（EntityTreeTest のビルド EXIT=0、警告 0 件）、`-6.txt`（`EcsSchedulerTest`・`TickDispatchTest` Passed、`100% tests passed`）、`-7-repeat.txt`（直接 30 回、失敗 0）、`-8-neighbors.txt`（Ecs*Test 4 本・WorldTickGroup/TimeChannel/EntityTree/SpringArm/TickGroupConfiguration/TransformHierarchy、10/10 Passed）。`-1`〜`-4` は最初の版（衝突の検査の誤りと `fopen` の警告を直す前）。
+- Notes:
+  - 解釈: 「同じフレームに足した行が次の Tick まで呼ばれない」は、順序付きの系の呼び先（行）のこととした。チャンクのシステムは World の行を走査するので、前の段の同期点で作られた行は同じ Tick の後ろの段から見える（構造変更は同期点まで見えない、で守る）。
+  - GameThread 系も構造変更を `ctx.Commands` に積む前提（直接の `CreateEntity` などは段の中でも即時に効く。強制はしていない）。チャンクのシステムが宣言した Reads/Writes と実際の書き込みの一致は検査していない。
+  - スロット（変更の束とコマンドバッファ）は段の仕事の総数ぶんをプールして使い回す（縮めない）。チャンクの仕事 1 件ごとに区間を 1 つ記録するので、トレースを取る間は仕事の数に比例して `RecordScope` のロックを取る（トレースを取らないときは `IsTraceActive` で早く抜ける）。WORLD-SCHEDULE で実際の規模を見て、重ければ区間をまとめる。
+  - 段の波の計画は `RegisterSystem`/`AddAfter` の後の最初の実行（または `GetWaveCount`/`GetSystemWave`）で作り直す。ComputeWaves は段内のシステム数の 2 乗。
+- 証拠（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-SCHEDULER-1.txt`〜`-8-neighbors.txt`、`-mutations.txt`。

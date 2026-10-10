@@ -152,6 +152,7 @@ set(PRIVATE_SOURCES
     Private/Debug/EngineChecks.cpp
     Private/Debug/Stats.cpp
     Private/Ecs/EcsCommandBuffer.cpp
+    Private/Ecs/EcsScheduler.cpp
     Private/Ecs/EcsTypes.cpp
     Private/Ecs/EcsWorld.cpp
     Private/EngineGlobals/MemoryOverrides.cpp
@@ -487,6 +488,7 @@ set(PUBLIC_HEADERS
     Public/Debug/EngineChecks.h
     Public/Debug/Stats.h
     Public/Ecs/EcsCommandBuffer.h
+    Public/Ecs/EcsScheduler.h
     Public/Ecs/EcsTypes.h
     Public/Ecs/EcsWorld.h
     Public/EngineGlobals/MemoryOverrides.h

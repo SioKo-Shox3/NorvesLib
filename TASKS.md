@@ -276,7 +276,7 @@
 - paths: Library/Core/Public/Thread/JobSystem.h, Library/Core/Private/Thread/JobSystem.cpp, Test/Thread/CMakeLists.txt, Test/Thread/JobParallelForTest.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-SCHEDULER: 段・波・順序付きの GameThread 系のスケジューラを足す
-- status: todo
+- status: done
 - done-when: 設計 1.7 の SystemDesc・波・順序付きの GameThread 系・参加の番号が入る。`EcsSchedulerTest` が次を確かめる: 衝突するシステムが同時に走らない、波の仕事が全システムのチャンクにまたがる、GameThreadOnly が呼び手のスレッドで単独で走る、RenderThreadOnly と循環する After を拒む、段の中の構造変更が同期点まで見えない、同じフレームに足した行が次の Tick まで呼ばれない、順序付きの系の順が TickDispatchLess と一致する。統計が有効な構成（Debug・RelWithDebInfo）では、スケジューラが段・系・同期点の実行を、冒頭の方針の名前（`Ecs.Stage.<段>`・`Ecs.Sys.<系>`・`Ecs.Sync.<段>`）で `Debug/Stats.h` の区間としてトレースに記録する。ワーカーで走ったチャンクの仕事は、そのワーカーのスレッドの番号で系の名前の区間に入る。名前は系の登録時に決めた文字列を使い、フレームごとに文字列を作らない。統計が無効な構成（Release）では何も記録しない。`EcsSchedulerTest` が、区間の名前・入れ子・ワーカーのスレッドの番号が記録されることを確かめる。
 - verify: `cmake --build build --config Debug --target EntityTreeTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(EcsSchedulerTest|TickDispatchTest)$" --no-tests=error --output-on-failure --timeout 180`
