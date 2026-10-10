@@ -731,3 +731,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 画: 3 視点の PNG（`scene-capture/SCN-MEGA-10K/default.png`・`close.png`・`low.png`）を開いた。overview は 1 万本が升目に敷かれ 3 つの山も出て、地面の透けや欠けは無い。close は手前の山と 1 本ごとの影、low は床すれすれの先まで影が出ていて、バナナの欠けは無い。
 - Rendering3DTest は撮影の平均輝度が基準（反復 14 の `startup-capture/SCN-FREE-CAMERA`: 124.024・123.744・125.939。実行間の揺れは 0.1 程度）と一致し、`--stress-geometry=300` も VTG5 の記録（121.844・123.211・125.014）と 0.15 以内で一致した。画素単位の比較（PSNR）は撮っていない。
 - Notes: 可視ビットは 1 クラスタ 1 bit に詰めていない（1 万本では 84 MB で収まるため。65536 本まで上げると約 552 MB）。1 万本を超える本数での確認は SCN-BANANAS-PERF（1万・2万・3万本）で行う。Debug の撮影は 1 視点約 5 分かかり、ランナーの背景実行の既定の 10 分では打ち切られるので、`timeout` を長くして走らせる。
+
+### SCN-MEGA-10K（2026-10-10、反復 24・run 20261009-233224）
+
+- 反復 23 の差し戻し（`CaptureScene.ps1` の再検証が spawnSync ETIMEDOUT）に対応。原因は実装ではなく検証の長さで、Debug の 1 万本は 1 視点が約 4 分かかり、3 視点を 1 コマンドで撮るとランナーの検証の上限 10 分（`VERIFY_TIMEOUT_MS`）を超える。取り残された Game.exe（`low` の撮影中。親の PowerShell ごと）を止め、`TASKS.md` の verify を `-Views overview`・`close`・`low` の 3 コマンドに分けた（出力先は `scene-capture/SCN-MEGA-10K/<視点>/`。実装は変えていない）。
+- 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-MEGA-10K-24-1.txt`（Debug の Game ビルド EXIT=0）、`-24-2.txt`・`-24-3.txt`・`-24-4.txt`（overview・close・low それぞれ pass。平均輝度 122.964・122.516・109.816 で反復 23 と一致）、`-24-5.txt`（`CaptureStartupScene.ps1` 3 視点 pass。124.04・123.749・125.948）。
+- ログ（`scene-capture/SCN-MEGA-10K/<視点>/<視点>.Game.log`）: 3 視点とも `MEGA_CAPACITY draw_dropped=0`（全行。`max_draw_count=1048576`）、VSM の `overflow=` に 0 でない行なし、`visibility_bytes=84200000`。
+- 画: 3 視点の PNG を開いた。overview は 1 万本の升目と 3 つの山で地面の透けは無く、close は手前のバナナと山に影、low は床すれすれまで影が出て、欠けは無い。
+- Notes: 検証コマンドの分割は技術的な調整（paths の内側）。Debug の撮影は 1 視点約 4 分で、1 コマンドに 3 視点を入れるとランナーの 10 分を超える点は、他の重いシーンの verify でも同じ。
