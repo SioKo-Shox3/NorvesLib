@@ -130,6 +130,9 @@ namespace Game
         constexpr const TCHAR *kCameraPathTimeOption = TEXT("--camera-path-time=");
         // --banana-count=<n>: mega-bananas のバナナの本数（1〜kMaxBananaCount。既定 kDefaultBananaCount）。
         constexpr const TCHAR *kBananaCountOption = TEXT("--banana-count=");
+        // --mega-lod-error-px=<px>: MegaGeometry の LOD を選ぶ誤差の閾値（画素）を替える（開発ビルドだけ。計測用）。
+        // 大きい値にすると全インスタンスが根の段で描かれる。環境変数 NORVES_MEGA_LOD_ERROR_PX と同じ効き方をする。
+        constexpr const TCHAR *kMegaLodErrorPxOption = TEXT("--mega-lod-error-px=");
         // --open-scene-info: mega-bananas を起動時から情報表示（H キーの表示）を出した状態にする（開発ビルドだけ。値を取らない）。
         // 撮影の起動は ImGui を使わないが、この指定があれば撮影でも使い、表示を撮れる。
         constexpr const TCHAR *kOpenSceneInfoOption = TEXT("--open-scene-info");
@@ -975,6 +978,25 @@ namespace Game
                 }
                 m_BananaCount = bananaCount;
                 m_bBananaCountSet = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kMegaLodErrorPxOption, sceneValue))
+            {
+                // 画素の閾値は正の有限な数。MegaGeometryPass が最初に作られる前に環境変数へ渡す。
+                const std::string valueText(sceneValue.c_str());
+                char *end = nullptr;
+                const float threshold = std::strtof(valueText.c_str(), &end);
+                if (valueText.empty() || end == valueText.c_str() || *end != '\0' || !std::isfinite(threshold) ||
+                    threshold <= 0.0f)
+                {
+                    LOG_ERROR("--mega-lod-error-px は 0 より大きい数で指定してください");
+                    return false;
+                }
+#if NORVES_BUILD_DEVELOPMENT
+                _putenv_s("NORVES_MEGA_LOD_ERROR_PX", valueText.c_str());
+#else
+                LOG_WARNING("--mega-lod-error-px は開発ビルドだけで使えます。無視します");
+#endif
                 continue;
             }
             if (TryStripPrefix(args[i], kCameraScriptOption, sceneValue))

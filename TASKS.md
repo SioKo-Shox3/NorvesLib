@@ -150,7 +150,7 @@
 - notes: C++ は変えない。バナナの決定的な撮影が 2 回で一致しなければ PROGRESS に記録し、以後のバナナの比較は MEGA_OCCLUSION の描いた数 ±1% に替える。旋回の On/Off が今一致しなければ、On の撮影を基準にして理由を書く。
 
 ## SCN-MEGA-PROBE-ROOT: 根の段の量と単価を測り、クックが根で止まる理由を突き止める
-- status: todo
+- status: done
 - done-when: 開発ビルドの `--mega-lod-error-px=<px>` で LOD の閾値を替えられる（今は環境変数だけ、`MegaGeometryPass.cpp` 238 行付近）。1万本 overview の 1 px と 100000 px（全本が根）で、描いたクラスタ数・`VisRasterSw1`・1 クラスタあたりの ns を PROGRESS に書く。banana の段ごとのクラスタ数・三角形数（GPT の復号では LOD0 780/99,722、根 44/4,112）と、根で止まった理由（`CookMeshDag.cpp` 745〜756 行付近の MinProgressPercent 15% か、境界の固定か）をクックのログで示す。製品の挙動は変えない。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000,mega-lod-error-px=100000 -OutDir .harness/runs/scene-capture/SCN-MEGA-PROBE-ROOT/root`

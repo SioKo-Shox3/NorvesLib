@@ -826,3 +826,38 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 既存トレース（`scene-capture/SCN-MEGA-METRICS/timing/overview.trace.csv`）で関数を再実行した結果（`verify-SCN-MEGA-METRICS-8-scope.txt`）: `RenderGraph.Execute` 1.662/1.906 ms、`RenderGraph.Compile` 0.329/0.674 ms、`MegaGeometryPass.RecordFrameCommand` 0.329/0.404 ms、`RenderGraph.Build` 0.003/0.005 ms がいずれも 241 件（窓の 240 フレーム＋境界 1）。評価者の再計算（Compile 0.329/0.674）と一致。
 - 実走（`verify-SCN-MEGA-METRICS-8-timing.txt`、`-GpuTimingFrames 300`、1024 本、EXIT=0、pass）: `cpu_scope_median` の行に `RenderGraph.Execute=1.671 MegaGeometryPass.RecordFrameCommand=0.332 RenderGraph.Compile=0.328 RenderGraph.Build=0.003` が出る。gt/rt の median・p95 も行に出る。
 - 画像の比較・基準の撮影（verify 2〜6）は集計の経路を通らないので、反復 8 の証拠（`-1`〜`-6`）をそのまま有効とした。
+
+### SCN-MEGA-PROBE-ROOT（2026-10-10、反復 10・run 20261010-132327）
+
+- `--mega-lod-error-px=<px>` を足した（`Game/GameApplicationHandler.cpp`。0 より大きい有限の数だけ。開発ビルドだけ有効で、リリース系は警告して無視する）。値は `MegaGeometryPass` が最初に作られる前に、既存の環境変数 `NORVES_MEGA_LOD_ERROR_PX` へ渡す（パス側の読み取りは変えていない）。指定が無ければ挙動は従来のまま。
+- クックの計測用に `Tools/AssetCook/CookMeshDag.cpp` へ、環境変数 `NORVES_COOK_DAG_TRACE=1` のときだけ段ごとの量を標準エラーへ出す記録（`COOK_DAG level=...`）を足した。クックの結果は変えない。
+- 描画の計測（1 万本 overview、RelWithDebInfo、1920x1080、`-GpuTimingFrames 300` の 240 フレーム）。1 クラスタあたりの ns = パスの中央値 ms ÷ `clusters_drawn_last`:
+
+| 閾値 | 描いたクラスタ数 | 1 本あたり | VisRasterSw1 中央値 | VisRasterSw1 の ns/クラスタ | MegaGeometry 全体 ns/クラスタ | gt / rt 中央値 ms |
+|---|---|---|---|---|---|---|
+| 1 px | 365,355 | 36.5 | 2.434 ms | 6.66 | 22.33（Draw1 4.30・Cull1 4.49・Cull2 4.25） | 72.46 / 30.88 |
+| 100000 px（全本が根） | 112,804 | 11.3 | 0.888 ms | 7.87 | 33.29（Draw1 4.56・Cull1 9.75・Cull2 8.44） | 74.61 / 31.17 |
+
+  - 根では描くクラスタが約 1/3.2 になり VisRasterSw1 は 2.74 倍速いが、gt・rt はほぼ変わらない（72.5→74.6、30.9→31.2 ms）。CPU 側（`RenderGraph.Execute` 26.5 ms、`RecordFrameCommand` 2.17 ms）は量に依存しない。GPU 全体は 17.76→12.87 ms（MegaGeometry 8.16→3.76 ms）。
+  - 根の Cull1/Cull2 の ns/クラスタが大きいのは、Cull が 1 万インスタンス単位の固定費を持ち、描いた数で割ると高く見えるため。1 クラスタの単価としては VisRasterSw1 が 6.7〜7.9 ns で、段に依らずほぼ一定。
+  - 根でも 1 本あたり 11.3 クラスタしか描かれないのは、視錐台・遮蔽で根の 44 クラスタの一部が落ちるためと考えられる（cooked の根は 1 本 44 クラスタ。落ちた内訳は未計測）。1 px でも 1 本 36.5 クラスタで、LOD0（780）には遠く、overview の距離では細かい段はほとんど選ばれない。
+- banana のクック（`fallback_min_triangles=4096`、`NORVES_COOK_DAG_TRACE=1`、`verify-SCN-MEGA-PROBE-ROOT-4-cook.txt`）。段ごとのクラスタ数/三角形数/グループ数/次の段の三角形/減少率/安全な簡略化が無く残したグループ数:
+
+| 段 | クラスタ | 三角形 | グループ | 次の三角形 | 減少 | rejected |
+|---|---|---|---|---|---|---|
+| 0 | 780 | 99,722 | 186 | 51,786 | 48.1% | 7 |
+| 1 | 456 | 51,786 | 107 | 27,896 | 46.1% | 8 |
+| 2 | 276 | 27,896 | 64 | 16,062 | 42.4% | 8 |
+| 3 | 164 | 16,062 | 40 | 11,308 | 29.6% | 8 |
+| 4 | 115 | 11,308 | 26 | 8,988 | 20.5% | 8 |
+| 5 | 90 | 8,988 | 21 | 7,290 | 18.9% | 8 |
+| 6 | 70 | 7,290 | 16 | 6,048 | 17.0% | 7 |
+| 7 | 60 | 6,048 | 13 | 4,986 | 17.6% | 6 |
+| 8 | 50 | 4,986 | 12 | 4,112 | 17.5% | 6 |
+| 9（根） | 44 | 4,112 | 10 | 3,690 | 10.3% | 7 |
+
+  - 段 0 は 780 クラスタ/99,722 三角形、根は 44/4,112 で、GPT の復号と一致。`MESH_COOK dag_levels=10 clusters=2105 rejected_groups=66`。
+  - **根で止まった理由は `MinProgressPercent`（15%）**: 段 9 の簡略化で 4,112→3,690 三角形（減少 10.3%）に留まり、`decision=min-progress`（`CookMeshDag.cpp` の `output.NextTriangles * 100 > currentTriangles * (100 - 15)`）。クラスタが 1 つになる条件（`single-cluster`）や段の上限 64 ではない。
+  - 減少が鈍る原因は、段 3 以降で毎段 6〜8 グループが「安全な簡略化が無く簡略化せずに残した」（rejected。非多様体の辺を作る出力を除く判定）こと。段 9 では 10 グループ中 7 が rejected で、実質 3 グループ分しか減らない。境界の固定（`ComputeGroupBoundaryLocks`）自体の影響は、この記録からは分けられていない（rejected の数まで）。段 5〜8 の減少率は 17〜19% で閾値 15% のすぐ上にあり、閾値を少し上げ下げすると根の段数が変わる。
+- 証拠（`.harness/runs/20261010-132327/`）: `verify-SCN-MEGA-PROBE-ROOT-1.txt`（RelWithDebInfo の Game ビルド EXIT=0）、`-2-px1.txt`・`-2-root.txt`（`CaptureScene.ps1 ... banana-count=10000,mega-lod-error-px=1|100000` が各 pass。`mega_stats` と `gpu_pass_median` はこの行）、`-3-cookbuild.txt`（AssetCook のビルド EXIT=0）、`-4-cook.txt`（クックの段ごとの記録）。撮影の出力は `scene-capture/SCN-MEGA-PROBE-ROOT/{px1,root}/`。
+- Notes: 製品の挙動は変えていない（新しい起動引数と環境変数つきの記録は、指定したときだけ効く）。次の手: 根の段数と rejected を減らす案（MinProgressPercent の見直し、rejected の原因の調査）は別タスクで。
