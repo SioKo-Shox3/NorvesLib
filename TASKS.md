@@ -97,7 +97,7 @@
 - notes: 配置の手順は `Rendering3DTestRoutine.cpp` 889〜900・1208〜1242 行付近（CreateMegaMesh→RegisterModel→TrackModel→SpawnObject→CreateComponent<MegaGeometryComponent>→SetMegaMeshHandle→SetCastShadow）。同じバナナのインスタンスは1つの Model を共有する。
 
 ## SCN-MEGA-10K: バナナ1万本で、描かれないクラスタ・影の欠け・過大なメモリが無いようにする
-- status: todo
+- status: done
 - done-when: `mega-bananas` を `--banana-count=10000`（引数は 65536 程度まで受ける）で起動し、`overview`・`close`・`low` の各視点で、区間ごとの描画コマンドの上限（`MaxDrawCount`）を超えて捨てたクラスタの数、影で省いたインスタンスの数（VSM。CSM に切り替えたときは UBO の枠）、MegaGeometry のバッファ（2パス遮蔽の可視ビットなど）の大きさを開発ビルドのログに出し、捨てた数・省いた数が 0。0 にならない上限は、必要な分だけ大きくするか、可視ビットを 1 クラスタ 1 bit に詰めるなどインスタンス数に比例して膨らむ量を抑えて直す。1万本の既定を `--banana-count` の既定にする。1万本の撮影を開いて、穴（地面が透けて見える欠け）や影の欠けが無いことを確かめる。Rendering3DTest の撮影と、`--stress-geometry=300` を付けた Rendering3DTest の撮影が変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-10K`
