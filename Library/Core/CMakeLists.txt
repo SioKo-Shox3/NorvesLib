@@ -151,6 +151,7 @@ set(PRIVATE_SOURCES
     Private/Debug/DebugOutput.cpp
     Private/Debug/EngineChecks.cpp
     Private/Debug/Stats.cpp
+    Private/Ecs/EcsTypes.cpp
     Private/Ecs/EcsWorld.cpp
     Private/EngineGlobals/MemoryOverrides.cpp
     Private/Platform/Windows/WindowsApplication.cpp

@@ -9,9 +9,11 @@
  *   連続した配列（SoA）を置く。1 アーキタイプのチャンクは先頭から詰めて埋め、最後の 1 つだけが空きを持つ。
  * - 行の削除は、アーキタイプの末尾の行との入れ替えで行う。末尾のチャンクが空になったら解放し、
  *   次の作成で同じブロックを再利用する。入れ替わった実体の表は更新される。
+ * - 列の追加・削除は、行を別のアーキタイプ（列の組が違うだけで、タグは同じ）へ移す。値と EcsEntity は保たれ、
+ *   移動元は削除と同じ入れ替えで詰める。
  * - 作った行の値は全部 0。
  *
- * GameThread だけが触る（スレッドセーフではない）。列の追加・削除、版、クエリ、コマンドバッファは別の層で足す。
+ * GameThread だけが触る（スレッドセーフではない）。版、クエリ、コマンドバッファは別の層で足す。
  */
 
 #include "Container/Containers.h"
@@ -78,6 +80,28 @@ namespace NorvesLib::Core::Ecs
 
         /// 1 行を削除する（末尾の行との入れ替え）。古い識別子・null は false で何もしない。
         bool DestroyEntity(EcsEntity entity);
+
+        /**
+         * @brief 実体に列を足す（行は列を 1 つ増やしたアーキタイプへ移る）
+         * @param initialValue 非 null なら column.Size byte をコピーする。null なら 0
+         * @return 成功なら true。生きていない・すでにその列を持つ・列の記述が不正（登録と食い違う）ときは false で何もしない
+         */
+        bool AddColumn(EcsEntity entity, const EcsColumnInfo &column, const void *initialValue = nullptr);
+
+        /// 実体から列 type を外す（行は列を 1 つ減らしたアーキタイプへ移る）。生きていない・その列を持たないときは false。
+        bool RemoveColumn(EcsEntity entity, TypeId type);
+
+        template <typename T>
+        bool AddColumnOf(EcsEntity entity, const T &value = T{})
+        {
+            return AddColumn(entity, EcsColumnInfoOf<T>(), &value);
+        }
+
+        template <typename T>
+        bool RemoveColumnOf(EcsEntity entity)
+        {
+            return RemoveColumn(entity, EcsColumnInfoOf<T>().Type);
+        }
 
         [[nodiscard]] bool IsAlive(EcsEntity entity) const;
 
@@ -162,6 +186,10 @@ namespace NorvesLib::Core::Ecs
         void ReleaseLastChunk(Archetype &archetype);
         EcsEntity AcquireSlot();
         void ZeroRows(const Archetype &archetype, EcsChunk *chunk, uint32_t firstRow, uint32_t rowCount) const;
+        /// 末尾の行を row へ移して詰める。末尾のチャンクが空になれば解放する（実体の表のこの行と m_EntityCount は呼び出し側）。
+        void RemoveRow(Archetype &archetype, EcsChunk *chunk, uint32_t row);
+        /// 実体の行を target の末尾へ移す。共通の列の値をコピーし、added があればその列に addedValue（null なら 0）を入れる。
+        void MoveRow(EcsEntity entity, EcsArchetypeId target, const EcsColumnInfo *added, const void *addedValue);
 
         Container::VariableArray<Archetype> m_Archetypes;
         Container::VariableArray<Slot> m_Slots;

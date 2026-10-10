@@ -1000,3 +1000,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - チャンク再利用の証明: `TestReleasedBlocksAreReusedAfterSlabExhausted` を足した。最初のスラブ（16 ブロック）を使い切ってプールを広げ（40 チャンク）、末尾の 10 チャンクを空にして解放し、作り直したチャンクのポインタがすべて解放前のものの中にあって重複しないこと、プールの大きさが増えないこと、全部消してから作り直してもプールが増えないことを確かめる。
   - 成功表示を日本語（`EcsStorageTest 合格`）にした。
   - 証拠（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-CORE-CHUNKS-8.txt`（EntityTreeTest のビルド EXIT=0）、`-9-ctest.txt`（`EcsStorageTest` Passed、`100% tests passed`）。
+
+### SCN-ECS-CORE-MOVE（2026-10-10、反復 5・run 20261010-223034）
+
+- 変更: `EcsWorld::AddColumn(entity, 記述, 初期値)`・`RemoveColumn(entity, 型番号)`（型付きは `AddColumnOf<T>`・`RemoveColumnOf<T>`）を足した。行は列を 1 つ増減したアーキタイプ（タグは同じ。列が 0 本になってもよい）へ、移動先の末尾に共通の列の値をコピーして移り、移動元は削除と同じ末尾との入れ替えで詰める（`RemoveRow` に切り出し、`DestroyEntity` も使う）。EcsEntity は変わらない。すでに持つ列の追加・持たない列の削除・死んだ実体・登録と食い違う記述は false で何も変えない。
+- 型の事前登録: `EcsRegisterColumn<T>()`（`EcsTypes.h`）が型を TypeRegistry に登録して番号を固定する（`EcsColumnInfoOf<T>()` は同じ関数。並列の外なら未登録でも使った時点で登録する）。並列の区間は `EcsParallelScope`（入れ子可）で表し、区間の中で未登録の型を使うと `Detail::EcsReportUnregisteredColumn()` が数え、`NORVES_BUILD_DEVELOPMENT` では assert する（`EcsSetUnregisteredColumnHandler` で assert の代わりに受けられる。テスト用）。未登録のときの記述は型の番号が `InvalidSchemaId` で、アーキタイプには使えない。新ファイル `Private/Ecs/EcsTypes.cpp`。
+- テスト: `EcsMoveTest`（EntityTreeTest の束、ctest 登録済み）が、移動の前後の値と実体の識別子の保持、初期値あり・なし、列を外して元のアーキタイプの番号へ戻ること、拒否された変更が何も変えないこと、移動元の入れ替え（中ほど・末尾・全部移してチャンク解放）と実体の表・チャンクの実体配列の整合、複数チャンクにまたがる 3 チャンク超の移動と戻し、タグの保持と列 0 本のアーキタイプ、並列の中の未登録の検出（回数・入れ子・登録後は報告なし）を確かめる。
+- 結果: `verify-SCN-ECS-CORE-MOVE-2.txt`（EntityTreeTest のビルド EXIT=0、警告 0 件）、`-3-ctest.txt`（`EcsStorageTest`・`EcsMoveTest` Passed、`100% tests passed`）、`-4-direct.txt`（`EcsMoveTest` 合格。端末の文字コードで化けて記録されている）。`-1.txt` は `[[nodiscard]]` の警告が 1 件あった最初のビルド（テストの `(void)` で解消）。
+- Notes: RelWithDebInfo では `assert` が無効なので、並列の中の未登録の検出は回数（`EcsGetUnregisteredColumnReportCount`）だけが残る。移動のたびに `GetOrCreateArchetype` で行き先を引く（毎回ソートと線形の照合）ので、大量の構造変更で目立てば、アーキタイプごとの「列を足す・外す」の辺のキャッシュを足す。

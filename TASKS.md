@@ -248,7 +248,7 @@
 - paths: Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/CMakeLists.txt, Test/Core/Object/CMakeLists.txt, Test/Core/Object/EcsStorageTest.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-CORE-MOVE: 列の追加・削除（アーキタイプ間の移動）と、列の型の事前登録を足す
-- status: todo
+- status: done
 - done-when: 列を足したり外したりすると行が別のアーキタイプへ移り、値と EcsEntity が保たれる。列の型は `EcsRegisterColumn<T>()` で登録して番号を固定し、未登録の型を並列の中で使うと開発ビルドで assert する（設計 1.2）。`EcsMoveTest` が、移動の前後の値・移動元の入れ替え・未登録の検出を確かめる。
 - verify: `cmake --build build --config Debug --target EntityTreeTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(EcsStorageTest|EcsMoveTest)$" --no-tests=error --output-on-failure --timeout 180`

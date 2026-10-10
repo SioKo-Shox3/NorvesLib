@@ -9,10 +9,15 @@
  *
  * 列の型は trivially copyable に限る（移動と入れ替えは memcpy）。所有や参照カウントを持つ値は
  * 列に置かず Object に残す。列の型の番号は TypeRegistry::GetTypeId<T>() の結果を使う。
+ *
+ * 列の型は、EcsWorld の初期化とシステムの登録のとき（GameThread、並列が始まる前）に
+ * EcsRegisterColumn<T>() で登録して番号を固定する。TypeRegistry は同期なしで書き換わるので、
+ * 並列の中（EcsParallelScope の間）では引かない。未登録の型を並列の中で使うと、開発ビルドで assert する。
  */
 
 #include "Object/RuntimeSchema.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -55,16 +60,81 @@ namespace NorvesLib::Core::Ecs
         uint32_t Align = 1;
     };
 
-    /// 型 T の列の記述を返す。T は trivially copyable でなければならない。
+    namespace Detail
+    {
+        /// 並列の区間に入る / 出る（深さを数える）。EcsParallelScope を使う。
+        void EcsEnterParallel();
+        void EcsLeaveParallel();
+        [[nodiscard]] bool EcsIsParallelActive();
+
+        /// 並列の中で未登録の列の型が使われたときの報告。開発ビルドでは assert する（ハンドラがあればそれを呼ぶ）。
+        void EcsReportUnregisteredColumn();
+
+        /// 型 T の列を EcsRegisterColumn で登録済みか
+        template <typename T>
+        inline std::atomic<bool> g_EcsColumnRegistered{false};
+    }
+
+    /// 並列の区間を表す。この間は TypeRegistry を書き換える登録をしてはならない。
+    class EcsParallelScope
+    {
+    public:
+        EcsParallelScope()
+        {
+            Detail::EcsEnterParallel();
+        }
+
+        ~EcsParallelScope()
+        {
+            Detail::EcsLeaveParallel();
+        }
+
+        EcsParallelScope(const EcsParallelScope &) = delete;
+        EcsParallelScope &operator=(const EcsParallelScope &) = delete;
+    };
+
+    using EcsUnregisteredColumnHandler = void (*)();
+
+    /// 未登録の報告を assert の代わりに受けるハンドラを差し替える（テスト用）。前のハンドラを返す。
+    EcsUnregisteredColumnHandler EcsSetUnregisteredColumnHandler(EcsUnregisteredColumnHandler handler);
+
+    /// 並列の中で未登録の列の型が使われた回数
+    [[nodiscard]] uint32_t EcsGetUnregisteredColumnReportCount();
+
+    /**
+     * @brief 型 T を列の型として登録し、記述を返す（GameThread、並列が始まる前に呼ぶ）
+     *
+     * 登録した型の番号は固定される。T は trivially copyable でなければならない。
+     * 並列の中で未登録の T に使うと報告し、型の番号が InvalidSchemaId の記述を返す（アーキタイプには使えない）。
+     */
     template <typename T>
-    [[nodiscard]] EcsColumnInfo EcsColumnInfoOf()
+    [[nodiscard]] EcsColumnInfo EcsRegisterColumn()
     {
         static_assert(std::is_trivially_copyable_v<T>, "ECS の列の型は trivially copyable でなければならない");
         static_assert(std::is_trivially_destructible_v<T>, "ECS の列の型は自明に破棄できなければならない");
         static_assert(sizeof(T) > 0 && alignof(T) <= 64, "ECS の列の型の配置は 64 byte 以下");
-        // 型ごとの番号は最初の呼び出しで覚える（TypeRegistry は並列の中では引かない）
+        const uint32_t size = static_cast<uint32_t>(sizeof(T));
+        const uint32_t align = static_cast<uint32_t>(alignof(T));
+        std::atomic<bool> &registered = Detail::g_EcsColumnRegistered<T>;
+        if (!registered.load(std::memory_order_acquire))
+        {
+            if (Detail::EcsIsParallelActive())
+            {
+                Detail::EcsReportUnregisteredColumn();
+                return EcsColumnInfo{InvalidSchemaId, size, align};
+            }
+            registered.store(true, std::memory_order_release);
+        }
+        // 型ごとの番号は最初の登録で覚える
         static const TypeId s_Type = TypeRegistry::Get().GetTypeId<T>();
-        return EcsColumnInfo{s_Type, static_cast<uint32_t>(sizeof(T)), static_cast<uint32_t>(alignof(T))};
+        return EcsColumnInfo{s_Type, size, align};
+    }
+
+    /// 型 T の列の記述を返す。登録済みでなければ、並列の外では登録して返す（並列の中は EcsRegisterColumn と同じ）。
+    template <typename T>
+    [[nodiscard]] EcsColumnInfo EcsColumnInfoOf()
+    {
+        return EcsRegisterColumn<T>();
     }
 
 }

@@ -69,6 +69,7 @@ norves_add_test_bundle(EntityTreeTest
     MEMBER WorldRenderInterpolationTest WorldRenderInterpolationTest.cpp
     MEMBER WorldTimeChannelTest WorldTimeChannelTest.cpp
     MEMBER EcsStorageTest EcsStorageTest.cpp
+    MEMBER EcsMoveTest EcsMoveTest.cpp
 )
 target_link_libraries(EntityTreeTest PRIVATE Core)
 target_include_directories(EntityTreeTest PRIVATE
@@ -132,3 +133,4 @@ add_test(NAME WorldRenderInterpolationTest COMMAND EntityTreeTest --test=WorldRe
 add_test(NAME WorldTimeChannelTest COMMAND EntityTreeTest --test=WorldTimeChannelTest)
 
 add_test(NAME EcsStorageTest COMMAND EntityTreeTest --test=EcsStorageTest)
+add_test(NAME EcsMoveTest COMMAND EntityTreeTest --test=EcsMoveTest)

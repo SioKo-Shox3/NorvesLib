@@ -234,17 +234,8 @@ namespace NorvesLib::Core::Ecs
         return slot != nullptr ? slot->Chunk->Archetype : kInvalidEcsArchetype;
     }
 
-    bool EcsWorld::DestroyEntity(EcsEntity entity)
+    void EcsWorld::RemoveRow(Archetype &archetype, EcsChunk *chunk, uint32_t row)
     {
-        const Slot *found = FindSlot(entity);
-        if (found == nullptr)
-        {
-            return false;
-        }
-        EcsChunk *chunk = found->Chunk;
-        const uint32_t row = found->Row;
-        Archetype &archetype = m_Archetypes[chunk->Archetype];
-
         // 末尾の行を削除する行へ移して、行を詰める
         EcsChunk *lastChunk = archetype.Chunks.back();
         const uint32_t lastRow = lastChunk->Count - 1;
@@ -265,11 +256,25 @@ namespace NorvesLib::Core::Ecs
         }
         --lastChunk->Count;
         --archetype.RowCount;
-        --m_EntityCount;
         if (lastChunk->Count == 0)
         {
             ReleaseLastChunk(archetype);
         }
+    }
+
+    bool EcsWorld::DestroyEntity(EcsEntity entity)
+    {
+        const Slot *found = FindSlot(entity);
+        if (found == nullptr)
+        {
+            return false;
+        }
+        EcsChunk *chunk = found->Chunk;
+        const uint32_t row = found->Row;
+        Archetype &archetype = m_Archetypes[chunk->Archetype];
+
+        RemoveRow(archetype, chunk, row);
+        --m_EntityCount;
 
         // 世代を進めて空き一覧へ戻す（0 は null なので飛ばす）
         Slot &slot = m_Slots[entity.Index];
@@ -277,6 +282,105 @@ namespace NorvesLib::Core::Ecs
         slot.Generation = slot.Generation + 1 == 0 ? 1 : slot.Generation + 1;
         slot.Row = m_FreeSlotHead;
         m_FreeSlotHead = entity.Index;
+        return true;
+    }
+
+    void EcsWorld::MoveRow(EcsEntity entity, EcsArchetypeId targetId, const EcsColumnInfo *added, const void *addedValue)
+    {
+        Slot &slot = m_Slots[entity.Index];
+        EcsChunk *srcChunk = slot.Chunk;
+        const uint32_t srcRow = slot.Row;
+        assert(srcChunk->Archetype != targetId);
+
+        // 移動先の末尾に 1 行を取る（チャンクの確保は m_Archetypes の配列を変えない）
+        Archetype &target = m_Archetypes[targetId];
+        EcsChunk *dstChunk = target.Chunks.empty() || target.Chunks.back()->Count == target.Capacity
+                                 ? AcquireChunk(targetId)
+                                 : target.Chunks.back();
+        const uint32_t dstRow = dstChunk->Count;
+        ZeroRows(target, dstChunk, dstRow, 1);
+
+        // 共通の列（どちらも型の番号の昇順）の値を移す
+        Archetype &source = m_Archetypes[srcChunk->Archetype];
+        const std::byte *srcBase = reinterpret_cast<const std::byte *>(srcChunk);
+        std::byte *dstBase = reinterpret_cast<std::byte *>(dstChunk);
+        size_t j = 0;
+        for (size_t i = 0; i < source.Columns.size(); ++i)
+        {
+            while (j < target.Columns.size() && target.Columns[j].Type < source.Columns[i].Type)
+            {
+                ++j;
+            }
+            if (j < target.Columns.size() && target.Columns[j].Type == source.Columns[i].Type)
+            {
+                const size_t size = source.Columns[i].Size;
+                std::memcpy(dstBase + target.Offsets[j] + size * dstRow, srcBase + source.Offsets[i] + size * srcRow, size);
+            }
+        }
+        if (added != nullptr && addedValue != nullptr)
+        {
+            const int32_t column = FindColumnIndex(targetId, added->Type);
+            assert(column >= 0);
+            std::memcpy(dstBase + target.Offsets[column] + static_cast<size_t>(added->Size) * dstRow, addedValue, added->Size);
+        }
+
+        dstChunk->GetEntities()[dstRow] = entity;
+        ++dstChunk->Count;
+        ++target.RowCount;
+        slot.Chunk = dstChunk;
+        slot.Row = dstRow;
+
+        // 移動元を詰める（実体の数は変わらない）
+        RemoveRow(source, srcChunk, srcRow);
+    }
+
+    bool EcsWorld::AddColumn(EcsEntity entity, const EcsColumnInfo &column, const void *initialValue)
+    {
+        const Slot *slot = FindSlot(entity);
+        if (slot == nullptr)
+        {
+            return false;
+        }
+        const EcsArchetypeId sourceId = slot->Chunk->Archetype;
+        if (FindColumnIndex(sourceId, column.Type) >= 0)
+        {
+            return false;
+        }
+        // GetOrCreateArchetype が m_Archetypes を伸ばすので、元の列とタグは先にコピーする
+        Container::VariableArray<EcsColumnInfo> columns = m_Archetypes[sourceId].Columns;
+        const uint64_t tags = m_Archetypes[sourceId].Tags;
+        columns.push_back(column);
+        const EcsArchetypeId targetId = GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(columns.data(), columns.size()), tags);
+        if (targetId == kInvalidEcsArchetype)
+        {
+            return false;
+        }
+        MoveRow(entity, targetId, &column, initialValue);
+        return true;
+    }
+
+    bool EcsWorld::RemoveColumn(EcsEntity entity, TypeId type)
+    {
+        const Slot *slot = FindSlot(entity);
+        if (slot == nullptr)
+        {
+            return false;
+        }
+        const EcsArchetypeId sourceId = slot->Chunk->Archetype;
+        const int32_t index = FindColumnIndex(sourceId, type);
+        if (index < 0)
+        {
+            return false;
+        }
+        Container::VariableArray<EcsColumnInfo> columns = m_Archetypes[sourceId].Columns;
+        const uint64_t tags = m_Archetypes[sourceId].Tags;
+        columns.erase(columns.begin() + index);
+        const EcsArchetypeId targetId = GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(columns.data(), columns.size()), tags);
+        if (targetId == kInvalidEcsArchetype)
+        {
+            return false;
+        }
+        MoveRow(entity, targetId, nullptr, nullptr);
         return true;
     }
 
