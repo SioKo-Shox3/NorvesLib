@@ -175,6 +175,43 @@ namespace
         return bPassed;
     }
 
+    GamepadSampleEvent LiveSampleOnSlot(uint8_t slot, uint16_t buttons)
+    {
+        GamepadSampleEvent event = LiveSample(buttons);
+        event.Slot = slot;
+        return event;
+    }
+
+    /// 別スロットの未押下サンプルが、Start を押し続けているスロットのラッチを外してはならない。
+    /// 配送順: slot 0 の Start 押下 → slot 1 の未押下サンプル → ReleaseAll → slot 0 の同じ押しっぱなしサンプル。
+    bool TestStartLatchIsPerSlot()
+    {
+        PauseMenu menu;
+        menu.SetEnabled(true);
+        GamepadButtonEvent press = PadPress(GamepadButton::Start);
+        press.Slot = 0;
+        bool bPassed = Check(menu.OnGamepadButton(press) && menu.IsOpen(), "slot 0 の Start で開く");
+        menu.OnGamepadSample(LiveSampleOnSlot(0, kStartMask));
+        menu.OnGamepadSample(LiveSampleOnSlot(1, 0));
+        menu.OnInputReset();
+        menu.OnGamepadButton(press);
+        menu.OnGamepadSample(LiveSampleOnSlot(0, kStartMask));
+        bPassed = Check(menu.IsOpen(), "別スロットの未押下サンプルを挟んでも、押し続けた Start で閉じない") && bPassed;
+
+        // 別スロットの Start の離した通知も、slot 0 のラッチを外さない。
+        GamepadButtonEvent otherRelease = PadRelease(GamepadButton::Start);
+        otherRelease.Slot = 1;
+        menu.OnGamepadButton(otherRelease);
+        menu.OnInputReset();
+        menu.OnGamepadButton(press);
+        bPassed = Check(menu.IsOpen(), "別スロットの Start の解放で閉じない") && bPassed;
+
+        // 同じスロットのサンプルで離したのを見たあとは、押し直しで閉じる。
+        menu.OnGamepadSample(LiveSampleOnSlot(0, 0));
+        bPassed = Check(menu.OnGamepadButton(press) && !menu.IsOpen(), "slot 0 を離した後の押し直しで閉じる") && bPassed;
+        return bPassed;
+    }
+
     bool TestMoveThenActivate()
     {
         PauseMenu menu;
@@ -224,6 +261,7 @@ int main()
     bPassed = TestOpenMenuBlocksSceneInput() && bPassed;
     bPassed = TestGamepadStartAndB() && bPassed;
     bPassed = TestStartHeldAcrossInputReset() && bPassed;
+    bPassed = TestStartLatchIsPerSlot() && bPassed;
     bPassed = TestMoveThenActivate() && bPassed;
     bPassed = TestReopenStartsOnContinue() && bPassed;
     if (!bPassed)

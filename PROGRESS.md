@@ -770,3 +770,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261010-132327/`）: `verify-SCN-R3D-REENTRY-1.txt`（Debug の Game ビルド EXIT=0）、`-2.txt`（`RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3` が `result=pass`・EXIT=0。3 周とも materials=0 textures=0 meshes=0 models=0 entities=2 buffers=0 で一致、`geometry_pool_capacity_bytes=268435456`）、`-3.txt`（`CaptureStartupScene.ps1` 3 視点 pass。平均輝度 124.09・123.716・125.968）。
 - 確認: `.harness/runs/scene-cycle-smoke/Validation.log` は 0 バイト（検証エラー 0 件。ファイルはあるので検証レイヤーは動いている）。`default.png` を開いて天球・地面・球・岩・小屋・電球が欠けないことを確かめた。
 - Notes: `blocked/SCN-R3D-REENTRY.md` の理由（共有コマンドプールの競合）は解消した。競合は時間依存なので 1 回の pass は保証ではない（反復 5 の記録と同じ）。
+### SCN-PAUSE-MENU 差し戻し対応（2026-10-10、反復 2・run 20261010-132327）
+
+- 評価者の指摘（Start のラッチが `event.Slot` を見ずに解除され、別スロットの未押下サンプルで押し続けた Start が再押下に見えて閉じる）を直した。`PauseMenu` のラッチをスロット別のビット（`m_StartLatchedMask`、スロット数は `GamepadSlotCount`）にし、同じスロットの解放通知・サンプルだけで外す。範囲外のスロットは無視する。
+- `Test/Game/Bridge/PauseMenuTest.cpp` に `TestStartLatchIsPerSlot` を足した（slot 0 の Start 押下 → slot 1 の未押下サンプル → ReleaseAll → slot 0 の押しっぱなしサンプルでも閉じない／別スロットの解放でも外れない／同じスロットの未押下サンプルの後は押し直しで閉じる）。`PauseMenuTest passed`・EXIT=0。
+- 証拠（`.harness/runs/20261010-132327/`）: `verify-SCN-PAUSE-MENU-1.txt`（Debug の Game ビルド EXIT=0）、`-2.txt`（`CaptureScene.ps1 -GameArgs open-pause-menu` が `result=pass`）、`-3.txt`（`RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3` が `result=pass`、3 周とも entities=2 で一致）、`-4.txt`（`CaptureStartupScene.ps1` 3 視点 pass）。
+- Notes: 回帰の検査は `PauseMenu` を直接呼ぶ形（InputSystem→Router の経路は通していない）。ルーターは `event.Slot` をそのまま渡す前提。

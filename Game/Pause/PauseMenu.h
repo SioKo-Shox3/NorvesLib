@@ -89,8 +89,12 @@ namespace Game::Pause
         /// 左スティックが上・下へ倒れているか（倒した瞬間だけ移動にする）
         bool m_StickUpHeld = false;
         bool m_StickDownHeld = false;
-        /// Start の押下を受けてから、物理的に離れたのを見るまで true。押しっぱなしの再押下で閉じ直さないため
-        bool m_bStartLatched = false;
+        /// スロットごとのビット。Start の押下を受けてから、そのスロットで物理的に離れたのを見るまで立てる。
+        /// 押しっぱなしの再押下で閉じ直さないため。別スロットの入力では外さない
+        uint8_t m_StartLatchedMask = 0;
+
+        bool IsStartLatched(uint8_t slot) const;
+        void SetStartLatched(uint8_t slot, bool latched);
     };
 
 } // namespace Game::Pause

@@ -168,7 +168,7 @@ namespace Game::Pause
         // Start を離したら、次の押下を受け付けられるようにする。
         if (event.Button == GamepadButton::Start && event.Action == InputAction::Released)
         {
-            m_bStartLatched = false;
+            SetStartLatched(event.Slot, false);
         }
 
         if (!m_bOpen)
@@ -176,11 +176,11 @@ namespace Game::Pause
             if (m_bEnabled && event.Button == GamepadButton::Start && bPressed)
             {
                 // 押しっぱなしの間に入力状態が捨てられて再押下に見えても、開き直さない。
-                if (m_bStartLatched)
+                if (IsStartLatched(event.Slot))
                 {
                     return true;
                 }
-                m_bStartLatched = true;
+                SetStartLatched(event.Slot, true);
                 Open();
                 return true;
             }
@@ -198,9 +198,9 @@ namespace Game::Pause
             {
             case GamepadButton::Start:
                 // 開いた Start を押したままにしている間の再押下（入力状態の破棄で生じる）は無視する。
-                if (!m_bStartLatched)
+                if (!IsStartLatched(event.Slot))
                 {
-                    m_bStartLatched = true;
+                    SetStartLatched(event.Slot, true);
                     Close();
                 }
                 break;
@@ -225,11 +225,11 @@ namespace Game::Pause
 
     bool PauseMenu::OnGamepadSample(const NorvesLib::Core::Input::GamepadSampleEvent &event)
     {
-        // 入力状態の破棄（ReleaseAll）で離した通知が来なくても、サンプルで Start が上がったのを見てラッチを外す。
+        // 入力状態の破棄（ReleaseAll）で離した通知が来なくても、同じスロットのサンプルで Start が上がったのを見てラッチを外す。
         if (!event.State.Connected ||
             (event.State.Buttons & static_cast<uint16_t>(GamepadButton::Start)) == 0)
         {
-            m_bStartLatched = false;
+            SetStartLatched(event.Slot, false);
         }
         if (!m_bOpen || event.Mode != NorvesLib::Core::Input::EGamepadSampleMode::Live || !event.State.Connected)
         {
@@ -257,6 +257,22 @@ namespace Game::Pause
             m_StickDownHeld = false;
         }
         return false;
+    }
+
+    bool PauseMenu::IsStartLatched(uint8_t slot) const
+    {
+        return slot < NorvesLib::Core::Input::GamepadSlotCount && (m_StartLatchedMask & (1u << slot)) != 0;
+    }
+
+    void PauseMenu::SetStartLatched(uint8_t slot, bool latched)
+    {
+        if (slot >= NorvesLib::Core::Input::GamepadSlotCount)
+        {
+            return;
+        }
+        const uint8_t bit = static_cast<uint8_t>(1u << slot);
+        m_StartLatchedMask = latched ? static_cast<uint8_t>(m_StartLatchedMask | bit)
+                                     : static_cast<uint8_t>(m_StartLatchedMask & ~bit);
     }
 
     void PauseMenu::OnInputReset()
