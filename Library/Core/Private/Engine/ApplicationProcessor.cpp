@@ -1,5 +1,6 @@
 ﻿#include "Engine/ApplicationProcessor.h"
 #include "Engine/FixedStepScheduler.h"
+#include "Ecs/EcsScheduler.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
 #include "Engine/ApplicationExitFramePolicy.h"
@@ -2662,17 +2663,16 @@ namespace NorvesLib::Core::Engine
         }
 
         const float FixedDeltaTime = m_FixedStepScheduler->GetDeltaSeconds();
+        World& world = GEngine->GetWorld();
+        // 同じフレームの複数の固定ステップは、更新への参加の番号を共有する
+        Ecs::EcsCollectionScope collection(world.GetScheduler());
         for (uint64_t step = 0; step < result.ExecutedSteps; ++step)
         {
-            World& world = GEngine->GetWorld();
-            world.UpdateWorldTransforms();
-            world.PrepareRenderInterpolationStep();
+            world.BeginFixedStep();
             Module::GetModuleRegistry().DispatchPreFixedTick(FixedDeltaTime);
             world.DispatchFixedTick(FixedDeltaTime);
             Module::GetModuleRegistry().DispatchFixedTick(FixedDeltaTime);
-            world.UpdateWorldTransforms();
-            world.CaptureRenderInterpolationStep();
-            world.CleanupAfterFixedStep();
+            world.EndFixedStep();
         }
 
         return result;

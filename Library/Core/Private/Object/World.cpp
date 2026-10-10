@@ -7,6 +7,8 @@
 #include "Component/SkinnedMeshComponent.h"
 #include "Component/TextComponent.h"
 #include "Container/UnorderedSet.h"
+#include "Ecs/EcsScheduler.h"
+#include "Ecs/EcsWorld.h"
 #include "Engine/ComponentDataRegistry.h"
 #include "Engine/NorvesEngine.h"
 #include "Logging/LogMacros.h"
@@ -614,6 +616,7 @@ namespace NorvesLib::Core
         NextObjectId = 1;
         m_RenderInterpolationAlpha = 1;
         m_bRenderInterpolationAllowed = true;
+        InitializeSchedule();
     }
 
     World::World(const FieldInitializer* initializer)
@@ -622,6 +625,7 @@ namespace NorvesLib::Core
         NextObjectId = 1;
         m_RenderInterpolationAlpha = 1;
         m_bRenderInterpolationAllowed = true;
+        InitializeSchedule();
     }
 
     World::World(const IUnknown* sourceObject)
@@ -630,6 +634,7 @@ namespace NorvesLib::Core
         NextObjectId = 1;
         m_RenderInterpolationAlpha = 1;
         m_bRenderInterpolationAllowed = true;
+        InitializeSchedule();
     }
 
     World::~World()
@@ -666,6 +671,7 @@ namespace NorvesLib::Core
             LOG_ERROR("World::Finalize cannot run during update or cleanup");
             return;
         }
+        EndTickCollection();
         m_TickEntries.clear();
         m_FixedTickEntries.clear();
         m_bHasTickSnapshot = false;
@@ -916,10 +922,13 @@ namespace NorvesLib::Core
         {
             return;
         }
-        BuildTickSnapshot();
-        UpdateWorldTransforms();
-        DispatchTickGroups(Component::ETickGroup::Input, Component::ETickGroup::PoseFinalize, deltaTime, times);
-        CleanupDestroyedObjects();
+        // 前のフレームの LateTick が来なかったときの収集を閉じてから、このフレームの収集を開く
+        EndTickCollection();
+        m_Scheduler->BeginCollection();
+        m_bTickCollectionOpen = true;
+        m_StageTimes = times;
+        m_StageDelta = deltaTime;
+        RunWorldStage(m_StageTick);
     }
 
     void World::LateTick(float deltaTime)
@@ -939,14 +948,126 @@ namespace NorvesLib::Core
         {
             return;
         }
-        UpdateWorldTransforms();
-        DispatchTickGroups(Component::ETickGroup::PostPhysics, Component::ETickGroup::PostPhysics, deltaTime, times);
-        UpdateRenderTransforms();
-        DispatchTickGroups(Component::ETickGroup::Camera, Component::ETickGroup::PreRender, deltaTime, times);
-        CleanupDestroyedObjects();
-        m_TickEntries.clear();
-        m_FixedTickEntries.clear();
-        m_bHasTickSnapshot = false;
+        m_StageTimes = times;
+        m_StageDelta = deltaTime;
+        RunWorldStage(m_StageLateTick);
+        EndTickCollection();
+    }
+
+    void World::EndTickCollection()
+    {
+        if (m_bTickCollectionOpen)
+        {
+            m_bTickCollectionOpen = false;
+            m_Scheduler->EndCollection();
+        }
+    }
+
+    void World::RunWorldStage(uint32_t stage)
+    {
+        m_Scheduler->RunStage(stage);
+    }
+
+    void World::InitializeSchedule()
+    {
+        m_EcsWorld = Container::MakeUnique<Ecs::EcsWorld>();
+        m_Scheduler = Container::MakeUnique<Ecs::SystemScheduler>(*m_EcsWorld);
+        Ecs::SystemScheduler& scheduler = *m_Scheduler;
+
+        m_StageTick = scheduler.AddStage("Tick");
+        m_StageLateTick = scheduler.AddStage("LateTick");
+        m_StageFixedBegin = scheduler.AddStage("FixedBegin");
+        m_StageFixedTick = scheduler.AddStage("FixedTick");
+        m_StageFixedEnd = scheduler.AddStage("FixedEnd");
+        m_StageSync = scheduler.AddStage("Sync");
+
+        // 段の GameThreadOnly のシステムは登録順に単独の波で走る。従来の処理を同じ順・同じ位置で呼ぶ。
+        auto add = [&](uint32_t stage, const char* name, Ecs::EcsSystemFn fn)
+        {
+            Ecs::SystemDesc desc;
+            desc.Name = name;
+            desc.Stage = stage;
+            desc.Thread = ThreadPolicy::GameThreadOnly;
+            desc.Run = fn;
+            desc.User = this;
+            const Ecs::EcsSystemId id = scheduler.RegisterSystem(desc);
+            if (id == Ecs::kInvalidEcsSystem)
+            {
+                LOG_ERROR("World: failed to register ECS system %s", name);
+            }
+        };
+        using Context = Ecs::EcsSystemContext;
+
+        add(m_StageTick, "Tick.BuildSnapshot",
+            [](void* user, const Context&) { static_cast<World*>(user)->BuildTickSnapshot(); });
+        add(m_StageTick, "Tick.UpdateTransforms",
+            [](void* user, const Context&) { static_cast<World*>(user)->UpdateWorldTransforms(); });
+        add(m_StageTick, "Tick.DispatchGroups",
+            [](void* user, const Context&)
+            {
+                auto* world = static_cast<World*>(user);
+                world->DispatchTickGroups(Component::ETickGroup::Input, Component::ETickGroup::PoseFinalize,
+                                          world->m_StageDelta, world->m_StageTimes);
+            });
+        add(m_StageTick, "Tick.Cleanup",
+            [](void* user, const Context&) { static_cast<World*>(user)->CleanupDestroyedObjects(); });
+
+        add(m_StageLateTick, "LateTick.UpdateTransforms",
+            [](void* user, const Context&) { static_cast<World*>(user)->UpdateWorldTransforms(); });
+        add(m_StageLateTick, "LateTick.DispatchPostPhysics",
+            [](void* user, const Context&)
+            {
+                auto* world = static_cast<World*>(user);
+                world->DispatchTickGroups(Component::ETickGroup::PostPhysics, Component::ETickGroup::PostPhysics,
+                                          world->m_StageDelta, world->m_StageTimes);
+            });
+        add(m_StageLateTick, "LateTick.UpdateRenderTransforms",
+            [](void* user, const Context&) { static_cast<World*>(user)->UpdateRenderTransforms(); });
+        add(m_StageLateTick, "LateTick.DispatchCameraToPreRender",
+            [](void* user, const Context&)
+            {
+                auto* world = static_cast<World*>(user);
+                world->DispatchTickGroups(Component::ETickGroup::Camera, Component::ETickGroup::PreRender,
+                                          world->m_StageDelta, world->m_StageTimes);
+            });
+        add(m_StageLateTick, "LateTick.Cleanup",
+            [](void* user, const Context&) { static_cast<World*>(user)->CleanupDestroyedObjects(); });
+        add(m_StageLateTick, "LateTick.EndSnapshot",
+            [](void* user, const Context&)
+            {
+                auto* world = static_cast<World*>(user);
+                world->m_TickEntries.clear();
+                world->m_FixedTickEntries.clear();
+                world->m_bHasTickSnapshot = false;
+            });
+
+        add(m_StageFixedBegin, "FixedBegin.UpdateTransforms",
+            [](void* user, const Context&) { static_cast<World*>(user)->UpdateWorldTransforms(); });
+        add(m_StageFixedBegin, "FixedBegin.PrepareInterpolation",
+            [](void* user, const Context&) { static_cast<World*>(user)->PrepareRenderInterpolationStep(); });
+
+        add(m_StageFixedTick, "FixedTick.Dispatch",
+            [](void* user, const Context&) { static_cast<World*>(user)->DispatchFixedTickBody(); });
+
+        add(m_StageFixedEnd, "FixedEnd.UpdateTransforms",
+            [](void* user, const Context&) { static_cast<World*>(user)->UpdateWorldTransforms(); });
+        add(m_StageFixedEnd, "FixedEnd.CaptureInterpolation",
+            [](void* user, const Context&) { static_cast<World*>(user)->CaptureRenderInterpolationStep(); });
+        add(m_StageFixedEnd, "FixedEnd.Cleanup",
+            [](void* user, const Context&) { static_cast<World*>(user)->CleanupDestroyedObjects(); });
+
+        add(m_StageSync, "Sync.SyncToSceneView",
+            [](void* user, const Context&) { static_cast<World*>(user)->SyncToSceneViewBody(); });
+    }
+
+    void World::BeginFixedStep()
+    {
+        RunWorldStage(m_StageFixedBegin);
+    }
+
+    void World::EndFixedStep()
+    {
+        RunWorldStage(m_StageFixedEnd);
     }
 
     void World::BuildTickSnapshot()
@@ -1205,6 +1326,21 @@ namespace NorvesLib::Core
     void World::SyncToSceneView(const Rendering::MaterialResources* materials,
                                 const Rendering::MeshResources* meshes)
     {
+        m_StageMaterials = materials;
+        m_StageMeshes = meshes;
+        if (m_Scheduler->IsRunning())
+        {
+            // 段の最中に呼ばれたときは再入できないので、段を通さずに同じ処理を行う
+            SyncToSceneViewBody();
+            return;
+        }
+        RunWorldStage(m_StageSync);
+    }
+
+    void World::SyncToSceneViewBody()
+    {
+        const Rendering::MaterialResources* materials = m_StageMaterials;
+        const Rendering::MeshResources* meshes = m_StageMeshes;
         if (!HasFlag(OF_Initialized) ||
             (!m_SceneView && !m_ScreenSpaceBoardSink))
         {
@@ -1700,6 +1836,13 @@ namespace NorvesLib::Core
         {
             return;
         }
+        m_StageFixedDelta = fixedDeltaTime;
+        RunWorldStage(m_StageFixedTick);
+    }
+
+    void World::DispatchFixedTickBody()
+    {
+        const float fixedDeltaTime = m_StageFixedDelta;
         const bool bStandalone = !m_bHasTickSnapshot;
         if (bStandalone)
         {

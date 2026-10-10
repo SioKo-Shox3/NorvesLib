@@ -284,7 +284,7 @@
 - notes: 親の追記（GPT 2 周目）: 更新への参加の番号は「次の収集」の番号とし、通常の Tick と単独で回る `DispatchFixedTick`（World.cpp 1703 行付近）の両方で進める。同じフレームの複数の固定ステップでは番号を共有する。
 
 ## SCN-ECS-WORLD-SCHEDULE: World の更新を段で回す（中身は今の処理のまま）
-- status: todo
+- status: done
 - done-when: World が EcsWorld と SystemScheduler を持つ。Tick・LateTick・DispatchFixedTick・SyncToSceneView と固定ステップのループ（ApplicationProcessor.cpp:2665-2676）が段を走らせる。今の処理（群ごとの配信・UpdateWorldTransforms・補間・同期・cleanup）は、段の GameThreadOnly のシステムとして同じ順・同じ位置で走る。下のテストと起動画面の比較が pass する。
 - verify: `cmake --build build --config Debug --target EntityTreeTest ApplicationFixedStepPipelineTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(WorldTickGroupTest|WorldTimeChannelTest|WorldRenderInterpolationTest|ApplicationFixedStepPipelineTest|RenderInterpolationCadenceTest)$" --no-tests=error --output-on-failure --timeout 180`

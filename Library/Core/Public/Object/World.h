@@ -19,6 +19,12 @@ namespace NorvesLib::Core::Rendering
     struct BoardProxy;
 }
 
+namespace NorvesLib::Core::Ecs
+{
+    class EcsWorld;
+    class SystemScheduler;
+}
+
 namespace NorvesLib::Core
 {
     namespace Engine
@@ -268,6 +274,16 @@ namespace NorvesLib::Core
 
         uint64_t GetTickSerial() const noexcept { return m_TickSerial; }
 
+        /// ECS の行の保管庫。更新は GetScheduler() の段を通して走る
+        Ecs::EcsWorld& GetEcsWorld() { return *m_EcsWorld; }
+        /// 更新の段（Tick / LateTick / FixedBegin / FixedTick / FixedEnd / Sync）を走らせるスケジューラ
+        Ecs::SystemScheduler& GetScheduler() { return *m_Scheduler; }
+
+        /// 固定ステップの前半（姿勢の確定と補間履歴の準備）。Module の PreFixedTick の前に呼ぶ
+        void BeginFixedStep();
+        /// 固定ステップの後半（姿勢の確定・補間履歴の記録・破棄の回収）。Module の FixedTick の後に呼ぶ
+        void EndFixedStep();
+
     private:
         friend class Engine::ApplicationProcessor;
         friend class Entity;
@@ -304,6 +320,30 @@ namespace NorvesLib::Core
         bool m_bHasTickSnapshot = false;
         bool m_bDispatchingTicks = false;
         bool m_bCleaningObjects = false;
+
+        // ---- 更新の段（中身は従来の処理。段の GameThreadOnly のシステムが同じ順で呼ぶ） ----
+        void InitializeSchedule();
+        void EndTickCollection();
+        void RunWorldStage(uint32_t stage);
+        void DispatchFixedTickBody();
+        void SyncToSceneViewBody();
+
+        Container::TUniquePtr<Ecs::EcsWorld> m_EcsWorld;
+        Container::TUniquePtr<Ecs::SystemScheduler> m_Scheduler;
+        uint32_t m_StageTick = 0;
+        uint32_t m_StageLateTick = 0;
+        uint32_t m_StageFixedBegin = 0;
+        uint32_t m_StageFixedTick = 0;
+        uint32_t m_StageFixedEnd = 0;
+        uint32_t m_StageSync = 0;
+        /// 段の中のシステムが読む、呼び出しごとの引数
+        const Engine::FrameTimes* m_StageTimes = nullptr;
+        float m_StageDelta = 0;
+        float m_StageFixedDelta = 0;
+        const Rendering::MaterialResources* m_StageMaterials = nullptr;
+        const Rendering::MeshResources* m_StageMeshes = nullptr;
+        /// Tick から LateTick までを 1 つの収集として開いている（参加の番号をフレームで共有する）
+        bool m_bTickCollectionOpen = false;
 
         void CleanupDestroyedObjects();
         void DispatchFixedTick(float fixedDeltaTime);
