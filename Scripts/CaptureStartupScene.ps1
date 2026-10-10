@@ -104,6 +104,13 @@
 # 撮影の差の原因を版から引けるようにする）。VT の常駐量は、ログの VRAM_POOLS の vt_used_mb の最大を vram_pools.vt_used_mb_max へ書き、
 # -VtUsedLimitMb（既定 64。-OrbitDegreesPerSecond を使う撮影で省略したときだけ 128 にする。明示した値はそのまま使い、実効値を metrics.json の vt_used_limit_mb へ書く）を超えたら失敗にする（フィードバックの LOD が壊れて全面でミップ 0 を要求すると数百 MB になる。
 # -StressTextures は VT を上限まで使うので検査しない。0 で検査しない）。
+#
+# -GameArgs は Game へ足す引数を、先頭の -- を除いてカンマ区切りで与える（例: -GameArgs engine-checks=ENGINE_CHECK_SELFTEST,stress-entities=2000）。
+#   値にカンマを含む引数は、カンマの次が英字で始まらない限り分けない（CaptureScene.ps1 の -GameArgs と同じ）。-ExtraGameArguments の後ろに足す。
+# -RequireChecks <名前,...> を与えると、Game を --engine-checks=<名前,...> 付きで起動し（開発ビルドの検査。Debug/EngineChecks.h）、
+#   視点ごとの Game.log の ENGINE_CHECK の行で、各名前の pass が 1 回以上あり fail が 0 であることを見る（満たさなければ失敗）。
+#   名前を与えていなくても、ENGINE_CHECK の fail の行が 1 件でもあれば失敗にする。結果は metrics.json の engine_checks へ書く。Release はログが無いので併用できない。
+# -Build を付けると、撮る構成（-Configuration）の Game を先にビルドし、失敗したら撮らずに失敗にする（古い exe で撮らないため）。
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -254,10 +261,50 @@ param(
     [ValidateSet('On', 'Off')]
     [string]$SphereSpin = 'On',
     # Game へそのまま渡す引数（空白で区切る。例: --texture-asset-root と --texture-asset-manifest で別のクック済みの出力を使う）。
-    [string[]]$ExtraGameArguments = @()
+    [string[]]$ExtraGameArguments = @(),
+    # Game へ足す引数（先頭の -- を除いてカンマ区切り。例: engine-checks=ENGINE_CHECK_SELFTEST）。
+    [string[]]$GameArgs = @(),
+    # 開発ビルドの検査の名前（カンマ区切りで1つの文字列でも、配列でもよい）。pass が 1 回以上・fail が 0 でなければ失敗にする。
+    [string[]]$RequireChecks = @(),
+    # 撮る前に、-Configuration の Game をビルドする（失敗したら撮らずに失敗）。
+    [switch]$Build
 )
 
 $ErrorActionPreference = 'Stop'
+
+# 検査の名前: 「A,B」の1文字列でも配列でも受ける。
+$requiredChecks = @($RequireChecks | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } | Select-Object -Unique)
+foreach ($checkName in $requiredChecks)
+{
+    if ($checkName -notmatch '^[A-Z][A-Z0-9_]*$')
+    {
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=invalid_check_name value=$checkName"
+        exit 1
+    }
+}
+if ($requiredChecks.Count -gt 0 -and $Configuration -eq 'Release')
+{
+    Write-Output 'CAPTURE_STARTUP_SCENE result=fail reason=checks_without_log（Release はログが無く、検査の結果を照合できない。Debug か RelWithDebInfo を使う）'
+    exit 1
+}
+
+# -GameArgs: カンマの次が「英字で始まり、= かカンマか末尾が続く」ところだけで分け、先頭の -- を付ける。
+$gameArgumentList = @()
+foreach ($gameArgument in $GameArgs)
+{
+    foreach ($part in ($gameArgument -split ',(?=[A-Za-z][A-Za-z0-9-]*(?:=|,|$))'))
+    {
+        $trimmed = $part.Trim().TrimStart('-')
+        if ($trimmed -ne '')
+        {
+            $gameArgumentList += "--$trimmed"
+        }
+    }
+}
+if ($requiredChecks.Count -gt 0)
+{
+    $gameArgumentList += "--engine-checks=$($requiredChecks -join ',')"
+}
 
 # 長く旋回する撮影は地面の広い範囲を通るので、静止の撮影より VT の常駐量が増える（低角度で 400 フレーム旋回すると 80 MB 台）。
 # フィードバックの LOD が壊れたときの数百 MB とは桁が違うので、旋回で -VtUsedLimitMb を省略したときだけ上限を 128 MB にする。
@@ -771,12 +818,59 @@ function Stop-OwnedProcessTree([int]$ProcessId)
     & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
 }
 
+# Game.log の ENGINE_CHECK の行を名前ごとに数える。pass/fail の数と、fail の行の本文を返す。
+function Get-EngineCheckCounts([string]$LogPath)
+{
+    $counts = @{}
+    $failLines = @()
+    foreach ($line in [IO.File]::ReadLines($LogPath))
+    {
+        if ($line -notmatch 'ENGINE_CHECK name=([A-Z][A-Z0-9_]*) result=(pass|fail)')
+        {
+            continue
+        }
+        if (-not $counts.ContainsKey($Matches[1])) { $counts[$Matches[1]] = [pscustomobject]@{ pass = 0; fail = 0 } }
+        if ($Matches[2] -eq 'pass') { $counts[$Matches[1]].pass += 1 } else { $counts[$Matches[1]].fail += 1; $failLines += $line.Trim() }
+    }
+    return [pscustomobject]@{ Counts = $counts; FailLines = $failLines }
+}
+
+# 撮る構成の Game をビルドする。成功なら $null、失敗なら理由を返す（出力は LogPath へ）。
+function Invoke-GameBuild([string]$RepoRoot, [string]$Config, [string]$LogPath)
+{
+    $buildDirectory = Join-Path $RepoRoot 'build'
+    if (-not (Test-Path -LiteralPath (Join-Path $buildDirectory 'CMakeCache.txt')))
+    {
+        return "build が構成されていない（$buildDirectory に CMakeCache.txt が無い。cmake -B build -S . を先に実行する）"
+    }
+    $errorLogPath = "$LogPath.err"
+    Remove-Item -LiteralPath $LogPath, $errorLogPath -Force -ErrorAction SilentlyContinue
+    $buildProcess = Start-Process -FilePath 'cmake.exe' -ArgumentList @('--build', "`"$buildDirectory`"", '--config', $Config, '--target', 'Game', '--', '/m:1') `
+        -WorkingDirectory $RepoRoot -NoNewWindow -Wait -PassThru -RedirectStandardOutput $LogPath -RedirectStandardError $errorLogPath
+    if ($buildProcess.ExitCode -ne 0)
+    {
+        $tail = @(Get-Content -LiteralPath $LogPath -Tail 8 -ErrorAction SilentlyContinue) -join ' | '
+        return "Game のビルド（$Config）が失敗（終了コード $($buildProcess.ExitCode)。ログ: $LogPath。末尾: $tail）"
+    }
+    return $null
+}
+
+New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
+if ($Build -and -not $CompareOnly)
+{
+    $buildFailure = Invoke-GameBuild $repoRoot $Configuration (Join-Path $outRoot 'Build.log')
+    if ($null -ne $buildFailure)
+    {
+        Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=build_failed detail=$buildFailure"
+        exit 1
+    }
+    Write-Output "CAPTURE_STARTUP_SCENE build result=pass configuration=$Configuration"
+}
 if (-not $CompareOnly -and -not (Test-Path -LiteralPath $gamePath))
 {
     Write-Output "CAPTURE_STARTUP_SCENE result=fail reason=game_missing path=$gamePath"
     exit 1
 }
-New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
 
 $failures = @()
 $results = @()
@@ -936,6 +1030,7 @@ foreach ($view in $shots)
     {
         $arguments += $extraArgument
     }
+    $arguments += $gameArgumentList
     if ($Night)
     {
         $arguments += '--night'
@@ -1395,6 +1490,29 @@ foreach ($view in $shots)
     }
     # Release はログが無効（NORVES_ENABLE_LOGGING=0）で Game.log を書かないため、ログの検査を飛ばす。
 
+    # 開発ビルドの検査（ENGINE_CHECK）。fail の行は、名前を指定していなくても失敗にする。
+    $engineChecks = @()
+    if (Test-Path -LiteralPath $viewLogPath)
+    {
+        $checkResult = Get-EngineCheckCounts $viewLogPath
+        foreach ($failLine in $checkResult.FailLines)
+        {
+            $failures += "$($view.Name): 検査が fail: $failLine"
+        }
+        foreach ($checkName in $requiredChecks)
+        {
+            $count = $checkResult.Counts[$checkName]
+            $passCount = if ($null -ne $count) { $count.pass } else { 0 }
+            $failCount = if ($null -ne $count) { $count.fail } else { 0 }
+            $engineChecks += [pscustomobject][ordered]@{ name = $checkName; pass = $passCount; fail = $failCount }
+            Write-Output "CAPTURE_STARTUP_SCENE engine_check view=$($view.Name) name=$checkName pass=$passCount fail=$failCount"
+            if ($passCount -lt 1)
+            {
+                $failures += "$($view.Name): 検査 $checkName の pass がログに無い（ENGINE_CHECK name=$checkName result=pass が 0 件。開発ビルドか、--engine-checks が効いているかを確かめる）"
+            }
+        }
+    }
+
     # 検証レイヤーのログ。エラーが 1 件でもあれば失敗にする。数えるのはメッセージの見出しの行（"Validation Error:"）で、
     # VUID を持たないエラー（UNASSIGNED-Threading-* など）も含み、本文の "#VUID-" の行を二重に数えない。
     # Debug でログのファイルが無いときは、検証レイヤーがログの設定を読んでいない（落ちようのない合格になる）ので失敗にする。
@@ -1456,6 +1574,7 @@ foreach ($view in $shots)
             stress_materials = $stressMaterials
             stress_geometry = $stressGeometryInfo
             skinned_probe = $skinnedProbeInfo
+            engine_checks = $engineChecks
         }
         $results += [pscustomobject]$result
         Write-Output ("CAPTURE_STARTUP_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5} indirect_lighting={6}" -f `

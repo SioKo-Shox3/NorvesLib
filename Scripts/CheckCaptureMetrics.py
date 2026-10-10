@@ -3,7 +3,9 @@
 # 撮影がいまの Game.exe より後に撮られたこと（古い結果の流用でないこと）を見る。
 #
 # 使い方: python Scripts/CheckCaptureMetrics.py <撮影の出力ディレクトリ> [--views horizon,overview]
-#         [--timing] [--configuration RelWithDebInfo]
+#         [--timing] [--configuration RelWithDebInfo] [--min-frames N]
+# --min-frames N は、計測の有効な標本（gpu_timing.valid_samples。シーンの初期配置と公開の完了の後のウォームアップを
+# 除いた窓の件数）が N 件以上で、計測の開始のフレーム（timing_start_frame）が記録されていることを見る。
 # 終了コード: すべて満たせば 0、どれかが欠ければ 1。
 import argparse
 import json
@@ -66,8 +68,16 @@ def main():
                         "game_thread_ms_p95", "render_thread_ms_median", "render_thread_ms_p95"):
                 if not timing.get(key):
                     failures.append("timing_missing=%s:%s" % (name, key))
-            if args.min_frames and (timing.get("frames") or 0) < args.min_frames:
-                failures.append("frames=%s:%s<%d" % (name, timing.get("frames"), args.min_frames))
+            if args.min_frames:
+                # 有効な標本の数（SceneReady の後のウォームアップを除いた窓の、FrameGPU が有効なフレーム数）を見る。
+                # 計測の開始のフレームが記録されていない撮影は、初期配置の前を含みうるので通さない。
+                valid = timing.get("valid_samples")
+                if valid is None:
+                    failures.append("valid_samples_missing=%s" % name)
+                elif valid < args.min_frames:
+                    failures.append("valid_samples=%s:%s<%d" % (name, valid, args.min_frames))
+                if view.get("timing_start_frame") is None:
+                    failures.append("timing_start_frame_missing=%s" % name)
             for key, option in limits:
                 limit = getattr(args, option)
                 value = timing.get(key)

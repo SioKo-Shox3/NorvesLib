@@ -147,6 +147,12 @@ namespace Game
 #if NORVES_BUILD_DEVELOPMENT
         constexpr const TCHAR *kMegaLodErrorPxOption = TEXT("--mega-lod-error-px=");
 #endif
+        // --engine-checks=<名前,...>: 開発ビルドの検査（Debug/EngineChecks.h）を名前で有効にする。結果は ENGINE_CHECK の行でログへ出る。
+        // --engine-checks-selftest-fail: 配線の確認用の検査 ENGINE_CHECK_SELFTEST を fail で報告させる（落ちる出力の確認用）。
+        constexpr const TCHAR *kEngineChecksOption = TEXT("--engine-checks=");
+        constexpr const TCHAR *kEngineChecksSelfTestFailOption = TEXT("--engine-checks-selftest-fail");
+        bool s_bEngineChecksSelfTestFail = false;
+        bool s_bEngineChecksSelfTestReported = false;
         // --open-scene-info: mega-bananas を起動時から情報表示（H キーの表示）を出した状態にする（開発ビルドだけ。値を取らない）。
         // 撮影の起動は ImGui を使わないが、この指定があれば撮影でも使い、表示を撮れる。
         constexpr const TCHAR *kOpenSceneInfoOption = TEXT("--open-scene-info");
@@ -556,6 +562,8 @@ namespace Game
         m_StressMovingPercent = 0.0f;
         m_bStressMovingPercentSet = false;
         m_StressMovingStartTime = 0.0f;
+        s_bEngineChecksSelfTestFail = false;
+        s_bEngineChecksSelfTestReported = false;
         m_StressStreamCellMeters = 0.0f;
         m_bStressStreamCellSet = false;
         m_StressStreamPeriod = Game::GameModes::kDefaultStressStreamPeriod;
@@ -1111,6 +1119,25 @@ namespace Game
                 continue;
             }
 #endif
+            if (TryStripPrefix(args[i], kEngineChecksOption, sceneValue))
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                auto *checksEngine = NorvesLib::Core::Engine::GEngine;
+                if (checksEngine == nullptr || !checksEngine->GetEngineChecks().EnableList(sceneValue.c_str()))
+                {
+                    LOG_ERROR("--engine-checks は大文字・数字・下線の名前をカンマで区切って指定してください");
+                    return false;
+                }
+#else
+                LOG_WARNING("--engine-checks は開発ビルドだけで使えます。無視します");
+#endif
+                continue;
+            }
+            if (args[i] == kEngineChecksSelfTestFailOption)
+            {
+                s_bEngineChecksSelfTestFail = true;
+                continue;
+            }
             if (TryStripPrefix(args[i], kCameraScriptOption, sceneValue))
             {
                 if (!m_CameraScriptPath.empty())
@@ -2344,6 +2371,16 @@ namespace Game
         }
         m_M6ScriptSmokeController.Update();
         UpdatePauseMenu();
+
+#if NORVES_BUILD_DEVELOPMENT
+        // 検査の窓口の配線の確認: ENGINE_CHECK_SELFTEST が有効なら、起動の後の最初の更新で結果を 1 回出す。
+        if (!s_bEngineChecksSelfTestReported && NorvesLib::Core::Engine::GEngine != nullptr)
+        {
+            s_bEngineChecksSelfTestReported = true;
+            NorvesLib::Core::Engine::GEngine->GetEngineChecks().Report(
+                NorvesLib::Debug::EngineChecks::kSelfTestName, !s_bEngineChecksSelfTestFail, 1);
+        }
+#endif
 
         if (m_SceneCycle.IsEnabled() && m_pGameModeStateMachine != nullptr && NorvesLib::Core::Engine::GEngine)
         {

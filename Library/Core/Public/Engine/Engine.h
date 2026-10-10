@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Container/PointerTypes.h"
+#include "Debug/EngineChecks.h"
 #include "Engine/DeterministicCapture.h"
 #include "Engine/TimeSystem.h"
 #include "Engine/FixedStepFrameTiming.h"
@@ -249,6 +250,14 @@ namespace NorvesLib::Core::Engine
         const DeterministicCapture &GetDeterministicCapture() const
         {
             return m_DeterministicCapture;
+        }
+
+        /**
+         * @brief 開発ビルドの検査（--engine-checks）の窓口を取得（GameThread 専用）
+         */
+        NorvesLib::Debug::EngineChecks &GetEngineChecks()
+        {
+            return m_EngineChecks;
         }
 
         /**
@@ -532,6 +541,9 @@ namespace NorvesLib::Core::Engine
 
         // 決定的な撮影の状態
         DeterministicCapture m_DeterministicCapture;
+
+        // 開発ビルドの検査の窓口
+        NorvesLib::Debug::EngineChecks m_EngineChecks;
     };
 
     /**

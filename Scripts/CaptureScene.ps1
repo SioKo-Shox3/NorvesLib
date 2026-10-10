@@ -15,17 +15,27 @@
 #   欠けの検出は2つ。シーンの定義の必要な資産は Game が --scene-report で書く報告（<視点>.SceneReport.txt）から読むので、
 #   ログを書かない Release でも検査できる。Rendering3DTest が読み込み失敗で出す印（COOKED_MODEL_MISSING など）は
 #   Game.log からだけ読むので、Debug・RelWithDebInfo で効く。
-# -GpuTimingFrames を与えると、決定的な撮影ではなく実時間の計測にする。Game を --trace-file 付きで起動し、落ち着いてから
-# その描画フレーム数の後に撮る（--exit-after-rendered-frames）。トレースの FrameGPU（GPU のタイムスタンプで測ったフレームの
-# 区間）の最後の (-GpuTimingFrames − 60) フレーム（撮影のフレームの直前2つを除く）の中央値・平均・95 パーセンタイル・最大と、
-# パスごとの中央値を gpu_timing として metrics.json へ書く（CaptureStartupScene.ps1 の -GpuTimingFrames と同じ測り方）。
-# 決定的な撮影ではないので、SCENE_READY の照合はしない（シーンの組み立ての完了は待たず、描画フレーム数で落ち着かせる）。
+# -GpuTimingFrames を与えると、決定的な撮影ではなく実時間の計測にする。Game を --trace-file 付きで起動し、有効な標本を
+# -GpuTimingFrames 件だけ得る。計測の窓は、シーンの初期配置と公開の完了（SceneReady。ログの SCENE_READY_FRAME のフレーム番号）
+# より後の、ウォームアップ（-TimingWarmupFrames。既定 60）を除いたフレームだけで、末尾の撮影のフレームの直前2つも除く。
+# Game は (-GpuTimingFrames + ウォームアップ + 末尾の2 + -TimingReadyMarginFrames) の描画フレームの後に撮って終わる
+# （--exit-after-rendered-frames）。余白 -TimingReadyMarginFrames は SceneReady までに要するフレーム数以上にする
+# （足りないと窓が SceneReady より前に入るので、標本が足りないとして失敗にし、要るフレーム数を示す。重いシーンは大きくする）。
+# トレースの FrameGPU（GPU のタイムスタンプで測ったフレームの区間）の窓の中央値・平均・95 パーセンタイル・最大と、パスごとの
+# 中央値を gpu_timing として metrics.json へ書く。視点ごとに、シーンが出した配置の数（placed_count。MEGA_STRESS_PLACED・
+# MEGA_BANANAS_PLACED の行）、SceneReady のフレーム（scene_ready_frame）、計測の開始のフレーム（timing_start_frame）も書く。
+# 決定的な撮影ではないので、SCENE_READY の照合はしない。
 # 同じ撮影のログから、描いたクラスタ数（MEGA_OCCLUSION の pass1 + pass2_drawn の最後の行）・MegaGeometry のバッファの大きさ
 # （MEGA_CAPACITY）・ジオメトリのプールの使用量（VRAM_POOLS の geometry_used_mb）を mega_stats として書く。
 # 統計が無効な Release は GPU のタイムスタンプを取れないので併用しない（RelWithDebInfo で測る）。
 # gpu_timing には CPU 側も入る。ゲームスレッド・描画スレッドのフレーム時間（game_thread_ms_* / render_thread_ms_*。median と p95）、
 # パスごとの median・p95・max（pass_ms）、CPU のスコープ（トレースの Type=Scope の行）の median 上位 15（cpu_scope_median_ms）。
-# CPU 側も GPU と同じ窓（最後の (-GpuTimingFrames − 60) フレームから撮影の直前2つを除く）で数える。
+# CPU 側も GPU と同じ窓（SceneReady の後のウォームアップを除いた最後の -GpuTimingFrames フレームから撮影の直前2つを除く）で数える。
+#
+# -RequireChecks <名前,...> を与えると、Game を --engine-checks=<名前,...> 付きで起動し（開発ビルドの検査。Debug/EngineChecks.h）、
+# Game.log の ENGINE_CHECK の行で各名前の pass が 1 回以上あり fail が 0 であることを見る（満たさなければ失敗）。
+# 名前を与えていなくても、ENGINE_CHECK の fail の行が 1 件でもあれば失敗にする。Release はログが無いので併用できない。
+# -Build を付けると、撮る構成（-Configuration）の Game を先にビルドし、失敗したら撮らずに失敗にする（古い exe で撮らないため）。
 #
 # -CompareWith <dir> を与えると、その撮影（同じ視点名の PNG）と視点ごとに比べる。平均輝度の差が -CompareMeanLuminanceLimit 以下、
 # PSNR が -ComparePsnrLimit 以上なら一致（式は CaptureStartupScene.ps1 の -CompareDeterministicWith と同じ）。
@@ -52,11 +62,21 @@ param(
     [int]$Height = 0,
     [string[]]$GameArgs = @(),
     [switch]$RequireAssets,
+    # 開発ビルドの検査の名前（カンマ区切りで1つの文字列でも、配列でもよい）。pass が 1 回以上・fail が 0 でなければ失敗にする。
+    [string[]]$RequireChecks = @(),
+    # 撮る前に、-Configuration の Game をビルドする（失敗したら撮らずに失敗）。
+    [switch]$Build,
     [ValidateRange(10, 3600)]
     [int]$TimeoutSeconds = 300,
     # GPU のフレーム時間を測るときの、落ち着いてから撮るまでの描画フレーム数（0 で測らず、決定的な撮影にする）。
     [ValidateRange(0, 100000)]
     [int]$GpuTimingFrames = 0,
+    # 計測の窓の前に捨てる、SceneReady の後のフレーム数。
+    [ValidateRange(0, 100000)]
+    [int]$TimingWarmupFrames = 60,
+    # SceneReady までに要するフレーム数の見込み（Game が終わるまでのフレーム数に足す余白）。
+    [ValidateRange(0, 1000000)]
+    [int]$TimingReadyMarginFrames = 240,
     # GPU のフレーム時間の予算（ms）。超えても失敗にはせず、metrics.json に within_budget として書く。
     [ValidateRange(0.1, 1000.0)]
     [double]$GpuFrameBudgetMs = 16.6,
@@ -96,6 +116,22 @@ if ($GpuTimingFrames -gt 0 -and $GpuTimingFrames -lt 100)
 if ($GpuTimingFrames -gt 0 -and $Configuration -eq 'Release')
 {
     Write-Output 'CAPTURE_SCENE result=fail reason=gpu_timing_without_stats（Release は統計が無効で GPU のタイムスタンプを取れない。-Configuration RelWithDebInfo で測る）'
+    exit 1
+}
+
+# 検査の名前: 「A,B」の1文字列でも配列でも受ける。
+$requiredChecks = @($RequireChecks | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' } | Select-Object -Unique)
+foreach ($checkName in $requiredChecks)
+{
+    if ($checkName -notmatch '^[A-Z][A-Z0-9_]*$')
+    {
+        Write-Output "CAPTURE_SCENE result=fail reason=invalid_check_name value=$checkName"
+        exit 1
+    }
+}
+if ($requiredChecks.Count -gt 0 -and $Configuration -eq 'Release')
+{
+    Write-Output 'CAPTURE_SCENE result=fail reason=checks_without_log（Release はログが無く、検査の結果を照合できない。Debug か RelWithDebInfo を使う）'
     exit 1
 }
 
@@ -141,6 +177,11 @@ foreach ($gameArgument in $GameArgs)
             $extraArguments += "--$trimmed"
         }
     }
+}
+
+if ($requiredChecks.Count -gt 0)
+{
+    $extraArguments += "--engine-checks=$($requiredChecks -join ',')"
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -272,9 +313,11 @@ function Get-Percentile([double[]]$Sorted, [double]$Fraction)
 }
 
 # トレース（--trace-file の CSV）から GPU・CPU のフレーム時間を集計する。Type=GPU の行は描画したフレームごとの FrameGPU と
-# パスごとの区間（Frame 列は区間を記録したフレームの番号）。撮影のフレームの直前2つを除いた最後の窓を使う。
+# パスごとの区間（Frame 列は区間を記録したフレームの番号）。窓は、フレーム番号が StartFrame 以上（SceneReady の後で
+# ウォームアップを除いた分）の有効なフレームから、撮影のフレームの直前 TailFrames 個を除いた最後の Samples 件。
 # CPU 側（ゲームスレッド・描画スレッド・スコープ）は、描画したフレームの行（RenderFrameMs > 0）の窓で数える。
-function Get-GpuTimingFromTrace([string]$TracePath, [int]$Frames, [double]$BudgetMs)
+# 有効な標本（FrameGPU > 0 のフレーム）が Samples 件に満たなければ失敗（Error）にする。
+function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$BudgetMs, [long]$StartFrame, [int]$TailFrames)
 {
     $header = @((Get-Content -LiteralPath $TracePath -TotalCount 1) -split ',')
     $nameColumn = [array]::IndexOf($header, 'Name')
@@ -312,15 +355,15 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Frames, [double]$Budge
             })
         }
     }
-    $windowCount = $Frames - 60
-    $cpuArray = $cpuRows.ToArray()
-    $cpuUsable = if ($cpuArray.Count -gt 2) { @($cpuArray[0..($cpuArray.Count - 3)]) } else { @() }
+    $windowCount = $Samples
+    $cpuArray = @($cpuRows.ToArray() | Where-Object { $_.Frame -ge $StartFrame })
+    $cpuUsable = if ($cpuArray.Count -gt $TailFrames) { @($cpuArray[0..($cpuArray.Count - $TailFrames - 1)]) } else { @() }
     $cpuWindow = if ($cpuUsable.Count -gt $windowCount) { @($cpuUsable[($cpuUsable.Count - $windowCount)..($cpuUsable.Count - 1)]) } else { $cpuUsable }
     $cpuSamples = [double[]]@($cpuWindow | ForEach-Object { $_.Cpu } | Where-Object { $_ -gt 0.0 } | Sort-Object)
     $gameThreadSamples = [double[]]@($cpuWindow | ForEach-Object { $_.GameThread } | Where-Object { $_ -gt 0.0 } | Sort-Object)
     $renderThreadSamples = [double[]]@($cpuWindow | ForEach-Object { $_.RenderThread } | Where-Object { $_ -gt 0.0 } | Sort-Object)
-    $gpuFrames = @($gpuScopesByFrame.Keys | Where-Object { @($gpuScopesByFrame[$_] | Where-Object { $_.Name -eq 'FrameGPU' -and $_.Ms -gt 0.0 }).Count -gt 0 })
-    $gpuUsable = if ($gpuFrames.Count -gt 2) { @($gpuFrames[0..($gpuFrames.Count - 3)]) } else { @() }
+    $gpuFrames = @($gpuScopesByFrame.Keys | Where-Object { $_ -ge $StartFrame -and @($gpuScopesByFrame[$_] | Where-Object { $_.Name -eq 'FrameGPU' -and $_.Ms -gt 0.0 }).Count -gt 0 })
+    $gpuUsable = if ($gpuFrames.Count -gt $TailFrames) { @($gpuFrames[0..($gpuFrames.Count - $TailFrames - 1)]) } else { @() }
     $gpuWindow = if ($gpuUsable.Count -gt $windowCount) { @($gpuUsable[($gpuUsable.Count - $windowCount)..($gpuUsable.Count - 1)]) } else { $gpuUsable }
     $gpuFrameMs = @{}
     $passSamples = @{}
@@ -334,9 +377,9 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Frames, [double]$Budge
         }
     }
     $gpuSamples = [double[]]@($gpuWindow | ForEach-Object { $gpuFrameMs[$_] } | Sort-Object)
-    if ($gpuSamples.Count -lt [math]::Min(50, $windowCount))
+    if ($gpuSamples.Count -lt $Samples)
     {
-        return [pscustomobject]@{ Error = "GPU のフレーム時間の標本が足りない（$($gpuSamples.Count) 件。統計が無効な構成か、GPU のタイムスタンプが使えない）"; Timing = $null }
+        return [pscustomobject]@{ Error = "GPU のフレーム時間の有効な標本が足りない（$($gpuSamples.Count) 件 / 指定 $Samples 件。計測の開始のフレーム $StartFrame より後で数えた。統計が無効な構成か、GPU のタイムスタンプが使えないか、SceneReady までに要したフレームが -TimingReadyMarginFrames を超えた。後者なら大きくして撮り直す）"; Timing = $null }
     }
     $maximum = $gpuSamples[$gpuSamples.Count - 1]
     $passList = @($passSamples.Keys | ForEach-Object {
@@ -380,6 +423,11 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Frames, [double]$Budge
     $timing = [ordered]@{
         trace = [IO.Path]::GetFileName($TracePath)
         frames = $gpuSamples.Count
+        valid_samples = $gpuSamples.Count
+        requested_samples = $Samples
+        start_frame = $StartFrame
+        window_first_frame = [long]$gpuWindow[0]
+        window_last_frame = [long]$gpuWindow[$gpuWindow.Count - 1]
         gpu_frame_ms_median = [math]::Round((Get-Percentile $gpuSamples 0.5), 3)
         gpu_frame_ms_mean = [math]::Round(($gpuSamples | Measure-Object -Average).Average, 3)
         gpu_frame_ms_p95 = [math]::Round((Get-Percentile $gpuSamples 0.95), 3)
@@ -476,19 +524,68 @@ function Get-MegaStatsFromLog([string]$LogPath)
     return [pscustomobject]$stats
 }
 
+# Game.log の ENGINE_CHECK の行を名前ごとに数える。pass/fail の数と、fail の行の本文を返す。
+function Get-EngineCheckCounts([string]$LogPath)
+{
+    $counts = @{}
+    $failLines = @()
+    foreach ($line in [IO.File]::ReadLines($LogPath))
+    {
+        if ($line -notmatch 'ENGINE_CHECK name=([A-Z][A-Z0-9_]*) result=(pass|fail)')
+        {
+            continue
+        }
+        if (-not $counts.ContainsKey($Matches[1])) { $counts[$Matches[1]] = [pscustomobject]@{ pass = 0; fail = 0 } }
+        if ($Matches[2] -eq 'pass') { $counts[$Matches[1]].pass += 1 } else { $counts[$Matches[1]].fail += 1; $failLines += $line.Trim() }
+    }
+    return [pscustomobject]@{ Counts = $counts; FailLines = $failLines }
+}
+
+# 撮る構成の Game をビルドする。成功なら $null、失敗なら理由を返す（出力は LogPath へ）。
+function Invoke-GameBuild([string]$RepoRoot, [string]$Config, [string]$LogPath)
+{
+    $buildDirectory = Join-Path $RepoRoot 'build'
+    if (-not (Test-Path -LiteralPath (Join-Path $buildDirectory 'CMakeCache.txt')))
+    {
+        return "build が構成されていない（$buildDirectory に CMakeCache.txt が無い。cmake -B build -S . を先に実行する）"
+    }
+    $errorLogPath = "$LogPath.err"
+    Remove-Item -LiteralPath $LogPath, $errorLogPath -Force -ErrorAction SilentlyContinue
+    $buildProcess = Start-Process -FilePath 'cmake.exe' -ArgumentList @('--build', "`"$buildDirectory`"", '--config', $Config, '--target', 'Game', '--', '/m:1') `
+        -WorkingDirectory $RepoRoot -NoNewWindow -Wait -PassThru -RedirectStandardOutput $LogPath -RedirectStandardError $errorLogPath
+    if ($buildProcess.ExitCode -ne 0)
+    {
+        $tail = @(Get-Content -LiteralPath $LogPath -Tail 8 -ErrorAction SilentlyContinue) -join ' | '
+        return "Game のビルド（$Config）が失敗（終了コード $($buildProcess.ExitCode)。ログ: $LogPath。末尾: $tail）"
+    }
+    return $null
+}
+
 # 資産の欠けを表す印（シーンの定義の SCENE_ASSET_MISSING と、Rendering3DTest が出す読み込み失敗の印）
 $missingAssetPattern = 'SCENE_ASSET_MISSING|COOKED_MODEL_MISSING|COOKED_MODEL_TEXTURES_MISSING|COOKED_BIG_SPHERE_MISSING|SCAN_PROP_MISSING'
 
+New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
+if ($Build)
+{
+    $buildFailure = Invoke-GameBuild $repoRoot $Configuration (Join-Path $outRoot 'Build.log')
+    if ($null -ne $buildFailure)
+    {
+        Write-Output "CAPTURE_SCENE result=fail reason=build_failed detail=$buildFailure"
+        exit 1
+    }
+    Write-Output "CAPTURE_SCENE build result=pass configuration=$Configuration"
+}
 if (-not (Test-Path -LiteralPath $gamePath))
 {
     Write-Output "CAPTURE_SCENE result=fail reason=game_missing path=$gamePath"
     exit 1
 }
-New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
 
 $failures = @()
 $results = @()
 $gameLogPath = Join-Path $repoRoot 'Game.log'
+# 計測の窓から外す、末尾の撮影のフレームの直前のフレーム数
+$timingTailFrames = 2
 for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
 {
     $shot = $shots[$shotIndex]
@@ -508,7 +605,7 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         # 実時間の計測: 決定的な撮影にせず、トレースを取って決まった描画フレーム数の後に撮る
         Remove-Item -LiteralPath $tracePath -Force -ErrorAction SilentlyContinue
         $arguments += "--trace-file=`"$tracePath`""
-        $arguments += "--exit-after-rendered-frames=$GpuTimingFrames"
+        $arguments += "--exit-after-rendered-frames=$($GpuTimingFrames + $TimingWarmupFrames + $timingTailFrames + $TimingReadyMarginFrames)"
     }
     else
     {
@@ -605,9 +702,41 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
 
     # Game.log の検査。Release はログが無効（NORVES_ENABLE_LOGGING=0）で Game.log を書かないため飛ばす。
     $sceneReady = $null
+    $sceneReadyFrame = $null
+    $placedCount = $null
+    $engineChecks = @()
     $logMissingAssets = @()
     if (Test-Path -LiteralPath $viewLogPath)
     {
+        # SceneReady のフレーム（SCENE_READY_FRAME）と、シーンが出した配置の数（最後の行）
+        $readyFrameLines = @(Select-String -LiteralPath $viewLogPath -Pattern "SCENE_READY_FRAME scene=$Scene frame=(\d+)")
+        if ($readyFrameLines.Count -gt 0)
+        {
+            $sceneReadyFrame = [long]$readyFrameLines[-1].Matches[0].Groups[1].Value
+        }
+        $placedLines = @(Select-String -LiteralPath $viewLogPath -Pattern '(?:MEGA_STRESS_PLACED entities|MEGA_BANANAS_PLACED count)=(\d+)')
+        if ($placedLines.Count -gt 0)
+        {
+            $placedCount = [long]$placedLines[-1].Matches[0].Groups[1].Value
+        }
+        # 開発ビルドの検査（ENGINE_CHECK）。fail の行は、名前を指定していなくても失敗にする。
+        $checkResult = Get-EngineCheckCounts $viewLogPath
+        foreach ($failLine in $checkResult.FailLines)
+        {
+            $failures += "$($shot.Name): 検査が fail: $failLine"
+        }
+        foreach ($checkName in $requiredChecks)
+        {
+            $count = $checkResult.Counts[$checkName]
+            $passCount = if ($null -ne $count) { $count.pass } else { 0 }
+            $failCount = if ($null -ne $count) { $count.fail } else { 0 }
+            $engineChecks += [pscustomobject][ordered]@{ name = $checkName; pass = $passCount; fail = $failCount }
+            Write-Output "CAPTURE_SCENE engine_check view=$($shot.Name) name=$checkName pass=$passCount fail=$failCount"
+            if ($passCount -lt 1)
+            {
+                $failures += "$($shot.Name): 検査 $checkName の pass がログに無い（ENGINE_CHECK name=$checkName result=pass が 0 件。開発ビルドか、--engine-checks が効いているかを確かめる）"
+            }
+        }
         $sceneReady = @(Select-String -LiteralPath $viewLogPath -Pattern "SCENE_READY scene=$Scene\s*$").Count -gt 0
         # SCENE_READY は決定的な撮影のときだけ出る（実時間の計測では出ないので照合しない）
         if (-not $sceneReady -and $GpuTimingFrames -le 0)
@@ -671,6 +800,7 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
 
     $gpuTiming = $null
     $megaStats = $null
+    $timingStartFrame = $null
     if ($GpuTimingFrames -gt 0)
     {
         if (-not (Test-Path -LiteralPath $tracePath))
@@ -679,7 +809,10 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         }
         else
         {
-            $timingResult = Get-GpuTimingFromTrace $tracePath $GpuTimingFrames $GpuFrameBudgetMs
+            # 計測の開始: SceneReady のフレームの後のウォームアップを除く（SceneReady の印が無いシーンは 0 から数える）
+            $timingStartFrame = $TimingWarmupFrames
+            if ($null -ne $sceneReadyFrame) { $timingStartFrame = $sceneReadyFrame + $TimingWarmupFrames }
+            $timingResult = Get-GpuTimingFromTrace $tracePath $GpuTimingFrames $GpuFrameBudgetMs $timingStartFrame $timingTailFrames
             if ($null -ne $timingResult.Error)
             {
                 $failures += "$($shot.Name): $($timingResult.Error)"
@@ -717,6 +850,10 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         clipped_white_ratio = [math]::Round($measured[3], 6)
         crushed_black_ratio = [math]::Round($measured[4], 6)
         scene_ready = $sceneReady
+        scene_ready_frame = $sceneReadyFrame
+        placed_count = $placedCount
+        timing_start_frame = $timingStartFrame
+        engine_checks = $engineChecks
         missing_assets = $missingAssets.Count
         vulkan_validation = $validationInfo
         gpu_timing = $gpuTiming
@@ -727,6 +864,8 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio)
     if ($null -ne $gpuTiming)
     {
+        Write-Output ("CAPTURE_SCENE timing_window view={0} scene_ready_frame={1} timing_start_frame={2} window={3}..{4} valid_samples={5} placed_count={6}" -f `
+            $result.view, $sceneReadyFrame, $timingStartFrame, $gpuTiming.window_first_frame, $gpuTiming.window_last_frame, $gpuTiming.valid_samples, $placedCount)
         Write-Output ("CAPTURE_SCENE gpu_timing view={0} frames={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5} cpu_median_ms={6} gt_median_ms={7} gt_p95_ms={8} rt_median_ms={9} rt_p95_ms={10} budget_ms={11} within_budget={12}" -f `
             $result.view, $gpuTiming.frames, $gpuTiming.gpu_frame_ms_median, $gpuTiming.gpu_frame_ms_mean, $gpuTiming.gpu_frame_ms_p95,
             $gpuTiming.gpu_frame_ms_max, $gpuTiming.cpu_frame_ms_median, $gpuTiming.game_thread_ms_median, $gpuTiming.game_thread_ms_p95,
@@ -822,6 +961,9 @@ $metrics = [ordered]@{
     game_args = $extraArguments
     require_assets = [bool]$RequireAssets
     gpu_timing_frames = $GpuTimingFrames
+    timing_warmup_frames = $TimingWarmupFrames
+    timing_ready_margin_frames = $TimingReadyMarginFrames
+    require_checks = $requiredChecks
     compare_with = $CompareWith
     compare_mean_luminance_limit = $CompareMeanLuminanceLimit
     compare_psnr_limit = $ComparePsnrLimit

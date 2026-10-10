@@ -6,7 +6,10 @@
 #
 # 失敗にするもの（終了コード 1）: Game の起動失敗・終了コードが0でない・タイムアウト、SCENE_CYCLE_SMOKE の行が無い・fail、
 # 周回のサンプル（SCENE_CYCLE_SAMPLE）の数が シーン数 × 周回数 と違う、Game.log のシェーダーのコンパイル失敗
-# （Slang SDK 未設定の neural_material_decode.slang だけは既知として除外）、Debug の検証レイヤーのエラー（スレッド競合を含め、除外しない）。
+# （Slang SDK 未設定の neural_material_decode.slang だけは既知として除外）、Debug の検証レイヤーのエラー（スレッド競合を含め、除外しない）、
+# 開発ビルドの検査（Debug/EngineChecks.h）の ENGINE_CHECK の fail の行。-GameArgs engine-checks=<名前,...> で有効にした検査は、
+# pass の行が 1 回以上無くても失敗にする（検査が働かないまま通るのを防ぐ）。
+# -Build を付けると、周回の前に -Configuration の Game をビルドし、失敗したら周回せずに失敗にする。
 # -Configuration Release はログが無効で Game.log を書かないため使えない（Debug か RelWithDebInfo を使う）。
 # -Cycles は 2 以上（1周目と比べるため）。-OutDir を省くと .harness/runs/scene-cycle-smoke へ Game.log を残す。
 # -GameArgs は Game へ足す引数（先頭の -- は省く。例: -GameArgs banana-count=1024）。重いシーンの周回を検証の上限内に収めるのに使う。
@@ -22,7 +25,9 @@ param(
     [string]$OutDir = '',
     [ValidateRange(10, 7200)]
     [int]$TimeoutSeconds = 900,
-    [string[]]$GameArgs = @()
+    [string[]]$GameArgs = @(),
+    # 周回の前に、-Configuration の Game をビルドする（失敗したら周回せずに失敗）。
+    [switch]$Build
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,19 +68,49 @@ function Stop-OwnedProcessTree([int]$ProcessId)
     & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
 }
 
+# 周回する構成の Game をビルドする。成功なら $null、失敗なら理由を返す（出力は LogPath へ）。
+function Invoke-GameBuild([string]$RepoRoot, [string]$Config, [string]$LogPath)
+{
+    $buildDirectory = Join-Path $RepoRoot 'build'
+    if (-not (Test-Path -LiteralPath (Join-Path $buildDirectory 'CMakeCache.txt')))
+    {
+        return "build が構成されていない（$buildDirectory に CMakeCache.txt が無い。cmake -B build -S . を先に実行する）"
+    }
+    $errorLogPath = "$LogPath.err"
+    Remove-Item -LiteralPath $LogPath, $errorLogPath -Force -ErrorAction SilentlyContinue
+    $buildProcess = Start-Process -FilePath 'cmake.exe' -ArgumentList @('--build', "`"$buildDirectory`"", '--config', $Config, '--target', 'Game', '--', '/m:1') `
+        -WorkingDirectory $RepoRoot -NoNewWindow -Wait -PassThru -RedirectStandardOutput $LogPath -RedirectStandardError $errorLogPath
+    if ($buildProcess.ExitCode -ne 0)
+    {
+        $tail = @(Get-Content -LiteralPath $LogPath -Tail 8 -ErrorAction SilentlyContinue) -join ' | '
+        return "Game のビルド（$Config）が失敗（終了コード $($buildProcess.ExitCode)。ログ: $LogPath。末尾: $tail）"
+    }
+    return $null
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $gamePath = Join-Path $repoRoot "build\Game\$Configuration\Game.exe"
-if (-not (Test-Path -LiteralPath $gamePath))
-{
-    Write-Output "SCENE_CYCLE_SMOKE_RUN result=fail reason=game_missing path=$gamePath"
-    exit 1
-}
 if ($OutDir -eq '')
 {
     $OutDir = Join-Path $repoRoot '.harness\runs\scene-cycle-smoke'
 }
 $outRoot = if ([IO.Path]::IsPathRooted($OutDir)) { [IO.Path]::GetFullPath($OutDir) } else { [IO.Path]::GetFullPath((Join-Path $repoRoot $OutDir)) }
 New-Item -ItemType Directory -Force -Path $outRoot | Out-Null
+if ($Build)
+{
+    $buildFailure = Invoke-GameBuild $repoRoot $Configuration (Join-Path $outRoot 'Build.log')
+    if ($null -ne $buildFailure)
+    {
+        Write-Output "SCENE_CYCLE_SMOKE_RUN result=fail reason=build_failed detail=$buildFailure"
+        exit 1
+    }
+    Write-Output "SCENE_CYCLE_SMOKE_RUN build result=pass configuration=$Configuration"
+}
+if (-not (Test-Path -LiteralPath $gamePath))
+{
+    Write-Output "SCENE_CYCLE_SMOKE_RUN result=fail reason=game_missing path=$gamePath"
+    exit 1
+}
 
 $gameLogPath = Join-Path $repoRoot 'Game.log'
 $runLogPath = Join-Path $outRoot 'Game.log'
@@ -87,6 +122,9 @@ foreach ($stale in @($gameLogPath, $runLogPath, $validationLogPath))
 
 $sceneList = $sceneIds -join ','
 $arguments = @("--scene-cycle-smoke=$sceneList", "--scene-cycle-count=$Cycles")
+# -GameArgs で有効にした検査の名前。-GameArgs はカンマの次が英字で始まると別の引数に分けるので、
+# 複数の検査は名前ごとに別の engine-checks=<名前> で与える。
+$requiredChecks = @()
 foreach ($gameArgument in $GameArgs)
 {
     foreach ($part in ($gameArgument -split ',(?=[A-Za-z][A-Za-z0-9-]*(?:=|,|$))'))
@@ -95,9 +133,14 @@ foreach ($gameArgument in $GameArgs)
         if ($trimmed -ne '')
         {
             $arguments += "--$trimmed"
+            if ($trimmed -match '^engine-checks=(.*)$')
+            {
+                $requiredChecks += @($Matches[1] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+            }
         }
     }
 }
+$requiredChecks = @($requiredChecks | Select-Object -Unique)
 
 # Vulkan の検証レイヤーのメッセージ（VUID）は Game.log に入らないので、検証レイヤー自身のログ出力をファイルへ向けて
 # エラーを数える（Debug だけ。他は検証レイヤーが無効）。起動した Game だけが受け継ぐよう、起動の直後に戻す。
@@ -180,6 +223,31 @@ if (Test-Path -LiteralPath $runLogPath)
     foreach ($line in @(Select-String -LiteralPath $runLogPath -Pattern 'SCENE_UNKNOWN|SCENE_CATALOG_INVALID'))
     {
         $failures += $line.Line.Trim()
+    }
+
+    # 開発ビルドの検査（ENGINE_CHECK）。fail の行は失敗。-GameArgs engine-checks= で有効にした名前は pass が 1 回以上要る。
+    $checkPassCounts = @{}
+    foreach ($line in @(Select-String -LiteralPath $runLogPath -Pattern 'ENGINE_CHECK name='))
+    {
+        if ($line.Line -match 'ENGINE_CHECK name=([A-Z][A-Z0-9_]*) result=(pass|fail)')
+        {
+            if ($Matches[2] -eq 'fail')
+            {
+                $failures += "検査が fail: $($line.Line.Trim())"
+            }
+            else
+            {
+                $checkPassCounts[$Matches[1]] = 1 + [int]$checkPassCounts[$Matches[1]]
+            }
+        }
+    }
+    foreach ($checkName in $requiredChecks)
+    {
+        Write-Output "SCENE_CYCLE_SMOKE_RUN engine_check name=$checkName pass=$([int]$checkPassCounts[$checkName])"
+        if (-not $checkPassCounts.ContainsKey($checkName))
+        {
+            $failures += "検査 $checkName の pass がログに無い（ENGINE_CHECK name=$checkName result=pass が 0 件）"
+        }
     }
 }
 else
