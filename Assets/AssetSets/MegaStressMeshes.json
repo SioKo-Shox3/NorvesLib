@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "name": "MegaStressMeshes",
+  "description": "mega-stress が個別の Entity として置くメッシュの一覧。cook_assets を持たないのでクックの対象ではない（資産は他の一覧が焼く）",
+  "meshes": [
+    {
+      "id": "boulder",
+      "mesh": "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf",
+      "albedo": "Assets/Models/boulder_01_4k.gltf/cooked/boulder_01_albedo",
+      "orm": "Assets/Models/boulder_01_4k.gltf/cooked/boulder_01_orm",
+      "normal": "Assets/Models/boulder_01_4k.gltf/cooked/boulder_01_normal",
+      "virtual_texture": true,
+      "target_height_m": 1.6,
+      "weight": 3
+    },
+    {
+      "id": "cottage",
+      "mesh": "Assets/Models/Cottage_Clean/Cottage_Clean.gltf",
+      "albedo": "Assets/Models/Cottage_Clean/cooked/Cottage_Clean_albedo",
+      "orm": "Assets/Models/Cottage_Clean/cooked/Cottage_Clean_orm",
+      "normal": "Assets/Models/Cottage_Clean/cooked/Cottage_Clean_normal",
+      "virtual_texture": true,
+      "target_height_m": 3.0,
+      "weight": 2
+    },
+    {
+      "id": "big-cobble-sphere",
+      "mesh": "Assets/Models/BigCobbleSphere/BigCobbleSphere.generated",
+      "albedo": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_diff_4k.png",
+      "orm": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_orm_4k",
+      "normal": "Assets/Textures/CobbleStoneFloor/cobblestone_floor_09_nor_dx_4k.png",
+      "virtual_texture": true,
+      "displaced_sphere": true,
+      "target_height_m": 2.0,
+      "weight": 2
+    },
+    {
+      "id": "coast_land_rocks_03",
+      "mesh": "Assets/Models/PolyHaven/coast_land_rocks_03/coast_land_rocks_03_4k.gltf",
+      "albedo": "Assets/Models/PolyHaven/coast_land_rocks_03/cooked/coast_land_rocks_03_albedo",
+      "orm": "Assets/Models/PolyHaven/coast_land_rocks_03/cooked/coast_land_rocks_03_orm",
+      "normal": "Assets/Models/PolyHaven/coast_land_rocks_03/cooked/coast_land_rocks_03_normal",
+      "virtual_texture": true,
+      "target_height_m": 1.8,
+      "weight": 2
+    },
+    {
+      "id": "coast_rocks_05",
+      "mesh": "Assets/Models/PolyHaven/coast_rocks_05/coast_rocks_05_4k.gltf",
+      "albedo": "Assets/Models/PolyHaven/coast_rocks_05/cooked/coast_rocks_05_albedo",
+      "orm": "Assets/Models/PolyHaven/coast_rocks_05/cooked/coast_rocks_05_orm",
+      "normal": "Assets/Models/PolyHaven/coast_rocks_05/cooked/coast_rocks_05_normal",
+      "virtual_texture": true,
+      "target_height_m": 1.8,
+      "weight": 2
+    },
+    {
+      "id": "sand_rocks_small_01",
+      "mesh": "Assets/Models/PolyHaven/sand_rocks_small_01/sand_rocks_small_01_4k.gltf",
+      "albedo": "Assets/Models/PolyHaven/sand_rocks_small_01/cooked/sand_rocks_small_01_albedo",
+      "orm": "Assets/Models/PolyHaven/sand_rocks_small_01/cooked/sand_rocks_small_01_orm",
+      "normal": "Assets/Models/PolyHaven/sand_rocks_small_01/cooked/sand_rocks_small_01_normal",
+      "virtual_texture": true,
+      "target_height_m": 1.2,
+      "weight": 2
+    },
+    {
+      "id": "watchtower",
+      "mesh": "Assets/Models/Generated/watchtower/watchtower.glb",
+      "albedo": "Assets/Models/Generated/watchtower/watchtower.glb.img0.png",
+      "orm": "Assets/Models/Generated/watchtower/watchtower.glb.img1.png",
+      "normal": "Assets/Models/Generated/watchtower/watchtower.glb.img2.png",
+      "virtual_texture": false,
+      "target_height_m": 5.0,
+      "weight": 1
+    },
+    {
+      "id": "banana",
+      "mesh": "Assets/Models/Generated/banana/banana.glb",
+      "albedo": "Assets/Models/Generated/banana/banana.glb.img0.png",
+      "orm": "Assets/Models/Generated/banana/banana.glb.img1.png",
+      "normal": "Assets/Models/Generated/banana/banana.glb.img2.png",
+      "virtual_texture": false,
+      "target_height_m": 1.0,
+      "weight": 2
+    },
+    {
+      "id": "namaqualand_boulder_02",
+      "mesh": "Assets/Models/PolyHaven/namaqualand_boulder_02/namaqualand_boulder_02_4k.gltf",
+      "albedo": "Assets/Models/PolyHaven/namaqualand_boulder_02/cooked/namaqualand_boulder_02_albedo",
+      "orm": "Assets/Models/PolyHaven/namaqualand_boulder_02/cooked/namaqualand_boulder_02_orm",
+      "normal": "Assets/Models/PolyHaven/namaqualand_boulder_02/cooked/namaqualand_boulder_02_normal",
+      "virtual_texture": true,
+      "target_height_m": 1.6,
+      "weight": 2
+    },
+    {
+      "id": "namaqualand_boulder_03",
+      "mesh": "Assets/Models/PolyHaven/namaqualand_boulder_03/namaqualand_boulder_03_4k.gltf",
+      "albedo": "Assets/Models/PolyHaven/namaqualand_boulder_03/cooked/namaqualand_boulder_03_albedo",
+      "orm": "Assets/Models/PolyHaven/namaqualand_boulder_03/cooked/namaqualand_boulder_03_orm",
+      "normal": "Assets/Models/PolyHaven/namaqualand_boulder_03/cooked/namaqualand_boulder_03_normal",
+      "virtual_texture": true,
+      "target_height_m": 1.6,
+      "weight": 2
+    },
+    {
+      "id": "namaqualand_boulder_04",
+      "mesh": "Assets/Models/PolyHaven/namaqualand_boulder_04/namaqualand_boulder_04_4k.gltf",
+      "albedo": "Assets/Models/PolyHaven/namaqualand_boulder_04/cooked/namaqualand_boulder_04_albedo",
+      "orm": "Assets/Models/PolyHaven/namaqualand_boulder_04/cooked/namaqualand_boulder_04_orm",
+      "normal": "Assets/Models/PolyHaven/namaqualand_boulder_04/cooked/namaqualand_boulder_04_normal",
+      "virtual_texture": true,
+      "target_height_m": 1.6,
+      "weight": 2
+    },
+    {
+      "id": "namaqualand_boulder_05",
+      "mesh": "Assets/Models/PolyHaven/namaqualand_boulder_05/namaqualand_boulder_05_4k.gltf",
+      "albedo": "Assets/Models/PolyHaven/namaqualand_boulder_05/cooked/namaqualand_boulder_05_albedo",
+      "orm": "Assets/Models/PolyHaven/namaqualand_boulder_05/cooked/namaqualand_boulder_05_orm",
+      "normal": "Assets/Models/PolyHaven/namaqualand_boulder_05/cooked/namaqualand_boulder_05_normal",
+      "virtual_texture": true,
+      "target_height_m": 1.6,
+      "weight": 2
+    },
+    {
+      "id": "namaqualand_cliff_01",
+      "mesh": "Assets/Models/PolyHaven/namaqualand_cliff_01/namaqualand_cliff_01_4k.gltf",
+      "albedo": "Assets/Models/PolyHaven/namaqualand_cliff_01/cooked/namaqualand_cliff_01_albedo",
+      "orm": "Assets/Models/PolyHaven/namaqualand_cliff_01/cooked/namaqualand_cliff_01_orm",
+      "normal": "Assets/Models/PolyHaven/namaqualand_cliff_01/cooked/namaqualand_cliff_01_normal",
+      "virtual_texture": true,
+      "target_height_m": 3.0,
+      "weight": 1
+    },
+    {
+      "id": "namaqualand_cliff_02",
+      "mesh": "Assets/Models/PolyHaven/namaqualand_cliff_02/namaqualand_cliff_02_4k.gltf",
+      "albedo": "Assets/Models/PolyHaven/namaqualand_cliff_02/cooked/namaqualand_cliff_02_albedo",
+      "orm": "Assets/Models/PolyHaven/namaqualand_cliff_02/cooked/namaqualand_cliff_02_orm",
+      "normal": "Assets/Models/PolyHaven/namaqualand_cliff_02/cooked/namaqualand_cliff_02_normal",
+      "virtual_texture": true,
+      "target_height_m": 3.0,
+      "weight": 1
+    }
+  ]
+}

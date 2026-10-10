@@ -232,6 +232,9 @@ namespace Game
         /// --banana-count=<n> で指定された、バナナのシーンの本数（指定が無ければ既定）
         uint32_t m_BananaCount = 10000;
         bool m_bBananaCountSet = false;
+        /// --stress-entities=<n> で指定された、負荷シーン mega-stress の Entity の数（指定が無ければ既定）
+        uint32_t m_StressEntityCount = 2000;
+        bool m_bStressEntityCountSet = false;
         /// --open-scene-info（開発ビルドだけ）: バナナのシーンを情報表示を出した状態で始める
         bool m_bOpenSceneInfo = false;
         /// --scene-cycle-smoke=<id,...> の検査（ランチャーとシーンの間を周回して、資源が増えないことを確かめる）

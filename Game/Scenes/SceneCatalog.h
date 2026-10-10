@@ -146,6 +146,9 @@ namespace Game::Scenes
     /// 確認用の sandbox の id。シーンの一覧に載るのは開発ビルドだけ
     inline constexpr const char *kSandboxSceneId = "sandbox";
 
+    /// 負荷シーン mega-stress の id。シーンの一覧に載るのは開発ビルドだけ
+    inline constexpr const char *kMegaStressSceneId = "mega-stress";
+
 #if NORVES_BUILD_DEVELOPMENT
     inline constexpr SceneViewDescriptor kSandboxViews[] = {
         // 地面の手前から奥の地平線まで見渡す視点。起動時の既定
@@ -175,6 +178,24 @@ namespace Game::Scenes
         sizeof(kSandboxPathKeys) / sizeof(kSandboxPathKeys[0]),
         true,
         20.0f,
+    };
+#endif
+
+#if NORVES_BUILD_DEVELOPMENT
+    inline constexpr SceneViewDescriptor kMegaStressViews[] = {
+        // 手前の端から、並んだ Entity の列を奥へ見渡す視点。起動時の既定
+        {"overview", SceneViewKind::FreePose, 0.0f, -8.0f, 0.0f, {0.0f, 7.0f, 0.0f}},
+        // 手前の列へ寄り、メッシュの種類を見分ける視点
+        {"close", SceneViewKind::FreePose, 0.0f, -3.0f, 0.0f, {0.0f, 2.5f, 2.0f}},
+        // 高い所から、列の広がりを見下ろす視点
+        {"aerial", SceneViewKind::FreePose, 0.0f, -38.0f, 0.0f, {0.0f, 110.0f, -40.0f}},
+    };
+
+    /// 読み込めないとシーンが成り立たない資産（置くメッシュの一覧と、リポジトリに入っている代表のソース）
+    inline constexpr const char *kMegaStressRequiredAssets[] = {
+        "Assets/AssetSets/MegaStressMeshes.json",
+        "Assets/Models/boulder_01_4k.gltf/boulder_01_4k.gltf",
+        "Assets/Models/Cottage_Clean/Cottage_Clean.gltf",
     };
 #endif
 
@@ -219,6 +240,20 @@ namespace Game::Scenes
             0,
             nullptr,
             &kSandboxPath,
+        },
+        // 開発ビルドだけ。サンドボックスの次（並びの最後）に置く
+        {
+            kMegaStressSceneId,
+            "負荷（仮想化ジオメトリ）",
+            "起動画面の岩・小屋・球・スキャン資産と生成した建物・果物を、個別の Entity として床に並べる負荷シーン。--stress-entities=<n> で数を変える。開発ビルドだけ。",
+            "Assets/Launcher/Thumbnails/mega-stress.png",
+            Game::GameModes::MegaStress,
+            kMegaStressViews,
+            sizeof(kMegaStressViews) / sizeof(kMegaStressViews[0]),
+            kMegaStressRequiredAssets,
+            sizeof(kMegaStressRequiredAssets) / sizeof(kMegaStressRequiredAssets[0]),
+            nullptr,
+            nullptr,
         },
 #endif
     };

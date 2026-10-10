@@ -41,6 +41,7 @@
 #include "GameModes/MemoryAgingTest/MemoryAgingTestMode.h"
 #include "GameModes/Launcher/LauncherMode.h"
 #include "GameModes/MegaBananas/MegaBananasMode.h"
+#include "GameModes/MegaStress/MegaStressMode.h"
 #include "GameModes/Sandbox/SandboxMode.h"
 #include "Scenes/SceneCatalog.h"
 
@@ -131,6 +132,8 @@ namespace Game
         constexpr const TCHAR *kCameraPathTimeOption = TEXT("--camera-path-time=");
         // --banana-count=<n>: mega-bananas のバナナの本数（1〜kMaxBananaCount。既定 kDefaultBananaCount）。
         constexpr const TCHAR *kBananaCountOption = TEXT("--banana-count=");
+        // --stress-entities=<n>: mega-stress の Entity の数（1〜kMaxStressEntityCount。既定 kDefaultStressEntityCount）。
+        constexpr const TCHAR *kStressEntitiesOption = TEXT("--stress-entities=");
         // --mega-lod-error-px=<px>: MegaGeometry の LOD を選ぶ誤差の閾値（画素）を替える（開発ビルドだけ。計測用）。
         // 大きい値にすると全インスタンスが根の段で描かれる。環境変数 NORVES_MEGA_LOD_ERROR_PX と同じ効き方をする。
 #if NORVES_BUILD_DEVELOPMENT
@@ -540,6 +543,8 @@ namespace Game
         m_CameraPathTime = -1.0f;
         m_BananaCount = Game::GameModes::kDefaultBananaCount;
         m_bBananaCountSet = false;
+        m_StressEntityCount = Game::GameModes::kDefaultStressEntityCount;
+        m_bStressEntityCountSet = false;
         m_bOpenSceneInfo = false;
         m_DogDrive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         bool bHasCharacterDrive = false;
@@ -981,6 +986,39 @@ namespace Game
                 }
                 m_BananaCount = bananaCount;
                 m_bBananaCountSet = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kStressEntitiesOption, sceneValue))
+            {
+                uint32_t stressEntityCount = 0;
+                if (m_bStressEntityCountSet)
+                {
+                    LOG_ERROR("--stress-entities が重複しています");
+                    return false;
+                }
+                if (!TryParseUInt32(sceneValue, stressEntityCount) || stressEntityCount == 0 ||
+                    stressEntityCount > Game::GameModes::kMaxStressEntityCount)
+                {
+                    LOG_ERROR_F("--stress-entities は 1〜%u の整数で指定してください", Game::GameModes::kMaxStressEntityCount);
+                    return false;
+                }
+                m_StressEntityCount = stressEntityCount;
+                m_bStressEntityCountSet = true;
+#if NORVES_BUILD_DEVELOPMENT
+                // MegaGeometry の区間ごとの描画コマンドの上限を 100 万に抑える（環境変数が無いときだけ）。既定の 419 万のままだと、
+                // メッシュの種類 × Entity が増えたとき（約 3000 個から）コマンドのバッファの容量が 2^26 件（1.3 GB）へ跳ねて、
+                // 何も描かれなくなる。MegaGeometryPass が最初に作られる前に環境変数へ渡す。
+                {
+                    char *existingMaxDraw = nullptr;
+                    size_t existingLength = 0;
+                    _dupenv_s(&existingMaxDraw, &existingLength, "NORVES_MEGA_MAX_DRAW_COUNT");
+                    if (existingMaxDraw == nullptr)
+                    {
+                        _putenv_s("NORVES_MEGA_MAX_DRAW_COUNT", "1000000");
+                    }
+                    std::free(existingMaxDraw);
+                }
+#endif
                 continue;
             }
 #if NORVES_BUILD_DEVELOPMENT
@@ -2725,6 +2763,23 @@ namespace Game
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
                 mode->GetData().m_pPauseMenu = pauseMenu;
+                return mode;
+            });
+        // 負荷シーン mega-stress も開発ビルドだけ。Entity の数・視点・台本は起動引数から渡す。
+        stateMachine->Registry().Register(
+            MegaStress,
+            [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+             entityCount = m_StressEntityCount, pauseMenu = &m_PauseMenu,
+             getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
+                -> Container::TUniquePtr<IGameMode>
+            {
+                auto mode = MakeUnique<MegaStressMode>();
+                mode->GetData().m_ViewName = viewName;
+                mode->GetData().m_CameraScriptPath = scriptPath;
+                mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_EntityCount = entityCount;
+                mode->GetData().m_pPauseMenu = pauseMenu;
+                mode->GetData().m_GetAssetSystem = getAssetSystem;
                 return mode;
             });
 #endif
