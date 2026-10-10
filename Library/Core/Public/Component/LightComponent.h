@@ -170,6 +170,14 @@ namespace NorvesLib::Core::Component
          */
         void GetLightDirection(float &outX, float &outY, float &outZ) const;
 
+    private:
+        // ライト方向を列から読む（行が無い間は予備の値）
+        void LoadLightDirection(float (&out)[3]) const;
+        // ライト方向を列へ書く（行が無い間は予備の値へ書く）
+        void StoreLightDirection(const float (&value)[3]);
+
+    public:
+
         // ========================================
         // LightProxy構築
         // ========================================
@@ -187,6 +195,11 @@ namespace NorvesLib::Core::Component
         Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::Light; }
 
     protected:
+        // ライト方向は列（EcsLightRender::Direction）の一部で、保存の対象でないので ECS_PROPERTY にしない。
+        // 行が付いた直後に予備の値を列へ写し、外す直前に列から予備の値へ戻す
+        void OnEcsRowAttached() override;
+        void OnEcsRowDetaching() override;
+
         /**
          * @brief 共通のLightProxyフィールドを設定するヘルパー
          * @param outProxy 出力先
@@ -212,6 +225,7 @@ namespace NorvesLib::Core::Component
         // 内部キャッシュ（リフレクション対象外）
         // ========================================
 
+        // 行が無い間のライト方向（行がある間は列が正）
         float m_LightDirection[3] = {0.0f, -1.0f, 0.0f};
     };
 

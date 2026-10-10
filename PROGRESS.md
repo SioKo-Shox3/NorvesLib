@@ -1384,3 +1384,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 光と Board の列は追跡（`MarkWritten`）の設定をまだ持たない。変更ログに載せるのは SYNC-PREP 以降の項目。
   - `SetIntensityUnit` の検証などは従来どおり読み口に残る。列へ直接書く側は検証を通らないので、変更ログを通す形にするときに書き込み口を一本にすること。
   - 行末: 編集したファイルは numstat の 2 通りが一致。新規 `LightIntensityUnit.h` は UTF-8 BOM + CRLF。
+
+### SCN-ECS-RENDER-COLUMNS-LIGHT 差し戻し対応（2026-10-11、反復 37・run 20261010-223034）
+
+- 差し戻し: ライト方向（`m_LightDirection`）と Billboard の `SizeWorld` が列に移っていなかった点。
+- 変更:
+  - `EcsRenderTypes.h`: `EcsLightRender` に `Math::Vector3 Direction` を足し、新しい列 `EcsBillboardSize`（`SizeWorld`）を足した。`EcsTypes.h` の `EcsComponentRowKind` に `Billboard` を足した。
+  - `LightComponent`: 方向は保存の対象外なので ECS_PROPERTY にせず、`SkinnedMeshComponent` の材質と同じ形で列の一部（`Direction` の位置）だけを読み書きする `LoadLightDirection`/`StoreLightDirection` にした。`OnEcsRowAttached/Detaching` で行の付け外しのたびに予備のメンバ（`m_LightDirection`）と列の間で値を移す。`SetLightDirection`・`GetLightDirection`・proxy 構築はこの口を通る。
+  - `BillboardComponent`: `SizeWorld` を `ECS_PROPERTY(Ecs::EcsBillboardSize, ...)` にし、proxy 構築と境界計算は `getSizeWorld().Get()` から読む。`GetSizeWorld()` の戻りは列が動くので参照から値渡しにした。行の種類は `Billboard`（Board の列に大きさの列を足したアーキタイプ。ImpostorComponent も継承で同じ行）。
+  - `World`: Billboard 用のアーキタイプを足し、検査 `ECS_BIND` の列と種類の照合に Billboard の大きさの列を足した。
+- テスト（paths の外）: `WorldSyncDifferentialTest::TestLightDirectionAndBillboardSizeLiveInComponentRow` を足した（既定値が列にある・setter→列・列→getter/proxy・外した間の読み書きと付け直しで列へ戻る・`SizeWorld` が `StorageKind::EcsColumn`）。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-ECS-RENDER-COLUMNS-LIGHT-7.txt`: 指定 2 ターゲット + WorldSyncDifferentialTest のビルド EXIT=0。
+  - `-8.txt`: 指定 ctest（LightComponentBuildProxyTest・BoardComponentRoutingTest・BillboardComponentTest）と WorldSyncDifferentialTest が 4/4 Passed。
+  - `-9-neighbors-build.txt` / `-10-neighbors.txt`: 隣接のテスト 27 件（Ecs*・EntityTree・SceneSerializer・PrefabRoundTrip・SchemaProjection・ComponentDirtyTracking・FlipbookAdvance・TextComponentBoardProxy・BoardTransform・SpriteSheetUVRect・ObjectCast・EntitySubtreeSnapshot・SceneFileRoundTrip・WorldRenderInterpolation・WorldTickGroup・TransformHierarchy・ObjectReflection・SkinnedRenderPathContract・SceneViewProxyLookup）がすべて Passed。`-9` の exit=1 はバンドルの一員でターゲット名の無いテスト（実体は EntityTreeTest・ObjectReflectionTest・SceneSerializerTest で、ビルド済み）。
+  - `-11-startup.txt`: 起動画面の決定論の比較 `result=pass`。3 視点とも `within_limits=True`（default は PSNR 100 dB、near 65.4 dB、low 70.4 dB）。`default.png` を開いて確認（太陽の影の向き・球・家・光源の点とも基準どおり）。
+- Notes:
+  - 方向の書き込みは列へ直接で、変更ログには載らない（他の光の列と同じ。SYNC-PREP 以降の項目）。
+  - 行末: 編集したファイルは numstat の 2 通りが一致（`World.cpp` は混在のまま、差分の行だけ元の行末で当て直した）。

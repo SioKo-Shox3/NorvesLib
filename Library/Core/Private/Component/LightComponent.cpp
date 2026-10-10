@@ -138,19 +138,63 @@ namespace NorvesLib::Core::Component
         return true;
     }
 
+    void LightComponent::LoadLightDirection(float (&out)[3]) const
+    {
+        out[0] = m_LightDirection[0];
+        out[1] = m_LightDirection[1];
+        out[2] = m_LightDirection[2];
+        Math::Vector3 direction(out[0], out[1], out[2]);
+        // 行が無い間（列を読めない間）は予備の値のまま返す
+        if (Ecs::EcsReadColumnPart(GetEcsRow(), Ecs::EcsColumnInfoOf<Ecs::EcsLightRender>().Type,
+                                   static_cast<uint32_t>(offsetof(Ecs::EcsLightRender, Direction)),
+                                   static_cast<uint32_t>(sizeof(direction)), &direction))
+        {
+            out[0] = direction.x;
+            out[1] = direction.y;
+            out[2] = direction.z;
+        }
+    }
+
+    void LightComponent::StoreLightDirection(const float (&value)[3])
+    {
+        const Ecs::EcsRowRef row = GetEcsRow();
+        const TypeId type = Ecs::EcsColumnInfoOf<Ecs::EcsLightRender>().Type;
+        if (Ecs::EcsRowHasColumn(row, type))
+        {
+            const Math::Vector3 direction(value[0], value[1], value[2]);
+            Ecs::EcsWriteColumnPart(row, type, static_cast<uint32_t>(offsetof(Ecs::EcsLightRender, Direction)),
+                                    static_cast<uint32_t>(sizeof(direction)), &direction);
+            return;
+        }
+        m_LightDirection[0] = value[0];
+        m_LightDirection[1] = value[1];
+        m_LightDirection[2] = value[2];
+    }
+
+    void LightComponent::OnEcsRowAttached()
+    {
+        StoreLightDirection(m_LightDirection);
+    }
+
+    void LightComponent::OnEcsRowDetaching()
+    {
+        LoadLightDirection(m_LightDirection);
+    }
+
     void LightComponent::SetLightDirection(float x, float y, float z)
     {
-        m_LightDirection[0] = x;
-        m_LightDirection[1] = y;
-        m_LightDirection[2] = z;
+        const float value[3] = {x, y, z};
+        StoreLightDirection(value);
         MarkRenderStateDirty();
     }
 
     void LightComponent::GetLightDirection(float &outX, float &outY, float &outZ) const
     {
-        outX = m_LightDirection[0];
-        outY = m_LightDirection[1];
-        outZ = m_LightDirection[2];
+        float value[3];
+        LoadLightDirection(value);
+        outX = value[0];
+        outY = value[1];
+        outZ = value[2];
     }
 
     // ========================================
@@ -205,9 +249,11 @@ namespace NorvesLib::Core::Component
         outProxy.AffectedLayers = getAffectedLayers().Get();
 
         // ライト方向（ディレクショナルライト / スポットライト用）
-        outProxy.DirectionX = m_LightDirection[0];
-        outProxy.DirectionY = m_LightDirection[1];
-        outProxy.DirectionZ = m_LightDirection[2];
+        float direction[3];
+        LoadLightDirection(direction);
+        outProxy.DirectionX = direction[0];
+        outProxy.DirectionY = direction[1];
+        outProxy.DirectionZ = direction[2];
         return true;
     }
 

@@ -212,6 +212,8 @@ namespace NorvesLib::Core
                     const bool bHasFalloff = ecs.GetColumnValue<Ecs::EcsLightFalloff>(componentRow) != nullptr;
                     const bool bHasSpotCone = ecs.GetColumnValue<Ecs::EcsSpotCone>(componentRow) != nullptr;
                     const bool bHasBoard = ecs.GetColumnValue<Ecs::EcsBoardRender>(componentRow) != nullptr;
+                    const bool bHasBillboardSize = ecs.GetColumnValue<Ecs::EcsBillboardSize>(componentRow) != nullptr;
+                    const bool bExpectBoard = rowKind == Ecs::EcsComponentRowKind::Board || rowKind == Ecs::EcsComponentRowKind::Billboard;
                     const bool bExpectMesh = rowKind == Ecs::EcsComponentRowKind::Mesh || rowKind == Ecs::EcsComponentRowKind::MegaGeometry;
                     const bool bExpectLight = rowKind == Ecs::EcsComponentRowKind::Light || rowKind == Ecs::EcsComponentRowKind::PointLight ||
                                               rowKind == Ecs::EcsComponentRowKind::SpotLight;
@@ -219,7 +221,8 @@ namespace NorvesLib::Core
                     if (bHasMesh != bExpectMesh || bHasMega != (rowKind == Ecs::EcsComponentRowKind::MegaGeometry) ||
                         bHasSkinned != (rowKind == Ecs::EcsComponentRowKind::SkinnedMesh) || bHasLight != bExpectLight ||
                         bHasFalloff != bExpectFalloff || bHasSpotCone != (rowKind == Ecs::EcsComponentRowKind::SpotLight) ||
-                        bHasBoard != (rowKind == Ecs::EcsComponentRowKind::Board))
+                        bHasBoard != bExpectBoard ||
+                        bHasBillboardSize != (rowKind == Ecs::EcsComponentRowKind::Billboard))
                     {
                         error = "Component の行の描画の値の列が、Component の種類と一致しない";
                         return false;
@@ -1385,6 +1388,11 @@ namespace NorvesLib::Core
             basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
             Ecs::EcsRegisterColumn<Ecs::EcsBoardRender>(),
         };
+        const Ecs::EcsColumnInfo billboardColumns[] = {
+            basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
+            Ecs::EcsRegisterColumn<Ecs::EcsBoardRender>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsBillboardSize>(),
+        };
         const auto createComponentArchetype = [this](Ecs::EcsComponentRowKind kind, Container::Span<const Ecs::EcsColumnInfo> columns)
         {
             Ecs::EcsArchetypeId& archetype = m_ComponentArchetypes[static_cast<size_t>(kind)];
@@ -1402,6 +1410,7 @@ namespace NorvesLib::Core
         createComponentArchetype(Ecs::EcsComponentRowKind::PointLight, Container::Span<const Ecs::EcsColumnInfo>(pointLightColumns, 6));
         createComponentArchetype(Ecs::EcsComponentRowKind::SpotLight, Container::Span<const Ecs::EcsColumnInfo>(spotLightColumns, 7));
         createComponentArchetype(Ecs::EcsComponentRowKind::Board, Container::Span<const Ecs::EcsColumnInfo>(boardColumns, 5));
+        createComponentArchetype(Ecs::EcsComponentRowKind::Billboard, Container::Span<const Ecs::EcsColumnInfo>(billboardColumns, 6));
 
         // 段の最中に孤児にした行は、各段の同期点で消す
         const uint32_t stages[] = {m_StageTick, m_StageLateTick, m_StageFixedBegin,

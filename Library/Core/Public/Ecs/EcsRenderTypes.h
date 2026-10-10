@@ -51,9 +51,11 @@ namespace NorvesLib::Core::Ecs
         bool Reserved1;
     };
 
-    /// LightComponent（とその派生）の行の共通の値（プロパティ。ECS_PROPERTY で読み書きする）
+    /// LightComponent（とその派生）の行の共通の値。Direction 以外はプロパティ（ECS_PROPERTY で読み書きする）。
+    /// 方向は保存の対象外なので、プロパティにはせず Component が列の一部として読み書きする
     struct EcsLightRender
     {
+        Math::Vector3 Direction;
         float Intensity;
         float ShadowBias;
         uint32_t ShadowMapResolution;
@@ -103,5 +105,11 @@ namespace NorvesLib::Core::Ecs
         Rendering::BlendMode Blend;
         uint8_t Reserved0;
         uint8_t Reserved1;
+    };
+
+    /// BillboardComponent（とその派生）の行の、ワールド単位の大きさ（プロパティ。ECS_PROPERTY で読み書きする）
+    struct EcsBillboardSize
+    {
+        Math::Vector2 SizeWorld;
     };
 }

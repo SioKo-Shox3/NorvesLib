@@ -195,6 +195,7 @@ namespace NorvesLib::Core::Ecs
         PointLight,
         SpotLight,
         Board,
+        Billboard,
         Count,
     };
 

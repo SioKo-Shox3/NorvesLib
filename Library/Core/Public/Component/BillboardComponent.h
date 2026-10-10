@@ -15,13 +15,16 @@ namespace NorvesLib::Core::Component
         virtual ~BillboardComponent();
 
         void SetSizeWorld(const Math::Vector2 &sizeWorld);
-        const Math::Vector2 &GetSizeWorld() const { return SizeWorld; }
+        Math::Vector2 GetSizeWorld() const { return getSizeWorld().Get(); }
 
         bool BuildBoardProxy(Rendering::BoardProxy &outProxy,
                              const Rendering::MaterialResources *materials = nullptr) const override;
 
+        Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::Billboard; }
+
     protected:
-        PROPERTY(Math::Vector2, SizeWorld)
+        // 大きさは World の木にいる間 ECS の行（EcsBillboardSize）の列にあり、無い間は予備の値にある
+        ECS_PROPERTY(Ecs::EcsBillboardSize, SizeWorld, Math::Vector2, SizeWorld)
     };
 
     using BillboardComponentPtr = Container::TSharedPtr<BillboardComponent>;

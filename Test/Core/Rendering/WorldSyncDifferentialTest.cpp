@@ -1,4 +1,5 @@
-﻿#include "Component/BoardComponent.h"
+﻿#include "Component/BillboardComponent.h"
+#include "Component/BoardComponent.h"
 #include "Component/DirectionalLightComponent.h"
 #include "Component/MegaGeometryComponent.h"
 #include "Component/MeshComponent.h"
@@ -472,6 +473,83 @@ namespace
 
         world.Finalize();
     }
+
+    // ライト方向と Billboard の大きさは、setter → 列 → getter・proxy の順に値が通り、行の付け外しで値が保たれる
+    void TestLightDirectionAndBillboardSizeLiveInComponentRow()
+    {
+        World world;
+        world.Initialize();
+
+        Entity* object = world.SpawnObject<Entity>();
+        assert(object);
+        DirectionalLightComponent* light = world.CreateComponent<DirectionalLightComponent>(object);
+        BillboardComponent* billboard = world.CreateComponent<BillboardComponent>(object);
+        BoardComponent* board = world.CreateComponent<BoardComponent>(object);
+        assert(light && billboard && board);
+
+        Ecs::EcsWorld& ecs = world.GetEcsWorld();
+        // 大きさの列は Billboard の行だけにある
+        assert(ecs.GetColumnValue<Ecs::EcsBillboardSize>(billboard->GetEcsEntity()) != nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsBoardRender>(billboard->GetEcsEntity()) != nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsBillboardSize>(board->GetEcsEntity()) == nullptr);
+
+        // 既定値が列にある（方向は下向き、大きさは 1 x 1）
+        const Ecs::EcsLightRender* lightColumn = ecs.GetColumnValue<Ecs::EcsLightRender>(light->GetEcsEntity());
+        assert(lightColumn->Direction.x == 0.0f && lightColumn->Direction.y == -1.0f && lightColumn->Direction.z == 0.0f);
+        const Ecs::EcsBillboardSize* sizeColumn = ecs.GetColumnValue<Ecs::EcsBillboardSize>(billboard->GetEcsEntity());
+        assert(sizeColumn->SizeWorld.x == 1.0f && sizeColumn->SizeWorld.y == 1.0f);
+
+        // setter → 列
+        light->SetLightDirection(0.25f, -0.5f, 0.75f);
+        assert(lightColumn->Direction.x == 0.25f && lightColumn->Direction.y == -0.5f && lightColumn->Direction.z == 0.75f);
+        billboard->SetSizeWorld(NorvesLib::Math::Vector2(2.0f, 3.0f));
+        assert(sizeColumn->SizeWorld.x == 2.0f && sizeColumn->SizeWorld.y == 3.0f);
+
+        // 列 → getter・proxy
+        Ecs::EcsLightRender* lightWritable = ecs.GetColumnValue<Ecs::EcsLightRender>(light->GetEcsEntity());
+        lightWritable->Direction = NorvesLib::Math::Vector3(1.0f, 0.0f, 0.0f);
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+        light->GetLightDirection(x, y, z);
+        assert(x == 1.0f && y == 0.0f && z == 0.0f);
+        LightProxy lightProxy;
+        assert(light->BuildLightProxy(lightProxy));
+        assert(lightProxy.DirectionX == 1.0f && lightProxy.DirectionY == 0.0f && lightProxy.DirectionZ == 0.0f);
+
+        Ecs::EcsBillboardSize* sizeWritable = ecs.GetColumnValue<Ecs::EcsBillboardSize>(billboard->GetEcsEntity());
+        sizeWritable->SizeWorld = NorvesLib::Math::Vector2(4.0f, 5.0f);
+        assert(billboard->GetSizeWorld().x == 4.0f && billboard->GetSizeWorld().y == 5.0f);
+        BoardProxy boardProxy;
+        assert(billboard->BuildBoardProxy(boardProxy));
+        assert(boardProxy.SizeWorld.x == 4.0f && boardProxy.SizeWorld.y == 5.0f);
+
+        // 大きさは保存の対象のプロパティで列にある。方向は列の一部だが保存の対象ではない
+        const ClassProperty* sizeProperty = billboard->GetClass()->GetProperty(Identity("SizeWorld"));
+        assert(sizeProperty && sizeProperty->GetStorageKind() == StorageKind::EcsColumn);
+
+        // 外すと予備の値へ戻り、読み口は同じ値を返す。付け直すと列へ戻る
+        light->SetLightDirection(0.0f, 0.0f, 1.0f);
+        billboard->SetSizeWorld(NorvesLib::Math::Vector2(6.0f, 7.0f));
+        assert(object->RemoveInner(light));
+        assert(object->RemoveInner(billboard));
+        assert(light->GetEcsEntity().IsNull() && billboard->GetEcsEntity().IsNull());
+        light->GetLightDirection(x, y, z);
+        assert(x == 0.0f && y == 0.0f && z == 1.0f);
+        assert(billboard->GetSizeWorld().x == 6.0f && billboard->GetSizeWorld().y == 7.0f);
+        // 行が無い間の書き込みも予備の値へ入り、付け直しで列へ写る
+        light->SetLightDirection(0.0f, 1.0f, 0.0f);
+        billboard->SetSizeWorld(NorvesLib::Math::Vector2(8.0f, 9.0f));
+        assert(object->AddInner(light));
+        assert(object->AddInner(billboard));
+        const Ecs::EcsLightRender* reboundLight = ecs.GetColumnValue<Ecs::EcsLightRender>(light->GetEcsEntity());
+        assert(reboundLight && reboundLight->Direction.x == 0.0f && reboundLight->Direction.y == 1.0f &&
+               reboundLight->Direction.z == 0.0f);
+        const Ecs::EcsBillboardSize* reboundSize = ecs.GetColumnValue<Ecs::EcsBillboardSize>(billboard->GetEcsEntity());
+        assert(reboundSize && reboundSize->SizeWorld.x == 8.0f && reboundSize->SizeWorld.y == 9.0f);
+
+        world.Finalize();
+    }
 }
 
 int main()
@@ -483,6 +561,7 @@ int main()
     TestMeshMaterialBlendSync();
     TestRenderValuesLiveInComponentRow();
     TestLightAndBoardValuesLiveInComponentRow();
+    TestLightDirectionAndBillboardSizeLiveInComponentRow();
 
     std::cout << "WorldSyncDifferentialTest passed\n";
     return 0;

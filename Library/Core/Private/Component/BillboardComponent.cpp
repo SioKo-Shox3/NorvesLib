@@ -25,7 +25,7 @@ namespace NorvesLib::Core::Component
     {
         getRenderLayerProp().Set(Rendering::RenderLayer::Default);
         getSpace().Set(Rendering::BoardSpace::WorldSpace);
-        SizeWorld = Math::Vector2(1.0f, 1.0f);
+        getSizeWorld().Set(Math::Vector2(1.0f, 1.0f));
     }
 
     BillboardComponent::BillboardComponent(const FieldInitializer *initializer)
@@ -33,7 +33,7 @@ namespace NorvesLib::Core::Component
     {
         getRenderLayerProp().Set(Rendering::RenderLayer::Default);
         getSpace().Set(Rendering::BoardSpace::WorldSpace);
-        SizeWorld = Math::Vector2(1.0f, 1.0f);
+        getSizeWorld().Set(Math::Vector2(1.0f, 1.0f));
     }
 
     BillboardComponent::BillboardComponent(const IUnknown *sourceObject)
@@ -41,14 +41,14 @@ namespace NorvesLib::Core::Component
     {
         getRenderLayerProp().Set(Rendering::RenderLayer::Default);
         getSpace().Set(Rendering::BoardSpace::WorldSpace);
-        SizeWorld = Math::Vector2(1.0f, 1.0f);
+        getSizeWorld().Set(Math::Vector2(1.0f, 1.0f));
     }
 
     BillboardComponent::~BillboardComponent() = default;
 
     void BillboardComponent::SetSizeWorld(const Math::Vector2 &sizeWorld)
     {
-        SizeWorld = sizeWorld;
+        getSizeWorld().Set(sizeWorld);
         MarkRenderStateDirty();
     }
 
@@ -62,7 +62,7 @@ namespace NorvesLib::Core::Component
 
         outProxy.Space = Rendering::BoardSpace::WorldSpace;
         outProxy.LayerMask = getRenderLayerProp().Get();
-        outProxy.SizeWorld = SizeWorld;
+        outProxy.SizeWorld = getSizeWorld().Get();
         const Math::Vector3 translation = outProxy.WorldTransform.GetTranslationRow();
         outProxy.WorldBounds.CenterX = translation.x;
         outProxy.WorldBounds.CenterY = translation.y;
@@ -71,7 +71,7 @@ namespace NorvesLib::Core::Component
         const Math::Vector3 scale = Math::MatrixUtils::ExtractScale(outProxy.WorldTransform);
         const float scaleX = scale.x;
         const float scaleY = scale.y;
-        const Math::Vector2 sizeWorld = SizeWorld;
+        const Math::Vector2 sizeWorld = getSizeWorld().Get();
         const Math::Vector2 pivot = getPivot().Get();
         const float width = AbsFloat(sizeWorld.x) * scaleX;
         const float height = AbsFloat(sizeWorld.y) * scaleY;
