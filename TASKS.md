@@ -28,13 +28,13 @@
 - notes: 計画書 `Docs/Plans/SceneLauncherPlan.md`。モードの登録は `Game/GameApplicationHandler.cpp` の `CreateGameModeStateMachine`（2073〜2167 行付近。`Start` は 2165 行付近）で、起動フラグは static の `s_*` を Creator ラムダが `Rendering3DTestData` へ写している（2095〜2151 行付近）。`Test/Game/Bridge/CMakeLists.txt` と `Test/Core/Rendering/CMakeLists.txt` は Game のソースを直接取り込むので、`GameApplicationHandler.cpp` から参照する新しいソースはそちらにも足す。撮影は `ApplicationProcessor.cpp` の `--capture-png`（634〜660 行付近）と SceneReady（`Rendering3DTestRoutine.cpp` 3276・3865 行付近）。 2026-10-10 再開: `blocked/SCN-SCENE-ARG.md` の推奨の案1（Slang SDK が無いときは `CreateSlangShaderCompiler` が nullptr を返し、`NeuralMaterialDecodePass::Initialize` が読み込みを試みない。そのうえで `CaptureScene.ps1`・`CaptureStartupScene.ps1` のシェーダー失敗の例外を外す）で進める（ユーザー不在のため親が推奨を採った）。
 
 ## SCN-R3D-REENTRY: シーンの出入りで作った資源を返し、出入りを繰り返しても増えないことを確かめる
-- status: blocked
+- status: todo
 - done-when: `--scene-cycle-smoke=<id,...>`・`--scene-cycle-count=<n>`（形は実装で決めてよい）で、Game が別のモード（この項目では空のモード、SCN-LAUNCHER の後はランチャー）とシーンの間を `RequestChange` で周回し、各周回の後に資源の数（材質・テクスチャ・メッシュ・Model・Entity）と GPU の割り当て量をログへ出し、2周目以降が1周目と同じ（GPU の割り当ては遅延解放が済むのを待って比べる）なら `SCENE_CYCLE_SMOKE result=pass`、増えたら `result=fail` と増えた種類を出す。`Rendering3DTestRoutine::Leave` が Enter で作った材質・チェッカーのテクスチャ・負荷用の資源などをすべて返し、`rendering3dtest` で3周して pass になる。材質とテクスチャもシーンの範囲（`GameModeScope`）で追跡して Leave で返せるようにし、後のシーンはそれを使う。`Scripts/RunSceneCycleSmoke.ps1 -Scenes <id,...> -Cycles <n> [-Configuration ...]` がこれを走らせて Game.log を照合し、pass で 0 を返す。Rendering3DTest の撮影の見た目は変わらない。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-R3D-REENTRY`
 - paths: Game, Library/Core/Public/GameMode, Library/Core/Private/GameMode, Library/Core/Public/Rendering/RenderResources.h, Library/Core/Private/Rendering, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
-- notes: 危険地帯（Object/Resource の寿命）。`GameModeScope`（`Library/Core/Private/GameMode/GameModeScope.cpp` 79〜128 行付近）は Entity・Mesh・Model だけを返し、材質とテクスチャは対象外。`Rendering3DTestRoutine.cpp` の Leave（3869〜4035 行付近）は `materials.Create`（2200 行付近〜）とチェッカー（`m_CheckerTextureHandle`、2175 行付近）を返していない。`RequestChange` はキューに積まれ次の Update の先頭で Leave→Cleanup→Enter（`GameModeStateMachine.cpp` 39〜48 行付近）。RenderThread が使い終わるまで破棄を待つ仕組み（`RenderResources.h` 377〜385 行付近の retire）を守る。資源の数を返す API が無ければ足す。
+- notes: 危険地帯（Object/Resource の寿命）。`GameModeScope`（`Library/Core/Private/GameMode/GameModeScope.cpp` 79〜128 行付近）は Entity・Mesh・Model だけを返し、材質とテクスチャは対象外。`Rendering3DTestRoutine.cpp` の Leave（3869〜4035 行付近）は `materials.Create`（2200 行付近〜）とチェッカー（`m_CheckerTextureHandle`、2175 行付近）を返していない。`RequestChange` はキューに積まれ次の Update の先頭で Leave→Cleanup→Enter（`GameModeStateMachine.cpp` 39〜48 行付近）。RenderThread が使い終わるまで破棄を待つ仕組み（`RenderResources.h` 377〜385 行付近の retire）を守る。資源の数を返す API が無ければ足す。 2026-10-10 再開（親が推奨を採った）: `blocked/SCN-R3D-REENTRY.md` の推奨の案1（スレッドごとのコマンドプール）は SCN-RHI-UPLOAD-THREAD で入って評価者を通った。検証レイヤーの除外なしで周回スモークを再検証し、残る指摘があれば直す。
 
 ## SCN-RHI-UPLOAD-THREAD: 描画中のシーン入場で、テクスチャの初期データの転送が共有コマンドプールを競合しないようにする
 - status: done
@@ -56,14 +56,14 @@
 - notes: ImGui の登録は `GameApplicationHandler.cpp` 1462〜1482 行付近（今は `--imgui` のときだけ）。`IImGuiView`（`Library/Modules/ImGui/Public/ImGuiModule/IImGuiView.h`）。NotoSansJP は `ImGuiModule.cpp` 632・671 行付近でマージ済み。入力の Menu の文脈（Confirm=Enter/パッド a、Cancel=Escape/パッド b）は `Assets/Config/DefaultInputBindings.json` 217 行付近。見本画像を ImGui のテクスチャとして描く手段が無ければ足す（画像は SCN-THUMBNAILS で作る）。Release にデバッグ機能（GPU 計測・ログ）を入れない。
 
 ## SCN-PAUSE-MENU: Esc のポーズメニューからランチャーへ戻れるようにする
-- status: blocked
+- status: todo
 - done-when: ランチャー以外の全シーンで Esc（ゲームパッドの Start）を押すとポーズメニュー（続ける／ランチャーへ戻る／ゲームを終了）が出て、もう一度 Esc か「続ける」で閉じる。「ランチャーへ戻る」で `RequestChange(launcher)`。メニューが出ている間はカメラ操作などシーン側の入力を止めてマウスカーソルを出す。Rendering3DTest の F1〜F5 のデバッグ表示や Alt のカメラ操作と衝突しない。見た目はランチャーと同じ作り（半透明の暗幕と中央のパネル）。撮影（`--capture-png`）の起動では出さない。開発ビルドだけの `--open-pause-menu` で開いた状態を撮り（`CaptureScene.ps1 -GameArgs open-pause-menu`）、開いて確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene rendering3dtest -GameArgs open-pause-menu -OutDir .harness/runs/scene-capture/SCN-PAUSE-MENU`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-PAUSE-MENU`
 - paths: Game, Assets/Config, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
-- notes: Escape を処理する箇所は今の Game に無い（`Game/Input/GameInputRebindTypes.h` 36 行付近のリバインド取消のみ）。F1〜F5 は `Game/GameModes/Rendering3DTest/Rendering3DTestDebugInput.cpp`。
+- notes: Escape を処理する箇所は今の Game に無い（`Game/Input/GameInputRebindTypes.h` 36 行付近のリバインド取消のみ）。F1〜F5 は `Game/GameModes/Rendering3DTest/Rendering3DTestDebugInput.cpp`。 2026-10-10 再開（親が推奨を採った）: 評価者の指摘（`PauseMenu.cpp` 229 行付近の Start のラッチが `event.Slot` を見ずに解除される）を、ラッチをスロットごとに持ち、同じスロットの解放・サンプルだけで解除する形に直す。回帰の確認は InputSystem→Router→PauseMenu を通し、別スロットの未押下のサンプルを挟む。
 
 ## SCN-FREE-CAMERA: 自由飛行カメラと、シーンごとの名前付き視点を足す
 - status: done
@@ -88,13 +88,13 @@
 - notes: 計画書の「資産」の節。保存済みのワークフロー `Y:\ComfyUI\ComfyUI_windows_portable\ComfyUI\user\default\doggame\pixal3d_trellis2_api.json`（ノード 316 の真偽で TRELLIS.2/Pixal3D を切り替え、`LoadImage` 122 が入力、`RemoveBackground` 192、`DecimateMesh` 186 の面数、`PrimitiveInt` 288 がテクスチャの大きさ、`Save3DAdvanced` 322 が出力）を元にする。文字→画像は ComfyUI 0.38 の Z-Image のノードで組む（`Y:\ComfyUI\models` に `z_image_turbo_bf16`・`qwen_3_4b`・`ae`）。Python は `C:\Python314\python.exe`（標準ライブラリだけで書く）。生成は GPU を占有するので、ComfyUI を止めてから Game を撮る。Blender は `Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe`。クックの入口は `Scripts/CookAssets.ps1`（`-SpecDir`・`-RuntimeRoot`、出力は `build/CookedAssets`）。
 
 ## SCN-BANANAS-SCENE: 仮想化ジオメトリのバナナのシーンを作る
-- status: blocked
+- status: todo
 - done-when: `mega-bananas` シーン: 昼の物理空と太陽の影の下、生成したバナナを MegaGeometry で `--banana-count=<n>`（この項目の既定は今の上限内の 4096。SCN-MEGA-10K で 1万へ上げる）本、広い床（Poly Haven の木の床か土）に向き・わずかな大きさをばらして敷き詰め、手前に数段の山を作る（物理で積まなくてよいが、重なりが不自然に見えない配置）。H キーの情報表示に本数・1本の三角形数・元の三角形の総数、開発ビルドでは MegaGeometry の GPU 時間と描いたクラスタ数も出す。名前付き視点 `overview`（全体を見渡す）・`close`（手前の山を数十 cm から）・`low`（床すれすれ）とカメラパスを持ち、ランチャーに載る。資産が無ければ警告し、ランチャーのカードに `python Scripts/GenerateSceneModels.py --ids banana` を出す。3視点の撮影を開いて、バナナが並ぶ・近くで高ポリの形に見える・影が落ちていることを確かめる。`mega-bananas` の cycle smoke 3周が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -OutDir .harness/runs/scene-capture/SCN-BANANAS-SCENE`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas -Cycles 3`
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
-- notes: 配置の手順は `Rendering3DTestRoutine.cpp` 889〜900・1208〜1242 行付近（CreateMegaMesh→RegisterModel→TrackModel→SpawnObject→CreateComponent<MegaGeometryComponent>→SetMegaMeshHandle→SetCastShadow）。同じバナナのインスタンスは1つの Model を共有する。
+- notes: 配置の手順は `Rendering3DTestRoutine.cpp` 889〜900・1208〜1242 行付近（CreateMegaMesh→RegisterModel→TrackModel→SpawnObject→CreateComponent<MegaGeometryComponent>→SetMegaMeshHandle→SetCastShadow）。同じバナナのインスタンスは1つの Model を共有する。 2026-10-10 再開（親が推奨を採った）: 評価者の指摘（山の上段が下段に支えられず浮く）を、物理を使わない「落とし込み」の配置で直す: 山の範囲に細かい高さの格子（1〜2 cm）を持ち、置いたバナナの変換後の頂点（間引いた点でよい）を格子へ最大の高さとして書き込み、次のバナナは向きを決めたあと、自分の下面の点が格子に初めて触れる高さに置く（少しめり込ませてよい）。3視点を撮り直し、上段の最下点と下の支えの隙間を数えて記録する。 あわせて、親が overview の撮影で見た「デバッグっぽさ」を直す: 敷き詰めが格子にそろって見える（位置のジッターかポアソン円盤で崩す）、山が四角い区画に見える（中央が盛り上がった塚の形にする）、木の床の端と外側の平らな地面の境目が地平線の手前に見える（床を視界の外まで広げるか、境目が見えない置き方にする）。
 
 ## SCN-MEGA-10K: バナナ1万本で、描かれないクラスタ・影の欠け・過大なメモリが無いようにする
 - status: done
@@ -114,6 +114,14 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs banana-count=30000 -OutDir .harness/runs/scene-capture/SCN-BANANAS-PERF`
 - paths: Docs/RenderingValidation, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Assets/Shaders, Game, Scripts, TASKS.md, PROGRESS.md
 - notes: 性能は RelWithDebInfo で測る（Release にデバッグ機能を入れない）。測り方は `Docs/RenderingValidation/VirtualizationAcceptance.md` の段5・段6の GPU 時間に合わせる。
+
+## SCN-MEGA-CPU-FRAME: バナナ 1万本以上で CPU のフレームが GPU の 4 倍以上かかる原因を絞る
+- status: todo
+- done-when: RelWithDebInfo・1920×1080 の `mega-bananas` 1万本 overview で、CPU のフレーム（1 万 72 ms・3 万 579 ms。`Docs/RenderingValidation/SceneLauncherAcceptance.md` のバナナの節）の内訳を、ゲームスレッドとレンダースレッドのスコープごとに測って絞り、直せる原因（インスタンスごとの毎フレームの処理・待ち）は直す。直さないものは既知の限界として同じ節に書く。起動画面（Rendering3DTest）と他シーンの見た目・GPU 時間は変えない。 目標は 1万本 overview の CPU のフレームを 16.6 ms 以下（本数に対して線形より速く伸びる部分を無くす）。届かないときは残りの内訳と理由を記録する。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-CPU-FRAME`
+- paths: Docs/RenderingValidation, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Object, Library/Core/Private/Object, Game, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画スレッド・メモリ）。トレースのスコープは `RenderGraph.Execute`（1 万 26 ms → 3 万 313 ms）と `MegaGeometryPass.RecordFrameCommand`（2.1 → 7.1 ms）だけで、ゲームスレッド（73 → 579 ms）の内訳が無い。まず `NORVES_TRACE_SCOPE` 相当のスコープを足して絞る。評価者を通す。
 
 ## SCN-PH-WASTELAND: 荒野用の Poly Haven の岩・崖と地形のテクスチャを落とす
 - status: done
@@ -297,6 +305,7 @@
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene launcher -OutDir .harness/runs/scene-capture/SCN-THUMBNAILS`
 - paths: Game, Scripts, Assets/Textures/Launcher, TASKS.md, PROGRESS.md
+- notes: 2026-10-10 親が見た点: 1920×1080 のランチャーでカードの説明文が右の縁からはみ出す（折り返しの幅がカードの内側の余白を引いていない）。カードが増えたときの並び（1 行に収まらないときの折り返しかスクロール）も確かめる。
 
 ## SCN-ACCEPT: ランチャーと全シーンの受入れを記録する
 - status: todo
@@ -851,11 +860,3 @@
 - done-when: 既存時間軸/ループ/root抽出に外れ値除去・周期平滑/平均・接地情報・自然速度・時間補正・導出root・reportを接続する。
 - verify: AssetCookとCoreの変更ソースの構文確認。調整値はprofileで変更できる。
 - notes: role-profile processingで明示的に有効化する。足のIK固定や別骨格への再接地は後続項目。
-
-## SCN-MEGA-CPU-FRAME: バナナ 1万本以上で CPU のフレームが GPU の 4 倍以上かかる原因を絞る
-- status: todo
-- done-when: RelWithDebInfo・1920×1080 の `mega-bananas` 1万本 overview で、CPU のフレーム（1 万 72 ms・3 万 579 ms。`Docs/RenderingValidation/SceneLauncherAcceptance.md` のバナナの節）の内訳を、ゲームスレッドとレンダースレッドのスコープごとに測って絞り、直せる原因（インスタンスごとの毎フレームの処理・待ち）は直す。直さないものは既知の限界として同じ節に書く。起動画面（Rendering3DTest）と他シーンの見た目・GPU 時間は変えない。
-- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-CPU-FRAME`
-- paths: Docs/RenderingValidation, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Object, Library/Core/Private/Object, Game, Scripts, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画スレッド・メモリ）。トレースのスコープは `RenderGraph.Execute`（1 万 26 ms → 3 万 313 ms）と `MegaGeometryPass.RecordFrameCommand`（2.1 → 7.1 ms）だけで、ゲームスレッド（73 → 579 ms）の内訳が無い。まず `NORVES_TRACE_SCOPE` 相当のスコープを足して絞る。評価者を通す。
