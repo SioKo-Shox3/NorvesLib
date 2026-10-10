@@ -1,6 +1,7 @@
 ﻿// JobSystem::ParallelFor の契約を確かめるテスト。
 // 全ワーカーが塞がっていても呼び手だけで終わること、各番号がちょうど 1 回走ること、
 // 返った後に起きた補助が関数に触れないこと、受理停止後・入れ子・例外の扱いを見る。
+#include "Container/VariableArray.h"
 #include "Thread/JobSystem.h"
 #include "Thread/Task.h"
 
@@ -9,11 +10,26 @@
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
-#include <string>
+#include <cstring>
 #include <thread>
-#include <vector>
+
 
 using namespace NorvesLib::Thread;
+using NorvesLib::Core::Container::VariableArray;
+
+namespace NorvesLib::Thread
+{
+    // JobSystem の提出準備の確認口（フック）へ触れるための friend。
+    struct JobParallelForTestAccess
+    {
+        using Point = JobSystem::SubmitPreparationPoint;
+        static void SetSubmitHook(JobSystem &system, void (*hook)(Point, void *), void *context)
+        {
+            system.m_submitPreparationHook = hook;
+            system.m_submitPreparationContext = context;
+        }
+    };
+} // namespace NorvesLib::Thread
 
 namespace
 {
@@ -30,7 +46,7 @@ namespace
 
     const char *ModeName(JobSystem::ExecutionMode mode)
     {
-        return mode == JobSystem::ExecutionMode::EXECUTION_SIMPLE ? "simple" : "work-stealing";
+        return mode == JobSystem::ExecutionMode::EXECUTION_SIMPLE ? "単純" : "ワークスチーリング";
     }
 
     void SleepMilliseconds(int milliseconds)
@@ -73,7 +89,7 @@ namespace
         std::atomic<bool> m_bRelease{false};
     };
 
-    void CheckEachIndexOnce(const std::vector<std::atomic<int>> &hits)
+    void CheckEachIndexOnce(const VariableArray<std::atomic<int>> &hits)
     {
         for (const auto &hit : hits)
         {
@@ -97,7 +113,7 @@ namespace
             {1000, 5000}, {100003, 64}, {100000, 100000}, {4097, 4096}};
         for (const Case &testCase : cases)
         {
-            std::vector<std::atomic<int>> hits(testCase.Count);
+            VariableArray<std::atomic<int>> hits(testCase.Count);
             std::atomic<size_t> calls{0};
             jobSystem.ParallelFor(testCase.Count, testCase.Grain, [&](size_t index)
                                   {
@@ -111,6 +127,28 @@ namespace
         jobSystem.Shutdown();
     }
 
+    struct SubmitFaultMarker
+    {
+    };
+
+    // 提出準備の 2 回目の BeforeTicket で例外を投げる。
+    struct SubmitFault
+    {
+        std::atomic<int> TicketCalls{0};
+    };
+
+    void ThrowOnSecondTicket(JobParallelForTestAccess::Point point, void *context)
+    {
+        if (point == JobParallelForTestAccess::Point::BeforeTicket)
+        {
+            auto *fault = static_cast<SubmitFault *>(context);
+            if (fault->TicketCalls.fetch_add(1) + 1 == 2)
+            {
+                throw SubmitFaultMarker{};
+            }
+        }
+    }
+
     // 全ワーカーが長いタスクで塞がっていても呼び手だけで終わる。返った後に起きた補助は関数を呼ばない。
     void TestCallerAloneWhenWorkersBlocked(JobSystem::ExecutionMode mode)
     {
@@ -122,7 +160,7 @@ namespace
 
         std::atomic<size_t> totalCalls{0};
         std::atomic<int> foreignCalls{0};
-        std::vector<std::atomic<int>> hits(Count);
+        VariableArray<std::atomic<int>> hits(Count);
         {
             WorkerBlocker blocker(jobSystem, WorkerCount);
             const std::thread::id callerId = std::this_thread::get_id();
@@ -169,7 +207,7 @@ namespace
 
         const std::thread::id callerId = std::this_thread::get_id();
         std::atomic<int> foreignCalls{0};
-        std::vector<std::atomic<int>> hits(Count);
+        VariableArray<std::atomic<int>> hits(Count);
         jobSystem.ParallelFor(Count, 2, [&](size_t index)
                               {
             hits[index]++;
@@ -193,7 +231,7 @@ namespace
         JobSystem &jobSystem = JobSystem::Get();
         jobSystem.Initialize(4, mode);
 
-        std::vector<std::atomic<int>> hits(OuterCount * InnerCount);
+        VariableArray<std::atomic<int>> hits(OuterCount * InnerCount);
         std::atomic<int> wrongThread{0};
         std::atomic<int> outOfOrder{0};
         jobSystem.ParallelFor(OuterCount, 1, [&](size_t outer)
@@ -226,7 +264,7 @@ namespace
         PF_CHECK(leafCalls.load() == 64);
 
         // 入れ子の外側が終わった後の呼び出しは、また並列に使える（入れ子の目印が残らない）。
-        std::vector<std::atomic<int>> hitsAfter(1000);
+        VariableArray<std::atomic<int>> hitsAfter(1000);
         jobSystem.ParallelFor(hitsAfter.size(), 1, [&](size_t index)
                               { hitsAfter[index]++; });
         CheckEachIndexOnce(hitsAfter);
@@ -242,7 +280,7 @@ namespace
         JobSystem &jobSystem = JobSystem::Get();
         jobSystem.Initialize(2, mode);
 
-        std::vector<std::atomic<int>> hits(Count);
+        VariableArray<std::atomic<int>> hits(Count);
         TaskPtr task = Task::Create([&]()
                                     { JobSystem::Get().ParallelFor(Count, 1, [&](size_t index)
                                                                    { hits[index]++; }); });
@@ -264,7 +302,7 @@ namespace
 
         // 1 件だけ投げる。ほかの番号は少し眠って、投げた時点で走っている分を作る。
         {
-            std::vector<std::atomic<int>> hits(Count);
+            VariableArray<std::atomic<int>> hits(Count);
             std::atomic<int> inFlight{0};
             std::atomic<size_t> calls{0};
             bool bCaught = false;
@@ -286,7 +324,7 @@ namespace
             catch (const std::runtime_error &error)
             {
                 bCaught = true;
-                PF_CHECK(std::string(error.what()) == "boom");
+                PF_CHECK(std::strcmp(error.what(), "boom") == 0);
             }
             PF_CHECK(bCaught);
             PF_CHECK(inFlight.load() == 0);
@@ -363,14 +401,14 @@ namespace
             catch (const std::runtime_error &error)
             {
                 bCaught = true;
-                PF_CHECK(std::string(error.what()) == "nested");
+                PF_CHECK(std::strcmp(error.what(), "nested") == 0);
             }
             PF_CHECK(bCaught);
         }
 
         // 例外の後も使える（入れ子の目印やカーソルが次の呼び出しに残らない）。
         {
-            std::vector<std::atomic<int>> hits(Count);
+            VariableArray<std::atomic<int>> hits(Count);
             jobSystem.ParallelFor(Count, 1, [&](size_t index)
                                   { hits[index]++; });
             CheckEachIndexOnce(hits);
@@ -407,6 +445,66 @@ namespace
         jobSystem.Shutdown();
     }
 
+    // 補助の提出の途中で例外が出ても、受理済みの補助が返った後に関数を呼ばず、例外は投げ直される。
+    void TestSubmitFaultDuringHelperSubmission(JobSystem::ExecutionMode mode)
+    {
+        constexpr int WorkerCount = 2;
+        constexpr size_t Count = 400;
+
+        JobSystem &jobSystem = JobSystem::Get();
+        jobSystem.Initialize(WorkerCount, mode);
+
+        std::atomic<size_t> totalCalls{0};
+        std::atomic<bool> bReturned{false};
+        std::atomic<size_t> callsAfterReturn{0};
+        {
+            WorkerBlocker blocker(jobSystem, WorkerCount);
+
+            // 2 個目の補助の提出で例外を出す（1 個目は受理されて塞がれたキューに残る）。
+            SubmitFault fault;
+            JobParallelForTestAccess::SetSubmitHook(jobSystem, ThrowOnSecondTicket, &fault);
+            bool bCaught = false;
+            // 関数は塞ぎを解くまで生かしておき、呼び出しが返った後に呼ばれたかを数える。
+            JobSystem::ParallelForFunction fn = [&](size_t)
+            {
+                totalCalls++;
+                if (bReturned.load())
+                {
+                    callsAfterReturn++;
+                }
+            };
+            try
+            {
+                jobSystem.ParallelFor(Count, 1, fn);
+            }
+            catch (const SubmitFaultMarker &)
+            {
+                bCaught = true;
+            }
+            bReturned.store(true);
+            JobParallelForTestAccess::SetSubmitHook(jobSystem, nullptr, nullptr);
+            PF_CHECK(bCaught);
+            PF_CHECK(fault.TicketCalls.load() == 2);
+
+            // 例外の後は未着手の区間を呼ばずに返る。受理済みの補助は塞ぎを解いても関数を呼ばない。
+            PF_CHECK(totalCalls.load() == 0);
+            blocker.Release();
+            jobSystem.WaitForAll();
+            SleepMilliseconds(30);
+            PF_CHECK(callsAfterReturn.load() == 0);
+            PF_CHECK(totalCalls.load() == 0);
+        }
+        PF_CHECK(jobSystem.GetQueuedTaskCount() == 0);
+
+        // 例外の後も使える。
+        VariableArray<std::atomic<int>> hits(1000);
+        jobSystem.ParallelFor(hits.size(), 1, [&](size_t index)
+                              { hits[index]++; });
+        CheckEachIndexOnce(hits);
+
+        jobSystem.Shutdown();
+    }
+
     void RunAllForMode(JobSystem::ExecutionMode mode)
     {
         std::cout << "JobParallelForTest: 実行モード " << ModeName(mode) << std::endl;
@@ -416,6 +514,7 @@ namespace
         TestNestedRunsInPlace(mode);
         TestCalledFromWorkerTask(mode);
         TestExceptionIsRethrownAfterAllFinish(mode);
+        TestSubmitFaultDuringHelperSubmission(mode);
     }
 } // namespace
 

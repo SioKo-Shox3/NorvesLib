@@ -195,6 +195,7 @@ namespace NorvesLib::Thread
 
     private:
         friend struct JobSystemTestAccess;
+        friend struct JobParallelForTestAccess;
 
         JobSystem();
         ~JobSystem();

@@ -598,14 +598,29 @@ namespace NorvesLib::Thread
         batch->Fn = &fn;
 
         // 補助は最大でワーカーの数。提出を拒まれたら以降は出さず、呼び手が残りを行う。
+        // 提出の途中で例外が出ても、受理済みの補助が返った後に関数を呼ばないよう、下の消化と待機は必ず通す。
         const size_t helperCount = std::min(GetWorkerThreadCount(), chunkCount - 1);
         for (size_t helper = 0; helper < helperCount; ++helper)
         {
-            const bool bAccepted = SubmitTask(Task::Create([batch]()
-                                                           { RunParallelForBatch(*batch); },
-                                                           TaskPriority::HIGH));
-            if (!bAccepted)
+            try
             {
+                const bool bAccepted = SubmitTask(Task::Create([batch]()
+                                                               { RunParallelForBatch(*batch); },
+                                                               TaskPriority::HIGH));
+                if (!bAccepted)
+                {
+                    break;
+                }
+            }
+            catch (...)
+            {
+                // 提出の例外もバッチの最初の例外として記録し、未着手の区間は関数を呼ばずに数えだけ進める。
+                ScopedLock lock(batch->Lock);
+                if (!batch->FirstException)
+                {
+                    batch->FirstException = std::current_exception();
+                }
+                batch->bFailed.Store(true);
                 break;
             }
         }
