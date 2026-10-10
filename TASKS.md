@@ -255,7 +255,7 @@
 - paths: Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/CMakeLists.txt, Test/Core/Object/CMakeLists.txt, Test/Core/Object/EcsMoveTest.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-CORE-CHANGES: クエリと、版・変更ログを足す
-- status: todo
+- status: done
 - done-when: 設計 1.2 の版と変更ログ、クエリ（All/Any/None・タグ・孤児の除外）、チャンクの版による絞り込み、消費者ごとの既読が入る。`EcsChangeTest` が次を確かめる: 書いた行だけが 1 回ずつログに出る、段の外の書き込みが新しい版になって読み落としが無い、移動や入れ替えで動いた行が「変わった」になる、2 つの消費者の既読が独立している。
 - verify: `cmake --build build --config Debug --target EntityTreeTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(EcsStorageTest|EcsMoveTest|EcsChangeTest)$" --no-tests=error --output-on-failure --timeout 180`

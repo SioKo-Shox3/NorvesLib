@@ -11,6 +11,8 @@ namespace NorvesLib::Core::Ecs
     {
         constexpr uint32_t kChunkPoolBlocksPerSlab = 16;
         constexpr uint32_t kMaxColumnAlign = 64;
+        /// 変更ログの先頭を詰め直すのは、読み終えた分がこの数以上で、全体の半分以上のとき
+        constexpr size_t kLogTrimThreshold = 4096;
 
         uint32_t AlignUpU32(uint32_t value, uint32_t align)
         {
@@ -78,14 +80,33 @@ namespace NorvesLib::Core::Ecs
             }
         }
 
-        // 1 チャンクに入る行数を、見出し・実体の配列・列の配置が 16 KB に収まる最大で決める
-        uint64_t rowBytes = sizeof(EcsEntity);
+        // 追跡する列を決める（追跡する列は行ごとの版の配列を持つ）
+        Container::VariableArray<int32_t> trackedIndex(sorted.size());
+        uint32_t trackedCount = 0;
+        for (size_t i = 0; i < sorted.size(); ++i)
+        {
+            trackedIndex[i] = FindLogIndex(sorted[i].Type);
+            if (trackedIndex[i] >= 0)
+            {
+                ++trackedCount;
+            }
+        }
+
+        // 1 チャンクに入る行数を、見出し・実体の配列・列・行ごとの版・チャンクの版が 16 KB に収まる最大で決める
+        const uint64_t fixedBytes = kEcsChunkHeaderSize + sizeof(uint64_t) * sorted.size();
+        if (fixedBytes >= kEcsChunkSize)
+        {
+            return kInvalidEcsArchetype;
+        }
+        uint64_t rowBytes = sizeof(EcsEntity) + sizeof(uint64_t) * trackedCount;
         for (const EcsColumnInfo &column : sorted)
         {
             rowBytes += column.Size;
         }
-        uint32_t capacity = static_cast<uint32_t>((kEcsChunkSize - kEcsChunkHeaderSize) / rowBytes);
+        uint32_t capacity = static_cast<uint32_t>((kEcsChunkSize - fixedBytes) / rowBytes);
         Container::VariableArray<uint32_t> offsets(sorted.size());
+        Container::VariableArray<uint32_t> rowVersionOffsets(sorted.size());
+        uint32_t chunkVersionOffset = 0;
         while (capacity > 0)
         {
             uint64_t offset = kEcsChunkHeaderSize + static_cast<uint64_t>(sizeof(EcsEntity)) * capacity;
@@ -95,6 +116,19 @@ namespace NorvesLib::Core::Ecs
                 offsets[i] = static_cast<uint32_t>(offset);
                 offset += static_cast<uint64_t>(sorted[i].Size) * capacity;
             }
+            for (size_t i = 0; i < sorted.size(); ++i)
+            {
+                rowVersionOffsets[i] = 0;
+                if (trackedIndex[i] >= 0)
+                {
+                    offset = AlignUpU32(static_cast<uint32_t>(offset), alignof(uint64_t));
+                    rowVersionOffsets[i] = static_cast<uint32_t>(offset);
+                    offset += sizeof(uint64_t) * static_cast<uint64_t>(capacity);
+                }
+            }
+            offset = AlignUpU32(static_cast<uint32_t>(offset), alignof(uint64_t));
+            chunkVersionOffset = static_cast<uint32_t>(offset);
+            offset += sizeof(uint64_t) * static_cast<uint64_t>(sorted.size());
             if (offset <= kEcsChunkSize)
             {
                 break;
@@ -109,6 +143,9 @@ namespace NorvesLib::Core::Ecs
         Archetype archetype;
         archetype.Columns = std::move(sorted);
         archetype.Offsets = std::move(offsets);
+        archetype.TrackedIndex = std::move(trackedIndex);
+        archetype.RowVersionOffsets = std::move(rowVersionOffsets);
+        archetype.ChunkVersionOffset = chunkVersionOffset;
         archetype.Tags = tags;
         archetype.Capacity = capacity;
         m_Archetypes.push_back(std::move(archetype));
@@ -125,6 +162,7 @@ namespace NorvesLib::Core::Ecs
         chunk->Count = 0;
         chunk->Capacity = archetype.Capacity;
         chunk->IndexInArchetype = static_cast<uint32_t>(archetype.Chunks.size());
+        std::memset(reinterpret_cast<std::byte *>(chunk) + archetype.ChunkVersionOffset, 0, sizeof(uint64_t) * archetype.Columns.size());
         archetype.Chunks.push_back(chunk);
         ++m_ChunkCount;
         return chunk;
@@ -158,6 +196,11 @@ namespace NorvesLib::Core::Ecs
         {
             const uint32_t size = archetype.Columns[i].Size;
             std::memset(base + archetype.Offsets[i] + static_cast<size_t>(size) * firstRow, 0, static_cast<size_t>(size) * rowCount);
+            if (archetype.TrackedIndex[i] >= 0)
+            {
+                // 古い持ち主の版が残らないように 0 に戻す（0 の行は必ず次の TouchRow でログに積まれる）
+                std::memset(base + archetype.RowVersionOffsets[i] + sizeof(uint64_t) * firstRow, 0, sizeof(uint64_t) * rowCount);
+            }
         }
     }
 
@@ -182,6 +225,7 @@ namespace NorvesLib::Core::Ecs
         {
             outEntities->reserve(outEntities->size() + count);
         }
+        const uint64_t version = AcquireWriteVersion();
 
         uint32_t remaining = count;
         while (remaining > 0)
@@ -200,6 +244,7 @@ namespace NorvesLib::Core::Ecs
                 slot.Chunk = chunk;
                 slot.Row = firstRow + i;
                 entities[firstRow + i] = entity;
+                TouchRow(archetype, chunk, firstRow + i, version);
                 if (outEntities != nullptr)
                 {
                     outEntities->push_back(entity);
@@ -248,11 +293,22 @@ namespace NorvesLib::Core::Ecs
                 const size_t size = archetype.Columns[i].Size;
                 std::memcpy(dstBase + archetype.Offsets[i] + size * row, srcBase + archetype.Offsets[i] + size * lastRow, size);
             }
+            for (size_t i = 0; i < archetype.Columns.size(); ++i)
+            {
+                // 動いた行は自分の版を持って移る（移動先の古い持ち主の版を残さない）
+                if (archetype.TrackedIndex[i] >= 0)
+                {
+                    reinterpret_cast<uint64_t *>(dstBase + archetype.RowVersionOffsets[i])[row] =
+                        reinterpret_cast<const uint64_t *>(srcBase + archetype.RowVersionOffsets[i])[lastRow];
+                }
+            }
             const EcsEntity moved = lastChunk->GetEntities()[lastRow];
             chunk->GetEntities()[row] = moved;
             Slot &movedSlot = m_Slots[moved.Index];
             movedSlot.Chunk = chunk;
             movedSlot.Row = row;
+            // 入れ替えで動いた行は「変わった」になる
+            TouchRow(archetype, chunk, row, AcquireWriteVersion());
         }
         --lastChunk->Count;
         --archetype.RowCount;
@@ -299,6 +355,7 @@ namespace NorvesLib::Core::Ecs
                                  : target.Chunks.back();
         const uint32_t dstRow = dstChunk->Count;
         ZeroRows(target, dstChunk, dstRow, 1);
+        const uint64_t version = AcquireWriteVersion();
 
         // 共通の列（どちらも型の番号の昇順）の値を移す
         Archetype &source = m_Archetypes[srcChunk->Archetype];
@@ -325,6 +382,8 @@ namespace NorvesLib::Core::Ecs
         }
 
         dstChunk->GetEntities()[dstRow] = entity;
+        // 移動した行は全列が「変わった」になる
+        TouchRow(target, dstChunk, dstRow, version);
         ++dstChunk->Count;
         ++target.RowCount;
         slot.Chunk = dstChunk;
@@ -404,6 +463,415 @@ namespace NorvesLib::Core::Ecs
     void *EcsWorld::GetColumnValue(EcsEntity entity, TypeId type)
     {
         return const_cast<void *>(static_cast<const EcsWorld *>(this)->GetColumnValue(entity, type));
+    }
+
+    uint64_t EcsWorld::AcquireWriteVersion()
+    {
+        if (m_bVersionSealed)
+        {
+            ++m_Version;
+            m_bVersionSealed = false;
+        }
+        return m_Version;
+    }
+
+    uint64_t EcsWorld::AdvanceVersion()
+    {
+        m_bVersionSealed = false;
+        return ++m_Version;
+    }
+
+    int32_t EcsWorld::FindLogIndex(TypeId type) const
+    {
+        for (size_t i = 0; i < m_Logs.size(); ++i)
+        {
+            if (m_Logs[i].Type == type)
+            {
+                return static_cast<int32_t>(i);
+            }
+        }
+        return -1;
+    }
+
+    bool EcsWorld::SetColumnTracked(TypeId type)
+    {
+        if (type == InvalidSchemaId)
+        {
+            return false;
+        }
+        if (FindLogIndex(type) >= 0)
+        {
+            return true;
+        }
+        for (size_t id = 0; id < m_Archetypes.size(); ++id)
+        {
+            if (FindColumnIndex(static_cast<EcsArchetypeId>(id), type) >= 0)
+            {
+                return false;
+            }
+        }
+        ChangeLog log;
+        log.Type = type;
+        m_Logs.push_back(std::move(log));
+        return true;
+    }
+
+    bool EcsWorld::IsColumnTracked(TypeId type) const
+    {
+        return FindLogIndex(type) >= 0;
+    }
+
+    void EcsWorld::AppendLog(int32_t logIndex, const EcsChangeEntry &entry)
+    {
+        ChangeLog &log = m_Logs[logIndex];
+        if (log.ConsumerCount > 0)
+        {
+            log.Entries.push_back(entry);
+        }
+    }
+
+    void EcsWorld::TouchRow(const Archetype &archetype, EcsChunk *chunk, uint32_t row, uint64_t version)
+    {
+        std::byte *base = reinterpret_cast<std::byte *>(chunk);
+        uint64_t *chunkVersions = reinterpret_cast<uint64_t *>(base + archetype.ChunkVersionOffset);
+        const EcsEntity entity = chunk->GetEntities()[row];
+        for (size_t i = 0; i < archetype.Columns.size(); ++i)
+        {
+            chunkVersions[i] = (std::max)(chunkVersions[i], version);
+            if (archetype.TrackedIndex[i] < 0)
+            {
+                continue;
+            }
+            uint64_t &rowVersion = reinterpret_cast<uint64_t *>(base + archetype.RowVersionOffsets[i])[row];
+            if (rowVersion == version)
+            {
+                continue;
+            }
+            rowVersion = version;
+            AppendLog(archetype.TrackedIndex[i], EcsChangeEntry{entity, version});
+        }
+    }
+
+    void EcsWorld::TrimLog(ChangeLog &log)
+    {
+        const size_t size = log.Entries.size();
+        uint64_t minCursor = log.BaseSeq + size;
+        for (const Consumer &consumer : m_Consumers)
+        {
+            if (consumer.bActive && &m_Logs[consumer.Log] == &log)
+            {
+                minCursor = (std::min)(minCursor, consumer.Cursor);
+            }
+        }
+        const size_t drop = static_cast<size_t>(minCursor - log.BaseSeq);
+        if (drop == size)
+        {
+            log.Entries.clear();
+            log.BaseSeq += drop;
+        }
+        else if (drop >= kLogTrimThreshold && drop * 2 >= size)
+        {
+            log.Entries.erase(log.Entries.begin(), log.Entries.begin() + drop);
+            log.BaseSeq += drop;
+        }
+    }
+
+    EcsConsumerId EcsWorld::RegisterChangeConsumer(TypeId trackedType)
+    {
+        const int32_t logIndex = FindLogIndex(trackedType);
+        if (logIndex < 0)
+        {
+            return kInvalidEcsConsumer;
+        }
+        ChangeLog &log = m_Logs[logIndex];
+        Consumer consumer;
+        consumer.Log = static_cast<uint32_t>(logIndex);
+        consumer.Cursor = log.BaseSeq + log.Entries.size();
+        consumer.ReadVersion = m_Version;
+        consumer.bActive = true;
+        ++log.ConsumerCount;
+        // 登録した時点の版を読んだことにする（以後の段の外の書き込みは新しい版になる）
+        m_bVersionSealed = true;
+        for (size_t i = 0; i < m_Consumers.size(); ++i)
+        {
+            if (!m_Consumers[i].bActive)
+            {
+                m_Consumers[i] = consumer;
+                return static_cast<EcsConsumerId>(i);
+            }
+        }
+        m_Consumers.push_back(consumer);
+        return static_cast<EcsConsumerId>(m_Consumers.size() - 1);
+    }
+
+    bool EcsWorld::UnregisterChangeConsumer(EcsConsumerId consumerId)
+    {
+        if (consumerId >= m_Consumers.size() || !m_Consumers[consumerId].bActive)
+        {
+            return false;
+        }
+        Consumer &consumer = m_Consumers[consumerId];
+        consumer.bActive = false;
+        ChangeLog &log = m_Logs[consumer.Log];
+        --log.ConsumerCount;
+        TrimLog(log);
+        return true;
+    }
+
+    uint32_t EcsWorld::ReadChanges(EcsConsumerId consumerId, Container::VariableArray<EcsChangeEntry> &out)
+    {
+        if (consumerId >= m_Consumers.size() || !m_Consumers[consumerId].bActive)
+        {
+            return 0;
+        }
+        Consumer &consumer = m_Consumers[consumerId];
+        ChangeLog &log = m_Logs[consumer.Log];
+        uint32_t added = 0;
+        for (size_t i = static_cast<size_t>(consumer.Cursor - log.BaseSeq); i < log.Entries.size(); ++i)
+        {
+            if (IsAlive(log.Entries[i].Entity))
+            {
+                out.push_back(log.Entries[i]);
+                ++added;
+            }
+        }
+        consumer.Cursor = log.BaseSeq + log.Entries.size();
+        consumer.ReadVersion = m_Version;
+        m_bVersionSealed = true;
+        TrimLog(log);
+        return added;
+    }
+
+    uint64_t EcsWorld::GetConsumerReadVersion(EcsConsumerId consumerId) const
+    {
+        return consumerId < m_Consumers.size() && m_Consumers[consumerId].bActive ? m_Consumers[consumerId].ReadVersion : 0;
+    }
+
+    size_t EcsWorld::GetChangeLogLength(TypeId trackedType) const
+    {
+        const int32_t logIndex = FindLogIndex(trackedType);
+        return logIndex >= 0 ? m_Logs[logIndex].Entries.size() : 0;
+    }
+
+    void EcsWorld::MarkWritten(EcsChunk *chunk, uint32_t columnIndex, uint32_t row, uint64_t version, EcsChangeBundle &bundle) const
+    {
+        MarkWrittenRange(chunk, columnIndex, row, 1, version, bundle);
+    }
+
+    void EcsWorld::MarkWrittenRange(EcsChunk *chunk, uint32_t columnIndex, uint32_t firstRow, uint32_t count, uint64_t version,
+                                    EcsChangeBundle &bundle) const
+    {
+        const Archetype &archetype = m_Archetypes[chunk->Archetype];
+        assert(columnIndex < archetype.Columns.size() && firstRow + count <= chunk->Count);
+        std::byte *base = reinterpret_cast<std::byte *>(chunk);
+        uint64_t &chunkVersion = reinterpret_cast<uint64_t *>(base + archetype.ChunkVersionOffset)[columnIndex];
+        chunkVersion = (std::max)(chunkVersion, version);
+        const int32_t tracked = archetype.TrackedIndex[columnIndex];
+        if (tracked < 0)
+        {
+            return;
+        }
+        uint64_t *rowVersions = reinterpret_cast<uint64_t *>(base + archetype.RowVersionOffsets[columnIndex]);
+        const EcsEntity *entities = chunk->GetEntities();
+        for (uint32_t row = firstRow; row < firstRow + count; ++row)
+        {
+            if (rowVersions[row] == version)
+            {
+                continue;
+            }
+            rowVersions[row] = version;
+            bundle.m_Records.push_back(EcsChangeBundle::Record{static_cast<uint32_t>(tracked), EcsChangeEntry{entities[row], version}});
+        }
+    }
+
+    void EcsWorld::CommitChanges(Container::Span<EcsChangeBundle *const> bundlesInJobOrder)
+    {
+        for (size_t b = 0; b < bundlesInJobOrder.size(); ++b)
+        {
+            EcsChangeBundle *bundle = bundlesInJobOrder[b];
+            if (bundle == nullptr)
+            {
+                continue;
+            }
+            for (const EcsChangeBundle::Record &record : bundle->m_Records)
+            {
+                AppendLog(static_cast<int32_t>(record.Log), record.Entry);
+            }
+            bundle->Clear();
+        }
+    }
+
+    bool EcsWorld::WriteColumnValue(EcsEntity entity, TypeId type, const void *value)
+    {
+        const Slot *slot = FindSlot(entity);
+        if (slot == nullptr || value == nullptr)
+        {
+            return false;
+        }
+        EcsChunk *chunk = slot->Chunk;
+        const uint32_t row = slot->Row;
+        const int32_t column = FindColumnIndex(chunk->Archetype, type);
+        if (column < 0)
+        {
+            return false;
+        }
+        const Archetype &archetype = m_Archetypes[chunk->Archetype];
+        const size_t size = archetype.Columns[column].Size;
+        std::memcpy(reinterpret_cast<std::byte *>(chunk) + archetype.Offsets[column] + size * row, value, size);
+
+        EcsChangeBundle bundle;
+        MarkWritten(chunk, static_cast<uint32_t>(column), row, AcquireWriteVersion(), bundle);
+        EcsChangeBundle *bundles[] = {&bundle};
+        CommitChanges(Container::Span<EcsChangeBundle *const>(bundles, 1));
+        return true;
+    }
+
+    uint64_t EcsWorld::GetRowVersion(EcsEntity entity, TypeId type) const
+    {
+        const Slot *slot = FindSlot(entity);
+        if (slot == nullptr)
+        {
+            return 0;
+        }
+        const int32_t column = FindColumnIndex(slot->Chunk->Archetype, type);
+        if (column < 0)
+        {
+            return 0;
+        }
+        const uint64_t *rowVersions = GetChunkRowVersions(slot->Chunk, static_cast<uint32_t>(column));
+        return rowVersions != nullptr ? rowVersions[slot->Row] : 0;
+    }
+
+    uint64_t EcsWorld::GetChunkColumnVersion(const EcsChunk *chunk, uint32_t columnIndex) const
+    {
+        const Archetype &archetype = m_Archetypes[chunk->Archetype];
+        assert(columnIndex < archetype.Columns.size());
+        return reinterpret_cast<const uint64_t *>(reinterpret_cast<const std::byte *>(chunk) + archetype.ChunkVersionOffset)[columnIndex];
+    }
+
+    const uint64_t *EcsWorld::GetChunkRowVersions(const EcsChunk *chunk, uint32_t columnIndex) const
+    {
+        const Archetype &archetype = m_Archetypes[chunk->Archetype];
+        assert(columnIndex < archetype.Columns.size());
+        if (archetype.TrackedIndex[columnIndex] < 0)
+        {
+            return nullptr;
+        }
+        return reinterpret_cast<const uint64_t *>(reinterpret_cast<const std::byte *>(chunk) + archetype.RowVersionOffsets[columnIndex]);
+    }
+
+    void EcsWorld::MatchArchetypes(const EcsQuery &query, Container::VariableArray<EcsArchetypeId> &out) const
+    {
+        for (size_t id = 0; id < m_Archetypes.size(); ++id)
+        {
+            const Archetype &archetype = m_Archetypes[id];
+            const uint64_t tags = archetype.Tags;
+            if ((!query.bIncludeOrphans && (tags & kEcsTagOrphan) != 0) || (tags & query.AllTags) != query.AllTags ||
+                (query.AnyTags != 0 && (tags & query.AnyTags) == 0) || (tags & query.NoneTags) != 0)
+            {
+                continue;
+            }
+            const EcsArchetypeId archetypeId = static_cast<EcsArchetypeId>(id);
+            bool bMatch = true;
+            for (size_t i = 0; i < query.All.size() && bMatch; ++i)
+            {
+                bMatch = FindColumnIndex(archetypeId, query.All[i]) >= 0;
+            }
+            for (size_t i = 0; i < query.None.size() && bMatch; ++i)
+            {
+                bMatch = FindColumnIndex(archetypeId, query.None[i]) < 0;
+            }
+            if (bMatch && !query.Any.empty())
+            {
+                bool bHasAny = false;
+                for (size_t i = 0; i < query.Any.size() && !bHasAny; ++i)
+                {
+                    bHasAny = FindColumnIndex(archetypeId, query.Any[i]) >= 0;
+                }
+                bMatch = bHasAny;
+            }
+            if (bMatch && !query.Changed.empty())
+            {
+                bool bHasChanged = false;
+                for (size_t i = 0; i < query.Changed.size() && !bHasChanged; ++i)
+                {
+                    bHasChanged = FindColumnIndex(archetypeId, query.Changed[i]) >= 0;
+                }
+                bMatch = bHasChanged;
+            }
+            if (bMatch)
+            {
+                out.push_back(archetypeId);
+            }
+        }
+    }
+
+    uint32_t EcsWorld::CollectChunks(const EcsQuery &query, Container::VariableArray<EcsChunk *> &out) const
+    {
+        Container::VariableArray<EcsArchetypeId> matched;
+        MatchArchetypes(query, matched);
+        uint32_t added = 0;
+        Container::VariableArray<int32_t> changedColumns;
+        for (const EcsArchetypeId archetypeId : matched)
+        {
+            const Archetype &archetype = m_Archetypes[archetypeId];
+            changedColumns.clear();
+            for (const TypeId type : query.Changed)
+            {
+                const int32_t column = FindColumnIndex(archetypeId, type);
+                if (column >= 0)
+                {
+                    changedColumns.push_back(column);
+                }
+            }
+            for (EcsChunk *chunk : archetype.Chunks)
+            {
+                if (!query.Changed.empty())
+                {
+                    bool bChanged = false;
+                    for (size_t i = 0; i < changedColumns.size() && !bChanged; ++i)
+                    {
+                        bChanged = GetChunkColumnVersion(chunk, static_cast<uint32_t>(changedColumns[i])) > query.ChangedSince;
+                    }
+                    if (!bChanged)
+                    {
+                        continue;
+                    }
+                }
+                out.push_back(chunk);
+                ++added;
+            }
+        }
+        return added;
+    }
+
+    bool EcsWorld::MarkOrphan(EcsEntity entity)
+    {
+        const Slot *slot = FindSlot(entity);
+        if (slot == nullptr)
+        {
+            return false;
+        }
+        const EcsArchetypeId sourceId = slot->Chunk->Archetype;
+        if ((m_Archetypes[sourceId].Tags & kEcsTagOrphan) != 0)
+        {
+            return false;
+        }
+        Container::VariableArray<EcsColumnInfo> columns = m_Archetypes[sourceId].Columns;
+        const uint64_t tags = m_Archetypes[sourceId].Tags | kEcsTagOrphan;
+        const EcsArchetypeId targetId = GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(columns.data(), columns.size()), tags);
+        if (targetId == kInvalidEcsArchetype)
+        {
+            return false;
+        }
+        MoveRow(entity, targetId, nullptr, nullptr);
+        return true;
+    }
+
+    bool EcsWorld::IsOrphan(EcsEntity entity) const
+    {
+        const Slot *slot = FindSlot(entity);
+        return slot != nullptr && (m_Archetypes[slot->Chunk->Archetype].Tags & kEcsTagOrphan) != 0;
     }
 
     uint32_t EcsWorld::GetArchetypeCount() const

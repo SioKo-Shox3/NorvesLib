@@ -1012,3 +1012,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 反復 6（評価者の差し戻しへの対応）: 並列の中の未登録の型は、`NORVES_BUILD_DEVELOPMENT` なら `NDEBUG` に依らず stderr へ `ECS_UNREGISTERED_COLUMN ...` を出して `std::abort()` する（`assert` をやめた。RelWithDebInfo でも止まる）。`EcsSetUnregisteredColumnHandler` のハンドラを差した場合は従来どおり数えて戻る。`EcsMoveTest` に、ハンドラなしの既定の動作を別プロセスで確かめるケースを足した（自分自身を `--test=EcsMoveTest --unregistered-column-child` で起動し、終了コードが 0 でないことと出力に `ECS_UNREGISTERED_COLUMN` があることを照合。開発ビルドのみ）。
 - 結果: `verify-SCN-ECS-CORE-MOVE-6.txt`（EntityTreeTest のビルド EXIT=0、警告・エラー 0 件）、`-6-ctest.txt`（`EcsStorageTest`・`EcsMoveTest` Passed、`100% tests passed`）、`-6-child.txt`（子を直接起動: 終了コード 3、`ECS_UNREGISTERED_COLUMN` を出力）。
 - Notes: 上の反復 5 までの Notes の「RelWithDebInfo では assert が無効で回数だけが残る」は、この反復で解消した。
+
+### SCN-ECS-CORE-CHANGES（2026-10-11、反復 7・run 20261010-223034）
+
+- 変更（`EcsWorld.h/.cpp` のみ。まだどこからも使わない）:
+  - 版: World の版は uint64（1 から。0 は「一度も書かれていない」）。`AdvanceVersion()` で進む（システム 1 回ぶん・再生ごと）。「チャンク × 列」ごとの最後に書いた版は全列がチャンク内の末尾（`uint64 × 列数`）に持つ。
+  - 追跡する列: `SetColumnTracked(型)`（最初のその型を持つアーキタイプより前に呼ぶ。後なら false）。追跡する列は行ごとの版の配列（チャンク内、列の後ろ）と変更ログを持ち、チャンクの行数はその分だけ減る。
+  - 書き口: `MarkWritten` / `MarkWrittenRange` が、チャンク × 列の版を進め、追跡する列なら行の版を比べて、まだその版でない行だけを `EcsChangeBundle` へ積む（並列の仕事ごとの束。1 チャンク 1 仕事の前提）。`CommitChanges` が束を渡した順に連結してログへ移し、束を空にする。段の外の書き込みの口は `WriteColumnValue`。
+  - 段の外の書き込みと構造変更（作成・列の追加と削除・入れ替え・孤児）の版: 消費者が読んだ（または登録した）後の最初の書き込みで版を +1 してから書く（`m_bVersionSealed`）。読む前の書き込みは同じ版にまとまる。だから読み落としが無い。作成・移動した行と、削除や移動元の詰めで入れ替わった行は、全追跡列で「変わった」になる（ログにも積む）。行は自分の版を持って入れ替わり、作った行・移動先の行は版を 0 に戻してから付けるので、行に残った前の持ち主の同じ版がログを隠さない。
+  - 消費者: `RegisterChangeConsumer(型)` は既読をログの末尾・いまの版から始める。`ReadChanges` は前回より後の項目（死んだ実体を除く。同じ行でも版が違えば別の項目）を返して既読を進め、`GetConsumerReadVersion` を `EcsQuery::ChangedSince` に渡せる。全員が読み終えた分は捨てる。消費者がいない列にはログを積まない。
+  - クエリ: `EcsQuery`（All/Any/None の列、AllTags/AnyTags/NoneTags、Changed + ChangedSince、`bIncludeOrphans`）。`MatchArchetypes`（アーキタイプ）と `CollectChunks`（チャンク。Changed があればチャンクの列の版が ChangedSince より後のものだけ）。孤児は予約タグ `kEcsTagOrphan`: `MarkOrphan` が行を同じ列の組でタグを足したアーキタイプへ移し、既定のクエリには出ない（`bIncludeOrphans` で出る）。
+- テスト: `EcsChangeTest`（EntityTreeTest の束、ctest 登録済み）が、追跡の宣言の順序とチャンクの配置、書いた行だけが版ごとに 1 回ずつログに出る（同じ版の二重書き・追跡しない列はログに出ない）、束の連結が仕事の順、段の外の書き込みが読んだ後なら新しい版になる（チャンクの版の絞り込みも）、作成・移動・入れ替え・孤児で動いた行が「変わった」になる、前の持ち主の版が残ってもログに出る、2 つの消費者の既読が独立（後から登録した消費者は過去を見ない・解除・全員解除後は積まない）、クエリの All/Any/None/タグ/Changed と孤児の除外、チャンクの版の絞り込み、10 万行を 1 チャンク 1 束で書いて 1 回ずつ、を確かめる。
+- 確認: 行に残った版を 0 に戻す処理を一時的に外すとテスト（`TestMovedRowsDoNotInheritStaleVersions`）が落ちること、戻すと通ることを見た。
+- 結果: `verify-SCN-ECS-CORE-CHANGES-1.txt`（EntityTreeTest のビルド EXIT=0）、`-2-ctest.txt`（3 本 Passed）、`-3-direct.txt`（`EcsChangeTest 合格`。端末の文字コードで化けて記録されている）、`-4-rebuild.txt`・`-5-ctest.txt`（変異を戻した後の再ビルドと ctest、`100% tests passed`）。
+- Notes: 追跡する列の宣言は最初のアーキタイプより前に必要（配置が変わるため）。`GetColumnValue` の可変ポインタで書いた値は版を付けない（版を付けるのは `MarkWritten` と `WriteColumnValue`）。`MatchArchetypes` は毎回全アーキタイプを走査する（アーキタイプが数百を超えて目立てば、クエリごとの結果のキャッシュを足す）。`AdvanceVersion` を呼ぶ側（スケジューラ・再生）はまだ無い。

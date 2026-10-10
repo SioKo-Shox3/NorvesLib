@@ -13,7 +13,18 @@
  *   移動元は削除と同じ入れ替えで詰める。
  * - 作った行の値は全部 0。
  *
- * GameThread だけが触る（スレッドセーフではない）。版、クエリ、コマンドバッファは別の層で足す。
+ * 版と変更ログ（設計 1.2）:
+ * - World の版は uint64。AdvanceVersion()（システム 1 回ぶん・再生ごと）で進む。
+ * - 「チャンク × 列」ごとに最後に書いた版を持つ（全列）。SetColumnTracked() した列（追跡する列）は、行ごとの版と
+ *   変更ログも持つ。ログは「その版で書いた行」の並びで、同じ版の同じ行は 1 回しか積まない。
+ * - 並列の仕事は MarkWritten で EcsChangeBundle へ積み、CommitChanges が仕事の順に連結してログへ移す。
+ * - 段の外の書き込み（WriteColumnValue）と構造変更（作成・移動・入れ替え・孤児）は、消費者が読んだ後の最初の書き込みで
+ *   版を +1 してから書くので、読み落としが起きない。作成・移動・入れ替えで動いた行は、全追跡列で「変わった」になる。
+ * - 消費者（RegisterChangeConsumer）は、既読のログ位置と既読の版を持つ。消費者がいない列にはログを積まない。
+ * クエリ（EcsQuery）は All/Any/None（列・タグ）とチャンクの版による絞り込みを持ち、孤児の行は既定で出ない。
+ *
+ * GameThread だけが触る（スレッドセーフではない）。並列の仕事が呼んでよいのは、MarkWritten 系と走査用の参照だけ
+ * （その間は構造変更・SetColumnTracked・CommitChanges をしない）。コマンドバッファは別の層で足す。
  */
 
 #include "Container/Containers.h"
@@ -28,6 +39,66 @@ namespace NorvesLib::Core::Ecs
 {
     inline constexpr uint32_t kEcsChunkSize = 16 * 1024;
     inline constexpr uint32_t kEcsChunkHeaderSize = 64;
+
+    /// 孤児の印（予約済みのタグのビット）。付いた行は、既定のクエリのどれにも出ない。
+    inline constexpr uint64_t kEcsTagOrphan = 1ull << 63;
+
+    /// 変更ログの 1 項目。その版で書かれた（または構造変更で動いた）行の実体。
+    struct EcsChangeEntry
+    {
+        EcsEntity Entity;
+        uint64_t Version = 0;
+    };
+
+    /// 並列の仕事（チャンク 1 つの処理）ごとの変更の束。MarkWritten が積み、EcsWorld::CommitChanges が空にする。
+    class EcsChangeBundle
+    {
+    public:
+        void Clear()
+        {
+            m_Records.clear();
+        }
+
+        [[nodiscard]] size_t Size() const
+        {
+            return m_Records.size();
+        }
+
+    private:
+        friend class EcsWorld;
+
+        struct Record
+        {
+            uint32_t Log = 0;
+            EcsChangeEntry Entry;
+        };
+
+        Container::VariableArray<Record> m_Records;
+    };
+
+    /// 変更の消費者の番号
+    using EcsConsumerId = uint32_t;
+    inline constexpr EcsConsumerId kInvalidEcsConsumer = 0xFFFFFFFFu;
+
+    /// 走査の条件。列は型の番号、タグはビット。
+    struct EcsQuery
+    {
+        /// すべて持つ列
+        Container::VariableArray<TypeId> All;
+        /// 空でなければ、どれか 1 つ以上持つ列
+        Container::VariableArray<TypeId> Any;
+        /// どれも持たない列
+        Container::VariableArray<TypeId> None;
+        uint64_t AllTags = 0;
+        /// 0 でなければ、どれか 1 つ以上持つタグ
+        uint64_t AnyTags = 0;
+        uint64_t NoneTags = 0;
+        /// 孤児（kEcsTagOrphan）の行も含める。既定は除く。
+        bool bIncludeOrphans = false;
+        /// 空でなければ、これらのどれかの列が ChangedSince より後の版で書かれたチャンクだけを通す（CollectChunks）
+        Container::VariableArray<TypeId> Changed;
+        uint64_t ChangedSince = 0;
+    };
 
     /// 16 KB のブロックの先頭に置く見出し。実体の配列と列は、このあとにアーキタイプの配置どおりに続く。
     struct EcsChunk
@@ -108,6 +179,92 @@ namespace NorvesLib::Core::Ecs
         /// 実体の行が属するアーキタイプ。生きていなければ kInvalidEcsArchetype。
         [[nodiscard]] EcsArchetypeId GetArchetypeOf(EcsEntity entity) const;
 
+        // ---- 版と変更ログ ----
+
+        /**
+         * @brief 列 type を追跡する列にする（行ごとの版と変更ログを持つ）
+         * @return 成功（すでに追跡していれば true）。type の列を持つアーキタイプがすでにあるときは false
+         *         （チャンクの配置が変わるので、最初のアーキタイプを作る前に呼ぶ）
+         */
+        bool SetColumnTracked(TypeId type);
+
+        template <typename T>
+        bool SetColumnTrackedOf()
+        {
+            return SetColumnTracked(EcsColumnInfoOf<T>().Type);
+        }
+
+        [[nodiscard]] bool IsColumnTracked(TypeId type) const;
+
+        /// いまの版（1 から始まる。0 は「一度も書かれていない」）
+        [[nodiscard]] uint64_t GetVersion() const
+        {
+            return m_Version;
+        }
+
+        /// 版を 1 進めて返す（システム 1 回ぶん、コマンドの再生ごと）。以後の書き込みはこの版になる。
+        uint64_t AdvanceVersion();
+
+        /// 追跡する列 type の変更の消費者を登録する。既読はいまのログの末尾・いまの版から始まる。登録できなければ kInvalidEcsConsumer。
+        EcsConsumerId RegisterChangeConsumer(TypeId trackedType);
+        bool UnregisterChangeConsumer(EcsConsumerId consumer);
+
+        /**
+         * @brief 前回の読みより後の変更を out の末尾へ足し、既読を進める
+         * @return 足した数（すでに死んだ実体の項目は除く）。同じ行でも版が違えば別の項目になる。
+         *         読んだ時点で、いまの版を既読の版にする（以後の段の外の書き込みは新しい版になる）。
+         */
+        uint32_t ReadChanges(EcsConsumerId consumer, Container::VariableArray<EcsChangeEntry> &out);
+
+        /// 消費者が最後に読んだ時点の版。EcsQuery::ChangedSince に渡す。無効な消費者は 0。
+        [[nodiscard]] uint64_t GetConsumerReadVersion(EcsConsumerId consumer) const;
+
+        /// 追跡する列 type のログに残っている項目の数（全員が読み終えた分は捨てられる）
+        [[nodiscard]] size_t GetChangeLogLength(TypeId trackedType) const;
+
+        /**
+         * @brief 並列の仕事から、チャンクの行 [firstRow, firstRow + count) の列 columnIndex を書いたと記録する
+         *
+         * チャンク × 列の版を version にし、追跡する列なら行の版を比べて、まだその版でない行だけを bundle へ積む。
+         * 1 つのチャンクを処理する仕事は 1 つだけ、同じ列を書く 2 つのシステムは同じ波に入らない、が前提。
+         */
+        void MarkWritten(EcsChunk *chunk, uint32_t columnIndex, uint32_t row, uint64_t version, EcsChangeBundle &bundle) const;
+        void MarkWrittenRange(EcsChunk *chunk, uint32_t columnIndex, uint32_t firstRow, uint32_t count, uint64_t version,
+                              EcsChangeBundle &bundle) const;
+
+        /// 束を先頭から順に連結してログへ移し、束を空にする（GameThread、並列の外）
+        void CommitChanges(Container::Span<EcsChangeBundle *const> bundlesInJobOrder);
+
+        /// 段の外の書き込み: 値を列の大きさだけコピーし、変更として記録する。生きていない・その列を持たないときは false。
+        bool WriteColumnValue(EcsEntity entity, TypeId type, const void *value);
+
+        template <typename T>
+        bool WriteColumnValueOf(EcsEntity entity, const T &value)
+        {
+            return WriteColumnValue(entity, EcsColumnInfoOf<T>().Type, &value);
+        }
+
+        /// 実体の追跡する列 type の行の版。追跡していない・生きていない・その列を持たないときは 0。
+        [[nodiscard]] uint64_t GetRowVersion(EcsEntity entity, TypeId type) const;
+
+        /// チャンクの列 columnIndex を最後に書いた版（追跡しない列も持つ）
+        [[nodiscard]] uint64_t GetChunkColumnVersion(const EcsChunk *chunk, uint32_t columnIndex) const;
+
+        /// チャンクの追跡する列 columnIndex の、行ごとの版の配列（Count 個が有効）。追跡しない列は nullptr。
+        [[nodiscard]] const uint64_t *GetChunkRowVersions(const EcsChunk *chunk, uint32_t columnIndex) const;
+
+        // ---- クエリ ----
+
+        /// 条件に合うアーキタイプを out の末尾へ足す（ChangedSince はチャンク単位なので見ない）。Changed の列を 1 つも持たないものは除く。
+        void MatchArchetypes(const EcsQuery &query, Container::VariableArray<EcsArchetypeId> &out) const;
+
+        /// 条件に合うチャンクを out の末尾へ足し、足した数を返す。Changed が空でなければ、その列のどれかが ChangedSince より後に書かれたチャンクだけ。
+        uint32_t CollectChunks(const EcsQuery &query, Container::VariableArray<EcsChunk *> &out) const;
+
+        /// 行に孤児の印を付ける（列の値は保ち、タグに kEcsTagOrphan を足したアーキタイプへ移る）。生きていない・すでに孤児なら false。
+        bool MarkOrphan(EcsEntity entity);
+        [[nodiscard]] bool IsOrphan(EcsEntity entity) const;
+
         /// 実体の列 type の値へのポインタ。生きていない・その列を持たないときは nullptr。
         /// 行の入れ替えや削除で動くので、構造変更をまたいで持たない。
         [[nodiscard]] void *GetColumnValue(EcsEntity entity, TypeId type);
@@ -165,6 +322,12 @@ namespace NorvesLib::Core::Ecs
         {
             Container::VariableArray<EcsColumnInfo> Columns;
             Container::VariableArray<uint32_t> Offsets;
+            /// 列ごとの追跡番号（m_Logs の添字）。追跡しない列は -1。
+            Container::VariableArray<int32_t> TrackedIndex;
+            /// 追跡する列の、行ごとの版の配列のチャンク内の位置。追跡しない列は 0。
+            Container::VariableArray<uint32_t> RowVersionOffsets;
+            /// 列ごとのチャンクの版（uint64 × 列数）のチャンク内の位置
+            uint32_t ChunkVersionOffset = 0;
             uint64_t Tags = 0;
             uint32_t Capacity = 0;
             uint32_t RowCount = 0;
@@ -179,6 +342,23 @@ namespace NorvesLib::Core::Ecs
             uint32_t Generation = 1;
         };
 
+        /// 追跡する列 1 本の変更ログ。Entries[0] のログ位置（通し番号）は BaseSeq。
+        struct ChangeLog
+        {
+            TypeId Type = 0;
+            Container::VariableArray<EcsChangeEntry> Entries;
+            uint64_t BaseSeq = 0;
+            uint32_t ConsumerCount = 0;
+        };
+
+        struct Consumer
+        {
+            uint32_t Log = 0;
+            uint64_t Cursor = 0;
+            uint64_t ReadVersion = 0;
+            bool bActive = false;
+        };
+
         static constexpr uint32_t kNoSlot = 0xFFFFFFFFu;
 
         [[nodiscard]] const Slot *FindSlot(EcsEntity entity) const;
@@ -190,12 +370,25 @@ namespace NorvesLib::Core::Ecs
         void RemoveRow(Archetype &archetype, EcsChunk *chunk, uint32_t row);
         /// 実体の行を target の末尾へ移す。共通の列の値をコピーし、added があればその列に addedValue（null なら 0）を入れる。
         void MoveRow(EcsEntity entity, EcsArchetypeId target, const EcsColumnInfo *added, const void *addedValue);
+        /// 構造変更・段の外の書き込みに使う版。消費者が読んだ後の最初の書き込みなら +1 する。
+        uint64_t AcquireWriteVersion();
+        /// 行の全列を version で「変わった」にする（追跡する列はログにも積む）
+        void TouchRow(const Archetype &archetype, EcsChunk *chunk, uint32_t row, uint64_t version);
+        void AppendLog(int32_t logIndex, const EcsChangeEntry &entry);
+        void TrimLog(ChangeLog &log);
+        /// 追跡する列 type のログの番号。追跡しなければ -1。
+        [[nodiscard]] int32_t FindLogIndex(TypeId type) const;
 
         Container::VariableArray<Archetype> m_Archetypes;
         Container::VariableArray<Slot> m_Slots;
         uint32_t m_FreeSlotHead = kNoSlot;
         uint32_t m_EntityCount = 0;
         uint32_t m_ChunkCount = 0;
+        uint64_t m_Version = 1;
+        /// いまの版を消費者が読んだ（以後の段の外の書き込みは版を進めてから書く）
+        bool m_bVersionSealed = false;
+        Container::VariableArray<ChangeLog> m_Logs;
+        Container::VariableArray<Consumer> m_Consumers;
         Memory::PoolAllocator<false> m_ChunkPool;
     };
 
