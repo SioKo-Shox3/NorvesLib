@@ -9,6 +9,7 @@
 # （Slang SDK 未設定の neural_material_decode.slang だけは既知として除外）、Debug の検証レイヤーのエラー（スレッド競合を含め、除外しない）。
 # -Configuration Release はログが無効で Game.log を書かないため使えない（Debug か RelWithDebInfo を使う）。
 # -Cycles は 2 以上（1周目と比べるため）。-OutDir を省くと .harness/runs/scene-cycle-smoke へ Game.log を残す。
+# -GameArgs は Game へ足す引数（先頭の -- は省く。例: -GameArgs banana-count=1024）。重いシーンの周回を検証の上限内に収めるのに使う。
 # 成功すると SCENE_CYCLE_SMOKE_RUN result=pass を出す。
 param(
     # シーンの id（カンマ区切りで1つの文字列でも、配列でもよい）
@@ -20,7 +21,8 @@ param(
     [string]$Configuration = 'Debug',
     [string]$OutDir = '',
     [ValidateRange(10, 7200)]
-    [int]$TimeoutSeconds = 900
+    [int]$TimeoutSeconds = 900,
+    [string[]]$GameArgs = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -85,6 +87,17 @@ foreach ($stale in @($gameLogPath, $runLogPath, $validationLogPath))
 
 $sceneList = $sceneIds -join ','
 $arguments = @("--scene-cycle-smoke=$sceneList", "--scene-cycle-count=$Cycles")
+foreach ($gameArgument in $GameArgs)
+{
+    foreach ($part in ($gameArgument -split ',(?=[A-Za-z][A-Za-z0-9-]*(?:=|,|$))'))
+    {
+        $trimmed = $part.Trim().TrimStart('-')
+        if ($trimmed -ne '')
+        {
+            $arguments += "--$trimmed"
+        }
+    }
+}
 
 # Vulkan の検証レイヤーのメッセージ（VUID）は Game.log に入らないので、検証レイヤー自身のログ出力をファイルへ向けて
 # エラーを数える（Debug だけ。他は検証レイヤーが無効）。起動した Game だけが受け継ぐよう、起動の直後に戻す。

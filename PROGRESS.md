@@ -785,3 +785,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261010-132327/`）: `verify-SCN-PAUSE-MENU-1-test.txt`（`PauseMenuTest passed`・EXIT=0）、`-1.txt`（Debug の Game ビルド EXIT=0）、`-2.txt`（`CaptureScene.ps1 -GameArgs open-pause-menu` が `result=pass`）、`-3.txt`（`RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3` が `result=pass`、3 周とも entities=2 で一致）、`-4.txt`（`CaptureStartupScene.ps1` 3 視点 pass。平均輝度 124.067・123.762・125.946）。
 - 画: `scene-capture/SCN-PAUSE-MENU/default.png` に暗幕と中央のパネル（続ける・ランチャーへ戻る・ゲームを終了）、`startup-capture/SCN-PAUSE-MENU/default.png` はメニューの出ない通常の見た目（天球・地面・球・岩・小屋・電球が欠けない）。
 - Notes: 実機パッドでの確認はしていない（検証は `InjectGamepadState` による注入）。
+
+### SCN-BANANAS-SCENE 差し戻し対応（2026-10-10、反復 5・run 20261010-132327）
+
+- 反復 21 の差し戻し（山の上段が下段に支えられず浮く）と、親が overview で見た「デバッグっぽさ」を直した（実装は前の作業途中の保存コミットに入っている。この反復で撮り直しと検証を通した）。
+- 山: 物理を使わない落とし込み。山の範囲に高さの格子を持ち、置いたバナナの変換後の頂点の最大の高さを書き込み、次のバナナは向きを決めたあと自分の下面の点が格子に初めて触れる高さに置く（少しめり込む）。山は中心から正規分布で落とす塚の形にし、3 つの山は各 260 本。
+- 敷き詰め: 位置をポアソン円盤（最小間隔 0.25 m）で崩し、升目に見えない。床は 1600 m 四方に広げ、地平線の手前に木の床の端が出ない。
+- 隙間の記録（`Scripts/VerifyBananaPile.py`、`verify-SCN-BANANAS-SCENE-9-pile-gap.txt`）: 生成 GLB の全頂点を描画の規約で変換し、水平 5 mm の格子で、各バナナの最下点と自分より前に置いた形（と床）の最大の高さの差を測った。3 つの山の 780 本で、浮いているもの 0（許容 5 mm 超なし）、支えあり 777、食い込み 3（最大 -28.4 mm。許容 -7 mm を超える。見た目では下段への軽い食い込み）。他のバナナに載っているもの 692、床だけに載るもの 88。山の頂点は床から 0.467〜0.474 m。
+- 証拠（`.harness/runs/20261010-132327/`）: `verify-SCN-BANANAS-SCENE-9-build.txt`（Debug の Game ビルド EXIT=0）、`-9-overview.txt`・`-9-close.txt`・`-9-low.txt`（`CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Views <視点>` が各 pass。平均輝度 123.489・120.544・106.031、検証レイヤーのエラー 0）、`-9-pile-gap.txt`（上記）、`-10-cycle.txt`（`RunSceneCycleSmoke.ps1 -Scenes mega-bananas -Cycles 3 -GameArgs banana-count=1024` が `result=pass`。3 周とも textures=6・entities=2・texture_bytes=134217804 で一致）。
+- 画: 3 視点の PNG（`scene-capture/SCN-BANANAS-SCENE/{overview,close,low}/*.png`）を開いた。overview は敷き詰めが升目に見えず、3 つの塚が下段から積み上がり、床は地平線まで続く。close は山の各段が下の段に載り、1 本ごとに影が落ちる。low は床すれすれで 2 つの塚と床の影が出て、欠けは無い。
+- 検証コマンドの調整（paths の内側）: Debug の撮影は 1 視点が約 3〜4 分で、1 コマンドに 3 視点を入れるとランナーの検証の上限 10 分を超えるため、`TASKS.md` の verify を視点ごとの 3 コマンドに分け、隙間の検算（`VerifyBananaPile.py`）を足した。周回スモークは既定の 1 万本だと 1 周が約 5 分（Debug・検証レイヤー付き）で 3 周が 15 分を超えるので、`RunSceneCycleSmoke.ps1` に `-GameArgs` を足し `banana-count=1024` で回す（資源の増減の検査なので本数には依存しない）。既定 1 万本の 1 周目は `settled=1 frames=196` で正常に終わるのを確かめた。
+- Notes: 食い込み 3 本は許容を超えるが、浮きは 0 で山の見た目に影響しない（格子の刻みが 1〜2 cm のため、細い茎の先などで最大 28 mm）。

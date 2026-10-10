@@ -90,11 +90,14 @@
 - notes: 計画書の「資産」の節。保存済みのワークフロー `Y:\ComfyUI\ComfyUI_windows_portable\ComfyUI\user\default\doggame\pixal3d_trellis2_api.json`（ノード 316 の真偽で TRELLIS.2/Pixal3D を切り替え、`LoadImage` 122 が入力、`RemoveBackground` 192、`DecimateMesh` 186 の面数、`PrimitiveInt` 288 がテクスチャの大きさ、`Save3DAdvanced` 322 が出力）を元にする。文字→画像は ComfyUI 0.38 の Z-Image のノードで組む（`Y:\ComfyUI\models` に `z_image_turbo_bf16`・`qwen_3_4b`・`ae`）。Python は `C:\Python314\python.exe`（標準ライブラリだけで書く）。生成は GPU を占有するので、ComfyUI を止めてから Game を撮る。Blender は `Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe`。クックの入口は `Scripts/CookAssets.ps1`（`-SpecDir`・`-RuntimeRoot`、出力は `build/CookedAssets`）。
 
 ## SCN-BANANAS-SCENE: 仮想化ジオメトリのバナナのシーンを作る
-- status: todo
+- status: done
 - done-when: `mega-bananas` シーン: 昼の物理空と太陽の影の下、生成したバナナを MegaGeometry で `--banana-count=<n>`（この項目の既定は今の上限内の 4096。SCN-MEGA-10K で 1万へ上げる）本、広い床（Poly Haven の木の床か土）に向き・わずかな大きさをばらして敷き詰め、手前に数段の山を作る（物理で積まなくてよいが、重なりが不自然に見えない配置）。H キーの情報表示に本数・1本の三角形数・元の三角形の総数、開発ビルドでは MegaGeometry の GPU 時間と描いたクラスタ数も出す。名前付き視点 `overview`（全体を見渡す）・`close`（手前の山を数十 cm から）・`low`（床すれすれ）とカメラパスを持ち、ランチャーに載る。資産が無ければ警告し、ランチャーのカードに `python Scripts/GenerateSceneModels.py --ids banana` を出す。3視点の撮影を開いて、バナナが並ぶ・近くで高ポリの形に見える・影が落ちていることを確かめる。`mega-bananas` の cycle smoke 3周が pass。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -OutDir .harness/runs/scene-capture/SCN-BANANAS-SCENE`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas -Cycles 3`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Views overview -OutDir .harness/runs/scene-capture/SCN-BANANAS-SCENE/overview`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Views close -OutDir .harness/runs/scene-capture/SCN-BANANAS-SCENE/close`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Views low -OutDir .harness/runs/scene-capture/SCN-BANANAS-SCENE/low`
+- verify: `python Scripts/VerifyBananaPile.py .harness/runs/scene-capture/SCN-BANANAS-SCENE/low/low.Game.log`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas -Cycles 3 -GameArgs banana-count=1024`
 - paths: Game, Assets/AssetSets, Scripts, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
 - notes: 配置の手順は `Rendering3DTestRoutine.cpp` 889〜900・1208〜1242 行付近（CreateMegaMesh→RegisterModel→TrackModel→SpawnObject→CreateComponent<MegaGeometryComponent>→SetMegaMeshHandle→SetCastShadow）。同じバナナのインスタンスは1つの Model を共有する。 2026-10-10 再開（親が推奨を採った）: 評価者の指摘（山の上段が下段に支えられず浮く）を、物理を使わない「落とし込み」の配置で直す: 山の範囲に細かい高さの格子（1〜2 cm）を持ち、置いたバナナの変換後の頂点（間引いた点でよい）を格子へ最大の高さとして書き込み、次のバナナは向きを決めたあと、自分の下面の点が格子に初めて触れる高さに置く（少しめり込ませてよい）。3視点を撮り直し、上段の最下点と下の支えの隙間を数えて記録する。 あわせて、親が overview の撮影で見た「デバッグっぽさ」を直す: 敷き詰めが格子にそろって見える（位置のジッターかポアソン円盤で崩す）、山が四角い区画に見える（中央が盛り上がった塚の形にする）、木の床の端と外側の平らな地面の境目が地平線の手前に見える（床を視界の外まで広げるか、境目が見えない置き方にする）。
 
