@@ -776,3 +776,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - `Test/Game/Bridge/PauseMenuTest.cpp` に `TestStartLatchIsPerSlot` を足した（slot 0 の Start 押下 → slot 1 の未押下サンプル → ReleaseAll → slot 0 の押しっぱなしサンプルでも閉じない／別スロットの解放でも外れない／同じスロットの未押下サンプルの後は押し直しで閉じる）。`PauseMenuTest passed`・EXIT=0。
 - 証拠（`.harness/runs/20261010-132327/`）: `verify-SCN-PAUSE-MENU-1.txt`（Debug の Game ビルド EXIT=0）、`-2.txt`（`CaptureScene.ps1 -GameArgs open-pause-menu` が `result=pass`）、`-3.txt`（`RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3` が `result=pass`、3 周とも entities=2 で一致）、`-4.txt`（`CaptureStartupScene.ps1` 3 視点 pass）。
 - Notes: 回帰の検査は `PauseMenu` を直接呼ぶ形（InputSystem→Router の経路は通していない）。ルーターは `event.Slot` をそのまま渡す前提。
+
+### SCN-PAUSE-MENU 差し戻し対応・実配送経路の回帰検査（2026-10-10、反復 3・run 20261010-132327）
+
+- 反復 2 の差し戻し（回帰検査が `PauseMenu` を直接呼ぶだけで、`InputSystem → Router → PauseMenu` を通っていない）に対応。実装（スロット別ラッチ）は前の反復のまま。
+- `Test/Game/Bridge/PauseMenuTest.cpp` に `TestStartHeldThroughInputSystem` を足した。実物の `InputSystem` と `InputRouter` に `PauseMenu` を登録し、`InjectGamepadState` と実際の `ReleaseAll()` で次の順を確かめる: slot 0 の Start 押下で開く → 同じフレームの slot 1 の未押下サンプルでも閉じない → `ReleaseAll()` ＋ slot 0 の押しっぱなしサンプルを 3 フレーム繰り返しても開いたまま → slot 0 を離しただけでは閉じない → 押し直しで閉じる。`Test/Game/Bridge/CMakeLists.txt` で `PauseMenuTest` を `Core` にリンクした（新しい実行ファイルは増やしていない）。
+- 検査が効くことの確認: `SetStartLatched` の解除を全スロット共通（`m_StartLatchedMask = 0`）に一時的に戻すと、新旧の検査が 5 件失敗し EXIT=1。元に戻して再ビルドし `PauseMenuTest passed`・EXIT=0。
+- 証拠（`.harness/runs/20261010-132327/`）: `verify-SCN-PAUSE-MENU-1-test.txt`（`PauseMenuTest passed`・EXIT=0）、`-1.txt`（Debug の Game ビルド EXIT=0）、`-2.txt`（`CaptureScene.ps1 -GameArgs open-pause-menu` が `result=pass`）、`-3.txt`（`RunSceneCycleSmoke.ps1 -Scenes rendering3dtest -Cycles 3` が `result=pass`、3 周とも entities=2 で一致）、`-4.txt`（`CaptureStartupScene.ps1` 3 視点 pass。平均輝度 124.067・123.762・125.946）。
+- 画: `scene-capture/SCN-PAUSE-MENU/default.png` に暗幕と中央のパネル（続ける・ランチャーへ戻る・ゲームを終了）、`startup-capture/SCN-PAUSE-MENU/default.png` はメニューの出ない通常の見た目（天球・地面・球・岩・小屋・電球が欠けない）。
+- Notes: 実機パッドでの確認はしていない（検証は `InjectGamepadState` による注入）。

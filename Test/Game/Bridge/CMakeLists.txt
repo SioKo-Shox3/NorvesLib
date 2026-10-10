@@ -88,12 +88,14 @@ if(MSVC)
 endif()
 add_test(NAME LauncherMenuTest COMMAND LauncherMenuTest)
 
-# ポーズメニューの入力の契約の検査（開閉・開いている間の入力の遮断・移動後の決定）。LauncherMenuTest と同じく Core にはリンクしない。
+# ポーズメニューの入力の契約の検査（開閉・開いている間の入力の遮断・移動後の決定）。
+# Start の押しっぱなしは InputSystem→InputRouter→PauseMenu の実配送で確かめるので Core にリンクする。
 add_executable(PauseMenuTest
     PauseMenuTest.cpp
     ${CMAKE_SOURCE_DIR}/Game/Pause/PauseMenu.cpp
 )
 set_target_properties(PauseMenuTest PROPERTIES FOLDER "Test/Game/Bridge")
+target_link_libraries(PauseMenuTest PRIVATE Core)
 target_include_directories(PauseMenuTest PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/Game

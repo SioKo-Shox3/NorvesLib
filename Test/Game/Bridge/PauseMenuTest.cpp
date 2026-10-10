@@ -1,4 +1,6 @@
-﻿#include "Pause/PauseMenu.h"
+﻿#include "Input/InputRouter.h"
+#include "Input/InputSystem.h"
+#include "Pause/PauseMenu.h"
 
 #include <iostream>
 
@@ -11,6 +13,9 @@ namespace
     using NorvesLib::Core::Input::GamepadButton;
     using NorvesLib::Core::Input::GamepadButtonEvent;
     using NorvesLib::Core::Input::GamepadSampleEvent;
+    using NorvesLib::Core::Input::GamepadState;
+    using NorvesLib::Core::Input::InputRouter;
+    using NorvesLib::Core::Input::InputSystem;
     using NorvesLib::Core::Input::InputAction;
     using NorvesLib::Core::Input::KeyCode;
     using NorvesLib::Core::Input::KeyEvent;
@@ -212,6 +217,51 @@ namespace
         return bPassed;
     }
 
+    GamepadState PadState(uint16_t buttons)
+    {
+        GamepadState state;
+        state.Connected = true;
+        state.Buttons = buttons;
+        return state;
+    }
+
+    /// 実際の配送経路（InputSystem → InputRouter → PauseMenu）で、Start の押しっぱなしが開いたメニューを閉じないことを確かめる。
+    /// 開いた直後に InputSystem::ReleaseAll() が入力状態を 0 にし、次のサンプルが同じ押下を新しい押下に見せる。
+    bool TestStartHeldThroughInputSystem()
+    {
+        InputSystem system;
+        InputRouter router;
+        PauseMenu menu;
+        menu.SetEnabled(true);
+        system.SetRouter(&router);
+        router.RegisterController(&menu, InputRouter::PriorityGame + 100);
+
+        // 1 フレーム目: slot 0 の Start 押下で開く。同じフレームに slot 1 の未押下サンプルも届く。
+        bool bPassed = Check(system.InjectGamepadState(0, PadState(kStartMask)), "slot 0 の Start のサンプルを注入できる");
+        bPassed = Check(menu.IsOpen(), "slot 0 の Start の押下で開く") && bPassed;
+        bPassed = Check(system.InjectGamepadState(1, PadState(0)), "slot 1 の未押下サンプルを注入できる") && bPassed;
+        bPassed = Check(menu.IsOpen(), "別スロットの未押下サンプルで閉じない") && bPassed;
+
+        // 開いた直後の更新で行う ReleaseAll と、その次のフレームの押しっぱなしのサンプル。
+        for (int frame = 0; frame < 3; ++frame)
+        {
+            system.ReleaseAll();
+            bPassed = Check(system.InjectGamepadState(0, PadState(kStartMask)), "ReleaseAll 後に押しっぱなしのサンプルを注入できる") && bPassed;
+            bPassed = Check(system.InjectGamepadState(1, PadState(0)), "ReleaseAll 後に別スロットの未押下サンプルを注入できる") && bPassed;
+            bPassed = Check(menu.IsOpen(), "ReleaseAll を挟んで Start を押し続けても閉じない") && bPassed;
+        }
+
+        // 物理的に離したあとの押し直しで閉じる。
+        bPassed = Check(system.InjectGamepadState(0, PadState(0)), "slot 0 の Start を離せる") && bPassed;
+        bPassed = Check(menu.IsOpen(), "Start を離しただけでは閉じない") && bPassed;
+        bPassed = Check(system.InjectGamepadState(0, PadState(kStartMask)), "slot 0 の Start を押し直せる") && bPassed;
+        bPassed = Check(!menu.IsOpen(), "離した後の押し直しで閉じる") && bPassed;
+
+        router.UnregisterController(&menu);
+        system.SetRouter(nullptr);
+        return bPassed;
+    }
+
     bool TestMoveThenActivate()
     {
         PauseMenu menu;
@@ -262,6 +312,7 @@ int main()
     bPassed = TestGamepadStartAndB() && bPassed;
     bPassed = TestStartHeldAcrossInputReset() && bPassed;
     bPassed = TestStartLatchIsPerSlot() && bPassed;
+    bPassed = TestStartHeldThroughInputSystem() && bPassed;
     bPassed = TestMoveThenActivate() && bPassed;
     bPassed = TestReopenStartsOnContinue() && bPassed;
     if (!bPassed)
