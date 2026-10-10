@@ -12,6 +12,11 @@
   python Scripts/GenerateSceneModels.py --verify [--require-cooked] [--ids banana]
                                                                 GPU を使わず、定義・manifest・実ファイルの MD5 と GLB の実寸の一致を確かめる
 
+生成の時間: 1 体あたりの上限(--model-time-limit、既定 900 秒)を超えたら ComfyUI の /interrupt で止め、
+upsample_resolution を 1024 にして 1 回だけやり直す(やり直しも超えたら失敗として次の id へ)。
+1 回の実行の合計(ComfyUI の起動を含む。--run-budget、既定 1800 秒)に収まらない分は次の実行へ回す。
+manifest が定義と食い違わない id は飛ばす(--force で作り直す)。
+
 生成は GPU を占有する。Game を撮る前に ComfyUI が止まっていること(このスクリプトは終了時に降ろして止める)。
 """
 import argparse
@@ -41,6 +46,14 @@ DEFAULT_COMFY_ROOT = r"Y:\ComfyUI\ComfyUI_windows_portable"
 DEFAULT_BLENDER = r"Y:\AI\blender\blender-5.2.2-windows-x64\blender.exe"
 DEFAULT_PORT = 8188
 
+# 画像→3D の質感の段(Trellis2UpsampleStage)の解像度。大きい建物では形の段が数千万面になり終わらないので、定義ごとに下げられる
+DEFAULT_UPSAMPLE_RESOLUTION = 1536
+FALLBACK_UPSAMPLE_RESOLUTION = 1024
+DEFAULT_MODEL_TIME_LIMIT = 900
+DEFAULT_RUN_BUDGET = 1800
+# 残りがこれ未満なら新しい試行を始めない(起動・読み込みだけで尽きるため)
+MIN_ATTEMPT_SECONDS = 180
+
 # 参照画像の被写体の置き方。背景除去が効きやすいよう、単色の背景・影なしを求める。
 PROMPT_SUFFIX = ", centered, isolated on a plain light grey background, studio lighting, no shadow, sharp focus, photorealistic"
 
@@ -49,6 +62,10 @@ REQUIRED_FIELDS = ("id", "prompt", "seed", "target_faces", "texture_size", "heig
 
 class PipelineError(RuntimeError):
     pass
+
+
+class WorkflowTimeout(PipelineError):
+    """ワークフローが上限時間内に終わらなかった。"""
 
 
 def log(message):
@@ -269,6 +286,35 @@ class ComfyServer:
         except (urllib.error.URLError, OSError, ValueError) as error:
             log("COMFY release_failed %s" % error)
 
+    def interrupt(self):
+        """実行中のワークフローを止める。"""
+        try:
+            self._request("/interrupt", data=b"{}", timeout=30, raw=True)
+            log("COMFY interrupt_sent")
+        except (urllib.error.URLError, OSError, ValueError) as error:
+            log("COMFY interrupt_failed %s" % error)
+
+    def is_idle(self):
+        try:
+            queue = self._request("/queue", timeout=10)
+        except (urllib.error.URLError, OSError, ValueError):
+            return False
+        return not queue.get("queue_running") and not queue.get("queue_pending")
+
+    def recover_after_timeout(self, wait_seconds=90):
+        """/interrupt はノードの切れ目でしか効かない。実行中のノードが終わらなければ、自分で起動した ComfyUI は作り直す。"""
+        deadline = time.time() + wait_seconds
+        while time.time() < deadline:
+            if self.is_idle():
+                log("COMFY idle_after_interrupt")
+                return
+            time.sleep(3)
+        if self.process is None:
+            raise PipelineError("ComfyUI が /interrupt の後も止まりません(自分で起動したものではないので止めません)")
+        log("COMFY restart_after_interrupt")
+        self.stop()
+        self.ensure_running()
+
     def stop(self):
         if self.process is None:
             return
@@ -326,7 +372,8 @@ class ComfyServer:
                 log("COMFY waiting %s %.0fs" % (label, time.time() - started))
                 next_report += 60
             time.sleep(3)
-        raise PipelineError("ワークフローが %d 秒で終わりませんでした(%s)" % (timeout, label))
+        self.interrupt()
+        raise WorkflowTimeout("ワークフローが %d 秒で終わりませんでした(%s)" % (timeout, label))
 
     def fetch_output(self, outputs, node_id, destination):
         """出力ノードのファイルを destination へ保存する。"""
@@ -349,19 +396,20 @@ def load_workflow(path):
         return json.load(stream)
 
 
-def generate_reference(server, model, destination):
+def generate_reference(server, model, destination, timeout=900):
     workflow = load_workflow(TEXT_TO_IMAGE_WORKFLOW)
     workflow["4"]["inputs"]["text"] = model["prompt"] + PROMPT_SUFFIX
     workflow["8"]["inputs"]["seed"] = int(model["seed"])
     workflow["10"]["inputs"]["filename_prefix"] = "generated/%s_reference" % model["id"]
-    outputs = server.run_workflow(workflow, timeout=900, label="%s:image" % model["id"])
+    outputs = server.run_workflow(workflow, timeout=timeout, label="%s:image" % model["id"])
     server.fetch_output(outputs, "10", destination)
 
 
-def generate_glb(server, model, reference_path, destination):
+def generate_glb(server, model, reference_path, destination, upsample_resolution, timeout):
     uploaded = server.upload_image(reference_path)
     workflow = load_workflow(IMAGE_TO_3D_WORKFLOW)
     size = int(model["texture_size"])
+    workflow["94"]["inputs"]["target_resolution"] = str(int(upsample_resolution))
     workflow["122"]["inputs"]["image"] = uploaded
     workflow["186"]["inputs"]["target_face_count"] = int(model["target_faces"])
     workflow["288"]["inputs"]["value"] = size
@@ -370,11 +418,11 @@ def generate_glb(server, model, reference_path, destination):
     for node in ("3", "12", "18", "23"):
         workflow[node]["inputs"]["seed"] = int(model["seed"])
     workflow["322"]["inputs"]["filename_prefix"] = "3d/generated_%s" % model["id"]
-    outputs = server.run_workflow(workflow, timeout=3600, label="%s:3d" % model["id"])
+    outputs = server.run_workflow(workflow, timeout=timeout, label="%s:3d@%d" % (model["id"], int(upsample_resolution)))
     server.fetch_output(outputs, "322", destination)
 
 
-def write_manifest(model, directory):
+def write_manifest(model, directory, upsample_resolution):
     glb_path = os.path.join(directory, model["id"] + ".glb")
     reference_path = os.path.join(directory, "reference.png")
     statistics = glb_statistics(glb_path)
@@ -387,6 +435,7 @@ def write_manifest(model, directory):
         "texture_size": int(model["texture_size"]),
         "height_m": float(model["height_m"]),
         "usage": model["usage"],
+        "upsample_resolution": int(upsample_resolution),
         "face_count": statistics["triangles"],
         "textures": statistics["textures"],
         "bounds_min": statistics["bounds_min"],
@@ -405,32 +454,82 @@ def write_manifest(model, directory):
     return manifest
 
 
+def generate_model(server, model, directory, args, remaining):
+    """1 体を作る。残り時間(秒)を返す関数 remaining の範囲で、上限を超えたら質感の解像度を下げて 1 回だけやり直す。
+    作れたら True、1 回の実行の残りが足りず見送ったら None、失敗は PipelineError。"""
+    glb_path = os.path.join(directory, model["id"] + ".glb")
+    reference_path = os.path.join(directory, "reference.png")
+    os.makedirs(directory, exist_ok=True)
+    if args.reuse_reference and os.path.isfile(reference_path):
+        log("GEN reuse_reference %s" % model["id"])
+    else:
+        generate_reference(server, model, reference_path, timeout=min(900, max(int(remaining()), 60)))
+    if args.reference_only:
+        log("GEN reference_only %s -> %s" % (model["id"], reference_path))
+        return True
+    upsample = int(model.get("upsample_resolution", DEFAULT_UPSAMPLE_RESOLUTION))
+    attempts = [upsample] + ([FALLBACK_UPSAMPLE_RESOLUTION] if upsample > FALLBACK_UPSAMPLE_RESOLUTION else [])
+    for index, resolution in enumerate(attempts):
+        left = remaining()
+        if left < MIN_ATTEMPT_SECONDS:
+            log("GEN deferred id=%s(1 回の実行の残りが %d 秒)" % (model["id"], left))
+            return None
+        limit = int(min(args.model_time_limit, left))
+        try:
+            generate_glb(server, model, reference_path, glb_path, resolution, limit)
+        except WorkflowTimeout as error:
+            log("GEN timeout id=%s upsample_resolution=%d limit=%ds" % (model["id"], resolution, limit))
+            server.recover_after_timeout()
+            if index + 1 == len(attempts):
+                raise PipelineError("%s: 上限時間内に終わりませんでした(%s)" % (model["id"], error))
+            log("GEN retry id=%s upsample_resolution=%d" % (model["id"], attempts[index + 1]))
+            continue
+        scale = fit_glb_height(glb_path, model["height_m"])
+        log("GEN fit_height id=%s height_m=%s scale=%.6f" % (model["id"], model["height_m"], scale))
+        manifest = write_manifest(model, directory, resolution)
+        log("GEN done id=%s faces=%d textures=%s upsample_resolution=%d glb_md5=%s"
+            % (model["id"], manifest["face_count"], ",".join(manifest["textures"]), resolution, manifest["glb"]["md5"]))
+        return True
+    return None
+
+
 def command_generate(args, models):
+    started = time.time()
+
+    def remaining():
+        return args.run_budget - (time.time() - started)
+
+    pending = []
+    for model in models:
+        if not args.force and not args.reference_only and not verify_model(model, False, None):
+            log("GEN skip id=%s(manifest が定義と一致。作り直すなら --force)" % model["id"])
+            continue
+        pending.append(model)
+    if not pending:
+        log("GEN nothing_to_do")
+        return 0
+    failed = []
+    deferred = []
     server = ComfyServer(args.comfy_root, args.port)
     try:
         server.ensure_running()
-        for model in models:
-            directory = model_dir(model["id"])
-            glb_path = os.path.join(directory, model["id"] + ".glb")
-            reference_path = os.path.join(directory, "reference.png")
-            os.makedirs(directory, exist_ok=True)
-            if args.reuse_reference and os.path.isfile(reference_path):
-                log("GEN reuse_reference %s" % model["id"])
-            else:
-                generate_reference(server, model, reference_path)
-            if args.reference_only:
-                log("GEN reference_only %s -> %s" % (model["id"], reference_path))
+        for model in pending:
+            if remaining() < MIN_ATTEMPT_SECONDS:
+                deferred.append(model["id"])
                 continue
-            generate_glb(server, model, reference_path, glb_path)
-            scale = fit_glb_height(glb_path, model["height_m"])
-            log("GEN fit_height id=%s height_m=%s scale=%.6f" % (model["id"], model["height_m"], scale))
-            manifest = write_manifest(model, directory)
-            log("GEN done id=%s faces=%d textures=%s glb_md5=%s"
-                % (model["id"], manifest["face_count"], ",".join(manifest["textures"]), manifest["glb"]["md5"]))
+            try:
+                result = generate_model(server, model, model_dir(model["id"]), args, remaining)
+            except PipelineError as error:
+                log("GEN failed id=%s %s" % (model["id"], error))
+                failed.append(model["id"])
+                continue
+            if result is None:
+                deferred.append(model["id"])
     finally:
         server.release_models()
         server.stop()
-    return 0
+    log("GEN summary elapsed=%ds failed=%s deferred=%s" % (time.time() - started, ",".join(failed) or "-", ",".join(deferred) or "-"))
+    return 1 if failed else 0
 
 
 # ---------------------------------------------------------------------------------------------
@@ -558,6 +657,11 @@ def main():
     parser.add_argument("--refit", action="store_true", help="既存の GLB を定義の実寸へ合わせ直し、manifest を書き直す(GPU 不使用)")
     parser.add_argument("--reference-only", action="store_true", help="参照画像だけ作る(seed の選び直し用)")
     parser.add_argument("--reuse-reference", action="store_true", help="参照画像があればそれを使い、3D だけ作り直す")
+    parser.add_argument("--force", action="store_true", help="manifest が定義と一致していても作り直す")
+    parser.add_argument("--model-time-limit", type=int, default=DEFAULT_MODEL_TIME_LIMIT,
+                        help="1 体の画像→3D の上限秒数(超えたら質感の解像度を下げて 1 回やり直す)")
+    parser.add_argument("--run-budget", type=int, default=DEFAULT_RUN_BUDGET,
+                        help="1 回の実行の合計秒数(ComfyUI の起動を含む。収まらない分は次の実行へ)")
     parser.add_argument("--comfy-root", default=DEFAULT_COMFY_ROOT)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--blender", default=DEFAULT_BLENDER)

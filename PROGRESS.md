@@ -796,3 +796,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 画: 3 視点の PNG（`scene-capture/SCN-BANANAS-SCENE/{overview,close,low}/*.png`）を開いた。overview は敷き詰めが升目に見えず、3 つの塚が下段から積み上がり、床は地平線まで続く。close は山の各段が下の段に載り、1 本ごとに影が落ちる。low は床すれすれで 2 つの塚と床の影が出て、欠けは無い。
 - 検証コマンドの調整（paths の内側）: Debug の撮影は 1 視点が約 3〜4 分で、1 コマンドに 3 視点を入れるとランナーの検証の上限 10 分を超えるため、`TASKS.md` の verify を視点ごとの 3 コマンドに分け、隙間の検算（`VerifyBananaPile.py`）を足した。周回スモークは既定の 1 万本だと 1 周が約 5 分（Debug・検証レイヤー付き）で 3 周が 15 分を超えるので、`RunSceneCycleSmoke.ps1` に `-GameArgs` を足し `banana-count=1024` で回す（資源の増減の検査なので本数には依存しない）。既定 1 万本の 1 周目は `settled=1 frames=196` で正常に終わるのを確かめた。
 - Notes: 食い込み 3 本は許容を超えるが、浮きは 0 で山の見た目に影響しない（格子の刻みが 1〜2 cm のため、細い茎の先などで最大 28 mm）。
+### SCN-GEN-BUILDINGS-1(2026-10-10、反復 6・run 20261010-132327。途中。adobe_ruin が未生成)
+
+- `Scripts/GenerateSceneModels.py` に上限時間とやり直しを足した。定義ごとの `upsample_resolution`（既定 1536 を `Trellis2UpsampleStage`（ノード 94）の `target_resolution` へ渡す。manifest にも記録）、1 体あたりの上限 `--model-time-limit`（既定 900 秒。超えたら `/interrupt`、止まらなければ自分で起動した ComfyUI を作り直し、`upsample_resolution` > 1024 なら 1024 で 1 回だけやり直す。やり直しも超えたら失敗として次の id へ）、1 回の実行の合計 `--run-budget`（既定 1800 秒、起動を含む。残り 180 秒未満なら見送り）、manifest が定義と一致する id は飛ばす（`--force` で作り直す）。時間切れの動作は `adobe_ruin` で実際に確かめた（`interrupt_sent` → `restart_after_interrupt` → 失敗して終了）。
+- 生成できたもの: `watchtower`（前の反復。59.9 万面・高さ 9.0 m）、`stone_arch`（今回。59.97 万面・テクスチャ 4096・高さ 5.0 m、276 秒）。プレビューを開いた: 見張り塔は 4 本脚・筋交い・足場・小屋・ハシゴ側の梁が揃い底は地面に立つ。石のアーチは 2 本の柱とアーチと平らな基壇で、浮いた破片・底の抜けは無い。
+- 未完: `adobe_ruin` は `upsample_resolution` 1024 でも 900 秒を超えて終わらなかった（`.harness/runs/20261010-132327/verify-SCN-GEN-BUILDINGS-1-gen1.txt`。ComfyUI のログは再起動で上書きされ、止まった段は特定できていない）。定義を 768 に下げた（未検証）。次の反復は `python Scripts/GenerateSceneModels.py --ids adobe_ruin --reuse-reference` から（参照画像は `adobe_ruin/reference.png` に有り。壁と屋根が崩れた日干し煉瓦の家で形は良い）。それでも終わらなければ seed かプロンプト（壁面を単純に、屋根の梁を減らす）を変えて参照画像から作り直す。生成後に `--preview` で形を確かめ、`Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe` でクックして verify を通す。
+- クックの一覧 `Assets/AssetSets/WastelandBuildingsModels.json`（3 種）を足した。クックは `adobe_ruin` の GLB が無いので未実施。
+- `TASKS.md` の status は `todo` のまま（`done` の条件を満たしていない）。`TASKS.md` には親の未コミットの変更があるため、この反復では触っていない。

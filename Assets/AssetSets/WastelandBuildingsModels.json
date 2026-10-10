@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "name": "WastelandBuildingsModels",
+  "package_root": "Cooked/WastelandBuildings",
+  "default_variant": "default",
+  "cook_assets": true,
+  "textures": [],
+  "models": [
+    {
+      "logical_path": "Assets/Models/Generated/adobe_ruin/adobe_ruin.glb",
+      "source_path": "Assets/Models/Generated/adobe_ruin/adobe_ruin.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "WastelandBuildings/adobe_ruin.nvpkg",
+      "entry_name": "Assets/Models/Generated/adobe_ruin/adobe_ruin.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/watchtower/watchtower.glb",
+      "source_path": "Assets/Models/Generated/watchtower/watchtower.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "WastelandBuildings/watchtower.nvpkg",
+      "entry_name": "Assets/Models/Generated/watchtower/watchtower.nvmesh"
+    },
+    {
+      "logical_path": "Assets/Models/Generated/stone_arch/stone_arch.glb",
+      "source_path": "Assets/Models/Generated/stone_arch/stone_arch.glb",
+      "fallback_min_triangles": 4096,
+      "package_name": "WastelandBuildings/stone_arch.nvpkg",
+      "entry_name": "Assets/Models/Generated/stone_arch/stone_arch.nvmesh"
+    }
+  ]
+}

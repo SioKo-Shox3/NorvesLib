@@ -18,6 +18,7 @@
       "target_faces": 600000,
       "texture_size": 4096,
       "height_m": 3.5,
+      "upsample_resolution": 768,
       "usage": "wasteland-buildings"
     },
     {
