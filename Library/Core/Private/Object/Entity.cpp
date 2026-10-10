@@ -199,6 +199,7 @@ namespace NorvesLib::Core
                 MarkForDestroy();
                 return;
             }
+            world->ForgetPendingDestroy(*this);
         }
         while (!m_Inners.empty())
         {
@@ -287,6 +288,15 @@ namespace NorvesLib::Core
             {
                 world->InvalidateTickEntitySubtree(*child);
             }
+            // 木から外れたものは、破棄予約の一覧から外す（外した後に削除されても一覧が壊れない）
+            if (auto* child = CastTo<Entity>(inner))
+            {
+                world->ForgetPendingDestroySubtree(*child);
+            }
+            else
+            {
+                world->ForgetPendingDestroy(*inner);
+            }
         }
         return UnknownImpl::RemoveInner(inner);
     }
@@ -298,7 +308,16 @@ namespace NorvesLib::Core
             return false;
         }
 
-        return UnknownImpl::AddInner(inner);
+        const bool bAdded = UnknownImpl::AddInner(inner);
+        // 破棄予約済みの Component を木に戻したら、一覧へ積む
+        if (bAdded && inner->HasFlag(OF_PendingDestroy) && !CastTo<Entity>(inner))
+        {
+            if (World* world = GetWorld())
+            {
+                world->RegisterPendingDestroy(*inner);
+            }
+        }
+        return bAdded;
     }
 
     // ========================================

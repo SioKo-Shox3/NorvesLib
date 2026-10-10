@@ -1112,3 +1112,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 
 - 反復 16 の NEEDS_WORK 2 点を直した。(1) `CheckCaptureMetrics.py`: 名前の検査（`--require-*`・`--max-scope-*`・`--max-pass-*`）を `--timing` の外へ出し、指定したら `--timing` が無くても必ず見る（`gpu_timing` が無ければ「無い」で失敗）。(2) `CaptureScene.ps1`: `ConvertTo-ScopeStatList` の戻りを `@(...)` で包み、0 件・1 件でも JSON が配列になる。検査側も辞書 1 件を配列として扱う。
 - 結果: `verify-SCN-ECS-SCOPE-METRICS-1.txt`（撮影 pass、`cpu_scope_ms` 34・`cpu_scope_group_ms` 3・`gpu_pass_ms` 63 の配列）、`-2.txt`（pass）、`-3.txt`（存在しない区間で失敗＝期待どおり）。`--timing` 無しでも、存在しない区間は失敗・低い閾値は失敗・正しい指定は pass を確認。単一オブジェクト形の metrics でも落ちない。
+
+### SCN-ECS-CLEANUP-LIST（2026-10-11、反復 18・run 20261010-223034）
+
+- 変更（`IUnknown.h`・`World.h/.cpp`・`Object.cpp`・`Entity.cpp`）:
+  - `World` が破棄予約の一覧（`m_PendingDestroyEntities`・`m_PendingDestroyComponents`、積んだ順）を持つ。載っているものは新しい旗 `OF_InDestroyList` で分かる（重複して積まない。外すときの探索は旗が立っているときだけ）。`RegisterPendingDestroy`・`ForgetPendingDestroy`・`ForgetPendingDestroySubtree` を公開。
+  - `Object::Destroy` が、World の木にいる Entity・Component を一覧へ積む（`Entity::MarkForDestroy`・`Component::MarkForDestroy`・`World::RemoveEntity` などの遅延経路はすべてここを通る。`Component.h` は `paths:` の外なので、入口は `Object::Destroy` に一本化した）。
+  - `CleanupDestroyedObjects` は一覧だけを処理する（全木の 2 回の走査をやめた）。Component は「所有する Entity と祖先が予約されていない」ものだけを先に外し、Entity は「祖先が予約されていない」最上位だけを部分木ごと破棄する。判定は破棄の前に全部済ませる。`InvalidateTickComponent` が待ち参照を nullptr にする仕組み（`m_PendingTickComponents`）は従来どおり残し、除去ループで null を飛ばす。
+  - 一覧のポインタが壊れないよう、`Entity::RemoveInner`（Component・部分木）・`DestroyEntitySubtree`（部分木）・`Entity::Finalize`（自身）・`World::Finalize`（一覧を空に）で外す。`Entity::AddInner` で予約済みの Component を木に戻したとき、`AssignFreshObjectIdsRecursive`（World に入る部分木）で木に入る前に予約されたものを積む。
+  - 検査 `WORLD_CLEANUP`（`--engine-checks=WORLD_CLEANUP`）: 有効なときだけ、従来の全木走査（`CollectPendingComponents`・`CollectPendingDestroyRecursive`）で見つけた予約と、一覧から求めた処理対象が順序を問わず一致するかを照合し、`ENGINE_CHECK` の行を出す。破棄の無い回は最初の 1 回だけ pass（count=0）を出し、破棄がある回は毎回出す。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-CLEANUP-LIST-1.txt`（EntityTreeTest のビルド EXIT=0）、`-2.txt`（`WorldTickGroupTest`・`EntityTreeTest` 2/2 Passed）、`-7-rendering3dtest.txt`・`-7-mega-bananas.txt`・`-7-mega-stress.txt`（周回スモーク 3 周が各 `result=pass`、`engine_check name=WORLD_CLEANUP pass=1`）、`-6-adhoc-check.txt`（検査を一時的に常時有効にして `WorldTickGroupTest`・`EntityTreeTest` を走らせた出力。破棄のある回で `WCPASS_1`・`WCPASS_2` が出て、不一致の `WCFAIL` は 0。恒久の変更ではない）。
+- 最初に `WorldTickGroupTest` が SegFault した（除去ループの null 判定を落としていた）。`-1`・`-2` は直した後の実行。
+- Notes:
+  - 検証コマンドの調整（`paths:` の内側）: 3 シーンを 1 回の周回に入れると、検査と無関係に `SCENE_CYCLE_DIFF field=textures`（1 周目の 0 → 2 周目以降の 9 など、別シーンが先に読んだテクスチャのキャッシュ）で失敗する。変更前（`git stash`）でも同じ 8 件で落ちる（`verify-SCN-ECS-CLEANUP-LIST-3.txt` が変更後、`-5-baseline.txt` が変更前）。シーンごとの周回は pass するので、`TASKS.md` の verify を 3 シーンの個別 3 コマンドに分けた。混在の周回のテクスチャ差は別件（このタスクの範囲外）。
+  - 3 シーンは破棄予約を使わない（`RemoveObject` の即時破棄だけ）ため、スモークの検査は count=0 の pass。破棄のある照合は `-6-adhoc-check.txt` が根拠。恒久の「破棄の契約」のテスト（一覧が壊れない・予約済み Component を木に戻す・World に入る前の予約）は `Test/` が `paths:` の外のため足していない。必要なら別タスクで `WorldTickGroupTest` に足す。
+  - 一覧への積み込みは GameThread 前提（`Object::Destroy` を別スレッドから呼ばない）。`-4-neighbors.txt` は ObjectHeapTest 以外の実行ファイルが再ビルドされていない古い物なので証拠にしない。

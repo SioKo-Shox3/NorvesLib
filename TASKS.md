@@ -303,11 +303,13 @@
 - paths: Scripts/CaptureScene.ps1, Scripts/CheckCaptureMetrics.py, TASKS.md, PROGRESS.md
 - notes: 2026-10-10 親が足した（ユーザー指摘: 全体の負荷だけでは効果が分からない。CPU は関数単位の内訳が要る）。区間の記録はスケジューラ（SCN-ECS-SCHEDULER）と World の段（SCN-ECS-WORLD-SCHEDULE）が入れる。この項目はスクリプトだけを変える。1 本目の verify の撮影は短い（2000 個・120 フレーム）。
 ## SCN-ECS-CLEANUP-LIST: 破棄の回収を、破棄予約の一覧だけにする
-- status: todo
+- status: done
 - done-when: `MarkForDestroy`・`Object::Destroy`・Component の破棄予約を World の一覧に積み、`CleanupDestroyedObjects` は一覧だけを処理する（World.cpp:1781-1828 の全木の 2 回の走査をやめる）。検査 `WORLD_CLEANUP`（全木を走査して見つけた予約と一覧が一致）が pass する。破棄の契約のテストと周回が pass する。
 - verify: `cmake --build build --config Debug --target EntityTreeTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(WorldTickGroupTest|EntityTreeTest)$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=WORLD_CLEANUP`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=WORLD_CLEANUP`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-bananas -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=WORLD_CLEANUP`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-stress -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=WORLD_CLEANUP`
 - paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Private/Component/Component.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-PROP-STORAGE: 値を列に置くプロパティ（StorageKind::EcsColumn）を足す

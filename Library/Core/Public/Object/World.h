@@ -281,6 +281,15 @@ namespace NorvesLib::Core
 
         /// 固定ステップの前半（姿勢の確定と補間履歴の準備）。Module の PreFixedTick の前に呼ぶ
         void BeginFixedStep();
+
+        /// 破棄予約の一覧へ積む（Object::Destroy が呼ぶ。GameThread だけ）。Entity・Component 以外は積まない。
+        /// 回収（CleanupDestroyedObjects）はこの一覧だけを処理する。
+        void RegisterPendingDestroy(IUnknown& object);
+        /// 一覧から外す（木から外す・破棄する前に呼ぶ。載っていなければ何もしない）
+        void ForgetPendingDestroy(IUnknown& object);
+        /// entity とその部分木（Component を含む）を一覧から外す
+        void ForgetPendingDestroySubtree(Entity& entity);
+
         /// 固定ステップの後半（姿勢の確定・補間履歴の記録・破棄の回収）。Module の FixedTick の後に呼ぶ
         void EndFixedStep();
 
@@ -317,6 +326,11 @@ namespace NorvesLib::Core
         Container::VariableArray<TickDispatchEntry> m_FixedTickEntries;
         Container::VariableArray<Component::Component*> m_PendingTickComponents;
         Container::VariableArray<Entity*> m_PendingTickEntities;
+        /// 破棄予約の一覧（積んだ順。OF_InDestroyList が立っているものだけが載る）
+        Container::VariableArray<Component::Component*> m_PendingDestroyComponents;
+        Container::VariableArray<Entity*> m_PendingDestroyEntities;
+        /// 検査 WORLD_CLEANUP の pass を 1 回以上出したか（破棄が無い間も pass を 1 回は出す）
+        bool m_bCleanupCheckReported = false;
         bool m_bHasTickSnapshot = false;
         bool m_bDispatchingTicks = false;
         bool m_bCleaningObjects = false;

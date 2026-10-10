@@ -10,6 +10,7 @@
 #include "Ecs/EcsScheduler.h"
 #include "Ecs/EcsWorld.h"
 #include "Engine/ComponentDataRegistry.h"
+#include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
 #include "Logging/LogMacros.h"
 #include "Object/Entity.h"
@@ -43,6 +44,21 @@ namespace NorvesLib::Core
             bool& m_Flag;
             bool m_Previous;
         };
+
+        /// 順序を無視して、2 つのポインタの集合が一致するか（検査 WORLD_CLEANUP の照合用）
+        template <typename T>
+        bool SamePointerSet(const Container::VariableArray<T*>& lhs, const Container::VariableArray<T*>& rhs)
+        {
+            if (lhs.size() != rhs.size())
+            {
+                return false;
+            }
+            Container::VariableArray<T*> sortedLhs(lhs);
+            Container::VariableArray<T*> sortedRhs(rhs);
+            std::sort(sortedLhs.begin(), sortedLhs.end());
+            std::sort(sortedRhs.begin(), sortedRhs.end());
+            return sortedLhs == sortedRhs;
+        }
 
         struct PrefabLiveObject
         {
@@ -701,6 +717,9 @@ namespace NorvesLib::Core
         }
 
         GEngine.GetComponentDataRegistry().UnregisterWorld(*this);
+
+        m_PendingDestroyEntities.clear();
+        m_PendingDestroyComponents.clear();
 
         m_SceneView = nullptr;
         m_ScreenSpaceBoardSink = nullptr;
@@ -1928,13 +1947,44 @@ namespace NorvesLib::Core
             return;
         }
         ScopedWorldFlag cleaning(m_bCleaningObjects);
+
+        // 検査 WORLD_CLEANUP: 全木を走査して見つけた予約と、一覧から求めた処理対象が一致するか照合する。
+        // 有効なときだけ全木を走査する（通常は一覧だけを処理する）。
+        NorvesLib::Debug::EngineChecks* checks = NorvesLib::Core::Engine::GEngine != nullptr
+            ? &NorvesLib::Core::Engine::GEngine->GetEngineChecks()
+            : nullptr;
+        const bool bCheck = checks != nullptr && checks->IsEnabled("WORLD_CLEANUP");
+        bool bCheckPass = true;
+        uint32_t checkCount = 0;
+
+        // 木から外す Component を先に処理する。所有する Entity か祖先が破棄予約なら、
+        // Entity ごと破棄されるので飛ばす。
         auto& pendingComponents = m_PendingTickComponents;
         pendingComponents.clear();
-        auto roots = GetRootEntities();
-        for (Entity* root : roots)
+        for (Component::Component* component : m_PendingDestroyComponents)
         {
-            CollectPendingComponents(*root, pendingComponents);
+            component->SetFlag(OF_InDestroyList, false);
+            Entity* owner = component->GetOwner();
+            if (owner && owner->GetWorld() == this && component->IsPendingDestroy() &&
+                !owner->IsPendingDestroy() && !HasPendingEntityAncestor(*owner))
+            {
+                pendingComponents.push_back(component);
+            }
         }
+        m_PendingDestroyComponents.clear();
+
+        if (bCheck)
+        {
+            Container::VariableArray<Component::Component*> scanned;
+            for (Entity* root : GetRootEntities())
+            {
+                CollectPendingComponents(*root, scanned);
+            }
+            bCheckPass = SamePointerSet(scanned, pendingComponents) && bCheckPass;
+            checkCount += static_cast<uint32_t>(scanned.size());
+        }
+
+        // 途中で別の Component が消えると、InvalidateTickComponent が待ち参照を nullptr にする
         for (Component::Component* component : pendingComponents)
         {
             if (!component)
@@ -1946,11 +1996,30 @@ namespace NorvesLib::Core
                 owner->RemoveComponentImmediately(component);
             }
         }
+
+        // 破棄予約の Entity。祖先が先に予約されているものは、その祖先の部分木ごと破棄される。
+        // 破棄の前に判定を全部済ませる（先に破棄した部分木の中の Entity を後で参照しないため）。
         auto& toRemove = m_PendingTickEntities;
         toRemove.clear();
-        for (auto* entity : roots)
+        for (Entity* entity : m_PendingDestroyEntities)
         {
-            CollectPendingDestroyRecursive(*entity, toRemove);
+            entity->SetFlag(OF_InDestroyList, false);
+            if (entity->GetWorld() == this && entity->IsPendingDestroy() && !HasPendingEntityAncestor(*entity))
+            {
+                toRemove.push_back(entity);
+            }
+        }
+        m_PendingDestroyEntities.clear();
+
+        if (bCheck)
+        {
+            Container::VariableArray<Entity*> scanned;
+            for (Entity* root : GetRootEntities())
+            {
+                CollectPendingDestroyRecursive(*root, scanned);
+            }
+            bCheckPass = SamePointerSet(scanned, toRemove) && bCheckPass;
+            checkCount += static_cast<uint32_t>(scanned.size());
         }
 
         for (auto* entity : toRemove)
@@ -1965,6 +2034,83 @@ namespace NorvesLib::Core
         {
             NORVES_LOG_DEBUG("World", "Cleaned up %llu destroyed objects",
                              static_cast<uint64_t>(toRemove.size()));
+        }
+
+        // 破棄が無い回は、最初の 1 回だけ pass を出す（毎フレームのログを避けつつ、検査が走ったことを示す）
+        if (bCheck && (!bCheckPass || checkCount > 0 || !m_bCleanupCheckReported))
+        {
+            checks->Report("WORLD_CLEANUP", bCheckPass, checkCount);
+            m_bCleanupCheckReported = true;
+        }
+    }
+
+    void World::RegisterPendingDestroy(IUnknown& object)
+    {
+        if (object.HasFlag(OF_InDestroyList))
+        {
+            return;
+        }
+        if (auto* entity = CastTo<Entity>(&object))
+        {
+            m_PendingDestroyEntities.push_back(entity);
+        }
+        else if (auto* component = CastTo<Component::Component>(&object))
+        {
+            m_PendingDestroyComponents.push_back(component);
+        }
+        else
+        {
+            return;
+        }
+        object.SetFlag(OF_InDestroyList, true);
+    }
+
+    void World::ForgetPendingDestroy(IUnknown& object)
+    {
+        if (!object.HasFlag(OF_InDestroyList))
+        {
+            return;
+        }
+        object.SetFlag(OF_InDestroyList, false);
+        if (auto* entity = CastTo<Entity>(&object))
+        {
+            auto it = std::find(m_PendingDestroyEntities.begin(), m_PendingDestroyEntities.end(), entity);
+            if (it != m_PendingDestroyEntities.end())
+            {
+                m_PendingDestroyEntities.erase(it);
+            }
+        }
+        else if (auto* component = CastTo<Component::Component>(&object))
+        {
+            auto it = std::find(m_PendingDestroyComponents.begin(), m_PendingDestroyComponents.end(), component);
+            if (it != m_PendingDestroyComponents.end())
+            {
+                m_PendingDestroyComponents.erase(it);
+            }
+        }
+    }
+
+    void World::ForgetPendingDestroySubtree(Entity& entity)
+    {
+        if (m_PendingDestroyEntities.empty() && m_PendingDestroyComponents.empty())
+        {
+            return;
+        }
+        ForgetPendingDestroy(entity);
+        for (IUnknown* inner : entity.GetInners())
+        {
+            if (m_PendingDestroyEntities.empty() && m_PendingDestroyComponents.empty())
+            {
+                return;
+            }
+            if (auto* child = CastTo<Entity>(inner))
+            {
+                ForgetPendingDestroySubtree(*child);
+            }
+            else if (inner->HasFlag(OF_InDestroyList))
+            {
+                ForgetPendingDestroy(*inner);
+            }
         }
     }
 
@@ -2108,6 +2254,8 @@ namespace NorvesLib::Core
         }
 
         ScopedWorldFlag removing(m_bCleaningObjects);
+        // 破棄する部分木の中の予約を一覧から外す（削除後に一覧が壊れたポインタを持たないため）
+        ForgetPendingDestroySubtree(entity);
         UnregisterEntitySubtreeForComponentData(entity);
 
         RemoveEntitySubtreeProxies(entity);
@@ -2158,10 +2306,23 @@ namespace NorvesLib::Core
     {
         entity.SetObjectId(NextObjectId++);
 
+        // 木に入る前に破棄予約された Entity・Component を、一覧へ積む（World の外では積まれないため）
+        if (entity.IsPendingDestroy())
+        {
+            RegisterPendingDestroy(entity);
+        }
+
         auto children = entity.GetChildEntities();
         for (auto* child : children)
         {
             AssignFreshObjectIdsRecursive(*child);
+        }
+        for (IUnknown* inner : entity.GetInners())
+        {
+            if (inner->HasFlag(OF_PendingDestroy) && !CastTo<Entity>(inner))
+            {
+                RegisterPendingDestroy(*inner);
+            }
         }
     }
 

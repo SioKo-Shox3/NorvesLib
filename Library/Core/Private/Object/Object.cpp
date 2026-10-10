@@ -2,6 +2,9 @@
 #include "Object/IClass.h"
 #include "Object/IValue.h"
 #include "Object/ObjectPropertyOps.h"
+#include "Component/Component.h"
+#include "Object/Entity.h"
+#include "Object/World.h"
 
 namespace NorvesLib::Core
 {
@@ -194,6 +197,24 @@ namespace NorvesLib::Core
     void Object::Destroy()
     {
         SetFlag(OF_PendingDestroy, true);
+
+        // World の木にいる Entity・Component は、World の破棄予約の一覧へ積む（回収はこの一覧だけを処理する）
+        World *world = nullptr;
+        if (auto *entity = CastTo<Entity>(this))
+        {
+            world = entity->GetWorld();
+        }
+        else if (auto *component = CastTo<Component::Component>(this))
+        {
+            if (Entity *owner = component->GetOwner())
+            {
+                world = owner->GetWorld();
+            }
+        }
+        if (world)
+        {
+            world->RegisterPendingDestroy(*this);
+        }
     }
 
     bool Object::IsPendingDestroy() const
