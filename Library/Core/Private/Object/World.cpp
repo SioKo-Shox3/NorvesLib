@@ -742,6 +742,26 @@ namespace NorvesLib::Core
         return UnknownImpl::AddInner(inner);
     }
 
+    bool World::RemoveInner(IUnknown* inner)
+    {
+        // 公開の RemoveInner で切り離すものも、待ち参照と破棄予約の一覧から外す（外した後に削除されても壊れない）
+        if (inner && inner->GetOuter() == this)
+        {
+            if (auto* entity = CastTo<Entity>(inner))
+            {
+                InvalidateTickEntitySubtree(*entity);
+                ForgetPendingDestroySubtree(*entity);
+            }
+            else if (auto* component = CastTo<Component::Component>(inner))
+            {
+                InvalidateTickComponent(*component);
+                ForgetPendingDestroy(*inner);
+            }
+        }
+
+        return UnknownImpl::RemoveInner(inner);
+    }
+
     bool World::AddObject(Entity* object)
     {
         if (!AttachRootEntity(object))
@@ -2254,13 +2274,15 @@ namespace NorvesLib::Core
         }
 
         ScopedWorldFlag removing(m_bCleaningObjects);
-        // 破棄する部分木の中の予約を一覧から外す（削除後に一覧が壊れたポインタを持たないため）
-        ForgetPendingDestroySubtree(entity);
         UnregisterEntitySubtreeForComponentData(entity);
 
         RemoveEntitySubtreeProxies(entity);
         NotifyEntitySubtreeRemoved(entity);
         InvalidateTickEntitySubtree(entity);
+
+        // 破棄する部分木の中の予約を一覧から外す。除去の通知（OnRemovedFromWorld）が再び予約しても
+        // 取りこぼさないよう、通知が済んだ後・木を切り離す直前に行う（削除後に一覧が壊れたポインタを持たないため）
+        ForgetPendingDestroySubtree(entity);
 
         EraseInnerReference(*owner, entity);
         SetOuterReference(entity, nullptr);

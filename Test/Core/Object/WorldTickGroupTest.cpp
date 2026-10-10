@@ -1,6 +1,8 @@
 ﻿#include "Object/World.h"
 #include "Object/ObjectHeap.h"
 #include "Component/Component.h"
+#include "Engine/ComponentDataRegistry.h"
+#include "Engine/NorvesEngine.h"
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -13,6 +15,8 @@ namespace NorvesLib::Core
     {
         static void Fixed(World& world) { world.DispatchFixedTick(1.0f / 60.0f); }
         static void Cleanup(World& world) { world.CleanupAfterFixedStep(); }
+        static size_t PendingEntities(World& world) { return world.m_PendingDestroyEntities.size(); }
+        static size_t PendingComponents(World& world) { return world.m_PendingDestroyComponents.size(); }
     };
 }
 
@@ -452,6 +456,78 @@ namespace
         world.LateTick(0.01f);
         world.Finalize();
     }
+
+    // 除去の通知の中で自身を破棄予約しても、削除後に一覧へ削除済みのポインタが残らない
+    class ReserveOnRemovedEntity : public Entity
+    {
+    public:
+        void OnRemovedFromWorld() override { MarkForDestroy(); }
+    };
+
+    void TestReserveInRemovalNotificationLeavesNoDanglingEntry()
+    {
+        World world;
+        world.Initialize();
+        auto* entity = world.SpawnEntity<ReserveOnRemovedEntity>();
+        assert(entity);
+        assert(world.RemoveEntity(entity));
+        assert(WorldTickGroupTestAccess::PendingEntities(world) == 0);
+        assert(WorldTickGroupTestAccess::PendingComponents(world) == 0);
+        world.Tick(0.01f);
+        world.LateTick(0.01f);
+        world.Finalize();
+    }
+
+    // ObjectHeap 経由の破棄予約も一覧へ積まれ、World の回収で木から外れる
+    void TestHeapEnqueueDestroyIsListed()
+    {
+        World world;
+        world.Initialize();
+        ObjectHeap heap;
+        Events events;
+        auto* root = world.SpawnEntity<Entity>();
+        const auto handle = heap.Create<TickComponent>();
+        auto* component = heap.Resolve<TickComponent>(handle);
+        assert(component && root->AddComponent(component));
+        component->Output = &events;
+        assert(root->GetComponents().size() == 1);
+
+        assert(heap.EnqueueDestroy(handle));
+        assert(WorldTickGroupTestAccess::PendingComponents(world) == 1);
+        world.Tick(0.01f);
+        assert(WorldTickGroupTestAccess::PendingComponents(world) == 0);
+        assert(root->GetComponents().size() == 0);
+        heap.ProcessDestroyQueue();
+        assert(!heap.Resolve(handle));
+        world.LateTick(0.01f);
+        world.Finalize();
+    }
+
+    // 公開の RemoveInner で切り離したものも一覧から外れ、削除後に回収が壊れない
+    void TestWorldRemoveInnerForgetsReservation()
+    {
+        World world;
+        world.Initialize();
+        auto* root = world.SpawnEntity<Entity>();
+        auto* child = world.SpawnEntity<Entity>(root);
+        assert(child);
+        child->MarkForDestroy();
+        root->MarkForDestroy();
+        assert(WorldTickGroupTestAccess::PendingEntities(world) == 2);
+
+        assert(world.RemoveInner(root));
+        assert(root->GetOuter() == nullptr);
+        assert(WorldTickGroupTestAccess::PendingEntities(world) == 0);
+        // 公開の RemoveInner は Component データの登録までは解除しないので、削除する側が解除する
+        GEngine.GetComponentDataRegistry().UnregisterEntity(*child);
+        GEngine.GetComponentDataRegistry().UnregisterEntity(*root);
+        root->Finalize();
+        delete root;
+
+        world.Tick(0.01f);
+        world.LateTick(0.01f);
+        world.Finalize();
+    }
 }
 
 int main()
@@ -463,6 +539,9 @@ int main()
     TestFixedCleanupAndInactiveParent();
     TestHeapDetachmentAndSelfRemoval();
     TestStandaloneFixedAndFixedMutation();
+    TestReserveInRemovalNotificationLeavesNoDanglingEntry();
+    TestHeapEnqueueDestroyIsListed();
+    TestWorldRemoveInnerForgetsReservation();
     std::cout << "WorldTickGroupTest passed\n";
     return 0;
 }

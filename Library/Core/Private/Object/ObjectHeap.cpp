@@ -1,4 +1,4 @@
-#include "Object/ObjectHeap.h"
+﻿#include "Object/ObjectHeap.h"
 #include "Object/IClass.h"
 #include "Object/ObjectCast.h"
 #include <chrono>
@@ -57,7 +57,8 @@ namespace NorvesLib::Core
         }
 
         slot.State = SlotState::DestroyQueued;
-        slot.Instance->SetFlag(OF_PendingDestroy, true);
+        // Object::Destroy を通し、World の木にいる Entity・Component は破棄予約の一覧にも積む
+        slot.Instance->Destroy();
         m_DestroyQueue.push_back(index);
         return true;
     }

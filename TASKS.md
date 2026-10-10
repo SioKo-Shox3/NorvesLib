@@ -310,7 +310,7 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=WORLD_CLEANUP`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-bananas -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=WORLD_CLEANUP`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-stress -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=WORLD_CLEANUP`
-- paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Private/Component/Component.cpp, TASKS.md, PROGRESS.md
+- paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Private/Component/Component.cpp, Test/Core/Object/WorldTickGroupTest.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-PROP-STORAGE: 値を列に置くプロパティ（StorageKind::EcsColumn）を足す
 - status: todo

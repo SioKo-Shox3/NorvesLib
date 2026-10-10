@@ -197,6 +197,11 @@ namespace NorvesLib::Core
         virtual bool AddInner(IUnknown* inner) override;
 
         /**
+         * @brief 切り離すものを待ち参照と破棄予約の一覧から外してから Inner を外します
+         */
+        virtual bool RemoveInner(IUnknown* inner) override;
+
+        /**
          * @brief 管理下のルートEntityを取得（World直下のInnersからフィルタリング）
          */
         Container::VariableArray<Entity *> GetRootEntities() const;

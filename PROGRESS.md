@@ -1127,3 +1127,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 検証コマンドの調整（`paths:` の内側）: 3 シーンを 1 回の周回に入れると、検査と無関係に `SCENE_CYCLE_DIFF field=textures`（1 周目の 0 → 2 周目以降の 9 など、別シーンが先に読んだテクスチャのキャッシュ）で失敗する。変更前（`git stash`）でも同じ 8 件で落ちる（`verify-SCN-ECS-CLEANUP-LIST-3.txt` が変更後、`-5-baseline.txt` が変更前）。シーンごとの周回は pass するので、`TASKS.md` の verify を 3 シーンの個別 3 コマンドに分けた。混在の周回のテクスチャ差は別件（このタスクの範囲外）。
   - 3 シーンは破棄予約を使わない（`RemoveObject` の即時破棄だけ）ため、スモークの検査は count=0 の pass。破棄のある照合は `-6-adhoc-check.txt` が根拠。恒久の「破棄の契約」のテスト（一覧が壊れない・予約済み Component を木に戻す・World に入る前の予約）は `Test/` が `paths:` の外のため足していない。必要なら別タスクで `WorldTickGroupTest` に足す。
   - 一覧への積み込みは GameThread 前提（`Object::Destroy` を別スレッドから呼ばない）。`-4-neighbors.txt` は ObjectHeapTest 以外の実行ファイルが再ビルドされていない古い物なので証拠にしない。
+
+### SCN-ECS-CLEANUP-LIST 差し戻し対応（2026-10-11、反復 19・run 20261010-223034）
+
+- 反復 18 の NEEDS_WORK 3 点を直した。
+  1. 除去の通知中の再予約: `World::DestroyEntitySubtree` の `ForgetPendingDestroySubtree` を、`OnRemovedFromWorld` の通知と待ち参照の無効化が済んだ後・木を切り離す直前へ移した（通知内で `MarkForDestroy` しても一覧に残らない）。
+  2. ObjectHeap 経由の予約: `ObjectHeap::EnqueueDestroy` がフラグを直接立てるのをやめ、`Object::Destroy()` を通す（World の木にいる Entity・Component は一覧へ積まれる）。`ObjectHeap.cpp` は BOM なしの ASCII だけだったので、日本語コメントの文字コード警告（C4819）を避けて BOM を付けた。
+  3. 公開 `RemoveInner`: `World::RemoveInner` を足し、切り離す前に Entity なら部分木、Component なら単体の待ち参照の無効化と一覧からの解除を行う。
+- 契約テスト（`WorldTickGroupTest.cpp` に 3 本。`paths:` に `Test/Core/Object/WorldTickGroupTest.cpp` を足した。差し戻しの「各経路を契約テストに追加」と done-when の「破棄の契約のテスト」を満たすために必要な最小の拡張）: 通知中の自己予約が一覧に残らない、heap 経由の Component 予約が一覧へ入り World の回収で木から外れる、公開 `RemoveInner` で切り離した部分木が一覧から外れる。一覧の件数は `WorldTickGroupTestAccess`（既存の friend）経由で見る。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-CLEANUP-LIST-10.txt`（EntityTreeTest のビルド EXIT=0、`WorldTickGroupTest`・`EntityTreeTest` 2/2 Passed）、`-11-rendering3dtest.txt`・`-11-mega-bananas.txt`・`-11-mega-stress.txt`（周回 3 周が各 `result=pass`、`engine_check name=WORLD_CLEANUP pass=1`）。`-8`・`-9` は直す途中の実行（ビルド引数の誤り・テストの落下）で証拠にしない。
+- Notes:
+  - 修正前に新テストが落ちることは、再ビルド（Core）の負荷を避けて実行していない。各テストの最初の件数の検査は、修正前のコードでは 1 以上（通知中の再登録・heap 経路が未登録・`RemoveInner` が一覧を残す）になる構造。
+  - 公開 `World::RemoveInner` は従来どおり `ComponentDataRegistry` の登録を解除しない（`DestroyEntitySubtree` だけが解除する）。木から外した Entity を削除する呼び出し側は解除が要る（テストでは明示している）。この反復の範囲外の既存の性質。
+  - ファイルの行末: `World.cpp`・`World.h` は混在（CRLF/LF）で、編集ツールが LF に正規化したため difflib で元の行末へ戻した（`git diff --numstat` と `--ignore-cr-at-eol` が一致）。
