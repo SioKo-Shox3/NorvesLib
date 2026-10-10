@@ -10,6 +10,33 @@
       "texture_size": 2048,
       "height_m": 0.2,
       "usage": "mega-bananas"
+    },
+    {
+      "id": "adobe_ruin",
+      "prompt": "a single small ruined adobe mud-brick house, one corner of the walls collapsed into a jagged broken edge, roof half fallen in with exposed wooden beams, empty door and window openings, sun-baked tan plaster peeling off, exposed bricks, whole building standing on flat ground, three-quarter view, weathered desert wasteland outpost style",
+      "seed": 2001,
+      "target_faces": 600000,
+      "texture_size": 4096,
+      "height_m": 3.5,
+      "usage": "wasteland-buildings"
+    },
+    {
+      "id": "watchtower",
+      "prompt": "a single tall rustic lookout watchtower made of weathered grey timber and rusted corrugated metal, four legs with diagonal cross braces, small enclosed platform on top with a ladder, whole building standing on flat ground, three-quarter view, weathered desert wasteland outpost style",
+      "seed": 2002,
+      "target_faces": 600000,
+      "texture_size": 4096,
+      "height_m": 9.0,
+      "usage": "wasteland-buildings"
+    },
+    {
+      "id": "stone_arch",
+      "prompt": "a single freestanding ancient rough-cut sandstone arch gateway, two thick pillars supporting a curved arch, weathered cracked blocks, clean flat square base slab, no rubble, no debris, no walls beside it, whole building standing on flat ground, three-quarter view, weathered desert wasteland outpost style",
+      "seed": 2003,
+      "target_faces": 600000,
+      "texture_size": 4096,
+      "height_m": 5.0,
+      "usage": "wasteland-buildings"
     }
   ]
 }
