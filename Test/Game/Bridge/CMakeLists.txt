@@ -35,6 +35,15 @@ norves_add_test_bundle(NorvesLibBridgeAdapterScriptComponentTest
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/AnimationDebugScene.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.cpp
         ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/M9WorldAcceptance.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/M9SkeletalPreparation.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/Rendering3DTest/StartupSkinnedProbe.cpp
+        ${CMAKE_SOURCE_DIR}/Game/GameModes/DogMovementSmoke/DogMovementSmokeRoutine.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Input/GameInputSettings.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Input/GameHapticsSettings.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Debug/SequenceFrameCapture.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Gameplay/Camera/FollowCameraComponent.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Gameplay/Camera/FollowCameraProfile.cpp
+        ${CMAKE_SOURCE_DIR}/Game/Gameplay/Locomotion/QuadrupedLocomotionComponent.cpp
 )
 target_link_libraries(NorvesLibBridgeAdapterScriptComponentTest PRIVATE Core NorvesModule_Dummy NorvesModule_Physics norves_bridge_engine_sdk)
 target_include_directories(NorvesLibBridgeAdapterScriptComponentTest PRIVATE

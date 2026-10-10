@@ -1228,3 +1228,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 読む費用: `GetWorldTransform` などが、Outer をたどって World を引き、列を探すぶん重くなった（1 回の再帰で局所とキャッシュを各 1 回読む）。階層のシステム（TRANSFORM-PREP/SWITCH）で列を直接走査するようになると、この経路は消える。節目の計測（MEASURE-CPU）で見る。
   - 行が付いている間、`Position` などを `ApplyValue`（保存の読み込み・ブリッジ）で書くと列に入る（`GetValuePtr` の可変は nullptr）。ワールドのキャッシュは従来どおり `UpdateWorldTransforms` で更新される。
   - 行末: 変更した 5 ファイル（`World.cpp` は混在）は、行末を保つ置換で編集した。`git diff --numstat` と `--ignore-cr-at-eol` が一致。
+
+### SCN-ECS-TRANSFORM-VALUES 差し戻し対応（2026-10-11、反復 26・run 20261010-223034）
+
+- 原因: `Test/Game/Bridge/CMakeLists.txt` の `NorvesLibBridgeAdapterScriptComponentTest` のソース一覧が、`Game` に後から足されたファイル（GLOB_RECURSE で自動収集される `Game` と違い明示列挙）に追従しておらず、リンクが未解決になっていた。変換の列への移行とは無関係の、変更前からの壊れ。
+- 変更: ソース一覧に `M9SkeletalPreparation.cpp`・`StartupSkinnedProbe.cpp`・`DogMovementSmokeRoutine.cpp`・`GameInputSettings.cpp`・`GameHapticsSettings.cpp`・`SequenceFrameCapture.cpp`・`FollowCameraComponent.cpp`・`FollowCameraProfile.cpp`・`QuadrupedLocomotionComponent.cpp` を足した（BOM + CRLF を保った。numstat 2 通りが一致）。
+- 範囲の注記: このファイルは `paths:` の外（`Test/Game/Bridge`）だが、タスクの verify がこのターゲットのビルドと実行を要求しており、これを直さないと合格できないため、最小の追記だけ行った。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-TRANSFORM-VALUES-7-build.txt`（指定の 4 ターゲットのビルド EXIT=0）、`-8-ctest.txt`（指定の ctest 7/7 Passed、NorvesLibBridgeAdapterScriptComponentTest を含む）。起動画面・mega-bananas の比較は反復 25 の `-3-startup.txt`・`-4-bananas.txt`（pass）から、Core・Game のコードは変わっていないので再実行していない。
