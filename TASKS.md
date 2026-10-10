@@ -176,6 +176,15 @@
 - paths: Game/GameModes/MegaBananas, Game/Scenes/SceneCatalog.h, Library/Core/Private/Rendering/MegaGeometryPass.cpp, TASKS.md, PROGRESS.md
 - notes: 計測だけ。CPU は遅くてよい。この項目の結果では止めない（25 ms の打切りは改修後の規模の確認にだけ使う）。
 
+## SCN-MEGA-BASE-RWDI: 起動画面の決定的な撮影の基準を RelWithDebInfo でも撮る
+- status: todo
+- done-when: 以後の項目が RelWithDebInfo のビルド 1 つで起動画面の比較をできるよう、`SCN-MEGA-BASE-RWDI`（RelWithDebInfo・決定的な撮影）を撮る。Debug の基準 `SCN-MEGA-BASE` と並べて平均輝度の差と PSNR を PROGRESS に書く（構成の違いの差の大きさの記録。一致は求めない）。同じコードで撮り直した比較が pass。C++ は変えない。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -OutDir .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI-check`
+- paths: TASKS.md, PROGRESS.md
+- notes: 撮影だけ。
+
 ## SCN-MEGA-PROBE-VSM: 10万本で、読み込み直後とカメラが動くときの VSM の投影物のカリングを測る
 - status: todo
 - done-when: 開発ビルドの `--camera-path-play` でカメラパスを再生したまま計測できる。静止と再生の 2 回について、`VsmCullPairs`・`VsmCullMega` の median・p95・max、`VSM_MEGA_CULL overflow` の最大、読み込み直後のフレームの値を PROGRESS に書き、100万本への外挿を書く。
@@ -189,332 +198,367 @@
 - done-when: AssetSet の指定（例 `"dagRootMaxClusters": 2`）があるメッシュだけ簡略化を続け、根のクラスタ数・三角形数・誤差をログに出す。バナナの根が 2 クラスタ以下になり、PROBE-ROOT と同じ測り方で根だけの `VisRasterSw1` が 1/10 以下。1万本 close の撮影を開いて近景の形が変わらない。起動画面の比較が pass（他の資産は焼き直さない）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000,mega-lod-error-px=100000 -OutDir .harness/runs/scene-capture/SCN-MEGA-ROOT-COOK/root`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-ROOT-COOK`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-ROOT-COOK`
 - paths: Tools/AssetCook, Assets/AssetSets/MegaBananasModels.json, TASKS.md, PROGRESS.md
 - notes: PROBE-ROOT で根の単価が問題でないと出たら、理由を書いて完了にする。縮まらない理由が UV の継ぎ目なら上の段だけ継ぎ目の固定を緩める。全体のクックが 10 分を超えるなら、バナナの指定だけを置いたディレクトリを `-SpecDir` に渡す。
 
-## SCN-MEGA-STRESS-RESIDENT: 開発用シーン mega-stress を作り、多種のメッシュの個別 Entity を今の経路で測る
+## SCN-MEGA-STRESS-RESIDENT: 開発用シーン mega-stress を作り、多種のメッシュの個別 Entity を置く
 - status: todo
-- done-when: `mega-stress`（開発ビルドだけランチャーに出る）が、メッシュの一覧の JSON（起動画面の Boulder・Cottage・BigCobbleSphere・ScanProps、生成した watchtower・banana、クック済みなら Poly Haven の岩）から個別の Entity を `--stress-entities=<n>` 個置く（既定 2000）。資源の数と区間の数をログに出す。5万個静止の gt・rt・GPU・`MEGA_CAPACITY` を PROGRESS に書く。cycle smoke が pass。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-stress -Cycles 3`
+- done-when: `mega-stress`（開発ビルドだけランチャーに出る）が、メッシュの一覧の JSON（起動画面の Boulder・Cottage・BigCobbleSphere・ScanProps、生成した watchtower・banana、クック済みなら Poly Haven の岩）から個別の Entity を `--stress-entities=<n>` 個置く（既定 2000）。資源の数と区間の数をログに出す。5000 個の撮影を開いて多種のメッシュが並んでいる。cycle smoke が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-RESIDENT`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-stress -Cycles 3 -Configuration RelWithDebInfo`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-RESIDENT`
 - paths: Game, Assets/AssetSets, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
-- notes: 区間の数だけ容量が増える問題（`MegaGeometryPass.cpp` 1526 行付近）がここで数で見える。
+- notes: 計測は SCN-MEGA-STRESS-STREAMING でまとめて行う。
 
-## SCN-MEGA-STRESS-MOVING: mega-stress に一部の Entity が毎フレーム動く負荷を足して測る
+## SCN-MEGA-STRESS-MOVING: mega-stress に一部の Entity が毎フレーム動く負荷を足す
 - status: todo
-- done-when: `--stress-moving-percent=<p>` で、その割合の Entity を毎フレーム動かす（位置と回転。決定的な動き）。5万個・1% 移動の gt・rt・GPU を PROGRESS に書き、静止との差を書く。
+- done-when: `--stress-moving-percent=<p>` で、その割合の Entity を毎フレーム動かす（位置と回転。決定的な動き）。5000 個・10% 移動で、時刻を変えた 2 枚の撮影を開いて動いていることを確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-MOVING`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=10 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-MOVING`
 - paths: Game, TASKS.md, PROGRESS.md
+- notes: 計測は SCN-MEGA-STRESS-STREAMING でまとめて行う。
 
-## SCN-MEGA-STRESS-STREAMING: mega-stress に区画の読み込み・解放を繰り返す負荷を足して測る
+## SCN-MEGA-STRESS-STREAMING: mega-stress に区画の読み込み・解放の負荷を足し、今の経路の基準を測る
 - status: todo
-- done-when: `--stress-stream-cell=<m>` で、その大きさの区画の Entity を一定の周期で読み込み・解放する（カメラの近くの区画が出入りする）。5万個・64 m 区画の gt・rt・GPU と、資源の数が周期の後に戻ることをログで確かめて PROGRESS に書く。cycle smoke が pass。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-stress -Cycles 3`
+- done-when: `--stress-stream-cell=<m>` で、その大きさの区画の Entity を一定の周期で読み込み・解放する（カメラの近くの区画が出入りする）。資源の数が周期の後に戻ることをログで確かめる。今の経路の基準として、5万個の静止・1% 移動・1% 移動 + 64 m 区画の 3 つで gt・rt・GPU の median と p95、`MEGA_CAPACITY` を PROGRESS の表に書く（以後の節目の計測はこの表と比べる）。cycle smoke が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-STREAMING`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-stress -Cycles 3 -Configuration RelWithDebInfo`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-STREAMING/static`
 - paths: Game, TASKS.md, PROGRESS.md
+- notes: 区間の数だけ容量が増える問題（`MegaGeometryPass.cpp` 1526 行付近）がここで数で見える。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
 
 ## SCN-MEGA-WORLD-TICK-CACHE: Tick の一覧を、Tick の集合と順序に関わる変化のときだけ作り直す
 - status: todo
-- done-when: `BuildTickSnapshot`（`World.cpp` 952〜970 行付近）を、Component の追加・削除・Tick の有効の変化・Tick の群・優先度・mask の変化のときだけ作り直す。mega-stress の 5万個静止で `World.BuildTickSnapshot` が 0.1 ms 以下、ctest と起動画面の比較が pass。
-- verify: `cmake --build build --config Debug --target Game EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
+- done-when: `BuildTickSnapshot`（`World.cpp` 952〜970 行付近）を、Component の追加・削除・Tick の有効の変化・Tick の群・優先度・mask の変化のときだけ作り直す。開発ビルドで、作り直さなかったフレームの一覧が全走査の結果と一致することを確かめる（`WORLD_TICK_CACHE mismatch=0`）。ctest と起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CPU）で確かめる。
+- verify: `cmake --build build --config Debug --target EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-WORLD-TICK-CACHE`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-WORLD-TICK-CACHE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-WORLD-TICK-CACHE/check`
 - paths: Library/Core/Private/Object, Library/Core/Public/Object, Library/Core/Private/Component, TASKS.md, PROGRESS.md
 - notes: 危険地帯（Object の寿命）。
 
 ## SCN-MEGA-WORLD-TRANSFORM-NOTIFY: 変換の変化を World の dirty の列へ積み、ワールドの変換の更新をその列だけにする
 - status: todo
-- done-when: 変換の設定・親の移動・親の付け替え・破棄が World の dirty の列へ積まれ（子へ伝える）、`UpdateWorldTransforms`（`World.cpp` 1284〜1296 行付近）は列だけを処理する。開発ビルドでは毎フレームの全走査の結果と一致することを確かめる（`WORLD_TRANSFORM_DIRTY mismatch=0`）。5万個静止で 0.1 ms 以下、1% 移動で移動数に比例。ctest と起動画面の比較が pass。
-- verify: `cmake --build build --config Debug --target Game EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
+- done-when: 変換の設定・親の移動・親の付け替え・破棄が World の dirty の列へ積まれ（子へ伝える）、`UpdateWorldTransforms`（`World.cpp` 1284〜1296 行付近。919〜945 行付近も同じ列にそろえる）は列だけを処理する。開発ビルドで毎フレームの全走査の結果と一致することを確かめる（`WORLD_TRANSFORM_DIRTY mismatch=0`）。ctest と起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CPU）で確かめる。
+- verify: `cmake --build build --config Debug --target EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-WORLD-TRANSFORM-NOTIFY`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-WORLD-TRANSFORM-NOTIFY`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-WORLD-TRANSFORM-NOTIFY`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-WORLD-TRANSFORM-NOTIFY/check`
 - paths: Library/Core/Private/Object, Library/Core/Public/Object, TASKS.md, PROGRESS.md
-- notes: 危険地帯。919〜945 行付近の更新も同じ列にそろえる。
+- notes: 危険地帯。
 
 ## SCN-MEGA-WORLD-TRANSFORM-INTERP: 描画用の変換の補間を、補間が有効な Entity と変わった Entity だけにする
 - status: todo
-- done-when: `UpdateRenderTransforms`（`World.cpp` 1352〜1397 行付近）が、補間が有効な Entity の集合と dirty の列だけを処理する。補間だけの変化（固定ステップの間の補間）も描画の dirty になる。開発ビルドで全走査と一致（`WORLD_RENDER_TRANSFORM mismatch=0`）。5万個静止で 0.1 ms 以下。ctest（補間を含む）と起動画面の比較が pass。
-- verify: `cmake --build build --config Debug --target Game EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
+- done-when: `UpdateRenderTransforms`（`World.cpp` 1352〜1397 行付近）が、補間が有効な Entity の集合と dirty の列だけを処理する。補間だけの変化（固定ステップの間の補間）も描画の dirty になる。開発ビルドで全走査と一致（`WORLD_RENDER_TRANSFORM mismatch=0`）。ctest（補間を含む）と起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CPU）で確かめる。
+- verify: `cmake --build build --config Debug --target EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-WORLD-TRANSFORM-INTERP`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-WORLD-TRANSFORM-INTERP`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-WORLD-TRANSFORM-INTERP/check`
 - paths: Library/Core/Private/Object, Library/Core/Public/Object, TASKS.md, PROGRESS.md
 - notes: 危険地帯。
 
 ## SCN-MEGA-WORLD-RENDER-DIRTY: 描画の状態の変化の通知を網羅し、全走査と並べて一致を確かめる（準備）
 - status: todo
-- done-when: MegaGeometry・Mesh・Light・Board の Component の可視・有効の変化、プロパティの直接の変更（メッシュの差し替え・材質・影の設定）、変換の変化、生成・破棄が、World の描画の dirty の列に自分を積む（`MarkRenderStateDirty` 等）。`SyncToSceneView` はまだ全走査のままで、開発ビルドで「列から作った変更の集合」と全走査で見つけた変更が毎フレーム一致する（`RENDER_DIRTY mismatch=0`。mega-stress の移動・ストリーミング・シーンの切り替えを含む）。
-- verify: `cmake --build build --config Debug --target Game EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
+- done-when: MegaGeometry・Mesh・Light・Board の Component の可視・有効の変化、プロパティの直接の変更（メッシュの差し替え・材質・影の設定）、変換の変化、生成・破棄が、World の描画の dirty の列に自分を積む（`MarkRenderStateDirty` 等。今は Component ごとの dirty の印はあるが、印を見るために `SyncEntityRecursive` が毎フレーム全 Entity をたどっている）。`SyncToSceneView` はまだ全走査のままで、開発ビルドで「列から作った変更の集合」と全走査で見つけた変更が毎フレーム一致する（`RENDER_DIRTY mismatch=0`。移動・ストリーミング・シーンの切り替えを含む）。
+- verify: `cmake --build build --config Debug --target EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB" --no-tests=error --output-on-failure --timeout 180`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-WORLD-RENDER-DIRTY`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-WORLD-RENDER-DIRTY/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Private/Object, Library/Core/Public/Object, Library/Core/Private/Component, Library/Core/Public/Component, Library/Core/Private/Rendering/SceneView.cpp, TASKS.md, PROGRESS.md
-- notes: 危険地帯（Public API）。
+- notes: 危険地帯（Public API）。dirty でない MegaGeometry にも毎フレームプロキシを作って補助のレジストリへ出している箇所（`World.cpp` 1542 行付近）も、変化のときだけにする。
 
 ## SCN-MEGA-SCENE-SLOTS: MegaGeometry のインスタンスに席を割り当て、席の寿命の規則を入れる（準備）
 - status: todo
-- done-when: SceneView が MegaGeometry のプロキシに範囲単位の空きリストで席を割り当て、席ごとに変化の通し番号を持つ。散布のバッチ・区画の席は空間的にまとまった範囲で割り当て、範囲ごとの AABB は所属する全席を常に包む（移動・メッシュの差し替え・部分の追加削除で直す）。解放した席は、削除の適用の確認と、その席を最後に使った GPU の提出の完了の両方が済むまで再利用しない（ゲームの FrameNumber の経過では決めない）。開発ビルドで、席の割り当てと AABB の包含を毎フレーム検査する（`MEGA_SLOTS violations=0`、mega-stress のストリーミングを含む）。
-- verify: `cmake --build build --config Debug --target Game EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
+- done-when: SceneView が MegaGeometry のプロキシに範囲単位の空きリストで席を割り当て、席ごとに変化の通し番号を持つ。散布のバッチ・区画の席は空間的にまとまった範囲で割り当て、範囲ごとの AABB は所属する全席を常に包む（移動・メッシュの差し替え・部分の追加削除で直す）。解放した席は、削除の適用の確認と、その席を最後に使った GPU の提出の完了の両方が済むまで再利用しない（ゲームの FrameNumber の経過では決めない）。開発ビルドで、席の割り当てと AABB の包含を毎フレーム検査する（`MEGA_SLOTS violations=0`、ストリーミングを含む）。
+- verify: `cmake --build build --config Debug --target EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB" --no-tests=error --output-on-failure --timeout 180`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-SCENE-SLOTS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-SCENE-SLOTS/check`
 - paths: Library/Core/Public/Rendering/SceneView.h, Library/Core/Private/Rendering/SceneView.cpp, Library/Core/Public/Rendering/SceneProxy.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, TASKS.md, PROGRESS.md
 - notes: 危険地帯（Public API・寿命）。メッシュ表が指す資源・BLAS にも同じ保持の条件を使う。
 
 ## SCN-MEGA-SCENE-CONFIRM: 差分を FramePacket で運び、RenderThread が写しへ適用した後に確認を公開する（準備）
 - status: todo
 - done-when: パケットが全量に加えて「確認以降に変わった席」の値の写しと解放した範囲を運ぶ。RenderThread は、マルチスレッド・シングルスレッドのどちらの経路でも（`RenderWorld.cpp` 353 行付近の直接の経路を含む）共通の場所で差分を自分の写しへ適用してから、適用したパケットの FrameNumber とシーンの世代を atomic で公開する（描画を見送ったフレームも、適用したなら確認する）。ゲーム側は確認まで差分を積み直し、上限を超えたら全量の再同期の印を立てる。開発ビルドで、差分を当てた写しと全量が毎フレーム一致する（`MEGA_SCENE_DELTA mismatch=0`。パケットの破棄・描画の見送り・シーンの切り替え・削除後の席の再利用・静止中の常駐の変化を含む）。
-- verify: `cmake --build build --config Debug --target Game EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
+- verify: `cmake --build build --config Debug --target EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB" --no-tests=error --output-on-failure --timeout 180`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-SCENE-CONFIRM`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-SCENE-CONFIRM/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-stress,mega-bananas -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Public/Rendering/FramePacket.h, Library/Core/Private/Rendering/RenderWorld.cpp, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/SceneView.h, Library/Core/Private/Rendering/SceneView.cpp, TASKS.md, PROGRESS.md
 - notes: 危険地帯（FramePacket・RenderThread）。RenderThread から GameThread へはデータを戻さない（確認の番号だけ）。GPU に未反映の差分は RenderThread 側に持つ。
 
 ## SCN-MEGA-SCENE-DELTA: プロキシの同期を dirty の列に切り替え、全量の写しをやめる（切替）
 - status: todo
-- done-when: `SyncToSceneView` の MegaGeometry の分が描画の dirty の列だけを処理し、`RemoveStaleMegaGeometryProxies` と全量の写し（`RenderingCoordinator.cpp` 2119 行付近）と `ApplyPreviousObjectStates` の毎回の作り直し（2325〜2352 行付近）が無くなる。消費者（Pass・VSM・CSM・RT）は RenderThread の写しと「今フレーム変わった席」を読む。開発用の `--mega-scene-full-sync` で旧経路に戻せ、両経路の比較が pass。5万個静止で gt の MegaGeometry の分が 0.2 ms 以下。
-- verify: `cmake --build build --config Debug --target Game EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
+- done-when: `SyncToSceneView` の MegaGeometry の分が描画の dirty の列だけを処理し、`RemoveStaleMegaGeometryProxies` と全量の写し（`RenderingCoordinator.cpp` 2119 行付近）と `ApplyPreviousObjectStates` の毎回の作り直し（2325〜2352 行付近）が無くなる。消費者（Pass・VSM・CSM・RT）は RenderThread の写しと「今フレーム変わった席」を読む。開発用の `--mega-scene-full-sync` で旧経路に戻せ、両経路の起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CPU）で確かめる。
+- verify: `cmake --build build --config Debug --target EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-SCENE-DELTA`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-SCENE-DELTA`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-SCENE-DELTA`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-SCENE-DELTA/check`
 - paths: Library/Core/Private/Object/World.cpp, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, TASKS.md, PROGRESS.md
 - notes: 危険地帯。RT のスナップショット（784〜850 行付近）はこの項目ではまだ写しから 1 本ずつ作ってよい。
 
+## SCN-MEGA-MEASURE-CPU: 節目の計測: CPU（ワールドと同期）の改修の効果を測る
+- status: todo
+- done-when: STRESS-STREAMING の基準と同じ 3 つ（5万個の静止・1% 移動・1% 移動 + 64 m 区画）と、バナナ 1万・3万本 overview で、gt・rt・GPU の median と p95 とスコープの上位を測り、基準との比較を PROGRESS の表に書く。目標: 5万個静止で `World.BuildTickSnapshot` ≤ 0.1 ms、ワールドと描画の変換の更新がそれぞれ ≤ 0.1 ms、gt の MegaGeometry の同期の分 ≤ 0.2 ms、1% 移動でこれらが移動数に比例。届かないスコープは名指して、直す項目を `SCN-MEGA-FIX-<名前>` として次へ足す（この項目の中で直さない）。Debug の起動画面で検証レイヤーのエラーが 0。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static`
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-CPU-debug`
+- paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
+
 ## SCN-MEGA-BVH-LEAF-SPLIT: BVH を持たないメッシュに、葉 8 クラスタ以下の階層の BVH を作る（準備）
 - status: todo
-- done-when: MegaGeometryResourceStore が、v1.0・手続き・実行時に作るメッシュ（BVH が無いもの）に、葉の上限 8 クラスタ（`CookedMeshFormat.h` 71 行付近）を守る多段の BVH を作る（空間で分けて葉を作り、上の段を組む）。作った BVH の検査（全クラスタが 1 回ずつ葉にある・節の境界が子を包む）を開発ビルドで行い、`MEGA_BVH_BUILD violations=0`。まだ描画には使わない。起動画面の比較が pass。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-BVH-LEAF-SPLIT`
-- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
+- done-when: MegaGeometryResourceStore が、v1.0・手続き・実行時に作るメッシュ（BVH が無いもの）に、葉の上限 8 クラスタ（`CookedMeshFormat.h` 71 行付近）を守る多段の BVH を作る（空間で分けて葉を作り、上の段を組む）。作った BVH の検査（全クラスタが 1 回ずつ葉にある・節の境界が子を包む）を開発ビルドで行い、`MEGA_BVH_BUILD violations=0`。まだ描画には使わない。起動画面の比較と ctest が pass。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-BVH-LEAF-SPLIT`
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Library/Core/Private/Rendering/MegaGeometryResourceStore.cpp, Library/Core/Private/Rendering/MegaGeometryResourceStore.h, Library/Core/Public/Rendering/MegaGeometry, TASKS.md, PROGRESS.md
 
 ## SCN-MEGA-FLAT-TO-BVH: 全インスタンスを BVH の経路で描く（平らな経路は残すが使わない）
 - status: todo
 - done-when: BVH-LEAF-SPLIT で作った BVH を使い、全インスタンスを BVH の経路へ流す。平らな経路（`cluster_cull.comp`・FirstGroup の接頭和、`MegaGeometryPass.cpp` 1264 行付近）は `--mega-flat-path` で戻せるように残す。起動画面・旋回の比較と ctest が pass。
-- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-FLAT-TO-BVH`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FLAT-TO-BVH`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-FLAT-TO-BVH-orbit`
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering/MegaGeometryPass.h, Assets/Shaders, TASKS.md, PROGRESS.md
 - notes: 起動画面の球・岩が通る経路。
 
 ## SCN-MEGA-GPU-SCENE-PREP: シェーダーのインスタンスの読み方を 1 つの関数とメッシュ表へ寄せ、表の更新を共通の前段に置く（準備・見た目は不変）
 - status: todo
-- done-when: cull・visbuffer・vsm_mega・megageometry.vert の MegaInstance の直接の読みを `LoadMegaInstance(index)` に寄せる。メッシュ表（binding を追加）を書き、関数はメッシュ表から補って同じ値を返す。インスタンス表・メッシュ表の更新を、最初にそれを読むパス（影のパスを含む）より前の共通の前段に移す。起動画面・バナナの比較と ctest が pass。
-- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-GPU-SCENE-PREP`
+- done-when: cull・visbuffer・vsm_mega・megageometry.vert の MegaInstance の直接の読みを `LoadMegaInstance(index)` に寄せる。メッシュ表（binding を追加）を書き、関数はメッシュ表から補って同じ値を返す。インスタンス表・メッシュ表の更新を、最初にそれを読むパス（影のパスを含む）より前の共通の前段に移す。起動画面・バナナの比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-GPU-SCENE-PREP`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-PREP/det`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: GPUMegaInstance は `MegaGeometryPass.h` 437〜455 行付近、影の表は 37〜48 行付近。
 
 ## SCN-MEGA-GPU-SCENE-SCATTER: インスタンス表を席ごとに GPU へ常駐させ、変わった席だけを散在更新する（切替）
 - status: todo
-- done-when: 表が席ごと 128 B の device-local になり、変わった席だけを staging から compute で散在書き込みする。インスタンス表・メッシュ表・常駐（ページ表）の 3 つの更新の条件を分け、常駐の表は両方の描画パスと VSM で同じ版を使う（今の `SyncPageTable` の frame slot ごとの版、`MegaGeometryPass.cpp` 2832 行付近）。インスタンスも常駐も変わらないフレームは `MEGA_SCENE_UPLOAD bytes=0`。`--mega-scene-full-sync` との比較が pass。5万個で `RecordFrameCommand` ≤ 1 ms。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-GPU-SCENE-SCATTER`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas,mega-stress -Cycles 3`
+- done-when: 表が席ごと 128 B の device-local になり、変わった席だけを staging から compute で散在書き込みする。インスタンス表・メッシュ表・常駐（ページ表）の 3 つの更新の条件を分け、常駐の表は両方の描画パスと VSM で同じ版を使う（今の `SyncPageTable` の frame slot ごとの版、`MegaGeometryPass.cpp` 2832 行付近）。インスタンスも常駐も変わらないフレームは `MEGA_SCENE_UPLOAD bytes=0`（ログで確かめる）。`--mega-scene-full-sync` との起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-UPLOAD）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-SCATTER`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-GPU-SCENE-SCATTER`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-SCATTER/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: 危険地帯（GPU メモリ）。転送の道は `RenderResources.cpp` 66・1561 行付近のリングと別の予算にする（最初に 1540〜1580 行付近を読んで決める）。
 
 ## SCN-MEGA-GPU-SCENE-GROW: 席の表の拡張を GPU のコピーで行い、古いバッファとメッシュ表の資源を GPU が使い終わるまで保つ
 - status: todo
-- done-when: 席の数が容量を超えたら新しい表へ GPU でコピーし、古いバッファは `m_RetiredBuffers` へ回す。メッシュ表が指す資源（頂点・インデックス・クラスタ・BVH・ページ表）は、その資源を最後に使った提出が終わるまで解放しない。mega-stress のストリーミングで拡張と縮小が起きても検証レイヤーのエラーが 0、`mismatch=0`。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-GPU-SCENE-GROW`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas,mega-stress -Cycles 3`
+- done-when: 席の数が容量を超えたら新しい表へ GPU でコピーし、古いバッファは `m_RetiredBuffers` へ回す。メッシュ表が指す資源（頂点・インデックス・クラスタ・BVH・ページ表）は、その資源を最後に使った提出が終わるまで解放しない。ストリーミングで拡張と縮小が起きても `mismatch=0`、cycle smoke が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-GROW`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-GROW/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 危険地帯（寿命）。
+- notes: 危険地帯（寿命）。検証レイヤーは節目の計測の Debug で見る。
 
 ## SCN-MEGA-GPU-SCENE-HISTORY: 前の変換（prevWorld）を、最後に描いたフレームを基準に保つ
 - status: todo
-- done-when: 席の prevWorld は `RenderedObjectHistory.h` 29 行付近の契約（最後に描いたフレームの変換）に従い、RenderThread 側で描画の履歴を持つ。動いて止まった席の 1 回だけの更新も描画の基準で行う（パケットの破棄・描画の見送りを挟んでも速度が 0 や二重にならない）。mega-stress の 1% 移動で、開発ビルドの速度の検査（全量の経路の速度と一致）が `MEGA_HISTORY mismatch=0`。TAA の撮影（移動の連続撮影）を開いて動く物の残像が増えていない。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-GPU-SCENE-HISTORY`
+- done-when: 席の prevWorld は `RenderedObjectHistory.h` 29 行付近の契約（最後に描いたフレームの変換）に従い、RenderThread 側で描画の履歴を持つ。動いて止まった席の 1 回だけの更新も描画の基準で行う（パケットの破棄・描画の見送りを挟んでも速度が 0 や二重にならない）。1% 移動で、開発ビルドの速度の検査（全量の経路の速度と一致）が `MEGA_HISTORY mismatch=0`。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-HISTORY`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-HISTORY/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-GPU-SCENE-HISTORY`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: 危険地帯。
 
 ## SCN-MEGA-INSTANCE-BATCH: 散布のバッチの部品（範囲の確保・一括の書き込み・部分更新・解放）を足し、バナナと区画をそれで置く
 - status: todo
 - done-when: `MegaGeometryInstancesComponent` が範囲を確保し、`SetInstances`・`UpdateInstances(first, count)`・破棄での解放を持ち、部分更新で範囲の AABB を直す。バナナが Entity 1 つで置かれる（`MEGA_BANANAS_PLACED ... batches=1`）。mega-stress の区画がバッチで読み込み・解放される（`--stress-batch-cells`）。1万本のバナナの比較が pass。cycle smoke で資源の数が増えない。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas,mega-stress -Cycles 3`
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-INSTANCE-BATCH/det`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/CMakeLists.txt, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
 - notes: 危険地帯（Public API）。
 
 ## SCN-MEGA-RT-SELECT: TLAS に入れるインスタンスを席ごとの配列で持ち、選ぶ規則を決める
 - status: todo
-- done-when: RT の instance 配列を席ごとに持ち、差分で直す。TLAS に入れるのは、カメラから 120 m 以内のインスタンスを近い順に上限 65,536 本まで（規則と、外れた数を `RT_SCENE instances= excluded=` に出す）。この項目では Update は毎フレーム呼んでよい。起動画面の旋回の比較（RT の影・RTGI・DDGI を含む見た目）が pass。
+- done-when: RT の instance 配列を席ごとに持ち、差分で直す。TLAS に入れるのは、カメラから 120 m 以内のインスタンスを近い順に上限 65,536 本まで（規則と外れた数を `RT_SCENE instances= excluded=` に出す）。この項目では Update は毎フレーム呼んでよい。起動画面の比較（RT の影・RTGI・DDGI を含む見た目）が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-RT-SELECT-orbit`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-RT-SELECT`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-RT-SELECT`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-RT-SELECT/check`
 - paths: Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RayTracingSceneSubsystem.h, TASKS.md, PROGRESS.md
 - notes: 対象は 784〜850 行付近。RHI/Vulkan は変えない（`VulkanCommandList.cpp` 1302 行付近は Update のたびに全量を変換・転送する）。共有の TLAS は RT の影・DDGI も使うので、遠方の影響を RTGI だけと見なさない。
 
 ## SCN-MEGA-RT-SKIP: TLAS の更新を、集合・変換・BLAS の版が変わったフレームだけにする
 - status: todo
-- done-when: frame slot ごとに、選んだ集合・変換・BLAS の版（準備完了・交換）を覚え、全部一致するフレームは Update を呼ばない（`AccelerationStructureBuild` ≤ 0.05 ms）。カメラの移動で 120 m 内の集合が変わる・追加削除・BLAS の交換では呼ぶ。変化のあるフレーム（全量の転送を含む）の p95 を記録する。バナナと起動画面の比較が pass。
+- done-when: frame slot ごとに、選んだ集合・変換・BLAS の版（準備完了・交換）を覚え、全部一致するフレームは Update を呼ばない（ログに `RT_SCENE update_skipped=` を出す）。カメラの移動で 120 m 内の集合が変わる・追加削除・BLAS の交換では呼ぶ。バナナと起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-UPLOAD）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-RT-SKIP-orbit`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-RT-SKIP`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-RT-SKIP/det`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-RT-SKIP/play`
 - paths: Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RayTracingSceneSubsystem.h, TASKS.md, PROGRESS.md
 - notes: 対象は 1037〜1085 行付近（同数なら毎フレーム Update、1043 行付近）。
 
 ## SCN-MEGA-SHADOW-DIRTY: VSM・CSM の無効化を、変わった席の旧・新の境界と、常駐・メッシュの変化の通知で行う
 - status: todo
-- done-when: VSM の動きの記録（`VirtualShadowMapPass.cpp` 736〜753 行付近）が、本数ではなく変わった席の数に比例する。バッチの一部が動いても無効化はその旧・新の境界だけ。静止した席でも、そのメッシュのページの常駐・メッシュの世代・影の設定が変わったら、使っている席・範囲へ通知して無効化する（今の署名に入っている `PageTableVersion` の役目を保つ）。光源・クリップマップ側の既存の無効化は残す。CSM の投影物の範囲（`DirectionalShadowLightMatrices.cpp` 283〜450 行付近）は範囲の AABB で求める。1% 移動で `VSM_PAGES` の無効化が移動に比例する。影の表の毎フレームの FNV（`MegaGeometryPass.cpp` 1331 行付近）をやめる。起動画面の比較が pass。
+- done-when: VSM の動きの記録（`VirtualShadowMapPass.cpp` 736〜753 行付近）が、本数ではなく変わった席の数に比例する。バッチの一部が動いても無効化はその旧・新の境界だけ。静止した席でも、そのメッシュのページの常駐・メッシュの世代・影の設定が変わったら、使っている席・範囲へ通知して無効化する（今の署名に入っている `PageTableVersion` の役目を保つ）。光源・クリップマップ側の既存の無効化は残す。CSM の投影物の範囲（`DirectionalShadowLightMatrices.cpp` 283〜450 行付近）は範囲の AABB で求める。影の表の毎フレームの FNV（`MegaGeometryPass.cpp` 1331 行付近）をやめる。起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-UPLOAD）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-SHADOW-DIRTY`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-SHADOW-DIRTY`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-SHADOW-DIRTY`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-SHADOW-DIRTY/check`
 - paths: Library/Core/Private/Rendering/VirtualShadowMapPass.cpp, Library/Core/Private/Rendering/DirectionalShadowLightMatrices.cpp, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: 危険地帯。
 
+## SCN-MEGA-MEASURE-UPLOAD: 節目の計測: GPU に常駐する表・RT・影の改修の効果を測る
+- status: todo
+- done-when: MEASURE-CPU と同じ 3 つの負荷とバナナ 3万本 overview で、gt・rt・GPU の median と p95、`MegaGeometryPass.RecordFrameCommand`、`MEGA_SCENE_UPLOAD bytes`、`AccelerationStructureBuild`、VSM の無効化のページ数を測って PROGRESS の表に書く。目標: 5万個で `RecordFrameCommand` ≤ 1 ms、静止で upload 0 と `AccelerationStructureBuild` ≤ 0.05 ms、1% 移動で upload・VSM の無効化が移動数に比例。カメラパスの再生中に TLAS の更新があるフレームの p95 も書く。1% 移動の連続撮影を開いて動く物に残像が増えていない（TAA と prevWorld）。届かないものは `SCN-MEGA-FIX-<名前>` を次へ足す。Debug の起動画面で検証レイヤーのエラーが 0。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-UPLOAD/static`
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-UPLOAD-debug`
+- paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
+
 ## SCN-MEGA-BVH-INDIRECT: BVH の段を間接 dispatch・固定容量の列にする
 - status: todo
-- done-when: 段 1 以降を GPU のカウンタから書いた引数で dispatch する（`ICommandList.h` 382 行付近）。列は固定容量で、書く前に境界を検査し、件数は頭打ち、引数は min(count, cap)、溢れを `bvh_overflow` に数える。2 パス目用の入力は別のバッファに持つ（`MegaGeometryPass.cpp` 1979 行付近の各パスの頭の消去と分ける）。`bvh_queue_bytes` が本数によらず一定。1万本の Cull1+Cull2 ≤ 2.5 ms。比較と ctest が pass。
-- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
+- done-when: 段 1 以降を GPU のカウンタから書いた引数で dispatch する（`ICommandList.h` 382 行付近）。列は固定容量で、書く前に境界を検査し、件数は頭打ち、引数は min(count, cap)、溢れを `bvh_overflow` に数える。2 パス目用の入力は別のバッファに持つ（`MegaGeometryPass.cpp` 1979 行付近の各パスの頭の消去と分ける）。`bvh_queue_bytes` が本数によらず一定（ログ）。バナナの比較と ctest が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CULL）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-BVH-INDIRECT`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-BVH-INDIRECT/det`
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: 今は最悪値で dispatch（1983〜2009 行付近）、列は全節の総和（1351〜1373 行付近）。
 
 ## SCN-MEGA-INSTANCE-CULL: 範囲とインスタンスの専用のカリングを、BVH の段 0 の前に置く
 - status: todo
-- done-when: 範囲（AABB）→ 席の順に判定する（1 席 1 スレッド。メッシュの球 × 倍率の締まった球で、視錐台・HZB・距離・画素の大きさ）。通った席だけを BVH の段 1 へ渡す。10万本 horizon で、範囲 + インスタンスの判定 ≤ 0.3 ms、描いたクラスタ数が PROBE-100K 以下。比較が pass。
+- done-when: 範囲（AABB）→ 席の順に判定する（1 席 1 スレッド。メッシュの球 × 倍率の締まった球で、視錐台・HZB・距離・画素の大きさ）。通った席だけを BVH の段 1 へ渡す。バナナの比較と起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CULL）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000 -OutDir .harness/runs/scene-capture/SCN-MEGA-INSTANCE-CULL`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-INSTANCE-CULL-orbit`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-INSTANCE-CULL/det`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-INSTANCE-CULL`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: 範囲の段は PROBE-100K が要ると判断したときだけ作る（要らなければ席の判定だけ）。
 
 ## SCN-MEGA-BINNING-PREP: 可視クラスタの全体の列と、区間 × ハード/ソフトの数え・接頭和を足す（準備・描画は旧経路）
 - status: todo
-- done-when: カリングが今の書き込みに加えて全体の列へも積む。数えと接頭和を計算し、開発ビルドで新旧を「席・メッシュ・クラスタ・LOD の集合」として比べて一致を出す（順番では比べない。`MEGA_BIN mismatch=0`）。全体の枠と溢れを `MEGA_CAPACITY` に出す。
+- done-when: カリングが今の書き込みに加えて全体の列へも積む。数えと接頭和を計算し、開発ビルドで新旧を「席・メッシュ・クラスタ・LOD の集合」として比べる（順番では比べない。`MEGA_BIN mismatch=0`）。全体の枠と溢れを `MEGA_CAPACITY` に出す。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-BINNING-PREP`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-BINNING-PREP/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-BINNING-PREP/check`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering/MegaGeometryPass.h, TASKS.md, PROGRESS.md
 - notes: 区間ごとに事前に容量を取る形（1526 行付近）は区間の数 × 419 万件まで膨らむ。
 
 ## SCN-MEGA-BINNING-SWITCH: 描画・記録・ソフトの一覧を binning の結果で詰めて書く（切替）
 - status: todo
-- done-when: ハードの間接描画はハードの分だけになる（`SW_RASTER_BIN zeroed=0`）。records_args・records・ソフトの一覧を詰めた範囲で作り、記録の番号（25 bit、`VisibilityBuffer.h` 37 行付近）は両パスを通じて保ち、ハード・ソフトの一覧は同じ記録を参照する（2 パス目の詰め直しで 1 パス目が ID のバッファへ書いた番号を上書きしない）。`--mega-binning=off` で旧経路に戻せる。1万本 overview の `MegaGeometryDraw1` ≤ 0.8 ms。起動画面・バナナ・旋回の比較が pass。mega-stress の `command_bytes` が区間の数によらない。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-BINNING-SWITCH`
+- done-when: ハードの間接描画はハードの分だけになる（`SW_RASTER_BIN zeroed=0`）。records_args・records・ソフトの一覧を詰めた範囲で作り、記録の番号（25 bit、`VisibilityBuffer.h` 37 行付近）は両パスを通じて保ち、ハード・ソフトの一覧は同じ記録を参照する（2 パス目の詰め直しで 1 パス目が ID のバッファへ書いた番号を上書きしない）。`--mega-binning=off` で旧経路に戻せる。起動画面・バナナの比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CULL）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-BINNING-SWITCH`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-BINNING-SWITCH-orbit`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-BINNING-SWITCH`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-BINNING-SWITCH/det`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Private/Rendering/VisibilityRasterPass.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: 危険地帯。GBuffer の経路（sink 無し）も同じ詰めた列を描く。今の番号の対応は `visbuffer_records.comp` 113 行付近。
 
 ## SCN-MEGA-PREV-HIZ: HZB を 2 枚にし、描いた番号・VP（ジッタ込み）・寸法・シーンの世代を契約として持たせる（準備）
 - status: todo
 - done-when: 2 フレーム目から `MEGA_PREV_HIZ ready=1` が出る。エポックの先頭・解像度の変更・カメラの切れ目・全量の再同期・パケットの飛びでは `ready=0` と理由が出る。判定にはまだ使わない。起動画面の比較が pass。
-- verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-PREV-HIZ`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-PREV-HIZ`
 - paths: Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, Assets/Shaders/Common/MegaGeometryCull.glsl, TASKS.md, PROGRESS.md
 - notes: HiZPyramid（`HiZPyramidPass.h` 28〜65 行付近）を 2 つ持つ。VP は自分で保存し、`PreviousMainCamera`（前のゲームパケット基準、`RenderingCoordinator.cpp` 2091 行付近）には頼らない。
 
 ## SCN-MEGA-TWOPASS-INSTANCES: 範囲とインスタンスの 1 パス目を前フレームの HZB で判定し、隠れたものを 2 パス目へ回す（切替）
 - status: todo
-- done-when: 範囲・インスタンスの 1 パス目が前の HZB で判定し、隠れたものは 2 パス目の別の列へ積む。HZB は 1 パス目の深度（ソフトの合流の後、`VisibilityRasterPass.cpp` 1554 行付近）から作る。契約が合わないフレームは遮蔽を使わない。2 パス目の列が溢れたら、溢れた範囲を遮蔽なしで走査し直して描く（取りこぼさない）。`--mega-twopass=legacy` で旧経路に戻せる。旋回・起動画面の比較が pass。安全（遮蔽 Off との一致）と速度（Cull・描いた数）は分けて記録する。
-- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
+- done-when: 範囲・インスタンスの 1 パス目が前の HZB で判定し、隠れたものは 2 パス目の別の列へ積む。HZB は 1 パス目の深度（ソフトの合流の後、`VisibilityRasterPass.cpp` 1554 行付近）から作る。契約が合わないフレームは遮蔽を使わない。2 パス目の列が溢れたら、溢れた範囲を遮蔽なしで走査し直して描く（取りこぼさない）。`--mega-twopass=legacy` で旧経路に戻せる。旋回（遮蔽 Off との一致）と起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CULL）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-TWOPASS-INSTANCES-orbit`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000 -OutDir .harness/runs/scene-capture/SCN-MEGA-TWOPASS-INSTANCES`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-TWOPASS-INSTANCES`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, Library/Core/Private/Rendering/VisibilityRasterPass.cpp, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 危険地帯。
 
 ## SCN-MEGA-TWOPASS-CLUSTERS: 節とクラスタの 2 パス遮蔽も同じ形にし、見えたビットを消す
 - status: todo
-- done-when: 節・葉・クラスタの 1 パス目も前の HZB で判定し、隠れたものを 2 パス目の列へ回す（溢れは TWOPASS-INSTANCES と同じ規則）。見えたビットと `UpdateVisibilityLayout`（`MegaGeometryPass.cpp` 3194〜3372 行付近）を消し、ページ要求のフレームの印（`visibleWriteStamp` 相当）は残す。旋回・起動画面・バナナの比較と ctest が pass。1万本の描いた数が基準の ±1%。
-- verify: `cmake --build build --config Debug --target Game RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-TWOPASS-CLUSTERS`
+- done-when: 節・葉・クラスタの 1 パス目も前の HZB で判定し、隠れたものを 2 パス目の列へ回す（溢れは TWOPASS-INSTANCES と同じ規則）。見えたビットと `UpdateVisibilityLayout`（`MegaGeometryPass.cpp` 3194〜3372 行付近）を消し、ページ要求のフレームの印（`visibleWriteStamp` 相当）は残す。旋回・バナナの比較と ctest が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CULL）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-TWOPASS-CLUSTERS-orbit`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-TWOPASS-CLUSTERS/det`
+- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 危険地帯。GeometryPageRequestVulkanTest は `cluster_cull.comp` を直接使うので定数の変更に追従させる。
 
+## SCN-MEGA-MEASURE-CULL: 節目の計測: カリング・描画の改修の効果を測る
+- status: todo
+- done-when: バナナ 1万本 overview と 10万本 horizon で、GPU・gt・rt の median と p95、パスごとの時間、描いたクラスタ数、`visibility_bytes`・`bvh_queue_bytes`・溢れを測って PROGRESS の表に書く。目標: 1万本の Cull1+Cull2 ≤ 2.5 ms、`MegaGeometryDraw1` ≤ 0.8 ms、10万本の範囲 + インスタンスの判定 ≤ 0.3 ms、1万本の描いたクラスタ数が基準の ±1%、`visibility_bytes` のバナナの分が 0、溢れ 0。mega-stress 5万個で `command_bytes` が区間の数によらない。届かないものは `SCN-MEGA-FIX-<名前>` を次へ足す。Debug の起動画面で検証レイヤーのエラーが 0。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CULL/10k`
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-CULL-debug`
+- paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
+
 ## SCN-MEGA-VSM-RANGES: VSM の組の判定を、受け手距離内の範囲とインスタンスに絞る
 - status: todo
-- done-when: 組の事前の絞り込み（`VirtualShadowMapRaster.cpp` 978 行付近）の前に範囲（AABB）の判定を置き、受け手距離 + 太陽方向の延長の外の範囲は組を作らない。10万本の再生で `VsmCullPairs` の p95 が PROBE-VSM の 1/5 以下。影の欠けが無い（撮影を開く）。
+- done-when: 組の事前の絞り込み（`VirtualShadowMapRaster.cpp` 978 行付近）の前に範囲（AABB）の判定を置き、受け手距離 + 太陽方向の延長の外の範囲は組を作らない。起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-VSM）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-VSM-RANGES`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-VSM-RANGES`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-VSM-RANGES/check`
 - paths: Assets/Shaders/vsm_mega_cull_pairs.comp, Library/Core/Private/Rendering/VirtualShadowMapRaster.cpp, Library/Core/Public/Rendering/VirtualShadowMapRaster.h, TASKS.md, PROGRESS.md
 
 ## SCN-MEGA-VSM-BVH-SUN: 太陽の VSM のクラスタの選択を、BVH の段を正射影の LOD でたどる形にする
 - status: todo
-- done-when: 通った組ごとにクラスタを全部見る形（`vsm_mega_cull.comp` 155〜175 行付近）を、太陽のクリップマップについて BVH の段（BVH-INDIRECT と同じ列の安全策）でたどる形にする。点光源の面は旧経路のまま。10万本の再生で `VsmCullMega` の p95 ≤ 1.5 ms、`VSM_MEGA_CULL overflow=0`。旋回の比較が pass。
+- done-when: 通った組ごとにクラスタを全部見る形（`vsm_mega_cull.comp` 155〜175 行付近）を、太陽のクリップマップについて BVH の段（BVH-INDIRECT と同じ列の安全策）でたどる形にする。点光源の面は旧経路のまま。`VSM_MEGA_CULL overflow=0`。起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-VSM）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-VSM-BVH-SUN`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-VSM-BVH-SUN-orbit`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-VSM-BVH-SUN`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-VSM-BVH-SUN/check`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/VirtualShadowMapRaster.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 
 ## SCN-MEGA-VSM-BVH-POINT: 点光源の VSM のクラスタの選択も BVH の段でたどる
 - status: todo
-- done-when: 点光源の面（立方体の各面の透視投影の LOD）でも BVH の段でたどる。夜の起動画面（`--night`）の撮影を開いて点光源の影が変わらず、点光源の影の計測（`VirtualizationAcceptance.md` の段9の測り方）が悪化しない。
+- done-when: 点光源の面（立方体の各面の透視投影の LOD）でも BVH の段でたどる。夜の起動画面の撮影を開いて点光源の影が変わらない。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-VSM）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -Night -OutDir .harness/runs/startup-capture/SCN-MEGA-VSM-BVH-POINT`
-- paths: Assets/Shaders, Library/Core/Private/Rendering/VirtualShadowMapRaster.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: `CaptureStartupScene.ps1` に夜の指定が無ければ、既存の `--night` を渡す引数を足す（paths に `Scripts/CaptureStartupScene.ps1` を加えてよい）。
+- paths: Assets/Shaders, Library/Core/Private/Rendering/VirtualShadowMapRaster.cpp, Library/Core/Public/Rendering, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
+- notes: `CaptureStartupScene.ps1` の `-Night` が既存の `--night` を渡さないなら直してよい。
+
+## SCN-MEGA-MEASURE-VSM: 節目の計測: 影の改修の効果を測る
+- status: todo
+- done-when: PROBE-VSM と同じ 10万本 horizon の静止とカメラパスの再生で、`VsmCullPairs`・`VsmCullMega` の median・p95・max、`VSM_MEGA_CULL overflow` の最大、読み込み直後のフレームを測って PROBE-VSM と並べて PROGRESS に書く。目標: 再生の `VsmCullPairs` の p95 が PROBE-VSM の 1/5 以下、`VsmCullMega` の p95 ≤ 1.5 ms、overflow 0。点光源の影の計測（`VirtualizationAcceptance.md` の段9の測り方）が悪化しない。撮影を開いて影の欠けが無い。届かないものは `SCN-MEGA-FIX-<名前>` を次へ足す。Debug の起動画面で検証レイヤーのエラーが 0。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-VSM`
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-VSM-debug`
+- paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
 
 ## SCN-MEGA-SCALE-300K: 30万本と mega-stress 10万個を、静止と移動で測る
 - status: todo
 - done-when: 30万本 horizon（静止・再生）と mega-stress 10万個（1% 移動・ストリーミング）について、GPU・gt・rt の median と p95、描いたクラスタ数、全溢れ、メモリ（設計の 3 GB の範囲）を `SceneLauncherAcceptance.md` に書く。全部 16.6 ms 以下、溢れは 0。超えたら最上位のパスを名指す。25 ms を超えたらループを止めてユーザーへ渡す。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=300000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-SCALE-300K/bananas`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=100000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-SCALE-300K/stress`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
 
 ## SCN-MEGA-LAYOUT-SEA: 地平線までのバナナの海を作る
 - status: todo
 - done-when: 距離で密度を落とす円盤（近 50/m²・中 10/m²・遠 2/m² 程度、半径 300〜400 m、半径と内訳を `MEGA_BANANAS_LAYOUT` に出す）をバッチで置く。配置の計算は O(N) で 3 s 以内（床全体の格子は持たない）。`horizon`・`overview` の撮影を開いて、床の帯・床の端・格子の並びが見えない。カメラの far が半径を超える。1万本では同じ形の小さな円盤。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GpuTimingFrames 300 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-LAYOUT-SEA`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-LAYOUT-SEA`
 - paths: Game/GameModes/MegaBananas, Game/Scenes/SceneCatalog.h, TASKS.md, PROGRESS.md
 
 ## SCN-MEGA-LAYOUT-MOUNDS: 落とし込みで積んだ大きな山を数個置く
 - status: todo
 - done-when: 3〜5 個の塚（合計 5〜15 万本）。全部の山について `MEGA_BANANAS_MOUND_GAP max_gap_mm=` を出す。検算用の山 1 つ（約 2 万本）を `VerifyBananaPile.py --decimate 30` が独立に数え、浮き（> 5 mm）が 0。撮影を開いて浮いて見える個体が無い。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-LAYOUT-MOUNDS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-LAYOUT-MOUNDS`
 - verify: `python Scripts/VerifyBananaPile.py .harness/runs/scene-capture/SCN-MEGA-LAYOUT-MOUNDS/horizon.Game.log --decimate 30`
 - paths: Game/GameModes/MegaBananas, Scripts/VerifyBananaPile.py, TASKS.md, PROGRESS.md
 - notes: 1 本ずつのログは検算用の山だけに絞る。
 
 ## SCN-MEGA-ACCEPT-1M: 100万本と混在の負荷の合否を判定し、既定の本数を決める
 - status: todo
-- done-when: 100万本 horizon の静止・再生と、100万本 + mega-stress 5万個（1% 移動・ストリーミング）で、GPU・gt・rt の median と p95 がすべて 16.6 ms 以下。全溢れ 0。メモリ ≤ 3 GB（設計の範囲）。PNG を開いて穴・影の欠けが無い。合格したら既定の本数を 100万にし、RelWithDebInfo の cycle smoke が pass。受入れ文書には、達成の範囲を「指定条件（RTX 4080・1920×1080・この配置と負荷）での MegaGeometry の 100万本と混在の負荷」と書き、Nanite 全体との同等性は未検証と書く。25 ms を超えたらループを止め、backlog の採否をユーザーへ渡す。
+- done-when: 100万本 horizon の静止・再生と、100万本 + mega-stress 5万個（1% 移動・ストリーミング）で、GPU・gt・rt の median と p95 がすべて 16.6 ms 以下。全溢れ 0。メモリ ≤ 3 GB（設計の範囲）。PNG を開いて穴・影の欠けが無い。合格したら既定の本数を 100万にし、RelWithDebInfo の cycle smoke が pass。受入れ文書には、達成の範囲を「指定条件（RTX 4080・1920×1080・この配置と負荷）での MegaGeometry の 100万本と混在の負荷」と書き、Nanite 全体との同等性は未検証と書く。25 ms を超えたらループを止め、backlog の採否をユーザーへ渡す。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GpuTimingFrames 300 -GameArgs banana-count=1000000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/bananas`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/stress`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas -Cycles 3 -Configuration RelWithDebInfo`
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-MEGA-ACCEPT-1M-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, Game/GameModes/MegaBananas/MegaBananasMode.h, TASKS.md, PROGRESS.md
+- notes: verify はビルド・代表の計測 1 本・Debug の検証だけにしてある。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
 
 ## SCN-MEGA-FAR-SPLAT: 画素より小さいインスタンスを ID のバッファへ 1 画素で書く
 - status: backlog
@@ -530,13 +574,12 @@
 - paths: Assets/Shaders, Library/Core/Private/Rendering, TASKS.md, PROGRESS.md
 - notes: 条件: Cull1 と Cull2 の合計が 2 ms を超えるとき。subgroup の対応は装置の機能で確かめる。
 
-
 ## SCN-GEN-BUILDINGS-1: 荒野の建物を3種生成する（崩れた日干し煉瓦の家・見張り塔・石のアーチ）
-- status: blocked
+- status: todo
 - done-when: `GeneratedModels.json` に3種（荒野の前哨地に合う、単体で地面に立つ形の英語のプロンプト。50〜70 万面、テクスチャ 4096、実寸の高さ）を足して生成し、参照画像とプレビューを開いて、建物として形が崩れていない（壁が抜けていない・浮いた破片が少ない・底が平ら）ことを確かめる。崩れたものは seed かプロンプトを変えて作り直す。クックの一覧 `Assets/AssetSets/WastelandBuildingsModels.json` に足し、クックが通る。
 - verify: `python Scripts/GenerateSceneModels.py --verify --require-cooked --ids adobe_ruin,watchtower,stone_arch`
 - paths: Assets/AssetSets, Scripts, Tools/ComfyWorkflows, TASKS.md, PROGRESS.md
-- notes: 2026-10-10 親の調べ: `adobe_ruin` の 3D 化が 2 反復とも 2000 秒を超えて終わらなかった（`build/ComfyUI.log` で形の段の出力が 4440 万面、続く質感の段で止まる。見張り塔は 222 秒）。生成スクリプトに、定義ごとの `upsample_resolution`（既定 1536。`Trellis2UpsampleStage` の `target_resolution`）と、1体あたりの上限時間（既定 15 分。超えたら ComfyUI の `/interrupt` で止め、`upsample_resolution` を 1024 にして 1 回だけやり直す。やり直しも超えたら失敗として次の id へ進む）を足す。1 反復の壁時計（40 分）を超えないよう、ComfyUI の起動を含めて 1 反復の生成は合計 30 分以内に収め、収まらない分は manifest のあるものを飛ばして次の反復で続ける。
+- notes: 2026-10-10 親の調べ: `adobe_ruin` の 3D 化が 2 反復とも 2000 秒を超えて終わらなかった（`build/ComfyUI.log` で形の段の出力が 4440 万面、続く質感の段で止まる。見張り塔は 222 秒）。生成スクリプトに、定義ごとの `upsample_resolution`（既定 1536。`Trellis2UpsampleStage` の `target_resolution`）と、1体あたりの上限時間（既定 15 分。超えたら ComfyUI の `/interrupt` で止め、`upsample_resolution` を 1024 にして 1 回だけやり直す。やり直しも超えたら失敗として次の id へ進む）を足す。1 反復の壁時計（40 分）を超えないよう、ComfyUI の起動を含めて 1 反復の生成は合計 30 分以内に収め、収まらない分は manifest のあるものを飛ばして次の反復で続ける。 2026-10-10 再開（親が推奨を採った）: 3 種の資産は生成・確認・クックが済んでいる（評価者も確認）。残りは評価者の指摘どおり、生成スクリプトの締切を絶対時刻 1 つにして、参照画像・3D・GLB の取得・復旧（`/queue`）・後処理・終了処理のすべてに効かせ、終了処理の時間を先に取っておき、収まらない生成は次へ繰り越すことだけ。資産は作り直さない。
 
 ## SCN-GEN-BUILDINGS-2: 荒野の建物を3種生成する（風車・給水塔・木造の小屋）
 - status: todo
