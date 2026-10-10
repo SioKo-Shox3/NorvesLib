@@ -240,6 +240,11 @@ namespace Game
         bool m_bStressMovingPercentSet = false;
         /// --stress-moving-time=<秒> で指定された、動く Entity の動きの開始時刻の底上げ（撮影で時刻を変えるため。既定 0）
         float m_StressMovingStartTime = 0.0f;
+        /// --stress-stream-cell=<m> で指定された、mega-stress で読み込み・解放する区画の一辺[m]（0 = 行わない）
+        float m_StressStreamCellMeters = 0.0f;
+        bool m_bStressStreamCellSet = false;
+        /// --stress-stream-period=<秒> で指定された、区画を 1 つ出入りさせる周期
+        float m_StressStreamPeriod = 1.0f;
         /// --open-scene-info（開発ビルドだけ）: バナナのシーンを情報表示を出した状態で始める
         bool m_bOpenSceneInfo = false;
         /// --scene-cycle-smoke=<id,...> の検査（ランチャーとシーンの間を周回して、資源が増えないことを確かめる）

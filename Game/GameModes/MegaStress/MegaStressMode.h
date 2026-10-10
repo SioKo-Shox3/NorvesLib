@@ -12,7 +12,9 @@
 // 視点は SceneCatalog.h の kMegaStressViews（overview・close・aerial）。
 // --stress-moving-percent=<p> で、その割合（%）の Entity を毎フレーム動かす（置いた位置の周りを円運動し、ヨーで回る。
 // 動きは Entity の番号と経過時間だけで決まる）。--stress-moving-time=<秒> で動きの時刻を底上げできる。
-// 後の項目（区画の読み込み・解放）は、この Entity の置き方を土台に足す。
+// --stress-stream-cell=<m> で、一辺 m[m] の区画ごとに Entity を読み込み・解放する。--stress-stream-period=<秒> ごとに、
+// カメラに最も近い区画を 1 つ解放し、解放中の区画が上限（kStreamWindowCells）に達したら、解放した順に 1 つずつ読み込み直す
+// （解放した区画が全部戻ったところで MEGA_STRESS_STREAM_CYCLE に Entity の数の一致を出す）。
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Container/Containers.h"
@@ -39,9 +41,20 @@ namespace Game::GameModes
     /// 毎フレーム動かす Entity の一覧（MegaStressRoutine.cpp が定義する）
     struct StressMovers;
 
+    /// 区画の読み込み・解放の状態（MegaStressRoutine.cpp が定義する）
+    struct StressStream;
+
     /// --stress-entities の既定値と上限
     inline constexpr uint32_t kDefaultStressEntityCount = 2000;
     inline constexpr uint32_t kMaxStressEntityCount = 200000;
+
+    /// --stress-stream-cell（区画の一辺[m]）の下限・上限、--stress-stream-period（周期[秒]）の既定・下限
+    inline constexpr float kMinStressStreamCellMeters = 4.0f;
+    inline constexpr float kMaxStressStreamCellMeters = 2000.0f;
+    inline constexpr float kDefaultStressStreamPeriod = 1.0f;
+    inline constexpr float kMinStressStreamPeriod = 0.01f;
+    /// 同時に解放している区画の数の上限（解放がここに達したら、解放した順に読み込み直す）
+    inline constexpr uint32_t kStreamWindowCells = 4;
 
     /// 非同期に読む材質のテクスチャ。読み込みの結果は主スレッドで届く（シーンを出たら bCancelled を立てて捨てる）
     struct StressPendingMaterial
@@ -67,6 +80,10 @@ namespace Game::GameModes
         float m_MovingPercent = 0.0f;
         /// 動きの時刻の底上げ[秒]（--stress-moving-time）
         float m_MovingStartTime = 0.0f;
+        /// 区画の一辺[m]（--stress-stream-cell。0 なら区画の読み込み・解放をしない）
+        float m_StreamCellMeters = 0.0f;
+        /// 区画を 1 つ出入りさせる周期[秒]（--stress-stream-period）
+        float m_StreamPeriod = kDefaultStressStreamPeriod;
         /// ポーズメニュー（非所有）。開いている間はカメラを動かさない。無いなら nullptr
         const Game::Pause::PauseMenu *m_pPauseMenu = nullptr;
         /// クック済みの資産を引く AssetSystem の窓口
@@ -80,6 +97,8 @@ namespace Game::GameModes
         NorvesLib::Core::Container::TSharedPtr<StressAssembly> m_pAssembly;
         /// 動く Entity（置いた後に作る。Entity の実体はシーンの範囲が持つので、Leave で手放す）
         NorvesLib::Core::Container::TSharedPtr<StressMovers> m_pMovers;
+        /// 区画の読み込み・解放の状態（--stress-stream-cell を指定したときだけ、置いた後に作る）
+        NorvesLib::Core::Container::TSharedPtr<StressStream> m_pStream;
         /// 動きの経過時間[秒]（Entity を置いた後に deltaTime を積む）
         float m_MovingElapsed = 0.0f;
         bool m_bEntitiesPlaced = false;

@@ -138,6 +138,10 @@ namespace Game
         // --stress-moving-time=<秒>: 動く Entity の動きの時刻の底上げ（撮影で時刻を変えるための指定。既定 0）。
         constexpr const TCHAR *kStressMovingPercentOption = TEXT("--stress-moving-percent=");
         constexpr const TCHAR *kStressMovingTimeOption = TEXT("--stress-moving-time=");
+        // --stress-stream-cell=<m>: mega-stress で、この一辺[m]の区画ごとに Entity を読み込み・解放する（0 = 行わない。既定 0）。
+        // --stress-stream-period=<秒>: 区画を 1 つ出入りさせる周期（既定 kDefaultStressStreamPeriod）。
+        constexpr const TCHAR *kStressStreamCellOption = TEXT("--stress-stream-cell=");
+        constexpr const TCHAR *kStressStreamPeriodOption = TEXT("--stress-stream-period=");
         // --mega-lod-error-px=<px>: MegaGeometry の LOD を選ぶ誤差の閾値（画素）を替える（開発ビルドだけ。計測用）。
         // 大きい値にすると全インスタンスが根の段で描かれる。環境変数 NORVES_MEGA_LOD_ERROR_PX と同じ効き方をする。
 #if NORVES_BUILD_DEVELOPMENT
@@ -552,6 +556,9 @@ namespace Game
         m_StressMovingPercent = 0.0f;
         m_bStressMovingPercentSet = false;
         m_StressMovingStartTime = 0.0f;
+        m_StressStreamCellMeters = 0.0f;
+        m_bStressStreamCellSet = false;
+        m_StressStreamPeriod = Game::GameModes::kDefaultStressStreamPeriod;
         m_bOpenSceneInfo = false;
         m_DogDrive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         bool bHasCharacterDrive = false;
@@ -1021,6 +1028,38 @@ namespace Game
                     return false;
                 }
                 m_StressMovingStartTime = movingStartTime;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kStressStreamCellOption, sceneValue))
+            {
+                float streamCell = 0.0f;
+                if (m_bStressStreamCellSet)
+                {
+                    LOG_ERROR("--stress-stream-cell が重複しています");
+                    return false;
+                }
+                if (!TryParseBoundedFloat(sceneValue, Game::GameModes::kMinStressStreamCellMeters,
+                                          Game::GameModes::kMaxStressStreamCellMeters, streamCell))
+                {
+                    LOG_ERROR_F("--stress-stream-cell は %.0f〜%.0f の数（m）で指定してください",
+                                static_cast<double>(Game::GameModes::kMinStressStreamCellMeters),
+                                static_cast<double>(Game::GameModes::kMaxStressStreamCellMeters));
+                    return false;
+                }
+                m_StressStreamCellMeters = streamCell;
+                m_bStressStreamCellSet = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kStressStreamPeriodOption, sceneValue))
+            {
+                float streamPeriod = 0.0f;
+                if (!TryParseBoundedFloat(sceneValue, Game::GameModes::kMinStressStreamPeriod, 3600.0f, streamPeriod))
+                {
+                    LOG_ERROR_F("--stress-stream-period は %.2f〜3600 の秒数で指定してください",
+                                static_cast<double>(Game::GameModes::kMinStressStreamPeriod));
+                    return false;
+                }
+                m_StressStreamPeriod = streamPeriod;
                 continue;
             }
             if (TryStripPrefix(args[i], kStressEntitiesOption, sceneValue))
@@ -2805,7 +2844,8 @@ namespace Game
             MegaStress,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              entityCount = m_StressEntityCount, movingPercent = m_StressMovingPercent,
-             movingStartTime = m_StressMovingStartTime, pauseMenu = &m_PauseMenu,
+             movingStartTime = m_StressMovingStartTime, streamCell = m_StressStreamCellMeters,
+             streamPeriod = m_StressStreamPeriod, pauseMenu = &m_PauseMenu,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
@@ -2816,6 +2856,8 @@ namespace Game
                 mode->GetData().m_EntityCount = entityCount;
                 mode->GetData().m_MovingPercent = movingPercent;
                 mode->GetData().m_MovingStartTime = movingStartTime;
+                mode->GetData().m_StreamCellMeters = streamCell;
+                mode->GetData().m_StreamPeriod = streamPeriod;
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
                 return mode;

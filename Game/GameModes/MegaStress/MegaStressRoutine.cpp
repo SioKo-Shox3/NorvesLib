@@ -109,6 +109,53 @@ namespace Game::GameModes
         VariableArray<StressMover> Items;
     };
 
+    /// 置いた 1 つの Entity の記録。区画を読み込み直すときに、同じ種類・位置・向きで置き直す
+    struct StressPlaced
+    {
+        /// StressAssembly::Loads の添字
+        uint32_t Kind = 0;
+        float X = 0.0f;
+        float Z = 0.0f;
+        float Yaw = 0.0f;
+        /// 動く Entity のときの StressMovers::Items の添字。動かないなら -1
+        int32_t MoverSlot = -1;
+        /// 読み込み中の Entity。解放中は nullptr
+        Entity *pEntity = nullptr;
+    };
+
+    /// 読み込み・解放の単位の区画
+    struct StressStreamCell
+    {
+        /// 区画の中の StressPlaced の添字
+        VariableArray<uint32_t> Members;
+        float CenterX = 0.0f;
+        float CenterZ = 0.0f;
+        bool bLoaded = true;
+    };
+
+    struct StressStream
+    {
+        /// 種類ごとの MegaMesh（置き直しに使う。FinishAssembly の後も持ち続ける）
+        TSharedPtr<StressAssembly> Assembly;
+        VariableArray<StressPlaced> Placed;
+        VariableArray<StressStreamCell> Cells;
+        /// 解放中の区画（解放した順。先頭から読み込み直す）
+        VariableArray<uint32_t> Unloaded;
+        uint32_t WindowCells = 0;
+        /// 読み込み中の Entity の数
+        uint32_t LiveEntities = 0;
+        /// 置き終えた直後の World の Entity の数（周期の後に戻ることの基準）
+        size_t BaselineWorldObjects = 0;
+        /// 周期の経過時間[秒]
+        float Elapsed = 0.0f;
+        uint32_t Steps = 0;
+        uint32_t Cycles = 0;
+        /// 解放した区画を読み戻している最中か（窓に達したら真、全部戻ったら偽）
+        bool bReloading = false;
+        /// 解放した区画が全部戻った直後（次の Tick で数の一致を確かめる）
+        bool bCheckPending = false;
+    };
+
     namespace
     {
         // 昼の太陽。カメラの後ろ右から差す向き
@@ -608,6 +655,173 @@ namespace Game::GameModes
             return last;
         }
 
+        /// 置いた Entity を区画に分ける（升目の範囲を一辺 data.m_StreamCellMeters[m] の区画で区切る）。
+        /// 区画の位置はフィールドの手前の左端を原点にした升目で決まり、Entity の置き方（番号 → 位置）は変えない
+        void BuildStream(GameModeContext &ctx, const MegaStressData &data, StressStream &stream, uint32_t columns,
+                         uint32_t rows)
+        {
+            const float cell = data.m_StreamCellMeters;
+            const float originX = -0.5f * static_cast<float>(columns - 1) * kCellMeters - kCellJitterMeters;
+            const float originZ = kFieldNearZ - kCellJitterMeters;
+            const float extentX = static_cast<float>(columns - 1) * kCellMeters + 2.0f * kCellJitterMeters;
+            const float extentZ = static_cast<float>(rows - 1) * kCellMeters + 2.0f * kCellJitterMeters;
+            const uint32_t cellsX = static_cast<uint32_t>(std::floor(extentX / cell)) + 1;
+            const uint32_t cellsZ = static_cast<uint32_t>(std::floor(extentZ / cell)) + 1;
+            VariableArray<int32_t> slotOfCell(static_cast<size_t>(cellsX) * cellsZ, -1);
+            for (uint32_t i = 0; i < static_cast<uint32_t>(stream.Placed.size()); ++i)
+            {
+                const StressPlaced &record = stream.Placed[i];
+                const uint32_t cx = std::min(cellsX - 1, static_cast<uint32_t>(std::max(0.0f, (record.X - originX) / cell)));
+                const uint32_t cz = std::min(cellsZ - 1, static_cast<uint32_t>(std::max(0.0f, (record.Z - originZ) / cell)));
+                int32_t &slot = slotOfCell[static_cast<size_t>(cz) * cellsX + cx];
+                if (slot < 0)
+                {
+                    slot = static_cast<int32_t>(stream.Cells.size());
+                    StressStreamCell added;
+                    added.CenterX = originX + (static_cast<float>(cx) + 0.5f) * cell;
+                    added.CenterZ = originZ + (static_cast<float>(cz) + 0.5f) * cell;
+                    stream.Cells.push_back(std::move(added));
+                }
+                stream.Cells[static_cast<size_t>(slot)].Members.push_back(i);
+            }
+            stream.WindowCells = std::min<uint32_t>(kStreamWindowCells, static_cast<uint32_t>(stream.Cells.size()));
+            stream.LiveEntities = static_cast<uint32_t>(stream.Placed.size());
+            stream.BaselineWorldObjects = ctx.WorldRef.GetObjectCount();
+            LOG_INFO_F("MEGA_STRESS_STREAM_SETUP cell_m=%.1f period=%.3f cells=%zu window=%u entities=%u world_objects=%zu",
+                       static_cast<double>(cell), static_cast<double>(data.m_StreamPeriod), stream.Cells.size(),
+                       stream.WindowCells, stream.LiveEntities, stream.BaselineWorldObjects);
+        }
+
+        /// 区画 1 つの Entity を全部解放する。動く Entity の参照は外す
+        uint32_t UnloadCell(GameModeContext &ctx, MegaStressData &data, StressStream &stream, uint32_t cellIndex)
+        {
+            StressStreamCell &cell = stream.Cells[cellIndex];
+            uint32_t released = 0;
+            for (const uint32_t member : cell.Members)
+            {
+                StressPlaced &record = stream.Placed[member];
+                if (record.pEntity == nullptr)
+                {
+                    continue;
+                }
+                if (record.MoverSlot >= 0 && data.m_pMovers)
+                {
+                    data.m_pMovers->Items[static_cast<size_t>(record.MoverSlot)].pEntity = nullptr;
+                }
+                ctx.ScopeRef.Untrack(record.pEntity);
+                ctx.WorldRef.RemoveObject(record.pEntity);
+                record.pEntity = nullptr;
+                ++released;
+            }
+            cell.bLoaded = false;
+            stream.LiveEntities -= released;
+            return released;
+        }
+
+        /// 区画 1 つの Entity を同じ種類・位置・向きで置き直す
+        uint32_t LoadCell(GameModeContext &ctx, MegaStressData &data, StressStream &stream, uint32_t cellIndex)
+        {
+            StressStreamCell &cell = stream.Cells[cellIndex];
+            uint32_t created = 0;
+            const float time = data.m_MovingStartTime + data.m_MovingElapsed;
+            for (const uint32_t member : cell.Members)
+            {
+                StressPlaced &record = stream.Placed[member];
+                if (record.pEntity != nullptr)
+                {
+                    continue;
+                }
+                record.pEntity = SpawnStressEntity(ctx, stream.Assembly->Loads[record.Kind], record.X, record.Z, record.Yaw);
+                if (record.pEntity == nullptr)
+                {
+                    continue;
+                }
+                if (record.MoverSlot >= 0 && data.m_pMovers)
+                {
+                    StressMover &mover = data.m_pMovers->Items[static_cast<size_t>(record.MoverSlot)];
+                    mover.pEntity = record.pEntity;
+                    ApplyMover(mover, time);
+                }
+                ++created;
+            }
+            cell.bLoaded = true;
+            stream.LiveEntities += created;
+            return created;
+        }
+
+        /// 周期ごとの 1 手。解放中の区画が窓に満たなければ、カメラに最も近い読み込み中の区画を解放し、
+        /// 窓に達したら解放した順に 1 つ読み込み直す
+        void StreamStep(GameModeContext &ctx, MegaStressData &data, StressStream &stream)
+        {
+            ++stream.Steps;
+            if (!stream.bReloading)
+            {
+                float cameraX = 0.0f;
+                float cameraZ = 0.0f;
+                if (const Component::CameraComponent *camera = data.m_Rig.GetCamera())
+                {
+                    if (const Entity *owner = camera->GetOwner())
+                    {
+                        cameraX = owner->GetPosition().x;
+                        cameraZ = owner->GetPosition().z;
+                    }
+                }
+                int64_t best = -1;
+                float bestDistance = std::numeric_limits<float>::max();
+                for (size_t index = 0; index < stream.Cells.size(); ++index)
+                {
+                    const StressStreamCell &cell = stream.Cells[index];
+                    if (!cell.bLoaded)
+                    {
+                        continue;
+                    }
+                    const float dx = cell.CenterX - cameraX;
+                    const float dz = cell.CenterZ - cameraZ;
+                    const float distance = dx * dx + dz * dz;
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        best = static_cast<int64_t>(index);
+                    }
+                }
+                if (best < 0)
+                {
+                    return;
+                }
+                const uint32_t cellIndex = static_cast<uint32_t>(best);
+                const uint32_t released = UnloadCell(ctx, data, stream, cellIndex);
+                stream.Unloaded.push_back(cellIndex);
+                stream.bReloading = stream.Unloaded.size() >= stream.WindowCells;
+                LOG_INFO_F("MEGA_STRESS_STREAM_STEP step=%u action=unload cell=%u entities=%u live=%u", stream.Steps,
+                           cellIndex, released, stream.LiveEntities);
+                return;
+            }
+            const uint32_t cellIndex = stream.Unloaded.front();
+            stream.Unloaded.erase(stream.Unloaded.begin());
+            const uint32_t created = LoadCell(ctx, data, stream, cellIndex);
+            LOG_INFO_F("MEGA_STRESS_STREAM_STEP step=%u action=load cell=%u entities=%u live=%u", stream.Steps, cellIndex,
+                       created, stream.LiveEntities);
+            if (stream.Unloaded.empty())
+            {
+                stream.bReloading = false;
+                stream.bCheckPending = true;
+            }
+        }
+
+        /// 解放した区画が全部戻った後に、Entity の数が置き終えた直後と同じかを確かめる
+        void CheckStreamCycle(GameModeContext &ctx, StressStream &stream)
+        {
+            stream.bCheckPending = false;
+            ++stream.Cycles;
+            const size_t worldObjects = ctx.WorldRef.GetObjectCount();
+            const bool bPass = stream.LiveEntities == static_cast<uint32_t>(stream.Placed.size()) &&
+                               worldObjects == stream.BaselineWorldObjects;
+            LOG_INFO_F("MEGA_STRESS_STREAM_CYCLE cycle=%u steps=%u live=%u expected=%zu world_objects=%zu baseline=%zu "
+                       "result=%s",
+                       stream.Cycles, stream.Steps, stream.LiveEntities, stream.Placed.size(), worldObjects,
+                       stream.BaselineWorldObjects, bPass ? "pass" : "fail");
+        }
+
         /// 全種類の材質がそろったら MegaMesh を作り、Entity を置く
         void FinishAssembly(GameModeContext &ctx, MegaStressData &data)
         {
@@ -626,6 +840,9 @@ namespace Game::GameModes
             auto movers = MakeShared<StressMovers>();
             // 置いた Entity のうち動かす候補（割合が 0 より大きいときだけ溜め、置き終わってから正確な個数を選ぶ）
             StressMovers candidates;
+            // 区画の読み込み・解放をするときだけ、置いた Entity を記録する（候補の順番 = 記録の順番）
+            const bool bStreaming = data.m_StreamCellMeters > 0.0f;
+            auto stream = MakeShared<StressStream>();
             uint32_t placed = 0;
             uint32_t columns = 0;
             uint32_t rows = 0;
@@ -654,6 +871,16 @@ namespace Game::GameModes
                     {
                         ++load.PlacedCount;
                         ++placed;
+                        if (bStreaming)
+                        {
+                            StressPlaced record;
+                            record.Kind = static_cast<uint32_t>(kind);
+                            record.X = x;
+                            record.Z = z;
+                            record.Yaw = yaw;
+                            record.pEntity = entity;
+                            stream->Placed.push_back(record);
+                        }
                         if (data.m_MovingPercent > 0.0f)
                         {
                             candidates.Items.push_back(MakeMover(entity, index, load, x, z, yaw));
@@ -687,6 +914,10 @@ namespace Game::GameModes
                 for (size_t i = 0; i < moverCount; ++i)
                 {
                     movers->Items.push_back(candidates.Items[keys[i].Ordinal]);
+                    if (bStreaming)
+                    {
+                        stream->Placed[keys[i].Ordinal].MoverSlot = static_cast<int32_t>(i);
+                    }
                 }
             }
 
@@ -713,6 +944,12 @@ namespace Game::GameModes
                 }
                 data.m_pMovers = movers;
             }
+            if (bStreaming && placed > 0)
+            {
+                BuildStream(ctx, data, *stream, columns, rows);
+                stream->Assembly = data.m_pAssembly;
+                data.m_pStream = stream;
+            }
             data.m_bEntitiesPlaced = true;
             data.m_pAssembly.reset();
         }
@@ -737,6 +974,7 @@ namespace Game::GameModes
         data.m_TickCount = 0;
         data.m_bEntitiesPlaced = false;
         data.m_pMovers.reset();
+        data.m_pStream.reset();
         data.m_MovingElapsed = 0.0f;
         Game::Scenes::BeginSceneAssembly(ctx.EngineRef);
 
@@ -799,7 +1037,26 @@ namespace Game::GameModes
             const float time = data.m_MovingStartTime + data.m_MovingElapsed;
             for (const StressMover &mover : data.m_pMovers->Items)
             {
-                ApplyMover(mover, time);
+                if (mover.pEntity != nullptr)
+                {
+                    ApplyMover(mover, time);
+                }
+            }
+        }
+
+        // 区画の読み込み・解放（ポーズ中は止める）。周期ごとに 1 手、1 フレームに 1 手まで
+        if (data.m_pStream && !bSuspended)
+        {
+            StressStream &stream = *data.m_pStream;
+            if (stream.bCheckPending)
+            {
+                CheckStreamCycle(ctx, stream);
+            }
+            stream.Elapsed += deltaTime;
+            if (stream.Elapsed >= data.m_StreamPeriod)
+            {
+                stream.Elapsed = 0.0f;
+                StreamStep(ctx, data, stream);
             }
         }
 
@@ -817,6 +1074,7 @@ namespace Game::GameModes
         ctx.EngineRef.GetRenderWorld().WaitForRender();
         // Entity の実体はスコープが返すので、動かす一覧は先に手放す
         data.m_pMovers.reset();
+        data.m_pStream.reset();
         // 届いていない読み込みの結果は捨てる
         if (data.m_pAssembly)
         {
