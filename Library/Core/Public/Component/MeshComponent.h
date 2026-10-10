@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "Component.h"
+#include "Ecs/EcsRenderTypes.h"
 #include "Rendering/RenderTypes.h"
 #include "Rendering/MeshTypes.h"
 #include "Rendering/MaterialTypes.h"
@@ -70,6 +71,8 @@ namespace NorvesLib::Core::Component
         virtual void EndPlay() override;
         virtual void Tick(float deltaTime) override;
 
+        Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::Mesh; }
+
         // ========================================
         // メッシュ設定
         // ========================================
@@ -84,12 +87,12 @@ namespace NorvesLib::Core::Component
          * @brief メッシュハンドルを取得
          * @return メッシュデータハンドル
          */
-        Rendering::MeshDataHandle GetMeshHandle() const { return MeshHandle; }
+        Rendering::MeshDataHandle GetMeshHandle() const { return getMeshHandle().Get(); }
 
         /**
          * @brief メッシュが設定されているかどうか
          */
-        bool HasMesh() const { return MeshHandle->IsValid(); }
+        bool HasMesh() const { return getMeshHandle().Get().IsValid(); }
 
         // ========================================
         // マテリアル設定
@@ -128,40 +131,40 @@ namespace NorvesLib::Core::Component
          */
         void SetVisible(bool bNewVisible)
         {
-            bVisible = bNewVisible;
+            getbVisible().Set(bNewVisible);
             MarkRenderStateDirty();
         }
-        bool IsVisible() const { return bVisible && IsActive(); }
+        bool IsVisible() const { return getbVisible().Get() && IsActive(); }
 
         /**
          * @brief シャドウキャスト設定
          */
         void SetCastShadow(bool bCast)
         {
-            bCastShadow = bCast;
+            getbCastShadow().Set(bCast);
             MarkRenderStateDirty();
         }
-        bool GetCastShadow() const { return bCastShadow; }
+        bool GetCastShadow() const { return getbCastShadow().Get(); }
 
         /**
          * @brief シャドウレシーブ設定
          */
         void SetReceiveShadow(bool bReceive)
         {
-            bReceiveShadow = bReceive;
+            getbReceiveShadow().Set(bReceive);
             MarkRenderStateDirty();
         }
-        bool GetReceiveShadow() const { return bReceiveShadow; }
+        bool GetReceiveShadow() const { return getbReceiveShadow().Get(); }
 
         /**
          * @brief レンダーレイヤー設定
          */
         void SetRenderLayer(Rendering::RenderLayer layer)
         {
-            RenderLayerProp = layer;
+            getRenderLayerProp().Set(layer);
             MarkRenderStateDirty();
         }
-        Rendering::RenderLayer GetRenderLayer() const { return RenderLayerProp; }
+        Rendering::RenderLayer GetRenderLayer() const { return getRenderLayerProp().Get(); }
 
         // ========================================
         // LOD設定
@@ -266,14 +269,17 @@ namespace NorvesLib::Core::Component
         // リフレクションプロパティ
         // ========================================
 
+        // 描画の値（メッシュの handle・可視・影・レイヤー）は World の木にいる間 ECS の行（EcsMeshRender）の列にあり、
+        // 無い間は予備の値にある
+
         // メッシュリソース（CPU側データ - Resourceシステム経由）
-        PROPERTY(Rendering::MeshDataHandle, MeshHandle)
+        ECS_PROPERTY(Ecs::EcsMeshRender, MeshHandle, Rendering::MeshDataHandle, MeshHandle)
 
         // 描画設定
-        PROPERTY(bool, bVisible)
-        PROPERTY(bool, bCastShadow)
-        PROPERTY(bool, bReceiveShadow)
-        PROPERTY(Rendering::RenderLayer, RenderLayerProp)
+        ECS_PROPERTY(Ecs::EcsMeshRender, bVisible, bool, bVisible)
+        ECS_PROPERTY(Ecs::EcsMeshRender, bCastShadow, bool, bCastShadow)
+        ECS_PROPERTY(Ecs::EcsMeshRender, bReceiveShadow, bool, bReceiveShadow)
+        ECS_PROPERTY(Ecs::EcsMeshRender, Layer, Rendering::RenderLayer, RenderLayerProp)
 
         // LOD
         PROPERTY(int32_t, ForcedLODLevel) // -1 = 自動

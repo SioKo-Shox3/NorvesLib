@@ -184,6 +184,16 @@ namespace NorvesLib::Core::Ecs
         uint16_t Reserved2;
     };
 
+    /// Component の行に足す描画の値の列の種類。World が行を作るときのアーキタイプを選ぶ（基本の列は全種類に共通）。
+    enum class EcsComponentRowKind : uint32_t
+    {
+        Basic = 0,
+        Mesh,
+        MegaGeometry,
+        SkinnedMesh,
+        Count,
+    };
+
     /// アーキタイプの番号（EcsWorld が割り当てる）
     using EcsArchetypeId = uint32_t;
     inline constexpr EcsArchetypeId kInvalidEcsArchetype = 0xFFFFFFFFu;

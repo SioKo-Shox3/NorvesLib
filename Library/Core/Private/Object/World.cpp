@@ -7,6 +7,7 @@
 #include "Component/SkinnedMeshComponent.h"
 #include "Component/TextComponent.h"
 #include "Container/UnorderedSet.h"
+#include "Ecs/EcsRenderTypes.h"
 #include "Ecs/EcsScheduler.h"
 #include "Ecs/EcsTransformSystem.h"
 #include "Ecs/EcsWorld.h"
@@ -201,6 +202,19 @@ namespace NorvesLib::Core
                 {
                     error = "Component の行に EcsHierarchy・EcsComponentFlags・EcsTickConfig が無い";
                     return false;
+                }
+                {
+                    const Ecs::EcsComponentRowKind rowKind = component->GetEcsRowKind();
+                    const bool bHasMesh = ecs.GetColumnValue<Ecs::EcsMeshRender>(componentRow) != nullptr;
+                    const bool bHasMega = ecs.GetColumnValue<Ecs::EcsMegaMesh>(componentRow) != nullptr;
+                    const bool bHasSkinned = ecs.GetColumnValue<Ecs::EcsSkinnedRender>(componentRow) != nullptr;
+                    const bool bExpectMesh = rowKind == Ecs::EcsComponentRowKind::Mesh || rowKind == Ecs::EcsComponentRowKind::MegaGeometry;
+                    if (bHasMesh != bExpectMesh || bHasMega != (rowKind == Ecs::EcsComponentRowKind::MegaGeometry) ||
+                        bHasSkinned != (rowKind == Ecs::EcsComponentRowKind::SkinnedMesh))
+                    {
+                        error = "Component の行の描画の値の列が、Component の種類と一致しない";
+                        return false;
+                    }
                 }
                 if (componentHierarchy->Kind != Ecs::kEcsHierarchyKindComponent || componentHierarchy->Parent != row ||
                     componentHierarchy->Depth != depth + 1 || !componentHierarchy->FirstChild.IsNull() ||
@@ -1323,19 +1337,39 @@ namespace NorvesLib::Core
             LOG_ERROR("World: Entity 用の ECS のアーキタイプを作れなかった");
         }
 
-        // Component の行: 所有者の子の葉。flags と Tick の設定を列に持つ
-        const Ecs::EcsColumnInfo componentColumns[] = {
+        // Component の行: 所有者の子の葉。flags と Tick の設定を列に持ち、Mesh 系は描画の値の列も持つ
+        const Ecs::EcsColumnInfo basicColumns[] = {
             Ecs::EcsRegisterColumn<Ecs::EcsObjectRef>(),
             Ecs::EcsRegisterColumn<Ecs::EcsHierarchy>(),
             Ecs::EcsRegisterColumn<Ecs::EcsComponentFlags>(),
             Ecs::EcsRegisterColumn<Ecs::EcsTickConfig>(),
         };
-        m_ComponentArchetype = m_EcsWorld->GetOrCreateArchetype(
-            Container::Span<const Ecs::EcsColumnInfo>(componentColumns, 4));
-        if (m_ComponentArchetype == Ecs::kInvalidEcsArchetype)
+        const Ecs::EcsColumnInfo meshColumns[] = {
+            basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
+            Ecs::EcsRegisterColumn<Ecs::EcsMeshRender>(),
+        };
+        const Ecs::EcsColumnInfo megaColumns[] = {
+            basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
+            Ecs::EcsRegisterColumn<Ecs::EcsMeshRender>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsMegaMesh>(),
+        };
+        const Ecs::EcsColumnInfo skinnedColumns[] = {
+            basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
+            Ecs::EcsRegisterColumn<Ecs::EcsSkinnedRender>(),
+        };
+        const auto createComponentArchetype = [this](Ecs::EcsComponentRowKind kind, Container::Span<const Ecs::EcsColumnInfo> columns)
         {
-            LOG_ERROR("World: Component 用の ECS のアーキタイプを作れなかった");
-        }
+            Ecs::EcsArchetypeId& archetype = m_ComponentArchetypes[static_cast<size_t>(kind)];
+            archetype = m_EcsWorld->GetOrCreateArchetype(columns);
+            if (archetype == Ecs::kInvalidEcsArchetype)
+            {
+                LOG_ERROR("World: Component 用の ECS のアーキタイプを作れなかった");
+            }
+        };
+        createComponentArchetype(Ecs::EcsComponentRowKind::Basic, Container::Span<const Ecs::EcsColumnInfo>(basicColumns, 4));
+        createComponentArchetype(Ecs::EcsComponentRowKind::Mesh, Container::Span<const Ecs::EcsColumnInfo>(meshColumns, 5));
+        createComponentArchetype(Ecs::EcsComponentRowKind::MegaGeometry, Container::Span<const Ecs::EcsColumnInfo>(megaColumns, 6));
+        createComponentArchetype(Ecs::EcsComponentRowKind::SkinnedMesh, Container::Span<const Ecs::EcsColumnInfo>(skinnedColumns, 5));
 
         // 段の最中に孤児にした行は、各段の同期点で消す
         const uint32_t stages[] = {m_StageTick, m_StageLateTick, m_StageFixedBegin,
@@ -3069,9 +3103,19 @@ namespace NorvesLib::Core
         }
     }
 
+    Ecs::EcsArchetypeId World::ComponentArchetypeFor(const Component::Component& component) const
+    {
+        const size_t kind = static_cast<size_t>(component.GetEcsRowKind());
+        if (kind >= static_cast<size_t>(Ecs::EcsComponentRowKind::Count))
+        {
+            return Ecs::kInvalidEcsArchetype;
+        }
+        return m_ComponentArchetypes[kind];
+    }
+
     void World::BindComponentRow(Component::Component& component)
     {
-        if (m_ComponentArchetype == Ecs::kInvalidEcsArchetype || !m_EcsWorld)
+        if (ComponentArchetypeFor(component) == Ecs::kInvalidEcsArchetype || !m_EcsWorld)
         {
             return;
         }
@@ -3098,7 +3142,7 @@ namespace NorvesLib::Core
             ReserveComponentRowCreate(component);
             return;
         }
-        const Ecs::EcsEntity row = ecs.CreateEntity(m_ComponentArchetype);
+        const Ecs::EcsEntity row = ecs.CreateEntity(ComponentArchetypeFor(component));
         if (row.IsNull())
         {
             LOG_ERROR("World: Component の ECS の行を作れなかった");
@@ -3133,6 +3177,7 @@ namespace NorvesLib::Core
         config.Mask = component.m_TickConfiguration.GetMask();
         m_EcsWorld->WriteColumnValueOf(component.m_EcsEntity, config);
         MoveEcsPropertyValuesToColumns(&component);
+        component.OnEcsRowAttached();
     }
 
     void World::MoveEntityValuesToFallback(Entity& entity)
@@ -3150,6 +3195,7 @@ namespace NorvesLib::Core
 
     void World::MoveComponentValuesToFallback(Component::Component& component)
     {
+        component.OnEcsRowDetaching();
         if (const Ecs::EcsTickConfig* config = m_EcsWorld->GetColumnValue<Ecs::EcsTickConfig>(component.m_EcsEntity))
         {
             // 列の値は検証済みの設定から写したものなので、群 → 優先度 → mask の順に戻せる
@@ -3441,7 +3487,7 @@ namespace NorvesLib::Core
         assert(!Ecs::Detail::EcsIsParallelActive());
         PendingEntityCreate pending;
         pending.ComponentTarget = &component;
-        pending.Ticket = m_EntityCreateCommands.Create(m_ComponentArchetype);
+        pending.Ticket = m_EntityCreateCommands.Create(ComponentArchetypeFor(component));
         component.m_EcsCreateSlot = static_cast<uint32_t>(m_PendingEntityCreates.size());
         m_PendingEntityCreates.push_back(pending);
         ++m_EcsBindingEpoch;

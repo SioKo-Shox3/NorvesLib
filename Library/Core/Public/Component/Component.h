@@ -242,7 +242,22 @@ namespace NorvesLib::Core::Component
          */
         Ecs::EcsRowRef GetEcsRow() const;
 
+        /**
+         * @brief 行に足す描画の値の列の種類（World が行を作るときのアーキタイプを選ぶ）
+         */
+        virtual Ecs::EcsComponentRowKind GetEcsRowKind() const { return Ecs::EcsComponentRowKind::Basic; }
+
     protected:
+        /**
+         * @brief 行が付いた直後に呼ばれる。ECS_PROPERTY にしていない値を、予備の値から列へ写す
+         */
+        virtual void OnEcsRowAttached() {}
+
+        /**
+         * @brief 行を外す直前に呼ばれる。ECS_PROPERTY にしていない値を、列から予備の値へ戻す
+         */
+        virtual void OnEcsRowDetaching() {}
+
         // ========================================
         // リフレクションプロパティ
         // ========================================

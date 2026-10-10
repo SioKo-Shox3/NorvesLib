@@ -25,13 +25,14 @@ namespace NorvesLib::Core::Component
 
     void MegaGeometryComponent::SetMegaMeshHandle(Rendering::MegaGeometry::MegaMeshHandle handle)
     {
-        MegaMeshHandleValue = handle;
+        getMegaMeshHandleValue().Set(handle);
         MarkRenderStateDirty();
     }
 
     bool MegaGeometryComponent::BuildMegaGeometryProxy(Rendering::MegaGeometryProxy &outProxy) const
     {
-        if (!MegaMeshHandleValue->IsValid())
+        const Rendering::MegaGeometry::MegaMeshHandle megaMeshHandle = getMegaMeshHandleValue().Get();
+        if (!megaMeshHandle.IsValid())
         {
             return false;
         }
@@ -43,12 +44,12 @@ namespace NorvesLib::Core::Component
 
         outProxy.ObjectId = GetOwnerId();
         outProxy.ComponentId = ComponentId;
-        outProxy.MegaMeshHandle = MegaMeshHandleValue;
+        outProxy.MegaMeshHandle = megaMeshHandle;
         outProxy.WorldTransform = m_WorldTransform;
         outProxy.WorldBounds = m_WorldBounds;
-        outProxy.bVisible = bVisible;
-        outProxy.bCastShadow = bCastShadow;
-        outProxy.LayerMask = RenderLayerProp;
+        outProxy.bVisible = getbVisible().Get();
+        outProxy.bCastShadow = getbCastShadow().Get();
+        outProxy.LayerMask = getRenderLayerProp().Get();
         return true;
     }
 

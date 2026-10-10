@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MeshComponent.h"
+#include "Ecs/EcsRenderTypes.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 
@@ -23,9 +24,11 @@ namespace NorvesLib::Core::Component
         explicit MegaGeometryComponent(const IUnknown *sourceObject);
         virtual ~MegaGeometryComponent();
 
+        Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::MegaGeometry; }
+
         void SetMegaMeshHandle(Rendering::MegaGeometry::MegaMeshHandle handle);
-        Rendering::MegaGeometry::MegaMeshHandle GetMegaMeshHandle() const { return MegaMeshHandleValue; }
-        bool HasMegaMesh() const { return MegaMeshHandleValue->IsValid(); }
+        Rendering::MegaGeometry::MegaMeshHandle GetMegaMeshHandle() const { return getMegaMeshHandleValue().Get(); }
+        bool HasMegaMesh() const { return getMegaMeshHandleValue().Get().IsValid(); }
 
         /**
          * @brief Build a MegaGeometry proxy for SceneView synchronization.
@@ -35,7 +38,8 @@ namespace NorvesLib::Core::Component
         bool BuildMegaGeometryProxy(Rendering::MegaGeometryProxy &outProxy) const;
 
     protected:
-        PROPERTY(Rendering::MegaGeometry::MegaMeshHandle, MegaMeshHandleValue)
+        // MegaMesh の handle は World の木にいる間 ECS の行（EcsMegaMesh）の列にあり、無い間は予備の値にある
+        ECS_PROPERTY(Ecs::EcsMegaMesh, Handle, Rendering::MegaGeometry::MegaMeshHandle, MegaMeshHandleValue)
     };
 
     using MegaGeometryComponentPtr = Container::TSharedPtr<MegaGeometryComponent>;

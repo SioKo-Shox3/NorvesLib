@@ -4,6 +4,7 @@
 #include "Animation/SkeletalAnimationSampler.h"
 #include "Animation/SkeletalAssetResource.h"
 #include "Component.h"
+#include "Ecs/EcsRenderTypes.h"
 #include "Math/Matrix4x4.h"
 #include "Rendering/SkinnedMeshTypes.h"
 #include "Resource/SkeletalMaterialBindings.h"
@@ -23,6 +24,8 @@ namespace NorvesLib::Core::Component
         explicit SkinnedMeshComponent(const FieldInitializer* initializer);
         explicit SkinnedMeshComponent(const IUnknown* sourceObject);
         ~SkinnedMeshComponent() override;
+
+        Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::SkinnedMesh; }
 
         void Initialize() override;
         void Finalize() override;
@@ -84,7 +87,15 @@ namespace NorvesLib::Core::Component
         // 自動評価せず、骨のscale/shearを捨てOwnerのscaleだけを保持する。
         [[nodiscard]] bool GetSocketWorldTransform(Identity socket, Math::Transform& outTransform) const;
 
+      protected:
+        void OnEcsRowAttached() override;
+        void OnEcsRowDetaching() override;
+
       private:
+        // 可視・影・材質の handle は行が付いている間 ECS の列（EcsSkinnedRender）が正で、無い間は下の予備のメンバが正
+        Ecs::EcsSkinnedRender LoadRenderValues() const;
+        void StoreRenderValues(const Ecs::EcsSkinnedRender& values);
+
         Container::TSharedPtr<const Rendering::SkinnedMeshAssetLease> GetMaterialBindingLease() const;
         bool HasValidPoseResources() const;
         bool HasCurrentPose() const;

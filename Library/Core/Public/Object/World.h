@@ -505,7 +505,10 @@ namespace NorvesLib::Core
         uint32_t PropagateEcsTransforms();
 
         Ecs::EcsArchetypeId m_EntityArchetype = Ecs::kInvalidEcsArchetype;
-        Ecs::EcsArchetypeId m_ComponentArchetype = Ecs::kInvalidEcsArchetype;
+        /// Component の行のアーキタイプ（基本の列 + 種類ごとの描画の値の列。添字は EcsComponentRowKind）
+        Ecs::EcsArchetypeId m_ComponentArchetypes[static_cast<size_t>(Ecs::EcsComponentRowKind::Count)] = {
+            Ecs::kInvalidEcsArchetype, Ecs::kInvalidEcsArchetype, Ecs::kInvalidEcsArchetype, Ecs::kInvalidEcsArchetype};
+        Ecs::EcsArchetypeId ComponentArchetypeFor(const Component::Component& component) const;
         /// 段の最中に孤児にした行（同期点で消す）
         Container::VariableArray<Ecs::EcsEntity> m_DeferredEntityRows;
         /// 段の最中に予約した行の作成。取り消した項目は Target が null（添字は Entity の札が指すので詰めない）

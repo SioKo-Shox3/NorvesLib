@@ -234,26 +234,78 @@ namespace NorvesLib::Core::Component
         return m_PlaybackRate;
     }
 
+    Ecs::EcsSkinnedRender SkinnedMeshComponent::LoadRenderValues() const
+    {
+        Ecs::EcsSkinnedRender values{};
+        values.Material = m_Material;
+        values.bVisible = m_bVisible;
+        values.bCastShadow = m_bCastShadow;
+        // 行が無い間（列を読めない間）は予備のメンバの値のまま返す
+        (void)Ecs::EcsReadColumnPart(GetEcsRow(), Ecs::EcsColumnInfoOf<Ecs::EcsSkinnedRender>().Type, 0,
+                                     static_cast<uint32_t>(sizeof(values)), &values);
+        return values;
+    }
+
+    void SkinnedMeshComponent::StoreRenderValues(const Ecs::EcsSkinnedRender& values)
+    {
+        const Ecs::EcsRowRef row = GetEcsRow();
+        const TypeId type = Ecs::EcsColumnInfoOf<Ecs::EcsSkinnedRender>().Type;
+        if (Ecs::EcsRowHasColumn(row, type))
+        {
+            Ecs::EcsWriteColumnPart(row, type, 0, static_cast<uint32_t>(sizeof(values)), &values);
+            return;
+        }
+        m_Material = values.Material;
+        m_bVisible = values.bVisible;
+        m_bCastShadow = values.bCastShadow;
+    }
+
+    void SkinnedMeshComponent::OnEcsRowAttached()
+    {
+        Ecs::EcsSkinnedRender values{};
+        values.Material = m_Material;
+        values.bVisible = m_bVisible;
+        values.bCastShadow = m_bCastShadow;
+        const Ecs::EcsRowRef row = GetEcsRow();
+        const TypeId type = Ecs::EcsColumnInfoOf<Ecs::EcsSkinnedRender>().Type;
+        if (Ecs::EcsRowHasColumn(row, type))
+        {
+            Ecs::EcsWriteColumnPart(row, type, 0, static_cast<uint32_t>(sizeof(values)), &values);
+        }
+    }
+
+    void SkinnedMeshComponent::OnEcsRowDetaching()
+    {
+        const Ecs::EcsSkinnedRender values = LoadRenderValues();
+        m_Material = values.Material;
+        m_bVisible = values.bVisible;
+        m_bCastShadow = values.bCastShadow;
+    }
+
     void SkinnedMeshComponent::SetVisible(bool bVisible)
     {
-        m_bVisible = bVisible;
+        Ecs::EcsSkinnedRender values = LoadRenderValues();
+        values.bVisible = bVisible;
+        StoreRenderValues(values);
         MarkRenderStateDirty();
     }
 
     bool SkinnedMeshComponent::IsVisible() const
     {
-        return m_bVisible && IsActive();
+        return LoadRenderValues().bVisible && IsActive();
     }
 
     void SkinnedMeshComponent::SetMaterial(Rendering::MaterialHandle material)
     {
-        m_Material = material;
+        Ecs::EcsSkinnedRender values = LoadRenderValues();
+        values.Material = material;
+        StoreRenderValues(values);
         MarkRenderStateDirty();
     }
 
     Rendering::MaterialHandle SkinnedMeshComponent::GetMaterial() const
     {
-        return m_Material;
+        return LoadRenderValues().Material;
     }
 
     bool SkinnedMeshComponent::SetMaterial(uint32_t slot, Rendering::MaterialHandle material)
@@ -355,7 +407,9 @@ namespace NorvesLib::Core::Component
         }
         if (slot == 0)
         {
-            m_Material = material;
+            Ecs::EcsSkinnedRender values = LoadRenderValues();
+            values.Material = material;
+            StoreRenderValues(values);
         }
         MarkRenderStateDirty();
         return true;
@@ -377,7 +431,7 @@ namespace NorvesLib::Core::Component
         const auto handle = lease->GetHandle();
         const uint32_t count = lease->GetMaterialSlotNames().empty() ? 1u : static_cast<uint32_t>(lease->GetMaterialSlotNames().size());
         uint64_t id = 0;
-        if (!m_SlotMaterials.TryGet(handle.Id, handle.Generation, count, slot, m_Material.Id, id))
+        if (!m_SlotMaterials.TryGet(handle.Id, handle.Generation, count, slot, LoadRenderValues().Material.Id, id))
         {
             return false;
         }
@@ -387,13 +441,15 @@ namespace NorvesLib::Core::Component
 
     void SkinnedMeshComponent::SetCastShadow(bool bCastShadow)
     {
-        m_bCastShadow = bCastShadow;
+        Ecs::EcsSkinnedRender values = LoadRenderValues();
+        values.bCastShadow = bCastShadow;
+        StoreRenderValues(values);
         MarkRenderStateDirty();
     }
 
     bool SkinnedMeshComponent::CastsShadow() const
     {
-        return m_bCastShadow;
+        return LoadRenderValues().bCastShadow;
     }
 
     bool SkinnedMeshComponent::BuildSkinnedMeshProxy(Rendering::SkinnedMeshProxy& outProxy)
@@ -407,7 +463,8 @@ namespace NorvesLib::Core::Component
         outProxy.ComponentId = GetComponentId();
         const Container::TSharedPtr<SkinnedMeshResource>& mesh = m_SkeletalAsset->GetMesh();
         outProxy.MeshHandle = mesh->GetRenderMeshHandle();
-        outProxy.Material = m_Material;
+        const Ecs::EcsSkinnedRender renderValues = LoadRenderValues();
+        outProxy.Material = renderValues.Material;
         const uint32_t slotCount = GetMaterialSlotCount();
         if (slotCount == 0 || slotCount > Rendering::MAX_MATERIAL_SLOTS)
         {
@@ -438,7 +495,7 @@ namespace NorvesLib::Core::Component
         }
         outProxy.BonePalette = m_Pose.BonePalette;
         outProxy.AnimatedBounds = m_Pose.AnimatedBounds;
-        outProxy.bCastShadow = m_bCastShadow;
+        outProxy.bCastShadow = renderValues.bCastShadow;
         outProxy.bHasAnimatedBounds = m_Pose.bHasAnimatedBounds;
         outProxy.bVisible = true;
         return outProxy.IsValid();

@@ -60,30 +60,30 @@ namespace NorvesLib::Core::Component
         : Component()
     {
         // PROPERTYマクロは値初期化するため、非ゼロデフォルト値を設定
-        bVisible = true;
-        bCastShadow = true;
-        bReceiveShadow = true;
-        RenderLayerProp = Rendering::RenderLayer::Default;
+        getbVisible().Set(true);
+        getbCastShadow().Set(true);
+        getbReceiveShadow().Set(true);
+        getRenderLayerProp().Set(Rendering::RenderLayer::Default);
         ForcedLODLevel = -1;
     }
 
     MeshComponent::MeshComponent(const FieldInitializer *initializer)
         : Component(initializer)
     {
-        bVisible = true;
-        bCastShadow = true;
-        bReceiveShadow = true;
-        RenderLayerProp = Rendering::RenderLayer::Default;
+        getbVisible().Set(true);
+        getbCastShadow().Set(true);
+        getbReceiveShadow().Set(true);
+        getRenderLayerProp().Set(Rendering::RenderLayer::Default);
         ForcedLODLevel = -1;
     }
 
     MeshComponent::MeshComponent(const IUnknown *sourceObject)
         : Component(sourceObject)
     {
-        bVisible = true;
-        bCastShadow = true;
-        bReceiveShadow = true;
-        RenderLayerProp = Rendering::RenderLayer::Default;
+        getbVisible().Set(true);
+        getbCastShadow().Set(true);
+        getbReceiveShadow().Set(true);
+        getRenderLayerProp().Set(Rendering::RenderLayer::Default);
         ForcedLODLevel = -1;
     }
 
@@ -136,7 +136,7 @@ namespace NorvesLib::Core::Component
 
     void MeshComponent::SetMeshHandle(Rendering::MeshDataHandle handle)
     {
-        MeshHandle = handle;
+        getMeshHandle().Set(handle);
         MarkRenderStateDirty();
     }
 
@@ -220,7 +220,8 @@ namespace NorvesLib::Core::Component
                                        const Rendering::MeshResources* meshes) const
     {
         // メッシュが無効なら生成しない
-        if (!MeshHandle->IsValid())
+        const Rendering::MeshDataHandle meshHandle = getMeshHandle().Get();
+        if (!meshHandle.IsValid())
         {
             return false;
         }
@@ -236,7 +237,7 @@ namespace NorvesLib::Core::Component
         // Proxyを構築
         outProxy.ObjectId = GetOwnerId();
         outProxy.ComponentId = ComponentId;
-        outProxy.MeshHandle = MeshHandle;
+        outProxy.MeshHandle = meshHandle;
         outProxy.LODLevel = CurrentLODLevel;
 
         // トランスフォーム
@@ -277,10 +278,10 @@ namespace NorvesLib::Core::Component
         }
 
         // 描画フラグ
-        outProxy.bVisible = bVisible;
-        outProxy.bCastShadow = bCastShadow;
-        outProxy.bReceiveShadow = bReceiveShadow;
-        outProxy.LayerMask = RenderLayerProp;
+        outProxy.bVisible = getbVisible().Get();
+        outProxy.bCastShadow = getbCastShadow().Get();
+        outProxy.bReceiveShadow = getbReceiveShadow().Get();
+        outProxy.LayerMask = getRenderLayerProp().Get();
 
         // カスタムデータ
         for (uint32_t i = 0; i < 4; ++i)

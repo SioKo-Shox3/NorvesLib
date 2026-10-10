@@ -372,7 +372,7 @@
 - paths: Library/Core/Private/Object/World.cpp, Library/Core/Public/Object/Entity.h, Library/Core/Private/Object/Entity.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-RENDER-COLUMNS-MESH: Mesh・MegaGeometry・SkinnedMesh の描画の値を Component の行の列へ移す
-- status: todo
+- status: done
 - done-when: 可視・影・レイヤー・メッシュの handle（Object の参照でないもの）を ECS_PROPERTY にし、Component の行を所有者の子の葉にする。同期はまだ全走査で、読む先だけが列になる。下のテストと起動画面の比較が pass する。
 - verify: `cmake --build build --config Debug --target SceneViewProxyLookupTest WorldSyncDifferentialTest SceneSerializerTest SkinnedRenderPathContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SceneViewProxyLookupTest|WorldSyncDifferentialTest|SceneFileRoundTripTest|SkinnedRenderPathContractTest)$" --no-tests=error --output-on-failure --timeout 180`

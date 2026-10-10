@@ -1,6 +1,9 @@
 ﻿#include "Component/MegaGeometryComponent.h"
 #include "Component/MeshComponent.h"
 #include "Component/PointLightComponent.h"
+#include "Component/SkinnedMeshComponent.h"
+#include "Ecs/EcsRenderTypes.h"
+#include "Ecs/EcsWorld.h"
 #include "Object/World.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
@@ -126,13 +129,15 @@ namespace
         lightProxy = FindLightProxy(view, light->GetComponentId());
         assert(meshProxy);
         assert(lightProxy);
-        assert(GetTranslationX(meshProxy->WorldTransform) == 777.0f);
+        // 変わっていない Mesh は現フレームの proxy を毎フレーム公開し直す（速度の履歴のため）ので、書き換えは残らない。
+        // 変わっていない Light は公開し直さない
+        assert(GetTranslationX(meshProxy->WorldTransform) == 0.0f);
         assert(lightProxy->PositionX == 888.0f);
 
         world.SyncToSceneView();
         assert(view.GetMeshProxies().size() == 1);
         assert(view.GetLightProxies().size() == 1);
-        assert(GetTranslationX(FindMeshProxy(view, object->GetObjectId())->WorldTransform) == 777.0f);
+        assert(GetTranslationX(FindMeshProxy(view, object->GetObjectId())->WorldTransform) == 0.0f);
 
         object->SetPosition(3.0f, 4.0f, 5.0f);
         world.SyncToSceneView();
@@ -285,6 +290,68 @@ namespace
     }
 }
 
+namespace
+{
+    // 描画の値は World の木にいる間、Component の行の列が正になる（予備の値は使われない）
+    void TestRenderValuesLiveInComponentRow()
+    {
+        World world;
+        world.Initialize();
+
+        Entity* object = world.SpawnObject<Entity>();
+        assert(object);
+
+        MeshComponent* mesh = world.CreateComponent<MeshComponent>(object);
+        assert(mesh);
+        MegaGeometryComponent* mega = world.CreateComponent<MegaGeometryComponent>(object);
+        assert(mega);
+        SkinnedMeshComponent* skinned = world.CreateComponent<SkinnedMeshComponent>(object);
+        assert(skinned);
+
+        Ecs::EcsWorld& ecs = world.GetEcsWorld();
+
+        mesh->SetMeshHandle(MakeMeshHandle(321));
+        mesh->SetVisible(false);
+        mesh->SetCastShadow(false);
+        mesh->SetRenderLayer(RenderLayer::UI);
+        const Ecs::EcsMeshRender* meshColumn = ecs.GetColumnValue<Ecs::EcsMeshRender>(mesh->GetEcsEntity());
+        assert(meshColumn);
+        assert(meshColumn->MeshHandle.Id == 321);
+        assert(!meshColumn->bVisible);
+        assert(!meshColumn->bCastShadow);
+        assert(meshColumn->bReceiveShadow);
+        assert(meshColumn->Layer == RenderLayer::UI);
+        assert(mesh->GetMeshHandle().Id == 321);
+        assert(!mesh->IsVisible());
+        assert(ecs.GetColumnValue<Ecs::EcsMegaMesh>(mesh->GetEcsEntity()) == nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsSkinnedRender>(mesh->GetEcsEntity()) == nullptr);
+
+        mega->SetMegaMeshHandle(MakeMegaMeshHandle(654));
+        const Ecs::EcsMegaMesh* megaColumn = ecs.GetColumnValue<Ecs::EcsMegaMesh>(mega->GetEcsEntity());
+        assert(megaColumn);
+        assert(megaColumn->Handle.Id == 654);
+        assert(ecs.GetColumnValue<Ecs::EcsMeshRender>(mega->GetEcsEntity()) != nullptr);
+        assert(mega->GetMegaMeshHandle().Id == 654);
+
+        MaterialHandle material;
+        material.Id = 987;
+        skinned->SetMaterial(material);
+        skinned->SetVisible(false);
+        skinned->SetCastShadow(false);
+        const Ecs::EcsSkinnedRender* skinnedColumn = ecs.GetColumnValue<Ecs::EcsSkinnedRender>(skinned->GetEcsEntity());
+        assert(skinnedColumn);
+        assert(skinnedColumn->Material.Id == 987);
+        assert(!skinnedColumn->bVisible);
+        assert(!skinnedColumn->bCastShadow);
+        assert(skinned->GetMaterial().Id == 987);
+        assert(!skinned->IsVisible());
+        assert(!skinned->CastsShadow());
+        assert(ecs.GetColumnValue<Ecs::EcsMeshRender>(skinned->GetEcsEntity()) == nullptr);
+
+        world.Finalize();
+    }
+}
+
 int main()
 {
     std::cout << "WorldSyncDifferentialTest start\n";
@@ -292,6 +359,7 @@ int main()
     TestMeshAndLightDifferentialSync();
     TestMegaGeometryDifferentialSync();
     TestMeshMaterialBlendSync();
+    TestRenderValuesLiveInComponentRow();
 
     std::cout << "WorldSyncDifferentialTest passed\n";
     return 0;

@@ -1330,3 +1330,23 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - テスト: `WorldRenderInterpolationTest` に `TestPendingDestroyAncestorKeepsRender`（補間しない親を `MarkForDestroy` した後、alpha を変えて更新・Prepare/Capture しても、子の描画位置 2.5 と版が変わらない）を足した。`World.cpp` を HEAD に戻して再ビルドすると、このテストが落ちる（assert でタイムアウト）ことを確かめた。
 - 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-INTERP-10.txt`（3 ターゲットのビルド EXIT=0）、`-11.txt`（ctest 3/3 Passed）、`-12-startup.txt`（`ECS_RENDER_TRANSFORM` が default 9・near 11・low 8、fail 0。3 視点とも `within_limits=True`）。`-8`・`-9` は同じ内容の途中版で証拠にしない。
 - Notes: 物理テスト 2 ファイル（`PhysicsModuleTestAccess.h`・`PhysicsFixedStepPipelineTest.cpp`）の修正は反復 32 のコミットに入っている。履歴を書き換えて分離はしない。
+
+### SCN-ECS-RENDER-COLUMNS-MESH（2026-10-11、反復 34・run 20261010-223034）
+
+- 変更:
+  - `Ecs/EcsRenderTypes.h`（新規）: 列 `EcsMeshRender`（メッシュの handle・可視・影を落とす・影を受ける・レイヤー）・`EcsMegaMesh`（MegaMesh の handle）・`EcsSkinnedRender`（材質の handle・可視・影を落とす）。`EcsTypes.h` に Component の行の種類 `EcsComponentRowKind`（Basic・Mesh・MegaGeometry・SkinnedMesh）を足した。
+  - `Component`: `GetEcsRowKind()`（行に足す列の種類）と `OnEcsRowAttached`・`OnEcsRowDetaching`（ECS_PROPERTY にしていない値を予備と列の間で移す口）を足した。
+  - `MeshComponent`: MeshHandle・bVisible・bCastShadow・bReceiveShadow・RenderLayerProp を `ECS_PROPERTY(EcsMeshRender)` にした。`MegaGeometryComponent`: MegaMeshHandleValue を `ECS_PROPERTY(EcsMegaMesh)` にした（Mesh の列も持つ）。保存・プレハブの経路は ECS_PROPERTY の口を通り、プロパティの名前・型・順は変えていない。
+  - `SkinnedMeshComponent`: 可視・影・材質の handle は元からプロパティではなく保存の対象でもないので、ECS_PROPERTY にして保存の形式を変えることはせず、`EcsSkinnedRender` を Component が Load/Store で読み書きする形にした（`OnEcsRowAttached/Detaching` で予備のメンバと列を移す）。
+  - `World`: Component の行のアーキタイプを種類ごとの配列 `m_ComponentArchetypes` にし、`ComponentArchetypeFor` で行の作成（即時・予約の両方）に使う。検査 `ECS_BIND` に、行の描画の値の列が Component の種類と一致するかの照合を足した。同期は全走査のまま、読む先だけが列になった。
+- paths の外を触った:
+  - `Test/Core/Rendering/WorldSyncDifferentialTest.cpp`: この項目の verify に含まれるテストで、反復 32 で記録した既存の失敗（`!bNeedsSync` 側の Mesh が現フレームの proxy を毎フレーム公開し直す仕様 = 1718b077c の R6-a の速度の修正に、期待値が追いついていない）だった。Mesh の proxy の書き換えは残らない（0）という現行の契約に期待値を直した（Light と MegaGeometry は公開し直さないので元のまま）。列に値が入る契約の `TestRenderValuesLiveInComponentRow`（Mesh・Mega・Skinned の列の中身と、種類ごとに列が付くか）も足した。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-ECS-RENDER-COLUMNS-MESH-1.txt`: 指定 4 ターゲットのビルド EXIT=0。`-2.txt`: ctest 3/4（WorldSyncDifferentialTest が上の既存の失敗）。`-3.txt` は途中の版で証拠にしない。
+  - `-5.txt`: 4 ターゲットのビルド EXIT=0 と ctest 4/4 Passed（SceneFileRoundTripTest・SceneViewProxyLookupTest・WorldSyncDifferentialTest・SkinnedRenderPathContractTest）。`-4.txt` は同じ内容の途中版。
+  - `-6-neighbors.txt`: 隣接の 11 件（EcsLifetimeTest・EcsPropertyStorageTest・EcsHierarchyTest・EntityTreeTest・WorldTickGroupTest・TransformHierarchyTest・WorldRenderInterpolationTest・SceneSerializerTest・PrefabRoundTripTest・SchemaProjectionTest・ComponentDirtyTrackingTest）がすべて Passed。
+  - `-7-startup.txt`: 起動画面の決定論の比較 `result=pass`。3 視点とも輝度差 0.0001 以下・PSNR 65 dB 以上で、`default.png` を開いて確認。
+- Notes:
+  - 描画の値の列は追跡（`MarkWritten`）の設定をまだ持たない。変更ログに載せるのは SYNC-PREP 以降の項目。
+  - ECS_PROPERTY の読み書きは 1 プロパティごとに行を引く。Mesh の proxy の構築は 1 回で 4〜5 回引くので、同期を変わった行だけにする項目（SYNC-SWITCH）で、列をまとめて読む形にできる。
+  - 行末: 編集したファイルは numstat の 2 通りが一致（`World.cpp`・`World.h` は混在のまま、位置ごとに元の行末で置換）。新規の `EcsRenderTypes.h` は UTF-8 BOM + CRLF。
