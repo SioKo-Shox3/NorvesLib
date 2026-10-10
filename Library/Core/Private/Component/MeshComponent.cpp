@@ -215,6 +215,22 @@ namespace NorvesLib::Core::Component
     // SceneProxy生成
     // ========================================
 
+    void MeshComponent::CollectRenderResourceRefs(Container::VariableArray<Rendering::RenderResourceRef>& out) const
+    {
+        const Rendering::MeshDataHandle meshHandle = getMeshHandle().Get();
+        if (meshHandle.IsValid())
+        {
+            out.push_back(Rendering::RenderResourceRef{Rendering::RenderResourceKind::Mesh, meshHandle.Id});
+        }
+        for (const Rendering::MaterialHandle& material : m_Materials)
+        {
+            if (material.IsValid())
+            {
+                out.push_back(Rendering::RenderResourceRef{Rendering::RenderResourceKind::Material, material.Id});
+            }
+        }
+    }
+
     bool MeshComponent::BuildMeshProxy(Rendering::MeshProxy &outProxy,
                                        const Rendering::MaterialResources* materials,
                                        const Rendering::MeshResources* meshes) const

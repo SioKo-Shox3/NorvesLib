@@ -19,11 +19,14 @@
 #include "Object/PrefabAsset.h"
 #include "Rendering/CanvasView.h"
 #include "Rendering/IBoardProxySink.h"
+#include "Rendering/RenderResources.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/SceneProxyHash.h"
 #include "Rendering/SceneView.h"
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstring>
 #include <limits>
 
 namespace NorvesLib::Core
@@ -33,6 +36,23 @@ namespace NorvesLib::Core
         constexpr uint32_t MaxPrefabNestedDepth = 16;
         /// Entity::m_EcsCreateSlot の「予約なし」の値
         constexpr uint32_t kNoEntityCreateSlot = 0xFFFFFFFFu;
+
+        /// 逆引きの集合に入れるため、行を 1 つの値に詰める
+        constexpr uint64_t PackEcsEntity(Ecs::EcsEntity entity)
+        {
+            return (static_cast<uint64_t>(entity.Generation) << 32) | entity.Index;
+        }
+
+        constexpr Ecs::EcsEntity UnpackEcsEntity(uint64_t packed)
+        {
+            return Ecs::EcsEntity{static_cast<uint32_t>(packed & 0xFFFFFFFFull), static_cast<uint32_t>(packed >> 32)};
+        }
+
+        /// 2 つの行列が bit まで同じか
+        bool SameMatrixBits(const Math::Matrix4x4& lhs, const Math::Matrix4x4& rhs)
+        {
+            return std::memcmp(&lhs, &rhs, sizeof(Math::Matrix4x4)) == 0;
+        }
 
         class ScopedWorldFlag
         {
@@ -213,11 +233,20 @@ namespace NorvesLib::Core
                     const bool bHasSpotCone = ecs.GetColumnValue<Ecs::EcsSpotCone>(componentRow) != nullptr;
                     const bool bHasBoard = ecs.GetColumnValue<Ecs::EcsBoardRender>(componentRow) != nullptr;
                     const bool bHasBillboardSize = ecs.GetColumnValue<Ecs::EcsBillboardSize>(componentRow) != nullptr;
+                    const bool bHasPublish = ecs.GetColumnValue<Ecs::EcsPublishState>(componentRow) != nullptr;
+                    const bool bHasPose = ecs.GetColumnValue<Ecs::EcsPoseVersion>(componentRow) != nullptr;
                     const bool bExpectBoard = rowKind == Ecs::EcsComponentRowKind::Board || rowKind == Ecs::EcsComponentRowKind::Billboard;
                     const bool bExpectMesh = rowKind == Ecs::EcsComponentRowKind::Mesh || rowKind == Ecs::EcsComponentRowKind::MegaGeometry;
                     const bool bExpectLight = rowKind == Ecs::EcsComponentRowKind::Light || rowKind == Ecs::EcsComponentRowKind::PointLight ||
                                               rowKind == Ecs::EcsComponentRowKind::SpotLight;
                     const bool bExpectFalloff = rowKind == Ecs::EcsComponentRowKind::PointLight || rowKind == Ecs::EcsComponentRowKind::SpotLight;
+                    // 公開の状態は描画へ出す種類（Basic 以外）の行だけが持ち、ポーズの版は SkinnedMesh の行だけが持つ
+                    if (bHasPublish != (rowKind != Ecs::EcsComponentRowKind::Basic) ||
+                        bHasPose != (rowKind == Ecs::EcsComponentRowKind::SkinnedMesh))
+                    {
+                        error = "Component の行の公開の状態・ポーズの版の列が、Component の種類と一致しない";
+                        return false;
+                    }
                     if (bHasMesh != bExpectMesh || bHasMega != (rowKind == Ecs::EcsComponentRowKind::MegaGeometry) ||
                         bHasSkinned != (rowKind == Ecs::EcsComponentRowKind::SkinnedMesh) || bHasLight != bExpectLight ||
                         bHasFalloff != bExpectFalloff || bHasSpotCone != (rowKind == Ecs::EcsComponentRowKind::SpotLight) ||
@@ -1356,42 +1385,52 @@ namespace NorvesLib::Core
             Ecs::EcsRegisterColumn<Ecs::EcsComponentFlags>(),
             Ecs::EcsRegisterColumn<Ecs::EcsTickConfig>(),
         };
+        // 描画へ出す行は、描画の値の列のほかに公開の状態（EcsPublishState）を持つ
         const Ecs::EcsColumnInfo meshColumns[] = {
             basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
             Ecs::EcsRegisterColumn<Ecs::EcsMeshRender>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsPublishState>(),
         };
         const Ecs::EcsColumnInfo megaColumns[] = {
             basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
             Ecs::EcsRegisterColumn<Ecs::EcsMeshRender>(),
             Ecs::EcsRegisterColumn<Ecs::EcsMegaMesh>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsPublishState>(),
         };
         const Ecs::EcsColumnInfo skinnedColumns[] = {
             basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
             Ecs::EcsRegisterColumn<Ecs::EcsSkinnedRender>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsPublishState>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsPoseVersion>(),
         };
         const Ecs::EcsColumnInfo lightColumns[] = {
             basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
             Ecs::EcsRegisterColumn<Ecs::EcsLightRender>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsPublishState>(),
         };
         const Ecs::EcsColumnInfo pointLightColumns[] = {
             basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
             Ecs::EcsRegisterColumn<Ecs::EcsLightRender>(),
             Ecs::EcsRegisterColumn<Ecs::EcsLightFalloff>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsPublishState>(),
         };
         const Ecs::EcsColumnInfo spotLightColumns[] = {
             basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
             Ecs::EcsRegisterColumn<Ecs::EcsLightRender>(),
             Ecs::EcsRegisterColumn<Ecs::EcsLightFalloff>(),
             Ecs::EcsRegisterColumn<Ecs::EcsSpotCone>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsPublishState>(),
         };
         const Ecs::EcsColumnInfo boardColumns[] = {
             basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
             Ecs::EcsRegisterColumn<Ecs::EcsBoardRender>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsPublishState>(),
         };
         const Ecs::EcsColumnInfo billboardColumns[] = {
             basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
             Ecs::EcsRegisterColumn<Ecs::EcsBoardRender>(),
             Ecs::EcsRegisterColumn<Ecs::EcsBillboardSize>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsPublishState>(),
         };
         const auto createComponentArchetype = [this](Ecs::EcsComponentRowKind kind, Container::Span<const Ecs::EcsColumnInfo> columns)
         {
@@ -1403,14 +1442,14 @@ namespace NorvesLib::Core
             }
         };
         createComponentArchetype(Ecs::EcsComponentRowKind::Basic, Container::Span<const Ecs::EcsColumnInfo>(basicColumns, 4));
-        createComponentArchetype(Ecs::EcsComponentRowKind::Mesh, Container::Span<const Ecs::EcsColumnInfo>(meshColumns, 5));
-        createComponentArchetype(Ecs::EcsComponentRowKind::MegaGeometry, Container::Span<const Ecs::EcsColumnInfo>(megaColumns, 6));
-        createComponentArchetype(Ecs::EcsComponentRowKind::SkinnedMesh, Container::Span<const Ecs::EcsColumnInfo>(skinnedColumns, 5));
-        createComponentArchetype(Ecs::EcsComponentRowKind::Light, Container::Span<const Ecs::EcsColumnInfo>(lightColumns, 5));
-        createComponentArchetype(Ecs::EcsComponentRowKind::PointLight, Container::Span<const Ecs::EcsColumnInfo>(pointLightColumns, 6));
-        createComponentArchetype(Ecs::EcsComponentRowKind::SpotLight, Container::Span<const Ecs::EcsColumnInfo>(spotLightColumns, 7));
-        createComponentArchetype(Ecs::EcsComponentRowKind::Board, Container::Span<const Ecs::EcsColumnInfo>(boardColumns, 5));
-        createComponentArchetype(Ecs::EcsComponentRowKind::Billboard, Container::Span<const Ecs::EcsColumnInfo>(billboardColumns, 6));
+        createComponentArchetype(Ecs::EcsComponentRowKind::Mesh, Container::Span<const Ecs::EcsColumnInfo>(meshColumns, 6));
+        createComponentArchetype(Ecs::EcsComponentRowKind::MegaGeometry, Container::Span<const Ecs::EcsColumnInfo>(megaColumns, 7));
+        createComponentArchetype(Ecs::EcsComponentRowKind::SkinnedMesh, Container::Span<const Ecs::EcsColumnInfo>(skinnedColumns, 7));
+        createComponentArchetype(Ecs::EcsComponentRowKind::Light, Container::Span<const Ecs::EcsColumnInfo>(lightColumns, 6));
+        createComponentArchetype(Ecs::EcsComponentRowKind::PointLight, Container::Span<const Ecs::EcsColumnInfo>(pointLightColumns, 7));
+        createComponentArchetype(Ecs::EcsComponentRowKind::SpotLight, Container::Span<const Ecs::EcsColumnInfo>(spotLightColumns, 8));
+        createComponentArchetype(Ecs::EcsComponentRowKind::Board, Container::Span<const Ecs::EcsColumnInfo>(boardColumns, 6));
+        createComponentArchetype(Ecs::EcsComponentRowKind::Billboard, Container::Span<const Ecs::EcsColumnInfo>(billboardColumns, 7));
 
         // 段の最中に孤児にした行は、各段の同期点で消す
         const uint32_t stages[] = {m_StageTick, m_StageLateTick, m_StageFixedBegin,
@@ -1681,12 +1720,8 @@ namespace NorvesLib::Core
     void World::SetSceneView(Rendering::SceneView* sceneView)
     {
         m_SceneView = sceneView;
-
-        auto roots = GetRootEntities();
-        for (auto* entity : roots)
-        {
-            MarkEntitySubtreeRenderStateDirty(*entity);
-        }
+        // 接続先が替わったので、全部の行を公開し直す
+        NotifyRenderRepublishAll();
     }
 
     void World::SetScreenSpaceBoardSink(Rendering::IBoardProxySink* sink)
@@ -1697,12 +1732,7 @@ namespace NorvesLib::Core
         }
 
         m_ScreenSpaceBoardSink = sink;
-
-        auto roots = GetRootEntities();
-        for (auto* entity : roots)
-        {
-            MarkEntitySubtreeRenderStateDirty(*entity);
-        }
+        NotifyRenderRepublishAll();
     }
 
     void World::SyncToSceneView(const Rendering::MaterialResources* materials,
@@ -1739,6 +1769,12 @@ namespace NorvesLib::Core
         }
 
         UpdateRenderTransforms();
+
+        // 資源の変化を行へ知らせてから走査する（通知を受けた行は走査で proxy を作り直す）
+        m_bInvalidationCheckFrame = IsRenderInvalidationCheckActive();
+        m_InvalidationFrameExamined = 0;
+        m_InvalidationFrameViolations = 0;
+        DrainRenderResourceChanges(materials, meshes);
 
         Container::UnorderedSet<uint64_t> liveMeshComponentIds;
         Container::UnorderedSet<uint64_t> liveSkinnedMeshComponentIds;
@@ -1783,6 +1819,263 @@ namespace NorvesLib::Core
             m_ScreenSpaceBoardSink->RemoveStaleBoardProxies(liveScreenBoardComponentIds);
         }
 
+        FinishRenderInvalidationFrame();
+    }
+
+    // ========================================
+    // 描画の無効化の通知（設計 1.10）
+    // ========================================
+
+    Component::Component* World::ComponentOfRow(Ecs::EcsEntity row) const
+    {
+        if (!m_EcsWorld || row.IsNull() || !m_EcsWorld->IsAlive(row))
+        {
+            return nullptr;
+        }
+        const Ecs::EcsObjectRef* ref = m_EcsWorld->GetColumnValue<Ecs::EcsObjectRef>(row);
+        if (ref == nullptr || ref->Object == nullptr || ref->Generation != row.Generation)
+        {
+            return nullptr;
+        }
+        return static_cast<Component::Component*>(ref->Object);
+    }
+
+    void World::NotifyRenderResourceChanged(Rendering::RenderResourceKind kind, uint64_t id)
+    {
+        const Rendering::RenderResourceRef ref{kind, id};
+        auto usersIt = m_RenderResourceUsers.find(ref.Key());
+        if (usersIt == m_RenderResourceUsers.end())
+        {
+            return;
+        }
+        Container::UnorderedSet<uint64_t>& users = usersIt->second;
+        for (auto it = users.begin(); it != users.end();)
+        {
+            Component::Component* component = ComponentOfRow(UnpackEcsEntity(*it));
+            if (component == nullptr)
+            {
+                // 行が消えている。逆引きから外す
+                it = users.erase(it);
+                continue;
+            }
+            // 走査はこの印で proxy を作り直す。検査は通知を受けた行を「載っている」と数える
+            component->MarkRenderStateDirty();
+            m_RenderNotified.insert(component->GetComponentId());
+            ++it;
+        }
+    }
+
+    void World::NotifyRenderRepublishAll()
+    {
+        m_bRenderRepublishAll = true;
+        auto roots = GetRootEntities();
+        for (auto* entity : roots)
+        {
+            MarkEntitySubtreeRenderStateDirty(*entity);
+        }
+    }
+
+    void World::SetRenderInvalidationCheckForced(bool bForced)
+    {
+        m_bInvalidationCheckForced = bForced;
+        if (!bForced)
+        {
+            m_InvalidationHashes.clear();
+        }
+    }
+
+    bool World::IsRenderInvalidationCheckActive() const
+    {
+        if (m_bInvalidationCheckForced)
+        {
+            return true;
+        }
+        NorvesLib::Debug::EngineChecks* checks = NorvesLib::Core::Engine::GEngine != nullptr
+            ? &NorvesLib::Core::Engine::GEngine->GetEngineChecks()
+            : nullptr;
+        return checks != nullptr && checks->IsEnabled("ECS_RENDER_INVALIDATION");
+    }
+
+    void World::DrainRenderResourceChanges(const Rendering::MaterialResources* materials,
+                                           const Rendering::MeshResources* meshes)
+    {
+        Rendering::ResourceChangeLog* logs[2] = {
+            meshes != nullptr ? meshes->GetChangeLog() : nullptr,
+            materials != nullptr ? materials->GetChangeLog() : nullptr,
+        };
+        for (int i = 0; i < 2; ++i)
+        {
+            Rendering::ResourceChangeLog* log = logs[i];
+            if (log == nullptr || (i == 1 && log == logs[0]))
+            {
+                continue;
+            }
+            if (log->Drain(m_RenderRefScratch))
+            {
+                // 記録が溢れて個別の handle が分からない。全部を公開し直す
+                NotifyRenderRepublishAll();
+                continue;
+            }
+            for (const Rendering::RenderResourceRef& ref : m_RenderRefScratch)
+            {
+                NotifyRenderResourceChanged(ref.Kind, ref.Id);
+            }
+        }
+    }
+
+    World::RenderRowInfo World::ReadRenderRowInfo(const Component::Component& component, const Entity& owner) const
+    {
+        RenderRowInfo info;
+        info.bNotified = m_bRenderRepublishAll ||
+                         m_RenderNotified.find(component.GetComponentId()) != m_RenderNotified.end();
+        if (!m_EcsWorld)
+        {
+            return info;
+        }
+        const Ecs::EcsEntity row = component.GetEcsEntity();
+        if (row.IsNull() || !m_EcsWorld->IsAlive(row))
+        {
+            return info;
+        }
+        const Ecs::EcsPublishState* publish = m_EcsWorld->GetColumnValue<Ecs::EcsPublishState>(row);
+        if (publish != nullptr)
+        {
+            info.bRenderTransformChanged = publish->RenderTransformVersion != owner.GetRenderTransformVersion();
+        }
+        if (const Ecs::EcsPoseVersion* pose = m_EcsWorld->GetColumnValue<Ecs::EcsPoseVersion>(row))
+        {
+            info.PoseSerial = pose->Serial;
+            info.bPoseChanged = publish != nullptr && publish->PoseSerial != pose->Serial;
+        }
+        return info;
+    }
+
+    void World::RecordRenderPublish(const Component::Component& component, const Entity& owner, bool bPublished,
+                                    uint64_t proxyHash)
+    {
+        if (m_EcsWorld)
+        {
+            const Ecs::EcsEntity row = component.GetEcsEntity();
+            if (!row.IsNull() && m_EcsWorld->IsAlive(row))
+            {
+                if (Ecs::EcsPublishState* publish = m_EcsWorld->GetColumnValue<Ecs::EcsPublishState>(row))
+                {
+                    publish->bPublished = bPublished;
+                    if (bPublished)
+                    {
+                        ++publish->Version;
+                        publish->RenderTransformVersion = owner.GetRenderTransformVersion();
+                        const Ecs::EcsPoseVersion* pose = m_EcsWorld->GetColumnValue<Ecs::EcsPoseVersion>(row);
+                        publish->PoseSerial = pose != nullptr ? pose->Serial : 0;
+                    }
+                }
+            }
+        }
+        if (!m_bInvalidationCheckFrame)
+        {
+            return;
+        }
+        if (bPublished)
+        {
+            m_InvalidationHashes[component.GetComponentId()] = proxyHash;
+            ++m_InvalidationStats.Published;
+            ++m_InvalidationFrameExamined;
+        }
+        else
+        {
+            m_InvalidationHashes.erase(component.GetComponentId());
+        }
+    }
+
+    void World::NoteRenderRetry(const Component::Component& component)
+    {
+        const Ecs::EcsEntity row = component.GetEcsEntity();
+        if (!row.IsNull())
+        {
+            m_RenderRetryNext.push_back(row);
+        }
+    }
+
+    void World::RegisterRenderResourceUsers(const Component::Component& component)
+    {
+        const Ecs::EcsEntity row = component.GetEcsEntity();
+        if (row.IsNull())
+        {
+            return;
+        }
+        m_RenderRefScratch.clear();
+        component.CollectRenderResourceRefs(m_RenderRefScratch);
+        const uint64_t packed = PackEcsEntity(row);
+        for (const Rendering::RenderResourceRef& ref : m_RenderRefScratch)
+        {
+            m_RenderResourceUsers[ref.Key()].insert(packed);
+        }
+    }
+
+    void World::CheckRenderRowUnchanged(const Component::Component& component, bool bBuilt, uint64_t proxyHash)
+    {
+        ++m_InvalidationStats.Probed;
+        ++m_InvalidationFrameExamined;
+        const auto shadowIt = m_InvalidationHashes.find(component.GetComponentId());
+        const bool bHadShadow = shadowIt != m_InvalidationHashes.end();
+        const bool bSame = bBuilt ? (bHadShadow && shadowIt->second == proxyHash) : !bHadShadow;
+        if (bSame)
+        {
+            return;
+        }
+        ++m_InvalidationStats.Violations;
+        ++m_InvalidationFrameViolations;
+        if (m_InvalidationStats.Violations <= 8)
+        {
+            LOG_ERROR("ECS_RENDER_INVALIDATION: 変更も通知も無いのに proxy が変わった (component=%llu, 作れた=%d, 公開済み=%d)",
+                      static_cast<unsigned long long>(component.GetComponentId()), bBuilt ? 1 : 0, bHadShadow ? 1 : 0);
+        }
+    }
+
+    void World::FinishRenderInvalidationFrame()
+    {
+        if (m_bInvalidationCheckFrame && m_EcsWorld)
+        {
+            // 再試行の一覧に入った行は、公開済みの状態であってはならない
+            for (const Ecs::EcsEntity row : m_RenderRetryNext)
+            {
+                const Ecs::EcsPublishState* publish =
+                    m_EcsWorld->IsAlive(row) ? m_EcsWorld->GetColumnValue<Ecs::EcsPublishState>(row) : nullptr;
+                if (publish != nullptr && publish->bPublished)
+                {
+                    ++m_InvalidationStats.RetryMismatches;
+                    ++m_InvalidationFrameViolations;
+                }
+            }
+        }
+        m_RenderRetryRows.swap(m_RenderRetryNext);
+        m_RenderRetryNext.clear();
+        // 通知は 1 回の同期で使い切る。公開しても前フレームの変換が落ち着いていない行は、次の同期の通知になる
+        m_RenderNotified.swap(m_RenderSettleNext);
+        m_RenderSettleNext.clear();
+        m_bRenderRepublishAll = false;
+
+        if (!m_bInvalidationCheckFrame)
+        {
+            return;
+        }
+        NorvesLib::Debug::EngineChecks* checks = NorvesLib::Core::Engine::GEngine != nullptr
+            ? &NorvesLib::Core::Engine::GEngine->GetEngineChecks()
+            : nullptr;
+        if (checks == nullptr || !checks->IsEnabled("ECS_RENDER_INVALIDATION"))
+        {
+            return;
+        }
+        ++m_InvalidationCalls;
+        const bool bPass = m_InvalidationFrameViolations == 0;
+        // 呼び出しが多いので、fail は毎回、pass は最初に行を照合できた回と 64 回ごとに出す
+        const bool bReportPass = bPass && m_InvalidationFrameExamined > 0 &&
+                                 (m_InvalidationLastReport == 0 || m_InvalidationCalls % 64 == 0);
+        if (!bPass || bReportPass)
+        {
+            checks->Report("ECS_RENDER_INVALIDATION", bPass, m_InvalidationFrameExamined);
+            m_InvalidationLastReport = m_InvalidationCalls;
+        }
     }
 
     void World::CollectTransientBoardProxies(Container::VariableArray<Rendering::BoardProxy>& outProxies)
@@ -2421,19 +2714,36 @@ namespace NorvesLib::Core
         }
 
         const uint64_t ownerVersion = entity.GetTransformVersion();
+        const bool bCheckInvalidation = m_bInvalidationCheckFrame;
         auto components = entity.GetComponents();
         for (auto* comp : components)
         {
             auto* skinnedMeshComp = CastTo<Component::SkinnedMeshComponent>(comp);
             if (m_SceneView && skinnedMeshComp)
             {
+                const RenderRowInfo rowInfo = ReadRenderRowInfo(*skinnedMeshComp, entity);
                 const bool bNeedsSync = skinnedMeshComp->IsRenderStateDirty() ||
-                                        skinnedMeshComp->GetLastSyncedTransformVersion() != ownerVersion;
+                                        skinnedMeshComp->GetLastSyncedTransformVersion() != ownerVersion ||
+                                        rowInfo.bPoseChanged;
                 if (!bNeedsSync)
                 {
                     if (skinnedMeshComp->IsVisible())
                     {
                         liveSkinnedMeshComponentIds.insert(skinnedMeshComp->GetComponentId());
+                    }
+                    // 変更も通知も無い行は、作り直しても公開した内容と同じでなければならない。
+                    // 姿勢が最新のときだけ作り直す（最新でないときの構築は姿勢を求め直して状態を変えてしまう）
+                    if (bCheckInvalidation && !rowInfo.bRenderTransformChanged && !rowInfo.bNotified &&
+                        skinnedMeshComp->IsVisible() && skinnedMeshComp->IsPoseCurrent())
+                    {
+                        Rendering::SkinnedMeshProxy probe;
+                        const bool bBuilt = skinnedMeshComp->BuildSkinnedMeshProxy(probe);
+                        if (bBuilt)
+                        {
+                            probe.ObjectId = entity.GetObjectId();
+                            probe.ComponentId = skinnedMeshComp->GetComponentId();
+                        }
+                        CheckRenderRowUnchanged(*skinnedMeshComp, bBuilt, bBuilt ? Rendering::HashProxy(probe) : 0);
                     }
                 }
                 else if (!skinnedMeshComp->IsVisible())
@@ -2441,6 +2751,7 @@ namespace NorvesLib::Core
                     // Hidden is an acknowledged non-publishing state, not a retryable failure.
                     skinnedMeshComp->ClearRenderStateDirty();
                     skinnedMeshComp->SetLastSyncedTransformVersion(ownerVersion);
+                    RecordRenderPublish(*skinnedMeshComp, entity, false, 0);
                 }
                 else
                 {
@@ -2453,7 +2764,16 @@ namespace NorvesLib::Core
                         liveSkinnedMeshComponentIds.insert(skinnedMeshProxy.ComponentId);
                         skinnedMeshComp->ClearRenderStateDirty();
                         skinnedMeshComp->SetLastSyncedTransformVersion(ownerVersion);
+                        RecordRenderPublish(*skinnedMeshComp, entity, true,
+                                            bCheckInvalidation ? Rendering::HashProxy(skinnedMeshProxy) : 0);
                     }
+                    else
+                    {
+                        // 公開したいのに proxy を作れなかった（資産の読み込み待ちなど）。次の同期でもう一度試す
+                        RecordRenderPublish(*skinnedMeshComp, entity, false, 0);
+                        NoteRenderRetry(*skinnedMeshComp);
+                    }
+                    RegisterRenderResourceUsers(*skinnedMeshComp);
                 }
             }
 
@@ -2462,6 +2782,7 @@ namespace NorvesLib::Core
             auto* meshComp = CastTo<Component::MeshComponent>(comp);
             if (m_SceneView && meshComp && !megaComp)
             {
+                const RenderRowInfo rowInfo = ReadRenderRowInfo(*meshComp, entity);
                 const bool bNeedsSync = meshComp->IsRenderStateDirty() ||
                                         meshComp->GetLastSyncedTransformVersion() != ownerVersion;
                 if (!bNeedsSync)
@@ -2477,6 +2798,17 @@ namespace NorvesLib::Core
                         {
                             componentDataRegistry->PublishMeshProxy(entity, meshProxy);
                         }
+                        // 変更も通知も無い行を作り直した内容は、公開した内容と同じでなければならない
+                        const uint64_t proxyHash = bCheckInvalidation ? Rendering::HashProxy(meshProxy) : 0;
+                        if (bCheckInvalidation && !rowInfo.bRenderTransformChanged && !rowInfo.bNotified)
+                        {
+                            CheckRenderRowUnchanged(*meshComp, true, proxyHash);
+                        }
+                        RecordRenderPublish(*meshComp, entity, true, proxyHash);
+                    }
+                    else if (bCheckInvalidation && !rowInfo.bRenderTransformChanged && !rowInfo.bNotified)
+                    {
+                        CheckRenderRowUnchanged(*meshComp, false, 0);
                     }
                 }
                 else
@@ -2494,7 +2826,19 @@ namespace NorvesLib::Core
                         {
                             componentDataRegistry->PublishMeshProxy(entity, meshProxy);
                         }
+                        RecordRenderPublish(*meshComp, entity, true,
+                                            bCheckInvalidation ? Rendering::HashProxy(meshProxy) : 0);
+                        // 前フレームの変換が現在と違う間は、次のフレームの公開で履歴が現在に揃う。次の同期の通知にする
+                        if (!SameMatrixBits(meshProxy.PreviousWorldTransform, meshProxy.WorldTransform))
+                        {
+                            m_RenderSettleNext.insert(meshComp->GetComponentId());
+                        }
                     }
+                    else
+                    {
+                        RecordRenderPublish(*meshComp, entity, false, 0);
+                    }
+                    RegisterRenderResourceUsers(*meshComp);
 
                     meshComp->ClearRenderStateDirty();
                     meshComp->SetLastSyncedTransformVersion(ownerVersion);
@@ -2504,6 +2848,7 @@ namespace NorvesLib::Core
 
             if (m_SceneView && megaComp)
             {
+                const RenderRowInfo rowInfo = ReadRenderRowInfo(*megaComp, entity);
                 const bool bNeedsSync = megaComp->IsRenderStateDirty() ||
                                         megaComp->GetLastSyncedTransformVersion() != ownerVersion;
                 if (!bNeedsSync)
@@ -2518,6 +2863,17 @@ namespace NorvesLib::Core
                             megaProxy.ComponentId = megaComp->GetComponentId();
                             componentDataRegistry->PublishMegaGeometryProxy(entity, megaProxy);
                         }
+                    }
+                    if (bCheckInvalidation && !rowInfo.bRenderTransformChanged && !rowInfo.bNotified)
+                    {
+                        Rendering::MegaGeometryProxy probe;
+                        const bool bBuilt = megaComp->BuildMegaGeometryProxy(probe);
+                        if (bBuilt)
+                        {
+                            probe.ObjectId = entity.GetObjectId();
+                            probe.ComponentId = megaComp->GetComponentId();
+                        }
+                        CheckRenderRowUnchanged(*megaComp, bBuilt, bBuilt ? Rendering::HashProxy(probe) : 0);
                     }
                 }
                 else
@@ -2535,6 +2891,12 @@ namespace NorvesLib::Core
                         {
                             componentDataRegistry->PublishMegaGeometryProxy(entity, megaProxy);
                         }
+                        RecordRenderPublish(*megaComp, entity, true,
+                                            bCheckInvalidation ? Rendering::HashProxy(megaProxy) : 0);
+                    }
+                    else
+                    {
+                        RecordRenderPublish(*megaComp, entity, false, 0);
                     }
 
                     megaComp->ClearRenderStateDirty();
@@ -2545,11 +2907,22 @@ namespace NorvesLib::Core
             auto* lightComp = CastTo<Component::LightComponent>(comp);
             if (m_SceneView && lightComp)
             {
+                const RenderRowInfo rowInfo = ReadRenderRowInfo(*lightComp, entity);
                 const bool bNeedsSync = lightComp->IsRenderStateDirty() ||
                                         lightComp->GetLastSyncedTransformVersion() != ownerVersion;
                 if (!bNeedsSync)
                 {
                     liveLightIds.insert(lightComp->GetComponentId());
+                    if (bCheckInvalidation && !rowInfo.bRenderTransformChanged && !rowInfo.bNotified)
+                    {
+                        Rendering::LightProxy probe;
+                        const bool bBuilt = lightComp->BuildLightProxy(probe);
+                        if (bBuilt)
+                        {
+                            probe.LightId = lightComp->GetComponentId();
+                        }
+                        CheckRenderRowUnchanged(*lightComp, bBuilt, bBuilt ? Rendering::HashProxy(probe) : 0);
+                    }
                 }
                 else
                 {
@@ -2559,6 +2932,12 @@ namespace NorvesLib::Core
                         lightProxy.LightId = lightComp->GetComponentId();
                         m_SceneView->UpdateLightProxy(lightProxy);
                         liveLightIds.insert(lightProxy.LightId);
+                        RecordRenderPublish(*lightComp, entity, true,
+                                            bCheckInvalidation ? Rendering::HashProxy(lightProxy) : 0);
+                    }
+                    else
+                    {
+                        RecordRenderPublish(*lightComp, entity, false, 0);
                     }
 
                     lightComp->ClearRenderStateDirty();
@@ -2576,6 +2955,7 @@ namespace NorvesLib::Core
             auto* boardComp = CastTo<Component::BoardComponent>(comp);
             if (boardComp)
             {
+                const RenderRowInfo rowInfo = ReadRenderRowInfo(*boardComp, entity);
                 boardComp->PrepareFlipbookForRenderSync();
                 const bool bForceWorldSpace = CastTo<Component::BillboardComponent>(boardComp) != nullptr;
                 const Rendering::BoardSpace effectiveSpace = bForceWorldSpace
@@ -2594,6 +2974,17 @@ namespace NorvesLib::Core
                     {
                         liveScreenBoardComponentIds.insert(boardComp->GetComponentId());
                     }
+                    if (bCheckInvalidation && !rowInfo.bRenderTransformChanged && !rowInfo.bNotified)
+                    {
+                        Rendering::BoardProxy probe;
+                        const bool bBuilt = boardComp->BuildBoardProxy(probe);
+                        if (bBuilt)
+                        {
+                            probe.ObjectId = entity.GetObjectId();
+                            probe.ComponentId = boardComp->GetComponentId();
+                        }
+                        CheckRenderRowUnchanged(*boardComp, bBuilt, bBuilt ? Rendering::HashProxy(probe) : 0);
+                    }
                 }
                 else
                 {
@@ -2604,6 +2995,8 @@ namespace NorvesLib::Core
                     {
                         boardProxy.ObjectId = entity.GetObjectId();
                         boardProxy.ComponentId = boardComp->GetComponentId();
+                        RecordRenderPublish(*boardComp, entity, true,
+                                            bCheckInvalidation ? Rendering::HashProxy(boardProxy) : 0);
                         if (boardProxy.Space == Rendering::BoardSpace::WorldSpace)
                         {
                             liveWorldBoardComponentIds.insert(boardProxy.ComponentId);
@@ -2631,6 +3024,7 @@ namespace NorvesLib::Core
                     }
                     else
                     {
+                        RecordRenderPublish(*boardComp, entity, false, 0);
                         if (m_ScreenSpaceBoardSink)
                         {
                             m_ScreenSpaceBoardSink->RemoveBoardProxy(boardComp->GetComponentId());

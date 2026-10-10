@@ -13,6 +13,7 @@
 #include "Rendering/ProceduralMeshGPUData.h"
 #include "Rendering/RenderResourcesFwd.h"
 #include "Rendering/RenderTypes.h"
+#include "Rendering/ResourceChangeLog.h"
 #include "Rendering/SkinnedMeshTypes.h"
 #include "Rendering/TextureAssetTypes.h"
 #include "Rendering/TextureAsyncTypes.h"
@@ -198,6 +199,9 @@ namespace NorvesLib::Core::Rendering
         // 登録中の材質の数（観測用）
         size_t GetCount() const;
 
+        // 材質の更新・解放を World へ知らせる記録（所有者が無ければ nullptr）
+        ResourceChangeLog *GetChangeLog() const;
+
         MaterialHandle CreateNeural(const NeuralMaterialDesc &desc);
         Container::VariableArray<NeuralMaterialResource *> GetNeuralResources() const;
 
@@ -238,6 +242,8 @@ namespace NorvesLib::Core::Rendering
         void Unregister(MeshDataHandle handle);
         // 登録中のメッシュの数（観測用）
         size_t GetCount() const;
+        // メッシュの登録・解除を World へ知らせる記録（所有者が無ければ nullptr）
+        ResourceChangeLog *GetChangeLog() const;
 
     private:
         friend class RenderResources;
@@ -453,6 +459,9 @@ namespace NorvesLib::Core::Rendering
         MegaGeometryResources &MegaGeometry() { return m_MegaGeometry; }
         const MegaGeometryResources &MegaGeometry() const { return m_MegaGeometry; }
 
+        /// 資源の登録・更新・解放の記録。World が同期の前に取り出し、使っている行の proxy を作り直す
+        ResourceChangeLog &ChangeLog() const { return m_ChangeLog; }
+
     private:
         friend class GpuResources;
         friend class TextureResources;
@@ -476,6 +485,7 @@ namespace NorvesLib::Core::Rendering
         SkinnedMeshResources m_SkinnedMeshes;
         MaterialResources m_Materials;
         MeshResources m_Meshes;
+        mutable ResourceChangeLog m_ChangeLog;
         MegaGeometryResources m_MegaGeometry;
     };
 

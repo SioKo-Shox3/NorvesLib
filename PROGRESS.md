@@ -1402,3 +1402,27 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - 方向の書き込みは列へ直接で、変更ログには載らない（他の光の列と同じ。SYNC-PREP 以降の項目）。
   - 行末: 編集したファイルは numstat の 2 通りが一致（`World.cpp` は混在のまま、差分の行だけ元の行末で当て直した）。
+
+### SCN-ECS-RENDER-INVALIDATION（2026-10-11、反復 38・run 20261010-223034）
+
+- 変更:
+  - 資源の変化の記録 `Rendering/ResourceChangeLog.h`（新規。スレッド間で積め、溢れたら「全部変わった」とだけ覚える）。`RenderResources::ChangeLog()` が持ち、`MeshResources::Register/Unregister`・`MaterialResources::Update/Release` が積む。
+  - 逆引き: `Component::CollectRenderResourceRefs`（Mesh はメッシュと材質、SkinnedMesh はメッシュと slot 材質、Mega は何も申告しない）。World が proxy を作り直すたびに「資源 → 行」の表へ登録し、`NotifyRenderResourceChanged` が行を dirty にして通知済みに数える。死んだ行は通知のときに表から外す。
+  - ポーズの版: 列 `EcsPoseVersion`（SkinnedMesh の行。ポーズを求め直すたびに Component が書く）と、公開した版との比較（違えば作り直し）。
+  - 接続先の交換: `SetSceneView`・`SetScreenSpaceBoardSink` が `NotifyRenderRepublishAll` を呼ぶ（全行を dirty にして、同期の終わりまで通知済みに数える）。
+  - 公開の状態の列 `EcsPublishState`（公開済みか・公開した回数・公開時の描画の変換の版とポーズの版）を、描画へ出す全種類の行のアーキタイプに足した（検査 ECS_BIND の種類との照合にも足した）。公開しようとして proxy を作れなかった行（アセット待ちの SkinnedMesh）は再試行の一覧に入る。
+  - 見つけた通知の種類: Mesh は公開の翌フレームにもう一度公開して前フレームの変換を揃える（速度の履歴）。これを「履歴が落ち着くまでの公開し直し」として次の同期の通知にした。
+  - 検査 `ECS_RENDER_INVALIDATION`: 公開した proxy の内容の hash（`Rendering/SceneProxyHash.h`。SceneView が書き換えるソート値は除く）を覚え、dirty でも変換の版違いでも通知でもない行を作り直して同じか照合する。食い違えば「変更も通知も無いのに proxy が変わった」で fail。再試行の一覧の行が公開済みになっていないかも見る。
+  - 同期はまだ全走査のまま（挙動は変えていない。SkinnedMesh の「ポーズの版が違う」だけ新しい作り直しの理由）。
+- テスト（paths の外）: `WorldSyncDifferentialTest::TestRenderInvalidationNotifications`（列の有無、逆引きで対象の行だけ dirty、材質の更新が記録を通って proxy に届く、記録を横取りして通知を欠くと検査が違反 1 件を見つける、動かした直後の公開し直しで違反が出ない、接続先の交換、再試行の一覧、消えた行への通知）。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-ECS-RENDER-INVALIDATION-1.txt`（Debug の Core ビルド EXIT=0）、`-2.txt`（WorldSyncDifferentialTest ビルド EXIT=0）、`-3.txt`（同テスト Passed）。
+  - `-4-startup.txt`: 起動画面の決定論の比較 `result=pass`、`ECS_RENDER_INVALIDATION` が default 3・near 4・low 3 pass、fail 0。3 視点とも `within_limits=True`。
+  - `-6-rendering3dtest.txt`・`-6-mega-bananas.txt`・`-6-mega-stress.txt`: 周回 3 周が各 `result=pass`、`ECS_RENDER_INVALIDATION` pass=1506/715/2303、fail 0。
+  - `-7-neighbors.txt`: 隣接の 26 件（Ecs*・EntityTree・SceneSerializer・PrefabRoundTrip・SchemaProjection・ComponentDirtyTracking・Light/Board/Billboard・WorldSync・SceneViewProxy*・SkinnedRenderPathContract・WorldRenderInterpolation・WorldTickGroup・TransformHierarchy など）すべて Passed。
+  - `-5-cycle.txt` は 3 シーン混在の周回で、検査は pass=4541・fail 0 だが別件のテクスチャキャッシュ差（`SCENE_CYCLE_DIFF field=textures`、CLEANUP-LIST 以来既知）で失敗する。証拠にしない。`TASKS.md` の verify を前の項目と同じくシーンごとの 3 コマンドにした。
+- Notes:
+  - 次の SYNC-PREP: 描画の値の列は追跡（`MarkWritten`）をまだ持たない。変更ログに載せるのは SYNC-PREP 以降。dirty フラグが当面その代わり。
+  - 公開の状態の `bPublished` は、非アクティブな Entity の行（走査されない）では更新されない。SYNC-PREP の Remove の一覧はこの点を扱うこと。
+  - 逆引きに載せない資源: Board のテクスチャ・Mega の MegaMesh（proxy が handle を渡すだけで状態を読まない）、SkinnedMesh の登録（`RenderResources` の窓口に登録の口が無い。アセット側の dirty とポーズの版に任せる）。
+  - 行末: 編集したファイルは numstat の 2 通りが一致。新規 `ResourceChangeLog.h`・`SceneProxyHash.h` は UTF-8 BOM + CRLF。

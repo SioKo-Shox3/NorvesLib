@@ -72,6 +72,7 @@ namespace NorvesLib::Core::Component
         virtual void Tick(float deltaTime) override;
 
         Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::Mesh; }
+        void CollectRenderResourceRefs(Container::VariableArray<Rendering::RenderResourceRef>& out) const override;
 
         // ========================================
         // メッシュ設定

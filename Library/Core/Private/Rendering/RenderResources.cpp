@@ -874,9 +874,15 @@ namespace NorvesLib::Core::Rendering
     bool MaterialResources::Update(MaterialHandle handle, const MaterialCreateData &createInfo)
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
-        return impl && impl->MaterialStore
-                   ? impl->MaterialStore->UpdateMaterial(handle, createInfo)
-                   : false;
+        const bool bUpdated = impl && impl->MaterialStore
+                                  ? impl->MaterialStore->UpdateMaterial(handle, createInfo)
+                                  : false;
+        if (bUpdated)
+        {
+            // 同じ handle のまま中身（ブレンドなど）が変わった。使っている行の proxy を作り直させる
+            m_pOwner->ChangeLog().Notify(RenderResourceKind::Material, handle.Id);
+        }
+        return bUpdated;
     }
 
     void MaterialResources::Release(MaterialHandle handle)
@@ -885,7 +891,13 @@ namespace NorvesLib::Core::Rendering
         if (impl && impl->MaterialStore && m_pOwner)
         {
             impl->MaterialStore->ReleaseMaterial(handle, m_pOwner->Textures());
+            m_pOwner->ChangeLog().Notify(RenderResourceKind::Material, handle.Id);
         }
+    }
+
+    ResourceChangeLog *MaterialResources::GetChangeLog() const
+    {
+        return m_pOwner ? &m_pOwner->ChangeLog() : nullptr;
     }
 
     size_t MaterialResources::GetCount() const
@@ -949,13 +961,19 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        return impl->ProceduralMeshes->RegisterMesh(handle,
-                                                   vertices,
-                                                   vertexSize,
-                                                   indices,
-                                                   indexCount,
-                                                   subMeshes,
-                                                   subMeshCount);
+        const bool bRegistered = impl->ProceduralMeshes->RegisterMesh(handle,
+                                                                       vertices,
+                                                                       vertexSize,
+                                                                       indices,
+                                                                       indexCount,
+                                                                       subMeshes,
+                                                                       subMeshCount);
+        if (bRegistered)
+        {
+            // 行が先に handle を持っていた場合、境界と部分メッシュの範囲がこの登録で決まる
+            m_pOwner->ChangeLog().Notify(RenderResourceKind::Mesh, handle.Id);
+        }
+        return bRegistered;
     }
 
     const MeshResources::MeshGPUData *MeshResources::GetGPUData(MeshDataHandle handle) const
@@ -992,6 +1010,7 @@ namespace NorvesLib::Core::Rendering
         if (impl && impl->ProceduralMeshes)
         {
             impl->ProceduralMeshes->UnregisterMesh(handle);
+            m_pOwner->ChangeLog().Notify(RenderResourceKind::Mesh, handle.Id);
         }
     }
 
@@ -999,6 +1018,11 @@ namespace NorvesLib::Core::Rendering
     {
         auto *impl = m_pOwner ? m_pOwner->m_Impl.get() : nullptr;
         return impl && impl->ProceduralMeshes ? impl->ProceduralMeshes->GetMeshCount() : 0;
+    }
+
+    ResourceChangeLog *MeshResources::GetChangeLog() const
+    {
+        return m_pOwner ? &m_pOwner->ChangeLog() : nullptr;
     }
 
     SkinnedMeshResources::SkinnedMeshResources(RenderResources* pOwner)

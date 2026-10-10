@@ -112,4 +112,28 @@ namespace NorvesLib::Core::Ecs
     {
         Math::Vector2 SizeWorld;
     };
+
+    /// 描画へ出す行（Mesh・MegaGeometry・SkinnedMesh・Light 系・Board）の公開の状態。World だけが書く。
+    /// 望む状態（可視・有効）と比べて、公開から非公開へ変わった行の Remove を出すのに使う。
+    /// 公開したときに読んだ版も持ち、今の版と違えば「変わった行」になる
+    struct EcsPublishState
+    {
+        /// 公開したときの描画の変換の版（Entity::GetRenderTransformVersion）
+        uint64_t RenderTransformVersion;
+        /// 公開したときのポーズの版（EcsPoseVersion::Serial。SkinnedMesh 以外は 0）
+        uint64_t PoseSerial;
+        /// proxy を作り直して渡した回数
+        uint32_t Version;
+        /// SceneView（または画面空間の sink）に proxy を出している
+        bool bPublished;
+        uint8_t Reserved0;
+        uint8_t Reserved1;
+        uint8_t Reserved2;
+    };
+
+    /// SkinnedMeshComponent の行のポーズの版。ポーズを求め直すたびに Component が書く（World は公開した版と比べる）
+    struct EcsPoseVersion
+    {
+        uint64_t Serial;
+    };
 }

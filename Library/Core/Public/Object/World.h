@@ -261,6 +261,41 @@ namespace NorvesLib::Core
         Rendering::IBoardProxySink *GetScreenSpaceBoardSink() const { return m_ScreenSpaceBoardSink; }
 
         /**
+         * @brief 描画の資源（メッシュ・材質など）が変わったことを知らせる
+         *
+         * 「資源の handle → その資源を使う行」の逆引きで行を見つけ、その行の proxy を次の同期で作り直す。
+         * 通常は SyncToSceneView が資源の記録（ResourceChangeLog）から取り出して呼ぶ
+         */
+        void NotifyRenderResourceChanged(Rendering::RenderResourceKind kind, uint64_t id);
+
+        /**
+         * @brief 全部の行の proxy を作り直して公開し直す（SceneView や画面空間の sink の接続先を替えたときなど）
+         */
+        void NotifyRenderRepublishAll();
+
+        /// 検査 ECS_RENDER_INVALIDATION の累計
+        struct RenderInvalidationStats
+        {
+            /// 公開した内容を覚えた回数
+            uint32_t Published = 0;
+            /// 変更も通知も無い行を作り直して、公開した内容と比べた回数
+            uint32_t Probed = 0;
+            /// 比べた結果が食い違った回数（変更も通知も無いのに proxy が変わった行）
+            uint32_t Violations = 0;
+            /// 再試行の一覧の行が、公開済みの状態になっていた回数
+            uint32_t RetryMismatches = 0;
+        };
+
+        /// 検査の累計
+        const RenderInvalidationStats& GetRenderInvalidationStats() const { return m_InvalidationStats; }
+
+        /// 検査 ECS_RENDER_INVALIDATION を EngineChecks の設定によらず走らせる（テスト用）
+        void SetRenderInvalidationCheckForced(bool bForced);
+
+        /// 公開を試みたが proxy を作れず、次の同期でもう一度試す行
+        const Container::VariableArray<Ecs::EcsEntity>& GetRenderRetryRows() const { return m_RenderRetryRows; }
+
+        /**
          * @brief MeshComponent/LightComponentからSceneViewへProxy同期
          */
         void SyncToSceneView(const Rendering::MaterialResources* materials = nullptr,
@@ -429,6 +464,33 @@ namespace NorvesLib::Core
         void DispatchFixedTickBody();
         void SyncToSceneViewBody();
 
+        // ---- 描画の無効化の通知（設計 1.10） ----
+        /// 同期の対象になる行を読む（公開の状態の列・ポーズの版・通知）
+        struct RenderRowInfo
+        {
+            bool bRenderTransformChanged = false;
+            bool bPoseChanged = false;
+            bool bNotified = false;
+            uint64_t PoseSerial = 0;
+        };
+        RenderRowInfo ReadRenderRowInfo(const Component::Component& component, const Entity& owner) const;
+        /// 公開の状態の列を書く。proxy を出したときは bPublished を true にして版を進め、出さなかった・外したときは false にする
+        void RecordRenderPublish(const Component::Component& component, const Entity& owner, bool bPublished,
+                                 uint64_t proxyHash);
+        /// 公開したかった行が proxy を作れなかった。次の同期でもう一度試す一覧に入れる
+        void NoteRenderRetry(const Component::Component& component);
+        /// 資源の逆引きへ、この Component の行が使っている資源を登録する（proxy を作り直すたびに呼ぶ）
+        void RegisterRenderResourceUsers(const Component::Component& component);
+        /// 資源の変化の記録から取り出して、使っている行へ通知する
+        void DrainRenderResourceChanges(const Rendering::MaterialResources* materials,
+                                        const Rendering::MeshResources* meshes);
+        /// 変更も通知も無い行を作り直した proxy が、公開した内容と同じか確かめる
+        void CheckRenderRowUnchanged(const Component::Component& component, bool bBuilt, uint64_t proxyHash);
+        bool IsRenderInvalidationCheckActive() const;
+        /// 1 回の同期の終わり: 再試行の一覧と通知の入れ替え、検査の報告
+        void FinishRenderInvalidationFrame();
+        Component::Component* ComponentOfRow(Ecs::EcsEntity row) const;
+
         Container::TUniquePtr<Ecs::EcsWorld> m_EcsWorld;
         Container::TUniquePtr<Ecs::SystemScheduler> m_Scheduler;
         /// 階層のシステム（ワールドの変換と EffectiveActive を伝播で求める）。EcsWorld より先に壊す
@@ -570,6 +632,31 @@ namespace NorvesLib::Core
         // システムポインタ（リフレクション対象外）
         Rendering::SceneView *m_SceneView = nullptr;
         Rendering::IBoardProxySink *m_ScreenSpaceBoardSink = nullptr;
+
+        /// 資源の逆引き: 鍵（RenderResourceRef::Key）→ その資源を使う Component の行（EcsEntity を 1 つの値に詰めたもの）。
+        /// 死んだ行は通知のときに取り除く
+        Container::UnorderedMap<uint64_t, Container::UnorderedSet<uint64_t>> m_RenderResourceUsers;
+        /// 今回の同期で「通知を受けた」ことにする Component の ID（資源の変化・前回の公開で履歴が落ち着いていない行）
+        Container::UnorderedSet<uint64_t> m_RenderNotified;
+        /// 次の同期で通知を受けたことにする Component の ID（今回の公開で前フレームの変換が現在と違う行）
+        Container::UnorderedSet<uint64_t> m_RenderSettleNext;
+        /// 全部の行を公開し直す要求（次に走った同期の終わりまで）
+        bool m_bRenderRepublishAll = false;
+        /// 再試行の一覧（今の分と、今回の同期で作っている次の分）
+        Container::VariableArray<Ecs::EcsEntity> m_RenderRetryRows;
+        Container::VariableArray<Ecs::EcsEntity> m_RenderRetryNext;
+        /// 取り出した資源の変化の置き場
+        Container::VariableArray<Rendering::RenderResourceRef> m_RenderRefScratch;
+        /// 検査 ECS_RENDER_INVALIDATION: Component の ID → 公開した proxy の内容の hash
+        Container::UnorderedMap<uint64_t, uint64_t> m_InvalidationHashes;
+        RenderInvalidationStats m_InvalidationStats;
+        bool m_bInvalidationCheckForced = false;
+        /// 今回の同期で検査を走らせる（同期の頭で決める）
+        bool m_bInvalidationCheckFrame = false;
+        uint64_t m_InvalidationCalls = 0;
+        uint64_t m_InvalidationLastReport = 0;
+        uint32_t m_InvalidationFrameExamined = 0;
+        uint32_t m_InvalidationFrameViolations = 0;
 
         // リフレクションプロパティ
         PROPERTY(uint64_t, NextObjectId)

@@ -277,10 +277,40 @@ namespace NorvesLib::Core::Component
         }
     }
 
+    void SkinnedMeshComponent::StorePoseVersion()
+    {
+        const Ecs::EcsRowRef row = GetEcsRow();
+        const TypeId type = Ecs::EcsColumnInfoOf<Ecs::EcsPoseVersion>().Type;
+        if (Ecs::EcsRowHasColumn(row, type))
+        {
+            Ecs::EcsWriteColumnPart(row, type, 0, static_cast<uint32_t>(sizeof(m_PoseSerial)), &m_PoseSerial);
+        }
+    }
+
+    void SkinnedMeshComponent::CollectRenderResourceRefs(
+        Container::VariableArray<Rendering::RenderResourceRef>& out) const
+    {
+        const Rendering::SkinnedMeshHandle meshHandle = getMeshHandle().Get();
+        if (meshHandle.IsValid())
+        {
+            out.push_back(Rendering::RenderResourceRef{Rendering::RenderResourceKind::SkinnedMesh, meshHandle.Id});
+        }
+        const uint32_t slotCount = GetMaterialSlotCount();
+        for (uint32_t slot = 0; slot < slotCount; ++slot)
+        {
+            Rendering::MaterialHandle material;
+            if (TryGetSlotMaterial(slot, material) && material.IsValid())
+            {
+                out.push_back(Rendering::RenderResourceRef{Rendering::RenderResourceKind::Material, material.Id});
+            }
+        }
+    }
+
     void SkinnedMeshComponent::OnEcsRowAttached()
     {
-        // 可視・影・メッシュの handle は ECS_PROPERTY の移動で列へ移っている。残りは材質の handle
+        // 可視・影・メッシュの handle は ECS_PROPERTY の移動で列へ移っている。残りは材質の handle とポーズの版
         StoreMaterial(m_Material);
+        StorePoseVersion();
     }
 
     void SkinnedMeshComponent::OnEcsRowDetaching()
@@ -520,7 +550,7 @@ namespace NorvesLib::Core::Component
            !Animation::SkeletalPoseBuilder::Prepare(skeleton,clip,mesh,m_MeshNodeGlobalTransform,m_PoseContext,m_PoseBoundsSettings))return false;
         if(!Animation::SkeletalPoseBuilder::BuildPose(m_PoseContext,pose,m_PoseScratch,m_Pose))return false;
         m_EvaluatedMesh=m_SkeletalAsset->GetMesh();m_EvaluatedSkeleton=m_SkeletalAsset->GetSkeleton();
-        m_EvaluatedClip=GetAnimationClip();m_bPoseDirty=false;++m_PoseSerial;return true;
+        m_EvaluatedClip=GetAnimationClip();m_bPoseDirty=false;++m_PoseSerial;StorePoseVersion();return true;
     }
 
     bool SkinnedMeshComponent::SetPoseBoundsSettings(const Animation::PoseBoundsSettings& settings)
@@ -577,6 +607,7 @@ namespace NorvesLib::Core::Component
             m_EvaluatedSkeleton = m_SkeletalAsset->GetSkeleton();
             m_EvaluatedClip = GetAnimationClip();
             ++m_PoseSerial;
+            StorePoseVersion();
         }
         return bSampled;
     }

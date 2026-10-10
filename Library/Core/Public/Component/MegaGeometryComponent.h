@@ -25,6 +25,11 @@ namespace NorvesLib::Core::Component
         virtual ~MegaGeometryComponent();
 
         Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::MegaGeometry; }
+        /// MegaGeometry の proxy は MegaMesh の handle をそのまま渡すだけで、メッシュや材質の状態を読まない
+        void CollectRenderResourceRefs(Container::VariableArray<Rendering::RenderResourceRef>& out) const override
+        {
+            (void)out;
+        }
 
         void SetMegaMeshHandle(Rendering::MegaGeometry::MegaMeshHandle handle);
         Rendering::MegaGeometry::MegaMeshHandle GetMegaMeshHandle() const { return getMegaMeshHandleValue().Get(); }

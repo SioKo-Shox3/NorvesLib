@@ -7,6 +7,7 @@
 #include "Object/Entity.h"
 #include "Object/Reflection.h"
 #include "Container/Containers.h"
+#include "Rendering/ResourceChangeLog.h"
 #include "Container/PointerTypes.h"
 #include <cstdint>
 
@@ -246,6 +247,17 @@ namespace NorvesLib::Core::Component
          * @brief 行に足す描画の値の列の種類（World が行を作るときのアーキタイプを選ぶ）
          */
         virtual Ecs::EcsComponentRowKind GetEcsRowKind() const { return Ecs::EcsComponentRowKind::Basic; }
+
+        /**
+         * @brief proxy の内容が依存している資源（メッシュ・材質など）を out へ足す
+         *
+         * World が「資源の handle → 使っている行」の逆引きに使う。資源の登録・更新・解放が通知されたとき、
+         * この行の proxy を作り直す。handle を変える setter は描画の更新を要求するので、そのたびに呼ばれて申告し直される
+         */
+        virtual void CollectRenderResourceRefs(Container::VariableArray<Rendering::RenderResourceRef>& out) const
+        {
+            (void)out;
+        }
 
     protected:
         /**

@@ -26,6 +26,7 @@ namespace NorvesLib::Core::Component
         ~SkinnedMeshComponent() override;
 
         Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::SkinnedMesh; }
+        void CollectRenderResourceRefs(Container::VariableArray<Rendering::RenderResourceRef>& out) const override;
 
         void Initialize() override;
         void Finalize() override;
@@ -70,6 +71,9 @@ namespace NorvesLib::Core::Component
 
         [[nodiscard]] bool BuildSkinnedMeshProxy(Rendering::SkinnedMeshProxy& outProxy);
 
+        // 姿勢が最新か（評価し直す必要が無いか）。描画の同期の検査が、副作用なしに proxy を作れるかの判定に使う
+        [[nodiscard]] bool IsPoseCurrent() const { return HasCurrentPose(); }
+
         // dirtyな姿勢だけ評価する。成功した再評価ごとにserialを進める。
         // 同じResourceの内容を直接編集した場合はSetSkeletalAssetで再設定して無効化する。
         [[nodiscard]] bool EvaluatePose();
@@ -103,6 +107,8 @@ namespace NorvesLib::Core::Component
         void StoreMaterial(Rendering::MaterialHandle material);
         // アセットの描画用 handle を列（無い間は予備）へ写す。lease の作り直しに追従するため、proxy の構築前にも呼ぶ
         void RefreshMeshHandle();
+        // ポーズの版（m_PoseSerial）を列（EcsPoseVersion。行が無い間は何もしない）へ写す
+        void StorePoseVersion();
 
         Container::TSharedPtr<const Rendering::SkinnedMeshAssetLease> GetMaterialBindingLease() const;
         bool HasValidPoseResources() const;

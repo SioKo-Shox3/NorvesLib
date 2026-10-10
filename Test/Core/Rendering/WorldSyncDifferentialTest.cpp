@@ -372,6 +372,129 @@ namespace
         world.Finalize();
     }
 
+    // 描画の無効化の通知（設計 1.10）: 資源の変化・履歴の落ち着き・接続先の交換が、変更の無い行の proxy 更新の理由になる
+    void TestRenderInvalidationNotifications()
+    {
+        World world;
+        world.Initialize();
+        world.SetRenderInvalidationCheckForced(true);
+
+        SceneView view;
+        SceneViewSettings settings;
+        assert(view.Initialize(settings));
+        world.SetSceneView(&view);
+
+        RenderResources renderResources;
+        Ecs::EcsWorld& ecs = world.GetEcsWorld();
+
+        Entity* object = world.SpawnObject<Entity>();
+        Entity* other = world.SpawnObject<Entity>();
+        assert(object && other);
+
+        const MaterialHandle translucent = MakeMaterialHandle(renderResources, BlendMode::Translucent);
+        const MaterialHandle additive = MakeMaterialHandle(renderResources, BlendMode::Additive);
+
+        MeshComponent* mesh = world.CreateComponent<MeshComponent>(object);
+        MeshComponent* otherMesh = world.CreateComponent<MeshComponent>(other);
+        PointLightComponent* light = world.CreateComponent<PointLightComponent>(object);
+        SkinnedMeshComponent* skinned = world.CreateComponent<SkinnedMeshComponent>(object);
+        assert(mesh && otherMesh && light && skinned);
+        mesh->SetMeshHandle(MakeMeshHandle(500));
+        mesh->SetMaterial(0, translucent);
+        otherMesh->SetMeshHandle(MakeMeshHandle(501));
+        otherMesh->SetMaterial(0, additive);
+        skinned->SetVisible(true);
+
+        // 公開の状態の列は描画へ出す行にだけあり、ポーズの版の列は SkinnedMesh の行にだけある
+        assert(ecs.GetColumnValue<Ecs::EcsPublishState>(mesh->GetEcsEntity()) != nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsPublishState>(light->GetEcsEntity()) != nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsPublishState>(skinned->GetEcsEntity()) != nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsPoseVersion>(skinned->GetEcsEntity()) != nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsPoseVersion>(mesh->GetEcsEntity()) == nullptr);
+
+        world.SyncToSceneView(&renderResources.Materials());
+        const Ecs::EcsPublishState* meshState = ecs.GetColumnValue<Ecs::EcsPublishState>(mesh->GetEcsEntity());
+        const Ecs::EcsPublishState* lightState = ecs.GetColumnValue<Ecs::EcsPublishState>(light->GetEcsEntity());
+        const Ecs::EcsPublishState* skinnedState = ecs.GetColumnValue<Ecs::EcsPublishState>(skinned->GetEcsEntity());
+        assert(meshState && meshState->bPublished && meshState->Version == 1);
+        assert(lightState && lightState->bPublished);
+        // アセットの無い SkinnedMesh は proxy を作れない。公開されないまま、再試行の一覧に入る
+        assert(!skinnedState->bPublished);
+        assert(world.GetRenderRetryRows().size() == 1);
+        assert(world.GetRenderRetryRows()[0] == skinned->GetEcsEntity());
+        assert(world.GetRenderInvalidationStats().Violations == 0);
+        assert(world.GetRenderInvalidationStats().RetryMismatches == 0);
+
+        // 資源の handle → 使っている行の逆引き: 通知した資源を使う行だけが作り直しの対象になる
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(!mesh->IsRenderStateDirty());
+        assert(!otherMesh->IsRenderStateDirty());
+        world.NotifyRenderResourceChanged(RenderResourceKind::Material, translucent.Id);
+        assert(mesh->IsRenderStateDirty());
+        assert(!otherMesh->IsRenderStateDirty());
+        world.NotifyRenderResourceChanged(RenderResourceKind::Material, 424242);
+        world.NotifyRenderResourceChanged(RenderResourceKind::Mesh, 501);
+        assert(otherMesh->IsRenderStateDirty());
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(!mesh->IsRenderStateDirty());
+        assert(!otherMesh->IsRenderStateDirty());
+        assert(world.GetRenderInvalidationStats().Violations == 0);
+
+        // 材質の更新は資源の記録を通って行に届き、同じ handle のままブレンドが替わった proxy になる
+        MaterialCreateData blended;
+        blended.Blend = BlendMode::Masked;
+        assert(renderResources.Materials().Update(translucent, blended));
+        assert(renderResources.ChangeLog().HasPending());
+        world.SyncToSceneView(&renderResources.Materials(), nullptr);
+        assert(!renderResources.ChangeLog().HasPending());
+        assert(FindMeshProxy(view, object->GetObjectId()) != nullptr);
+        assert(FindMeshProxy(view, object->GetObjectId())->MaterialBlendModes[0] == BlendMode::Masked);
+        assert(world.GetRenderInvalidationStats().Violations == 0);
+
+        // 通知が行に届かなければ、変更も通知も無いのに proxy が変わった行として検査が見つける
+        blended.Blend = BlendMode::Additive;
+        assert(renderResources.Materials().Update(translucent, blended));
+        Container::VariableArray<RenderResourceRef> swallowed;
+        (void)renderResources.ChangeLog().Drain(swallowed);
+        assert(swallowed.size() == 1);
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(world.GetRenderInvalidationStats().Violations == 1);
+        // 公開し直した内容を覚えるので、次の同期では食い違わない
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(world.GetRenderInvalidationStats().Violations == 1);
+
+        // 前フレームの変換の履歴が落ち着くまでの公開し直しは通知になる（動かした直後の 2 回目の同期）
+        object->SetPosition(9.0f, 0.0f, 0.0f);
+        world.SyncToSceneView(&renderResources.Materials());
+        world.SyncToSceneView(&renderResources.Materials());
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(world.GetRenderInvalidationStats().Violations == 1);
+        assert(world.GetRenderInvalidationStats().Probed > 0);
+
+        // 接続先の交換は全部の行を公開し直す
+        SceneView replacementView;
+        assert(replacementView.Initialize(settings));
+        world.SetSceneView(&replacementView);
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(replacementView.GetMeshProxies().size() == 2);
+        assert(replacementView.GetLightProxies().size() == 1);
+        assert(world.GetRenderInvalidationStats().Violations == 1);
+
+        // 再試行の一覧は、公開を望まなくなった行を外す
+        skinned->SetVisible(false);
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(world.GetRenderRetryRows().empty());
+        assert(world.GetRenderInvalidationStats().RetryMismatches == 0);
+
+        // 行が消えた後の通知は何も起こさない
+        other->MarkForDestroy();
+        world.Tick(0.016f);
+        world.NotifyRenderResourceChanged(RenderResourceKind::Mesh, 501);
+        world.SyncToSceneView(&renderResources.Materials());
+
+        world.Finalize();
+    }
+
     void TestLightAndBoardValuesLiveInComponentRow()
     {
         World world;
@@ -560,6 +683,7 @@ int main()
     TestMegaGeometryDifferentialSync();
     TestMeshMaterialBlendSync();
     TestRenderValuesLiveInComponentRow();
+    TestRenderInvalidationNotifications();
     TestLightAndBoardValuesLiveInComponentRow();
     TestLightDirectionAndBillboardSizeLiveInComponentRow();
 
