@@ -739,3 +739,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - ログ（`scene-capture/SCN-MEGA-10K/<視点>/<視点>.Game.log`）: 3 視点とも `MEGA_CAPACITY draw_dropped=0`（全行。`max_draw_count=1048576`）、VSM の `overflow=` に 0 でない行なし、`visibility_bytes=84200000`。
 - 画: 3 視点の PNG を開いた。overview は 1 万本の升目と 3 つの山で地面の透けは無く、close は手前のバナナと山に影、low は床すれすれまで影が出て、欠けは無い。
 - Notes: 検証コマンドの分割は技術的な調整（paths の内側）。Debug の撮影は 1 視点約 4 分で、1 コマンドに 3 視点を入れるとランナーの 10 分を超える点は、他の重いシーンの verify でも同じ。
+
+### SCN-BANANAS-PERF（2026-10-10、反復 26・run 20261009-233224）
+
+- バナナ 1 万・2 万・3 万本 × overview・close の GPU 時間・MegaGeometry の GPU 時間・描いたクラスタ数・バッファの大きさを、RelWithDebInfo・1920×1080・`-GpuTimingFrames 300` で測り、`Docs/RenderingValidation/SceneLauncherAcceptance.md`（新規）のバナナの節に表で書いた。1 万本 overview の内訳（パスごと）と、直したもの・既知の限界も同じ節に書いた。
+- 直したもの（前の反復の作業途中の保存コミットに入っている）: (1) 太陽の影を VSM が持つ間は CSM に MegaGeometry を描かない（1 万本 overview 31.4 → 17.3 ms）、(2) `vsm_mark.comp` が立っているビットへ atomicOr しない（1 万 close の `VsmMark` 11.9 → 4.1 ms）、(3) `MaxDrawCount` 1,048,576 → 4,194,304（2 万・3 万本の捨てたクラスタ 0）。CSM を省く前後で起動画面・バナナの平均輝度は同じ。
+- 結果（最新の計測 `vm2`）: フレームの GPU は 1 万 16.99（overview）・16.45（close）ms、2 万 29.6・32.0 ms、3 万 41.0・55.9 ms。1 万本 overview は予算 16.6 ms を 2% 超える（残りは MegaGeometry のカリングとラスタ。LOD の閾値を 1.5 画素にすると 16.47 ms だが、全シーンの LOD が変わるので既定は変えていない）。
+- 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-BANANAS-PERF-1.txt`（RelWithDebInfo の Game ビルド EXIT=0）、`-3.txt`（`CaptureScene.ps1 -GameArgs banana-count=30000` 3 視点 pass、約 261 秒）、`-vm2-<本数>-<視点>.txt` 6 本（最新の計測）、`-base-*`（変更前）・`-fix1-*`（CSM の省略と上限）・`-eq-*`（見た目の同一確認）・`-lod1.5-`・`-lod2-`・`-rerun1/2-30000-close`。
+- 画: 1 万・2 万・3 万本の overview と close、3 万本の low を開いた。穴・欠け・影の欠けは無い。
+- Notes: CPU のフレームが GPU より長く、本数で線形より速く伸びる（1 万 72 ms・3 万 579 ms）。内訳はトレースのスコープに無く未調査。別件として `TASKS.md` に SCN-MEGA-CPU-FRAME を追記した。3 万本の GPU 時間は CPU 律速のため計測ごとに揺れる（close 45.7〜57 ms）。

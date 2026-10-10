@@ -108,7 +108,7 @@
 - notes: 危険地帯（描画・メモリ）。`MegaGeometryPass.h` 98〜105 行付近（`MaxDrawCount = 262144`。超えた可視クラスタは描かれない）、`MegaGeometryPass.cpp` 1488 行付近（Capacity）、3157〜3169・3296〜3299 行付近（可視ビット 4 B × 全インスタンスのクラスタ数の総和、0x3FFFFFFF の上限）、`DynamicUniformAllocator.cpp` 147 行付近（CSM の UBO 枠 1024）。引数の上限は `GameApplicationHandler.cpp` 134〜142 行付近。1フレームの GPU 転送は 8 MB 上限（`RenderResources.cpp` 66 行付近）。
 
 ## SCN-BANANAS-PERF: バナナ 1万・2万・3万本の GPU 時間とメモリを測って記録する
-- status: todo
+- status: done
 - done-when: RelWithDebInfo・1920×1080 で、`mega-bananas` の `overview` と `close` を 1万・2万・3万本で測り、MegaGeometry の GPU 時間・フレームの GPU 時間・VRAM（MegaGeometry のプールとバッファ）・描いたクラスタ数を `Docs/RenderingValidation/SceneLauncherAcceptance.md`（無ければ作る）のバナナの節に表で書く。1万本の `overview` のフレームの GPU 時間が 16.6 ms を超えるときは内訳（どのパスが重いか）を書き、直せるものは直し、直さないものは既知の限界として書く。測った視点の撮影を開いて、本数が増えても穴が無いことを確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs banana-count=30000 -OutDir .harness/runs/scene-capture/SCN-BANANAS-PERF`
@@ -851,3 +851,11 @@
 - done-when: 既存時間軸/ループ/root抽出に外れ値除去・周期平滑/平均・接地情報・自然速度・時間補正・導出root・reportを接続する。
 - verify: AssetCookとCoreの変更ソースの構文確認。調整値はprofileで変更できる。
 - notes: role-profile processingで明示的に有効化する。足のIK固定や別骨格への再接地は後続項目。
+
+## SCN-MEGA-CPU-FRAME: バナナ 1万本以上で CPU のフレームが GPU の 4 倍以上かかる原因を絞る
+- status: todo
+- done-when: RelWithDebInfo・1920×1080 の `mega-bananas` 1万本 overview で、CPU のフレーム（1 万 72 ms・3 万 579 ms。`Docs/RenderingValidation/SceneLauncherAcceptance.md` のバナナの節）の内訳を、ゲームスレッドとレンダースレッドのスコープごとに測って絞り、直せる原因（インスタンスごとの毎フレームの処理・待ち）は直す。直さないものは既知の限界として同じ節に書く。起動画面（Rendering3DTest）と他シーンの見た目・GPU 時間は変えない。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-CPU-FRAME`
+- paths: Docs/RenderingValidation, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Object, Library/Core/Private/Object, Game, Scripts, TASKS.md, PROGRESS.md
+- notes: 危険地帯（描画スレッド・メモリ）。トレースのスコープは `RenderGraph.Execute`（1 万 26 ms → 3 万 313 ms）と `MegaGeometryPass.RecordFrameCommand`（2.1 → 7.1 ms）だけで、ゲームスレッド（73 → 579 ms）の内訳が無い。まず `NORVES_TRACE_SCOPE` 相当のスコープを足して絞る。評価者を通す。
