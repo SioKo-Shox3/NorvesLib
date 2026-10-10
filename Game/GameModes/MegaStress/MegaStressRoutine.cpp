@@ -89,6 +89,26 @@ namespace Game::GameModes
         VariableArray<StressMeshLoad> Loads;
     };
 
+    /// 毎フレーム動かす 1 つの Entity。置いた位置・向きを基準に、円運動とヨーの回転を重ねる
+    struct StressMover
+    {
+        Entity *pEntity = nullptr;
+        float BaseX = 0.0f;
+        float BaseY = 0.0f;
+        float BaseZ = 0.0f;
+        float BaseYaw = 0.0f;
+        /// 円運動の半径[m]・角速度[rad/s]・初期位相[rad]、ヨーの角速度[rad/s]
+        float Radius = 0.0f;
+        float Omega = 0.0f;
+        float Phase = 0.0f;
+        float YawOmega = 0.0f;
+    };
+
+    struct StressMovers
+    {
+        VariableArray<StressMover> Items;
+    };
+
     namespace
     {
         // 昼の太陽。カメラの後ろ右から差す向き
@@ -113,6 +133,13 @@ namespace Game::GameModes
         constexpr float kCellJitterMeters = 1.0f;
         constexpr float kFieldNearZ = 8.0f;
         constexpr float kPi = 3.14159265358979323846f;
+
+        // 動く Entity の動き: 半径 kMoverRadiusMin〜Max[m] の円運動（角速度 kMoverOmegaMin〜Max[rad/s]）とヨーの回転
+        constexpr float kMoverRadiusMin = 1.0f;
+        constexpr float kMoverRadiusMax = 2.0f;
+        constexpr float kMoverOmegaMin = 0.8f;
+        constexpr float kMoverOmegaMax = 1.6f;
+        constexpr float kMoverYawOmegaMax = 1.5f;
 
         // 整数のハッシュ（配置の乱数。番号だけで決まり、実行ごとに同じ）
         uint32_t HashIndex(uint32_t value)
@@ -512,13 +539,13 @@ namespace Game::GameModes
             return true;
         }
 
-        /// 1 つの Entity を置く
-        bool SpawnStressEntity(GameModeContext &ctx, const StressMeshLoad &load, float x, float z, float yaw)
+        /// 1 つの Entity を置く。置けなければ nullptr
+        Entity *SpawnStressEntity(GameModeContext &ctx, const StressMeshLoad &load, float x, float z, float yaw)
         {
             Entity *object = ctx.ScopeRef.SpawnObject<Entity>();
             if (object == nullptr)
             {
-                return false;
+                return nullptr;
             }
             object->SetPosition(x, load.BaseY, z);
             object->SetScale(load.BaseScale, load.BaseScale, load.BaseScale);
@@ -526,11 +553,38 @@ namespace Game::GameModes
             auto *component = ctx.WorldRef.CreateComponent<Component::MegaGeometryComponent>(object);
             if (component == nullptr)
             {
-                return false;
+                return nullptr;
             }
             component->SetMegaMeshHandle(load.MegaMesh);
             component->SetCastShadow(true);
-            return true;
+            return object;
+        }
+
+        /// 動かす Entity の動きを番号から決める（実行ごとに同じ）
+        StressMover MakeMover(Entity *entity, uint32_t index, const StressMeshLoad &load, float x, float z, float yaw)
+        {
+            const uint32_t hash = HashIndex(index * 2246822519u + 0x2545f491u);
+            StressMover mover;
+            mover.pEntity = entity;
+            mover.BaseX = x;
+            mover.BaseY = load.BaseY;
+            mover.BaseZ = z;
+            mover.BaseYaw = yaw;
+            mover.Radius = kMoverRadiusMin + UnitFloat(hash) * (kMoverRadiusMax - kMoverRadiusMin);
+            mover.Omega = kMoverOmegaMin + UnitFloat(HashIndex(hash ^ 0x85ebca6bu)) * (kMoverOmegaMax - kMoverOmegaMin);
+            mover.Phase = UnitFloat(HashIndex(hash ^ 0xc2b2ae35u)) * 2.0f * kPi;
+            mover.YawOmega = (UnitFloat(HashIndex(hash ^ 0x27d4eb2fu)) * 2.0f - 1.0f) * kMoverYawOmegaMax;
+            return mover;
+        }
+
+        /// 時刻 time[秒] の位置と向きを Entity へ入れる
+        void ApplyMover(const StressMover &mover, float time)
+        {
+            const float angle = mover.Omega * time + mover.Phase;
+            mover.pEntity->SetPosition(mover.BaseX + mover.Radius * std::sin(angle), mover.BaseY,
+                                       mover.BaseZ + mover.Radius * std::cos(angle));
+            mover.pEntity->SetRotation(
+                Math::Quaternion(Math::Vector3(0.0f, 1.0f, 0.0f), mover.BaseYaw + mover.YawOmega * time));
         }
 
         /// 読めた種類から重みで 1 つ選ぶ（番号だけで決まる）。選べなければ -1
@@ -569,6 +623,8 @@ namespace Game::GameModes
                 }
             }
 
+            auto movers = MakeShared<StressMovers>();
+            const uint32_t movingThreshold = static_cast<uint32_t>(data.m_MovingPercent * 10000.0f + 0.5f);
             uint32_t placed = 0;
             uint32_t columns = 0;
             uint32_t rows = 0;
@@ -592,10 +648,16 @@ namespace Game::GameModes
                     const float x = (static_cast<float>(column) - 0.5f * static_cast<float>(columns - 1)) * kCellMeters + jitterX;
                     const float z = kFieldNearZ + static_cast<float>(row) * kCellMeters + jitterZ;
                     StressMeshLoad &load = assembly.Loads[static_cast<size_t>(kind)];
-                    if (SpawnStressEntity(ctx, load, x, z, yaw))
+                    Entity *entity = SpawnStressEntity(ctx, load, x, z, yaw);
+                    if (entity != nullptr)
                     {
                         ++load.PlacedCount;
                         ++placed;
+                        // 動かす Entity は番号のハッシュで決める（100 万分率の閾値。実行ごとに同じ）
+                        if (HashIndex(index * 3266489917u + 0x165667b1u) % 1000000u < movingThreshold)
+                        {
+                            movers->Items.push_back(MakeMover(entity, index, load, x, z, yaw));
+                        }
                     }
                 }
             }
@@ -612,6 +674,17 @@ namespace Game::GameModes
             }
             LOG_INFO_F("MEGA_STRESS_PLACED entities=%u requested=%u resources=%u sections=%u columns=%u rows=%u", placed,
                        data.m_EntityCount, resourceCount, sectionCount, columns, rows);
+            LOG_INFO_F("MEGA_STRESS_MOVING movers=%zu percent=%.3f start_time=%.3f", movers->Items.size(),
+                       static_cast<double>(data.m_MovingPercent), static_cast<double>(data.m_MovingStartTime));
+            if (!movers->Items.empty())
+            {
+                // 置いた直後の 1 フレーム目から動いた位置で描く
+                for (const StressMover &mover : movers->Items)
+                {
+                    ApplyMover(mover, data.m_MovingStartTime);
+                }
+                data.m_pMovers = movers;
+            }
             data.m_bEntitiesPlaced = true;
             data.m_pAssembly.reset();
         }
@@ -635,6 +708,8 @@ namespace Game::GameModes
         LOG_INFO_F("mega-stress を開始します（Entity 数 %u）", data.m_EntityCount);
         data.m_TickCount = 0;
         data.m_bEntitiesPlaced = false;
+        data.m_pMovers.reset();
+        data.m_MovingElapsed = 0.0f;
         Game::Scenes::BeginSceneAssembly(ctx.EngineRef);
 
         const Game::Scenes::SceneDescriptor *scene = Game::Scenes::FindScene(Game::Scenes::kMegaStressSceneId);
@@ -689,6 +764,17 @@ namespace Game::GameModes
             FinishAssembly(ctx, data);
         }
 
+        // 動く Entity を毎フレーム動かす（ポーズ中は止める）
+        if (data.m_pMovers && !bSuspended)
+        {
+            data.m_MovingElapsed += deltaTime;
+            const float time = data.m_MovingStartTime + data.m_MovingElapsed;
+            for (const StressMover &mover : data.m_pMovers->Items)
+            {
+                ApplyMover(mover, time);
+            }
+        }
+
         // 台本を流し終えるまで、決定的な撮影を待たせる（撮影は台本の後のカメラで撮る）
         Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, Game::Scenes::kMegaStressSceneId,
                                           data.m_TickCount >= kReadyTickCount && data.m_bEntitiesPlaced &&
@@ -701,6 +787,8 @@ namespace Game::GameModes
         // 描画スレッドは、影・MegaGeometry のパスの間、モデルの GPU データを生のポインタで読む。Cleanup がモデルを返す
         // 瞬間に描画中のフレームが残っていると解放済みのデータを読むので、先にそれまでのフレームの描画を完了させる。
         ctx.EngineRef.GetRenderWorld().WaitForRender();
+        // Entity の実体はスコープが返すので、動かす一覧は先に手放す
+        data.m_pMovers.reset();
         // 届いていない読み込みの結果は捨てる
         if (data.m_pAssembly)
         {

@@ -933,3 +933,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 材質のテクスチャ: クック済みの BC のものは仮想テクスチャ（失敗したら全常駐で読み直し）、生成した GLB の埋め込み画像（RGBA8）は全常駐。床は無地（一辺 1600 m）。
 - 証拠（`.harness/runs/20261010-191942/`）: `verify-SCN-MEGA-STRESS-RESIDENT-4-build.txt`（Game の RelWithDebInfo ビルド EXIT=0、最終実装）、`-5-cycle.txt`（cycle smoke 3 周 `result=pass`）、`-6-capture.txt`（5000 個の撮影 `result=pass`）。途中の確認: `-1.txt`〜`-3.txt`（回避を入れる前のビルド・cycle・撮影。撮影は pass だが画像は空と床だけで、これが上の問題）。切り分けの撮影は `.harness/runs/scene-capture/SCN-MEGA-STRESS-RESIDENT-dbg{40,1000,2500,3300,4200,Max1M,Debug3300}/`（Debug の 3300 個でも検証レイヤーのログは空）。
 - Notes: `CaptureScene.ps1` の pass は、画像が空でも出る（`mean_luminance` と白飛び・黒つぶしの比率だけを見る）。5000 個の撮影は画像を開いて確かめた。
+
+### SCN-MEGA-STRESS-MOVING（2026-10-10、反復 5・run 20261010-191942）
+
+- 変更: mega-stress に `--stress-moving-percent=<p>`（0〜100 の数。既定 0 = 動かさない）を足した。Entity を置くときに、番号のハッシュ（100 万分率）が割合の閾値より小さいものを「動く Entity」にする（実行ごとに同じ集合）。毎フレーム `Tick` で、置いた位置の周りを半径 1〜2 m・角速度 0.8〜1.6 rad/s の円運動（水平面）にし、ヨーを ±1.5 rad/s の範囲で回す（半径・角速度・位相・ヨーの角速度は番号から決める。高さは変えない）。動きは番号と経過時間だけで決まる。ポーズ中は止める。置いた直後の 1 フレーム目から動いた位置で描く。
+- 撮影で時刻を変えるため、`--stress-moving-time=<秒>`（動きの時刻の底上げ。既定 0）も足した。ログは `MEGA_STRESS_MOVING movers=<数> percent=<p> start_time=<秒>`。
+- 変更ファイル: `Game/GameApplicationHandler.{h,cpp}`（引数の解析と受け渡し）、`Game/GameModes/MegaStress/MegaStressMode.h`・`MegaStressRoutine.cpp`。
+- 結果（5000 個・10%）: `MEGA_STRESS_PLACED entities=5000 resources=14 sections=14`、`MEGA_STRESS_MOVING movers=528`（10.56%。ハッシュによる選び方なので正確に 10% ではない）、`draw_dropped=0`。
+- 動いていることの確認: 時刻の底上げを 0 秒と 3 秒にした default 視点の 2 枚（`scene-capture/SCN-MEGA-STRESS-MOVING-t0/default.png`・`-t3/default.png`）を開いた。右側の小屋が回転して位置が変わり、バナナ・岩の位置も違う。差が 8 を超える画素は 278,696（13.44%）。同じ時刻（0 秒）を撮り直した対照は 221 画素（0.011%）なので、差は撮影の揺れでなく動きによる（`-4-diff.txt`・`-5-control.txt`）。
+- 証拠（`.harness/runs/20261010-191942/`）: `verify-SCN-MEGA-STRESS-MOVING-1.txt`（Game の RelWithDebInfo ビルド EXIT=0）、`-2-capture.txt`（verify の撮影 `result=pass`。出力は `scene-capture/SCN-MEGA-STRESS-MOVING/`）、`-3-t0.txt`・`-3-t3.txt`（時刻を変えた撮影）、`-4-diff.txt`、`-5-control.txt`。
+- Notes: 計測は SCN-MEGA-STRESS-STREAMING でまとめて行う（このタスクでは GPU 時間を測っていない）。PowerShell でなく Git Bash から `cmake --build ... -- /m:1` を打つと `/m:1` がパスに変換されて失敗する（PowerShell から実行する）。

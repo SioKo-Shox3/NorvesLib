@@ -134,6 +134,10 @@ namespace Game
         constexpr const TCHAR *kBananaCountOption = TEXT("--banana-count=");
         // --stress-entities=<n>: mega-stress の Entity の数（1〜kMaxStressEntityCount。既定 kDefaultStressEntityCount）。
         constexpr const TCHAR *kStressEntitiesOption = TEXT("--stress-entities=");
+        // --stress-moving-percent=<p>: mega-stress で毎フレーム動かす Entity の割合[%]（0〜100。既定 0）。
+        // --stress-moving-time=<秒>: 動く Entity の動きの時刻の底上げ（撮影で時刻を変えるための指定。既定 0）。
+        constexpr const TCHAR *kStressMovingPercentOption = TEXT("--stress-moving-percent=");
+        constexpr const TCHAR *kStressMovingTimeOption = TEXT("--stress-moving-time=");
         // --mega-lod-error-px=<px>: MegaGeometry の LOD を選ぶ誤差の閾値（画素）を替える（開発ビルドだけ。計測用）。
         // 大きい値にすると全インスタンスが根の段で描かれる。環境変数 NORVES_MEGA_LOD_ERROR_PX と同じ効き方をする。
 #if NORVES_BUILD_DEVELOPMENT
@@ -545,6 +549,9 @@ namespace Game
         m_bBananaCountSet = false;
         m_StressEntityCount = Game::GameModes::kDefaultStressEntityCount;
         m_bStressEntityCountSet = false;
+        m_StressMovingPercent = 0.0f;
+        m_bStressMovingPercentSet = false;
+        m_StressMovingStartTime = 0.0f;
         m_bOpenSceneInfo = false;
         m_DogDrive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         bool bHasCharacterDrive = false;
@@ -986,6 +993,34 @@ namespace Game
                 }
                 m_BananaCount = bananaCount;
                 m_bBananaCountSet = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kStressMovingPercentOption, sceneValue))
+            {
+                float movingPercent = 0.0f;
+                if (m_bStressMovingPercentSet)
+                {
+                    LOG_ERROR("--stress-moving-percent が重複しています");
+                    return false;
+                }
+                if (!TryParseBoundedFloat(sceneValue, 0.0f, 100.0f, movingPercent))
+                {
+                    LOG_ERROR("--stress-moving-percent は 0〜100 の数で指定してください");
+                    return false;
+                }
+                m_StressMovingPercent = movingPercent;
+                m_bStressMovingPercentSet = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kStressMovingTimeOption, sceneValue))
+            {
+                float movingStartTime = 0.0f;
+                if (!TryParseBoundedFloat(sceneValue, 0.0f, 1.0e6f, movingStartTime))
+                {
+                    LOG_ERROR("--stress-moving-time は 0〜1000000 の秒数で指定してください");
+                    return false;
+                }
+                m_StressMovingStartTime = movingStartTime;
                 continue;
             }
             if (TryStripPrefix(args[i], kStressEntitiesOption, sceneValue))
@@ -2769,7 +2804,8 @@ namespace Game
         stateMachine->Registry().Register(
             MegaStress,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
-             entityCount = m_StressEntityCount, pauseMenu = &m_PauseMenu,
+             entityCount = m_StressEntityCount, movingPercent = m_StressMovingPercent,
+             movingStartTime = m_StressMovingStartTime, pauseMenu = &m_PauseMenu,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
@@ -2778,6 +2814,8 @@ namespace Game
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
                 mode->GetData().m_EntityCount = entityCount;
+                mode->GetData().m_MovingPercent = movingPercent;
+                mode->GetData().m_MovingStartTime = movingStartTime;
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
                 return mode;

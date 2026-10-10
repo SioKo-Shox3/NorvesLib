@@ -235,6 +235,11 @@ namespace Game
         /// --stress-entities=<n> で指定された、負荷シーン mega-stress の Entity の数（指定が無ければ既定）
         uint32_t m_StressEntityCount = 2000;
         bool m_bStressEntityCountSet = false;
+        /// --stress-moving-percent=<p> で指定された、mega-stress で毎フレーム動かす Entity の割合[%]（0〜100。既定 0 = 動かさない）
+        float m_StressMovingPercent = 0.0f;
+        bool m_bStressMovingPercentSet = false;
+        /// --stress-moving-time=<秒> で指定された、動く Entity の動きの開始時刻の底上げ（撮影で時刻を変えるため。既定 0）
+        float m_StressMovingStartTime = 0.0f;
         /// --open-scene-info（開発ビルドだけ）: バナナのシーンを情報表示を出した状態で始める
         bool m_bOpenSceneInfo = false;
         /// --scene-cycle-smoke=<id,...> の検査（ランチャーとシーンの間を周回して、資源が増えないことを確かめる）

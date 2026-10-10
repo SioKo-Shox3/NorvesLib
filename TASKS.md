@@ -209,7 +209,7 @@
 - notes: 計測は SCN-MEGA-STRESS-STREAMING でまとめて行う。
 
 ## SCN-MEGA-STRESS-MOVING: mega-stress に一部の Entity が毎フレーム動く負荷を足す
-- status: todo
+- status: done
 - done-when: `--stress-moving-percent=<p>` で、その割合の Entity を毎フレーム動かす（位置と回転。決定的な動き）。5000 個・10% 移動で、時刻を変えた 2 枚の撮影を開いて動いていることを確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=10 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-MOVING`
