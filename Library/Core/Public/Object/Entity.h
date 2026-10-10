@@ -200,9 +200,9 @@ namespace NorvesLib::Core
         void SetLocalScale(float x, float y, float z);
 
         /**
-         * @brief ローカルトランスフォームを取得
+         * @brief ローカルトランスフォームを取得（値で返す。実体は ECS の列 EcsLocalTransform にある）
          */
-        const Math::Transform& GetLocalTransform() const { return m_LocalTransform; }
+        Math::Transform GetLocalTransform() const;
 
         /**
          * @brief ワールドトランスフォームを設定
@@ -210,9 +210,9 @@ namespace NorvesLib::Core
         void SetWorldTransform(const Math::Transform& worldTransform);
 
         /**
-         * @brief ワールドトランスフォームを取得
+         * @brief ワールドトランスフォームを取得（値で返す。キャッシュは ECS の列 EcsWorldTransform にある）
          */
-        const Math::Transform& GetWorldTransform() const;
+        Math::Transform GetWorldTransform() const;
         // 描画専用。opt-in root以下だけ補間し、物理/joint/AABBのworld姿勢は変更しない。
         // 明示ON/OFFはsubsystem由来の既定値より優先する。falseの明示も記録する。
         void SetRenderInterpolationEnabled(bool enabled);
@@ -222,7 +222,7 @@ namespace NorvesLib::Core
         {
             return m_bRenderInterpolationEnabled;
         }
-        const Math::Transform& GetRenderWorldTransform() const;
+        Math::Transform GetRenderWorldTransform() const;
         uint64_t GetRenderTransformVersion() const
         {
             return m_RenderTransformVersion;
@@ -244,7 +244,7 @@ namespace NorvesLib::Core
         /**
          * @brief ワールド位置を取得
          */
-        const Math::Vector3& GetPosition() const;
+        Math::Vector3 GetPosition() const;
 
         /**
          * @brief ワールド回転を設定（クォータニオン）
@@ -255,7 +255,7 @@ namespace NorvesLib::Core
         /**
          * @brief ワールド回転を取得（クォータニオン）
          */
-        const Math::Quaternion& GetRotation() const;
+        Math::Quaternion GetRotation() const;
 
         /**
          * @brief ワールドスケールを設定
@@ -266,7 +266,7 @@ namespace NorvesLib::Core
         /**
          * @brief ワールドスケールを取得
          */
-        const Math::Vector3& GetScale() const;
+        Math::Vector3 GetScale() const;
 
         /**
          * @brief トランスフォーム更新バージョンを取得
@@ -369,17 +369,17 @@ namespace NorvesLib::Core
         // 表示名（エディタでのリネーム用。空文字は未設定を表す）
         PROPERTY(Container::String, Name)
 
-        // トランスフォーム
-        PROPERTY(Math::Vector3, Position)    // ローカル位置
-        PROPERTY(Math::Quaternion, Rotation) // ローカル回転（クォータニオン）
-        PROPERTY(Math::Vector3, Scale)       // ローカルスケール
+        // トランスフォーム（World の木にいる間は ECS の行（EcsLocalTransform）の列にあり、無い間は予備の値にある）
+        ECS_PROPERTY(Ecs::EcsLocalTransform, position, Math::Vector3, Position)    // ローカル位置
+        ECS_PROPERTY(Ecs::EcsLocalTransform, rotation, Math::Quaternion, Rotation) // ローカル回転（クォータニオン）
+        ECS_PROPERTY(Ecs::EcsLocalTransform, scale, Math::Vector3, Scale)          // ローカルスケール
 
         // オブジェクトID（World内でユニーク）
         PROPERTY(uint64_t, ObjectId)
 
         float m_CustomTimeDilation = 1;
-        Math::Transform m_LocalTransform;
-        Math::Transform m_CachedWorldTransform;
+        /// ワールドの変換のキャッシュの予備（行が付いている間は列 EcsWorldTransform が正で、ここは行を外すときに列から戻す）
+        Math::Transform m_WorldTransformFallback;
         bool m_bWorldTransformDirty = true;
         uint64_t m_TransformVersion = 1;
         EntityHandle m_EntityHandle;
@@ -403,8 +403,13 @@ namespace NorvesLib::Core
         void RemoveComponentImmediately(Component::Component* component);
         void MarkRenderStateDirtyRecursive();
         void SetLocalTransform(const Math::Transform& transform);
-        void SyncLocalTransformFromProperties();
         Math::Transform EvaluateWorldTransformNonMutating() const;
+        /// ローカルの変換の読み書き（行が付いていて列を持つ間は列、無い間は予備のプロパティ）
+        Math::Transform LoadLocalTransform() const;
+        bool StoreLocalTransform(const Math::Transform& transform);
+        /// ワールドの変換のキャッシュの読み書き（同上。列は EcsWorldTransform、予備は m_WorldTransformFallback）
+        Math::Transform LoadWorldTransformCache() const;
+        bool StoreWorldTransformCache(const Math::Transform& transform);
     };
 
 } // namespace NorvesLib::Core

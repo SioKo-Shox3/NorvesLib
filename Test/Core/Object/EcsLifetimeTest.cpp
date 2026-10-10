@@ -20,10 +20,12 @@ using NorvesLib::Core::Ecs::EcsComponentFlags;
 using NorvesLib::Core::Ecs::EcsEntity;
 using NorvesLib::Core::Ecs::EcsEntityFlags;
 using NorvesLib::Core::Ecs::EcsHierarchy;
+using NorvesLib::Core::Ecs::EcsLocalTransform;
 using NorvesLib::Core::Ecs::EcsObjectRef;
 using NorvesLib::Core::Ecs::EcsTickConfig;
 using NorvesLib::Core::Ecs::EcsTimeDilation;
 using NorvesLib::Core::Ecs::EcsWorld;
+using NorvesLib::Core::Ecs::EcsWorldTransform;
 
 namespace
 {
@@ -625,6 +627,71 @@ namespace
         delete entity;
     }
 
+    // 変換の値: World に付く前の値は行が付くと列にあり、書き込みも読み口も列を通り、外すと Object に戻る
+    void TestTransformColumns()
+    {
+        using NorvesLib::Math::Quaternion;
+        using NorvesLib::Math::Vector3;
+        World world;
+        world.Initialize();
+        EcsWorld &ecs = world.GetEcsWorld();
+
+        Entity *entity = new Entity();
+        entity->SetLocalPosition(1.0f, 2.0f, 3.0f);
+        entity->SetLocalRotation(0.0f, 0.0f, 0.70710678f, 0.70710678f);
+        entity->SetLocalScale(2.0f, 3.0f, 4.0f);
+        assert(world.AddObject(entity));
+
+        const EcsEntity row = entity->GetEcsEntity();
+        const EcsLocalTransform *local = ecs.GetColumnValue<EcsLocalTransform>(row);
+        assert(local && local->position == Vector3(1.0f, 2.0f, 3.0f) && local->scale == Vector3(2.0f, 3.0f, 4.0f));
+        assert(local->rotation == Quaternion(0.0f, 0.0f, 0.70710678f, 0.70710678f));
+        assert(ecs.GetColumnValue<EcsWorldTransform>(row) != nullptr);
+
+        // 書き込みは列に出る（列の値を直接見る）。局所の変換の取得は値で返る
+        entity->SetLocalPosition(5.0f, 6.0f, 7.0f);
+        assert(ecs.GetColumnValue<EcsLocalTransform>(row)->position == Vector3(5.0f, 6.0f, 7.0f));
+        assert(entity->GetLocalTransform().position == Vector3(5.0f, 6.0f, 7.0f));
+        entity->SetPosition(8.0f, 9.0f, 10.0f);
+        assert(ecs.GetColumnValue<EcsLocalTransform>(row)->position == Vector3(8.0f, 9.0f, 10.0f));
+
+        // ワールドのキャッシュは列にあり、更新後に取得と列が一致する。子の値も列にある（World が持つ木で確かめる）
+        Entity *root = world.SpawnEntity<Entity>();
+        Entity *child = world.SpawnEntity<Entity>(root);
+        root->SetLocalPosition(8.0f, 9.0f, 10.0f);
+        root->SetLocalScale(2.0f, 3.0f, 4.0f);
+        child->SetLocalPosition(1.0f, 0.0f, 0.0f);
+        world.UpdateWorldTransforms();
+        const EcsWorldTransform *cache = ecs.GetColumnValue<EcsWorldTransform>(root->GetEcsEntity());
+        assert(cache && cache->position == root->GetWorldTransform().position && cache->scale == Vector3(2.0f, 3.0f, 4.0f));
+        const EcsWorldTransform *childCache = ecs.GetColumnValue<EcsWorldTransform>(child->GetEcsEntity());
+        assert(childCache && childCache->position == child->GetWorldTransform().position);
+        assert(!(childCache->position == child->GetLocalTransform().position));
+
+        // 親が動くと子のキャッシュが列の中で追従する（再帰は列を読み書きする）
+        const NorvesLib::Math::Transform childBefore = child->GetWorldTransform();
+        root->SetLocalPosition(0.0f, 0.0f, 0.0f);
+        world.UpdateWorldTransforms();
+        assert(!(child->GetWorldTransform() == childBefore));
+        assert(ecs.GetColumnValue<EcsWorldTransform>(child->GetEcsEntity())->position == child->GetWorldTransform().position);
+
+        // 木から外すと値は Object に戻り、読み口は同じ値を返す
+        const NorvesLib::Math::Transform localBefore = entity->GetLocalTransform();
+        const NorvesLib::Math::Transform worldBefore = entity->GetWorldTransform();
+        assert(world.RemoveInner(entity));
+        assert(entity->GetEcsEntity().IsNull());
+        assert(entity->GetLocalTransform() == localBefore && entity->GetWorldTransform() == worldBefore);
+        entity->SetLocalPosition(4.0f, 4.0f, 4.0f);
+        assert(entity->GetLocalTransform().position == Vector3(4.0f, 4.0f, 4.0f));
+
+        // 付け直すと、外している間に書いた値が列に入る
+        assert(world.AddObject(entity));
+        assert(ecs.GetColumnValue<EcsLocalTransform>(entity->GetEcsEntity())->position == Vector3(4.0f, 4.0f, 4.0f));
+        assert(world.RemoveInner(entity));
+        world.Finalize();
+        delete entity;
+    }
+
     // World の中での Component の追加・除去: 行が作られて消え、所有者の連結が直る。段の最中の追加は予約になる
     void TestComponentRowsAddRemoveAndReserve()
     {
@@ -733,6 +800,7 @@ int main()
     TestPublicRemoveInnerAndReattach();
     TestStaleRowRejected();
     TestFlagsAndTickConfigColumns();
+    TestTransformColumns();
     TestComponentRowsAddRemoveAndReserve();
     TestCycleReturnsToZero();
     std::cout << "EcsLifetimeTest 合格\n";

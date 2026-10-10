@@ -142,9 +142,7 @@ namespace NorvesLib::Core
         getbTickEnabled().Set(true);
         getbActive().Set(true);
         // RotationはQuaternionのデフォルトが単位回転(0,0,0,1)なので設定不要
-        Scale = Math::Vector3(1.0f, 1.0f, 1.0f);
-        SyncLocalTransformFromProperties();
-        m_CachedWorldTransform = m_LocalTransform;
+        getScale().Set(Math::Vector3(1.0f, 1.0f, 1.0f));
     }
 
     Entity::Entity(const FieldInitializer *initializer)
@@ -152,9 +150,7 @@ namespace NorvesLib::Core
     {
         getbTickEnabled().Set(true);
         getbActive().Set(true);
-        Scale = Math::Vector3(1.0f, 1.0f, 1.0f);
-        SyncLocalTransformFromProperties();
-        m_CachedWorldTransform = m_LocalTransform;
+        getScale().Set(Math::Vector3(1.0f, 1.0f, 1.0f));
     }
 
     Entity::Entity(const IUnknown *sourceObject)
@@ -162,9 +158,7 @@ namespace NorvesLib::Core
     {
         getbTickEnabled().Set(true);
         getbActive().Set(true);
-        Scale = Math::Vector3(1.0f, 1.0f, 1.0f);
-        SyncLocalTransformFromProperties();
-        m_CachedWorldTransform = m_LocalTransform;
+        getScale().Set(Math::Vector3(1.0f, 1.0f, 1.0f));
     }
 
     Entity::~Entity()
@@ -369,14 +363,17 @@ namespace NorvesLib::Core
 
     void Entity::SetLocalPosition(const Math::Vector3& pos)
     {
-        if (m_LocalTransform.position == pos && Position.Get() == pos)
+        Math::Transform local = LoadLocalTransform();
+        if (local.position == pos)
         {
             return;
         }
 
-        Position = pos;
-        m_LocalTransform.position = pos;
-        MarkWorldTransformDirty();
+        local.position = pos;
+        if (StoreLocalTransform(local))
+        {
+            MarkWorldTransformDirty();
+        }
     }
 
     void Entity::SetLocalPosition(float x, float y, float z)
@@ -386,14 +383,17 @@ namespace NorvesLib::Core
 
     void Entity::SetLocalRotation(const Math::Quaternion& rot)
     {
-        if (m_LocalTransform.rotation == rot && Rotation.Get() == rot)
+        Math::Transform local = LoadLocalTransform();
+        if (local.rotation == rot)
         {
             return;
         }
 
-        Rotation = rot;
-        m_LocalTransform.rotation = rot;
-        MarkWorldTransformDirty();
+        local.rotation = rot;
+        if (StoreLocalTransform(local))
+        {
+            MarkWorldTransformDirty();
+        }
     }
 
     void Entity::SetLocalRotation(float x, float y, float z, float w)
@@ -403,14 +403,17 @@ namespace NorvesLib::Core
 
     void Entity::SetLocalScale(const Math::Vector3& scale)
     {
-        if (m_LocalTransform.scale == scale && Scale.Get() == scale)
+        Math::Transform local = LoadLocalTransform();
+        if (local.scale == scale)
         {
             return;
         }
 
-        Scale = scale;
-        m_LocalTransform.scale = scale;
-        MarkWorldTransformDirty();
+        local.scale = scale;
+        if (StoreLocalTransform(local))
+        {
+            MarkWorldTransformDirty();
+        }
     }
 
     void Entity::SetLocalScale(float x, float y, float z)
@@ -431,14 +434,19 @@ namespace NorvesLib::Core
         SetLocalTransform(MakeLocalTransformFromWorld(parentWorld, worldTransform));
     }
 
-    const Math::Transform& Entity::GetWorldTransform() const
+    Math::Transform Entity::GetLocalTransform() const
+    {
+        return LoadLocalTransform();
+    }
+
+    Math::Transform Entity::GetWorldTransform() const
     {
         if (m_bWorldTransformDirty && !GetParentEntity())
         {
-            return m_LocalTransform;
+            return LoadLocalTransform();
         }
 
-        return m_CachedWorldTransform;
+        return LoadWorldTransformCache();
     }
 
     void Entity::SetRenderInterpolationEnabled(bool enabled)
@@ -462,7 +470,7 @@ namespace NorvesLib::Core
         m_bRenderInterpolationEnabled = enabled;
         ResetRenderInterpolation();
     }
-    const Math::Transform& Entity::GetRenderWorldTransform() const
+    Math::Transform Entity::GetRenderWorldTransform() const
     {
         return m_bRenderTransformValid && m_bUsesRenderInterpolation ? m_RenderWorldTransform : GetWorldTransform();
     }
@@ -520,7 +528,7 @@ namespace NorvesLib::Core
         SetPosition(Math::Vector3(x, y, z));
     }
 
-    const Math::Vector3& Entity::GetPosition() const
+    Math::Vector3 Entity::GetPosition() const
     {
         return GetWorldTransform().position;
     }
@@ -537,7 +545,7 @@ namespace NorvesLib::Core
         SetRotation(Math::Quaternion(x, y, z, w));
     }
 
-    const Math::Quaternion& Entity::GetRotation() const
+    Math::Quaternion Entity::GetRotation() const
     {
         return GetWorldTransform().rotation;
     }
@@ -554,7 +562,7 @@ namespace NorvesLib::Core
         SetScale(Math::Vector3(x, y, z));
     }
 
-    const Math::Vector3& Entity::GetScale() const
+    Math::Vector3 Entity::GetScale() const
     {
         return GetWorldTransform().scale;
     }
@@ -583,12 +591,10 @@ namespace NorvesLib::Core
 
     void Entity::RecomputeWorldTransform(const Math::Transform& parentWorld)
     {
-        SyncLocalTransformFromProperties();
-
-        const Math::Transform newWorldTransform = ComposeTransform(parentWorld, m_LocalTransform);
-        if (newWorldTransform != m_CachedWorldTransform)
+        const Math::Transform newWorldTransform = ComposeTransform(parentWorld, LoadLocalTransform());
+        if (newWorldTransform != LoadWorldTransformCache())
         {
-            m_CachedWorldTransform = newWorldTransform;
+            StoreWorldTransformCache(newWorldTransform);
             ++m_TransformVersion;
         }
 
@@ -597,23 +603,68 @@ namespace NorvesLib::Core
 
     void Entity::SetLocalTransform(const Math::Transform& transform)
     {
-        Position = transform.position;
-        Rotation = transform.rotation;
-        Scale = transform.scale;
-        m_LocalTransform = transform;
+        StoreLocalTransform(transform);
         MarkWorldTransformDirty();
     }
 
-    void Entity::SyncLocalTransformFromProperties()
+    Math::Transform Entity::LoadLocalTransform() const
     {
-        m_LocalTransform.position = Position;
-        m_LocalTransform.rotation = Rotation;
-        m_LocalTransform.scale = Scale;
+        Ecs::EcsLocalTransform column{m_EcsFallback_Position, m_EcsFallback_Rotation, m_EcsFallback_Scale};
+        // 列に無いとき（行なし・並列の中）は予備の値のまま返す
+        (void)Ecs::EcsReadColumnPart(GetEcsRow(), Ecs::EcsColumnInfoOf<Ecs::EcsLocalTransform>().Type, 0,
+                                     static_cast<uint32_t>(sizeof(column)), &column);
+        return Math::Transform(column.position, column.rotation, column.scale);
+    }
+
+    bool Entity::StoreLocalTransform(const Math::Transform& transform)
+    {
+        // 並列の中の書き込みは、行がなくて予備へ書く場合も止める
+        if (!Ecs::Detail::EcsCheckSerialAccess())
+        {
+            return false;
+        }
+        const Ecs::EcsLocalTransform column{transform.position, transform.rotation, transform.scale};
+        const Ecs::EcsRowRef row = GetEcsRow();
+        const TypeId type = Ecs::EcsColumnInfoOf<Ecs::EcsLocalTransform>().Type;
+        if (Ecs::EcsRowHasColumn(row, type))
+        {
+            return Ecs::EcsWriteColumnPart(row, type, 0, static_cast<uint32_t>(sizeof(column)), &column);
+        }
+        m_EcsFallback_Position = transform.position;
+        m_EcsFallback_Rotation = transform.rotation;
+        m_EcsFallback_Scale = transform.scale;
+        return true;
+    }
+
+    Math::Transform Entity::LoadWorldTransformCache() const
+    {
+        Ecs::EcsWorldTransform column{m_WorldTransformFallback.position, m_WorldTransformFallback.rotation,
+                                      m_WorldTransformFallback.scale};
+        (void)Ecs::EcsReadColumnPart(GetEcsRow(), Ecs::EcsColumnInfoOf<Ecs::EcsWorldTransform>().Type, 0,
+                                     static_cast<uint32_t>(sizeof(column)), &column);
+        return Math::Transform(column.position, column.rotation, column.scale);
+    }
+
+    bool Entity::StoreWorldTransformCache(const Math::Transform& transform)
+    {
+        if (!Ecs::Detail::EcsCheckSerialAccess())
+        {
+            return false;
+        }
+        const Ecs::EcsWorldTransform column{transform.position, transform.rotation, transform.scale};
+        const Ecs::EcsRowRef row = GetEcsRow();
+        const TypeId type = Ecs::EcsColumnInfoOf<Ecs::EcsWorldTransform>().Type;
+        if (Ecs::EcsRowHasColumn(row, type))
+        {
+            return Ecs::EcsWriteColumnPart(row, type, 0, static_cast<uint32_t>(sizeof(column)), &column);
+        }
+        m_WorldTransformFallback = transform;
+        return true;
     }
 
     Math::Transform Entity::EvaluateWorldTransformNonMutating() const
     {
-        const Math::Transform localTransform(Position.Get(), Rotation.Get(), Scale.Get());
+        const Math::Transform localTransform = LoadLocalTransform();
         const Entity* parent = GetParentEntity();
         if (!parent)
         {

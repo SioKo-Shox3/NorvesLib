@@ -15,6 +15,8 @@
  * 並列の中（EcsParallelScope の間）では引かない。未登録の型を並列の中で使うと、開発ビルドで assert する。
  */
 
+#include "Math/Quaternion.h"
+#include "Math/Vector3.h"
 #include "Object/RuntimeSchema.h"
 
 #include <atomic>
@@ -105,6 +107,22 @@ namespace NorvesLib::Core::Ecs
     struct EcsTimeDilation
     {
         float CustomTimeDilation;
+    };
+
+    /// Entity の行の局所の変換（プロパティ Position・Rotation・Scale。ECS_PROPERTY で読み書きする）
+    struct EcsLocalTransform
+    {
+        Math::Vector3 position;
+        Math::Quaternion rotation;
+        Math::Vector3 scale;
+    };
+
+    /// Entity の行のワールドの変換のキャッシュ（親のワールドの変換と局所の変換から求めた値。保存の対象にはしない）
+    struct EcsWorldTransform
+    {
+        Math::Vector3 position;
+        Math::Quaternion rotation;
+        Math::Vector3 scale;
     };
 
     /// Component の行の flags（プロパティ。ECS_PROPERTY で読み書きする）

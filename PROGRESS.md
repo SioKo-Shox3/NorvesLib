@@ -1213,3 +1213,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 値を読む費用: flags・時間倍率・Tick の設定の読み出しが、行を引く（World を Outer からたどる + 列の探索）ぶん重くなる。TRANSFORM 系以降でシステムが列を直接走査するようになると、旧の配信の読み出しは消える。節目の計測（MEASURE-CPU）で見る。
   - 並列の中でこれらの読み出しを呼ぶと `ECS_PROPERTY` の検査で止まる（既存の契約）。ワーカーは Object に触れない。
   - 行末: `World.cpp`・`World.h`・`Component.cpp` は混在。difflib で元の行末に揃えた（numstat 2 通りが一致）。
+
+### SCN-ECS-TRANSFORM-VALUES（2026-10-11、反復 25・run 20261010-223034）
+
+- 変更:
+  - `EcsTypes.h`: 列 `EcsLocalTransform{position, rotation, scale}`（プロパティ Position・Rotation・Scale の置き場）と `EcsWorldTransform{position, rotation, scale}`（ワールドの変換のキャッシュ）を足した。
+  - `Entity`: `Position`・`Rotation`・`Scale` を `ECS_PROPERTY`（`EcsLocalTransform`）にした（宣言の順・名前は変えていない）。重複していた `m_LocalTransform` と、プロパティとの同期（`SyncLocalTransformFromProperties`）を消した。`m_CachedWorldTransform` は `m_WorldTransformFallback`（行が無い間の予備。行がある間は列 `EcsWorldTransform` が正）にした。読み書きは `LoadLocalTransform`/`StoreLocalTransform`/`LoadWorldTransformCache`/`StoreWorldTransformCache`（列全体を 1 回で読み書きする。並列の中は拒否）。
+  - Public API: `GetLocalTransform`・`GetWorldTransform`・`GetRenderWorldTransform`・`GetPosition`・`GetRotation`・`GetScale` を値で返すようにした（参照で受ける呼び出し側は const 参照のまま通る。Library・Game・Test は変更なしでビルドできた）。
+  - `World`: Entity の行のアーキタイプに `EcsLocalTransform`・`EcsWorldTransform` を足した（4 列 → 6 列）。`MoveEntityValuesToRow`/`MoveEntityValuesToFallback` が世界のキャッシュの予備を列と行き来させる（局所の変換は ECS_PROPERTY の移動）。今の再帰（`UpdateEntityTransformRecursive` → `RecomputeWorldTransform`）はそのままで、列を読み書きする。
+- テスト: `EcsLifetimeTest` に `TestTransformColumns` を足した（`paths:` の `Test/Core/Object`）。World に付く前の値が行を付けると列にある・書き込みが列に出る・ワールドのキャッシュが列にあって親の動きに追従する・外すと値が Object に戻る・外している間に書いた値が付け直しで列に入る、を確かめる。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-TRANSFORM-VALUES-1.txt`（EntityTreeTest・SceneSerializerTest・ScriptComponentTickTest のビルドは通り、Core・Game の C++ のコンパイルエラーなし。`NorvesLibBridgeAdapterScriptComponentTest` のリンクだけ Game 側のシンボル未解決で失敗）、`-2.txt`（指定の ctest 6/7 Passed、Bridge は実行ファイルが無く Not Run）、`-3-startup.txt`（起動画面の決定論の比較 `result=pass`、3 視点とも `within_limits=True`。`default.png` を開いて確認）、`-4-bananas.txt`（mega-bananas の比較 `result=pass`、`within_limits=True`）、`-5-neighbors.txt`（EcsLifetimeTest・EcsPropertyStorageTest・WorldTickGroupTest・WorldRenderInterpolationTest・SpringArmComponentTest・EntityTreeTest・SceneSerializerTest・RuntimeSchemaSnapshotTest・SchemaProjectionTest 9/9 Passed）、`-6-test.txt`（`TestTransformColumns` を足した後の再ビルドと、変換系の ctest 8/8 Passed）。
+- Notes:
+  - `NorvesLibBridgeAdapterScriptComponentTest` は、反復 24 から続く `Test/Game/Bridge` のリンクエラー（`GameInputSettings`・`SequenceFrameCapture`・`M9SkeletalPreparation` などの未解決）で実行できていない。`paths:` の外（`Test/Game`）で、この変更が触るシンボルではない。このテストが期待するプロパティ名・型（Position・Rotation・Scale）は変えていない。
+  - 読む費用: `GetWorldTransform` などが、Outer をたどって World を引き、列を探すぶん重くなった（1 回の再帰で局所とキャッシュを各 1 回読む）。階層のシステム（TRANSFORM-PREP/SWITCH）で列を直接走査するようになると、この経路は消える。節目の計測（MEASURE-CPU）で見る。
+  - 行が付いている間、`Position` などを `ApplyValue`（保存の読み込み・ブリッジ）で書くと列に入る（`GetValuePtr` の可変は nullptr）。ワールドのキャッシュは従来どおり `UpdateWorldTransforms` で更新される。
+  - 行末: 変更した 5 ファイル（`World.cpp` は混在）は、行末を保つ置換で編集した。`git diff --numstat` と `--ignore-cr-at-eol` が一致。

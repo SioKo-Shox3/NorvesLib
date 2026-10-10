@@ -1240,15 +1240,17 @@ namespace NorvesLib::Core
         add(m_StageSync, "Sync.SyncToSceneView",
             [](void* user, const Context&) { static_cast<World*>(user)->SyncToSceneViewBody(); });
 
-        // World の木にいる全 Entity の行: Object への弱い参照と階層
+        // World の木にいる全 Entity の行: Object への弱い参照・階層・flags・時間倍率・変換（局所とワールドのキャッシュ）
         const Ecs::EcsColumnInfo entityColumns[] = {
             Ecs::EcsRegisterColumn<Ecs::EcsObjectRef>(),
             Ecs::EcsRegisterColumn<Ecs::EcsHierarchy>(),
             Ecs::EcsRegisterColumn<Ecs::EcsEntityFlags>(),
             Ecs::EcsRegisterColumn<Ecs::EcsTimeDilation>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsLocalTransform>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsWorldTransform>(),
         };
         m_EntityArchetype = m_EcsWorld->GetOrCreateArchetype(
-            Container::Span<const Ecs::EcsColumnInfo>(entityColumns, 4));
+            Container::Span<const Ecs::EcsColumnInfo>(entityColumns, 6));
         if (m_EntityArchetype == Ecs::kInvalidEcsArchetype)
         {
             LOG_ERROR("World: Entity 用の ECS のアーキタイプを作れなかった");
@@ -2575,8 +2577,11 @@ namespace NorvesLib::Core
 
     void World::MoveEntityValuesToRow(Entity& entity)
     {
-        // 時間倍率は保存の対象でないので、予備の値を直接列へ写す。flags は ECS_PROPERTY の移動に任せる
+        // 時間倍率とワールドの変換のキャッシュは保存の対象でないので、予備の値を直接列へ写す。
+        // flags と局所の変換は ECS_PROPERTY の移動に任せる
         m_EcsWorld->WriteColumnValueOf(entity.m_EcsEntity, Ecs::EcsTimeDilation{entity.m_CustomTimeDilation});
+        const Math::Transform& cache = entity.m_WorldTransformFallback;
+        m_EcsWorld->WriteColumnValueOf(entity.m_EcsEntity, Ecs::EcsWorldTransform{cache.position, cache.rotation, cache.scale});
         MoveEcsPropertyValuesToColumns(&entity);
     }
 
@@ -2595,6 +2600,10 @@ namespace NorvesLib::Core
         if (const Ecs::EcsTimeDilation* dilation = m_EcsWorld->GetColumnValue<Ecs::EcsTimeDilation>(entity.m_EcsEntity))
         {
             entity.m_CustomTimeDilation = dilation->CustomTimeDilation;
+        }
+        if (const Ecs::EcsWorldTransform* cache = m_EcsWorld->GetColumnValue<Ecs::EcsWorldTransform>(entity.m_EcsEntity))
+        {
+            entity.m_WorldTransformFallback = Math::Transform(cache->position, cache->rotation, cache->scale);
         }
         MoveEcsPropertyValuesToFallback(&entity);
     }

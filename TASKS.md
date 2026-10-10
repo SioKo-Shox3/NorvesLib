@@ -339,7 +339,7 @@
 - paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Component/Component.h, Library/Core/Private/Component/Component.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Test/Core/Object/EcsLifetimeTest.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-TRANSFORM-VALUES: Entity の変換の値を列へ移す
-- status: todo
+- status: done
 - done-when: Position・Rotation・Scale を ECS_PROPERTY（EcsLocalTransform）にし、ワールドの変換のキャッシュを EcsWorldTransform にして、重複（Entity.h:370-371）を消す。変換の取得は値で返す。今の再帰（World.cpp:1399-1409）は、列を読み書きする形で残す。ブリッジ・プレハブ・保存の往復・スクリプトから見える位置が今と同じ値になる。起動画面とバナナの比較が pass する。
 - verify: `cmake --build build --config Debug --target EntityTreeTest SceneSerializerTest ScriptComponentTickTest NorvesLibBridgeAdapterScriptComponentTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(TransformHierarchyTest|EntityWorldAABBTest|EntitySubtreeSnapshotTest|PrefabRoundTripTest|SceneFileRoundTripTest|ScriptComponentTickTest|NorvesLibBridgeAdapterScriptComponentTest)$" --no-tests=error --output-on-failure --timeout 180`
