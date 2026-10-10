@@ -634,6 +634,179 @@ namespace
         assert(world.GetEntityCount() == countBefore + 16);
     }
 
+    // ---- 更新への参加 ----
+
+    struct JoinProbe
+    {
+        std::atomic<uint32_t> Joined{0};
+        std::atomic<uint32_t> Skipped{0};
+        std::atomic<uint32_t> FullChunks{0};
+
+        void Reset()
+        {
+            Joined = 0;
+            Skipped = 0;
+            FullChunks = 0;
+        }
+    };
+
+    /// 参加している行だけを数える（AllRowsJoined のチャンクは行ごとの判定を省く）
+    void CountJoinedChunk(void *user, const EcsChunkJob &job)
+    {
+        auto *probe = static_cast<JoinProbe *>(user);
+        if (job.AllRowsJoined())
+        {
+            for (uint32_t row = 0; row < job.Chunk->Count; ++row)
+            {
+                assert(job.IsRowJoined(row));
+            }
+            probe->Joined += job.Chunk->Count;
+            ++probe->FullChunks;
+            return;
+        }
+        for (uint32_t row = 0; row < job.Chunk->Count; ++row)
+        {
+            if (job.IsRowJoined(row))
+            {
+                ++probe->Joined;
+            }
+            else
+            {
+                ++probe->Skipped;
+            }
+        }
+    }
+
+    /// ScAux の列を持つ行のうち、参加の番号が serial 以下の数と、それより大きい数（World の走査で数える）
+    void CountAuxRowsBySerial(EcsWorld &world, uint64_t serial, uint32_t &joined, uint32_t &pending)
+    {
+        EcsQuery query;
+        query.All.push_back(TypeOf<ScAux>());
+        Container::VariableArray<EcsChunk *> chunks;
+        world.CollectChunks(query, chunks);
+        joined = 0;
+        pending = 0;
+        for (const EcsChunk *chunk : chunks)
+        {
+            for (uint32_t row = 0; row < chunk->Count; ++row)
+            {
+                (chunk->GetJoinSerials()[row] <= serial ? joined : pending) += 1;
+            }
+        }
+    }
+
+    void TestRowsCreatedAtSyncJoinAtNextCollection()
+    {
+        EcsWorld world;
+        SystemScheduler scheduler(world);
+        const EcsStageId build = scheduler.AddStage("Build");
+        const EcsStageId use = scheduler.AddStage("Use");
+        FillChunks<ScHeavyA>(world, 4);
+        const EcsArchetypeId auxArchetype = ArchetypeOf<ScAux>(world);
+
+        // スケジューラの後に作った行は「次の収集」（1 回目）から参加する
+        Container::VariableArray<EcsEntity> oldRows;
+        world.CreateEntities(auxArchetype, 5, &oldRows);
+        for (const EcsEntity entity : oldRows)
+        {
+            assert(world.GetJoinSerial(entity) == 1);
+        }
+        assert(world.GetJoinSerial(EcsEntity{}) == 0);
+
+        StructuralProbe creator;
+        creator.CreateArchetype = auxArchetype;
+        SystemDesc desc = ChunkSystem("MakeRows", build, TypeOf<ScHeavyA>(), CreateChunk, &creator);
+        desc.Writes.push_back(TypeOf<ScHeavyA>());
+        scheduler.RegisterSystem(desc);
+        JoinProbe joined;
+        scheduler.RegisterSystem(ChunkSystem("CountJoined", use, TypeOf<ScAux>(), CountJoinedChunk, &joined));
+
+        // 収集 1: 同じ収集の後ろの段は、同期点で作られた 4 行を呼ばない。存在は同期点から見える
+        {
+            EcsCollectionScope collection(scheduler);
+            assert(scheduler.GetCollectionSerial() == 1);
+            assert(scheduler.RunStage(build));
+            assert(scheduler.GetLastReplayResult().Created == 4);
+            assert(world.GetEntityCount() == 4 * world.GetArchetypeChunkCapacity(ArchetypeOf<ScHeavyA>(world)) + 9);
+            assert(scheduler.RunStage(use));
+            assert(joined.Joined.load() == 5 && joined.Skipped.load() == 4);
+            assert(joined.FullChunks.load() == 0);
+        }
+        uint32_t joinedRows = 0;
+        uint32_t pendingRows = 0;
+        CountAuxRowsBySerial(world, 1, joinedRows, pendingRows);
+        assert(joinedRows == 5 && pendingRows == 4);
+
+        // 次の収集（2）から 9 行すべてが呼ばれる
+        joined.Reset();
+        assert(scheduler.RunStage(use));
+        assert(scheduler.GetCollectionSerial() == 2);
+        assert(joined.Joined.load() == 9 && joined.Skipped.load() == 0 && joined.FullChunks.load() == 1);
+
+        // 同じフレームの複数の固定ステップ（1 つの外側の収集）は番号を共有する。どのステップで作った行も次の収集まで呼ばれない
+        joined.Reset();
+        {
+            EcsCollectionScope collection(scheduler);
+            assert(scheduler.GetCollectionSerial() == 3);
+            assert(scheduler.RunStage(build));
+            assert(scheduler.RunStage(build));
+            assert(scheduler.GetCollectionSerial() == 3);
+            assert(scheduler.RunStage(use));
+            assert(joined.Joined.load() == 9 && joined.Skipped.load() == 8);
+        }
+        joined.Reset();
+        assert(scheduler.RunStage(use));
+        assert(joined.Joined.load() == 17 && joined.Skipped.load() == 0);
+
+        // 収集 5 の途中で、入れ替え削除・列の追加・孤児の印があっても、動いた行は自分の参加の番号を保つ
+        joined.Reset();
+        {
+            EcsCollectionScope collection(scheduler);
+            assert(scheduler.GetCollectionSerial() == 5);
+            assert(scheduler.RunStage(build));
+
+            EcsQuery query;
+            query.All.push_back(TypeOf<ScAux>());
+            query.bIncludeOrphans = true;
+            Container::VariableArray<EcsChunk *> chunks;
+            world.CollectChunks(query, chunks);
+            Container::VariableArray<EcsEntity> all;
+            Container::VariableArray<uint64_t> serials;
+            for (const EcsChunk *chunk : chunks)
+            {
+                for (uint32_t row = 0; row < chunk->Count; ++row)
+                {
+                    all.push_back(chunk->GetEntities()[row]);
+                    serials.push_back(chunk->GetJoinSerials()[row]);
+                }
+            }
+            assert(all.size() == 21);
+
+            // 先頭の参加済みの行を消すと、末尾の（未参加の）行が穴へ入る
+            const EcsEntity victim = all[0];
+            assert(world.DestroyEntity(victim));
+            // 参加済みの行 1 つ、未参加の行 1 つに列を足す（別のアーキタイプへ動く）。未参加の行はもう 1 つ孤児にする
+            assert(world.AddColumnOf<ScPos>(all[1]));
+            assert(world.AddColumnOf<ScPos>(all[20]));
+            assert(world.MarkOrphan(all[19]));
+            for (size_t i = 1; i < all.size(); ++i)
+            {
+                assert(world.IsAlive(all[i]));
+                assert(world.GetJoinSerial(all[i]) == serials[i]);
+            }
+            assert(serials[1] <= 5 && serials[20] == 6 && serials[19] == 6);
+
+            // 呼ばれるのは参加済みの行だけ。孤児と列を足された行も、参加の番号どおり（孤児は既定のクエリに出ない）
+            assert(scheduler.RunStage(use));
+            uint32_t expectJoined = 0;
+            uint32_t expectPending = 0;
+            CountAuxRowsBySerial(world, 5, expectJoined, expectPending);
+            assert(joined.Joined.load() == expectJoined);
+            assert(joined.Skipped.load() == expectPending);
+            assert(expectPending == 3 && expectJoined == 16);
+        }
+    }
+
     // ---- 変更の記録 ----
 
     void WritePosChunk(void *user, const EcsChunkJob &job)
@@ -1359,6 +1532,7 @@ int main()
     TestGameThreadOnlyRunsAloneOnCallerThread();
     TestRegistrationRejections();
     TestStructuralChangesWaitForSync();
+    TestRowsCreatedAtSyncJoinAtNextCollection();
     TestSystemWritesAreCommittedToChangeLog();
     TestEntriesJoinAtNextCollection();
     TestOrderRebuildsOnlyOnChange();

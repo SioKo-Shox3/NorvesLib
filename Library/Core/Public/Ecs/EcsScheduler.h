@@ -74,6 +74,20 @@ namespace NorvesLib::Core::Ecs
         EcsChangeBundle *Changes = nullptr;
         /// 構造変更の積み先（この仕事だけが使う）
         EcsCommandBuffer *Commands = nullptr;
+        /// いまの収集の番号。参加の番号がこれより大きい行（同じ収集の中で作られた行）は処理しない
+        uint64_t CollectionSerial = 0;
+
+        /// チャンクの全行が参加するか（true なら IsRowJoined を呼ばずに全行を処理してよい）
+        [[nodiscard]] bool AllRowsJoined() const
+        {
+            return Chunk->AllRowsJoined(CollectionSerial);
+        }
+
+        /// 行 row が今回の収集に参加するか。false の行は飛ばす。
+        [[nodiscard]] bool IsRowJoined(uint32_t row) const
+        {
+            return Chunk->IsRowJoined(row, CollectionSerial);
+        }
     };
 
     using EcsSystemFn = void (*)(void *user, const EcsSystemContext &context);

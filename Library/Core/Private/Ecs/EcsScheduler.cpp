@@ -74,6 +74,8 @@ namespace NorvesLib::Core::Ecs
     SystemScheduler::SystemScheduler(EcsWorld &world)
         : m_World(world)
     {
+        // 次の収集から参加する番号を World に渡す（以後に作る行は次の収集まで更新に参加しない）
+        m_World.SetCreateJoinSerial(GetNextCollectionSerial());
     }
 
     SystemScheduler::~SystemScheduler() = default;
@@ -585,6 +587,7 @@ namespace NorvesLib::Core::Ecs
         if (m_CollectionDepth++ == 0)
         {
             ++m_CollectionSerial;
+            m_World.SetCreateJoinSerial(GetNextCollectionSerial());
             RebuildDirtyOrders();
         }
         return m_CollectionSerial;
@@ -782,6 +785,7 @@ namespace NorvesLib::Core::Ecs
         job.DeltaTime = system.RunDelta;
         job.Changes = &slot.Changes;
         job.Commands = &slot.Commands;
+        job.CollectionSerial = m_CollectionSerial;
 
         // ワーカーで走った仕事は、そのワーカーのスレッドの番号で系の名前の区間に入る
         Debug::ScopedStat scope(system.ScopeName.c_str(), kStatCategory);

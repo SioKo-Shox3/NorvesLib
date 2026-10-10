@@ -12,6 +12,9 @@
  * - 列の追加・削除は、行を別のアーキタイプ（列の組が違うだけで、タグは同じ）へ移す。値と EcsEntity は保たれ、
  *   移動元は削除と同じ入れ替えで詰める。
  * - 作った行の値は全部 0。
+ * - 更新への参加（存在と分ける）: 行ごとに参加の番号を持つ。作った行は SetCreateJoinSerial で決めた番号（既定 0 = 最初から参加）を
+ *   受け取り、列の追加・削除・入れ替えで動いても保つ。システムは収集の番号以下の行だけを処理する（EcsChunk::IsRowJoined）。
+ *   行の存在（クエリ・IsAlive・GetColumnValue）は参加に依らず、作った直後から見える。
  *
  * 版と変更ログ（設計 1.2）:
  * - World の版は uint64。AdvanceVersion()（システム 1 回ぶん・再生ごと）で進む。
@@ -141,6 +144,8 @@ namespace NorvesLib::Core::Ecs
         uint32_t Count = 0;
         uint32_t Capacity = 0;
         uint32_t IndexInArchetype = 0;
+        /// このチャンクの行がこれまでに持った参加の番号の最大（行が抜けても下がらない。次にチャンクを確保するまで有効）
+        uint64_t MaxJoinSerial = 0;
 
         /// 行 → 実体の配列（Count 個が有効）
         [[nodiscard]] EcsEntity *GetEntities()
@@ -152,8 +157,34 @@ namespace NorvesLib::Core::Ecs
         {
             return reinterpret_cast<const EcsEntity *>(reinterpret_cast<const std::byte *>(this) + kEcsChunkHeaderSize);
         }
+
+        /// 行 → 更新への参加の番号の配列（実体の配列の直後。Count 個が有効）
+        [[nodiscard]] uint64_t *GetJoinSerials()
+        {
+            return reinterpret_cast<uint64_t *>(reinterpret_cast<std::byte *>(this) + kEcsChunkHeaderSize +
+                                                sizeof(EcsEntity) * static_cast<size_t>(Capacity));
+        }
+
+        [[nodiscard]] const uint64_t *GetJoinSerials() const
+        {
+            return reinterpret_cast<const uint64_t *>(reinterpret_cast<const std::byte *>(this) + kEcsChunkHeaderSize +
+                                                      sizeof(EcsEntity) * static_cast<size_t>(Capacity));
+        }
+
+        /// 全行が collectionSerial の収集に参加するか（false なら行ごとに IsRowJoined で飛ばす）
+        [[nodiscard]] bool AllRowsJoined(uint64_t collectionSerial) const
+        {
+            return MaxJoinSerial <= collectionSerial;
+        }
+
+        /// 行 row が collectionSerial の収集に参加するか。参加の番号が収集の番号以下の行だけが参加する。
+        [[nodiscard]] bool IsRowJoined(uint32_t row, uint64_t collectionSerial) const
+        {
+            return GetJoinSerials()[row] <= collectionSerial;
+        }
     };
     static_assert(sizeof(EcsChunk) <= kEcsChunkHeaderSize, "チャンクの見出しは 64 byte に収める");
+    static_assert(sizeof(EcsEntity) == 8, "参加の番号の配列は実体の配列の直後に 8 byte 境界で置く");
 
     class EcsWorld
     {
@@ -226,6 +257,20 @@ namespace NorvesLib::Core::Ecs
         bool SetColumnHooks(TypeId type, const EcsColumnHooks &hooks);
 
         [[nodiscard]] bool IsAlive(EcsEntity entity) const;
+
+        /// これから作る行が受け取る、更新への参加の番号を決める（スケジューラが「次の収集」の番号を入れる）
+        void SetCreateJoinSerial(uint64_t serial)
+        {
+            m_CreateJoinSerial = serial;
+        }
+
+        [[nodiscard]] uint64_t GetCreateJoinSerial() const
+        {
+            return m_CreateJoinSerial;
+        }
+
+        /// 実体の更新への参加の番号。生きていなければ 0。
+        [[nodiscard]] uint64_t GetJoinSerial(EcsEntity entity) const;
 
         /// 実体の行が属するアーキタイプ。生きていなければ kInvalidEcsArchetype。
         [[nodiscard]] EcsArchetypeId GetArchetypeOf(EcsEntity entity) const;
@@ -458,6 +503,8 @@ namespace NorvesLib::Core::Ecs
         Container::VariableArray<HookEntry> m_Hooks;
         /// フックを呼んでいる間の深さ（0 でなければ構造変更を拒む）
         uint32_t m_HookDepth = 0;
+        /// 作る行が受け取る参加の番号
+        uint64_t m_CreateJoinSerial = 0;
         Memory::PoolAllocator<false> m_ChunkPool;
     };
 

@@ -99,7 +99,7 @@ namespace NorvesLib::Core::Ecs
         {
             return kInvalidEcsArchetype;
         }
-        uint64_t rowBytes = sizeof(EcsEntity) + sizeof(uint64_t) * trackedCount;
+        uint64_t rowBytes = sizeof(EcsEntity) + sizeof(uint64_t) + sizeof(uint64_t) * trackedCount;
         for (const EcsColumnInfo &column : sorted)
         {
             rowBytes += column.Size;
@@ -110,7 +110,8 @@ namespace NorvesLib::Core::Ecs
         uint32_t chunkVersionOffset = 0;
         while (capacity > 0)
         {
-            uint64_t offset = kEcsChunkHeaderSize + static_cast<uint64_t>(sizeof(EcsEntity)) * capacity;
+            // 実体の配列、続けて参加の番号の配列
+            uint64_t offset = kEcsChunkHeaderSize + static_cast<uint64_t>(sizeof(EcsEntity) + sizeof(uint64_t)) * capacity;
             for (size_t i = 0; i < sorted.size(); ++i)
             {
                 offset = AlignUpU32(static_cast<uint32_t>(offset), sorted[i].Align);
@@ -162,7 +163,9 @@ namespace NorvesLib::Core::Ecs
         chunk->Archetype = archetypeId;
         chunk->Count = 0;
         chunk->Capacity = archetype.Capacity;
+        chunk->MaxJoinSerial = 0;
         chunk->IndexInArchetype = static_cast<uint32_t>(archetype.Chunks.size());
+        chunk->MaxJoinSerial = 0;
         std::memset(reinterpret_cast<std::byte *>(chunk) + archetype.ChunkVersionOffset, 0, sizeof(uint64_t) * archetype.Columns.size());
         archetype.Chunks.push_back(chunk);
         ++m_ChunkCount;
@@ -281,6 +284,8 @@ namespace NorvesLib::Core::Ecs
             const uint32_t batch = (std::min)(remaining, archetype.Capacity - firstRow);
             ZeroRows(archetype, chunk, firstRow, batch);
             EcsEntity *entities = chunk->GetEntities();
+            uint64_t *joinSerials = chunk->GetJoinSerials();
+            chunk->MaxJoinSerial = (std::max)(chunk->MaxJoinSerial, m_CreateJoinSerial);
             for (uint32_t i = 0; i < batch; ++i)
             {
                 const EcsEntity entity = AcquireSlot();
@@ -288,6 +293,7 @@ namespace NorvesLib::Core::Ecs
                 slot.Chunk = chunk;
                 slot.Row = firstRow + i;
                 entities[firstRow + i] = entity;
+                joinSerials[firstRow + i] = m_CreateJoinSerial;
                 TouchRow(archetype, chunk, firstRow + i, version);
                 if (outEntities != nullptr)
                 {
@@ -315,6 +321,12 @@ namespace NorvesLib::Core::Ecs
     bool EcsWorld::IsAlive(EcsEntity entity) const
     {
         return FindSlot(entity) != nullptr;
+    }
+
+    uint64_t EcsWorld::GetJoinSerial(EcsEntity entity) const
+    {
+        const Slot *slot = FindSlot(entity);
+        return slot != nullptr ? slot->Chunk->GetJoinSerials()[slot->Row] : 0;
     }
 
     EcsArchetypeId EcsWorld::GetArchetypeOf(EcsEntity entity) const
@@ -348,6 +360,9 @@ namespace NorvesLib::Core::Ecs
             }
             const EcsEntity moved = lastChunk->GetEntities()[lastRow];
             chunk->GetEntities()[row] = moved;
+            // 参加の番号も行と一緒に動く（入れ替えで未参加の行が参加済みになったり、その逆になったりしない）
+            chunk->GetJoinSerials()[row] = lastChunk->GetJoinSerials()[lastRow];
+            chunk->MaxJoinSerial = (std::max)(chunk->MaxJoinSerial, chunk->GetJoinSerials()[row]);
             Slot &movedSlot = m_Slots[moved.Index];
             movedSlot.Chunk = chunk;
             movedSlot.Row = row;
@@ -435,6 +450,10 @@ namespace NorvesLib::Core::Ecs
         }
 
         dstChunk->GetEntities()[dstRow] = entity;
+        // 列の組が変わるだけの移動は参加の番号を保つ（同期点で作った行が、列を足されても早く参加しない）
+        const uint64_t joinSerial = srcChunk->GetJoinSerials()[srcRow];
+        dstChunk->GetJoinSerials()[dstRow] = joinSerial;
+        dstChunk->MaxJoinSerial = (std::max)(dstChunk->MaxJoinSerial, joinSerial);
         // 追跡列を足して版を引き継げなかった行は、外す前に同じ版で積んだ項目と重なりうる（読むときに除く）
         for (size_t k = 0; k < target.Columns.size(); ++k)
         {

@@ -1078,3 +1078,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - スロット（変更の束とコマンドバッファ）は段の仕事の総数ぶんをプールして使い回す（縮めない）。チャンクの仕事 1 件ごとに区間を 1 つ記録するので、トレースを取る間は仕事の数に比例して `RecordScope` のロックを取る（トレースを取らないときは `IsTraceActive` で早く抜ける）。WORLD-SCHEDULE で実際の規模を見て、重ければ区間をまとめる。
   - 段の波の計画は `RegisterSystem`/`AddAfter` の後の最初の実行（または `GetWaveCount`/`GetSystemWave`）で作り直す。ComputeWaves は段内のシステム数の 2 乗。
 - 証拠（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-SCHEDULER-1.txt`〜`-8-neighbors.txt`、`-mutations.txt`。
+
+- 反復 14（評価者の差し戻しへの対応）: チャンクのシステムが、同期点で作られた行を同じ収集の後ろの段で処理していた。設計 1.4 の「存在と参加を分ける」に従い、ECS の行に参加の番号を持たせた。
+  - `EcsWorld`/`EcsChunk`: チャンクの実体の配列の直後に行ごとの参加の番号（uint64）の配列を置く（1 チャンクの行数は 8 byte ぶん減る）。見出しに `MaxJoinSerial` を持ち、`AllRowsJoined(収集の番号)`／`IsRowJoined(行, 収集の番号)` で判定する。作った行は `SetCreateJoinSerial` の番号（既定 0 = 最初から参加）を受け取り、入れ替え削除（`RemoveRow`）・列の追加と削除・孤児の印（`MoveRow`）で動いても番号を保つ。`GetJoinSerial(実体)` で引ける。行の存在（クエリ・`IsAlive`・値）は参加に依らず同期点の後から見える。
+  - `SystemScheduler`: 構築時と最も外側の `BeginCollection` で `SetCreateJoinSerial(次の収集の番号)` を World に渡す。`EcsChunkJob` に `CollectionSerial`・`AllRowsJoined()`・`IsRowJoined(row)` を足した（チャンクのシステムが未参加の行を飛ばす口）。
+  - テスト: `EcsSchedulerTest` に `TestRowsCreatedAtSyncJoinAtNextCollection` を足した。同じ収集の `Build`→`Use` で同期点の 4 行が呼ばれない（既存 5 行は呼ばれる）、次の収集から 9 行すべて、同じフレームの複数の固定ステップを包んだ外側の収集で番号を共有（2 回作っても次の収集まで呼ばれない）、入れ替え削除・列の追加・孤児の印の後も動いた行の参加の番号が保たれる。
+- 確認: 収集の先頭で World へ番号を渡す行を外した変異では `EcsSchedulerTest` が `joined.Joined == 5 && joined.Skipped == 4` で止まり、戻すと通る（`verify-SCN-ECS-SCHEDULER-14-mutation.txt`）。
+- 結果: `verify-SCN-ECS-SCHEDULER-14-1.txt`（EntityTreeTest のビルド EXIT=0、警告 0 件）、`-14-2.txt`（Ecs 系 4 本・EntityTreeTest・TickDispatchTest の 7 本 Passed）、`-14-3.txt`・`-14-4.txt`（変異を戻した後の再ビルドと `EcsSchedulerTest`・`TickDispatchTest` 2/2 Passed）。
+- Notes: 参加の番号の運用は `World::Tick` と `DispatchFixedTick` への配線のとき（WORLD-SCHEDULE）に、通常の Tick と単独の固定ステップの両方を `EcsCollectionScope` で包んで合わせる。`MaxJoinSerial` はチャンクを確保し直すまで下がらない（次の収集で全行が参加した後は `AllRowsJoined` が true に戻る）。
