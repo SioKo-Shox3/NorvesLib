@@ -53,6 +53,8 @@ DEFAULT_MODEL_TIME_LIMIT = 900
 DEFAULT_RUN_BUDGET = 1800
 # 残りがこれ未満なら新しい試行を始めない(起動・読み込みだけで尽きるため)
 MIN_ATTEMPT_SECONDS = 180
+STARTUP_TIMEOUT_SECONDS = 300
+RECOVER_WAIT_SECONDS = 90
 
 # 参照画像の被写体の置き方。背景除去が効きやすいよう、単色の背景・影なしを求める。
 PROMPT_SUFFIX = ", centered, isolated on a plain light grey background, studio lighting, no shadow, sharp focus, photorealistic"
@@ -301,19 +303,23 @@ class ComfyServer:
             return False
         return not queue.get("queue_running") and not queue.get("queue_pending")
 
-    def recover_after_timeout(self, wait_seconds=90):
-        """/interrupt はノードの切れ目でしか効かない。実行中のノードが終わらなければ、自分で起動した ComfyUI は作り直す。"""
-        deadline = time.time() + wait_seconds
-        while time.time() < deadline:
+    def recover_after_timeout(self, wait_seconds):
+        """/interrupt はノードの切れ目でしか効かない。wait_seconds だけ待ち、実行中のノードが終わらなければ、
+        自分で起動した ComfyUI は止める。止めたら True(続けるなら呼び出し側が ensure_running で起動し直す)、
+        アイドルに戻っていれば False を返す。"""
+        deadline = time.time() + max(wait_seconds, 0)
+        while True:
             if self.is_idle():
                 log("COMFY idle_after_interrupt")
-                return
-            time.sleep(3)
+                return False
+            if time.time() >= deadline:
+                break
+            time.sleep(min(3, max(deadline - time.time(), 0.1)))
         if self.process is None:
             raise PipelineError("ComfyUI が /interrupt の後も止まりません(自分で起動したものではないので止めません)")
-        log("COMFY restart_after_interrupt")
+        log("COMFY stop_after_interrupt")
         self.stop()
-        self.ensure_running()
+        return True
 
     def stop(self):
         if self.process is None:
@@ -479,9 +485,15 @@ def generate_model(server, model, directory, args, remaining):
             generate_glb(server, model, reference_path, glb_path, resolution, limit)
         except WorkflowTimeout as error:
             log("GEN timeout id=%s upsample_resolution=%d limit=%ds" % (model["id"], resolution, limit))
-            server.recover_after_timeout()
+            stopped = server.recover_after_timeout(min(RECOVER_WAIT_SECONDS, remaining()))
             if index + 1 == len(attempts):
                 raise PipelineError("%s: 上限時間内に終わりませんでした(%s)" % (model["id"], error))
+            if stopped:
+                startup = int(min(STARTUP_TIMEOUT_SECONDS, remaining() - MIN_ATTEMPT_SECONDS))
+                if startup <= 0:
+                    log("GEN deferred id=%s(再起動の時間が残っていません)" % model["id"])
+                    return None
+                server.ensure_running(startup_timeout=startup)
             log("GEN retry id=%s upsample_resolution=%d" % (model["id"], attempts[index + 1]))
             continue
         scale = fit_glb_height(glb_path, model["height_m"])
@@ -512,7 +524,7 @@ def command_generate(args, models):
     deferred = []
     server = ComfyServer(args.comfy_root, args.port)
     try:
-        server.ensure_running()
+        server.ensure_running(startup_timeout=int(min(STARTUP_TIMEOUT_SECONDS, remaining())))
         for model in pending:
             if remaining() < MIN_ATTEMPT_SECONDS:
                 deferred.append(model["id"])
@@ -544,7 +556,13 @@ def command_refit(args, models):
         if not os.path.isfile(glb_path) or not os.path.isfile(os.path.join(directory, "reference.png")):
             raise PipelineError("GLB か参照画像がありません(先に生成してください): %s" % directory)
         scale = fit_glb_height(glb_path, model["height_m"])
-        manifest = write_manifest(model, directory)
+        manifest_path = os.path.join(directory, "manifest.json")
+        recorded = None
+        if os.path.isfile(manifest_path):
+            with open(manifest_path, "r", encoding="utf-8") as stream:
+                recorded = json.load(stream).get("upsample_resolution")
+        upsample = int(recorded if recorded is not None else model.get("upsample_resolution", DEFAULT_UPSAMPLE_RESOLUTION))
+        manifest = write_manifest(model, directory, upsample)
         log("REFIT id=%s height_m=%s scale=%.6f glb_md5=%s" % (model["id"], model["height_m"], scale, manifest["glb"]["md5"]))
     return 0
 

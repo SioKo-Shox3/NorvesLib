@@ -13,12 +13,12 @@
     },
     {
       "id": "adobe_ruin",
-      "prompt": "a single small ruined adobe mud-brick house, one corner of the walls collapsed into a jagged broken edge, roof half fallen in with exposed wooden beams, empty door and window openings, sun-baked tan plaster peeling off, exposed bricks, whole building standing on flat ground, three-quarter view, weathered desert wasteland outpost style",
-      "seed": 2001,
+      "prompt": "a single small adobe mud-brick house with thick solid smooth plaster walls, flat roof, one top corner of the wall broken off in a simple stepped edge, one plain door opening and one plain window opening, sun-baked tan plaster, compact simple blocky shape, whole building standing on flat ground, three-quarter view, weathered desert wasteland outpost style",
+      "seed": 2011,
       "target_faces": 600000,
       "texture_size": 4096,
       "height_m": 3.5,
-      "upsample_resolution": 768,
+      "upsample_resolution": 1024,
       "usage": "wasteland-buildings"
     },
     {

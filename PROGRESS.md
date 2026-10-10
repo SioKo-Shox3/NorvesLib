@@ -803,3 +803,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 未完: `adobe_ruin` は `upsample_resolution` 1024 でも 900 秒を超えて終わらなかった（`.harness/runs/20261010-132327/verify-SCN-GEN-BUILDINGS-1-gen1.txt`。ComfyUI のログは再起動で上書きされ、止まった段は特定できていない）。定義を 768 に下げた（未検証）。次の反復は `python Scripts/GenerateSceneModels.py --ids adobe_ruin --reuse-reference` から（参照画像は `adobe_ruin/reference.png` に有り。壁と屋根が崩れた日干し煉瓦の家で形は良い）。それでも終わらなければ seed かプロンプト（壁面を単純に、屋根の梁を減らす）を変えて参照画像から作り直す。生成後に `--preview` で形を確かめ、`Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe` でクックして verify を通す。
 - クックの一覧 `Assets/AssetSets/WastelandBuildingsModels.json`（3 種）を足した。クックは `adobe_ruin` の GLB が無いので未実施。
 - `TASKS.md` の status は `todo` のまま（`done` の条件を満たしていない）。`TASKS.md` には親の未コミットの変更があるため、この反復では触っていない。
+
+### SCN-GEN-BUILDINGS-1 完了(2026-10-10、反復 7・run 20261010-132327)
+
+- 前回の差し戻し3点に対応。(1) `--refit` が `write_manifest` を引数不足で呼ぶ退行: manifest に記録済みの `upsample_resolution`(無ければ定義・既定)を渡すようにした。(2) 合計の上限を超える経路: `recover_after_timeout` は待ち時間を引数で受け、残り時間で絞る(止めたら True を返すだけで、再起動は呼び出し側が `残り - 180 秒` までの起動待ちで行い、残りが無ければ見送る)。ComfyUI の初回起動待ちも残りで絞る。仮想時計での再現は 900＋復旧待ち＋再起動＋715 秒で 1805 秒(予算 1800 秒＋停止処理)に収まった。
+- `upsample_resolution` の最小値は 1024(768 は ComfyUI が `Value 768 smaller than min of 1024` で拒否する。`verify-SCN-GEN-BUILDINGS-1-gen2.txt`)。`adobe_ruin` は 1024 の元のプロンプトでは 900 秒で終わらないため、プロンプトを壁面が厚く単純な形(上の角だけ階段状に欠け、扉と窓は各 1 つ)に、seed を 2011 に替えて参照画像から作り直した。結果は 3D 化が約 280 秒(参照画像の生成を含む実行全体 822 秒)、59.98 万面・テクスチャ 4096・高さ 3.5 m。
+- プレビュー(`Assets/Models/Generated/adobe_ruin/preview_{front,side,top}.png`)と参照画像を開いた: 厚い壁の平屋根の家で、扉の開口が保たれ、壁の抜け・浮いた破片は無く、底はほぼ平ら。屋根の梁の先が小さく出る以外に突起は無い。見張り塔・石のアーチは前の反復で確認済み。
+- クック: `Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe` が `cooked=3`・EXIT=0(`verify-SCN-GEN-BUILDINGS-1-cook.txt`)。`--verify --require-cooked --ids adobe_ruin,watchtower,stone_arch` は 3 種とも `VERIFY_OK ... cooked`・EXIT=0(`verify-SCN-GEN-BUILDINGS-1-final.txt`)。生成の証拠は `-gen2.txt`(768 の拒否)・`-gen3.txt`(成功)。
