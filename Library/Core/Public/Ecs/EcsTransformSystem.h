@@ -43,13 +43,14 @@ namespace NorvesLib::Core::Ecs
         return Math::Transform(parent.position + parent.rotation * scaledPosition, parent.rotation * local.rotation, scale);
     }
 
-    /// 浮動小数 2 つが bit まで同じか（NaN どうしも、同じ bit なら同じ。== だと NaN の行が毎回「変わった」になる）
+    /// 浮動小数 2 つが同じ値か。数値として等しければ同じ（+0 と -0 も同じ。旧の再帰は数値の == で等しければキャッシュを
+    /// 更新しないので、同じ関係で並べる）。NaN は同じ bit のときだけ同じ（== だと NaN の行が毎回「変わった」になる）
     inline bool EcsSameBits(float lhs, float rhs)
     {
-        return std::memcmp(&lhs, &rhs, sizeof(float)) == 0;
+        return lhs == rhs || std::memcmp(&lhs, &rhs, sizeof(float)) == 0;
     }
 
-    /// 列に置く変換が bit まで同じ値か（旧の再帰が同じ式で求めた値と並べるので、同じ入力なら同じ bit になる）
+    /// 列に置く変換が同じ値か（EcsSameBits の関係で全成分を並べる。旧の再帰が同じ式で求めた値と並べるので、同じ入力なら一致する）
     inline bool EcsEqualWorldTransform(const EcsWorldTransform &lhs, const EcsWorldTransform &rhs)
     {
         return EcsSameBits(lhs.position.x, rhs.position.x) && EcsSameBits(lhs.position.y, rhs.position.y) &&

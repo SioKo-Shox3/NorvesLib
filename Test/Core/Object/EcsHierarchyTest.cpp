@@ -14,6 +14,7 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <limits>
 
 using namespace NorvesLib::Core;
 using NorvesLib::Core::Ecs::EcsEntity;
@@ -448,6 +449,48 @@ namespace
         }
     }
 
+    // 符号付きゼロ: 旧の再帰は数値として等しければキャッシュを更新しないので、+0 と -0 の違いだけでは不一致にならない
+    void TestSignedZeroMatchesLegacy()
+    {
+        // 比較の関係そのもの: +0 と -0 は同じ、NaN は同じ bit のときだけ同じ、違う値は違う
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        assert(Ecs::EcsSameBits(0.0f, -0.0f));
+        assert(Ecs::EcsSameBits(nan, nan));
+        assert(!Ecs::EcsSameBits(nan, 0.0f));
+        assert(!Ecs::EcsSameBits(1.0f, 2.0f));
+
+        World world;
+        world.Initialize();
+        (void)world.GetEcsTransformSystem();
+        Entity *root = world.SpawnEntity<Entity>(nullptr);
+        Entity *child = world.SpawnEntity<Entity>(root);
+        assert(root && child);
+
+        // 局所のスケールの x を +0 にして求める
+        root->SetLocalScale(0.0f, 1.0f, 1.0f);
+        const NorvesLib::Math::Transform local = root->GetLocalTransform();
+        UpdateAndRun(world);
+        assert(world.VerifyEcsTransform());
+
+        // 列を直接 -0 に書き換える（setter は数値として等しい値を書かない）
+        assert(world.GetEcsWorld().WriteColumnValueOf(
+            root->GetEcsEntity(), Ecs::EcsLocalTransform{local.position, local.rotation, NorvesLib::Math::Vector3(-0.0f, 1.0f, 1.0f)}));
+        const EcsTransformSystem::RunResult negative = UpdateAndRun(world);
+        assert(negative.Processed >= 1);
+        assert(world.VerifyEcsTransform());
+
+        // 子の局所の変換を動かしても、根の -0 を挟んで旧と一致する
+        child->SetLocalPosition(1.0f, 2.0f, 3.0f);
+        UpdateAndRun(world);
+        assert(world.VerifyEcsTransform());
+
+        // setter 経由でも一致する
+        root->SetLocalScale(-0.0f, 1.0f, 1.0f);
+        UpdateAndRun(world);
+        assert(world.VerifyEcsTransform());
+        world.Finalize();
+    }
+
     // 並列の中は列を読むだけ: 並列の区間にいる間も、階層のシステムは ECS_PROPERTY の検査に触れない
     void TestParallelRunReportsNoPropertyAccess()
     {
@@ -476,6 +519,7 @@ int main()
     TestLateSystemSeedsExistingRows();
     TestParallelMatchesSerialAndOrderIsDeterministic();
     TestParallelRunReportsNoPropertyAccess();
+    TestSignedZeroMatchesLegacy();
 
     NorvesLib::Thread::JobSystem::Get().Shutdown();
     std::cout << "EcsHierarchyTest 合格\n";

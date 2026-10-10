@@ -1250,3 +1250,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 予約中の親の下へ付け替えた行がある間（`m_PendingEntityRelinks` が空でない間）は、階層の列が Outer/Inner と食い違うのが正当なので、伝播も照合もしない。
   - 切替（SCN-ECS-TRANSFORM-SWITCH）で `EcsWorldTransform` を書く側に替えるとき、比較用の列は消す。比較用の列は追跡せず、チャンクの版も進めない。切替では書き込みを `MarkWritten` と `CommitChanges` を通す形にすること（今は GameThread が行の順に直接書く）。
   - 行末: `World.cpp`・`World.h`・`TASKS.md`・`PROGRESS.md` は混在。挿入は元の行の行末に合わせた（numstat 2 通りが一致）。
+
+### SCN-ECS-TRANSFORM-PREP 差し戻し対応（2026-10-11、反復 28・run 20261010-223034）
+
+- 原因: 照合の `EcsSameBits` が bit 比較だったため、旧の再帰が「数値として等しいのでキャッシュを更新しない」場合（局所のスケール x が +0 → -0 など符号付きゼロだけの違い）に、比較用の列は -0、旧のキャッシュは +0 となって不一致になった。
+- 変更: `EcsSameBits` を `lhs == rhs || 同じ bit`（+0 と -0 は同じ、NaN は同じ bit のときだけ同じ）にした。旧の再帰の `Transform::operator==` と同じ関係なので、変更の検出（`bChanged`）と照合（`EcsEqualWorldTransform`）が旧と同じ判定になる。`EcsHierarchyTest` に `TestSignedZeroMatchesLegacy` を足した（比較の関係そのものと、根の局所スケール x を +0 → 列の直接書き込みで -0 → setter で -0 にして、そのつど旧と一致すること）。
+- 結果（`.harness/runs/20261010-223034/`、反復 28 の保存）: `verify-SCN-ECS-TRANSFORM-PREP-1.txt`（EntityTreeTest のビルド EXIT=0）、`-2.txt`（EcsHierarchyTest・TransformHierarchyTest 2/2 Passed）、`-3.txt`（mega-stress の撮影が `result=pass`、`engine_check name=ECS_TRANSFORM` が default 16・close 16・aerial 12、fail 0）。
+- Notes: 反復 27 の記述中の `-3`〜`-5` のファイル名は、この反復の保存で上書きされた。
