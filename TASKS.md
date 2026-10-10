@@ -8,7 +8,7 @@
 
 2026-10-10 仮想化ジオメトリの規模の引き上げ（ユーザー決定）: バナナ 100万本（と一般のゲームの負荷 mega-stress）で GPU・ゲームスレッド・レンダースレッドの median と p95 が 16.6 ms 以下（RTX 4080・1920×1080・RelWithDebInfo）を `SCN-MEGA-` の項目で、荒野より先に進める。バナナ専用ではなく、席（GPU Scene）・変化の通知・差分の転送・ストリーミングで実際のゲームにも効く形にする。設計は計画者の計画を GPT（Sol）が 2 周批評したものを親がまとめた（計画書 `Docs/Plans/SceneLauncherPlan.md` の「仮想化ジオメトリの規模の引き上げ」）。準備の項目は新旧の一致（mismatch=0）が取れるまで切替へ進まない。切替の項目は旧経路へ戻す引数を残す。
 
-2026-10-10 計測の方針（ユーザー指示「毎変更ごとにビルドしてゲームをつけて計測していたら終わらない。計測が必要なタイミングを考える」）: 実装の項目の検証は、RelWithDebInfo のビルド 1 回と、正しさを見る短い起動 1〜2 本（新旧の一致・溢れ・送った量などの検査のカウンタ。0 でなければ ERROR を出して撮影が落ちる）だけにし、GPU 時間（`-GpuTimingFrames`）は測らない。性能の数値と Debug の検証レイヤーは節目の計測の項目（`SCN-MEGA-MEASURE-*`・`SCN-MEGA-SCALE-300K`・`SCN-MEGA-ACCEPT-1M`。調べる段の PROBE と SETUP-LINEAR は計測そのものが目的）でまとめて見る。反復の中でも、小さな変更のたびにビルドしてゲームを起動しない。コードを読んで考え、変更をまとめてから起動 1 回で確かめる。CPU のテストで確かめられる契約はゲームを起動せずに確かめる。 計測の項目の verify は、反復の中で 1 回撮った結果を `Scripts/CheckCaptureMetrics.py`（結果が揃い、失敗・溢れが無く、計測の値があり、いまの Game.exe より後に撮られたこと）で検査し、ランナーは重い撮影をやり直さない。1 回の撮影が 10 分を超える規模（古い経路での 10万本以上など）は、ECS の大量の軽い実体が入るまで測らない。
+2026-10-10 計測の方針（ユーザー指示「毎変更ごとにビルドしてゲームをつけて計測していたら終わらない。計測が必要なタイミングを考える」）: 実装の項目の検証は、RelWithDebInfo のビルド 1 回と、正しさを見る短い起動 1〜2 本（新旧の一致・溢れ・送った量などの検査のカウンタ。0 でなければ ERROR を出して撮影が落ちる）だけにし、GPU 時間（`-GpuTimingFrames`）は測らない。性能の数値と Debug の検証レイヤーは節目の計測の項目（`SCN-MEGA-MEASURE-*`・`SCN-MEGA-SCALE-300K`・`SCN-MEGA-ACCEPT-1M`。調べる段の PROBE と SETUP-LINEAR は計測そのものが目的）でまとめて見る。反復の中でも、小さな変更のたびにビルドしてゲームを起動しない。コードを読んで考え、変更をまとめてから起動 1 回で確かめる。CPU のテストで確かめられる契約はゲームを起動せずに確かめる。 計測の項目の verify は、反復の中で 1 回撮った結果を `Scripts/CheckCaptureMetrics.py`（結果が揃い、失敗・溢れが無く、計測の値があり、いまの Game.exe より後に撮られたこと）で検査し、ランナーは重い撮影をやり直さない。1 回の撮影が 10 分を超える規模（古い経路での 10万本以上など）は、ECS の大量の軽い実体が入るまで測らない。 2026-10-10 追記（ユーザー指摘「改善が確定している土台で測って意味があるのか」）: 作り変えが決まっている経路の改修前の計測はしない。節目の計測の合否は目標の絶対値（16.6 ms などの閾値）で決め、改修前の値との比は合否に使わない。改修の前に測るのは、結果で設計や作るかどうかが変わる診断（PROBE-ROOT・PROBE-100K のような）だけ。正しさの比較（描いたクラスタ数・画像の一致）は別で、これは続ける。ECS 前の mega-stress の値は、既に撮った分を PROGRESS に参考値として残した（そのために撮り直さない）。
 
 2026-10-10 ECS の決定（ユーザー決定）: Entity はオブジェクト管理の器として残し、更新（Tick・変換・描画への同期・ゲームロジック）のデータと処理を ECS 型（自前のアーキタイプ型、値の実体は列に置き Object の読み書きはそこを通す、大量の物は Object を持たない軽い実体、ロジックはすべてシステムへ、ジョブで並列）に作り変え、レンダースレッドもコマンドの並列記録まで並列化する。100万本の改修に組み込む。設計の正本は `Docs/Plans/EcsUpdatePathPlan.md`（計画者の計画を GPT が 2 周批評し、親が追記した。項目の notes の「§」はこの文書の節）。`SCN-ECS-` の項目と、ECS 前提で置き換えた `SCN-MEGA-` の項目を、計画書の §2 の順に並べた。ワールドの全走査を直す旧案（WORLD-TICK-CACHE・WORLD-TRANSFORM-NOTIFY・WORLD-TRANSFORM-INTERP・WORLD-RENDER-DIRTY・INSTANCE-BATCH）は ECS の項目に置き換えて消した。戻すときは、戻す項目とそれに依存する後続の項目を新しい順に revert する（単独では戻さない）。
 
@@ -227,13 +227,13 @@
 - notes: 実装は途中保存のコミット a005038e・403e93b1 に入っている（403e93b1 で足した材質・メッシュ・モデルの数の照合はまだビルドしていない）。続きから仕上げる。滞在中に区画の1周期が終わらないときは、区画の引数の verify の GameArgs の数値（個数・周期）だけをこの項目の中で調整してよい（検査の中身は弱めない）。2026-10-10 親: 2回続けて40分を超えたため、基準の計測を SCN-MEGA-STRESS-BASELINE へ分けた（2万個の今の経路はゲームスレッドが約480 ms/フレームで、3視点×300フレームの撮影1本に約12分かかり、3本で反復に収まらない）。Game の起動と撮影は1本ずつ順に行い、並行させない（並行した撮影で trace.csv を別のプロセスが使っていて読めずに失敗した）。
 
 ## SCN-MEGA-STRESS-BASELINE: mega-stress の今の経路の基準を測り、PROGRESS の表に書く
-- status: todo
+- status: backlog
 - done-when: 2万個の静止・1% 移動・1% 移動 + 64 m 区画の3本を、既定の視点だけ・`-GpuTimingFrames 240`（有効な標本180）で撮り、3本とも CheckCaptureMetrics が pass。gt・rt・GPU の median と p95、`MEGA_CAPACITY` を PROGRESS の表に書く（以後の節目の計測はこの表と比べる）。
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/static --views default --timing --min-frames 180`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/moving --views default --timing --min-frames 180`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/stream --views default --timing --min-frames 180`
 - paths: TASKS.md, PROGRESS.md
-- notes: コードを変えない（変えると Game.exe が新しくなり、撮影が古いと判定される）。撮影は次の3本を1本ずつ順に（並行させない。1本あたり約4分）。ランナーは撮り直さず、保存した結果を検査する。static: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views default -GpuTimingFrames 240 -TimeoutSeconds 900 -GameArgs stress-entities=20000 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/static`。 moving: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views default -GpuTimingFrames 240 -TimeoutSeconds 900 -GameArgs stress-entities=20000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/moving`。 stream: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views default -GpuTimingFrames 240 -TimeoutSeconds 900 -GameArgs stress-entities=20000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/stream`。
+- notes: コードを変えない（変えると Game.exe が新しくなり、撮影が古いと判定される）。撮影は次の3本を1本ずつ順に（並行させない。1本あたり約4分）。ランナーは撮り直さず、保存した結果を検査する。static: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views default -GpuTimingFrames 240 -TimeoutSeconds 900 -GameArgs stress-entities=20000 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/static`。 moving: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views default -GpuTimingFrames 240 -TimeoutSeconds 900 -GameArgs stress-entities=20000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/moving`。 stream: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views default -GpuTimingFrames 240 -TimeoutSeconds 900 -GameArgs stress-entities=20000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/stream`。 2026-10-10 親が backlog にした: ECS で作り変えが決まっている経路の基準は、比べても判断が変わらない（合否は目標の絶対値で決める）。既に撮った 2万個の値は PROGRESS に参考値として残した。
 ## SCN-ECS-CHECK-GATE: 開発ビルドの検査の結果と、撮る構成のビルドを撮影の門にする
 - status: todo
 - done-when: `Debug/EngineChecks.h` の口が、`--engine-checks=<名前,...>`（開発ビルドだけ）で有効にした検査について `ENGINE_CHECK name=<名前> result=pass|fail count=<n>` を出す。`CaptureScene.ps1` と `CaptureStartupScene.ps1` に `-RequireChecks` を足す（各名前の pass が 1 回以上あり、fail が 0 でなければ失敗）。3 つのスクリプトに `-Build` を足す（撮る構成の Game をビルドし、失敗したら撮らずに失敗）。`CaptureStartupScene.ps1` に `-GameArgs` を足す。`RunSceneCycleSmoke.ps1` は fail の行で落ちる。`ENGINE_CHECK_SELFTEST` の pass の撮影が通る。`--engine-checks-selftest-fail` で落ちる出力は、反復の中で 1 回撮って PROGRESS に貼る。 あわせて、`CaptureScene.ps1` の計測（`-GpuTimingFrames`）は初期配置と公開の完了（SceneReady）の後に始め、ウォームアップと末尾の除外を別に取って、有効な標本を指定の数だけ得る（今は「指定 − 60」件に制限している、315 行付近）。配置した数（シーンが出す数）と計測の開始のフレームを metrics.json に記録し、`CheckCaptureMetrics.py` の `--min-frames` が有効な標本の数を見る。
@@ -448,19 +448,19 @@
 
 ## SCN-MEGA-MIXED-LOAD: バナナ 100万本と mega-stress の個別 Entity を 1 回の起動で同時に置く
 - status: todo
-- done-when: 1 回の起動で、散布の Object によるバナナ（`banana-count`）と mega-stress の個別 Entity（`stress-entities`・`stress-moving-percent`・`stress-stream-cell`）を同時に置ける（今は GameApplicationHandler.cpp 2721 行付近のモードの登録で別々のシーンへ渡している）。静止・カメラパスの再生・1% 移動・64 m 区画のストリーミングの 4 つの起動の引数を決めて PROGRESS に書き、実際に置いた数（バナナの本数・Entity の数）をログと metrics.json に出して、引数どおりであることを確かめる（10万本 + 5000 個の短い起動で確かめる。計測はしない）。
+- done-when: 1 回の起動で、散布の Object によるバナナ（`banana-count`）と mega-stress の個別 Entity（`stress-entities`・`stress-moving-percent`・`stress-stream-cell`）を同時に置ける（今は GameApplicationHandler.cpp 2721 行付近のモードの登録で別々のシーンへ渡している）。静止・カメラパスの再生・1% 移動・64 m 区画のストリーミングの 4 つの起動の引数を決めて PROGRESS に書き、実際に置いた数（バナナの本数・Entity の数）をログと metrics.json に出して、引数どおりであることを確かめる（10万本 + 5000 個の短い起動で確かめる。計測はしない）。開発ビルドの `--camera-path-play` で、シーンのカメラパスを再生したまま撮れる（`--camera-path-time` は止めた視点。再生の開始の時刻はそれに合わせる。ログに再生中の時刻を出す）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs banana-count=100000,stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-MIXED-LOAD`
-- paths: Game, Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
-- notes: GPT の 2 周目の指摘（ACCEPT-1M の混在の負荷を作る実装が無い）への対応。
+- paths: Game, Library/Core/Public/Input, Library/Core/Private/Input, Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
+- notes: GPT の 2 周目の指摘（ACCEPT-1M の混在の負荷を作る実装が無い）への対応。 2026-10-10 親: `--camera-path-play` を SCN-MEGA-PROBE-VSM（backlog にした）から移した。
 
 ## SCN-MEGA-PROBE-VSM: 10万本で、読み込み直後とカメラが動くときの VSM の投影物のカリングを測る
-- status: todo
+- status: backlog
 - done-when: 開発ビルドの `--camera-path-play` でカメラパスを再生したまま計測できる。静止と再生の 2 回について、`VsmCullPairs`・`VsmCullMega` の median・p95・max、`VSM_MEGA_CULL overflow` の最大、読み込み直後のフレームの値を PROGRESS に書き、100万本への外挿を書く。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-PROBE-VSM --views horizon --timing`
 - paths: Game/GameModes/MegaBananas, Game/GameApplicationHandler.cpp, Library/Core/Public/Input, Library/Core/Private/Input, TASKS.md, PROGRESS.md
-- notes: VSM のコードは変えない。静止の値は PROBE-100K の撮影を使ってよい。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-PROBE-VSM`（ランナーは撮り直さず、保存した結果を検査する）。 2026-10-10 親が backlog にした: 古い経路（1本1Entity）では 10万本の撮影 1 回が約 19 分かかるため、ECS の大量の軽い実体で読み込みが速くなってから測る。 2026-10-10 ECS の大量の軽い実体（MASS-ROWS）の後に置いて todo に戻した。
+- notes: VSM のコードは変えない。静止の値は PROBE-100K の撮影を使ってよい。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-PROBE-VSM`（ランナーは撮り直さず、保存した結果を検査する）。 2026-10-10 親が backlog にした: 古い経路（1本1Entity）では 10万本の撮影 1 回が約 19 分かかるため、ECS の大量の軽い実体で読み込みが速くなってから測る。 2026-10-10 ECS の大量の軽い実体（MASS-ROWS）の後に置いて todo に戻した。 2026-10-10 親が backlog にした: VSM の改修（VSM-RANGES・VSM-BVH-SUN/POINT）は結果によらず行うので、改修前の値は判断を変えない。`--camera-path-play` は SCN-MEGA-MIXED-LOAD へ移した。MEASURE-VSM の合否は絶対値にした。
 
 ## SCN-ECS-TICK-SIMPLE: Mesh・Board・Camera・Light 系・SpringArm・HoldSlot・SocketAttachment の Tick を順序付きの系へ移す
 - status: todo
@@ -520,7 +520,7 @@
 
 ## SCN-MEGA-MEASURE-CPU: 節目の計測: ECS 化した CPU（ワールド・同期・ロジック）の効果を測る
 - status: todo
-- done-when: - 測る負荷: 5万個の静止・1% 移動・1% 移動 + 64 m 区画と、バナナ 1万本 overview・10万本 horizon。 - 測る値: gt・rt・GPU の median と p95、スコープの上位。基準と並べて PROGRESS の表に書く。 - 合格の条件: - 5万個の静止で、ゲームスレッドの段の合計 ≤ 2 ms（変換の伝播・描画の変換・RenderSync・SceneQuery・cleanup はそれぞれ ≤ 0.1 ms）。 - 1% 移動での増分が「変わった行 + 影響する子孫 + 補間の部分木」の数に比例する（数をログに出し、比を表に書く）。 - 10万本と 1万本の gt の差 ≤ 0.5 ms。 - 届かないスコープは `SCN-MEGA-FIX-<名前>` として足す。Debug の起動画面で検証レイヤーのエラーが 0。
+- done-when: - 測る負荷: 5万個の静止・1% 移動・1% 移動 + 64 m 区画と、バナナ 1万本 overview・10万本 horizon。 - 測る値: gt・rt・GPU の median と p95、スコープの上位。PROGRESS の表に書く（合否は下の閾値で決め、改修前の値は撮らない）。 - 合格の条件: - 5万個の静止で、ゲームスレッドの段の合計 ≤ 2 ms（変換の伝播・描画の変換・RenderSync・SceneQuery・cleanup はそれぞれ ≤ 0.1 ms）。 - 1% 移動での増分が「変わった行 + 影響する子孫 + 補間の部分木」の数に比例する（数をログに出し、比を表に書く）。 - 10万本と 1万本の gt の差 ≤ 0.5 ms。 - 届かないスコープは `SCN-MEGA-FIX-<名前>` として足す。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static --timing --min-frames 300 --max-gt-p95-ms 16.6`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-CPU-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
@@ -777,7 +777,7 @@
 
 ## SCN-MEGA-MEASURE-VSM: 節目の計測: 影の改修の効果を測る
 - status: todo
-- done-when: PROBE-VSM と同じ 10万本 horizon の静止とカメラパスの再生で、`VsmCullPairs`・`VsmCullMega` の median・p95・max、`VSM_MEGA_CULL overflow` の最大、読み込み直後のフレームを測って PROBE-VSM と並べて PROGRESS に書く。目標: 再生の `VsmCullPairs` の p95 が PROBE-VSM の 1/5 以下、`VsmCullMega` の p95 ≤ 1.5 ms、overflow 0。点光源の影の計測（`VirtualizationAcceptance.md` の段9の測り方）が悪化しない。撮影を開いて影の欠けが無い。届かないものは `SCN-MEGA-FIX-<名前>` を次へ足す。Debug の起動画面で検証レイヤーのエラーが 0。
+- done-when: 10万本 horizon の静止とカメラパスの再生で、`VsmCullPairs`・`VsmCullMega` の median・p95・max、`VSM_MEGA_CULL overflow` の最大、読み込み直後のフレームを測って PROGRESS に書く。目標: 再生の `VsmCullPairs` の p95 ≤ 1.0 ms、`VsmCullMega` の p95 ≤ 1.5 ms、overflow 0。点光源の影の計測（`VirtualizationAcceptance.md` の段9の測り方）が悪化しない。撮影を開いて影の欠けが無い。届かないものは `SCN-MEGA-FIX-<名前>` を次へ足す。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-VSM --views horizon --timing`
 - verify: `cmake --build build --config Debug --target Game -- /m:1`

@@ -895,6 +895,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 古い経路（1 本 1 Entity）の 10万本の撮影は 1 回約 19 分で、ランナーの再検証（上限 10 分）が必ず時間切れになり、SCN-MEGA-PROBE-100K が 3 反復続けて撮り直していた。計測の結果は反復 15 の評価者が確認済みなので、親が完了にした。
 - 計測の項目の verify を、反復の中で 1 回撮った結果を検査する `Scripts/CheckCaptureMetrics.py`（結果が揃い、失敗・溢れが無く、計測の値があり、いまの Game.exe より後に撮られたこと）に替えた。ランナーは重い撮影をやり直さない。
 - 古い経路で撮影が 10 分を超える PROBE-VSM（10万本）は ECS の後へ回し、負荷シーンの基準（STRESS-STREAMING）は 2万個に減らした。
+- 改修前の計測をやめた（ユーザーの指摘「改善が確定している土台で測って意味があるのか」）: 作り変えが決まっている経路の基準は、比べても判断が変わらない。節目の計測の合否は目標の絶対値で決める。基準の計測の項目 `SCN-MEGA-STRESS-BASELINE` と VSM の事前調査 `SCN-MEGA-PROBE-VSM` を backlog にし、`SCN-MEGA-MEASURE-VSM` の合否を「PROBE-VSM の 1/5」から `VsmCullPairs` の p95 ≤ 1.0 ms に替えた。`--camera-path-play` は `SCN-MEGA-MIXED-LOAD` へ移した。
+- ECS 前の参考値（撮り直さず、既に撮った分だけ。mega-stress 2万個・RelWithDebInfo・1920×1080。計測は組み立ての完了を待たないので p95 は揺れが大きい）:
+  | 負荷 | 視点 | gt median / p95 | rt median / p95 | GPU median / p95 |
+  |---|---|---|---|---|
+  | 静止 | default | 480 / 675 ms | 51 / 389 ms | 42 / 503 ms |
+  | 静止 | close | 451 / 545 ms | 119 / 565 ms | 377 / 559 ms |
+  | 静止 | aerial | 427 / 646 ms | 53 / 1026 ms | 91 / 977 ms |
+  | 1% 移動 | default | 416 / 529 ms | 42 / 55 ms | 82 / 113 ms |
+  出典: `.harness/runs/scene-capture/SCN-MEGA-STRESS-STREAMING/static/metrics.json`（静止）、`.harness/runs/20261010-191942/verify-SCN-MEGA-STRESS-STREAMING-7-moving.txt`（1% 移動。trace.csv の読み取りで撮影が失敗し metrics.json は無い）。
 
 ### SCN-MEGA-BASE-RWDI（2026-10-10、反復 1・run 20261010-191942）
 
