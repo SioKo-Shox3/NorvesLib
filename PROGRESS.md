@@ -1107,3 +1107,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `CheckCaptureMetrics.py`: `--require-scope`・`--require-pass`（繰り返し可。完全一致、末尾 `*` などのワイルドカードは前方一致。区間は個別の名前とグループの両方を探す。無ければ失敗）、`--max-scope-median-ms`・`--max-scope-p95-ms`・`--max-pass-median-ms`・`--max-pass-p95-ms`（`<名前>=<ms>`、繰り返し可。一致する区間・パスが 1 つでも超えれば失敗。一致が無い指定も失敗）。
 - 結果: `verify-SCN-ECS-SCOPE-METRICS-1.txt`（ビルド pass、2000 個・120 フレームの撮影 pass、34 区間。`Ecs.Stage.Tick`・`Ecs.Stage.Sync`・`Ecs.Sys.Sync.SyncToSceneView` など、グループ `Ecs.Stage.*`・`Ecs.Sys.*`・`Ecs.Sync.*`）、`-2.txt`（`--require-scope Ecs.Stage.*`・`Ecs.Sync.*`・`--require-pass MegaGeometry` が pass）、`-3.txt`（存在しない区間で rc=1 を確認）、`-4-limits.txt`（閾値を通す・超える・存在しない名前の 5 通り）。
 - Notes: このシーンでは `RG.Record.*` の区間はまだ出ない（出れば `cpu_scope_group_ms` に入る）。`Ecs.Stage.Sync`（段の名前が Sync）と `Ecs.Sync.*`（段の同期点の区間）は別物。チャンクの仕事の区間はこの規模では出ていない（`Ecs.Sys.*` は GameThread 系のみ）。
+
+### SCN-ECS-SCOPE-METRICS 差し戻し対応（2026-10-11、反復 17・run 20261010-223034）
+
+- 反復 16 の NEEDS_WORK 2 点を直した。(1) `CheckCaptureMetrics.py`: 名前の検査（`--require-*`・`--max-scope-*`・`--max-pass-*`）を `--timing` の外へ出し、指定したら `--timing` が無くても必ず見る（`gpu_timing` が無ければ「無い」で失敗）。(2) `CaptureScene.ps1`: `ConvertTo-ScopeStatList` の戻りを `@(...)` で包み、0 件・1 件でも JSON が配列になる。検査側も辞書 1 件を配列として扱う。
+- 結果: `verify-SCN-ECS-SCOPE-METRICS-1.txt`（撮影 pass、`cpu_scope_ms` 34・`cpu_scope_group_ms` 3・`gpu_pass_ms` 63 の配列）、`-2.txt`（pass）、`-3.txt`（存在しない区間で失敗＝期待どおり）。`--timing` 無しでも、存在しない区間は失敗・低い閾値は失敗・正しい指定は pass を確認。単一オブジェクト形の metrics でも落ちない。

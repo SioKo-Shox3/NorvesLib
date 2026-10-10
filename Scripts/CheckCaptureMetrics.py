@@ -8,7 +8,7 @@
 # --min-frames N は、計測の有効な標本（gpu_timing.valid_samples。シーンの初期配置と公開の完了の後の描画フレームから
 # ウォームアップと末尾を件数で除いた窓の件数）が N 件以上で、計測の開始のフレーム（timing_start_frame）が記録され、
 # 窓が SceneReady のフレームより後で、ウォームアップを指定の件数だけ除いていることを見る。
-# --require-scope <名前>・--require-pass <名前>（繰り返し可）は、--timing のとき、CPU の区間（gpu_timing.cpu_scope_ms と
+# --require-scope <名前>・--require-pass <名前>（繰り返し可）は、--timing が無くても、CPU の区間（gpu_timing.cpu_scope_ms と
 # cpu_scope_group_ms）・GPU のパス（gpu_pass_ms）にその名前があることを見る。名前は完全一致で、末尾が * なら前方一致
 # （Ecs.Stage.* は Ecs.Stage. で始まる区間が 1 つ以上あれば満たす。グループ名 Ecs.Stage.* とも一致する）。無ければ失敗。
 # --max-scope-median-ms / --max-scope-p95-ms / --max-pass-median-ms / --max-pass-p95-ms は <名前>=<ms>（繰り返し可）。
@@ -29,6 +29,13 @@ def parse_name_limit(text):
         return name, float(value)
     except ValueError:
         raise argparse.ArgumentTypeError("<ms> が数値でない: %s" % text)
+
+
+def as_list(value):
+    # 集計が 1 件だと PowerShell の JSON がオブジェクトになりうるので、リストに揃える
+    if isinstance(value, dict):
+        return [value]
+    return [entry for entry in (value or []) if isinstance(entry, dict)]
 
 
 def match_entries(entries, key, pattern):
@@ -120,30 +127,32 @@ def main():
                 removed = timing.get("warmup_frames_removed")
                 if removed is None or removed < warmup:
                     failures.append("warmup_not_removed=%s:%s<%s" % (name, removed, warmup))
-            # 名前ごとの検査。区間は個別の名前とグループ（A.B.*）の両方を探す
-            tables = {
-                "cpu_scope": list(timing.get("cpu_scope_ms") or []) + list(timing.get("cpu_scope_group_ms") or []),
-                "gpu_pass": list(timing.get("gpu_pass_ms") or []),
-            }
-            keys = {"cpu_scope": "scope", "gpu_pass": "pass"}
-            for table, required in (("cpu_scope", args.require_scope), ("gpu_pass", args.require_pass)):
-                for pattern in required:
-                    if not match_entries(tables[table], keys[table], pattern):
-                        failures.append("%s_missing=%s:%s" % (table, name, pattern))
-            for table, field, option in named_limits:
-                for pattern, limit in getattr(args, option):
-                    matched = match_entries(tables[table], keys[table], pattern)
-                    if not matched:
-                        failures.append("%s_missing=%s:%s" % (table, name, pattern))
-                    for entry in matched:
-                        value = entry.get(field)
-                        if value is not None and value > limit:
-                            failures.append("%s.%s=%s:%s:%.3f>%.3f" % (table, field, name, entry.get(keys[table]), value, limit))
             for key, option in limits:
                 limit = getattr(args, option)
                 value = timing.get(key)
                 if limit is not None and value is not None and value > limit:
                     failures.append("%s=%s:%.3f>%.3f" % (key, name, value, limit))
+        # 名前ごとの検査。--timing が無くても、名前の引数を指定したら必ず見る（空振りで通さない）。
+        # 区間は個別の名前とグループ（A.B.*）の両方を探す
+        timing = view.get("gpu_timing") or {}
+        tables = {
+            "cpu_scope": as_list(timing.get("cpu_scope_ms")) + as_list(timing.get("cpu_scope_group_ms")),
+            "gpu_pass": as_list(timing.get("gpu_pass_ms")),
+        }
+        keys = {"cpu_scope": "scope", "gpu_pass": "pass"}
+        for table, required in (("cpu_scope", args.require_scope), ("gpu_pass", args.require_pass)):
+            for pattern in required:
+                if not match_entries(tables[table], keys[table], pattern):
+                    failures.append("%s_missing=%s:%s" % (table, name, pattern))
+        for table, field, option in named_limits:
+            for pattern, limit in getattr(args, option):
+                matched = match_entries(tables[table], keys[table], pattern)
+                if not matched:
+                    failures.append("%s_missing=%s:%s" % (table, name, pattern))
+                for entry in matched:
+                    value = entry.get(field)
+                    if value is not None and value > limit:
+                        failures.append("%s.%s=%s:%s:%.3f>%.3f" % (table, field, name, entry.get(keys[table]), value, limit))
 
     if failures:
         print("CHECK_CAPTURE_METRICS result=fail " + " ".join(failures))

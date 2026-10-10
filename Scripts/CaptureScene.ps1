@@ -466,8 +466,9 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
             }
         } | Sort-Object -Property @{ Expression = 'median_ms'; Descending = $true }, @{ Expression = 'max_ms'; Descending = $true }, @{ Expression = 'scope'; Descending = $false })
     }
-    $cpuScopeList = ConvertTo-ScopeStatList $scopePerFrame $scopeThreads $scopeRecords $scopeFrameCount
-    $cpuScopeGroupList = ConvertTo-ScopeStatList $groupPerFrame $groupThreads $groupRecords $scopeFrameCount
+    # 関数の戻りは 1 件だと配列でなくなり JSON がオブジェクトになるので、受け側で配列に包む（0 件・1 件でも配列を保つ）
+    $cpuScopeList = @(ConvertTo-ScopeStatList $scopePerFrame $scopeThreads $scopeRecords $scopeFrameCount)
+    $cpuScopeGroupList = @(ConvertTo-ScopeStatList $groupPerFrame $groupThreads $groupRecords $scopeFrameCount)
 
     $timing = [ordered]@{
         trace = [IO.Path]::GetFileName($TracePath)
