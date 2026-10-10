@@ -23,6 +23,13 @@
 # 同じ撮影のログから、描いたクラスタ数（MEGA_OCCLUSION の pass1 + pass2_drawn の最後の行）・MegaGeometry のバッファの大きさ
 # （MEGA_CAPACITY）・ジオメトリのプールの使用量（VRAM_POOLS の geometry_used_mb）を mega_stats として書く。
 # 統計が無効な Release は GPU のタイムスタンプを取れないので併用しない（RelWithDebInfo で測る）。
+# gpu_timing には CPU 側も入る。ゲームスレッド・描画スレッドのフレーム時間（game_thread_ms_* / render_thread_ms_*。median と p95）、
+# パスごとの median・p95・max（pass_ms）、CPU のスコープ（トレースの Type=Scope の行）の median 上位 15（cpu_scope_median_ms）。
+# CPU 側も GPU と同じ窓（最後の (-GpuTimingFrames − 60) フレームから撮影の直前2つを除く）で数える。
+#
+# -CompareWith <dir> を与えると、その撮影（同じ視点名の PNG）と視点ごとに比べる。平均輝度の差が -CompareMeanLuminanceLimit 以下、
+# PSNR が -ComparePsnrLimit 以上なら一致（式は CaptureStartupScene.ps1 の -CompareDeterministicWith と同じ）。
+# 比べる側にも gpu_timing があれば、metrics.json の comparison に GPU・ゲームスレッド・描画スレッドの median の比も書く。
 #
 # 失敗にするもの（終了コード 1）: Game の起動失敗・終了コードが0でない・タイムアウト、PNG が無い・大きさが違う、
 # Game.log のシェーダーのコンパイル失敗（Slang SDK 未設定の neural_material_decode.slang だけは既知として除外）、
@@ -52,7 +59,14 @@ param(
     [int]$GpuTimingFrames = 0,
     # GPU のフレーム時間の予算（ms）。超えても失敗にはせず、metrics.json に within_budget として書く。
     [ValidateRange(0.1, 1000.0)]
-    [double]$GpuFrameBudgetMs = 16.6
+    [double]$GpuFrameBudgetMs = 16.6,
+    # 比べる別の撮影の出力先（metrics.json と <視点>.png がある）。空なら比べない。
+    [string]$CompareWith = '',
+    # -CompareWith の判定: 平均輝度の差の上限と PSNR（dB）の下限。
+    [ValidateRange(0.0, 255.0)]
+    [double]$CompareMeanLuminanceLimit = 0.1,
+    [ValidateRange(0.0, 100.0)]
+    [double]$ComparePsnrLimit = 45.0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -179,6 +193,69 @@ public static class SceneCaptureMetrics
             }
         }
     }
+
+    // 同じ大きさの2枚の画像の違い。{ 平均輝度A, 平均輝度B, PSNR（dB。R・G・B の 8bit。同一なら 100）,
+    // 一致しない画素の割合, 1チャンネルの最大の絶対差 }（CaptureStartupScene.ps1 の StartupCaptureMetrics.Compare と同じ式）。
+    public static double[] Compare(string pathA, string pathB)
+    {
+        using (var bitmapA = new Bitmap(pathA))
+        using (var bitmapB = new Bitmap(pathB))
+        {
+            if (bitmapA.Width != bitmapB.Width || bitmapA.Height != bitmapB.Height)
+            {
+                throw new ArgumentException("画像の寸法が揃っていない: " + pathA + " / " + pathB);
+            }
+            int width = bitmapA.Width;
+            int height = bitmapA.Height;
+            var rect = new Rectangle(0, 0, width, height);
+            BitmapData dataA = bitmapA.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            BitmapData dataB = bitmapB.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                byte[] bytesA = new byte[dataA.Stride * height];
+                byte[] bytesB = new byte[dataB.Stride * height];
+                Marshal.Copy(dataA.Scan0, bytesA, 0, bytesA.Length);
+                Marshal.Copy(dataB.Scan0, bytesB, 0, bytesB.Length);
+                double sumA = 0.0;
+                double sumB = 0.0;
+                double squaredError = 0.0;
+                long mismatched = 0;
+                int maxDifference = 0;
+                for (int y = 0; y < height; ++y)
+                {
+                    for (int x = 0; x < width; ++x)
+                    {
+                        int ia = y * dataA.Stride + x * 4;
+                        int ib = y * dataB.Stride + x * 4;
+                        bool differs = false;
+                        for (int c = 0; c < 3; ++c)
+                        {
+                            int d = bytesA[ia + c] - bytesB[ib + c];
+                            if (d != 0)
+                            {
+                                differs = true;
+                                squaredError += (double)d * d;
+                                int magnitude = d < 0 ? -d : d;
+                                if (magnitude > maxDifference) { maxDifference = magnitude; }
+                            }
+                        }
+                        if (differs) { ++mismatched; }
+                        sumA += 0.2126 * bytesA[ia + 2] + 0.7152 * bytesA[ia + 1] + 0.0722 * bytesA[ia];
+                        sumB += 0.2126 * bytesB[ib + 2] + 0.7152 * bytesB[ib + 1] + 0.0722 * bytesB[ib];
+                    }
+                }
+                double count = (double)width * height;
+                double meanSquaredError = squaredError / (count * 3.0);
+                double psnr = meanSquaredError <= 0.0 ? 100.0 : Math.Min(100.0, 10.0 * Math.Log10(255.0 * 255.0 / meanSquaredError));
+                return new double[] { sumA / count, sumB / count, psnr, mismatched / count, maxDifference };
+            }
+            finally
+            {
+                bitmapA.UnlockBits(dataA);
+                bitmapB.UnlockBits(dataB);
+            }
+        }
+    }
 }
 '@
 
@@ -187,8 +264,16 @@ function Stop-OwnedProcessTree([int]$ProcessId)
     & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
 }
 
-# トレース（--trace-file の CSV）から GPU のフレーム時間を集計する。Type=GPU の行は描画したフレームごとの FrameGPU と
+# 昇順に並べた標本の百分位（0〜1）。標本の添字は floor((n-1)*p)（GPU のフレーム時間の既存の求め方と同じ）。
+function Get-Percentile([double[]]$Sorted, [double]$Fraction)
+{
+    if ($Sorted.Count -eq 0) { return $null }
+    return $Sorted[[int][math]::Floor(($Sorted.Count - 1) * $Fraction)]
+}
+
+# トレース（--trace-file の CSV）から GPU・CPU のフレーム時間を集計する。Type=GPU の行は描画したフレームごとの FrameGPU と
 # パスごとの区間（Frame 列は区間を記録したフレームの番号）。撮影のフレームの直前2つを除いた最後の窓を使う。
+# CPU 側（ゲームスレッド・描画スレッド・スコープ）は、描画したフレームの行（RenderFrameMs > 0）の窓で数える。
 function Get-GpuTimingFromTrace([string]$TracePath, [int]$Frames, [double]$BudgetMs)
 {
     $header = @((Get-Content -LiteralPath $TracePath -TotalCount 1) -split ',')
@@ -196,7 +281,9 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Frames, [double]$Budge
     $durationColumn = [array]::IndexOf($header, 'DurationMs')
     $renderFrameColumn = [array]::IndexOf($header, 'RenderFrameMs')
     $cpuFrameColumn = [array]::IndexOf($header, 'CPUFrameMs')
-    $cpuRows = New-Object System.Collections.Generic.List[double]
+    $gameThreadColumn = [array]::IndexOf($header, 'GameThreadMs')
+    $renderThreadColumn = [array]::IndexOf($header, 'RenderThreadMs')
+    $cpuRows = New-Object System.Collections.Generic.List[object]
     $gpuScopesByFrame = New-Object 'System.Collections.Generic.SortedDictionary[long,object]'
     foreach ($line in [IO.File]::ReadLines($TracePath))
     {
@@ -204,7 +291,12 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Frames, [double]$Budge
         {
             $fields = $line -split ','
             if ([double]::Parse($fields[$renderFrameColumn], $invariant) -le 0.0) { continue }
-            $cpuRows.Add([double]::Parse($fields[$cpuFrameColumn], $invariant))
+            $cpuRows.Add([pscustomobject]@{
+                Frame = [long]$fields[1]
+                Cpu = [double]::Parse($fields[$cpuFrameColumn], $invariant)
+                GameThread = [double]::Parse($fields[$gameThreadColumn], $invariant)
+                RenderThread = [double]::Parse($fields[$renderThreadColumn], $invariant)
+            })
         }
         elseif ($line.StartsWith('GPU,'))
         {
@@ -224,7 +316,9 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Frames, [double]$Budge
     $cpuArray = $cpuRows.ToArray()
     $cpuUsable = if ($cpuArray.Count -gt 2) { @($cpuArray[0..($cpuArray.Count - 3)]) } else { @() }
     $cpuWindow = if ($cpuUsable.Count -gt $windowCount) { @($cpuUsable[($cpuUsable.Count - $windowCount)..($cpuUsable.Count - 1)]) } else { $cpuUsable }
-    $cpuSamples = @($cpuWindow | Where-Object { $_ -gt 0.0 } | Sort-Object)
+    $cpuSamples = [double[]]@($cpuWindow | ForEach-Object { $_.Cpu } | Where-Object { $_ -gt 0.0 } | Sort-Object)
+    $gameThreadSamples = [double[]]@($cpuWindow | ForEach-Object { $_.GameThread } | Where-Object { $_ -gt 0.0 } | Sort-Object)
+    $renderThreadSamples = [double[]]@($cpuWindow | ForEach-Object { $_.RenderThread } | Where-Object { $_ -gt 0.0 } | Sort-Object)
     $gpuFrames = @($gpuScopesByFrame.Keys | Where-Object { @($gpuScopesByFrame[$_] | Where-Object { $_.Name -eq 'FrameGPU' -and $_.Ms -gt 0.0 }).Count -gt 0 })
     $gpuUsable = if ($gpuFrames.Count -gt 2) { @($gpuFrames[0..($gpuFrames.Count - 3)]) } else { @() }
     $gpuWindow = if ($gpuUsable.Count -gt $windowCount) { @($gpuUsable[($gpuUsable.Count - $windowCount)..($gpuUsable.Count - 1)]) } else { $gpuUsable }
@@ -239,27 +333,66 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Frames, [double]$Budge
             $passSamples[$scope.Name].Add($scope.Ms)
         }
     }
-    $gpuSamples = @($gpuWindow | ForEach-Object { $gpuFrameMs[$_] } | Sort-Object)
+    $gpuSamples = [double[]]@($gpuWindow | ForEach-Object { $gpuFrameMs[$_] } | Sort-Object)
     if ($gpuSamples.Count -lt [math]::Min(50, $windowCount))
     {
         return [pscustomobject]@{ Error = "GPU のフレーム時間の標本が足りない（$($gpuSamples.Count) 件。統計が無効な構成か、GPU のタイムスタンプが使えない）"; Timing = $null }
     }
     $maximum = $gpuSamples[$gpuSamples.Count - 1]
-    $passMedianList = @($passSamples.Keys | ForEach-Object {
-        $sortedPass = @($passSamples[$_] | Sort-Object)
-        [pscustomobject][ordered]@{ pass = $_; median_ms = [math]::Round($sortedPass[[int][math]::Floor(($sortedPass.Count - 1) * 0.5)], 3) }
+    $passList = @($passSamples.Keys | ForEach-Object {
+        $sortedPass = [double[]]@($passSamples[$_] | Sort-Object)
+        [pscustomobject][ordered]@{
+            pass = $_
+            median_ms = [math]::Round((Get-Percentile $sortedPass 0.5), 3)
+            p95_ms = [math]::Round((Get-Percentile $sortedPass 0.95), 3)
+            max_ms = [math]::Round($sortedPass[$sortedPass.Count - 1], 3)
+        }
     } | Sort-Object -Property median_ms -Descending)
+    $passMedianList = @($passList | ForEach-Object { [pscustomobject][ordered]@{ pass = $_.pass; median_ms = $_.median_ms } })
+
+    # CPU のスコープ（Type=Scope の行）: 窓のフレームに記録された区間の継続時間の median の上位 15
+    $windowFrames = New-Object 'System.Collections.Generic.HashSet[long]'
+    foreach ($row in $cpuWindow) { [void]$windowFrames.Add($row.Frame) }
+    $scopeSamples = @{}
+    foreach ($line in [IO.File]::ReadLines($TracePath))
+    {
+        if (-not $line.StartsWith('Scope,')) { continue }
+        $frameEnd = $line.IndexOf(',', 6)
+        if (-not $windowFrames.Contains([long]$line.Substring(6, $frameEnd - 6))) { continue }
+        $fields = $line.Split(',', 8)
+        $scopeName = $fields[$nameColumn].Trim('"')
+        if (-not $scopeSamples.ContainsKey($scopeName)) { $scopeSamples[$scopeName] = New-Object System.Collections.Generic.List[double] }
+        $scopeSamples[$scopeName].Add([double]::Parse($fields[$durationColumn], $invariant))
+    }
+    $cpuScopeList = @($scopeSamples.Keys | ForEach-Object {
+        $sortedScope = [double[]]@($scopeSamples[$_] | Sort-Object)
+        [pscustomobject][ordered]@{
+            scope = $_
+            median_ms = [math]::Round((Get-Percentile $sortedScope 0.5), 3)
+            p95_ms = [math]::Round((Get-Percentile $sortedScope 0.95), 3)
+            samples = $sortedScope.Count
+        }
+    } | Sort-Object -Property median_ms -Descending | Select-Object -First 15)
+
     $timing = [ordered]@{
         trace = [IO.Path]::GetFileName($TracePath)
         frames = $gpuSamples.Count
-        gpu_frame_ms_median = [math]::Round($gpuSamples[[int][math]::Floor(($gpuSamples.Count - 1) * 0.5)], 3)
+        gpu_frame_ms_median = [math]::Round((Get-Percentile $gpuSamples 0.5), 3)
         gpu_frame_ms_mean = [math]::Round(($gpuSamples | Measure-Object -Average).Average, 3)
-        gpu_frame_ms_p95 = [math]::Round($gpuSamples[[int][math]::Floor(($gpuSamples.Count - 1) * 0.95)], 3)
+        gpu_frame_ms_p95 = [math]::Round((Get-Percentile $gpuSamples 0.95), 3)
         gpu_frame_ms_max = [math]::Round($maximum, 3)
-        cpu_frame_ms_median = if ($cpuSamples.Count -gt 0) { [math]::Round($cpuSamples[[int][math]::Floor(($cpuSamples.Count - 1) * 0.5)], 3) } else { $null }
+        cpu_frame_ms_median = if ($cpuSamples.Count -gt 0) { [math]::Round((Get-Percentile $cpuSamples 0.5), 3) } else { $null }
+        cpu_frame_ms_p95 = if ($cpuSamples.Count -gt 0) { [math]::Round((Get-Percentile $cpuSamples 0.95), 3) } else { $null }
+        game_thread_ms_median = if ($gameThreadSamples.Count -gt 0) { [math]::Round((Get-Percentile $gameThreadSamples 0.5), 3) } else { $null }
+        game_thread_ms_p95 = if ($gameThreadSamples.Count -gt 0) { [math]::Round((Get-Percentile $gameThreadSamples 0.95), 3) } else { $null }
+        render_thread_ms_median = if ($renderThreadSamples.Count -gt 0) { [math]::Round((Get-Percentile $renderThreadSamples 0.5), 3) } else { $null }
+        render_thread_ms_p95 = if ($renderThreadSamples.Count -gt 0) { [math]::Round((Get-Percentile $renderThreadSamples 0.95), 3) } else { $null }
+        cpu_frames = $cpuSamples.Count
         budget_ms = $BudgetMs
         within_budget = ($maximum -le $BudgetMs)
         pass_median_ms = $passMedianList
+        pass_ms = $passList
+        cpu_scope_median_ms = $cpuScopeList
     }
     return [pscustomobject]@{ Error = $null; Timing = [pscustomobject]$timing }
 }
@@ -591,11 +724,16 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio)
     if ($null -ne $gpuTiming)
     {
-        Write-Output ("CAPTURE_SCENE gpu_timing view={0} frames={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5} cpu_median_ms={6} budget_ms={7} within_budget={8}" -f `
+        Write-Output ("CAPTURE_SCENE gpu_timing view={0} frames={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5} cpu_median_ms={6} gt_median_ms={7} gt_p95_ms={8} rt_median_ms={9} rt_p95_ms={10} budget_ms={11} within_budget={12}" -f `
             $result.view, $gpuTiming.frames, $gpuTiming.gpu_frame_ms_median, $gpuTiming.gpu_frame_ms_mean, $gpuTiming.gpu_frame_ms_p95,
-            $gpuTiming.gpu_frame_ms_max, $gpuTiming.cpu_frame_ms_median, $gpuTiming.budget_ms, $gpuTiming.within_budget)
+            $gpuTiming.gpu_frame_ms_max, $gpuTiming.cpu_frame_ms_median, $gpuTiming.game_thread_ms_median, $gpuTiming.game_thread_ms_p95,
+            $gpuTiming.render_thread_ms_median, $gpuTiming.render_thread_ms_p95, $gpuTiming.budget_ms, $gpuTiming.within_budget)
         Write-Output ("CAPTURE_SCENE gpu_pass_median view={0} {1}" -f $result.view,
             (($gpuTiming.pass_median_ms | Select-Object -First 10 | ForEach-Object { "$($_.pass)=$($_.median_ms)" }) -join ' '))
+        Write-Output ("CAPTURE_SCENE gpu_pass_p95 view={0} {1}" -f $result.view,
+            (($gpuTiming.pass_ms | Select-Object -First 10 | ForEach-Object { "$($_.pass)=$($_.p95_ms)/max=$($_.max_ms)" }) -join ' '))
+        Write-Output ("CAPTURE_SCENE cpu_scope_median view={0} {1}" -f $result.view,
+            (($gpuTiming.cpu_scope_median_ms | Select-Object -First 15 | ForEach-Object { "$($_.scope)=$($_.median_ms)" }) -join ' '))
     }
     if ($null -ne $megaStats)
     {
@@ -607,6 +745,73 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
     }
 }
 
+# 別の撮影（-CompareWith）と、同じ視点名の PNG を比べる。平均輝度の差と PSNR の式は CaptureStartupScene.ps1 の
+# -CompareDeterministicWith と同じ。
+$comparison = @()
+if ($CompareWith -ne '')
+{
+    $compareRoot = if ([IO.Path]::IsPathRooted($CompareWith)) { [IO.Path]::GetFullPath($CompareWith) } else { [IO.Path]::GetFullPath((Join-Path $repoRoot $CompareWith)) }
+    $compareMetricsPath = Join-Path $compareRoot 'metrics.json'
+    if (-not (Test-Path -LiteralPath $compareMetricsPath))
+    {
+        $failures += "比べる撮影の metrics.json が無い: $compareRoot"
+    }
+    else
+    {
+        $compareMetrics = Get-Content -LiteralPath $compareMetricsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($entry in $results)
+        {
+            $thisPng = Join-Path $outRoot $entry.png
+            $otherPng = Join-Path $compareRoot $entry.png
+            if (-not (Test-Path -LiteralPath $thisPng) -or -not (Test-Path -LiteralPath $otherPng))
+            {
+                $failures += "$($entry.view): 比べる画像が揃っていない（$thisPng / $otherPng）"
+                continue
+            }
+            try
+            {
+                $difference = [SceneCaptureMetrics]::Compare($thisPng, $otherPng)
+            }
+            catch
+            {
+                $failures += "$($entry.view): 画像を比べられない: $($_.Exception.Message)"
+                continue
+            }
+            $meanDifference = [math]::Abs($difference[0] - $difference[1])
+            $withinLimits = ($meanDifference -le $CompareMeanLuminanceLimit) -and ($difference[2] -ge $ComparePsnrLimit)
+            $item = [ordered]@{
+                view = $entry.view
+                png = $entry.png
+                mean_luminance = [math]::Round($difference[0], 4)
+                compare_mean_luminance = [math]::Round($difference[1], 4)
+                mean_luminance_difference = [math]::Round($meanDifference, 4)
+                psnr_db = [math]::Round($difference[2], 3)
+                mismatched_pixel_ratio = [math]::Round($difference[3], 6)
+                max_channel_difference = [int]$difference[4]
+                within_limits = $withinLimits
+            }
+            # 両方に gpu_timing があれば、median の比（この撮影 / 比べる撮影）も書く
+            $otherView = @($compareMetrics.views | Where-Object { $_.view -eq $entry.view }) | Select-Object -First 1
+            if ($null -ne $entry.gpu_timing -and $null -ne $otherView -and $null -ne $otherView.gpu_timing)
+            {
+                foreach ($key in @('gpu_frame_ms_median', 'game_thread_ms_median', 'render_thread_ms_median'))
+                {
+                    $otherValue = $otherView.gpu_timing.$key
+                    $item["${key}_ratio"] = if ($null -ne $otherValue -and [double]$otherValue -gt 0.0 -and $null -ne $entry.gpu_timing.$key) { [math]::Round([double]$entry.gpu_timing.$key / [double]$otherValue, 3) } else { $null }
+                }
+            }
+            $comparison += [pscustomobject]$item
+            Write-Output ("CAPTURE_SCENE comparison view={0} mean_luminance={1} compare_mean_luminance={2} mean_luminance_difference={3} (limit {4}) psnr_db={5} (limit {6}) mismatched_pixel_ratio={7} max_channel_difference={8} within_limits={9}" -f `
+                $item.view, $item.mean_luminance, $item.compare_mean_luminance, $item.mean_luminance_difference, $CompareMeanLuminanceLimit,
+                $item.psnr_db, $ComparePsnrLimit, $item.mismatched_pixel_ratio, $item.max_channel_difference, $item.within_limits)
+            if (-not $withinLimits)
+            {
+                $failures += "$($entry.view): 比べる撮影と一致しない（平均輝度の差 $($item.mean_luminance_difference) / 上限 $CompareMeanLuminanceLimit、PSNR $($item.psnr_db) dB / 下限 $ComparePsnrLimit dB）"
+            }
+        }
+    }
+}
+
 $metrics = [ordered]@{
     scene = $Scene
     configuration = $Configuration
@@ -614,6 +819,10 @@ $metrics = [ordered]@{
     game_args = $extraArguments
     require_assets = [bool]$RequireAssets
     gpu_timing_frames = $GpuTimingFrames
+    compare_with = $CompareWith
+    compare_mean_luminance_limit = $CompareMeanLuminanceLimit
+    compare_psnr_limit = $ComparePsnrLimit
+    comparison = $comparison
     views = $results
     failures = $failures
 }

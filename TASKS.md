@@ -138,7 +138,7 @@
 - paths: Scripts, Assets/AssetSets, TASKS.md, PROGRESS.md
 
 ## SCN-MEGA-METRICS: 撮影の metrics にスレッドごとの CPU・パスの p95・基準との比較を足し、基準を撮る
-- status: todo
+- status: done
 - done-when: `CaptureScene.ps1` の gpu_timing に `game_thread_ms`・`render_thread_ms` の median と p95、パスごとの median・p95・max、`cpu_scope_median_ms`（上位 15）が入り、`CAPTURE_SCENE gpu_timing` の行に gt/rt の median・p95 が出る。`-CompareWith <dir>` が視点ごとの平均輝度の差 ≤ 0.1・PSNR ≥ 45 dB で判定する（式は `CaptureStartupScene.ps1` 1736〜1755 行付近と同じ）。基準 `SCN-MEGA-BASE`（バナナ 1万本 overview と起動画面、どちらも決定的な撮影）と、遮蔽 Off の旋回の基準 `SCN-MEGA-ORBIT-OFF` を撮り、同じコードでの比較と、今の遮蔽 On の旋回が Off と一致することが pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-BASE`
