@@ -7,6 +7,7 @@
 #include "Component/Component.h"
 #include "Component/TickDispatch.h"
 #include "Container/Containers.h"
+#include "Ecs/EcsCommandBuffer.h"
 #include <cstdint>
 #include <type_traits>
 
@@ -393,6 +394,12 @@ namespace NorvesLib::Core
         void LinkEntityRowToParent(Ecs::EcsEntity row, Ecs::EcsEntity parentRow);
         void UnlinkEntityRow(Ecs::EcsEntity row);
         void UpdateEntitySubtreeDepth(Entity& entity, uint32_t depth);
+        /// 段の最中の Attach*: 行の作成を予約して Entity に札を持たせる（行は同期点まで無い）
+        void ReserveEntityRowCreate(Entity& entity);
+        /// 同期点: 予約した作成を再生して行を結び、階層（子の並び・深さ）を Inner の並びから直す
+        void PlaybackEntityRowCreates();
+        /// 親の行の子の連結と、子（とその子孫）の深さを Inner の並びに合わせて作り直す
+        void RebuildEntityRowChildren(Entity& parent);
         /// 同期点まで待たせた行を消す
         void FlushDeferredEntityRows();
         /// 検査 ECS_BIND: 結び付けに変化があったときだけ照合して結果を出す。最後の引数は World の終了時（行が残らない）
@@ -401,6 +408,16 @@ namespace NorvesLib::Core
         Ecs::EcsArchetypeId m_EntityArchetype = Ecs::kInvalidEcsArchetype;
         /// 段の最中に孤児にした行（同期点で消す）
         Container::VariableArray<Ecs::EcsEntity> m_DeferredEntityRows;
+        /// 段の最中に予約した行の作成。取り消した項目は Target が null（添字は Entity の札が指すので詰めない）
+        struct PendingEntityCreate
+        {
+            Entity* Target = nullptr;
+            Ecs::EcsCreateTicket Ticket;
+        };
+        Ecs::EcsCommandBuffer m_EntityCreateCommands;
+        Container::VariableArray<PendingEntityCreate> m_PendingEntityCreates;
+        /// 予約中の親の下へ付け替えた行（同期点で親の行ができてから結び直す）
+        Container::VariableArray<Ecs::EcsEntity> m_PendingEntityRelinks;
         uint64_t m_EcsBindingEpoch = 0;
         /// 検査 ECS_BIND で最後に照合したときの m_EcsBindingEpoch（まだなら最大値）
         uint64_t m_VerifiedBindingEpoch = ~0ull;

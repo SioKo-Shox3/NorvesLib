@@ -386,6 +386,8 @@ namespace NorvesLib::Core
         EntityHandle m_EntityHandle;
         /// ECS の行（World が付け外しする）
         Ecs::EcsEntity m_EcsEntity;
+        /// 段の最中に予約した行の作成の位置（World の予約の並び。予約が無ければ最大値。同期点までの間だけ持つ）
+        uint32_t m_EcsCreateSlot = 0xFFFFFFFFu;
         Scene::RenderTransformHistory m_RenderHistory;
         Math::Transform m_RenderWorldTransform;
         bool m_bRenderInterpolationEnabled = false;

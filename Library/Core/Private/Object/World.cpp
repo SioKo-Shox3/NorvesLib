@@ -29,6 +29,8 @@ namespace NorvesLib::Core
     namespace
     {
         constexpr uint32_t MaxPrefabNestedDepth = 16;
+        /// Entity::m_EcsCreateSlot の「予約なし」の値
+        constexpr uint32_t kNoEntityCreateSlot = 0xFFFFFFFFu;
 
         class ScopedWorldFlag
         {
@@ -1195,7 +1197,7 @@ namespace NorvesLib::Core
             Container::Span<const Ecs::EcsColumnInfo>(entityColumns, 2));
         if (m_EntityArchetype == Ecs::kInvalidEcsArchetype)
         {
-            LOG_ERROR("World: failed to create the ECS archetype for entities");
+            LOG_ERROR("World: Entity 用の ECS のアーキタイプを作れなかった");
         }
 
         // 段の最中に孤児にした行は、各段の同期点で消す
@@ -2420,12 +2422,17 @@ namespace NorvesLib::Core
             return;
         }
         Ecs::EcsWorld& ecs = *m_EcsWorld;
-        if (!ecs.IsAlive(entity.m_EcsEntity))
+        if (entity.m_EcsCreateSlot == kNoEntityCreateSlot && !ecs.IsAlive(entity.m_EcsEntity) && m_Scheduler->IsRunning())
+        {
+            // 段の最中は作成を予約し、行は段の終わりの同期点で作る
+            ReserveEntityRowCreate(entity);
+        }
+        else if (entity.m_EcsCreateSlot == kNoEntityCreateSlot && !ecs.IsAlive(entity.m_EcsEntity))
         {
             const Ecs::EcsEntity row = ecs.CreateEntity(m_EntityArchetype);
             if (row.IsNull())
             {
-                LOG_ERROR("World: failed to create an ECS row for an entity");
+                LOG_ERROR("World: Entity の ECS の行を作れなかった");
             }
             else
             {
@@ -2527,10 +2534,16 @@ namespace NorvesLib::Core
         Ecs::EcsWorld& ecs = *m_EcsWorld;
         if (!ecs.IsAlive(entity.m_EcsEntity))
         {
+            // 作成を予約中の Entity は行が無い。同期点で今の親の下に結ばれる
             return;
         }
         UnlinkEntityRow(entity.m_EcsEntity);
         const Entity* parent = entity.GetParentEntity();
+        if (parent && parent->m_EcsCreateSlot != kNoEntityCreateSlot)
+        {
+            // 新しい親の行はまだ無い。同期点で親の行ができてから結び直す
+            m_PendingEntityRelinks.push_back(entity.m_EcsEntity);
+        }
         LinkEntityRowToParent(entity.m_EcsEntity, parent ? parent->m_EcsEntity : Ecs::kNullEcsEntity);
         uint32_t depth = 0;
         if (const Ecs::EcsHierarchy* hierarchy = ecs.GetColumnValue<Ecs::EcsHierarchy>(entity.m_EcsEntity))
@@ -2580,6 +2593,19 @@ namespace NorvesLib::Core
 
     void World::ReleaseEntityRow(Entity& entity)
     {
+        if (entity.m_EcsCreateSlot != kNoEntityCreateSlot)
+        {
+            // 作成の予約がまだ再生されていない: 札を取り消す（行は無いので消すものも無い）
+            const uint32_t slot = entity.m_EcsCreateSlot;
+            entity.m_EcsCreateSlot = kNoEntityCreateSlot;
+            if (slot < m_PendingEntityCreates.size() && m_PendingEntityCreates[slot].Target == &entity)
+            {
+                m_EntityCreateCommands.CancelCreate(m_PendingEntityCreates[slot].Ticket);
+                m_PendingEntityCreates[slot].Target = nullptr;
+            }
+            ++m_EcsBindingEpoch;
+            return;
+        }
         const Ecs::EcsEntity row = entity.m_EcsEntity;
         entity.m_EcsEntity = Ecs::kNullEcsEntity;
         if (row.IsNull())
@@ -2609,15 +2635,164 @@ namespace NorvesLib::Core
 
     void World::FlushDeferredEntityRows()
     {
-        if (m_DeferredEntityRows.empty())
+        if (!m_DeferredEntityRows.empty())
+        {
+            for (const Ecs::EcsEntity row : m_DeferredEntityRows)
+            {
+                m_EcsWorld->DestroyEntity(row);
+            }
+            m_DeferredEntityRows.clear();
+        }
+        PlaybackEntityRowCreates();
+    }
+
+    void World::ReserveEntityRowCreate(Entity& entity)
+    {
+        // 並列の段の中で Object を木に付けてはならない（ワーカーは Object に触れない）
+        assert(!Ecs::Detail::EcsIsParallelActive());
+        PendingEntityCreate pending;
+        pending.Target = &entity;
+        pending.Ticket = m_EntityCreateCommands.Create(m_EntityArchetype);
+        entity.m_EcsCreateSlot = static_cast<uint32_t>(m_PendingEntityCreates.size());
+        m_PendingEntityCreates.push_back(pending);
+        ++m_EcsBindingEpoch;
+    }
+
+    void World::PlaybackEntityRowCreates()
+    {
+        if (m_PendingEntityCreates.empty() && m_PendingEntityRelinks.empty())
         {
             return;
         }
-        for (const Ecs::EcsEntity row : m_DeferredEntityRows)
+        Ecs::EcsWorld& ecs = *m_EcsWorld;
+        Ecs::EcsCommandBuffer* buffers[] = {&m_EntityCreateCommands};
+        Ecs::EcsCommandBuffer::Replay(ecs, Container::Span<Ecs::EcsCommandBuffer* const>(buffers, 1));
+
+        // 階層を直す親（行を持つ Entity）。Inner の並びから子の連結を作り直す
+        Container::VariableArray<Entity*> dirtyParents;
+        Container::UnorderedSet<Entity*> dirtySet;
+        const auto markParent = [&](Entity& entity)
         {
-            m_EcsWorld->DestroyEntity(row);
+            Entity* parent = entity.GetParentEntity();
+            if (parent && dirtySet.insert(parent).second)
+            {
+                dirtyParents.push_back(parent);
+            }
+        };
+
+        uint32_t failed = 0;
+        uint32_t created = 0;
+        for (const PendingEntityCreate& pending : m_PendingEntityCreates)
+        {
+            if (!pending.Target)
+            {
+                continue;
+            }
+            Entity& entity = *pending.Target;
+            entity.m_EcsCreateSlot = kNoEntityCreateSlot;
+            const Ecs::EcsEntity row = m_EntityCreateCommands.ResolveCreate(pending.Ticket);
+            if (row.IsNull())
+            {
+                // 再生に失敗した Entity は、値を Object に残したまま行なしで残る
+                ++failed;
+                continue;
+            }
+            ++created;
+            entity.m_EcsEntity = row;
+            Ecs::EcsObjectRef ref;
+            ref.Object = static_cast<void*>(&entity);
+            ref.Generation = row.Generation;
+            ecs.WriteColumnValueOf(row, ref);
+            markParent(entity);
         }
-        m_DeferredEntityRows.clear();
+        for (const Ecs::EcsEntity row : m_PendingEntityRelinks)
+        {
+            const Ecs::EcsObjectRef* ref = ecs.IsAlive(row) ? ecs.GetColumnValue<Ecs::EcsObjectRef>(row) : nullptr;
+            if (ref && ref->Object != nullptr && ref->Generation == row.Generation)
+            {
+                markParent(*static_cast<Entity*>(ref->Object));
+            }
+        }
+        m_PendingEntityCreates.clear();
+        m_PendingEntityRelinks.clear();
+        m_EntityCreateCommands.Clear();
+
+        // 祖先の少ない親から順に直す（子の深さは親の深さから決まる）
+        Container::VariableArray<std::pair<uint32_t, Entity*>> ordered;
+        for (Entity* parent : dirtyParents)
+        {
+            uint32_t ancestors = 0;
+            for (const Entity* cursor = parent->GetParentEntity(); cursor; cursor = cursor->GetParentEntity())
+            {
+                ++ancestors;
+            }
+            ordered.push_back({ancestors, parent});
+        }
+        std::stable_sort(ordered.begin(), ordered.end(),
+                         [](const std::pair<uint32_t, Entity*>& lhs, const std::pair<uint32_t, Entity*>& rhs)
+                         { return lhs.first < rhs.first; });
+        for (const auto& item : ordered)
+        {
+            RebuildEntityRowChildren(*item.second);
+        }
+        ++m_EcsBindingEpoch;
+
+        if (failed != 0)
+        {
+            LOG_ERROR("World: 予約した Entity の行の作成を再生できなかった（%u 件。値は Object に残り、行なしになる）", failed);
+        }
+        NorvesLib::Debug::EngineChecks* checks = NorvesLib::Core::Engine::GEngine != nullptr
+            ? &NorvesLib::Core::Engine::GEngine->GetEngineChecks()
+            : nullptr;
+        if (checks != nullptr && checks->IsEnabled("ECS_PLAYBACK") && (created != 0 || failed != 0))
+        {
+            checks->Report("ECS_PLAYBACK", failed == 0, created);
+        }
+    }
+
+    void World::RebuildEntityRowChildren(Entity& parent)
+    {
+        Ecs::EcsWorld& ecs = *m_EcsWorld;
+        const Ecs::EcsEntity parentRow = parent.m_EcsEntity;
+        const Ecs::EcsHierarchy* parentHierarchy = ecs.IsAlive(parentRow) ? ecs.GetColumnValue<Ecs::EcsHierarchy>(parentRow) : nullptr;
+        if (!parentHierarchy)
+        {
+            return;
+        }
+        const uint32_t parentDepth = parentHierarchy->Depth;
+        Ecs::EcsEntity first = Ecs::kNullEcsEntity;
+        Ecs::EcsEntity previous = Ecs::kNullEcsEntity;
+        for (Entity* child : parent.GetChildEntities())
+        {
+            const Ecs::EcsEntity row = child->m_EcsEntity;
+            if (!ecs.IsAlive(row))
+            {
+                continue;
+            }
+            const Ecs::EcsEntity before = previous;
+            EditHierarchy(ecs, row, [&](Ecs::EcsHierarchy& self)
+                          {
+                              self.Parent = parentRow;
+                              self.PrevSibling = before;
+                              self.NextSibling = Ecs::kNullEcsEntity;
+                              self.Depth = parentDepth + 1;
+                          });
+            if (!previous.IsNull())
+            {
+                EditHierarchy(ecs, previous, [&](Ecs::EcsHierarchy& sibling) { sibling.NextSibling = row; });
+            }
+            else
+            {
+                first = row;
+            }
+            previous = row;
+        }
+        EditHierarchy(ecs, parentRow, [&](Ecs::EcsHierarchy& self)
+                      {
+                          self.FirstChild = first;
+                          self.LastChild = previous;
+                      });
+        UpdateEntitySubtreeDepth(parent, parentDepth);
     }
 
     bool World::VerifyEcsBinding(uint32_t* outCount)
@@ -2672,6 +2847,21 @@ namespace NorvesLib::Core
             else if (orphans != 0 || !m_DeferredEntityRows.empty())
             {
                 error = "孤児の行が残っている";
+            }
+            else if (!m_PendingEntityRelinks.empty())
+            {
+                error = "同期点まで待たせた付け替えが残っている";
+            }
+            else
+            {
+                for (const PendingEntityCreate& pending : m_PendingEntityCreates)
+                {
+                    if (pending.Target)
+                    {
+                        error = "再生されていない行の作成の予約が残っている";
+                        break;
+                    }
+                }
             }
         }
         if (error)

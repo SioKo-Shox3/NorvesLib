@@ -1,7 +1,8 @@
 ﻿// World に付いた全 Entity の ECS の行の寿命の契約を確かめる。
 // - 付け替え・破棄・World の出入りで行が作られて消え、階層（親・子の並び・深さ）が Outer/Inner と一致する
 // - 解放の前に行が切られる（Object の解放が始まる時点で、行は孤児で Object への参照が null、または消えている）
-// - Tick と LateTick の間の除去・破棄予約の直後の除去・部分木の連鎖でも孤児や古い参照が残らない
+// - Tick と LateTick の間の除去・DestroyNow・破棄予約の直後の除去・部分木の連鎖でも孤児や古い参照が残らない
+// - 段の最中の作成は同期点まで予約され、再生の前の破棄で取り消される
 #include "Component/Component.h"
 #include "Ecs/EcsWorld.h"
 #include "Object/Entity.h"
@@ -309,6 +310,134 @@ namespace
         world.Finalize();
     }
 
+    // 段の最中に Attach*/Reparent/Remove を行う Component。行の作成は同期点まで予約になる
+    class StageMutator : public Component::Component
+    {
+    public:
+        Entity *Parent = nullptr;
+        Entity *Existing = nullptr;
+        Entity *A = nullptr;
+        Entity *B = nullptr;
+        Entity *C = nullptr;
+        bool bRan = false;
+        // 段の最中に見えた状態
+        bool bNewRowsPending = false;
+        bool bCancelledRowless = false;
+        bool bMoved = false;
+
+        void Tick(float) override
+        {
+            if (bRan)
+            {
+                return;
+            }
+            bRan = true;
+            World *world = GetOwner()->GetWorld();
+            A = world->SpawnEntity<Entity>(Parent);
+            B = world->SpawnEntity<Entity>(A);
+            Entity *cancelled = world->SpawnEntity<Entity>(Parent);
+            Entity *cancelledChild = world->SpawnEntity<Entity>(cancelled);
+            C = world->SpawnEntity<Entity>(Parent);
+            // 段の最中は予約だけで、行はまだ無い
+            bNewRowsPending = A->GetEcsEntity().IsNull() && B->GetEcsEntity().IsNull() && C->GetEcsEntity().IsNull();
+            bCancelledRowless = cancelled->GetEcsEntity().IsNull() && cancelledChild->GetEcsEntity().IsNull();
+            // 既に行を持つ Entity を、予約中の親の下へ付け替える
+            bMoved = world->ReparentEntity(Existing, B);
+            // 再生の前に破棄: 予約は取り消され、行は作られない
+            world->RemoveEntity(cancelled);
+        }
+    };
+
+    // 段の最中の作成は予約され、同期点で再生されて行と階層ができる。再生の前に破棄した分は作られない
+    void TestReservedCreateAndCancelInStage()
+    {
+        World world;
+        world.Initialize();
+        Entity *root = world.SpawnEntity<Entity>();
+        Entity *holder = world.SpawnEntity<Entity>(root);
+        Entity *existing = world.SpawnEntity<Entity>(holder);
+        auto *mutator = world.CreateComponent<StageMutator>(root);
+        assert(mutator);
+        mutator->Parent = root;
+        mutator->Existing = existing;
+        ExpectBound(world, 3);
+
+        world.Tick(0.01f);
+        assert(mutator->bRan && mutator->bNewRowsPending && mutator->bCancelledRowless && mutator->bMoved);
+
+        // 同期点の後: A・B・C に行ができ、取り消した 2 つは作られていない（root・holder・existing・A・B・C の 6 つ）
+        ExpectBound(world, 6);
+        Entity *a = mutator->A;
+        Entity *b = mutator->B;
+        Entity *c = mutator->C;
+        assert(a->GetEcsRow().IsBound() && b->GetEcsRow().IsBound() && c->GetEcsRow().IsBound());
+        // root の子は Inner の並び（holder, A, C）のとおりに連なる
+        assert(HierarchyOf(world, root).FirstChild == holder->GetEcsEntity());
+        assert(HierarchyOf(world, holder).NextSibling == a->GetEcsEntity());
+        assert(HierarchyOf(world, a).NextSibling == c->GetEcsEntity());
+        assert(HierarchyOf(world, root).LastChild == c->GetEcsEntity());
+        assert(HierarchyOf(world, a).Depth == 1 && HierarchyOf(world, c).Depth == 1);
+        // 予約中の親へ付け替えた Entity は、親の行ができてから結び直される
+        assert(HierarchyOf(world, holder).FirstChild.IsNull() && HierarchyOf(world, holder).LastChild.IsNull());
+        assert(HierarchyOf(world, b).Depth == 2 && HierarchyOf(world, b).FirstChild == existing->GetEcsEntity());
+        assert(HierarchyOf(world, existing).Parent == b->GetEcsEntity() && HierarchyOf(world, existing).Depth == 3);
+
+        world.LateTick(0.01f);
+        ExpectBound(world, 6);
+        world.Finalize();
+        assert(world.GetEcsWorld().GetEntityCount() == 0);
+    }
+
+    // Tick と LateTick の間の DestroyNow: heap の Component を即時に破棄しても、持ち主の行と階層は壊れない。
+    // 持ち主を除去した後の DestroyNow でも、残った行や古い参照が無い
+    void TestDestroyNowBetweenTickAndLateTick()
+    {
+        World world;
+        world.Initialize();
+        ObjectHeap heap;
+        Entity *root = world.SpawnEntity<Entity>();
+        Entity *child = world.SpawnEntity<Entity>(root);
+        const ObjectHandle liveHandle = heap.Create<ReleaseProbe>();
+        const ObjectHandle detachedHandle = heap.Create<ReleaseProbe>();
+        auto *liveProbe = heap.Resolve<ReleaseProbe>(liveHandle);
+        auto *detachedProbe = heap.Resolve<ReleaseProbe>(detachedHandle);
+        assert(liveProbe && detachedProbe);
+        assert(child->AddComponent(liveProbe) && root->AddComponent(detachedProbe));
+        ReleaseReport liveReport;
+        ReleaseReport detachedReport;
+        liveProbe->Owner = detachedProbe->Owner = &world;
+        liveProbe->Out = &liveReport;
+        detachedProbe->Out = &detachedReport;
+        liveProbe->Row = child->GetEcsEntity();
+        liveProbe->ParentRow = root->GetEcsEntity();
+        detachedProbe->Row = root->GetEcsEntity();
+        const EcsEntity rootRow = root->GetEcsEntity();
+        const EcsEntity childRow = child->GetEcsEntity();
+        ExpectBound(world, 2);
+
+        world.Tick(0.01f);
+        // 持ち主が生きている間の DestroyNow: EndPlay の時点で行は生きていて孤児ではない。階層もそのまま
+        assert(heap.DestroyNow(liveHandle));
+        assert(liveReport.Calls == 1 && liveReport.bRowAlive && !liveReport.bRowOrphan && liveReport.bParentRowAlive);
+        assert(!heap.Resolve(liveHandle));
+        ExpectBound(world, 2);
+        assert(child->GetEcsEntity() == childRow && root->GetEcsEntity() == rootRow);
+        assert(HierarchyOf(world, root).FirstChild == childRow && HierarchyOf(world, child).Parent == rootRow);
+
+        // 持ち主を除去した後（heap の Component は PendingDestroy のまま残る）の DestroyNow
+        world.RemoveObject(root);
+        ExpectBound(world, 0);
+        assert(detachedReport.Calls == 0);
+        assert(heap.DestroyNow(detachedHandle));
+        assert(detachedReport.Calls == 1 && !detachedReport.bRowAlive);
+        assert(!world.GetEcsWorld().IsAlive(rootRow) && !world.GetEcsWorld().IsAlive(childRow));
+        ExpectBound(world, 0);
+
+        world.LateTick(0.01f);
+        ExpectBound(world, 0);
+        world.Finalize();
+    }
+
     // 公開の RemoveInner で外した部分木は行を失い、AddObject で付け直すと行が作り直される
     void TestPublicRemoveInnerAndReattach()
     {
@@ -392,9 +521,11 @@ int main()
     TestRemoveBetweenTickAndLateTick();
     TestCleanupInStageOrphansBeforeRelease();
     TestHeapOwnedComponentDeferredCollection();
+    TestReservedCreateAndCancelInStage();
+    TestDestroyNowBetweenTickAndLateTick();
     TestPublicRemoveInnerAndReattach();
     TestStaleRowRejected();
     TestCycleReturnsToZero();
-    std::cout << "EcsLifetimeTest passed\n";
+    std::cout << "EcsLifetimeTest 合格\n";
     return 0;
 }

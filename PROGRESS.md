@@ -1183,3 +1183,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - Component の行・flags・時間倍率は BIND-FLAGS。値は Object にある（このタスクは行と階層だけ）。
   - `Hierarchy` の書き込みは `WriteColumnValue`（変更として記録）を通す。まだ追跡する列にはしていない（TRANSFORM 系で消費者を足すとき `SetColumnTracked` を最初のアーキタイプの前に呼ぶ必要がある）。
   - 行末: `World.h`・`World.cpp` は混在。編集は Python で行い、`difflib` で元の行末に揃えた（numstat 2 通りが一致）。
+
+### SCN-ECS-BIND-ENTITY 差し戻し対応（2026-10-11、反復 23・run 20261010-223034）
+
+- 反復 22 の NEEDS_WORK 3 点への対応。
+  1. 設計 1.4 の作成予約・取消し（実装）: 段の最中（`SystemScheduler::IsRunning()`）の `BindEntitySubtreeRows` は行を作らず、World が持つ `EcsCommandBuffer`（`m_EntityCreateCommands`）へ作成を積んで予約札を取り、Entity が予約の位置（`m_EcsCreateSlot`）を持つ。段の外は従来どおり即時。`ReleaseEntityRow` は札が再生前なら `CancelCreate` して予約の項目を空にする（行が無いので消すものも無い）。同期点（`FlushDeferredEntityRows` → `PlaybackEntityRowCreates`）で `Replay` し、`ResolveCreate` で引いた行に `EcsObjectRef` を書き、親を `RebuildEntityRowChildren` で Inner の並びから連結・深さごと作り直す（祖先の少ない親から順）。予約中の親の下へ付け替えた既存の行は `m_PendingEntityRelinks` に積み、親の行ができてから結び直す。再生に失敗した Entity は行なしで残し（値は Object）、`LOG_ERROR` と、`engine-checks=ECS_PLAYBACK` のとき `ENGINE_CHECK name=ECS_PLAYBACK` を出す。`VerifyEcsBinding` は再生されていない予約・待たせた付け替えが残っていれば fail にする。
+  2. `EcsLifetimeTest` に 2 本足した: `TestReservedCreateAndCancelInStage`（Tick の中で Attach・付け替え・RemoveEntity。段の最中は行なし、同期点の後に行と階層（兄弟の並び・深さ・予約中の親へ付け替えた既存の行）ができ、再生前に破棄した 2 つは作られない）、`TestDestroyNowBetweenTickAndLateTick`（Tick の後の実際の `ObjectHeap::DestroyNow`。持ち主が生きている間は EndPlay の時点で行は孤児でなく階層も不変、持ち主を除去した後の DestroyNow でも行・孤児が残らない）。heap が持つ Entity は `ContainsHeapOwnedEntity` で World に付けられないため、`DestroyNow` の対象は heap の Component。
+  3. 英語の文言: `World.cpp` の `LOG_ERROR` 2 件（アーキタイプ・行の作成失敗）と `EcsLifetimeTest.cpp` の完了表示を日本語にした。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-BIND-ENTITY-5.txt`（EntityTreeTest のビルド EXIT=0）、`-6.txt`（EcsLifetimeTest・WorldTickGroupTest・EntityTreeTest・TransformHierarchyTest 4/4 Passed）、`-7-rendering3dtest.txt`・`-7-mega-bananas.txt`・`-7-mega-stress.txt`（周回 3 周が各 `result=pass`、`engine_check name=ECS_BIND pass=14/9/11`）。`-8-combined.txt` は元の 3 シーン混在のコマンドで、`ECS_BIND pass=31`・fail 0 だが `SCENE_CYCLE_SMOKE result=fail`（`changed=textures,texture_bytes`、1 周目の基準が別シーンより前に読んだテクスチャのキャッシュ分だけ小さい）。
+- Notes:
+  - 混在の周回の失敗は変更前でも同じ（CLEANUP-LIST の `-5-baseline.txt`）。原因は `Game` 側の `SceneCycleSmoke` の判定（1 周目を基準にする）で、`paths:` の外。`TASKS.md` の smoke の verify は 3 シーンの個別 3 コマンドのままにした（検査の合否は同じ行を見る）。混在コマンドを正とするか、`SceneCycleSmoke` の基準を直すかは人の判断（別タスク）。
+  - 作成の予約は段の最中の Attach*/ReparentEntity だけが通る。TRANSFORM 系などチャンクを走査するシステムが入るときは、走査中に Object を付ける・解放する経路が無いことを改めて確かめること（並列の中は assert）。
+  - 行末: `World.cpp`（混在）は difflib で元の行末に揃えた。`sed -i` は CRLF を落とすので Windows では使わない（`EcsLifetimeTest.cpp` で起きて CRLF に戻した）。numstat 2 通りが一致。
