@@ -2845,7 +2845,8 @@ namespace Game
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
              entityCount = m_StressEntityCount, movingPercent = m_StressMovingPercent,
              movingStartTime = m_StressMovingStartTime, streamCell = m_StressStreamCellMeters,
-             streamPeriod = m_StressStreamPeriod, pauseMenu = &m_PauseMenu,
+             streamPeriod = m_StressStreamPeriod, streamMaxCycles = m_SceneCycle.IsEnabled() ? Game::GameModes::kSmokeStreamCycles : 0u,
+             pauseMenu = &m_PauseMenu,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
@@ -2858,6 +2859,7 @@ namespace Game
                 mode->GetData().m_MovingStartTime = movingStartTime;
                 mode->GetData().m_StreamCellMeters = streamCell;
                 mode->GetData().m_StreamPeriod = streamPeriod;
+                mode->GetData().m_StreamMaxCycles = streamMaxCycles;
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
                 return mode;

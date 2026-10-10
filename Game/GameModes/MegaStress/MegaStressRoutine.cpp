@@ -154,6 +154,8 @@ namespace Game::GameModes
         float Elapsed = 0.0f;
         uint32_t Steps = 0;
         uint32_t Cycles = 0;
+        /// 周期を回す回数の上限（0 なら止めない）
+        uint32_t MaxCycles = 0;
         /// 解放した区画を読み戻している最中か（窓に達したら真、全部戻ったら偽）
         bool bReloading = false;
         /// 解放した区画が全部戻った直後（次の Tick で数の一致を確かめる）
@@ -689,6 +691,7 @@ namespace Game::GameModes
                 stream.Cells[static_cast<size_t>(slot)].Members.push_back(i);
             }
             stream.WindowCells = std::min<uint32_t>(kStreamWindowCells, static_cast<uint32_t>(stream.Cells.size()));
+            stream.MaxCycles = data.m_StreamMaxCycles;
             stream.LiveEntities = static_cast<uint32_t>(stream.Placed.size());
             stream.BaselineWorldObjects = ctx.WorldRef.GetObjectCount();
             stream.BaselineMaterials = ctx.RenderResourcesRef.Materials().GetCount();
@@ -1066,8 +1069,10 @@ namespace Game::GameModes
             {
                 CheckStreamCycle(ctx, stream);
             }
+            // 上限まで回したら止める（cycle smoke が、Entity の数が落ち着くのを待てるように）
+            const bool bFinished = stream.MaxCycles > 0 && stream.Cycles >= stream.MaxCycles;
             stream.Elapsed += deltaTime;
-            if (stream.Elapsed >= data.m_StreamPeriod)
+            if (!bFinished && stream.Elapsed >= data.m_StreamPeriod)
             {
                 stream.Elapsed = 0.0f;
                 StreamStep(ctx, data, stream);

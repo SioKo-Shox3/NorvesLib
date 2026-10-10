@@ -947,3 +947,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 反復 6（評価者の差し戻しへの対応: 動かす個数を割合どおりに揃える）: 動く Entity の選び方を、番号のハッシュの閾値（個数がずれる）から、**置けた数 × 割合を四捨五入した個数**に変えた。置き終わった Entity を候補にして番号のハッシュの小さい順に並べ、先頭からその個数を選ぶ（同じハッシュは置いた順で決め、選んだ分は置いた順に戻す。実行ごとに同じ集合）。割合が 0 のときは候補を溜めない。変更は `MegaStressRoutine.cpp` の `FinishAssembly` だけ。
 - 結果（5000 個・10%）: `MEGA_STRESS_PLACED entities=5000` → `MEGA_STRESS_MOVING movers=500 percent=10.000`（前回は 528）。時刻を 0 秒と 3 秒にした default 視点の 2 枚（`scene-capture/SCN-MEGA-STRESS-MOVING-t0/default.png`・`-t3/default.png`）を開いた。左の小屋の向き、バナナ・岩・石畳の球の位置が違う。差が 8 を超える画素は 392,223（18.9%。`-9-diff.txt`）。前回の対照（同じ時刻の撮り直しは 0.011%）から、差は動きによる。
 - 証拠（`.harness/runs/20261010-191942/`）: `verify-SCN-MEGA-STRESS-MOVING-6-build.txt`（Game の RelWithDebInfo ビルド EXIT=0）、`-7-capture.txt`（verify の撮影 `result=pass`。出力は `scene-capture/SCN-MEGA-STRESS-MOVING/`、ログに `movers=500`）、`-8-t0.txt`・`-8-t3.txt`（時刻を変えた撮影）、`-9-diff.txt`。
+
+### SCN-MEGA-STRESS-STREAMING（2026-10-10、反復 1・run 20261010-220740）
+
+- 変更: mega-stress の `--stress-stream-cell=<m>`（4〜2000）と `--stress-stream-period=<秒>`（既定 1、0.01〜3600）。置いた Entity を一辺 m[m] の区画に分け、周期ごとに 1 手: カメラに最も近い読み込み中の区画を解放し、解放中が窓（`kStreamWindowCells` = 4）に達したら解放した順に 1 つずつ読み直す。解放した区画が全部戻った次の Tick に `MEGA_STRESS_STREAM_CYCLE` で、生きている Entity・World の Entity・材質・メッシュ・モデルの数が置き終えた直後の基準と一致するかを出す（`result=pass|fail`）。
+- 前の反復の途中保存（a005038e・403e93b1）の続きとして、材質・メッシュ・モデルの照合を含めてビルドし、動作を確かめた。
+- 見つけた問題と修正: 区画の引数付きの cycle smoke が、区画の出入りが止まらないため Entity の数が落ち着かず（スモークは値が 90 フレーム続けて同じなのを待つ）、300 秒の上限まで待って SCENE_CYCLE の行が Game.log の 10 MB の上限に押し出されて失敗した。cycle smoke の中だけ周期を `kSmokeStreamCycles` = 3 回で止める（`m_StreamMaxCycles`。`GameApplicationHandler.cpp` が `m_SceneCycle.IsEnabled()` のときに渡す）。通常の起動では止めない。
+- 結果: 素の引数・区画の引数（2000 個・64 m・0.05 秒）とも cycle smoke 3 周が `result=pass`。区画の引数のログは 15 区画・窓 4・`MEGA_STRESS_STREAM_CYCLE` が 9 件すべて `result=pass`（`live=2000 world_objects=2002 materials=1/1 meshes=1/1 models=14/14`）、`result=fail` は 0 件。
+- 証拠（`.harness/runs/20261010-220740/`）: `verify-SCN-MEGA-STRESS-STREAMING-1.txt`（ビルド EXIT=0、最初の実装）、`-3.txt`（区画の引数の smoke の失敗、上記の問題）、`-4.txt`（修正後のビルド EXIT=0）、`-5.txt`（素の smoke pass）、`-6.txt`（区画の引数の smoke pass）、`-7.txt`（STREAM_CYCLE の検査 EXIT=0）。
+- Notes: このタスクでは GPU 時間を撮っていない（基準の計測は SCN-MEGA-STRESS-BASELINE）。

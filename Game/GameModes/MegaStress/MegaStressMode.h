@@ -53,6 +53,8 @@ namespace Game::GameModes
     inline constexpr float kMaxStressStreamCellMeters = 2000.0f;
     inline constexpr float kDefaultStressStreamPeriod = 1.0f;
     inline constexpr float kMinStressStreamPeriod = 0.01f;
+    /// cycle smoke の中で、区画の周期を回す回数（超えたら止めて、基準の状態で落ち着かせる）
+    inline constexpr uint32_t kSmokeStreamCycles = 3;
     /// 同時に解放している区画の数の上限（解放がここに達したら、解放した順に読み込み直す）
     inline constexpr uint32_t kStreamWindowCells = 4;
 
@@ -84,6 +86,8 @@ namespace Game::GameModes
         float m_StreamCellMeters = 0.0f;
         /// 区画を 1 つ出入りさせる周期[秒]（--stress-stream-period）
         float m_StreamPeriod = kDefaultStressStreamPeriod;
+        /// 区画の周期を回す回数の上限（0 なら止めない。cycle smoke の中だけ kSmokeStreamCycles）
+        uint32_t m_StreamMaxCycles = 0;
         /// ポーズメニュー（非所有）。開いている間はカメラを動かさない。無いなら nullptr
         const Game::Pause::PauseMenu *m_pPauseMenu = nullptr;
         /// クック済みの資産を引く AssetSystem の窓口

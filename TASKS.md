@@ -217,7 +217,7 @@
 - notes: 計測は SCN-MEGA-STRESS-STREAMING でまとめて行う。
 
 ## SCN-MEGA-STRESS-STREAMING: mega-stress に区画の読み込み・解放の負荷を足す
-- status: todo
+- status: done
 - done-when: `--stress-stream-cell=<m>` で、その大きさの区画の Entity を一定の周期で読み込み・解放する（カメラの近くの区画が出入りする）。1周期ごとに、生きている Entity・World の Entity・材質・メッシュ・モデルの数が置き終えた直後の基準に戻ることをログ `MEGA_STRESS_STREAM_CYCLE ... result=pass` で確かめ、`result=fail` が1件も出ない。cycle smoke が素の引数と区画の引数の両方で pass。基準の計測は SCN-MEGA-STRESS-BASELINE で行い、この項目では GPU 時間を撮らない。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-stress -Cycles 3 -Configuration RelWithDebInfo`
