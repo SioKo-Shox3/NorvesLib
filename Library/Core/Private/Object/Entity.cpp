@@ -456,6 +456,10 @@ namespace NorvesLib::Core
             return;
         m_bRenderInterpolationEnabled = enabled;
         ResetRenderInterpolation();
+        if (World *world = GetWorld())
+        {
+            world->NoteRenderInterpolationChange(*this);
+        }
     }
     void Entity::ClearRenderInterpolationOverride()
     {
@@ -469,18 +473,29 @@ namespace NorvesLib::Core
             return;
         m_bRenderInterpolationEnabled = enabled;
         ResetRenderInterpolation();
+        if (World *world = GetWorld())
+        {
+            world->NoteRenderInterpolationChange(*this);
+        }
     }
     Math::Transform Entity::GetRenderWorldTransform() const
     {
-        return m_bRenderTransformValid && m_bUsesRenderInterpolation ? m_RenderWorldTransform : GetWorldTransform();
+        // 補間する行とその子孫だけが描画の変換の列を持つ。無い・値をまだ求めていない行はワールドの変換と同じ
+        Ecs::EcsRenderTransform column{};
+        if (Ecs::EcsReadColumnPart(GetEcsRow(), Ecs::EcsColumnInfoOf<Ecs::EcsRenderTransform>().Type, 0,
+                                   static_cast<uint32_t>(sizeof(column)), &column) &&
+            column.bValid != 0)
+        {
+            return Math::Transform(column.position, column.rotation, column.scale);
+        }
+        return GetWorldTransform();
     }
     void Entity::ResetRenderInterpolation()
     {
-        m_RenderHistory.Clear();
-        m_bRenderTransformValid = false;
-        for (auto* inner : GetInners())
-            if (auto* child = CastTo<Entity>(inner))
-                child->ResetRenderInterpolation();
+        if (World *world = GetWorld())
+        {
+            world->ResetEntityRenderInterpolation(*this);
+        }
     }
 
     bool Entity::GetWorldAABB(Math::AABB& outAABB) const

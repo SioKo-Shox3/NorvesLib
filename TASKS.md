@@ -356,7 +356,7 @@
 - paths: Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Private/Object/World.cpp, Test/Core/Object/CMakeLists.txt, Test/Core/Object/EcsHierarchyTest.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-TRANSFORM-SWITCH: 階層のシステムを正にする（切替）
-- status: done
+- status: blocked
 - done-when: 旧の再帰の呼び出し（World.cpp:920・942・1094・1356、ApplicationProcessor.cpp:2668・2673）を、段の終わりと固定ステップの前後の伝播に替える。公開している `UpdateWorldTransforms` は伝播を呼ぶ形で残す（SpringArmComponentTest.cpp:312 が呼んでいる）。`CanDispatchEntity` は EffectiveActive を読む。`--ecs-legacy-transform` で旧経路に戻せる。下のテストと起動画面の比較が pass する。
 - verify: `cmake --build build --config Debug --target EntityTreeTest ApplicationFixedStepPipelineTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(TransformHierarchyTest|EcsHierarchyTest|WorldTickGroupTest|SpringArmComponentTest|ApplicationFixedStepPipelineTest)$" --no-tests=error --output-on-failure --timeout 180`
@@ -364,7 +364,7 @@
 - paths: Library/Core/Public/Object/World.h, Library/Core/Private/Object/World.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-INTERP: 描画の変換の補間をシステムにする
-- status: todo
+- status: done
 - done-when: 設計 1.9 の補間（タグ・履歴・描画の変換の列・Prepare/Capture・履歴を消すきっかけ）にし、World.cpp:1314-1397 の全走査をやめる。処理するのは、補間する行とその子孫と、変わった行だけ。検査 `ECS_RENDER_TRANSFORM`（旧の式で全行を求めた値と一致）が pass する。
 - verify: `cmake --build build --config Debug --target EntityTreeTest ApplicationFixedStepPipelineTest PhysicsDynamicsTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(WorldRenderInterpolationTest|RenderInterpolationCadenceTest|PhysicsFixedStepPipelineTest)$" --no-tests=error --output-on-failure --timeout 180`

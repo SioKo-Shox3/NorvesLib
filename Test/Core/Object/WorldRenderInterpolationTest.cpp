@@ -1,6 +1,7 @@
 ﻿#include "Component/CameraComponent.h"
 #include "Component/MeshComponent.h"
 #include "Component/SpringArmComponent.h"
+#include "Ecs/EcsWorld.h"
 #include "Game/CameraLateUpdate.h"
 #include "Object/World.h"
 #include "Rendering/SceneView.h"
@@ -25,6 +26,118 @@ namespace
                 return proxy;
         assert(false);
         return view.GetMeshProxies()[0];
+    }
+
+    // 型 T の列を持つ行の数
+    template <typename T>
+    uint32_t CountRowsWith(World& world)
+    {
+        Ecs::EcsQuery query;
+        query.All.push_back(Ecs::EcsColumnInfoOf<T>().Type);
+        Container::VariableArray<Ecs::EcsArchetypeId> archetypes;
+        world.GetEcsWorld().MatchArchetypes(query, archetypes);
+        uint32_t rows = 0;
+        for (const Ecs::EcsArchetypeId archetype : archetypes)
+            rows += world.GetEcsWorld().GetArchetypeRowCount(archetype);
+        return rows;
+    }
+
+    // 更新して、描画の変換を旧の式で求め直した値と全行照合する。照合した Entity の数を返す
+    uint32_t UpdateAndVerify(World& world)
+    {
+        world.UpdateRenderTransforms();
+        uint32_t count = 0;
+        assert(world.VerifyEcsRenderTransform(&count));
+        return count;
+    }
+
+    // 補間の列は、補間する行とその子孫にだけ付き、処理するのも変わった行だけ。付け外しのあとも旧の式と一致する
+    void TestRenderRowsAreIncremental()
+    {
+        World world;
+        world.Initialize();
+        Container::VariableArray<Entity*> statics;
+        auto* staticRoot = world.SpawnEntity<Entity>();
+        for (int i = 0; i < 200; ++i)
+        {
+            auto* entity = world.SpawnEntity<Entity>(staticRoot);
+            entity->SetLocalPosition(static_cast<float>(i), 0, 0);
+            statics.push_back(entity);
+        }
+        auto* body = world.SpawnEntity<Entity>();
+        auto* visual = world.SpawnEntity<Entity>(body);
+        auto* child = world.SpawnEntity<Entity>(visual);
+        auto* leaf = world.SpawnEntity<Entity>(child);
+        visual->SetRenderInterpolationEnabled(true);
+        const uint32_t total = static_cast<uint32_t>(world.GetEcsWorld().GetEntityCount());
+        assert(UpdateAndVerify(world) == total);
+        // 描画の変換の列は visual とその子孫（child・leaf）だけ。タグと履歴は visual だけ
+        assert(CountRowsWith<Ecs::EcsRenderTransform>(world) == 3);
+        assert(CountRowsWith<Ecs::EcsRenderInterpolated>(world) == 1);
+        assert(CountRowsWith<Ecs::EcsTransformHistory>(world) == 1);
+
+        // 動かない行は、更新を重ねても描画の版が進まない。動いた行だけ 1 回進む
+        const uint64_t before = statics[10]->GetRenderTransformVersion();
+        const uint64_t movedBefore = statics[20]->GetRenderTransformVersion();
+        for (int i = 0; i < 3; ++i)
+            assert(UpdateAndVerify(world) == total);
+        assert(statics[10]->GetRenderTransformVersion() == before);
+        statics[20]->SetLocalPosition(-5, 0, 0);
+        assert(UpdateAndVerify(world) == total);
+        assert(statics[10]->GetRenderTransformVersion() == before);
+        assert(statics[20]->GetRenderTransformVersion() == movedBefore + 1);
+
+        // 固定ステップを重ねて補間を動かす。履歴は visual の行だけが持つ
+        for (int step = 0; step < 4; ++step)
+        {
+            world.PrepareRenderInterpolationStep();
+            body->SetLocalPosition(static_cast<float>(step) * 2, 0, 0);
+            world.UpdateWorldTransforms();
+            world.CaptureRenderInterpolationStep();
+            assert(world.SetRenderInterpolationAlpha(.25f * static_cast<float>(step)));
+            assert(UpdateAndVerify(world) == total);
+        }
+
+        // 許可を外すと描画の変換・履歴の列が外れ、タグだけが残る。戻すと付け直される
+        world.SetRenderInterpolationAllowed(false);
+        assert(UpdateAndVerify(world) == total);
+        assert(CountRowsWith<Ecs::EcsRenderTransform>(world) == 0);
+        assert(CountRowsWith<Ecs::EcsTransformHistory>(world) == 0);
+        assert(CountRowsWith<Ecs::EcsRenderInterpolated>(world) == 1);
+        assert(leaf->GetRenderWorldTransform() == leaf->GetWorldTransform());
+        world.SetRenderInterpolationAllowed(true);
+        assert(UpdateAndVerify(world) == total);
+        assert(CountRowsWith<Ecs::EcsRenderTransform>(world) == 3);
+        assert(CountRowsWith<Ecs::EcsTransformHistory>(world) == 1);
+
+        // 補間しない親の下へ付け替えると、子孫も外れる。付け戻すと戻る
+        auto* other = world.SpawnEntity<Entity>();
+        assert(UpdateAndVerify(world) == total + 1);
+        assert(world.ReparentEntity(child, other));
+        assert(UpdateAndVerify(world) == total + 1);
+        assert(CountRowsWith<Ecs::EcsRenderTransform>(world) == 1);
+        assert(world.ReparentEntity(child, visual));
+        assert(UpdateAndVerify(world) == total + 1);
+        assert(CountRowsWith<Ecs::EcsRenderTransform>(world) == 3);
+
+        // 要求を外すと列が外れ、補間する親の下の新しい子は継承で付く
+        visual->SetRenderInterpolationEnabled(false);
+        assert(UpdateAndVerify(world) == total + 1);
+        assert(CountRowsWith<Ecs::EcsRenderTransform>(world) == 0);
+        child->SetRenderInterpolationEnabled(true);
+        auto* grand = world.SpawnEntity<Entity>(leaf);
+        assert(UpdateAndVerify(world) == total + 2);
+        assert(CountRowsWith<Ecs::EcsRenderTransform>(world) == 3);
+        assert(CountRowsWith<Ecs::EcsRenderInterpolated>(world) == 1);
+        assert(grand->GetParentEntity() == leaf);
+
+        // 補間する行の部分木を消しても、残りの照合が通る
+        child->MarkForDestroy();
+        world.Tick(.01f);
+        world.LateTick(.01f);
+        assert(UpdateAndVerify(world) == static_cast<uint32_t>(world.GetEcsWorld().GetEntityCount()));
+        assert(CountRowsWith<Ecs::EcsRenderTransform>(world) == 0);
+        world.Finalize();
     }
 } // namespace
 int main()
@@ -128,6 +241,7 @@ int main()
     world.UpdateRenderTransforms();
     assert(visual->GetRenderWorldTransform() == visual->GetWorldTransform());
     world.Finalize();
+    TestRenderRowsAreIncremental();
     std::cout << "WorldRenderInterpolationTest PASS\n";
     return 0;
 }

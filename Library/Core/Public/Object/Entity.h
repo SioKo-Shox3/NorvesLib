@@ -387,16 +387,11 @@ namespace NorvesLib::Core
         Ecs::EcsEntity m_EcsEntity;
         /// 段の最中に予約した行の作成の位置（World の予約の並び。予約が無ければ最大値。同期点までの間だけ持つ）
         uint32_t m_EcsCreateSlot = 0xFFFFFFFFu;
-        Scene::RenderTransformHistory m_RenderHistory;
-        Math::Transform m_RenderWorldTransform;
+        // 補間の要求の状態。履歴と描画の変換は ECS の列（EcsRenderInterpolated・EcsTransformHistory・EcsRenderTransform）にある
         bool m_bRenderInterpolationEnabled = false;
         bool m_bRenderInterpolationDefault = false;
         bool m_bRenderInterpolationOverride = false;
-        bool m_bRenderInterpolationInherited = false;
-        bool m_bUsesRenderInterpolation = false;
-        bool m_bRenderTransformValid = false;
         uint64_t m_RenderTransformVersion = 1;
-        uint64_t m_RenderParentId = 0;
 
       private:
         friend class World;

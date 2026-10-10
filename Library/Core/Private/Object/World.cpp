@@ -908,6 +908,12 @@ namespace NorvesLib::Core
         FlushDeferredEntityRows();
         RunEcsBindingCheck(true);
 
+        // 行はすべて消えた。補間の一覧は空にする
+        m_RenderRows.clear();
+        m_RenderReconcile.clear();
+        m_RenderChangedRows.clear();
+        m_bRenderRowsUnsorted = false;
+
         m_PendingDestroyEntities.clear();
         m_PendingDestroyComponents.clear();
 
@@ -1294,6 +1300,11 @@ namespace NorvesLib::Core
 
         add(m_StageSync, "Sync.SyncToSceneView",
             [](void* user, const Context&) { static_cast<World*>(user)->SyncToSceneViewBody(); });
+
+        // 補間の列は行へ後から付け外しされる。型の番号は並列が始まる前に固定しておく
+        (void)Ecs::EcsRegisterColumn<Ecs::EcsRenderTransform>();
+        (void)Ecs::EcsRegisterColumn<Ecs::EcsRenderInterpolated>();
+        (void)Ecs::EcsRegisterColumn<Ecs::EcsTransformHistory>();
 
         // World の木にいる全 Entity の行: Object への弱い参照・階層・flags・時間倍率・変換（局所とワールドのキャッシュ）・階層のシステムの比較用の列
         const Ecs::EcsColumnInfo entityColumns[] = {
@@ -1746,103 +1757,542 @@ namespace NorvesLib::Core
         m_RenderInterpolationAlpha = alpha;
         return true;
     }
+    namespace
+    {
+        /// 行の履歴を捨て、描画の変換を求め直させる（列が無ければ何もしない）
+        void ResetRenderColumns(Ecs::EcsWorld& ecs, Ecs::EcsEntity row)
+        {
+            if (Ecs::EcsTransformHistory* history = ecs.GetColumnValue<Ecs::EcsTransformHistory>(row))
+            {
+                history->History.Clear();
+            }
+            if (Ecs::EcsRenderTransform* render = ecs.GetColumnValue<Ecs::EcsRenderTransform>(row))
+            {
+                render->bValid = 0;
+            }
+        }
+
+        /// 描画の変換の列の値 ↔ Math::Transform
+        Math::Transform LoadRenderTransform(const Ecs::EcsRenderTransform& column)
+        {
+            return Math::Transform(column.position, column.rotation, column.scale);
+        }
+
+        void StoreRenderTransform(Ecs::EcsRenderTransform& column, const Math::Transform& transform)
+        {
+            column.position = transform.position;
+            column.rotation = transform.rotation;
+            column.scale = transform.scale;
+        }
+
+        /// 検査 ECS_RENDER_TRANSFORM の比較（成分ごとに数値として等しいか。NaN は同じ bit のときだけ等しい）
+        bool SameRenderTransform(const Math::Transform& lhs, const Math::Transform& rhs)
+        {
+            return Ecs::EcsEqualWorldTransform(Ecs::EcsWorldTransform{lhs.position, lhs.rotation, lhs.scale},
+                                               Ecs::EcsWorldTransform{rhs.position, rhs.rotation, rhs.scale});
+        }
+
+        /// 根から数えた Entity の深さ（Outer/Inner の木で数える。階層の列が同期点まで古い間も正しい）
+        uint32_t CountEntityDepth(const Entity& entity)
+        {
+            uint32_t depth = 0;
+            for (const Entity* cursor = entity.GetParentEntity(); cursor; cursor = cursor->GetParentEntity())
+            {
+                ++depth;
+            }
+            return depth;
+        }
+
+        /// 補間の列（タグ・描画の変換・履歴）のどれかを持つか
+        bool HasAnyRenderColumn(Ecs::EcsWorld& ecs, Ecs::EcsEntity row)
+        {
+            return ecs.GetColumnValue<Ecs::EcsRenderInterpolated>(row) != nullptr ||
+                   ecs.GetColumnValue<Ecs::EcsRenderTransform>(row) != nullptr ||
+                   ecs.GetColumnValue<Ecs::EcsTransformHistory>(row) != nullptr;
+        }
+    } // namespace
+
     void World::SetRenderInterpolationAllowed(bool allowed)
     {
         if (m_bRenderInterpolationAllowed == allowed)
             return;
         m_bRenderInterpolationAllowed = allowed;
-        for (auto* inner : GetInners())
-            if (auto* entity = CastTo<Entity>(inner))
-                entity->ResetRenderInterpolation();
-    }
-    void World::PrepareRenderInterpolationStep()
-    {
-        if (!HasFlag(OF_Initialized) || !m_bRenderInterpolationAllowed)
+        // 履歴と描画の変換の列は許可に合わせて付け外しされる。次の更新で見直し、それまでも古い値を返さないよう値を下ろす
+        if (!m_EcsWorld)
             return;
-        for (auto* inner : GetInners())
-            if (auto* entity = CastTo<Entity>(inner))
-                UpdateInterpolationHistoryRecursive(*entity, false);
-    }
-    void World::CaptureRenderInterpolationStep()
-    {
-        if (!HasFlag(OF_Initialized) || !m_bRenderInterpolationAllowed)
-            return;
-        for (auto* inner : GetInners())
-            if (auto* entity = CastTo<Entity>(inner))
-                UpdateInterpolationHistoryRecursive(*entity, true);
-    }
-    void World::UpdateInterpolationHistoryRecursive(Entity& entity, bool capture)
-    {
-        if (entity.IsPendingDestroy())
-            return;
-        const auto* parent = entity.GetParentEntity();
-        const auto parentId = parent ? parent->GetObjectId() : 0;
-        if (entity.m_RenderParentId != parentId)
+        for (const Ecs::EcsEntity row : m_RenderRows)
         {
-            entity.m_RenderHistory.Clear();
-            entity.m_RenderParentId = parentId;
+            m_RenderReconcile.push_back(row);
+            ResetRenderColumns(*m_EcsWorld, row);
         }
-        if (entity.m_bRenderInterpolationEnabled)
-        {
-            if (capture)
-                entity.m_RenderHistory.Capture(entity.GetWorldTransform());
-            else
-                entity.m_RenderHistory.Prepare(entity.GetWorldTransform());
-        }
+    }
+
+    Entity* World::ResolveRenderEntity(Ecs::EcsEntity row) const
+    {
+        if (!m_EcsWorld || row.IsNull() || !m_EcsWorld->IsAlive(row))
+            return nullptr;
+        const Ecs::EcsObjectRef* ref = m_EcsWorld->GetColumnValue<Ecs::EcsObjectRef>(row);
+        const Ecs::EcsHierarchy* hierarchy = m_EcsWorld->GetColumnValue<Ecs::EcsHierarchy>(row);
+        if (!ref || ref->Object == nullptr || ref->Generation != row.Generation || !hierarchy ||
+            hierarchy->Kind != Ecs::kEcsHierarchyKindEntity)
+            return nullptr;
+        return static_cast<Entity*>(ref->Object);
+    }
+
+    bool World::IsRenderParticipating(const Entity& entity) const
+    {
+        if (!m_bRenderInterpolationAllowed)
+            return false;
+        for (const Entity* cursor = &entity; cursor; cursor = cursor->GetParentEntity())
+            if (cursor->m_bRenderInterpolationEnabled)
+                return true;
+        return false;
+    }
+
+    void World::NoteRenderInterpolationChange(Entity& entity)
+    {
+        if (!m_EcsWorld || entity.m_EcsEntity.IsNull())
+            return;
+        m_RenderReconcile.push_back(entity.m_EcsEntity);
+        // 付け替えや要求の変化で親子の前後が変わりうる。次の処理の前に並べ直す
+        if (!m_RenderRows.empty())
+            m_bRenderRowsUnsorted = true;
+    }
+
+    void World::NoteRenderRowCreated(Entity& entity)
+    {
+        const Ecs::EcsEntity row = entity.m_EcsEntity;
+        if (!m_EcsWorld || row.IsNull())
+            return;
+        // 作られた行は、ワールドの変換を初めて求めたときに描画の更新へ知らせる。旧の再帰では行の作成が唯一の目印なので、ここでも積む
+        QueueRenderChange(row);
+        if (entity.m_bRenderInterpolationEnabled || (!m_RenderRows.empty() && IsRenderParticipating(entity)))
+            m_RenderReconcile.push_back(row);
+    }
+
+    void World::ResetEntityRenderInterpolation(Entity& entity)
+    {
+        if (m_EcsWorld)
+            ResetRenderColumns(*m_EcsWorld, entity.m_EcsEntity);
         for (auto* inner : entity.GetInners())
             if (auto* child = CastTo<Entity>(inner))
-                UpdateInterpolationHistoryRecursive(*child, capture);
+                ResetEntityRenderInterpolation(*child);
     }
+
+    bool World::ReconcileRenderRow(Entity& entity, Ecs::EcsEntity row)
+    {
+        Ecs::EcsWorld& ecs = *m_EcsWorld;
+        // 要求と許可から決まる組: タグ = 要求した、描画の変換 = 要求した行かその子孫（許可されている間）、履歴 = 要求して許可されている
+        const bool bTag = entity.m_bRenderInterpolationEnabled;
+        const bool bRender = IsRenderParticipating(entity);
+        const bool bHistory = m_bRenderInterpolationAllowed && bTag;
+        const bool bHadTag = ecs.GetColumnValue<Ecs::EcsRenderInterpolated>(row) != nullptr;
+        const bool bHadRender = ecs.GetColumnValue<Ecs::EcsRenderTransform>(row) != nullptr;
+        const bool bHadHistory = ecs.GetColumnValue<Ecs::EcsTransformHistory>(row) != nullptr;
+
+        if (bTag != bHadTag)
+        {
+            if (bTag)
+                (void)ecs.AddColumnOf(row, Ecs::EcsRenderInterpolated{});
+            else
+                (void)ecs.RemoveColumnOf<Ecs::EcsRenderInterpolated>(row);
+        }
+        if (bRender != bHadRender)
+        {
+            if (bRender)
+            {
+                // 値は 0（bValid が 0）。次の更新が求める
+                (void)ecs.AddColumnOf(row, Ecs::EcsRenderTransform{});
+            }
+            else
+            {
+                (void)ecs.RemoveColumnOf<Ecs::EcsRenderTransform>(row);
+                // 描画の値が補間の結果からワールドの変換へ戻る。所有する描画状態を直させる
+                QueueRenderChange(row);
+            }
+        }
+        if (bHistory != bHadHistory)
+        {
+            if (bHistory)
+                (void)ecs.AddColumnOf(row, Ecs::EcsTransformHistory{});
+            else
+                (void)ecs.RemoveColumnOf<Ecs::EcsTransformHistory>(row);
+        }
+        if (!bHadTag && !bHadRender && !bHadHistory && (bTag || bRender || bHistory))
+        {
+            m_RenderRows.push_back(row);
+            m_bRenderRowsUnsorted = true;
+        }
+        return bRender != bHadRender;
+    }
+
+    void World::ReconcileRenderInterpolation()
+    {
+        if (m_RenderReconcile.empty() || !m_EcsWorld)
+            return;
+        Ecs::EcsWorld& ecs = *m_EcsWorld;
+        struct Item
+        {
+            uint32_t Depth;
+            Ecs::EcsEntity Row;
+        };
+        Container::VariableArray<Item> work;
+        for (const Ecs::EcsEntity row : m_RenderReconcile)
+            if (const Entity* entity = ResolveRenderEntity(row))
+                work.push_back(Item{CountEntityDepth(*entity), row});
+        m_RenderReconcile.clear();
+
+        bool bLostRows = false;
+        Container::VariableArray<Item> current;
+        while (!work.empty())
+        {
+            // 親を先に直す（子の要求は親の描画の変換の有無で決まる）。最も浅い深さの行をまとめて取り出す
+            uint32_t depth = (std::numeric_limits<uint32_t>::max)();
+            for (const Item& item : work)
+                depth = (std::min)(depth, item.Depth);
+            current.clear();
+            size_t kept = 0;
+            for (size_t i = 0; i < work.size(); ++i)
+            {
+                if (work[i].Depth == depth)
+                    current.push_back(work[i]);
+                else
+                    work[kept++] = work[i];
+            }
+            work.resize(kept);
+            std::sort(current.begin(), current.end(), [](const Item& lhs, const Item& rhs)
+                      { return lhs.Row.Index != rhs.Row.Index ? lhs.Row.Index < rhs.Row.Index
+                                                              : lhs.Row.Generation < rhs.Row.Generation; });
+            current.erase(std::unique(current.begin(), current.end(),
+                                      [](const Item& lhs, const Item& rhs) { return lhs.Row == rhs.Row; }),
+                          current.end());
+            for (const Item& item : current)
+            {
+                Entity* entity = ResolveRenderEntity(item.Row);
+                if (!entity)
+                    continue;
+                if (ReconcileRenderRow(*entity, item.Row))
+                {
+                    // 描画の変換の有無が変わった行の子は、要求の組が変わりうる
+                    for (Entity* child : entity->GetChildEntities())
+                        if (!child->m_EcsEntity.IsNull())
+                            work.push_back(Item{depth + 1, child->m_EcsEntity});
+                }
+                if (!HasAnyRenderColumn(ecs, item.Row))
+                    bLostRows = true;
+            }
+        }
+        if (bLostRows)
+            CompactRenderRows();
+    }
+
+    void World::CompactRenderRows()
+    {
+        if (!m_EcsWorld)
+        {
+            m_RenderRows.clear();
+            return;
+        }
+        Ecs::EcsWorld& ecs = *m_EcsWorld;
+        size_t kept = 0;
+        for (const Ecs::EcsEntity row : m_RenderRows)
+        {
+            if (ResolveRenderEntity(row) != nullptr && HasAnyRenderColumn(ecs, row))
+                m_RenderRows[kept++] = row;
+        }
+        m_RenderRows.resize(kept);
+    }
+
+    void World::SortRenderRows()
+    {
+        m_bRenderRowsUnsorted = false;
+        struct Key
+        {
+            uint32_t Depth;
+            Ecs::EcsEntity Row;
+        };
+        Container::VariableArray<Key> keys;
+        for (const Ecs::EcsEntity row : m_RenderRows)
+            if (const Entity* entity = ResolveRenderEntity(row))
+                keys.push_back(Key{CountEntityDepth(*entity), row});
+        std::stable_sort(keys.begin(), keys.end(), [](const Key& lhs, const Key& rhs)
+                         { return lhs.Depth != rhs.Depth ? lhs.Depth < rhs.Depth : lhs.Row.Index < rhs.Row.Index; });
+        m_RenderRows.clear();
+        for (const Key& key : keys)
+            m_RenderRows.push_back(key.Row);
+    }
+
+    void World::QueueRenderChange(Ecs::EcsEntity row)
+    {
+        if (!m_EcsWorld)
+            return;
+        Ecs::EcsPropagatedTransform* propagated = m_EcsWorld->GetColumnValue<Ecs::EcsPropagatedTransform>(row);
+        if (!propagated || propagated->bRenderQueued != 0)
+            return;
+        propagated->bRenderQueued = 1;
+        m_RenderChangedRows.push_back(row);
+    }
+
+    void World::NoteRenderTransformChanged(Entity& entity)
+    {
+        if (entity.m_RenderTransformVersion != UINT64_MAX)
+            ++entity.m_RenderTransformVersion;
+        // simulation版のversionは触らない。alphaだけ変わる0step frameでもproxyを更新する。
+        for (auto* inner : entity.GetInners())
+            if (auto* component = CastTo<Component::Component>(inner))
+                if (CastTo<Component::MeshComponent>(component) || CastTo<Component::SkinnedMeshComponent>(component))
+                    component->MarkRenderStateDirty();
+    }
+
+    void World::FlushRenderChangedRows()
+    {
+        if (m_RenderChangedRows.empty() || !m_EcsWorld)
+            return;
+        Ecs::EcsWorld& ecs = *m_EcsWorld;
+        for (const Ecs::EcsEntity row : m_RenderChangedRows)
+        {
+            if (Ecs::EcsPropagatedTransform* propagated = ecs.GetColumnValue<Ecs::EcsPropagatedTransform>(row))
+                propagated->bRenderQueued = 0;
+            Entity* entity = ResolveRenderEntity(row);
+            // 補間する行とその子孫は UpdateRenderRows が見る。破棄予約の部分木は旧と同じく触らない
+            if (!entity || entity->IsPendingDestroy() || ecs.GetColumnValue<Ecs::EcsRenderTransform>(row) != nullptr)
+                continue;
+            NoteRenderTransformChanged(*entity);
+        }
+        m_RenderChangedRows.clear();
+    }
+
+    void World::StepRenderHistory(bool bCapture)
+    {
+        if (!HasFlag(OF_Initialized) || !m_bRenderInterpolationAllowed || !m_EcsWorld)
+            return;
+        ReconcileRenderInterpolation();
+        if (m_RenderRows.empty())
+            return;
+        Ecs::EcsWorld& ecs = *m_EcsWorld;
+        for (const Ecs::EcsEntity row : m_RenderRows)
+        {
+            // 履歴を持つのは、補間を要求して許可されている行だけ（子孫は履歴を使わない）
+            Ecs::EcsTransformHistory* history = ecs.GetColumnValue<Ecs::EcsTransformHistory>(row);
+            if (!history)
+                continue;
+            Entity* entity = ResolveRenderEntity(row);
+            if (!entity || entity->IsPendingDestroy())
+                continue;
+            const Entity* parent = entity->GetParentEntity();
+            const uint64_t parentId = parent ? parent->GetObjectId() : 0;
+            if (Ecs::EcsRenderTransform* render = ecs.GetColumnValue<Ecs::EcsRenderTransform>(row))
+            {
+                if (render->ParentId != parentId)
+                {
+                    history->History.Clear();
+                    render->ParentId = parentId;
+                }
+            }
+            if (bCapture)
+                history->History.Capture(entity->GetWorldTransform());
+            else
+                history->History.Prepare(entity->GetWorldTransform());
+        }
+    }
+
+    void World::PrepareRenderInterpolationStep()
+    {
+        StepRenderHistory(false);
+    }
+
+    void World::CaptureRenderInterpolationStep()
+    {
+        StepRenderHistory(true);
+    }
+
+    void World::UpdateRenderRows()
+    {
+        if (m_RenderRows.empty() || !m_EcsWorld)
+            return;
+        if (m_bRenderRowsUnsorted)
+            SortRenderRows();
+        Ecs::EcsWorld& ecs = *m_EcsWorld;
+        bool bLostRows = false;
+        // 親が先（深さの順）。補間する行は履歴を評価し、その子孫は「親の描画の変換 × 局所の変換」で求める
+        for (const Ecs::EcsEntity row : m_RenderRows)
+        {
+            Entity* entity = ResolveRenderEntity(row);
+            if (!entity)
+            {
+                bLostRows = true;
+                continue;
+            }
+            Ecs::EcsRenderTransform* render = ecs.GetColumnValue<Ecs::EcsRenderTransform>(row);
+            if (!render || entity->IsPendingDestroy())
+                continue;
+            Ecs::EcsTransformHistory* history = ecs.GetColumnValue<Ecs::EcsTransformHistory>(row);
+            const bool bTag = ecs.GetColumnValue<Ecs::EcsRenderInterpolated>(row) != nullptr;
+            const Entity* parent = entity->GetParentEntity();
+            const uint64_t parentId = parent ? parent->GetObjectId() : 0;
+            const Ecs::EcsRenderTransform* parentRender =
+                parent ? ecs.GetColumnValue<Ecs::EcsRenderTransform>(parent->m_EcsEntity) : nullptr;
+            const bool bInherited = m_bRenderInterpolationAllowed && parentRender != nullptr;
+            if (render->ParentId != parentId || (render->bInherited != 0) != bInherited)
+            {
+                if (history)
+                    history->History.Clear();
+            }
+            render->ParentId = parentId;
+            render->bInherited = bInherited ? 1 : 0;
+            const bool bInterpolated = m_bRenderInterpolationAllowed && (bInherited || bTag);
+            const Math::Transform world = entity->GetWorldTransform();
+            Math::Transform value = world;
+            if (bInherited)
+                value = LoadRenderTransform(*parentRender) * entity->GetLocalTransform();
+            else if (bInterpolated && history && history->History.Prepare(world))
+                (void)history->History.Evaluate(m_RenderInterpolationAlpha, value);
+            const bool bChanged = render->bValid == 0 || LoadRenderTransform(*render) != value;
+            StoreRenderTransform(*render, value);
+            render->bValid = 1;
+            if (bChanged)
+                NoteRenderTransformChanged(*entity);
+        }
+        if (bLostRows)
+            CompactRenderRows();
+    }
+
     void World::UpdateRenderTransforms()
     {
         if (!HasFlag(OF_Initialized))
             return;
         UpdateWorldTransforms();
-        for (auto* inner : GetInners())
-            if (auto* entity = CastTo<Entity>(inner))
-                UpdateRenderTransformRecursive(*entity, Math::Transform::Identity, false);
+        ReconcileRenderInterpolation();
+        UpdateRenderRows();
+        FlushRenderChangedRows();
+        // 検査 ECS_RENDER_TRANSFORM が有効なときだけ、全行を旧の式で求め直した値と照合する
+        RunEcsRenderTransformCheck();
     }
-    void World::UpdateRenderTransformRecursive(Entity& entity, const Math::Transform& parentRender,
-                                               bool parentInterpolated)
+
+    bool World::VerifyRenderEntity(Entity& entity, const Math::Transform& parentRender, bool bParentInterpolated,
+                                   uint32_t& count, const char*& error)
     {
+        // 旧の再帰と同じく、破棄予約の部分木は見ない
         if (entity.IsPendingDestroy())
-            return;
-        const auto* parent = entity.GetParentEntity();
-        const auto parentId = parent ? parent->GetObjectId() : 0;
-        const bool inherited = m_bRenderInterpolationAllowed && parentInterpolated;
-        if (entity.m_RenderParentId != parentId || entity.m_bRenderInterpolationInherited != inherited)
-            entity.m_RenderHistory.Clear();
-        entity.m_RenderParentId = parentId;
-        entity.m_bRenderInterpolationInherited = inherited;
-        const bool interpolated = m_bRenderInterpolationAllowed && (inherited || entity.m_bRenderInterpolationEnabled);
-        Math::Transform render = entity.GetWorldTransform();
-        if (inherited)
-            render = parentRender * entity.GetLocalTransform();
-        else if (interpolated && entity.m_RenderHistory.Prepare(entity.GetWorldTransform()))
-            (void)entity.m_RenderHistory.Evaluate(m_RenderInterpolationAlpha, render);
-        const bool changed = !entity.m_bRenderTransformValid || entity.m_RenderWorldTransform != render;
-        entity.m_RenderWorldTransform = render;
-        entity.m_bRenderTransformValid = true;
-        entity.m_bUsesRenderInterpolation = interpolated;
-        if (changed)
+            return true;
+        Ecs::EcsWorld& ecs = *m_EcsWorld;
+        const bool bInherited = m_bRenderInterpolationAllowed && bParentInterpolated;
+        const bool bInterpolated = m_bRenderInterpolationAllowed && (bInherited || entity.IsRenderInterpolationEnabled());
+        const Math::Transform world = entity.GetWorldTransform();
+        const Ecs::EcsEntity row = entity.GetEcsEntity();
+        const bool bHasRow = !row.IsNull() && ecs.IsAlive(row);
+        Math::Transform expected = world;
+        if (bInherited)
         {
-            if (entity.m_RenderTransformVersion != UINT64_MAX)
-                ++entity.m_RenderTransformVersion;
-            // simulation版のversionは触らない。alphaだけ変わる0step frameでもproxyを更新する。
-            for (auto* inner : entity.GetInners())
-                if (auto* component = CastTo<Component::Component>(inner))
-                    if (CastTo<Component::MeshComponent>(component) ||
-                        CastTo<Component::SkinnedMeshComponent>(component))
-                        component->MarkRenderStateDirty();
+            expected = parentRender * entity.GetLocalTransform();
         }
-        for (auto* inner : entity.GetInners())
-            if (auto* child = CastTo<Entity>(inner))
-                UpdateRenderTransformRecursive(*child, render, interpolated);
+        else if (bInterpolated)
+        {
+            const Ecs::EcsTransformHistory* history = bHasRow ? ecs.GetColumnValue<Ecs::EcsTransformHistory>(row) : nullptr;
+            if (history)
+            {
+                // 履歴の写しで求める（本体の履歴は変えない）
+                Scene::RenderTransformHistory copy = history->History;
+                if (copy.Prepare(world))
+                    (void)copy.Evaluate(m_RenderInterpolationAlpha, expected);
+            }
+        }
+        if (bHasRow)
+        {
+            ++count;
+            const bool bTag = ecs.GetColumnValue<Ecs::EcsRenderInterpolated>(row) != nullptr;
+            const bool bRender = ecs.GetColumnValue<Ecs::EcsRenderTransform>(row) != nullptr;
+            const bool bHistory = ecs.GetColumnValue<Ecs::EcsTransformHistory>(row) != nullptr;
+            if (bTag != entity.IsRenderInterpolationEnabled())
+            {
+                error = "補間のタグの有無が補間の要求と一致しない";
+                return false;
+            }
+            if (bRender != bInterpolated)
+            {
+                error = "描画の変換の列の有無が補間の要求と許可から決まる組と一致しない";
+                return false;
+            }
+            if (bHistory != (m_bRenderInterpolationAllowed && entity.IsRenderInterpolationEnabled()))
+            {
+                error = "履歴の列の有無が補間の要求と許可から決まる組と一致しない";
+                return false;
+            }
+            if (!SameRenderTransform(entity.GetRenderWorldTransform(), expected))
+            {
+                error = "描画の変換が旧の式で求め直した値と一致しない";
+                return false;
+            }
+        }
+        for (Entity* child : entity.GetChildEntities())
+        {
+            if (!VerifyRenderEntity(*child, expected, bInterpolated, count, error))
+                return false;
+        }
+        return true;
+    }
+
+    bool World::VerifyEcsRenderTransform(uint32_t* outCount)
+    {
+        if (outCount)
+        {
+            *outCount = 0;
+        }
+        // 同期点まで待たせた付け替え・作成予約・列の見直しがある間は、列が Outer/Inner と食い違うのが正当。この間は照合しない
+        if (!m_EcsWorld || m_EntityArchetype == Ecs::kInvalidEcsArchetype || !m_PendingEntityRelinks.empty() ||
+            !m_PendingEntityCreates.empty() || !m_RenderReconcile.empty())
+        {
+            return true;
+        }
+        uint32_t count = 0;
+        const char* error = nullptr;
+        for (Entity* root : GetRootEntities())
+        {
+            if (!VerifyRenderEntity(*root, Math::Transform::Identity, false, count, error))
+                break;
+        }
+        if (outCount)
+        {
+            *outCount = count;
+        }
+        if (error)
+        {
+            LOG_ERROR("ECS_RENDER_TRANSFORM: %s", error);
+            return false;
+        }
+        return true;
+    }
+
+    void World::RunEcsRenderTransformCheck()
+    {
+        NorvesLib::Debug::EngineChecks* checks = NorvesLib::Core::Engine::GEngine != nullptr
+            ? &NorvesLib::Core::Engine::GEngine->GetEngineChecks()
+            : nullptr;
+        if (checks == nullptr || !checks->IsEnabled("ECS_RENDER_TRANSFORM"))
+        {
+            return;
+        }
+        ++m_RenderCheckCalls;
+        uint32_t count = 0;
+        const bool bPass = VerifyEcsRenderTransform(&count);
+        // 呼び出しが多いので、fail は毎回、pass は最初に Entity が居た回と 64 回ごとに出す
+        const bool bReportPass = bPass && count > 0 && (m_RenderCheckLastReport == 0 || m_RenderCheckCalls % 64 == 0);
+        if (!bPass || bReportPass)
+        {
+            checks->Report("ECS_RENDER_TRANSFORM", bPass, count);
+            m_RenderCheckLastReport = m_RenderCheckCalls;
+        }
     }
 
     void World::UpdateEntityTransformRecursive(Entity& entity, const Math::Transform& parentWorld)
     {
+        const uint64_t versionBefore = entity.m_TransformVersion;
         entity.RecomputeWorldTransform(parentWorld);
+        if (entity.m_TransformVersion != versionBefore)
+        {
+            // 旧の再帰でも、ワールドの変換が変わった行を描画の更新へ知らせる
+            QueueRenderChange(entity.m_EcsEntity);
+        }
         const Math::Transform& worldTransform = entity.GetWorldTransform();
 
         auto children = entity.GetChildEntities();
@@ -2605,6 +3055,7 @@ namespace NorvesLib::Core
                 const Entity* parent = entity.GetParentEntity();
                 LinkEntityRowToParent(row, parent ? parent->m_EcsEntity : Ecs::kNullEcsEntity);
                 ++m_EcsBindingEpoch;
+                NoteRenderRowCreated(entity);
             }
         }
         for (Component::Component* component : entity.GetComponents())
@@ -2817,6 +3268,8 @@ namespace NorvesLib::Core
         }
         UpdateEntitySubtreeDepth(entity, depth);
         ++m_EcsBindingEpoch;
+        // 新しい親の下で補間する祖先が変わりうる。履歴は親の ID が変わったことで捨てられる
+        NoteRenderInterpolationChange(entity);
     }
 
     void World::UpdateEntitySubtreeDepth(Entity& entity, uint32_t depth)
@@ -3073,6 +3526,7 @@ namespace NorvesLib::Core
             ecs.WriteColumnValueOf(row, ref);
             MoveEntityValuesToRow(entity);
             markParent(entity);
+            NoteRenderRowCreated(entity);
         }
         for (const Ecs::EcsEntity row : m_PendingEntityRelinks)
         {
@@ -3080,6 +3534,7 @@ namespace NorvesLib::Core
             if (ref && ref->Object != nullptr && ref->Generation == row.Generation)
             {
                 markParent(*static_cast<Entity*>(ref->Object));
+                NoteRenderInterpolationChange(*static_cast<Entity*>(ref->Object));
             }
         }
         m_PendingEntityCreates.clear();
@@ -3294,6 +3749,11 @@ namespace NorvesLib::Core
         const Ecs::EcsTransformSystem::RunResult run = system.Run();
         for (const Ecs::EcsTransformSystem::AppliedRow& applied : system.GetApplied())
         {
+            if (applied.bWorldChanged || applied.bFirst)
+            {
+                // 補間しない行の描画の変換はワールドの変換と同じ。変わった行だけ、描画の更新が版と描画状態を直す
+                QueueRenderChange(applied.Entity);
+            }
             const Ecs::EcsObjectRef* ref = m_EcsWorld->GetColumnValue<Ecs::EcsObjectRef>(applied.Entity);
             if (ref == nullptr || ref->Object == nullptr)
             {

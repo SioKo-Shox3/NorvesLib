@@ -170,6 +170,8 @@ namespace NorvesLib::Core::Ecs
         {
             EcsEntity Entity;
             bool bWorldChanged = false;
+            /// 値を初めて求めた行（作られた直後）
+            bool bFirst = false;
         };
 
         [[nodiscard]] const Container::VariableArray<AppliedRow> &GetApplied() const
@@ -392,9 +394,10 @@ namespace NorvesLib::Core::Ecs
                 }
                 EcsPropagatedTransform *propagated =
                     static_cast<EcsPropagatedTransform *>(m_World.GetColumnValue(entity, m_Propagated));
+                const bool bFirst = propagated->bValid == 0;
                 propagated->bEffectiveActive = row.bEffectiveActive ? 1u : 0u;
                 propagated->bValid = 1;
-                m_Applied.push_back(AppliedRow{entity, row.bWorldChanged});
+                m_Applied.push_back(AppliedRow{entity, row.bWorldChanged, bFirst});
                 if (!row.bChanged)
                 {
                     continue;

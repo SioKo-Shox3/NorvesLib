@@ -958,6 +958,8 @@ namespace
         if (calls != 1 || value.Character || value.Owner->GetComponent<CharacterBodyComponent>())
             return false;
         world.Tick(kFixedDeltaTime);
+        // 収集を開いたまま作った Component は次のフレームから参加する。後から作る replacement を固定ステップに参加させるため、ここでフレームを閉じる
+        world.LateTick(kFixedDeltaTime);
         auto* replacement = world.CreateComponent<CharacterBodyComponent>(value.Owner);
         if (!replacement)
             return false;
@@ -1132,7 +1134,7 @@ namespace
         if (std::fabs(cameraOwner->GetPosition().x - 2) > 1e-4f || subject.Owner->GetPosition().x != 4)
             return false;
         wall->SetPosition({0, 2, 20});
-        if (GFixture->Physics->RefreshDynamicSnapshot() != EPhysicsSceneQueryResult::Success)
+        if (PhysicsModuleTestAccess::RefreshDynamicSnapshot(*GFixture->Physics) != EPhysicsSceneQueryResult::Success)
             return false;
         world.Tick(kFixedDeltaTime);
         world.LateTick(kFixedDeltaTime);

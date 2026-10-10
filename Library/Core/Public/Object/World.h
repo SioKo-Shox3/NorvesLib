@@ -337,6 +337,16 @@ namespace NorvesLib::Core
          */
         bool VerifyEcsTransform(uint32_t* outCount = nullptr);
 
+        /**
+         * @brief 描画の変換（補間の結果）を、旧の式で全行を求め直した値と照合する（検査 ECS_RENDER_TRANSFORM）
+         *
+         * 木を根からたどり、補間する行は履歴の写しに Prepare・Evaluate をかけた値、その子孫は「親の描画の変換 × 局所の変換」、
+         * それ以外はワールドの変換を期待値とし、各 Entity の GetRenderWorldTransform と全成分で照合する。
+         * 描画の変換の列・タグ・履歴の列が、補間の要求と許可から決まる組と一致するかも確かめる。UpdateRenderTransforms の直後に呼ぶ。
+         * @param outCount 照合した Entity の数（行の無い Entity は含まない）
+         */
+        bool VerifyEcsRenderTransform(uint32_t* outCount = nullptr);
+
         /// 階層のシステム。無ければ作る（作ったときは最初の Run が全行をきっかけにする）
         Ecs::EcsTransformSystem& GetEcsTransformSystem();
 
@@ -351,9 +361,39 @@ namespace NorvesLib::Core
         uint64_t m_TickSerial = 0;
         float m_RenderInterpolationAlpha = 1;
         bool m_bRenderInterpolationAllowed = true;
-        void UpdateInterpolationHistoryRecursive(Entity& entity, bool capture);
-        void UpdateRenderTransformRecursive(Entity& entity, const Math::Transform& parentRender,
-                                            bool parentInterpolated);
+
+        // ---- 描画の変換の補間（設計 1.9）。処理するのは、補間する行とその子孫（m_RenderRows）と、ワールドの変換が変わった行だけ ----
+        /// 補間の要求・親・許可・行の作成が変わったことを知らせる（次の更新で列を付け外しする）
+        void NoteRenderInterpolationChange(Entity& entity);
+        /// 行を作った直後に呼ぶ。補間する Entity か、補間する祖先がいる行なら、列の付け外しの対象にし、描画の更新へ知らせる
+        void NoteRenderRowCreated(Entity& entity);
+        /// 部分木の履歴を切り、描画の変換を求め直させる（Teleport・駆動切替）
+        void ResetEntityRenderInterpolation(Entity& entity);
+        /// 補間を要求した Entity か、補間する祖先がいる Entity か（許可されている間だけ）
+        bool IsRenderParticipating(const Entity& entity) const;
+        /// 行の描画の変換の列・タグ・履歴の列を、要求と許可から決まる組に合わせる。描画の変換の列の有無が変わったら true
+        bool ReconcileRenderRow(Entity& entity, Ecs::EcsEntity row);
+        /// 溜まった通知の行を浅い順に処理し、描画の変換の列の有無が変わった行の子へ広げる
+        void ReconcileRenderInterpolation();
+        /// 補間する行とその子孫を浅い順に並べ直す
+        void SortRenderRows();
+        /// 列を持たなくなった行・消えた行を一覧から除く
+        void CompactRenderRows();
+        /// 補間する行とその子孫の描画の変換を求める（親から順）
+        void UpdateRenderRows();
+        /// 固定ステップの前（bCapture が false。履歴の準備）か後（true。捕捉）に、補間を要求した行の履歴を進める
+        void StepRenderHistory(bool bCapture);
+        /// 通知: ワールドの変換が変わった（初めて求めた）行。次の描画の更新が、補間しない行の版と描画状態を直す
+        void QueueRenderChange(Ecs::EcsEntity row);
+        /// 溜まった行のうち、描画の変換の列を持たない行の版を進め、描画状態を dirty にする
+        void FlushRenderChangedRows();
+        /// 描画の変換が変わった Entity の版を進め、所有する Mesh・SkinnedMesh の描画状態を dirty にする
+        void NoteRenderTransformChanged(Entity& entity);
+        /// 行から Entity を引く（Entity の行でない・Object を切られた行は null）
+        Entity* ResolveRenderEntity(Ecs::EcsEntity row) const;
+        bool VerifyRenderEntity(Entity& entity, const Math::Transform& parentRender, bool bParentInterpolated,
+                                uint32_t& count, const char*& error);
+        void RunEcsRenderTransformCheck();
 
         void BuildTickSnapshot();
         void CollectTickEntries(Entity& entity, size_t& ordinal);
@@ -398,6 +438,16 @@ namespace NorvesLib::Core
         /// 検査 ECS_TRANSFORM の照合の回数と、最後に pass を出した回
         uint64_t m_EcsTransformCheckCalls = 0;
         uint64_t m_EcsTransformLastReport = 0;
+        /// 補間を要求した行と、描画の変換の列を持つ行（補間する行とその子孫）。m_bRenderRowsUnsorted の間は深さの順でない
+        Container::VariableArray<Ecs::EcsEntity> m_RenderRows;
+        bool m_bRenderRowsUnsorted = false;
+        /// 列の付け外しを見直す行（補間の要求・親・許可・行の作成が変わった Entity）
+        Container::VariableArray<Ecs::EcsEntity> m_RenderReconcile;
+        /// 前回の描画の更新より後にワールドの変換が変わった（初めて求めた）行
+        Container::VariableArray<Ecs::EcsEntity> m_RenderChangedRows;
+        /// 検査 ECS_RENDER_TRANSFORM の照合の回数と、最後に pass を出した回
+        uint64_t m_RenderCheckCalls = 0;
+        uint64_t m_RenderCheckLastReport = 0;
         uint32_t m_StageTick = 0;
         uint32_t m_StageLateTick = 0;
         uint32_t m_StageFixedBegin = 0;

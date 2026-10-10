@@ -18,6 +18,7 @@
 #include "Math/Quaternion.h"
 #include "Math/Vector3.h"
 #include "Object/RuntimeSchema.h"
+#include "Scene/RenderTransformHistory.h"
 
 #include <atomic>
 #include <cstddef>
@@ -133,6 +134,35 @@ namespace NorvesLib::Core::Ecs
         uint64_t Visited;
         uint32_t bValid;
         uint32_t bEffectiveActive;
+        /// 描画の変換の更新へ「ワールドの変換が変わった」と知らせる一覧に積み済みか（二重に積まない印）
+        uint32_t bRenderQueued;
+        uint32_t Reserved;
+    };
+
+    /// Entity の行の描画の変換（補間する行とその子孫にだけ付く。補間しない行は描画の変換をワールドの変換と同じとし、専用の列を持たない）。
+    /// bValid は今の値を求めたか（Teleport・駆動切替の Reset で下ろす。下りている間は読み手にワールドの変換を返す）、
+    /// ParentId と bInherited は前回に見た親の Object の ID と「補間する祖先から継承しているか」（変わったら履歴を捨てる）。
+    struct EcsRenderTransform
+    {
+        Math::Vector3 position;
+        Math::Quaternion rotation;
+        Math::Vector3 scale;
+        uint64_t ParentId;
+        uint32_t bValid;
+        uint32_t bInherited;
+    };
+
+    /// 補間を要求した Entity の行に付くタグ（SetRenderInterpolationEnabled の結果）。補間が許可されていない間も付いたままで、
+    /// 再び許可されたときに列を付け直す目印になる。
+    struct EcsRenderInterpolated
+    {
+        uint32_t Reserved;
+    };
+
+    /// 固定ステップの前後の姿勢の履歴（補間を要求し、かつ許可されている行に付く。Prepare/Capture/Evaluate は RenderTransformHistory のもの）
+    struct EcsTransformHistory
+    {
+        Scene::RenderTransformHistory History;
     };
 
     /// Component の行の flags（プロパティ。ECS_PROPERTY で読み書きする）

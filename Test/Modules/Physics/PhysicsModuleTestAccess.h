@@ -229,6 +229,11 @@ namespace NorvesLib::Modules::Physics
             return concrete.Initialize();
         }
 
+        static Core::Scene::EPhysicsSceneQueryResult RefreshDynamicSnapshot(IPhysicsModule& module)
+        {
+            return GetConcrete(module).RefreshDynamicSnapshot();
+        }
+
     private:
         static const PhysicsModule& GetConcrete(const IPhysicsModule& module)
         {

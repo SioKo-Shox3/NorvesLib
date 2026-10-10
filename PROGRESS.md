@@ -1294,3 +1294,31 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 変更: ソースの変更なし（診断用の出力は戻した）。
 - 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-TRANSFORM-SWITCH-11.txt`（EntityTreeTest・ApplicationFixedStepPipelineTest のビルド EXIT=0）、`-12.txt`（5 件の ctest 5/5 Passed）、`-13-startup.txt`（起動画面の決定論の比較 `result=pass`、3 視点とも `within_limits=True`）。再コンパイル後の `EcsHierarchyTest` を 30 回続けて実行し、失敗 0 回。
 - Notes: 食い違ったバイナリになった原因は特定できていない。同じ症状が再発したら、World.cpp を再コンパイルしてから疑うこと。
+
+### SCN-ECS-INTERP（2026-10-11、反復 32・run 20261010-223034）
+
+- 変更:
+  - `EcsTypes.h`: 列 `EcsRenderTransform`（描画の変換 + 値を求めたか + 前回の親の ID・継承の有無）・タグ `EcsRenderInterpolated`・`EcsTransformHistory`（`Scene::RenderTransformHistory` を包む）。`EcsPropagatedTransform` に「描画の更新へ積み済み」の印 `bRenderQueued` を足した。
+  - `EcsTransformSystem.h`: `AppliedRow` に `bFirst`（値を初めて求めた行）を足した。
+  - `World`: 描画の変換の補間を全走査から外した。補間する Entity（要求あり・許可あり）の行にタグ・履歴・描画の変換の列を付け、その子孫の行には描画の変換の列だけを付ける（`AddColumn`/`RemoveColumn`。補間しない行は専用の列を持たず、描画の変換 = ワールドの変換）。
+    - 列の付け外しは `ReconcileRenderInterpolation`（要求・許可・付け替え・行の作成の通知が溜まったときだけ。浅い行から処理し、描画の変換の有無が変わった行の子へ広げる）。Prepare/Capture/UpdateRenderTransforms の先頭で呼ぶ。
+    - Prepare/Capture（`StepRenderHistory`）は履歴の列を持つ行だけ、`UpdateRenderRows` は補間する行とその子孫（一覧 `m_RenderRows`、深さ順）だけを処理する。親の ID・継承の有無が変わったら履歴を捨てる、`ResetRenderInterpolation`（子孫まで）と `SetRenderInterpolationAllowed` で履歴と値を下ろす、は従来の規則のまま。
+    - 補間しない行は、階層のシステムの結果（ワールドの変換が変わった・初めて求めた行）と旧の再帰（版が進んだ行）・行の作成から `m_RenderChangedRows` へ積み、`FlushRenderChangedRows` がその行だけ版を進め Mesh・SkinnedMesh の描画状態を dirty にする。
+  - `Entity`: 履歴・描画の変換・継承の各メンバを廃止（列へ移した）。`GetRenderWorldTransform` は描画の変換の列（値を求めていれば）を返す。補間の要求・Reset は World へ通知する。
+  - 検査 `ECS_RENDER_TRANSFORM`（`VerifyEcsRenderTransform`）: 木を根からたどり、補間する行は履歴の写しに Prepare/Evaluate、その子孫は親の期待値 × 局所の変換、それ以外はワールドの変換を期待値として、`GetRenderWorldTransform` と全成分で照合し、列・タグ・履歴の有無が要求と許可から決まる組と一致するかも確かめる。
+- テスト: `WorldRenderInterpolationTest` に `TestRenderRowsAreIncremental`（描画の変換の列は補間する行とその子孫だけ・動かない行の描画の版は更新を重ねても進まず動いた行だけ 1 進む・許可の切替・付け替え・要求の解除・子孫の新規作成・部分木の破棄のたびに旧の式と一致）を足した。
+- paths の外を触った:
+  - `World.h`（宣言・メンバ）。
+  - `Test/Core/Object/WorldRenderInterpolationTest.cpp`（上のテスト）。
+  - `Test/Modules/Physics/PhysicsModuleTestAccess.h`・`PhysicsFixedStepPipelineTest.cpp`: HEAD の時点で `PhysicsFixedStepPipelineTest` が `IPhysicsModule::RefreshDynamicSnapshot` を呼んでコンパイルできなかったので、テスト用アクセサ経由にした。さらにケース 12（`TestCharacterBeforeSimulationRemoval`）は HEAD の Library だけでも失敗した（収集を開いたまま作った replacement は次のフレームから参加するため、固定ステップに呼ばれない）ので、replacement の作成前に `LateTick` でフレームを閉じた（表明は変えていない）。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-ECS-INTERP-4.txt`: 指定 3 ターゲットのビルド EXIT=0。
+  - `-5.txt`: 指定 ctest（WorldRenderInterpolationTest・RenderInterpolationCadenceTest・PhysicsFixedStepPipelineTest）3/3 Passed。`-1`〜`-3` はビルドの引数の誤り・テストのコンパイル不能の版で証拠にしない。
+  - `-6-neighbors.txt`: 隣接の ECS・World 系 20 件中 19 件 Passed。`WorldSyncDifferentialTest` だけ失敗（Timeout の実体は assert。第 2 回の同期で Mesh のプロキシが 777 のまま残る前提が崩れている）。これは `World.cpp` の `if (!bNeedsSync)` 側で `UpdateMeshProxy` を呼ぶ 1718b077c（2026-09-22）からの既存の失敗で、診断出力でこの変更が第 2 回の同期で dirty を立てていないことを確かめた。
+  - `-7-startup.txt`: 起動画面の決定論の比較 `result=pass`。`engine_check name=ECS_RENDER_TRANSFORM` が default 9・near 11・low 8、fail 0。3 視点とも `within_limits=True`。`default.png` を開いて確認。
+- Notes:
+  - 撮影は `Deterministic` で補間が許可されないので、補間の経路を通して値を照合するのは `WorldRenderInterpolationTest` と物理の固定ステップのテスト。
+  - 描画の変換の列は追跡せず（`MarkWritten` を通さない）、チャンクの版も進めない。描画への同期の切替（SYNC-PREP 以降）で変更ログに載せるときは、書き込みを `MarkWritten` と `CommitChanges` を通す形にすること。
+  - 構造変更（列の付け外し）は `UpdateRenderTransforms`・Prepare・Capture の中だけで行う。段の最中に要求を変えても、行が動くのは次の呼び出しから。
+  - `WorldSyncDifferentialTest` は別の項目で直す（`!bNeedsSync` 側の更新は、非同期の読み込みの完了を拾うための意図的な再構築かもしれない。テストの前提のほうが古い可能性が高い）。
+  - 行末: `World.cpp`・`World.h` は混在。Edit ツールは混在ファイルを LF にしてしまうので、編集のたびに HEAD の行末を基準に difflib で直した（numstat 2 通りが一致）。
