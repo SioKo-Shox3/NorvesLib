@@ -3,6 +3,7 @@
 // - 解放の前に行が切られる（Object の解放が始まる時点で、行は孤児で Object への参照が null、または消えている）
 // - Tick と LateTick の間の除去・DestroyNow・破棄予約の直後の除去・部分木の連鎖でも孤児や古い参照が残らない
 // - 段の最中の作成は同期点まで予約され、再生の前の破棄で取り消される
+// - Component の行は所有者の子の葉で、flags・時間倍率・Tick の設定は行が付いている間だけ列にあり、外れると Object に戻る
 #include "Component/Component.h"
 #include "Ecs/EcsWorld.h"
 #include "Object/Entity.h"
@@ -15,20 +16,24 @@
 #include <iostream>
 
 using namespace NorvesLib::Core;
+using NorvesLib::Core::Ecs::EcsComponentFlags;
 using NorvesLib::Core::Ecs::EcsEntity;
+using NorvesLib::Core::Ecs::EcsEntityFlags;
 using NorvesLib::Core::Ecs::EcsHierarchy;
 using NorvesLib::Core::Ecs::EcsObjectRef;
+using NorvesLib::Core::Ecs::EcsTickConfig;
+using NorvesLib::Core::Ecs::EcsTimeDilation;
 using NorvesLib::Core::Ecs::EcsWorld;
 
 namespace
 {
-    // 照合する: 結び付けが一致していて、数が期待どおり
-    void ExpectBound(World &world, uint32_t expectedEntities)
+    // 照合する: 結び付けが一致していて、Entity と Component の行の数が期待どおり
+    void ExpectBound(World &world, uint32_t expectedEntities, uint32_t expectedComponents = 0)
     {
         uint32_t count = 0;
         assert(world.VerifyEcsBinding(&count));
         assert(count == expectedEntities);
-        assert(world.GetEcsWorld().GetEntityCount() == expectedEntities);
+        assert(world.GetEcsWorld().GetEntityCount() == expectedEntities + expectedComponents);
     }
 
     const EcsHierarchy &HierarchyOf(World &world, Entity *entity)
@@ -176,14 +181,14 @@ namespace
         Probe(world, a1, a1Report, a);
         const EcsEntity rootRow = root->GetEcsEntity();
         const EcsEntity a1Row = a1->GetEcsEntity();
-        ExpectBound(world, 4);
+        ExpectBound(world, 4, 2);
 
         // 子 a の部分木だけを除く（RemoveEntity）。親 root の連結は b だけになる
         const EcsEntity aRow = a->GetEcsEntity();
         assert(world.RemoveEntity(a));
         assert(a1Report.Calls == 1 && !a1Report.bRowAlive && !a1Report.bParentRowAlive);
         assert(!world.GetEcsWorld().IsAlive(aRow) && !world.GetEcsWorld().IsAlive(a1Row));
-        ExpectBound(world, 2);
+        ExpectBound(world, 2, 1);
         assert(HierarchyOf(world, root).FirstChild == b->GetEcsEntity() && HierarchyOf(world, root).LastChild == b->GetEcsEntity());
 
         world.RemoveObject(root);
@@ -209,16 +214,16 @@ namespace
         ReleaseReport reservedReport;
         Probe(world, child, childReport, victim);
         Probe(world, reserved, reservedReport, keep);
-        ExpectBound(world, 4);
+        ExpectBound(world, 4, 2);
 
         world.Tick(0.01f);
-        ExpectBound(world, 4);
+        ExpectBound(world, 4, 2);
 
         // Tick の後・LateTick の前に、段の外から除く
         world.RemoveObject(victim);
         assert(childReport.Calls == 1 && !childReport.bRowAlive);
         assert(!world.GetEcsWorld().IsAlive(victimRow) && !world.GetEcsWorld().IsAlive(childRow));
-        ExpectBound(world, 2);
+        ExpectBound(world, 2, 1);
 
         // 破棄を予約した直後（回収の前）に除く: 予約の一覧にも残らず、孤児も残らない
         reserved->MarkForDestroy();
@@ -251,7 +256,7 @@ namespace
         Probe(world, mid, midReport, root);
         const EcsEntity midRow = mid->GetEcsEntity();
         const EcsEntity leafRow = leaf->GetEcsEntity();
-        ExpectBound(world, 4);
+        ExpectBound(world, 4, 2);
 
         // 祖先と子孫を両方予約する（最上位だけが部分木ごと破棄される）
         leaf->MarkForDestroy();
@@ -294,7 +299,7 @@ namespace
         rootProbe->Row = root->GetEcsEntity();
         childProbe->Row = child->GetEcsEntity();
         childProbe->ParentRow = root->GetEcsEntity();
-        ExpectBound(world, 2);
+        ExpectBound(world, 2, 2);
 
         world.Tick(0.01f);
         world.RemoveObject(root);
@@ -360,13 +365,13 @@ namespace
         assert(mutator);
         mutator->Parent = root;
         mutator->Existing = existing;
-        ExpectBound(world, 3);
+        ExpectBound(world, 3, 1);
 
         world.Tick(0.01f);
         assert(mutator->bRan && mutator->bNewRowsPending && mutator->bCancelledRowless && mutator->bMoved);
 
         // 同期点の後: A・B・C に行ができ、取り消した 2 つは作られていない（root・holder・existing・A・B・C の 6 つ）
-        ExpectBound(world, 6);
+        ExpectBound(world, 6, 1);
         Entity *a = mutator->A;
         Entity *b = mutator->B;
         Entity *c = mutator->C;
@@ -383,7 +388,7 @@ namespace
         assert(HierarchyOf(world, existing).Parent == b->GetEcsEntity() && HierarchyOf(world, existing).Depth == 3);
 
         world.LateTick(0.01f);
-        ExpectBound(world, 6);
+        ExpectBound(world, 6, 1);
         world.Finalize();
         assert(world.GetEcsWorld().GetEntityCount() == 0);
     }
@@ -413,14 +418,14 @@ namespace
         detachedProbe->Row = root->GetEcsEntity();
         const EcsEntity rootRow = root->GetEcsEntity();
         const EcsEntity childRow = child->GetEcsEntity();
-        ExpectBound(world, 2);
+        ExpectBound(world, 2, 2);
 
         world.Tick(0.01f);
         // 持ち主が生きている間の DestroyNow: EndPlay の時点で行は生きていて孤児ではない。階層もそのまま
         assert(heap.DestroyNow(liveHandle));
         assert(liveReport.Calls == 1 && liveReport.bRowAlive && !liveReport.bRowOrphan && liveReport.bParentRowAlive);
         assert(!heap.Resolve(liveHandle));
-        ExpectBound(world, 2);
+        ExpectBound(world, 2, 1);
         assert(child->GetEcsEntity() == childRow && root->GetEcsEntity() == rootRow);
         assert(HierarchyOf(world, root).FirstChild == childRow && HierarchyOf(world, child).Parent == rootRow);
 
@@ -487,6 +492,208 @@ namespace
         world.Finalize();
     }
 
+    // クラスの中では基底の注入名 Component が名前空間の別名を隠すので、外で別名を付ける
+    using ComponentBase = Component::Component;
+    namespace TickGroups = NorvesLib::Core::Component;
+
+    // 段の最中に Component を足す Component。行の作成は同期点まで予約になり、Tick の設定は行ができた後も保たれる
+    class StageComponentAdder : public ComponentBase
+    {
+    public:
+        ComponentBase *Added = nullptr;
+        ComponentBase *Cancelled = nullptr;
+        bool bRan = false;
+        bool bAddedRowlessInStage = false;
+        bool bConfigKeptInStage = false;
+
+        void Tick(float) override
+        {
+            if (bRan)
+            {
+                return;
+            }
+            bRan = true;
+            Entity *owner = GetOwner();
+            Added = new ReleaseProbe();
+            Added->Disable();
+            Added->SetTickGroup(TickGroups::ETickGroup::Camera);
+            Added->SetTickPriority(-3);
+            assert(owner->AddComponent(Added));
+            // 段の最中は予約だけで、行はまだ無い。値は Object にあるので読める
+            bAddedRowlessInStage = Added->GetEcsEntity().IsNull();
+            bConfigKeptInStage = !Added->IsEnabled() && Added->GetTickGroup() == TickGroups::ETickGroup::Camera &&
+                                 Added->GetTickPriority() == -3;
+            // 再生の前に外す: 予約は取り消され、行は作られない
+            Cancelled = new ReleaseProbe();
+            assert(owner->AddComponent(Cancelled));
+            owner->RemoveComponent(Cancelled);
+        }
+    };
+
+    const EcsComponentFlags &ComponentFlagsOf(World &world, Component::Component *component)
+    {
+        const EcsComponentFlags *flags = world.GetEcsWorld().GetColumnValue<EcsComponentFlags>(component->GetEcsEntity());
+        assert(flags);
+        return *flags;
+    }
+
+    const EcsTickConfig &TickConfigOf(World &world, Component::Component *component)
+    {
+        const EcsTickConfig *config = world.GetEcsWorld().GetColumnValue<EcsTickConfig>(component->GetEcsEntity());
+        assert(config);
+        return *config;
+    }
+
+    // flags・時間倍率・Tick の設定: 行が付く前は Object の予備、付いたら列、外れたら Object に戻る。
+    // Component の行は所有者の子の葉で、所有者の Component の連結に Inner の並びで入る
+    void TestFlagsAndTickConfigColumns()
+    {
+        World world;
+        world.Initialize();
+        EcsWorld &ecs = world.GetEcsWorld();
+
+        // World に付く前に設定した値は、行が付くと列にある
+        Entity *entity = new Entity();
+        auto *first = new ReleaseProbe();
+        auto *second = new ReleaseProbe();
+        entity->SetActive(false);
+        entity->SetTickEnabled(false);
+        assert(entity->SetCustomTimeDilation(2.0f));
+        first->Disable();
+        first->SetTickEnabled(false);
+        assert(first->SetTickGroup(Component::ETickGroup::Animation));
+        first->SetTickPriority(7);
+        const Component::TickGroupMask firstMask = Component::TickGroupBit(Component::ETickGroup::Animation) |
+                                                   Component::TickGroupBit(Component::ETickGroup::Camera);
+        assert(first->SetTickGroupMask(firstMask));
+        assert(entity->AddComponent(first) && entity->AddComponent(second));
+        assert(world.AddObject(entity));
+        ExpectBound(world, 1, 2);
+
+        const EcsEntity entityRow = entity->GetEcsEntity();
+        const EcsEntityFlags *entityFlags = ecs.GetColumnValue<EcsEntityFlags>(entityRow);
+        assert(entityFlags && !entityFlags->bActive && !entityFlags->bTickEnabled && !entityFlags->bPendingDestroy);
+        assert(ecs.GetColumnValue<EcsTimeDilation>(entityRow)->CustomTimeDilation == 2.0f);
+        assert(!ComponentFlagsOf(world, first).bEnabled && !ComponentFlagsOf(world, first).bTickEnabled);
+        assert(TickConfigOf(world, first).Group == static_cast<uint8_t>(Component::ETickGroup::Animation));
+        assert(TickConfigOf(world, first).Priority == 7 && TickConfigOf(world, first).Mask == firstMask);
+        // 何も設定しなかった Component は既定のまま（有効・Tick 有効・Default 群）
+        assert(ComponentFlagsOf(world, second).bEnabled && ComponentFlagsOf(world, second).bTickEnabled);
+        assert(TickConfigOf(world, second).Group == static_cast<uint8_t>(Component::ETickGroup::Default));
+        assert(TickConfigOf(world, second).Mask == Component::TickGroupBit(Component::ETickGroup::Default));
+
+        // Component の行は所有者の子の葉で、Inner の並びで連なる。子 Entity の連結には入らない
+        const EcsHierarchy &entityHierarchy = HierarchyOf(world, entity);
+        assert(entityHierarchy.FirstChild.IsNull() && entityHierarchy.LastChild.IsNull());
+        assert(entityHierarchy.FirstComponent == first->GetEcsEntity() && entityHierarchy.LastComponent == second->GetEcsEntity());
+        const EcsHierarchy *firstHierarchy = ecs.GetColumnValue<EcsHierarchy>(first->GetEcsEntity());
+        assert(firstHierarchy && firstHierarchy->Parent == entityRow && firstHierarchy->Depth == 1);
+        assert(firstHierarchy->Kind == Ecs::kEcsHierarchyKindComponent && firstHierarchy->NextSibling == second->GetEcsEntity());
+        assert(ecs.GetColumnValue<EcsObjectRef>(first->GetEcsEntity())->Object == static_cast<void *>(first));
+
+        // 行が付いている間は列が正: 書き込みは列に出て、読み口も列を読む
+        entity->SetActive(true);
+        entity->SetTickEnabled(true);
+        assert(entity->SetCustomTimeDilation(0.5f));
+        assert(!entity->SetCustomTimeDilation(-1.0f));
+        first->Enable();
+        first->SetTickEnabled(true);
+        assert(first->SetTickGroup(Component::ETickGroup::Camera));
+        assert(!first->SetTickGroupMask(Component::TickGroupBit(Component::ETickGroup::Input)));
+        first->SetTickPriority(-2);
+        assert(ecs.GetColumnValue<EcsEntityFlags>(entityRow)->bActive && ecs.GetColumnValue<EcsEntityFlags>(entityRow)->bTickEnabled);
+        assert(ecs.GetColumnValue<EcsTimeDilation>(entityRow)->CustomTimeDilation == 0.5f);
+        assert(entity->IsActive() && entity->IsTickEnabled() && entity->GetCustomTimeDilation() == 0.5f);
+        assert(ComponentFlagsOf(world, first).bEnabled && ComponentFlagsOf(world, first).bTickEnabled);
+        // 主群を変えると mask は 1 群へ戻る（従来の規則）
+        assert(TickConfigOf(world, first).Group == static_cast<uint8_t>(Component::ETickGroup::Camera));
+        assert(TickConfigOf(world, first).Mask == Component::TickGroupBit(Component::ETickGroup::Camera));
+        assert(TickConfigOf(world, first).Priority == -2);
+        assert(first->IsEnabled() && first->IsTickEnabled() && first->GetTickGroup() == Component::ETickGroup::Camera);
+        assert(first->GetTickPriority() == -2);
+        entity->MarkForDestroy();
+        assert(ecs.GetColumnValue<EcsEntityFlags>(entityRow)->bPendingDestroy && entity->IsPendingDestroy());
+
+        // 木から外すと値は Object に戻り、読み口はそのまま同じ値を返す
+        assert(world.RemoveInner(entity));
+        assert(entity->GetEcsEntity().IsNull() && first->GetEcsEntity().IsNull() && second->GetEcsEntity().IsNull());
+        ExpectBound(world, 0, 0);
+        assert(entity->IsActive() && entity->IsTickEnabled() && entity->GetCustomTimeDilation() == 0.5f);
+        assert(first->IsEnabled() && first->IsTickEnabled() && first->GetTickGroup() == Component::ETickGroup::Camera);
+        assert(first->GetTickPriority() == -2 && first->GetTickGroupMask() == Component::TickGroupBit(Component::ETickGroup::Camera));
+        world.Finalize();
+        delete entity;
+    }
+
+    // World の中での Component の追加・除去: 行が作られて消え、所有者の連結が直る。段の最中の追加は予約になる
+    void TestComponentRowsAddRemoveAndReserve()
+    {
+        World world;
+        world.Initialize();
+        EcsWorld &ecs = world.GetEcsWorld();
+        Entity *root = world.SpawnEntity<Entity>();
+        Entity *child = world.SpawnEntity<Entity>(root);
+        auto *a = world.CreateComponent<ReleaseProbe>(root);
+        auto *b = world.CreateComponent<ReleaseProbe>(root);
+        auto *c = world.CreateComponent<ReleaseProbe>(root);
+        ExpectBound(world, 2, 3);
+        assert(HierarchyOf(world, root).FirstChild == child->GetEcsEntity());
+        assert(HierarchyOf(world, root).FirstComponent == a->GetEcsEntity() && HierarchyOf(world, root).LastComponent == c->GetEcsEntity());
+
+        // 中ほどを外すと、前後がつながる
+        const EcsEntity bRow = b->GetEcsEntity();
+        root->RemoveComponent(b);
+        assert(!ecs.IsAlive(bRow));
+        ExpectBound(world, 2, 2);
+        assert(ecs.GetColumnValue<EcsHierarchy>(a->GetEcsEntity())->NextSibling == c->GetEcsEntity());
+        assert(ecs.GetColumnValue<EcsHierarchy>(c->GetEcsEntity())->PrevSibling == a->GetEcsEntity());
+
+        // 末尾・先頭を外す
+        root->RemoveComponent(c);
+        assert(HierarchyOf(world, root).LastComponent == a->GetEcsEntity());
+        root->RemoveComponent(a);
+        assert(HierarchyOf(world, root).FirstComponent.IsNull() && HierarchyOf(world, root).LastComponent.IsNull());
+        ExpectBound(world, 2, 0);
+
+        // 部分木を付け替えても、Component の行の深さが直る
+        auto *leaf = world.CreateComponent<ReleaseProbe>(child);
+        ExpectBound(world, 2, 1);
+        assert(ecs.GetColumnValue<EcsHierarchy>(leaf->GetEcsEntity())->Depth == 2);
+        assert(world.ReparentEntity(child, nullptr));
+        assert(ecs.GetColumnValue<EcsHierarchy>(leaf->GetEcsEntity())->Depth == 1);
+        ExpectBound(world, 2, 1);
+
+        // 段の最中に足した Component は同期点まで予約で、再生の前に外した分は作られない
+        auto *adder = world.CreateComponent<StageComponentAdder>(root);
+        ExpectBound(world, 2, 2);
+        world.Tick(0.01f);
+        assert(adder->bRan && adder->bAddedRowlessInStage && adder->bConfigKeptInStage);
+        ExpectBound(world, 2, 3);
+        Component::Component *added = adder->Added;
+        assert(added->GetEcsRow().IsBound() && adder->Cancelled != nullptr);
+        assert(!ComponentFlagsOf(world, added).bEnabled && ComponentFlagsOf(world, added).bTickEnabled);
+        assert(TickConfigOf(world, added).Group == static_cast<uint8_t>(Component::ETickGroup::Camera));
+        assert(TickConfigOf(world, added).Priority == -3);
+        assert(HierarchyOf(world, root).FirstComponent == adder->GetEcsEntity());
+        assert(HierarchyOf(world, root).LastComponent == added->GetEcsEntity());
+        assert(ecs.GetColumnValue<EcsHierarchy>(added->GetEcsEntity())->Depth == 1);
+
+        // 破棄予約した Component は、回収の時点で行が消える
+        added->MarkForDestroy();
+        world.LateTick(0.01f);
+        world.Tick(0.01f);
+        ExpectBound(world, 2, 2);
+        assert(HierarchyOf(world, root).LastComponent == adder->GetEcsEntity());
+
+        // Entity ごと破棄すると、Component の行も残らない
+        root->MarkForDestroy();
+        world.LateTick(0.01f);
+        world.Tick(0.01f);
+        ExpectBound(world, 1, 1);
+        world.Finalize();
+        assert(ecs.GetEntityCount() == 0);
+    }
+
     // 周回: 作って消すのを繰り返しても、行・チャンクの数が戻る
     void TestCycleReturnsToZero()
     {
@@ -525,6 +732,8 @@ int main()
     TestDestroyNowBetweenTickAndLateTick();
     TestPublicRemoveInnerAndReattach();
     TestStaleRowRejected();
+    TestFlagsAndTickConfigColumns();
+    TestComponentRowsAddRemoveAndReserve();
     TestCycleReturnsToZero();
     std::cout << "EcsLifetimeTest 合格\n";
     return 0;

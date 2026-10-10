@@ -305,6 +305,8 @@ namespace NorvesLib::Core
          * - World の木にいる Entity の数と、行（EcsObjectRef を持つ行。孤児を含む）の数が一致する（1 対 1）。
          * - 行の EcsObjectRef が Entity を指し、Entity が行の EcsEntity を覚えている。
          * - EcsHierarchy の Parent・Depth・子の並び（FirstChild・LastChild・兄弟）が Outer/Inner と一致する。
+         * - Component にも 1 対 1 で行があり（所有者の子の葉）、所有者の Component の連結（FirstComponent・LastComponent・兄弟）が
+         *   Inner の並び（Component だけ）と一致する。
          * - 孤児の行と、同期点を待つ破棄の予約が残っていない。
          * 食い違いは LOG_ERROR で理由を出す。
          * @param outCount 照合した Entity の数
@@ -384,6 +386,11 @@ namespace NorvesLib::Core
         // ---- ECS の行と Entity の結び付け（World の木にいる全 Entity に 1 行。値はまだ Object にある） ----
         /// 部分木の行を親から順に作り、階層（親・子の並び・深さ）を結ぶ。Outer/Inner を結んだ後・BeginPlay の前に呼ぶ
         void BindEntitySubtreeRows(Entity& entity);
+        /// Component の行を作り、所有者の Component の連結の末尾へ付ける。所有者が World の木にいるときだけ（Entity::AddInner と
+        /// BindEntitySubtreeRows が呼ぶ）。段の最中、または所有者の行が予約中なら作成を予約する
+        void BindComponentRow(Component::Component& component);
+        /// Component の行を、解放や付け替えの前に切る（値を予備へ戻して孤児にして消す）。bUnlink は所有者の連結から外すか
+        void ReleaseComponentRow(Component::Component& component, bool bUnlink = true);
         /// 部分木の行を、解放の前に切る（親の連結から外し、子から順に孤児にして消す）。木から外す前に呼ぶ
         void UnbindEntitySubtreeRows(Entity& entity);
         void ReleaseEntitySubtreeRows(Entity& entity);
@@ -391,11 +398,19 @@ namespace NorvesLib::Core
         void ReleaseEntityRow(Entity& entity);
         /// 親を付け替えた後の階層を直す（古い親の連結から外し、新しい親の末尾へ付け、部分木の深さを直す）
         void RelinkEntityRow(Entity& entity);
-        void LinkEntityRowToParent(Ecs::EcsEntity row, Ecs::EcsEntity parentRow);
+        /// row を parentRow の連結の末尾へ付ける。kind が Component なら所有者の Component の連結、Entity なら子 Entity の連結
+        void LinkEntityRowToParent(Ecs::EcsEntity row, Ecs::EcsEntity parentRow, uint32_t kind = Ecs::kEcsHierarchyKindEntity);
         void UnlinkEntityRow(Ecs::EcsEntity row);
         void UpdateEntitySubtreeDepth(Entity& entity, uint32_t depth);
         /// 段の最中の Attach*: 行の作成を予約して Entity に札を持たせる（行は同期点まで無い）
         void ReserveEntityRowCreate(Entity& entity);
+        void ReserveComponentRowCreate(Component::Component& component);
+        /// 行を付けた直後に、Object の予備の値（flags・時間倍率・Tick の設定）を列へ移す
+        void MoveEntityValuesToRow(Entity& entity);
+        void MoveComponentValuesToRow(Component::Component& component);
+        /// 行を消す前に、列の値を Object の予備へ戻す
+        void MoveEntityValuesToFallback(Entity& entity);
+        void MoveComponentValuesToFallback(Component::Component& component);
         /// 同期点: 予約した作成を再生して行を結び、階層（子の並び・深さ）を Inner の並びから直す
         void PlaybackEntityRowCreates();
         /// 親の行の子の連結と、子（とその子孫）の深さを Inner の並びに合わせて作り直す
@@ -406,12 +421,15 @@ namespace NorvesLib::Core
         void RunEcsBindingCheck(bool bFinal);
 
         Ecs::EcsArchetypeId m_EntityArchetype = Ecs::kInvalidEcsArchetype;
+        Ecs::EcsArchetypeId m_ComponentArchetype = Ecs::kInvalidEcsArchetype;
         /// 段の最中に孤児にした行（同期点で消す）
         Container::VariableArray<Ecs::EcsEntity> m_DeferredEntityRows;
         /// 段の最中に予約した行の作成。取り消した項目は Target が null（添字は Entity の札が指すので詰めない）
         struct PendingEntityCreate
         {
+            /// Entity の作成なら Target、Component の作成なら ComponentTarget（どちらも null なら取り消し済み）
             Entity* Target = nullptr;
+            Component::Component* ComponentTarget = nullptr;
             Ecs::EcsCreateTicket Ticket;
         };
         Ecs::EcsCommandBuffer m_EntityCreateCommands;

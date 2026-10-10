@@ -309,22 +309,20 @@ namespace NorvesLib::Core
         virtual void Tick(float deltaTime) {}
         // 実行時の局所倍率。親子へは継承せず、World/Animationだけに適用する。
         bool SetCustomTimeDilation(float value);
-        float GetCustomTimeDilation() const
-        {
-            return m_CustomTimeDilation;
-        }
+        // 行が付いている間は ECS の列（EcsTimeDilation）が正で、無い間は m_CustomTimeDilation が正
+        float GetCustomTimeDilation() const;
 
         /**
          * @brief 更新が有効かどうか
          * @return 有効な場合true
          */
-        bool IsTickEnabled() const { return bTickEnabled; }
+        bool IsTickEnabled() const { return getbTickEnabled().Get(); }
 
         /**
          * @brief 更新の有効/無効を設定
          * @param bEnabled 有効にする場合true
          */
-        void SetTickEnabled(bool bEnabled) { bTickEnabled = bEnabled; }
+        void SetTickEnabled(bool bEnabled) { getbTickEnabled().Set(bEnabled); }
 
         // ========================================
         // アクティブ状態
@@ -334,7 +332,7 @@ namespace NorvesLib::Core
          * @brief オブジェクトがアクティブかどうか
          * @return アクティブな場合true
          */
-        bool IsActive() const { return bActive; }
+        bool IsActive() const { return getbActive().Get(); }
 
         /**
          * @brief アクティブ状態を設定
@@ -349,7 +347,7 @@ namespace NorvesLib::Core
          */
         void MarkForDestroy()
         {
-            bPendingDestroy = true;
+            getbPendingDestroy().Set(true);
             Object::Destroy();
         }
 
@@ -357,15 +355,16 @@ namespace NorvesLib::Core
          * @brief 破棄予約されているかどうか
          * @return 破棄予約されている場合true
          */
-        bool IsPendingDestroy() const { return bPendingDestroy || Object::IsPendingDestroy(); }
+        bool IsPendingDestroy() const { return getbPendingDestroy().Get() || Object::IsPendingDestroy(); }
 
     protected:
         // ========================================
         // リフレクションプロパティ
         // ========================================
-        PROPERTY(bool, bTickEnabled)    // Tick更新が有効か
-        PROPERTY(bool, bActive)         // アクティブ状態
-        PROPERTY(bool, bPendingDestroy) // 破棄予約フラグ
+        // flags は World の木にいる間 ECS の行（EcsEntityFlags）の列にあり、無い間は予備の値にある
+        ECS_PROPERTY(Ecs::EcsEntityFlags, bTickEnabled, bool, bTickEnabled)       // Tick更新が有効か
+        ECS_PROPERTY(Ecs::EcsEntityFlags, bActive, bool, bActive)                 // アクティブ状態
+        ECS_PROPERTY(Ecs::EcsEntityFlags, bPendingDestroy, bool, bPendingDestroy) // 破棄予約フラグ
 
         // 表示名（エディタでのリネーム用。空文字は未設定を表す）
         PROPERTY(Container::String, Name)

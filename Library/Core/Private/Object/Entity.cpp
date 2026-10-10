@@ -139,8 +139,8 @@ namespace NorvesLib::Core
         : Object()
     {
         // PROPERTYマクロは値初期化（0/false）するため、非ゼロデフォルト値を設定
-        bTickEnabled = true;
-        bActive = true;
+        getbTickEnabled().Set(true);
+        getbActive().Set(true);
         // RotationはQuaternionのデフォルトが単位回転(0,0,0,1)なので設定不要
         Scale = Math::Vector3(1.0f, 1.0f, 1.0f);
         SyncLocalTransformFromProperties();
@@ -150,8 +150,8 @@ namespace NorvesLib::Core
     Entity::Entity(const FieldInitializer *initializer)
         : Object(initializer)
     {
-        bTickEnabled = true;
-        bActive = true;
+        getbTickEnabled().Set(true);
+        getbActive().Set(true);
         Scale = Math::Vector3(1.0f, 1.0f, 1.0f);
         SyncLocalTransformFromProperties();
         m_CachedWorldTransform = m_LocalTransform;
@@ -160,8 +160,8 @@ namespace NorvesLib::Core
     Entity::Entity(const IUnknown *sourceObject)
         : Object(sourceObject)
     {
-        bTickEnabled = true;
-        bActive = true;
+        getbTickEnabled().Set(true);
+        getbActive().Set(true);
         Scale = Math::Vector3(1.0f, 1.0f, 1.0f);
         SyncLocalTransformFromProperties();
         m_CachedWorldTransform = m_LocalTransform;
@@ -176,8 +176,24 @@ namespace NorvesLib::Core
     {
         if (!std::isfinite(value) || value < 0)
             return false;
+        // 行が付いている間は列が正（予備の m_CustomTimeDilation は行を外すときに列から戻す）
+        const Ecs::EcsRowRef row = GetEcsRow();
+        const Ecs::EcsTimeDilation column{value};
+        if (Ecs::EcsRowHasColumn(row, Ecs::EcsColumnInfoOf<Ecs::EcsTimeDilation>().Type))
+        {
+            return Ecs::EcsWriteColumnPart(row, Ecs::EcsColumnInfoOf<Ecs::EcsTimeDilation>().Type, 0,
+                                           static_cast<uint32_t>(sizeof(column)), &column);
+        }
         m_CustomTimeDilation = value;
         return true;
+    }
+
+    float Entity::GetCustomTimeDilation() const
+    {
+        Ecs::EcsTimeDilation column{m_CustomTimeDilation};
+        (void)Ecs::EcsReadColumnPart(GetEcsRow(), Ecs::EcsColumnInfoOf<Ecs::EcsTimeDilation>().Type, 0,
+                                     static_cast<uint32_t>(sizeof(column)), &column);
+        return column.CustomTimeDilation;
     }
 
     void Entity::Initialize()
@@ -228,12 +244,12 @@ namespace NorvesLib::Core
 
     void Entity::SetActive(bool bNewActive)
     {
-        if (bActive == bNewActive)
+        if (IsActive() == bNewActive)
         {
             return;
         }
 
-        bActive = bNewActive;
+        getbActive().Set(bNewActive);
         MarkRenderStateDirtyRecursive();
     }
 
@@ -295,6 +311,8 @@ namespace NorvesLib::Core
             if (auto* component = CastTo<Component::Component>(inner))
             {
                 world->InvalidateTickComponent(*component);
+                // Component は解放や付け替えのために外れる。外す前に行を切る（値を予備へ戻す）
+                world->ReleaseComponentRow(*component);
             }
             else if (auto* child = CastTo<Entity>(inner))
             {
@@ -329,6 +347,17 @@ namespace NorvesLib::Core
             if (World* world = GetWorld())
             {
                 world->RegisterPendingDestroy(*inner);
+            }
+        }
+        // World の木にいる Entity に付けた Component には、行を作る
+        if (bAdded)
+        {
+            if (auto* component = CastTo<Component::Component>(inner))
+            {
+                if (World* world = GetWorld())
+                {
+                    world->BindComponentRow(*component);
+                }
             }
         }
         return bAdded;

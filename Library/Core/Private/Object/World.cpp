@@ -62,7 +62,7 @@ namespace NorvesLib::Core
 
         /// 検査 ECS_BIND の再帰: entity の行と、その部分木が Outer/Inner と一致するか。食い違いは error に理由を入れて false
         bool VerifyEntityRows(Ecs::EcsWorld& ecs, Entity& entity, Ecs::EcsEntity parentRow, uint32_t depth,
-                              uint32_t& count, const char*& error)
+                              uint32_t& count, uint32_t& componentCount, const char*& error)
         {
             ++count;
             const Ecs::EcsEntity row = entity.GetEcsEntity();
@@ -88,9 +88,10 @@ namespace NorvesLib::Core
                 error = "行に EcsHierarchy が無い";
                 return false;
             }
-            if (hierarchy->Parent != parentRow || hierarchy->Depth != depth)
+            if (hierarchy->Parent != parentRow || hierarchy->Depth != depth ||
+                hierarchy->Kind != Ecs::kEcsHierarchyKindEntity)
             {
-                error = "EcsHierarchy の Parent または Depth が Outer と一致しない";
+                error = "EcsHierarchy の Parent・Depth・Kind が Outer と一致しない";
                 return false;
             }
             if (parentRow.IsNull() && (!hierarchy->PrevSibling.IsNull() || !hierarchy->NextSibling.IsNull()))
@@ -120,9 +121,60 @@ namespace NorvesLib::Core
                 error = "EcsHierarchy の子の連結の端が一致しない";
                 return false;
             }
+            // Component の行: 所有者の子の葉で、所有者の Component の連結に Inner の並びで入っている
+            Ecs::EcsEntity expectedComponent = hierarchy->FirstComponent;
+            Ecs::EcsEntity previousComponent;
+            for (Component::Component* component : entity.GetComponents())
+            {
+                ++componentCount;
+                const Ecs::EcsEntity componentRow = component->GetEcsEntity();
+                if (componentRow.IsNull() || !ecs.IsAlive(componentRow))
+                {
+                    error = "Component の行が無い（または死んでいる）";
+                    return false;
+                }
+                if (ecs.IsOrphan(componentRow))
+                {
+                    error = "生きた Component の行が孤児になっている";
+                    return false;
+                }
+                const Ecs::EcsObjectRef* componentRef = ecs.GetColumnValue<Ecs::EcsObjectRef>(componentRow);
+                if (!componentRef || componentRef->Object != static_cast<void*>(component) ||
+                    componentRef->Generation != componentRow.Generation)
+                {
+                    error = "行の EcsObjectRef が Component を指していない";
+                    return false;
+                }
+                const Ecs::EcsHierarchy* componentHierarchy = ecs.GetColumnValue<Ecs::EcsHierarchy>(componentRow);
+                if (!componentHierarchy || ecs.GetColumnValue<Ecs::EcsComponentFlags>(componentRow) == nullptr ||
+                    ecs.GetColumnValue<Ecs::EcsTickConfig>(componentRow) == nullptr)
+                {
+                    error = "Component の行に EcsHierarchy・EcsComponentFlags・EcsTickConfig が無い";
+                    return false;
+                }
+                if (componentHierarchy->Kind != Ecs::kEcsHierarchyKindComponent || componentHierarchy->Parent != row ||
+                    componentHierarchy->Depth != depth + 1 || !componentHierarchy->FirstChild.IsNull() ||
+                    !componentHierarchy->LastChild.IsNull())
+                {
+                    error = "Component の EcsHierarchy が所有者の子の葉になっていない";
+                    return false;
+                }
+                if (expectedComponent != componentRow || componentHierarchy->PrevSibling != previousComponent)
+                {
+                    error = "EcsHierarchy の Component の並びが Inner の並びと一致しない";
+                    return false;
+                }
+                previousComponent = componentRow;
+                expectedComponent = componentHierarchy->NextSibling;
+            }
+            if (!expectedComponent.IsNull() || hierarchy->LastComponent != previousComponent)
+            {
+                error = "EcsHierarchy の Component の連結の端が一致しない";
+                return false;
+            }
             for (Entity* child : children)
             {
-                if (!VerifyEntityRows(ecs, *child, row, depth + 1, count, error))
+                if (!VerifyEntityRows(ecs, *child, row, depth + 1, count, componentCount, error))
                 {
                     return false;
                 }
@@ -1192,12 +1244,28 @@ namespace NorvesLib::Core
         const Ecs::EcsColumnInfo entityColumns[] = {
             Ecs::EcsRegisterColumn<Ecs::EcsObjectRef>(),
             Ecs::EcsRegisterColumn<Ecs::EcsHierarchy>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsEntityFlags>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsTimeDilation>(),
         };
         m_EntityArchetype = m_EcsWorld->GetOrCreateArchetype(
-            Container::Span<const Ecs::EcsColumnInfo>(entityColumns, 2));
+            Container::Span<const Ecs::EcsColumnInfo>(entityColumns, 4));
         if (m_EntityArchetype == Ecs::kInvalidEcsArchetype)
         {
             LOG_ERROR("World: Entity 用の ECS のアーキタイプを作れなかった");
+        }
+
+        // Component の行: 所有者の子の葉。flags と Tick の設定を列に持つ
+        const Ecs::EcsColumnInfo componentColumns[] = {
+            Ecs::EcsRegisterColumn<Ecs::EcsObjectRef>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsHierarchy>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsComponentFlags>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsTickConfig>(),
+        };
+        m_ComponentArchetype = m_EcsWorld->GetOrCreateArchetype(
+            Container::Span<const Ecs::EcsColumnInfo>(componentColumns, 4));
+        if (m_ComponentArchetype == Ecs::kInvalidEcsArchetype)
+        {
+            LOG_ERROR("World: Component 用の ECS のアーキタイプを作れなかった");
         }
 
         // 段の最中に孤児にした行は、各段の同期点で消す
@@ -2443,10 +2511,15 @@ namespace NorvesLib::Core
                     ref->Object = static_cast<void*>(&entity);
                     ref->Generation = row.Generation;
                 }
+                MoveEntityValuesToRow(entity);
                 const Entity* parent = entity.GetParentEntity();
                 LinkEntityRowToParent(row, parent ? parent->m_EcsEntity : Ecs::kNullEcsEntity);
                 ++m_EcsBindingEpoch;
             }
+        }
+        for (Component::Component* component : entity.GetComponents())
+        {
+            BindComponentRow(*component);
         }
         for (Entity* child : entity.GetChildEntities())
         {
@@ -2454,23 +2527,112 @@ namespace NorvesLib::Core
         }
     }
 
-    void World::LinkEntityRowToParent(Ecs::EcsEntity row, Ecs::EcsEntity parentRow)
+    void World::BindComponentRow(Component::Component& component)
+    {
+        if (m_ComponentArchetype == Ecs::kInvalidEcsArchetype || !m_EcsWorld)
+        {
+            return;
+        }
+        Entity* owner = component.GetOwner();
+        if (!owner || owner->GetWorld() != this)
+        {
+            return;
+        }
+        Ecs::EcsWorld& ecs = *m_EcsWorld;
+        if (component.m_EcsCreateSlot != kNoEntityCreateSlot || ecs.IsAlive(component.m_EcsEntity))
+        {
+            // 行は付いている（または作成を予約済み）
+            return;
+        }
+        const bool bOwnerReserved = owner->m_EcsCreateSlot != kNoEntityCreateSlot;
+        if (!bOwnerReserved && !ecs.IsAlive(owner->m_EcsEntity))
+        {
+            // 所有者に行が無い（再生に失敗した）。値は Object に残し、行なしのまま
+            return;
+        }
+        if (bOwnerReserved || m_Scheduler->IsRunning())
+        {
+            // 段の最中は作成を予約し、行は段の終わりの同期点で作る
+            ReserveComponentRowCreate(component);
+            return;
+        }
+        const Ecs::EcsEntity row = ecs.CreateEntity(m_ComponentArchetype);
+        if (row.IsNull())
+        {
+            LOG_ERROR("World: Component の ECS の行を作れなかった");
+            return;
+        }
+        component.m_EcsEntity = row;
+        if (Ecs::EcsObjectRef* ref = ecs.GetColumnValue<Ecs::EcsObjectRef>(row))
+        {
+            ref->Object = static_cast<void*>(&component);
+            ref->Generation = row.Generation;
+        }
+        MoveComponentValuesToRow(component);
+        LinkEntityRowToParent(row, owner->m_EcsEntity, Ecs::kEcsHierarchyKindComponent);
+        ++m_EcsBindingEpoch;
+    }
+
+    void World::MoveEntityValuesToRow(Entity& entity)
+    {
+        // 時間倍率は保存の対象でないので、予備の値を直接列へ写す。flags は ECS_PROPERTY の移動に任せる
+        m_EcsWorld->WriteColumnValueOf(entity.m_EcsEntity, Ecs::EcsTimeDilation{entity.m_CustomTimeDilation});
+        MoveEcsPropertyValuesToColumns(&entity);
+    }
+
+    void World::MoveComponentValuesToRow(Component::Component& component)
+    {
+        Ecs::EcsTickConfig config{};
+        config.Group = static_cast<uint8_t>(component.m_TickConfiguration.GetGroup());
+        config.Priority = component.m_TickConfiguration.GetPriority();
+        config.Mask = component.m_TickConfiguration.GetMask();
+        m_EcsWorld->WriteColumnValueOf(component.m_EcsEntity, config);
+        MoveEcsPropertyValuesToColumns(&component);
+    }
+
+    void World::MoveEntityValuesToFallback(Entity& entity)
+    {
+        if (const Ecs::EcsTimeDilation* dilation = m_EcsWorld->GetColumnValue<Ecs::EcsTimeDilation>(entity.m_EcsEntity))
+        {
+            entity.m_CustomTimeDilation = dilation->CustomTimeDilation;
+        }
+        MoveEcsPropertyValuesToFallback(&entity);
+    }
+
+    void World::MoveComponentValuesToFallback(Component::Component& component)
+    {
+        if (const Ecs::EcsTickConfig* config = m_EcsWorld->GetColumnValue<Ecs::EcsTickConfig>(component.m_EcsEntity))
+        {
+            // 列の値は検証済みの設定から写したものなので、群 → 優先度 → mask の順に戻せる
+            Component::TickGroupConfiguration restored;
+            restored.SetGroup(static_cast<Component::ETickGroup>(config->Group));
+            restored.SetPriority(config->Priority);
+            restored.SetMask(config->Mask);
+            component.m_TickConfiguration = restored;
+        }
+        MoveEcsPropertyValuesToFallback(&component);
+    }
+
+    void World::LinkEntityRowToParent(Ecs::EcsEntity row, Ecs::EcsEntity parentRow, uint32_t kind)
     {
         Ecs::EcsWorld& ecs = *m_EcsWorld;
         const Ecs::EcsHierarchy* parentHierarchy = parentRow.IsNull() ? nullptr : ecs.GetColumnValue<Ecs::EcsHierarchy>(parentRow);
         if (!parentHierarchy)
         {
             // 根（World 直下）。兄弟の連結は持たない
-            EditHierarchy(ecs, row, [](Ecs::EcsHierarchy& self)
+            EditHierarchy(ecs, row, [kind](Ecs::EcsHierarchy& self)
                           {
                               self.Parent = Ecs::kNullEcsEntity;
                               self.PrevSibling = Ecs::kNullEcsEntity;
                               self.NextSibling = Ecs::kNullEcsEntity;
                               self.Depth = 0;
+                              self.Kind = kind;
                           });
             return;
         }
-        const Ecs::EcsEntity tail = parentHierarchy->LastChild;
+        // Component は所有者の Component の連結、Entity は子 Entity の連結の末尾へ付ける
+        const bool bComponent = kind == Ecs::kEcsHierarchyKindComponent;
+        const Ecs::EcsEntity tail = bComponent ? parentHierarchy->LastComponent : parentHierarchy->LastChild;
         const uint32_t depth = parentHierarchy->Depth + 1;
         EditHierarchy(ecs, row, [&](Ecs::EcsHierarchy& self)
                       {
@@ -2478,6 +2640,7 @@ namespace NorvesLib::Core
                           self.PrevSibling = tail;
                           self.NextSibling = Ecs::kNullEcsEntity;
                           self.Depth = depth;
+                          self.Kind = kind;
                       });
         if (!tail.IsNull())
         {
@@ -2485,10 +2648,12 @@ namespace NorvesLib::Core
         }
         EditHierarchy(ecs, parentRow, [&](Ecs::EcsHierarchy& parent)
                       {
-                          parent.LastChild = row;
-                          if (parent.FirstChild.IsNull())
+                          Ecs::EcsEntity& first = bComponent ? parent.FirstComponent : parent.FirstChild;
+                          Ecs::EcsEntity& last = bComponent ? parent.LastComponent : parent.LastChild;
+                          last = row;
+                          if (first.IsNull())
                           {
-                              parent.FirstChild = row;
+                              first = row;
                           }
                       });
     }
@@ -2502,11 +2667,13 @@ namespace NorvesLib::Core
             return;
         }
         const Ecs::EcsHierarchy mine = *hierarchy;
+        const bool bComponent = mine.Kind == Ecs::kEcsHierarchyKindComponent;
         if (!mine.Parent.IsNull())
         {
             if (mine.PrevSibling.IsNull())
             {
-                EditHierarchy(ecs, mine.Parent, [&](Ecs::EcsHierarchy& parent) { parent.FirstChild = mine.NextSibling; });
+                EditHierarchy(ecs, mine.Parent, [&](Ecs::EcsHierarchy& parent)
+                              { (bComponent ? parent.FirstComponent : parent.FirstChild) = mine.NextSibling; });
             }
             else
             {
@@ -2514,7 +2681,8 @@ namespace NorvesLib::Core
             }
             if (mine.NextSibling.IsNull())
             {
-                EditHierarchy(ecs, mine.Parent, [&](Ecs::EcsHierarchy& parent) { parent.LastChild = mine.PrevSibling; });
+                EditHierarchy(ecs, mine.Parent, [&](Ecs::EcsHierarchy& parent)
+                              { (bComponent ? parent.LastComponent : parent.LastChild) = mine.PrevSibling; });
             }
             else
             {
@@ -2556,6 +2724,15 @@ namespace NorvesLib::Core
 
     void World::UpdateEntitySubtreeDepth(Entity& entity, uint32_t depth)
     {
+        for (Component::Component* component : entity.GetComponents())
+        {
+            const Ecs::EcsEntity componentRow = component->m_EcsEntity;
+            const Ecs::EcsHierarchy* hierarchy = m_EcsWorld->GetColumnValue<Ecs::EcsHierarchy>(componentRow);
+            if (hierarchy && hierarchy->Depth != depth + 1)
+            {
+                EditHierarchy(*m_EcsWorld, componentRow, [&](Ecs::EcsHierarchy& self) { self.Depth = depth + 1; });
+            }
+        }
         for (Entity* child : entity.GetChildEntities())
         {
             const Ecs::EcsEntity childRow = child->m_EcsEntity;
@@ -2588,6 +2765,11 @@ namespace NorvesLib::Core
         {
             ReleaseEntitySubtreeRows(*child);
         }
+        // Component は所有者の葉。所有者の行ごと消えるので、連結は直さない
+        for (Component::Component* component : entity.GetComponents())
+        {
+            ReleaseComponentRow(*component, false);
+        }
         ReleaseEntityRow(entity);
     }
 
@@ -2607,7 +2789,6 @@ namespace NorvesLib::Core
             return;
         }
         const Ecs::EcsEntity row = entity.m_EcsEntity;
-        entity.m_EcsEntity = Ecs::kNullEcsEntity;
         if (row.IsNull())
         {
             return;
@@ -2616,6 +2797,63 @@ namespace NorvesLib::Core
         assert(!Ecs::Detail::EcsIsParallelActive());
         ++m_EcsBindingEpoch;
         Ecs::EcsWorld& ecs = *m_EcsWorld;
+        if (ecs.IsAlive(row))
+        {
+            // 値を予備へ戻す（行を外す前でないと、行を引けない）
+            MoveEntityValuesToFallback(entity);
+        }
+        entity.m_EcsEntity = Ecs::kNullEcsEntity;
+        if (!ecs.IsAlive(row))
+        {
+            return;
+        }
+        // Object への参照を先に切り、以後どのクエリにも出ない孤児にする
+        ecs.WriteColumnValueOf(row, Ecs::EcsObjectRef{});
+        ecs.MarkOrphan(row);
+        if (m_Scheduler->IsRunning())
+        {
+            m_DeferredEntityRows.push_back(row);
+        }
+        else
+        {
+            ecs.DestroyEntity(row);
+        }
+    }
+
+    void World::ReleaseComponentRow(Component::Component& component, bool bUnlink)
+    {
+        if (component.m_EcsCreateSlot != kNoEntityCreateSlot)
+        {
+            // 作成の予約がまだ再生されていない: 札を取り消す（行は無いので消すものも無い）
+            const uint32_t slot = component.m_EcsCreateSlot;
+            component.m_EcsCreateSlot = kNoEntityCreateSlot;
+            if (slot < m_PendingEntityCreates.size() && m_PendingEntityCreates[slot].ComponentTarget == &component)
+            {
+                m_EntityCreateCommands.CancelCreate(m_PendingEntityCreates[slot].Ticket);
+                m_PendingEntityCreates[slot].ComponentTarget = nullptr;
+            }
+            ++m_EcsBindingEpoch;
+            return;
+        }
+        const Ecs::EcsEntity row = component.m_EcsEntity;
+        if (row.IsNull())
+        {
+            return;
+        }
+        // 並列の段の中で Object を解放してはならない（ワーカーは Object に触れない）
+        assert(!Ecs::Detail::EcsIsParallelActive());
+        ++m_EcsBindingEpoch;
+        Ecs::EcsWorld& ecs = *m_EcsWorld;
+        if (ecs.IsAlive(row))
+        {
+            if (bUnlink)
+            {
+                UnlinkEntityRow(row);
+            }
+            // 値を予備へ戻す（行を外す前でないと、行を引けない）
+            MoveComponentValuesToFallback(component);
+        }
+        component.m_EcsEntity = Ecs::kNullEcsEntity;
         if (!ecs.IsAlive(row))
         {
             return;
@@ -2646,6 +2884,18 @@ namespace NorvesLib::Core
         PlaybackEntityRowCreates();
     }
 
+    void World::ReserveComponentRowCreate(Component::Component& component)
+    {
+        // 並列の段の中で Object を木に付けてはならない（ワーカーは Object に触れない）
+        assert(!Ecs::Detail::EcsIsParallelActive());
+        PendingEntityCreate pending;
+        pending.ComponentTarget = &component;
+        pending.Ticket = m_EntityCreateCommands.Create(m_ComponentArchetype);
+        component.m_EcsCreateSlot = static_cast<uint32_t>(m_PendingEntityCreates.size());
+        m_PendingEntityCreates.push_back(pending);
+        ++m_EcsBindingEpoch;
+    }
+
     void World::ReserveEntityRowCreate(Entity& entity)
     {
         // 並列の段の中で Object を木に付けてはならない（ワーカーは Object に触れない）
@@ -2668,22 +2918,43 @@ namespace NorvesLib::Core
         Ecs::EcsCommandBuffer* buffers[] = {&m_EntityCreateCommands};
         Ecs::EcsCommandBuffer::Replay(ecs, Container::Span<Ecs::EcsCommandBuffer* const>(buffers, 1));
 
-        // 階層を直す親（行を持つ Entity）。Inner の並びから子の連結を作り直す
+        // 階層を直す親（行を持つ Entity）。Inner の並びから子と Component の連結を作り直す
         Container::VariableArray<Entity*> dirtyParents;
         Container::UnorderedSet<Entity*> dirtySet;
-        const auto markParent = [&](Entity& entity)
+        const auto markEntity = [&](Entity* parent)
         {
-            Entity* parent = entity.GetParentEntity();
             if (parent && dirtySet.insert(parent).second)
             {
                 dirtyParents.push_back(parent);
             }
         };
+        const auto markParent = [&](Entity& entity) { markEntity(entity.GetParentEntity()); };
 
         uint32_t failed = 0;
         uint32_t created = 0;
         for (const PendingEntityCreate& pending : m_PendingEntityCreates)
         {
+            if (pending.ComponentTarget)
+            {
+                Component::Component& component = *pending.ComponentTarget;
+                component.m_EcsCreateSlot = kNoEntityCreateSlot;
+                const Ecs::EcsEntity componentRow = m_EntityCreateCommands.ResolveCreate(pending.Ticket);
+                if (componentRow.IsNull())
+                {
+                    // 再生に失敗した Component は、値を Object に残したまま行なしで残る
+                    ++failed;
+                    continue;
+                }
+                ++created;
+                component.m_EcsEntity = componentRow;
+                Ecs::EcsObjectRef componentRef;
+                componentRef.Object = static_cast<void*>(&component);
+                componentRef.Generation = componentRow.Generation;
+                ecs.WriteColumnValueOf(componentRow, componentRef);
+                MoveComponentValuesToRow(component);
+                markEntity(component.GetOwner());
+                continue;
+            }
             if (!pending.Target)
             {
                 continue;
@@ -2703,6 +2974,7 @@ namespace NorvesLib::Core
             ref.Object = static_cast<void*>(&entity);
             ref.Generation = row.Generation;
             ecs.WriteColumnValueOf(row, ref);
+            MoveEntityValuesToRow(entity);
             markParent(entity);
         }
         for (const Ecs::EcsEntity row : m_PendingEntityRelinks)
@@ -2787,10 +3059,41 @@ namespace NorvesLib::Core
             }
             previous = row;
         }
+        // Component の連結も Inner の並び（Component だけ）から作り直す
+        Ecs::EcsEntity firstComponent = Ecs::kNullEcsEntity;
+        Ecs::EcsEntity previousComponent = Ecs::kNullEcsEntity;
+        for (Component::Component* component : parent.GetComponents())
+        {
+            const Ecs::EcsEntity row = component->m_EcsEntity;
+            if (!ecs.IsAlive(row))
+            {
+                continue;
+            }
+            const Ecs::EcsEntity before = previousComponent;
+            EditHierarchy(ecs, row, [&](Ecs::EcsHierarchy& self)
+                          {
+                              self.Parent = parentRow;
+                              self.PrevSibling = before;
+                              self.NextSibling = Ecs::kNullEcsEntity;
+                              self.Depth = parentDepth + 1;
+                              self.Kind = Ecs::kEcsHierarchyKindComponent;
+                          });
+            if (!previousComponent.IsNull())
+            {
+                EditHierarchy(ecs, previousComponent, [&](Ecs::EcsHierarchy& sibling) { sibling.NextSibling = row; });
+            }
+            else
+            {
+                firstComponent = row;
+            }
+            previousComponent = row;
+        }
         EditHierarchy(ecs, parentRow, [&](Ecs::EcsHierarchy& self)
                       {
                           self.FirstChild = first;
                           self.LastChild = previous;
+                          self.FirstComponent = firstComponent;
+                          self.LastComponent = previousComponent;
                       });
         UpdateEntitySubtreeDepth(parent, parentDepth);
     }
@@ -2807,10 +3110,11 @@ namespace NorvesLib::Core
         }
         Ecs::EcsWorld& ecs = *m_EcsWorld;
         uint32_t count = 0;
+        uint32_t componentCount = 0;
         const char* error = nullptr;
         for (Entity* root : GetRootEntities())
         {
-            if (!VerifyEntityRows(ecs, *root, Ecs::kNullEcsEntity, 0, count, error))
+            if (!VerifyEntityRows(ecs, *root, Ecs::kNullEcsEntity, 0, count, componentCount, error))
             {
                 break;
             }
@@ -2840,9 +3144,9 @@ namespace NorvesLib::Core
             {
                 orphans += ecs.GetArchetypeRowCount(archetype);
             }
-            if (rows != count)
+            if (rows != static_cast<uint64_t>(count) + componentCount)
             {
-                error = "生きた Entity の数と行の数が一致しない";
+                error = "生きた Entity・Component の数と行の数が一致しない";
             }
             else if (orphans != 0 || !m_DeferredEntityRows.empty())
             {
@@ -2856,7 +3160,7 @@ namespace NorvesLib::Core
             {
                 for (const PendingEntityCreate& pending : m_PendingEntityCreates)
                 {
-                    if (pending.Target)
+                    if (pending.Target || pending.ComponentTarget)
                     {
                         error = "再生されていない行の作成の予約が残っている";
                         break;

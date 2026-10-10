@@ -1,5 +1,6 @@
 ﻿#include "Component/Component.h"
 #include "Object/Entity.h"
+#include "Object/World.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core::Component
@@ -13,24 +14,24 @@ namespace NorvesLib::Core::Component
         : Object()
     {
         ComponentId = s_NextComponentId++;
-        bEnabled = true;
-        bTickEnabled = true;
+        getbEnabled().Set(true);
+        getbTickEnabled().Set(true);
     }
 
     Component::Component(const FieldInitializer *initializer)
         : Object(initializer)
     {
         ComponentId = s_NextComponentId++;
-        bEnabled = true;
-        bTickEnabled = true;
+        getbEnabled().Set(true);
+        getbTickEnabled().Set(true);
     }
 
     Component::Component(const IUnknown *sourceObject)
         : Object(sourceObject)
     {
         ComponentId = s_NextComponentId++;
-        bEnabled = true;
-        bTickEnabled = true;
+        getbEnabled().Set(true);
+        getbTickEnabled().Set(true);
     }
 
     Component::~Component()
@@ -110,25 +111,68 @@ namespace NorvesLib::Core::Component
         return owner ? owner->GetObjectId() : 0;
     }
 
+    Ecs::EcsRowRef Component::GetEcsRow() const
+    {
+        const Entity *owner = GetOwner();
+        World *world = owner ? owner->GetWorld() : nullptr;
+        if (!world || m_EcsEntity.IsNull())
+        {
+            return {};
+        }
+        return Ecs::EcsRowRef{&world->GetEcsWorld(), m_EcsEntity};
+    }
+
+    TickGroupConfiguration Component::LoadTickConfiguration() const
+    {
+        Ecs::EcsTickConfig column{};
+        if (!Ecs::EcsReadColumnPart(GetEcsRow(), Ecs::EcsColumnInfoOf<Ecs::EcsTickConfig>().Type, 0,
+                                    static_cast<uint32_t>(sizeof(column)), &column))
+        {
+            return m_TickConfiguration;
+        }
+        // 列の値は検証済みの設定から写したものなので、群 → 優先度 → mask の順に戻せる
+        TickGroupConfiguration configuration;
+        configuration.SetGroup(static_cast<ETickGroup>(column.Group));
+        configuration.SetPriority(column.Priority);
+        configuration.SetMask(column.Mask);
+        return configuration;
+    }
+
+    void Component::StoreTickConfiguration(const TickGroupConfiguration &configuration)
+    {
+        const Ecs::EcsRowRef row = GetEcsRow();
+        const TypeId type = Ecs::EcsColumnInfoOf<Ecs::EcsTickConfig>().Type;
+        if (Ecs::EcsRowHasColumn(row, type))
+        {
+            Ecs::EcsTickConfig column{};
+            column.Group = static_cast<uint8_t>(configuration.GetGroup());
+            column.Priority = configuration.GetPriority();
+            column.Mask = configuration.GetMask();
+            Ecs::EcsWriteColumnPart(row, type, 0, static_cast<uint32_t>(sizeof(column)), &column);
+            return;
+        }
+        m_TickConfiguration = configuration;
+    }
+
     void Component::Enable()
     {
-        if (bEnabled)
+        if (getbEnabled().Get())
         {
             return;
         }
 
-        bEnabled = true;
+        getbEnabled().Set(true);
         MarkRenderStateDirty();
     }
 
     void Component::Disable()
     {
-        if (!bEnabled)
+        if (!getbEnabled().Get())
         {
             return;
         }
 
-        bEnabled = false;
+        getbEnabled().Set(false);
         MarkRenderStateDirty();
     }
 

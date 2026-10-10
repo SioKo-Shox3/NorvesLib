@@ -2,6 +2,7 @@
 
 #include "Object/Object.h"
 #include "Component/TickGroup.h"
+#include "Ecs/EcsTypes.h"
 #include "Engine/TimeChannels.h"
 #include "Object/Entity.h"
 #include "Object/Reflection.h"
@@ -143,12 +144,12 @@ namespace NorvesLib::Core::Component
         /**
          * @brief 有効かどうか
          */
-        bool IsEnabled() const { return bEnabled; }
+        bool IsEnabled() const { return getbEnabled().Get(); }
 
         /**
          * @brief アクティブかどうか（オーナーが存在かつ自身も有効）
          */
-        virtual bool IsActive() const { return bEnabled && GetOuter() != nullptr; }
+        virtual bool IsActive() const { return getbEnabled().Get() && GetOuter() != nullptr; }
 
         // ========================================
         // Render state dirty tracking
@@ -186,44 +187,77 @@ namespace NorvesLib::Core::Component
         /**
          * @brief Tick有効設定
          */
-        void SetTickEnabled(bool bEnabled) { bTickEnabled = bEnabled; }
-        bool IsTickEnabled() const { return bTickEnabled; }
+        void SetTickEnabled(bool bEnabled) { getbTickEnabled().Set(bEnabled); }
+        bool IsTickEnabled() const { return getbTickEnabled().Get(); }
         ETickGroup GetTickGroup() const
         {
-            return m_TickConfiguration.GetGroup();
+            return LoadTickConfiguration().GetGroup();
         }
         int16_t GetTickPriority() const
         {
-            return m_TickConfiguration.GetPriority();
+            return LoadTickConfiguration().GetPriority();
         }
         TickGroupMask GetTickGroupMask() const
         {
-            return m_TickConfiguration.GetMask();
+            return LoadTickConfiguration().GetMask();
         }
         bool SetTickGroup(ETickGroup group)
         {
-            return m_TickConfiguration.SetGroup(group);
+            TickGroupConfiguration configuration = LoadTickConfiguration();
+            if (!configuration.SetGroup(group))
+            {
+                return false;
+            }
+            StoreTickConfiguration(configuration);
+            return true;
         }
         void SetTickPriority(int16_t priority)
         {
-            m_TickConfiguration.SetPriority(priority);
+            TickGroupConfiguration configuration = LoadTickConfiguration();
+            configuration.SetPriority(priority);
+            StoreTickConfiguration(configuration);
         }
         bool SetTickGroupMask(TickGroupMask mask)
         {
-            return m_TickConfiguration.SetMask(mask);
+            TickGroupConfiguration configuration = LoadTickConfiguration();
+            if (!configuration.SetMask(mask))
+            {
+                return false;
+            }
+            StoreTickConfiguration(configuration);
+            return true;
         }
+
+        // ========================================
+        // ECS の行
+        // ========================================
+
+        /**
+         * @brief この Component の ECS の行（World の木にいる間だけ有効。木から外れる前に World が切る）
+         */
+        Ecs::EcsEntity GetEcsEntity() const { return m_EcsEntity; }
+
+        /**
+         * @brief 行を引く口（プロパティ用）。行が無い間は IsBound() が false
+         */
+        Ecs::EcsRowRef GetEcsRow() const;
 
     protected:
         // ========================================
         // リフレクションプロパティ
         // ========================================
         PROPERTY(uint64_t, ComponentId) // コンポーネントID
-        PROPERTY(bool, bEnabled)        // 有効状態
-        PROPERTY(bool, bTickEnabled)    // Tick有効
+        // flags は World の木にいる間 ECS の行（EcsComponentFlags）の列にあり、無い間は予備の値にある
+        ECS_PROPERTY(Ecs::EcsComponentFlags, bEnabled, bool, bEnabled)         // 有効状態
+        ECS_PROPERTY(Ecs::EcsComponentFlags, bTickEnabled, bool, bTickEnabled) // Tick有効
         PROPERTY(bool, bBegunPlay)      // BeginPlay済みフラグ
 
         bool m_bRenderStateDirty = true;
         uint64_t m_LastSyncedTransformVersion = 0;
+        /// ECS の行（World が付け外しする）
+        Ecs::EcsEntity m_EcsEntity;
+        /// 段の最中に予約した行の作成の位置（World の予約の並び。予約が無ければ最大値。同期点までの間だけ持つ）
+        uint32_t m_EcsCreateSlot = 0xFFFFFFFFu;
 
     private:
         friend class ::NorvesLib::Core::World;
@@ -232,7 +266,10 @@ namespace NorvesLib::Core::Component
 
         // ID生成用静的カウンター
         static uint64_t s_NextComponentId;
+        // 行が付いている間は ECS の列（EcsTickConfig）が正で、無い間はこの予備が正（行を外すときに列から戻す）
         TickGroupConfiguration m_TickConfiguration;
+        TickGroupConfiguration LoadTickConfiguration() const;
+        void StoreTickConfiguration(const TickGroupConfiguration &configuration);
     };
 
     // コンポーネントへのスマートポインタ

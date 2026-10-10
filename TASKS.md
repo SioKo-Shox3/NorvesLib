@@ -331,12 +331,12 @@
 - notes: 親の追記（GPT 2 周目）: `DestroyEntitySubtree`（World.cpp 1974 行付近）は `RemoveInner` を通らないので、切り離す前に部分木の行を無効化する共通の処理をここにも入れる。寿命のテストに通常の `RemoveObject` と Heap が持つ部分木の遅延回収を含める。
 
 ## SCN-ECS-BIND-FLAGS: Component の行と、flags・時間倍率・Tick の設定を列へ移す
-- status: todo
+- status: done
 - done-when: 値を列に持つ Component の行（所有者の子の葉）を作る。Entity の bActive・bTickEnabled・bPendingDestroy・CustomTimeDilation と、Component の bEnabled・bTickEnabled・TickGroupConfiguration を列にする（設計 1.3。プロパティのものは ECS_PROPERTY）。旧の配信はこの列を読む。下のテストと起動画面の比較が pass する。
 - verify: `cmake --build build --config Debug --target EntityTreeTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(WorldTickGroupTest|WorldTimeChannelTest|EntityTreeTest|TickGroupConfigurationTest)$" --no-tests=error --output-on-failure --timeout 180`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-BIND-FLAGS`
-- paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Component/Component.h, Library/Core/Private/Component/Component.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
+- paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Component/Component.h, Library/Core/Private/Component/Component.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Test/Core/Object/EcsLifetimeTest.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-TRANSFORM-VALUES: Entity の変換の値を列へ移す
 - status: todo

@@ -71,8 +71,14 @@ namespace NorvesLib::Core::Ecs
         uint32_t Reserved = 0;
     };
 
+    /// EcsHierarchy::Kind の値。行が Entity か、Entity の子の葉の Component か
+    inline constexpr uint32_t kEcsHierarchyKindEntity = 0;
+    inline constexpr uint32_t kEcsHierarchyKindComponent = 1;
+
     /// Object を持つ実体の階層。World 直下（根）の Parent は null で、根どうしの兄弟の連結は持たない。
-    /// 子の並びは Outer/Inner の並び（Entity だけを取り出した順）と同じ。Depth は根が 0。
+    /// 子 Entity の並びは Outer/Inner の並び（Entity だけを取り出した順）と同じ。Depth は根が 0。
+    /// Component の行は所有者の子の葉（Kind が Component、子を持たない）で、所有者の FirstComponent・LastComponent を
+    /// 頭と末尾とする別の連結に、Inner の並び（Component だけを取り出した順）で入る。子 Entity の連結には入らない。
     struct EcsHierarchy
     {
         EcsEntity Parent;
@@ -80,8 +86,44 @@ namespace NorvesLib::Core::Ecs
         EcsEntity LastChild;
         EcsEntity NextSibling;
         EcsEntity PrevSibling;
+        EcsEntity FirstComponent;
+        EcsEntity LastComponent;
         uint32_t Depth = 0;
-        uint32_t Reserved = 0;
+        uint32_t Kind = kEcsHierarchyKindEntity;
+    };
+
+    /// Entity の行の flags（プロパティ。ECS_PROPERTY で読み書きする）
+    struct EcsEntityFlags
+    {
+        bool bActive;
+        bool bTickEnabled;
+        bool bPendingDestroy;
+        bool Reserved;
+    };
+
+    /// Entity の行の局所の時間倍率（親子へは継承しない。World と Animation の channel にだけ掛かる）
+    struct EcsTimeDilation
+    {
+        float CustomTimeDilation;
+    };
+
+    /// Component の行の flags（プロパティ。ECS_PROPERTY で読み書きする）
+    struct EcsComponentFlags
+    {
+        bool bEnabled;
+        bool bTickEnabled;
+        bool Reserved0;
+        bool Reserved1;
+    };
+
+    /// Component の行の Tick の設定（型ごとの更新設定。保存の対象にはしない）。Mask は群の bit の集合
+    struct EcsTickConfig
+    {
+        uint8_t Group;
+        uint8_t Reserved;
+        int16_t Priority;
+        uint16_t Mask;
+        uint16_t Reserved2;
     };
 
     /// アーキタイプの番号（EcsWorld が割り当てる）
