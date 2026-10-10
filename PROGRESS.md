@@ -829,8 +829,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 
 ### SCN-MEGA-PROBE-ROOT（2026-10-10、反復 10・run 20261010-132327）
 
-- `--mega-lod-error-px=<px>` を足した（`Game/GameApplicationHandler.cpp`。0 より大きい有限の数だけ。開発ビルドだけ有効で、リリース系は警告して無視する）。値は `MegaGeometryPass` が最初に作られる前に、既存の環境変数 `NORVES_MEGA_LOD_ERROR_PX` へ渡す（パス側の読み取りは変えていない）。指定が無ければ挙動は従来のまま。
-- クックの計測用に `Tools/AssetCook/CookMeshDag.cpp` へ、環境変数 `NORVES_COOK_DAG_TRACE=1` のときだけ段ごとの量を標準エラーへ出す記録（`COOK_DAG level=...`）を足した。クックの結果は変えない。
+- `--mega-lod-error-px=<px>` を足した（`Game/GameApplicationHandler.cpp`。0 より大きい有限の数だけ。開発ビルドだけ有効で、リリース系では引数自体を扱わない）。値は `MegaGeometryPass` が最初に作られる前に、既存の環境変数 `NORVES_MEGA_LOD_ERROR_PX` へ渡す（パス側の読み取りは変えていない）。指定が無ければ挙動は従来のまま。
+- クックの計測用に `Tools/AssetCook/CookMeshDag.cpp` へ、環境変数 `NORVES_COOK_DAG_TRACE=1` のときだけ段ごとの量をログ（`NORVES_LOG_WARNING`。AssetCook は標準出力に出る）へ出す記録（`COOK_DAG level=...`）を足した。クックの結果は変えない。
 - 描画の計測（1 万本 overview、RelWithDebInfo、1920x1080、`-GpuTimingFrames 300` の 240 フレーム）。1 クラスタあたりの ns = パスの中央値 ms ÷ `clusters_drawn_last`:
 
 | 閾値 | 描いたクラスタ数 | 1 本あたり | VisRasterSw1 中央値 | VisRasterSw1 の ns/クラスタ | MegaGeometry 全体 ns/クラスタ | gt / rt 中央値 ms |
@@ -860,4 +860,5 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - **根で止まった理由は `MinProgressPercent`（15%）**: 段 9 の簡略化で 4,112→3,690 三角形（減少 10.3%）に留まり、`decision=min-progress`（`CookMeshDag.cpp` の `output.NextTriangles * 100 > currentTriangles * (100 - 15)`）。クラスタが 1 つになる条件（`single-cluster`）や段の上限 64 ではない。
   - 減少が鈍る原因は、段 3 以降で毎段 6〜8 グループが「安全な簡略化が無く簡略化せずに残した」（rejected。非多様体の辺を作る出力を除く判定）こと。段 9 では 10 グループ中 7 が rejected で、実質 3 グループ分しか減らない。境界の固定（`ComputeGroupBoundaryLocks`）自体の影響は、この記録からは分けられていない（rejected の数まで）。段 5〜8 の減少率は 17〜19% で閾値 15% のすぐ上にあり、閾値を少し上げ下げすると根の段数が変わる。
 - 証拠（`.harness/runs/20261010-132327/`）: `verify-SCN-MEGA-PROBE-ROOT-1.txt`（RelWithDebInfo の Game ビルド EXIT=0）、`-2-px1.txt`・`-2-root.txt`（`CaptureScene.ps1 ... banana-count=10000,mega-lod-error-px=1|100000` が各 pass。`mega_stats` と `gpu_pass_median` はこの行）、`-3-cookbuild.txt`（AssetCook のビルド EXIT=0）、`-4-cook.txt`（クックの段ごとの記録）。撮影の出力は `scene-capture/SCN-MEGA-PROBE-ROOT/{px1,root}/`。
+- 反復 11（評価者の差し戻しへの対応）: (1) `--mega-lod-error-px` の検査を含む分岐全体と定数を `#if NORVES_BUILD_DEVELOPMENT` の中へ移した（リリース系では引数を扱わず、従来どおり）。(2) 検査を `std::string`/`strtof` から既存の `TryParseBoundedFloat`（下限 1e-6・上限 1e9）に替え、環境変数へは `snprintf` した固定長バッファで渡す。(3) クックのトレースを `std::fprintf` から `NORVES_LOG_WARNING` に替えた。AssetCook はロガーを初期化せず、フォーマッタが空だとログが捨てられ、コンソールの既定は Warning 以上なので、トレースを有効にしたときだけ標準フォーマッタを 1 回入れ、Warning で出す（Info では 0 行になることを実走で確認した）。再実走: `verify-SCN-MEGA-PROBE-ROOT-11-cook.out.txt` に `COOK_DAG` が 10 行出て、段 0 = 780/99,722、段 9（根）= 44/4,112・減少 10.3%・`decision=min-progress` で前回と同じ。`-11-build.txt`（Game の RelWithDebInfo ビルド EXIT=0）、`-11-cookexebuild.txt`（AssetCook のビルド EXIT=0）、`-11-capture.txt`（`mega-lod-error-px=100000` の撮影が pass。`clusters_drawn_last=112804`、`VisRasterSw1` 0.942 ms ≒ 8.35 ns/クラスタ。前回の 7.87 ns とは run 間の揺れの範囲で、結論は変わらない）。
 - Notes: 製品の挙動は変えていない（新しい起動引数と環境変数つきの記録は、指定したときだけ効く）。次の手: 根の段数と rejected を減らす案（MinProgressPercent の見直し、rejected の原因の調査）は別タスクで。

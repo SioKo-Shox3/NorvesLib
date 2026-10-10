@@ -1,6 +1,7 @@
 ﻿#include "CookMeshDag.h"
 
 #include "CookMeshOptimizer.h"
+#include "Logging/LogMacros.h"
 #include "Rendering/MegaGeometry/MeshClusterizer.h"
 
 #include <meshoptimizer.h>
@@ -47,7 +48,7 @@ namespace NorvesLib::Tools::AssetCook
         // 1 段で三角形がこの割合(%)も減らない段は、簡略化が進まないので、そこを根の段として打ち切る。
         constexpr uint64_t MinProgressPercent = 15;
 
-        // 環境変数 NORVES_COOK_DAG_TRACE=1 のとき、段ごとの量と根にした理由を標準エラーへ出す（計測用。クックの結果は変えない）。
+        // 環境変数 NORVES_COOK_DAG_TRACE=1 のとき、段ごとの量と根にした理由をログへ出す（計測用。クックの結果は変えない）。
         bool IsDagTraceEnabled()
         {
 #if defined(_MSC_VER)
@@ -59,6 +60,16 @@ namespace NorvesLib::Tools::AssetCook
 #pragma warning(pop)
 #endif
             return value != nullptr && std::strcmp(value, "1") == 0;
+        }
+
+        // AssetCook はロガーを初期化しないので、フォーマッタが空のままだとログが捨てられる。計測を有効にしたときだけ標準のものを入れる。
+        void EnsureTraceLogFormatter()
+        {
+            static const bool bInstalled = []() {
+                Core::Logging::Logger::GetInstance().SetFormatter(Core::Logging::LogFormatterPtr{});
+                return true;
+            }();
+            (void)bInstalled;
         }
 
         struct BuildCluster
@@ -774,19 +785,21 @@ namespace NorvesLib::Tools::AssetCook
             }
             if (IsDagTraceEnabled())
             {
-                // 計測用: 段ごとのクラスタ数・三角形数と、次の段でどれだけ減ったか（根にした理由つき）
+                // 計測用: 段ごとのクラスタ数・三角形数と、次の段でどれだけ減ったか（根にした理由つき）。
+                // 環境変数で明示したときだけ出るので、コンソールの既定（Warning 以上）に届くよう Warning で出す。
                 const double reductionPercent =
                     (bMakeRoot && output.Groups.empty())
                         ? 0.0
                         : 100.0 - 100.0 * static_cast<double>(output.NextTriangles) / static_cast<double>(currentTriangles);
-                std::fprintf(stderr,
-                             "COOK_DAG level=%u clusters=%zu triangles=%llu groups=%zu next_clusters=%zu "
-                             "next_triangles=%llu reduction_percent=%.1f permissive=%u rejected=%u min_progress_percent=%llu "
-                             "decision=%s\n",
-                             level, current.size(), static_cast<unsigned long long>(currentTriangles), output.Groups.size(),
-                             output.Next.size(), static_cast<unsigned long long>(output.NextTriangles), reductionPercent,
-                             output.PermissiveGroups, output.RejectedGroups,
-                             static_cast<unsigned long long>(MinProgressPercent), bMakeRoot ? rootReason : "continue");
+                EnsureTraceLogFormatter();
+                NORVES_LOG_WARNING("CookMeshDag",
+                                   "COOK_DAG level=%u clusters=%zu triangles=%llu groups=%zu next_clusters=%zu "
+                                   "next_triangles=%llu reduction_percent=%.1f permissive=%u rejected=%u min_progress_percent=%llu "
+                                   "decision=%s",
+                                   level, current.size(), static_cast<unsigned long long>(currentTriangles), output.Groups.size(),
+                                   output.Next.size(), static_cast<unsigned long long>(output.NextTriangles), reductionPercent,
+                                   output.PermissiveGroups, output.RejectedGroups,
+                                   static_cast<unsigned long long>(MinProgressPercent), bMakeRoot ? rootReason : "continue");
             }
 
             if (bMakeRoot)
