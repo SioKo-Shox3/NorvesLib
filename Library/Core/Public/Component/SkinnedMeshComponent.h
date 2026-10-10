@@ -91,10 +91,18 @@ namespace NorvesLib::Core::Component
         void OnEcsRowAttached() override;
         void OnEcsRowDetaching() override;
 
+        // 描画の値（メッシュの handle・可視・影を落とす）は World の木にいる間 ECS の行（EcsSkinnedRender）の列にあり、
+        // 無い間は予備の値にある。メッシュの handle はアセットから求めた値の写しで、保存の対象にならない型
+        ECS_PROPERTY(Ecs::EcsSkinnedRender, MeshHandle, Rendering::SkinnedMeshHandle, MeshHandle)
+        ECS_PROPERTY(Ecs::EcsSkinnedRender, bVisible, bool, bVisible)
+        ECS_PROPERTY(Ecs::EcsSkinnedRender, bCastShadow, bool, bCastShadow)
+
       private:
-        // 可視・影・材質の handle は行が付いている間 ECS の列（EcsSkinnedRender）が正で、無い間は下の予備のメンバが正
-        Ecs::EcsSkinnedRender LoadRenderValues() const;
-        void StoreRenderValues(const Ecs::EcsSkinnedRender& values);
+        // 材質の handle は行が付いている間 ECS の列（EcsSkinnedRender）が正で、無い間は下の予備のメンバが正
+        Rendering::MaterialHandle LoadMaterial() const;
+        void StoreMaterial(Rendering::MaterialHandle material);
+        // アセットの描画用 handle を列（無い間は予備）へ写す。lease の作り直しに追従するため、proxy の構築前にも呼ぶ
+        void RefreshMeshHandle();
 
         Container::TSharedPtr<const Rendering::SkinnedMeshAssetLease> GetMaterialBindingLease() const;
         bool HasValidPoseResources() const;
@@ -119,9 +127,7 @@ namespace NorvesLib::Core::Component
         float m_PlaybackRate = 1.0f;
         bool m_bExternalAnimationDriven = false;
         bool m_bPlaying = true;
-        bool m_bCastShadow = true;
         bool m_bLooping = true;
-        bool m_bVisible = true;
         bool m_bPoseDirty = true;
     };
 } // namespace NorvesLib::Core::Component

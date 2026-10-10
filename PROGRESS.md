@@ -1350,3 +1350,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 描画の値の列は追跡（`MarkWritten`）の設定をまだ持たない。変更ログに載せるのは SYNC-PREP 以降の項目。
   - ECS_PROPERTY の読み書きは 1 プロパティごとに行を引く。Mesh の proxy の構築は 1 回で 4〜5 回引くので、同期を変わった行だけにする項目（SYNC-SWITCH）で、列をまとめて読む形にできる。
   - 行末: 編集したファイルは numstat の 2 通りが一致（`World.cpp`・`World.h` は混在のまま、位置ごとに元の行末で置換）。新規の `EcsRenderTypes.h` は UTF-8 BOM + CRLF。
+
+### SCN-ECS-RENDER-COLUMNS-MESH 差し戻し対応（2026-10-11、反復 35・run 20261010-223034）
+
+- 差し戻し: SkinnedMesh の可視・影が `ECS_PROPERTY` でなく手動の Load/Store だった点と、メッシュの handle が列に無くアセットから毎回求めていた点。
+- 変更:
+  - `EcsRenderTypes.h`: `EcsSkinnedRender` に `SkinnedMeshHandle MeshHandle` を足した。
+  - `SkinnedMeshComponent`: メッシュの handle・可視・影を落とすを `ECS_PROPERTY(EcsSkinnedRender, ...)` にし、手動の `LoadRenderValues`/`StoreRenderValues` と予備のメンバ `m_bVisible`・`m_bCastShadow` を廃止した。材質の handle はスロットごとの上書きと一緒に扱うので、列の一部（`Material` の位置）だけを読み書きする `LoadMaterial`/`StoreMaterial` に縮めた（行の付け外しの `OnEcsRowAttached/Detaching` は材質だけ移す）。メッシュの handle は `RefreshMeshHandle` が資産の描画用 handle を列へ写す（`SetSkeletalAsset` の末尾と、proxy を作る直前＝lease の作り直しへの追従）。proxy は列の値を読む。
+  - 保存の形式: `bVisible`・`bCastShadow`（bool）が SkinnedMesh のプロパティとして増える。`MeshHandle` は型がシリアライズ不能なので保存されない（従来の保存の対象は変わらず、増えた bool は古いデータに無くても既定の true で読める）。
+  - `MegaGeometryComponent.h`: 差分の文脈の英語の doc コメントを日本語にした。
+- テスト: `WorldSyncDifferentialTest::TestRenderValuesLiveInComponentRow` に、SkinnedMesh の 3 プロパティの `StorageKind::EcsColumn` と、列を直接書き換えると `IsVisible`/`CastsShadow` がその値を返すことの照合を足した。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-ECS-RENDER-COLUMNS-MESH-9.txt`: 指定 4 ターゲットのビルド EXIT=0。`-8` は Git Bash が `/m:1` を変換して失敗した試行で証拠にしない。
+  - `-10.txt`: 指定 ctest 4/4 Passed。
+  - `-13-neighbors.txt`: 隣接の 11 件（Ecs*・EntityTree・WorldTickGroup・TransformHierarchy・WorldRenderInterpolation・SceneSerializer・PrefabRoundTrip・SchemaProjection・ComponentDirtyTracking）すべて Passed（実体の `EntityTreeTest`・`ObjectReflectionTest`・`SceneSerializerTest` は再ビルド済み。`-11`・`-12` はターゲット名の誤りで証拠にしない）。
+  - `-14-startup.txt`: 起動画面の決定論の比較 `result=pass`。3 視点とも `within_limits=True`（default は PSNR 100 dB）。`default.png` を開いて確認。
+- Notes: Bash から MSBuild の `/m:1` を渡すとパスに変換される。ビルドは PowerShell で実行すること。`MegaGeometryComponent.h` は BOM 無しの UTF-8 に日本語があり C4819 の警告が出る（前の反復から。BOM の付与は別件）。

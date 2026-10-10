@@ -348,6 +348,23 @@ namespace
         assert(!skinned->CastsShadow());
         assert(ecs.GetColumnValue<Ecs::EcsMeshRender>(skinned->GetEcsEntity()) == nullptr);
 
+        // 可視・影・メッシュの handle は列に置くプロパティで、値は列にだけある
+        const IClass* skinnedClass = skinned->GetClass();
+        assert(skinnedClass);
+        for (const char* name : {"MeshHandle", "bVisible", "bCastShadow"})
+        {
+            const ClassProperty* property = skinnedClass->GetProperty(Identity(name));
+            assert(property);
+            assert(property->GetStorageKind() == StorageKind::EcsColumn);
+        }
+        // 列の値を直接書き換えると、Component の読み口と proxy の元がその値を返す
+        Ecs::EcsSkinnedRender* skinnedWritable = ecs.GetColumnValue<Ecs::EcsSkinnedRender>(skinned->GetEcsEntity());
+        assert(skinnedWritable);
+        skinnedWritable->bVisible = true;
+        skinnedWritable->bCastShadow = true;
+        assert(skinned->IsVisible());
+        assert(skinned->CastsShadow());
+
         world.Finalize();
     }
 }

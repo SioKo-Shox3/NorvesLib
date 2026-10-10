@@ -11,6 +11,7 @@
 #include "Ecs/EcsTypes.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/RenderTypes.h"
+#include "Rendering/SkinnedMeshTypes.h"
 
 #include <cstdint>
 
@@ -33,9 +34,11 @@ namespace NorvesLib::Core::Ecs
         Rendering::MegaGeometry::MegaMeshHandle Handle;
     };
 
-    /// SkinnedMeshComponent の行の描画の値。保存の対象にしないので、プロパティにはせず Component が読み書きする
+    /// SkinnedMeshComponent の行の描画の値。メッシュの handle・可視・影を落とすはプロパティ（ECS_PROPERTY で読み書きする）。
+    /// 材質の handle はスロットごとの上書きと一緒に扱うので、プロパティにはせず Component が読み書きする
     struct EcsSkinnedRender
     {
+        Rendering::SkinnedMeshHandle MeshHandle;
         Rendering::MaterialHandle Material;
         bool bVisible;
         bool bCastShadow;

@@ -31,9 +31,9 @@ namespace NorvesLib::Core::Component
         bool HasMegaMesh() const { return getMegaMeshHandleValue().Get().IsValid(); }
 
         /**
-         * @brief Build a MegaGeometry proxy for SceneView synchronization.
-         * @param outProxy Output proxy destination.
-         * @return true when a valid proxy was produced.
+         * @brief SceneView 同期用の MegaGeometry proxy を構築する
+         * @param outProxy 出力先
+         * @return 有効な proxy を作れたら true
          */
         bool BuildMegaGeometryProxy(Rendering::MegaGeometryProxy &outProxy) const;
 
