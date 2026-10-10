@@ -1273,3 +1273,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-5-legacy.txt` の最初の実行は `-GameArgs` に `--` を付けて失敗した（スクリプトが `--` を足すので不要）。上書き保存した版が正。
   - `CanDispatchEntity` は祖先の Active の変更を、次の伝播まで見ない（自分の変更は即座に見る）。段の途中で祖先を止めた場合、その段の残りの群では子孫が 1 回余分に Tick し得る。WorldTickGroupTest は pass。
   - 行末: `World.cpp`・`World.h`・`ApplicationProcessor.cpp` は混在。元の行末を保つ置換で編集した（numstat 2 通りが一致）。`sed -i` は CRLF を LF にしてしまうので使わない。
+
+### SCN-ECS-TRANSFORM-SWITCH 差し戻し対応（2026-10-11、反復 30・run 20261010-223034）
+
+- 原因:
+  1. 作成予約中の Entity（段の最中に作った子。行がまだ無い）は伝播の対象に載らず、その間に付け替えると未更新のキャッシュの座標を保存していた。
+  2. `CanDispatchEntity` が `bValid` のキャッシュをそのまま採るため、同じ群の中で祖先が `SetActive(false)`・`MarkForDestroy()` されても、後続の子は古い EffectiveActive で呼ばれた。
+- 変更:
+  - `World::UpdateWorldTransforms`: 作成予約（`m_PendingEntityCreates`）がある間も、付け替え待ちと同じく旧の再帰で求める。
+  - `World::CanDispatchEntity`: 作成予約・付け替え待ちがある間と、EcsEntityFlags の変更が次の伝播まで未消費の間は、キャッシュを採らず祖先をたどる。変換全体は伝播しないので、同じ群の中の姿勢公開規則は変わらない。
+  - `EcsTransformSystem::HasUnpropagatedFlagChanges()`: EcsEntityFlags のログに未消費の変更があるか（消費者を持てないときは常に true）。
+  - テスト（`EcsHierarchyTest`）: `TestSpawnedChildReparentKeepsPosition`（段の最中に作った子の付け替えで座標 12、旧と一致）、`TestAncestorStopSuppressesDescendantsImmediately`（親の SetActive(false)・MarkForDestroy の後に子・孫が呼ばれない、旧と一致）。修正を外すと、前者は `propagated == legacy`、後者は `RunAncestorStop(false, …) == 0` で落ちることを確かめた。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-TRANSFORM-SWITCH-8.txt`（EntityTreeTest・ApplicationFixedStepPipelineTest のビルド EXIT=0）、`-9.txt`（5 件の ctest 5/5 Passed）、`-10-startup.txt`（起動画面の決定論の比較 `result=pass`、3 視点とも `within_limits=True`）。`-6`・`-7` はテストの前提の誤り（破棄予約で Entity が解放された後に Count を読んだ）の版で、証拠にしない。
+- Notes: `HasUnpropagatedFlagChanges` が true の間（例: 伝播の前に Entity を作った直後）は祖先をたどるので、その間の判定は旧の経路と同じ費用になる。次の伝播で戻る。

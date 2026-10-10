@@ -1427,7 +1427,9 @@ namespace NorvesLib::Core
         {
             return false;
         }
-        if (!m_bLegacyTransformPropagation && m_EcsWorld && m_PendingEntityRelinks.empty())
+        // 作成予約中の行・付け替え待ちがある間と、Active・PendingDestroy の変更がまだ伝播されていない間は、キャッシュが古いので祖先をたどる
+        if (!m_bLegacyTransformPropagation && m_EcsWorld && m_PendingEntityRelinks.empty() && m_PendingEntityCreates.empty() &&
+            m_EcsTransformSystem && !m_EcsTransformSystem->HasUnpropagatedFlagChanges())
         {
             const Ecs::EcsEntity row = entity.GetEcsEntity();
             if (!row.IsNull() && m_EcsWorld->IsAlive(row))
@@ -1718,9 +1720,9 @@ namespace NorvesLib::Core
             return;
         }
 
-        // 同期点まで待たせた付け替えがある間は、階層の列が Outer/Inner と食い違う。この間は Outer/Inner を正とする旧の再帰で求める
+        // 同期点まで待たせた付け替えと作成予約（行がまだ無い Entity）がある間は、階層の列が Outer/Inner と食い違う。この間は Outer/Inner を正とする旧の再帰で求める
         const bool bLegacy = m_bLegacyTransformPropagation || !m_EcsWorld || m_EntityArchetype == Ecs::kInvalidEcsArchetype ||
-                             !m_PendingEntityRelinks.empty();
+                             !m_PendingEntityRelinks.empty() || !m_PendingEntityCreates.empty();
         if (bLegacy)
         {
             auto roots = GetRootEntities();

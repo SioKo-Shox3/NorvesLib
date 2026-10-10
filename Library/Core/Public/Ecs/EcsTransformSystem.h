@@ -132,6 +132,16 @@ namespace NorvesLib::Core::Ecs
             m_ParallelGrain = grain == 0 ? 1 : grain;
         }
 
+        /**
+         * @brief 前回の Run より後に EcsEntityFlags（Active・PendingDestroy）の変更があったか
+         *
+         * true の間、行の EffectiveActive は古いかもしれない。消費者を持てないときは常に true。
+         */
+        [[nodiscard]] bool HasUnpropagatedFlagChanges() const
+        {
+            return !m_bIncremental || m_World.GetChangeLogLength(m_Flags) != 0;
+        }
+
         [[nodiscard]] bool IsParallel() const
         {
             return m_bParallel;

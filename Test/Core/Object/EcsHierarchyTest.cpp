@@ -553,6 +553,111 @@ namespace
         propagated.Finalize();
         legacy.Finalize();
     }
+
+    // 段の最中に作った子（行の作成を予約中）を、局所の位置を決めてすぐ根へ付け替えても、座標が旧の再帰と同じに保たれる
+    class SpawnAndDetachEntity : public Entity
+    {
+    public:
+        Entity *Spawned = nullptr;
+        bool bDone = false;
+
+        void Tick(float) override
+        {
+            if (bDone)
+            {
+                return;
+            }
+            bDone = true;
+            World *world = GetWorld();
+            Spawned = world->SpawnEntity<Entity>(this);
+            Spawned->SetLocalPosition(2.0f, 0.0f, 0.0f);
+            assert(world->ReparentEntity(Spawned, nullptr));
+        }
+    };
+
+    float RunSpawnAndDetach(bool bLegacy)
+    {
+        World world;
+        world.Initialize();
+        world.SetLegacyTransformPropagation(bLegacy);
+        auto *root = world.SpawnEntity<SpawnAndDetachEntity>();
+        root->SetLocalPosition(10.0f, 0.0f, 0.0f);
+        world.UpdateWorldTransforms();
+        world.Tick(0.01f);
+        world.LateTick(0.01f);
+        assert(root->Spawned != nullptr);
+        // 付け替えは世界の位置を保つ: 親の 10 + 局所の 2
+        const float x = root->Spawned->GetWorldTransform().position.x;
+        assert(root->Spawned->GetParentEntity() == nullptr);
+        world.UpdateWorldTransforms();
+        assert(root->Spawned->GetWorldTransform().position.x == x);
+        world.Finalize();
+        return x;
+    }
+
+    void TestSpawnedChildReparentKeepsPosition()
+    {
+        const float legacy = RunSpawnAndDetach(true);
+        const float propagated = RunSpawnAndDetach(false);
+        assert(legacy == 12.0f);
+        assert(propagated == legacy);
+    }
+
+    // 同じ群の中で祖先が止まる・破棄予約になったら、後ろの子はそのとき呼ばれない（旧の祖先をたどる判定と同じ）
+    class StopOwnerEntity : public Entity
+    {
+    public:
+        bool bDestroy = false;
+
+        void Tick(float) override
+        {
+            if (bDestroy)
+            {
+                MarkForDestroy();
+            }
+            else
+            {
+                SetActive(false);
+            }
+        }
+    };
+
+    class CountEntity : public Entity
+    {
+    public:
+        int *Counter = nullptr;
+
+        void Tick(float) override { ++*Counter; }
+    };
+
+    int RunAncestorStop(bool bLegacy, bool bDestroy)
+    {
+        World world;
+        world.Initialize();
+        world.SetLegacyTransformPropagation(bLegacy);
+        auto *parent = world.SpawnEntity<StopOwnerEntity>();
+        parent->bDestroy = bDestroy;
+        int count = 0;
+        auto *child = world.SpawnEntity<CountEntity>(parent);
+        child->Counter = &count;
+        auto *grandChild = world.SpawnEntity<CountEntity>(child);
+        grandChild->Counter = &count;
+        // 先に伝播して、全員が EffectiveActive を求めた状態にする
+        world.UpdateWorldTransforms();
+        world.UpdateWorldTransforms();
+        world.Tick(0.01f);
+        world.Finalize();
+        return count;
+    }
+
+    void TestAncestorStopSuppressesDescendantsImmediately()
+    {
+        for (const bool bDestroy : {false, true})
+        {
+            assert(RunAncestorStop(true, bDestroy) == 0);
+            assert(RunAncestorStop(false, bDestroy) == 0);
+        }
+    }
 }
 
 int main()
@@ -569,6 +674,8 @@ int main()
     TestParallelRunReportsNoPropertyAccess();
     TestSignedZeroMatchesLegacy();
     TestUpdateMatchesLegacyRecursion();
+    TestSpawnedChildReparentKeepsPosition();
+    TestAncestorStopSuppressesDescendantsImmediately();
 
     NorvesLib::Thread::JobSystem::Get().Shutdown();
     std::cout << "EcsHierarchyTest 合格\n";
