@@ -889,3 +889,9 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 反復 15（再検証の ETIMEDOUT への対応）: 前回の再検証が `spawnSync cmd.exe ETIMEDOUT` で落ちたのは、撮影が約 19 分（ゲームスレッド約 7 秒/フレーム × 120 フレーム＋読み込み）かかり、ランナーの 1 verify の上限 10 分に入らないため。`-GpuTimingFrames` の下限は 100 でもゲームスレッドだけで 700 秒を超え、コマンドの引数では 10 分に収められない。そこで撮影は反復の中で実走し、`TASKS.md` の verify は撮影が書いた `metrics.json`（失敗なし・view=horizon・描いたクラスタ数・gt/rt・BVH の段の各パスの有無）を検査する形に替え、撮影コマンドは notes に残した。打ち切られた再検証が残した Game.exe（PID 20788）は止めた。
 - 撮り直し（`verify-SCN-MEGA-PROBE-100K-5.txt`、pass・EXIT=0、段の表は `-5-stages.txt`）。前回（反復 14）と同じ傾向で、数値は run 間で揺れた: GPU フレーム median 185.6 ms（p95 218.9）、gt median 6,875 ms、rt median 247.6 ms、`RenderGraph.Execute` 179.1 ms、`RecordFrameCommand` 38.6 ms、描いたクラスタ数 3,880,187、`VisRasterSw1` 23.6 ms、`MegaGeometry` 115.9 ms。BVH の段（median ms）: 1 パス目 S0 4.652・S1 2.395・S2 2.124・S3 2.025・Leaf 19.631、2 パス目 S0 4.477・S1 2.467・S2 1.681・S3 1.357・Leaf 16.038。球の半径は前回と同じ（根の節 0.1818・メッシュ 0.1032）。**結論は変わらない: 段 0 は 1 パス 4.5 ms 前後で 0.5 ms の約 9 倍、範囲（セル）の判定が要る。** 前の節の数値は反復 14 の実走のもの。
 - 検査の証拠: `verify-SCN-MEGA-PROBE-100K-6-check.txt`（`CHECK pass clusters=3880187 gt=6875.28 rt=247.616`・EXIT=0）。
+
+### 計測の運用の見直し（2026-10-10、親）
+
+- 古い経路（1 本 1 Entity）の 10万本の撮影は 1 回約 19 分で、ランナーの再検証（上限 10 分）が必ず時間切れになり、SCN-MEGA-PROBE-100K が 3 反復続けて撮り直していた。計測の結果は反復 15 の評価者が確認済みなので、親が完了にした。
+- 計測の項目の verify を、反復の中で 1 回撮った結果を検査する `Scripts/CheckCaptureMetrics.py`（結果が揃い、失敗・溢れが無く、計測の値があり、いまの Game.exe より後に撮られたこと）に替えた。ランナーは重い撮影をやり直さない。
+- 古い経路で撮影が 10 分を超える PROBE-VSM（10万本）は ECS の後へ回し、負荷シーンの基準（STRESS-STREAMING）は 2万個に減らした。

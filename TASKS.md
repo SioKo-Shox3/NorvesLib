@@ -8,7 +8,7 @@
 
 2026-10-10 仮想化ジオメトリの規模の引き上げ（ユーザー決定）: バナナ 100万本（と一般のゲームの負荷 mega-stress）で GPU・ゲームスレッド・レンダースレッドの median と p95 が 16.6 ms 以下（RTX 4080・1920×1080・RelWithDebInfo）を `SCN-MEGA-` の項目で、荒野より先に進める。バナナ専用ではなく、席（GPU Scene）・変化の通知・差分の転送・ストリーミングで実際のゲームにも効く形にする。設計は計画者の計画を GPT（Sol）が 2 周批評したものを親がまとめた（計画書 `Docs/Plans/SceneLauncherPlan.md` の「仮想化ジオメトリの規模の引き上げ」）。準備の項目は新旧の一致（mismatch=0）が取れるまで切替へ進まない。切替の項目は旧経路へ戻す引数を残す。
 
-2026-10-10 計測の方針（ユーザー指示「毎変更ごとにビルドしてゲームをつけて計測していたら終わらない。計測が必要なタイミングを考える」）: 実装の項目の検証は、RelWithDebInfo のビルド 1 回と、正しさを見る短い起動 1〜2 本（新旧の一致・溢れ・送った量などの検査のカウンタ。0 でなければ ERROR を出して撮影が落ちる）だけにし、GPU 時間（`-GpuTimingFrames`）は測らない。性能の数値と Debug の検証レイヤーは節目の計測の項目（`SCN-MEGA-MEASURE-*`・`SCN-MEGA-SCALE-300K`・`SCN-MEGA-ACCEPT-1M`。調べる段の PROBE と SETUP-LINEAR は計測そのものが目的）でまとめて見る。反復の中でも、小さな変更のたびにビルドしてゲームを起動しない。コードを読んで考え、変更をまとめてから起動 1 回で確かめる。CPU のテストで確かめられる契約はゲームを起動せずに確かめる。
+2026-10-10 計測の方針（ユーザー指示「毎変更ごとにビルドしてゲームをつけて計測していたら終わらない。計測が必要なタイミングを考える」）: 実装の項目の検証は、RelWithDebInfo のビルド 1 回と、正しさを見る短い起動 1〜2 本（新旧の一致・溢れ・送った量などの検査のカウンタ。0 でなければ ERROR を出して撮影が落ちる）だけにし、GPU 時間（`-GpuTimingFrames`）は測らない。性能の数値と Debug の検証レイヤーは節目の計測の項目（`SCN-MEGA-MEASURE-*`・`SCN-MEGA-SCALE-300K`・`SCN-MEGA-ACCEPT-1M`。調べる段の PROBE と SETUP-LINEAR は計測そのものが目的）でまとめて見る。反復の中でも、小さな変更のたびにビルドしてゲームを起動しない。コードを読んで考え、変更をまとめてから起動 1 回で確かめる。CPU のテストで確かめられる契約はゲームを起動せずに確かめる。 計測の項目の verify は、反復の中で 1 回撮った結果を `Scripts/CheckCaptureMetrics.py`（結果が揃い、失敗・溢れが無く、計測の値があり、いまの Game.exe より後に撮られたこと）で検査し、ランナーは重い撮影をやり直さない。1 回の撮影が 10 分を超える規模（古い経路での 10万本以上など）は、ECS の大量の軽い実体が入るまで測らない。
 
 2026-10-10 ECS の決定（ユーザー決定）: Entity はオブジェクト管理の器として残し、更新（Tick・変換・描画への同期）のデータと処理を ECS 型（データ指向の配列とシステム、ジョブでの並列）に作り変える。レンダースレッドもコマンドの並列記録まで並列化する。100万本の改修に組み込む。設計を決めるまで、ワールド・同期・席（GPU Scene）とそれに依存する `SCN-MEGA-` の項目は `backlog` に退避している（WORLD-TICK-CACHE・WORLD-TRANSFORM-NOTIFY・WORLD-TRANSFORM-INTERP・WORLD-RENDER-DIRTY・SCENE-SLOTS・SCENE-CONFIRM・SCENE-DELTA・MEASURE-CPU・GPU-SCENE-PREP・GPU-SCENE-SCATTER・GPU-SCENE-GROW・GPU-SCENE-HISTORY・INSTANCE-BATCH・RT-SELECT・RT-SKIP・SHADOW-DIRTY・MEASURE-UPLOAD・INSTANCE-CULL・TWOPASS-INSTANCES・TWOPASS-CLUSTERS・MEASURE-CULL・VSM-RANGES・MEASURE-VSM・SCALE-300K・LAYOUT-SEA・LAYOUT-MOUNDS・ACCEPT-1M）。GPU 側だけで閉じる項目（BASE-RWDI・PROBE-VSM・ROOT-COOK・STRESS・BVH・binning・HZB・影の BVH）は先に進めてよい。
 
@@ -130,9 +130,9 @@
 - status: backlog
 - done-when: RelWithDebInfo・1920×1080 の `mega-bananas` 1万本 overview で、CPU のフレーム（1 万 72 ms・3 万 579 ms。`Docs/RenderingValidation/SceneLauncherAcceptance.md` のバナナの節）の内訳を、ゲームスレッドとレンダースレッドのスコープごとに測って絞り、直せる原因（インスタンスごとの毎フレームの処理・待ち）は直す。直さないものは既知の限界として同じ節に書く。起動画面（Rendering3DTest）と他シーンの見た目・GPU 時間は変えない。 目標は 1万本 overview の CPU のフレームを 16.6 ms 以下（本数に対して線形より速く伸びる部分を無くす）。届かないときは残りの内訳と理由を記録する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-CPU-FRAME`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-CPU-FRAME --views overview --timing`
 - paths: Docs/RenderingValidation, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Object, Library/Core/Private/Object, Game, Scripts, TASKS.md, PROGRESS.md
-- notes: 危険地帯（描画スレッド・メモリ）。トレースのスコープは `RenderGraph.Execute`（1 万 26 ms → 3 万 313 ms）と `MegaGeometryPass.RecordFrameCommand`（2.1 → 7.1 ms）だけで、ゲームスレッド（73 → 579 ms）の内訳が無い。まず `NORVES_TRACE_SCOPE` 相当のスコープを足して絞る。評価者を通す。 2026-10-10 親が backlog にした: 100万本の改修計画（`SCN-MEGA-` の項目）を作り直している間、古い版の項目に手を付けない。計画が入ったら置き換える。 2026-10-10 `SCN-MEGA-` の改修の項目（SETUP-LINEAR・WORLD-*・SCENE-*・GPU-SCENE-*）に置き換えた。この項目は回さない。
+- notes: 危険地帯（描画スレッド・メモリ）。トレースのスコープは `RenderGraph.Execute`（1 万 26 ms → 3 万 313 ms）と `MegaGeometryPass.RecordFrameCommand`（2.1 → 7.1 ms）だけで、ゲームスレッド（73 → 579 ms）の内訳が無い。まず `NORVES_TRACE_SCOPE` 相当のスコープを足して絞る。評価者を通す。 2026-10-10 親が backlog にした: 100万本の改修計画（`SCN-MEGA-` の項目）を作り直している間、古い版の項目に手を付けない。計画が入ったら置き換える。 2026-10-10 `SCN-MEGA-` の改修の項目（SETUP-LINEAR・WORLD-*・SCENE-*・GPU-SCENE-*）に置き換えた。この項目は回さない。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-CPU-FRAME`（ランナーは撮り直さず、保存した結果を検査する）。
 
 ## SCN-PH-WASTELAND: 荒野用の Poly Haven の岩・崖と地形のテクスチャを落とす
 - status: done
@@ -173,12 +173,12 @@
 - notes: 危険地帯（RenderThread）。対象は `MegaGeometryPass.cpp` 581〜599 行付近。鍵（1293 行付近と同じ式）の `Container::UnorderedSet` を 1 回だけ作って引く。
 
 ## SCN-MEGA-PROBE-100K: 10万本（1本1Entity のまま）で、目の高さの視点のインスタンス判定と描く量を測る
-- status: doing
+- status: done
 - done-when: `kMaxBananaCount` を 1,048,576 にし（`MegaBananasMode.h` 49 行付近）、視点 `horizon`（目の高さ 1.7 m から地平線を見る）を足す。10万本 horizon で、BVH の段ごとの GPU 時間（段ごとのタイムスタンプを足す）・描いたクラスタ数・`VisRasterSw1`・gt/rt を記録する。根の球とメッシュの球の半径を開発ログに出す。段 0 が 0.5 ms を超えるかで、範囲（セル）の判定が要るかを PROGRESS に書く。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -Command "$f = Get-Item .harness/runs/scene-capture/SCN-MEGA-PROBE-100K/metrics.json; if ($f.LastWriteTime -lt (Get-Item build/Game/RelWithDebInfo/Game.exe).LastWriteTime) { Write-Output 'CHECK fail stale metrics.json'; exit 1 }; $m = Get-Content $f.FullName -Raw | ConvertFrom-Json; $v = $m.views[0]; $names = $v.gpu_timing.pass_ms | ForEach-Object { $_.pass }; $need = 'MegaBvhC1S0','MegaBvhC1S1','MegaBvhC1S2','MegaBvhC1S3','MegaBvhC1Leaf','MegaBvhC2S0','MegaBvhC2Leaf','VisRasterSw1'; $miss = $need | Where-Object { $names -notcontains $_ }; if ($m.failures.Count -ne 0 -or $v.view -ne 'horizon' -or $v.mega_stats.clusters_drawn_last -le 0 -or $v.gpu_timing.game_thread_ms_median -le 0 -or $v.gpu_timing.render_thread_ms_median -le 0 -or $miss) { Write-Output ('CHECK fail missing=' + ($miss -join ',')); exit 1 }; Write-Output ('CHECK pass clusters=' + $v.mega_stats.clusters_drawn_last + ' gt=' + $v.gpu_timing.game_thread_ms_median + ' rt=' + $v.gpu_timing.render_thread_ms_median)"`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-PROBE-100K --views horizon --timing`
 - paths: Game/GameModes/MegaBananas, Game/Scenes/SceneCatalog.h, Library/Core/Private/Rendering/MegaGeometryPass.cpp, TASKS.md, PROGRESS.md
-- notes: 計測だけ。CPU は遅くてよい。この項目の結果では止めない（25 ms の打切りは改修後の規模の確認にだけ使う）。 撮影そのもの（約 19 分。ゲームスレッドが 1 フレーム約 7 秒で、ランナーの再検証の上限 10 分に入らない）は反復の中で次のコマンドを実走して `metrics.json` を作り、上の verify はその `metrics.json` を検査する: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 120 -TimeoutSeconds 2400 -GameArgs banana-count=100000 -OutDir .harness/runs/scene-capture/SCN-MEGA-PROBE-100K`
+- notes: 計測だけ。CPU は遅くてよい。この項目の結果では止めない（25 ms の打切りは改修後の規模の確認にだけ使う）。 撮影そのもの（約 19 分。ゲームスレッドが 1 フレーム約 7 秒で、ランナーの再検証の上限 10 分に入らない）は反復の中で次のコマンドを実走して `metrics.json` を作り、上の verify はその `metrics.json` を検査する: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 120 -TimeoutSeconds 2400 -GameArgs banana-count=100000 -OutDir .harness/runs/scene-capture/SCN-MEGA-PROBE-100K` 2026-10-10 親が完了にした: 計測の結果（10万本 horizon、描いたクラスタ 3,880,187、BVH の段 0 が 4.65/4.48 ms でセルの判定が要る、gt/rt、球の半径）は反復 15 の評価者が確認済み。古い経路の 10万本の撮影は約 19 分でランナーの再検証の上限 10 分を超えるため、計測の項目は保存した結果の検査（`Scripts/CheckCaptureMetrics.py`）で検証する方針にした。
 
 ## SCN-MEGA-BASE-RWDI: 起動画面の決定的な撮影の基準を RelWithDebInfo でも撮る
 - status: todo
@@ -190,21 +190,21 @@
 - notes: 撮影だけ。
 
 ## SCN-MEGA-PROBE-VSM: 10万本で、読み込み直後とカメラが動くときの VSM の投影物のカリングを測る
-- status: todo
+- status: backlog
 - done-when: 開発ビルドの `--camera-path-play` でカメラパスを再生したまま計測できる。静止と再生の 2 回について、`VsmCullPairs`・`VsmCullMega` の median・p95・max、`VSM_MEGA_CULL overflow` の最大、読み込み直後のフレームの値を PROGRESS に書き、100万本への外挿を書く。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-PROBE-VSM`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-PROBE-VSM --views horizon --timing`
 - paths: Game/GameModes/MegaBananas, Game/GameApplicationHandler.cpp, Library/Core/Public/Input, Library/Core/Private/Input, TASKS.md, PROGRESS.md
-- notes: VSM のコードは変えない。静止の値は PROBE-100K の撮影を使ってよい。
+- notes: VSM のコードは変えない。静止の値は PROBE-100K の撮影を使ってよい。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-PROBE-VSM`（ランナーは撮り直さず、保存した結果を検査する）。 2026-10-10 親が backlog にした: 古い経路（1本1Entity）では 10万本の撮影 1 回が約 19 分かかるため、ECS の大量の軽い実体で読み込みが速くなってから測る。
 
 ## SCN-MEGA-ROOT-COOK: 指定した資産だけ、根の段を 1〜2 クラスタまで縮めて焼く
 - status: todo
 - done-when: AssetSet の指定（例 `"dagRootMaxClusters": 2`）があるメッシュだけ簡略化を続け、根のクラスタ数・三角形数・誤差をログに出す。バナナの根が 2 クラスタ以下になり、PROBE-ROOT と同じ測り方で根だけの `VisRasterSw1` が 1/10 以下。1万本 close の撮影を開いて近景の形が変わらない。起動画面の比較が pass（他の資産は焼き直さない）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000,mega-lod-error-px=100000 -OutDir .harness/runs/scene-capture/SCN-MEGA-ROOT-COOK/root`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ROOT-COOK/root --views overview --timing`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-ROOT-COOK`
 - paths: Tools/AssetCook, Assets/AssetSets/MegaBananasModels.json, TASKS.md, PROGRESS.md
-- notes: PROBE-ROOT で根の単価が問題でないと出たら、理由を書いて完了にする。縮まらない理由が UV の継ぎ目なら上の段だけ継ぎ目の固定を緩める。全体のクックが 10 分を超えるなら、バナナの指定だけを置いたディレクトリを `-SpecDir` に渡す。
+- notes: PROBE-ROOT で根の単価が問題でないと出たら、理由を書いて完了にする。縮まらない理由が UV の継ぎ目なら上の段だけ継ぎ目の固定を緩める。全体のクックが 10 分を超えるなら、バナナの指定だけを置いたディレクトリを `-SpecDir` に渡す。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000,mega-lod-error-px=100000 -OutDir .harness/runs/scene-capture/SCN-MEGA-ROOT-COOK/root`（ランナーは撮り直さず、保存した結果を検査する）。
 
 ## SCN-MEGA-STRESS-RESIDENT: 開発用シーン mega-stress を作り、多種のメッシュの個別 Entity を置く
 - status: todo
@@ -225,12 +225,12 @@
 
 ## SCN-MEGA-STRESS-STREAMING: mega-stress に区画の読み込み・解放の負荷を足し、今の経路の基準を測る
 - status: todo
-- done-when: `--stress-stream-cell=<m>` で、その大きさの区画の Entity を一定の周期で読み込み・解放する（カメラの近くの区画が出入りする）。資源の数が周期の後に戻ることをログで確かめる。今の経路の基準として、5万個の静止・1% 移動・1% 移動 + 64 m 区画の 3 つで gt・rt・GPU の median と p95、`MEGA_CAPACITY` を PROGRESS の表に書く（以後の節目の計測はこの表と比べる）。cycle smoke が pass。
+- done-when: `--stress-stream-cell=<m>` で、その大きさの区画の Entity を一定の周期で読み込み・解放する（カメラの近くの区画が出入りする）。資源の数が周期の後に戻ることをログで確かめる。今の経路の基準として、2万個の静止・1% 移動・1% 移動 + 64 m 区画の 3 つで gt・rt・GPU の median と p95、`MEGA_CAPACITY` を PROGRESS の表に書く（以後の節目の計測はこの表と比べる）。cycle smoke が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-stress -Cycles 3 -Configuration RelWithDebInfo`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-STREAMING/static`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-STRESS-STREAMING/static --timing`
 - paths: Game, TASKS.md, PROGRESS.md
-- notes: 区間の数だけ容量が増える問題（`MegaGeometryPass.cpp` 1526 行付近）がここで数で見える。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
+- notes: 区間の数だけ容量が増える問題（`MegaGeometryPass.cpp` 1526 行付近）がここで数で見える。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=20000 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-STREAMING/static`（ランナーは撮り直さず、保存した結果を検査する）。 2026-10-10 親が 5万個から 2万個に減らした（古い経路の 1 本 1 Entity では撮影が長くなるため。ECS の後の節目の計測で 5万個を測る）。
 
 ## SCN-MEGA-WORLD-TICK-CACHE: Tick の一覧を、Tick の集合と順序に関わる変化のときだけ作り直す
 - status: backlog
@@ -312,11 +312,11 @@
 - status: backlog
 - done-when: STRESS-STREAMING の基準と同じ 3 つ（5万個の静止・1% 移動・1% 移動 + 64 m 区画）と、バナナ 1万・3万本 overview で、gt・rt・GPU の median と p95 とスコープの上位を測り、基準との比較を PROGRESS の表に書く。目標: 5万個静止で `World.BuildTickSnapshot` ≤ 0.1 ms、ワールドと描画の変換の更新がそれぞれ ≤ 0.1 ms、gt の MegaGeometry の同期の分 ≤ 0.2 ms、1% 移動でこれらが移動数に比例。届かないスコープは名指して、直す項目を `SCN-MEGA-FIX-<名前>` として次へ足す（この項目の中で直さない）。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static --timing`
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-CPU-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static`（ランナーは撮り直さず、保存した結果を検査する）。
 
 ## SCN-MEGA-BVH-LEAF-SPLIT: BVH を持たないメッシュに、葉 8 クラスタ以下の階層の BVH を作る（準備）
 - status: todo
@@ -415,11 +415,11 @@
 - status: backlog
 - done-when: MEASURE-CPU と同じ 3 つの負荷とバナナ 3万本 overview で、gt・rt・GPU の median と p95、`MegaGeometryPass.RecordFrameCommand`、`MEGA_SCENE_UPLOAD bytes`、`AccelerationStructureBuild`、VSM の無効化のページ数を測って PROGRESS の表に書く。目標: 5万個で `RecordFrameCommand` ≤ 1 ms、静止で upload 0 と `AccelerationStructureBuild` ≤ 0.05 ms、1% 移動で upload・VSM の無効化が移動数に比例。カメラパスの再生中に TLAS の更新があるフレームの p95 も書く。1% 移動の連続撮影を開いて動く物に残像が増えていない（TAA と prevWorld）。届かないものは `SCN-MEGA-FIX-<名前>` を次へ足す。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-UPLOAD/static`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-UPLOAD/static --timing`
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-UPLOAD-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-UPLOAD/static`（ランナーは撮り直さず、保存した結果を検査する）。
 
 ## SCN-MEGA-BVH-INDIRECT: BVH の段を間接 dispatch・固定容量の列にする
 - status: todo
@@ -490,11 +490,11 @@
 - status: backlog
 - done-when: バナナ 1万本 overview と 10万本 horizon で、GPU・gt・rt の median と p95、パスごとの時間、描いたクラスタ数、`visibility_bytes`・`bvh_queue_bytes`・溢れを測って PROGRESS の表に書く。目標: 1万本の Cull1+Cull2 ≤ 2.5 ms、`MegaGeometryDraw1` ≤ 0.8 ms、10万本の範囲 + インスタンスの判定 ≤ 0.3 ms、1万本の描いたクラスタ数が基準の ±1%、`visibility_bytes` のバナナの分が 0、溢れ 0。mega-stress 5万個で `command_bytes` が区間の数によらない。届かないものは `SCN-MEGA-FIX-<名前>` を次へ足す。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CULL/10k`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-CULL/10k --views overview --timing`
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-CULL-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CULL/10k`（ランナーは撮り直さず、保存した結果を検査する）。
 
 ## SCN-MEGA-VSM-RANGES: VSM の組の判定を、受け手距離内の範囲とインスタンスに絞る
 - status: backlog
@@ -524,18 +524,18 @@
 - status: backlog
 - done-when: PROBE-VSM と同じ 10万本 horizon の静止とカメラパスの再生で、`VsmCullPairs`・`VsmCullMega` の median・p95・max、`VSM_MEGA_CULL overflow` の最大、読み込み直後のフレームを測って PROBE-VSM と並べて PROGRESS に書く。目標: 再生の `VsmCullPairs` の p95 が PROBE-VSM の 1/5 以下、`VsmCullMega` の p95 ≤ 1.5 ms、overflow 0。点光源の影の計測（`VirtualizationAcceptance.md` の段9の測り方）が悪化しない。撮影を開いて影の欠けが無い。届かないものは `SCN-MEGA-FIX-<名前>` を次へ足す。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-VSM`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-VSM --views horizon --timing`
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-VSM-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-VSM`（ランナーは撮り直さず、保存した結果を検査する）。
 
 ## SCN-MEGA-SCALE-300K: 30万本と mega-stress 10万個を、静止と移動で測る
 - status: backlog
 - done-when: 30万本 horizon（静止・再生）と mega-stress 10万個（1% 移動・ストリーミング）について、GPU・gt・rt の median と p95、描いたクラスタ数、全溢れ、メモリ（設計の 3 GB の範囲）を `SceneLauncherAcceptance.md` に書く。全部 16.6 ms 以下、溢れは 0。超えたら最上位のパスを名指す。25 ms を超えたらループを止めてユーザーへ渡す。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=300000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-SCALE-300K/bananas`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-SCALE-300K/bananas --views horizon --timing`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=300000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-SCALE-300K/bananas`（ランナーは撮り直さず、保存した結果を検査する）。
 
 ## SCN-MEGA-LAYOUT-SEA: 地平線までのバナナの海を作る
 - status: backlog
@@ -557,26 +557,26 @@
 - status: backlog
 - done-when: 100万本 horizon の静止・再生と、100万本 + mega-stress 5万個（1% 移動・ストリーミング）で、GPU・gt・rt の median と p95 がすべて 16.6 ms 以下。全溢れ 0。メモリ ≤ 3 GB（設計の範囲）。PNG を開いて穴・影の欠けが無い。合格したら既定の本数を 100万にし、RelWithDebInfo の cycle smoke が pass。受入れ文書には、達成の範囲を「指定条件（RTX 4080・1920×1080・この配置と負荷）での MegaGeometry の 100万本と混在の負荷」と書き、Nanite 全体との同等性は未検証と書く。25 ms を超えたらループを止め、backlog の採否をユーザーへ渡す。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GpuTimingFrames 300 -GameArgs banana-count=1000000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/bananas`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/bananas --views horizon,overview --timing`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas -Cycles 3 -Configuration RelWithDebInfo`
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -OutDir .harness/runs/startup-capture/SCN-MEGA-ACCEPT-1M-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, Game/GameModes/MegaBananas/MegaBananasMode.h, TASKS.md, PROGRESS.md
-- notes: verify はビルド・代表の計測 1 本・Debug の検証だけにしてある。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。
+- notes: verify はビルド・代表の計測 1 本・Debug の検証だけにしてある。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon,overview -GpuTimingFrames 300 -GameArgs banana-count=1000000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/bananas`（ランナーは撮り直さず、保存した結果を検査する）。
 
 ## SCN-MEGA-FAR-SPLAT: 画素より小さいインスタンスを ID のバッファへ 1 画素で書く
 - status: backlog
 - done-when: 1M horizon で、ソフトのラスタと Cull の合計が 30% 以上減る。遠景の平均輝度の差 ≤ 0.5。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FAR-SPLAT`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FAR-SPLAT --views horizon --timing`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, TASKS.md, PROGRESS.md
-- notes: 条件: ROOT-COOK の後も描くクラスタが 150 万を超えるとき。`ImpostorBake.h` が使えるかを先に読む。
+- notes: 条件: ROOT-COOK の後も描くクラスタが 150 万を超えるとき。`ImpostorBake.h` が使えるかを先に読む。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FAR-SPLAT`（ランナーは撮り直さず、保存した結果を検査する）。
 
 ## SCN-MEGA-WAVE-ATOMICS: カウンタ・一覧・ページ要求の共有アトミックを wave 単位でまとめる
 - status: backlog
 - done-when: 1M で Cull が 20% 以上減り、全比較が pass。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-WAVE-ATOMICS`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-WAVE-ATOMICS --views horizon --timing`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, TASKS.md, PROGRESS.md
-- notes: 条件: Cull1 と Cull2 の合計が 2 ms を超えるとき。subgroup の対応は装置の機能で確かめる。
+- notes: 条件: Cull1 と Cull2 の合計が 2 ms を超えるとき。subgroup の対応は装置の機能で確かめる。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=1000000 -OutDir .harness/runs/scene-capture/SCN-MEGA-WAVE-ATOMICS`（ランナーは撮り直さず、保存した結果を検査する）。
 
 ## SCN-GEN-BUILDINGS-1: 荒野の建物を3種生成する（崩れた日干し煉瓦の家・見張り塔・石のアーチ）
 - status: todo
