@@ -10,6 +10,7 @@
       "logical_path": "Assets/Models/Generated/banana/banana.glb",
       "source_path": "Assets/Models/Generated/banana/banana.glb",
       "fallback_min_triangles": 4096,
+      "dag_root_max_clusters": 2,
       "package_name": "Banana/banana.nvpkg",
       "entry_name": "Assets/Models/Generated/banana/banana.nvmesh"
     }

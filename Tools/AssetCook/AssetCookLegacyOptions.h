@@ -14,6 +14,7 @@ namespace NorvesLib::Tools::AssetCook::Detail
         std::filesystem::path OrmAoPath, OrmRoughnessPath, OrmMetallicPath;
         bool bFlipNormalY = false;
         uint32_t FallbackMinTriangles = 0;
+        uint32_t DagRootMaxClusters = 0;
         std::filesystem::path InputPath;
         std::filesystem::path PackagePath;
         std::filesystem::path ManifestPath;

@@ -145,7 +145,8 @@ namespace NorvesLib::Tools::AssetCook
                                         Core::Container::AnsiStringView logicalPath, MeshCookResult &outResult,
                                         Core::Container::AnsiString &error,
                                         const Core::AssetImport::ImportSettingsFileOptions *importOptions = nullptr,
-                                        uint32_t fallbackMinTriangles = 0);
+                                        uint32_t fallbackMinTriangles = 0,
+                                        uint32_t dagRootMaxClusters = 0);
 
     // 起動画面の大きな球（石畳の高さマップ cobblestone_floor_09_disp_4k.png で変位した緯度経度の球）を作り、
     // NVMESH v1 に焼く（--generate displaced-sphere）。heightMapBytes は 16 ビットのグレーの PNG の中身。
@@ -156,7 +157,8 @@ namespace NorvesLib::Tools::AssetCook
                                                    Core::Container::AnsiStringView logicalPath,
                                                    MeshCookResult& outResult,
                                                    Core::Container::AnsiString& error,
-                                                   uint32_t fallbackMinTriangles = 0);
+                                                   uint32_t fallbackMinTriangles = 0,
+                                                   uint32_t dagRootMaxClusters = 0);
 
     [[nodiscard]] bool IsSupportedSkeletalCookFormat(Core::Container::AnsiStringView format) noexcept;
 
@@ -181,7 +183,7 @@ namespace NorvesLib::Tools::AssetCook
         const uint8_t *sourceBytes, size_t sourceSize, Core::Container::AnsiStringView format,
         const std::filesystem::path &sourcePath, Core::Container::AnsiStringView logicalPath, MeshCookResult &outResult,
         Core::Container::AnsiString &error, const Core::AssetImport::ImportSettingsFileOptions *importOptions = nullptr,
-        uint32_t fallbackMinTriangles = 0);
+        uint32_t fallbackMinTriangles = 0, uint32_t dagRootMaxClusters = 0);
     [[nodiscard]] bool CookGltfToNvskelNativePath(const uint8_t* sourceBytes, size_t sourceSize,
         Core::Container::AnsiStringView format, const std::filesystem::path& sourcePath,
         SkeletalCookResult& outResult, Core::Container::AnsiString& error,

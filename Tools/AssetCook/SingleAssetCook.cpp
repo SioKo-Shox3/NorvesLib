@@ -723,10 +723,11 @@ namespace NorvesLib::Tools::AssetCook
             const bool cooked =
                 options.Generate == "displaced-sphere"
                     ? CookDisplacedSphereToNvmesh(inputBytes.data(), inputBytes.size(), options.Format, logicalPath,
-                                                  meshResult, meshError, options.FallbackMinTriangles)
+                                                  meshResult, meshError, options.FallbackMinTriangles,
+                                                  options.DagRootMaxClusters)
                     : CookGltfToNvmeshNativePath(inputBytes.data(), inputBytes.size(), options.Format, inputPath,
                                                  logicalPath, meshResult, meshError, &options.ImportSettings,
-                                                 options.FallbackMinTriangles);
+                                                 options.FallbackMinTriangles, options.DagRootMaxClusters);
             if (!cooked)
             {
                 error = ToStdString(meshError);
@@ -1213,6 +1214,7 @@ namespace NorvesLib::Tools::AssetCook
             options.OrmMetallicPath = request.OrmMetallicPath;
             options.bFlipNormalY = request.bFlipNormalY;
             options.FallbackMinTriangles = request.FallbackMinTriangles;
+            options.DagRootMaxClusters = request.DagRootMaxClusters;
             options.InputPath = request.InputPath;
             options.PackagePath = request.PackagePath;
             options.ManifestPath = request.ManifestPath;
@@ -1235,6 +1237,7 @@ namespace NorvesLib::Tools::AssetCook
                                        Core::Container::AnsiString& outError)
         {
             if (!request.Usage.empty() || !request.Generate.empty() || request.FallbackMinTriangles != 0 ||
+                request.DagRootMaxClusters != 0 ||
                 request.Format == "nvmesh.v1.mesh3d.pnt.u32.lodgraph")
             {
                 outError = "usage_and_lodgraph_managed_cache_not_supported";
@@ -1328,6 +1331,7 @@ namespace NorvesLib::Tools::AssetCook
             if ((!outOptions.Generate.empty() &&
                  (outOptions.Generate != "displaced-sphere" || !lodGraph || outOptions.Kind != "model")) ||
                 (outOptions.FallbackMinTriangles && !lodGraph) || outOptions.FallbackMinTriangles > 1000000 ||
+                (outOptions.DagRootMaxClusters && !lodGraph) || outOptions.DagRootMaxClusters > 1000 ||
                 (outOptions.bSkipIfUnchanged && (lodGraph || !outOptions.Generate.empty())) ||
                 (!outOptions.Generate.empty() && HasImportArguments(outOptions.ImportSettings)))
             {
@@ -1434,6 +1438,7 @@ namespace NorvesLib::Tools::AssetCook
             request.OrmMetallicPath = options.OrmMetallicPath;
             request.bFlipNormalY = options.bFlipNormalY;
             request.FallbackMinTriangles = options.FallbackMinTriangles;
+            request.DagRootMaxClusters = options.DagRootMaxClusters;
             request.InputPath = options.InputPath;
             request.PackagePath = options.PackagePath;
             request.ManifestPath = options.ManifestPath;

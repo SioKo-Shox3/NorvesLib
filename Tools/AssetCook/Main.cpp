@@ -273,6 +273,22 @@ namespace
                 }
                 outOptions.FallbackMinTriangles = static_cast<uint32_t>(parsed);
             }
+            else if (argument == "--dag-root-max-clusters")
+            {
+                if (!readValue())
+                {
+                    return false;
+                }
+                char *end = nullptr;
+                const unsigned long parsed = std::strtoul(value.c_str(), &end, 10);
+                if (value.empty() || *end != '\0' || parsed > 1000ul)
+                {
+                    error = "--dag-root-max-clusters は 0 から 1000 まで "
+                            "の整数で指定してください";
+                    return false;
+                }
+                outOptions.DagRootMaxClusters = static_cast<uint32_t>(parsed);
+            }
             else if (argument == "--generate")
             {
                 if (!readValue())

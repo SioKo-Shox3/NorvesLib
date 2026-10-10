@@ -6,6 +6,7 @@
 # 一覧の "models"（省略可）の各項目は logical_path・source_path・package_name・entry_name・format（省略時は NVMESH v1）と、
 # 変更の検出に含める "extra_sources"（glTF が読む .bin など。省略可）と、フォールバックの段の三角形数の目標の下限
 # "fallback_min_triangles"（省略可。小さなメッシュで根の段までの粗さが影・RT の形を崩すときに上げる）と、
+# 根のクラスタ数の上限 "dag_root_max_clusters"（省略可。1 以上なら、根がこの数以下のクラスタになるまで簡略化を続ける）と、
 # glTF を読まずにメッシュを作らせる "generate"（省略可。displaced-sphere は source_path の高さマップで変位した
 # 起動画面の大きな球。仕様は Library/Core/Public/Rendering/MegaGeometry/StartupBigSphereSpec.h）を持つ。
 #
@@ -445,6 +446,13 @@ foreach ($specFile in $specFiles) {
                 throw "$context の fallback_min_triangles は 0 以上の整数にしてください"
             }
             $cookArguments += @("--fallback-min-triangles", [string]$fallbackMin)
+        }
+        if (Test-PropertyExists -Object $model -Name "dag_root_max_clusters") {
+            $dagRootMax = $model.dag_root_max_clusters
+            if (($dagRootMax -isnot [int]) -or ($dagRootMax -lt 0) -or ($dagRootMax -gt 1000)) {
+                throw "$context の dag_root_max_clusters は 0〜1000 の整数にしてください"
+            }
+            $cookArguments += @("--dag-root-max-clusters", [string]$dagRootMax)
         }
         # "generate": "displaced-sphere" は、source_path の高さマップ（16 ビットのグレーの PNG）で変位した起動画面の大きな球を
         # AssetCook に作らせて焼く（glTF は読まない）。

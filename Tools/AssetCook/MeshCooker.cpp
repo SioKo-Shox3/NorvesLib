@@ -2375,7 +2375,7 @@ namespace NorvesLib::Tools::AssetCook
         // ここでは入力の変換・材質の参照・書き出し・読み込みでの自己検証を受け持つ。
         bool CookLodGraphMesh(const VariableArray<MeshVertexPnt>& vertices, const VariableArray<uint32_t>& indices,
                               const MaterialReferences& materialReferences, MeshCookResult& outResult,
-                              AnsiString& error, uint32_t fallbackMinTriangles)
+                              AnsiString& error, uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
         {
             const auto bakeStart = std::chrono::steady_clock::now();
 
@@ -2393,7 +2393,7 @@ namespace NorvesLib::Tools::AssetCook
             CookMeshDagResult dag;
             AnsiString dagError;
             if (!BakeMeshLodDag(cookedVertices.data(), cookedVertices.size(), indices.data(), indices.size(), dag,
-                                dagError, fallbackMinTriangles))
+                                dagError, fallbackMinTriangles, dagRootMaxClusters))
             {
                 error = AnsiString("LOD の階層の焼き込みに失敗しました: ") + dagError;
                 return false;
@@ -2460,7 +2460,7 @@ namespace NorvesLib::Tools::AssetCook
                                       const std::filesystem::path &sourcePath, AnsiStringView logicalPath,
                                       MeshCookResult &outResult, AnsiString &error,
                                       const AssetImport::ImportSettingsFileOptions *importOptions,
-                                      uint32_t fallbackMinTriangles)
+                                      uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
         {
             if (format != SupportedMeshFormat && format != SupportedMeshFormatV1 &&
                 format != SupportedMeshFormatLodGraph)
@@ -2633,7 +2633,8 @@ namespace NorvesLib::Tools::AssetCook
             if (format == SupportedMeshFormatLodGraph)
             {
                 MeshCookResult v1Result;
-                if (!CookLodGraphMesh(vertices, indices, materialReferences, v1Result, error, fallbackMinTriangles))
+                if (!CookLodGraphMesh(vertices, indices, materialReferences, v1Result, error, fallbackMinTriangles,
+                                    dagRootMaxClusters))
                 {
                     return false;
                 }
@@ -2727,7 +2728,7 @@ namespace NorvesLib::Tools::AssetCook
         // 実行時の生成が作る 5 段の LOD は使わず、最も細かい段（LOD0）だけを入れて階層を焼く。
         bool CookDisplacedSphereInternal(const uint8_t* heightMapBytes, size_t heightMapSize, AnsiStringView format,
                                          AnsiStringView logicalPath, MeshCookResult& outResult, AnsiString& error,
-                                         uint32_t fallbackMinTriangles)
+                                         uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
         {
             namespace Spec = NorvesLib::Core::Rendering::MegaGeometry::StartupBigSphere;
             using NorvesLib::Core::Rendering::MegaGeometry::BuildProceduralMegaSphere;
@@ -2809,7 +2810,8 @@ namespace NorvesLib::Tools::AssetCook
             // 材質は Game が石畳の材質を当てるので、メッシュには材質の参照を持たせない。
             MaterialReferences materialReferences;
             MeshCookResult v1Result;
-            if (!CookLodGraphMesh(vertices, sphere.Indices, materialReferences, v1Result, error, fallbackMinTriangles))
+            if (!CookLodGraphMesh(vertices, sphere.Indices, materialReferences, v1Result, error, fallbackMinTriangles,
+                                    dagRootMaxClusters))
             {
                 return false;
             }
@@ -3499,7 +3501,7 @@ namespace NorvesLib::Tools::AssetCook
                                     Core::Container::AnsiStringView logicalPath, MeshCookResult &outResult,
                                     Core::Container::AnsiString &error,
                                     const Core::AssetImport::ImportSettingsFileOptions *importOptions,
-                                    uint32_t fallbackMinTriangles)
+                                    uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
     {
         if (!ValidateNativeCookPaths(sourcePath, importOptions, error))
         {
@@ -3507,7 +3509,7 @@ namespace NorvesLib::Tools::AssetCook
         }
         AnsiString internalError;
         if (!CookGltfToNvmeshInternal(sourceBytes, sourceSize, format, sourcePath, logicalPath, outResult,
-                                      internalError, importOptions, fallbackMinTriangles))
+                                      internalError, importOptions, fallbackMinTriangles, dagRootMaxClusters))
         {
             error = internalError.c_str();
             return false;
@@ -3600,10 +3602,10 @@ namespace NorvesLib::Tools::AssetCook
                           Core::Container::AnsiStringView sourcePath, Core::Container::AnsiStringView logicalPath,
                           MeshCookResult &outResult, Core::Container::AnsiString &error,
                           const Core::AssetImport::ImportSettingsFileOptions *importOptions,
-                          uint32_t fallbackMinTriangles)
+                          uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
     {
         return CookGltfToNvmeshNativePath(sourceBytes, sourceSize, format, LegacyModelLocator(sourcePath), logicalPath,
-                                          outResult, error, importOptions, fallbackMinTriangles);
+                                          outResult, error, importOptions, fallbackMinTriangles, dagRootMaxClusters);
     }
 
     bool CookDisplacedSphereToNvmesh(const uint8_t *heightMapBytes, size_t heightMapSize,
@@ -3611,11 +3613,11 @@ namespace NorvesLib::Tools::AssetCook
                                      NorvesLib::Core::Container::AnsiStringView logicalPath,
                                      MeshCookResult& outResult,
                                      NorvesLib::Core::Container::AnsiString& error,
-                                     uint32_t fallbackMinTriangles)
+                                     uint32_t fallbackMinTriangles, uint32_t dagRootMaxClusters)
     {
         AnsiString internalError;
         if (!CookDisplacedSphereInternal(heightMapBytes, heightMapSize, format, logicalPath, outResult, internalError,
-                                         fallbackMinTriangles))
+                                         fallbackMinTriangles, dagRootMaxClusters))
         {
             error = internalError;
             return false;

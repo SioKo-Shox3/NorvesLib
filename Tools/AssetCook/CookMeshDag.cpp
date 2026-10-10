@@ -33,7 +33,13 @@ namespace NorvesLib::Tools::AssetCook
         constexpr size_t ClusterMaxVertices = Format::ClusterMaxVertices;
         // 1 グループのクラスタ数の目標。これ以下の数のクラスタしか残っていない段は、全部を 1 グループにする。
         constexpr size_t GroupTargetSize = 4;
-        constexpr size_t SingleGroupMaxClusters = GroupTargetSize + GroupTargetSize / 3;
+        // グループの目標のクラスタ数のとき、全部を 1 グループにする段のクラスタ数の上限
+        constexpr size_t SingleGroupMaxClusters(size_t groupTargetSize)
+        {
+            return groupTargetSize + groupTargetSize / 3;
+        }
+        // 根のクラスタ数の上限を指定した資産で、段の進みが鈍いときにやり直すグループの目標の上限
+        constexpr size_t RootLimitedMaxGroupTargetSize = 32;
         constexpr float ConeWeight = 0.25f;
         // 簡略化の誤差に混ぜる属性の重み(外形の大きさに対する相対値)。法線と UV の食い違いも誤差として数える。
         constexpr float AttributeWeightNormal = 0.2f;
@@ -47,6 +53,8 @@ namespace NorvesLib::Tools::AssetCook
         constexpr size_t FallbackReductionDivisor = 16;
         // 1 段で三角形がこの割合(%)も減らない段は、簡略化が進まないので、そこを根の段として打ち切る。
         constexpr uint64_t MinProgressPercent = 15;
+        // 根のクラスタ数の上限を指定した資産では、打ち切りの基準を緩める（それでも 1 % も減らない段は打ち切る）。
+        constexpr uint64_t RootLimitedMinProgressPercent = 1;
 
         // 環境変数 NORVES_COOK_DAG_TRACE=1 のとき、段ごとの量と根にした理由をログへ出す（計測用。クックの結果は変えない）。
         bool IsDagTraceEnabled()
@@ -114,6 +122,8 @@ namespace NorvesLib::Tools::AssetCook
             uint32_t PermissiveGroups = 0;
             // 安全な簡略化が見つからず、簡略化せずに残したグループの数
             uint32_t RejectedGroups = 0;
+            // 安全な簡略化が無く、非多様体の辺を許して採ったグループの数（根のクラスタ数の上限を指定した資産の最後の手段）
+            uint32_t RelaxedGroups = 0;
         };
 
         struct WeldedMesh
@@ -491,6 +501,7 @@ namespace NorvesLib::Tools::AssetCook
                            const VariableArray<BuildCluster>& current,
                            const VariableArray<uint8_t>& lockByPosition,
                            SimplifyScratch& scratch,
+                           bool bAllowNonManifold,
                            LevelGroup& group,
                            LevelOutput& output,
                            AnsiString& error)
@@ -553,7 +564,9 @@ namespace NorvesLib::Tools::AssetCook
             CollectPositionEdges(mesh, scratch.LocalToGlobal.data(), scratch.LocalIndices.data(),
                                  scratch.LocalIndices.size(), inputEdges);
             CookSimplifyResult simplified;
+            CookSimplifyResult unsafeSimplified;
             bool bHaveCandidate = false;
+            bool bHaveUnsafeCandidate = false;
             bool bCandidatePermissive = false;
             const auto attempt = [&](size_t targetIndexCount, bool bPermissive) -> bool {
                 params.TargetIndexCount = targetIndexCount;
@@ -573,6 +586,12 @@ namespace NorvesLib::Tools::AssetCook
                     simplified = std::move(candidate);
                     bHaveCandidate = true;
                     bCandidatePermissive = bPermissive;
+                }
+                else if (bAllowNonManifold && !candidate.Indices.empty() &&
+                         (!bHaveUnsafeCandidate || candidate.Indices.size() < unsafeSimplified.Indices.size()))
+                {
+                    unsafeSimplified = std::move(candidate);
+                    bHaveUnsafeCandidate = true;
                 }
                 return true;
             };
@@ -595,6 +614,14 @@ namespace NorvesLib::Tools::AssetCook
             if (!bHaveCandidate && !attempt(std::max<size_t>(3, (triangleCount * 3 / 4) * 3), false))
             {
                 return false;
+            }
+            if (!bHaveCandidate && bHaveUnsafeCandidate)
+            {
+                // 非多様体の辺を許す指定のときは、三角形が最も少なかった候補を採る。辺の共有数の検査は通らない。
+                simplified = std::move(unsafeSimplified);
+                bHaveCandidate = true;
+                bCandidatePermissive = false;
+                ++output.RelaxedGroups;
             }
             if (!bHaveCandidate)
             {
@@ -662,13 +689,15 @@ namespace NorvesLib::Tools::AssetCook
         bool ProcessLevel(const WeldedMesh& mesh,
                           const VariableArray<BuildCluster>& current,
                           SimplifyScratch& scratch,
+                          size_t groupTargetSize,
+                          bool bAllowNonManifold,
                           LevelOutput& output,
                           AnsiString& error)
         {
             const size_t clusterCount = current.size();
             VariableArray<uint32_t> groupOfCluster(clusterCount, 0u);
             size_t groupCount = 1;
-            if (clusterCount > SingleGroupMaxClusters)
+            if (clusterCount > SingleGroupMaxClusters(groupTargetSize))
             {
                 VariableArray<uint32_t> clusterIndices;
                 VariableArray<uint32_t> clusterIndexCounts;
@@ -684,7 +713,7 @@ namespace NorvesLib::Tools::AssetCook
                 groupCount = meshopt_partitionClusters(groupOfCluster.data(), clusterIndices.data(),
                                                        clusterIndices.size(), clusterIndexCounts.data(), clusterCount,
                                                        mesh.Positions.data(), mesh.VertexCount(), sizeof(float) * 3,
-                                                       GroupTargetSize);
+                                                       groupTargetSize);
             }
 
             VariableArray<LevelGroup> groups(groupCount);
@@ -709,7 +738,7 @@ namespace NorvesLib::Tools::AssetCook
                 {
                     continue;
                 }
-                if (!SimplifyGroup(mesh, current, lockByPosition, scratch, group, output, error))
+                if (!SimplifyGroup(mesh, current, lockByPosition, scratch, bAllowNonManifold, group, output, error))
                 {
                     return false;
                 }
@@ -731,9 +760,13 @@ namespace NorvesLib::Tools::AssetCook
                         size_t indexCount,
                         CookMeshDagResult& outResult,
                         AnsiString& error,
-                        uint32_t fallbackMinTriangles)
+                        uint32_t fallbackMinTriangles,
+                        uint32_t rootMaxClusters)
     {
         outResult = CookMeshDagResult{};
+        const bool bRootLimited = rootMaxClusters > 0;
+        const size_t rootClusterLimit = std::max<size_t>(1, rootMaxClusters);
+        const uint64_t minProgressPercent = bRootLimited ? RootLimitedMinProgressPercent : MinProgressPercent;
 
         WeldedMesh mesh;
         if (!BuildWeldedMesh(vertices, vertexCount, indices, indexCount, mesh, error))
@@ -758,6 +791,7 @@ namespace NorvesLib::Tools::AssetCook
         uint32_t level = 0;
         uint32_t permissiveGroups = 0;
         uint32_t rejectedGroups = 0;
+        uint32_t relaxedGroups = 0;
         VariableArray<uint32_t> levelTriangles;
         while (true)
         {
@@ -768,19 +802,53 @@ namespace NorvesLib::Tools::AssetCook
             }
 
             levelTriangles.push_back(static_cast<uint32_t>(currentTriangles));
-            // 1 クラスタまで縮んだか、段の上限に達した段は根にする
-            bool bMakeRoot = current.size() <= 1 || level + 1 >= Format::MaxLODLevels;
-            const char* rootReason = current.size() <= 1 ? "single-cluster" : "max-levels";
+            // 指定の数（既定は 1）以下のクラスタまで縮んだか、段の上限に達した段は根にする
+            bool bMakeRoot = current.size() <= rootClusterLimit || level + 1 >= Format::MaxLODLevels;
+            const char* rootReason = current.size() <= rootClusterLimit ? "single-cluster" : "max-levels";
             LevelOutput output;
+            size_t levelGroupTarget = GroupTargetSize;
+            size_t acceptedGroupTarget = GroupTargetSize;
             if (!bMakeRoot)
             {
-                if (!ProcessLevel(mesh, current, scratch, output, error))
+                if (!ProcessLevel(mesh, current, scratch, levelGroupTarget, false, output, error))
                 {
                     return false;
                 }
+                // 根のクラスタ数の上限を指定した資産は、進みが鈍い段のグループを大きくしてやり直す。
+                // 小さなグループでは境界の頂点の固定が多く、簡略化がほとんど進まずに残るグループが出るため。
+                while (bRootLimited && levelGroupTarget < RootLimitedMaxGroupTargetSize &&
+                       output.NextTriangles * 100 > currentTriangles * (100 - MinProgressPercent))
+                {
+                    const size_t retryGroupTarget = levelGroupTarget * 2;
+                    LevelOutput retry;
+                    if (!ProcessLevel(mesh, current, scratch, retryGroupTarget, false, retry, error))
+                    {
+                        return false;
+                    }
+                    levelGroupTarget = retryGroupTarget;
+                    if (retry.NextTriangles < output.NextTriangles)
+                    {
+                        output = std::move(retry);
+                        acceptedGroupTarget = retryGroupTarget;
+                    }
+                }
+                // それでも進みが鈍いなら、最も大きなグループで、非多様体の辺を許してやり直す（最後の手段）
+                if (bRootLimited && output.NextTriangles * 100 > currentTriangles * (100 - MinProgressPercent))
+                {
+                    LevelOutput relaxed;
+                    if (!ProcessLevel(mesh, current, scratch, RootLimitedMaxGroupTargetSize, true, relaxed, error))
+                    {
+                        return false;
+                    }
+                    if (relaxed.NextTriangles < output.NextTriangles)
+                    {
+                        output = std::move(relaxed);
+                        acceptedGroupTarget = RootLimitedMaxGroupTargetSize;
+                    }
+                }
                 // 次の段が空、または三角形がほとんど減らないなら、簡略化が進まないのでこの段を根にする
                 bMakeRoot = output.Next.empty() ||
-                            output.NextTriangles * 100 > currentTriangles * (100 - MinProgressPercent);
+                            output.NextTriangles * 100 > currentTriangles * (100 - minProgressPercent);
                 rootReason = output.Next.empty() ? "next-empty" : "min-progress";
             }
             if (IsDagTraceEnabled())
@@ -794,12 +862,13 @@ namespace NorvesLib::Tools::AssetCook
                 EnsureTraceLogFormatter();
                 NORVES_LOG_WARNING("CookMeshDag",
                                    "COOK_DAG level=%u clusters=%zu triangles=%llu groups=%zu next_clusters=%zu "
-                                   "next_triangles=%llu reduction_percent=%.1f permissive=%u rejected=%u min_progress_percent=%llu "
-                                   "decision=%s",
+                                   "next_triangles=%llu reduction_percent=%.1f permissive=%u rejected=%u relaxed=%u min_progress_percent=%llu "
+                                   "group_target=%zu decision=%s",
                                    level, current.size(), static_cast<unsigned long long>(currentTriangles), output.Groups.size(),
                                    output.Next.size(), static_cast<unsigned long long>(output.NextTriangles), reductionPercent,
-                                   output.PermissiveGroups, output.RejectedGroups,
-                                   static_cast<unsigned long long>(MinProgressPercent), bMakeRoot ? rootReason : "continue");
+                                   output.PermissiveGroups, output.RejectedGroups, output.RelaxedGroups,
+                                   static_cast<unsigned long long>(minProgressPercent), acceptedGroupTarget,
+                                   bMakeRoot ? rootReason : "continue");
             }
 
             if (bMakeRoot)
@@ -818,6 +887,7 @@ namespace NorvesLib::Tools::AssetCook
             // この段のクラスタを、グループごとの連続した範囲に並べて確定する
             permissiveGroups += output.PermissiveGroups;
             rejectedGroups += output.RejectedGroups;
+            relaxedGroups += output.RelaxedGroups;
             // 次の段のクラスタに付いた作ったグループの番号は段の中の通し番号なので、全体の番号へ直す
             // （下の確定は output.Groups の順に番号を振るので、全体の番号 = 確定前のグループ数 + 段の中の番号）
             const uint32_t firstGroupId = static_cast<uint32_t>(groups.size());
@@ -853,6 +923,29 @@ namespace NorvesLib::Tools::AssetCook
             }
             current = std::move(output.Next);
             ++level;
+        }
+
+        if (bRootLimited)
+        {
+            // 根のクラスタ数の上限を指定した資産は、指定の達成を確かめられるよう、根の量と誤差を常に出す。
+            size_t rootClusters = 0;
+            uint64_t rootTriangles = 0;
+            float rootError = 0.0f;
+            for (const BuiltCluster& entry : built)
+            {
+                if (entry.bRoot)
+                {
+                    ++rootClusters;
+                    rootTriangles += entry.Cluster.Indices.size() / 3;
+                    rootError = std::max(rootError, entry.Cluster.Error);
+                }
+            }
+            EnsureTraceLogFormatter();
+            NORVES_LOG_WARNING("CookMeshDag",
+                               "COOK_DAG_ROOT requested_max_clusters=%u root_clusters=%zu root_triangles=%llu "
+                               "root_error=%.6f levels=%u relaxed_groups=%u",
+                               rootMaxClusters, rootClusters, static_cast<unsigned long long>(rootTriangles), rootError,
+                               level + 1, relaxedGroups);
         }
 
         // 書き出しの形へ。クラスタごとに自分の頂点の範囲(最大 128 頂点)とクラスタ内の相対の索引を持たせる。
