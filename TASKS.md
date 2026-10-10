@@ -295,7 +295,7 @@
 
 
 ## SCN-ECS-SCOPE-METRICS: 撮影が CPU の区間と GPU のパスの値を名前ごとに出し、名前で検査できるようにする
-- status: todo
+- status: done
 - done-when: `CaptureScene.ps1` の計測（`-GpuTimingFrames`）が、トレースの全部の区間について、名前ごとのフレームあたりの合計（全スレッド）の median・p95・max と、区間が出たスレッドの数を metrics.json の `cpu_scope_ms` に書く（今の上位 15 だけをやめる）。名前の先頭 2 つの部分ごとの合計（`Ecs.Stage.*`・`Ecs.Sys.*`・`Ecs.Sync.*`・`RG.Record.*`）も書く。GPU のパスは今の median・p95・max を `gpu_pass_ms` に全部書く。`CheckCaptureMetrics.py` に `--require-scope <名前>`・`--require-pass <名前>`（無ければ失敗）と `--max-scope-median-ms <名前>=<ms>`・`--max-scope-p95-ms`・`--max-pass-median-ms`・`--max-pass-p95-ms`（繰り返し可）を足す。2000 個の短い計測で `Ecs.Stage.*` と各段の区間が出る。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 120 -GameArgs stress-entities=2000 -OutDir .harness/runs/scene-capture/SCN-ECS-SCOPE-METRICS`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-SCOPE-METRICS --views overview --timing --min-frames 120 --require-scope Ecs.Stage.* --require-scope Ecs.Sync.* --require-pass MegaGeometry`

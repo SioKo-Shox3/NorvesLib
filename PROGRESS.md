@@ -1096,3 +1096,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 結果: `verify-SCN-ECS-WORLD-SCHEDULE-5.txt`（EntityTreeTest・ApplicationFixedStepPipelineTest のビルド EXIT=0）、`-6.txt`（WorldTickGroupTest・WorldTimeChannelTest・WorldRenderInterpolationTest・ApplicationFixedStepPipelineTest・RenderInterpolationCadenceTest 5/5 Passed）、`-4-capture.txt`（起動画面の決定的な比較 default/near/low とも within_limits=True、`result=pass`）。`-1`・`-2` は最初のビルド（`ThreadPolicy` の名前空間の誤りを直す前後）と同じテストの実行。
 - 確認: `paths:` の外のため追加はしなかったが、一時的に `WorldTickGroupTest` へ「段の並び（システムの波の番号が登録順）・Tick〜LateTick が 1 収集・Tick が重なっても収集が重ならない・単独の固定ステップが番号を 1 進める・外側の収集で複数の固定ステップが番号を共有・Finalize で閉じる」を足して通ることを確かめ（`verify-SCN-ECS-WORLD-SCHEDULE-3-adhoc.txt`）、戻した。
 - Notes: 段の再入（RunStage の最中の RunStage）は false を返すだけで処理は走らない（Tick 系は従来も配信中は早期 return）。恒久のテストは `paths:` を広げる別のタスクで足すとよい。名前（`Ecs.Sys.Tick.*` など）は SCN-ECS-SCOPE-METRICS の検査に使える。
+
+### SCN-ECS-SCOPE-METRICS（2026-10-11、反復 16・run 20261010-223034）
+
+- 変更（`Scripts/CaptureScene.ps1`・`Scripts/CheckCaptureMetrics.py`）:
+  - `gpu_timing.cpu_scope_ms`: トレースの全部の区間を名前ごとに、フレームあたりの合計（全スレッド）の `median_ms`・`p95_ms`・`max_ms`、区間が出たスレッドの数 `threads`、出たフレーム数 `frames_present`、記録件数 `samples` で書く（上位 15 をやめた。旧 `cpu_scope_median_ms` は廃止）。窓は従来どおり（窓の最初〜最後のフレーム番号の範囲。長さは `cpu_scope_frames`）。範囲内でその名前が出なかったフレームは 0 で数える。
+  - `gpu_timing.cpu_scope_group_ms`: 名前の先頭 2 つの部分が同じで 3 部分以上の名前を `A.B.*` ごとにフレームで合計した値（`Ecs.Stage.*`・`Ecs.Sys.*`・`Ecs.Sync.*`・`RG.Record.*` など）。入れ子の区間は二重に数える（`Ecs.Sys.*` は `Ecs.Stage.*` の中身）。
+  - `gpu_timing.gpu_pass_ms`: パスごとの median・p95・max を全部（既存の `pass_ms`・`pass_median_ms` は他の項目が使うので残した）。
+  - 標準出力: `cpu_scope_median`（上位 15 の median/max/スレッド数と区間の総数）と `cpu_scope_group` の行。
+  - `CheckCaptureMetrics.py`: `--require-scope`・`--require-pass`（繰り返し可。完全一致、末尾 `*` などのワイルドカードは前方一致。区間は個別の名前とグループの両方を探す。無ければ失敗）、`--max-scope-median-ms`・`--max-scope-p95-ms`・`--max-pass-median-ms`・`--max-pass-p95-ms`（`<名前>=<ms>`、繰り返し可。一致する区間・パスが 1 つでも超えれば失敗。一致が無い指定も失敗）。
+- 結果: `verify-SCN-ECS-SCOPE-METRICS-1.txt`（ビルド pass、2000 個・120 フレームの撮影 pass、34 区間。`Ecs.Stage.Tick`・`Ecs.Stage.Sync`・`Ecs.Sys.Sync.SyncToSceneView` など、グループ `Ecs.Stage.*`・`Ecs.Sys.*`・`Ecs.Sync.*`）、`-2.txt`（`--require-scope Ecs.Stage.*`・`Ecs.Sync.*`・`--require-pass MegaGeometry` が pass）、`-3.txt`（存在しない区間で rc=1 を確認）、`-4-limits.txt`（閾値を通す・超える・存在しない名前の 5 通り）。
+- Notes: このシーンでは `RG.Record.*` の区間はまだ出ない（出れば `cpu_scope_group_ms` に入る）。`Ecs.Stage.Sync`（段の名前が Sync）と `Ecs.Sync.*`（段の同期点の区間）は別物。チャンクの仕事の区間はこの規模では出ていない（`Ecs.Sys.*` は GameThread 系のみ）。

@@ -30,7 +30,9 @@
 # （MEGA_CAPACITY）・ジオメトリのプールの使用量（VRAM_POOLS の geometry_used_mb）を mega_stats として書く。
 # 統計が無効な Release は GPU のタイムスタンプを取れないので併用しない（RelWithDebInfo で測る）。
 # gpu_timing には CPU 側も入る。ゲームスレッド・描画スレッドのフレーム時間（game_thread_ms_* / render_thread_ms_*。median と p95）、
-# パスごとの median・p95・max（pass_ms）、CPU のスコープ（トレースの Type=Scope の行）の median 上位 15（cpu_scope_median_ms）。
+# パスごとの median・p95・max（pass_ms。同じ内容を gpu_pass_ms にも書く）、CPU のスコープ（トレースの Type=Scope の行）は全部の区間を
+# 名前ごとに集計して cpu_scope_ms へ（フレームあたりの合計（全スレッド）の median・p95・max、区間が出たスレッドの数 threads）、
+# 名前の先頭 2 つの部分ごとの合計（Ecs.Stage.*・Ecs.Sys.*・RG.Record.* など）を cpu_scope_group_ms へ書く。
 # CPU 側も GPU と同じ手順（SceneReady の後の描画フレームからウォームアップと末尾を除いた最後の -GpuTimingFrames 件）で数える。
 #
 # -RequireChecks <名前,...> を与えると、Game を --engine-checks=<名前,...> 付きで起動し（開発ビルドの検査。Debug/EngineChecks.h）、
@@ -397,12 +399,23 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
     } | Sort-Object -Property median_ms -Descending)
     $passMedianList = @($passList | ForEach-Object { [pscustomobject][ordered]@{ pass = $_.pass; median_ms = $_.median_ms } })
 
-    # CPU のスコープ（Type=Scope の行）: 窓の最初〜最後のフレーム番号の範囲に記録された区間の継続時間の median の上位 15。
+    # CPU のスコープ（Type=Scope の行）: 窓の最初〜最後のフレーム番号の範囲に記録された全部の区間を、名前ごとに集計する。
     # Scope 行の Frame は記録時点のゲームフレーム番号で、描画を完了したフレームの行（窓）の番号とは一致しないため、
     # 窓の行の番号に所属するかではなく連続した範囲で選ぶ。
+    # フレームあたりの値 = そのフレームに記録された同じ名前の区間の継続時間の合計（全スレッド・並列の仕事は足し合わせる）。
+    # 範囲内でその名前が 1 度も出なかったフレームは 0 として数える（median は「毎フレーム出る区間」の典型値、max は偶発の区間の検出に使う）。
+    # threads = その名前の区間が出たスレッド（ThreadId）の数、frames_present = 出たフレームの数、samples = 区間の記録の件数。
+    # 名前の先頭 2 つの部分（A.B）が同じで 3 つ以上の部分を持つ名前は、A.B.* としてフレームごとに合計した値も書く。
     $scopeFrameFirst = if ($cpuWindow.Count -gt 0) { [long]$cpuWindow[0].Frame } else { [long]::MaxValue }
     $scopeFrameLast = if ($cpuWindow.Count -gt 0) { [long]$cpuWindow[$cpuWindow.Count - 1].Frame } else { [long]::MinValue }
-    $scopeSamples = @{}
+    $scopeFrameCount = if ($cpuWindow.Count -gt 0) { [int]($scopeFrameLast - $scopeFrameFirst + 1) } else { 0 }
+    $threadColumn = [array]::IndexOf($header, 'ThreadId')
+    $scopePerFrame = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.Dictionary[long,double]]'
+    $scopeThreads = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.HashSet[string]]'
+    $scopeRecords = New-Object 'System.Collections.Generic.Dictionary[string,int]'
+    $groupPerFrame = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.Dictionary[long,double]]'
+    $groupThreads = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.HashSet[string]]'
+    $groupRecords = New-Object 'System.Collections.Generic.Dictionary[string,int]'
     foreach ($line in [IO.File]::ReadLines($TracePath))
     {
         if (-not $line.StartsWith('Scope,')) { continue }
@@ -411,18 +424,50 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
         if ($scopeFrame -lt $scopeFrameFirst -or $scopeFrame -gt $scopeFrameLast) { continue }
         $fields = $line.Split(',', 8)
         $scopeName = $fields[$nameColumn].Trim('"')
-        if (-not $scopeSamples.ContainsKey($scopeName)) { $scopeSamples[$scopeName] = New-Object System.Collections.Generic.List[double] }
-        $scopeSamples[$scopeName].Add([double]::Parse($fields[$durationColumn], $invariant))
-    }
-    $cpuScopeList = @($scopeSamples.Keys | ForEach-Object {
-        $sortedScope = [double[]]@($scopeSamples[$_] | Sort-Object)
-        [pscustomobject][ordered]@{
-            scope = $_
-            median_ms = [math]::Round((Get-Percentile $sortedScope 0.5), 3)
-            p95_ms = [math]::Round((Get-Percentile $sortedScope 0.95), 3)
-            samples = $sortedScope.Count
+        $scopeMs = [double]::Parse($fields[$durationColumn], $invariant)
+        $threadId = $fields[$threadColumn]
+        $targets = @(, @($scopeName, $scopePerFrame, $scopeThreads, $scopeRecords))
+        $nameParts = $scopeName.Split('.')
+        if ($nameParts.Count -ge 3) { $targets += , @(($nameParts[0] + '.' + $nameParts[1] + '.*'), $groupPerFrame, $groupThreads, $groupRecords) }
+        foreach ($target in $targets)
+        {
+            $key = $target[0]
+            $perFrame = $target[1]
+            if (-not $perFrame.ContainsKey($key))
+            {
+                $perFrame[$key] = New-Object 'System.Collections.Generic.Dictionary[long,double]'
+                $target[2][$key] = New-Object 'System.Collections.Generic.HashSet[string]'
+                $target[3][$key] = 0
+            }
+            $frameTotals = $perFrame[$key]
+            $previous = 0.0
+            $null = $frameTotals.TryGetValue($scopeFrame, [ref]$previous)
+            $frameTotals[$scopeFrame] = $previous + $scopeMs
+            $null = $target[2][$key].Add($threadId)
+            $target[3][$key] = $target[3][$key] + 1
         }
-    } | Sort-Object -Property median_ms -Descending | Select-Object -First 15)
+    }
+    function ConvertTo-ScopeStatList($PerFrame, $Threads, $Records, [int]$FrameCount)
+    {
+        return @($PerFrame.Keys | ForEach-Object {
+            $frameTotals = $PerFrame[$_]
+            $values = New-Object 'System.Collections.Generic.List[double]'
+            foreach ($total in $frameTotals.Values) { $values.Add($total) }
+            for ($padIndex = $frameTotals.Count; $padIndex -lt $FrameCount; ++$padIndex) { $values.Add(0.0) }
+            $sortedScope = [double[]]@($values | Sort-Object)
+            [pscustomobject][ordered]@{
+                scope = $_
+                median_ms = [math]::Round((Get-Percentile $sortedScope 0.5), 3)
+                p95_ms = [math]::Round((Get-Percentile $sortedScope 0.95), 3)
+                max_ms = [math]::Round($sortedScope[$sortedScope.Count - 1], 3)
+                threads = $Threads[$_].Count
+                frames_present = $frameTotals.Count
+                samples = $Records[$_]
+            }
+        } | Sort-Object -Property @{ Expression = 'median_ms'; Descending = $true }, @{ Expression = 'max_ms'; Descending = $true }, @{ Expression = 'scope'; Descending = $false })
+    }
+    $cpuScopeList = ConvertTo-ScopeStatList $scopePerFrame $scopeThreads $scopeRecords $scopeFrameCount
+    $cpuScopeGroupList = ConvertTo-ScopeStatList $groupPerFrame $groupThreads $groupRecords $scopeFrameCount
 
     $timing = [ordered]@{
         trace = [IO.Path]::GetFileName($TracePath)
@@ -449,7 +494,10 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
         within_budget = ($maximum -le $BudgetMs)
         pass_median_ms = $passMedianList
         pass_ms = $passList
-        cpu_scope_median_ms = $cpuScopeList
+        gpu_pass_ms = $passList
+        cpu_scope_frames = $scopeFrameCount
+        cpu_scope_ms = $cpuScopeList
+        cpu_scope_group_ms = $cpuScopeGroupList
     }
     return [pscustomobject]@{ Error = $null; Timing = [pscustomobject]$timing }
 }
@@ -886,8 +934,10 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
             (($gpuTiming.pass_median_ms | Select-Object -First 10 | ForEach-Object { "$($_.pass)=$($_.median_ms)" }) -join ' '))
         Write-Output ("CAPTURE_SCENE gpu_pass_p95 view={0} {1}" -f $result.view,
             (($gpuTiming.pass_ms | Select-Object -First 10 | ForEach-Object { "$($_.pass)=$($_.p95_ms)/max=$($_.max_ms)" }) -join ' '))
-        Write-Output ("CAPTURE_SCENE cpu_scope_median view={0} {1}" -f $result.view,
-            (($gpuTiming.cpu_scope_median_ms | Select-Object -First 15 | ForEach-Object { "$($_.scope)=$($_.median_ms)" }) -join ' '))
+        Write-Output ("CAPTURE_SCENE cpu_scope_median view={0} scopes={1} {2}" -f $result.view, @($gpuTiming.cpu_scope_ms).Count,
+            (($gpuTiming.cpu_scope_ms | Select-Object -First 15 | ForEach-Object { "$($_.scope)=$($_.median_ms)/max=$($_.max_ms)/t=$($_.threads)" }) -join ' '))
+        Write-Output ("CAPTURE_SCENE cpu_scope_group view={0} {1}" -f $result.view,
+            (($gpuTiming.cpu_scope_group_ms | ForEach-Object { "$($_.scope)=$($_.median_ms)/p95=$($_.p95_ms)/max=$($_.max_ms)" }) -join ' '))
     }
     if ($null -ne $megaStats)
     {
