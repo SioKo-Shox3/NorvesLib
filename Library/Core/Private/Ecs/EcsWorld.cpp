@@ -205,17 +205,60 @@ namespace NorvesLib::Core::Ecs
         }
     }
 
-    EcsEntity EcsWorld::CreateEntity(EcsArchetypeId archetypeId)
+    EcsEntity EcsWorld::CreateEntity(EcsArchetypeId archetypeId, Container::Span<const EcsColumnValue> initialValues)
     {
-        Container::VariableArray<EcsEntity> created;
-        if (CreateEntities(archetypeId, 1, &created) == 0)
+        if (m_HookDepth > 0 || archetypeId >= m_Archetypes.size())
         {
             return kNullEcsEntity;
         }
-        return created[0];
+        for (const EcsColumnValue &value : initialValues)
+        {
+            const int32_t column = FindColumnIndex(archetypeId, value.Type);
+            if (value.Data == nullptr || column < 0 || m_Archetypes[archetypeId].Columns[column].Size != value.Size)
+            {
+                return kNullEcsEntity;
+            }
+        }
+        Container::VariableArray<EcsEntity> created;
+        if (CreateRows(archetypeId, 1, &created) == 0)
+        {
+            return kNullEcsEntity;
+        }
+        const EcsEntity entity = created[0];
+        // 初期値は OnCreate より前に入れる（作成の直後の行は全列が「変わった」なので、版は付け直さない）
+        for (const EcsColumnValue &value : initialValues)
+        {
+            const int32_t column = FindColumnIndex(archetypeId, value.Type);
+            std::memcpy(GetColumnValue(entity, value.Type), value.Data, m_Archetypes[archetypeId].Columns[column].Size);
+        }
+        FireRowHooks(entity, true, EcsHookReason::Create);
+        return entity;
     }
 
     uint32_t EcsWorld::CreateEntities(EcsArchetypeId archetypeId, uint32_t count, Container::VariableArray<EcsEntity> *outEntities)
+    {
+        if (m_HookDepth > 0)
+        {
+            return 0;
+        }
+        if (m_Hooks.empty())
+        {
+            return CreateRows(archetypeId, count, outEntities);
+        }
+        Container::VariableArray<EcsEntity> created;
+        const uint32_t made = CreateRows(archetypeId, count, &created);
+        for (const EcsEntity &entity : created)
+        {
+            FireRowHooks(entity, true, EcsHookReason::Create);
+            if (outEntities != nullptr)
+            {
+                outEntities->push_back(entity);
+            }
+        }
+        return made;
+    }
+
+    uint32_t EcsWorld::CreateRows(EcsArchetypeId archetypeId, uint32_t count, Container::VariableArray<EcsEntity> *outEntities)
     {
         if (archetypeId >= m_Archetypes.size())
         {
@@ -322,10 +365,13 @@ namespace NorvesLib::Core::Ecs
     bool EcsWorld::DestroyEntity(EcsEntity entity)
     {
         const Slot *found = FindSlot(entity);
-        if (found == nullptr)
+        if (found == nullptr || m_HookDepth > 0)
         {
             return false;
         }
+        // 行が消える前に、全列の OnDestroy を呼ぶ
+        FireRowHooks(entity, false, EcsHookReason::Destroy);
+        found = FindSlot(entity);
         EcsChunk *chunk = found->Chunk;
         const uint32_t row = found->Row;
         Archetype &archetype = m_Archetypes[chunk->Archetype];
@@ -412,7 +458,7 @@ namespace NorvesLib::Core::Ecs
     bool EcsWorld::AddColumn(EcsEntity entity, const EcsColumnInfo &column, const void *initialValue)
     {
         const Slot *slot = FindSlot(entity);
-        if (slot == nullptr)
+        if (slot == nullptr || m_HookDepth > 0)
         {
             return false;
         }
@@ -431,13 +477,15 @@ namespace NorvesLib::Core::Ecs
             return false;
         }
         MoveRow(entity, targetId, &column, initialValue);
+        // 足した列だけが生まれる（共通の列は Move なのでフックを呼ばない）
+        FireColumnHook(entity, column.Type, true, EcsHookReason::ColumnAdded);
         return true;
     }
 
     bool EcsWorld::RemoveColumn(EcsEntity entity, TypeId type)
     {
         const Slot *slot = FindSlot(entity);
-        if (slot == nullptr)
+        if (slot == nullptr || m_HookDepth > 0)
         {
             return false;
         }
@@ -455,8 +503,98 @@ namespace NorvesLib::Core::Ecs
         {
             return false;
         }
+        // 外す列だけが消える（共通の列は Move なのでフックを呼ばない）。値が残っているうちに呼ぶ
+        FireColumnHook(entity, type, false, EcsHookReason::ColumnRemoved);
         MoveRow(entity, targetId, nullptr, nullptr);
         return true;
+    }
+
+    bool EcsWorld::SetColumnHooks(TypeId type, const EcsColumnHooks &hooks)
+    {
+        if (type == InvalidSchemaId || m_HookDepth > 0)
+        {
+            return false;
+        }
+        for (size_t i = 0; i < m_Hooks.size(); ++i)
+        {
+            if (m_Hooks[i].Type == type)
+            {
+                if (hooks.OnCreate == nullptr && hooks.OnDestroy == nullptr)
+                {
+                    m_Hooks.erase(m_Hooks.begin() + i);
+                }
+                else
+                {
+                    m_Hooks[i].Hooks = hooks;
+                }
+                return true;
+            }
+        }
+        if (hooks.OnCreate != nullptr || hooks.OnDestroy != nullptr)
+        {
+            HookEntry entry;
+            entry.Type = type;
+            entry.Hooks = hooks;
+            m_Hooks.push_back(entry);
+        }
+        return true;
+    }
+
+    const EcsColumnHooks *EcsWorld::FindHooks(TypeId type) const
+    {
+        for (const HookEntry &entry : m_Hooks)
+        {
+            if (entry.Type == type)
+            {
+                return &entry.Hooks;
+            }
+        }
+        return nullptr;
+    }
+
+    void EcsWorld::FireRowHooks(EcsEntity entity, bool create, EcsHookReason reason)
+    {
+        if (m_Hooks.empty())
+        {
+            return;
+        }
+        const Slot *slot = FindSlot(entity);
+        if (slot == nullptr)
+        {
+            return;
+        }
+        const Archetype &archetype = m_Archetypes[slot->Chunk->Archetype];
+        const std::byte *base = reinterpret_cast<const std::byte *>(slot->Chunk);
+        const uint32_t row = slot->Row;
+        ++m_HookDepth;
+        for (size_t i = 0; i < archetype.Columns.size(); ++i)
+        {
+            const EcsColumnHooks *hooks = FindHooks(archetype.Columns[i].Type);
+            const EcsHookFn fn = hooks == nullptr ? nullptr : (create ? hooks->OnCreate : hooks->OnDestroy);
+            if (fn != nullptr)
+            {
+                fn(hooks->User, entity, base + archetype.Offsets[i] + static_cast<size_t>(archetype.Columns[i].Size) * row, reason);
+            }
+        }
+        --m_HookDepth;
+    }
+
+    void EcsWorld::FireColumnHook(EcsEntity entity, TypeId type, bool create, EcsHookReason reason)
+    {
+        const EcsColumnHooks *hooks = FindHooks(type);
+        const EcsHookFn fn = hooks == nullptr ? nullptr : (create ? hooks->OnCreate : hooks->OnDestroy);
+        if (fn == nullptr)
+        {
+            return;
+        }
+        const void *value = static_cast<const EcsWorld *>(this)->GetColumnValue(entity, type);
+        if (value == nullptr)
+        {
+            return;
+        }
+        ++m_HookDepth;
+        fn(hooks->User, entity, value, reason);
+        --m_HookDepth;
     }
 
     const void *EcsWorld::GetColumnValue(EcsEntity entity, TypeId type) const
@@ -883,7 +1021,7 @@ namespace NorvesLib::Core::Ecs
     bool EcsWorld::MarkOrphan(EcsEntity entity)
     {
         const Slot *slot = FindSlot(entity);
-        if (slot == nullptr)
+        if (slot == nullptr || m_HookDepth > 0)
         {
             return false;
         }

@@ -262,7 +262,7 @@
 - paths: Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/CMakeLists.txt, Test/Core/Object/CMakeLists.txt, Test/Core/Object/EcsChangeTest.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-CORE-COMMANDS: コマンドバッファと、理由つきの作成・削除のフックを足す
-- status: todo
+- status: done
 - done-when: `EcsCommandBuffer` が入る（仕事ごとの束、決定的な再生、Generation の照合で古いものを捨てる、作成の予約札の取り消し）。列の型ごとの OnCreate/OnDestroy は、理由 Destroy と Move を区別し、Move では Destroy を呼ばない。`EcsCommandTest` が次を確かめる: 再生の順がスレッドの数によらない、取り消した予約は再生されない、Move で Destroy のフックが呼ばれない。
 - verify: `cmake --build build --config Debug --target EntityTreeTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(EcsStorageTest|EcsChangeTest|EcsCommandTest)$" --no-tests=error --output-on-failure --timeout 180`

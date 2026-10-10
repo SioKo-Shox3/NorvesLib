@@ -23,8 +23,10 @@
  * - 消費者（RegisterChangeConsumer）は、既読のログ位置と既読の版を持つ。消費者がいない列にはログを積まない。
  * クエリ（EcsQuery）は All/Any/None（列・タグ）とチャンクの版による絞り込みを持ち、孤児の行は既定で出ない。
  *
+ * 作成・削除のフック（SetColumnHooks）は、列が生まれる・消えるときだけ呼ぶ（列の組が変わるだけの Move では呼ばない）。
+ *
  * GameThread だけが触る（スレッドセーフではない）。並列の仕事が呼んでよいのは、MarkWritten 系と走査用の参照だけ
- * （その間は構造変更・SetColumnTracked・CommitChanges をしない）。コマンドバッファは別の層で足す。
+ * （その間は構造変更・SetColumnTracked・CommitChanges をしない）。並列の中の構造変更は EcsCommandBuffer に積む。
  */
 
 #include "Container/Containers.h"
@@ -42,6 +44,38 @@ namespace NorvesLib::Core::Ecs
 
     /// 孤児の印（予約済みのタグのビット）。付いた行は、既定のクエリのどれにも出ない。
     inline constexpr uint64_t kEcsTagOrphan = 1ull << 63;
+
+    /// 作成・削除のフックが呼ばれた理由。行がアーキタイプ間を移るだけ（Move）の列には、どのフックも呼ばれない。
+    enum class EcsHookReason : uint8_t
+    {
+        /// 行の作成で、その列が生まれた
+        Create,
+        /// AddColumn で、その列が足された
+        ColumnAdded,
+        /// 行の削除で、その列が消える
+        Destroy,
+        /// RemoveColumn で、その列が外される
+        ColumnRemoved,
+    };
+
+    /// フックの関数。value は列の値（作成・追加の直後、または削除・除去の直前）。フックの中では構造変更をしない。
+    using EcsHookFn = void (*)(void *user, EcsEntity entity, const void *value, EcsHookReason reason);
+
+    /// 列の型ごとの作成・削除のフック。どちらも null でよい。
+    struct EcsColumnHooks
+    {
+        EcsHookFn OnCreate = nullptr;
+        EcsHookFn OnDestroy = nullptr;
+        void *User = nullptr;
+    };
+
+    /// 行の作成時に与える列の初期値。Size は列の大きさと一致しなければならない（食い違いは作成を拒む）。
+    struct EcsColumnValue
+    {
+        TypeId Type = 0;
+        const void *Data = nullptr;
+        uint32_t Size = 0;
+    };
 
     /// 変更ログの 1 項目。その版で書かれた（または構造変更で動いた）行の実体。
     struct EcsChangeEntry
@@ -139,8 +173,12 @@ namespace NorvesLib::Core::Ecs
          */
         EcsArchetypeId GetOrCreateArchetype(Container::Span<const EcsColumnInfo> columns, uint64_t tags = 0);
 
-        /// 1 行を作る（値は 0）。アーキタイプが不正なら null。
-        EcsEntity CreateEntity(EcsArchetypeId archetype);
+        /**
+         * @brief 1 行を作る（値は 0。initialValues があればその列だけ上書きする）
+         * @return 作った実体。アーキタイプが不正・初期値の列がアーキタイプに無い・フックの中からの呼び出しなら null
+         *         （OnCreate は初期値を入れた後に呼ぶ）
+         */
+        EcsEntity CreateEntity(EcsArchetypeId archetype, Container::Span<const EcsColumnValue> initialValues = {});
 
         /**
          * @brief まとめて count 行を作る（値は 0）
@@ -173,6 +211,19 @@ namespace NorvesLib::Core::Ecs
         {
             return RemoveColumn(entity, EcsColumnInfoOf<T>().Type);
         }
+
+        /**
+         * @brief 列の型 type の作成・削除のフックを設定する（置き換え。両方 null なら外す）
+         *
+         * - OnCreate: 行の作成（reason Create）と AddColumn（ColumnAdded）で、その列が生まれたとき。
+         * - OnDestroy: 行の削除（Destroy）と RemoveColumn（ColumnRemoved）で、その列が消えるとき。
+         * - 列の組が変わるだけの移動（Move）で残る列には、OnDestroy も OnCreate も呼ばない。
+         *   孤児の印（MarkOrphan）も移動なので呼ばない。
+         * - フックの中の構造変更（作成・削除・列の追加と除去・孤児）は false / null で何もしない。
+         * - EcsWorld の破棄では呼ばない。
+         * @return type が無効なら false
+         */
+        bool SetColumnHooks(TypeId type, const EcsColumnHooks &hooks);
 
         [[nodiscard]] bool IsAlive(EcsEntity entity) const;
 
@@ -363,7 +414,20 @@ namespace NorvesLib::Core::Ecs
 
         static constexpr uint32_t kNoSlot = 0xFFFFFFFFu;
 
+        struct HookEntry
+        {
+            TypeId Type = 0;
+            EcsColumnHooks Hooks;
+        };
+
         [[nodiscard]] const Slot *FindSlot(EcsEntity entity) const;
+        /// 行を作る（フックは呼ばない）。作った実体は outEntities の末尾へ足す。
+        uint32_t CreateRows(EcsArchetypeId archetype, uint32_t count, Container::VariableArray<EcsEntity> *outEntities);
+        [[nodiscard]] const EcsColumnHooks *FindHooks(TypeId type) const;
+        /// 実体の全列について、フックを呼ぶ（OnCreate は create が true）
+        void FireRowHooks(EcsEntity entity, bool create, EcsHookReason reason);
+        /// 実体の列 column のフックを 1 つ呼ぶ
+        void FireColumnHook(EcsEntity entity, TypeId type, bool create, EcsHookReason reason);
         EcsChunk *AcquireChunk(EcsArchetypeId archetypeId);
         void ReleaseLastChunk(Archetype &archetype);
         EcsEntity AcquireSlot();
@@ -391,6 +455,9 @@ namespace NorvesLib::Core::Ecs
         bool m_bVersionSealed = false;
         Container::VariableArray<ChangeLog> m_Logs;
         Container::VariableArray<Consumer> m_Consumers;
+        Container::VariableArray<HookEntry> m_Hooks;
+        /// フックを呼んでいる間の深さ（0 でなければ構造変更を拒む）
+        uint32_t m_HookDepth = 0;
         Memory::PoolAllocator<false> m_ChunkPool;
     };
 

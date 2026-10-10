@@ -1030,3 +1030,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 反復 8（評価者の差し戻しへの対応）: 書いた直後（同じ版）に列を足す・外すと、移動先の行の版が 0 に戻り、同じ実体・版がログに 2 件出た。`MoveRow` が、移動元と移動先に共通する追跡列の行の版を値と一緒に引き継ぐようにした（`TouchRow` は同じ版なら積まない）。追跡列を外して付け直した行は版を引き継げないので、その追跡列のログに `bMayDuplicate` を立て、`ReadChanges` が同じ実体・版の項目を 1 回にまとめる（全員が読み切るとフラグが戻る）。`EcsChangeTest` に `TestWriteThenMoveLogsOncePerVersion`（書く→足す→外す、書く→追跡列を外す→付け直す を読まずに続けて 1 件）を足した。
 - 結果: `verify-SCN-ECS-CORE-CHANGES-8-1.txt`（EntityTreeTest のビルド EXIT=0）、`-8-2.txt`（`EcsStorageTest`・`EcsMoveTest`・`EcsChangeTest` Passed、`100% tests passed`）。
 - Notes: 重複の除去は `bMayDuplicate` が立っている間の読み取りだけで、通常の経路の費用は増えない。
+
+### SCN-ECS-CORE-COMMANDS（2026-10-11、反復 9・run 20261010-223034）
+
+- 変更（`Library/Core/{Public,Private}/Ecs/`。まだどこからも使わない）:
+  - `EcsCommandBuffer`（新規 `EcsCommandBuffer.h/.cpp`）: 仕事ごとに 1 つのバッファへ Create / Destroy / AddColumn / RemoveColumn / Write を積む（値は積むときにコピー）。`EcsCommandBuffer::Replay(world, 仕事の順のバッファ列)` が、渡された順・各バッファの中は積んだ順に当てる。当てるコマンドが 1 つでもあれば先に `AdvanceVersion()` を 1 回呼ぶ。再生済みのバッファは `Clear()` まで二重に当てない。再生のとき、対象が死んでいる（Generation 違い）コマンドは捨てて `DiscardedStale` に数え、生きた対象を World が拒んだものは `Rejected`（Write は列の大きさと食い違えば拒む）。
+  - 作成の予約札: `Create` が `EcsCreateTicket` を返す。再生の前なら `CancelCreate` で取り消せて、その作成は再生されず（`CancelledCreates`）、札を対象にした後続のコマンドは捨てる。再生後は `ResolveCreate` で実体を引く（再生の後の取り消しは false）。札はそれを積んだバッファの番号（コンストラクタの引数）と対にしか効かない。
+  - 列の型ごとのフック（`EcsWorld::SetColumnHooks`）: `OnCreate`・`OnDestroy` と理由 `EcsHookReason{Create, ColumnAdded, Destroy, ColumnRemoved}`。行の作成は全列に Create、AddColumn は足した列だけ ColumnAdded、行の削除は全列に Destroy（行が消える前）、RemoveColumn は外す列だけ ColumnRemoved（値が残っているうち）。列の組が変わるだけの Move で残る列と MarkOrphan には、どちらも呼ばない。フックの中の構造変更は拒む。`CreateEntity` は初期値（`EcsColumnValue`、Size が列と一致しなければ拒む）を OnCreate の前に入れる。EcsWorld の破棄では呼ばない。
+- テスト: `EcsCommandTest`（EntityTreeTest の束、ctest 登録済み）が、64 の仕事のバッファを 1/2/4/8 本のスレッドで（仕事を取る順も正順・逆順で）積み、番号順に再生した World の状態と集計がすべて一致すること、バッファの渡す順で結果が変わること、取り消した予約が再生されないこと（札を対象にした後続も捨てる・再生後は取り消せない・別バッファの札は無効）、古い識別子（同じ番号の再利用）と二重の削除を捨てること、拒まれるコマンドが何も変えないこと、空の再生は版を進めないこと、フックの理由と回数（AddColumn / RemoveColumn / MarkOrphan / 入れ替え削除で残る列に Destroy が呼ばれない）、再生経由でも Move で Destroy が呼ばれないこと、フックの中の構造変更の拒否を確かめる。
+- 確認: 再生の取り消し判定を一時的に外すと `EcsCommandTest` が通らなくなる（assert で止まりタイムアウト）こと、戻すと通ることを見た。
+- 結果: `verify-SCN-ECS-CORE-COMMANDS-1.txt`（EntityTreeTest のビルド EXIT=0、警告・エラー 0 件）、`-3-ctest.txt`（`EcsStorageTest`・`EcsChangeTest`・`EcsCommandTest` Passed、`100% tests passed`）。`-2-ctest.txt` は変異を入れる前の同じ実行。EcsMoveTest・EntityTreeTest も Passed。
+- Notes: Git Bash は `/m:1` をパスに変換してビルドが失敗するので、verify は PowerShell で走らせる。バッファの番号（札の持ち主）は呼び出し側が重ならないように渡す（スケジューラができたら仕事の番号を使う）。フックの検索は型ごとの線形（フックを付ける型が数個の前提。増えるならアーキタイプごとの索引を足す）。コマンドを積むのは GameThread か、自分の仕事のバッファを持つ並列の仕事だけ（バッファ同士は触れ合わない）。
+- 証拠（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-CORE-COMMANDS-1.txt`、`-2-ctest.txt`、`-3-ctest.txt`。
