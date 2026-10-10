@@ -11,34 +11,34 @@ namespace NorvesLib::Core::Component
     PointLightComponent::PointLightComponent()
         : LightComponent()
     {
-        LightTypeProp = Rendering::LightType::Point;
-        IntensityUnit = LightIntensityUnit::Candela;
-        Range = 10.0f;
-        AttenuationConstant = 1.0f;
-        AttenuationLinear = 0.09f;
-        AttenuationQuadratic = 0.032f;
+        getLightTypeProp().Set(Rendering::LightType::Point);
+        getIntensityUnit().Set(LightIntensityUnit::Candela);
+        getRange().Set(10.0f);
+        getAttenuationConstant().Set(1.0f);
+        getAttenuationLinear().Set(0.09f);
+        getAttenuationQuadratic().Set(0.032f);
     }
 
     PointLightComponent::PointLightComponent(const FieldInitializer* initializer)
         : LightComponent(initializer)
     {
-        LightTypeProp = Rendering::LightType::Point;
-        IntensityUnit = LightIntensityUnit::Candela;
-        Range = 10.0f;
-        AttenuationConstant = 1.0f;
-        AttenuationLinear = 0.09f;
-        AttenuationQuadratic = 0.032f;
+        getLightTypeProp().Set(Rendering::LightType::Point);
+        getIntensityUnit().Set(LightIntensityUnit::Candela);
+        getRange().Set(10.0f);
+        getAttenuationConstant().Set(1.0f);
+        getAttenuationLinear().Set(0.09f);
+        getAttenuationQuadratic().Set(0.032f);
     }
 
     PointLightComponent::PointLightComponent(const IUnknown* sourceObject)
         : LightComponent(sourceObject)
     {
-        LightTypeProp = Rendering::LightType::Point;
-        IntensityUnit = LightIntensityUnit::Candela;
-        Range = 10.0f;
-        AttenuationConstant = 1.0f;
-        AttenuationLinear = 0.09f;
-        AttenuationQuadratic = 0.032f;
+        getLightTypeProp().Set(Rendering::LightType::Point);
+        getIntensityUnit().Set(LightIntensityUnit::Candela);
+        getRange().Set(10.0f);
+        getAttenuationConstant().Set(1.0f);
+        getAttenuationLinear().Set(0.09f);
+        getAttenuationQuadratic().Set(0.032f);
     }
 
     PointLightComponent::~PointLightComponent()
@@ -71,14 +71,14 @@ namespace NorvesLib::Core::Component
 
         // ポイントライト固有
         outProxy.Type = Rendering::LightType::Point;
-        outProxy.Range = Range;
-        outProxy.AttenuationConstant = AttenuationConstant;
-        outProxy.AttenuationLinear = AttenuationLinear;
-        outProxy.AttenuationQuadratic = AttenuationQuadratic;
+        outProxy.Range = getRange().Get();
+        outProxy.AttenuationConstant = getAttenuationConstant().Get();
+        outProxy.AttenuationLinear = getAttenuationLinear().Get();
+        outProxy.AttenuationQuadratic = getAttenuationQuadratic().Get();
 
-        if (IntensityUnit == LightIntensityUnit::Lumen)
+        if (getIntensityUnit().Get() == LightIntensityUnit::Lumen)
         {
-            outProxy.CanonicalIntensity = Intensity / (4.0f * Math::Constants::PI);
+            outProxy.CanonicalIntensity = getIntensity().Get() / (4.0f * Math::Constants::PI);
         }
 
         // オーナーのEntityから位置を取得

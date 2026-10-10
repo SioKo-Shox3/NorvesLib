@@ -1,6 +1,8 @@
 ﻿#pragma once
 
 #include "Component.h"
+#include "LightIntensityUnit.h"
+#include "Ecs/EcsRenderTypes.h"
 #include "Rendering/SceneProxy.h"
 #include "Rendering/RenderTypes.h"
 #include "Math/Vector3.h"
@@ -8,13 +10,6 @@
 
 namespace NorvesLib::Core::Component
 {
-    enum class LightIntensityUnit : uint8_t
-    {
-        Lux,
-        Candela,
-        Lumen
-    };
-
     // ========================================
     // LightComponent
     // ========================================
@@ -77,7 +72,7 @@ namespace NorvesLib::Core::Component
          * @brief ライトタイプを取得
          * @return ライトタイプ
          */
-        Rendering::LightType GetLightType() const { return LightTypeProp; }
+        Rendering::LightType GetLightType() const { return getLightTypeProp().Get(); }
 
         /**
          * @brief ライトカラーを設定
@@ -104,60 +99,60 @@ namespace NorvesLib::Core::Component
         /**
          * @brief 強度を取得
          */
-        float GetIntensity() const { return Intensity; }
+        float GetIntensity() const { return getIntensity().Get(); }
 
         bool SetIntensityUnit(LightIntensityUnit unit);
-        LightIntensityUnit GetIntensityUnit() const { return IntensityUnit; }
+        LightIntensityUnit GetIntensityUnit() const { return getIntensityUnit().Get(); }
 
         /**
          * @brief シャドウキャスト設定
          */
         void SetCastShadows(bool bCast)
         {
-            bCastShadows = bCast;
+            getbCastShadows().Set(bCast);
             MarkRenderStateDirty();
         }
-        bool GetCastShadows() const { return bCastShadows; }
+        bool GetCastShadows() const { return getbCastShadows().Get(); }
 
         /**
          * @brief ライト可視性設定
          */
         void SetLightVisible(bool bNewVisible)
         {
-            bLightVisible = bNewVisible;
+            getbLightVisible().Set(bNewVisible);
             MarkRenderStateDirty();
         }
-        bool IsLightVisible() const { return bLightVisible; }
+        bool IsLightVisible() const { return getbLightVisible().Get(); }
 
         /**
          * @brief シャドウバイアス設定
          */
         void SetShadowBias(float bias)
         {
-            ShadowBias = bias;
+            getShadowBias().Set(bias);
             MarkRenderStateDirty();
         }
-        float GetShadowBias() const { return ShadowBias; }
+        float GetShadowBias() const { return getShadowBias().Get(); }
 
         /**
          * @brief シャドウマップ解像度設定
          */
         void SetShadowMapResolution(uint32_t resolution)
         {
-            ShadowMapResolution = resolution;
+            getShadowMapResolution().Set(resolution);
             MarkRenderStateDirty();
         }
-        uint32_t GetShadowMapResolution() const { return ShadowMapResolution; }
+        uint32_t GetShadowMapResolution() const { return getShadowMapResolution().Get(); }
 
         /**
          * @brief 影響レイヤー設定
          */
         void SetAffectedLayers(Rendering::RenderLayer layers)
         {
-            AffectedLayers = layers;
+            getAffectedLayers().Set(layers);
             MarkRenderStateDirty();
         }
-        Rendering::RenderLayer GetAffectedLayers() const { return AffectedLayers; }
+        Rendering::RenderLayer GetAffectedLayers() const { return getAffectedLayers().Get(); }
 
         /**
          * @brief ライト方向を設定（ディレクショナルライト用）
@@ -189,6 +184,8 @@ namespace NorvesLib::Core::Component
          */
         virtual bool BuildLightProxy(Rendering::LightProxy &outProxy) const;
 
+        Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::Light; }
+
     protected:
         /**
          * @brief 共通のLightProxyフィールドを設定するヘルパー
@@ -200,15 +197,16 @@ namespace NorvesLib::Core::Component
         // リフレクションプロパティ
         // ========================================
 
-        PROPERTY(Rendering::LightType, LightTypeProp)
-        PROPERTY(float, Intensity)
-        PROPERTY(LightIntensityUnit, IntensityUnit)
-        PROPERTY(Math::Vector3, LightColor)
-        PROPERTY(bool, bCastShadows)
-        PROPERTY(bool, bLightVisible)
-        PROPERTY(float, ShadowBias)
-        PROPERTY(uint32_t, ShadowMapResolution)
-        PROPERTY(Rendering::RenderLayer, AffectedLayers)
+        // 光の値は World の木にいる間 ECS の行（EcsLightRender）の列にあり、無い間は予備の値にある
+        ECS_PROPERTY(Ecs::EcsLightRender, Type, Rendering::LightType, LightTypeProp)
+        ECS_PROPERTY(Ecs::EcsLightRender, Intensity, float, Intensity)
+        ECS_PROPERTY(Ecs::EcsLightRender, Unit, LightIntensityUnit, IntensityUnit)
+        ECS_PROPERTY(Ecs::EcsLightRender, Color, Math::Vector3, LightColor)
+        ECS_PROPERTY(Ecs::EcsLightRender, bCastShadows, bool, bCastShadows)
+        ECS_PROPERTY(Ecs::EcsLightRender, bVisible, bool, bLightVisible)
+        ECS_PROPERTY(Ecs::EcsLightRender, ShadowBias, float, ShadowBias)
+        ECS_PROPERTY(Ecs::EcsLightRender, ShadowMapResolution, uint32_t, ShadowMapResolution)
+        ECS_PROPERTY(Ecs::EcsLightRender, AffectedLayers, Rendering::RenderLayer, AffectedLayers)
 
         // ========================================
         // 内部キャッシュ（リフレクション対象外）

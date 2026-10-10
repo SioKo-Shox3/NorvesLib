@@ -208,9 +208,18 @@ namespace NorvesLib::Core
                     const bool bHasMesh = ecs.GetColumnValue<Ecs::EcsMeshRender>(componentRow) != nullptr;
                     const bool bHasMega = ecs.GetColumnValue<Ecs::EcsMegaMesh>(componentRow) != nullptr;
                     const bool bHasSkinned = ecs.GetColumnValue<Ecs::EcsSkinnedRender>(componentRow) != nullptr;
+                    const bool bHasLight = ecs.GetColumnValue<Ecs::EcsLightRender>(componentRow) != nullptr;
+                    const bool bHasFalloff = ecs.GetColumnValue<Ecs::EcsLightFalloff>(componentRow) != nullptr;
+                    const bool bHasSpotCone = ecs.GetColumnValue<Ecs::EcsSpotCone>(componentRow) != nullptr;
+                    const bool bHasBoard = ecs.GetColumnValue<Ecs::EcsBoardRender>(componentRow) != nullptr;
                     const bool bExpectMesh = rowKind == Ecs::EcsComponentRowKind::Mesh || rowKind == Ecs::EcsComponentRowKind::MegaGeometry;
+                    const bool bExpectLight = rowKind == Ecs::EcsComponentRowKind::Light || rowKind == Ecs::EcsComponentRowKind::PointLight ||
+                                              rowKind == Ecs::EcsComponentRowKind::SpotLight;
+                    const bool bExpectFalloff = rowKind == Ecs::EcsComponentRowKind::PointLight || rowKind == Ecs::EcsComponentRowKind::SpotLight;
                     if (bHasMesh != bExpectMesh || bHasMega != (rowKind == Ecs::EcsComponentRowKind::MegaGeometry) ||
-                        bHasSkinned != (rowKind == Ecs::EcsComponentRowKind::SkinnedMesh))
+                        bHasSkinned != (rowKind == Ecs::EcsComponentRowKind::SkinnedMesh) || bHasLight != bExpectLight ||
+                        bHasFalloff != bExpectFalloff || bHasSpotCone != (rowKind == Ecs::EcsComponentRowKind::SpotLight) ||
+                        bHasBoard != (rowKind == Ecs::EcsComponentRowKind::Board))
                     {
                         error = "Component の行の描画の値の列が、Component の種類と一致しない";
                         return false;
@@ -1357,6 +1366,25 @@ namespace NorvesLib::Core
             basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
             Ecs::EcsRegisterColumn<Ecs::EcsSkinnedRender>(),
         };
+        const Ecs::EcsColumnInfo lightColumns[] = {
+            basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
+            Ecs::EcsRegisterColumn<Ecs::EcsLightRender>(),
+        };
+        const Ecs::EcsColumnInfo pointLightColumns[] = {
+            basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
+            Ecs::EcsRegisterColumn<Ecs::EcsLightRender>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsLightFalloff>(),
+        };
+        const Ecs::EcsColumnInfo spotLightColumns[] = {
+            basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
+            Ecs::EcsRegisterColumn<Ecs::EcsLightRender>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsLightFalloff>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsSpotCone>(),
+        };
+        const Ecs::EcsColumnInfo boardColumns[] = {
+            basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
+            Ecs::EcsRegisterColumn<Ecs::EcsBoardRender>(),
+        };
         const auto createComponentArchetype = [this](Ecs::EcsComponentRowKind kind, Container::Span<const Ecs::EcsColumnInfo> columns)
         {
             Ecs::EcsArchetypeId& archetype = m_ComponentArchetypes[static_cast<size_t>(kind)];
@@ -1370,6 +1398,10 @@ namespace NorvesLib::Core
         createComponentArchetype(Ecs::EcsComponentRowKind::Mesh, Container::Span<const Ecs::EcsColumnInfo>(meshColumns, 5));
         createComponentArchetype(Ecs::EcsComponentRowKind::MegaGeometry, Container::Span<const Ecs::EcsColumnInfo>(megaColumns, 6));
         createComponentArchetype(Ecs::EcsComponentRowKind::SkinnedMesh, Container::Span<const Ecs::EcsColumnInfo>(skinnedColumns, 5));
+        createComponentArchetype(Ecs::EcsComponentRowKind::Light, Container::Span<const Ecs::EcsColumnInfo>(lightColumns, 5));
+        createComponentArchetype(Ecs::EcsComponentRowKind::PointLight, Container::Span<const Ecs::EcsColumnInfo>(pointLightColumns, 6));
+        createComponentArchetype(Ecs::EcsComponentRowKind::SpotLight, Container::Span<const Ecs::EcsColumnInfo>(spotLightColumns, 7));
+        createComponentArchetype(Ecs::EcsComponentRowKind::Board, Container::Span<const Ecs::EcsColumnInfo>(boardColumns, 5));
 
         // 段の最中に孤児にした行は、各段の同期点で消す
         const uint32_t stages[] = {m_StageTick, m_StageLateTick, m_StageFixedBegin,

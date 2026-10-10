@@ -507,6 +507,7 @@ namespace NorvesLib::Core
         Ecs::EcsArchetypeId m_EntityArchetype = Ecs::kInvalidEcsArchetype;
         /// Component の行のアーキタイプ（基本の列 + 種類ごとの描画の値の列。添字は EcsComponentRowKind）
         Ecs::EcsArchetypeId m_ComponentArchetypes[static_cast<size_t>(Ecs::EcsComponentRowKind::Count)] = {
+            Ecs::kInvalidEcsArchetype, Ecs::kInvalidEcsArchetype, Ecs::kInvalidEcsArchetype, Ecs::kInvalidEcsArchetype,
             Ecs::kInvalidEcsArchetype, Ecs::kInvalidEcsArchetype, Ecs::kInvalidEcsArchetype, Ecs::kInvalidEcsArchetype};
         Ecs::EcsArchetypeId ComponentArchetypeFor(const Component::Component& component) const;
         /// 段の最中に孤児にした行（同期点で消す）

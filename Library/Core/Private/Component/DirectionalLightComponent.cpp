@@ -7,22 +7,22 @@ namespace NorvesLib::Core::Component
     DirectionalLightComponent::DirectionalLightComponent()
         : LightComponent()
     {
-        LightTypeProp = Rendering::LightType::Directional;
-        IntensityUnit = LightIntensityUnit::Lux;
+        getLightTypeProp().Set(Rendering::LightType::Directional);
+        getIntensityUnit().Set(LightIntensityUnit::Lux);
     }
 
     DirectionalLightComponent::DirectionalLightComponent(const FieldInitializer* initializer)
         : LightComponent(initializer)
     {
-        LightTypeProp = Rendering::LightType::Directional;
-        IntensityUnit = LightIntensityUnit::Lux;
+        getLightTypeProp().Set(Rendering::LightType::Directional);
+        getIntensityUnit().Set(LightIntensityUnit::Lux);
     }
 
     DirectionalLightComponent::DirectionalLightComponent(const IUnknown* sourceObject)
         : LightComponent(sourceObject)
     {
-        LightTypeProp = Rendering::LightType::Directional;
-        IntensityUnit = LightIntensityUnit::Lux;
+        getLightTypeProp().Set(Rendering::LightType::Directional);
+        getIntensityUnit().Set(LightIntensityUnit::Lux);
     }
 
     DirectionalLightComponent::~DirectionalLightComponent()

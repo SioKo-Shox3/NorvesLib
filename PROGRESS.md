@@ -1366,3 +1366,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-13-neighbors.txt`: 隣接の 11 件（Ecs*・EntityTree・WorldTickGroup・TransformHierarchy・WorldRenderInterpolation・SceneSerializer・PrefabRoundTrip・SchemaProjection・ComponentDirtyTracking）すべて Passed（実体の `EntityTreeTest`・`ObjectReflectionTest`・`SceneSerializerTest` は再ビルド済み。`-11`・`-12` はターゲット名の誤りで証拠にしない）。
   - `-14-startup.txt`: 起動画面の決定論の比較 `result=pass`。3 視点とも `within_limits=True`（default は PSNR 100 dB）。`default.png` を開いて確認。
 - Notes: Bash から MSBuild の `/m:1` を渡すとパスに変換される。ビルドは PowerShell で実行すること。`MegaGeometryComponent.h` は BOM 無しの UTF-8 に日本語があり C4819 の警告が出る（前の反復から。BOM の付与は別件）。
+
+### SCN-ECS-RENDER-COLUMNS-LIGHT（2026-10-11、反復 36・run 20261010-223034）
+
+- 変更:
+  - `Ecs/EcsRenderTypes.h`: 列 `EcsLightRender`（種類・強度・単位・色・影・可視・影のバイアス・影の解像度・影響レイヤー）、`EcsLightFalloff`（Point・Spot 共通の範囲と減衰）、`EcsSpotCone`（コーン角）、`EcsBoardRender`（テクスチャ・可視・レイヤー・空間・ブレンド・Tint・反転・Pivot・SizePx・UV・LayerPriority・OrderInLayer）を足した。`EcsTypes.h` の `EcsComponentRowKind` に Light・PointLight・SpotLight・Board を足した。
+  - `LightComponent` 系: 共通の 9 プロパティを `ECS_PROPERTY(EcsLightRender, ...)`、Point・Spot の範囲と減衰 4 つを `EcsLightFalloff`、Spot のコーン角 2 つを `EcsSpotCone` にした。行の種類は Light（Directional を含む）・PointLight・SpotLight。プロパティの名前・型・順は変えていない。`LightIntensityUnit` は列の構造体から参照するので、`Component/LightIntensityUnit.h`（新規。名前空間は従来のまま）へ移した。
+  - `BoardComponent`: 描画の値 13 個を `ECS_PROPERTY(EcsBoardRender, ...)` にした。フリップブックの設定（コマ数・速度・ループ・アトラス・開始コマ）は描画の値ではないので `PROPERTY` のまま。`GetTint`・`GetPivot`・`GetSizePx`・`GetUVRect` の戻りは列が動くので参照から値渡しにした。BillboardComponent・ImpostorComponent・TextComponent は派生なので Board の行を使う（ImpostorComponent の `Space` の書き込みだけ読み口に直した）。
+  - `World`: 行のアーキタイプを 4 種類足し、検査 `ECS_BIND` の列と種類の照合に Light・Falloff・SpotCone・Board を足した。同期は全走査のまま、読む先だけが列。
+- テスト（paths の外）: `WorldSyncDifferentialTest` に `TestLightAndBoardValuesLiveInComponentRow`（種類ごとに付く列が違う・Set の値が列にある・列を直接書き換えると読み口が追従・対象プロパティが `StorageKind::EcsColumn`・フリップブックの設定は列でない）を足した。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-ECS-RENDER-COLUMNS-LIGHT-3.txt`: 指定 2 ターゲット + WorldSyncDifferentialTest のビルド EXIT=0。`-1`・`-2` は `LightComponentBuildProxyTest`・`BillboardComponentTest` をターゲット名に入れて失敗した試行（EntityTreeTest・BoardComponentRoutingTest のバンドルの一員）と、ImpostorComponent の `Space` を直す前の版で証拠にしない。
+  - `-4.txt`: 指定 ctest（LightComponentBuildProxyTest・BoardComponentRoutingTest・BillboardComponentTest）と WorldSyncDifferentialTest が 4/4 Passed。
+  - `-5-neighbors.txt`: 隣接の 26 件（Ecs*・EntityTree・SceneSerializer・PrefabRoundTrip・SchemaProjection・ComponentDirtyTracking・FlipbookAdvance・TextComponentBoardProxy・BoardTransform・SpriteSheetUVRect・ObjectCast・EntitySubtreeSnapshot・SceneFileRoundTrip・WorldRenderInterpolation・WorldTickGroup・TransformHierarchy・ObjectReflection・SkinnedRenderPathContract・SceneViewProxyLookup）すべて Passed。
+  - `-6-startup.txt`: 起動画面の決定論の比較 `result=pass`。3 視点とも `within_limits=True`（default は PSNR 100 dB、near 65.4 dB、low 70.4 dB）。`default.png` を開いて確認（太陽の影・球・家・光源の点とも基準どおり）。
+- Notes:
+  - 光と Board の列は追跡（`MarkWritten`）の設定をまだ持たない。変更ログに載せるのは SYNC-PREP 以降の項目。
+  - `SetIntensityUnit` の検証などは従来どおり読み口に残る。列へ直接書く側は検証を通らないので、変更ログを通す形にするときに書き込み口を一本にすること。
+  - 行末: 編集したファイルは numstat の 2 通りが一致。新規 `LightIntensityUnit.h` は UTF-8 BOM + CRLF。

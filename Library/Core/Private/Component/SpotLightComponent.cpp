@@ -21,40 +21,40 @@ namespace NorvesLib::Core::Component
     SpotLightComponent::SpotLightComponent()
         : LightComponent()
     {
-        LightTypeProp = Rendering::LightType::Spot;
-        IntensityUnit = LightIntensityUnit::Candela;
-        Range = 10.0f;
-        AttenuationConstant = 1.0f;
-        AttenuationLinear = 0.09f;
-        AttenuationQuadratic = 0.032f;
-        InnerConeAngle = 12.5f;
-        OuterConeAngle = 17.5f;
+        getLightTypeProp().Set(Rendering::LightType::Spot);
+        getIntensityUnit().Set(LightIntensityUnit::Candela);
+        getRange().Set(10.0f);
+        getAttenuationConstant().Set(1.0f);
+        getAttenuationLinear().Set(0.09f);
+        getAttenuationQuadratic().Set(0.032f);
+        getInnerConeAngle().Set(12.5f);
+        getOuterConeAngle().Set(17.5f);
     }
 
     SpotLightComponent::SpotLightComponent(const FieldInitializer* initializer)
         : LightComponent(initializer)
     {
-        LightTypeProp = Rendering::LightType::Spot;
-        IntensityUnit = LightIntensityUnit::Candela;
-        Range = 10.0f;
-        AttenuationConstant = 1.0f;
-        AttenuationLinear = 0.09f;
-        AttenuationQuadratic = 0.032f;
-        InnerConeAngle = 12.5f;
-        OuterConeAngle = 17.5f;
+        getLightTypeProp().Set(Rendering::LightType::Spot);
+        getIntensityUnit().Set(LightIntensityUnit::Candela);
+        getRange().Set(10.0f);
+        getAttenuationConstant().Set(1.0f);
+        getAttenuationLinear().Set(0.09f);
+        getAttenuationQuadratic().Set(0.032f);
+        getInnerConeAngle().Set(12.5f);
+        getOuterConeAngle().Set(17.5f);
     }
 
     SpotLightComponent::SpotLightComponent(const IUnknown* sourceObject)
         : LightComponent(sourceObject)
     {
-        LightTypeProp = Rendering::LightType::Spot;
-        IntensityUnit = LightIntensityUnit::Candela;
-        Range = 10.0f;
-        AttenuationConstant = 1.0f;
-        AttenuationLinear = 0.09f;
-        AttenuationQuadratic = 0.032f;
-        InnerConeAngle = 12.5f;
-        OuterConeAngle = 17.5f;
+        getLightTypeProp().Set(Rendering::LightType::Spot);
+        getIntensityUnit().Set(LightIntensityUnit::Candela);
+        getRange().Set(10.0f);
+        getAttenuationConstant().Set(1.0f);
+        getAttenuationLinear().Set(0.09f);
+        getAttenuationQuadratic().Set(0.032f);
+        getInnerConeAngle().Set(12.5f);
+        getOuterConeAngle().Set(17.5f);
     }
 
     SpotLightComponent::~SpotLightComponent()
@@ -89,13 +89,13 @@ namespace NorvesLib::Core::Component
 
         // スポットライト固有
         snapshot.Type = Rendering::LightType::Spot;
-        snapshot.Range = Range;
-        snapshot.AttenuationConstant = AttenuationConstant;
-        snapshot.AttenuationLinear = AttenuationLinear;
-        snapshot.AttenuationQuadratic = AttenuationQuadratic;
+        snapshot.Range = getRange().Get();
+        snapshot.AttenuationConstant = getAttenuationConstant().Get();
+        snapshot.AttenuationLinear = getAttenuationLinear().Get();
+        snapshot.AttenuationQuadratic = getAttenuationQuadratic().Get();
 
-        const float innerConeAngle = InnerConeAngle.Get();
-        const float outerConeAngle = OuterConeAngle.Get();
+        const float innerConeAngle = getInnerConeAngle().Get();
+        const float outerConeAngle = getOuterConeAngle().Get();
         if (!std::isfinite(innerConeAngle) || !std::isfinite(outerConeAngle) ||
             innerConeAngle < 0.0f || outerConeAngle <= innerConeAngle ||
             outerConeAngle > 179.0f)
@@ -113,9 +113,9 @@ namespace NorvesLib::Core::Component
             NORVES_LOG_WARNING("Light", "Rejected degenerate spot light cone solid angle");
             return false;
         }
-        if (IntensityUnit.Get() == LightIntensityUnit::Lumen)
+        if (getIntensityUnit().Get() == LightIntensityUnit::Lumen)
         {
-            const double canonicalIntensity = static_cast<double>(Intensity.Get()) / omega;
+            const double canonicalIntensity = static_cast<double>(getIntensity().Get()) / omega;
             if (!std::isfinite(canonicalIntensity) || canonicalIntensity < 0.0 ||
                 canonicalIntensity > static_cast<double>(std::numeric_limits<float>::max()))
             {

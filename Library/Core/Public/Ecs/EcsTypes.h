@@ -191,6 +191,10 @@ namespace NorvesLib::Core::Ecs
         Mesh,
         MegaGeometry,
         SkinnedMesh,
+        Light,
+        PointLight,
+        SpotLight,
+        Board,
         Count,
     };
 

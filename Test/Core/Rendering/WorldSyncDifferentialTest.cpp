@@ -1,7 +1,10 @@
-﻿#include "Component/MegaGeometryComponent.h"
+﻿#include "Component/BoardComponent.h"
+#include "Component/DirectionalLightComponent.h"
+#include "Component/MegaGeometryComponent.h"
 #include "Component/MeshComponent.h"
 #include "Component/PointLightComponent.h"
 #include "Component/SkinnedMeshComponent.h"
+#include "Component/SpotLightComponent.h"
 #include "Ecs/EcsRenderTypes.h"
 #include "Ecs/EcsWorld.h"
 #include "Object/World.h"
@@ -367,6 +370,108 @@ namespace
 
         world.Finalize();
     }
+
+    void TestLightAndBoardValuesLiveInComponentRow()
+    {
+        World world;
+        world.Initialize();
+
+        Entity* object = world.SpawnObject<Entity>();
+        assert(object);
+
+        DirectionalLightComponent* directional = world.CreateComponent<DirectionalLightComponent>(object);
+        PointLightComponent* point = world.CreateComponent<PointLightComponent>(object);
+        SpotLightComponent* spot = world.CreateComponent<SpotLightComponent>(object);
+        BoardComponent* board = world.CreateComponent<BoardComponent>(object);
+        assert(directional && point && spot && board);
+
+        Ecs::EcsWorld& ecs = world.GetEcsWorld();
+
+        // 種類ごとに付く列が違う（Directional は共通の列だけ、Point は減衰を足し、Spot はコーン角まで足す）
+        assert(ecs.GetColumnValue<Ecs::EcsLightRender>(directional->GetEcsEntity()) != nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsLightFalloff>(directional->GetEcsEntity()) == nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsLightFalloff>(point->GetEcsEntity()) != nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsSpotCone>(point->GetEcsEntity()) == nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsSpotCone>(spot->GetEcsEntity()) != nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsBoardRender>(board->GetEcsEntity()) != nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsLightRender>(board->GetEcsEntity()) == nullptr);
+        assert(ecs.GetColumnValue<Ecs::EcsMeshRender>(point->GetEcsEntity()) == nullptr);
+
+        // 生成時の既定値が列にある
+        const Ecs::EcsLightRender* directionalColumn = ecs.GetColumnValue<Ecs::EcsLightRender>(directional->GetEcsEntity());
+        assert(directionalColumn->Type == LightType::Directional);
+        assert(directionalColumn->Unit == LightIntensityUnit::Lux);
+        assert(directionalColumn->bVisible);
+
+        point->SetIntensity(7.0f);
+        point->SetLightColor(0.5f, 0.25f, 0.125f);
+        point->SetCastShadows(true);
+        point->SetShadowMapResolution(256);
+        point->SetRange(3.5f);
+        point->SetAttenuationLinear(0.5f);
+        const Ecs::EcsLightRender* pointColumn = ecs.GetColumnValue<Ecs::EcsLightRender>(point->GetEcsEntity());
+        assert(pointColumn->Type == LightType::Point);
+        assert(pointColumn->Intensity == 7.0f);
+        assert(pointColumn->Color.x == 0.5f && pointColumn->Color.y == 0.25f && pointColumn->Color.z == 0.125f);
+        assert(pointColumn->bCastShadows);
+        assert(pointColumn->ShadowMapResolution == 256);
+        const Ecs::EcsLightFalloff* pointFalloff = ecs.GetColumnValue<Ecs::EcsLightFalloff>(point->GetEcsEntity());
+        assert(pointFalloff->Range == 3.5f);
+        assert(pointFalloff->AttenuationLinear == 0.5f);
+        assert(point->GetIntensity() == 7.0f && point->GetRange() == 3.5f);
+
+        spot->SetInnerConeAngle(20.0f);
+        spot->SetOuterConeAngle(30.0f);
+        const Ecs::EcsSpotCone* spotCone = ecs.GetColumnValue<Ecs::EcsSpotCone>(spot->GetEcsEntity());
+        assert(spotCone->InnerConeAngle == 20.0f && spotCone->OuterConeAngle == 30.0f);
+
+        board->SetTextureHandle(TextureHandle{42});
+        board->SetVisible(false);
+        board->SetTint(NorvesLib::Math::Vector4(0.1f, 0.2f, 0.3f, 0.4f));
+        board->SetPivot(NorvesLib::Math::Vector2(0.5f, 0.25f));
+        board->SetBoardSpace(BoardSpace::WorldSpace);
+        board->SetLayerPriority(3);
+        board->SetOrderInLayer(9);
+        board->SetFlipX(true);
+        const Ecs::EcsBoardRender* boardColumn = ecs.GetColumnValue<Ecs::EcsBoardRender>(board->GetEcsEntity());
+        assert(boardColumn->Texture.Id == 42);
+        assert(!boardColumn->bVisible);
+        assert(boardColumn->Tint.w == 0.4f);
+        assert(boardColumn->Pivot.x == 0.5f && boardColumn->Pivot.y == 0.25f);
+        assert(boardColumn->Space == BoardSpace::WorldSpace);
+        assert(boardColumn->LayerPriority == 3 && boardColumn->OrderInLayer == 9);
+        assert(boardColumn->bFlipX && !boardColumn->bFlipY);
+        assert(board->GetTextureHandle().Id == 42);
+        assert(!board->IsVisible());
+
+        // 光と Board の値は列に置くプロパティで、値は列にだけある
+        const char* lightNames[] = {"LightTypeProp", "Intensity", "IntensityUnit", "LightColor", "bCastShadows",
+                                    "bLightVisible", "ShadowBias", "ShadowMapResolution", "AffectedLayers"};
+        for (const char* name : lightNames)
+        {
+            const ClassProperty* property = point->GetClass()->GetProperty(Identity(name));
+            assert(property);
+            assert(property->GetStorageKind() == StorageKind::EcsColumn);
+        }
+        const char* boardNames[] = {"TextureHandle", "bVisible", "RenderLayerProp", "Space", "BlendModeProp", "Tint",
+                                    "bFlipX", "bFlipY", "Pivot", "SizePx", "UVRectProp", "LayerPriority", "OrderInLayer"};
+        for (const char* name : boardNames)
+        {
+            const ClassProperty* property = board->GetClass()->GetProperty(Identity(name));
+            assert(property);
+            assert(property->GetStorageKind() == StorageKind::EcsColumn);
+        }
+        // フリップブックの設定は描画の値ではないので列に置かない
+        const ClassProperty* frameCount = board->GetClass()->GetProperty(Identity("FrameCount"));
+        assert(frameCount && frameCount->GetStorageKind() != StorageKind::EcsColumn);
+
+        // 列の値を直接書き換えると、Component の読み口がその値を返す
+        Ecs::EcsLightRender* pointWritable = ecs.GetColumnValue<Ecs::EcsLightRender>(point->GetEcsEntity());
+        pointWritable->bVisible = false;
+        assert(!point->IsLightVisible());
+
+        world.Finalize();
+    }
 }
 
 int main()
@@ -377,6 +482,7 @@ int main()
     TestMegaGeometryDifferentialSync();
     TestMeshMaterialBlendSync();
     TestRenderValuesLiveInComponentRow();
+    TestLightAndBoardValuesLiveInComponentRow();
 
     std::cout << "WorldSyncDifferentialTest passed\n";
     return 0;

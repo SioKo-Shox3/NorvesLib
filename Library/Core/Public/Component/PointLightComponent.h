@@ -72,44 +72,44 @@ namespace NorvesLib::Core::Component
          */
         void SetRange(float range)
         {
-            Range = range;
+            getRange().Set(range);
             MarkRenderStateDirty();
         }
 
         /**
          * @brief 影響範囲を取得
          */
-        float GetRange() const { return Range; }
+        float GetRange() const { return getRange().Get(); }
 
         /**
          * @brief 定数減衰を設定
          */
         void SetAttenuationConstant(float value)
         {
-            AttenuationConstant = value;
+            getAttenuationConstant().Set(value);
             MarkRenderStateDirty();
         }
-        float GetAttenuationConstant() const { return AttenuationConstant; }
+        float GetAttenuationConstant() const { return getAttenuationConstant().Get(); }
 
         /**
          * @brief 線形減衰を設定
          */
         void SetAttenuationLinear(float value)
         {
-            AttenuationLinear = value;
+            getAttenuationLinear().Set(value);
             MarkRenderStateDirty();
         }
-        float GetAttenuationLinear() const { return AttenuationLinear; }
+        float GetAttenuationLinear() const { return getAttenuationLinear().Get(); }
 
         /**
          * @brief 二次減衰を設定
          */
         void SetAttenuationQuadratic(float value)
         {
-            AttenuationQuadratic = value;
+            getAttenuationQuadratic().Set(value);
             MarkRenderStateDirty();
         }
-        float GetAttenuationQuadratic() const { return AttenuationQuadratic; }
+        float GetAttenuationQuadratic() const { return getAttenuationQuadratic().Get(); }
 
         // ========================================
         // LightProxy構築（オーバーライド）
@@ -122,15 +122,17 @@ namespace NorvesLib::Core::Component
          */
         virtual bool BuildLightProxy(Rendering::LightProxy& outProxy) const override;
 
+        Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::PointLight; }
+
     protected:
         // ========================================
         // リフレクションプロパティ
         // ========================================
 
-        PROPERTY(float, Range)
-        PROPERTY(float, AttenuationConstant)
-        PROPERTY(float, AttenuationLinear)
-        PROPERTY(float, AttenuationQuadratic)
+        ECS_PROPERTY(Ecs::EcsLightFalloff, Range, float, Range)
+        ECS_PROPERTY(Ecs::EcsLightFalloff, AttenuationConstant, float, AttenuationConstant)
+        ECS_PROPERTY(Ecs::EcsLightFalloff, AttenuationLinear, float, AttenuationLinear)
+        ECS_PROPERTY(Ecs::EcsLightFalloff, AttenuationQuadratic, float, AttenuationQuadratic)
     };
 
     // PointLightComponentへのスマートポインタ

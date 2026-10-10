@@ -28,43 +28,43 @@ namespace NorvesLib::Core::Component
     LightComponent::LightComponent()
         : Component()
     {
-        LightTypeProp = Rendering::LightType::Directional;
-        Intensity = 1.0f;
-        IntensityUnit = LightIntensityUnit::Lux;
-        LightColor = Math::Vector3(1.0f, 1.0f, 1.0f);
-        bCastShadows = false;
-        bLightVisible = true;
-        ShadowBias = 0.005f;
-        ShadowMapResolution = 1024;
-        AffectedLayers = Rendering::RenderLayer::All;
+        getLightTypeProp().Set(Rendering::LightType::Directional);
+        getIntensity().Set(1.0f);
+        getIntensityUnit().Set(LightIntensityUnit::Lux);
+        getLightColor().Set(Math::Vector3(1.0f, 1.0f, 1.0f));
+        getbCastShadows().Set(false);
+        getbLightVisible().Set(true);
+        getShadowBias().Set(0.005f);
+        getShadowMapResolution().Set(1024);
+        getAffectedLayers().Set(Rendering::RenderLayer::All);
     }
 
     LightComponent::LightComponent(const FieldInitializer *initializer)
         : Component(initializer)
     {
-        LightTypeProp = Rendering::LightType::Directional;
-        Intensity = 1.0f;
-        IntensityUnit = LightIntensityUnit::Lux;
-        LightColor = Math::Vector3(1.0f, 1.0f, 1.0f);
-        bCastShadows = false;
-        bLightVisible = true;
-        ShadowBias = 0.005f;
-        ShadowMapResolution = 1024;
-        AffectedLayers = Rendering::RenderLayer::All;
+        getLightTypeProp().Set(Rendering::LightType::Directional);
+        getIntensity().Set(1.0f);
+        getIntensityUnit().Set(LightIntensityUnit::Lux);
+        getLightColor().Set(Math::Vector3(1.0f, 1.0f, 1.0f));
+        getbCastShadows().Set(false);
+        getbLightVisible().Set(true);
+        getShadowBias().Set(0.005f);
+        getShadowMapResolution().Set(1024);
+        getAffectedLayers().Set(Rendering::RenderLayer::All);
     }
 
     LightComponent::LightComponent(const IUnknown *sourceObject)
         : Component(sourceObject)
     {
-        LightTypeProp = Rendering::LightType::Directional;
-        Intensity = 1.0f;
-        IntensityUnit = LightIntensityUnit::Lux;
-        LightColor = Math::Vector3(1.0f, 1.0f, 1.0f);
-        bCastShadows = false;
-        bLightVisible = true;
-        ShadowBias = 0.005f;
-        ShadowMapResolution = 1024;
-        AffectedLayers = Rendering::RenderLayer::All;
+        getLightTypeProp().Set(Rendering::LightType::Directional);
+        getIntensity().Set(1.0f);
+        getIntensityUnit().Set(LightIntensityUnit::Lux);
+        getLightColor().Set(Math::Vector3(1.0f, 1.0f, 1.0f));
+        getbCastShadows().Set(false);
+        getbLightVisible().Set(true);
+        getShadowBias().Set(0.005f);
+        getShadowMapResolution().Set(1024);
+        getAffectedLayers().Set(Rendering::RenderLayer::All);
     }
 
     LightComponent::~LightComponent()
@@ -102,13 +102,13 @@ namespace NorvesLib::Core::Component
 
     void LightComponent::SetLightColor(float r, float g, float b)
     {
-        LightColor = Math::Vector3(r, g, b);
+        getLightColor().Set(Math::Vector3(r, g, b));
         MarkRenderStateDirty();
     }
 
     void LightComponent::GetLightColor(float &outR, float &outG, float &outB) const
     {
-        const Math::Vector3& lightColor = LightColor.Get();
+        const Math::Vector3& lightColor = getLightColor().Get();
         outR = lightColor.x;
         outG = lightColor.y;
         outB = lightColor.z;
@@ -116,7 +116,7 @@ namespace NorvesLib::Core::Component
 
     void LightComponent::SetIntensity(float intensity)
     {
-        Intensity = intensity;
+        getIntensity().Set(intensity);
         MarkRenderStateDirty();
     }
 
@@ -130,9 +130,9 @@ namespace NorvesLib::Core::Component
             return false;
         }
 
-        if (IntensityUnit.Get() != unit)
+        if (getIntensityUnit().Get() != unit)
         {
-            IntensityUnit = unit;
+            getIntensityUnit().Set(unit);
             MarkRenderStateDirty();
         }
         return true;
@@ -159,10 +159,10 @@ namespace NorvesLib::Core::Component
 
     bool LightComponent::FillCommonLightProxy(Rendering::LightProxy &outProxy) const
     {
-        const float intensity = Intensity.Get();
-        const Rendering::LightType lightType = LightTypeProp.Get();
-        const LightIntensityUnit intensityUnit = IntensityUnit.Get();
-        const Math::Vector3& lightColor = LightColor.Get();
+        const float intensity = getIntensity().Get();
+        const Rendering::LightType lightType = getLightTypeProp().Get();
+        const LightIntensityUnit intensityUnit = getIntensityUnit().Get();
+        const Math::Vector3& lightColor = getLightColor().Get();
 
         if (!std::isfinite(intensity) || intensity < 0.0f)
         {
@@ -198,11 +198,11 @@ namespace NorvesLib::Core::Component
         outProxy.ColorG = lightColor.y / luminance;
         outProxy.ColorB = lightColor.z / luminance;
         outProxy.CanonicalIntensity = intensity;
-        outProxy.bCastShadows = bCastShadows;
-        outProxy.bVisible = bLightVisible;
-        outProxy.ShadowBias = ShadowBias;
-        outProxy.ShadowMapResolution = ShadowMapResolution;
-        outProxy.AffectedLayers = AffectedLayers;
+        outProxy.bCastShadows = getbCastShadows().Get();
+        outProxy.bVisible = getbLightVisible().Get();
+        outProxy.ShadowBias = getShadowBias().Get();
+        outProxy.ShadowMapResolution = getShadowMapResolution().Get();
+        outProxy.AffectedLayers = getAffectedLayers().Get();
 
         // ライト方向（ディレクショナルライト / スポットライト用）
         outProxy.DirectionX = m_LightDirection[0];
@@ -213,7 +213,7 @@ namespace NorvesLib::Core::Component
 
     bool LightComponent::BuildLightProxy(Rendering::LightProxy &outProxy) const
     {
-        if (!IsEnabled() || !bLightVisible)
+        if (!IsEnabled() || !getbLightVisible().Get())
         {
             return false;
         }

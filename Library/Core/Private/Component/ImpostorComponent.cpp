@@ -15,7 +15,7 @@ namespace NorvesLib::Core::Component
         BakedAtlasTextureHandle = Rendering::TextureHandle::Invalid();
         BakedAtlasMetadata = Rendering::ImpostorBakeMetadata{};
         LODSwitchDistance = 0.0f;
-        Space = Rendering::BoardSpace::WorldSpace;
+        getSpace().Set(Rendering::BoardSpace::WorldSpace);
     }
 
     ImpostorComponent::ImpostorComponent(const FieldInitializer *initializer)
@@ -24,7 +24,7 @@ namespace NorvesLib::Core::Component
         BakedAtlasTextureHandle = Rendering::TextureHandle::Invalid();
         BakedAtlasMetadata = Rendering::ImpostorBakeMetadata{};
         LODSwitchDistance = 0.0f;
-        Space = Rendering::BoardSpace::WorldSpace;
+        getSpace().Set(Rendering::BoardSpace::WorldSpace);
     }
 
     ImpostorComponent::ImpostorComponent(const IUnknown *sourceObject)
@@ -33,7 +33,7 @@ namespace NorvesLib::Core::Component
         BakedAtlasTextureHandle = Rendering::TextureHandle::Invalid();
         BakedAtlasMetadata = Rendering::ImpostorBakeMetadata{};
         LODSwitchDistance = 0.0f;
-        Space = Rendering::BoardSpace::WorldSpace;
+        getSpace().Set(Rendering::BoardSpace::WorldSpace);
     }
 
     ImpostorComponent::~ImpostorComponent()

@@ -23,24 +23,24 @@ namespace NorvesLib::Core::Component
     BillboardComponent::BillboardComponent()
         : BoardComponent()
     {
-        RenderLayerProp = Rendering::RenderLayer::Default;
-        Space = Rendering::BoardSpace::WorldSpace;
+        getRenderLayerProp().Set(Rendering::RenderLayer::Default);
+        getSpace().Set(Rendering::BoardSpace::WorldSpace);
         SizeWorld = Math::Vector2(1.0f, 1.0f);
     }
 
     BillboardComponent::BillboardComponent(const FieldInitializer *initializer)
         : BoardComponent(initializer)
     {
-        RenderLayerProp = Rendering::RenderLayer::Default;
-        Space = Rendering::BoardSpace::WorldSpace;
+        getRenderLayerProp().Set(Rendering::RenderLayer::Default);
+        getSpace().Set(Rendering::BoardSpace::WorldSpace);
         SizeWorld = Math::Vector2(1.0f, 1.0f);
     }
 
     BillboardComponent::BillboardComponent(const IUnknown *sourceObject)
         : BoardComponent(sourceObject)
     {
-        RenderLayerProp = Rendering::RenderLayer::Default;
-        Space = Rendering::BoardSpace::WorldSpace;
+        getRenderLayerProp().Set(Rendering::RenderLayer::Default);
+        getSpace().Set(Rendering::BoardSpace::WorldSpace);
         SizeWorld = Math::Vector2(1.0f, 1.0f);
     }
 
@@ -61,7 +61,7 @@ namespace NorvesLib::Core::Component
         }
 
         outProxy.Space = Rendering::BoardSpace::WorldSpace;
-        outProxy.LayerMask = RenderLayerProp;
+        outProxy.LayerMask = getRenderLayerProp().Get();
         outProxy.SizeWorld = SizeWorld;
         const Math::Vector3 translation = outProxy.WorldTransform.GetTranslationRow();
         outProxy.WorldBounds.CenterX = translation.x;
@@ -72,7 +72,7 @@ namespace NorvesLib::Core::Component
         const float scaleX = scale.x;
         const float scaleY = scale.y;
         const Math::Vector2 sizeWorld = SizeWorld;
-        const Math::Vector2 pivot = Pivot;
+        const Math::Vector2 pivot = getPivot().Get();
         const float width = AbsFloat(sizeWorld.x) * scaleX;
         const float height = AbsFloat(sizeWorld.y) * scaleY;
         const float left = -pivot.x * width;

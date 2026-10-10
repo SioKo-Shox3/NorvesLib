@@ -380,7 +380,7 @@
 - paths: Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/Private/Object/World.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-RENDER-COLUMNS-LIGHT: Light 系と Board の描画の値を Component の行の列へ移す
-- status: todo
+- status: done
 - done-when: RENDER-COLUMNS-MESH と同じ形で、光の値と Board の値を列にする。下のテストと起動画面の比較が pass する。
 - verify: `cmake --build build --config Debug --target EntityTreeTest BoardComponentRoutingTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(LightComponentBuildProxyTest|BoardComponentRoutingTest|BillboardComponentTest)$" --no-tests=error --output-on-failure --timeout 180`

@@ -11,58 +11,58 @@ namespace NorvesLib::Core::Component
     BoardComponent::BoardComponent()
         : Component()
     {
-        TextureHandle = Rendering::TextureHandle::Invalid();
-        bVisible = true;
-        RenderLayerProp = Rendering::RenderLayer::UI;
-        Space = Rendering::BoardSpace::ScreenSpace;
-        BlendModeProp = Rendering::BlendMode::Translucent;
-        Tint = Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f);
-        bFlipX = false;
-        bFlipY = false;
-        Pivot = Math::Vector2(0.0f, 0.0f);
-        SizePx = Math::Vector2(0.0f, 0.0f);
-        UVRectProp = GetFullTextureUVRect();
+        getTextureHandle().Set(Rendering::TextureHandle::Invalid());
+        getbVisible().Set(true);
+        getRenderLayerProp().Set(Rendering::RenderLayer::UI);
+        getSpace().Set(Rendering::BoardSpace::ScreenSpace);
+        getBlendModeProp().Set(Rendering::BlendMode::Translucent);
+        getTint().Set(Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f));
+        getbFlipX().Set(false);
+        getbFlipY().Set(false);
+        getPivot().Set(Math::Vector2(0.0f, 0.0f));
+        getSizePx().Set(Math::Vector2(0.0f, 0.0f));
+        getUVRectProp().Set(GetFullTextureUVRect());
         InitializeFlipbookDefaults();
-        LayerPriority = 0;
-        OrderInLayer = 0;
+        getLayerPriority().Set(0);
+        getOrderInLayer().Set(0);
     }
 
     BoardComponent::BoardComponent(const FieldInitializer *initializer)
         : Component(initializer)
     {
-        TextureHandle = Rendering::TextureHandle::Invalid();
-        bVisible = true;
-        RenderLayerProp = Rendering::RenderLayer::UI;
-        Space = Rendering::BoardSpace::ScreenSpace;
-        BlendModeProp = Rendering::BlendMode::Translucent;
-        Tint = Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f);
-        bFlipX = false;
-        bFlipY = false;
-        Pivot = Math::Vector2(0.0f, 0.0f);
-        SizePx = Math::Vector2(0.0f, 0.0f);
-        UVRectProp = GetFullTextureUVRect();
+        getTextureHandle().Set(Rendering::TextureHandle::Invalid());
+        getbVisible().Set(true);
+        getRenderLayerProp().Set(Rendering::RenderLayer::UI);
+        getSpace().Set(Rendering::BoardSpace::ScreenSpace);
+        getBlendModeProp().Set(Rendering::BlendMode::Translucent);
+        getTint().Set(Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f));
+        getbFlipX().Set(false);
+        getbFlipY().Set(false);
+        getPivot().Set(Math::Vector2(0.0f, 0.0f));
+        getSizePx().Set(Math::Vector2(0.0f, 0.0f));
+        getUVRectProp().Set(GetFullTextureUVRect());
         InitializeFlipbookDefaults();
-        LayerPriority = 0;
-        OrderInLayer = 0;
+        getLayerPriority().Set(0);
+        getOrderInLayer().Set(0);
     }
 
     BoardComponent::BoardComponent(const IUnknown *sourceObject)
         : Component(sourceObject)
     {
-        TextureHandle = Rendering::TextureHandle::Invalid();
-        bVisible = true;
-        RenderLayerProp = Rendering::RenderLayer::UI;
-        Space = Rendering::BoardSpace::ScreenSpace;
-        BlendModeProp = Rendering::BlendMode::Translucent;
-        Tint = Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f);
-        bFlipX = false;
-        bFlipY = false;
-        Pivot = Math::Vector2(0.0f, 0.0f);
-        SizePx = Math::Vector2(0.0f, 0.0f);
-        UVRectProp = GetFullTextureUVRect();
+        getTextureHandle().Set(Rendering::TextureHandle::Invalid());
+        getbVisible().Set(true);
+        getRenderLayerProp().Set(Rendering::RenderLayer::UI);
+        getSpace().Set(Rendering::BoardSpace::ScreenSpace);
+        getBlendModeProp().Set(Rendering::BlendMode::Translucent);
+        getTint().Set(Math::Vector4(1.0f, 1.0f, 1.0f, 0.75f));
+        getbFlipX().Set(false);
+        getbFlipY().Set(false);
+        getPivot().Set(Math::Vector2(0.0f, 0.0f));
+        getSizePx().Set(Math::Vector2(0.0f, 0.0f));
+        getUVRectProp().Set(GetFullTextureUVRect());
         InitializeFlipbookDefaults();
-        LayerPriority = 0;
-        OrderInLayer = 0;
+        getLayerPriority().Set(0);
+        getOrderInLayer().Set(0);
     }
 
     BoardComponent::~BoardComponent() = default;
@@ -101,67 +101,67 @@ namespace NorvesLib::Core::Component
 
     void BoardComponent::SetTextureHandle(Rendering::TextureHandle texture)
     {
-        TextureHandle = texture;
+        getTextureHandle().Set(texture);
         MarkRenderStateDirty();
     }
 
     void BoardComponent::SetVisible(bool bNewVisible)
     {
-        bVisible = bNewVisible;
+        getbVisible().Set(bNewVisible);
         MarkRenderStateDirty();
     }
 
     void BoardComponent::SetRenderLayer(Rendering::RenderLayer layer)
     {
-        RenderLayerProp = layer;
+        getRenderLayerProp().Set(layer);
         MarkRenderStateDirty();
     }
 
     void BoardComponent::SetBoardSpace(Rendering::BoardSpace space)
     {
-        Space = space;
+        getSpace().Set(space);
         MarkRenderStateDirty();
     }
 
     void BoardComponent::SetBlendMode(Rendering::BlendMode blendMode)
     {
-        BlendModeProp = blendMode;
+        getBlendModeProp().Set(blendMode);
         MarkRenderStateDirty();
     }
 
     void BoardComponent::SetTint(const Math::Vector4 &tint)
     {
-        Tint = tint;
+        getTint().Set(tint);
         MarkRenderStateDirty();
     }
 
     void BoardComponent::SetFlipX(bool bInFlipX)
     {
-        bFlipX = bInFlipX;
+        getbFlipX().Set(bInFlipX);
         MarkRenderStateDirty();
     }
 
     void BoardComponent::SetFlipY(bool bInFlipY)
     {
-        bFlipY = bInFlipY;
+        getbFlipY().Set(bInFlipY);
         MarkRenderStateDirty();
     }
 
     void BoardComponent::SetPivot(const Math::Vector2 &pivot)
     {
-        Pivot = pivot;
+        getPivot().Set(pivot);
         MarkRenderStateDirty();
     }
 
     void BoardComponent::SetSizePx(const Math::Vector2 &sizePx)
     {
-        SizePx = sizePx;
+        getSizePx().Set(sizePx);
         MarkRenderStateDirty();
     }
 
     void BoardComponent::SetUVRect(const Math::Vector4 &uvRect)
     {
-        UVRectProp = uvRect;
+        getUVRectProp().Set(uvRect);
         MarkRenderStateDirty();
     }
 
@@ -295,13 +295,13 @@ namespace NorvesLib::Core::Component
 
     void BoardComponent::SetLayerPriority(uint32_t layerPriority)
     {
-        LayerPriority = layerPriority;
+        getLayerPriority().Set(layerPriority);
         MarkRenderStateDirty();
     }
 
     void BoardComponent::SetOrderInLayer(uint32_t orderInLayer)
     {
-        OrderInLayer = orderInLayer;
+        getOrderInLayer().Set(orderInLayer);
         MarkRenderStateDirty();
     }
 
@@ -485,12 +485,12 @@ namespace NorvesLib::Core::Component
         }
 
         const Math::Vector4 nextUVRect = m_FlipbookUVRects[atlasFrameIndex];
-        if (UVRectProp.Get() == nextUVRect)
+        if (getUVRectProp().Get() == nextUVRect)
         {
             return false;
         }
 
-        UVRectProp = nextUVRect;
+        getUVRectProp().Set(nextUVRect);
         MarkRenderStateDirty();
         return true;
     }
@@ -576,22 +576,22 @@ namespace NorvesLib::Core::Component
         outProxy = Rendering::BoardProxy{};
         outProxy.ObjectId = GetOwnerId();
         outProxy.ComponentId = ComponentId;
-        outProxy.Texture = TextureHandle;
+        outProxy.Texture = getTextureHandle().Get();
         outProxy.WorldTransform = m_WorldTransform;
         outProxy.PreviousWorldTransform = m_PreviousWorldTransform;
-        outProxy.LayerMask = RenderLayerProp;
-        outProxy.Space = Space;
-        outProxy.BlendModeProp = BlendModeProp;
-        outProxy.Tint = Tint;
-        outProxy.bFlipX = bFlipX;
-        outProxy.bFlipY = bFlipY;
-        outProxy.Pivot = Pivot;
-        outProxy.SizePx = SizePx;
-        outProxy.UVRect = UVRectProp;
-        outProxy.LayerPriority = LayerPriority;
-        outProxy.OrderInLayer = OrderInLayer;
-        outProxy.SortKey = Rendering::BoardProxy::ComputeSortKey(LayerPriority, OrderInLayer);
-        outProxy.bVisible = bVisible;
+        outProxy.LayerMask = getRenderLayerProp().Get();
+        outProxy.Space = getSpace().Get();
+        outProxy.BlendModeProp = getBlendModeProp().Get();
+        outProxy.Tint = getTint().Get();
+        outProxy.bFlipX = getbFlipX().Get();
+        outProxy.bFlipY = getbFlipY().Get();
+        outProxy.Pivot = getPivot().Get();
+        outProxy.SizePx = getSizePx().Get();
+        outProxy.UVRect = getUVRectProp().Get();
+        outProxy.LayerPriority = getLayerPriority().Get();
+        outProxy.OrderInLayer = getOrderInLayer().Get();
+        outProxy.SortKey = Rendering::BoardProxy::ComputeSortKey(getLayerPriority().Get(), getOrderInLayer().Get());
+        outProxy.bVisible = getbVisible().Get();
         return true;
     }
 
