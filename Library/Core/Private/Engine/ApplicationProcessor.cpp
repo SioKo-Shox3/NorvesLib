@@ -49,6 +49,9 @@ namespace
     constexpr TCHAR kDisableBoardInstanceBatchingOption[] = TEXT("--disable-board-instance-batching");
     constexpr size_t kDisableBoardInstanceBatchingOptionLength =
         (sizeof(kDisableBoardInstanceBatchingOption) / sizeof(TCHAR)) - 1;
+    // ワールドの変換の更新を旧の再帰へ戻す（階層のシステムとの比較・切り戻し用）
+    constexpr TCHAR kEcsLegacyTransformOption[] = TEXT("--ecs-legacy-transform");
+    constexpr size_t kEcsLegacyTransformOptionLength = (sizeof(kEcsLegacyTransformOption) / sizeof(TCHAR)) - 1;
 
     class ApplicationInitializeTransaction final
     {
@@ -1035,6 +1038,24 @@ namespace
 
         return pText[kDisableBoardInstanceBatchingOptionLength] == TEXT('\0');
     }
+
+    bool IsEcsLegacyTransformOption(const TCHAR* pText)
+    {
+        if (!pText)
+        {
+            return false;
+        }
+
+        for (size_t i = 0; i < kEcsLegacyTransformOptionLength; ++i)
+        {
+            if (pText[i] == TEXT('\0') || pText[i] != kEcsLegacyTransformOption[i])
+            {
+                return false;
+            }
+        }
+
+        return pText[kEcsLegacyTransformOptionLength] == TEXT('\0');
+    }
 } // namespace
 
 namespace NorvesLib::Core::Engine
@@ -1148,6 +1169,7 @@ namespace NorvesLib::Core::Engine
         bool bCaptureDeterministic = false;
         bool bEnableCanvasView = false;
         bool bBoardInstanceBatchingEnabled = true;
+        bool bEcsLegacyTransform = false;
         Rendering::RenderingMainViewRenderer mainViewRenderer = Rendering::RenderingMainViewRenderer::Raster;
         uint32_t pathTracingSamplesPerFrame = 1u;
         Rendering::PathTracingTransportScope pathTracingTransport =
@@ -1227,6 +1249,12 @@ namespace NorvesLib::Core::Engine
             {
                 bBoardInstanceBatchingEnabled = false;
                 LOG_INFO("ApplicationProcessor runtime option board_instance_batching=false");
+            }
+
+            if (IsEcsLegacyTransformOption(args[i].c_str()))
+            {
+                bEcsLegacyTransform = true;
+                LOG_INFO("ApplicationProcessor runtime option ecs_legacy_transform=true");
             }
 
             bool bMatchedRenderer = false;
@@ -1657,6 +1685,7 @@ namespace NorvesLib::Core::Engine
         {
             GApplicationLifecycleState.bWorld = true;
             GEngine->GetWorld().Initialize();
+            GEngine->GetWorld().SetLegacyTransformPropagation(bEcsLegacyTransform);
             GEngine->GetWorld().SetRenderInterpolationAllowed(!bCaptureDeterministic &&
                                                               !pathTracingSequenceFrame.bEnabled);
 

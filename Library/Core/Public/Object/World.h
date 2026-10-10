@@ -270,8 +270,15 @@ namespace NorvesLib::Core
 
         /**
          * @brief Entity階層のワールドトランスフォームを更新
+         *
+         * 既定は階層のシステムの伝播（局所の変換・親・Active が変わった行とその子孫だけを求め直し、EcsWorldTransform に書く）。
+         * SetLegacyTransformPropagation(true) の間は、全 Entity を根から再帰して求める旧の経路を使う。
          */
         void UpdateWorldTransforms();
+
+        /// 旧の再帰でワールドの変換を更新するか（起動オプション --ecs-legacy-transform。比較と切り戻し用）。既定は false
+        void SetLegacyTransformPropagation(bool bLegacy) noexcept { m_bLegacyTransformPropagation = bLegacy; }
+        [[nodiscard]] bool IsLegacyTransformPropagation() const noexcept { return m_bLegacyTransformPropagation; }
         // 固定stepの前後で呼ぶ。描画alphaの適用はCamera群より前に行う。
         void PrepareRenderInterpolationStep();
         void CaptureRenderInterpolationStep();
@@ -319,12 +326,12 @@ namespace NorvesLib::Core
         uint64_t GetEcsBindingEpoch() const noexcept { return m_EcsBindingEpoch; }
 
         /**
-         * @brief 階層のシステム（準備）の結果を、旧の再帰の結果と全行照合する（検査 ECS_TRANSFORM）
+         * @brief 階層のシステムの結果を、根から全部たどって求め直した値と全行照合する（検査 ECS_TRANSFORM）
          *
-         * 階層のシステムを 1 回走らせ（変更の無い回は何もしない）、World の木にいる全 Entity について、比較用の列
-         * （EcsPropagatedTransform）が旧の再帰の結果と一致するかを確かめる: ワールドの変換が旧の再帰が EcsWorldTransform に置いた値と
-         * bit まで一致する。EffectiveActive が、祖先をたどる従来の判定（自分と全祖先が Active かつ PendingDestroy でない）と一致する。
-         * 旧の再帰を先に走らせておくこと（UpdateWorldTransforms の直後）。食い違いは LOG_ERROR で理由を出す。
+         * 階層のシステムを 1 回走らせ（変更の無い回は何もしない）、World の木にいる全 Entity について、EcsWorldTransform が
+         * 局所の変換から根をたどって求め直した値と bit まで一致するか、EffectiveActive が祖先をたどる従来の判定
+         * （自分と全祖先が Active かつ PendingDestroy でない）と一致するかを確かめる。
+         * UpdateWorldTransforms の直後に呼ぶ。食い違いは LOG_ERROR で理由を出す。
          * @param outCount 照合した Entity の数（行の無い Entity は含まない）
          * @return 全部一致すれば true
          */
@@ -384,8 +391,10 @@ namespace NorvesLib::Core
 
         Container::TUniquePtr<Ecs::EcsWorld> m_EcsWorld;
         Container::TUniquePtr<Ecs::SystemScheduler> m_Scheduler;
-        /// 階層のシステム（準備。比較用の列へ求める）。EcsWorld より先に壊す
+        /// 階層のシステム（ワールドの変換と EffectiveActive を伝播で求める）。EcsWorld より先に壊す
         Container::TUniquePtr<Ecs::EcsTransformSystem> m_EcsTransformSystem;
+        /// 旧の再帰でワールドの変換を更新する（--ecs-legacy-transform）
+        bool m_bLegacyTransformPropagation = false;
         /// 検査 ECS_TRANSFORM の照合の回数と、最後に pass を出した回
         uint64_t m_EcsTransformCheckCalls = 0;
         uint64_t m_EcsTransformLastReport = 0;
@@ -440,8 +449,10 @@ namespace NorvesLib::Core
         void FlushDeferredEntityRows();
         /// 検査 ECS_BIND: 結び付けに変化があったときだけ照合して結果を出す。最後の引数は World の終了時（行が残らない）
         void RunEcsBindingCheck(bool bFinal);
-        /// 検査 ECS_TRANSFORM: 旧の再帰の直後に階層のシステムを走らせて照合し、結果を出す
+        /// 検査 ECS_TRANSFORM: 更新の直後に階層のシステムの結果を全行照合し、結果を出す
         void RunEcsTransformCheck();
+        /// 階層のシステムを 1 回走らせ、値が変わった Entity の版を進めて、処理した Entity の dirty を戻す。求められなかった行の数を返す
+        uint32_t PropagateEcsTransforms();
 
         Ecs::EcsArchetypeId m_EntityArchetype = Ecs::kInvalidEcsArchetype;
         Ecs::EcsArchetypeId m_ComponentArchetype = Ecs::kInvalidEcsArchetype;

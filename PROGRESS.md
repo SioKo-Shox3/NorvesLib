@@ -1257,3 +1257,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 変更: `EcsSameBits` を `lhs == rhs || 同じ bit`（+0 と -0 は同じ、NaN は同じ bit のときだけ同じ）にした。旧の再帰の `Transform::operator==` と同じ関係なので、変更の検出（`bChanged`）と照合（`EcsEqualWorldTransform`）が旧と同じ判定になる。`EcsHierarchyTest` に `TestSignedZeroMatchesLegacy` を足した（比較の関係そのものと、根の局所スケール x を +0 → 列の直接書き込みで -0 → setter で -0 にして、そのつど旧と一致すること）。
 - 結果（`.harness/runs/20261010-223034/`、反復 28 の保存）: `verify-SCN-ECS-TRANSFORM-PREP-1.txt`（EntityTreeTest のビルド EXIT=0）、`-2.txt`（EcsHierarchyTest・TransformHierarchyTest 2/2 Passed）、`-3.txt`（mega-stress の撮影が `result=pass`、`engine_check name=ECS_TRANSFORM` が default 16・close 16・aerial 12、fail 0）。
 - Notes: 反復 27 の記述中の `-3`〜`-5` のファイル名は、この反復の保存で上書きされた。
+
+### SCN-ECS-TRANSFORM-SWITCH（2026-10-11、反復 29・run 20261010-223034）
+
+- 変更:
+  - `EcsTransformSystem.h`: 伝播の結果を `EcsWorldTransform` の列へ直接書く（値が変わった行だけ `WriteColumnValue`。チャンクの版が進む）。親の値も `EcsWorldTransform` から読む。`EcsPropagatedTransform` から `World` を消した（`Visited`・`bValid`・`bEffectiveActive` だけ。比較用の列は無くなった）。直近の Run で値を求めた行を `GetApplied()`（行と「ワールドの変換が変わった」印）で返す。
+  - `World`: `UpdateWorldTransforms` は既定で伝播（`PropagateEcsTransforms`: Run → 変わった Entity の `m_TransformVersion` を進め、処理した Entity の dirty を戻す。版は旧の再帰と同じく「ワールドの変換が変わった」ときだけ）。呼び出し元（Tick/LateTick/FixedBegin/FixedEnd の各段、`UpdateRenderTransforms`、`ReparentEntity`、`SocketAttachmentComponent`）は変えず、公開の `UpdateWorldTransforms` が伝播を呼ぶ形にした（`SpringArmComponentTest` が呼ぶ口はそのまま）。`SetLegacyTransformPropagation(bool)` で旧の再帰へ戻せる。同期点まで待たせた付け替えがある間（階層の列が Outer/Inner と食い違う間）は、旧の再帰で求める。階層のシステムは作成時に並列を有効にする（行が 512 未満のバケツは直列。列の値と処理した順は直列と同じ）。
+  - `CanDispatchEntity`: 自分の今の Active・PendingDestroy を見てから、階層のシステムが求めた `EffectiveActive` を読む（行が無い・まだ求めていない・旧の経路・付け替え待ちの間は、従来どおり祖先をたどる）。
+  - 検査 `ECS_TRANSFORM`: 旧の再帰との照合をやめ、`EcsWorldTransform` の列を、根から局所の変換をたどって求め直した値（親の列の値 × 局所の変換）と全行 bit まで照合する形に替えた。EffectiveActive は従来どおり祖先をたどる判定と照合する。
+  - `ApplicationProcessor`: 起動オプション `--ecs-legacy-transform`（World の初期化の直後に `SetLegacyTransformPropagation(true)`）。
+  - 旧の再帰の呼び出し位置の行番号（World.cpp:920 など）は古く、実際の呼び出しはすべて `UpdateWorldTransforms` 経由だった。`ApplicationProcessor.cpp` の固定ステップ（`BeginFixedStep`/`EndFixedStep`）は World の段（FixedBegin/FixedEnd）を通るので、そこは変更なし。
+- テスト（`paths:` の外の `Test/Core/Object/EcsHierarchyTest.cpp` を、比較用の列の廃止と UpdateWorldTransforms の意味の変更に合わせて直した。必要な最小の範囲）: 旧の再帰を先に走らせる前提を外し、照合の名前を `ExpectMatchesReference` にした。新規 `TestUpdateMatchesLegacyRecursion`（既定の伝播と `SetLegacyTransformPropagation(true)` の 2 つの World が、決まった変更の列で全 Entity のワールドの変換・`GetTransformVersion` まで一致し、変更の無い回は版を進めない）。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-TRANSFORM-SWITCH-1.txt`（EntityTreeTest・ApplicationFixedStepPipelineTest のビルド EXIT=0）、`-2.txt`（TransformHierarchyTest・EcsHierarchyTest・WorldTickGroupTest・SpringArmComponentTest・ApplicationFixedStepPipelineTest 5/5 Passed）、`-3-startup.txt`（起動画面の決定論の比較 `result=pass`、3 視点とも `within_limits=True`。`default.png` を開いて確認）、`-4-stress.txt`（mega-stress の新経路で `engine_check name=ECS_TRANSFORM` が default 16・close 16・aerial 12、fail 0）、`-5-legacy.txt`（`--ecs-legacy-transform` を付けた同じ撮影が `result=pass`、ログに `ecs_legacy_transform=true`）。
+- Notes:
+  - `-5-legacy.txt` の最初の実行は `-GameArgs` に `--` を付けて失敗した（スクリプトが `--` を足すので不要）。上書き保存した版が正。
+  - `CanDispatchEntity` は祖先の Active の変更を、次の伝播まで見ない（自分の変更は即座に見る）。段の途中で祖先を止めた場合、その段の残りの群では子孫が 1 回余分に Tick し得る。WorldTickGroupTest は pass。
+  - 行末: `World.cpp`・`World.h`・`ApplicationProcessor.cpp` は混在。元の行末を保つ置換で編集した（numstat 2 通りが一致）。`sed -i` は CRLF を LF にしてしまうので使わない。

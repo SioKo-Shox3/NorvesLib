@@ -1,6 +1,7 @@
-﻿// 階層のシステム（準備）の契約を確かめる。
-// - 局所の変換・親・Active・PendingDestroy の変更から、ワールドの変換と EffectiveActive を比較用の列へ求め、
-//   旧の再帰（EcsWorldTransform）と全行が bit まで一致する（深い木・付け替え・非アクティブの伝播・シーンの出入りを含む）
+﻿// 階層のシステムの契約を確かめる。
+// - 局所の変換・親・Active・PendingDestroy の変更から、ワールドの変換（EcsWorldTransform）と EffectiveActive を伝播で求め、
+//   根から全部たどって求め直した値と全行が bit まで一致する（深い木・付け替え・非アクティブの伝播・シーンの出入りを含む）
+// - UpdateWorldTransforms は伝播を呼び、旧の再帰（--ecs-legacy-transform 相当）と値も版も一致する
 // - 変更の無い行は処理せず、変わらなかった行の子孫へは伝播しない
 // - 並列と直列で、列の値も処理した順も同じ（決定的）
 #include "Ecs/EcsTransformSystem.h"
@@ -25,8 +26,8 @@ using NorvesLib::Core::Ecs::EcsWorldTransform;
 
 namespace
 {
-    // 旧の再帰を走らせてから、階層のシステムの結果と全行を照合する。照合した Entity の数を返す
-    uint32_t ExpectMatchesLegacy(World &world)
+    // 更新（伝播）を走らせてから、根から求め直した値と全行を照合する。照合した Entity の数を返す
+    uint32_t ExpectMatchesReference(World &world)
     {
         world.UpdateWorldTransforms();
         uint32_t count = 0;
@@ -35,10 +36,9 @@ namespace
         return count;
     }
 
-    // 旧の再帰を走らせ、階層のシステムを 1 回走らせた結果を返す（照合は別に行う）
+    // 階層のシステムを 1 回走らせた結果を返す（UpdateWorldTransforms を通さないので、変更の数を数えられる。照合は別に行う）
     EcsTransformSystem::RunResult UpdateAndRun(World &world)
     {
-        world.UpdateWorldTransforms();
         return world.GetEcsTransformSystem().Run();
     }
 
@@ -129,12 +129,11 @@ namespace
         assert(scene.Chain.size() == depth);
 
         // 初めての Run は全行をきっかけにする。鎖は 1 段ずつ（最後の段の葉を含めて深さ + 1 段）処理される
-        world.UpdateWorldTransforms();
         const EcsTransformSystem::RunResult first = world.GetEcsTransformSystem().Run();
         assert(first.Levels == depth + 1);
         assert(first.Processed == world.GetEcsWorld().GetEntityCount());
         assert(first.Unresolved == 0);
-        assert(ExpectMatchesLegacy(world) == world.GetEcsWorld().GetEntityCount());
+        assert(ExpectMatchesReference(world) == world.GetEcsWorld().GetEntityCount());
 
         // 鎖の根を動かすと、全部の子孫へ伝わる
         scene.Chain[0]->SetLocalPosition(100.0f, 0.0f, 0.0f);
@@ -156,7 +155,7 @@ namespace
         (void)world.GetEcsTransformSystem();
         Scene scene;
         BuildScene(world, scene, 20, 6);
-        const uint32_t total = ExpectMatchesLegacy(world);
+        const uint32_t total = ExpectMatchesReference(world);
         assert(total == scene.All.size());
 
         // 何も変えなければ何も処理しない
@@ -201,21 +200,21 @@ namespace
         world.Initialize();
         Scene scene;
         BuildScene(world, scene, 12, 5);
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
 
         // 幅広い木の子（と孫）を、鎖の途中の葉の下へ
         Entity *moving = scene.WideChildren[1];
         assert(world.ReparentEntity(moving, scene.Chain[6]));
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         assert(moving->GetParentEntity() == scene.Chain[6]);
 
         // 根へ出す
         assert(world.ReparentEntity(moving, nullptr));
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
 
         // 鎖ごと別の枝の下へ（深さが変わる）
         assert(world.ReparentEntity(scene.Chain[3], scene.WideChildren[0]));
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         assert(world.VerifyEcsBinding());
         world.Finalize();
     }
@@ -227,7 +226,7 @@ namespace
         world.Initialize();
         Scene scene;
         BuildScene(world, scene, 6, 4);
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         for (Entity *entity : scene.All)
         {
             assert(EffectiveActiveOf(world, entity));
@@ -237,41 +236,41 @@ namespace
         Entity *branch = scene.WideChildren[1];
         Entity *grandchild = branch->GetChildEntities()[0];
         branch->SetActive(false);
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         assert(!EffectiveActiveOf(world, branch) && !EffectiveActiveOf(world, grandchild));
         assert(EffectiveActiveOf(world, scene.WideChildren[0]) && EffectiveActiveOf(world, scene.WideRoot));
 
         // 孫も止めてから親を戻すと、孫だけが止まったまま
         grandchild->SetActive(false);
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         branch->SetActive(true);
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         assert(EffectiveActiveOf(world, branch) && !EffectiveActiveOf(world, grandchild));
         assert(EffectiveActiveOf(world, branch->GetChildEntities()[1]));
         grandchild->SetActive(true);
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         assert(EffectiveActiveOf(world, grandchild));
 
         // 根を止めると全部（根の部分木）が false。鎖は別の根なので変わらない
         scene.WideRoot->SetActive(false);
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         for (Entity *child : scene.WideChildren)
         {
             assert(!EffectiveActiveOf(world, child));
         }
         assert(EffectiveActiveOf(world, scene.Chain[0]));
         scene.WideRoot->SetActive(true);
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
 
         // 破棄予約も伝わる（回収は Tick の cleanup）。回収されると行は消え、残りは一致したまま
         Entity *doomed = scene.WideChildren[2];
         doomed->MarkForDestroy();
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         assert(!EffectiveActiveOf(world, doomed) && !EffectiveActiveOf(world, doomed->GetChildEntities()[0]));
         assert(EffectiveActiveOf(world, scene.WideChildren[3]));
         world.Tick(0.01f);
         world.LateTick(0.01f);
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         world.Finalize();
     }
 
@@ -283,7 +282,7 @@ namespace
         (void)world.GetEcsTransformSystem();
         Scene scene;
         BuildScene(world, scene, 8, 4);
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         const uint32_t before = static_cast<uint32_t>(world.GetEcsWorld().GetEntityCount());
 
         // 出る: 部分木を除去する（変更ログには死んだ行の項目が残るが、読むときに除かれる）
@@ -292,7 +291,7 @@ namespace
         assert(world.RemoveEntity(leaving));
         world.Tick(0.01f);
         world.LateTick(0.01f);
-        const uint32_t after = ExpectMatchesLegacy(world);
+        const uint32_t after = ExpectMatchesReference(world);
         assert(after == before - 4);
 
         // 入る: 新しい部分木を足す
@@ -301,7 +300,7 @@ namespace
         Entity *entering = Spawn(world, scene, scene.WideRoot, random);
         Spawn(world, scene, entering, random);
         Spawn(world, scene, entering, random);
-        assert(ExpectMatchesLegacy(world) == after + 3);
+        assert(ExpectMatchesReference(world) == after + 3);
 
         // 鎖の途中を根へ出して動かす（部分木ごと深さが変わる）
         Entity *detached = scene.Chain[2];
@@ -310,7 +309,7 @@ namespace
         assert(parentOfDetached == scene.Chain[1]);
         assert(world.ReparentEntity(detached, nullptr));
         detached->SetLocalPosition(40.0f, 0.0f, 0.0f);
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         assert(world.GetEcsWorld().GetEntityCount() == beforeDetach);
 
         // 全部出す: World を空にしても落ちない
@@ -325,7 +324,6 @@ namespace
         world.Initialize();
         Scene scene;
         BuildScene(world, scene, 10, 5);
-        world.UpdateWorldTransforms();
         // この時点で初めて作る
         EcsTransformSystem &system = world.GetEcsTransformSystem();
         const EcsTransformSystem::RunResult first = system.Run();
@@ -341,7 +339,7 @@ namespace
         world.Finalize();
     }
 
-    // 同じ手順で作った 2 つの World の比較用の列が、全行 bit まで一致するか
+    // 同じ手順で作った 2 つの World の列（ワールドの変換・EffectiveActive）が、全行 bit まで一致するか
     void ExpectSameColumns(World &lhs, const Scene &lhsScene, World &rhs, const Scene &rhsScene)
     {
         assert(lhsScene.All.size() == rhsScene.All.size());
@@ -354,7 +352,10 @@ namespace
             const EcsPropagatedTransform *b = rhs.GetEcsWorld().GetColumnValue<EcsPropagatedTransform>(right);
             assert(a && b);
             assert(a->bValid == b->bValid && a->bEffectiveActive == b->bEffectiveActive);
-            assert(Ecs::EcsEqualWorldTransform(a->World, b->World));
+            const EcsWorldTransform *worldA = lhs.GetEcsWorld().GetColumnValue<EcsWorldTransform>(left);
+            const EcsWorldTransform *worldB = rhs.GetEcsWorld().GetColumnValue<EcsWorldTransform>(right);
+            assert(worldA && worldB);
+            assert(Ecs::EcsEqualWorldTransform(*worldA, *worldB));
         }
     }
 
@@ -440,7 +441,7 @@ namespace
             }
             ExpectSameColumns(serial, serialScene, parallel, parallelScene);
             ExpectSameColumns(serial, serialScene, parallelAgain, parallelAgainScene);
-            // 旧の再帰の結果とも一致する（Run はすでに済んでいるので、この照合の Run は何もしない）
+            // 根から求め直した値とも一致する（Run はすでに済んでいるので、この照合の Run は何もしない）
             assert(serial.VerifyEcsTransform() && parallel.VerifyEcsTransform() && parallelAgain.VerifyEcsTransform());
         }
         for (World *world : {&serial, &parallel, &parallelAgain})
@@ -449,7 +450,7 @@ namespace
         }
     }
 
-    // 符号付きゼロ: 旧の再帰は数値として等しければキャッシュを更新しないので、+0 と -0 の違いだけでは不一致にならない
+    // 符号付きゼロ: 数値として等しければキャッシュを更新しない（旧の再帰と同じ）ので、+0 と -0 の違いだけでは不一致にならない
     void TestSignedZeroMatchesLegacy()
     {
         // 比較の関係そのもの: +0 と -0 は同じ、NaN は同じ bit のときだけ同じ、違う値は違う
@@ -501,9 +502,56 @@ namespace
         Scene scene;
         BuildScene(world, scene, 10, 20);
         scene.WideRoot->SetLocalPosition(1.0f, 1.0f, 1.0f);
-        ExpectMatchesLegacy(world);
+        ExpectMatchesReference(world);
         assert(Ecs::EcsGetParallelAccessReportCount() == before);
         world.Finalize();
+    }
+
+    // 切替: 既定の UpdateWorldTransforms（伝播）と旧の再帰（SetLegacyTransformPropagation）で、値も版も同じ
+    void TestUpdateMatchesLegacyRecursion()
+    {
+        World propagated;
+        World legacy;
+        propagated.Initialize();
+        legacy.Initialize();
+        assert(!propagated.IsLegacyTransformPropagation());
+        legacy.SetLegacyTransformPropagation(true);
+        assert(legacy.IsLegacyTransformPropagation());
+        Scene propagatedScene;
+        Scene legacyScene;
+        BuildScene(propagated, propagatedScene, 20, 12);
+        BuildScene(legacy, legacyScene, 20, 12);
+
+        for (uint32_t step = 0; step <= 36; ++step)
+        {
+            if (step > 0)
+            {
+                Mutate(propagated, propagatedScene, step);
+                Mutate(legacy, legacyScene, step);
+            }
+            propagated.UpdateWorldTransforms();
+            legacy.UpdateWorldTransforms();
+            assert(propagatedScene.All.size() == legacyScene.All.size());
+            for (size_t i = 0; i < propagatedScene.All.size(); ++i)
+            {
+                const Entity *a = propagatedScene.All[i];
+                const Entity *b = legacyScene.All[i];
+                const NorvesLib::Math::Transform worldA = a->GetWorldTransform();
+                const NorvesLib::Math::Transform worldB = b->GetWorldTransform();
+                assert(worldA == worldB);
+                // 版は、ワールドの変換が変わった回だけ進む（旧の再帰と同じ）
+                assert(a->GetTransformVersion() == b->GetTransformVersion());
+            }
+        }
+
+        // 何も変えない回は、版を進めない
+        const uint64_t version = propagatedScene.All[5]->GetTransformVersion();
+        propagated.UpdateWorldTransforms();
+        propagated.UpdateWorldTransforms();
+        assert(propagatedScene.All[5]->GetTransformVersion() == version);
+        assert(propagated.VerifyEcsTransform());
+        propagated.Finalize();
+        legacy.Finalize();
     }
 }
 
@@ -520,6 +568,7 @@ int main()
     TestParallelMatchesSerialAndOrderIsDeterministic();
     TestParallelRunReportsNoPropertyAccess();
     TestSignedZeroMatchesLegacy();
+    TestUpdateMatchesLegacyRecursion();
 
     NorvesLib::Thread::JobSystem::Get().Shutdown();
     std::cout << "EcsHierarchyTest 合格\n";

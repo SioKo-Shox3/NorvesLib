@@ -61,10 +61,11 @@ namespace NorvesLib::Core
             }
         }
 
-        /// 検査 ECS_TRANSFORM の再帰: 階層のシステムが求めた比較用の列が、旧の再帰の結果（EcsWorldTransform）と、
-        /// 祖先をたどる従来の Active 判定に一致するか。行の無い Entity（段の最中に予約中）は ECS_BIND の担当なので飛ばす
-        bool VerifyEntityTransforms(Ecs::EcsWorld& ecs, Entity& entity, bool parentActive, uint32_t& count,
-                                    const char*& error)
+        /// 検査 ECS_TRANSFORM の再帰: 階層のシステムが求めた EcsWorldTransform が、根から局所の変換をたどって求め直した値
+        /// （親の列の値 × 局所の変換）と、祖先をたどる従来の Active 判定に一致するか。
+        /// 行の無い Entity（段の最中に予約中）は ECS_BIND の担当なので飛ばす
+        bool VerifyEntityTransforms(Ecs::EcsWorld& ecs, Entity& entity, const Ecs::EcsWorldTransform& parentWorld,
+                                    bool parentActive, uint32_t& count, const char*& error)
         {
             const Ecs::EcsEntity row = entity.GetEcsEntity();
             if (row.IsNull() || !ecs.IsAlive(row))
@@ -72,10 +73,10 @@ namespace NorvesLib::Core
                 return true;
             }
             const Ecs::EcsPropagatedTransform* propagated = ecs.GetColumnValue<Ecs::EcsPropagatedTransform>(row);
-            const Ecs::EcsWorldTransform* legacy = ecs.GetColumnValue<Ecs::EcsWorldTransform>(row);
-            if (!propagated || !legacy)
+            const Ecs::EcsWorldTransform* stored = ecs.GetColumnValue<Ecs::EcsWorldTransform>(row);
+            if (!propagated || !stored)
             {
-                error = "行に比較用の列（EcsPropagatedTransform）か EcsWorldTransform が無い";
+                error = "行に EcsPropagatedTransform か EcsWorldTransform が無い";
                 return false;
             }
             ++count;
@@ -84,9 +85,13 @@ namespace NorvesLib::Core
                 error = "階層のシステムが求めていない行がある";
                 return false;
             }
-            if (!Ecs::EcsEqualWorldTransform(propagated->World, *legacy))
+            const Math::Transform expected =
+                Ecs::EcsComposeTransform(Math::Transform(parentWorld.position, parentWorld.rotation, parentWorld.scale),
+                                         entity.GetLocalTransform());
+            if (!Ecs::EcsEqualWorldTransform(*stored,
+                                             Ecs::EcsWorldTransform{expected.position, expected.rotation, expected.scale}))
             {
-                error = "階層のシステムのワールドの変換が旧の再帰の結果と一致しない";
+                error = "階層のシステムのワールドの変換が根から求め直した値と一致しない";
                 return false;
             }
             const bool bActive = parentActive && entity.IsActive() && !entity.IsPendingDestroy();
@@ -97,7 +102,7 @@ namespace NorvesLib::Core
             }
             for (Entity* child : entity.GetChildEntities())
             {
-                if (!VerifyEntityTransforms(ecs, *child, bActive, count, error))
+                if (!VerifyEntityTransforms(ecs, *child, *stored, bActive, count, error))
                 {
                     return false;
                 }
@@ -1417,6 +1422,24 @@ namespace NorvesLib::Core
         {
             return false;
         }
+        // 自分の今の状態は常に見る。祖先を含めた判定は、階層のシステムが求めた EffectiveActive を読む
+        if (!entity.IsActive() || entity.IsPendingDestroy())
+        {
+            return false;
+        }
+        if (!m_bLegacyTransformPropagation && m_EcsWorld && m_PendingEntityRelinks.empty())
+        {
+            const Ecs::EcsEntity row = entity.GetEcsEntity();
+            if (!row.IsNull() && m_EcsWorld->IsAlive(row))
+            {
+                const Ecs::EcsPropagatedTransform* propagated = m_EcsWorld->GetColumnValue<Ecs::EcsPropagatedTransform>(row);
+                if (propagated != nullptr && propagated->bValid != 0)
+                {
+                    return propagated->bEffectiveActive != 0;
+                }
+            }
+        }
+        // 行が無い・まだ求めていない・旧の経路のときは、祖先をたどる
         for (const Entity* current = &entity; current; current = current->GetParentEntity())
         {
             if (!current->IsActive() || current->IsPendingDestroy())
@@ -1695,12 +1718,22 @@ namespace NorvesLib::Core
             return;
         }
 
-        auto roots = GetRootEntities();
-        for (auto* entity : roots)
+        // 同期点まで待たせた付け替えがある間は、階層の列が Outer/Inner と食い違う。この間は Outer/Inner を正とする旧の再帰で求める
+        const bool bLegacy = m_bLegacyTransformPropagation || !m_EcsWorld || m_EntityArchetype == Ecs::kInvalidEcsArchetype ||
+                             !m_PendingEntityRelinks.empty();
+        if (bLegacy)
         {
-            UpdateEntityTransformRecursive(*entity, Math::Transform::Identity);
+            auto roots = GetRootEntities();
+            for (auto* entity : roots)
+            {
+                UpdateEntityTransformRecursive(*entity, Math::Transform::Identity);
+            }
         }
-        // まだ旧の再帰が正。検査 ECS_TRANSFORM が有効なときだけ、階層のシステムの結果を並べて照合する
+        else
+        {
+            (void)PropagateEcsTransforms();
+        }
+        // 検査 ECS_TRANSFORM が有効なときだけ、全行を根から求め直した値と照合する
         RunEcsTransformCheck();
     }
 
@@ -3243,8 +3276,36 @@ namespace NorvesLib::Core
         if (!m_EcsTransformSystem)
         {
             m_EcsTransformSystem = Container::MakeUnique<Ecs::EcsTransformSystem>(*m_EcsWorld);
+            // 行の少ないバケツは直列のまま（既定の閾値）。並列でも直列でも列の値と処理した順は同じ
+            m_EcsTransformSystem->SetParallel(true);
         }
         return *m_EcsTransformSystem;
+    }
+
+    uint32_t World::PropagateEcsTransforms()
+    {
+        if (!m_EcsWorld || m_EntityArchetype == Ecs::kInvalidEcsArchetype)
+        {
+            return 0;
+        }
+        Ecs::EcsTransformSystem& system = GetEcsTransformSystem();
+        const Ecs::EcsTransformSystem::RunResult run = system.Run();
+        for (const Ecs::EcsTransformSystem::AppliedRow& applied : system.GetApplied())
+        {
+            const Ecs::EcsObjectRef* ref = m_EcsWorld->GetColumnValue<Ecs::EcsObjectRef>(applied.Entity);
+            if (ref == nullptr || ref->Object == nullptr)
+            {
+                continue;
+            }
+            Entity* entity = static_cast<Entity*>(ref->Object);
+            if (applied.bWorldChanged)
+            {
+                // 旧の再帰と同じく、ワールドの変換が変わった Entity だけ版を進める
+                ++entity->m_TransformVersion;
+            }
+            entity->m_bWorldTransformDirty = false;
+        }
+        return run.Unresolved;
     }
 
     bool World::VerifyEcsTransform(uint32_t* outCount)
@@ -3258,10 +3319,10 @@ namespace NorvesLib::Core
         {
             return true;
         }
-        const Ecs::EcsTransformSystem::RunResult run = GetEcsTransformSystem().Run();
+        const uint32_t unresolved = PropagateEcsTransforms();
         uint32_t count = 0;
         const char* error = nullptr;
-        if (run.Unresolved != 0)
+        if (unresolved != 0)
         {
             error = "階層のシステムが親の値を求められなかった行がある";
         }
@@ -3269,7 +3330,9 @@ namespace NorvesLib::Core
         {
             for (Entity* root : GetRootEntities())
             {
-                if (!VerifyEntityTransforms(*m_EcsWorld, *root, true, count, error))
+                const Math::Transform identity = Math::Transform::Identity;
+                const Ecs::EcsWorldTransform identityColumn{identity.position, identity.rotation, identity.scale};
+                if (!VerifyEntityTransforms(*m_EcsWorld, *root, identityColumn, true, count, error))
                 {
                     break;
                 }
@@ -3295,11 +3358,6 @@ namespace NorvesLib::Core
         if (checks == nullptr || !checks->IsEnabled("ECS_TRANSFORM"))
         {
             return;
-        }
-        if (m_EcsTransformCheckCalls == 0)
-        {
-            // 検査のときは並列の経路も通す（行が少ないバケツは直列のまま）
-            GetEcsTransformSystem().SetParallel(true);
         }
         ++m_EcsTransformCheckCalls;
         uint32_t count = 0;

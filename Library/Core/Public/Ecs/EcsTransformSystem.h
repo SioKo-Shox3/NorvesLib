@@ -2,7 +2,7 @@
 
 /**
  * @file EcsTransformSystem.h
- * @brief 階層の変換のシステム（準備）: 局所の変換・親・Active の変更から、ワールドの変換と EffectiveActive を比較用の列へ求める
+ * @brief 階層の変換のシステム: 局所の変換・親・Active の変更から、ワールドの変換（EcsWorldTransform）と EffectiveActive を伝播で求める
  *
  * 設計 1.9 の伝播。伝播のきっかけは、追跡する列 EcsLocalTransform・EcsHierarchy（Parent）・EcsEntityFlags（Active・PendingDestroy）の
  * 変更ログ（作成された行は全列が「変わった」になる）。変わった行を Depth ごとのバケツに積み、Depth 0 から順に処理する。
@@ -11,8 +11,9 @@
  *   - ワールドの変換か EffectiveActive が変わった行（初めて求めた行を含む）は、その子を次の Depth のバケツへ積む。
  * 処理した行の「訪れた番号」（EcsPropagatedTransform::Visited）で、同じ伝播での二重の処理を除く。
  *
- * 結果は EcsPropagatedTransform（比較用の列）に置く。まだ旧の再帰が正で、この列は検査 ECS_TRANSFORM が旧の結果と全行を照合する。
- * 比較用の列は追跡しない（変更ログにも積まず、チャンクの版も進めない）。切替（SCN-ECS-TRANSFORM-SWITCH）で EcsWorldTransform に替える。
+ * ワールドの変換は EcsWorldTransform の列へ書く（値が変わった行だけ。WriteColumnValue を通すので、チャンクの版が進む）。
+ * EffectiveActive・訪れた番号・求めたかどうかは EcsPropagatedTransform（追跡しない列）に置く。
+ * 検査 ECS_TRANSFORM は、この結果を、木を根から全部たどって求め直した値と全行照合する。
  *
  * 並列のしかた: 1 つの Depth の行は互いに独立なので、行ごとの計算（列の読み取りと式の評価だけ）を ParallelFor で回す。
  * 計算の結果は行ごとの置き場に出し、列への書き込みと次の Depth への積み込みは GameThread が行の順に行う。
@@ -95,6 +96,7 @@ namespace NorvesLib::Core::Ecs
             m_Hierarchy = EcsColumnInfoOf<EcsHierarchy>().Type;
             m_Flags = EcsColumnInfoOf<EcsEntityFlags>().Type;
             m_Propagated = EcsColumnInfoOf<EcsPropagatedTransform>().Type;
+            m_WorldType = EcsColumnInfoOf<EcsWorldTransform>().Type;
             m_Consumers[0] = world.RegisterChangeConsumer(m_Local);
             m_Consumers[1] = world.RegisterChangeConsumer(m_Hierarchy);
             m_Consumers[2] = world.RegisterChangeConsumer(m_Flags);
@@ -153,10 +155,23 @@ namespace NorvesLib::Core::Ecs
             return m_Order;
         }
 
+        /// 直近の Run で処理して値を求めた行（処理した順）と、そのうちワールドの変換の値が変わった行の印
+        struct AppliedRow
+        {
+            EcsEntity Entity;
+            bool bWorldChanged = false;
+        };
+
+        [[nodiscard]] const Container::VariableArray<AppliedRow> &GetApplied() const
+        {
+            return m_Applied;
+        }
+
         /// 伝播を 1 回行う。変更が無ければ（消費者のログが空なら）何もしない
         RunResult Run()
         {
             RunResult result;
+            m_Applied.clear();
             if (m_bRecordOrder)
             {
                 m_Order.clear();
@@ -219,6 +234,9 @@ namespace NorvesLib::Core::Ecs
         {
             EcsWorldTransform World;
             bool bEffectiveActive = false;
+            /// ワールドの変換の値が列と違う（書き込みが要る）
+            bool bWorldChanged = false;
+            /// 子へ伝える（ワールドの変換か EffectiveActive が変わった、または初めて求めた）
             bool bChanged = false;
             bool bUnresolved = false;
         };
@@ -285,7 +303,8 @@ namespace NorvesLib::Core::Ecs
             const EcsEntityFlags *flags = static_cast<const EcsEntityFlags *>(world.GetColumnValue(entity, m_Flags));
             const EcsPropagatedTransform *self =
                 static_cast<const EcsPropagatedTransform *>(world.GetColumnValue(entity, m_Propagated));
-            if (hierarchy == nullptr || local == nullptr || flags == nullptr || self == nullptr)
+            const EcsWorldTransform *current = static_cast<const EcsWorldTransform *>(world.GetColumnValue(entity, m_WorldType));
+            if (hierarchy == nullptr || local == nullptr || flags == nullptr || self == nullptr || current == nullptr)
             {
                 out.bUnresolved = true;
                 return;
@@ -297,12 +316,14 @@ namespace NorvesLib::Core::Ecs
             {
                 const EcsPropagatedTransform *parent =
                     static_cast<const EcsPropagatedTransform *>(world.GetColumnValue(hierarchy->Parent, m_Propagated));
-                if (parent == nullptr || parent->bValid == 0)
+                const EcsWorldTransform *parentValue =
+                    static_cast<const EcsWorldTransform *>(world.GetColumnValue(hierarchy->Parent, m_WorldType));
+                if (parent == nullptr || parent->bValid == 0 || parentValue == nullptr)
                 {
                     out.bUnresolved = true;
                     return;
                 }
-                parentWorld = Math::Transform(parent->World.position, parent->World.rotation, parent->World.scale);
+                parentWorld = Math::Transform(parentValue->position, parentValue->rotation, parentValue->scale);
                 bParentActive = parent->bEffectiveActive != 0;
             }
 
@@ -310,8 +331,8 @@ namespace NorvesLib::Core::Ecs
                 EcsComposeTransform(parentWorld, Math::Transform(local->position, local->rotation, local->scale));
             out.World = EcsWorldTransform{composed.position, composed.rotation, composed.scale};
             out.bEffectiveActive = bParentActive && flags->bActive && !flags->bPendingDestroy;
-            out.bChanged = self->bValid == 0 || !EcsEqualWorldTransform(self->World, out.World) ||
-                           (self->bEffectiveActive != 0) != out.bEffectiveActive;
+            out.bWorldChanged = !EcsEqualWorldTransform(*current, out.World);
+            out.bChanged = self->bValid == 0 || out.bWorldChanged || (self->bEffectiveActive != 0) != out.bEffectiveActive;
         }
 
         /// 1 つの Depth のバケツを処理する: 計算（並列でもよい）→ 列への書き込みと子の積み込み（GameThread、行の順）
@@ -355,11 +376,15 @@ namespace NorvesLib::Core::Ecs
                 {
                     m_Order.push_back(entity);
                 }
+                if (row.bWorldChanged)
+                {
+                    m_World.WriteColumnValue(entity, m_WorldType, &row.World);
+                }
                 EcsPropagatedTransform *propagated =
                     static_cast<EcsPropagatedTransform *>(m_World.GetColumnValue(entity, m_Propagated));
-                propagated->World = row.World;
                 propagated->bEffectiveActive = row.bEffectiveActive ? 1u : 0u;
                 propagated->bValid = 1;
+                m_Applied.push_back(AppliedRow{entity, row.bWorldChanged});
                 if (!row.bChanged)
                 {
                     continue;
@@ -392,6 +417,7 @@ namespace NorvesLib::Core::Ecs
         TypeId m_Hierarchy = 0;
         TypeId m_Flags = 0;
         TypeId m_Propagated = 0;
+        TypeId m_WorldType = 0;
         /// EcsLocalTransform・EcsHierarchy・EcsEntityFlags の消費者
         EcsConsumerId m_Consumers[3] = {kInvalidEcsConsumer, kInvalidEcsConsumer, kInvalidEcsConsumer};
         bool m_bIncremental = false;
@@ -409,6 +435,7 @@ namespace NorvesLib::Core::Ecs
         Container::VariableArray<EcsChangeEntry> m_Scratch;
         Container::VariableArray<EcsArchetypeId> m_Archetypes;
         Container::VariableArray<EcsEntity> m_Order;
+        Container::VariableArray<AppliedRow> m_Applied;
     };
 
 }
