@@ -75,6 +75,7 @@ norves_add_test_bundle(EntityTreeTest
     MEMBER EcsCommandTest EcsCommandTest.cpp
     MEMBER EcsSchedulerTest EcsSchedulerTest.cpp
     MEMBER EcsLifetimeTest EcsLifetimeTest.cpp
+    MEMBER EcsHierarchyTest EcsHierarchyTest.cpp
 )
 target_link_libraries(EntityTreeTest PRIVATE Core)
 target_include_directories(EntityTreeTest PRIVATE
@@ -144,3 +145,4 @@ add_test(NAME EcsChangeTest COMMAND EntityTreeTest --test=EcsChangeTest)
 add_test(NAME EcsCommandTest COMMAND EntityTreeTest --test=EcsCommandTest)
 add_test(NAME EcsSchedulerTest COMMAND EntityTreeTest --test=EcsSchedulerTest)
 add_test(NAME EcsLifetimeTest COMMAND EntityTreeTest --test=EcsLifetimeTest)
+add_test(NAME EcsHierarchyTest COMMAND EntityTreeTest --test=EcsHierarchyTest)

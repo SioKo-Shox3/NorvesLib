@@ -125,6 +125,17 @@ namespace NorvesLib::Core::Ecs
         Math::Vector3 scale;
     };
 
+    /// Entity の行に、階層のシステムが求める値（比較用）。旧の再帰が EcsWorldTransform に置く値と並べて照合する。
+    /// World は階層のシステムが求めたワールドの変換、bEffectiveActive は自分と祖先がすべて Active かつ PendingDestroy でないか、
+    /// Visited は最後に処理した伝播の番号（同じ伝播で行を二重に処理しない印）、bValid は一度でも求めたか。
+    struct EcsPropagatedTransform
+    {
+        EcsWorldTransform World;
+        uint64_t Visited;
+        uint32_t bValid;
+        uint32_t bEffectiveActive;
+    };
+
     /// Component の行の flags（プロパティ。ECS_PROPERTY で読み書きする）
     struct EcsComponentFlags
     {

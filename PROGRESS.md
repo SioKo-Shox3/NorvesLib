@@ -1235,3 +1235,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 変更: ソース一覧に `M9SkeletalPreparation.cpp`・`StartupSkinnedProbe.cpp`・`DogMovementSmokeRoutine.cpp`・`GameInputSettings.cpp`・`GameHapticsSettings.cpp`・`SequenceFrameCapture.cpp`・`FollowCameraComponent.cpp`・`FollowCameraProfile.cpp`・`QuadrupedLocomotionComponent.cpp` を足した（BOM + CRLF を保った。numstat 2 通りが一致）。
 - 範囲の注記: このファイルは `paths:` の外（`Test/Game/Bridge`）だが、タスクの verify がこのターゲットのビルドと実行を要求しており、これを直さないと合格できないため、最小の追記だけ行った。
 - 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-TRANSFORM-VALUES-7-build.txt`（指定の 4 ターゲットのビルド EXIT=0）、`-8-ctest.txt`（指定の ctest 7/7 Passed、NorvesLibBridgeAdapterScriptComponentTest を含む）。起動画面・mega-bananas の比較は反復 25 の `-3-startup.txt`・`-4-bananas.txt`（pass）から、Core・Game のコードは変わっていないので再実行していない。
+
+### SCN-ECS-TRANSFORM-PREP（2026-10-11、反復 27・run 20261010-223034）
+
+- 変更:
+  - `Ecs/EcsTransformSystem.h`（新規。ヘッダのみ。`Library/Core/CMakeLists.txt` のソース一覧を触らないため）: 階層のシステム `EcsTransformSystem`。局所の変換・`EcsHierarchy`・`EcsEntityFlags` の変更ログ（初回と消費者を持てないときは全行）を Depth ごとのバケツに積み、Depth 0 から順に「親のワールドの変換 × 局所の変換」（旧の `ComposeTransform` と同じ式）と EffectiveActive（親 && Active && !PendingDestroy）を求める。変わった行（ワールドの変換か EffectiveActive。初めて求めた行を含む）だけ子を次の Depth へ積み、行の `Visited`（伝播の番号）で二重の処理を除く。行ごとの計算（列の読み取りと式）は `ParallelFor`、列への書き込みと子の積み込みは GameThread が行の順に行うので、直列でも並列でも列の値と処理した順（`GetProcessedOrder`）が同じになる。
+  - `EcsTypes.h`: 比較用の列 `EcsPropagatedTransform{World, Visited, bValid, bEffectiveActive}`。
+  - `World`: Entity の行のアーキタイプに比較用の列を足した（7 列）。`EcsLocalTransform`・`EcsHierarchy`・`EcsEntityFlags` を追跡する列にした（最初のアーキタイプの前。消費者がいない間はログを積まない）。`GetEcsTransformSystem()`（遅延作成）、`VerifyEcsTransform()`（システムを 1 回走らせ、全 Entity の比較用の列を、旧の再帰が置いた `EcsWorldTransform` と bit まで、EffectiveActive を祖先をたどる従来の判定と照合）、`RunEcsTransformCheck()`（`UpdateWorldTransforms` の末尾から。`--engine-checks=ECS_TRANSFORM` のときだけ。fail は毎回、pass は最初に Entity が居た回と 64 回ごとに出す）。まだ旧の再帰が正。
+- テスト `EcsHierarchyTest`（EntityTreeTest の束）: 深い鎖（400 段で処理する Depth 数が一致）、変更の無い回は何も処理しない・同じ値の書き込みは子孫へ伝えない・親子同時の変更は 1 回だけ処理、付け替え（鎖の途中・根へ・別の枝の下へ）、非アクティブ・破棄予約の伝播（孫だけ止めて親を戻す等）、部分木の出入り、後から作ったシステムの全行の取り込み、直列・並列（grain 1 と 3）の 3 つの World が 40 回の変更列で列の値も処理した順も一致、並列の中で ECS_PROPERTY の検査に触れないこと。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-TRANSFORM-PREP-3.txt`（EntityTreeTest のビルド EXIT=0）、`-4.txt`（EcsHierarchyTest・TransformHierarchyTest 2/2 Passed）、`-5.txt`（mega-stress の撮影が `result=pass`、`engine_check name=ECS_TRANSFORM` が default 16・close 16・aerial 12、fail 0）、`-6-neighbors.txt`（隣接の ECS・World 系 13/13 Passed）。`-1`・`-2` は最初の版（テストの前提の誤り）で証拠にしない。
+- Notes:
+  - `paths:` の外は `World.h` だけ触った（メンバと公開関数の宣言。World.cpp だけでは持ち主を置けない）。`Library/Core/CMakeLists.txt` は触らず、システムをヘッダのみにした。
+  - 初版の失敗は `EcsEqualWorldTransform` を `==` で比べたため、深い鎖で拡縮が発散して NaN になった行が不一致になったこと。bit 比較にした（旧の再帰と同じ式なので同じ入力は同じ bit になることは、Debug のテストと RelWithDebInfo の撮影で確かめた）。
+  - 予約中の親の下へ付け替えた行がある間（`m_PendingEntityRelinks` が空でない間）は、階層の列が Outer/Inner と食い違うのが正当なので、伝播も照合もしない。
+  - 切替（SCN-ECS-TRANSFORM-SWITCH）で `EcsWorldTransform` を書く側に替えるとき、比較用の列は消す。比較用の列は追跡せず、チャンクの版も進めない。切替では書き込みを `MarkWritten` と `CommitChanges` を通す形にすること（今は GameThread が行の順に直接書く）。
+  - 行末: `World.cpp`・`World.h`・`TASKS.md`・`PROGRESS.md` は混在。挿入は元の行の行末に合わせた（numstat 2 通りが一致）。

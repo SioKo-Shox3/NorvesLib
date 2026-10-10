@@ -24,6 +24,7 @@ namespace NorvesLib::Core::Ecs
 {
     class EcsWorld;
     class SystemScheduler;
+    class EcsTransformSystem;
 }
 
 namespace NorvesLib::Core
@@ -317,6 +318,21 @@ namespace NorvesLib::Core
         /// 結び付け（行の作成・消去・付け替え）の回数。変化があったときだけ検査を走らせるのに使う
         uint64_t GetEcsBindingEpoch() const noexcept { return m_EcsBindingEpoch; }
 
+        /**
+         * @brief 階層のシステム（準備）の結果を、旧の再帰の結果と全行照合する（検査 ECS_TRANSFORM）
+         *
+         * 階層のシステムを 1 回走らせ（変更の無い回は何もしない）、World の木にいる全 Entity について、比較用の列
+         * （EcsPropagatedTransform）が旧の再帰の結果と一致するかを確かめる: ワールドの変換が旧の再帰が EcsWorldTransform に置いた値と
+         * bit まで一致する。EffectiveActive が、祖先をたどる従来の判定（自分と全祖先が Active かつ PendingDestroy でない）と一致する。
+         * 旧の再帰を先に走らせておくこと（UpdateWorldTransforms の直後）。食い違いは LOG_ERROR で理由を出す。
+         * @param outCount 照合した Entity の数（行の無い Entity は含まない）
+         * @return 全部一致すれば true
+         */
+        bool VerifyEcsTransform(uint32_t* outCount = nullptr);
+
+        /// 階層のシステム。無ければ作る（作ったときは最初の Run が全行をきっかけにする）
+        Ecs::EcsTransformSystem& GetEcsTransformSystem();
+
     private:
         friend class Engine::ApplicationProcessor;
         friend class Entity;
@@ -368,6 +384,11 @@ namespace NorvesLib::Core
 
         Container::TUniquePtr<Ecs::EcsWorld> m_EcsWorld;
         Container::TUniquePtr<Ecs::SystemScheduler> m_Scheduler;
+        /// 階層のシステム（準備。比較用の列へ求める）。EcsWorld より先に壊す
+        Container::TUniquePtr<Ecs::EcsTransformSystem> m_EcsTransformSystem;
+        /// 検査 ECS_TRANSFORM の照合の回数と、最後に pass を出した回
+        uint64_t m_EcsTransformCheckCalls = 0;
+        uint64_t m_EcsTransformLastReport = 0;
         uint32_t m_StageTick = 0;
         uint32_t m_StageLateTick = 0;
         uint32_t m_StageFixedBegin = 0;
@@ -419,6 +440,8 @@ namespace NorvesLib::Core
         void FlushDeferredEntityRows();
         /// 検査 ECS_BIND: 結び付けに変化があったときだけ照合して結果を出す。最後の引数は World の終了時（行が残らない）
         void RunEcsBindingCheck(bool bFinal);
+        /// 検査 ECS_TRANSFORM: 旧の再帰の直後に階層のシステムを走らせて照合し、結果を出す
+        void RunEcsTransformCheck();
 
         Ecs::EcsArchetypeId m_EntityArchetype = Ecs::kInvalidEcsArchetype;
         Ecs::EcsArchetypeId m_ComponentArchetype = Ecs::kInvalidEcsArchetype;

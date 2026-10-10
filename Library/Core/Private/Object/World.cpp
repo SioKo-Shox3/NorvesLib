@@ -8,6 +8,7 @@
 #include "Component/TextComponent.h"
 #include "Container/UnorderedSet.h"
 #include "Ecs/EcsScheduler.h"
+#include "Ecs/EcsTransformSystem.h"
 #include "Ecs/EcsWorld.h"
 #include "Engine/ComponentDataRegistry.h"
 #include "Engine/Engine.h"
@@ -58,6 +59,50 @@ namespace NorvesLib::Core
                 fn(next);
                 ecs.WriteColumnValueOf(row, next);
             }
+        }
+
+        /// 検査 ECS_TRANSFORM の再帰: 階層のシステムが求めた比較用の列が、旧の再帰の結果（EcsWorldTransform）と、
+        /// 祖先をたどる従来の Active 判定に一致するか。行の無い Entity（段の最中に予約中）は ECS_BIND の担当なので飛ばす
+        bool VerifyEntityTransforms(Ecs::EcsWorld& ecs, Entity& entity, bool parentActive, uint32_t& count,
+                                    const char*& error)
+        {
+            const Ecs::EcsEntity row = entity.GetEcsEntity();
+            if (row.IsNull() || !ecs.IsAlive(row))
+            {
+                return true;
+            }
+            const Ecs::EcsPropagatedTransform* propagated = ecs.GetColumnValue<Ecs::EcsPropagatedTransform>(row);
+            const Ecs::EcsWorldTransform* legacy = ecs.GetColumnValue<Ecs::EcsWorldTransform>(row);
+            if (!propagated || !legacy)
+            {
+                error = "行に比較用の列（EcsPropagatedTransform）か EcsWorldTransform が無い";
+                return false;
+            }
+            ++count;
+            if (propagated->bValid == 0)
+            {
+                error = "階層のシステムが求めていない行がある";
+                return false;
+            }
+            if (!Ecs::EcsEqualWorldTransform(propagated->World, *legacy))
+            {
+                error = "階層のシステムのワールドの変換が旧の再帰の結果と一致しない";
+                return false;
+            }
+            const bool bActive = parentActive && entity.IsActive() && !entity.IsPendingDestroy();
+            if ((propagated->bEffectiveActive != 0) != bActive)
+            {
+                error = "階層のシステムの EffectiveActive が祖先をたどる判定と一致しない";
+                return false;
+            }
+            for (Entity* child : entity.GetChildEntities())
+            {
+                if (!VerifyEntityTransforms(ecs, *child, bActive, count, error))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         /// 検査 ECS_BIND の再帰: entity の行と、その部分木が Outer/Inner と一致するか。食い違いは error に理由を入れて false
@@ -1151,7 +1196,12 @@ namespace NorvesLib::Core
 
     void World::InitializeSchedule()
     {
+        m_EcsTransformSystem.reset();
         m_EcsWorld = Container::MakeUnique<Ecs::EcsWorld>();
+        // 階層のシステムのきっかけになる列は追跡する（最初のアーキタイプを作る前に決める）。消費者がいない間はログを積まない
+        m_EcsWorld->SetColumnTrackedOf<Ecs::EcsLocalTransform>();
+        m_EcsWorld->SetColumnTrackedOf<Ecs::EcsHierarchy>();
+        m_EcsWorld->SetColumnTrackedOf<Ecs::EcsEntityFlags>();
         m_Scheduler = Container::MakeUnique<Ecs::SystemScheduler>(*m_EcsWorld);
         Ecs::SystemScheduler& scheduler = *m_Scheduler;
 
@@ -1240,7 +1290,7 @@ namespace NorvesLib::Core
         add(m_StageSync, "Sync.SyncToSceneView",
             [](void* user, const Context&) { static_cast<World*>(user)->SyncToSceneViewBody(); });
 
-        // World の木にいる全 Entity の行: Object への弱い参照・階層・flags・時間倍率・変換（局所とワールドのキャッシュ）
+        // World の木にいる全 Entity の行: Object への弱い参照・階層・flags・時間倍率・変換（局所とワールドのキャッシュ）・階層のシステムの比較用の列
         const Ecs::EcsColumnInfo entityColumns[] = {
             Ecs::EcsRegisterColumn<Ecs::EcsObjectRef>(),
             Ecs::EcsRegisterColumn<Ecs::EcsHierarchy>(),
@@ -1248,9 +1298,10 @@ namespace NorvesLib::Core
             Ecs::EcsRegisterColumn<Ecs::EcsTimeDilation>(),
             Ecs::EcsRegisterColumn<Ecs::EcsLocalTransform>(),
             Ecs::EcsRegisterColumn<Ecs::EcsWorldTransform>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsPropagatedTransform>(),
         };
         m_EntityArchetype = m_EcsWorld->GetOrCreateArchetype(
-            Container::Span<const Ecs::EcsColumnInfo>(entityColumns, 6));
+            Container::Span<const Ecs::EcsColumnInfo>(entityColumns, 7));
         if (m_EntityArchetype == Ecs::kInvalidEcsArchetype)
         {
             LOG_ERROR("World: Entity 用の ECS のアーキタイプを作れなかった");
@@ -1649,6 +1700,8 @@ namespace NorvesLib::Core
         {
             UpdateEntityTransformRecursive(*entity, Math::Transform::Identity);
         }
+        // まだ旧の再帰が正。検査 ECS_TRANSFORM が有効なときだけ、階層のシステムの結果を並べて照合する
+        RunEcsTransformCheck();
     }
 
     bool World::SetRenderInterpolationAlpha(float alpha)
@@ -3183,6 +3236,82 @@ namespace NorvesLib::Core
             return false;
         }
         return true;
+    }
+
+    Ecs::EcsTransformSystem& World::GetEcsTransformSystem()
+    {
+        if (!m_EcsTransformSystem)
+        {
+            m_EcsTransformSystem = Container::MakeUnique<Ecs::EcsTransformSystem>(*m_EcsWorld);
+        }
+        return *m_EcsTransformSystem;
+    }
+
+    bool World::VerifyEcsTransform(uint32_t* outCount)
+    {
+        if (outCount)
+        {
+            *outCount = 0;
+        }
+        // 予約中の親の下へ付け替えた行は、同期点まで階層の列が古い（Outer/Inner と食い違うのは正当）。この間は伝播も照合もしない
+        if (!m_EcsWorld || m_EntityArchetype == Ecs::kInvalidEcsArchetype || !m_PendingEntityRelinks.empty())
+        {
+            return true;
+        }
+        const Ecs::EcsTransformSystem::RunResult run = GetEcsTransformSystem().Run();
+        uint32_t count = 0;
+        const char* error = nullptr;
+        if (run.Unresolved != 0)
+        {
+            error = "階層のシステムが親の値を求められなかった行がある";
+        }
+        else
+        {
+            for (Entity* root : GetRootEntities())
+            {
+                if (!VerifyEntityTransforms(*m_EcsWorld, *root, true, count, error))
+                {
+                    break;
+                }
+            }
+        }
+        if (outCount)
+        {
+            *outCount = count;
+        }
+        if (error)
+        {
+            LOG_ERROR("ECS_TRANSFORM: %s", error);
+            return false;
+        }
+        return true;
+    }
+
+    void World::RunEcsTransformCheck()
+    {
+        NorvesLib::Debug::EngineChecks* checks = NorvesLib::Core::Engine::GEngine != nullptr
+            ? &NorvesLib::Core::Engine::GEngine->GetEngineChecks()
+            : nullptr;
+        if (checks == nullptr || !checks->IsEnabled("ECS_TRANSFORM"))
+        {
+            return;
+        }
+        if (m_EcsTransformCheckCalls == 0)
+        {
+            // 検査のときは並列の経路も通す（行が少ないバケツは直列のまま）
+            GetEcsTransformSystem().SetParallel(true);
+        }
+        ++m_EcsTransformCheckCalls;
+        uint32_t count = 0;
+        const bool bPass = VerifyEcsTransform(&count);
+        // 呼び出しが多いので、fail は毎回、pass は最初に Entity が居た回と 64 回ごとに出す
+        const bool bReportPass = bPass && count > 0 &&
+                                 (m_EcsTransformLastReport == 0 || m_EcsTransformCheckCalls % 64 == 0);
+        if (!bPass || bReportPass)
+        {
+            checks->Report("ECS_TRANSFORM", bPass, count);
+            m_EcsTransformLastReport = m_EcsTransformCheckCalls;
+        }
     }
 
     void World::RunEcsBindingCheck(bool bFinal)

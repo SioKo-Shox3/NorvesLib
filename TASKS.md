@@ -348,7 +348,7 @@
 - paths: Library/Core/Public/Object/Entity.h, Library/Core/Private/Object/Entity.cpp, Library/Core/Private/Object/World.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Game, Test/Core/Object, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-TRANSFORM-PREP: 階層のシステムを旧の再帰と並べ、一致を確かめる（準備）
-- status: todo
+- status: done
 - done-when: 設計 1.9 の階層のシステムが比較用の列へ求め、検査 `ECS_TRANSFORM` で旧の再帰と全行が一致する（移動・付け替え・Active の切り替え・シーンの出入りを含む）。まだ旧の再帰が正。`EcsHierarchyTest` が次を確かめる: 深い木、付け替え、非アクティブの伝播、並列と直列の結果の一致、出力の順の決定性。
 - verify: `cmake --build build --config Debug --target EntityTreeTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(EcsHierarchyTest|TransformHierarchyTest)$" --no-tests=error --output-on-failure --timeout 180`
