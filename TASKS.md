@@ -116,7 +116,7 @@
 - notes: 性能は RelWithDebInfo で測る（Release にデバッグ機能を入れない）。測り方は `Docs/RenderingValidation/VirtualizationAcceptance.md` の段5・段6の GPU 時間に合わせる。
 
 ## SCN-PH-WASTELAND: 荒野用の Poly Haven の岩・崖と地形のテクスチャを落とす
-- status: todo
+- status: done
 - done-when: `Scripts/FetchPolyHavenModels.ps1 -Set wasteland` が乾燥地に合う岩・崖・枯れ木などのモデル 5〜8 種（Poly Haven の API のカテゴリとタグから選ぶ。CC0）を、`Scripts/FetchPolyHavenTextures.ps1 -Set wasteland` が地形の 3 層（砂・ひび割れた乾いた土・岩肌）と石の床（材質ギャラリー・夜の集落の道）のテクスチャを、既存と同じ形（4K、MD5 で照合、git 管理外）で落とす。引数なしの既定の組（起動画面の分）は変わらない。選んだ id と理由（色・形が荒野に合う）を計画書の資産の節に書き足す（計画書は git 管理外）。岩・崖のクックの一覧 `Assets/AssetSets/WastelandModels.json` を足してクックが通り、岩のプレビュー（`GenerateSceneModels.py --preview` の Blender の描画を流用してよい）を開いて荒野に合う見た目を確かめる。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenModels.ps1 -Set wasteland`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/FetchPolyHavenTextures.ps1 -Set wasteland`

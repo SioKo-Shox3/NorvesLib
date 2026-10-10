@@ -13,6 +13,10 @@
 # 負荷用の材質の並びは Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp の kStressMaterials・
 # Assets/AssetSets/Rendering3DTestStressTextures.json と同じにする。
 #
+# -Set wasteland を付けると、荒野のシーンが使う地形の3層（砂・ひび割れた乾いた土・岩肌）と、石の床
+# （材質ギャラリーの展示場・夜の集落の道）を、地面の区画と同じ5枚（色・法線・粗さ・AO・高さ、4K）で落とす。
+# -Set を省くと従来の地面の区画の組（既定）を落とす。-StressSet はどちらの -Set にも足せる。
+#
 # 終了コード: すべてそろえば0、どれかを落とせない・MD5が合わなければ1。
 [CmdletBinding()]
 param(
@@ -20,7 +24,11 @@ param(
     [switch]$Force,
 
     # 負荷モード用の材質の組も落とす
-    [switch]$StressSet
+    [switch]$StressSet,
+
+    # 落とす組。startup = 起動画面の地面の区画（既定）、wasteland = 荒野のシーン
+    [ValidateSet('startup', 'wasteland')]
+    [string]$Set = 'startup'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,7 +38,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $destinationRoot = Join-Path $repoRoot 'Assets\Textures\PolyHaven'
 
 # 地面の区画に並べる素材（Poly Haven の資産ID）
-$assetIds = @(
+$startupAssetIds = @(
     'brown_mud_leaves_01',
     'forrest_ground_01',
     'sand_01',
@@ -38,6 +46,15 @@ $assetIds = @(
     'snow_02',
     'marble_01'
 )
+# 荒野のシーンの素材。地形の3層（砂・ひび割れた乾いた土・岩肌）と石の床（展示場と集落の道）
+$wastelandAssetIds = @(
+    'sandy_gravel_02',
+    'dry_ground_01',
+    'rock_face',
+    'rock_tile_floor',
+    'stone_floor'
+)
+$assetIds = if ($Set -eq 'wasteland') { $wastelandAssetIds } else { $startupAssetIds }
 # 負荷モード用の材質（-StressSet のときだけ落とす）
 $stressAssetIds = @(
     'aerial_rocks_02',

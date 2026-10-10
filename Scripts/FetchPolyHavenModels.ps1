@@ -7,11 +7,19 @@
 # 一致するファイルは落とし直さない。資産の並びは Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp の
 # kStartupScanProps と Assets/AssetSets/Rendering3DTestStartupScanProps.json と同じにする。
 #
+# -Set wasteland を付けると、荒野のシーン（wasteland・night-village）が置く乾燥地の岩・崖・枯れ木
+# （Poly Haven の Namaqualand コレクション、CC0）を落とす。-Set を省くと起動画面の組（既定）を落とす。
+# 荒野の組のクックの一覧は Assets/AssetSets/WastelandModels.json。
+#
 # 終了コード: すべてそろえば0、どれかを落とせない・MD5が合わなければ1。
 [CmdletBinding()]
 param(
     # 既にあるファイルも落とし直す
-    [switch]$Force
+    [switch]$Force,
+
+    # 落とす組。startup = 起動画面の地面の外周（既定）、wasteland = 荒野のシーン
+    [ValidateSet('startup', 'wasteland')]
+    [string]$Set = 'startup'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,11 +29,22 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $destinationRoot = Join-Path $repoRoot 'Assets\Models\PolyHaven'
 
 # 起動画面に並べるスキャン資産（Poly Haven の資産ID）
-$assetIds = @(
+$startupAssetIds = @(
     'coast_rocks_05',
     'sand_rocks_small_01',
     'coast_land_rocks_03'
 )
+# 荒野のシーンに置く資産。色が乾いた茶・黄土で、形が乾燥地の岩・崖・枯れ木のもの
+$wastelandAssetIds = @(
+    'namaqualand_boulder_02',
+    'namaqualand_boulder_03',
+    'namaqualand_boulder_05',
+    'namaqualand_boulder_04',
+    'namaqualand_cliff_01',
+    'namaqualand_cliff_02',
+    'dead_quiver_trunk'
+)
+$assetIds = if ($Set -eq 'wasteland') { $wastelandAssetIds } else { $startupAssetIds }
 $resolution = '4k'
 
 function Get-FileMd5([string]$Path)

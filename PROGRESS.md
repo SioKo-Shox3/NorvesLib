@@ -753,3 +753,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 
 - 反復 26 の差し戻し（VRAM の記録）に対応。`SceneLauncherAcceptance.md` のバナナの節で、(1) ジオメトリのプールの使用量を、読み込み完了後の最終 `VRAM_LEDGER geometry_pool` の値（overview 3.9 MiB・close 5.7 MiB、容量 256 MiB、確保数 30・46。1 万・2 万・3 万本とも同じ）の表に差し替え、(2) 「ソフトウェアラスタの一覧 32 MB」を別の確保として数えていた二重計上を直し、`sw_raster_bytes` と同じ `m_SwRasterBuffer` で合計に含まれると明記した。
 - 変更は文書だけ（実装・計測値は変えていない）。GPU 時間・クラスタ数の表は反復 26 の `verify-SCN-BANANAS-PERF-vm2-*.txt` のまま。6 条件のログ（`scene-capture/SCN-BANANAS-PERF/vm2-<本数>-<視点>/<視点>.Game.log`）の最終 `VRAM_LEDGER geometry_pool` を開いて確かめた。verify（ビルド・3 万本の撮影）は実装を変えていないので重い再撮影はせず、反復 26 の保存出力を根拠にする。
+
+### SCN-PH-WASTELAND（2026-10-10、反復 28・run 20261009-233224）
+
+- `FetchPolyHavenModels.ps1`・`FetchPolyHavenTextures.ps1` に `-Set startup|wasteland`（既定 `startup`）を足した。引数なしの組は従来どおり（モデル 3 種 15 ファイル、地面の区画 6 種 30 ファイル。再実行で全て MD5 一致のため飛ばした）。`-Set wasteland` は 4K・MD5 照合・git 管理外で同じ形。
+- 荒野のモデル 7 種（Namaqualand コレクション）: `namaqualand_boulder_02`・`_03`・`_04`・`_05`・`namaqualand_cliff_01`・`_02`・`dead_quiver_trunk`。テクスチャ 5 種（色・法線・粗さ・AO・高さ）: 砂 `sandy_gravel_02`、乾いた土 `dry_ground_01`、岩肌 `rock_face`、石の床 `rock_tile_floor`・`stone_floor`。選んだ理由は `Docs/Plans/SceneLauncherPlan.md` の資産の節（git 管理外）に書いた。
+- 当初の `namaqualand_boulders_01` は glTF に 2 メッシュあり、AssetCook（NVMESH は 1 メッシュだけ）が `requires exactly one glTF mesh` で落ちたので `namaqualand_boulder_04` に替えた（ディスクの旧ファイルも消した）。
+- クックの一覧 `Assets/AssetSets/WastelandModels.json`（`Cooked/WastelandModels`、モデル 7・テクスチャ 21）を足し、`Scripts/CookAssets.ps1` で通した（`COOK_ASSETS cooked=7 skipped=146`、パッケージ 28 件がマニフェストに入った）。
+- 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-PH-WASTELAND-5.txt`（`-Set wasteland` モデル `result=pass`・EXIT=0。最終の 7 種）、`-2.txt`（`-Set wasteland` テクスチャ `result=pass downloaded=25`・EXIT=0）、`-4-default.txt`（既定の組と再実行の結果）、`-6-cook.txt`（クック EXIT=0）。`-1.txt` は差し替え前の 7 種（`boulders_01` 入り）の取得、`-3-cook.txt` は 1 メッシュでない失敗の記録。
+- 画: `ph-wasteland-preview/contact_front.png`（Blender の `BlenderPreviewGlb.py` で 7 種を描いた）を開いた。茶・黄土・赤みの岩と橙の地衣類の岩、積み重なった岩の崖、層状に割れた崖の壁、白く風化した枯れ幹で、乾燥地に合う。
+- Notes: `CookAssets` という CMake ターゲットはこのビルドツリーに無く、`Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/Debug/AssetCook.exe` で呼ぶ（RelWithDebInfo の `AssetCook.exe` は 10/5 のままで古く、GLB を読めずバナナで落ちる。差分クックの印が Debug 版のものなので Debug 版を使う）。`build/CookedAssets` には外した `boulders_01` のテクスチャ 3 件がマニフェスト外で残っている（害は無い）。
