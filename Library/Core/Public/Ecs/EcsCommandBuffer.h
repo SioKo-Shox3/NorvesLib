@@ -22,11 +22,13 @@
 
 namespace NorvesLib::Core::Ecs
 {
-    /// 作成の予約札。積んだバッファに対してだけ意味を持つ。
+    /// 作成の予約札。積んだバッファの、積んだ時点（Clear から次の Clear まで）に対してだけ意味を持つ。
     struct EcsCreateTicket
     {
         uint32_t Buffer = 0xFFFFFFFFu;
         uint32_t Index = 0xFFFFFFFFu;
+        /// 積んだときのバッファの世代。Clear で進み、Clear 前の札は新しい予約に作用しない
+        uint32_t Generation = 0xFFFFFFFFu;
 
         [[nodiscard]] constexpr bool IsValid() const
         {
@@ -102,15 +104,15 @@ namespace NorvesLib::Core::Ecs
 
         /**
          * @brief 再生の前の作成を取り消す（その作成は再生されず、札を対象にしたコマンドは捨てられる）
-         * @return 取り消せたら true。別のバッファの札・無効な札・取り消し済み・再生済みは false
+         * @return 取り消せたら true。別のバッファの札・Clear 前の札・無効な札・取り消し済み・再生済みは false
          *         （再生済みなら、できた実体を ResolveCreate で引いて消す）
          */
         bool CancelCreate(EcsCreateTicket ticket);
 
-        /// 再生で作られた実体。再生の前・取り消し・失敗・別のバッファの札は null。
+        /// 再生で作られた実体。再生の前・取り消し・失敗・別のバッファの札・Clear 前の札は null。
         [[nodiscard]] EcsEntity ResolveCreate(EcsCreateTicket ticket) const;
 
-        /// 積んだコマンドを全部捨てる（札も無効になる）。再生済みの印も戻る。
+        /// 積んだコマンドを全部捨てる（Clear 前の札は世代が合わず無効になる）。再生済みの印も戻る。
         void Clear();
 
         [[nodiscard]] size_t Size() const
@@ -173,11 +175,15 @@ namespace NorvesLib::Core::Ecs
         };
 
         Command MakeCommand(Kind kind, const EcsCommandTarget &target) const;
+        /// 札がこのバッファの今の世代の、積み済みの作成を指しているか
+        [[nodiscard]] bool OwnsTicket(const EcsCreateTicket &ticket) const;
         uint32_t AppendPayload(const void *data, uint32_t size);
         /// 当てた結果の集計に加える。対象が死んでいたら DiscardedStale
         void Apply(EcsWorld &world, const Command &command, EcsReplayResult &result);
 
         uint32_t m_BufferId = 0;
+        /// Clear のたびに進む。札の世代と照合する
+        uint32_t m_Generation = 0;
         bool m_bReplayed = false;
         Container::VariableArray<Command> m_Commands;
         Container::VariableArray<CreateRecord> m_Creates;

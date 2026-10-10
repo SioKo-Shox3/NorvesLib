@@ -30,14 +30,20 @@ namespace NorvesLib::Core::Ecs
         return offset;
     }
 
+    bool EcsCommandBuffer::OwnsTicket(const EcsCreateTicket &ticket) const
+    {
+        return ticket.IsValid() && ticket.Buffer == m_BufferId && ticket.Generation == m_Generation
+            && ticket.Index < m_Creates.size();
+    }
+
     EcsCommandBuffer::Command EcsCommandBuffer::MakeCommand(Kind kind, const EcsCommandTarget &target) const
     {
         Command command;
         command.CommandKind = kind;
         if (target.Ticket.IsValid())
         {
-            // 別のバッファの札・範囲外の札は、対象なし（再生で捨てる）
-            if (target.Ticket.Buffer == m_BufferId && target.Ticket.Index < m_Creates.size())
+            // 別のバッファの札・Clear 前の札・範囲外の札は、対象なし（再生で捨てる）
+            if (OwnsTicket(target.Ticket))
             {
                 command.TargetCreate = target.Ticket.Index;
             }
@@ -75,6 +81,7 @@ namespace NorvesLib::Core::Ecs
         EcsCreateTicket ticket;
         ticket.Buffer = m_BufferId;
         ticket.Index = command.CreateIndex;
+        ticket.Generation = m_Generation;
         return ticket;
     }
 
@@ -119,7 +126,7 @@ namespace NorvesLib::Core::Ecs
 
     bool EcsCommandBuffer::CancelCreate(EcsCreateTicket ticket)
     {
-        if (m_bReplayed || !ticket.IsValid() || ticket.Buffer != m_BufferId || ticket.Index >= m_Creates.size())
+        if (m_bReplayed || !OwnsTicket(ticket))
         {
             return false;
         }
@@ -134,7 +141,7 @@ namespace NorvesLib::Core::Ecs
 
     EcsEntity EcsCommandBuffer::ResolveCreate(EcsCreateTicket ticket) const
     {
-        if (!m_bReplayed || !ticket.IsValid() || ticket.Buffer != m_BufferId || ticket.Index >= m_Creates.size())
+        if (!m_bReplayed || !OwnsTicket(ticket))
         {
             return kNullEcsEntity;
         }
@@ -146,6 +153,7 @@ namespace NorvesLib::Core::Ecs
         m_Commands.clear();
         m_Creates.clear();
         m_Payload.clear();
+        ++m_Generation;
         m_bReplayed = false;
     }
 

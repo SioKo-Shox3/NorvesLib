@@ -1042,3 +1042,7 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 結果: `verify-SCN-ECS-CORE-COMMANDS-1.txt`（EntityTreeTest のビルド EXIT=0、警告・エラー 0 件）、`-3-ctest.txt`（`EcsStorageTest`・`EcsChangeTest`・`EcsCommandTest` Passed、`100% tests passed`）。`-2-ctest.txt` は変異を入れる前の同じ実行。EcsMoveTest・EntityTreeTest も Passed。
 - Notes: Git Bash は `/m:1` をパスに変換してビルドが失敗するので、verify は PowerShell で走らせる。バッファの番号（札の持ち主）は呼び出し側が重ならないように渡す（スケジューラができたら仕事の番号を使う）。フックの検索は型ごとの線形（フックを付ける型が数個の前提。増えるならアーキタイプごとの索引を足す）。コマンドを積むのは GameThread か、自分の仕事のバッファを持つ並列の仕事だけ（バッファ同士は触れ合わない）。
 - 証拠（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-CORE-COMMANDS-1.txt`、`-2-ctest.txt`、`-3-ctest.txt`。
+
+- 反復 10（評価者の差し戻しへの対応）: `Clear()` 後に旧札が新しい予約に作用した（Buffer・Index が同じになるため）。`EcsCreateTicket` に `Generation` を足し、バッファの世代（`m_Generation`）を `Clear()` ごとに進め、`CancelCreate`・`ResolveCreate`・コマンドを積むときの対象解決（`OwnsTicket`）で照合するようにした。Clear 前の札は取り消せず、札宛てのコマンドは積んでも再生で捨てられ（`DiscardedStale`）、新予約の再生後も旧札では解決できない。`EcsCommandTest` に `TestTicketFromBeforeClearDoesNotAffectNewReservation` を足した。
+- 結果: `verify-SCN-ECS-CORE-COMMANDS-10a.txt`（EntityTreeTest のビルド exit=0）、`-10b.txt`（`EcsStorageTest`・`EcsChangeTest`・`EcsCommandTest` Passed、`100% tests passed`）。
+- Notes: Git Bash から verify を走らせるときは `MSYS_NO_PATHCONV=1` を付ければ `/m:1` が通る。

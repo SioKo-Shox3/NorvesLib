@@ -312,6 +312,39 @@ namespace
         assert(world.GetEntityCount() == 3);
     }
 
+    void TestTicketFromBeforeClearDoesNotAffectNewReservation()
+    {
+        EcsWorld world;
+        const EcsArchetypeId archetype = PosArchetype(world);
+
+        EcsCommandBuffer buffer(7);
+        const EcsCreateTicket oldTicket = buffer.Create(archetype);
+        assert(buffer.CancelCreate(oldTicket));
+
+        // Clear の後の新しい予約は、旧札と同じ Buffer・Index になる
+        buffer.Clear();
+        const EcsCreateTicket freshTicket = buffer.Create(archetype);
+        assert(freshTicket.Buffer == oldTicket.Buffer && freshTicket.Index == oldTicket.Index);
+
+        // 旧札では新しい予約を取り消せず、旧札宛てのコマンドは積んでも捨てられる
+        assert(!buffer.CancelCreate(oldTicket));
+        buffer.AddColumnOf<CmVel>(oldTicket, CmVel{1.0f});
+        buffer.Destroy(oldTicket);
+
+        EcsCommandBuffer *order[] = {&buffer};
+        const EcsReplayResult result = EcsCommandBuffer::Replay(world, Container::Span<EcsCommandBuffer *const>(order, 1));
+        assert(result.Created == 1);
+        assert(result.CancelledCreates == 0);
+        assert(result.DiscardedStale == 2);
+        assert(world.GetEntityCount() == 1);
+
+        // 新予約の再生後も、旧札では解決できない（新札は解決できる）
+        assert(buffer.ResolveCreate(oldTicket).IsNull());
+        const EcsEntity created = buffer.ResolveCreate(freshTicket);
+        assert(world.IsAlive(created));
+        assert(world.GetColumnValue<CmVel>(created) == nullptr);
+    }
+
     void TestStaleCommandsAreDiscarded()
     {
         EcsWorld world;
@@ -561,6 +594,7 @@ int main()
     TestReplayOrderIsIndependentOfThreadCount();
     TestOrderFollowsBufferSequence();
     TestCancelledReservationIsNotReplayed();
+    TestTicketFromBeforeClearDoesNotAffectNewReservation();
     TestStaleCommandsAreDiscarded();
     TestRejectedCommandsChangeNothing();
     TestReplayAdvancesVersionOnlyWithCommands();
