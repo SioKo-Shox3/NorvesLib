@@ -52,4 +52,4 @@ namespace NorvesLib::Debug
         uint32_t m_FailCount = 0;
     };
 
-} // namespace NorvesLib::Debug
+}

@@ -7,7 +7,7 @@ namespace NorvesLib::Debug
     namespace
     {
         constexpr size_t kMaxNameLength = 64;
-    } // namespace
+    }
 
     bool EngineChecks::IsValidName(const char *name)
     {
@@ -136,4 +136,4 @@ namespace NorvesLib::Debug
 
 #endif
 
-} // namespace NorvesLib::Debug
+}

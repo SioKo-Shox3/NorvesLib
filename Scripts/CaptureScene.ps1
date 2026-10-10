@@ -17,20 +17,21 @@
 #   Game.log からだけ読むので、Debug・RelWithDebInfo で効く。
 # -GpuTimingFrames を与えると、決定的な撮影ではなく実時間の計測にする。Game を --trace-file 付きで起動し、有効な標本を
 # -GpuTimingFrames 件だけ得る。計測の窓は、シーンの初期配置と公開の完了（SceneReady。ログの SCENE_READY_FRAME のフレーム番号）
-# より後の、ウォームアップ（-TimingWarmupFrames。既定 60）を除いたフレームだけで、末尾の撮影のフレームの直前2つも除く。
+# より後の描画フレームだけで、先頭のウォームアップ（-TimingWarmupFrames 件。既定 60。件数で数える）と、末尾の撮影の直前2件を
+# それぞれ除く。SceneReady の記録（SCENE_READY・SCENE_READY_FRAME）がログに無ければ、計測せず失敗にする。
 # Game は (-GpuTimingFrames + ウォームアップ + 末尾の2 + -TimingReadyMarginFrames) の描画フレームの後に撮って終わる
 # （--exit-after-rendered-frames）。余白 -TimingReadyMarginFrames は SceneReady までに要するフレーム数以上にする
 # （足りないと窓が SceneReady より前に入るので、標本が足りないとして失敗にし、要るフレーム数を示す。重いシーンは大きくする）。
 # トレースの FrameGPU（GPU のタイムスタンプで測ったフレームの区間）の窓の中央値・平均・95 パーセンタイル・最大と、パスごとの
 # 中央値を gpu_timing として metrics.json へ書く。視点ごとに、シーンが出した配置の数（placed_count。MEGA_STRESS_PLACED・
-# MEGA_BANANAS_PLACED の行）、SceneReady のフレーム（scene_ready_frame）、計測の開始のフレーム（timing_start_frame）も書く。
-# 決定的な撮影ではないので、SCENE_READY の照合はしない。
+# MEGA_BANANAS_PLACED の行）、SceneReady のフレーム（scene_ready_frame）、計測の開始のフレーム（timing_start_frame。
+# ウォームアップを除いた最初の有効な描画フレーム）も書く。
 # 同じ撮影のログから、描いたクラスタ数（MEGA_OCCLUSION の pass1 + pass2_drawn の最後の行）・MegaGeometry のバッファの大きさ
 # （MEGA_CAPACITY）・ジオメトリのプールの使用量（VRAM_POOLS の geometry_used_mb）を mega_stats として書く。
 # 統計が無効な Release は GPU のタイムスタンプを取れないので併用しない（RelWithDebInfo で測る）。
 # gpu_timing には CPU 側も入る。ゲームスレッド・描画スレッドのフレーム時間（game_thread_ms_* / render_thread_ms_*。median と p95）、
 # パスごとの median・p95・max（pass_ms）、CPU のスコープ（トレースの Type=Scope の行）の median 上位 15（cpu_scope_median_ms）。
-# CPU 側も GPU と同じ窓（SceneReady の後のウォームアップを除いた最後の -GpuTimingFrames フレームから撮影の直前2つを除く）で数える。
+# CPU 側も GPU と同じ手順（SceneReady の後の描画フレームからウォームアップと末尾を除いた最後の -GpuTimingFrames 件）で数える。
 #
 # -RequireChecks <名前,...> を与えると、Game を --engine-checks=<名前,...> 付きで起動し（開発ビルドの検査。Debug/EngineChecks.h）、
 # Game.log の ENGINE_CHECK の行で各名前の pass が 1 回以上あり fail が 0 であることを見る（満たさなければ失敗）。
@@ -313,11 +314,12 @@ function Get-Percentile([double[]]$Sorted, [double]$Fraction)
 }
 
 # トレース（--trace-file の CSV）から GPU・CPU のフレーム時間を集計する。Type=GPU の行は描画したフレームごとの FrameGPU と
-# パスごとの区間（Frame 列は区間を記録したフレームの番号）。窓は、フレーム番号が StartFrame 以上（SceneReady の後で
-# ウォームアップを除いた分）の有効なフレームから、撮影のフレームの直前 TailFrames 個を除いた最後の Samples 件。
-# CPU 側（ゲームスレッド・描画スレッド・スコープ）は、描画したフレームの行（RenderFrameMs > 0）の窓で数える。
-# 有効な標本（FrameGPU > 0 のフレーム）が Samples 件に満たなければ失敗（Error）にする。
-function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$BudgetMs, [long]$StartFrame, [int]$TailFrames)
+# パスごとの区間（Frame 列は区間を記録したフレームの番号）。窓は、SceneReady のフレーム（ReadyFrame）以降の描画した
+# 有効なフレームから、先頭の WarmupFrames 個（ウォームアップ）を件数で除き、さらに撮影のフレームの直前 TailFrames 個を
+# 除いた残りの最後の Samples 件（ウォームアップと末尾の除外は別々に取る）。
+# CPU 側（ゲームスレッド・描画スレッド・スコープ）は、描画したフレームの行（RenderFrameMs > 0）で同じ手順の窓を取る。
+# 有効な標本（FrameGPU > 0 のフレーム）が除外の後に Samples 件に満たなければ失敗（Error）にする。
+function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$BudgetMs, [long]$ReadyFrame, [int]$WarmupFrames, [int]$TailFrames)
 {
     $header = @((Get-Content -LiteralPath $TracePath -TotalCount 1) -split ',')
     $nameColumn = [array]::IndexOf($header, 'Name')
@@ -356,13 +358,15 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
         }
     }
     $windowCount = $Samples
-    $cpuArray = @($cpuRows.ToArray() | Where-Object { $_.Frame -ge $StartFrame })
+    $cpuReady = @($cpuRows.ToArray() | Where-Object { $_.Frame -ge $ReadyFrame })
+    $cpuArray = if ($cpuReady.Count -gt $WarmupFrames) { @($cpuReady[$WarmupFrames..($cpuReady.Count - 1)]) } else { @() }
     $cpuUsable = if ($cpuArray.Count -gt $TailFrames) { @($cpuArray[0..($cpuArray.Count - $TailFrames - 1)]) } else { @() }
     $cpuWindow = if ($cpuUsable.Count -gt $windowCount) { @($cpuUsable[($cpuUsable.Count - $windowCount)..($cpuUsable.Count - 1)]) } else { $cpuUsable }
     $cpuSamples = [double[]]@($cpuWindow | ForEach-Object { $_.Cpu } | Where-Object { $_ -gt 0.0 } | Sort-Object)
     $gameThreadSamples = [double[]]@($cpuWindow | ForEach-Object { $_.GameThread } | Where-Object { $_ -gt 0.0 } | Sort-Object)
     $renderThreadSamples = [double[]]@($cpuWindow | ForEach-Object { $_.RenderThread } | Where-Object { $_ -gt 0.0 } | Sort-Object)
-    $gpuFrames = @($gpuScopesByFrame.Keys | Where-Object { $_ -ge $StartFrame -and @($gpuScopesByFrame[$_] | Where-Object { $_.Name -eq 'FrameGPU' -and $_.Ms -gt 0.0 }).Count -gt 0 })
+    $gpuReady = @($gpuScopesByFrame.Keys | Where-Object { $_ -ge $ReadyFrame -and @($gpuScopesByFrame[$_] | Where-Object { $_.Name -eq 'FrameGPU' -and $_.Ms -gt 0.0 }).Count -gt 0 })
+    $gpuFrames = if ($gpuReady.Count -gt $WarmupFrames) { @($gpuReady[$WarmupFrames..($gpuReady.Count - 1)]) } else { @() }
     $gpuUsable = if ($gpuFrames.Count -gt $TailFrames) { @($gpuFrames[0..($gpuFrames.Count - $TailFrames - 1)]) } else { @() }
     $gpuWindow = if ($gpuUsable.Count -gt $windowCount) { @($gpuUsable[($gpuUsable.Count - $windowCount)..($gpuUsable.Count - 1)]) } else { $gpuUsable }
     $gpuFrameMs = @{}
@@ -379,7 +383,7 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
     $gpuSamples = [double[]]@($gpuWindow | ForEach-Object { $gpuFrameMs[$_] } | Sort-Object)
     if ($gpuSamples.Count -lt $Samples)
     {
-        return [pscustomobject]@{ Error = "GPU のフレーム時間の有効な標本が足りない（$($gpuSamples.Count) 件 / 指定 $Samples 件。計測の開始のフレーム $StartFrame より後で数えた。統計が無効な構成か、GPU のタイムスタンプが使えないか、SceneReady までに要したフレームが -TimingReadyMarginFrames を超えた。後者なら大きくして撮り直す）"; Timing = $null }
+        return [pscustomobject]@{ Error = "GPU のフレーム時間の有効な標本が足りない（SceneReady（フレーム $ReadyFrame）の後の有効な描画フレーム $($gpuReady.Count) 件からウォームアップ $WarmupFrames 件と末尾 $TailFrames 件を除き、$($gpuSamples.Count) 件 / 指定 $Samples 件。統計が無効な構成か、GPU のタイムスタンプが使えないか、SceneReady までに要したフレームが -TimingReadyMarginFrames を超えた。後者なら大きくして撮り直す）"; Timing = $null }
     }
     $maximum = $gpuSamples[$gpuSamples.Count - 1]
     $passList = @($passSamples.Keys | ForEach-Object {
@@ -425,7 +429,9 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
         frames = $gpuSamples.Count
         valid_samples = $gpuSamples.Count
         requested_samples = $Samples
-        start_frame = $StartFrame
+        scene_ready_frame = $ReadyFrame
+        warmup_frames_removed = $WarmupFrames
+        start_frame = [long]$gpuFrames[0]
         window_first_frame = [long]$gpuWindow[0]
         window_last_frame = [long]$gpuWindow[$gpuWindow.Count - 1]
         gpu_frame_ms_median = [math]::Round((Get-Percentile $gpuSamples 0.5), 3)
@@ -738,10 +744,13 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
             }
         }
         $sceneReady = @(Select-String -LiteralPath $viewLogPath -Pattern "SCENE_READY scene=$Scene\s*$").Count -gt 0
-        # SCENE_READY は決定的な撮影のときだけ出る（実時間の計測では出ないので照合しない）
-        if (-not $sceneReady -and $GpuTimingFrames -le 0)
+        if (-not $sceneReady)
         {
             $failures += "$($shot.Name): SCENE_READY（シーンの組み立ての完了）がログに無い"
+        }
+        if ($GpuTimingFrames -gt 0 -and $null -eq $sceneReadyFrame)
+        {
+            $failures += "$($shot.Name): SCENE_READY_FRAME（SceneReady のフレーム番号）がログに無く、計測の窓を決められない"
         }
         $shaderFailures = @(Select-String -LiteralPath $viewLogPath -Pattern 'Failed to compile shader' -SimpleMatch)
         foreach ($line in $shaderFailures)
@@ -809,17 +818,20 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         }
         else
         {
-            # 計測の開始: SceneReady のフレームの後のウォームアップを除く（SceneReady の印が無いシーンは 0 から数える）
-            $timingStartFrame = $TimingWarmupFrames
-            if ($null -ne $sceneReadyFrame) { $timingStartFrame = $sceneReadyFrame + $TimingWarmupFrames }
-            $timingResult = Get-GpuTimingFromTrace $tracePath $GpuTimingFrames $GpuFrameBudgetMs $timingStartFrame $timingTailFrames
-            if ($null -ne $timingResult.Error)
+            # 計測の窓は SceneReady のフレームの後だけで取る。SceneReady の記録が無ければ、窓を決められないので計測しない。
+            if ($null -ne $sceneReadyFrame)
             {
-                $failures += "$($shot.Name): $($timingResult.Error)"
-            }
-            else
-            {
-                $gpuTiming = $timingResult.Timing
+                $timingResult = Get-GpuTimingFromTrace $tracePath $GpuTimingFrames $GpuFrameBudgetMs $sceneReadyFrame $TimingWarmupFrames $timingTailFrames
+                if ($null -ne $timingResult.Error)
+                {
+                    $failures += "$($shot.Name): $($timingResult.Error)"
+                }
+                else
+                {
+                    $gpuTiming = $timingResult.Timing
+                    # 計測の開始のフレーム: ウォームアップを除いた最初の有効な描画フレーム
+                    $timingStartFrame = $gpuTiming.start_frame
+                }
             }
         }
         if (Test-Path -LiteralPath $viewLogPath)

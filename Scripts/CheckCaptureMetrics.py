@@ -4,8 +4,10 @@
 #
 # 使い方: python Scripts/CheckCaptureMetrics.py <撮影の出力ディレクトリ> [--views horizon,overview]
 #         [--timing] [--configuration RelWithDebInfo] [--min-frames N]
-# --min-frames N は、計測の有効な標本（gpu_timing.valid_samples。シーンの初期配置と公開の完了の後のウォームアップを
-# 除いた窓の件数）が N 件以上で、計測の開始のフレーム（timing_start_frame）が記録されていることを見る。
+# --timing では、シーンの組み立ての完了（scene_ready と scene_ready_frame）が記録されていることも見る。
+# --min-frames N は、計測の有効な標本（gpu_timing.valid_samples。シーンの初期配置と公開の完了の後の描画フレームから
+# ウォームアップと末尾を件数で除いた窓の件数）が N 件以上で、計測の開始のフレーム（timing_start_frame）が記録され、
+# 窓が SceneReady のフレームより後で、ウォームアップを指定の件数だけ除いていることを見る。
 # 終了コード: すべて満たせば 0、どれかが欠ければ 1。
 import argparse
 import json
@@ -55,9 +57,10 @@ def main():
         if view is None:
             failures.append("view_missing=%s" % name)
             continue
-        # 計測の撮影は組み立て完了の印を待たない作りなので、印は計測でない撮影でだけ見る
-        if not args.timing and not view.get("scene_ready", False):
+        if not view.get("scene_ready", False):
             failures.append("scene_not_ready=%s" % name)
+        if args.timing and view.get("scene_ready_frame") is None:
+            failures.append("scene_ready_frame_missing=%s" % name)
         stats = view.get("mega_stats") or {}
         for key in ("draw_dropped_last", "draw_dropped_max"):
             if stats.get(key, 0):
@@ -78,6 +81,14 @@ def main():
                     failures.append("valid_samples=%s:%s<%d" % (name, valid, args.min_frames))
                 if view.get("timing_start_frame") is None:
                     failures.append("timing_start_frame_missing=%s" % name)
+                ready = view.get("scene_ready_frame")
+                first = timing.get("window_first_frame")
+                if ready is not None and first is not None and first < ready:
+                    failures.append("window_before_scene_ready=%s:%s<%s" % (name, first, ready))
+                warmup = metrics.get("timing_warmup_frames", 0)
+                removed = timing.get("warmup_frames_removed")
+                if removed is None or removed < warmup:
+                    failures.append("warmup_not_removed=%s:%s<%s" % (name, removed, warmup))
             for key, option in limits:
                 limit = getattr(args, option)
                 value = timing.get(key)

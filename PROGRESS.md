@@ -977,3 +977,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - `paths:` の外を触った点: `Library/Core/Public/Engine/Engine.h`（`GetEngineChecks()` の追加。窓口を GEngine のメンバに置くため）、`Game/Scenes/SceneReadiness.h`（SCENE_READY を決定的な撮影でないときも状態として持ち、`SCENE_READY_FRAME` を出す。ApplicationProcessor・SequenceFrameCapture は `IsEnabled()` も見るので、決定的な撮影でない起動の挙動は変わらない）、`Scripts/CheckCaptureMetrics.py`（done-when が `--min-frames` の変更を求めている）。
 - Notes: 計測の窓の「ゲームフレーム番号」は、描画より速く進むゲームスレッドのフレーム（GPU の行は描画したフレームだけ）なので、`window` の幅は標本数より大きい。余白は描画フレーム数、SceneReady は ゲームフレーム番号 なので、余白の見積りは過大側に倒れる（安全側）。
 - 証拠（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-CHECK-GATE-1.txt`（verify、EXIT=0）、`-2-fail.txt`、`-3-timing.txt`、`-4-cycle-pass.txt`、`-5-cycle-fail.txt`。
+
+- 反復 2（評価者の差し戻しへの対応: 計測は SceneReady を必須にし、ウォームアップを標本の件数で除く）:
+  - SceneReady 必須: `Rendering3DTestRoutine.cpp` の SceneReady の報告（`UpdateVirtualTextureSettle`・`UpdateSceneAssembly`）を、決定的な撮影のときだけでなく常に呼ぶ（状態と印のログだけで、撮影でない起動の挙動は変わらない）。`CaptureScene.ps1` は SCENE_READY を計測でも必須にし、SCENE_READY_FRAME が無ければ計測せず失敗にする（代替の開始番号 60 を削除）。
+  - ウォームアップの件数除外: `Get-GpuTimingFromTrace` は、SceneReady のフレーム以降の有効な描画標本から、先頭の `-TimingWarmupFrames` 件を除き、末尾の 2 件を別に除いた残りの最後の N 件を取る（GPU・CPU とも）。残りが N 件に満たなければ失敗。`gpu_timing` に `scene_ready_frame`・`warmup_frames_removed`、`timing_start_frame` は除外後の最初の標本のフレーム番号。
+  - `CheckCaptureMetrics.py`: 計測でも `scene_ready`・`scene_ready_frame` を必須にし、`--min-frames` では窓が SceneReady より後であること・`warmup_frames_removed` が指定のウォームアップ件数以上であることも見る。
+  - 英語の終端コメント `// namespace` を `EngineChecks.{h,cpp}` から削除。
+  - 実走: verify（Game を再ビルドして起動画面 3 視点の決定的撮影）は pass（`verify-SCN-ECS-CHECK-GATE-6.txt`、EXIT=0。ENGINE_CHECK_SELFTEST pass=1 fail=0、default PSNR 100・near 65.36・low 70.35）。計測（mega-stress 500 個、`-GpuTimingFrames 120 -TimingReadyMarginFrames 600`、`-7-timing.txt`）は 3 視点とも `valid_samples=120`・`scene_ready_frame` の後に `timing_start_frame`、`CheckCaptureMetrics.py --timing --min-frames 120` は pass。metrics.json を改変した 3 通り（SceneReady なし／ウォームアップ除外 1 件／窓が SceneReady より前）はいずれも `CHECK_CAPTURE_METRICS result=fail`（`-8-negative.txt`）。
+  - `paths:` の外を触った点: `Game/GameModes/Rendering3DTest/Rendering3DTestRoutine.cpp`（上の報告の呼び出し。評価者の指摘どおり）。

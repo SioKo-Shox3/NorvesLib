@@ -3899,11 +3899,9 @@ namespace Game::GameModes
         UpdateStartupSkinnedProbe(ctx, data);
 
         // 決定的な撮影は、組み立てが終わった時点（この Tick の大きな球の生成まで含む）から数え直す。
-        if (ctx.EngineRef.GetDeterministicCapture().IsEnabled())
-        {
-            UpdateVirtualTextureSettle(ctx, data);
-            Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, "rendering3dtest", IsStartupSceneAssembled(data));
-        }
+        // 実時間の計測（SceneReady の後だけを数える）にも同じ印が要るので、撮影でないときも状態と印は持つ。
+        UpdateVirtualTextureSettle(ctx, data);
+        Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, "rendering3dtest", IsStartupSceneAssembled(data));
     }
 
     void Rendering3DTestRoutine::Leave(GameModeContext &ctx, Rendering3DTestData &data, GameModeExitReason reason)
