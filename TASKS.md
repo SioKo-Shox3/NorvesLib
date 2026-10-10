@@ -201,6 +201,7 @@
 - status: done
 - done-when: AssetSet の指定（例 `"dagRootMaxClusters": 2`）があるメッシュだけ簡略化を続け、根のクラスタ数・三角形数・誤差をログに出す。バナナの根が 2 クラスタ以下になり、PROBE-ROOT と同じ測り方で根だけの `VisRasterSw1` が 1/10 以下。1万本 close の撮影を開いて近景の形が変わらない。起動画面の比較が pass（他の資産は焼き直さない）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CookAssets.ps1 -AssetCookExe build/Tools/AssetCook/RelWithDebInfo/AssetCook.exe -OnlyLogicalPath Models/Generated/banana/banana.glb -Force`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ROOT-COOK/root --views overview --timing`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-ROOT-COOK`
 - paths: Tools/AssetCook, Assets/AssetSets/MegaBananasModels.json, TASKS.md, PROGRESS.md

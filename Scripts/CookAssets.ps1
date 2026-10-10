@@ -14,6 +14,11 @@
 # 前回の結果（<RuntimeRoot>/.cookstate/ に項目ごとの印とマニフェスト項目を残す）をそのまま使う。
 # 元画像が無い項目は飛ばし、"COOK_ASSETS missing=<path>" を出す（クックの失敗にはしない）。
 #
+# 対象を絞る: -OnlyLogicalPath（ワイルドカード可。論理パスと -like で照合）に合う項目だけを焼き（印が同じなら飛ばす。
+# -Force で印が同じでも焼き直す）、合わない項目は焼かず、既存の manifest.json の項目をそのまま引き継ぐ（パッケージにも状態にも触れない）。
+# AssetCook の実行ファイルが変わって全項目の印が変わっていても、対象外は焼き直されない。既存のマニフェストに無い項目があれば失敗する
+# （先に全体をクックする）。
+#
 # 出力: <RuntimeRoot>/manifest.json（全項目を集めたマニフェスト）と、一覧の package_root 以下の .nvpkg。
 # 標準出力の最後の行: COOK_ASSETS cooked=<焼いた数> skipped=<前回のまま使った数>
 # 終了コード: クックまで通れば0、一覧の誤り・AssetCook の失敗は1。
@@ -29,7 +34,13 @@ param(
     [string]$RuntimeRoot = "build/CookedAssets",
 
     # BC7 の品質（fast|normal|best）。空なら AssetCook の既定
-    [string]$Quality = ""
+    [string]$Quality = "",
+
+    # 焼く項目の論理パス（"Assets/" を除いた形。ワイルドカード可）。空なら全項目
+    [string[]]$OnlyLogicalPath = @(),
+
+    # 印が同じでも対象の項目を焼き直す（-OnlyLogicalPath と併せて使う）
+    [switch]$Force
 )
 
 Set-StrictMode -Version Latest
@@ -141,6 +152,17 @@ function Write-TextUtf8 {
 
 # 項目 1 つ分: 印で前回の結果が使えるかを判定し、使えなければ AssetCook を実行する。
 # 戻り値は、マニフェストへ載せる項目（前回のものか、今回焼いたもの）。元画像が無いときは $null（COOK_ASSETS missing=<path> を出す）。
+function Test-OnlyTarget {
+    param([string]$LogicalPath)
+
+    foreach ($pattern in $script:OnlyPatterns) {
+        if ($LogicalPath -like $pattern) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Invoke-CookEntry {
     param(
         [string]$SetName,
@@ -156,6 +178,18 @@ function Invoke-CookEntry {
         [string[]]$CookArguments,
         [string]$SetStateDir
     )
+
+    # 対象を絞っているとき、対象外は焼かず、既存のマニフェストの項目（埋め込みの画像を含む）を引き継ぐ
+    if (($script:OnlyPatterns.Count -gt 0) -and (-not (Test-OnlyTarget -LogicalPath $LogicalPath))) {
+        $carried = @($script:PreviousAssets | Where-Object {
+                ($_.cooked_package -eq $CookedPackage) -or $_.cooked_package.StartsWith("$CookedPackage.")
+            })
+        if (($carried.Count -lt 1) -or ($carried[0].cooked_package -ne $CookedPackage)) {
+            throw "対象外の項目が既存のマニフェストにありません（先に全体をクックしてください）: $LogicalPath"
+        }
+        $script:untouchedCount++
+        return $carried
+    }
 
     $missing = @($SourceTexts | Where-Object { -not (Test-Path -LiteralPath (Resolve-RepoPath $_) -PathType Leaf) })
     if ($missing.Count -gt 0) {
@@ -184,7 +218,7 @@ function Invoke-CookEntry {
     }
     $stamp = Get-TextSha256 $stampSource.ToString()
 
-    if ((Test-Path -LiteralPath $statePath -PathType Leaf) -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
+    if ((-not $script:ForceCook) -and (Test-Path -LiteralPath $statePath -PathType Leaf) -and (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
         try {
             $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
             if (($state.stamp -eq $stamp) -and ($null -ne $state.asset)) {
@@ -265,6 +299,16 @@ New-Item -ItemType Directory -Path $ResolvedRuntimeRoot -Force | Out-Null
 $AssetCookHash = Get-FileSha256 $AssetCookPath
 $cookedCount = 0
 $skippedCount = 0
+$untouchedCount = 0
+$ForceCook = $Force.IsPresent
+$OnlyPatterns = @($OnlyLogicalPath | ForEach-Object { ConvertTo-LogicalPath -Path $_ -Name "OnlyLogicalPath" })
+$PreviousAssets = @()
+if ($OnlyPatterns.Count -gt 0) {
+    if (-not (Test-Path -LiteralPath $AggregateManifestPath -PathType Leaf)) {
+        throw "対象を絞るには既存の manifest.json が要ります（先に全体をクックしてください）: $AggregateManifestPath"
+    }
+    $PreviousAssets = @((Get-Content -LiteralPath $AggregateManifestPath -Raw | ConvertFrom-Json).assets)
+}
 $missingEntryCount = 0
 $aggregateAssets = @()
 $seenKeys = @{}
@@ -483,6 +527,9 @@ if ($existingJson -ne $aggregateJson) {
 
 if ($missingEntryCount -gt 0) {
     Write-Output "COOK_ASSETS missing_entries=$missingEntryCount manifest_assets=$($aggregateAssets.Count)"
+}
+if ($OnlyPatterns.Count -gt 0) {
+    Write-Output "COOK_ASSETS only=$($OnlyPatterns -join ',') untouched=$untouchedCount"
 }
 Write-Output "COOK_ASSETS cooked=$cookedCount skipped=$skippedCount"
 exit 0
