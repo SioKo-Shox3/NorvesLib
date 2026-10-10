@@ -1026,3 +1026,7 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 確認: 行に残った版を 0 に戻す処理を一時的に外すとテスト（`TestMovedRowsDoNotInheritStaleVersions`）が落ちること、戻すと通ることを見た。
 - 結果: `verify-SCN-ECS-CORE-CHANGES-1.txt`（EntityTreeTest のビルド EXIT=0）、`-2-ctest.txt`（3 本 Passed）、`-3-direct.txt`（`EcsChangeTest 合格`。端末の文字コードで化けて記録されている）、`-4-rebuild.txt`・`-5-ctest.txt`（変異を戻した後の再ビルドと ctest、`100% tests passed`）。
 - Notes: 追跡する列の宣言は最初のアーキタイプより前に必要（配置が変わるため）。`GetColumnValue` の可変ポインタで書いた値は版を付けない（版を付けるのは `MarkWritten` と `WriteColumnValue`）。`MatchArchetypes` は毎回全アーキタイプを走査する（アーキタイプが数百を超えて目立てば、クエリごとの結果のキャッシュを足す）。`AdvanceVersion` を呼ぶ側（スケジューラ・再生）はまだ無い。
+
+- 反復 8（評価者の差し戻しへの対応）: 書いた直後（同じ版）に列を足す・外すと、移動先の行の版が 0 に戻り、同じ実体・版がログに 2 件出た。`MoveRow` が、移動元と移動先に共通する追跡列の行の版を値と一緒に引き継ぐようにした（`TouchRow` は同じ版なら積まない）。追跡列を外して付け直した行は版を引き継げないので、その追跡列のログに `bMayDuplicate` を立て、`ReadChanges` が同じ実体・版の項目を 1 回にまとめる（全員が読み切るとフラグが戻る）。`EcsChangeTest` に `TestWriteThenMoveLogsOncePerVersion`（書く→足す→外す、書く→追跡列を外す→付け直す を読まずに続けて 1 件）を足した。
+- 結果: `verify-SCN-ECS-CORE-CHANGES-8-1.txt`（EntityTreeTest のビルド EXIT=0）、`-8-2.txt`（`EcsStorageTest`・`EcsMoveTest`・`EcsChangeTest` Passed、`100% tests passed`）。
+- Notes: 重複の除去は `bMayDuplicate` が立っている間の読み取りだけで、通常の経路の費用は増えない。

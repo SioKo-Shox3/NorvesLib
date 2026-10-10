@@ -360,6 +360,40 @@ namespace
         assert(Drain(world, consumer).empty());
     }
 
+    /// 同じ版で書いた直後に列を足す・外す・追跡列ごと外して付け直しても、同じ実体・版は 1 件しか出ない。
+    void TestWriteThenMoveLogsOncePerVersion()
+    {
+        EcsWorld world;
+        assert(world.SetColumnTrackedOf<ChPos>());
+        Container::VariableArray<EcsEntity> entities;
+        world.CreateEntities(PosArchetype(world), 3, &entities);
+        const EcsConsumerId consumer = world.RegisterChangeConsumer(PosType());
+
+        // 書く → 足す → 外す を、読まずに続ける
+        assert(world.WriteColumnValueOf(entities[1], ChPos{1, 0, 0}));
+        const uint64_t version = world.GetVersion();
+        assert(world.AddColumnOf<ChVel>(entities[1], ChVel{7}));
+        assert(world.RemoveColumnOf<ChVel>(entities[1]));
+        assert(world.GetVersion() == version);
+        Container::VariableArray<EcsChangeEntry> changes = Drain(world, consumer);
+        assert(CountOf(changes, entities[1]) == 1);
+        for (size_t i = 0; i < changes.size(); ++i)
+        {
+            assert(changes[i].Version == version);
+        }
+
+        // 書く → 追跡列を外す → 付け直す を、読まずに続ける
+        assert(world.AddColumnOf<ChVel>(entities[2], ChVel{3}));
+        Drain(world, consumer);
+        assert(world.WriteColumnValueOf(entities[2], ChPos{2, 0, 0}));
+        assert(world.RemoveColumnOf<ChPos>(entities[2]));
+        assert(world.AddColumnOf<ChPos>(entities[2], ChPos{5, 0, 0}));
+        changes = Drain(world, consumer);
+        assert(CountOf(changes, entities[2]) == 1);
+        assert(static_cast<ChPos *>(world.GetColumnValue(entities[2], PosType()))->X == 5.0f);
+        assert(Drain(world, consumer).empty());
+    }
+
     /// 動いた行が、同じ版の前の持ち主の版を引き継がない。作った行・入れ替わった行は、必ず自分の版でログに出る。
     void TestMovedRowsDoNotInheritStaleVersions()
     {
@@ -685,6 +719,7 @@ int main()
     TestExternalWritesGetNewVersionAfterRead();
     TestStructuralChangesMarkRowsChanged();
     TestMovedRowsDoNotInheritStaleVersions();
+    TestWriteThenMoveLogsOncePerVersion();
     TestConsumersAreIndependent();
     TestQueryMatching();
     TestOrphanIsExcludedFromQueries();

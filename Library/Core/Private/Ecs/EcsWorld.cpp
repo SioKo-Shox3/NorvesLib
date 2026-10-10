@@ -1,5 +1,6 @@
 ﻿#include "Ecs/EcsWorld.h"
 
+#include "Container/UnorderedSet.h"
 #include <algorithm>
 #include <cassert>
 #include <cstring>
@@ -372,6 +373,12 @@ namespace NorvesLib::Core::Ecs
             {
                 const size_t size = source.Columns[i].Size;
                 std::memcpy(dstBase + target.Offsets[j] + size * dstRow, srcBase + source.Offsets[i] + size * srcRow, size);
+                // 追跡列の行の版も引き継ぐ（同じ版で書いた直後の移動が、同じ実体・版をログへ二重に積まない）
+                if (source.TrackedIndex[i] >= 0 && target.TrackedIndex[j] >= 0)
+                {
+                    reinterpret_cast<uint64_t *>(dstBase + target.RowVersionOffsets[j])[dstRow] =
+                        reinterpret_cast<const uint64_t *>(srcBase + source.RowVersionOffsets[i])[srcRow];
+                }
             }
         }
         if (added != nullptr && addedValue != nullptr)
@@ -382,6 +389,15 @@ namespace NorvesLib::Core::Ecs
         }
 
         dstChunk->GetEntities()[dstRow] = entity;
+        // 追跡列を足して版を引き継げなかった行は、外す前に同じ版で積んだ項目と重なりうる（読むときに除く）
+        for (size_t k = 0; k < target.Columns.size(); ++k)
+        {
+            if (target.TrackedIndex[k] >= 0 &&
+                reinterpret_cast<const uint64_t *>(dstBase + target.RowVersionOffsets[k])[dstRow] == 0)
+            {
+                m_Logs[target.TrackedIndex[k]].bMayDuplicate = true;
+            }
+        }
         // 移動した行は全列が「変わった」になる
         TouchRow(target, dstChunk, dstRow, version);
         ++dstChunk->Count;
@@ -568,6 +584,7 @@ namespace NorvesLib::Core::Ecs
         {
             log.Entries.clear();
             log.BaseSeq += drop;
+            log.bMayDuplicate = false;
         }
         else if (drop >= kLogTrimThreshold && drop * 2 >= size)
         {
@@ -627,13 +644,31 @@ namespace NorvesLib::Core::Ecs
         Consumer &consumer = m_Consumers[consumerId];
         ChangeLog &log = m_Logs[consumer.Log];
         uint32_t added = 0;
+        // 同じ実体・版の項目は 1 回にまとめる（版は単調なので、版が変わるたびに見た実体を捨てる）
+        Container::UnorderedSet<uint64_t> seen;
+        uint64_t seenVersion = 0;
         for (size_t i = static_cast<size_t>(consumer.Cursor - log.BaseSeq); i < log.Entries.size(); ++i)
         {
-            if (IsAlive(log.Entries[i].Entity))
+            const EcsChangeEntry &entry = log.Entries[i];
+            if (!IsAlive(entry.Entity))
             {
-                out.push_back(log.Entries[i]);
-                ++added;
+                continue;
             }
+            if (log.bMayDuplicate)
+            {
+                if (entry.Version != seenVersion)
+                {
+                    seen.clear();
+                    seenVersion = entry.Version;
+                }
+                const uint64_t key = (static_cast<uint64_t>(entry.Entity.Index) << 32) | entry.Entity.Generation;
+                if (!seen.insert(key).second)
+                {
+                    continue;
+                }
+            }
+            out.push_back(entry);
+            ++added;
         }
         consumer.Cursor = log.BaseSeq + log.Entries.size();
         consumer.ReadVersion = m_Version;

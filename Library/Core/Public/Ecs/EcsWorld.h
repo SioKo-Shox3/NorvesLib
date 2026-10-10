@@ -349,6 +349,8 @@ namespace NorvesLib::Core::Ecs
             Container::VariableArray<EcsChangeEntry> Entries;
             uint64_t BaseSeq = 0;
             uint32_t ConsumerCount = 0;
+            /// 同じ実体・版の項目が重なりうる間 true（読むときに除く）。全員が読み切ると戻る
+            bool bMayDuplicate = false;
         };
 
         struct Consumer
