@@ -216,15 +216,24 @@
 - paths: Game, TASKS.md, PROGRESS.md
 - notes: 計測は SCN-MEGA-STRESS-STREAMING でまとめて行う。
 
-## SCN-MEGA-STRESS-STREAMING: mega-stress に区画の読み込み・解放の負荷を足し、今の経路の基準を測る
+## SCN-MEGA-STRESS-STREAMING: mega-stress に区画の読み込み・解放の負荷を足す
 - status: todo
-- done-when: `--stress-stream-cell=<m>` で、その大きさの区画の Entity を一定の周期で読み込み・解放する（カメラの近くの区画が出入りする）。資源の数が周期の後に戻ることをログで確かめる。今の経路の基準として、2万個の静止・1% 移動・1% 移動 + 64 m 区画の 3 つで gt・rt・GPU の median と p95、`MEGA_CAPACITY` を PROGRESS の表に書く（以後の節目の計測はこの表と比べる）。cycle smoke が pass。
+- done-when: `--stress-stream-cell=<m>` で、その大きさの区画の Entity を一定の周期で読み込み・解放する（カメラの近くの区画が出入りする）。1周期ごとに、生きている Entity・World の Entity・材質・メッシュ・モデルの数が置き終えた直後の基準に戻ることをログ `MEGA_STRESS_STREAM_CYCLE ... result=pass` で確かめ、`result=fail` が1件も出ない。cycle smoke が素の引数と区画の引数の両方で pass。基準の計測は SCN-MEGA-STRESS-BASELINE で行い、この項目では GPU 時間を撮らない。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-stress -Cycles 3 -Configuration RelWithDebInfo`
-- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-STRESS-STREAMING/static --timing`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-stress -Cycles 3 -Configuration RelWithDebInfo -GameArgs stress-entities=2000,stress-stream-cell=64,stress-stream-period=0.05 -OutDir .harness/runs/scene-cycle-smoke-stream`
+- verify: `python -c "import re,sys; t=open('.harness/runs/scene-cycle-smoke-stream/Game.log',encoding='utf-8',errors='replace').read(); r=re.findall(r'MEGA_STRESS_STREAM_CYCLE [^\n]*result=(\w+)',t); print('STREAM_CYCLES',r); sys.exit(0 if r and set(r)=={'pass'} else 1)"`
 - paths: Game, TASKS.md, PROGRESS.md
-- notes: 区間の数だけ容量が増える問題（`MegaGeometryPass.cpp` 1526 行付近）がここで数で見える。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=20000 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-STREAMING/static`（ランナーは撮り直さず、保存した結果を検査する）。 2026-10-10 親が 5万個から 2万個に減らした（古い経路の 1 本 1 Entity では撮影が長くなるため。ECS の後の節目の計測で 5万個を測る）。
+- notes: 実装は途中保存のコミット a005038e・403e93b1 に入っている（403e93b1 で足した材質・メッシュ・モデルの数の照合はまだビルドしていない）。続きから仕上げる。滞在中に区画の1周期が終わらないときは、区画の引数の verify の GameArgs の数値（個数・周期）だけをこの項目の中で調整してよい（検査の中身は弱めない）。2026-10-10 親: 2回続けて40分を超えたため、基準の計測を SCN-MEGA-STRESS-BASELINE へ分けた（2万個の今の経路はゲームスレッドが約480 ms/フレームで、3視点×300フレームの撮影1本に約12分かかり、3本で反復に収まらない）。Game の起動と撮影は1本ずつ順に行い、並行させない（並行した撮影で trace.csv を別のプロセスが使っていて読めずに失敗した）。
 
+## SCN-MEGA-STRESS-BASELINE: mega-stress の今の経路の基準を測り、PROGRESS の表に書く
+- status: todo
+- done-when: 2万個の静止・1% 移動・1% 移動 + 64 m 区画の3本を、既定の視点だけ・`-GpuTimingFrames 240`（有効な標本180）で撮り、3本とも CheckCaptureMetrics が pass。gt・rt・GPU の median と p95、`MEGA_CAPACITY` を PROGRESS の表に書く（以後の節目の計測はこの表と比べる）。
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/static --views default --timing --min-frames 180`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/moving --views default --timing --min-frames 180`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/stream --views default --timing --min-frames 180`
+- paths: TASKS.md, PROGRESS.md
+- notes: コードを変えない（変えると Game.exe が新しくなり、撮影が古いと判定される）。撮影は次の3本を1本ずつ順に（並行させない。1本あたり約4分）。ランナーは撮り直さず、保存した結果を検査する。static: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views default -GpuTimingFrames 240 -TimeoutSeconds 900 -GameArgs stress-entities=20000 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/static`。 moving: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views default -GpuTimingFrames 240 -TimeoutSeconds 900 -GameArgs stress-entities=20000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/moving`。 stream: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views default -GpuTimingFrames 240 -TimeoutSeconds 900 -GameArgs stress-entities=20000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-STRESS-BASELINE/stream`。
 ## SCN-ECS-CHECK-GATE: 開発ビルドの検査の結果と、撮る構成のビルドを撮影の門にする
 - status: todo
 - done-when: `Debug/EngineChecks.h` の口が、`--engine-checks=<名前,...>`（開発ビルドだけ）で有効にした検査について `ENGINE_CHECK name=<名前> result=pass|fail count=<n>` を出す。`CaptureScene.ps1` と `CaptureStartupScene.ps1` に `-RequireChecks` を足す（各名前の pass が 1 回以上あり、fail が 0 でなければ失敗）。3 つのスクリプトに `-Build` を足す（撮る構成の Game をビルドし、失敗したら撮らずに失敗）。`CaptureStartupScene.ps1` に `-GameArgs` を足す。`RunSceneCycleSmoke.ps1` は fail の行で落ちる。`ENGINE_CHECK_SELFTEST` の pass の撮影が通る。`--engine-checks-selftest-fail` で落ちる出力は、反復の中で 1 回撮って PROGRESS に貼る。 あわせて、`CaptureScene.ps1` の計測（`-GpuTimingFrames`）は初期配置と公開の完了（SceneReady）の後に始め、ウォームアップと末尾の除外を別に取って、有効な標本を指定の数だけ得る（今は「指定 − 60」件に制限している、315 行付近）。配置した数（シーンが出す数）と計測の開始のフレームを metrics.json に記録し、`CheckCaptureMetrics.py` の `--min-frames` が有効な標本の数を見る。
