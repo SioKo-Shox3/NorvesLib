@@ -146,6 +146,10 @@ namespace Game::GameModes
         uint32_t LiveEntities = 0;
         /// 置き終えた直後の World の Entity の数（周期の後に戻ることの基準）
         size_t BaselineWorldObjects = 0;
+        /// 置き終えた直後の材質・メッシュ・モデル（MegaMesh）の数（周期の後に戻ることの基準）
+        size_t BaselineMaterials = 0;
+        size_t BaselineMeshes = 0;
+        size_t BaselineModels = 0;
         /// 周期の経過時間[秒]
         float Elapsed = 0.0f;
         uint32_t Steps = 0;
@@ -687,9 +691,14 @@ namespace Game::GameModes
             stream.WindowCells = std::min<uint32_t>(kStreamWindowCells, static_cast<uint32_t>(stream.Cells.size()));
             stream.LiveEntities = static_cast<uint32_t>(stream.Placed.size());
             stream.BaselineWorldObjects = ctx.WorldRef.GetObjectCount();
-            LOG_INFO_F("MEGA_STRESS_STREAM_SETUP cell_m=%.1f period=%.3f cells=%zu window=%u entities=%u world_objects=%zu",
+            stream.BaselineMaterials = ctx.RenderResourcesRef.Materials().GetCount();
+            stream.BaselineMeshes = ctx.RenderResourcesRef.Meshes().GetCount();
+            stream.BaselineModels = ctx.RenderResourcesRef.MegaGeometry().GetModelCount();
+            LOG_INFO_F("MEGA_STRESS_STREAM_SETUP cell_m=%.1f period=%.3f cells=%zu window=%u entities=%u world_objects=%zu "
+                       "materials=%zu meshes=%zu models=%zu",
                        static_cast<double>(cell), static_cast<double>(data.m_StreamPeriod), stream.Cells.size(),
-                       stream.WindowCells, stream.LiveEntities, stream.BaselineWorldObjects);
+                       stream.WindowCells, stream.LiveEntities, stream.BaselineWorldObjects, stream.BaselineMaterials,
+                       stream.BaselineMeshes, stream.BaselineModels);
         }
 
         /// 区画 1 つの Entity を全部解放する。動く Entity の参照は外す
@@ -814,12 +823,17 @@ namespace Game::GameModes
             stream.bCheckPending = false;
             ++stream.Cycles;
             const size_t worldObjects = ctx.WorldRef.GetObjectCount();
+            const size_t materials = ctx.RenderResourcesRef.Materials().GetCount();
+            const size_t meshes = ctx.RenderResourcesRef.Meshes().GetCount();
+            const size_t models = ctx.RenderResourcesRef.MegaGeometry().GetModelCount();
             const bool bPass = stream.LiveEntities == static_cast<uint32_t>(stream.Placed.size()) &&
-                               worldObjects == stream.BaselineWorldObjects;
+                               worldObjects == stream.BaselineWorldObjects && materials == stream.BaselineMaterials &&
+                               meshes == stream.BaselineMeshes && models == stream.BaselineModels;
             LOG_INFO_F("MEGA_STRESS_STREAM_CYCLE cycle=%u steps=%u live=%u expected=%zu world_objects=%zu baseline=%zu "
-                       "result=%s",
+                       "materials=%zu/%zu meshes=%zu/%zu models=%zu/%zu result=%s",
                        stream.Cycles, stream.Steps, stream.LiveEntities, stream.Placed.size(), worldObjects,
-                       stream.BaselineWorldObjects, bPass ? "pass" : "fail");
+                       stream.BaselineWorldObjects, materials, stream.BaselineMaterials, meshes, stream.BaselineMeshes,
+                       models, stream.BaselineModels, bPass ? "pass" : "fail");
         }
 
         /// 全種類の材質がそろったら MegaMesh を作り、Entity を置く
