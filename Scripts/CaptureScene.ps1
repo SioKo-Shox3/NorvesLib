@@ -350,15 +350,18 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Frames, [double]$Budge
     } | Sort-Object -Property median_ms -Descending)
     $passMedianList = @($passList | ForEach-Object { [pscustomobject][ordered]@{ pass = $_.pass; median_ms = $_.median_ms } })
 
-    # CPU のスコープ（Type=Scope の行）: 窓のフレームに記録された区間の継続時間の median の上位 15
-    $windowFrames = New-Object 'System.Collections.Generic.HashSet[long]'
-    foreach ($row in $cpuWindow) { [void]$windowFrames.Add($row.Frame) }
+    # CPU のスコープ（Type=Scope の行）: 窓の最初〜最後のフレーム番号の範囲に記録された区間の継続時間の median の上位 15。
+    # Scope 行の Frame は記録時点のゲームフレーム番号で、描画を完了したフレームの行（窓）の番号とは一致しないため、
+    # 窓の行の番号に所属するかではなく連続した範囲で選ぶ。
+    $scopeFrameFirst = if ($cpuWindow.Count -gt 0) { [long]$cpuWindow[0].Frame } else { [long]::MaxValue }
+    $scopeFrameLast = if ($cpuWindow.Count -gt 0) { [long]$cpuWindow[$cpuWindow.Count - 1].Frame } else { [long]::MinValue }
     $scopeSamples = @{}
     foreach ($line in [IO.File]::ReadLines($TracePath))
     {
         if (-not $line.StartsWith('Scope,')) { continue }
         $frameEnd = $line.IndexOf(',', 6)
-        if (-not $windowFrames.Contains([long]$line.Substring(6, $frameEnd - 6))) { continue }
+        $scopeFrame = [long]$line.Substring(6, $frameEnd - 6)
+        if ($scopeFrame -lt $scopeFrameFirst -or $scopeFrame -gt $scopeFrameLast) { continue }
         $fields = $line.Split(',', 8)
         $scopeName = $fields[$nameColumn].Trim('"')
         if (-not $scopeSamples.ContainsKey($scopeName)) { $scopeSamples[$scopeName] = New-Object System.Collections.Generic.List[double] }

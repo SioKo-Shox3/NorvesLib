@@ -818,3 +818,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261010-132327/`）: `verify-SCN-MEGA-METRICS-1.txt`（RelWithDebInfo の Game ビルド EXIT=0）、`-2.txt`（バナナ 1 万本 overview の基準 `SCN-MEGA-BASE` が pass。平均輝度 123.246）、`-3.txt`（同じコードの 2 回目を `-CompareWith` で比較: 平均輝度の差 0.0001・PSNR 67.759 dB・不一致の画素 0.027%・pass）、`-4.txt`（起動画面の基準 `startup-capture/SCN-MEGA-BASE`、3 視点 pass）、`-5.txt`（遮蔽 Off の旋回の基準 `SCN-MEGA-ORBIT-OFF`、24 視点 pass）、`-6.txt`（今の遮蔽 On の旋回を Off と `-CompareDeterministicWith` で比較: 24 視点すべて平均輝度の差 ≤ 0.0008・PSNR 59.46〜62.47 dB で pass）、`-7-timing.txt`（`-GpuTimingFrames 300` の実走。`gt_median_ms=1.624`・`rt_median_ms=10.624` などが行に出て pass。1024 本）。
 - 判断: バナナの決定的な撮影は 2 回で一致した（PSNR 67.8 dB で下限 45 dB を大きく超える）ので、以後のバナナの比較は画像で行える（`MEGA_OCCLUSION` の数での代替は不要）。旋回の On は Off と一致した（不一致の画素は 8〜17%、最大 8〜27 の差だが PSNR は 59 dB 超で、遮蔽の有無による見た目の差は無い）ため、On の撮影を基準に替える必要は無い。
 - Notes: `-GpuTimingFrames` の集計は 30 万行のトレースで約 11 秒（トレースを 2 回読む）。スコープの標本は 1 フレームに複数回記録される区間もあるので、median は記録 1 件ごとの継続時間（フレーム合計ではない）。
+
+### SCN-MEGA-METRICS 差し戻し対応（2026-10-10、反復 9・run 20261010-132327）
+
+- 差し戻し: `cpu_scope_median_ms` が、描画完了を記録した疎な Frame 番号への所属で Scope 行を除いていたため、同じ計測窓の描画スコープが落ちていた（`RenderGraph.Build` は全件欠落、`RenderGraph.Compile` は 241 件中 1 件だけ採用）。Scope 行の Frame は記録時点のゲームフレーム番号で、窓の行の番号とは一致しない。
+- 修正: `Scripts/CaptureScene.ps1` の `Get-GpuTimingFromTrace` で、窓の最初〜最後のフレーム番号の連続した範囲に記録された Scope 行を数えるようにした（C++ は変えていない）。
+- 既存トレース（`scene-capture/SCN-MEGA-METRICS/timing/overview.trace.csv`）で関数を再実行した結果（`verify-SCN-MEGA-METRICS-8-scope.txt`）: `RenderGraph.Execute` 1.662/1.906 ms、`RenderGraph.Compile` 0.329/0.674 ms、`MegaGeometryPass.RecordFrameCommand` 0.329/0.404 ms、`RenderGraph.Build` 0.003/0.005 ms がいずれも 241 件（窓の 240 フレーム＋境界 1）。評価者の再計算（Compile 0.329/0.674）と一致。
+- 実走（`verify-SCN-MEGA-METRICS-8-timing.txt`、`-GpuTimingFrames 300`、1024 本、EXIT=0、pass）: `cpu_scope_median` の行に `RenderGraph.Execute=1.671 MegaGeometryPass.RecordFrameCommand=0.332 RenderGraph.Compile=0.328 RenderGraph.Build=0.003` が出る。gt/rt の median・p95 も行に出る。
+- 画像の比較・基準の撮影（verify 2〜6）は集計の経路を通らないので、反復 8 の証拠（`-1`〜`-6`）をそのまま有効とした。
