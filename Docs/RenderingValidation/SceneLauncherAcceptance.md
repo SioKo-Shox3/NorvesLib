@@ -37,7 +37,20 @@
 | 2 万 | 160.6 | 160 | 64 | 256 | 32 | 672.6 |
 | 3 万 | 240.9 | 160 | 64 | 256 | 32 | 752.9 |
 
-上のほかに本数によらない固定の確保: `VisibilityRasterPass` の記録バッファ 1024 MB（`VRAM_LEDGER visbuffer_records`）、ID のバッファ 15.8 MB、ソフトウェアラスタの一覧 32 MB、VSM の物理ページ 320 MB（`vsm_pool_mb`）、影のマップの確保 623 MB（`shadow_map_pool_mb`）。ジオメトリのプールは 256 MB の枠に対し使用量 0〜1 MB（バナナのメッシュは 1 つで共有）。
+ソフトウェアラスタの 32 MB は上の表の `sw_raster_bytes` と `VRAM_LEDGER sw_raster_list` が同じ `m_SwRasterBuffer` を測った値で、合計に含まれる（別の確保ではない）。上のほかに本数によらない固定の確保: `VisibilityRasterPass` の記録バッファ 1024 MB（`VRAM_LEDGER visbuffer_records`）、ID のバッファ 15.8 MB、VSM の物理ページ 320 MB（`vsm_pool_mb`）、影のマップの確保 623 MB（`shadow_map_pool_mb`）。
+
+ジオメトリのプール（`VRAM_LEDGER geometry_pool` の最終行。読み込み完了後の値）。容量は 1 ブロック 256 MiB で、使用量は本数によらず視点ごとに同じ値（バナナのメッシュは 1 つで共有）。
+
+| 本数 | 視点 | 容量（MiB） | 使用量（MiB） | 確保数 |
+|---|---|---|---|---|
+| 1 万 | overview | 256.0 | 3.9 | 30 |
+| 1 万 | close | 256.0 | 5.7 | 46 |
+| 2 万 | overview | 256.0 | 3.9 | 30 |
+| 2 万 | close | 256.0 | 5.7 | 46 |
+| 3 万 | overview | 256.0 | 3.9 | 30 |
+| 3 万 | close | 256.0 | 5.7 | 46 |
+
+（証拠: `scene-capture/SCN-BANANAS-PERF/vm2-<本数>-<視点>/<視点>.Game.log` の最後の `VRAM_LEDGER geometry_pool`。）
 
 ### 1 万本 overview の内訳（17.0 ms）
 

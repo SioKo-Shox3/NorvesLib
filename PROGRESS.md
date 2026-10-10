@@ -748,3 +748,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 証拠（`.harness/runs/20261009-233224/`）: `verify-SCN-BANANAS-PERF-1.txt`（RelWithDebInfo の Game ビルド EXIT=0）、`-3.txt`（`CaptureScene.ps1 -GameArgs banana-count=30000` 3 視点 pass、約 261 秒）、`-vm2-<本数>-<視点>.txt` 6 本（最新の計測）、`-base-*`（変更前）・`-fix1-*`（CSM の省略と上限）・`-eq-*`（見た目の同一確認）・`-lod1.5-`・`-lod2-`・`-rerun1/2-30000-close`。
 - 画: 1 万・2 万・3 万本の overview と close、3 万本の low を開いた。穴・欠け・影の欠けは無い。
 - Notes: CPU のフレームが GPU より長く、本数で線形より速く伸びる（1 万 72 ms・3 万 579 ms）。内訳はトレースのスコープに無く未調査。別件として `TASKS.md` に SCN-MEGA-CPU-FRAME を追記した。3 万本の GPU 時間は CPU 律速のため計測ごとに揺れる（close 45.7〜57 ms）。
+
+### SCN-BANANAS-PERF 差し戻し対応（2026-10-10、反復 27・run 20261009-233224）
+
+- 反復 26 の差し戻し（VRAM の記録）に対応。`SceneLauncherAcceptance.md` のバナナの節で、(1) ジオメトリのプールの使用量を、読み込み完了後の最終 `VRAM_LEDGER geometry_pool` の値（overview 3.9 MiB・close 5.7 MiB、容量 256 MiB、確保数 30・46。1 万・2 万・3 万本とも同じ）の表に差し替え、(2) 「ソフトウェアラスタの一覧 32 MB」を別の確保として数えていた二重計上を直し、`sw_raster_bytes` と同じ `m_SwRasterBuffer` で合計に含まれると明記した。
+- 変更は文書だけ（実装・計測値は変えていない）。GPU 時間・クラスタ数の表は反復 26 の `verify-SCN-BANANAS-PERF-vm2-*.txt` のまま。6 条件のログ（`scene-capture/SCN-BANANAS-PERF/vm2-<本数>-<視点>/<視点>.Game.log`）の最終 `VRAM_LEDGER geometry_pool` を開いて確かめた。verify（ビルド・3 万本の撮影）は実装を変えていないので重い再撮影はせず、反復 26 の保存出力を根拠にする。
