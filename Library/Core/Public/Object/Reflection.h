@@ -6,6 +6,8 @@
 #include "TClass.h"
 #include "Container/Containers.h" // Core::Containerのすべてのコンテナ
 #include "Text/IdentityPool.h"
+#include <cstddef>
+#include <type_traits>
 #include <typeindex>
 
 namespace NorvesLib::Core
@@ -95,6 +97,59 @@ public:                                                                         
 protected:                                                                                                           \
     NorvesLib::Core::TPropertyValue<Type> Name;
 
+// 値を ECS の列に置くプロパティの宣言用マクロ（自動登録機能付き）
+//   Column: 列の構造体（trivially copyable。EcsColumnInfoOf<Column>() で登録される）
+//   Field : Column の中のメンバ名（Type と同じ型）
+//   ValueType: プロパティの型  Name: プロパティ名（保存・ブリッジ・Stable ID は PROPERTY と同じ規則）
+// クラスには `Ecs::EcsRowRef GetEcsRow() const` が必要（値を探す行を返す。行が無ければ空の EcsRowRef）。
+// TPropertyValue は作らない。getName() は取得と代入だけを持つ EcsPropertyRef<ValueType> を返し、
+// クラスの中での読み書きもこの取得と代入で行う。行が無い間の値は予備のメンバ m_EcsFallback_<Name> にある。
+#define ECS_PROPERTY(Column, Field, ValueType, Name)                                                                      \
+    static_assert(std::is_same_v<decltype(Column::Field), ValueType>, "ECS_PROPERTY: ValueType が Column::Field の型と違う"); \
+                                                                                                                     \
+private:                                                                                                             \
+    static inline const NorvesLib::Core::TEcsColumnProperty<ValueType> *s_PropertyPtr_##Name = nullptr;                   \
+    static inline void RegisterProperty_##Name()                                                                     \
+    {                                                                                                                \
+        s_PropertyPtr_##Name = static_cast<const NorvesLib::Core::TEcsColumnProperty<ValueType> *>(                       \
+            s_PropertyRegistry().RegisterEcsColumn<ValueType>(NorvesLib::Core::Container::String(#Name), sizeof(ValueType), 0, \
+                []() -> NorvesLib::Core::TypeId                                                                      \
+                {                                                                                                    \
+                    return NorvesLib::Core::Ecs::EcsColumnInfoOf<Column>().Type;                                     \
+                },                                                                                                   \
+                static_cast<uint32_t>(offsetof(Column, Field)),                                                      \
+                [](const NorvesLib::Core::IUnknown *obj) -> NorvesLib::Core::Ecs::EcsRowRef                          \
+                {                                                                                                    \
+                    return static_cast<const __ThisClass *>(obj)->GetEcsRow();                                       \
+                },                                                                                                   \
+                [](NorvesLib::Core::IUnknown *obj) -> ValueType &                                                         \
+                {                                                                                                    \
+                    return static_cast<__ThisClass *>(obj)->m_EcsFallback_##Name;                                    \
+                },                                                                                                   \
+                [](const NorvesLib::Core::IUnknown *obj) -> const ValueType &                                             \
+                {                                                                                                    \
+                    return static_cast<const __ThisClass *>(obj)->m_EcsFallback_##Name;                              \
+                }));                                                                                                 \
+    }                                                                                                                \
+    /* 自動登録を行うための静的変数 */                                                                               \
+    static inline bool s_PropertyRegistered_##Name = []() { \
+                RegisterProperty_##Name(); \
+                return true; }();                                                     \
+                                                                                                                     \
+public:                                                                                                              \
+    NorvesLib::Core::EcsPropertyRef<ValueType> get##Name()                                                                \
+    {                                                                                                                \
+        return NorvesLib::Core::EcsPropertyRef<ValueType>(this, s_PropertyPtr_##Name);                                    \
+    }                                                                                                                \
+    NorvesLib::Core::ConstEcsPropertyRef<ValueType> get##Name() const                                                     \
+    {                                                                                                                \
+        return NorvesLib::Core::ConstEcsPropertyRef<ValueType>(this, s_PropertyPtr_##Name);                               \
+    }                                                                                                                \
+                                                                                                                     \
+protected:                                                                                                           \
+    /* 行が無い間の値（予備）。行が付いている間は列にあり、ここは使われない */                                       \
+    ValueType m_EcsFallback_##Name{};
+
 // 関数宣言用マクロ (自動登録機能付き)
 #define FUNCTION(ReturnType, Name, ...)                                                        \
 private:                                                                                       \
@@ -130,6 +185,23 @@ public:                                                                         
             m_Properties.push_back(property);
 
             // 登録したプロパティへの参照を返す
+            return property.get();
+        }
+
+        // ECS の列に値を置くプロパティの登録関数（ECS_PROPERTY が使う）
+        template <typename PropertyType>
+        const ClassProperty *RegisterEcsColumn(const Container::String &name, size_t size, uint32_t flags,
+                                               typename TEcsColumnProperty<PropertyType>::ColumnTypeGetter columnType,
+                                               uint32_t fieldOffset,
+                                               typename TEcsColumnProperty<PropertyType>::RowGetter rowGetter,
+                                               typename TEcsColumnProperty<PropertyType>::MutableFallback mutableFallback,
+                                               typename TEcsColumnProperty<PropertyType>::ConstFallback constFallback)
+        {
+            const IClass *propertyTypeClass = nullptr;
+            auto property = std::make_shared<TEcsColumnProperty<PropertyType>>(
+                Identity(name), propertyTypeClass, size, flags, columnType, fieldOffset, rowGetter, mutableFallback, constFallback);
+
+            m_Properties.push_back(property);
             return property.get();
         }
 

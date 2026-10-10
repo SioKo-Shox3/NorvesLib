@@ -56,7 +56,9 @@ namespace NorvesLib::Core
         Computed,
         ObjectRef,
         ResourceRef,
-        Transient
+        Transient,
+        /// 値を ECS の列に置く（行が無い間は Object の予備の値）。末尾に足すので既存の値は変わらない。
+        EcsColumn
     };
 
     enum class PropertyFlags : uint32_t
@@ -1183,10 +1185,13 @@ namespace NorvesLib::Core
         TypeId Type = InvalidSchemaId;
     };
 
+    class ClassProperty;
+
     struct PropertyDesc
     {
-        using GetterFn = bool (*)(const IUnknown *instance, PropertyValue &outValue);
-        using SetterFn = bool (*)(IUnknown *instance, const PropertyValue &value);
+        /// Get/Set は desc.Source（元の ClassProperty）を経由して読み書きする。Source が null の記述では呼べない。
+        using GetterFn = bool (*)(const PropertyDesc &desc, const IUnknown *instance, PropertyValue &outValue);
+        using SetterFn = bool (*)(const PropertyDesc &desc, IUnknown *instance, const PropertyValue &value);
 
         PropertyId Id = InvalidSchemaId;
         StablePropertyId StableId = InvalidSchemaId;
@@ -1194,6 +1199,7 @@ namespace NorvesLib::Core
         TypeId Type = InvalidSchemaId;
         PropertyFlags Flags = PropertyFlags::None;
         StorageKind Storage = StorageKind::Member;
+        const ClassProperty *Source = nullptr;
         GetterFn Get = nullptr;
         SetterFn Set = nullptr;
     };

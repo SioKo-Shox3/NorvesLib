@@ -313,7 +313,7 @@
 - paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Private/Component/Component.cpp, Test/Core/Object/WorldTickGroupTest.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-PROP-STORAGE: 値を列に置くプロパティ（StorageKind::EcsColumn）を足す
-- status: todo
+- status: done
 - done-when: 設計 1.5 の EcsColumn・GetStorageKind・TEcsColumnProperty・ECS_PROPERTY（EcsPropertyRef）・予備の値が入る。BuildClassInfoSnapshot は Storage を性質から取り、Get/Set を埋める。`EcsPropertyStorageTest`（ObjectReflectionTest の束）が、テスト用の Component で次を確かめる: 値が予備→列→予備と移る、ApplyValue・CopyValueFrom・既定値の適用が版を付ける、可変の GetValuePtr が nullptr を返す、BuildObjectSnapshot と保存の往復で値と Stable ID が変わらない。実際の型はまだ移さない。
 - verify: `cmake --build build --config Debug --target ObjectReflectionTest SceneSerializerTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(EcsPropertyStorageTest|RuntimeSchemaSnapshotTest|SchemaProjectionTest|SceneSerializerTest|SceneFileRoundTripTest)$" --no-tests=error --output-on-failure --timeout 180`

@@ -8,6 +8,7 @@
 #include <utility>
 #include "IUnknown.h"
 #include "RuntimeSchema.h"
+#include "Ecs/EcsTypes.h"
 #include "Object/ClassCastFlags.h"
 #include "Object/PropertyBag.h"
 #include "Container/Containers.h" // Core::Containerのすべてのコンテナ
@@ -67,6 +68,44 @@ namespace NorvesLib::Core
          * 旧ClassPropertyでは型情報を持たない場合があるため、既定値は無効IDです。
          */
         virtual TypeId GetRuntimeTypeId() const { return InvalidSchemaId; }
+
+        /**
+         * @brief 値の置き場を返します。
+         *
+         * 既定は Member。ECS_PROPERTY は EcsColumn を返し、行が付いている間は値を ECS の列に置きます。
+         */
+        virtual StorageKind GetStorageKind() const { return StorageKind::Member; }
+
+        /**
+         * @brief 現在の値を Runtime schema 値として取り出します（PropertyDesc::Get の実体）。
+         * @return 取り出せた場合はtrue。型情報を持たない旧プロパティは false
+         */
+        virtual bool GetPropertyValue(const IUnknown *instance, PropertyValue &outValue) const
+        {
+            (void)instance;
+            (void)outValue;
+            return false;
+        }
+
+        /**
+         * @brief 予備の値を列へ移します（行が付いた直後）。値は 1 か所にだけ置かれます。
+         * @return 移した場合はtrue。EcsColumn 以外・行が無い・行がその列を持たないときは false
+         */
+        virtual bool MoveValueToColumn(IUnknown *instance) const
+        {
+            (void)instance;
+            return false;
+        }
+
+        /**
+         * @brief 列の値を予備へ戻します（行を消す前）。
+         * @return 戻した場合はtrue。EcsColumn 以外・行が無い・行がその列を持たないときは false
+         */
+        virtual bool MoveValueToFallback(IUnknown *instance) const
+        {
+            (void)instance;
+            return false;
+        }
 
         /**
          * @brief Runtime schema値をプロパティへ適用します。
@@ -415,6 +454,16 @@ namespace NorvesLib::Core
             ref = value;
         }
 
+        bool GetPropertyValue(const IUnknown *instance, PropertyValue &outValue) const override
+        {
+            if (!instance)
+            {
+                return false;
+            }
+            outValue = PropertyValue::Create<T>(GetRef(instance));
+            return outValue.IsValid();
+        }
+
         virtual const void *GetValuePtr(const IUnknown *instance) const override
         {
             if (!instance)
@@ -604,6 +653,246 @@ namespace NorvesLib::Core
     private:
         const IUnknown *m_Instance;
         const TClassProperty<T> *m_Property;
+    };
+
+    /**
+     * @brief 値を ECS の列に置く型付きのプロパティ（ECS_PROPERTY が登録する）
+     *
+     * 行（EcsRowRef）が付いていて、その行が列を持つ間、値は列の中の Field（列の構造体の中の位置）にだけある。
+     * それ以外のとき（new T() から World へ付くまで、クラスの既定値の取得、単独で作った Object）は Object の
+     * 予備の値にある。どの時点でも値は 1 か所で、移すのは MoveValueToColumn / MoveValueToFallback。
+     *
+     * - 書き込みは ApplyValue / CopyValueFrom / ApplyDefaultValue（と EcsPropertyRef の代入）だけで、列へ書くときは版を付ける。
+     * - 可変の GetValuePtr は nullptr を返す（列は構造変更で動くので、書き込み用の生ポインタは出さない）。
+     *   const の GetValuePtr は「同じ処理の中ですぐ写す」ための読み口で、構造変更をまたいで持たない。
+     * - 触ってよいのは GameThread かつ並列の外だけ。T は trivially copyable（ObjectRef / ResourceRef は置かない）。
+     * @tparam T プロパティの型（列の構造体の Field と同じ型）
+     */
+    template <typename T>
+    class TEcsColumnProperty : public ClassProperty
+    {
+    public:
+        static_assert(std::is_trivially_copyable_v<T>, "ECS の列に置くプロパティは trivially copyable でなければならない");
+
+        using RowGetter = Ecs::EcsRowRef (*)(const IUnknown *);
+        using ColumnTypeGetter = TypeId (*)();
+        using MutableFallback = T &(*)(IUnknown *);
+        using ConstFallback = const T &(*)(const IUnknown *);
+
+        TEcsColumnProperty(const Identity &name, const IClass *type, size_t size, uint32_t flags,
+                           ColumnTypeGetter columnType, uint32_t fieldOffset, RowGetter rowGetter,
+                           MutableFallback mutableFallback, ConstFallback constFallback)
+            : ClassProperty(name, type, fieldOffset, size, flags), m_DefaultValue(),
+              m_ColumnType(columnType), m_FieldOffset(fieldOffset), m_RowGetter(rowGetter),
+              m_MutableFallback(mutableFallback), m_ConstFallback(constFallback)
+        {
+        }
+
+        void SetDefaultValue(const T &defaultValue)
+        {
+            m_DefaultValue = defaultValue;
+        }
+
+        StorageKind GetStorageKind() const override { return StorageKind::EcsColumn; }
+
+        /// 値が列にあるか（行が付いていて、その行が列を持つ）
+        bool IsColumnBacked(const IUnknown *instance) const
+        {
+            return instance != nullptr && Ecs::EcsRowHasColumn(m_RowGetter(instance), m_ColumnType());
+        }
+
+        /// 現在の値を取り出す（列にあれば列から、なければ予備から）
+        T Read(const IUnknown *instance) const
+        {
+            T value = m_ConstFallback(instance);
+            Ecs::EcsReadColumnPart(m_RowGetter(instance), m_ColumnType(), m_FieldOffset, static_cast<uint32_t>(sizeof(T)), &value);
+            return value;
+        }
+
+        /// 値を書く（列にあれば列へ書いて版を付け、なければ予備へ書く）
+        bool Write(IUnknown *instance, const T &value) const
+        {
+            if (!instance)
+            {
+                return false;
+            }
+            const Ecs::EcsRowRef row = m_RowGetter(instance);
+            const TypeId column = m_ColumnType();
+            if (Ecs::EcsRowHasColumn(row, column))
+            {
+                return Ecs::EcsWriteColumnPart(row, column, m_FieldOffset, static_cast<uint32_t>(sizeof(T)), &value);
+            }
+            m_MutableFallback(instance) = value;
+            return true;
+        }
+
+        bool MoveValueToColumn(IUnknown *instance) const override
+        {
+            if (!IsColumnBacked(instance))
+            {
+                return false;
+            }
+            T &fallback = m_MutableFallback(instance);
+            if (!Write(instance, fallback))
+            {
+                return false;
+            }
+            fallback = T{}; // 値は 1 か所にだけ置く
+            return true;
+        }
+
+        bool MoveValueToFallback(IUnknown *instance) const override
+        {
+            if (!IsColumnBacked(instance))
+            {
+                return false;
+            }
+            m_MutableFallback(instance) = Read(instance);
+            return true;
+        }
+
+        bool GetPropertyValue(const IUnknown *instance, PropertyValue &outValue) const override
+        {
+            if (!instance)
+            {
+                return false;
+            }
+            outValue = PropertyValue::Create<T>(Read(instance));
+            return outValue.IsValid();
+        }
+
+        virtual const void *GetValuePtr(const IUnknown *instance) const override
+        {
+            if (!instance)
+            {
+                return nullptr;
+            }
+            if (const void *columnValue = Ecs::EcsGetColumnPartPtr(m_RowGetter(instance), m_ColumnType(), m_FieldOffset, static_cast<uint32_t>(sizeof(T))))
+            {
+                return columnValue;
+            }
+            return &m_ConstFallback(instance);
+        }
+
+        virtual void *GetValuePtr(IUnknown *instance) const override
+        {
+            (void)instance;
+            return nullptr;
+        }
+
+        bool ApplyValue(IUnknown *instance, const PropertyValue &value) const override
+        {
+            const T *typedValue = value.Get<T>();
+            return typedValue != nullptr && Write(instance, *typedValue);
+        }
+
+        bool ApplyInitialValue(IUnknown *instance, const FieldInitializer *initializer) const override
+        {
+            if (initializer)
+            {
+                const PropertyValue *value = initializer->FindValue(m_Name);
+                if (value)
+                {
+                    return ApplyValue(instance, *value);
+                }
+            }
+            return false;
+        }
+
+        void ApplyDefaultValue(IUnknown *instance) const override
+        {
+            Write(instance, m_DefaultValue);
+        }
+
+        bool CopyValueFrom(IUnknown *destInstance, const IUnknown *srcInstance) const override
+        {
+            if (!destInstance || !srcInstance)
+            {
+                return false;
+            }
+            return Write(destInstance, Read(srcInstance));
+        }
+
+        void CaptureDefaultValue(const IUnknown *instance) override
+        {
+            if (instance)
+            {
+                m_DefaultValue = Read(instance);
+            }
+        }
+
+        TypeId GetRuntimeTypeId() const override
+        {
+            return TypeRegistry::Get().GetTypeId<T>();
+        }
+
+    private:
+        T m_DefaultValue; // プロパティのデフォルト値
+        ColumnTypeGetter m_ColumnType;
+        uint32_t m_FieldOffset;
+        RowGetter m_RowGetter;
+        MutableFallback m_MutableFallback;
+        ConstFallback m_ConstFallback;
+    };
+
+    /**
+     * @brief ECS_PROPERTY の getName() が返す参照。取得と代入だけを持つ。
+     *
+     * 値の参照は外へ出さない（operator-> / operator* は持たない）。列は構造変更で動くため。
+     */
+    template <typename T>
+    class EcsPropertyRef
+    {
+    public:
+        EcsPropertyRef(IUnknown *instance, const TEcsColumnProperty<T> *property)
+            : m_Instance(instance), m_Property(property)
+        {
+        }
+
+        EcsPropertyRef(const EcsPropertyRef &) = default;
+
+        // 参照どうしの代入は、参照先の値を写す（参照そのものは付け替えない）
+        EcsPropertyRef &operator=(const EcsPropertyRef &other)
+        {
+            Set(other.Get());
+            return *this;
+        }
+
+        T Get() const { return m_Property->Read(m_Instance); }
+        void Set(const T &value) const { m_Property->Write(m_Instance, value); }
+
+        operator T() const { return Get(); }
+
+        EcsPropertyRef &operator=(const T &value)
+        {
+            Set(value);
+            return *this;
+        }
+
+    private:
+        IUnknown *m_Instance;
+        const TEcsColumnProperty<T> *m_Property;
+    };
+
+    /**
+     * @brief ECS_PROPERTY の const 版の参照（取得だけ）
+     */
+    template <typename T>
+    class ConstEcsPropertyRef
+    {
+    public:
+        ConstEcsPropertyRef(const IUnknown *instance, const TEcsColumnProperty<T> *property)
+            : m_Instance(instance), m_Property(property)
+        {
+        }
+
+        T Get() const { return m_Property->Read(m_Instance); }
+
+        operator T() const { return Get(); }
+
+    private:
+        const IUnknown *m_Instance;
+        const TEcsColumnProperty<T> *m_Property;
     };
 
     /**
@@ -1032,6 +1321,63 @@ namespace NorvesLib::Core
 
     };
 
+    namespace Detail
+    {
+        /// PropertyDesc::Get の実体。元の ClassProperty を経由して読む。
+        inline bool GetPropertyDescValue(const PropertyDesc &desc, const IUnknown *instance, PropertyValue &outValue)
+        {
+            return desc.Source != nullptr && instance != nullptr && desc.Source->GetPropertyValue(instance, outValue);
+        }
+
+        /// PropertyDesc::Set の実体。元の ClassProperty を経由して書く（EcsColumn なら版が付く）。
+        inline bool SetPropertyDescValue(const PropertyDesc &desc, IUnknown *instance, const PropertyValue &value)
+        {
+            return desc.Source != nullptr && instance != nullptr && desc.Source->ApplyValue(instance, value);
+        }
+    }
+
+    /**
+     * @brief 行が付いた直後に、オブジェクトの ECS_PROPERTY の値を予備から列へ移す
+     * @return 移したプロパティの数
+     */
+    inline uint32_t MoveEcsPropertyValuesToColumns(IUnknown *object)
+    {
+        const IClass *cls = object ? object->GetClass() : nullptr;
+        uint32_t moved = 0;
+        if (cls)
+        {
+            for (const ClassProperty *property : cls->GetAllProperties())
+            {
+                if (property && property->GetStorageKind() == StorageKind::EcsColumn && property->MoveValueToColumn(object))
+                {
+                    ++moved;
+                }
+            }
+        }
+        return moved;
+    }
+
+    /**
+     * @brief 行を消す前に、オブジェクトの ECS_PROPERTY の値を列から予備へ戻す
+     * @return 戻したプロパティの数
+     */
+    inline uint32_t MoveEcsPropertyValuesToFallback(IUnknown *object)
+    {
+        const IClass *cls = object ? object->GetClass() : nullptr;
+        uint32_t moved = 0;
+        if (cls)
+        {
+            for (const ClassProperty *property : cls->GetAllProperties())
+            {
+                if (property && property->GetStorageKind() == StorageKind::EcsColumn && property->MoveValueToFallback(object))
+                {
+                    ++moved;
+                }
+            }
+        }
+        return moved;
+    }
+
     inline ClassInfo BuildClassInfoSnapshot(const IClass &cls, const char *moduleName = "NorvesLib")
     {
         ClassInfo info;
@@ -1059,7 +1405,10 @@ namespace NorvesLib::Core
             desc.Name = property->GetName().ToString();
             desc.Type = property->GetRuntimeTypeId();
             desc.Flags = static_cast<PropertyFlags>(property->GetFlags());
-            desc.Storage = StorageKind::Member;
+            desc.Storage = property->GetStorageKind();
+            desc.Source = property;
+            desc.Get = &Detail::GetPropertyDescValue;
+            desc.Set = &Detail::SetPropertyDescValue;
             info.Properties.push_back(std::move(desc));
         }
 

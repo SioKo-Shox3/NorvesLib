@@ -5,6 +5,7 @@ norves_add_test_bundle(ObjectReflectionTest
     MEMBER ObjectCastTest ObjectCastTest.cpp
     MEMBER PropertyBagTest PropertyBagTest.cpp
     MEMBER SchemaProjectionTest SchemaProjectionTest.cpp
+    MEMBER EcsPropertyStorageTest EcsPropertyStorageTest.cpp
     MEMBER StructPropertySerializeTest ${CMAKE_SOURCE_DIR}/Test/Reflection/StructPropertySerializeTest.cpp
     MEMBER EnumPropertySerializeTest ${CMAKE_SOURCE_DIR}/Test/Reflection/EnumPropertySerializeTest.cpp
     SOURCES
@@ -107,6 +108,7 @@ add_test(NAME ResourceMetadataTest COMMAND ResourceRegistryTest --test=ResourceM
 add_test(NAME ObjectGCTest COMMAND ObjectHeapTest --test=ObjectGCTest)
 add_test(NAME IncrementalGCTest COMMAND ObjectHeapTest --test=IncrementalGCTest)
 add_test(NAME SchemaProjectionTest COMMAND ObjectReflectionTest --test=SchemaProjectionTest)
+add_test(NAME EcsPropertyStorageTest COMMAND ObjectReflectionTest --test=EcsPropertyStorageTest)
 add_test(NAME EntitySubtreeSnapshotTest COMMAND SceneSerializerTest --test=EntitySubtreeSnapshotTest)
 add_test(NAME PrefabRoundTripTest COMMAND SceneSerializerTest --test=PrefabRoundTripTest)
 add_test(NAME TransformHierarchyTest COMMAND EntityTreeTest --test=TransformHierarchyTest)

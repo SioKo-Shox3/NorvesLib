@@ -900,6 +900,22 @@ namespace NorvesLib::Core::Ecs
         {
             return false;
         }
+        const int32_t column = FindColumnIndex(slot->Chunk->Archetype, type);
+        if (column < 0)
+        {
+            return false;
+        }
+        const uint32_t size = m_Archetypes[slot->Chunk->Archetype].Columns[column].Size;
+        return WriteColumnPart(entity, type, 0, size, value);
+    }
+
+    bool EcsWorld::WriteColumnPart(EcsEntity entity, TypeId type, uint32_t offset, uint32_t partSize, const void *value)
+    {
+        const Slot *slot = FindSlot(entity);
+        if (slot == nullptr || value == nullptr)
+        {
+            return false;
+        }
         EcsChunk *chunk = slot->Chunk;
         const uint32_t row = slot->Row;
         const int32_t column = FindColumnIndex(chunk->Archetype, type);
@@ -909,7 +925,11 @@ namespace NorvesLib::Core::Ecs
         }
         const Archetype &archetype = m_Archetypes[chunk->Archetype];
         const size_t size = archetype.Columns[column].Size;
-        std::memcpy(reinterpret_cast<std::byte *>(chunk) + archetype.Offsets[column] + size * row, value, size);
+        if (static_cast<size_t>(offset) + partSize > size)
+        {
+            return false;
+        }
+        std::memcpy(reinterpret_cast<std::byte *>(chunk) + archetype.Offsets[column] + size * row + offset, value, partSize);
 
         EcsChangeBundle bundle;
         MarkWritten(chunk, static_cast<uint32_t>(column), row, AcquireWriteVersion(), bundle);

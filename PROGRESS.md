@@ -1140,3 +1140,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 修正前に新テストが落ちることは、再ビルド（Core）の負荷を避けて実行していない。各テストの最初の件数の検査は、修正前のコードでは 1 以上（通知中の再登録・heap 経路が未登録・`RemoveInner` が一覧を残す）になる構造。
   - 公開 `World::RemoveInner` は従来どおり `ComponentDataRegistry` の登録を解除しない（`DestroyEntitySubtree` だけが解除する）。木から外した Entity を削除する呼び出し側は解除が要る（テストでは明示している）。この反復の範囲外の既存の性質。
   - ファイルの行末: `World.cpp`・`World.h` は混在（CRLF/LF）で、編集ツールが LF に正規化したため difflib で元の行末へ戻した（`git diff --numstat` と `--ignore-cr-at-eol` が一致）。
+
+### SCN-ECS-PROP-STORAGE（2026-10-11、反復 20・run 20261010-223034）
+
+- 変更:
+  - `RuntimeSchema.h`: `StorageKind::EcsColumn` を末尾に足した（既存の値は不変）。`PropertyDesc` に `Source`（元の `ClassProperty`）を足し、`Get`/`Set` の関数ポインタの第 1 引数を `const PropertyDesc &` にした（関数ポインタは文脈を持てないため。これまで `Get`/`Set` を呼ぶ側は無かった）。
+  - `IClass.h`: `ClassProperty` に `GetStorageKind()`（既定 Member）・`GetPropertyValue()`・`MoveValueToColumn()`・`MoveValueToFallback()` を足した。`TEcsColumnProperty<T>`・`EcsPropertyRef<T>`（取得 `Get()`/`operator T` と代入だけ。`operator->`/`operator*` は無い）・`ConstEcsPropertyRef<T>` を足した。`BuildClassInfoSnapshot` は `Storage` を `GetStorageKind()` から取り、`Source`/`Get`/`Set` を全プロパティで埋める。クラス単位の移動の口として `MoveEcsPropertyValuesToColumns(IUnknown*)`・`MoveEcsPropertyValuesToFallback(IUnknown*)` を足した（BIND-ENTITY が行を付ける直後・消す直前に呼ぶ想定）。
+  - `Reflection.h`: `ECS_PROPERTY(Column, Field, ValueType, Name)` と `PropertyRegistry::RegisterEcsColumn`。クラスに `Ecs::EcsRowRef GetEcsRow() const` が要る。`TPropertyValue` は作らず、予備の値は `m_EcsFallback_<Name>`。マクロの引数名を `Type` にすると `EcsColumnInfo::Type` の `.Type` まで置換されるので `ValueType` にした。
+  - `Ecs`: `EcsRowRef`（World + Entity）、読み書きの口 `EcsReadColumnPart`・`EcsWriteColumnPart`・`EcsRowHasColumn`・`EcsGetColumnPartPtr`（`EcsTypes.h/.cpp`。並列の中で呼ぶと assert）、`EcsWorld::WriteColumnPart`（列の一部だけ書いて `WriteColumnValue` と同じく変更を記録。`WriteColumnValue` はこれに通した）。
+  - 値の置き場: 行が付いていてその行が列を持つ間は列（Field の位置）、それ以外は予備。移すとき予備は `T{}` に戻す（値は 1 か所）。書き込みは `ApplyValue`/`CopyValueFrom`/`ApplyDefaultValue`/代入だけで版を付ける。可変の `GetValuePtr` は常に nullptr、const は列の中（なければ予備）を指す。
+- テスト: `EcsPropertyStorageTest`（ObjectReflectionTest の束、`Test/Core/Object/CMakeLists.txt` に MEMBER と add_test）。テスト用の Component で、置き場とスキーマ記述（Stable ID・Get/Set）、予備→列→予備の移動と「予備に値が残らない」こと、`ApplyValue`・`CopyValueFrom`（行ありから行なしも）・`CopyEditableProperties`・`ApplyDefaultValue(s)` が変更ログに新しい版で 1 件ずつ積まれ型違いの値は版を付けないこと、可変 `GetValuePtr`/`GetPropertyValue(名前)` が nullptr、`BuildObjectSnapshot`→直列化→`DeserializeStable`→`ApplyValue` の往復（行なし・別の行のどちらにも）で値と Stable ID が変わらないこと、スキーマ投影の Storage が EcsColumn で Stable ID が行の有無に依らないこと、を確かめる。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-PROP-STORAGE-2.txt`（ObjectReflectionTest・SceneSerializerTest のビルド EXIT=0）、`-5.txt`（EcsPropertyStorageTest・RuntimeSchemaSnapshotTest・SchemaProjectionTest・SceneSerializerTest・SceneFileRoundTripTest 5/5 Passed）。`-1` は Git Bash の `/m:1` 変換でのビルド引数の誤り、`-3` はテストの誤り（行を付け直すと予備の 0 で列が上書きされる）の実行で証拠にしない。`-4` は直した後の再ビルドと単体の実行。
+- Notes:
+  - 「保存の往復」は、`SceneSerializer` の World 経由ではなくスナップショットの直列化値の往復で確かめた（テスト用の Component を World に付ける経路は BIND 系で行が付いてから）。既存の `SceneSerializerTest`/`SceneFileRoundTripTest` は変更なしで通る。
+  - `Library/Core/CMakeLists.txt` は `paths:` の外のため、新しい .cpp/.h は足していない（既存の `EcsTypes.*`・`EcsWorld.*`・`IClass.h`・`Reflection.h` に入れた）。
+  - ビルドは Git Bash から `cmake ... -- /m:1` を呼ぶと `m:1` に化けて失敗する。PowerShell から呼ぶ。
+  - 行末: `IClass.h`・`Reflection.h`・`TASKS.md`・`PROGRESS.md` は混在。編集ツールが全行を CRLF に寄せたので difflib で元に戻した（numstat 2 通りが一致）。

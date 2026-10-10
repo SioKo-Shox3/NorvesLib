@@ -340,6 +340,10 @@ namespace NorvesLib::Core::Ecs
             return WriteColumnValue(entity, EcsColumnInfoOf<T>().Type, &value);
         }
 
+        /// 段の外の書き込み（列の一部）: 列 type の [offset, offset + size) だけ書き、WriteColumnValue と同じく変更を記録する。
+        /// 生きていない・その列を持たない・範囲が列の外・value が null なら false。
+        bool WriteColumnPart(EcsEntity entity, TypeId type, uint32_t offset, uint32_t size, const void *value);
+
         /// 実体の追跡する列 type の行の版。追跡していない・生きていない・その列を持たないときは 0。
         [[nodiscard]] uint64_t GetRowVersion(EcsEntity entity, TypeId type) const;
 

@@ -48,6 +48,20 @@ namespace NorvesLib::Core::Ecs
 
     inline constexpr EcsEntity kNullEcsEntity{};
 
+    class EcsWorld;
+
+    /// プロパティが値を探す行。World が null、または Entity が null なら「行が無い」（値は Object の予備の値）。
+    struct EcsRowRef
+    {
+        EcsWorld *World = nullptr;
+        EcsEntity Entity;
+
+        [[nodiscard]] bool IsBound() const
+        {
+            return World != nullptr && !Entity.IsNull();
+        }
+    };
+
     /// アーキタイプの番号（EcsWorld が割り当てる）
     using EcsArchetypeId = uint32_t;
     inline constexpr EcsArchetypeId kInvalidEcsArchetype = 0xFFFFFFFFu;
@@ -92,6 +106,20 @@ namespace NorvesLib::Core::Ecs
         EcsParallelScope(const EcsParallelScope &) = delete;
         EcsParallelScope &operator=(const EcsParallelScope &) = delete;
     };
+
+    // ---- ECS_PROPERTY の読み書き口（GameThread かつ並列の外だけ。並列の中で呼ぶと assert する） ----
+
+    /// 行の列 column の [offset, offset + size) を out へ写す。行が無い・生きていない・その列を持たない・範囲が列の外なら false。
+    [[nodiscard]] bool EcsReadColumnPart(const EcsRowRef &row, TypeId column, uint32_t offset, uint32_t size, void *out);
+
+    /// 行の列 column の [offset, offset + size) を書き、変更として記録して版を付ける。失敗の条件は EcsReadColumnPart と同じ。
+    bool EcsWriteColumnPart(const EcsRowRef &row, TypeId column, uint32_t offset, uint32_t size, const void *value);
+
+    /// 行が列 column を持つか（持てばプロパティの値は列にある）
+    [[nodiscard]] bool EcsRowHasColumn(const EcsRowRef &row, TypeId column);
+
+    /// 行の列 column の [offset, ...) へのポインタ（読み取り専用。構造変更をまたいで持たない）。無ければ nullptr。
+    [[nodiscard]] const void *EcsGetColumnPartPtr(const EcsRowRef &row, TypeId column, uint32_t offset, uint32_t size);
 
     using EcsUnregisteredColumnHandler = void (*)();
 
