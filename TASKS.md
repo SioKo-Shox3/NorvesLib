@@ -181,7 +181,7 @@
 - notes: 計測だけ。CPU は遅くてよい。この項目の結果では止めない（25 ms の打切りは改修後の規模の確認にだけ使う）。 撮影そのもの（約 19 分。ゲームスレッドが 1 フレーム約 7 秒で、ランナーの再検証の上限 10 分に入らない）は反復の中で次のコマンドを実走して `metrics.json` を作り、上の verify はその `metrics.json` を検査する: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 120 -TimeoutSeconds 2400 -GameArgs banana-count=100000 -OutDir .harness/runs/scene-capture/SCN-MEGA-PROBE-100K` 2026-10-10 親が完了にした: 計測の結果（10万本 horizon、描いたクラスタ 3,880,187、BVH の段 0 が 4.65/4.48 ms でセルの判定が要る、gt/rt、球の半径）は反復 15 の評価者が確認済み。古い経路の 10万本の撮影は約 19 分でランナーの再検証の上限 10 分を超えるため、計測の項目は保存した結果の検査（`Scripts/CheckCaptureMetrics.py`）で検証する方針にした。
 
 ## SCN-MEGA-BASE-RWDI: 起動画面の決定的な撮影の基準を RelWithDebInfo でも撮る
-- status: todo
+- status: done
 - done-when: 以後の項目が RelWithDebInfo のビルド 1 つで起動画面の比較をできるよう、`SCN-MEGA-BASE-RWDI`（RelWithDebInfo・決定的な撮影）を撮る。Debug の基準 `SCN-MEGA-BASE` と並べて平均輝度の差と PSNR を PROGRESS に書く（構成の違いの差の大きさの記録。一致は求めない）。同じコードで撮り直した比較が pass。C++ は変えない。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Configuration RelWithDebInfo -Deterministic -OutDir .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI`

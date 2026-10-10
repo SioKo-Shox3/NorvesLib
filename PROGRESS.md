@@ -895,3 +895,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 古い経路（1 本 1 Entity）の 10万本の撮影は 1 回約 19 分で、ランナーの再検証（上限 10 分）が必ず時間切れになり、SCN-MEGA-PROBE-100K が 3 反復続けて撮り直していた。計測の結果は反復 15 の評価者が確認済みなので、親が完了にした。
 - 計測の項目の verify を、反復の中で 1 回撮った結果を検査する `Scripts/CheckCaptureMetrics.py`（結果が揃い、失敗・溢れが無く、計測の値があり、いまの Game.exe より後に撮られたこと）に替えた。ランナーは重い撮影をやり直さない。
 - 古い経路で撮影が 10 分を超える PROBE-VSM（10万本）は ECS の後へ回し、負荷シーンの基準（STRESS-STREAMING）は 2万個に減らした。
+
+### SCN-MEGA-BASE-RWDI（2026-10-10、反復 1・run 20261010-191942）
+
+- RelWithDebInfo の決定的な撮影の基準 `SCN-MEGA-BASE-RWDI` を `.harness/runs/startup-capture/SCN-MEGA-BASE-RWDI` に撮った（`metrics.json` の `configuration` = RelWithDebInfo、Debug の基準は Debug。exe は別: Debug 49,030,144 B / RelWithDebInfo 20,708,352 B）。平均輝度は default 124.143・near 123.973・low 126.023。C++ は変えていない。
+- Debug の基準 `SCN-MEGA-BASE` との差（RelWithDebInfo の撮影を `-CompareDeterministicWith SCN-MEGA-BASE` で比較、`-4-vs-debug.txt`）: 平均輝度の差は 3 視点とも 0（0.0001 未満）、PSNR は 3 視点とも 100 dB、不一致画素率は最大 9E-06・最大チャネル差 1。構成の違いによる差は、この 3 視点では無視できる大きさ。
+- 同じコードでの撮り直し（`-3.txt`、`CompareDeterministicWith SCN-MEGA-BASE-RWDI`）は pass。default・near は輝度差 0・PSNR 100、low は輝度差 0.0001・PSNR 62.65 dB・不一致画素率 0.075・最大チャネル差 11（基準 ≤ 0.1・≥ 45 dB の内）。low は撮影ごとに揺れる画素がある。
+- 証拠（`.harness/runs/20261010-191942/`）: `verify-SCN-MEGA-BASE-RWDI-1.txt`（Game の RelWithDebInfo ビルド EXIT=0）、`-2.txt`（基準の撮影 pass）、`-3.txt`（撮り直しの比較 pass）、`-4-vs-debug.txt`（Debug 基準との比較）。
