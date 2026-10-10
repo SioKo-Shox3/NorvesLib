@@ -1156,3 +1156,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `Library/Core/CMakeLists.txt` は `paths:` の外のため、新しい .cpp/.h は足していない（既存の `EcsTypes.*`・`EcsWorld.*`・`IClass.h`・`Reflection.h` に入れた）。
   - ビルドは Git Bash から `cmake ... -- /m:1` を呼ぶと `m:1` に化けて失敗する。PowerShell から呼ぶ。
   - 行末: `IClass.h`・`Reflection.h`・`TASKS.md`・`PROGRESS.md` は混在。編集ツールが全行を CRLF に寄せたので difflib で元に戻した（numstat 2 通りが一致）。
+
+### SCN-ECS-PROP-STORAGE 差し戻し対応（2026-10-11、反復 21・run 20261010-223034）
+
+- 反復 20 の NEEDS_WORK 2 点を直した。
+  1. 並列中アクセスの検出: `Ecs::Detail::EcsCheckSerialAccess()` を足した（`EcsTypes.h/.cpp`）。開発ビルド（`NORVES_BUILD_DEVELOPMENT`。Debug・RelWithDebInfo）では `NDEBUG` に依らず、並列の中なら報告して false を返す（ハンドラが無ければ `ECS_PARALLEL_PROPERTY_ACCESS` を出して abort）。`EcsGetColumnPartPtr`・`EcsWriteColumnPart`・`EcsRowHasColumn` の通常の `assert` をこれに置き換え、`TEcsColumnProperty::Write` も行なし（予備への書き込み）の前に通す。false のときは列にも予備にも書かない。Release は検査なし（デバッグ機能を入れない方針）。テスト用に `EcsSetParallelAccessHandler`・`EcsGetParallelAccessReportCount`。
+  2. `Reflection.h` の `RegisterEcsColumn` の `std::make_shared` を `Container::MakeShared` にした（既存の `Register` の `std::make_shared` は今回の範囲外）。
+  - 副次: `Read` の `EcsReadColumnPart` の戻り値破棄の警告（C4834）を `(void)` で消した。
+- 負例テスト `TestParallelAccessRejected`（`EcsPropertyStorageTest.cpp`。`NORVES_BUILD_DEVELOPMENT` のときだけ）: 行あり（列）は `ApplyValue` が失敗し列の値・版が変わらない、行なし（予備）は `ApplyValue`・`CopyValueFrom` が失敗し `ApplyDefaultValue` でも予備が変わらない、いずれも報告数が増える。並列を出れば書ける。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-PROP-STORAGE-8.txt`（ObjectReflectionTest・SceneSerializerTest のビルド EXIT=0）、`-9.txt`（指定 5 テスト 5/5 Passed）。`-6` は文字列リテラルに生の改行を混ぜたビルド失敗、`-7` は警告を直す前のビルドで証拠にしない。
+- Notes: RelWithDebInfo の abort 経路（ハンドラ無し）は、プロセスが落ちるためテストしていない。ハンドラ経由の報告・拒否と同じ関数を通る。

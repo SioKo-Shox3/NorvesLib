@@ -705,14 +705,16 @@ namespace NorvesLib::Core
         T Read(const IUnknown *instance) const
         {
             T value = m_ConstFallback(instance);
-            Ecs::EcsReadColumnPart(m_RowGetter(instance), m_ColumnType(), m_FieldOffset, static_cast<uint32_t>(sizeof(T)), &value);
+            // 列に無いとき（行なし・並列の中）は予備の値のまま返す
+            (void)Ecs::EcsReadColumnPart(m_RowGetter(instance), m_ColumnType(), m_FieldOffset, static_cast<uint32_t>(sizeof(T)), &value);
             return value;
         }
 
         /// 値を書く（列にあれば列へ書いて版を付け、なければ予備へ書く）
         bool Write(IUnknown *instance, const T &value) const
         {
-            if (!instance)
+            // 並列の中の書き込みは、行がなくて予備へ書く場合も止める（開発ビルドは NDEBUG に依らず報告する）
+            if (!instance || !Ecs::Detail::EcsCheckSerialAccess())
             {
                 return false;
             }

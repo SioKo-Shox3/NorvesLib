@@ -13,6 +13,8 @@ namespace NorvesLib::Core::Ecs
     {
         std::atomic<int32_t> g_ParallelDepth{0};
         std::atomic<uint32_t> g_UnregisteredReports{0};
+        std::atomic<uint32_t> g_ParallelAccessReports{0};
+        std::atomic<EcsParallelAccessHandler> g_ParallelAccessHandler{nullptr};
         std::atomic<EcsUnregisteredColumnHandler> g_UnregisteredHandler{nullptr};
     }
 
@@ -33,6 +35,28 @@ namespace NorvesLib::Core::Ecs
         bool EcsIsParallelActive()
         {
             return g_ParallelDepth.load(std::memory_order_acquire) > 0;
+        }
+
+        bool EcsCheckSerialAccess()
+        {
+#if NORVES_BUILD_DEVELOPMENT
+            if (!EcsIsParallelActive())
+            {
+                return true;
+            }
+            g_ParallelAccessReports.fetch_add(1, std::memory_order_relaxed);
+            if (const EcsParallelAccessHandler handler = g_ParallelAccessHandler.load(std::memory_order_acquire))
+            {
+                handler();
+                return false;
+            }
+            // RelWithDebInfo は NDEBUG で assert が消えるため、assert に頼らず止める
+            std::fputs("ECS_PARALLEL_PROPERTY_ACCESS ECS_PROPERTY を並列の中で読み書きした。GameThread かつ並列の外だけが触ること\n", stderr);
+            std::fflush(stderr);
+            std::abort();
+#else
+            return true;
+#endif
         }
 
         void EcsReportUnregisteredColumn()
@@ -57,6 +81,16 @@ namespace NorvesLib::Core::Ecs
         return g_UnregisteredHandler.exchange(handler, std::memory_order_acq_rel);
     }
 
+    EcsParallelAccessHandler EcsSetParallelAccessHandler(EcsParallelAccessHandler handler)
+    {
+        return g_ParallelAccessHandler.exchange(handler, std::memory_order_acq_rel);
+    }
+
+    uint32_t EcsGetParallelAccessReportCount()
+    {
+        return g_ParallelAccessReports.load(std::memory_order_relaxed);
+    }
+
     uint32_t EcsGetUnregisteredColumnReportCount()
     {
         return g_UnregisteredReports.load(std::memory_order_relaxed);
@@ -64,8 +98,7 @@ namespace NorvesLib::Core::Ecs
 
     const void *EcsGetColumnPartPtr(const EcsRowRef &row, TypeId column, uint32_t offset, uint32_t size)
     {
-        assert(!Detail::EcsIsParallelActive() && "ECS_PROPERTY は並列の外の GameThread だけが触る");
-        if (!row.IsBound())
+        if (!Detail::EcsCheckSerialAccess() || !row.IsBound())
         {
             return nullptr;
         }
@@ -86,7 +119,7 @@ namespace NorvesLib::Core::Ecs
 
     bool EcsRowHasColumn(const EcsRowRef &row, TypeId column)
     {
-        return row.IsBound() && static_cast<const EcsWorld *>(row.World)->GetColumnValue(row.Entity, column) != nullptr;
+        return Detail::EcsCheckSerialAccess() && row.IsBound() && static_cast<const EcsWorld *>(row.World)->GetColumnValue(row.Entity, column) != nullptr;
     }
 
     bool EcsReadColumnPart(const EcsRowRef &row, TypeId column, uint32_t offset, uint32_t size, void *out)
@@ -102,8 +135,7 @@ namespace NorvesLib::Core::Ecs
 
     bool EcsWriteColumnPart(const EcsRowRef &row, TypeId column, uint32_t offset, uint32_t size, const void *value)
     {
-        assert(!Detail::EcsIsParallelActive() && "ECS_PROPERTY は並列の外の GameThread だけが触る");
-        return row.IsBound() && row.World->WriteColumnPart(row.Entity, column, offset, size, value);
+        return Detail::EcsCheckSerialAccess() && row.IsBound() && row.World->WriteColumnPart(row.Entity, column, offset, size, value);
     }
 
 }

@@ -346,6 +346,62 @@ namespace
         assert(columnPtr != fallbackPtr);
     }
 
+    // 並列の中で数えるだけのハンドラ（abort の代わり）
+    void CountOnlyParallelAccess() {}
+
+    // 並列の中の読み書きは、行あり（列）・行なし（予備）のどちらも拒否される（開発ビルドは NDEBUG に依らず報告する）
+    void TestParallelAccessRejected()
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        ProbeWorld probeWorld;
+        const EcsEntity row = probeWorld.NewRow();
+        EcsPropertyProbe bound;
+        EcsPropertyProbe loose;
+        bound.BindRow(probeWorld.World, row);
+        assert(bound.getProbeSpin().Get() == 0.0f);
+        bound.getProbeSpin() = 42.0f;
+        loose.getProbeSpin() = 3.0f;
+        probeWorld.Drain();
+
+        const ClassProperty *spin = FindProperty("ProbeSpin");
+        const EcsParallelAccessHandler previous = EcsSetParallelAccessHandler(&CountOnlyParallelAccess);
+        {
+            // 列: 並列の中の書き込みは失敗し、列の値も版も変わらない
+            const uint64_t version = probeWorld.World.GetRowVersion(row, probeWorld.Column);
+            const uint32_t before = EcsGetParallelAccessReportCount();
+            {
+                EcsParallelScope scope;
+                assert(!spin->ApplyValue(&bound, PropertyValue::Create<float>(9.0f)));
+                assert(EcsGetParallelAccessReportCount() > before);
+                // 列の読み取りも拒否され、列の値は読めない
+                const void *columnPtr = spin->GetValuePtr(static_cast<const NorvesLib::Core::IUnknown *>(&bound));
+                assert(columnPtr != &probeWorld.Value(row).Spin);
+            }
+            assert(probeWorld.Value(row).Spin == 42.0f);
+            assert(probeWorld.World.GetRowVersion(row, probeWorld.Column) == version);
+            assert(probeWorld.Drain() == 0);
+
+            // 予備: 行が無くても並列の中の書き込みは失敗し、予備の値が変わらない
+            const uint32_t beforeFallback = EcsGetParallelAccessReportCount();
+            {
+                EcsParallelScope scope;
+                assert(!spin->ApplyValue(&loose, PropertyValue::Create<float>(9.0f)));
+                assert(!spin->CopyValueFrom(&loose, &bound));
+                spin->ApplyDefaultValue(&loose);
+                assert(EcsGetParallelAccessReportCount() > beforeFallback);
+            }
+            assert(loose.getProbeSpin().Get() == 3.0f);
+
+            // 並列の外に戻れば、どちらも書ける
+            assert(spin->ApplyValue(&loose, PropertyValue::Create<float>(9.0f)));
+            assert(loose.getProbeSpin().Get() == 9.0f);
+            assert(spin->ApplyValue(&bound, PropertyValue::Create<float>(9.0f)));
+            assert(probeWorld.Value(row).Spin == 9.0f);
+        }
+        EcsSetParallelAccessHandler(previous);
+#endif
+    }
+
     void TestSnapshotAndSerializedRoundTrip()
     {
         ProbeWorld probeWorld;
@@ -451,6 +507,7 @@ int main()
     TestValueMovesFallbackToColumnToFallback();
     TestWritesStampVersions();
     TestMutableValuePtrIsNull();
+    TestParallelAccessRejected();
     TestSnapshotAndSerializedRoundTrip();
     std::cout << "EcsPropertyStorageTest 合格\n";
     return 0;

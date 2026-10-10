@@ -198,7 +198,7 @@ public:                                                                         
                                                typename TEcsColumnProperty<PropertyType>::ConstFallback constFallback)
         {
             const IClass *propertyTypeClass = nullptr;
-            auto property = std::make_shared<TEcsColumnProperty<PropertyType>>(
+            auto property = Container::MakeShared<TEcsColumnProperty<PropertyType>>(
                 Identity(name), propertyTypeClass, size, flags, columnType, fieldOffset, rowGetter, mutableFallback, constFallback);
 
             m_Properties.push_back(property);

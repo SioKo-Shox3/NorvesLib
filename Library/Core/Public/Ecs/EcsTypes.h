@@ -81,6 +81,10 @@ namespace NorvesLib::Core::Ecs
         void EcsLeaveParallel();
         [[nodiscard]] bool EcsIsParallelActive();
 
+        /// ECS_PROPERTY の読み書きの前に通す共通の検査。並列の中なら報告して false を返す（開発ビルドだけ。
+        /// ハンドラが無ければ abort する。NDEBUG に依存しない）。false のときは呼び出し側が列にも予備にも触らない。
+        [[nodiscard]] bool EcsCheckSerialAccess();
+
         /// 並列の中で未登録の列の型が使われたときの報告。開発ビルドでは assert する（ハンドラがあればそれを呼ぶ）。
         void EcsReportUnregisteredColumn();
 
@@ -107,7 +111,7 @@ namespace NorvesLib::Core::Ecs
         EcsParallelScope &operator=(const EcsParallelScope &) = delete;
     };
 
-    // ---- ECS_PROPERTY の読み書き口（GameThread かつ並列の外だけ。並列の中で呼ぶと assert する） ----
+    // ---- ECS_PROPERTY の読み書き口（GameThread かつ並列の外だけ。並列の中で呼ぶと開発ビルドでは報告し、失敗を返す） ----
 
     /// 行の列 column の [offset, offset + size) を out へ写す。行が無い・生きていない・その列を持たない・範囲が列の外なら false。
     [[nodiscard]] bool EcsReadColumnPart(const EcsRowRef &row, TypeId column, uint32_t offset, uint32_t size, void *out);
@@ -125,6 +129,14 @@ namespace NorvesLib::Core::Ecs
 
     /// 未登録の報告を assert の代わりに受けるハンドラを差し替える（テスト用）。前のハンドラを返す。
     EcsUnregisteredColumnHandler EcsSetUnregisteredColumnHandler(EcsUnregisteredColumnHandler handler);
+
+    using EcsParallelAccessHandler = void (*)();
+
+    /// 並列の中での ECS_PROPERTY の読み書きの報告を abort の代わりに受けるハンドラを差し替える（テスト用）。前のハンドラを返す。
+    EcsParallelAccessHandler EcsSetParallelAccessHandler(EcsParallelAccessHandler handler);
+
+    /// 並列の中で ECS_PROPERTY の読み書きが試みられた回数
+    [[nodiscard]] uint32_t EcsGetParallelAccessReportCount();
 
     /// 並列の中で未登録の列の型が使われた回数
     [[nodiscard]] uint32_t EcsGetUnregisteredColumnReportCount();
