@@ -870,3 +870,4 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 1 万本の同条件（`-2-ref10k.txt`）: `RenderGraph.Execute` 8.646 ms、`rt` median 12.872 ms → `rt` の 3万/1万 比 = 3.13（基準 ≤ 3.5）。
 - 比較: バナナ 1 万本は `SCN-MEGA-BASE` と pass（PSNR 65.35 dB、輝度差 0.0001、`-3.txt`）、起動画面の決定的比較は 3 視点とも pass（輝度差 0、PSNR 100、`-4.txt`）。
 - Notes: ビルド（`-1.txt`）は PowerShell から実行（Git Bash は `/m:1` をパスに変換して失敗する）。3万本の gt は 548 ms と GameThread 側が重い（別の線形処理が残っている可能性。このタスクの範囲外）。
+- 反復 13（評価者の差し戻しへの対応）: 起動画面の比較は `CaptureStartupScene.ps1` の既定の Debug の `Game.exe` を撮るが、直前の Debug は変更前の実装だった（`MegaGeometryPass.obj` が古い）。`cmake --build build --config Debug --target Game -- /m:1` で再ビルドしてから（obj 17:58:40・exe 17:58:49 でソース 17:40:50 より新しい）、起動画面の決定的比較を再実行した。3 視点とも pass（輝度差 0、PSNR 100、不一致画素率は最大 1.1E-05・最大チャネル差 1）。`TASKS.md` の verify に Debug ビルドを足した。証拠: `verify-SCN-MEGA-SETUP-LINEAR-13-debugbuild.txt`（EXIT=0）、`-13-startup.txt`（`result=pass`）。実装コードは変えていない。

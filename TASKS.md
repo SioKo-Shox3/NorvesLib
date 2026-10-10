@@ -161,6 +161,7 @@
 - status: done
 - done-when: 3万本 overview で `RenderGraph.Execute` の中央値 ≤ 60 ms（前は 313.9）、`rt` の median の 3万/1万 比が 3.5 以下。バナナと起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=30000 -OutDir .harness/runs/scene-capture/SCN-MEGA-SETUP-LINEAR`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-SETUP-LINEAR/det`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE -OutDir .harness/runs/startup-capture/SCN-MEGA-SETUP-LINEAR`
