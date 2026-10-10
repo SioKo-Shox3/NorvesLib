@@ -15,8 +15,8 @@ int main()
     alignas(64) unsigned char identities[4][64]{};
     auto* ownerA = reinterpret_cast<Entity*>(identities[0]);
     auto* ownerB = reinterpret_cast<Entity*>(identities[1]);
-    auto* targetA = reinterpret_cast<Component::Component*>(identities[2]);
-    auto* targetB = reinterpret_cast<Component::Component*>(identities[3]);
+    auto* targetA = reinterpret_cast<NorvesLib::Core::Component::Component*>(identities[2]);
+    auto* targetB = reinterpret_cast<NorvesLib::Core::Component::Component*>(identities[3]);
     TickDispatchEntry entries[] = {
         {ownerB, targetB, ETickGroup::Camera, ETickGroup::Camera, -100, 4},
         {ownerB, targetB, ETickGroup::Default, ETickGroup::Default, 0, 3},

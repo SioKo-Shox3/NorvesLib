@@ -199,11 +199,8 @@ namespace
         auto* root = world.SpawnEntity<Entity>();
         auto* child = world.SpawnEntity<Entity>(root);
         auto* grandchild = world.SpawnEntity<Entity>(child);
-        NorvesLib::Math::Transform local = NorvesLib::Math::Transform::Identity;
-        local.position.x = 1;
-        child->SetLocalTransform(local);
-        local.position.x = 2;
-        grandchild->SetLocalTransform(local);
+        child->SetLocalPosition(1, 0, 0);
+        grandchild->SetLocalPosition(2, 0, 0);
         world.UpdateWorldTransforms();
         assert(grandchild->GetWorldTransform().position.x == 3);
         // フレーム前の変更も最初のInput群から読む。親ありdirtyは確定までは旧値。
@@ -255,9 +252,7 @@ namespace
         world.Initialize();
         auto* root = world.SpawnEntity<Entity>();
         auto* child = world.SpawnEntity<Entity>(root);
-        auto local = NorvesLib::Math::Transform::Identity;
-        local.position.x = 2;
-        child->SetLocalTransform(local);
+        child->SetLocalPosition(2, 0, 0);
         auto* mover = world.CreateComponent<TransformBoundaryComponent>(root);
         mover->SetTickGroup(ETickGroup::Movement);
         mover->MoveTarget = root;

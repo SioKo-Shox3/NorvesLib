@@ -151,6 +151,7 @@ set(PRIVATE_SOURCES
     Private/Debug/DebugOutput.cpp
     Private/Debug/EngineChecks.cpp
     Private/Debug/Stats.cpp
+    Private/Ecs/EcsWorld.cpp
     Private/EngineGlobals/MemoryOverrides.cpp
     Private/Platform/Windows/WindowsApplication.cpp
     Private/Platform/Windows/XInputStateConversion.h
@@ -483,6 +484,8 @@ set(PUBLIC_HEADERS
     Public/Debug/DebugOutput.h
     Public/Debug/EngineChecks.h
     Public/Debug/Stats.h
+    Public/Ecs/EcsTypes.h
+    Public/Ecs/EcsWorld.h
     Public/EngineGlobals/MemoryOverrides.h
     Public/Platform/NativeWindowHandle.h
     Public/Platform/PlatformGraphics.h

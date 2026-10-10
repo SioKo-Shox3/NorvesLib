@@ -14,6 +14,16 @@
 #include <cmath>
 #include <iostream>
 
+namespace NorvesLib::Core
+{
+    // World の固定ステップ送りは非公開。WorldTickGroupTest.cpp の同名の友達構造体と同じ定義にそろえる。
+    struct WorldTickGroupTestAccess
+    {
+        static void Fixed(World& world) { world.DispatchFixedTick(1.0f / 60.0f); }
+        static void Cleanup(World& world) { world.CleanupAfterFixedStep(); }
+    };
+}
+
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Component;
 using namespace NorvesLib::Core::Input;
@@ -60,7 +70,7 @@ namespace
     {
         SpringArmComponent direct;
         SpringArmComponent initialized(static_cast<const FieldInitializer*>(nullptr));
-        SpringArmComponent copied(static_cast<const IUnknown*>(nullptr));
+        SpringArmComponent copied(static_cast<const NorvesLib::Core::IUnknown*>(nullptr));
         assert(direct.GetTickGroup() == ETickGroup::Camera);
         assert(initialized.GetTickGroup() == ETickGroup::Camera);
         assert(copied.GetTickGroup() == ETickGroup::Camera);
@@ -92,15 +102,15 @@ namespace
             assert(IsNearlyEqual(owner->GetPosition(), initialPosition));
             for (uint32_t step = 0; step < steps; ++step)
             {
-                world.DispatchFixedTick(1.0f / 60.0f);
+                WorldTickGroupTestAccess::Fixed(world);
                 world.UpdateWorldTransforms();
-                world.CleanupAfterFixedStep();
+                WorldTickGroupTestAccess::Cleanup(world);
             }
             world.LateTick(0.016f);
             // helperの追加refreshに頼らず、Camera群自体がchildのlocalへ書いたことを確認する。
-            assert(IsNearlyEqual(owner->GetLocalPosition().x,
+            assert(IsNearlyEqual(owner->GetLocalTransform().position.x,
                 -10.0f + (steps == 0 ? 2.0f : static_cast<float>(steps))));
-            assert(IsNearlyEqual(owner->GetLocalPosition().z, 4.0f));
+            assert(IsNearlyEqual(owner->GetLocalTransform().position.z, 4.0f));
             Rendering::CameraProxy proxy;
             assert(state.BuildSnapshot(world, proxy));
             assert(IsNearlyEqual(proxy.PositionX, 10.0f + (steps == 0 ? 2.0f : static_cast<float>(steps))));

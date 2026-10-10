@@ -241,7 +241,7 @@
 - paths: Library/Core/Public/Debug, Library/Core/Private/Debug, Library/Core/CMakeLists.txt, Game/GameApplicationHandler.cpp, Scripts/CaptureScene.ps1, Scripts/CaptureStartupScene.ps1, Scripts/RunSceneCycleSmoke.ps1, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-CORE-CHUNKS: 実体の表・アーキタイプ・16 KB のチャンク・行の作成と削除を足す
-- status: todo
+- status: done
 - done-when: 設計 1.2・1.3 の実体の表・アーキタイプ・チャンク・行の作成と削除（末尾との入れ替え）・まとめての作成が入る。`EcsStorageTest`（EntityTreeTest の束）が次を確かめる: Generation で古い識別子を拒む、チャンクを解放して再利用できる、100万行を作って消すと行とチャンクの数が元に戻る。まだどこからも使わない。
 - verify: `cmake --build build --config Debug --target EntityTreeTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^EcsStorageTest$" --no-tests=error --output-on-failure --timeout 180`
