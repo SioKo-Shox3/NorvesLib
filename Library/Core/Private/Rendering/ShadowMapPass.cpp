@@ -9,6 +9,7 @@
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
+#include "Rendering/VirtualShadowMapPass.h"
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
@@ -942,7 +943,24 @@ namespace NorvesLib::Core::Rendering
             m_SceneRenderer &&
             (meshes || context.SkinnedMeshes) &&
             !drawCommands.empty();
-        const bool bCanDrawMegaCasters = cascadedShadowMatrices.bEnabled && !megaCasters.empty();
+        // 太陽の影を VSM が受け持つ間は、CSM へ MegaGeometry を描かない。CSM を読む物（半透明・ボリュームのフォグ・検証表示・
+        // 影の測定）が無いときだけ。MegaGeometry の描画は（インスタンス数 × 根の段の三角形数 × カスケード数）で増え、
+        // 1 万本のバナナでは CSM だけでフレームの GPU 時間の約 6 割になる。カスケードの行列は変えない（上の境界の計算に含めたまま）
+        const bool bVsmOwnsSunShadow =
+            m_ShadowMethod == ShadowMethod::Vsm && m_pSunVsmPass != nullptr && m_pSunVsmPass->IsActive() &&
+            context.PhysicalLighting.SunClipmap.bEnabled && context.GetActiveTransparentCommands().empty() &&
+            !(context.SnapshotScene != nullptr && context.SnapshotScene->VolumetricFog.bEnabled) &&
+            context.GetActiveDebugMode() == DebugViewMode::Normal;
+        const bool bSkipMegaCasters = bVsmOwnsSunShadow && !megaCasters.empty();
+        if (bSkipMegaCasters != m_bLoggedCsmMegaSkipped)
+        {
+            m_bLoggedCsmMegaSkipped = bSkipMegaCasters;
+            NORVES_LOG_INFO("ShadowMapPass",
+                            "CSM_MEGA_SKIPPED skipped=%d reason=vsm_owns_sun casters=%u",
+                            bSkipMegaCasters ? 1 : 0,
+                            static_cast<uint32_t>(megaCasters.size()));
+        }
+        const bool bCanDrawMegaCasters = cascadedShadowMatrices.bEnabled && !megaCasters.empty() && !bSkipMegaCasters;
 
         if (bCanBuildShadowCommands || bCanDrawMegaCasters)
         {

@@ -15,6 +15,14 @@
 #   欠けの検出は2つ。シーンの定義の必要な資産は Game が --scene-report で書く報告（<視点>.SceneReport.txt）から読むので、
 #   ログを書かない Release でも検査できる。Rendering3DTest が読み込み失敗で出す印（COOKED_MODEL_MISSING など）は
 #   Game.log からだけ読むので、Debug・RelWithDebInfo で効く。
+# -GpuTimingFrames を与えると、決定的な撮影ではなく実時間の計測にする。Game を --trace-file 付きで起動し、落ち着いてから
+# その描画フレーム数の後に撮る（--exit-after-rendered-frames）。トレースの FrameGPU（GPU のタイムスタンプで測ったフレームの
+# 区間）の最後の (-GpuTimingFrames − 60) フレーム（撮影のフレームの直前2つを除く）の中央値・平均・95 パーセンタイル・最大と、
+# パスごとの中央値を gpu_timing として metrics.json へ書く（CaptureStartupScene.ps1 の -GpuTimingFrames と同じ測り方）。
+# 決定的な撮影ではないので、SCENE_READY の照合はしない（シーンの組み立ての完了は待たず、描画フレーム数で落ち着かせる）。
+# 同じ撮影のログから、描いたクラスタ数（MEGA_OCCLUSION の pass1 + pass2_drawn の最後の行）・MegaGeometry のバッファの大きさ
+# （MEGA_CAPACITY）・ジオメトリのプールの使用量（VRAM_POOLS の geometry_used_mb）を mega_stats として書く。
+# 統計が無効な Release は GPU のタイムスタンプを取れないので併用しない（RelWithDebInfo で測る）。
 #
 # 失敗にするもの（終了コード 1）: Game の起動失敗・終了コードが0でない・タイムアウト、PNG が無い・大きさが違う、
 # Game.log のシェーダーのコンパイル失敗（Slang SDK 未設定の neural_material_decode.slang だけは既知として除外）、
@@ -38,7 +46,13 @@ param(
     [string[]]$GameArgs = @(),
     [switch]$RequireAssets,
     [ValidateRange(10, 3600)]
-    [int]$TimeoutSeconds = 300
+    [int]$TimeoutSeconds = 300,
+    # GPU のフレーム時間を測るときの、落ち着いてから撮るまでの描画フレーム数（0 で測らず、決定的な撮影にする）。
+    [ValidateRange(0, 100000)]
+    [int]$GpuTimingFrames = 0,
+    # GPU のフレーム時間の予算（ms）。超えても失敗にはせず、metrics.json に within_budget として書く。
+    [ValidateRange(0.1, 1000.0)]
+    [double]$GpuFrameBudgetMs = 16.6
 )
 
 $ErrorActionPreference = 'Stop'
@@ -57,6 +71,17 @@ if (($Width -gt 0) -ne ($Height -gt 0))
 if ($Width -gt 0 -and ($Width -lt 64 -or $Height -lt 64))
 {
     Write-Output 'CAPTURE_SCENE result=fail reason=window_size_too_small min=64'
+    exit 1
+}
+
+if ($GpuTimingFrames -gt 0 -and $GpuTimingFrames -lt 100)
+{
+    Write-Output 'CAPTURE_SCENE result=fail reason=gpu_timing_frames_too_few（-GpuTimingFrames は100以上）'
+    exit 1
+}
+if ($GpuTimingFrames -gt 0 -and $Configuration -eq 'Release')
+{
+    Write-Output 'CAPTURE_SCENE result=fail reason=gpu_timing_without_stats（Release は統計が無効で GPU のタイムスタンプを取れない。-Configuration RelWithDebInfo で測る）'
     exit 1
 }
 
@@ -162,6 +187,159 @@ function Stop-OwnedProcessTree([int]$ProcessId)
     & taskkill.exe /PID $ProcessId /T /F 2>&1 | Out-Null
 }
 
+# トレース（--trace-file の CSV）から GPU のフレーム時間を集計する。Type=GPU の行は描画したフレームごとの FrameGPU と
+# パスごとの区間（Frame 列は区間を記録したフレームの番号）。撮影のフレームの直前2つを除いた最後の窓を使う。
+function Get-GpuTimingFromTrace([string]$TracePath, [int]$Frames, [double]$BudgetMs)
+{
+    $header = @((Get-Content -LiteralPath $TracePath -TotalCount 1) -split ',')
+    $nameColumn = [array]::IndexOf($header, 'Name')
+    $durationColumn = [array]::IndexOf($header, 'DurationMs')
+    $renderFrameColumn = [array]::IndexOf($header, 'RenderFrameMs')
+    $cpuFrameColumn = [array]::IndexOf($header, 'CPUFrameMs')
+    $cpuRows = New-Object System.Collections.Generic.List[double]
+    $gpuScopesByFrame = New-Object 'System.Collections.Generic.SortedDictionary[long,object]'
+    foreach ($line in [IO.File]::ReadLines($TracePath))
+    {
+        if ($line.StartsWith('Frame,'))
+        {
+            $fields = $line -split ','
+            if ([double]::Parse($fields[$renderFrameColumn], $invariant) -le 0.0) { continue }
+            $cpuRows.Add([double]::Parse($fields[$cpuFrameColumn], $invariant))
+        }
+        elseif ($line.StartsWith('GPU,'))
+        {
+            $fields = $line -split ','
+            $frameNumber = [long]$fields[1]
+            if (-not $gpuScopesByFrame.ContainsKey($frameNumber))
+            {
+                $gpuScopesByFrame[$frameNumber] = New-Object 'System.Collections.Generic.List[object]'
+            }
+            $gpuScopesByFrame[$frameNumber].Add([pscustomobject]@{
+                Name = $fields[$nameColumn].Trim('"')
+                Ms = [double]::Parse($fields[$durationColumn], $invariant)
+            })
+        }
+    }
+    $windowCount = $Frames - 60
+    $cpuArray = $cpuRows.ToArray()
+    $cpuUsable = if ($cpuArray.Count -gt 2) { @($cpuArray[0..($cpuArray.Count - 3)]) } else { @() }
+    $cpuWindow = if ($cpuUsable.Count -gt $windowCount) { @($cpuUsable[($cpuUsable.Count - $windowCount)..($cpuUsable.Count - 1)]) } else { $cpuUsable }
+    $cpuSamples = @($cpuWindow | Where-Object { $_ -gt 0.0 } | Sort-Object)
+    $gpuFrames = @($gpuScopesByFrame.Keys | Where-Object { @($gpuScopesByFrame[$_] | Where-Object { $_.Name -eq 'FrameGPU' -and $_.Ms -gt 0.0 }).Count -gt 0 })
+    $gpuUsable = if ($gpuFrames.Count -gt 2) { @($gpuFrames[0..($gpuFrames.Count - 3)]) } else { @() }
+    $gpuWindow = if ($gpuUsable.Count -gt $windowCount) { @($gpuUsable[($gpuUsable.Count - $windowCount)..($gpuUsable.Count - 1)]) } else { $gpuUsable }
+    $gpuFrameMs = @{}
+    $passSamples = @{}
+    foreach ($frameNumber in $gpuWindow)
+    {
+        foreach ($scope in $gpuScopesByFrame[$frameNumber])
+        {
+            if ($scope.Name -eq 'FrameGPU') { $gpuFrameMs[$frameNumber] = $scope.Ms; continue }
+            if (-not $passSamples.ContainsKey($scope.Name)) { $passSamples[$scope.Name] = New-Object System.Collections.Generic.List[double] }
+            $passSamples[$scope.Name].Add($scope.Ms)
+        }
+    }
+    $gpuSamples = @($gpuWindow | ForEach-Object { $gpuFrameMs[$_] } | Sort-Object)
+    if ($gpuSamples.Count -lt [math]::Min(50, $windowCount))
+    {
+        return [pscustomobject]@{ Error = "GPU のフレーム時間の標本が足りない（$($gpuSamples.Count) 件。統計が無効な構成か、GPU のタイムスタンプが使えない）"; Timing = $null }
+    }
+    $maximum = $gpuSamples[$gpuSamples.Count - 1]
+    $passMedianList = @($passSamples.Keys | ForEach-Object {
+        $sortedPass = @($passSamples[$_] | Sort-Object)
+        [pscustomobject][ordered]@{ pass = $_; median_ms = [math]::Round($sortedPass[[int][math]::Floor(($sortedPass.Count - 1) * 0.5)], 3) }
+    } | Sort-Object -Property median_ms -Descending)
+    $timing = [ordered]@{
+        trace = [IO.Path]::GetFileName($TracePath)
+        frames = $gpuSamples.Count
+        gpu_frame_ms_median = [math]::Round($gpuSamples[[int][math]::Floor(($gpuSamples.Count - 1) * 0.5)], 3)
+        gpu_frame_ms_mean = [math]::Round(($gpuSamples | Measure-Object -Average).Average, 3)
+        gpu_frame_ms_p95 = [math]::Round($gpuSamples[[int][math]::Floor(($gpuSamples.Count - 1) * 0.95)], 3)
+        gpu_frame_ms_max = [math]::Round($maximum, 3)
+        cpu_frame_ms_median = if ($cpuSamples.Count -gt 0) { [math]::Round($cpuSamples[[int][math]::Floor(($cpuSamples.Count - 1) * 0.5)], 3) } else { $null }
+        budget_ms = $BudgetMs
+        within_budget = ($maximum -le $BudgetMs)
+        pass_median_ms = $passMedianList
+    }
+    return [pscustomobject]@{ Error = $null; Timing = [pscustomobject]$timing }
+}
+
+# ログの MegaGeometry の統計（描いたクラスタ数・バッファの大きさ・ジオメトリのプールの使用量）の最後の値を読む。
+# 値が無い項目は $null。
+function Get-MegaStatsFromLog([string]$LogPath)
+{
+    $stats = [ordered]@{
+        clusters_drawn_last = $null
+        clusters_drawn_max = $null
+        draw_dropped_last = $null
+        draw_dropped_max = $null
+        visibility_bytes = $null
+        indirect_bytes = $null
+        draw_info_bytes = $null
+        bvh_queue_bytes = $null
+        sw_raster_bytes = $null
+        geometry_used_mb = $null
+        geometry_used_mb_max = $null
+        vt_used_mb_max = $null
+        shadow_map_pool_mb = $null
+        geometry_pool_capacity_mb = $null
+        sw_raster_list_mb = $null
+        visbuffer_records_mb = $null
+        visbuffer64_mb = $null
+        vsm_pool_mb = $null
+    }
+    $number = { param($line, $key) if ($line -match "(?:^|\s)$key=(\d+(?:\.\d+)?)") { [double]$Matches[1] } else { $null } }
+    foreach ($line in [IO.File]::ReadLines($LogPath))
+    {
+        if ($line.Contains('MEGA_OCCLUSION frame='))
+        {
+            $drawn = (& $number $line 'pass1') + (& $number $line 'pass2_drawn')
+            $stats.clusters_drawn_last = $drawn
+            if ($null -eq $stats.clusters_drawn_max -or $drawn -gt $stats.clusters_drawn_max) { $stats.clusters_drawn_max = $drawn }
+        }
+        elseif ($line.Contains('MEGA_CAPACITY '))
+        {
+            foreach ($key in @('visibility_bytes', 'indirect_bytes', 'draw_info_bytes', 'bvh_queue_bytes', 'sw_raster_bytes'))
+            {
+                $stats[$key] = & $number $line $key
+            }
+            $dropped = & $number $line 'draw_dropped'
+            $stats.draw_dropped_last = $dropped
+            if ($null -eq $stats.draw_dropped_max -or $dropped -gt $stats.draw_dropped_max) { $stats.draw_dropped_max = $dropped }
+        }
+        elseif ($line.Contains('VRAM_LEDGER geometry_pool '))
+        {
+            $stats.geometry_pool_capacity_mb = & $number $line 'capacity_mb'
+        }
+        elseif ($line.Contains('VRAM_LEDGER sw_raster_list '))
+        {
+            $stats.sw_raster_list_mb = & $number $line 'mb'
+        }
+        elseif ($line.Contains('VRAM_LEDGER visbuffer_records '))
+        {
+            $stats.visbuffer_records_mb = & $number $line 'mb'
+        }
+        elseif ($line.Contains('VRAM_LEDGER visbuffer64 '))
+        {
+            $stats.visbuffer64_mb = & $number $line 'mb'
+        }
+        elseif ($line.Contains('VRAM_LEDGER vsm_pool '))
+        {
+            $stats.vsm_pool_mb = & $number $line 'mb'
+        }
+        elseif ($line.Contains('VRAM_POOLS '))
+        {
+            $geometry = & $number $line 'geometry_used_mb'
+            $stats.geometry_used_mb = $geometry
+            if ($null -eq $stats.geometry_used_mb_max -or $geometry -gt $stats.geometry_used_mb_max) { $stats.geometry_used_mb_max = $geometry }
+            $vt = & $number $line 'vt_used_mb'
+            if ($null -eq $stats.vt_used_mb_max -or $vt -gt $stats.vt_used_mb_max) { $stats.vt_used_mb_max = $vt }
+            $stats.shadow_map_pool_mb = & $number $line 'shadow_map_pool_mb'
+        }
+    }
+    return [pscustomobject]$stats
+}
+
 # 資産の欠けを表す印（シーンの定義の SCENE_ASSET_MISSING と、Rendering3DTest が出す読み込み失敗の印）
 $missingAssetPattern = 'SCENE_ASSET_MISSING|COOKED_MODEL_MISSING|COOKED_MODEL_TEXTURES_MISSING|COOKED_BIG_SPHERE_MISSING|SCAN_PROP_MISSING'
 
@@ -187,7 +365,19 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         Remove-Item -LiteralPath $stale -Force -ErrorAction SilentlyContinue
     }
 
-    $arguments = @("--scene=$Scene", "--capture-png=`"$pngPath`"", "--scene-report=`"$viewReportPath`"", '--capture-deterministic')
+    $tracePath = Join-Path $outRoot "$($shot.Name).trace.csv"
+    $arguments = @("--scene=$Scene", "--capture-png=`"$pngPath`"", "--scene-report=`"$viewReportPath`"")
+    if ($GpuTimingFrames -gt 0)
+    {
+        # 実時間の計測: 決定的な撮影にせず、トレースを取って決まった描画フレーム数の後に撮る
+        Remove-Item -LiteralPath $tracePath -Force -ErrorAction SilentlyContinue
+        $arguments += "--trace-file=`"$tracePath`""
+        $arguments += "--exit-after-rendered-frames=$GpuTimingFrames"
+    }
+    else
+    {
+        $arguments += '--capture-deterministic'
+    }
     if ($shot.SceneView -ne '')
     {
         $arguments += "--scene-view=$($shot.SceneView)"
@@ -283,7 +473,8 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
     if (Test-Path -LiteralPath $viewLogPath)
     {
         $sceneReady = @(Select-String -LiteralPath $viewLogPath -Pattern "SCENE_READY scene=$Scene\s*$").Count -gt 0
-        if (-not $sceneReady)
+        # SCENE_READY は決定的な撮影のときだけ出る（実時間の計測では出ないので照合しない）
+        if (-not $sceneReady -and $GpuTimingFrames -le 0)
         {
             $failures += "$($shot.Name): SCENE_READY（シーンの組み立ての完了）がログに無い"
         }
@@ -342,6 +533,32 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         $failures += "$($shot.Name): 検証レイヤーのログ（$($shot.Name).Validation.log）が無い（検証レイヤーがログの設定を読んでいない）"
     }
 
+    $gpuTiming = $null
+    $megaStats = $null
+    if ($GpuTimingFrames -gt 0)
+    {
+        if (-not (Test-Path -LiteralPath $tracePath))
+        {
+            $failures += "$($shot.Name): トレースが無い（$tracePath）"
+        }
+        else
+        {
+            $timingResult = Get-GpuTimingFromTrace $tracePath $GpuTimingFrames $GpuFrameBudgetMs
+            if ($null -ne $timingResult.Error)
+            {
+                $failures += "$($shot.Name): $($timingResult.Error)"
+            }
+            else
+            {
+                $gpuTiming = $timingResult.Timing
+            }
+        }
+        if (Test-Path -LiteralPath $viewLogPath)
+        {
+            $megaStats = Get-MegaStatsFromLog $viewLogPath
+        }
+    }
+
     if (-not (Test-Path -LiteralPath $pngPath))
     {
         $failures += "$($shot.Name): PNG が無い"
@@ -366,10 +583,28 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         scene_ready = $sceneReady
         missing_assets = $missingAssets.Count
         vulkan_validation = $validationInfo
+        gpu_timing = $gpuTiming
+        mega_stats = $megaStats
     }
     $results += [pscustomobject]$result
     Write-Output ("CAPTURE_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5}" -f `
         $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio)
+    if ($null -ne $gpuTiming)
+    {
+        Write-Output ("CAPTURE_SCENE gpu_timing view={0} frames={1} median_ms={2} mean_ms={3} p95_ms={4} max_ms={5} cpu_median_ms={6} budget_ms={7} within_budget={8}" -f `
+            $result.view, $gpuTiming.frames, $gpuTiming.gpu_frame_ms_median, $gpuTiming.gpu_frame_ms_mean, $gpuTiming.gpu_frame_ms_p95,
+            $gpuTiming.gpu_frame_ms_max, $gpuTiming.cpu_frame_ms_median, $gpuTiming.budget_ms, $gpuTiming.within_budget)
+        Write-Output ("CAPTURE_SCENE gpu_pass_median view={0} {1}" -f $result.view,
+            (($gpuTiming.pass_median_ms | Select-Object -First 10 | ForEach-Object { "$($_.pass)=$($_.median_ms)" }) -join ' '))
+    }
+    if ($null -ne $megaStats)
+    {
+        Write-Output ("CAPTURE_SCENE mega_stats view={0} clusters_drawn_last={1} clusters_drawn_max={2} draw_dropped_last={3} draw_dropped_max={4} geometry_used_mb={5} geometry_pool_capacity_mb={6} vt_used_mb_max={7} shadow_map_pool_mb={8} visibility_bytes={9} indirect_bytes={10} draw_info_bytes={11} bvh_queue_bytes={12} sw_raster_bytes={13} sw_raster_list_mb={14} visbuffer_records_mb={15} visbuffer64_mb={16} vsm_pool_mb={17}" -f `
+            $result.view, $megaStats.clusters_drawn_last, $megaStats.clusters_drawn_max, $megaStats.draw_dropped_last, $megaStats.draw_dropped_max, $megaStats.geometry_used_mb,
+            $megaStats.geometry_pool_capacity_mb, $megaStats.vt_used_mb_max, $megaStats.shadow_map_pool_mb, $megaStats.visibility_bytes, $megaStats.indirect_bytes,
+            $megaStats.draw_info_bytes, $megaStats.bvh_queue_bytes, $megaStats.sw_raster_bytes, $megaStats.sw_raster_list_mb, $megaStats.visbuffer_records_mb,
+            $megaStats.visbuffer64_mb, $megaStats.vsm_pool_mb)
+    }
 }
 
 $metrics = [ordered]@{
@@ -378,6 +613,7 @@ $metrics = [ordered]@{
     window_size = if ($Width -gt 0) { "${Width}x${Height}" } else { $null }
     game_args = $extraArguments
     require_assets = [bool]$RequireAssets
+    gpu_timing_frames = $GpuTimingFrames
     views = $results
     failures = $failures
 }

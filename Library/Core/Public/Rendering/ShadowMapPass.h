@@ -16,6 +16,7 @@ using namespace NorvesLib::Core::Container;
 namespace NorvesLib::Core::Rendering
 {
     class SceneView;
+    class VirtualShadowMapPass;
     struct SkinnedRenderPathContractTestAccess;
 
     /**
@@ -138,6 +139,14 @@ namespace NorvesLib::Core::Rendering
         void SetShadowMethod(ShadowMethod method) { m_ShadowMethod = method; }
         ShadowMethod GetShadowMethod() const { return m_ShadowMethod; }
 
+        /**
+         * @brief 太陽の影を物理ページ（VSM）で描くパス（外部所有。nullptr なら CSM に MegaGeometry を常に描く）
+         *
+         * 太陽の影を VSM が受け持つ間（パスが有効で、半透明・ボリュームのフォグ・検証表示・影の測定のように CSM を読む物が無いとき）は、
+         * CSM へ MegaGeometry を描かない。MegaGeometry のインスタンス数 × 根の段の三角形数 × カスケード数の描画を省くため。
+         */
+        void SetSunVsmPass(const VirtualShadowMapPass* pass) { m_pSunVsmPass = pass; }
+
         RHI::ITexture* GetShadowMapTexture() const { return m_ShadowMapTexture.get(); }
         RGResourceHandle GetShadowMapHandle() const { return m_ShadowMapHandle; }
         RHI::ITexture* GetPointShadowCubeTexture() const { return m_PointShadowCubeTexture.get(); }
@@ -185,6 +194,10 @@ namespace NorvesLib::Core::Rendering
         bool m_bRegisterLegacyBridge = true;
 
         ShadowMethod m_ShadowMethod = ShadowMethod::Csm;
+        // 太陽の影を受け持つ VSM のパス（外部所有）。SetSunVsmPass を参照
+        const VirtualShadowMapPass* m_pSunVsmPass = nullptr;
+        // CSM_MEGA_SKIPPED を出したか（省いた間は 1 回だけ出し、描き戻したら出し直す）
+        bool m_bLoggedCsmMegaSkipped = false;
         // VSM_CLIPMAP / VSM_TEXEL を出したか（起動後に 1 回だけ出す）
         bool m_bLoggedVsmClipmap = false;
 

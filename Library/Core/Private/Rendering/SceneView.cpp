@@ -860,6 +860,7 @@ namespace NorvesLib::Core::Rendering
         // ShadowMapPass: ライト視点の深度描画
         ShadowMapPassSettings shadowSettings;
         auto shadowMapPass = MakeUnique<ShadowMapPass>(shadowSettings);
+        ShadowMapPass* shadowMapPassPtr = shadowMapPass.get();
         shadowMapPass->SetSceneView(this);
         shadowMapPass->SetSceneRenderer(sceneRenderer);
         shadowMapPass->SetRegisterLegacyBridge(false);
@@ -971,6 +972,11 @@ namespace NorvesLib::Core::Rendering
             // MegaGeometry の投影物（bCastShadow のインスタンス）を、展開の前に段ごとにカリングする（主の経路の入力を読み取りだけで使う）
             virtualShadowMapPass->SetMegaGeometryPass(megaGeometryPassPtr);
             virtualShadowMapPass->SetPointShadowMethod(m_PointShadowMethod);
+            // 影の測定（--shadow-probe）は CSM と VSM の両方を読んで比べるので、CSM へ MegaGeometry を描き続ける
+            if (!m_bShadowProbeEnabled)
+            {
+                shadowMapPassPtr->SetSunVsmPass(virtualShadowMapPass.get());
+            }
             AddPass(std::move(virtualShadowMapPass));
         }
         else if (m_PointShadowMethod == PointShadowMethod::Vsm)

@@ -60,7 +60,7 @@ layout(std140, set = 0, binding = 9) uniform VsmPointParams
 
 layout(set = 0, binding = 1) uniform sampler2D gbufferDepth;
 
-layout(std430, set = 0, binding = 2) buffer VsmRequestBits
+layout(std430, set = 0, binding = 2) coherent buffer VsmRequestBits
 {
     uint requestBits[];
 };
@@ -74,7 +74,13 @@ void MarkPage(VsmSlice slice, int pageX, int pageY)
     const uint index = VsmSliceEntryIndex(slice, pageX, pageY);
     const uint word = index >> 5u;
     const uint bit = 1u << (index & 31u);
-    // 同じ dispatch の中で別のスレッドが同じ語へ atomicOr するので、読んでから書く形にせず、常に atomicOr する（通常の読み取りはデータ競合になる）
+    // 要求のビットは dispatch の間に立つ一方（0 から始まり下ろさない）。coherent の読みで既に立っていれば atomicOr を省く。
+    // 読みが古くても（他のスレッドの atomicOr が見えなくても）余計な atomicOr が走るだけで、立つビットは同じ。立っていると読めたビットは必ず誰かが立てたもの。
+    // 近接の視点は画面のほぼ全画素が同じ数語へ印を付けるので、無条件の atomicOr は同じ語への直列化で 10 ms を超える
+    if ((requestBits[word] & bit) != 0u)
+    {
+        return;
+    }
     atomicOr(requestBits[word], bit);
 }
 
