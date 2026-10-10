@@ -17,6 +17,15 @@ def main():
     parser.add_argument("--views", default="")
     parser.add_argument("--timing", action="store_true")
     parser.add_argument("--configuration", default="RelWithDebInfo")
+    # 合否の閾値（節目の計測で使う）。指定したものだけを見る。単位は ms
+    limits = (
+        ("gpu_frame_ms_median", "max_gpu_median_ms"), ("gpu_frame_ms_p95", "max_gpu_p95_ms"),
+        ("game_thread_ms_median", "max_gt_median_ms"), ("game_thread_ms_p95", "max_gt_p95_ms"),
+        ("render_thread_ms_median", "max_rt_median_ms"), ("render_thread_ms_p95", "max_rt_p95_ms"),
+    )
+    for _, option in limits:
+        parser.add_argument("--" + option.replace("_", "-"), type=float, default=None)
+    parser.add_argument("--min-frames", type=int, default=0)
     args = parser.parse_args()
 
     failures = []
@@ -57,6 +66,13 @@ def main():
                         "game_thread_ms_p95", "render_thread_ms_median", "render_thread_ms_p95"):
                 if not timing.get(key):
                     failures.append("timing_missing=%s:%s" % (name, key))
+            if args.min_frames and (timing.get("frames") or 0) < args.min_frames:
+                failures.append("frames=%s:%s<%d" % (name, timing.get("frames"), args.min_frames))
+            for key, option in limits:
+                limit = getattr(args, option)
+                value = timing.get(key)
+                if limit is not None and value is not None and value > limit:
+                    failures.append("%s=%s:%.3f>%.3f" % (key, name, value, limit))
 
     if failures:
         print("CHECK_CAPTURE_METRICS result=fail " + " ".join(failures))
