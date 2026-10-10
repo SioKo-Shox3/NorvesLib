@@ -298,6 +298,22 @@ namespace NorvesLib::Core
         /// 固定ステップの後半（姿勢の確定・補間履歴の記録・破棄の回収）。Module の FixedTick の後に呼ぶ
         void EndFixedStep();
 
+        /**
+         * @brief ECS の行と Object の結び付けを照合する（段の外、GameThread から呼ぶ）
+         *
+         * - World の木にいる Entity の数と、行（EcsObjectRef を持つ行。孤児を含む）の数が一致する（1 対 1）。
+         * - 行の EcsObjectRef が Entity を指し、Entity が行の EcsEntity を覚えている。
+         * - EcsHierarchy の Parent・Depth・子の並び（FirstChild・LastChild・兄弟）が Outer/Inner と一致する。
+         * - 孤児の行と、同期点を待つ破棄の予約が残っていない。
+         * 食い違いは LOG_ERROR で理由を出す。
+         * @param outCount 照合した Entity の数
+         * @return 全部一致すれば true。段の最中なら（孤児が正当に残りうるので）照合せず true
+         */
+        bool VerifyEcsBinding(uint32_t* outCount = nullptr);
+
+        /// 結び付け（行の作成・消去・付け替え）の回数。変化があったときだけ検査を走らせるのに使う
+        uint64_t GetEcsBindingEpoch() const noexcept { return m_EcsBindingEpoch; }
+
     private:
         friend class Engine::ApplicationProcessor;
         friend class Entity;
@@ -363,6 +379,31 @@ namespace NorvesLib::Core
         const Rendering::MeshResources* m_StageMeshes = nullptr;
         /// Tick から LateTick までを 1 つの収集として開いている（参加の番号をフレームで共有する）
         bool m_bTickCollectionOpen = false;
+
+        // ---- ECS の行と Entity の結び付け（World の木にいる全 Entity に 1 行。値はまだ Object にある） ----
+        /// 部分木の行を親から順に作り、階層（親・子の並び・深さ）を結ぶ。Outer/Inner を結んだ後・BeginPlay の前に呼ぶ
+        void BindEntitySubtreeRows(Entity& entity);
+        /// 部分木の行を、解放の前に切る（親の連結から外し、子から順に孤児にして消す）。木から外す前に呼ぶ
+        void UnbindEntitySubtreeRows(Entity& entity);
+        void ReleaseEntitySubtreeRows(Entity& entity);
+        /// 行 1 つを切る: Object への参照を null にして孤児の印を付け、並列の段の外なら消す。段の最中は同期点まで待つ
+        void ReleaseEntityRow(Entity& entity);
+        /// 親を付け替えた後の階層を直す（古い親の連結から外し、新しい親の末尾へ付け、部分木の深さを直す）
+        void RelinkEntityRow(Entity& entity);
+        void LinkEntityRowToParent(Ecs::EcsEntity row, Ecs::EcsEntity parentRow);
+        void UnlinkEntityRow(Ecs::EcsEntity row);
+        void UpdateEntitySubtreeDepth(Entity& entity, uint32_t depth);
+        /// 同期点まで待たせた行を消す
+        void FlushDeferredEntityRows();
+        /// 検査 ECS_BIND: 結び付けに変化があったときだけ照合して結果を出す。最後の引数は World の終了時（行が残らない）
+        void RunEcsBindingCheck(bool bFinal);
+
+        Ecs::EcsArchetypeId m_EntityArchetype = Ecs::kInvalidEcsArchetype;
+        /// 段の最中に孤児にした行（同期点で消す）
+        Container::VariableArray<Ecs::EcsEntity> m_DeferredEntityRows;
+        uint64_t m_EcsBindingEpoch = 0;
+        /// 検査 ECS_BIND で最後に照合したときの m_EcsBindingEpoch（まだなら最大値）
+        uint64_t m_VerifiedBindingEpoch = ~0ull;
 
         void CleanupDestroyedObjects();
         void DispatchFixedTick(float fixedDeltaTime);

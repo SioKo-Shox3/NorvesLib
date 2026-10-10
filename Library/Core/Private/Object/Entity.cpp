@@ -200,6 +200,8 @@ namespace NorvesLib::Core
                 return;
             }
             world->ForgetPendingDestroy(*this);
+            // 木にいるまま解放される場合も、解放の前に自身と部分木の行を切る
+            world->UnbindEntitySubtreeRows(*this);
         }
         while (!m_Inners.empty())
         {
@@ -259,6 +261,16 @@ namespace NorvesLib::Core
         return GetWorld() != nullptr;
     }
 
+    Ecs::EcsRowRef Entity::GetEcsRow() const
+    {
+        World *world = GetWorld();
+        if (!world || m_EcsEntity.IsNull())
+        {
+            return {};
+        }
+        return Ecs::EcsRowRef{&world->GetEcsWorld(), m_EcsEntity};
+    }
+
     bool Entity::RemoveInner(IUnknown* inner)
     {
         if (!inner)
@@ -292,6 +304,8 @@ namespace NorvesLib::Core
             if (auto* child = CastTo<Entity>(inner))
             {
                 world->ForgetPendingDestroySubtree(*child);
+                // 子 Entity は解放や付け替えのために外れる。外す前に部分木の行を切る
+                world->UnbindEntitySubtreeRows(*child);
             }
             else
             {

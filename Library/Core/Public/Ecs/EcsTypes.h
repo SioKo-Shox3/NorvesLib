@@ -62,6 +62,28 @@ namespace NorvesLib::Core::Ecs
         }
     };
 
+    /// Object を持つ実体の行 → Object の弱い参照（強い参照ではない）。Object が行を切る前に null にするので、
+    /// 生きた行では常に Object を指す。Generation は行の EcsEntity の世代（行の作り直しとの取り違えを見分ける）。
+    struct EcsObjectRef
+    {
+        void *Object = nullptr;
+        uint32_t Generation = 0;
+        uint32_t Reserved = 0;
+    };
+
+    /// Object を持つ実体の階層。World 直下（根）の Parent は null で、根どうしの兄弟の連結は持たない。
+    /// 子の並びは Outer/Inner の並び（Entity だけを取り出した順）と同じ。Depth は根が 0。
+    struct EcsHierarchy
+    {
+        EcsEntity Parent;
+        EcsEntity FirstChild;
+        EcsEntity LastChild;
+        EcsEntity NextSibling;
+        EcsEntity PrevSibling;
+        uint32_t Depth = 0;
+        uint32_t Reserved = 0;
+    };
+
     /// アーキタイプの番号（EcsWorld が割り当てる）
     using EcsArchetypeId = uint32_t;
     inline constexpr EcsArchetypeId kInvalidEcsArchetype = 0xFFFFFFFFu;

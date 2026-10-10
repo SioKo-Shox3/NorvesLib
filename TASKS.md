@@ -320,11 +320,13 @@
 - paths: Library/Core/Public/Object/RuntimeSchema.h, Library/Core/Public/Object/IClass.h, Library/Core/Public/Object/Reflection.h, Library/Core/Private/Object/SchemaProjection.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Test/Core/Object/CMakeLists.txt, Test/Core/Object/EcsPropertyStorageTest.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-BIND-ENTITY: World に付いた全 Entity に行を持たせ、寿命の契約を入れる
-- status: todo
+- status: done
 - done-when: 設計 1.3・1.4 のとおり、付け替え・破棄（cleanup・RemoveObject・ObjectHeap の DestroyNow）・シーンの出入りで行が作られて消え、解放の前に孤児になる。値はまだ Object にある。検査 `ECS_BIND`（生きた Entity と行が 1 対 1、Object の照合、Hierarchy が Outer/Inner と一致、孤児が残らない）が pass する。`EcsLifetimeTest` が、Tick と LateTick の間の DestroyNow・予約の直後の破棄・部分木の連鎖を確かめる。
 - verify: `cmake --build build --config Debug --target EntityTreeTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(EcsLifetimeTest|WorldTickGroupTest|EntityTreeTest|TransformHierarchyTest)$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=ECS_BIND`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=ECS_BIND`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-bananas -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=ECS_BIND`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-stress -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=ECS_BIND`
 - paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Test/Core/Object/CMakeLists.txt, Test/Core/Object/EcsLifetimeTest.cpp, TASKS.md, PROGRESS.md
 - notes: 親の追記（GPT 2 周目）: `DestroyEntitySubtree`（World.cpp 1974 行付近）は `RemoveInner` を通らないので、切り離す前に部分木の行を無効化する共通の処理をここにも入れる。寿命のテストに通常の `RemoveObject` と Heap が持つ部分木の遅延回収を含める。
 

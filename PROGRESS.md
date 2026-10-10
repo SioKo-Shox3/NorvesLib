@@ -1166,3 +1166,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 負例テスト `TestParallelAccessRejected`（`EcsPropertyStorageTest.cpp`。`NORVES_BUILD_DEVELOPMENT` のときだけ）: 行あり（列）は `ApplyValue` が失敗し列の値・版が変わらない、行なし（予備）は `ApplyValue`・`CopyValueFrom` が失敗し `ApplyDefaultValue` でも予備が変わらない、いずれも報告数が増える。並列を出れば書ける。
 - 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-PROP-STORAGE-8.txt`（ObjectReflectionTest・SceneSerializerTest のビルド EXIT=0）、`-9.txt`（指定 5 テスト 5/5 Passed）。`-6` は文字列リテラルに生の改行を混ぜたビルド失敗、`-7` は警告を直す前のビルドで証拠にしない。
 - Notes: RelWithDebInfo の abort 経路（ハンドラ無し）は、プロセスが落ちるためテストしていない。ハンドラ経由の報告・拒否と同じ関数を通る。
+
+### SCN-ECS-BIND-ENTITY（2026-10-11、反復 22・run 20261010-223034）
+
+- 変更:
+  - `EcsTypes.h`: 行の列 `EcsObjectRef{Object, Generation}`（Object への弱い参照）と `EcsHierarchy{Parent, FirstChild, LastChild, NextSibling, PrevSibling, Depth}` を足した。設計の `{Parent, FirstChild, NextSibling, Depth}` に `LastChild`・`PrevSibling` を足した（末尾への追加と途中の除去を子の数に依らず一定の費用にするため）。根（World 直下）は兄弟の連結を持たない。
+  - `Entity`: `GetEcsEntity()`・`GetEcsRow()`（`EcsRowRef`）と、World が付け外しする行 `m_EcsEntity`。
+  - `World`: 全 Entity の行用のアーキタイプ（EcsObjectRef + EcsHierarchy）を `InitializeSchedule` で作る。`BindEntitySubtreeRows`（親から順に行を作り、親の子の連結の末尾へ付ける。`AttachRootEntity`・`AttachChildEntity` で Outer/Inner を結んだ直後・BeginPlay の前）、`UnbindEntitySubtreeRows`（最上位だけ親の連結から外し、子から順に `ReleaseEntityRow`）、`RelinkEntityRow`（`MoveEntityInnerAtomic` の成功後。古い親の連結から外し、新しい親の末尾へ付け、部分木の深さを直す）。
+  - 解放の前に行を切る入口: `DestroyEntitySubtree`（通知の後・木から切り離す前）、`World::RemoveInner`（公開）、`Entity::RemoveInner`（子 Entity。ObjectHeap の `ReleaseSlot` もここを通る）、`Entity::Finalize`（木にいるまま解放される場合）。どれも idempotent（行が無ければ何もしない）。
+  - `ReleaseEntityRow`: EcsObjectRef を null にして孤児の印を付け、段の外なら行を即時に消す。段の最中（`SystemScheduler::IsRunning()`）は `m_DeferredEntityRows` に積み、各段の同期点（`SetSyncHook`）で消す。並列の段の中は assert。
+  - 検査 `ECS_BIND`: `World::VerifyEcsBinding()`（公開。段の外で呼ぶ）が、木を歩いて Entity ごとに「行が生きていて孤児でない・EcsObjectRef が Entity を指す・Parent/Depth が Outer と一致・子の連結（FirstChild/LastChild/兄弟）が Inner の並びと一致」を確かめ、行の側からも EcsObjectRef を持つ行（孤児を含む）の数が Entity 数と等しく、孤児と同期点待ちが 0 であることを確かめる。`--engine-checks=ECS_BIND` のとき、LateTick の後に結び付けの変化（`GetEcsBindingEpoch`）があった回だけ照合して `ENGINE_CHECK name=ECS_BIND` を出す。`World::Finalize` では必ず行い、行が 0 に戻ることも見る。
+- テスト `EcsLifetimeTest`（EntityTreeTest の束、`Test/Core/Object/CMakeLists.txt` に MEMBER と add_test）: 付与と階層・付け替え（中ほどの兄弟・根へ・根から子へ。深さと連結）・`RemoveEntity`/`RemoveObject` で EndPlay の時点に行が消えていること・Tick と LateTick の間の除去・破棄予約の直後の除去（一覧と行が残らない）・段の最中の回収（EndPlay の時点で孤児かつ参照 null、祖先と子孫を両方予約、同期点で消える）・heap が持つ Component の遅延回収（行は除去の時点で消え、heap の回収は後）・公開 `RemoveInner` と付け直し・古い識別子の拒否・作って消す周回で 0 に戻ること。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-BIND-ENTITY-1.txt`（EntityTreeTest のビルド EXIT=0）、`-2.txt`（EcsLifetimeTest・WorldTickGroupTest・EntityTreeTest・TransformHierarchyTest 4/4 Passed）、`-4-rendering3dtest.txt`・`-4-mega-bananas.txt`・`-4-mega-stress.txt`（周回 3 周が各 `result=pass`、`engine_check name=ECS_BIND pass=14/9/11`、fail 0）。`-3.txt` は 3 シーンを 1 回の周回にしたもので、`ECS_BIND pass=31`・fail 0 だが、前回（CLEANUP-LIST）と同じ別シーンのテクスチャキャッシュ差（`SCENE_CYCLE_DIFF field=textures`）で失敗する（検査と無関係。証拠にしない）。このため `TASKS.md` の smoke の verify を 3 シーンの個別 3 コマンドにした。
+- Notes:
+  - 構造変更は段の最中でも即時（作成は参加の番号が「次の収集」になるので処理は次から）。設計 1.4 の「作成の予約札」は入れていない: Object の生成は即時で、行は Attach で同期的にできるため。段の中の消去だけ同期点へ遅らせている。チャンクを走査するシステムが入る TRANSFORM 系で、走査中に Object を解放する経路が無いことを改めて確かめること。
+  - Component の行・flags・時間倍率は BIND-FLAGS。値は Object にある（このタスクは行と階層だけ）。
+  - `Hierarchy` の書き込みは `WriteColumnValue`（変更として記録）を通す。まだ追跡する列にはしていない（TRANSFORM 系で消費者を足すとき `SetColumnTracked` を最初のアーキタイプの前に呼ぶ必要がある）。
+  - 行末: `World.h`・`World.cpp` は混在。編集は Python で行い、`difflib` で元の行末に揃えた（numstat 2 通りが一致）。

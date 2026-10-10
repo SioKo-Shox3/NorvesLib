@@ -2,6 +2,7 @@
 
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "Ecs/EcsTypes.h"
 #include "Math/GeometryTypes.h"
 #include "Math/Quaternion.h"
 #include "Math/Transform.h"
@@ -144,6 +145,17 @@ namespace NorvesLib::Core
         virtual bool AddInner(IUnknown* inner) override;
         // ObjectHeapも通るdetach入口で、Worldの非所有更新参照を無効化する。
         virtual bool RemoveInner(IUnknown* inner) override;
+
+        /**
+         * @brief この Entity の ECS の行（World の木にいる間だけ有効。木から外れる前に World が切る）
+         * @return 行が無ければ null
+         */
+        Ecs::EcsEntity GetEcsEntity() const { return m_EcsEntity; }
+
+        /**
+         * @brief 行を引く口（プロパティ用）。行が無い間は IsBound() が false
+         */
+        Ecs::EcsRowRef GetEcsRow() const;
 
         /**
          * @brief オブジェクトIDを取得
@@ -372,6 +384,8 @@ namespace NorvesLib::Core
         bool m_bWorldTransformDirty = true;
         uint64_t m_TransformVersion = 1;
         EntityHandle m_EntityHandle;
+        /// ECS の行（World が付け外しする）
+        Ecs::EcsEntity m_EcsEntity;
         Scene::RenderTransformHistory m_RenderHistory;
         Math::Transform m_RenderWorldTransform;
         bool m_bRenderInterpolationEnabled = false;
