@@ -137,7 +137,7 @@ namespace NorvesLib::Modules::Physics
             const auto& owner = *static_cast<const Core::World*>(user);
             if (PhysicsModule* module = FindBoundModule(owner))
             {
-                module->RequestFixedCharacters(owner, context.DeltaTime);
+                module->RequestFixedCharacters(owner, context.DeltaTime, context.CollectionSerial);
             }
         });
         add("FixedTick", "Physics.FixedStep", [](void* user, const Context& context)

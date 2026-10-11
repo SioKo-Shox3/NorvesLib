@@ -180,7 +180,7 @@ namespace
     static_assert(!std::is_standard_layout_v<FramePacketType>);
     static_assert(!std::is_standard_layout_v<SceneProxyType>);
 
-    constexpr uint32_t kCaseCount = 19;
+    constexpr uint32_t kCaseCount = 20;
     constexpr float kFixedDeltaTime = 1.0f / 60.0f;
 
     struct Fixture
@@ -974,6 +974,34 @@ namespace
                replacement->GetState().StepSerial == 1;
     }
 
+    // フレームの Tick の後に足した CharacterBody は、同じフレームの固定ステップでは要求を出さず、次の収集から加わる
+    bool TestCharacterAddedAfterTickJoinsNextCollection(ApplicationProcessor& processor)
+    {
+        auto& world = NorvesLib::Core::Engine::GEngine->GetWorld();
+        if (!CreateCharacterFloor())
+            return false;
+        world.Tick(kFixedDeltaTime);
+        CharacterFixture value;
+        if (!CreateCharacter(value, Math::Vector3::Zero))
+            return false;
+        unsigned calls = 0;
+        value.Character->BeforeSimulation.Add([&](float) { ++calls; });
+        if (!StepCharacter(processor) || !StepCharacter(processor) || calls != 0)
+            return false;
+        world.LateTick(kFixedDeltaTime);
+        world.Tick(kFixedDeltaTime);
+        if (!StepCharacter(processor) || calls != 1)
+            return false;
+        world.LateTick(kFixedDeltaTime);
+        // 収集の外で足したものは、次に走る固定ステップ（自分で収集を開く）から加わる
+        CharacterFixture outside;
+        if (!CreateCharacter(outside, Math::Vector3(3, 0, 0)))
+            return false;
+        unsigned outsideCalls = 0;
+        outside.Character->BeforeSimulation.Add([&](float) { ++outsideCalls; });
+        return StepCharacter(processor) && outsideCalls == 1 && calls == 2;
+    }
+
     bool TestGameLocomotionInput(ApplicationProcessor& processor)
     {
         using namespace Input;
@@ -1343,6 +1371,8 @@ namespace
             return TestDynamicInterpolationAt144Hz(processor, 60);
         case 18:
             return TestDynamicInterpolationAt144Hz(processor, 120);
+        case 19:
+            return TestCharacterAddedAfterTickJoinsNextCollection(processor);
         default:
             return false;
         }

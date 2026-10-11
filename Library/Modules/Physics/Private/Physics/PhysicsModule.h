@@ -100,8 +100,9 @@ namespace NorvesLib::Modules::Physics
         void RegisterWorldSystems(Core::World& world);
         // world に束ねられていて、初期化済みのときだけ自分を返す（段のシステムの呼び先の解決）
         static PhysicsModule* FindBoundModule(const Core::World& world);
-        // 固定ステップの CharacterBody の要求（一覧の順 = 作成の順）。物理の一歩の前に段 FixedTick で呼ぶ
-        void RequestFixedCharacters(const Core::World& world, float fixedDeltaTime);
+        // 固定ステップの CharacterBody の要求（一覧の順 = 作成の順）。物理の一歩の前に段 FixedTick で呼ぶ。
+        // collectionSerial は段が走っている収集の番号で、参加の番号がそれより後のものは呼ばない
+        void RequestFixedCharacters(const Core::World& world, float fixedDeltaTime, uint64_t collectionSerial);
         void ProcessCharacterBodies(float dt, CharacterBodyComponent* onlyVariable = nullptr);
         void ProcessVariableCharacter(CharacterBodyComponent& character, float dt);
         void DispatchCharacterEvents();
@@ -187,7 +188,14 @@ namespace NorvesLib::Modules::Physics
         bool m_bFixedTickInProgress = false;
         // 要求を出している間の削除は null にしておき、走査の後で詰める
         bool m_bRequestingCharacters = false;
-        Core::Container::VariableArray<CharacterBodyComponent*> m_Characters;
+        // 参加の番号 = 登録したときの「次の収集」の番号（スケジューラの順序付きの呼び先と同じ規則）。
+        // 収集の中で足したものは次の収集から固定の要求に加わる（旧の Tick の先頭の一覧と同じ）
+        struct CharacterEntry
+        {
+            CharacterBodyComponent* Character = nullptr;
+            uint64_t JoinSerial = 0;
+        };
+        Core::Container::VariableArray<CharacterEntry> m_Characters;
         bool m_bVariableCharacterInProgress = false;
         bool m_bCharacterInputInProgress = false;
         bool m_bHasPublishedSnapshot = false;

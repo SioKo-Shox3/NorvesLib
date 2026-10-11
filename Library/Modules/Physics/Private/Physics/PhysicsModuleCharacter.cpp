@@ -5,6 +5,9 @@
 #include "Physics/ColliderComponent.h"
 #include "Physics/PhysicsModule.h"
 #include "Physics/RigidBodyComponent.h"
+#include "Ecs/EcsScheduler.h"
+#include "Engine/Engine.h"
+#include "Object/World.h"
 #include <cmath>
 namespace NorvesLib::Modules::Physics
 {
@@ -17,29 +20,34 @@ namespace NorvesLib::Modules::Physics
     } // namespace
     void PhysicsModule::RegisterCharacter(CharacterBodyComponent& character)
     {
-        for (const CharacterBodyComponent* registered : m_Characters)
-            if (registered == &character)
+        for (const CharacterEntry& registered : m_Characters)
+            if (registered.Character == &character)
                 return;
-        m_Characters.push_back(&character);
+        Core::World* world = character.GetOwner() ? character.GetOwner()->GetWorld() : nullptr;
+        if (world == nullptr && m_Engine != nullptr)
+            world = &m_Engine->GetWorld();
+        const uint64_t joinSerial = world ? world->GetScheduler().GetNextCollectionSerial() : 0;
+        m_Characters.push_back({&character, joinSerial});
     }
     void PhysicsModule::UnregisterCharacter(CharacterBodyComponent& character)
     {
         for (size_t index = 0; index < m_Characters.size(); ++index)
         {
-            if (m_Characters[index] != &character)
+            if (m_Characters[index].Character != &character)
                 continue;
             if (m_bRequestingCharacters)
-                m_Characters[index] = nullptr;
+                m_Characters[index].Character = nullptr;
             else
                 m_Characters.erase(m_Characters.begin() + static_cast<std::ptrdiff_t>(index));
             return;
         }
     }
-    void PhysicsModule::RequestFixedCharacters(const Core::World& world, float fixedDeltaTime)
+    void PhysicsModule::RequestFixedCharacters(const Core::World& world, float fixedDeltaTime, uint64_t collectionSerial)
     {
         // 旧の Component の FixedTick の配信と同じ条件（Entity が祖先を含めて有効、Tick が有効、破棄予約でない）で要求を出す。
         // 要求の中の BeforeSimulation が Component を消したら一覧の席を null にし、走査の後で詰める。
-        // 走査の中で足されたものは次の歩から（旧の一覧も収集の先頭で作っていた）
+        // 参加は収集の単位: 収集の中（Tick の後の同じフレームの固定ステップを含む）で足されたものは次の収集から
+        // （旧の一覧も収集の先頭で作っていた）。収集の外で走る段は自分で 1 つの収集を開くので、その前に足したものは加わる
         if (m_bRequestingCharacters)
             return;
         struct RequestGuard
@@ -59,7 +67,9 @@ namespace NorvesLib::Modules::Physics
             const size_t count = m_Characters.size();
             for (size_t index = 0; index < count; ++index)
             {
-                CharacterBodyComponent* character = m_Characters[index];
+                if (m_Characters[index].JoinSerial > collectionSerial)
+                    continue;
+                CharacterBodyComponent* character = m_Characters[index].Character;
                 Core::Entity* owner = character ? character->GetOwner() : nullptr;
                 if (!owner || owner->GetWorld() != &world || !owner->IsTickEnabled() || !character->IsActive() ||
                     !character->IsTickEnabled() || character->IsPendingDestroy())
@@ -79,7 +89,7 @@ namespace NorvesLib::Modules::Physics
         }
         size_t write = 0;
         for (size_t read = 0; read < m_Characters.size(); ++read)
-            if (m_Characters[read] != nullptr)
+            if (m_Characters[read].Character != nullptr)
                 m_Characters[write++] = m_Characters[read];
         m_Characters.resize(write);
     }

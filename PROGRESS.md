@@ -1972,3 +1972,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 段 FixedTick は World が初期化されていないと走らない（World::DispatchFixedTick の条件）。旧はモジュールの FixedTick だけはその場合も呼ばれていた。
   - PhysicsBroadphaseQueryTest の Debug の失敗（上）は直していない（paths の内側のテストだが、このタスクの範囲の外）。
   - スケジューラの既定の delta と物理の段のシステムの単体テストは足していない（計画に無い。固定ステップの経路のテストで確かめた）。
+
+### SCN-ECS-TICK-PHYSICS 差し戻しの対応（2026-10-11、反復 2・run 20261011-211043）
+
+- 変更:
+  - 物理モジュールの CharacterBody の一覧に参加の番号を持たせた（登録したときの `GetNextCollectionSerial`。スケジューラの順序付きの呼び先と同じ規則）。段 FixedTick の `Physics.CharacterFixed` は `context.CollectionSerial` より後に参加したものを飛ばす。Tick の後に足した CharacterBody は、同じフレームの固定ステップ（同じ収集で番号を共有）では要求を出さず、次の Tick の収集から加わる（旧の Tick の先頭の一覧と同じ）。収集の外で走る固定ステップは段が自分で収集を開くので、その前に足したものは加わる（旧の単独の固定ステップが一覧をその場で作るのと同じ）。
+  - テスト: PhysicsFixedStepPipelineTest にケース 19（Tick の後に足した CharacterBody が同じフレームの 2 歩で BeforeSimulation を呼ばず、次の Tick で呼ばれる。収集の外で足したものは次の歩で呼ばれる）を足した。差し戻しの再現手順そのもの。
+- 結果（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-ECS-TICK-PHYSICS-4.txt`: RelWithDebInfo の Game のビルド EXIT=0。
+  - `-5.txt`: Debug の PhysicsDynamicsTest・ApplicationFixedStepPipelineTest のビルド EXIT=0。
+  - `-6.txt`: ApplicationFixedStepPipelineTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest・PhysicsCharacterMoveTest・CharacterPlatformMotionTest の 5/5 が pass、EXIT=0。
+  - 判定を一時的に外した版では PhysicsFixedStepPipelineTest が Failed になることを確かめ、元に戻して再ビルドした（verify の外。保存なし）。
+- Next: TASKS.md の次の todo（SCN-ECS-TICK-SCRIPT ほか）。
+- Notes:
+  - 参加の番号は CharacterBody の Owner の World のスケジューラから取る（Owner が無ければ束ねた World）。別の World の CharacterBody は要求の側で World の一致を見て飛ばすので、番号の出所の違いは影響しない。
