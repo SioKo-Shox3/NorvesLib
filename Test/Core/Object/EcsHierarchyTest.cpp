@@ -610,6 +610,10 @@ namespace
         SetActive,
         MarkForDestroy,
         Destroy,
+        // ObjectHeap::EnqueueDestroy と同じ、Object の仮想呼び出し経由
+        DestroyViaObject,
+        // Object のフラグだけ立てて World の予約登録を直接呼ぶ経路
+        RegisterOnly,
     };
 
     class StopOwnerEntity : public Entity
@@ -626,6 +630,13 @@ namespace
                 break;
             case StopKind::Destroy:
                 Destroy();
+                break;
+            case StopKind::DestroyViaObject:
+                static_cast<Object *>(this)->Destroy();
+                break;
+            case StopKind::RegisterOnly:
+                SetFlag(OF_PendingDestroy, true);
+                GetWorld()->RegisterPendingDestroy(*this);
                 break;
             default:
                 SetActive(false);
@@ -671,8 +682,10 @@ namespace
 
     void TestAncestorStopSuppressesDescendantsImmediately()
     {
-        // 公開の Destroy() も MarkForDestroy() と同じく、ECS の印と変更ログを更新して子・孫の呼び出しを止める
-        for (const StopKind kind : {StopKind::SetActive, StopKind::MarkForDestroy, StopKind::Destroy})
+        // 公開の Destroy()・Heap と同じ Object 経由の呼び出し・World の予約登録の直接呼び出しも、MarkForDestroy() と同じく
+        // ECS の印と変更ログを更新して子・孫の呼び出しを止める
+        for (const StopKind kind : {StopKind::SetActive, StopKind::MarkForDestroy, StopKind::Destroy,
+                                    StopKind::DestroyViaObject, StopKind::RegisterOnly})
         {
             assert(RunAncestorStop(true, kind) == 0);
             assert(RunAncestorStop(false, kind) == 0);

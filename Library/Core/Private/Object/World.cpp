@@ -4733,6 +4733,8 @@ namespace NorvesLib::Core
         }
         if (auto* entity = CastTo<Entity>(&object))
         {
+            // Object のフラグだけ立てて直接積む経路でも、ECS の破棄の印と変更ログを更新する
+            entity->getbPendingDestroy().Set(true);
             m_PendingDestroyEntities.push_back(entity);
             // 破棄予約の部分木は走査に入らなくなる。出していた proxy を Remove の候補にする
             NoteSubtreeRenderRemoval(*entity);

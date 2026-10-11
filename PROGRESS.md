@@ -1621,3 +1621,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 検証の ctest は束の EntityTreeTest.exe を使う。個別の名前（EcsHierarchyTest など）では cmake のターゲットが無いので、EntityTreeTest をビルドする。
   - Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに変換されて失敗する。PowerShell から呼ぶこと。
   - SCN-ECS-TRANSFORM-SWITCH を done にした（評価の 2 周目の指摘はこの 1 点だけだった）。
+
+### SCN-ECS-FIX-DESTROY-FLAGS 差し戻し対応（2026-10-11、反復 2・run 20261011-130759）
+
+- 直したこと（反復 1 の評価者 NEEDS_WORK の 2 点）:
+  - `World::RegisterPendingDestroy` が Entity を積むとき、`getbPendingDestroy().Set(true)` で ECS の破棄の印と変更ログも更新するようにした。Object のフラグだけ立てて直接登録する経路でも、祖先の破棄予約で子・孫の古い EffectiveActive が採用されない。`Destroy()` は呼ばない（再帰を避ける）。
+  - `EcsHierarchyTest` の祖先の停止の検査に、`Object` 経由の仮想呼び出し（`ObjectHeap::EnqueueDestroy` が `slot.Instance->Destroy()` で呼ぶ形と同じ）と、`SetFlag(OF_PendingDestroy)` + `RegisterPendingDestroy` の直接呼び出しを足した。どちらも旧/新の伝播で子・孫の count=0。
+- 結果（`.harness/runs/20261011-130759/`）: `verify-SCN-ECS-FIX-DESTROY-FLAGS-4.txt` Game の RelWithDebInfo ビルド exit=0、`-5.txt` Debug の EntityTreeTest・ApplicationFixedStepPipelineTest のビルド exit=0、`-6.txt` 5 件が 5/5 Passed。
+- Notes: 現行の World は Heap 所有の Entity を木へ入れられない（`AddObject` が拒否）ので、Heap 経由の「子・孫の count=0」は、Heap の予約が通る仮想呼び出し（`Object::Destroy`）を World の木の Entity に対して行う形で検査した。Heap の Entity 単体の ECS の印の検査（予備の値）も残している。
