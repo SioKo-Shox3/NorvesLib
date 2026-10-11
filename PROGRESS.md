@@ -1715,3 +1715,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-2.txt`: mega-stress・mega-bananas の混在周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、`MEGA_SCENE_CONFIRM pass=3284`、ログに `SCENE_CYCLE_BASELINE cycle=2 scenes=2`、2 周目以降の textures 9・texture_bytes は揃う、「約束が破れた」は 0 件、EXIT=0。
 - Next: SCN-MEGA-SCENE-SLOTS（verify の通し直し）。
 - Notes: Git Bash の `sed -i` は TASKS.md の CRLF を LF に落とすので、書き換えの後に CRLF へ戻した（numstat の 2 通りが一致）。
+
+### SCN-MEGA-SCENE-CONFIRM 差し戻しの修正（2026-10-11、反復 5・run 20261011-144300）
+
+- 変更:
+  - `PacketConfirmation` に、GPU が完了した最後の提出番号を atomic で公開する `GetCompletedSubmissionSerial()` を足した。`Retire()` が完了の番号を進めた後に書き、`Reset()` で 0 に戻す。GPU 側の番号をそのまま公開するので、スワップチェーンの作り直しで提出番号が戻るとこの値も戻る。
+  - 検査 `MEGA_SCENE_CONFIRM` の場面 C で、提出番号 99・100 の完了と、作り直し後の 4 が公開されることを確かめるようにした。120 回ごとのログに `submission=` を足した。
+  - 古いパケットを捨てたときの警告の説明を日本語にした。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-MEGA-SCENE-CONFIRM-3.txt`: mega-stress（5000 本、動く 1%、セル 64）の overview を RelWithDebInfo で撮影し、`MEGA_SCENE_CONFIRM pass=3 fail=0`、`result=pass`、EXIT=0。overview.Game.log に `submission=118` が出て、新しいバイナリで走ったことを確認。
+  - `-4.txt`: mega-stress・mega-bananas の混在周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、`MEGA_SCENE_CONFIRM pass=3403`、ログに `SCENE_CYCLE_BASELINE cycle=2 scenes=2`、2 周目以降の textures 9・texture_bytes は揃う、「約束が破れた」は 0 件、EXIT=0。
+- Next: SCN-MEGA-SCENE-SLOTS（verify の通し直し）。
+- Notes: FramePacket.h・RenderingCoordinator.cpp は編集で行末が崩れたので、HEAD の行末へ戻した（numstat の 2 通りが一致）。

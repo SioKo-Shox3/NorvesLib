@@ -750,6 +750,7 @@ namespace NorvesLib::Core::Rendering
             m_ConfirmedGeneration.Store(0, std::memory_order_release);
             m_ConfirmedSerial.Store(0, std::memory_order_release);
             m_CompletedSerial.Store(0, std::memory_order_release);
+            m_CompletedSubmission.Store(0, std::memory_order_release);
             m_StaleDropped.Store(0, std::memory_order_release);
         }
 
@@ -809,6 +810,8 @@ namespace NorvesLib::Core::Rendering
         {
             m_LastCompletedSubmission = completedSubmissionSerial;
             RetireCompleted(bAllCompleted);
+            // 完了の番号を進めてから公開する（提出番号を読んだ側には、それに対応する完了の番号が見えている）
+            m_CompletedSubmission.Store(completedSubmissionSerial, std::memory_order_release);
         }
 
         /** @brief 適用した最後のパケットの番号（読んでよいスレッド: どこでも） */
@@ -817,6 +820,15 @@ namespace NorvesLib::Core::Rendering
         [[nodiscard]] uint64_t GetConfirmedGeneration() const { return m_ConfirmedGeneration.Load(std::memory_order_acquire); }
         /** @brief GPU の描画が完了した番号。これ以前に適用したパケットはすべて、提出が完了したか提出が無かった */
         [[nodiscard]] uint64_t GetCompletedSerial() const { return m_CompletedSerial.Load(std::memory_order_acquire); }
+        /**
+         * @brief GPU が完了した最後の提出番号（Retire で取り込んだ値。読んでよいスレッド: どこでも）
+         *
+         * GPU 側の番号をそのまま公開するので、スワップチェーンの作り直しで提出番号が戻ると、この値も戻る。
+         */
+        [[nodiscard]] uint64_t GetCompletedSubmissionSerial() const
+        {
+            return m_CompletedSubmission.Load(std::memory_order_acquire);
+        }
         /** @brief 古いため捨てたパケットの数 */
         [[nodiscard]] uint64_t GetStaleDropCount() const { return m_StaleDropped.Load(std::memory_order_acquire); }
 
@@ -876,6 +888,7 @@ namespace NorvesLib::Core::Rendering
         Thread::Atomic<uint64_t> m_ConfirmedGeneration{0};
         Thread::Atomic<uint64_t> m_ConfirmedSerial{0};
         Thread::Atomic<uint64_t> m_CompletedSerial{0};
+        Thread::Atomic<uint64_t> m_CompletedSubmission{0};
         Thread::Atomic<uint64_t> m_StaleDropped{0};
     };
 

@@ -1842,10 +1842,18 @@ namespace NorvesLib::Core::Rendering
                 {
                     return fail("提出番号に届かないのに、完了の番号が進んだ");
                 }
+                if (mapping.GetCompletedSubmissionSerial() != 99)
+                {
+                    return fail("GPU の完了した提出番号が公開されない");
+                }
                 mapping.Retire(100, false);
                 if (mapping.GetCompletedSerial() != 2)
                 {
                     return fail("提出が完了したのに、提出の無いパケットまで完了の番号が進まない");
+                }
+                if (mapping.GetCompletedSubmissionSerial() != 100)
+                {
+                    return fail("完了した提出番号 100 が公開されない");
                 }
                 mapping.TryApply(3, 1);
                 mapping.NoteSubmitted(3, 5);
@@ -1855,7 +1863,11 @@ namespace NorvesLib::Core::Rendering
                 {
                     return fail("提出番号が戻ったとき、持っていた提出が完了済みにならない");
                 }
-                examined += 5;
+                if (mapping.GetCompletedSubmissionSerial() != 4)
+                {
+                    return fail("提出番号が戻ったとき、公開する完了の提出番号が GPU の値に揃わない");
+                }
+                examined += 8;
             }
             return true;
         }
@@ -2219,12 +2231,14 @@ namespace NorvesLib::Core::Rendering
             {
                 const PacketConfirmation& confirmation = manager.GetConfirmation();
                 NORVES_LOG_INFO("RenderingCoordinator",
-                                "MEGA_SCENE_CONFIRM sent=%llu confirmed=%llu completed=%llu generation=%llu stale=%llu",
+                                "MEGA_SCENE_CONFIRM sent=%llu confirmed=%llu completed=%llu generation=%llu stale=%llu "
+                                "submission=%llu",
                                 static_cast<unsigned long long>(manager.GetLastSentSerial()),
                                 static_cast<unsigned long long>(confirmation.GetConfirmedSerial()),
                                 static_cast<unsigned long long>(confirmation.GetCompletedSerial()),
                                 static_cast<unsigned long long>(manager.GetSceneGeneration()),
-                                static_cast<unsigned long long>(confirmation.GetStaleDropCount()));
+                                static_cast<unsigned long long>(confirmation.GetStaleDropCount()),
+                                static_cast<unsigned long long>(confirmation.GetCompletedSubmissionSerial()));
             }
             // fail は毎回、pass は最初の回と 64 回ごとに出す
             if (!bPass || calls == 1 || calls % 64 == 0)
@@ -3491,7 +3505,7 @@ namespace NorvesLib::Core::Rendering
         if (applyResult == PacketApplyResult::StaleSerial || applyResult == PacketApplyResult::StaleGeneration)
         {
             NORVES_LOG_WARNING("RenderingCoordinator",
-                               "Dropped a packet older than the applied one: serial=%llu generation=%llu confirmed=%llu",
+                               "適用済みより古いパケットを捨てた: serial=%llu generation=%llu confirmed=%llu",
                                static_cast<unsigned long long>(packet->SendSerial),
                                static_cast<unsigned long long>(packet->SceneGeneration),
                                static_cast<unsigned long long>(packetConfirmation.GetConfirmedSerial()));
