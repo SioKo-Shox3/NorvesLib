@@ -2812,6 +2812,11 @@ namespace NorvesLib::Core
             }
             for (const Rendering::MegaGeometryProxy& proxy : m_SceneView->GetMegaGeometryProxies())
             {
+                // 散布の行の proxy は散布の Component が公開と取り下げを持つ（照合は検査 MASS_RANGES）
+                if (Rendering::IsMegaScatterProxyKey(proxy.ObjectId))
+                {
+                    continue;
+                }
                 addStale(Kind::MegaGeometry, proxy.ObjectId, liveMega);
             }
             for (const Rendering::LightProxy& proxy : m_SceneView->GetLightProxies())
@@ -3196,6 +3201,11 @@ namespace NorvesLib::Core
         Container::UnorderedSet<uint64_t> viewMega;
         for (const Rendering::MegaGeometryProxy& proxy : m_SceneView->GetMegaGeometryProxies())
         {
+            // 散布の行の proxy は散布の Component が公開と取り下げを持つ（照合は検査 MASS_RANGES）
+            if (Rendering::IsMegaScatterProxyKey(proxy.ObjectId))
+            {
+                continue;
+            }
             viewMega.insert(proxy.ObjectId);
         }
         for (const Rendering::MeshProxy& proxy : m_SceneView->GetMeshProxies())

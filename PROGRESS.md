@@ -1835,3 +1835,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: SCN-ECS-MASS-STREAM の 5 万個の条件の判断待ち。判断が出るまでは次の todo へ。
 - Notes:
   - 差し戻しの API の再現（予算 64 行でのメッシュの差し替え・同じ Component への与え直し・0.001 ms の予算での破棄）の単体テストは足していない（計画に無い。修正は制御の流れで確かめ、verify の検査とログで回帰が無いことを確かめた）。
+
+### SCN-ECS-MASS-ROWS 差し戻し 1 回目の対応・指摘 1（2026-10-11、反復 13・run 20261011-144300）
+
+- 変更（指摘 1: 検査 ECS_RENDER_SYNC・ECS_RENDER_INVALIDATION の照合が散布の proxy を残留と数える）:
+  - `World::VerifyRenderSyncDelta` の `viewMega` と、旧の全走査の `FinishRenderSyncFrame` の `scanStale` の MegaGeometry のループで、`Rendering::IsMegaScatterProxyKey` の proxy を飛ばす。散布の行の proxy は散布の Component が公開と取り下げを持ち、照合は検査 MASS_RANGES が行う。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `check-SCN-ECS-MASS-ROWS-syncchecks.txt`: mega-bananas 1 万本を `--engine-checks=ECS_RENDER_SYNC,ECS_RENDER_INVALIDATION` 付きで撮影し、`ECS_RENDER_SYNC pass=2 fail=0`・`ECS_RENDER_INVALIDATION pass=2 fail=0`、`result=pass`、EXIT=0。pass の 2 回目は散布の公開（`MASS_WORK_SETTLED`）の後。Game.log の ERROR は 0。
+  - `check-SCN-ECS-MASS-ROWS-syncchecks-legacy.txt`: 同じ撮影を `--ecs-legacy-sync`（全走査の照合）で、`ECS_RENDER_SYNC pass=1 fail=0`、EXIT=0、ERROR は 0（fail は毎回報告されるので、散布の公開後も残留の検出は無い）。
+  - `verify-SCN-ECS-MASS-ROWS-5.txt`: 1 万本の overview を SCN-MEGA-BASE と比べ、平均輝度差 0.0001・PSNR 64.9 dB・不一致画素 0.026%（最大 160）で `result=pass`、EXIT=0。PNG を開いて確認（山 3 つと敷き詰め・影）。Game.log は `MEGA_BANANAS_PLACED count=10000 ... batches=1 scatter_rows=10000 scatter_ranges=157`、山の 780 本の `MEGA_BANANAS_PILE_ITEM` は基準のログと同じ。ERROR は 0。
+  - `-6.txt`: mega-bananas の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`（entities=2・資源の数は 3 周とも同じ）、EXIT=0。解放は 3 周とも `destroyed=10000 chunks_returned=55 ecs_rows=4 slots_live=0 blocks_in_use=0`。ERROR は 0。
+- Next: 次の todo。
+- Notes: 検査名は `ECS_RENDER_INVALIDATION`（`RENDER_INVALIDATION` を与えると検査が動かず pass も fail も出ない）。
