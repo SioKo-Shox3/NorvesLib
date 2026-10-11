@@ -573,6 +573,18 @@ namespace NorvesLib
                 }
             }
 
+            void WindowsWindow::ShowInBackground()
+            {
+                if (m_hWnd)
+                {
+                    // アクティブにせずに表示し、Z 順の最後へ回す（使っている人の作業を遮らない）。
+                    // 最小化はしない（バックバッファの大きさが 0 になり、描画と撮影が止まる）。
+                    ShowWindow(m_hWnd, SW_SHOWNOACTIVATE);
+                    SetWindowPos(m_hWnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                    UpdateWindow(m_hWnd);
+                }
+            }
+
             void WindowsWindow::Hide()
             {
                 SetInputFocused(false);

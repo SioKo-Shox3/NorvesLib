@@ -710,6 +710,12 @@ namespace
         return argument == String(TEXT("--capture-deterministic"));
     }
 
+    // --window-background: ウィンドウを前面に出さず、フォーカスを奪わずに表示する（自動の検証の起動用。値を取らない）。
+    bool IsWindowBackgroundOption(const String& argument)
+    {
+        return argument == String(TEXT("--window-background"));
+    }
+
     // 撮影の終了条件（アセットが落ち着いてから描いたフレーム数）の既定値。時間方向に積む効果の収束を待つ。
     constexpr uint64_t kCapturePngDefaultSettledRenderedFrames = 60;
     // 撮影を要求してから結果が戻るまで待つ描画フレーム数の上限。超えたら失敗として終了する。
@@ -1224,6 +1230,7 @@ namespace NorvesLib::Core::Engine
         const VariableArray<String> &args = config.Arguments;
         int windowWidth = config.WindowWidth;
         int windowHeight = config.WindowHeight;
+        bool bWindowBackground = config.bWindowBackground;
         for (size_t i = 0; i < args.size(); ++i)
         {
             bool bParsedMultiThreadedRendering = false;
@@ -1507,6 +1514,12 @@ namespace NorvesLib::Core::Engine
                 bCaptureDeterministic = true;
             }
 
+            if (IsWindowBackgroundOption(args[i]))
+            {
+                bWindowBackground = true;
+                LOG_INFO("ApplicationProcessor runtime option window_background=1");
+            }
+
             bool bMatchedWindowSize = false;
             if (TryParseWindowSizeOption(args[i], windowWidth, windowHeight, bMatchedWindowSize))
             {
@@ -1597,6 +1610,7 @@ namespace NorvesLib::Core::Engine
         Boot::BootConfig windowConfig = config;
         windowConfig.WindowWidth = windowWidth;
         windowConfig.WindowHeight = windowHeight;
+        windowConfig.bWindowBackground = bWindowBackground;
         if (!CreateMainWindow(windowConfig))
         {
             LOG_ERROR("Failed to create main window");
@@ -2796,7 +2810,14 @@ namespace NorvesLib::Core::Engine
             return false;
         }
 
-        window->Show();
+        if (config.bWindowBackground)
+        {
+            window->ShowInBackground();
+        }
+        else
+        {
+            window->Show();
+        }
 
         // プラットフォームアプリケーションにウィンドウを登録
         auto *platformApp = GEngine->GetPlatformApp();

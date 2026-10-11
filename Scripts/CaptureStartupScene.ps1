@@ -919,6 +919,8 @@ foreach ($view in $shots)
     Remove-Item -LiteralPath $gameLogPath -Force -ErrorAction SilentlyContinue
 
     $arguments = @('--scene=rendering3dtest', "--capture-png=`"$pngPath`"")
+    # 検証の起動は窓を前面に出さない（使っている人の作業を遮らない）
+    $arguments += '--window-background'
     if ($view.Camera -ne '')
     {
         $arguments += "--startup-camera=$($view.Camera)"

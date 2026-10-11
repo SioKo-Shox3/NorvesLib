@@ -47,6 +47,11 @@ namespace NorvesLib::Core::Boot
         bool bFullscreen = false;
 
         /**
+         * @brief ウィンドウを前面に出さず、フォーカスを奪わずに表示する（--window-background。自動の検証の起動用）
+         */
+        bool bWindowBackground = false;
+
+        /**
          * @brief ウィンドウリサイズ可能
          */
         bool bResizable = true;

@@ -655,6 +655,8 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
 
     $tracePath = Join-Path $outRoot "$($shot.Name).trace.csv"
     $arguments = @("--scene=$Scene", "--capture-png=`"$pngPath`"", "--scene-report=`"$viewReportPath`"")
+    # 検証の起動は窓を前面に出さない（使っている人の作業を遮らない）
+    $arguments += '--window-background'
     if ($GpuTimingFrames -gt 0)
     {
         # 実時間の計測: 決定的な撮影にせず、トレースを取って決まった描画フレーム数の後に撮る

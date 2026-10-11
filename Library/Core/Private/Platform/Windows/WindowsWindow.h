@@ -44,6 +44,7 @@ namespace NorvesLib
                 virtual bool Create(const Container::String &title, int width, int height) override;
                 virtual void Destroy() override;
                 virtual void Show() override;
+                virtual void ShowInBackground() override;
                 virtual void Hide() override;
                 virtual void SetTitle(const Container::String &title) override;
                 virtual void Resize(int width, int height) override;

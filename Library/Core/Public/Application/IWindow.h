@@ -41,6 +41,13 @@ public:
     virtual void Show() = 0;
 
     /**
+     * @brief 前面に出さず、入力のフォーカスも奪わずにウィンドウを表示する（自動の検証で起動するとき用）
+     *
+     * 既定は Show() と同じ。対応するプラットフォームは、アクティブにせずに他のウィンドウの後ろへ表示する。
+     */
+    virtual void ShowInBackground() { Show(); }
+
+    /**
      * @brief ウィンドウの非表示
      */
     virtual void Hide() = 0;

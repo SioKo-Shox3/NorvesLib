@@ -123,6 +123,8 @@ foreach ($stale in @($gameLogPath, $runLogPath, $validationLogPath))
 
 $sceneList = $sceneIds -join ','
 $arguments = @("--scene-cycle-smoke=$sceneList", "--scene-cycle-count=$Cycles")
+# 検証の起動は窓を前面に出さない（使っている人の作業を遮らない）
+$arguments += '--window-background'
 # -GameArgs で有効にした検査の名前。-GameArgs はカンマの次が英字で始まると別の引数に分けるので、
 # 複数の検査は名前ごとに別の engine-checks=<名前> で与える。
 $requiredChecks = @()
