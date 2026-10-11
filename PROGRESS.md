@@ -2323,3 +2323,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 検証: verify 1・2 を走らせ直して `verify-SCN-MEGA-MEASURE-CPU-6.txt`・`-7.txt` に保存した。6: 5万個の静止の metrics.json に対し `CHECK_CAPTURE_METRICS result=pass views=default,close,aerial`・EXIT=0。7: Debug の起動画面 default を撮って `CAPTURE_STARTUP_SCENE result=pass`・EXIT=0、`vulkan_validation` の error_count=0・vuid_count=0、Game.log の ERROR は 0、PNG を開いて確認（天球・地面・球・岩・家）。
 - Next: SCN-MEGA-FIX-TRANSIENT-BOARDS。
 - Notes: `CaptureScene.ps1` の rt の集計（`RenderFrameMs > 0` の行に限る）はバナナのように描画スレッドの時間が別の行に出る負荷で偏る。スクリプトは paths の外なので直していない。
+
+### SCN-MEGA-FIX-TRANSIENT-BOARDS（2026-10-12、反復 20・run 20261011-211043）
+
+- Done（実装のみ。タスクは BLOCKED）: `World::CollectTransientBoardProxies` は既定で Text の行の一覧 `m_TextBoardRows` だけを見る。行を得たとき（`BindComponentRow`・予約の再生）に足し、部分木の追加・親の付け替え・行の追加・死んだ行の発見で並べ直す。並べ直しは各 Text の根からの道（各段の Outer の Inner の中の位置。Component は同じ Entity の子より先）で旧の走査と同じ木の深さ優先の順にする。アクティブでない・破棄待ち・木の外の Text は出さない。旧の同期（`SetLegacyRenderSync(true)`）のときだけ根から全走査する（差分テストの旧との照合が順も含めて比べる）。
+- 検証: verify 1（Debug ビルド）pass、verify 2（`WorldSyncDifferentialTest`）pass、関連の `TextComponentBoardProxyTest`・`ParticleFrameSnapshotTest` も pass。verify 3（起動画面の比較）pass（輝度差 0・PSNR 100 dB）。5万個の静止の撮影で `GameThread.TransientBoards` は median 0.000 ms・max 0.025 ms、gt の median は 10.97 → 0.174 ms（p95 0.301 ms）。
+- verify 4 は `timing_missing=render_thread_ms_*` だけで fail（区間の閾値だけの検査は `verify-SCN-MEGA-FIX-TRANSIENT-BOARDS-4-scope-only.txt` で pass）。gt が下がりゲームスレッドが描画 1 フレームあたり約 800 フレーム回るため、`CaptureScene.ps1` が rt を拾う `RenderFrameMs > 0` の行に `RenderThreadMs` が載らない（窓の中で両方が載る行は 0 件。独立に集めた rt は median 135.6 ms で前回の 138.0 ms とほぼ同じ）。直す先は paths の外なので `blocked/SCN-MEGA-FIX-TRANSIENT-BOARDS.md` に選択肢を書いた。
+- Next: blocked の判断（推奨は `CaptureScene.ps1` の rt を窓の Frame 行から独立に集める）の後、verify 4 だけを撮り直して done にする。
+- Notes: 木の順の並べ直し（兄弟の位置が登録の順と違う場合）を直接突くテストは無い（差分テストの Text は登録の順と木の順が同じ）。

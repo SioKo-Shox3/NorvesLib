@@ -351,6 +351,7 @@ namespace NorvesLib::Core
         void SyncToSceneView(const Rendering::MaterialResources* materials = nullptr,
                              const Rendering::MeshResources* meshes = nullptr);
 
+        /// Text のグリフの板を、木の深さ優先の順で集める。既定は Text の行の一覧だけを見る（旧の同期では根から全走査する）
         void CollectTransientBoardProxies(Container::VariableArray<Rendering::BoardProxy>& outProxies);
 
         /**
@@ -753,6 +754,10 @@ namespace NorvesLib::Core
                                  ComponentDataRegistry* componentDataRegistry);
         void CollectTransientBoardProxiesRecursive(Entity& entity,
                                                    Container::VariableArray<Rendering::BoardProxy>& outProxies);
+        /// 行を得た Text を、グリフの板を集める一覧へ足す
+        void RegisterTextBoardRow(const Component::Component& component);
+        /// 一覧から死んだ行を除き、旧の走査と同じ木の深さ優先の順へ並べ直す
+        void RebuildTextBoardOrder();
         void CollectPendingDestroyRecursive(Entity& entity, Container::VariableArray<Entity*>& toRemove);
         bool AttachRootEntity(Entity* entity);
         bool AttachChildEntity(Entity* parent, Entity* child);
@@ -833,6 +838,11 @@ namespace NorvesLib::Core
         Container::UnorderedSet<uint64_t> m_RenderTextSeen;
         /// 次の同期で求め直す Text の行（前フレームの変換が今の変換に揃うまで）
         Container::VariableArray<uint64_t> m_RenderTextSettleRows;
+        /// グリフの板を集める Text の行（並べ直しの後は木の深さ優先の順）と、その重複除け
+        Container::VariableArray<uint64_t> m_TextBoardRows;
+        Container::UnorderedSet<uint64_t> m_TextBoardSeen;
+        /// 行が加わった・木の構造が変わった・死んだ行を見つけた。次の収集で並べ直す
+        bool m_bTextBoardOrderDirty = false;
         /// 直近の同期がたどった行の数
         uint32_t m_RenderSyncVisitedRows = 0;
         /// 全走査が proxy を作り直した行

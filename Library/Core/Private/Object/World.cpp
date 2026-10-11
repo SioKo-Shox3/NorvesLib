@@ -1159,6 +1159,9 @@ namespace NorvesLib::Core
         m_RenderTextRows.clear();
         m_RenderTextSeen.clear();
         m_RenderTextSettleRows.clear();
+        m_TextBoardRows.clear();
+        m_TextBoardSeen.clear();
+        m_bTextBoardOrderDirty = false;
 
         m_PendingDestroyEntities.clear();
         m_PendingDestroyComponents.clear();
@@ -1471,6 +1474,10 @@ namespace NorvesLib::Core
         // 呼び先の持ち手は作り直すスケジューラでは使えない
         m_OrderedTicks.clear();
         m_bOrderedTicksDirty = true;
+        // 行は作り直す ECS の世界では引けない
+        m_TextBoardRows.clear();
+        m_TextBoardSeen.clear();
+        m_bTextBoardOrderDirty = false;
         RegisterCoreComponentTicks();
         m_EcsWorld = Container::MakeUnique<Ecs::EcsWorld>();
         // 階層のシステムのきっかけになる列は追跡する（最初のアーキタイプを作る前に決める）。消費者がいない間はログを積まない
@@ -3907,10 +3914,146 @@ namespace NorvesLib::Core
             return;
         }
 
-        auto roots = GetRootEntities();
-        for (Entity* entity : roots)
+        if (m_bLegacyRenderSync)
         {
-            CollectTransientBoardProxiesRecursive(*entity, outProxies);
+            auto roots = GetRootEntities();
+            for (Entity* entity : roots)
+            {
+                CollectTransientBoardProxiesRecursive(*entity, outProxies);
+            }
+            return;
+        }
+
+        // Text の行の一覧だけを見る。板の並びは旧の走査（木の深さ優先・Entity ごとに Component が子より先）と同じ
+        if (m_TextBoardRows.empty())
+        {
+            return;
+        }
+        if (m_bTextBoardOrderDirty)
+        {
+            RebuildTextBoardOrder();
+        }
+        for (const uint64_t packed : m_TextBoardRows)
+        {
+            auto* text = CastTo<Component::TextComponent>(ComponentOfRow(UnpackEcsEntity(packed)));
+            if (text == nullptr)
+            {
+                // 行が外れた。次の収集で一覧から除く
+                m_bTextBoardOrderDirty = true;
+                continue;
+            }
+            const Entity* owner = text->GetOwner();
+            if (owner == nullptr || owner->GetWorld() != this || !IsEntityRenderScanned(*owner))
+            {
+                // 木の外・アクティブでない・破棄待ちの部分木の Text は出さない
+                continue;
+            }
+            text->BuildGlyphBoardProxies(outProxies);
+        }
+    }
+
+    void World::RegisterTextBoardRow(const Component::Component& component)
+    {
+        if (CastTo<Component::TextComponent>(&component) == nullptr)
+        {
+            return;
+        }
+        const Ecs::EcsEntity row = component.GetEcsEntity();
+        if (!row.IsNull() && m_TextBoardSeen.insert(PackEcsEntity(row)).second)
+        {
+            m_TextBoardRows.push_back(PackEcsEntity(row));
+            m_bTextBoardOrderDirty = true;
+        }
+    }
+
+    void World::RebuildTextBoardOrder()
+    {
+        m_bTextBoardOrderDirty = false;
+
+        // 生きている Text と、根からの道（各段の Outer の Inner の中の位置）を求める。
+        // 道の 1 段は (種別 << 32 | 位置) で、Component(0) は同じ Entity の子(1)より先に並ぶ
+        struct TextBoardEntry
+        {
+            uint64_t Packed = 0;
+            bool bInWorld = false;
+            Container::VariableArray<uint64_t> Path;
+        };
+        Container::VariableArray<TextBoardEntry> entries;
+        entries.reserve(m_TextBoardRows.size());
+        Container::UnorderedMap<const IUnknown*, uint32_t> positions;
+        Container::VariableArray<const IUnknown*> outers;
+        Container::UnorderedSet<const IUnknown*> outerSeen;
+        for (const uint64_t packed : m_TextBoardRows)
+        {
+            const Component::Component* component = CastTo<Component::TextComponent>(ComponentOfRow(UnpackEcsEntity(packed)));
+            if (component == nullptr)
+            {
+                continue;
+            }
+            TextBoardEntry entry;
+            entry.Packed = packed;
+            entry.bInWorld = false;
+            for (const IUnknown* node = component; node != nullptr; node = node->GetOuter())
+            {
+                const IUnknown* outer = node->GetOuter();
+                if (outer == nullptr)
+                {
+                    break;
+                }
+                positions.emplace(node, 0u);
+                if (outerSeen.insert(outer).second)
+                {
+                    outers.push_back(outer);
+                }
+                if (outer == this)
+                {
+                    entry.bInWorld = true;
+                    break;
+                }
+            }
+            // 木から外れた Text も行が生きている間は一覧に残す（収集では出さない。付け直すと構造の変化で並べ直す）
+            entries.push_back(std::move(entry));
+        }
+
+        // 道に現れる Outer ごとに Inner を 1 回だけたどり、要る節の位置を記す
+        for (const IUnknown* outer : outers)
+        {
+            const auto& inners = outer->GetInners();
+            for (size_t index = 0; index < inners.size(); ++index)
+            {
+                auto found = positions.find(inners[index]);
+                if (found != positions.end())
+                {
+                    found->second = static_cast<uint32_t>(index);
+                }
+            }
+        }
+
+        for (TextBoardEntry& entry : entries)
+        {
+            if (!entry.bInWorld)
+            {
+                // 木の外の Text は末尾へ
+                entry.Path.push_back(std::numeric_limits<uint64_t>::max());
+                continue;
+            }
+            const IUnknown* component = ComponentOfRow(UnpackEcsEntity(entry.Packed));
+            for (const IUnknown* node = component; node != this; node = node->GetOuter())
+            {
+                const uint64_t kind = node == component ? 0u : 1u;
+                entry.Path.push_back((kind << 32) | positions[node]);
+            }
+            std::reverse(entry.Path.begin(), entry.Path.end());
+        }
+        std::stable_sort(entries.begin(), entries.end(), [](const TextBoardEntry& lhs, const TextBoardEntry& rhs)
+                         { return std::lexicographical_compare(lhs.Path.begin(), lhs.Path.end(), rhs.Path.begin(), rhs.Path.end()); });
+
+        m_TextBoardRows.clear();
+        m_TextBoardSeen.clear();
+        for (const TextBoardEntry& entry : entries)
+        {
+            m_TextBoardRows.push_back(entry.Packed);
+            m_TextBoardSeen.insert(entry.Packed);
         }
     }
 
@@ -5302,8 +5445,9 @@ namespace NorvesLib::Core
 
     void World::BindEntitySubtreeRows(Entity& entity)
     {
-        // 木に部分木が加わった。Tick の呼び先と深さ優先の番号を次の収集で付け直す
+        // 木に部分木が加わった。Tick の呼び先と深さ優先の番号、Text の板の順を次の収集で付け直す
         m_bOrderedTicksDirty = true;
+        m_bTextBoardOrderDirty = true;
         if (m_EntityArchetype == Ecs::kInvalidEcsArchetype)
         {
             return;
@@ -5403,6 +5547,7 @@ namespace NorvesLib::Core
         MoveComponentValuesToRow(component);
         LinkEntityRowToParent(row, owner->m_EcsEntity, Ecs::kEcsHierarchyKindComponent);
         ++m_EcsBindingEpoch;
+        RegisterTextBoardRow(component);
     }
 
     void World::MoveEntityValuesToRow(Entity& entity)
@@ -5547,8 +5692,9 @@ namespace NorvesLib::Core
 
     void World::RelinkEntityRow(Entity& entity)
     {
-        // 親が変わり、深さ優先の番号が変わる。Tick の呼び先を次の収集で付け直す
+        // 親が変わり、深さ優先の番号が変わる。Tick の呼び先と Text の板の順を次の収集で付け直す
         m_bOrderedTicksDirty = true;
+        m_bTextBoardOrderDirty = true;
         Ecs::EcsWorld& ecs = *m_EcsWorld;
         if (!ecs.IsAlive(entity.m_EcsEntity))
         {
@@ -5804,6 +5950,7 @@ namespace NorvesLib::Core
                 componentRef.Generation = componentRow.Generation;
                 ecs.WriteColumnValueOf(componentRow, componentRef);
                 MoveComponentValuesToRow(component);
+                RegisterTextBoardRow(component);
                 markEntity(component.GetOwner());
                 continue;
             }
