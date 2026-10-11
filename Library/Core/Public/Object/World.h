@@ -408,22 +408,48 @@ namespace NorvesLib::Core
         uint64_t GetEcsBindingEpoch() const noexcept { return m_EcsBindingEpoch; }
 
         /**
-         * @brief 階層のシステムの結果を、根から全部たどって求め直した値と全行照合する（検査 ECS_TRANSFORM）
+         * @brief 階層のシステムの結果を、根から全部求め直した値と全行照合する（検査 ECS_TRANSFORM）
          *
-         * 階層のシステムを 1 回走らせ（変更の無い回は何もしない）、World の木にいる全 Entity について、EcsWorldTransform が
-         * 局所の変換から根をたどって求め直した値と bit まで一致するか、EffectiveActive が祖先をたどる従来の判定
-         * （自分と全祖先が Active かつ PendingDestroy でない）と一致するかを確かめる。
+         * 階層のシステムを 1 回走らせ（変更の無い回は何もしない）、CollectEntityRowsByDepth で集めた全 Entity の行について、
+         * EcsWorldTransform が局所の変換の列から根まで求め直した値と bit まで一致するか、EffectiveActive が祖先の行から求めた判定
+         * （自分と全祖先が Active かつ PendingDestroy でない）と一致するかを確かめる。Entity の木はたどらない。
          * UpdateWorldTransforms の直後に呼ぶ。食い違いは LOG_ERROR で理由を出す。
-         * @param outCount 照合した Entity の数（行の無い Entity は含まない）
+         * @param outCount 照合した Entity の数（孤児の部分木の行は含まない）
          * @return 全部一致すれば true
          */
         bool VerifyEcsTransform(uint32_t* outCount = nullptr);
 
+        /// CollectEntityRowsByDepth が返す、Entity の行 1 つ分
+        struct EntityRowForCheck
+        {
+            Ecs::EcsEntity Row;
+            /// 階層の列の Parent（根は null）
+            Ecs::EcsEntity Parent;
+            /// 行の Entity（行の Object の参照が切れていれば null）
+            Entity* EntityPtr = nullptr;
+            /// 親の行の、この一覧での位置。根は kNoParentRow、親が一覧の先に無い（孤児か、Depth が親の次でない）ときは kMissingParentRow
+            uint32_t ParentIndex = 0;
+            /// 根から Parent をたどって届く（孤児の部分木でない）
+            bool bReachable = false;
+            /// 届き、自分と全祖先が Active かつ破棄の予約でない（親の行の結果から求める）
+            bool bEffectiveActive = false;
+        };
+        static constexpr uint32_t kNoParentRow = 0xFFFFFFFFu;
+        static constexpr uint32_t kMissingParentRow = 0xFFFFFFFEu;
+
+        /**
+         * @brief 全量の照合のために、ECS の Entity の行（孤児を除く）を階層の列の Depth の小さい順（親が子より先）に集める
+         *
+         * Entity の木（Outer/Inner）はたどらず、行・階層の列（Parent・Depth・Kind）・行の Entity の Active と破棄の予約だけを読む。
+         * 検査 ECS_TRANSFORM・ECS_RENDER_TRANSFORM・ECS_RENDER_SYNC と、SceneQuery の全量の作り直しが使う。
+         */
+        void CollectEntityRowsByDepth(Container::VariableArray<EntityRowForCheck>& out) const;
+
         /**
          * @brief 描画の変換（補間の結果）を、全行を求め直した値と照合する（検査 ECS_RENDER_TRANSFORM）
          *
-         * 木を根からたどり、補間する行は履歴の写しに Prepare・Evaluate をかけた値、その子孫は「親の描画の変換 × 局所の変換」、
-         * それ以外はワールドの変換を期待値とし、各 Entity の GetRenderWorldTransform と全成分で照合する。
+         * CollectEntityRowsByDepth の順に親から求め、補間する行は履歴の写しに Prepare・Evaluate をかけた値、その子孫は
+         * 「親の描画の変換 × 局所の変換」、それ以外はワールドの変換を期待値とし、各 Entity の GetRenderWorldTransform と全成分で照合する。
          * 描画の変換の列・タグ・履歴の列が、補間の要求と許可から決まる組と一致するかも確かめる。UpdateRenderTransforms の直後に呼ぶ。
          * @param outCount 照合した Entity の数（行の無い Entity は含まない）
          */
@@ -473,8 +499,9 @@ namespace NorvesLib::Core
         void NoteRenderTransformChanged(Entity& entity);
         /// 行から Entity を引く（Entity の行でない・Object を切られた行は null）
         Entity* ResolveRenderEntity(Ecs::EcsEntity row) const;
-        bool VerifyRenderEntity(Entity& entity, const Math::Transform& parentRender, bool bParentInterpolated,
-                                uint32_t& count, const char*& error);
+        /// 検査 ECS_RENDER_TRANSFORM の 1 行分。親の期待値から自分の期待値を求めて照合し、子のために outExpected・outInterpolated を返す
+        bool VerifyRenderRow(Entity& entity, Ecs::EcsEntity row, const Math::Transform& parentRender, bool bParentInterpolated,
+                             Math::Transform& outExpected, bool& outInterpolated, uint32_t& count, const char*& error);
         void RunEcsRenderTransformCheck();
 
         /// 登録のある型の呼び先（順序付きの系の項目）を、木の深さ優先の順で足し・付け替え・外す。

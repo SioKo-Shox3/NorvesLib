@@ -7,8 +7,11 @@
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
 #include "Scene/SceneQuery.h"
+#include <algorithm>
 #include <cassert>
 #include <cfloat>
+#include <cmath>
+#include <functional>
 #include <iostream>
 
 using namespace NorvesLib::Core;
@@ -93,6 +96,51 @@ namespace
         assert(bvhHit.HitEntity == bruteForceHit.HitEntity);
         assert(AreNearlyEqual(bvhHit.Distance, bruteForceHit.Distance));
     }
+
+    // 既定の境界（MeshComponent の ±1 の箱）を包む球の半径。ワールドの境界は中心からこの半径の立方体になる
+    const float kDefaultBoundsRadius = std::sqrt(3.0f);
+    // 期待値の光線は、狙う Entity の境界の中心から 10 離れた点から撃つ（当たりの距離は 10 - 半径）
+    constexpr float kRayStandOff = 10.0f;
+
+    /// 照会の Entry の集合が expected と同じか（全体を覆う箱の照会で取り出して比べる）
+    void AssertEntrySet(const Scene::SceneQuery& sceneQuery, Container::VariableArray<Entity*> expected)
+    {
+        assert(sceneQuery.GetEntryCount() == expected.size());
+        Container::VariableArray<Entity*> actual;
+        sceneQuery.OverlapBox(
+            NorvesLib::Math::AABB(NorvesLib::Math::Vector3(-10000.0f, -10000.0f, -10000.0f),
+                                  NorvesLib::Math::Vector3(10000.0f, 10000.0f, 10000.0f)),
+            actual);
+        std::sort(actual.begin(), actual.end(), std::less<Entity*>{});
+        std::sort(expected.begin(), expected.end(), std::less<Entity*>{});
+        assert(actual.size() == expected.size());
+        assert(std::equal(actual.begin(), actual.end(), expected.begin()));
+    }
+
+    /// center から direction の逆へ kRayStandOff 離れた点から direction へ撃つと expected に当たり、距離が 10 - 半径
+    void AssertHitAt(const Scene::SceneQuery& sceneQuery, const NorvesLib::Math::Vector3& center,
+                     const NorvesLib::Math::Vector3& direction, Entity* expected)
+    {
+        Scene::RaycastHit hit;
+        const NorvesLib::Math::Ray ray(center - direction * kRayStandOff, direction);
+        assert(sceneQuery.Raycast(ray, hit));
+        assert(hit.bHit);
+        assert(hit.HitEntity == expected);
+        assert(AreNearlyEqual(hit.Distance, kRayStandOff - kDefaultBoundsRadius));
+    }
+
+    /// center の真上（+Z）から真下へ撃っても何にも当たらない
+    void AssertMissFromAbove(const Scene::SceneQuery& sceneQuery, const NorvesLib::Math::Vector3& center)
+    {
+        Scene::RaycastHit hit;
+        const NorvesLib::Math::Ray ray(center + NorvesLib::Math::Vector3(0.0f, 0.0f, kRayStandOff),
+                                       NorvesLib::Math::Vector3(0.0f, 0.0f, -1.0f));
+        assert(!sceneQuery.Raycast(ray, hit));
+        assert(!hit.bHit && hit.HitEntity == nullptr);
+    }
+
+    const NorvesLib::Math::Vector3 kDown(0.0f, 0.0f, -1.0f);
+    const NorvesLib::Math::Vector3 kUp(0.0f, 0.0f, 1.0f);
 
     void TestWorldRebuildRaycast()
     {
@@ -262,8 +310,8 @@ namespace
         world.Finalize();
     }
 
-    // 増分の更新（Update）は、全量で作った結果と同じ Entry・照会の結果を保ち、静止では何もしない
-    void TestIncrementalUpdateMatchesRebuild()
+    // 増分の更新（Update）は、追加・値の変更・親の動き・非アクティブ・破棄の後に、手で決めた Entry と照会の結果を保ち、静止では何もしない
+    void TestIncrementalUpdateMatchesExpected()
     {
         World world;
         world.Initialize();
@@ -273,6 +321,7 @@ namespace
         world.SetSceneView(&view);
         Rendering::RenderResources renderResources;
 
+        // 6 間隔の格子（境界の立方体は半辺 √3 なので隣と重ならない）
         Container::VariableArray<Entity*> entities;
         for (int i = 0; i < 40; ++i)
         {
@@ -284,6 +333,7 @@ namespace
         assert(child);
         AddMesh(*child);
         child->SetLocalPosition(0.0f, 0.0f, 3.0f);
+        using NorvesLib::Math::Vector3;
 
         Scene::SceneQuery sceneQuery;
         const auto syncOnce = [&]()
@@ -291,24 +341,20 @@ namespace
             world.SyncToSceneView(&renderResources.Materials());
             sceneQuery.Update(world);
         };
-        const auto checkAgainstRebuild = [&]()
+        Container::VariableArray<Entity*> expected = entities;
+        expected.push_back(child);
+        const auto removeExpected = [&](Entity* entity)
         {
-            uint32_t examined = 0;
-            char detail[200] = {};
-            const bool bPass = sceneQuery.VerifyAgainstRebuild(world, examined, detail, sizeof(detail));
-            if (!bPass)
-            {
-                std::cout << "全量との不一致: " << detail << "\n";
-            }
-            assert(bPass);
-            assert(examined > 0);
+            expected.erase(std::find(expected.begin(), expected.end(), entity));
         };
 
-        // 最初は全量で作る
+        // 最初は全量で作る。子は親の真上（Z+3）にあるので、親は下から、子は上から狙う
         syncOnce();
         assert(sceneQuery.GetLastUpdateStats().Rebuilt == 1);
-        assert(sceneQuery.GetEntryCount() == 41);
-        checkAgainstRebuild();
+        AssertEntrySet(sceneQuery, expected);
+        AssertHitAt(sceneQuery, Vector3(12.0f, 6.0f, 0.0f), kDown, entities[10]);
+        AssertHitAt(sceneQuery, Vector3(0.0f, 0.0f, 3.0f), kDown, child);
+        AssertHitAt(sceneQuery, Vector3(0.0f, 0.0f, 0.0f), kUp, parent);
 
         // 静止: 履歴が落ち着いたあとは、更新も追加も削除も作り直しも 0
         syncOnce();
@@ -318,79 +364,82 @@ namespace
             const Scene::SceneQuery::UpdateStats& stats = sceneQuery.GetLastUpdateStats();
             assert(stats.Updated == 0 && stats.Added == 0 && stats.Removed == 0 && stats.Rebuilt == 0);
         }
-        checkAgainstRebuild();
+        AssertEntrySet(sceneQuery, expected);
 
-        // 1 つ動かす: 動かした分だけ refit する
+        // 1 つ動かす: 動かした分だけ refit し、元の場所は外れて新しい場所で当たる
         entities[10]->SetPosition(100.0f, 50.0f, 0.0f);
         syncOnce();
         assert(sceneQuery.GetLastUpdateStats().Updated == 1);
         assert(sceneQuery.GetLastUpdateStats().Rebuilt == 0);
-        checkAgainstRebuild();
+        AssertEntrySet(sceneQuery, expected);
+        AssertMissFromAbove(sceneQuery, Vector3(12.0f, 6.0f, 0.0f));
+        AssertHitAt(sceneQuery, Vector3(100.0f, 50.0f, 0.0f), kDown, entities[10]);
 
         // 親を動かすと子孫の境界も変わる
         parent->SetPosition(-40.0f, 0.0f, 0.0f);
         syncOnce();
         assert(sceneQuery.GetLastUpdateStats().Updated == 2);
-        checkAgainstRebuild();
+        AssertEntrySet(sceneQuery, expected);
+        AssertMissFromAbove(sceneQuery, Vector3(0.0f, 0.0f, 3.0f));
+        AssertHitAt(sceneQuery, Vector3(-40.0f, 0.0f, 3.0f), kDown, child);
+        AssertHitAt(sceneQuery, Vector3(-40.0f, 0.0f, 0.0f), kUp, parent);
 
         // 非アクティブ化で外れ、戻すと入る
         entities[3]->SetActive(false);
         syncOnce();
         assert(sceneQuery.GetLastUpdateStats().Removed == 1);
-        assert(sceneQuery.GetEntryCount() == 40);
-        checkAgainstRebuild();
+        removeExpected(entities[3]);
+        AssertEntrySet(sceneQuery, expected);
+        AssertMissFromAbove(sceneQuery, Vector3(18.0f, 0.0f, 0.0f));
         entities[3]->SetActive(true);
         syncOnce();
         assert(sceneQuery.GetLastUpdateStats().Added == 1);
-        assert(sceneQuery.GetEntryCount() == 41);
-        checkAgainstRebuild();
+        expected.push_back(entities[3]);
+        AssertEntrySet(sceneQuery, expected);
+        AssertHitAt(sceneQuery, Vector3(18.0f, 0.0f, 0.0f), kDown, entities[3]);
 
         // 破棄で外れる
         entities[20]->MarkForDestroy();
         world.Tick(0.016f);
         syncOnce();
-        assert(sceneQuery.GetEntryCount() == 40);
-        checkAgainstRebuild();
+        removeExpected(entities[20]);
+        AssertEntrySet(sceneQuery, expected);
+        AssertMissFromAbove(sceneQuery, Vector3(24.0f, 12.0f, 0.0f));
 
         // 追加
         Entity* added = SpawnMeshEntity(world, -20.0f, -20.0f, 0.0f);
         syncOnce();
         assert(sceneQuery.GetLastUpdateStats().Added == 1);
-        assert(sceneQuery.GetEntryCount() == 41);
-        Scene::RaycastHit hit;
-        assert(sceneQuery.Raycast(
-            NorvesLib::Math::Ray(NorvesLib::Math::Vector3(-30.0f, -20.0f, 0.0f), NorvesLib::Math::Vector3(1.0f, 0.0f, 0.0f)),
-            hit));
-        assert(hit.HitEntity == added);
-        checkAgainstRebuild();
+        expected.push_back(added);
+        AssertEntrySet(sceneQuery, expected);
+        AssertHitAt(sceneQuery, Vector3(-20.0f, -20.0f, 0.0f), Vector3(1.0f, 0.0f, 0.0f), added);
 
-        // 大量に追加すると保留があふれて作り直す
+        // 大量に追加すると保留があふれて作り直す（4 間隔でも半辺 √3 の立方体は重ならない）
         Entity* bulk[100] = {};
         for (int i = 0; i < 100; ++i)
         {
             bulk[i] = SpawnMeshEntity(world, static_cast<float>(i) * 4.0f, 200.0f, 0.0f);
+            expected.push_back(bulk[i]);
         }
         syncOnce();
         assert(sceneQuery.GetLastUpdateStats().Rebuilt == 1);
-        assert(sceneQuery.GetEntryCount() == 141);
-        checkAgainstRebuild();
+        assert(expected.size() == 141);
+        AssertEntrySet(sceneQuery, expected);
 
         // 作り直した後も、静止のフレームは何も変えず、置いた位置の Entity に当たる
         syncOnce();
         assert(sceneQuery.GetLastUpdateStats().Rebuilt == 0);
         assert(sceneQuery.GetLastUpdateStats().Added == 0);
-        assert(sceneQuery.GetEntryCount() == 141);
-        assert(sceneQuery.Raycast(
-            NorvesLib::Math::Ray(NorvesLib::Math::Vector3(40.0f, 190.0f, 0.0f), NorvesLib::Math::Vector3(0.0f, 1.0f, 0.0f)),
-            hit));
-        assert(hit.HitEntity == bulk[10]);
-        checkAgainstRebuild();
+        AssertEntrySet(sceneQuery, expected);
+        AssertHitAt(sceneQuery, Vector3(40.0f, 200.0f, 0.0f), Vector3(0.0f, 1.0f, 0.0f), bulk[10]);
+        AssertHitAt(sceneQuery, Vector3(-20.0f, -20.0f, 0.0f), Vector3(1.0f, 0.0f, 0.0f), added);
+        AssertHitAt(sceneQuery, Vector3(-40.0f, 0.0f, 3.0f), kDown, child);
 
         sceneQuery.Clear();
         world.Finalize();
     }
 
-    // 増分の更新の共通の道具。Update の前に描画の同期を 1 回回し、全量で作った結果と照合する
+    // 増分の更新の共通の道具。Update の前に描画の同期を 1 回回す
     struct IncrementalHarness
     {
         World& TargetWorld;
@@ -401,18 +450,6 @@ namespace
         {
             TargetWorld.SyncToSceneView(&Resources.Materials());
             Query.Update(TargetWorld);
-        }
-
-        void Check() const
-        {
-            uint32_t examined = 0;
-            char detail[200] = {};
-            const bool bPass = Query.VerifyAgainstRebuild(TargetWorld, examined, detail, sizeof(detail));
-            if (!bPass)
-            {
-                std::cout << "全量との不一致: " << detail << "\n";
-            }
-            assert(bPass);
         }
     };
 
@@ -433,22 +470,26 @@ namespace
         assert(child);
         MegaGeometryComponent* mega = world.CreateComponent<MegaGeometryComponent>(child);
         assert(mega);
-        SpawnMeshEntity(world, 30.0f, 0.0f, 0.0f);
+        Entity* other = SpawnMeshEntity(world, 30.0f, 0.0f, 0.0f);
+        using NorvesLib::Math::Vector3;
 
+        // Mesh を持たない親は Entry にならず、MegaGeometry の子と別の Mesh の Entity だけが入る
         Scene::SceneQuery sceneQuery;
         const IncrementalHarness harness{world, sceneQuery, renderResources};
         harness.Sync();
-        harness.Check();
+        AssertEntrySet(sceneQuery, {child, other});
+        AssertHitAt(sceneQuery, Vector3(0.0f, 0.0f, 0.0f), kDown, child);
         harness.Sync();
         harness.Sync();
         harness.Sync();
-        const size_t entriesBefore = sceneQuery.GetEntryCount();
 
         parent->SetPosition(-60.0f, 10.0f, 0.0f);
         harness.Sync();
-        assert(sceneQuery.GetEntryCount() == entriesBefore);
         assert(sceneQuery.GetLastUpdateStats().Updated >= 1);
-        harness.Check();
+        AssertEntrySet(sceneQuery, {child, other});
+        AssertMissFromAbove(sceneQuery, Vector3(0.0f, 0.0f, 0.0f));
+        AssertHitAt(sceneQuery, Vector3(-60.0f, 10.0f, 0.0f), kDown, child);
+        AssertHitAt(sceneQuery, Vector3(30.0f, 0.0f, 0.0f), kDown, other);
 
         sceneQuery.Clear();
         world.Finalize();
@@ -478,22 +519,23 @@ namespace
 
         Scene::SceneQuery sceneQuery;
         const IncrementalHarness harness{world, sceneQuery, renderResources};
+        const NorvesLib::Math::Vector3 leafCenter(5.0f, 0.0f, 0.0f);
         harness.Sync();
         harness.Sync();
         harness.Sync();
-        assert(sceneQuery.GetEntryCount() == 1);
-        harness.Check();
+        AssertEntrySet(sceneQuery, {leaf});
+        AssertHitAt(sceneQuery, leafCenter, kDown, leaf);
 
         assert(world.ReparentEntity(subtree, rootB));
         harness.Sync();
-        assert(sceneQuery.GetEntryCount() == 0);
-        harness.Check();
+        AssertEntrySet(sceneQuery, {});
+        AssertMissFromAbove(sceneQuery, leafCenter);
 
         // 戻すと入る
         assert(world.ReparentEntity(subtree, rootA));
         harness.Sync();
-        assert(sceneQuery.GetEntryCount() == 1);
-        harness.Check();
+        AssertEntrySet(sceneQuery, {leaf});
+        AssertHitAt(sceneQuery, leafCenter, kDown, leaf);
 
         sceneQuery.Clear();
         world.Finalize();
@@ -517,8 +559,8 @@ namespace
 
         Entity* doomed = SpawnMeshEntity(worldA, 0.0f, 0.0f, 0.0f);
         SpawnMeshEntity(worldA, 10.0f, 0.0f, 0.0f);
-        SpawnMeshEntity(worldB, 0.0f, 0.0f, 0.0f);
-        SpawnMeshEntity(worldB, 10.0f, 0.0f, 0.0f);
+        Entity* nearB = SpawnMeshEntity(worldB, 0.0f, 0.0f, 0.0f);
+        Entity* farB = SpawnMeshEntity(worldB, 10.0f, 0.0f, 0.0f);
 
         Scene::SceneQuery sceneQuery;
         const IncrementalHarness harnessA{worldA, sceneQuery, renderResources};
@@ -531,8 +573,9 @@ namespace
         doomed->MarkForDestroy();
         worldA.Tick(0.016f);
         harnessB.Sync();
-        assert(sceneQuery.GetEntryCount() == 2);
-        harnessB.Check();
+        AssertEntrySet(sceneQuery, {nearB, farB});
+        AssertHitAt(sceneQuery, NorvesLib::Math::Vector3(0.0f, 0.0f, 0.0f), kDown, nearB);
+        AssertHitAt(sceneQuery, NorvesLib::Math::Vector3(10.0f, 0.0f, 0.0f), kDown, farB);
 
         sceneQuery.Clear();
         worldA.Finalize();
@@ -638,7 +681,7 @@ int main()
     TestExplicitSpanRebuild();
     TestWorldRebuildSkipsInactiveAndPendingSubtrees();
     TestBVHRaycastMatchesBruteForce();
-    TestIncrementalUpdateMatchesRebuild();
+    TestIncrementalUpdateMatchesExpected();
     TestIncrementalUpdateFollowsMegaGeometryChild();
     TestIncrementalUpdateFollowsReparentToInactive();
     TestIncrementalUpdateIgnoresOldWorldHooksAfterSwitch();

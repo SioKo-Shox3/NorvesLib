@@ -113,10 +113,21 @@ namespace NorvesLib::Core::Scene
         DetachTracking();
         m_Entries.clear();
 
-        auto rootEntities = world.GetRootEntities();
-        for (Entity* entity : rootEntities)
+        // ECS の Entity の行から作る（Entity の木はたどらない）。自分と祖先がすべて Active かつ破棄の予約でない行だけを入れる
+        Container::VariableArray<World::EntityRowForCheck> rows;
+        world.CollectEntityRowsByDepth(rows);
+        for (const World::EntityRowForCheck& info : rows)
         {
-            CollectRecursive(entity, m_Entries);
+            if (!info.bEffectiveActive || info.EntityPtr == nullptr)
+            {
+                continue;
+            }
+            Math::AABB bounds;
+            if (info.EntityPtr->GetWorldAABB(bounds))
+            {
+                const uint32_t originalIndex = static_cast<uint32_t>(m_Entries.size());
+                m_Entries.push_back({info.EntityPtr, bounds, originalIndex});
+            }
         }
 
         m_NextOriginalIndex = static_cast<uint32_t>(m_Entries.size());
@@ -801,32 +812,6 @@ namespace NorvesLib::Core::Scene
         }
 
         return center.x;
-    }
-
-    void SceneQuery::CollectRecursive(Entity* entity, Container::VariableArray<Entry>& entries)
-    {
-        if (!entity)
-        {
-            return;
-        }
-
-        if (!entity->IsActive() || entity->IsPendingDestroy())
-        {
-            return;
-        }
-
-        Math::AABB bounds;
-        if (entity->GetWorldAABB(bounds))
-        {
-            const uint32_t originalIndex = static_cast<uint32_t>(entries.size());
-            entries.push_back({entity, bounds, originalIndex});
-        }
-
-        auto childEntities = entity->GetChildEntities();
-        for (Entity* child : childEntities)
-        {
-            CollectRecursive(child, entries);
-        }
     }
 
     // ========================================

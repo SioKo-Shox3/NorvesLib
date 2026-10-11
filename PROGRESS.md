@@ -2405,3 +2405,25 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-8.txt`: 3 シーンの混在の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。Game.log を開いて確認: `SCENE_CYCLE_SMOKE result=pass cycles=3 scenes=3 changed=none unsettled=0`、サンプル 9 件、ERROR 0、Game.log 7.7MB。
 - Next: 残りの todo の最優先（SCN-FIX-M9-T0-CAPTURE ほか）。
 - Notes: Git Bash から verify 1 を打つと `/m:1` がパスに変換されて MSBuild が MSB1008 で落ちる。PowerShell から実行する。
+
+### SCN-ECS-RETIRE-LEGACY-FLAGS 差し戻しの対応（2026-10-12、反復 5・run 20261012-030203）
+
+- Done（評価者の NEEDS_WORK の 2 点）:
+  1. 開発ビルドの検査の作り直しを、Entity の木（`GetRootEntities`・`GetChildEntities` の再帰・スタック）から ECS の行へ移した。`World::CollectEntityRowsByDepth` を足し、ECS の Entity の行（孤児を除く）を階層の列の Depth の順（親が子より先）に集め、行ごとに親の行の位置・根から届くか・「自分と祖先がすべて Active かつ破棄の予約でない」を親の行の結果から求める。`VerifyEntityTransforms`（再帰）と `VerifyRenderEntity`（再帰）を消し、1 行分の照合（`VerifyRowTransform`・`World::VerifyRenderRow`）を親が先の順に回して、求め直した値を行の位置ごとに覚えて子が読む形にした。`VerifyRenderSyncDelta` のスタックによる木の走査も同じ一覧に替えた。`SceneQuery::Rebuild(const World&)`（検査 ECS_SCENEQUERY の比較先）も同じ一覧から作るようにし、`CollectRecursive` を消した。
+  2. `SceneQueryRaycastTest` の `VerifyAgainstRebuild` を正解にした照合をすべて外し、手で決めた期待値に替えた。`TestIncrementalUpdateMatchesExpected`（旧 `TestIncrementalUpdateMatchesRebuild`）は、各操作（追加・値の変更・親の動き・非アクティブと戻し・破棄・大量の追加での作り直し）の後に、Entry の集合（全体を覆う箱の照会で取り出して期待する Entity の集合と比べる）、狙った Entity への当たりと距離（中心から 10 離れた点から撃ち、距離 = 10 - √3。√3 は既定の ±1 の箱を包む球の半径）、外れた場所の非ヒットを確かめる。MegaGeometry の子・非アクティブな親への付け替え・World の切り替えの 3 テストも同じ道具で明示の期待値にした。
+- 開発ビルドの検査の扱い（反復 1 の表を差し替える）:
+
+| 検査 | 扱い | 照合の中身 |
+|---|---|---|
+| ECS_TRANSFORM | 残す（ECS の行から全量を作り直して比べる） | `CollectEntityRowsByDepth` の順に、根から局所の変換の列を合成した値と `EcsWorldTransform` を全行 bit まで照合し、`EffectiveActive` を親の行から求めた判定と照合。親が一覧の先に無い行は、親が孤児なら飛ばし（ECS_BIND の担当）、そうでなければ失敗 |
+| ECS_RENDER_TRANSFORM | 残す（同上） | 同じ順に、親の行について求め直した描画の変換と補間の有無から自分の期待値を求め、`GetRenderWorldTransform`・列とタグの組と照合。破棄の予約と孤児の部分木は見ない |
+| ECS_RENDER_SYNC | 残す（同上） | `VerifyRenderSyncDelta`: 同じ一覧で自分と祖先がすべて Active かつ破棄の予約でない行の Component から proxy を作り直し、SceneView の proxy・内容の hash と照合 |
+| ECS_RENDER_INVALIDATION | 残す（同上） | `VerifyRenderSyncDelta` の内容の hash の照合（通知・変更ログに載らない変化の検出）と再試行の一覧の照合 |
+| ECS_SCENEQUERY | 残す（同上） | 増分の Entry と照会の結果を、`Rebuild`（同じ一覧から作る）と照合 |
+
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RETIRE-LEGACY-FLAGS-9.txt`: Debug の 4 ターゲットのビルド EXIT=0、error・warning 0。
+  - `-10.txt`: `-LE Reference` 付きで 14/14 Passed（EcsHierarchyTest・WorldRenderInterpolationTest・WorldSyncDifferentialTest・SceneQueryRaycastTest ほか）、EXIT=0。
+  - `-11.txt`: 3 シーンの混在の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。Game.log を開いて確認: `SCENE_CYCLE_SMOKE result=pass cycles=3 scenes=3 changed=none unsettled=0`、サンプル 9 件、ERROR 0、Game.log 8.2MB。
+- Next: 残りの todo の最優先（SCN-FIX-M9-T0-CAPTURE ほか）。
+- Notes: `World::SeedRenderSyncLog`（変更ログを取り始めるときの種まき）と `NotifyRenderRepublishAll` は木をたどるが、検査の比較先ではなく同期の側の一度きりの処理なので残した。

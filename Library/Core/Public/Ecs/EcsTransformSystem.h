@@ -13,7 +13,7 @@
  *
  * ワールドの変換は EcsWorldTransform の列へ書く（値が変わった行だけ。WriteColumnValue を通すので、チャンクの版が進む）。
  * EffectiveActive・訪れた番号・求めたかどうかは EcsPropagatedTransform（追跡しない列）に置く。
- * 検査 ECS_TRANSFORM は、この結果を、木を根から全部たどって求め直した値と全行照合する。
+ * 検査 ECS_TRANSFORM は、この結果を、Entity の行を親が先の順に回して根から求め直した値と全行照合する（Entity の木はたどらない）。
  *
  * 並列のしかた: 1 つの Depth の行は互いに独立なので、行ごとの計算（列の読み取りと式の評価だけ）を ParallelFor で回す。
  * 計算の結果は行ごとの置き場に出し、列への書き込みと次の Depth への積み込みは GameThread が行の順に行う。

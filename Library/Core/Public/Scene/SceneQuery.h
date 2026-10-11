@@ -145,7 +145,8 @@ namespace NorvesLib::Core::Scene
         /// 増分で保った結果が、全量で作った結果と一致するかを確かめる（検査 ECS_SCENEQUERY。有効なときだけ重い照合を走らせる）
         void RunCheck(const World& world, Debug::EngineChecks& checks);
 
-        /// 増分で保った Entry と照会の結果を、全量で作った SceneQuery と照合する。食い違いがあれば false で、最初の説明を outDetail へ書く。
+        /// 増分で保った Entry と照会の結果を、全量で作った SceneQuery（Rebuild。ECS の Entity の行から作る）と照合する。
+        /// 食い違いがあれば false で、最初の説明を outDetail へ書く。
         bool VerifyAgainstRebuild(const World& world, uint32_t& outExamined, char* outDetail, size_t detailSize) const;
 
         // 保持中の全Entryを破棄する(shutdown時のdangling Entity*回避)。
@@ -232,7 +233,6 @@ namespace NorvesLib::Core::Scene
             Container::VariableArray<uint64_t> MeshIds;
         };
 
-        static void CollectRecursive(Entity* entity, Container::VariableArray<Entry>& entries);
         static float GetCenterAxis(const Math::AABB& bounds, uint32_t axis);
 
         void BuildBVH();

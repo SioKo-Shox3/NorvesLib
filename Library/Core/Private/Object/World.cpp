@@ -265,22 +265,17 @@ namespace NorvesLib::Core
             }
         }
 
-        /// 検査 ECS_TRANSFORM の再帰: 階層のシステムが求めた EcsWorldTransform が、根から局所の変換をたどって求め直した値
-        /// （親の列の値 × 局所の変換）と、祖先をたどる従来の Active 判定に一致するか。
-        /// 行の無い Entity（段の最中に予約中）は ECS_BIND の担当なので飛ばす
-        bool VerifyEntityTransforms(Ecs::EcsWorld& ecs, Entity& entity, const Ecs::EcsWorldTransform& parentWorld,
-                                    bool parentActive, uint32_t& count, const char*& error)
+        /// 検査 ECS_TRANSFORM の 1 行分: 階層のシステムが求めた EcsWorldTransform が、親の行について根から求め直した値 ×
+        /// 局所の変換の列と、祖先の行から求めた Active 判定（bEffectiveActive）に一致するか。求め直した値を outWorld に返す
+        bool VerifyRowTransform(Ecs::EcsWorld& ecs, Ecs::EcsEntity row, const Math::Transform& parentWorld,
+                                bool bEffectiveActive, Math::Transform& outWorld, uint32_t& count, const char*& error)
         {
-            const Ecs::EcsEntity row = entity.GetEcsEntity();
-            if (row.IsNull() || !ecs.IsAlive(row))
-            {
-                return true;
-            }
+            const Ecs::EcsLocalTransform* local = ecs.GetColumnValue<Ecs::EcsLocalTransform>(row);
             const Ecs::EcsPropagatedTransform* propagated = ecs.GetColumnValue<Ecs::EcsPropagatedTransform>(row);
             const Ecs::EcsWorldTransform* stored = ecs.GetColumnValue<Ecs::EcsWorldTransform>(row);
-            if (!propagated || !stored)
+            if (!local || !propagated || !stored)
             {
-                error = "行に EcsPropagatedTransform か EcsWorldTransform が無い";
+                error = "行に EcsLocalTransform・EcsPropagatedTransform・EcsWorldTransform のどれかが無い";
                 return false;
             }
             ++count;
@@ -289,29 +284,30 @@ namespace NorvesLib::Core
                 error = "階層のシステムが求めていない行がある";
                 return false;
             }
-            const Math::Transform expected =
-                Ecs::EcsComposeTransform(Math::Transform(parentWorld.position, parentWorld.rotation, parentWorld.scale),
-                                         entity.GetLocalTransform());
+            outWorld = Ecs::EcsComposeTransform(parentWorld, Math::Transform(local->position, local->rotation, local->scale));
             if (!Ecs::EcsEqualWorldTransform(*stored,
-                                             Ecs::EcsWorldTransform{expected.position, expected.rotation, expected.scale}))
+                                             Ecs::EcsWorldTransform{outWorld.position, outWorld.rotation, outWorld.scale}))
             {
                 error = "階層のシステムのワールドの変換が根から求め直した値と一致しない";
                 return false;
             }
-            const bool bActive = parentActive && entity.IsActive() && !entity.IsPendingDestroy();
-            if ((propagated->bEffectiveActive != 0) != bActive)
+            if ((propagated->bEffectiveActive != 0) != bEffectiveActive)
             {
-                error = "階層のシステムの EffectiveActive が祖先をたどる判定と一致しない";
+                error = "階層のシステムの EffectiveActive が祖先の行から求めた判定と一致しない";
                 return false;
             }
-            for (Entity* child : entity.GetChildEntities())
-            {
-                if (!VerifyEntityTransforms(ecs, *child, *stored, bActive, count, error))
-                {
-                    return false;
-                }
-            }
             return true;
+        }
+
+        /// 全量の照合で、親が一覧に無い行が正当か（親が孤児なら、その部分木は ECS_BIND の担当）。正当でなければ error に理由を入れる
+        bool IsMissingParentExpected(const Ecs::EcsWorld& ecs, const World::EntityRowForCheck& info, const char*& error)
+        {
+            if (info.ParentIndex != World::kMissingParentRow || (ecs.IsAlive(info.Parent) && ecs.IsOrphan(info.Parent)))
+            {
+                return true;
+            }
+            error = "親の行が一覧の先に無い（親が生きていないか、Depth が親の次でない）";
+            return false;
         }
 
         /// 検査 ECS_BIND の再帰: entity の行と、その部分木が Outer/Inner と一致するか。食い違いは error に理由を入れて false
@@ -3402,19 +3398,17 @@ namespace NorvesLib::Core
         Container::UnorderedSet<uint64_t> expectBoard;
         Container::UnorderedSet<uint64_t> expectMega;
 
-        Container::VariableArray<Entity*> stack;
-        for (Entity* root : GetRootEntities())
+        // 全行から作り直す: ECS の Entity の行を集め、自分と祖先がすべて Active かつ破棄の予約でない行の Component を見る
+        // （Entity の木はたどらない）
+        Container::VariableArray<EntityRowForCheck> entityRows;
+        CollectEntityRowsByDepth(entityRows);
+        for (const EntityRowForCheck& info : entityRows)
         {
-            stack.push_back(root);
-        }
-        while (!stack.empty())
-        {
-            Entity* entity = stack.back();
-            stack.pop_back();
-            if (!entity->IsActive() || entity->IsPendingDestroy())
+            if (!info.bEffectiveActive || info.EntityPtr == nullptr)
             {
                 continue;
             }
+            Entity* entity = info.EntityPtr;
             const uint64_t ownerVersion = entity->GetTransformVersion();
             for (Component::Component* comp : entity->GetComponents())
             {
@@ -3593,10 +3587,6 @@ namespace NorvesLib::Core
                         fail("World に出さない Board の proxy が残っている", *board);
                     }
                 }
-            }
-            for (Entity* child : entity->GetChildEntities())
-            {
-                stack.push_back(child);
             }
         }
 
@@ -4268,17 +4258,14 @@ namespace NorvesLib::Core
         RunEcsRenderTransformCheck();
     }
 
-    bool World::VerifyRenderEntity(Entity& entity, const Math::Transform& parentRender, bool bParentInterpolated,
-                                   uint32_t& count, const char*& error)
+    bool World::VerifyRenderRow(Entity& entity, Ecs::EcsEntity row, const Math::Transform& parentRender,
+                                bool bParentInterpolated, Math::Transform& outExpected, bool& outInterpolated,
+                                uint32_t& count, const char*& error)
     {
-        // 描画の変換の更新と同じく、破棄予約の部分木は見ない
-        if (entity.IsPendingDestroy())
-            return true;
         Ecs::EcsWorld& ecs = *m_EcsWorld;
         const bool bInherited = m_bRenderInterpolationAllowed && bParentInterpolated;
         const bool bInterpolated = m_bRenderInterpolationAllowed && (bInherited || entity.IsRenderInterpolationEnabled());
         const Math::Transform world = entity.GetWorldTransform();
-        const Ecs::EcsEntity row = entity.GetEcsEntity();
         const bool bHasRow = !row.IsNull() && ecs.IsAlive(row);
         Math::Transform expected = world;
         if (bInherited)
@@ -4323,11 +4310,8 @@ namespace NorvesLib::Core
                 return false;
             }
         }
-        for (Entity* child : entity.GetChildEntities())
-        {
-            if (!VerifyRenderEntity(*child, expected, bInterpolated, count, error))
-                return false;
-        }
+        outExpected = expected;
+        outInterpolated = bInterpolated;
         return true;
     }
 
@@ -4345,10 +4329,39 @@ namespace NorvesLib::Core
         }
         uint32_t count = 0;
         const char* error = nullptr;
-        for (Entity* root : GetRootEntities())
+        // 行を親が先の順に回し、求め直した描画の変換と補間の有無を行の位置ごとに覚えて子が読む
+        Container::VariableArray<EntityRowForCheck> rows;
+        CollectEntityRowsByDepth(rows);
+        Container::VariableArray<Math::Transform> expectedRender(rows.size(), Math::Transform::Identity);
+        Container::VariableArray<uint8_t> interpolated(rows.size(), 0);
+        // 描画の変換の更新と同じく、破棄予約の部分木は見ない（孤児の部分木も見ない）
+        Container::VariableArray<uint8_t> skipped(rows.size(), 0);
+        for (size_t i = 0; i < rows.size(); ++i)
         {
-            if (!VerifyRenderEntity(*root, Math::Transform::Identity, false, count, error))
+            const EntityRowForCheck& info = rows[i];
+            const bool bHasParent = info.ParentIndex != kNoParentRow && info.ParentIndex != kMissingParentRow;
+            if (!info.bReachable || (bHasParent && skipped[info.ParentIndex] != 0))
+            {
+                skipped[i] = 1;
+                continue;
+            }
+            if (info.EntityPtr == nullptr)
+            {
+                error = "Entity の行が Entity を指していない";
                 break;
+            }
+            if (info.EntityPtr->IsPendingDestroy())
+            {
+                skipped[i] = 1;
+                continue;
+            }
+            const Math::Transform parentRender = bHasParent ? expectedRender[info.ParentIndex] : Math::Transform::Identity;
+            const bool bParentInterpolated = bHasParent && interpolated[info.ParentIndex] != 0;
+            bool bInterpolated = false;
+            if (!VerifyRenderRow(*info.EntityPtr, info.Row, parentRender, bParentInterpolated, expectedRender[i],
+                                 bInterpolated, count, error))
+                break;
+            interpolated[i] = bInterpolated ? 1 : 0;
         }
         if (outCount)
         {
@@ -5601,6 +5614,82 @@ namespace NorvesLib::Core
         return run.Unresolved;
     }
 
+    void World::CollectEntityRowsByDepth(Container::VariableArray<EntityRowForCheck>& out) const
+    {
+        out.clear();
+        if (!m_EcsWorld)
+        {
+            return;
+        }
+        const Ecs::EcsWorld& ecs = *m_EcsWorld;
+        const TypeId hierarchyType = Ecs::EcsColumnInfoOf<Ecs::EcsHierarchy>().Type;
+        Ecs::EcsQuery query;
+        query.All.push_back(hierarchyType);
+        Container::VariableArray<Ecs::EcsChunk*> chunks;
+        ecs.CollectChunks(query, chunks);
+
+        // Depth ごとのバケツに積み、浅い順に並べる（親の Depth は子より 1 小さいので、親が先に来る）
+        Container::VariableArray<Container::VariableArray<Ecs::EcsEntity>> buckets;
+        for (const Ecs::EcsChunk* chunk : chunks)
+        {
+            const int32_t column = ecs.FindColumnIndex(chunk->Archetype, hierarchyType);
+            if (column < 0)
+            {
+                continue;
+            }
+            const auto* hierarchies =
+                static_cast<const Ecs::EcsHierarchy*>(ecs.GetChunkColumn(chunk, static_cast<uint32_t>(column)));
+            const Ecs::EcsEntity* rows = chunk->GetEntities();
+            for (uint32_t i = 0; i < chunk->Count; ++i)
+            {
+                if (hierarchies[i].Kind != Ecs::kEcsHierarchyKindEntity)
+                {
+                    continue;
+                }
+                const uint32_t depth = hierarchies[i].Depth;
+                if (buckets.size() <= depth)
+                {
+                    buckets.resize(static_cast<size_t>(depth) + 1);
+                }
+                buckets[depth].push_back(rows[i]);
+            }
+        }
+
+        Container::UnorderedMap<uint64_t, uint32_t> indexOfRow;
+        for (const Container::VariableArray<Ecs::EcsEntity>& bucket : buckets)
+        {
+            for (const Ecs::EcsEntity row : bucket)
+            {
+                EntityRowForCheck info;
+                info.Row = row;
+                info.Parent = ecs.GetColumnValue<Ecs::EcsHierarchy>(row)->Parent;
+                info.EntityPtr = ResolveRenderEntity(row);
+                bool bParentReachable = true;
+                bool bParentActive = true;
+                if (info.Parent.IsNull())
+                {
+                    info.ParentIndex = kNoParentRow;
+                }
+                else if (const auto it = indexOfRow.find(PackEcsEntity(info.Parent)); it != indexOfRow.end())
+                {
+                    info.ParentIndex = it->second;
+                    bParentReachable = out[it->second].bReachable;
+                    bParentActive = out[it->second].bEffectiveActive;
+                }
+                else
+                {
+                    info.ParentIndex = kMissingParentRow;
+                    bParentReachable = false;
+                }
+                info.bReachable = bParentReachable;
+                info.bEffectiveActive = bParentReachable && bParentActive && info.EntityPtr != nullptr &&
+                                        info.EntityPtr->IsActive() && !info.EntityPtr->IsPendingDestroy();
+                indexOfRow.emplace(PackEcsEntity(row), static_cast<uint32_t>(out.size()));
+                out.push_back(info);
+            }
+        }
+    }
+
     bool World::VerifyEcsTransform(uint32_t* outCount)
     {
         if (outCount)
@@ -5621,11 +5710,25 @@ namespace NorvesLib::Core
         }
         else
         {
-            for (Entity* root : GetRootEntities())
+            // 行を親が先の順に回し、根から求め直した値を行の位置ごとに覚えて子が読む
+            Container::VariableArray<EntityRowForCheck> rows;
+            CollectEntityRowsByDepth(rows);
+            Container::VariableArray<Math::Transform> expectedWorld(rows.size(), Math::Transform::Identity);
+            for (size_t i = 0; i < rows.size(); ++i)
             {
-                const Math::Transform identity = Math::Transform::Identity;
-                const Ecs::EcsWorldTransform identityColumn{identity.position, identity.rotation, identity.scale};
-                if (!VerifyEntityTransforms(*m_EcsWorld, *root, identityColumn, true, count, error))
+                const EntityRowForCheck& info = rows[i];
+                if (!info.bReachable)
+                {
+                    if (!IsMissingParentExpected(*m_EcsWorld, info, error))
+                    {
+                        break;
+                    }
+                    continue;
+                }
+                const Math::Transform parentWorld =
+                    info.ParentIndex == kNoParentRow ? Math::Transform::Identity : expectedWorld[info.ParentIndex];
+                if (!VerifyRowTransform(*m_EcsWorld, info.Row, parentWorld, info.bEffectiveActive, expectedWorld[i], count,
+                                        error))
                 {
                     break;
                 }
