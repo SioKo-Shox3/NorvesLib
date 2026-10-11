@@ -60,7 +60,8 @@ namespace
     {
         JsonDocument document;
         Container::String error;
-        assert(JsonDocument::TryParse(R"json({"name":"\u9aa8\ud83d\udc3a"})json",document,&error));
+        // サロゲートを raw 文字列に書くと MSVC が UCN として読んで C3850 になるので、逆斜線をエスケープした通常の文字列で渡す。
+        assert(JsonDocument::TryParse("{\"name\":\"\\u9aa8\\ud83d\\udc3a\"}",document,&error));
         const auto value = document.GetRoot().FindMember("name").AsString();
         const unsigned char expected[] = {0xe9,0xaa,0xa8,0xf0,0x9f,0x90,0xba};
         if constexpr (sizeof(Container::String::value_type) == 1)

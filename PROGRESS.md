@@ -2043,3 +2043,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: TASKS.md の次の todo。
 - Notes:
   - 「取得」は、スクリプトの束縛にある唯一の取得の口（EntityRef の解決。IsValid・GetPosition などが通る）とした。C++ の `Entity::GetComponent` は破棄予約の Component も返す（paths の外。束縛の側で予約を見て外している）。
+
+### SCN-FIX-LOGGERSINK-BUNDLE（2026-10-11、反復 8・run 20261011-211043）
+
+- 変更（テスト側の追随だけ。確かめる中身は変えていない）:
+  - InputRebindCaptureManagerTest・InputDebugOverlayControllerTest: `ECursorMode` が `NorvesLib` 直下へ移ったので `using NorvesLib::ECursorMode;` を足した。
+  - InputBindingJsonTest: `assert(...)` の中の raw 文字列（文字列中の括弧の検査）を変数 `bracketsInString` へ出した。
+  - ActiveDeviceKindIntegrationTest: 偽物の ConsumingUI に、IInputController に増えた純粋仮想 `DebugName()` を実装した。
+  - JsonWriterTest: サロゲートの `\u` を raw 文字列に書いていた所を、逆斜線をエスケープした通常の文字列にした（解析させる JSON の文字は同じ）。
+- 結果（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-FIX-LOGGERSINK-BUNDLE-1.txt`: Debug の LoggerSinkTest のビルド EXIT=0（実行ファイルが 2026-09-27 以来はじめて更新された）。
+  - `-2.txt`: LoggerSinkTest・QuadrupedLocomotionModelTest・LocomotionProfileReloadTest・CameraCollisionSolverTest の 4/4 が pass、EXIT=0。
+  - `-3-allmembers.txt`（verify の外）: LoggerSinkTest.exe を使う ctest の全 50 本が pass、EXIT=0。直した 5 本も含む。落ちる member は無く、製品のコードの不具合として足す項目は無い。
+- Next: SCN-ECS-TICK-GAME（verify の 2・3 本目がこの束を使う）。
+- Notes:
+  - JSON のサロゲートの扱いそのもの（CORE-JSON-SURROGATE）には触れていない。書き方を変えただけ。

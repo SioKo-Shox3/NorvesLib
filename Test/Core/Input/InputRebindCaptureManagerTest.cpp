@@ -12,6 +12,7 @@
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Input;
 using namespace NorvesLib::Core::literals;
+using NorvesLib::ECursorMode;
 namespace
 {
     InputBindingSet Definitions()

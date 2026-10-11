@@ -21,6 +21,7 @@ namespace
     {
         InputSystem* System = nullptr;
         int PadCount = 0;
+        const char* DebugName() const override { return "ConsumingUI"; }
         bool OnGamepadButton(const GamepadButtonEvent&) override
         {
             ++PadCount;

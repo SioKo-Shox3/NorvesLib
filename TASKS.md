@@ -570,7 +570,7 @@
 
 
 ## SCN-FIX-LOGGERSINK-BUNDLE: テストの束 LoggerSinkTest を、今の API に追いつかせてビルドできるようにする
-- status: todo
+- status: done
 - done-when: LoggerSinkTest の束の次の 5 本を今の API に合わせて直し、束が Debug でビルドできる。直すのはテスト側の追随だけで、テストが確かめる中身は変えない。(1) `Test/Core/Input/InputRebindCaptureManagerTest.cpp`・`InputDebugOverlayControllerTest.cpp`: `ECursorMode` の名前空間の移動に合わせる。(2) `Test/Core/Input/InputBindingJsonTest.cpp` 158 行付近: `assert(...)` の中の raw 文字列を変数へ出す。(3) `Test/Core/Input/ActiveDeviceKindIntegrationTest.cpp`: 入力コントローラーのインターフェースに増えた純粋仮想を偽物に実装する。(4) `Test/Core/Text/JsonWriterTest.cpp` 63 行付近: サロゲート（D83D・DC3A）を UCN で書いて C3850 になる所を、コンパイルできる書き方（バイト列など）にする。束の全体の ctest（`LoggerSinkTest`）と、SCN-ECS-TICK-GAME が使う 3 本が pass する。実行して落ちる member があれば原因を PROGRESS に書き、テスト側の追随で直らないもの（製品のコードの不具合）は別の項目として TASKS に足す。
 - verify: `cmake --build build --config Debug --target LoggerSinkTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(LoggerSinkTest|QuadrupedLocomotionModelTest|CameraCollisionSolverTest|LocomotionProfileReloadTest)$" --no-tests=error --output-on-failure --timeout 180`

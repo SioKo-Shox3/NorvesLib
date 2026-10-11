@@ -155,7 +155,9 @@ int main()
     Container::String large(InputBindingJson::MaximumTextBytes+1,' ');RejectOverride(defaults,large);
     Container::String deep;for(size_t i=0;i<InputBindingJson::MaximumDepth+1;++i) deep.push_back('[');
     for(size_t i=0;i<InputBindingJson::MaximumDepth+1;++i) deep.push_back(']');RejectOverride(defaults,deep);
-    assert(InputBindingJson::ApplyOverrides(defaults,R"({"schema":"bindings.v1","contexts":[],"unknown":"[[{\"}]]"})",roundtrip));
+    // raw 文字列をマクロ引数へ直接書くと前処理が壊れるので、変数へ出してから渡す。
+    const char* bracketsInString=R"({"schema":"bindings.v1","contexts":[],"unknown":"[[{\"}]]"})";
+    assert(InputBindingJson::ApplyOverrides(defaults,bracketsInString,roundtrip));
     // 差分で表現できない構造/型変更は書き出さず、既存textを維持する。
     Container::String preservedText="keep";InputBindingSet different;
     assert(!InputBindingJson::WriteOverrides(defaults,different,preservedText) && preservedText=="keep");
