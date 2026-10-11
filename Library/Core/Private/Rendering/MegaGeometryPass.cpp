@@ -1469,8 +1469,8 @@ namespace NorvesLib::Core::Rendering
             !m_bMegaGeometryDebugPayloadUnsupportedWarned)
         {
             NORVES_LOG_WARNING("MegaGeometryPass",
-                               "%s debug view requires DrawIndirectFirstInstance; "
-                               "using normal MegaGeometry shading",
+                               "%s のデバッグ表示は DrawIndirectFirstInstance が要るため、"
+                               "通常の MegaGeometry の陰影で描きます",
                                DebugViewModeToString(command.DebugMode));
             m_bMegaGeometryDebugPayloadUnsupportedWarned = true;
         }

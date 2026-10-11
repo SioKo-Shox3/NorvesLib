@@ -71,10 +71,4 @@ MegaInstance LoadMegaInstance(uint index)
     return instance;
 }
 
-// index 番目のインスタンスの最初のワークグループの通し番号（平らな判定がワークグループの持ち主を二分探索で探すときに読む）
-uint LoadMegaInstanceFirstGroup(uint index)
-{
-    return megaInstanceRows[index].info.y;
-}
-
 #endif // NORVES_MEGA_INSTANCE_TABLE_GLSL

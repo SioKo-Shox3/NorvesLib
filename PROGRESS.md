@@ -2473,10 +2473,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - C++: `GPUMegaInstance`（144 B）と `GPUMegaMesh`（64 B）に分け、`MegaGeometryPass::BuildSceneTables`（CPU で表を作る）・`UploadSceneTables`（フレームスロットへ書き、VSM の入力を作る）・`PrepareSceneTables`（共通の前段）を足した。前段は `MegaGeometryPass::Execute`（RenderGraph の順で、主のカリングと描画・ID のラスタと解決・VSM の影のどれよりも前）で表を書き、同じフレーム・同じ枠の記録はその表とスロットを使う。前段を通らない記録（同じフレームの 2 つ目のビューポート・コマンドを直接組んだ呼び出し）は従来どおり自分で作る。「見えた」ビットの先頭は表を作るときにクラスタ数を詰めて書く（`UpdateVisibilityLayout` の配置と同じで、2 パスでないフレームはシェーダーが読まない）。メッシュの表は描画・カリング・ID のラスタ（ソフトを含む）・解決・VSM のカリングと影の塊の記録の各セットへ binding 22 で結ぶ。
   - テスト: 表を手で組む `GeometryPageRequestVulkanTest`・`VirtualShadowMapVulkanTest`（ケース K を含む）・`VisibilityResolveVulkanTest` を、行とメッシュの表に分けて書く形にした。`RenderGraphCompileTest` のインスタンスの表のバイトの検査をメッシュの表と合わせて新しい並びにし、VSM のカリングと影の塊の記録の束縛の数（12・6）とメッシュの表の束縛を確かめるようにした。
 - 検証（`.harness/runs/20261012-030203/`）:
-  - `verify-SCN-MEGA-GPU-SCENE-PREP-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error・warning 0。
+  - `verify-SCN-MEGA-GPU-SCENE-PREP-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0（warning は libwebsockets の `MSB8065` 1 件だけ）。
   - `-2.txt`: バナナ 1 万本 overview の `SCN-MEGA-BASE` との比較が `mean_luminance_difference=0`・`psnr_db=65.311`・`mismatched_pixel_ratio=0.000246` で `CAPTURE_SCENE result=pass`、EXIT=0。Game.log の ERROR 0。以前の項目の同じ比較（64.8〜69.2 dB・0.0002〜0.0003）の幅の中。
   - `-3.txt`（追加の確認）: `visibility-buffer=off`（GBuffer のラスタの経路。`megageometry.vert` と描画のセットの binding 22）で撮って ERROR 0、`SCN-MEGA-BASE` との比較 pass（47.2 dB。経路の違いの差）。
   - `-8.txt`: Debug の ctest 4 本のうち `GeometryPageRequestVulkanTest`・`VirtualShadowMapVulkanTest`・`RenderGraphCompileTest` が Passed。`VisibilityResolveVulkanTest` は「直接 dispatch の粗さの既定」の 1 件だけで落ちる（`-8-resolve-failures.txt`）。変更を stash して変更前（HEAD 0ed7bf4e）で再ビルドしても同じ 1 件で落ちる（`-6-baseline.txt`）ので、この変更によるものではない。
 - Next: SCN-MEGA-GPU-SCENE-SCATTER（席ごとの device-local な表と散在書き込み。前段の `PrepareSceneTables` の位置で compute を記録する）。
 - Notes: `VisibilityResolveVulkanTest` の直接 dispatch の粗さ（MegaGeometry の AO の既定、`VisFlatMaterialSurface`）の失敗は変更前からある。直す項目は TASKS に無い。
 - Notes: 前段は `MegaGeometryPass::Execute` の中に置いた（RenderGraph の順で MegaGeometry が表の読み手のどのパスよりも前。CSM・点光源の影は GPU の表を読まない）。独立の RenderGraph のパスにするかは、散在書き込みの compute を入れる SCATTER で決める。
+
+### SCN-MEGA-GPU-SCENE-PREP の差し戻しの対応（2026-10-12、反復 10・run 20261012-030203）
+
+- Done: `cluster_cull.comp` の平らな判定の二分探索を `LoadMegaInstance(mid).clusterInfo.w` で読むようにし、行を直接読む `LoadMegaInstanceFirstGroup` を消した。これで cull・visbuffer・vsm_mega・`megageometry.vert` のインスタンスの読みは `LoadMegaInstance` だけになった（`grep LoadMegaInstanceFirstGroup` は 0 件）。`MegaGeometryPass.cpp` の前段へ移した DrawIndirectFirstInstance の警告文を日本語にした。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-GPU-SCENE-PREP-9.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0（warning は libwebsockets の `MSB8065` 1 件だけ）。
+  - `-10.txt`: バナナ 1 万本 overview の `SCN-MEGA-BASE` との比較が `mean_luminance_difference=0`・`psnr_db=68.642`・`mismatched_pixel_ratio=0.000239` で `CAPTURE_SCENE result=pass`、EXIT=0。`overview.Game.log` で `cluster_cull.comp` がソースからコンパイルされて読み込まれ、ERROR 0。
+- Next: SCN-MEGA-GPU-SCENE-SCATTER。

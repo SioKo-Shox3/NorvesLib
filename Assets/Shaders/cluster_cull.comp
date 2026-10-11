@@ -37,7 +37,7 @@ void main()
     while (low < high)
     {
         uint mid = (low + high + 1u) >> 1u;
-        if (LoadMegaInstanceFirstGroup(mid) <= flatGroup)
+        if (LoadMegaInstance(mid).clusterInfo.w <= flatGroup)
         {
             low = mid;
         }
