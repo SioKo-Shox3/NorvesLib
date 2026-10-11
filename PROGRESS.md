@@ -1442,3 +1442,26 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-12-mixed.txt`: 元の混在周回は `result=fail`（EXIT=1）。`SCENE_CYCLE_DIFF field=textures,texture_bytes` で、CLEANUP-LIST の基準でも同じ既知の差。`Game/Scenes` は `paths:` の外のため、`blocked/SCN-ECS-RENDER-INVALIDATION.md` に判断を書いて BLOCKED にした。
 - 隣接の 26 件は今回は走らせていない（変更が World の逆引き・公開状態の列に限られ、WorldSyncDifferentialTest とシーンごとの周回で確かめた）。
 - 行末: 編集したファイルは numstat の 2 通りが一致（`World.cpp`・`World.h` は Edit で全体が書き換わったので、difflib で元の行末に当て直した）。
+
+### SCN-ECS-RENDER-SYNC-PREP（2026-10-11、反復 40・run 20261010-223034）
+
+- 変更:
+  - 新規 `Ecs/EcsRenderSync.h`（ヘッダのみ）: 一覧（変わった行 `Changed`・Remove `Removed`。鍵は種類 + proxy の鍵）と、全走査との照合 `EcsRenderSyncCompare`（走査で変わった行が一覧に無い／一覧にあるのに変わっていない／外された proxy の説明が無い／Remove なのに走査後も生存、の 4 種を数える）。
+  - 変更ログ: `Component::MarkRenderStateDirty` が「不要 → 必要」に変わったときだけ World の `NoteComponentRenderDirty` へ知らせる（`m_RenderLogWorld`。行の付け外しで World が設定し、付けたとき既に必要なら種として積む）。ワールドの変換の版が進んだ Entity の行も `m_RenderSyncTransformLog` に積む（ECS 伝播と旧の再帰の両方）。
+  - 公開の状態 `EcsPublishState` に `ProxyKey`・`Kind`（出している先。板は World / 画面空間まで分ける）を足し、行の削除のフック（`OnDestroy`）が出していた proxy の Remove を積む。
+  - 一覧の作成 `BuildRenderSyncList`: (1) 板のフリップブックを先に進める（走査での呼び出しは何もしない）、(2) 変更ログ（必要になった Component）、(3) 変換の版ログ × 公開した版との差、(4) ポーズの版 × 公開の状態の差（SkinnedMesh の列を走査）、(5) Remove = 行の削除のフック + 公開の状態が「出している」のに走査に入らない（非アクティブ・破棄待ち）部分木の行。
+  - 検査 `ECS_RENDER_SYNC`: 同期の頭で一覧を作り、走査の結果（変わった行・SceneView から外される proxy・走査後の生存）と照合する。違反は毎回、pass は最初と 64 回ごとに報告。有効でない間は変更ログを取らない（挙動は変えていない。同期は全走査のまま）。
+- テスト（paths の外）: `WorldSyncDifferentialTest::TestRenderSyncListMatchesFullScan`（最初・静止・移動・非表示・非アクティブ化と復帰・破棄で一覧が全走査と一致し違反 0、公開した版だけ古くした行は違反 1 になる）、`TestRenderSyncCompareDetectsEachMismatch`（4 種の食い違いと種類の取り違えを検出）。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-ECS-RENDER-SYNC-PREP-1.txt`（Debug の Core ビルド EXIT=0）、`-2.txt`（WorldSyncDifferentialTest ビルド EXIT=0）、`-3.txt`（同テスト Passed）。
+  - `-4-capture.txt`: 指定の撮影 `result=pass`、`ECS_RENDER_SYNC` が default 3・close 3・aerial 2 pass、fail 0。
+  - `-5-cycle.txt`: 指定の混在周回は `ECS_RENDER_SYNC` pass=1382・fail 無しだが、`SCENE_CYCLE_DIFF field=textures,texture_bytes`（既知。INVALIDATION と同じ）で EXIT=1。
+  - `-6-rendering3dtest.txt`・`-6-mega-bananas.txt`・`-6-mega-stress.txt`: シーンごとの周回 3 周が各 `result=pass`、`ECS_RENDER_SYNC` pass=1428/1/1、fail 無し。
+- BLOCKED: 混在周回の verify は ECS 側と無関係な既知のテクスチャ差で通らない。`blocked/SCN-ECS-RENDER-INVALIDATION.md` の判断（混在周回の判定を直す別タスクを起こす案が推奨）に従う。実装は完了・コミット済み。判断後に `status:` を戻す。
+- Notes:
+  - 次の SYNC-SWITCH へ: Remove のうち「非アクティブ・破棄待ち」は今は公開の状態の列の走査（公開数に比例）で拾っている。切替では EcsEntityFlags の変更ログ（追跡済み）か SetActive・破棄予約の通知に置き換えて O(変化) にすること。ポーズの版も同じく列の走査（SkinnedMesh の行数に比例）。
+  - 描画の値の列は追跡（MarkWritten）をまだ持たず、変更ログは Component の dirty の通知で代用している（`MarkRenderStateDirty` が 103 箇所から呼ばれ、列以外の変化も含むため）。
+  - 非表示の SkinnedMesh は公開の状態のポーズの版が更新されず、走査では毎フレーム「変わった行」になる（既存の挙動。一覧も同じ列の差で合わせた）。切替で直す。
+  - 画面空間の板 sink は proxy の一覧を持てないので、走査で外される proxy の照合は World の板までで、画面空間は「Remove なのに生存」の側だけ見ている。
+  - World.h は `paths:` に書かれていないが、World.cpp の宣言として前の項目と同じく編集した。
+  - 行末: 編集したファイルは numstat の 2 通りが一致。新規 `EcsRenderSync.h` は UTF-8 BOM + CRLF。

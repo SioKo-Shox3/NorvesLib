@@ -558,6 +558,156 @@ namespace
         world.Finalize();
     }
 
+    // 段 RenderSync の一覧（設計 1.10・準備）: 変更ログ・通知・公開の状態から作った「変わった行」と Remove が、全走査と一致する
+    void TestRenderSyncListMatchesFullScan()
+    {
+        using Kind = Ecs::EcsRenderSyncKind;
+        World world;
+        world.Initialize();
+        world.SetRenderSyncCheckForced(true);
+
+        SceneView view;
+        SceneViewSettings settings;
+        assert(view.Initialize(settings));
+        world.SetSceneView(&view);
+
+        RenderResources renderResources;
+        Entity* parent = world.SpawnObject<Entity>();
+        Entity* child = world.SpawnEntity<Entity>(parent);
+        Entity* other = world.SpawnObject<Entity>();
+        assert(parent && child && other);
+
+        MeshComponent* parentMesh = world.CreateComponent<MeshComponent>(parent);
+        MeshComponent* childMesh = world.CreateComponent<MeshComponent>(child);
+        PointLightComponent* childLight = world.CreateComponent<PointLightComponent>(child);
+        MeshComponent* otherMesh = world.CreateComponent<MeshComponent>(other);
+        assert(parentMesh && childMesh && childLight && otherMesh);
+        parentMesh->SetMeshHandle(MakeMeshHandle(700));
+        childMesh->SetMeshHandle(MakeMeshHandle(701));
+        otherMesh->SetMeshHandle(MakeMeshHandle(702));
+
+        const auto keyOf = [](Kind kind, uint64_t id) { return Ecs::EcsRenderSyncKey(kind, id); };
+        const auto syncOnce = [&]() { world.SyncToSceneView(&renderResources.Materials()); };
+
+        // 最初の同期: 付けたばかりの行はすべて変わった行
+        syncOnce();
+        assert(world.GetRenderSyncStats().Checked == 1);
+        assert(world.GetRenderSyncStats().Violations == 0);
+        const Ecs::EcsRenderSyncList& list = world.GetRenderSyncList();
+        assert(list.Changed.count(keyOf(Kind::Mesh, parentMesh->GetComponentId())) == 1);
+        assert(list.Changed.count(keyOf(Kind::Mesh, childMesh->GetComponentId())) == 1);
+        assert(list.Changed.count(keyOf(Kind::Light, childLight->GetComponentId())) == 1);
+        assert(list.Removed.empty());
+
+        // 静止: 履歴の落ち着きの 2 回目の公開を除けば、変わった行は無い
+        syncOnce();
+        syncOnce();
+        syncOnce();
+        assert(list.Changed.empty());
+        assert(list.Removed.empty());
+
+        // 移動: 動かした Entity と子孫の行が変わった行になり、動かさない行は載らない
+        parent->SetPosition(3.0f, 0.0f, 0.0f);
+        syncOnce();
+        assert(list.Changed.count(keyOf(Kind::Mesh, parentMesh->GetComponentId())) == 1);
+        assert(list.Changed.count(keyOf(Kind::Mesh, childMesh->GetComponentId())) == 1);
+        assert(list.Changed.count(keyOf(Kind::Light, childLight->GetComponentId())) == 1);
+        assert(list.Changed.count(keyOf(Kind::Mesh, otherMesh->GetComponentId())) == 0);
+
+        // 非表示: 値を書いた行だけが変わった行になる。取り下げは作り直した結果で、Remove には載らない
+        syncOnce();
+        syncOnce();
+        otherMesh->SetVisible(false);
+        syncOnce();
+        assert(list.Changed.count(keyOf(Kind::Mesh, otherMesh->GetComponentId())) == 1);
+        assert(list.Changed.size() == 1);
+        assert(list.Removed.empty());
+        assert(FindMeshProxy(view, other->GetObjectId()) == nullptr);
+
+        // 部分木を非アクティブにする: 公開していた行は Remove になり、次の同期では載らない
+        syncOnce();
+        parent->SetActive(false);
+        syncOnce();
+        assert(list.Removed.count(keyOf(Kind::Mesh, parentMesh->GetComponentId())) == 1);
+        assert(list.Removed.count(keyOf(Kind::Mesh, childMesh->GetComponentId())) == 1);
+        assert(list.Removed.count(keyOf(Kind::Light, childLight->GetComponentId())) == 1);
+        syncOnce();
+        assert(list.Removed.empty());
+        parent->SetActive(true);
+        syncOnce();
+        assert(list.Changed.count(keyOf(Kind::Mesh, childMesh->GetComponentId())) == 1);
+
+        // 破棄: 行の削除のフックが Remove を積む
+        syncOnce();
+        syncOnce();
+        const uint64_t destroyedMeshId = childMesh->GetComponentId();
+        assert(FindMeshProxy(view, child->GetObjectId()) != nullptr);
+        child->MarkForDestroy();
+        world.Tick(0.016f);
+        syncOnce();
+        assert(list.Removed.count(keyOf(Kind::Mesh, destroyedMeshId)) == 1);
+        assert(FindMeshProxy(view, child->GetObjectId()) == nullptr);
+        assert(world.GetRenderSyncStats().Violations == 0);
+
+        // 変更ログに載らない変化（公開した版だけが古くなった行）は、検査が見つける
+        const uint32_t violationsBefore = world.GetRenderSyncStats().Violations;
+        parentMesh->SetLastSyncedTransformVersion(0);
+        syncOnce();
+        assert(world.GetRenderSyncStats().Violations == violationsBefore + 1);
+        syncOnce();
+        assert(world.GetRenderSyncStats().Violations == violationsBefore + 1);
+
+        world.Finalize();
+    }
+
+    // 一覧と全走査の照合は、欠け・余り・説明のない取り下げ・Remove なのに生存、をそれぞれ違反にする
+    void TestRenderSyncCompareDetectsEachMismatch()
+    {
+        using Kind = Ecs::EcsRenderSyncKind;
+        const auto keyOf = [](Kind kind, uint64_t id) { return Ecs::EcsRenderSyncKey(kind, id); };
+
+        Ecs::EcsRenderSyncList list;
+        Container::UnorderedSet<uint64_t> scanChanged;
+        Container::UnorderedSet<uint64_t> scanStale;
+        Container::UnorderedSet<uint64_t> liveAfter;
+
+        list.Changed.insert(keyOf(Kind::Mesh, 1));
+        scanChanged.insert(keyOf(Kind::Mesh, 1));
+        // 板は変わった行（Board）が、World・画面空間どちらの取り下げも説明する
+        list.Changed.insert(keyOf(Kind::Board, 5));
+        scanChanged.insert(keyOf(Kind::Board, 5));
+        scanStale.insert(keyOf(Kind::WorldBoard, 5));
+        list.Removed.insert(keyOf(Kind::Light, 9));
+        scanStale.insert(keyOf(Kind::Light, 9));
+        assert(Ecs::EcsRenderSyncCompare(list, scanChanged, scanStale, liveAfter).Violations() == 0);
+
+        scanChanged.insert(keyOf(Kind::Mesh, 2));
+        Ecs::EcsRenderSyncReport report = Ecs::EcsRenderSyncCompare(list, scanChanged, scanStale, liveAfter);
+        assert(report.ChangedMissing == 1 && report.Violations() == 1);
+        scanChanged.erase(keyOf(Kind::Mesh, 2));
+
+        list.Changed.insert(keyOf(Kind::Mesh, 3));
+        report = Ecs::EcsRenderSyncCompare(list, scanChanged, scanStale, liveAfter);
+        assert(report.ChangedExtra == 1 && report.Violations() == 1);
+        list.Changed.erase(keyOf(Kind::Mesh, 3));
+
+        scanStale.insert(keyOf(Kind::Mesh, 4));
+        report = Ecs::EcsRenderSyncCompare(list, scanChanged, scanStale, liveAfter);
+        assert(report.RemovedUnexplained == 1 && report.Violations() == 1);
+        scanStale.erase(keyOf(Kind::Mesh, 4));
+
+        liveAfter.insert(keyOf(Kind::Light, 9));
+        report = Ecs::EcsRenderSyncCompare(list, scanChanged, scanStale, liveAfter);
+        assert(report.RemovedStillLive == 1 && report.Violations() == 1);
+        assert(report.FirstDetail[0] != '\0');
+        liveAfter.clear();
+
+        // 種類が違う鍵は別物（Mesh の 1 と Light の 1 を取り違えない）
+        scanStale.insert(keyOf(Kind::Light, 1));
+        report = Ecs::EcsRenderSyncCompare(list, scanChanged, scanStale, liveAfter);
+        assert(report.RemovedUnexplained == 1);
+    }
+
     void TestLightAndBoardValuesLiveInComponentRow()
     {
         World world;
@@ -748,6 +898,8 @@ int main()
     TestRenderValuesLiveInComponentRow();
     TestRenderInvalidationNotifications();
     TestRenderInvalidationStaleRefsAndInactiveRows();
+    TestRenderSyncListMatchesFullScan();
+    TestRenderSyncCompareDetectsEachMismatch();
     TestLightAndBoardValuesLiveInComponentRow();
     TestLightDirectionAndBillboardSizeLiveInComponentRow();
 

@@ -122,13 +122,16 @@ namespace NorvesLib::Core::Ecs
         uint64_t RenderTransformVersion;
         /// 公開したときのポーズの版（EcsPoseVersion::Serial。SkinnedMesh 以外は 0）
         uint64_t PoseSerial;
+        /// 出している proxy の鍵（Mega は Entity の ObjectId、他は ComponentId）。行の削除のフックが Remove を積むのに使う
+        uint64_t ProxyKey;
         /// proxy を作り直して渡した回数
         uint32_t Version;
         /// SceneView（または画面空間の sink）に proxy を出している
         bool bPublished;
+        /// 出している先（EcsRenderSyncKind。Board は World か画面空間かまで分ける）
+        uint8_t Kind;
         uint8_t Reserved0;
         uint8_t Reserved1;
-        uint8_t Reserved2;
     };
 
     /// SkinnedMeshComponent の行のポーズの版。ポーズを求め直すたびに Component が書く（World は公開した版と比べる）

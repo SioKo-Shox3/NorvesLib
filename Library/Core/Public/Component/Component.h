@@ -158,8 +158,17 @@ namespace NorvesLib::Core::Component
 
         /**
          * @brief RenderThread同期が必要な状態にする
+         *
+         * 同期が不要から必要へ変わったときだけ、World の段 RenderSync の一覧（変更ログ）へ知らせる
          */
-        void MarkRenderStateDirty() { m_bRenderStateDirty = true; }
+        void MarkRenderStateDirty()
+        {
+            if (!m_bRenderStateDirty)
+            {
+                m_bRenderStateDirty = true;
+                NotifyRenderStateDirty();
+            }
+        }
 
         /**
          * @brief RenderThread同期が必要かどうか
@@ -280,6 +289,8 @@ namespace NorvesLib::Core::Component
         PROPERTY(bool, bBegunPlay)      // BeginPlay済みフラグ
 
         bool m_bRenderStateDirty = true;
+        /// 変更ログ（段 RenderSync の一覧）へ知らせる World。行が付いている間だけ持つ（World が付け外しする）
+        ::NorvesLib::Core::World* m_RenderLogWorld = nullptr;
         uint64_t m_LastSyncedTransformVersion = 0;
         /// ECS の行（World が付け外しする）
         Ecs::EcsEntity m_EcsEntity;
@@ -288,6 +299,8 @@ namespace NorvesLib::Core::Component
 
     private:
         friend class ::NorvesLib::Core::World;
+        /// 描画の同期が必要になったことを World の変更ログへ知らせる（World が無ければ何もしない）
+        void NotifyRenderStateDirty();
         ETickGroup m_DispatchPrimaryGroup = ETickGroup::Default;
         bool m_bHasDispatchPrimaryGroup = false;
 

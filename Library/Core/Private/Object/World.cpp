@@ -968,6 +968,10 @@ namespace NorvesLib::Core
         m_RenderReconcile.clear();
         m_RenderChangedRows.clear();
         m_bRenderRowsUnsorted = false;
+        m_RenderSyncDirtyLog.clear();
+        m_RenderSyncTransformLog.clear();
+        m_RenderSyncDestroyed.clear();
+        m_RenderSyncList.Clear();
 
         m_PendingDestroyEntities.clear();
         m_PendingDestroyComponents.clear();
@@ -1451,6 +1455,13 @@ namespace NorvesLib::Core
         createComponentArchetype(Ecs::EcsComponentRowKind::Board, Container::Span<const Ecs::EcsColumnInfo>(boardColumns, 6));
         createComponentArchetype(Ecs::EcsComponentRowKind::Billboard, Container::Span<const Ecs::EcsColumnInfo>(billboardColumns, 7));
 
+        // 行の削除で、出していた proxy の Remove を積む（段 RenderSync の一覧）
+        Ecs::EcsColumnHooks publishHooks;
+        publishHooks.OnDestroy = &World::OnPublishStateDestroyed;
+        publishHooks.User = this;
+        m_EcsWorld->SetColumnHooks(Ecs::EcsColumnInfoOf<Ecs::EcsPublishState>().Type, publishHooks);
+        m_bRenderSyncLogEnabled = IsRenderSyncCheckActive();
+
         // 段の最中に孤児にした行は、各段の同期点で消す
         const uint32_t stages[] = {m_StageTick, m_StageLateTick, m_StageFixedBegin,
                                    m_StageFixedTick, m_StageFixedEnd, m_StageSync};
@@ -1756,6 +1767,7 @@ namespace NorvesLib::Core
         if (!HasFlag(OF_Initialized) ||
             (!m_SceneView && !m_ScreenSpaceBoardSink))
         {
+            m_RenderSyncTransformLog.clear();
             return;
         }
 
@@ -1775,6 +1787,13 @@ namespace NorvesLib::Core
         m_InvalidationFrameExamined = 0;
         m_InvalidationFrameViolations = 0;
         DrainRenderResourceChanges(materials, meshes);
+
+        // 段 RenderSync の一覧: 変更ログ・通知・公開の状態から作り、全走査の結果と照合する
+        m_bRenderSyncCheckFrame = BeginRenderSyncFrame();
+        if (m_bRenderSyncCheckFrame)
+        {
+            BuildRenderSyncList();
+        }
 
         Container::UnorderedSet<uint64_t> liveMeshComponentIds;
         Container::UnorderedSet<uint64_t> liveSkinnedMeshComponentIds;
@@ -1803,6 +1822,12 @@ namespace NorvesLib::Core
                 liveScreenBoardComponentIds,
                 liveWorldBoardComponentIds,
                 enabledComponentDataRegistry);
+        }
+
+        if (m_bRenderSyncCheckFrame)
+        {
+            FinishRenderSyncFrame(liveMeshComponentIds, liveSkinnedMeshComponentIds, liveMegaGeometryObjectIds,
+                                  liveLightIds, liveScreenBoardComponentIds, liveWorldBoardComponentIds);
         }
 
         if (m_SceneView)
@@ -1952,7 +1977,7 @@ namespace NorvesLib::Core
     }
 
     void World::RecordRenderPublish(const Component::Component& component, const Entity& owner, bool bPublished,
-                                    uint64_t proxyHash)
+                                    uint64_t proxyHash, Ecs::EcsRenderSyncKind sink)
     {
         if (m_EcsWorld)
         {
@@ -1965,6 +1990,11 @@ namespace NorvesLib::Core
                     if (bPublished)
                     {
                         ++publish->Version;
+                        // 出している先と鍵を覚える（行が消えるとき、フックが Remove を積むのに使う）
+                        publish->ProxyKey = RenderSyncProxyKey(component);
+                        publish->Kind = static_cast<uint8_t>(sink != Ecs::EcsRenderSyncKind::None
+                                                                 ? sink
+                                                                 : RenderSyncKindOf(component));
                         publish->RenderTransformVersion = owner.GetRenderTransformVersion();
                         const Ecs::EcsPoseVersion* pose = m_EcsWorld->GetColumnValue<Ecs::EcsPoseVersion>(row);
                         publish->PoseSerial = pose != nullptr ? pose->Serial : 0;
@@ -2107,6 +2137,464 @@ namespace NorvesLib::Core
         {
             checks->Report("ECS_RENDER_INVALIDATION", bPass, m_InvalidationFrameExamined);
             m_InvalidationLastReport = m_InvalidationCalls;
+        }
+    }
+
+    // ========================================
+    // 段 RenderSync の一覧（設計 1.10。準備: 同期は全走査のまま、一覧と全走査を照合する）
+    // ========================================
+
+    bool World::IsRenderSyncCheckActive() const
+    {
+        if (m_bRenderSyncCheckForced)
+        {
+            return true;
+        }
+        NorvesLib::Debug::EngineChecks* checks = NorvesLib::Core::Engine::GEngine != nullptr
+            ? &NorvesLib::Core::Engine::GEngine->GetEngineChecks()
+            : nullptr;
+        return checks != nullptr && checks->IsEnabled("ECS_RENDER_SYNC");
+    }
+
+    void World::SetRenderSyncCheckForced(bool bForced)
+    {
+        m_bRenderSyncCheckForced = bForced;
+        if (bForced)
+        {
+            if (!m_bRenderSyncLogEnabled)
+            {
+                m_bRenderSyncLogEnabled = true;
+                m_RenderSyncDirtyLog.clear();
+                m_RenderSyncTransformLog.clear();
+                for (Entity* root : GetRootEntities())
+                {
+                    SeedRenderSyncLog(*root);
+                }
+            }
+        }
+        else if (m_bRenderSyncLogEnabled && !IsRenderSyncCheckActive())
+        {
+            m_bRenderSyncLogEnabled = false;
+            m_RenderSyncDirtyLog.clear();
+            m_RenderSyncTransformLog.clear();
+            m_RenderSyncDestroyed.clear();
+        }
+    }
+
+    void World::SeedRenderSyncLog(Entity& entity)
+    {
+        // 取り始める前から必要だった分を、変更ログの種として積む
+        const Ecs::EcsEntity row = entity.GetEcsEntity();
+        if (!row.IsNull())
+        {
+            m_RenderSyncTransformLog.push_back(PackEcsEntity(row));
+        }
+        for (Component::Component* component : entity.GetComponents())
+        {
+            if (component->IsRenderStateDirty() && !component->GetEcsEntity().IsNull())
+            {
+                m_RenderSyncDirtyLog.push_back(PackEcsEntity(component->GetEcsEntity()));
+            }
+        }
+        for (Entity* child : entity.GetChildEntities())
+        {
+            SeedRenderSyncLog(*child);
+        }
+    }
+
+    bool World::BeginRenderSyncFrame()
+    {
+        const bool bActive = IsRenderSyncCheckActive();
+        if (bActive && !m_bRenderSyncLogEnabled)
+        {
+            m_bRenderSyncLogEnabled = true;
+            m_RenderSyncDirtyLog.clear();
+            m_RenderSyncTransformLog.clear();
+            for (Entity* root : GetRootEntities())
+            {
+                SeedRenderSyncLog(*root);
+            }
+        }
+        else if (!bActive && m_bRenderSyncLogEnabled)
+        {
+            m_bRenderSyncLogEnabled = false;
+            m_RenderSyncDirtyLog.clear();
+            m_RenderSyncTransformLog.clear();
+            m_RenderSyncDestroyed.clear();
+        }
+        m_RenderSyncScanChanged.clear();
+        return m_bRenderSyncLogEnabled;
+    }
+
+    void World::NoteComponentRenderDirty(Ecs::EcsEntity row)
+    {
+        if (m_bRenderSyncLogEnabled && !row.IsNull())
+        {
+            m_RenderSyncDirtyLog.push_back(PackEcsEntity(row));
+        }
+    }
+
+    void World::NoteRenderSyncTransform(Ecs::EcsEntity row)
+    {
+        if (m_bRenderSyncLogEnabled && !row.IsNull())
+        {
+            m_RenderSyncTransformLog.push_back(PackEcsEntity(row));
+        }
+    }
+
+    void World::OnPublishStateDestroyed(void* user, Ecs::EcsEntity entity, const void* value, Ecs::EcsHookReason reason)
+    {
+        (void)entity;
+        (void)reason;
+        World* world = static_cast<World*>(user);
+        const auto* state = static_cast<const Ecs::EcsPublishState*>(value);
+        if (world == nullptr || state == nullptr || !world->m_bRenderSyncLogEnabled || !state->bPublished)
+        {
+            return;
+        }
+        world->m_RenderSyncDestroyed.insert(
+            Ecs::EcsRenderSyncKey(static_cast<Ecs::EcsRenderSyncKind>(state->Kind), state->ProxyKey));
+    }
+
+    bool World::IsEntityRenderScanned(const Entity& entity) const
+    {
+        // 走査は、アクティブでない・破棄待ちの Entity の部分木に入らない
+        for (const Entity* cursor = &entity; cursor != nullptr; cursor = cursor->GetParentEntity())
+        {
+            if (!cursor->IsActive() || cursor->IsPendingDestroy())
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    Ecs::EcsRenderSyncKind World::RenderSyncKindOf(const Component::Component& component) const
+    {
+        if (CastTo<Component::SkinnedMeshComponent>(&component))
+        {
+            return Ecs::EcsRenderSyncKind::SkinnedMesh;
+        }
+        if (CastTo<Component::MegaGeometryComponent>(&component))
+        {
+            return Ecs::EcsRenderSyncKind::MegaGeometry;
+        }
+        if (CastTo<Component::MeshComponent>(&component))
+        {
+            return Ecs::EcsRenderSyncKind::Mesh;
+        }
+        if (CastTo<Component::LightComponent>(&component))
+        {
+            return Ecs::EcsRenderSyncKind::Light;
+        }
+        if (CastTo<Component::TextComponent>(&component))
+        {
+            return Ecs::EcsRenderSyncKind::None;
+        }
+        if (CastTo<Component::BoardComponent>(&component))
+        {
+            return Ecs::EcsRenderSyncKind::Board;
+        }
+        return Ecs::EcsRenderSyncKind::None;
+    }
+
+    uint64_t World::RenderSyncProxyKey(const Component::Component& component) const
+    {
+        if (CastTo<Component::MegaGeometryComponent>(&component))
+        {
+            const Entity* owner = component.GetOwner();
+            return owner != nullptr ? owner->GetObjectId() : 0;
+        }
+        return component.GetComponentId();
+    }
+
+    void World::NoteRenderScanChanged(const Component::Component& component)
+    {
+        if (!m_bRenderSyncCheckFrame || !m_EcsWorld)
+        {
+            return;
+        }
+        // 行が付く前の Component は変更ログに載らない（付いたときに積む）。照合の対象にしない
+        const Ecs::EcsEntity row = component.GetEcsEntity();
+        if (row.IsNull() || !m_EcsWorld->IsAlive(row))
+        {
+            return;
+        }
+        const Ecs::EcsRenderSyncKind kind = RenderSyncKindOf(component);
+        if (kind != Ecs::EcsRenderSyncKind::None)
+        {
+            m_RenderSyncScanChanged.insert(Ecs::EcsRenderSyncKey(kind, RenderSyncProxyKey(component)));
+        }
+    }
+
+    void World::AddRenderSyncChanged(Component::Component& component)
+    {
+        const Ecs::EcsRenderSyncKind kind = RenderSyncKindOf(component);
+        if (kind == Ecs::EcsRenderSyncKind::None)
+        {
+            return;
+        }
+        // 板は SceneView が無くても画面空間の sink へ出す。他は SceneView が要る
+        if (kind != Ecs::EcsRenderSyncKind::Board && m_SceneView == nullptr)
+        {
+            return;
+        }
+        const Entity* owner = component.GetOwner();
+        if (owner == nullptr || !IsEntityRenderScanned(*owner))
+        {
+            return;
+        }
+        m_RenderSyncList.Changed.insert(Ecs::EcsRenderSyncKey(kind, RenderSyncProxyKey(component)));
+    }
+
+    void World::CollectRenderSyncPublishedRemovals()
+    {
+        const TypeId publishType = Ecs::EcsColumnInfoOf<Ecs::EcsPublishState>().Type;
+        Ecs::EcsQuery query;
+        query.All.push_back(publishType);
+        Container::VariableArray<Ecs::EcsChunk*> chunks;
+        m_EcsWorld->CollectChunks(query, chunks);
+        for (Ecs::EcsChunk* chunk : chunks)
+        {
+            const int32_t column = m_EcsWorld->FindColumnIndex(chunk->Archetype, publishType);
+            if (column < 0)
+            {
+                continue;
+            }
+            const auto* states = static_cast<const Ecs::EcsPublishState*>(
+                m_EcsWorld->GetChunkColumn(static_cast<const Ecs::EcsChunk*>(chunk), static_cast<uint32_t>(column)));
+            const Ecs::EcsEntity* rows = chunk->GetEntities();
+            for (uint32_t i = 0; i < chunk->Count; ++i)
+            {
+                if (!states[i].bPublished)
+                {
+                    continue;
+                }
+                // Object を指していない行（外された行）は、行の削除のフックが積む
+                const Component::Component* component = ComponentOfRow(rows[i]);
+                if (component == nullptr)
+                {
+                    continue;
+                }
+                const Entity* owner = component->GetOwner();
+                if (owner != nullptr && IsEntityRenderScanned(*owner))
+                {
+                    continue;
+                }
+                m_RenderSyncList.Removed.insert(Ecs::EcsRenderSyncKey(
+                    static_cast<Ecs::EcsRenderSyncKind>(states[i].Kind), states[i].ProxyKey));
+            }
+        }
+    }
+
+    void World::BuildRenderSyncList()
+    {
+        m_RenderSyncList.Clear();
+        if (!m_EcsWorld)
+        {
+            return;
+        }
+
+        // 板のフリップブックは、一覧を作る前に進めておく（進めた結果で描画の同期が必要になった板を変更ログに載せる）。
+        // 走査での呼び出しは、すでに進めてあるので何もしない
+        {
+            Ecs::EcsQuery query;
+            query.All.push_back(Ecs::EcsColumnInfoOf<Ecs::EcsBoardRender>().Type);
+            Container::VariableArray<Ecs::EcsChunk*> chunks;
+            m_EcsWorld->CollectChunks(query, chunks);
+            for (const Ecs::EcsChunk* chunk : chunks)
+            {
+                const Ecs::EcsEntity* rows = chunk->GetEntities();
+                for (uint32_t i = 0; i < chunk->Count; ++i)
+                {
+                    Component::Component* component = ComponentOfRow(rows[i]);
+                    if (component == nullptr || RenderSyncKindOf(*component) != Ecs::EcsRenderSyncKind::Board)
+                    {
+                        continue;
+                    }
+                    const Entity* owner = component->GetOwner();
+                    if (owner != nullptr && IsEntityRenderScanned(*owner))
+                    {
+                        static_cast<Component::BoardComponent*>(component)->PrepareFlipbookForRenderSync();
+                    }
+                }
+            }
+        }
+
+        // 変更ログ: 描画の同期が必要になった Component
+        for (const uint64_t packed : m_RenderSyncDirtyLog)
+        {
+            if (Component::Component* component = ComponentOfRow(UnpackEcsEntity(packed)))
+            {
+                AddRenderSyncChanged(*component);
+            }
+        }
+
+        // 変更ログ: ワールドの変換の版が進んだ Entity の Component のうち、公開した版と違うもの
+        for (const uint64_t packed : m_RenderSyncTransformLog)
+        {
+            Entity* entity = ResolveRenderEntity(UnpackEcsEntity(packed));
+            if (entity == nullptr)
+            {
+                continue;
+            }
+            for (Component::Component* component : entity->GetComponents())
+            {
+                if (component->GetLastSyncedTransformVersion() != entity->GetTransformVersion())
+                {
+                    AddRenderSyncChanged(*component);
+                }
+            }
+        }
+
+        // 公開の状態: ポーズの版が公開した版と違う SkinnedMesh
+        {
+            const TypeId poseType = Ecs::EcsColumnInfoOf<Ecs::EcsPoseVersion>().Type;
+            const TypeId publishType = Ecs::EcsColumnInfoOf<Ecs::EcsPublishState>().Type;
+            Ecs::EcsQuery query;
+            query.All.push_back(poseType);
+            query.All.push_back(publishType);
+            Container::VariableArray<Ecs::EcsChunk*> chunks;
+            m_EcsWorld->CollectChunks(query, chunks);
+            for (Ecs::EcsChunk* chunk : chunks)
+            {
+                const int32_t poseColumn = m_EcsWorld->FindColumnIndex(chunk->Archetype, poseType);
+                const int32_t publishColumn = m_EcsWorld->FindColumnIndex(chunk->Archetype, publishType);
+                if (poseColumn < 0 || publishColumn < 0)
+                {
+                    continue;
+                }
+                const Ecs::EcsChunk* constChunk = chunk;
+                const auto* poses = static_cast<const Ecs::EcsPoseVersion*>(
+                    m_EcsWorld->GetChunkColumn(constChunk, static_cast<uint32_t>(poseColumn)));
+                const auto* states = static_cast<const Ecs::EcsPublishState*>(
+                    m_EcsWorld->GetChunkColumn(constChunk, static_cast<uint32_t>(publishColumn)));
+                const Ecs::EcsEntity* rows = chunk->GetEntities();
+                for (uint32_t i = 0; i < chunk->Count; ++i)
+                {
+                    if (states[i].PoseSerial != poses[i].Serial)
+                    {
+                        if (Component::Component* component = ComponentOfRow(rows[i]))
+                        {
+                            AddRenderSyncChanged(*component);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remove: 行の削除のフックが積んだもの、と、公開の状態が「出している」のに走査に入らない部分木の行
+        for (const uint64_t packed : m_RenderSyncDestroyed)
+        {
+            m_RenderSyncList.Removed.insert(packed);
+        }
+        CollectRenderSyncPublishedRemovals();
+
+        m_RenderSyncStats.ChangedListed += static_cast<uint32_t>(m_RenderSyncList.Changed.size());
+        m_RenderSyncStats.RemovedListed += static_cast<uint32_t>(m_RenderSyncList.Removed.size());
+    }
+
+    void World::FinishRenderSyncFrame(const Container::UnorderedSet<uint64_t>& liveMesh,
+                                      const Container::UnorderedSet<uint64_t>& liveSkinned,
+                                      const Container::UnorderedSet<uint64_t>& liveMega,
+                                      const Container::UnorderedSet<uint64_t>& liveLight,
+                                      const Container::UnorderedSet<uint64_t>& liveScreenBoard,
+                                      const Container::UnorderedSet<uint64_t>& liveWorldBoard)
+    {
+        using Kind = Ecs::EcsRenderSyncKind;
+        Container::UnorderedSet<uint64_t> liveAfter;
+        const auto addLive = [&liveAfter](Kind kind, const Container::UnorderedSet<uint64_t>& live)
+        {
+            for (const uint64_t key : live)
+            {
+                liveAfter.insert(Ecs::EcsRenderSyncKey(kind, key));
+            }
+        };
+        addLive(Kind::Mesh, liveMesh);
+        addLive(Kind::SkinnedMesh, liveSkinned);
+        addLive(Kind::MegaGeometry, liveMega);
+        addLive(Kind::Light, liveLight);
+        addLive(Kind::ScreenBoard, liveScreenBoard);
+        addLive(Kind::WorldBoard, liveWorldBoard);
+
+        // 走査の終わりに外される proxy: SceneView が持っているのに、生きていないもの（画面空間の sink は数えられないので見ない）
+        Container::UnorderedSet<uint64_t> scanStale;
+        if (m_SceneView)
+        {
+            const auto addStale = [&scanStale](Kind kind, uint64_t key, const Container::UnorderedSet<uint64_t>& live)
+            {
+                if (live.find(key) == live.end())
+                {
+                    scanStale.insert(Ecs::EcsRenderSyncKey(kind, key));
+                }
+            };
+            for (const Rendering::MeshProxy& proxy : m_SceneView->GetMeshProxies())
+            {
+                addStale(Kind::Mesh, proxy.ComponentId, liveMesh);
+            }
+            for (const Rendering::SkinnedMeshProxy& proxy : m_SceneView->GetSkinnedMeshProxies())
+            {
+                addStale(Kind::SkinnedMesh, proxy.ComponentId, liveSkinned);
+            }
+            for (const Rendering::MegaGeometryProxy& proxy : m_SceneView->GetMegaGeometryProxies())
+            {
+                addStale(Kind::MegaGeometry, proxy.ObjectId, liveMega);
+            }
+            for (const Rendering::LightProxy& proxy : m_SceneView->GetLightProxies())
+            {
+                addStale(Kind::Light, proxy.LightId, liveLight);
+            }
+            for (const Rendering::BoardProxy& proxy : m_SceneView->GetBoardProxies())
+            {
+                addStale(Kind::WorldBoard, proxy.ComponentId, liveWorldBoard);
+            }
+        }
+
+        const Ecs::EcsRenderSyncReport report =
+            Ecs::EcsRenderSyncCompare(m_RenderSyncList, m_RenderSyncScanChanged, scanStale, liveAfter);
+        ++m_RenderSyncStats.Checked;
+        m_RenderSyncStats.Examined += report.Examined;
+        m_RenderSyncStats.Violations += report.Violations();
+        if (report.Violations() != 0 && m_RenderSyncStats.Violations <= 8)
+        {
+            LOG_ERROR("ECS_RENDER_SYNC: 変わった行・Remove の一覧が全走査と食い違う (変更の欠け=%u, 余り=%u, 外れた proxy の説明なし=%u, Remove なのに生存=%u): %s",
+                      report.ChangedMissing, report.ChangedExtra, report.RemovedUnexplained, report.RemovedStillLive,
+                      report.FirstDetail);
+        }
+
+        // 変更ログの整理: 変換と削除は今回で使い切り、描画の値は、まだ同期が必要な行（走査に入らなかった行など）だけ残す
+        m_RenderSyncTransformLog.clear();
+        m_RenderSyncDestroyed.clear();
+        {
+            Container::UnorderedSet<uint64_t> kept;
+            size_t write = 0;
+            for (const uint64_t packed : m_RenderSyncDirtyLog)
+            {
+                const Component::Component* component = ComponentOfRow(UnpackEcsEntity(packed));
+                if (component != nullptr && component->IsRenderStateDirty() && kept.insert(packed).second)
+                {
+                    m_RenderSyncDirtyLog[write++] = packed;
+                }
+            }
+            m_RenderSyncDirtyLog.resize(write);
+        }
+
+        NorvesLib::Debug::EngineChecks* checks = NorvesLib::Core::Engine::GEngine != nullptr
+            ? &NorvesLib::Core::Engine::GEngine->GetEngineChecks()
+            : nullptr;
+        if (checks == nullptr || !checks->IsEnabled("ECS_RENDER_SYNC"))
+        {
+            return;
+        }
+        ++m_RenderSyncCalls;
+        const bool bPass = report.Violations() == 0;
+        // 呼び出しが多いので、fail は毎回、pass は最初に行を照合できた回と 64 回ごとに出す
+        const bool bReportPass = bPass && report.Examined > 0 &&
+                                 (m_RenderSyncLastReport == 0 || m_RenderSyncCalls % 64 == 0);
+        if (!bPass || bReportPass)
+        {
+            checks->Report("ECS_RENDER_SYNC", bPass, report.Examined);
+            m_RenderSyncLastReport = m_RenderSyncCalls;
         }
     }
 
@@ -2693,6 +3181,7 @@ namespace NorvesLib::Core
         {
             // 旧の再帰でも、ワールドの変換が変わった行を描画の更新へ知らせる
             QueueRenderChange(entity.m_EcsEntity);
+            NoteRenderSyncTransform(entity.m_EcsEntity);
         }
         const Math::Transform& worldTransform = entity.GetWorldTransform();
 
@@ -2759,6 +3248,10 @@ namespace NorvesLib::Core
                 const bool bNeedsSync = skinnedMeshComp->IsRenderStateDirty() ||
                                         skinnedMeshComp->GetLastSyncedTransformVersion() != ownerVersion ||
                                         rowInfo.bPoseChanged;
+                if (bNeedsSync)
+                {
+                    NoteRenderScanChanged(*skinnedMeshComp);
+                }
                 if (!bNeedsSync)
                 {
                     if (skinnedMeshComp->IsVisible())
@@ -2819,6 +3312,10 @@ namespace NorvesLib::Core
                 const RenderRowInfo rowInfo = ReadRenderRowInfo(*meshComp, entity);
                 const bool bNeedsSync = meshComp->IsRenderStateDirty() ||
                                         meshComp->GetLastSyncedTransformVersion() != ownerVersion;
+                if (bNeedsSync)
+                {
+                    NoteRenderScanChanged(*meshComp);
+                }
                 if (!bNeedsSync)
                 {
                     liveMeshComponentIds.insert(meshComp->GetComponentId());
@@ -2885,6 +3382,10 @@ namespace NorvesLib::Core
                 const RenderRowInfo rowInfo = ReadRenderRowInfo(*megaComp, entity);
                 const bool bNeedsSync = megaComp->IsRenderStateDirty() ||
                                         megaComp->GetLastSyncedTransformVersion() != ownerVersion;
+                if (bNeedsSync)
+                {
+                    NoteRenderScanChanged(*megaComp);
+                }
                 if (!bNeedsSync)
                 {
                     liveMegaGeometryObjectIds.insert(entity.GetObjectId());
@@ -2944,6 +3445,10 @@ namespace NorvesLib::Core
                 const RenderRowInfo rowInfo = ReadRenderRowInfo(*lightComp, entity);
                 const bool bNeedsSync = lightComp->IsRenderStateDirty() ||
                                         lightComp->GetLastSyncedTransformVersion() != ownerVersion;
+                if (bNeedsSync)
+                {
+                    NoteRenderScanChanged(*lightComp);
+                }
                 if (!bNeedsSync)
                 {
                     liveLightIds.insert(lightComp->GetComponentId());
@@ -2998,6 +3503,10 @@ namespace NorvesLib::Core
 
                 const bool bNeedsSync = boardComp->IsRenderStateDirty() ||
                                         boardComp->GetLastSyncedTransformVersion() != ownerVersion;
+                if (bNeedsSync)
+                {
+                    NoteRenderScanChanged(*boardComp);
+                }
                 if (!bNeedsSync)
                 {
                     if (effectiveSpace == Rendering::BoardSpace::WorldSpace)
@@ -3030,7 +3539,10 @@ namespace NorvesLib::Core
                         boardProxy.ObjectId = entity.GetObjectId();
                         boardProxy.ComponentId = boardComp->GetComponentId();
                         RecordRenderPublish(*boardComp, entity, true,
-                                            bCheckInvalidation ? Rendering::HashProxy(boardProxy) : 0);
+                                            bCheckInvalidation ? Rendering::HashProxy(boardProxy) : 0,
+                                            boardProxy.Space == Rendering::BoardSpace::WorldSpace
+                                                ? Ecs::EcsRenderSyncKind::WorldBoard
+                                                : Ecs::EcsRenderSyncKind::ScreenBoard);
                         if (boardProxy.Space == Rendering::BoardSpace::WorldSpace)
                         {
                             liveWorldBoardComponentIds.insert(boardProxy.ComponentId);
@@ -3647,6 +4159,12 @@ namespace NorvesLib::Core
         m_EcsWorld->WriteColumnValueOf(component.m_EcsEntity, config);
         MoveEcsPropertyValuesToColumns(&component);
         component.OnEcsRowAttached();
+        // 描画の同期が必要になったら変更ログへ知らせる。いま必要な分は種として積む
+        component.m_RenderLogWorld = this;
+        if (component.IsRenderStateDirty())
+        {
+            NoteComponentRenderDirty(component.m_EcsEntity);
+        }
     }
 
     void World::MoveEntityValuesToFallback(Entity& entity)
@@ -3665,6 +4183,7 @@ namespace NorvesLib::Core
     void World::MoveComponentValuesToFallback(Component::Component& component)
     {
         component.OnEcsRowDetaching();
+        component.m_RenderLogWorld = nullptr;
         if (const Ecs::EcsTickConfig* config = m_EcsWorld->GetColumnValue<Ecs::EcsTickConfig>(component.m_EcsEntity))
         {
             // 列の値は検証済みの設定から写したものなので、群 → 優先度 → mask の順に戻せる
@@ -4280,6 +4799,7 @@ namespace NorvesLib::Core
             {
                 // 旧の再帰と同じく、ワールドの変換が変わった Entity だけ版を進める
                 ++entity->m_TransformVersion;
+                NoteRenderSyncTransform(applied.Entity);
             }
             entity->m_bWorldTransformDirty = false;
         }

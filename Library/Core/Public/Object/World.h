@@ -8,6 +8,7 @@
 #include "Component/TickDispatch.h"
 #include "Container/Containers.h"
 #include "Ecs/EcsCommandBuffer.h"
+#include "Ecs/EcsRenderSync.h"
 #include <cstdint>
 #include <type_traits>
 
@@ -295,6 +296,32 @@ namespace NorvesLib::Core
         /// 公開を試みたが proxy を作れず、次の同期でもう一度試す行
         const Container::VariableArray<Ecs::EcsEntity>& GetRenderRetryRows() const { return m_RenderRetryRows; }
 
+        /// 検査 ECS_RENDER_SYNC の累計
+        struct RenderSyncStats
+        {
+            /// 一覧を作って全走査と照合した同期の回数
+            uint32_t Checked = 0;
+            /// 照合した項目の数の合計
+            uint32_t Examined = 0;
+            /// 食い違った項目の数の合計
+            uint32_t Violations = 0;
+            /// 一覧に載せた変わった行・Remove の延べ数
+            uint32_t ChangedListed = 0;
+            uint32_t RemovedListed = 0;
+        };
+
+        /// 検査の累計
+        const RenderSyncStats& GetRenderSyncStats() const { return m_RenderSyncStats; }
+
+        /// 直近の同期で作った一覧
+        const Ecs::EcsRenderSyncList& GetRenderSyncList() const { return m_RenderSyncList; }
+
+        /// 検査 ECS_RENDER_SYNC を EngineChecks の設定によらず走らせる（テスト用）
+        void SetRenderSyncCheckForced(bool bForced);
+
+        /// 変更ログ: Component の描画の同期が不要から必要へ変わった。Component の MarkRenderStateDirty が呼ぶ
+        void NoteComponentRenderDirty(Ecs::EcsEntity row);
+
         /**
          * @brief MeshComponent/LightComponentからSceneViewへProxy同期
          */
@@ -476,7 +503,7 @@ namespace NorvesLib::Core
         RenderRowInfo ReadRenderRowInfo(const Component::Component& component, const Entity& owner) const;
         /// 公開の状態の列を書く。proxy を出したときは bPublished を true にして版を進め、出さなかった・外したときは false にする
         void RecordRenderPublish(const Component::Component& component, const Entity& owner, bool bPublished,
-                                 uint64_t proxyHash);
+                                 uint64_t proxyHash, Ecs::EcsRenderSyncKind sink = Ecs::EcsRenderSyncKind::None);
         /// 公開したかった行が proxy を作れなかった。次の同期でもう一度試す一覧に入れる
         void NoteRenderRetry(const Component::Component& component);
         /// 資源の逆引きへ、この Component の行が使っている資源を登録する（proxy を作り直すたびに呼ぶ）
@@ -490,6 +517,36 @@ namespace NorvesLib::Core
         /// 1 回の同期の終わり: 再試行の一覧と通知の入れ替え、検査の報告
         void FinishRenderInvalidationFrame();
         Component::Component* ComponentOfRow(Ecs::EcsEntity row) const;
+
+        // ---- 段 RenderSync の一覧（設計 1.10。準備: 同期は全走査のまま、一覧と全走査を照合する） ----
+        bool IsRenderSyncCheckActive() const;
+        /// 変更ログを取るかを同期の頭で決める。取り始めるときは、いまの状態を種として積む。戻りは、この同期で一覧を作って照合するか
+        bool BeginRenderSyncFrame();
+        void SeedRenderSyncLog(Entity& entity);
+        /// 変更ログ: ワールドの変換の版が進んだ Entity の行を積む
+        void NoteRenderSyncTransform(Ecs::EcsEntity row);
+        /// 変更ログ・通知・公開の状態から、変わった行と Remove の一覧を作る
+        void BuildRenderSyncList();
+        void AddRenderSyncChanged(Component::Component& component);
+        void CollectRenderSyncPublishedRemovals();
+        /// 描画の同期の走査が入る Entity か（自分と祖先がすべてアクティブで破棄待ちでない）
+        bool IsEntityRenderScanned(const Entity& entity) const;
+        /// 描画の同期の対象の種類。対象でなければ None
+        Ecs::EcsRenderSyncKind RenderSyncKindOf(const Component::Component& component) const;
+        /// proxy の鍵（Mega は Entity の ObjectId、他は ComponentId）
+        uint64_t RenderSyncProxyKey(const Component::Component& component) const;
+        /// 全走査が proxy を作り直した行を覚える（一覧との照合用）
+        void NoteRenderScanChanged(const Component::Component& component);
+        /// 走査の終わり: 外された proxy を求め、一覧と照合し、変更ログを整理する
+        void FinishRenderSyncFrame(const Container::UnorderedSet<uint64_t>& liveMesh,
+                                   const Container::UnorderedSet<uint64_t>& liveSkinned,
+                                   const Container::UnorderedSet<uint64_t>& liveMega,
+                                   const Container::UnorderedSet<uint64_t>& liveLight,
+                                   const Container::UnorderedSet<uint64_t>& liveScreenBoard,
+                                   const Container::UnorderedSet<uint64_t>& liveWorldBoard);
+        /// 行の削除（公開の状態の列が消える）のフック。出していた proxy の Remove を積む
+        static void OnPublishStateDestroyed(void* user, Ecs::EcsEntity entity, const void* value,
+                                            Ecs::EcsHookReason reason);
 
         Container::TUniquePtr<Ecs::EcsWorld> m_EcsWorld;
         Container::TUniquePtr<Ecs::SystemScheduler> m_Scheduler;
@@ -661,6 +718,25 @@ namespace NorvesLib::Core
         uint64_t m_InvalidationLastReport = 0;
         uint32_t m_InvalidationFrameExamined = 0;
         uint32_t m_InvalidationFrameViolations = 0;
+
+        // ---- 段 RenderSync の一覧 ----
+        /// 変更ログを取っている（検査 ECS_RENDER_SYNC が有効）
+        bool m_bRenderSyncLogEnabled = false;
+        bool m_bRenderSyncCheckForced = false;
+        /// この同期で一覧を作って照合する
+        bool m_bRenderSyncCheckFrame = false;
+        /// 変更ログ: 描画の同期が必要になった Component の行（EcsEntity を詰めたもの。同期の終わりに、まだ必要な行だけ残す）
+        Container::VariableArray<uint64_t> m_RenderSyncDirtyLog;
+        /// 変更ログ: ワールドの変換の版が進んだ Entity の行（同期のたびに空にする）
+        Container::VariableArray<uint64_t> m_RenderSyncTransformLog;
+        /// 行の削除のフックが積んだ Remove（同期のたびに空にする）
+        Container::UnorderedSet<uint64_t> m_RenderSyncDestroyed;
+        Ecs::EcsRenderSyncList m_RenderSyncList;
+        /// 全走査が proxy を作り直した行
+        Container::UnorderedSet<uint64_t> m_RenderSyncScanChanged;
+        RenderSyncStats m_RenderSyncStats;
+        uint64_t m_RenderSyncCalls = 0;
+        uint64_t m_RenderSyncLastReport = 0;
 
         // リフレクションプロパティ
         PROPERTY(uint64_t, NextObjectId)

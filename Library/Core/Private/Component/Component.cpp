@@ -154,6 +154,14 @@ namespace NorvesLib::Core::Component
         m_TickConfiguration = configuration;
     }
 
+    void Component::NotifyRenderStateDirty()
+    {
+        if (m_RenderLogWorld != nullptr)
+        {
+            m_RenderLogWorld->NoteComponentRenderDirty(m_EcsEntity);
+        }
+    }
+
     void Component::Enable()
     {
         if (getbEnabled().Get())
