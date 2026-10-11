@@ -672,7 +672,7 @@
 
 
 ## SCN-ECS-SCOPE-METRICS-THREADS: 撮影の区間の集計を、その区間が出たフレームだけで数え、スレッドの名前を添える
-- status: todo
+- status: done
 - done-when: `Scripts/CaptureScene.ps1` の `cpu_scope_ms`・`cpu_scope_group_ms` の median・p95・max を、その区間が出たフレーム（`frames_present`）だけで求める（今はゲームスレッドの窓の全フレームで数えるので、ゲームスレッドが描画 1 フレームの間に何回も回ると描画スレッドの区間の median が 0 になる。5万個の静止の撮影で `RenderGraph.Execute` が median 0・p95 49.3 ms・frames_present 302 / 窓 3832）。区間ごとに、出たスレッドの名前（GameThread・RenderThread・Worker）を `thread` に書く。mega-stress 2000 個の短い撮影で、`RenderGraph.Execute` の median が 0 より大きく、`thread` が入っている。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 120 -GameArgs stress-entities=2000 -OutDir .harness/runs/scene-capture/SCN-ECS-SCOPE-METRICS-THREADS`
 - verify: `python -c "import json,sys; m=json.load(open('.harness/runs/scene-capture/SCN-ECS-SCOPE-METRICS-THREADS/metrics.json',encoding='utf-8-sig')); r=[x for v in m['views'] for x in v['gpu_timing']['cpu_scope_ms'] if x['scope']=='RenderGraph.Execute']; print(r); sys.exit(0 if r and all(x['median_ms']>0 and x.get('thread') for x in r) else 1)"`

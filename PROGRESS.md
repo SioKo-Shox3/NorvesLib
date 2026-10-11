@@ -2438,3 +2438,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-2.txt`・`-4.txt`: `ctest -R ^M9WorldAcceptanceTest$` は EXIT=8（未修正のため）。通常起動（`--window-background` 付き）は通り、M9 のスモークが t0 の撮影で落ちる。
   - `-3-gamelog.txt`: スモークの Game.log の抜粋（`FRAME_CAPTURE_SOURCE … format=9 usage=0x5`・`FRAME_CAPTURE_FAILED status=SourceMissingTransferSrc`・`capture_status=SourceMissingTransferSrc`）。
 - Next: 人が paths を広げて todo に戻したら、VignettePass の 1 行を直して M9 を通す。
+
+### SCN-ECS-SCOPE-METRICS-THREADS（2026-10-12、反復 7・run 20261012-030203）
+
+- Done: `Scripts/CaptureScene.ps1` の `cpu_scope_ms`・`cpu_scope_group_ms` の median・p95・max を、その区間が出たフレーム（`frames_present`）だけで求めるようにした（出なかったフレームを 0 で埋めるのをやめた。範囲のフレーム数は `cpu_scope_frames` に残る）。区間ごとに出たスレッドの名前を `thread`（GameThread・RenderThread・Worker を , で連ねる）に書く。スレッドの名前はトレースの Frame の行を書く ThreadId（最も多いもの）を GameThread、GPU の行を書く ThreadId を RenderThread、それ以外を Worker とする。標準出力の `cpu_scope_median` の `t=` も名前にした。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-SCOPE-METRICS-THREADS-1.txt`: RelWithDebInfo のビルドと mega-stress 2000 個の撮影が `CAPTURE_SCENE result=pass`、EXIT=0。`RenderGraph.Execute=2.397/max=3.256/t=RenderThread`、`MegaGeometryPass.RecordFrameCommand=0.695/max=1.057/t=RenderThread`。
+  - `-2.txt`: `RenderGraph.Execute` の median 2.397 ms・p95 2.876・max 3.256・`thread=RenderThread`・frames_present 122（範囲 9432 フレーム）、EXIT=0。
+- Next: 残りの todo の最優先（MEASURE-UPLOAD・RT-PASSES・MEASURE-RT はこの値を使う）。
+- Notes: この撮影では区間 70 種のうち GameThread 66・RenderThread 4 で、Worker に出た区間は無かった。median の意味が「範囲の全フレーム」から「出たフレーム」に変わったので、以前の撮影の `cpu_scope_ms` の median（毎フレーム出ない区間）とは直接比べられない。

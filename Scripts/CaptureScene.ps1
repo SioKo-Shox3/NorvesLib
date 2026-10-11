@@ -34,7 +34,8 @@
 # 統計が無効な Release は GPU のタイムスタンプを取れないので併用しない（RelWithDebInfo で測る）。
 # gpu_timing には CPU 側も入る。ゲームスレッド・描画スレッドのフレーム時間（game_thread_ms_* / render_thread_ms_*。median と p95）、
 # パスごとの median・p95・max（pass_ms。同じ内容を gpu_pass_ms にも書く）、CPU のスコープ（トレースの Type=Scope の行）は全部の区間を
-# 名前ごとに集計して cpu_scope_ms へ（フレームあたりの合計（全スレッド）の median・p95・max、区間が出たスレッドの数 threads）、
+# 名前ごとに集計して cpu_scope_ms へ（その区間が出たフレームだけで数えたフレームあたりの合計（全スレッド）の median・p95・max、
+# 区間が出たスレッドの数 threads とその名前 thread（GameThread・RenderThread・Worker））、
 # 名前の先頭 2 つの部分ごとの合計（Ecs.Stage.*・Ecs.Sys.*・RG.Record.* など）を cpu_scope_group_ms へ書く。
 # CPU 側も GPU と同じ手順（SceneReady の後の描画フレームからウォームアップと末尾を除いた最後の -GpuTimingFrames 件）で数える。
 # 描画スレッドの時間だけは、その窓の最初〜最後のフレーム番号の範囲で RenderThreadMs > 0 の Frame 行から独立に集める。
@@ -345,6 +346,9 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
     $cpuFrameColumn = [array]::IndexOf($header, 'CPUFrameMs')
     $gameThreadColumn = [array]::IndexOf($header, 'GameThreadMs')
     $renderThreadColumn = [array]::IndexOf($header, 'RenderThreadMs')
+    $threadColumn = [array]::IndexOf($header, 'ThreadId')
+    $frameRowThreads = New-Object 'System.Collections.Generic.Dictionary[string,int]'
+    $gpuRowThreads = New-Object 'System.Collections.Generic.Dictionary[string,int]'
     $cpuRows = New-Object System.Collections.Generic.List[object]
     $renderThreadRows = New-Object System.Collections.Generic.List[object]
     $gpuScopesByFrame = New-Object 'System.Collections.Generic.SortedDictionary[long,object]'
@@ -353,6 +357,7 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
         if ($line.StartsWith('Frame,'))
         {
             $fields = $line -split ','
+            $frameRowThreads[$fields[$threadColumn]] = $frameRowThreads[$fields[$threadColumn]] + 1
             $renderThreadMs = [double]::Parse($fields[$renderThreadColumn], $invariant)
             if ($renderThreadMs -gt 0.0) { $renderThreadRows.Add([pscustomobject]@{ Frame = [long]$fields[1]; RenderThread = $renderThreadMs }) }
             if ([double]::Parse($fields[$renderFrameColumn], $invariant) -le 0.0) { continue }
@@ -365,6 +370,7 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
         elseif ($line.StartsWith('GPU,'))
         {
             $fields = $line -split ','
+            $gpuRowThreads[$fields[$threadColumn]] = $gpuRowThreads[$fields[$threadColumn]] + 1
             $frameNumber = [long]$fields[1]
             if (-not $gpuScopesByFrame.ContainsKey($frameNumber))
             {
@@ -422,14 +428,19 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
     # Scope 行の Frame は記録時点のゲームフレーム番号で、描画を完了したフレームの行（窓）の番号とは一致しないため、
     # 窓の行の番号に所属するかではなく連続した範囲で選ぶ。
     # フレームあたりの値 = そのフレームに記録された同じ名前の区間の継続時間の合計（全スレッド・並列の仕事は足し合わせる）。
-    # 範囲内でその名前が 1 度も出なかったフレームは 0 として数える（median は「毎フレーム出る区間」の典型値、max は偶発の区間の検出に使う）。
-    # threads = その名前の区間が出たスレッド（ThreadId）の数、frames_present = 出たフレームの数、samples = 区間の記録の件数。
+    # median・p95・max はその名前が出たフレーム（frames_present）だけで求める。ゲームスレッドが描画 1 フレームの間に何回も回ると
+    # 描画スレッドの区間は範囲の一部のフレームにしか出ないので、出なかったフレームを 0 として数えると median が 0 になるため。
+    # threads = その名前の区間が出たスレッド（ThreadId）の数、thread = その名前（GameThread・RenderThread・Worker を , で連ねる）、
+    # frames_present = 出たフレームの数、samples = 区間の記録の件数。
+    # スレッドの名前は、Frame の行を書くスレッドを GameThread、GPU の行を書くスレッドを RenderThread とし（それぞれ最も多い ThreadId）、
+    # それ以外を Worker とする。
     # 名前の先頭 2 つの部分（A.B）が同じで 3 つ以上の部分を持つ名前は、A.B.* としてフレームごとに合計した値も書く。
     $scopeFrameFirst = if ($cpuWindow.Count -gt 0) { [long]$cpuWindow[0].Frame } else { [long]::MaxValue }
     $scopeFrameLast = if ($cpuWindow.Count -gt 0) { [long]$cpuWindow[$cpuWindow.Count - 1].Frame } else { [long]::MinValue }
     $scopeFrameCount = if ($cpuWindow.Count -gt 0) { [int]($scopeFrameLast - $scopeFrameFirst + 1) } else { 0 }
-    $threadColumn = [array]::IndexOf($header, 'ThreadId')
-    $scopePerFrame = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.Dictionary[long,double]]'
+    $gameThreadId = if ($frameRowThreads.Count -gt 0) { @($frameRowThreads.Keys | Sort-Object { $frameRowThreads[$_] } -Descending)[0] } else { $null }
+    $renderThreadId = if ($gpuRowThreads.Count -gt 0) { @($gpuRowThreads.Keys | Sort-Object { $gpuRowThreads[$_] } -Descending)[0] } else { $null }
+    $scopePerFrame =New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.Dictionary[long,double]]'
     $scopeThreads = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.HashSet[string]]'
     $scopeRecords = New-Object 'System.Collections.Generic.Dictionary[string,int]'
     $groupPerFrame = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.Dictionary[long,double]]'
@@ -466,28 +477,30 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
             $target[3][$key] = $target[3][$key] + 1
         }
     }
-    function ConvertTo-ScopeStatList($PerFrame, $Threads, $Records, [int]$FrameCount)
+    function ConvertTo-ScopeStatList($PerFrame, $Threads, $Records, $GameThreadId, $RenderThreadId)
     {
         return @($PerFrame.Keys | ForEach-Object {
-            $frameTotals = $PerFrame[$_]
-            $values = New-Object 'System.Collections.Generic.List[double]'
-            foreach ($total in $frameTotals.Values) { $values.Add($total) }
-            for ($padIndex = $frameTotals.Count; $padIndex -lt $FrameCount; ++$padIndex) { $values.Add(0.0) }
-            $sortedScope = [double[]]@($values | Sort-Object)
+            $scopeName = $_
+            $frameTotals = $PerFrame[$scopeName]
+            $sortedScope = [double[]]@($frameTotals.Values | Sort-Object)
+            $threadNames = @($Threads[$scopeName] | ForEach-Object {
+                if ($_ -eq $GameThreadId) { 'GameThread' } elseif ($_ -eq $RenderThreadId) { 'RenderThread' } else { 'Worker' }
+            } | Sort-Object { @('GameThread', 'RenderThread', 'Worker').IndexOf($_) } | Select-Object -Unique)
             [pscustomobject][ordered]@{
-                scope = $_
+                scope = $scopeName
                 median_ms = [math]::Round((Get-Percentile $sortedScope 0.5), 3)
                 p95_ms = [math]::Round((Get-Percentile $sortedScope 0.95), 3)
                 max_ms = [math]::Round($sortedScope[$sortedScope.Count - 1], 3)
-                threads = $Threads[$_].Count
+                threads = $Threads[$scopeName].Count
+                thread = $threadNames -join ','
                 frames_present = $frameTotals.Count
-                samples = $Records[$_]
+                samples = $Records[$scopeName]
             }
         } | Sort-Object -Property @{ Expression = 'median_ms'; Descending = $true }, @{ Expression = 'max_ms'; Descending = $true }, @{ Expression = 'scope'; Descending = $false })
     }
     # 関数の戻りは 1 件だと配列でなくなり JSON がオブジェクトになるので、受け側で配列に包む（0 件・1 件でも配列を保つ）
-    $cpuScopeList = @(ConvertTo-ScopeStatList $scopePerFrame $scopeThreads $scopeRecords $scopeFrameCount)
-    $cpuScopeGroupList = @(ConvertTo-ScopeStatList $groupPerFrame $groupThreads $groupRecords $scopeFrameCount)
+    $cpuScopeList = @(ConvertTo-ScopeStatList $scopePerFrame $scopeThreads $scopeRecords $gameThreadId $renderThreadId)
+    $cpuScopeGroupList = @(ConvertTo-ScopeStatList $groupPerFrame $groupThreads $groupRecords $gameThreadId $renderThreadId)
 
     $timing = [ordered]@{
         trace = [IO.Path]::GetFileName($TracePath)
@@ -985,7 +998,7 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         Write-Output ("CAPTURE_SCENE gpu_pass_p95 view={0} {1}" -f $result.view,
             (($gpuTiming.pass_ms | Select-Object -First 10 | ForEach-Object { "$($_.pass)=$($_.p95_ms)/max=$($_.max_ms)" }) -join ' '))
         Write-Output ("CAPTURE_SCENE cpu_scope_median view={0} scopes={1} {2}" -f $result.view, @($gpuTiming.cpu_scope_ms).Count,
-            (($gpuTiming.cpu_scope_ms | Select-Object -First 15 | ForEach-Object { "$($_.scope)=$($_.median_ms)/max=$($_.max_ms)/t=$($_.threads)" }) -join ' '))
+            (($gpuTiming.cpu_scope_ms | Select-Object -First 15 | ForEach-Object { "$($_.scope)=$($_.median_ms)/max=$($_.max_ms)/t=$($_.thread)" }) -join ' '))
         Write-Output ("CAPTURE_SCENE cpu_scope_group view={0} {1}" -f $result.view,
             (($gpuTiming.cpu_scope_group_ms | ForEach-Object { "$($_.scope)=$($_.median_ms)/p95=$($_.p95_ms)/max=$($_.max_ms)" }) -join ' '))
     }
