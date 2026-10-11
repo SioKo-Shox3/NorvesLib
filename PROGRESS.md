@@ -1664,3 +1664,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-RENDER-INVALIDATION-1.txt`: 起動画面の決定論比較 `result=pass`（default の psnr 100 dB、基準 SCN-MEGA-BASE-RWDI と同水準）、`ECS_RENDER_INVALIDATION` default pass=3・fail=0、EXIT=0。
   - `-2.txt`: 3 シーン混在の周回（rendering3dtest,mega-bananas,mega-stress、3 周）が `SCENE_CYCLE_SMOKE_RUN result=pass`、`ECS_RENDER_INVALIDATION` pass=4282・fail 無し、Game.log に `SCENE_CYCLE_BASELINE cycle=2 scenes=3`・`changed=none unsettled=0`、EXIT=0。
 - Notes: SCN-ECS-RENDER-INVALIDATION を done にした。同期はまだ全走査のまま（次の SYNC-SWITCH で一覧へ切り替える）。
+### SCN-ECS-RENDER-SYNC-PREP 再検証（2026-10-11、反復 7・run 20261011-130759）
+
+- 変更なし。実装はコミット済み（3d8e475..3311c3f）で、止まった理由の混在周回の判定は SCN-SCENE-CYCLE-SHARED-CACHE で直っているので、元の verify を通し直した。
+- 結果（`.harness/runs/20261011-130759/`）:
+  - `verify-SCN-ECS-RENDER-SYNC-PREP-1.txt`: mega-stress の撮影（5000 体・動く 1%・ストリーミング）で `ECS_RENDER_SYNC pass=3 fail=0`、`CAPTURE_SCENE result=pass`、EXIT=0。
+  - `-2.txt`: 3 シーン混在の周回（rendering3dtest,mega-bananas,mega-stress、3 周）が `SCENE_CYCLE_SMOKE_RUN result=pass`、`ECS_RENDER_SYNC pass=4108`、2 周目以降の textures は 9 で揃う、EXIT=0。
+- Notes: SCN-ECS-RENDER-SYNC-PREP を done にした。同期はまだ全走査のまま（次の SYNC-SWITCH で一覧へ切り替える）。
