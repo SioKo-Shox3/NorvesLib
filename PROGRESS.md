@@ -2073,3 +2073,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - ScriptApplicationLifecycleContractTest は 1 本で約 245 秒かかる（ctest の `--timeout 180` より長いが pass する。テスト側の TIMEOUT の設定が優先されているとみられる）。
   - Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに書き換わり MSBuild が失敗する。ビルドは PowerShell から呼ぶ。
+
+### SCN-ECS-TICK-GAME（2026-10-11、反復 10・run 20261011-211043）
+
+- 変更: 無し（実装は反復 6 のコミット 7031680 のまま）。前提の SCN-FIX-LOGGERSINK-BUNDLE で束がビルドできるようになったので、verify を通し直した。
+  - Game の FollowCamera・QuadrupedLocomotion には OnTickGroup の override が残っていない。GameApplicationHandler::OnInitialize が両者の RegisterTick で World へ登録する。QuadrupedLocomotion の TryGetComponentTickDelta・GetTickSerial の使い方は保っている。
+- 結果（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-ECS-TICK-GAME-4.txt`: RelWithDebInfo の Game のビルド EXIT=0。
+  - `-5.txt`: Debug の LoggerSinkTest のビルド EXIT=0。
+  - `-6.txt`: QuadrupedLocomotionModelTest・LocomotionProfileReloadTest・CameraCollisionSolverTest の 3/3 が pass、EXIT=0。
+  - 起動画面の比較は、2026-10-11 の検証の軽量化に従い verify に無いので回していない。
+- Next: TASKS.md の次の todo。

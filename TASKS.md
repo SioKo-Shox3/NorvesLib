@@ -579,7 +579,7 @@
 
 
 ## SCN-ECS-TICK-GAME: Game の FollowCamera と QuadrupedLocomotion を順序付きの系へ移す
-- status: todo
+- status: done
 - done-when: OnTickGroup を消し、Game が起動時に登録する（TryGetComponentTickDelta と GetTickSerial の使い方は保つ）。下のテストと起動画面の比較が pass する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target LoggerSinkTest -- /m:1`
