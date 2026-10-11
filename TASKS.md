@@ -494,7 +494,7 @@
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-MASS-ROWS: 散布の Object と軽い実体でバナナを置く
-- status: done
+- status: doing
 - done-when: 設計 1.11 の `MegaGeometryScatterComponent` が入る（入力の番号の表、範囲の連続の予約、Morton 順、範囲ごとの公開、Active・可視の範囲の印、破棄で全行と範囲を解放）。バナナが Object 1 つで置かれ（`MEGA_BANANAS_PLACED ... batches=1`。Entity の数が本数によらない）、配置の値と順は今と同じで、1万本の比較が pass する。周回で行・席・資源の数が戻る。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-ECS-MASS-ROWS/det`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-bananas -Cycles 3 -Configuration RelWithDebInfo`

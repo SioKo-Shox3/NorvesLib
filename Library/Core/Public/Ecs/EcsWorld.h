@@ -30,6 +30,7 @@
  *
  * 席（EcsGpuSceneSlot の列）: EcsWorld が席の表を 1 つ持ち、席の列のフックで割り当てと解放を行う。
  * 割り当ては行の作成・列の追加、解放は理由が Destroy の削除だけ（移動・入れ替え・チャンクの返却では解放しない）。
+ * DestroyArchetypeRows はチャンクを丸ごと返すが、行ごとに理由 Destroy のフックを呼ぶので席も解放する。
  *
  * GameThread だけが触る（スレッドセーフではない）。並列の仕事が呼んでよいのは、MarkWritten 系と走査用の参照だけ
  * （その間は構造変更・SetColumnTracked・CommitChanges をしない）。並列の中の構造変更は EcsCommandBuffer に積む。
@@ -209,10 +210,32 @@ namespace NorvesLib::Core::Ecs
          * @brief 列の組とタグから、アーキタイプを取得する（無ければ作る）
          * @param columns 列の記述。順序は問わない（型の番号の昇順に並べて照合する）
          * @param tags タグのビット（列を持たない印。アーキタイプの同一性に含む）
+         * @param chunkGroup チャンクの組（0 は共有）。アーキタイプの同一性に含むので、組が違う行は同じチャンクに入らない。
+         *        散布のようにまとめて消す行の集まりは AcquireChunkGroup の組で作り、DestroyArchetypeRows でチャンクごと返す。
+         *        列の追加・削除・孤児の移動は組を保つ。
          * @return アーキタイプの番号。同じ型が重複する・行が 16 KB に収まらない・
          *         型が TypeRegistry に無い、または大きさ・配置が登録と食い違うときは kInvalidEcsArchetype（タグや列の組が違っても毎回照合する）
          */
-        EcsArchetypeId GetOrCreateArchetype(Container::Span<const EcsColumnInfo> columns, uint64_t tags = 0);
+        EcsArchetypeId GetOrCreateArchetype(Container::Span<const EcsColumnInfo> columns, uint64_t tags = 0,
+                                            uint32_t chunkGroup = 0);
+
+        /// チャンクの組を 1 つ取る（1 以上。返した組を次に使い直すので、アーキタイプの数は同時に生きている組の数で止まる）
+        uint32_t AcquireChunkGroup();
+
+        /// チャンクの組を返す。組のアーキタイプに行が残っている・0・取っていない組なら false で何もしない
+        bool ReleaseChunkGroup(uint32_t chunkGroup);
+
+        /// アーキタイプのチャンクの組（共有は 0）
+        [[nodiscard]] uint32_t GetArchetypeChunkGroup(EcsArchetypeId archetype) const;
+
+        /**
+         * @brief アーキタイプの全行を削除し、チャンクを 1 つずつ丸ごと返す（行の入れ替えをしない）
+         *
+         * 行ごとに全列の OnDestroy（理由 Destroy）を呼んでから、実体の表の番号を世代を進めて空きへ戻す。
+         * 席の列の行は DestroyEntity と同じく席を解放する。フックの中からの呼び出しは 0 で何もしない。
+         * @return 削除した行の数
+         */
+        uint32_t DestroyArchetypeRows(EcsArchetypeId archetype);
 
         /**
          * @brief 1 行を作る（値は 0。initialValues があればその列だけ上書きする）
@@ -454,6 +477,7 @@ namespace NorvesLib::Core::Ecs
             /// 列ごとのチャンクの版（uint64 × 列数）のチャンク内の位置
             uint32_t ChunkVersionOffset = 0;
             uint64_t Tags = 0;
+            uint32_t ChunkGroup = 0;
             uint32_t Capacity = 0;
             uint32_t RowCount = 0;
             Container::VariableArray<EcsChunk *> Chunks;
@@ -536,6 +560,9 @@ namespace NorvesLib::Core::Ecs
         uint32_t m_HookDepth = 0;
         /// 作る行が受け取る参加の番号
         uint64_t m_CreateJoinSerial = 0;
+        /// 取ったチャンクの組の印（添字が組の番号。0 は共有で常に 0）と、返された組の番号
+        Container::VariableArray<uint8_t> m_ChunkGroupInUse;
+        Container::VariableArray<uint32_t> m_FreeChunkGroups;
         EcsGpuSceneSlotTable m_GpuSceneSlots;
         Memory::PoolAllocator<false> m_ChunkPool;
     };

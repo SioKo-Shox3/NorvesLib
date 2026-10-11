@@ -10,7 +10,9 @@
  * - 行は入力の位置の Morton 順に作り、席は連続した範囲の組（塊）から先頭の順に取る。範囲が空間的にまとまる。
  * - 公開は範囲ごと。範囲の全行を書き終えてから、その範囲の proxy をまとめて公開し直す。
  * - Active と可視は範囲の印で切り替える（印を変えた範囲だけを公開・取り下げる）。
- * - 破棄（World の木から外れる）で、全行を削除し（席は理由が Destroy の削除で解放される）、proxy を取り下げ、塊を返す。
+ * - 行は散布ごとのチャンクの組（EcsWorld::AcquireChunkGroup）のアーキタイプに入れ、ほかの散布や行とチャンクを共有しない。
+ * - 破棄（World の木から外れる）で、proxy を取り下げ、全行をチャンクごと返し（席は理由が Destroy の削除で解放される）、
+ *   チャンクの組と塊を返す。
  *
  * GameThread の並列の段の外で触る。行の作成は World の木に付いている間だけ行い、付く前に与えた入力は付いたときに作る。
  * 所有者の変換の変化と SceneView の付け替えは、まだ自動では反映しない（入力を与え直すと反映される）。
@@ -99,6 +101,8 @@ namespace NorvesLib::Core::Component
         uint32_t GetInstanceRange(uint32_t inputIndex) const;
         /// proxy の鍵に使う散布の番号（行を作ったときに決まる）
         uint32_t GetBatchId() const { return m_BatchId; }
+        /// 行を入れたチャンクの組（行が無ければ 0）
+        uint32_t GetChunkGroup() const { return m_ChunkGroup; }
 
     protected:
         void OnEcsRowAttached() override;
@@ -147,6 +151,9 @@ namespace NorvesLib::Core::Component
         /// 席の表の塊
         uint32_t m_Block = 0xFFFFFFFFu;
         uint32_t m_BatchId = 0;
+        /// 行のチャンクの組とアーキタイプ（この散布の行だけが入る）
+        uint32_t m_ChunkGroup = 0;
+        Ecs::EcsArchetypeId m_Archetype = Ecs::kInvalidEcsArchetype;
     };
 
 } // namespace NorvesLib::Core::Component

@@ -315,10 +315,14 @@ namespace NorvesLib::Core::Component
         Ecs::EcsGpuSceneSlotTable &table = ecs.GetGpuSceneSlots();
         Ecs::EcsColumnInfo columns[4];
         Ecs::EcsMegaInstanceColumns(columns);
-        const Ecs::EcsArchetypeId archetype = ecs.GetOrCreateArchetype(Container::Span<const Ecs::EcsColumnInfo>(columns, 4));
+        // 散布ごとのチャンクの組で作る（ほかの散布の行とチャンクを共有せず、破棄でチャンクごと返せる）
+        const uint32_t chunkGroup = ecs.AcquireChunkGroup();
+        const Ecs::EcsArchetypeId archetype =
+            ecs.GetOrCreateArchetype(Container::Span<const Ecs::EcsColumnInfo>(columns, 4), 0, chunkGroup);
         if (archetype == Ecs::kInvalidEcsArchetype)
         {
             LOG_ERROR("MegaGeometryScatterComponent: 軽い行のアーキタイプを作れませんでした");
+            ecs.ReleaseChunkGroup(chunkGroup);
             return false;
         }
 
@@ -329,6 +333,7 @@ namespace NorvesLib::Core::Component
         if (block == Ecs::EcsGpuSceneSlotTable::kInvalidBlock)
         {
             LOG_ERROR("MegaGeometryScatterComponent: 席の範囲を予約できませんでした");
+            ecs.ReleaseChunkGroup(chunkGroup);
             return false;
         }
         Container::VariableArray<uint32_t> order;
@@ -341,16 +346,16 @@ namespace NorvesLib::Core::Component
         if (made != count || rows.size() != count)
         {
             LOG_ERROR_F("MegaGeometryScatterComponent: 軽い行を作れませんでした（要求 %u・実際 %u）", count, made);
-            for (const Ecs::EcsEntity row : rows)
-            {
-                ecs.DestroyEntity(row);
-            }
+            ecs.DestroyArchetypeRows(archetype);
             table.ReleaseBlock(block);
+            ecs.ReleaseChunkGroup(chunkGroup);
             return false;
         }
 
         m_pRowWorld = &world;
         m_Block = block;
+        m_ChunkGroup = chunkGroup;
+        m_Archetype = archetype;
         m_BatchId = static_cast<uint32_t>(GetComponentId() & 0x3FFFFFFFull);
         m_Rows = std::move(rows);
         m_RowToInput = std::move(order);
@@ -394,10 +399,12 @@ namespace NorvesLib::Core::Component
         ReflectAllRanges(false);
 
         const Ecs::EcsGpuSceneSlot *firstSlot = ecs.GetColumnValue<Ecs::EcsGpuSceneSlot>(m_Rows[0]);
-        LOG_INFO_F("MEGA_SCATTER_ROWS batch=%u rows=%u ranges=%u first_slot=%u published_ranges=%u ecs_rows=%u slots=%u "
-                   "slots_live=%u table_ranges=%u blocks=%u",
-                   m_BatchId, count, rangeCount, firstSlot != nullptr ? firstSlot->GetIndex() : 0u, GetPublishedRangeCount(),
-                   ecs.GetEntityCount(), table.GetSlotCount(), table.GetLiveCount(), table.GetRangeCount(), table.GetBlockCount());
+        LOG_INFO_F("MEGA_SCATTER_ROWS batch=%u rows=%u ranges=%u chunk_group=%u chunks=%u archetype_rows=%u first_slot=%u "
+                   "published_ranges=%u ecs_rows=%u slots=%u slots_live=%u table_ranges=%u blocks=%u",
+                   m_BatchId, count, rangeCount, m_ChunkGroup, static_cast<uint32_t>(ecs.GetArchetypeChunks(archetype).size()),
+                   ecs.GetArchetypeRowCount(archetype), firstSlot != nullptr ? firstSlot->GetIndex() : 0u,
+                   GetPublishedRangeCount(), ecs.GetEntityCount(), table.GetSlotCount(), table.GetLiveCount(),
+                   table.GetRangeCount(), table.GetBlockCount());
         return true;
     }
 
@@ -430,23 +437,37 @@ namespace NorvesLib::Core::Component
             }
         }
 
-        // 行の削除（理由が Destroy）で席が解放される。後ろから消すと入れ替えが起きにくい
+        // 散布のアーキタイプにはこの散布の行だけが入っているので、チャンクごと返す（行ごとの理由 Destroy のフックで席も解放される）
         const uint32_t rowCount = static_cast<uint32_t>(m_Rows.size());
+        const uint32_t chunksBefore = ecs.GetChunkCount();
+        uint32_t destroyed = 0;
+        if (m_Archetype != Ecs::kInvalidEcsArchetype)
+        {
+            destroyed = ecs.DestroyArchetypeRows(m_Archetype);
+        }
+        const uint32_t chunksReturned = chunksBefore - ecs.GetChunkCount();
+        // 列の追加などで別のアーキタイプへ移った行が残っていれば、1 行ずつ消す
         for (uint32_t row = rowCount; row-- > 0;)
         {
             if (ecs.IsAlive(m_Rows[row]))
             {
                 ecs.DestroyEntity(m_Rows[row]);
+                ++destroyed;
             }
         }
         if (m_Block != Ecs::EcsGpuSceneSlotTable::kInvalidBlock)
         {
             table.ReleaseBlock(m_Block);
         }
-        LOG_INFO_F("MEGA_SCATTER_RELEASED batch=%u rows=%u ranges=%u ecs_rows=%u slots=%u slots_live=%u table_ranges=%u "
-                   "blocks_in_use=%u",
-                   m_BatchId, rowCount, static_cast<uint32_t>(m_Ranges.size()), ecs.GetEntityCount(), table.GetSlotCount(),
-                   table.GetLiveCount(), table.GetRangeCount(), table.GetBlocksInUse());
+        if (m_ChunkGroup != 0 && !ecs.ReleaseChunkGroup(m_ChunkGroup))
+        {
+            LOG_WARNING_F("MegaGeometryScatterComponent: チャンクの組 %u に行が残っているので返せませんでした", m_ChunkGroup);
+        }
+        LOG_INFO_F("MEGA_SCATTER_RELEASED batch=%u rows=%u destroyed=%u chunks_returned=%u ranges=%u ecs_rows=%u slots=%u "
+                   "slots_live=%u table_ranges=%u blocks_in_use=%u",
+                   m_BatchId, rowCount, destroyed, chunksReturned, static_cast<uint32_t>(m_Ranges.size()),
+                   ecs.GetEntityCount(), table.GetSlotCount(), table.GetLiveCount(), table.GetRangeCount(),
+                   table.GetBlocksInUse());
 
         m_Rows.clear();
         m_RowToInput.clear();
@@ -454,6 +475,8 @@ namespace NorvesLib::Core::Component
         m_Ranges.clear();
         m_pRowWorld = nullptr;
         m_Block = Ecs::EcsGpuSceneSlotTable::kInvalidBlock;
+        m_ChunkGroup = 0;
+        m_Archetype = Ecs::kInvalidEcsArchetype;
     }
 
     void MegaGeometryScatterComponent::WriteRow(Ecs::EcsWorld &ecs, uint32_t row, const Math::Transform &ownerWorld)

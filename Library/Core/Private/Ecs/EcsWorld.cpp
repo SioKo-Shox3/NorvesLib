@@ -90,7 +90,8 @@ namespace NorvesLib::Core::Ecs
         m_Hooks.clear();
     }
 
-    EcsArchetypeId EcsWorld::GetOrCreateArchetype(Container::Span<const EcsColumnInfo> columns, uint64_t tags)
+    EcsArchetypeId EcsWorld::GetOrCreateArchetype(Container::Span<const EcsColumnInfo> columns, uint64_t tags,
+                                                  uint32_t chunkGroup)
     {
         Container::VariableArray<EcsColumnInfo> sorted(columns.begin(), columns.end());
         std::sort(sorted.begin(), sorted.end(), [](const EcsColumnInfo &a, const EcsColumnInfo &b)
@@ -106,7 +107,7 @@ namespace NorvesLib::Core::Ecs
         for (size_t id = 0; id < m_Archetypes.size(); ++id)
         {
             const Archetype &existing = m_Archetypes[id];
-            if (existing.Tags != tags || existing.Columns.size() != sorted.size())
+            if (existing.Tags != tags || existing.ChunkGroup != chunkGroup || existing.Columns.size() != sorted.size())
             {
                 continue;
             }
@@ -194,9 +195,91 @@ namespace NorvesLib::Core::Ecs
         archetype.RowVersionOffsets = std::move(rowVersionOffsets);
         archetype.ChunkVersionOffset = chunkVersionOffset;
         archetype.Tags = tags;
+        archetype.ChunkGroup = chunkGroup;
         archetype.Capacity = capacity;
         m_Archetypes.push_back(std::move(archetype));
         return static_cast<EcsArchetypeId>(m_Archetypes.size() - 1);
+    }
+
+    uint32_t EcsWorld::AcquireChunkGroup()
+    {
+        if (m_ChunkGroupInUse.empty())
+        {
+            // 0 は共有の組なので、番号は 1 から配る
+            m_ChunkGroupInUse.push_back(0);
+        }
+        uint32_t group = 0;
+        if (!m_FreeChunkGroups.empty())
+        {
+            group = m_FreeChunkGroups.back();
+            m_FreeChunkGroups.pop_back();
+        }
+        else
+        {
+            group = static_cast<uint32_t>(m_ChunkGroupInUse.size());
+            m_ChunkGroupInUse.push_back(0);
+        }
+        m_ChunkGroupInUse[group] = 1;
+        return group;
+    }
+
+    bool EcsWorld::ReleaseChunkGroup(uint32_t chunkGroup)
+    {
+        if (chunkGroup == 0 || chunkGroup >= m_ChunkGroupInUse.size() || m_ChunkGroupInUse[chunkGroup] == 0)
+        {
+            return false;
+        }
+        for (const Archetype &archetype : m_Archetypes)
+        {
+            if (archetype.ChunkGroup == chunkGroup && archetype.RowCount != 0)
+            {
+                return false;
+            }
+        }
+        m_ChunkGroupInUse[chunkGroup] = 0;
+        m_FreeChunkGroups.push_back(chunkGroup);
+        return true;
+    }
+
+    uint32_t EcsWorld::GetArchetypeChunkGroup(EcsArchetypeId archetype) const
+    {
+        return archetype < m_Archetypes.size() ? m_Archetypes[archetype].ChunkGroup : 0;
+    }
+
+    uint32_t EcsWorld::DestroyArchetypeRows(EcsArchetypeId archetypeId)
+    {
+        if (m_HookDepth > 0 || archetypeId >= m_Archetypes.size())
+        {
+            return 0;
+        }
+        uint32_t destroyed = 0;
+        Archetype &archetype = m_Archetypes[archetypeId];
+        // 後ろのチャンクから、チャンク内の全行のフックを呼んでから番号を空きへ戻し、チャンクを丸ごと返す。
+        // フックの中の構造変更は拒まれるので、呼んでいる間にチャンクの並びは変わらない
+        while (!archetype.Chunks.empty())
+        {
+            EcsChunk *chunk = archetype.Chunks.back();
+            const EcsEntity *entities = chunk->GetEntities();
+            for (uint32_t row = 0; row < chunk->Count; ++row)
+            {
+                FireRowHooks(entities[row], false, EcsHookReason::Destroy);
+            }
+            for (uint32_t row = 0; row < chunk->Count; ++row)
+            {
+                const EcsEntity entity = entities[row];
+                Slot &slot = m_Slots[entity.Index];
+                slot.Chunk = nullptr;
+                slot.Generation = slot.Generation + 1 == 0 ? 1 : slot.Generation + 1;
+                slot.Row = m_FreeSlotHead;
+                m_FreeSlotHead = entity.Index;
+            }
+            destroyed += chunk->Count;
+            m_EntityCount -= chunk->Count;
+            archetype.RowCount -= chunk->Count;
+            chunk->Count = 0;
+            ReleaseLastChunk(archetype);
+        }
+        return destroyed;
     }
 
     EcsChunk *EcsWorld::AcquireChunk(EcsArchetypeId archetypeId)
@@ -534,8 +617,10 @@ namespace NorvesLib::Core::Ecs
         // GetOrCreateArchetype が m_Archetypes を伸ばすので、元の列とタグは先にコピーする
         Container::VariableArray<EcsColumnInfo> columns = m_Archetypes[sourceId].Columns;
         const uint64_t tags = m_Archetypes[sourceId].Tags;
+        const uint32_t chunkGroup = m_Archetypes[sourceId].ChunkGroup;
         columns.push_back(column);
-        const EcsArchetypeId targetId = GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(columns.data(), columns.size()), tags);
+        const EcsArchetypeId targetId =
+            GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(columns.data(), columns.size()), tags, chunkGroup);
         if (targetId == kInvalidEcsArchetype)
         {
             return false;
@@ -561,8 +646,10 @@ namespace NorvesLib::Core::Ecs
         }
         Container::VariableArray<EcsColumnInfo> columns = m_Archetypes[sourceId].Columns;
         const uint64_t tags = m_Archetypes[sourceId].Tags;
+        const uint32_t chunkGroup = m_Archetypes[sourceId].ChunkGroup;
         columns.erase(columns.begin() + index);
-        const EcsArchetypeId targetId = GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(columns.data(), columns.size()), tags);
+        const EcsArchetypeId targetId =
+            GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(columns.data(), columns.size()), tags, chunkGroup);
         if (targetId == kInvalidEcsArchetype)
         {
             return false;
@@ -1211,7 +1298,9 @@ namespace NorvesLib::Core::Ecs
         }
         Container::VariableArray<EcsColumnInfo> columns = m_Archetypes[sourceId].Columns;
         const uint64_t tags = m_Archetypes[sourceId].Tags | kEcsTagOrphan;
-        const EcsArchetypeId targetId = GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(columns.data(), columns.size()), tags);
+        const uint32_t chunkGroup = m_Archetypes[sourceId].ChunkGroup;
+        const EcsArchetypeId targetId =
+            GetOrCreateArchetype(Container::Span<const EcsColumnInfo>(columns.data(), columns.size()), tags, chunkGroup);
         if (targetId == kInvalidEcsArchetype)
         {
             return false;

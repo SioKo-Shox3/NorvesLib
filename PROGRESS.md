@@ -1782,3 +1782,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 所有者の変換の変化と SceneView の付け替えは、まだ散布へ自動で反映しない（入力を与え直すと反映する）。予算つきの反映は MASS-STREAM。
   - 範囲の印の切り替えは、SceneView では範囲の行の数だけ公開・取り下げる（描画側に範囲単位の印は無い）。
   - World.cpp（この項目の paths の外）の検査 ECS_RENDER_SYNC・RENDER_INVALIDATION の照合（`VerifyRenderSyncDelta`）は、散布の proxy を「行が無いのに残っている」と数える見込み。`IsMegaScatterProxyKey` で外す 1 行が要る（この反復の verify では検査を有効にしていない）。テストの追加はしていない。
+
+### SCN-ECS-MASS-ROWS 差し戻し 1 回目の対応（2026-10-11、反復 10・run 20261011-144300）
+
+- 変更（指摘 2: BatchId ごとのチャンク分離とチャンク単位の返却）:
+  - `EcsWorld` にチャンクの組を足した。`GetOrCreateArchetype(columns, tags, chunkGroup)` の組はアーキタイプの同一性に含み、列の追加・削除・孤児の移動でも保つ。`AcquireChunkGroup` は返された組を使い直す（アーキタイプの数は同時に生きている組の数で止まる）。`ReleaseChunkGroup` は組に行が残っていれば拒む。
+  - `EcsWorld::DestroyArchetypeRows`: 後ろのチャンクから、チャンク内の全行の OnDestroy（理由 Destroy。席も解放）を呼んでから番号を世代を進めて空きへ戻し、チャンクを丸ごと返す（行の入れ替えをしない）。
+  - 散布は自分の組のアーキタイプに行を作り、破棄でそのアーキタイプの全行をチャンクごと返してから、組と塊を返す。ログに `chunk_group chunks archetype_rows`（作成）と `destroyed chunks_returned`（解放）を足した。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-ECS-MASS-ROWS-3.txt`: 1 万本の overview を SCN-MEGA-BASE と比べ、平均輝度差 0・PSNR 69.2 dB・不一致画素 0.02%（最大 67）で `result=pass`、EXIT=0。PNG を開いて確認（山 3 つと敷き詰め・影）。Game.log は `MEGA_SCATTER_ROWS ... chunk_group=1 chunks=55 archetype_rows=10000`、`MEGA_BANANAS_PLACED count=10000 ... batches=1`、ERROR は 0。
+  - `-4.txt`: mega-bananas の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`（entities=2・資源の数は 3 周とも同じ）、EXIT=0。周回のログは 3 周とも `chunk_group=1 chunks=55`（組を使い直す）、解放は `destroyed=10000 chunks_returned=55 ecs_rows=2 slots_live=0 blocks_in_use=0`。ERROR は 0。
+- 未対応（指摘 1）: 検査 ECS_RENDER_SYNC・RENDER_INVALIDATION の照合（`World::VerifyRenderSyncDelta` の `viewMega` と、全走査側の `scanStale` の MegaGeometry のループ）が散布の proxy を残留と数える。直す先の `Library/Core/Private/Object/World.cpp` がこのタスクの paths の外なので、`blocked/SCN-ECS-MASS-ROWS.md` に記録して止めた（paths に足せば `IsMegaScatterProxyKey` の proxy を飛ばす数行で直る）。status は doing のまま。
+- Next: SCN-ECS-MASS-ROWS（World.cpp を paths に足した後、指摘 1 を直して検査付きの起動と verify 2 本を通し直す）。
+- Notes: チャンクの組と `DestroyArchetypeRows` の ECS の単体テストは足していない（verify の周回のログで返却の数を確かめた）。
