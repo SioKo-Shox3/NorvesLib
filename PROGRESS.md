@@ -1727,3 +1727,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-4.txt`: mega-stress・mega-bananas の混在周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、`MEGA_SCENE_CONFIRM pass=3403`、ログに `SCENE_CYCLE_BASELINE cycle=2 scenes=2`、2 周目以降の textures 9・texture_bytes は揃う、「約束が破れた」は 0 件、EXIT=0。
 - Next: SCN-MEGA-SCENE-SLOTS（verify の通し直し）。
 - Notes: FramePacket.h・RenderingCoordinator.cpp は編集で行末が崩れたので、HEAD の行末へ戻した（numstat の 2 通りが一致）。
+
+### SCN-MEGA-SCENE-SLOTS の検証の通し直し（2026-10-11、反復 6・run 20261011-144300）
+
+- 実装はコミット済み（d78eea3..490cabf）。混在周回の判定の修正（SCN-SCENE-CYCLE-SHARED-CACHE）の後に verify だけを通し直した。コードの変更は無い。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-MEGA-SCENE-SLOTS-1.txt`: mega-stress（5000 本、動く 1%、セル 64）の overview を RelWithDebInfo で撮影し、`engine_check name=MEGA_SLOTS pass=5 fail=0`、`result=pass`、EXIT=0。overview.Game.log の最後の突き合わせは `rows=4675 ranges=79 released=325 ready=325 proxies=4675`（ストリーミングで席が解放されている）、「席の規則が破れた」は 0 件。
+  - `-2.txt`: mega-stress・mega-bananas の混在周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、`MEGA_SLOTS pass=950`、ログに `SCENE_CYCLE_BASELINE cycle=2 scenes=2`、2 周目以降の textures 9・texture_bytes は揃う、周回中に `released=36000 reused=26000` まで再利用が起き、「席の規則が破れた」は 0 件、EXIT=0。
+- Next: SCN-ECS-PACKET-DELTA。
+- Notes: 前回の BLOCKED の記録（`blocked/SCN-MEGA-SCENE-SLOTS.md`）にあるとおり、実装は `paths:` に当時無かった World.cpp を最小限編集している（今の `paths:` には含まれる）。
