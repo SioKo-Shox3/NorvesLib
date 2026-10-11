@@ -1933,3 +1933,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: TASKS.md の次の todo。
 - Notes:
   - Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに変換されて MSBuild が失敗する。verify のビルドは PowerShell で走らせる。
+
+### SCN-ECS-TICK-ANIM（2026-10-11、反復 19・run 20261011-144300）
+
+- 変更:
+  - Animator・SkinnedMesh の仮想の OnTickGroup と SkinnedMesh の Tick を消し、群ごとの非仮想の本体にした（Animator: `TickAnimationGroup`＝UpdateAnimation、`TickPoseFinalizeGroup`＝評価の後にイベントを配る。SkinnedMesh: `AdvanceAnimationTime`、`TickPoseFinalizeGroup`＝外部駆動でなければ EvaluatePose）。イベントの配信は今と同じく PoseFinalize の本体の最後（GameThread）。
+  - 登録に群ごとの本体 `ComponentTickRegistration::GroupRuns`（null の群は Run）と `BodyFor`・`HasBody` を足し、World の収集は群ごとに `BodyFor(group)` を呼び先の本体にする。
+  - World の初期化で Animator・SkinnedMesh を登録（主群によらず Animation・PoseFinalize の群、channel Animation、書く EcsSkinnedRender）。群・mask・優先度・深さ優先の順は Component の設定のまま。
+  - Tick・OnTickGroup を直接呼ぶテストは無かった（テストは World の Tick 経由）。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - 基準: 最初の編集の前に `check-SCN-ECS-TICK-ANIM-base.txt`（同じ引数・比較なし）で `SCN-ECS-TICK-ANIM-base` を撮った。`ECS_TICK_DUP pass=3 fail=0`、result=pass、EXIT=0。
+  - `verify-SCN-ECS-TICK-ANIM-1.txt`: Debug の SkeletalAnimationSamplingTest・SkinnedRenderPathContractTest・EntityTreeTest のビルド EXIT=0（警告は触っていないファイルの既存のものだけ）。
+  - `-2.txt`: WorldTimeChannelTest・SkeletalAnimationSamplingTest・SkinnedRenderPathContractTest の 3/3 が pass、EXIT=0。
+  - `-3.txt`: `-SkinnedProbe` 付きの決定的な撮影が `ECS_TICK_DUP pass=3 fail=0`、基準との比較は平均輝度差 0・PSNR 100 dB・不一致画素 8E-06（最大差 1）で `result=pass`、EXIT=0。Game.log は `STARTUP_SKINNED_PROBE bodies=2`・`VIS_RASTER skinned_chunks=4 dropped_chunks=0`・ERROR 0。PNG を開いて確認（天球・地面・球・岩・家と骨付きのパネル 2 枚）。Game.exe は World.cpp の編集より後。
+  - `check-SCN-ECS-TICK-ANIM-related.txt`: WorldTickGroupTest・EntityTreeTest・WorldTimeChannelTest の 3/3 が pass（verify の外の確認。冒頭のビルドは対象名が EntityTreeTest の中の 1 本なので MSBuild が見つけられず失敗、テストは verify 1 で作った EntityTreeTest で走った）。
+- Next: TASKS.md の次の todo（SCN-ECS-TICK-PHYSICS ほか）。
+- Notes:
+  - 登録は World.cpp の RegisterCoreComponentTicks（paths の外）に置いた。群ごとの本体を呼び先へ渡す 2 行の変更も World.cpp。他の Core の型の登録と同じ場所で、Component の側だけでは群を区別できないため。
+  - 群ごとの本体（GroupRuns）の単体テストは足していない（計画に無い。撮影と既存の Animator のテストで確かめた）。

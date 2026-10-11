@@ -56,7 +56,10 @@ namespace NorvesLib::Core::Component
         void Initialize() override;
         void Finalize() override;
         void EndPlay() override;
-        void OnTickGroup(ETickGroup, float) override;
+        /// Animation の群の本体（World の順序付きの系が呼ぶ）。グラフを dt だけ進める
+        void TickAnimationGroup(float dt);
+        /// PoseFinalize の群の本体。姿勢を評価してから、溜まったイベントを GameThread で配る
+        void TickPoseFinalizeGroup();
         // 同じEntityのSkinnedMeshComponentと有効資産が先に必要。失敗時は前のgraphを維持する。
         [[nodiscard]] bool SetGraph(const Container::TSharedPtr<AnimGraphResource>&);
         MulticastDelegate<const Animation::AnimEventInfo&> OnEvent;

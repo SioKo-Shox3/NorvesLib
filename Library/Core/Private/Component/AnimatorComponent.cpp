@@ -274,18 +274,15 @@ namespace NorvesLib::Core::Component
         }
         return mesh->SubmitLocalPose(m_FinalPose);
     }
-    void AnimatorComponent::OnTickGroup(ETickGroup group, float dt)
+    void AnimatorComponent::TickAnimationGroup(float dt)
     {
-        if (group == ETickGroup::Animation)
-        {
-            (void)UpdateAnimation(dt);
-        }
-        else if (group == ETickGroup::PoseFinalize)
-        {
-            if (m_bEvaluate)
-                (void)EvaluateAnimation();
-            m_Instance.Events().Dispatch();
-        }
+        (void)UpdateAnimation(dt);
+    }
+    void AnimatorComponent::TickPoseFinalizeGroup()
+    {
+        if (m_bEvaluate)
+            (void)EvaluateAnimation();
+        m_Instance.Events().Dispatch();
     }
     void AnimatorComponent::BuildDebugSnapshot(AnimatorDebugSnapshot& out) const
     {

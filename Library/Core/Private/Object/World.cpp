@@ -1,4 +1,5 @@
 ﻿#include "Object/World.h"
+#include "Component/AnimatorComponent.h"
 #include "Component/BillboardComponent.h"
 #include "Component/BoardComponent.h"
 #include "Component/CameraComponent.h"
@@ -1774,7 +1775,7 @@ namespace NorvesLib::Core
                 const Component::ComponentTickRegistration* registration = FindComponentTick(component->GetClass());
                 if (registration != nullptr)
                 {
-                    if (registration->Run == nullptr || !m_bSyncOrderedTicks)
+                    if (!registration->HasBody() || !m_bSyncOrderedTicks)
                     {
                         continue;
                     }
@@ -1783,7 +1784,8 @@ namespace NorvesLib::Core
                         const auto group = static_cast<Component::ETickGroup>(index);
                         if ((component->GetTickGroupMask() & Component::TickGroupBit(group)) == 0 ||
                             (registration->bPrimaryGroupOnly ? group != primary
-                                                             : (registration->Groups & Component::TickGroupBit(group)) == 0))
+                                                             : (registration->Groups & Component::TickGroupBit(group)) == 0) ||
+                            registration->BodyFor(group) == nullptr)
                         {
                             continue;
                         }
@@ -2074,6 +2076,38 @@ namespace NorvesLib::Core
         socket.Reads = hold.Reads;
         socket.Writes = hold.Writes;
         RegisterComponentTick(Component::SocketAttachmentComponent::StaticClass(), socket);
+
+        // Animator・SkinnedMesh: 更新は Animation、評価は PoseFinalize の群（旧の OnTickGroup と同じ。channel は Animation）。
+        // Animator のイベントは PoseFinalize の本体の最後に GameThread で配る（ゲームのコードを呼ぶため）
+        const auto animationBit = Component::TickGroupBit(Component::ETickGroup::Animation);
+        const auto poseFinalizeBit = Component::TickGroupBit(Component::ETickGroup::PoseFinalize);
+        Component::ComponentTickRegistration animator;
+        animator.Name = "Animator.AnimationPoseFinalize";
+        animator.bPrimaryGroupOnly = false;
+        animator.Groups = animationBit | poseFinalizeBit;
+        animator.GroupRuns[static_cast<size_t>(Component::ETickGroup::Animation)] =
+            [](Component::Component& component, float deltaTime)
+        { static_cast<Component::AnimatorComponent&>(component).TickAnimationGroup(deltaTime); };
+        animator.GroupRuns[static_cast<size_t>(Component::ETickGroup::PoseFinalize)] =
+            [](Component::Component& component, float)
+        { static_cast<Component::AnimatorComponent&>(component).TickPoseFinalizeGroup(); };
+        animator.TimeChannel = Engine::TimeChannel::Animation;
+        animator.Writes.push_back(Ecs::EcsColumnInfoOf<Ecs::EcsSkinnedRender>().Type);
+        RegisterComponentTick(Component::AnimatorComponent::StaticClass(), animator);
+
+        Component::ComponentTickRegistration skinned;
+        skinned.Name = "SkinnedMesh.AnimationPoseFinalize";
+        skinned.bPrimaryGroupOnly = false;
+        skinned.Groups = animationBit | poseFinalizeBit;
+        skinned.GroupRuns[static_cast<size_t>(Component::ETickGroup::Animation)] =
+            [](Component::Component& component, float deltaTime)
+        { static_cast<Component::SkinnedMeshComponent&>(component).AdvanceAnimationTime(deltaTime); };
+        skinned.GroupRuns[static_cast<size_t>(Component::ETickGroup::PoseFinalize)] =
+            [](Component::Component& component, float)
+        { static_cast<Component::SkinnedMeshComponent&>(component).TickPoseFinalizeGroup(); };
+        skinned.TimeChannel = Engine::TimeChannel::Animation;
+        skinned.Writes.push_back(Ecs::EcsColumnInfoOf<Ecs::EcsSkinnedRender>().Type);
+        RegisterComponentTick(Component::SkinnedMeshComponent::StaticClass(), skinned);
     }
 
     struct World::OrderedTickRecord
@@ -2135,7 +2169,7 @@ namespace NorvesLib::Core
             }
             record->SeenWalk = m_OrderedTickWalk;
             record->OwnerEntity = &entity;
-            record->Body = registration.Run;
+            record->Body = registration.BodyFor(group);
             if (record->Channel != channel)
             {
                 // channel は項目に持つので、足し直す（収集を開く前なので、この収集から呼ばれる）
@@ -2160,7 +2194,7 @@ namespace NorvesLib::Core
         record->Owner = this;
         record->OwnerEntity = &entity;
         record->Target = &component;
-        record->Body = registration.Run;
+        record->Body = registration.BodyFor(group);
         record->Group = group;
         record->Priority = priority;
         record->Ordinal = ordinal;

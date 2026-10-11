@@ -68,19 +68,15 @@ namespace NorvesLib::Core::Component
         Component::Finalize();
     }
 
-    void SkinnedMeshComponent::OnTickGroup(ETickGroup group, float deltaTime)
+    void SkinnedMeshComponent::TickPoseFinalizeGroup()
     {
-        if (group == ETickGroup::Animation)
-        {
-            Tick(deltaTime);
-        }
-        else if (group == ETickGroup::PoseFinalize && !m_bExternalAnimationDriven)
+        if (!m_bExternalAnimationDriven)
         {
             (void)EvaluatePose();
         }
     }
 
-    void SkinnedMeshComponent::Tick(float deltaTime)
+    void SkinnedMeshComponent::AdvanceAnimationTime(float deltaTime)
     {
         if (m_bExternalAnimationDriven || !m_bPlaying || !std::isfinite(deltaTime) || !std::isfinite(m_PlaybackRate) || !m_SkeletalAsset ||
             !GetAnimationClip())

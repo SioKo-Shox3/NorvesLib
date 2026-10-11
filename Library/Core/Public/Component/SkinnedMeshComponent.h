@@ -30,8 +30,10 @@ namespace NorvesLib::Core::Component
 
         void Initialize() override;
         void Finalize() override;
-        void Tick(float deltaTime) override;
-        void OnTickGroup(ETickGroup group, float deltaTime) override;
+        /// Animation の群の本体（World の順序付きの系が呼ぶ）。再生中の clip の時刻を進める
+        void AdvanceAnimationTime(float deltaTime);
+        /// PoseFinalize の群の本体。外部（Animator）が姿勢を渡していなければ dirty な姿勢を評価する
+        void TickPoseFinalizeGroup();
 
         void SetSkeletalAsset(const Container::TSharedPtr<SkeletalAssetResource>& asset);
         const Container::TSharedPtr<SkeletalAssetResource>& GetSkeletalAsset() const;

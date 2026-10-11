@@ -329,6 +329,8 @@ namespace NorvesLib::Core::Component
         const char *Name = nullptr;
         /// 本体。null は「毎フレームの処理を持たない型」で、順の一覧に載せない
         ComponentTickFn Run = nullptr;
+        /// 群ごとの本体（群によって処理の違う型が使う）。null の群は Run を使う
+        ComponentTickFn GroupRuns[TickGroupCount] = {};
         /// true: 主群（GetTickGroup）の呼び出しだけで呼ぶ（旧の Tick と同じ）。false: Groups に含まれる群で呼ぶ
         bool bPrimaryGroupOnly = true;
         TickGroupMask Groups = AllTickGroups;
@@ -338,6 +340,25 @@ namespace NorvesLib::Core::Component
         /// 本体が読む列・書く列（型の番号）
         Container::VariableArray<TypeId> Reads;
         Container::VariableArray<TypeId> Writes;
+
+        /// その群で呼ぶ本体（無ければ null）
+        ComponentTickFn BodyFor(ETickGroup group) const noexcept
+        {
+            const auto index = static_cast<size_t>(group);
+            return index < TickGroupCount && GroupRuns[index] != nullptr ? GroupRuns[index] : Run;
+        }
+        /// どれかの群に本体があるか
+        bool HasBody() const noexcept
+        {
+            for (ComponentTickFn body : GroupRuns)
+            {
+                if (body != nullptr)
+                {
+                    return true;
+                }
+            }
+            return Run != nullptr;
+        }
     };
 
     // コンポーネントへのスマートポインタ

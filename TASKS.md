@@ -535,7 +535,7 @@
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-TICK-ANIM: Animator と SkinnedMesh の更新を順序付きの系へ移す
-- status: todo
+- status: done
 - done-when: OnTickGroup/Tick を消して登録する（Animation・PoseFinalize。イベントの配信の位置は今と同じ）。直接呼んでいるテストも直す。`-SkinnedProbe` の決定的な撮影が、最初の編集の前に `.harness/runs/startup-capture/SCN-ECS-TICK-ANIM-base` へ同じ引数で撮った基準と一致する。
 - verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest SkinnedRenderPathContractTest EntityTreeTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SkeletalAnimationSamplingTest|SkinnedRenderPathContractTest|WorldTimeChannelTest)$" --no-tests=error --output-on-failure --timeout 180`
