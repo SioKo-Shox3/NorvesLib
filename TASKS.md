@@ -667,8 +667,8 @@
 - done-when: `ctest -R M9WorldAcceptanceTest`（Reference の GPU の受入れ）が `M9_WORLD_SMOKE stage=failure reason=t0_capture_failed` で落ちる原因を突き止めて直す。まず撮影の結果が成功でないときの状態（MapFailed など）を `FrameCaptureReadbackHelper.cpp`・`Rendering3DTestRoutine.cpp` でログに出し、原因を PROGRESS に書く。このブランチの変更（ランチャー・`--window-background`・ECS の同期など）が原因なら、どの変更かを書いて直す。M9 の受入れが pass する。Game の起動に `--window-background` を付けていなければ足す。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^M9WorldAcceptanceTest$" --no-tests=error --output-on-failure --timeout 600`
-- paths: Game/GameModes/Rendering3DTest, Library/Core/Private/Rendering/FrameCaptureReadbackHelper.cpp, Library/Core/Public/Rendering, Scripts/Test-M9World.ps1, Test/M9, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY-FLAGS の blocked の推奨 A）。7c7e56f7 の時点でも同じ理由で落ちる。危険地帯（描画の撮影）。
+- paths: Library/Core/Private/Rendering/VignettePass.cpp, Game/GameModes/Rendering3DTest, Library/Core/Private/Rendering/FrameCaptureReadbackHelper.cpp, Library/Core/Public/Rendering, Scripts/Test-M9World.ps1, Test/M9, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY-FLAGS の blocked の推奨 A）。7c7e56f7 の時点でも同じ理由で落ちる。危険地帯（描画の撮影）。 2026-10-12 親: 原因は `VignetteOutput` だけ用途に TransferSrc が無く、TAA が効いて拡大なしのときに撮影元になるため（SourceMissingTransferSrc）。blocked の推奨 A を採り、VignettePass.cpp を paths に足して todo に戻した（用途の追加だけで描画は変わらない）。
 
 
 ## SCN-ECS-SCOPE-METRICS-THREADS: 撮影の区間の集計を、その区間が出たフレームだけで数え、スレッドの名前を添える
