@@ -662,6 +662,15 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M8MinimalPhysics.ps1 -Configuration RelWithDebInfo`
 - paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Engine, Library/Core/Private/Engine, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/CMakeLists.txt, Game/Input, Game/GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Scripts/Test-M8MinimalPhysics.ps1, Test/Core/Engine, Test/Core/Object, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY の推奨 A の 2）。危険地帯（Object の寿命・公開 API）。ComponentDataRegistry の場所は `GEngine` のメンバ（`NorvesEngine.*`）と `Test/Core/Rendering` のテスト・ベンチマーク。
+## SCN-ECS-SCOPE-METRICS-THREADS: 撮影の区間の集計を、その区間が出たフレームだけで数え、スレッドの名前を添える
+- status: todo
+- done-when: `Scripts/CaptureScene.ps1` の `cpu_scope_ms`・`cpu_scope_group_ms` の median・p95・max を、その区間が出たフレーム（`frames_present`）だけで求める（今はゲームスレッドの窓の全フレームで数えるので、ゲームスレッドが描画 1 フレームの間に何回も回ると描画スレッドの区間の median が 0 になる。5万個の静止の撮影で `RenderGraph.Execute` が median 0・p95 49.3 ms・frames_present 302 / 窓 3832）。区間ごとに、出たスレッドの名前（GameThread・RenderThread・Worker）を `thread` に書く。mega-stress 2000 個の短い撮影で、`RenderGraph.Execute` の median が 0 より大きく、`thread` が入っている。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 120 -GameArgs stress-entities=2000 -OutDir .harness/runs/scene-capture/SCN-ECS-SCOPE-METRICS-THREADS`
+- verify: `python -c "import json,sys; m=json.load(open('.harness/runs/scene-capture/SCN-ECS-SCOPE-METRICS-THREADS/metrics.json',encoding='utf-8-sig')); r=[x for v in m['views'] for x in v['gpu_timing']['cpu_scope_ms'] if x['scope']=='RenderGraph.Execute']; print(r); sys.exit(0 if r and all(x['median_ms']>0 and x.get('thread') for x in r) else 1)"`
+- paths: Scripts/CaptureScene.ps1, Scripts/CheckCaptureMetrics.py, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が足した。MEASURE-UPLOAD（RecordFrameCommand ≤ 1 ms）・RT-PASSES（rt の上位のパスから監査）・MEASURE-RT（RG.Record.* の区間）が描画スレッドの区間の値を使うので、GPU の表の項目の前に置く。
+
+
 ## SCN-MEGA-GPU-SCENE-PREP: シェーダーのインスタンスの読み方を 1 つの関数とメッシュ表へ寄せ、表の更新を共通の前段に置く（準備・見た目は不変）
 - status: todo
 - done-when: cull・visbuffer・vsm_mega・megageometry.vert の MegaInstance の直接の読みを `LoadMegaInstance(index)` に寄せる。メッシュ表（binding を追加）を書き、関数はメッシュ表から補って同じ値を返す。インスタンス表・メッシュ表の更新を、最初にそれを読むパス（影のパスを含む）より前の共通の前段に移す。起動画面・バナナの比較が pass。
