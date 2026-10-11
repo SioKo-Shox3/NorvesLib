@@ -8,7 +8,7 @@
 
 2026-10-10 仮想化ジオメトリの規模の引き上げ（ユーザー決定）: バナナ 100万本（と一般のゲームの負荷 mega-stress）で GPU・ゲームスレッド・レンダースレッドの median と p95 が 16.6 ms 以下（RTX 4080・1920×1080・RelWithDebInfo）を `SCN-MEGA-` の項目で、荒野より先に進める。バナナ専用ではなく、席（GPU Scene）・変化の通知・差分の転送・ストリーミングで実際のゲームにも効く形にする。設計は計画者の計画を GPT（Sol）が 2 周批評したものを親がまとめた（計画書 `Docs/Plans/SceneLauncherPlan.md` の「仮想化ジオメトリの規模の引き上げ」）。準備の項目は新旧の一致（mismatch=0）が取れるまで切替へ進まない。切替の項目は旧経路へ戻す引数を残す。
 
-2026-10-10 計測の方針（ユーザー指示「毎変更ごとにビルドしてゲームをつけて計測していたら終わらない。計測が必要なタイミングを考える」）: 実装の項目の検証は、RelWithDebInfo のビルド 1 回と、正しさを見る短い起動 1〜2 本（新旧の一致・溢れ・送った量などの検査のカウンタ。0 でなければ ERROR を出して撮影が落ちる）だけにし、GPU 時間（`-GpuTimingFrames`）は測らない。性能の数値と Debug の検証レイヤーは節目の計測の項目（`SCN-MEGA-MEASURE-*`・`SCN-MEGA-SCALE-300K`・`SCN-MEGA-ACCEPT-1M`。調べる段の PROBE と SETUP-LINEAR は計測そのものが目的）でまとめて見る。反復の中でも、小さな変更のたびにビルドしてゲームを起動しない。コードを読んで考え、変更をまとめてから起動 1 回で確かめる。CPU のテストで確かめられる契約はゲームを起動せずに確かめる。 計測の項目の verify は、反復の中で 1 回撮った結果を `Scripts/CheckCaptureMetrics.py`（結果が揃い、失敗・溢れが無く、計測の値があり、いまの Game.exe より後に撮られたこと）で検査し、ランナーは重い撮影をやり直さない。1 回の撮影が 10 分を超える規模（古い経路での 10万本以上など）は、ECS の大量の軽い実体が入るまで測らない。 2026-10-10 追記（ユーザー指摘「改善が確定している土台で測って意味があるのか」）: 作り変えが決まっている経路の改修前の計測はしない。節目の計測の合否は目標の絶対値（16.6 ms などの閾値）で決め、改修前の値との比は合否に使わない。改修の前に測るのは、結果で設計や作るかどうかが変わる診断（PROBE-ROOT・PROBE-100K のような）だけ。正しさの比較（描いたクラスタ数・画像の一致）は別で、これは続ける。ECS 前の mega-stress の値は、既に撮った分を PROGRESS に参考値として残した（そのために撮り直さない）。 2026-10-10 追記（ユーザー指摘「全体の負荷だけ測っても効果が分からない。GPU はパスごと、CPU は関数単位の内訳が要る」）: 節目の計測の項目は、問いと、それに答える区間（CPU）・パス（GPU）の名前を done-when に書き、その値で判断する。全体の gt・rt・GPU だけで合否を決めるのは受入れ（SCALE-300K・ACCEPT-1M）だけ。GPU のパスごとの時間は撮影が既に出している。CPU は ECS のスケジューラが系ごとの区間を自動で記録する（SCN-ECS-SCHEDULER）。区間の名前の決まり: 段 `Ecs.Stage.<段>`、系 `Ecs.Sys.<系>`、同期点 `Ecs.Sync.<段>`、同期点の中のコマンドの適用・破棄の回収・変換の伝播は `Ecs.Sync.Commands`・`Ecs.Sync.Cleanup`・`Ecs.Sync.TransformPropagate`、描画の変換の系は `Ecs.Sys.RenderTransform`、SceneQuery の更新は `Ecs.Sys.SceneQuery`、RenderGraph のパスの記録は `RG.Record.<パス>`。系や段を作る項目はこの名前を使う。タイムラインのビューア（Insights のようなもの）は今は作らない。
+2026-10-10 計測の方針（ユーザー指示「毎変更ごとにビルドしてゲームをつけて計測していたら終わらない。計測が必要なタイミングを考える」）: 実装の項目の検証は、RelWithDebInfo のビルド 1 回と、正しさを見る短い起動 1〜2 本（新旧の一致・溢れ・送った量などの検査のカウンタ。0 でなければ ERROR を出して撮影が落ちる）だけにし、GPU 時間（`-GpuTimingFrames`）は測らない。性能の数値と Debug の検証レイヤーは節目の計測の項目（`SCN-MEGA-MEASURE-*`・`SCN-MEGA-SCALE-300K`・`SCN-MEGA-ACCEPT-1M`。調べる段の PROBE と SETUP-LINEAR は計測そのものが目的）でまとめて見る。反復の中でも、小さな変更のたびにビルドしてゲームを起動しない。コードを読んで考え、変更をまとめてから起動 1 回で確かめる。CPU のテストで確かめられる契約はゲームを起動せずに確かめる。 計測の項目の verify は、反復の中で 1 回撮った結果を `Scripts/CheckCaptureMetrics.py`（結果が揃い、失敗・溢れが無く、計測の値があり、いまの Game.exe より後に撮られたこと）で検査し、ランナーは重い撮影をやり直さない。1 回の撮影が 10 分を超える規模（古い経路での 10万本以上など）は、ECS の大量の軽い実体が入るまで測らない。 2026-10-10 追記（ユーザー指摘「改善が確定している土台で測って意味があるのか」）: 作り変えが決まっている経路の改修前の計測はしない。節目の計測の合否は目標の絶対値（16.6 ms などの閾値）で決め、改修前の値との比は合否に使わない。改修の前に測るのは、結果で設計や作るかどうかが変わる診断（PROBE-ROOT・PROBE-100K のような）だけ。正しさの比較（描いたクラスタ数・画像の一致）は別で、これは続ける。ECS 前の mega-stress の値は、既に撮った分を PROGRESS に参考値として残した（そのために撮り直さない）。 2026-10-10 追記（ユーザー指摘「全体の負荷だけ測っても効果が分からない。GPU はパスごと、CPU は関数単位の内訳が要る」）: 節目の計測の項目は、問いと、それに答える区間（CPU）・パス（GPU）の名前を done-when に書き、その値で判断する。全体の gt・rt・GPU だけで合否を決めるのは受入れ（SCALE-300K・ACCEPT-1M）だけ。GPU のパスごとの時間は撮影が既に出している。CPU は ECS のスケジューラが系ごとの区間を自動で記録する（SCN-ECS-SCHEDULER）。区間の名前の決まり: 段 `Ecs.Stage.<段>`、系 `Ecs.Sys.<系>`、同期点 `Ecs.Sync.<段>`、同期点の中のコマンドの適用・破棄の回収・変換の伝播は `Ecs.Sync.Commands`・`Ecs.Sync.Cleanup`・`Ecs.Sync.TransformPropagate`、描画の変換の系は `Ecs.Sys.RenderTransform`、SceneQuery の更新は `Ecs.Sys.SceneQuery`、RenderGraph のパスの記録は `RG.Record.<パス>`。系や段を作る項目はこの名前を使う。タイムラインのビューア（Insights のようなもの）は今は作らない。 2026-10-11 追記（ユーザー指摘「計測は改修の後と決めたのに、何のための撮影か」→ ユーザー決定）: 各項目の検証でゲームを起動するのは正しさの確認だけで、回数を絞る。起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）。検査付きの起動（`-RequireChecks`・`engine-checks`）は 1 視点 1 本。シーンの出入りの周回は、寿命とシーンの出入りに触る項目だけで、混在 1 本。CPU だけの変更は CPU のテストと Game のビルドで確かめる。反復の中でも、確かめたいことが無い起動はしない。
 
 2026-10-10 ECS の決定（ユーザー決定）: Entity はオブジェクト管理の器として残し、更新（Tick・変換・描画への同期・ゲームロジック）のデータと処理を ECS 型（自前のアーキタイプ型、値の実体は列に置き Object の読み書きはそこを通す、大量の物は Object を持たない軽い実体、ロジックはすべてシステムへ、ジョブで並列）に作り変え、レンダースレッドもコマンドの並列記録まで並列化する。100万本の改修に組み込む。設計の正本は `Docs/Plans/EcsUpdatePathPlan.md`（計画者の計画を GPT が 2 周批評し、親が追記した。項目の notes の「§」はこの文書の節）。`SCN-ECS-` の項目と、ECS 前提で置き換えた `SCN-MEGA-` の項目を、計画書の §2 の順に並べた。ワールドの全走査を直す旧案（WORLD-TICK-CACHE・WORLD-TRANSFORM-NOTIFY・WORLD-TRANSFORM-INTERP・WORLD-RENDER-DIRTY・INSTANCE-BATCH）は ECS の項目に置き換えて消した。戻すときは、戻す項目とそれに依存する後続の項目を新しい順に revert する（単独では戻さない）。
 
@@ -368,11 +368,11 @@
 ## SCN-ECS-FIX-DESTROY-FLAGS: 公開の Destroy() と Heap の破棄予約でも、ECS の破棄の印を立てる
 - status: todo
 - done-when: `Entity::Destroy()`（`Object.cpp` 197 行付近の Object のフラグだけを変える経路）・World の予約登録（`World.cpp` 2336 行付近）・`ObjectHeap::EnqueueDestroy()` のどれから破棄を予約しても、`MarkForDestroy()` と同じ処理で ECS の破棄の印と変更ログが更新され、祖先の破棄予約で子・孫の Tick が呼ばれない（`World.cpp` 1431 行付近が古い `EffectiveActive=true` を使わない）。`EcsHierarchyTest` に、直接の `Destroy()` と Heap 経由の予約で子・孫が呼ばれない（count=0）回帰の検査を足す。通ったら SCN-ECS-TRANSFORM-SWITCH の status を done にし、`blocked/SCN-ECS-TRANSFORM-SWITCH.md` に解消を書き足す（残りの指摘はこの 1 点だけ）。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target EntityTreeTest ApplicationFixedStepPipelineTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(TransformHierarchyTest|EcsHierarchyTest|WorldTickGroupTest|SpringArmComponentTest|ApplicationFixedStepPipelineTest)$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-DESTROY-FLAGS`
 - paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Test/Core/Object, TASKS.md, PROGRESS.md
-- notes: 2026-10-11 親が足した。SCN-ECS-TRANSFORM-SWITCH の評価の 2 周目の指摘（`blocked/SCN-ECS-TRANSFORM-SWITCH.md`）。評価者の最小の修正候補は、`Entity::Destroy()` をオーバーライドして ECS の破棄の印も更新し、`MarkForDestroy()` を同じ処理へまとめること。新しいテストの実行ファイルは足さない（既存の束に入れる）。
+- notes: 2026-10-11 親が足した。SCN-ECS-TRANSFORM-SWITCH の評価の 2 周目の指摘（`blocked/SCN-ECS-TRANSFORM-SWITCH.md`）。評価者の最小の修正候補は、`Entity::Destroy()` をオーバーライドして ECS の破棄の印も更新し、`MarkForDestroy()` を同じ処理へまとめること。新しいテストの実行ファイルは足さない（既存の束に入れる）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 
 ## SCN-ECS-FIX-SCENEQUERY-HOOKS: SceneQuery が切り替えた前の World と、破棄後に残る行の削除フックを外す
@@ -380,9 +380,9 @@
 - done-when: SceneQuery が World を切り替えるとき（`SceneQuery.cpp` 927 行付近）に前の World の行の削除フックを外し、SceneQuery の破棄でも登録したすべての World のフックを外す（または、フックのデータを World 側が登録の間だけ持つ）。World A・B を生かしたまま `Update(A)` → `Update(B)` → `Clear()` → SceneQuery を破棄 → A の Entity を削除、の順で解放後の参照が起きないことを、既存の SceneQuery の試験の束に足した検査で確かめる（Debug で走らせる）。通ったら SCN-ECS-SCENEQUERY の status を done にし、`blocked/SCN-ECS-SCENEQUERY.md` に解消を書き足す（残りの指摘はこの 1 点だけ）。
 - verify: `cmake --build build --config Debug --target SceneQueryRaycastTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SceneQueryRaycastTest|SceneQueryOverlapTest|SceneQueryPhysicsFacadeTest|SceneCameraProbeTest)$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks ECS_SCENEQUERY -OutDir .harness/runs/scene-capture/SCN-ECS-FIX-SCENEQUERY-HOOKS/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks ECS_SCENEQUERY -OutDir .harness/runs/scene-capture/SCN-ECS-FIX-SCENEQUERY-HOOKS/check`
 - paths: Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Object/World.h, Library/Core/Private/Object/World.cpp, Test/Core/Object, TASKS.md, PROGRESS.md
-- notes: 2026-10-11 親が足した。SCN-ECS-SCENEQUERY の評価の 2 周目の指摘（`blocked/SCN-ECS-SCENEQUERY.md`。前回の指摘 3 が未解決）。新しいテストの実行ファイルは足さない（既存の束に入れる）。
+- notes: 2026-10-11 親が足した。SCN-ECS-SCENEQUERY の評価の 2 周目の指摘（`blocked/SCN-ECS-SCENEQUERY.md`。前回の指摘 3 が未解決）。新しいテストの実行ファイルは足さない（既存の束に入れる）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 
 ## SCN-ECS-TRANSFORM-SWITCH: 階層のシステムを正にする（切替）
@@ -417,34 +417,41 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RENDER-COLUMNS-LIGHT`
 - paths: Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
 
+## SCN-MEGA-FIX-DELTA-SKIP: 描画の見送りの後の空の差分で、変わった席と前の変換の付け替えを取り逃がさない
+- status: todo
+- done-when: (1) 描画を見送ったフレームの変わった席は、消費者（MegaGeometryPass）が取り込むまで保つ。または、変わった席と版が対応しないときは全量に戻す（`MegaGeometryMirror.h` 71 行付近は空の差分でも変わった席を消し、`MegaGeometryPass.cpp` 633 行付近がそれを適用済みとして扱う。再現: 影ありで描画 → 影なしの差分を適用して見送り → 空の差分で描画 で、写しは影なし・Pass は影ありのまま）。(2) 写しの前の変換の付け替え（`MegaGeometryMirror.h` 176 行付近）はそのフレームだけにし、次のフレームで履歴が落ち着く席も消費者へ知らせる（再現: 10 で x=0 を描画 → 11 で x=10 を適用して見送り → 12 で静止した x=10 を描画 → 13 で空の差分を描画 で、13 の前の変換が 10 になる）。2 つの再現を `WorldSyncDifferentialTest` の検査として足し（新しい実行ファイルは足さない）、Debug で pass。通ったら SCN-MEGA-SCENE-DELTA の status を done にし、`blocked/SCN-MEGA-SCENE-DELTA.md` に解消を書き足す。
+- verify: `cmake --build build --config Debug --target WorldSyncDifferentialTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^WorldSyncDifferentialTest$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FIX-DELTA-SKIP`
+- paths: Library/Core/Public/Rendering/MegaGeometryMirror.h, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Test/Core/Rendering/WorldSyncDifferentialTest.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 親が足した。SCN-MEGA-SCENE-DELTA の評価の 2 周目の指摘 2・3（`blocked/SCN-MEGA-SCENE-DELTA.md`）。前の変換を最後に描いたフレームで保つ本格の直しは SCN-MEGA-GPU-SCENE-HISTORY。この項目は今の付け替えの退行だけを直す。
+
+
 ## SCN-ECS-RENDER-INVALIDATION: 列の値の変化以外で描画が古くなる場合を通知にする
 - status: todo
 - done-when: 設計 1.10 の無効化の通知（資源の handle → 使っている行の逆引き、ポーズの版、接続先の交換での全再公開）と、公開の状態の列・再試行の一覧が入る。同期はまだ全走査のまま。検査 `ECS_RENDER_INVALIDATION`（全走査で proxy が変わった行が、必ず通知か変更ログに載っている）が、読み込み中のシーンへの入場と周回で pass する。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -RequireChecks ECS_RENDER_INVALIDATION -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RENDER-INVALIDATION`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -RequireChecks ECS_RENDER_INVALIDATION -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RENDER-INVALIDATION`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=ECS_RENDER_INVALIDATION`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=ECS_RENDER_INVALIDATION`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-bananas -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=ECS_RENDER_INVALIDATION`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes mega-stress -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=ECS_RENDER_INVALIDATION`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/Private/Object/World.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
-- notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。
+- notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RENDER-SYNC-PREP: 変わった行と Remove の一覧を作り、全走査と一致を確かめる（準備）
 - status: todo
 - done-when: 段 RenderSync のシステムが、変更ログ・通知・公開の状態から「変わった行」と Remove の一覧を作る。同期はまだ全走査。検査 `ECS_RENDER_SYNC`（一覧と全走査で見つけた変化が一致。移動・ストリーミング・非表示・シーンの切り替えを含む）が pass する。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks ECS_RENDER_SYNC -OutDir .harness/runs/scene-capture/SCN-ECS-RENDER-SYNC-PREP/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks ECS_RENDER_SYNC -OutDir .harness/runs/scene-capture/SCN-ECS-RENDER-SYNC-PREP/check`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=ECS_RENDER_SYNC`
 - paths: Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Private/Object/World.cpp, Library/Core/Public/Component, Library/Core/Private/Component, TASKS.md, PROGRESS.md
-- notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。
+- notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RENDER-SYNC-SWITCH: Mesh・Skinned・Light・Board の同期を、変わった行だけにする（切替）
 - status: todo
 - done-when: 次をやめる: 生存集合と `RemoveStale*`（World.cpp:1225-1261）、dirty でない行の作り直し（1497-1511）、ComponentDataRegistry への毎フレームの公開（1448-1451・1542-1551）。MegaGeometry は SCENE-DELTA まで旧経路のまま。`--ecs-legacy-sync` で戻せる。下のテストと起動画面の比較・周回が pass する。
 - verify: `cmake --build build --config Debug --target SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SceneViewProxyLookupTest|SceneViewProxyReconcileTest|WorldSyncDifferentialTest)$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RENDER-SYNC-SWITCH`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RENDER-SYNC-SWITCH`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Private/Object/World.cpp, Library/Core/Public/Object/World.h, Library/Core/Public/Rendering/SceneView.h, Library/Core/Private/Rendering/SceneView.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
-- notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。
+- notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-SCENEQUERY: SceneQuery を、境界の変化からの refit と追加・削除にする
 - status: blocked
@@ -457,32 +464,34 @@
 ## SCN-MEGA-SCENE-CONFIRM: パケットの番号・世代と、RenderThread の適用の確認を先に入れる（準備）
 - status: todo
 - done-when: パケットがシーンの世代と送った番号を持つ。RenderThread はマルチ・シングルのどちらの経路でも（RenderWorld.cpp 353 行付近の直接の経路を含む）、共通の場所で次を行う: 適用済みより古いパケットを捨てる、適用した番号と GPU の提出番号の対応を持つ、適用した番号・世代・完了した提出番号を atomic で公開する（描画を見送っても、適用したら確認する）。全量の写しもまだ運ぶ。検査 `MEGA_SCENE_CONFIRM`（確認が単調、飛んだパケットの差分は積み直される、世代が替わったら古い差分を拒む）が pass する。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks MEGA_SCENE_CONFIRM -OutDir .harness/runs/scene-capture/SCN-MEGA-SCENE-CONFIRM/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks MEGA_SCENE_CONFIRM -OutDir .harness/runs/scene-capture/SCN-MEGA-SCENE-CONFIRM/check`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-stress,mega-bananas -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=MEGA_SCENE_CONFIRM`
 - paths: Library/Core/Public/Rendering/FramePacket.h, Library/Core/Private/Rendering/RenderWorld.cpp, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/SceneView.h, Library/Core/Private/Rendering/SceneView.cpp, TASKS.md, PROGRESS.md
-- notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。
+- notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-SCENE-SLOTS: MegaGeometry の行に席の列を持たせ、席の寿命の規則を入れる（準備）
 - status: todo
 - done-when: Object の行も軽い行も `EcsGpuSceneSlot` を持つ。席の解放は、理由が Destroy の削除のフックでだけ行い、移動・チャンクの返却・入れ替えでは解放しない（設計 1.10）。空きリストは範囲単位で、範囲の AABB は所属する全席を包む。解放した席の再利用は、CONFIRM の確認と、その席を最後に使った提出の完了の両方を待つ。検査 `MEGA_SLOTS`（重複・包含の外れ・早すぎる再利用が 0）が、ストリーミングと周回で pass する。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks MEGA_SLOTS -OutDir .harness/runs/scene-capture/SCN-MEGA-SCENE-SLOTS/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks MEGA_SLOTS -OutDir .harness/runs/scene-capture/SCN-MEGA-SCENE-SLOTS/check`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-stress,mega-bananas -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=MEGA_SLOTS`
 - paths: Library/Core/Private/Object/World.cpp, Library/Core/Public/Rendering/SceneView.h, Library/Core/Private/Rendering/SceneView.cpp, Library/Core/Public/Rendering/SceneProxy.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Component, Library/Core/Private/Component, TASKS.md, PROGRESS.md
-- notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。
+- notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-SCENE-DELTA: MegaGeometry の同期を、変わった行と Free だけにする（切替）
-- status: done
-- done-when: 次をやめる: `RemoveStaleMegaGeometryProxies`、全量の写し（RenderingCoordinator.cpp:2119）、`ApplyPreviousObjectStates` の毎回の作り直し。消費者（Pass・VSM・CSM・RT）は、RenderThread の写しと「今フレーム変わった席」を読む。`--mega-scene-full-sync` で全量に戻せる（ECS の全行を数える）。両方の経路で起動画面の比較が pass する。
+- status: blocked
+- done-when: 次をやめる: `RemoveStaleMegaGeometryProxies`、全量の写し（RenderingCoordinator.cpp:2119）、`ApplyPreviousObjectStates` の毎回の作り直し。消費者のうち Pass と VSM は、RenderThread の写しと「今フレーム変わった席」を読む（CSM は SCN-MEGA-SHADOW-DIRTY、RT は SCN-MEGA-RT-SELECT で切り替える）。`--mega-scene-full-sync` で全量に戻せる（ECS の全行を数える）。両方の経路で起動画面の比較が pass する。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-SCENE-DELTA`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -GameArgs mega-scene-full-sync -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-SCENE-DELTA-full`
 - paths: Library/Core/Private/Object/World.cpp, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Game, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 親: 評価の 2 周目の指摘（`blocked/SCN-MEGA-SCENE-DELTA.md`）のうち、CSM（ShadowMapPass）と RT の消費者の切り替えは、それぞれを直す SHADOW-DIRTY・RT-SELECT へ移した（計画の順の判断）。残る 2 点（見送りの後の空の差分、TAA の付け替えの残り）は SCN-MEGA-FIX-DELTA-SKIP で直し、通ったらこの項目を done にする。
 
 ## SCN-ECS-PACKET-DELTA: Mesh・Skinned・Light の全量の写しと、構成の hash の全走査をやめる
 - status: todo
 - done-when: SCENE-DELTA と同じ確認の経路で、Mesh・Skinned・Light の proxy を差分で運び、RenderThread の写しへ当てる（RenderingCoordinator.cpp:2116-2118 の全量の写しをやめる）。構成の hash（189-195）は差分のたびに増分で更新する。検査 `PACKET_DELTA`（差分を当てた写しと全量が一致）と、起動画面の比較が pass する。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -RequireChecks PACKET_DELTA -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-PACKET-DELTA`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks PACKET_DELTA -OutDir .harness/runs/scene-capture/SCN-ECS-PACKET-DELTA/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -RequireChecks PACKET_DELTA -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-PACKET-DELTA`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks PACKET_DELTA -OutDir .harness/runs/scene-capture/SCN-ECS-PACKET-DELTA/check`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-MASS-ROWS: 散布の Object と軽い実体でバナナを置く
 - status: todo
@@ -494,17 +503,18 @@
 ## SCN-ECS-MASS-STREAM: 散布の作成・反映・解放を予算で分け、mega-stress の区画を散布で出し入れする
 - status: todo
 - done-when: 作成、所有者の変換とメッシュの反映、解放を、1 フレームの行数と ms の予算で分け、範囲ごとに公開・解放する（設計 1.11）。mega-stress の区画が `--stress-batch-cells` で散布として出し入れされる。検査 `MASS_RANGES`（公開中の範囲は全行が揃っている、解放した範囲は描かない）が pass する。5万個 + 64 m 区画で gt の p95 を PROGRESS に書き、予算の既定値を決める。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -RequireChecks MASS_RANGES -OutDir .harness/runs/scene-capture/SCN-ECS-MASS-STREAM/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -RequireChecks MASS_RANGES -OutDir .harness/runs/scene-capture/SCN-ECS-MASS-STREAM/check`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-stress,mega-bananas -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Game, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-MIXED-LOAD: バナナ 100万本と mega-stress の個別 Entity を 1 回の起動で同時に置く
 - status: todo
 - done-when: 1 回の起動で、散布の Object によるバナナ（`banana-count`）と mega-stress の個別 Entity（`stress-entities`・`stress-moving-percent`・`stress-stream-cell`）を同時に置ける（今は GameApplicationHandler.cpp 2721 行付近のモードの登録で別々のシーンへ渡している）。静止・カメラパスの再生・1% 移動・64 m 区画のストリーミングの 4 つの起動の引数を決めて PROGRESS に書き、実際に置いた数（バナナの本数・Entity の数）をログと metrics.json に出して、引数どおりであることを確かめる（10万本 + 5000 個の短い起動で確かめる。計測はしない）。開発ビルドの `--camera-path-play` で、シーンのカメラパスを再生したまま撮れる（`--camera-path-time` は止めた視点。再生の開始の時刻はそれに合わせる。ログに再生中の時刻を出す）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs banana-count=100000,stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-MIXED-LOAD`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs banana-count=100000,stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-MIXED-LOAD`
 - paths: Game, Library/Core/Public/Input, Library/Core/Private/Input, Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
-- notes: GPT の 2 周目の指摘（ACCEPT-1M の混在の負荷を作る実装が無い）への対応。 2026-10-10 親: `--camera-path-play` を SCN-MEGA-PROBE-VSM（backlog にした）から移した。
+- notes: GPT の 2 周目の指摘（ACCEPT-1M の混在の負荷を作る実装が無い）への対応。 2026-10-10 親: `--camera-path-play` を SCN-MEGA-PROBE-VSM（backlog にした）から移した。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-PROBE-VSM: 10万本で、読み込み直後とカメラが動くときの VSM の投影物のカリングを測る
 - status: backlog
@@ -519,24 +529,27 @@
 - done-when: これらの Tick/OnTickGroup の上書きを消し、設計 1.12 のとおり登録する（順・channel・群は今と同じ）。Tick を直接呼んでいるテスト（FlipbookAdvanceTest.cpp:65、SpringArmComponentTest.cpp:311 など）も同じ項目で直す。検査 `ECS_TICK_DUP` が 0。
 - verify: `cmake --build build --config Debug --target EntityTreeTest FlipbookAdvanceTest BoardComponentRoutingTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SpringArmComponentTest|FlipbookAdvanceTest|BoardComponentRoutingTest|BillboardComponentTest|WorldTickGroupTest)$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -RequireChecks ECS_TICK_DUP -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-TICK-SIMPLE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -RequireChecks ECS_TICK_DUP -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-TICK-SIMPLE`
 - paths: Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Private/Object/World.cpp, Test/Core/Object, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-TICK-ANIM: Animator と SkinnedMesh の更新を順序付きの系へ移す
 - status: todo
 - done-when: OnTickGroup/Tick を消して登録する（Animation・PoseFinalize。イベントの配信の位置は今と同じ）。直接呼んでいるテストも直す。`-SkinnedProbe` の決定的な撮影が、最初の編集の前に `.harness/runs/startup-capture/SCN-ECS-TICK-ANIM-base` へ同じ引数で撮った基準と一致する。
 - verify: `cmake --build build --config Debug --target SkeletalAnimationSamplingTest SkinnedRenderPathContractTest EntityTreeTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SkeletalAnimationSamplingTest|SkinnedRenderPathContractTest|WorldTimeChannelTest)$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -RequireChecks ECS_TICK_DUP -CompareDeterministicWith .harness/runs/startup-capture/SCN-ECS-TICK-ANIM-base -OutDir .harness/runs/startup-capture/SCN-ECS-TICK-ANIM`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -SkinnedProbe -RequireChecks ECS_TICK_DUP -CompareDeterministicWith .harness/runs/startup-capture/SCN-ECS-TICK-ANIM-base -OutDir .harness/runs/startup-capture/SCN-ECS-TICK-ANIM`
 - paths: Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Test/Core/Object, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-TICK-PHYSICS: CharacterBody と物理の一歩を、固定ステップの段へ移す
 - status: todo
 - done-when: CharacterBody の 3 つの上書きを消して登録し、PhysicsModule の PreFixedTick と FixedTick を Fixed* の段のシステムにする（物理モジュールが登録、GameThreadOnly）。下のテストと起動画面の比較が pass する。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target PhysicsDynamicsTest ApplicationFixedStepPipelineTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(PhysicsFixedStepPipelineTest|PhysicsCharacterMoveTest|CharacterPlatformMotionTest|PhysicsLifecycleEventTest|ApplicationFixedStepPipelineTest)$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-TICK-PHYSICS`
 - paths: Library/Modules/Physics, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Test/Modules/Physics, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-TICK-SCRIPT: ScriptComponent の Tick を順序付きの系へ移す
 - status: todo
@@ -548,35 +561,37 @@
 ## SCN-ECS-TICK-GAME: Game の FollowCamera と QuadrupedLocomotion を順序付きの系へ移す
 - status: todo
 - done-when: OnTickGroup を消し、Game が起動時に登録する（TryGetComponentTickDelta と GetTickSerial の使い方は保つ）。下のテストと起動画面の比較が pass する。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target LoggerSinkTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(QuadrupedLocomotionModelTest|CameraCollisionSolverTest|LocomotionProfileReloadTest)$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-TICK-GAME`
 - paths: Game/Gameplay, Game/GameApplicationHandler.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-FRAME-HOOKS: GameMode・粒子・モジュール・handler の更新を段のシステムにする
 - status: todo
 - done-when: 次を設計 1.7 の段の GameThreadOnly のシステムとして、今と同じ順で走らせる（中身は持ち主に残す）: `UpdateGameModeStateMachine`、handler の OnUpdate/OnLateUpdate、`ParticleSystem::Tick`、モジュールの TickAll/LateTick/PreFixedTick/FixedTick、スクリプトの前後処理（ApplicationProcessor.cpp:2096-2132・2576-2590・2670-2672）。下のテストと起動画面の比較が pass する。
 - verify: `cmake --build build --config Debug --target ApplicationFixedStepPipelineTest GameModeStateMachineTest LoggerSinkTest CanvasTransientBoardSnapshotTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(ApplicationFixedStepPipelineTest|GameModeStateMachineTest|GameModeRegistryTest|SubRoutineTest|ModuleRegistryTest|ParticleFrameSnapshotTest)$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FRAME-HOOKS`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FRAME-HOOKS`
 - paths: Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Engine, Library/Core/Private/Engine, Library/Core/Public/Module, Library/Core/Private/Module, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
-- notes: 親の追記（GPT 2 周目）: 段は `ApplicationProcessor.cpp` 2096 行付近の実際の順（handler の更新は GameMode の更新より前、粒子の更新は固定ステップより前、`Module::TickAll` は RenderSync より後）で定義し、シミュレーションが止まっているときにどの呼び出しが走るかを表にして PROGRESS に残す。
+- notes: 親の追記（GPT 2 周目）: 段は `ApplicationProcessor.cpp` 2096 行付近の実際の順（handler の更新は GameMode の更新より前、粒子の更新は固定ステップより前、`Module::TickAll` は RenderSync より後）で定義し、シミュレーションが止まっているときにどの呼び出しが走るかを表にして PROGRESS に残す。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-TICK-REMOVE: 仮想の Tick と、毎フレームの Tick の一覧を消す
 - status: todo
 - done-when: 次を消す: Component.h:82-89・102 の仮想（Tick・GetTimeChannel・OnTickGroup・FixedTick）、`Entity::Tick`/`TickComponents`、`TickDispatch.h`、`BuildTickSnapshot` と一覧（World.h:286-306）、旧の配信のシステム。Tick の設定の API は、BIND-FLAGS の列に書く形で残す。残っているテストを直し、全部 pass させる。
 - verify: `cmake --build build --config Debug --target EntityTreeTest ApplicationFixedStepPipelineTest PhysicsDynamicsTest ScriptComponentTickTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(WorldTickGroupTest|WorldTimeChannelTest|EntityTreeTest|TickGroupConfigurationTest|ApplicationFixedStepPipelineTest|PhysicsFixedStepPipelineTest|ScriptComponentTickTest)$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-TICK-REMOVE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-TICK-REMOVE`
 - paths: Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/Public/Object, Library/Core/Private/Object, Library/Modules/Physics, Game, Test, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-MEASURE-CPU: 節目の計測: ECS 化した CPU（ワールド・同期・ロジック）の効果を測る
 - status: todo
 - done-when: - 測る負荷: 5万個の静止・1% 移動・1% 移動 + 64 m 区画と、バナナ 1万本 overview・10万本 horizon。 - 問い: ECS 化した段・系・同期点のそれぞれが、本数と変化の数に対してどれだけかかり、並列の系がワーカーに広がっているか。 - 測る値: 段・系・同期点の区間（冒頭の方針の名前）ごとの median と p95、並列の系の区間が出たスレッドの数。全体の gt・rt・GPU は添える。PROGRESS の表に書く（合否は下の閾値で決め、改修前の値は撮らない）。 - 合格の条件: - 5万個の静止で、ゲームスレッドの段の合計 ≤ 2 ms（変換の伝播・描画の変換・RenderSync・SceneQuery・cleanup はそれぞれ ≤ 0.1 ms）。 - 1% 移動での増分が「変わった行 + 影響する子孫 + 補間の部分木」の数に比例する（数をログに出し、比を表に書く）。 - 10万本と 1万本の gt の差 ≤ 0.5 ms。 - 届かないスコープは `SCN-MEGA-FIX-<名前>` として足す。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static --timing --min-frames 300 --max-gt-p95-ms 16.6 --require-scope Ecs.Stage.* --require-scope Ecs.Sync.TransformPropagate --require-scope Ecs.Sys.RenderTransform --require-scope Ecs.Stage.RenderSync --require-scope Ecs.Sys.SceneQuery --require-scope Ecs.Sync.Cleanup`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-CPU-debug`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-CPU-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。反復の中で 1 回撮る: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static`（他の負荷も同じ形で、出力先だけ変える）
+- notes: 計測だけ。反復の中で 1 回撮る: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static`（他の負荷も同じ形で、出力先だけ変える） 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RETIRE-LEGACY: 旧経路と ComponentDataRegistry を消す
 - status: todo
@@ -590,65 +605,63 @@
 - status: todo
 - done-when: cull・visbuffer・vsm_mega・megageometry.vert の MegaInstance の直接の読みを `LoadMegaInstance(index)` に寄せる。メッシュ表（binding を追加）を書き、関数はメッシュ表から補って同じ値を返す。インスタンス表・メッシュ表の更新を、最初にそれを読むパス（影のパスを含む）より前の共通の前段に移す。起動画面・バナナの比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-GPU-SCENE-PREP`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-PREP/det`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: GPUMegaInstance は `MegaGeometryPass.h` 437〜455 行付近、影の表は 37〜48 行付近。 （ECS 計画の対応）変わった席は RenderSync から受け取る。
+- notes: GPUMegaInstance は `MegaGeometryPass.h` 437〜455 行付近、影の表は 37〜48 行付近。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-GPU-SCENE-SCATTER: インスタンス表を席ごとに GPU へ常駐させ、変わった席だけを散在更新する（切替）
 - status: todo
 - done-when: 表が席ごと 128 B の device-local になり、変わった席だけを staging から compute で散在書き込みする。インスタンス表・メッシュ表・常駐（ページ表）の 3 つの更新の条件を分け、常駐の表は両方の描画パスと VSM で同じ版を使う（今の `SyncPageTable` の frame slot ごとの版、`MegaGeometryPass.cpp` 2832 行付近）。インスタンスも常駐も変わらないフレームは `MEGA_SCENE_UPLOAD bytes=0`（ログで確かめる）。`--mega-scene-full-sync` との起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-UPLOAD）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-GPU-SCENE-SCATTER`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-SCATTER/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-GPU-SCENE-SCATTER`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-SCATTER/check`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Assets/Shaders, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 危険地帯（GPU メモリ）。転送の道は `RenderResources.cpp` 66・1561 行付近のリングと別の予算にする（最初に 1540〜1580 行付近を読んで決める）。 （ECS 計画の対応）変わった席は RenderSync から受け取る。
+- notes: 危険地帯（GPU メモリ）。転送の道は `RenderResources.cpp` 66・1561 行付近のリングと別の予算にする（最初に 1540〜1580 行付近を読んで決める）。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-GPU-SCENE-GROW: 席の表の拡張を GPU のコピーで行い、古いバッファとメッシュ表の資源を GPU が使い終わるまで保つ
 - status: todo
 - done-when: 席の数が容量を超えたら新しい表へ GPU でコピーし、古いバッファは `m_RetiredBuffers` へ回す。メッシュ表が指す資源（頂点・インデックス・クラスタ・BVH・ページ表）は、その資源を最後に使った提出が終わるまで解放しない。ストリーミングで拡張と縮小が起きても `mismatch=0`、cycle smoke が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-GROW/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-GROW/check`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 危険地帯（寿命）。検証レイヤーは節目の計測の Debug で見る。 （ECS 計画の対応）変わった席は RenderSync から受け取る。
+- notes: 危険地帯（寿命）。検証レイヤーは節目の計測の Debug で見る。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-GPU-SCENE-HISTORY: 前の変換（prevWorld）を、最後に描いたフレームを基準に保つ
 - status: todo
 - done-when: 席の prevWorld は `RenderedObjectHistory.h` 29 行付近の契約（最後に描いたフレームの変換）に従い、RenderThread 側で描画の履歴を持つ。動いて止まった席の 1 回だけの更新も描画の基準で行う（パケットの破棄・描画の見送りを挟んでも速度が 0 や二重にならない）。1% 移動で、開発ビルドの速度の検査（全量の経路の速度と一致）が `MEGA_HISTORY mismatch=0`。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-HISTORY/check`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-GPU-SCENE-HISTORY`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-HISTORY/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-GPU-SCENE-HISTORY`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 危険地帯。 （ECS 計画の対応）席は行と一緒に動く。
+- notes: 危険地帯。 （ECS 計画の対応）席は行と一緒に動く。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-RT-SELECT: TLAS に入れるインスタンスを席ごとの配列で持ち、選ぶ規則を決める
 - status: todo
-- done-when: RT の instance 配列を席ごとに持ち、差分で直す。TLAS に入れるのは、カメラから 120 m 以内のインスタンスを近い順に上限 65,536 本まで（規則と外れた数を `RT_SCENE instances= excluded=` に出す）。この項目では Update は毎フレーム呼んでよい。起動画面の比較（RT の影・RTGI・DDGI を含む見た目）が pass。
+- done-when: RT の instance 配列を席ごとに持ち、差分で直す。RT の入力（`RenderingCoordinator.cpp` 805 行付近の全量の読みと、連番のパストレーシングが使う GameThread の配列）を、RenderThread の写しと変わった席にする（SCN-MEGA-SCENE-DELTA から移した）。TLAS に入れるのは、カメラから 120 m 以内のインスタンスを近い順に上限 65,536 本まで（規則と外れた数を `RT_SCENE instances= excluded=` に出す）。この項目では Update は毎フレーム呼んでよい。起動画面の比較（RT の影・RTGI・DDGI を含む見た目）が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-RT-SELECT`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-RT-SELECT/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-RT-SELECT`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-RT-SELECT/check`
 - paths: Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RayTracingSceneSubsystem.h, TASKS.md, PROGRESS.md
-- notes: 対象は 784〜850 行付近。RHI/Vulkan は変えない（`VulkanCommandList.cpp` 1302 行付近は Update のたびに全量を変換・転送する）。共有の TLAS は RT の影・DDGI も使うので、遠方の影響を RTGI だけと見なさない。 （ECS 計画の対応）変わった席は RenderSync から受け取る。
+- notes: 対象は 784〜850 行付近。RHI/Vulkan は変えない（`VulkanCommandList.cpp` 1302 行付近は Update のたびに全量を変換・転送する）。共有の TLAS は RT の影・DDGI も使うので、遠方の影響を RTGI だけと見なさない。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-RT-SKIP: TLAS の更新を、集合・変換・BLAS の版が変わったフレームだけにする
 - status: todo
 - done-when: frame slot ごとに、選んだ集合・変換・BLAS の版（準備完了・交換）を覚え、全部一致するフレームは Update を呼ばない（ログに `RT_SCENE update_skipped=` を出す）。カメラの移動で 120 m 内の集合が変わる・追加削除・BLAS の交換では呼ぶ。バナナと起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-UPLOAD）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-RT-SKIP`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-RT-SKIP/det`
 - paths: Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/RayTracingSceneSubsystem.h, TASKS.md, PROGRESS.md
-- notes: 対象は 1037〜1085 行付近（同数なら毎フレーム Update、1043 行付近）。 （ECS 計画の対応）変わった席は RenderSync から受け取る。
+- notes: 対象は 1037〜1085 行付近（同数なら毎フレーム Update、1043 行付近）。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-SHADOW-DIRTY: VSM・CSM の無効化を、変わった席の旧・新の境界と、常駐・メッシュの変化の通知で行う
 - status: todo
-- done-when: VSM の動きの記録（`VirtualShadowMapPass.cpp` 736〜753 行付近）が、本数ではなく変わった席の数に比例する。バッチの一部が動いても無効化はその旧・新の境界だけ。静止した席でも、そのメッシュのページの常駐・メッシュの世代・影の設定が変わったら、使っている席・範囲へ通知して無効化する（今の署名に入っている `PageTableVersion` の役目を保つ）。光源・クリップマップ側の既存の無効化は残す。CSM の投影物の範囲（`DirectionalShadowLightMatrices.cpp` 283〜450 行付近）は範囲の AABB で求める。影の表の毎フレームの FNV（`MegaGeometryPass.cpp` 1331 行付近）をやめる。起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-UPLOAD）で確かめる。
+- done-when: VSM の動きの記録（`VirtualShadowMapPass.cpp` 736〜753 行付近）が、本数ではなく変わった席の数に比例する。バッチの一部が動いても無効化はその旧・新の境界だけ。静止した席でも、そのメッシュのページの常駐・メッシュの世代・影の設定が変わったら、使っている席・範囲へ通知して無効化する（今の署名に入っている `PageTableVersion` の役目を保つ）。光源・クリップマップ側の既存の無効化は残す。CSM の投影物の範囲（`DirectionalShadowLightMatrices.cpp` 283〜450 行付近）は範囲の AABB で求める。影の表の毎フレームの FNV（`MegaGeometryPass.cpp` 1331 行付近）をやめる。ShadowMapPass（CSM。`ShadowMapPass.cpp` 203 行付近）の MegaGeometry の全量の走査を、RenderThread の写しと変わった席にする（SCN-MEGA-SCENE-DELTA から移した）。起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-UPLOAD）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-SHADOW-DIRTY`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-SHADOW-DIRTY/check`
-- paths: Library/Core/Private/Rendering/VirtualShadowMapPass.cpp, Library/Core/Private/Rendering/DirectionalShadowLightMatrices.cpp, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 危険地帯。 （ECS 計画の対応）変わった席は RenderSync から受け取る。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-SHADOW-DIRTY`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-SHADOW-DIRTY/check`
+- paths: Library/Core/Private/Rendering/VirtualShadowMapPass.cpp, Library/Core/Private/Rendering/ShadowMapPass.cpp, Library/Core/Private/Rendering/DirectionalShadowLightMatrices.cpp, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
+- notes: 危険地帯。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-MEASURE-UPLOAD: 節目の計測: GPU に常駐する表・RT・影の改修の効果を測る
 - status: todo
@@ -656,26 +669,27 @@
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-UPLOAD/static --timing`
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-UPLOAD-debug`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-UPLOAD-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-UPLOAD/static`（ランナーは撮り直さず、保存した結果を検査する）。 （ECS 計画の対応）変わった席は RenderSync から受け取る。
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-UPLOAD/static`（ランナーは撮り直さず、保存した結果を検査する）。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RT-PLAN: 記録の前に、確保・保留コマンド・バリアの layout を直列で決める
 - status: todo
 - done-when: 設計 1.13 の記録の前の計画と、RHI の明示の old/new のバリア、最終の layout の書き戻しが入る。記録はまだ 1 本のリスト。`RenderGraphParallelPlanTest`（RenderGraphCompileTest の束）が、計画した layout が今の逐次の実行の layout と全バリアで一致することを確かめる。Execute の中で自分でバリアを張るパスの一覧を PROGRESS に書く。
 - verify: `cmake --build build --config Debug --target RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^RenderGraphParallelPlanTest$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PLAN`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PLAN`
 - paths: Library/Core/Public/Rendering/RenderGraph, Library/Core/Private/Rendering/RenderGraph, Library/Core/Public/RHI/ICommandList.h, Library/Core/Private/RHI/Vulkan/VulkanCommandList.cpp, Library/Core/Private/RHI/Vulkan/VulkanCommandList.h, Test/Core/Rendering/CMakeLists.txt, Test/Core/Rendering/RenderGraphParallelPlanTest.cpp, TASKS.md, PROGRESS.md
-- notes: 親の追記（GPT 2 周目）: `EndRenderPass`（VulkanCommandList.cpp 903 行付近）も共有の layout を書き換える。attachment の最終の layout とパスの内部の遷移も計画の対象にし、記録の最中に共有の layout を更新しない。計画できない Serial の区間は記録の後に状態を確定して次の区間を計画する。両方の経路を検証する。
+- notes: 親の追記（GPT 2 周目）: `EndRenderPass`（VulkanCommandList.cpp 903 行付近）も共有の layout を書き換える。attachment の最終の layout とパスの内部の遷移も計画の対象にし、記録の最中に共有の layout を更新しない。計画できない Serial の区間は記録の後に状態を確定して次の区間を計画する。両方の経路を検証する。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RT-RHI-SUBMIT: 複数のコマンドリストを、同じ提出番号と完了通知で 1 回に提出する
 - status: todo
 - done-when: 次が入る: `ISwapChain::EndFrame` の複数リストの版、全リストへの提出番号・完了通知・中止、同じ slot が完了するまで記録し直さないこと、RenderingCoordinator が仕事の番号ごとに持つリスト。`RHIParallelRecordVulkanTest`（RHITextureUpdateVulkanTest の束）が次を確かめる: 2 つのスレッドで記録した「書き込み → バリア → 読み出し」の 2 本を 1 回で提出して結果が正しい、検証レイヤーのエラーが 0、中止の後に古いリストを再利用しない。描画はまだ 1 本。起動画面の比較が pass する。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^RHIParallelRecordVulkanTest$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-RHI-SUBMIT`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-RHI-SUBMIT`
 - paths: Library/Core/Public/RHI, Library/Core/Private/RHI/Vulkan/VulkanSwapChain.cpp, Library/Core/Private/RHI/Vulkan/VulkanSwapChain.h, Library/Core/Private/RHI/Vulkan/VulkanCommandList.cpp, Library/Core/Private/RHI/Vulkan/VulkanCommandList.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Test/Core/Rendering/CMakeLists.txt, Test/Core/Rendering/RHIParallelRecordVulkanTest.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RT-RHI-TIMESTAMPS: GPU の時間をリストをまたいで集め、FrameGPU を先頭の開始から末尾の終了までにする
 - status: todo
@@ -689,43 +703,46 @@
 - done-when: 記録の方針（既定は Serial）と区間ごとの記録（区間ごとの context・保留コマンド・リスト、RT-PLAN の計画を使う、提出はグラフの順）が入る。`RenderGraphParallelRecordTest` が、偽のリストで次を確かめる: 区間の分け方、バリアが入る区間、Serial だけのグラフが今と同じ 1 本の記録になる。どのパスもまだ Parallel を宣言しない。各パスの記録（Execute）を、記録したスレッドの番号で `RG.Record.<パス>` の区間として残す（Serial でも区間ごとの記録でも。名前はパスの登録時の文字列）。
 - verify: `cmake --build build --config Debug --target RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(RenderGraphParallelRecordTest|RenderGraphParallelPlanTest)$" --no-tests=error --output-on-failure --timeout 180`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-GRAPH`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-GRAPH`
 - paths: Library/Core/Public/Rendering/RenderGraph, Library/Core/Private/Rendering/RenderGraph, Library/Core/Public/Rendering/ViewRenderContext.h, Test/Core/Rendering/CMakeLists.txt, Test/Core/Rendering/RenderGraphParallelRecordTest.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RT-PASSES: 監査したパスを並列に記録する
 - status: todo
 - done-when: MEASURE-CPU の rt の上位から、次の 3 つを満たすと監査したパスに Parallel を宣言する: Execute が記録だけ、自分でバリアを張らない、共有の CPU の状態を持たない（監査の表を PROGRESS に書く。共有のアロケータは区間ごとに分ける）。`--render-parallel-record=off` で 1 本に戻せる。on と off の両方で起動画面の比較が pass する。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PASSES`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -GameArgs render-parallel-record=off -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PASSES-off`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PASSES`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -GameArgs render-parallel-record=off -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PASSES-off`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-MEASURE-RT: 節目の計測: 並列の記録の効果と安全を測る
 - status: todo
 - done-when: バナナ 1万本 overview と mega-stress 5万個で、on と off の rt の median と p95、`RenderGraph.Execute`、GPU、ワーカーの統計（JobSystem.h:133）、`RG.Record.*` の区間ごとの時間と記録したスレッドの数を PROGRESS の表に書く。合格は、on の rt の p95 が off 以下で、Debug の起動画面（on）で検証レイヤーのエラーが 0（Threading を含む）。外れたら off を既定にし、`SCN-ECS-FIX-<名前>` を足す。
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-MEASURE-RT/on --timing --min-frames 300 --require-scope RG.Record.*`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -OutDir .harness/runs/startup-capture/SCN-ECS-MEASURE-RT-debug`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-ECS-MEASURE-RT-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。反復の中で on と off を撮る（`CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000[,render-parallel-record=off] -OutDir .harness/runs/scene-capture/SCN-ECS-MEASURE-RT/<on|off>`）。
+- notes: 計測だけ。反復の中で on と off を撮る（`CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000[,render-parallel-record=off] -OutDir .harness/runs/scene-capture/SCN-ECS-MEASURE-RT/<on|off>`）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-BVH-LEAF-SPLIT: BVH を持たないメッシュに、葉 8 クラスタ以下の階層の BVH を作る（準備）
 - status: todo
 - done-when: MegaGeometryResourceStore が、v1.0・手続き・実行時に作るメッシュ（BVH が無いもの）に、葉の上限 8 クラスタ（`CookedMeshFormat.h` 71 行付近）を守る多段の BVH を作る（空間で分けて葉を作り、上の段を組む）。作った BVH の検査（全クラスタが 1 回ずつ葉にある・節の境界が子を包む）を開発ビルドで行い、`MEGA_BVH_BUILD violations=0`。まだ描画には使わない。起動画面の比較と ctest が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-BVH-LEAF-SPLIT`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-BVH-LEAF-SPLIT`
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Library/Core/Private/Rendering/MegaGeometryResourceStore.cpp, Library/Core/Private/Rendering/MegaGeometryResourceStore.h, Library/Core/Public/Rendering/MegaGeometry, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-FLAT-TO-BVH: 全インスタンスを BVH の経路で描く（平らな経路は残すが使わない）
 - status: todo
 - done-when: BVH-LEAF-SPLIT で作った BVH を使い、全インスタンスを BVH の経路へ流す。平らな経路（`cluster_cull.comp`・FirstGroup の接頭和、`MegaGeometryPass.cpp` 1264 行付近）は `--mega-flat-path` で戻せるように残す。起動画面・旋回の比較と ctest が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FLAT-TO-BVH`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-FLAT-TO-BVH-orbit`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FLAT-TO-BVH`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-FLAT-TO-BVH-orbit`
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering/MegaGeometryPass.h, Assets/Shaders, TASKS.md, PROGRESS.md
-- notes: 起動画面の球・岩が通る経路。
+- notes: 起動画面の球・岩が通る経路。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-BVH-INDIRECT: BVH の段を間接 dispatch・固定容量の列にする
 - status: todo
@@ -742,55 +759,53 @@
 - done-when: 範囲（AABB）→ 席の順に判定する（1 席 1 スレッド。メッシュの球 × 倍率の締まった球で、視錐台・HZB・距離・画素の大きさ）。通った席だけを BVH の段 1 へ渡す。バナナの比較と起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CULL）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-INSTANCE-CULL/det`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-INSTANCE-CULL`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 範囲の段は PROBE-100K が要ると判断したときだけ作る（要らなければ席の判定だけ）。 （ECS 計画の対応）範囲は、散布の連続した席の範囲。
+- notes: 範囲の段は PROBE-100K が要ると判断したときだけ作る（要らなければ席の判定だけ）。 （ECS 計画の対応）範囲は、散布の連続した席の範囲。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-BINNING-PREP: 可視クラスタの全体の列と、区間 × ハード/ソフトの数え・接頭和を足す（準備・描画は旧経路）
 - status: todo
 - done-when: カリングが今の書き込みに加えて全体の列へも積む。数えと接頭和を計算し、開発ビルドで新旧を「席・メッシュ・クラスタ・LOD の集合」として比べる（順番では比べない。`MEGA_BIN mismatch=0`）。全体の枠と溢れを `MEGA_CAPACITY` に出す。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-BINNING-PREP/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-BINNING-PREP/check`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-BINNING-PREP/check`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering/MegaGeometryPass.h, TASKS.md, PROGRESS.md
-- notes: 区間ごとに事前に容量を取る形（1526 行付近）は区間の数 × 419 万件まで膨らむ。
+- notes: 区間ごとに事前に容量を取る形（1526 行付近）は区間の数 × 419 万件まで膨らむ。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-BINNING-SWITCH: 描画・記録・ソフトの一覧を binning の結果で詰めて書く（切替）
 - status: todo
 - done-when: ハードの間接描画はハードの分だけになる（`SW_RASTER_BIN zeroed=0`）。records_args・records・ソフトの一覧を詰めた範囲で作り、記録の番号（25 bit、`VisibilityBuffer.h` 37 行付近）は両パスを通じて保ち、ハード・ソフトの一覧は同じ記録を参照する（2 パス目の詰め直しで 1 パス目が ID のバッファへ書いた番号を上書きしない）。`--mega-binning=off` で旧経路に戻せる。起動画面・バナナの比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CULL）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-BINNING-SWITCH`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-BINNING-SWITCH`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-BINNING-SWITCH/det`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Private/Rendering/VisibilityRasterPass.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 危険地帯。GBuffer の経路（sink 無し）も同じ詰めた列を描く。今の番号の対応は `visbuffer_records.comp` 113 行付近。
+- notes: 危険地帯。GBuffer の経路（sink 無し）も同じ詰めた列を描く。今の番号の対応は `visbuffer_records.comp` 113 行付近。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-PREV-HIZ: HZB を 2 枚にし、描いた番号・VP（ジッタ込み）・寸法・シーンの世代を契約として持たせる（準備）
 - status: todo
 - done-when: 2 フレーム目から `MEGA_PREV_HIZ ready=1` が出る。エポックの先頭・解像度の変更・カメラの切れ目・全量の再同期・パケットの飛びでは `ready=0` と理由が出る。判定にはまだ使わない。起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-PREV-HIZ`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-PREV-HIZ`
 - paths: Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, Assets/Shaders/Common/MegaGeometryCull.glsl, TASKS.md, PROGRESS.md
-- notes: HiZPyramid（`HiZPyramidPass.h` 28〜65 行付近）を 2 つ持つ。VP は自分で保存し、`PreviousMainCamera`（前のゲームパケット基準、`RenderingCoordinator.cpp` 2091 行付近）には頼らない。
+- notes: HiZPyramid（`HiZPyramidPass.h` 28〜65 行付近）を 2 つ持つ。VP は自分で保存し、`PreviousMainCamera`（前のゲームパケット基準、`RenderingCoordinator.cpp` 2091 行付近）には頼らない。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-TWOPASS-INSTANCES: 範囲とインスタンスの 1 パス目を前フレームの HZB で判定し、隠れたものを 2 パス目へ回す（切替）
 - status: todo
 - done-when: 範囲・インスタンスの 1 パス目が前の HZB で判定し、隠れたものは 2 パス目の別の列へ積む。HZB は 1 パス目の深度（ソフトの合流の後、`VisibilityRasterPass.cpp` 1554 行付近）から作る。契約が合わないフレームは遮蔽を使わない。2 パス目の列が溢れたら、溢れた範囲を遮蔽なしで走査し直して描く（取りこぼさない）。`--mega-twopass=legacy` で旧経路に戻せる。旋回（遮蔽 Off との一致）と起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CULL）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-TWOPASS-INSTANCES-orbit`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-TWOPASS-INSTANCES`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-TWOPASS-INSTANCES-orbit`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-TWOPASS-INSTANCES`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, Library/Core/Private/Rendering/VisibilityRasterPass.cpp, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 危険地帯。 （ECS 計画の対応）変わった席は RenderSync から受け取る。
+- notes: 危険地帯。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-TWOPASS-CLUSTERS: 節とクラスタの 2 パス遮蔽も同じ形にし、見えたビットを消す
 - status: todo
 - done-when: 節・葉・クラスタの 1 パス目も前の HZB で判定し、隠れたものを 2 パス目の列へ回す（溢れは TWOPASS-INSTANCES と同じ規則）。見えたビットと `UpdateVisibilityLayout`（`MegaGeometryPass.cpp` 3194〜3372 行付近）を消し、ページ要求のフレームの印（`visibleWriteStamp` 相当）は残す。旋回・バナナの比較と ctest が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CULL）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-TWOPASS-CLUSTERS-orbit`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-TWOPASS-CLUSTERS/det`
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 危険地帯。GeometryPageRequestVulkanTest は `cluster_cull.comp` を直接使うので定数の変更に追従させる。 （ECS 計画の対応）変わった席は RenderSync から受け取る。
+- notes: 危険地帯。GeometryPageRequestVulkanTest は `cluster_cull.comp` を直接使うので定数の変更に追従させる。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-MEASURE-CULL: 節目の計測: カリング・描画の改修の効果を測る
 - status: todo
@@ -798,34 +813,35 @@
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-CULL/10k --views overview --timing`
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-CULL-debug`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-CULL-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CULL/10k`（ランナーは撮り直さず、保存した結果を検査する）。 （ECS 計画の対応）変わった席は RenderSync から受け取る。
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CULL/10k`（ランナーは撮り直さず、保存した結果を検査する）。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-VSM-RANGES: VSM の組の判定を、受け手距離内の範囲とインスタンスに絞る
 - status: todo
 - done-when: 組の事前の絞り込み（`VirtualShadowMapRaster.cpp` 978 行付近）の前に範囲（AABB）の判定を置き、受け手距離 + 太陽方向の延長の外の範囲は組を作らない。起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-VSM）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-VSM-RANGES`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-VSM-RANGES`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-VSM-RANGES/check`
 - paths: Assets/Shaders/vsm_mega_cull_pairs.comp, Library/Core/Private/Rendering/VirtualShadowMapRaster.cpp, Library/Core/Public/Rendering/VirtualShadowMapRaster.h, TASKS.md, PROGRESS.md
-- notes: （ECS 計画の対応）変わった席は RenderSync から受け取る。
+- notes: （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-VSM-BVH-SUN: 太陽の VSM のクラスタの選択を、BVH の段を正射影の LOD でたどる形にする
 - status: todo
 - done-when: 通った組ごとにクラスタを全部見る形（`vsm_mega_cull.comp` 155〜175 行付近）を、太陽のクリップマップについて BVH の段（BVH-INDIRECT と同じ列の安全策）でたどる形にする。点光源の面は旧経路のまま。`VSM_MEGA_CULL overflow=0`。起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-VSM）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-VSM-BVH-SUN`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-VSM-BVH-SUN`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-MEGA-VSM-BVH-SUN/check`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/VirtualShadowMapRaster.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-VSM-BVH-POINT: 点光源の VSM のクラスタの選択も BVH の段でたどる
 - status: todo
 - done-when: 点光源の面（立方体の各面の透視投影の LOD）でも BVH の段でたどる。夜の起動画面の撮影を開いて点光源の影が変わらない。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-VSM）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -Night -OutDir .harness/runs/startup-capture/SCN-MEGA-VSM-BVH-POINT`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -Night -OutDir .harness/runs/startup-capture/SCN-MEGA-VSM-BVH-POINT`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/VirtualShadowMapRaster.cpp, Library/Core/Public/Rendering, Scripts/CaptureStartupScene.ps1, TASKS.md, PROGRESS.md
-- notes: `CaptureStartupScene.ps1` の `-Night` が既存の `--night` を渡さないなら直してよい。
+- notes: `CaptureStartupScene.ps1` の `-Night` が既存の `--night` を渡さないなら直してよい。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-MEASURE-VSM: 節目の計測: 影の改修の効果を測る
 - status: todo
@@ -833,9 +849,9 @@
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-VSM --views horizon --timing`
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-VSM-debug`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-VSM-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-VSM`（ランナーは撮り直さず、保存した結果を検査する）。 （ECS 計画の対応）変わった席は RenderSync から受け取る。
+- notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-VSM`（ランナーは撮り直さず、保存した結果を検査する）。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-SCALE-300K: 30万本と mega-stress 10万個を、静止と移動で測る
 - status: todo
@@ -868,9 +884,9 @@
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/path --views horizon --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/moving --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-ACCEPT-1M/streaming --timing --min-frames 300 --max-gpu-p95-ms 16.6 --max-gt-p95-ms 16.6 --max-rt-p95-ms 16.6 --max-gpu-median-ms 16.6 --max-gt-median-ms 16.6 --max-rt-median-ms 16.6`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-ACCEPT-1M-debug`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-ACCEPT-1M-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, Game/GameModes/MegaBananas/MegaBananasMode.h, TASKS.md, PROGRESS.md
-- notes: 4 つの撮影は反復の中で 1 回ずつ `-Build -GpuTimingFrames 300` で撮る。混在の負荷を作る引数は UNCERTAIN U12。status は前のとおり、規模の段で todo に上げる。 混在の負荷は SCN-MEGA-MIXED-LOAD の引数で作る。
+- notes: 4 つの撮影は反復の中で 1 回ずつ `-Build -GpuTimingFrames 300` で撮る。混在の負荷を作る引数は UNCERTAIN U12。status は前のとおり、規模の段で todo に上げる。 混在の負荷は SCN-MEGA-MIXED-LOAD の引数で作る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-FAR-SPLAT: 画素より小さいインスタンスを ID のバッファへ 1 画素で書く
 - status: backlog
