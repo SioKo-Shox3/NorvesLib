@@ -2029,3 +2029,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: `blocked/SCN-ECS-TICK-GAME.md` の判断（LoggerSinkTest のバンドルを別の項目で直すか、paths を広げるか、verify を差し替えるか）。
 - Notes:
   - LoggerSinkTest・PhysicsDynamicsTest はテストを束ねた実行ファイルで、ctest の名前の対象（PhysicsFixedStepPipelineTest など）はビルドの対象として存在しない。ビルドはバンドル名で行う。
+
+### SCN-ECS-TICK-SCRIPT（2026-10-11、反復 7・run 20261011-211043、差し戻しへの対応）
+
+- 前提: 親が「破棄は即時」の意味を、破棄予約が即時に立つこと（解放は同期点）と決め、done-when を直した。Tick の登録（反復 4）はそのまま。
+- 変更:
+  - ScriptRuntime の EntityRef の解決（スクリプトからの取得）が、ScriptComponent 自身の破棄予約と、Owner の祖先の破棄予約も見て失敗するようにした。旧は Owner 自身の予約だけを見ていたので、Tick の最中に `RemoveComponent` された ScriptComponent や、破棄予約が立った Entity の子は、同期点まで取得できていた。
+  - テスト: ScriptComponentTickTest に `TestDestroyDuringTickReservesUntilSyncPoint` を足した。スクリプトの Tick より前（優先度 -100）の Component が、Tick の最中に Entity（子を持つ）を `RemoveEntity` し、別の Entity の ScriptComponent を `RemoveComponent` し、Entity を生成する。呼んだ直後に `IsPendingDestroy` が真で Object はまだ所有者に残り、生成した Entity は Object があって行がまだ無いことを確かめる。後（優先度 100）の Component が、3 つのスクリプトが同じフレームで呼ばれていない（位置が動いていない）ことと、取得が失敗する（Mover の `GetPosition` が例外になる）ことを確かめる。Tick の後に束縛が解かれ、行が消え、生成した Entity の行ができていることを確かめる。
+- 結果（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-ECS-TICK-SCRIPT-3.txt`: Debug の ScriptComponentTickTest・ScriptApplicationLifecycleContractTest・ScriptHotReloadTest のビルド EXIT=0。
+  - `-4.txt`: 5/5 が pass、EXIT=0。
+  - 取得の修正を一時的に外すと、追加したテストが取得の検査（LastResult が ExecutionFailed）で落ちることを確かめた（git の差分を戻して再ビルドし、上の verify はその後に走らせた）。
+- Next: TASKS.md の次の todo。
+- Notes:
+  - 「取得」は、スクリプトの束縛にある唯一の取得の口（EntityRef の解決。IsValid・GetPosition などが通る）とした。C++ の `Entity::GetComponent` は破棄予約の Component も返す（paths の外。束縛の側で予約を見て外している）。

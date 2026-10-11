@@ -312,10 +312,18 @@ namespace NorvesLib::Core
                 return false;
             }
 
+            // 破棄予約が立った Component・Entity とその子孫は、解放（同期点）を待たずに取得の対象から外す
             Entity* owner = component->GetOwner();
-            if (owner == nullptr || owner->IsPendingDestroy() || owner->GetWorld() != m_World)
+            if (component->IsPendingDestroy() || owner == nullptr || owner->GetWorld() != m_World)
             {
                 return false;
+            }
+            for (const Entity* current = owner; current != nullptr; current = current->GetParentEntity())
+            {
+                if (current->IsPendingDestroy())
+                {
+                    return false;
+                }
             }
 
             for (IUnknown* inner : owner->GetInners())

@@ -234,6 +234,135 @@ namespace
 
         ShutdownRuntimeAfterWorld(world);
     }
+
+    // Tick の最中に破棄を呼ぶ・確かめる Component（型の登録が無いので旧の Tick で呼ばれる）
+    struct DestroyDuringTickState
+    {
+        World* TargetWorld = nullptr;
+        Entity* DestroyedOwner = nullptr;
+        Entity* ComponentOwner = nullptr;
+        Component::ScriptComponent* Scripts[3] = {};
+        Component::ScriptComponent* RemovedScript = nullptr;
+        Entity* Spawned = nullptr;
+        bool bDestroyed = false;
+        bool bChecked = false;
+    };
+
+    class DestroyDuringTickProbe final : public Component::Component
+    {
+    public:
+        DestroyDuringTickState* State = nullptr;
+        bool bDestroyPhase = false;
+
+        void Tick(float deltaTime) override
+        {
+            if (bDestroyPhase)
+            {
+                RunDestroy();
+            }
+            else
+            {
+                RunCheck(deltaTime);
+            }
+        }
+
+    private:
+        void RunDestroy()
+        {
+            if (State->bDestroyed)
+            {
+                return;
+            }
+            State->bDestroyed = true;
+            assert(State->TargetWorld->RemoveEntity(State->DestroyedOwner));
+            State->ComponentOwner->RemoveComponent(State->RemovedScript);
+            // 破棄予約は呼んだ時点で立ち、Object の解放は同期点まで待つ
+            assert(State->DestroyedOwner->IsPendingDestroy());
+            assert(State->RemovedScript->IsPendingDestroy());
+            assert(State->DestroyedOwner->GetWorld() == State->TargetWorld);
+            assert(State->RemovedScript->GetOwner() == State->ComponentOwner);
+            // 生成は Object が即時、行は同期点で作られる
+            State->Spawned = State->TargetWorld->SpawnEntity<Entity>();
+            assert(State->Spawned != nullptr);
+            assert(State->Spawned->GetEcsEntity().IsNull());
+        }
+
+        void RunCheck(float deltaTime)
+        {
+            if (!State->bDestroyed || State->bChecked)
+            {
+                return;
+            }
+            State->bChecked = true;
+            ScriptRuntime& runtime = GEngine.GetScriptRuntime();
+            for (auto* script : State->Scripts)
+            {
+                // 破棄の後に並ぶ Tick は呼ばれていない（呼ばれていれば Mover が x を 1 進める）
+                assert(script->GetOwner()->GetPosition().x == 0.0f);
+                // スクリプトからの取得は失敗する（Mover の GetPosition が例外になり、位置は動かない）
+                script->TickScript(deltaTime);
+                assert(runtime.GetDiagnostics().LastResult == EScriptRuntimeResult::ExecutionFailed);
+                assert(script->GetOwner()->GetPosition().x == 0.0f);
+            }
+        }
+    };
+
+    void TestDestroyDuringTickReservesUntilSyncPoint()
+    {
+        World world;
+        world.Initialize();
+        ScriptRuntime& runtime = GEngine.GetScriptRuntime();
+        assert(runtime.Initialize(world) == EScriptRuntimeResult::Success);
+
+        Entity* probeOwner = world.SpawnEntity<Entity>();
+        Entity* destroyedOwner = world.SpawnEntity<Entity>();
+        Entity* destroyedChild = world.SpawnEntity<Entity>(destroyedOwner);
+        Entity* componentOwner = world.SpawnEntity<Entity>();
+        Entity* survivor = world.SpawnEntity<Entity>();
+        assert(probeOwner != nullptr && destroyedOwner != nullptr && destroyedChild != nullptr);
+        assert(componentOwner != nullptr && survivor != nullptr);
+
+        DestroyDuringTickState state;
+        state.TargetWorld = &world;
+        state.DestroyedOwner = destroyedOwner;
+        state.ComponentOwner = componentOwner;
+        state.Scripts[0] = AddConfiguredComponent(*destroyedOwner);
+        state.Scripts[1] = AddConfiguredComponent(*destroyedChild);
+        state.Scripts[2] = AddConfiguredComponent(*componentOwner);
+        state.RemovedScript = state.Scripts[2];
+        AddConfiguredComponent(*survivor);
+        assert(runtime.GetDiagnostics().ActiveBindingCount == 4);
+
+        // スクリプトの Tick（優先度 0）より前で破棄し、後で確かめる
+        auto* destroyProbe = new DestroyDuringTickProbe();
+        destroyProbe->State = &state;
+        destroyProbe->bDestroyPhase = true;
+        destroyProbe->SetTickPriority(-100);
+        assert(probeOwner->AddComponent(destroyProbe));
+        auto* checkProbe = new DestroyDuringTickProbe();
+        checkProbe->State = &state;
+        checkProbe->SetTickPriority(100);
+        assert(probeOwner->AddComponent(checkProbe));
+
+        const Ecs::EcsEntity destroyedRow = destroyedOwner->GetEcsEntity();
+        const Ecs::EcsEntity childRow = destroyedChild->GetEcsEntity();
+        assert(world.GetEcsWorld().IsAlive(destroyedRow) && world.GetEcsWorld().IsAlive(childRow));
+
+        world.Tick(1.0f);
+        assert(state.bDestroyed && state.bChecked);
+        assert(survivor->GetPosition().x == 1.0f);
+        // 解放と行の除去・行の作成は、Tick の後の同期点で行われた
+        assert(runtime.GetDiagnostics().ActiveBindingCount == 1);
+        assert(componentOwner->GetComponent<Component::ScriptComponent>() == nullptr);
+        assert(!world.GetEcsWorld().IsAlive(destroyedRow) && !world.GetEcsWorld().IsAlive(childRow));
+        assert(!state.Spawned->GetEcsEntity().IsNull() && world.GetEcsWorld().IsAlive(state.Spawned->GetEcsEntity()));
+
+        world.Tick(1.0f);
+        assert(survivor->GetPosition().x == 2.0f);
+        assert(componentOwner->GetPosition().x == 0.0f);
+
+        ShutdownRuntimeAfterWorld(world);
+    }
 }
 
 int main()
@@ -244,6 +373,7 @@ int main()
     TestHeapDeferredRemovalAndFaultIsolation();
     TestBeginPlayRollbackAndShutdownBeforeFinalize();
     TestScriptRetainedStaleEntityRefFaultIsolation();
+    TestDestroyDuringTickReservesUntilSyncPoint();
     std::cout << "ScriptComponentTickTest passed\n";
     return 0;
 }
