@@ -38,7 +38,7 @@ namespace NorvesLib::Core::Rendering
          * @param materialResources DrawCommandのマテリアル値を解決するリソース
          * @param megaGeometryResources MegaGeometry（岩・小屋など）のLOD0を解決するリソース。nullなら含めない
          * @param megaGeometryProxies MegaGeometry の proxy の配列。nullなら packet.Scene.MegaGeometryProxies を読む
-         *        （差分の同期ではパケットが全量を持たないので、GameThread の SceneView の配列を渡す）
+         *        （連番のパストレーシングでは差分の同期でも GameThread で作るので、GameThread の SceneView の配列を渡す）
          * @return 有効なスナップショットを構築できた場合true
          */
         bool BuildFrameSnapshot(const MeshResources* meshResources,
@@ -46,6 +46,18 @@ namespace NorvesLib::Core::Rendering
                                 const MaterialResources* materialResources = nullptr,
                                 const MegaGeometryResources* megaGeometryResources = nullptr,
                                 const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies = nullptr);
+
+        /**
+         * @brief MegaGeometry（岩・小屋など）のインスタンスを、パケットのレイトレーシングシーンの末尾へ足す
+         * @param megaGeometryResources LOD0 を解決するリソース。nullなら何も足さない
+         * @param megaProxies 足す proxy の配列。差分の同期では RenderThread の写し（MegaGeometryMirror）を渡す
+         * @param packet 足し先のフレームスナップショット
+         *
+         * BuildFrameSnapshot の MegaGeometry の段と同じ規則で、BuildAccelerationStructures の前に呼ぶ。
+         */
+        void AppendMegaGeometryInstances(const MegaGeometryResources* megaGeometryResources,
+                                         const Container::VariableArray<MegaGeometryProxy>& megaProxies,
+                                         FramePacket& packet);
 
         /**
          * @brief FramePacketのgeometryからBLAS/TLAS buildをRenderThreadへ記録

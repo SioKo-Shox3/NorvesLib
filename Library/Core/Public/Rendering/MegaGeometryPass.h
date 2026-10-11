@@ -18,6 +18,7 @@ namespace NorvesLib::Core::Rendering
 {
     class ConstantMaterialTextureCache;
     class SceneView;
+    struct MegaGeometryProxy;
     class SceneRenderer;
     class VisibilityRasterPass;
     class VisibilityResolvePass;
@@ -470,6 +471,17 @@ namespace NorvesLib::Core::Rendering
             bool bCastShadow = true;
             BoundingSphere WorldBounds;
         };
+
+        /** @brief proxy から描くインスタンスを作る */
+        static MegaMeshInstance MakeMegaMeshInstance(const MegaGeometryProxy &proxy);
+
+        /**
+         * @brief RenderThread の写しの、変わった席のインスタンスだけを直す
+         *
+         * 席の数え間違いが無いよう、直す前に全部の席を確かめ、外れた席・無効な proxy・ObjectId が替わる位置があれば
+         * m_Instances を変えずに false を返す（呼び出し側が作り直す）。
+         */
+        bool PatchInstancesFromChangedSlots(const ViewRenderContext &context);
 
         /**
          * @brief カリング用GPUリソースを作成

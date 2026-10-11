@@ -17,6 +17,7 @@
 #include "Rendering/ConstantMaterialTextureCache.h"
 #include "Rendering/FrameCommand.h"
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
+#include "Rendering/MegaGeometryMirror.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -549,18 +550,97 @@ namespace NorvesLib::Core::Rendering
     // Setup
     // ========================================
 
+    MegaGeometryPass::MegaMeshInstance MegaGeometryPass::MakeMegaMeshInstance(const MegaGeometryProxy &proxy)
+    {
+        MegaMeshInstance instance;
+        instance.ObjectId = proxy.ObjectId;
+        instance.ComponentId = proxy.ComponentId;
+        instance.Handle = proxy.MegaMeshHandle;
+        std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
+        std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
+        instance.bCastShadow = proxy.bCastShadow;
+        instance.WorldBounds = proxy.WorldBounds;
+        return instance;
+    }
+
+    bool MegaGeometryPass::PatchInstancesFromChangedSlots(const ViewRenderContext &context)
+    {
+        const MegaGeometryMirror &mirror = *context.SnapshotMegaMirror;
+        const auto &proxies = *context.SnapshotMegaGeometryProxies;
+
+        // m_Instances は proxy の配列と同じ並び・同じ数（無効な proxy が無い）ときだけ、位置で対応する。
+        // 先に全部の席を確かめてから書く（途中で諦めても m_Instances を壊さない）
+        Container::VariableArray<uint32_t> positions;
+        positions.reserve(context.SnapshotMegaChangedSlots->size());
+        for (const uint32_t slot : *context.SnapshotMegaChangedSlots)
+        {
+            uint32_t position = 0;
+            if (!mirror.TryGetPositionBySlot(slot, position) || position >= proxies.size() ||
+                position >= m_Instances.size())
+            {
+                return false;
+            }
+            const MegaGeometryProxy &proxy = proxies[position];
+            // ObjectId が替わる位置は、見えたビットの引き継ぎ（鍵の集合）が変わるので作り直す
+            if (!proxy.IsValid() || m_Instances[position].ObjectId != proxy.ObjectId)
+            {
+                return false;
+            }
+            positions.push_back(position);
+        }
+        for (const uint32_t position : positions)
+        {
+            m_Instances[position] = MakeMegaMeshInstance(proxies[position]);
+        }
+
+        // 検査 MEGA_SCENE_DELTA: 直した結果が、全部を作り直した結果と同じこと
+        if (context.bSnapshotMegaVerify)
+        {
+            bool bSame = m_Instances.size() == proxies.size();
+            for (size_t index = 0; bSame && index < proxies.size(); ++index)
+            {
+                const MegaMeshInstance expected = MakeMegaMeshInstance(proxies[index]);
+                const MegaMeshInstance &actual = m_Instances[index];
+                bSame = actual.ObjectId == expected.ObjectId && actual.ComponentId == expected.ComponentId &&
+                        actual.Handle.Id == expected.Handle.Id && actual.bCastShadow == expected.bCastShadow &&
+                        std::memcmp(actual.WorldMatrix, expected.WorldMatrix, sizeof(expected.WorldMatrix)) == 0 &&
+                        std::memcmp(actual.PreviousWorldMatrix, expected.PreviousWorldMatrix,
+                                    sizeof(expected.PreviousWorldMatrix)) == 0 &&
+                        std::memcmp(&actual.WorldBounds, &expected.WorldBounds, sizeof(expected.WorldBounds)) == 0;
+            }
+            if (!bSame)
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass", "変わった席だけ直したインスタンスが、作り直した結果と一致しません");
+            }
+            mirror.NoteConsumerCheck(bSame);
+        }
+        return true;
+    }
+
     void MegaGeometryPass::Setup(ViewRenderContext &context)
     {
         // VSM の投影物のカリングの入力は、今フレームの記録が書けたときだけ有効にする（前のフレームのものを残さない）
         m_ShadowCasterInputs = MegaGeometryShadowCasterInputs{};
 
         // 差分の同期では、RenderThread の写しが前回から変わっていない（版が同じ）フレームは、インスタンスを作り直さない。
+        // 版が 1 だけ進んだフレームは、変わった席のインスタンスだけを直す。
         // 写しの版は、基準・差分を当てたときだけ進む。手で足したインスタンス（AddMegaMeshInstance）は版を 0 に戻す
         const bool bFromMirror = context.SnapshotMegaChangedSlots != nullptr && context.SnapshotMegaRevision != 0 &&
                                  context.SnapshotMegaGeometryProxies != nullptr;
-        const bool bReuseInstances = bFromMirror && context.SnapshotMegaRevision == m_InstanceSourceRevision &&
-                                     context.SnapshotMegaGeometryProxies == m_InstanceSourceProxies;
-        if (!bReuseInstances)
+        const bool bSameSource = bFromMirror && context.SnapshotMegaGeometryProxies == m_InstanceSourceProxies;
+        const bool bReuseInstances = bSameSource && context.SnapshotMegaRevision == m_InstanceSourceRevision;
+        bool bPatchedInstances = false;
+        if (!bReuseInstances && bSameSource && context.SnapshotMegaMirror != nullptr && !context.bSnapshotMegaAllChanged &&
+            context.SnapshotMegaRevision == m_InstanceSourceRevision + 1u &&
+            m_Instances.size() == context.SnapshotMegaGeometryProxies->size())
+        {
+            bPatchedInstances = PatchInstancesFromChangedSlots(context);
+            if (bPatchedInstances)
+            {
+                m_InstanceSourceRevision = context.SnapshotMegaRevision;
+            }
+        }
+        if (!bReuseInstances && !bPatchedInstances)
         {
             m_Instances.clear();
             m_InstanceSourceRevision = bFromMirror ? context.SnapshotMegaRevision : 0;
@@ -578,15 +658,7 @@ namespace NorvesLib::Core::Rendering
                         continue;
                     }
 
-                    MegaMeshInstance instance;
-                    instance.ObjectId = proxy.ObjectId;
-                    instance.ComponentId = proxy.ComponentId;
-                    instance.Handle = proxy.MegaMeshHandle;
-                    std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
-                    std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
-                    instance.bCastShadow = proxy.bCastShadow;
-                    instance.WorldBounds = proxy.WorldBounds;
-                    m_Instances.push_back(instance);
+                    m_Instances.push_back(MakeMegaMeshInstance(proxy));
                 }
             }
 

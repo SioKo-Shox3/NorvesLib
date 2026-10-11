@@ -1584,3 +1584,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 変わった席の一覧は、最後に適用した差分の分だけ（描画を見送った・飛ばした差分の席は含まない）。GPU の表を散布で書き換える項目（GPU-SCENE-*）は、`SnapshotMegaRevision` が前回見た版より 1 より大きく進んでいたら全部が変わったものとして扱うこと。
   - MegaGeometryPass の作り直しの省略は、`SnapshotMegaChangedSlots` がある（写しを読む）ときだけ。手で足したインスタンス（`AddMegaMeshInstance`）・全量の同期・手で組んだパケットは従来どおり毎フレーム作り直す。
   - 行末: 編集したファイルは numstat の 2 通りが一致。新規 `MegaGeometryMirror.h` は UTF-8 BOM + CRLF。
+
+### SCN-MEGA-SCENE-DELTA 差し戻し対応（2026-10-11、反復 48・run 20261010-223034）
+
+- 直したこと（反復 47 の評価者 NEEDS_WORK の 2 点）:
+  - TAA の前の変換: 写しは `Apply` で前の変換を付け替えず（GameThread の値のまま）、描く場所（`RenderedObjectHistory::Apply` の直後）で `MegaGeometryMirror::NoteDrawn(bRebased)` が付け替える。最後に描いたフレームの変換は ObjectId ごとに差分だけで保ち（最後に描いてから変わった位置・外れた物体の印から直す）、描かなかった適用では動かさない。評価者の再現（10 で x=0 を描画 → 11 で x=10 を適用して見送り → 12 で x=20 を適用して描画）は前の変換が 0 になる。検査 `MEGA_SCENE_DELTA` の場面に、この再現・続けて描くフレーム・位置を移った物体・新しい物体・外れて戻った物体を足した。
+  - 消費者: 写しに席 → 配列の位置の表（`TryGetPositionBySlot`/`FindBySlot`）を持たせ、席を持たない proxy（`SceneSlot` が 0）が変わったときは全部が変わった扱いにした。RT の MegaGeometry のインスタンスは RenderThread が写しから足す（`RayTracingSceneSubsystem::AppendMegaGeometryInstances`。`BuildAccelerationStructures` の直前）。連番のパストレーシング（`SequenceFrame != 0`）だけ、前の変換の持ち越しが GameThread の snapshot の並びに依るので従来どおり GameThread で作る（`FramePacket::DefersMegaRayTracingToRenderThread`）。MegaGeometryPass（VSM の入力を含む）は、版が 1 だけ進んだフレームを変わった席のインスタンスだけ直す（外れた席・無効な proxy・ObjectId の替わる位置があれば作り直す）。検査が有効なときは直した結果を作り直した結果と照合する。
+  - 英語だったエラー文を日本語にした。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-MEGA-SCENE-DELTA-11.txt`: 起動画面の比較（既定）`result=pass`、default/near/low の psnr 100 / 65.4 / 70.4 dB（前回と同水準）。
+  - `-12.txt`: `--mega-scene-full-sync` も `result=pass`（同水準）。
+  - `-14-checks.txt`: mega-stress の撮影 pass。`MEGA_SCENE_DELTA` default 140・close 144・aerial 107 pass、fail 0。ログに `consumer_patches=113`（直したインスタンスを作り直した結果と照合し、不一致なし）。
+  - `-15-cycle-*.txt`: mega-stress・mega-bananas の周回 3 周が各 `result=pass`（`MEGA_SCENE_DELTA` pass=1718 / 1716、`ECS_RENDER_SYNC` fail 無し）。
+- Notes:
+  - CSM（ShadowMapPass）は写しの配列を読むが、投影物の集め方（メッシュの準備完了を proxy ごとに引く）は変えていない。準備完了は GPU 完了で遅延して変わり、版を持たないので、キャッシュは安全にできない。変わった席で絞るのは SCN-MEGA-SHADOW-DIRTY、RT の席ごとの配列は SCN-MEGA-RT-SELECT / RT-SKIP の範囲。
+  - 席の表への散布は SCN-MEGA-GPU-SCENE-SCATTER が `SnapshotMegaRevision` が 1 より大きく進んだら全部が変わったものとして扱うこと（`SnapshotMegaMirror` で席から proxy を引ける）。
+  - 行末: 編集したファイルは numstat の 2 通りが一致（混在ファイルは行ごとに保って編集した）。

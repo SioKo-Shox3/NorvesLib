@@ -779,84 +779,96 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // MegaGeometry（岩・小屋など）はGBufferではクラスタ単位でGPUが選ぶが、光線には影に使う段
-        // （既定はLOD0）をそのまま見せる（点光源の影と同じ範囲）。表面色はMegaGeometryPassのGBufferと同じく材質のBaseColorを
-        // instance色とし、textureは白とみなす。
         if (megaGeometryResources)
         {
-            constexpr uint32_t vertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
-            const Container::VariableArray<MegaGeometryProxy>& megaProxies =
-                megaGeometryProxies ? *megaGeometryProxies : packet.Scene.MegaGeometryProxies;
-            for (const MegaGeometryProxy& proxy : megaProxies)
-            {
-                if (packet.RayTracingScene.Instances.size() > 0x00FFFFFFu)
-                {
-                    break;
-                }
-                if (!proxy.IsValid())
-                {
-                    continue;
-                }
-                // 区画へのコピーが GPU で完了したメッシュだけを BLAS の入力にする（BLAS は同期で構築する）
-                const MegaGeometry::MegaMeshGPUData* gpuData =
-                    megaGeometryResources->GetReadyMegaMeshGPUData(proxy.MegaMeshHandle);
-                if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
-                    gpuData->ShadowIndexCount < 3u || gpuData->ShadowIndexCount % 3u != 0u ||
-                    gpuData->ShadowFirstIndex > gpuData->IndexCount ||
-                    gpuData->ShadowIndexCount > gpuData->IndexCount - gpuData->ShadowFirstIndex ||
-                    gpuData->VertexCount < 3u ||
-                    static_cast<uint64_t>(gpuData->VertexCount) * vertexStride >
-                        gpuData->VertexBufferBytes ||
-                    (static_cast<uint64_t>(gpuData->ShadowFirstIndex) + gpuData->ShadowIndexCount) *
-                            sizeof(uint32_t) >
-                        gpuData->IndexBufferBytes ||
-                    !IsFiniteRayTracingTransform(proxy.WorldTransform))
-                {
-                    continue;
-                }
-
-                RayTracingSceneInstanceSnapshot instance;
-                instance.ObjectId = proxy.ObjectId;
-                instance.ObjectInstanceIndex = 0;
-                instance.SourceVertexBuffer = gpuData->VertexBuffer;
-                instance.SourceIndexBuffer = gpuData->IndexBuffer;
-                instance.VertexBufferOffsetBytes = gpuData->VertexBufferOffsetBytes;
-                instance.IndexBufferOffsetBytes = gpuData->IndexBufferOffsetBytes;
-                instance.MegaMeshId = proxy.MegaMeshHandle.Id;
-                instance.GeometryRegionOwner = gpuData->RegionOwner;
-                instance.IndexOffset = gpuData->ShadowFirstIndex;
-                instance.IndexCount = gpuData->ShadowIndexCount;
-                instance.VertexOffset = 0;
-                instance.VertexCount = gpuData->VertexCount;
-                instance.VertexStride = vertexStride;
-                instance.bGeometryOpaque = true;
-                const MegaGeometry::MegaMeshMaterial& material = gpuData->Material;
-                for (uint32_t channel = 0u; channel < 4u; ++channel)
-                {
-                    instance.Material.BaseColor[channel] = material.BaseColor[channel];
-                    instance.Material.ObjectColor[channel] = material.BaseColor[channel];
-                }
-                for (uint32_t channel = 0u; channel < 3u; ++channel)
-                {
-                    instance.Material.EmissiveColor[channel] = material.EmissiveColor[channel];
-                }
-                instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
-                instance.Instance.customIndex =
-                    static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
-                instance.Instance.mask = proxy.bCastShadow ? RayTracingInstanceMaskShadowCaster
-                                                           : RayTracingInstanceMaskNonShadowCaster;
-                CopyRayTracingInstanceTransform(proxy.WorldTransform, instance.Instance.transform);
-                if (IsFiniteRayTracingTransform(proxy.PreviousWorldTransform))
-                {
-                    CopyRayTracingInstanceTransform(proxy.PreviousWorldTransform,
-                                                    instance.PreviousTransform);
-                    instance.bHasPreviousTransform = true;
-                }
-                packet.RayTracingScene.Instances.push_back(std::move(instance));
-            }
+            AppendMegaGeometryInstances(megaGeometryResources,
+                                        megaGeometryProxies ? *megaGeometryProxies : packet.Scene.MegaGeometryProxies,
+                                        packet);
         }
 
         return true;
+    }
+
+    void RayTracingSceneSubsystem::AppendMegaGeometryInstances(
+        const MegaGeometryResources* megaGeometryResources,
+        const Container::VariableArray<MegaGeometryProxy>& megaProxies,
+        FramePacket& packet)
+    {
+        if (!megaGeometryResources)
+        {
+            return;
+        }
+        // MegaGeometry（岩・小屋など）はGBufferではクラスタ単位でGPUが選ぶが、光線には影に使う段
+        // （既定はLOD0）をそのまま見せる（点光源の影と同じ範囲）。表面色はMegaGeometryPassのGBufferと同じく材質のBaseColorを
+        // instance色とし、textureは白とみなす。
+        constexpr uint32_t vertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
+        for (const MegaGeometryProxy& proxy : megaProxies)
+        {
+            if (packet.RayTracingScene.Instances.size() > 0x00FFFFFFu)
+            {
+                break;
+            }
+            if (!proxy.IsValid())
+            {
+                continue;
+            }
+            // 区画へのコピーが GPU で完了したメッシュだけを BLAS の入力にする（BLAS は同期で構築する）
+            const MegaGeometry::MegaMeshGPUData* gpuData =
+                megaGeometryResources->GetReadyMegaMeshGPUData(proxy.MegaMeshHandle);
+            if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
+                gpuData->ShadowIndexCount < 3u || gpuData->ShadowIndexCount % 3u != 0u ||
+                gpuData->ShadowFirstIndex > gpuData->IndexCount ||
+                gpuData->ShadowIndexCount > gpuData->IndexCount - gpuData->ShadowFirstIndex ||
+                gpuData->VertexCount < 3u ||
+                static_cast<uint64_t>(gpuData->VertexCount) * vertexStride >
+                    gpuData->VertexBufferBytes ||
+                (static_cast<uint64_t>(gpuData->ShadowFirstIndex) + gpuData->ShadowIndexCount) *
+                        sizeof(uint32_t) >
+                    gpuData->IndexBufferBytes ||
+                !IsFiniteRayTracingTransform(proxy.WorldTransform))
+            {
+                continue;
+            }
+
+            RayTracingSceneInstanceSnapshot instance;
+            instance.ObjectId = proxy.ObjectId;
+            instance.ObjectInstanceIndex = 0;
+            instance.SourceVertexBuffer = gpuData->VertexBuffer;
+            instance.SourceIndexBuffer = gpuData->IndexBuffer;
+            instance.VertexBufferOffsetBytes = gpuData->VertexBufferOffsetBytes;
+            instance.IndexBufferOffsetBytes = gpuData->IndexBufferOffsetBytes;
+            instance.MegaMeshId = proxy.MegaMeshHandle.Id;
+            instance.GeometryRegionOwner = gpuData->RegionOwner;
+            instance.IndexOffset = gpuData->ShadowFirstIndex;
+            instance.IndexCount = gpuData->ShadowIndexCount;
+            instance.VertexOffset = 0;
+            instance.VertexCount = gpuData->VertexCount;
+            instance.VertexStride = vertexStride;
+            instance.bGeometryOpaque = true;
+            const MegaGeometry::MegaMeshMaterial& material = gpuData->Material;
+            for (uint32_t channel = 0u; channel < 4u; ++channel)
+            {
+                instance.Material.BaseColor[channel] = material.BaseColor[channel];
+                instance.Material.ObjectColor[channel] = material.BaseColor[channel];
+            }
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                instance.Material.EmissiveColor[channel] = material.EmissiveColor[channel];
+            }
+            instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
+            instance.Instance.customIndex =
+                static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
+            instance.Instance.mask = proxy.bCastShadow ? RayTracingInstanceMaskShadowCaster
+                                                       : RayTracingInstanceMaskNonShadowCaster;
+            CopyRayTracingInstanceTransform(proxy.WorldTransform, instance.Instance.transform);
+            if (IsFiniteRayTracingTransform(proxy.PreviousWorldTransform))
+            {
+                CopyRayTracingInstanceTransform(proxy.PreviousWorldTransform,
+                                                instance.PreviousTransform);
+                instance.bHasPreviousTransform = true;
+            }
+            packet.RayTracingScene.Instances.push_back(std::move(instance));
+        }
     }
 
     bool RayTracingSceneSubsystem::BuildAccelerationStructures(RHI::DevicePtr device,
@@ -2376,7 +2388,7 @@ namespace NorvesLib::Core::Rendering
                         const InFlight& older = inFlight[inFlight.size() - 2];
                         if (confirmation.TryApply(older.Serial, older.Generation) == PacketApplyResult::Applied)
                         {
-                            if (!mirror.Apply(older.Delta, older.Generation, false))
+                            if (!mirror.Apply(older.Delta, older.Generation))
                             {
                                 return fail("遅れて適用した差分を当てられなかった");
                             }
@@ -2387,13 +2399,22 @@ namespace NorvesLib::Core::Rendering
                     {
                         return fail("適用できるはずのパケットが適用されなかった");
                     }
-                    if (!mirror.Apply(newest.Delta, newest.Generation, false))
+                    if (!mirror.Apply(newest.Delta, newest.Generation))
                     {
                         return fail("最新のパケットの差分を当てられなかった");
                     }
                     if (!sameArrays(mirror.GetProxies(), source))
                     {
                         return fail("差分を当てた写しが、GameThread の配列と一致しない");
+                    }
+                    // 席から proxy を引ける（席の位置の表が、配列の全部の席を正しい位置で指す）
+                    for (uint32_t index = 0; index < static_cast<uint32_t>(source.size()); ++index)
+                    {
+                        uint32_t position = 0;
+                        if (!mirror.TryGetPositionBySlot(source[index].SceneSlot, position) || position != index)
+                        {
+                            return fail("席の位置の表が、配列の位置を指していない");
+                        }
                     }
                     if (!newest.Delta.bBaseline)
                     {
@@ -2428,12 +2449,112 @@ namespace NorvesLib::Core::Rendering
                 staleDelta.Indices.push_back(0);
                 staleDelta.Proxies.push_back(makeProxy(9999));
                 const size_t sizeBefore = mirror.GetProxies().size();
-                if (mirror.Apply(staleDelta, generation - 1, false) || mirror.GetProxies().size() != sizeBefore ||
+                if (mirror.Apply(staleDelta, generation - 1) || mirror.GetProxies().size() != sizeBefore ||
                     mirror.GetRejectedCount() != 1)
                 {
                     return fail("古い世代の差分が写しへ当たった");
                 }
                 ++examined;
+            }
+
+            // 描画を見送った差分を挟んでも、前の変換は最後に描いたフレームの変換へ付け替わる（TAA）。
+            // 当てただけで描かなかった差分は、描いた変換の履歴を動かさない
+            {
+                constexpr uint64_t taaGeneration = 7;
+                const auto makeDelta = [](bool bBaseline, uint32_t size)
+                {
+                    MegaSceneDelta delta;
+                    delta.bActive = true;
+                    delta.bBaseline = bBaseline;
+                    delta.Size = size;
+                    return delta;
+                };
+                const auto pushEntry = [&](MegaSceneDelta& delta, uint32_t index, uint64_t objectId, float x, float previousX)
+                {
+                    MegaGeometryProxy proxy = makeProxy(objectId);
+                    proxy.WorldTransform.values[12] = x;
+                    proxy.PreviousWorldTransform.values[12] = previousX;
+                    delta.Indices.push_back(index);
+                    delta.Proxies.push_back(proxy);
+                };
+                const auto previousX = [](const MegaGeometryMirror& target, uint32_t index)
+                {
+                    return target.GetProxies()[index].PreviousWorldTransform.values[12];
+                };
+                MegaGeometryMirror taa;
+                constexpr uint64_t objectA = 100, objectB = 101, objectC = 102;
+
+                // フレーム 10: 基準（A=0, B=50）を当てて描く（最初に描くので付け替えない）
+                MegaSceneDelta delta = makeDelta(true, 2);
+                pushEntry(delta, 0, objectA, 0.0f, 0.0f);
+                pushEntry(delta, 1, objectB, 50.0f, 50.0f);
+                if (!taa.Apply(delta, taaGeneration))
+                {
+                    return fail("TAA の場面: 基準を当てられなかった");
+                }
+                taa.NoteDrawn(false);
+
+                // フレーム 11: A=10 を当てるが、描かない
+                delta = makeDelta(false, 2);
+                pushEntry(delta, 0, objectA, 10.0f, 0.0f);
+                taa.Apply(delta, taaGeneration);
+
+                // フレーム 12: A=20 と新しい C=7 を当てて描く（フレームが飛んだので付け替える）
+                delta = makeDelta(false, 3);
+                pushEntry(delta, 0, objectA, 20.0f, 10.0f);
+                pushEntry(delta, 2, objectC, 7.0f, 7.0f);
+                taa.Apply(delta, taaGeneration);
+                taa.NoteDrawn(true);
+                if (previousX(taa, 0) != 0.0f)
+                {
+                    return fail("TAA の場面: 描かなかった差分を挟むと、前の変換が最後に描いたフレームのものにならない");
+                }
+                if (previousX(taa, 1) != 50.0f || previousX(taa, 2) != 7.0f)
+                {
+                    return fail("TAA の場面: 変わっていない物体・新しい物体の前の変換を動かした");
+                }
+
+                // フレーム 13: 続けて描く（飛ばない）。GameThread の前の変換をそのまま使う
+                delta = makeDelta(false, 3);
+                pushEntry(delta, 0, objectA, 30.0f, 20.0f);
+                taa.Apply(delta, taaGeneration);
+                taa.NoteDrawn(false);
+                if (previousX(taa, 0) != 20.0f)
+                {
+                    return fail("TAA の場面: 続けて描くフレームの前の変換を動かした");
+                }
+
+                // フレーム 14: A を外して末尾の C を A の位置へ入れる。描かない
+                delta = makeDelta(false, 2);
+                pushEntry(delta, 0, objectC, 9.0f, 7.0f);
+                taa.Apply(delta, taaGeneration);
+
+                // フレーム 15: C=12 を当てて描く（飛んだので、C の前の変換はフレーム 12 で描いた 7）
+                delta = makeDelta(false, 2);
+                pushEntry(delta, 0, objectC, 12.0f, 9.0f);
+                taa.Apply(delta, taaGeneration);
+                taa.NoteDrawn(true);
+                if (previousX(taa, 0) != 7.0f)
+                {
+                    return fail("TAA の場面: 位置を移った物体の前の変換が、最後に描いたフレームのものにならない");
+                }
+                uint32_t position = 0;
+                if (taa.FindBySlot(static_cast<uint32_t>(objectA)) != nullptr ||
+                    !taa.TryGetPositionBySlot(static_cast<uint32_t>(objectC), position) || position != 0)
+                {
+                    return fail("TAA の場面: 外れた物体の席が残っている、または移った物体の席を引けない");
+                }
+
+                // フレーム 17: A を戻して描く（フレーム 15 の時点で外れているので、最後に描いたフレームに無い物体）
+                delta = makeDelta(false, 3);
+                pushEntry(delta, 2, objectA, 100.0f, 100.0f);
+                taa.Apply(delta, taaGeneration);
+                taa.NoteDrawn(true);
+                if (previousX(taa, 2) != 100.0f)
+                {
+                    return fail("TAA の場面: 最後に描いたフレームに無かった物体の前の変換を付け替えた");
+                }
+                examined += 6;
             }
             return true;
         }
@@ -2466,7 +2587,7 @@ namespace NorvesLib::Core::Rendering
             if (mismatched > reportedMismatched)
             {
                 bPass = false;
-                std::snprintf(detail, sizeof(detail), "差分を当てた写しが、送った時点の配列と一致しない: mismatched=%llu checked=%llu",
+                std::snprintf(detail, sizeof(detail), "差分を当てた写し・差分で直した消費者の結果が、全量と一致しない: mismatched=%llu checked=%llu",
                               static_cast<unsigned long long>(mismatched), static_cast<unsigned long long>(checked));
             }
             if (!bPass && checks.GetFailCount() <= 8)
@@ -3137,12 +3258,14 @@ namespace NorvesLib::Core::Rendering
                 m_RenderResources ? &m_RenderResources->Materials() : nullptr;
             const MegaGeometryResources* megaGeometryResources =
                 m_RenderResources ? &m_RenderResources->MegaGeometry() : nullptr;
-            // 差分の同期ではパケットが MegaGeometry の全量を持たないので、GameThread の SceneView の配列を渡す
+            // 差分の同期では、MegaGeometry のレイトレーシングのインスタンスは RenderThread が自分の写しから足す。
+            // 連番のパストレーシングだけは、前の変換の持ち越しが snapshot の並びに依るので、GameThread の SceneView の配列で作る
+            const bool bDeferMegaRayTracing = m_CurrentPacket->DefersMegaRayTracingToRenderThread();
             if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildFrameSnapshot(
                     meshResources,
                     *m_CurrentPacket,
                     materialResources,
-                    megaGeometryResources,
+                    bDeferMegaRayTracing ? nullptr : megaGeometryResources,
                     m_CurrentPacket->MegaDelta.bActive && m_MainSceneView
                         ? &m_MainSceneView->GetMegaGeometryProxies()
                         : nullptr))
@@ -3238,11 +3361,12 @@ namespace NorvesLib::Core::Rendering
                 if (m_MegaDeltaSentCount % 120 == 0)
                 {
                     NORVES_LOG_INFO("RenderingCoordinator",
-                                    "MEGA_SCENE_DELTA sent=%llu entries=%llu baselines=%llu unconfirmed=%zu",
+                                    "MEGA_SCENE_DELTA sent=%llu entries=%llu baselines=%llu unconfirmed=%zu consumer_patches=%llu",
                                     static_cast<unsigned long long>(m_MegaDeltaSentCount),
                                     static_cast<unsigned long long>(m_MegaDeltaEntryTotal),
                                     static_cast<unsigned long long>(m_MegaSender.GetBaselineCount()),
-                                    m_MegaSender.GetUnconfirmedSendCount());
+                                    m_MegaSender.GetUnconfirmedSendCount(),
+                                    static_cast<unsigned long long>(m_MegaMirror.GetConsumerCheckedCount()));
                 }
                 RunMegaDeltaCheck(m_MegaMirror, m_MegaDeltaSentCount, m_MegaVerifyReportedChecked,
                                   m_MegaVerifyReportedMismatched);
@@ -3382,20 +3506,13 @@ namespace NorvesLib::Core::Rendering
         } appliedPacketScope{packetConfirmation, packet->SendSerial, applyResult == PacketApplyResult::Applied};
 
         // MegaGeometry の差分を写しへ当てる。描画を見送っても、適用したパケットの差分は当てる（次の差分の土台になる）。
-        // 描画がゲームのフレームを飛ばして TAA の履歴が最後に描いたフレームのときは、前の変換も最後に描いた変換へ揃える
-        // （全量の同期の RenderedObjectHistory と同じ規約）
+        // 前の変換の付け替え（TAA の履歴が最後に描いたフレームのとき）は、描く場所の NoteDrawn が行う
         if (applyResult == PacketApplyResult::Applied && packet->MegaDelta.bActive)
         {
-            const bool bFrameGap = m_RenderedObjectHistory.IsValid() &&
-                                   packet->FrameNumber > m_RenderedObjectHistory.GetFrameNumber() + 1u;
-            const bool bTemporalAA =
-                (m_MainSceneView && m_MainSceneView->IsTemporalAAForced()) ||
-                (packet->bHasMainCamera &&
-                 packet->Scene.MainCamera.AntiAliasing == CameraAntiAliasingMode::TemporalAA);
-            if (!m_MegaMirror.Apply(packet->MegaDelta, packet->SceneGeneration, bFrameGap && bTemporalAA))
+            if (!m_MegaMirror.Apply(packet->MegaDelta, packet->SceneGeneration))
             {
                 NORVES_LOG_ERROR("RenderingCoordinator",
-                                 "MegaGeometry delta could not be applied: serial=%llu generation=%llu mirror_generation=%llu",
+                                 "MegaGeometry の差分を写しへ当てられません: serial=%llu generation=%llu mirror_generation=%llu",
                                  static_cast<unsigned long long>(packet->SendSerial),
                                  static_cast<unsigned long long>(packet->SceneGeneration),
                                  static_cast<unsigned long long>(m_MegaMirror.GetGeneration()));
@@ -3599,6 +3716,11 @@ namespace NorvesLib::Core::Rendering
             ++m_RenderedObjectRebasedFrameCount;
             m_RenderedObjectIncompleteFrameCount += renderedObjectHistory.bComplete ? 0u : 1u;
         }
+        // MegaGeometry の写しも同じ規約: 描いたフレームの変換を覚え、飛んだフレームの前の変換を最後に描いた変換へ付け替える
+        if (packet->MegaDelta.bActive)
+        {
+            m_MegaMirror.NoteDrawn(renderedObjectHistory.bRebased);
+        }
         RHI::BufferPtr instanceDataBuffer = m_InstanceBufferRing.Upload(frameIndex, packet->InstanceData);
 
         // フレーム別コマンドバッファを選択（ダブルバッファリングでの同期問題を回避）
@@ -3670,6 +3792,15 @@ namespace NorvesLib::Core::Rendering
                     m_CommandList->BeginGPUTimestampScope("AccelerationStructureBuild");
             }
 #endif
+            // 差分の同期の MegaGeometry は、RenderThread の写しからレイトレーシングのインスタンスを足す
+            if (packet->DefersMegaRayTracingToRenderThread() && m_RenderResources && m_Device &&
+                m_Device->GetCapabilities().RayTracing.bAccelerationStructure)
+            {
+                NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().AppendMegaGeometryInstances(
+                    &m_RenderResources->MegaGeometry(),
+                    m_MegaMirror.GetProxies(),
+                    *packet);
+            }
             if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildAccelerationStructures(
                     m_Device,
                     *m_CommandList,
@@ -3776,6 +3907,8 @@ namespace NorvesLib::Core::Rendering
             viewContext.SnapshotMegaChangedSlots = &m_MegaMirror.GetChangedSlots();
             viewContext.bSnapshotMegaAllChanged = m_MegaMirror.AreAllChanged();
             viewContext.SnapshotMegaRevision = m_MegaMirror.GetRevision();
+            viewContext.SnapshotMegaMirror = &m_MegaMirror;
+            viewContext.bSnapshotMegaVerify = packet->MegaDelta.bVerify;
         }
         else
         {

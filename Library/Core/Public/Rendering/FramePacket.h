@@ -266,6 +266,18 @@ namespace NorvesLib::Core::Rendering
             return RayTracingScene.IsComplete();
         }
 
+        /**
+         * @brief MegaGeometry のレイトレーシングのインスタンスを RenderThread が写しから足すか
+         *
+         * 差分の同期では、パケットは MegaGeometry の全量を持たないので、RenderThread が自分の写しから足す。
+         * 連番のパストレーシング（メインカメラの SequenceFrame が 0 でない）は前の変換の持ち越しが GameThread の
+         * snapshot の並びに依るため、GameThread で作る。
+         */
+        bool DefersMegaRayTracingToRenderThread() const
+        {
+            return MegaDelta.bActive && !(bHasMainCamera && Scene.MainCamera.SequenceFrame != 0);
+        }
+
         // ========================================
         // DrawCommandスナップショット（GameThreadで生成、RenderThreadで読み取り専用）
         // ========================================

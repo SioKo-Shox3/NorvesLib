@@ -33,6 +33,7 @@ namespace NorvesLib::Core::Rendering
     class SharedResourceRegistry;
     class ShaderManager;
     class MegaGeometryPass;
+    class MegaGeometryMirror;
     class PresentationPass;
     class RenderGraph;
     struct RenderGraphExecutionResult;
@@ -632,12 +633,17 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 今フレーム適用した差分で変わった MegaGeometry の席（SceneSlot。昇順・重複なし）
          *
-         * 写しを読むときだけ有効（nullptr は全量の同期）。bSnapshotMegaAllChanged のときは全部の席が変わった（基準の適用直後）。
+         * 写しを読むときだけ有効（nullptr は全量の同期）。bSnapshotMegaAllChanged のときは全部の席が変わった
+         * （基準の適用直後・席を持たない proxy が変わったとき）。
          */
         const Container::VariableArray<uint32_t> *SnapshotMegaChangedSlots = nullptr;
         bool bSnapshotMegaAllChanged = false;
         /** @brief 写しに差分を当てるたびに進む版（全量の同期では 0） */
         uint64_t SnapshotMegaRevision = 0;
+        /** @brief 席から proxy の位置を引く写し（SnapshotMegaChangedSlots と同じく、写しを読むときだけ有効） */
+        const MegaGeometryMirror *SnapshotMegaMirror = nullptr;
+        /** @brief 検査 MEGA_SCENE_DELTA が有効（消費者が差分で直した結果を、作り直した結果と照合する） */
+        bool bSnapshotMegaVerify = false;
 
         /** @brief キューブシャドウを描く点光源のスナップショット（FramePacket::PointShadowsを指す） */
         const PointShadowSnapshot* SnapshotPointShadows = nullptr;
