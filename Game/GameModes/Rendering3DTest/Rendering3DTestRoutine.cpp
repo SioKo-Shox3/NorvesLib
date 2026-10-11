@@ -3534,6 +3534,10 @@ namespace Game::GameModes
                 {
                     if (!frame.IsSuccess())
                     {
+                        LOG_ERROR("M9_WORLD_SMOKE capture_status=%s frame=%llu tick=%u",
+                                  NorvesLib::Core::Rendering::GetFrameCaptureResultStatusName(frame.Status),
+                                  static_cast<unsigned long long>(frame.FrameNumber),
+                                  static_cast<unsigned>(data.m_M9TickCount));
                         FailM9WorldSmoke(ctx, data.m_bM9NegativeCaptureRequested ? "negative_capture_failed" : "t0_capture_failed");
                         return;
                     }
@@ -3596,6 +3600,10 @@ namespace Game::GameModes
                     {
                         if (!frame.IsSuccess())
                         {
+                            LOG_ERROR("M9_WORLD_SMOKE capture_status=%s frame=%llu tick=%u",
+                                      NorvesLib::Core::Rendering::GetFrameCaptureResultStatusName(frame.Status),
+                                      static_cast<unsigned long long>(frame.FrameNumber),
+                                      static_cast<unsigned>(data.m_M9TickCount));
                             FailM9WorldSmoke(ctx, "t1_capture_failed");
                             return;
                         }

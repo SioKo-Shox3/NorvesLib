@@ -57,6 +57,29 @@ namespace NorvesLib::Core::Rendering
         MapFailed
     };
 
+    /** @brief 撮影の結果の状態をログの照合用の名前にする */
+    inline const char* GetFrameCaptureResultStatusName(FrameCaptureResultStatus status)
+    {
+        switch (status)
+        {
+        case FrameCaptureResultStatus::Success:
+            return "Success";
+        case FrameCaptureResultStatus::SourceUnavailable:
+            return "SourceUnavailable";
+        case FrameCaptureResultStatus::SourceMissingTransferSrc:
+            return "SourceMissingTransferSrc";
+        case FrameCaptureResultStatus::UnsupportedFormat:
+            return "UnsupportedFormat";
+        case FrameCaptureResultStatus::InvalidDimensions:
+            return "InvalidDimensions";
+        case FrameCaptureResultStatus::ReadbackBufferCreateFailed:
+            return "ReadbackBufferCreateFailed";
+        case FrameCaptureResultStatus::MapFailed:
+            return "MapFailed";
+        }
+        return "Unknown";
+    }
+
     struct FrameCaptureRequestResult
     {
         FrameCaptureRequestStatus Status = FrameCaptureRequestStatus::NotInitialized;

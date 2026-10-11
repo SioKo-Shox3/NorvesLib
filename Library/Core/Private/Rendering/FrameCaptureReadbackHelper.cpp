@@ -4,6 +4,7 @@
 #include "RHI/IDevice.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/ITexture.h"
+#include "Logging/LogMacros.h"
 #include <cstring>
 #include <limits>
 
@@ -195,6 +196,10 @@ namespace NorvesLib::Core::Rendering
 
         if ((source->Texture->GetUsage() & RHI::ResourceUsage::TransferSrc) == RHI::ResourceUsage::None)
         {
+            NORVES_LOG_WARNING("FrameCapture",
+                               "FRAME_CAPTURE_SOURCE width=%u height=%u format=%u usage=0x%llx",
+                               width, height, static_cast<unsigned>(format),
+                               static_cast<unsigned long long>(source->Texture->GetUsage()));
             PublishFailure(FrameCaptureResultStatus::SourceMissingTransferSrc, source->FrameNumber);
             return FrameCaptureRecordStatus::PublishedFailure;
         }
@@ -388,6 +393,14 @@ namespace NorvesLib::Core::Rendering
         frame.Status = status;
         frame.RequestId = m_ActiveRequest.RequestId;
         frame.FrameNumber = frameNumber;
+
+        // 撮影の失敗は利用者側で理由が失われやすいので、状態の名前をここで残す。
+        NORVES_LOG_WARNING("FrameCapture",
+                           "FRAME_CAPTURE_FAILED status=%s request=%llu frame=%llu source_kind=%u",
+                           GetFrameCaptureResultStatusName(status),
+                           static_cast<unsigned long long>(m_ActiveRequest.RequestId),
+                           static_cast<unsigned long long>(frameNumber),
+                           static_cast<unsigned>(m_ActiveRequest.SourceKind));
 
         m_CompletedFrame = frame;
         m_PendingReadback = PendingReadback{};

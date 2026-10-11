@@ -367,13 +367,13 @@ try
     Assert-M9 ($script:AssetCookInvocations -eq 3) "AssetCook invocation count=$script:AssetCookInvocations expected=3"
 
     $normalDir = Join-Path $runRoot "normal"; New-Item -ItemType Directory -Path $normalDir | Out-Null
-    $normal = Invoke-M9Game $gamePath @("--scene=rendering3dtest", "--render-thread=st", "--exit-after-rendered-frames=4") $normalDir
+    $normal = Invoke-M9Game $gamePath @("--scene=rendering3dtest", "--window-background", "--render-thread=st", "--exit-after-rendered-frames=4") $normalDir
     Assert-M9 ($normal.ExitCode -eq 0) "normal Game exit=$($normal.ExitCode)"
     Assert-M9 (-not $normal.RootAlive -and $normal.RemainingOwnedProcessIds.Count -eq 0) "normal Game owned process cleanup incomplete"
     Assert-M9 (-not ($normal.Transcript -match "M9_WORLD_SMOKE")) "normal Game emitted M9 marker"
 
     $smokeDir = Join-Path $runRoot "smoke"; New-Item -ItemType Directory -Path $smokeDir | Out-Null
-    $smoke = Invoke-M9Game $gamePath @("--scene=rendering3dtest", "--m9-world-smoke", "--texture-asset-root", $runtimeRoot, "--texture-asset-manifest", $manifest, "--render-thread=st") $smokeDir
+    $smoke = Invoke-M9Game $gamePath @("--scene=rendering3dtest", "--window-background", "--m9-world-smoke", "--texture-asset-root", $runtimeRoot, "--texture-asset-manifest", $manifest, "--render-thread=st") $smokeDir
     Assert-M9 ($smoke.ExitCode -eq 0) "M9 Game exit=$($smoke.ExitCode) transcript=$($smoke.Transcript)"
     Assert-M9 (-not $smoke.RootAlive -and $smoke.RemainingOwnedProcessIds.Count -eq 0) "M9 Game owned process cleanup incomplete"
     foreach ($stage in @("registered", "assets_ready", "skeletal_binding", "audio_play", "visual", "audio", "complete"))

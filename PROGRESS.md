@@ -2427,3 +2427,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-11.txt`: 3 シーンの混在の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。Game.log を開いて確認: `SCENE_CYCLE_SMOKE result=pass cycles=3 scenes=3 changed=none unsettled=0`、サンプル 9 件、ERROR 0、Game.log 8.2MB。
 - Next: 残りの todo の最優先（SCN-FIX-M9-T0-CAPTURE ほか）。
 - Notes: `World::SeedRenderSyncLog`（変更ログを取り始めるときの種まき）と `NotifyRenderRepublishAll` は木をたどるが、検査の比較先ではなく同期の側の一度きりの処理なので残した。
+
+### SCN-FIX-M9-T0-CAPTURE（2026-10-12、反復 6・run 20261012-030203）— BLOCKED
+
+- 原因: M9 の t0 の撮影は `SourceMissingTransferSrc`（フレーム 0、撮影元 PresentationColor）で失敗する。撮影元は 1280x720・RGBA16F・用途 `ShaderRead|RenderTarget` で `TransferSrc` が無い。これは `VignettePass` の出力 `VignetteOutput`（`ToneMappedColor` を上書きする）で、TemporalAA が効くと FXAA が止まり、拡大なしの Upscale が `ToneMappedColor` をそのまま `PresentationColor` に出すので、Vignette の出力が撮影元になる。他の後処理の出力はすべて `TransferSrc` を足しているが `VignetteOutput` だけ足していない。Rendering3DTest はカメラのグレーディングでビネットを有効にしている（SS-POST-TUNE 以降）。このブランチの変更（ランチャー・`--window-background`・ECS の同期）は原因ではない。
+- Done（paths の内側）: `FrameCaptureTypes.h` に `GetFrameCaptureResultStatusName` を足し、`FrameCaptureReadbackHelper` の失敗の発行で `FRAME_CAPTURE_FAILED status=… request=… frame=… source_kind=…`、転送元の用途が無いときは `FRAME_CAPTURE_SOURCE width=… height=… format=… usage=…` をログに出す。`Rendering3DTestRoutine.cpp` の t0・陰性対照・t1 の撮影の失敗で `M9_WORLD_SMOKE capture_status=…` を出す。`Scripts/Test-M9World.ps1` の Game の起動 2 本に `--window-background` を足した。
+- BLOCKED: 直すには paths の外の `Library/Core/Private/Rendering/VignettePass.cpp`（`VignetteOutput` の desc に `TransferSrc` を足す 1 行）が要る。`blocked/SCN-FIX-M9-T0-CAPTURE.md` に選択肢を書いた（推奨: paths に足して 1 行直す。描画の結果は変わらない）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-FIX-M9-T0-CAPTURE-1.txt`: Debug の Game のビルド EXIT=0、error 0（`-5-build.txt` は診断ログを足した後の再ビルドで EXIT=0）。
+  - `-2.txt`・`-4.txt`: `ctest -R ^M9WorldAcceptanceTest$` は EXIT=8（未修正のため）。通常起動（`--window-background` 付き）は通り、M9 のスモークが t0 の撮影で落ちる。
+  - `-3-gamelog.txt`: スモークの Game.log の抜粋（`FRAME_CAPTURE_SOURCE … format=9 usage=0x5`・`FRAME_CAPTURE_FAILED status=SourceMissingTransferSrc`・`capture_status=SourceMissingTransferSrc`）。
+- Next: 人が paths を広げて todo に戻したら、VignettePass の 1 行を直して M9 を通す。
