@@ -1600,3 +1600,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - CSM（ShadowMapPass）は写しの配列を読むが、投影物の集め方（メッシュの準備完了を proxy ごとに引く）は変えていない。準備完了は GPU 完了で遅延して変わり、版を持たないので、キャッシュは安全にできない。変わった席で絞るのは SCN-MEGA-SHADOW-DIRTY、RT の席ごとの配列は SCN-MEGA-RT-SELECT / RT-SKIP の範囲。
   - 席の表への散布は SCN-MEGA-GPU-SCENE-SCATTER が `SnapshotMegaRevision` が 1 より大きく進んだら全部が変わったものとして扱うこと（`SnapshotMegaMirror` で席から proxy を引ける）。
   - 行末: 編集したファイルは numstat の 2 通りが一致（混在ファイルは行ごとに保って編集した）。
+
+### SCN-SCENE-CYCLE-SHARED-CACHE（2026-10-11、反復 49・run 20261010-223034）
+
+- 変更（`Game/Scenes/SceneCycleSmoke.cpp/.h`・`Scripts/RunSceneCycleSmoke.ps1` のコメント）: `Finish` の基準を、シーンが 2 つ以上なら 2周目、1 つなら 1周目にした。基準より後の周回を、同じシーンの基準の周回と比べる（増え続ける漏れは従来どおり `SCENE_CYCLE_DIFF` で失敗）。必要な周回数は 基準 + 2（混在は 3、単一は 2）で、足りなければ `SCENE_CYCLE_TOO_FEW cycles= scenes=` で失敗。使った基準を `SCENE_CYCLE_BASELINE cycle=<n> scenes=<数>` で出す。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-SCENE-CYCLE-SHARED-CACHE-1.txt`: Game の RelWithDebInfo ビルド成功（exit 0）。
+  - `-2.txt` / `-4.txt`（+ `-4-gamelog.txt`）: rendering3dtest,mega-bananas,mega-stress の 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`。Game.log に `SCENE_CYCLE_BASELINE cycle=2 scenes=3`、`SCENE_CYCLE_SMOKE result=pass cycles=3 scenes=3 changed=none unsettled=0`。1周目の textures は 0 / 6 / 9、2周目以降はすべて 9 で揃う。
+  - `-3.txt`（+ `-3-gamelog.txt`）: mega-stress 単独の 3 周が pass。`SCENE_CYCLE_BASELINE cycle=1 scenes=1`、`changed=none`。
+  - `-5-toofew.txt`: 混在で `-Cycles 2` にすると `SCENE_CYCLE_TOO_FEW cycles=2 scenes=3` で fail（終了コード 1）。
+- Notes: 夜に止まった 5 項目（SCN-ECS-RENDER-INVALIDATION・RENDER-SYNC-PREP・RENDER-SYNC-SWITCH・SCN-MEGA-SCENE-CONFIRM・SCENE-SLOTS）は、混在の周回が通るようになったので、各項目の verify と評価をやり直せる。TASKS.md の作業ツリーにあった SCN-MEGA-SCENE-DELTA の `status: blocked`（ランナーの記録）はそのまま同じコミットに入れた。

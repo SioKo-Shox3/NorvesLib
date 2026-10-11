@@ -356,7 +356,7 @@
 - paths: Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Private/Object/World.cpp, Test/Core/Object/CMakeLists.txt, Test/Core/Object/EcsHierarchyTest.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-SCENE-CYCLE-SHARED-CACHE: 複数のシーンの周回で、シーンをまたいで残るキャッシュを基準に含めない
-- status: todo
+- status: done
 - done-when: `SceneCycleSmoke` が、2 つ以上のシーンを回すときは、各シーンの 2 周目（全シーンを 1 回ずつ訪れた後）を基準にして 3 周目以降と比べる（1 周目は、後のシーンが読むテクスチャのキャッシュがまだ無いので基準にしない）。このとき周回数が 3 未満なら `SCENE_CYCLE_TOO_FEW` で失敗する。1 つのシーンだけのときは今のとおり 1 周目を基準にする。使った基準の周回を `SCENE_CYCLE_BASELINE cycle=<n> scenes=<数>` でログに出す。3 周目以降で増え続けるもの（漏れ）は今のとおり失敗になる。 3 シーンの混在の周回と、シーン 1 つの周回が pass する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`

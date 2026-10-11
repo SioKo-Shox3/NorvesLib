@@ -159,9 +159,13 @@ namespace Game::Scenes
 
     void SceneCycleSmoke::Finish(NorvesLib::Core::Engine::Engine &engine)
     {
-        // 2周目以降を、同じシーンの1周目と比べる。値が違えば（増えても減っても）失敗。
+        // 基準の周回より後を、同じシーンの基準の周回と比べる。値が違えば（増えても減っても）失敗。
         // 落ち着かないまま測った値は比べられないので、それも失敗にする。
+        // シーンが 2 つ以上のときは、1周目を基準にしない。後のシーンが読むテクスチャのキャッシュ（別のシーンが先に読んだもの）が
+        // 1周目の時点ではまだ無く、2周目で増えるため。全シーンを 1 回ずつ訪れた後の 2周目を基準にする。
         const std::size_t sceneCount = m_Scenes.size();
+        const uint32_t baselineCycle = sceneCount >= 2 ? 1 : 0;
+        const uint32_t requiredCycles = baselineCycle + 2;
         bool bChanged[kFieldCount] = {};
         bool bAnyChanged = false;
         bool bUnsettled = false;
@@ -173,11 +177,11 @@ namespace Game::Scenes
                 LOG_ERROR_F("SCENE_CYCLE_UNSETTLED cycle=%u scene=%s 値が落ち着く前に測りました", sample.Cycle + 1,
                             m_Scenes[sample.SceneIndex]->Id);
             }
-            if (sample.Cycle == 0)
+            if (sample.Cycle <= baselineCycle)
             {
                 continue;
             }
-            const Sample &base = m_Samples[sample.SceneIndex];
+            const Sample &base = m_Samples[baselineCycle * sceneCount + sample.SceneIndex];
             for (std::size_t index = 0; index < kFieldCount; ++index)
             {
                 const uint64_t baseValue = base.Values.Values[index];
@@ -208,11 +212,17 @@ namespace Game::Scenes
             }
         }
 
-        if (m_CycleCount < 2)
+        const bool bEnoughCycles = m_CycleCount >= requiredCycles;
+        if (!bEnoughCycles)
         {
-            LOG_ERROR("SCENE_CYCLE_TOO_FEW 周回数が 1 では 1周目と比べられません。2 以上を指定してください");
+            LOG_ERROR_F("SCENE_CYCLE_TOO_FEW cycles=%u scenes=%u 基準の周回の後に比べる周回が無いため比べられません。%u 以上を指定してください",
+                        m_CycleCount, static_cast<unsigned>(sceneCount), requiredCycles);
         }
-        const bool bPass = !bAnyChanged && !bUnsettled && m_CycleCount >= 2 && m_Samples.size() == m_CycleCount * sceneCount;
+        else
+        {
+            LOG_INFO_F("SCENE_CYCLE_BASELINE cycle=%u scenes=%u", baselineCycle + 1, static_cast<unsigned>(sceneCount));
+        }
+        const bool bPass = !bAnyChanged && !bUnsettled && bEnoughCycles && m_Samples.size() == m_CycleCount * sceneCount;
         LOG_INFO_F("SCENE_CYCLE_SMOKE result=%s cycles=%u scenes=%u changed=%s unsettled=%d", bPass ? "pass" : "fail",
                    m_CycleCount, static_cast<unsigned>(sceneCount), changedKinds, bUnsettled ? 1 : 0);
         m_Phase = Phase::Done;

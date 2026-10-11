@@ -1,7 +1,8 @@
 ﻿# シーンの出入りを繰り返しても資源が増えないことを確かめる。
 # Game を --scene-cycle-smoke=<id,...> --scene-cycle-count=<n> 付きで起動する。Game はランチャーと
 # 指定のシーンの間を周回し、周回ごとに資源の数（材質・テクスチャ・メッシュ・Model・Entity）と GPU の割り当て量を
-# Game.log へ出す。2周目以降の値が1周目と同じなら Game が SCENE_CYCLE_SMOKE result=pass を出して終了コード 0 で終わる。
+# Game.log へ出す。基準の周回より後の値が基準の周回と同じなら Game が SCENE_CYCLE_SMOKE result=pass を出して終了コード 0 で終わる。
+# 基準の周回は、シーンが 1 つなら 1周目、2 つ以上なら 2周目（1周目には、別のシーンが先に読むテクスチャのキャッシュがまだ無い）。
 # このスクリプトは Game.log を照合して結果を確かめ、pass のときだけ 0 を返す。
 #
 # 失敗にするもの（終了コード 1）: Game の起動失敗・終了コードが0でない・タイムアウト、SCENE_CYCLE_SMOKE の行が無い・fail、
@@ -11,7 +12,7 @@
 # pass の行が 1 回以上無くても失敗にする（検査が働かないまま通るのを防ぐ）。
 # -Build を付けると、周回の前に -Configuration の Game をビルドし、失敗したら周回せずに失敗にする。
 # -Configuration Release はログが無効で Game.log を書かないため使えない（Debug か RelWithDebInfo を使う）。
-# -Cycles は 2 以上（1周目と比べるため）。-OutDir を省くと .harness/runs/scene-cycle-smoke へ Game.log を残す。
+# -Cycles は 2 以上（シーンが 2 つ以上のときは 3 以上。基準の周回と比べるため）。-OutDir を省くと .harness/runs/scene-cycle-smoke へ Game.log を残す。
 # -GameArgs は Game へ足す引数（先頭の -- は省く。例: -GameArgs banana-count=1024）。重いシーンの周回を検証の上限内に収めるのに使う。
 # 成功すると SCENE_CYCLE_SMOKE_RUN result=pass を出す。
 param(
