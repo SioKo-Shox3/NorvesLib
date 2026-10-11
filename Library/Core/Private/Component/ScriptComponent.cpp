@@ -1,7 +1,9 @@
 ﻿#include "Component/ScriptComponent.h"
 
+#include "Ecs/EcsTypes.h"
 #include "Engine/NorvesEngine.h"
 #include "Logging/LogMacros.h"
+#include "Object/World.h"
 
 namespace NorvesLib::Core::Component
 {
@@ -41,7 +43,20 @@ namespace NorvesLib::Core::Component
         Component::EndPlay();
     }
 
-    void ScriptComponent::Tick(float deltaTime)
+    void ScriptComponent::RegisterTick(World& world)
+    {
+        // 主群（GetTickGroup）だけで呼ぶ（旧の Tick と同じ）。群・mask・優先度・channel は Component の設定のまま。
+        // スクリプトは姿勢を読み書きする。段の最中に起きた生成・破棄は、Object は即時、行は段の終わりの同期点で作られる
+        ComponentTickRegistration script;
+        script.Name = "Script.Tick";
+        script.Run = [](Component& component, float deltaTime)
+        { static_cast<ScriptComponent&>(component).TickScript(deltaTime); };
+        script.Reads.push_back(Ecs::EcsColumnInfoOf<Ecs::EcsWorldTransform>().Type);
+        script.Writes.push_back(Ecs::EcsColumnInfoOf<Ecs::EcsLocalTransform>().Type);
+        world.RegisterComponentTick(StaticClass(), script);
+    }
+
+    void ScriptComponent::TickScript(float deltaTime)
     {
         if (!m_BindingHandle.IsValid())
         {

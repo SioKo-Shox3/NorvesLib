@@ -1998,3 +1998,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: TASKS.md の次の todo（SCN-ECS-TICK-SCRIPT ほか）。
 - Notes:
   - 判定を外して失敗を確かめる類の一時的な書き換えは、git checkout で戻して更新時刻を新しくし、戻した後に対象の verify を走らせ直してから保存する。
+
+### SCN-ECS-TICK-SCRIPT（2026-10-11、反復 4・run 20261011-211043）
+
+- 変更:
+  - ScriptComponent: 仮想の Tick の上書きを消し、非仮想の本体 `TickScript`（中身は旧の Tick と同じ）と、World へ登録する `RegisterTick(World&)` を足した。登録は主群だけで呼ぶ（`bPrimaryGroupOnly`。旧の OnTickGroup→Tick と同じ）、channel は World、読む EcsWorldTransform・書く EcsLocalTransform。群・mask・優先度・深さ優先の順は Component の設定のまま（順序付きの系の呼び先として旧の一覧と同じ比較で合流）。
+  - ScriptRuntime::Initialize が成功の直前に、束ねる World へ `ScriptComponent::RegisterTick` を呼ぶ。束ねられるのは Owner がその World の ScriptComponent だけなので、他の World では登録が無くても呼ぶものが無い（基底の空の Tick）。
+  - テスト: ScriptComponentTickTest の `staleComponent->Tick(1.0f)` を `TickScript(1.0f)` に直した。
+- 結果（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-ECS-TICK-SCRIPT-1.txt`: Debug の ScriptComponentTickTest・ScriptApplicationLifecycleContractTest・ScriptHotReloadTest のビルド EXIT=0（ScriptComponent.cpp・ScriptRuntime.cpp を再コンパイル。警告はリンクの PDB の既存のものだけ）。
+  - `-2.txt`: ScriptApplicationLifecycleContractTest・ScriptComponentTickTest・ScriptComponentSceneRoundTripTest・ScriptHotReloadTest・M6AngelScriptAcceptanceTest の 5/5 が pass、EXIT=0。ScriptComponent に仮想の Tick が無くなったので、移動・無効化・非 Active・ホットリロードの検査は登録した本体だけで通っている。
+- Next: TASKS.md の次の todo（SCN-ECS-TICK-GAME ほか）。
+- Notes:
+  - スクリプトの束縛（EntityRef）には Entity・Component を生成・破棄する口が無い。スクリプトの Tick は順序付きの系（スケジューラの段の最中）で走るので、そこから C++ 経由で起きた生成は World の既存の経路（`BindEntitySubtreeRows`・`ReserveComponentRowCreate`）で Object が即時、行が段の終わりの同期点で作られ、破棄の行は `m_DeferredEntityRows` で同期点に回る。この経路のスクリプト専用のテストは足していない（計画に無い）。
+  - 登録の場所は World.cpp の RegisterCoreComponentTicks（paths の外）ではなく、物理モジュールと同じく束ねる側（ScriptRuntime）にした。
+  - verify のビルドは Git Bash から走らせると `/m:1` が `m:1` に書き換えられて MSBuild が失敗する。PowerShell から走らせる。

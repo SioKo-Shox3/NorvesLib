@@ -1079,6 +1079,8 @@ namespace NorvesLib::Core
             m_Impl->m_SourceTracker.Reset();
             m_Impl->m_PollBatch.Reset();
             m_Impl->m_BindingViews.clear();
+            // 束ねた World の順序付きの系に ScriptComponent の本体を載せる（別の World の ScriptComponent は束ねられないので呼ばない）
+            Component::ScriptComponent::RegisterTick(world);
             m_Impl->m_World = &world;
             m_Impl->m_bInitialized = true;
             m_Impl->SetResult(EScriptRuntimeResult::Success);

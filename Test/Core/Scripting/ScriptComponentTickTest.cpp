@@ -227,7 +227,7 @@ namespace
             RetainedReferenceClassName);
         AddConfiguredComponent(*healthyOwner);
         staleOwner->MarkForDestroy();
-        staleComponent->Tick(1.0f);
+        staleComponent->TickScript(1.0f);
         world.Tick(1.0f);
         assert(healthyOwner->GetPosition().x == 1.0f);
         assert(runtime.GetDiagnostics().ActiveBindingCount == 1);

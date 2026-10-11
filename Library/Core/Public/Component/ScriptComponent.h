@@ -6,6 +6,7 @@
 namespace NorvesLib::Core
 {
     class ScriptRuntime;
+    class World;
 
     namespace Component
     {
@@ -19,8 +20,13 @@ namespace NorvesLib::Core
 
             void BeginPlay() override;
             void EndPlay() override;
-            void Tick(float deltaTime) override;
             void Finalize() override;
+
+            /// 毎フレームの本体（非仮想）。World の順序付きの系が主群・優先度・深さ優先の順で呼ぶ
+            void TickScript(float deltaTime);
+
+            /// World へ Tick の本体を登録する（ScriptRuntime が World に束ねられたときに呼ぶ）
+            static void RegisterTick(World& world);
 
         protected:
             PROPERTY(Container::String, ScriptPath)
