@@ -623,15 +623,15 @@ namespace NorvesLib::Core::Rendering
         m_ShadowCasterInputs = MegaGeometryShadowCasterInputs{};
 
         // 差分の同期では、RenderThread の写しが前回から変わっていない（版が同じ）フレームは、インスタンスを作り直さない。
-        // 版が 1 だけ進んだフレームは、変わった席のインスタンスだけを直す。
+        // 前に見た版から変わった席を写しが数えているフレーム（描画を見送った差分の席も含む）は、変わった席のインスタンスだけを直す。
         // 写しの版は、基準・差分を当てたときだけ進む。手で足したインスタンス（AddMegaMeshInstance）は版を 0 に戻す
         const bool bFromMirror = context.SnapshotMegaChangedSlots != nullptr && context.SnapshotMegaRevision != 0 &&
                                  context.SnapshotMegaGeometryProxies != nullptr;
         const bool bSameSource = bFromMirror && context.SnapshotMegaGeometryProxies == m_InstanceSourceProxies;
         const bool bReuseInstances = bSameSource && context.SnapshotMegaRevision == m_InstanceSourceRevision;
         bool bPatchedInstances = false;
-        if (!bReuseInstances && bSameSource && context.SnapshotMegaMirror != nullptr && !context.bSnapshotMegaAllChanged &&
-            context.SnapshotMegaRevision == m_InstanceSourceRevision + 1u &&
+        if (!bReuseInstances && bSameSource && context.SnapshotMegaMirror != nullptr &&
+            context.SnapshotMegaMirror->CanPatchFrom(m_InstanceSourceRevision) &&
             m_Instances.size() == context.SnapshotMegaGeometryProxies->size())
         {
             bPatchedInstances = PatchInstancesFromChangedSlots(context);

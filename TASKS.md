@@ -418,7 +418,7 @@
 - paths: Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
 
 ## SCN-MEGA-FIX-DELTA-SKIP: 描画の見送りの後の空の差分で、変わった席と前の変換の付け替えを取り逃がさない
-- status: todo
+- status: done
 - done-when: (1) 描画を見送ったフレームの変わった席は、消費者（MegaGeometryPass）が取り込むまで保つ。または、変わった席と版が対応しないときは全量に戻す（`MegaGeometryMirror.h` 71 行付近は空の差分でも変わった席を消し、`MegaGeometryPass.cpp` 633 行付近がそれを適用済みとして扱う。再現: 影ありで描画 → 影なしの差分を適用して見送り → 空の差分で描画 で、写しは影なし・Pass は影ありのまま）。(2) 写しの前の変換の付け替え（`MegaGeometryMirror.h` 176 行付近）はそのフレームだけにし、次のフレームで履歴が落ち着く席も消費者へ知らせる（再現: 10 で x=0 を描画 → 11 で x=10 を適用して見送り → 12 で静止した x=10 を描画 → 13 で空の差分を描画 で、13 の前の変換が 10 になる）。2 つの再現を `WorldSyncDifferentialTest` の検査として足し（新しい実行ファイルは足さない）、Debug で pass。通ったら SCN-MEGA-SCENE-DELTA の status を done にし、`blocked/SCN-MEGA-SCENE-DELTA.md` に解消を書き足す。
 - verify: `cmake --build build --config Debug --target WorldSyncDifferentialTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^WorldSyncDifferentialTest$" --no-tests=error --output-on-failure --timeout 180`
@@ -478,7 +478,7 @@
 - notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-SCENE-DELTA: MegaGeometry の同期を、変わった行と Free だけにする（切替）
-- status: blocked
+- status: done
 - done-when: 次をやめる: `RemoveStaleMegaGeometryProxies`、全量の写し（RenderingCoordinator.cpp:2119）、`ApplyPreviousObjectStates` の毎回の作り直し。消費者のうち Pass と VSM は、RenderThread の写しと「今フレーム変わった席」を読む（CSM は SCN-MEGA-SHADOW-DIRTY、RT は SCN-MEGA-RT-SELECT で切り替える）。`--mega-scene-full-sync` で全量に戻せる（ECS の全行を数える）。両方の経路で起動画面の比較が pass する。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-SCENE-DELTA`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -GameArgs mega-scene-full-sync -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-SCENE-DELTA-full`

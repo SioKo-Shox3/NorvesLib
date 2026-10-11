@@ -9,9 +9,11 @@
 #include "Ecs/EcsRenderTypes.h"
 #include "Ecs/EcsWorld.h"
 #include "Object/World.h"
+#include "Rendering/MegaGeometryMirror.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
 #include <cassert>
+#include <cstring>
 #include <iostream>
 
 using namespace NorvesLib::Core;
@@ -1184,6 +1186,225 @@ namespace
 
         world.Finalize();
     }
+
+    // RenderThread の写しの消費者（MegaGeometryPass など）の模型。前に見た版から、変わった席だけで直せるときは直し、
+    // 直せないときは写しの全部を取り直す。どちらでも、写しの配列と同じ内容になるはず
+    struct MegaMirrorConsumer
+    {
+        Container::VariableArray<MegaGeometryProxy> Copy;
+        uint64_t Revision = 0;
+        uint32_t Patched = 0;
+        uint32_t Rebuilt = 0;
+
+        void Sync(const MegaGeometryMirror& mirror)
+        {
+            if (mirror.GetRevision() == Revision)
+            {
+                return;
+            }
+            bool bPatched = false;
+            if (mirror.CanPatchFrom(Revision) && Copy.size() == mirror.GetProxies().size())
+            {
+                bPatched = true;
+                for (const uint32_t slot : mirror.GetChangedSlots())
+                {
+                    uint32_t position = 0;
+                    if (!mirror.TryGetPositionBySlot(slot, position))
+                    {
+                        bPatched = false;
+                        break;
+                    }
+                    Copy[position] = mirror.GetProxies()[position];
+                }
+            }
+            if (bPatched)
+            {
+                ++Patched;
+            }
+            else
+            {
+                Copy = mirror.GetProxies();
+                ++Rebuilt;
+            }
+            Revision = mirror.GetRevision();
+        }
+
+        bool Matches(const MegaGeometryMirror& mirror) const
+        {
+            const auto& source = mirror.GetProxies();
+            if (Copy.size() != source.size())
+            {
+                return false;
+            }
+            for (size_t index = 0; index < source.size(); ++index)
+            {
+                const MegaGeometryProxy& a = Copy[index];
+                const MegaGeometryProxy& b = source[index];
+                if (a.ObjectId != b.ObjectId || a.SceneSlot != b.SceneSlot || a.bCastShadow != b.bCastShadow ||
+                    std::memcmp(&a.WorldTransform, &b.WorldTransform, sizeof(a.WorldTransform)) != 0 ||
+                    std::memcmp(&a.PreviousWorldTransform, &b.PreviousWorldTransform,
+                                sizeof(a.PreviousWorldTransform)) != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    };
+
+    MegaGeometryProxy MakeMirrorProxy(uint64_t objectId, float x, float previousX, bool bCastShadow)
+    {
+        MegaGeometryProxy proxy;
+        proxy.ObjectId = objectId;
+        proxy.SceneSlot = static_cast<uint32_t>(objectId - 99);
+        proxy.bCastShadow = bCastShadow;
+        SetTranslationX(proxy.WorldTransform, x);
+        SetTranslationX(proxy.PreviousWorldTransform, previousX);
+        return proxy;
+    }
+
+    MegaSceneDelta MakeMirrorDelta(bool bBaseline, uint32_t size)
+    {
+        MegaSceneDelta delta;
+        delta.bActive = true;
+        delta.bBaseline = bBaseline;
+        delta.Size = size;
+        return delta;
+    }
+
+    void PushMirrorEntry(MegaSceneDelta& delta, uint32_t index, const MegaGeometryProxy& proxy)
+    {
+        delta.Indices.push_back(index);
+        delta.Proxies.push_back(proxy);
+    }
+
+    // 描画を見送った差分を挟んだあとの空の差分でも、変わった席を取り逃がさない（消費者が前に見た版から数える）
+    void TestMegaMirrorKeepsChangesAcrossSkippedDraw()
+    {
+        constexpr uint64_t generation = 3;
+        constexpr uint64_t objectA = 100, objectB = 101;
+        MegaGeometryMirror mirror;
+        MegaMirrorConsumer consumer;
+
+        // 影ありで描く
+        MegaSceneDelta delta = MakeMirrorDelta(true, 2);
+        PushMirrorEntry(delta, 0, MakeMirrorProxy(objectA, 0.0f, 0.0f, true));
+        PushMirrorEntry(delta, 1, MakeMirrorProxy(objectB, 5.0f, 5.0f, true));
+        assert(mirror.Apply(delta, generation));
+        mirror.NoteDrawn(false);
+        consumer.Sync(mirror);
+        assert(consumer.Matches(mirror));
+
+        // 影なしの差分を当てて見送り、空の差分で描く
+        delta = MakeMirrorDelta(false, 2);
+        PushMirrorEntry(delta, 0, MakeMirrorProxy(objectA, 0.0f, 0.0f, false));
+        assert(mirror.Apply(delta, generation));
+        assert(mirror.Apply(MakeMirrorDelta(false, 2), generation));
+        mirror.NoteDrawn(false);
+        consumer.Sync(mirror);
+        assert(!consumer.Copy[0].bCastShadow);
+        assert(consumer.Matches(mirror));
+        // 変わった席だけで直せた（全部の取り直しに落ちていない）
+        assert(consumer.Patched == 1 && consumer.Rebuilt == 1);
+
+        // 取り込んだあとの空の差分は、何も変えない
+        assert(mirror.Apply(MakeMirrorDelta(false, 2), generation));
+        mirror.NoteDrawn(false);
+        assert(mirror.GetChangedSlots().empty() && !mirror.AreAllChanged());
+        consumer.Sync(mirror);
+        assert(consumer.Patched == 1 && consumer.Rebuilt == 1 && consumer.Matches(mirror));
+
+        // 基準を当てて見送り、空の差分で描く: 全部が変わったまま残る
+        delta = MakeMirrorDelta(true, 2);
+        PushMirrorEntry(delta, 0, MakeMirrorProxy(objectA, 1.0f, 1.0f, true));
+        PushMirrorEntry(delta, 1, MakeMirrorProxy(objectB, 5.0f, 5.0f, true));
+        assert(mirror.Apply(delta, generation + 1));
+        assert(mirror.Apply(MakeMirrorDelta(false, 2), generation + 1));
+        mirror.NoteDrawn(false);
+        assert(mirror.AreAllChanged() && !mirror.CanPatchFrom(consumer.Revision));
+        consumer.Sync(mirror);
+        assert(consumer.Rebuilt == 2 && consumer.Matches(mirror));
+
+        // 版が離れた消費者（途中の版を見ていない）は、変わった席で直さず取り直す
+        delta = MakeMirrorDelta(false, 2);
+        PushMirrorEntry(delta, 1, MakeMirrorProxy(objectB, 9.0f, 5.0f, true));
+        assert(mirror.Apply(delta, generation + 1));
+        mirror.NoteDrawn(false);
+        MegaMirrorConsumer late;
+        late.Revision = consumer.Revision - 1;
+        late.Copy = consumer.Copy;
+        late.Sync(mirror);
+        assert(late.Rebuilt == 1 && late.Patched == 0 && late.Matches(mirror));
+    }
+
+    // 描画を見送ったあとの付け替えは、描いたフレームだけ。次のフレームで履歴が落ち着く席は消費者へ知らせる
+    void TestMegaMirrorRebaseLastsOnlyOneFrame()
+    {
+        constexpr uint64_t generation = 5;
+        constexpr uint64_t objectA = 100, objectB = 101;
+        MegaGeometryMirror mirror;
+        MegaMirrorConsumer consumer;
+        const auto previousX = [&](uint32_t index)
+        {
+            return GetTranslationX(mirror.GetProxies()[index].PreviousWorldTransform);
+        };
+
+        // フレーム 10: A=0 を描く
+        MegaSceneDelta delta = MakeMirrorDelta(true, 2);
+        PushMirrorEntry(delta, 0, MakeMirrorProxy(objectA, 0.0f, 0.0f, true));
+        PushMirrorEntry(delta, 1, MakeMirrorProxy(objectB, 50.0f, 50.0f, true));
+        assert(mirror.Apply(delta, generation));
+        mirror.NoteDrawn(false);
+        consumer.Sync(mirror);
+
+        // フレーム 11: A=10 を当てて見送る
+        delta = MakeMirrorDelta(false, 2);
+        PushMirrorEntry(delta, 0, MakeMirrorProxy(objectA, 10.0f, 0.0f, true));
+        assert(mirror.Apply(delta, generation));
+
+        // フレーム 12: 静止した A=10（GameThread の前の変換は 10）を描く。フレームが飛んだので、前の変換は 10 で描いた 0
+        delta = MakeMirrorDelta(false, 2);
+        PushMirrorEntry(delta, 0, MakeMirrorProxy(objectA, 10.0f, 10.0f, true));
+        assert(mirror.Apply(delta, generation));
+        mirror.NoteDrawn(true);
+        consumer.Sync(mirror);
+        assert(previousX(0) == 0.0f && previousX(1) == 50.0f);
+        assert(consumer.Matches(mirror));
+
+        // フレーム 13: 空の差分で描く。付け替えは 12 だけなので、前の変換は GameThread の 10 に戻り、消費者へ知らせる
+        assert(mirror.Apply(MakeMirrorDelta(false, 2), generation));
+        mirror.NoteDrawn(false);
+        assert(previousX(0) == 10.0f);
+        assert(mirror.CanPatchFrom(consumer.Revision) && !mirror.GetChangedSlots().empty());
+        const uint32_t rebuiltBefore = consumer.Rebuilt;
+        consumer.Sync(mirror);
+        assert(GetTranslationX(consumer.Copy[0].PreviousWorldTransform) == 10.0f);
+        assert(consumer.Rebuilt == rebuiltBefore && consumer.Matches(mirror));
+
+        // フレーム 14: また飛んで描く。静止した A は 12 で描いた位置 10 のまま（落ち着いた席は付け替えない）
+        assert(mirror.Apply(MakeMirrorDelta(false, 2), generation));
+        mirror.NoteDrawn(true);
+        consumer.Sync(mirror);
+        assert(previousX(0) == 10.0f && previousX(1) == 50.0f);
+        assert(consumer.Matches(mirror));
+
+        // 付け替えた席が次の差分で書き換わるときは、差分の値が勝つ（B を見送って動かし、飛んで描く → 次の差分で動かす）
+        delta = MakeMirrorDelta(false, 2);
+        PushMirrorEntry(delta, 1, MakeMirrorProxy(objectB, 60.0f, 50.0f, true));
+        assert(mirror.Apply(delta, generation));
+        delta = MakeMirrorDelta(false, 2);
+        PushMirrorEntry(delta, 1, MakeMirrorProxy(objectB, 70.0f, 60.0f, true));
+        assert(mirror.Apply(delta, generation));
+        mirror.NoteDrawn(true);
+        consumer.Sync(mirror);
+        assert(previousX(1) == 50.0f && consumer.Matches(mirror));
+        delta = MakeMirrorDelta(false, 2);
+        PushMirrorEntry(delta, 1, MakeMirrorProxy(objectB, 80.0f, 70.0f, true));
+        assert(mirror.Apply(delta, generation));
+        mirror.NoteDrawn(false);
+        consumer.Sync(mirror);
+        assert(previousX(1) == 70.0f && consumer.Matches(mirror));
+    }
 }
 
 
@@ -1205,6 +1426,8 @@ int main()
     TestDeltaSyncVerifyDetectsMissedNotification();
     TestLegacyRenderSyncSwitch();
     TestInvisibleSkinnedMeshIsNotChangedEveryFrame();
+    TestMegaMirrorKeepsChangesAcrossSkippedDraw();
+    TestMegaMirrorRebaseLastsOnlyOneFrame();
 
     std::cout << "WorldSyncDifferentialTest passed\n";
     return 0;

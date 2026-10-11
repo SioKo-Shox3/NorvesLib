@@ -1636,3 +1636,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - テスト（`SceneQueryRaycastTest` の束、新しい実行ファイルは足していない）: `TestIncrementalUpdateSurvivesQueryDestroyedBeforeOldWorldRows`（World A・B を生かしたまま Update(A)→Update(B)→Clear→SceneQuery 破棄→A・B の Entity を削除）、`TestEcsColumnHooksReleaseUser`（差し替え・解除・EcsWorld の破棄で手放しが 1 度ずつ）。
 - 結果（`.harness/runs/20261011-130759/`）: `verify-SCN-ECS-FIX-SCENEQUERY-HOOKS-1.txt` Debug の SceneQueryRaycastTest ビルド成功、`-2.txt` 4 テスト 4/4 Passed、`-3.txt` mega-stress の撮影 `result=pass`・`ECS_SCENEQUERY pass=3 fail=0`。
 - Notes: SCN-ECS-SCENEQUERY を done にした（残りの指摘はこの 1 点だけだった）。切り替えた前の World に登録した変更ログの消費者は、その World が消えるまで残る（古い World は触れないため）。行末は numstat の 2 通りが一致。TASKS.md は誤って LF にしかけたので CRLF に戻した。
+
+### SCN-MEGA-FIX-DELTA-SKIP（2026-10-11、反復 4・run 20261011-130759）
+
+- 変更:
+  - `MegaGeometryMirror`: 変わった席を、消費者が取り込む（`NoteDrawn` を通る）まで溜める。取り込んだあとの最初の `Apply` で数え直し、数え始めた版を `GetChangedBaseRevision()` で出す。`CanPatchFrom(消費者が前に見た版)` が true のとき（全部が変わった扱いでなく、見た版から数えているとき）だけ、変わった席で直せる。描画を見送った差分や空の差分を挟んでも席を取り逃がさない。
+  - 前の変換の付け替えをフレーム限定にした。`NoteDrawn(true)` が付け替えた席は GameThread の値を覚え、次の `Apply`（または `NoteDrawn`）の頭で戻して、変わった席に入れ、版を進める。静止した物体の前の変換が、付け替えのまま残らない。
+  - `MegaGeometryPass::Setup`: 作り直しの省略の条件を `版 == 前回 + 1` から `mirror.CanPatchFrom(前回の版)` へ。
+- テスト（`WorldSyncDifferentialTest`、新しい実行ファイルは足していない）: `TestMegaMirrorKeepsChangesAcrossSkippedDraw`（影ありで描画 → 影なしを適用して見送り → 空の差分で描画。基準を見送った場合・版が離れた消費者も）、`TestMegaMirrorRebaseLastsOnlyOneFrame`（10 で x=0 → 11 見送り → 12 静止 x=10 を描画 → 13 空の差分で前の変換が 10）。消費者の模型は、変わった席で直せるときは直し、直せないときは取り直す。
+- 結果（`.harness/runs/20261011-130759/`）: `verify-SCN-MEGA-FIX-DELTA-SKIP-1.txt` Debug の WorldSyncDifferentialTest ビルド exit=0、`-2.txt` ctest 1/1 Passed、`-3.txt` 起動画面の決定論比較 `result=pass`（default の psnr 100 dB、基準 SCN-MEGA-BASE-RWDI と同水準）。
+- Notes:
+  - SCN-MEGA-SCENE-DELTA を done にした（評価の 2 周目の指摘 2・3 はこの項目で解消。1 は前の反復で消費者を写しへ切り替え済み）。
+  - 変わった席は「消費者が前に見た版から今まで」の累積になった。GPU の表を散布で書き換える項目（GPU-SCENE-*）は、`mirror.CanPatchFrom(前回見た版)` が false なら全部が変わったものとして扱うこと（前の Notes の「版が 1 より大きく進んだら」は、この判定に置き換わる）。
+  - 付け替えの戻しは、付け替えた席の `Index` と `ObjectId` が同じときだけ行う。同じフレームで差分が席を書き換えるなら、差分の値が勝つ。
+  - 行末: 編集したファイルは numstat の 2 通りが一致するか確認する（混在ファイルは行ごとに保った）。

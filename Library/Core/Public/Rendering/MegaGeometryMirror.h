@@ -44,6 +44,9 @@ namespace NorvesLib::Core::Rendering
             m_ChangedSlots.clear();
             m_PositionBySlot.clear();
             m_bAllChanged = false;
+            m_bChangedConsumed = true;
+            m_ChangedBaseRevision = 0;
+            m_Rebased.clear();
             m_DrawnWorlds.clear();
             m_PendingPositions.clear();
             m_PendingRemoved.clear();
@@ -65,11 +68,15 @@ namespace NorvesLib::Core::Rendering
          *
          * 前の変換（PreviousWorldTransform）は GameThread が書いた値のまま持つ。描画がゲームのフレームを飛ばしたときの
          * 付け替えは、描くときに NoteDrawn が行う（当てただけで描かなかった差分では、描いた変換の履歴を動かさない）。
+         * 前のフレームの付け替えは、ここで GameThread の値へ戻す（付け替えは描いたフレームだけ）。
+         *
+         * 変わった席は、消費者が取り込む（NoteDrawn の後に読む）まで溜める。描画を見送った差分や空の差分を挟んでも、
+         * 消費者が前に見た版から今までの変わった席を取り逃がさない。
          */
         bool Apply(const MegaSceneDelta& delta, uint64_t sceneGeneration)
         {
-            m_ChangedSlots.clear();
-            m_bAllChanged = false;
+            BeginChangeAccumulation();
+            SettleRebased();
             m_LastEntryCount = 0;
             if (!delta.bActive)
             {
@@ -175,13 +182,16 @@ namespace NorvesLib::Core::Rendering
          */
         void NoteDrawn(bool bRebase)
         {
+            // 前のフレームの付け替えが残っていれば戻す（Apply を通らずに描くときの備え）
+            BeginChangeAccumulation();
+            SettleRebased();
             if (bRebase)
             {
                 if (m_bPendingAll)
                 {
-                    for (MegaGeometryProxy& proxy : m_Proxies)
+                    for (uint32_t index = 0; index < static_cast<uint32_t>(m_Proxies.size()); ++index)
                     {
-                        RebaseProxy(proxy);
+                        RebaseProxy(index);
                     }
                 }
                 else
@@ -190,7 +200,7 @@ namespace NorvesLib::Core::Rendering
                     {
                         if (index < m_Proxies.size())
                         {
-                            RebaseProxy(m_Proxies[index]);
+                            RebaseProxy(index);
                         }
                     }
                 }
@@ -221,6 +231,8 @@ namespace NorvesLib::Core::Rendering
             m_PendingPositions.clear();
             m_PendingRemoved.clear();
             m_bPendingAll = false;
+            // これから消費者が読む。次の Apply で、溜めた変わった席を捨てて数え直す
+            m_bChangedConsumed = true;
         }
 
         /** @brief 写しの配列（GameThread の SceneView と同じ並び。席のない位置はない） */
@@ -242,12 +254,24 @@ namespace NorvesLib::Core::Rendering
             return TryGetPositionBySlot(slot, position) ? &m_Proxies[position] : nullptr;
         }
         /**
-         * @brief 最後に当てた差分で変わった席（SceneSlot。昇順・重複なし）。AreAllChanged のときは空で、全部が変わった
+         * @brief GetChangedBaseRevision の版から今までに変わった席（SceneSlot。昇順・重複なし）。AreAllChanged のときは空で、全部が変わった
          *
          * 席を持たない proxy（SceneSlot が 0）が変わったときは席で数えられないので、全部が変わったものとして扱う。
+         * 消費者が取り込んだ（NoteDrawn を通った）あとの最初の Apply で数え直すので、描画を見送った差分の席も残る。
          */
         [[nodiscard]] const Container::VariableArray<uint32_t>& GetChangedSlots() const { return m_ChangedSlots; }
         [[nodiscard]] bool AreAllChanged() const { return m_bAllChanged; }
+        /** @brief GetChangedSlots が数え始めた版。消費者が前に見た版がこれと同じときだけ、変わった席で直せる */
+        [[nodiscard]] uint64_t GetChangedBaseRevision() const { return m_ChangedBaseRevision; }
+        /**
+         * @brief 消費者が前に見た版（consumerRevision）から今までの変更が、変わった席だけで直せるか
+         *
+         * false のときは全部を作り直す（全部が変わった・消費者が見た版から数えていない）。
+         */
+        [[nodiscard]] bool CanPatchFrom(uint64_t consumerRevision) const
+        {
+            return !m_bAllChanged && consumerRevision == m_ChangedBaseRevision;
+        }
         /** @brief 基準を当てたとき・配列が変わる差分を当てたときに進む（何も変えない差分では進まない） */
         [[nodiscard]] uint64_t GetRevision() const { return m_Revision; }
         [[nodiscard]] uint64_t GetGeneration() const { return m_Generation; }
@@ -302,6 +326,42 @@ namespace NorvesLib::Core::Rendering
         [[nodiscard]] uint32_t GetLastEntryCount() const { return m_LastEntryCount; }
 
     private:
+        // 消費者が取り込んだあとなら、変わった席を捨てて、今の版から数え直す
+        void BeginChangeAccumulation()
+        {
+            if (m_bChangedConsumed)
+            {
+                m_ChangedSlots.clear();
+                m_bAllChanged = false;
+                m_ChangedBaseRevision = m_Revision;
+                m_bChangedConsumed = false;
+            }
+        }
+
+        // 前のフレームの付け替えを GameThread の値へ戻す。戻した席は、消費者へ変わった席として知らせる
+        void SettleRebased()
+        {
+            if (m_Rebased.empty())
+            {
+                return;
+            }
+            for (const RebasedEntry& entry : m_Rebased)
+            {
+                if (entry.Index < m_Proxies.size() && m_Proxies[entry.Index].ObjectId == entry.ObjectId)
+                {
+                    m_Proxies[entry.Index].PreviousWorldTransform = entry.Original;
+                    NoteChangedSlot(m_Proxies[entry.Index].SceneSlot);
+                }
+            }
+            m_Rebased.clear();
+            if (!m_bAllChanged && !m_ChangedSlots.empty())
+            {
+                std::sort(m_ChangedSlots.begin(), m_ChangedSlots.end());
+                m_ChangedSlots.erase(std::unique(m_ChangedSlots.begin(), m_ChangedSlots.end()), m_ChangedSlots.end());
+            }
+            ++m_Revision;
+        }
+
         // 席を持たない proxy（SceneSlot が 0）が変わったら、席の一覧では数えられないので全部が変わった扱いにする
         void NoteChangedSlot(uint32_t slot)
         {
@@ -363,10 +423,22 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        void RebaseProxy(MegaGeometryProxy& proxy) const
+        // 値が変わるときだけ、GameThread の値を覚えて付け替える（次の Apply で戻す）
+        void RebaseProxy(uint32_t index)
         {
+            MegaGeometryProxy& proxy = m_Proxies[index];
             const auto found = proxy.ObjectId != 0 ? m_DrawnWorlds.find(proxy.ObjectId) : m_DrawnWorlds.end();
-            proxy.PreviousWorldTransform = found != m_DrawnWorlds.end() ? found->second : proxy.WorldTransform;
+            const Math::Matrix4x4 rebased = found != m_DrawnWorlds.end() ? found->second : proxy.WorldTransform;
+            if (std::memcmp(&rebased, &proxy.PreviousWorldTransform, sizeof(Math::Matrix4x4)) == 0)
+            {
+                return;
+            }
+            RebasedEntry entry;
+            entry.Index = index;
+            entry.ObjectId = proxy.ObjectId;
+            entry.Original = proxy.PreviousWorldTransform;
+            m_Rebased.push_back(entry);
+            proxy.PreviousWorldTransform = rebased;
         }
 
         void RecordDrawn(const MegaGeometryProxy& proxy)
@@ -377,8 +449,20 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // 描くときに付け替えた前の変換の、GameThread の値（次の Apply で戻す。付け替えはフレーム限定）
+        struct RebasedEntry
+        {
+            uint32_t Index = 0;
+            uint64_t ObjectId = 0;
+            Math::Matrix4x4 Original;
+        };
+
         Container::VariableArray<MegaGeometryProxy> m_Proxies;
         Container::VariableArray<uint32_t> m_ChangedSlots;
+        Container::VariableArray<RebasedEntry> m_Rebased;
+        // 変わった席を消費者が取り込んだか（true のとき、次の Apply で数え直す）と、数え始めた版
+        bool m_bChangedConsumed = true;
+        uint64_t m_ChangedBaseRevision = 0;
         // 席（SceneSlot）→ 配列の位置 + 1（0 は無し）
         Container::VariableArray<uint32_t> m_PositionBySlot;
         // 最後に描いたフレームの変換（ObjectId ごと）。当てただけで描かなかった差分では動かさない
