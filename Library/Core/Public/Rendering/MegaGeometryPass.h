@@ -752,6 +752,10 @@ namespace NorvesLib::Core::Rendering
 
         // フレーム単位のインスタンスリスト
         Container::VariableArray<MegaMeshInstance> m_Instances;
+        // m_Instances を作った時点の RenderThread の写しの版と配列。差分の同期で写しが変わらないフレームは作り直さない
+        // （0 / nullptr は、写しから作ったのではない）
+        uint64_t m_InstanceSourceRevision = 0;
+        const void *m_InstanceSourceProxies = nullptr;
 
         // VSM の投影物のカリングの入力（Setup で無効に戻り、記録がバッファを書けたときに有効になる）
         MegaGeometryShadowCasterInputs m_ShadowCasterInputs;

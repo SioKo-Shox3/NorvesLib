@@ -33,6 +33,7 @@
 #include "Math/MatrixUtils.h"
 #include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -462,12 +463,14 @@ namespace NorvesLib::Core::Rendering
         if (indexIt != m_MegaGeometryProxyIndex.end())
         {
             m_MegaGeometryProxies[indexIt->second] = proxy;
+            NoteMegaChanged(indexIt->second);
             return;
         }
 
         const uint32_t index = static_cast<uint32_t>(m_MegaGeometryProxies.size());
         m_MegaGeometryProxies.push_back(proxy);
         m_MegaGeometryProxyIndex[proxy.ObjectId] = index;
+        NoteMegaChanged(index);
     }
 
     void SceneView::RemoveLightProxy(uint64_t objectId)
@@ -530,6 +533,7 @@ namespace NorvesLib::Core::Rendering
         {
             m_MegaGeometryProxies[removeIndex] = m_MegaGeometryProxies[lastIndex];
             m_MegaGeometryProxyIndex[m_MegaGeometryProxies[removeIndex].ObjectId] = removeIndex;
+            NoteMegaChanged(removeIndex);
         }
 
         m_MegaGeometryProxies.pop_back();
@@ -553,6 +557,7 @@ namespace NorvesLib::Core::Rendering
             {
                 m_MegaGeometryProxies[index] = m_MegaGeometryProxies[lastIndex];
                 m_MegaGeometryProxyIndex[m_MegaGeometryProxies[index].ObjectId] = index;
+                NoteMegaChanged(index);
             }
             m_MegaGeometryProxies.pop_back();
         }
@@ -590,10 +595,87 @@ namespace NorvesLib::Core::Rendering
         if (indexIt != m_MegaGeometryProxyIndex.end())
         {
             m_MegaGeometryProxies[indexIt->second] = proxy;
+            NoteMegaChanged(indexIt->second);
             return;
         }
 
         AddMegaGeometryProxy(proxy);
+    }
+
+    void SceneView::NoteMegaChanged(uint32_t index)
+    {
+        if (m_bMegaFullSync)
+        {
+            return;
+        }
+        m_MegaChangedIndices.push_back(index);
+        if (m_MegaChangedIndices.size() > m_MegaGeometryProxies.size() * 4u + 4096u)
+        {
+            std::sort(m_MegaChangedIndices.begin(), m_MegaChangedIndices.end());
+            m_MegaChangedIndices.erase(std::unique(m_MegaChangedIndices.begin(), m_MegaChangedIndices.end()),
+                                       m_MegaChangedIndices.end());
+        }
+    }
+
+    const MegaGeometryProxy *SceneView::FindMegaGeometryProxy(uint64_t objectId) const
+    {
+        const auto indexIt = m_MegaGeometryProxyIndex.find(objectId);
+        return indexIt != m_MegaGeometryProxyIndex.end() ? &m_MegaGeometryProxies[indexIt->second] : nullptr;
+    }
+
+    namespace
+    {
+        bool SameMegaTransformBits(const Math::Matrix4x4 &lhs, const Math::Matrix4x4 &rhs)
+        {
+            return std::memcmp(&lhs, &rhs, sizeof(Math::Matrix4x4)) == 0;
+        }
+    } // namespace
+
+    void SceneView::PublishMegaGeometryProxy(const MegaGeometryProxy &proxy)
+    {
+        MegaGeometryProxy next = proxy;
+        const auto indexIt = m_MegaGeometryProxyIndex.find(proxy.ObjectId);
+        next.PreviousWorldTransform = indexIt != m_MegaGeometryProxyIndex.end()
+                                          ? m_MegaGeometryProxies[indexIt->second].WorldTransform
+                                          : next.WorldTransform;
+        UpdateMegaGeometryProxy(next);
+        if (!SameMegaTransformBits(next.PreviousWorldTransform, next.WorldTransform))
+        {
+            m_MegaUnsettledObjects.push_back(next.ObjectId);
+        }
+    }
+
+    void SceneView::BeginMegaGeometrySync()
+    {
+        for (const uint64_t objectId : m_MegaUnsettledObjects)
+        {
+            const auto indexIt = m_MegaGeometryProxyIndex.find(objectId);
+            if (indexIt == m_MegaGeometryProxyIndex.end())
+            {
+                continue;
+            }
+            MegaGeometryProxy &proxy = m_MegaGeometryProxies[indexIt->second];
+            if (!SameMegaTransformBits(proxy.PreviousWorldTransform, proxy.WorldTransform))
+            {
+                proxy.PreviousWorldTransform = proxy.WorldTransform;
+                NoteMegaChanged(indexIt->second);
+            }
+        }
+        m_MegaUnsettledObjects.clear();
+    }
+
+    void SceneView::TakeMegaGeometryChangedIndices(Container::VariableArray<uint32_t> &outIndices)
+    {
+        outIndices.clear();
+        if (m_MegaChangedIndices.empty())
+        {
+            return;
+        }
+        std::sort(m_MegaChangedIndices.begin(), m_MegaChangedIndices.end());
+        m_MegaChangedIndices.erase(std::unique(m_MegaChangedIndices.begin(), m_MegaChangedIndices.end()),
+                                   m_MegaChangedIndices.end());
+        outIndices.assign(m_MegaChangedIndices.begin(), m_MegaChangedIndices.end());
+        m_MegaChangedIndices.clear();
     }
 
     void SceneView::ClearAllProxies()
@@ -607,6 +689,8 @@ namespace NorvesLib::Core::Rendering
         m_SkinnedMeshProxyIndex.clear();
         m_BoardProxyIndex.clear();
         m_MegaGeometryProxyIndex.clear();
+        m_MegaChangedIndices.clear();
+        m_MegaUnsettledObjects.clear();
         m_LightProxyIndex.clear();
         m_VisibleMeshProxies.clear();
         m_VisibleBoardProxies.clear();
@@ -617,6 +701,8 @@ namespace NorvesLib::Core::Rendering
     {
         m_MegaGeometryProxies.clear();
         m_MegaGeometryProxyIndex.clear();
+        m_MegaChangedIndices.clear();
+        m_MegaUnsettledObjects.clear();
         AdvanceSceneGeneration();
     }
 

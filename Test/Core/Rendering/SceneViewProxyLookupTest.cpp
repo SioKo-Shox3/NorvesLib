@@ -1,6 +1,7 @@
 ﻿#include "Rendering/SceneView.h"
 #include "Container/UnorderedSet.h"
 #include <cassert>
+#include <cstring>
 #include <iostream>
 
 using namespace NorvesLib::Core;
@@ -402,6 +403,103 @@ namespace
 
         view.Shutdown();
     }
+
+    bool SamePreviousAndWorld(const MegaGeometryProxy& proxy)
+    {
+        return std::memcmp(&proxy.PreviousWorldTransform, &proxy.WorldTransform, sizeof(proxy.WorldTransform)) == 0;
+    }
+
+    // 差分の同期の土台: 書いた位置の記録（取り出し・外したときの末尾の移動・クリア・全量の同期）と、前の変換の履歴
+    void TestMegaGeometryDeltaTracking()
+    {
+        SceneView view;
+        SceneViewSettings settings;
+        assert(view.Initialize(settings));
+
+        Container::VariableArray<uint32_t> taken;
+        for (uint64_t i = 1; i <= 4; ++i)
+        {
+            view.PublishMegaGeometryProxy(MakeMegaGeometryProxy(i, i + 10));
+        }
+        view.TakeMegaGeometryChangedIndices(taken);
+        assert(taken.size() == 4 && taken[0] == 0 && taken[1] == 1 && taken[2] == 2 && taken[3] == 3);
+        view.TakeMegaGeometryChangedIndices(taken);
+        assert(taken.empty());
+        // 新しい proxy の前の変換は今の変換
+        assert(SamePreviousAndWorld(*view.FindMegaGeometryProxy(2)));
+
+        // 動いた proxy は、前回公開した変換が前の変換になる。次の同期の最初に揃う
+        MegaGeometryProxy moved = MakeMegaGeometryProxy(2, 12);
+        moved.WorldTransform.values[12] = 5.0f;
+        view.PublishMegaGeometryProxy(moved);
+        const MegaGeometryProxy* found = view.FindMegaGeometryProxy(2);
+        assert(found->WorldTransform.values[12] == 5.0f);
+        assert(found->PreviousWorldTransform.values[12] == 0.0f);
+        assert(!SamePreviousAndWorld(*found));
+        view.TakeMegaGeometryChangedIndices(taken);
+        assert(taken.size() == 1 && taken[0] == 1);
+
+        view.BeginMegaGeometrySync();
+        assert(SamePreviousAndWorld(*view.FindMegaGeometryProxy(2)));
+        view.TakeMegaGeometryChangedIndices(taken);
+        assert(taken.size() == 1 && taken[0] == 1);
+        view.BeginMegaGeometrySync();
+        view.TakeMegaGeometryChangedIndices(taken);
+        assert(taken.empty());
+
+        // 同期の最初に揃えてから動かすと、前の変換は前回の同期の変換になる（毎フレーム動く proxy）
+        MegaGeometryProxy movedAgain = moved;
+        movedAgain.WorldTransform.values[12] = 9.0f;
+        view.PublishMegaGeometryProxy(movedAgain);
+        assert(view.FindMegaGeometryProxy(2)->PreviousWorldTransform.values[12] == 5.0f);
+        view.BeginMegaGeometrySync();
+        MegaGeometryProxy movedThird = moved;
+        movedThird.WorldTransform.values[12] = 12.0f;
+        view.PublishMegaGeometryProxy(movedThird);
+        assert(view.FindMegaGeometryProxy(2)->PreviousWorldTransform.values[12] == 9.0f);
+        view.TakeMegaGeometryChangedIndices(taken);
+
+        // 外すと、末尾の proxy が外した位置へ入る。外した位置だけが書かれる（末尾の消えた位置は配列の大きさが運ぶ）
+        view.RemoveMegaGeometryProxy(1);
+        assert(view.GetMegaGeometryProxies().size() == 3);
+        assert(view.GetMegaGeometryProxies()[0].ObjectId == 4);
+        view.TakeMegaGeometryChangedIndices(taken);
+        assert(taken.size() == 1 && taken[0] == 0);
+        // 末尾を外しても書かれる位置は無い
+        view.RemoveMegaGeometryProxy(3);
+        view.TakeMegaGeometryChangedIndices(taken);
+        assert(taken.empty() && view.GetMegaGeometryProxies().size() == 2);
+
+        // 生存集合での外し（全量の同期・旧の全走査）も位置を記録する
+        view.PublishMegaGeometryProxy(MakeMegaGeometryProxy(7, 17));
+        view.TakeMegaGeometryChangedIndices(taken);
+        Container::UnorderedSet<uint64_t> live;
+        live.insert(7);
+        view.RemoveStaleMegaGeometryProxies(live);
+        assert(view.GetMegaGeometryProxies().size() == 1 && view.GetMegaGeometryProxies()[0].ObjectId == 7);
+        view.TakeMegaGeometryChangedIndices(taken);
+        assert(taken.size() == 1 && taken[0] == 0);
+
+        // クリアは世代を進め、記録を捨てる
+        view.PublishMegaGeometryProxy(MakeMegaGeometryProxy(8, 18));
+        const uint64_t generationBefore = view.GetSceneGeneration();
+        view.ClearMegaGeometryProxies();
+        assert(view.GetSceneGeneration() == generationBefore + 1);
+        view.TakeMegaGeometryChangedIndices(taken);
+        assert(taken.empty());
+
+        // 全量の同期（--mega-scene-full-sync）は位置を記録しない（パケットが全量を写す）
+        view.SetMegaFullSync(true);
+        assert(view.IsMegaFullSync());
+        for (uint64_t i = 1; i <= 3; ++i)
+        {
+            view.UpdateMegaGeometryProxy(MakeMegaGeometryProxy(i, i + 20));
+        }
+        view.TakeMegaGeometryChangedIndices(taken);
+        assert(taken.empty() && view.GetMegaGeometryProxies().size() == 3);
+
+        view.Shutdown();
+    }
 }
 
 int main()
@@ -413,6 +511,7 @@ int main()
     TestMeshVisibleCacheInvalidation();
     TestLightProxyLookup();
     TestMegaGeometryProxyLookup();
+    TestMegaGeometryDeltaTracking();
 
     std::cout << "SceneViewProxyLookupTest passed\n";
     return 0;

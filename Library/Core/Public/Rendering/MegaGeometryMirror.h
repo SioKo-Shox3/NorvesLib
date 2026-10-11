@@ -1,0 +1,303 @@
+﻿// MegaGeometry の proxy 配列を、GameThread から RenderThread へ差分で運ぶための送り手と写し。
+// 送り手（GameThread）は SceneView の配列の変化した位置だけをパケットへ積み、確認されていない送信の分も積み直す。
+// 写し（RenderThread）は適用したパケットの差分を当てて、GameThread の配列と同じ並びの配列を持つ。
+#pragma once
+
+#include "Rendering/FramePacket.h"
+#include "Rendering/SceneProxy.h"
+#include "Rendering/SceneProxyHash.h"
+#include "Container/Containers.h"
+#include "Math/Matrix4x4.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+
+namespace NorvesLib::Core::Rendering
+{
+    /** @brief proxy 配列の内容の hash（検査用。並びに依存する。前の変換と席は含めない） */
+    inline uint64_t HashMegaGeometryContent(const Container::VariableArray<MegaGeometryProxy>& proxies)
+    {
+        uint64_t hash = 14695981039346656037ull;
+        for (const MegaGeometryProxy& proxy : proxies)
+        {
+            MegaGeometryProxy normalized = proxy;
+            normalized.PreviousWorldTransform = normalized.WorldTransform;
+            hash = (hash ^ HashProxy(normalized)) * 1099511628211ull;
+        }
+        return hash ^ static_cast<uint64_t>(proxies.size());
+    }
+
+    /**
+     * @brief RenderThread の MegaGeometry の写し
+     *
+     * 適用したパケットの差分（MegaSceneDelta）を当て、GameThread の SceneView と同じ並びの配列を持つ。
+     * 消費者（MegaGeometryPass・ShadowMapPass）はこの配列を読み、変わった席（SceneSlot）の一覧で GPU の表を更新できる。
+     * 描画するスレッドだけが触る。
+     */
+    class MegaGeometryMirror
+    {
+    public:
+        void Reset()
+        {
+            m_Proxies.clear();
+            m_ChangedSlots.clear();
+            m_bAllChanged = false;
+            m_Generation = 0;
+            m_Revision = 0;
+            m_RejectedCount = 0;
+            m_LastEntryCount = 0;
+            m_VerifyChecked.Store(0);
+            m_VerifyMismatched.Store(0);
+        }
+
+        /**
+         * @brief 差分を当てる
+         * @param delta 適用したパケットの差分
+         * @param sceneGeneration そのパケットのシーンの世代
+         * @param bRebaseOnGap true のとき、変わった proxy の前の変換を写しにあった変換へ付け替える
+         *        （描画がゲームのフレームを飛ばして TAA の履歴の基準が最後に描いたフレームのとき）
+         * @return 当てたとき true。世代が合わない差分（基準でない）は当てずに false
+         */
+        bool Apply(const MegaSceneDelta& delta, uint64_t sceneGeneration, bool bRebaseOnGap)
+        {
+            m_ChangedSlots.clear();
+            m_bAllChanged = false;
+            m_LastEntryCount = 0;
+            if (!delta.bActive)
+            {
+                return false;
+            }
+            if (delta.bBaseline)
+            {
+                m_Proxies.clear();
+                m_Generation = sceneGeneration;
+                m_bAllChanged = true;
+            }
+            else if (m_Generation != sceneGeneration)
+            {
+                ++m_RejectedCount;
+                return false;
+            }
+
+            const size_t sizeBefore = delta.bBaseline ? 0 : m_Proxies.size();
+
+            // 末尾を切る（外した proxy の席は変わった席として知らせる）
+            if (delta.Size < m_Proxies.size())
+            {
+                if (!m_bAllChanged)
+                {
+                    for (size_t index = delta.Size; index < m_Proxies.size(); ++index)
+                    {
+                        NoteSlot(m_Proxies[index].SceneSlot);
+                    }
+                }
+                m_Proxies.resize(delta.Size);
+            }
+            else if (delta.Size > m_Proxies.size())
+            {
+                m_Proxies.resize(delta.Size);
+            }
+
+            const size_t count = std::min(delta.Indices.size(), delta.Proxies.size());
+            for (size_t entry = 0; entry < count; ++entry)
+            {
+                const uint32_t index = delta.Indices[entry];
+                if (index >= m_Proxies.size())
+                {
+                    continue;
+                }
+                MegaGeometryProxy incoming = delta.Proxies[entry];
+                MegaGeometryProxy& slot = m_Proxies[index];
+                const bool bSameComponent = slot.ComponentId == incoming.ComponentId && slot.ComponentId != 0;
+                if (!m_bAllChanged)
+                {
+                    // 位置の中身が替わった（席が替わる・外れる）ときは、前の席も変わった席にする
+                    NoteSlot(slot.SceneSlot);
+                    NoteSlot(incoming.SceneSlot);
+                }
+                if (bRebaseOnGap)
+                {
+                    incoming.PreviousWorldTransform =
+                        bSameComponent && std::memcmp(&slot.WorldTransform, &incoming.WorldTransform, sizeof(Math::Matrix4x4)) != 0
+                            ? slot.WorldTransform
+                            : incoming.WorldTransform;
+                }
+                slot = incoming;
+            }
+            m_LastEntryCount = static_cast<uint32_t>(count);
+
+            if (!m_ChangedSlots.empty())
+            {
+                std::sort(m_ChangedSlots.begin(), m_ChangedSlots.end());
+                m_ChangedSlots.erase(std::unique(m_ChangedSlots.begin(), m_ChangedSlots.end()), m_ChangedSlots.end());
+            }
+            // 版は、配列が変わったときだけ進める（何も運ばなかった差分では進めない。消費者が作り直しを省ける）
+            if (delta.bBaseline || sizeBefore != m_Proxies.size() || count > 0)
+            {
+                ++m_Revision;
+            }
+            return true;
+        }
+
+        /** @brief 写しの配列（GameThread の SceneView と同じ並び。席のない位置はない） */
+        [[nodiscard]] const Container::VariableArray<MegaGeometryProxy>& GetProxies() const { return m_Proxies; }
+        /** @brief 最後に当てた差分で変わった席（SceneSlot。昇順・重複なし）。AreAllChanged のときは空で、全部が変わった */
+        [[nodiscard]] const Container::VariableArray<uint32_t>& GetChangedSlots() const { return m_ChangedSlots; }
+        [[nodiscard]] bool AreAllChanged() const { return m_bAllChanged; }
+        /** @brief 基準を当てたとき・配列が変わる差分を当てたときに進む（何も変えない差分では進まない） */
+        [[nodiscard]] uint64_t GetRevision() const { return m_Revision; }
+        [[nodiscard]] uint64_t GetGeneration() const { return m_Generation; }
+        /** @brief 世代が合わず当てなかった差分の数 */
+        [[nodiscard]] uint64_t GetRejectedCount() const { return m_RejectedCount; }
+
+        /**
+         * @brief 検査 MEGA_SCENE_DELTA: 差分を当てた写しの hash が、送った時点の GameThread の配列の hash と一致するか
+         *
+         * RenderThread が Apply の直後に呼ぶ。結果は atomic で公開し、GameThread が読む。
+         */
+        bool Verify(const MegaSceneDelta& delta)
+        {
+            if (!delta.bVerify)
+            {
+                return true;
+            }
+            const bool bSame = HashMegaGeometryContent(m_Proxies) == delta.VerifyHash && m_Proxies.size() == delta.Size;
+            m_VerifyChecked.FetchAdd(1);
+            if (!bSame)
+            {
+                m_VerifyMismatched.FetchAdd(1);
+            }
+            return bSame;
+        }
+
+        /** @brief 照合した回数（どのスレッドからでも読める） */
+        [[nodiscard]] uint64_t GetVerifyCheckedCount() const { return m_VerifyChecked.Load(); }
+        /** @brief 照合して食い違った回数 */
+        [[nodiscard]] uint64_t GetVerifyMismatchedCount() const { return m_VerifyMismatched.Load(); }
+        /** @brief 最後に当てた差分の proxy の数 */
+        [[nodiscard]] uint32_t GetLastEntryCount() const { return m_LastEntryCount; }
+
+    private:
+        void NoteSlot(uint32_t slot)
+        {
+            if (slot != 0)
+            {
+                m_ChangedSlots.push_back(slot);
+            }
+        }
+
+        Container::VariableArray<MegaGeometryProxy> m_Proxies;
+        Container::VariableArray<uint32_t> m_ChangedSlots;
+        bool m_bAllChanged = false;
+        uint64_t m_Generation = 0;
+        uint64_t m_Revision = 0;
+        uint64_t m_RejectedCount = 0;
+        uint32_t m_LastEntryCount = 0;
+        Thread::Atomic<uint64_t> m_VerifyChecked{0};
+        Thread::Atomic<uint64_t> m_VerifyMismatched{0};
+    };
+
+    /**
+     * @brief GameThread の MegaGeometry の差分の送り手
+     *
+     * パケットを作るたびに Build でパケットの差分を書き、送り終えたら NoteSent で台帳へ記録する。
+     * 差分は、RenderThread が確認した番号より後の送信の変化をすべて積み直す累積（PacketDeltaLedger）なので、
+     * RenderThread に飛ばされたパケットがあっても、何回当たっても写しは GameThread の配列と一致する。
+     * 適用された世代が現在の世代でないあいだは、全量（基準）を送る。GameThread だけが触る。
+     */
+    class MegaGeometryDeltaSender
+    {
+    public:
+        void Reset()
+        {
+            m_Ledger.Reset();
+            m_Unsent.clear();
+            m_Pending.clear();
+            m_BaselineCount = 0;
+        }
+
+        /**
+         * @param proxies GameThread の SceneView の配列（写しの元）
+         * @param newlyChanged 前回の Build 以降に SceneView が書いた位置（昇順・重複なし）
+         * @param confirmedSerial RenderThread が適用した最後の番号
+         * @param confirmedGeneration そのパケットのシーンの世代
+         * @param packetGeneration このパケットのシーンの世代
+         */
+        void Build(const Container::VariableArray<MegaGeometryProxy>& proxies,
+                   const Container::VariableArray<uint32_t>& newlyChanged,
+                   uint64_t confirmedSerial,
+                   uint64_t confirmedGeneration,
+                   uint64_t packetGeneration,
+                   MegaSceneDelta& out)
+        {
+            for (uint32_t index : newlyChanged)
+            {
+                m_Unsent.push_back(index);
+            }
+            m_Ledger.NoteConfirmed(confirmedSerial, confirmedGeneration);
+
+            out.Clear();
+            out.bActive = true;
+            out.Size = static_cast<uint32_t>(proxies.size());
+            if (confirmedGeneration != packetGeneration)
+            {
+                // 適用された写しの世代が違う: 全量を送り、写しを捨てさせる
+                out.bBaseline = true;
+                ++m_BaselineCount;
+                out.Indices.reserve(proxies.size());
+                out.Proxies.reserve(proxies.size());
+                for (uint32_t index = 0; index < out.Size; ++index)
+                {
+                    out.Indices.push_back(index);
+                    out.Proxies.push_back(proxies[index]);
+                }
+                return;
+            }
+
+            m_Ledger.CollectPending(packetGeneration, m_Pending);
+            for (uint32_t index : m_Unsent)
+            {
+                m_Pending.push_back(index);
+            }
+            std::sort(m_Pending.begin(), m_Pending.end());
+            m_Pending.erase(std::unique(m_Pending.begin(), m_Pending.end()), m_Pending.end());
+            out.Indices.reserve(m_Pending.size());
+            out.Proxies.reserve(m_Pending.size());
+            for (uint64_t key : m_Pending)
+            {
+                if (key < out.Size)
+                {
+                    out.Indices.push_back(static_cast<uint32_t>(key));
+                    out.Proxies.push_back(proxies[static_cast<size_t>(key)]);
+                }
+            }
+        }
+
+        /** @brief Build したパケットを送り終えた（番号が決まった）。新しい変化を台帳へ移す */
+        void NoteSent(uint64_t sendSerial, uint64_t sceneGeneration)
+        {
+            Container::VariableArray<uint64_t> keys;
+            keys.reserve(m_Unsent.size());
+            for (uint32_t index : m_Unsent)
+            {
+                keys.push_back(index);
+            }
+            m_Ledger.NoteSent(sendSerial, sceneGeneration, keys.data(), keys.size());
+            m_Unsent.clear();
+        }
+
+        /** @brief 全量（基準）を送った回数 */
+        [[nodiscard]] uint64_t GetBaselineCount() const { return m_BaselineCount; }
+        /** @brief 確認を待っている送信の数 */
+        [[nodiscard]] size_t GetUnconfirmedSendCount() const { return m_Ledger.GetUnconfirmedSendCount(); }
+
+    private:
+        PacketDeltaLedger m_Ledger;
+        // 送っていない新しい変化（SceneView が書いた位置）
+        Container::VariableArray<uint32_t> m_Unsent;
+        Container::VariableArray<uint64_t> m_Pending;
+        uint64_t m_BaselineCount = 0;
+    };
+
+} // namespace NorvesLib::Core::Rendering

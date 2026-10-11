@@ -1558,3 +1558,29 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 検査の履歴（席ごとの境界・解放の記録）は検査が有効なときだけ持つ。World の作成後に有効になっても、その時点から持ち始める（すでにある席は境界なしで、包含の照合から外れる）。
   - 範囲の割り当ては作成順で、個別の実体の範囲は空間的にはまとまらない（AABB は緩い）。散布の範囲（連続した席・Morton 順）は MASS-ROWS で `CreateRange` を足すこと。
   - 行末: 編集したファイルは numstat の 2 通りが一致。新規 `EcsGpuSceneSlots.h`・`EcsSlotGate.h` は UTF-8 BOM + CRLF。
+
+### SCN-MEGA-SCENE-DELTA（2026-10-11、反復 47・run 20261010-223034）
+
+- 変更:
+  - World（MegaGeometry の公開）: 変わった行は `PublishRenderRow` の MegaGeometry の枝で公開し、外す proxy は Remove の一覧（`ApplyRenderSyncRemovals`）が外す。既定の同期の走査（`SyncEntityRecursive`）は MegaGeometry の生存集合を作らず、`RemoveStaleMegaGeometryProxies` を呼ばない。proxy には行の席（`SceneSlot` = EcsGpuSceneSlot の値）を書く。検査 `ECS_RENDER_SYNC`（`VerifyRenderSyncDelta`）が MegaGeometry も全行から求め直して照合する。
+  - SceneView: 配列の「位置」を鍵にした変化の記録（`TakeMegaGeometryChangedIndices`。追加・更新はその位置、外すと末尾が入った位置）。前の変換の履歴は SceneView が持つ（`PublishMegaGeometryProxy` は既にある proxy の変換を前の変換にし、`BeginMegaGeometrySync` が同期の最初に前の変換を今の変換へ揃える。World が毎同期の最初に呼ぶ）。`SetMegaFullSync` / `IsMegaFullSync`。
+  - パケットの差分（`FramePacket::MegaDelta`、新規 `Rendering/MegaGeometryMirror.h`）: 送り手（`MegaGeometryDeltaSender`）が、確認より後の送信の変化を全部積み直す累積の差分（位置・proxy・配列の大きさ）を書く。台帳は既存の `PacketDeltaLedger`（重複の除去を二乗から線形へ直した）。適用された世代が現在の世代でないあいだは全量（基準）を送る。RenderThread の写し（`MegaGeometryMirror`）は `RenderFrame` が `TryApply` の直後（描画を見送っても）に当て、GameThread の SceneView と同じ並びの配列を持つ。変わった席（`GetChangedSlots`・全部が変わった印・版）は `ViewRenderContext::SnapshotMegaChangedSlots`・`bSnapshotMegaAllChanged`・`SnapshotMegaRevision` で渡す。
+  - 消費者: MegaGeometryPass（VSM の投影物の入力もここ）と ShadowMapPass（CSM）は `SnapshotMegaGeometryProxies` = 写しを読む。MegaGeometryPass は写しの版が前回と同じフレームは、インスタンスの作り直しとビジビリティの鍵の突き合わせを省く。RT の scene snapshot は GameThread で作るので、パケットではなく GameThread の SceneView の配列を渡す（`BuildFrameSnapshot` の末尾の引数）。
+  - やめたもの: `ApplyPreviousObjectStates` の MegaGeometry の毎回の作り直し（`m_PreviousMegaGeometryWorlds`）・全量の写し（`Scene.MegaGeometryProxies = GetMegaGeometryProxies()`）は、`--mega-scene-full-sync` のときだけ残る。`RenderedObjectHistory` の MegaGeometry の覚え直しは、差分の同期ではパケットが全量を持たないので空の走査になる。飛んだフレームの前の変換の付け替え（TAA）は写しの `Apply` が行う。
+  - `--mega-scene-full-sync`（Game が OnPostInitialize でメインの SceneView へ渡す）: World が ECS の MegaGeometry の全行を毎フレーム公開し直して `RemoveStaleMegaGeometryProxies` で外し、パケットは配列を全量で写して前の変換を毎回付け直す（写しは使わない）。
+  - 検査 `MEGA_SCENE_DELTA`: (1) 送った時点の GameThread の配列の hash をパケットに載せ、RenderThread が差分を当てた写しの hash と照合する（食い違うと fail）。(2) 最初の回と 256 回ごとに、本物の送り手・写し・確認で決まった場面（飛ばされるパケット・遅れて当たる古いパケット・世代の替わりで基準を飛ばされて送り直す・古い世代の差分は当たらない）を確かめる。開発ログ `MEGA_SCENE_DELTA sent= entries= baselines= unconfirmed=` は 120 回ごと。
+- テスト（paths の外）: `SceneViewProxyLookupTest` に `TestMegaGeometryDeltaTracking`（位置の記録・取り出し・外したときの末尾の移動・生存集合での外し・クリアで世代が進む・全量の同期は記録しない・前の変換の履歴と揃え）を足した。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-MEGA-SCENE-DELTA-1.txt`: 起動画面の比較（既定）`result=pass`。default / near / low の mean_luminance_difference 0 / 0.0001 / 0.0001、psnr 100 / 65.4 / 70.3 dB、max_channel_difference 1 / 9 / 12（直前の SWITCH の記録と同じ水準）。ログに `MEGA_SCENE_DELTA sent=120 entries=16 baselines=1 unconfirmed=1`。PNG（default.png）を開いて、小屋・岩・球・地面が出ていることを見た。
+  - `-2.txt`: `--mega-scene-full-sync` の比較も `result=pass`（同じ水準。ログに「MegaGeometry の同期を全量にしました」、`MEGA_SCENE_DELTA` の行は無い）。
+  - `-3-stress.txt`: mega-stress（5000 個・1% 移動・64 m 区画）の撮影 `result=pass`。`MEGA_SCENE_DELTA` default 140・close 144・aerial 107 pass / fail 0、`MEGA_SCENE_CONFIRM`・`MEGA_SLOTS`・`ECS_RENDER_SYNC`（MegaGeometry の照合を足した）・`ECS_RENDER_INVALIDATION`・`ECS_SCENEQUERY` も fail 0。
+  - `-4-cycle-*.txt`: シーンごとの周回 3 周が全部 `result=pass`（mega-stress・mega-bananas・rendering3dtest の `MEGA_SCENE_DELTA` pass=1729 / 1740 / 2030、mega-stress・mega-bananas の `ECS_RENDER_SYNC` pass=1938 / 625。fail 無し）。
+  - `-5-tests-*.txt`・`-6-lookup.txt`・`-7-neighbors.txt`: Debug の EntityTreeTest・FramePacketManagerTest・RayTracingSceneSnapshotTest・SceneViewProxyLookupTest（新ケースを含む）・SceneViewProxyReconcileTest・WorldSyncDifferentialTest・SceneQueryRaycastTest・RenderThreadFrameCompletionTest と、隣接 10 件（ObjectCast・WorldRenderInterpolation・ApplicationFixedStepPipeline・ComponentDataRegistry・BoardComponentRouting・TextComponentBoardProxy・ParticleFrameSnapshot・SkeletalFramePacketSnapshot・PhysicsFixedStepPipeline・EntityTree）がすべて Passed。
+- Notes:
+  - `paths:` に World.h が無いので、World の状態は増やしていない（フラグ・履歴・位置の記録は SceneView、送り手・写しは RenderingCoordinator）。World.h の「MegaGeometry は SCENE-DELTA まで旧の走査」のコメントは古いまま（World.h を触れるタスクで直す）。
+  - 混合周回（mega-stress,mega-bananas を 1 回の起動で回す）は、この項目の verify に無いので走らせていない（前の項目の記録では既知のテクスチャ差で通らない）。周回はシーンごとに回して pass を確かめた。
+  - シーンの切り替えで `AdvanceSceneGeneration` は呼んでいない。差分は状態の累積（位置ごとの最新の proxy と配列の大きさ）なので、切り替えで行・proxy が消えても整合する。世代が進むのは `ClearAllProxies` / `ClearMegaGeometryProxies` だけで、その直後のパケットは基準（全量）になる。
+  - 席の解放は、行の Destroy 後の同期でその proxy を SceneView から外し、次に送るパケットの差分（外れた位置・配列の大きさ）が運ぶ。席の再利用の確認（SLOTS のゲート）は「解放時に送り終えた番号 + 1」の適用を待つので、外れたことを運ぶパケットより早く再利用されない。
+  - 変わった席の一覧は、最後に適用した差分の分だけ（描画を見送った・飛ばした差分の席は含まない）。GPU の表を散布で書き換える項目（GPU-SCENE-*）は、`SnapshotMegaRevision` が前回見た版より 1 より大きく進んでいたら全部が変わったものとして扱うこと。
+  - MegaGeometryPass の作り直しの省略は、`SnapshotMegaChangedSlots` がある（写しを読む）ときだけ。手で足したインスタンス（`AddMegaMeshInstance`）・全量の同期・手で組んだパケットは従来どおり毎フレーム作り直す。
+  - 行末: 編集したファイルは numstat の 2 通りが一致。新規 `MegaGeometryMirror.h` は UTF-8 BOM + CRLF。

@@ -166,6 +166,37 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief MegaGeometry の proxy 配列の差分（RenderThread の写しへ当てる）
+     *
+     * GameThread の SceneView の配列の「位置」を鍵にした状態の差分。Indices の位置の proxy を Proxies の同じ順で書き、
+     * 配列の大きさを Size にそろえる。確認されていない送信の分も含む累積なので、何回当てても、飛ばされたパケットがあっても
+     * 同じ結果になる。bBaseline のときは Indices が 0〜Size-1 の全部で、写しを捨ててから当てる（世代が替わった直後など）。
+     * bActive が false のパケット（手で組んだもの・--mega-scene-full-sync）は、Scene.MegaGeometryProxies を全量として読む。
+     */
+    struct MegaSceneDelta
+    {
+        bool bActive = false;
+        bool bBaseline = false;
+        uint32_t Size = 0;
+        Container::VariableArray<uint32_t> Indices;
+        Container::VariableArray<MegaGeometryProxy> Proxies;
+        // 検査 MEGA_SCENE_DELTA: 送った時点の GameThread の配列の hash。RenderThread が写しの hash と照合する
+        bool bVerify = false;
+        uint64_t VerifyHash = 0;
+
+        void Clear()
+        {
+            bActive = false;
+            bBaseline = false;
+            Size = 0;
+            Indices.clear();
+            Proxies.clear();
+            bVerify = false;
+            VerifyHash = 0;
+        }
+    };
+
+    /**
      * @brief フレームパケット
      *
      * 1フレーム分の描画データを格納する構造体。
@@ -218,6 +249,9 @@ namespace NorvesLib::Core::Rendering
         CameraProxy PreviousMainCamera;
         SceneProxy Scene;
         RayTracingSceneSnapshot RayTracingScene;
+
+        /** @brief MegaGeometry の差分。有効なとき、Scene.MegaGeometryProxies は空で、消費者は RenderThread の写しを読む */
+        MegaSceneDelta MegaDelta;
 
         /** @brief キューブシャドウを描く点光源の選択と6面の行列（Scene.LightProxiesとMainCameraから作る） */
         PointShadowSnapshot PointShadows;
@@ -315,6 +349,7 @@ namespace NorvesLib::Core::Rendering
             PreviousMainCamera = CameraProxy{};
             Scene.Clear();
             RayTracingScene.Clear();
+            MegaDelta.Clear();
             PointShadows.Clear();
             DrawCommands.clear();
             DrawCommandRange = CommandRange{};
@@ -885,6 +920,8 @@ namespace NorvesLib::Core::Rendering
         void CollectPending(uint64_t currentGeneration, Container::VariableArray<uint64_t>& outKeys) const
         {
             outKeys.clear();
+            // 最初に現れた順を保ち、重複は除く（鍵の数に比例。変化の数が多い送信が続いても二乗にならない）
+            Container::UnorderedSet<uint64_t> seen;
             for (const SentEntry& entry : m_Sent)
             {
                 if (entry.SceneGeneration != currentGeneration)
@@ -893,7 +930,7 @@ namespace NorvesLib::Core::Rendering
                 }
                 for (uint64_t key : entry.Keys)
                 {
-                    if (std::find(outKeys.begin(), outKeys.end(), key) == outKeys.end())
+                    if (seen.insert(key).second)
                     {
                         outKeys.push_back(key);
                     }

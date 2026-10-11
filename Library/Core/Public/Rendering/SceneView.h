@@ -219,6 +219,46 @@ namespace NorvesLib::Core::Rendering
         const Ecs::EcsSlotGate &GetSlotGate() const { return m_SlotGate; }
 
         // ========================================
+        // MegaGeometry の差分の同期（GameThread だけが触る）
+        // ========================================
+
+        /**
+         * @brief MegaGeometry の同期を全量にするか（起動オプション --mega-scene-full-sync。比較と切り戻し用）
+         *
+         * true のときは、World が ECS の全行の MegaGeometry を毎フレーム公開し直して生存しない proxy を外し、
+         * パケットは配列を全量で写して前の変換も毎回作り直す。既定の false は、変わった行と外した行だけを公開し、
+         * 変わった位置だけをパケットの差分で運ぶ。
+         */
+        void SetMegaFullSync(bool bFullSync) { m_bMegaFullSync = bFullSync; }
+        [[nodiscard]] bool IsMegaFullSync() const { return m_bMegaFullSync; }
+
+        /**
+         * @brief ObjectId の MegaGeometryProxy を探す（無ければ nullptr。次に配列を変える呼び出しまで有効）
+         */
+        const MegaGeometryProxy *FindMegaGeometryProxy(uint64_t objectId) const;
+
+        /**
+         * @brief MegaGeometryProxy を前の変換の履歴つきで公開する（差分の同期の公開口）
+         *
+         * 既にある proxy は、その変換（前回までに公開した変換）を前の変換にする。無ければ前の変換は今の変換。
+         * 前の変換が今と違う proxy は、次の BeginMegaGeometrySync で前の変換を今の変換へ揃える。
+         */
+        void PublishMegaGeometryProxy(const MegaGeometryProxy &proxy);
+
+        /**
+         * @brief 同期の最初に呼ぶ。前回の同期で動いた proxy の前の変換を、今の変換へ揃える（速度を 0 に戻す）
+         */
+        void BeginMegaGeometrySync();
+
+        /**
+         * @brief 前回の呼び出し以降に書いた MegaGeometryProxy 配列の位置を取り出す（昇順・重複なし）
+         *
+         * 追加・更新はその位置、外した位置は末尾の proxy が入った位置。配列の大きさはパケットの差分が別に運ぶ。
+         * 配列を空にしたとき（クリア）は世代が進み、記録は捨てる。
+         */
+        void TakeMegaGeometryChangedIndices(Container::VariableArray<uint32_t> &outIndices);
+
+        // ========================================
         // 描画フロー
         // ========================================
 
@@ -528,6 +568,15 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_SceneGeneration = 1;
         // 席の再利用の条件（描画の調整役が書く。GameThread だけが触る）
         Ecs::EcsSlotGate m_SlotGate;
+
+        // MegaGeometry の差分の同期（GameThread だけが触る）
+        bool m_bMegaFullSync = false;
+        // 前回の Take 以降に書いた m_MegaGeometryProxies の位置（重複あり。Take で整える）
+        Container::VariableArray<uint32_t> m_MegaChangedIndices;
+        // 前の変換が今の変換と違うまま公開した proxy の ObjectId（次の BeginMegaGeometrySync で揃える）
+        Container::VariableArray<uint64_t> m_MegaUnsettledObjects;
+        // 位置を記録する（全量の同期では記録しない。Take されないまま溜まったときは重複を畳んで大きさを抑える）
+        void NoteMegaChanged(uint32_t index);
         bool m_bShadowProbeEnabled = false;
         bool m_bShadowProbePointOnly = false;
         ShadowMethod m_ShadowMethod = ShadowMethod::Csm;

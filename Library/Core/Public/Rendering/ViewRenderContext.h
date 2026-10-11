@@ -621,8 +621,23 @@ namespace NorvesLib::Core::Rendering
         /** @brief LightProxyスナップショット（FramePacket::Scene.LightProxiesを指す） */
         const Container::VariableArray<LightProxy> *SnapshotLightProxies = nullptr;
 
-        /** @brief MegaGeometryProxyスナップショット（FramePacket::Scene.MegaGeometryProxiesを指す） */
+        /**
+         * @brief MegaGeometryProxyスナップショット
+         *
+         * 差分の同期では RenderThread の写し（MegaGeometryMirror）を指し、手で組んだパケットと --mega-scene-full-sync では
+         * FramePacket::Scene.MegaGeometryProxies を指す。
+         */
         const Container::VariableArray<MegaGeometryProxy> *SnapshotMegaGeometryProxies = nullptr;
+
+        /**
+         * @brief 今フレーム適用した差分で変わった MegaGeometry の席（SceneSlot。昇順・重複なし）
+         *
+         * 写しを読むときだけ有効（nullptr は全量の同期）。bSnapshotMegaAllChanged のときは全部の席が変わった（基準の適用直後）。
+         */
+        const Container::VariableArray<uint32_t> *SnapshotMegaChangedSlots = nullptr;
+        bool bSnapshotMegaAllChanged = false;
+        /** @brief 写しに差分を当てるたびに進む版（全量の同期では 0） */
+        uint64_t SnapshotMegaRevision = 0;
 
         /** @brief キューブシャドウを描く点光源のスナップショット（FramePacket::PointShadowsを指す） */
         const PointShadowSnapshot* SnapshotPointShadows = nullptr;

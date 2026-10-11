@@ -37,12 +37,15 @@ namespace NorvesLib::Core::Rendering
          * @param packet 構築元および出力先のフレームスナップショット
          * @param materialResources DrawCommandのマテリアル値を解決するリソース
          * @param megaGeometryResources MegaGeometry（岩・小屋など）のLOD0を解決するリソース。nullなら含めない
+         * @param megaGeometryProxies MegaGeometry の proxy の配列。nullなら packet.Scene.MegaGeometryProxies を読む
+         *        （差分の同期ではパケットが全量を持たないので、GameThread の SceneView の配列を渡す）
          * @return 有効なスナップショットを構築できた場合true
          */
         bool BuildFrameSnapshot(const MeshResources* meshResources,
                                 FramePacket& packet,
                                 const MaterialResources* materialResources = nullptr,
-                                const MegaGeometryResources* megaGeometryResources = nullptr);
+                                const MegaGeometryResources* megaGeometryResources = nullptr,
+                                const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies = nullptr);
 
         /**
          * @brief FramePacketのgeometryからBLAS/TLAS buildをRenderThreadへ記録

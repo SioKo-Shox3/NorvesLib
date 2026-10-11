@@ -197,6 +197,10 @@ namespace NorvesLib::Core::Rendering
         bool bCastShadow = true;
         RenderLayer LayerMask = RenderLayer::Default;
 
+        // 行の席（EcsGpuSceneSlot の値 = 席の番号 + 1。0 は席なし）。World が公開するときに書く。
+        // 値の比較や hash には含めない（席は行の寿命で決まり、proxy の内容ではない）
+        uint32_t SceneSlot = 0;
+
         bool IsValid() const
         {
             return MegaMeshHandle.IsValid() && bVisible;

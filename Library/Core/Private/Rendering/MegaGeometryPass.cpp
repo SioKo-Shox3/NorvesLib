@@ -536,6 +536,8 @@ namespace NorvesLib::Core::Rendering
         m_DefaultLinearSampler.reset();
 
         m_Instances.clear();
+        m_InstanceSourceRevision = 0;
+        m_InstanceSourceProxies = nullptr;
         m_bPreferRenderGraphGBufferResources = false;
         m_bGBufferRenderPassUsesRenderGraphAttachmentStates = false;
         m_bMegaGeometryDebugPayloadUnsupportedWarned = false;
@@ -549,51 +551,64 @@ namespace NorvesLib::Core::Rendering
 
     void MegaGeometryPass::Setup(ViewRenderContext &context)
     {
-        m_Instances.clear();
         // VSM の投影物のカリングの入力は、今フレームの記録が書けたときだけ有効にする（前のフレームのものを残さない）
         m_ShadowCasterInputs = MegaGeometryShadowCasterInputs{};
 
-        if (context.SnapshotMegaGeometryProxies)
+        // 差分の同期では、RenderThread の写しが前回から変わっていない（版が同じ）フレームは、インスタンスを作り直さない。
+        // 写しの版は、基準・差分を当てたときだけ進む。手で足したインスタンス（AddMegaMeshInstance）は版を 0 に戻す
+        const bool bFromMirror = context.SnapshotMegaChangedSlots != nullptr && context.SnapshotMegaRevision != 0 &&
+                                 context.SnapshotMegaGeometryProxies != nullptr;
+        const bool bReuseInstances = bFromMirror && context.SnapshotMegaRevision == m_InstanceSourceRevision &&
+                                     context.SnapshotMegaGeometryProxies == m_InstanceSourceProxies;
+        if (!bReuseInstances)
         {
-            const auto &megaGeometryProxies = *context.SnapshotMegaGeometryProxies;
-            m_Instances.reserve(megaGeometryProxies.size());
+            m_Instances.clear();
+            m_InstanceSourceRevision = bFromMirror ? context.SnapshotMegaRevision : 0;
+            m_InstanceSourceProxies = bFromMirror ? static_cast<const void *>(context.SnapshotMegaGeometryProxies) : nullptr;
 
-            for (const auto &proxy : megaGeometryProxies)
+            if (context.SnapshotMegaGeometryProxies)
             {
-                if (!proxy.IsValid())
+                const auto &megaGeometryProxies = *context.SnapshotMegaGeometryProxies;
+                m_Instances.reserve(megaGeometryProxies.size());
+
+                for (const auto &proxy : megaGeometryProxies)
                 {
-                    continue;
+                    if (!proxy.IsValid())
+                    {
+                        continue;
+                    }
+
+                    MegaMeshInstance instance;
+                    instance.ObjectId = proxy.ObjectId;
+                    instance.ComponentId = proxy.ComponentId;
+                    instance.Handle = proxy.MegaMeshHandle;
+                    std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
+                    std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
+                    instance.bCastShadow = proxy.bCastShadow;
+                    instance.WorldBounds = proxy.WorldBounds;
+                    m_Instances.push_back(instance);
                 }
-
-                MegaMeshInstance instance;
-                instance.ObjectId = proxy.ObjectId;
-                instance.ComponentId = proxy.ComponentId;
-                instance.Handle = proxy.MegaMeshHandle;
-                std::memcpy(instance.WorldMatrix, &proxy.WorldTransform, sizeof(float) * 16);
-                std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
-                instance.bCastShadow = proxy.bCastShadow;
-                instance.WorldBounds = proxy.WorldBounds;
-                m_Instances.push_back(instance);
             }
-        }
 
-        // スナップショットから外れたインスタンスの見えたビットは、全インスタンスが消えて記録を省くフレームでも
-        // 引き継げないものにする（記録の中だけで連続性を見ると、空のフレームを挟んだ再追加が引き継ぎに見える）。
-        // LastUsedFrame を0にすると、次の記録の連続の条件（LastUsedFrame + 1 == 記録のフレーム数）を満たさない。
-        // 鍵は 1 回だけ集めて引く（区画ごとに全インスタンスを探すと、区画数×インスタンス数の二重ループになる）
-        Container::UnorderedSet<uint64_t> presentKeys;
-        presentKeys.reserve(m_Instances.size());
-        for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
-        {
-            const uint64_t objectId = m_Instances[instanceIndex].ObjectId;
-            presentKeys.insert(objectId != 0 ? objectId : (0x8000000000000000ull | instanceIndex));
-        }
-
-        for (VisibilityEntry &entry : m_VisibilityEntries)
-        {
-            if (presentKeys.find(entry.Key) == presentKeys.end())
+            // スナップショットから外れたインスタンスの見えたビットは、全インスタンスが消えて記録を省くフレームでも
+            // 引き継げないものにする（記録の中だけで連続性を見ると、空のフレームを挟んだ再追加が引き継ぎに見える）。
+            // LastUsedFrame を0にすると、次の記録の連続の条件（LastUsedFrame + 1 == 記録のフレーム数）を満たさない。
+            // 鍵は 1 回だけ集めて引く（区画ごとに全インスタンスを探すと、区画数×インスタンス数の二重ループになる）。
+            // インスタンスの集合が変わらないフレームは、前回の結果と同じなので省く
+            Container::UnorderedSet<uint64_t> presentKeys;
+            presentKeys.reserve(m_Instances.size());
+            for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
             {
-                entry.LastUsedFrame = 0;
+                const uint64_t objectId = m_Instances[instanceIndex].ObjectId;
+                presentKeys.insert(objectId != 0 ? objectId : (0x8000000000000000ull | instanceIndex));
+            }
+
+            for (VisibilityEntry &entry : m_VisibilityEntries)
+            {
+                if (presentKeys.find(entry.Key) == presentKeys.end())
+                {
+                    entry.LastUsedFrame = 0;
+                }
             }
         }
 
@@ -2448,11 +2463,15 @@ namespace NorvesLib::Core::Rendering
             instance.WorldMatrix[15] = 1.0f;
         }
         m_Instances.push_back(instance);
+        m_InstanceSourceRevision = 0;
+        m_InstanceSourceProxies = nullptr;
     }
 
     void MegaGeometryPass::ClearMegaMeshInstances()
     {
         m_Instances.clear();
+        m_InstanceSourceRevision = 0;
+        m_InstanceSourceProxies = nullptr;
     }
 
     namespace

@@ -153,6 +153,10 @@ namespace Game
         constexpr const TCHAR *kEngineChecksSelfTestFailOption = TEXT("--engine-checks-selftest-fail");
         bool s_bEngineChecksSelfTestFail = false;
         bool s_bEngineChecksSelfTestReported = false;
+        // --mega-scene-full-sync: MegaGeometry の同期を全量にする（ECS の全行を毎フレーム公開し直し、パケットは配列を全量で写す）。
+        // 変わった行だけの同期（既定）との見比べと切り戻しに使う。値を取らない。
+        constexpr const TCHAR *kMegaSceneFullSyncOption = TEXT("--mega-scene-full-sync");
+        bool s_bMegaSceneFullSync = false;
         // --open-scene-info: mega-bananas を起動時から情報表示（H キーの表示）を出した状態にする（開発ビルドだけ。値を取らない）。
         // 撮影の起動は ImGui を使わないが、この指定があれば撮影でも使い、表示を撮れる。
         constexpr const TCHAR *kOpenSceneInfoOption = TEXT("--open-scene-info");
@@ -564,6 +568,7 @@ namespace Game
         m_StressMovingStartTime = 0.0f;
         s_bEngineChecksSelfTestFail = false;
         s_bEngineChecksSelfTestReported = false;
+        s_bMegaSceneFullSync = false;
         m_StressStreamCellMeters = 0.0f;
         m_bStressStreamCellSet = false;
         m_StressStreamPeriod = Game::GameModes::kDefaultStressStreamPeriod;
@@ -1136,6 +1141,11 @@ namespace Game
             if (args[i] == kEngineChecksSelfTestFailOption)
             {
                 s_bEngineChecksSelfTestFail = true;
+                continue;
+            }
+            if (args[i] == kMegaSceneFullSyncOption)
+            {
+                s_bMegaSceneFullSync = true;
                 continue;
             }
             if (TryStripPrefix(args[i], kCameraScriptOption, sceneValue))
@@ -1986,6 +1996,21 @@ namespace Game
             NorvesLib::Core::Engine::GEngine->GetRenderResources().MegaGeometry().SetOcclusionCullingEnabled(s_bMegaOcclusion);
             // --geometry-streaming の指定（既定は有効）。メッシュを作る前に決める
             NorvesLib::Core::Engine::GEngine->GetRenderResources().MegaGeometry().SetPageStreamingEnabled(s_bGeometryStreaming);
+
+            // --mega-scene-full-sync: MegaGeometry の同期を全量へ戻す（最初のフレームの前に、メインの SceneView へ渡す）
+            if (s_bMegaSceneFullSync)
+            {
+                auto mainSceneView = NorvesLib::Core::Engine::GEngine->GetRenderWorld().GetRenderingCoordinator().GetMainSceneView();
+                if (mainSceneView)
+                {
+                    mainSceneView->SetMegaFullSync(true);
+                    LOG_INFO("MegaGeometry の同期を全量にしました (--mega-scene-full-sync)");
+                }
+                else
+                {
+                    LOG_ERROR("--mega-scene-full-sync: メインの SceneView が無いため、全量の同期にできません");
+                }
+            }
         }
 
         if (m_bHasTextureAssetRuntimeConfig && !ReloadConfiguredAssetManifest())

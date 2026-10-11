@@ -84,6 +84,34 @@ namespace NorvesLib::Core
             ecs.GetGpuSceneSlots().NoteBounds(*slot, boundsMin, boundsMax);
         }
 
+        /// MegaGeometry の proxy を SceneView へ公開する。行の席を proxy に書き、席の範囲の AABB を広げる。
+        /// 差分の同期では前の変換の履歴をつけて公開し、全量の同期（--mega-scene-full-sync）では前の変換をパケットが付け直す
+        void PublishMegaProxyToView(Rendering::SceneView& view, Ecs::EcsWorld* ecs, Ecs::EcsEntity row,
+                                    Rendering::MegaGeometryProxy proxy)
+        {
+            const bool bHasRow = ecs != nullptr && !row.IsNull() && ecs->IsAlive(row);
+            if (bHasRow)
+            {
+                if (const Ecs::EcsGpuSceneSlot* slot = ecs->GetColumnValue<Ecs::EcsGpuSceneSlot>(row))
+                {
+                    proxy.SceneSlot = slot->Value;
+                }
+            }
+            proxy.PreviousWorldTransform = proxy.WorldTransform;
+            if (view.IsMegaFullSync())
+            {
+                view.UpdateMegaGeometryProxy(proxy);
+            }
+            else
+            {
+                view.PublishMegaGeometryProxy(proxy);
+            }
+            if (bHasRow)
+            {
+                NoteMegaSlotBounds(*ecs, row, proxy);
+            }
+        }
+
         /// 検査 MEGA_SLOTS の本体: 席の表と全行の突き合わせに加え、SceneView が持つ MegaGeometry の proxy の境界が
         /// 行の席の範囲の AABB に包まれることを確かめる
         void RunGpuSceneSlotsCheck(Ecs::EcsWorld& ecs, const Rendering::SceneView* sceneView,
@@ -1938,6 +1966,12 @@ namespace NorvesLib::Core
 
         UpdateRenderTransforms();
 
+        // MegaGeometry: 前回の同期で動いた proxy の前の変換を今の変換へ揃える（差分の同期のとき。履歴の落ち着き）
+        if (m_SceneView && !m_SceneView->IsMegaFullSync())
+        {
+            m_SceneView->BeginMegaGeometrySync();
+        }
+
         // 資源の変化を行へ知らせてから走査する（通知を受けた行は走査で proxy を作り直す）
         // 既定の同期では、検査 ECS_RENDER_SYNC も公開した内容の覚えを使う
         m_bInvalidationCheckFrame = IsRenderInvalidationCheckActive() ||
@@ -1959,7 +1993,8 @@ namespace NorvesLib::Core
             // Mesh・Skinned・Light・Board は、変わった行だけを公開し、Remove の一覧だけを外す
             SyncRenderRowsDelta(materials, meshes);
 
-            // MegaGeometry と Text は SCENE-DELTA まで旧の走査
+            // Text は旧の走査。MegaGeometry は変わった行で公開し、外す proxy は Remove の一覧が外す
+            // （走査は MegaGeometry の生存集合を作らない。--mega-scene-full-sync だけ、全行を数えて外す）
             Container::UnorderedSet<uint64_t> liveMeshComponentIds;
             Container::UnorderedSet<uint64_t> liveSkinnedMeshComponentIds;
             Container::UnorderedSet<uint64_t> liveMegaGeometryObjectIds;
@@ -1980,10 +2015,6 @@ namespace NorvesLib::Core
                     liveScreenBoardComponentIds,
                     liveWorldBoardComponentIds,
                     enabledComponentDataRegistry);
-            }
-            if (m_SceneView)
-            {
-                m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaGeometryObjectIds);
             }
 
             FinishRenderInvalidationFrame();
@@ -2851,6 +2882,33 @@ namespace NorvesLib::Core
             }
         }
 
+        // 全量の同期（--mega-scene-full-sync）: MegaGeometry の ECS の全行を数え、変わっていない行も公開し直して、
+        // 生存しない proxy を外す。差分の同期の結果と見比べる基準（Object の走査には戻らない）
+        if (m_SceneView != nullptr && m_SceneView->IsMegaFullSync() && m_EcsWorld)
+        {
+            Container::UnorderedSet<uint64_t> liveMegaObjectIds;
+            Ecs::EcsQuery query;
+            query.All.push_back(Ecs::EcsColumnInfoOf<Ecs::EcsMegaMesh>().Type);
+            Container::VariableArray<Ecs::EcsChunk*> chunks;
+            m_EcsWorld->CollectChunks(query, chunks);
+            for (const Ecs::EcsChunk* chunk : chunks)
+            {
+                const Ecs::EcsEntity* rows = chunk->GetEntities();
+                for (uint32_t i = 0; i < chunk->Count; ++i)
+                {
+                    auto* megaComp = CastTo<Component::MegaGeometryComponent>(ComponentOfRow(rows[i]));
+                    const Entity* owner = megaComp != nullptr ? megaComp->GetOwner() : nullptr;
+                    if (owner == nullptr || !IsEntityRenderScanned(*owner))
+                    {
+                        continue;
+                    }
+                    liveMegaObjectIds.insert(owner->GetObjectId());
+                    PublishRenderRow(*megaComp, materials, meshes);
+                }
+            }
+            m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaObjectIds);
+        }
+
         if (m_bRenderSyncCheckFrame || m_bInvalidationCheckFrame)
         {
             VerifyRenderSyncDelta(materials, meshes);
@@ -2899,8 +2957,13 @@ namespace NorvesLib::Core
                     m_ScreenSpaceBoardSink->RemoveBoardProxy(key);
                 }
                 break;
+            case Kind::MegaGeometry:
+                if (m_SceneView)
+                {
+                    m_SceneView->RemoveMegaGeometryProxy(key);
+                }
+                break;
             default:
-                // MegaGeometry は SCENE-DELTA まで旧の走査が外す
                 break;
             }
         }
@@ -2966,11 +3029,39 @@ namespace NorvesLib::Core
             return;
         }
 
+        if (auto* megaComp = CastTo<Component::MegaGeometryComponent>(&component))
+        {
+            if (m_SceneView == nullptr)
+            {
+                return;
+            }
+            megaComp->RefreshRenderTransformCache();
+
+            Rendering::MegaGeometryProxy megaProxy;
+            if (megaComp->BuildMegaGeometryProxy(megaProxy))
+            {
+                megaProxy.ObjectId = entity.GetObjectId();
+                megaProxy.ComponentId = megaComp->GetComponentId();
+                // 内容の覚えは席と前の変換を書く前の値で取る（検査が作り直した proxy と比べるため）
+                const uint64_t proxyHash = bCheckInvalidation ? Rendering::HashProxy(megaProxy) : 0;
+                PublishMegaProxyToView(*m_SceneView, m_EcsWorld.get(), megaComp->GetEcsEntity(), megaProxy);
+                RecordRenderPublish(*megaComp, entity, true, proxyHash);
+            }
+            else
+            {
+                RecordRenderPublish(*megaComp, entity, false, 0);
+                m_SceneView->RemoveMegaGeometryProxy(entity.GetObjectId());
+            }
+
+            megaComp->ClearRenderStateDirty();
+            megaComp->SetLastSyncedTransformVersion(ownerVersion);
+            return;
+        }
+
         if (auto* meshComp = CastTo<Component::MeshComponent>(&component))
         {
-            if (CastTo<Component::MegaGeometryComponent>(meshComp) != nullptr || m_SceneView == nullptr)
+            if (m_SceneView == nullptr)
             {
-                // MegaGeometry は SCENE-DELTA まで旧の走査が公開する
                 return;
             }
             meshComp->RefreshRenderTransformCache();
@@ -3099,6 +3190,11 @@ namespace NorvesLib::Core
         Container::UnorderedSet<uint64_t> viewSkinned;
         Container::UnorderedSet<uint64_t> viewLight;
         Container::UnorderedSet<uint64_t> viewBoard;
+        Container::UnorderedSet<uint64_t> viewMega;
+        for (const Rendering::MegaGeometryProxy& proxy : m_SceneView->GetMegaGeometryProxies())
+        {
+            viewMega.insert(proxy.ObjectId);
+        }
         for (const Rendering::MeshProxy& proxy : m_SceneView->GetMeshProxies())
         {
             viewMesh.insert(proxy.ComponentId);
@@ -3146,6 +3242,7 @@ namespace NorvesLib::Core
         Container::UnorderedSet<uint64_t> expectSkinned;
         Container::UnorderedSet<uint64_t> expectLight;
         Container::UnorderedSet<uint64_t> expectBoard;
+        Container::UnorderedSet<uint64_t> expectMega;
 
         Container::VariableArray<Entity*> stack;
         for (Entity* root : GetRootEntities())
@@ -3210,8 +3307,35 @@ namespace NorvesLib::Core
 
                 if (auto* mesh = CastTo<Component::MeshComponent>(comp))
                 {
-                    if (CastTo<Component::MegaGeometryComponent>(mesh) != nullptr)
+                    if (auto* mega = CastTo<Component::MegaGeometryComponent>(mesh))
                     {
+                        ++examined;
+                        if (mega->IsRenderStateDirty() || mega->GetLastSyncedTransformVersion() != ownerVersion)
+                        {
+                            fail("MegaGeometry が同期されていない", *mega);
+                            continue;
+                        }
+                        Rendering::MegaGeometryProxy probe;
+                        const bool bBuilt = mega->BuildMegaGeometryProxy(probe);
+                        const bool bPresent = viewMega.find(entity->GetObjectId()) != viewMega.end();
+                        if (bBuilt)
+                        {
+                            expectMega.insert(entity->GetObjectId());
+                            probe.ObjectId = entity->GetObjectId();
+                            probe.ComponentId = mega->GetComponentId();
+                            if (!bPresent)
+                            {
+                                fail("MegaGeometry の proxy が公開されていない", *mega);
+                            }
+                            else if (contentDiffers(*mega, Rendering::HashProxy(probe)))
+                            {
+                                fail("MegaGeometry の proxy が公開した内容と違う", *mega);
+                            }
+                        }
+                        else if (bPresent)
+                        {
+                            fail("作れない MegaGeometry の proxy が残っている", *mega);
+                        }
                         continue;
                     }
                     ++examined;
@@ -3340,6 +3464,7 @@ namespace NorvesLib::Core
         countStale(viewSkinned, expectSkinned, "行が無いのに SkinnedMesh の proxy が残っている");
         countStale(viewLight, expectLight, "行が無いのに Light の proxy が残っている");
         countStale(viewBoard, expectBoard, "行が無いのに Board の proxy が残っている");
+        countStale(viewMega, expectMega, "行が無いのに MegaGeometry の proxy が残っている");
 
         ++m_RenderSyncStats.Checked;
         m_RenderSyncStats.Examined += examined;
@@ -4182,7 +4307,11 @@ namespace NorvesLib::Core
                 }
                 if (!bNeedsSync)
                 {
-                    liveMegaGeometryObjectIds.insert(entity.GetObjectId());
+                    // 既定の同期は生存集合を使わない（O(全 Entity) のハッシュ挿入を避ける）
+                    if (m_bLegacyRenderSync)
+                    {
+                        liveMegaGeometryObjectIds.insert(entity.GetObjectId());
+                    }
                     if (componentDataRegistry)
                     {
                         Rendering::MegaGeometryProxy megaProxy;
@@ -4214,15 +4343,17 @@ namespace NorvesLib::Core
                     {
                         megaProxy.ObjectId = entity.GetObjectId();
                         megaProxy.ComponentId = megaComp->GetComponentId();
-                        m_SceneView->UpdateMegaGeometryProxy(megaProxy);
-                        NoteMegaSlotBounds(*m_EcsWorld, megaComp->GetEcsEntity(), megaProxy);
-                        liveMegaGeometryObjectIds.insert(megaProxy.ObjectId);
+                        const uint64_t proxyHash = bCheckInvalidation ? Rendering::HashProxy(megaProxy) : 0;
+                        PublishMegaProxyToView(*m_SceneView, m_EcsWorld.get(), megaComp->GetEcsEntity(), megaProxy);
+                        if (m_bLegacyRenderSync)
+                        {
+                            liveMegaGeometryObjectIds.insert(megaProxy.ObjectId);
+                        }
                         if (componentDataRegistry)
                         {
                             componentDataRegistry->PublishMegaGeometryProxy(entity, megaProxy);
                         }
-                        RecordRenderPublish(*megaComp, entity, true,
-                                            bCheckInvalidation ? Rendering::HashProxy(megaProxy) : 0);
+                        RecordRenderPublish(*megaComp, entity, true, proxyHash);
                     }
                     else
                     {

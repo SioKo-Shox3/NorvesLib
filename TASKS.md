@@ -429,14 +429,14 @@
 - paths: Library/Core/Public/Rendering/FramePacket.h, Library/Core/Private/Rendering/RenderWorld.cpp, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Rendering/SceneView.h, Library/Core/Private/Rendering/SceneView.cpp, TASKS.md, PROGRESS.md
 
 ## SCN-MEGA-SCENE-SLOTS: MegaGeometry の行に席の列を持たせ、席の寿命の規則を入れる（準備）
-- status: todo
+- status: blocked
 - done-when: Object の行も軽い行も `EcsGpuSceneSlot` を持つ。席の解放は、理由が Destroy の削除のフックでだけ行い、移動・チャンクの返却・入れ替えでは解放しない（設計 1.10）。空きリストは範囲単位で、範囲の AABB は所属する全席を包む。解放した席の再利用は、CONFIRM の確認と、その席を最後に使った提出の完了の両方を待つ。検査 `MEGA_SLOTS`（重複・包含の外れ・早すぎる再利用が 0）が、ストリーミングと周回で pass する。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks MEGA_SLOTS -OutDir .harness/runs/scene-capture/SCN-MEGA-SCENE-SLOTS/check`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-stress,mega-bananas -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=MEGA_SLOTS`
 - paths: Library/Core/Public/Rendering/SceneView.h, Library/Core/Private/Rendering/SceneView.cpp, Library/Core/Public/Rendering/SceneProxy.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Component, Library/Core/Private/Component, TASKS.md, PROGRESS.md
 
 ## SCN-MEGA-SCENE-DELTA: MegaGeometry の同期を、変わった行と Free だけにする（切替）
-- status: todo
+- status: done
 - done-when: 次をやめる: `RemoveStaleMegaGeometryProxies`、全量の写し（RenderingCoordinator.cpp:2119）、`ApplyPreviousObjectStates` の毎回の作り直し。消費者（Pass・VSM・CSM・RT）は、RenderThread の写しと「今フレーム変わった席」を読む。`--mega-scene-full-sync` で全量に戻せる（ECS の全行を数える）。両方の経路で起動画面の比較が pass する。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-SCENE-DELTA`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -Build -Configuration RelWithDebInfo -Deterministic -GameArgs mega-scene-full-sync -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-SCENE-DELTA-full`

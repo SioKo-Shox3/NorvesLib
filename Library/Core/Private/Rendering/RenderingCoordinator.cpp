@@ -617,7 +617,8 @@ namespace NorvesLib::Core::Rendering
     bool RayTracingSceneSubsystem::BuildFrameSnapshot(const MeshResources* meshResources,
                                                        FramePacket& packet,
                                                        const MaterialResources* materialResources,
-                                                       const MegaGeometryResources* megaGeometryResources)
+                                                       const MegaGeometryResources* megaGeometryResources,
+                                                       const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies)
     {
         packet.RayTracingScene.Clear();
         if (!meshResources && !megaGeometryResources)
@@ -784,7 +785,9 @@ namespace NorvesLib::Core::Rendering
         if (megaGeometryResources)
         {
             constexpr uint32_t vertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
-            for (const MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
+            const Container::VariableArray<MegaGeometryProxy>& megaProxies =
+                megaGeometryProxies ? *megaGeometryProxies : packet.Scene.MegaGeometryProxies;
+            for (const MegaGeometryProxy& proxy : megaProxies)
             {
                 if (packet.RayTracingScene.Instances.size() > 0x00FFFFFFu)
                 {
@@ -2217,6 +2220,268 @@ namespace NorvesLib::Core::Rendering
                 checks.Report("MEGA_SCENE_CONFIRM", bPass, examined);
             }
         }
+
+        // 検査 MEGA_SCENE_DELTA の決まった場面: 送り手と写しを、本物の型で確かめる。
+        // GameThread の配列（SceneView と同じ追加・更新・外して末尾を入れる並び）の変化を、飛ばされるパケット・世代の替わりを
+        // 挟みながら運び、適用するたびに写しが配列と一致することを見る。破れたときは detail に理由を書いて false を返す
+        bool VerifyMegaDeltaProtocol(char* detail, size_t detailSize, uint32_t& examined)
+        {
+            auto fail = [&](const char* reason)
+            {
+                std::snprintf(detail, detailSize, "%s", reason);
+                return false;
+            };
+
+            Container::VariableArray<MegaGeometryProxy> source;
+            Container::VariableArray<uint32_t> changedRaw;
+            uint64_t seed = 0x9E3779B97F4A7C15ull;
+            const auto nextRandom = [&seed]()
+            {
+                seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+                return static_cast<uint32_t>(seed >> 33);
+            };
+            uint64_t nextObject = 1;
+            const auto makeProxy = [&](uint64_t objectId)
+            {
+                MegaGeometryProxy proxy;
+                proxy.ObjectId = objectId;
+                proxy.ComponentId = objectId * 10u;
+                proxy.MegaMeshHandle.Id = 1u + objectId % 5u;
+                proxy.WorldTransform.values[12] = static_cast<float>(objectId);
+                proxy.PreviousWorldTransform = proxy.WorldTransform;
+                proxy.SceneSlot = static_cast<uint32_t>(objectId);
+                return proxy;
+            };
+            const auto addProxy = [&]()
+            {
+                source.push_back(makeProxy(nextObject++));
+                changedRaw.push_back(static_cast<uint32_t>(source.size() - 1));
+            };
+            const auto updateProxy = [&](uint32_t index)
+            {
+                source[index].PreviousWorldTransform = source[index].WorldTransform;
+                source[index].WorldTransform.values[12] += 1.0f + static_cast<float>(nextRandom() % 7u);
+                changedRaw.push_back(index);
+            };
+            const auto removeProxy = [&](uint32_t index)
+            {
+                const uint32_t last = static_cast<uint32_t>(source.size() - 1);
+                if (index != last)
+                {
+                    source[index] = source[last];
+                    changedRaw.push_back(index);
+                }
+                source.pop_back();
+            };
+            const auto sameArrays = [](const Container::VariableArray<MegaGeometryProxy>& lhs,
+                                       const Container::VariableArray<MegaGeometryProxy>& rhs)
+            {
+                if (lhs.size() != rhs.size())
+                {
+                    return false;
+                }
+                for (size_t index = 0; index < lhs.size(); ++index)
+                {
+                    if (HashProxy(lhs[index]) != HashProxy(rhs[index]) || lhs[index].SceneSlot != rhs[index].SceneSlot)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            };
+
+            PacketConfirmation confirmation;
+            MegaGeometryDeltaSender sender;
+            MegaGeometryMirror mirror;
+            uint64_t generation = 1;
+            uint64_t serial = 0;
+            struct InFlight
+            {
+                uint64_t Serial = 0;
+                uint64_t Generation = 0;
+                MegaSceneDelta Delta;
+            };
+            Container::VariableArray<InFlight> inFlight;
+            uint32_t baselines = 0;
+            bool bBaselineSkippedOnce = false;
+
+            // 適用するステップ（それ以外は RenderThread に飛ばされる）。世代の替わり（ステップ 30）の基準は一度飛ばす
+            for (uint32_t step = 0; step < 72; ++step)
+            {
+                if (step == 30)
+                {
+                    // シーンを入れ替える: 世代が進み、配列を作り直す。この基準は RenderThread に飛ばされる
+                    bBaselineSkippedOnce = true;
+                    source.clear();
+                    changedRaw.clear();
+                    ++generation;
+                    for (uint32_t add = 0; add < 12; ++add)
+                    {
+                        addProxy();
+                    }
+                }
+                else
+                {
+                    const uint32_t adds = step < 4 ? 8u : nextRandom() % 3u;
+                    for (uint32_t add = 0; add < adds; ++add)
+                    {
+                        addProxy();
+                    }
+                    if (!source.empty())
+                    {
+                        const uint32_t updates = nextRandom() % 4u;
+                        for (uint32_t update = 0; update < updates; ++update)
+                        {
+                            updateProxy(nextRandom() % static_cast<uint32_t>(source.size()));
+                        }
+                        if (nextRandom() % 3u == 0u)
+                        {
+                            removeProxy(nextRandom() % static_cast<uint32_t>(source.size()));
+                        }
+                    }
+                }
+
+                Container::VariableArray<uint32_t> taken = changedRaw;
+                changedRaw.clear();
+                std::sort(taken.begin(), taken.end());
+                taken.erase(std::unique(taken.begin(), taken.end()), taken.end());
+
+                InFlight flight;
+                flight.Generation = generation;
+                const uint64_t confirmedSerial = confirmation.GetConfirmedSerial();
+                const uint64_t confirmedGeneration = confirmation.GetConfirmedGeneration();
+                sender.Build(source, taken, confirmedSerial, confirmedGeneration, generation, flight.Delta);
+                ++serial;
+                flight.Serial = serial;
+                sender.NoteSent(serial, generation);
+                if (flight.Delta.bBaseline != (confirmedGeneration != generation))
+                {
+                    return fail("適用された世代が現在の世代でないあいだは基準を送り、それ以外は差分を送るはず");
+                }
+                baselines += flight.Delta.bBaseline ? 1u : 0u;
+                if (step >= 30 && step <= 31 && !flight.Delta.bBaseline)
+                {
+                    return fail("世代が替わった直後のパケットは基準のはず");
+                }
+                inFlight.push_back(std::move(flight));
+                ++examined;
+
+                // RenderThread は、適用すると決めたステップで最新のパケットだけを適用する（古いパケットは捨てられる）。
+                // 3 の倍数のステップでは、適用の前に 1 つ古いパケットを遅れて適用して、重なった当たり方も確かめる
+                const bool bApply = (step % 4u == 3u) || (step % 11u == 5u) || step == 31 || step == 33;
+                if (bApply)
+                {
+                    if (step % 3u == 0u && inFlight.size() >= 2)
+                    {
+                        const InFlight& older = inFlight[inFlight.size() - 2];
+                        if (confirmation.TryApply(older.Serial, older.Generation) == PacketApplyResult::Applied)
+                        {
+                            if (!mirror.Apply(older.Delta, older.Generation, false))
+                            {
+                                return fail("遅れて適用した差分を当てられなかった");
+                            }
+                        }
+                    }
+                    const InFlight& newest = inFlight.back();
+                    if (confirmation.TryApply(newest.Serial, newest.Generation) != PacketApplyResult::Applied)
+                    {
+                        return fail("適用できるはずのパケットが適用されなかった");
+                    }
+                    if (!mirror.Apply(newest.Delta, newest.Generation, false))
+                    {
+                        return fail("最新のパケットの差分を当てられなかった");
+                    }
+                    if (!sameArrays(mirror.GetProxies(), source))
+                    {
+                        return fail("差分を当てた写しが、GameThread の配列と一致しない");
+                    }
+                    if (!newest.Delta.bBaseline)
+                    {
+                        // 変わった席には、このパケットが運んだ proxy の席が全部入る
+                        for (uint32_t index : newest.Delta.Indices)
+                        {
+                            const uint32_t slot = source[index].SceneSlot;
+                            if (!std::binary_search(mirror.GetChangedSlots().begin(), mirror.GetChangedSlots().end(), slot))
+                            {
+                                return fail("運んだ proxy の席が、変わった席に入っていない");
+                            }
+                        }
+                    }
+                    else if (!mirror.AreAllChanged())
+                    {
+                        return fail("基準を当てた直後は、全部の席が変わったはず");
+                    }
+                    inFlight.clear();
+                    ++examined;
+                }
+            }
+            if (!bBaselineSkippedOnce || baselines < 2)
+            {
+                return fail("基準を飛ばされても、次のパケットが基準を送り直す場面が通らなかった");
+            }
+
+            // 世代が替わったあとに、古い世代の差分は写しへ当たらない
+            {
+                MegaSceneDelta staleDelta;
+                staleDelta.bActive = true;
+                staleDelta.Size = 1;
+                staleDelta.Indices.push_back(0);
+                staleDelta.Proxies.push_back(makeProxy(9999));
+                const size_t sizeBefore = mirror.GetProxies().size();
+                if (mirror.Apply(staleDelta, generation - 1, false) || mirror.GetProxies().size() != sizeBefore ||
+                    mirror.GetRejectedCount() != 1)
+                {
+                    return fail("古い世代の差分が写しへ当たった");
+                }
+                ++examined;
+            }
+            return true;
+        }
+
+        // 検査 MEGA_SCENE_DELTA: 本物の写しの hash の照合結果（RenderThread が公開）と、決まった場面（最初の回と 256 回ごと）を確かめる。
+        // GameThread から呼ぶ
+        void RunMegaDeltaCheck(const MegaGeometryMirror& mirror,
+                               uint64_t sentCount,
+                               uint64_t& reportedChecked,
+                               uint64_t& reportedMismatched)
+        {
+            if (Engine::GEngine == nullptr)
+            {
+                return;
+            }
+            NorvesLib::Debug::EngineChecks& checks = Engine::GEngine->GetEngineChecks();
+            if (!checks.IsEnabled("MEGA_SCENE_DELTA"))
+            {
+                return;
+            }
+            char detail[240] = {};
+            bool bPass = true;
+            uint32_t examined = 0;
+            if (sentCount == 1 || sentCount % 256 == 0)
+            {
+                bPass = VerifyMegaDeltaProtocol(detail, sizeof(detail), examined);
+            }
+            const uint64_t checked = mirror.GetVerifyCheckedCount();
+            const uint64_t mismatched = mirror.GetVerifyMismatchedCount();
+            if (mismatched > reportedMismatched)
+            {
+                bPass = false;
+                std::snprintf(detail, sizeof(detail), "差分を当てた写しが、送った時点の配列と一致しない: mismatched=%llu checked=%llu",
+                              static_cast<unsigned long long>(mismatched), static_cast<unsigned long long>(checked));
+            }
+            if (!bPass && checks.GetFailCount() <= 8)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "MEGA_SCENE_DELTA: 約束が破れた: %s", detail);
+            }
+            // fail は毎回、pass は照合が進んだときと決まった場面を確かめたときに出す
+            if (!bPass || checked > reportedChecked || examined > 0)
+            {
+                checks.Report("MEGA_SCENE_DELTA", bPass,
+                              std::max<uint32_t>(examined, static_cast<uint32_t>(checked - reportedChecked)));
+            }
+            reportedChecked = checked;
+            reportedMismatched = mismatched;
+        }
     } // namespace
 
     void RenderingCoordinator::AdvanceCompletedRenderFrameSerial(uint64_t completedSubmissionSerial)
@@ -2334,6 +2599,13 @@ namespace NorvesLib::Core::Rendering
                             static_cast<unsigned long long>(m_RenderedObjectIncompleteFrameCount));
         }
         m_RenderedObjectHistory.Reset();
+        m_MegaSender.Reset();
+        m_MegaMirror.Reset();
+        m_bMegaDeltaPending = false;
+        m_MegaDeltaSentCount = 0;
+        m_MegaDeltaEntryTotal = 0;
+        m_MegaVerifyReportedChecked = 0;
+        m_MegaVerifyReportedMismatched = 0;
         m_RenderedObjectRebasedFrameCount = 0u;
         m_RenderedObjectIncompleteFrameCount = 0u;
 
@@ -2645,12 +2917,39 @@ namespace NorvesLib::Core::Rendering
 
             m_CurrentPacket->SceneGeneration = m_PacketManager.ResolveSceneGeneration(
                 m_MainSceneView.get(), m_MainSceneView ? m_MainSceneView->GetSceneGeneration() : 0u);
+            m_CurrentPacket->MegaDelta.Clear();
+            m_bMegaDeltaPending = false;
             if (m_MainSceneView)
             {
                 m_CurrentPacket->Scene.MeshProxies = m_MainSceneView->GetMeshProxies();
                 m_CurrentPacket->Scene.SkinnedMeshProxies = m_MainSceneView->GetSkinnedMeshProxies();
                 m_CurrentPacket->Scene.LightProxies = m_MainSceneView->GetLightProxies();
-                m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
+                if (m_MainSceneView->IsMegaFullSync())
+                {
+                    // 全量の同期（--mega-scene-full-sync）: 配列を毎フレーム全量で写す
+                    m_CurrentPacket->Scene.MegaGeometryProxies = m_MainSceneView->GetMegaGeometryProxies();
+                }
+                else
+                {
+                    // 差分の同期: 変わった位置と、確認されていない送信の変化だけをパケットへ積む。
+                    // 消費者は RenderThread の写し（MegaGeometryMirror）を読む
+                    m_CurrentPacket->Scene.MegaGeometryProxies.clear();
+                    m_MainSceneView->TakeMegaGeometryChangedIndices(m_MegaChangedScratch);
+                    // 書く側は 世代 → 番号 の順に公開するので、読む側は逆の順に読む
+                    const uint64_t confirmedSerial = m_PacketManager.GetConfirmation().GetConfirmedSerial();
+                    const uint64_t confirmedGeneration = m_PacketManager.GetConfirmation().GetConfirmedGeneration();
+                    MegaSceneDelta& megaDelta = m_CurrentPacket->MegaDelta;
+                    m_MegaSender.Build(m_MainSceneView->GetMegaGeometryProxies(), m_MegaChangedScratch, confirmedSerial,
+                                       confirmedGeneration, m_CurrentPacket->SceneGeneration, megaDelta);
+                    m_bMegaDeltaPending = true;
+                    m_MegaDeltaPendingGeneration = m_CurrentPacket->SceneGeneration;
+                    m_MegaDeltaEntryTotal += megaDelta.Indices.size();
+                    if (Engine::GEngine != nullptr && Engine::GEngine->GetEngineChecks().IsEnabled("MEGA_SCENE_DELTA"))
+                    {
+                        megaDelta.bVerify = true;
+                        megaDelta.VerifyHash = HashMegaGeometryContent(m_MainSceneView->GetMegaGeometryProxies());
+                    }
+                }
             }
             SnapshotSceneParameters(*m_CurrentPacket, capabilities);
             // 影を落とす点光源の選択と6面の行列は、空の太陽を加えた後の光源表とメインカメラから作る。
@@ -2838,11 +3137,15 @@ namespace NorvesLib::Core::Rendering
                 m_RenderResources ? &m_RenderResources->Materials() : nullptr;
             const MegaGeometryResources* megaGeometryResources =
                 m_RenderResources ? &m_RenderResources->MegaGeometry() : nullptr;
+            // 差分の同期ではパケットが MegaGeometry の全量を持たないので、GameThread の SceneView の配列を渡す
             if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildFrameSnapshot(
                     meshResources,
                     *m_CurrentPacket,
                     materialResources,
-                    megaGeometryResources))
+                    megaGeometryResources,
+                    m_CurrentPacket->MegaDelta.bActive && m_MainSceneView
+                        ? &m_MainSceneView->GetMegaGeometryProxies()
+                        : nullptr))
             {
                 NORVES_LOG_WARNING("RayTracingSceneSubsystem", "FramePacketのレイトレーシングscene "
                                                                "snapshotを構築できませんでした");
@@ -2861,24 +3164,33 @@ namespace NorvesLib::Core::Rendering
         // 前の値は直前のゲームのフレームのパケットのものだけを使う（前のカメラと同じ規約）。
         const bool bHasPrevious = m_bPreviousObjectStateValid &&
                                   m_PreviousObjectStateFrameNumber + 1u == packet.FrameNumber;
-        for (MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
+        // 差分の同期では、MegaGeometry の前の変換は SceneView が履歴つきで公開した値（パケットは全量を持たない）。
+        // 全量の同期（--mega-scene-full-sync）だけ、毎フレーム全量で前の変換を付け直して覚え直す
+        const bool bMegaFull = !packet.MegaDelta.bActive;
+        if (bMegaFull)
         {
-            proxy.PreviousWorldTransform = proxy.WorldTransform;
-            if (bHasPrevious)
+            for (MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
             {
-                const auto found = m_PreviousMegaGeometryWorlds.find(proxy.ComponentId);
-                if (found != m_PreviousMegaGeometryWorlds.end())
+                proxy.PreviousWorldTransform = proxy.WorldTransform;
+                if (bHasPrevious)
                 {
-                    proxy.PreviousWorldTransform = found->second;
+                    const auto found = m_PreviousMegaGeometryWorlds.find(proxy.ComponentId);
+                    if (found != m_PreviousMegaGeometryWorlds.end())
+                    {
+                        proxy.PreviousWorldTransform = found->second;
+                    }
                 }
             }
         }
         m_PreviousSkinnedStates.Apply(packet,bHasPrevious);
 
-        m_PreviousMegaGeometryWorlds.clear();
-        for (const MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
+        if (bMegaFull)
         {
-            m_PreviousMegaGeometryWorlds[proxy.ComponentId] = proxy.WorldTransform;
+            m_PreviousMegaGeometryWorlds.clear();
+            for (const MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
+            {
+                m_PreviousMegaGeometryWorlds[proxy.ComponentId] = proxy.WorldTransform;
+            }
         }
         m_PreviousSkinnedStates.Record(packet);
         m_PreviousObjectStateFrameNumber = packet.FrameNumber;
@@ -2917,6 +3229,24 @@ namespace NorvesLib::Core::Rendering
             }
             m_PacketManager.FinishWrite(m_CurrentPacket);
             m_CurrentPacket = nullptr;
+            if (m_bMegaDeltaPending)
+            {
+                // 送り終えた番号で、運んだ変化を台帳へ記録する（確認されるまで次のパケットが積み直す）
+                m_MegaSender.NoteSent(m_PacketManager.GetLastSentSerial(), m_MegaDeltaPendingGeneration);
+                m_bMegaDeltaPending = false;
+                ++m_MegaDeltaSentCount;
+                if (m_MegaDeltaSentCount % 120 == 0)
+                {
+                    NORVES_LOG_INFO("RenderingCoordinator",
+                                    "MEGA_SCENE_DELTA sent=%llu entries=%llu baselines=%llu unconfirmed=%zu",
+                                    static_cast<unsigned long long>(m_MegaDeltaSentCount),
+                                    static_cast<unsigned long long>(m_MegaDeltaEntryTotal),
+                                    static_cast<unsigned long long>(m_MegaSender.GetBaselineCount()),
+                                    m_MegaSender.GetUnconfirmedSendCount());
+                }
+                RunMegaDeltaCheck(m_MegaMirror, m_MegaDeltaSentCount, m_MegaVerifyReportedChecked,
+                                  m_MegaVerifyReportedMismatched);
+            }
             RunPacketConfirmCheck(m_PacketManager);
             PublishSceneSlotGate(m_MainSceneView.get(), m_PacketManager);
             RunGpuSceneSlotRulesCheck(m_PacketManager.GetLastSentSerial());
@@ -3050,6 +3380,28 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         } appliedPacketScope{packetConfirmation, packet->SendSerial, applyResult == PacketApplyResult::Applied};
+
+        // MegaGeometry の差分を写しへ当てる。描画を見送っても、適用したパケットの差分は当てる（次の差分の土台になる）。
+        // 描画がゲームのフレームを飛ばして TAA の履歴が最後に描いたフレームのときは、前の変換も最後に描いた変換へ揃える
+        // （全量の同期の RenderedObjectHistory と同じ規約）
+        if (applyResult == PacketApplyResult::Applied && packet->MegaDelta.bActive)
+        {
+            const bool bFrameGap = m_RenderedObjectHistory.IsValid() &&
+                                   packet->FrameNumber > m_RenderedObjectHistory.GetFrameNumber() + 1u;
+            const bool bTemporalAA =
+                (m_MainSceneView && m_MainSceneView->IsTemporalAAForced()) ||
+                (packet->bHasMainCamera &&
+                 packet->Scene.MainCamera.AntiAliasing == CameraAntiAliasingMode::TemporalAA);
+            if (!m_MegaMirror.Apply(packet->MegaDelta, packet->SceneGeneration, bFrameGap && bTemporalAA))
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator",
+                                 "MegaGeometry delta could not be applied: serial=%llu generation=%llu mirror_generation=%llu",
+                                 static_cast<unsigned long long>(packet->SendSerial),
+                                 static_cast<unsigned long long>(packet->SceneGeneration),
+                                 static_cast<unsigned long long>(m_MegaMirror.GetGeneration()));
+            }
+            m_MegaMirror.Verify(packet->MegaDelta);
+        }
 
         FrameCaptureRequestSnapshot claimedCaptureRequest;
         if (m_FrameCaptureReadbackHelper)
@@ -3418,7 +3770,17 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotSkinnedMeshProxies = &packet->Scene.SkinnedMeshProxies;
         viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
         viewContext.SnapshotPointShadows = &packet->PointShadows;
-        viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
+        if (packet->MegaDelta.bActive)
+        {
+            viewContext.SnapshotMegaGeometryProxies = &m_MegaMirror.GetProxies();
+            viewContext.SnapshotMegaChangedSlots = &m_MegaMirror.GetChangedSlots();
+            viewContext.bSnapshotMegaAllChanged = m_MegaMirror.AreAllChanged();
+            viewContext.SnapshotMegaRevision = m_MegaMirror.GetRevision();
+        }
+        else
+        {
+            viewContext.SnapshotMegaGeometryProxies = &packet->Scene.MegaGeometryProxies;
+        }
 
         PresentationComposer presentationComposer;
         const auto &screenViews = m_Screen.GetViews();

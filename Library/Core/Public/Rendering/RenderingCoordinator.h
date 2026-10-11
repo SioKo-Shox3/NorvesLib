@@ -15,6 +15,7 @@
 #include "Rendering/VolumetricFog.h"
 #include "Rendering/InstanceBufferRing.h"
 #include "Rendering/RenderedObjectHistory.h"
+#include "Rendering/MegaGeometryMirror.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
@@ -666,6 +667,20 @@ namespace NorvesLib::Core::Rendering
         // FramePacket管理
         FramePacketManager m_PacketManager;
         FramePacket *m_CurrentPacket = nullptr;
+
+        // MegaGeometry の差分の同期。送り手と作業用の配列は GameThread、写しは RenderThread が触る。
+        // 写しのない（--mega-scene-full-sync・手で組んだ）パケットは、Scene.MegaGeometryProxies を全量として読む
+        MegaGeometryDeltaSender m_MegaSender;
+        MegaGeometryMirror m_MegaMirror;
+        Container::VariableArray<uint32_t> m_MegaChangedScratch;
+        // 作ったパケットが差分を持つとき true（EndFrame で送り終えた番号を台帳へ記録する）
+        bool m_bMegaDeltaPending = false;
+        uint64_t m_MegaDeltaPendingGeneration = 0;
+        // 開発ログ・検査 MEGA_SCENE_DELTA（GameThread）
+        uint64_t m_MegaDeltaSentCount = 0;
+        uint64_t m_MegaDeltaEntryTotal = 0;
+        uint64_t m_MegaVerifyReportedChecked = 0;
+        uint64_t m_MegaVerifyReportedMismatched = 0;
 
         // 同期
         Thread::Mutex m_Mutex;
