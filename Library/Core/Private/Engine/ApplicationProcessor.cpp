@@ -52,6 +52,9 @@ namespace
     // ワールドの変換の更新を旧の再帰へ戻す（階層のシステムとの比較・切り戻し用）
     constexpr TCHAR kEcsLegacyTransformOption[] = TEXT("--ecs-legacy-transform");
     constexpr size_t kEcsLegacyTransformOptionLength = (sizeof(kEcsLegacyTransformOption) / sizeof(TCHAR)) - 1;
+    // 描画の同期を旧の全走査へ戻す（変わった行だけの同期との比較・切り戻し用）
+    constexpr TCHAR kEcsLegacySyncOption[] = TEXT("--ecs-legacy-sync");
+    constexpr size_t kEcsLegacySyncOptionLength = (sizeof(kEcsLegacySyncOption) / sizeof(TCHAR)) - 1;
 
     class ApplicationInitializeTransaction final
     {
@@ -1056,6 +1059,24 @@ namespace
 
         return pText[kEcsLegacyTransformOptionLength] == TEXT('\0');
     }
+
+    bool IsEcsLegacySyncOption(const TCHAR* pText)
+    {
+        if (!pText)
+        {
+            return false;
+        }
+
+        for (size_t i = 0; i < kEcsLegacySyncOptionLength; ++i)
+        {
+            if (pText[i] == TEXT('\0') || pText[i] != kEcsLegacySyncOption[i])
+            {
+                return false;
+            }
+        }
+
+        return pText[kEcsLegacySyncOptionLength] == TEXT('\0');
+    }
 } // namespace
 
 namespace NorvesLib::Core::Engine
@@ -1170,6 +1191,7 @@ namespace NorvesLib::Core::Engine
         bool bEnableCanvasView = false;
         bool bBoardInstanceBatchingEnabled = true;
         bool bEcsLegacyTransform = false;
+        bool bEcsLegacySync = false;
         Rendering::RenderingMainViewRenderer mainViewRenderer = Rendering::RenderingMainViewRenderer::Raster;
         uint32_t pathTracingSamplesPerFrame = 1u;
         Rendering::PathTracingTransportScope pathTracingTransport =
@@ -1255,6 +1277,12 @@ namespace NorvesLib::Core::Engine
             {
                 bEcsLegacyTransform = true;
                 LOG_INFO("ApplicationProcessor runtime option ecs_legacy_transform=true");
+            }
+
+            if (IsEcsLegacySyncOption(args[i].c_str()))
+            {
+                bEcsLegacySync = true;
+                LOG_INFO("ApplicationProcessor runtime option ecs_legacy_sync=true");
             }
 
             bool bMatchedRenderer = false;
@@ -1686,6 +1714,7 @@ namespace NorvesLib::Core::Engine
             GApplicationLifecycleState.bWorld = true;
             GEngine->GetWorld().Initialize();
             GEngine->GetWorld().SetLegacyTransformPropagation(bEcsLegacyTransform);
+            GEngine->GetWorld().SetLegacyRenderSync(bEcsLegacySync);
             GEngine->GetWorld().SetRenderInterpolationAllowed(!bCaptureDeterministic &&
                                                               !pathTracingSequenceFrame.bEnabled);
 

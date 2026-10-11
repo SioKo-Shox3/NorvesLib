@@ -319,6 +319,11 @@ namespace NorvesLib::Core
         /// 検査 ECS_RENDER_SYNC を EngineChecks の設定によらず走らせる（テスト用）
         void SetRenderSyncCheckForced(bool bForced);
 
+        /// 描画の同期を旧の全走査にするか（起動オプション --ecs-legacy-sync。比較と切り戻し用）。既定は false。
+        /// 既定は、変わった行だけを公開し、Remove の一覧だけを外す（MegaGeometry は SCENE-DELTA まで旧の走査）
+        void SetLegacyRenderSync(bool bLegacy) noexcept { m_bLegacyRenderSync = bLegacy; }
+        [[nodiscard]] bool IsLegacyRenderSync() const noexcept { return m_bLegacyRenderSync; }
+
         /// 変更ログ: Component の描画の同期が不要から必要へ変わった。Component の MarkRenderStateDirty が呼ぶ
         void NoteComponentRenderDirty(Ecs::EcsEntity row);
 
@@ -518,17 +523,32 @@ namespace NorvesLib::Core
         void FinishRenderInvalidationFrame();
         Component::Component* ComponentOfRow(Ecs::EcsEntity row) const;
 
-        // ---- 段 RenderSync の一覧（設計 1.10。準備: 同期は全走査のまま、一覧と全走査を照合する） ----
+        // ---- 段 RenderSync の一覧（設計 1.10）。既定は一覧の行だけを公開する。旧の全走査では一覧と全走査を照合する ----
         bool IsRenderSyncCheckActive() const;
-        /// 変更ログを取るかを同期の頭で決める。取り始めるときは、いまの状態を種として積む。戻りは、この同期で一覧を作って照合するか
+        /// 変更ログを取るかを同期の頭で決める。取り始めるときは、いまの状態を種として積む。戻りは、この同期で検査を走らせるか
         bool BeginRenderSyncFrame();
         void SeedRenderSyncLog(Entity& entity);
         /// 変更ログ: ワールドの変換の版が進んだ Entity の行を積む
         void NoteRenderSyncTransform(Ecs::EcsEntity row);
         /// 変更ログ・通知・公開の状態から、変わった行と Remove の一覧を作る
         void BuildRenderSyncList();
-        void AddRenderSyncChanged(Component::Component& component);
-        void CollectRenderSyncPublishedRemovals();
+        /// bFromSettle: 履歴が落ち着くまでの公開し直し（変わった行の一覧には載せず、公開する行にだけ入れる）
+        void AddRenderSyncChanged(Component::Component& component, bool bFromSettle = false);
+        /// 走査に入らない部分木の行が proxy を出していたら、Remove の一覧と「公開していない」へ戻す行の一覧に載せる
+        void AddRenderSyncRemoval(Component::Component& component);
+        /// 破棄予約された Entity の部分木の行を、Remove の候補として変更ログに積む
+        void NoteSubtreeRenderRemoval(Entity& entity);
+        /// 変更ログの整理: 変換と削除は使い切り、描画の値は、まだ同期が必要な行だけ残す
+        void TrimRenderSyncLogs();
+        // ---- 既定の同期（変わった行だけ） ----
+        void SyncRenderRowsDelta(const Rendering::MaterialResources* materials, const Rendering::MeshResources* meshes);
+        /// 一覧の Remove を SceneView・画面空間の sink から外し、走査に入らない行の公開の状態を戻す
+        void ApplyRenderSyncRemovals();
+        /// 変わった行 1 つの proxy を作り直して公開する（MegaGeometry は旧の走査が行う）
+        void PublishRenderRow(Component::Component& component, const Rendering::MaterialResources* materials,
+                              const Rendering::MeshResources* meshes);
+        /// 既定の同期の結果を、全行から求め直した proxy と照合する（検査が有効なときだけ）
+        void VerifyRenderSyncDelta(const Rendering::MaterialResources* materials, const Rendering::MeshResources* meshes);
         /// 描画の同期の走査が入る Entity か（自分と祖先がすべてアクティブで破棄待ちでない）
         bool IsEntityRenderScanned(const Entity& entity) const;
         /// 描画の同期の対象の種類。対象でなければ None
@@ -554,6 +574,8 @@ namespace NorvesLib::Core
         Container::TUniquePtr<Ecs::EcsTransformSystem> m_EcsTransformSystem;
         /// 旧の再帰でワールドの変換を更新する（--ecs-legacy-transform）
         bool m_bLegacyTransformPropagation = false;
+        /// 描画の同期を旧の全走査にする（--ecs-legacy-sync）
+        bool m_bLegacyRenderSync = false;
         /// 検査 ECS_TRANSFORM の照合の回数と、最後に pass を出した回
         uint64_t m_EcsTransformCheckCalls = 0;
         uint64_t m_EcsTransformLastReport = 0;
@@ -732,6 +754,14 @@ namespace NorvesLib::Core
         /// 行の削除のフックが積んだ Remove（同期のたびに空にする）
         Container::UnorderedSet<uint64_t> m_RenderSyncDestroyed;
         Ecs::EcsRenderSyncList m_RenderSyncList;
+        /// 一覧の変わった行（積んだ順。公開の順を決定論にする）と、その重複除け
+        Container::VariableArray<uint64_t> m_RenderSyncChangedRows;
+        Container::UnorderedSet<uint64_t> m_RenderSyncChangedSeen;
+        /// 走査に入らない部分木で proxy を出していた行（公開の状態を「公開していない」へ戻す）
+        Container::VariableArray<uint64_t> m_RenderSyncUnpublishRows;
+        /// 今回の同期で公開し直す行と、次の同期で公開し直す行（Mesh の履歴が落ち着くまでの公開し直し）
+        Container::VariableArray<uint64_t> m_RenderSettleRows;
+        Container::VariableArray<uint64_t> m_RenderSettleNextRows;
         /// 全走査が proxy を作り直した行
         Container::UnorderedSet<uint64_t> m_RenderSyncScanChanged;
         RenderSyncStats m_RenderSyncStats;

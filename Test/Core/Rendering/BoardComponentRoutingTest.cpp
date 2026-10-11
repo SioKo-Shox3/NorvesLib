@@ -238,7 +238,8 @@ namespace
         assert(sink.Find(first->GetComponentId())->ObjectId == entity->GetObjectId());
         assert(sink.Find(second->GetComponentId())->ObjectId == entity->GetObjectId());
         assert(sink.Find(first->GetComponentId())->WorldTransform.GetTranslationRow().x == 7.0f);
-        assert(sink.StaleCount == 1);
+        // 既定の同期は生存集合を作らない。外す proxy は Remove の一覧で外す
+        assert(sink.StaleCount == 0);
 
         TrackingBoardSink replacementSink;
         world.SetScreenSpaceBoardSink(&replacementSink);
@@ -280,7 +281,7 @@ namespace
         assert(sceneView.GetBoardProxies()[0].ComponentId == board->GetComponentId());
         assert(sceneView.GetBoardProxies()[0].Space == BoardSpace::WorldSpace);
         assert(sink.RemoveId == board->GetComponentId());
-        assert(sink.StaleCount == 2);
+        assert(sink.StaleCount == 0);
 
         board->SetBoardSpace(BoardSpace::ScreenSpace);
         world.SyncToSceneView();
@@ -295,6 +296,30 @@ namespace
         sceneView.Shutdown();
         world.Finalize();
         std::cout << "TestWorldSpaceRemovesScreenSpaceProxyAndStaleRemovalRuns passed\n";
+    }
+
+    // 旧の全走査（--ecs-legacy-sync）は、同期のたびに画面空間の sink へ生存集合を渡して古い proxy を外す
+    void TestLegacySyncRunsStaleRemovalOnScreenSink()
+    {
+        World world;
+        world.Initialize();
+        world.SetLegacyRenderSync(true);
+        TrackingBoardSink sink;
+        world.SetScreenSpaceBoardSink(&sink);
+
+        Entity *entity = world.SpawnObject<Entity>();
+        assert(entity);
+        BoardComponent *board = world.CreateComponent<BoardComponent>(entity);
+        assert(board);
+
+        world.SyncToSceneView();
+        assert(sink.Find(board->GetComponentId()));
+        assert(sink.StaleCount == 1);
+        world.SyncToSceneView();
+        assert(sink.StaleCount == 2);
+
+        world.Finalize();
+        std::cout << "TestLegacySyncRunsStaleRemovalOnScreenSink passed\n";
     }
 
     void TestBillboardEffectiveWorldSpaceSurvivesCleanSync()
@@ -516,6 +541,7 @@ int main()
     TestBoardReflectionAndTextureOptionalProxy();
     TestWorldRoutesScreenSpaceBoardsByComponentId();
     TestWorldSpaceRemovesScreenSpaceProxyAndStaleRemovalRuns();
+    TestLegacySyncRunsStaleRemovalOnScreenSink();
     TestBillboardEffectiveWorldSpaceSurvivesCleanSync();
     TestCanvasViewBoardStoreAndDrawCommandSnapshotShape();
     TestRenderingCoordinatorAppendsCanvasBoardsAfterSceneCommands();
