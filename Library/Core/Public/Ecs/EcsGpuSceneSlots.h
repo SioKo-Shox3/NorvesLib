@@ -1,0 +1,551 @@
+﻿#pragma once
+
+/**
+ * @file EcsGpuSceneSlots.h
+ * @brief MegaGeometry の席（GPU Scene の表の番号）の割り当てと、席の寿命の規則（設計 1.10）
+ *
+ * - 席は行の列 EcsGpuSceneSlot が持つ。行の作成（Create・ColumnAdded）で割り当て、理由が Destroy の削除でだけ解放する。
+ *   行の移動・チャンクの返却・入れ替えでは解放しない（席は行と一緒に動き、前のフレームの履歴が席に付いたまま残る）。
+ * - 空きリストは範囲単位。範囲は連続した席の組で、範囲の AABB は所属する全席の境界を包む。
+ * - 解放した席は、次の 2 つがそろうまで再利用しない（待ちの一覧から使える一覧へ移さない）。
+ *   (1) 削除の適用の確認: 解放を運ぶパケットの番号以上が RenderThread に適用された（世代が進んでいれば、写しごと入れ替わっている）
+ *   (2) その席を最後に使った提出の完了: 解放の時点で送り終えていた最後のパケットまでが、GPU で完了した
+ * - 描画側（消費者）がいない間（ゲートが無効）は、解放した席を直ちに再利用できる。
+ *
+ * EcsWorld が 1 つ持ち、GameThread だけが触る（スレッドセーフではない）。
+ */
+
+#include "Container/Containers.h"
+#include "Ecs/EcsSlotGate.h"
+#include "Ecs/EcsTypes.h"
+#include "Math/Vector3.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <utility>
+
+namespace NorvesLib::Core::Ecs
+{
+    /// 行の席。作った行は全部 0 なので、Value は「席の番号 + 1」とし、0 を「未割り当て」にする
+    struct EcsGpuSceneSlot
+    {
+        uint32_t Value;
+        /// 席が属する範囲の番号
+        uint32_t Range;
+
+        [[nodiscard]] bool IsAssigned() const
+        {
+            return Value != 0;
+        }
+
+        /// 席の番号（IsAssigned のときだけ有効）
+        [[nodiscard]] uint32_t GetIndex() const
+        {
+            return Value - 1;
+        }
+    };
+
+    /// 軽い行（Object なし）の MegaGeometry の値。列の組は EcsMegaInstanceColumns で作る
+    struct EcsMegaInstance
+    {
+        uint32_t MeshIndex;
+        uint32_t Flags;
+        float Scale;
+    };
+
+    /// 軽い行の持ち主の散布（BatchId）
+    struct EcsScatterOwner
+    {
+        uint32_t BatchId;
+    };
+
+    /// 軽い行の列の組: ワールドの変換・MegaGeometry の値・席・持ち主の散布
+    inline void EcsMegaInstanceColumns(EcsColumnInfo (&out)[4])
+    {
+        out[0] = EcsRegisterColumn<EcsWorldTransform>();
+        out[1] = EcsRegisterColumn<EcsMegaInstance>();
+        out[2] = EcsRegisterColumn<EcsGpuSceneSlot>();
+        out[3] = EcsRegisterColumn<EcsScatterOwner>();
+    }
+
+    /// 席の表と行の食い違いの報告（検査 MEGA_SLOTS）
+    struct EcsGpuSceneSlotAudit
+    {
+        /// 席の列を持つ行の数
+        uint32_t Rows = 0;
+        /// 席が未割り当ての行
+        uint32_t UnassignedRows = 0;
+        /// 同じ席を 2 つの行が持つ
+        uint32_t DuplicateSlots = 0;
+        /// 行の席が、表で使用中でない・範囲が食い違う
+        uint32_t UnknownSlots = 0;
+        /// 表で使用中なのに、持つ行が無い席の数（行を持たない席の差）
+        uint32_t OrphanLiveSlots = 0;
+        /// 範囲の AABB が、所属する席の境界を包まない席の数
+        uint32_t ContainmentMisses = 0;
+        /// 解放の条件がそろう前に再利用した席の数（累計）
+        uint64_t PrematureReuse = 0;
+        /// 使用中でない席の二重解放・未割り当ての解放の数（累計）
+        uint64_t InvalidReleases = 0;
+        /// 理由が Destroy でない列の除去・作成時から値が入っていた行の数（累計）
+        uint64_t RuleViolations = 0;
+        char FirstDetail[200] = {};
+
+        [[nodiscard]] uint32_t Violations() const
+        {
+            return UnassignedRows + DuplicateSlots + UnknownSlots + OrphanLiveSlots + ContainmentMisses +
+                   static_cast<uint32_t>(PrematureReuse + InvalidReleases + RuleViolations);
+        }
+
+        void Note(const char *text)
+        {
+            if (FirstDetail[0] == '\0')
+            {
+                std::snprintf(FirstDetail, sizeof(FirstDetail), "%s", text);
+            }
+        }
+    };
+
+    /**
+     * @brief 席の割り当てと、範囲ごとの空きリスト・AABB・再利用の待ち
+     */
+    class EcsGpuSceneSlotTable
+    {
+    public:
+        /// 個別の実体の席を取る範囲の大きさ（席の数）
+        static constexpr uint32_t kGeneralRangeSlots = 64;
+        static constexpr uint32_t kInvalidRange = 0xFFFFFFFFu;
+
+        /// 席を 1 つ割り当てる。使える空き（再利用の条件がそろった席）を先に使い、無ければ範囲の未使用の末尾、無ければ新しい範囲
+        EcsGpuSceneSlot Allocate()
+        {
+            uint32_t rangeIndex = kInvalidRange;
+            uint32_t slot = 0;
+            bool bReused = false;
+            while (!m_ReusableRanges.empty())
+            {
+                const uint32_t candidate = m_ReusableRanges.back();
+                if (m_Ranges[candidate].Ready.empty())
+                {
+                    m_Ranges[candidate].bQueued = false;
+                    m_ReusableRanges.pop_back();
+                    continue;
+                }
+                rangeIndex = candidate;
+                break;
+            }
+            if (rangeIndex != kInvalidRange)
+            {
+                Range &range = m_Ranges[rangeIndex];
+                slot = range.Ready.back();
+                range.Ready.pop_back();
+                bReused = true;
+            }
+            else
+            {
+                if (m_ActiveRange == kInvalidRange || m_Ranges[m_ActiveRange].NextUnused >= m_Ranges[m_ActiveRange].Count)
+                {
+                    m_ActiveRange = CreateRange(kGeneralRangeSlots);
+                }
+                rangeIndex = m_ActiveRange;
+                Range &range = m_Ranges[rangeIndex];
+                slot = range.First + range.NextUnused;
+                ++range.NextUnused;
+            }
+
+            Range &range = m_Ranges[rangeIndex];
+            if (bReused && m_bAudit && m_Gate.bValid && !IsReleasable(m_Audit[slot].Release, m_Gate))
+            {
+                ++m_PrematureReuse;
+            }
+            if (bReused)
+            {
+                ++m_Reused;
+                if (m_bAudit)
+                {
+                    // 前の持ち主の境界は引き継がない
+                    m_Audit[slot].bBounds = false;
+                }
+            }
+            m_State[slot] = SlotState::Live;
+            ++range.Live;
+            ++m_LiveCount;
+            ++m_Allocated;
+            return EcsGpuSceneSlot{slot + 1, rangeIndex};
+        }
+
+        /// 席を解放する（理由が Destroy の削除でだけ呼ぶ）。使用中でない席・未割り当ての席は false で、数えて何もしない
+        bool Release(const EcsGpuSceneSlot &slot)
+        {
+            if (!slot.IsAssigned())
+            {
+                ++m_InvalidReleases;
+                return false;
+            }
+            const uint32_t index = slot.GetIndex();
+            if (index >= m_SlotCount || m_State[index] != SlotState::Live || m_SlotRange[index] != slot.Range)
+            {
+                ++m_InvalidReleases;
+                return false;
+            }
+            Range &range = m_Ranges[slot.Range];
+            --range.Live;
+            --m_LiveCount;
+            ++m_Released;
+            if (!m_Gate.bValid)
+            {
+                MakeReady(index, slot.Range);
+                return true;
+            }
+            PendingEntry entry;
+            entry.Slot = index;
+            entry.Range = slot.Range;
+            entry.Release.Generation = m_Gate.SceneGeneration;
+            entry.Release.ReleaseSerial = m_Gate.LastSentSerial + 1;
+            entry.Release.LastUsedSerial = m_Gate.LastSentSerial;
+            m_State[index] = SlotState::Pending;
+            ++range.Pending;
+            m_Pending.push_back(entry);
+            if (m_bAudit)
+            {
+                m_Audit[index].Release = entry.Release;
+            }
+            return true;
+        }
+
+        /// 描画側の進み具合を取り込み、再利用の条件がそろった席を使える一覧へ移す。ゲートが無効なら待ちを全部移す
+        void Advance(const EcsSlotGate &gate)
+        {
+            m_Gate = gate;
+            ++m_AdvanceCount;
+            while (m_PendingHead < m_Pending.size())
+            {
+                const PendingEntry &entry = m_Pending[m_PendingHead];
+                if (gate.bValid && !IsReleasable(entry.Release, gate))
+                {
+                    break;
+                }
+                --m_Ranges[entry.Range].Pending;
+                if (!gate.bValid && m_bAudit)
+                {
+                    // 消費者がいなくなった（次の消費者は全量から始める）ので、解放の記録は意味を持たない
+                    m_Audit[entry.Slot].Release = ReleaseRecord{};
+                }
+                MakeReady(entry.Slot, entry.Range);
+                ++m_PendingHead;
+            }
+            if (m_PendingHead == m_Pending.size())
+            {
+                m_Pending.clear();
+                m_PendingHead = 0;
+            }
+            else if (m_PendingHead >= 4096 && m_PendingHead * 2 >= m_Pending.size())
+            {
+                m_Pending.erase(m_Pending.begin(), m_Pending.begin() + static_cast<std::ptrdiff_t>(m_PendingHead));
+                m_PendingHead = 0;
+            }
+        }
+
+        /// 席の境界を覚え、所属する範囲の AABB をそれを包むところまで広げる
+        void NoteBounds(const EcsGpuSceneSlot &slot, const Math::Vector3 &boundsMin, const Math::Vector3 &boundsMax)
+        {
+            if (!slot.IsAssigned() || slot.GetIndex() >= m_SlotCount || slot.Range >= m_Ranges.size())
+            {
+                return;
+            }
+            Range &range = m_Ranges[slot.Range];
+            if (!range.bBounds)
+            {
+                range.Min = boundsMin;
+                range.Max = boundsMax;
+                range.bBounds = true;
+            }
+            else
+            {
+                range.Min = Math::Vector3(std::min(range.Min.x, boundsMin.x), std::min(range.Min.y, boundsMin.y),
+                                          std::min(range.Min.z, boundsMin.z));
+                range.Max = Math::Vector3(std::max(range.Max.x, boundsMax.x), std::max(range.Max.y, boundsMax.y),
+                                          std::max(range.Max.z, boundsMax.z));
+            }
+            if (m_bAudit)
+            {
+                AuditSlot &audit = m_Audit[slot.GetIndex()];
+                audit.Min = boundsMin;
+                audit.Max = boundsMax;
+                audit.bBounds = true;
+            }
+        }
+
+        /// 範囲の AABB。境界がまだ無ければ false
+        [[nodiscard]] bool GetRangeBounds(uint32_t range, Math::Vector3 &outMin, Math::Vector3 &outMax) const
+        {
+            if (range >= m_Ranges.size() || !m_Ranges[range].bBounds)
+            {
+                return false;
+            }
+            outMin = m_Ranges[range].Min;
+            outMax = m_Ranges[range].Max;
+            return true;
+        }
+
+        /// 席ごとの履歴（解放の条件・境界）を持つ。検査 MEGA_SLOTS が有効なときだけ呼ぶ。
+        /// すでにある席の履歴は空から始まる（境界が無い席は包含の照合から外れる）
+        void SetAuditEnabled(bool bEnabled)
+        {
+            if (bEnabled && !m_bAudit)
+            {
+                m_bAudit = true;
+                m_Audit.resize(m_SlotCount);
+            }
+        }
+
+        [[nodiscard]] bool IsAuditEnabled() const
+        {
+            return m_bAudit;
+        }
+
+        /// 席の列に Destroy 以外の理由で除去された、または作成時から値が入っていたことを数える（規則の違反）
+        void NoteRuleViolation()
+        {
+            ++m_RuleViolations;
+        }
+
+        /// 範囲の AABB が所属する全席（使用中と解放待ち）の境界を包むかを調べ、外れた席の数を返す。境界の履歴が要る（SetAuditEnabled）
+        uint32_t AuditContainment(EcsGpuSceneSlotAudit &report) const
+        {
+            if (!m_bAudit)
+            {
+                return 0;
+            }
+            uint32_t misses = 0;
+            for (uint32_t slot = 0; slot < m_SlotCount; ++slot)
+            {
+                const SlotState state = m_State[slot];
+                const AuditSlot &audit = m_Audit[slot];
+                if ((state != SlotState::Live && state != SlotState::Pending) || !audit.bBounds)
+                {
+                    continue;
+                }
+                const Range &range = m_Ranges[m_SlotRange[slot]];
+                const bool bContained = range.bBounds && range.Min.x <= audit.Min.x && range.Min.y <= audit.Min.y &&
+                                        range.Min.z <= audit.Min.z && range.Max.x >= audit.Max.x &&
+                                        range.Max.y >= audit.Max.y && range.Max.z >= audit.Max.z;
+                if (!bContained)
+                {
+                    ++misses;
+                    char text[120];
+                    std::snprintf(text, sizeof(text), "範囲 %u の AABB が席 %u の境界を包まない", m_SlotRange[slot], slot);
+                    report.Note(text);
+                }
+            }
+            return misses;
+        }
+
+        /// 席が使用中か
+        [[nodiscard]] bool IsLive(uint32_t slot) const
+        {
+            return slot < m_SlotCount && m_State[slot] == SlotState::Live;
+        }
+
+        /// 席が属する範囲（席の番号が表の外なら kInvalidRange）
+        [[nodiscard]] uint32_t GetRangeOf(uint32_t slot) const
+        {
+            return slot < m_SlotCount ? m_SlotRange[slot] : kInvalidRange;
+        }
+
+        [[nodiscard]] uint32_t GetSlotCount() const
+        {
+            return m_SlotCount;
+        }
+
+        [[nodiscard]] uint32_t GetRangeCount() const
+        {
+            return static_cast<uint32_t>(m_Ranges.size());
+        }
+
+        /// 使用中の席の数
+        [[nodiscard]] uint32_t GetLiveCount() const
+        {
+            return m_LiveCount;
+        }
+
+        /// 再利用の条件を待っている席の数
+        [[nodiscard]] size_t GetPendingCount() const
+        {
+            return m_Pending.size() - m_PendingHead;
+        }
+
+        /// 条件がそろい、再利用を待っている空きの数
+        [[nodiscard]] size_t GetReadyCount() const
+        {
+            size_t total = 0;
+            for (const Range &range : m_Ranges)
+            {
+                total += range.Ready.size();
+            }
+            return total;
+        }
+
+        [[nodiscard]] uint64_t GetAllocatedCount() const
+        {
+            return m_Allocated;
+        }
+
+        [[nodiscard]] uint64_t GetReleasedCount() const
+        {
+            return m_Released;
+        }
+
+        /// 解放した席を再割り当てした回数
+        [[nodiscard]] uint64_t GetReusedCount() const
+        {
+            return m_Reused;
+        }
+
+        /// 条件がそろう前に再利用した回数（履歴が要る）
+        [[nodiscard]] uint64_t GetPrematureReuseCount() const
+        {
+            return m_PrematureReuse;
+        }
+
+        [[nodiscard]] uint64_t GetInvalidReleaseCount() const
+        {
+            return m_InvalidReleases;
+        }
+
+        [[nodiscard]] uint64_t GetRuleViolationCount() const
+        {
+            return m_RuleViolations;
+        }
+
+        [[nodiscard]] const EcsSlotGate &GetGate() const
+        {
+            return m_Gate;
+        }
+
+        /// Advance を呼んだ回数（検査の間引きに使う）
+        [[nodiscard]] uint64_t GetAdvanceCount() const
+        {
+            return m_AdvanceCount;
+        }
+
+    private:
+        enum class SlotState : uint8_t
+        {
+            Unused = 0,
+            Live,
+            Pending,
+            Ready,
+        };
+
+        /// 席の解放の記録（再利用の条件に使う）
+        struct ReleaseRecord
+        {
+            /// 解放したときのシーンの世代
+            uint64_t Generation = 0;
+            /// 解放を運ぶパケットの番号（解放したときに送り終えていた番号 + 1）
+            uint64_t ReleaseSerial = 0;
+            /// その席を最後に使いうる、送り終えていた最後のパケットの番号
+            uint64_t LastUsedSerial = 0;
+        };
+
+        struct PendingEntry
+        {
+            uint32_t Slot = 0;
+            uint32_t Range = 0;
+            ReleaseRecord Release;
+        };
+
+        struct Range
+        {
+            uint32_t First = 0;
+            uint32_t Count = 0;
+            /// 未使用の末尾の先頭（First からの位置）
+            uint32_t NextUnused = 0;
+            uint32_t Live = 0;
+            uint32_t Pending = 0;
+            /// 使える空きの一覧に入っているか
+            bool bQueued = false;
+            bool bBounds = false;
+            Math::Vector3 Min;
+            Math::Vector3 Max;
+            /// 再利用の条件がそろった席
+            Container::VariableArray<uint32_t> Ready;
+        };
+
+        struct AuditSlot
+        {
+            Math::Vector3 Min;
+            Math::Vector3 Max;
+            bool bBounds = false;
+            ReleaseRecord Release;
+        };
+
+        /// 削除の適用の確認と、最後に使った提出の完了の両方がそろったか
+        static bool IsReleasable(const ReleaseRecord &release, const EcsSlotGate &gate)
+        {
+            const bool bApplied = gate.ConfirmedGeneration > release.Generation ||
+                                  (gate.ConfirmedGeneration == release.Generation &&
+                                   gate.ConfirmedSerial >= release.ReleaseSerial);
+            const bool bCompleted = gate.CompletedSerial >= release.LastUsedSerial;
+            return bApplied && bCompleted;
+        }
+
+        uint32_t CreateRange(uint32_t slotCount)
+        {
+            Range range;
+            range.First = m_SlotCount;
+            range.Count = slotCount;
+            const uint32_t index = static_cast<uint32_t>(m_Ranges.size());
+            m_SlotCount += slotCount;
+            m_State.resize(m_SlotCount, SlotState::Unused);
+            m_SlotRange.resize(m_SlotCount, index);
+            if (m_bAudit)
+            {
+                m_Audit.resize(m_SlotCount);
+            }
+            m_Ranges.push_back(std::move(range));
+            return index;
+        }
+
+        /// 席を使える空きにする。範囲に使用中も解放待ちも無くなったら、範囲の AABB を捨てる
+        void MakeReady(uint32_t slot, uint32_t rangeIndex)
+        {
+            Range &range = m_Ranges[rangeIndex];
+            m_State[slot] = SlotState::Ready;
+            range.Ready.push_back(slot);
+            if (!range.bQueued)
+            {
+                range.bQueued = true;
+                m_ReusableRanges.push_back(rangeIndex);
+            }
+            if (range.Live == 0 && range.Pending == 0)
+            {
+                range.bBounds = false;
+            }
+        }
+
+        Container::VariableArray<Range> m_Ranges;
+        Container::VariableArray<SlotState> m_State;
+        Container::VariableArray<uint32_t> m_SlotRange;
+        Container::VariableArray<AuditSlot> m_Audit;
+        /// 使える空きを持つ範囲（末尾から使う）
+        Container::VariableArray<uint32_t> m_ReusableRanges;
+        /// 解放の順（番号は増える一方なので、条件も先頭から順にそろう）
+        Container::VariableArray<PendingEntry> m_Pending;
+        size_t m_PendingHead = 0;
+        EcsSlotGate m_Gate;
+        uint32_t m_ActiveRange = kInvalidRange;
+        uint32_t m_SlotCount = 0;
+        uint32_t m_LiveCount = 0;
+        uint64_t m_Allocated = 0;
+        uint64_t m_Released = 0;
+        uint64_t m_Reused = 0;
+        uint64_t m_PrematureReuse = 0;
+        uint64_t m_InvalidReleases = 0;
+        uint64_t m_RuleViolations = 0;
+        uint64_t m_AdvanceCount = 0;
+        bool m_bAudit = false;
+    };
+}

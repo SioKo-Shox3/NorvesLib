@@ -1,6 +1,8 @@
 ﻿#include "Rendering/RenderingCoordinator.h"
 #include "Debug/EngineChecks.h"
 #include "Debug/Stats.h"
+#include "Ecs/EcsGpuSceneSlots.h"
+#include "Ecs/EcsWorld.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
 #include "Logging/LogMacros.h"
@@ -1843,6 +1845,333 @@ namespace NorvesLib::Core::Rendering
             return true;
         }
 
+        // 席の再利用の条件に使う描画側の進み具合（送った番号・確認・完了）を、SceneView へ写す。GameThread から呼ぶ
+        void PublishSceneSlotGate(SceneView* sceneView, const FramePacketManager& manager)
+        {
+            if (sceneView == nullptr)
+            {
+                return;
+            }
+            const PacketConfirmation& confirmation = manager.GetConfirmation();
+            Ecs::EcsSlotGate gate;
+            gate.bValid = true;
+            gate.SceneGeneration = manager.GetSceneGeneration();
+            gate.LastSentSerial = manager.GetLastSentSerial();
+            // 世代を先に、完了を最後に読む（公開は逆の順で書かれる）
+            gate.ConfirmedGeneration = confirmation.GetConfirmedGeneration();
+            gate.ConfirmedSerial = confirmation.GetConfirmedSerial();
+            gate.CompletedSerial = confirmation.GetCompletedSerial();
+            sceneView->SetSlotGate(gate);
+        }
+
+        // 検査 MEGA_SLOTS の決まった場面: 席の寿命の規則を、本物の型（EcsWorld・席の表）で確かめる。
+        // 破れたときは detail に理由を書いて false を返す。examined に確かめた項目数を足す
+        bool VerifyGpuSceneSlotRules(char* detail, size_t detailSize, uint32_t& examined)
+        {
+            auto fail = [&](const char* reason)
+            {
+                std::snprintf(detail, detailSize, "%s", reason);
+                return false;
+            };
+            auto makeGate = [](uint64_t generation, uint64_t sent, uint64_t confirmedGeneration, uint64_t confirmed,
+                               uint64_t completed)
+            {
+                Ecs::EcsSlotGate gate;
+                gate.bValid = true;
+                gate.SceneGeneration = generation;
+                gate.LastSentSerial = sent;
+                gate.ConfirmedGeneration = confirmedGeneration;
+                gate.ConfirmedSerial = confirmed;
+                gate.CompletedSerial = completed;
+                return gate;
+            };
+            auto slotOf = [](Ecs::EcsWorld& world, Ecs::EcsEntity entity) -> Ecs::EcsGpuSceneSlot
+            {
+                const Ecs::EcsGpuSceneSlot* slot = world.GetColumnValue<Ecs::EcsGpuSceneSlot>(entity);
+                return slot != nullptr ? *slot : Ecs::EcsGpuSceneSlot{0, 0};
+            };
+
+            Ecs::EcsColumnInfo lightColumns[4];
+            Ecs::EcsMegaInstanceColumns(lightColumns);
+            const Ecs::EcsColumnInfo objectColumns[3] = {
+                Ecs::EcsRegisterColumn<Ecs::EcsObjectRef>(),
+                Ecs::EcsRegisterColumn<Ecs::EcsHierarchy>(),
+                Ecs::EcsRegisterColumn<Ecs::EcsGpuSceneSlot>(),
+            };
+
+            // 場面 A: 解放は理由が Destroy の削除だけ。入れ替え・チャンクの返却・列の組の移動では席が変わらず、解放されない
+            {
+                Ecs::EcsWorld world;
+                Ecs::EcsGpuSceneSlotTable& table = world.GetGpuSceneSlots();
+                table.SetAuditEnabled(true);
+                table.Advance(makeGate(1, 10, 1, 10, 10));
+                const Ecs::EcsArchetypeId lightArchetype =
+                    world.GetOrCreateArchetype(Container::Span<const Ecs::EcsColumnInfo>(lightColumns, 4));
+                const Ecs::EcsArchetypeId objectArchetype =
+                    world.GetOrCreateArchetype(Container::Span<const Ecs::EcsColumnInfo>(objectColumns, 3));
+                if (lightArchetype == Ecs::kInvalidEcsArchetype || objectArchetype == Ecs::kInvalidEcsArchetype)
+                {
+                    return fail("席の列を持つアーキタイプを作れなかった");
+                }
+                Container::VariableArray<Ecs::EcsEntity> lights;
+                Container::VariableArray<Ecs::EcsEntity> objects;
+                world.CreateEntities(lightArchetype, 450, &lights);
+                world.CreateEntities(objectArchetype, 80, &objects);
+                if (lights.size() != 450 || objects.size() != 80 || table.GetLiveCount() != 530 ||
+                    world.GetArchetypeChunks(lightArchetype).size() < 2)
+                {
+                    return fail("行の作成で席が割り当てられない、またはチャンクをまたぐ数にならない");
+                }
+                Container::VariableArray<uint32_t> expected;
+                for (const Ecs::EcsEntity entity : lights)
+                {
+                    expected.push_back(slotOf(world, entity).Value);
+                }
+                for (const Ecs::EcsEntity entity : objects)
+                {
+                    expected.push_back(slotOf(world, entity).Value);
+                }
+                const Ecs::EcsGpuSceneSlotAudit created = world.AuditGpuSceneSlots();
+                if (created.Violations() != 0 || created.Rows != 530)
+                {
+                    return fail("作った直後に席の重複・食い違いがある");
+                }
+                examined += 2;
+
+                // 先頭のチャンクの行を削除する: 末尾の行が入れ替わって動くが、動いた行の席は変わらない
+                world.DestroyEntity(lights[10]);
+                // 末尾のチャンクを丸ごと返す
+                for (size_t index = 200; index < lights.size(); ++index)
+                {
+                    world.DestroyEntity(lights[index]);
+                }
+                // 列の組を変える移動: 席は変わらず、解放も割り当てもされない
+                const uint64_t allocatedBefore = table.GetAllocatedCount();
+                const uint64_t releasedBefore = table.GetReleasedCount();
+                for (size_t index = 0; index < 10; ++index)
+                {
+                    world.AddColumnOf<Ecs::EcsScatterOwner>(objects[index]);
+                    world.RemoveColumnOf<Ecs::EcsScatterOwner>(objects[index]);
+                }
+                if (table.GetAllocatedCount() != allocatedBefore || table.GetReleasedCount() != releasedBefore)
+                {
+                    return fail("列の組を変える移動で席が割り当てられた、または解放された");
+                }
+                if (table.GetReleasedCount() != 1 + (lights.size() - 200))
+                {
+                    return fail("解放の数が、Destroy の削除の数と一致しない");
+                }
+                bool bUnchanged = true;
+                for (size_t index = 0; index < lights.size(); ++index)
+                {
+                    if (index == 10 || index >= 200)
+                    {
+                        continue;
+                    }
+                    bUnchanged = bUnchanged && slotOf(world, lights[index]).Value == expected[index];
+                }
+                for (size_t index = 0; index < objects.size(); ++index)
+                {
+                    bUnchanged = bUnchanged && slotOf(world, objects[index]).Value == expected[lights.size() + index];
+                }
+                if (!bUnchanged)
+                {
+                    return fail("入れ替え・チャンクの返却・列の組の移動で、生きている行の席が変わった");
+                }
+                const Ecs::EcsGpuSceneSlotAudit afterDestroy = world.AuditGpuSceneSlots();
+                if (afterDestroy.Violations() != 0 || afterDestroy.Rows != 530 - 1 - (lights.size() - 200))
+                {
+                    return fail("削除のあとに、席の重複・解放漏れ・食い違いがある");
+                }
+                examined += 5;
+            }
+
+            // 場面 B: 解放した席は、削除の適用の確認と提出の完了の両方がそろうまで再利用しない
+            {
+                Ecs::EcsWorld world;
+                Ecs::EcsGpuSceneSlotTable& table = world.GetGpuSceneSlots();
+                table.SetAuditEnabled(true);
+                table.Advance(makeGate(1, 10, 1, 10, 10));
+                const Ecs::EcsArchetypeId lightArchetype =
+                    world.GetOrCreateArchetype(Container::Span<const Ecs::EcsColumnInfo>(lightColumns, 4));
+                Container::VariableArray<Ecs::EcsEntity> rows;
+                world.CreateEntities(lightArchetype, 4, &rows);
+                const uint32_t slot1 = slotOf(world, rows[1]).Value;
+                const uint32_t slot2 = slotOf(world, rows[2]).Value;
+                const uint32_t slot3 = slotOf(world, rows[3]).Value;
+                world.DestroyEntity(rows[1]); // 運ぶパケットは 11、最後に使いうる提出は 10
+                if (table.GetPendingCount() != 1 || table.GetReadyCount() != 0)
+                {
+                    return fail("解放した席が、条件を待つ一覧に入らない");
+                }
+                auto createdSlot = [&]()
+                {
+                    Container::VariableArray<Ecs::EcsEntity> created;
+                    world.CreateEntities(lightArchetype, 1, &created);
+                    rows.push_back(created[0]);
+                    return slotOf(world, created[0]).Value;
+                };
+                if (createdSlot() == slot1)
+                {
+                    return fail("削除が適用される前に、解放した席を再利用した");
+                }
+                table.Advance(makeGate(1, 11, 1, 11, 9)); // 適用は済んだが、最後に使った提出（10）が完了していない
+                if (table.GetPendingCount() != 1 || createdSlot() == slot1)
+                {
+                    return fail("提出が完了する前に、解放した席を再利用した");
+                }
+                table.Advance(makeGate(1, 12, 1, 10, 12)); // 完了は先に進んだが、解放を運ぶパケット（11）が適用されていない
+                if (table.GetPendingCount() != 1 || createdSlot() == slot1)
+                {
+                    return fail("削除の適用の確認の前に、解放した席を再利用した");
+                }
+                table.Advance(makeGate(1, 12, 1, 11, 10));
+                if (table.GetPendingCount() != 0 || table.GetReadyCount() != 1 || createdSlot() != slot1)
+                {
+                    return fail("両方の条件がそろったのに、解放した席を再利用しない");
+                }
+                // シーンの世代が進めば、古い世代の確認の番号に届かなくても写しごと入れ替わっている
+                world.DestroyEntity(rows[2]); // 運ぶパケットは 13、最後に使いうる提出は 12
+                table.Advance(makeGate(2, 13, 2, 12, 12));
+                if (table.GetPendingCount() != 0 || createdSlot() != slot2)
+                {
+                    return fail("世代が進んだのに、解放した席を再利用しない");
+                }
+                // 消費者がいない間は、解放した席を直ちに再利用する。待っていた分も開放する
+                world.DestroyEntity(rows[3]);
+                table.Advance(Ecs::EcsSlotGate{});
+                if (table.GetPendingCount() != 0 || createdSlot() != slot3)
+                {
+                    return fail("消費者がいないのに、解放した席を再利用しない");
+                }
+                const Ecs::EcsGpuSceneSlotAudit audit = world.AuditGpuSceneSlots();
+                if (audit.Violations() != 0 || table.GetPrematureReuseCount() != 0)
+                {
+                    return fail("再利用のあとに、席の重複・食い違い・早すぎる再利用がある");
+                }
+                examined += 7;
+            }
+
+            // 場面 C: 範囲の AABB は所属する全席を包み、範囲が空になったら捨てる
+            {
+                Ecs::EcsWorld world;
+                Ecs::EcsGpuSceneSlotTable& table = world.GetGpuSceneSlots();
+                table.SetAuditEnabled(true);
+                table.Advance(makeGate(1, 10, 1, 10, 10));
+                const Ecs::EcsArchetypeId lightArchetype =
+                    world.GetOrCreateArchetype(Container::Span<const Ecs::EcsColumnInfo>(lightColumns, 4));
+                Container::VariableArray<Ecs::EcsEntity> rows;
+                world.CreateEntities(lightArchetype, 130, &rows);
+                for (size_t index = 0; index < rows.size(); ++index)
+                {
+                    const float x = static_cast<float>(index);
+                    table.NoteBounds(slotOf(world, rows[index]), Math::Vector3(x - 1.0f, -2.0f, 0.0f),
+                                     Math::Vector3(x + 1.0f, 2.0f, 3.0f));
+                }
+                Ecs::EcsGpuSceneSlotAudit audit;
+                if (table.AuditContainment(audit) != 0 || table.GetRangeCount() != 3)
+                {
+                    return fail("範囲の AABB が所属する席の境界を包まない");
+                }
+                Math::Vector3 rangeMin;
+                Math::Vector3 rangeMax;
+                if (!table.GetRangeBounds(0, rangeMin, rangeMax) || rangeMin.x != -1.0f || rangeMax.x != 64.0f)
+                {
+                    return fail("範囲の AABB が、所属する席の境界の和にならない");
+                }
+                // 最初の範囲の全席を解放する。条件がそろって範囲が空になれば AABB を捨てる
+                for (size_t index = 0; index < 64; ++index)
+                {
+                    world.DestroyEntity(rows[index]);
+                }
+                table.Advance(makeGate(1, 11, 1, 11, 11));
+                if (table.GetRangeBounds(0, rangeMin, rangeMax))
+                {
+                    return fail("空になった範囲の AABB が残っている");
+                }
+                Container::VariableArray<Ecs::EcsEntity> created;
+                world.CreateEntities(lightArchetype, 1, &created);
+                const Ecs::EcsGpuSceneSlot reused = slotOf(world, created[0]);
+                table.NoteBounds(reused, Math::Vector3(999.0f, 0.0f, 0.0f), Math::Vector3(1001.0f, 1.0f, 1.0f));
+                if (reused.Range != 0 || !table.GetRangeBounds(0, rangeMin, rangeMax) || rangeMin.x != 999.0f ||
+                    table.AuditContainment(audit) != 0)
+                {
+                    return fail("空になった範囲を再利用したとき、古い境界が残った、または新しい席を包まない");
+                }
+                examined += 4;
+            }
+
+            // 場面 D: 突き合わせが、規則の破れを見つける（重複・未割り当て・表との食い違い・Destroy 以外での列の除去）
+            {
+                Ecs::EcsWorld world;
+                Ecs::EcsGpuSceneSlotTable& table = world.GetGpuSceneSlots();
+                table.Advance(makeGate(1, 10, 1, 10, 10));
+                const Ecs::EcsArchetypeId lightArchetype =
+                    world.GetOrCreateArchetype(Container::Span<const Ecs::EcsColumnInfo>(lightColumns, 4));
+                Container::VariableArray<Ecs::EcsEntity> rows;
+                world.CreateEntities(lightArchetype, 3, &rows);
+                if (world.AuditGpuSceneSlots().Violations() != 0)
+                {
+                    return fail("正しい状態なのに、突き合わせが破れを報告した");
+                }
+                const Ecs::EcsGpuSceneSlot original1 = slotOf(world, rows[1]);
+                const Ecs::EcsGpuSceneSlot original2 = slotOf(world, rows[2]);
+                world.WriteColumnValueOf(rows[1], slotOf(world, rows[0]));
+                const Ecs::EcsGpuSceneSlotAudit duplicate = world.AuditGpuSceneSlots();
+                if (duplicate.DuplicateSlots != 1 || duplicate.OrphanLiveSlots != 1)
+                {
+                    return fail("席の重複を見つけられない");
+                }
+                world.WriteColumnValueOf(rows[1], original1);
+                world.WriteColumnValueOf(rows[2], Ecs::EcsGpuSceneSlot{0, 0});
+                if (world.AuditGpuSceneSlots().UnassignedRows != 1)
+                {
+                    return fail("席が未割り当ての行を見つけられない");
+                }
+                world.WriteColumnValueOf(rows[2], Ecs::EcsGpuSceneSlot{9999, 0});
+                if (world.AuditGpuSceneSlots().UnknownSlots != 1)
+                {
+                    return fail("表に無い席を持つ行を見つけられない");
+                }
+                world.WriteColumnValueOf(rows[2], original2);
+                if (world.AuditGpuSceneSlots().Violations() != 0)
+                {
+                    return fail("値を戻したのに、突き合わせが破れを報告し続けた");
+                }
+                world.RemoveColumnOf<Ecs::EcsGpuSceneSlot>(rows[0]);
+                const Ecs::EcsGpuSceneSlotAudit removed = world.AuditGpuSceneSlots();
+                if (removed.RuleViolations != 1 || removed.OrphanLiveSlots != 1)
+                {
+                    return fail("Destroy 以外の理由で席の列を外したことを見つけられない");
+                }
+                examined += 6;
+            }
+            return true;
+        }
+
+        // 検査 MEGA_SLOTS: 席の寿命の規則（最初のパケットと 256 パケットごと）。実際の World の席は World が毎フレーム突き合わせる。
+        // GameThread から呼ぶ
+        void RunGpuSceneSlotRulesCheck(uint64_t sendSerial)
+        {
+            if (Engine::GEngine == nullptr || (sendSerial != 1 && sendSerial % 256 != 0))
+            {
+                return;
+            }
+            NorvesLib::Debug::EngineChecks& checks = Engine::GEngine->GetEngineChecks();
+            if (!checks.IsEnabled("MEGA_SLOTS"))
+            {
+                return;
+            }
+            char detail[240] = {};
+            uint32_t examined = 0;
+            const bool bPass = VerifyGpuSceneSlotRules(detail, sizeof(detail), examined);
+            if (!bPass && checks.GetFailCount() <= 8)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "MEGA_SLOTS: 席の規則が破れた: %s", detail);
+            }
+            checks.Report("MEGA_SLOTS", bPass, examined);
+        }
+
         // 検査 MEGA_SCENE_CONFIRM: 確認の公開値の単調さ（毎回）と、確認・台帳の約束（最初の回と 256 回ごと）を確かめる。
         // GameThread から呼ぶ
         void RunPacketConfirmCheck(FramePacketManager& manager)
@@ -2589,6 +2918,8 @@ namespace NorvesLib::Core::Rendering
             m_PacketManager.FinishWrite(m_CurrentPacket);
             m_CurrentPacket = nullptr;
             RunPacketConfirmCheck(m_PacketManager);
+            PublishSceneSlotGate(m_MainSceneView.get(), m_PacketManager);
+            RunGpuSceneSlotRulesCheck(m_PacketManager.GetLastSentSerial());
         }
 
         if (bFinishedCameraValid)

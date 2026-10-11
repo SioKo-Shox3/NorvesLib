@@ -1535,3 +1535,26 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 確認の番号は「その番号のパケットを適用した」であり、それ以前のパケットがすべて適用された意味ではない。差分は「確認より後」を全部積み直す累積にして、飛んだ分を落とさない（`PacketDeltaLedger`）。差分を運ぶ項目では、RenderThread 側で `CanApplyDelta` を使うこと。
   - 起動の読み込み中は RenderThread が最初のパケットで止まり、GameThread だけが数万フレーム先へ進む（周回のログで `confirmed=1`、`sent` は増える）。再開すると確認・完了とも単調に追いつく。既存の挙動で、この項目では変えていない。
   - 行末: 編集したファイルは numstat の 2 通りが一致。
+
+### SCN-MEGA-SCENE-SLOTS（2026-10-11、反復 46・run 20261010-223034）
+
+- 変更:
+  - 席の列 `EcsGpuSceneSlot{Value(席+1), Range}` と、席の表 `EcsGpuSceneSlotTable`（新規 `Ecs/EcsGpuSceneSlots.h`。.cpp なしのヘッダ完結）。`EcsWorld` が表を 1 つ持ち、列のフックで割り当て（Create・ColumnAdded）と解放を行う。解放は理由が `Destroy` の削除だけ。移動（AddColumn/RemoveColumn の Move）・入れ替え・チャンクの返却ではフックが呼ばれず、席は行と一緒に動く。`Destroy` 以外の理由で席の列を外したら規則違反として数える。
+  - 空きリストは範囲単位（既定 64 席。使える空きを持つ範囲の一覧から LIFO で使い、無ければ末尾の未使用、無ければ新しい範囲）。範囲の AABB は `NoteBounds` で所属する席の境界を包むまで広がり、範囲に使用中も解放待ちも無くなったら捨てる。
+  - 再利用の条件（`EcsSlotGate`、新規 `Ecs/EcsSlotGate.h`）: 削除の適用の確認（解放を運ぶパケット = 解放時に送り終えた番号 +1 以上が適用された。世代が進んでいれば満たす）と、最後に使いうる提出の完了（解放時に送り終えた最後のパケットまで完了）の両方がそろうまで、解放した席は待ちの一覧に置く。ゲートが無効（SceneView が無い／書かれていない）の間は直ちに再利用する。
+  - ゲートは `RenderingCoordinator`（パケットを送り終えた直後）が `SceneView::SetSlotGate` へ写し、`World` が毎フレーム `AdvanceGpuSceneSlots` で表へ渡す。MegaGeometry の行（`megaColumns`）が席の列を持つ。軽い行用の列 `EcsMegaInstance`・`EcsScatterOwner` と組の作り方 `EcsMegaInstanceColumns` も定義した（MASS-ROWS が使う。席の寿命の検査は軽い行でも確かめた）。
+  - 検査 `MEGA_SLOTS`: (1) World が 32 フレームごとに全行と表を突き合わせる（重複・未割り当て・表との食い違い・解放漏れ・範囲の AABB の包含・早すぎる再利用・不正な解放・規則違反が 0）。さらに SceneView の MegaGeometry の proxy の境界が、行の席の範囲の AABB に包まれることを確かめる。(2) RenderingCoordinator が最初のパケットと 256 パケットごとに、本物の `EcsWorld` で場面 A〜D を確かめる（A: 入れ替え・チャンクの返却・列の組の移動で席が変わらず解放もされない／B: 確認だけ・完了だけでは再利用せず両方で再利用、世代が進んだら再利用、消費者がいなければ直ちに再利用／C: 範囲の AABB の包含と空になった範囲の捨て方／D: 突き合わせが重複・未割り当て・表に無い席・Destroy 以外の列の除去を見つける）。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-MEGA-SCENE-SLOTS-1-build.txt`: Core の RelWithDebInfo ビルド EXIT=0。
+  - `-4.txt`: 指定の撮影 `result=pass`、`MEGA_SLOTS` が default 5・close 5・aerial 4 pass、fail 0。開発ログは `rows=4675 slots=5056 ranges=79 live=4675 pending=0 ready=325 allocated=5000 released=325 proxies=4675`（proxy の境界の包含も 4675 件確かめた）。
+  - `-5-cycle.txt`: 指定の周回（mega-stress,mega-bananas）は `MEGA_SLOTS` pass=1483・fail 無しだが、`SCENE_CYCLE_DIFF field=textures,texture_bytes`（既知。CONFIRM と同じ）で EXIT=1。
+  - `-6-mega-stress.txt`・`-6-mega-bananas.txt`: シーンごとの周回 3 周が各 `result=pass`、`MEGA_SLOTS` pass=1018 / 986、fail 無し。mega-bananas の周回の開発ログは `slots=10048 ranges=157 live=0 allocated=30000 released=30000 reused=20000`（周回しても表は増えず、3 周で席を再利用して元に戻る）。
+  - `-7-build.txt`・`-8-ctest.txt`: Debug の EntityTreeTest・WorldSyncDifferentialTest のビルド EXIT=0、EcsStorageTest・EcsMoveTest・EcsCommandTest・WorldSyncDifferentialTest の 4 件 Passed。
+- BLOCKED: 混在周回の verify だけが、ECS・描画と無関係な既知のテクスチャ差で通らない（`blocked/SCN-MEGA-SCENE-SLOTS.md`。CONFIRM と同じ判断）。実装は完了・コミット済み。
+- Notes:
+  - `paths:` の外の `World.cpp` を最小限で編集した（アーキタイプの列 1 つ・proxy の公開に境界を書く 1 行・毎フレームの更新の 1 行・検査の関数）。`World.h`・`CMakeLists.txt`・`RenderingCoordinator.h` は触っていない（新しい型はヘッダ完結、状態は EcsWorld と SceneView が持つ）。
+  - 席の解放を運ぶパケットは「解放時に送り終えた番号 + 1」と見なしている。SCENE-DELTA は、解放を必ず次に送るパケットに載せること（載せ損ねた分は確認の番号が追い付かないので再利用が遅れるだけで安全側）。
+  - 席の表は SceneView が違う（メイン以外）と、ゲートが書かれず消費者なしとして扱う。
+  - 検査の履歴（席ごとの境界・解放の記録）は検査が有効なときだけ持つ。World の作成後に有効になっても、その時点から持ち始める（すでにある席は境界なしで、包含の照合から外れる）。
+  - 範囲の割り当ては作成順で、個別の実体の範囲は空間的にはまとまらない（AABB は緩い）。散布の範囲（連続した席・Morton 順）は MASS-ROWS で `CreateRange` を足すこと。
+  - 行末: 編集したファイルは numstat の 2 通りが一致。新規 `EcsGpuSceneSlots.h`・`EcsSlotGate.h` は UTF-8 BOM + CRLF。

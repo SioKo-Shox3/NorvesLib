@@ -3,6 +3,7 @@
 #include "Container/UnorderedSet.h"
 #include <algorithm>
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <new>
 
@@ -36,11 +37,47 @@ namespace NorvesLib::Core::Ecs
             const TypeInfo *registered = TypeRegistry::Get().Find(info.Type);
             return registered != nullptr && registered->Size == info.Size && registered->Alignment == info.Align;
         }
+
+        /// 席の列が生まれた（行の作成・列の追加）: 席を割り当てて列へ書く。作成時から値が入っていたら規則の違反として数える
+        void OnSlotColumnCreated(void *user, EcsEntity entity, const void *value, EcsHookReason reason)
+        {
+            (void)reason;
+            EcsWorld *world = static_cast<EcsWorld *>(user);
+            EcsGpuSceneSlot *column = world->GetColumnValue<EcsGpuSceneSlot>(entity);
+            if (column == nullptr)
+            {
+                return;
+            }
+            EcsGpuSceneSlotTable &table = world->GetGpuSceneSlots();
+            if (static_cast<const EcsGpuSceneSlot *>(value)->IsAssigned())
+            {
+                table.NoteRuleViolation();
+            }
+            *column = table.Allocate();
+        }
+
+        /// 席の列が消える: 理由が Destroy の削除のときだけ席を解放する。列の除去では解放せず、規則の違反として数える
+        void OnSlotColumnDestroyed(void *user, EcsEntity entity, const void *value, EcsHookReason reason)
+        {
+            (void)entity;
+            EcsGpuSceneSlotTable &table = static_cast<EcsWorld *>(user)->GetGpuSceneSlots();
+            if (reason != EcsHookReason::Destroy)
+            {
+                table.NoteRuleViolation();
+                return;
+            }
+            table.Release(*static_cast<const EcsGpuSceneSlot *>(value));
+        }
     }
 
     EcsWorld::EcsWorld()
         : m_ChunkPool(kEcsChunkSize, kChunkPoolBlocksPerSlab, 64)
     {
+        EcsColumnHooks slotHooks;
+        slotHooks.OnCreate = &OnSlotColumnCreated;
+        slotHooks.OnDestroy = &OnSlotColumnDestroyed;
+        slotHooks.User = this;
+        SetColumnHooks(EcsColumnInfoOf<EcsGpuSceneSlot>().Type, slotHooks);
     }
 
     EcsWorld::~EcsWorld() = default;
@@ -614,6 +651,80 @@ namespace NorvesLib::Core::Ecs
         ++m_HookDepth;
         fn(hooks->User, entity, value, reason);
         --m_HookDepth;
+    }
+
+    EcsGpuSceneSlotAudit EcsWorld::AuditGpuSceneSlots() const
+    {
+        EcsGpuSceneSlotAudit report;
+        const TypeId slotType = EcsColumnInfoOf<EcsGpuSceneSlot>().Type;
+        const EcsGpuSceneSlotTable &table = m_GpuSceneSlots;
+        Container::VariableArray<uint8_t> seen(table.GetSlotCount(), 0);
+        uint32_t distinctSlots = 0;
+        char text[160];
+        for (EcsArchetypeId archetypeId = 0; archetypeId < m_Archetypes.size(); ++archetypeId)
+        {
+            const int32_t column = FindColumnIndex(archetypeId, slotType);
+            if (column < 0)
+            {
+                continue;
+            }
+            for (const EcsChunk *chunk : m_Archetypes[archetypeId].Chunks)
+            {
+                const EcsGpuSceneSlot *slots = static_cast<const EcsGpuSceneSlot *>(GetChunkColumn(chunk, static_cast<uint32_t>(column)));
+                for (uint32_t row = 0; row < chunk->Count; ++row)
+                {
+                    ++report.Rows;
+                    const EcsGpuSceneSlot &slot = slots[row];
+                    if (!slot.IsAssigned())
+                    {
+                        ++report.UnassignedRows;
+                        report.Note("席が未割り当ての行がある");
+                        continue;
+                    }
+                    const uint32_t index = slot.GetIndex();
+                    if (!table.IsLive(index) || table.GetRangeOf(index) != slot.Range)
+                    {
+                        ++report.UnknownSlots;
+                        std::snprintf(text, sizeof(text), "行の席 %u が表で使用中でない、または範囲が食い違う", index);
+                        report.Note(text);
+                    }
+                    else if (seen[index] != 0)
+                    {
+                        ++report.DuplicateSlots;
+                        std::snprintf(text, sizeof(text), "席 %u を 2 つの行が持つ", index);
+                        report.Note(text);
+                    }
+                    else
+                    {
+                        seen[index] = 1;
+                        ++distinctSlots;
+                    }
+                }
+            }
+        }
+        if (table.GetLiveCount() > distinctSlots)
+        {
+            report.OrphanLiveSlots = table.GetLiveCount() - distinctSlots;
+            std::snprintf(text, sizeof(text), "表で使用中の席が行より %u 多い（解放漏れ）", report.OrphanLiveSlots);
+            report.Note(text);
+        }
+        report.ContainmentMisses = table.AuditContainment(report);
+        report.PrematureReuse = table.GetPrematureReuseCount();
+        report.InvalidReleases = table.GetInvalidReleaseCount();
+        report.RuleViolations = table.GetRuleViolationCount();
+        if (report.PrematureReuse != 0)
+        {
+            report.Note("解放の条件がそろう前に席を再利用した");
+        }
+        if (report.InvalidReleases != 0)
+        {
+            report.Note("使用中でない席・未割り当ての席を解放しようとした");
+        }
+        if (report.RuleViolations != 0)
+        {
+            report.Note("Destroy 以外の理由で席の列を外した、または作成時から値が入っていた");
+        }
+        return report;
     }
 
     const void *EcsWorld::GetColumnValue(EcsEntity entity, TypeId type) const

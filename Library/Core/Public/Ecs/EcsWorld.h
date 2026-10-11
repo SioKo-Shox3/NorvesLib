@@ -28,12 +28,16 @@
  *
  * 作成・削除のフック（SetColumnHooks）は、列が生まれる・消えるときだけ呼ぶ（列の組が変わるだけの Move では呼ばない）。
  *
+ * 席（EcsGpuSceneSlot の列）: EcsWorld が席の表を 1 つ持ち、席の列のフックで割り当てと解放を行う。
+ * 割り当ては行の作成・列の追加、解放は理由が Destroy の削除だけ（移動・入れ替え・チャンクの返却では解放しない）。
+ *
  * GameThread だけが触る（スレッドセーフではない）。並列の仕事が呼んでよいのは、MarkWritten 系と走査用の参照だけ
  * （その間は構造変更・SetColumnTracked・CommitChanges をしない）。並列の中の構造変更は EcsCommandBuffer に積む。
  */
 
 #include "Container/Containers.h"
 #include "Container/Span.h"
+#include "Ecs/EcsGpuSceneSlots.h"
 #include "Ecs/EcsTypes.h"
 #include "Memory/PoolAllocator.h"
 
@@ -397,6 +401,21 @@ namespace NorvesLib::Core::Ecs
         [[nodiscard]] void *GetChunkColumn(EcsChunk *chunk, uint32_t columnIndex) const;
         [[nodiscard]] const void *GetChunkColumn(const EcsChunk *chunk, uint32_t columnIndex) const;
 
+        // ---- 席（MegaGeometry の GPU Scene の表の番号。EcsGpuSceneSlots.h） ----
+
+        [[nodiscard]] EcsGpuSceneSlotTable &GetGpuSceneSlots()
+        {
+            return m_GpuSceneSlots;
+        }
+
+        [[nodiscard]] const EcsGpuSceneSlotTable &GetGpuSceneSlots() const
+        {
+            return m_GpuSceneSlots;
+        }
+
+        /// 席の列を持つ全行と席の表を突き合わせる（重複・未割り当て・表との食い違い・範囲の AABB の包含・規則の違反）
+        [[nodiscard]] EcsGpuSceneSlotAudit AuditGpuSceneSlots() const;
+
         // ---- 数の確認 ----
 
         /// 生きている実体（行）の数
@@ -509,6 +528,7 @@ namespace NorvesLib::Core::Ecs
         uint32_t m_HookDepth = 0;
         /// 作る行が受け取る参加の番号
         uint64_t m_CreateJoinSerial = 0;
+        EcsGpuSceneSlotTable m_GpuSceneSlots;
         Memory::PoolAllocator<false> m_ChunkPool;
     };
 

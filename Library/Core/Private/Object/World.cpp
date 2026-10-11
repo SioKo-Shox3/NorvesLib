@@ -54,6 +54,149 @@ namespace NorvesLib::Core
             return std::memcmp(&lhs, &rhs, sizeof(Math::Matrix4x4)) == 0;
         }
 
+        /// 検査 MEGA_SLOTS が有効か
+        bool IsGpuSceneSlotsCheckActive()
+        {
+            NorvesLib::Debug::EngineChecks* checks = NorvesLib::Core::Engine::GEngine != nullptr
+                ? &NorvesLib::Core::Engine::GEngine->GetEngineChecks()
+                : nullptr;
+            return checks != nullptr && checks->IsEnabled("MEGA_SLOTS");
+        }
+
+        /// 球の境界を包む AABB
+        void SphereToBox(const Rendering::BoundingSphere& sphere, Math::Vector3& outMin, Math::Vector3& outMax)
+        {
+            outMin = Math::Vector3(sphere.CenterX - sphere.Radius, sphere.CenterY - sphere.Radius, sphere.CenterZ - sphere.Radius);
+            outMax = Math::Vector3(sphere.CenterX + sphere.Radius, sphere.CenterY + sphere.Radius, sphere.CenterZ + sphere.Radius);
+        }
+
+        /// MegaGeometry の proxy を公開したとき、行の席の範囲の AABB を proxy の境界を包むところまで広げる
+        void NoteMegaSlotBounds(Ecs::EcsWorld& ecs, Ecs::EcsEntity row, const Rendering::MegaGeometryProxy& proxy)
+        {
+            const Ecs::EcsGpuSceneSlot* slot = ecs.GetColumnValue<Ecs::EcsGpuSceneSlot>(row);
+            if (slot == nullptr)
+            {
+                return;
+            }
+            Math::Vector3 boundsMin;
+            Math::Vector3 boundsMax;
+            SphereToBox(proxy.WorldBounds, boundsMin, boundsMax);
+            ecs.GetGpuSceneSlots().NoteBounds(*slot, boundsMin, boundsMax);
+        }
+
+        /// 検査 MEGA_SLOTS の本体: 席の表と全行の突き合わせに加え、SceneView が持つ MegaGeometry の proxy の境界が
+        /// 行の席の範囲の AABB に包まれることを確かめる
+        void RunGpuSceneSlotsCheck(Ecs::EcsWorld& ecs, const Rendering::SceneView* sceneView,
+                                   NorvesLib::Debug::EngineChecks& checks, uint64_t calls)
+        {
+            Ecs::EcsGpuSceneSlotAudit audit = ecs.AuditGpuSceneSlots();
+            uint32_t proxyMisses = 0;
+            uint32_t proxiesExamined = 0;
+            if (sceneView != nullptr)
+            {
+                Container::UnorderedMap<uint64_t, const Rendering::MegaGeometryProxy*> proxyByObject;
+                proxyByObject.reserve(sceneView->GetMegaGeometryProxies().size());
+                for (const Rendering::MegaGeometryProxy& proxy : sceneView->GetMegaGeometryProxies())
+                {
+                    proxyByObject[proxy.ObjectId] = &proxy;
+                }
+                const TypeId slotType = Ecs::EcsColumnInfoOf<Ecs::EcsGpuSceneSlot>().Type;
+                const TypeId refType = Ecs::EcsColumnInfoOf<Ecs::EcsObjectRef>().Type;
+                for (Ecs::EcsArchetypeId archetype = 0; archetype < ecs.GetArchetypeCount(); ++archetype)
+                {
+                    const int32_t slotColumn = ecs.FindColumnIndex(archetype, slotType);
+                    const int32_t refColumn = ecs.FindColumnIndex(archetype, refType);
+                    if (slotColumn < 0 || refColumn < 0)
+                    {
+                        continue;
+                    }
+                    for (const Ecs::EcsChunk* chunk : ecs.GetArchetypeChunks(archetype))
+                    {
+                        const Ecs::EcsGpuSceneSlot* slots =
+                            static_cast<const Ecs::EcsGpuSceneSlot*>(ecs.GetChunkColumn(chunk, static_cast<uint32_t>(slotColumn)));
+                        const Ecs::EcsObjectRef* refs =
+                            static_cast<const Ecs::EcsObjectRef*>(ecs.GetChunkColumn(chunk, static_cast<uint32_t>(refColumn)));
+                        for (uint32_t row = 0; row < chunk->Count; ++row)
+                        {
+                            const Component::Component* component = static_cast<const Component::Component*>(refs[row].Object);
+                            const Entity* owner = component != nullptr ? component->GetOwner() : nullptr;
+                            if (owner == nullptr || !slots[row].IsAssigned())
+                            {
+                                continue;
+                            }
+                            const auto found = proxyByObject.find(owner->GetObjectId());
+                            if (found == proxyByObject.end())
+                            {
+                                continue;
+                            }
+                            ++proxiesExamined;
+                            Math::Vector3 boundsMin;
+                            Math::Vector3 boundsMax;
+                            SphereToBox(found->second->WorldBounds, boundsMin, boundsMax);
+                            Math::Vector3 rangeMin;
+                            Math::Vector3 rangeMax;
+                            const bool bContained =
+                                ecs.GetGpuSceneSlots().GetRangeBounds(slots[row].Range, rangeMin, rangeMax) &&
+                                rangeMin.x <= boundsMin.x && rangeMin.y <= boundsMin.y && rangeMin.z <= boundsMin.z &&
+                                rangeMax.x >= boundsMax.x && rangeMax.y >= boundsMax.y && rangeMax.z >= boundsMax.z;
+                            if (!bContained)
+                            {
+                                ++proxyMisses;
+                                audit.Note("公開した proxy の境界が、行の席の範囲の AABB に包まれない");
+                            }
+                        }
+                    }
+                }
+            }
+            const uint32_t violations = audit.Violations() + proxyMisses;
+            const bool bPass = violations == 0;
+            if (!bPass && checks.GetFailCount() <= 8)
+            {
+                LOG_ERROR("MEGA_SLOTS: 席の規則が破れた (未割り当て=%u, 重複=%u, 表と不一致=%u, 解放漏れ=%u, 包含の外れ=%u, proxy の外れ=%u, 早すぎる再利用=%llu, 不正な解放=%llu, 規則違反=%llu): %s",
+                          audit.UnassignedRows, audit.DuplicateSlots, audit.UnknownSlots, audit.OrphanLiveSlots,
+                          audit.ContainmentMisses, proxyMisses, static_cast<unsigned long long>(audit.PrematureReuse),
+                          static_cast<unsigned long long>(audit.InvalidReleases),
+                          static_cast<unsigned long long>(audit.RuleViolations), audit.FirstDetail);
+            }
+            if (calls % 128 == 0)
+            {
+                const Ecs::EcsGpuSceneSlotTable& table = ecs.GetGpuSceneSlots();
+                LOG_INFO("MEGA_SLOTS rows=%u slots=%u ranges=%u live=%u pending=%zu ready=%zu allocated=%llu released=%llu reused=%llu proxies=%u",
+                         audit.Rows, table.GetSlotCount(), table.GetRangeCount(), table.GetLiveCount(), table.GetPendingCount(),
+                         table.GetReadyCount(), static_cast<unsigned long long>(table.GetAllocatedCount()),
+                         static_cast<unsigned long long>(table.GetReleasedCount()),
+                         static_cast<unsigned long long>(table.GetReusedCount()), proxiesExamined);
+            }
+            // 行が無い間は照合するものが無いので pass は出さない（fail は常に出す）
+            if (!bPass || audit.Rows > 0)
+            {
+                checks.Report("MEGA_SLOTS", bPass, audit.Rows + proxiesExamined);
+            }
+        }
+
+        /// 描画側の進み具合を席の表へ渡す。検査 MEGA_SLOTS が有効なら、一定の間隔で表と全行を突き合わせる
+        void AdvanceGpuSceneSlots(Ecs::EcsWorld& ecs, const Rendering::SceneView* sceneView)
+        {
+            Ecs::EcsGpuSceneSlotTable& table = ecs.GetGpuSceneSlots();
+            table.Advance(sceneView != nullptr ? sceneView->GetSlotGate() : Ecs::EcsSlotGate{});
+            if (NorvesLib::Core::Engine::GEngine == nullptr)
+            {
+                return;
+            }
+            NorvesLib::Debug::EngineChecks& checks = NorvesLib::Core::Engine::GEngine->GetEngineChecks();
+            if (!checks.IsEnabled("MEGA_SLOTS"))
+            {
+                return;
+            }
+            // World を作ったあとで検査が有効になった場合も履歴を持ち始める
+            table.SetAuditEnabled(true);
+            const uint64_t calls = table.GetAdvanceCount();
+            if (calls % 32 == 0)
+            {
+                RunGpuSceneSlotsCheck(ecs, sceneView, checks, calls);
+            }
+        }
+
         class ScopedWorldFlag
         {
         public:
@@ -1405,6 +1548,7 @@ namespace NorvesLib::Core
             Ecs::EcsRegisterColumn<Ecs::EcsMeshRender>(),
             Ecs::EcsRegisterColumn<Ecs::EcsMegaMesh>(),
             Ecs::EcsRegisterColumn<Ecs::EcsPublishState>(),
+            Ecs::EcsRegisterColumn<Ecs::EcsGpuSceneSlot>(),
         };
         const Ecs::EcsColumnInfo skinnedColumns[] = {
             basicColumns[0], basicColumns[1], basicColumns[2], basicColumns[3],
@@ -1452,7 +1596,7 @@ namespace NorvesLib::Core
         };
         createComponentArchetype(Ecs::EcsComponentRowKind::Basic, Container::Span<const Ecs::EcsColumnInfo>(basicColumns, 4));
         createComponentArchetype(Ecs::EcsComponentRowKind::Mesh, Container::Span<const Ecs::EcsColumnInfo>(meshColumns, 6));
-        createComponentArchetype(Ecs::EcsComponentRowKind::MegaGeometry, Container::Span<const Ecs::EcsColumnInfo>(megaColumns, 7));
+        createComponentArchetype(Ecs::EcsComponentRowKind::MegaGeometry, Container::Span<const Ecs::EcsColumnInfo>(megaColumns, 8));
         createComponentArchetype(Ecs::EcsComponentRowKind::SkinnedMesh, Container::Span<const Ecs::EcsColumnInfo>(skinnedColumns, 7));
         createComponentArchetype(Ecs::EcsComponentRowKind::Light, Container::Span<const Ecs::EcsColumnInfo>(lightColumns, 6));
         createComponentArchetype(Ecs::EcsComponentRowKind::PointLight, Container::Span<const Ecs::EcsColumnInfo>(pointLightColumns, 7));
@@ -1466,6 +1610,8 @@ namespace NorvesLib::Core
         publishHooks.User = this;
         m_EcsWorld->SetColumnHooks(Ecs::EcsColumnInfoOf<Ecs::EcsPublishState>().Type, publishHooks);
         m_bRenderSyncLogEnabled = IsRenderSyncCheckActive();
+        // 検査 MEGA_SLOTS は席ごとの境界の履歴を使うので、最初の割り当ての前に有効にする
+        m_EcsWorld->GetGpuSceneSlots().SetAuditEnabled(IsGpuSceneSlotsCheckActive());
 
         // 段の最中に孤児にした行は、各段の同期点で消す
         const uint32_t stages[] = {m_StageTick, m_StageLateTick, m_StageFixedBegin,
@@ -1769,6 +1915,11 @@ namespace NorvesLib::Core
     {
         const Rendering::MaterialResources* materials = m_StageMaterials;
         const Rendering::MeshResources* meshes = m_StageMeshes;
+        if (m_EcsWorld)
+        {
+            // 席の再利用の条件を取り込む（SceneView が無い間は消費者がいないものとして、解放した席を直ちに再利用する）
+            AdvanceGpuSceneSlots(*m_EcsWorld, m_SceneView);
+        }
         if (!HasFlag(OF_Initialized) ||
             (!m_SceneView && !m_ScreenSpaceBoardSink))
         {
@@ -4064,6 +4215,7 @@ namespace NorvesLib::Core
                         megaProxy.ObjectId = entity.GetObjectId();
                         megaProxy.ComponentId = megaComp->GetComponentId();
                         m_SceneView->UpdateMegaGeometryProxy(megaProxy);
+                        NoteMegaSlotBounds(*m_EcsWorld, megaComp->GetEcsEntity(), megaProxy);
                         liveMegaGeometryObjectIds.insert(megaProxy.ObjectId);
                         if (componentDataRegistry)
                         {

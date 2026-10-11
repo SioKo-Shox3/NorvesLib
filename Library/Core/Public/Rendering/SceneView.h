@@ -14,6 +14,7 @@
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
 #include "Container/UnorderedSet.h"
+#include "Ecs/EcsSlotGate.h"
 #include <cstdint>
 
 namespace NorvesLib::Core::Rendering
@@ -205,6 +206,17 @@ namespace NorvesLib::Core::Rendering
          * @brief シーンの世代を 1 つ進める（シーンの切り替えなど、内容を入れ替えるとき）
          */
         void AdvanceSceneGeneration() { ++m_SceneGeneration; }
+
+        /**
+         * @brief 席の再利用の条件に使う、描画側の進み具合を書く
+         *
+         * 描画の調整役（RenderingCoordinator）がパケットを送り終えるたびに、確認・完了の公開値を写す。
+         * World が毎フレーム読んで席の表へ渡す。書かれていない間は消費者がいないものとして、解放した席を直ちに再利用する。
+         */
+        void SetSlotGate(const Ecs::EcsSlotGate &gate) { m_SlotGate = gate; }
+
+        /** @brief 席の再利用の条件に使う、描画側の進み具合 */
+        const Ecs::EcsSlotGate &GetSlotGate() const { return m_SlotGate; }
 
         // ========================================
         // 描画フロー
@@ -514,6 +526,8 @@ namespace NorvesLib::Core::Rendering
 
         // Proxy の内容を入れ替えるたびに進む世代（GameThread だけが触る）
         uint64_t m_SceneGeneration = 1;
+        // 席の再利用の条件（描画の調整役が書く。GameThread だけが触る）
+        Ecs::EcsSlotGate m_SlotGate;
         bool m_bShadowProbeEnabled = false;
         bool m_bShadowProbePointOnly = false;
         ShadowMethod m_ShadowMethod = ShadowMethod::Csm;
