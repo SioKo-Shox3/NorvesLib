@@ -560,14 +560,23 @@
 - paths: Library/Core/Public/Component/ScriptComponent.h, Library/Core/Private/Component/ScriptComponent.cpp, Library/Core/Public/Scripting, Library/Core/Private/Scripting, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Test/Core/Scripting, TASKS.md, PROGRESS.md
 - notes: 2026-10-11 親: 「Object は即時に破棄」の意味を、破棄予約が即時に立つことと決めた（blocked の推奨 A。実際の解放は同期点）。
 
+## SCN-FIX-LOGGERSINK-BUNDLE: テストの束 LoggerSinkTest を、今の API に追いつかせてビルドできるようにする
+- status: todo
+- done-when: LoggerSinkTest の束の次の 5 本を今の API に合わせて直し、束が Debug でビルドできる。直すのはテスト側の追随だけで、テストが確かめる中身は変えない。(1) `Test/Core/Input/InputRebindCaptureManagerTest.cpp`・`InputDebugOverlayControllerTest.cpp`: `ECursorMode` の名前空間の移動に合わせる。(2) `Test/Core/Input/InputBindingJsonTest.cpp` 158 行付近: `assert(...)` の中の raw 文字列を変数へ出す。(3) `Test/Core/Input/ActiveDeviceKindIntegrationTest.cpp`: 入力コントローラーのインターフェースに増えた純粋仮想を偽物に実装する。(4) `Test/Core/Text/JsonWriterTest.cpp` 63 行付近: サロゲート（D83D・DC3A）を UCN で書いて C3850 になる所を、コンパイルできる書き方（バイト列など）にする。束の全体の ctest（`LoggerSinkTest`）と、SCN-ECS-TICK-GAME が使う 3 本が pass する。実行して落ちる member があれば原因を PROGRESS に書き、テスト側の追随で直らないもの（製品のコードの不具合）は別の項目として TASKS に足す。
+- verify: `cmake --build build --config Debug --target LoggerSinkTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(LoggerSinkTest|QuadrupedLocomotionModelTest|CameraCollisionSolverTest|LocomotionProfileReloadTest)$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Test/Core/Input, Test/Core/Text, Test/Core/Logging, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 親が足した。SCN-ECS-TICK-GAME の blocked（`blocked/SCN-ECS-TICK-GAME.md`）の推奨 A。`build/Test/Core/Logging/Debug/LoggerSinkTest.exe` は 2026-09-27 のままで、10 月 2〜4 日の変更以降この束は一度もビルドできていない。JSON のサロゲートは backlog の CORE-JSON-SURROGATE の作業と重なるので、ここではコンパイルを通すための書き方の変更だけにする。
+
+
 ## SCN-ECS-TICK-GAME: Game の FollowCamera と QuadrupedLocomotion を順序付きの系へ移す
 - status: todo
 - done-when: OnTickGroup を消し、Game が起動時に登録する（TryGetComponentTickDelta と GetTickSerial の使い方は保つ）。下のテストと起動画面の比較が pass する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target LoggerSinkTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(QuadrupedLocomotionModelTest|CameraCollisionSolverTest|LocomotionProfileReloadTest)$" --no-tests=error --output-on-failure --timeout 180`
-- paths: Game/Gameplay, Game/GameApplicationHandler.cpp, TASKS.md, PROGRESS.md
-- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
+- paths: Test/Modules/Physics/PhysicsFixedStepPipelineTest.cpp, Game/Gameplay, Game/GameApplicationHandler.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-11 親: verify の LoggerSinkTest の束が、この項目と関係なく 10 月初めから別のテスト 5 本のコンパイルエラーでビルドできない。束を直す SCN-FIX-LOGGERSINK-BUNDLE をこの項目の前に足して todo に戻した（blocked の推奨 A）。消した OnTickGroup を直接呼んでいた `Test/Modules/Physics/PhysicsFixedStepPipelineTest.cpp` の 3 行の追随は paths に足して追認した。
 
 ## SCN-ECS-FRAME-HOOKS: GameMode・粒子・モジュール・handler の更新を段のシステムにする
 - status: todo
