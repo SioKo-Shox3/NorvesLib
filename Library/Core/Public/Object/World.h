@@ -632,6 +632,24 @@ namespace NorvesLib::Core
         /// 検査 ECS_RENDER_TRANSFORM の照合の回数と、最後に pass を出した回
         uint64_t m_RenderCheckCalls = 0;
         uint64_t m_RenderCheckLastReport = 0;
+        /// 計測（統計が有効な構成だけ数える）: 変換の伝播・描画の変換・同期で扱った行の数の累計。kReportFrames ごとに
+        /// 1 フレームあたりの平均を ECS_TRANSFORM_COUNTS で出して戻す
+        struct TransformCounts
+        {
+            static constexpr uint32_t kReportFrames = 120;
+            /// 変わった行（伝播のきっかけ）
+            uint64_t Seeds = 0;
+            /// 伝播で処理した行（きっかけ + 影響する子孫）
+            uint64_t Processed = 0;
+            /// 処理した行のうちワールドの変換か有効性が変わった行
+            uint64_t Changed = 0;
+            /// 描画の変換で見た補間の部分木の行
+            uint64_t RenderRows = 0;
+            /// 同期へ渡した変換の変わった行
+            uint64_t SyncRows = 0;
+            uint32_t Frames = 0;
+        };
+        TransformCounts m_TransformCounts;
         uint32_t m_StageTick = 0;
         uint32_t m_StageLateTick = 0;
         uint32_t m_StageFixedBegin = 0;

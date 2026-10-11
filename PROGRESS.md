@@ -2134,3 +2134,34 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: TASKS.md の次の todo。
 - Notes:
   - `TickDispatch.h` を消したので、paths の外の `Library/Core/CMakeLists.txt`（ヘッダの一覧）と `Ecs/EcsScheduler.*`（比較の参照）も合わせて直した。
+
+### SCN-MEGA-MEASURE-CPU（2026-10-12、反復 14・run 20261011-211043。未完: FIX の後に撮り直す）
+
+- 変更（計測の口だけ。paths に足した）:
+  - 冒頭の方針の名前の区間を足した: 変換の伝播（`World::UpdateWorldTransforms`）を `Ecs.Sync.TransformPropagate`、描画の変換（`UpdateRenderTransforms` の伝播の後）を `Ecs.Sys.RenderTransform`、破棄の回収（`CleanupDestroyedObjects`）を `Ecs.Sync.Cleanup`、SceneQuery の更新を `Ecs.Sys.SceneQuery`。World の段 `Sync` を `RenderSync` に改名した（`Ecs.Stage.RenderSync`・`Ecs.Sys.RenderSync.SyncToSceneView`）。
+  - 統計が有効な構成だけ、120 フレームごとに 1 フレームあたりの行の数を `ECS_TRANSFORM_COUNTS seeds= processed= changed= render_rows= sync_rows=` で出す（変わった行・伝播で処理した行（変わった行 + 影響する子孫）・補間の部分木の行・同期へ渡した行）。
+- 結果（RelWithDebInfo・1920×1080・300 フレーム。`.harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/<static|move1>/metrics.json`）:
+
+| 区間（median / p95 ms） | 5万個 静止（default） | 5万個 1% 移動（default） | 増分 | 行の増分 | 1 行あたり |
+|---|---|---|---|---|---|
+| 段の合計 `Ecs.Stage.*` | 13.44 / 15.08 | 15.45 / 17.91 | +2.01 | | |
+| `Ecs.Stage.RenderSync` | **13.24 / 14.86** | 14.50 / 16.77 | +1.26 | sync_rows 0 → 500 | 2.5 µs |
+| `Ecs.Sync.TransformPropagate` | 0.003 / 0.005 | 0.212 / 0.297 | +0.209 | processed 1 → 501 | 0.42 µs |
+| `Ecs.Sys.RenderTransform` | 0.000 / 0.000 | 0.104 / 0.176 | +0.104 | changed 0 → 500 | 0.21 µs |
+| `Ecs.Sys.SceneQuery` | 0.008 / 0.012 | 1.264 / 1.529 | +1.256 | 500 | 2.5 µs |
+| `Ecs.Sync.Cleanup` | 0.000 / 0.000 | 0.000 / 0.000 | 0 | | |
+| `Ecs.Stage.PreSimulation`（移動のロジック） | 0.022 / 0.031 | 0.403 / 0.532 | +0.38 | 500 | 0.76 µs |
+| gt | 24.22 / 26.81 | 27.84 / 31.42 | | | |
+| rt | 121.1 / 132.9 | 129.5 / 142.5 | | | |
+| GPU | 48.3 / 56.4 | 54.8 / 61.9 | | | |
+
+- 静止の close・aerial も同じ傾向（`Ecs.Stage.RenderSync` 13.07・13.11 ms、gt の p95 26.0・26.4 ms）。補間の部分木は mega-stress では 0 行（`render_rows=0.0`）。
+- 合否:
+  - 5万個の静止でゲームスレッドの段の合計 ≤ 2 ms: **不合格**（13.44 ms）。ほぼ全部が `Ecs.Stage.RenderSync`（変わった行 0 件で 13.2 ms）。差分の同期でも「Text は旧の走査」として根から全 Entity をたどっている。
+  - 各区間 ≤ 0.1 ms: 変換の伝播 0.003・描画の変換 0.000・SceneQuery 0.008・cleanup 0.000 は合格、RenderSync 13.24 は不合格。
+  - 1% 移動の増分が数に比例: 静止（行 0〜1）で伝播・描画の変換・SceneQuery が 0.01 ms 未満、500 行で上の 1 行あたりの値。行の数に依らない固定の重さは RenderSync の全走査だけ。
+  - 並列の系: この負荷で走る系は全部 GameThreadOnly で、どの区間もスレッドは 1（ワーカーに出る系が無い）。
+  - verify 1（`verify-SCN-MEGA-MEASURE-CPU-1.txt`）: 区間はすべて揃ったが、gt の p95 が 26.0〜26.8 ms > 16.6 で `result=fail`、EXIT=1。
+- 1% 移動 + 64 m 区画・バナナ 1万本 / 10万本は撮っていない（RenderSync の全走査が本数に比例して残る間は、増分も gt の差もそれで決まり、直した後に撮り直すため）。Game.log の ERROR は静止・1% 移動とも 0。
+- Next: SCN-MEGA-FIX-RENDERSYNC-WALK（この項目の前に足した）。それが done になったら、この項目を todo に戻して全部の負荷を撮り直す。
+- Notes: gt（24 ms）のうち Ecs の区間の外が約 11 ms ある（区間が無く内訳は不明）。撮り直しのときに見る。

@@ -2186,7 +2186,11 @@ namespace NorvesLib::Core::Engine
             canvasView->SetTransientBoardProxies(frameTransient);
         }
         // SceneQuery は、SyncToSceneView が確定した境界の変化だけを反映する(静止なら更新 0 件)。検査 ECS_SCENEQUERY が有効なら全量と照合する
-        GEngine->GetSceneQuery().Update(GEngine->GetWorld());
+        {
+            // SceneQuery の更新の区間（計測の方針の名前）
+            NorvesLib::Debug::ScopedStat sceneQueryScope("Ecs.Sys.SceneQuery", "Ecs");
+            GEngine->GetSceneQuery().Update(GEngine->GetWorld());
+        }
         GEngine->GetSceneQuery().RunCheck(GEngine->GetWorld(), GEngine->GetEngineChecks());
 
         // 段 PostUpdate: スクリプトの後処理 → モジュールの毎フレーム Tick(SyncToSceneView 後・描画前)

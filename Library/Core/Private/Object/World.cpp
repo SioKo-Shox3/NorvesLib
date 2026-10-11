@@ -16,6 +16,7 @@
 #include "Component/SpringArmComponent.h"
 #include "Component/TextComponent.h"
 #include "Container/UnorderedSet.h"
+#include "Debug/Stats.h"
 #include "Ecs/EcsRenderTypes.h"
 #include "Ecs/EcsScheduler.h"
 #include "Ecs/EcsTransformSystem.h"
@@ -1481,7 +1482,7 @@ namespace NorvesLib::Core
         m_StageFixedBegin = scheduler.AddStage("FixedBegin");
         m_StageFixedTick = scheduler.AddStage("FixedTick");
         m_StageFixedEnd = scheduler.AddStage("FixedEnd");
-        m_StageSync = scheduler.AddStage("Sync");
+        m_StageSync = scheduler.AddStage("RenderSync");
 
         // 段の GameThreadOnly のシステムは登録順に単独の波で走る。従来の処理を同じ順・同じ位置で呼ぶ。
         auto add = [&](uint32_t stage, const char* name, Ecs::EcsSystemFn fn)
@@ -1576,7 +1577,7 @@ namespace NorvesLib::Core
         add(m_StageFixedEnd, "FixedEnd.Cleanup",
             [](void* user, const Context&) { static_cast<World*>(user)->CleanupDestroyedObjects(); });
 
-        add(m_StageSync, "Sync.SyncToSceneView",
+        add(m_StageSync, "RenderSync.SyncToSceneView",
             [](void* user, const Context&) { static_cast<World*>(user)->SyncToSceneViewBody(); });
 
         // 補間の列は行へ後から付け外しされる。型の番号は並列が始まる前に固定しておく
@@ -2278,6 +2279,19 @@ namespace NorvesLib::Core
     {
         const Rendering::MaterialResources* materials = m_StageMaterials;
         const Rendering::MeshResources* meshes = m_StageMeshes;
+#if NORVES_ENABLE_STATS
+        // 計測: 同期は 1 フレーム 1 回なので、ここでフレームを数え、変換の行の数の 1 フレームあたりの平均を一定のフレームごとに出す
+        m_TransformCounts.SyncRows += m_RenderSyncTransformLog.size();
+        if (++m_TransformCounts.Frames >= TransformCounts::kReportFrames)
+        {
+            const double frames = static_cast<double>(m_TransformCounts.Frames);
+            LOG_INFO("ECS_TRANSFORM_COUNTS frames=%u seeds=%.1f processed=%.1f changed=%.1f render_rows=%.1f sync_rows=%.1f",
+                     m_TransformCounts.Frames, m_TransformCounts.Seeds / frames, m_TransformCounts.Processed / frames,
+                     m_TransformCounts.Changed / frames, m_TransformCounts.RenderRows / frames,
+                     m_TransformCounts.SyncRows / frames);
+            m_TransformCounts = TransformCounts{};
+        }
+#endif
         if (m_EcsWorld)
         {
             // 席の再利用の条件を取り込む（SceneView が無い間は消費者がいないものとして、解放した席を直ちに再利用する）。
@@ -3869,6 +3883,8 @@ namespace NorvesLib::Core
         {
             return;
         }
+        // 変換の伝播の区間（計測の方針の名前）
+        NorvesLib::Debug::ScopedStat statScope("Ecs.Sync.TransformPropagate", "Ecs");
 
         // 同期点まで待たせた付け替えと作成予約（行がまだ無い Entity）がある間は、階層の列が Outer/Inner と食い違う。この間は Outer/Inner を正とする旧の再帰で求める
         const bool bLegacy = m_bLegacyTransformPropagation || !m_EcsWorld || m_EntityArchetype == Ecs::kInvalidEcsArchetype ||
@@ -4254,6 +4270,10 @@ namespace NorvesLib::Core
             SortRenderRows();
         Ecs::EcsWorld& ecs = *m_EcsWorld;
         bool bLostRows = false;
+#if NORVES_ENABLE_STATS
+        // 計測: 補間の部分木の行の数（ECS_TRANSFORM_COUNTS で出す）
+        m_TransformCounts.RenderRows += m_RenderRows.size();
+#endif
         // 親が先（深さの順）。補間する行は履歴を評価し、その子孫は「親の描画の変換 × 局所の変換」で求める
         for (const Ecs::EcsEntity row : m_RenderRows)
         {
@@ -4302,6 +4322,8 @@ namespace NorvesLib::Core
         if (!HasFlag(OF_Initialized))
             return;
         UpdateWorldTransforms();
+        // 描画の変換の系の区間（計測の方針の名前。前の変換の伝播は Ecs.Sync.TransformPropagate に入る）
+        NorvesLib::Debug::ScopedStat statScope("Ecs.Sys.RenderTransform", "Ecs");
         ReconcileRenderInterpolation();
         UpdateRenderRows();
         FlushRenderChangedRows();
@@ -4897,6 +4919,8 @@ namespace NorvesLib::Core
             return;
         }
         ScopedWorldFlag cleaning(m_bCleaningObjects);
+        // 破棄の回収の区間（計測の方針の名前）
+        NorvesLib::Debug::ScopedStat statScope("Ecs.Sync.Cleanup", "Ecs");
 
         // 検査 WORLD_CLEANUP: 全木を走査して見つけた予約と、一覧から求めた処理対象が一致するか照合する。
         // 有効なときだけ全木を走査する（通常は一覧だけを処理する）。
@@ -5987,6 +6011,12 @@ namespace NorvesLib::Core
         }
         Ecs::EcsTransformSystem& system = GetEcsTransformSystem();
         const Ecs::EcsTransformSystem::RunResult run = system.Run();
+#if NORVES_ENABLE_STATS
+        // 計測: 変わった行（きっかけ）と、伝播で処理した行（きっかけ + 影響する子孫）を数える（ECS_TRANSFORM_COUNTS で出す）
+        m_TransformCounts.Seeds += run.Seeds;
+        m_TransformCounts.Processed += run.Processed;
+        m_TransformCounts.Changed += run.Changed;
+#endif
         for (const Ecs::EcsTransformSystem::AppliedRow& applied : system.GetApplied())
         {
             if (applied.bWorldChanged || applied.bFirst)
