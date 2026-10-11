@@ -700,7 +700,6 @@ set(PUBLIC_HEADERS
     # Component
     Public/Component/Component.h
     Public/Component/TickGroup.h
-    Public/Component/TickDispatch.h
     Public/Component/BoardComponent.h
     Public/Component/TextComponent.h
     Public/Component/BillboardComponent.h

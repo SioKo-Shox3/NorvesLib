@@ -52,7 +52,6 @@ namespace
         int Code = 0;
         Container::VariableArray<int>* AddedEvents = nullptr;
         Container::VariableArray<int>* RemovedEvents = nullptr;
-        Container::VariableArray<int>* TickEvents = nullptr;
 
         void OnAddedToWorld() override
         {
@@ -71,19 +70,15 @@ namespace
                 RemovedEvents->push_back(Code);
             }
         }
-
-        void Tick(float deltaTime) override
-        {
-            (void)deltaTime;
-            if (TickEvents)
-            {
-                TickEvents->push_back(Code);
-            }
-        }
     };
 
-    class TrackingComponent : public NorvesLib::Core::Component::Component
+    // クラスの中では基底の注入名 Component が名前空間の別名を隠すので、外で別名を付ける
+    using TrackingComponentBase = NorvesLib::Core::Component::Component;
+
+    class EntityTreeTrackingComponent : public TrackingComponentBase
     {
+        REFLECTION_CLASS(EntityTreeTrackingComponent, TrackingComponentBase)
+
     public:
         int Code = 0;
         int* BeginCount = nullptr;
@@ -108,15 +103,26 @@ namespace
             NorvesLib::Core::Component::Component::EndPlay();
         }
 
-        void Tick(float deltaTime) override
+        // 型に登録する本体（World の順序付きの系が呼ぶ）
+        static void RunTick(TrackingComponentBase& component, float)
         {
-            (void)deltaTime;
-            if (TickEvents)
+            auto& self = static_cast<EntityTreeTrackingComponent&>(component);
+            if (self.TickEvents)
             {
-                TickEvents->push_back(Code);
+                self.TickEvents->push_back(self.Code);
             }
         }
     };
+
+    IMPLEMENT_CLASS(EntityTreeTrackingComponent, TrackingComponentBase)
+
+    void RegisterTrackingTick(World& world)
+    {
+        NorvesLib::Core::Component::ComponentTickRegistration registration;
+        registration.Name = "Test.EntityTreeTracking";
+        registration.Run = &EntityTreeTrackingComponent::RunTick;
+        world.RegisterComponentTick(EntityTreeTrackingComponent::StaticClass(), registration);
+    }
 
     MeshProxy* FindMeshProxy(SceneView& view, uint64_t componentId)
     {
@@ -208,7 +214,7 @@ namespace
 
         TrackingEntity* offlineParent = new TrackingEntity();
         TrackingEntity* offlineChild = new TrackingEntity();
-        TrackingComponent* offlineComponent = new TrackingComponent();
+        EntityTreeTrackingComponent* offlineComponent = new EntityTreeTrackingComponent();
         offlineParent->Code = 1;
         offlineChild->Code = 2;
         offlineParent->AddedEvents = &addedEvents;
@@ -240,7 +246,7 @@ namespace
         assert(addedEvents[0] == 1);
         assert(addedEvents[1] == 2);
 
-        TrackingComponent* createdOnChild = world.CreateComponent<TrackingComponent>(offlineChild);
+        EntityTreeTrackingComponent* createdOnChild = world.CreateComponent<EntityTreeTrackingComponent>(offlineChild);
         assert(createdOnChild != nullptr);
         createdOnChild->EndCount = &endCount;
 
@@ -455,28 +461,31 @@ namespace
     {
         World world;
         world.Initialize();
+        RegisterTrackingTick(world);
 
         Container::VariableArray<int> tickEvents;
+        auto addTracker = [&](Entity* owner, int code)
+        {
+            EntityTreeTrackingComponent* tracker = world.CreateComponent<EntityTreeTrackingComponent>(owner);
+            assert(tracker != nullptr);
+            tracker->Code = code;
+            tracker->TickEvents = &tickEvents;
+        };
 
         TrackingEntity* root = world.SpawnEntity<TrackingEntity>();
         assert(root != nullptr);
-        root->Code = 1;
-        root->TickEvents = &tickEvents;
+        addTracker(root, 1);
 
         TrackingEntity* child = world.SpawnEntity<TrackingEntity>(root);
         assert(child != nullptr);
-        child->Code = 2;
-        child->TickEvents = &tickEvents;
+        addTracker(child, 2);
 
         TrackingEntity* grandChild = world.SpawnEntity<TrackingEntity>(child);
         assert(grandChild != nullptr);
-        grandChild->Code = 3;
-        grandChild->TickEvents = &tickEvents;
+        addTracker(grandChild, 3);
 
-        TrackingComponent* component = world.CreateComponent<TrackingComponent>(child);
-        assert(component != nullptr);
-        component->Code = 20;
-        component->TickEvents = &tickEvents;
+        // 子の 2 つ目の Component は孫より後に足しても、深さ優先の順（子の Component が先）で呼ばれる
+        addTracker(child, 20);
 
         world.Tick(0.016f);
         assert(tickEvents.size() == 4);
@@ -598,14 +607,11 @@ namespace
         World world;
         world.Initialize();
 
-        Container::VariableArray<int> tickEvents;
-
         TrackingEntity* externalRoot = world.SpawnEntity<TrackingEntity>();
         TrackingEntity* unrelated = world.SpawnEntity<TrackingEntity>();
         assert(externalRoot != nullptr);
         assert(unrelated != nullptr);
         unrelated->Code = 99;
-        unrelated->TickEvents = &tickEvents;
 
         GameMode::GameModeScope scope(&world, nullptr);
         TrackingEntity* externalChild = scope.SpawnObject<TrackingEntity>(externalRoot);
@@ -622,7 +628,6 @@ namespace
 
         scope.Cleanup();
         assert(scope.IsEmpty());
-        assert(tickEvents.empty());
         assert(externalRoot->GetWorld() == &world);
         assert(unrelated->GetWorld() == &world);
         assert(externalRoot->GetChildEntities().empty());

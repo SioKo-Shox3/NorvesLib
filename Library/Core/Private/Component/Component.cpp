@@ -73,24 +73,6 @@ namespace NorvesLib::Core::Component
         bBegunPlay = false;
     }
 
-    void Component::Tick(float deltaTime)
-    {
-        (void)deltaTime;
-    }
-
-    void Component::OnTickGroup(ETickGroup group, float deltaTime)
-    {
-        if (group == (m_bHasDispatchPrimaryGroup ? m_DispatchPrimaryGroup : GetTickGroup()))
-        {
-            Tick(deltaTime);
-        }
-    }
-
-    void Component::FixedTick(float fixedDeltaTime)
-    {
-        (void)fixedDeltaTime;
-    }
-
     // ========================================
     // オーナー管理（Outer経由）
     // ========================================
@@ -140,6 +122,14 @@ namespace NorvesLib::Core::Component
 
     void Component::StoreTickConfiguration(const TickGroupConfiguration &configuration)
     {
+        // World の木にいる間は、順序付きの系の呼び先（群・優先度・mask で決まる）を次の収集で付け直させる
+        if (Entity *owner = GetOwner())
+        {
+            if (World *world = owner->GetWorld())
+            {
+                world->NoteComponentTickConfigurationChanged();
+            }
+        }
         const Ecs::EcsRowRef row = GetEcsRow();
         const TypeId type = Ecs::EcsColumnInfoOf<Ecs::EcsTickConfig>().Type;
         if (Ecs::EcsRowHasColumn(row, type))

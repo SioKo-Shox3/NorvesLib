@@ -61,7 +61,6 @@ norves_add_test_bundle(EntityTreeTest
     FOLDER "Test/Core/Object"
     MEMBER EntityTreeTest EntityTreeTest.cpp
     MEMBER TickGroupConfigurationTest TickGroupConfigurationTest.cpp
-    MEMBER TickDispatchTest TickDispatchTest.cpp
     MEMBER WorldTickGroupTest WorldTickGroupTest.cpp
     MEMBER LightComponentBuildProxyTest LightComponentBuildProxyTest.cpp
     MEMBER TransformHierarchyTest TransformHierarchyTest.cpp
@@ -131,7 +130,6 @@ add_test(NAME PhysicsQueryTypesTest COMMAND SceneQueryRaycastTest --test=Physics
 
 add_test(NAME TickGroupConfigurationTest COMMAND EntityTreeTest --test=TickGroupConfigurationTest)
 
-add_test(NAME TickDispatchTest COMMAND EntityTreeTest --test=TickDispatchTest)
 add_test(NAME WorldTickGroupTest COMMAND EntityTreeTest --test=WorldTickGroupTest)
 
 add_test(NAME SceneCameraProbeTest COMMAND SceneQueryRaycastTest --test=SceneCameraProbeTest)

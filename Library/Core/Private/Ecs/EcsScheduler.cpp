@@ -1,6 +1,5 @@
 ﻿#include "Ecs/EcsScheduler.h"
 
-#include "Component/TickDispatch.h"
 #include "Debug/Stats.h"
 #include "Thread/JobSystem.h"
 
@@ -62,12 +61,6 @@ namespace NorvesLib::Core::Ecs
         float DeltaOf(Container::Span<const float> deltas, uint8_t channel, float fallback)
         {
             return channel < deltas.size() ? deltas[channel] : fallback;
-        }
-
-        /// 順序付きの呼び先の比較。TickDispatchLess と同じ（群 → 優先度 → 順番）で、同じなら足した順
-        TickDispatchEntry MakeDispatchKey(Component::ETickGroup group, int16_t priority, size_t ordinal)
-        {
-            return TickDispatchEntry{nullptr, nullptr, group, group, priority, ordinal};
         }
     }
 
@@ -621,13 +614,12 @@ namespace NorvesLib::Core::Ecs
             std::sort(system.Order.begin(), system.Order.end(), [&entries](uint32_t lhs, uint32_t rhs) {
                 const OrderedEntry &a = entries[lhs];
                 const OrderedEntry &b = entries[rhs];
-                const TickDispatchEntry keyA = MakeDispatchKey(a.Group, a.Priority, a.Ordinal);
-                const TickDispatchEntry keyB = MakeDispatchKey(b.Group, b.Priority, b.Ordinal);
-                if (TickDispatchLess(keyA, keyB))
+                // 群 → 優先度 → 順番（TickOrderLess）で、同じなら足した順
+                if (Component::TickOrderLess(a.Group, a.Priority, a.Ordinal, b.Group, b.Priority, b.Ordinal))
                 {
                     return true;
                 }
-                if (TickDispatchLess(keyB, keyA))
+                if (Component::TickOrderLess(b.Group, b.Priority, b.Ordinal, a.Group, a.Priority, a.Ordinal))
                 {
                     return false;
                 }

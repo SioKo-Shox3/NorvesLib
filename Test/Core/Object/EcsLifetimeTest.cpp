@@ -317,9 +317,24 @@ namespace
         world.Finalize();
     }
 
-    // 段の最中に Attach*/Reparent/Remove を行う Component。行の作成は同期点まで予約になる
-    class StageMutator : public Component::Component
+    // クラスの中では基底の注入名 Component が名前空間の別名を隠すので、外で別名を付ける
+    using StageProbeBase = Component::Component;
+
+    // 型に Tick の本体を登録する（World の順序付きの系が呼ぶ）
+    template <typename T>
+    void RegisterStageTick(World &world, const char *name)
     {
+        Component::ComponentTickRegistration registration;
+        registration.Name = name;
+        registration.Run = [](StageProbeBase &component, float) { static_cast<T &>(component).OnTick(); };
+        world.RegisterComponentTick(T::StaticClass(), registration);
+    }
+
+    // 段の最中に Attach*/Reparent/Remove を行う Component。行の作成は同期点まで予約になる
+    class StageMutator : public StageProbeBase
+    {
+        REFLECTION_CLASS(StageMutator, StageProbeBase)
+
     public:
         Entity *Parent = nullptr;
         Entity *Existing = nullptr;
@@ -332,7 +347,7 @@ namespace
         bool bCancelledRowless = false;
         bool bMoved = false;
 
-        void Tick(float) override
+        void OnTick()
         {
             if (bRan)
             {
@@ -354,6 +369,7 @@ namespace
             world->RemoveEntity(cancelled);
         }
     };
+    IMPLEMENT_CLASS(StageMutator, StageProbeBase)
 
     // 段の最中の作成は予約され、同期点で再生されて行と階層ができる。再生の前に破棄した分は作られない
     void TestReservedCreateAndCancelInStage()
@@ -363,6 +379,7 @@ namespace
         Entity *root = world.SpawnEntity<Entity>();
         Entity *holder = world.SpawnEntity<Entity>(root);
         Entity *existing = world.SpawnEntity<Entity>(holder);
+        RegisterStageTick<StageMutator>(world, "Test.StageMutator");
         auto *mutator = world.CreateComponent<StageMutator>(root);
         assert(mutator);
         mutator->Parent = root;
@@ -501,6 +518,8 @@ namespace
     // 段の最中に Component を足す Component。行の作成は同期点まで予約になり、Tick の設定は行ができた後も保たれる
     class StageComponentAdder : public ComponentBase
     {
+        REFLECTION_CLASS(StageComponentAdder, ComponentBase)
+
     public:
         ComponentBase *Added = nullptr;
         ComponentBase *Cancelled = nullptr;
@@ -508,7 +527,7 @@ namespace
         bool bAddedRowlessInStage = false;
         bool bConfigKeptInStage = false;
 
-        void Tick(float) override
+        void OnTick()
         {
             if (bRan)
             {
@@ -531,6 +550,7 @@ namespace
             owner->RemoveComponent(Cancelled);
         }
     };
+    IMPLEMENT_CLASS(StageComponentAdder, ComponentBase)
 
     const EcsComponentFlags &ComponentFlagsOf(World &world, Component::Component *component)
     {
@@ -731,6 +751,7 @@ namespace
         ExpectBound(world, 2, 1);
 
         // 段の最中に足した Component は同期点まで予約で、再生の前に外した分は作られない
+        RegisterStageTick<StageComponentAdder>(world, "Test.StageComponentAdder");
         auto *adder = world.CreateComponent<StageComponentAdder>(root);
         ExpectBound(world, 2, 2);
         world.Tick(0.01f);

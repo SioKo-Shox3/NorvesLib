@@ -117,12 +117,6 @@ namespace NorvesLib::Core
          */
         Container::VariableArray<Entity*> GetChildEntities() const;
 
-        /**
-         * @brief 全コンポーネントのTickを呼び出す
-         * @param deltaTime 前フレームからの経過時間
-         */
-        void TickComponents(float deltaTime);
-
         // ========================================
         // World関連（Outer経由）
         // ========================================
@@ -302,11 +296,6 @@ namespace NorvesLib::Core
          */
         virtual void OnRemovedFromWorld() {}
 
-        /**
-         * @brief フレーム更新（GameThread）
-         * @param deltaTime 前フレームからの経過時間（秒）
-         */
-        virtual void Tick(float deltaTime) {}
         // 実行時の局所倍率。親子へは継承せず、World/Animationだけに適用する。
         bool SetCustomTimeDilation(float value);
         // 行が付いている間は ECS の列（EcsTimeDilation）が正で、無い間は m_CustomTimeDilation が正

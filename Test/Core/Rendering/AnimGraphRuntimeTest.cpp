@@ -1179,15 +1179,29 @@ namespace
         world.Finalize();
     }
 
-    class SocketTimeProbe final : public Component::SocketAttachmentComponent
+    // channel は型ごとの登録に持つので、SocketAttachment の本体を channel の違う派生の型へ登録し直す
+    using SocketBase = Component::SocketAttachmentComponent;
+    class UnscaledSocketProbe final : public SocketBase
     {
-      public:
-        Engine::TimeChannel Channel = Engine::TimeChannel::World;
-        Engine::TimeChannel GetTimeChannel() const noexcept override
-        {
-            return Channel;
-        }
+        REFLECTION_CLASS(UnscaledSocketProbe, SocketBase)
     };
+    IMPLEMENT_CLASS(UnscaledSocketProbe, SocketBase)
+    class AnimationSocketProbe final : public SocketBase
+    {
+        REFLECTION_CLASS(AnimationSocketProbe, SocketBase)
+    };
+    IMPLEMENT_CLASS(AnimationSocketProbe, SocketBase)
+    void RegisterSocketProbeTicks(World& world)
+    {
+        const Component::ComponentTickRegistration* socket = world.FindComponentTick(SocketBase::StaticClass());
+        GRAPH_CHECK(socket != nullptr);
+        Component::ComponentTickRegistration unscaled = *socket;
+        unscaled.TimeChannel = Engine::TimeChannel::Unscaled;
+        world.RegisterComponentTick(UnscaledSocketProbe::StaticClass(), unscaled);
+        Component::ComponentTickRegistration animation = *socket;
+        animation.TimeChannel = Engine::TimeChannel::Animation;
+        world.RegisterComponentTick(AnimationSocketProbe::StaticClass(), animation);
+    }
     void TestSocketDependencyTimeDilation()
     {
         for (bool reverse : {false, true})
@@ -1200,6 +1214,7 @@ namespace
                         C::String(R"({"sockets":[{"name":"Mouth","parent":"Root"}]})"), report));
                     World world;
                     world.Initialize();
+                    RegisterSocketProbeTicks(world);
                     auto* first = world.SpawnEntity<Entity>();
                     auto* second = world.SpawnEntity<Entity>();
                     auto* a = reverse ? second : first;
@@ -1212,13 +1227,10 @@ namespace
                         mesh->SetPlaying(false);
                     }
                     GRAPH_CHECK(a->SetCustomTimeDilation(variant == 1 ? 0 : .25f) && t->SetCustomTimeDilation(.5f));
-                    auto* aa = world.CreateComponent<SocketTimeProbe>(a);
-                    auto* ta = world.CreateComponent<SocketTimeProbe>(t);
-                    if (variant == 2)
-                    {
-                        aa->Channel = Engine::TimeChannel::Unscaled;
-                        ta->Channel = Engine::TimeChannel::Animation;
-                    }
+                    SocketBase* aa = variant == 2 ? static_cast<SocketBase*>(world.CreateComponent<UnscaledSocketProbe>(a))
+                                                  : world.CreateComponent<SocketBase>(a);
+                    SocketBase* ta = variant == 2 ? static_cast<SocketBase*>(world.CreateComponent<AnimationSocketProbe>(t))
+                                                  : world.CreateComponent<SocketBase>(t);
                     q->SetPosition(10, 0, 0);
                     GRAPH_CHECK(ta->Attach(q->GetObjectId(), Identity("Mouth"), {}, 1));
                     GRAPH_CHECK(aa->Attach(t->GetObjectId(), Identity("Mouth"), {}, 0));

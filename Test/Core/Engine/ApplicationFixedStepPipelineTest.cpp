@@ -1,6 +1,7 @@
 ﻿#include "Application/ApplicationHandlerBase.h"
 #include "Component/Component.h"
 #include "Component/PointLightComponent.h"
+#include "Ecs/EcsScheduler.h"
 #include "Engine/ApplicationProcessor.h"
 #include "Engine/Engine.h"
 #include "Engine/FixedStepScheduler.h"
@@ -81,16 +82,79 @@ namespace
 
     DynamicFixture* GFixture = nullptr;
 
-    class FixedProbeComponent final : public Component::Component
+    // クラスの中では基底の注入名 Component が名前空間の別名を隠すので、外で別名を付ける
+    using ProbeBase = Component::Component;
+
+    // 固定ステップの段 FixedTick で呼ぶ試験の本体。段のシステム（RunFixedProbes）が Entity の深さ優先の順に呼ぶ
+    class IFixedProbe
     {
     public:
-        void Tick(float deltaTime) override
+        virtual ~IFixedProbe() = default;
+        virtual void OnFixed(float fixedDeltaTime) = 0;
+    };
+
+    void CollectFixedProbes(Entity& entity, Container::VariableArray<IFixedProbe*>& out)
+    {
+        if (!entity.IsActive() || entity.IsPendingDestroy())
+        {
+            return;
+        }
+        if (entity.IsTickEnabled())
+        {
+            for (ProbeBase* component : entity.GetComponents())
+            {
+                if (component->IsActive() && component->IsTickEnabled() && !component->IsPendingDestroy())
+                {
+                    if (auto* probe = dynamic_cast<IFixedProbe*>(component))
+                    {
+                        out.push_back(probe);
+                    }
+                }
+            }
+        }
+        for (Entity* child : entity.GetChildEntities())
+        {
+            CollectFixedProbes(*child, out);
+        }
+    }
+
+    void RunFixedProbes(void* user, const Ecs::EcsSystemContext& context)
+    {
+        auto& world = *static_cast<World*>(user);
+        Container::VariableArray<IFixedProbe*> probes;
+        for (Entity* root : world.GetRootEntities())
+        {
+            CollectFixedProbes(*root, probes);
+        }
+        for (IFixedProbe* probe : probes)
+        {
+            probe->OnFixed(context.DeltaTime);
+        }
+    }
+
+    // 型に Tick の本体を登録する（World の順序付きの系が呼ぶ）
+    template <typename T>
+    void RegisterProbeTick(World& world, const char* name, Engine::TimeChannel channel = Engine::TimeChannel::World)
+    {
+        Component::ComponentTickRegistration registration;
+        registration.Name = name;
+        registration.Run = [](ProbeBase& component, float deltaTime) { static_cast<T&>(component).OnTick(deltaTime); };
+        registration.TimeChannel = channel;
+        world.RegisterComponentTick(T::StaticClass(), registration);
+    }
+
+    class FixedProbeComponent final : public ProbeBase, public IFixedProbe
+    {
+        REFLECTION_CLASS(FixedProbeComponent, ProbeBase)
+
+    public:
+        void OnTick(float deltaTime)
         {
             ++VariableTickCount;
             LastVariableDeltaTime = deltaTime;
         }
 
-        void FixedTick(float fixedDeltaTime) override
+        void OnFixed(float fixedDeltaTime) override
         {
             ++FixedTickCount;
             LastFixedDeltaTime = fixedDeltaTime;
@@ -119,6 +183,7 @@ namespace
         bool bMoveOwner = false;
         bool bReadParent = false;
     };
+    IMPLEMENT_CLASS(FixedProbeComponent, ProbeBase)
 
     class FixedProbeModule final : public Module::IModule
     {
@@ -222,11 +287,17 @@ namespace
             registry.InstallAll(*Engine::GEngine);
     }
 
+    bool RegisterWorldProbes(World& world);
+
     bool SetupDynamicFixture(DynamicFixture& fixture, Engine::ApplicationProcessor& processor, bool bRegisterModules = true)
     {
         GFixture = &fixture;
         Engine::GEngine = new Engine::Engine();
         Engine::GEngine->GetWorld().Initialize();
+        if (!RegisterWorldProbes(Engine::GEngine->GetWorld()))
+        {
+            return false;
+        }
         if (bRegisterModules && !RegisterModules())
         {
             return false;
@@ -352,6 +423,7 @@ namespace
 
     bool TestTickDisabledParentStillTraversesChild(Engine::ApplicationProcessor& processor)
     {
+        (void)processor;
         World& world = Engine::GEngine->GetWorld();
         Entity* parent = world.SpawnEntity<Entity>();
         Entity* child = parent ? world.SpawnEntity<Entity>(parent) : nullptr;
@@ -363,10 +435,9 @@ namespace
         }
 
         parent->SetTickEnabled(false);
-        const Engine::FixedStepAdvanceResult result =
-            Engine::ApplicationFixedStepTestAccess::Advance(processor, 17'000'000, true);
-        return result.ExecutedSteps == 1 &&
-            parentComponent->FixedTickCount == 0 && childComponent->FixedTickCount == 1;
+        world.Tick(0.01f);
+        world.LateTick(0.01f);
+        return parentComponent->VariableTickCount == 0 && childComponent->VariableTickCount == 1;
     }
 
     bool TestShouldAdvanceSimulationPausesAccumulatorAndHooks(Engine::ApplicationProcessor& processor)
@@ -503,10 +574,12 @@ namespace
         return variableDelta == 0.1f && fixed.ExecutedSteps == 8;
     }
 
-    class StageProbeComponent final : public Component::Component
+    class StageProbeComponent final : public ProbeBase
     {
+        REFLECTION_CLASS(StageProbeComponent, ProbeBase)
+
     public:
-        void Tick(float) override
+        void OnTick(float)
         {
             GFixture->Events.push_back(Container::String(Name));
             ObservedWorldX = GetOwner()->GetPosition().x;
@@ -514,6 +587,7 @@ namespace
         const char* Name = "";
         float ObservedWorldX = -1.0f;
     };
+    IMPLEMENT_CLASS(StageProbeComponent, ProbeBase)
 
     class LateProbeHandler final : public Application::ApplicationHandlerBase
     {
@@ -624,14 +698,16 @@ namespace
             GFixture->Events[8] == Container::String("Handler Late");
     }
 
-    class FixedInputEventProbe final : public Component::Component
+    class FixedInputEventProbe final : public ProbeBase, public IFixedProbe
     {
+        REFLECTION_CLASS(FixedInputEventProbe, ProbeBase)
+
       public:
         Input::InputButtonState Button;
         Container::VariableArray<Input::EInputButtonEventType> Consumed;
         bool bQueuePair = true;
         uint32_t FixedCalls = 0;
-        void Tick(float) override
+        void OnTick(float)
         {
             Button.BeginFrame();
             Button.SetFixedEventCapture(true);
@@ -642,7 +718,7 @@ namespace
                 bQueuePair = false;
             }
         }
-        void FixedTick(float) override
+        void OnFixed(float) override
         {
             ++FixedCalls;
             Input::InputButtonEvent event;
@@ -650,6 +726,7 @@ namespace
                 Consumed.push_back(event.Type);
         }
     };
+    IMPLEMENT_CLASS(FixedInputEventProbe, ProbeBase)
     bool TestFixedInputEventFrameOrder(Engine::ApplicationProcessor& processor)
     {
         auto& world = Engine::GEngine->GetWorld();
@@ -692,27 +769,54 @@ namespace
                component->LastFixedDeltaTime == 1.f / 120 && GFixture->LastModuleFixedDelta == 1.f / 120;
     }
 
-    class TimeChannelProbe final : public Component::Component
+    // channel は型ごとの登録に持つので、channel ごとに型を分ける
+    class TimeChannelProbe : public ProbeBase, public IFixedProbe
     {
+        REFLECTION_CLASS(TimeChannelProbe, ProbeBase)
+
       public:
-        Engine::TimeChannel Channel = Engine::TimeChannel::World;
         float Delta = -1, FixedDelta = -1;
         unsigned Calls = 0, FixedCalls = 0;
-        Engine::TimeChannel GetTimeChannel() const noexcept override
-        {
-            return Channel;
-        }
-        void Tick(float value) override
+        void OnTick(float value)
         {
             Delta = value;
             ++Calls;
         }
-        void FixedTick(float value) override
+        void OnFixed(float value) override
         {
             FixedDelta = value;
             ++FixedCalls;
         }
     };
+    IMPLEMENT_CLASS(TimeChannelProbe, ProbeBase)
+    class TimeChannelWorldProbe final : public TimeChannelProbe
+    {
+        REFLECTION_CLASS(TimeChannelWorldProbe, TimeChannelProbe)
+    };
+    IMPLEMENT_CLASS(TimeChannelWorldProbe, TimeChannelProbe)
+    class TimeChannelAnimationProbe final : public TimeChannelProbe
+    {
+        REFLECTION_CLASS(TimeChannelAnimationProbe, TimeChannelProbe)
+    };
+    IMPLEMENT_CLASS(TimeChannelAnimationProbe, TimeChannelProbe)
+    class TimeChannelUnscaledProbe final : public TimeChannelProbe
+    {
+        REFLECTION_CLASS(TimeChannelUnscaledProbe, TimeChannelProbe)
+    };
+    IMPLEMENT_CLASS(TimeChannelUnscaledProbe, TimeChannelProbe)
+
+    TimeChannelProbe* CreateTimeChannelProbe(World& world, Entity* owner, Engine::TimeChannel channel)
+    {
+        switch (channel)
+        {
+        case Engine::TimeChannel::Animation:
+            return world.CreateComponent<TimeChannelAnimationProbe>(owner);
+        case Engine::TimeChannel::Unscaled:
+            return world.CreateComponent<TimeChannelUnscaledProbe>(owner);
+        default:
+            return world.CreateComponent<TimeChannelWorldProbe>(owner);
+        }
+    }
     bool TestHitStopTimeChannels(Engine::ApplicationProcessor& processor, uint32_t rate)
     {
         using namespace Engine;
@@ -731,10 +835,9 @@ namespace
                                                 Component::ETickGroup::Input, Component::ETickGroup::Camera};
         for (unsigned i = 0; i < 4; ++i)
         {
-            probes[i] = world.CreateComponent<TimeChannelProbe>(owner);
+            probes[i] = CreateTimeChannelProbe(world, owner, channels[i]);
             if (!probes[i])
                 return false;
-            probes[i]->Channel = channels[i];
             probes[i]->SetTickGroup(groups[i]);
         }
         TimeScaleRequest half;
@@ -769,6 +872,25 @@ namespace
         result = ApplicationFixedStepTestAccess::Simulate(processor, rate == 60 ? 17000000 : 8500000, true, nullptr);
         return result.ExecutedSteps == 1 && probes[0]->FixedCalls == 1 && probes[0]->FixedDelta == 1.f / rate &&
                probes[0]->Delta > 0 && probes[1]->Delta > 0 && probes[3]->Calls == calls + 1;
+    }
+
+    // 試験の型の本体と、固定ステップの段のシステムを World へ登録する
+    bool RegisterWorldProbes(World& world)
+    {
+        RegisterProbeTick<FixedProbeComponent>(world, "Test.FixedProbe");
+        RegisterProbeTick<StageProbeComponent>(world, "Test.StageProbe");
+        RegisterProbeTick<FixedInputEventProbe>(world, "Test.FixedInputEventProbe");
+        RegisterProbeTick<TimeChannelWorldProbe>(world, "Test.TimeChannelWorld", Engine::TimeChannel::World);
+        RegisterProbeTick<TimeChannelAnimationProbe>(world, "Test.TimeChannelAnimation", Engine::TimeChannel::Animation);
+        RegisterProbeTick<TimeChannelUnscaledProbe>(world, "Test.TimeChannelUnscaled", Engine::TimeChannel::Unscaled);
+        Ecs::SystemScheduler& scheduler = world.GetScheduler();
+        Ecs::SystemDesc desc;
+        desc.Name = "Test.FixedProbes";
+        desc.Stage = scheduler.FindStage("FixedTick");
+        desc.Thread = ThreadPolicy::GameThreadOnly;
+        desc.Run = &RunFixedProbes;
+        desc.User = &world;
+        return scheduler.RegisterSystem(desc) != Ecs::kInvalidEcsSystem;
     }
 
     bool RunCase(uint32_t caseIndex, Engine::ApplicationProcessor& processor)

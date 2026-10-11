@@ -1,6 +1,6 @@
 ﻿#include "Debug/DebugConfig.h"
 #include "Debug/Stats.h"
-#include "Component/TickDispatch.h"
+#include "Component/TickGroup.h"
 #include "Ecs/EcsScheduler.h"
 #include "Thread/JobSystem.h"
 #ifdef NDEBUG
@@ -1108,7 +1108,7 @@ namespace
         return state;
     }
 
-    void TestOrderedOrderMatchesTickDispatchLess()
+    void TestOrderedOrderMatchesTickOrderLess()
     {
         constexpr uint32_t Count = 300;
         uint64_t random = 0x9E3779B97F4A7C15ull;
@@ -1180,19 +1180,15 @@ namespace
             assert(scheduler.RunStage(stage2));
         }
 
-        // 期待する順 = TickDispatchLess で並べた順
-        Container::VariableArray<TickDispatchEntry> expected;
-        for (uint32_t i = 0; i < Count; ++i)
-        {
-            expected.push_back(TickDispatchEntry{nullptr, nullptr, keys[i].Group, keys[i].Group, keys[i].Priority, keys[i].Ordinal});
-        }
+        // 期待する順 = TickOrderLess で並べた順
         Container::VariableArray<uint32_t> expectedIndex;
         for (uint32_t i = 0; i < Count; ++i)
         {
             expectedIndex.push_back(i);
         }
-        std::sort(expectedIndex.begin(), expectedIndex.end(), [&expected](uint32_t a, uint32_t b) {
-            return TickDispatchLess(expected[a], expected[b]);
+        std::sort(expectedIndex.begin(), expectedIndex.end(), [&keys](uint32_t a, uint32_t b) {
+            return Component::TickOrderLess(keys[a].Group, keys[a].Priority, keys[a].Ordinal,
+                                            keys[b].Group, keys[b].Priority, keys[b].Ordinal);
         });
         assert(allCalls.size() == Count);
         for (uint32_t i = 0; i < Count; ++i)
@@ -1536,7 +1532,7 @@ int main()
     TestSystemWritesAreCommittedToChangeLog();
     TestEntriesJoinAtNextCollection();
     TestOrderRebuildsOnlyOnChange();
-    TestOrderedOrderMatchesTickDispatchLess();
+    TestOrderedOrderMatchesTickOrderLess();
 #if NORVES_ENABLE_STATS
     TestSchedulerRecordsScopesInTrace();
     TestTraceKeepsEveryChunkScopeBeyondFrameEventLimit();

@@ -5,7 +5,6 @@
 #include "Reflection.h"
 #include "Entity.h"
 #include "Component/Component.h"
-#include "Component/TickDispatch.h"
 #include "Container/Containers.h"
 #include "Ecs/EcsCommandBuffer.h"
 #include "Ecs/EcsRenderSync.h"
@@ -224,7 +223,7 @@ namespace NorvesLib::Core
         size_t GetObjectCount() const;
 
         /**
-         * @brief 全オブジェクトのTick更新
+         * @brief 順序付きの系に載った Component の Tick の本体を、群 Input〜PoseFinalize まで呼ぶ
          * @param deltaTime 前フレームからの経過時間（秒）
          */
         void Tick(float deltaTime);
@@ -232,9 +231,11 @@ namespace NorvesLib::Core
         // 同じフレームの収集結果を用い、物理後の群を実行する。再収集はしない。
         void LateTick(float deltaTime);
         void LateTick(const Engine::FrameTimes& times);
-        // 現在の可変dispatchだけを問い合わせる。dt0は成功、失敗時outは保持する。
+        // 現在の可変dispatchだけを問い合わせる。dt0は成功、失敗時outは保持する。channel は型の登録の channel。
         // 時間解決は更新の許可ではなく、active/tick/pending判定は呼出側が行う。
         bool TryGetComponentTickDelta(const Component::Component& component, float& out) const;
+        /// Component の型の channel（登録の TimeChannel。登録が無ければ World）
+        Engine::TimeChannel GetComponentTimeChannel(const Component::Component& component) const;
         bool HasActiveTickTimeContext() const
         {
             return m_bHasActiveTickTime;
@@ -246,8 +247,10 @@ namespace NorvesLib::Core
          * 照合は型の完全一致。反映は次の Tick の収集から。Core の型は World の初期化で登録する
          */
         void RegisterComponentTick(const IClass* cls, const Component::ComponentTickRegistration& registration);
-        /// 型 cls の登録（無ければ null。仮想の OnTickGroup で呼ばれる）
+        /// 型 cls の登録（無ければ null。登録の無い型は毎フレームの処理を持たない）
         const Component::ComponentTickRegistration* FindComponentTick(const IClass* cls) const;
+        /// Component の群・mask・優先度が変わった（次の収集の先頭で呼び先を付け直す）
+        void NoteComponentTickConfigurationChanged() { m_bOrderedTicksDirty = true; }
 
         /**
          * @brief 描画先SceneViewを設定
@@ -473,25 +476,26 @@ namespace NorvesLib::Core
                                 uint32_t& count, const char*& error);
         void RunEcsRenderTransformCheck();
 
-        /// bSyncOrdered: 登録のある型の呼び先（順序付きの系の項目）を、同じ深さ優先の順で足し・付け替え・外す
-        void BuildTickSnapshot(bool bSyncOrdered);
-        void CollectTickEntries(Entity& entity, size_t& ordinal);
+        /// 登録のある型の呼び先（順序付きの系の項目）を、木の深さ優先の順で足し・付け替え・外す。
+        /// 木の構造・Tick の設定・型の登録が変わったとき（m_bOrderedTicksDirty）だけ、収集の先頭で呼ぶ
+        void SyncOrderedTicks();
+        void CollectOrderedTicks(Entity& entity, size_t& ordinal);
         bool CanDispatchEntity(const Entity& entity) const;
         const Engine::FrameTimes* m_ActiveTickTimes = nullptr;
         float m_ActiveTickDelta = 0;
         bool m_bHasActiveTickTime = false;
-        bool TryResolveTickDelta(const Entity& owner, const Component::Component* component, float& out) const;
         bool TryResolveChannelDelta(const Entity& owner, Engine::TimeChannel channel, float& out) const;
 
         /// 順序付きの系の呼び先 1 つ（登録のある型の Component の、群 1 つぶん）。項目の User はこれを指す
         struct OrderedTickRecord;
-        /// Component ごとの呼び先。Component が木から外れる（InvalidateTickComponent）か、収集で見つからなければ外す
+        /// Component ごとの呼び先。Component が木から外れる（InvalidateTickComponent）か、付け直しで見つからなければ外す
         Container::UnorderedMap<const Component::Component*,
                                 Container::VariableArray<Container::TUniquePtr<OrderedTickRecord>>> m_OrderedTicks;
         /// 順序付きの系: [0] Input〜PoseFinalize（Tick）・[1] PostPhysics・[2] Camera〜PreRender（LateTick）
         uint32_t m_OrderedTickSystems[3] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
         uint64_t m_OrderedTickWalk = 0;
-        bool m_bSyncOrderedTicks = false;
+        /// 呼び先の付け直しが要る（木への追加・付け替え、Tick の設定・型の登録の変更で立つ）
+        bool m_bOrderedTicksDirty = true;
         uint32_t OrderedTickSystemOf(Component::ETickGroup group) const;
         void SyncOrderedTick(Entity& entity, Component::Component& component, Component::ETickGroup group,
                              int16_t priority, size_t ordinal, const Component::ComponentTickRegistration& registration);
@@ -508,8 +512,6 @@ namespace NorvesLib::Core
         void InvalidateTickComponent(Component::Component& component);
         void InvalidateTickEntitySubtree(Entity& entity);
         void CollectPendingComponents(Entity& entity, Container::VariableArray<Component::Component*>& output);
-        Container::VariableArray<TickDispatchEntry> m_TickEntries;
-        Container::VariableArray<TickDispatchEntry> m_FixedTickEntries;
         /// 型ごとの Tick の登録（設計 1.12）
         Container::UnorderedMap<const IClass*, Component::ComponentTickRegistration> m_ComponentTicks;
         void RegisterCoreComponentTicks();
@@ -519,8 +521,7 @@ namespace NorvesLib::Core
         uint32_t m_TickDupFailures = 0;
         uint32_t m_TickDupCollections = 0;
         bool m_bTickDupCheck = false;
-        void NoteTickDispatchForCheck(const void* target, Component::ETickGroup group, const Component::Component* component,
-                                      bool bRegistered);
+        void NoteTickDispatchForCheck(const Component::Component& component, Component::ETickGroup group);
         void ReportTickDupCheck();
         Container::VariableArray<Component::Component*> m_PendingTickComponents;
         Container::VariableArray<Entity*> m_PendingTickEntities;
@@ -529,7 +530,6 @@ namespace NorvesLib::Core
         Container::VariableArray<Entity*> m_PendingDestroyEntities;
         /// 検査 WORLD_CLEANUP の pass を 1 回以上出したか（破棄が無い間も pass を 1 回は出す）
         bool m_bCleanupCheckReported = false;
-        bool m_bHasTickSnapshot = false;
         bool m_bDispatchingTicks = false;
         bool m_bCleaningObjects = false;
 
@@ -537,7 +537,6 @@ namespace NorvesLib::Core
         void InitializeSchedule();
         void EndTickCollection();
         void RunWorldStage(uint32_t stage);
-        void DispatchFixedTickBody();
         void SyncToSceneViewBody();
 
         // ---- 描画の無効化の通知（設計 1.10） ----
@@ -642,7 +641,6 @@ namespace NorvesLib::Core
         /// 段の中のシステムが読む、呼び出しごとの引数
         const Engine::FrameTimes* m_StageTimes = nullptr;
         float m_StageDelta = 0;
-        float m_StageFixedDelta = 0;
         const Rendering::MaterialResources* m_StageMaterials = nullptr;
         const Rendering::MeshResources* m_StageMeshes = nullptr;
         /// Tick から LateTick までを 1 つの収集として開いている（参加の番号をフレームで共有する）
@@ -716,9 +714,7 @@ namespace NorvesLib::Core
         void CleanupDestroyedObjects();
         void DispatchFixedTick(float fixedDeltaTime);
         void CleanupAfterFixedStep();
-        void FixedTickEntityRecursive(Entity& entity, float fixedDeltaTime);
         void UpdateEntityTransformRecursive(Entity& entity, const Math::Transform& parentWorld);
-        void TickEntityRecursive(Entity& entity, float deltaTime);
         void SyncEntityRecursive(Entity& entity,
                                  const Rendering::MaterialResources* materials,
                                  const Rendering::MeshResources* meshes,

@@ -1110,9 +1110,6 @@ namespace NorvesLib::Core
             return;
         }
         EndTickCollection();
-        m_TickEntries.clear();
-        m_FixedTickEntries.clear();
-        m_bHasTickSnapshot = false;
         ClearOrderedTicks();
         LOG_INFO("World::Finalize() - Destroying %llu objects",
                  static_cast<uint64_t>(GetObjectCount()));
@@ -1405,9 +1402,20 @@ namespace NorvesLib::Core
         }
         // 前のフレームの LateTick が来なかったときの収集を閉じてから、このフレームの収集を開く
         EndTickCollection();
-        // 一覧はこの収集を開く直前に作る。順序付きの系への足し・付け替えは、収集の先頭の作り直しでこの収集から効く
-        // （収集の中で起きた変更は、旧の一覧と同じく次の収集から）
-        BuildTickSnapshot(true);
+        if (++m_TickSerial == 0)
+        {
+            ++m_TickSerial;
+        }
+        // 検査 ECS_TICK_DUP は収集ごとに数え直す（有効かどうかも収集の先頭で決める）
+        m_TickDupSeen.clear();
+        m_TickDupCalls = 0;
+        m_bTickDupCheck = NorvesLib::Core::Engine::GEngine != nullptr &&
+                          NorvesLib::Core::Engine::GEngine->GetEngineChecks().IsEnabled("ECS_TICK_DUP");
+        // 呼び先の付け直しは収集を開く直前に行い、この収集から効く（収集の中で起きた変更は次の収集から）
+        if (m_bOrderedTicksDirty)
+        {
+            SyncOrderedTicks();
+        }
         m_Scheduler->BeginCollection();
         m_bTickCollectionOpen = true;
         m_StageTimes = times;
@@ -1428,7 +1436,7 @@ namespace NorvesLib::Core
     }
     void World::LateTickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime)
     {
-        if (!HasFlag(OF_Initialized) || !m_bHasTickSnapshot || IsDeferringObjectRemoval())
+        if (!HasFlag(OF_Initialized) || !m_bTickCollectionOpen || IsDeferringObjectRemoval())
         {
             return;
         }
@@ -1458,6 +1466,7 @@ namespace NorvesLib::Core
         m_EcsTransformSystem.reset();
         // 呼び先の持ち手は作り直すスケジューラでは使えない
         m_OrderedTicks.clear();
+        m_bOrderedTicksDirty = true;
         RegisterCoreComponentTicks();
         m_EcsWorld = Container::MakeUnique<Ecs::EcsWorld>();
         // 階層のシステムのきっかけになる列は追跡する（最初のアーキタイプを作る前に決める）。消費者がいない間はログを積まない
@@ -1525,7 +1534,7 @@ namespace NorvesLib::Core
             [](void* user, const Context&) { static_cast<World*>(user)->CleanupDestroyedObjects(); });
 
         // 登録のある型の呼び先を持つ順序付きの系。呼ぶのは同じ段の Dispatch のシステムで、
-        // まだ移していない仮想の経路の一覧と（群, 優先度, 深さ優先の順）で合流させる
+        // （群, 優先度, 深さ優先の順）に呼び、群の切れ目で変換を公開する
         auto addOrdered = [&](uint32_t stage, const char* name, Component::ETickGroup first, Component::ETickGroup last)
         {
             Ecs::OrderedSystemDesc desc;
@@ -1550,23 +1559,15 @@ namespace NorvesLib::Core
                                              Component::ETickGroup::PostPhysics, Component::ETickGroup::PostPhysics);
         m_OrderedTickSystems[2] = addOrdered(m_StageLateTick, "LateTick.OrderedCameraToPreRender",
                                              Component::ETickGroup::Camera, Component::ETickGroup::PreRender);
-        add(m_StageLateTick, "LateTick.EndSnapshot",
-            [](void* user, const Context&)
-            {
-                auto* world = static_cast<World*>(user);
-                world->ReportTickDupCheck();
-                world->m_TickEntries.clear();
-                world->m_FixedTickEntries.clear();
-                world->m_bHasTickSnapshot = false;
-            });
+        add(m_StageLateTick, "LateTick.ReportTickDup",
+            [](void* user, const Context&) { static_cast<World*>(user)->ReportTickDupCheck(); });
 
         add(m_StageFixedBegin, "FixedBegin.UpdateTransforms",
             [](void* user, const Context&) { static_cast<World*>(user)->UpdateWorldTransforms(); });
         add(m_StageFixedBegin, "FixedBegin.PrepareInterpolation",
             [](void* user, const Context&) { static_cast<World*>(user)->PrepareRenderInterpolationStep(); });
 
-        add(m_StageFixedTick, "FixedTick.Dispatch",
-            [](void* user, const Context&) { static_cast<World*>(user)->DispatchFixedTickBody(); });
+        // 段 FixedTick のシステムは、物理などのモジュールが登録する（World は持たない）
 
         add(m_StageFixedEnd, "FixedEnd.UpdateTransforms",
             [](void* user, const Context&) { static_cast<World*>(user)->UpdateWorldTransforms(); });
@@ -1703,104 +1704,58 @@ namespace NorvesLib::Core
         RunWorldStage(m_StageFixedEnd);
     }
 
-    void World::BuildTickSnapshot(bool bSyncOrdered)
+    void World::SyncOrderedTicks()
     {
-        if (++m_TickSerial == 0)
+        m_bOrderedTicksDirty = false;
+        if (m_Scheduler == nullptr)
         {
-            ++m_TickSerial;
+            return;
         }
-        m_TickEntries.clear();
-        m_FixedTickEntries.clear();
-        // 検査 ECS_TICK_DUP は収集ごとに数え直す（有効かどうかも収集の先頭で決める）
-        m_TickDupSeen.clear();
-        m_TickDupCalls = 0;
-        m_bTickDupCheck = NorvesLib::Core::Engine::GEngine != nullptr &&
-                          NorvesLib::Core::Engine::GEngine->GetEngineChecks().IsEnabled("ECS_TICK_DUP");
-        // 登録のある型の呼び先は、旧の一覧と同じ番号の振り方で順序付きの系へ足し・付け替える（変わったものだけ）
-        m_bSyncOrderedTicks = bSyncOrdered && m_Scheduler != nullptr;
-        if (m_bSyncOrderedTicks)
-        {
-            ++m_OrderedTickWalk;
-        }
+        // 登録のある型の呼び先を、木の深さ優先の番号で足し・付け替える（変わったものだけ）。見つからなかったものは外す
+        ++m_OrderedTickWalk;
         size_t ordinal = 0;
         for (IUnknown* inner : GetInners())
         {
             if (auto* entity = CastTo<Entity>(inner))
             {
-                CollectTickEntries(*entity, ordinal);
+                CollectOrderedTicks(*entity, ordinal);
             }
         }
-        if (m_bSyncOrderedTicks)
-        {
-            SweepOrderedTicks();
-            m_bSyncOrderedTicks = false;
-        }
-        std::sort(m_TickEntries.begin(), m_TickEntries.end(), TickDispatchLess);
-        m_bHasTickSnapshot = true;
+        SweepOrderedTicks();
     }
 
-    void World::CollectTickEntries(Entity& entity, size_t& ordinal)
+    void World::CollectOrderedTicks(Entity& entity, size_t& ordinal)
     {
         if (entity.IsPendingDestroy())
         {
             return;
         }
-        int16_t entityPriority = 0;
-        bool bFoundDefault = false;
-        for (IUnknown* inner : entity.GetInners())
-        {
-            if (auto* component = CastTo<Component::Component>(inner))
-            {
-                if ((component->GetTickGroupMask() & Component::TickGroupBit(Component::ETickGroup::Default)) != 0)
-                {
-                    if (!bFoundDefault || component->GetTickPriority() < entityPriority)
-                    {
-                        entityPriority = component->GetTickPriority();
-                    }
-                    bFoundDefault = true;
-                }
-            }
-        }
-        m_TickEntries.push_back({&entity, nullptr, Component::ETickGroup::Default,
-            Component::ETickGroup::Default, entityPriority, ordinal++});
+        // 番号は Entity 自身に 1 つ、Component に 1 つずつ振る（深さ優先）
+        ++ordinal;
         for (IUnknown* inner : entity.GetInners())
         {
             if (auto* component = CastTo<Component::Component>(inner))
             {
                 const size_t order = ordinal++;
-                const auto primary = component->GetTickGroup();
-                m_FixedTickEntries.push_back({&entity, component, Component::ETickGroup::Default, primary, 0, order});
-                // 型に本体を登録した型は旧の一覧に載せず、本体を呼ぶ群ごとに順序付きの系の呼び先にする
-                // （本体が null の型はどちらにも載せない）
+                // 型に本体を登録した型だけ、本体を呼ぶ群ごとに順序付きの系の呼び先にする（本体が null の型は載せない）
                 const Component::ComponentTickRegistration* registration = FindComponentTick(component->GetClass());
-                if (registration != nullptr)
+                if (registration == nullptr || !registration->HasBody())
                 {
-                    if (!registration->HasBody() || !m_bSyncOrderedTicks)
-                    {
-                        continue;
-                    }
-                    for (uint8_t index = 0; index < Component::TickGroupCount; ++index)
-                    {
-                        const auto group = static_cast<Component::ETickGroup>(index);
-                        if ((component->GetTickGroupMask() & Component::TickGroupBit(group)) == 0 ||
-                            (registration->bPrimaryGroupOnly ? group != primary
-                                                             : (registration->Groups & Component::TickGroupBit(group)) == 0) ||
-                            registration->BodyFor(group) == nullptr)
-                        {
-                            continue;
-                        }
-                        SyncOrderedTick(entity, *component, group, component->GetTickPriority(), order, *registration);
-                    }
                     continue;
                 }
+                const auto primary = component->GetTickGroup();
+                const auto mask = component->GetTickGroupMask();
                 for (uint8_t index = 0; index < Component::TickGroupCount; ++index)
                 {
                     const auto group = static_cast<Component::ETickGroup>(index);
-                    if ((component->GetTickGroupMask() & Component::TickGroupBit(group)) == 0)
+                    if ((mask & Component::TickGroupBit(group)) == 0 ||
+                        (registration->bPrimaryGroupOnly ? group != primary
+                                                         : (registration->Groups & Component::TickGroupBit(group)) == 0) ||
+                        registration->BodyFor(group) == nullptr)
                     {
                         continue;
                     }
-                    m_TickEntries.push_back({&entity, component, group, primary, component->GetTickPriority(), order});
+                    SyncOrderedTick(entity, *component, group, component->GetTickPriority(), order, *registration);
                 }
             }
         }
@@ -1808,7 +1763,7 @@ namespace NorvesLib::Core
         {
             if (auto* child = CastTo<Entity>(inner))
             {
-                CollectTickEntries(*child, ordinal);
+                CollectOrderedTicks(*child, ordinal);
             }
         }
     }
@@ -1849,10 +1804,6 @@ namespace NorvesLib::Core
         return true;
     }
 
-    bool World::TryResolveTickDelta(const Entity& owner, const Component::Component* component, float& out) const
-    {
-        return TryResolveChannelDelta(owner, component ? component->GetTimeChannel() : Engine::TimeChannel::World, out);
-    }
     bool World::TryResolveChannelDelta(const Entity& owner, Engine::TimeChannel channel, float& out) const
     {
         if (!m_bHasActiveTickTime || owner.GetWorld() != this)
@@ -1870,7 +1821,12 @@ namespace NorvesLib::Core
     bool World::TryGetComponentTickDelta(const Component::Component& component, float& out) const
     {
         const auto* owner = component.GetOwner();
-        return owner && TryResolveTickDelta(*owner, &component, out);
+        return owner && TryResolveChannelDelta(*owner, GetComponentTimeChannel(component), out);
+    }
+    Engine::TimeChannel World::GetComponentTimeChannel(const Component::Component& component) const
+    {
+        const Component::ComponentTickRegistration* registration = FindComponentTick(component.GetClass());
+        return registration != nullptr ? registration->TimeChannel : Engine::TimeChannel::World;
     }
     void World::DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime,
                                    const Engine::FrameTimes* times)
@@ -1907,100 +1863,23 @@ namespace NorvesLib::Core
             }
             publishedGroup = group;
         };
-        // 順序付きの系の順の一覧（収集の先頭でだけ変わる）と旧の一覧を、同じ比較（TickDispatchLess）で合流させる。
-        // どちらの一覧も、呼び先の中で外されたものは呼ぶ直前に読み直して飛ばす
+        // 順序付きの系の順の一覧（収集の先頭でだけ変わる）を（群, 優先度, 深さ優先の順）に呼ぶ。
+        // 呼び先の中で外されたものは、呼ぶ直前に読み直して飛ばす
         const uint32_t orderedSystem = OrderedTickSystemOf(first);
         const uint32_t orderedCount = orderedSystem != Ecs::kInvalidEcsSystem
             ? m_Scheduler->GetOrderedRunCount(orderedSystem) : 0;
         Ecs::EcsSystemContext orderedContext;
         orderedContext.World = m_EcsWorld.get();
         orderedContext.CollectionSerial = m_Scheduler->GetCollectionSerial();
-        uint32_t orderedIndex = 0;
-        size_t legacyIndex = 0;
-        for (;;)
+        for (uint32_t orderedIndex = 0; orderedIndex < orderedCount; ++orderedIndex)
         {
             Ecs::OrderedRunView view;
-            bool bHasOrdered = false;
-            for (; orderedIndex < orderedCount; ++orderedIndex)
-            {
-                if (m_Scheduler->GetOrderedRun(orderedSystem, orderedIndex, view) && view.Group >= first &&
-                    view.Group <= last)
-                {
-                    bHasOrdered = true;
-                    break;
-                }
-            }
-            while (legacyIndex < m_TickEntries.size() &&
-                   (m_TickEntries[legacyIndex].Group < first || m_TickEntries[legacyIndex].Group > last))
-            {
-                ++legacyIndex;
-            }
-            const bool bHasLegacy = legacyIndex < m_TickEntries.size();
-            if (!bHasOrdered && !bHasLegacy)
-            {
-                break;
-            }
-            if (bHasOrdered &&
-                (!bHasLegacy ||
-                 TickDispatchLess(TickDispatchEntry{nullptr, nullptr, view.Group, view.Group, view.Priority, view.Ordinal},
-                                  m_TickEntries[legacyIndex])))
-            {
-                ++orderedIndex;
-                publish(view.Group);
-                view.Run(view.User, orderedContext);
-                continue;
-            }
-            const TickDispatchEntry& slot = m_TickEntries[legacyIndex++];
-            const TickDispatchEntry entry = slot;
-            publish(entry.Group);
-            if (!entry.Owner || !CanDispatchEntity(*entry.Owner))
+            if (!m_Scheduler->GetOrderedRun(orderedSystem, orderedIndex, view) || view.Group < first || view.Group > last)
             {
                 continue;
             }
-            if (!entry.Target)
-            {
-                float tickDelta = 0;
-                if (!TryResolveTickDelta(*entry.Owner, nullptr, tickDelta))
-                    continue;
-                if (m_bTickDupCheck)
-                {
-                    NoteTickDispatchForCheck(entry.Owner, entry.Group, nullptr, false);
-                }
-                entry.Owner->Tick(tickDelta);
-            }
-            else if (entry.Target->GetOwner() == entry.Owner && entry.Target->IsActive() &&
-                     entry.Target->IsTickEnabled() && !entry.Target->IsPendingDestroy())
-            {
-                float tickDelta = 0;
-                if (!TryGetComponentTickDelta(*entry.Target, tickDelta))
-                    continue;
-                if (m_bTickDupCheck)
-                {
-                    NoteTickDispatchForCheck(entry.Target, entry.Group, entry.Target, false);
-                }
-                const auto previousGroup = entry.Target->m_DispatchPrimaryGroup;
-                const bool bPrevious = entry.Target->m_bHasDispatchPrimaryGroup;
-                entry.Target->m_DispatchPrimaryGroup = entry.PrimaryGroup;
-                entry.Target->m_bHasDispatchPrimaryGroup = true;
-                // callback自身がheapから破棄されても、その後にTargetを参照解除しない。
-                auto restore = [&]() {
-                    if (slot.Owner == entry.Owner && slot.Target == entry.Target)
-                    {
-                        entry.Target->m_DispatchPrimaryGroup = previousGroup;
-                        entry.Target->m_bHasDispatchPrimaryGroup = bPrevious;
-                    }
-                };
-                try
-                {
-                    entry.Target->OnTickGroup(entry.Group, tickDelta);
-                }
-                catch (...)
-                {
-                    restore();
-                    throw;
-                }
-                restore();
-            }
+            publish(view.Group);
+            view.Run(view.User, orderedContext);
         }
     }
 
@@ -2011,6 +1890,8 @@ namespace NorvesLib::Core
             return;
         }
         m_ComponentTicks[cls] = registration;
+        // 型の本体・群・channel が変わりうるので、次の収集で呼び先を付け直す
+        m_bOrderedTicksDirty = true;
     }
 
     const Component::ComponentTickRegistration* World::FindComponentTick(const IClass* cls) const
@@ -2021,14 +1902,16 @@ namespace NorvesLib::Core
 
     void World::RegisterCoreComponentTicks()
     {
-        // 設計 1.12 の行き先。順・群・mask・優先度は Component の設定のまま（順序付きの系の呼び先として、旧の一覧と合流させて呼ぶ）
+        // 設計 1.12 の行き先。順・群・mask・優先度は Component の設定のまま（順序付きの系の呼び先として呼ぶ）
         // Mesh: 変換のキャッシュは描画の同期（RefreshRenderTransformCache）が求めるので、毎フレームの処理は無い。
-        // Camera・Light 系: 中身が空だった。
+        // Camera・Light 系: 中身が空だった。Camera の channel は Unscaled（TryGetComponentTickDelta が使う）
         Component::ComponentTickRegistration none;
         none.Name = "NoTick";
         RegisterComponentTick(Component::MeshComponent::StaticClass(), none);
         RegisterComponentTick(Component::MegaGeometryComponent::StaticClass(), none);
-        RegisterComponentTick(Component::CameraComponent::StaticClass(), none);
+        Component::ComponentTickRegistration camera = none;
+        camera.TimeChannel = Engine::TimeChannel::Unscaled;
+        RegisterComponentTick(Component::CameraComponent::StaticClass(), camera);
         RegisterComponentTick(Component::LightComponent::StaticClass(), none);
         RegisterComponentTick(Component::DirectionalLightComponent::StaticClass(), none);
         RegisterComponentTick(Component::PointLightComponent::StaticClass(), none);
@@ -2055,7 +1938,7 @@ namespace NorvesLib::Core
         arm.Writes.push_back(Ecs::EcsColumnInfoOf<Ecs::EcsLocalTransform>().Type);
         RegisterComponentTick(Component::SpringArmComponent::StaticClass(), arm);
 
-        // HoldSlot・SocketAttachment は PostPhysics の群でだけ呼ぶ（主群によらない。旧の OnTickGroup と同じ）
+        // HoldSlot・SocketAttachment は PostPhysics の群でだけ呼ぶ（主群によらない）
         Component::ComponentTickRegistration hold;
         hold.Name = "HoldSlot.PostPhysics";
         hold.bPrimaryGroupOnly = false;
@@ -2077,7 +1960,7 @@ namespace NorvesLib::Core
         socket.Writes = hold.Writes;
         RegisterComponentTick(Component::SocketAttachmentComponent::StaticClass(), socket);
 
-        // Animator・SkinnedMesh: 更新は Animation、評価は PoseFinalize の群（旧の OnTickGroup と同じ。channel は Animation）。
+        // Animator・SkinnedMesh: 更新は Animation、評価は PoseFinalize の群（channel は Animation）。
         // Animator のイベントは PoseFinalize の本体の最後に GameThread で配る（ゲームのコードを呼ぶため）
         const auto animationBit = Component::TickGroupBit(Component::ETickGroup::Animation);
         const auto poseFinalizeBit = Component::TickGroupBit(Component::ETickGroup::PoseFinalize);
@@ -2159,7 +2042,7 @@ namespace NorvesLib::Core
     void World::SyncOrderedTick(Entity& entity, Component::Component& component, Component::ETickGroup group,
                                 int16_t priority, size_t ordinal, const Component::ComponentTickRegistration& registration)
     {
-        const Engine::TimeChannel channel = component.GetTimeChannel();
+        const Engine::TimeChannel channel = registration.TimeChannel;
         auto& records = m_OrderedTicks[&component];
         for (auto& record : records)
         {
@@ -2285,33 +2168,22 @@ namespace NorvesLib::Core
         }
         if (m_bTickDupCheck)
         {
-            NoteTickDispatchForCheck(target, group, target, true);
+            NoteTickDispatchForCheck(*target, group);
         }
         body(*target, tickDelta);
     }
 
-    void World::NoteTickDispatchForCheck(const void* target, Component::ETickGroup group,
-                                         const Component::Component* component, bool bRegistered)
+    void World::NoteTickDispatchForCheck(const Component::Component& component, Component::ETickGroup group)
     {
         ++m_TickDupCalls;
         // 呼び先の番地と群を 1 つの鍵にする（ユーザー空間の番地は 2^56 未満）
-        const uint64_t key = (static_cast<uint64_t>(reinterpret_cast<uintptr_t>(target)) << 8) |
+        const uint64_t key = (static_cast<uint64_t>(reinterpret_cast<uintptr_t>(&component)) << 8) |
                              static_cast<uint64_t>(group);
-        const char* reason = nullptr;
         if (!m_TickDupSeen.insert(key).second)
         {
-            reason = "同じ収集で同じ呼び先と群を 2 回呼んだ";
-        }
-        else if (component != nullptr && !bRegistered && FindComponentTick(component->GetClass()) != nullptr)
-        {
-            reason = "登録のある型を仮想の経路で呼んだ";
-        }
-        if (reason != nullptr)
-        {
             ++m_TickDupFailures;
-            LOG_ERROR("ECS_TICK_DUP: %s (component=%llu group=%u)", reason,
-                      static_cast<unsigned long long>(component != nullptr ? component->GetComponentId() : 0),
-                      static_cast<unsigned>(group));
+            LOG_ERROR("ECS_TICK_DUP: 同じ収集で同じ呼び先と群を 2 回呼んだ (component=%llu group=%u)",
+                      static_cast<unsigned long long>(component.GetComponentId()), static_cast<unsigned>(group));
         }
     }
 
@@ -2338,7 +2210,6 @@ namespace NorvesLib::Core
 
     void World::InvalidateTickComponent(Component::Component& component)
     {
-        component.m_bHasDispatchPrimaryGroup = false;
         RemoveOrderedTicks(component);
         for (auto& pending : m_PendingTickComponents)
         {
@@ -2347,8 +2218,6 @@ namespace NorvesLib::Core
                 pending = nullptr;
             }
         }
-        InvalidateTickTarget(Container::Span<TickDispatchEntry>(m_TickEntries.data(), m_TickEntries.size()), &component);
-        InvalidateTickTarget(Container::Span<TickDispatchEntry>(m_FixedTickEntries.data(), m_FixedTickEntries.size()), &component);
     }
 
     void World::InvalidateTickEntitySubtree(Entity& entity)
@@ -2360,8 +2229,6 @@ namespace NorvesLib::Core
                 pending = nullptr;
             }
         }
-        InvalidateTickOwner(Container::Span<TickDispatchEntry>(m_TickEntries.data(), m_TickEntries.size()), &entity);
-        InvalidateTickOwner(Container::Span<TickDispatchEntry>(m_FixedTickEntries.data(), m_FixedTickEntries.size()), &entity);
         for (IUnknown* inner : entity.GetInners())
         {
             if (auto* child = CastTo<Entity>(inner))
@@ -4576,26 +4443,6 @@ namespace NorvesLib::Core
         }
     }
 
-    void World::TickEntityRecursive(Entity& entity, float deltaTime)
-    {
-        if (!entity.IsActive() || entity.IsPendingDestroy())
-        {
-            return;
-        }
-
-        if (entity.IsTickEnabled())
-        {
-            entity.Tick(deltaTime);
-            entity.TickComponents(deltaTime);
-        }
-
-        auto children = entity.GetChildEntities();
-        for (auto* child : children)
-        {
-            TickEntityRecursive(*child, deltaTime);
-        }
-    }
-
     void World::SyncEntityRecursive(
         Entity& entity,
         const Rendering::MaterialResources* materials,
@@ -5005,66 +4852,19 @@ namespace NorvesLib::Core
         {
             return;
         }
-        m_StageFixedDelta = fixedDeltaTime;
+        // Tick の外の単独の固定ステップは、それぞれを 1 回の Tick として数える（収集の中ではフレームの番号を共有する）
+        if (!m_bTickCollectionOpen && ++m_TickSerial == 0)
+        {
+            ++m_TickSerial;
+        }
+        // 1 歩の時間は、呼び手が段の既定の delta（SetStageDefaultDelta）で段のシステムへ届ける
+        (void)fixedDeltaTime;
         RunWorldStage(m_StageFixedTick);
-    }
-
-    void World::DispatchFixedTickBody()
-    {
-        const float fixedDeltaTime = m_StageFixedDelta;
-        const bool bStandalone = !m_bHasTickSnapshot;
-        if (bStandalone)
-        {
-            BuildTickSnapshot(false);
-        }
-        {
-            ScopedWorldFlag dispatch(m_bDispatchingTicks);
-            for (const TickDispatchEntry& slot : m_FixedTickEntries)
-            {
-                const TickDispatchEntry entry = slot;
-                if (entry.Owner && entry.Target && CanDispatchEntity(*entry.Owner)
-                    && entry.Target->GetOwner() == entry.Owner && entry.Target->IsActive()
-                    && entry.Target->IsTickEnabled() && !entry.Target->IsPendingDestroy())
-                {
-                    entry.Target->FixedTick(fixedDeltaTime);
-                }
-            }
-        }
-        if (bStandalone)
-        {
-            m_TickEntries.clear();
-            m_FixedTickEntries.clear();
-            m_bHasTickSnapshot = false;
-        }
     }
 
     void World::CleanupAfterFixedStep()
     {
         CleanupDestroyedObjects();
-    }
-
-    void World::FixedTickEntityRecursive(Entity& entity, float fixedDeltaTime)
-    {
-        if (!entity.IsActive() || entity.IsPendingDestroy())
-        {
-            return;
-        }
-
-        if (entity.IsTickEnabled())
-        {
-            for (Component::Component* component : entity.GetComponents())
-            {
-                if (component && component->IsActive() && component->IsTickEnabled())
-                {
-                    component->FixedTick(fixedDeltaTime);
-                }
-            }
-        }
-
-        for (Entity* child : entity.GetChildEntities())
-        {
-            FixedTickEntityRecursive(*child, fixedDeltaTime);
-        }
     }
 
     void World::CollectTransientBoardProxiesRecursive(
@@ -5440,6 +5240,8 @@ namespace NorvesLib::Core
 
     void World::BindEntitySubtreeRows(Entity& entity)
     {
+        // 木に部分木が加わった。Tick の呼び先と深さ優先の番号を次の収集で付け直す
+        m_bOrderedTicksDirty = true;
         if (m_EntityArchetype == Ecs::kInvalidEcsArchetype)
         {
             return;
@@ -5495,6 +5297,8 @@ namespace NorvesLib::Core
 
     void World::BindComponentRow(Component::Component& component)
     {
+        // 木の Entity に Component が加わった。Tick の呼び先と深さ優先の番号を次の収集で付け直す
+        m_bOrderedTicksDirty = true;
         if (ComponentArchetypeFor(component) == Ecs::kInvalidEcsArchetype || !m_EcsWorld)
         {
             return;
@@ -5681,6 +5485,8 @@ namespace NorvesLib::Core
 
     void World::RelinkEntityRow(Entity& entity)
     {
+        // 親が変わり、深さ優先の番号が変わる。Tick の呼び先を次の収集で付け直す
+        m_bOrderedTicksDirty = true;
         Ecs::EcsWorld& ecs = *m_EcsWorld;
         if (!ecs.IsAlive(entity.m_EcsEntity))
         {

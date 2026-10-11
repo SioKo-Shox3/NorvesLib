@@ -89,7 +89,7 @@ namespace NorvesLib::Modules::Physics
     void PhysicsModule::RegisterWorldSystems(Core::World& world)
     {
         using namespace Core::Component;
-        // CharacterBody の可変の処理は Movement と PoseFinalize の群（旧の OnTickGroup と同じ。順・mask・優先度は Component の設定のまま）
+        // CharacterBody の可変の処理は Movement と PoseFinalize の群（順・mask・優先度は Component の設定のまま）
         ComponentTickRegistration character;
         character.Name = "CharacterBody.MovementPoseFinalize";
         character.bPrimaryGroupOnly = false;
@@ -104,7 +104,7 @@ namespace NorvesLib::Modules::Physics
 
         // 固定ステップの段（設計 1.8）。World のシステムより後に登録するので、段の中では World の処理の後に走る:
         // FixedBegin: 姿勢の確定・補間の準備 → 物理の前の写し
-        // FixedTick: Component の FixedTick → CharacterBody の要求 → 物理の一歩
+        // FixedTick: CharacterBody の要求 → 物理の一歩（この段に先に登録したシステムは、その前に走る）
         // 段のスケジューラは World と同じ寿命で、システムを外す口が無い。呼び先は毎回モジュールの登録から引き直す
         Core::Ecs::SystemScheduler& scheduler = world.GetScheduler();
         const auto add = [&](const char* stageName, const char* name, Core::Ecs::EcsSystemFn fn)

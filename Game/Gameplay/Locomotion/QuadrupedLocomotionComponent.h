@@ -22,10 +22,6 @@ namespace Game::Gameplay
     {
         REFLECTION_CLASS(QuadrupedLocomotionComponent, NorvesLib::Core::Component::Component)
       public:
-        NorvesLib::Core::Engine::TimeChannel GetTimeChannel() const noexcept override
-        {
-            return NorvesLib::Core::Engine::TimeChannel::Unscaled;
-        }
         ~QuadrupedLocomotionComponent() override;
         void Initialize() override;
         void EndPlay() override;

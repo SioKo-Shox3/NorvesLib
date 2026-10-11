@@ -18,10 +18,10 @@
  * - システム 1 回ぶんごとに World の版を 1 つ進め（AdvanceVersion）、仕事はその版で MarkWritten する。
  *   波が終わるごとに変更の束を仕事の順に CommitChanges する。
  * - 順序付きの GameThread 系（RegisterOrderedSystem）は、Tick を持っていた型の呼び先を
- *   （群, 優先度, 順番）の順 = TickDispatchLess と同じ比較で呼ぶ。順の一覧を作り直すのは、
+ *   （群, 優先度, 順番）の順 = TickOrderLess（Component/TickGroup.h）の比較で呼ぶ。順の一覧を作り直すのは、
  *   追加・削除・付け替えがあったときの次の収集の先頭だけ。
  *   bCallerDriven の系は段の中では呼ばず、同じ段の GameThread のシステム（呼び手）が GetOrderedRun で
- *   順の一覧を読み、外部の一覧（まだ移していない仮想の経路）と同じ比較で合流させて呼ぶ。
+ *   順の一覧を読んで呼ぶ（群の切れ目で変換を公開するなど、呼び手が間に処理を挟むため）。
  * - 収集（BeginCollection / EndCollection）は通常の Tick や単独の固定ステップの単位。入れ子では番号を共有する。
  *   参加の番号 = 「次の収集」の番号（GetNextCollectionSerial）。収集の中で足した呼び先は、次の収集まで呼ばれない。
  * - 統計が有効な構成では、段・系・同期点を Ecs.Stage.<段>・Ecs.Sys.<系>・Ecs.Sync.<段> の区間としてトレースへ記録する。

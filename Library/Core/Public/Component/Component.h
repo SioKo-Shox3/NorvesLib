@@ -77,31 +77,12 @@ namespace NorvesLib::Core::Component
          */
         virtual void EndPlay();
 
-        /**
-         * @brief 毎フレーム更新
-         * @param deltaTime 前フレームからの経過時間
-         */
-        virtual void Tick(float deltaTime);
-        virtual Engine::TimeChannel GetTimeChannel() const noexcept
-        {
-            return Engine::TimeChannel::World;
-        }
-
-        // 既定では主群の呼び出しだけを旧Tickへ渡す。複数群を使う型は上書きする。
-        virtual void OnTickGroup(ETickGroup group, float deltaTime);
+        // 毎フレームの処理は型ごとに World::RegisterComponentTick で登録する（ComponentTickRegistration）。
         // 実破棄はWorldの安全なcleanup位置で行う。
         void MarkForDestroy()
         {
             Object::Destroy();
         }
-
-        /**
-         * @brief 固定ステップ更新(GameThread限定)
-         *
-         * Module PreFixedTick(Transform読み・準備専用)の後、登録順・Entity深さ優先で
-         * 呼ばれる。RenderThreadへはこの更新後のFramePacket snapshotだけを渡す。
-         */
-        virtual void FixedTick(float fixedDeltaTime);
 
         // ========================================
         // オーナー管理（Outer経由）
@@ -196,6 +177,9 @@ namespace NorvesLib::Core::Component
 
         /**
          * @brief Tick有効設定
+         *
+         * 値は行の列（EcsComponentFlags・EcsTickConfig）にある。群・mask・優先度の変更は World に知らせ、
+         * 順序付きの系の呼び先を次の収集の先頭で付け直す（その収集から効く）
          */
         void SetTickEnabled(bool bEnabled) { getbTickEnabled().Set(bEnabled); }
         bool IsTickEnabled() const { return getbTickEnabled().Get(); }
@@ -301,8 +285,6 @@ namespace NorvesLib::Core::Component
         friend class ::NorvesLib::Core::World;
         /// 描画の同期が必要になったことを World の変更ログへ知らせる（World が無ければ何もしない）
         void NotifyRenderStateDirty();
-        ETickGroup m_DispatchPrimaryGroup = ETickGroup::Default;
-        bool m_bHasDispatchPrimaryGroup = false;
 
         // ID生成用静的カウンター
         static uint64_t s_NextComponentId;
@@ -319,7 +301,7 @@ namespace NorvesLib::Core::Component
      * @brief 型ごとの Tick の登録（設計 1.12）
      *
      * World::RegisterComponentTick で型（IClass）に結び付ける。照合は型の完全一致で、派生の型は自分の型で登録する
-     * （リフレクションを宣言しない派生は基底の型として扱われる）。登録の無い型は旧の仮想の OnTickGroup で呼ばれる。
+     * （リフレクションを宣言しない派生は基底の型として扱われる）。登録の無い型は毎フレームの処理を持たない。
      * 登録のある型の Component は、World の順序付きの系（スケジューラの AddOrderedEntry）に（Component, 群）ごとの
      * 呼び先として載る。群・mask・優先度は Component の Tick の設定をそのまま使う。
      */
@@ -331,11 +313,10 @@ namespace NorvesLib::Core::Component
         ComponentTickFn Run = nullptr;
         /// 群ごとの本体（群によって処理の違う型が使う）。null の群は Run を使う
         ComponentTickFn GroupRuns[TickGroupCount] = {};
-        /// true: 主群（GetTickGroup）の呼び出しだけで呼ぶ（旧の Tick と同じ）。false: Groups に含まれる群で呼ぶ
+        /// true: 主群（GetTickGroup）の呼び出しだけで呼ぶ。false: Groups に含まれる群で呼ぶ
         bool bPrimaryGroupOnly = true;
         TickGroupMask Groups = AllTickGroups;
-        /// 型の channel。呼び先は個体の channel（Core の型ではこの値と同じ）を順序付きの系の項目に持ち、delta をそこから取る。
-        /// 個体ごとに上書きできる仮想の GetTimeChannel は TICK-REMOVE で消す
+        /// 型の channel。呼び先の delta と World::TryGetComponentTickDelta はこの channel から取る
         Engine::TimeChannel TimeChannel = Engine::TimeChannel::World;
         /// 本体が読む列・書く列（型の番号）
         Container::VariableArray<TypeId> Reads;

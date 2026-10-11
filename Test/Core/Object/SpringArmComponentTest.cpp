@@ -1,6 +1,7 @@
 ﻿#include "../../../Game/CameraLateUpdate.h"
 #include "Component/SpringArmComponent.h"
 #include "Component/SpringArmTypes.h"
+#include "Ecs/EcsScheduler.h"
 #include "Input/InputState.h"
 #include "Input/MayaCameraController.h"
 #include "Math/Quaternion.h"
@@ -56,14 +57,29 @@ namespace
                IsNearlyEqual(lhs.w, rhs.w, tolerance);
     }
 
-    class FixedPivotMover final : public NorvesLib::Core::Component::Component
+    // 固定ステップの段 FixedTick で pivot を動かすシステム（物理の一歩の位置で姿勢を書く）
+    struct FixedPivotMover
     {
-    public:
-        void FixedTick(float) override
-        {
-            GetOwner()->SetLocalPosition(static_cast<float>(++Steps), 0, 0);
-        }
+        Entity* Pivot = nullptr;
         uint32_t Steps = 0;
+
+        static void Run(void* user, const Ecs::EcsSystemContext&)
+        {
+            auto* self = static_cast<FixedPivotMover*>(user);
+            self->Pivot->SetLocalPosition(static_cast<float>(++self->Steps), 0, 0);
+        }
+        // World と同じ寿命のスケジューラへ登録する（World より先に破棄しないこと）
+        void Register(World& world)
+        {
+            Ecs::SystemScheduler& scheduler = world.GetScheduler();
+            Ecs::SystemDesc desc;
+            desc.Name = "Test.FixedPivotMover";
+            desc.Stage = scheduler.FindStage("FixedTick");
+            desc.Thread = ThreadPolicy::GameThreadOnly;
+            desc.Run = &FixedPivotMover::Run;
+            desc.User = this;
+            assert(scheduler.RegisterSystem(desc) != Ecs::kInvalidEcsSystem);
+        }
     };
 
     void TestLateCameraReadsFinalPhysicsAndChildTransforms()
@@ -88,8 +104,10 @@ namespace
             cameraParent->SetLocalPosition(20, 0, 0);
             auto* arm = world.CreateComponent<SpringArmComponent>(owner);
             auto* camera = world.CreateComponent<CameraComponent>(owner);
-            auto* mover = world.CreateComponent<FixedPivotMover>(pivot);
-            assert(arm && camera && mover && arm->SetPivot(pivot));
+            FixedPivotMover mover;
+            mover.Pivot = pivot;
+            mover.Register(world);
+            assert(arm && camera && arm->SetPivot(pivot));
             arm->SetYaw(0); arm->SetPitch(0); arm->SetArmLength(4);
             camera->SetActiveCamera(true);
             Game::CameraLateUpdateState state;

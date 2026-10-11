@@ -45,7 +45,7 @@ namespace NorvesLib::Core::Component
 
     void ScriptComponent::RegisterTick(World& world)
     {
-        // 主群（GetTickGroup）だけで呼ぶ（旧の Tick と同じ）。群・mask・優先度・channel は Component の設定のまま。
+        // 主群（GetTickGroup）だけで呼ぶ。群・mask・優先度は Component の設定のまま。
         // スクリプトは姿勢を読み書きする。段の最中に起きた生成・破棄は、Object は即時、行は段の終わりの同期点で作られる
         ComponentTickRegistration script;
         script.Name = "Script.Tick";

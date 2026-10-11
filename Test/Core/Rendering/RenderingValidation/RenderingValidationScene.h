@@ -138,10 +138,11 @@ namespace NorvesLib::Test::RenderingValidation
         uint32_t width,
         uint32_t height);
 
+    // 固定ステップの歩数を数える。World の段 FixedTick のシステム（RegisterFixedStepSentinelSystem）が 1 歩ごとに呼ぶ
     class FixedStepSentinelComponent final : public Core::Component::Component
     {
     public:
-        void FixedTick(float fixedDeltaTime) override;
+        void OnFixedStep(float fixedDeltaTime);
         uint64_t GetObservedSteps() const;
         bool IsFixedDeltaValid() const;
 

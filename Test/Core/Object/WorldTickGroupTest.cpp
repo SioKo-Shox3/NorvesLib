@@ -48,42 +48,27 @@ namespace
         }
     };
 
-    class TickEntity : public Entity
-    {
-    public:
-        Events* Output = nullptr;
-        int Code = 0;
-        void Tick(float) override
-        {
-            if (Output)
-            {
-                Output->Add(Code);
-            }
-        }
-    };
+    // クラスの中では基底の注入名 Component が名前空間の別名を隠すので、外で別名を付ける
+    using ProbeBase = Component::Component;
 
-    class TickComponent : public Component::Component
+    class TickGroupProbe : public ProbeBase
     {
+        REFLECTION_CLASS(TickGroupProbe, ProbeBase)
+
     public:
         Events* Output = nullptr;
         int Code = 0;
         int* DestroyCount = nullptr;
-        TickComponent* RemoveTarget = nullptr;
+        TickGroupProbe* RemoveTarget = nullptr;
         Entity* RemoveEntityTarget = nullptr;
-        TickComponent* ChangeTarget = nullptr;
+        TickGroupProbe* ChangeTarget = nullptr;
         bool bAddCamera = false;
-        bool bRemoveDuringFixed = false;
-        bool bRemoveComponentDuringFixed = false;
-        bool bAddDuringFixed = false;
-        int* FixedCount = nullptr;
-        int* AddedFixedCount = nullptr;
         ObjectHeap* SelfHeap = nullptr;
         ObjectHandle SelfHandle;
-        bool bDestroySelfDuringFixed = false;
         ObjectHeap* OtherHeapOnEnd = nullptr;
         ObjectHandle OtherHandleOnEnd;
 
-        ~TickComponent() override
+        ~TickGroupProbe() override
         {
             if (DestroyCount)
             {
@@ -92,15 +77,20 @@ namespace
         }
         void EndPlay() override
         {
-            NorvesLib::Core::Component::Component::EndPlay();
+            ProbeBase::EndPlay();
             if (OtherHeapOnEnd)
             {
                 OtherHeapOnEnd->DestroyNow(OtherHandleOnEnd);
             }
         }
-        void Tick(float) override
+        // 型に登録する本体（World の順序付きの系が呼ぶ）
+        static void RunTick(ProbeBase& component, float deltaTime)
         {
-            if (SelfHeap && !bDestroySelfDuringFixed)
+            static_cast<TickGroupProbe&>(component).OnTick(deltaTime);
+        }
+        void OnTick(float)
+        {
+            if (SelfHeap)
             {
                 ObjectHeap* heap = SelfHeap;
                 const ObjectHandle handle = SelfHandle;
@@ -116,57 +106,33 @@ namespace
                 ChangeTarget->SetTickGroup(ETickGroup::Camera);
                 ChangeTarget = nullptr;
             }
-            if (RemoveTarget && !bRemoveComponentDuringFixed)
+            if (RemoveTarget)
             {
                 GetOwner()->RemoveComponent(RemoveTarget);
                 RemoveTarget = nullptr;
             }
+            if (RemoveEntityTarget)
+            {
+                GetOwner()->GetWorld()->RemoveEntity(RemoveEntityTarget);
+                RemoveEntityTarget = nullptr;
+            }
             if (bAddCamera)
             {
                 bAddCamera = false;
-                auto* added = GetOwner()->GetWorld()->CreateComponent<TickComponent>(GetOwner());
+                auto* added = GetOwner()->GetWorld()->CreateComponent<TickGroupProbe>(GetOwner());
                 assert(added);
                 added->Output = Output;
                 added->Code = 99;
                 added->SetTickGroup(ETickGroup::Camera);
             }
         }
-        void FixedTick(float) override
-        {
-            if (FixedCount)
-            {
-                ++*FixedCount;
-            }
-            if (SelfHeap && bDestroySelfDuringFixed)
-            {
-                ObjectHeap* heap = SelfHeap;
-                const ObjectHandle handle = SelfHandle;
-                heap->DestroyNow(handle);
-                return;
-            }
-            if (bRemoveComponentDuringFixed && RemoveTarget)
-            {
-                GetOwner()->RemoveComponent(RemoveTarget);
-                RemoveTarget = nullptr;
-            }
-            if (bAddDuringFixed)
-            {
-                bAddDuringFixed = false;
-                auto* added = GetOwner()->GetWorld()->CreateComponent<TickComponent>(GetOwner());
-                assert(added);
-                added->FixedCount = AddedFixedCount;
-            }
-            if (bRemoveDuringFixed && RemoveEntityTarget)
-            {
-                GetOwner()->GetWorld()->RemoveEntity(RemoveEntityTarget);
-                RemoveEntityTarget = nullptr;
-            }
-        }
     };
 
-    TickComponent* Add(World& world, Entity* owner, Events& events, int code, ETickGroup group = ETickGroup::Default)
+    IMPLEMENT_CLASS(TickGroupProbe, ProbeBase)
+
+    TickGroupProbe* Add(World& world, Entity* owner, Events& events, int code, ETickGroup group = ETickGroup::Default)
     {
-        auto* component = world.CreateComponent<TickComponent>(owner);
+        auto* component = world.CreateComponent<TickGroupProbe>(owner);
         assert(component);
         component->Output = &events;
         component->Code = code;
@@ -174,32 +140,56 @@ namespace
         return component;
     }
 
-    class TransformBoundaryComponent : public Component::Component
+    class TickGroupBoundaryProbe : public ProbeBase
     {
+        REFLECTION_CLASS(TickGroupBoundaryProbe, ProbeBase)
+
     public:
         Entity* ReadTarget = nullptr;
         Entity* MoveTarget = nullptr;
         float Position = 0;
         float Observed = -999;
         int Calls = 0;
-        void Tick(float) override
+        static void RunTick(ProbeBase& component, float)
         {
-            ++Calls;
-            if (ReadTarget)
+            auto& self = static_cast<TickGroupBoundaryProbe&>(component);
+            ++self.Calls;
+            if (self.ReadTarget)
             {
-                Observed = ReadTarget->GetWorldTransform().position.x;
+                self.Observed = self.ReadTarget->GetWorldTransform().position.x;
             }
-            if (MoveTarget)
+            if (self.MoveTarget)
             {
-                MoveTarget->SetPosition(Position, 0, 0);
+                self.MoveTarget->SetPosition(self.Position, 0, 0);
             }
         }
     };
 
+    IMPLEMENT_CLASS(TickGroupBoundaryProbe, ProbeBase)
+
+    // 試験の型の本体を、主群で呼ぶ登録として World へ載せる
+    void RegisterProbeTicks(World& world)
+    {
+        Component::ComponentTickRegistration probe;
+        probe.Name = "Test.TickGroupProbe";
+        probe.Run = &TickGroupProbe::RunTick;
+        world.RegisterComponentTick(TickGroupProbe::StaticClass(), probe);
+        Component::ComponentTickRegistration boundary;
+        boundary.Name = "Test.TickGroupBoundaryProbe";
+        boundary.Run = &TickGroupBoundaryProbe::RunTick;
+        world.RegisterComponentTick(TickGroupBoundaryProbe::StaticClass(), boundary);
+    }
+
+    void InitializeWorld(World& world)
+    {
+        world.Initialize();
+        RegisterProbeTicks(world);
+    }
+
     void TestTransformPublicationAtGroupBoundaries()
     {
         World world;
-        world.Initialize();
+        InitializeWorld(world);
         auto* root = world.SpawnEntity<Entity>();
         auto* child = world.SpawnEntity<Entity>(root);
         auto* grandchild = world.SpawnEntity<Entity>(child);
@@ -210,13 +200,13 @@ namespace
         // フレーム前の変更も最初のInput群から読む。親ありdirtyは確定までは旧値。
         root->SetPosition(7, 0, 0);
         assert(grandchild->GetWorldTransform().position.x == 3);
-        TransformBoundaryComponent* movers[8]{};
-        TransformBoundaryComponent* observers[8]{};
+        TickGroupBoundaryProbe* movers[8]{};
+        TickGroupBoundaryProbe* observers[8]{};
         for (int index = 7; index >= 0; --index)
         {
             const auto group = static_cast<ETickGroup>(index);
-            movers[index] = world.CreateComponent<TransformBoundaryComponent>(root);
-            observers[index] = world.CreateComponent<TransformBoundaryComponent>(grandchild);
+            movers[index] = world.CreateComponent<TickGroupBoundaryProbe>(root);
+            observers[index] = world.CreateComponent<TickGroupBoundaryProbe>(grandchild);
             movers[index]->SetTickGroup(group);
             observers[index]->SetTickGroup(group);
             observers[index]->SetTickPriority(1);
@@ -253,15 +243,15 @@ namespace
     void TestSparseTransformBoundaries()
     {
         World world;
-        world.Initialize();
+        InitializeWorld(world);
         auto* root = world.SpawnEntity<Entity>();
         auto* child = world.SpawnEntity<Entity>(root);
         child->SetLocalPosition(2, 0, 0);
-        auto* mover = world.CreateComponent<TransformBoundaryComponent>(root);
+        auto* mover = world.CreateComponent<TickGroupBoundaryProbe>(root);
         mover->SetTickGroup(ETickGroup::Movement);
         mover->MoveTarget = root;
         mover->Position = 10;
-        auto* reader = world.CreateComponent<TransformBoundaryComponent>(child);
+        auto* reader = world.CreateComponent<TickGroupBoundaryProbe>(child);
         reader->SetTickGroup(ETickGroup::PoseFinalize);
         reader->ReadTarget = child;
         world.Tick(0.01f);
@@ -277,25 +267,23 @@ namespace
     void TestOrderAndChanges()
     {
         World world;
-        world.Initialize();
+        InitializeWorld(world);
         Events events;
-        auto* root = world.SpawnEntity<TickEntity>();
-        auto* child = world.SpawnEntity<TickEntity>(root);
-        root->Output = &events;
-        root->Code = 10;
-        child->Output = &events;
-        child->Code = 20;
+        auto* root = world.SpawnEntity<Entity>();
+        auto* child = world.SpawnEntity<Entity>(root);
         auto* first = Add(world, root, events, 11);
-        Add(world, child, events, 21);
+        auto* second = Add(world, child, events, 21);
         world.Tick(0.01f);
-        assert(events.Count == 4 && events.Codes[0] == 10 && events.Codes[1] == 11 && events.Codes[2] == 20 && events.Codes[3] == 21);
+        assert(events.Count == 2 && events.Codes[0] == 11 && events.Codes[1] == 21);
         world.LateTick(0.01f);
         events.Clear();
-        first->SetTickPriority(-5);
+        // 優先度の変更は次の収集の順に効く（深さ優先の順より優先度が先）
+        second->SetTickPriority(-5);
         world.Tick(0.01f);
-        assert(events.Codes[0] == 10 && events.Codes[1] == 11);
+        assert(events.Count == 2 && events.Codes[0] == 21 && events.Codes[1] == 11);
         world.LateTick(0.01f);
         events.Clear();
+        // 収集の途中の群の変更は、このフレームの順に効かず、次の収集から効く
         auto* changer = Add(world, root, events, 1, ETickGroup::Input);
         changer->ChangeTarget = first;
         world.Tick(0.01f);
@@ -313,7 +301,7 @@ namespace
     void TestAdditionAndRemoval()
     {
         World world;
-        world.Initialize();
+        InitializeWorld(world);
         Events events;
         int destroyed = 0;
         auto* root = world.SpawnEntity<Entity>();
@@ -332,10 +320,10 @@ namespace
         world.Finalize();
     }
 
-    void TestFixedCleanupAndInactiveParent()
+    void TestEntityRemovalCleanupAndInactiveParent()
     {
         World world;
-        world.Initialize();
+        InitializeWorld(world);
         Events events;
         int destroyed = 0;
         auto* root = world.SpawnEntity<Entity>();
@@ -343,14 +331,10 @@ namespace
         auto* late = Add(world, child, events, 2, ETickGroup::Camera);
         late->DestroyCount = &destroyed;
         auto* remover = Add(world, root, events, 1);
-        remover->bRemoveDuringFixed = true;
         remover->RemoveEntityTarget = child;
+        // Tick の最中の除去は破棄予約になり、段の終わりの回収で解放される。後の群でも呼ばれない
         world.Tick(0.01f);
-        WorldTickGroupTestAccess::Fixed(world);
-        assert(child->IsPendingDestroy() && destroyed == 0);
-        WorldTickGroupTestAccess::Cleanup(world);
         assert(destroyed == 1);
-        WorldTickGroupTestAccess::Fixed(world);
         world.LateTick(0.01f);
         assert(!events.Has(2));
         auto* newChild = world.SpawnEntity<Entity>(root);
@@ -365,13 +349,13 @@ namespace
     void TestHeapDetachmentAndSelfRemoval()
     {
         World world;
-        world.Initialize();
+        InitializeWorld(world);
         ObjectHeap heap;
         Events events;
         int destroyed = 0;
         auto* root = world.SpawnEntity<Entity>();
-        const auto lateHandle = heap.Create<TickComponent>();
-        auto* late = heap.Resolve<TickComponent>(lateHandle);
+        const auto lateHandle = heap.Create<TickGroupProbe>();
+        auto* late = heap.Resolve<TickGroupProbe>(lateHandle);
         assert(root->AddComponent(late));
         late->SetTickGroup(ETickGroup::Camera);
         late->Output = &events;
@@ -382,8 +366,8 @@ namespace
         world.LateTick(0.01f);
         assert(destroyed == 1 && !events.Has(7));
 
-        const auto selfHandle = heap.Create<TickComponent>();
-        auto* self = heap.Resolve<TickComponent>(selfHandle);
+        const auto selfHandle = heap.Create<TickGroupProbe>();
+        auto* self = heap.Resolve<TickGroupProbe>(selfHandle);
         assert(root->AddComponent(self));
         self->SelfHeap = &heap;
         self->SelfHandle = selfHandle;
@@ -392,24 +376,23 @@ namespace
         world.LateTick(0.01f);
         assert(!heap.Resolve(selfHandle) && destroyed == 2);
 
-        const auto fixedHandle = heap.Create<TickComponent>();
-        auto* fixed = heap.Resolve<TickComponent>(fixedHandle);
-        assert(root->AddComponent(fixed));
-        fixed->SetTickGroup(ETickGroup::Camera);
-        fixed->SelfHeap = &heap;
-        fixed->SelfHandle = fixedHandle;
-        fixed->bDestroySelfDuringFixed = true;
-        fixed->DestroyCount = &destroyed;
+        // LateTick の群の中で自身を破棄しても、回収は段の終わりまで待つ
+        const auto lateSelfHandle = heap.Create<TickGroupProbe>();
+        auto* lateSelf = heap.Resolve<TickGroupProbe>(lateSelfHandle);
+        assert(root->AddComponent(lateSelf));
+        lateSelf->SetTickGroup(ETickGroup::Camera);
+        lateSelf->SelfHeap = &heap;
+        lateSelf->SelfHandle = lateSelfHandle;
+        lateSelf->DestroyCount = &destroyed;
         world.Tick(0.01f);
-        WorldTickGroupTestAccess::Fixed(world);
-        WorldTickGroupTestAccess::Cleanup(world);
+        assert(heap.Resolve(lateSelfHandle) && destroyed == 2);
         world.LateTick(0.01f);
-        assert(!heap.Resolve(fixedHandle) && destroyed == 3);
+        assert(!heap.Resolve(lateSelfHandle) && destroyed == 3);
 
         // cleanupの途中で別のheap Componentが消えても、待ち参照を再利用しない。
         auto* trigger = Add(world, root, events, 9);
-        const auto otherHandle = heap.Create<TickComponent>();
-        auto* other = heap.Resolve<TickComponent>(otherHandle);
+        const auto otherHandle = heap.Create<TickGroupProbe>();
+        auto* other = heap.Resolve<TickGroupProbe>(otherHandle);
         assert(root->AddComponent(other));
         other->DestroyCount = &destroyed;
         trigger->OtherHeapOnEnd = &heap;
@@ -422,38 +405,26 @@ namespace
         world.Finalize();
     }
 
-    void TestStandaloneFixedAndFixedMutation()
+    // Tick の番号は収集（Tick から LateTick まで）ごとに 1 つ進み、収集の中の固定ステップは同じ番号を使う。
+    // 収集の外の単独の固定ステップは、それぞれ 1 つ進める
+    void TestTickSerialAcrossStandaloneFixed()
     {
         World world;
-        world.Initialize();
-        Events events;
-        int fixedCount = 0;
-        int addedCount = 0;
-        int destroyed = 0;
-        auto* root = world.SpawnEntity<Entity>();
-        auto* first = Add(world, root, events, 1);
-        first->FixedCount = &fixedCount;
+        InitializeWorld(world);
+        const uint64_t initial = world.GetTickSerial();
         WorldTickGroupTestAccess::Fixed(world);
-        WorldTickGroupTestAccess::Cleanup(world);
-        assert(fixedCount == 1);
-        auto* victim = Add(world, root, events, 2);
-        victim->DestroyCount = &destroyed;
-        first->RemoveTarget = victim;
-        first->bRemoveComponentDuringFixed = true;
-        first->bAddDuringFixed = true;
-        first->AddedFixedCount = &addedCount;
+        assert(world.GetTickSerial() == initial + 1);
+        WorldTickGroupTestAccess::Fixed(world);
+        assert(world.GetTickSerial() == initial + 2);
         world.Tick(0.01f);
+        assert(world.GetTickSerial() == initial + 3);
         WorldTickGroupTestAccess::Fixed(world);
-        assert(victim->IsPendingDestroy() && destroyed == 0 && addedCount == 0);
-        WorldTickGroupTestAccess::Cleanup(world);
-        assert(destroyed == 1);
         WorldTickGroupTestAccess::Fixed(world);
-        assert(addedCount == 0);
+        assert(world.GetTickSerial() == initial + 3);
         world.LateTick(0.01f);
-        world.Tick(0.01f);
+        assert(world.GetTickSerial() == initial + 3);
         WorldTickGroupTestAccess::Fixed(world);
-        assert(addedCount == 1);
-        world.LateTick(0.01f);
+        assert(world.GetTickSerial() == initial + 4);
         world.Finalize();
     }
 
@@ -467,7 +438,7 @@ namespace
     void TestReserveInRemovalNotificationLeavesNoDanglingEntry()
     {
         World world;
-        world.Initialize();
+        InitializeWorld(world);
         auto* entity = world.SpawnEntity<ReserveOnRemovedEntity>();
         assert(entity);
         assert(world.RemoveEntity(entity));
@@ -482,12 +453,12 @@ namespace
     void TestHeapEnqueueDestroyIsListed()
     {
         World world;
-        world.Initialize();
+        InitializeWorld(world);
         ObjectHeap heap;
         Events events;
         auto* root = world.SpawnEntity<Entity>();
-        const auto handle = heap.Create<TickComponent>();
-        auto* component = heap.Resolve<TickComponent>(handle);
+        const auto handle = heap.Create<TickGroupProbe>();
+        auto* component = heap.Resolve<TickGroupProbe>(handle);
         assert(component && root->AddComponent(component));
         component->Output = &events;
         assert(root->GetComponents().size() == 1);
@@ -507,7 +478,7 @@ namespace
     void TestWorldRemoveInnerForgetsReservation()
     {
         World world;
-        world.Initialize();
+        InitializeWorld(world);
         auto* root = world.SpawnEntity<Entity>();
         auto* child = world.SpawnEntity<Entity>(root);
         assert(child);
@@ -536,9 +507,9 @@ int main()
     TestSparseTransformBoundaries();
     TestOrderAndChanges();
     TestAdditionAndRemoval();
-    TestFixedCleanupAndInactiveParent();
+    TestEntityRemovalCleanupAndInactiveParent();
     TestHeapDetachmentAndSelfRemoval();
-    TestStandaloneFixedAndFixedMutation();
+    TestTickSerialAcrossStandaloneFixed();
     TestReserveInRemovalNotificationLeavesNoDanglingEntry();
     TestHeapEnqueueDestroyIsListed();
     TestWorldRemoveInnerForgetsReservation();

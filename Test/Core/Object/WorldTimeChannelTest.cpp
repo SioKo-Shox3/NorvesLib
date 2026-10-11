@@ -14,28 +14,24 @@
 using namespace NorvesLib::Core;
 namespace
 {
-    class TimeEntity : public Entity
+    // クラスの中では基底の注入名 Component が名前空間の別名を隠すので、外で別名を付ける
+    using ProbeBase = Component::Component;
+
+    // channel は型ごとの登録に持つので、channel ごとに型を分ける
+    class TimeProbe : public ProbeBase
     {
+        REFLECTION_CLASS(TimeProbe, ProbeBase)
+
       public:
-        float Delta = -1;
-        void Tick(float delta) override
-        {
-            Delta = delta;
-        }
-    };
-    class TimeProbe : public Component::Component
-    {
-      public:
-        Engine::TimeChannel Channel = Engine::TimeChannel::World;
         float Delta = -1;
         unsigned Calls = 0;
         bool Throw = false;
-        Component* Foreign = nullptr;
-        Engine::TimeChannel GetTimeChannel() const noexcept override
+        ProbeBase* Foreign = nullptr;
+        static void RunTick(ProbeBase& component, float delta)
         {
-            return Channel;
+            static_cast<TimeProbe&>(component).OnTick(delta);
         }
-        void Tick(float delta) override
+        void OnTick(float delta)
         {
             auto* world = GetOwner()->GetWorld();
             float queried = -1;
@@ -52,6 +48,63 @@ namespace
             ++Calls;
         }
     };
+    IMPLEMENT_CLASS(TimeProbe, ProbeBase)
+
+    class TimeWorldProbe : public TimeProbe
+    {
+        REFLECTION_CLASS(TimeWorldProbe, TimeProbe)
+    };
+    IMPLEMENT_CLASS(TimeWorldProbe, TimeProbe)
+    class TimeAnimationProbe : public TimeProbe
+    {
+        REFLECTION_CLASS(TimeAnimationProbe, TimeProbe)
+    };
+    IMPLEMENT_CLASS(TimeAnimationProbe, TimeProbe)
+    class TimeUnscaledProbe : public TimeProbe
+    {
+        REFLECTION_CLASS(TimeUnscaledProbe, TimeProbe)
+    };
+    IMPLEMENT_CLASS(TimeUnscaledProbe, TimeProbe)
+    class TimeParticleProbe : public TimeProbe
+    {
+        REFLECTION_CLASS(TimeParticleProbe, TimeProbe)
+    };
+    IMPLEMENT_CLASS(TimeParticleProbe, TimeProbe)
+
+    void RegisterProbeTicks(World& world)
+    {
+        const struct
+        {
+            const IClass* Class;
+            Engine::TimeChannel Channel;
+        } entries[] = {{TimeWorldProbe::StaticClass(), Engine::TimeChannel::World},
+                       {TimeAnimationProbe::StaticClass(), Engine::TimeChannel::Animation},
+                       {TimeUnscaledProbe::StaticClass(), Engine::TimeChannel::Unscaled},
+                       {TimeParticleProbe::StaticClass(), Engine::TimeChannel::Particle}};
+        for (const auto& entry : entries)
+        {
+            Component::ComponentTickRegistration registration;
+            registration.Name = "Test.TimeProbe";
+            registration.Run = &TimeProbe::RunTick;
+            registration.TimeChannel = entry.Channel;
+            world.RegisterComponentTick(entry.Class, registration);
+        }
+    }
+
+    TimeProbe* CreateProbe(World& world, Entity* owner, Engine::TimeChannel channel)
+    {
+        switch (channel)
+        {
+        case Engine::TimeChannel::Animation:
+            return world.CreateComponent<TimeAnimationProbe>(owner);
+        case Engine::TimeChannel::Unscaled:
+            return world.CreateComponent<TimeUnscaledProbe>(owner);
+        case Engine::TimeChannel::Particle:
+            return world.CreateComponent<TimeParticleProbe>(owner);
+        default:
+            return world.CreateComponent<TimeWorldProbe>(owner);
+        }
+    }
     bool Near(float a, float b)
     {
         return std::fabs(a - b) < 1e-6f;
@@ -61,8 +114,9 @@ int main()
 {
     World world;
     world.Initialize();
-    auto* root = world.SpawnEntity<TimeEntity>();
-    auto* child = world.SpawnEntity<TimeEntity>(root);
+    RegisterProbeTicks(world);
+    auto* root = world.SpawnEntity<Entity>();
+    auto* child = world.SpawnEntity<Entity>(root);
     assert(root && child && root->SetCustomTimeDilation(.25f));
     assert(!root->SetCustomTimeDilation(-1) && !root->SetCustomTimeDilation(std::nanf("")) &&
            root->GetCustomTimeDilation() == .25f);
@@ -75,15 +129,18 @@ int main()
                                             Component::ETickGroup::Camera};
     for (unsigned i = 0; i < 5; ++i)
     {
-        probes[i] = world.CreateComponent<TimeProbe>(root);
+        probes[i] = CreateProbe(world, root, channels[i]);
         assert(probes[i]);
-        probes[i]->Channel = channels[i];
         assert(probes[i]->SetTickGroup(groups[i]));
     }
+    // 時間倍率は子へ継承しない（子の World の channel は倍率の掛からない delta）
+    TimeProbe* childProbe = CreateProbe(world, child, Engine::TimeChannel::World);
+    assert(childProbe);
     World foreignWorld;
     foreignWorld.Initialize();
+    RegisterProbeTicks(foreignWorld);
     auto* foreignEntity = foreignWorld.SpawnEntity<Entity>();
-    auto* foreignProbe = foreignWorld.CreateComponent<TimeProbe>(foreignEntity);
+    auto* foreignProbe = CreateProbe(foreignWorld, foreignEntity, Engine::TimeChannel::World);
     assert(foreignEntity && foreignProbe);
     probes[0]->Foreign = foreignProbe;
     float untouched = 42;
@@ -98,7 +155,7 @@ int main()
     times.PhysicsDeltaNanoseconds = 30000000;
     world.Tick(times);
     world.LateTick(times);
-    assert(Near(root->Delta, .01f) && Near(child->Delta, .04f));
+    assert(Near(childProbe->Delta, .04f));
     assert(Near(probes[0]->Delta, .01f) && Near(probes[1]->Delta, .005f));
     assert(Near(probes[2]->Delta, .08f) && Near(probes[3]->Delta, .06f) && Near(probes[4]->Delta, .08f));
     times.World = times.Animation = 0;
@@ -111,15 +168,15 @@ int main()
     world.LateTick(.1f);
     assert(Near(probes[0]->Delta, .025f) && Near(probes[1]->Delta, .025f));
     assert(probes[2]->Delta == .1f && probes[3]->Delta == .1f && probes[4]->Delta == .1f);
-    assert(Near(child->Delta, .1f));
+    assert(Near(childProbe->Delta, .1f));
     Component::AnimatorComponent animator;
     Component::SkinnedMeshComponent skinned;
     Component::CameraComponent camera;
     Component::SpringArmComponent arm;
-    assert(animator.GetTimeChannel() == Engine::TimeChannel::Animation &&
-           skinned.GetTimeChannel() == Engine::TimeChannel::Animation);
-    assert(camera.GetTimeChannel() == Engine::TimeChannel::Unscaled &&
-           arm.GetTimeChannel() == Engine::TimeChannel::Unscaled);
+    assert(world.GetComponentTimeChannel(animator) == Engine::TimeChannel::Animation &&
+           world.GetComponentTimeChannel(skinned) == Engine::TimeChannel::Animation);
+    assert(world.GetComponentTimeChannel(camera) == Engine::TimeChannel::Unscaled &&
+           world.GetComponentTimeChannel(arm) == Engine::TimeChannel::Unscaled);
     assert(!world.HasActiveTickTimeContext() && !world.TryGetComponentTickDelta(*probes[0], untouched) &&
            untouched == 42);
     probes[0]->Throw = true;

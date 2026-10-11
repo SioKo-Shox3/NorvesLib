@@ -308,13 +308,24 @@ namespace
         world.RegisterComponentTick(Component::ScriptComponent::StaticClass(), counting);
     }
 
-    class DestroyDuringTickProbe final : public Component::Component
+    // クラスの中では基底の注入名 Component が名前空間の別名を隠すので、外で別名を付ける
+    using ProbeBase = Component::Component;
+
+    class DestroyDuringTickProbe final : public ProbeBase
     {
+        REFLECTION_CLASS(DestroyDuringTickProbe, ProbeBase)
+
     public:
         DestroyDuringTickState* State = nullptr;
         bool bDestroyPhase = false;
 
-        void Tick(float deltaTime) override
+        // 型に登録する本体（World の順序付きの系が呼ぶ）
+        static void RunTick(ProbeBase& component, float deltaTime)
+        {
+            static_cast<DestroyDuringTickProbe&>(component).OnTick(deltaTime);
+        }
+
+        void OnTick(float deltaTime)
         {
             if (bDestroyPhase)
             {
@@ -372,6 +383,7 @@ namespace
             }
         }
     };
+    IMPLEMENT_CLASS(DestroyDuringTickProbe, ProbeBase)
 
     void TestDestroyDuringTickReservesUntilSyncPoint()
     {
@@ -400,6 +412,10 @@ namespace
         assert(runtime.GetDiagnostics().ActiveBindingCount == 4);
         ScriptTickCounter counter;
         InstallScriptTickCounter(world, counter);
+        Component::ComponentTickRegistration probeTick;
+        probeTick.Name = "Test.DestroyDuringTickProbe";
+        probeTick.Run = &DestroyDuringTickProbe::RunTick;
+        world.RegisterComponentTick(DestroyDuringTickProbe::StaticClass(), probeTick);
 
         // スクリプトの Tick（優先度 0）より前で破棄し、後で確かめる
         auto* destroyProbe = new DestroyDuringTickProbe();

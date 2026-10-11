@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace NorvesLib::Core::Component
@@ -35,6 +36,25 @@ namespace NorvesLib::Core::Component
     constexpr bool IsPostPhysicsTickGroup(ETickGroup group)
     {
         return IsValidTickGroup(group) && group >= ETickGroup::PostPhysics;
+    }
+
+    /**
+     * @brief Tick の呼び先の順の比較（群 → 優先度 → 順番。順番は Entity の深さ優先の番号など）
+     *
+     * World の順序付きの系と、スケジューラの順の一覧が同じ比較で並べる
+     */
+    constexpr bool TickOrderLess(ETickGroup groupA, int16_t priorityA, size_t ordinalA,
+                                 ETickGroup groupB, int16_t priorityB, size_t ordinalB)
+    {
+        if (groupA != groupB)
+        {
+            return groupA < groupB;
+        }
+        if (priorityA != priorityB)
+        {
+            return priorityA < priorityB;
+        }
+        return ordinalA < ordinalB;
     }
 
     constexpr const char* GetTickGroupName(ETickGroup group)

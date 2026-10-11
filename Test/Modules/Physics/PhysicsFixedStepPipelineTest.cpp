@@ -3,6 +3,7 @@
 #include "Component/Component.h"
 #include "Component/MeshComponent.h"
 #include "Component/PointLightComponent.h"
+#include "Ecs/EcsScheduler.h"
 #include "Engine/ApplicationProcessor.h"
 #include "Engine/Engine.h"
 #include "Engine/FixedStepScheduler.h"
@@ -195,10 +196,70 @@ namespace
 
     Fixture* GFixture = nullptr;
 
-    class MoveKinematicComponent final : public Component::Component
+    // 固定ステップの段 FixedTick で呼ぶ試験の本体。段のシステム（RunFixedProbes）が Entity の深さ優先の順に呼ぶ。
+    // システムは物理モジュールより先に登録するので、段の中では物理の要求・一歩より前に走る
+    class IFixedProbe
     {
     public:
-        void FixedTick(float /*fixedDeltaTime*/) override
+        virtual ~IFixedProbe() = default;
+        virtual void OnFixed(float fixedDeltaTime) = 0;
+    };
+
+    void CollectFixedProbes(Entity& entity, Container::VariableArray<IFixedProbe*>& out)
+    {
+        if (!entity.IsActive() || entity.IsPendingDestroy())
+        {
+            return;
+        }
+        if (entity.IsTickEnabled())
+        {
+            for (Component::Component* component : entity.GetComponents())
+            {
+                if (component->IsActive() && component->IsTickEnabled() && !component->IsPendingDestroy())
+                {
+                    if (auto* probe = dynamic_cast<IFixedProbe*>(component))
+                    {
+                        out.push_back(probe);
+                    }
+                }
+            }
+        }
+        for (Entity* child : entity.GetChildEntities())
+        {
+            CollectFixedProbes(*child, out);
+        }
+    }
+
+    void RunFixedProbes(void* user, const Ecs::EcsSystemContext& context)
+    {
+        auto& world = *static_cast<World*>(user);
+        Container::VariableArray<IFixedProbe*> probes;
+        for (Entity* root : world.GetRootEntities())
+        {
+            CollectFixedProbes(*root, probes);
+        }
+        for (IFixedProbe* probe : probes)
+        {
+            probe->OnFixed(context.DeltaTime);
+        }
+    }
+
+    bool RegisterFixedProbeSystem(World& world)
+    {
+        Ecs::SystemScheduler& scheduler = world.GetScheduler();
+        Ecs::SystemDesc desc;
+        desc.Name = "Test.FixedProbes";
+        desc.Stage = scheduler.FindStage("FixedTick");
+        desc.Thread = ThreadPolicy::GameThreadOnly;
+        desc.Run = &RunFixedProbes;
+        desc.User = &world;
+        return scheduler.RegisterSystem(desc) != Ecs::kInvalidEcsSystem;
+    }
+
+    class MoveKinematicComponent final : public Component::Component, public IFixedProbe
+    {
+    public:
+        void OnFixed(float /*fixedDeltaTime*/) override
         {
             ++FixedTickCount;
             if (GFixture)
@@ -212,10 +273,10 @@ namespace
         uint32_t FixedTickCount = 0;
     };
 
-    class MoveSceneQueryComponent final : public Component::Component
+    class MoveSceneQueryComponent final : public Component::Component, public IFixedProbe
     {
     public:
-        void FixedTick(float /*fixedDeltaTime*/) override
+        void OnFixed(float /*fixedDeltaTime*/) override
         {
             ++FixedTickCount;
             GetOwner()->SetLocalPosition(GetOwner()->GetLocalTransform().position + StepDisplacement);
@@ -282,6 +343,10 @@ namespace
         GFixture = &fixture;
         NorvesLib::Core::Engine::GEngine = new NorvesLib::Core::Engine::Engine();
         NorvesLib::Core::Engine::GEngine->GetWorld().Initialize();
+        if (!RegisterFixedProbeSystem(NorvesLib::Core::Engine::GEngine->GetWorld()))
+        {
+            return false;
+        }
         // Game の起動と同じく、Game の Component の本体を順序付きの系へ登録する
         Game::Gameplay::FollowCameraComponent::RegisterTick(NorvesLib::Core::Engine::GEngine->GetWorld());
         Game::Gameplay::QuadrupedLocomotionComponent::RegisterTick(NorvesLib::Core::Engine::GEngine->GetWorld());
@@ -754,21 +819,21 @@ namespace
     {
         return ApplicationFixedStepTestAccess::Advance(processor, 16'666'667, true).ExecutedSteps == 1;
     }
-    class CharacterPlatformTick final : public Component::Component
+    class CharacterPlatformTick final : public Component::Component, public IFixedProbe
     {
       public:
         Math::Transform Target;
-        void FixedTick(float) override
+        void OnFixed(float) override
         {
             GetOwner()->SetWorldTransform(Target);
         }
     };
-    class CharacterTeleportTick final : public Component::Component
+    class CharacterTeleportTick final : public Component::Component, public IFixedProbe
     {
       public:
         CharacterBodyComponent* Target = nullptr;
         bool bDone = false;
-        void FixedTick(float) override
+        void OnFixed(float) override
         {
             if (!bDone && Target)
             {

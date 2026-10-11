@@ -555,43 +555,63 @@ namespace
         legacy.Finalize();
     }
 
-    // 段の最中に作った子（行の作成を予約中）を、局所の位置を決めてすぐ根へ付け替えても、座標が旧の再帰と同じに保たれる
-    class SpawnAndDetachEntity : public Entity
+    // クラスの中では基底の注入名 Component が名前空間の別名を隠すので、外で別名を付ける
+    using HierarchyProbeBase = Component::Component;
+
+    // 型に Tick の本体を登録する（World の順序付きの系が呼ぶ）
+    template <typename T>
+    void RegisterProbeTick(World &world, const char *name)
     {
+        Component::ComponentTickRegistration registration;
+        registration.Name = name;
+        registration.Run = [](HierarchyProbeBase &component, float) { static_cast<T &>(component).OnTick(); };
+        world.RegisterComponentTick(T::StaticClass(), registration);
+    }
+
+    // 段の最中に作った子（行の作成を予約中）を、局所の位置を決めてすぐ根へ付け替えても、座標が旧の再帰と同じに保たれる
+    class HierarchySpawnAndDetachProbe : public HierarchyProbeBase
+    {
+        REFLECTION_CLASS(HierarchySpawnAndDetachProbe, HierarchyProbeBase)
+
     public:
         Entity *Spawned = nullptr;
         bool bDone = false;
 
-        void Tick(float) override
+        void OnTick()
         {
             if (bDone)
             {
                 return;
             }
             bDone = true;
-            World *world = GetWorld();
-            Spawned = world->SpawnEntity<Entity>(this);
+            Entity *owner = GetOwner();
+            World *world = owner->GetWorld();
+            Spawned = world->SpawnEntity<Entity>(owner);
             Spawned->SetLocalPosition(2.0f, 0.0f, 0.0f);
             assert(world->ReparentEntity(Spawned, nullptr));
         }
     };
+    IMPLEMENT_CLASS(HierarchySpawnAndDetachProbe, HierarchyProbeBase)
 
     float RunSpawnAndDetach(bool bLegacy)
     {
         World world;
         world.Initialize();
+        RegisterProbeTick<HierarchySpawnAndDetachProbe>(world, "Test.SpawnAndDetach");
         world.SetLegacyTransformPropagation(bLegacy);
-        auto *root = world.SpawnEntity<SpawnAndDetachEntity>();
+        auto *root = world.SpawnEntity<Entity>();
+        auto *probe = world.CreateComponent<HierarchySpawnAndDetachProbe>(root);
+        assert(probe != nullptr);
         root->SetLocalPosition(10.0f, 0.0f, 0.0f);
         world.UpdateWorldTransforms();
         world.Tick(0.01f);
         world.LateTick(0.01f);
-        assert(root->Spawned != nullptr);
+        assert(probe->Spawned != nullptr);
         // 付け替えは世界の位置を保つ: 親の 10 + 局所の 2
-        const float x = root->Spawned->GetWorldTransform().position.x;
-        assert(root->Spawned->GetParentEntity() == nullptr);
+        const float x = probe->Spawned->GetWorldTransform().position.x;
+        assert(probe->Spawned->GetParentEntity() == nullptr);
         world.UpdateWorldTransforms();
-        assert(root->Spawned->GetWorldTransform().position.x == x);
+        assert(probe->Spawned->GetWorldTransform().position.x == x);
         world.Finalize();
         return x;
     }
@@ -616,34 +636,39 @@ namespace
         RegisterOnly,
     };
 
-    class StopOwnerEntity : public Entity
+    // 所有者の Entity を止める（同じ群で後ろに並ぶ子・孫の Component より先に呼ばれる）
+    class HierarchyStopOwnerProbe : public HierarchyProbeBase
     {
+        REFLECTION_CLASS(HierarchyStopOwnerProbe, HierarchyProbeBase)
+
     public:
         StopKind Kind = StopKind::SetActive;
 
-        void Tick(float) override
+        void OnTick()
         {
+            Entity *owner = GetOwner();
             switch (Kind)
             {
             case StopKind::MarkForDestroy:
-                MarkForDestroy();
+                owner->MarkForDestroy();
                 break;
             case StopKind::Destroy:
-                Destroy();
+                owner->Destroy();
                 break;
             case StopKind::DestroyViaObject:
-                static_cast<Object *>(this)->Destroy();
+                static_cast<Object *>(owner)->Destroy();
                 break;
             case StopKind::RegisterOnly:
-                SetFlag(OF_PendingDestroy, true);
-                GetWorld()->RegisterPendingDestroy(*this);
+                owner->SetFlag(OF_PendingDestroy, true);
+                owner->GetWorld()->RegisterPendingDestroy(*owner);
                 break;
             default:
-                SetActive(false);
+                owner->SetActive(false);
                 break;
             }
         }
     };
+    IMPLEMENT_CLASS(HierarchyStopOwnerProbe, HierarchyProbeBase)
 
     // 破棄予約が ECS の破棄の印（プロパティ経由で読む値）まで立てるかを見るための窓口
     class FlagProbeEntity : public Entity
@@ -652,26 +677,32 @@ namespace
         bool EcsPendingDestroyFlag() { return getbPendingDestroy().Get(); }
     };
 
-    class CountEntity : public Entity
+    class HierarchyCountProbe : public HierarchyProbeBase
     {
+        REFLECTION_CLASS(HierarchyCountProbe, HierarchyProbeBase)
+
     public:
         int *Counter = nullptr;
 
-        void Tick(float) override { ++*Counter; }
+        void OnTick() { ++*Counter; }
     };
+    IMPLEMENT_CLASS(HierarchyCountProbe, HierarchyProbeBase)
 
     int RunAncestorStop(bool bLegacy, StopKind kind)
     {
         World world;
         world.Initialize();
+        RegisterProbeTick<HierarchyStopOwnerProbe>(world, "Test.StopOwner");
+        RegisterProbeTick<HierarchyCountProbe>(world, "Test.Count");
         world.SetLegacyTransformPropagation(bLegacy);
-        auto *parent = world.SpawnEntity<StopOwnerEntity>();
-        parent->Kind = kind;
+        auto *parent = world.SpawnEntity<Entity>();
+        auto *stopper = world.CreateComponent<HierarchyStopOwnerProbe>(parent);
+        stopper->Kind = kind;
         int count = 0;
-        auto *child = world.SpawnEntity<CountEntity>(parent);
-        child->Counter = &count;
-        auto *grandChild = world.SpawnEntity<CountEntity>(child);
-        grandChild->Counter = &count;
+        auto *child = world.SpawnEntity<Entity>(parent);
+        world.CreateComponent<HierarchyCountProbe>(child)->Counter = &count;
+        auto *grandChild = world.SpawnEntity<Entity>(child);
+        world.CreateComponent<HierarchyCountProbe>(grandChild)->Counter = &count;
         // 先に伝播して、全員が EffectiveActive を求めた状態にする
         world.UpdateWorldTransforms();
         world.UpdateWorldTransforms();

@@ -13,6 +13,7 @@
 #include "Animation/AnimationClipResource.h"
 #include "Animation/SkeletalAssetResource.h"
 #include "Animation/SkeletonResource.h"
+#include "Ecs/EcsScheduler.h"
 #include "Engine/NorvesEngine.h"
 #include "Math/VectorUtils.h"
 #include "Object/Entity.h"
@@ -36,6 +37,44 @@ namespace NorvesLib::Test::RenderingValidation
         using Core::Rendering::MeshDataHandle;
         using Core::Rendering::RenderResources;
         using Core::Rendering::TextureHandle;
+
+        // 段 FixedTick: 根の Entity に付いた見張り役へ、固定ステップの 1 歩を知らせる
+        void RunFixedStepSentinels(void* user, const Core::Ecs::EcsSystemContext& context)
+        {
+            auto& world = *static_cast<Core::World*>(user);
+            for (Core::Entity* root : world.GetRootEntities())
+            {
+                if (!root->IsActive() || root->IsPendingDestroy())
+                {
+                    continue;
+                }
+                for (Core::Component::Component* component : root->GetComponents())
+                {
+                    if (auto* sentinel = dynamic_cast<FixedStepSentinelComponent*>(component))
+                    {
+                        sentinel->OnFixedStep(context.DeltaTime);
+                    }
+                }
+            }
+        }
+
+        // 見張り役を呼ぶシステムを World のスケジューラへ 1 度だけ登録する（スケジューラは World と同じ寿命）
+        bool RegisterFixedStepSentinelSystem(Core::World& world)
+        {
+            constexpr const char* kName = "RenderingValidation.FixedStepSentinel";
+            Core::Ecs::SystemScheduler& scheduler = world.GetScheduler();
+            if (scheduler.FindSystem(kName) != Core::Ecs::kInvalidEcsSystem)
+            {
+                return true;
+            }
+            Core::Ecs::SystemDesc desc;
+            desc.Name = kName;
+            desc.Stage = scheduler.FindStage("FixedTick");
+            desc.Thread = Core::ThreadPolicy::GameThreadOnly;
+            desc.Run = &RunFixedStepSentinels;
+            desc.User = &world;
+            return scheduler.RegisterSystem(desc) != Core::Ecs::kInvalidEcsSystem;
+        }
 
         constexpr MeshDataHandle PlaneHandle{0x52300001u};
         constexpr MeshDataHandle SphereHandle{0x52300002u};
@@ -734,7 +773,7 @@ namespace NorvesLib::Test::RenderingValidation
         return camera;
     }
 
-    void FixedStepSentinelComponent::FixedTick(float fixedDeltaTime)
+    void FixedStepSentinelComponent::OnFixedStep(float fixedDeltaTime)
     {
         if (fixedDeltaTime != 1.0f / 60.0f)
         {
@@ -1328,7 +1367,7 @@ namespace NorvesLib::Test::RenderingValidation
         }
         guard.TrackObject(sentinelEntity);
         pSentinel = world.CreateComponent<FixedStepSentinelComponent>(sentinelEntity);
-        if (pSentinel == nullptr)
+        if (pSentinel == nullptr || !RegisterFixedStepSentinelSystem(world))
         {
             return false;
         }

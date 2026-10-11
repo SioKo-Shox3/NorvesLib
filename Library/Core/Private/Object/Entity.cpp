@@ -794,18 +794,6 @@ namespace NorvesLib::Core
         return result;
     }
 
-    void Entity::TickComponents(float deltaTime)
-    {
-        for (auto *inner : m_Inners)
-        {
-            auto *comp = CastTo<Component::Component>(inner);
-            if (comp && comp->IsActive() && comp->IsTickEnabled())
-            {
-                comp->Tick(deltaTime);
-            }
-        }
-    }
-
     void Entity::MarkRenderStateDirtyRecursive()
     {
         auto components = GetComponents();
