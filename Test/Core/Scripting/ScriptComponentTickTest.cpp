@@ -243,10 +243,70 @@ namespace
         Entity* ComponentOwner = nullptr;
         Component::ScriptComponent* Scripts[3] = {};
         Component::ScriptComponent* RemovedScript = nullptr;
+        Component::ScriptComponent* SurvivorScript = nullptr;
         Entity* Spawned = nullptr;
         bool bDestroyed = false;
         bool bChecked = false;
     };
+
+    // 登録した ScriptComponent の Tick の呼び先を包み、対象ごとの呼び出し回数を数える（本体はそのまま呼ぶ）
+    struct ScriptTickCounter
+    {
+        static constexpr size_t MaxTargets = 8;
+        Component::ComponentTickFn OriginalRun = nullptr;
+        const Component::Component* Targets[MaxTargets] = {};
+        uint32_t Counts[MaxTargets] = {};
+        size_t TargetCount = 0;
+
+        uint32_t CountOf(const Component::Component* target) const
+        {
+            for (size_t i = 0; i < TargetCount; ++i)
+            {
+                if (Targets[i] == target)
+                {
+                    return Counts[i];
+                }
+            }
+            return 0;
+        }
+
+        void Note(const Component::Component* target)
+        {
+            for (size_t i = 0; i < TargetCount; ++i)
+            {
+                if (Targets[i] == target)
+                {
+                    ++Counts[i];
+                    return;
+                }
+            }
+            assert(TargetCount < MaxTargets);
+            Targets[TargetCount] = target;
+            Counts[TargetCount] = 1;
+            ++TargetCount;
+        }
+    };
+
+    ScriptTickCounter* GScriptTickCounter = nullptr;
+
+    void CountingScriptTick(Component::Component& component, float deltaTime)
+    {
+        GScriptTickCounter->Note(&component);
+        GScriptTickCounter->OriginalRun(component, deltaTime);
+    }
+
+    // ScriptRuntime が World に登録した呼び先を、計数の包みに置き換える（反映は次の Tick の収集から）
+    void InstallScriptTickCounter(World& world, ScriptTickCounter& counter)
+    {
+        const Component::ComponentTickRegistration* registered =
+            world.FindComponentTick(Component::ScriptComponent::StaticClass());
+        assert(registered != nullptr && registered->Run != nullptr);
+        Component::ComponentTickRegistration counting = *registered;
+        counter.OriginalRun = registered->Run;
+        counting.Run = &CountingScriptTick;
+        GScriptTickCounter = &counter;
+        world.RegisterComponentTick(Component::ScriptComponent::StaticClass(), counting);
+    }
 
     class DestroyDuringTickProbe final : public Component::Component
     {
@@ -295,9 +355,15 @@ namespace
             }
             State->bChecked = true;
             ScriptRuntime& runtime = GEngine.GetScriptRuntime();
+            // 計数が効いていること: 破棄していない対象は、このフレームで登録した呼び先がちょうど 1 回呼ばれた
+            assert(GScriptTickCounter->CountOf(State->SurvivorScript) == 1);
+            // 破棄の後に並ぶ Tick は呼ばれていない。直接の呼び出しより前に、対象ごとの回数で確かめる
             for (auto* script : State->Scripts)
             {
-                // 破棄の後に並ぶ Tick は呼ばれていない（呼ばれていれば Mover が x を 1 進める）
+                assert(GScriptTickCounter->CountOf(script) == 0);
+            }
+            for (auto* script : State->Scripts)
+            {
                 assert(script->GetOwner()->GetPosition().x == 0.0f);
                 // スクリプトからの取得は失敗する（Mover の GetPosition が例外になり、位置は動かない）
                 script->TickScript(deltaTime);
@@ -330,8 +396,10 @@ namespace
         state.Scripts[1] = AddConfiguredComponent(*destroyedChild);
         state.Scripts[2] = AddConfiguredComponent(*componentOwner);
         state.RemovedScript = state.Scripts[2];
-        AddConfiguredComponent(*survivor);
+        state.SurvivorScript = AddConfiguredComponent(*survivor);
         assert(runtime.GetDiagnostics().ActiveBindingCount == 4);
+        ScriptTickCounter counter;
+        InstallScriptTickCounter(world, counter);
 
         // スクリプトの Tick（優先度 0）より前で破棄し、後で確かめる
         auto* destroyProbe = new DestroyDuringTickProbe();
@@ -360,8 +428,10 @@ namespace
         world.Tick(1.0f);
         assert(survivor->GetPosition().x == 2.0f);
         assert(componentOwner->GetPosition().x == 0.0f);
+        assert(counter.CountOf(state.SurvivorScript) == 2);
 
         ShutdownRuntimeAfterWorld(world);
+        GScriptTickCounter = nullptr;
     }
 }
 

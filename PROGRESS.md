@@ -2058,3 +2058,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: SCN-ECS-TICK-GAME（verify の 2・3 本目がこの束を使う）。
 - Notes:
   - JSON のサロゲートの扱いそのもの（CORE-JSON-SURROGATE）には触れていない。書き方を変えただけ。
+
+### SCN-ECS-FIX-SCRIPT-TICK-COUNT（2026-10-11、反復 9・run 20261011-211043）
+
+- 変更（テストだけ。製品のコードは変えていない）:
+  - ScriptComponentTickTest の `TestDestroyDuringTickReservesUntilSyncPoint` で、ScriptRuntime が World に登録した ScriptComponent の Tick の呼び先を `FindComponentTick` で取り出し、対象ごとの呼び出し回数を数えてから元の本体を呼ぶ包みに `RegisterComponentTick` で置き換えた。
+  - 後の Tick（優先度 100）で、破棄予約した 3 つの対象（破棄した Entity・その子・`RemoveComponent` した ScriptComponent）の回数が 0 であることを、直接の `TickScript` より前に確かめる。破棄していない対象が同じフレームでちょうど 1 回（次のフレームで 2 回）呼ばれたことで、計数が効いていることも確かめる。位置と取得の失敗の検査はその後に残した。
+- 結果（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-ECS-FIX-SCRIPT-TICK-COUNT-3.txt`: Debug の 3 つのビルド EXIT=0。
+  - `-4.txt`: 5/5 が pass、EXIT=0。
+  - `-1.txt`・`-2.txt` は無効（下の変異の確認で戻した World.cpp の時刻が古く再コンパイルされず、変異のまま走った）。
+  - 変異の確認: `World::ExecuteOrderedTick` の `target->IsPendingDestroy()` の検査を一時的に外すと、追加した回数の検査（`CountOf(script) == 0`）で落ちた。旧の位置の検査はこの変異では落ちない（取得が失敗して位置が動かないため）。
+- Next: TASKS.md の次の todo。SCN-ECS-TICK-SCRIPT も done にした。
+- Notes:
+  - ScriptApplicationLifecycleContractTest は 1 本で約 245 秒かかる（ctest の `--timeout 180` より長いが pass する。テスト側の TIMEOUT の設定が優先されているとみられる）。
+  - Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに書き換わり MSBuild が失敗する。ビルドは PowerShell から呼ぶ。
