@@ -111,17 +111,17 @@ namespace NorvesLib::Core::Scene
             uint32_t Entries = 0;
         };
 
-        /// 行の削除のフックへ渡す相手（内部用）。World が替わったあとの古い呼び出しを見分ける印を持つ
+        /// 行の削除のフックへ渡す相手（内部用）。登録ごとに 1 つ作り、World が替わったら bLive を落として古い呼び出しを無視する
         struct HookUser
         {
             Container::VariableArray<uint64_t>* Destroyed = nullptr;
-            /// 追っている ECS の World（SceneQuery が持つ m_TrackedEcs）。Tag と違えば古い World の呼び出し
-            const void* const* Current = nullptr;
-            const void* Tag = nullptr;
+            /// この登録がまだ有効か。World の切替・解除で false になる（フックが残っていても何もしない）
+            bool bLive = false;
         };
 
         SceneQuery();
-        ~SceneQuery() = default;
+        /// 追っている World の購読（変更ログの消費者・削除のフック）を解く。World は SceneQuery より長く生きるか、先に Clear() を呼ぶこと
+        ~SceneQuery();
         SceneQuery(const SceneQuery&) = delete;
         SceneQuery(SceneQuery&&) = delete;
         SceneQuery& operator=(const SceneQuery&) = delete;
@@ -262,6 +262,8 @@ namespace NorvesLib::Core::Scene
         // ---- 増分の更新 ----
         bool AttachTracking(World& world);
         void DetachTracking();
+        /// 現在の登録の識別子を無効にする（フックが残っても何もしなくなる）
+        void RetireHookUser();
         void ForgetTrackedData();
         void BuildTrackedFromWorld(World& world);
         void RefreshEntity(const World& world, Entity& entity);
@@ -283,9 +285,10 @@ namespace NorvesLib::Core::Scene
 
         // 増分の状態
         World* m_TrackedWorld = nullptr;
-        const void* m_TrackedEcs = nullptr;
         uint32_t m_Consumers[3] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
-        HookUser m_HookUser;
+        /// 現在の登録の識別子（m_HookUsers の末尾）。解除済み・切替済みの登録は bLive=false のまま残す
+        HookUser* m_HookUser = nullptr;
+        Container::VariableArray<Container::TUniquePtr<HookUser>> m_HookUsers;
         Container::UnorderedMap<uint64_t, TrackedEntity> m_Tracked;
         /// MeshComponent の ComponentId → それを持つ Entity の行
         Container::UnorderedMap<uint64_t, uint64_t> m_MeshOwner;

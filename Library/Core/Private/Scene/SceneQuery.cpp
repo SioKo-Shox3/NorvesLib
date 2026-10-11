@@ -74,12 +74,11 @@ namespace NorvesLib::Core::Scene
             return true;
         }
 
-        /// 行の削除のフックの呼び出し先。追っている World の行だけを、削除の一覧へ積む
+        /// 行の削除のフックの呼び出し先。有効な登録（追っている World）の行だけを、削除の一覧へ積む
         void OnRowDestroyed(void* user, Ecs::EcsEntity entity, const void* /*value*/, Ecs::EcsHookReason /*reason*/)
         {
             auto* hookUser = static_cast<SceneQuery::HookUser*>(user);
-            if (hookUser == nullptr || hookUser->Destroyed == nullptr || hookUser->Current == nullptr
-                || *hookUser->Current != hookUser->Tag)
+            if (hookUser == nullptr || !hookUser->bLive || hookUser->Destroyed == nullptr)
             {
                 return;
             }
@@ -90,6 +89,11 @@ namespace NorvesLib::Core::Scene
     SceneQuery::SceneQuery()
         : m_OwnerThreadId(Thread::Thread::GetCurrentThreadId())
     {
+    }
+
+    SceneQuery::~SceneQuery()
+    {
+        DetachTracking();
     }
 
     void SceneQuery::Rebuild(const World& world)
@@ -837,15 +841,16 @@ namespace NorvesLib::Core::Scene
         }
 
         // 行の削除は変更ログに載らない（死んだ行は読めない）ので、Entity の行が必ず持つ列のフックで拾う
-        m_TrackedEcs = &ecs;
-        m_HookUser.Destroyed = &m_DestroyedRows;
-        m_HookUser.Current = &m_TrackedEcs;
-        m_HookUser.Tag = &ecs;
+        // 登録ごとに識別子を作る。World の切替で古い登録を無効にしても、残ったフックが指す先は生きている
+        m_HookUsers.push_back(Container::MakeUnique<HookUser>());
+        m_HookUser = m_HookUsers.back().get();
+        m_HookUser->Destroyed = &m_DestroyedRows;
+        m_HookUser->bLive = true;
         if (bOk)
         {
             Ecs::EcsColumnHooks hooks;
             hooks.OnDestroy = &OnRowDestroyed;
-            hooks.User = &m_HookUser;
+            hooks.User = m_HookUser;
             bOk = ecs.SetColumnHooks(types[2], hooks);
         }
 
@@ -859,8 +864,7 @@ namespace NorvesLib::Core::Scene
                 }
                 consumer = Ecs::kInvalidEcsConsumer;
             }
-            m_TrackedEcs = nullptr;
-            m_HookUser = HookUser{};
+            RetireHookUser();
             return false;
         }
 
@@ -887,9 +891,18 @@ namespace NorvesLib::Core::Scene
             consumer = Ecs::kInvalidEcsConsumer;
         }
         m_TrackedWorld = nullptr;
-        m_TrackedEcs = nullptr;
-        m_HookUser = HookUser{};
+        RetireHookUser();
         ForgetTrackedData();
+    }
+
+    void SceneQuery::RetireHookUser()
+    {
+        if (m_HookUser != nullptr)
+        {
+            m_HookUser->bLive = false;
+            m_HookUser->Destroyed = nullptr;
+            m_HookUser = nullptr;
+        }
     }
 
     void SceneQuery::ForgetTrackedData()
@@ -913,14 +926,14 @@ namespace NorvesLib::Core::Scene
         const bool bIncremental = !world.IsLegacyRenderSync() && world.GetSceneView() != nullptr;
         if (bIncremental && m_TrackedWorld != nullptr && m_TrackedWorld != &world)
         {
-            // 別の World に替わった。古い World は消えているかもしれないので触らない
+            // 別の World に替わった。古い World は消えているかもしれないので触らず、登録だけ無効にする
+            // （古い World に残ったフックが呼ばれても、無効な識別子は何もしない）
             for (uint32_t& consumer : m_Consumers)
             {
                 consumer = Ecs::kInvalidEcsConsumer;
             }
             m_TrackedWorld = nullptr;
-            m_TrackedEcs = nullptr;
-            m_HookUser = HookUser{};
+            RetireHookUser();
             ForgetTrackedData();
         }
 
@@ -977,29 +990,27 @@ namespace NorvesLib::Core::Scene
             for (const Ecs::EcsChangeEntry& change : changes)
             {
                 Entity* entity = ResolveEntityRow(ecs, change.Entity);
-                if (entity == nullptr && i == 1)
+                if (entity == nullptr)
                 {
+                    if (i != 1)
+                    {
+                        continue;
+                    }
                     // Component の行の階層が変わった（付け外し）。持ち主の Entity を更新する
                     const Ecs::EcsHierarchy* hierarchy = ecs.GetColumnValue<Ecs::EcsHierarchy>(change.Entity);
                     if (hierarchy != nullptr && hierarchy->Kind == Ecs::kEcsHierarchyKindComponent)
                     {
-                        entity = ResolveEntityRow(ecs, hierarchy->Parent);
+                        Entity* owner = ResolveEntityRow(ecs, hierarchy->Parent);
+                        if (owner != nullptr)
+                        {
+                            RefreshEntity(world, *owner);
+                        }
                     }
-                }
-                if (entity == nullptr)
-                {
                     continue;
                 }
-                // Active・破棄待ちの変化は子孫が走査に入るかを変えるので、部分木ごと見直す。
-                // 局所の変換・階層は、子孫の境界の変化を描画同期の一覧（下）が教えるので、その Entity だけ見る
-                if (i == 2)
-                {
-                    RefreshSubtree(world, *entity);
-                }
-                else
-                {
-                    RefreshEntity(world, *entity);
-                }
+                // 局所の変換・階層・Active・破棄待ちの変化は、子孫のワールドの境界や走査に入るかを変えるので、
+                // 部分木ごと見直す。描画同期の一覧（下）は MegaGeometry や、付け替えで入らなくなる子孫を教えない
+                RefreshSubtree(world, *entity);
             }
         }
 

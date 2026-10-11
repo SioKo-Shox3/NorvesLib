@@ -1504,3 +1504,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `paths:` の外は World を触っていない。`GetRenderSyncList()` の Changed が描画の同期に依存するので、SceneView が無い／旧の全走査では全量に切り替わる。
   - 描画同期の一覧が MeshComponent の変化を落とす変更が将来入ると、検査 ECS_SCENEQUERY が fail になる（検出用）。
   - 行末: 編集したファイルは numstat の 2 通りが一致。
+
+### SCN-ECS-SCENEQUERY 差し戻し対応（2026-10-11、反復 44・run 20261010-223034）
+
+- 変更（評価者の指摘 3 件）:
+  - 局所の変換・階層の変化も、Active と同じく部分木ごと見直す（`RefreshSubtree`）。Mesh を持たない親が動いたときの MegaGeometry を持つ子と、非アクティブな親への付け替えで入らなくなる子孫を拾う。描画同期の一覧は、この 2 つを教えないため。Component の行の階層変化は持ち主の Entity だけ見る。
+  - 行の削除のフックの識別子を登録ごとに作る（`HookUser::bLive`）。World の切替・解除で `bLive` を落とし、古い World に残ったフックは何もしない。識別子は SceneQuery が破棄まで持つ。`~SceneQuery` で追跡中の World の購読を解く（World は SceneQuery より長く生きるか、先に `Clear()` を呼ぶ前提）。
+  - テストの出力文を日本語にした。
+- テスト（paths の外）: `SceneQueryRaycastTest` に MegaGeometry の子・非アクティブな親への付け替えと復帰・World 切替後の古い World の削除、の 3 ケースを追加。各段で全量と照合。
+- 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-SCENEQUERY-44-build.txt`（Debug ビルド EXIT=0）、`-44-ctest.txt`（4 件 Passed）、`-44-capture.txt`（mega-stress の `result=pass`、`ECS_SCENEQUERY` が default 3・close 3・aerial 2 pass、fail 無し。1% 移動で `updated=45 entries=4838 rebuilt=0`、累計 作り直し 2 回）。
+- Notes: 行末は numstat の 2 通りが一致。旧の World が SceneQuery より長く生きて切替前に Clear されない場合、その World に残る識別子は無効のまま（SceneQuery 破棄後は呼ばれない前提）。

@@ -1,4 +1,5 @@
-﻿#include "Component/MeshComponent.h"
+﻿#include "Component/MegaGeometryComponent.h"
+#include "Component/MeshComponent.h"
 #include "Math/GeometryIntersection.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
@@ -295,7 +296,7 @@ namespace
             const bool bPass = sceneQuery.VerifyAgainstRebuild(world, examined, detail, sizeof(detail));
             if (!bPass)
             {
-                std::cout << "mismatch: " << detail << "\n";
+                std::cout << "全量との不一致: " << detail << "\n";
             }
             assert(bPass);
             assert(examined > 0);
@@ -383,6 +384,155 @@ namespace
         sceneQuery.Clear();
         world.Finalize();
     }
+
+    // 増分の更新の共通の道具。Update の前に描画の同期を 1 回回し、全量で作った結果と照合する
+    struct IncrementalHarness
+    {
+        World& TargetWorld;
+        Scene::SceneQuery& Query;
+        Rendering::RenderResources& Resources;
+
+        void Sync() const
+        {
+            TargetWorld.SyncToSceneView(&Resources.Materials());
+            Query.Update(TargetWorld);
+        }
+
+        void Check() const
+        {
+            uint32_t examined = 0;
+            char detail[200] = {};
+            const bool bPass = Query.VerifyAgainstRebuild(TargetWorld, examined, detail, sizeof(detail));
+            if (!bPass)
+            {
+                std::cout << "全量との不一致: " << detail << "\n";
+            }
+            assert(bPass);
+        }
+    };
+
+    // MegaGeometry を持つ子は、Mesh を持たない親が動いても境界を追う
+    void TestIncrementalUpdateFollowsMegaGeometryChild()
+    {
+        World world;
+        world.Initialize();
+        Rendering::SceneView view;
+        Rendering::SceneViewSettings settings;
+        assert(view.Initialize(settings));
+        world.SetSceneView(&view);
+        Rendering::RenderResources renderResources;
+
+        Entity* parent = world.SpawnObject<Entity>();
+        assert(parent);
+        Entity* child = world.SpawnEntity<Entity>(parent);
+        assert(child);
+        MegaGeometryComponent* mega = world.CreateComponent<MegaGeometryComponent>(child);
+        assert(mega);
+        SpawnMeshEntity(world, 30.0f, 0.0f, 0.0f);
+
+        Scene::SceneQuery sceneQuery;
+        const IncrementalHarness harness{world, sceneQuery, renderResources};
+        harness.Sync();
+        harness.Check();
+        harness.Sync();
+        harness.Sync();
+        harness.Sync();
+        const size_t entriesBefore = sceneQuery.GetEntryCount();
+
+        parent->SetPosition(-60.0f, 10.0f, 0.0f);
+        harness.Sync();
+        assert(sceneQuery.GetEntryCount() == entriesBefore);
+        assert(sceneQuery.GetLastUpdateStats().Updated >= 1);
+        harness.Check();
+
+        sceneQuery.Clear();
+        world.Finalize();
+    }
+
+    // 非アクティブな親へ付け替えると、子孫は照会対象から外れる
+    void TestIncrementalUpdateFollowsReparentToInactive()
+    {
+        World world;
+        world.Initialize();
+        Rendering::SceneView view;
+        Rendering::SceneViewSettings settings;
+        assert(view.Initialize(settings));
+        world.SetSceneView(&view);
+        Rendering::RenderResources renderResources;
+
+        Entity* rootA = world.SpawnObject<Entity>();
+        Entity* rootB = world.SpawnObject<Entity>();
+        assert(rootA && rootB);
+        Entity* subtree = world.SpawnEntity<Entity>(rootA);
+        assert(subtree);
+        Entity* leaf = world.SpawnEntity<Entity>(subtree);
+        assert(leaf);
+        AddMesh(*leaf);
+        leaf->SetLocalPosition(5.0f, 0.0f, 0.0f);
+        rootB->SetActive(false);
+
+        Scene::SceneQuery sceneQuery;
+        const IncrementalHarness harness{world, sceneQuery, renderResources};
+        harness.Sync();
+        harness.Sync();
+        harness.Sync();
+        assert(sceneQuery.GetEntryCount() == 1);
+        harness.Check();
+
+        assert(world.ReparentEntity(subtree, rootB));
+        harness.Sync();
+        assert(sceneQuery.GetEntryCount() == 0);
+        harness.Check();
+
+        // 戻すと入る
+        assert(world.ReparentEntity(subtree, rootA));
+        harness.Sync();
+        assert(sceneQuery.GetEntryCount() == 1);
+        harness.Check();
+
+        sceneQuery.Clear();
+        world.Finalize();
+    }
+
+    // World を切り替えたあと、古い World の行の削除は新しい World の Entry を外さない
+    void TestIncrementalUpdateIgnoresOldWorldHooksAfterSwitch()
+    {
+        World worldA;
+        World worldB;
+        worldA.Initialize();
+        worldB.Initialize();
+        Rendering::SceneView viewA;
+        Rendering::SceneView viewB;
+        Rendering::SceneViewSettings settings;
+        assert(viewA.Initialize(settings));
+        assert(viewB.Initialize(settings));
+        worldA.SetSceneView(&viewA);
+        worldB.SetSceneView(&viewB);
+        Rendering::RenderResources renderResources;
+
+        Entity* doomed = SpawnMeshEntity(worldA, 0.0f, 0.0f, 0.0f);
+        SpawnMeshEntity(worldA, 10.0f, 0.0f, 0.0f);
+        SpawnMeshEntity(worldB, 0.0f, 0.0f, 0.0f);
+        SpawnMeshEntity(worldB, 10.0f, 0.0f, 0.0f);
+
+        Scene::SceneQuery sceneQuery;
+        const IncrementalHarness harnessA{worldA, sceneQuery, renderResources};
+        const IncrementalHarness harnessB{worldB, sceneQuery, renderResources};
+        harnessA.Sync();
+        harnessB.Sync();
+        harnessB.Sync();
+        assert(sceneQuery.GetEntryCount() == 2);
+
+        doomed->MarkForDestroy();
+        worldA.Tick(0.016f);
+        harnessB.Sync();
+        assert(sceneQuery.GetEntryCount() == 2);
+        harnessB.Check();
+
+        sceneQuery.Clear();
+        worldA.Finalize();
+        worldB.Finalize();
+    }
 }
 
 int main()
@@ -394,6 +544,9 @@ int main()
     TestWorldRebuildSkipsInactiveAndPendingSubtrees();
     TestBVHRaycastMatchesBruteForce();
     TestIncrementalUpdateMatchesRebuild();
+    TestIncrementalUpdateFollowsMegaGeometryChild();
+    TestIncrementalUpdateFollowsReparentToInactive();
+    TestIncrementalUpdateIgnoresOldWorldHooksAfterSwitch();
 
     std::cout << "SceneQueryRaycastTest passed\n";
     return 0;
