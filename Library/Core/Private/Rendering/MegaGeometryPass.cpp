@@ -370,6 +370,26 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 常駐の表へ差分を散在書き込みするパイプライン。作れなければ表を書けないので、パスを無効にする
+        if (context.ShaderMgr)
+        {
+            m_SceneScatterShader = context.ShaderMgr->LoadShader("mega_scene_scatter.comp", RHI::ShaderStage::Compute);
+        }
+        if (m_SceneScatterShader)
+        {
+            RHI::ComputePipelineDesc scatterPipelineDesc;
+            scatterPipelineDesc.computeShader = m_SceneScatterShader;
+            scatterPipelineDesc.descriptorSetLayouts.push_back(BuildSceneScatterDescriptorSetDesc());
+            m_SceneScatterPipeline = m_Device->CreateComputePipeline(scatterPipelineDesc);
+        }
+        if (!m_SceneScatterPipeline)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "常駐の表の散在書き込みのパイプラインを作れません。パスは無効化されます");
+            m_CullPipeline.reset();
+            m_bInitialized = true;
+            return true;
+        }
+
         // グループの BVH をたどるカリング（BVH を持つメッシュ用）。作れなければ BVH は使わず、平らなクラスタの列で判定する
         if (context.ShaderMgr)
         {
@@ -485,6 +505,29 @@ namespace NorvesLib::Core::Rendering
         m_MegaGeometryCompleteHandle = {};
         m_FrameSlots.Clear();
         m_PreparedSceneTables = PreparedSceneTables{};
+        m_SceneScatterPipeline.reset();
+        m_SceneScatterShader.reset();
+        m_SlotTableBuffer.reset();
+        m_SlotTableCapacity = 0;
+        m_InstanceTableBuffer.reset();
+        m_ShadowTableBuffer.reset();
+        m_InstanceTableCapacity = 0;
+        m_MeshTableBuffer.reset();
+        m_MeshTableCapacity = 0;
+        m_SlotRowCopies.clear();
+        m_SlotRowStates.clear();
+        m_SlotRowChangedStamps.clear();
+        m_SceneUpdateStamp = 0;
+        m_EntryCopies.clear();
+        m_EntryCopyCount = 0;
+        m_ShadowRowCopies.clear();
+        m_ShadowRowCopyCount = 0;
+        m_MeshCopies.clear();
+        m_bMeshCopiesValid = false;
+        m_bSceneRowsAllDirty = true;
+        m_SceneDirtyPositions.clear();
+        m_bSceneSlotsDirty = true;
+        m_SceneUploadStats = SceneUploadStats{};
         m_RenderFrameCount = 0;
         m_LastRenderFrameSerial = 0;
         m_bUnsetFrameSerialWarned = false;
@@ -563,6 +606,7 @@ namespace NorvesLib::Core::Rendering
         std::memcpy(instance.PreviousWorldMatrix, &proxy.PreviousWorldTransform, sizeof(float) * 16);
         instance.bCastShadow = proxy.bCastShadow;
         instance.WorldBounds = proxy.WorldBounds;
+        instance.SceneSlot = proxy.SceneSlot;
         return instance;
     }
 
@@ -584,8 +628,10 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
             const MegaGeometryProxy &proxy = proxies[position];
-            // ObjectId が替わる位置は、見えたビットの引き継ぎ（鍵の集合）が変わるので作り直す
-            if (!proxy.IsValid() || m_Instances[position].ObjectId != proxy.ObjectId)
+            // ObjectId が替わる位置は、見えたビットの引き継ぎ（鍵の集合）が変わるので作り直す。
+            // 行の席が替わる位置も、席の表の番号を決め直すので作り直す
+            if (!proxy.IsValid() || m_Instances[position].ObjectId != proxy.ObjectId ||
+                m_Instances[position].SceneSlot != proxy.SceneSlot)
             {
                 return false;
             }
@@ -593,7 +639,15 @@ namespace NorvesLib::Core::Rendering
         }
         for (const uint32_t position : positions)
         {
+            // 席の表の番号は行の席と一緒に保つ（行の席が同じことは上で確かめた）
+            const uint32_t tableSlot = m_Instances[position].TableSlot;
             m_Instances[position] = MakeMegaMeshInstance(proxies[position]);
+            m_Instances[position].TableSlot = tableSlot;
+            // 席の表の行を確かめる位置（全部を確かめる更新が待っていれば要らない）
+            if (!m_bSceneRowsAllDirty)
+            {
+                m_SceneDirtyPositions.push_back(position);
+            }
         }
 
         // 検査 MEGA_SCENE_DELTA: 直した結果が、全部を作り直した結果と同じこと
@@ -645,6 +699,10 @@ namespace NorvesLib::Core::Rendering
         }
         if (!bReuseInstances && !bPatchedInstances)
         {
+            // 作り直したインスタンスは、席の表の番号を決め直し、全部の席の行を確かめる
+            m_bSceneRowsAllDirty = true;
+            m_bSceneSlotsDirty = true;
+            m_SceneDirtyPositions.clear();
             m_Instances.clear();
             m_InstanceSourceRevision = bFromMirror ? context.SnapshotMegaRevision : 0;
             m_InstanceSourceProxies = bFromMirror ? static_cast<const void *>(context.SnapshotMegaGeometryProxies) : nullptr;
@@ -1033,8 +1091,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 表を書く共通の前段: インスタンスの表・メッシュの表・影の表を、読み手のどのパス（主のカリングと描画、
-        // ID のラスタと解決、VSM の影）よりも前にここで書く。記録がどこで行われても（キューのコマンド・ID のラスタ）同じ表を使う
-        PrepareSceneTables(context.BuildMegaGeometryPassCommand(this).MegaGeometry);
+        // ID のラスタと解決、VSM の影）よりも前にここで書く。記録がどこで行われても（キューのコマンド・ID のラスタ）同じ表を使う。
+        // 常駐の表への散在書き込みは、ここで直接コマンドリストへ記録する（RenderGraph はこのパスの前後でキューを流すので、
+        // 読み手のパスの記録より前に並ぶ）
+        PrepareSceneTables(context.BuildMegaGeometryPassCommand(this).MegaGeometry, context.CommandList);
 
         // 解決が GBuffer を書くフレームは GBuffer の描画を止めるので、2パスの遮蔽の HZB の元になる深度が GBuffer に入らない。
         // ID のラスタがその Execute の中で記録を駆動して（ID・深度の1パス目 → HZB → 2パス目）、HZB を ID の深度から作る。
@@ -1104,7 +1164,7 @@ namespace NorvesLib::Core::Rendering
         NORVES_PROFILE_SCOPE("MegaGeometryPass.BuildSceneTables");
         tables.Sections.clear();
         tables.Drawables.clear();
-        tables.Instances.clear();
+        tables.Entries.clear();
         tables.Meshes.clear();
         tables.VisibilityRequests.clear();
         tables.ShadowInstances.clear();
@@ -1120,7 +1180,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         tables.Drawables.reserve(m_Instances.size());
-        tables.Instances.reserve(m_Instances.size());
+        tables.Entries.reserve(m_Instances.size());
         tables.VisibilityRequests.reserve(m_Instances.size());
         tables.ShadowInstances.reserve(m_Instances.size());
 
@@ -1245,9 +1305,9 @@ namespace NorvesLib::Core::Rendering
                 meshIndices.emplace(gpuData, meshIndex);
             }
 
-            GPUMegaInstance entry{};
-            std::memcpy(entry.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
-            std::memcpy(entry.PreviousWorldMatrix, instance.PreviousWorldMatrix, sizeof(float) * 16);
+            // 変換は席の表にあり、GPU が描く順の表の行を組むときに席から引く
+            GPUMegaEntry entry;
+            entry.Slot = instance.TableSlot;
             entry.MeshIndex = meshIndex;
             entry.FirstGroup = static_cast<uint32_t>(tables.TotalGroups);
             entry.VisibleOffset = static_cast<uint32_t>(visibleOffset);
@@ -1283,7 +1343,7 @@ namespace NorvesLib::Core::Rendering
             drawable.InstanceIndex = instanceIndex;
             drawable.GpuData = gpuData;
             tables.Drawables.push_back(drawable);
-            tables.Instances.push_back(entry);
+            tables.Entries.push_back(entry);
             tables.VisibilityRequests.push_back(request);
 
             // 影の表: 影を落とすインスタンスだけが、影の判定のワークグループ（64クラスタ）を持つ。BVH のインスタンスも
@@ -1325,58 +1385,58 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void MegaGeometryPass::UploadSceneTables(FrameSlot &slot, SceneTables &tables)
+    void MegaGeometryPass::PublishShadowCasterInputs(const FrameSlot &slot, SceneTables &tables)
     {
-        // インスタンスの表とメッシュの表を書く（ホストが書き、カリング・頂点シェーダー・ビジビリティバッファ・VSM の影が読む）
-        slot.InstanceBuffer->Update(tables.Instances.data(), tables.Instances.size() * sizeof(GPUMegaInstance));
-        slot.MeshBuffer->Update(tables.Meshes.data(), tables.Meshes.size() * sizeof(GPUMegaMesh));
-        // 影の表（インスタンスの表と同じ並び）を書き、VSM の投影物のカリングへ渡す入力を有効にする。
+        // 常駐の表（描く順の表・影の表・メッシュの表）と、このフレームのページの表を VSM の投影物のカリングへ渡す。
         // 影を落とすインスタンスが無い・ワークグループの数が 32 ビットに収まらないときは入力を作らない
-        if (slot.ShadowInstanceBuffer && tables.ShadowCasterCount > 0 && tables.ShadowTotalGroups <= 0xFFFFFFFFull)
+        if (m_ShadowTableBuffer && tables.ShadowCasterCount > 0 && tables.ShadowTotalGroups <= 0xFFFFFFFFull)
         {
-            slot.ShadowInstanceBuffer->Update(tables.ShadowInstances.data(),
-                                              tables.ShadowInstances.size() * sizeof(MegaGeometryShadowInstance));
             m_ShadowCasterInputs.bValid = true;
-            m_ShadowCasterInputs.InstanceBuffer = slot.InstanceBuffer;
-            m_ShadowCasterInputs.ShadowInstanceBuffer = slot.ShadowInstanceBuffer;
-            m_ShadowCasterInputs.MeshBuffer = slot.MeshBuffer;
+            m_ShadowCasterInputs.InstanceBuffer = m_InstanceTableBuffer;
+            m_ShadowCasterInputs.ShadowInstanceBuffer = m_ShadowTableBuffer;
+            m_ShadowCasterInputs.MeshBuffer = m_MeshTableBuffer;
             m_ShadowCasterInputs.PageTableBuffer = slot.PageTableBuffer;
             m_ShadowCasterInputs.PageTableVersion = slot.PageTableVersion;
-            m_ShadowCasterInputs.InstanceCount = static_cast<uint32_t>(tables.Instances.size());
+            m_ShadowCasterInputs.InstanceCount = static_cast<uint32_t>(tables.Entries.size());
             m_ShadowCasterInputs.CasterCount = tables.ShadowCasterCount;
             m_ShadowCasterInputs.TotalGroups = static_cast<uint32_t>(tables.ShadowTotalGroups);
             m_ShadowCasterInputs.Motions = std::move(tables.ShadowMotions);
         }
     }
 
-    void MegaGeometryPass::PrepareSceneTables(const MegaGeometryPassCommand &command)
+    void MegaGeometryPass::PrepareSceneTables(const MegaGeometryPassCommand &command, RHI::ICommandList *commandList)
     {
         NORVES_PROFILE_SCOPE("MegaGeometryPass.PrepareSceneTables");
         m_PreparedSceneTables = PreparedSceneTables{};
         // 通し番号が無いコマンドは記録ごとに別のフレームとして扱うので、前段の表を記録へ渡せない（記録が自分で作る）
-        if (m_Instances.empty() || !m_CullPipeline || !command.MegaGeometry || command.RenderFrameSerial == 0)
+        if (m_Instances.empty() || !m_CullPipeline || !command.MegaGeometry || command.RenderFrameSerial == 0 ||
+            !commandList)
         {
             return;
         }
 
+        if (m_bSceneSlotsDirty)
+        {
+            AssignSceneTableSlots();
+        }
         BuildSceneTables(command, m_SceneTables);
-        if (m_SceneTables.Instances.empty() || m_SceneTables.TotalGroups > 0xFFFFFFFFull)
+        if (m_SceneTables.Entries.empty() || m_SceneTables.TotalGroups > 0xFFFFFFFFull)
         {
             return;
         }
 
-        // このフレームの資源の組を 1 つ取り、同じフレームの記録へ渡す（記録は同じ枠・同じ通し番号なら取り直さない）
+        // このフレームの資源の組を 1 つ取り、同じフレームの記録へ渡す（記録は同じ枠・同じ通し番号なら取り直さない）。
+        // ページの表の版はここで決め、同じフレームの記録（主の描画・ID のラスタ）と VSM が同じ版を使う
         m_FrameSlots.BeginFrame(command.InFlightIndex, command.RenderFrameSerial);
         FrameSlot &slot = m_FrameSlots.Acquire();
-        if (!EnsureSceneTableBuffers(slot,
-                                     static_cast<uint32_t>(m_SceneTables.Instances.size()),
-                                     static_cast<uint32_t>(m_SceneTables.Meshes.size())) ||
-            !SyncPageTable(slot, *command.MegaGeometry))
+        uint64_t pageTableBytes = 0;
+        if (!SyncPageTable(slot, *command.MegaGeometry, &pageTableBytes) ||
+            !UpdateResidentSceneTables(slot, m_SceneTables, commandList, pageTableBytes))
         {
             // 記録が自分で作り直し、同じ失敗ならそこで記録する
             return;
         }
-        UploadSceneTables(slot, m_SceneTables);
+        PublishShadowCasterInputs(slot, m_SceneTables);
 
         m_PreparedSceneTables.bPrepared = true;
         m_PreparedSceneTables.FrameSerial = command.RenderFrameSerial;
@@ -1529,11 +1589,15 @@ namespace NorvesLib::Core::Rendering
         SceneTables &tables = m_SceneTables;
         if (!bPreparedTables)
         {
+            if (m_bSceneSlotsDirty)
+            {
+                AssignSceneTableSlots();
+            }
             BuildSceneTables(command, tables);
         }
         VariableArray<Section> &sections = tables.Sections;
         const VariableArray<Drawable> &drawables = tables.Drawables;
-        const VariableArray<GPUMegaInstance> &instanceTable = tables.Instances;
+        const VariableArray<GPUMegaEntry> &instanceTable = tables.Entries;
         VariableArray<VisibilityRequest> &visibilityRequests = tables.VisibilityRequests;
         const uint64_t totalGroups = tables.TotalGroups;
         const uint32_t bvhInstanceCount = tables.BvhInstanceCount;
@@ -1729,9 +1793,6 @@ namespace NorvesLib::Core::Rendering
 
         FrameSlot &frameSlot = preparedSlot ? *preparedSlot : m_FrameSlots.Acquire();
         if (!EnsureBatchBuffers(static_cast<uint32_t>(commandsTotal), sectionCount * passCount) ||
-            (!bPreparedTables && !EnsureSceneTableBuffers(frameSlot,
-                                                          static_cast<uint32_t>(instanceTable.size()),
-                                                          static_cast<uint32_t>(tables.Meshes.size()))) ||
             !EnsureFrameSlot(frameSlot, sectionCount * passCount, sectionCount) ||
             (bvhInstanceCount > 0 &&
              (!EnsureBvhBuffers(static_cast<uint32_t>(bvhQueueEntries)) ||
@@ -1760,12 +1821,25 @@ namespace NorvesLib::Core::Rendering
         // bSwRasterBin は sink と 2 パスの遮蔽の判定を前提にしている
         const bool bSwRasterSkipHardware = bSwRasterBin && sink != nullptr && sink->PrepareSwRaster();
 
-        // ページの表（常駐の状態）をこのフレームのスロットへ写す。フレームの間は変わらないので、2パスの判定が食い違わない
-        if (!SyncPageTable(frameSlot, *command.MegaGeometry))
+        // ページの表（常駐の状態）をこのフレームのスロットへ写し、常駐の表へ差分を書く（前段が済ませたフレームは、前段の版の
+        // ページの表と表をそのまま使う。前段の後に常駐が変わっても、VSM とこの記録が同じ版を読むよう写し直さない）。
+        // フレームの間は変わらないので、2パスの判定が食い違わない
+        if (!bPreparedTables)
         {
-            NORVES_LOG_ERROR("MegaGeometryPass", "ページの表のバッファを用意できませんでした");
-            recordEmptyRenderPass();
-            return;
+            uint64_t pageTableBytes = 0;
+            if (!SyncPageTable(frameSlot, *command.MegaGeometry, &pageTableBytes))
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass", "ページの表のバッファを用意できませんでした");
+                recordEmptyRenderPass();
+                return;
+            }
+            if (!UpdateResidentSceneTables(frameSlot, tables, cmdList, pageTableBytes))
+            {
+                NORVES_LOG_ERROR("MegaGeometryPass", "常駐の表へ差分を書けませんでした");
+                recordEmptyRenderPass();
+                return;
+            }
+            PublishShadowCasterInputs(frameSlot, tables);
         }
 
         // ページの要求を書くバッファ（このフレームのもの。獲得できなければ容量 0 で、統計用の代わりのバッファを束ねる）。
@@ -1778,16 +1852,6 @@ namespace NorvesLib::Core::Rendering
             pageRequestBuffer = m_DummyStatsBuffer;
         }
 
-        // インスタンスの表・メッシュの表・影の表（前段が書いていなければここで書く）
-        if (!bPreparedTables)
-        {
-            UploadSceneTables(frameSlot, tables);
-        }
-        else if (m_ShadowCasterInputs.bValid)
-        {
-            // 前段の後に常駐が変わっていれば上で書き直したので、VSM のキャッシュが比べる版を合わせる
-            m_ShadowCasterInputs.PageTableVersion = frameSlot.PageTableVersion;
-        }
         // 区間の表を書く（ホストが書き、カリングが読む）
         {
             VariableArray<uint32_t> sectionTable;
@@ -1928,9 +1992,9 @@ namespace NorvesLib::Core::Rendering
             BindVirtualTextureFeedback(*descriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
 
             // 頂点シェーダーが引くインスタンスの表・メッシュの表と描画情報
-            descriptorSet->BindStorageBuffer(8, frameSlot.InstanceBuffer, 0,
+            descriptorSet->BindStorageBuffer(8, m_InstanceTableBuffer, 0,
                                              static_cast<uint32_t>(instanceTable.size() * sizeof(GPUMegaInstance)));
-            descriptorSet->BindStorageBuffer(MegaMeshTableBindingIndex, frameSlot.MeshBuffer, 0,
+            descriptorSet->BindStorageBuffer(MegaMeshTableBindingIndex, m_MeshTableBuffer, 0,
                                              static_cast<uint32_t>(tables.Meshes.size() * sizeof(GPUMegaMesh)));
             descriptorSet->BindStorageBuffer(9, m_DrawInfoBuffer, 0,
                                              static_cast<uint32_t>(m_DrawInfoBuffer->GetSize()));
@@ -2056,9 +2120,9 @@ namespace NorvesLib::Core::Rendering
             {
                 descriptorSet->BindConstantBuffer(0, cullUniformBuffer, 0,
                                                   static_cast<uint32_t>(sizeof(CullUniformData)));
-                descriptorSet->BindStorageBuffer(1, frameSlot.InstanceBuffer, 0,
+                descriptorSet->BindStorageBuffer(1, m_InstanceTableBuffer, 0,
                                                  static_cast<uint32_t>(instanceTable.size() * sizeof(GPUMegaInstance)));
-                descriptorSet->BindStorageBuffer(MegaMeshTableBindingIndex, frameSlot.MeshBuffer, 0,
+                descriptorSet->BindStorageBuffer(MegaMeshTableBindingIndex, m_MeshTableBuffer, 0,
                                                  static_cast<uint32_t>(tables.Meshes.size() * sizeof(GPUMegaMesh)));
                 descriptorSet->BindStorageBuffer(2, m_IndirectDrawBuffer, 0,
                                                  static_cast<uint32_t>(m_IndirectDrawBuffer->GetSize()));
@@ -2273,9 +2337,9 @@ namespace NorvesLib::Core::Rendering
             plan.IndirectBuffer = m_IndirectDrawBuffer;
             plan.CountBuffer = m_DrawCountBuffer;
             plan.DrawInfoBuffer = m_DrawInfoBuffer;
-            plan.InstanceBuffer = frameSlot.InstanceBuffer;
+            plan.InstanceBuffer = m_InstanceTableBuffer;
             plan.InstanceBufferBytes = static_cast<uint64_t>(instanceTable.size()) * sizeof(GPUMegaInstance);
-            plan.MeshBuffer = frameSlot.MeshBuffer;
+            plan.MeshBuffer = m_MeshTableBuffer;
             plan.MeshBufferBytes = static_cast<uint64_t>(tables.Meshes.size()) * sizeof(GPUMegaMesh);
             plan.SectionBuffer = frameSlot.SectionBuffer;
             plan.SectionBufferBytes = static_cast<uint64_t>(sectionCount) * passCount * 2u * sizeof(uint32_t);
@@ -2646,6 +2710,8 @@ namespace NorvesLib::Core::Rendering
         m_Instances.push_back(instance);
         m_InstanceSourceRevision = 0;
         m_InstanceSourceProxies = nullptr;
+        m_bSceneSlotsDirty = true;
+        m_bSceneRowsAllDirty = true;
     }
 
     void MegaGeometryPass::ClearMegaMeshInstances()
@@ -2653,6 +2719,8 @@ namespace NorvesLib::Core::Rendering
         m_Instances.clear();
         m_InstanceSourceRevision = 0;
         m_InstanceSourceProxies = nullptr;
+        m_bSceneSlotsDirty = true;
+        m_bSceneRowsAllDirty = true;
     }
 
     namespace
@@ -2946,57 +3014,524 @@ namespace NorvesLib::Core::Rendering
         return desc;
     }
 
-    bool MegaGeometryPass::EnsureSceneTableBuffers(FrameSlot &slot, uint32_t instanceCount, uint32_t meshCount)
+    RHI::DescriptorSetDesc MegaGeometryPass::BuildSceneScatterDescriptorSetDesc()
     {
+        RHI::DescriptorSetDesc desc;
+        auto addBinding = [&desc](uint32_t binding, RHI::ResourceBindType type) -> void
+        {
+            RHI::DescriptorBinding descriptorBinding;
+            descriptorBinding.binding = binding;
+            descriptorBinding.type = type;
+            descriptorBinding.stages = RHI::ShaderStage::Compute;
+            desc.bindings.push_back(descriptorBinding);
+        };
+        addBinding(0, RHI::ResourceBindType::StructuredBuffer); // 記録の列（staging）
+        addBinding(1, RHI::ResourceBindType::RWBuffer);         // 席の表
+        addBinding(2, RHI::ResourceBindType::RWBuffer);         // 描く順の表
+        addBinding(3, RHI::ResourceBindType::RWBuffer);         // 影の表
+        addBinding(4, RHI::ResourceBindType::RWBuffer);         // メッシュの表
+        return desc;
+    }
+
+    bool MegaGeometryPass::EnsureResidentTable(RHI::BufferPtr &buffer, uint32_t &capacity, uint32_t required,
+                                               uint32_t minimumCapacity, uint64_t elementBytes, const char *debugName,
+                                               bool &bOutGrown)
+    {
+        bOutGrown = false;
         if (!m_Device)
         {
             return false;
         }
-
-        // この組を直前に使ったのは前のフレーム（飛行中のフレームの番号が同じ）で、そのGPUの仕事は終わっているので、作り直して置き換えてよい
-        if (!slot.InstanceBuffer || slot.InstanceCapacity < instanceCount)
+        if (buffer && required <= capacity)
         {
-            const uint32_t capacity = std::max(64u, NextPowerOfTwo(instanceCount));
-            RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * sizeof(GPUMegaInstance),
-                                 RHI::ResourceUsage::StorageBuffer,
-                                 true,
-                                 "MegaGeometry_InstanceTable");
-            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
-            if (!buffer)
-            {
-                return false;
-            }
-            slot.InstanceBuffer = buffer;
-            slot.InstanceCapacity = capacity;
-            // 影の表は、インスタンスの表と同じ要素数で作り直す（VSM の投影物のカリングが同じ添字で読む）
-            slot.ShadowInstanceBuffer.reset();
-        }
-        if (!slot.ShadowInstanceBuffer)
-        {
-            RHI::BufferDesc desc(static_cast<uint64_t>(slot.InstanceCapacity) * sizeof(MegaGeometryShadowInstance),
-                                 RHI::ResourceUsage::StorageBuffer,
-                                 true,
-                                 "MegaGeometry_ShadowInstanceTable");
-            // 作れなくても主の描画は止めない（影の入力が無効になるだけ）
-            slot.ShadowInstanceBuffer = m_Device->CreateBuffer(desc);
+            return true;
         }
 
-        if (!slot.MeshBuffer || slot.MeshCapacity < meshCount)
+        const uint32_t newCapacity = std::max(minimumCapacity, NextPowerOfTwo(std::max(required, 1u)));
+        RHI::BufferDesc desc(static_cast<uint64_t>(newCapacity) * elementBytes,
+                             RHI::ResourceUsage::StorageBuffer,
+                             false,
+                             debugName);
+        RHI::BufferPtr newBuffer = m_Device->CreateBuffer(desc);
+        if (!newBuffer)
         {
-            const uint32_t capacity = std::max(16u, NextPowerOfTwo(meshCount));
-            RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * sizeof(GPUMegaMesh),
-                                 RHI::ResourceUsage::StorageBuffer,
-                                 true,
-                                 "MegaGeometry_MeshTable");
-            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
-            if (!buffer)
-            {
-                return false;
-            }
-            slot.MeshBuffer = buffer;
-            slot.MeshCapacity = capacity;
+            return false;
         }
+        // 古い表は、前のフレームの GPU がまだ読んでいるかもしれないので、しばらく保持してから破棄する
+        if (buffer)
+        {
+            m_RetiredBuffers.push_back(RetiredBuffer{buffer, m_RenderFrameCount});
+        }
+        buffer = newBuffer;
+        capacity = newCapacity;
+        bOutGrown = true;
+        NORVES_LOG_INFO("MegaGeometryPass",
+                        "VRAM_LEDGER %s mb=%.2f capacity=%u",
+                        debugName,
+                        static_cast<double>(desc.Size) / (1024.0 * 1024.0),
+                        newCapacity);
         return true;
+    }
+
+    void MegaGeometryPass::AssignSceneTableSlots()
+    {
+        m_bSceneSlotsDirty = false;
+        // 行の席（SceneSlot = 席の番号 + 1）をそのまま席の表の番号にする。席を持たないインスタンス（手で足した・行の外の
+        // proxy）と、同じ席を持つ 2 つ目以降のインスタンスは、行の席の最大の次から順に割り当てる
+        uint32_t slotLimit = 0;
+        for (const MegaMeshInstance &instance : m_Instances)
+        {
+            slotLimit = std::max(slotLimit, instance.SceneSlot);
+        }
+        m_SceneSlotSeen.assign(slotLimit, static_cast<uint8_t>(0));
+        uint32_t nextLocalSlot = slotLimit;
+        for (MegaMeshInstance &instance : m_Instances)
+        {
+            if (instance.SceneSlot != 0 && m_SceneSlotSeen[instance.SceneSlot - 1u] == 0u)
+            {
+                m_SceneSlotSeen[instance.SceneSlot - 1u] = 1u;
+                instance.TableSlot = instance.SceneSlot - 1u;
+            }
+            else
+            {
+                instance.TableSlot = nextLocalSlot++;
+            }
+        }
+    }
+
+    bool MegaGeometryPass::UpdateResidentSceneTables(FrameSlot &slot, const SceneTables &tables,
+                                                     RHI::ICommandList *commandList, uint64_t pageTableBytes)
+    {
+        NORVES_PROFILE_SCOPE("MegaGeometryPass.UpdateResidentSceneTables");
+        if (!m_Device || !commandList || !m_SceneScatterPipeline)
+        {
+            return false;
+        }
+
+        ++m_SceneUpdateStamp;
+        if (m_SceneUpdateStamp == 0u)
+        {
+            // 番号が一周したら、古い番号を今の番号と取り違えないよう消してから 1 に戻す
+            std::fill(m_SlotRowChangedStamps.begin(), m_SlotRowChangedStamps.end(), 0u);
+            m_SceneUpdateStamp = 1u;
+        }
+        const uint32_t stamp = m_SceneUpdateStamp;
+        const uint32_t entryCount = static_cast<uint32_t>(tables.Entries.size());
+        const uint32_t meshCount = static_cast<uint32_t>(tables.Meshes.size());
+
+        // ----------------------------------------
+        // 1. 席の表: 確かめる行（Setup が作り直したなら全部、直したなら直した位置）の中身を写しと比べる
+        // ----------------------------------------
+        bool bAllRows = m_bSceneRowsAllDirty;
+        uint32_t slotLimit = 0;
+        if (bAllRows)
+        {
+            for (const MegaMeshInstance &instance : m_Instances)
+            {
+                slotLimit = std::max(slotLimit, instance.TableSlot + 1u);
+            }
+        }
+        else
+        {
+            for (const uint32_t position : m_SceneDirtyPositions)
+            {
+                if (position < m_Instances.size())
+                {
+                    slotLimit = std::max(slotLimit, m_Instances[position].TableSlot + 1u);
+                }
+            }
+        }
+        // 描く順の行が指す席も収める（GPU が席の表の外を読まないように）
+        for (const GPUMegaEntry &entry : tables.Entries)
+        {
+            slotLimit = std::max(slotLimit, entry.Slot + 1u);
+        }
+        bool bSlotTableGrown = false;
+        if (!EnsureResidentTable(m_SlotTableBuffer, m_SlotTableCapacity, slotLimit, 1024u, sizeof(GPUMegaSlotRow),
+                                 "MegaGeometry_SlotTable", bSlotTableGrown))
+        {
+            return false;
+        }
+        if (bSlotTableGrown)
+        {
+            // 新しい席の表は中身を持たない。覚えている行は送り直すが、中身は変わっていない（描く順の表は組み直さない）
+            for (uint8_t &state : m_SlotRowStates)
+            {
+                if (state == 1u)
+                {
+                    state = 2u;
+                }
+            }
+            m_SlotRowCopies.resize(m_SlotTableCapacity);
+            m_SlotRowStates.resize(m_SlotTableCapacity, 0u);
+            m_SlotRowChangedStamps.resize(m_SlotTableCapacity, 0u);
+            bAllRows = true;
+        }
+
+        Container::VariableArray<uint32_t> rowSlots;
+        const auto checkRow = [&](const MegaMeshInstance &instance) -> void
+        {
+            const uint32_t tableSlot = instance.TableSlot;
+            GPUMegaSlotRow row;
+            std::memcpy(row.WorldMatrix, instance.WorldMatrix, sizeof(row.WorldMatrix));
+            std::memcpy(row.PreviousWorldMatrix, instance.PreviousWorldMatrix, sizeof(row.PreviousWorldMatrix));
+            uint8_t &state = m_SlotRowStates[tableSlot];
+            GPUMegaSlotRow &copy = m_SlotRowCopies[tableSlot];
+            const bool bSame = state != 0u && std::memcmp(&copy, &row, sizeof(GPUMegaSlotRow)) == 0;
+            if (bSame && state == 1u)
+            {
+                return;
+            }
+            if (!bSame)
+            {
+                copy = row;
+                m_SlotRowChangedStamps[tableSlot] = stamp;
+            }
+            state = 1u;
+            rowSlots.push_back(tableSlot);
+        };
+        if (bAllRows)
+        {
+            for (const MegaMeshInstance &instance : m_Instances)
+            {
+                checkRow(instance);
+            }
+        }
+        else
+        {
+            for (const uint32_t position : m_SceneDirtyPositions)
+            {
+                if (position < m_Instances.size())
+                {
+                    checkRow(m_Instances[position]);
+                }
+            }
+        }
+        m_bSceneRowsAllDirty = false;
+        m_SceneDirtyPositions.clear();
+
+        // ここから先で失敗したら、写しを GPU の表に書いたものと見なせないので、次の更新が全部を送り直すようにする
+        const auto invalidateCopies = [this]() -> void
+        {
+            for (uint8_t &state : m_SlotRowStates)
+            {
+                if (state == 1u)
+                {
+                    state = 2u;
+                }
+            }
+            m_bSceneRowsAllDirty = true;
+            m_EntryCopyCount = 0;
+            m_ShadowRowCopyCount = 0;
+            m_bMeshCopiesValid = false;
+        };
+
+        // ----------------------------------------
+        // 2. 描く順の表・影の表: 並びの出所が変わった行と、席の行の中身が変わった行
+        // ----------------------------------------
+        bool bInstanceTableGrown = false;
+        if (!EnsureResidentTable(m_InstanceTableBuffer, m_InstanceTableCapacity, entryCount, 256u,
+                                 sizeof(GPUMegaInstance), "MegaGeometry_InstanceTable", bInstanceTableGrown))
+        {
+            invalidateCopies();
+            return false;
+        }
+        uint32_t shadowCapacity = (m_ShadowTableBuffer && !bInstanceTableGrown) ? m_InstanceTableCapacity : 0u;
+        bool bShadowTableGrown = false;
+        if (!EnsureResidentTable(m_ShadowTableBuffer, shadowCapacity, m_InstanceTableCapacity, m_InstanceTableCapacity,
+                                 sizeof(MegaGeometryShadowInstance), "MegaGeometry_ShadowInstanceTable", bShadowTableGrown))
+        {
+            invalidateCopies();
+            return false;
+        }
+        if (bInstanceTableGrown)
+        {
+            m_EntryCopyCount = 0;
+            m_EntryCopies.resize(m_InstanceTableCapacity);
+        }
+        if (bShadowTableGrown)
+        {
+            m_ShadowRowCopyCount = 0;
+            m_ShadowRowCopies.resize(m_InstanceTableCapacity);
+        }
+
+        Container::VariableArray<uint32_t> entryIndices;
+        for (uint32_t index = 0; index < entryCount; ++index)
+        {
+            const GPUMegaEntry &entry = tables.Entries[index];
+            GPUMegaEntry &copy = m_EntryCopies[index];
+            const bool bSameEntry = index < m_EntryCopyCount && copy.Slot == entry.Slot && copy.MeshIndex == entry.MeshIndex &&
+                                    copy.FirstGroup == entry.FirstGroup && copy.VisibleOffset == entry.VisibleOffset;
+            if (bSameEntry && m_SlotRowChangedStamps[entry.Slot] != stamp)
+            {
+                continue;
+            }
+            copy = entry;
+            entryIndices.push_back(index);
+        }
+        m_EntryCopyCount = entryCount;
+
+        Container::VariableArray<uint32_t> shadowIndices;
+        for (uint32_t index = 0; index < entryCount; ++index)
+        {
+            const MegaGeometryShadowInstance &shadow = tables.ShadowInstances[index];
+            MegaGeometryShadowInstance &copy = m_ShadowRowCopies[index];
+            if (index < m_ShadowRowCopyCount && std::memcmp(&copy, &shadow, sizeof(MegaGeometryShadowInstance)) == 0)
+            {
+                continue;
+            }
+            copy = shadow;
+            shadowIndices.push_back(index);
+        }
+        m_ShadowRowCopyCount = entryCount;
+
+        // ----------------------------------------
+        // 3. メッシュの表: 中身が変わったら全部を書く（メッシュの数は少ない）
+        // ----------------------------------------
+        bool bMeshTableGrown = false;
+        if (!EnsureResidentTable(m_MeshTableBuffer, m_MeshTableCapacity, meshCount, 16u, sizeof(GPUMegaMesh),
+                                 "MegaGeometry_MeshTable", bMeshTableGrown))
+        {
+            invalidateCopies();
+            return false;
+        }
+        const bool bMeshesChanged = bMeshTableGrown || !m_bMeshCopiesValid || m_MeshCopies.size() != tables.Meshes.size() ||
+                                    (meshCount > 0 &&
+                                     std::memcmp(m_MeshCopies.data(), tables.Meshes.data(), meshCount * sizeof(GPUMegaMesh)) != 0);
+        const uint32_t meshRecords = bMeshesChanged ? meshCount : 0u;
+        if (bMeshesChanged)
+        {
+            m_MeshCopies.assign(tables.Meshes.begin(), tables.Meshes.end());
+            m_bMeshCopiesValid = true;
+        }
+
+        // ----------------------------------------
+        // 4. 記録の列を staging へ書き、散在書き込みを記録する（書くものが無ければ何もしない）
+        // ----------------------------------------
+        constexpr uint32_t HeaderWords = 4u;
+        constexpr uint32_t RowRecordWords = 4u + 32u;    // 席の番号の uvec4 + 席の行（128 B）
+        constexpr uint32_t EntryRecordWords = 8u;        // 2 語の uvec4
+        constexpr uint32_t ShadowRecordWords = 4u + 12u; // 描く順の番号の uvec4 + 影の表の行（48 B）
+        constexpr uint32_t MeshRecordWords = 4u + 16u;   // メッシュの表の番号の uvec4 + メッシュの表の行（64 B）
+        constexpr uint32_t RegionAlignWords = 64u;       // 区画の先頭を 256 B にそろえる（storage のオフセットの整列）
+        static_assert(sizeof(GPUMegaSlotRow) == 32u * sizeof(uint32_t));
+        static_assert(sizeof(MegaGeometryShadowInstance) == 12u * sizeof(uint32_t));
+        static_assert(sizeof(GPUMegaMesh) == 16u * sizeof(uint32_t));
+
+        const uint32_t rowCount = static_cast<uint32_t>(rowSlots.size());
+        const uint32_t entryRecords = static_cast<uint32_t>(entryIndices.size());
+        const uint32_t shadowRecords = static_cast<uint32_t>(shadowIndices.size());
+        const uint64_t rowRegionWords = rowCount > 0 ? HeaderWords + static_cast<uint64_t>(rowCount) * RowRecordWords : 0u;
+        const uint64_t tableRecords = static_cast<uint64_t>(entryRecords) + shadowRecords + meshRecords;
+        const uint64_t tableRegionWords =
+            tableRecords > 0 ? HeaderWords + static_cast<uint64_t>(entryRecords) * EntryRecordWords +
+                                   static_cast<uint64_t>(shadowRecords) * ShadowRecordWords +
+                                   static_cast<uint64_t>(meshRecords) * MeshRecordWords
+                             : 0u;
+        const uint64_t tableRegionOffsetWords = (rowRegionWords + RegionAlignWords - 1u) / RegionAlignWords * RegionAlignWords;
+        const uint64_t uploadBytes = (rowRegionWords + tableRegionWords) * sizeof(uint32_t);
+        if (rowRegionWords == 0 && tableRegionWords == 0)
+        {
+            NoteSceneUpload(pageTableBytes, 0u, 0u, 0u, 0u, pageTableBytes);
+            return true;
+        }
+
+        const uint64_t totalWords = tableRegionOffsetWords + tableRegionWords;
+        if (totalWords * sizeof(uint32_t) > 0xFFFFFFFFull)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_SCENE_UPLOAD_TOO_LARGE bytes=%llu",
+                             static_cast<unsigned long long>(totalWords * sizeof(uint32_t)));
+            invalidateCopies();
+            return false;
+        }
+        m_SceneScatterWords.assign(static_cast<size_t>(totalWords), 0u);
+        uint32_t *words = m_SceneScatterWords.data();
+        if (rowRegionWords > 0)
+        {
+            words[0] = rowCount;
+            words[1] = 0u; // 段 0
+            uint32_t *record = words + HeaderWords;
+            for (const uint32_t tableSlot : rowSlots)
+            {
+                record[0] = tableSlot;
+                std::memcpy(record + 4u, &m_SlotRowCopies[tableSlot], sizeof(GPUMegaSlotRow));
+                record += RowRecordWords;
+            }
+        }
+        if (tableRegionWords > 0)
+        {
+            uint32_t *region = words + tableRegionOffsetWords;
+            region[0] = entryRecords;
+            region[1] = 1u; // 段 1
+            region[2] = shadowRecords;
+            region[3] = meshRecords;
+            uint32_t *record = region + HeaderWords;
+            for (const uint32_t index : entryIndices)
+            {
+                const GPUMegaEntry &entry = tables.Entries[index];
+                record[0] = index;
+                record[1] = entry.Slot;
+                record[2] = entry.MeshIndex;
+                record[3] = entry.FirstGroup;
+                record[4] = entry.VisibleOffset;
+                record += EntryRecordWords;
+            }
+            for (const uint32_t index : shadowIndices)
+            {
+                record[0] = index;
+                std::memcpy(record + 4u, &tables.ShadowInstances[index], sizeof(MegaGeometryShadowInstance));
+                record += ShadowRecordWords;
+            }
+            for (uint32_t meshIndex = 0; meshIndex < meshRecords; ++meshIndex)
+            {
+                record[0] = meshIndex;
+                std::memcpy(record + 4u, &tables.Meshes[meshIndex], sizeof(GPUMegaMesh));
+                record += MeshRecordWords;
+            }
+        }
+
+        // staging はフレームスロットのもの（この組を前に使ったフレームの GPU の仕事は終わっている）
+        const uint64_t stagingBytes = totalWords * sizeof(uint32_t);
+        if (!slot.SceneStaging || slot.SceneStagingCapacity < stagingBytes)
+        {
+            const uint64_t capacity =
+                std::max<uint64_t>(64ull * 1024ull, NextPowerOfTwo(static_cast<uint32_t>(stagingBytes)));
+            RHI::BufferDesc desc(capacity, RHI::ResourceUsage::StorageBuffer, true, "MegaGeometry_SceneStaging");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                invalidateCopies();
+                return false;
+            }
+            slot.SceneStaging = buffer;
+            slot.SceneStagingCapacity = capacity;
+        }
+        slot.SceneStaging->Update(m_SceneScatterWords.data(), stagingBytes);
+
+        const RHI::DescriptorSetDesc scatterDesc = BuildSceneScatterDescriptorSetDesc();
+        for (RHI::DescriptorSetPtr &descriptorSet : slot.SceneScatterDescriptorSet)
+        {
+            if (!descriptorSet)
+            {
+                descriptorSet = m_Device->CreateDescriptorSet(scatterDesc);
+                if (!descriptorSet)
+                {
+                    invalidateCopies();
+                    return false;
+                }
+            }
+        }
+        const auto bindTables = [this, &slot](const RHI::DescriptorSetPtr &descriptorSet, uint64_t offsetWords,
+                                              uint64_t sizeWords) -> void
+        {
+            descriptorSet->BindStorageBuffer(0, slot.SceneStaging, static_cast<uint32_t>(offsetWords * sizeof(uint32_t)),
+                                             static_cast<uint32_t>(sizeWords * sizeof(uint32_t)));
+            descriptorSet->BindStorageBuffer(1, m_SlotTableBuffer, 0, static_cast<uint32_t>(m_SlotTableBuffer->GetSize()));
+            descriptorSet->BindStorageBuffer(2, m_InstanceTableBuffer, 0,
+                                             static_cast<uint32_t>(m_InstanceTableBuffer->GetSize()));
+            descriptorSet->BindStorageBuffer(3, m_ShadowTableBuffer, 0, static_cast<uint32_t>(m_ShadowTableBuffer->GetSize()));
+            descriptorSet->BindStorageBuffer(4, m_MeshTableBuffer, 0, static_cast<uint32_t>(m_MeshTableBuffer->GetSize()));
+            descriptorSet->Update();
+        };
+        const auto dispatchRecords = [commandList](uint64_t records) -> void
+        {
+            const uint64_t groups = (records + 63u) / 64u;
+            const uint32_t dispatchX = static_cast<uint32_t>(std::min<uint64_t>(groups, 65535u));
+            const uint32_t dispatchY = static_cast<uint32_t>((groups + dispatchX - 1u) / dispatchX);
+            commandList->Dispatch(dispatchX, dispatchY, 1);
+        };
+
+        // 前のフレームの読み手（カリング・頂点・解決・VSM）が読み終えてから書き、書き終えてから読ませる。
+        // 同じキューの記録の順なので、パイプラインのバリアで足りる
+        const RHI::BufferPtr residentTables[] = {m_SlotTableBuffer, m_InstanceTableBuffer, m_ShadowTableBuffer, m_MeshTableBuffer};
+        for (const RHI::BufferPtr &table : residentTables)
+        {
+            commandList->BufferBarrier(table, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
+        }
+        commandList->SetPipeline(m_SceneScatterPipeline);
+        if (rowRegionWords > 0)
+        {
+            bindTables(slot.SceneScatterDescriptorSet[0], 0u, rowRegionWords);
+            commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[0], 0);
+            dispatchRecords(rowCount);
+            // 段 1 が席の表から描く順の表を組むので、段 0 の書き込みを見せる
+            commandList->BufferBarrier(m_SlotTableBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        }
+        if (tableRegionWords > 0)
+        {
+            bindTables(slot.SceneScatterDescriptorSet[1], tableRegionOffsetWords, tableRegionWords);
+            commandList->SetDescriptorSet(slot.SceneScatterDescriptorSet[1], 0);
+            dispatchRecords(tableRecords);
+        }
+        for (const RHI::BufferPtr &table : residentTables)
+        {
+            commandList->BufferBarrier(table, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
+        }
+
+        NoteSceneUpload(uploadBytes + pageTableBytes, rowCount, entryRecords, shadowRecords, meshRecords, pageTableBytes);
+        return true;
+    }
+
+    void MegaGeometryPass::NoteSceneUpload(uint64_t bytes, uint32_t rows, uint32_t entries, uint32_t shadows,
+                                           uint32_t meshes, uint64_t pageTableBytes)
+    {
+        SceneUploadStats &stats = m_SceneUploadStats;
+        ++stats.Updates;
+        if (bytes == 0)
+        {
+            ++stats.ZeroUpdates;
+        }
+        stats.WindowBytes += bytes;
+        if (stats.bLoggedOnce && stats.Updates < 120u)
+        {
+            return;
+        }
+
+#if NORVES_BUILD_DEVELOPMENT
+        // 変わった席の数え漏れの検査: 差分を書いた直後なので、全インスタンスの席の行の写しが m_Instances と一致し、
+        // GPU の表にある（状態 1）こと。Setup が直した位置を記録し損ねると、ここで食い違う
+        uint32_t mismatches = 0;
+        for (const MegaMeshInstance &instance : m_Instances)
+        {
+            const uint32_t tableSlot = instance.TableSlot;
+            if (tableSlot >= m_SlotRowStates.size() || m_SlotRowStates[tableSlot] != 1u ||
+                std::memcmp(m_SlotRowCopies[tableSlot].WorldMatrix, instance.WorldMatrix, sizeof(instance.WorldMatrix)) != 0 ||
+                std::memcmp(m_SlotRowCopies[tableSlot].PreviousWorldMatrix, instance.PreviousWorldMatrix,
+                            sizeof(instance.PreviousWorldMatrix)) != 0)
+            {
+                ++mismatches;
+            }
+        }
+        if (mismatches > 0)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_SCENE_UPLOAD_MISMATCH mismatch=%u instances=%zu 席の表の写しが"
+                                                 "インスタンスと一致しません（変わった席の数え漏れ）",
+                             mismatches, m_Instances.size());
+        }
+        stats.Mismatches = mismatches;
+#endif
+
+        // bytes は、この更新で常駐の表とページの表へ書いたバイト数。インスタンスも常駐も変わらない更新は 0
+        NORVES_LOG_INFO("MegaGeometryPass",
+                        "MEGA_SCENE_UPLOAD bytes=%llu rows=%u entries=%u shadows=%u meshes=%u page_bytes=%llu "
+                        "updates=%u zero_updates=%u window_bytes=%llu slot_capacity=%u instance_capacity=%u "
+                        "mismatch=%u",
+                        static_cast<unsigned long long>(bytes),
+                        rows,
+                        entries,
+                        shadows,
+                        meshes,
+                        static_cast<unsigned long long>(pageTableBytes),
+                        stats.Updates,
+                        stats.ZeroUpdates,
+                        static_cast<unsigned long long>(stats.WindowBytes),
+                        m_SlotTableCapacity,
+                        m_InstanceTableCapacity,
+                        stats.Mismatches);
+        stats.bLoggedOnce = true;
+        stats.Updates = 0;
+        stats.ZeroUpdates = 0;
+        stats.WindowBytes = 0;
     }
 
     bool MegaGeometryPass::EnsureFrameSlot(FrameSlot &slot,
@@ -3068,8 +3603,12 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool MegaGeometryPass::SyncPageTable(FrameSlot &slot, MegaGeometryResources &resources)
+    bool MegaGeometryPass::SyncPageTable(FrameSlot &slot, MegaGeometryResources &resources, uint64_t *outBytes)
     {
+        if (outBytes)
+        {
+            *outBytes = 0;
+        }
         if (!m_Device)
         {
             return false;
@@ -3105,6 +3644,10 @@ namespace NorvesLib::Core::Rendering
         {
             slot.PageTableBuffer->Update(entries.data(),
                                          static_cast<size_t>(entryCount) * sizeof(MegaGeometry::GeometryPageTable::Entry));
+            if (outBytes)
+            {
+                *outBytes = static_cast<uint64_t>(entryCount) * sizeof(MegaGeometry::GeometryPageTable::Entry);
+            }
         }
         slot.PageTableVersion = version;
         return true;

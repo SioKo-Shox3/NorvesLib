@@ -68,8 +68,9 @@ namespace NorvesLib::Core::Rendering
      * @brief VSM の投影物のカリングが読む、このフレームのインスタンスの表などの入力（無ければ bValid が false）
      *
      * 表を書く前段（MegaGeometryPass::Execute。読み手のどのパスよりも前）が作る。
-     * バッファはどれも host-visible で、ホストが書いたまま（このフレームの記録が終わるまで書き換わらない）。主の経路が
-     * 使うものと同じバッファを読み取りだけで使うので、状態の遷移は要らない。
+     * インスタンス・影・メッシュの表は device-local の常駐の表で、前段が差分を書いた後に読み取りの状態へ戻してある。
+     * ページの表はフレームスロットの host-visible のバッファ。どれも主の経路と同じものを読み取りだけで使うので、
+     * 状態の遷移は要らない。
      */
     struct MegaGeometryShadowCasterInputs
     {
@@ -440,10 +441,11 @@ namespace NorvesLib::Core::Rendering
         using CullUniformData = MegaGeometry::CullUniformData;
 
         /**
-         * @brief インスタンスの表の1要素（GPU送信用。Common/MegaInstanceTable.glsl の MegaInstanceRow と一致）
+         * @brief 描く順のインスタンスの表の1要素（Common/MegaInstanceTable.glsl の MegaInstanceRow と一致）
          *
-         * 席ごとに変わる値だけを持つ。メッシュごとに決まる値はメッシュの表（GPUMegaMesh）に置き、MeshIndex で指す。
-         * シェーダーは LoadMegaInstance(index) で 2 つの表を合わせて読む。
+         * インスタンスごとに変わる値だけを持つ。メッシュごとに決まる値はメッシュの表（GPUMegaMesh）に置き、MeshIndex で指す。
+         * シェーダーは LoadMegaInstance(index) で 2 つの表を合わせて読む。この表は GPU が席の表（GPUMegaSlotRow）と
+         * 描く順の記録（GPUMegaEntry）から組む（mega_scene_scatter.comp）。ホストはこの形で書かない。
          */
         struct alignas(16) GPUMegaInstance
         {
@@ -478,6 +480,28 @@ namespace NorvesLib::Core::Rendering
         static_assert(sizeof(GPUMegaMesh) == 64, "Common/MegaInstanceTable.glsl の MegaMeshEntry と大きさが一致しません");
 
         /**
+         * @brief 席の表の1要素（席ごと 128 B。mega_scene_scatter.comp の SceneSlotRows と一致）
+         *
+         * 席の番号は行の席（MegaGeometryProxy::SceneSlot - 1）。行と一緒に動き、その実体が消えるまで変わらないので、
+         * 動いた席の行だけを書き直せば、描く順が変わっても行を送り直さずに済む。
+         */
+        struct alignas(16) GPUMegaSlotRow
+        {
+            float WorldMatrix[16];         // ワールド変換（行ベクトル規約の列優先の並びのまま）
+            float PreviousWorldMatrix[16]; // 直前のフレームの変換（velocity 用）
+        };
+        static_assert(sizeof(GPUMegaSlotRow) == 128, "mega_scene_scatter.comp の席の表の行と大きさが一致しません");
+
+        /** @brief 描く順の表の 1 行の出所（席・メッシュの表の番号・ワークグループ・「見えた」印の先頭）。CPU 側の値 */
+        struct GPUMegaEntry
+        {
+            uint32_t Slot = 0;
+            uint32_t MeshIndex = 0;
+            uint32_t FirstGroup = 0;
+            uint32_t VisibleOffset = 0;
+        };
+
+        /**
          * @brief MegaMeshインスタンス情報
          */
         struct MegaMeshInstance
@@ -492,6 +516,9 @@ namespace NorvesLib::Core::Rendering
             // 影: 影を落とすか（プロキシの bCastShadow）と、ワールドの境界（プロキシの WorldBounds。半径が 0 以下なら分からない）
             bool bCastShadow = true;
             BoundingSphere WorldBounds;
+            // 行の席（プロキシの SceneSlot。席の番号 + 1、0 は席を持たない）と、席の表の番号（AssignSceneTableSlots が決める）
+            uint32_t SceneSlot = 0;
+            uint32_t TableSlot = 0;
         };
 
         /** @brief proxy から描くインスタンスを作る */
@@ -549,11 +576,10 @@ namespace NorvesLib::Core::Rendering
         /** @brief ホストが毎フレーム書く資源の組。1 回の記録（ビューポート）ごとに FrameUseRing から 1 組使う */
         struct FrameSlot
         {
-            RHI::BufferPtr InstanceBuffer; // インスタンスの表（host-visible）
-            uint32_t InstanceCapacity = 0; // 要素数
-            RHI::BufferPtr ShadowInstanceBuffer; // 影の表（インスタンスの表と同じ要素数。host-visible）
-            RHI::BufferPtr MeshBuffer;     // メッシュの表（host-visible）
-            uint32_t MeshCapacity = 0;     // 要素数
+            // 常駐の表へ散在書き込みする記録の列（host-visible の staging）と、段ごとのディスクリプタセット
+            RHI::BufferPtr SceneStaging;
+            uint64_t SceneStagingCapacity = 0; // バイト数
+            RHI::DescriptorSetPtr SceneScatterDescriptorSet[2];
             RHI::BufferPtr SectionBuffer;  // 区間の表（uvec2: コマンドの先頭・最大数。host-visible）
             uint32_t SectionCapacity = 0;  // 要素数
             // ページの表（GeometryPageTable::Entry の並び。host-visible）。このフレームの常駐を固定して、
@@ -571,8 +597,18 @@ namespace NorvesLib::Core::Rendering
         /** @brief フレームスロットに、このフレームの区間の数を収める資源（区間の表・カリングと描画の UBO・ディスクリプタセット）を用意する */
         bool EnsureFrameSlot(FrameSlot &slot, uint32_t sectionTableEntries, uint32_t sectionCount);
 
-        /** @brief フレームスロットに、インスタンスの表・影の表・メッシュの表を収めるバッファを用意する */
-        bool EnsureSceneTableBuffers(FrameSlot &slot, uint32_t instanceCount, uint32_t meshCount);
+        /** @brief 常駐の表の散在書き込みのディスクリプタセットの形（mega_scene_scatter.comp の binding 0〜4） */
+        static RHI::DescriptorSetDesc BuildSceneScatterDescriptorSetDesc();
+
+        /**
+         * @brief 常駐の表（device-local）を、required 個の要素を収める大きさにする
+         *
+         * 足りないときだけ作り直し、古いバッファは m_RetiredBuffers へ回す（前のフレームの GPU がまだ読んでいるかもしれない）。
+         * @param bOutGrown 作り直したら true（新しいバッファは中身を持たない）
+         * @return false ならバッファを作れなかった
+         */
+        bool EnsureResidentTable(RHI::BufferPtr &buffer, uint32_t &capacity, uint32_t required, uint32_t minimumCapacity,
+                                 uint64_t elementBytes, const char *debugName, bool &bOutGrown);
 
         /** @brief 「見えた」ビットの区画を要求するインスタンス1つ分 */
         struct VisibilityRequest
@@ -606,17 +642,18 @@ namespace NorvesLib::Core::Rendering
         };
 
         /**
-         * @brief 1 フレームのインスタンスの表・メッシュの表・影の表と、記録がそれから決める規模
+         * @brief 1 フレームの描く順の表・メッシュの表・影の表と、記録がそれから決める規模（CPU 側の値）
          *
          * 表は読み手のどのパス（主のカリングと描画・ビジビリティバッファ・VSM の影）よりも前の共通の前段
-         * （PrepareSceneTables）で作ってフレームスロットへ書く。記録はそれを使い、前段を通らなかった記録
-         * （同じフレームの 2 つ目のビューポート・コマンドを直接組んだ呼び出し）は自分で作る。
+         * （PrepareSceneTables）で作り、常駐の表へ差分だけを書く。記録はそれを使い、前段を通らなかった記録
+         * （同じフレームの 2 つ目のビューポート・コマンドを直接組んだ呼び出し）は自分で作って差分を書く。
          */
         struct SceneTables
         {
             Container::VariableArray<SceneSection> Sections;
             Container::VariableArray<SceneDrawable> Drawables;
-            Container::VariableArray<GPUMegaInstance> Instances;
+            // 描く順の表の行の出所（GPU が席の表から MegaInstanceRow を組む）
+            Container::VariableArray<GPUMegaEntry> Entries;
             Container::VariableArray<GPUMegaMesh> Meshes;
             // 「見えた」ビットの区画の要求（インスタンスの表と同じ並び）
             Container::VariableArray<VisibilityRequest> VisibilityRequests;
@@ -651,23 +688,50 @@ namespace NorvesLib::Core::Rendering
          */
         void BuildSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables);
 
-        /** @brief 作った表をフレームスロットのバッファへ書き、VSM の投影物のカリングの入力を作る */
-        void UploadSceneTables(FrameSlot &slot, SceneTables &tables);
+        /**
+         * @brief m_Instances の席の表の番号（TableSlot）を決める（m_bSceneSlotsDirty のときだけ）
+         *
+         * 行の席（SceneSlot - 1）をそのまま使う。席を持たないインスタンスと、同じ席を持つ 2 つ目以降のインスタンスは、
+         * 行の席の最大の次から順に割り当てる。
+         */
+        void AssignSceneTableSlots();
+
+        /**
+         * @brief 作った表と常駐の表の写しを比べ、変わった行だけを staging から常駐の表へ散在書き込みする
+         *
+         * 3 つの更新の条件を分ける: 席の表は変わった席（Setup が記録したインスタンスの位置、作り直したフレームは全部）の
+         * 行のうち中身が違うもの、描く順の表はその並びの出所が変わった行と席の行が変わった行、メッシュの表は中身が変わったとき。
+         * 常駐（ページの表）はフレームスロットの版で別に揃える（SyncPageTable）。書くものが無ければ何も記録しない。
+         * commandList へ記録するので、表を読むどのパスよりも前に呼ぶこと。
+         * @param pageTableBytes このフレームにページの表へ書いたバイト数（統計 MEGA_SCENE_UPLOAD に足す）
+         * @return false なら表を書けなかった（このフレームは描けない）
+         */
+        bool UpdateResidentSceneTables(FrameSlot &slot, const SceneTables &tables, RHI::ICommandList *commandList,
+                                       uint64_t pageTableBytes);
+
+        /** @brief VSM の投影物のカリングの入力を、常駐の表とこのフレームのページの表から作る */
+        void PublishShadowCasterInputs(const FrameSlot &slot, SceneTables &tables);
+
+        /** @brief 常駐の表へ書いたバイト数を数え、120 回ごとに MEGA_SCENE_UPLOAD を出す */
+        void NoteSceneUpload(uint64_t bytes, uint32_t rows, uint32_t entries, uint32_t shadows, uint32_t meshes,
+                             uint64_t pageTableBytes);
 
         /**
          * @brief 表を書く共通の前段。読み手のどのパスよりも前（MegaGeometryPass::Execute）で 1 回呼ぶ
          *
-         * フレームスロットを 1 組取り、表を作って書き、ページの表をそろえる。同じフレームの記録はこのスロットを使う。
+         * フレームスロットを 1 組取り、表を作り、ページの表をそろえ、常駐の表へ差分を書く（commandList へ記録する）。
+         * 同じフレームの記録はこのスロットとページの表の版を使う。
          */
-        void PrepareSceneTables(const MegaGeometryPassCommand &command);
+        void PrepareSceneTables(const MegaGeometryPassCommand &command, RHI::ICommandList *commandList);
 
         /**
          * @brief フレームスロットのページの表を、今の常駐の状態に合わせる
          *
          * 表の版がスロットの写しと違うときだけ、バッファを（足りなければ作り直して）書き直す。
+         * @param outBytes 書いたバイト数（書かなければ 0）を受け取る。null なら受け取らない
          * @return false ならバッファを作れなかった（このフレームは描けない）
          */
-        bool SyncPageTable(FrameSlot &slot, MegaGeometryResources &resources);
+        bool SyncPageTable(FrameSlot &slot, MegaGeometryResources &resources, uint64_t *outBytes = nullptr);
 
         /**
          * @brief IndirectDraw コマンド・区間のカウンタ・描画情報のバッファを、必要な数に収まる大きさにする
@@ -870,6 +934,51 @@ namespace NorvesLib::Core::Rendering
         // （0 / nullptr は、写しから作ったのではない）
         uint64_t m_InstanceSourceRevision = 0;
         const void *m_InstanceSourceProxies = nullptr;
+
+        // 常駐の表（device-local。フレームをまたいで残り、前段が変わった行だけを staging から散在書き込みする）。
+        // 席の表（席ごと 128 B）が変換の元で、描く順の表（MegaInstanceRow）は GPU が席の表と描く順の記録から組む。
+        // 影の表は描く順の表と同じ並び・同じ容量。転送は RenderResources のリング（ジオメトリ・テクスチャのタイル）とは
+        // 別の道（フレームスロットの staging）で、予算もリングの 1 フレームの上限とは別（書く量だけ staging を広げる）
+        RHI::ShaderPtr m_SceneScatterShader;
+        RHI::PipelinePtr m_SceneScatterPipeline;
+        RHI::BufferPtr m_SlotTableBuffer;
+        uint32_t m_SlotTableCapacity = 0;
+        RHI::BufferPtr m_InstanceTableBuffer;
+        RHI::BufferPtr m_ShadowTableBuffer;
+        uint32_t m_InstanceTableCapacity = 0;
+        RHI::BufferPtr m_MeshTableBuffer;
+        uint32_t m_MeshTableCapacity = 0;
+        // 常駐の表の中身の写し（CPU）。散在書き込みは写しと違う行だけを送る。席の行の状態は 0 = 中身なし、
+        // 1 = GPU の表にある、2 = 中身は覚えているが GPU の表に無い（席の表を作り直した後。送り直すが変わったとは見なさない）
+        Container::VariableArray<GPUMegaSlotRow> m_SlotRowCopies;
+        Container::VariableArray<uint8_t> m_SlotRowStates;
+        // 席の行の中身が変わった更新の番号（その更新で、席を指す描く順の行を組み直す）
+        Container::VariableArray<uint32_t> m_SlotRowChangedStamps;
+        uint32_t m_SceneUpdateStamp = 0;
+        Container::VariableArray<GPUMegaEntry> m_EntryCopies;
+        uint32_t m_EntryCopyCount = 0;
+        Container::VariableArray<MegaGeometryShadowInstance> m_ShadowRowCopies;
+        uint32_t m_ShadowRowCopyCount = 0;
+        Container::VariableArray<GPUMegaMesh> m_MeshCopies;
+        bool m_bMeshCopiesValid = false;
+        // 席の表を確かめる行: Setup が m_Instances を作り直した（全部）か、直したインスタンスの位置。差分を書いた更新が消す
+        bool m_bSceneRowsAllDirty = true;
+        Container::VariableArray<uint32_t> m_SceneDirtyPositions;
+        // m_Instances の TableSlot を決め直すか（作り直し・手で足した・消したとき）
+        bool m_bSceneSlotsDirty = true;
+        Container::VariableArray<uint8_t> m_SceneSlotSeen;
+        // 散在書き込みの記録を組む作業領域（フレームをまたいで使い回す）
+        Container::VariableArray<uint32_t> m_SceneScatterWords;
+        // 統計 MEGA_SCENE_UPLOAD（120 回の更新ごと）
+        struct SceneUploadStats
+        {
+            uint32_t Updates = 0;
+            uint32_t ZeroUpdates = 0;
+            uint64_t WindowBytes = 0;
+            uint32_t Mismatches = 0;
+            bool bLoggedOnce = false;
+        };
+        SceneUploadStats m_SceneUploadStats;
 
         // VSM の投影物のカリングの入力（Setup で無効に戻り、前段か記録が表を書けたときに有効になる）
         MegaGeometryShadowCasterInputs m_ShadowCasterInputs;
