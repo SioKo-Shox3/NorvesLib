@@ -2395,3 +2395,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 確認（verify の外）: SceneQueryPhysicsFacadeTest・LegacyInputResetTest は pass。PhysicsBroadphaseQueryTest は Debug で 2 個目の fixture の `InstallAll` の assert で止まる既知の失敗（反復 SCN-ECS-TICK-PHYSICS の記録と同じ。この変更と無関係）。
 - Next: 残りの todo の最優先。
 - Notes: 段の最中に作った Entity は、作成の予約が同期点で再生されるまで行が無いのでハンドルは無効（旧の表は作った時点で発行していた）。`Library/Core/Public/Math/MatrixUtils.h` のコメントに ComponentDataRegistry の名が残る（paths の外）。
+
+### SCN-ECS-RETIRE-LEGACY-FLAGS 再開（2026-10-12、反復 4・run 20261012-030203）
+
+- Done: 人の判断（推奨 A: verify 2 に `-LE Reference`）で todo に戻ったので、コードは変えずに現在の HEAD（SCN-ECS-RETIRE-REGISTRY の後）で 3 本の verify を取り直し、done にした。開発ビルドの検査の扱いの表は反復 1 の節のとおり。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RETIRE-LEGACY-FLAGS-6.txt`: Debug の 4 ターゲット（EntityTreeTest・SceneViewProxyLookupTest・WorldSyncDifferentialTest・SceneQueryRaycastTest）のビルド EXIT=0、error・warning 0。
+  - `-7.txt`: `-LE Reference` 付きで 14/14 Passed（EcsHierarchyTest・WorldSyncDifferentialTest・SceneQueryRaycastTest ほか）、EXIT=0。
+  - `-8.txt`: 3 シーンの混在の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。Game.log を開いて確認: `SCENE_CYCLE_SMOKE result=pass cycles=3 scenes=3 changed=none unsettled=0`、サンプル 9 件、ERROR 0、Game.log 7.7MB。
+- Next: 残りの todo の最優先（SCN-FIX-M9-T0-CAPTURE ほか）。
+- Notes: Git Bash から verify 1 を打つと `/m:1` がパスに変換されて MSBuild が MSB1008 で落ちる。PowerShell から実行する。

@@ -644,7 +644,7 @@
 
 
 ## SCN-ECS-RETIRE-LEGACY-FLAGS: 旧の更新・同期の切替と再帰を消し、旧を正解にしていた照合を期待値に替える
-- status: todo
+- status: done
 - done-when: `--ecs-legacy-transform`・`--ecs-legacy-sync`、`SetLegacyRenderSync`/`IsLegacyRenderSync`、旧の再帰（UpdateEntityTransformRecursive・SyncEntityRecursive・UpdateRenderTransformRecursive ほか）と、SceneQuery の旧への切替（`SceneQuery.cpp` 944 行付近）を消す。`--mega-scene-full-sync` は残す。旧の全走査を正解にしていた照合は次のように替える: `WorldSyncDifferentialTest`・`EcsHierarchyTest`・`SceneQueryRaycastTest` は、手で決めた期待値（追加・値の変更・親の付け替え・非アクティブ・破棄・シーンの出入りの後の proxy・板・変換・照会の結果）との照合にする。開発ビルドの検査（ECS_RENDER_SYNC・ECS_RENDER_INVALIDATION・ECS_TRANSFORM など）は、旧の再帰を使わない全量の照合（ECS の行から全量を作り直して比べる）に替えるか、照合が成り立たないものは消してその役目をテストの期待値で持つ（どちらにしたかを PROGRESS に表で書く）。3 シーンの混在の周回が pass。
 - verify: `cmake --build build --config Debug --target EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest SceneQueryRaycastTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB|TransformHierarchy|EcsHierarchy|SceneQuery" -LE Reference --no-tests=error --output-on-failure --timeout 180`
