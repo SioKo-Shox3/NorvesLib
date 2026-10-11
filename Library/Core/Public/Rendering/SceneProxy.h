@@ -181,6 +181,22 @@ namespace NorvesLib::Core::Rendering
      *
      * World/Component 系から MegaGeometryPass に渡す最小限のインスタンス情報。
          */
+    /// 散布（MegaGeometryScatterComponent）の軽い行の proxy の鍵の印。Object の ObjectId（小さい通し番号）と重ならない bit を立てる。
+    /// 最上位 bit は描画側が ObjectId の無いインスタンスの鍵に使うので避ける
+    inline constexpr uint64_t kMegaScatterProxyKeyBit = 1ull << 62;
+
+    /// 散布の軽い行の proxy の鍵: 印 | 散布の番号（30 bit）| 入力の番号（32 bit）
+    inline constexpr uint64_t MakeMegaScatterProxyKey(uint32_t batchId, uint32_t inputIndex)
+    {
+        return kMegaScatterProxyKeyBit | (static_cast<uint64_t>(batchId & 0x3FFFFFFFu) << 32) | inputIndex;
+    }
+
+    /// 散布の軽い行の proxy の鍵か（持ち主は散布で、World の行の走査では外さない）
+    inline constexpr bool IsMegaScatterProxyKey(uint64_t objectId)
+    {
+        return (objectId & (kMegaScatterProxyKeyBit | (1ull << 63))) == kMegaScatterProxyKeyBit;
+    }
+
     struct MegaGeometryProxy
     {
         uint64_t ObjectId = 0;

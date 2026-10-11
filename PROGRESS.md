@@ -1763,3 +1763,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - RenderThread の `RenderedObjectHistory` は記録に MeshProxy を毎フレーム全部回す（既存。写しを読むだけに変えた）。差分化は別の項目。
   - 写しの SortDepth は、SceneView がカリングで書いた値でなく最後に運んだ値になる（RenderThread の消費者は読まない。照合の hash も含めない）。
   - 手組みのパケットの経路を残したので、生成したパケットの `Scene.SkinnedMeshProxies` を見る SkeletalFramePacketSnapshotTest は最初のパケットが基準になるため変わらない見込み（この反復では走らせていない）。
+
+### SCN-ECS-MASS-ROWS（2026-10-11、反復 9・run 20261011-144300）
+
+- 変更:
+  - `MegaGeometryScatterComponent`（Object 1 つ）を足した。入力（局所の位置・向き・倍率）を `SetInstances` で受け、入力の位置の Morton 順に軽い行（`EcsMegaInstanceColumns`: ワールドの変換・MegaGeometry の値・席・持ち主の散布）を作る。入力の番号 → 格納の順の表を持ち、`UpdateInstances(first, values)` は入力の番号を指す。保存に見えるのはメッシュ・影・可視・種・本数のプロパティだけ。
+  - 席の表 `EcsGpuSceneSlotTable` に塊（連続した範囲の組）の予約を足した（`ReserveBlock`・`BeginBlockAllocation`・`ReleaseBlock`）。散布の行は塊の席を先頭から順に取るので、席の番号と範囲（64 席）が Morton 順に連続する。塊の範囲は散布の専用で、解放した席を個別の実体へ回さず、全席の再利用の条件がそろった塊を次の予約が使い直す。
+  - 公開は範囲ごと（範囲の全行を書いた後に、その範囲の proxy をまとめて公開し、席の範囲の AABB を広げる）。Active・可視は範囲の印（`SetRangeActive`・`SetRangeVisible`）と Component の有効・可視で、変わった範囲だけを公開・取り下げる。破棄（World の木から外れる `OnEcsRowDetaching`）で proxy を取り下げ、全行を削除し（席は理由が Destroy の削除で解放）、塊を返す。
+  - proxy の鍵は `MakeMegaScatterProxyKey`（bit 62 の印 | 散布の番号 | 入力の番号）。`SceneView::RemoveStaleMegaGeometryProxies`（旧の走査・全量の同期）は散布の鍵を外さない。変換と境界は 1 本ずつの MegaGeometryComponent と同じ式。
+  - mega-bananas は 1 本ずつの Entity + MegaGeometryComponent をやめ、配置の計算はそのままに入力の配列へ積み、散布 1 つで置く。`MEGA_BANANAS_PLACED` に `batches=1 scatter_rows scatter_ranges` を足した。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-ECS-MASS-ROWS-1.txt`: 1 万本の overview（RelWithDebInfo）を SCN-MEGA-BASE と比べ、平均輝度差 0・PSNR 65.4 dB・不一致画素 0.024%（最大 160）で `result=pass`、EXIT=0。PNG を開いて確認（山 3 つと敷き詰め・影）。Game.log は `MEGA_BANANAS_PLACED count=10000 ... batches=1 scatter_rows=10000 scatter_ranges=157`、`MEGA_SCATTER_ROWS ... ecs_rows=10006 slots=10048 table_ranges=157 blocks=1`。山の 780 本の姿勢の行（`MEGA_BANANAS_PILE_ITEM`）は基準のログと diff が空（配置の値と順が同じ）。
+  - `-2.txt`: mega-bananas の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`（entities=2・資源の数は 3 周とも同じ）、EXIT=0。周回のログの `MEGA_SCATTER_ROWS` は 3 周とも `first_slot=0 slots=10048 table_ranges=157 blocks=1`（塊を使い直す）、`MEGA_SCATTER_RELEASED` は 3 周とも `ecs_rows=2 slots_live=0 blocks_in_use=0`。ERROR の行は 0。
+- Next: SCN-ECS-MASS-STREAM。
+- Notes:
+  - 画像の差（不一致画素 0.024%）は、SceneView の配列への公開の順が作成の順から席の順（Morton 順）に変わったことによる重なりの順の差。閾値の内側。
+  - 散布の行はすべて 1 つのアーキタイプに入れ、破棄は後ろの行から 1 行ずつ消す（設計の「BatchId で分けたチャンクをまとめて返す」は入れていない）。
+  - 所有者の変換の変化と SceneView の付け替えは、まだ散布へ自動で反映しない（入力を与え直すと反映する）。予算つきの反映は MASS-STREAM。
+  - 範囲の印の切り替えは、SceneView では範囲の行の数だけ公開・取り下げる（描画側に範囲単位の印は無い）。
+  - World.cpp（この項目の paths の外）の検査 ECS_RENDER_SYNC・RENDER_INVALIDATION の照合（`VerifyRenderSyncDelta`）は、散布の proxy を「行が無いのに残っている」と数える見込み。`IsMegaScatterProxyKey` で外す 1 行が要る（この反復の verify では検査を有効にしていない）。テストの追加はしていない。

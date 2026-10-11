@@ -14,6 +14,9 @@
  *   反映する前で、ゲートは直前に送ったパケットの番号を持つ）で、そのゲートの番号から決める。前の同期で取り込んだ
  *   ゲートは、その後に送ったパケットを知らない（古い番号で記録すると、席を含むパケットの完了を待たずに再利用してしまう）。
  * - 描画側（消費者）がいない間（ゲートが無効）は、解放した席を次の Advance で直ちに使える一覧へ移す。
+ * - 散布（設計 1.11）は、連続した範囲の組（塊）を予約し、塊の中の席を先頭から順に割り当てる（BeginBlockAllocation）。
+ *   塊の範囲は散布の専用で、解放した席を個別の実体の割り当てへ回さない。塊を返した後、所属する全席の再利用の条件が
+ *   そろってから、次の予約が塊ごと使い直す（周回で席と範囲の数が増え続けない）。
  *
  * EcsWorld が 1 つ持ち、GameThread だけが触る（スレッドセーフではない）。
  */
@@ -119,10 +122,21 @@ namespace NorvesLib::Core::Ecs
         /// 個別の実体の席を取る範囲の大きさ（席の数）
         static constexpr uint32_t kGeneralRangeSlots = 64;
         static constexpr uint32_t kInvalidRange = 0xFFFFFFFFu;
+        static constexpr uint32_t kInvalidBlock = 0xFFFFFFFFu;
 
-        /// 席を 1 つ割り当てる。使える空き（再利用の条件がそろった席）を先に使い、無ければ範囲の未使用の末尾、無ければ新しい範囲
+        /// 席を 1 つ割り当てる。使える空き（再利用の条件がそろった席）を先に使い、無ければ範囲の未使用の末尾、無ければ新しい範囲。
+        /// 塊の割り当て中（BeginBlockAllocation）は、塊の席を先頭から順に使う
         EcsGpuSceneSlot Allocate()
         {
+            if (m_AllocBlock != kInvalidBlock)
+            {
+                const EcsGpuSceneSlot blockSlot = AllocateFromBlock(m_Blocks[m_AllocBlock]);
+                if (blockSlot.IsAssigned())
+                {
+                    return blockSlot;
+                }
+                // 塊を使い切った（予約より多く作った）。個別の実体の割り当てへ回す
+            }
             uint32_t rangeIndex = kInvalidRange;
             uint32_t slot = 0;
             bool bReused = false;
@@ -258,6 +272,110 @@ namespace NorvesLib::Core::Ecs
             }
             // ゲートが有効なら全部記録済み、無効なら全部移し終えている
             m_StampedEnd = m_Pending.size();
+        }
+
+        /**
+         * @brief 散布の塊（連続した範囲の組）を予約する
+         * @param slotCount 席の数
+         * @param rangeSlots 1 つの範囲の席の数
+         * @param outFirstRange 塊の先頭の範囲の番号（範囲の番号は塊の中で連続し、席の番号も連続する）
+         * @param outRangeCount 塊の範囲の数（slotCount を rangeSlots で割り上げた数）
+         * @return 塊の番号（slotCount か rangeSlots が 0 なら kInvalidBlock）
+         *
+         * 返した塊のうち、所属する全席の再利用の条件がそろった（使用中も解放待ちも無い）同じ大きさ以上の塊があれば使い直す。
+         * 無ければ新しい範囲を末尾に作る
+         */
+        uint32_t ReserveBlock(uint32_t slotCount, uint32_t rangeSlots, uint32_t &outFirstRange, uint32_t &outRangeCount)
+        {
+            outFirstRange = kInvalidRange;
+            outRangeCount = 0;
+            if (slotCount == 0 || rangeSlots == 0)
+            {
+                return kInvalidBlock;
+            }
+            const uint32_t rangeCount = (slotCount + rangeSlots - 1) / rangeSlots;
+            uint32_t chosen = kInvalidBlock;
+            for (uint32_t index = 0; index < m_Blocks.size(); ++index)
+            {
+                const Block &block = m_Blocks[index];
+                if (block.bInUse || block.RangeSlots != rangeSlots || block.RangeCount < rangeCount || !IsBlockIdle(block))
+                {
+                    continue;
+                }
+                // 余りの最も少ない塊を使う
+                if (chosen == kInvalidBlock || block.RangeCount < m_Blocks[chosen].RangeCount)
+                {
+                    chosen = index;
+                }
+            }
+            if (chosen == kInvalidBlock)
+            {
+                Block block;
+                block.RangeSlots = rangeSlots;
+                block.RangeCount = rangeCount;
+                block.FirstRange = static_cast<uint32_t>(m_Ranges.size());
+                for (uint32_t range = 0; range < rangeCount; ++range)
+                {
+                    const uint32_t created = CreateRange(rangeSlots);
+                    m_Ranges[created].bDedicated = true;
+                }
+                chosen = static_cast<uint32_t>(m_Blocks.size());
+                m_Blocks.push_back(block);
+            }
+            Block &block = m_Blocks[chosen];
+            block.bInUse = true;
+            block.Cursor = 0;
+            for (uint32_t range = 0; range < block.RangeCount; ++range)
+            {
+                Range &target = m_Ranges[block.FirstRange + range];
+                target.NextUnused = 0;
+                target.bBounds = false;
+            }
+            outFirstRange = block.FirstRange;
+            outRangeCount = rangeCount;
+            return chosen;
+        }
+
+        /// 以後の Allocate（行の作成のフック）を、塊の席から先頭の順に取る。EndBlockAllocation まで
+        void BeginBlockAllocation(uint32_t block)
+        {
+            m_AllocBlock = block < m_Blocks.size() && m_Blocks[block].bInUse ? block : kInvalidBlock;
+        }
+
+        void EndBlockAllocation()
+        {
+            m_AllocBlock = kInvalidBlock;
+        }
+
+        /// 塊を返す。所属する席は行の削除（理由が Destroy）で先に解放しておく。塊は全席の再利用の条件がそろってから使い直される
+        void ReleaseBlock(uint32_t block)
+        {
+            if (block >= m_Blocks.size() || !m_Blocks[block].bInUse)
+            {
+                ++m_InvalidReleases;
+                return;
+            }
+            m_Blocks[block].bInUse = false;
+            if (m_AllocBlock == block)
+            {
+                m_AllocBlock = kInvalidBlock;
+            }
+        }
+
+        /// 使っている塊の数
+        [[nodiscard]] uint32_t GetBlocksInUse() const
+        {
+            uint32_t count = 0;
+            for (const Block &block : m_Blocks)
+            {
+                count += block.bInUse ? 1u : 0u;
+            }
+            return count;
+        }
+
+        [[nodiscard]] uint32_t GetBlockCount() const
+        {
+            return static_cast<uint32_t>(m_Blocks.size());
         }
 
         /// 席の境界を覚え、所属する範囲の AABB をそれを包むところまで広げる
@@ -480,11 +598,24 @@ namespace NorvesLib::Core::Ecs
             uint32_t Pending = 0;
             /// 使える空きの一覧に入っているか
             bool bQueued = false;
+            /// 散布の塊の範囲（解放した席を個別の実体の割り当てへ回さない）
+            bool bDedicated = false;
             bool bBounds = false;
             Math::Vector3 Min;
             Math::Vector3 Max;
             /// 再利用の条件がそろった席
             Container::VariableArray<uint32_t> Ready;
+        };
+
+        /// 散布の塊: 連続した範囲の組
+        struct Block
+        {
+            uint32_t FirstRange = 0;
+            uint32_t RangeCount = 0;
+            uint32_t RangeSlots = 0;
+            /// 次に席を取る範囲（FirstRange からの位置）
+            uint32_t Cursor = 0;
+            bool bInUse = false;
         };
 
         struct AuditSlot
@@ -503,6 +634,56 @@ namespace NorvesLib::Core::Ecs
                                    gate.ConfirmedSerial >= release.ReleaseSerial);
             const bool bCompleted = gate.CompletedSerial >= release.LastUsedSerial;
             return bApplied && bCompleted;
+        }
+
+        /// 塊の全範囲に、使用中の席も解放待ちの席も無いか
+        bool IsBlockIdle(const Block &block) const
+        {
+            for (uint32_t range = 0; range < block.RangeCount; ++range)
+            {
+                const Range &target = m_Ranges[block.FirstRange + range];
+                if (target.Live != 0 || target.Pending != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// 塊の席を先頭から順に 1 つ割り当てる。使い切っていれば未割り当てを返す
+        EcsGpuSceneSlot AllocateFromBlock(Block &block)
+        {
+            while (block.Cursor < block.RangeCount)
+            {
+                const uint32_t rangeIndex = block.FirstRange + block.Cursor;
+                Range &range = m_Ranges[rangeIndex];
+                if (range.NextUnused >= range.Count)
+                {
+                    ++block.Cursor;
+                    continue;
+                }
+                const uint32_t slot = range.First + range.NextUnused;
+                ++range.NextUnused;
+                // 前に塊を使った散布が解放した席なら再利用（塊は全席の条件がそろってから予約し直すので、早すぎることはない）
+                if (m_State[slot] == SlotState::Ready)
+                {
+                    if (m_bAudit && m_Gate.bValid && !IsReleasable(m_Audit[slot].Release, m_Gate))
+                    {
+                        ++m_PrematureReuse;
+                    }
+                    ++m_Reused;
+                    if (m_bAudit)
+                    {
+                        m_Audit[slot].bBounds = false;
+                    }
+                }
+                m_State[slot] = SlotState::Live;
+                ++range.Live;
+                ++m_LiveCount;
+                ++m_Allocated;
+                return EcsGpuSceneSlot{slot + 1, rangeIndex};
+            }
+            return EcsGpuSceneSlot{0, 0};
         }
 
         uint32_t CreateRange(uint32_t slotCount)
@@ -527,6 +708,15 @@ namespace NorvesLib::Core::Ecs
         {
             Range &range = m_Ranges[rangeIndex];
             m_State[slot] = SlotState::Ready;
+            if (range.bDedicated)
+            {
+                // 散布の塊の席は、塊を予約し直すまで使わない
+                if (range.Live == 0 && range.Pending == 0)
+                {
+                    range.bBounds = false;
+                }
+                return;
+            }
             range.Ready.push_back(slot);
             if (!range.bQueued)
             {
@@ -552,6 +742,9 @@ namespace NorvesLib::Core::Ecs
         size_t m_StampedEnd = 0;
         EcsSlotGate m_Gate;
         uint32_t m_ActiveRange = kInvalidRange;
+        Container::VariableArray<Block> m_Blocks;
+        /// 割り当て中の塊（BeginBlockAllocation）
+        uint32_t m_AllocBlock = kInvalidBlock;
         uint32_t m_SlotCount = 0;
         uint32_t m_LiveCount = 0;
         uint64_t m_Allocated = 0;

@@ -375,6 +375,7 @@ set(PRIVATE_SOURCES
     Private/Component/MeshComponent.cpp
     Private/Component/SkinnedMeshComponent.cpp
     Private/Component/MegaGeometryComponent.cpp
+    Private/Component/MegaGeometryScatterComponent.cpp
     Private/Component/LightComponent.cpp
     Private/Component/DirectionalLightComponent.cpp
     Private/Component/PointLightComponent.cpp
@@ -707,6 +708,7 @@ set(PUBLIC_HEADERS
     Public/Component/MeshComponent.h
     Public/Component/SkinnedMeshComponent.h
     Public/Component/MegaGeometryComponent.h
+    Public/Component/MegaGeometryScatterComponent.h
     Public/Component/LightComponent.h
     Public/Component/DirectionalLightComponent.h
     Public/Component/PointLightComponent.h

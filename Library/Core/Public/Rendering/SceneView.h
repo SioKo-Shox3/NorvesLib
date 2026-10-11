@@ -143,6 +143,8 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 生存ObjectIdに含まれないMegaGeometryProxyを削除
          * @param liveObjectIds 現在World側で有効なMegaGeometry所有ObjectId
+         *
+         * 散布の軽い行の proxy（IsMegaScatterProxyKey）は外さない。散布が自分で取り下げる
          */
         void RemoveStaleMegaGeometryProxies(const Container::UnorderedSet<uint64_t> &liveObjectIds);
 

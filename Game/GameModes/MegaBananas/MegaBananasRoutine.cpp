@@ -3,7 +3,7 @@
 #include "Core/Public/Asset/AssetSystem.h"
 #include "Core/Public/Asset/CookedMeshFormat.h"
 #include "Core/Public/Component/CameraComponent.h"
-#include "Core/Public/Component/MegaGeometryComponent.h"
+#include "Core/Public/Component/MegaGeometryScatterComponent.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Debug/DebugConfig.h"
 #include "Core/Public/Engine/Engine.h"
@@ -463,24 +463,15 @@ namespace Game::GameModes
             }
         }
 
-        /// 1 本のバナナを置く。位置はバナナの原点（中心）の世界座標
-        void SpawnBanana(GameModeContext &ctx, MegaMeshHandle megaMesh, float x, float y, float z, float yaw, float scale)
+        /// 1 本のバナナを散布の入力へ足す。位置はバナナの原点（中心）の世界座標（散布の所有者は原点に置く）
+        void AddBanana(Container::VariableArray<Component::MegaScatterInstance> &instances, float x, float y, float z, float yaw,
+                       float scale)
         {
-            Entity *object = ctx.ScopeRef.SpawnObject<Entity>();
-            if (object == nullptr)
-            {
-                return;
-            }
-            object->SetPosition(x, y, z);
-            object->SetScale(scale, scale, scale);
-            object->SetRotation(MakeBananaRotation(yaw));
-            auto *component = ctx.WorldRef.CreateComponent<Component::MegaGeometryComponent>(object);
-            if (component == nullptr)
-            {
-                return;
-            }
-            component->SetMegaMeshHandle(megaMesh);
-            component->SetCastShadow(true);
+            Component::MegaScatterInstance instance;
+            instance.Position = Math::Vector3(x, y, z);
+            instance.Rotation = MakeBananaRotation(yaw);
+            instance.Scale = Math::Vector3(scale, scale, scale);
+            instances.push_back(instance);
         }
 
         /// 最も細かい段（LOD 0）の三角形数
@@ -726,8 +717,8 @@ namespace Game::GameModes
         };
 
         /// 山を 1 つ作る。中心から正規分布で落とし、下の形に初めて触れる高さに置く
-        void PlacePile(GameModeContext &ctx, MegaMeshHandle megaMesh, const BananaAssembly &assembly, int pileIndex,
-                       float centerX, float centerZ, uint32_t count, PlacementRandom &random)
+        void PlacePile(Container::VariableArray<Component::MegaScatterInstance> &instances, const BananaAssembly &assembly,
+                       int pileIndex, float centerX, float centerZ, uint32_t count, PlacementRandom &random)
         {
             PileHeightField field(centerX, centerZ);
             VariableArray<Math::Vector3> oriented;
@@ -777,7 +768,7 @@ namespace Game::GameModes
                     field.Raise(bestX + offset.x, bestZ + offset.z, y + offset.y);
                     peakHeight = std::max(peakHeight, y + offset.y);
                 }
-                SpawnBanana(ctx, megaMesh, bestX, y, bestZ, bestYaw, bestScale);
+                AddBanana(instances, bestX, y, bestZ, bestYaw, bestScale);
 #if NORVES_BUILD_DEVELOPMENT
                 // 置いた姿勢（外部の検算が頂点から接触の隙間を数えるための記録）
                 LOG_INFO_F("MEGA_BANANAS_PILE_ITEM pile=%d index=%u x=%.5f y=%.5f z=%.5f yaw=%.6f scale=%.6f", pileIndex, n,
@@ -789,9 +780,9 @@ namespace Game::GameModes
                        static_cast<double>(peakHeight));
         }
 
-        /// count 本を、手前に山・その周りに敷き詰めで置く。置いた本数を返す
-        uint32_t PlaceBananas(GameModeContext &ctx, MegaMeshHandle megaMesh, const BananaAssembly &assembly, uint32_t count,
-                              uint32_t &outPileCount)
+        /// count 本を、手前に山・その周りに敷き詰めで散布の入力へ足す。足した本数を返す
+        uint32_t PlaceBananas(Container::VariableArray<Component::MegaScatterInstance> &instances, const BananaAssembly &assembly,
+                              uint32_t count, uint32_t &outPileCount)
         {
             PlacementRandom random;
             uint32_t placed = 0;
@@ -806,7 +797,7 @@ namespace Game::GameModes
             {
                 const uint32_t pileCount =
                     pileBudget / kPileCount + (static_cast<uint32_t>(pile) < pileBudget % kPileCount ? 1u : 0u);
-                PlacePile(ctx, megaMesh, assembly, pile, kPileCenters[pile][0], kPileCenters[pile][1], pileCount, random);
+                PlacePile(instances, assembly, pile, kPileCenters[pile][0], kPileCenters[pile][1], pileCount, random);
                 placed += pileCount;
             }
             outPileCount = placed;
@@ -824,7 +815,7 @@ namespace Game::GameModes
                     const float yaw = random.Next() * 2.0f * kPi;
                     const float scale = kScaleMin + (kScaleMax - kScaleMin) * random.Next();
                     const float y = (halfThickness + centerOffset) * scale - kSinkMeters;
-                    SpawnBanana(ctx, megaMesh, point.X, y, point.Z, yaw, scale);
+                    AddBanana(instances, point.X, y, point.Z, yaw, scale);
                     ++placed;
                 }
                 if (points.size() < fieldCount)
@@ -918,8 +909,31 @@ namespace Game::GameModes
             // 同じバナナの全インスタンスが 1 つの Model を共有する。シーンを出るときにスコープが返す
             ctx.ScopeRef.TrackModel(modelHandle);
 
+            // 全部のバナナを 1 つの散布（Object 1 つと軽い行）で置く。配置の順と値は 1 本ずつ Entity を置いていたときと同じ
             uint32_t pileCount = 0;
-            const uint32_t placed = PlaceBananas(ctx, megaMesh, assembly, data.m_BananaCount, pileCount);
+            Container::VariableArray<Component::MegaScatterInstance> instances;
+            instances.reserve(data.m_BananaCount);
+            uint32_t placed = PlaceBananas(instances, assembly, data.m_BananaCount, pileCount);
+            uint32_t batches = 0;
+            Entity *scatterOwner = ctx.ScopeRef.SpawnObject<Entity>();
+            auto *scatter = scatterOwner != nullptr
+                                ? ctx.WorldRef.CreateComponent<Component::MegaGeometryScatterComponent>(scatterOwner)
+                                : nullptr;
+            if (scatter != nullptr)
+            {
+                scatter->SetMegaMeshHandle(megaMesh);
+                scatter->SetCastShadow(true);
+                if (scatter->SetInstances(Container::Span<const Component::MegaScatterInstance>(instances.data(), instances.size())))
+                {
+                    batches = 1;
+                }
+            }
+            if (batches == 0)
+            {
+                LOG_ERROR("mega-bananas: バナナの散布を作れませんでした");
+                placed = 0;
+                pileCount = 0;
+            }
 
             const uint32_t trianglesPerBanana = CountLod0Triangles(*assembly.Mesh);
             data.m_Info.BananaCount = placed;
@@ -929,10 +943,11 @@ namespace Game::GameModes
             data.m_Info.MeshClusterCount = static_cast<uint32_t>(assembly.Mesh->Clusters.size());
             data.m_Info.MeshLodLevelCount = assembly.Mesh->LODLevelCount;
             LOG_INFO_F("MEGA_BANANAS_PLACED count=%u pile=%u field=%u triangles_per_banana=%u source_triangles=%llu "
-                       "clusters=%u lod_levels=%u",
+                       "clusters=%u lod_levels=%u batches=%u scatter_rows=%u scatter_ranges=%u",
                        placed, pileCount, placed - pileCount, trianglesPerBanana,
                        static_cast<unsigned long long>(data.m_Info.SourceTriangleTotal), data.m_Info.MeshClusterCount,
-                       data.m_Info.MeshLodLevelCount);
+                       data.m_Info.MeshLodLevelCount, batches, scatter != nullptr ? scatter->GetRowCount() : 0u,
+                       scatter != nullptr ? scatter->GetRangeCount() : 0u);
 
             // 向きの検算: ローカル Y（長手）は水平、ローカル X（太さ）は縦になっているはず
             {

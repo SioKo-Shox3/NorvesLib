@@ -564,7 +564,8 @@ namespace NorvesLib::Core::Rendering
         while (index < m_MegaGeometryProxies.size())
         {
             const uint64_t objectId = m_MegaGeometryProxies[index].ObjectId;
-            if (liveObjectIds.find(objectId) != liveObjectIds.end())
+            // 散布の軽い行の proxy は散布が公開と取り下げを持つ（World の行の生存集合には載らない）
+            if (IsMegaScatterProxyKey(objectId) || liveObjectIds.find(objectId) != liveObjectIds.end())
             {
                 ++index;
                 continue;
