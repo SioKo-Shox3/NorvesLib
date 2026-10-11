@@ -229,7 +229,9 @@ namespace Game
         NorvesLib::Core::Container::String m_CameraScriptPath;
         /// --camera-path-time=<秒> で指定された、起動時にカメラパスの途中へ置く時刻。負なら置かない
         float m_CameraPathTime = -1.0f;
-        /// --banana-count=<n> で指定された、バナナのシーンの本数（指定が無ければ既定）
+        /// --camera-path-play（開発ビルドだけ）: カメラパスを持つシーンで、組み立てが済んだところからパスを再生する
+        bool m_bCameraPathPlay = false;
+        /// --banana-count=<n> で指定された、バナナのシーンの本数（指定が無ければ既定。mega-stress は指定したときだけ置く）
         uint32_t m_BananaCount = 10000;
         bool m_bBananaCountSet = false;
         /// --stress-entities=<n> で指定された、負荷シーン mega-stress の Entity の数（指定が無ければ既定）

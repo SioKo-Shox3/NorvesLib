@@ -131,7 +131,11 @@ namespace Game
         constexpr const TCHAR *kCameraScriptOption = TEXT("--camera-script=");
         // --camera-path-time=<秒>: カメラパスを持つシーンで、起動時の視点をパスのこの時刻の位置と向きにする（停止した状態。撮影用）。
         constexpr const TCHAR *kCameraPathTimeOption = TEXT("--camera-path-time=");
+        // --camera-path-play: カメラパスを持つシーンで、組み立てが済んだところからパスを再生したままにする（開発ビルドだけ。
+        // 値を取らない。開始の時刻は --camera-path-time、無ければ 0 秒。計測でパスを飛ぶ負荷を撮るのに使う）。
+        constexpr const TCHAR *kCameraPathPlayOption = TEXT("--camera-path-play");
         // --banana-count=<n>: mega-bananas のバナナの本数（1〜kMaxBananaCount。既定 kDefaultBananaCount）。
+        // mega-stress では、指定したときだけ同じ配置のバナナ n 本を個別の Entity と同時に置く（混在の負荷）。
         constexpr const TCHAR *kBananaCountOption = TEXT("--banana-count=");
         // --stress-entities=<n>: mega-stress の Entity の数（1〜kMaxStressEntityCount。既定 kDefaultStressEntityCount）。
         constexpr const TCHAR *kStressEntitiesOption = TEXT("--stress-entities=");
@@ -569,6 +573,7 @@ namespace Game
         m_SceneReportPath = {};
         m_CameraScriptPath = {};
         m_CameraPathTime = -1.0f;
+        m_bCameraPathPlay = false;
         m_BananaCount = Game::GameModes::kDefaultBananaCount;
         m_bBananaCountSet = false;
         m_StressEntityCount = Game::GameModes::kDefaultStressEntityCount;
@@ -1164,6 +1169,15 @@ namespace Game
             if (args[i] == kStressBatchCellsOption)
             {
                 m_bStressBatchCells = true;
+                continue;
+            }
+            if (args[i] == kCameraPathPlayOption)
+            {
+#if NORVES_BUILD_DEVELOPMENT
+                m_bCameraPathPlay = true;
+#else
+                LOG_WARNING("--camera-path-play は開発ビルドだけで使えます。無視します");
+#endif
                 continue;
             }
             if (TryStripPrefix(args[i], kMassBudgetRowsOption, sceneValue))
@@ -2926,7 +2940,8 @@ namespace Game
         stateMachine->Registry().Register(
             MegaBananas,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
-             bananaCount = m_BananaCount, bShowInfo = m_bOpenSceneInfo, pauseMenu = &m_PauseMenu,
+             bPathPlay = m_bCameraPathPlay, bananaCount = m_BananaCount, bShowInfo = m_bOpenSceneInfo,
+             pauseMenu = &m_PauseMenu,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
             {
@@ -2934,6 +2949,7 @@ namespace Game
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
                 mode->GetData().m_BananaCount = bananaCount;
                 mode->GetData().m_bShowInfoAtStart = bShowInfo;
                 mode->GetData().m_pPauseMenu = pauseMenu;
@@ -2945,19 +2961,22 @@ namespace Game
         stateMachine->Registry().Register(
             Sandbox,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
-             pauseMenu = &m_PauseMenu](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
+             bPathPlay = m_bCameraPathPlay, pauseMenu = &m_PauseMenu](const GameModeParams&) -> Container::TUniquePtr<IGameMode>
             {
                 auto mode = MakeUnique<SandboxMode>();
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 return mode;
             });
         // 負荷シーン mega-stress も開発ビルドだけ。Entity の数・視点・台本は起動引数から渡す。
+        // バナナは --banana-count を指定したときだけ同時に置く（混在の負荷）。
         stateMachine->Registry().Register(
             MegaStress,
             [viewName = m_StartupSceneView, scriptPath = m_CameraScriptPath, pathTime = m_CameraPathTime,
+             bPathPlay = m_bCameraPathPlay, bananaCount = m_bBananaCountSet ? m_BananaCount : 0u,
              entityCount = m_StressEntityCount, movingPercent = m_StressMovingPercent,
              movingStartTime = m_StressMovingStartTime, streamCell = m_StressStreamCellMeters,
              streamPeriod = m_StressStreamPeriod, streamMaxCycles = m_SceneCycle.IsEnabled() ? Game::GameModes::kSmokeStreamCycles : 0u,
@@ -2970,7 +2989,9 @@ namespace Game
                 mode->GetData().m_ViewName = viewName;
                 mode->GetData().m_CameraScriptPath = scriptPath;
                 mode->GetData().m_CameraPathTime = pathTime;
+                mode->GetData().m_bCameraPathPlay = bPathPlay;
                 mode->GetData().m_EntityCount = entityCount;
+                mode->GetData().m_BananaCount = bananaCount;
                 mode->GetData().m_MovingPercent = movingPercent;
                 mode->GetData().m_MovingStartTime = movingStartTime;
                 mode->GetData().m_StreamCellMeters = streamCell;

@@ -26,6 +26,9 @@
 # 中央値を gpu_timing として metrics.json へ書く。視点ごとに、シーンが出した配置の数（placed_count。MEGA_STRESS_PLACED・
 # MEGA_BANANAS_PLACED の行）、SceneReady のフレーム（scene_ready_frame）、計測の開始のフレーム（timing_start_frame。
 # ウォームアップを除いた最初の有効な描画フレーム）も書く。
+# 置いた Entity の数（placed_entities。MEGA_STRESS_PLACED の entities）とバナナの本数（placed_bananas。MEGA_STRESS_PLACED の
+# bananas か MEGA_BANANAS_PLACED の count）も分けて書き、-RequireAssets のときは -GameArgs の stress-entities・banana-count と
+# 違えば失敗にする（引数どおりに置けたことの確認。mega-stress のバナナは banana-count を指定したときだけ置く）。
 # 同じ撮影のログから、描いたクラスタ数（MEGA_OCCLUSION の pass1 + pass2_drawn の最後の行）・MegaGeometry のバッファの大きさ
 # （MEGA_CAPACITY）・ジオメトリのプールの使用量（VRAM_POOLS の geometry_used_mb）を mega_stats として書く。
 # 統計が無効な Release は GPU のタイムスタンプを取れないので併用しない（RelWithDebInfo で測る）。
@@ -180,6 +183,15 @@ foreach ($gameArgument in $GameArgs)
             $extraArguments += "--$trimmed"
         }
     }
+}
+
+# 置く数の指定（-RequireAssets のとき、置いた数と突き合わせる）。指定が無ければ $null
+$requestedEntities = $null
+$requestedBananas = $null
+foreach ($argument in $extraArguments)
+{
+    if ($argument -match '^--stress-entities=(\d+)$') { $requestedEntities = [long]$Matches[1] }
+    if ($argument -match '^--banana-count=(\d+)$') { $requestedBananas = [long]$Matches[1] }
 }
 
 if ($requiredChecks.Count -gt 0)
@@ -761,6 +773,8 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
     $sceneReady = $null
     $sceneReadyFrame = $null
     $placedCount = $null
+    $placedEntities = $null
+    $placedBananas = $null
     $engineChecks = @()
     $logMissingAssets = @()
     if (Test-Path -LiteralPath $viewLogPath)
@@ -775,6 +789,28 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         if ($placedLines.Count -gt 0)
         {
             $placedCount = [long]$placedLines[-1].Matches[0].Groups[1].Value
+        }
+        # 置いた Entity の数とバナナの本数（最後の行）
+        $entityLines = @(Select-String -LiteralPath $viewLogPath -Pattern 'MEGA_STRESS_PLACED entities=(\d+)')
+        if ($entityLines.Count -gt 0)
+        {
+            $placedEntities = [long]$entityLines[-1].Matches[0].Groups[1].Value
+        }
+        $bananaLines = @(Select-String -LiteralPath $viewLogPath -Pattern '(?:MEGA_STRESS_PLACED .*\bbananas|MEGA_BANANAS_PLACED count)=(\d+)')
+        if ($bananaLines.Count -gt 0)
+        {
+            $placedBananas = [long]$bananaLines[-1].Matches[0].Groups[1].Value
+        }
+        if ($RequireAssets)
+        {
+            if ($null -ne $requestedEntities -and $null -ne $placedEntities -and $placedEntities -ne $requestedEntities)
+            {
+                $failures += "$($shot.Name): 置いた Entity の数 $placedEntities が指定（stress-entities=$requestedEntities）と違う"
+            }
+            if ($null -ne $requestedBananas -and $null -ne $placedBananas -and $placedBananas -ne $requestedBananas)
+            {
+                $failures += "$($shot.Name): 置いたバナナの本数 $placedBananas が指定（banana-count=$requestedBananas）と違う"
+            }
         }
         # 開発ビルドの検査（ENGINE_CHECK）。fail の行は、名前を指定していなくても失敗にする。
         $checkResult = Get-EngineCheckCounts $viewLogPath
@@ -915,6 +951,8 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
         scene_ready = $sceneReady
         scene_ready_frame = $sceneReadyFrame
         placed_count = $placedCount
+        placed_entities = $placedEntities
+        placed_bananas = $placedBananas
         timing_start_frame = $timingStartFrame
         engine_checks = $engineChecks
         missing_assets = $missingAssets.Count
@@ -925,6 +963,8 @@ for ($shotIndex = 0; $shotIndex -lt $shots.Count; ++$shotIndex)
     $results += [pscustomobject]$result
     Write-Output ("CAPTURE_SCENE view={0} size={1}x{2} mean_luminance={3} clipped_white_ratio={4} crushed_black_ratio={5}" -f `
         $result.view, $result.width, $result.height, $result.mean_luminance, $result.clipped_white_ratio, $result.crushed_black_ratio)
+    Write-Output ("CAPTURE_SCENE placed view={0} entities={1} bananas={2} requested_entities={3} requested_bananas={4}" -f `
+        $result.view, $placedEntities, $placedBananas, $requestedEntities, $requestedBananas)
     if ($null -ne $gpuTiming)
     {
         Write-Output ("CAPTURE_SCENE timing_window view={0} scene_ready_frame={1} timing_start_frame={2} window={3}..{4} valid_samples={5} placed_count={6}" -f `

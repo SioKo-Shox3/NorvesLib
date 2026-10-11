@@ -119,6 +119,8 @@ namespace Game::GameModes
         NorvesLib::Core::Container::String m_CameraScriptPath;
         /// 起動時にカメラパスの途中へ置く時刻[秒]（--camera-path-time）。負なら置かない
         float m_CameraPathTime = -1.0f;
+        /// 組み立てが済んだところからカメラパスを再生する（--camera-path-play。開発ビルドだけ）
+        bool m_bCameraPathPlay = false;
         /// バナナの本数（--banana-count）
         uint32_t m_BananaCount = kDefaultBananaCount;
         /// 起動時から情報を出す（--open-scene-info。開発ビルドだけ。撮影で情報を確かめるのに使う）

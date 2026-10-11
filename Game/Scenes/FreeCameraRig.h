@@ -12,6 +12,8 @@
 // カメラパス（シーンのデモ飛行。SceneCatalog の ScenePathDescriptor）を持つシーンでは、P キー（ゲームパッドは Y）で
 // 再生・停止する。再生中に自由飛行の入力（移動・視点）があると止まり、その位置から自由飛行へ戻る。
 // 止めたあとの再生は、止めたパスの時刻へ戻って続ける。--camera-path-time=<秒> は起動時にパスの途中へ置く（撮影用）。
+// 開発ビルドの --camera-path-play は、シーンの組み立てが済んだ（NotifySceneReady）ところから、その時刻（無ければ 0 秒）で
+// パスを再生したままにする（計測用）。再生中は約 1 秒ごとにパスの時刻をログ（CAMERA_PATH_TIME）へ出す。
 // 開発ビルドだけ、--camera-script=<file> の台本（Input/CameraScript.h）を自由飛行カメラへ流せる。台本を流している間は
 // 実際の入力を無視し、1フレームを固定刻み（1/60 秒）で進める。台本が終わるまで IsScriptRunning() が真になる。
 // ---------------------------------------------------------------------------
@@ -47,8 +49,9 @@ namespace Game::Scenes
          * @brief シーンのカメラパスを設定する（Enter の前に呼ぶ）
          * @param pPath シーンのカメラパスの定義。nullptr か不正なキー列ならパスなし
          * @param startTimeSeconds 0 以上なら、Enter で最初の視点を使わずパスのこの時刻に置く（停止したまま）。負なら使わない
+         * @param bPlayWhenReady 真なら、NotifySceneReady でパスの再生を始める（開始の時刻は startTimeSeconds。負なら 0）
          */
-        void ConfigurePath(const Game::Scenes::ScenePathDescriptor *pPath, float startTimeSeconds);
+        void ConfigurePath(const Game::Scenes::ScenePathDescriptor *pPath, float startTimeSeconds, bool bPlayWhenReady = false);
 
         /**
          * @brief カメラを作って入力を登録する
@@ -66,6 +69,9 @@ namespace Game::Scenes
 
         /// 入力の登録を外す
         void Leave(NorvesLib::Core::GameMode::GameModeContext &ctx);
+
+        /// シーンの組み立てが済んだことを伝える。ConfigurePath で再生を頼まれていれば、最初の 1 回でパスの再生を始める
+        void NotifySceneReady();
 
         /// 台本を流している最中か（読み込めなかった・流し終えたときは偽）
         bool IsScriptRunning() const
@@ -121,6 +127,10 @@ namespace Game::Scenes
         bool m_bPathPlaying = false;
         /// 再生中のパスの時刻[秒]
         float m_PathTime = 0.0f;
+        /// NotifySceneReady で再生を始める（--camera-path-play）。始めたら下ろす
+        bool m_bPlayWhenReady = false;
+        /// 再生した Tick の数（時刻のログの間隔に使う）
+        uint32_t m_PathPlayedFrames = 0;
     };
 
 } // namespace Game::Scenes

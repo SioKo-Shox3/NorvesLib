@@ -18,6 +18,9 @@
 // --stress-batch-cells を足すと、区画の動かない Entity を区画ごとに散布（MegaGeometryScatterComponent。Entity 1 つと軽い行）
 // 1 つにまとめて置き、区画の解放・読み込みは散布の Entity ごと出し入れする（動く Entity は 1 つずつの Entity のまま）。
 // 散布の行の作成・解放は EcsWorld の仕事の列が予算で範囲ごとに分けて進める（--mass-budget-rows・--mass-budget-ms）。
+// --banana-count=<n> を指定したときだけ、mega-bananas と同じ配置のバナナ n 本を散布 1 つ（Object 1 つと軽い行）で同時に置く
+// （混在の負荷。敷き詰めは置いた Entity の足元と、動く Entity の動く範囲を空ける）。置いた本数は MEGA_STRESS_BANANAS と
+// MEGA_STRESS_PLACED の bananas に出る。指定が無ければバナナは置かない。
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Container/Containers.h"
@@ -81,6 +84,10 @@ namespace Game::GameModes
         float m_CameraPathTime = -1.0f;
         /// 置く Entity の数（--stress-entities）
         uint32_t m_EntityCount = kDefaultStressEntityCount;
+        /// 同時に置くバナナの本数（--banana-count を指定したときだけ。0 なら置かない）
+        uint32_t m_BananaCount = 0;
+        /// 組み立てが済んだところからカメラパスを再生する（--camera-path-play。このシーンにパスは無いので警告して無視する）
+        bool m_bCameraPathPlay = false;
         /// 毎フレーム動かす Entity の割合[%]（--stress-moving-percent。0 なら動かさない）
         float m_MovingPercent = 0.0f;
         /// 動きの時刻の底上げ[秒]（--stress-moving-time）

@@ -198,7 +198,7 @@ namespace Game::GameModes
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
         }
-        data.m_Rig.ConfigurePath(scene->CameraPath, data.m_CameraPathTime);
+        data.m_Rig.ConfigurePath(scene->CameraPath, data.m_CameraPathTime, data.m_bCameraPathPlay);
         if (!data.m_Rig.Enter(ctx, pose, data.m_CameraScriptPath.c_str()))
         {
             LOG_ERROR("sandbox: カメラを作れませんでした");
@@ -222,8 +222,12 @@ namespace Game::GameModes
         const bool bSuspended = data.m_pPauseMenu != nullptr && data.m_pPauseMenu->IsOpen();
         data.m_Rig.Tick(ctx, deltaTime, bSuspended);
         // 台本を流し終えるまで、決定的な撮影を待たせる（撮影は台本の後のカメラで撮る）
-        Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, Game::Scenes::kSandboxSceneId,
-                                          data.m_TickCount >= kReadyTickCount && !data.m_Rig.IsScriptRunning());
+        const bool bReady = data.m_TickCount >= kReadyTickCount && !data.m_Rig.IsScriptRunning();
+        if (bReady)
+        {
+            data.m_Rig.NotifySceneReady();
+        }
+        Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, Game::Scenes::kSandboxSceneId, bReady);
     }
 
     void SandboxRoutine::Leave(GameModeContext &ctx, SandboxData &data, GameModeExitReason)

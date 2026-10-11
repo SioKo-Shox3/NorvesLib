@@ -11,6 +11,8 @@
 #include "Core/Public/Rendering/RenderWorld.h"
 
 
+#include <algorithm>
+
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::GameMode;
 using namespace NorvesLib::Core::Rendering;
@@ -19,14 +21,26 @@ namespace Math = NorvesLib::Math;
 namespace Game::Scenes
 {
 
-    void FreeCameraRig::ConfigurePath(const ScenePathDescriptor *pPath, float startTimeSeconds)
+    namespace
+    {
+        // 再生中のパスの時刻をログへ出す間隔（Tick の数。60 fps で約 1 秒）
+        constexpr uint32_t kPathTimeLogFrames = 60;
+    } // namespace
+
+    void FreeCameraRig::ConfigurePath(const ScenePathDescriptor *pPath, float startTimeSeconds, bool bPlayWhenReady)
     {
         m_Path.Clear();
         m_PathStartTime = -1.0f;
         m_bPathPlaying = false;
         m_PathTime = 0.0f;
+        m_bPlayWhenReady = false;
+        m_PathPlayedFrames = 0;
         if (pPath == nullptr)
         {
+            if (bPlayWhenReady)
+            {
+                LOG_WARNING("--camera-path-play: このシーンにはカメラパスがありません。再生せずに続けます");
+            }
             return;
         }
         if (!m_Path.Set(pPath->Keys, pPath->KeyCount, pPath->bLoop, pPath->LoopSeconds))
@@ -37,6 +51,12 @@ namespace Game::Scenes
         if (startTimeSeconds >= 0.0f)
         {
             m_PathStartTime = startTimeSeconds;
+        }
+        if (bPlayWhenReady)
+        {
+            // 組み立ての間は、再生を始める時刻の位置に止めて置く
+            m_bPlayWhenReady = true;
+            m_PathStartTime = std::max(m_PathStartTime, 0.0f);
         }
     }
 
@@ -148,6 +168,7 @@ namespace Game::Scenes
             if (m_bPathPlaying)
             {
                 m_PathTime += deltaTime;
+                ++m_PathPlayedFrames;
                 if (!m_Path.IsLoop() && m_PathTime >= m_Path.GetDuration())
                 {
                     m_PathTime = m_Path.GetDuration();
@@ -158,6 +179,10 @@ namespace Game::Scenes
                 {
                     m_PathTime = m_Path.WrapTime(m_PathTime);
                     PlaceOnPath(m_PathTime);
+                }
+                if (m_PathPlayedFrames % kPathTimeLogFrames == 0)
+                {
+                    LOG_INFO_F("CAMERA_PATH_TIME time=%.3f frames=%u", static_cast<double>(m_PathTime), m_PathPlayedFrames);
                 }
             }
             else
@@ -179,9 +204,24 @@ namespace Game::Scenes
         m_Collector.ResetAll();
         m_bScriptActive = false;
         m_bPathPlaying = false;
+        m_bPlayWhenReady = false;
         // 実体は GameModeScope::Cleanup が返す
         m_pCameraEntity = nullptr;
         m_pCamera = nullptr;
+    }
+
+    void FreeCameraRig::NotifySceneReady()
+    {
+        if (!m_bPlayWhenReady)
+        {
+            return;
+        }
+        m_bPlayWhenReady = false;
+        if (m_Path.IsValid() && !m_bPathPlaying)
+        {
+            m_PathPlayedFrames = 0;
+            StartPath();
+        }
     }
 
     void FreeCameraRig::Publish(GameModeContext &ctx)

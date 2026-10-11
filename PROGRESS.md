@@ -1858,3 +1858,28 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 予算の既定値: 反復 11 で決めた 1 フレーム 8192 行・1 ms（`Ecs::kDefaultMassRowsPerFrame`・`kDefaultMassMillisecondsPerFrame`）のまま。区画の出し入れは予算に掛からず 1 フレームで済む。
 - Next: SCN-MEGA-MIXED-LOAD。
 - Notes: 5 万個 + 64 m 区画の gt p95 は、描画の BVH の列が VRAM に載らないため、BVH の改修の後の節目の計測（SCN-MEGA-MEASURE-CPU）で取る。
+
+### SCN-MEGA-MIXED-LOAD（2026-10-11、反復 15・run 20261011-144300）
+
+- 変更:
+  - `Game/GameModes/MegaBananas/BananaLayout.h/.cpp`（新規）: mega-bananas のバナナの配置（山 3 つ・ポアソン円盤の敷き詰め・形の点）を共有の関数 `BuildBananaShape`・`PlaceBananas` に移した。敷き詰めはマスク（`IBananaFieldMask`）が塞いだ位置を飛ばす。mega-bananas はマスク無しで呼ぶので配置は変わらない（1 万本の山の 780 本の座標と `MEGA_BANANAS_PLACED` の行が SCN-ECS-MASS-ROWS の撮影のログと一致）。
+  - mega-stress: `--banana-count=<n>` を指定したときだけ、mega-bananas と同じ配置のバナナ n 本を散布 1 つ（Object 1 つと軽い行）で個別の Entity と同時に置く。敷き詰めは置いた Entity の足元（メッシュの原点から最も遠い頂点までの水平の距離 × 拡大率 + 0.15 m）と、動く Entity の円運動の範囲を空ける。置いた数は `MEGA_STRESS_BANANAS count requested pile field scatter_rows scatter_ranges` と `MEGA_STRESS_PLACED ... bananas bananas_requested` に出る。指定が無ければ今までどおりバナナを置かない（既定の見た目は変わらない）。
+  - `--camera-path-play`（開発ビルドだけ）: カメラパスを持つシーン（mega-bananas・sandbox）で、組み立てが済んだ（SceneReady の条件がそろった）ところから `--camera-path-time`（無ければ 0 秒）でパスを再生したままにする。組み立ての間はその時刻の位置に止めて置く。再生中は 60 フレームごとに `CAMERA_PATH_TIME time frames` をログに出す。パスの無い mega-stress では警告して無視する。
+  - `Scripts/CaptureScene.ps1`: 視点ごとに `placed_entities`（`MEGA_STRESS_PLACED` の entities）と `placed_bananas`（`MEGA_STRESS_PLACED` の bananas か `MEGA_BANANAS_PLACED` の count）を metrics.json に書き、`-RequireAssets` のときは `-GameArgs` の `stress-entities`・`banana-count` と違えば失敗にする。
+- 混在の負荷の 4 つの起動の引数（ACCEPT-1M で使う。`-GameArgs` の形）:
+  - 静止: `-Scene mega-bananas -Views horizon -GameArgs banana-count=1000000`
+  - カメラパスの再生: `-Scene mega-bananas -Views horizon -GameArgs banana-count=1000000,camera-path-play,camera-path-time=0`（視点はパスが決める。計測の窓はパスの 0 秒から）
+  - 1% 移動: `-Scene mega-stress -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1`
+  - 64 m 区画のストリーミング: `-Scene mega-stress -GameArgs banana-count=1000000,stress-entities=50000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells`
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-MEGA-MIXED-LOAD-1.txt`: RelWithDebInfo の Game のビルド EXIT=0（新しい .cpp を拾うため、その前に `cmake -S . -B build` で構成し直した）。
+  - `verify-SCN-MEGA-MIXED-LOAD-2.txt`: **fail**（EXIT=1）。10万本 + 5000 個は置く所までは引数どおり（`MEGA_STRESS_PLACED entities=5000 requested=5000 ... bananas=100000 bananas_requested=100000`、`MASS_WORK_SETTLED frames=68 rows=100000`）だが、描画側の VRAM が尽きて Game が abort（-1073740791。非プール 1.0 GB → 14.1 GB、予算 11.7 GB、`MEGA_BVH bvh_instances=104837 levels=6 leaf_capacity=57588508`）。単体の 10万本（4.3 GB）と 5000 個（4.6 GB）はどちらも載る。
+  - `check-SCN-MEGA-MIXED-LOAD-30k.txt`: 同じ引数で 3万本にした混在が `result=pass`・EXIT=0・ERROR 0。`CAPTURE_SCENE placed view=overview entities=5000 bananas=30000 requested_entities=5000 requested_bananas=30000`、metrics.json に `placed_entities=5000`・`placed_bananas=30000`。World の Object は 5003（床・カメラ・散布 1 つ・Entity 5000）でバナナの本数によらない。非プール 8.0 GB。PNG を開いて確認（奥に Entity の列、手前は出し入れで解放した区画で、バナナは区画の Entity の足元を空けて残る）。
+  - `check-SCN-MEGA-MIXED-LOAD-bananas100k.txt`: mega-bananas 10万本の単体が `result=pass`・`placed_bananas=100000`。
+  - `check-SCN-MEGA-MIXED-LOAD-pathplay.txt`: mega-bananas 1 万本 + `camera-path-play,camera-path-time=5` が pass。ログは `CAMERA_PATH state=placed time=5.000` → `CAMERA_PATH state=playing time=5.000` → `SCENE_READY` → `CAMERA_PATH_TIME time=6.000 frames=60`。PNG を開いて確認（パスの 6 秒の位置から山を見る絵）。
+- 未完: verify 2 本目（10万本 + 5000 個）が描画の VRAM（paths の外の Rendering。SCN-MEGA-BVH-INDIRECT の対象と同じ系統）で落ちる。verify の規模の扱いをユーザーの判断に回した（`blocked/SCN-MEGA-MIXED-LOAD.md`。推奨は 3万本に下げて完了、10万本以上は BVH-INDIRECT の後の節目の計測で確かめる）。status は doing。
+- Next: SCN-MEGA-MIXED-LOAD の verify の規模の判断待ち。判断が出るまでは次の todo へ。
+- Notes:
+  - mega-stress の床が overview で白く飛んで見えるのは、この変更の前の撮影（SCN-ECS-MASS-STREAM/check）でも同じ（この項目では触っていない）。
+  - 混在の敷き詰めは Entity の足元を空けるので、Entity の多い所ではバナナが隙間に斑に残る。出し入れで解放した区画も足元は空けたまま。
+  - マスクと `--camera-path-play` の単体テストは足していない（計画に無い。撮影のログで確かめた）。

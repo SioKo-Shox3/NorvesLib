@@ -25,6 +25,7 @@
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Rendering/SkyAtmosphere.h"
 #include "Core/Public/Rendering/VolumetricFog.h"
+#include "GameModes/MegaBananas/BananaLayout.h"
 #include "GameModes/Rendering3DTest/SkySunControl.h"
 #include "Scenes/SceneCatalog.h"
 #include "Scenes/SceneReadiness.h"
@@ -83,12 +84,16 @@ namespace Game::GameModes
         /// 床に据える高さ（拡大後に最下点が床に接する Entity の y）と、置くときの拡大率
         float BaseScale = 1.0f;
         float BaseY = 0.0f;
+        /// 原点から最も遠い頂点までの水平の距離（拡大後）。向きによらず Entity の足元がこの円に収まる
+        float FootprintRadius = 0.0f;
         uint32_t PlacedCount = 0;
     };
 
     struct StressAssembly
     {
         VariableArray<StressMeshLoad> Loads;
+        /// 同時に置くバナナ（--banana-count を指定したときだけ）。Loads とは別に持ち、Entity の種類には選ばない
+        TSharedPtr<StressMeshLoad> Banana;
     };
 
     /// 毎フレーム動かす 1 つの Entity。置いた位置・向きを基準に、円運動とヨーの回転を重ねる
@@ -434,7 +439,7 @@ namespace Game::GameModes
         /// メッシュ 1 種類のクック済みメッシュを解決・解析し、材質のテクスチャの読み込みを始める。
         /// クック済みが無い・壊れているときは理由を警告して false を返す（その種類を読み飛ばす）
         bool StartMeshLoad(GameModeContext &ctx, const TSharedPtr<const Asset::AssetSystem> &assetSystem,
-                           const StressMeshSpec &spec, StressAssembly &assembly)
+                           const StressMeshSpec &spec, StressMeshLoad &load)
         {
             const Asset::AssetResolveResult resolved = assetSystem->ResolveAsset(spec.MeshPath, Asset::AssetKind::Model);
             if (!resolved.UsedCooked())
@@ -462,7 +467,6 @@ namespace Game::GameModes
                 return false;
             }
 
-            StressMeshLoad load;
             load.Spec = spec;
             {
                 Asset::AssetCookedRange pageRange;
@@ -475,10 +479,13 @@ namespace Game::GameModes
             load.Mesh = MakeShared<Asset::CookedMeshData>(std::move(parsed.Mesh));
             float minY = std::numeric_limits<float>::max();
             float maxY = std::numeric_limits<float>::lowest();
+            float maxRadiusSquared = 0.0f;
             for (const Asset::CookedMeshVertex &vertex : load.Mesh->Vertices)
             {
                 minY = std::min(minY, vertex.Position.Y);
                 maxY = std::max(maxY, vertex.Position.Y);
+                maxRadiusSquared =
+                    std::max(maxRadiusSquared, vertex.Position.X * vertex.Position.X + vertex.Position.Z * vertex.Position.Z);
             }
             if (!(maxY - minY > 1.0e-4f))
             {
@@ -490,6 +497,7 @@ namespace Game::GameModes
             load.MaxY = maxY;
             load.BaseScale = spec.TargetHeight / (maxY - minY);
             load.BaseY = -minY * load.BaseScale;
+            load.FootprintRadius = std::sqrt(maxRadiusSquared) * load.BaseScale;
 
             LOG_INFO_F("MEGA_STRESS_MESH id=%s path=%s vertices=%u indices=%u clusters=%u lod_levels=%u pages=%zu "
                        "height=%.3f scale=%.4f",
@@ -509,7 +517,27 @@ namespace Game::GameModes
             LoadMaterialTexture(textures, pending, spec.Normal, &MaterialCreateData::NormalTexture, true,
                                 spec.bVirtualTexture);
             LoadMaterialTexture(textures, pending, spec.Orm, &MaterialCreateData::ORMTexture, false, spec.bVirtualTexture);
-            assembly.Loads.push_back(std::move(load));
+            return true;
+        }
+
+        /// 同時に置くバナナの読み込みを始める。資産が無い・壊れているときは警告して false を返す（バナナ抜きで続ける）
+        bool StartBananaLoad(GameModeContext &ctx, const TSharedPtr<const Asset::AssetSystem> &assetSystem,
+                             StressAssembly &assembly)
+        {
+            StressMeshSpec spec;
+            spec.Id = "banana";
+            spec.MeshPath = kBananaMeshPath;
+            spec.Albedo = String(kBananaMeshPath) + kBananaAlbedoSuffix;
+            spec.Normal = String(kBananaMeshPath) + kBananaNormalSuffix;
+            spec.Orm = String(kBananaMeshPath) + kBananaOrmSuffix;
+            auto load = MakeShared<StressMeshLoad>();
+            if (!StartMeshLoad(ctx, assetSystem, spec, *load))
+            {
+                LOG_WARNING_F("MEGA_STRESS_BANANAS_SKIPPED path=%s バナナを置けません。%s で生成し、CookAssets で焼いてください",
+                              kBananaMeshPath, kBananaFetchHint);
+                return false;
+            }
+            assembly.Banana = load;
             return true;
         }
 
@@ -535,15 +563,20 @@ namespace Game::GameModes
             auto assembly = MakeShared<StressAssembly>();
             for (const StressMeshSpec &spec : specs)
             {
-                StartMeshLoad(ctx, assetSystem, spec, *assembly);
+                StressMeshLoad load;
+                if (StartMeshLoad(ctx, assetSystem, spec, load))
+                {
+                    assembly->Loads.push_back(std::move(load));
+                }
             }
             const uint32_t started = static_cast<uint32_t>(assembly->Loads.size());
-            LOG_INFO_F("MEGA_STRESS_LIST listed=%zu loading=%u", specs.size(), started);
-            if (started > 0)
+            const bool bBanana = data.m_BananaCount > 0 && StartBananaLoad(ctx, assetSystem, *assembly);
+            LOG_INFO_F("MEGA_STRESS_LIST listed=%zu loading=%u banana=%d", specs.size(), started, bBanana ? 1 : 0);
+            if (started > 0 || bBanana)
             {
                 data.m_pAssembly = assembly;
             }
-            return started;
+            return started + (bBanana ? 1u : 0u);
         }
 
         /// 材質がそろった 1 種類の MegaMesh を作り、モデルとして登録する。作れなければ false
@@ -670,6 +703,139 @@ namespace Game::GameModes
                 }
             }
             return last;
+        }
+
+        /// 同時に置くバナナの敷き詰めから、置いた Entity の足元（動く Entity は動く範囲）を空けるマスク。
+        /// Entity は升目（一辺 kCellMeters）ごとに 1 つで、升目の中心から kCellJitterMeters 以内にあるので、
+        /// 問う位置の周りの升目だけを調べる
+        class StressFootprintMask final : public IBananaFieldMask
+        {
+        public:
+            /// バナナの中心から先端までの長さ（約 0.125 m）に余白を足した、足元の円の外へ空ける距離
+            static constexpr float kBananaClearanceMeters = 0.15f;
+
+            void Reset(uint32_t columns, uint32_t rows)
+            {
+                m_Columns = columns;
+                m_Rows = rows;
+                m_SlotItem.assign(static_cast<size_t>(columns) * rows, -1);
+                m_Items.clear();
+                m_MaxRadius = 0.0f;
+            }
+
+            /// 升目 (column, row) に置いた Entity の足元を足す。足した順の番号（置いた順）で Grow から引く
+            void Add(uint32_t column, uint32_t row, float x, float z, float footprintRadius)
+            {
+                m_SlotItem[static_cast<size_t>(row) * m_Columns + column] = static_cast<int32_t>(m_Items.size());
+                m_Items.push_back(Item{x, z, footprintRadius + kBananaClearanceMeters});
+                m_MaxRadius = std::max(m_MaxRadius, m_Items.back().Radius);
+            }
+
+            /// ordinal 番目に足した足元の半径を extra だけ広げる（動く Entity の円運動の半径）
+            void Grow(size_t ordinal, float extra)
+            {
+                if (ordinal < m_Items.size())
+                {
+                    m_Items[ordinal].Radius += extra;
+                    m_MaxRadius = std::max(m_MaxRadius, m_Items[ordinal].Radius);
+                }
+            }
+
+            bool IsBlocked(float x, float z) const override
+            {
+                if (m_Items.empty())
+                {
+                    return false;
+                }
+                const float columnCoord = x / kCellMeters + 0.5f * static_cast<float>(m_Columns - 1);
+                const float rowCoord = (z - kFieldNearZ) / kCellMeters;
+                const int reach = static_cast<int>(std::ceil((m_MaxRadius + kCellJitterMeters) / kCellMeters));
+                const int centerColumn = static_cast<int>(std::lround(columnCoord));
+                const int centerRow = static_cast<int>(std::lround(rowCoord));
+                for (int row = centerRow - reach; row <= centerRow + reach; ++row)
+                {
+                    if (row < 0 || row >= static_cast<int>(m_Rows))
+                    {
+                        continue;
+                    }
+                    for (int column = centerColumn - reach; column <= centerColumn + reach; ++column)
+                    {
+                        if (column < 0 || column >= static_cast<int>(m_Columns))
+                        {
+                            continue;
+                        }
+                        const int32_t item = m_SlotItem[static_cast<size_t>(row) * m_Columns + static_cast<size_t>(column)];
+                        if (item < 0)
+                        {
+                            continue;
+                        }
+                        const Item &footprint = m_Items[static_cast<size_t>(item)];
+                        const float dx = x - footprint.X;
+                        const float dz = z - footprint.Z;
+                        if (dx * dx + dz * dz < footprint.Radius * footprint.Radius)
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+
+        private:
+            struct Item
+            {
+                float X = 0.0f;
+                float Z = 0.0f;
+                float Radius = 0.0f;
+            };
+
+            uint32_t m_Columns = 0;
+            uint32_t m_Rows = 0;
+            /// 升目ごとの m_Items の添字（置いていない升目は -1）
+            VariableArray<int32_t> m_SlotItem;
+            VariableArray<Item> m_Items;
+            float m_MaxRadius = 0.0f;
+        };
+
+        /// バナナの散布（Object 1 つと軽い行）を置く。置いた本数を返す（置けなければ 0）
+        uint32_t PlaceStressBananas(GameModeContext &ctx, const MegaStressData &data, const StressMeshLoad &banana,
+                                    const StressFootprintMask &mask, uint32_t &outPileCount)
+        {
+            BananaShape shape;
+            BuildBananaShape(*banana.Mesh, shape);
+            VariableArray<Component::MegaScatterInstance> instances;
+            instances.reserve(data.m_BananaCount);
+            const uint32_t laid = PlaceBananas(instances, shape, data.m_BananaCount, &mask, outPileCount);
+            uint32_t placed = 0;
+            uint32_t scatterRows = 0;
+            uint32_t scatterRanges = 0;
+            Entity *owner = laid > 0 ? ctx.ScopeRef.SpawnObject<Entity>() : nullptr;
+            auto *scatter =
+                owner != nullptr ? ctx.WorldRef.CreateComponent<Component::MegaGeometryScatterComponent>(owner) : nullptr;
+            if (scatter != nullptr)
+            {
+                scatter->SetMegaMeshHandle(banana.MegaMesh);
+                scatter->SetCastShadow(true);
+                if (scatter->SetInstances(Span<const Component::MegaScatterInstance>(instances.data(), instances.size())))
+                {
+                    placed = laid;
+                    scatterRows = scatter->GetInstanceCount();
+                    scatterRanges = scatter->GetRangeCount();
+                }
+            }
+            if (placed == 0)
+            {
+                LOG_ERROR("mega-stress: バナナの散布を作れませんでした");
+                if (owner != nullptr)
+                {
+                    ctx.ScopeRef.Untrack(owner);
+                    ctx.WorldRef.RemoveObject(owner);
+                }
+                outPileCount = 0;
+            }
+            LOG_INFO_F("MEGA_STRESS_BANANAS count=%u requested=%u pile=%u field=%u scatter_rows=%u scatter_ranges=%u", placed,
+                       data.m_BananaCount, outPileCount, placed - outPileCount, scatterRows, scatterRanges);
+            return placed;
         }
 
         uint32_t SpawnCellBatch(GameModeContext &ctx, StressStream &stream, uint32_t cellIndex);
@@ -943,6 +1109,9 @@ namespace Game::GameModes
                     ++resourceCount;
                 }
             }
+            // 同時に置くバナナ。置くときは、Entity の足元をバナナの敷き詰めから空けるマスクを置いた順に作る
+            const bool bBananas = assembly.Banana && CreateMegaMeshForLoad(ctx, *assembly.Banana);
+            StressFootprintMask footprints;
 
             auto movers = MakeShared<StressMovers>();
             // 置いた Entity のうち動かす候補（割合が 0 より大きいときだけ溜め、置き終わってから正確な個数を選ぶ）
@@ -964,6 +1133,7 @@ namespace Game::GameModes
             {
                 columns = static_cast<uint32_t>(std::ceil(std::sqrt(static_cast<float>(data.m_EntityCount) * 2.0f)));
                 rows = (data.m_EntityCount + columns - 1) / columns;
+                footprints.Reset(columns, rows);
                 for (uint32_t index = 0; index < data.m_EntityCount; ++index)
                 {
                     const int kind = PickKind(assembly.Loads, totalWeight, index);
@@ -985,6 +1155,10 @@ namespace Game::GameModes
                     {
                         ++load.PlacedCount;
                         ++placed;
+                        if (bBananas)
+                        {
+                            footprints.Add(column, row, x, z, load.FootprintRadius);
+                        }
                         if (bStreaming)
                         {
                             StressPlaced record;
@@ -1028,6 +1202,8 @@ namespace Game::GameModes
                 for (size_t i = 0; i < moverCount; ++i)
                 {
                     movers->Items.push_back(candidates.Items[keys[i].Ordinal]);
+                    // 動く Entity の周りは、円運動で通る範囲までバナナを空ける（候補の順 = 置いた順）
+                    footprints.Grow(keys[i].Ordinal, candidates.Items[keys[i].Ordinal].Radius);
                     if (bStreaming)
                     {
                         stream->Placed[keys[i].Ordinal].MoverSlot = static_cast<int32_t>(i);
@@ -1048,6 +1224,13 @@ namespace Game::GameModes
                 }
             }
 
+            uint32_t bananaCount = 0;
+            uint32_t bananaPileCount = 0;
+            if (bBananas)
+            {
+                bananaCount = PlaceStressBananas(ctx, data, *assembly.Banana, footprints, bananaPileCount);
+            }
+
             // 区間は材質とプールの塊が同じ Entity の集まりで、メッシュごとに 1 つ（Entity を 1 つ以上置いた種類の数）
             uint32_t sectionCount = 0;
             for (const StressMeshLoad &load : assembly.Loads)
@@ -1058,8 +1241,10 @@ namespace Game::GameModes
                     LOG_INFO_F("MEGA_STRESS_KIND id=%s count=%u", load.Spec.Id.c_str(), load.PlacedCount);
                 }
             }
-            LOG_INFO_F("MEGA_STRESS_PLACED entities=%u requested=%u resources=%u sections=%u columns=%u rows=%u batch_cells=%d",
-                       placed, data.m_EntityCount, resourceCount, sectionCount, columns, rows, bBatch ? 1 : 0);
+            LOG_INFO_F("MEGA_STRESS_PLACED entities=%u requested=%u resources=%u sections=%u columns=%u rows=%u batch_cells=%d "
+                       "bananas=%u bananas_requested=%u",
+                       placed, data.m_EntityCount, resourceCount, sectionCount, columns, rows, bBatch ? 1 : 0, bananaCount,
+                       data.m_BananaCount);
             LOG_INFO_F("MEGA_STRESS_MOVING movers=%zu percent=%.3f start_time=%.3f", movers->Items.size(),
                        static_cast<double>(data.m_MovingPercent), static_cast<double>(data.m_MovingStartTime));
             if (!movers->Items.empty())
@@ -1099,13 +1284,13 @@ namespace Game::GameModes
                     return false;
                 }
             }
-            return true;
+            return !assembly.Banana || assembly.Banana->Material->PendingTextureCount == 0;
         }
     } // namespace
 
     GameModeEnterResult MegaStressRoutine::Enter(GameModeContext &ctx, MegaStressData &data)
     {
-        LOG_INFO_F("mega-stress を開始します（Entity 数 %u）", data.m_EntityCount);
+        LOG_INFO_F("mega-stress を開始します（Entity 数 %u・バナナ %u 本）", data.m_EntityCount, data.m_BananaCount);
         data.m_TickCount = 0;
         data.m_bEntitiesPlaced = false;
         data.m_bMassWorkSettled = false;
@@ -1130,7 +1315,7 @@ namespace Game::GameModes
             Game::Scenes::EndSceneAssembly(ctx.EngineRef);
             return GameModeEnterResult::Failed;
         }
-        data.m_Rig.ConfigurePath(scene->CameraPath, data.m_CameraPathTime);
+        data.m_Rig.ConfigurePath(scene->CameraPath, data.m_CameraPathTime, data.m_bCameraPathPlay);
         if (!data.m_Rig.Enter(ctx, pose, data.m_CameraScriptPath.c_str()))
         {
             LOG_ERROR("mega-stress: カメラを作れませんでした");
@@ -1150,7 +1335,7 @@ namespace Game::GameModes
         {
             // 置けるメッシュが 1 つも無い。床だけでシーンの組み立てを終える
             data.m_bEntitiesPlaced = true;
-            LOG_WARNING("MEGA_STRESS_PLACED entities=0 resources=0 sections=0 置けるメッシュがありません");
+            LOG_WARNING("MEGA_STRESS_PLACED entities=0 resources=0 sections=0 bananas=0 置けるメッシュがありません");
         }
         return GameModeEnterResult::Succeeded;
     }
@@ -1205,10 +1390,13 @@ namespace Game::GameModes
         }
 
         // 台本を流し終えるまで、決定的な撮影を待たせる（撮影は台本の後のカメラで撮る）
-        Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, Game::Scenes::kMegaStressSceneId,
-                                          data.m_TickCount >= kReadyTickCount && data.m_bEntitiesPlaced &&
-                                              data.m_bMassWorkSettled &&
-                                              !data.m_Rig.IsScriptRunning());
+        const bool bReady = data.m_TickCount >= kReadyTickCount && data.m_bEntitiesPlaced && data.m_bMassWorkSettled &&
+                            !data.m_Rig.IsScriptRunning();
+        if (bReady)
+        {
+            data.m_Rig.NotifySceneReady();
+        }
+        Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, Game::Scenes::kMegaStressSceneId, bReady);
     }
 
     void MegaStressRoutine::Leave(GameModeContext &ctx, MegaStressData &data, GameModeExitReason)
@@ -1223,7 +1411,7 @@ namespace Game::GameModes
         // 届いていない読み込みの結果は捨てる
         if (data.m_pAssembly)
         {
-            for (StressMeshLoad &load : data.m_pAssembly->Loads)
+            const auto cancel = [&ctx](StressMeshLoad &load)
             {
                 load.Material->bCancelled = true;
                 // すでに届いた仮想テクスチャは、まだ追跡していないので自分で返す
@@ -1232,6 +1420,14 @@ namespace Game::GameModes
                     ctx.RenderResourcesRef.Textures().ReleaseTexture(texture);
                 }
                 load.Material->VirtualTextures.clear();
+            };
+            for (StressMeshLoad &load : data.m_pAssembly->Loads)
+            {
+                cancel(load);
+            }
+            if (data.m_pAssembly->Banana)
+            {
+                cancel(*data.m_pAssembly->Banana);
             }
             data.m_pAssembly.reset();
         }

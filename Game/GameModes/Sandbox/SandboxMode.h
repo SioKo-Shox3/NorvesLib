@@ -28,6 +28,8 @@ namespace Game::GameModes
         NorvesLib::Core::Container::String m_CameraScriptPath;
         /// 起動時にカメラパスの途中へ置く時刻[秒]（--camera-path-time）。負なら置かない
         float m_CameraPathTime = -1.0f;
+        /// 組み立てが済んだところからカメラパスを再生する（--camera-path-play）
+        bool m_bCameraPathPlay = false;
         /// ポーズメニュー（非所有）。開いている間はカメラを動かさない。無いなら nullptr
         const Game::Pause::PauseMenu *m_pPauseMenu = nullptr;
 
