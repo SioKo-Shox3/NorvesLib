@@ -2331,3 +2331,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - verify 4 は `timing_missing=render_thread_ms_*` だけで fail（区間の閾値だけの検査は `verify-SCN-MEGA-FIX-TRANSIENT-BOARDS-4-scope-only.txt` で pass）。gt が下がりゲームスレッドが描画 1 フレームあたり約 800 フレーム回るため、`CaptureScene.ps1` が rt を拾う `RenderFrameMs > 0` の行に `RenderThreadMs` が載らない（窓の中で両方が載る行は 0 件。独立に集めた rt は median 135.6 ms で前回の 138.0 ms とほぼ同じ）。直す先は paths の外なので `blocked/SCN-MEGA-FIX-TRANSIENT-BOARDS.md` に選択肢を書いた。
 - Next: blocked の判断（推奨は `CaptureScene.ps1` の rt を窓の Frame 行から独立に集める）の後、verify 4 だけを撮り直して done にする。
 - Notes: 木の順の並べ直し（兄弟の位置が登録の順と違う場合）を直接突くテストは無い（差分テストの Text は登録の順と木の順が同じ）。
+
+### SCN-ECS-RETIRE-LEGACY（2026-10-12、反復 21・run 20261011-211043）
+
+- BLOCKED（コードは変えていない）: done-when に従って先に利用者を数えた。paths の外に利用者が残る。ComponentDataRegistry は `EntityHandle` の発行と解決（`RegisterEntity`・`ResolveEntity`）を持ち、`Game/Input/PickingController.cpp`・`Library/Modules/Physics/.../PhysicsModule.cpp`（`GetEntityHandle`）・`M8MinimalPhysicsSmoke.cpp`・`Test/Core/Engine/ApplicationFixedStepPipelineTest.cpp`・`Test/Core/Object/WorldTickGroupTest.cpp` が使う。旧の切替は `Library/Core/Private/Scene/SceneQuery.cpp:944`（`IsLegacyRenderSync`）・`Test/Core/Object/EcsHierarchyTest.cpp`・`SceneQueryRaycastTest.cpp` が使う。
+- 決めたいこと・選択肢・推奨は `blocked/SCN-ECS-RETIRE-LEGACY.md`（推奨: 旧の切替を消す項目と、ハンドルの表を World へ移して ComponentDataRegistry を消す項目に分け、paths を広げる）。
+- Next: 人の判断の後に再開。
+- Notes: `WorldSyncDifferentialTest` は旧の全走査を照合の正解に使っているので、旧を消すときは手で決めた期待値との照合に書き換える必要がある。
