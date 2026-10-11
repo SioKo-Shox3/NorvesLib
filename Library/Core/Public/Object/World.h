@@ -34,7 +34,6 @@ namespace NorvesLib::Core
     {
         class ApplicationProcessor;
     }
-    class ComponentDataRegistry;
     class PrefabAsset;
     struct PrefabOverrideSet;
 
@@ -292,9 +291,7 @@ namespace NorvesLib::Core
         {
             /// 公開した内容を覚えた回数
             uint32_t Published = 0;
-            /// 変更も通知も無い行を作り直して、公開した内容と比べた回数
-            uint32_t Probed = 0;
-            /// 比べた結果が食い違った回数（変更も通知も無いのに proxy が変わった行）
+            /// 全行から作り直した proxy が、公開した内容と食い違った回数（変更も通知も届かずに proxy が古くなった行）
             uint32_t Violations = 0;
             /// 再試行の一覧の行が、公開済みの状態になっていた回数
             uint32_t RetryMismatches = 0;
@@ -312,7 +309,7 @@ namespace NorvesLib::Core
         /// 検査 ECS_RENDER_SYNC の累計
         struct RenderSyncStats
         {
-            /// 一覧を作って全走査と照合した同期の回数
+            /// 同期の結果を、全行から作り直した proxy と照合した回数
             uint32_t Checked = 0;
             /// 照合した項目の数の合計
             uint32_t Examined = 0;
@@ -329,42 +326,35 @@ namespace NorvesLib::Core
         /// 直近の同期で作った一覧
         const Ecs::EcsRenderSyncList& GetRenderSyncList() const { return m_RenderSyncList; }
 
-        /// 直近の同期がたどった行の数。既定の同期は、公開した行・Remove・変換のキャッシュを求め直した Text の行を数え、
-        /// 旧の全走査は、たどった Entity を数える（静止のフレームの既定の同期は 0）
+        /// 直近の同期がたどった行の数。公開した行・Remove・変換のキャッシュを求め直した Text の行を数える（静止のフレームは 0）
         [[nodiscard]] uint32_t GetLastRenderSyncVisitedRows() const noexcept { return m_RenderSyncVisitedRows; }
 
         /// 検査 ECS_RENDER_SYNC を EngineChecks の設定によらず走らせる（テスト用）
         void SetRenderSyncCheckForced(bool bForced);
-
-        /// 描画の同期を旧の全走査にするか（起動オプション --ecs-legacy-sync。比較と切り戻し用）。既定は false。
-        /// 既定は、変わった行だけを公開し、Remove の一覧だけを外す（Entity の木はたどらない）。
-        /// ComponentDataRegistry のフレームごとの捕捉は旧の全走査のときだけ行う
-        void SetLegacyRenderSync(bool bLegacy) noexcept { m_bLegacyRenderSync = bLegacy; }
-        [[nodiscard]] bool IsLegacyRenderSync() const noexcept { return m_bLegacyRenderSync; }
 
         /// 変更ログ: Component の描画の同期が不要から必要へ変わった。Component の MarkRenderStateDirty が呼ぶ
         void NoteComponentRenderDirty(Ecs::EcsEntity row);
 
         /**
          * @brief MeshComponent/LightComponentからSceneViewへProxy同期
+         *
+         * 変わった行だけを公開し、Remove の一覧だけを外す（Entity の木はたどらない）。
          */
         void SyncToSceneView(const Rendering::MaterialResources* materials = nullptr,
                              const Rendering::MeshResources* meshes = nullptr);
 
-        /// Text のグリフの板を、木の深さ優先の順で集める。既定は Text の行の一覧だけを見る（旧の同期では根から全走査する）
+        /// Text のグリフの板を、木の深さ優先の順で集める（Text の行の一覧だけを見る）
         void CollectTransientBoardProxies(Container::VariableArray<Rendering::BoardProxy>& outProxies);
 
         /**
          * @brief Entity階層のワールドトランスフォームを更新
          *
-         * 既定は階層のシステムの伝播（局所の変換・親・Active が変わった行とその子孫だけを求め直し、EcsWorldTransform に書く）。
-         * SetLegacyTransformPropagation(true) の間は、全 Entity を根から再帰して求める旧の経路を使う。
+         * 階層のシステムの伝播（局所の変換・親・Active が変わった行とその子孫だけを求め直し、EcsWorldTransform に書く）。
+         * 段の最中に作成を予約した Entity と、予約中の親の下へ付け替えた行（同期点まで階層の列が古い）の部分木だけは、
+         * 伝播の後に Outer/Inner の親から求め直す。
          */
         void UpdateWorldTransforms();
 
-        /// 旧の再帰でワールドの変換を更新するか（起動オプション --ecs-legacy-transform。比較と切り戻し用）。既定は false
-        void SetLegacyTransformPropagation(bool bLegacy) noexcept { m_bLegacyTransformPropagation = bLegacy; }
-        [[nodiscard]] bool IsLegacyTransformPropagation() const noexcept { return m_bLegacyTransformPropagation; }
         // 固定stepの前後で呼ぶ。描画alphaの適用はCamera群より前に行う。
         void PrepareRenderInterpolationStep();
         void CaptureRenderInterpolationStep();
@@ -424,7 +414,7 @@ namespace NorvesLib::Core
         bool VerifyEcsTransform(uint32_t* outCount = nullptr);
 
         /**
-         * @brief 描画の変換（補間の結果）を、旧の式で全行を求め直した値と照合する（検査 ECS_RENDER_TRANSFORM）
+         * @brief 描画の変換（補間の結果）を、全行を求め直した値と照合する（検査 ECS_RENDER_TRANSFORM）
          *
          * 木を根からたどり、補間する行は履歴の写しに Prepare・Evaluate をかけた値、その子孫は「親の描画の変換 × 局所の変換」、
          * それ以外はワールドの変換を期待値とし、各 Entity の GetRenderWorldTransform と全成分で照合する。
@@ -545,15 +535,6 @@ namespace NorvesLib::Core
         void SyncToSceneViewBody();
 
         // ---- 描画の無効化の通知（設計 1.10） ----
-        /// 同期の対象になる行を読む（公開の状態の列・ポーズの版・通知）
-        struct RenderRowInfo
-        {
-            bool bRenderTransformChanged = false;
-            bool bPoseChanged = false;
-            bool bNotified = false;
-            uint64_t PoseSerial = 0;
-        };
-        RenderRowInfo ReadRenderRowInfo(const Component::Component& component, const Entity& owner) const;
         /// 公開の状態の列を書く。proxy を出したときは bPublished を true にして版を進め、出さなかった・外したときは false にする
         void RecordRenderPublish(const Component::Component& component, const Entity& owner, bool bPublished,
                                  uint64_t proxyHash, Ecs::EcsRenderSyncKind sink = Ecs::EcsRenderSyncKind::None);
@@ -564,16 +545,14 @@ namespace NorvesLib::Core
         /// 資源の変化の記録から取り出して、使っている行へ通知する
         void DrainRenderResourceChanges(const Rendering::MaterialResources* materials,
                                         const Rendering::MeshResources* meshes);
-        /// 変更も通知も無い行を作り直した proxy が、公開した内容と同じか確かめる
-        void CheckRenderRowUnchanged(const Component::Component& component, bool bBuilt, uint64_t proxyHash);
         bool IsRenderInvalidationCheckActive() const;
         /// 1 回の同期の終わり: 再試行の一覧と通知の入れ替え、検査の報告
         void FinishRenderInvalidationFrame();
         Component::Component* ComponentOfRow(Ecs::EcsEntity row) const;
 
-        // ---- 段 RenderSync の一覧（設計 1.10）。既定は一覧の行だけを公開する。旧の全走査では一覧と全走査を照合する ----
+        // ---- 段 RenderSync の一覧（設計 1.10）。一覧の行だけを公開する ----
         bool IsRenderSyncCheckActive() const;
-        /// 変更ログを取るかを同期の頭で決める。取り始めるときは、いまの状態を種として積む。戻りは、この同期で検査を走らせるか
+        /// 変更ログを取り始めていなければ、いまの状態を種として積む。戻りは、この同期で検査を走らせるか
         bool BeginRenderSyncFrame();
         void SeedRenderSyncLog(Entity& entity);
         /// 変更ログ: ワールドの変換の版が進んだ Entity の行を積む
@@ -596,7 +575,7 @@ namespace NorvesLib::Core
         void SyncRenderRowsDelta(const Rendering::MaterialResources* materials, const Rendering::MeshResources* meshes);
         /// 一覧の Remove を SceneView・画面空間の sink から外し、走査に入らない行の公開の状態を戻す
         void ApplyRenderSyncRemovals();
-        /// 変わった行 1 つの proxy を作り直して公開する（MegaGeometry は旧の走査が行う）
+        /// 変わった行 1 つの proxy を作り直して公開する
         void PublishRenderRow(Component::Component& component, const Rendering::MaterialResources* materials,
                               const Rendering::MeshResources* meshes);
         /// 既定の同期の結果を、全行から求め直した proxy と照合する（検査が有効なときだけ）
@@ -607,15 +586,6 @@ namespace NorvesLib::Core
         Ecs::EcsRenderSyncKind RenderSyncKindOf(const Component::Component& component) const;
         /// proxy の鍵（Mega は Entity の ObjectId、他は ComponentId）
         uint64_t RenderSyncProxyKey(const Component::Component& component) const;
-        /// 全走査が proxy を作り直した行を覚える（一覧との照合用）
-        void NoteRenderScanChanged(const Component::Component& component);
-        /// 走査の終わり: 外された proxy を求め、一覧と照合し、変更ログを整理する
-        void FinishRenderSyncFrame(const Container::UnorderedSet<uint64_t>& liveMesh,
-                                   const Container::UnorderedSet<uint64_t>& liveSkinned,
-                                   const Container::UnorderedSet<uint64_t>& liveMega,
-                                   const Container::UnorderedSet<uint64_t>& liveLight,
-                                   const Container::UnorderedSet<uint64_t>& liveScreenBoard,
-                                   const Container::UnorderedSet<uint64_t>& liveWorldBoard);
         /// 行の削除（公開の状態の列が消える）のフック。出していた proxy の Remove を積む
         static void OnPublishStateDestroyed(void* user, Ecs::EcsEntity entity, const void* value,
                                             Ecs::EcsHookReason reason);
@@ -624,10 +594,6 @@ namespace NorvesLib::Core
         Container::TUniquePtr<Ecs::SystemScheduler> m_Scheduler;
         /// 階層のシステム（ワールドの変換と EffectiveActive を伝播で求める）。EcsWorld より先に壊す
         Container::TUniquePtr<Ecs::EcsTransformSystem> m_EcsTransformSystem;
-        /// 旧の再帰でワールドの変換を更新する（--ecs-legacy-transform）
-        bool m_bLegacyTransformPropagation = false;
-        /// 描画の同期を旧の全走査にする（--ecs-legacy-sync）
-        bool m_bLegacyRenderSync = false;
         /// 検査 ECS_TRANSFORM の照合の回数と、最後に pass を出した回
         uint64_t m_EcsTransformCheckCalls = 0;
         uint64_t m_EcsTransformLastReport = 0;
@@ -713,6 +679,10 @@ namespace NorvesLib::Core
         void RunEcsTransformCheck();
         /// 階層のシステムを 1 回走らせ、値が変わった Entity の版を進めて、処理した Entity の dirty を戻す。求められなかった行の数を返す
         uint32_t PropagateEcsTransforms();
+        /// 作成を予約中の Entity と、予約中の親の下へ付け替えた行の部分木のワールドの変換を、Outer/Inner の親から求め直す
+        void UpdatePendingEntityTransforms();
+        /// entity とその子孫のワールドの変換を親の値から求め、変わった行を描画の更新へ知らせる
+        void RecomputePendingSubtreeTransform(Entity& entity, const Math::Transform& parentWorld);
 
         Ecs::EcsArchetypeId m_EntityArchetype = Ecs::kInvalidEcsArchetype;
         /// Component の行のアーキタイプ（基本の列 + 種類ごとの描画の値の列。添字は EcsComponentRowKind）
@@ -741,22 +711,9 @@ namespace NorvesLib::Core
         void CleanupDestroyedObjects();
         void DispatchFixedTick(float fixedDeltaTime);
         void CleanupAfterFixedStep();
-        void UpdateEntityTransformRecursive(Entity& entity, const Math::Transform& parentWorld);
-        void SyncEntityRecursive(Entity& entity,
-                                 const Rendering::MaterialResources* materials,
-                                 const Rendering::MeshResources* meshes,
-                                 Container::UnorderedSet<uint64_t>& liveMeshComponentIds,
-                                 Container::UnorderedSet<uint64_t>& liveSkinnedMeshComponentIds,
-                                 Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
-                                 Container::UnorderedSet<uint64_t>& liveLightIds,
-                                 Container::UnorderedSet<uint64_t>& liveScreenBoardComponentIds,
-                                 Container::UnorderedSet<uint64_t>& liveWorldBoardComponentIds,
-                                 ComponentDataRegistry* componentDataRegistry);
-        void CollectTransientBoardProxiesRecursive(Entity& entity,
-                                                   Container::VariableArray<Rendering::BoardProxy>& outProxies);
         /// 行を得た Text を、グリフの板を集める一覧へ足す
         void RegisterTextBoardRow(const Component::Component& component);
-        /// 一覧から死んだ行を除き、旧の走査と同じ木の深さ優先の順へ並べ直す
+        /// 一覧から死んだ行を除き、木の深さ優先の順（Entity ごとに Component が子より先）へ並べ直す
         void RebuildTextBoardOrder();
         void CollectPendingDestroyRecursive(Entity& entity, Container::VariableArray<Entity*>& toRemove);
         bool AttachRootEntity(Entity* entity);
@@ -813,10 +770,10 @@ namespace NorvesLib::Core
         uint32_t m_InvalidationFrameViolations = 0;
 
         // ---- 段 RenderSync の一覧 ----
-        /// 変更ログを取っている（検査 ECS_RENDER_SYNC が有効）
+        /// 変更ログを取っている（最初の同期で取り始める）
         bool m_bRenderSyncLogEnabled = false;
         bool m_bRenderSyncCheckForced = false;
-        /// この同期で一覧を作って照合する
+        /// この同期で結果を全行から作り直した proxy と照合する
         bool m_bRenderSyncCheckFrame = false;
         /// 変更ログ: 描画の同期が必要になった Component の行（EcsEntity を詰めたもの。同期の終わりに、まだ必要な行だけ残す）
         Container::VariableArray<uint64_t> m_RenderSyncDirtyLog;
@@ -845,8 +802,6 @@ namespace NorvesLib::Core
         bool m_bTextBoardOrderDirty = false;
         /// 直近の同期がたどった行の数
         uint32_t m_RenderSyncVisitedRows = 0;
-        /// 全走査が proxy を作り直した行
-        Container::UnorderedSet<uint64_t> m_RenderSyncScanChanged;
         RenderSyncStats m_RenderSyncStats;
         uint64_t m_RenderSyncCalls = 0;
         uint64_t m_RenderSyncLastReport = 0;

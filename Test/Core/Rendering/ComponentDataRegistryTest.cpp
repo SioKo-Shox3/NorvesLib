@@ -1,5 +1,4 @@
-﻿#include "Component/MegaGeometryComponent.h"
-#include "Component/MeshComponent.h"
+﻿#include "Component/MeshComponent.h"
 #include "Engine/NorvesEngine.h"
 #include "Object/World.h"
 #include "Rendering/SceneView.h"
@@ -19,14 +18,7 @@ namespace
         return handle;
     }
 
-    MegaGeometry::MegaMeshHandle MakeMegaMeshHandle(uint64_t id)
-    {
-        MegaGeometry::MegaMeshHandle handle;
-        handle.Id = id;
-        return handle;
-    }
-
-    // レジストリの捕捉は旧の全走査（SetLegacyRenderSync(true)）だけが行うので、捕捉を見るテストはそれを有効にする
+    // World の同期はレジストリへ捕捉しない（捕捉していた旧の全走査は消した）。ここではハンドルの発行と解決を見る
     void ResetRegistry()
     {
         ComponentDataRegistry& registry = GEngine.GetComponentDataRegistry();
@@ -62,42 +54,6 @@ namespace
             if (proxy.ObjectId == objectId)
             {
                 return &proxy;
-            }
-        }
-        return nullptr;
-    }
-
-    const EntityTransformData* FindTransformData(EntityHandle handle)
-    {
-        for (const EntityTransformData& data : GEngine.GetComponentDataRegistry().GetTransformData())
-        {
-            if (data.Handle == handle)
-            {
-                return &data;
-            }
-        }
-        return nullptr;
-    }
-
-    const MeshComponentData* FindMeshData(EntityHandle handle)
-    {
-        for (const MeshComponentData& data : GEngine.GetComponentDataRegistry().GetMeshData())
-        {
-            if (data.Handle == handle)
-            {
-                return &data;
-            }
-        }
-        return nullptr;
-    }
-
-    const MegaGeometryComponentData* FindMegaData(EntityHandle handle)
-    {
-        for (const MegaGeometryComponentData& data : GEngine.GetComponentDataRegistry().GetMegaGeometryData())
-        {
-            if (data.Handle == handle)
-            {
-                return &data;
             }
         }
         return nullptr;
@@ -151,7 +107,6 @@ namespace
 
         World world;
         world.Initialize();
-        assert(!world.IsLegacyRenderSync());
         SceneView view;
         InitializeSceneView(view);
         world.SetSceneView(&view);
@@ -194,7 +149,6 @@ namespace
 
         World world;
         world.Initialize();
-        world.SetLegacyRenderSync(true);
         SceneView view;
         InitializeSceneView(view);
         world.SetSceneView(&view);
@@ -217,9 +171,8 @@ namespace
         assert(registry.SetEnabled(true));
 
         world.SyncToSceneView();
-        const EntityTransformData* transformData = FindTransformData(handleBeforeEnable);
-        assert(transformData);
-        assert(transformData->WorldTransform.position.x == 2.0f);
+        assert(registry.ResolveEntity(handleBeforeEnable) == entity);
+        assert(registry.GetTransformData().empty());
 
         world.Finalize();
         ResetRegistry();
@@ -235,7 +188,6 @@ namespace
 
         World world;
         world.Initialize();
-        world.SetLegacyRenderSync(true);
         SceneView view;
         InitializeSceneView(view);
         world.SetSceneView(&view);
@@ -252,8 +204,8 @@ namespace
         assert(childHandle.IsValid());
 
         world.SyncToSceneView();
-        assert(FindTransformData(parentHandle));
-        assert(FindTransformData(childHandle));
+        assert(registry.ResolveEntity(parentHandle) == parent);
+        assert(registry.ResolveEntity(childHandle) == child);
 
         world.Finalize();
         ResetRegistry();
@@ -269,7 +221,6 @@ namespace
 
         World world;
         world.Initialize();
-        world.SetLegacyRenderSync(true);
         SceneView view;
         InitializeSceneView(view);
         world.SetSceneView(&view);
@@ -286,12 +237,11 @@ namespace
         ComponentDataRegistry& registry = GEngine.GetComponentDataRegistry();
         EntityHandle parentHandle = registry.GetHandle(*parent);
         EntityHandle childHandle = registry.GetHandle(*child);
-        assert(FindMeshData(childHandle));
+        assert(registry.ResolveEntity(childHandle) == child);
 
         world.RemoveObject(parent);
         assert(registry.ResolveEntity(parentHandle) == nullptr);
         assert(registry.ResolveEntity(childHandle) == nullptr);
-        assert(!FindMeshData(childHandle));
 
         world.Finalize();
         ResetRegistry();
@@ -349,7 +299,7 @@ namespace
         ResetRegistry();
     }
 
-    void TestReparentPreservesHandleAndUpdatesDenseData()
+    void TestReparentPreservesHandle()
     {
         ResetRegistry();
         if (!EnableRegistryOrSkip())
@@ -359,7 +309,6 @@ namespace
 
         World world;
         world.Initialize();
-        world.SetLegacyRenderSync(true);
         SceneView view;
         InitializeSceneView(view);
         world.SetSceneView(&view);
@@ -386,62 +335,7 @@ namespace
 
         child->SetPosition(9.0f, 0.0f, 0.0f);
         world.SyncToSceneView();
-
-        const EntityTransformData* transformData = FindTransformData(handleAfter);
-        const MeshComponentData* meshData = FindMeshData(handleAfter);
-        assert(transformData);
-        assert(meshData);
-        assert(transformData->WorldTransform.position.x == 9.0f);
-        assert(meshData->WorldBounds.CenterX == 9.0f);
-
-        world.Finalize();
-        ResetRegistry();
-    }
-
-    void TestInvisibleAndInvalidProxiesDoNotPublishStaleDenseEntries()
-    {
-        ResetRegistry();
-        if (!EnableRegistryOrSkip())
-        {
-            return;
-        }
-
-        World world;
-        world.Initialize();
-        world.SetLegacyRenderSync(true);
-        SceneView view;
-        InitializeSceneView(view);
-        world.SetSceneView(&view);
-
-        Entity* meshEntity = world.SpawnEntity<Entity>();
-        Entity* megaEntity = world.SpawnEntity<Entity>();
-        assert(meshEntity);
-        assert(megaEntity);
-
-        MeshComponent* mesh = world.CreateComponent<MeshComponent>(meshEntity);
-        MegaGeometryComponent* mega = world.CreateComponent<MegaGeometryComponent>(megaEntity);
-        assert(mesh);
-        assert(mega);
-        mesh->SetMeshHandle(MakeMeshHandle(50));
-        mega->SetMegaMeshHandle(MakeMegaMeshHandle(60));
-
-        world.SyncToSceneView();
-        assert(GEngine.GetComponentDataRegistry().GetMeshData().size() == 1);
-        assert(GEngine.GetComponentDataRegistry().GetMegaGeometryData().size() == 1);
-
-        mesh->SetVisible(false);
-        mega->SetVisible(false);
-        world.SyncToSceneView();
-        assert(GEngine.GetComponentDataRegistry().GetMeshData().empty());
-        assert(GEngine.GetComponentDataRegistry().GetMegaGeometryData().empty());
-
-        mesh->SetVisible(true);
-        mega->SetVisible(true);
-        mesh->SetMeshHandle(MeshDataHandle::Invalid());
-        mega->SetMegaMeshHandle(MegaGeometry::MegaMeshHandle::Invalid());
-        world.SyncToSceneView();
-        assert(GEngine.GetComponentDataRegistry().GetMeshData().empty());
-        assert(GEngine.GetComponentDataRegistry().GetMegaGeometryData().empty());
+        assert(registry.ResolveEntity(handleAfter) == child);
 
         world.Finalize();
         ResetRegistry();
@@ -476,52 +370,6 @@ namespace
         world.Finalize();
         ResetRegistry();
     }
-
-    void TestMultiWorldLatestSyncReplacesDenseScratch()
-    {
-        ResetRegistry();
-        if (!EnableRegistryOrSkip())
-        {
-            return;
-        }
-
-        World worldA;
-        World worldB;
-        worldA.Initialize();
-        worldB.Initialize();
-        worldA.SetLegacyRenderSync(true);
-        worldB.SetLegacyRenderSync(true);
-        SceneView viewA;
-        SceneView viewB;
-        InitializeSceneView(viewA);
-        InitializeSceneView(viewB);
-        worldA.SetSceneView(&viewA);
-        worldB.SetSceneView(&viewB);
-
-        Entity* entityA = worldA.SpawnEntity<Entity>();
-        Entity* entityB = worldB.SpawnEntity<Entity>();
-        assert(entityA);
-        assert(entityB);
-        entityA->SetPosition(1.0f, 0.0f, 0.0f);
-        entityB->SetPosition(2.0f, 0.0f, 0.0f);
-
-        ComponentDataRegistry& registry = GEngine.GetComponentDataRegistry();
-        EntityHandle handleA = registry.GetHandle(*entityA);
-        EntityHandle handleB = registry.GetHandle(*entityB);
-
-        worldA.SyncToSceneView();
-        assert(registry.GetTransformData().size() == 1);
-        assert(registry.GetTransformData()[0].Handle == handleA);
-
-        worldB.SyncToSceneView();
-        assert(registry.GetTransformData().size() == 1);
-        assert(registry.GetTransformData()[0].Handle == handleB);
-        assert(registry.GetTransformData()[0].WorldTransform.position.x == 2.0f);
-
-        worldA.Finalize();
-        worldB.Finalize();
-        ResetRegistry();
-    }
 }
 
 int main()
@@ -534,10 +382,8 @@ int main()
     TestAdoptedSubtreeRegistersChildren();
     TestSubtreeDestroyInvalidatesHandles();
     TestRemoveEntityHeapOwnedAndFinalizeInvalidate();
-    TestReparentPreservesHandleAndUpdatesDenseData();
-    TestInvisibleAndInvalidProxiesDoNotPublishStaleDenseEntries();
+    TestReparentPreservesHandle();
     TestGenerationReuseRejectsStaleHandles();
-    TestMultiWorldLatestSyncReplacesDenseScratch();
 
     std::cout << "ComponentDataRegistryTest passed\n";
     return 0;

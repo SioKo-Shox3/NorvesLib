@@ -940,8 +940,8 @@ namespace NorvesLib::Core::Scene
         m_LastStats = UpdateStats{};
         ++m_UpdateCalls;
 
-        // 描画の同期が旧の全走査のとき・SceneView が無いとき（同期の一覧が作られない）は、毎回全量で作る
-        const bool bIncremental = !world.IsLegacyRenderSync() && world.GetSceneView() != nullptr;
+        // SceneView が無いとき（同期の一覧が作られない）は、毎回全量で作る
+        const bool bIncremental = world.GetSceneView() != nullptr;
         if (bIncremental && m_TrackedWorld != nullptr && m_TrackedWorld != &world)
         {
             // 別の World に替わった。古い World は消えているかもしれないので触らず、登録だけ無効にする

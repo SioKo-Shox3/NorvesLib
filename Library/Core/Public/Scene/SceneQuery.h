@@ -89,10 +89,10 @@ namespace NorvesLib::Core::Scene
      * Entity* は非所有の借用ポインタとして保持します。保持ポインタは次の Rebuild / Update または World 変更まで有効です。
      *
      * 更新は 2 通り:
-     * - Rebuild: 全 Entry を入れ替えて BVH を作り直す（テスト・World を持たない呼び出し・旧の経路）。
+     * - Rebuild: 全 Entry を入れ替えて BVH を作り直す（テスト・World を持たない呼び出し・SceneView の無い World）。
      * - Update: World の変更（ECS の変更ログ・行の削除のフック・描画同期の一覧）から、変わった Entity の境界だけを
      *   葉から親へ refit し、追加は保留の一覧、削除は墓石にする。保留・墓石・累積した更新が増えたときだけ BVH を作り直す。
-     *   描画同期が旧の全走査のとき・SceneView が無いときは、毎回 Rebuild と同じ結果にする。
+     *   SceneView が無いときは、毎回 Rebuild と同じ結果にする。
      */
     class SceneQuery
     {

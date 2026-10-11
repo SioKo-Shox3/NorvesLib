@@ -2,10 +2,10 @@
 
 /**
  * @file EcsRenderSync.h
- * @brief 段 RenderSync の「変わった行」と Remove の一覧（設計 1.10）と、全走査との照合
+ * @brief 段 RenderSync の「変わった行」と Remove の一覧（設計 1.10）
  *
  * 一覧は変更ログ（描画の値の変更・変換の版の変化）・通知・公開の状態（EcsPublishState）から作る。
- * 同期はまだ全走査のままなので、一覧と全走査で見つけた変化が一致することを検査 ECS_RENDER_SYNC で確かめる。
+ * 同期は一覧の行だけを公開し、Remove だけを外す。結果は検査 ECS_RENDER_SYNC が全行から作り直した proxy と照合する。
  *
  * - 変わった行: 次の同期で proxy を作り直す行。鍵は proxy の鍵（Mega は Entity の ObjectId、他は ComponentId）。
  * - Remove: 構造の変化で proxy を外す行（行の削除・部分木の非アクティブ化・破棄待ち）。
@@ -15,7 +15,6 @@
 #include "Container/Containers.h"
 
 #include <cstdint>
-#include <cstdio>
 
 namespace NorvesLib::Core::Ecs
 {
@@ -62,94 +61,4 @@ namespace NorvesLib::Core::Ecs
             Removed.clear();
         }
     };
-
-    /// 全走査との照合の結果
-    struct EcsRenderSyncReport
-    {
-        /// 照合した項目の数（走査で変わった行・外された proxy・Remove の合計）
-        uint32_t Examined = 0;
-        /// 走査では変わった行なのに、一覧に無い
-        uint32_t ChangedMissing = 0;
-        /// 一覧にあるのに、走査では変わった行でない
-        uint32_t ChangedExtra = 0;
-        /// 走査で外された proxy が、一覧の Remove にも変わった行にも無い
-        uint32_t RemovedUnexplained = 0;
-        /// 一覧の Remove にあるのに、走査後も生きている
-        uint32_t RemovedStillLive = 0;
-        /// 最初の食い違いの説明
-        char FirstDetail[160] = {};
-
-        [[nodiscard]] uint32_t Violations() const
-        {
-            return ChangedMissing + ChangedExtra + RemovedUnexplained + RemovedStillLive;
-        }
-
-        void NoteDetail(const char *what, uint64_t packed)
-        {
-            if (FirstDetail[0] == '\0')
-            {
-                std::snprintf(FirstDetail, sizeof(FirstDetail), "%s (kind=%u, key=%llu)", what,
-                              static_cast<unsigned>(EcsRenderSyncKindOf(packed)),
-                              static_cast<unsigned long long>(EcsRenderSyncKeyOf(packed)));
-            }
-        }
-    };
-
-    /**
-     * @brief 一覧を、全走査の結果と照合する
-     * @param list 同期の前に作った一覧
-     * @param scanChanged 走査で proxy を作り直した行（Board は EcsRenderSyncKind::Board）
-     * @param scanStale 走査の終わりに外された proxy（Board は出していた先の種類）
-     * @param liveAfter 走査後に生きている proxy（Board は出している先の種類）
-     */
-    inline EcsRenderSyncReport EcsRenderSyncCompare(const EcsRenderSyncList &list,
-                                                    const Container::UnorderedSet<uint64_t> &scanChanged,
-                                                    const Container::UnorderedSet<uint64_t> &scanStale,
-                                                    const Container::UnorderedSet<uint64_t> &liveAfter)
-    {
-        EcsRenderSyncReport report;
-        report.Examined = static_cast<uint32_t>(scanChanged.size() + scanStale.size() + list.Removed.size());
-
-        for (const uint64_t packed : scanChanged)
-        {
-            if (list.Changed.find(packed) == list.Changed.end())
-            {
-                ++report.ChangedMissing;
-                report.NoteDetail("走査で変わった行が一覧に無い", packed);
-            }
-        }
-        for (const uint64_t packed : list.Changed)
-        {
-            if (scanChanged.find(packed) == scanChanged.end())
-            {
-                ++report.ChangedExtra;
-                report.NoteDetail("一覧の変わった行が走査では変わっていない", packed);
-            }
-        }
-        for (const uint64_t packed : scanStale)
-        {
-            if (list.Removed.find(packed) != list.Removed.end())
-            {
-                continue;
-            }
-            const EcsRenderSyncKind kind = EcsRenderSyncKindOf(packed);
-            const bool bBoard = kind == EcsRenderSyncKind::WorldBoard || kind == EcsRenderSyncKind::ScreenBoard;
-            const uint64_t changedKey =
-                EcsRenderSyncKey(bBoard ? EcsRenderSyncKind::Board : kind, EcsRenderSyncKeyOf(packed));
-            if (list.Changed.find(changedKey) == list.Changed.end())
-            {
-                ++report.RemovedUnexplained;
-                report.NoteDetail("走査で外された proxy が一覧に無い", packed);
-            }
-        }
-        for (const uint64_t packed : list.Removed)
-        {
-            if (liveAfter.find(packed) != liveAfter.end())
-            {
-                ++report.RemovedStillLive;
-                report.NoteDetail("一覧の Remove なのに走査後も生きている", packed);
-            }
-        }
-        return report;
-    }
 }

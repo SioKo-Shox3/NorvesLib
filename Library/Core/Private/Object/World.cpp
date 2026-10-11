@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 
@@ -1791,7 +1792,7 @@ namespace NorvesLib::Core
             return false;
         }
         // 作成予約中の行・付け替え待ちがある間と、Active・PendingDestroy の変更がまだ伝播されていない間は、キャッシュが古いので祖先をたどる
-        if (!m_bLegacyTransformPropagation && m_EcsWorld && m_PendingEntityRelinks.empty() && m_PendingEntityCreates.empty() &&
+        if (m_EcsWorld && m_PendingEntityRelinks.empty() && m_PendingEntityCreates.empty() &&
             m_EcsTransformSystem && !m_EcsTransformSystem->HasUnpropagatedFlagChanges())
         {
             const Ecs::EcsEntity row = entity.GetEcsEntity();
@@ -1804,7 +1805,7 @@ namespace NorvesLib::Core
                 }
             }
         }
-        // 行が無い・まだ求めていない・旧の経路のときは、祖先をたどる
+        // 行が無い・まだ求めていないときは、祖先をたどる
         for (const Entity* current = &entity; current; current = current->GetParentEntity())
         {
             if (!current->IsActive() || current->IsPendingDestroy())
@@ -2316,17 +2317,6 @@ namespace NorvesLib::Core
             return;
         }
 
-        // ComponentDataRegistry の捕捉は旧の全走査だけが行う（全行をフレームごとに公開し直す仕組みなので、
-        // 既定の同期では消去も公開もしない）
-        ComponentDataRegistry& componentDataRegistry = GEngine.GetComponentDataRegistry();
-        ComponentDataRegistry* enabledComponentDataRegistry = (m_bLegacyRenderSync && componentDataRegistry.IsEnabled())
-            ? &componentDataRegistry
-            : nullptr;
-        if (enabledComponentDataRegistry)
-        {
-            enabledComponentDataRegistry->BeginFrameCapture();
-        }
-
         UpdateRenderTransforms();
 
         // MegaGeometry: 前回の同期で動いた proxy の前の変換を今の変換へ揃える（差分の同期のとき。履歴の落ち着き）
@@ -2335,86 +2325,25 @@ namespace NorvesLib::Core
             m_SceneView->BeginMegaGeometrySync();
         }
 
-        // 資源の変化を行へ知らせてから走査する（通知を受けた行は走査で proxy を作り直す）
-        // 既定の同期では、検査 ECS_RENDER_SYNC も公開した内容の覚えを使う
-        m_bInvalidationCheckFrame = IsRenderInvalidationCheckActive() ||
-                                    (!m_bLegacyRenderSync && IsRenderSyncCheckActive());
+        // 資源の変化を行へ知らせてから一覧を作る（通知を受けた行は proxy を作り直す）。
+        // 検査 ECS_RENDER_SYNC も公開した内容の覚えを使う
+        m_bInvalidationCheckFrame = IsRenderInvalidationCheckActive() || IsRenderSyncCheckActive();
         m_InvalidationFrameExamined = 0;
         m_InvalidationFrameViolations = 0;
         DrainRenderResourceChanges(materials, meshes);
 
         // 段 RenderSync の一覧: 変更ログ・通知・公開の状態から作る
         m_bRenderSyncCheckFrame = BeginRenderSyncFrame();
-        if (!m_bLegacyRenderSync)
+
+        // 検査が止まっている間に覚えが古くなるので、止まっているフレームでは捨てる
+        if (!m_bInvalidationCheckFrame && !m_InvalidationHashes.empty())
         {
-            // 検査が止まっている間に覚えが古くなるので、止まっているフレームでは捨てる
-            if (!m_bInvalidationCheckFrame && !m_InvalidationHashes.empty())
-            {
-                m_InvalidationHashes.clear();
-            }
-
-            // 変わった行だけを公開し、Remove の一覧だけを外す。Text は変換のキャッシュを求め直す行だけを見る。
-            // Entity の木はたどらない（--mega-scene-full-sync だけ、MegaGeometry の全行を数えて外す）
-            SyncRenderRowsDelta(materials, meshes);
-
-            FinishRenderInvalidationFrame();
-            return;
+            m_InvalidationHashes.clear();
         }
 
-        // 旧の全走査では、一覧を作って走査の結果と照合する
-        if (m_bRenderSyncCheckFrame)
-        {
-            BuildRenderSyncList();
-        }
-
-        Container::UnorderedSet<uint64_t> liveMeshComponentIds;
-        Container::UnorderedSet<uint64_t> liveSkinnedMeshComponentIds;
-        Container::UnorderedSet<uint64_t> liveMegaGeometryObjectIds;
-        Container::UnorderedSet<uint64_t> liveLightIds;
-        Container::UnorderedSet<uint64_t> liveScreenBoardComponentIds;
-        Container::UnorderedSet<uint64_t> liveWorldBoardComponentIds;
-        liveMeshComponentIds.reserve(m_Inners.size());
-        liveSkinnedMeshComponentIds.reserve(m_Inners.size());
-        liveMegaGeometryObjectIds.reserve(m_Inners.size());
-        liveLightIds.reserve(m_Inners.size());
-        liveScreenBoardComponentIds.reserve(m_Inners.size());
-        liveWorldBoardComponentIds.reserve(m_Inners.size());
-
-        auto roots = GetRootEntities();
-        for (auto* entity : roots)
-        {
-            SyncEntityRecursive(
-                *entity,
-                materials,
-                meshes,
-                liveMeshComponentIds,
-                liveSkinnedMeshComponentIds,
-                liveMegaGeometryObjectIds,
-                liveLightIds,
-                liveScreenBoardComponentIds,
-                liveWorldBoardComponentIds,
-                enabledComponentDataRegistry);
-        }
-
-        if (m_bRenderSyncCheckFrame)
-        {
-            FinishRenderSyncFrame(liveMeshComponentIds, liveSkinnedMeshComponentIds, liveMegaGeometryObjectIds,
-                                  liveLightIds, liveScreenBoardComponentIds, liveWorldBoardComponentIds);
-        }
-
-        if (m_SceneView)
-        {
-            m_SceneView->RemoveStaleMeshProxies(liveMeshComponentIds);
-            m_SceneView->RemoveStaleSkinnedMeshProxies(liveSkinnedMeshComponentIds);
-            m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaGeometryObjectIds);
-            m_SceneView->RemoveStaleLightProxies(liveLightIds);
-            m_SceneView->RemoveStaleBoardProxies(liveWorldBoardComponentIds);
-        }
-
-        if (m_ScreenSpaceBoardSink)
-        {
-            m_ScreenSpaceBoardSink->RemoveStaleBoardProxies(liveScreenBoardComponentIds);
-        }
+        // 変わった行だけを公開し、Remove の一覧だけを外す。Text は変換のキャッシュを求め直す行だけを見る。
+        // Entity の木はたどらない（--mega-scene-full-sync だけ、MegaGeometry の全行を数えて外す）
+        SyncRenderRowsDelta(materials, meshes);
 
         FinishRenderInvalidationFrame();
     }
@@ -2521,33 +2450,6 @@ namespace NorvesLib::Core
         }
     }
 
-    World::RenderRowInfo World::ReadRenderRowInfo(const Component::Component& component, const Entity& owner) const
-    {
-        RenderRowInfo info;
-        info.bNotified = m_bRenderRepublishAll ||
-                         m_RenderNotified.find(component.GetComponentId()) != m_RenderNotified.end();
-        if (!m_EcsWorld)
-        {
-            return info;
-        }
-        const Ecs::EcsEntity row = component.GetEcsEntity();
-        if (row.IsNull() || !m_EcsWorld->IsAlive(row))
-        {
-            return info;
-        }
-        const Ecs::EcsPublishState* publish = m_EcsWorld->GetColumnValue<Ecs::EcsPublishState>(row);
-        if (publish != nullptr)
-        {
-            info.bRenderTransformChanged = publish->RenderTransformVersion != owner.GetRenderTransformVersion();
-        }
-        if (const Ecs::EcsPoseVersion* pose = m_EcsWorld->GetColumnValue<Ecs::EcsPoseVersion>(row))
-        {
-            info.PoseSerial = pose->Serial;
-            info.bPoseChanged = publish != nullptr && publish->PoseSerial != pose->Serial;
-        }
-        return info;
-    }
-
     void World::RecordRenderPublish(const Component::Component& component, const Entity& owner, bool bPublished,
                                     uint64_t proxyHash, Ecs::EcsRenderSyncKind sink)
     {
@@ -2651,26 +2553,6 @@ namespace NorvesLib::Core
         }
     }
 
-    void World::CheckRenderRowUnchanged(const Component::Component& component, bool bBuilt, uint64_t proxyHash)
-    {
-        ++m_InvalidationStats.Probed;
-        ++m_InvalidationFrameExamined;
-        const auto shadowIt = m_InvalidationHashes.find(component.GetComponentId());
-        const bool bHadShadow = shadowIt != m_InvalidationHashes.end();
-        const bool bSame = bBuilt ? (bHadShadow && shadowIt->second == proxyHash) : !bHadShadow;
-        if (bSame)
-        {
-            return;
-        }
-        ++m_InvalidationStats.Violations;
-        ++m_InvalidationFrameViolations;
-        if (m_InvalidationStats.Violations <= 8)
-        {
-            LOG_ERROR("ECS_RENDER_INVALIDATION: 変更も通知も無いのに proxy が変わった (component=%llu, 作れた=%d, 公開済み=%d)",
-                      static_cast<unsigned long long>(component.GetComponentId()), bBuilt ? 1 : 0, bHadShadow ? 1 : 0);
-        }
-    }
-
     void World::FinishRenderInvalidationFrame()
     {
         if (m_bInvalidationCheckFrame && m_EcsWorld)
@@ -2718,7 +2600,7 @@ namespace NorvesLib::Core
     }
 
     // ========================================
-    // 段 RenderSync の一覧（設計 1.10。準備: 同期は全走査のまま、一覧と全走査を照合する）
+    // 段 RenderSync の一覧（設計 1.10。変更ログ・通知・公開の状態から、公開する行と Remove を決める）
     // ========================================
 
     bool World::IsRenderSyncCheckActive() const
@@ -2749,13 +2631,6 @@ namespace NorvesLib::Core
                 }
             }
         }
-        else if (m_bRenderSyncLogEnabled && !IsRenderSyncCheckActive() && m_bLegacyRenderSync)
-        {
-            m_bRenderSyncLogEnabled = false;
-            m_RenderSyncDirtyLog.clear();
-            m_RenderSyncTransformLog.clear();
-            m_RenderSyncDestroyed.clear();
-        }
     }
 
     void World::SeedRenderSyncLog(Entity& entity)
@@ -2781,10 +2656,8 @@ namespace NorvesLib::Core
 
     bool World::BeginRenderSyncFrame()
     {
-        // 旧の全走査では、検査が有効なときだけ変更ログを取る。既定の同期では常に取る
-        const bool bCheck = IsRenderSyncCheckActive();
-        const bool bActive = bCheck || !m_bLegacyRenderSync;
-        if (bActive && !m_bRenderSyncLogEnabled)
+        // 変更ログは常に取る。最初の同期で、それまでに必要だった分を種として積む
+        if (!m_bRenderSyncLogEnabled)
         {
             m_bRenderSyncLogEnabled = true;
             m_RenderSyncDirtyLog.clear();
@@ -2794,15 +2667,7 @@ namespace NorvesLib::Core
                 SeedRenderSyncLog(*root);
             }
         }
-        else if (!bActive && m_bRenderSyncLogEnabled)
-        {
-            m_bRenderSyncLogEnabled = false;
-            m_RenderSyncDirtyLog.clear();
-            m_RenderSyncTransformLog.clear();
-            m_RenderSyncDestroyed.clear();
-        }
-        m_RenderSyncScanChanged.clear();
-        return bCheck;
+        return IsRenderSyncCheckActive();
     }
 
     void World::NoteComponentRenderDirty(Ecs::EcsEntity row)
@@ -2887,25 +2752,6 @@ namespace NorvesLib::Core
         return component.GetComponentId();
     }
 
-    void World::NoteRenderScanChanged(const Component::Component& component)
-    {
-        if (!m_bRenderSyncCheckFrame || !m_EcsWorld)
-        {
-            return;
-        }
-        // 行が付く前の Component は変更ログに載らない（付いたときに積む）。照合の対象にしない
-        const Ecs::EcsEntity row = component.GetEcsEntity();
-        if (row.IsNull() || !m_EcsWorld->IsAlive(row))
-        {
-            return;
-        }
-        const Ecs::EcsRenderSyncKind kind = RenderSyncKindOf(component);
-        if (kind != Ecs::EcsRenderSyncKind::None)
-        {
-            m_RenderSyncScanChanged.insert(Ecs::EcsRenderSyncKey(kind, RenderSyncProxyKey(component)));
-        }
-    }
-
     void World::AddRenderSyncChanged(Component::Component& component, bool bFromSettle)
     {
         if (CastTo<Component::TextComponent>(&component) != nullptr)
@@ -2963,7 +2809,7 @@ namespace NorvesLib::Core
             const Entity* owner = text != nullptr ? text->GetOwner() : nullptr;
             if (owner == nullptr || !IsEntityRenderScanned(*owner))
             {
-                // 走査に入らない部分木の行は、旧の走査と同じく求め直さない。dirty の行はログに残り、
+                // 走査に入らない部分木の行は求め直さない。dirty の行はログに残り、
                 // 再びアクティブになったときは dirty になって求め直す
                 continue;
             }
@@ -2971,7 +2817,7 @@ namespace NorvesLib::Core
             text->RefreshRenderTransformCache();
             text->ClearRenderStateDirty();
             text->SetLastSyncedTransformVersion(owner->GetTransformVersion());
-            // 旧の走査は毎フレーム求め直して前フレームの変換を今の変換に揃えていた。揃うまで次の同期でも求め直す
+            // 前フレームの変換が今の変換に揃うまで、次の同期でも求め直す
             if (!SameMatrixBits(text->GetPreviousWorldTransformCache(), text->GetWorldTransformCache()))
             {
                 m_RenderTextSettleRows.push_back(packed);
@@ -3032,7 +2878,7 @@ namespace NorvesLib::Core
         }
 
         // 板のフリップブックは、一覧を作る前に進めておく（進めた結果で描画の同期が必要になった板を変更ログに載せる）。
-        // 走査での呼び出しは、すでに進めてあるので何もしない
+        // 公開のときの呼び出しは、すでに進めてあるので何もしない
         {
             Ecs::EcsQuery query;
             query.All.push_back(Ecs::EcsColumnInfoOf<Ecs::EcsBoardRender>().Type);
@@ -3147,102 +2993,8 @@ namespace NorvesLib::Core
         m_RenderSyncDirtyLog.resize(write);
     }
 
-    void World::FinishRenderSyncFrame(const Container::UnorderedSet<uint64_t>& liveMesh,
-                                      const Container::UnorderedSet<uint64_t>& liveSkinned,
-                                      const Container::UnorderedSet<uint64_t>& liveMega,
-                                      const Container::UnorderedSet<uint64_t>& liveLight,
-                                      const Container::UnorderedSet<uint64_t>& liveScreenBoard,
-                                      const Container::UnorderedSet<uint64_t>& liveWorldBoard)
-    {
-        using Kind = Ecs::EcsRenderSyncKind;
-        Container::UnorderedSet<uint64_t> liveAfter;
-        const auto addLive = [&liveAfter](Kind kind, const Container::UnorderedSet<uint64_t>& live)
-        {
-            for (const uint64_t key : live)
-            {
-                liveAfter.insert(Ecs::EcsRenderSyncKey(kind, key));
-            }
-        };
-        addLive(Kind::Mesh, liveMesh);
-        addLive(Kind::SkinnedMesh, liveSkinned);
-        addLive(Kind::MegaGeometry, liveMega);
-        addLive(Kind::Light, liveLight);
-        addLive(Kind::ScreenBoard, liveScreenBoard);
-        addLive(Kind::WorldBoard, liveWorldBoard);
-
-        // 走査の終わりに外される proxy: SceneView が持っているのに、生きていないもの（画面空間の sink は数えられないので見ない）
-        Container::UnorderedSet<uint64_t> scanStale;
-        if (m_SceneView)
-        {
-            const auto addStale = [&scanStale](Kind kind, uint64_t key, const Container::UnorderedSet<uint64_t>& live)
-            {
-                if (live.find(key) == live.end())
-                {
-                    scanStale.insert(Ecs::EcsRenderSyncKey(kind, key));
-                }
-            };
-            for (const Rendering::MeshProxy& proxy : m_SceneView->GetMeshProxies())
-            {
-                addStale(Kind::Mesh, proxy.ComponentId, liveMesh);
-            }
-            for (const Rendering::SkinnedMeshProxy& proxy : m_SceneView->GetSkinnedMeshProxies())
-            {
-                addStale(Kind::SkinnedMesh, proxy.ComponentId, liveSkinned);
-            }
-            for (const Rendering::MegaGeometryProxy& proxy : m_SceneView->GetMegaGeometryProxies())
-            {
-                // 散布の行の proxy は散布の Component が公開と取り下げを持つ（照合は検査 MASS_RANGES）
-                if (Rendering::IsMegaScatterProxyKey(proxy.ObjectId))
-                {
-                    continue;
-                }
-                addStale(Kind::MegaGeometry, proxy.ObjectId, liveMega);
-            }
-            for (const Rendering::LightProxy& proxy : m_SceneView->GetLightProxies())
-            {
-                addStale(Kind::Light, proxy.LightId, liveLight);
-            }
-            for (const Rendering::BoardProxy& proxy : m_SceneView->GetBoardProxies())
-            {
-                addStale(Kind::WorldBoard, proxy.ComponentId, liveWorldBoard);
-            }
-        }
-
-        const Ecs::EcsRenderSyncReport report =
-            Ecs::EcsRenderSyncCompare(m_RenderSyncList, m_RenderSyncScanChanged, scanStale, liveAfter);
-        ++m_RenderSyncStats.Checked;
-        m_RenderSyncStats.Examined += report.Examined;
-        m_RenderSyncStats.Violations += report.Violations();
-        if (report.Violations() != 0 && m_RenderSyncStats.Violations <= 8)
-        {
-            LOG_ERROR("ECS_RENDER_SYNC: 変わった行・Remove の一覧が全走査と食い違う (変更の欠け=%u, 余り=%u, 外れた proxy の説明なし=%u, Remove なのに生存=%u): %s",
-                      report.ChangedMissing, report.ChangedExtra, report.RemovedUnexplained, report.RemovedStillLive,
-                      report.FirstDetail);
-        }
-
-        TrimRenderSyncLogs();
-
-        NorvesLib::Debug::EngineChecks* checks = NorvesLib::Core::Engine::GEngine != nullptr
-            ? &NorvesLib::Core::Engine::GEngine->GetEngineChecks()
-            : nullptr;
-        if (checks == nullptr || !checks->IsEnabled("ECS_RENDER_SYNC"))
-        {
-            return;
-        }
-        ++m_RenderSyncCalls;
-        const bool bPass = report.Violations() == 0;
-        // 呼び出しが多いので、fail は毎回、pass は最初に行を照合できた回と 64 回ごとに出す
-        const bool bReportPass = bPass && report.Examined > 0 &&
-                                 (m_RenderSyncLastReport == 0 || m_RenderSyncCalls % 64 == 0);
-        if (!bPass || bReportPass)
-        {
-            checks->Report("ECS_RENDER_SYNC", bPass, report.Examined);
-            m_RenderSyncLastReport = m_RenderSyncCalls;
-        }
-    }
-
     // ========================================
-    // 既定の同期（変わった行だけを公開し、Remove の一覧だけを外す）
+    // 同期（変わった行だけを公開し、Remove の一覧だけを外す）
     // ========================================
 
     void World::SyncRenderRowsDelta(const Rendering::MaterialResources* materials, const Rendering::MeshResources* meshes)
@@ -3914,17 +3666,7 @@ namespace NorvesLib::Core
             return;
         }
 
-        if (m_bLegacyRenderSync)
-        {
-            auto roots = GetRootEntities();
-            for (Entity* entity : roots)
-            {
-                CollectTransientBoardProxiesRecursive(*entity, outProxies);
-            }
-            return;
-        }
-
-        // Text の行の一覧だけを見る。板の並びは旧の走査（木の深さ優先・Entity ごとに Component が子より先）と同じ
+        // Text の行の一覧だけを見る。板の並びは木の深さ優先（Entity ごとに Component が子より先）
         if (m_TextBoardRows.empty())
         {
             return;
@@ -4066,20 +3808,16 @@ namespace NorvesLib::Core
         // 変換の伝播の区間（計測の方針の名前）
         NorvesLib::Debug::ScopedStat statScope("Ecs.Sync.TransformPropagate", "Ecs");
 
-        // 同期点まで待たせた付け替えと作成予約（行がまだ無い Entity）がある間は、階層の列が Outer/Inner と食い違う。この間は Outer/Inner を正とする旧の再帰で求める
-        const bool bLegacy = m_bLegacyTransformPropagation || !m_EcsWorld || m_EntityArchetype == Ecs::kInvalidEcsArchetype ||
-                             !m_PendingEntityRelinks.empty() || !m_PendingEntityCreates.empty();
-        if (bLegacy)
+        if (!m_EcsWorld || m_EntityArchetype == Ecs::kInvalidEcsArchetype)
         {
-            auto roots = GetRootEntities();
-            for (auto* entity : roots)
-            {
-                UpdateEntityTransformRecursive(*entity, Math::Transform::Identity);
-            }
+            return;
         }
-        else
+        (void)PropagateEcsTransforms();
+        // 同期点まで待たせた付け替えと作成予約（行がまだ無い Entity）がある間は、その部分木の階層の列が Outer/Inner と食い違う。
+        // その部分木だけを Outer/Inner の親から求め直す
+        if (!m_PendingEntityRelinks.empty() || !m_PendingEntityCreates.empty())
         {
-            (void)PropagateEcsTransforms();
+            UpdatePendingEntityTransforms();
         }
         // 検査 ECS_TRANSFORM が有効なときだけ、全行を根から求め直した値と照合する
         RunEcsTransformCheck();
@@ -4199,7 +3937,7 @@ namespace NorvesLib::Core
         const Ecs::EcsEntity row = entity.m_EcsEntity;
         if (!m_EcsWorld || row.IsNull())
             return;
-        // 作られた行は、ワールドの変換を初めて求めたときに描画の更新へ知らせる。旧の再帰では行の作成が唯一の目印なので、ここでも積む
+        // 作られた行は、ワールドの変換を初めて求めたときに描画の更新へ知らせる。行の作成をその目印として、ここでも積む
         QueueRenderChange(row);
         if (entity.m_bRenderInterpolationEnabled || (!m_RenderRows.empty() && IsRenderParticipating(entity)))
             m_RenderReconcile.push_back(row);
@@ -4389,7 +4127,7 @@ namespace NorvesLib::Core
             if (Ecs::EcsPropagatedTransform* propagated = ecs.GetColumnValue<Ecs::EcsPropagatedTransform>(row))
                 propagated->bRenderQueued = 0;
             Entity* entity = ResolveRenderEntity(row);
-            // 補間する行とその子孫は UpdateRenderRows が見る。破棄予約の部分木は旧と同じく触らない
+            // 補間する行とその子孫は UpdateRenderRows が見る。破棄予約の部分木は触らない
             if (!entity || entity->IsPendingDestroy() || HasPendingEntityAncestor(*entity) ||
                 ecs.GetColumnValue<Ecs::EcsRenderTransform>(row) != nullptr)
                 continue;
@@ -4507,14 +4245,14 @@ namespace NorvesLib::Core
         ReconcileRenderInterpolation();
         UpdateRenderRows();
         FlushRenderChangedRows();
-        // 検査 ECS_RENDER_TRANSFORM が有効なときだけ、全行を旧の式で求め直した値と照合する
+        // 検査 ECS_RENDER_TRANSFORM が有効なときだけ、全行を求め直した値と照合する
         RunEcsRenderTransformCheck();
     }
 
     bool World::VerifyRenderEntity(Entity& entity, const Math::Transform& parentRender, bool bParentInterpolated,
                                    uint32_t& count, const char*& error)
     {
-        // 旧の再帰と同じく、破棄予約の部分木は見ない
+        // 描画の変換の更新と同じく、破棄予約の部分木は見ない
         if (entity.IsPendingDestroy())
             return true;
         Ecs::EcsWorld& ecs = *m_EcsWorld;
@@ -4562,7 +4300,7 @@ namespace NorvesLib::Core
             }
             if (!SameRenderTransform(entity.GetRenderWorldTransform(), expected))
             {
-                error = "描画の変換が旧の式で求め直した値と一致しない";
+                error = "描画の変換が求め直した値と一致しない";
                 return false;
             }
         }
@@ -4626,426 +4364,71 @@ namespace NorvesLib::Core
         }
     }
 
-    void World::UpdateEntityTransformRecursive(Entity& entity, const Math::Transform& parentWorld)
+    void World::UpdatePendingEntityTransforms()
+    {
+        // 部分木の頭: 作成を予約中の Entity と、予約中の親の下へ付け替えた行の Entity
+        Container::VariableArray<Entity*> heads;
+        Container::UnorderedSet<const Entity*> headSet;
+        const auto addHead = [&](Entity* entity)
+        {
+            if (entity != nullptr && headSet.insert(entity).second)
+            {
+                heads.push_back(entity);
+            }
+        };
+        for (const PendingEntityCreate& pending : m_PendingEntityCreates)
+        {
+            addHead(pending.Target);
+        }
+        for (const Ecs::EcsEntity row : m_PendingEntityRelinks)
+        {
+            const Ecs::EcsObjectRef* ref =
+                m_EcsWorld->IsAlive(row) ? m_EcsWorld->GetColumnValue<Ecs::EcsObjectRef>(row) : nullptr;
+            if (ref != nullptr && ref->Object != nullptr && ref->Generation == row.Generation)
+            {
+                addHead(static_cast<Entity*>(ref->Object));
+            }
+        }
+        for (Entity* head : heads)
+        {
+            if (head->GetWorld() != this)
+            {
+                continue;
+            }
+            // 祖先にも頭があれば、その頭の部分木の中で求める
+            bool bNested = false;
+            for (const Entity* cursor = head->GetParentEntity(); cursor != nullptr; cursor = cursor->GetParentEntity())
+            {
+                if (headSet.find(cursor) != headSet.end())
+                {
+                    bNested = true;
+                    break;
+                }
+            }
+            if (bNested)
+            {
+                continue;
+            }
+            // 頭の親は行を持ち、伝播で求め終わっている
+            const Entity* parent = head->GetParentEntity();
+            RecomputePendingSubtreeTransform(*head, parent != nullptr ? parent->GetWorldTransform() : Math::Transform::Identity);
+        }
+    }
+
+    void World::RecomputePendingSubtreeTransform(Entity& entity, const Math::Transform& parentWorld)
     {
         const uint64_t versionBefore = entity.m_TransformVersion;
         entity.RecomputeWorldTransform(parentWorld);
         if (entity.m_TransformVersion != versionBefore)
         {
-            // 旧の再帰でも、ワールドの変換が変わった行を描画の更新へ知らせる
+            // 伝播と同じく、ワールドの変換が変わった行を描画の更新と同期の変更ログへ知らせる
             QueueRenderChange(entity.m_EcsEntity);
             NoteRenderSyncTransform(entity.m_EcsEntity);
         }
-        const Math::Transform& worldTransform = entity.GetWorldTransform();
-
-        auto children = entity.GetChildEntities();
-        for (auto* child : children)
+        const Math::Transform worldTransform = entity.GetWorldTransform();
+        for (Entity* child : entity.GetChildEntities())
         {
-            UpdateEntityTransformRecursive(*child, worldTransform);
-        }
-    }
-
-    void World::SyncEntityRecursive(
-        Entity& entity,
-        const Rendering::MaterialResources* materials,
-        const Rendering::MeshResources* meshes,
-        Container::UnorderedSet<uint64_t>& liveMeshComponentIds,
-        Container::UnorderedSet<uint64_t>& liveSkinnedMeshComponentIds,
-        Container::UnorderedSet<uint64_t>& liveMegaGeometryObjectIds,
-        Container::UnorderedSet<uint64_t>& liveLightIds,
-        Container::UnorderedSet<uint64_t>& liveScreenBoardComponentIds,
-        Container::UnorderedSet<uint64_t>& liveWorldBoardComponentIds,
-        ComponentDataRegistry* componentDataRegistry)
-    {
-        ++m_RenderSyncVisitedRows;
-        if (!entity.IsActive() || entity.IsPendingDestroy())
-        {
-            // 走査しない部分木の proxy は RemoveStale* が消す。公開の状態の列もそれに合わせる。
-            // 既定の同期では、Remove の一覧を外すときに公開の状態を戻すので、ここでは何もしない
-            if (m_bLegacyRenderSync)
-            {
-                MarkEntitySubtreeRenderUnpublished(entity);
-            }
-            return;
-        }
-
-        if (componentDataRegistry)
-        {
-            componentDataRegistry->PublishTransform(entity);
-        }
-
-        const uint64_t ownerVersion = entity.GetTransformVersion();
-        const bool bCheckInvalidation = m_bInvalidationCheckFrame;
-        auto components = entity.GetComponents();
-        for (auto* comp : components)
-        {
-            auto* skinnedMeshComp = CastTo<Component::SkinnedMeshComponent>(comp);
-            if (m_bLegacyRenderSync && m_SceneView && skinnedMeshComp)
-            {
-                const RenderRowInfo rowInfo = ReadRenderRowInfo(*skinnedMeshComp, entity);
-                const bool bNeedsSync = skinnedMeshComp->IsRenderStateDirty() ||
-                                        skinnedMeshComp->GetLastSyncedTransformVersion() != ownerVersion ||
-                                        rowInfo.bPoseChanged;
-                if (bNeedsSync)
-                {
-                    NoteRenderScanChanged(*skinnedMeshComp);
-                }
-                if (!bNeedsSync)
-                {
-                    if (skinnedMeshComp->IsVisible())
-                    {
-                        liveSkinnedMeshComponentIds.insert(skinnedMeshComp->GetComponentId());
-                    }
-                    // 変更も通知も無い行は、作り直しても公開した内容と同じでなければならない。
-                    // 姿勢が最新のときだけ作り直す（最新でないときの構築は姿勢を求め直して状態を変えてしまう）
-                    if (bCheckInvalidation && !rowInfo.bRenderTransformChanged && !rowInfo.bNotified &&
-                        skinnedMeshComp->IsVisible() && skinnedMeshComp->IsPoseCurrent())
-                    {
-                        Rendering::SkinnedMeshProxy probe;
-                        const bool bBuilt = skinnedMeshComp->BuildSkinnedMeshProxy(probe);
-                        if (bBuilt)
-                        {
-                            probe.ObjectId = entity.GetObjectId();
-                            probe.ComponentId = skinnedMeshComp->GetComponentId();
-                        }
-                        CheckRenderRowUnchanged(*skinnedMeshComp, bBuilt, bBuilt ? Rendering::HashProxy(probe) : 0);
-                    }
-                }
-                else if (!skinnedMeshComp->IsVisible())
-                {
-                    // 非表示は公開しない状態として受理済みで、再試行すべき失敗ではない
-                    skinnedMeshComp->ClearRenderStateDirty();
-                    skinnedMeshComp->SetLastSyncedTransformVersion(ownerVersion);
-                    RecordRenderPublish(*skinnedMeshComp, entity, false, 0);
-                }
-                else
-                {
-                    Rendering::SkinnedMeshProxy skinnedMeshProxy;
-                    if (skinnedMeshComp->BuildSkinnedMeshProxy(skinnedMeshProxy))
-                    {
-                        skinnedMeshProxy.ObjectId = entity.GetObjectId();
-                        skinnedMeshProxy.ComponentId = skinnedMeshComp->GetComponentId();
-                        m_SceneView->UpdateSkinnedMeshProxy(skinnedMeshProxy);
-                        liveSkinnedMeshComponentIds.insert(skinnedMeshProxy.ComponentId);
-                        skinnedMeshComp->ClearRenderStateDirty();
-                        skinnedMeshComp->SetLastSyncedTransformVersion(ownerVersion);
-                        RecordRenderPublish(*skinnedMeshComp, entity, true,
-                                            bCheckInvalidation ? Rendering::HashProxy(skinnedMeshProxy) : 0);
-                    }
-                    else
-                    {
-                        // 公開したいのに proxy を作れなかった（資産の読み込み待ちなど）。次の同期でもう一度試す
-                        RecordRenderPublish(*skinnedMeshComp, entity, false, 0);
-                        NoteRenderRetry(*skinnedMeshComp);
-                    }
-                    RegisterRenderResourceUsers(*skinnedMeshComp);
-                }
-            }
-
-            auto* megaComp = CastTo<Component::MegaGeometryComponent>(comp);
-
-            auto* meshComp = CastTo<Component::MeshComponent>(comp);
-            if (m_bLegacyRenderSync && m_SceneView && meshComp && !megaComp)
-            {
-                const RenderRowInfo rowInfo = ReadRenderRowInfo(*meshComp, entity);
-                const bool bNeedsSync = meshComp->IsRenderStateDirty() ||
-                                        meshComp->GetLastSyncedTransformVersion() != ownerVersion;
-                if (bNeedsSync)
-                {
-                    NoteRenderScanChanged(*meshComp);
-                }
-                if (!bNeedsSync)
-                {
-                    liveMeshComponentIds.insert(meshComp->GetComponentId());
-                    Rendering::MeshProxy meshProxy;
-                    if (meshComp->BuildMeshProxy(meshProxy, materials, meshes))
-                    {
-                        meshProxy.ObjectId = entity.GetObjectId();
-                        meshProxy.ComponentId = meshComp->GetComponentId();
-                        m_SceneView->UpdateMeshProxy(meshProxy);
-                        if (componentDataRegistry)
-                        {
-                            componentDataRegistry->PublishMeshProxy(entity, meshProxy);
-                        }
-                        // 変更も通知も無い行を作り直した内容は、公開した内容と同じでなければならない
-                        const uint64_t proxyHash = bCheckInvalidation ? Rendering::HashProxy(meshProxy) : 0;
-                        if (bCheckInvalidation && !rowInfo.bRenderTransformChanged && !rowInfo.bNotified)
-                        {
-                            CheckRenderRowUnchanged(*meshComp, true, proxyHash);
-                        }
-                        RecordRenderPublish(*meshComp, entity, true, proxyHash);
-                    }
-                    else if (bCheckInvalidation && !rowInfo.bRenderTransformChanged && !rowInfo.bNotified)
-                    {
-                        CheckRenderRowUnchanged(*meshComp, false, 0);
-                    }
-                }
-                else
-                {
-                    meshComp->RefreshRenderTransformCache();
-
-                    Rendering::MeshProxy meshProxy;
-                    if (meshComp->BuildMeshProxy(meshProxy, materials, meshes))
-                    {
-                        meshProxy.ObjectId = entity.GetObjectId();
-                        meshProxy.ComponentId = meshComp->GetComponentId();
-                        m_SceneView->UpdateMeshProxy(meshProxy);
-                        liveMeshComponentIds.insert(meshProxy.ComponentId);
-                        if (componentDataRegistry)
-                        {
-                            componentDataRegistry->PublishMeshProxy(entity, meshProxy);
-                        }
-                        RecordRenderPublish(*meshComp, entity, true,
-                                            bCheckInvalidation ? Rendering::HashProxy(meshProxy) : 0);
-                        // 前フレームの変換が現在と違う間は、次のフレームの公開で履歴が現在に揃う。次の同期の通知にする
-                        if (!SameMatrixBits(meshProxy.PreviousWorldTransform, meshProxy.WorldTransform))
-                        {
-                            m_RenderSettleNext.insert(meshComp->GetComponentId());
-                        }
-                    }
-                    else
-                    {
-                        RecordRenderPublish(*meshComp, entity, false, 0);
-                    }
-                    RegisterRenderResourceUsers(*meshComp);
-
-                    meshComp->ClearRenderStateDirty();
-                    meshComp->SetLastSyncedTransformVersion(ownerVersion);
-                }
-                meshComp->CommitRenderTransformHistory();
-            }
-
-            if (m_SceneView && megaComp)
-            {
-                const RenderRowInfo rowInfo = ReadRenderRowInfo(*megaComp, entity);
-                const bool bNeedsSync = megaComp->IsRenderStateDirty() ||
-                                        megaComp->GetLastSyncedTransformVersion() != ownerVersion;
-                if (bNeedsSync)
-                {
-                    NoteRenderScanChanged(*megaComp);
-                }
-                if (!bNeedsSync)
-                {
-                    // 既定の同期は生存集合を使わない（O(全 Entity) のハッシュ挿入を避ける）
-                    if (m_bLegacyRenderSync)
-                    {
-                        liveMegaGeometryObjectIds.insert(entity.GetObjectId());
-                    }
-                    if (componentDataRegistry)
-                    {
-                        Rendering::MegaGeometryProxy megaProxy;
-                        if (megaComp->BuildMegaGeometryProxy(megaProxy))
-                        {
-                            megaProxy.ObjectId = entity.GetObjectId();
-                            megaProxy.ComponentId = megaComp->GetComponentId();
-                            componentDataRegistry->PublishMegaGeometryProxy(entity, megaProxy);
-                        }
-                    }
-                    if (bCheckInvalidation && !rowInfo.bRenderTransformChanged && !rowInfo.bNotified)
-                    {
-                        Rendering::MegaGeometryProxy probe;
-                        const bool bBuilt = megaComp->BuildMegaGeometryProxy(probe);
-                        if (bBuilt)
-                        {
-                            probe.ObjectId = entity.GetObjectId();
-                            probe.ComponentId = megaComp->GetComponentId();
-                        }
-                        CheckRenderRowUnchanged(*megaComp, bBuilt, bBuilt ? Rendering::HashProxy(probe) : 0);
-                    }
-                }
-                else
-                {
-                    megaComp->RefreshRenderTransformCache();
-
-                    Rendering::MegaGeometryProxy megaProxy;
-                    if (megaComp->BuildMegaGeometryProxy(megaProxy))
-                    {
-                        megaProxy.ObjectId = entity.GetObjectId();
-                        megaProxy.ComponentId = megaComp->GetComponentId();
-                        const uint64_t proxyHash = bCheckInvalidation ? Rendering::HashProxy(megaProxy) : 0;
-                        PublishMegaProxyToView(*m_SceneView, m_EcsWorld.get(), megaComp->GetEcsEntity(), megaProxy);
-                        if (m_bLegacyRenderSync)
-                        {
-                            liveMegaGeometryObjectIds.insert(megaProxy.ObjectId);
-                        }
-                        if (componentDataRegistry)
-                        {
-                            componentDataRegistry->PublishMegaGeometryProxy(entity, megaProxy);
-                        }
-                        RecordRenderPublish(*megaComp, entity, true, proxyHash);
-                    }
-                    else
-                    {
-                        RecordRenderPublish(*megaComp, entity, false, 0);
-                    }
-
-                    megaComp->ClearRenderStateDirty();
-                    megaComp->SetLastSyncedTransformVersion(ownerVersion);
-                }
-            }
-
-            auto* lightComp = CastTo<Component::LightComponent>(comp);
-            if (m_bLegacyRenderSync && m_SceneView && lightComp)
-            {
-                const RenderRowInfo rowInfo = ReadRenderRowInfo(*lightComp, entity);
-                const bool bNeedsSync = lightComp->IsRenderStateDirty() ||
-                                        lightComp->GetLastSyncedTransformVersion() != ownerVersion;
-                if (bNeedsSync)
-                {
-                    NoteRenderScanChanged(*lightComp);
-                }
-                if (!bNeedsSync)
-                {
-                    liveLightIds.insert(lightComp->GetComponentId());
-                    if (bCheckInvalidation && !rowInfo.bRenderTransformChanged && !rowInfo.bNotified)
-                    {
-                        Rendering::LightProxy probe;
-                        const bool bBuilt = lightComp->BuildLightProxy(probe);
-                        if (bBuilt)
-                        {
-                            probe.LightId = lightComp->GetComponentId();
-                        }
-                        CheckRenderRowUnchanged(*lightComp, bBuilt, bBuilt ? Rendering::HashProxy(probe) : 0);
-                    }
-                }
-                else
-                {
-                    Rendering::LightProxy lightProxy;
-                    if (lightComp->BuildLightProxy(lightProxy))
-                    {
-                        lightProxy.LightId = lightComp->GetComponentId();
-                        m_SceneView->UpdateLightProxy(lightProxy);
-                        liveLightIds.insert(lightProxy.LightId);
-                        RecordRenderPublish(*lightComp, entity, true,
-                                            bCheckInvalidation ? Rendering::HashProxy(lightProxy) : 0);
-                    }
-                    else
-                    {
-                        RecordRenderPublish(*lightComp, entity, false, 0);
-                    }
-
-                    lightComp->ClearRenderStateDirty();
-                    lightComp->SetLastSyncedTransformVersion(ownerVersion);
-                }
-            }
-
-            auto* textComp = CastTo<Component::TextComponent>(comp);
-            if (textComp)
-            {
-                textComp->RefreshRenderTransformCache();
-                continue;
-            }
-
-            auto* boardComp = CastTo<Component::BoardComponent>(comp);
-            if (m_bLegacyRenderSync && boardComp)
-            {
-                const RenderRowInfo rowInfo = ReadRenderRowInfo(*boardComp, entity);
-                boardComp->PrepareFlipbookForRenderSync();
-                const bool bForceWorldSpace = CastTo<Component::BillboardComponent>(boardComp) != nullptr;
-                const Rendering::BoardSpace effectiveSpace = bForceWorldSpace
-                                                                  ? Rendering::BoardSpace::WorldSpace
-                                                                  : boardComp->GetBoardSpace();
-
-                const bool bNeedsSync = boardComp->IsRenderStateDirty() ||
-                                        boardComp->GetLastSyncedTransformVersion() != ownerVersion;
-                if (bNeedsSync)
-                {
-                    NoteRenderScanChanged(*boardComp);
-                }
-                if (!bNeedsSync)
-                {
-                    if (effectiveSpace == Rendering::BoardSpace::WorldSpace)
-                    {
-                        liveWorldBoardComponentIds.insert(boardComp->GetComponentId());
-                    }
-                    else
-                    {
-                        liveScreenBoardComponentIds.insert(boardComp->GetComponentId());
-                    }
-                    if (bCheckInvalidation && !rowInfo.bRenderTransformChanged && !rowInfo.bNotified)
-                    {
-                        Rendering::BoardProxy probe;
-                        const bool bBuilt = boardComp->BuildBoardProxy(probe);
-                        if (bBuilt)
-                        {
-                            probe.ObjectId = entity.GetObjectId();
-                            probe.ComponentId = boardComp->GetComponentId();
-                        }
-                        CheckRenderRowUnchanged(*boardComp, bBuilt, bBuilt ? Rendering::HashProxy(probe) : 0);
-                    }
-                }
-                else
-                {
-                    boardComp->RefreshRenderTransformCache();
-
-                    Rendering::BoardProxy boardProxy;
-                    if (boardComp->BuildBoardProxy(boardProxy))
-                    {
-                        boardProxy.ObjectId = entity.GetObjectId();
-                        boardProxy.ComponentId = boardComp->GetComponentId();
-                        RecordRenderPublish(*boardComp, entity, true,
-                                            bCheckInvalidation ? Rendering::HashProxy(boardProxy) : 0,
-                                            boardProxy.Space == Rendering::BoardSpace::WorldSpace
-                                                ? Ecs::EcsRenderSyncKind::WorldBoard
-                                                : Ecs::EcsRenderSyncKind::ScreenBoard);
-                        if (boardProxy.Space == Rendering::BoardSpace::WorldSpace)
-                        {
-                            liveWorldBoardComponentIds.insert(boardProxy.ComponentId);
-                            if (m_SceneView)
-                            {
-                                m_SceneView->UpdateBoardProxy(boardProxy);
-                            }
-                            if (m_ScreenSpaceBoardSink)
-                            {
-                                m_ScreenSpaceBoardSink->RemoveBoardProxy(boardProxy.ComponentId);
-                            }
-                        }
-                        else
-                        {
-                            liveScreenBoardComponentIds.insert(boardProxy.ComponentId);
-                            if (m_ScreenSpaceBoardSink)
-                            {
-                                m_ScreenSpaceBoardSink->UpdateBoardProxy(boardProxy.ComponentId, boardProxy);
-                            }
-                            if (m_SceneView)
-                            {
-                                m_SceneView->RemoveBoardProxy(boardProxy.ComponentId);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        RecordRenderPublish(*boardComp, entity, false, 0);
-                        if (m_ScreenSpaceBoardSink)
-                        {
-                            m_ScreenSpaceBoardSink->RemoveBoardProxy(boardComp->GetComponentId());
-                        }
-                        if (m_SceneView)
-                        {
-                            m_SceneView->RemoveBoardProxy(boardComp->GetComponentId());
-                        }
-                    }
-
-                    boardComp->ClearRenderStateDirty();
-                    boardComp->SetLastSyncedTransformVersion(ownerVersion);
-                }
-            }
-        }
-
-        auto children = entity.GetChildEntities();
-        for (auto* child : children)
-        {
-            SyncEntityRecursive(
-                *child,
-                materials,
-                meshes,
-                liveMeshComponentIds,
-                liveSkinnedMeshComponentIds,
-                liveMegaGeometryObjectIds,
-                liveLightIds,
-                liveScreenBoardComponentIds,
-                liveWorldBoardComponentIds,
-                componentDataRegistry);
+            RecomputePendingSubtreeTransform(*child, worldTransform);
         }
     }
 
@@ -5068,29 +4451,6 @@ namespace NorvesLib::Core
     void World::CleanupAfterFixedStep()
     {
         CleanupDestroyedObjects();
-    }
-
-    void World::CollectTransientBoardProxiesRecursive(
-        Entity& entity,
-        Container::VariableArray<Rendering::BoardProxy>& outProxies)
-    {
-        if (!entity.IsActive() || entity.IsPendingDestroy())
-        {
-            return;
-        }
-
-        for (Component::Component* component : entity.GetComponents())
-        {
-            if (Component::TextComponent* textComponent = CastTo<Component::TextComponent>(component))
-            {
-                textComponent->BuildGlyphBoardProxies(outProxies);
-            }
-        }
-
-        for (Entity* child : entity.GetChildEntities())
-        {
-            CollectTransientBoardProxiesRecursive(*child, outProxies);
-        }
     }
 
     void World::CleanupDestroyedObjects()
@@ -6217,7 +5577,7 @@ namespace NorvesLib::Core
             Entity* entity = static_cast<Entity*>(ref->Object);
             if (applied.bWorldChanged)
             {
-                // 旧の再帰と同じく、ワールドの変換が変わった Entity だけ版を進める
+                // ワールドの変換が変わった Entity だけ版を進める
                 ++entity->m_TransformVersion;
                 NoteRenderSyncTransform(applied.Entity);
             }

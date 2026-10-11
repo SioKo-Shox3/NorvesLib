@@ -36,8 +36,6 @@ int main()
 
     World world;
     world.Initialize();
-    // レジストリの捕捉は旧の全走査だけが行う
-    world.SetLegacyRenderSync(true);
     SceneView view;
     SceneViewSettings settings;
     assert(view.Initialize(settings));

@@ -1,7 +1,8 @@
 ﻿// 階層のシステムの契約を確かめる。
 // - 局所の変換・親・Active・PendingDestroy の変更から、ワールドの変換（EcsWorldTransform）と EffectiveActive を伝播で求め、
 //   根から全部たどって求め直した値と全行が bit まで一致する（深い木・付け替え・非アクティブの伝播・シーンの出入りを含む）
-// - UpdateWorldTransforms は伝播を呼び、旧の再帰（--ecs-legacy-transform 相当）と値も版も一致する
+// - UpdateWorldTransforms は伝播を呼び、手で求めた値になり、版はワールドの変換が変わった回だけ進む
+// - 段の最中に作成を予約した Entity も、同期点の前から親の値で求まる
 // - 変更の無い行は処理せず、変わらなかった行の子孫へは伝播しない
 // - 並列と直列で、列の値も処理した順も同じ（決定的）
 #include "Ecs/EcsTransformSystem.h"
@@ -451,8 +452,8 @@ namespace
         }
     }
 
-    // 符号付きゼロ: 数値として等しければキャッシュを更新しない（旧の再帰と同じ）ので、+0 と -0 の違いだけでは不一致にならない
-    void TestSignedZeroMatchesLegacy()
+    // 符号付きゼロ: 数値として等しければキャッシュを更新しないので、+0 と -0 の違いだけでは不一致にならない
+    void TestSignedZeroMatchesReference()
     {
         // 比較の関係そのもの: +0 と -0 は同じ、NaN は同じ bit のときだけ同じ、違う値は違う
         const float nan = std::numeric_limits<float>::quiet_NaN();
@@ -481,7 +482,7 @@ namespace
         assert(negative.Processed >= 1);
         assert(world.VerifyEcsTransform());
 
-        // 子の局所の変換を動かしても、根の -0 を挟んで旧と一致する
+        // 子の局所の変換を動かしても、根の -0 を挟んで求め直した値と一致する
         child->SetLocalPosition(1.0f, 2.0f, 3.0f);
         UpdateAndRun(world);
         assert(world.VerifyEcsTransform());
@@ -508,51 +509,100 @@ namespace
         world.Finalize();
     }
 
-    // 切替: 既定の UpdateWorldTransforms（伝播）と旧の再帰（SetLegacyTransformPropagation）で、値も版も同じ
-    void TestUpdateMatchesLegacyRecursion()
+    // 位置の x が期待値か（スケール・回転は既定のまま）
+    void ExpectWorldX(const Entity *entity, float expected)
     {
-        World propagated;
-        World legacy;
-        propagated.Initialize();
-        legacy.Initialize();
-        assert(!propagated.IsLegacyTransformPropagation());
-        legacy.SetLegacyTransformPropagation(true);
-        assert(legacy.IsLegacyTransformPropagation());
-        Scene propagatedScene;
-        Scene legacyScene;
-        BuildScene(propagated, propagatedScene, 20, 12);
-        BuildScene(legacy, legacyScene, 20, 12);
+        const NorvesLib::Math::Transform world = entity->GetWorldTransform();
+        assert(world.position.x == expected);
+        assert(world.position.y == 0.0f && world.position.z == 0.0f);
+    }
 
-        for (uint32_t step = 0; step <= 36; ++step)
+    // UpdateWorldTransforms: 局所の変換の変更・付け替え・非アクティブの後のワールドの変換が手で求めた値になり、
+    // 版はワールドの変換が変わった Entity だけ 1 つ進む
+    void TestUpdateMatchesExpectedValuesAndVersions()
+    {
+        World world;
+        world.Initialize();
+        Entity *rootA = world.SpawnEntity<Entity>();
+        Entity *rootB = world.SpawnEntity<Entity>();
+        Entity *child = world.SpawnEntity<Entity>(rootA);
+        Entity *grandChild = world.SpawnEntity<Entity>(child);
+        assert(rootA && rootB && child && grandChild);
+        rootA->SetLocalPosition(1.0f, 0.0f, 0.0f);
+        rootB->SetLocalPosition(10.0f, 0.0f, 0.0f);
+        child->SetLocalPosition(2.0f, 0.0f, 0.0f);
+        grandChild->SetLocalPosition(4.0f, 0.0f, 0.0f);
+        world.UpdateWorldTransforms();
+        ExpectWorldX(rootA, 1.0f);
+        ExpectWorldX(rootB, 10.0f);
+        ExpectWorldX(child, 3.0f);
+        ExpectWorldX(grandChild, 7.0f);
+
+        struct Versions
         {
-            if (step > 0)
+            uint64_t RootA, RootB, Child, GrandChild;
+            bool operator==(const Versions &other) const
             {
-                Mutate(propagated, propagatedScene, step);
-                Mutate(legacy, legacyScene, step);
+                return RootA == other.RootA && RootB == other.RootB && Child == other.Child &&
+                       GrandChild == other.GrandChild;
             }
-            propagated.UpdateWorldTransforms();
-            legacy.UpdateWorldTransforms();
-            assert(propagatedScene.All.size() == legacyScene.All.size());
-            for (size_t i = 0; i < propagatedScene.All.size(); ++i)
-            {
-                const Entity *a = propagatedScene.All[i];
-                const Entity *b = legacyScene.All[i];
-                const NorvesLib::Math::Transform worldA = a->GetWorldTransform();
-                const NorvesLib::Math::Transform worldB = b->GetWorldTransform();
-                assert(worldA == worldB);
-                // 版は、ワールドの変換が変わった回だけ進む（旧の再帰と同じ）
-                assert(a->GetTransformVersion() == b->GetTransformVersion());
-            }
-        }
+        };
+        const auto versions = [&]()
+        {
+            return Versions{rootA->GetTransformVersion(), rootB->GetTransformVersion(), child->GetTransformVersion(),
+                            grandChild->GetTransformVersion()};
+        };
 
         // 何も変えない回は、版を進めない
-        const uint64_t version = propagatedScene.All[5]->GetTransformVersion();
-        propagated.UpdateWorldTransforms();
-        propagated.UpdateWorldTransforms();
-        assert(propagatedScene.All[5]->GetTransformVersion() == version);
-        assert(propagated.VerifyEcsTransform());
-        propagated.Finalize();
-        legacy.Finalize();
+        const Versions settled = versions();
+        world.UpdateWorldTransforms();
+        world.UpdateWorldTransforms();
+        assert(versions() == settled);
+
+        // 親を動かす: 親と子孫だけ版が 1 つ進み、値は親の移動の分だけ動く
+        rootA->SetLocalPosition(5.0f, 0.0f, 0.0f);
+        world.UpdateWorldTransforms();
+        ExpectWorldX(rootA, 5.0f);
+        ExpectWorldX(child, 7.0f);
+        ExpectWorldX(grandChild, 11.0f);
+        const Versions moved = versions();
+        assert(moved.RootA == settled.RootA + 1);
+        assert(moved.RootB == settled.RootB);
+        assert(moved.Child == settled.Child + 1);
+        assert(moved.GrandChild == settled.GrandChild + 1);
+
+        // 同じ値を書き直しても、ワールドの変換は変わらないので版は進まない
+        child->SetLocalPosition(2.0f, 0.0f, 0.0f);
+        world.UpdateWorldTransforms();
+        assert(versions() == moved);
+
+        // 付け替えはワールドの位置を保つ: 新しい親の下の局所の変換が 7 - 10 = -3 になり、ワールドの値は変わらない
+        assert(world.ReparentEntity(child, rootB));
+        world.UpdateWorldTransforms();
+        ExpectWorldX(child, 7.0f);
+        ExpectWorldX(grandChild, 11.0f);
+        assert(child->GetLocalTransform().position.x == -3.0f);
+        // 前の親を動かしても、付け替えた部分木は動かない。新しい親を動かすと付いてくる
+        rootA->SetLocalPosition(0.0f, 0.0f, 0.0f);
+        rootB->SetLocalPosition(20.0f, 0.0f, 0.0f);
+        world.UpdateWorldTransforms();
+        ExpectWorldX(rootA, 0.0f);
+        ExpectWorldX(child, 17.0f);
+        ExpectWorldX(grandChild, 21.0f);
+
+        // 非アクティブにしても値は求め続ける（描画と Tick だけが止まる）。EffectiveActive は子孫まで落ちる
+        child->SetActive(false);
+        rootB->SetLocalPosition(30.0f, 0.0f, 0.0f);
+        world.UpdateWorldTransforms();
+        ExpectWorldX(grandChild, 31.0f);
+        assert(EffectiveActiveOf(world, rootB));
+        assert(!EffectiveActiveOf(world, child));
+        assert(!EffectiveActiveOf(world, grandChild));
+        child->SetActive(true);
+        world.UpdateWorldTransforms();
+        assert(EffectiveActiveOf(world, grandChild));
+        assert(world.VerifyEcsTransform());
+        world.Finalize();
     }
 
     // クラスの中では基底の注入名 Component が名前空間の別名を隠すので、外で別名を付ける
@@ -568,7 +618,7 @@ namespace
         world.RegisterComponentTick(T::StaticClass(), registration);
     }
 
-    // 段の最中に作った子（行の作成を予約中）を、局所の位置を決めてすぐ根へ付け替えても、座標が旧の再帰と同じに保たれる
+    // 段の最中に作った子（行の作成を予約中）を、局所の位置を決めてすぐ根へ付け替えても、ワールドの座標が保たれる
     class HierarchySpawnAndDetachProbe : public HierarchyProbeBase
     {
         REFLECTION_CLASS(HierarchySpawnAndDetachProbe, HierarchyProbeBase)
@@ -593,12 +643,11 @@ namespace
     };
     IMPLEMENT_CLASS(HierarchySpawnAndDetachProbe, HierarchyProbeBase)
 
-    float RunSpawnAndDetach(bool bLegacy)
+    float RunSpawnAndDetach()
     {
         World world;
         world.Initialize();
         RegisterProbeTick<HierarchySpawnAndDetachProbe>(world, "Test.SpawnAndDetach");
-        world.SetLegacyTransformPropagation(bLegacy);
         auto *root = world.SpawnEntity<Entity>();
         auto *probe = world.CreateComponent<HierarchySpawnAndDetachProbe>(root);
         assert(probe != nullptr);
@@ -618,13 +667,11 @@ namespace
 
     void TestSpawnedChildReparentKeepsPosition()
     {
-        const float legacy = RunSpawnAndDetach(true);
-        const float propagated = RunSpawnAndDetach(false);
-        assert(legacy == 12.0f);
-        assert(propagated == legacy);
+        // 付け替えの前のワールドの位置（親の 10 + 局所の 2）が保たれる
+        assert(RunSpawnAndDetach() == 12.0f);
     }
 
-    // 同じ群の中で祖先が止まる・破棄予約になったら、後ろの子はそのとき呼ばれない（旧の祖先をたどる判定と同じ）
+    // 同じ群の中で祖先が止まる・破棄予約になったら、後ろの子はそのとき呼ばれない
     enum class StopKind
     {
         SetActive,
@@ -688,13 +735,12 @@ namespace
     };
     IMPLEMENT_CLASS(HierarchyCountProbe, HierarchyProbeBase)
 
-    int RunAncestorStop(bool bLegacy, StopKind kind)
+    int RunAncestorStop(StopKind kind)
     {
         World world;
         world.Initialize();
         RegisterProbeTick<HierarchyStopOwnerProbe>(world, "Test.StopOwner");
         RegisterProbeTick<HierarchyCountProbe>(world, "Test.Count");
-        world.SetLegacyTransformPropagation(bLegacy);
         auto *parent = world.SpawnEntity<Entity>();
         auto *stopper = world.CreateComponent<HierarchyStopOwnerProbe>(parent);
         stopper->Kind = kind;
@@ -718,8 +764,7 @@ namespace
         for (const StopKind kind : {StopKind::SetActive, StopKind::MarkForDestroy, StopKind::Destroy,
                                     StopKind::DestroyViaObject, StopKind::RegisterOnly})
         {
-            assert(RunAncestorStop(true, kind) == 0);
-            assert(RunAncestorStop(false, kind) == 0);
+            assert(RunAncestorStop(kind) == 0);
         }
     }
 
@@ -756,8 +801,8 @@ int main()
     TestLateSystemSeedsExistingRows();
     TestParallelMatchesSerialAndOrderIsDeterministic();
     TestParallelRunReportsNoPropertyAccess();
-    TestSignedZeroMatchesLegacy();
-    TestUpdateMatchesLegacyRecursion();
+    TestSignedZeroMatchesReference();
+    TestUpdateMatchesExpectedValuesAndVersions();
     TestSpawnedChildReparentKeepsPosition();
     TestAncestorStopSuppressesDescendantsImmediately();
     TestHeapEnqueueDestroySetsEcsFlag();

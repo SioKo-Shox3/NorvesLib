@@ -298,30 +298,6 @@ namespace
         std::cout << "TestWorldSpaceRemovesScreenSpaceProxyAndStaleRemovalRuns passed\n";
     }
 
-    // 旧の全走査（--ecs-legacy-sync）は、同期のたびに画面空間の sink へ生存集合を渡して古い proxy を外す
-    void TestLegacySyncRunsStaleRemovalOnScreenSink()
-    {
-        World world;
-        world.Initialize();
-        world.SetLegacyRenderSync(true);
-        TrackingBoardSink sink;
-        world.SetScreenSpaceBoardSink(&sink);
-
-        Entity *entity = world.SpawnObject<Entity>();
-        assert(entity);
-        BoardComponent *board = world.CreateComponent<BoardComponent>(entity);
-        assert(board);
-
-        world.SyncToSceneView();
-        assert(sink.Find(board->GetComponentId()));
-        assert(sink.StaleCount == 1);
-        world.SyncToSceneView();
-        assert(sink.StaleCount == 2);
-
-        world.Finalize();
-        std::cout << "TestLegacySyncRunsStaleRemovalOnScreenSink passed\n";
-    }
-
     void TestBillboardEffectiveWorldSpaceSurvivesCleanSync()
     {
         World world;
@@ -541,7 +517,6 @@ int main()
     TestBoardReflectionAndTextureOptionalProxy();
     TestWorldRoutesScreenSpaceBoardsByComponentId();
     TestWorldSpaceRemovesScreenSpaceProxyAndStaleRemovalRuns();
-    TestLegacySyncRunsStaleRemovalOnScreenSink();
     TestBillboardEffectiveWorldSpaceSurvivesCleanSync();
     TestCanvasViewBoardStoreAndDrawCommandSnapshotShape();
     TestRenderingCoordinatorAppendsCanvasBoardsAfterSceneCommands();

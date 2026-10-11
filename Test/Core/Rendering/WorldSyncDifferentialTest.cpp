@@ -476,13 +476,12 @@ namespace
         world.Finalize();
     }
 
-    // 描画の無効化の通知（設計 1.10）: 資源の変化・履歴の落ち着き・接続先の交換が、変更の無い行の proxy 更新の理由になる
-    // 旧の全走査（--ecs-legacy-sync）の検査: 変更も通知も無い行を作り直して、公開した内容と比べる
+    // 描画の無効化の通知（設計 1.10）: 資源の変化・履歴の落ち着き・接続先の交換が、変更の無い行の proxy 更新の理由になる。
+    // 検査 ECS_RENDER_INVALIDATION は、全行から作り直した proxy を公開した内容と比べ、届かなかった通知を見つける
     void TestRenderInvalidationNotifications()
     {
         World world;
         world.Initialize();
-        world.SetLegacyRenderSync(true);
         world.SetRenderInvalidationCheckForced(true);
 
         SceneView view;
@@ -557,25 +556,33 @@ namespace
         assert(FindMeshProxy(view, object->GetObjectId())->MaterialBlendModes[0] == BlendMode::Masked);
         assert(world.GetRenderInvalidationStats().Violations == 0);
 
-        // 通知が行に届かなければ、変更も通知も無いのに proxy が変わった行として検査が見つける
+        // 通知が行に届かなければ proxy は古いまま残り、全行から作り直した proxy との食い違いとして検査が見つける
         blended.Blend = BlendMode::Additive;
         assert(renderResources.Materials().Update(translucent, blended));
         Container::VariableArray<RenderResourceRef> swallowed;
         (void)renderResources.ChangeLog().Drain(swallowed);
         assert(swallowed.size() == 1);
         world.SyncToSceneView(&renderResources.Materials());
+        assert(FindMeshProxy(view, object->GetObjectId())->MaterialBlendModes[0] == BlendMode::Masked);
         assert(world.GetRenderInvalidationStats().Violations == 1);
-        // 公開し直した内容を覚えるので、次の同期では食い違わない
+        // 通知が届けば公開し直し、それ以後は食い違わない
+        world.NotifyRenderResourceChanged(RenderResourceKind::Material, translucent.Id);
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(FindMeshProxy(view, object->GetObjectId())->MaterialBlendModes[0] == BlendMode::Additive);
+        assert(world.GetRenderInvalidationStats().Violations == 1);
         world.SyncToSceneView(&renderResources.Materials());
         assert(world.GetRenderInvalidationStats().Violations == 1);
 
         // 前フレームの変換の履歴が落ち着くまでの公開し直しは通知になる（動かした直後の 2 回目の同期）
         object->SetPosition(9.0f, 0.0f, 0.0f);
         world.SyncToSceneView(&renderResources.Materials());
+        assert(GetTranslationX(FindMeshProxy(view, object->GetObjectId())->WorldTransform) == 9.0f);
+        assert(GetTranslationX(FindMeshProxy(view, object->GetObjectId())->PreviousWorldTransform) == 0.0f);
         world.SyncToSceneView(&renderResources.Materials());
+        assert(GetTranslationX(FindMeshProxy(view, object->GetObjectId())->PreviousWorldTransform) == 9.0f);
         world.SyncToSceneView(&renderResources.Materials());
+        assert(FindLightProxy(view, light->GetComponentId())->PositionX == 9.0f);
         assert(world.GetRenderInvalidationStats().Violations == 1);
-        assert(world.GetRenderInvalidationStats().Probed > 0);
 
         // 接続先の交換は全部の行を公開し直す
         SceneView replacementView;
@@ -664,13 +671,13 @@ namespace
         world.Finalize();
     }
 
-    // 段 RenderSync の一覧（設計 1.10・準備）: 変更ログ・通知・公開の状態から作った「変わった行」と Remove が、全走査と一致する
-    void TestRenderSyncListMatchesFullScan()
+    // 段 RenderSync の一覧（設計 1.10）: 変更ログ・通知・公開の状態から作った「変わった行」と Remove が、
+    // 追加・移動・非表示・非アクティブ・破棄のそれぞれで手で決めた行と一致する
+    void TestRenderSyncListContents()
     {
         using Kind = Ecs::EcsRenderSyncKind;
         World world;
         world.Initialize();
-        world.SetLegacyRenderSync(true);
         world.SetRenderSyncCheckForced(true);
 
         SceneView view;
@@ -720,6 +727,11 @@ namespace
         assert(list.Changed.count(keyOf(Kind::Mesh, childMesh->GetComponentId())) == 1);
         assert(list.Changed.count(keyOf(Kind::Light, childLight->GetComponentId())) == 1);
         assert(list.Changed.count(keyOf(Kind::Mesh, otherMesh->GetComponentId())) == 0);
+        assert(list.Changed.size() == 3);
+        assert(GetTranslationX(FindMeshProxyByComponent(view, parentMesh->GetComponentId())->WorldTransform) == 3.0f);
+        assert(GetTranslationX(FindMeshProxyByComponent(view, childMesh->GetComponentId())->WorldTransform) == 3.0f);
+        assert(FindLightProxy(view, childLight->GetComponentId())->PositionX == 3.0f);
+        assert(GetTranslationX(FindMeshProxyByComponent(view, otherMesh->GetComponentId())->WorldTransform) == 0.0f);
 
         // 非表示: 値を書いた行だけが変わった行になる。取り下げは作り直した結果で、Remove には載らない
         syncOnce();
@@ -738,11 +750,16 @@ namespace
         assert(list.Removed.count(keyOf(Kind::Mesh, parentMesh->GetComponentId())) == 1);
         assert(list.Removed.count(keyOf(Kind::Mesh, childMesh->GetComponentId())) == 1);
         assert(list.Removed.count(keyOf(Kind::Light, childLight->GetComponentId())) == 1);
+        assert(list.Removed.size() == 3);
+        assert(view.GetMeshProxies().empty());
+        assert(view.GetLightProxies().empty());
         syncOnce();
         assert(list.Removed.empty());
         parent->SetActive(true);
         syncOnce();
         assert(list.Changed.count(keyOf(Kind::Mesh, childMesh->GetComponentId())) == 1);
+        assert(view.GetMeshProxies().size() == 2);
+        assert(view.GetLightProxies().size() == 1);
 
         // 破棄: 行の削除のフックが Remove を積む
         syncOnce();
@@ -760,59 +777,16 @@ namespace
         const uint32_t violationsBefore = world.GetRenderSyncStats().Violations;
         parentMesh->SetLastSyncedTransformVersion(0);
         syncOnce();
-        assert(world.GetRenderSyncStats().Violations == violationsBefore + 1);
+        const uint32_t violationsDetected = world.GetRenderSyncStats().Violations;
+        assert(violationsDetected > violationsBefore);
+        // 変更ログに載る変化（移動）で公開し直すと、それ以後は食い違わない
+        parent->SetPosition(6.0f, 0.0f, 0.0f);
         syncOnce();
-        assert(world.GetRenderSyncStats().Violations == violationsBefore + 1);
+        syncOnce();
+        assert(world.GetRenderSyncStats().Violations == violationsDetected);
+        assert(GetTranslationX(FindMeshProxyByComponent(view, parentMesh->GetComponentId())->WorldTransform) == 6.0f);
 
         world.Finalize();
-    }
-
-    // 一覧と全走査の照合は、欠け・余り・説明のない取り下げ・Remove なのに生存、をそれぞれ違反にする
-    void TestRenderSyncCompareDetectsEachMismatch()
-    {
-        using Kind = Ecs::EcsRenderSyncKind;
-        const auto keyOf = [](Kind kind, uint64_t id) { return Ecs::EcsRenderSyncKey(kind, id); };
-
-        Ecs::EcsRenderSyncList list;
-        Container::UnorderedSet<uint64_t> scanChanged;
-        Container::UnorderedSet<uint64_t> scanStale;
-        Container::UnorderedSet<uint64_t> liveAfter;
-
-        list.Changed.insert(keyOf(Kind::Mesh, 1));
-        scanChanged.insert(keyOf(Kind::Mesh, 1));
-        // 板は変わった行（Board）が、World・画面空間どちらの取り下げも説明する
-        list.Changed.insert(keyOf(Kind::Board, 5));
-        scanChanged.insert(keyOf(Kind::Board, 5));
-        scanStale.insert(keyOf(Kind::WorldBoard, 5));
-        list.Removed.insert(keyOf(Kind::Light, 9));
-        scanStale.insert(keyOf(Kind::Light, 9));
-        assert(Ecs::EcsRenderSyncCompare(list, scanChanged, scanStale, liveAfter).Violations() == 0);
-
-        scanChanged.insert(keyOf(Kind::Mesh, 2));
-        Ecs::EcsRenderSyncReport report = Ecs::EcsRenderSyncCompare(list, scanChanged, scanStale, liveAfter);
-        assert(report.ChangedMissing == 1 && report.Violations() == 1);
-        scanChanged.erase(keyOf(Kind::Mesh, 2));
-
-        list.Changed.insert(keyOf(Kind::Mesh, 3));
-        report = Ecs::EcsRenderSyncCompare(list, scanChanged, scanStale, liveAfter);
-        assert(report.ChangedExtra == 1 && report.Violations() == 1);
-        list.Changed.erase(keyOf(Kind::Mesh, 3));
-
-        scanStale.insert(keyOf(Kind::Mesh, 4));
-        report = Ecs::EcsRenderSyncCompare(list, scanChanged, scanStale, liveAfter);
-        assert(report.RemovedUnexplained == 1 && report.Violations() == 1);
-        scanStale.erase(keyOf(Kind::Mesh, 4));
-
-        liveAfter.insert(keyOf(Kind::Light, 9));
-        report = Ecs::EcsRenderSyncCompare(list, scanChanged, scanStale, liveAfter);
-        assert(report.RemovedStillLive == 1 && report.Violations() == 1);
-        assert(report.FirstDetail[0] != '\0');
-        liveAfter.clear();
-
-        // 種類が違う鍵は別物（Mesh の 1 と Light の 1 を取り違えない）
-        scanStale.insert(keyOf(Kind::Light, 1));
-        report = Ecs::EcsRenderSyncCompare(list, scanChanged, scanStale, liveAfter);
-        assert(report.RemovedUnexplained == 1);
     }
 
     void TestLightAndBoardValuesLiveInComponentRow()
@@ -1005,7 +979,6 @@ namespace
         World world;
         world.Initialize();
         world.SetRenderSyncCheckForced(true);
-        assert(!world.IsLegacyRenderSync());
 
         SceneView view;
         SceneViewSettings settings;
@@ -1185,52 +1158,89 @@ namespace
         world.Finalize();
     }
 
-    // --ecs-legacy-sync 相当の切り替え: 旧の全走査は変わっていない Mesh も公開し直し、既定の同期は公開し直さない。実行中に往復できる
-    void TestLegacyRenderSyncSwitch()
+    // 親の付け替え・シーンの出入りの後の proxy と板が、手で決めた位置と数になる
+    void TestDeltaSyncReparentAndSceneExitEnter()
     {
         World world;
         world.Initialize();
         world.SetRenderSyncCheckForced(true);
-        world.SetLegacyRenderSync(true);
-        assert(world.IsLegacyRenderSync());
+        world.SetRenderInvalidationCheckForced(true);
 
         SceneView view;
         SceneViewSettings settings;
         assert(view.Initialize(settings));
         world.SetSceneView(&view);
 
-        Entity* object = world.SpawnObject<Entity>();
-        assert(object);
-        MeshComponent* mesh = world.CreateComponent<MeshComponent>(object);
-        PointLightComponent* light = world.CreateComponent<PointLightComponent>(object);
-        assert(mesh && light);
+        Entity* rootA = world.SpawnObject<Entity>();
+        Entity* rootB = world.SpawnObject<Entity>();
+        Entity* child = world.SpawnEntity<Entity>(rootA);
+        assert(rootA && rootB && child);
+        rootA->SetPosition(1.0f, 0.0f, 0.0f);
+        rootB->SetPosition(10.0f, 0.0f, 0.0f);
+        child->SetLocalPosition(2.0f, 0.0f, 0.0f);
+        MeshComponent* mesh = world.CreateComponent<MeshComponent>(child);
+        PointLightComponent* light = world.CreateComponent<PointLightComponent>(child);
+        BoardComponent* board = world.CreateComponent<BoardComponent>(child);
+        assert(mesh && light && board);
         mesh->SetMeshHandle(MakeMeshHandle(820));
+        board->SetTextureHandle(TextureHandle{44});
+        board->SetBoardSpace(BoardSpace::WorldSpace);
 
-        world.SyncToSceneView();
-        world.SyncToSceneView();
-        world.SyncToSceneView();
-        SetTranslationX(FindMeshProxy(view, object->GetObjectId())->WorldTransform, 777.0f);
-        world.SyncToSceneView();
-        assert(GetTranslationX(FindMeshProxy(view, object->GetObjectId())->WorldTransform) == 0.0f);
+        const auto expectAt = [&](float x)
+        {
+            assert(view.GetMeshProxies().size() == 1);
+            assert(view.GetLightProxies().size() == 1);
+            assert(view.GetBoardProxies().size() == 1);
+            assert(GetTranslationX(FindMeshProxyByComponent(view, mesh->GetComponentId())->WorldTransform) == x);
+            assert(FindLightProxy(view, light->GetComponentId())->PositionX == x);
+            assert(GetTranslationX(FindBoardProxy(view, board->GetComponentId())->WorldTransform) == x);
+        };
 
-        world.SetLegacyRenderSync(false);
+        // 追加: 親 1 + 局所 2
         world.SyncToSceneView();
         world.SyncToSceneView();
-        SetTranslationX(FindMeshProxy(view, object->GetObjectId())->WorldTransform, 777.0f);
         world.SyncToSceneView();
-        assert(GetTranslationX(FindMeshProxy(view, object->GetObjectId())->WorldTransform) == 777.0f);
-        object->SetPosition(2.0f, 0.0f, 0.0f);
-        world.SyncToSceneView();
-        assert(GetTranslationX(FindMeshProxy(view, object->GetObjectId())->WorldTransform) == 2.0f);
-        assert(FindLightProxy(view, light->GetComponentId())->PositionX == 2.0f);
-        assert(world.GetRenderSyncStats().Violations == 0);
+        expectAt(3.0f);
 
-        world.SetLegacyRenderSync(true);
+        // 付け替えはワールドの位置を保つので、proxy は動かない
+        assert(world.ReparentEntity(child, rootB));
+        world.SyncToSceneView();
+        world.SyncToSceneView();
+        expectAt(3.0f);
+
+        // 前の親を動かしても付いてこない。新しい親を動かすと付いてくる（3 - 10 + 20 = 13）
+        rootA->SetPosition(-5.0f, 0.0f, 0.0f);
+        world.SyncToSceneView();
+        expectAt(3.0f);
+        rootB->SetPosition(20.0f, 0.0f, 0.0f);
+        world.SyncToSceneView();
+        world.SyncToSceneView();
+        expectAt(13.0f);
+
+        // シーンを出る: 根を全部外すと、proxy も板も残らない
+        world.RemoveObject(rootA);
+        world.RemoveObject(rootB);
+        world.SyncToSceneView();
+        assert(view.GetMeshProxies().empty());
+        assert(view.GetLightProxies().empty());
+        assert(view.GetBoardProxies().empty());
+
+        // 次のシーンに入る: 新しく置いた行だけが出る
+        Entity* next = world.SpawnObject<Entity>();
+        assert(next);
+        next->SetPosition(5.0f, 0.0f, 0.0f);
+        MeshComponent* nextMesh = world.CreateComponent<MeshComponent>(next);
+        assert(nextMesh);
+        nextMesh->SetMeshHandle(MakeMeshHandle(821));
         world.SyncToSceneView();
         world.SyncToSceneView();
         assert(view.GetMeshProxies().size() == 1);
-        assert(world.GetRenderSyncStats().Violations == 0);
+        assert(view.GetLightProxies().empty());
+        assert(view.GetBoardProxies().empty());
+        assert(GetTranslationX(FindMeshProxyByComponent(view, nextMesh->GetComponentId())->WorldTransform) == 5.0f);
 
+        assert(world.GetRenderSyncStats().Violations == 0);
+        assert(world.GetRenderInvalidationStats().Violations == 0);
         world.Finalize();
     }
 
@@ -1260,8 +1270,8 @@ namespace
         world.Finalize();
     }
 
-    // 静止のフレームでは、既定の同期は行を 1 つもたどらない（旧の全走査は Entity をたどる）。
-    // Text の追加・変更・削除は、旧の走査と同じく変換のキャッシュに届き、グリフの板として公開される
+    // 静止のフレームでは、同期は行を 1 つもたどらない。
+    // Text の追加・変更・削除は変換のキャッシュに届き、グリフの板として公開される
     void TestDeltaSyncWalksNoRowsWhenStatic()
     {
         auto device = Container::MakeShared<FakeDevice>();
@@ -1316,7 +1326,6 @@ namespace
         world.Initialize();
         world.SetRenderSyncCheckForced(true);
         world.SetRenderInvalidationCheckForced(true);
-        assert(!world.IsLegacyRenderSync());
 
         SceneView view;
         SceneViewSettings settings;
@@ -1412,31 +1421,6 @@ namespace
         assert(glyphsMatch(world, addedId, "E", 3.0f, 3.0f));
         assert(glyphsMatch(world, textId, "BC D", 7.0f, 7.0f));
 
-        // 旧の全走査に切り替えても、公開するグリフの板は変わらない
-        {
-            Container::VariableArray<BoardProxy> deltaGlyphs;
-            world.CollectTransientBoardProxies(deltaGlyphs);
-            world.SetLegacyRenderSync(true);
-            world.SyncToSceneView();
-            Container::VariableArray<BoardProxy> legacyGlyphs;
-            world.CollectTransientBoardProxies(legacyGlyphs);
-            world.SetLegacyRenderSync(false);
-            assert(deltaGlyphs.size() == legacyGlyphs.size());
-            assert(!deltaGlyphs.empty() || !atlas.IsValid());
-            for (size_t index = 0; index < deltaGlyphs.size(); ++index)
-            {
-                const BoardProxy& delta = deltaGlyphs[index];
-                const BoardProxy& legacy = legacyGlyphs[index];
-                assert(delta.ComponentId == legacy.ComponentId);
-                assert(GetTranslationX(delta.WorldTransform) == GetTranslationX(legacy.WorldTransform));
-                assert(GetTranslationX(delta.PreviousWorldTransform) == GetTranslationX(legacy.PreviousWorldTransform));
-                assert(delta.SizePx.x == legacy.SizePx.x && delta.SizePx.y == legacy.SizePx.y);
-            }
-            world.SyncToSceneView();
-            world.SyncToSceneView();
-            syncStatic(2);
-        }
-
         // 削除: 前フレームの変換が揃う前に破棄しても、回収後の同期は消えた行を見ない
         parent->SetPosition(9.0f, 0.0f, 0.0f);
         world.SyncToSceneView();
@@ -1452,16 +1436,6 @@ namespace
         Container::VariableArray<BoardProxy> transient;
         world.CollectTransientBoardProxies(transient);
         assert(transient.empty());
-
-        // 旧の全走査は、静止のフレームでも Entity をたどる
-        world.SetLegacyRenderSync(true);
-        world.SyncToSceneView();
-        world.SyncToSceneView();
-        assert(world.GetLastRenderSyncVisitedRows() >= 3);
-        world.SetLegacyRenderSync(false);
-        world.SyncToSceneView();
-        world.SyncToSceneView();
-        syncStatic(2);
 
         assert(view.GetMeshProxies().size() == 1);
         assert(view.GetLightProxies().size() == 1);
@@ -1705,13 +1679,12 @@ int main()
     TestRenderValuesLiveInComponentRow();
     TestRenderInvalidationNotifications();
     TestRenderInvalidationStaleRefsAndInactiveRows();
-    TestRenderSyncListMatchesFullScan();
-    TestRenderSyncCompareDetectsEachMismatch();
+    TestRenderSyncListContents();
     TestLightAndBoardValuesLiveInComponentRow();
     TestLightDirectionAndBillboardSizeLiveInComponentRow();
     TestDeltaSyncPublishesOnlyChangedRows();
     TestDeltaSyncVerifyDetectsMissedNotification();
-    TestLegacyRenderSyncSwitch();
+    TestDeltaSyncReparentAndSceneExitEnter();
     TestInvisibleSkinnedMeshIsNotChangedEveryFrame();
     TestDeltaSyncWalksNoRowsWhenStatic();
     TestMegaMirrorKeepsChangesAcrossSkippedDraw();

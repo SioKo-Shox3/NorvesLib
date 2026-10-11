@@ -365,22 +365,25 @@ namespace
         checkAgainstRebuild();
 
         // 大量に追加すると保留があふれて作り直す
+        Entity* bulk[100] = {};
         for (int i = 0; i < 100; ++i)
         {
-            SpawnMeshEntity(world, static_cast<float>(i) * 4.0f, 200.0f, 0.0f);
+            bulk[i] = SpawnMeshEntity(world, static_cast<float>(i) * 4.0f, 200.0f, 0.0f);
         }
         syncOnce();
         assert(sceneQuery.GetLastUpdateStats().Rebuilt == 1);
         assert(sceneQuery.GetEntryCount() == 141);
         checkAgainstRebuild();
 
-        // 描画の同期が旧の全走査のときは、毎回全量で作る
-        world.SetLegacyRenderSync(true);
+        // 作り直した後も、静止のフレームは何も変えず、置いた位置の Entity に当たる
         syncOnce();
-        assert(sceneQuery.GetLastUpdateStats().Rebuilt == 1);
+        assert(sceneQuery.GetLastUpdateStats().Rebuilt == 0);
+        assert(sceneQuery.GetLastUpdateStats().Added == 0);
         assert(sceneQuery.GetEntryCount() == 141);
-        world.SetLegacyRenderSync(false);
-        syncOnce();
+        assert(sceneQuery.Raycast(
+            NorvesLib::Math::Ray(NorvesLib::Math::Vector3(40.0f, 190.0f, 0.0f), NorvesLib::Math::Vector3(0.0f, 1.0f, 0.0f)),
+            hit));
+        assert(hit.HitEntity == bulk[10]);
         checkAgainstRebuild();
 
         sceneQuery.Clear();
