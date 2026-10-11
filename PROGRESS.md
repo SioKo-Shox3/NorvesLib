@@ -1679,3 +1679,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-RENDER-SYNC-PREP-1.txt`: mega-stress の撮影（5000 体・動く 1%・ストリーミング、overview.Game.log に `Arg[11]=--ecs-legacy-sync`）で `ECS_RENDER_SYNC pass=3 fail=0`、`CAPTURE_SCENE result=pass`、EXIT=0。
   - `-2.txt`: 3 シーン混在の周回（rendering3dtest,mega-bananas,mega-stress、3 周、Game.log に `Arg[5]=--ecs-legacy-sync`）が `SCENE_CYCLE_SMOKE_RUN result=pass`、`ECS_RENDER_SYNC pass=1336`・fail 0、`SCENE_CYCLE_BASELINE cycle=2 scenes=3`・`changed=none unsettled=0`、EXIT=0。
 - Notes: SCN-ECS-RENDER-SYNC-PREP を done にした。差分同期側の照合（`VerifyRenderSyncDelta`）は SYNC-SWITCH の verify で扱う。
+
+### SCN-ECS-RENDER-SYNC-SWITCH 再検証（2026-10-11、反復 2・run 20261011-144300）
+
+- 変更なし。実装は保存コミット 2d5be294（記録は 0eae6a22）に入っており、止まった理由の混在周回の判定は SCN-SCENE-CYCLE-SHARED-CACHE で直っているので、元の verify を通し直した。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-ECS-RENDER-SYNC-SWITCH-1.txt`: SceneViewProxyLookupTest・WorldSyncDifferentialTest の Debug ビルド EXIT=0。
+  - `-2.txt`: SceneViewProxyReconcileTest・SceneViewProxyLookupTest・WorldSyncDifferentialTest の 3 件 Passed、EXIT=0。
+  - `-3.txt`: 起動画面（default、RelWithDebInfo、決定論）を SCN-MEGA-BASE-RWDI と比較し `result=pass`（平均輝度差 0、PSNR 100 dB、不一致画素 2E-06）。
+  - `-4.txt`: 3 シーン混在の周回（rendering3dtest,mega-bananas,mega-stress、3 周）が `SCENE_CYCLE_SMOKE_RUN result=pass`、2 周目以降の textures は 9・texture_bytes は揃う、EXIT=0。
+- Next: SCN-MEGA-SCENE-DELTA で MegaGeometry を差分同期へ移すと、同期の走査が O(変化) になる。
+- Notes: SCN-ECS-RENDER-SYNC-SWITCH を done にした。Git Bash から `cmake --build ... -- /m:1` を呼ぶとスイッチがパスに変換されて MSBuild が失敗するので、verify は PowerShell で走らせた。

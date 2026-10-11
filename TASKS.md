@@ -444,7 +444,7 @@
 - notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RENDER-SYNC-SWITCH: Mesh・Skinned・Light・Board の同期を、変わった行だけにする（切替）
-- status: todo
+- status: done
 - done-when: 次をやめる: 生存集合と `RemoveStale*`（World.cpp:1225-1261）、dirty でない行の作り直し（1497-1511）、ComponentDataRegistry への毎フレームの公開（1448-1451・1542-1551）。MegaGeometry は SCENE-DELTA まで旧経路のまま。`--ecs-legacy-sync` で戻せる。下のテストと起動画面の比較・周回が pass する。
 - verify: `cmake --build build --config Debug --target SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SceneViewProxyLookupTest|SceneViewProxyReconcileTest|WorldSyncDifferentialTest)$" --no-tests=error --output-on-failure --timeout 180`
