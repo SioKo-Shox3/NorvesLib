@@ -80,7 +80,15 @@ namespace NorvesLib::Core::Ecs
         SetColumnHooks(EcsColumnInfoOf<EcsGpuSceneSlot>().Type, slotHooks);
     }
 
-    EcsWorld::~EcsWorld() = default;
+    EcsWorld::~EcsWorld()
+    {
+        // 登録されたフックの相手を持ったままにしない（登録した側が先に消えていても、相手の寿命は EcsWorld が見る）
+        for (const HookEntry &entry : m_Hooks)
+        {
+            ReleaseHookUser(entry.Hooks);
+        }
+        m_Hooks.clear();
+    }
 
     EcsArchetypeId EcsWorld::GetOrCreateArchetype(Container::Span<const EcsColumnInfo> columns, uint64_t tags)
     {
@@ -565,33 +573,54 @@ namespace NorvesLib::Core::Ecs
         return true;
     }
 
+    void EcsWorld::ReleaseHookUser(const EcsColumnHooks &hooks)
+    {
+        if (hooks.ReleaseUser != nullptr)
+        {
+            hooks.ReleaseUser(hooks.User);
+        }
+    }
+
     bool EcsWorld::SetColumnHooks(TypeId type, const EcsColumnHooks &hooks)
     {
         if (type == InvalidSchemaId || m_HookDepth > 0)
         {
             return false;
         }
+        const bool bStore = hooks.OnCreate != nullptr || hooks.OnDestroy != nullptr;
         for (size_t i = 0; i < m_Hooks.size(); ++i)
         {
             if (m_Hooks[i].Type == type)
             {
-                if (hooks.OnCreate == nullptr && hooks.OnDestroy == nullptr)
+                const EcsColumnHooks previous = m_Hooks[i].Hooks;
+                if (bStore)
                 {
-                    m_Hooks.erase(m_Hooks.begin() + i);
+                    m_Hooks[i].Hooks = hooks;
                 }
                 else
                 {
-                    m_Hooks[i].Hooks = hooks;
+                    m_Hooks.erase(m_Hooks.begin() + i);
+                }
+                // 持っていた相手の参照は、差し替え・解除のあとで手放す（新しい相手が同じでも参照は別に数える）
+                ReleaseHookUser(previous);
+                if (!bStore)
+                {
+                    ReleaseHookUser(hooks);
                 }
                 return true;
             }
         }
-        if (hooks.OnCreate != nullptr || hooks.OnDestroy != nullptr)
+        if (bStore)
         {
             HookEntry entry;
             entry.Type = type;
             entry.Hooks = hooks;
             m_Hooks.push_back(entry);
+        }
+        else
+        {
+            // 何も登録されない。渡された参照は持たないので、ここで手放す
+            ReleaseHookUser(hooks);
         }
         return true;
     }

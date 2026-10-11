@@ -1629,3 +1629,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `EcsHierarchyTest` の祖先の停止の検査に、`Object` 経由の仮想呼び出し（`ObjectHeap::EnqueueDestroy` が `slot.Instance->Destroy()` で呼ぶ形と同じ）と、`SetFlag(OF_PendingDestroy)` + `RegisterPendingDestroy` の直接呼び出しを足した。どちらも旧/新の伝播で子・孫の count=0。
 - 結果（`.harness/runs/20261011-130759/`）: `verify-SCN-ECS-FIX-DESTROY-FLAGS-4.txt` Game の RelWithDebInfo ビルド exit=0、`-5.txt` Debug の EntityTreeTest・ApplicationFixedStepPipelineTest のビルド exit=0、`-6.txt` 5 件が 5/5 Passed。
 - Notes: 現行の World は Heap 所有の Entity を木へ入れられない（`AddObject` が拒否）ので、Heap 経由の「子・孫の count=0」は、Heap の予約が通る仮想呼び出し（`Object::Destroy`）を World の木の Entity に対して行う形で検査した。Heap の Entity 単体の ECS の印の検査（予備の値）も残している。
+
+### SCN-ECS-FIX-SCENEQUERY-HOOKS（2026-10-11、反復 3・run 20261011-130759）
+
+- 変更: 行の削除のフックの相手 `SceneQuery::HookUser` を参照カウント（`Thread::Atomic`）にし、`EcsColumnHooks` に `ReleaseUser` を足した。`SetColumnHooks` が true を返した時点で EcsWorld が 1 参照を持ち、フックの差し替え・解除・EcsWorld の破棄で 1 度だけ `ReleaseUser` を呼ぶ（false のときは呼び出し側に残る）。SceneQuery は自分の 1 参照を `RetireHookUser`（World の切替・`DetachTracking`）で手放すので、SceneQuery が先に消えても、切り替えた前の World に残ったフックが指す識別子はその World が持つ参照で生きる（bLive は false なので何もしない）。`m_HookUsers` の配列は廃止。
+- テスト（`SceneQueryRaycastTest` の束、新しい実行ファイルは足していない）: `TestIncrementalUpdateSurvivesQueryDestroyedBeforeOldWorldRows`（World A・B を生かしたまま Update(A)→Update(B)→Clear→SceneQuery 破棄→A・B の Entity を削除）、`TestEcsColumnHooksReleaseUser`（差し替え・解除・EcsWorld の破棄で手放しが 1 度ずつ）。
+- 結果（`.harness/runs/20261011-130759/`）: `verify-SCN-ECS-FIX-SCENEQUERY-HOOKS-1.txt` Debug の SceneQueryRaycastTest ビルド成功、`-2.txt` 4 テスト 4/4 Passed、`-3.txt` mega-stress の撮影 `result=pass`・`ECS_SCENEQUERY pass=3 fail=0`。
+- Notes: SCN-ECS-SCENEQUERY を done にした（残りの指摘はこの 1 点だけだった）。切り替えた前の World に登録した変更ログの消費者は、その World が消えるまで残る（古い World は触れないため）。行末は numstat の 2 通りが一致。TASKS.md は誤って LF にしかけたので CRLF に戻した。

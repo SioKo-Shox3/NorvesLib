@@ -1,5 +1,6 @@
 ﻿#include "Component/MegaGeometryComponent.h"
 #include "Component/MeshComponent.h"
+#include "Ecs/EcsWorld.h"
 #include "Math/GeometryIntersection.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
@@ -12,6 +13,7 @@
 
 using namespace NorvesLib::Core;
 using namespace NorvesLib::Core::Component;
+namespace Ecs = NorvesLib::Core::Ecs;
 
 namespace
 {
@@ -533,6 +535,96 @@ namespace
         worldA.Finalize();
         worldB.Finalize();
     }
+
+    // 切り替えた前の World・追っていた World が生きたまま SceneQuery を先に破棄しても、
+    // 前の World に残った削除のフックが解放済みの識別子を読まない（識別子は World が参照を持って生かす）
+    void TestIncrementalUpdateSurvivesQueryDestroyedBeforeOldWorldRows()
+    {
+        World worldA;
+        World worldB;
+        worldA.Initialize();
+        worldB.Initialize();
+        Rendering::SceneView viewA;
+        Rendering::SceneView viewB;
+        Rendering::SceneViewSettings settings;
+        assert(viewA.Initialize(settings));
+        assert(viewB.Initialize(settings));
+        worldA.SetSceneView(&viewA);
+        worldB.SetSceneView(&viewB);
+        Rendering::RenderResources renderResources;
+
+        Entity* doomedA = SpawnMeshEntity(worldA, 0.0f, 0.0f, 0.0f);
+        Entity* doomedB = SpawnMeshEntity(worldB, 0.0f, 0.0f, 0.0f);
+        SpawnMeshEntity(worldA, 10.0f, 0.0f, 0.0f);
+        SpawnMeshEntity(worldB, 10.0f, 0.0f, 0.0f);
+
+        {
+            Scene::SceneQuery sceneQuery;
+            const IncrementalHarness harnessA{worldA, sceneQuery, renderResources};
+            const IncrementalHarness harnessB{worldB, sceneQuery, renderResources};
+            harnessA.Sync();
+            harnessB.Sync();
+            harnessB.Sync();
+            assert(sceneQuery.GetEntryCount() == 2);
+            sceneQuery.Clear();
+        }
+
+        // SceneQuery が消えたあと、A（切り替えた前）と B（最後に追っていた）の行を消す
+        doomedA->MarkForDestroy();
+        doomedB->MarkForDestroy();
+        worldA.Tick(0.016f);
+        worldB.Tick(0.016f);
+
+        worldA.Finalize();
+        worldB.Finalize();
+    }
+
+    // フックの相手の参照は、差し替え・解除・EcsWorld の破棄のそれぞれで 1 度ずつ手放される
+    int g_ReleasedHookUsers = 0;
+
+    void CountReleasedHookUser(void* user)
+    {
+        ++*static_cast<int*>(user);
+        ++g_ReleasedHookUsers;
+    }
+
+    void NoOpRowHook(void*, Ecs::EcsEntity, const void*, Ecs::EcsHookReason) {}
+
+    void TestEcsColumnHooksReleaseUser()
+    {
+        const auto type = Ecs::EcsColumnInfoOf<Ecs::EcsEntityFlags>().Type;
+        int releasedFirst = 0;
+        int releasedSecond = 0;
+        int releasedThird = 0;
+        g_ReleasedHookUsers = 0;
+
+        {
+            Ecs::EcsWorld ecs;
+            Ecs::EcsColumnHooks hooks;
+            hooks.OnDestroy = &NoOpRowHook;
+            hooks.ReleaseUser = &CountReleasedHookUser;
+
+            hooks.User = &releasedFirst;
+            assert(ecs.SetColumnHooks(type, hooks));
+            assert(releasedFirst == 0);
+
+            // 差し替えで前の相手が手放される
+            hooks.User = &releasedSecond;
+            assert(ecs.SetColumnHooks(type, hooks));
+            assert(releasedFirst == 1 && releasedSecond == 0);
+
+            // 解除で手放される
+            assert(ecs.SetColumnHooks(type, Ecs::EcsColumnHooks{}));
+            assert(releasedSecond == 1);
+
+            // EcsWorld の破棄で、残っている相手が手放される
+            hooks.User = &releasedThird;
+            assert(ecs.SetColumnHooks(type, hooks));
+            assert(releasedThird == 0);
+        }
+        assert(releasedFirst == 1 && releasedSecond == 1 && releasedThird == 1);
+        assert(g_ReleasedHookUsers == 3);
+    }
 }
 
 int main()
@@ -547,6 +639,8 @@ int main()
     TestIncrementalUpdateFollowsMegaGeometryChild();
     TestIncrementalUpdateFollowsReparentToInactive();
     TestIncrementalUpdateIgnoresOldWorldHooksAfterSwitch();
+    TestIncrementalUpdateSurvivesQueryDestroyedBeforeOldWorldRows();
+    TestEcsColumnHooksReleaseUser();
 
     std::cout << "SceneQueryRaycastTest passed\n";
     return 0;

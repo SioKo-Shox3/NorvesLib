@@ -68,12 +68,18 @@ namespace NorvesLib::Core::Ecs
     /// フックの関数。value は列の値（作成・追加の直後、または削除・除去の直前）。フックの中では構造変更をしない。
     using EcsHookFn = void (*)(void *user, EcsEntity entity, const void *value, EcsHookReason reason);
 
-    /// 列の型ごとの作成・削除のフック。どちらも null でよい。
+    /// フックの相手（User）の解放の関数。EcsWorld が相手を持つのをやめるとき（フックの差し替え・解除・EcsWorld の破棄）に呼ぶ。
+    using EcsHookUserReleaseFn = void (*)(void *user);
+
+    /// 列の型ごとの作成・削除のフック。OnCreate・OnDestroy はどちらも null でよい。
+    /// ReleaseUser が非 null なら、SetColumnHooks が true を返した時点で User への 1 参照を EcsWorld へ渡したことになり、
+    /// EcsWorld が持つのをやめるとき（差し替え・解除・破棄）に 1 度だけ呼ぶ。SetColumnHooks が false なら参照は呼び出し側に残る。
     struct EcsColumnHooks
     {
         EcsHookFn OnCreate = nullptr;
         EcsHookFn OnDestroy = nullptr;
         void *User = nullptr;
+        EcsHookUserReleaseFn ReleaseUser = nullptr;
     };
 
     /// 行の作成時に与える列の初期値。Size は列の大きさと一致しなければならない（食い違いは作成を拒む）。
@@ -492,6 +498,8 @@ namespace NorvesLib::Core::Ecs
         /// 行を作る（フックは呼ばない）。作った実体は outEntities の末尾へ足す。
         uint32_t CreateRows(EcsArchetypeId archetype, uint32_t count, Container::VariableArray<EcsEntity> *outEntities);
         [[nodiscard]] const EcsColumnHooks *FindHooks(TypeId type) const;
+        /// フックの相手への参照を手放す（ReleaseUser があるときだけ）
+        static void ReleaseHookUser(const EcsColumnHooks &hooks);
         /// 実体の全列について、フックを呼ぶ（OnCreate は create が true）
         void FireRowHooks(EcsEntity entity, bool create, EcsHookReason reason);
         /// 実体の列 column のフックを 1 つ呼ぶ

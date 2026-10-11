@@ -84,6 +84,16 @@ namespace NorvesLib::Core::Scene
             }
             hookUser->Destroyed->push_back(PackRow(entity));
         }
+
+        /// 識別子の参照を 1 つ手放す。最後の参照なら解放する（EcsWorld のフックの解除からも呼ばれる）
+        void ReleaseHookUser(void* user)
+        {
+            auto* hookUser = static_cast<SceneQuery::HookUser*>(user);
+            if (hookUser != nullptr && hookUser->RefCount.FetchSub(1) == 1)
+            {
+                delete hookUser;
+            }
+        }
     } // namespace
 
     SceneQuery::SceneQuery()
@@ -841,9 +851,9 @@ namespace NorvesLib::Core::Scene
         }
 
         // 行の削除は変更ログに載らない（死んだ行は読めない）ので、Entity の行が必ず持つ列のフックで拾う
-        // 登録ごとに識別子を作る。World の切替で古い登録を無効にしても、残ったフックが指す先は生きている
-        m_HookUsers.push_back(Container::MakeUnique<HookUser>());
-        m_HookUser = m_HookUsers.back().get();
+        // 登録ごとに識別子を作る。World が持つ参照とは別に SceneQuery も 1 参照を持ち、World の切替や SceneQuery の破棄の後でも、
+        // 古い World に残ったフックが指す先は、その World がフックを外す（または破棄される）まで生きている
+        m_HookUser = new HookUser();
         m_HookUser->Destroyed = &m_DestroyedRows;
         m_HookUser->bLive = true;
         if (bOk)
@@ -851,7 +861,14 @@ namespace NorvesLib::Core::Scene
             Ecs::EcsColumnHooks hooks;
             hooks.OnDestroy = &OnRowDestroyed;
             hooks.User = m_HookUser;
+            hooks.ReleaseUser = &ReleaseHookUser;
+            m_HookUser->RefCount.FetchAdd(1);
             bOk = ecs.SetColumnHooks(types[2], hooks);
+            if (!bOk)
+            {
+                // 渡せなかった参照は戻す
+                ReleaseHookUser(m_HookUser);
+            }
         }
 
         if (!bOk)
@@ -901,6 +918,7 @@ namespace NorvesLib::Core::Scene
         {
             m_HookUser->bLive = false;
             m_HookUser->Destroyed = nullptr;
+            ReleaseHookUser(m_HookUser);
             m_HookUser = nullptr;
         }
     }
@@ -927,7 +945,7 @@ namespace NorvesLib::Core::Scene
         if (bIncremental && m_TrackedWorld != nullptr && m_TrackedWorld != &world)
         {
             // 別の World に替わった。古い World は消えているかもしれないので触らず、登録だけ無効にする
-            // （古い World に残ったフックが呼ばれても、無効な識別子は何もしない）
+            // （古い World に残ったフックが呼ばれても、無効な識別子は何もしない。識別子は古い World が参照を持って生かす）
             for (uint32_t& consumer : m_Consumers)
             {
                 consumer = Ecs::kInvalidEcsConsumer;

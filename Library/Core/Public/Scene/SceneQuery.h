@@ -6,6 +6,7 @@
 #include "Container/Span.h"
 #include "Ecs/EcsTypes.h"
 #include "Object/EntityHandle.h"
+#include "Thread/Atomic.h"
 #include "Thread/Thread.h"
 #include <cstdint>
 #include <cstddef>
@@ -111,12 +112,16 @@ namespace NorvesLib::Core::Scene
             uint32_t Entries = 0;
         };
 
-        /// 行の削除のフックへ渡す相手（内部用）。登録ごとに 1 つ作り、World が替わったら bLive を落として古い呼び出しを無視する
+        /// 行の削除のフックへ渡す相手（内部用）。登録ごとに 1 つ作る。
+        /// 参照で数え、SceneQuery と、フックを持つ EcsWorld がそれぞれ 1 参照を持つ。SceneQuery が先に消えても、
+        /// 切り替えた先の World が残っていれば、その World がフックを外すまで生きている（bLive は false で何もしない）
         struct HookUser
         {
             Container::VariableArray<uint64_t>* Destroyed = nullptr;
             /// この登録がまだ有効か。World の切替・解除で false になる（フックが残っていても何もしない）
             bool bLive = false;
+            /// 参照の数（作った直後は SceneQuery の 1）
+            Thread::Atomic<uint32_t> RefCount{1};
         };
 
         SceneQuery();
@@ -286,9 +291,8 @@ namespace NorvesLib::Core::Scene
         // 増分の状態
         World* m_TrackedWorld = nullptr;
         uint32_t m_Consumers[3] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
-        /// 現在の登録の識別子（m_HookUsers の末尾）。解除済み・切替済みの登録は bLive=false のまま残す
+        /// 現在の登録の識別子（SceneQuery の 1 参照）。切替・解除で bLive=false にして手放す（World が持つ参照が残れば生きる）
         HookUser* m_HookUser = nullptr;
-        Container::VariableArray<Container::TUniquePtr<HookUser>> m_HookUsers;
         Container::UnorderedMap<uint64_t, TrackedEntity> m_Tracked;
         /// MeshComponent の ComponentId → それを持つ Entity の行
         Container::UnorderedMap<uint64_t, uint64_t> m_MeshOwner;
