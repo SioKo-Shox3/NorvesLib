@@ -29,6 +29,8 @@ namespace NorvesLib::Core::Component
         /// 検査 MASS_RANGES の名前と、仕事の無いフレームに突き合わせる間隔（列の Run の回数）
         constexpr const char *kMassRangesCheckName = "MASS_RANGES";
         constexpr uint64_t kMassRangesIdleInterval = 60;
+        /// 解放の後始末で、アーキタイプの外へ移った行を 1 単位に調べる行の数
+        constexpr uint32_t kReleaseSweepRows = 1024;
 
         /// 10 bit の値の bit を 3 つおきに広げる（Morton の符号用）
         uint32_t SpreadBits10(uint32_t value)
@@ -184,23 +186,27 @@ namespace NorvesLib::Core::Component
             }
         }
 
-        /// 散布の行の削除の後始末（Component が消えた後も、列が持って予算で進める）
+        /// 散布の行の削除の後始末（Component が消えた後も、列が持って予算で進める）。
+        /// 1 単位は、チャンク 1 つの返却・アーキタイプの外へ移った行の 1 区切りの削除・塊と組の返却のどれか 1 つ
         class MegaScatterReleaseJob final : public Ecs::IEcsMassWork
         {
         public:
+            /// rows はアーキタイプの外へ移った行を探すときだけ渡す（空なら探さない）。rowCount はログ用の行の数
             MegaScatterReleaseJob(World &world, uint32_t batchId, Ecs::EcsArchetypeId archetype, uint32_t chunkGroup,
-                                  uint32_t block, Container::VariableArray<Ecs::EcsEntity> &&rows, uint32_t instanceCount,
-                                  uint32_t rangeCount, uint64_t startRun)
+                                  uint32_t block, Container::VariableArray<Ecs::EcsEntity> &&rows, uint32_t rowCount,
+                                  uint32_t instanceCount, uint32_t rangeCount, uint64_t startRun)
                 : m_World(world),
                   m_BatchId(batchId),
                   m_Archetype(archetype),
                   m_ChunkGroup(chunkGroup),
                   m_Block(block),
                   m_Rows(std::move(rows)),
+                  m_RowCount(rowCount),
                   m_InstanceCount(instanceCount),
                   m_RangeCount(rangeCount),
                   m_StartRun(startRun)
             {
+                m_SweepCursor = static_cast<uint32_t>(m_Rows.size());
             }
 
             bool HasMassWork() const override
@@ -215,15 +221,32 @@ namespace NorvesLib::Core::Component
                     return;
                 }
                 Ecs::EcsWorld &ecs = m_World.GetEcsWorld();
-                // 散布のアーキタイプにはこの散布の行だけが入っているので、後ろのチャンクからチャンクごと返す
-                // （行ごとの理由 Destroy のフックで席も解放される）
+                // 散布のアーキタイプにはこの散布の行だけが入っているので、後ろのチャンクから 1 つずつ丸ごと返す
+                // （行ごとの理由 Destroy のフックで席も解放される）。列は単位の間で行数と時間の予算を見る
                 if (m_Archetype != Ecs::kInvalidEcsArchetype && ecs.GetArchetypeRowCount(m_Archetype) > 0)
                 {
                     const uint32_t chunksBefore = ecs.GetChunkCount();
-                    const uint32_t destroyed = ecs.DestroyArchetypeTailChunks(m_Archetype, cursor.GetRemainingRows());
+                    const uint32_t destroyed = ecs.DestroyArchetypeTailChunks(m_Archetype, 1);
                     m_ChunksReturned += chunksBefore - ecs.GetChunkCount();
                     m_Destroyed += destroyed;
                     cursor.Consume(destroyed);
+                    return;
+                }
+                // 列の追加などで別のアーキタイプへ移った行が残っていれば、後ろから 1 区切りずつ調べて消す
+                if (m_SweepCursor > 0)
+                {
+                    const uint32_t end = m_SweepCursor;
+                    const uint32_t begin = end > kReleaseSweepRows ? end - kReleaseSweepRows : 0;
+                    for (uint32_t row = end; row-- > begin;)
+                    {
+                        if (!m_Rows[row].IsNull() && ecs.IsAlive(m_Rows[row]))
+                        {
+                            ecs.DestroyEntity(m_Rows[row]);
+                            ++m_Destroyed;
+                        }
+                    }
+                    m_SweepCursor = begin;
+                    cursor.Consume(end - begin);
                     return;
                 }
                 Finish(ecs);
@@ -254,15 +277,6 @@ namespace NorvesLib::Core::Component
             void Finish(Ecs::EcsWorld &ecs)
             {
                 Ecs::EcsGpuSceneSlotTable &table = ecs.GetGpuSceneSlots();
-                // 列の追加などで別のアーキタイプへ移った行が残っていれば、1 行ずつ消す
-                for (uint32_t row = static_cast<uint32_t>(m_Rows.size()); row-- > 0;)
-                {
-                    if (!m_Rows[row].IsNull() && ecs.IsAlive(m_Rows[row]))
-                    {
-                        ecs.DestroyEntity(m_Rows[row]);
-                        ++m_Destroyed;
-                    }
-                }
                 if (m_Block != Ecs::EcsGpuSceneSlotTable::kInvalidBlock)
                 {
                     table.ReleaseBlock(m_Block);
@@ -274,7 +288,7 @@ namespace NorvesLib::Core::Component
                 const uint64_t frames = ecs.GetMassWork().GetStats().Runs + 1 - m_StartRun;
                 LOG_INFO_F("MEGA_SCATTER_RELEASED batch=%u rows=%u destroyed=%u chunks_returned=%u ranges=%u frames=%llu "
                            "ecs_rows=%u slots=%u slots_live=%u table_ranges=%u blocks_in_use=%u",
-                           m_BatchId, static_cast<uint32_t>(m_Rows.size()), m_Destroyed, m_ChunksReturned, m_RangeCount,
+                           m_BatchId, m_RowCount, m_Destroyed, m_ChunksReturned, m_RangeCount,
                            static_cast<unsigned long long>(frames), ecs.GetEntityCount(), table.GetSlotCount(),
                            table.GetLiveCount(), table.GetRangeCount(), table.GetBlocksInUse());
                 m_Rows.clear();
@@ -286,7 +300,10 @@ namespace NorvesLib::Core::Component
             Ecs::EcsArchetypeId m_Archetype = Ecs::kInvalidEcsArchetype;
             uint32_t m_ChunkGroup = 0;
             uint32_t m_Block = Ecs::EcsGpuSceneSlotTable::kInvalidBlock;
+            /// アーキタイプの外へ移った行を探す行（探さないなら空）と、次に調べる区切りの終わり
             Container::VariableArray<Ecs::EcsEntity> m_Rows;
+            uint32_t m_SweepCursor = 0;
+            uint32_t m_RowCount = 0;
             uint32_t m_InstanceCount = 0;
             uint32_t m_RangeCount = 0;
             uint64_t m_StartRun = 0;
@@ -338,7 +355,7 @@ namespace NorvesLib::Core::Component
         m_InputToRow.clear();
         m_Ranges.clear();
         m_Instances.clear();
-        m_MeshHandles.clear();
+        m_MeshTables.clear();
         m_pRowWorld = nullptr;
         m_bMassWorkRegistered = false;
         m_Block = Ecs::EcsGpuSceneSlotTable::kInvalidBlock;
@@ -364,11 +381,20 @@ namespace NorvesLib::Core::Component
 
     void MegaGeometryScatterComponent::SetMegaMeshHandles(Container::Span<const Rendering::MegaGeometry::MegaMeshHandle> handles)
     {
-        m_MeshHandles.assign(handles.begin(), handles.end());
-        MegaMeshHandleValue = m_MeshHandles.empty() ? Rendering::MegaGeometry::MegaMeshHandle::Invalid() : m_MeshHandles[0];
-        // 公開中の範囲は前のメッシュのまま描き、範囲ごとに公開し直す
+        // 新しい表を今の表にする。前の今の表は、指している範囲（書き直しを待つ範囲）がある間だけ残す
+        if (!m_MeshTables.empty() && m_MeshTables.back().Ranges == 0)
+        {
+            m_MeshTables.pop_back();
+        }
+        MeshTable table;
+        table.Generation = m_NextMeshGeneration;
+        m_NextMeshGeneration = m_NextMeshGeneration + 1 == 0 ? 1 : m_NextMeshGeneration + 1;
+        table.Handles.assign(handles.begin(), handles.end());
+        m_MeshTables.push_back(std::move(table));
+        MegaMeshHandleValue = handles.empty() ? Rendering::MegaGeometry::MegaMeshHandle::Invalid() : handles[0];
+        // 公開中の範囲は前の表のメッシュのまま描き、範囲ごとに書き直して今の表で公開し直す
         BumpContentVersion();
-        if (m_MeshHandles.empty())
+        if (handles.empty())
         {
             // 描くメッシュが無くなった: 公開中の範囲はすぐ取り下げる（返されたメッシュを描画が読まない）
             ReflectAllRanges(false);
@@ -577,7 +603,8 @@ namespace NorvesLib::Core::Component
         m_Block = block;
         m_ChunkGroup = chunkGroup;
         m_Archetype = archetype;
-        m_BatchId = static_cast<uint32_t>(GetComponentId() & 0x3FFFFFFFull);
+        // 散布の番号は予約のたびに新しく取る（解放中の前の行の proxy の鍵と重ならない）
+        m_BatchId = ecs.GetMassWork().AcquireBatchId();
         m_Rows.assign(count, Ecs::kNullEcsEntity);
         m_RowToInput = std::move(order);
         m_InputToRow.assign(count, kInvalidIndex);
@@ -600,6 +627,7 @@ namespace NorvesLib::Core::Component
         m_RangeMismatches = 0;
         m_StaleRanges = 0;
         m_RewriteCursor = 0;
+        ResetMeshTables();
         const Entity *owner = GetOwner();
         m_OwnerWorld = owner != nullptr ? owner->GetWorldTransform() : Math::Transform::Identity;
 
@@ -647,10 +675,17 @@ namespace NorvesLib::Core::Component
             }
         }
 
-        // 行の削除はチャンクごとに予算で分ける。後始末は列が持つ（この Component が先に消えても続く）
+        // 行の削除はチャンク 1 つずつ予算で分ける。後始末は列が持つ（この Component が先に消えても続く）。
+        // 散布のアーキタイプの行の数が作った行の数と合わない（作成の失敗・列の追加で移った行がある）ときだけ、
+        // 移った行を探すために行の表を渡す
+        const bool bNeedsSweep = m_bCreateFailed || ecs.GetArchetypeRowCount(m_Archetype) != m_CreatedRows;
+        if (!bNeedsSweep)
+        {
+            m_Rows.clear();
+        }
         queue.Adopt(Container::MakeUnique<MegaScatterReleaseJob>(
-            world, m_BatchId, m_Archetype, m_ChunkGroup, m_Block, std::move(m_Rows), static_cast<uint32_t>(m_RowToInput.size()),
-            static_cast<uint32_t>(m_Ranges.size()), queue.GetStats().Runs));
+            world, m_BatchId, m_Archetype, m_ChunkGroup, m_Block, std::move(m_Rows), m_CreatedRows,
+            static_cast<uint32_t>(m_RowToInput.size()), static_cast<uint32_t>(m_Ranges.size()), queue.GetStats().Runs));
         EnsureMassWorkSystem(world);
 
         m_Rows.clear();
@@ -664,6 +699,7 @@ namespace NorvesLib::Core::Component
         m_CreatedRanges = 0;
         m_CreatedRows = 0;
         m_StaleRanges = 0;
+        ResetMeshTables();
     }
 
     void MegaGeometryScatterComponent::CreateNextRange(Ecs::EcsMassBudgetCursor &cursor)
@@ -700,6 +736,7 @@ namespace NorvesLib::Core::Component
         }
         range.bCreated = true;
         range.WrittenVersion = m_ContentVersion;
+        BindRangeMeshTable(range);
         ++m_CreatedRanges;
         m_CreatedRows += range.RowCount;
         // 範囲の全行を作って書いた後に、範囲を公開する
@@ -758,6 +795,7 @@ namespace NorvesLib::Core::Component
             --m_StaleRanges;
         }
         target.WrittenVersion = m_ContentVersion;
+        BindRangeMeshTable(target);
     }
 
     void MegaGeometryScatterComponent::BumpContentVersion()
@@ -783,12 +821,76 @@ namespace NorvesLib::Core::Component
         ecs.WriteColumnValueOf(entity, Ecs::EcsScatterOwner{m_BatchId});
     }
 
-    Rendering::MegaGeometry::MegaMeshHandle MegaGeometryScatterComponent::ResolveMesh(uint32_t meshIndex) const
+    const MegaGeometryScatterComponent::MeshTable *MegaGeometryScatterComponent::FindMeshTable(uint32_t generation) const
     {
-        return meshIndex < m_MeshHandles.size() ? m_MeshHandles[meshIndex] : Rendering::MegaGeometry::MegaMeshHandle::Invalid();
+        if (generation == 0)
+        {
+            return nullptr;
+        }
+        for (size_t index = m_MeshTables.size(); index-- > 0;)
+        {
+            if (m_MeshTables[index].Generation == generation)
+            {
+                return &m_MeshTables[index];
+            }
+        }
+        return nullptr;
     }
 
-    bool MegaGeometryScatterComponent::BuildProxy(const Ecs::EcsWorld &ecs, uint32_t row, Rendering::MegaGeometryProxy &outProxy) const
+    bool MegaGeometryScatterComponent::HasCurrentMeshes() const
+    {
+        return !m_MeshTables.empty() && !m_MeshTables.back().Handles.empty();
+    }
+
+    void MegaGeometryScatterComponent::BindRangeMeshTable(ScatterRange &range)
+    {
+        if (m_MeshTables.empty())
+        {
+            range.MeshGeneration = 0;
+            return;
+        }
+        if (range.MeshGeneration == m_MeshTables.back().Generation)
+        {
+            return;
+        }
+        // 前に指していた表の数を減らし、どの範囲も指さなくなったら捨てる（今の表は残す）
+        if (range.MeshGeneration != 0)
+        {
+            for (size_t index = 0; index + 1 < m_MeshTables.size(); ++index)
+            {
+                if (m_MeshTables[index].Generation == range.MeshGeneration)
+                {
+                    if (m_MeshTables[index].Ranges <= 1)
+                    {
+                        m_MeshTables.erase(m_MeshTables.begin() + static_cast<std::ptrdiff_t>(index));
+                    }
+                    else
+                    {
+                        --m_MeshTables[index].Ranges;
+                    }
+                    break;
+                }
+            }
+        }
+        range.MeshGeneration = m_MeshTables.back().Generation;
+        ++m_MeshTables.back().Ranges;
+    }
+
+    void MegaGeometryScatterComponent::ResetMeshTables()
+    {
+        if (m_MeshTables.empty())
+        {
+            return;
+        }
+        if (m_MeshTables.size() > 1)
+        {
+            m_MeshTables.erase(m_MeshTables.begin(), m_MeshTables.end() - 1);
+        }
+        m_MeshTables.back().Ranges = 0;
+    }
+
+    bool MegaGeometryScatterComponent::BuildProxy(const Ecs::EcsWorld &ecs, uint32_t row, const MeshTable *meshes,
+                                                  Rendering::MegaGeometryProxy &outProxy) const
     {
         const Ecs::EcsEntity entity = m_Rows[row];
         const Ecs::EcsWorldTransform *world = ecs.GetColumnValue<Ecs::EcsWorldTransform>(entity);
@@ -798,7 +900,11 @@ namespace NorvesLib::Core::Component
         {
             return false;
         }
-        const Rendering::MegaGeometry::MegaMeshHandle mesh = ResolveMesh(instance->MeshIndex);
+        if (meshes == nullptr || instance->MeshIndex >= meshes->Handles.size())
+        {
+            return false;
+        }
+        const Rendering::MegaGeometry::MegaMeshHandle mesh = meshes->Handles[instance->MeshIndex];
         if (!mesh.IsValid())
         {
             return false;
@@ -829,7 +935,7 @@ namespace NorvesLib::Core::Component
 
     bool MegaGeometryScatterComponent::ShouldPublish(const ScatterRange &range) const
     {
-        return range.bCreated && IsEnabled() && bVisible.Get() && !m_MeshHandles.empty() && range.bActive && range.bVisible;
+        return range.bCreated && IsEnabled() && bVisible.Get() && HasCurrentMeshes() && range.bActive && range.bVisible;
     }
 
     void MegaGeometryScatterComponent::ReflectRange(uint32_t range, bool bRepublish)
@@ -868,10 +974,12 @@ namespace NorvesLib::Core::Component
         Ecs::EcsWorld &ecs = m_pRowWorld->GetEcsWorld();
         Ecs::EcsGpuSceneSlotTable &table = ecs.GetGpuSceneSlots();
         const bool bFullSync = view->IsMegaFullSync();
+        // 範囲の行を書いたときのメッシュの表で作る（書き直しを待つ範囲は前の表のメッシュのまま）
+        const MeshTable *meshes = FindMeshTable(target.MeshGeneration);
         Rendering::MegaGeometryProxy proxy;
         for (uint32_t row = target.FirstRow; row < target.FirstRow + target.RowCount; ++row)
         {
-            if (!BuildProxy(ecs, row, proxy))
+            if (!BuildProxy(ecs, row, meshes, proxy))
             {
                 // 描けない行（メッシュが表の外・無効）は、前に公開した proxy も外す
                 view->RemoveMegaGeometryProxy(Rendering::MakeMegaScatterProxyKey(m_BatchId, m_RowToInput[row]));
@@ -933,6 +1041,7 @@ namespace NorvesLib::Core::Component
                 }
                 // 公開中の範囲は全行がそろっている: 行が生きていて、描ける全行の proxy が行の値と一致する
                 Rendering::MegaGeometryProxy expected;
+                const MeshTable *meshes = FindMeshTable(range.MeshGeneration);
                 for (uint32_t row = range.FirstRow; row < range.FirstRow + range.RowCount; ++row)
                 {
                     const uint64_t key = Rendering::MakeMegaScatterProxyKey(m_BatchId, m_RowToInput[row]);
@@ -942,7 +1051,7 @@ namespace NorvesLib::Core::Component
                         NoteAuditFailure(audit, "散布 %u の公開中の範囲 %u の行 %u が無い", m_BatchId, rangeIndex, row);
                         break;
                     }
-                    if (!BuildProxy(ecs, row, expected))
+                    if (!BuildProxy(ecs, row, meshes, expected))
                     {
                         if (actual != nullptr)
                         {

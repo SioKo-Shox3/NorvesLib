@@ -1821,3 +1821,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 1 万本のバナナの作成が 4〜5 フレームに分かれたので、撮影は全範囲の公開を待ってから撮る（SceneReady の条件に足した）。100 万本では約 1 ms × 625 フレームかかる見込み。読み込み画面のように待つ場面で予算を広げるかは、MIXED-LOAD の計測で決める。
   - 範囲の Active・可視の印と Component の有効・可視の切り替えは、従来どおり予算に掛けず、その場で範囲の行の数だけ公開・取り下げる。
   - テストは足していない（列と散布の仕事の単体テストは計画に無い。verify の検査とログで確かめた）。
+
+### SCN-ECS-MASS-STREAM 反復 12（2026-10-11、run 20261011-144300。評価の差し戻しへの対応）
+
+- 変更:
+  - メッシュの表を版ごとに持つ（`MegaGeometryScatterComponent::MeshTable`）。範囲は行を書いたときの表の世代を指し（`ScatterRange::MeshGeneration`）、公開（`ReflectRange`）と検査（`Audit`）は範囲が指す表で proxy を作る。書き直しを待つ範囲は前の表のメッシュで描き、どの範囲も指さなくなった表は捨てる（指している範囲の数で数える）。
+  - 散布の番号（proxy の鍵）を、席を予約するたびに列から新しく取る（`EcsMassWorkQueue::AcquireBatchId`。Component の番号から作るのをやめた）。同じ Component に入力を与え直しても、新しい範囲の proxy と解放中の前の行の鍵が重ならないので、解放の検査が新しい proxy を残留と数えない。
+  - 解放の後始末を 1 単位ずつにした: チャンク 1 つの返却（`DestroyArchetypeTailChunks(archetype, 1)`）、アーキタイプの外へ移った行の 1,024 行ずつの削除（継続位置を持つ）、塊と組の返却のどれか 1 つを 1 単位とし、列が単位の間で行数と時間の予算を見る。移った行の走査は、散布のアーキタイプの行の数が作った行の数と合わない（作成の失敗・列の追加）ときだけ行い、合えば行の表を渡さない。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-ECS-MASS-STREAM-5.txt`: mega-stress（5000 個・動く 1%・64 m 区画・散布）の overview が `MASS_RANGES pass=8 fail=0`、`result=pass`、EXIT=0。PNG を開いて確認（前の撮影と同じ並び）。Game.log の ERROR は 0。最初の作成は `MASS_WORK_SETTLED frames=4 rows=4950 max_ms=1.064`、区画の解放は `MEGA_SCATTER_RELEASED ... chunks_returned=1 frames=1`。
+  - `-6.txt`: mega-stress・mega-bananas の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0、Game.log の ERROR は 0。バナナ 1 万本の解放はチャンク 1 つずつで 2 フレーム（`destroyed=10000 chunks_returned=55 slots_live=0 blocks_in_use=0`、1 フレーム最大 0.198 ms）。
+- 未対応（指摘 4）: 5 万個 + 64 m 区画の gt p95 は、描画の BVH の列が VRAM に載らず落ちるため測れない（反復 11 の measure-default。直す先は paths の外の Rendering）。条件の扱いをユーザーの判断に回した（`blocked/SCN-ECS-MASS-STREAM.md`。推奨は 3 万個の計測で完了とし、5 万個は MEASURE-CPU で測る）。status は doing のまま。
+- Next: SCN-ECS-MASS-STREAM の 5 万個の条件の判断待ち。判断が出るまでは次の todo へ。
+- Notes:
+  - 差し戻しの API の再現（予算 64 行でのメッシュの差し替え・同じ Component への与え直し・0.001 ms の予算での破棄）の単体テストは足していない（計画に無い。修正は制御の流れで確かめ、verify の検査とログで回帰が無いことを確かめた）。

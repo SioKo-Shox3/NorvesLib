@@ -13,9 +13,11 @@
  *   - 作成: SetInstances は席の塊とチャンクの組を予約するだけで、行は範囲ごとに作る。範囲の全行を作って書いてから、その範囲を公開する。
  *   - 反映: 所有者のワールドの変換・メッシュ・影の変化は版を進め、範囲ごとに全行を書き直してから公開し直す。
  *     書き直すまでの範囲は前の値で描く（公開中の範囲の proxy は、いつも範囲の全行の同じ版の値）。
+ *     メッシュの表も版ごとに持ち、範囲は書いたときの表を指す（書き直すまでは前の表のメッシュで描き、どの範囲も指さなくなった表を捨てる）。
  *   - 解放: 破棄（World の木から外れる）と入力の与え直しでは、公開中の proxy をすぐ全部取り下げ（持ち主がこの直後にメッシュを
- *     返しても描画が古いメッシュを読まない）、行の削除はチャンクごとに予算で分ける。全行を消したら塊とチャンクの組を返す。
+ *     返しても描画が古いメッシュを読まない）、行の削除はチャンク 1 つずつ予算で分ける。全行を消したら塊とチャンクの組を返す。
  *     行の削除の後始末は列が持つので、Component が先に消えても続く。
+ *     散布の番号（proxy の鍵）は席を予約するたびに列から新しく取るので、与え直した入力の proxy と解放中の前の行は鍵で区別できる。
  * - Active と可視は範囲の印で切り替える（印を変えた範囲だけを公開・取り下げる）。
  * - 行は散布ごとのチャンクの組（EcsWorld::AcquireChunkGroup）のアーキタイプに入れ、ほかの散布や行とチャンクを共有しない。
  * - メッシュは表で持ち、入力ごとに表の番号（MeshIndex）を選ぶ。1 つの散布に種類の違うメッシュを混ぜられる。
@@ -136,6 +138,15 @@ namespace NorvesLib::Core::Component
         PROPERTY(uint32_t, InstanceCount)
 
     private:
+        /// メッシュの表の 1 つの版（入力の MeshIndex が指す）
+        struct MeshTable
+        {
+            uint32_t Generation = 0;
+            /// この表を指している範囲の数
+            uint32_t Ranges = 0;
+            Container::VariableArray<Rendering::MegaGeometry::MegaMeshHandle> Handles;
+        };
+
         /// 散布の範囲（席の表の範囲 1 つと、格納の順で連続した行）
         struct ScatterRange
         {
@@ -144,6 +155,8 @@ namespace NorvesLib::Core::Component
             uint32_t RowCount = 0;
             /// 行に書いた値の版（m_ContentVersion と違えば書き直しを待っている）
             uint32_t WrittenVersion = 0;
+            /// 行を書いたときのメッシュの表の世代（作っていない範囲は 0）
+            uint32_t MeshGeneration = 0;
             bool bCreated = false;
             bool bActive = true;
             bool bVisible = true;
@@ -173,8 +186,17 @@ namespace NorvesLib::Core::Component
         void RewriteRange(uint32_t range);
         void BumpContentVersion();
         void WriteRow(Ecs::EcsWorld &ecs, uint32_t row);
-        bool BuildProxy(const Ecs::EcsWorld &ecs, uint32_t row, Rendering::MegaGeometryProxy &outProxy) const;
-        Rendering::MegaGeometry::MegaMeshHandle ResolveMesh(uint32_t meshIndex) const;
+        /// 行の proxy を、範囲が指すメッシュの表（meshes。null なら描けない）で作る
+        bool BuildProxy(const Ecs::EcsWorld &ecs, uint32_t row, const MeshTable *meshes,
+                        Rendering::MegaGeometryProxy &outProxy) const;
+        /// 世代のメッシュの表（無ければ null）
+        const MeshTable *FindMeshTable(uint32_t generation) const;
+        /// 今のメッシュの表に描けるメッシュがあるか
+        bool HasCurrentMeshes() const;
+        /// 範囲が今のメッシュの表を指すようにし、どの範囲も指さなくなった前の表を捨てる
+        void BindRangeMeshTable(ScatterRange &range);
+        /// 範囲を全部捨てた後に、今の表だけを残す
+        void ResetMeshTables();
         bool ShouldPublish(const ScatterRange &range) const;
         /// 印と状態に合わせて範囲を公開・取り下げる。bRepublish なら公開中の範囲も公開し直す。作っていない範囲は何もしない
         void ReflectRange(uint32_t range, bool bRepublish);
@@ -183,8 +205,9 @@ namespace NorvesLib::Core::Component
 
         /// 入力（入力の番号の順）
         Container::VariableArray<MegaScatterInstance> m_Instances;
-        /// メッシュの表（入力の MeshIndex が指す）
-        Container::VariableArray<Rendering::MegaGeometry::MegaMeshHandle> m_MeshHandles;
+        /// メッシュの表の版（末尾が今の表。前の表は、書き直しを待つ範囲が指している間だけ残る）
+        Container::VariableArray<MeshTable> m_MeshTables;
+        uint32_t m_NextMeshGeneration = 1;
         /// 行（格納の順 = Morton 順 = 席の順）。作っていない行は null
         Container::VariableArray<Ecs::EcsEntity> m_Rows;
         /// 格納の順 → 入力の番号

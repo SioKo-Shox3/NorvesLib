@@ -332,6 +332,18 @@ namespace NorvesLib::Core::Ecs
             return m_Stats;
         }
 
+        /// 散布の番号（proxy の鍵の 30 bit）を 1 つ出す。同じ列（EcsWorld）の中では、一巡するまで同じ番号を出さない（0 は出さない）
+        [[nodiscard]] uint32_t AcquireBatchId()
+        {
+            const uint32_t id = m_NextBatchId;
+            m_NextBatchId = (m_NextBatchId + 1) & 0x3FFFFFFFu;
+            if (m_NextBatchId == 0)
+            {
+                m_NextBatchId = 1;
+            }
+            return id;
+        }
+
     private:
         struct Entry
         {
@@ -368,6 +380,7 @@ namespace NorvesLib::Core::Ecs
         bool m_bRunning = false;
         bool m_bNeedsCompact = false;
         EcsMassWorkStats m_Stats;
+        uint32_t m_NextBatchId = 1;
     };
 
 } // namespace NorvesLib::Core::Ecs
