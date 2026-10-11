@@ -2338,3 +2338,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 決めたいこと・選択肢・推奨は `blocked/SCN-ECS-RETIRE-LEGACY.md`（推奨: 旧の切替を消す項目と、ハンドルの表を World へ移して ComponentDataRegistry を消す項目に分け、paths を広げる）。
 - Next: 人の判断の後に再開。
 - Notes: `WorldSyncDifferentialTest` は旧の全走査を照合の正解に使っているので、旧を消すときは手で決めた期待値との照合に書き換える必要がある。
+
+### SCN-MEGA-FIX-TRANSIENT-BOARDS 再開（2026-10-12、反復 22・run 20261011-211043）
+
+- Done: `Scripts/CaptureScene.ps1` の描画スレッドの時間（rt）を、CPU の窓（`RenderFrameMs > 0` の行で取る窓）の最初〜最後のフレーム番号の範囲の Frame 行のうち `RenderThreadMs > 0` の行から独立に集めるようにした。ゲームスレッド・CPU のフレーム時間とスコープの窓は今までどおり。グリフの板集めの実装は反復 20（b6a6a3c）のまま。
+- 検証（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-MEGA-FIX-TRANSIENT-BOARDS-1.txt`: Debug の `WorldSyncDifferentialTest` のビルド、EXIT=0。
+  - `verify-SCN-MEGA-FIX-TRANSIENT-BOARDS-2.txt`: `WorldSyncDifferentialTest` 1/1 pass、EXIT=0。
+  - `verify-SCN-MEGA-FIX-TRANSIENT-BOARDS-3.txt`: 起動画面 default の決定的比較 `result=pass`（輝度差 0・PSNR 100 dB・不一致の画素 5E-06）、EXIT=0。PNG を開いて確認（天球・地面・球・岩・家）。
+  - 撮り直し `capture-SCN-MEGA-FIX-TRANSIENT-BOARDS-static.txt`（5万個の静止、RelWithDebInfo）: `result=pass`。gt median 0.174 ms・p95 0.267 ms、rt median 135.508 ms・p95 142.59 ms（反復 20 で手で集めた 135.6 / 141.7 ms と一致）、GPU median 64.98 ms。metrics.json の `GameThread.TransientBoards` は median 0・p95 0・max 0.022 ms。
+  - `verify-SCN-MEGA-FIX-TRANSIENT-BOARDS-4.txt`: `--timing --min-frames 300 --max-scope-median-ms GameThread.TransientBoards=0.1` で `CHECK_CAPTURE_METRICS result=pass views=default`、EXIT=0。
+- Next: 残りの todo の最優先。
+- Notes: rt は描画スレッドの行から独立に集めるので、ゲームスレッドと描画スレッドの 1:1 の負荷では窓の行と同じ標本になり、値は変わらない。

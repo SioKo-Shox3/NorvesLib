@@ -37,6 +37,7 @@
 # 名前ごとに集計して cpu_scope_ms へ（フレームあたりの合計（全スレッド）の median・p95・max、区間が出たスレッドの数 threads）、
 # 名前の先頭 2 つの部分ごとの合計（Ecs.Stage.*・Ecs.Sys.*・RG.Record.* など）を cpu_scope_group_ms へ書く。
 # CPU 側も GPU と同じ手順（SceneReady の後の描画フレームからウォームアップと末尾を除いた最後の -GpuTimingFrames 件）で数える。
+# 描画スレッドの時間だけは、その窓の最初〜最後のフレーム番号の範囲で RenderThreadMs > 0 の Frame 行から独立に集める。
 #
 # -RequireChecks <名前,...> を与えると、Game を --engine-checks=<名前,...> 付きで起動し（開発ビルドの検査。Debug/EngineChecks.h）、
 # Game.log の ENGINE_CHECK の行で各名前の pass が 1 回以上あり fail が 0 であることを見る（満たさなければ失敗）。
@@ -331,7 +332,9 @@ function Get-Percentile([double[]]$Sorted, [double]$Fraction)
 # パスごとの区間（Frame 列は区間を記録したフレームの番号）。窓は、SceneReady のフレーム（ReadyFrame）以降の描画した
 # 有効なフレームから、先頭の WarmupFrames 個（ウォームアップ）を件数で除き、さらに撮影のフレームの直前 TailFrames 個を
 # 除いた残りの最後の Samples 件（ウォームアップと末尾の除外は別々に取る）。
-# CPU 側（ゲームスレッド・描画スレッド・スコープ）は、描画したフレームの行（RenderFrameMs > 0）で同じ手順の窓を取る。
+# CPU 側（ゲームスレッド・スコープ）は、描画したフレームの行（RenderFrameMs > 0）で同じ手順の窓を取る。
+# 描画スレッドの時間（RenderThreadMs）は RenderFrameMs と同じ行に載るとは限らない（ゲームスレッドが描画 1 フレームの間に
+# 何百回も回ると別の行に出る）ので、その窓の最初〜最後のフレーム番号の範囲の Frame 行のうち RenderThreadMs > 0 の行から集める。
 # 有効な標本（FrameGPU > 0 のフレーム）が除外の後に Samples 件に満たなければ失敗（Error）にする。
 function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$BudgetMs, [long]$ReadyFrame, [int]$WarmupFrames, [int]$TailFrames)
 {
@@ -343,18 +346,20 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
     $gameThreadColumn = [array]::IndexOf($header, 'GameThreadMs')
     $renderThreadColumn = [array]::IndexOf($header, 'RenderThreadMs')
     $cpuRows = New-Object System.Collections.Generic.List[object]
+    $renderThreadRows = New-Object System.Collections.Generic.List[object]
     $gpuScopesByFrame = New-Object 'System.Collections.Generic.SortedDictionary[long,object]'
     foreach ($line in [IO.File]::ReadLines($TracePath))
     {
         if ($line.StartsWith('Frame,'))
         {
             $fields = $line -split ','
+            $renderThreadMs = [double]::Parse($fields[$renderThreadColumn], $invariant)
+            if ($renderThreadMs -gt 0.0) { $renderThreadRows.Add([pscustomobject]@{ Frame = [long]$fields[1]; RenderThread = $renderThreadMs }) }
             if ([double]::Parse($fields[$renderFrameColumn], $invariant) -le 0.0) { continue }
             $cpuRows.Add([pscustomobject]@{
                 Frame = [long]$fields[1]
                 Cpu = [double]::Parse($fields[$cpuFrameColumn], $invariant)
                 GameThread = [double]::Parse($fields[$gameThreadColumn], $invariant)
-                RenderThread = [double]::Parse($fields[$renderThreadColumn], $invariant)
             })
         }
         elseif ($line.StartsWith('GPU,'))
@@ -378,7 +383,9 @@ function Get-GpuTimingFromTrace([string]$TracePath, [int]$Samples, [double]$Budg
     $cpuWindow = if ($cpuUsable.Count -gt $windowCount) { @($cpuUsable[($cpuUsable.Count - $windowCount)..($cpuUsable.Count - 1)]) } else { $cpuUsable }
     $cpuSamples = [double[]]@($cpuWindow | ForEach-Object { $_.Cpu } | Where-Object { $_ -gt 0.0 } | Sort-Object)
     $gameThreadSamples = [double[]]@($cpuWindow | ForEach-Object { $_.GameThread } | Where-Object { $_ -gt 0.0 } | Sort-Object)
-    $renderThreadSamples = [double[]]@($cpuWindow | ForEach-Object { $_.RenderThread } | Where-Object { $_ -gt 0.0 } | Sort-Object)
+    $renderThreadFirst = if ($cpuWindow.Count -gt 0) { [long]$cpuWindow[0].Frame } else { [long]::MaxValue }
+    $renderThreadLast = if ($cpuWindow.Count -gt 0) { [long]$cpuWindow[$cpuWindow.Count - 1].Frame } else { [long]::MinValue }
+    $renderThreadSamples = [double[]]@($renderThreadRows.ToArray() | Where-Object { $_.Frame -ge $renderThreadFirst -and $_.Frame -le $renderThreadLast } | ForEach-Object { $_.RenderThread } | Sort-Object)
     $gpuReady = @($gpuScopesByFrame.Keys | Where-Object { $_ -ge $ReadyFrame -and @($gpuScopesByFrame[$_] | Where-Object { $_.Name -eq 'FrameGPU' -and $_.Ms -gt 0.0 }).Count -gt 0 })
     $gpuFrames = if ($gpuReady.Count -gt $WarmupFrames) { @($gpuReady[$WarmupFrames..($gpuReady.Count - 1)]) } else { @() }
     $gpuUsable = if ($gpuFrames.Count -gt $TailFrames) { @($gpuFrames[0..($gpuFrames.Count - $TailFrames - 1)]) } else { @() }
