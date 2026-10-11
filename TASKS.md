@@ -502,7 +502,7 @@
 - notes: 2026-10-11 親: 評価の指摘 1（散布の proxy を ECS_RENDER_SYNC・RENDER_INVALIDATION の照合が残留と数える）の直し先の World.cpp（VerifyRenderSyncDelta の viewMega と全走査の scanStale の 2 か所）を paths に足して todo に戻した（blocked の推奨 1）。
 
 ## SCN-ECS-MASS-STREAM: 散布の作成・反映・解放を予算で分け、mega-stress の区画を散布で出し入れする
-- status: todo
+- status: done
 - done-when: 作成、所有者の変換とメッシュの反映、解放を、1 フレームの行数と ms の予算で分け、範囲ごとに公開・解放する（設計 1.11）。mega-stress の区画が `--stress-batch-cells` で散布として出し入れされる。検査 `MASS_RANGES`（公開中の範囲は全行が揃っている、解放した範囲は描かない）が pass する。3万個 + 64 m 区画で gt の p95 を PROGRESS に書き、予算の既定値を決める（5万個は描画側の BVH の列が VRAM に載らず落ちるので、BVH の改修の後の節目の計測で測る）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -RequireChecks MASS_RANGES -OutDir .harness/runs/scene-capture/SCN-ECS-MASS-STREAM/check`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-stress,mega-bananas -Cycles 3 -Configuration RelWithDebInfo`

@@ -1847,3 +1847,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-6.txt`: mega-bananas の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`（entities=2・資源の数は 3 周とも同じ）、EXIT=0。解放は 3 周とも `destroyed=10000 chunks_returned=55 ecs_rows=4 slots_live=0 blocks_in_use=0`。ERROR は 0。
 - Next: 次の todo。
 - Notes: 検査名は `ECS_RENDER_INVALIDATION`（`RENDER_INVALIDATION` を与えると検査が動かず pass も fail も出ない）。
+
+### SCN-ECS-MASS-STREAM 反復 14（2026-10-11、run 20261011-144300。計測を 3 万個に直した後の検証）
+
+- 変更: なし（反復 12 の直しと、SCN-ECS-MASS-ROWS の World.cpp の照合の修正の後のコードで verify を通し直し、3 万個を取り直した）。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-ECS-MASS-STREAM-7.txt`: mega-stress（5000 個・動く 1%・64 m 区画・散布）の overview が `MASS_RANGES pass=7 fail=0`、`result=pass`、EXIT=0。PNG を開いて確認（前の撮影と同じ並び）。Game.log の ERROR は 0。最初の作成は `MASS_WORK_SETTLED frames=3 rows=4950 max_ms=1.045`、区画の解放は `MEGA_SCATTER_RELEASED ... chunks_returned=1 frames=1`。
+  - `-8.txt`: mega-stress・mega-bananas の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0、Game.log の ERROR は 0。バナナ 1 万本の解放は 3 周とも `destroyed=10000 chunks_returned=55 frames=2 slots_live=0 blocks_in_use=0`、作成は 4〜6 フレーム（1 フレーム最大 1.085 ms）。
+  - `measure-SCN-ECS-MASS-STREAM-30k-iter14.txt`: 3 万個（200 区画・29,700 行）+ 64 m 区画・既定の予算（8192 行・1 ms）・RelWithDebInfo・1920x1080・300 フレームで **gt median 1.92 ms・p95 3.104 ms**（GPU median 65.4 ms・rt median 119.8 ms）、EXIT=0、ERROR は 0。最初の作成は 22 フレーム・1 フレーム最大 2.652 ms、区画 1 つの出し入れは 1 フレーム・最大 0.325 ms、`Ecs.Sys.LateTick.MassWork` は median 0.012 ms・max 0.294 ms（`.harness/runs/scene-capture/SCN-ECS-MASS-STREAM/measure-30k-iter14`）。反復 11 の値（gt p95 3.935 ms）と同じ程度。
+- 予算の既定値: 反復 11 で決めた 1 フレーム 8192 行・1 ms（`Ecs::kDefaultMassRowsPerFrame`・`kDefaultMassMillisecondsPerFrame`）のまま。区画の出し入れは予算に掛からず 1 フレームで済む。
+- Next: SCN-MEGA-MIXED-LOAD。
+- Notes: 5 万個 + 64 m 区画の gt p95 は、描画の BVH の列が VRAM に載らないため、BVH の改修の後の節目の計測（SCN-MEGA-MEASURE-CPU）で取る。
