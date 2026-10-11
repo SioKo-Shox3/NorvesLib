@@ -320,7 +320,8 @@ namespace NorvesLib::Core
         void SetRenderSyncCheckForced(bool bForced);
 
         /// 描画の同期を旧の全走査にするか（起動オプション --ecs-legacy-sync。比較と切り戻し用）。既定は false。
-        /// 既定は、変わった行だけを公開し、Remove の一覧だけを外す（MegaGeometry は SCENE-DELTA まで旧の走査）
+        /// 既定は、変わった行だけを公開し、Remove の一覧だけを外す（MegaGeometry は SCENE-DELTA まで旧の走査）。
+        /// ComponentDataRegistry のフレームごとの捕捉は旧の全走査のときだけ行う
         void SetLegacyRenderSync(bool bLegacy) noexcept { m_bLegacyRenderSync = bLegacy; }
         [[nodiscard]] bool IsLegacyRenderSync() const noexcept { return m_bLegacyRenderSync; }
 

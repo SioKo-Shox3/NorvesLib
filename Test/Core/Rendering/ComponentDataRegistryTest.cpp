@@ -26,6 +26,7 @@ namespace
         return handle;
     }
 
+    // レジストリの捕捉は旧の全走査（SetLegacyRenderSync(true)）だけが行うので、捕捉を見るテストはそれを有効にする
     void ResetRegistry()
     {
         ComponentDataRegistry& registry = GEngine.GetComponentDataRegistry();
@@ -139,7 +140,8 @@ namespace
         ResetRegistry();
     }
 
-    void TestEnabledNoSyncPublishesWithoutTouchingSceneView()
+    // 既定の同期（変わった行だけ）では、レジストリが有効でも捕捉しない。変わらない行の proxy も作り直さない
+    void TestEnabledDefaultSyncDoesNotCaptureOrRebuild()
     {
         ResetRegistry();
         if (!EnableRegistryOrSkip())
@@ -149,6 +151,7 @@ namespace
 
         World world;
         world.Initialize();
+        assert(!world.IsLegacyRenderSync());
         SceneView view;
         InitializeSceneView(view);
         world.SetSceneView(&view);
@@ -174,11 +177,11 @@ namespace
         assert(untouchedProxy);
         assert(untouchedProxy->WorldTransform.GetTranslationRow().x == 777.0f);
 
-        EntityHandle handle = GEngine.GetComponentDataRegistry().GetHandle(*entity);
-        const MeshComponentData* meshData = FindMeshData(handle);
-        assert(meshData);
-        assert(meshData->Proxy.WorldTransform.GetTranslationRow().x != 777.0f);
-        assert(GEngine.GetComponentDataRegistry().GetTransformData().size() == 1);
+        ComponentDataRegistry& registry = GEngine.GetComponentDataRegistry();
+        assert(registry.GetHandle(*entity).IsValid());
+        assert(registry.GetTransformData().empty());
+        assert(registry.GetMeshData().empty());
+        assert(registry.GetMegaGeometryData().empty());
 
         world.Finalize();
         ResetRegistry();
@@ -191,6 +194,7 @@ namespace
 
         World world;
         world.Initialize();
+        world.SetLegacyRenderSync(true);
         SceneView view;
         InitializeSceneView(view);
         world.SetSceneView(&view);
@@ -231,6 +235,7 @@ namespace
 
         World world;
         world.Initialize();
+        world.SetLegacyRenderSync(true);
         SceneView view;
         InitializeSceneView(view);
         world.SetSceneView(&view);
@@ -264,6 +269,7 @@ namespace
 
         World world;
         world.Initialize();
+        world.SetLegacyRenderSync(true);
         SceneView view;
         InitializeSceneView(view);
         world.SetSceneView(&view);
@@ -353,6 +359,7 @@ namespace
 
         World world;
         world.Initialize();
+        world.SetLegacyRenderSync(true);
         SceneView view;
         InitializeSceneView(view);
         world.SetSceneView(&view);
@@ -401,6 +408,7 @@ namespace
 
         World world;
         world.Initialize();
+        world.SetLegacyRenderSync(true);
         SceneView view;
         InitializeSceneView(view);
         world.SetSceneView(&view);
@@ -481,6 +489,8 @@ namespace
         World worldB;
         worldA.Initialize();
         worldB.Initialize();
+        worldA.SetLegacyRenderSync(true);
+        worldB.SetLegacyRenderSync(true);
         SceneView viewA;
         SceneView viewB;
         InitializeSceneView(viewA);
@@ -519,7 +529,7 @@ int main()
     std::cout << "ComponentDataRegistryTest start\n";
 
     TestDefaultOffNoCaptureNoEngineInitialize();
-    TestEnabledNoSyncPublishesWithoutTouchingSceneView();
+    TestEnabledDefaultSyncDoesNotCaptureOrRebuild();
     TestEnableAfterExistingEntities();
     TestAdoptedSubtreeRegistersChildren();
     TestSubtreeDestroyInvalidatesHandles();

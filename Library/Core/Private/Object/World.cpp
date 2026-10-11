@@ -1955,8 +1955,10 @@ namespace NorvesLib::Core
             return;
         }
 
+        // ComponentDataRegistry の捕捉は旧の全走査だけが行う（全行をフレームごとに公開し直す仕組みなので、
+        // 既定の同期では消去も公開もしない）
         ComponentDataRegistry& componentDataRegistry = GEngine.GetComponentDataRegistry();
-        ComponentDataRegistry* enabledComponentDataRegistry = componentDataRegistry.IsEnabled()
+        ComponentDataRegistry* enabledComponentDataRegistry = (m_bLegacyRenderSync && componentDataRegistry.IsEnabled())
             ? &componentDataRegistry
             : nullptr;
         if (enabledComponentDataRegistry)
@@ -2014,7 +2016,7 @@ namespace NorvesLib::Core
                     liveLightIds,
                     liveScreenBoardComponentIds,
                     liveWorldBoardComponentIds,
-                    enabledComponentDataRegistry);
+                    nullptr);
             }
 
             FinishRenderInvalidationFrame();
@@ -4214,18 +4216,6 @@ namespace NorvesLib::Core
             auto* megaComp = CastTo<Component::MegaGeometryComponent>(comp);
 
             auto* meshComp = CastTo<Component::MeshComponent>(comp);
-            if (!m_bLegacyRenderSync && componentDataRegistry && m_SceneView && meshComp && !megaComp)
-            {
-                // 既定の同期では Mesh の公開は変わった行だけ。レジストリは有効なときだけフレームごとの捕捉を続ける
-                Rendering::MeshProxy registryProxy;
-                if (meshComp->BuildMeshProxy(registryProxy, materials, meshes))
-                {
-                    registryProxy.ObjectId = entity.GetObjectId();
-                    registryProxy.ComponentId = meshComp->GetComponentId();
-                    componentDataRegistry->PublishMeshProxy(entity, registryProxy);
-                }
-            }
-
             if (m_bLegacyRenderSync && m_SceneView && meshComp && !megaComp)
             {
                 const RenderRowInfo rowInfo = ReadRenderRowInfo(*meshComp, entity);

@@ -1690,3 +1690,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-4.txt`: 3 シーン混在の周回（rendering3dtest,mega-bananas,mega-stress、3 周）が `SCENE_CYCLE_SMOKE_RUN result=pass`、2 周目以降の textures は 9・texture_bytes は揃う、EXIT=0。
 - Next: SCN-MEGA-SCENE-DELTA で MegaGeometry を差分同期へ移すと、同期の走査が O(変化) になる。
 - Notes: SCN-ECS-RENDER-SYNC-SWITCH を done にした。Git Bash から `cmake --build ... -- /m:1` を呼ぶとスイッチがパスに変換されて MSBuild が失敗するので、verify は PowerShell で走らせた。
+
+### SCN-ECS-RENDER-SYNC-SWITCH 差し戻しの修正（2026-10-11、反復 3・run 20261011-144300）
+
+- 変更:
+  - ComponentDataRegistry の捕捉（`BeginFrameCapture`・全 Entity の `PublishTransform`・Mesh/MegaGeometry の `Publish*Proxy`）を旧の全走査（`--ecs-legacy-sync`）だけに限った。既定の同期では、レジストリが有効でも消去・作り直し・公開をしない（走査には `nullptr` を渡し、既定の同期用の Mesh の作り直しと公開のブロックを消した）。ハンドルの登録・解除はそのまま。
+- テスト（paths の外）: `ComponentDataRegistryTest` の `TestEnabledNoSyncPublishesWithoutTouchingSceneView` を `TestEnabledDefaultSyncDoesNotCaptureOrRebuild` に置き換えた（レジストリ有効・既定の同期で、変わらない行の proxy が作り直されず、レジストリの捕捉が空のまま）。捕捉を見る他のケースと `ComponentDataBenchmark` は `SetLegacyRenderSync(true)` にした。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-ECS-RENDER-SYNC-SWITCH-5.txt`: SceneViewProxyLookupTest・WorldSyncDifferentialTest の Debug ビルド EXIT=0。
+  - `-6.txt`: SceneViewProxyReconcileTest・SceneViewProxyLookupTest・WorldSyncDifferentialTest の 3 件 Passed、EXIT=0。
+  - `-7.txt`: 起動画面（default、RelWithDebInfo、決定論）を SCN-MEGA-BASE-RWDI と比較し `result=pass`（平均輝度差 0、PSNR 100 dB、不一致画素 5E-06）。PNG を開いて確認。
+  - `-8.txt`: 3 シーン混在の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、2 周目以降の textures 9・texture_bytes は揃う、EXIT=0。
+  - `regtest-SCN-ECS-RENDER-SYNC-SWITCH-3.txt`: ComponentDataRegistryTest・BoardComponentRoutingTest・SceneQueryRaycastTest Passed、ComponentDataBenchmark は旧の全走査で transformData=1000・meshData=1000。
+- Next: SCN-MEGA-SCENE-DELTA。
+- Notes:
+  - 旧の全走査から既定の同期へ実行中に切り替えると、レジストリには最後の旧の捕捉が残る（切り替えは起動オプションで、レジストリの利用者はテストとベンチマークだけ。SCN-ECS-RETIRE-LEGACY でレジストリごと消す）。
+  - 行末: World.cpp・World.h は編集で全体が LF になったので、HEAD の行末へ戻した。numstat の 2 通りが一致。
