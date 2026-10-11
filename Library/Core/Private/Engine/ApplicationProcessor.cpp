@@ -2138,10 +2138,14 @@ namespace NorvesLib::Core::Engine
         const float deltaTime = ClampVariableDeltaTime(rawDeltaNanoseconds);
         GEngine->SetDeltaTime(deltaTime);
         // 入力はゲーム用100ms clampの前の実dtで評価し、OnUpdateから同frame値を読める。
-        if (!UpdateInputFrame(m_LastFrameTimeNanoseconds, rawDeltaNanoseconds))
         {
-            GEngine->GetInputMapper().CancelAll();
-            LOG_WARNING("入力actionの評価に失敗したため操作を取り消しました");
+            // ゲームスレッドの内訳の区間（Ecs の区間の外）
+            NorvesLib::Debug::ScopedStat inputScope("GameThread.Input", "GameThread");
+            if (!UpdateInputFrame(m_LastFrameTimeNanoseconds, rawDeltaNanoseconds))
+            {
+                GEngine->GetInputMapper().CancelAll();
+                LOG_WARNING("入力actionの評価に失敗したため操作を取り消しました");
+            }
         }
         deterministicCapture.AdvanceFrame();
 
@@ -2172,18 +2176,25 @@ namespace NorvesLib::Core::Engine
             return;
         }
 
-        TickSimulationAndHaptics(rawDeltaNanoseconds, deltaTime, handler);
+        {
+            NorvesLib::Debug::ScopedStat simulationScope("GameThread.Simulation", "GameThread");
+            TickSimulationAndHaptics(rawDeltaNanoseconds, deltaTime, handler);
+        }
 
         // ワールドからSceneViewへProxy同期
         GEngine->GetWorld().SyncToSceneView(
             &GEngine->GetRenderResources().Materials(),
             &GEngine->GetRenderResources().Meshes());
-        Container::VariableArray<Rendering::BoardProxy> frameTransient;
-        GEngine->GetWorld().CollectTransientBoardProxies(frameTransient);
-        GEngine->GetParticleSystem().AppendBoardProxies(frameTransient);
-        if (auto canvasView = GEngine->GetRenderWorld().GetRenderingCoordinator().GetCanvasView())
         {
-            canvasView->SetTransientBoardProxies(frameTransient);
+            // Text のグリフと粒子の板を集める区間
+            NorvesLib::Debug::ScopedStat transientScope("GameThread.TransientBoards", "GameThread");
+            Container::VariableArray<Rendering::BoardProxy> frameTransient;
+            GEngine->GetWorld().CollectTransientBoardProxies(frameTransient);
+            GEngine->GetParticleSystem().AppendBoardProxies(frameTransient);
+            if (auto canvasView = GEngine->GetRenderWorld().GetRenderingCoordinator().GetCanvasView())
+            {
+                canvasView->SetTransientBoardProxies(frameTransient);
+            }
         }
         // SceneQuery は、SyncToSceneView が確定した境界の変化だけを反映する(静止なら更新 0 件)。検査 ECS_SCENEQUERY が有効なら全量と照合する
         {
@@ -2191,7 +2202,10 @@ namespace NorvesLib::Core::Engine
             NorvesLib::Debug::ScopedStat sceneQueryScope("Ecs.Sys.SceneQuery", "Ecs");
             GEngine->GetSceneQuery().Update(GEngine->GetWorld());
         }
-        GEngine->GetSceneQuery().RunCheck(GEngine->GetWorld(), GEngine->GetEngineChecks());
+        {
+            NorvesLib::Debug::ScopedStat sceneQueryCheckScope("GameThread.SceneQueryCheck", "GameThread");
+            GEngine->GetSceneQuery().RunCheck(GEngine->GetWorld(), GEngine->GetEngineChecks());
+        }
 
         // 段 PostUpdate: スクリプトの後処理 → モジュールの毎フレーム Tick(SyncToSceneView 後・描画前)
         RunFrameStage(EFrameStage::PostUpdate, deltaTime, handler);
@@ -2236,13 +2250,23 @@ namespace NorvesLib::Core::Engine
                                                      bSceneAssembling,
                                                  m_bObservedPendingAssets, m_bAssetSettleBaselineLatched);
                 }
-                renderWorld.BeginFrame();
+                {
+                    // 描画の受け渡し（パケットの確保・待ち・投入）の区間
+                    NorvesLib::Debug::ScopedStat beginFrameScope("GameThread.RenderWorld.BeginFrame", "GameThread");
+                    renderWorld.BeginFrame();
+                }
                 // BeginFrame で書き込み中パケットが確保された後に overlay 集合を載せる
                 // (同一フレームで RenderFrame が消費・1 フレーム遅延なし)。空なら完全 no-op。
                 renderWorld.GetRenderingCoordinator().SetOverlayPassesForNextFrame(
                     Container::Span<Rendering::IViewPass *>(overlayPasses.data(), overlayPasses.size()));
-                renderWorld.Render();
-                renderWorld.EndFrame();
+                {
+                    NorvesLib::Debug::ScopedStat renderScope("GameThread.RenderWorld.Render", "GameThread");
+                    renderWorld.Render();
+                }
+                {
+                    NorvesLib::Debug::ScopedStat endFrameScope("GameThread.RenderWorld.EndFrame", "GameThread");
+                    renderWorld.EndFrame();
+                }
                 renderedFrameCount = renderWorld.GetRenderedFrameCount();
                 if (m_ExitAfterRenderedFrames > 0)
                 {
