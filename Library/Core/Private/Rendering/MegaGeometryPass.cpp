@@ -504,6 +504,7 @@ namespace NorvesLib::Core::Rendering
         m_DrawCountBufferHandle = {};
         m_MegaGeometryCompleteHandle = {};
         m_FrameSlots.Clear();
+        m_bFrameSlotMeshOwnersHeld = false;
         m_PreparedSceneTables = PreparedSceneTables{};
         m_SceneScatterPipeline.reset();
         m_SceneScatterShader.reset();
@@ -1069,6 +1070,10 @@ namespace NorvesLib::Core::Rendering
 
         if (m_Instances.empty() || !m_CullPipeline || !context.Resources.MegaGeometry)
         {
+            if (m_Instances.empty())
+            {
+                ReleaseIdleMeshRegionOwners(context.FrameIndex, context.ResolveRenderFrameSerial());
+            }
             enqueueEmptyTransitionPass();
             return;
         }
@@ -1404,6 +1409,20 @@ namespace NorvesLib::Core::Rendering
             m_ShadowCasterInputs.TotalGroups = static_cast<uint32_t>(tables.ShadowTotalGroups);
             m_ShadowCasterInputs.Motions = std::move(tables.ShadowMotions);
         }
+    }
+
+    void MegaGeometryPass::ReleaseIdleMeshRegionOwners(uint32_t inFlightIndex, uint64_t frameSerial)
+    {
+        if (!m_bFrameSlotMeshOwnersHeld || frameSerial == 0 || inFlightIndex >= FrameUseRingMaxInFlightSlots)
+        {
+            return;
+        }
+        // 枠を選ぶと、同じ番号の前のフレーム（GPU の仕事が終わっている）が使った組だけが渡される。
+        // インスタンスの無いフレームが飛行中のフレームの数だけ続けば、どの組もメッシュの区画を持たなくなる
+        // 前のフレームの表の持ち主は CPU の一覧で、GPU が読むのは組の持ち主なので、すぐ手放してよい
+        m_SceneTables.MeshOwners.clear();
+        m_FrameSlots.BeginFrame(inFlightIndex, frameSerial);
+        m_FrameSlots.ForEachIdleInActiveSlot([](FrameSlot &slot) { slot.MeshRegionOwners.clear(); });
     }
 
     void MegaGeometryPass::PrepareSceneTables(const MegaGeometryPassCommand &command, RHI::ICommandList *commandList)
@@ -3133,6 +3152,7 @@ namespace NorvesLib::Core::Rendering
         // このフレームの記録が読むメッシュの持ち主に替える（替えた古い持ち主の区画は、GpuRetireQueue を通って空きへ戻る）
         ResolveSceneTableCheck(slot);
         slot.MeshRegionOwners.assign(tables.MeshOwners.begin(), tables.MeshOwners.end());
+        m_bFrameSlotMeshOwnersHeld = m_bFrameSlotMeshOwnersHeld || !slot.MeshRegionOwners.empty();
 
         ++m_SceneUpdateStamp;
         if (m_SceneUpdateStamp == 0u)
@@ -3448,8 +3468,10 @@ namespace NorvesLib::Core::Rendering
         const uint64_t stagingBytes = totalWords * sizeof(uint32_t);
         if (!slot.SceneStaging || slot.SceneStagingCapacity < stagingBytes)
         {
-            const uint64_t capacity =
-                std::max<uint64_t>(64ull * 1024ull, NextPowerOfTwo(static_cast<uint32_t>(stagingBytes)));
+            // 2 GiB を超える大きさは 2 の冪へ丸めると 32 ビットで溢れるので、そのときは必要な大きさのまま取る
+            const uint64_t rounded = stagingBytes <= 0x80000000ull ? NextPowerOfTwo(static_cast<uint32_t>(stagingBytes))
+                                                                   : stagingBytes;
+            const uint64_t capacity = std::max<uint64_t>(64ull * 1024ull, rounded);
             RHI::BufferDesc desc(capacity, RHI::ResourceUsage::StorageBuffer, true, "MegaGeometry_SceneStaging");
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
             if (!buffer)

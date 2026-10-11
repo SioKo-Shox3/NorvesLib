@@ -738,6 +738,13 @@ namespace NorvesLib::Core::Rendering
         /** @brief 開発ビルドの検査: この組の読み戻しを覚えた写しと照合し、食い違った行を MEGA_SCENE_GROW_CHECK に出す */
         void ResolveSceneTableCheck(FrameSlot &slot);
 
+        /**
+         * @brief インスタンスの無いフレームで、GPU の仕事が終わった組のメッシュの区画の持ち主を手放す
+         *
+         * シーンを出た後も、組が最後の記録のメッシュの区画を持ち続けないようにする（組を次に使うまで区画が空きへ戻らない）。
+         */
+        void ReleaseIdleMeshRegionOwners(uint32_t inFlightIndex, uint64_t frameSerial);
+
         /** @brief VSM の投影物のカリングの入力を、常駐の表とこのフレームのページの表から作る */
         void PublishShadowCasterInputs(const FrameSlot &slot, SceneTables &tables);
 
@@ -854,6 +861,8 @@ namespace NorvesLib::Core::Rendering
         // ホストが毎フレーム書く資源。同じパスが1フレームに何回記録されても（複数のビューポート）、提出前・GPU が読み終わる前の
         // 組を上書きしないよう、記録の回数ではなくフレームの通し番号で使用済みの位置を戻す（FrameUseRing）
         FrameUseRing<FrameSlot> m_FrameSlots;
+        // 組のどれかがメッシュの区画の持ち主を持っているか（インスタンスの無いフレームで手放す）
+        bool m_bFrameSlotMeshOwnersHeld = false;
         // 記録したフレームの数え（フレームの通し番号が変わるたびに 1 進む）。退避したバッファの寿命と統計の枠の判定に使う
         // （m_OcclusionFrameCount は記録ごとに進むので、1フレームに複数回記録すると実時間が短くなる）
         uint64_t m_RenderFrameCount = 0;

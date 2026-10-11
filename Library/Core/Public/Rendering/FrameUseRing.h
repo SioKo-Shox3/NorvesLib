@@ -67,6 +67,22 @@ namespace NorvesLib::Core::Rendering
             return *slot.Uses[slot.Cursor++];
         }
 
+        /**
+         * @brief 選んだ枠の、今のフレームにまだ渡していない資源をすべて fn へ渡す
+         *
+         * BeginFrame の後なら、渡すのは同じ番号の前のフレームが使った（GPU の仕事が終わった）資源だけ。
+         * 今のフレームに Acquire で渡した資源は含まない。
+         */
+        template <typename Fn>
+        void ForEachIdleInActiveSlot(Fn&& fn)
+        {
+            Slot& slot = m_Slots[m_ActiveSlot];
+            for (size_t index = slot.Cursor; index < slot.Uses.size(); ++index)
+            {
+                fn(*slot.Uses[index]);
+            }
+        }
+
         /** @brief 選んだ枠で、今のフレームにここまで渡した資源の数 */
         uint32_t GetUsedCount() const { return m_Slots[m_ActiveSlot].Cursor; }
         /** @brief 選んだ枠が持っている資源の数（使用済みの位置を戻しても減らない） */

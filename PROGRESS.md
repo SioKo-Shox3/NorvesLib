@@ -2505,3 +2505,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: mega-stress は最初の更新で席がそろうので、ストリーミングだけでは席の表は広がらない（ECS が空いた席を使い回す）。席の表のコピーは、席の少ないシーンから多いシーンへ移る周回で確かめた。
 - Notes: `GetReadyMegaMeshGPUData` が返すのはストアのエントリへの生のポインタで、GameThread の `ReleaseModel`（シーンを出るとき）と RenderThread の記録が重なると CPU 側で無効になりうる（GPU の区画は保たれる）。この項目では変えていない。
 - Notes: 前の反復（SCATTER）は時間切れで「作業途中の保存」になり、`Assets/Shaders/mega_scene_scatter.comp` が追跡されていなかった。HEAD のコードが読むシェーダーなので、このコミットで追跡に加えた（中身は変えていない）。SCATTER の検証の記録は `verify-SCN-MEGA-GPU-SCENE-SCATTER-1〜5.txt`。
+
+### SCN-MEGA-GPU-SCENE-SCATTER の再検証（2026-10-12、反復 13・run 20261012-030203）
+
+- 反復 11 の実装（d44b9900。席ごと 128 B の device-local な席の表 `GPUMegaSlotRow`、変わった席だけを staging から `mega_scene_scatter.comp` で散在書き込み、席の表・描く順の表・メッシュの表の更新の条件を分け、ページの表は前段の `SyncPageTable` の版を主の描画・ID のラスタ・VSM が共有）を作り直さず、HEAD（GROW を含む）で verify を通し直した。
+- Done:
+  - `UpdateResidentSceneTables`: staging の容量を 2 の冪へ丸めるとき、2 GiB を超える大きさは 32 ビットで溢れて 64 KiB に戻っていたので、そのときは必要な大きさのまま取る。
+  - シーンを出た後のメッシュの区画: GROW 以降、ランチャーへ戻っても前のシーンのメッシュの区画の持ち主（前のフレームの表の `m_SceneTables.MeshOwners` と組の `MeshRegionOwners`）が残り、ランチャーで `geometry_pool_used_bytes` が mega-stress 36274144・mega-bananas 988640 のままだった（SCATTER 時点は 0）。インスタンスの無いフレームで `ReleaseIdleMeshRegionOwners` が表の一覧を捨て、枠を選んで GPU の仕事が終わった組（`FrameUseRing::ForEachIdleInActiveSlot`。今のフレームに渡していない組だけ）の持ち主を手放す。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-GPU-SCENE-SCATTER-14.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `-15.txt`: 起動画面 default の `SCN-MEGA-BASE-RWDI` との決定的な比較が `mean_luminance_difference=0`・`psnr_db=100`・`mismatched_pixel_ratio=1E-06` で `result=pass`、EXIT=0。PNG を開いて確認（家・球・岩・天球）。Game.log の ERROR 0。
+  - `-16-fullsync.txt`: `--mega-scene-full-sync` の起動画面を `-15` の撮影と比べ、`mean_luminance_difference=0`・`psnr_db=100`・`mismatched_pixel_ratio=4E-06` で `result=pass`、EXIT=0。
+  - `-17.txt`: mega-stress 5000 個（動く 1%・区画 64 m）の overview が `CAPTURE_SCENE result=pass`（mean_luminance 157.64）、EXIT=0。PNG を開いて確認。Game.log の ERROR 0、`MEGA_SCENE_UPLOAD` は最初 `rows=5000`、以後の窓は `rows=43`（動いた席だけ）・`mismatch=0`、`MEGA_SCENE_GROW_CHECK` 3 回とも `mismatch=0`。
+  - `-18.txt`・`-18-Game.log`: mega-bananas・mega-stress の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。ランチャーへ戻った後の `geometry_pool_used_bytes` は 6 回とも 0。`MEGA_SCENE_UPLOAD` 12 件すべて `mismatch=0`、インスタンスも常駐も変わらない更新は `bytes=0 rows=0 entries=0 ... page_bytes=0`（静止した mega-bananas の窓で 120 回中 113 回が 0）。ERROR 0。
+- Next: 残りの todo の最優先（SCN-MEGA-MEASURE-UPLOAD で効果の数値を測る）。
+- Notes: mega-stress の窓の最後の更新で `entries=4624` になるのは、区画の読み込みで描く順が並び替わったフレーム（窓の平均は 1 フレーム約 44 KB）。効果の数値は MEASURE-UPLOAD で見る。
