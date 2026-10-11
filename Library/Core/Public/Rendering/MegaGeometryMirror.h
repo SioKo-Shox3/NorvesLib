@@ -46,11 +46,19 @@ namespace NorvesLib::Core::Rendering
             m_bAllChanged = false;
             m_bChangedConsumed = true;
             m_ChangedBaseRevision = 0;
-            m_Rebased.clear();
+            m_Unsettled.clear();
             m_DrawnWorlds.clear();
             m_PendingPositions.clear();
             m_PendingRemoved.clear();
             m_bPendingAll = false;
+            m_DrawCount = 0;
+            m_GapDrawCount = 0;
+            m_HistoryReference.clear();
+            m_bHistoryReferenceValid = false;
+            m_HistoryCheckRounds = 0;
+            m_HistoryCheckedInstances = 0;
+            m_HistoryMismatched = 0;
+            m_HistorySkippedRounds = 0;
             m_Generation = 0;
             m_Revision = 0;
             m_RejectedCount = 0;
@@ -66,9 +74,9 @@ namespace NorvesLib::Core::Rendering
          * @param sceneGeneration そのパケットのシーンの世代
          * @return 当てたとき true。世代が合わない差分（基準でない）は当てずに false
          *
-         * 前の変換（PreviousWorldTransform）は GameThread が書いた値のまま持つ。描画がゲームのフレームを飛ばしたときの
-         * 付け替えは、描くときに NoteDrawn が行う（当てただけで描かなかった差分では、描いた変換の履歴を動かさない）。
-         * 前のフレームの付け替えは、ここで GameThread の値へ戻す（付け替えは描いたフレームだけ）。
+         * 差分が運ぶ前の変換（GameThread が書いた直前のゲームのフレームの値）は使わない。当てた位置の前の変換は、
+         * 描くときに NoteDrawn が最後に描いたフレームの変換から決め直す（当てただけで描かなかった差分では、描いた変換の
+         * 履歴を動かさない）。
          *
          * 変わった席は、消費者が取り込む（NoteDrawn の後に読む）まで溜める。描画を見送った差分や空の差分を挟んでも、
          * 消費者が前に見た版から今までの変わった席を取り逃がさない。
@@ -76,7 +84,6 @@ namespace NorvesLib::Core::Rendering
         bool Apply(const MegaSceneDelta& delta, uint64_t sceneGeneration)
         {
             BeginChangeAccumulation();
-            SettleRebased();
             m_LastEntryCount = 0;
             if (!delta.bActive)
             {
@@ -173,38 +180,105 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief 写しの内容でフレームを描く（RenderThread が、描画を始める場所で呼ぶ）
-         * @param bRebase true のとき、当てただけで描かなかった差分も含め、最後に描いてから変わった proxy の前の変換を
-         *        最後に描いたフレームの変換へ付け替える（描画がゲームのフレームを飛ばして TAA の履歴の基準が
-         *        最後に描いたフレームのとき。全量の同期の RenderedObjectHistory と同じ規約）
+         * @param bFrameGap 描画がゲームのフレームを飛ばしたか（統計だけに使う。前の変換の決め方は変わらない）
          *
-         * 最後に描いたフレームの変換は、物体（ObjectId）ごとに差分だけで保つ。最後に描いたフレームに無かった物体は付け替えない
-         * （前の変換を今の変換にする）。描いたあと、変わった proxy の変換を次のために覚える。
+         * 前の変換（velocity の基準）は、RenderedObjectHistory の契約どおり最後に描いたフレームの変換にする。
+         * 最後に描いたフレームの変換は、物体（ObjectId）ごとに差分だけで保つ。最後に描いたフレームに無かった物体は
+         * 前の変換を今の変換にする。決め直すのは、最後に描いてから差分が当たった位置と、前に描いたとき前の変換と変換が
+         * 違った位置（動いて止まった物体。GameThread が次の差分を送らなくても、描いた基準で 1 回だけ前の変換を今の変換へ
+         * 揃える）だけ。前の変換が変わった席は、消費者へ変わった席として知らせる。描いたあと、変わった proxy の変換を
+         * 次のために覚える。
          */
-        void NoteDrawn(bool bRebase)
+        void NoteDrawn(bool bFrameGap)
         {
-            // 前のフレームの付け替えが残っていれば戻す（Apply を通らずに描くときの備え）
             BeginChangeAccumulation();
-            SettleRebased();
-            if (bRebase)
+            ++m_DrawCount;
+            m_GapDrawCount += bFrameGap ? 1u : 0u;
+            bool bPreviousChanged = false;
+            Container::VariableArray<uint32_t> settledPositions;
+            if (m_bPendingAll)
             {
-                if (m_bPendingAll)
+                for (uint32_t index = 0; index < static_cast<uint32_t>(m_Proxies.size()); ++index)
                 {
-                    for (uint32_t index = 0; index < static_cast<uint32_t>(m_Proxies.size()); ++index)
+                    bPreviousChanged |= ResolvePrevious(index);
+                }
+            }
+            else
+            {
+                for (uint32_t index : m_PendingPositions)
+                {
+                    if (index < m_Proxies.size())
                     {
-                        RebaseProxy(index);
+                        bPreviousChanged |= ResolvePrevious(index);
                     }
                 }
-                else
+                // 前に描いたとき落ち着いていなかった物体（位置が替わった・外れたものは、差分の位置として上で決め直した）
+                for (const UnsettledEntry& entry : m_Unsettled)
                 {
-                    for (uint32_t index : m_PendingPositions)
+                    if (entry.Index < m_Proxies.size() && m_Proxies[entry.Index].ObjectId == entry.ObjectId)
                     {
-                        if (index < m_Proxies.size())
-                        {
-                            RebaseProxy(index);
-                        }
+                        bPreviousChanged |= ResolvePrevious(entry.Index);
+                        settledPositions.push_back(entry.Index);
                     }
                 }
             }
+            if (bPreviousChanged)
+            {
+                if (!m_bAllChanged && !m_ChangedSlots.empty())
+                {
+                    std::sort(m_ChangedSlots.begin(), m_ChangedSlots.end());
+                    m_ChangedSlots.erase(std::unique(m_ChangedSlots.begin(), m_ChangedSlots.end()), m_ChangedSlots.end());
+                }
+                ++m_Revision;
+            }
+
+            // 次に描くときに前の変換を揃える物体（このフレームで前の変換と変換が違う物体）を覚え直す
+            m_Unsettled.clear();
+            const auto noteUnsettled = [this](uint32_t index)
+            {
+                const MegaGeometryProxy& proxy = m_Proxies[index];
+                if (std::memcmp(&proxy.PreviousWorldTransform, &proxy.WorldTransform, sizeof(Math::Matrix4x4)) != 0)
+                {
+                    UnsettledEntry entry;
+                    entry.Index = index;
+                    entry.ObjectId = proxy.ObjectId;
+                    m_Unsettled.push_back(entry);
+                }
+            };
+            if (m_bPendingAll)
+            {
+                for (uint32_t index = 0; index < static_cast<uint32_t>(m_Proxies.size()); ++index)
+                {
+                    noteUnsettled(index);
+                }
+            }
+            else
+            {
+                for (uint32_t index : m_PendingPositions)
+                {
+                    if (index < m_Proxies.size())
+                    {
+                        noteUnsettled(index);
+                    }
+                }
+                for (uint32_t index : settledPositions)
+                {
+                    noteUnsettled(index);
+                }
+                if (!m_Unsettled.empty())
+                {
+                    std::sort(m_Unsettled.begin(), m_Unsettled.end(),
+                              [](const UnsettledEntry& lhs, const UnsettledEntry& rhs) { return lhs.Index < rhs.Index; });
+                    m_Unsettled.erase(std::unique(m_Unsettled.begin(), m_Unsettled.end(),
+                                                  [](const UnsettledEntry& lhs, const UnsettledEntry& rhs)
+                                                  { return lhs.Index == rhs.Index; }),
+                                      m_Unsettled.end());
+                }
+            }
+
+            // 検査 MEGA_HISTORY: 全量で数え直した前の変換と照合する（覚えた変換は、まだこのフレームの分を書いていない）
+            CheckHistoryAgainstReference();
+
             if (m_bPendingAll)
             {
                 m_DrawnWorlds.clear();
@@ -231,9 +305,38 @@ namespace NorvesLib::Core::Rendering
             m_PendingPositions.clear();
             m_PendingRemoved.clear();
             m_bPendingAll = false;
+            SnapshotHistoryReference();
             // これから消費者が読む。次の Apply で、溜めた変わった席を捨てて数え直す
             m_bChangedConsumed = true;
         }
+
+        /**
+         * @brief 検査 MEGA_HISTORY を有効にする（開発ビルドで RenderThread が呼ぶ）
+         * @param interval 何回描くごとに照合するか（0 で無効）。照合する回の 1 つ前に描いたフレームの変換を全量で写し、
+         *        照合する回に、全部の proxy の前の変換が写しから全量で求めた値（最後に描いたフレームの変換。無ければ今の
+         *        変換）と一致するかを確かめる
+         * @param maxInstances これより多い proxy の回は照合しない（全量の写しの費用を抑える。数は GetHistorySkippedRounds）
+         */
+        void SetHistoryCheck(uint32_t interval, uint32_t maxInstances)
+        {
+            m_HistoryCheckInterval = interval;
+            m_HistoryCheckMaxInstances = maxInstances;
+            if (interval == 0)
+            {
+                m_HistoryReference.clear();
+                m_bHistoryReferenceValid = false;
+            }
+        }
+        /** @brief NoteDrawn を呼んだ回数と、そのうちゲームのフレームを飛ばした回数 */
+        [[nodiscard]] uint64_t GetDrawCount() const { return m_DrawCount; }
+        [[nodiscard]] uint64_t GetGapDrawCount() const { return m_GapDrawCount; }
+        /** @brief 検査 MEGA_HISTORY の照合の回数・照合した proxy の延べ数・食い違った proxy の延べ数・数が多くて省いた回数 */
+        [[nodiscard]] uint64_t GetHistoryCheckRounds() const { return m_HistoryCheckRounds; }
+        [[nodiscard]] uint64_t GetHistoryCheckedInstances() const { return m_HistoryCheckedInstances; }
+        [[nodiscard]] uint64_t GetHistoryMismatched() const { return m_HistoryMismatched; }
+        [[nodiscard]] uint64_t GetHistorySkippedRounds() const { return m_HistorySkippedRounds; }
+        /** @brief 今、前の変換と変換が違う（次に描くときに揃える）proxy の数 */
+        [[nodiscard]] size_t GetUnsettledCount() const { return m_Unsettled.size(); }
 
         /** @brief 写しの配列（GameThread の SceneView と同じ並び。席のない位置はない） */
         [[nodiscard]] const Container::VariableArray<MegaGeometryProxy>& GetProxies() const { return m_Proxies; }
@@ -338,30 +441,6 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // 前のフレームの付け替えを GameThread の値へ戻す。戻した席は、消費者へ変わった席として知らせる
-        void SettleRebased()
-        {
-            if (m_Rebased.empty())
-            {
-                return;
-            }
-            for (const RebasedEntry& entry : m_Rebased)
-            {
-                if (entry.Index < m_Proxies.size() && m_Proxies[entry.Index].ObjectId == entry.ObjectId)
-                {
-                    m_Proxies[entry.Index].PreviousWorldTransform = entry.Original;
-                    NoteChangedSlot(m_Proxies[entry.Index].SceneSlot);
-                }
-            }
-            m_Rebased.clear();
-            if (!m_bAllChanged && !m_ChangedSlots.empty())
-            {
-                std::sort(m_ChangedSlots.begin(), m_ChangedSlots.end());
-                m_ChangedSlots.erase(std::unique(m_ChangedSlots.begin(), m_ChangedSlots.end()), m_ChangedSlots.end());
-            }
-            ++m_Revision;
-        }
-
         // 席を持たない proxy（SceneSlot が 0）が変わったら、席の一覧では数えられないので全部が変わった扱いにする
         void NoteChangedSlot(uint32_t slot)
         {
@@ -423,22 +502,19 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // 値が変わるときだけ、GameThread の値を覚えて付け替える（次の Apply で戻す）
-        void RebaseProxy(uint32_t index)
+        // 前の変換を、最後に描いたフレームの変換（無ければ今の変換）にする。変わったら席を知らせて true
+        bool ResolvePrevious(uint32_t index)
         {
             MegaGeometryProxy& proxy = m_Proxies[index];
             const auto found = proxy.ObjectId != 0 ? m_DrawnWorlds.find(proxy.ObjectId) : m_DrawnWorlds.end();
-            const Math::Matrix4x4 rebased = found != m_DrawnWorlds.end() ? found->second : proxy.WorldTransform;
-            if (std::memcmp(&rebased, &proxy.PreviousWorldTransform, sizeof(Math::Matrix4x4)) == 0)
+            const Math::Matrix4x4& previous = found != m_DrawnWorlds.end() ? found->second : proxy.WorldTransform;
+            if (std::memcmp(&previous, &proxy.PreviousWorldTransform, sizeof(Math::Matrix4x4)) == 0)
             {
-                return;
+                return false;
             }
-            RebasedEntry entry;
-            entry.Index = index;
-            entry.ObjectId = proxy.ObjectId;
-            entry.Original = proxy.PreviousWorldTransform;
-            m_Rebased.push_back(entry);
-            proxy.PreviousWorldTransform = rebased;
+            proxy.PreviousWorldTransform = previous;
+            NoteChangedSlot(proxy.SceneSlot);
+            return true;
         }
 
         void RecordDrawn(const MegaGeometryProxy& proxy)
@@ -449,17 +525,70 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // 描くときに付け替えた前の変換の、GameThread の値（次の Apply で戻す。付け替えはフレーム限定）
-        struct RebasedEntry
+        // 検査 MEGA_HISTORY: 照合する回の 1 つ前に描いたフレームの変換を、差分の印に頼らず全部の proxy から写す
+        void SnapshotHistoryReference()
+        {
+            m_bHistoryReferenceValid = false;
+            if (m_HistoryCheckInterval == 0 || (m_DrawCount + 1u) % m_HistoryCheckInterval != 0)
+            {
+                return;
+            }
+            if (m_Proxies.size() > m_HistoryCheckMaxInstances)
+            {
+                ++m_HistorySkippedRounds;
+                m_HistoryReference.clear();
+                return;
+            }
+            m_HistoryReference.clear();
+            m_HistoryReference.reserve(m_Proxies.size());
+            for (const MegaGeometryProxy& proxy : m_Proxies)
+            {
+                if (proxy.ObjectId != 0)
+                {
+                    m_HistoryReference[proxy.ObjectId] = proxy.WorldTransform;
+                }
+            }
+            m_bHistoryReferenceValid = true;
+        }
+
+        // 検査 MEGA_HISTORY: 全部の proxy の前の変換が、前の回の写し（全量の経路で最後に描いたフレームの変換）と一致するか
+        void CheckHistoryAgainstReference()
+        {
+            if (!m_bHistoryReferenceValid)
+            {
+                return;
+            }
+            m_bHistoryReferenceValid = false;
+            if (m_Proxies.size() > m_HistoryCheckMaxInstances)
+            {
+                ++m_HistorySkippedRounds;
+                return;
+            }
+            uint64_t mismatched = 0;
+            for (const MegaGeometryProxy& proxy : m_Proxies)
+            {
+                const auto found = proxy.ObjectId != 0 ? m_HistoryReference.find(proxy.ObjectId) : m_HistoryReference.end();
+                const Math::Matrix4x4& expected = found != m_HistoryReference.end() ? found->second : proxy.WorldTransform;
+                if (std::memcmp(&expected, &proxy.PreviousWorldTransform, sizeof(Math::Matrix4x4)) != 0)
+                {
+                    ++mismatched;
+                }
+            }
+            ++m_HistoryCheckRounds;
+            m_HistoryCheckedInstances += m_Proxies.size();
+            m_HistoryMismatched += mismatched;
+        }
+
+        // 前に描いたとき前の変換と変換が違った proxy（次に描くときに前の変換を揃える）
+        struct UnsettledEntry
         {
             uint32_t Index = 0;
             uint64_t ObjectId = 0;
-            Math::Matrix4x4 Original;
         };
 
         Container::VariableArray<MegaGeometryProxy> m_Proxies;
         Container::VariableArray<uint32_t> m_ChangedSlots;
-        Container::VariableArray<RebasedEntry> m_Rebased;
+        Container::VariableArray<UnsettledEntry> m_Unsettled;
         // 変わった席を消費者が取り込んだか（true のとき、次の Apply で数え直す）と、数え始めた版
         bool m_bChangedConsumed = true;
         uint64_t m_ChangedBaseRevision = 0;
@@ -476,6 +605,17 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_Revision = 0;
         uint64_t m_RejectedCount = 0;
         uint32_t m_LastEntryCount = 0;
+        uint64_t m_DrawCount = 0;
+        uint64_t m_GapDrawCount = 0;
+        // 検査 MEGA_HISTORY（SetHistoryCheck）。写しは照合する回の 1 つ前に描いたフレームの、ObjectId ごとの変換
+        uint32_t m_HistoryCheckInterval = 0;
+        uint32_t m_HistoryCheckMaxInstances = 0;
+        Container::UnorderedMap<uint64_t, Math::Matrix4x4> m_HistoryReference;
+        bool m_bHistoryReferenceValid = false;
+        uint64_t m_HistoryCheckRounds = 0;
+        uint64_t m_HistoryCheckedInstances = 0;
+        uint64_t m_HistoryMismatched = 0;
+        uint64_t m_HistorySkippedRounds = 0;
         mutable Thread::Atomic<uint64_t> m_ConsumerChecked{0};
         mutable Thread::Atomic<uint64_t> m_VerifyChecked{0};
         mutable Thread::Atomic<uint64_t> m_VerifyMismatched{0};

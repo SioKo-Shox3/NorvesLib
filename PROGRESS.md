@@ -2520,3 +2520,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-18.txt`・`-18-Game.log`: mega-bananas・mega-stress の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。ランチャーへ戻った後の `geometry_pool_used_bytes` は 6 回とも 0。`MEGA_SCENE_UPLOAD` 12 件すべて `mismatch=0`、インスタンスも常駐も変わらない更新は `bytes=0 rows=0 entries=0 ... page_bytes=0`（静止した mega-bananas の窓で 120 回中 113 回が 0）。ERROR 0。
 - Next: 残りの todo の最優先（SCN-MEGA-MEASURE-UPLOAD で効果の数値を測る）。
 - Notes: mega-stress の窓の最後の更新で `entries=4624` になるのは、区画の読み込みで描く順が並び替わったフレーム（窓の平均は 1 フレーム約 44 KB）。効果の数値は MEASURE-UPLOAD で見る。
+
+### SCN-MEGA-GPU-SCENE-HISTORY（2026-10-12、反復 14・run 20261012-030203）
+
+- Done:
+  - `MegaGeometryMirror`: 差分が運ぶ前の変換（GameThread の直前のゲームのフレームの値）を使わず、`NoteDrawn` が毎回、最後に描いたフレームの変換（ObjectId ごと。無ければ今の変換）から決める。決め直すのは、最後に描いてから差分が当たった位置と、前に描いたとき前の変換と変換が違った位置（`m_Unsettled`）だけ。動いて止まった物体は、GameThread の揃える差分が破棄されても、次に描くフレームで 1 回だけ前の変換が今の変換に揃い、その席を変わった席として消費者へ知らせて版を進める（席の表の行が散在書き込みで直る）。TAA の有無に関わらない。フレーム限定の付け替えと戻し（`m_Rebased`・`SettleRebased`）は消した。
+  - 全量の経路（`--mega-scene-full-sync`）も同じ規約にした: `RenderedObjectHistory` は描画が飛んだら TAA の有無に関わらず MegaGeometry の前の変換を最後に描いた変換にし、覚える鍵を ComponentId から ObjectId にした（散布の部品は 1 つの ComponentId が多数の物体を持つ）。GameThread の `ApplyPreviousObjectStates` の MegaGeometry の前の値も ObjectId で引く。
+  - 開発ビルドの検査 `MEGA_HISTORY`: 16384 本以下は 4 回描くごと（それより多いと 60 回、262144 本を超える回は省く）に、1 つ前に描いたフレームの全部の proxy の変換を写し、次に描くときに全部の前の変換がその写しから全量で求めた値と一致するかを照合する。60 回描くごとに `MEGA_HISTORY draws= gap_draws= checked= instances= skipped= unsettled= mismatch=` を出し、食い違いは ERROR にする。
+  - 検査 MEGA_SCENE_DELTA の決まった場面に「続けて描くフレームの前の変換が最後に描いた変換」「止まった印が破棄されたパケットにあり空の差分で描いても 1 回だけ揃い、席が変わった席に入る」「揃ったあとは動かさない」を足した。写しと GameThread の配列の照合は、前の変換を除いて比べる（`HashMegaGeometryContent` と同じ）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-GPU-SCENE-HISTORY-6.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0（最終のコード）。
+  - `-9.txt`: mega-stress 5000 個（動く 1%・区画 64 m）の overview が `CAPTURE_SCENE result=pass`（mean_luminance 157.641。SCATTER・GROW と同じ）、EXIT=0。PNG を開いて確認。`MEGA_HISTORY draws=120 gap_draws=0 checked=30 instances=142718 skipped=0 unsettled=45 mismatch=0`、Game.log の ERROR 0、`MEGA_SCENE_UPLOAD rows=43 ... gpu_mismatch=0 mismatch=0`。
+  - `-8.txt`: 起動画面 default の `SCN-MEGA-BASE-RWDI` との決定的な比較が `mean_luminance_difference=0`・`psnr_db=100`・`mismatched_pixel_ratio=8E-06` で `result=pass`、EXIT=0。PNG を開いて確認（家・球・岩・天球）。
+  - `-7-gap.txt`（補助）: 5 万個・`--engine-checks=MEGA_SCENE_DELTA` で `result=pass`、EXIT=0。`ENGINE_CHECK name=MEGA_SCENE_DELTA result=pass` 143 件・fail 0、`MEGA_HISTORY ... unsettled=497 mismatch=0`、ERROR 0。
+- Next: 残りの todo の最優先。
+- Notes: 撮影ではゲームと描画が 1:1 で進み `gap_draws=0`（パケットの破棄・描画の見送りが起きない）。飛んだフレームの扱いは検査 MEGA_SCENE_DELTA の決まった場面（描かなかった差分・止まった印の破棄・位置を移った物体・外れて戻った物体）で確かめた。描画を意図して飛ばす起動引数は無い。
+- Notes: `-5-gap.txt` は前の変換まで含めて写しと GameThread の配列を比べていた決まった場面の照合が落ちた記録（前の変換を RenderThread が決めるようにした結果。照合から前の変換を除いて `-7` で pass）。
+- Notes: GameThread の `SceneView::BeginMegaGeometrySync`（止まった物体の前の変換を揃える差分）は全量の経路のために残した。差分の同期では写しが前の変換を決め直すので、この差分は席の内容を変えない（送る量の削減は別の項目）。`WorldSyncDifferentialTest` の写しの 2 つの場面は新しい規約でも同じ値を期待している（Test は paths の外なので走らせていない）。

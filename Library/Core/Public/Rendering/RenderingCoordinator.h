@@ -610,7 +610,7 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_PreviousMainCameraFrameNumber = 0;
 
         // 直前のゲームのフレームのパケットに書いた MegaGeometry の変換と、スキニングの変換・パレット
-        // （ComponentId ごと）。次のパケットの前の値（velocity 用）にする。
+        // （MegaGeometry は ObjectId、スキニングは ComponentId ごと）。次のパケットの前の値（velocity 用）にする。
         Container::UnorderedMap<uint64_t, Math::Matrix4x4> m_PreviousMegaGeometryWorlds;
         SkinnedPoseHistory m_PreviousSkinnedStates;
         uint64_t m_PreviousObjectStateFrameNumber = 0;
@@ -691,6 +691,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_MegaDeltaEntryTotal = 0;
         uint64_t m_MegaVerifyReportedChecked = 0;
         uint64_t m_MegaVerifyReportedMismatched = 0;
+        // 検査 MEGA_HISTORY の食い違いを最後にログへ出したときの数（RenderThread）
+        uint64_t m_MegaHistoryReportedMismatched = 0;
 
         // Mesh・Skinned・Light の差分の同期。送り手・作業用の配列・光源表・構成の hash の集合は GameThread、写しは RenderThread が触る。
         // 差分の無い（手で組んだ）パケットは、Scene の配列を全量として読む

@@ -1,4 +1,5 @@
 ﻿#include "Rendering/RenderingCoordinator.h"
+#include "Debug/DebugConfig.h"
 #include "Debug/EngineChecks.h"
 #include "Debug/Stats.h"
 #include "Ecs/EcsGpuSceneSlots.h"
@@ -2259,7 +2260,7 @@ namespace NorvesLib::Core::Rendering
                 {
                     return fail("Destroy 以外の理由で席の列を外したことを見つけられない");
                 }
-                examined += 6;
+                examined += 9;
             }
             return true;
         }
@@ -2394,9 +2395,15 @@ namespace NorvesLib::Core::Rendering
                 {
                     return false;
                 }
+                // 前の変換は写しが描いた履歴から決めるので比べない（HashMegaGeometryContent と同じ）
+                const auto contentHash = [](MegaGeometryProxy proxy)
+                {
+                    proxy.PreviousWorldTransform = proxy.WorldTransform;
+                    return HashProxy(proxy);
+                };
                 for (size_t index = 0; index < lhs.size(); ++index)
                 {
-                    if (HashProxy(lhs[index]) != HashProxy(rhs[index]) || lhs[index].SceneSlot != rhs[index].SceneSlot)
+                    if (contentHash(lhs[index]) != contentHash(rhs[index]) || lhs[index].SceneSlot != rhs[index].SceneSlot)
                     {
                         return false;
                     }
@@ -2622,7 +2629,7 @@ namespace NorvesLib::Core::Rendering
                     return fail("TAA の場面: 変わっていない物体・新しい物体の前の変換を動かした");
                 }
 
-                // フレーム 13: 続けて描く（飛ばない）。GameThread の前の変換をそのまま使う
+                // フレーム 13: 続けて描く（飛ばない）。前の変換は 12 で描いた 20（GameThread の値と同じ）
                 delta = makeDelta(false, 3);
                 pushEntry(delta, 0, objectA, 30.0f, 20.0f);
                 taa.Apply(delta, taaGeneration);
@@ -2661,6 +2668,33 @@ namespace NorvesLib::Core::Rendering
                 if (previousX(taa, 2) != 100.0f)
                 {
                     return fail("TAA の場面: 最後に描いたフレームに無かった物体の前の変換を付け替えた");
+                }
+                // フレーム 18: C=20 を当てて続けて描く（GameThread の前の変換は 12）。前の変換は 15 で描いた 12
+                delta = makeDelta(false, 3);
+                pushEntry(delta, 0, objectC, 20.0f, 12.0f);
+                taa.Apply(delta, taaGeneration);
+                taa.NoteDrawn(false);
+                if (previousX(taa, 0) != 12.0f)
+                {
+                    return fail("履歴の場面: 続けて描くフレームの前の変換が、最後に描いたフレームのものにならない");
+                }
+                // フレーム 20: C は止まったが、止まった印（前の変換を揃える差分）は破棄されたパケットにあり、空の差分で描く。
+                // 前の変換は 18 で描いた 20 に揃い（速度 0）、その席を消費者へ知らせる
+                const uint64_t revisionBeforeSettle = taa.GetRevision();
+                taa.Apply(makeDelta(false, 3), taaGeneration);
+                taa.NoteDrawn(true);
+                if (previousX(taa, 0) != 20.0f || taa.GetRevision() == revisionBeforeSettle ||
+                    !std::binary_search(taa.GetChangedSlots().begin(), taa.GetChangedSlots().end(),
+                                        static_cast<uint32_t>(objectC)))
+                {
+                    return fail("履歴の場面: 動いて止まった物体の前の変換が、描いた基準で 1 回だけ揃わない");
+                }
+                // フレーム 21: 空の差分で描く。揃った物体はもう変わった席にならない
+                taa.Apply(makeDelta(false, 3), taaGeneration);
+                taa.NoteDrawn(false);
+                if (previousX(taa, 0) != 20.0f || !taa.GetChangedSlots().empty() || taa.GetUnsettledCount() != 0)
+                {
+                    return fail("履歴の場面: 揃った物体の前の変換を、続くフレームでまた動かした");
                 }
                 examined += 6;
             }
@@ -3089,6 +3123,7 @@ namespace NorvesLib::Core::Rendering
         m_RenderedObjectHistory.Reset();
         m_MegaSender.Reset();
         m_MegaMirror.Reset();
+        m_MegaHistoryReportedMismatched = 0;
         m_bMegaDeltaPending = false;
         m_MegaDeltaSentCount = 0;
         m_MegaDeltaEntryTotal = 0;
@@ -3834,7 +3869,7 @@ namespace NorvesLib::Core::Rendering
         // 前の値は直前のゲームのフレームのパケットのものだけを使う（前のカメラと同じ規約）。
         const bool bHasPrevious = m_bPreviousObjectStateValid &&
                                   m_PreviousObjectStateFrameNumber + 1u == packet.FrameNumber;
-        // 差分の同期では、MegaGeometry の前の変換は SceneView が履歴つきで公開した値（パケットは全量を持たない）。
+        // 差分の同期では、MegaGeometry の前の変換は RenderThread の写しが描いた履歴から決める（パケットは全量を持たない）。
         // 全量の同期（--mega-scene-full-sync）だけ、毎フレーム全量で前の変換を付け直して覚え直す
         const bool bMegaFull = !packet.MegaDelta.bActive;
         if (bMegaFull)
@@ -3844,7 +3879,7 @@ namespace NorvesLib::Core::Rendering
                 proxy.PreviousWorldTransform = proxy.WorldTransform;
                 if (bHasPrevious)
                 {
-                    const auto found = m_PreviousMegaGeometryWorlds.find(proxy.ComponentId);
+                    const auto found = m_PreviousMegaGeometryWorlds.find(proxy.ObjectId);
                     if (found != m_PreviousMegaGeometryWorlds.end())
                     {
                         proxy.PreviousWorldTransform = found->second;
@@ -3859,7 +3894,11 @@ namespace NorvesLib::Core::Rendering
             m_PreviousMegaGeometryWorlds.clear();
             for (const MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
             {
-                m_PreviousMegaGeometryWorlds[proxy.ComponentId] = proxy.WorldTransform;
+                // 物体（ObjectId）ごとに覚える（散布の部品は 1 つの ComponentId が多数の物体を持つ）
+                if (proxy.ObjectId != 0)
+                {
+                    m_PreviousMegaGeometryWorlds[proxy.ObjectId] = proxy.WorldTransform;
+                }
             }
         }
         m_PreviousSkinnedStates.Record(packet);
@@ -4083,7 +4122,7 @@ namespace NorvesLib::Core::Rendering
         } appliedPacketScope{packetConfirmation, packet->SendSerial, applyResult == PacketApplyResult::Applied};
 
         // MegaGeometry の差分を写しへ当てる。描画を見送っても、適用したパケットの差分は当てる（次の差分の土台になる）。
-        // 前の変換の付け替え（TAA の履歴が最後に描いたフレームのとき）は、描く場所の NoteDrawn が行う
+        // 前の変換（最後に描いたフレームの変換）は、描く場所の NoteDrawn が決める
         if (applyResult == PacketApplyResult::Applied && packet->MegaDelta.bActive)
         {
             if (!m_MegaMirror.Apply(packet->MegaDelta, packet->SceneGeneration))
@@ -4294,6 +4333,9 @@ namespace NorvesLib::Core::Rendering
             (m_MainSceneView && m_MainSceneView->IsTemporalAAForced()) ||
             (packet->bHasMainCamera &&
              packet->Scene.MainCamera.AntiAliasing == CameraAntiAliasingMode::TemporalAA);
+        // 最後に描いたフレームの直後でないパケット（パケットの破棄・描画の見送りを挟んだ）か
+        const bool bRenderedFrameGap = m_RenderedObjectHistory.IsValid() &&
+                                       packet->FrameNumber > m_RenderedObjectHistory.GetFrameNumber() + 1u;
         const RenderedObjectHistoryResult renderedObjectHistory = m_RenderedObjectHistory.Apply(
             *packet,
             packet->MeshDelta.bActive ? m_MeshMirror.GetProxies() : packet->Scene.MeshProxies,
@@ -4303,10 +4345,38 @@ namespace NorvesLib::Core::Rendering
             ++m_RenderedObjectRebasedFrameCount;
             m_RenderedObjectIncompleteFrameCount += renderedObjectHistory.bComplete ? 0u : 1u;
         }
-        // MegaGeometry の写しも同じ規約: 描いたフレームの変換を覚え、飛んだフレームの前の変換を最後に描いた変換へ付け替える
+        // MegaGeometry の写しも同じ規約: 前の変換は RenderThread が覚えた最後に描いたフレームの変換にする
+        // （TAA の有無に関わらない。動いて止まった物体の前の変換も、描いた基準で 1 回だけ揃える）
         if (packet->MegaDelta.bActive)
         {
-            m_MegaMirror.NoteDrawn(renderedObjectHistory.bRebased);
+#if NORVES_BUILD_DEVELOPMENT
+            // 検査 MEGA_HISTORY: 差分で保った前の変換を、全量で数え直した値と照合する。全量の写しの費用を抑えるため、
+            // 16384 本以下は 4 回描くごと、それより多いと 60 回描くごと（262144 本を超える回は省く）
+            m_MegaMirror.SetHistoryCheck(m_MegaMirror.GetProxies().size() <= 16384u ? 4u : 60u, 262144u);
+#endif
+            m_MegaMirror.NoteDrawn(bRenderedFrameGap);
+#if NORVES_BUILD_DEVELOPMENT
+            if (m_MegaMirror.GetHistoryMismatched() > m_MegaHistoryReportedMismatched)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator",
+                                 "MEGA_HISTORY 前の変換が全量の経路（最後に描いたフレームの変換）と一致しません: mismatch=%llu",
+                                 static_cast<unsigned long long>(m_MegaMirror.GetHistoryMismatched()));
+                m_MegaHistoryReportedMismatched = m_MegaMirror.GetHistoryMismatched();
+            }
+            if (m_MegaMirror.GetDrawCount() % 60u == 0u)
+            {
+                NORVES_LOG_INFO("RenderingCoordinator",
+                                "MEGA_HISTORY draws=%llu gap_draws=%llu checked=%llu instances=%llu skipped=%llu "
+                                "unsettled=%zu mismatch=%llu",
+                                static_cast<unsigned long long>(m_MegaMirror.GetDrawCount()),
+                                static_cast<unsigned long long>(m_MegaMirror.GetGapDrawCount()),
+                                static_cast<unsigned long long>(m_MegaMirror.GetHistoryCheckRounds()),
+                                static_cast<unsigned long long>(m_MegaMirror.GetHistoryCheckedInstances()),
+                                static_cast<unsigned long long>(m_MegaMirror.GetHistorySkippedRounds()),
+                                m_MegaMirror.GetUnsettledCount(),
+                                static_cast<unsigned long long>(m_MegaMirror.GetHistoryMismatched()));
+            }
+#endif
         }
         RHI::BufferPtr instanceDataBuffer = m_InstanceBufferRing.Upload(frameIndex, packet->InstanceData);
 

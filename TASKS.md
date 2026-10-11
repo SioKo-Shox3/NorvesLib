@@ -708,7 +708,7 @@
 - notes: 危険地帯（寿命）。検証レイヤーは節目の計測の Debug で見る。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-GPU-SCENE-HISTORY: 前の変換（prevWorld）を、最後に描いたフレームを基準に保つ
-- status: todo
+- status: done
 - done-when: 席の prevWorld は `RenderedObjectHistory.h` 29 行付近の契約（最後に描いたフレームの変換）に従い、RenderThread 側で描画の履歴を持つ。動いて止まった席の 1 回だけの更新も描画の基準で行う（パケットの破棄・描画の見送りを挟んでも速度が 0 や二重にならない）。1% 移動で、開発ビルドの速度の検査（全量の経路の速度と一致）が `MEGA_HISTORY mismatch=0`。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-GPU-SCENE-HISTORY/check`

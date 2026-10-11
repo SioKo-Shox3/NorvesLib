@@ -37,6 +37,7 @@ namespace NorvesLib::Core::Rendering
      * 描いたフレームの変換へ付け替える。インスタンスは World・PreviousWorld が一致する MeshProxy の
      * ComponentId で見分ける。最後に描いたフレームに無かった物体（新しく現れた物体）は付け替えない
      * （その物体は履歴に写っていない）。照合できないインスタンスがあれば bComplete を false にする。
+     * MegaGeometry の前の変換は、bRewriteOnGap に関わらず飛んだフレームでは最後に描いたフレームの変換にする。
      * 付け替えた後、このパケットの変換を次のフレームのために覚える。
      */
     class RenderedObjectHistory
@@ -68,6 +69,12 @@ namespace NorvesLib::Core::Rendering
                 Rebase(packet, meshProxies, result);
                 result.PreviousFrameNumber = m_FrameNumber;
                 result.bRebased = true;
+            }
+            // MegaGeometry の前の変換は TAA の有無に関わらず最後に描いたフレームの変換にする（差分の同期の
+            // MegaGeometryMirror::NoteDrawn と同じ規約。続けて描くフレームでは GameThread の値と同じ）
+            if (bGap)
+            {
+                RebaseMegaGeometry(packet);
             }
             Record(packet, meshProxies);
             return result;
@@ -161,13 +168,19 @@ namespace NorvesLib::Core::Rendering
                     }
                 }
             }
+            m_SkinnedStates.Apply(packet,true);
+        }
+
+        // MegaGeometry は物体（ObjectId）ごとに覚える（散布の部品は 1 つの ComponentId が多数の物体を持つ）
+        void RebaseMegaGeometry(FramePacket& packet) const
+        {
             for (MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
             {
-                const auto found = m_MegaGeometryWorlds.find(proxy.ComponentId);
+                const auto found =
+                    proxy.ObjectId != 0u ? m_MegaGeometryWorlds.find(proxy.ObjectId) : m_MegaGeometryWorlds.end();
                 proxy.PreviousWorldTransform =
                     found != m_MegaGeometryWorlds.end() ? found->second : proxy.WorldTransform;
             }
-            m_SkinnedStates.Apply(packet,true);
         }
 
         /**
@@ -230,7 +243,10 @@ namespace NorvesLib::Core::Rendering
             m_MegaGeometryWorlds.clear();
             for (const MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
             {
-                m_MegaGeometryWorlds[proxy.ComponentId] = proxy.WorldTransform;
+                if (proxy.ObjectId != 0u)
+                {
+                    m_MegaGeometryWorlds[proxy.ObjectId] = proxy.WorldTransform;
+                }
             }
             m_SkinnedStates.Record(packet);
             m_FrameNumber = packet.FrameNumber;
@@ -239,7 +255,7 @@ namespace NorvesLib::Core::Rendering
 
         bool m_bValid = false;
         uint64_t m_FrameNumber = 0u;
-        // 最後に描いたフレームの変換（MeshProxy・MegaGeometry は ComponentId、スキニングは元の MeshComponent の ID ごと）。
+        // 最後に描いたフレームの変換（MeshProxy は ComponentId、MegaGeometry は ObjectId、スキニングは元の MeshComponent の ID ごと）。
         Container::UnorderedMap<uint64_t, Math::Matrix4x4> m_MeshWorlds;
         Container::UnorderedMap<uint64_t, Math::Matrix4x4> m_MegaGeometryWorlds;
         SkinnedPoseHistory m_SkinnedStates;
