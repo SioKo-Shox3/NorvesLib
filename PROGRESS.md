@@ -1671,3 +1671,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-RENDER-SYNC-PREP-1.txt`: mega-stress の撮影（5000 体・動く 1%・ストリーミング）で `ECS_RENDER_SYNC pass=3 fail=0`、`CAPTURE_SCENE result=pass`、EXIT=0。
   - `-2.txt`: 3 シーン混在の周回（rendering3dtest,mega-bananas,mega-stress、3 周）が `SCENE_CYCLE_SMOKE_RUN result=pass`、`ECS_RENDER_SYNC pass=4108`、2 周目以降の textures は 9 で揃う、EXIT=0。
 - Notes: SCN-ECS-RENDER-SYNC-PREP を done にした。同期はまだ全走査のまま（次の SYNC-SWITCH で一覧へ切り替える）。
+
+### SCN-ECS-RENDER-SYNC-PREP 全走査モードでの再検証（2026-10-11、run 20261011-144300）
+
+- 既定は差分同期（SYNC-SWITCH の実装）なので、一覧を全走査の結果と直接照合する `EcsRenderSyncCompare` は全走査のときだけ通る。両 verify の `-GameArgs` に `ecs-legacy-sync` を足し、全走査で通し直した。実装の変更はなし。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-ECS-RENDER-SYNC-PREP-1.txt`: mega-stress の撮影（5000 体・動く 1%・ストリーミング、overview.Game.log に `Arg[11]=--ecs-legacy-sync`）で `ECS_RENDER_SYNC pass=3 fail=0`、`CAPTURE_SCENE result=pass`、EXIT=0。
+  - `-2.txt`: 3 シーン混在の周回（rendering3dtest,mega-bananas,mega-stress、3 周、Game.log に `Arg[5]=--ecs-legacy-sync`）が `SCENE_CYCLE_SMOKE_RUN result=pass`、`ECS_RENDER_SYNC pass=1336`・fail 0、`SCENE_CYCLE_BASELINE cycle=2 scenes=3`・`changed=none unsettled=0`、EXIT=0。
+- Notes: SCN-ECS-RENDER-SYNC-PREP を done にした。差分同期側の照合（`VerifyRenderSyncDelta`）は SYNC-SWITCH の verify で扱う。

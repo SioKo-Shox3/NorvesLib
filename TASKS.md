@@ -436,10 +436,10 @@
 - notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RENDER-SYNC-PREP: 変わった行と Remove の一覧を作り、全走査と一致を確かめる（準備）
-- status: doing
+- status: done
 - done-when: 段 RenderSync のシステムが、変更ログ・通知・公開の状態から「変わった行」と Remove の一覧を作る。同期はまだ全走査。検査 `ECS_RENDER_SYNC`（一覧と全走査で見つけた変化が一致。移動・ストリーミング・非表示・シーンの切り替えを含む）が pass する。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks ECS_RENDER_SYNC -OutDir .harness/runs/scene-capture/SCN-ECS-RENDER-SYNC-PREP/check`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=ECS_RENDER_SYNC`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64,ecs-legacy-sync -RequireChecks ECS_RENDER_SYNC -OutDir .harness/runs/scene-capture/SCN-ECS-RENDER-SYNC-PREP/check`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=ECS_RENDER_SYNC,ecs-legacy-sync`
 - paths: Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Private/Object/World.cpp, Library/Core/Public/Component, Library/Core/Private/Component, TASKS.md, PROGRESS.md
 - notes: 2026-10-11 親が todo に戻した: 実装はコミット済み。止まった理由の混在の周回は SCN-SCENE-CYCLE-SHARED-CACHE で直すので、その後に verify を通し直して評価を受ける（作り直さない）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
