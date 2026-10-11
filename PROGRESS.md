@@ -2553,3 +2553,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: 距離は境界の球の表面まで（大きな物体の中心が遠くても、表面が 120 m 以内なら入れる）。メインカメラが無いパケットは距離で外さず上限だけで選ぶ。
 - Notes: `FramePacket::DefersMegaRayTracingToRenderThread`（連番を GameThread に残す判定）は使わなくなった。FramePacket.h は paths の外なので消していない。全量の同期の経路（`path=full`）は起動して確かめていない（verify に無い）。
 - Notes: 連番の持ち越し（`MakeKeys`・`Find`）はインスタンス数の 2 乗で、上限の 65,536 本近くを連番で撮ると RenderThread が重い（以前は GameThread で全量に対して同じ計算をしていた）。
+
+### SCN-MEGA-RT-SELECT 差し戻しの対応（2026-10-12、反復 16・run 20261012-030203）
+
+- Done:
+  - TLAS に入れる規則を、描画コマンドから作るメッシュのインスタンスにも当てる。メッシュの境界の球は、メッシュのローカルの AABB（`MeshResources::TryGetLocalBounds`。同じメッシュが続く間は使い回す）をインスタンスの変換で写した AABB を囲む球（AABB が分からないメッシュは並進と半径 0）。メッシュと MegaGeometry を同じ候補の列（番号はメッシュがパケットの並び、MegaGeometry がその後ろ）に入れて、120 m 以内を近い順に合計 65,536 本まで選び、外れたメッシュのインスタンスはパケットから除いて詰め、`customIndex` を振り直す。差分の同期は RenderThread（`AppendMegaGeometryInstancesFromMirror` に `MeshResources` を渡す）、全量の同期は GameThread（`AppendMegaGeometryInstances`）で選ぶ。`RT_SCENE` に `mesh=` を足し、`excluded`・`candidates` はメッシュを含む数にした。
+  - 席ごとの配列 `MegaSlotEntry` が TLAS のインスタンスの入力（境界・3x4 の変換・前の変換・マスク・物体 ID・メッシュのハンドル）を持ち、変わった席（前の変換の決め直しも写しが変わった席として知らせる）だけ写しの proxy から作り直す。変わらない席は写しを読まず、席の入力とメッシュの GPU データ（頂点・インデックス・材質。GPU への書き込みの完了で変わるのでフレームごとに同じメッシュは 1 回だけ引く）からインスタンスを足す。席を持たない proxy も同じ入力の形で作り直すときだけ集める。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-RT-SELECT-4.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `-5.txt`: 起動画面 default の `SCN-MEGA-BASE-RWDI` との決定的な比較が `mean_luminance_difference=0`・`psnr_db=100`・`mismatched_pixel_ratio=9E-06`（`indirect_lighting=rtgi`）で `result=pass`、EXIT=0。PNG を開いて確認（家・球・岩・天球・影）。Game.log の ERROR 0、`RT_SCENE instances=26 excluded=0 path=mirror mesh=20 mega=6 candidates=26 ... patched_slots=1 rebuilt=0`。
+  - `-6.txt`: mega-stress 5000 個（動く 1%・区画 64 m）の overview が `CAPTURE_SCENE result=pass`（mean_luminance 157.614。前の反復と同じ）、EXIT=0。PNG を開いて確認。Game.log の ERROR 0、`RT_SCENE instances=728 excluded=4110 path=mirror mesh=1 mega=727 candidates=4838 out_of_range=4110 over_limit=0 not_ready=0 ... patched_slots=45 rebuilt=0`、`MEGA_HISTORY ... mismatch=0`、`MEGA_SCENE_UPLOAD ... mismatch=0`。
+- Next: SCN-MEGA-RT-SKIP（TLAS の更新を、集合・変換・BLAS の版が変わったフレームだけにする）。
+- Notes: 反復 15 の Notes の「規則が外すのは MegaGeometry だけ（Mesh は上限の枠を先に使う）」は廃止。今はメッシュも距離と上限で外す。
+- Notes: `BuildFrameSnapshot` を MegaGeometry のリソース無しで呼ぶと規則を当てない（差分の同期では RenderThread が当てる。メッシュだけで呼ぶ既存のテストの挙動は変えていない）。
+- Notes: 席の入力は 1 席あたり約 130 B（変換 2 つを持つため。反復 15 の 32 B から増えた）。
+- Notes: メッシュの距離と上限を直接確かめるテスト（65,536 本を超えるメッシュ、120 m の外のメッシュ）は書いていない（verify に無い）。
