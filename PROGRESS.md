@@ -1922,3 +1922,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 収集の走査（旧の一覧を作るもの）は未移行の型のために毎フレーム残る。順序付きの系の項目は、その走査の番号と比べて変わったときだけ付け替える。走査と旧の一覧を消すのは TICK-REMOVE。
   - スケジューラに足した口（bCallerDriven・GetOrderedRun・順番の付け替え）の単体テストは足していない（計画に無い）。
   - World.h（paths の外だが World.cpp の非公開のメンバの宣言）に呼び先の記録と関数の宣言を足した。
+
+### SCN-MEGA-MIXED-LOAD 完了（2026-10-11、反復 18・run 20261011-144300）
+
+- 変更: 無し（実装は反復 15 の ce9c5906。verify の規模はユーザーの判断で 3万本 + 5000 個に下げた）。反復 16・17 の Tick の変更が入ったので、今のコードで verify を通し直した。
+- 4 つの起動の引数は反復 15 の節（上）のとおり。ACCEPT-1M の 100万本 + 5万個の混在は BVH の列の改修（SCN-MEGA-BVH-INDIRECT）の後の節目の計測で確かめる。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-MEGA-MIXED-LOAD-3.txt`: RelWithDebInfo の Game のビルド EXIT=0。
+  - `verify-SCN-MEGA-MIXED-LOAD-4.txt`: `CaptureScene.ps1 -Scene mega-stress -Views overview -GameArgs banana-count=30000,stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64` が `result=pass`・EXIT=0。`CAPTURE_SCENE placed view=overview entities=5000 bananas=30000 requested_entities=5000 requested_bananas=30000`。metrics.json に `placed_entities=5000`・`placed_bananas=30000`。Game のログは ERROR 0、`MEGA_STRESS_BANANAS count=30000 requested=30000 pile=780 field=29220 scatter_rows=30000 scatter_ranges=469`。PNG を開いて確認（奥に Entity の列、手前の解放した区画にバナナが Entity の足元を空けて残る。反復 15 の絵と同じ）。
+- Next: TASKS.md の次の todo。
+- Notes:
+  - Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに変換されて MSBuild が失敗する。verify のビルドは PowerShell で走らせる。
