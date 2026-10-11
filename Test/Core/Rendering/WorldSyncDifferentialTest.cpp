@@ -6,6 +6,7 @@
 #include "Component/PointLightComponent.h"
 #include "Component/SkinnedMeshComponent.h"
 #include "Component/SpotLightComponent.h"
+#include "Component/TextComponent.h"
 #include "Ecs/EcsRenderTypes.h"
 #include "Ecs/EcsWorld.h"
 #include "Object/World.h"
@@ -1187,6 +1188,129 @@ namespace
         world.Finalize();
     }
 
+    // 静止のフレームでは、既定の同期は行を 1 つもたどらない（旧の全走査は Entity をたどる）。
+    // Text の追加・変更・削除は、旧の走査と同じく変換のキャッシュに届く
+    void TestDeltaSyncWalksNoRowsWhenStatic()
+    {
+        World world;
+        world.Initialize();
+        world.SetRenderSyncCheckForced(true);
+        world.SetRenderInvalidationCheckForced(true);
+        assert(!world.IsLegacyRenderSync());
+
+        SceneView view;
+        SceneViewSettings settings;
+        assert(view.Initialize(settings));
+        world.SetSceneView(&view);
+
+        Entity* parent = world.SpawnObject<Entity>();
+        Entity* child = world.SpawnEntity<Entity>(parent);
+        Entity* other = world.SpawnObject<Entity>();
+        assert(parent && child && other);
+        MeshComponent* parentMesh = world.CreateComponent<MeshComponent>(parent);
+        PointLightComponent* childLight = world.CreateComponent<PointLightComponent>(child);
+        BoardComponent* board = world.CreateComponent<BoardComponent>(other);
+        TextComponent* text = world.CreateComponent<TextComponent>(child);
+        assert(parentMesh && childLight && board && text);
+        parentMesh->SetMeshHandle(MakeMeshHandle(840));
+        board->SetTextureHandle(TextureHandle{43});
+        board->SetBoardSpace(BoardSpace::WorldSpace);
+        text->SetText("A");
+        parent->SetPosition(1.0f, 0.0f, 0.0f);
+
+        const auto syncStatic = [&world](int frames)
+        {
+            for (int frame = 0; frame < frames; ++frame)
+            {
+                world.SyncToSceneView();
+                assert(world.GetLastRenderSyncVisitedRows() == 0);
+            }
+        };
+
+        // 追加: 最初の同期で公開し、Text の変換のキャッシュも求める。前フレームの変換が揃うまで同期する
+        world.SyncToSceneView();
+        assert(world.GetLastRenderSyncVisitedRows() > 0);
+        assert(view.GetMeshProxies().size() == 1);
+        assert(GetTranslationX(text->GetWorldTransformCache()) == 1.0f);
+        world.SyncToSceneView();
+        world.SyncToSceneView();
+        syncStatic(3);
+
+        // 変更: Text の行だけを見る
+        text->SetText("B");
+        assert(text->IsRenderStateDirty());
+        world.SyncToSceneView();
+        assert(world.GetLastRenderSyncVisitedRows() == 1);
+        assert(!text->IsRenderStateDirty());
+        syncStatic(2);
+
+        // 親の移動: 子の Text のキャッシュが追従し、次の同期で前フレームの変換が今の変換に揃う
+        parent->SetPosition(5.0f, 0.0f, 0.0f);
+        world.SyncToSceneView();
+        assert(GetTranslationX(text->GetWorldTransformCache()) == 5.0f);
+        assert(GetTranslationX(text->GetPreviousWorldTransformCache()) == 1.0f);
+        world.SyncToSceneView();
+        assert(GetTranslationX(text->GetPreviousWorldTransformCache()) == 5.0f);
+        syncStatic(2);
+
+        // 非アクティブの部分木では求め直さず、再びアクティブにすると求め直す
+        child->SetActive(false);
+        world.SyncToSceneView();
+        parent->SetPosition(7.0f, 0.0f, 0.0f);
+        world.SyncToSceneView();
+        assert(GetTranslationX(text->GetWorldTransformCache()) == 5.0f);
+        child->SetActive(true);
+        world.SyncToSceneView();
+        assert(GetTranslationX(text->GetWorldTransformCache()) == 7.0f);
+        world.SyncToSceneView();
+        world.SyncToSceneView();
+        syncStatic(2);
+
+        // 動かした Entity に後から足した Text
+        other->SetPosition(3.0f, 0.0f, 0.0f);
+        world.SyncToSceneView();
+        world.SyncToSceneView();
+        TextComponent* added = world.CreateComponent<TextComponent>(other);
+        assert(added);
+        world.SyncToSceneView();
+        assert(world.GetLastRenderSyncVisitedRows() == 1);
+        assert(GetTranslationX(added->GetWorldTransformCache()) == 3.0f);
+        world.SyncToSceneView();
+        syncStatic(2);
+
+        // 削除: 前フレームの変換が揃う前に破棄しても、回収後の同期は消えた行を見ない
+        parent->SetPosition(9.0f, 0.0f, 0.0f);
+        world.SyncToSceneView();
+        assert(GetTranslationX(text->GetWorldTransformCache()) == 9.0f);
+        text->MarkForDestroy();
+        added->MarkForDestroy();
+        world.Tick(0.016f);
+        world.SyncToSceneView();
+        world.SyncToSceneView();
+        syncStatic(2);
+        Container::VariableArray<BoardProxy> transient;
+        world.CollectTransientBoardProxies(transient);
+        assert(transient.empty());
+
+        // 旧の全走査は、静止のフレームでも Entity をたどる
+        world.SetLegacyRenderSync(true);
+        world.SyncToSceneView();
+        world.SyncToSceneView();
+        assert(world.GetLastRenderSyncVisitedRows() >= 3);
+        world.SetLegacyRenderSync(false);
+        world.SyncToSceneView();
+        world.SyncToSceneView();
+        syncStatic(2);
+
+        assert(view.GetMeshProxies().size() == 1);
+        assert(view.GetLightProxies().size() == 1);
+        assert(view.GetBoardProxies().size() == 1);
+        assert(world.GetRenderSyncStats().Violations == 0);
+        assert(world.GetRenderInvalidationStats().Violations == 0);
+
+        world.Finalize();
+    }
+
     // RenderThread の写しの消費者（MegaGeometryPass など）の模型。前に見た版から、変わった席だけで直せるときは直し、
     // 直せないときは写しの全部を取り直す。どちらでも、写しの配列と同じ内容になるはず
     struct MegaMirrorConsumer
@@ -1426,6 +1550,7 @@ int main()
     TestDeltaSyncVerifyDetectsMissedNotification();
     TestLegacyRenderSyncSwitch();
     TestInvisibleSkinnedMeshIsNotChangedEveryFrame();
+    TestDeltaSyncWalksNoRowsWhenStatic();
     TestMegaMirrorKeepsChangesAcrossSkippedDraw();
     TestMegaMirrorRebaseLastsOnlyOneFrame();
 

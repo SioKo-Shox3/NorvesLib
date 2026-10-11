@@ -606,7 +606,7 @@
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-FIX-RENDERSYNC-WALK: 既定の差分の同期で、Entity の木の全走査をやめる
-- status: todo
+- status: done
 - done-when: 既定の差分の同期（`World::SyncToSceneViewBody` の `!m_bLegacyRenderSync` の側）が、変わった行・通知・Remove の一覧と、走査が要る行（Text など、差分の公開に載っていない種類）だけを見て、根からの `SyncEntityRecursive` で全 Entity と全 Component を毎フレームたどらない。旧の全走査（`m_bLegacyRenderSync`）と検査 `ECS_RENDER_SYNC`・`ECS_RENDER_INVALIDATION` の照合は残す。`WorldSyncDifferentialTest` が、静止のフレームで差分の同期が行を 1 つもたどらないこと（数を返す口で確かめる）と、Text の追加・変更・削除が今と同じく公開されることを確かめる。起動画面の比較と、検査付きの起動が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-CPU）で確かめる。
 - verify: `cmake --build build --config Debug --target WorldSyncDifferentialTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^WorldSyncDifferentialTest$" --no-tests=error --output-on-failure --timeout 180`

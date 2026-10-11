@@ -1156,6 +1156,9 @@ namespace NorvesLib::Core
         m_RenderSyncUnpublishRows.clear();
         m_RenderSettleRows.clear();
         m_RenderSettleNextRows.clear();
+        m_RenderTextRows.clear();
+        m_RenderTextSeen.clear();
+        m_RenderTextSettleRows.clear();
 
         m_PendingDestroyEntities.clear();
         m_PendingDestroyComponents.clear();
@@ -2279,6 +2282,7 @@ namespace NorvesLib::Core
     {
         const Rendering::MaterialResources* materials = m_StageMaterials;
         const Rendering::MeshResources* meshes = m_StageMeshes;
+        m_RenderSyncVisitedRows = 0;
 #if NORVES_ENABLE_STATS
         // 計測: 同期は 1 フレーム 1 回なので、ここでフレームを数え、変換の行の数の 1 フレームあたりの平均を一定のフレームごとに出す
         m_TransformCounts.SyncRows += m_RenderSyncTransformLog.size();
@@ -2342,32 +2346,9 @@ namespace NorvesLib::Core
                 m_InvalidationHashes.clear();
             }
 
-            // Mesh・Skinned・Light・Board は、変わった行だけを公開し、Remove の一覧だけを外す
+            // 変わった行だけを公開し、Remove の一覧だけを外す。Text は変換のキャッシュを求め直す行だけを見る。
+            // Entity の木はたどらない（--mega-scene-full-sync だけ、MegaGeometry の全行を数えて外す）
             SyncRenderRowsDelta(materials, meshes);
-
-            // Text は旧の走査。MegaGeometry は変わった行で公開し、外す proxy は Remove の一覧が外す
-            // （走査は MegaGeometry の生存集合を作らない。--mega-scene-full-sync だけ、全行を数えて外す）
-            Container::UnorderedSet<uint64_t> liveMeshComponentIds;
-            Container::UnorderedSet<uint64_t> liveSkinnedMeshComponentIds;
-            Container::UnorderedSet<uint64_t> liveMegaGeometryObjectIds;
-            Container::UnorderedSet<uint64_t> liveLightIds;
-            Container::UnorderedSet<uint64_t> liveScreenBoardComponentIds;
-            Container::UnorderedSet<uint64_t> liveWorldBoardComponentIds;
-            auto deltaRoots = GetRootEntities();
-            for (auto* entity : deltaRoots)
-            {
-                SyncEntityRecursive(
-                    *entity,
-                    materials,
-                    meshes,
-                    liveMeshComponentIds,
-                    liveSkinnedMeshComponentIds,
-                    liveMegaGeometryObjectIds,
-                    liveLightIds,
-                    liveScreenBoardComponentIds,
-                    liveWorldBoardComponentIds,
-                    nullptr);
-            }
 
             FinishRenderInvalidationFrame();
             return;
@@ -2920,6 +2901,11 @@ namespace NorvesLib::Core
 
     void World::AddRenderSyncChanged(Component::Component& component, bool bFromSettle)
     {
+        if (CastTo<Component::TextComponent>(&component) != nullptr)
+        {
+            AddRenderTextRow(component);
+            return;
+        }
         const Ecs::EcsRenderSyncKind kind = RenderSyncKindOf(component);
         if (kind == Ecs::EcsRenderSyncKind::None)
         {
@@ -2951,6 +2937,41 @@ namespace NorvesLib::Core
         {
             m_RenderSyncChangedRows.push_back(PackEcsEntity(row));
         }
+    }
+
+    void World::AddRenderTextRow(const Component::Component& component)
+    {
+        const Ecs::EcsEntity row = component.GetEcsEntity();
+        if (!row.IsNull() && m_RenderTextSeen.insert(PackEcsEntity(row)).second)
+        {
+            m_RenderTextRows.push_back(PackEcsEntity(row));
+        }
+    }
+
+    void World::RefreshRenderTextRows()
+    {
+        for (const uint64_t packed : m_RenderTextRows)
+        {
+            auto* text = CastTo<Component::TextComponent>(ComponentOfRow(UnpackEcsEntity(packed)));
+            const Entity* owner = text != nullptr ? text->GetOwner() : nullptr;
+            if (owner == nullptr || !IsEntityRenderScanned(*owner))
+            {
+                // 走査に入らない部分木の行は、旧の走査と同じく求め直さない。dirty の行はログに残り、
+                // 再びアクティブになったときは dirty になって求め直す
+                continue;
+            }
+            ++m_RenderSyncVisitedRows;
+            text->RefreshRenderTransformCache();
+            text->ClearRenderStateDirty();
+            text->SetLastSyncedTransformVersion(owner->GetTransformVersion());
+            // 旧の走査は毎フレーム求め直して前フレームの変換を今の変換に揃えていた。揃うまで次の同期でも求め直す
+            if (!SameMatrixBits(text->GetPreviousWorldTransformCache(), text->GetWorldTransformCache()))
+            {
+                m_RenderTextSettleRows.push_back(packed);
+            }
+        }
+        m_RenderTextRows.clear();
+        m_RenderTextSeen.clear();
     }
 
     void World::AddRenderSyncRemoval(Component::Component& component)
@@ -2996,6 +3017,8 @@ namespace NorvesLib::Core
         m_RenderSyncChangedRows.clear();
         m_RenderSyncChangedSeen.clear();
         m_RenderSyncUnpublishRows.clear();
+        m_RenderTextRows.clear();
+        m_RenderTextSeen.clear();
         if (!m_EcsWorld)
         {
             return;
@@ -3238,6 +3261,19 @@ namespace NorvesLib::Core
                 PublishRenderRow(*component, materials, meshes);
             }
         }
+        m_RenderSyncVisitedRows += static_cast<uint32_t>(m_RenderSyncChangedRows.size() + m_RenderSyncList.Removed.size());
+
+        // Text: 前回の同期で前フレームの変換が揃っていない行を足してから、変換のキャッシュを求め直す。
+        // 変更ログの整理より先に dirty を落とす（落とした行はログから外れる）
+        for (const uint64_t packed : m_RenderTextSettleRows)
+        {
+            if (const Component::Component* component = ComponentOfRow(UnpackEcsEntity(packed)))
+            {
+                AddRenderTextRow(*component);
+            }
+        }
+        m_RenderTextSettleRows.clear();
+        RefreshRenderTextRows();
 
         // 全量の同期（--mega-scene-full-sync）: MegaGeometry の ECS の全行を数え、変わっていない行も公開し直して、
         // 生存しない proxy を外す。差分の同期の結果と見比べる基準（Object の走査には戻らない）
@@ -3261,6 +3297,7 @@ namespace NorvesLib::Core
                     }
                     liveMegaObjectIds.insert(owner->GetObjectId());
                     PublishRenderRow(*megaComp, materials, meshes);
+                    ++m_RenderSyncVisitedRows;
                 }
             }
             m_SceneView->RemoveStaleMegaGeometryProxies(liveMegaObjectIds);
@@ -4477,6 +4514,7 @@ namespace NorvesLib::Core
         Container::UnorderedSet<uint64_t>& liveWorldBoardComponentIds,
         ComponentDataRegistry* componentDataRegistry)
     {
+        ++m_RenderSyncVisitedRows;
         if (!entity.IsActive() || entity.IsPendingDestroy())
         {
             // 走査しない部分木の proxy は RemoveStale* が消す。公開の状態の列もそれに合わせる。

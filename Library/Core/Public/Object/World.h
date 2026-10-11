@@ -329,11 +329,15 @@ namespace NorvesLib::Core
         /// 直近の同期で作った一覧
         const Ecs::EcsRenderSyncList& GetRenderSyncList() const { return m_RenderSyncList; }
 
+        /// 直近の同期がたどった行の数。既定の同期は、公開した行・Remove・変換のキャッシュを求め直した Text の行を数え、
+        /// 旧の全走査は、たどった Entity を数える（静止のフレームの既定の同期は 0）
+        [[nodiscard]] uint32_t GetLastRenderSyncVisitedRows() const noexcept { return m_RenderSyncVisitedRows; }
+
         /// 検査 ECS_RENDER_SYNC を EngineChecks の設定によらず走らせる（テスト用）
         void SetRenderSyncCheckForced(bool bForced);
 
         /// 描画の同期を旧の全走査にするか（起動オプション --ecs-legacy-sync。比較と切り戻し用）。既定は false。
-        /// 既定は、変わった行だけを公開し、Remove の一覧だけを外す（MegaGeometry は SCENE-DELTA まで旧の走査）。
+        /// 既定は、変わった行だけを公開し、Remove の一覧だけを外す（Entity の木はたどらない）。
         /// ComponentDataRegistry のフレームごとの捕捉は旧の全走査のときだけ行う
         void SetLegacyRenderSync(bool bLegacy) noexcept { m_bLegacyRenderSync = bLegacy; }
         [[nodiscard]] bool IsLegacyRenderSync() const noexcept { return m_bLegacyRenderSync; }
@@ -577,6 +581,10 @@ namespace NorvesLib::Core
         void BuildRenderSyncList();
         /// bFromSettle: 履歴が落ち着くまでの公開し直し（変わった行の一覧には載せず、公開する行にだけ入れる）
         void AddRenderSyncChanged(Component::Component& component, bool bFromSettle = false);
+        /// Text の行を、変換のキャッシュを求め直す行の一覧に積む（Text は差分の公開に載らない）
+        void AddRenderTextRow(const Component::Component& component);
+        /// 一覧の Text の行の変換のキャッシュを求め直す（走査に入らない部分木の行は、dirty のまま残す）
+        void RefreshRenderTextRows();
         /// 走査に入らない部分木の行が proxy を出していたら、Remove の一覧と「公開していない」へ戻す行の一覧に載せる
         void AddRenderSyncRemoval(Component::Component& component);
         /// 破棄予約された Entity の部分木の行を、Remove の候補として変更ログに積む
@@ -820,6 +828,13 @@ namespace NorvesLib::Core
         /// 今回の同期で公開し直す行と、次の同期で公開し直す行（Mesh の履歴が落ち着くまでの公開し直し）
         Container::VariableArray<uint64_t> m_RenderSettleRows;
         Container::VariableArray<uint64_t> m_RenderSettleNextRows;
+        /// 今回の同期で変換のキャッシュを求め直す Text の行と、その重複除け
+        Container::VariableArray<uint64_t> m_RenderTextRows;
+        Container::UnorderedSet<uint64_t> m_RenderTextSeen;
+        /// 次の同期で求め直す Text の行（前フレームの変換が今の変換に揃うまで）
+        Container::VariableArray<uint64_t> m_RenderTextSettleRows;
+        /// 直近の同期がたどった行の数
+        uint32_t m_RenderSyncVisitedRows = 0;
         /// 全走査が proxy を作り直した行
         Container::UnorderedSet<uint64_t> m_RenderSyncScanChanged;
         RenderSyncStats m_RenderSyncStats;

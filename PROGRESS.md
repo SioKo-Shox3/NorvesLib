@@ -2165,3 +2165,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 1% 移動 + 64 m 区画・バナナ 1万本 / 10万本は撮っていない（RenderSync の全走査が本数に比例して残る間は、増分も gt の差もそれで決まり、直した後に撮り直すため）。Game.log の ERROR は静止・1% 移動とも 0。
 - Next: SCN-MEGA-FIX-RENDERSYNC-WALK（この項目の前に足した）。それが done になったら、この項目を todo に戻して全部の負荷を撮り直す。
 - Notes: gt（24 ms）のうち Ecs の区間の外が約 11 ms ある（区間が無く内訳は不明）。撮り直しのときに見る。
+
+### SCN-MEGA-FIX-RENDERSYNC-WALK 完了（2026-10-12、反復 15・run 20261011-211043）
+
+- 変更:
+  - 既定の差分の同期（`SyncToSceneViewBody` の `!m_bLegacyRenderSync` の側）から、根からの `SyncEntityRecursive` を外した。見るのは変わった行・通知・Remove の一覧と、変換のキャッシュを求め直す Text の行だけ。
+  - Text は、変更ログ（dirty）と変換の版が進んだ Entity の行から一覧に積み（`AddRenderTextRow`）、`RefreshRenderTextRows` で求め直して dirty を落とし、同期した変換の版を記録する。旧の走査は毎フレーム求め直して前フレームの変換を今に揃えていたので、揃っていない行は次の同期でもう一度求め直す。走査に入らない部分木の行は求め直さない（旧の走査と同じ。再びアクティブにすると dirty で求め直す）。
+  - MegaGeometry の走査（変わっていない行の照合）は外した。照合は `VerifyRenderSyncDelta` が検査のフレームで全行に対して行う。
+  - 数を返す口 `World::GetLastRenderSyncVisitedRows()`: 既定の同期は公開した行・Remove・求め直した Text の行、旧の全走査はたどった Entity を数える。
+  - 旧の全走査と検査 `ECS_RENDER_SYNC`・`ECS_RENDER_INVALIDATION` の照合はそのまま。
+- 検証（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-MEGA-FIX-RENDERSYNC-WALK-1.txt`: Debug の `WorldSyncDifferentialTest` のビルド EXIT=0。
+  - `verify-SCN-MEGA-FIX-RENDERSYNC-WALK-2.txt`: ctest 1/1 Passed、EXIT=0。足した `TestDeltaSyncWalksNoRowsWhenStatic` が、静止のフレームでたどった行 0、Text の変更で 1、Text の追加（動かした Entity に後から足す）・親の移動・非アクティブの間・破棄の各場面でキャッシュが旧の走査と同じ値になること、旧の全走査では静止でも Entity をたどることを確かめる（検査 2 つを強制して違反 0）。Debug は NDEBUG なし。
+  - `verify-SCN-MEGA-FIX-RENDERSYNC-WALK-3.txt`: 起動画面 default を RelWithDebInfo で `ECS_RENDER_SYNC`・`ECS_RENDER_INVALIDATION` 付きで撮り、どちらも pass=3 fail=0。SCN-MEGA-BASE-RWDI との比較は平均輝度差 0・PSNR 100 dB・不一致画素 5E-06（最大差 1）で `result=pass`、EXIT=0。PNG を開いて確認（天球・地面・球・岩・家）。Game.log の ERROR は 0。Core.lib（00:31）と Game.exe（00:33）は World.cpp の編集（00:30）より後。
+  - 追加で `TextComponentBoardProxyTest` も pass（Text のグリフを集める経路）。
+- Next: SCN-MEGA-MEASURE-CPU を todo に戻して全部の負荷を撮り直す（効果の数値はそこで確かめる）。
+- Notes: `CollectTransientBoardProxies`（ApplicationProcessor が毎フレーム呼ぶ、Text のグリフ集め）も根から全 Entity をたどる。同期の段の外なので触っていない。撮り直しで gt の Ecs の区間の外（約 11 ms）を見るときの候補。
