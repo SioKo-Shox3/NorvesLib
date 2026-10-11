@@ -2568,3 +2568,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: `BuildFrameSnapshot` を MegaGeometry のリソース無しで呼ぶと規則を当てない（差分の同期では RenderThread が当てる。メッシュだけで呼ぶ既存のテストの挙動は変えていない）。
 - Notes: 席の入力は 1 席あたり約 130 B（変換 2 つを持つため。反復 15 の 32 B から増えた）。
 - Notes: メッシュの距離と上限を直接確かめるテスト（65,536 本を超えるメッシュ、120 m の外のメッシュ）は書いていない（verify に無い）。
+
+### SCN-MEGA-RT-SKIP（2026-10-12、反復 17・run 20261012-030203）
+
+- Done:
+  - `RayTracingSceneSubsystem::BuildAccelerationStructures`: frame slot ごとの TLAS の記録（`TopLevelCacheEntry::Instances`）に、最後に Build / Update を記録したインスタンスの入力（選んだ集合と並び・3x4 の変換・マスク・customIndex・SBT の位置・カリングの印・BLAS の参照）を覚える。次にその slot で描くフレームの入力が全部一致すれば Update を記録せず、slot の TLAS をそのまま使う。変換はビットで比べ、BLAS は参照で比べる（記録が BLAS の参照を持つので、準備完了で増えた・交換で作り直した BLAS は別の参照になり一致しない）。カメラの移動で 120 m 内の集合が変わる・追加削除・並びの変化・BLAS の交換では入力が変わるので Update（数が違えば Build）を記録する。Update に渡す配列はコピーせず移して覚える。Build に失敗した slot は覚えた入力を捨てる。
+  - `RT_SCENE update_skipped= updated= built= frames= instances=` を最初と 120 フレームごと、出していない残りを `Shutdown` で出す（破棄では出さない）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-RT-SKIP-3.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0（最終のコード。`-1.txt` は終了時のログを足す前のビルドで EXIT=0）。
+  - `-4.txt`: mega-bananas 1 万本の overview を `SCN-MEGA-BASE` と比べ、`mean_luminance_difference=0`・`psnr_db=65.362`・`mismatched_pixel_ratio=0.000239` で `result=pass`、EXIT=0。PNG を開いて確認（バナナ・山・影・床・空）。`-4-Game.log` の ERROR 0、`RT_SCENE update_skipped=84 updated=0 built=9 frames=93 instances=10001`（読み込みで集合が変わった間は記録し、静止した後は 3 つの slot とも省いた）。`-2.txt` は同じ比較の終了時のログを足す前の版（pass）。
+- Next: 残りの todo の最優先（SCN-MEGA-MEASURE-UPLOAD で効果の数値を測る）。
+- Notes: 比較は O(インスタンス数) で毎フレーム行う（選んだインスタンスの入力を作るのと同じ桁）。席の版から一致を決める方式にしなかったのは、描画コマンドから作るメッシュのインスタンスが版を持たないため。
+- Notes: 動く物体のある mega-stress・カメラが動く場面で Update を記録することは、この項目の verify に無いので起動して確かめていない（入力が変わる限り一致しないので記録される）。

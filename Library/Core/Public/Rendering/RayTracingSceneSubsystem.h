@@ -132,11 +132,37 @@ namespace NorvesLib::Core::Rendering
             RHI::AccelerationStructurePtr Structure;
         };
 
+        /**
+         * @brief frame slot ごとの TLAS と、最後に記録したインスタンスの入力
+         *
+         * Instances は最後に Build / Update を記録したときのインスタンス（選んだ集合と並び・変換・マスク・customIndex・
+         * BLAS）。次にその slot で描くフレームの入力が全部一致すれば Update を記録しない。BLAS の参照を持つので、
+         * 準備完了で増えた・交換で作り直した BLAS は別の参照になり、一致しない。
+         */
         struct TopLevelCacheEntry
         {
             RHI::AccelerationStructurePtr Structure;
             uint32_t InstanceCount = 0;
+            Container::VariableArray<RHI::AccelerationStructureInstanceDesc> Instances;
         };
+
+        /** @brief TLAS の記録の内訳（RT_SCENE update_skipped= に出す。出したら 0 に戻す） */
+        struct TopLevelUpdateStats
+        {
+            uint32_t Frames = 0;
+            uint32_t Skipped = 0; // 入力が slot の前回と一致して Update を記録しなかった
+            uint32_t Updated = 0; // 同じ数のインスタンスで Update を記録した
+            uint32_t Built = 0;   // 作り直して Build を記録した
+            uint32_t LastInstances = 0;
+        };
+
+        /** @brief 2 つの TLAS のインスタンスの入力が全部一致するか（BLAS は参照、変換はビットで比べる） */
+        static bool SameTopLevelInstances(
+            const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& lhs,
+            const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& rhs);
+
+        /** @brief TLAS の記録の内訳を出す（最初と、120 フレームごと。bFlush なら出していない残りを出す） */
+        void LogTopLevelUpdates(bool bFlush);
 
         /**
          * @brief 席ごとの MegaGeometry の TLAS のインスタンスの入力
@@ -229,6 +255,8 @@ namespace NorvesLib::Core::Rendering
 
         Container::VariableArray<BottomLevelCacheEntry> m_BottomLevelCache;
         Container::FixedArray<TopLevelCacheEntry, FRAME_PACKET_BUFFER_COUNT> m_TopLevelCache;
+        TopLevelUpdateStats m_TopLevelUpdateStats;
+        uint32_t m_TopLevelLogCounter = 0;
 
         // ここから下は RenderThread だけが触る（AppendMegaGeometryInstancesFromMirror）
         /** @brief 席（SceneSlot の値。0 は使わない）ごとの入力 */

@@ -793,11 +793,14 @@ namespace NorvesLib::Core::Rendering
 
     RayTracingSceneSubsystem::~RayTracingSceneSubsystem()
     {
+        // 破棄（静的な終了を含む）ではログを出さない
+        m_TopLevelUpdateStats = TopLevelUpdateStats{};
         Shutdown();
     }
 
     void RayTracingSceneSubsystem::Shutdown()
     {
+        LogTopLevelUpdates(true);
         m_BottomLevelCache.clear();
         for (TopLevelCacheEntry& topLevel : m_TopLevelCache)
         {
@@ -1549,6 +1552,19 @@ namespace NorvesLib::Core::Rendering
 
         TopLevelCacheEntry& cachedTopLevel = m_TopLevelCache[frameSlot];
         const uint32_t instanceCount = static_cast<uint32_t>(tlasInstances.size());
+        ++m_TopLevelUpdateStats.Frames;
+        m_TopLevelUpdateStats.LastInstances = instanceCount;
+
+        // この slot で前回記録した入力（集合と並び・変換・マスク・BLAS）と全部一致すれば、slot の TLAS はすでにこの内容なので
+        // Update を記録しない（slot の前回の GPU の仕事は、この slot のパケットを描く前に終わっている）
+        if (cachedTopLevel.Structure && SameTopLevelInstances(cachedTopLevel.Instances, tlasInstances))
+        {
+            ++m_TopLevelUpdateStats.Skipped;
+            LogTopLevelUpdates(false);
+            packet.RayTracingScene.TopLevel = cachedTopLevel.Structure;
+            return true;
+        }
+
         RHI::AccelerationStructurePtr topLevel;
         if (cachedTopLevel.Structure && cachedTopLevel.InstanceCount == instanceCount)
         {
@@ -1557,10 +1573,16 @@ namespace NorvesLib::Core::Rendering
             tlasUpdate.mode = RHI::AccelerationStructureBuildMode::Update;
             tlasUpdate.destination = cachedTopLevel.Structure;
             tlasUpdate.source = cachedTopLevel.Structure;
-            tlasUpdate.instances = tlasInstances;
+            tlasUpdate.instances = std::move(tlasInstances);
             if (commandList.UpdateAccelerationStructure(tlasUpdate))
             {
                 topLevel = cachedTopLevel.Structure;
+                cachedTopLevel.Instances = std::move(tlasUpdate.instances);
+                ++m_TopLevelUpdateStats.Updated;
+            }
+            else
+            {
+                tlasInstances = std::move(tlasUpdate.instances);
             }
         }
 
@@ -1583,16 +1605,61 @@ namespace NorvesLib::Core::Rendering
             tlasBuild.instances = std::move(tlasInstances);
             if (!commandList.BuildAccelerationStructure(tlasBuild))
             {
+                // slot の TLAS を作り直せなかったので、前回の入力は覚えない（次は一致させずに記録し直す）
+                cachedTopLevel = TopLevelCacheEntry{};
                 clearPacketAccelerationStructures();
                 return false;
             }
 
             cachedTopLevel.Structure = topLevel;
             cachedTopLevel.InstanceCount = instanceCount;
+            cachedTopLevel.Instances = std::move(tlasBuild.instances);
+            ++m_TopLevelUpdateStats.Built;
         }
 
+        LogTopLevelUpdates(false);
         packet.RayTracingScene.TopLevel = topLevel;
         return true;
+    }
+
+    bool RayTracingSceneSubsystem::SameTopLevelInstances(
+        const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& lhs,
+        const Container::VariableArray<RHI::AccelerationStructureInstanceDesc>& rhs)
+    {
+        if (lhs.size() != rhs.size())
+        {
+            return false;
+        }
+        for (size_t index = 0; index < lhs.size(); ++index)
+        {
+            const RHI::AccelerationStructureInstanceDesc& a = lhs[index];
+            const RHI::AccelerationStructureInstanceDesc& b = rhs[index];
+            if (a.bottomLevel.get() != b.bottomLevel.get() || a.customIndex != b.customIndex || a.mask != b.mask ||
+                a.shaderBindingTableRecordOffset != b.shaderBindingTableRecordOffset ||
+                a.disableTriangleFacingCull != b.disableTriangleFacingCull ||
+                std::memcmp(a.transform, b.transform, sizeof(a.transform)) != 0)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void RayTracingSceneSubsystem::LogTopLevelUpdates(bool bFlush)
+    {
+        // 最初と、その後は 120 フレームごとに、前に出してからの内訳を出す。bFlush は出していない残りを出す（Shutdown）
+        if (bFlush ? m_TopLevelUpdateStats.Frames == 0u : (m_TopLevelLogCounter++ % 120u) != 0u)
+        {
+            return;
+        }
+        NORVES_LOG_INFO("RayTracingSceneSubsystem",
+                        "RT_SCENE update_skipped=%u updated=%u built=%u frames=%u instances=%u",
+                        m_TopLevelUpdateStats.Skipped,
+                        m_TopLevelUpdateStats.Updated,
+                        m_TopLevelUpdateStats.Built,
+                        m_TopLevelUpdateStats.Frames,
+                        m_TopLevelUpdateStats.LastInstances);
+        m_TopLevelUpdateStats = TopLevelUpdateStats{};
     }
 
     // ========================================
