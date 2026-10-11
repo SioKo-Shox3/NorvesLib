@@ -66,13 +66,6 @@ namespace NorvesLib::Core::Component
         LightComponent::Initialize();
     }
 
-    void SpotLightComponent::Tick(float deltaTime)
-    {
-        (void)deltaTime;
-        // スポットライトは位置をオーナーのEntityからSyncToSceneView時に取得するため
-        // Tick内での特別な処理は不要
-    }
-
     // ========================================
     // LightProxy構築
     // ========================================

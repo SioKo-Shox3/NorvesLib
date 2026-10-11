@@ -89,13 +89,8 @@ namespace NorvesLib::Core::Component
         }
     }
 
-    void BoardComponent::Tick(float deltaTime)
+    void BoardComponent::TickFlipbook(float deltaTime)
     {
-        if (m_bTransformDirty)
-        {
-            UpdateWorldTransform();
-        }
-
         AdvanceFlipbook(deltaTime);
     }
 
@@ -307,6 +302,12 @@ namespace NorvesLib::Core::Component
 
     void BoardComponent::RefreshRenderTransformCache()
     {
+        // 初期化から一度も求めていなければ先に 1 回求め、前フレームの変換を今の値に揃える
+        // （初回の Tick で求めてから同期していた頃と同じ値になる）
+        if (m_bTransformDirty)
+        {
+            UpdateWorldTransform();
+        }
         UpdateWorldTransform();
     }
 

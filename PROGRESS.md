@@ -1883,3 +1883,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - mega-stress の床が overview で白く飛んで見えるのは、この変更の前の撮影（SCN-ECS-MASS-STREAM/check）でも同じ（この項目では触っていない）。
   - 混在の敷き詰めは Entity の足元を空けるので、Entity の多い所ではバナナが隙間に斑に残る。出し入れで解放した区画も足元は空けたまま。
   - マスクと `--camera-path-play` の単体テストは足していない（計画に無い。撮影のログで確かめた）。
+
+### SCN-ECS-TICK-SIMPLE（2026-10-11、反復 16・run 20261011-144300）
+
+- 変更:
+  - 型ごとの Tick の登録（設計 1.12）: `Component::ComponentTickRegistration`（本体の非仮想の関数・主群だけで呼ぶか・呼ぶ群）と `World::RegisterComponentTick`/`FindComponentTick` を足した。照合は型（IClass）の完全一致で、リフレクションを宣言しない派生（テストの TestBoardComponent・SocketTimeProbe など）は基底の型として扱われる。World の順序付きの系（Tick.DispatchGroups ほか、同じ（群, 優先度, 深さ優先の順）の一覧）は、登録した型の項目では本体を、それ以外は旧の仮想の OnTickGroup を呼ぶ。登録の無い Game の FollowCamera（SpringArm の派生）は自前の OnTickGroup のまま。
+  - Core の型の登録（World の初期化）: Board・Billboard・Impostor・Text は `BoardComponent::TickFlipbook`（主群）、SpringArm は `TickArm`（主群 = Camera）、HoldSlot は `TickHolds`・SocketAttachment は `TickAttachment`（PostPhysics の群だけ。主群によらない）。Mesh・MegaGeometry・Camera・Light 系は本体なし（一覧に載せない）。仮想の Tick/OnTickGroup の上書きはこれらの型から消した。channel は型の GetTimeChannel のまま（仮想の GetTimeChannel は TICK-REMOVE で消す）。
+  - Mesh・Board の変換のキャッシュ: Tick での初回の計算をやめ、`RefreshRenderTransformCache` が初期化から一度も求めていなければ先に 1 回求める（前フレームの変換が今の値に揃い、初回の Tick の後に同期していた頃と同じ値になる）。
+  - 検査 `ECS_TICK_DUP`: 収集ごとに（呼び先, 群）を数え、同じ収集で 2 回呼んだもの、登録のある型を仮想の経路で呼んだものを fail にする。pass は最初と 64 収集ごと。
+  - テスト: FlipbookAdvanceTest・EntitySubtreeSnapshotTest の `Tick` を `TickFlipbook` に、SpringArmComponentTest の `Tick` を `TickArm` に直した。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-ECS-TICK-SIMPLE-1.txt`: Debug の EntityTreeTest・FlipbookAdvanceTest・BoardComponentRoutingTest のビルド EXIT=0（エラー・警告なし）。
+  - `-2.txt`: SpringArmComponentTest・FlipbookAdvanceTest・BoardComponentRoutingTest・BillboardComponentTest・WorldTickGroupTest の 5/5 が pass、EXIT=0。
+  - `-3.txt`: 起動画面 default を `ECS_TICK_DUP` 付きで撮り、`engine_check name=ECS_TICK_DUP pass=3 fail=0`（count 25〜29）、SCN-MEGA-BASE-RWDI との比較は平均輝度差 0・PSNR 100 dB・不一致画素 2E-06（最大差 1）で `result=pass`、EXIT=0。PNG を開いて確認（天球・地面・球・岩・家）。Game.log の ERROR は 0。
+  - `check-SCN-ECS-TICK-SIMPLE-anim-serializer.txt`: SocketAttachment・HoldSlot を World の Tick で回す SkeletalAnimationSamplingTest と、直した EntitySubtreeSnapshotTest が pass（verify の外の確認）。
+- Next: SCN-ECS-TICK-ANIM。
+- Notes:
+  - 検査 ECS_TICK_DUP と型の登録の単体テストは足していない（計画に無い。起動画面の検査で確かめた）。
+  - 一覧を作り直すのは今も毎フレーム（BuildTickSnapshot）。一覧と仮想の経路を消すのは TICK-REMOVE。
+  - verify 1 本目の `/m:1` は Git Bash だとパスに変換されて MSBuild が拒む。PowerShell から回した。

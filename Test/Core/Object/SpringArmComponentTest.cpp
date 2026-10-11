@@ -318,7 +318,7 @@ namespace
         assert(IsNearlyEqual(arm->GetArmLength(), 6.0f));
         assert(!IsNearlyEqual(pivot->GetPosition(), pivotBeforePan));
 
-        arm->Tick(0.016f);
+        arm->TickArm(0.016f);
         world.UpdateWorldTransforms();
         assert(std::isfinite(owner->GetPosition().x));
         assert(std::isfinite(owner->GetPosition().y));
@@ -347,13 +347,13 @@ namespace
 
         pivot->MarkForDestroy();
         assert(!arm->HasValidPivot());
-        arm->Tick(0.016f);
+        arm->TickArm(0.016f);
         assert(IsNearlyEqual(owner->GetPosition(), positionBefore));
         assert(IsNearlyEqual(owner->GetRotation(), rotationBefore));
 
         world.Tick(0.016f);
         assert(!arm->HasValidPivot());
-        arm->Tick(0.016f);
+        arm->TickArm(0.016f);
         assert(IsNearlyEqual(owner->GetPosition(), positionBefore));
         assert(IsNearlyEqual(owner->GetRotation(), rotationBefore));
 

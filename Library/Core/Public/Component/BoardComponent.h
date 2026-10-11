@@ -26,7 +26,11 @@ namespace NorvesLib::Core::Component
 
         virtual void Initialize() override;
         virtual void BeginPlay() override;
-        virtual void Tick(float deltaTime) override;
+
+        /**
+         * @brief Flipbook を deltaTime だけ進める（毎フレームの本体。World の順序付きの系が主群で呼ぶ）
+         */
+        void TickFlipbook(float deltaTime);
 
         Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::Board; }
 

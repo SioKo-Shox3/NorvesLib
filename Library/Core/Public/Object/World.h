@@ -240,6 +240,15 @@ namespace NorvesLib::Core
         }
 
         /**
+         * @brief 型 cls の Tick の本体を順序付きの系へ登録する（設計 1.12。同じ型の登録は置き換え）
+         *
+         * 照合は型の完全一致。反映は次の収集（BuildTickSnapshot）から。Core の型は World の初期化で登録する
+         */
+        void RegisterComponentTick(const IClass* cls, const Component::ComponentTickRegistration& registration);
+        /// 型 cls の登録（無ければ null。仮想の OnTickGroup で呼ばれる）
+        const Component::ComponentTickRegistration* FindComponentTick(const IClass* cls) const;
+
+        /**
          * @brief 描画先SceneViewを設定
          * @param sceneView MeshProxyの送信先
          */
@@ -479,6 +488,18 @@ namespace NorvesLib::Core
         void CollectPendingComponents(Entity& entity, Container::VariableArray<Component::Component*>& output);
         Container::VariableArray<TickDispatchEntry> m_TickEntries;
         Container::VariableArray<TickDispatchEntry> m_FixedTickEntries;
+        /// 型ごとの Tick の登録（設計 1.12）
+        Container::UnorderedMap<const IClass*, Component::ComponentTickRegistration> m_ComponentTicks;
+        void RegisterCoreComponentTicks();
+        /// 検査 ECS_TICK_DUP: この収集で呼んだ（呼び先, 群）。検査が有効な収集だけ積む
+        Container::UnorderedSet<uint64_t> m_TickDupSeen;
+        uint32_t m_TickDupCalls = 0;
+        uint32_t m_TickDupFailures = 0;
+        uint32_t m_TickDupCollections = 0;
+        bool m_bTickDupCheck = false;
+        void NoteTickDispatchForCheck(const void* target, Component::ETickGroup group, const Component::Component* component,
+                                      bool bRegistered);
+        void ReportTickDupCheck();
         Container::VariableArray<Component::Component*> m_PendingTickComponents;
         Container::VariableArray<Entity*> m_PendingTickEntities;
         /// 破棄予約の一覧（積んだ順。OF_InDestroyList が立っているものだけが載る）

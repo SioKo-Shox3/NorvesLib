@@ -1,10 +1,18 @@
 ﻿#include "Object/World.h"
 #include "Component/BillboardComponent.h"
 #include "Component/BoardComponent.h"
+#include "Component/CameraComponent.h"
+#include "Component/DirectionalLightComponent.h"
+#include "Component/HoldSlotComponent.h"
+#include "Component/ImpostorComponent.h"
 #include "Component/LightComponent.h"
 #include "Component/MegaGeometryComponent.h"
 #include "Component/MeshComponent.h"
+#include "Component/PointLightComponent.h"
 #include "Component/SkinnedMeshComponent.h"
+#include "Component/SocketAttachmentComponent.h"
+#include "Component/SpotLightComponent.h"
+#include "Component/SpringArmComponent.h"
 #include "Component/TextComponent.h"
 #include "Container/UnorderedSet.h"
 #include "Ecs/EcsRenderTypes.h"
@@ -1443,6 +1451,7 @@ namespace NorvesLib::Core
     void World::InitializeSchedule()
     {
         m_EcsTransformSystem.reset();
+        RegisterCoreComponentTicks();
         m_EcsWorld = Container::MakeUnique<Ecs::EcsWorld>();
         // 階層のシステムのきっかけになる列は追跡する（最初のアーキタイプを作る前に決める）。消費者がいない間はログを積まない
         m_EcsWorld->SetColumnTrackedOf<Ecs::EcsLocalTransform>();
@@ -1513,6 +1522,7 @@ namespace NorvesLib::Core
             [](void* user, const Context&)
             {
                 auto* world = static_cast<World*>(user);
+                world->ReportTickDupCheck();
                 world->m_TickEntries.clear();
                 world->m_FixedTickEntries.clear();
                 world->m_bHasTickSnapshot = false;
@@ -1669,6 +1679,11 @@ namespace NorvesLib::Core
         }
         m_TickEntries.clear();
         m_FixedTickEntries.clear();
+        // 検査 ECS_TICK_DUP は収集ごとに数え直す（有効かどうかも収集の先頭で決める）
+        m_TickDupSeen.clear();
+        m_TickDupCalls = 0;
+        m_bTickDupCheck = NorvesLib::Core::Engine::GEngine != nullptr &&
+                          NorvesLib::Core::Engine::GEngine->GetEngineChecks().IsEnabled("ECS_TICK_DUP");
         size_t ordinal = 0;
         for (IUnknown* inner : GetInners())
         {
@@ -1712,13 +1727,27 @@ namespace NorvesLib::Core
                 const size_t order = ordinal++;
                 const auto primary = component->GetTickGroup();
                 m_FixedTickEntries.push_back({&entity, component, Component::ETickGroup::Default, primary, 0, order});
+                // 型に本体を登録した型は、その本体を呼ぶ群だけを載せる（本体が null の型は載せない）
+                const Component::ComponentTickRegistration* registration = FindComponentTick(component->GetClass());
+                if (registration != nullptr && registration->Run == nullptr)
+                {
+                    continue;
+                }
                 for (uint8_t index = 0; index < Component::TickGroupCount; ++index)
                 {
                     const auto group = static_cast<Component::ETickGroup>(index);
-                    if ((component->GetTickGroupMask() & Component::TickGroupBit(group)) != 0)
+                    if ((component->GetTickGroupMask() & Component::TickGroupBit(group)) == 0)
                     {
-                        m_TickEntries.push_back({&entity, component, group, primary, component->GetTickPriority(), order});
+                        continue;
                     }
+                    if (registration != nullptr &&
+                        (registration->bPrimaryGroupOnly ? group != primary
+                                                         : (registration->Groups & Component::TickGroupBit(group)) == 0))
+                    {
+                        continue;
+                    }
+                    m_TickEntries.push_back({&entity, component, group, primary, component->GetTickPriority(), order,
+                                             registration != nullptr ? registration->Run : nullptr});
                 }
             }
         }
@@ -1835,6 +1864,10 @@ namespace NorvesLib::Core
                 float tickDelta = 0;
                 if (!TryResolveTickDelta(*entry.Owner, nullptr, tickDelta))
                     continue;
+                if (m_bTickDupCheck)
+                {
+                    NoteTickDispatchForCheck(entry.Owner, entry.Group, nullptr, false);
+                }
                 entry.Owner->Tick(tickDelta);
             }
             else if (entry.Target->GetOwner() == entry.Owner && entry.Target->IsActive() &&
@@ -1843,6 +1876,16 @@ namespace NorvesLib::Core
                 float tickDelta = 0;
                 if (!TryGetComponentTickDelta(*entry.Target, tickDelta))
                     continue;
+                if (m_bTickDupCheck)
+                {
+                    NoteTickDispatchForCheck(entry.Target, entry.Group, entry.Target, entry.Run != nullptr);
+                }
+                if (entry.Run != nullptr)
+                {
+                    // 型に登録した本体（非仮想）。群の判定は収集で済んでいる
+                    entry.Run(*entry.Target, tickDelta);
+                    continue;
+                }
                 const auto previousGroup = entry.Target->m_DispatchPrimaryGroup;
                 const bool bPrevious = entry.Target->m_bHasDispatchPrimaryGroup;
                 entry.Target->m_DispatchPrimaryGroup = entry.PrimaryGroup;
@@ -1867,6 +1910,117 @@ namespace NorvesLib::Core
                 restore();
             }
         }
+    }
+
+    void World::RegisterComponentTick(const IClass* cls, const Component::ComponentTickRegistration& registration)
+    {
+        if (cls == nullptr)
+        {
+            return;
+        }
+        m_ComponentTicks[cls] = registration;
+    }
+
+    const Component::ComponentTickRegistration* World::FindComponentTick(const IClass* cls) const
+    {
+        const auto it = m_ComponentTicks.find(cls);
+        return it != m_ComponentTicks.end() ? &it->second : nullptr;
+    }
+
+    void World::RegisterCoreComponentTicks()
+    {
+        // 設計 1.12 の行き先。順・channel・群・mask・優先度は Component の設定のまま（呼ぶのは同じ順の一覧）
+        // Mesh: 変換のキャッシュは描画の同期（RefreshRenderTransformCache）が求めるので、毎フレームの処理は無い。
+        // Camera・Light 系: 中身が空だった。
+        Component::ComponentTickRegistration none;
+        none.Name = "NoTick";
+        RegisterComponentTick(Component::MeshComponent::StaticClass(), none);
+        RegisterComponentTick(Component::MegaGeometryComponent::StaticClass(), none);
+        RegisterComponentTick(Component::CameraComponent::StaticClass(), none);
+        RegisterComponentTick(Component::LightComponent::StaticClass(), none);
+        RegisterComponentTick(Component::DirectionalLightComponent::StaticClass(), none);
+        RegisterComponentTick(Component::PointLightComponent::StaticClass(), none);
+        RegisterComponentTick(Component::SpotLightComponent::StaticClass(), none);
+
+        // Board の Flipbook は Default（主群）の系。派生の Billboard・Impostor・Text も同じ本体を持っていた
+        Component::ComponentTickRegistration board;
+        board.Name = "Board.Flipbook";
+        board.Run = [](Component::Component& component, float deltaTime)
+        { static_cast<Component::BoardComponent&>(component).TickFlipbook(deltaTime); };
+        RegisterComponentTick(Component::BoardComponent::StaticClass(), board);
+        RegisterComponentTick(Component::BillboardComponent::StaticClass(), board);
+        RegisterComponentTick(Component::ImpostorComponent::StaticClass(), board);
+        RegisterComponentTick(Component::TextComponent::StaticClass(), board);
+
+        // SpringArm は Camera の群（主群）
+        Component::ComponentTickRegistration arm;
+        arm.Name = "SpringArm.Camera";
+        arm.Run = [](Component::Component& component, float deltaTime)
+        { static_cast<Component::SpringArmComponent&>(component).TickArm(deltaTime); };
+        RegisterComponentTick(Component::SpringArmComponent::StaticClass(), arm);
+
+        // HoldSlot・SocketAttachment は PostPhysics の群でだけ呼ぶ（主群によらない。旧の OnTickGroup と同じ）
+        Component::ComponentTickRegistration hold;
+        hold.Name = "HoldSlot.PostPhysics";
+        hold.bPrimaryGroupOnly = false;
+        hold.Groups = Component::TickGroupBit(Component::ETickGroup::PostPhysics);
+        hold.Run = [](Component::Component& component, float deltaTime)
+        { static_cast<Component::HoldSlotComponent&>(component).TickHolds(deltaTime); };
+        RegisterComponentTick(Component::HoldSlotComponent::StaticClass(), hold);
+
+        Component::ComponentTickRegistration socket;
+        socket.Name = "SocketAttachment.PostPhysics";
+        socket.bPrimaryGroupOnly = false;
+        socket.Groups = Component::TickGroupBit(Component::ETickGroup::PostPhysics);
+        socket.Run = [](Component::Component& component, float deltaTime)
+        { static_cast<Component::SocketAttachmentComponent&>(component).TickAttachment(deltaTime); };
+        RegisterComponentTick(Component::SocketAttachmentComponent::StaticClass(), socket);
+    }
+
+    void World::NoteTickDispatchForCheck(const void* target, Component::ETickGroup group,
+                                         const Component::Component* component, bool bRegistered)
+    {
+        ++m_TickDupCalls;
+        // 呼び先の番地と群を 1 つの鍵にする（ユーザー空間の番地は 2^56 未満）
+        const uint64_t key = (static_cast<uint64_t>(reinterpret_cast<uintptr_t>(target)) << 8) |
+                             static_cast<uint64_t>(group);
+        const char* reason = nullptr;
+        if (!m_TickDupSeen.insert(key).second)
+        {
+            reason = "same target and group dispatched twice in one collection";
+        }
+        else if (component != nullptr && !bRegistered && FindComponentTick(component->GetClass()) != nullptr)
+        {
+            reason = "registered type dispatched through the virtual path";
+        }
+        if (reason != nullptr)
+        {
+            ++m_TickDupFailures;
+            LOG_ERROR("ECS_TICK_DUP: %s (component=%llu group=%u)", reason,
+                      static_cast<unsigned long long>(component != nullptr ? component->GetComponentId() : 0),
+                      static_cast<unsigned>(group));
+        }
+    }
+
+    void World::ReportTickDupCheck()
+    {
+        if (!m_bTickDupCheck)
+        {
+            return;
+        }
+        m_bTickDupCheck = false;
+        if (NorvesLib::Core::Engine::GEngine == nullptr || (m_TickDupCalls == 0 && m_TickDupFailures == 0))
+        {
+            return;
+        }
+        // fail は毎回、pass は最初と 64 回ごとに出す
+        const bool bPass = m_TickDupFailures == 0;
+        ++m_TickDupCollections;
+        if (!bPass || m_TickDupCollections == 1 || m_TickDupCollections % 64 == 0)
+        {
+            NorvesLib::Core::Engine::GEngine->GetEngineChecks().Report("ECS_TICK_DUP", bPass, m_TickDupCalls);
+        }
+        m_TickDupFailures = 0;
     }
 
     void World::InvalidateTickComponent(Component::Component& component)

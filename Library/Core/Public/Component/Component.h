@@ -312,6 +312,27 @@ namespace NorvesLib::Core::Component
         void StoreTickConfiguration(const TickGroupConfiguration &configuration);
     };
 
+    /// Tick を持っていた型の本体（非仮想）。World の順序付きの系が（群, 優先度, 深さ優先の順）で呼ぶ
+    using ComponentTickFn = void (*)(Component &component, float deltaTime);
+
+    /**
+     * @brief 型ごとの Tick の登録（設計 1.12）
+     *
+     * World::RegisterComponentTick で型（IClass）に結び付ける。照合は型の完全一致で、派生の型は自分の型で登録する
+     * （リフレクションを宣言しない派生は基底の型として扱われる）。登録の無い型は旧の仮想の OnTickGroup で呼ばれる。
+     * channel は型の GetTimeChannel、群・mask・優先度は Component の Tick の設定をそのまま使う。
+     */
+    struct ComponentTickRegistration
+    {
+        /// 登録の名前（ログ・検査用。文字列は呼び手が持ち続ける）
+        const char *Name = nullptr;
+        /// 本体。null は「毎フレームの処理を持たない型」で、順の一覧に載せない
+        ComponentTickFn Run = nullptr;
+        /// true: 主群（GetTickGroup）の呼び出しだけで呼ぶ（旧の Tick と同じ）。false: Groups に含まれる群で呼ぶ
+        bool bPrimaryGroupOnly = true;
+        TickGroupMask Groups = AllTickGroups;
+    };
+
     // コンポーネントへのスマートポインタ
     using ComponentPtr = Container::TSharedPtr<Component>;
     using ComponentWeakPtr = Container::TWeakPtr<Component>;

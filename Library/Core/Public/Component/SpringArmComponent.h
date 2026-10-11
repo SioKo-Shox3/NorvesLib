@@ -36,7 +36,11 @@ namespace NorvesLib::Core::Component
         virtual void Finalize() override;
         virtual void BeginPlay() override;
         virtual void EndPlay() override;
-        virtual void Tick(float deltaTime) override;
+
+        /**
+         * @brief 毎フレームの本体。pivot から owner の変換を求め直す（World の順序付きの系が Camera の群で呼ぶ）
+         */
+        void TickArm(float deltaTime);
 
         /**
          * @brief 同一 World の pivot を設定します。nullptr は設定解除として成功します。

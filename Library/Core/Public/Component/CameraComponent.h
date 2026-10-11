@@ -32,7 +32,6 @@ namespace NorvesLib::Core::Component
         virtual void Finalize() override;
         virtual void BeginPlay() override;
         virtual void EndPlay() override;
-        virtual void Tick(float deltaTime) override;
 
         void SetProjectionType(Rendering::ProjectionType type)
         {

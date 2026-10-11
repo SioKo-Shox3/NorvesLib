@@ -119,17 +119,6 @@ namespace NorvesLib::Core::Component
         Component::EndPlay();
     }
 
-    void MeshComponent::Tick(float deltaTime)
-    {
-        (void)deltaTime;
-
-        // トランスフォームが変更されていれば更新
-        if (m_bTransformDirty)
-        {
-            UpdateWorldTransform();
-        }
-    }
-
     // ========================================
     // メッシュ設定
     // ========================================
@@ -203,6 +192,12 @@ namespace NorvesLib::Core::Component
 
     void MeshComponent::RefreshRenderTransformCache()
     {
+        // 初期化から一度も求めていなければ先に 1 回求め、前フレームの変換を今の値に揃える
+        // （初回の Tick で求めてから同期していた頃と同じ値になる）
+        if (m_bTransformDirty)
+        {
+            UpdateWorldTransform();
+        }
         UpdateWorldTransform();
     }
 

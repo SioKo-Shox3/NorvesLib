@@ -21,6 +21,8 @@ namespace NorvesLib::Core
         Component::ETickGroup PrimaryGroup = Component::ETickGroup::Default;
         int16_t Priority = 0;
         size_t Ordinal = 0;
+        /// 型に登録した本体（ComponentTickFn）。null なら旧の仮想の OnTickGroup で呼ぶ
+        void (*Run)(Component::Component&, float) = nullptr;
     };
 
     inline bool TickDispatchLess(const TickDispatchEntry& a, const TickDispatchEntry& b)

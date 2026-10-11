@@ -34,11 +34,6 @@ namespace NorvesLib::Core::Component
         LightComponent::Initialize();
     }
 
-    void DirectionalLightComponent::Tick(float deltaTime)
-    {
-        (void)deltaTime;
-    }
-
     // ========================================
     // LightProxy構築
     // ========================================

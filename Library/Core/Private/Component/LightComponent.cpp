@@ -91,11 +91,6 @@ namespace NorvesLib::Core::Component
         Component::EndPlay();
     }
 
-    void LightComponent::Tick(float deltaTime)
-    {
-        (void)deltaTime;
-    }
-
     // ========================================
     // ライト共通プロパティ
     // ========================================

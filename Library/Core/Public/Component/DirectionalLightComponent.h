@@ -45,7 +45,6 @@ namespace NorvesLib::Core::Component
         // ========================================
 
         virtual void Initialize() override;
-        virtual void Tick(float deltaTime) override;
 
         // ========================================
         // LightProxy構築（オーバーライド）

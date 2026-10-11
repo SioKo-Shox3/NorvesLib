@@ -35,7 +35,8 @@ namespace NorvesLib::Core::Component
         ~HoldSlotComponent() override;
         void EndPlay() override;
         void Finalize() override;
-        void OnTickGroup(ETickGroup, float) override;
+        /// 毎フレームの本体。無効になった保持を外す（World の順序付きの系が PostPhysics の群で呼ぶ）
+        void TickHolds(float deltaTime);
         [[nodiscard]] bool ApplySlotsJson(const Container::String&, Animation::SocketReport&);
         [[nodiscard]] bool ApplySlotsFile(const Container::String&, Animation::SocketReport&);
         [[nodiscard]] bool SetSlots(Container::Span<const HoldSlotDefinition>);

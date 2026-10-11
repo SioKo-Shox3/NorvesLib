@@ -98,7 +98,7 @@ namespace NorvesLib::Core::Component
         Component::EndPlay();
     }
 
-    void SpringArmComponent::Tick(float deltaTime)
+    void SpringArmComponent::TickArm(float deltaTime)
     {
         (void)deltaTime;
         RefreshOwnerTransform();

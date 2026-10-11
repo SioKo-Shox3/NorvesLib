@@ -246,7 +246,7 @@ namespace
         board->SetLoop(false);
         assert(board->SetFlipbookGrid(128, 64, 32, 32, 4u));
         board->Play();
-        board->Tick(1.0f);
+        board->TickFlipbook(1.0f);
 
         EntitySubtreeSnapshot snapshot = RuntimeSchemaProjector::BuildEntitySubtreeSnapshot(*root);
         assert(snapshot.Root.Components.size() == 1);

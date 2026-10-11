@@ -237,10 +237,9 @@ namespace NorvesLib::Core::Component
             Notify(event, false);
         }
     }
-    void HoldSlotComponent::OnTickGroup(ETickGroup group, float)
+    void HoldSlotComponent::TickHolds(float)
     {
-        if (group == ETickGroup::PostPhysics)
-            Prune();
+        Prune();
     }
     void HoldSlotComponent::EndPlay()
     {

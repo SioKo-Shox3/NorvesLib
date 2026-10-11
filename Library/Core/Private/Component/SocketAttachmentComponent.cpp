@@ -386,9 +386,9 @@ namespace NorvesLib::Core::Component
         m_bLastSuccess = true;
         return true;
     }
-    void SocketAttachmentComponent::OnTickGroup(ETickGroup group, float dt)
+    void SocketAttachmentComponent::TickAttachment(float dt)
     {
-        if (group != ETickGroup::PostPhysics || m_State == AttachState::Detached)
+        if (m_State == AttachState::Detached)
             return;
         auto* world = GetOwner() ? GetOwner()->GetWorld() : nullptr;
         if (!world || !UpdateAttachment(dt, world->GetTickSerial(), 0))

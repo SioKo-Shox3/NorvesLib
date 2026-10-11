@@ -24,7 +24,8 @@ namespace NorvesLib::Core::Component
         ~SocketAttachmentComponent() override;
         void EndPlay() override;
         void Finalize() override;
-        void OnTickGroup(ETickGroup, float) override;
+        /// 毎フレームの本体。付け先のソケットへ追従する（World の順序付きの系が PostPhysics の群で呼ぶ）
+        void TickAttachment(float deltaTime);
         [[nodiscard]] bool Attach(uint64_t target, Identity socket, Identity slot = {}, float blendSeconds = .1f,
                                   Container::Span<const Identity> tags = {}, float massMultiplier = 1);
         void Detach();

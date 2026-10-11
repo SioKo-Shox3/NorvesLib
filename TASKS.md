@@ -526,7 +526,7 @@
 - notes: VSM のコードは変えない。静止の値は PROBE-100K の撮影を使ってよい。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views horizon -GpuTimingFrames 300 -GameArgs banana-count=100000,camera-path-play -OutDir .harness/runs/scene-capture/SCN-MEGA-PROBE-VSM`（ランナーは撮り直さず、保存した結果を検査する）。 2026-10-10 親が backlog にした: 古い経路（1本1Entity）では 10万本の撮影 1 回が約 19 分かかるため、ECS の大量の軽い実体で読み込みが速くなってから測る。 2026-10-10 ECS の大量の軽い実体（MASS-ROWS）の後に置いて todo に戻した。 2026-10-10 親が backlog にした: VSM の改修（VSM-RANGES・VSM-BVH-SUN/POINT）は結果によらず行うので、改修前の値は判断を変えない。`--camera-path-play` は SCN-MEGA-MIXED-LOAD へ移した。MEASURE-VSM の合否は絶対値にした。
 
 ## SCN-ECS-TICK-SIMPLE: Mesh・Board・Camera・Light 系・SpringArm・HoldSlot・SocketAttachment の Tick を順序付きの系へ移す
-- status: todo
+- status: done
 - done-when: これらの Tick/OnTickGroup の上書きを消し、設計 1.12 のとおり登録する（順・channel・群は今と同じ）。Tick を直接呼んでいるテスト（FlipbookAdvanceTest.cpp:65、SpringArmComponentTest.cpp:311 など）も同じ項目で直す。検査 `ECS_TICK_DUP` が 0。
 - verify: `cmake --build build --config Debug --target EntityTreeTest FlipbookAdvanceTest BoardComponentRoutingTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SpringArmComponentTest|FlipbookAdvanceTest|BoardComponentRoutingTest|BillboardComponentTest|WorldTickGroupTest)$" --no-tests=error --output-on-failure --timeout 180`

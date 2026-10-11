@@ -69,7 +69,6 @@ namespace NorvesLib::Core::Component
         virtual void Finalize() override;
         virtual void BeginPlay() override;
         virtual void EndPlay() override;
-        virtual void Tick(float deltaTime) override;
 
         Ecs::EcsComponentRowKind GetEcsRowKind() const override { return Ecs::EcsComponentRowKind::Mesh; }
         void CollectRenderResourceRefs(Container::VariableArray<Rendering::RenderResourceRef>& out) const override;

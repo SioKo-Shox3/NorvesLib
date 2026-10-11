@@ -62,7 +62,7 @@ namespace
         assert(board.GetUVRect() == BoardComponent::GetFullTextureUVRect());
 
         board.ClearRenderStateDirty();
-        board.Tick(1.0f);
+        board.TickFlipbook(1.0f);
         assert(board.GetUVRect() == BoardComponent::GetFullTextureUVRect());
         assert(!board.IsRenderStateDirty());
 
@@ -127,7 +127,7 @@ namespace
         assert(board->BuildBoardProxy(proxy));
         assert(proxy.UVRect == manualUV);
 
-        board->Tick(1.0f);
+        board->TickFlipbook(1.0f);
         board->PrepareFlipbookForRenderSync();
         assert(board->GetUVRect() == manualUV);
 
@@ -141,9 +141,9 @@ namespace
         ConfigureFourFrameBoard(board, 2.0f);
         board.Play();
 
-        board.Tick(0.49f);
+        board.TickFlipbook(0.49f);
         assert(board.GetCurrentFrame() == 0u);
-        board.Tick(0.01f);
+        board.TickFlipbook(0.01f);
         assert(board.GetCurrentFrame() == 1u);
         AssertVector4Near(board.GetUVRect(), RectAt(1));
 
@@ -158,7 +158,7 @@ namespace
         board.SetFramesPerSecond(4.0f);
         board.Play();
 
-        board.Tick(0.75f);
+        board.TickFlipbook(0.75f);
         assert(board.GetCurrentFrame() == 3u);
         AssertVector4Near(board.GetUVRect(), RectAt(3));
 
@@ -174,7 +174,7 @@ namespace
         board.SetFrame(2);
         board.Play();
 
-        board.Tick(1.0f);
+        board.TickFlipbook(1.0f);
         assert(board.GetCurrentFrame() == 0u);
         assert(board.IsPlaying());
         AssertVector4Near(board.GetUVRect(), RectAt(0));
@@ -191,7 +191,7 @@ namespace
         board.SetLoop(false);
         board.Play();
 
-        board.Tick(1.0f);
+        board.TickFlipbook(1.0f);
         assert(board.GetCurrentFrame() == 2u);
         assert(!board.IsPlaying());
         AssertVector4Near(board.GetUVRect(), RectAt(2));
@@ -210,11 +210,11 @@ namespace
         ConfigureFourFrameBoard(board, 2.0f);
         board.Play();
 
-        board.Tick(-1.0f);
+        board.TickFlipbook(-1.0f);
         assert(board.GetCurrentFrame() == 0u);
-        board.Tick(std::numeric_limits<float>::infinity());
+        board.TickFlipbook(std::numeric_limits<float>::infinity());
         assert(board.GetCurrentFrame() == 0u);
-        board.Tick(std::numeric_limits<float>::quiet_NaN());
+        board.TickFlipbook(std::numeric_limits<float>::quiet_NaN());
         assert(board.GetCurrentFrame() == 0u);
         AssertVector4Near(board.GetUVRect(), RectAt(0));
 
@@ -226,11 +226,11 @@ namespace
         TestBoardComponent board;
         ConfigureFourFrameBoard(board, 2.0f);
         board.Play();
-        board.Tick(0.5f);
+        board.TickFlipbook(0.5f);
         assert(board.GetCurrentFrame() == 1u);
 
         board.Pause();
-        board.Tick(2.0f);
+        board.TickFlipbook(2.0f);
         assert(board.GetCurrentFrame() == 1u);
 
         board.SetFrame(10u);
@@ -239,9 +239,9 @@ namespace
 
         board.SetFrame(1u);
         board.Play();
-        board.Tick(0.24f);
+        board.TickFlipbook(0.24f);
         assert(board.GetCurrentFrame() == 1u);
-        board.Tick(0.26f);
+        board.TickFlipbook(0.26f);
         assert(board.GetCurrentFrame() == 2u);
 
         board.SetInitialFrameForTest(2u);
@@ -261,16 +261,16 @@ namespace
         board.Play();
         assert(!board.IsRenderStateDirty());
 
-        board.Tick(0.1f);
+        board.TickFlipbook(0.1f);
         assert(!board.IsRenderStateDirty());
 
-        board.Tick(0.4f);
+        board.TickFlipbook(0.4f);
         assert(board.IsRenderStateDirty());
         assert(board.GetCurrentFrame() == 1u);
 
         board.ClearRenderStateDirty();
-        board.Tick(0.0f);
-        board.Tick(-0.1f);
+        board.TickFlipbook(0.0f);
+        board.TickFlipbook(-0.1f);
         assert(!board.IsRenderStateDirty());
 
         board.SetFrame(1u);

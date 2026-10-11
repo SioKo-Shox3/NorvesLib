@@ -73,11 +73,6 @@ namespace NorvesLib::Core::Component
         Component::EndPlay();
     }
 
-    void CameraComponent::Tick(float deltaTime)
-    {
-        (void)deltaTime;
-    }
-
     bool CameraComponent::TryBuildExposureSnapshot(
         float aperture,
         float shutterSpeed,
