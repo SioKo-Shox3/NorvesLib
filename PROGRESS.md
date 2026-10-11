@@ -1485,3 +1485,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - 同期の走査（`SyncEntityRecursive`）自体は MegaGeometry・Text のために全 Entity を巡回する。O(変化) になるのは SCENE-DELTA で MegaGeometry を移したあと。
   - 行末: 編集したファイルは numstat の 2 通りが一致。
+
+### SCN-ECS-SCENEQUERY（2026-10-11、反復 43・run 20261010-223034）
+
+- 変更:
+  - `SceneQuery::Update(World&)` を足し、毎フレームの `Rebuild` をやめた（ApplicationProcessor）。最初の呼び出しで全 Entity を拾い、以後は変更だけを反映する。
+  - 変更の拾い方: ECS の変更ログ（局所の変換・階層・フラグの消費者）、行の削除のフック（EcsEntityFlags の OnDestroy）、描画同期の一覧（`GetRenderSyncList().Changed` の Mesh・SkinnedMesh を、ComponentId → 持ち主の行の逆引きで Entity へ）。Active・破棄待ちの変化は部分木ごと、他は Entity 単体を見直す。
+  - BVH: 節に親を持たせ、Entry に葉を覚えさせて、境界が変わった Entry だけ葉から親へ refit（変わらなくなったら止める）。追加は保留の一覧（照会は BVH の後に線形に見る）、削除は墓石。保留・墓石・累積した refit が増えたときだけ作り直す。
+  - 作り直しの分割は `std::nth_element` の中央値分割（挿入ソートをやめた）。O(N log N)。
+  - 描画同期が旧の全走査（`--ecs-legacy-sync`）のとき・SceneView が無いときは、毎回 Rebuild と同じ全量。
+  - 検査 `ECS_SCENEQUERY`: `RunCheck` が全量で作った SceneQuery と、Entry の集合・境界、球・箱・下向き光線の照会結果を照合する。開発ログ `SCENEQUERY updated=` は 120 回ごと。
+- テスト（paths の外）: `SceneQueryRaycastTest::TestIncrementalUpdateMatchesRebuild`（最初の全量、静止で全 0、1 件移動で Updated=1、親の移動で子孫も、非アクティブ化と復帰、破棄、追加、保留あふれの作り直し、旧の全走査への切り戻し。各段で全量と照合）。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-ECS-SCENEQUERY-2-build.txt`（SceneQueryRaycastTest の Debug ビルド EXIT=0。新ケースを含めて単体実行も通った）。
+  - `-3-ctest.txt`: 4 本 Passed（Overlap・PhysicsFacade・CameraProbe は SceneQueryRaycastTest の束の MEMBER）。
+  - `-4-capture.txt`: mega-stress の撮影 `result=pass`、`ECS_SCENEQUERY` が default 3・close 3・aerial 2 pass、fail 0。開発ログ（`.harness/runs/scene-capture/SCN-ECS-SCENEQUERY/check/*.Game.log`）は 1% 移動で `updated=45 entries=4838 rebuilt=0`（累計 updated=5515 / 120 回、作り直し 2 回）。
+- Notes:
+  - `paths:` の外は World を触っていない。`GetRenderSyncList()` の Changed が描画の同期に依存するので、SceneView が無い／旧の全走査では全量に切り替わる。
+  - 描画同期の一覧が MeshComponent の変化を落とす変更が将来入ると、検査 ECS_SCENEQUERY が fail になる（検出用）。
+  - 行末: 編集したファイルは numstat の 2 通りが一致。

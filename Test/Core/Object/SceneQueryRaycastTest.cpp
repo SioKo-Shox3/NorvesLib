@@ -2,6 +2,8 @@
 #include "Math/GeometryIntersection.h"
 #include "Object/Entity.h"
 #include "Object/World.h"
+#include "Rendering/RenderResources.h"
+#include "Rendering/SceneView.h"
 #include "Scene/SceneQuery.h"
 #include <cassert>
 #include <cfloat>
@@ -256,6 +258,131 @@ namespace
 
         world.Finalize();
     }
+
+    // 増分の更新（Update）は、全量で作った結果と同じ Entry・照会の結果を保ち、静止では何もしない
+    void TestIncrementalUpdateMatchesRebuild()
+    {
+        World world;
+        world.Initialize();
+        Rendering::SceneView view;
+        Rendering::SceneViewSettings settings;
+        assert(view.Initialize(settings));
+        world.SetSceneView(&view);
+        Rendering::RenderResources renderResources;
+
+        Container::VariableArray<Entity*> entities;
+        for (int i = 0; i < 40; ++i)
+        {
+            entities.push_back(SpawnMeshEntity(
+                world, static_cast<float>(i % 8) * 6.0f, static_cast<float>(i / 8) * 6.0f, 0.0f));
+        }
+        Entity* parent = entities[0];
+        Entity* child = world.SpawnEntity<Entity>(parent);
+        assert(child);
+        AddMesh(*child);
+        child->SetLocalPosition(0.0f, 0.0f, 3.0f);
+
+        Scene::SceneQuery sceneQuery;
+        const auto syncOnce = [&]()
+        {
+            world.SyncToSceneView(&renderResources.Materials());
+            sceneQuery.Update(world);
+        };
+        const auto checkAgainstRebuild = [&]()
+        {
+            uint32_t examined = 0;
+            char detail[200] = {};
+            const bool bPass = sceneQuery.VerifyAgainstRebuild(world, examined, detail, sizeof(detail));
+            if (!bPass)
+            {
+                std::cout << "mismatch: " << detail << "\n";
+            }
+            assert(bPass);
+            assert(examined > 0);
+        };
+
+        // 最初は全量で作る
+        syncOnce();
+        assert(sceneQuery.GetLastUpdateStats().Rebuilt == 1);
+        assert(sceneQuery.GetEntryCount() == 41);
+        checkAgainstRebuild();
+
+        // 静止: 履歴が落ち着いたあとは、更新も追加も削除も作り直しも 0
+        syncOnce();
+        syncOnce();
+        syncOnce();
+        {
+            const Scene::SceneQuery::UpdateStats& stats = sceneQuery.GetLastUpdateStats();
+            assert(stats.Updated == 0 && stats.Added == 0 && stats.Removed == 0 && stats.Rebuilt == 0);
+        }
+        checkAgainstRebuild();
+
+        // 1 つ動かす: 動かした分だけ refit する
+        entities[10]->SetPosition(100.0f, 50.0f, 0.0f);
+        syncOnce();
+        assert(sceneQuery.GetLastUpdateStats().Updated == 1);
+        assert(sceneQuery.GetLastUpdateStats().Rebuilt == 0);
+        checkAgainstRebuild();
+
+        // 親を動かすと子孫の境界も変わる
+        parent->SetPosition(-40.0f, 0.0f, 0.0f);
+        syncOnce();
+        assert(sceneQuery.GetLastUpdateStats().Updated == 2);
+        checkAgainstRebuild();
+
+        // 非アクティブ化で外れ、戻すと入る
+        entities[3]->SetActive(false);
+        syncOnce();
+        assert(sceneQuery.GetLastUpdateStats().Removed == 1);
+        assert(sceneQuery.GetEntryCount() == 40);
+        checkAgainstRebuild();
+        entities[3]->SetActive(true);
+        syncOnce();
+        assert(sceneQuery.GetLastUpdateStats().Added == 1);
+        assert(sceneQuery.GetEntryCount() == 41);
+        checkAgainstRebuild();
+
+        // 破棄で外れる
+        entities[20]->MarkForDestroy();
+        world.Tick(0.016f);
+        syncOnce();
+        assert(sceneQuery.GetEntryCount() == 40);
+        checkAgainstRebuild();
+
+        // 追加
+        Entity* added = SpawnMeshEntity(world, -20.0f, -20.0f, 0.0f);
+        syncOnce();
+        assert(sceneQuery.GetLastUpdateStats().Added == 1);
+        assert(sceneQuery.GetEntryCount() == 41);
+        Scene::RaycastHit hit;
+        assert(sceneQuery.Raycast(
+            NorvesLib::Math::Ray(NorvesLib::Math::Vector3(-30.0f, -20.0f, 0.0f), NorvesLib::Math::Vector3(1.0f, 0.0f, 0.0f)),
+            hit));
+        assert(hit.HitEntity == added);
+        checkAgainstRebuild();
+
+        // 大量に追加すると保留があふれて作り直す
+        for (int i = 0; i < 100; ++i)
+        {
+            SpawnMeshEntity(world, static_cast<float>(i) * 4.0f, 200.0f, 0.0f);
+        }
+        syncOnce();
+        assert(sceneQuery.GetLastUpdateStats().Rebuilt == 1);
+        assert(sceneQuery.GetEntryCount() == 141);
+        checkAgainstRebuild();
+
+        // 描画の同期が旧の全走査のときは、毎回全量で作る
+        world.SetLegacyRenderSync(true);
+        syncOnce();
+        assert(sceneQuery.GetLastUpdateStats().Rebuilt == 1);
+        assert(sceneQuery.GetEntryCount() == 141);
+        world.SetLegacyRenderSync(false);
+        syncOnce();
+        checkAgainstRebuild();
+
+        sceneQuery.Clear();
+        world.Finalize();
+    }
 }
 
 int main()
@@ -266,6 +393,7 @@ int main()
     TestExplicitSpanRebuild();
     TestWorldRebuildSkipsInactiveAndPendingSubtrees();
     TestBVHRaycastMatchesBruteForce();
+    TestIncrementalUpdateMatchesRebuild();
 
     std::cout << "SceneQueryRaycastTest passed\n";
     return 0;

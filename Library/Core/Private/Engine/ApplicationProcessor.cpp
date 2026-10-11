@@ -2178,8 +2178,9 @@ namespace NorvesLib::Core::Engine
         {
             canvasView->SetTransientBoardProxies(frameTransient);
         }
-        // SceneQuery を当フレームの最新 world-AABB で再構築(SyncToSceneView が transform/bounds を確定済み)
-        GEngine->GetSceneQuery().Rebuild(GEngine->GetWorld());
+        // SceneQuery は、SyncToSceneView が確定した境界の変化だけを反映する(静止なら更新 0 件)。検査 ECS_SCENEQUERY が有効なら全量と照合する
+        GEngine->GetSceneQuery().Update(GEngine->GetWorld());
+        GEngine->GetSceneQuery().RunCheck(GEngine->GetWorld(), GEngine->GetEngineChecks());
 
         if (NorvesLib::Core::GEngine.GetScriptRuntime().EndFrameMaintenance() !=
             EScriptRuntimeResult::Success)
