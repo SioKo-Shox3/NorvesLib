@@ -234,7 +234,9 @@ namespace Game::GameModes
 
     void UpdateStartupSkinnedProbe(NorvesLib::Core::GameMode::GameModeContext& ctx, Rendering3DTestData& data)
     {
-        if (data.m_StartupSkinnedProbeComponents.empty())
+        // M9 の受入れは何も変えない 2 フレームの一致を陰性対照に取るので、揺れを止めて生成時の姿勢のままにする。
+        if (data.m_StartupSkinnedProbeComponents.empty() ||
+            (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested))
         {
             return;
         }

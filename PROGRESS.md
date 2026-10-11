@@ -2447,3 +2447,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-2.txt`: `RenderGraph.Execute` の median 2.397 ms・p95 2.876・max 3.256・`thread=RenderThread`・frames_present 122（範囲 9432 フレーム）、EXIT=0。
 - Next: 残りの todo の最優先（MEASURE-UPLOAD・RT-PASSES・MEASURE-RT はこの値を使う）。
 - Notes: この撮影では区間 70 種のうち GameThread 66・RenderThread 4 で、Worker に出た区間は無かった。median の意味が「範囲の全フレーム」から「出たフレーム」に変わったので、以前の撮影の `cpu_scope_ms` の median（毎フレーム出ない区間）とは直接比べられない。
+
+### SCN-FIX-M9-T0-CAPTURE（2026-10-12、反復 8・run 20261012-030203）
+
+- 原因は 3 段で、いずれもこのブランチの変更（ランチャー・`--window-background`・ECS の同期）ではなく、M9 の受入れが書かれた後に既定になった描画の設定による。
+  1. t0 の撮影の失敗（`SourceMissingTransferSrc`）: TAA が効いて拡大なしのとき撮影元になる `VignetteOutput` だけ用途に `TransferSrc` が無かった（反復 6 の記録どおり）。
+  2. 1 を直すと陰性対照で落ちた（`negative_control_pixel_delta`）: 何も変えない t0（フレーム 0）と陰性対照（フレーム 2）が全 921600 画素で違った。起動直後で組み立て途中（大きな球の生成・VT のタイルの到着）なうえ、既定の自動露出の順応・TAA のジッタ・RTGI の乱数と履歴・起動画面の揺れるスキンのパネル（壁時計で動く）が毎フレーム画面を変える。自動露出と TAA を止めても 676099 画素が違った。
+  3. 2 を直すと最終の検査で落ちた（`pixel_or_skinned_submit_validation`、`changed_pixels=36405 negative_changed_pixels=0 gbuffer=0 shadow=1`）: M9 が見るスキンの GBuffer の描画数は GBuffer のラスタの経路で数えるが、既定のビジビリティバッファではスキンを VisibilityRaster が描き、GBuffer パスは描かない（`GBufferPass::ShouldSkipDraws`）ので 0 のまま。
+- Done:
+  - `VignettePass.cpp`: `VignetteOutput`（RenderGraph と旧経路の両方）の用途に `TransferSrc` を足した。用途の追加だけで描画は変わらない。
+  - `Rendering3DTestRoutine.cpp`: M9 の実行のときだけ、手動露出・FXAA にし、RTGI を切る（通常の起動とランチャーから入る Rendering3DTest の見た目は変えない）。t0 の撮影を `IsStartupSceneAssembled`（組み立てと VT のタイルがそろう）まで待つ（Tick の残りは止めない）。陰性対照と最終の検査の失敗で、差の画素数・フレーム番号・描画数をログに出す。
+  - `StartupSkinnedProbe.cpp`: M9 の実行のときは揺れるパネルの姿勢を進めない（大きな球の自転を M9 で止めているのと同じ扱い）。
+  - `Scripts/Test-M9World.ps1`: M9 のスモークの起動に `--visibility-buffer=off`（装置が対応しないときに戻る GBuffer のラスタの経路）を足し、スキンの GBuffer の描画数の検査を契約どおり確かめる。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-FIX-M9-T0-CAPTURE-8.txt`: Debug の Game のビルド EXIT=0、error 0（`-6.txt` は VignettePass だけ直した時点のビルドで EXIT=0）。
+  - `-9.txt`: `ctest -R ^M9WorldAcceptanceTest$` が `1/1 Passed`（94.27 s）、EXIT=0。`-7.txt` は VignettePass だけ直した時点の失敗（`negative_control_pixel_delta`）。
+- Next: 残りの todo の最優先。
+- Notes: 既定の経路（ビジビリティバッファ）でのスキンの描画は M9 で数えていない。VisibilityRaster の `SkinnedRecords` を `RenderingCoordinatorStatsSnapshot` へ出せば（`RenderingCoordinator.cpp` 側。この項目の paths の外）、M9 を既定の経路のまま検査できる。
+- Notes: t0 は組み立てがそろってから撮るので、M9 のスモークの t0 はフレーム 61 前後になる（Debug。VT の落ち着きに 60 ティック）。

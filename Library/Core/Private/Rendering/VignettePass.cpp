@@ -140,11 +140,14 @@ namespace NorvesLib::Core::Rendering
 
         if (bNeedsOutputTexture)
         {
-            m_OutputTexture = m_Device->CreateTexture(
+            // 拡大なしでは出力がそのまま撮影元になるため、他の後処理の出力と同じく転送元の用途を付ける
+            RHI::TextureDesc outputDesc =
                 RHI::TextureDesc::RenderTarget(width,
                                                height,
                                                RHI::Format::R16G16B16A16_FLOAT,
-                                               "VignetteOutput"));
+                                               "VignetteOutput");
+            outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
+            m_OutputTexture = m_Device->CreateTexture(outputDesc);
 
             if (!m_OutputTexture)
             {
@@ -354,12 +357,16 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        // TAA が効いて拡大なしのときは PresentationColor としてそのまま撮影されるので転送元の用途を付ける
+        RGTextureDesc outputDesc = RGTextureDesc::RenderTarget(width,
+                                                               height,
+                                                               RHI::Format::R16G16B16A16_FLOAT,
+                                                               "VignetteOutput");
+        outputDesc.Usage = outputDesc.Usage | RHI::ResourceUsage::TransferSrc;
+
         RGTextureHandle outputHandle = builder.WriteTexture(
             RenderGraphResourceNames::ToneMappedColor,
-            RGTextureDesc::RenderTarget(width,
-                                        height,
-                                        RHI::Format::R16G16B16A16_FLOAT,
-                                        "VignetteOutput"),
+            outputDesc,
             RHI::ResourceState::RenderTarget,
             RHI::ResourceState::ShaderResource);
         m_OutputTextureHandle = outputHandle;

@@ -1640,6 +1640,18 @@ namespace Game::GameModes
             data.m_bAppliedTemporalAA = data.m_bTemporalAA;
             data.m_pCameraComponent->SetAntiAliasingMode(data.m_bTemporalAA ? CameraAntiAliasingMode::TemporalAA
                                                                             : CameraAntiAliasingMode::FXAA);
+            // M9 の受入れは、何も変えない 2 フレームが一致することを陰性対照に取る。フレームごとに画面全体が
+            // 変わる自動露出の順応と TAA のジッタを、M9 の実行のときだけ止める（通常の起動は変えない）。
+            if (data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested)
+            {
+                data.m_bAutoExposure = false;
+                data.m_bAppliedAutoExposure = false;
+                data.m_pCameraComponent->SetExposureMode(CameraExposureMode::Manual);
+                data.m_pCameraComponent->SetExposureCompensation(StartupExposureCompensationEV(false));
+                data.m_bTemporalAA = false;
+                data.m_bAppliedTemporalAA = false;
+                data.m_pCameraComponent->SetAntiAliasingMode(CameraAntiAliasingMode::FXAA);
+            }
             data.m_pSpringArmComponent->RefreshOwnerTransform();
 
             CameraProxy initialCamera;
@@ -1656,8 +1668,10 @@ namespace Game::GameModes
             ctx.EngineRef.GetRenderWorld().SetMainCamera(initialCamera);
             // 起動画面の間接光はRTGI（レイトレが使えない環境では環境光（IBL）へ落ちる）。
             // 環境変数 NORVES_STARTUP_RTGI=0 で切り、IBLだけの画面と撮り比べられる。
+            // M9 の受入れでは、フレームごとに乱数と履歴で変わる RTGI を切り、陰性対照を IBL の画面で取る。
+            const bool bM9WorldAcceptance = data.m_M9WorldAcceptance && data.m_M9WorldAcceptance->bRequested;
             ctx.EngineRef.GetRenderWorld().GetRenderingCoordinator().SetRTGIEnabled(
-                ReadStartupRTGIEnabled());
+                ReadStartupRTGIEnabled() && !bM9WorldAcceptance);
             // --render-scale の指定があれば、内部解像度（画面解像度×倍率）で描いて拡大する。
             if (data.m_StartupRenderScale < 1.0f)
             {
@@ -3518,7 +3532,9 @@ namespace Game::GameModes
                 }
                 data.m_M9StatsHistory.push_back(statsSnapshot);
             }
-            if (data.m_M9CapturePhase == 0)
+            // 組み立て途中（大きな球の生成・VT のタイルの到着）は画面が毎フレーム変わるので、
+            // すべてそろってから t0 を撮る。
+            if (data.m_M9CapturePhase == 0 && IsStartupSceneAssembled(data))
             {
                 if (!renderWorld.RequestFrameCapture().IsAccepted())
                 {
@@ -3568,6 +3584,10 @@ namespace Game::GameModes
                                                   negativeChangedPixels, unusedCentroidX, unusedCentroidY,
                                                   unusedWidth, unusedHeight) || negativeChangedPixels > 32)
                         {
+                            LOG_ERROR("M9_WORLD_SMOKE negative_changed_pixels=%u t0_frame=%llu negative_frame=%llu",
+                                      negativeChangedPixels,
+                                      static_cast<unsigned long long>(data.m_M9FirstCapture.FrameNumber),
+                                      static_cast<unsigned long long>(data.m_M9NegativeCapture.FrameNumber));
                             FailM9WorldSmoke(ctx, "negative_control_pixel_delta");
                             return;
                         }
@@ -3653,6 +3673,12 @@ namespace Game::GameModes
                         matchingStats->SkinnedGBufferRecordedDraws == 0 ||
                         matchingStats->SkinnedShadowRecordedDraws == 0)
                     {
+                        LOG_ERROR("M9_WORLD_SMOKE changed_pixels=%u negative_changed_pixels=%u t0_frame=%llu t1_frame=%llu gbuffer=%u shadow=%u",
+                                  changedPixels, negativeChangedPixels,
+                                  static_cast<unsigned long long>(data.m_M9FirstCapture.FrameNumber),
+                                  static_cast<unsigned long long>(data.m_M9SecondCapture.FrameNumber),
+                                  static_cast<unsigned>(matchingStats->SkinnedGBufferRecordedDraws),
+                                  static_cast<unsigned>(matchingStats->SkinnedShadowRecordedDraws));
                         FailM9WorldSmoke(ctx, "pixel_or_skinned_submit_validation");
                         return;
                     }

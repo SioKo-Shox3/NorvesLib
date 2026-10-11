@@ -373,7 +373,9 @@ try
     Assert-M9 (-not ($normal.Transcript -match "M9_WORLD_SMOKE")) "normal Game emitted M9 marker"
 
     $smokeDir = Join-Path $runRoot "smoke"; New-Item -ItemType Directory -Path $smokeDir | Out-Null
-    $smoke = Invoke-M9Game $gamePath @("--scene=rendering3dtest", "--window-background", "--m9-world-smoke", "--texture-asset-root", $runtimeRoot, "--texture-asset-manifest", $manifest, "--render-thread=st") $smokeDir
+    # スキンの GBuffer の描画数（gbuffer=）は GBuffer のラスタの経路で数える。既定のビジビリティバッファでは
+    # スキンを VisibilityRaster が描き、この数が 0 のままになるので、GBuffer のラスタの経路で起動する。
+    $smoke = Invoke-M9Game $gamePath @("--scene=rendering3dtest", "--window-background", "--m9-world-smoke", "--texture-asset-root", $runtimeRoot, "--texture-asset-manifest", $manifest, "--render-thread=st", "--visibility-buffer=off") $smokeDir
     Assert-M9 ($smoke.ExitCode -eq 0) "M9 Game exit=$($smoke.ExitCode) transcript=$($smoke.Transcript)"
     Assert-M9 (-not $smoke.RootAlive -and $smoke.RemainingOwnedProcessIds.Count -eq 0) "M9 Game owned process cleanup incomplete"
     foreach ($stage in @("registered", "assets_ready", "skeletal_binding", "audio_play", "visual", "audio", "complete"))
