@@ -1166,6 +1166,7 @@ namespace NorvesLib::Core::Rendering
         tables.Drawables.clear();
         tables.Entries.clear();
         tables.Meshes.clear();
+        tables.MeshOwners.clear();
         tables.VisibilityRequests.clear();
         tables.ShadowInstances.clear();
         tables.ShadowMotions.clear();
@@ -1302,6 +1303,7 @@ namespace NorvesLib::Core::Rendering
                 }
                 meshIndex = static_cast<uint32_t>(tables.Meshes.size());
                 tables.Meshes.push_back(mesh);
+                tables.MeshOwners.push_back(gpuData->RegionOwner);
                 meshIndices.emplace(gpuData, meshIndex);
             }
 
@@ -3035,9 +3037,10 @@ namespace NorvesLib::Core::Rendering
 
     bool MegaGeometryPass::EnsureResidentTable(RHI::BufferPtr &buffer, uint32_t &capacity, uint32_t required,
                                                uint32_t minimumCapacity, uint64_t elementBytes, const char *debugName,
-                                               bool &bOutGrown)
+                                               RHI::ICommandList *commandList, bool &bOutGrown, bool &bOutCopied)
     {
         bOutGrown = false;
+        bOutCopied = false;
         if (!m_Device)
         {
             return false;
@@ -3048,8 +3051,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         const uint32_t newCapacity = std::max(minimumCapacity, NextPowerOfTwo(std::max(required, 1u)));
+        // コピーの元と先になる（広げるときに古い表の中身を写す。開発ビルドの検査が読み戻す）
         RHI::BufferDesc desc(static_cast<uint64_t>(newCapacity) * elementBytes,
-                             RHI::ResourceUsage::StorageBuffer,
+                             RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferSrc |
+                                 RHI::ResourceUsage::TransferDst,
                              false,
                              debugName);
         RHI::BufferPtr newBuffer = m_Device->CreateBuffer(desc);
@@ -3057,19 +3062,35 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
-        // 古い表は、前のフレームの GPU がまだ読んでいるかもしれないので、しばらく保持してから破棄する
+        uint64_t copiedBytes = 0;
         if (buffer)
         {
+            // 古い表の中身を新しい表の先頭へ写す。古い表はどの更新の後も読み取りの状態にあり、前のフレームの散在書き込みは
+            // 同じキューの前の記録なので、バリアで前の読み手・書き手の後に並ぶ。写した行は送り直さずに済む
+            copiedBytes = std::min(buffer->GetSize(), desc.Size);
+            if (commandList && copiedBytes > 0)
+            {
+                commandList->BufferBarrier(buffer, RHI::ResourceState::GenericRead, RHI::ResourceState::CopySource);
+                commandList->CopyBuffer(buffer, newBuffer, copiedBytes, 0, 0);
+                commandList->BufferBarrier(newBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::GenericRead);
+                bOutCopied = true;
+            }
+            else
+            {
+                copiedBytes = 0;
+            }
+            // 古い表は、前のフレームの GPU がまだ読んでいるかもしれない（このフレームのコピーも読む）ので、しばらく保持してから破棄する
             m_RetiredBuffers.push_back(RetiredBuffer{buffer, m_RenderFrameCount});
         }
         buffer = newBuffer;
         capacity = newCapacity;
         bOutGrown = true;
         NORVES_LOG_INFO("MegaGeometryPass",
-                        "VRAM_LEDGER %s mb=%.2f capacity=%u",
+                        "VRAM_LEDGER %s mb=%.2f capacity=%u copied_bytes=%llu",
                         debugName,
                         static_cast<double>(desc.Size) / (1024.0 * 1024.0),
-                        newCapacity);
+                        newCapacity,
+                        static_cast<unsigned long long>(copiedBytes));
         return true;
     }
 
@@ -3107,6 +3128,11 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+
+        // この組を前に使った記録の GPU の仕事は終わっている。そのときの読み戻しを照合し、そのときのメッシュの区画の持ち主を
+        // このフレームの記録が読むメッシュの持ち主に替える（替えた古い持ち主の区画は、GpuRetireQueue を通って空きへ戻る）
+        ResolveSceneTableCheck(slot);
+        slot.MeshRegionOwners.assign(tables.MeshOwners.begin(), tables.MeshOwners.end());
 
         ++m_SceneUpdateStamp;
         if (m_SceneUpdateStamp == 0u)
@@ -3147,25 +3173,31 @@ namespace NorvesLib::Core::Rendering
             slotLimit = std::max(slotLimit, entry.Slot + 1u);
         }
         bool bSlotTableGrown = false;
+        bool bSlotTableCopied = false;
         if (!EnsureResidentTable(m_SlotTableBuffer, m_SlotTableCapacity, slotLimit, 1024u, sizeof(GPUMegaSlotRow),
-                                 "MegaGeometry_SlotTable", bSlotTableGrown))
+                                 "MegaGeometry_SlotTable", commandList, bSlotTableGrown, bSlotTableCopied))
         {
             return false;
         }
+        bool bCopiedAnyTable = bSlotTableCopied;
         if (bSlotTableGrown)
         {
-            // 新しい席の表は中身を持たない。覚えている行は送り直すが、中身は変わっていない（描く順の表は組み直さない）
-            for (uint8_t &state : m_SlotRowStates)
+            if (!bSlotTableCopied)
             {
-                if (state == 1u)
+                // 新しい席の表は中身を持たない。覚えている行は送り直すが、中身は変わっていない（描く順の表は組み直さない）
+                for (uint8_t &state : m_SlotRowStates)
                 {
-                    state = 2u;
+                    if (state == 1u)
+                    {
+                        state = 2u;
+                    }
                 }
+                bAllRows = true;
             }
+            // コピーしたときは、古い表にあった行は新しい表の同じ位置にあるので、写しの状態をそのまま引き継ぐ
             m_SlotRowCopies.resize(m_SlotTableCapacity);
             m_SlotRowStates.resize(m_SlotTableCapacity, 0u);
             m_SlotRowChangedStamps.resize(m_SlotTableCapacity, 0u);
-            bAllRows = true;
         }
 
         Container::VariableArray<uint32_t> rowSlots;
@@ -3230,28 +3262,40 @@ namespace NorvesLib::Core::Rendering
         // 2. 描く順の表・影の表: 並びの出所が変わった行と、席の行の中身が変わった行
         // ----------------------------------------
         bool bInstanceTableGrown = false;
+        bool bInstanceTableCopied = false;
         if (!EnsureResidentTable(m_InstanceTableBuffer, m_InstanceTableCapacity, entryCount, 256u,
-                                 sizeof(GPUMegaInstance), "MegaGeometry_InstanceTable", bInstanceTableGrown))
+                                 sizeof(GPUMegaInstance), "MegaGeometry_InstanceTable", commandList, bInstanceTableGrown,
+                                 bInstanceTableCopied))
         {
             invalidateCopies();
             return false;
         }
         uint32_t shadowCapacity = (m_ShadowTableBuffer && !bInstanceTableGrown) ? m_InstanceTableCapacity : 0u;
         bool bShadowTableGrown = false;
+        bool bShadowTableCopied = false;
         if (!EnsureResidentTable(m_ShadowTableBuffer, shadowCapacity, m_InstanceTableCapacity, m_InstanceTableCapacity,
-                                 sizeof(MegaGeometryShadowInstance), "MegaGeometry_ShadowInstanceTable", bShadowTableGrown))
+                                 sizeof(MegaGeometryShadowInstance), "MegaGeometry_ShadowInstanceTable", commandList,
+                                 bShadowTableGrown, bShadowTableCopied))
         {
             invalidateCopies();
             return false;
         }
+        bCopiedAnyTable = bCopiedAnyTable || bInstanceTableCopied || bShadowTableCopied;
+        // コピーしたときは、古い表の行が新しい表の同じ位置にあるので、写しの行数を引き継ぐ
         if (bInstanceTableGrown)
         {
-            m_EntryCopyCount = 0;
+            if (!bInstanceTableCopied)
+            {
+                m_EntryCopyCount = 0;
+            }
             m_EntryCopies.resize(m_InstanceTableCapacity);
         }
         if (bShadowTableGrown)
         {
-            m_ShadowRowCopyCount = 0;
+            if (!bShadowTableCopied)
+            {
+                m_ShadowRowCopyCount = 0;
+            }
             m_ShadowRowCopies.resize(m_InstanceTableCapacity);
         }
 
@@ -3289,13 +3333,15 @@ namespace NorvesLib::Core::Rendering
         // 3. メッシュの表: 中身が変わったら全部を書く（メッシュの数は少ない）
         // ----------------------------------------
         bool bMeshTableGrown = false;
+        bool bMeshTableCopied = false;
         if (!EnsureResidentTable(m_MeshTableBuffer, m_MeshTableCapacity, meshCount, 16u, sizeof(GPUMegaMesh),
-                                 "MegaGeometry_MeshTable", bMeshTableGrown))
+                                 "MegaGeometry_MeshTable", commandList, bMeshTableGrown, bMeshTableCopied))
         {
             invalidateCopies();
             return false;
         }
-        const bool bMeshesChanged = bMeshTableGrown || !m_bMeshCopiesValid || m_MeshCopies.size() != tables.Meshes.size() ||
+        bCopiedAnyTable = bCopiedAnyTable || bMeshTableCopied;
+        const bool bMeshesChanged = (bMeshTableGrown && !bMeshTableCopied) || !m_bMeshCopiesValid || m_MeshCopies.size() != tables.Meshes.size() ||
                                     (meshCount > 0 &&
                                      std::memcmp(m_MeshCopies.data(), tables.Meshes.data(), meshCount * sizeof(GPUMegaMesh)) != 0);
         const uint32_t meshRecords = bMeshesChanged ? meshCount : 0u;
@@ -3330,8 +3376,16 @@ namespace NorvesLib::Core::Rendering
                              : 0u;
         const uint64_t tableRegionOffsetWords = (rowRegionWords + RegionAlignWords - 1u) / RegionAlignWords * RegionAlignWords;
         const uint64_t uploadBytes = (rowRegionWords + tableRegionWords) * sizeof(uint32_t);
+        if (bCopiedAnyTable)
+        {
+            ++m_SceneUploadStats.Grows;
+        }
         if (rowRegionWords == 0 && tableRegionWords == 0)
         {
+            if (bCopiedAnyTable)
+            {
+                RecordSceneTableCheck(slot, commandList, entryCount, meshCount);
+            }
             NoteSceneUpload(pageTableBytes, 0u, 0u, 0u, 0u, pageTableBytes);
             return true;
         }
@@ -3467,6 +3521,10 @@ namespace NorvesLib::Core::Rendering
         {
             commandList->BufferBarrier(table, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::GenericRead);
         }
+        if (bCopiedAnyTable)
+        {
+            RecordSceneTableCheck(slot, commandList, entryCount, meshCount);
+        }
 
         NoteSceneUpload(uploadBytes + pageTableBytes, rowCount, entryRecords, shadowRecords, meshRecords, pageTableBytes);
         return true;
@@ -3508,14 +3566,16 @@ namespace NorvesLib::Core::Rendering
                                                  "インスタンスと一致しません（変わった席の数え漏れ）",
                              mismatches, m_Instances.size());
         }
-        stats.Mismatches = mismatches;
+        // 表を広げた後の GPU の表の読み戻しの照合（窓の間に食い違った行）も、数え漏れと同じ食い違いとして数える
+        stats.Mismatches = mismatches + stats.GpuMismatches;
 #endif
 
-        // bytes は、この更新で常駐の表とページの表へ書いたバイト数。インスタンスも常駐も変わらない更新は 0
+        // bytes は、この更新で常駐の表とページの表へ書いたバイト数。インスタンスも常駐も変わらない更新は 0。
+        // grows は表を広げて古い表をコピーした更新の数、gpu_checks はその後の読み戻しを照合した数（窓の間）
         NORVES_LOG_INFO("MegaGeometryPass",
                         "MEGA_SCENE_UPLOAD bytes=%llu rows=%u entries=%u shadows=%u meshes=%u page_bytes=%llu "
                         "updates=%u zero_updates=%u window_bytes=%llu slot_capacity=%u instance_capacity=%u "
-                        "mismatch=%u",
+                        "grows=%u gpu_checks=%u gpu_mismatch=%u mismatch=%u",
                         static_cast<unsigned long long>(bytes),
                         rows,
                         entries,
@@ -3527,11 +3587,193 @@ namespace NorvesLib::Core::Rendering
                         static_cast<unsigned long long>(stats.WindowBytes),
                         m_SlotTableCapacity,
                         m_InstanceTableCapacity,
+                        stats.Grows,
+                        stats.GpuChecks,
+                        stats.GpuMismatches,
                         stats.Mismatches);
         stats.bLoggedOnce = true;
         stats.Updates = 0;
         stats.ZeroUpdates = 0;
         stats.WindowBytes = 0;
+        stats.Grows = 0;
+        stats.GpuChecks = 0;
+        stats.GpuMismatches = 0;
+    }
+
+    void MegaGeometryPass::RecordSceneTableCheck(FrameSlot &slot, RHI::ICommandList *commandList, uint32_t entryCount,
+                                                 uint32_t meshCount)
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        // 表ごとに先頭のこの行数までを見る（席が非常に多いシーンで、読み戻しと写しが大きくなりすぎないように）
+        constexpr uint32_t SceneCheckMaxRows = 16384u;
+        if (!m_Device || !commandList || !m_SlotTableBuffer || !m_InstanceTableBuffer || !m_ShadowTableBuffer ||
+            !m_MeshTableBuffer)
+        {
+            return;
+        }
+        const uint32_t slotRows = std::min(m_SlotTableCapacity, SceneCheckMaxRows);
+        const uint32_t entryRows = std::min(entryCount, SceneCheckMaxRows);
+        const uint32_t meshRows = std::min(meshCount, SceneCheckMaxRows);
+        const uint64_t slotBytes = static_cast<uint64_t>(slotRows) * sizeof(GPUMegaSlotRow);
+        const uint64_t instanceBytes = static_cast<uint64_t>(entryRows) * sizeof(GPUMegaInstance);
+        const uint64_t shadowBytes = static_cast<uint64_t>(entryRows) * sizeof(MegaGeometryShadowInstance);
+        const uint64_t meshBytes = static_cast<uint64_t>(meshRows) * sizeof(GPUMegaMesh);
+        const uint64_t totalBytes = slotBytes + instanceBytes + shadowBytes + meshBytes;
+        if (totalBytes == 0)
+        {
+            return;
+        }
+        if (!slot.SceneCheckReadback || slot.SceneCheckCapacity < totalBytes)
+        {
+            RHI::BufferDesc desc(totalBytes, RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst, true,
+                                 "MegaGeometry_SceneCheckReadback");
+            slot.SceneCheckReadback = m_Device->CreateBuffer(desc);
+            slot.SceneCheckCapacity = slot.SceneCheckReadback ? totalBytes : 0u;
+            if (!slot.SceneCheckReadback)
+            {
+                return;
+            }
+        }
+
+        // 期待する中身: 席の表は写し（GPU の表にある行だけ照合する）、描く順の表は写しの出所と席の行から
+        // mega_scene_scatter.comp と同じ並び（席の行 8 語 + (メッシュの表の番号, 最初のワークグループ, 「見えた」印の先頭, 0)）
+        slot.SceneCheckExpected.assign(static_cast<size_t>(totalBytes), static_cast<uint8_t>(0));
+        slot.SceneCheckSlotMask.assign(slotRows, static_cast<uint8_t>(0));
+        uint8_t *expected = slot.SceneCheckExpected.data();
+        for (uint32_t row = 0; row < slotRows && row < m_SlotRowStates.size(); ++row)
+        {
+            if (m_SlotRowStates[row] == 1u)
+            {
+                slot.SceneCheckSlotMask[row] = 1u;
+                std::memcpy(expected + row * sizeof(GPUMegaSlotRow), &m_SlotRowCopies[row], sizeof(GPUMegaSlotRow));
+            }
+        }
+        expected += slotBytes;
+        for (uint32_t row = 0; row < entryRows; ++row)
+        {
+            const GPUMegaEntry &entry = m_EntryCopies[row];
+            uint32_t words[sizeof(GPUMegaInstance) / sizeof(uint32_t)] = {};
+            if (entry.Slot < m_SlotRowCopies.size())
+            {
+                std::memcpy(words, &m_SlotRowCopies[entry.Slot], sizeof(GPUMegaSlotRow));
+            }
+            words[32] = entry.MeshIndex;
+            words[33] = entry.FirstGroup;
+            words[34] = entry.VisibleOffset;
+            std::memcpy(expected + row * sizeof(GPUMegaInstance), words, sizeof(GPUMegaInstance));
+        }
+        expected += instanceBytes;
+        if (entryRows > 0)
+        {
+            std::memcpy(expected, m_ShadowRowCopies.data(), shadowBytes);
+        }
+        expected += shadowBytes;
+        if (meshRows > 0)
+        {
+            std::memcpy(expected, m_MeshCopies.data(), meshBytes);
+        }
+
+        // 常駐の表は読み取りの状態（GenericRead はコピー元を含む）。読み戻しはホストが前に読んだ後
+        commandList->BufferBarrier(slot.SceneCheckReadback, RHI::ResourceState::HostRead, RHI::ResourceState::CopyDest);
+        uint64_t offset = 0;
+        const auto copyTable = [&](const RHI::BufferPtr &table, uint64_t bytes) -> void
+        {
+            if (bytes > 0)
+            {
+                commandList->CopyBuffer(table, slot.SceneCheckReadback, bytes, 0, offset);
+            }
+            offset += bytes;
+        };
+        copyTable(m_SlotTableBuffer, slotBytes);
+        copyTable(m_InstanceTableBuffer, instanceBytes);
+        copyTable(m_ShadowTableBuffer, shadowBytes);
+        copyTable(m_MeshTableBuffer, meshBytes);
+        commandList->BufferBarrier(slot.SceneCheckReadback, RHI::ResourceState::CopyDest, RHI::ResourceState::HostRead);
+        slot.SceneCheckSlotRows = slotRows;
+        slot.SceneCheckEntryRows = entryRows;
+        slot.SceneCheckMeshRows = meshRows;
+        slot.bSceneCheckPending = true;
+#else
+        (void)slot;
+        (void)commandList;
+        (void)entryCount;
+        (void)meshCount;
+#endif
+    }
+
+    void MegaGeometryPass::ResolveSceneTableCheck(FrameSlot &slot)
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        if (!slot.bSceneCheckPending)
+        {
+            return;
+        }
+        slot.bSceneCheckPending = false;
+        const uint64_t slotBytes = static_cast<uint64_t>(slot.SceneCheckSlotRows) * sizeof(GPUMegaSlotRow);
+        const uint64_t instanceBytes = static_cast<uint64_t>(slot.SceneCheckEntryRows) * sizeof(GPUMegaInstance);
+        const uint64_t shadowBytes = static_cast<uint64_t>(slot.SceneCheckEntryRows) * sizeof(MegaGeometryShadowInstance);
+        const uint64_t meshBytes = static_cast<uint64_t>(slot.SceneCheckMeshRows) * sizeof(GPUMegaMesh);
+        const uint64_t totalBytes = slotBytes + instanceBytes + shadowBytes + meshBytes;
+        if (!slot.SceneCheckReadback || totalBytes == 0 || slot.SceneCheckExpected.size() < totalBytes)
+        {
+            return;
+        }
+        const uint8_t *mapped = static_cast<const uint8_t *>(slot.SceneCheckReadback->Map(0, totalBytes));
+        if (!mapped)
+        {
+            return;
+        }
+        const uint8_t *expected = slot.SceneCheckExpected.data();
+        uint32_t slotMismatches = 0;
+        for (uint32_t row = 0; row < slot.SceneCheckSlotRows; ++row)
+        {
+            const uint64_t at = static_cast<uint64_t>(row) * sizeof(GPUMegaSlotRow);
+            if (slot.SceneCheckSlotMask[row] != 0u && std::memcmp(mapped + at, expected + at, sizeof(GPUMegaSlotRow)) != 0)
+            {
+                ++slotMismatches;
+            }
+        }
+        const auto countRows = [&](uint64_t base, uint32_t rows, uint64_t rowBytes) -> uint32_t
+        {
+            uint32_t count = 0;
+            for (uint32_t row = 0; row < rows; ++row)
+            {
+                const uint64_t at = base + static_cast<uint64_t>(row) * rowBytes;
+                if (std::memcmp(mapped + at, expected + at, static_cast<size_t>(rowBytes)) != 0)
+                {
+                    ++count;
+                }
+            }
+            return count;
+        };
+        const uint32_t entryMismatches = countRows(slotBytes, slot.SceneCheckEntryRows, sizeof(GPUMegaInstance));
+        const uint32_t shadowMismatches =
+            countRows(slotBytes + instanceBytes, slot.SceneCheckEntryRows, sizeof(MegaGeometryShadowInstance));
+        const uint32_t meshMismatches =
+            countRows(slotBytes + instanceBytes + shadowBytes, slot.SceneCheckMeshRows, sizeof(GPUMegaMesh));
+        slot.SceneCheckReadback->Unmap();
+
+        const uint32_t mismatches = slotMismatches + entryMismatches + shadowMismatches + meshMismatches;
+        ++m_SceneUploadStats.GpuChecks;
+        m_SceneUploadStats.GpuMismatches += mismatches;
+        if (mismatches > 0)
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass",
+                             "MEGA_SCENE_GROW_CHECK slot_rows=%u entry_rows=%u mesh_rows=%u slot_mismatch=%u "
+                             "entry_mismatch=%u shadow_mismatch=%u mesh_mismatch=%u mismatch=%u "
+                             "広げた常駐の表の中身が写しと一致しません",
+                             slot.SceneCheckSlotRows, slot.SceneCheckEntryRows, slot.SceneCheckMeshRows, slotMismatches,
+                             entryMismatches, shadowMismatches, meshMismatches, mismatches);
+        }
+        else
+        {
+            NORVES_LOG_INFO("MegaGeometryPass",
+                            "MEGA_SCENE_GROW_CHECK slot_rows=%u entry_rows=%u mesh_rows=%u mismatch=0",
+                            slot.SceneCheckSlotRows, slot.SceneCheckEntryRows, slot.SceneCheckMeshRows);
+        }
+#else
+        (void)slot;
+#endif
     }
 
     bool MegaGeometryPass::EnsureFrameSlot(FrameSlot &slot,

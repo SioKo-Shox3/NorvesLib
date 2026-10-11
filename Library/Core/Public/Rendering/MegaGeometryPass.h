@@ -580,6 +580,18 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr SceneStaging;
             uint64_t SceneStagingCapacity = 0; // バイト数
             RHI::DescriptorSetPtr SceneScatterDescriptorSet[2];
+            // この組を使った記録のメッシュの表が指すメッシュの区画（頂点・インデックス・クラスタ・BVH）の持ち主。
+            // 組を次に使うとき（その記録の提出の GPU の仕事が終わった後）まで保ち、区画を空きへ戻さない
+            Container::VariableArray<Container::TSharedPtr<void>> MeshRegionOwners;
+            // 開発ビルドの検査: 表を広げた更新の後に読み戻した常駐の表と、そのときの写し（組を次に使うときに照合する）
+            RHI::BufferPtr SceneCheckReadback;
+            uint64_t SceneCheckCapacity = 0; // バイト数
+            bool bSceneCheckPending = false;
+            uint32_t SceneCheckSlotRows = 0;  // 席の表の先頭から照合する行の数
+            uint32_t SceneCheckEntryRows = 0; // 描く順の表・影の表の先頭から照合する行の数
+            uint32_t SceneCheckMeshRows = 0;  // メッシュの表の先頭から照合する行の数
+            Container::VariableArray<uint8_t> SceneCheckExpected; // 読み戻しと同じ並びの期待するバイト列
+            Container::VariableArray<uint8_t> SceneCheckSlotMask; // 席の行ごとに照合するか（GPU の表にある行だけ 1）
             RHI::BufferPtr SectionBuffer;  // 区間の表（uvec2: コマンドの先頭・最大数。host-visible）
             uint32_t SectionCapacity = 0;  // 要素数
             // ページの表（GeometryPageTable::Entry の並び。host-visible）。このフレームの常駐を固定して、
@@ -603,12 +615,16 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 常駐の表（device-local）を、required 個の要素を収める大きさにする
          *
-         * 足りないときだけ作り直し、古いバッファは m_RetiredBuffers へ回す（前のフレームの GPU がまだ読んでいるかもしれない）。
-         * @param bOutGrown 作り直したら true（新しいバッファは中身を持たない）
+         * 足りないときだけ作り直す。古いバッファがあれば、その中身を新しいバッファの先頭へ GPU でコピーする記録を
+         * commandList へ積み（同じキューの前のフレームの書き込みの後、読み手の前）、古いバッファは m_RetiredBuffers へ回す
+         * （前のフレームの GPU がまだ読んでいるかもしれない）。新しいバッファは読み取りの状態（GenericRead）で返す。
+         * @param bOutGrown 作り直したら true
+         * @param bOutCopied 古いバッファの中身をコピーしたら true（false で作り直したなら、新しいバッファは中身を持たない）
          * @return false ならバッファを作れなかった
          */
         bool EnsureResidentTable(RHI::BufferPtr &buffer, uint32_t &capacity, uint32_t required, uint32_t minimumCapacity,
-                                 uint64_t elementBytes, const char *debugName, bool &bOutGrown);
+                                 uint64_t elementBytes, const char *debugName, RHI::ICommandList *commandList,
+                                 bool &bOutGrown, bool &bOutCopied);
 
         /** @brief 「見えた」ビットの区画を要求するインスタンス1つ分 */
         struct VisibilityRequest
@@ -655,6 +671,8 @@ namespace NorvesLib::Core::Rendering
             // 描く順の表の行の出所（GPU が席の表から MegaInstanceRow を組む）
             Container::VariableArray<GPUMegaEntry> Entries;
             Container::VariableArray<GPUMegaMesh> Meshes;
+            // メッシュの表の行と同じ並びの、メッシュの区画の持ち主（MegaMeshGPUData::RegionOwner）
+            Container::VariableArray<Container::TSharedPtr<void>> MeshOwners;
             // 「見えた」ビットの区画の要求（インスタンスの表と同じ並び）
             Container::VariableArray<VisibilityRequest> VisibilityRequests;
             // 影の表（インスタンスの表と同じ並び）。影を落とすインスタンスだけが、影の判定のワークグループを持つ
@@ -708,6 +726,17 @@ namespace NorvesLib::Core::Rendering
          */
         bool UpdateResidentSceneTables(FrameSlot &slot, const SceneTables &tables, RHI::ICommandList *commandList,
                                        uint64_t pageTableBytes);
+
+        /**
+         * @brief 開発ビルドの検査: 表を広げた更新の後の常駐の表を、この組の読み戻しのバッファへコピーする記録を積む
+         *
+         * そのときの写し（GPU の表にあるはずの中身）を組に覚え、組を次に使うときに ResolveSceneTableCheck が照合する。
+         * 表ごとに先頭の SceneCheckMaxRows 行までを見る。
+         */
+        void RecordSceneTableCheck(FrameSlot &slot, RHI::ICommandList *commandList, uint32_t entryCount, uint32_t meshCount);
+
+        /** @brief 開発ビルドの検査: この組の読み戻しを覚えた写しと照合し、食い違った行を MEGA_SCENE_GROW_CHECK に出す */
+        void ResolveSceneTableCheck(FrameSlot &slot);
 
         /** @brief VSM の投影物のカリングの入力を、常駐の表とこのフレームのページの表から作る */
         void PublishShadowCasterInputs(const FrameSlot &slot, SceneTables &tables);
@@ -949,7 +978,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_MeshTableBuffer;
         uint32_t m_MeshTableCapacity = 0;
         // 常駐の表の中身の写し（CPU）。散在書き込みは写しと違う行だけを送る。席の行の状態は 0 = 中身なし、
-        // 1 = GPU の表にある、2 = 中身は覚えているが GPU の表に無い（席の表を作り直した後。送り直すが変わったとは見なさない）
+        // 1 = GPU の表にある、2 = 中身は覚えているが GPU の表に無い（更新に失敗した後。送り直すが変わったとは見なさない）。
+        // 表を広げるときは古い表の中身を GPU でコピーするので、状態はそのまま引き継ぐ
         Container::VariableArray<GPUMegaSlotRow> m_SlotRowCopies;
         Container::VariableArray<uint8_t> m_SlotRowStates;
         // 席の行の中身が変わった更新の番号（その更新で、席を指す描く順の行を組み直す）
@@ -976,6 +1006,10 @@ namespace NorvesLib::Core::Rendering
             uint32_t ZeroUpdates = 0;
             uint64_t WindowBytes = 0;
             uint32_t Mismatches = 0;
+            // 表を広げた更新の、GPU の表の読み戻しの照合（窓の間の合計）
+            uint32_t Grows = 0;
+            uint32_t GpuChecks = 0;
+            uint32_t GpuMismatches = 0;
             bool bLoggedOnce = false;
         };
         SceneUploadStats m_SceneUploadStats;

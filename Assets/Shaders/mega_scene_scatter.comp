@@ -1,0 +1,120 @@
+﻿#version 460
+
+// ========================================
+// MegaGeometry の常駐の表へ、このフレームの差分を書く（MegaGeometryPass::UpdateResidentSceneTables）
+//
+// 表はどれも device-local で、フレームをまたいで残る。ホストは変わった行だけを staging（記録の列）へ書き、
+// このシェーダーが散在書き込みする。値は uvec4 のまま写す（浮動小数の変換をしない）。
+//
+// 段 0（header.y == 0）: 席の表（席ごと 128 B: 変換・前の変換）へ、変わった席の行を写す。
+//   記録 1 件 = 9 語（uvec4）: [0].x = 席の番号, [1..4] = 変換, [5..8] = 前の変換
+// 段 1（header.y == 1）: 描く順の表（Common/MegaInstanceTable.glsl の MegaInstanceRow。144 B）を席の表から組み、
+//   影の表（48 B）とメッシュの表（64 B）の変わった行を写す。段 0 の書き込みの後（バリアを挟んで）に走る。
+//   描く順の記録 1 件 = 2 語: [0] = (描く順の番号, 席の番号, メッシュの表の番号, 最初のワークグループ), [1].x = 「見えた」印の先頭
+//   影の記録 1 件 = 4 語: [0].x = 描く順の番号, [1..3] = 影の表の行
+//   メッシュの記録 1 件 = 5 語: [0].x = メッシュの表の番号, [1..4] = メッシュの表の行
+//   header.x = 描く順の記録の数, header.z = 影の記録の数, header.w = メッシュの記録の数。記録はこの順に続けて並ぶ
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// 記録の列（staging。ホストが書く）。header.x = 件数, header.y = 段
+layout(std430, set = 0, binding = 0) readonly buffer SceneScatterRecords
+{
+    uvec4 header;
+    uvec4 recordWords[];
+};
+
+// 席の表（席ごと 8 語）
+layout(std430, set = 0, binding = 1) buffer SceneSlotRows
+{
+    uvec4 slotWords[];
+};
+
+// 描く順の表（MegaInstanceRow。1 行 9 語）
+layout(std430, set = 0, binding = 2) buffer SceneInstanceRows
+{
+    uvec4 instanceWords[];
+};
+
+// 影の表（MegaGeometryShadowInstance。1 行 3 語）
+layout(std430, set = 0, binding = 3) buffer SceneShadowRows
+{
+    uvec4 shadowWords[];
+};
+
+// メッシュの表（MegaMeshEntry。1 行 4 語）
+layout(std430, set = 0, binding = 4) buffer SceneMeshRows
+{
+    uvec4 meshWords[];
+};
+
+const uint SlotRowWords = 8u;
+const uint InstanceRowWords = 9u;
+const uint ShadowRowWords = 3u;
+const uint MeshRowWords = 4u;
+
+void main()
+{
+    // 記録の通し番号（dispatch は x 方向の上限を避けて 2 次元で出す）
+    const uint flatGroup = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    uint index = flatGroup * 64u + gl_LocalInvocationID.x;
+
+    if (header.y == 0u)
+    {
+        if (index >= header.x)
+        {
+            return;
+        }
+        const uint base = index * (1u + SlotRowWords);
+        const uint slot = recordWords[base].x;
+        for (uint word = 0u; word < SlotRowWords; ++word)
+        {
+            slotWords[slot * SlotRowWords + word] = recordWords[base + 1u + word];
+        }
+        return;
+    }
+
+    const uint entryCount = header.x;
+    const uint shadowCount = header.z;
+    const uint meshCount = header.w;
+
+    if (index < entryCount)
+    {
+        const uint base = index * 2u;
+        const uvec4 entry = recordWords[base];
+        const uint visibleOffset = recordWords[base + 1u].x;
+        const uint dense = entry.x;
+        const uint slot = entry.y;
+        for (uint word = 0u; word < SlotRowWords; ++word)
+        {
+            instanceWords[dense * InstanceRowWords + word] = slotWords[slot * SlotRowWords + word];
+        }
+        instanceWords[dense * InstanceRowWords + SlotRowWords] = uvec4(entry.z, entry.w, visibleOffset, 0u);
+        return;
+    }
+    index -= entryCount;
+
+    const uint shadowBase = entryCount * 2u;
+    if (index < shadowCount)
+    {
+        const uint base = shadowBase + index * (1u + ShadowRowWords);
+        const uint dense = recordWords[base].x;
+        for (uint word = 0u; word < ShadowRowWords; ++word)
+        {
+            shadowWords[dense * ShadowRowWords + word] = recordWords[base + 1u + word];
+        }
+        return;
+    }
+    index -= shadowCount;
+
+    if (index < meshCount)
+    {
+        const uint base = shadowBase + shadowCount * (1u + ShadowRowWords) + index * (1u + MeshRowWords);
+        const uint meshIndex = recordWords[base].x;
+        for (uint word = 0u; word < MeshRowWords; ++word)
+        {
+            meshWords[meshIndex * MeshRowWords + word] = recordWords[base + 1u + word];
+        }
+    }
+}

@@ -2488,3 +2488,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-MEGA-GPU-SCENE-PREP-9.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0（warning は libwebsockets の `MSB8065` 1 件だけ）。
   - `-10.txt`: バナナ 1 万本 overview の `SCN-MEGA-BASE` との比較が `mean_luminance_difference=0`・`psnr_db=68.642`・`mismatched_pixel_ratio=0.000239` で `CAPTURE_SCENE result=pass`、EXIT=0。`overview.Game.log` で `cluster_cull.comp` がソースからコンパイルされて読み込まれ、ERROR 0。
 - Next: SCN-MEGA-GPU-SCENE-SCATTER。
+
+### SCN-MEGA-GPU-SCENE-GROW（2026-10-12、反復 12・run 20261012-030203）
+
+- Done:
+  - `MegaGeometryPass::EnsureResidentTable` が常駐の表（席・描く順・影・メッシュ）を広げるとき、古い表の中身を新しい表の先頭へ `CopyBuffer` で写す記録を前段のコマンドへ積む（古い表 GenericRead→CopySource、新しい表 CopyDest→GenericRead）。古い表は従来どおり `m_RetiredBuffers` へ回す。表のバッファの用途に `TransferSrc`・`TransferDst` を足した。コピーしたときは写しの状態（席の行の状態 1・描く順と影の写しの行数・メッシュの写し）を引き継ぎ、行を送り直さない。コピーできなかった作り直し（初回）だけが従来の送り直しになる。`VRAM_LEDGER MegaGeometry_*` に `copied_bytes=` を足した。
+  - メッシュの表が指す資源の寿命: `SceneTables::MeshOwners`（メッシュの表の行と同じ並びの `MegaMeshGPUData::RegionOwner`）を `BuildSceneTables` で集め、`UpdateResidentSceneTables` がフレームスロットの `MeshRegionOwners` へ写す。スロットは FrameUseRing で、その記録の提出の GPU の仕事が終わってから次に使われるので、頂点・インデックス・クラスタ・BVH（どれもメッシュの区画の中）は最後に使った提出が終わるまで空きへ戻らない（替えた古い持ち主の区画は GpuRetireQueue を通って戻る）。ページの表はフレームスロットごとのバッファで、外したページの区画は従来どおり GpuRetireQueue が提出の完了まで保つ。
+  - 開発ビルドの検査: 表を広げてコピーした更新の後、常駐の 4 つの表（各先頭 16384 行まで）をスロットの読み戻しへコピーし、そのときの写しを覚えて、スロットを次に使うときに照合する（`MEGA_SCENE_GROW_CHECK ... mismatch=`）。食い違いは `MEGA_SCENE_UPLOAD` の `gpu_mismatch=` と `mismatch=` に足す。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-GPU-SCENE-GROW-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `-2.txt`・`-2-log.txt`: mega-stress 5000 個・区画 64 m の撮影が `CAPTURE_SCENE result=pass`（mean_luminance 157.641。SCATTER の同じ撮影と同じ）、EXIT=0。描く順と影の表が 1024→2048→4096→8192 と GPU コピーで広がり（copied_bytes 147456・294912・589824 ほか）、`MEGA_SCENE_GROW_CHECK` 3 回とも `mismatch=0`、`MEGA_SCENE_UPLOAD` は `gpu_mismatch=0 mismatch=0`、区画の解放 2 回、ERROR 0。
+  - `-3.txt`: mega-bananas・mega-stress の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0（Game.log の `MEGA_SCENE_UPLOAD` 12 件すべて `mismatch=0`、ERROR 0 を開いて確認。Game.log は後の補助の周回で上書き）。
+  - `-4-slotgrow.txt`（補助）: 8150 個・区画の周期 0.2 秒で、区画の読み込み 4 回・解放 8 回の後も `MEGA_SCENE_GROW_CHECK` 2 回と `MEGA_SCENE_UPLOAD` が `mismatch=0`、ERROR 0（`-2-log.txt` の後半）。
+  - `-5-slotgrow-cycle.txt`・`-6-slotgrow-log.txt`（補助）: mega-stress → mega-bananas の周回 3 周が pass、EXIT=0。席の表が 2048→16384 と GPU コピー（262144 B）で広がり、`MEGA_SCENE_GROW_CHECK` 4 回とも `mismatch=0`、ERROR 0。
+- Next: 残りの todo の最優先。
+- Notes: mega-stress は最初の更新で席がそろうので、ストリーミングだけでは席の表は広がらない（ECS が空いた席を使い回す）。席の表のコピーは、席の少ないシーンから多いシーンへ移る周回で確かめた。
+- Notes: `GetReadyMegaMeshGPUData` が返すのはストアのエントリへの生のポインタで、GameThread の `ReleaseModel`（シーンを出るとき）と RenderThread の記録が重なると CPU 側で無効になりうる（GPU の区画は保たれる）。この項目では変えていない。
+- Notes: 前の反復（SCATTER）は時間切れで「作業途中の保存」になり、`Assets/Shaders/mega_scene_scatter.comp` が追跡されていなかった。HEAD のコードが読むシェーダーなので、このコミットで追跡に加えた（中身は変えていない）。SCATTER の検証の記録は `verify-SCN-MEGA-GPU-SCENE-SCATTER-1〜5.txt`。
