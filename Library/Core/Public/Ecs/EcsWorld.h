@@ -39,6 +39,7 @@
 #include "Container/Containers.h"
 #include "Container/Span.h"
 #include "Ecs/EcsGpuSceneSlots.h"
+#include "Ecs/EcsMassWork.h"
 #include "Ecs/EcsTypes.h"
 #include "Memory/PoolAllocator.h"
 
@@ -236,6 +237,14 @@ namespace NorvesLib::Core::Ecs
          * @return 削除した行の数
          */
         uint32_t DestroyArchetypeRows(EcsArchetypeId archetype);
+
+        /**
+         * @brief アーキタイプの末尾のチャンクから、チャンクを丸ごと返しながら maxRows 行以上（全行が先に尽きればそこまで）を削除する
+         *
+         * DestroyArchetypeRows を予算で分けた版。少なくとも 1 チャンクを返す（maxRows が 0 でも）。行の扱いは DestroyArchetypeRows と同じ。
+         * @return 削除した行の数（フックの中からの呼び出し・不正なアーキタイプは 0）
+         */
+        uint32_t DestroyArchetypeTailChunks(EcsArchetypeId archetype, uint32_t maxRows);
 
         /**
          * @brief 1 行を作る（値は 0。initialValues があればその列だけ上書きする）
@@ -442,6 +451,18 @@ namespace NorvesLib::Core::Ecs
             return m_GpuSceneSlots;
         }
 
+        // ---- 予算で分けて進める大量の行の仕事（EcsMassWork.h） ----
+
+        [[nodiscard]] EcsMassWorkQueue &GetMassWork()
+        {
+            return m_MassWork;
+        }
+
+        [[nodiscard]] const EcsMassWorkQueue &GetMassWork() const
+        {
+            return m_MassWork;
+        }
+
         /// 席の列を持つ全行と席の表を突き合わせる（重複・未割り当て・表との食い違い・範囲の AABB の包含・規則の違反）
         [[nodiscard]] EcsGpuSceneSlotAudit AuditGpuSceneSlots() const;
 
@@ -565,6 +586,8 @@ namespace NorvesLib::Core::Ecs
         Container::VariableArray<uint32_t> m_FreeChunkGroups;
         EcsGpuSceneSlotTable m_GpuSceneSlots;
         Memory::PoolAllocator<false> m_ChunkPool;
+        /// 最後に置き、最初に消す（列が持つ仕事の後始末は、ほかの状態がまだある間に消える）
+        EcsMassWorkQueue m_MassWork;
     };
 
 }

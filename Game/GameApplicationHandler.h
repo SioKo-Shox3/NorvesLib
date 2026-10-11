@@ -245,6 +245,8 @@ namespace Game
         bool m_bStressStreamCellSet = false;
         /// --stress-stream-period=<秒> で指定された、区画を 1 つ出入りさせる周期
         float m_StressStreamPeriod = 1.0f;
+        /// --stress-batch-cells: mega-stress の区画の動かない Entity を区画ごとの散布 1 つにまとめる
+        bool m_bStressBatchCells = false;
         /// --open-scene-info（開発ビルドだけ）: バナナのシーンを情報表示を出した状態で始める
         bool m_bOpenSceneInfo = false;
         /// --scene-cycle-smoke=<id,...> の検査（ランチャーとシーンの間を周回して、資源が増えないことを確かめる）

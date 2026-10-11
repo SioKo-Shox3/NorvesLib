@@ -4,8 +4,10 @@
 #include "Core/Public/Asset/CookedMeshFormat.h"
 #include "Core/Public/Component/CameraComponent.h"
 #include "Core/Public/Component/MegaGeometryComponent.h"
+#include "Core/Public/Component/MegaGeometryScatterComponent.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Debug/DebugConfig.h"
+#include "Core/Public/Ecs/EcsWorld.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/GameMode/GameModeScope.h"
 #include "Core/Public/Logging/LogMacros.h"
@@ -119,7 +121,7 @@ namespace Game::GameModes
         float Yaw = 0.0f;
         /// 動く Entity のときの StressMovers::Items の添字。動かないなら -1
         int32_t MoverSlot = -1;
-        /// 読み込み中の Entity。解放中は nullptr
+        /// 読み込み中の Entity。解放中は nullptr（区画の散布にまとめた動かない Entity は、いつも nullptr）
         Entity *pEntity = nullptr;
     };
 
@@ -131,12 +133,21 @@ namespace Game::GameModes
         float CenterX = 0.0f;
         float CenterZ = 0.0f;
         bool bLoaded = true;
+        /// 区画の動かない Entity をまとめた散布の Entity（--stress-batch-cells のときだけ。解放中は nullptr）と、その行の数
+        Entity *pBatch = nullptr;
+        uint32_t BatchRows = 0;
     };
 
     struct StressStream
     {
         /// 種類ごとの MegaMesh（置き直しに使う。FinishAssembly の後も持ち続ける）
         TSharedPtr<StressAssembly> Assembly;
+        /// 区画の動かない Entity を、区画ごとの散布 1 つにまとめる（--stress-batch-cells）
+        bool bBatch = false;
+        /// 散布のメッシュの表（StressAssembly::Loads の添字の順。置けない種類は無効のハンドル）
+        VariableArray<MegaMeshHandle> MeshTable;
+        /// 読み込み中の区画の散布の数
+        uint32_t LiveBatches = 0;
         VariableArray<StressPlaced> Placed;
         VariableArray<StressStreamCell> Cells;
         /// 解放中の区画（解放した順。先頭から読み込み直す）
@@ -661,6 +672,8 @@ namespace Game::GameModes
             return last;
         }
 
+        uint32_t SpawnCellBatch(GameModeContext &ctx, StressStream &stream, uint32_t cellIndex);
+
         /// 置いた Entity を区画に分ける（升目の範囲を一辺 data.m_StreamCellMeters[m] の区画で区切る）。
         /// 区画の位置はフィールドの手前の左端を原点にした升目で決まり、Entity の置き方（番号 → 位置）は変えない
         void BuildStream(GameModeContext &ctx, const MegaStressData &data, StressStream &stream, uint32_t columns,
@@ -693,15 +706,78 @@ namespace Game::GameModes
             stream.WindowCells = std::min<uint32_t>(kStreamWindowCells, static_cast<uint32_t>(stream.Cells.size()));
             stream.MaxCycles = data.m_StreamMaxCycles;
             stream.LiveEntities = static_cast<uint32_t>(stream.Placed.size());
+            // 区画の動かない Entity を区画ごとの散布にまとめて置く（基準の数は置いた後に取る）
+            uint32_t batchRows = 0;
+            if (stream.bBatch)
+            {
+                for (uint32_t cellIndex = 0; cellIndex < static_cast<uint32_t>(stream.Cells.size()); ++cellIndex)
+                {
+                    batchRows += SpawnCellBatch(ctx, stream, cellIndex);
+                }
+            }
             stream.BaselineWorldObjects = ctx.WorldRef.GetObjectCount();
             stream.BaselineMaterials = ctx.RenderResourcesRef.Materials().GetCount();
             stream.BaselineMeshes = ctx.RenderResourcesRef.Meshes().GetCount();
             stream.BaselineModels = ctx.RenderResourcesRef.MegaGeometry().GetModelCount();
-            LOG_INFO_F("MEGA_STRESS_STREAM_SETUP cell_m=%.1f period=%.3f cells=%zu window=%u entities=%u world_objects=%zu "
-                       "materials=%zu meshes=%zu models=%zu",
+            LOG_INFO_F("MEGA_STRESS_STREAM_SETUP cell_m=%.1f period=%.3f cells=%zu window=%u entities=%u batch=%d batches=%u "
+                       "batch_rows=%u world_objects=%zu materials=%zu meshes=%zu models=%zu",
                        static_cast<double>(cell), static_cast<double>(data.m_StreamPeriod), stream.Cells.size(),
-                       stream.WindowCells, stream.LiveEntities, stream.BaselineWorldObjects, stream.BaselineMaterials,
-                       stream.BaselineMeshes, stream.BaselineModels);
+                       stream.WindowCells, stream.LiveEntities, stream.bBatch ? 1 : 0, stream.LiveBatches, batchRows,
+                       stream.BaselineWorldObjects, stream.BaselineMaterials, stream.BaselineMeshes, stream.BaselineModels);
+        }
+
+        /// 区画 1 つの動かない Entity を、散布 1 つ（Entity 1 つと軽い行）にまとめて置く。置いた行の数を返す。
+        /// 行の作成は仕事の列が予算で範囲ごとに進める（範囲の全行がそろってから描く）
+        uint32_t SpawnCellBatch(GameModeContext &ctx, StressStream &stream, uint32_t cellIndex)
+        {
+            StressStreamCell &cell = stream.Cells[cellIndex];
+            VariableArray<Component::MegaScatterInstance> instances;
+            instances.reserve(cell.Members.size());
+            for (const uint32_t member : cell.Members)
+            {
+                const StressPlaced &record = stream.Placed[member];
+                if (record.MoverSlot >= 0)
+                {
+                    continue;
+                }
+                // 1 つずつ置くときの Entity の変換（SpawnStressEntity）と同じ値を、散布の入力の局所の変換にする（散布の Entity は原点）
+                const StressMeshLoad &load = stream.Assembly->Loads[record.Kind];
+                Component::MegaScatterInstance instance;
+                instance.Position = Math::Vector3(record.X, load.BaseY, record.Z);
+                instance.Rotation = Math::Quaternion(Math::Vector3(0.0f, 1.0f, 0.0f), record.Yaw);
+                instance.Scale = Math::Vector3(load.BaseScale, load.BaseScale, load.BaseScale);
+                instance.MeshIndex = record.Kind;
+                instances.push_back(instance);
+            }
+            if (instances.empty())
+            {
+                return 0;
+            }
+            Entity *owner = ctx.ScopeRef.SpawnObject<Entity>();
+            if (owner == nullptr)
+            {
+                return 0;
+            }
+            auto *scatter = ctx.WorldRef.CreateComponent<Component::MegaGeometryScatterComponent>(owner);
+            if (scatter == nullptr)
+            {
+                ctx.ScopeRef.Untrack(owner);
+                ctx.WorldRef.RemoveObject(owner);
+                return 0;
+            }
+            scatter->SetMegaMeshHandles(Span<const MegaMeshHandle>(stream.MeshTable.data(), stream.MeshTable.size()));
+            scatter->SetCastShadow(true);
+            if (!scatter->SetInstances(Span<const Component::MegaScatterInstance>(instances.data(), instances.size())))
+            {
+                LOG_WARNING_F("mega-stress: 区画 %u の散布を作れませんでした", cellIndex);
+                ctx.ScopeRef.Untrack(owner);
+                ctx.WorldRef.RemoveObject(owner);
+                return 0;
+            }
+            cell.pBatch = owner;
+            cell.BatchRows = static_cast<uint32_t>(instances.size());
+            ++stream.LiveBatches;
+            return cell.BatchRows;
         }
 
         /// 区画 1 つの Entity を全部解放する。動く Entity の参照は外す
@@ -709,6 +785,15 @@ namespace Game::GameModes
         {
             StressStreamCell &cell = stream.Cells[cellIndex];
             uint32_t released = 0;
+            // 区画の散布は Entity ごと外す（proxy はすぐ取り下げ、行の削除は仕事の列が予算で進める）
+            if (cell.pBatch != nullptr)
+            {
+                ctx.ScopeRef.Untrack(cell.pBatch);
+                ctx.WorldRef.RemoveObject(cell.pBatch);
+                cell.pBatch = nullptr;
+                released += cell.BatchRows;
+                --stream.LiveBatches;
+            }
             for (const uint32_t member : cell.Members)
             {
                 StressPlaced &record = stream.Placed[member];
@@ -736,10 +821,15 @@ namespace Game::GameModes
             StressStreamCell &cell = stream.Cells[cellIndex];
             uint32_t created = 0;
             const float time = data.m_MovingStartTime + data.m_MovingElapsed;
+            if (stream.bBatch && cell.pBatch == nullptr)
+            {
+                created += SpawnCellBatch(ctx, stream, cellIndex);
+            }
             for (const uint32_t member : cell.Members)
             {
                 StressPlaced &record = stream.Placed[member];
-                if (record.pEntity != nullptr)
+                // 散布にまとめた動かない Entity は、1 つずつは置かない
+                if (record.pEntity != nullptr || (stream.bBatch && record.MoverSlot < 0))
                 {
                     continue;
                 }
@@ -804,15 +894,15 @@ namespace Game::GameModes
                 const uint32_t released = UnloadCell(ctx, data, stream, cellIndex);
                 stream.Unloaded.push_back(cellIndex);
                 stream.bReloading = stream.Unloaded.size() >= stream.WindowCells;
-                LOG_INFO_F("MEGA_STRESS_STREAM_STEP step=%u action=unload cell=%u entities=%u live=%u", stream.Steps,
-                           cellIndex, released, stream.LiveEntities);
+                LOG_INFO_F("MEGA_STRESS_STREAM_STEP step=%u action=unload cell=%u entities=%u live=%u batches=%u", stream.Steps,
+                           cellIndex, released, stream.LiveEntities, stream.LiveBatches);
                 return;
             }
             const uint32_t cellIndex = stream.Unloaded.front();
             stream.Unloaded.erase(stream.Unloaded.begin());
             const uint32_t created = LoadCell(ctx, data, stream, cellIndex);
-            LOG_INFO_F("MEGA_STRESS_STREAM_STEP step=%u action=load cell=%u entities=%u live=%u", stream.Steps, cellIndex,
-                       created, stream.LiveEntities);
+            LOG_INFO_F("MEGA_STRESS_STREAM_STEP step=%u action=load cell=%u entities=%u live=%u batches=%u", stream.Steps,
+                       cellIndex, created, stream.LiveEntities, stream.LiveBatches);
             if (stream.Unloaded.empty())
             {
                 stream.bReloading = false;
@@ -832,9 +922,9 @@ namespace Game::GameModes
             const bool bPass = stream.LiveEntities == static_cast<uint32_t>(stream.Placed.size()) &&
                                worldObjects == stream.BaselineWorldObjects && materials == stream.BaselineMaterials &&
                                meshes == stream.BaselineMeshes && models == stream.BaselineModels;
-            LOG_INFO_F("MEGA_STRESS_STREAM_CYCLE cycle=%u steps=%u live=%u expected=%zu world_objects=%zu baseline=%zu "
-                       "materials=%zu/%zu meshes=%zu/%zu models=%zu/%zu result=%s",
-                       stream.Cycles, stream.Steps, stream.LiveEntities, stream.Placed.size(), worldObjects,
+            LOG_INFO_F("MEGA_STRESS_STREAM_CYCLE cycle=%u steps=%u live=%u expected=%zu batches=%u world_objects=%zu "
+                       "baseline=%zu materials=%zu/%zu meshes=%zu/%zu models=%zu/%zu result=%s",
+                       stream.Cycles, stream.Steps, stream.LiveEntities, stream.Placed.size(), stream.LiveBatches, worldObjects,
                        stream.BaselineWorldObjects, materials, stream.BaselineMaterials, meshes, stream.BaselineMeshes,
                        models, stream.BaselineModels, bPass ? "pass" : "fail");
         }
@@ -859,6 +949,13 @@ namespace Game::GameModes
             StressMovers candidates;
             // 区画の読み込み・解放をするときだけ、置いた Entity を記録する（候補の順番 = 記録の順番）
             const bool bStreaming = data.m_StreamCellMeters > 0.0f;
+            // 区画の散布は区画を指定したときだけ。動かない Entity は 1 つずつ置かず、区画を作った後に区画ごとの散布で置く
+            const bool bBatch = bStreaming && data.m_bBatchCells;
+            if (data.m_bBatchCells && !bStreaming)
+            {
+                LOG_WARNING("mega-stress: --stress-batch-cells は --stress-stream-cell と一緒に指定してください"
+                            "（1 つずつの Entity で置きます）");
+            }
             auto stream = MakeShared<StressStream>();
             uint32_t placed = 0;
             uint32_t columns = 0;
@@ -883,8 +980,8 @@ namespace Game::GameModes
                     const float x = (static_cast<float>(column) - 0.5f * static_cast<float>(columns - 1)) * kCellMeters + jitterX;
                     const float z = kFieldNearZ + static_cast<float>(row) * kCellMeters + jitterZ;
                     StressMeshLoad &load = assembly.Loads[static_cast<size_t>(kind)];
-                    Entity *entity = SpawnStressEntity(ctx, load, x, z, yaw);
-                    if (entity != nullptr)
+                    Entity *entity = bBatch ? nullptr : SpawnStressEntity(ctx, load, x, z, yaw);
+                    if (entity != nullptr || bBatch)
                     {
                         ++load.PlacedCount;
                         ++placed;
@@ -937,6 +1034,19 @@ namespace Game::GameModes
                     }
                 }
             }
+            // 区画の散布のときは、動く Entity だけを 1 つずつ置く（置いた順 = 記録の順）
+            if (bBatch)
+            {
+                for (StressPlaced &record : stream->Placed)
+                {
+                    if (record.MoverSlot < 0)
+                    {
+                        continue;
+                    }
+                    record.pEntity = SpawnStressEntity(ctx, assembly.Loads[record.Kind], record.X, record.Z, record.Yaw);
+                    movers->Items[static_cast<size_t>(record.MoverSlot)].pEntity = record.pEntity;
+                }
+            }
 
             // 区間は材質とプールの塊が同じ Entity の集まりで、メッシュごとに 1 つ（Entity を 1 つ以上置いた種類の数）
             uint32_t sectionCount = 0;
@@ -948,8 +1058,8 @@ namespace Game::GameModes
                     LOG_INFO_F("MEGA_STRESS_KIND id=%s count=%u", load.Spec.Id.c_str(), load.PlacedCount);
                 }
             }
-            LOG_INFO_F("MEGA_STRESS_PLACED entities=%u requested=%u resources=%u sections=%u columns=%u rows=%u", placed,
-                       data.m_EntityCount, resourceCount, sectionCount, columns, rows);
+            LOG_INFO_F("MEGA_STRESS_PLACED entities=%u requested=%u resources=%u sections=%u columns=%u rows=%u batch_cells=%d",
+                       placed, data.m_EntityCount, resourceCount, sectionCount, columns, rows, bBatch ? 1 : 0);
             LOG_INFO_F("MEGA_STRESS_MOVING movers=%zu percent=%.3f start_time=%.3f", movers->Items.size(),
                        static_cast<double>(data.m_MovingPercent), static_cast<double>(data.m_MovingStartTime));
             if (!movers->Items.empty())
@@ -957,14 +1067,22 @@ namespace Game::GameModes
                 // 置いた直後の 1 フレーム目から動いた位置で描く
                 for (const StressMover &mover : movers->Items)
                 {
-                    ApplyMover(mover, data.m_MovingStartTime);
+                    if (mover.pEntity != nullptr)
+                    {
+                        ApplyMover(mover, data.m_MovingStartTime);
+                    }
                 }
                 data.m_pMovers = movers;
             }
             if (bStreaming && placed > 0)
             {
-                BuildStream(ctx, data, *stream, columns, rows);
                 stream->Assembly = data.m_pAssembly;
+                stream->bBatch = bBatch;
+                for (const StressMeshLoad &load : assembly.Loads)
+                {
+                    stream->MeshTable.push_back(load.bReady ? load.MegaMesh : MegaMeshHandle::Invalid());
+                }
+                BuildStream(ctx, data, *stream, columns, rows);
                 data.m_pStream = stream;
             }
             data.m_bEntitiesPlaced = true;
@@ -990,6 +1108,7 @@ namespace Game::GameModes
         LOG_INFO_F("mega-stress を開始します（Entity 数 %u）", data.m_EntityCount);
         data.m_TickCount = 0;
         data.m_bEntitiesPlaced = false;
+        data.m_bMassWorkSettled = false;
         data.m_pMovers.reset();
         data.m_pStream.reset();
         data.m_MovingElapsed = 0.0f;
@@ -1079,9 +1198,16 @@ namespace Game::GameModes
             }
         }
 
+        // 散布の行の作成が全範囲の公開まで進むのを待つ（一度そろえば、その後の区画の出し入れでは待たない）
+        if (data.m_bEntitiesPlaced && !data.m_bMassWorkSettled && !ctx.WorldRef.GetEcsWorld().GetMassWork().HasPendingWork())
+        {
+            data.m_bMassWorkSettled = true;
+        }
+
         // 台本を流し終えるまで、決定的な撮影を待たせる（撮影は台本の後のカメラで撮る）
         Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, Game::Scenes::kMegaStressSceneId,
                                           data.m_TickCount >= kReadyTickCount && data.m_bEntitiesPlaced &&
+                                              data.m_bMassWorkSettled &&
                                               !data.m_Rig.IsScriptRunning());
     }
 

@@ -248,6 +248,11 @@ namespace NorvesLib::Core::Ecs
 
     uint32_t EcsWorld::DestroyArchetypeRows(EcsArchetypeId archetypeId)
     {
+        return DestroyArchetypeTailChunks(archetypeId, 0xFFFFFFFFu);
+    }
+
+    uint32_t EcsWorld::DestroyArchetypeTailChunks(EcsArchetypeId archetypeId, uint32_t maxRows)
+    {
         if (m_HookDepth > 0 || archetypeId >= m_Archetypes.size())
         {
             return 0;
@@ -255,8 +260,9 @@ namespace NorvesLib::Core::Ecs
         uint32_t destroyed = 0;
         Archetype &archetype = m_Archetypes[archetypeId];
         // 後ろのチャンクから、チャンク内の全行のフックを呼んでから番号を空きへ戻し、チャンクを丸ごと返す。
-        // フックの中の構造変更は拒まれるので、呼んでいる間にチャンクの並びは変わらない
-        while (!archetype.Chunks.empty())
+        // フックの中の構造変更は拒まれるので、呼んでいる間にチャンクの並びは変わらない。
+        // maxRows に達したら止める（少なくとも 1 チャンクは返す）
+        while (!archetype.Chunks.empty() && (destroyed == 0 || destroyed < maxRows))
         {
             EcsChunk *chunk = archetype.Chunks.back();
             const EcsEntity *entities = chunk->GetEntities();

@@ -137,6 +137,8 @@ namespace Game::GameModes
         NorvesLib::Core::Container::TSharedPtr<BananasPendingMaterial> m_pFloorMaterial;
         bool m_bFloorReady = false;
         bool m_bBananasPlaced = false;
+        /// 置いた後に、散布の行の作成が全範囲の公開まで進んだ（撮影の準備の条件。一度立てたら戻さない）
+        bool m_bMassWorkSettled = false;
         /// 床以外（バナナ）を置けなかった（資産が無い・壊れている）。シーンの組み立ては済んだものとして続ける
         bool m_bBananasSkipped = false;
 

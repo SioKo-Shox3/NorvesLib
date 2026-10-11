@@ -1795,3 +1795,29 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 未対応（指摘 1）: 検査 ECS_RENDER_SYNC・RENDER_INVALIDATION の照合（`World::VerifyRenderSyncDelta` の `viewMega` と、全走査側の `scanStale` の MegaGeometry のループ）が散布の proxy を残留と数える。直す先の `Library/Core/Private/Object/World.cpp` がこのタスクの paths の外なので、`blocked/SCN-ECS-MASS-ROWS.md` に記録して止めた（paths に足せば `IsMegaScatterProxyKey` の proxy を飛ばす数行で直る）。status は doing のまま。
 - Next: SCN-ECS-MASS-ROWS（World.cpp を paths に足した後、指摘 1 を直して検査付きの起動と verify 2 本を通し直す）。
 - Notes: チャンクの組と `DestroyArchetypeRows` の ECS の単体テストは足していない（verify の周回のログで返却の数を確かめた）。
+
+### SCN-ECS-MASS-STREAM（2026-10-11、反復 11・run 20261011-144300）
+
+- 変更:
+  - `Ecs/EcsMassWork.h`（新規・ヘッダのみ）: 予算（1 フレームの行数と ms）と仕事の列 `EcsMassWorkQueue` を足した。仕事は範囲 1 つ・チャンク 1 つの単位で進め、列は全項目の Poll の後、先頭をずらしながら 1 単位ずつ回し、行数か時間を使い切ったら止める（1 フレームに少なくとも 1 単位）。`EcsWorld` が 1 つ持ち（`GetMassWork`）、World の LateTick の段の系 `LateTick.MassWork`（最初の散布が登録）が毎フレーム回す。
+  - `EcsWorld::DestroyArchetypeTailChunks(archetype, maxRows)`: 末尾のチャンクから丸ごと返しながら maxRows 行以上を消す（`DestroyArchetypeRows` はこれの全行版）。
+  - `MegaGeometryScatterComponent`: `SetInstances` は席の塊とチャンクの組を予約するだけにし、行は列が範囲ごとに作って、範囲の全行を作って書いてから公開する。所有者のワールドの変換（Poll で値の変化を見る）・メッシュ・影の変化は版を進め、範囲ごとに全行を書き直してから公開し直す（それまでは前の値で描く）。解放（破棄・入力の与え直し）は公開中の proxy をすぐ全部取り下げ（持ち主が直後にメッシュを返しても描画が読まない）、行の削除はチャンクごとに予算で分ける後始末の仕事を列に持たせる（Component が先に消えても続く）。メッシュは表で持ち、入力ごとに `MeshIndex` で選ぶ。
+  - 検査 `MASS_RANGES`: 公開中の範囲は全行が生きていて、描ける全行の proxy が行の値（席・メッシュ・変換・影）と一致し、描かない印のまま公開していない。公開していない範囲と解放した散布の鍵の proxy は無い。仕事のあったフレームと、無いフレームの 60 回に 1 回突き合わせる。
+  - Game: `--stress-batch-cells`（区画の動かない Entity を区画ごとの散布 1 つにまとめ、区画の解放・読み込みは散布の Entity ごと出し入れする。動く Entity は 1 つずつのまま）、`--mass-budget-rows`・`--mass-budget-ms`（予算）。mega-stress・mega-bananas は散布の作成が全範囲の公開まで進んでから SceneReady を出す（一度そろえば待たない）。ひと続きの仕事が終わると `MASS_WORK_SETTLED frames rows max_ms` をログに出す。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-ECS-MASS-STREAM-3.txt`: mega-stress（5000 個・動く 1%・64 m 区画・散布）の overview が `MASS_RANGES pass=10 fail=0`、`result=pass`、EXIT=0。PNG を開いて確認（散布前の撮影と同じ並び。カメラ手前の解放した区画は描かれない）。Game.log は `MEGA_STRESS_STREAM_SETUP cells=32 batches=32 batch_rows=4950`、最初の作成は `MASS_WORK_SETTLED frames=6 rows=4950`、ERROR は 0。
+  - `-4.txt`: mega-stress・mega-bananas の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。バナナ 1 万本は 4〜5 フレームで作成（1 フレーム最大 1.02 ms）、解放は 2 フレームで `destroyed=10000 chunks_returned=55 slots_live=0 blocks_in_use=0`、塊を使い直す（`blocks=1`）。ERROR は 0。
+  - （-1・-2 は同じ verify を、計測用のログを足す前のコードで通したもの）
+  - 解放と読み戻しの経路（verify の短い撮影では読み戻しに届かない）: 周期 0.05 秒で 300 フレーム撮った起動（`.harness/runs/scene-capture/SCN-ECS-MASS-STREAM/reload`）が load 188 回・unload 192 回で `MASS_RANGES pass=1238 fail=0`、`MEGA_STRESS_STREAM_CYCLE` は全周期 `result=pass`（席の表は slots=6208・範囲 97 で止まる）。
+- 計測（RelWithDebInfo・1920x1080・overview・300 フレーム・動く 1%・64 m 区画・周期 1 秒・散布）:
+  - 5 万個は描画側が GPU メモリ不足で落ちる（`.harness/runs/scene-capture/SCN-ECS-MASS-STREAM/measure-default`。`MEGA_BVH bvh_instances=48159 leaf_capacity=75146943 queue_entries=165171094` の後に RenderThread が「バッファメモリの割り当てに失敗」、`VRAM_BUDGET heap_budget_mb=11847 heap_usage_mb=14975`）。BVH の容量はインスタンスの数とメッシュで決まり（MegaGeometryPass.cpp の bvhLeafCapacity）、散布か 1 つずつの Entity かに依らない。落ちる前の作成は `MASS_WORK_SETTLED frames=39 rows=49500 max_ms=2.814`（325 区画）。
+  - 3 万個（200 区画・29,700 行）: 既定の予算（8192 行・1 ms）で gt median 2.424 ms・p95 3.935 ms（GPU median 51.4 ms・rt median 113.4 ms）。最初の作成は 22 フレーム・1 フレーム最大 2.044 ms、区画 1 つの出し入れは 1 フレーム・最大 0.416 ms、`Ecs.Sys.LateTick.MassWork` は median 0.014 ms・max 0.563 ms（`measure-30k-default`）。
+  - 同じ 3 万個を予算なし（`mass-budget-rows=10000000,mass-budget-ms=0`）: 最初の作成が 1 フレームで 18.412 ms。窓の gt median 1.749 ms・p95 2.9 ms（GPU median 37.4 ms。区画の出し入れは予算に掛からない大きさなので、窓の差は描画側のばらつき）（`measure-30k-unlimited`）。
+  - 予算の既定値: 1 フレーム 8192 行・1 ms（`Ecs::kDefaultMassRowsPerFrame`・`kDefaultMassMillisecondsPerFrame`）。行 1 本の作成は約 0.6 µs（29,700 行で 18.4 ms）なので、1 ms で約 1,600 行・64 m 区画（約 160 行）なら 1 フレームで済む。大きな散布の作成はフレームあたり 2 ms 程度に収まる（予算なしの 18 ms のスパイクを避ける）。8192 行は速い機械での上限。
+- Next: SCN-MEGA-MIXED-LOAD。
+- Notes:
+  - 5 万個の gt p95 は、描画の BVH のメモリ（paths の外）が 5 万個を載せられないため測れず、載る最大の 3 万個で測った。5 万個の計測は BVH のメモリを減らした後（SCN-MEGA-MEASURE-CPU など）で取り直す。
+  - `EcsMassWork.h` は Core の CMakeLists（paths の外）のヘッダの一覧に足していない（ヘッダのみなのでビルドには要らない）。
+  - 1 万本のバナナの作成が 4〜5 フレームに分かれたので、撮影は全範囲の公開を待ってから撮る（SceneReady の条件に足した）。100 万本では約 1 ms × 625 フレームかかる見込み。読み込み画面のように待つ場面で予算を広げるかは、MIXED-LOAD の計測で決める。
+  - 範囲の Active・可視の印と Component の有効・可視の切り替えは、従来どおり予算に掛けず、その場で範囲の行の数だけ公開・取り下げる。
+  - テストは足していない（列と散布の仕事の単体テストは計画に無い。verify の検査とログで確かめた）。

@@ -15,6 +15,9 @@
 // --stress-stream-cell=<m> で、一辺 m[m] の区画ごとに Entity を読み込み・解放する。--stress-stream-period=<秒> ごとに、
 // カメラに最も近い区画を 1 つ解放し、解放中の区画が上限（kStreamWindowCells）に達したら、解放した順に 1 つずつ読み込み直す
 // （解放した区画が全部戻ったところで MEGA_STRESS_STREAM_CYCLE に Entity の数の一致を出す）。
+// --stress-batch-cells を足すと、区画の動かない Entity を区画ごとに散布（MegaGeometryScatterComponent。Entity 1 つと軽い行）
+// 1 つにまとめて置き、区画の解放・読み込みは散布の Entity ごと出し入れする（動く Entity は 1 つずつの Entity のまま）。
+// 散布の行の作成・解放は EcsWorld の仕事の列が予算で範囲ごとに分けて進める（--mass-budget-rows・--mass-budget-ms）。
 // ---------------------------------------------------------------------------
 
 #include "Core/Public/Container/Containers.h"
@@ -88,6 +91,8 @@ namespace Game::GameModes
         float m_StreamPeriod = kDefaultStressStreamPeriod;
         /// 区画の周期を回す回数の上限（0 なら止めない。cycle smoke の中だけ kSmokeStreamCycles）
         uint32_t m_StreamMaxCycles = 0;
+        /// 区画の動かない Entity を区画ごとの散布 1 つにまとめる（--stress-batch-cells。区画の指定が要る）
+        bool m_bBatchCells = false;
         /// ポーズメニュー（非所有）。開いている間はカメラを動かさない。無いなら nullptr
         const Game::Pause::PauseMenu *m_pPauseMenu = nullptr;
         /// クック済みの資産を引く AssetSystem の窓口
@@ -106,6 +111,8 @@ namespace Game::GameModes
         /// 動きの経過時間[秒]（Entity を置いた後に deltaTime を積む）
         float m_MovingElapsed = 0.0f;
         bool m_bEntitiesPlaced = false;
+        /// 置いた後に、散布の行の作成が全範囲の公開まで進んだ（撮影の準備の条件。一度立てたら戻さない）
+        bool m_bMassWorkSettled = false;
     };
 
     class MegaStressRoutine

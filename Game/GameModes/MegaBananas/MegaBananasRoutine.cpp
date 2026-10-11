@@ -6,6 +6,7 @@
 #include "Core/Public/Component/MegaGeometryScatterComponent.h"
 #include "Core/Public/Component/MeshComponent.h"
 #include "Core/Public/Debug/DebugConfig.h"
+#include "Core/Public/Ecs/EcsWorld.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/GameMode/GameModeScope.h"
 #include "Core/Public/Input/InputRouter.h"
@@ -946,7 +947,7 @@ namespace Game::GameModes
                        "clusters=%u lod_levels=%u batches=%u scatter_rows=%u scatter_ranges=%u",
                        placed, pileCount, placed - pileCount, trianglesPerBanana,
                        static_cast<unsigned long long>(data.m_Info.SourceTriangleTotal), data.m_Info.MeshClusterCount,
-                       data.m_Info.MeshLodLevelCount, batches, scatter != nullptr ? scatter->GetRowCount() : 0u,
+                       data.m_Info.MeshLodLevelCount, batches, scatter != nullptr ? scatter->GetInstanceCount() : 0u,
                        scatter != nullptr ? scatter->GetRangeCount() : 0u);
 
             // 向きの検算: ローカル Y（長手）は水平、ローカル X（太さ）は縦になっているはず
@@ -1038,6 +1039,7 @@ namespace Game::GameModes
         data.m_TickCount = 0;
         data.m_bFloorReady = false;
         data.m_bBananasPlaced = false;
+        data.m_bMassWorkSettled = false;
         data.m_bBananasSkipped = false;
         data.m_Info = BananasInfo{};
         data.m_LastGpuLogTick = 0;
@@ -1130,7 +1132,13 @@ namespace Game::GameModes
             FinishBananaLoad(ctx, data);
         }
 
-        const bool bBananasDone = data.m_bBananasPlaced || data.m_bBananasSkipped;
+        // 散布の行は仕事の列が予算で範囲ごとに作る。全範囲の公開まで進むのを待つ（一度そろえば、その後は待たない）
+        if ((data.m_bBananasPlaced || data.m_bBananasSkipped) && !data.m_bMassWorkSettled &&
+            !ctx.WorldRef.GetEcsWorld().GetMassWork().HasPendingWork())
+        {
+            data.m_bMassWorkSettled = true;
+        }
+        const bool bBananasDone = (data.m_bBananasPlaced || data.m_bBananasSkipped) && data.m_bMassWorkSettled;
         // 台本を流し終えるまで、決定的な撮影を待たせる（撮影は台本の後のカメラで撮る）
         Game::Scenes::UpdateSceneAssembly(ctx.EngineRef, Game::Scenes::kMegaBananasSceneId,
                                           data.m_TickCount >= kReadyTickCount && bBananasDone && data.m_bFloorReady &&

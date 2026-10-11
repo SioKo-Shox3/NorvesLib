@@ -6,6 +6,7 @@
 #include "Core/Public/Asset/CookedAudioFormat.h"
 #include "Core/Public/Asset/CookedSkeletalFormat.h"
 #include "Core/Public/Component/MeshComponent.h"
+#include "Core/Public/Ecs/EcsWorld.h"
 #include "Core/Public/Engine/Engine.h"
 #include "Core/Public/Engine/NorvesEngine.h"
 #include "Core/Public/Input/InputMapper.h"
@@ -142,6 +143,15 @@ namespace Game
         // --stress-stream-period=<秒>: 区画を 1 つ出入りさせる周期（既定 kDefaultStressStreamPeriod）。
         constexpr const TCHAR *kStressStreamCellOption = TEXT("--stress-stream-cell=");
         constexpr const TCHAR *kStressStreamPeriodOption = TEXT("--stress-stream-period=");
+        // --stress-batch-cells: mega-stress の区画の動かない Entity を、区画ごとに散布（MegaGeometryScatterComponent）1 つにまとめて
+        // 出し入れする（--stress-stream-cell と一緒に使う。値を取らない）。
+        constexpr const TCHAR *kStressBatchCellsOption = TEXT("--stress-batch-cells");
+        // --mass-budget-rows=<n>・--mass-budget-ms=<ms>: 散布の作成・反映・解放を 1 フレームに進める行の数と時間[ms]の予算
+        // （既定 Ecs::kDefaultMassRowsPerFrame・kDefaultMassMillisecondsPerFrame。ms の 0 は時間で止めない）。
+        constexpr const TCHAR *kMassBudgetRowsOption = TEXT("--mass-budget-rows=");
+        constexpr const TCHAR *kMassBudgetMsOption = TEXT("--mass-budget-ms=");
+        bool s_bMassBudgetSet = false;
+        NorvesLib::Core::Ecs::EcsMassBudget s_MassBudget;
         // --mega-lod-error-px=<px>: MegaGeometry の LOD を選ぶ誤差の閾値（画素）を替える（開発ビルドだけ。計測用）。
         // 大きい値にすると全インスタンスが根の段で描かれる。環境変数 NORVES_MEGA_LOD_ERROR_PX と同じ効き方をする。
 #if NORVES_BUILD_DEVELOPMENT
@@ -572,6 +582,9 @@ namespace Game
         m_StressStreamCellMeters = 0.0f;
         m_bStressStreamCellSet = false;
         m_StressStreamPeriod = Game::GameModes::kDefaultStressStreamPeriod;
+        m_bStressBatchCells = false;
+        s_bMassBudgetSet = false;
+        s_MassBudget = NorvesLib::Core::Ecs::EcsMassBudget{};
         m_bOpenSceneInfo = false;
         m_DogDrive = NorvesLib::Modules::Physics::CharacterDriveMode::Fixed;
         bool bHasCharacterDrive = false;
@@ -1146,6 +1159,35 @@ namespace Game
             if (args[i] == kMegaSceneFullSyncOption)
             {
                 s_bMegaSceneFullSync = true;
+                continue;
+            }
+            if (args[i] == kStressBatchCellsOption)
+            {
+                m_bStressBatchCells = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kMassBudgetRowsOption, sceneValue))
+            {
+                uint32_t rows = 0;
+                if (!TryParseUInt32(sceneValue, rows) || rows == 0)
+                {
+                    LOG_ERROR("--mass-budget-rows は 1 以上の整数で指定してください");
+                    return false;
+                }
+                s_MassBudget.RowsPerFrame = rows;
+                s_bMassBudgetSet = true;
+                continue;
+            }
+            if (TryStripPrefix(args[i], kMassBudgetMsOption, sceneValue))
+            {
+                float milliseconds = 0.0f;
+                if (!TryParseBoundedFloat(sceneValue, 0.0f, 1000.0f, milliseconds))
+                {
+                    LOG_ERROR("--mass-budget-ms は 0〜1000 の数（ms。0 は時間で止めない）で指定してください");
+                    return false;
+                }
+                s_MassBudget.MillisecondsPerFrame = milliseconds;
+                s_bMassBudgetSet = true;
                 continue;
             }
             if (TryStripPrefix(args[i], kCameraScriptOption, sceneValue))
@@ -1996,6 +2038,17 @@ namespace Game
             NorvesLib::Core::Engine::GEngine->GetRenderResources().MegaGeometry().SetOcclusionCullingEnabled(s_bMegaOcclusion);
             // --geometry-streaming の指定（既定は有効）。メッシュを作る前に決める
             NorvesLib::Core::Engine::GEngine->GetRenderResources().MegaGeometry().SetPageStreamingEnabled(s_bGeometryStreaming);
+
+            // --mass-budget-rows・--mass-budget-ms: 散布の仕事の列の予算（World の EcsWorld へ渡す）
+            {
+                auto &massWork = NorvesLib::Core::Engine::GEngine->GetWorld().GetEcsWorld().GetMassWork();
+                if (s_bMassBudgetSet)
+                {
+                    massWork.SetBudget(s_MassBudget);
+                }
+                LOG_INFO_F("MASS_BUDGET rows_per_frame=%u ms_per_frame=%.3f", massWork.GetBudget().RowsPerFrame,
+                           static_cast<double>(massWork.GetBudget().MillisecondsPerFrame));
+            }
 
             // --mega-scene-full-sync: MegaGeometry の同期を全量へ戻す（最初のフレームの前に、メインの SceneView へ渡す）
             if (s_bMegaSceneFullSync)
@@ -2908,6 +2961,7 @@ namespace Game
              entityCount = m_StressEntityCount, movingPercent = m_StressMovingPercent,
              movingStartTime = m_StressMovingStartTime, streamCell = m_StressStreamCellMeters,
              streamPeriod = m_StressStreamPeriod, streamMaxCycles = m_SceneCycle.IsEnabled() ? Game::GameModes::kSmokeStreamCycles : 0u,
+             batchCells = m_bStressBatchCells,
              pauseMenu = &m_PauseMenu,
              getAssetSystem = [this]() { return GetAssetSystemSnapshot(); }](const GameModeParams&)
                 -> Container::TUniquePtr<IGameMode>
@@ -2922,6 +2976,7 @@ namespace Game
                 mode->GetData().m_StreamCellMeters = streamCell;
                 mode->GetData().m_StreamPeriod = streamPeriod;
                 mode->GetData().m_StreamMaxCycles = streamMaxCycles;
+                mode->GetData().m_bBatchCells = batchCells;
                 mode->GetData().m_pPauseMenu = pauseMenu;
                 mode->GetData().m_GetAssetSystem = getAssetSystem;
                 return mode;
