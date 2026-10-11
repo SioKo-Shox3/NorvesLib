@@ -462,7 +462,7 @@
 - paths: Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
 
 ## SCN-MEGA-SCENE-CONFIRM: パケットの番号・世代と、RenderThread の適用の確認を先に入れる（準備）
-- status: todo
+- status: done
 - done-when: パケットがシーンの世代と送った番号を持つ。RenderThread はマルチ・シングルのどちらの経路でも（RenderWorld.cpp 353 行付近の直接の経路を含む）、共通の場所で次を行う: 適用済みより古いパケットを捨てる、適用した番号と GPU の提出番号の対応を持つ、適用した番号・世代・完了した提出番号を atomic で公開する（描画を見送っても、適用したら確認する）。全量の写しもまだ運ぶ。検査 `MEGA_SCENE_CONFIRM`（確認が単調、飛んだパケットの差分は積み直される、世代が替わったら古い差分を拒む）が pass する。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -RequireChecks MEGA_SCENE_CONFIRM -OutDir .harness/runs/scene-capture/SCN-MEGA-SCENE-CONFIRM/check`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-stress,mega-bananas -Cycles 3 -Configuration RelWithDebInfo -GameArgs engine-checks=MEGA_SCENE_CONFIRM`

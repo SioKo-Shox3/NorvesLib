@@ -1706,3 +1706,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - 旧の全走査から既定の同期へ実行中に切り替えると、レジストリには最後の旧の捕捉が残る（切り替えは起動オプションで、レジストリの利用者はテストとベンチマークだけ。SCN-ECS-RETIRE-LEGACY でレジストリごと消す）。
   - 行末: World.cpp・World.h は編集で全体が LF になったので、HEAD の行末へ戻した。numstat の 2 通りが一致。
+
+### SCN-MEGA-SCENE-CONFIRM の検証の通し直し（2026-10-11、反復 4・run 20261011-144300）
+
+- 実装はコミット済み（bf927fa..d78eea3）。混在周回の判定の修正（SCN-SCENE-CYCLE-SHARED-CACHE）の後に verify だけを通し直した。コードの変更は無い。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-MEGA-SCENE-CONFIRM-1.txt`: mega-stress（5000 本、動く 1%、セル 64）の overview を RelWithDebInfo で撮影し、`engine_check name=MEGA_SCENE_CONFIRM pass=3 fail=0`、`result=pass`、EXIT=0。
+  - `-2.txt`: mega-stress・mega-bananas の混在周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、`MEGA_SCENE_CONFIRM pass=3284`、ログに `SCENE_CYCLE_BASELINE cycle=2 scenes=2`、2 周目以降の textures 9・texture_bytes は揃う、「約束が破れた」は 0 件、EXIT=0。
+- Next: SCN-MEGA-SCENE-SLOTS（verify の通し直し）。
+- Notes: Git Bash の `sed -i` は TASKS.md の CRLF を LF に落とすので、書き換えの後に CRLF へ戻した（numstat の 2 通りが一致）。
