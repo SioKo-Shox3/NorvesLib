@@ -616,6 +616,8 @@ namespace NorvesLib::Core
         void InitializeEntitySubtreeForWorld(Entity& entity);
         void AssignFreshObjectIdsRecursive(Entity& entity);
         void MarkEntitySubtreeRenderStateDirty(Entity& entity);
+        /// 走査されない（非アクティブ・破棄待ち）部分木の行について、公開の状態の列を「公開していない」へ合わせる
+        void MarkEntitySubtreeRenderUnpublished(Entity& entity);
         void MarkEntitySubtreeTransformDirty(Entity& entity);
         void NotifyEntitySubtreeAdded(Entity& entity);
         void NotifyEntitySubtreeRemoved(Entity& entity);
@@ -636,6 +638,8 @@ namespace NorvesLib::Core
         /// 資源の逆引き: 鍵（RenderResourceRef::Key）→ その資源を使う Component の行（EcsEntity を 1 つの値に詰めたもの）。
         /// 死んだ行は通知のときに取り除く
         Container::UnorderedMap<uint64_t, Container::UnorderedSet<uint64_t>> m_RenderResourceUsers;
+        /// 行ごとの旧参照: 行 → 逆引きに登録した資源の鍵。登録し直すとき、交換前の資源の集合から行を外すのに使う
+        Container::UnorderedMap<uint64_t, Container::VariableArray<uint64_t>> m_RenderRowRefKeys;
         /// 今回の同期で「通知を受けた」ことにする Component の ID（資源の変化・前回の公開で履歴が落ち着いていない行）
         Container::UnorderedSet<uint64_t> m_RenderNotified;
         /// 次の同期で通知を受けたことにする Component の ID（今回の公開で前フレームの変換が現在と違う行）

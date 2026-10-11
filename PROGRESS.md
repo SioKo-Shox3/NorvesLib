@@ -1426,3 +1426,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 公開の状態の `bPublished` は、非アクティブな Entity の行（走査されない）では更新されない。SYNC-PREP の Remove の一覧はこの点を扱うこと。
   - 逆引きに載せない資源: Board のテクスチャ・Mega の MegaMesh（proxy が handle を渡すだけで状態を読まない）、SkinnedMesh の登録（`RenderResources` の窓口に登録の口が無い。アセット側の dirty とポーズの版に任せる）。
   - 行末: 編集したファイルは numstat の 2 通りが一致。新規 `ResourceChangeLog.h`・`SceneProxyHash.h` は UTF-8 BOM + CRLF。
+
+### SCN-ECS-RENDER-INVALIDATION 差し戻し対応（2026-10-11、反復 39・run 20261010-223034）
+
+- 差し戻し（反復 38 の評価）への対応:
+  - 逆引きの旧参照: `World` に行ごとの旧参照 `m_RenderRowRefKeys` を足し、`RegisterRenderResourceUsers` が再登録の前に交換前の資源の集合から行を外す（空になった集合は消す）。死んだ行の通知で旧参照も外す。
+  - 公開状態の列: `SyncEntityRecursive` が非アクティブ・破棄待ちの部分木を飛ばすとき、`MarkEntitySubtreeRenderUnpublished` で公開済みの行の列を「公開していない」にし（検査の覚えも消す）、`RemoveStale*` が消した proxy と合わせた。再びアクティブにすると SetActive が部分木を dirty にするので公開し直す。
+  - 今回触ったブロックの英語コメントを日本語にした。
+  - 元の混在周回の verify を `TASKS.md` に戻した（シーンごとの 3 本は補助）。
+- テスト（paths の外）: `WorldSyncDifferentialTest::TestRenderInvalidationStaleRefsAndInactiveRows`（材質・メッシュの handle を交換したあと、交換前の資源の通知が行に届かず新しい資源の通知は届く。非アクティブで proxy と公開の列が消え、戻すと公開し直す）。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-ECS-RENDER-INVALIDATION-8-build.txt`（WorldSyncDifferentialTest の Debug ビルド EXIT=0）、`-9-ctest.txt`（Passed）。
+  - `-10-startup.txt`: 起動画面の決定論の比較 `result=pass`、`ECS_RENDER_INVALIDATION` が default 3・near 4・low 3 pass、fail 0。
+  - `-11-rendering3dtest.txt`・`-11-mega-bananas.txt`・`-11-mega-stress.txt`: シーンごとの周回 3 周が各 `result=pass`、pass=1459/741/2318、fail 0。
+  - `-12-mixed.txt`: 元の混在周回は `result=fail`（EXIT=1）。`SCENE_CYCLE_DIFF field=textures,texture_bytes` で、CLEANUP-LIST の基準でも同じ既知の差。`Game/Scenes` は `paths:` の外のため、`blocked/SCN-ECS-RENDER-INVALIDATION.md` に判断を書いて BLOCKED にした。
+- 隣接の 26 件は今回は走らせていない（変更が World の逆引き・公開状態の列に限られ、WorldSyncDifferentialTest とシーンごとの周回で確かめた）。
+- 行末: 編集したファイルは numstat の 2 通りが一致（`World.cpp`・`World.h` は Edit で全体が書き換わったので、difflib で元の行末に当て直した）。

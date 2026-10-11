@@ -495,6 +495,69 @@ namespace
         world.Finalize();
     }
 
+    // 資源を交換した行は、交換前の資源の通知を受けない。非アクティブになった行は公開の状態の列も「公開していない」になる
+    void TestRenderInvalidationStaleRefsAndInactiveRows()
+    {
+        World world;
+        world.Initialize();
+        world.SetRenderInvalidationCheckForced(true);
+
+        SceneView view;
+        SceneViewSettings settings;
+        assert(view.Initialize(settings));
+        world.SetSceneView(&view);
+
+        RenderResources renderResources;
+        Ecs::EcsWorld& ecs = world.GetEcsWorld();
+
+        Entity* object = world.SpawnObject<Entity>();
+        assert(object);
+        const MaterialHandle materialA = MakeMaterialHandle(renderResources, BlendMode::Translucent);
+        const MaterialHandle materialB = MakeMaterialHandle(renderResources, BlendMode::Additive);
+
+        MeshComponent* mesh = world.CreateComponent<MeshComponent>(object);
+        assert(mesh);
+        mesh->SetMeshHandle(MakeMeshHandle(600));
+        mesh->SetMaterial(0, materialA);
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(!mesh->IsRenderStateDirty());
+
+        // 材質 A → B に交換して同期すると、A の変化は行に届かず、B の変化だけが届く
+        mesh->SetMaterial(0, materialB);
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(!mesh->IsRenderStateDirty());
+        world.NotifyRenderResourceChanged(RenderResourceKind::Material, materialA.Id);
+        assert(!mesh->IsRenderStateDirty());
+        world.NotifyRenderResourceChanged(RenderResourceKind::Material, materialB.Id);
+        assert(mesh->IsRenderStateDirty());
+        world.SyncToSceneView(&renderResources.Materials());
+
+        // メッシュの handle の交換も同じ
+        mesh->SetMeshHandle(MakeMeshHandle(601));
+        world.SyncToSceneView(&renderResources.Materials());
+        world.NotifyRenderResourceChanged(RenderResourceKind::Mesh, 600);
+        assert(!mesh->IsRenderStateDirty());
+        world.NotifyRenderResourceChanged(RenderResourceKind::Mesh, 601);
+        assert(mesh->IsRenderStateDirty());
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(world.GetRenderInvalidationStats().Violations == 0);
+
+        // 非アクティブにした行は proxy が消え、公開の状態の列も公開していないになる。戻すと公開し直す
+        const Ecs::EcsPublishState* state = ecs.GetColumnValue<Ecs::EcsPublishState>(mesh->GetEcsEntity());
+        assert(state && state->bPublished);
+        object->SetActive(false);
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(FindMeshProxy(view, object->GetObjectId()) == nullptr);
+        assert(!state->bPublished);
+        object->SetActive(true);
+        world.SyncToSceneView(&renderResources.Materials());
+        assert(FindMeshProxy(view, object->GetObjectId()) != nullptr);
+        assert(state->bPublished);
+        assert(world.GetRenderInvalidationStats().Violations == 0);
+
+        world.Finalize();
+    }
+
     void TestLightAndBoardValuesLiveInComponentRow()
     {
         World world;
@@ -684,6 +747,7 @@ int main()
     TestMeshMaterialBlendSync();
     TestRenderValuesLiveInComponentRow();
     TestRenderInvalidationNotifications();
+    TestRenderInvalidationStaleRefsAndInactiveRows();
     TestLightAndBoardValuesLiveInComponentRow();
     TestLightDirectionAndBillboardSizeLiveInComponentRow();
 

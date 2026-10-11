@@ -1855,6 +1855,7 @@ namespace NorvesLib::Core
             if (component == nullptr)
             {
                 // 行が消えている。逆引きから外す
+                m_RenderRowRefKeys.erase(*it);
                 it = users.erase(it);
                 continue;
             }
@@ -2003,12 +2004,43 @@ namespace NorvesLib::Core
         {
             return;
         }
+        const uint64_t packed = PackEcsEntity(row);
+
+        // 交換前の資源の集合から、この行を外す（外さないと、交換前の資源の変化でこの行が無関係に通知を受ける）
+        auto oldIt = m_RenderRowRefKeys.find(packed);
+        if (oldIt != m_RenderRowRefKeys.end())
+        {
+            for (const uint64_t oldKey : oldIt->second)
+            {
+                auto usersIt = m_RenderResourceUsers.find(oldKey);
+                if (usersIt == m_RenderResourceUsers.end())
+                {
+                    continue;
+                }
+                usersIt->second.erase(packed);
+                if (usersIt->second.empty())
+                {
+                    m_RenderResourceUsers.erase(usersIt);
+                }
+            }
+            oldIt->second.clear();
+        }
+
         m_RenderRefScratch.clear();
         component.CollectRenderResourceRefs(m_RenderRefScratch);
-        const uint64_t packed = PackEcsEntity(row);
+        if (m_RenderRefScratch.empty())
+        {
+            if (oldIt != m_RenderRowRefKeys.end())
+            {
+                m_RenderRowRefKeys.erase(oldIt);
+            }
+            return;
+        }
+        Container::VariableArray<uint64_t>& keys = m_RenderRowRefKeys[packed];
         for (const Rendering::RenderResourceRef& ref : m_RenderRefScratch)
         {
             m_RenderResourceUsers[ref.Key()].insert(packed);
+            keys.push_back(ref.Key());
         }
     }
 
@@ -2705,6 +2737,8 @@ namespace NorvesLib::Core
     {
         if (!entity.IsActive() || entity.IsPendingDestroy())
         {
+            // 走査しない部分木の proxy は RemoveStale* が消す。公開の状態の列もそれに合わせる
+            MarkEntitySubtreeRenderUnpublished(entity);
             return;
         }
 
@@ -2748,7 +2782,7 @@ namespace NorvesLib::Core
                 }
                 else if (!skinnedMeshComp->IsVisible())
                 {
-                    // Hidden is an acknowledged non-publishing state, not a retryable failure.
+                    // 非表示は公開しない状態として受理済みで、再試行すべき失敗ではない
                     skinnedMeshComp->ClearRenderStateDirty();
                     skinnedMeshComp->SetLastSyncedTransformVersion(ownerVersion);
                     RecordRenderPublish(*skinnedMeshComp, entity, false, 0);
@@ -4398,6 +4432,33 @@ namespace NorvesLib::Core
         for (auto* child : children)
         {
             MarkEntitySubtreeRenderStateDirty(*child);
+        }
+    }
+
+    void World::MarkEntitySubtreeRenderUnpublished(Entity& entity)
+    {
+        if (m_EcsWorld)
+        {
+            auto components = entity.GetComponents();
+            for (auto* component : components)
+            {
+                const Ecs::EcsEntity row = component->GetEcsEntity();
+                if (row.IsNull() || !m_EcsWorld->IsAlive(row))
+                {
+                    continue;
+                }
+                const Ecs::EcsPublishState* publish = m_EcsWorld->GetColumnValue<Ecs::EcsPublishState>(row);
+                if (publish != nullptr && publish->bPublished)
+                {
+                    RecordRenderPublish(*component, entity, false, 0);
+                }
+            }
+        }
+
+        auto children = entity.GetChildEntities();
+        for (auto* child : children)
+        {
+            MarkEntitySubtreeRenderUnpublished(*child);
         }
     }
 
