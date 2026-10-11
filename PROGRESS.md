@@ -2371,3 +2371,12 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-3.txt`: 3 シーンの混在の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。Game.log を開いて確認: `SCENE_CYCLE_SMOKE result=pass cycles=3 scenes=3 changed=none unsettled=0`、サンプル 9 件、ERROR 0、Game.log 8.2MB（`ECS_TRANSFORM_COUNTS`・`SCENEQUERY` は各 71 行）。
 - Next: 残りの todo の最優先（SCN-ECS-RETIRE-REGISTRY ほか）。
 - Notes: 周回の Game.log は 8.2MB でまだ上限 10MB に近い。残りの大半は RenderingCoordinator の 120 フレームごとの `MEGA_SCENE_DELTA`・`PACKET_DELTA`（paths の外）。周回の数・シーンを増やすと同じ形で落ちうるので、同じ間引きを入れるか、周回中のフレームの速さ（毎秒数万フレーム）を見直す項目が要る。
+
+### SCN-ECS-RETIRE-LEGACY-FLAGS 差し戻しの対応（2026-10-12、反復 2・run 20261012-030203）
+
+- BLOCKED（コードは変えていない）: ランナーの再検証で verify 2 が M9WorldAcceptanceTest（`Reference` ラベルの GPU の受入れ）の `reason=t0_capture_failed` で落ちた。変更の前から同じ理由で落ち、出どころ（`Rendering3DTestRoutine.cpp`・`FrameCaptureReadbackHelper.cpp`）は paths の外。verify から外すのは検査の範囲の変更なので、`blocked/SCN-ECS-RETIRE-LEGACY-FLAGS.md` に選択肢を書いた（推奨: verify 2 に `-LE Reference` を足し、M9 の撮影失敗は別項目で直す）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RETIRE-LEGACY-FLAGS-4.txt`: verify 1 の Debug の 4 ターゲットのビルド EXIT=0、error・warning 0。
+  - `verify-SCN-ECS-RETIRE-LEGACY-FLAGS-5-excluding-M9.txt`: verify 2 から M9WorldAcceptanceTest だけを除いて 14/14 Passed、EXIT=0。
+- Next: 人の判断の後に再開（推奨 A なら verify を取り直して done）。
+- Notes: M9 の撮影失敗はログに失敗の状態（`FrameCaptureResultStatus`）が出ないので原因が未特定。直す項目ではまず状態をログに出す。
