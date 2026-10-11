@@ -2,6 +2,7 @@
 #include "Camera/SceneCameraProbe.h"
 #include "Component/CameraComponent.h"
 #include "Component/SkinnedMeshComponent.h"
+#include "Ecs/EcsTypes.h"
 #include "Game/Input/GameInputActions.h"
 #include "Logging/LogMacros.h"
 #include "Math/CriticalDamping.h"
@@ -89,16 +90,33 @@ namespace Game::Gameplay
         m_Settings = value;
         return true;
     }
-    void FollowCameraComponent::OnTickGroup(Core::Component::ETickGroup group, float dt)
+    void FollowCameraComponent::RegisterTick(Core::World& world)
     {
-        if (group == Core::Component::ETickGroup::Input)
-            ReadLook(dt);
-        else if (group == Core::Component::ETickGroup::Camera)
-        {
-            if (m_CameraTickCount != UINT64_MAX)
-                ++m_CameraTickCount;
-            UpdateCamera(dt);
-        }
+        // Input群とCamera群で呼ぶ（主群によらない）。群・mask・優先度・channelはComponentの設定のまま。
+        // SpringArmの登録は型の完全一致なので、この型にはSpringArmの本体は呼ばれない（旧と同じ）
+        using namespace Core::Component;
+        ComponentTickRegistration camera;
+        camera.Name = "FollowCamera.InputCamera";
+        camera.bPrimaryGroupOnly = false;
+        camera.Groups = TickGroupBit(ETickGroup::Input) | TickGroupBit(ETickGroup::Camera);
+        camera.GroupRuns[static_cast<size_t>(ETickGroup::Input)] = [](Component& component, float dt)
+        { static_cast<FollowCameraComponent&>(component).TickInputGroup(dt); };
+        camera.GroupRuns[static_cast<size_t>(ETickGroup::Camera)] = [](Component& component, float dt)
+        { static_cast<FollowCameraComponent&>(component).TickCameraGroup(dt); };
+        camera.TimeChannel = Core::Engine::TimeChannel::Unscaled;
+        camera.Reads.push_back(Core::Ecs::EcsColumnInfoOf<Core::Ecs::EcsWorldTransform>().Type);
+        camera.Writes.push_back(Core::Ecs::EcsColumnInfoOf<Core::Ecs::EcsLocalTransform>().Type);
+        world.RegisterComponentTick(StaticClass(), camera);
+    }
+    void FollowCameraComponent::TickInputGroup(float dt)
+    {
+        ReadLook(dt);
+    }
+    void FollowCameraComponent::TickCameraGroup(float dt)
+    {
+        if (m_CameraTickCount != UINT64_MAX)
+            ++m_CameraTickCount;
+        UpdateCamera(dt);
     }
     void FollowCameraComponent::ReadLook(float dt)
     {

@@ -1,5 +1,6 @@
 ﻿#include "Gameplay/Locomotion/QuadrupedLocomotionComponent.h"
 #include "Component/AnimatorComponent.h"
+#include "Ecs/EcsTypes.h"
 #include "Engine/Engine.h"
 #include "Game/Input/GameInputActions.h"
 #include "Locomotion/QuadrupedLocomotionJson.h"
@@ -190,17 +191,38 @@ namespace Game::Gameplay
         ResetRootMotion();
         Core::Component::Component::Disable();
     }
-    void QuadrupedLocomotionComponent::OnTickGroup(Core::Component::ETickGroup group, float dt)
+    void QuadrupedLocomotionComponent::RegisterTick(Core::World& world)
     {
-        if (group == Core::Component::ETickGroup::Input)
-            CollectInput(dt);
-        else if (group == Core::Component::ETickGroup::PoseFinalize)
-            CaptureRootMotion();
-        else if (group == Core::Component::ETickGroup::PostPhysics)
-        {
-            FinishRootMotionFrame();
-            PublishVisual(dt);
-        }
+        // Input・PoseFinalize・PostPhysics群で呼ぶ（主群によらない）。群・mask・優先度・channelはComponentの設定のまま
+        using namespace Core::Component;
+        ComponentTickRegistration locomotion;
+        locomotion.Name = "QuadrupedLocomotion.InputPosePostPhysics";
+        locomotion.bPrimaryGroupOnly = false;
+        locomotion.Groups = TickGroupBit(ETickGroup::Input) | TickGroupBit(ETickGroup::PoseFinalize) |
+                            TickGroupBit(ETickGroup::PostPhysics);
+        locomotion.GroupRuns[static_cast<size_t>(ETickGroup::Input)] = [](Component& component, float dt)
+        { static_cast<QuadrupedLocomotionComponent&>(component).TickInputGroup(dt); };
+        locomotion.GroupRuns[static_cast<size_t>(ETickGroup::PoseFinalize)] = [](Component& component, float)
+        { static_cast<QuadrupedLocomotionComponent&>(component).TickPoseFinalizeGroup(); };
+        locomotion.GroupRuns[static_cast<size_t>(ETickGroup::PostPhysics)] = [](Component& component, float dt)
+        { static_cast<QuadrupedLocomotionComponent&>(component).TickPostPhysicsGroup(dt); };
+        locomotion.TimeChannel = Core::Engine::TimeChannel::Unscaled;
+        locomotion.Reads.push_back(Core::Ecs::EcsColumnInfoOf<Core::Ecs::EcsWorldTransform>().Type);
+        locomotion.Writes.push_back(Core::Ecs::EcsColumnInfoOf<Core::Ecs::EcsLocalTransform>().Type);
+        world.RegisterComponentTick(StaticClass(), locomotion);
+    }
+    void QuadrupedLocomotionComponent::TickInputGroup(float dt)
+    {
+        CollectInput(dt);
+    }
+    void QuadrupedLocomotionComponent::TickPoseFinalizeGroup()
+    {
+        CaptureRootMotion();
+    }
+    void QuadrupedLocomotionComponent::TickPostPhysicsGroup(float dt)
+    {
+        FinishRootMotionFrame();
+        PublishVisual(dt);
     }
     bool QuadrupedLocomotionComponent::ValidateInput()
     {

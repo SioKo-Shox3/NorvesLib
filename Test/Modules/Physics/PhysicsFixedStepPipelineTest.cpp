@@ -282,6 +282,9 @@ namespace
         GFixture = &fixture;
         NorvesLib::Core::Engine::GEngine = new NorvesLib::Core::Engine::Engine();
         NorvesLib::Core::Engine::GEngine->GetWorld().Initialize();
+        // Game の起動と同じく、Game の Component の本体を順序付きの系へ登録する
+        Game::Gameplay::FollowCameraComponent::RegisterTick(NorvesLib::Core::Engine::GEngine->GetWorld());
+        Game::Gameplay::QuadrupedLocomotionComponent::RegisterTick(NorvesLib::Core::Engine::GEngine->GetWorld());
         Rendering::SceneViewSettings sceneViewSettings;
         if (!fixture.SceneView.Initialize(sceneViewSettings))
         {
@@ -1106,7 +1109,7 @@ namespace
             if (!owner || !temporary.CreateComponent<CharacterBodyComponent>(owner) || !owner->AddComponent(driver))
                 return false;
             driver->Initialize();
-            driver->OnTickGroup(Component::ETickGroup::Input, kFixedDeltaTime);
+            driver->TickInputGroup(kFixedDeltaTime);
             // Worldはheap所有componentのOuterを解除してpendingにするが、この場では解放しない。
         }
         return driver->GetOwner() == nullptr && heap.DestroyNow(handle);

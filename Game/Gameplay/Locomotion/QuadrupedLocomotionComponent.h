@@ -6,6 +6,10 @@
 #include "Input/InputMapper.h"
 #include "Locomotion/QuadrupedLocomotionModel.h"
 #include "Physics/CharacterBodyComponent.h"
+namespace NorvesLib::Core
+{
+    class World;
+}
 namespace Game::Gameplay
 {
     enum class LocomotionMotionSource
@@ -28,7 +32,14 @@ namespace Game::Gameplay
         void Finalize() override;
         void Enable() override;
         void Disable() override;
-        void OnTickGroup(NorvesLib::Core::Component::ETickGroup group, float dt) override;
+        // Input・PoseFinalize・PostPhysics群の本体をWorldの順序付きの系へ登録する（Gameが起動時に呼ぶ）。
+        static void RegisterTick(NorvesLib::Core::World& world);
+        // Input群の本体。入力と設定を取り込み、CharacterBodyへの接続を保つ。
+        void TickInputGroup(float dt);
+        // PoseFinalize群の本体。確定したルート移動を取り込む。
+        void TickPoseFinalizeGroup();
+        // PostPhysics群の本体。ルート移動の端数を締め、見た目を公開する。
+        void TickPostPhysicsGroup(float dt);
         // MapperのJumpイベントを単独で消費する。Mapperはこのcomponentより長生きすること。
         void BindInput(NorvesLib::Core::Input::InputMapper* mapper);
         bool SetProfilePath(NorvesLib::Core::Container::AnsiStringView path);

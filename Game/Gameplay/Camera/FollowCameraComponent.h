@@ -5,6 +5,10 @@
 #include "Gameplay/Camera/FollowCameraProfile.h"
 #include "Input/InputMapper.h"
 #include "Math/Transform.h"
+namespace NorvesLib::Core
+{
+    class World;
+}
 namespace NorvesLib::Core::Scene
 {
     class SceneQuery;
@@ -18,7 +22,12 @@ namespace Game::Gameplay
       public:
         void Initialize() override;
         void Finalize() override;
-        void OnTickGroup(NorvesLib::Core::Component::ETickGroup group, float dt) override;
+        // Input群とCamera群の本体をWorldの順序付きの系へ登録する（Gameが起動時に呼ぶ）。
+        static void RegisterTick(NorvesLib::Core::World& world);
+        // Input群の本体。視線の入力を読み、移動処理へ渡す視線を更新する。
+        void TickInputGroup(float dt);
+        // Camera群の本体。補間済の対象へ追従し、衝突を解いて姿勢を確定する。
+        void TickCameraGroup(float dt);
         // Mapperとqueryはcomponentより長生きするか、破棄前にnullptrへ解除すること。
         void BindInput(NorvesLib::Core::Input::InputMapper* mapper)
         {

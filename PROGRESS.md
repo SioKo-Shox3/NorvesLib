@@ -2013,3 +2013,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - スクリプトの束縛（EntityRef）には Entity・Component を生成・破棄する口が無い。スクリプトの Tick は順序付きの系（スケジューラの段の最中）で走るので、そこから C++ 経由で起きた生成は World の既存の経路（`BindEntitySubtreeRows`・`ReserveComponentRowCreate`）で Object が即時、行が段の終わりの同期点で作られ、破棄の行は `m_DeferredEntityRows` で同期点に回る。この経路のスクリプト専用のテストは足していない（計画に無い）。
   - 登録の場所は World.cpp の RegisterCoreComponentTicks（paths の外）ではなく、物理モジュールと同じく束ねる側（ScriptRuntime）にした。
   - verify のビルドは Git Bash から走らせると `/m:1` が `m:1` に書き換えられて MSBuild が失敗する。PowerShell から走らせる。
+
+### SCN-ECS-TICK-GAME（2026-10-11、反復 6・run 20261011-211043、BLOCKED）
+
+- 変更:
+  - FollowCamera: 仮想の OnTickGroup を消し、群ごとの非仮想の本体 `TickInputGroup`（ReadLook）・`TickCameraGroup`（Camera 群の回数を数えて UpdateCamera）と、World へ登録する `RegisterTick(World&)` を足した。Input・Camera の群で呼ぶ（主群によらない）、channel は Unscaled、読む EcsWorldTransform・書く EcsLocalTransform。SpringArm の登録は型の完全一致なので、旧と同じく FollowCamera には SpringArm の本体は呼ばれない。
+  - QuadrupedLocomotion: 同じく `TickInputGroup`（CollectInput）・`TickPoseFinalizeGroup`（CaptureRootMotion）・`TickPostPhysicsGroup`（FinishRootMotionFrame→PublishVisual）と `RegisterTick(World&)`。Input・PoseFinalize・PostPhysics の群、channel は Unscaled。TryGetComponentTickDelta と GetTickSerial の使い方は変えていない。
+  - GameApplicationHandler::OnInitialize で `GEngine->GetWorld()` へ 2 つを登録する（シーンが作るより前）。
+  - paths の外: PhysicsFixedStepPipelineTest の fixture で同じ登録をし、消した `OnTickGroup` の直接の呼び出しを `TickInputGroup` に替えた（3 行）。
+- 結果（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-ECS-TICK-GAME-1.txt`: RelWithDebInfo の Game のビルド EXIT=0（3 ファイルを再コンパイル）。
+  - `-2.txt`: Debug の LoggerSinkTest のビルドが EXIT=1。束ねた別のテスト 5 本（Test/Core/Input の 4 本と JsonWriterTest）が今の Core に追随しておらずコンパイルできない（このタスクの変更と無関係。実行ファイルは 2026-09-27 のまま）。
+  - `-3.txt`: 古い実行ファイルに 3 本が無く「unknown test」で Failed。
+  - `check-SCN-ECS-TICK-GAME-physics-pipeline.txt`（verify の外）: PhysicsDynamicsTest のバンドルを再ビルドし（FollowCamera・QuadrupedLocomotion・PhysicsFixedStepPipelineTest を再コンパイル）、PhysicsFixedStepPipelineTest・PhysicsLifecycleEventTest・PhysicsCharacterMoveTest・CharacterPlatformMotionTest が 4/4 pass。
+- Next: `blocked/SCN-ECS-TICK-GAME.md` の判断（LoggerSinkTest のバンドルを別の項目で直すか、paths を広げるか、verify を差し替えるか）。
+- Notes:
+  - LoggerSinkTest・PhysicsDynamicsTest はテストを束ねた実行ファイルで、ctest の名前の対象（PhysicsFixedStepPipelineTest など）はビルドの対象として存在しない。ビルドはバンドル名で行う。

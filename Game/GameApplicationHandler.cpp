@@ -19,6 +19,8 @@
 #include "Core/Public/Rendering/RenderWorld.h"
 #include "Core/Public/Resource/SkinnedMeshResource.h"
 #include "GameModes/DogMovementSmoke/DogMovementSmokeMode.h"
+#include "Gameplay/Camera/FollowCameraComponent.h"
+#include "Gameplay/Locomotion/QuadrupedLocomotionComponent.h"
 #include "Input/GameHapticsSettings.h"
 #include "Input/GameInputActions.h"
 #include <cmath>
@@ -1975,6 +1977,10 @@ namespace Game
 
         if (auto* engine = NorvesLib::Core::Engine::GEngine)
         {
+            // Game の Component の毎フレームの処理を World の順序付きの系へ登録する（シーンが作る前に済ませる）
+            Game::Gameplay::FollowCameraComponent::RegisterTick(engine->GetWorld());
+            Game::Gameplay::QuadrupedLocomotionComponent::RegisterTick(engine->GetWorld());
+
             NorvesLib::Core::Container::String hapticsError;
             if (!Game::Input::InitializeGameHaptics(engine->GetHapticsService(), hapticsError))
             {
