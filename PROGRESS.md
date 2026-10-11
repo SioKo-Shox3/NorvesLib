@@ -2181,3 +2181,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 追加で `TextComponentBoardProxyTest` も pass（Text のグリフを集める経路）。
 - Next: SCN-MEGA-MEASURE-CPU を todo に戻して全部の負荷を撮り直す（効果の数値はそこで確かめる）。
 - Notes: `CollectTransientBoardProxies`（ApplicationProcessor が毎フレーム呼ぶ、Text のグリフ集め）も根から全 Entity をたどる。同期の段の外なので触っていない。撮り直しで gt の Ecs の区間の外（約 11 ms）を見るときの候補。
+
+### SCN-MEGA-FIX-RENDERSYNC-WALK 差し戻しの対応（2026-10-12、反復 16・run 20261011-211043）
+
+- 差し戻し: テストの Text に FontAtlas が無く、グリフの板が作られないため、追加・変更・削除の公開を確かめられていなかった。
+- 変更（テストだけ）: `TestDeltaSyncWalksNoRowsWhenStatic` で、代役の RHI（`FakeDevice`）の上に既定の FontAtlas を作って Text に設定し、`CollectTransientBoardProxies` の結果を各場面で照合する。
+  - 追加: 最初の同期の後に "A" のグリフ 1 枚、揃った後に Entity の位置 1 から並べた位置・寸法・テクスチャと一致。後から足した Text（"E"）も最初の同期でグリフ 1 枚、揃った後に位置 3 で一致。
+  - 変更: "BC D" に変えた同期でたどった行 1、グリフ 3 枚（空白は送りだけ）が位置・寸法とも一致。
+  - 親の移動: 今の変換は位置 5、前フレームの変換は 1 のまま、次の同期で 5 に揃う。非アクティブの間はグリフが出ず、再びアクティブにすると位置 7 で出る。
+  - 旧の全走査との比較: 同じ状態で旧の全走査に切り替えて同期し、集めたグリフの板（Component・今と前フレームの位置・寸法）が既定の同期と一致。
+  - 削除: 破棄の前に 2 つの Text のグリフがあり、回収後の同期で何も出ない。
+  - 検査 2 つを強制して違反 0。Atlas を作れない構成（`NORVES_ENABLE_CORE_TEXT` が無効）では、グリフが出ないことだけを確かめる。
+- 検証（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-MEGA-FIX-RENDERSYNC-WALK-6.txt`: Debug の `WorldSyncDifferentialTest` のビルド EXIT=0（4 は Git Bash で `/m:1` が壊れて取り直し、4 の PowerShell 版も EXIT=0）。
+  - `verify-SCN-MEGA-FIX-RENDERSYNC-WALK-7.txt`: ctest 1/1 Passed、EXIT=0。5 は前フレームの変換の期待を誤ってグリフごとにずらしていたための失敗（`BuildGlyphBoardProxies` は今の変換だけをずらす）。この失敗で Atlas が作られ照合が効いていることも確かめた。
+  - `verify-SCN-MEGA-FIX-RENDERSYNC-WALK-8.txt`: 起動画面 default を RelWithDebInfo で検査 2 つ付きで撮り、どちらも pass=3 fail=0。SCN-MEGA-BASE-RWDI との比較は平均輝度差 0・PSNR 100 dB・不一致画素 3E-06（最大差 1）で `result=pass`、EXIT=0。PNG を開いて確認（天球・地面・球・岩・家）。Game.log の ERROR は 0。
+- Next: SCN-MEGA-MEASURE-CPU を todo に戻して全部の負荷を撮り直す。
+- Notes: グリフの板の前フレームの変換は、グリフごとの位置ずらしを含まない（Entity の前フレームの変換のまま）。速度のベクトルを使う段がグリフを扱うなら、ずれが出る。この項目では触っていない。

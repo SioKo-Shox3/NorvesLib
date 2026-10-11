@@ -13,6 +13,8 @@
 #include "Rendering/MegaGeometryMirror.h"
 #include "Rendering/RenderResources.h"
 #include "Rendering/SceneView.h"
+#include "Resource/FontAtlas.h"
+#include "RHI/IDevice.h"
 #include <cassert>
 #include <cstring>
 #include <iostream>
@@ -33,6 +35,76 @@ namespace
     float GetTranslationX(const NorvesLib::Math::Matrix4x4& matrix)
     {
         return matrix.GetTranslationRow().x;
+    }
+
+    // FontAtlas のテクスチャ作成だけを受ける RHI の代役
+    class FakeTexture final : public NorvesLib::RHI::ITexture
+    {
+    public:
+        explicit FakeTexture(const NorvesLib::RHI::TextureDesc& desc)
+            : Desc(desc)
+        {
+        }
+
+        uint32_t GetWidth() const override { return Desc.Width; }
+        uint32_t GetHeight() const override { return Desc.Height; }
+        uint32_t GetDepth() const override { return Desc.Depth; }
+        uint32_t GetMipLevels() const override { return Desc.MipLevels; }
+        uint32_t GetArraySize() const override { return Desc.ArraySize; }
+        NorvesLib::RHI::Format GetFormat() const override { return Desc.TextureFormat; }
+        NorvesLib::RHI::ResourceUsage GetUsage() const override { return Desc.Usage; }
+        bool IsCubemap() const override { return Desc.IsCubemap; }
+        void Update(const void*, uint32_t, uint32_t, uint32_t = 0, uint32_t = 0) override {}
+
+        NorvesLib::RHI::TextureDesc Desc;
+    };
+
+    class FakeDevice final : public NorvesLib::RHI::IDevice
+    {
+    public:
+        NorvesLib::RHI::TexturePtr CreateTexture(const NorvesLib::RHI::TextureDesc& desc) override
+        {
+            return Container::MakeShared<FakeTexture>(desc);
+        }
+
+        NorvesLib::RHI::BufferPtr CreateBuffer(const NorvesLib::RHI::BufferDesc&) override { return {}; }
+        NorvesLib::RHI::SamplerPtr CreateSampler(const NorvesLib::RHI::SamplerDesc&) override { return {}; }
+        NorvesLib::RHI::ShaderPtr CreateShader(const NorvesLib::RHI::ShaderDesc&) override { return {}; }
+        NorvesLib::RHI::CommandListPtr CreateCommandList() override { return {}; }
+        NorvesLib::RHI::SwapChainPtr CreateSwapChain(const NorvesLib::RHI::SwapChainDesc&) override { return {}; }
+        NorvesLib::RHI::RenderPassPtr CreateRenderPass(const NorvesLib::RHI::RenderPassDesc&) override { return {}; }
+        NorvesLib::RHI::FramebufferPtr CreateFramebuffer(const NorvesLib::RHI::FramebufferDesc&) override { return {}; }
+        NorvesLib::RHI::PipelinePtr CreateGraphicsPipeline(const NorvesLib::RHI::GraphicsPipelineDesc&) override { return {}; }
+        NorvesLib::RHI::PipelinePtr CreateComputePipeline(const NorvesLib::RHI::ComputePipelineDesc&) override { return {}; }
+        NorvesLib::RHI::DescriptorSetPtr CreateDescriptorSet(const NorvesLib::RHI::DescriptorSetDesc&) override { return {}; }
+        NorvesLib::RHI::ShaderCompilerPtr CreateShaderCompiler() override { return {}; }
+        NorvesLib::RHI::IGPUResourceAllocator* GetResourceAllocator() override { return nullptr; }
+        void WaitIdle() override {}
+        NorvesLib::RHI::API GetAPI() const override { return NorvesLib::RHI::API::None; }
+        const NorvesLib::RHI::DeviceCapabilities& GetCapabilities() const override { return Capabilities; }
+        NorvesLib::Math::Matrix4x4 AdjustProjectionForClipSpace(const NorvesLib::Math::Matrix4x4& value,
+                                                                  bool = true) const override
+        {
+            return value;
+        }
+
+        NorvesLib::RHI::DeviceCapabilities Capabilities;
+    };
+
+    // World が公開する Text のグリフの板のうち、指定した Component のものだけを集める
+    Container::VariableArray<BoardProxy> CollectTextGlyphs(World& world, uint64_t componentId)
+    {
+        Container::VariableArray<BoardProxy> all;
+        world.CollectTransientBoardProxies(all);
+        Container::VariableArray<BoardProxy> result;
+        for (const BoardProxy& proxy : all)
+        {
+            if (proxy.ComponentId == componentId)
+            {
+                result.push_back(proxy);
+            }
+        }
+        return result;
     }
 
     MeshDataHandle MakeMeshHandle(uint64_t id)
@@ -1189,9 +1261,57 @@ namespace
     }
 
     // 静止のフレームでは、既定の同期は行を 1 つもたどらない（旧の全走査は Entity をたどる）。
-    // Text の追加・変更・削除は、旧の走査と同じく変換のキャッシュに届く
+    // Text の追加・変更・削除は、旧の走査と同じく変換のキャッシュに届き、グリフの板として公開される
     void TestDeltaSyncWalksNoRowsWhenStatic()
     {
+        auto device = Container::MakeShared<FakeDevice>();
+        RenderResources resources;
+        assert(resources.Initialize(device));
+        Asset::AssetFileReader reader;
+        FontAtlas atlas;
+        const bool bAtlasBuilt = atlas.Build(FontAtlasDesc{}, reader, resources.Textures());
+#if NORVES_ENABLE_CORE_TEXT
+        assert(bAtlasBuilt && atlas.IsValid());
+#else
+        (void)bAtlasBuilt;
+#endif
+
+        // 公開されたグリフの板が、文字列のグリフ（空白を除く）を Entity の位置 x から並べたものと一致するか。
+        // 前フレームの変換はグリフごとにずらさず、Entity の前フレームの位置 x のまま。Atlas が作れない構成では確かめない
+        const auto glyphsMatch = [&atlas](World& targetWorld, uint64_t componentId, const char* expected,
+                                          float originX, float previousOriginX)
+        {
+            const Container::VariableArray<BoardProxy> glyphs = CollectTextGlyphs(targetWorld, componentId);
+            if (!atlas.IsValid())
+            {
+                return glyphs.empty();
+            }
+            size_t index = 0;
+            float penX = 0.0f;
+            for (const char* character = expected; *character != '\0'; ++character)
+            {
+                const FontAtlasGlyph& glyph = atlas.GetGlyph(static_cast<uint32_t>(*character));
+                assert(glyph.bValid);
+                if (*character != ' ')
+                {
+                    if (index >= glyphs.size())
+                    {
+                        return false;
+                    }
+                    const BoardProxy& proxy = glyphs[index++];
+                    if (GetTranslationX(proxy.WorldTransform) != originX + (penX + glyph.BearingPx.x) ||
+                        GetTranslationX(proxy.PreviousWorldTransform) != previousOriginX ||
+                        proxy.SizePx.x != glyph.SizePx.x || proxy.SizePx.y != glyph.SizePx.y ||
+                        proxy.Texture != atlas.GetTextureHandle())
+                    {
+                        return false;
+                    }
+                }
+                penX += glyph.AdvancePx;
+            }
+            return index == glyphs.size();
+        };
+
         World world;
         world.Initialize();
         world.SetRenderSyncCheckForced(true);
@@ -1216,7 +1336,9 @@ namespace
         board->SetTextureHandle(TextureHandle{43});
         board->SetBoardSpace(BoardSpace::WorldSpace);
         text->SetText("A");
+        text->SetFontAtlas(&atlas);
         parent->SetPosition(1.0f, 0.0f, 0.0f);
+        const uint64_t textId = text->GetComponentId();
 
         const auto syncStatic = [&world](int frames)
         {
@@ -1235,13 +1357,15 @@ namespace
         world.SyncToSceneView();
         world.SyncToSceneView();
         syncStatic(3);
+        assert(glyphsMatch(world, textId, "A", 1.0f, 1.0f));
 
-        // 変更: Text の行だけを見る
-        text->SetText("B");
+        // 変更: Text の行だけを見て、新しい文字列のグリフを公開する
+        text->SetText("BC D");
         assert(text->IsRenderStateDirty());
         world.SyncToSceneView();
         assert(world.GetLastRenderSyncVisitedRows() == 1);
         assert(!text->IsRenderStateDirty());
+        assert(glyphsMatch(world, textId, "BC D", 1.0f, 1.0f));
         syncStatic(2);
 
         // 親の移動: 子の Text のキャッシュが追従し、次の同期で前フレームの変換が今の変換に揃う
@@ -1249,8 +1373,10 @@ namespace
         world.SyncToSceneView();
         assert(GetTranslationX(text->GetWorldTransformCache()) == 5.0f);
         assert(GetTranslationX(text->GetPreviousWorldTransformCache()) == 1.0f);
+        assert(glyphsMatch(world, textId, "BC D", 5.0f, 1.0f));
         world.SyncToSceneView();
         assert(GetTranslationX(text->GetPreviousWorldTransformCache()) == 5.0f);
+        assert(glyphsMatch(world, textId, "BC D", 5.0f, 5.0f));
         syncStatic(2);
 
         // 非アクティブの部分木では求め直さず、再びアクティブにすると求め直す
@@ -1259,12 +1385,14 @@ namespace
         parent->SetPosition(7.0f, 0.0f, 0.0f);
         world.SyncToSceneView();
         assert(GetTranslationX(text->GetWorldTransformCache()) == 5.0f);
+        assert(CollectTextGlyphs(world, textId).empty());
         child->SetActive(true);
         world.SyncToSceneView();
         assert(GetTranslationX(text->GetWorldTransformCache()) == 7.0f);
         world.SyncToSceneView();
         world.SyncToSceneView();
         syncStatic(2);
+        assert(glyphsMatch(world, textId, "BC D", 7.0f, 7.0f));
 
         // 動かした Entity に後から足した Text
         other->SetPosition(3.0f, 0.0f, 0.0f);
@@ -1272,16 +1400,49 @@ namespace
         world.SyncToSceneView();
         TextComponent* added = world.CreateComponent<TextComponent>(other);
         assert(added);
+        added->SetText("E");
+        added->SetFontAtlas(&atlas);
+        const uint64_t addedId = added->GetComponentId();
         world.SyncToSceneView();
         assert(world.GetLastRenderSyncVisitedRows() == 1);
         assert(GetTranslationX(added->GetWorldTransformCache()) == 3.0f);
+        assert(CollectTextGlyphs(world, addedId).size() == (atlas.IsValid() ? 1u : 0u));
         world.SyncToSceneView();
         syncStatic(2);
+        assert(glyphsMatch(world, addedId, "E", 3.0f, 3.0f));
+        assert(glyphsMatch(world, textId, "BC D", 7.0f, 7.0f));
+
+        // 旧の全走査に切り替えても、公開するグリフの板は変わらない
+        {
+            Container::VariableArray<BoardProxy> deltaGlyphs;
+            world.CollectTransientBoardProxies(deltaGlyphs);
+            world.SetLegacyRenderSync(true);
+            world.SyncToSceneView();
+            Container::VariableArray<BoardProxy> legacyGlyphs;
+            world.CollectTransientBoardProxies(legacyGlyphs);
+            world.SetLegacyRenderSync(false);
+            assert(deltaGlyphs.size() == legacyGlyphs.size());
+            assert(!deltaGlyphs.empty() || !atlas.IsValid());
+            for (size_t index = 0; index < deltaGlyphs.size(); ++index)
+            {
+                const BoardProxy& delta = deltaGlyphs[index];
+                const BoardProxy& legacy = legacyGlyphs[index];
+                assert(delta.ComponentId == legacy.ComponentId);
+                assert(GetTranslationX(delta.WorldTransform) == GetTranslationX(legacy.WorldTransform));
+                assert(GetTranslationX(delta.PreviousWorldTransform) == GetTranslationX(legacy.PreviousWorldTransform));
+                assert(delta.SizePx.x == legacy.SizePx.x && delta.SizePx.y == legacy.SizePx.y);
+            }
+            world.SyncToSceneView();
+            world.SyncToSceneView();
+            syncStatic(2);
+        }
 
         // 削除: 前フレームの変換が揃う前に破棄しても、回収後の同期は消えた行を見ない
         parent->SetPosition(9.0f, 0.0f, 0.0f);
         world.SyncToSceneView();
         assert(GetTranslationX(text->GetWorldTransformCache()) == 9.0f);
+        assert(glyphsMatch(world, textId, "BC D", 9.0f, 7.0f));
+        assert(glyphsMatch(world, addedId, "E", 3.0f, 3.0f));
         text->MarkForDestroy();
         added->MarkForDestroy();
         world.Tick(0.016f);
@@ -1309,6 +1470,8 @@ namespace
         assert(world.GetRenderInvalidationStats().Violations == 0);
 
         world.Finalize();
+        atlas.Shutdown(resources.Textures());
+        resources.Shutdown();
     }
 
     // RenderThread の写しの消費者（MegaGeometryPass など）の模型。前に見た版から、変わった席だけで直せるときは直し、
