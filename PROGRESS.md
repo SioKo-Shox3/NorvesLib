@@ -1610,3 +1610,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-3.txt`（+ `-3-gamelog.txt`）: mega-stress 単独の 3 周が pass。`SCENE_CYCLE_BASELINE cycle=1 scenes=1`、`changed=none`。
   - `-5-toofew.txt`: 混在で `-Cycles 2` にすると `SCENE_CYCLE_TOO_FEW cycles=2 scenes=3` で fail（終了コード 1）。
 - Notes: 夜に止まった 5 項目（SCN-ECS-RENDER-INVALIDATION・RENDER-SYNC-PREP・RENDER-SYNC-SWITCH・SCN-MEGA-SCENE-CONFIRM・SCENE-SLOTS）は、混在の周回が通るようになったので、各項目の verify と評価をやり直せる。TASKS.md の作業ツリーにあった SCN-MEGA-SCENE-DELTA の `status: blocked`（ランナーの記録）はそのまま同じコミットに入れた。
+
+### SCN-ECS-FIX-DESTROY-FLAGS（2026-10-11、反復 1・run 20261011-130759）
+
+- 変更: `Entity::Destroy()` をオーバーライドし、ECS の破棄の印（`EcsEntityFlags` の `bPendingDestroy`）を立ててから `Object::Destroy()`（World の破棄予約の一覧への登録）を呼ぶ。`MarkForDestroy()` は `Destroy()` を呼ぶだけにした。公開の `Destroy()`・`ObjectHeap::EnqueueDestroy()`（`Object::Destroy` の仮想呼び出し）・`MarkForDestroy()` が同じ入口を通るので、変更ログが更新され、祖先の破棄予約で子・孫の Tick が古い EffectiveActive で呼ばれない。
+- テスト（`EcsHierarchyTest`、既存の束 EntityTreeTest の中）: 祖先の停止の検査を SetActive(false)・MarkForDestroy・公開の Destroy() の 3 通り × 旧/新の伝播で count=0 にした。Heap 経由と直接の Destroy() で ECS の印が立つ検査を足した。
+- 結果（`.harness/runs/20261011-130759/`）: `verify-SCN-ECS-FIX-DESTROY-FLAGS-1.txt` Game の RelWithDebInfo ビルド exit=0、`-2.txt` Debug の EntityTreeTest・ApplicationFixedStepPipelineTest のビルド exit=0、`-3.txt` TransformHierarchyTest・EcsHierarchyTest・WorldTickGroupTest・SpringArmComponentTest・ApplicationFixedStepPipelineTest が 5/5 Passed。
+- Notes:
+  - Heap 経由の検査は、Entity を World の木へ Heap から入れられない（`AddObject` が拒否）ので、World に付かない Heap の Entity で ECS の印（予備の値）が立つことを見ている。World の木での子・孫の抑止は、直接の Destroy() の検査が受け持つ。
+  - 検証の ctest は束の EntityTreeTest.exe を使う。個別の名前（EcsHierarchyTest など）では cmake のターゲットが無いので、EntityTreeTest をビルドする。
+  - Git Bash から `cmake --build ... -- /m:1` を呼ぶと `/m:1` がパスに変換されて失敗する。PowerShell から呼ぶこと。
+  - SCN-ECS-TRANSFORM-SWITCH を done にした（評価の 2 周目の指摘はこの 1 点だけだった）。

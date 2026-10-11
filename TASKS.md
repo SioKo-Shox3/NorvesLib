@@ -366,7 +366,7 @@
 
 
 ## SCN-ECS-FIX-DESTROY-FLAGS: 公開の Destroy() と Heap の破棄予約でも、ECS の破棄の印を立てる
-- status: todo
+- status: done
 - done-when: `Entity::Destroy()`（`Object.cpp` 197 行付近の Object のフラグだけを変える経路）・World の予約登録（`World.cpp` 2336 行付近）・`ObjectHeap::EnqueueDestroy()` のどれから破棄を予約しても、`MarkForDestroy()` と同じ処理で ECS の破棄の印と変更ログが更新され、祖先の破棄予約で子・孫の Tick が呼ばれない（`World.cpp` 1431 行付近が古い `EffectiveActive=true` を使わない）。`EcsHierarchyTest` に、直接の `Destroy()` と Heap 経由の予約で子・孫が呼ばれない（count=0）回帰の検査を足す。通ったら SCN-ECS-TRANSFORM-SWITCH の status を done にし、`blocked/SCN-ECS-TRANSFORM-SWITCH.md` に解消を書き足す（残りの指摘はこの 1 点だけ）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target EntityTreeTest ApplicationFixedStepPipelineTest -- /m:1`
@@ -386,7 +386,7 @@
 
 
 ## SCN-ECS-TRANSFORM-SWITCH: 階層のシステムを正にする（切替）
-- status: blocked
+- status: done
 - done-when: 旧の再帰の呼び出し（World.cpp:920・942・1094・1356、ApplicationProcessor.cpp:2668・2673）を、段の終わりと固定ステップの前後の伝播に替える。公開している `UpdateWorldTransforms` は伝播を呼ぶ形で残す（SpringArmComponentTest.cpp:312 が呼んでいる）。`CanDispatchEntity` は EffectiveActive を読む。`--ecs-legacy-transform` で旧経路に戻せる。下のテストと起動画面の比較が pass する。
 - verify: `cmake --build build --config Debug --target EntityTreeTest ApplicationFixedStepPipelineTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(TransformHierarchyTest|EcsHierarchyTest|WorldTickGroupTest|SpringArmComponentTest|ApplicationFixedStepPipelineTest)$" --no-tests=error --output-on-failure --timeout 180`

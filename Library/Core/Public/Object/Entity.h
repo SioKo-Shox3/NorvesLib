@@ -347,6 +347,16 @@ namespace NorvesLib::Core
          */
         void MarkForDestroy()
         {
+            Destroy();
+        }
+
+        /**
+         * @brief 破棄予約の入口（公開の Destroy・ObjectHeap::EnqueueDestroy・MarkForDestroy が共通で通る）
+         *
+         * Object のフラグに加えて ECS の破棄の印（EcsEntityFlags）も立て、階層のシステムが子孫の EffectiveActive を求め直せるようにする。
+         */
+        void Destroy() override
+        {
             getbPendingDestroy().Set(true);
             Object::Destroy();
         }

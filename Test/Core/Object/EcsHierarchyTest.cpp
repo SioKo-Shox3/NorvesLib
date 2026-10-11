@@ -7,6 +7,7 @@
 #include "Ecs/EcsTransformSystem.h"
 #include "Ecs/EcsWorld.h"
 #include "Object/Entity.h"
+#include "Object/ObjectHeap.h"
 #include "Object/World.h"
 #include "Thread/JobSystem.h"
 #ifdef NDEBUG
@@ -604,22 +605,40 @@ namespace
     }
 
     // 同じ群の中で祖先が止まる・破棄予約になったら、後ろの子はそのとき呼ばれない（旧の祖先をたどる判定と同じ）
+    enum class StopKind
+    {
+        SetActive,
+        MarkForDestroy,
+        Destroy,
+    };
+
     class StopOwnerEntity : public Entity
     {
     public:
-        bool bDestroy = false;
+        StopKind Kind = StopKind::SetActive;
 
         void Tick(float) override
         {
-            if (bDestroy)
+            switch (Kind)
             {
+            case StopKind::MarkForDestroy:
                 MarkForDestroy();
-            }
-            else
-            {
+                break;
+            case StopKind::Destroy:
+                Destroy();
+                break;
+            default:
                 SetActive(false);
+                break;
             }
         }
+    };
+
+    // 破棄予約が ECS の破棄の印（プロパティ経由で読む値）まで立てるかを見るための窓口
+    class FlagProbeEntity : public Entity
+    {
+    public:
+        bool EcsPendingDestroyFlag() { return getbPendingDestroy().Get(); }
     };
 
     class CountEntity : public Entity
@@ -630,13 +649,13 @@ namespace
         void Tick(float) override { ++*Counter; }
     };
 
-    int RunAncestorStop(bool bLegacy, bool bDestroy)
+    int RunAncestorStop(bool bLegacy, StopKind kind)
     {
         World world;
         world.Initialize();
         world.SetLegacyTransformPropagation(bLegacy);
         auto *parent = world.SpawnEntity<StopOwnerEntity>();
-        parent->bDestroy = bDestroy;
+        parent->Kind = kind;
         int count = 0;
         auto *child = world.SpawnEntity<CountEntity>(parent);
         child->Counter = &count;
@@ -652,11 +671,32 @@ namespace
 
     void TestAncestorStopSuppressesDescendantsImmediately()
     {
-        for (const bool bDestroy : {false, true})
+        // 公開の Destroy() も MarkForDestroy() と同じく、ECS の印と変更ログを更新して子・孫の呼び出しを止める
+        for (const StopKind kind : {StopKind::SetActive, StopKind::MarkForDestroy, StopKind::Destroy})
         {
-            assert(RunAncestorStop(true, bDestroy) == 0);
-            assert(RunAncestorStop(false, bDestroy) == 0);
+            assert(RunAncestorStop(true, kind) == 0);
+            assert(RunAncestorStop(false, kind) == 0);
         }
+    }
+
+    // ObjectHeap 経由の予約も、公開の Destroy() と同じ入口を通って ECS の破棄の印が立つ
+    void TestHeapEnqueueDestroySetsEcsFlag()
+    {
+        ObjectHeap heap;
+        const ObjectHandle handle = heap.Create<FlagProbeEntity>();
+        auto *entity = heap.Resolve<FlagProbeEntity>(handle);
+        assert(entity != nullptr);
+        assert(!entity->EcsPendingDestroyFlag());
+        assert(heap.EnqueueDestroy(handle));
+        assert(entity->EcsPendingDestroyFlag());
+        assert(entity->IsPendingDestroy());
+        heap.ProcessDestroyQueue();
+
+        // 公開の Destroy() も同じ
+        FlagProbeEntity direct;
+        assert(!direct.EcsPendingDestroyFlag());
+        direct.Destroy();
+        assert(direct.EcsPendingDestroyFlag());
     }
 }
 
@@ -676,6 +716,7 @@ int main()
     TestUpdateMatchesLegacyRecursion();
     TestSpawnedChildReparentKeepsPosition();
     TestAncestorStopSuppressesDescendantsImmediately();
+    TestHeapEnqueueDestroySetsEcsFlag();
 
     NorvesLib::Thread::JobSystem::Get().Shutdown();
     std::cout << "EcsHierarchyTest 合格\n";
