@@ -553,7 +553,7 @@
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-TICK-SCRIPT: ScriptComponent の Tick を順序付きの系へ移す
-- status: done
+- status: doing
 - done-when: Tick を消して登録する（順は今と同じ）。スクリプトからの生成と破棄は、Object は即時、行は同期点で作られる。下のテストが pass する。
 - verify: `cmake --build build --config Debug --target ScriptComponentTickTest ScriptApplicationLifecycleContractTest ScriptHotReloadTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(ScriptComponentTickTest|ScriptComponentSceneRoundTripTest|M6AngelScriptAcceptanceTest|ScriptApplicationLifecycleContractTest|ScriptHotReloadTest)$" --no-tests=error --output-on-failure --timeout 180`
