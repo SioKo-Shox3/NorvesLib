@@ -639,6 +639,161 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        /** @brief TLAS に入れるかを決める MegaGeometry の境界の球（ワールド）。境界が無ければ変換の並進と半径 0 */
+        void MakeRayTracingSelectBounds(const MegaGeometryProxy& proxy, float outSphere[4])
+        {
+            if (proxy.WorldBounds.IsValid())
+            {
+                outSphere[0] = proxy.WorldBounds.CenterX;
+                outSphere[1] = proxy.WorldBounds.CenterY;
+                outSphere[2] = proxy.WorldBounds.CenterZ;
+                outSphere[3] = proxy.WorldBounds.Radius;
+                return;
+            }
+            const Math::Vector3 translation = proxy.WorldTransform.GetTranslationRow();
+            outSphere[0] = translation.x;
+            outSphere[1] = translation.y;
+            outSphere[2] = translation.z;
+            outSphere[3] = 0.0f;
+        }
+
+        /** @brief 選ぶ規則の原点（メインカメラの位置）。カメラが無ければ false で、距離では外さない（上限だけで選ぶ） */
+        bool GetRayTracingSelectOrigin(const FramePacket& packet, float outOrigin[3])
+        {
+            if (!packet.bHasMainCamera)
+            {
+                return false;
+            }
+            outOrigin[0] = packet.Scene.MainCamera.PositionX;
+            outOrigin[1] = packet.Scene.MainCamera.PositionY;
+            outOrigin[2] = packet.Scene.MainCamera.PositionZ;
+            return std::isfinite(outOrigin[0]) && std::isfinite(outOrigin[1]) && std::isfinite(outOrigin[2]);
+        }
+
+        /** @brief 原点から境界の球の表面までの距離（球の中なら 0）。値が有限でなければ無限大（外す） */
+        float DistanceToRayTracingSelectBounds(const float origin[3], const float sphere[4])
+        {
+            const float dx = sphere[0] - origin[0];
+            const float dy = sphere[1] - origin[1];
+            const float dz = sphere[2] - origin[2];
+            const float distance = std::sqrt(dx * dx + dy * dy + dz * dz) - sphere[3];
+            if (!std::isfinite(distance))
+            {
+                return std::numeric_limits<float>::infinity();
+            }
+            return distance > 0.0f ? distance : 0.0f;
+        }
+
+        /**
+         * @brief BLAS の入力に使える MegaGeometry のメッシュの GPU データを、1 フレームの中で同じメッシュは 1 回だけ引く
+         *
+         * 区画へのコピーが GPU で完了し、影に使う段の範囲が頂点・インデックスの中に収まるメッシュだけを返す（BLAS は同期で構築する）。
+         */
+        class RayTracingMegaMeshLookup
+        {
+        public:
+            explicit RayTracingMegaMeshLookup(const MegaGeometryResources& resources)
+                : m_Resources(resources)
+            {
+            }
+
+            const MegaGeometry::MegaMeshGPUData* Find(MegaGeometry::MegaMeshHandle handle)
+            {
+                const auto found = m_Cache.find(handle.Id);
+                if (found != m_Cache.end())
+                {
+                    return found->second;
+                }
+                const MegaGeometry::MegaMeshGPUData* gpuData = Resolve(handle);
+                m_Cache.emplace(handle.Id, gpuData);
+                return gpuData;
+            }
+
+        private:
+            const MegaGeometry::MegaMeshGPUData* Resolve(MegaGeometry::MegaMeshHandle handle) const
+            {
+                constexpr uint32_t vertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
+                const MegaGeometry::MegaMeshGPUData* gpuData = m_Resources.GetReadyMegaMeshGPUData(handle);
+                if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
+                    gpuData->ShadowIndexCount < 3u || gpuData->ShadowIndexCount % 3u != 0u ||
+                    gpuData->ShadowFirstIndex > gpuData->IndexCount ||
+                    gpuData->ShadowIndexCount > gpuData->IndexCount - gpuData->ShadowFirstIndex ||
+                    gpuData->VertexCount < 3u ||
+                    static_cast<uint64_t>(gpuData->VertexCount) * vertexStride >
+                        gpuData->VertexBufferBytes ||
+                    (static_cast<uint64_t>(gpuData->ShadowFirstIndex) + gpuData->ShadowIndexCount) *
+                            sizeof(uint32_t) >
+                        gpuData->IndexBufferBytes)
+                {
+                    return nullptr;
+                }
+                return gpuData;
+            }
+
+            const MegaGeometryResources& m_Resources;
+            Container::UnorderedMap<uint64_t, const MegaGeometry::MegaMeshGPUData*> m_Cache;
+        };
+
+        /**
+         * @brief MegaGeometry のインスタンス 1 つを、パケットのレイトレーシングシーンの末尾へ足す
+         *
+         * GBuffer ではクラスタ単位で GPU が選ぶが、光線には影に使う段（既定は LOD0）をそのまま見せる（点光源の影と同じ範囲）。
+         * 表面色は MegaGeometryPass の GBuffer と同じく材質の BaseColor を instance 色とし、texture は白とみなす。
+         */
+        void AppendRayTracingMegaInstance(const MegaGeometry::MegaMeshGPUData& gpuData,
+                                          const MegaGeometryProxy& proxy,
+                                          FramePacket& packet)
+        {
+            constexpr uint32_t vertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
+            RayTracingSceneInstanceSnapshot instance;
+            instance.ObjectId = proxy.ObjectId;
+            instance.ObjectInstanceIndex = 0;
+            instance.SourceVertexBuffer = gpuData.VertexBuffer;
+            instance.SourceIndexBuffer = gpuData.IndexBuffer;
+            instance.VertexBufferOffsetBytes = gpuData.VertexBufferOffsetBytes;
+            instance.IndexBufferOffsetBytes = gpuData.IndexBufferOffsetBytes;
+            instance.MegaMeshId = proxy.MegaMeshHandle.Id;
+            instance.GeometryRegionOwner = gpuData.RegionOwner;
+            instance.IndexOffset = gpuData.ShadowFirstIndex;
+            instance.IndexCount = gpuData.ShadowIndexCount;
+            instance.VertexOffset = 0;
+            instance.VertexCount = gpuData.VertexCount;
+            instance.VertexStride = vertexStride;
+            instance.bGeometryOpaque = true;
+            const MegaGeometry::MegaMeshMaterial& material = gpuData.Material;
+            for (uint32_t channel = 0u; channel < 4u; ++channel)
+            {
+                instance.Material.BaseColor[channel] = material.BaseColor[channel];
+                instance.Material.ObjectColor[channel] = material.BaseColor[channel];
+            }
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                instance.Material.EmissiveColor[channel] = material.EmissiveColor[channel];
+            }
+            instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
+            instance.Instance.customIndex =
+                static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
+            instance.Instance.mask = proxy.bCastShadow ? RayTracingInstanceMaskShadowCaster
+                                                       : RayTracingInstanceMaskNonShadowCaster;
+            CopyRayTracingInstanceTransform(proxy.WorldTransform, instance.Instance.transform);
+            if (IsFiniteRayTracingTransform(proxy.PreviousWorldTransform))
+            {
+                CopyRayTracingInstanceTransform(proxy.PreviousWorldTransform,
+                                                instance.PreviousTransform);
+                instance.bHasPreviousTransform = true;
+            }
+            packet.RayTracingScene.Instances.push_back(std::move(instance));
+        }
+
+        /** @brief TLAS の合計が上限に収まるよう、すでに入っているインスタンスの後に MegaGeometry を入れられる数 */
+        uint32_t RayTracingMegaBudget(const FramePacket& packet)
+        {
+            const size_t existing = packet.RayTracingScene.Instances.size();
+            return existing >= RayTracingSelectMaxInstances
+                       ? 0u
+                       : RayTracingSelectMaxInstances - static_cast<uint32_t>(existing);
+        }
+
         /**
          * @brief 登録するカメラの GameThread 側の識別子を決める
          *
@@ -670,6 +825,14 @@ namespace NorvesLib::Core::Rendering
         {
             topLevel = TopLevelCacheEntry{};
         }
+        m_MegaSlots.clear();
+        m_UnslottedMegaProxies.clear();
+        m_MegaSelectCandidates.clear();
+        m_MegaSlotSource = nullptr;
+        m_MegaSlotRevision = 0;
+        m_MegaSlotGeneration = 0;
+        m_bMegaSlotsValid = false;
+        m_RenderThreadSequenceCarry.Reset();
     }
 
     bool RayTracingSceneSubsystem::BuildFrameSnapshot(const MeshResources* meshResources,
@@ -858,77 +1021,235 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
-        // MegaGeometry（岩・小屋など）はGBufferではクラスタ単位でGPUが選ぶが、光線には影に使う段
-        // （既定はLOD0）をそのまま見せる（点光源の影と同じ範囲）。表面色はMegaGeometryPassのGBufferと同じく材質のBaseColorを
-        // instance色とし、textureは白とみなす。
-        constexpr uint32_t vertexStride = static_cast<uint32_t>(sizeof(Mesh3DVertex));
-        for (const MegaGeometryProxy& proxy : megaProxies)
+        SelectionStats stats;
+        stats.bRebuilt = true;
+        stats.PatchedSlots = static_cast<uint32_t>(megaProxies.size());
+        const size_t baseCount = packet.RayTracingScene.Instances.size();
+        float origin[3] = {};
+        const bool bHasOrigin = GetRayTracingSelectOrigin(packet, origin);
+        Container::VariableArray<SelectCandidate> candidates;
+        candidates.reserve(megaProxies.size());
+        for (uint32_t index = 0; index < static_cast<uint32_t>(megaProxies.size()); ++index)
         {
-            if (packet.RayTracingScene.Instances.size() > 0x00FFFFFFu)
-            {
-                break;
-            }
-            if (!proxy.IsValid())
+            const MegaGeometryProxy& proxy = megaProxies[index];
+            if (!proxy.IsValid() || !IsFiniteRayTracingTransform(proxy.WorldTransform))
             {
                 continue;
             }
-            // 区画へのコピーが GPU で完了したメッシュだけを BLAS の入力にする（BLAS は同期で構築する）
-            const MegaGeometry::MegaMeshGPUData* gpuData =
-                megaGeometryResources->GetReadyMegaMeshGPUData(proxy.MegaMeshHandle);
-            if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
-                gpuData->ShadowIndexCount < 3u || gpuData->ShadowIndexCount % 3u != 0u ||
-                gpuData->ShadowFirstIndex > gpuData->IndexCount ||
-                gpuData->ShadowIndexCount > gpuData->IndexCount - gpuData->ShadowFirstIndex ||
-                gpuData->VertexCount < 3u ||
-                static_cast<uint64_t>(gpuData->VertexCount) * vertexStride >
-                    gpuData->VertexBufferBytes ||
-                (static_cast<uint64_t>(gpuData->ShadowFirstIndex) + gpuData->ShadowIndexCount) *
-                        sizeof(uint32_t) >
-                    gpuData->IndexBufferBytes ||
-                !IsFiniteRayTracingTransform(proxy.WorldTransform))
+            ++stats.Candidates;
+            float sphere[4] = {};
+            MakeRayTracingSelectBounds(proxy, sphere);
+            const float distance = bHasOrigin ? DistanceToRayTracingSelectBounds(origin, sphere) : 0.0f;
+            if (distance > RayTracingSelectRadiusMeters)
             {
+                ++stats.OutOfRange;
                 continue;
             }
-
-            RayTracingSceneInstanceSnapshot instance;
-            instance.ObjectId = proxy.ObjectId;
-            instance.ObjectInstanceIndex = 0;
-            instance.SourceVertexBuffer = gpuData->VertexBuffer;
-            instance.SourceIndexBuffer = gpuData->IndexBuffer;
-            instance.VertexBufferOffsetBytes = gpuData->VertexBufferOffsetBytes;
-            instance.IndexBufferOffsetBytes = gpuData->IndexBufferOffsetBytes;
-            instance.MegaMeshId = proxy.MegaMeshHandle.Id;
-            instance.GeometryRegionOwner = gpuData->RegionOwner;
-            instance.IndexOffset = gpuData->ShadowFirstIndex;
-            instance.IndexCount = gpuData->ShadowIndexCount;
-            instance.VertexOffset = 0;
-            instance.VertexCount = gpuData->VertexCount;
-            instance.VertexStride = vertexStride;
-            instance.bGeometryOpaque = true;
-            const MegaGeometry::MegaMeshMaterial& material = gpuData->Material;
-            for (uint32_t channel = 0u; channel < 4u; ++channel)
-            {
-                instance.Material.BaseColor[channel] = material.BaseColor[channel];
-                instance.Material.ObjectColor[channel] = material.BaseColor[channel];
-            }
-            for (uint32_t channel = 0u; channel < 3u; ++channel)
-            {
-                instance.Material.EmissiveColor[channel] = material.EmissiveColor[channel];
-            }
-            instance.Material.EmissiveLuminanceNits = material.EmissiveLuminanceNits;
-            instance.Instance.customIndex =
-                static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
-            instance.Instance.mask = proxy.bCastShadow ? RayTracingInstanceMaskShadowCaster
-                                                       : RayTracingInstanceMaskNonShadowCaster;
-            CopyRayTracingInstanceTransform(proxy.WorldTransform, instance.Instance.transform);
-            if (IsFiniteRayTracingTransform(proxy.PreviousWorldTransform))
-            {
-                CopyRayTracingInstanceTransform(proxy.PreviousWorldTransform,
-                                                instance.PreviousTransform);
-                instance.bHasPreviousTransform = true;
-            }
-            packet.RayTracingScene.Instances.push_back(std::move(instance));
+            candidates.push_back(SelectCandidate{distance, index});
         }
+        stats.OverLimit = SelectNearest(candidates, RayTracingMegaBudget(packet));
+
+        RayTracingMegaMeshLookup meshes(*megaGeometryResources);
+        for (const SelectCandidate& candidate : candidates)
+        {
+            const MegaGeometryProxy& proxy = megaProxies[candidate.Index];
+            const MegaGeometry::MegaMeshGPUData* gpuData = meshes.Find(proxy.MegaMeshHandle);
+            if (!gpuData)
+            {
+                ++stats.NotReady;
+                continue;
+            }
+            AppendRayTracingMegaInstance(*gpuData, proxy, packet);
+        }
+        stats.Instances = static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
+        stats.MegaInstances = static_cast<uint32_t>(packet.RayTracingScene.Instances.size() - baseCount);
+        LogSelection("full", stats, m_FullSelectionLogCounter);
+    }
+
+    void RayTracingSceneSubsystem::AppendMegaGeometryInstancesFromMirror(
+        const MegaGeometryResources* megaGeometryResources,
+        const MegaGeometryMirror& mirror,
+        FramePacket& packet)
+    {
+        SelectionStats stats;
+        stats.PatchedSlots = SyncMegaSlots(mirror, stats.bRebuilt);
+        if (megaGeometryResources)
+        {
+            const size_t baseCount = packet.RayTracingScene.Instances.size();
+            float origin[3] = {};
+            const bool bHasOrigin = GetRayTracingSelectOrigin(packet, origin);
+            const uint32_t slotCount = static_cast<uint32_t>(m_MegaSlots.size());
+            Container::VariableArray<SelectCandidate>& candidates = m_MegaSelectCandidates;
+            candidates.clear();
+            const auto consider = [&](const float sphere[4], uint32_t index)
+            {
+                ++stats.Candidates;
+                const float distance = bHasOrigin ? DistanceToRayTracingSelectBounds(origin, sphere) : 0.0f;
+                if (distance > RayTracingSelectRadiusMeters)
+                {
+                    ++stats.OutOfRange;
+                    return;
+                }
+                candidates.push_back(SelectCandidate{distance, index});
+            };
+            // 席の番号の順、その後に席を持たない proxy の順（番号は slotCount + 並び）
+            for (uint32_t slot = 1; slot < slotCount; ++slot)
+            {
+                const MegaSlotEntry& entry = m_MegaSlots[slot];
+                if (entry.bUsable)
+                {
+                    consider(entry.BoundsSphere, slot);
+                }
+            }
+            for (uint32_t index = 0; index < static_cast<uint32_t>(m_UnslottedMegaProxies.size()); ++index)
+            {
+                const MegaGeometryProxy& proxy = m_UnslottedMegaProxies[index];
+                if (proxy.IsValid() && IsFiniteRayTracingTransform(proxy.WorldTransform))
+                {
+                    float sphere[4] = {};
+                    MakeRayTracingSelectBounds(proxy, sphere);
+                    consider(sphere, slotCount + index);
+                }
+            }
+            stats.OverLimit = SelectNearest(candidates, RayTracingMegaBudget(packet));
+
+            // 選んだ席だけ、写しの proxy（前の変換は NoteDrawn が最後に描いたフレームから決めた値）からインスタンスを作る
+            RayTracingMegaMeshLookup meshes(*megaGeometryResources);
+            for (const SelectCandidate& candidate : candidates)
+            {
+                const MegaGeometryProxy* proxy = candidate.Index < slotCount
+                                                     ? mirror.FindBySlot(candidate.Index)
+                                                     : &m_UnslottedMegaProxies[candidate.Index - slotCount];
+                const MegaGeometry::MegaMeshGPUData* gpuData =
+                    proxy ? meshes.Find(proxy->MegaMeshHandle) : nullptr;
+                if (!gpuData)
+                {
+                    ++stats.NotReady;
+                    continue;
+                }
+                AppendRayTracingMegaInstance(*gpuData, *proxy, packet);
+            }
+            stats.Instances = static_cast<uint32_t>(packet.RayTracingScene.Instances.size());
+            stats.MegaInstances = static_cast<uint32_t>(packet.RayTracingScene.Instances.size() - baseCount);
+            LogSelection("mirror", stats, m_MirrorSelectionLogCounter);
+        }
+
+        // 連番のパストレーシング: MegaGeometry を足した後のインスタンスで前の値を持ち越す（描くパケットごと）。
+        // 連番の1フレームの中ではどのパケットも同じ状態なので、描いたパケットの状態を前の値にしてよい。連番でなければ状態を捨てる
+        ApplyPathTracingSequenceCarry(packet, m_RenderThreadSequenceCarry);
+    }
+
+    uint32_t RayTracingSceneSubsystem::SyncMegaSlots(const MegaGeometryMirror& mirror, bool& outRebuilt)
+    {
+        outRebuilt = false;
+        const bool bSameSource = m_bMegaSlotsValid && m_MegaSlotSource == &mirror &&
+                                 m_MegaSlotGeneration == mirror.GetGeneration();
+        if (bSameSource && m_MegaSlotRevision == mirror.GetRevision())
+        {
+            return 0u;
+        }
+
+        const auto writeEntry = [](const MegaGeometryProxy* proxy, MegaSlotEntry& entry)
+        {
+            entry = MegaSlotEntry{};
+            if (!proxy || !proxy->IsValid() || !IsFiniteRayTracingTransform(proxy->WorldTransform))
+            {
+                return;
+            }
+            MakeRayTracingSelectBounds(*proxy, entry.BoundsSphere);
+            entry.MegaMeshId = proxy->MegaMeshHandle.Id;
+            entry.bUsable = true;
+        };
+
+        // 前に見た版から数えた変わった席だけを直す（外れた席は写しに無いので使わない印にする）
+        if (bSameSource && mirror.CanPatchFrom(m_MegaSlotRevision))
+        {
+            const Container::VariableArray<uint32_t>& changedSlots = mirror.GetChangedSlots();
+            for (uint32_t slot : changedSlots)
+            {
+                if (slot == 0)
+                {
+                    continue;
+                }
+                if (slot >= m_MegaSlots.size())
+                {
+                    m_MegaSlots.resize(static_cast<size_t>(slot) + 1u);
+                }
+                writeEntry(mirror.FindBySlot(slot), m_MegaSlots[slot]);
+            }
+            m_MegaSlotRevision = mirror.GetRevision();
+            return static_cast<uint32_t>(changedSlots.size());
+        }
+
+        // 直せない（全部が変わった・前に見た版から数えていない・別の写し）ので作り直す
+        m_MegaSlots.clear();
+        m_UnslottedMegaProxies.clear();
+        for (const MegaGeometryProxy& proxy : mirror.GetProxies())
+        {
+            if (proxy.SceneSlot == 0)
+            {
+                m_UnslottedMegaProxies.push_back(proxy);
+                continue;
+            }
+            if (proxy.SceneSlot >= m_MegaSlots.size())
+            {
+                m_MegaSlots.resize(static_cast<size_t>(proxy.SceneSlot) + 1u);
+            }
+            writeEntry(&proxy, m_MegaSlots[proxy.SceneSlot]);
+        }
+        m_MegaSlotSource = &mirror;
+        m_MegaSlotGeneration = mirror.GetGeneration();
+        m_MegaSlotRevision = mirror.GetRevision();
+        m_bMegaSlotsValid = true;
+        outRebuilt = true;
+        return static_cast<uint32_t>(mirror.GetProxies().size());
+    }
+
+    uint32_t RayTracingSceneSubsystem::SelectNearest(Container::VariableArray<SelectCandidate>& candidates,
+                                                     uint32_t budget)
+    {
+        if (candidates.size() <= budget)
+        {
+            return 0u;
+        }
+        const uint32_t overLimit = static_cast<uint32_t>(candidates.size() - budget);
+        if (budget > 0u)
+        {
+            // 近い順（同じ距離は番号の小さい方）に budget 個を前へ集め、入れる順は番号の昇順に戻す（並びを決定的に保つ）
+            const auto nearer = [](const SelectCandidate& lhs, const SelectCandidate& rhs)
+            {
+                return lhs.Distance != rhs.Distance ? lhs.Distance < rhs.Distance : lhs.Index < rhs.Index;
+            };
+            std::nth_element(candidates.begin(), candidates.begin() + (budget - 1u), candidates.end(), nearer);
+        }
+        candidates.resize(budget);
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const SelectCandidate& lhs, const SelectCandidate& rhs) { return lhs.Index < rhs.Index; });
+        return overLimit;
+    }
+
+    void RayTracingSceneSubsystem::LogSelection(const char* path, const SelectionStats& stats, uint32_t& counter)
+    {
+        // 最初と、その後は 120 回ごとに出す。excluded は規則（距離・上限）で外した MegaGeometry の数
+        if ((counter++ % 120u) != 0u)
+        {
+            return;
+        }
+        NORVES_LOG_INFO("RayTracingSceneSubsystem",
+                        "RT_SCENE instances=%u excluded=%u path=%s mega=%u candidates=%u out_of_range=%u "
+                        "over_limit=%u not_ready=%u radius_m=%.0f limit=%u patched_slots=%u rebuilt=%u",
+                        stats.Instances,
+                        stats.OutOfRange + stats.OverLimit,
+                        path,
+                        stats.MegaInstances,
+                        stats.Candidates,
+                        stats.OutOfRange,
+                        stats.OverLimit,
+                        stats.NotReady,
+                        static_cast<double>(RayTracingSelectRadiusMeters),
+                        RayTracingSelectMaxInstances,
+                        stats.PatchedSlots,
+                        stats.bRebuilt ? 1u : 0u);
     }
 
     bool RayTracingSceneSubsystem::BuildAccelerationStructures(RHI::DevicePtr device,
@@ -3837,17 +4158,15 @@ namespace NorvesLib::Core::Rendering
                 m_RenderResources ? &m_RenderResources->Materials() : nullptr;
             const MegaGeometryResources* megaGeometryResources =
                 m_RenderResources ? &m_RenderResources->MegaGeometry() : nullptr;
-            // 差分の同期では、MegaGeometry のレイトレーシングのインスタンスは RenderThread が自分の写しから足す。
-            // 連番のパストレーシングだけは、前の変換の持ち越しが snapshot の並びに依るので、GameThread の SceneView の配列で作る
-            const bool bDeferMegaRayTracing = m_CurrentPacket->DefersMegaRayTracingToRenderThread();
+            // 差分の同期では、MegaGeometry のレイトレーシングのインスタンスは RenderThread が写しの席ごとの配列から選んで足す
+            // （連番のパストレーシングも同じ。前の値の持ち越しは RenderThread が MegaGeometry を足した後に当てる）
+            const bool bDeferMegaRayTracing = m_CurrentPacket->MegaDelta.bActive;
             if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildFrameSnapshot(
                     meshResources,
                     *m_CurrentPacket,
                     materialResources,
                     bDeferMegaRayTracing ? nullptr : megaGeometryResources,
-                    m_CurrentPacket->MegaDelta.bActive && m_MainSceneView
-                        ? &m_MainSceneView->GetMegaGeometryProxies()
-                        : nullptr,
+                    nullptr,
                     m_CurrentPacket->MeshDelta.bActive && m_MainSceneView
                         ? &m_MainSceneView->GetMeshProxies()
                         : nullptr))
@@ -4449,13 +4768,14 @@ namespace NorvesLib::Core::Rendering
                     m_CommandList->BeginGPUTimestampScope("AccelerationStructureBuild");
             }
 #endif
-            // 差分の同期の MegaGeometry は、RenderThread の写しからレイトレーシングのインスタンスを足す
-            if (packet->DefersMegaRayTracingToRenderThread() && m_RenderResources && m_Device &&
+            // 差分の同期の MegaGeometry は、RenderThread の写し（NoteDrawn の後）の席ごとの配列から、
+            // 規則で選んだレイトレーシングのインスタンスを足す
+            if (packet->MegaDelta.bActive && m_RenderResources && m_Device &&
                 m_Device->GetCapabilities().RayTracing.bAccelerationStructure)
             {
-                NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().AppendMegaGeometryInstances(
+                NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().AppendMegaGeometryInstancesFromMirror(
                     &m_RenderResources->MegaGeometry(),
-                    m_MegaMirror.GetProxies(),
+                    m_MegaMirror,
                     *packet);
             }
             if (!NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().BuildAccelerationStructures(

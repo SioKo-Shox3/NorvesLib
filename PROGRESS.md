@@ -2537,3 +2537,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: 撮影ではゲームと描画が 1:1 で進み `gap_draws=0`（パケットの破棄・描画の見送りが起きない）。飛んだフレームの扱いは検査 MEGA_SCENE_DELTA の決まった場面（描かなかった差分・止まった印の破棄・位置を移った物体・外れて戻った物体）で確かめた。描画を意図して飛ばす起動引数は無い。
 - Notes: `-5-gap.txt` は前の変換まで含めて写しと GameThread の配列を比べていた決まった場面の照合が落ちた記録（前の変換を RenderThread が決めるようにした結果。照合から前の変換を除いて `-7` で pass）。
 - Notes: GameThread の `SceneView::BeginMegaGeometrySync`（止まった物体の前の変換を揃える差分）は全量の経路のために残した。差分の同期では写しが前の変換を決め直すので、この差分は席の内容を変えない（送る量の削減は別の項目）。`WorldSyncDifferentialTest` の写しの 2 つの場面は新しい規約でも同じ値を期待している（Test は paths の外なので走らせていない）。
+
+### SCN-MEGA-RT-SELECT（2026-10-12、反復 15・run 20261012-030203）
+
+- Done:
+  - `RayTracingSceneSubsystem` が RenderThread で MegaGeometry の席（SceneSlot）ごとの配列 `m_MegaSlots`（境界の球・メッシュ・使えるか。1 席 32 B で、変換は写しの proxy を読む）を持ち、写しが前に見た版から数えた変わった席（`CanPatchFrom`・`GetChangedSlots`）だけを直す。直せないとき（全部が変わった・世代や写しが違う）だけ作り直す。席を持たない proxy は作り直すときに写しを集める（変わると写しが全部が変わった扱いにする）。
+  - TLAS に入れる規則: メインカメラの位置から境界の球の表面までの距離が 120 m 以内の MegaGeometry を、近い順（同じ距離は席の番号の小さい方）に、TLAS の合計（MegaGeometry 以外の描画のインスタンスを含む）が 65,536 本に収まるまで。入れる順は席の番号の昇順（決定的）。選んだ席だけ写しの proxy（前の変換は NoteDrawn が最後に描いたフレームから決めた値）からインスタンスを作り、メッシュの GPU データはフレームの中で同じメッシュを 1 回だけ引く。最初と 120 回ごとに `RT_SCENE instances= excluded= path= mega= candidates= out_of_range= over_limit= not_ready= radius_m=120 limit=65536 patched_slots= rebuilt=` を出す。
+  - RT の入力の切替: 差分の同期では、連番のパストレーシングも含めて MegaGeometry を RenderThread の写しから足す（GameThread の `SceneView` の配列は読まない）。連番の前の値の持ち越しは、MegaGeometry を足した後に RenderThread の状態で `ApplyPathTracingSequenceCarry` を当てる（連番の1フレームの中ではどのパケットも同じ状態なので、描いたパケットの状態を前の値にする）。全量の同期（`--mega-scene-full-sync`）は GameThread の全量の配列のまま、同じ規則で選ぶ（`path=full`）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-RT-SELECT-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `-2.txt`: 起動画面 default の `SCN-MEGA-BASE-RWDI` との決定的な比較が `mean_luminance_difference=0`・`psnr_db=100`・`mismatched_pixel_ratio=9E-06`（`indirect_lighting=rtgi`）で `result=pass`、EXIT=0。PNG を開いて確認（家・球・岩・天球・影）。Game.log の ERROR 0、`RT_SCENE instances=26 excluded=0 path=mirror mega=6 ... patched_slots=1 rebuilt=0`。
+  - `-3.txt`: mega-stress 5000 個（動く 1%・区画 64 m）の overview が `CAPTURE_SCENE result=pass`（mean_luminance 157.614。前の項目は 157.641 で、遠くのインスタンスを TLAS から外した RT の影・GI の差）、EXIT=0。PNG を開いて確認。Game.log の ERROR 0、`RT_SCENE instances=728 excluded=4110 path=mirror mega=727 candidates=4837 out_of_range=4110 over_limit=0 not_ready=0 ... patched_slots=45 rebuilt=0`、`MEGA_HISTORY ... mismatch=0`、`MEGA_SCENE_UPLOAD ... mismatch=0`。
+- Next: SCN-MEGA-RT-SKIP（TLAS の更新を、集合・変換・BLAS の版が変わったフレームだけにする）。
+- Notes: 規則が外すのは MegaGeometry（席）だけ。描画コマンドから作る Mesh のインスタンスは境界を持たないので距離では外さず、上限の枠を先に使う（Mesh だけで 65,536 を超えても切らない）。
+- Notes: 距離は境界の球の表面まで（大きな物体の中心が遠くても、表面が 120 m 以内なら入れる）。メインカメラが無いパケットは距離で外さず上限だけで選ぶ。
+- Notes: `FramePacket::DefersMegaRayTracingToRenderThread`（連番を GameThread に残す判定）は使わなくなった。FramePacket.h は paths の外なので消していない。全量の同期の経路（`path=full`）は起動して確かめていない（verify に無い）。
+- Notes: 連番の持ち越し（`MakeKeys`・`Find`）はインスタンス数の 2 乗で、上限の 65,536 本近くを連番で撮ると RenderThread が重い（以前は GameThread で全量に対して同じ計算をしていた）。
