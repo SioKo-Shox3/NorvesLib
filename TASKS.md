@@ -494,14 +494,15 @@
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-MASS-ROWS: 散布の Object と軽い実体でバナナを置く
-- status: blocked
+- status: todo
 - done-when: 設計 1.11 の `MegaGeometryScatterComponent` が入る（入力の番号の表、範囲の連続の予約、Morton 順、範囲ごとの公開、Active・可視の範囲の印、破棄で全行と範囲を解放）。バナナが Object 1 つで置かれ（`MEGA_BANANAS_PLACED ... batches=1`。Entity の数が本数によらない）、配置の値と順は今と同じで、1万本の比較が pass する。周回で行・席・資源の数が戻る。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-ECS-MASS-ROWS/det`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-bananas -Cycles 3 -Configuration RelWithDebInfo`
-- paths: Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/CMakeLists.txt, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameModes/MegaBananas, TASKS.md, PROGRESS.md
+- paths: Library/Core/Private/Object/World.cpp, Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/CMakeLists.txt, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameModes/MegaBananas, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 親: 評価の指摘 1（散布の proxy を ECS_RENDER_SYNC・RENDER_INVALIDATION の照合が残留と数える）の直し先の World.cpp（VerifyRenderSyncDelta の viewMega と全走査の scanStale の 2 か所）を paths に足して todo に戻した（blocked の推奨 1）。
 
 ## SCN-ECS-MASS-STREAM: 散布の作成・反映・解放を予算で分け、mega-stress の区画を散布で出し入れする
-- status: done
+- status: doing
 - done-when: 作成、所有者の変換とメッシュの反映、解放を、1 フレームの行数と ms の予算で分け、範囲ごとに公開・解放する（設計 1.11）。mega-stress の区画が `--stress-batch-cells` で散布として出し入れされる。検査 `MASS_RANGES`（公開中の範囲は全行が揃っている、解放した範囲は描かない）が pass する。5万個 + 64 m 区画で gt の p95 を PROGRESS に書き、予算の既定値を決める。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -RequireChecks MASS_RANGES -OutDir .harness/runs/scene-capture/SCN-ECS-MASS-STREAM/check`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-stress,mega-bananas -Cycles 3 -Configuration RelWithDebInfo`
