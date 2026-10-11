@@ -15,6 +15,74 @@ namespace NorvesLib::Modules::Physics
             return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
         }
     } // namespace
+    void PhysicsModule::RegisterCharacter(CharacterBodyComponent& character)
+    {
+        for (const CharacterBodyComponent* registered : m_Characters)
+            if (registered == &character)
+                return;
+        m_Characters.push_back(&character);
+    }
+    void PhysicsModule::UnregisterCharacter(CharacterBodyComponent& character)
+    {
+        for (size_t index = 0; index < m_Characters.size(); ++index)
+        {
+            if (m_Characters[index] != &character)
+                continue;
+            if (m_bRequestingCharacters)
+                m_Characters[index] = nullptr;
+            else
+                m_Characters.erase(m_Characters.begin() + static_cast<std::ptrdiff_t>(index));
+            return;
+        }
+    }
+    void PhysicsModule::RequestFixedCharacters(const Core::World& world, float fixedDeltaTime)
+    {
+        // 旧の Component の FixedTick の配信と同じ条件（Entity が祖先を含めて有効、Tick が有効、破棄予約でない）で要求を出す。
+        // 要求の中の BeforeSimulation が Component を消したら一覧の席を null にし、走査の後で詰める。
+        // 走査の中で足されたものは次の歩から（旧の一覧も収集の先頭で作っていた）
+        if (m_bRequestingCharacters)
+            return;
+        struct RequestGuard
+        {
+            bool& Active;
+            explicit RequestGuard(bool& active) : Active(active)
+            {
+                Active = true;
+            }
+            ~RequestGuard()
+            {
+                Active = false;
+            }
+        };
+        {
+            RequestGuard guard(m_bRequestingCharacters);
+            const size_t count = m_Characters.size();
+            for (size_t index = 0; index < count; ++index)
+            {
+                CharacterBodyComponent* character = m_Characters[index];
+                Core::Entity* owner = character ? character->GetOwner() : nullptr;
+                if (!owner || owner->GetWorld() != &world || !owner->IsTickEnabled() || !character->IsActive() ||
+                    !character->IsTickEnabled() || character->IsPendingDestroy())
+                    continue;
+                bool bDispatchable = true;
+                for (const Core::Entity* entity = owner; entity != nullptr; entity = entity->GetParentEntity())
+                {
+                    if (!entity->IsActive() || entity->IsPendingDestroy())
+                    {
+                        bDispatchable = false;
+                        break;
+                    }
+                }
+                if (bDispatchable)
+                    character->TickFixedStep(fixedDeltaTime);
+            }
+        }
+        size_t write = 0;
+        for (size_t read = 0; read < m_Characters.size(); ++read)
+            if (m_Characters[read] != nullptr)
+                m_Characters[write++] = m_Characters[read];
+        m_Characters.resize(write);
+    }
     EPhysicsResult PhysicsModule::ValidateCharacterAccess(const CharacterBodyComponent& character) const
     {
         if (!IsOwnerThread())

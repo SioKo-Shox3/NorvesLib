@@ -365,7 +365,7 @@ namespace
             return false;
         }
         world.UpdateWorldTransforms();
-        fixture.Physics->FixedTick(kFixedDeltaTime);
+        fixture.Physics->StepFixed(kFixedDeltaTime);
         fixture.Events.clear();
         return true;
     }
@@ -442,7 +442,7 @@ namespace
             return false;
         }
 
-        fixture.Physics->FixedTick(kFixedDeltaTime);
+        fixture.Physics->StepFixed(kFixedDeltaTime);
         if (body->SetLinearVelocity(Math::Vector3(60.0f, 0.0f, 0.0f)) != EPhysicsResult::Success)
         {
             return false;
@@ -516,7 +516,7 @@ namespace
             return false;
         }
 
-        fixture.Physics->FixedTick(kFixedDeltaTime);
+        fixture.Physics->StepFixed(kFixedDeltaTime);
         const ColliderHandle inactiveHandle = inactiveCollider->GetColliderHandle();
         const ColliderHandle disabledHandle = disabledCollider->GetColliderHandle();
         const ColliderHandle pendingHandle = pendingCollider->GetColliderHandle();
@@ -630,7 +630,7 @@ namespace
         }
         triggerEntity->SetLocalPosition(3.0f, 0.0f, 0.0f);
         world.UpdateWorldTransforms();
-        fixture.Physics->FixedTick(kFixedDeltaTime);
+        fixture.Physics->StepFixed(kFixedDeltaTime);
 
         const Math::Transform localTransformBefore = child->GetLocalTransform();
         const Math::Transform worldTransformBefore = child->GetWorldTransform();
@@ -665,8 +665,8 @@ namespace
         EPhysicsResult workerColliderMutation = EPhysicsResult::Success;
         Thread::Thread worker([&fixture, &workerQuery, &workerImpulse, &workerColliderMutation, body, collider]()
         {
-            fixture.Physics->PreFixedTick(kFixedDeltaTime);
-            fixture.Physics->FixedTick(kFixedDeltaTime);
+            fixture.Physics->StepPreFixed(kFixedDeltaTime);
+            fixture.Physics->StepFixed(kFixedDeltaTime);
             workerImpulse = body->SetLinearVelocity(Math::Vector3(7.0f, 0.0f, 0.0f));
             workerColliderMutation = collider->SetSphere(1.0f);
             PhysicsRaycastHit hit;
@@ -966,8 +966,8 @@ namespace
         bool guarded = true;
         replacement->BeforeSimulation.Add([&](float dt) {
             const auto serial = replacement->GetState().StepSerial;
-            GFixture->Physics->PreFixedTick(dt);
-            GFixture->Physics->FixedTick(dt);
+            GFixture->Physics->StepPreFixed(dt);
+            GFixture->Physics->StepFixed(dt);
             guarded = guarded && replacement->GetState().StepSerial == serial;
         });
         return StepCharacter(processor) && calls == 1 && guarded && replacement->GetState().bReady &&
@@ -1057,8 +1057,8 @@ namespace
         // 手動の重複FixedTickでもBeforeを二重実行しない。
         unsigned callbacks = 0;
         value.Character->BeforeSimulation.Add([&](float) { ++callbacks; });
-        value.Character->FixedTick(kFixedDeltaTime);
-        value.Character->FixedTick(kFixedDeltaTime);
+        value.Character->TickFixedStep(kFixedDeltaTime);
+        value.Character->TickFixedStep(kFixedDeltaTime);
         const bool once = callbacks == 1 && StepCharacter(processor) && callbacks == 1;
         value.Character->BeforeSimulation.Clear();
         return once;

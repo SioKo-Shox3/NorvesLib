@@ -59,9 +59,9 @@ namespace NorvesLib::Core::Ecs
             return std::find(ids.begin(), ids.end(), id) != ids.end();
         }
 
-        float DeltaOf(Container::Span<const float> deltas, uint8_t channel)
+        float DeltaOf(Container::Span<const float> deltas, uint8_t channel, float fallback)
         {
-            return channel < deltas.size() ? deltas[channel] : 0.0f;
+            return channel < deltas.size() ? deltas[channel] : fallback;
         }
 
         /// 順序付きの呼び先の比較。TickDispatchLess と同じ（群 → 優先度 → 順番）で、同じなら足した順
@@ -125,6 +125,16 @@ namespace NorvesLib::Core::Ecs
         }
         m_Stages[stage].SyncFn = fn;
         m_Stages[stage].SyncUser = user;
+        return true;
+    }
+
+    bool SystemScheduler::SetStageDefaultDelta(EcsStageId stage, float delta)
+    {
+        if (stage >= m_Stages.size())
+        {
+            return false;
+        }
+        m_Stages[stage].DefaultDelta = delta;
         return true;
     }
 
@@ -691,6 +701,8 @@ namespace NorvesLib::Core::Ecs
         RunningGuard running(m_bRunning);
         Stage &stage = m_Stages[stageId];
         EnsurePlan(stageId);
+        // delta を渡された段は、範囲外の channel を従来どおり 0 にする
+        m_RunDefaultDelta = channelDeltas.empty() ? stage.DefaultDelta : 0.0f;
 
         m_SlotCursor = 0;
         for (const EcsSystemId id : stage.Systems)
@@ -740,7 +752,7 @@ namespace NorvesLib::Core::Ecs
         context.World = &m_World;
         context.Commands = &m_Slots[slotIndex]->Commands;
         context.Version = m_World.AdvanceVersion();
-        context.DeltaTime = DeltaOf(channelDeltas, system.TimeChannel);
+        context.DeltaTime = DeltaOf(channelDeltas, system.TimeChannel, m_RunDefaultDelta);
         context.CollectionSerial = m_CollectionSerial;
 
         Debug::ScopedStat scope(system.ScopeName.c_str(), kStatCategory);
@@ -768,7 +780,7 @@ namespace NorvesLib::Core::Ecs
             }
             const EcsSystemFn fn = entry.Run;
             void *const user = entry.User;
-            context.DeltaTime = DeltaOf(channelDeltas, entry.TimeChannel);
+            context.DeltaTime = DeltaOf(channelDeltas, entry.TimeChannel, m_RunDefaultDelta);
             fn(user, context);
         }
     }
@@ -789,7 +801,7 @@ namespace NorvesLib::Core::Ecs
                 continue;
             }
             system.RunVersion = m_World.AdvanceVersion();
-            system.RunDelta = DeltaOf(channelDeltas, system.TimeChannel);
+            system.RunDelta = DeltaOf(channelDeltas, system.TimeChannel, m_RunDefaultDelta);
             system.FirstSlot = m_SlotCursor;
             system.SlotCount = system.ChunkCount;
             for (uint32_t k = 0; k < system.ChunkCount; ++k)

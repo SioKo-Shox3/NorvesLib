@@ -263,8 +263,8 @@ namespace
         auto* body = fixture.World.CreateComponent<RigidBodyComponent>(entity);
         assert(body && body->SetBodyType(EPhysicsBodyType::Kinematic) == EPhysicsResult::Success);
         auto& query = fixture.Engine.GetSceneQuery();
-        fixture.Physics->PreFixedTick(1.f / 60);
-        fixture.Physics->FixedTick(1.f / 60);
+        fixture.Physics->StepPreFixed(1.f / 60);
+        fixture.Physics->StepFixed(1.f / 60);
         const auto handle = collider->GetColliderHandle();
         const auto ownerBefore = entity->GetLocalTransform();
         PhysicsShapeProxy snapshot;
@@ -304,8 +304,8 @@ namespace
         assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics, handle, snapshot));
         assert(NearlyEqual(snapshot.Capsule.PointA.x, 16) && NearlyEqual(snapshot.Capsule.PointB.x, 12));
         assert(NearlyEqual(snapshot.Capsule.Radius, 1.6f));
-        fixture.Physics->PreFixedTick(1.f / 60);
-        fixture.Physics->FixedTick(1.f / 60);
+        fixture.Physics->StepPreFixed(1.f / 60);
+        fixture.Physics->StepFixed(1.f / 60);
         assert(body->GetLinearVelocity() == Math::Vector3::Zero);
     }
 
@@ -333,25 +333,25 @@ namespace
             [&](const PhysicsContactEvent&) { ++end; }),endHandle) == EPhysicsResult::Success);
         assert(second->AddOnHit(Core::Delegate<void,const PhysicsContactEvent&>(
             [&](const PhysicsContactEvent&) { ++hit; }),hitHandle) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         assert(begin == 1 && end == 0 && hit == 0);
         assert(secondEntity->GetLocalTransform().position.x == 1.5f);
         assert(second->SetCollisionMask(0) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         assert(begin == 1 && end == 1 && hit == 0);
         assert(secondEntity->GetLocalTransform().position.x == 1.5f);
         assert(second->SetCollisionMask(1) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         assert(begin == 2 && end == 1 && hit == 0);
         assert(first->SetTrigger(false) == EPhysicsResult::Success);
         assert(body->SetLinearVelocity(Math::Vector3(-1,0,0)) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         assert(end == 2 && hit == 1);
         assert(secondEntity->GetLocalTransform().position.x > 1.5f);
         secondEntity->SetLocalPosition(1.5f,0,0);
         assert(body->SetLinearVelocity(Math::Vector3(-1,0,0)) == EPhysicsResult::Success);
         assert(first->SetCollisionMask(0) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         assert(begin == 2 && end == 2 && hit == 1);
         assert(NearlyEqual(secondEntity->GetLocalTransform().position.x,1.5f-1.f/60));
         assert(body->GetLinearVelocity() == Math::Vector3(-1,0,0));
@@ -378,12 +378,12 @@ namespace
         assert(body != nullptr);
         assert(body->SetBodyType(EPhysicsBodyType::Dynamic) == EPhysicsResult::Success);
         assert(body->SetGravityScale(0) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         uint64_t sequence = 0, after = 0;
         assert(scene.GetPublishedSnapshotSequence(sequence) == EPhysicsSceneQueryResult::Success);
         assert(body->SetLinearVelocity(Math::Vector3(3,0,0)) == EPhysicsResult::Success);
         assert(body->AddImpulse(Math::Vector3(2,0,0)) == EPhysicsResult::Success);
-        fixture.Physics->PreFixedTick(1.f/60);
+        fixture.Physics->StepPreFixed(1.f/60);
         const auto handle = body->GetBodyHandle();
         const auto pending = PhysicsModuleTestAccess::GetPendingImpulse(*fixture.Physics,handle);
         const auto preStep = PhysicsModuleTestAccess::GetPreStepPosition(*fixture.Physics,handle);
@@ -429,7 +429,7 @@ namespace
         assert(scene.Raycast(ray,20,hit) == EPhysicsSceneQueryResult::Success);
         assert(hit.Collider == collider->GetColliderHandle() && hit.Body == handle && NearlyEqual(hit.Distance,9));
         assert(PhysicsModuleTestAccess::GetPendingImpulse(*fixture.Physics,handle) == pending);
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         assert(body->GetLinearVelocity() == Math::Vector3(5,0,0));
         assert(NearlyEqual(entity->GetLocalTransform().position.x,5+5.f/60));
         assert(scene.GetPublishedSnapshotSequence(after) == EPhysicsSceneQueryResult::Success && after == sequence+1);
@@ -456,7 +456,7 @@ namespace
                 == EPhysicsSceneQueryResult::Success);
             assert(hit.UserData == 111);
         }),subscription) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         assert(calls == 1 && refreshResult == EPhysicsSceneQueryResult::NotReady);
         assert(first->RemoveOnOverlapBegin(subscription) == EPhysicsResult::Success);
         uint64_t before = 0, after = 0;
@@ -505,7 +505,7 @@ namespace
         assert(first->SetUserData(111) == EPhysicsResult::Success);
         assert(second->SetUserData(222) == EPhysicsResult::Success);
         assert(third->SetUserData(333) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         uint64_t before = 0, after = 0;
         assert(scene.GetPublishedSnapshotSequence(before) == EPhysicsSceneQueryResult::Success);
         assert(first->SetUserData(444) == EPhysicsResult::Success);
@@ -539,7 +539,7 @@ namespace
         assert(scene.ExecuteBatch(Core::Container::Span<const PhysicsQueryDesc>(nullptr,1),hits,results)
             == EPhysicsSceneQueryResult::InvalidArgument);
         assert(hits.empty() && results.empty());
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         assert(scene.ExecuteBatch(queries,hits,results) == EPhysicsSceneQueryResult::Success);
         assert(hits[0].UserData == 444 && hits[2].UserData == 444);
     }
@@ -565,7 +565,7 @@ namespace
         assert(second->SetUserData(222) == EPhysicsResult::Success);
         assert(trigger->SetUserData(333) == EPhysicsResult::Success);
         assert(trigger->SetTrigger(true) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         assert(scene.ExecuteQuery(query,hits) == EPhysicsSceneQueryResult::Success);
         assert(hits.size() == 3 && hits[0].UserData == 111 && hits[1].UserData == 222 && hits[2].UserData == 333);
         assert(NearlyEqual(hits[0].Distance,4) && NearlyEqual(hits[2].Distance,12));
@@ -640,7 +640,7 @@ namespace
         assert(collider->GetCollisionLayer() == DefaultPhysicsLayer);
         assert(collider->GetCollisionMask() == AllPhysicsLayers);
         assert(collider->GetUserData() == 0);
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         const auto handle = collider->GetColliderHandle();
         PhysicsShapeProxy snapshot;
         assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics,handle,snapshot));
@@ -678,7 +678,7 @@ namespace
             {
                 assert(collider->SetCapsule(1,1) == EPhysicsResult::Success);
             }
-            fixture.Physics->FixedTick(1.f/60);
+            fixture.Physics->StepFixed(1.f/60);
             assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics,handle,snapshot));
             assert(snapshot.Layer == 0x80000002u && snapshot.Mask == 0);
             assert(snapshot.UserData == UINT64_MAX && snapshot.bTrigger);
@@ -704,7 +704,7 @@ namespace
         assert(collider->SetCollisionMask(AllPhysicsLayers) == EPhysicsResult::Success);
         assert(collider->SetUserData(0) == EPhysicsResult::Success);
         assert(collider->SetTrigger(false) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.f/60);
+        fixture.Physics->StepFixed(1.f/60);
         assert(PhysicsModuleTestAccess::CopyPublishedProxy(*fixture.Physics,handle,snapshot));
         assert(snapshot.Layer == 0 && snapshot.Mask == AllPhysicsLayers);
         assert(snapshot.UserData == 0 && !snapshot.bTrigger);
@@ -725,7 +725,7 @@ namespace
         const Math::Ray ray(Math::Vector3(-5.0f, 0.0f, 0.0f), Math::Vector3(2.0f, 0.0f, 0.0f));
         assert(query.Raycast(ray, 10.0f, hit) == EPhysicsSceneQueryResult::NotReady);
 
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         Core::Container::VariableArray<PhysicsOverlapHit> emptyHits;
         emptyHits.push_back(PhysicsOverlapHit{ColliderHandle{1, 1}});
         assert(query.OverlapSphere(Math::Sphere(Math::Vector3(100.0f, 0.0f, 0.0f), 1.0f), emptyHits)
@@ -735,12 +735,12 @@ namespace
         Entity* unconfigured = fixture.World.SpawnEntity<Entity>();
         assert(unconfigured != nullptr);
         assert(fixture.World.CreateComponent<ColliderComponent>(unconfigured) != nullptr);
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(ray, 10.0f, hit) == EPhysicsSceneQueryResult::NoHit);
 
         Entity* entity = fixture.CreateSphere(Math::Transform(
             Math::Vector3(), Math::Quaternion::Identity, Math::Vector3(2.0f, 3.0f, 4.0f)), 1.0f);
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(ray, 10.0f, hit) == EPhysicsSceneQueryResult::Success);
         assert(hit.Distance == 1.0f);
         const ColliderHandle preservedHandle = hit.Collider;
@@ -753,25 +753,25 @@ namespace
         assert(hit.Point != Math::Vector3());
         assert(hit.Normal != Math::Vector3());
         assert(hit.Distance > 0.0f);
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(ray, 10.0f, hit) == EPhysicsSceneQueryResult::NoHit);
         assert(IsDefaultRaycastHit(hit));
 
         entity->SetWorldTransform(Math::Transform(
             Math::Vector3(), Math::Quaternion::Identity,
             Math::Vector3(std::numeric_limits<float>::quiet_NaN(), 1.0f, 1.0f)));
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(ray, 10.0f, hit) == EPhysicsSceneQueryResult::NoHit);
 
         entity->SetWorldTransform(Math::Transform(Math::Vector3()));
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(ray, 10.0f, hit) == EPhysicsSceneQueryResult::Success);
         assert(hit.Collider == preservedHandle);
 
         ColliderComponent* collider = entity->GetComponent<ColliderComponent>();
         assert(collider != nullptr);
         assert(collider->SetSphere(1.0f) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(Math::Ray(Math::Vector3(-5.0f, 0.0f, 0.0f), Math::Vector3(0.0001f, 0.0f, 0.0f)), 10.0f, hit)
             == EPhysicsSceneQueryResult::Success);
         assert(NearlyEqual(hit.Distance, 4.0f));
@@ -786,7 +786,7 @@ namespace
         entity->SetWorldTransform(Math::Transform(
             Math::Vector3(), Math::Quaternion(Math::Vector3::UnitZ, 1.57079632679f), Math::Vector3(-2.0f, -3.0f, -4.0f)));
         assert(collider->SetBox(Math::Vector3(1.0f, 0.5f, 1.0f)) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(Math::Ray(Math::Vector3(-5.0f, 0.0f, 0.0f), Math::Vector3::UnitX), 10.0f, hit)
             == EPhysicsSceneQueryResult::Success);
         assert(NearlyEqual(hit.Distance, 3.5f));
@@ -794,48 +794,48 @@ namespace
         entity->SetWorldTransform(Math::Transform(
             Math::Vector3(), Math::Quaternion(Math::Vector3::UnitZ, 1.57079632679f), Math::Vector3(2.0f, 3.0f, 4.0f)));
         assert(collider->SetCapsule(1.0f, 1.0f) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(Math::Ray(Math::Vector3(-10.0f, 0.0f, 0.0f), Math::Vector3::UnitX), 10.0f, hit)
             == EPhysicsSceneQueryResult::Success);
         assert(NearlyEqual(hit.Distance, 3.0f));
 
         entity->SetWorldTransform(Math::Transform(
             Math::Vector3(), Math::Quaternion::Identity, Math::Vector3(0.0f, 1.0f, 1.0f)));
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(Math::Ray(Math::Vector3(0.0f, -10.0f, 0.0f), Math::Vector3::UnitY), 10.0f, hit)
             == EPhysicsSceneQueryResult::NoHit);
         entity->SetWorldTransform(Math::Transform(
             Math::Vector3(std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f)));
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(ray, 10.0f, hit) == EPhysicsSceneQueryResult::NoHit);
         entity->SetWorldTransform(Math::Transform(
             Math::Vector3(), Math::Quaternion(
                 std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f, 1.0f), Math::Vector3::One));
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(ray, 10.0f, hit) == EPhysicsSceneQueryResult::NoHit);
         entity->SetWorldTransform(Math::Transform(
             Math::Vector3(), Math::Quaternion::Identity,
             Math::Vector3(std::numeric_limits<float>::infinity(), 1.0f, 1.0f)));
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(Math::Ray(Math::Vector3(0.0f, -10.0f, 0.0f), Math::Vector3::UnitY), 10.0f, hit)
             == EPhysicsSceneQueryResult::NoHit);
         entity->SetWorldTransform(Math::Transform(Math::Vector3()));
         collider->Disable();
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(Math::Ray(Math::Vector3(0.0f, -10.0f, 0.0f), Math::Vector3::UnitY), 10.0f, hit)
             == EPhysicsSceneQueryResult::NoHit);
         collider->Enable();
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(Math::Ray(Math::Vector3(0.0f, -10.0f, 0.0f), Math::Vector3::UnitY), 10.0f, hit)
             == EPhysicsSceneQueryResult::Success);
         assert(hit.Collider == preservedHandle);
 
         entity->SetActive(false);
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(Math::Ray(Math::Vector3(0.0f, -10.0f, 0.0f), Math::Vector3::UnitY), 10.0f, hit)
             == EPhysicsSceneQueryResult::NoHit);
         entity->SetActive(true);
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
 
         hit = PhysicsRaycastHit{ColliderHandle{1, 1}};
         assert(query.Raycast(Math::Ray(Math::Vector3(), Math::Vector3()), 1.0f, hit)
@@ -880,7 +880,7 @@ namespace
         Entity* capsuleEntity = fixture.CreateSphere(Math::Transform(Math::Vector3()), 1.0f);
         ColliderComponent* capsuleCollider = capsuleEntity->GetComponent<ColliderComponent>();
         assert(capsuleCollider->SetCapsule(1.0f, 1.0f) == EPhysicsResult::Success);
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         Core::Container::VariableArray<PhysicsOverlapHit> overlapHits;
         assert(query.OverlapBox(Math::OBB(Math::Vector3(), Math::Vector3(0.5f, 0.5f, 0.5f),
             Math::Vector3::UnitX, Math::Vector3::UnitY, Math::Vector3::UnitZ), overlapHits)
@@ -898,7 +898,7 @@ namespace
         assert(overlapHits[0].Contact.Depth >= 0.0f);
 
         entity->MarkForDestroy();
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.IsAlive(reusedHandle, bAlive) == EPhysicsSceneQueryResult::Success);
         assert(bAlive);
         overlapHits.clear();
@@ -908,7 +908,7 @@ namespace
         assert(overlapHits.size() == 2);
         assert(PhysicsModuleTestAccess::ShutdownAndInitialize(*fixture.Physics));
         assert(query.Raycast(ray, 10.0f, hit) == EPhysicsSceneQueryResult::NotReady);
-        fixture.Physics->FixedTick(1.0f / 60.0f);
+        fixture.Physics->StepFixed(1.0f / 60.0f);
         assert(query.Raycast(ray, 10.0f, hit) == EPhysicsSceneQueryResult::Success);
     }
 } // namespace

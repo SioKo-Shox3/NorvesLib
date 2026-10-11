@@ -1951,3 +1951,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - 登録は World.cpp の RegisterCoreComponentTicks（paths の外）に置いた。群ごとの本体を呼び先へ渡す 2 行の変更も World.cpp。他の Core の型の登録と同じ場所で、Component の側だけでは群を区別できないため。
   - 群ごとの本体（GroupRuns）の単体テストは足していない（計画に無い。撮影と既存の Animator のテストで確かめた）。
+
+### SCN-ECS-TICK-PHYSICS（2026-10-11、反復 1・run 20261011-211043）
+
+- 変更:
+  - CharacterBody: 仮想の OnTickGroup・Tick・FixedTick を消し、非仮想の本体にした（`TickMovementGroup`・`TickPoseFinalizeGroup`＝可変の要求、`TickFixedStep`＝固定の要求。中身は旧と同じ）。Initialize で物理モジュールの一覧へ入り、Finalize で外れる（RigidBody と同じく、モジュールの登録の後に作られたものが対象）。
+  - 物理モジュールの登録（Install で `RegisterWorldSystems`）: CharacterBody の可変の処理を `World::RegisterComponentTick` で Movement・PoseFinalize の群に登録（主群によらない。読む EcsWorldTransform・書く EcsLocalTransform）。固定ステップの段に GameThreadOnly のシステムを 3 つ登録: 段 FixedBegin の `Physics.FixedPre`（旧 PreFixedTick）、段 FixedTick の `Physics.CharacterFixed`（CharacterBody の固定の要求。旧の配信と同じ条件）→ `Physics.FixedStep`（旧 FixedTick）。World のシステムより後に登録するので、段の中では World の処理（姿勢の確定・補間の準備、Component の FixedTick）の後に走る。同じ World へ入れ直したときは名前で見つけて登録しない。呼び先は毎回モジュールの登録から引き、その World に束ねられた初期化済みのモジュールだけを呼ぶ（スケジューラにシステムを外す口が無いため）。
+  - PhysicsModule の PreFixedTick・FixedTick の上書きを消し、`IPhysicsModule::StepPreFixed`・`StepFixed`（1 歩を直接進める口。段のシステムとテストが呼ぶ）にした。モジュールの DispatchPreFixedTick・DispatchFixedTick は物理以外のモジュールのために残る（設計 1.8）。
+  - スケジューラ: `SetStageDefaultDelta`（RunStage に delta が渡されない段の全 channel に使う値）。ApplicationProcessor の固定ステップが FixedBegin・FixedTick・FixedEnd に 1 歩の時間を入れ、抜けるときに 0 に戻す（World は段に delta を渡さないため）。
+  - テスト: 物理のテストの `PreFixedTick`/`FixedTick` の直接の呼び出しを `StepPreFixed`/`StepFixed` に、CharacterBody の `FixedTick` を `TickFixedStep` に直した。
+- 結果（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-ECS-TICK-PHYSICS-1.txt`: RelWithDebInfo の Game のビルド EXIT=0（EcsScheduler・ApplicationProcessor・物理モジュールを再コンパイル）。
+  - `-2.txt`: Debug の PhysicsDynamicsTest・ApplicationFixedStepPipelineTest のビルド EXIT=0（エラー・警告はリンクの PDB の既存のものだけ）。
+  - `-3.txt`: ApplicationFixedStepPipelineTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest（pre → Component → 物理 → 後のモジュールの順、Game の QuadrupedLocomotion を含む）・PhysicsCharacterMoveTest・CharacterPlatformMotionTest の 5/5 が pass、EXIT=0。
+  - `check-SCN-ECS-TICK-PHYSICS-related.txt`（verify の外）: EcsSchedulerTest・WorldTickGroupTest・PhysicsModuleLinkTest・PhysicsDynamicsTest・CharacterDriveOptionsTest は pass。PhysicsBroadphaseQueryTest は Debug で 2 個目の fixture の `InstallAll` の assert で止まる（同じプロセスで ShutdownAll の後の InstallAll は ModuleRegistry の冪等ガードで false。ModuleRegistry は触っていない既存の挙動で、assert が消える Release でだけ通る）。
+- Next: TASKS.md の次の todo（SCN-ECS-TICK-SCRIPT ほか）。
+- Notes:
+  - CharacterBody 同士の固定の要求（BeforeSimulation）の順は、旧の深さ優先から作成の順になった（Game のキャラクターは 1 体。テストの複数体のケースは pass）。固定の要求を出す Component の FixedTick は Core と Game には CharacterBody のほかに無く、他の Component との前後は変わらない。
+  - 固定の要求の中で BeforeSimulation が Component を消すと、旧は配信中なので破棄が遅れたが、今は段のシステムなので即時に消える（RequestSimulation は消えた後を引き直すので、旧の可変の経路と同じ扱い）。
+  - 段 FixedTick は World が初期化されていないと走らない（World::DispatchFixedTick の条件）。旧はモジュールの FixedTick だけはその場合も呼ばれていた。
+  - PhysicsBroadphaseQueryTest の Debug の失敗（上）は直していない（paths の内側のテストだが、このタスクの範囲の外）。
+  - スケジューラの既定の delta と物理の段のシステムの単体テストは足していない（計画に無い。固定ステップの経路のテストで確かめた）。

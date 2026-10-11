@@ -103,8 +103,8 @@ namespace
                 ++secondBeginCount;
                 secondBeginEvent = event;
             }), secondBeginHandle) == EPhysicsResult::Success);
-        physics->PreFixedTick(1.0f / 60.0f);
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepPreFixed(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         assert(beginCount == 1);
         assert(secondBeginCount == 1);
         assert(bCallbackSawPublishedQuery);
@@ -116,22 +116,22 @@ namespace
 
         physics->Shutdown();
         assert(physics->Initialize());
-        physics->PreFixedTick(1.0f / 60.0f);
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepPreFixed(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         assert(beginCount == 2);
         assert(secondBeginCount == 2);
         assert(endCount == 0);
 
         secondEntity->SetLocalPosition(10.0f, 0.0f, 0.0f);
-        physics->PreFixedTick(1.0f / 60.0f);
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepPreFixed(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         assert(endCount == 1);
         assert(endEvent.Contact.Depth == 0.0f);
         assert(endEvent.NormalImpulse == 0.0f);
 
         secondEntity->SetLocalPosition(0.0f, 0.0f, 0.0f);
-        physics->PreFixedTick(1.0f / 60.0f);
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepPreFixed(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         assert(beginCount == 3);
         assert(secondBeginCount == 3);
 
@@ -170,7 +170,7 @@ namespace
         PhysicsCallbackHandle hitHandle;
         assert(solid->AddOnHit(Core::Delegate<void, const PhysicsContactEvent&>(
             [&hitCount](const PhysicsContactEvent&) { ++hitCount; }), hitHandle) == EPhysicsResult::Success);
-        physics.FixedTick(1.0f);
+        physics.StepFixed(1.0f);
         assert(dynamicBody->GetLinearVelocity() == Math::Vector3(1.0f, 0.0f, 0.0f));
         assert(dynamicEntity->GetLocalTransform().position == Math::Vector3(1.0f, 0.0f, 0.0f));
         assert(hitCount == 0);
@@ -210,7 +210,7 @@ namespace
             [&laterCallbackCount](const PhysicsContactEvent&) { ++laterCallbackCount; }), laterHandle) == EPhysicsResult::Success);
         assert(victim->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
             [&otherCallbackCount](const PhysicsContactEvent&) { ++otherCallbackCount; }), otherHandle) == EPhysicsResult::Success);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(firstCallbackCount == 1);
         assert(laterCallbackCount == 0);
         assert(otherCallbackCount == 0);
@@ -241,17 +241,17 @@ namespace
         assert(first->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
             [&beginCount](const PhysicsContactEvent&) { ++beginCount; }), beginHandle) == EPhysicsResult::Success);
         assert(dynamicBody->AddImpulse(Math::Vector3(3.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
-        physics.PreFixedTick(1.0f);
-        physics.FixedTick(1.0f);
+        physics.StepPreFixed(1.0f);
+        physics.StepFixed(1.0f);
         assert(beginCount == 1);
         assert(dynamicBody->GetLinearVelocity() == Math::Vector3(3.0f, 0.0f, 0.0f));
         assert(dynamicBody->AddImpulse(Math::Vector3(3.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
-        physics.PreFixedTick(1.0f);
+        physics.StepPreFixed(1.0f);
 
         physics.Uninstall(GetEngine());
         assert(physics.Install(GetEngine()));
         assert(physics.Initialize());
-        physics.FixedTick(1.0f);
+        physics.StepFixed(1.0f);
         assert(beginCount == 2);
         assert(dynamicBody->GetLinearVelocity() == Math::Vector3(3.0f, 0.0f, 0.0f));
         world.Finalize();
@@ -296,7 +296,7 @@ namespace
             [&laterFirstCount](const PhysicsContactEvent&) { ++laterFirstCount; }), laterFirstHandle) == EPhysicsResult::Success);
         assert(victim->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
             [&secondCount](const PhysicsContactEvent&) { ++secondCount; }), secondHandle) == EPhysicsResult::Success);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(firstCount == 1);
         assert(laterFirstCount == 0);
         assert(secondCount == 0);
@@ -335,17 +335,17 @@ namespace
             }), firstHandle) == EPhysicsResult::Success);
         assert(destroyer->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
             [&removedTokenCount](const PhysicsContactEvent&) { ++removedTokenCount; }), removedHandle) == EPhysicsResult::Success);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(firstCount == 1);
         assert(removalResult == EPhysicsResult::Success);
         assert(removedTokenCount == 1);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(firstCount == 1);
         assert(removedTokenCount == 1);
         secondEntity->SetLocalPosition(4.0f, 0.0f, 0.0f);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         secondEntity->SetLocalPosition(0.0f, 0.0f, 0.0f);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(firstCount == 2);
         assert(removedTokenCount == 1);
         world.Finalize();
@@ -383,16 +383,16 @@ namespace
         assert(target->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
             [&secondCount](const PhysicsContactEvent&) { ++secondCount; }), secondHandle) == EPhysicsResult::Success);
 
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(firstCount == 1);
         assert(removalResult == EPhysicsResult::Success);
         assert(secondCount == 1);
 
         secondEntity->SetLocalPosition(4.0f, 0.0f, 0.0f);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         firstEntity->SetLocalPosition(0.0f, 0.0f, 0.0f);
         secondEntity->SetLocalPosition(0.0f, 0.0f, 0.0f);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(firstCount == 2);
         assert(secondCount == 1);
         world.Finalize();
@@ -439,15 +439,15 @@ namespace
             [&existingSecondCount](const PhysicsContactEvent&) { ++existingSecondCount; }), existingSecondHandle)
             == EPhysicsResult::Success);
 
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(firstCount == 1);
         assert(existingSecondCount == 1);
         assert(addedSecondCount == 0);
 
         secondEntity->SetLocalPosition(4.0f, 0.0f, 0.0f);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         secondEntity->SetLocalPosition(0.0f, 0.0f, 0.0f);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(firstCount == 2);
         assert(existingSecondCount == 2);
         assert(addedSecondCount == 1);
@@ -484,13 +484,13 @@ namespace
                 if (!bNestedCalled)
                 {
                     bNestedCalled = true;
-                    physics.FixedTick(1.0f / 60.0f);
+                    physics.StepFixed(1.0f / 60.0f);
                 }
             }), firstHandle) == EPhysicsResult::Success);
         assert(target->AddOnOverlapBegin(Core::Delegate<void, const PhysicsContactEvent&>(
             [&secondCount](const PhysicsContactEvent&) { ++secondCount; }), secondHandle) == EPhysicsResult::Success);
 
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(bNestedCalled);
         assert(firstCount == 1);
         assert(secondCount == 1);
@@ -538,18 +538,18 @@ namespace
             }), firstHandle) == EPhysicsResult::Success);
         assert(second->AddOnOverlapEnd(Core::Delegate<void, const PhysicsContactEvent&>(
             [&survivorEndCount](const PhysicsContactEvent&) { ++survivorEndCount; }), survivorEndHandle) == EPhysicsResult::Success);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(replacement != nullptr);
         const Core::Scene::ColliderHandle replacementHandle = replacement->GetColliderHandle();
         assert(replacementHandle.Index == oldHandle.Index);
         assert(replacementHandle.Generation != oldHandle.Generation);
         assert(replacementBeginCount == 0);
         secondEntity->SetLocalPosition(4.0f, 0.0f, 0.0f);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(replacementEndCount == 0);
         assert(survivorEndCount == 1);
         secondEntity->RemoveComponent(second);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(replacementEndCount == 0);
         assert(survivorEndCount == 1);
         world.Finalize();
@@ -569,9 +569,9 @@ namespace
         assert(collider->SetSphere(1.0f) == EPhysicsResult::Success);
         assert(body->SetBodyType(EPhysicsBodyType::Dynamic) == EPhysicsResult::Success);
         assert(body->SetGravityScale(0.0f) == EPhysicsResult::Success);
-        physics.FixedTick(1.0f);
+        physics.StepFixed(1.0f);
         assert(body->AddImpulse(Math::Vector3(2.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
-        physics.PreFixedTick(1.0f);
+        physics.StepPreFixed(1.0f);
         const Math::Vector3 positionBefore = entity->GetLocalTransform().position;
         const Math::Vector3 velocityBefore = body->GetLinearVelocity();
         const Math::Vector3 pendingImpulseBefore = PhysicsModuleTestAccess::GetPendingImpulse(physics, body->GetBodyHandle());
@@ -583,8 +583,8 @@ namespace
             Math::Ray(Math::Vector3(-3.0f, 0.0f, 0.0f), Math::Vector3::UnitX), 10.0f, hitBefore);
         Thread::Thread worker([&physics]()
         {
-            physics.PreFixedTick(1.0f);
-            physics.FixedTick(1.0f);
+            physics.StepPreFixed(1.0f);
+            physics.StepFixed(1.0f);
         });
         worker.Join();
         Core::Scene::PhysicsRaycastHit hitAfter;

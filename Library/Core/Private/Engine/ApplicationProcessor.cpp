@@ -2739,6 +2739,29 @@ namespace NorvesLib::Core::Engine
         World& world = GEngine->GetWorld();
         // 同じフレームの複数の固定ステップは、更新への参加の番号を共有する
         Ecs::EcsCollectionScope collection(world.GetScheduler());
+        // 固定ステップの段のシステム（物理モジュールが登録する前の写し・一歩など）へ 1 歩の時間を渡す。
+        // 段を直接走らせる呼び出し（テスト）へ残さないよう、抜けるときに外す
+        struct FixedStageDelta
+        {
+            Ecs::SystemScheduler& Scheduler;
+            Ecs::EcsStageId Stages[3];
+            FixedStageDelta(Ecs::SystemScheduler& scheduler, float delta)
+                : Scheduler(scheduler)
+                , Stages{scheduler.FindStage("FixedBegin"), scheduler.FindStage("FixedTick"), scheduler.FindStage("FixedEnd")}
+            {
+                for (const Ecs::EcsStageId stage : Stages)
+                {
+                    (void)Scheduler.SetStageDefaultDelta(stage, delta);
+                }
+            }
+            ~FixedStageDelta()
+            {
+                for (const Ecs::EcsStageId stage : Stages)
+                {
+                    (void)Scheduler.SetStageDefaultDelta(stage, 0.0f);
+                }
+            }
+        } fixedStageDelta(world.GetScheduler(), FixedDeltaTime);
         for (uint64_t step = 0; step < result.ExecutedSteps; ++step)
         {
             world.BeginFixedStep();

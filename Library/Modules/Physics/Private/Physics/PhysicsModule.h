@@ -8,6 +8,11 @@
 #include "Scene/SceneQuery.h"
 #include "Thread/Thread.h"
 
+namespace NorvesLib::Core
+{
+    class World;
+}
+
 namespace NorvesLib::Modules::Physics
 {
     class ColliderComponent;
@@ -34,8 +39,8 @@ namespace NorvesLib::Modules::Physics
         void RegisterReflectedTypes() override;
         bool Initialize() override;
         void Tick(float deltaTime) override;
-        void PreFixedTick(float fixedDeltaTime) override;
-        void FixedTick(float fixedDeltaTime) override;
+        void StepPreFixed(float fixedDeltaTime) override;
+        void StepFixed(float fixedDeltaTime) override;
         void Shutdown() override;
         void Uninstall(Core::Engine::Engine& engine) override;
 
@@ -89,6 +94,14 @@ namespace NorvesLib::Modules::Physics
         friend class ColliderComponent;
         friend class CharacterBodyComponent;
         EPhysicsResult ValidateCharacterAccess(const CharacterBodyComponent& character) const;
+        void RegisterCharacter(CharacterBodyComponent& character);
+        void UnregisterCharacter(CharacterBodyComponent& character);
+        // World の段に物理のシステムを登録する（同じ World へは 1 度だけ）。CharacterBody の可変の処理の登録もここ
+        void RegisterWorldSystems(Core::World& world);
+        // world に束ねられていて、初期化済みのときだけ自分を返す（段のシステムの呼び先の解決）
+        static PhysicsModule* FindBoundModule(const Core::World& world);
+        // 固定ステップの CharacterBody の要求（一覧の順 = 作成の順）。物理の一歩の前に段 FixedTick で呼ぶ
+        void RequestFixedCharacters(const Core::World& world, float fixedDeltaTime);
         void ProcessCharacterBodies(float dt, CharacterBodyComponent* onlyVariable = nullptr);
         void ProcessVariableCharacter(CharacterBodyComponent& character, float dt);
         void DispatchCharacterEvents();
@@ -172,6 +185,9 @@ namespace NorvesLib::Modules::Physics
         bool m_bBound = false;
         bool m_bInitialized = false;
         bool m_bFixedTickInProgress = false;
+        // 要求を出している間の削除は null にしておき、走査の後で詰める
+        bool m_bRequestingCharacters = false;
+        Core::Container::VariableArray<CharacterBodyComponent*> m_Characters;
         bool m_bVariableCharacterInProgress = false;
         bool m_bCharacterInputInProgress = false;
         bool m_bHasPublishedSnapshot = false;

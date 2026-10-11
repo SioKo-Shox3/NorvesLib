@@ -54,9 +54,13 @@ namespace NorvesLib::Modules::Physics
         {
             return m_MotionGeneration;
         }
-        void OnTickGroup(Core::Component::ETickGroup group, float dt) override;
-        void Tick(float dt) override;
-        void FixedTick(float dt) override;
+        // 可変の更新の本体。物理モジュールが World の順序付きの系へ Movement・PoseFinalize の群として登録する。
+        // Movement: root motion を Animation の後へ移さないフレームはここで要求を出す
+        void TickMovementGroup(float dt);
+        // PoseFinalize: Animation の後へ移したフレームだけ要求を出す
+        void TickPoseFinalizeGroup(float dt);
+        // 固定ステップ 1 歩の要求。物理モジュールが段 FixedTick に登録したシステムが、物理の一歩の前に呼ぶ
+        void TickFixedStep(float dt);
         void EndPlay() override;
         void Finalize() override;
 

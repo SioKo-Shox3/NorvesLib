@@ -198,6 +198,10 @@ namespace NorvesLib::Core::Ecs
         /// 段の同期点で、コマンドの再生の後に呼ぶ関数を設定する（置き換え。null で外す）
         bool SetSyncHook(EcsStageId stage, EcsSyncFn fn, void *user);
 
+        /// RunStage に delta が渡されなかったとき、この段の全 channel に使う delta（0 で外す）。
+        /// 呼び手が delta を渡さない段（固定ステップの段）のシステムへ、1 歩の時間を届けるのに使う
+        bool SetStageDefaultDelta(EcsStageId stage, float delta);
+
         // ---- システム ----
 
         /**
@@ -383,6 +387,7 @@ namespace NorvesLib::Core::Ecs
             bool bPlanDirty = false;
             EcsSyncFn SyncFn = nullptr;
             void *SyncUser = nullptr;
+            float DefaultDelta = 0.0f;
         };
 
         /// 段の波を求める。循環するなら false（outWaves は未定義）
@@ -421,6 +426,8 @@ namespace NorvesLib::Core::Ecs
         uint64_t m_CollectionSerial = 0;
         uint32_t m_CollectionDepth = 0;
         bool m_bRunning = false;
+        /// 走っている段の、channel の delta が無いときの値（RunStage の間だけ有効）
+        float m_RunDefaultDelta = 0.0f;
         EcsReplayResult m_LastReplay;
         SchedulerStats m_Stats;
     };

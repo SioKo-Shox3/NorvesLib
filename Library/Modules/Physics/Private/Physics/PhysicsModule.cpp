@@ -1,10 +1,14 @@
 ﻿#include "Physics/PhysicsModule.h"
 
 #include "CoreTypes.h"
+#include "Ecs/EcsScheduler.h"
+#include "Ecs/EcsTypes.h"
 #include "Engine/Engine.h"
+#include "Logging/LogMacros.h"
 #include "Math/VectorUtils.h"
 #include "Object/Entity.h"
 #include "Object/IUnknown.h"
+#include "Object/World.h"
 #include "Physics/CharacterBodyComponent.h"
 #include "Physics/ColliderComponent.h"
 #include "Physics/ColliderShapeTransform.h"
@@ -78,7 +82,82 @@ namespace NorvesLib::Modules::Physics
 
         m_Engine = &engine;
         m_bBound = true;
+        RegisterWorldSystems(engine.GetWorld());
         return true;
+    }
+
+    void PhysicsModule::RegisterWorldSystems(Core::World& world)
+    {
+        using namespace Core::Component;
+        // CharacterBody の可変の処理は Movement と PoseFinalize の群（旧の OnTickGroup と同じ。順・mask・優先度は Component の設定のまま）
+        ComponentTickRegistration character;
+        character.Name = "CharacterBody.MovementPoseFinalize";
+        character.bPrimaryGroupOnly = false;
+        character.Groups = TickGroupBit(ETickGroup::Movement) | TickGroupBit(ETickGroup::PoseFinalize);
+        character.GroupRuns[static_cast<size_t>(ETickGroup::Movement)] = [](Component& component, float deltaTime)
+        { static_cast<CharacterBodyComponent&>(component).TickMovementGroup(deltaTime); };
+        character.GroupRuns[static_cast<size_t>(ETickGroup::PoseFinalize)] = [](Component& component, float deltaTime)
+        { static_cast<CharacterBodyComponent&>(component).TickPoseFinalizeGroup(deltaTime); };
+        character.Reads.push_back(Core::Ecs::EcsColumnInfoOf<Core::Ecs::EcsWorldTransform>().Type);
+        character.Writes.push_back(Core::Ecs::EcsColumnInfoOf<Core::Ecs::EcsLocalTransform>().Type);
+        world.RegisterComponentTick(CharacterBodyComponent::StaticClass(), character);
+
+        // 固定ステップの段（設計 1.8）。World のシステムより後に登録するので、段の中では World の処理の後に走る:
+        // FixedBegin: 姿勢の確定・補間の準備 → 物理の前の写し
+        // FixedTick: Component の FixedTick → CharacterBody の要求 → 物理の一歩
+        // 段のスケジューラは World と同じ寿命で、システムを外す口が無い。呼び先は毎回モジュールの登録から引き直す
+        Core::Ecs::SystemScheduler& scheduler = world.GetScheduler();
+        const auto add = [&](const char* stageName, const char* name, Core::Ecs::EcsSystemFn fn)
+        {
+            if (scheduler.FindSystem(name) != Core::Ecs::kInvalidEcsSystem)
+            {
+                return;
+            }
+            Core::Ecs::SystemDesc desc;
+            desc.Name = name;
+            desc.Stage = scheduler.FindStage(stageName);
+            desc.Thread = Core::ThreadPolicy::GameThreadOnly;
+            desc.Run = fn;
+            desc.User = &world;
+            if (desc.Stage == Core::Ecs::kInvalidEcsStage || scheduler.RegisterSystem(desc) == Core::Ecs::kInvalidEcsSystem)
+            {
+                LOG_ERROR("PhysicsModule: 段 %s にシステム %s を登録できなかった", stageName, name);
+            }
+        };
+        using Context = Core::Ecs::EcsSystemContext;
+        add("FixedBegin", "Physics.FixedPre", [](void* user, const Context& context)
+        {
+            if (PhysicsModule* module = FindBoundModule(*static_cast<const Core::World*>(user)))
+            {
+                module->StepPreFixed(context.DeltaTime);
+            }
+        });
+        add("FixedTick", "Physics.CharacterFixed", [](void* user, const Context& context)
+        {
+            const auto& owner = *static_cast<const Core::World*>(user);
+            if (PhysicsModule* module = FindBoundModule(owner))
+            {
+                module->RequestFixedCharacters(owner, context.DeltaTime);
+            }
+        });
+        add("FixedTick", "Physics.FixedStep", [](void* user, const Context& context)
+        {
+            if (PhysicsModule* module = FindBoundModule(*static_cast<const Core::World*>(user)))
+            {
+                module->StepFixed(context.DeltaTime);
+            }
+        });
+    }
+
+    PhysicsModule* PhysicsModule::FindBoundModule(const Core::World& world)
+    {
+        auto* module = dynamic_cast<PhysicsModule*>(FindPhysicsModule(Core::Module::GetModuleRegistry()));
+        if (module == nullptr || !module->m_bBound || !module->m_bInitialized || module->m_Engine == nullptr ||
+            &module->m_Engine->GetWorld() != &world)
+        {
+            return nullptr;
+        }
+        return module;
     }
 
     void PhysicsModule::RegisterReflectedTypes()
@@ -109,7 +188,7 @@ namespace NorvesLib::Modules::Physics
     {
     }
 
-    void PhysicsModule::PreFixedTick(float fixedDeltaTime)
+    void PhysicsModule::StepPreFixed(float fixedDeltaTime)
     {
         if (!IsOwnerThread() || !m_bInitialized || !std::isfinite(fixedDeltaTime) || fixedDeltaTime <= 0.0f)
         {
@@ -133,7 +212,7 @@ namespace NorvesLib::Modules::Physics
         }
     }
 
-    void PhysicsModule::FixedTick(float fixedDeltaTime)
+    void PhysicsModule::StepFixed(float fixedDeltaTime)
     {
         if (!IsOwnerThread() || !m_bInitialized || !std::isfinite(fixedDeltaTime) || fixedDeltaTime <= 0.0f)
         {

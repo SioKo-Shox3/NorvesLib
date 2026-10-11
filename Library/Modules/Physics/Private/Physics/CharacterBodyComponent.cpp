@@ -147,23 +147,22 @@ namespace NorvesLib::Modules::Physics
         SetTickGroupMask(Core::Component::TickGroupBit(Core::Component::ETickGroup::Movement) |
                          Core::Component::TickGroupBit(Core::Component::ETickGroup::PoseFinalize));
         SetTickPriority(10);
+        // 固定ステップの要求は物理モジュールの一覧から出す（RigidBody と同じく、モジュールの登録の後に作られたものが対象）
+        if (auto* module = Module())
+            module->RegisterCharacter(*this);
     }
-    void CharacterBodyComponent::OnTickGroup(Core::Component::ETickGroup group, float dt)
+    void CharacterBodyComponent::TickMovementGroup(float dt)
     {
-        if (group == Core::Component::ETickGroup::Movement)
-        {
-            m_bFrameAfterAnimation = m_bVariableAfterAnimation;
-            if (!m_bFrameAfterAnimation)
-                Tick(dt);
-        }
-        else if (group == Core::Component::ETickGroup::PoseFinalize && m_bFrameAfterAnimation)
-            Tick(dt);
+        m_bFrameAfterAnimation = m_bVariableAfterAnimation;
+        if (!m_bFrameAfterAnimation)
+            RequestSimulation(dt, CharacterDriveMode::Variable);
     }
-    void CharacterBodyComponent::Tick(float dt)
+    void CharacterBodyComponent::TickPoseFinalizeGroup(float dt)
     {
-        RequestSimulation(dt, CharacterDriveMode::Variable);
+        if (m_bFrameAfterAnimation)
+            RequestSimulation(dt, CharacterDriveMode::Variable);
     }
-    void CharacterBodyComponent::FixedTick(float dt)
+    void CharacterBodyComponent::TickFixedStep(float dt)
     {
         RequestSimulation(dt, CharacterDriveMode::Fixed);
     }
@@ -265,6 +264,8 @@ namespace NorvesLib::Modules::Physics
     }
     void CharacterBodyComponent::Finalize()
     {
+        if (auto* module = Module())
+            module->UnregisterCharacter(*this);
         ResetMotion(true);
         OnLanded.Clear();
         BeforeSimulation.Clear();

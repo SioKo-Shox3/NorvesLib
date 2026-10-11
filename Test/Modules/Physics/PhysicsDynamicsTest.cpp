@@ -76,7 +76,7 @@ namespace
         assert(body->SetMass(2.0f) == EPhysicsResult::Success);
         assert(body->SetGravityScale(0.0f) == EPhysicsResult::Success);
         assert(body->SetLinearVelocity(Math::Vector3(1.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
-        physics->FixedTick(1.0f);
+        physics->StepFixed(1.0f);
         assert(entity->GetLocalTransform().position == Math::Vector3());
         assert(body->AddImpulse(Math::Vector3(2.0f, 0.0f, 0.0f)) == EPhysicsResult::InvalidState);
         assert(body->GetLinearVelocity() == Math::Vector3(1.0f, 0.0f, 0.0f));
@@ -84,24 +84,24 @@ namespace
         assert(body->SetBodyType(EPhysicsBodyType::Dynamic) == EPhysicsResult::Success);
         assert(body->AddImpulse(Math::Vector3(2.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
         assert(body->GetLinearVelocity() == Math::Vector3(1.0f, 0.0f, 0.0f));
-        physics->PreFixedTick(1.0f);
-        physics->FixedTick(1.0f);
+        physics->StepPreFixed(1.0f);
+        physics->StepFixed(1.0f);
         assert(body->GetLinearVelocity() == Math::Vector3(2.0f, 0.0f, 0.0f));
-        physics->PreFixedTick(1.0f);
-        physics->FixedTick(1.0f);
+        physics->StepPreFixed(1.0f);
+        physics->StepFixed(1.0f);
         assert(body->GetLinearVelocity() == Math::Vector3(2.0f, 0.0f, 0.0f));
 
         assert(body->AddImpulse(Math::Vector3(2.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
         assert(body->SetLinearVelocity(Math::Vector3(3.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
-        physics->PreFixedTick(1.0f);
-        physics->FixedTick(1.0f);
+        physics->StepPreFixed(1.0f);
+        physics->StepFixed(1.0f);
         assert(body->GetLinearVelocity() == Math::Vector3(4.0f, 0.0f, 0.0f));
 
         const Math::Vector3 positionBeforeInvalidDelta = entity->GetLocalTransform().position;
-        physics->PreFixedTick(0.0f);
-        physics->FixedTick(0.0f);
-        physics->PreFixedTick(std::numeric_limits<float>::quiet_NaN());
-        physics->FixedTick(std::numeric_limits<float>::infinity());
+        physics->StepPreFixed(0.0f);
+        physics->StepFixed(0.0f);
+        physics->StepPreFixed(std::numeric_limits<float>::quiet_NaN());
+        physics->StepFixed(std::numeric_limits<float>::infinity());
         assert(entity->GetLocalTransform().position == positionBeforeInvalidDelta);
 
         world.Finalize();
@@ -141,7 +141,7 @@ namespace
         {
             expectedVelocity += -9.81f * deltaTime;
             expectedPosition += expectedVelocity * deltaTime;
-            physics.FixedTick(deltaTime);
+            physics.StepFixed(deltaTime);
         }
         assert(NearlyEqual(firstBody->GetLinearVelocity().y, expectedVelocity));
         assert(NearlyEqual(firstEntity->GetLocalTransform().position.y, expectedPosition));
@@ -162,12 +162,12 @@ namespace
         assert(collider != nullptr && body != nullptr);
         assert(collider->SetSphere(0.25f) == EPhysicsResult::Success);
         assert(body->SetBodyType(EPhysicsBodyType::Kinematic) == EPhysicsResult::Success);
-        physics.FixedTick(1.0f);
+        physics.StepFixed(1.0f);
 
-        physics.PreFixedTick(1.0f);
+        physics.StepPreFixed(1.0f);
         parent->SetLocalScale(2.0f, 2.0f, 2.0f);
         child->SetLocalPosition(1.0f, 0.0f, 0.0f);
-        physics.FixedTick(1.0f);
+        physics.StepFixed(1.0f);
         assert(body->GetLinearVelocity() == Math::Vector3(2.0f, 0.0f, 0.0f));
 
         Core::Container::VariableArray<Core::Scene::PhysicsOverlapHit> hits;
@@ -198,17 +198,17 @@ namespace
         assert(dynamicBody->SetBodyType(EPhysicsBodyType::Dynamic) == EPhysicsResult::Success);
         assert(dynamicBody->SetGravityScale(0.0f) == EPhysicsResult::Success);
         assert(kinematicBody->SetLinearVelocity(Math::Vector3(100.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
-        physics.FixedTick(1.0f);
+        physics.StepFixed(1.0f);
         assert(kinematicBody->GetLinearVelocity() == Math::Vector3());
         assert(dynamicBody->GetLinearVelocity() == Math::Vector3());
 
-        physics.PreFixedTick(1.0f);
+        physics.StepPreFixed(1.0f);
         kinematicEntity->SetLocalPosition(1.0f, 0.0f, 0.0f);
-        physics.FixedTick(1.0f);
+        physics.StepFixed(1.0f);
         assert(kinematicBody->GetLinearVelocity() == Math::Vector3(1.0f, 0.0f, 0.0f));
-        physics.PreFixedTick(0.0f);
+        physics.StepPreFixed(0.0f);
         kinematicEntity->SetLocalPosition(2.0f, 0.0f, 0.0f);
-        physics.FixedTick(1.0f);
+        physics.StepFixed(1.0f);
         assert(kinematicBody->GetLinearVelocity() == Math::Vector3());
         world.Finalize();
     }
@@ -227,9 +227,9 @@ namespace
         assert(body->SetGravityScale(0.0f) == EPhysicsResult::Success);
         assert(body->AddImpulse(Math::Vector3(4.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
         entity->SetActive(false);
-        physics.FixedTick(1.0f);
+        physics.StepFixed(1.0f);
         entity->SetActive(true);
-        physics.FixedTick(1.0f);
+        physics.StepFixed(1.0f);
         assert(body->GetLinearVelocity() == Math::Vector3());
         assert(entity->GetLocalTransform().position == Math::Vector3());
         world.Finalize();
@@ -259,7 +259,7 @@ namespace
         assert(destroyedBody->SetGravityScale(0.0f) == EPhysicsResult::Success);
         assert(disabledBody->SetLinearVelocity(Math::Vector3(1.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
         assert(destroyedBody->SetLinearVelocity(Math::Vector3(1.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
-        physics.FixedTick(1.0f);
+        physics.StepFixed(1.0f);
 
         assert(disabledBody->AddImpulse(Math::Vector3(4.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
         assert(destroyedBody->AddImpulse(Math::Vector3(4.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
@@ -268,14 +268,14 @@ namespace
         const Math::Vector3 disabledPosition = disabledEntity->GetLocalTransform().position;
         const Math::Vector3 destroyedPosition = destroyedEntity->GetLocalTransform().position;
 
-        physics.PreFixedTick(1.0f);
-        physics.FixedTick(1.0f);
+        physics.StepPreFixed(1.0f);
+        physics.StepFixed(1.0f);
         const bool bDisabledBodyStopped = disabledEntity->GetLocalTransform().position == disabledPosition;
         const bool bDestroyedBodyStopped = destroyedEntity->GetLocalTransform().position == destroyedPosition;
 
         disabledBody->Enable();
-        physics.PreFixedTick(1.0f);
-        physics.FixedTick(1.0f);
+        physics.StepPreFixed(1.0f);
+        physics.StepFixed(1.0f);
         const bool bDisabledImpulseDiscarded =
             disabledEntity->GetLocalTransform().position == disabledPosition + Math::Vector3(1.0f, 0.0f, 0.0f);
 
@@ -345,7 +345,7 @@ namespace
         assert(upperBody->SetBodyType(EPhysicsBodyType::Dynamic) == EPhysicsResult::Success);
         for (uint32_t step = 0; step < 180; ++step)
         {
-            physics.FixedTick(1.0f / 60.0f);
+            physics.StepFixed(1.0f / 60.0f);
         }
         assert(std::isfinite(lowerEntity->GetLocalTransform().position.y));
         assert(std::isfinite(upperEntity->GetLocalTransform().position.y));
@@ -399,7 +399,7 @@ namespace
         assert(secondBody->SetGravityScale(0.0f) == EPhysicsResult::Success);
         assert(firstBody->SetLinearVelocity(Math::Vector3(1.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
         assert(secondBody->SetLinearVelocity(Math::Vector3(-1.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
-        physics.FixedTick(0.01f);
+        physics.StepFixed(0.01f);
         outFirstVelocity = firstBody->GetLinearVelocity().x;
         outSecondVelocity = secondBody->GetLinearVelocity().x;
         world.Finalize();
@@ -440,13 +440,13 @@ namespace
                 ++dynamicHitCount;
                 dynamicEvent = event;
             }), dynamicHandle) == EPhysicsResult::Success);
-        physics.FixedTick(1.0f / 60.0f);
+        physics.StepFixed(1.0f / 60.0f);
         assert(staticHitCount == 0);
         assert(dynamicHitCount == 0);
 
         dynamicEntity->SetLocalPosition(3.0f, 0.0f, 0.0f);
         assert(dynamicBody->SetLinearVelocity(Math::Vector3(-150.0f, 0.0f, 0.0f)) == EPhysicsResult::Success);
-        physics.FixedTick(0.01f);
+        physics.StepFixed(0.01f);
         assert(staticHitCount == 1);
         assert(dynamicHitCount == 1);
         assert(staticEvent.Self == staticCollider->GetColliderHandle());

@@ -544,7 +544,7 @@
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-TICK-PHYSICS: CharacterBody と物理の一歩を、固定ステップの段へ移す
-- status: todo
+- status: done
 - done-when: CharacterBody の 3 つの上書きを消して登録し、PhysicsModule の PreFixedTick と FixedTick を Fixed* の段のシステムにする（物理モジュールが登録、GameThreadOnly）。下のテストと起動画面の比較が pass する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target PhysicsDynamicsTest ApplicationFixedStepPipelineTest -- /m:1`

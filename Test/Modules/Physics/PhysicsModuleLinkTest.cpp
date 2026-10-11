@@ -243,31 +243,31 @@ namespace
             == EPhysicsSceneQueryResult::NotReady);
         assert(publishedSnapshotSequence == 0);
 
-        physics->FixedTick(0.0f);
+        physics->StepFixed(0.0f);
         publishedSnapshotSequence = 227;
         assert(engine.GetSceneQuery().GetPublishedSnapshotSequence(publishedSnapshotSequence)
             == EPhysicsSceneQueryResult::NotReady);
         assert(publishedSnapshotSequence == 0);
-        physics->FixedTick(std::numeric_limits<float>::quiet_NaN());
+        physics->StepFixed(std::numeric_limits<float>::quiet_NaN());
         publishedSnapshotSequence = 229;
         assert(engine.GetSceneQuery().GetPublishedSnapshotSequence(publishedSnapshotSequence)
             == EPhysicsSceneQueryResult::NotReady);
         assert(publishedSnapshotSequence == 0);
 
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         AssertEmptySnapshotReady(engine.GetSceneQuery());
         assert(engine.GetSceneQuery().GetPublishedSnapshotSequence(publishedSnapshotSequence)
             == EPhysicsSceneQueryResult::Success);
         assert(publishedSnapshotSequence == 1);
 
-        physics->FixedTick(0.0f);
-        physics->FixedTick(std::numeric_limits<float>::quiet_NaN());
+        physics->StepFixed(0.0f);
+        physics->StepFixed(std::numeric_limits<float>::quiet_NaN());
         uint64_t unchangedSnapshotSequence = 0;
         assert(engine.GetSceneQuery().GetPublishedSnapshotSequence(unchangedSnapshotSequence)
             == EPhysicsSceneQueryResult::Success);
         assert(unchangedSnapshotSequence == publishedSnapshotSequence);
 
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         uint64_t nextSnapshotSequence = 0;
         assert(engine.GetSceneQuery().GetPublishedSnapshotSequence(nextSnapshotSequence)
             == EPhysicsSceneQueryResult::Success);
@@ -331,7 +331,7 @@ namespace
             NorvesLib::Modules::Physics::IPhysicsModule* physics =
                 NorvesLib::Modules::Physics::RegisterPhysicsModule(registry);
             assert(registry.InstallAll(engine));
-            physics->FixedTick(1.0f / 60.0f);
+            physics->StepFixed(1.0f / 60.0f);
             AssertEmptySnapshotReady(engine.GetSceneQuery());
             registry.ShutdownAll(engine);
         }
@@ -364,7 +364,7 @@ namespace
             NorvesLib::Modules::Physics::RegisterPhysicsModule(registry);
 
         assert(registry.InstallAll(engine));
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         AssertEmptySnapshotReady(engine.GetSceneQuery());
 
         Thread::Thread worker([physics, &engine]()
@@ -463,7 +463,7 @@ namespace
         assert(collider->SetBox(Math::Vector3(1.0f, 0.0f, 1.0f)) == NorvesLib::Modules::Physics::EPhysicsResult::InvalidArgument);
         assert(collider->SetCapsule(1.0f, 0.0f) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
         assert(collider->SetTrigger(true) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::GetActiveColliderCount(*physics) == 1);
 
         auto* body = world.CreateComponent<NorvesLib::Modules::Physics::RigidBodyComponent>(root);
@@ -488,7 +488,7 @@ namespace
         assert(body->GetBodyType() == NorvesLib::Modules::Physics::EPhysicsBodyType::Dynamic);
         assert(body->AddImpulse(Math::Vector3(1.0f, 0.0f, 0.0f)) == NorvesLib::Modules::Physics::EPhysicsResult::Success);
         assert(body->GetLinearVelocity() == Math::Vector3(1.0f, 2.0f, 3.0f));
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyHandle));
 
         auto* duplicateBody = world.CreateComponent<NorvesLib::Modules::Physics::RigidBodyComponent>(root);
@@ -570,7 +570,7 @@ namespace
         Entity* reparentParent = world.SpawnEntity<Entity>();
         assert(reparentParent != nullptr);
         assert(world.ReparentEntity(root, reparentParent));
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyHandle));
 
         Entity* child = world.SpawnEntity<Entity>(root);
@@ -587,17 +587,17 @@ namespace
         auto* bodyFirst = world.CreateComponent<NorvesLib::Modules::Physics::RigidBodyComponent>(bodyFirstOwner);
         assert(bodyFirst != nullptr && bodyFirst->GetBodyHandle().IsValid());
         const BodyHandle bodyFirstHandle = bodyFirst->GetBodyHandle();
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyFirstHandle));
         auto* lateCollider = world.CreateComponent<NorvesLib::Modules::Physics::ColliderComponent>(bodyFirstOwner);
         assert(lateCollider != nullptr && lateCollider->SetSphere(1.0f)
             == NorvesLib::Modules::Physics::EPhysicsResult::Success);
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         assert(lateCollider->GetColliderHandle().IsValid());
         assert(bodyFirst->GetBodyHandle() == bodyFirstHandle);
         assert(NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyFirstHandle));
         bodyFirstOwner->RemoveComponent(lateCollider);
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyFirstHandle));
 
         assert(firstHandle.Generation == 1);
@@ -605,7 +605,7 @@ namespace
         const ColliderHandle maximumGenerationColliderHandle = collider->GetColliderHandle();
         root->RemoveComponent(collider);
         assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsColliderAlive(*physics, firstHandle));
-        physics->FixedTick(1.0f / 60.0f);
+        physics->StepFixed(1.0f / 60.0f);
         assert(!NorvesLib::Modules::Physics::PhysicsModuleTestAccess::IsBodyActive(*physics, bodyHandle));
 
         Entity* reuseOwner = world.SpawnEntity<Entity>();
