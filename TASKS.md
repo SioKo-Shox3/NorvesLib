@@ -553,11 +553,12 @@
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-TICK-SCRIPT: ScriptComponent の Tick を順序付きの系へ移す
-- status: doing
-- done-when: Tick を消して登録する（順は今と同じ）。スクリプトからの生成と破棄は、Object は即時、行は同期点で作られる。下のテストが pass する。
+- status: todo
+- done-when: Tick を消して登録する（順は今と同じ）。スクリプトからの生成は Object が即時に作られ、行は同期点で作られる。スクリプトからの破棄は、呼んだ時点で破棄予約が立ち（`IsPendingDestroy` が真）、以後その Object はスクリプトからの取得と Tick の対象から外れ、実際の解放と行の除去は同期点で行う（Tick の最中に巡回中の Object を解放しない既存の破棄の規則を保つ）。Tick の中で破棄した直後に、取得が null を返し、同じフレームの後の Tick でも呼ばれないことを、既存のスクリプトの試験の束で確かめる。下のテストが pass する。
 - verify: `cmake --build build --config Debug --target ScriptComponentTickTest ScriptApplicationLifecycleContractTest ScriptHotReloadTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(ScriptComponentTickTest|ScriptComponentSceneRoundTripTest|M6AngelScriptAcceptanceTest|ScriptApplicationLifecycleContractTest|ScriptHotReloadTest)$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Library/Core/Public/Component/ScriptComponent.h, Library/Core/Private/Component/ScriptComponent.cpp, Library/Core/Public/Scripting, Library/Core/Private/Scripting, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Test/Core/Scripting, TASKS.md, PROGRESS.md
+- notes: 2026-10-11 親: 「Object は即時に破棄」の意味を、破棄予約が即時に立つことと決めた（blocked の推奨 A。実際の解放は同期点）。
 
 ## SCN-ECS-TICK-GAME: Game の FollowCamera と QuadrupedLocomotion を順序付きの系へ移す
 - status: todo
