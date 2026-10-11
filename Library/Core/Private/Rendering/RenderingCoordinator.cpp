@@ -2416,9 +2416,17 @@ namespace NorvesLib::Core::Rendering
                             return fail("席の位置の表が、配列の位置を指していない");
                         }
                     }
-                    if (!newest.Delta.bBaseline)
+                    if (newest.Delta.bBaseline)
+                    {
+                        if (!mirror.AreAllChanged())
+                        {
+                            return fail("基準を当てた直後は、全部の席が変わったはず");
+                        }
+                    }
+                    else if (!mirror.AreAllChanged())
                     {
                         // 変わった席には、このパケットが運んだ proxy の席が全部入る
+                        // （全部が変わった扱いのあいだは、どの席も変わった席として扱われる）
                         for (uint32_t index : newest.Delta.Indices)
                         {
                             const uint32_t slot = source[index].SceneSlot;
@@ -2428,10 +2436,8 @@ namespace NorvesLib::Core::Rendering
                             }
                         }
                     }
-                    else if (!mirror.AreAllChanged())
-                    {
-                        return fail("基準を当てた直後は、全部の席が変わったはず");
-                    }
+                    // 検査用の消費者が取り込んだ地点。次の適用から、変わった席を数え直す
+                    mirror.NoteDrawn(false);
                     inFlight.clear();
                     ++examined;
                 }
