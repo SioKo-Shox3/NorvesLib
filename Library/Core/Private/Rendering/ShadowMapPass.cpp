@@ -13,6 +13,8 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/ProceduralMeshGenerator.h"
 #include "Rendering/SceneProxy.h"
+#include "Rendering/ShadowCasterRanges.h"
+#include "Rendering/MegaGeometryMirror.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
@@ -184,59 +186,24 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
-        // 影を落とすMegaGeometry（岩・小屋など）を集める。GBufferではクラスタ単位でGPUがLODを
-        // 選ぶが、影へはメッシュが指定した段（既定はLOD0）か、それより粗く1回の範囲で描ける段を描く（読み込んだ
-        // モデルはLOD0だけを持ち、実行時に作る階層も段ごとに頂点の基点が違ううえ簡略化に失敗した群を飛ばすため、
-        // 1段を1回の範囲で描けない。手続きで作る球は粗い段を連続した範囲として持ち、テクセルに見合う段を使う）。
-        // 行列はMegaGeometryPassと同じくプロキシの行列をそのままシェーダーへ渡す。インスタンスは
-        // 読まないが記述子のレイアウトを満たすために結ぶので、インスタンスのバッファが要る。
-        void CollectMegaShadowCasters(const ViewRenderContext& context,
-                                      uint32_t instanceDataSize,
-                                      Container::VariableArray<MegaShadowCaster>& outCasters)
+        // MegaGeometry の投影物になれるメッシュの GPU データ（区画へのコピーが GPU で完了し、影に使う段を持つ）。無ければ null
+        const MegaGeometry::MegaMeshGPUData* FindMegaShadowMesh(const MegaGeometryResources& resources,
+                                                               MegaGeometry::MegaMeshHandle handle)
         {
-            outCasters.clear();
-            if (!context.SnapshotMegaGeometryProxies || !context.Resources.MegaGeometry ||
-                !context.InstanceDataBuffer || instanceDataSize == 0)
+            const MegaGeometry::MegaMeshGPUData* gpuData = resources.GetReadyMegaMeshGPUData(handle);
+            if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer || gpuData->ShadowIndexCount == 0u)
             {
-                return;
+                return nullptr;
             }
-            for (const MegaGeometryProxy& proxy : *context.SnapshotMegaGeometryProxies)
-            {
-                if (!proxy.IsValid() || !proxy.bCastShadow)
-                {
-                    continue;
-                }
-                // 区画へのコピーが GPU で完了したメッシュだけが影を落とす
-                const MegaGeometry::MegaMeshGPUData* gpuData =
-                    context.Resources.MegaGeometry->GetReadyMegaMeshGPUData(proxy.MegaMeshHandle);
-                if (!gpuData || !gpuData->VertexBuffer || !gpuData->IndexBuffer ||
-                    gpuData->ShadowIndexCount == 0u)
-                {
-                    continue;
-                }
-                MegaShadowCaster caster;
-                caster.VertexBuffer = gpuData->VertexBuffer;
-                caster.IndexBuffer = gpuData->IndexBuffer;
-                caster.VertexBufferOffsetBytes = gpuData->VertexBufferOffsetBytes;
-                caster.IndexBufferOffsetBytes = gpuData->IndexBufferOffsetBytes;
-                caster.FirstIndex = gpuData->ShadowFirstIndex;
-                caster.IndexCount = gpuData->ShadowIndexCount;
-                caster.GpuData = gpuData;
-                std::memcpy(caster.World, &proxy.WorldTransform, sizeof(caster.World));
-                caster.Bounds = TransformMegaBounds(gpuData->TotalBounds, caster.World);
-                caster.WorldScale = gpuData->TotalBounds.Radius > 0.0f
-                                        ? caster.Bounds.Radius / gpuData->TotalBounds.Radius
-                                        : 1.0f;
-                if (!std::isfinite(caster.Bounds.CenterX) || !std::isfinite(caster.Bounds.CenterY) ||
-                    !std::isfinite(caster.Bounds.CenterZ) || !std::isfinite(caster.Bounds.Radius) ||
-                    !(caster.Bounds.Radius > 0.0f))
-                {
-                    continue;
-                }
-                outCasters.push_back(caster);
-            }
+            return gpuData;
         }
 
+        // ワールドの境界球が描ける大きさか（有限で半径が正）
+        bool IsDrawableMegaBounds(const BoundingSphere& bounds)
+        {
+            return std::isfinite(bounds.CenterX) && std::isfinite(bounds.CenterY) && std::isfinite(bounds.CenterZ) &&
+                   std::isfinite(bounds.Radius) && bounds.Radius > 0.0f;
+        }
         // MegaGeometryの影に使う段の範囲を描く深度描画のコマンドを作る（記述子セットは呼び出し側で用意する）。
         DrawCommand MakeMegaShadowDrawCommand(const MegaShadowCaster& caster,
                                               const MegaShadowRange& range,
@@ -359,6 +326,309 @@ namespace NorvesLib::Core::Rendering
                 }
             }
             return false;
+        }
+    } // namespace
+
+    /**
+     * @brief CSM・点光源のキューブへ描く MegaGeometry の投影物を、RenderThread の写しの席ごとに保つ
+     *
+     * 写し（MegaGeometryMirror）が前に見た版から数えた変わった席だけを直し、範囲の AABB（ShadowCasterRangeSet）も
+     * その席だけ置き直す。直せない（全部が変わった・別の写し・席を持たない proxy の番号と重なる）ときと、全量の同期
+     * （写しが無い）のときだけ全部を作り直す。メッシュの GPU データは同期のたびにメッシュごとに 1 回引き、
+     * 描けるかどうか・境界が変わったメッシュがあれば、全部の席の範囲を置き直す（読み込みの完了のときだけ起きる）。
+     */
+    struct ShadowMapMegaCasterCache
+    {
+        struct Entry
+        {
+            float World[16] = {};
+            MegaGeometry::MegaMeshHandle Handle;
+            // proxy が有効で影を落とす
+            bool bCastShadow = false;
+        };
+
+        struct MeshState
+        {
+            MegaGeometry::MegaMeshHandle Handle;
+            // 同期で引いた、投影物になれる GPU データ（なれなければ null）
+            const MegaGeometry::MegaMeshGPUData* GpuData = nullptr;
+            BoundingSphere TotalBounds;
+        };
+
+        // 席（SceneSlot）で引く投影物（0 は使わない）と、席を持たない proxy（範囲の番号は UnslottedBase + 位置）
+        Container::VariableArray<Entry> Slots;
+        Container::VariableArray<Entry> Unslotted;
+        uint32_t UnslottedBase = 1;
+        Container::UnorderedMap<uint64_t, MeshState> Meshes;
+        ShadowCasterRangeSet Ranges;
+        // 前に見た写しと版（全量の同期で作ったときは bFromMirror が false）
+        const MegaGeometryMirror* Source = nullptr;
+        uint64_t Generation = 0;
+        uint64_t Revision = 0;
+        bool bFromMirror = false;
+        bool bValid = false;
+
+        void Clear()
+        {
+            Slots.clear();
+            Unslotted.clear();
+            UnslottedBase = 1;
+            Meshes.clear();
+            Ranges.Clear();
+            Source = nullptr;
+            Generation = 0;
+            Revision = 0;
+            bFromMirror = false;
+            bValid = false;
+        }
+
+        void AddMesh(const MegaGeometryResources& resources, MegaGeometry::MegaMeshHandle handle)
+        {
+            if (Meshes.find(handle.Id) != Meshes.end())
+            {
+                return;
+            }
+            MeshState state;
+            state.Handle = handle;
+            state.GpuData = FindMegaShadowMesh(resources, handle);
+            if (state.GpuData)
+            {
+                state.TotalBounds = state.GpuData->TotalBounds;
+            }
+            Meshes.emplace(handle.Id, state);
+        }
+
+        void MakeEntry(const MegaGeometryResources& resources, const MegaGeometryProxy* proxy, Entry& out)
+        {
+            out = Entry{};
+            if (!proxy || !proxy->IsValid() || !proxy->bCastShadow)
+            {
+                return;
+            }
+            std::memcpy(out.World, &proxy->WorldTransform, sizeof(out.World));
+            out.Handle = proxy->MegaMeshHandle;
+            out.bCastShadow = true;
+            AddMesh(resources, out.Handle);
+        }
+
+        // 投影物 1 つの範囲を置き直す（描けない物は外す）
+        void Place(uint32_t id, const Entry& entry)
+        {
+            const auto mesh = entry.bCastShadow ? Meshes.find(entry.Handle.Id) : Meshes.end();
+            if (mesh == Meshes.end() || !mesh->second.GpuData)
+            {
+                Ranges.Remove(id);
+                return;
+            }
+            const BoundingSphere bounds = TransformMegaBounds(mesh->second.TotalBounds, entry.World);
+            if (!IsDrawableMegaBounds(bounds))
+            {
+                Ranges.Remove(id);
+                return;
+            }
+            Ranges.Set(id, bounds);
+        }
+
+        void PlaceAll()
+        {
+            for (size_t slot = 1; slot < Slots.size(); ++slot)
+            {
+                Place(static_cast<uint32_t>(slot), Slots[slot]);
+            }
+            for (size_t index = 0; index < Unslotted.size(); ++index)
+            {
+                Place(UnslottedBase + static_cast<uint32_t>(index), Unslotted[index]);
+            }
+        }
+
+        // メッシュの GPU データを引き直す。描けるかどうか・境界が変わったメッシュがあれば true
+        bool RefreshMeshes(const MegaGeometryResources& resources)
+        {
+            bool bChanged = false;
+            for (auto& [id, state] : Meshes)
+            {
+                const MegaGeometry::MegaMeshGPUData* gpuData = FindMegaShadowMesh(resources, state.Handle);
+                if ((gpuData == nullptr) != (state.GpuData == nullptr) ||
+                    (gpuData && std::memcmp(&gpuData->TotalBounds, &state.TotalBounds, sizeof(BoundingSphere)) != 0))
+                {
+                    bChanged = true;
+                }
+                state.GpuData = gpuData;
+                if (gpuData)
+                {
+                    state.TotalBounds = gpuData->TotalBounds;
+                }
+            }
+            return bChanged;
+        }
+
+        // 全部を作り直す（mirror が null なら全量の同期の配列から、席を使わずに並びの番号で置く）
+        void Rebuild(const MegaGeometryResources& resources,
+                     const MegaGeometryMirror* mirror,
+                     const Container::VariableArray<MegaGeometryProxy>* proxies)
+        {
+            Clear();
+            if (proxies)
+            {
+                for (const MegaGeometryProxy& proxy : *proxies)
+                {
+                    if (mirror && proxy.SceneSlot != 0)
+                    {
+                        if (proxy.SceneSlot >= Slots.size())
+                        {
+                            Slots.resize(static_cast<size_t>(proxy.SceneSlot) + 1u);
+                        }
+                        MakeEntry(resources, &proxy, Slots[proxy.SceneSlot]);
+                        continue;
+                    }
+                    Unslotted.emplace_back();
+                    MakeEntry(resources, &proxy, Unslotted.back());
+                }
+            }
+            UnslottedBase = static_cast<uint32_t>(std::max<size_t>(Slots.size(), 1u));
+            Source = mirror;
+            bFromMirror = mirror != nullptr;
+            Generation = mirror ? mirror->GetGeneration() : 0;
+            Revision = mirror ? mirror->GetRevision() : 0;
+            bValid = true;
+            PlaceAll();
+        }
+
+        void Sync(const ViewRenderContext& context)
+        {
+            const MegaGeometryResources& resources = *context.Resources.MegaGeometry;
+            const MegaGeometryMirror* mirror =
+                context.SnapshotMegaChangedSlots != nullptr ? context.SnapshotMegaMirror : nullptr;
+            if (!mirror)
+            {
+                // 全量の同期: 写しが無いので、毎フレーム全部を作り直す
+                Rebuild(resources, nullptr, context.SnapshotMegaGeometryProxies);
+                return;
+            }
+            const bool bMeshChanged = RefreshMeshes(resources);
+            const bool bSameSource = bValid && bFromMirror && Source == mirror && Generation == mirror->GetGeneration();
+            if (bSameSource && Revision == mirror->GetRevision())
+            {
+                if (bMeshChanged)
+                {
+                    PlaceAll();
+                }
+                return;
+            }
+            if (bSameSource && mirror->CanPatchFrom(Revision))
+            {
+                // 前に見た版から数えた変わった席だけを直す（外れた席は写しに無いので投影物でなくなる）
+                const Container::VariableArray<uint32_t>& changedSlots = mirror->GetChangedSlots();
+                bool bOverlapsUnslotted = false;
+                for (const uint32_t slot : changedSlots)
+                {
+                    bOverlapsUnslotted = bOverlapsUnslotted || (!Unslotted.empty() && slot >= UnslottedBase);
+                }
+                if (!bOverlapsUnslotted)
+                {
+                    for (const uint32_t slot : changedSlots)
+                    {
+                        if (slot == 0)
+                        {
+                            continue;
+                        }
+                        if (slot >= Slots.size())
+                        {
+                            Slots.resize(static_cast<size_t>(slot) + 1u);
+                        }
+                        MakeEntry(resources, mirror->FindBySlot(slot), Slots[slot]);
+                        Place(slot, Slots[slot]);
+                    }
+                    Revision = mirror->GetRevision();
+                    if (bMeshChanged)
+                    {
+                        PlaceAll();
+                    }
+                    return;
+                }
+            }
+            // 直せない（全部が変わった・前に見た版から数えていない・別の写し）ので作り直す
+            Rebuild(resources, mirror, &mirror->GetProxies());
+        }
+    };
+
+    namespace
+    {
+        // 投影物の写しを同期し、CSM の深度範囲と描画に使える投影物の数を返す（描けない構成は 0）
+        uint32_t SyncMegaShadowCasters(Container::TUniquePtr<ShadowMapMegaCasterCache>& cache,
+                                       const ViewRenderContext& context,
+                                       uint32_t instanceDataSize)
+        {
+            if (!context.SnapshotMegaGeometryProxies || !context.Resources.MegaGeometry)
+            {
+                if (cache)
+                {
+                    cache->Clear();
+                }
+                return 0u;
+            }
+            if (!cache)
+            {
+                cache = Container::MakeUnique<ShadowMapMegaCasterCache>();
+            }
+            cache->Sync(context);
+            // インスタンスのバッファは読まないが記述子のレイアウトを満たすために結ぶので、無ければ描かない
+            if (!context.InstanceDataBuffer || instanceDataSize == 0)
+            {
+                return 0u;
+            }
+            return cache->Ranges.GetCount();
+        }
+
+        // 影を落とす MegaGeometry（岩・小屋など）の描画の一覧を、席ごとの写しから作る（描くフレームだけ）。GBuffer ではクラスタ単位で
+        // GPU が LOD を選ぶが、影へはメッシュが指定した段（既定は LOD0）か、それより粗く 1 回の範囲で描ける段を描く（読み込んだ
+        // モデルは LOD0 だけを持ち、実行時に作る階層も段ごとに頂点の基点が違ううえ簡略化に失敗した群を飛ばすため、
+        // 1 段を 1 回の範囲で描けない。手続きで作る球は粗い段を連続した範囲として持ち、テクセルに見合う段を使う）。
+        // 行列は MegaGeometryPass と同じくプロキシの行列をそのままシェーダーへ渡す
+        void CollectMegaShadowCasters(const ShadowMapMegaCasterCache& cache,
+                                      Container::VariableArray<MegaShadowCaster>& outCasters)
+        {
+            outCasters.clear();
+            outCasters.reserve(cache.Ranges.GetCount());
+            const auto append = [&](const ShadowMapMegaCasterCache::Entry& entry)
+            {
+                if (!entry.bCastShadow)
+                {
+                    return;
+                }
+                const auto mesh = cache.Meshes.find(entry.Handle.Id);
+                const MegaGeometry::MegaMeshGPUData* gpuData = mesh != cache.Meshes.end() ? mesh->second.GpuData : nullptr;
+                if (!gpuData)
+                {
+                    return;
+                }
+                MegaShadowCaster caster;
+                caster.VertexBuffer = gpuData->VertexBuffer;
+                caster.IndexBuffer = gpuData->IndexBuffer;
+                caster.VertexBufferOffsetBytes = gpuData->VertexBufferOffsetBytes;
+                caster.IndexBufferOffsetBytes = gpuData->IndexBufferOffsetBytes;
+                caster.FirstIndex = gpuData->ShadowFirstIndex;
+                caster.IndexCount = gpuData->ShadowIndexCount;
+                caster.GpuData = gpuData;
+                std::memcpy(caster.World, entry.World, sizeof(caster.World));
+                caster.Bounds = TransformMegaBounds(gpuData->TotalBounds, caster.World);
+                caster.WorldScale = gpuData->TotalBounds.Radius > 0.0f
+                                        ? caster.Bounds.Radius / gpuData->TotalBounds.Radius
+                                        : 1.0f;
+                if (!IsDrawableMegaBounds(caster.Bounds))
+                {
+                    return;
+                }
+                outCasters.push_back(caster);
+            };
+            for (size_t slot = 1; slot < cache.Slots.size(); ++slot)
+            {
+                append(cache.Slots[slot]);
+            }
+            for (const ShadowMapMegaCasterCache::Entry& entry : cache.Unslotted)
+            {
+                append(entry);
+            }
         }
     } // namespace
 
@@ -671,6 +941,7 @@ namespace NorvesLib::Core::Rendering
         m_bPointShadowResourcesReady = false;
         m_bPointShadowResourcesFailed = false;
         m_LoggedPointShadowLightCount = 0;
+        m_MegaCasters.reset();
         m_SceneView = nullptr;
         m_SceneRenderer = nullptr;
         m_Device = nullptr;
@@ -807,16 +1078,17 @@ namespace NorvesLib::Core::Rendering
         // カスケードの視錐台の切片より光源側の遮蔽物もnear面で切り取らないよう、影を落とす
         // 物体の境界球を光源側の深度範囲に含める。MegaGeometryは下で実際に描くキャスターの
         // 境界球だけを含める（描かない物で深度範囲とPCSSの探索半径を広げない）。
-        Container::VariableArray<MegaShadowCaster> megaCasters;
-        CollectMegaShadowCasters(context, instanceDataSize, megaCasters);
+        // MegaGeometry は RenderThread の写しの変わった席だけを直した席ごとの写しから、範囲（格子）ごとの AABB を含める
+        // （物の数ではなく範囲の数だけを見る。範囲に物が 1 つなら、その物の境界球そのもの）
+        const uint32_t megaCasterCount = SyncMegaShadowCasters(m_MegaCasters, context, instanceDataSize);
         Container::VariableArray<BoundingSphere> casterBounds;
         CollectDirectionalShadowCasterBounds(context.SnapshotMeshProxies,
                                              context.SnapshotSkinnedMeshProxies,
                                              nullptr,
                                              casterBounds);
-        for (const MegaShadowCaster& megaCaster : megaCasters)
+        if (megaCasterCount != 0u)
         {
-            casterBounds.push_back(megaCaster.Bounds);
+            m_MegaCasters->Ranges.AppendBounds(casterBounds);
         }
         const CascadedShadowMatrixResult cascadedShadowMatrices =
             BuildCascadedShadowLightMatrices(context.SnapshotLightProxies,
@@ -951,16 +1223,22 @@ namespace NorvesLib::Core::Rendering
             context.PhysicalLighting.SunClipmap.bEnabled && context.GetActiveTransparentCommands().empty() &&
             !(context.SnapshotScene != nullptr && context.SnapshotScene->VolumetricFog.bEnabled) &&
             context.GetActiveDebugMode() == DebugViewMode::Normal;
-        const bool bSkipMegaCasters = bVsmOwnsSunShadow && !megaCasters.empty();
+        const bool bSkipMegaCasters = bVsmOwnsSunShadow && megaCasterCount != 0u;
         if (bSkipMegaCasters != m_bLoggedCsmMegaSkipped)
         {
             m_bLoggedCsmMegaSkipped = bSkipMegaCasters;
             NORVES_LOG_INFO("ShadowMapPass",
                             "CSM_MEGA_SKIPPED skipped=%d reason=vsm_owns_sun casters=%u",
                             bSkipMegaCasters ? 1 : 0,
-                            static_cast<uint32_t>(megaCasters.size()));
+                            megaCasterCount);
         }
-        const bool bCanDrawMegaCasters = cascadedShadowMatrices.bEnabled && !megaCasters.empty() && !bSkipMegaCasters;
+        const bool bCanDrawMegaCasters = cascadedShadowMatrices.bEnabled && megaCasterCount != 0u && !bSkipMegaCasters;
+        // 描く一覧は描くフレームだけ作る
+        Container::VariableArray<MegaShadowCaster> megaCasters;
+        if (bCanDrawMegaCasters)
+        {
+            CollectMegaShadowCasters(*m_MegaCasters, megaCasters);
+        }
 
         if (bCanBuildShadowCommands || bCanDrawMegaCasters)
         {
@@ -1141,7 +1419,7 @@ namespace NorvesLib::Core::Rendering
                             "CSMへ描くMegaGeometry: csm_mega_casters=%u "
                             "csm_mega_draws=%u,%u,%u,%u csm_mega_omitted=%u,%u,%u,%u "
                             "csm_mega_triangles=%u,%u,%u,%u csm_mega_levels=\"%s\"",
-                            static_cast<uint32_t>(megaCasters.size()),
+                            megaCasterCount,
                             megaDrawCounts[0],
                             megaDrawCounts[1],
                             megaDrawCounts[2],
@@ -1431,7 +1709,10 @@ namespace NorvesLib::Core::Rendering
 
         // MegaGeometry（岩・小屋など）はCSMと同じ集め方で、境界球がかかる面へだけ、光源からの距離のテクセルに見合う段を描く。
         Container::VariableArray<MegaShadowCaster> megaCasters;
-        CollectMegaShadowCasters(context, instanceDataSize, megaCasters);
+        if (SyncMegaShadowCasters(m_MegaCasters, context, instanceDataSize) != 0u)
+        {
+            CollectMegaShadowCasters(*m_MegaCasters, megaCasters);
+        }
 
         RHI::Viewport viewport;
         viewport.x = 0.0f;

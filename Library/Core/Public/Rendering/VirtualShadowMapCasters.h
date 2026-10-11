@@ -412,7 +412,7 @@ namespace NorvesLib::Core::Rendering
             uint64_t Key = 0;
             /** @brief 位置・形が同じかを見分ける署名（変換・メッシュ・描く範囲から作る）。違えば動いた */
             uint64_t Signature = 0;
-            /** @brief 毎フレーム動いた物として扱う（スキニング。MegaGeometry の world ≠ previousWorld） */
+            /** @brief 毎フレーム動いた物として扱う（スキニング。MegaGeometry は MegaGeometryPass が変わった席から無効化を積む） */
             bool bAlwaysChanged = false;
             /** @brief ワールドの境界（AABB）が分かるか。分からない物が変わったときは、全ページを無効にする */
             bool bHasBounds = false;

@@ -67,6 +67,8 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<VirtualShadowMap::CasterMotionEntry> Motion;
         VirtualShadowMap::CasterMotionTracker MotionTracker;
         Container::VariableArray<VirtualShadowMap::CasterBounds> ChangedBounds;
+        /** @brief MegaGeometryPass から取り出した無効化（変わった席の旧・新の境界と、常駐・メッシュが変わった席の境界） */
+        MegaGeometryShadowInvalidation MegaInvalidation;
         Container::VariableArray<float> InvalidationRects;
         Container::VariableArray<float> InvalidationSpheres;
         bool bInvalidateAll = false;
@@ -84,6 +86,20 @@ namespace NorvesLib::Core::Rendering
         constexpr double BytesPerMegabyte = 1024.0 * 1024.0;
         /** @brief 投影物の内訳が変わらなくても VSM_CASTERS を出す間隔（Execute の回数） */
         constexpr uint32_t CasterLogIntervalExecutions = 60;
+
+        // MegaGeometryPass が積んだキャッシュの無効化を取り出す（MegaGeometry が無ければ空）
+        void TakeMegaInvalidationFrom(MegaGeometryPass* megaPass, VirtualShadowMapCasterState& state)
+        {
+            if (megaPass)
+            {
+                megaPass->TakeShadowInvalidation(state.MegaInvalidation);
+            }
+            else
+            {
+                state.MegaInvalidation.Boxes.clear();
+                state.MegaInvalidation.bInvalidateAll = false;
+            }
+        }
 
         // スキニングの描画の持ち主（元の描画の SourceMeshComponentId と同じ ComponentId を持つプロキシ）。無ければ null
         const SkinnedMeshProxy* FindSkinnedProxy(const Container::VariableArray<SkinnedMeshProxy>& proxies, uint64_t componentId)
@@ -727,32 +743,8 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // ----- MegaGeometry: インスタンスの表を作ったときに集めた動き（world ≠ previousWorld は動いた物） -----
-        if (m_MegaPass)
-        {
-            const MegaGeometryShadowCasterInputs& inputs = m_MegaPass->GetShadowCasterInputs();
-            if (inputs.bValid)
-            {
-                for (const MegaGeometryShadowMotion& source : inputs.Motions)
-                {
-                    VirtualShadowMap::CasterMotionEntry motion;
-                    motion.Key = VirtualShadowMap::CasterHashCombine(0x4D454741ull, source.Key);
-                    // 常駐するジオメトリのページが変わると、選ばれるクラスタが変わる（ストリーミング中の影の欠けを残さない）
-                    motion.Signature = VirtualShadowMap::CasterHashCombine(source.Signature, inputs.PageTableVersion);
-                    motion.bAlwaysChanged = source.bMoved;
-                    motion.bHasBounds = source.bHasBounds;
-                    if (source.bHasBounds)
-                    {
-                        for (uint32_t axis = 0; axis < 3u; ++axis)
-                        {
-                            motion.Bounds.Min[axis] = source.BoundsSphere[axis] - source.BoundsSphere[3];
-                            motion.Bounds.Max[axis] = source.BoundsSphere[axis] + source.BoundsSphere[3];
-                        }
-                    }
-                    state.Motion.push_back(motion);
-                }
-            }
-        }
+        // MegaGeometry の動きは前フレームと全部を比べず、MegaGeometryPass が変わった席・メッシュの変化から積んだ箱を
+        // PlanInvalidation が取り出す（本数ではなく変わった席の数に比例する）
     }
 
     void VirtualShadowMapPass::PlanInvalidation(ViewRenderContext& context)
@@ -762,6 +754,8 @@ namespace NorvesLib::Core::Rendering
         state.InvalidationRects.clear();
         state.InvalidationSpheres.clear();
         state.bInvalidateAll = false;
+        // MegaGeometry: 前に取り出してから積まれた、変わった席の旧・新の境界と、常駐・メッシュが変わった席の境界
+        TakeMegaInvalidationFrom(m_MegaPass, state);
         // 太陽の段（矩形）も点光源の面（球）も無いフレームは、無効にする範囲が無い
         const bool bSun = context.PhysicalLighting.SunClipmap.bEnabled;
         const bool bPoint = state.bUseSliceTable;
@@ -771,6 +765,18 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         state.MotionTracker.Update(state.Motion, state.ChangedBounds, state.bInvalidateAll);
+        // MegaGeometry の箱は取り出した分をそのまま無効にする（多く描き直すぶんには影は崩れない）
+        state.bInvalidateAll = state.bInvalidateAll || state.MegaInvalidation.bInvalidateAll;
+        for (const MegaGeometryShadowBox& box : state.MegaInvalidation.Boxes)
+        {
+            VirtualShadowMap::CasterBounds bounds;
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                bounds.Min[axis] = box.Min[axis];
+                bounds.Max[axis] = box.Max[axis];
+            }
+            state.ChangedBounds.push_back(bounds);
+        }
         if (state.bInvalidateAll)
         {
             return;
@@ -1143,7 +1149,9 @@ namespace NorvesLib::Core::Rendering
         {
             dispatch.bCacheEnabled = m_bCacheEnabled;
             // 集めなかったフレームの動きは見ていないので、次に集めるとき前の記録との差が大きい。記録を捨てて新しく始める
+            // （MegaGeometry の積まれた無効化も同じく捨てる）
             m_Casters->MotionTracker.Reset();
+            TakeMegaInvalidationFrom(m_MegaPass, *m_Casters);
         }
         m_Pages->Record(commandList, dispatch);
         m_bMarked = m_Pages->WasMarked();

@@ -734,7 +734,7 @@
 - notes: 対象は 1037〜1085 行付近（同数なら毎フレーム Update、1043 行付近）。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-SHADOW-DIRTY: VSM・CSM の無効化を、変わった席の旧・新の境界と、常駐・メッシュの変化の通知で行う
-- status: todo
+- status: done
 - done-when: VSM の動きの記録（`VirtualShadowMapPass.cpp` 736〜753 行付近）が、本数ではなく変わった席の数に比例する。バッチの一部が動いても無効化はその旧・新の境界だけ。静止した席でも、そのメッシュのページの常駐・メッシュの世代・影の設定が変わったら、使っている席・範囲へ通知して無効化する（今の署名に入っている `PageTableVersion` の役目を保つ）。光源・クリップマップ側の既存の無効化は残す。CSM の投影物の範囲（`DirectionalShadowLightMatrices.cpp` 283〜450 行付近）は範囲の AABB で求める。影の表の毎フレームの FNV（`MegaGeometryPass.cpp` 1331 行付近）をやめる。ShadowMapPass（CSM。`ShadowMapPass.cpp` 203 行付近）の MegaGeometry の全量の走査を、RenderThread の写しと変わった席にする（SCN-MEGA-SCENE-DELTA から移した）。起動画面の比較が pass。効果の数値はこの項目では測らず、節目の計測（SCN-MEGA-MEASURE-UPLOAD）で確かめる。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-SHADOW-DIRTY`

@@ -2580,3 +2580,26 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: 残りの todo の最優先（SCN-MEGA-MEASURE-UPLOAD で効果の数値を測る）。
 - Notes: 比較は O(インスタンス数) で毎フレーム行う（選んだインスタンスの入力を作るのと同じ桁）。席の版から一致を決める方式にしなかったのは、描画コマンドから作るメッシュのインスタンスが版を持たないため。
 - Notes: 動く物体のある mega-stress・カメラが動く場面で Update を記録することは、この項目の verify に無いので起動して確かめていない（入力が変わる限り一致しないので記録される）。
+
+### SCN-MEGA-SHADOW-DIRTY（2026-10-12、反復 18・run 20261012-030203）
+
+- Done:
+  - VSM: MegaGeometry の動きの記録（`VirtualShadowMapPass.cpp` の投影物の収集）を、全インスタンスの鍵・署名を毎フレーム前フレームと比べる方式から、MegaGeometryPass が積んだ箱を `PlanInvalidation` で取り出す方式にした（`MegaGeometryPass::TakeShadowInvalidation`）。積む数は変わった席の数に比例する。動いた席は、前に影の表へ載せた境界と今の境界を合わせた箱 1 つ。スキニング・手続きメッシュの動きの記録（`CasterMotionTracker`）と、光源・クリップマップ側の無効化はそのまま。
+  - MegaGeometryPass: 影の表へ載せたインスタンスの記録（境界の球・投影物か）を `m_Instances` と同じ並びで保つ。変わった席を直すとき（`PatchInstancesFromChangedSlots`）に、変換・メッシュ・影の設定・境界が変わった位置だけを覚え、次に表を作るときその位置だけ旧・新の境界を積む。作り直した（並びが変わった）後の最初の表だけ、前の並びを鍵で引いて全部を比べる（区画の出入り・全量の同期）。インスタンスが無くなったフレームは前の投影物の境界を積む。
+  - 静止した席の通知: 表へ載せるメッシュごとに、区画（頂点・インデックス・クラスタのバッファと先頭）・クラスタ数・ページの範囲・境界と、ページを読み込むメッシュはページの範囲の常駐の区画の署名を覚え、変わったメッシュ（初めて載る・載らなくなって戻ったものを含む）を使う席の境界を積む。常駐の署名はページの表の版が変わったフレームだけ作り直す。これで、以前の署名に入っていた `PageTableVersion`（どのページが変わっても全部の MegaGeometry を描き直していた）を、常駐が変わったメッシュの席だけの描き直しにした。`MegaGeometryShadowCasterInputs` から `Motions`・`PageTableVersion` を外した。
+  - 影の表の毎フレームの FNV（インスタンスごとの行列の署名）をやめた。前の並びの鍵の FNV は作り直した後の最初の表だけ。
+  - CSM（ShadowMapPass）: MegaGeometry の投影物を `ShadowMapMegaCasterCache`（RenderThread の写しの席ごと）に保ち、写しが数えた変わった席だけを直す（直せない・全量の同期のときだけ作り直す）。CSM の深度範囲へ含める境界は、新しい `ShadowCasterRangeSet`（`Library/Core/Public/Rendering/ShadowCasterRanges.h`、実装は `DirectionalShadowLightMatrices.cpp`）の範囲（16 m の格子）ごとの AABB から作る（物が 1 つの範囲はその物の球そのもの、2 つ以上は AABB の中心から全部を含む半径）。変わった席の範囲だけ置き直し、外した・動いた範囲は引くときに残りの物から作り直す。描く一覧は CSM が MegaGeometry を描くフレーム（VSM が太陽を受け持たないとき）と点光源のキューブのときだけ席ごとの写しから作る。
+  - VSM のパスが無効化を取り出せるよう、`VirtualShadowMapPass::SetMegaGeometryPass` を非 const のポインタにした（呼び出し側はどれも非 const を渡している）。
+  - 開発用のログ `MEGA_SHADOW_DIRTY builds= rebuilds= dirty_slots= mesh_changes= residency_changes= boxes= invalidate_all= instances=`（表を作った 120 回ごと）。
+- 検証（`.harness/runs/20261012-030203/`。最終のコードは `-6`〜`-8`）:
+  - `verify-SCN-MEGA-SHADOW-DIRTY-6.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0、警告 0（`-1.txt` は内訳のログを足す前のビルドで EXIT=0）。
+  - `-7.txt`: 起動画面 default の `SCN-MEGA-BASE-RWDI` との決定的な比較が `mean_luminance_difference=0`・`psnr_db=100`・`mismatched_pixel_ratio=8E-06` で `result=pass`、EXIT=0。PNG を開いて確認（家・球・岩・天球・影）。Game.log の ERROR 0。CSM は MegaGeometry 6 本を描いている（VSM が太陽を受け持たない構成。範囲の境界にしても画素が一致）。`MEGA_SHADOW_DIRTY builds=120 rebuilds=1 dirty_slots=12 mesh_changes=59 residency_changes=53 boxes=71`。`-2.txt` は内訳のログを足す前の同じ比較（pass、psnr 100）。
+  - `-8.txt`: mega-stress 5000 個（動く 1%・区画 64 m）の overview が `CAPTURE_SCENE result=pass`（mean_luminance 157.614。RT-SELECT 以降と同じ）、EXIT=0。PNG を開いて確認。Game.log の ERROR 0、`CSM_MEGA_SKIPPED skipped=1`、`MEGA_HISTORY ... mismatch=0`、`MEGA_SCENE_UPLOAD ... mismatch=0`。読み込み中の窓は常駐の変化（`residency_changes=138`）で `boxes=58224`。`-3.txt` は内訳のログを足す前の同じ撮影（pass、157.614）。
+  - `-4-long.txt`（補助）: 同じ負荷を約 600 フレーム（`-GpuTimingFrames 480`）。読み込み後の窓は `dirty_slots` 4997〜5714・`boxes` 5329〜6200（120 フレームで。1 フレーム約 45 席・約 50 箱。差は区画の出入りの作り直しで出入りした物）・`mesh_changes` 0〜16・`invalidate_all=0`、ERROR 0。
+  - `-5-fullsync.txt`（補助）: `--mega-scene-full-sync` の起動画面が `SCN-MEGA-BASE-RWDI` と `psnr_db=100` で pass。毎フレーム作り直し（`rebuilds=119`）でも積む箱は差分の経路と同じ 71、ERROR 0。
+- Next: 残りの todo の最優先（SCN-MEGA-MEASURE-UPLOAD で効果の数値を測る）。
+- Notes: 範囲の格子は 16 m（`ShadowCasterRangeSet::RangeSizeMeters`）。物が 2 つ以上の範囲の球は物ごとの球より大きいので、CSM が MegaGeometry を多く描く構成では深度範囲が少し広がりうる（起動画面は画素が一致した）。
+- Notes: 積む箱の上限は 4096（超えたら全ページ）。VSM は矩形が 256 を超えると全ページにするので、1 フレームに 256 を超える席が動く負荷（5 万個の 1% など）では全ページの描き直しになる。数値は MEASURE-UPLOAD で見る。
+- Notes: VSM が投影物を集めなかったフレーム（深度・クリップマップが無い）は、他の投影物の記録と同じく積まれた MegaGeometry の無効化も捨てる。
+- Notes: 表の作り直し（区画の出入り）のフレームは前の並びを鍵で引くので O(本数)。読み込み後の mega-stress では 120 フレームに 1〜2 回。
+- Notes: `DirectionalShadowLightMatrices` の `CollectDirectionalShadowCasterBounds`・`FitDirectionalShadowMatrixSettingsToCasters` は MegaGeometry の proxy の配列を受ける形のまま（既存のテストが物ごとの球の値を確かめている。製品の経路は ShadowMapPass が範囲の境界を足す）。範囲の集合を直接確かめるテストは書いていない（verify に無い）。

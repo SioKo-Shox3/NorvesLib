@@ -18,6 +18,8 @@ namespace NorvesLib::Core::Rendering
     class SceneView;
     class VirtualShadowMapPass;
     struct SkinnedRenderPathContractTestAccess;
+    /** @brief CSM・点光源のキューブへ描く MegaGeometry の投影物の、席ごとの写し（ShadowMapPass.cpp が定義する） */
+    struct ShadowMapMegaCasterCache;
 
     /**
      * @brief シャドウマップパス設定
@@ -196,6 +198,8 @@ namespace NorvesLib::Core::Rendering
         ShadowMethod m_ShadowMethod = ShadowMethod::Csm;
         // 太陽の影を受け持つ VSM のパス（外部所有）。SetSunVsmPass を参照
         const VirtualShadowMapPass* m_pSunVsmPass = nullptr;
+        // MegaGeometry の投影物の席ごとの写しと範囲の AABB（RenderThread の写しの変わった席だけ直す）
+        Container::TUniquePtr<ShadowMapMegaCasterCache> m_MegaCasters;
         // CSM_MEGA_SKIPPED を出したか（省いた間は 1 回だけ出し、描き戻したら出し直す）
         bool m_bLoggedCsmMegaSkipped = false;
         // VSM_CLIPMAP / VSM_TEXEL を出したか（起動後に 1 回だけ出す）

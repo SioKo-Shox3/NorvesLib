@@ -3,6 +3,7 @@
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/HiZPyramidPass.h"
 #include "Rendering/IViewPass.h"
+#include "Rendering/MegaGeometry/GeometryPageTable.h"
 #include "Rendering/MegaGeometry/MegaGeometryCullUniforms.h"
 #include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/RenderTypes.h"
@@ -48,20 +49,25 @@ namespace NorvesLib::Core::Rendering
     };
     static_assert(sizeof(MegaGeometryShadowInstance) == 48, "Common/VirtualShadowMapMegaCull.glsl の ShadowInstance と大きさが一致しません");
 
-    /**
-     * @brief 影を落とすインスタンス 1 つの動き。VSM のキャッシュが、動いた投影物のページだけを描き直すために、フレームをまたいで比べる
-     */
-    struct MegaGeometryShadowMotion
+    /** @brief VSM のキャッシュで描き直すワールドの範囲（AABB） */
+    struct MegaGeometryShadowBox
     {
-        /** @brief フレームをまたいで同じインスタンスを指す鍵（プロキシの ObjectId と ComponentId・並びの番号から作る） */
-        uint64_t Key = 0;
-        /** @brief 変換・メッシュから作った署名。違えば動いた（作り直された）と見なす */
-        uint64_t Signature = 0;
-        /** @brief インスタンスの境界（ワールドの球）の中心 xyz + 半径。bHasBounds が false なら使えない */
-        float BoundsSphere[4] = {};
-        bool bHasBounds = false;
-        /** @brief ワールド変換が直前のフレームの変換と違う */
-        bool bMoved = false;
+        float Min[3] = {};
+        float Max[3] = {};
+    };
+
+    /**
+     * @brief VSM のキャッシュの無効化の入力。MegaGeometryPass が変わった席・メッシュの変化から積み、VSM が取り出す
+     *
+     * 席の変換・メッシュ・影の設定が変わったインスタンスは、前に影の表へ載せた境界と今の境界を合わせた箱を 1 つ積む。
+     * 静止した席でも、そのメッシュのページの常駐・メッシュの世代（区画・境界）が変わったら、そのメッシュを使う席の境界を積む。
+     * 積む数は変わった席の数に比例する（全部の席を毎フレーム比べない）。
+     */
+    struct MegaGeometryShadowInvalidation
+    {
+        Container::VariableArray<MegaGeometryShadowBox> Boxes;
+        /** @brief 境界の分からない投影物が変わった・積んだ数が上限を超えた（全ページを描き直す） */
+        bool bInvalidateAll = false;
     };
 
     /**
@@ -87,13 +93,6 @@ namespace NorvesLib::Core::Rendering
         uint32_t CasterCount = 0;
         /** @brief 影の判定の全ワークグループの数（影を落とすインスタンスのクラスタ ÷ 64 の切り上げの合計） */
         uint32_t TotalGroups = 0;
-        /** @brief 影を落とすインスタンスの動き（CasterCount 個。インスタンスの表の並び） */
-        Container::VariableArray<MegaGeometryShadowMotion> Motions;
-        /**
-         * @brief ページの表（ジオメトリのページの常駐）の版。常駐するページが変わると、カリングが選ぶクラスタが（インスタンスが動かなくても）
-         *        変わるので、VSM のキャッシュは版が変わったときにインスタンスの範囲を描き直す
-         */
-        uint64_t PageTableVersion = 0;
     };
 
     /**
@@ -436,6 +435,13 @@ namespace NorvesLib::Core::Rendering
          */
         const MegaGeometryShadowCasterInputs &GetShadowCasterInputs() const { return m_ShadowCasterInputs; }
 
+        /**
+         * @brief 前に取り出してから積んだ VSM のキャッシュの無効化を out へ移し、積んだ分を空にする
+         *
+         * 表を作るたびに積み、VSM が取り出すまで溜める（VSM が無い・見送ったフレームの分も次に取り出す）。
+         */
+        void TakeShadowInvalidation(MegaGeometryShadowInvalidation &out);
+
     private:
         /** @brief カリング用ユニフォームデータ（Common/MegaGeometryCull.glsl の CullUniforms と一致。VSM の投影物のカリングと同じ構造を使う） */
         using CullUniformData = MegaGeometry::CullUniformData;
@@ -677,8 +683,6 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<VisibilityRequest> VisibilityRequests;
             // 影の表（インスタンスの表と同じ並び）。影を落とすインスタンスだけが、影の判定のワークグループを持つ
             Container::VariableArray<MegaGeometryShadowInstance> ShadowInstances;
-            // 影を落とすインスタンスの動き（VSM のキャッシュが、動いた投影物のページだけを描き直すために使う）
-            Container::VariableArray<MegaGeometryShadowMotion> ShadowMotions;
             uint64_t ShadowTotalGroups = 0;
             uint32_t ShadowCasterCount = 0;
             // 平らな判定の全ワークグループの数（BVH をたどるインスタンスは持たない）
@@ -747,6 +751,58 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief VSM の投影物のカリングの入力を、常駐の表とこのフレームのページの表から作る */
         void PublishShadowCasterInputs(const FrameSlot &slot, SceneTables &tables);
+
+        /** @brief VSM のキャッシュの無効化: 影の表へ載せたインスタンス 1 つの記録（m_Instances と同じ並び） */
+        struct ShadowInstanceRecord
+        {
+            // ワールドの境界の球（中心 xyz + 半径）。bHasBounds が false なら使えない
+            float Sphere[4] = {};
+            // 影を落とすインスタンスとして影の表へ載せたか（メッシュが描けない・影を落とさないなら false）
+            bool bCaster = false;
+            bool bHasBounds = false;
+        };
+
+        /** @brief VSM のキャッシュの無効化: 影の表へ載せたメッシュの、影に効く中身（区画・境界・ページの常駐） */
+        struct ShadowMeshState
+        {
+            const void *VertexBuffer = nullptr;
+            const void *IndexBuffer = nullptr;
+            const void *ClusterBuffer = nullptr;
+            uint64_t VertexBufferOffsetBytes = 0;
+            uint64_t IndexBufferOffsetBytes = 0;
+            uint64_t ClusterBufferOffsetBytes = 0;
+            uint32_t ClusterCount = 0;
+            uint32_t PageTableBase = 0;
+            uint32_t PageCount = 0;
+            float TotalBounds[4] = {};
+            // ページの範囲の常駐の区画の署名（ページを読み込むメッシュだけ。常駐が変わると、カリングが選ぶクラスタが変わる）
+            uint64_t Residency = 0;
+            // 最後に表へ載せた回（載らなかったメッシュは記録から外し、次に載ったときに変わったものとして扱う）
+            uint64_t Stamp = 0;
+
+            bool operator==(const ShadowMeshState &other) const;
+        };
+
+        /**
+         * @brief m_Instances を作り直す（並びが変わる）前に呼ぶ。今の並びと記録を、次に表を作るときの比べる元として残す
+         *
+         * 表を作る前に何度作り直しても、残すのは最後に表を作ったときの並び（VSM が知っている境界）。
+         * @param bKeepInstances 今の並びを写して残す（m_Instances を空にせず足していくとき）。false なら移す
+         */
+        void BeginShadowRebuild(bool bKeepInstances);
+        /** @brief 変わった席のインスタンスを直したとき、影に効く中身（変換・メッシュ・影の設定・境界）が変わった位置を覚える */
+        void NoteShadowPatched(size_t position, const MegaMeshInstance &before, const MegaMeshInstance &after);
+        /** @brief インスタンスが無くなって表を作らないとき、残した並びの投影物の境界を無効化へ積む */
+        void FlushShadowRebuildWithoutInstances();
+        /** @brief インスタンス 1 つの前と今の記録から、描き直す範囲を積む（どちらかが投影物でなければ、もう片方だけ） */
+        void PushShadowInvalidation(const ShadowInstanceRecord &before, const ShadowInstanceRecord &after);
+        /**
+         * @brief このフレームに表へ載せるメッシュの中身を覚えたものと比べる
+         * @param bResidencyFresh ページの表の写しが前に比べてから変わった（常駐の署名を作り直す）
+         * @return 前に載せたときから中身・常駐が変わった（初めて載せたときも true）
+         */
+        bool UpdateShadowMeshState(MegaGeometry::MegaMeshHandle handle, const MegaGeometry::MegaMeshGPUData &data,
+                                   bool bResidencyFresh);
 
         /** @brief 常駐の表へ書いたバイト数を数え、120 回ごとに MEGA_SCENE_UPLOAD を出す */
         void NoteSceneUpload(uint64_t bytes, uint32_t rows, uint32_t entries, uint32_t shadows, uint32_t meshes,
@@ -1025,6 +1081,35 @@ namespace NorvesLib::Core::Rendering
 
         // VSM の投影物のカリングの入力（Setup で無効に戻り、前段か記録が表を書けたときに有効になる）
         MegaGeometryShadowCasterInputs m_ShadowCasterInputs;
+        // VSM のキャッシュの無効化: 影の表へ載せた記録（m_Instances と同じ並び）と、影に効く中身が変わった位置（印と一覧）
+        Container::VariableArray<ShadowInstanceRecord> m_ShadowRecords;
+        Container::VariableArray<uint8_t> m_ShadowDirtyMarks;
+        Container::VariableArray<uint32_t> m_ShadowDirtyPositions;
+        // m_Instances を作り直した後、まだ表を作っていない（前に表を作ったときの並びと記録を、鍵で引いて比べる）
+        bool m_bShadowRebuildPending = false;
+        Container::VariableArray<MegaMeshInstance> m_ShadowPreviousInstances;
+        Container::VariableArray<ShadowInstanceRecord> m_ShadowPreviousRecords;
+        // 表へ載せたメッシュ（ハンドルの番号で引く）と、常駐の署名を作るページの表の写し
+        Container::UnorderedMap<uint64_t, ShadowMeshState> m_ShadowMeshes;
+        uint64_t m_ShadowMeshStamp = 0;
+        uint64_t m_ShadowPageTableVersion = ~0ull;
+        Container::VariableArray<MegaGeometry::GeometryPageTable::Entry> m_ShadowPageEntries;
+        // VSM が取り出すまで積む無効化
+        MegaGeometryShadowInvalidation m_ShadowInvalidation;
+        // 統計 MEGA_SHADOW_DIRTY（表を作った 120 回ごと。窓の間の合計）
+        struct ShadowDirtyStats
+        {
+            uint32_t Builds = 0;
+            uint32_t Rebuilds = 0;
+            uint64_t DirtySlots = 0;
+            uint64_t MeshChanges = 0;
+            // そのうちページの常駐だけが変わった回数
+            uint64_t ResidencyChanges = 0;
+            uint64_t Boxes = 0;
+            uint32_t InvalidateAll = 0;
+            bool bLoggedOnce = false;
+        };
+        ShadowDirtyStats m_ShadowDirtyStats;
         // このフレームの表（前段が作り、同じフレームの記録が使う。配列の容量はフレームをまたいで使い回す）
         SceneTables m_SceneTables;
         PreparedSceneTables m_PreparedSceneTables;

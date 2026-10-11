@@ -1,5 +1,6 @@
 ﻿#include "Rendering/DirectionalShadowLightMatrices.h"
 
+#include "Rendering/ShadowCasterRanges.h"
 #include "Rendering/ShadowMapPass.h"
 #include "Rendering/SkySunLight.h"
 #include "Math/MatrixUtils.h"
@@ -458,5 +459,153 @@ namespace NorvesLib::Core::Rendering
     {
         CopyShadowMatrixToShaderData(Math::Matrix4x4::Identity, outView);
         CopyShadowMatrixToShaderData(Math::Matrix4x4::Identity, outProjection);
+    }
+
+    // ========================================
+    // 影を落とす物の範囲の AABB（ShadowCasterRangeSet）
+    // ========================================
+
+    void ShadowCasterRangeSet::Clear()
+    {
+        m_Items.clear();
+        m_Ranges.clear();
+        m_Count = 0;
+    }
+
+    uint64_t ShadowCasterRangeSet::MakeRangeKey(const BoundingSphere& bounds)
+    {
+        // 球の中心が入る格子の番号（各軸 21 ビットへ丸めて詰める。遠すぎる位置は端の格子へ寄せる）
+        const float centers[3] = {bounds.CenterX, bounds.CenterY, bounds.CenterZ};
+        uint64_t key = 0;
+        for (const float center : centers)
+        {
+            const float cell = std::floor(center / RangeSizeMeters);
+            const float clamped = cell < -1048576.0f ? -1048576.0f : (cell > 1048575.0f ? 1048575.0f : cell);
+            key = (key << 21) | (static_cast<uint64_t>(static_cast<int64_t>(clamped) + 1048576) & 0x1FFFFFull);
+        }
+        return key;
+    }
+
+    bool ShadowCasterRangeSet::Set(uint32_t id, const BoundingSphere& bounds)
+    {
+        if (!bounds.IsValid() || !IsFiniteBounds(bounds))
+        {
+            Remove(id);
+            return false;
+        }
+        if (id >= m_Items.size())
+        {
+            m_Items.resize(static_cast<size_t>(id) + 1u);
+        }
+        Item& item = m_Items[id];
+        const uint64_t key = MakeRangeKey(bounds);
+        if (item.bPlaced && item.RangeKey == key)
+        {
+            // 同じ範囲の中で動いた: 範囲を作り直すだけ（AABB が縮むかもしれない）
+            item.Bounds = bounds;
+            m_Ranges[key].bDirty = true;
+            return true;
+        }
+        Remove(id);
+        Range& range = m_Ranges[key];
+        item.Bounds = bounds;
+        item.RangeKey = key;
+        item.IndexInRange = static_cast<uint32_t>(range.Members.size());
+        item.bPlaced = true;
+        range.Members.push_back(id);
+        range.bDirty = true;
+        ++m_Count;
+        return true;
+    }
+
+    void ShadowCasterRangeSet::Remove(uint32_t id)
+    {
+        if (id >= m_Items.size() || !m_Items[id].bPlaced)
+        {
+            return;
+        }
+        Item& item = m_Items[id];
+        const auto found = m_Ranges.find(item.RangeKey);
+        if (found != m_Ranges.end())
+        {
+            // 範囲の物の一覧から外す（末尾の物を空いた位置へ移す）
+            Range& range = found->second;
+            const uint32_t position = item.IndexInRange;
+            if (position < range.Members.size())
+            {
+                const uint32_t last = range.Members.back();
+                range.Members[position] = last;
+                m_Items[last].IndexInRange = position;
+                range.Members.pop_back();
+            }
+            if (range.Members.empty())
+            {
+                m_Ranges.erase(found);
+            }
+            else
+            {
+                range.bDirty = true;
+            }
+        }
+        item = Item{};
+        --m_Count;
+    }
+
+    void ShadowCasterRangeSet::Rebuild(Range& range) const
+    {
+        bool bFirst = true;
+        for (const uint32_t member : range.Members)
+        {
+            const BoundingSphere& bounds = m_Items[member].Bounds;
+            const float center[3] = {bounds.CenterX, bounds.CenterY, bounds.CenterZ};
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                const float low = center[axis] - bounds.Radius;
+                const float high = center[axis] + bounds.Radius;
+                range.Min[axis] = bFirst ? low : MinFloat(range.Min[axis], low);
+                range.Max[axis] = bFirst ? high : MaxFloat(range.Max[axis], high);
+            }
+            bFirst = false;
+        }
+        // AABB の中心から、物の球をすべて含む半径（物が 1 つなら、その物の半径。中心も一致する）
+        const Math::Vector3 rangeCenter((range.Min[0] + range.Max[0]) * 0.5f,
+                                        (range.Min[1] + range.Max[1]) * 0.5f,
+                                        (range.Min[2] + range.Max[2]) * 0.5f);
+        range.Radius = 0.0f;
+        for (const uint32_t member : range.Members)
+        {
+            range.Radius = MaxFloat(range.Radius, CalculateCasterFitRadius(m_Items[member].Bounds, rangeCenter));
+        }
+        if (range.Members.size() == 1u)
+        {
+            range.Radius = m_Items[range.Members[0]].Bounds.Radius;
+        }
+        range.bDirty = false;
+    }
+
+    void ShadowCasterRangeSet::AppendBounds(Container::VariableArray<BoundingSphere>& out)
+    {
+        out.reserve(out.size() + m_Ranges.size());
+        for (auto& [key, range] : m_Ranges)
+        {
+            if (range.bDirty)
+            {
+                Rebuild(range);
+            }
+            // 物が 1 つの範囲は、その物の球をそのまま返す（AABB の中心は球の中心と同じ）
+            BoundingSphere bounds;
+            if (range.Members.size() == 1u)
+            {
+                bounds = m_Items[range.Members[0]].Bounds;
+            }
+            else
+            {
+                bounds.CenterX = (range.Min[0] + range.Max[0]) * 0.5f;
+                bounds.CenterY = (range.Min[1] + range.Max[1]) * 0.5f;
+                bounds.CenterZ = (range.Min[2] + range.Max[2]) * 0.5f;
+                bounds.Radius = range.Radius;
+            }
+            out.push_back(bounds);
+        }
     }
 } // namespace NorvesLib::Core::Rendering

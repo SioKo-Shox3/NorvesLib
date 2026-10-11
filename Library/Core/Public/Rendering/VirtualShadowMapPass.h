@@ -361,7 +361,7 @@ namespace NorvesLib::Core::Rendering
         /** @brief スキニングの投影物の取り出し元（同じ View のパス。null ならスキニングの投影物は描かない） */
         void SetSkinningComputePass(const SkinningComputePass* pass) { m_SkinningPass = pass; }
         /** @brief MegaGeometry の投影物の取り出し元（同じ View の主の経路。null なら MegaGeometry の投影物はカリングしない） */
-        void SetMegaGeometryPass(const MegaGeometryPass* pass) { m_MegaPass = pass; }
+        void SetMegaGeometryPass(MegaGeometryPass* pass) { m_MegaPass = pass; }
         const MegaGeometryPass* GetMegaGeometryPass() const { return m_MegaPass; }
 
         /**
@@ -486,7 +486,8 @@ namespace NorvesLib::Core::Rendering
         Container::TUniquePtr<VirtualShadowMapMegaCull> m_MegaCull;
         Container::TUniquePtr<VirtualShadowMapMegaCullStatsReporter> m_MegaReporter;
         const SkinningComputePass* m_SkinningPass = nullptr;
-        const MegaGeometryPass* m_MegaPass = nullptr;
+        // 投影物のカリングの入力を読み、キャッシュの無効化（MegaGeometryPass::TakeShadowInvalidation）を取り出す
+        MegaGeometryPass* m_MegaPass = nullptr;
         StatsSlot m_StatsSlots[StatsSlotCount];
         /** @brief 最後に書いた枠の番号と、そのときのフレームの通し番号（同じフレームの Execute は同じ枠を書き直す） */
         uint32_t m_StatsWriteIndex = StatsSlotCount - 1;
