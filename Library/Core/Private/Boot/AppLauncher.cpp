@@ -69,6 +69,20 @@ namespace
     }
 #endif
 
+    // --window-background（自動の検証の起動）が付いているか。付いていれば、新しいコンソールの窓が前面に出て
+    // 使っている人のフォーカスを奪わないように、デバッグ用のコンソールを開かない（ログはファイルへ出る）。
+    bool HasWindowBackgroundArgument(const NorvesLib::Core::Boot::BootConfig& config)
+    {
+        for (size_t i = 0; i < config.Arguments.size(); ++i)
+        {
+            if (config.Arguments[i] == TEXT("--window-background"))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * @brief プラットフォーム初期化（内部ヘルパ）
      *
@@ -149,7 +163,7 @@ namespace NorvesLib::Core::Boot
     int LaunchApplication(const BootConfig& config)
     {
         // コンソール割当（ロガー初期化より前に行う必要があるため LaunchApplication 冒頭で実施）
-        if (config.bEnableDebugConsole)
+        if (config.bEnableDebugConsole && !HasWindowBackgroundArgument(config))
         {
             Platform::OpenDebugConsole();
         }
