@@ -650,7 +650,7 @@
 - verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB|TransformHierarchy|EcsHierarchy|SceneQuery" --no-tests=error --output-on-failure --timeout 180`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Private/Object/World.cpp, Library/Core/Public/Object/World.h, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Core/Public/Engine, Library/Core/Private/Engine, Library/Core/Public/Debug, Library/Core/Private/Debug, Game/GameApplicationHandler.cpp, Test/Core/Object, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY の推奨 A の 1）。後の項目の verify は ECS_* の検査も旧の切替も使っていない（親が確かめた）。危険地帯（描画の同期・Object の寿命）。
+- notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY の推奨 A の 1）。後の項目の verify は ECS_* の検査も旧の切替も使っていない（親が確かめた）。危険地帯（描画の同期・Object の寿命）。 2026-10-12 親: 反復 23 は 40 分の上限で止まった。そのとき作業を git stash に退避して HEAD の周回と比べる途中だったので、親が退避を戻して 作業途中の保存 eaad1e4f に入れた（World.cpp の旧の再帰の削除・照合のテストの書き換え、計 12 ファイル）。続きから進める。分かっていたこと: M9 の受入れは変更の前後で同じ理由（t0_capture_failed）で落ちる（この項目と無関係）。3 シーンの周回（verify 3）がこの変更で落ちた（`.harness/runs/20261011-211043/verify-SCN-ECS-RETIRE-LEGACY-FLAGS-3.txt`）ので、まず HEAD~1 と比べて原因を切り分ける。作業を git stash に退避しない（上限で止まると失われる）。比べるときは別のディレクトリにビルドせず、コミットしてから戻す。
 
 
 ## SCN-ECS-RETIRE-REGISTRY: EntityHandle の発行と解決を World へ移し、ComponentDataRegistry を消す
