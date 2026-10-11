@@ -510,12 +510,12 @@
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-11 親: 5万個は MegaGeometryPass の BVH の列（leaf_capacity 7,514 万・queue 1 億 6,517 万）が VRAM を超えて RenderThread が落ちる（`.harness/runs/scene-capture/SCN-ECS-MASS-STREAM/measure-default`）。このタスクの範囲の外なので、計測を 3万個に直して todo に戻した（blocked の推奨 1。3万個の値は反復 12 で測り済み: gt median 2.424 ms・p95 3.935 ms）。反復 12 の直しを verify に通して評価を受ける。
 
 ## SCN-MEGA-MIXED-LOAD: バナナ 100万本と mega-stress の個別 Entity を 1 回の起動で同時に置く
-- status: doing
-- done-when: 1 回の起動で、散布の Object によるバナナ（`banana-count`）と mega-stress の個別 Entity（`stress-entities`・`stress-moving-percent`・`stress-stream-cell`）を同時に置ける（今は GameApplicationHandler.cpp 2721 行付近のモードの登録で別々のシーンへ渡している）。静止・カメラパスの再生・1% 移動・64 m 区画のストリーミングの 4 つの起動の引数を決めて PROGRESS に書き、実際に置いた数（バナナの本数・Entity の数）をログと metrics.json に出して、引数どおりであることを確かめる（10万本 + 5000 個の短い起動で確かめる。計測はしない）。開発ビルドの `--camera-path-play` で、シーンのカメラパスを再生したまま撮れる（`--camera-path-time` は止めた視点。再生の開始の時刻はそれに合わせる。ログに再生中の時刻を出す）。
+- status: todo
+- done-when: 1 回の起動で、散布の Object によるバナナ（`banana-count`）と mega-stress の個別 Entity（`stress-entities`・`stress-moving-percent`・`stress-stream-cell`）を同時に置ける（今は GameApplicationHandler.cpp 2721 行付近のモードの登録で別々のシーンへ渡している）。静止・カメラパスの再生・1% 移動・64 m 区画のストリーミングの 4 つの起動の引数を決めて PROGRESS に書き、実際に置いた数（バナナの本数・Entity の数）をログと metrics.json に出して、引数どおりであることを確かめる（3万本 + 5000 個の短い起動で確かめる。計測はしない。10万本以上の混在は BVH の改修の後の節目の計測で確かめる）。開発ビルドの `--camera-path-play` で、シーンのカメラパスを再生したまま撮れる（`--camera-path-time` は止めた視点。再生の開始の時刻はそれに合わせる。ログに再生中の時刻を出す）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs banana-count=100000,stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-MIXED-LOAD`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs banana-count=30000,stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-MIXED-LOAD`
 - paths: Game, Library/Core/Public/Input, Library/Core/Private/Input, Scripts/CaptureScene.ps1, TASKS.md, PROGRESS.md
-- notes: GPT の 2 周目の指摘（ACCEPT-1M の混在の負荷を作る実装が無い）への対応。 2026-10-10 親: `--camera-path-play` を SCN-MEGA-PROBE-VSM（backlog にした）から移した。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
+- notes: GPT の 2 周目の指摘（ACCEPT-1M の混在の負荷を作る実装が無い）への対応。 2026-10-10 親: `--camera-path-play` を SCN-MEGA-PROBE-VSM（backlog にした）から移した。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-11 親: 10万本 + 5000 個は描画側の BVH の列が VRAM を超えて落ちる（leaf_capacity 5,759 万・queue 1 億 2,388 万、非プール 14.1 GB / 予算 11.7 GB）。この項目の範囲の外なので、verify を 3万本 + 5000 個に下げて todo に戻した（blocked の推奨 A）。
 
 ## SCN-MEGA-PROBE-VSM: 10万本で、読み込み直後とカメラが動くときの VSM の投影物のカリングを測る
 - status: backlog
@@ -753,7 +753,7 @@
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 今は最悪値で dispatch（1983〜2009 行付近）、列は全節の総和（1351〜1373 行付近）。 2026-10-11 親: 今の BVH の列はインスタンスの数とメッシュから最大の容量を取るので、mega-stress 5万個で leaf_capacity 7,514 万・queue 1 億 6,517 万になり、VRAM（使用 14,975 MB / 予算 11,847 MB）を超えて RenderThread がバッファの割り当てに失敗して落ちる。この項目の固定容量の列で、5万個の mega-stress が落ちずに描けることを確かめる。
+- notes: 今は最悪値で dispatch（1983〜2009 行付近）、列は全節の総和（1351〜1373 行付近）。 2026-10-11 親: 今の BVH の列はインスタンスの数とメッシュから最大の容量を取るので、mega-stress 5万個で leaf_capacity 7,514 万・queue 1 億 6,517 万になり、VRAM（使用 14,975 MB / 予算 11,847 MB）を超えて RenderThread がバッファの割り当てに失敗して落ちる。この項目の固定容量の列で、5万個の mega-stress が落ちずに描けることを確かめる。 2026-10-11 親: バナナ 10万本 + mega-stress 5000 個の混在でも同じく VRAM を超える（SCN-MEGA-MIXED-LOAD の記録）。そのとき `VulkanBuffer.cpp` の割り当て失敗の例外が描画スレッドで捕まらず、Game が 0xC0000409 で落ちる。固定容量の列にしたうえで、列の割り当てに失敗したら落ちずにその描画を見送り、ERROR を出す形にする。10万本 + 5000 個の混在が落ちずに描けることも確かめる。
 
 ## SCN-MEGA-INSTANCE-CULL: 範囲とインスタンスの専用のカリングを、BVH の段 0 の前に置く
 - status: todo
