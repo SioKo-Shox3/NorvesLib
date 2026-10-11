@@ -1986,3 +1986,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: TASKS.md の次の todo（SCN-ECS-TICK-SCRIPT ほか）。
 - Notes:
   - 参加の番号は CharacterBody の Owner の World のスケジューラから取る（Owner が無ければ束ねた World）。別の World の CharacterBody は要求の側で World の一致を見て飛ばすので、番号の出所の違いは影響しない。
+
+### SCN-ECS-TICK-PHYSICS 再検証の失敗の対応（2026-10-11、反復 3・run 20261011-211043）
+
+- 原因: 再検証で落ちたのは PhysicsFixedStepPipelineTest の case 19（Tick の後に足した CharacterBody）だけで、同じフレームの固定ステップで要求が 2 回出ていた。コードの誤りではなく古いオブジェクト: 反復 2 で判定を一時的に外して失敗を確かめたあと、元に戻したソースの更新時刻が外した版のオブジェクトより古く、Debug の PhysicsModuleCharacter.obj が作り直されないまま判定なしの版がリンクされていた（反復 2 の verify の 5/5 はこの確認の前の実行）。
+- 対応: コードの変更はない。ソースを触って Debug と RelWithDebInfo の両方で PhysicsModuleCharacter.cpp を再コンパイルさせ、case 19 が参加の番号どおり（Tick の後の追加は同じ収集の 2 歩で 0 回、次の収集で 1 回、収集の外の追加は次の歩から）に通ることを確かめた。
+- 検証（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-ECS-TICK-PHYSICS-7.txt`: RelWithDebInfo の Game のビルド EXIT=0（PhysicsModuleCharacter.cpp を再コンパイル）。
+  - `-8.txt`: Debug の PhysicsDynamicsTest・ApplicationFixedStepPipelineTest のビルド EXIT=0（同じく再コンパイル）。
+  - `-9.txt`: ApplicationFixedStepPipelineTest・PhysicsLifecycleEventTest・PhysicsFixedStepPipelineTest・PhysicsCharacterMoveTest・CharacterPlatformMotionTest の 5/5 が pass、EXIT=0。
+- Next: TASKS.md の次の todo（SCN-ECS-TICK-SCRIPT ほか）。
+- Notes:
+  - 判定を外して失敗を確かめる類の一時的な書き換えは、git checkout で戻して更新時刻を新しくし、戻した後に対象の verify を走らせ直してから保存する。
