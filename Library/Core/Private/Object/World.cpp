@@ -1945,7 +1945,8 @@ namespace NorvesLib::Core
         const Rendering::MeshResources* meshes = m_StageMeshes;
         if (m_EcsWorld)
         {
-            // 席の再利用の条件を取り込む（SceneView が無い間は消費者がいないものとして、解放した席を直ちに再利用する）
+            // 席の再利用の条件を取り込む（SceneView が無い間は消費者がいないものとして、解放した席を直ちに再利用する）。
+            // 前の同期の後に解放した席は、ここで解放を運ぶパケットの番号が決まるので、削除を SceneView へ反映するより先に呼ぶ
             AdvanceGpuSceneSlots(*m_EcsWorld, m_SceneView);
         }
         if (!HasFlag(OF_Initialized) ||

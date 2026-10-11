@@ -2013,24 +2013,21 @@ namespace NorvesLib::Core::Rendering
                 examined += 5;
             }
 
-            // 場面 B: 解放した席は、削除の適用の確認と提出の完了の両方がそろうまで再利用しない
+            // 場面 B: 解放した席は、削除の適用の確認と提出の完了の両方がそろうまで再利用しない。
+            // 実際の呼び出しの順（同期の先頭で Advance → パケットを送る → 次のフレームの Tick で Destroy → 次の同期で Advance）で確かめる。
+            // 表のゲートは前の同期の値で、その後に送ったパケットを知らないまま Destroy が来る
             {
                 Ecs::EcsWorld world;
                 Ecs::EcsGpuSceneSlotTable& table = world.GetGpuSceneSlots();
                 table.SetAuditEnabled(true);
-                table.Advance(makeGate(1, 10, 1, 10, 10));
                 const Ecs::EcsArchetypeId lightArchetype =
                     world.GetOrCreateArchetype(Container::Span<const Ecs::EcsColumnInfo>(lightColumns, 4));
                 Container::VariableArray<Ecs::EcsEntity> rows;
                 world.CreateEntities(lightArchetype, 4, &rows);
+                const uint32_t slot0 = slotOf(world, rows[0]).Value;
                 const uint32_t slot1 = slotOf(world, rows[1]).Value;
                 const uint32_t slot2 = slotOf(world, rows[2]).Value;
                 const uint32_t slot3 = slotOf(world, rows[3]).Value;
-                world.DestroyEntity(rows[1]); // 運ぶパケットは 11、最後に使いうる提出は 10
-                if (table.GetPendingCount() != 1 || table.GetReadyCount() != 0)
-                {
-                    return fail("解放した席が、条件を待つ一覧に入らない");
-                }
                 auto createdSlot = [&]()
                 {
                     Container::VariableArray<Ecs::EcsEntity> created;
@@ -2038,33 +2035,64 @@ namespace NorvesLib::Core::Rendering
                     rows.push_back(created[0]);
                     return slotOf(world, created[0]).Value;
                 };
-                if (createdSlot() == slot1)
+
+                // 最初のフレーム: 同期ではまだゲートが無効（パケットを送っていない）。席を含むパケット 1 を送った後、
+                // 表が進み具合を取り込む前に Destroy する。運ぶパケットは 2、最後に使いうる提出は 1
+                table.Advance(Ecs::EcsSlotGate{});
+                world.DestroyEntity(rows[0]);
+                if (table.GetPendingCount() != 1 || table.GetReadyCount() != 0 || createdSlot() == slot0)
                 {
-                    return fail("削除が適用される前に、解放した席を再利用した");
+                    return fail("描画側の進み具合を取り込む前の解放で、席を直ちに再利用した");
                 }
-                table.Advance(makeGate(1, 11, 1, 11, 9)); // 適用は済んだが、最後に使った提出（10）が完了していない
+                table.Advance(makeGate(1, 1, 0, 0, 0));
+                if (table.GetPendingCount() != 1 || createdSlot() == slot0)
+                {
+                    return fail("パケット 1 が適用・完了する前に、解放した席を再利用した");
+                }
+                table.Advance(makeGate(1, 2, 1, 2, 1));
+                if (table.GetPendingCount() != 0 || createdSlot() != slot0)
+                {
+                    return fail("両方の条件がそろったのに、最初のフレームに解放した席を再利用しない");
+                }
+                examined += 3;
+
+                // 表のゲートは送り終えた番号 2 のまま、席を含むパケット 3 を送ってから Destroy する。
+                // 運ぶパケットは 4、最後に使いうる提出は 3（前の同期の値 2 で記録すると、下の 1 つ目の Advance で再利用してしまう）
+                world.DestroyEntity(rows[1]);
+                if (table.GetPendingCount() != 1 || table.GetReadyCount() != 0 || createdSlot() == slot1)
+                {
+                    return fail("解放した席が、条件を待つ一覧に入らない");
+                }
+                table.Advance(makeGate(1, 3, 1, 2, 2)); // 解放を運ぶパケットの番号がここで決まる
+                table.Advance(makeGate(1, 4, 1, 3, 2)); // パケット 3 は適用されたが、解放を運ぶ 4 は未適用で、3 の提出も未完了
+                if (table.GetPendingCount() != 1 || createdSlot() == slot1)
+                {
+                    return fail("解放を運ぶパケットの適用と、席を含むパケットの完了を待たずに再利用した");
+                }
+                table.Advance(makeGate(1, 4, 1, 4, 2)); // 適用は済んだが、最後に使った提出（3）が完了していない
                 if (table.GetPendingCount() != 1 || createdSlot() == slot1)
                 {
                     return fail("提出が完了する前に、解放した席を再利用した");
                 }
-                table.Advance(makeGate(1, 12, 1, 10, 12)); // 完了は先に進んだが、解放を運ぶパケット（11）が適用されていない
+                table.Advance(makeGate(1, 4, 1, 3, 3)); // 完了は済んだが、解放を運ぶパケット（4）が適用されていない
                 if (table.GetPendingCount() != 1 || createdSlot() == slot1)
                 {
                     return fail("削除の適用の確認の前に、解放した席を再利用した");
                 }
-                table.Advance(makeGate(1, 12, 1, 11, 10));
+                table.Advance(makeGate(1, 4, 1, 4, 3));
                 if (table.GetPendingCount() != 0 || table.GetReadyCount() != 1 || createdSlot() != slot1)
                 {
                     return fail("両方の条件がそろったのに、解放した席を再利用しない");
                 }
                 // シーンの世代が進めば、古い世代の確認の番号に届かなくても写しごと入れ替わっている
-                world.DestroyEntity(rows[2]); // 運ぶパケットは 13、最後に使いうる提出は 12
-                table.Advance(makeGate(2, 13, 2, 12, 12));
+                world.DestroyEntity(rows[2]);
+                table.Advance(makeGate(1, 4, 1, 4, 4)); // 運ぶパケットは 5、最後に使いうる提出は 4
+                table.Advance(makeGate(2, 6, 2, 4, 4));
                 if (table.GetPendingCount() != 0 || createdSlot() != slot2)
                 {
                     return fail("世代が進んだのに、解放した席を再利用しない");
                 }
-                // 消費者がいない間は、解放した席を直ちに再利用する。待っていた分も開放する
+                // 消費者がいない間は、解放した席を次の Advance で直ちに再利用する
                 world.DestroyEntity(rows[3]);
                 table.Advance(Ecs::EcsSlotGate{});
                 if (table.GetPendingCount() != 0 || createdSlot() != slot3)
@@ -2111,6 +2139,7 @@ namespace NorvesLib::Core::Rendering
                 {
                     world.DestroyEntity(rows[index]);
                 }
+                table.Advance(makeGate(1, 10, 1, 10, 10)); // 運ぶパケットは 11、最後に使いうる提出は 10
                 table.Advance(makeGate(1, 11, 1, 11, 11));
                 if (table.GetRangeBounds(0, rangeMin, rangeMax))
                 {

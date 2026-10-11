@@ -1736,3 +1736,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-2.txt`: mega-stress・mega-bananas の混在周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、`MEGA_SLOTS pass=950`、ログに `SCENE_CYCLE_BASELINE cycle=2 scenes=2`、2 周目以降の textures 9・texture_bytes は揃う、周回中に `released=36000 reused=26000` まで再利用が起き、「席の規則が破れた」は 0 件、EXIT=0。
 - Next: SCN-ECS-PACKET-DELTA。
 - Notes: 前回の BLOCKED の記録（`blocked/SCN-MEGA-SCENE-SLOTS.md`）にあるとおり、実装は `paths:` に当時無かった World.cpp を最小限編集している（今の `paths:` には含まれる）。
+
+### SCN-MEGA-SCENE-SLOTS の差し戻しの修正（2026-10-11、反復 7・run 20261011-144300）
+
+- 差し戻し: Destroy の解放が、前の同期で取り込んだゲート（その後に送ったパケットを知らない）の番号で記録され、席を含むパケットの完了と、削除を運ぶパケットの確認を待たずに再利用できた。
+- 修正: `EcsGpuSceneSlotTable::Release` は解放を運ぶ番号を決めずに待ちへ積み、解放の後の最初の `Advance`（同期の先頭。ゲートは直前に送ったパケットの番号を持ち、削除はこの同期で SceneView へ反映される）で、運ぶ番号 = 送った番号 + 1、最後に使いうる提出 = 送った番号を記録する。ゲートが無効な間の解放も次の Advance までは使える一覧へ移さない（最初のパケットを送った直後の Destroy も同じ穴だった）。
+- 検査 `MEGA_SLOTS` の場面 B を実際の呼び出しの順（同期で Advance → 送る → Tick で Destroy → 次の同期で Advance）に書き直し、差し戻しの再現の順で再利用しないこと・最初のフレームの解放・世代の前進・消費者がいない場合を確かめる。場面 C も同じ順に合わせた。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-MEGA-SCENE-SLOTS-3.txt`: mega-stress（5000 本、動く 1%、セル 64）の overview を RelWithDebInfo で撮影し、`engine_check name=MEGA_SLOTS pass=5 fail=0`、`result=pass`、EXIT=0。Game.log の最後の突き合わせは `rows=4675 ranges=79 pending=0 ready=325 released=325`、「席の規則が破れた」は 0 件。
+  - `-4.txt`: mega-stress・mega-bananas の混在周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、`MEGA_SLOTS pass=941`、ログの `MEGA_SLOTS result=fail` と「席の規則が破れた」は 0 件、`released=36000 reused=26000`、EXIT=0。
+- Next: SCN-ECS-PACKET-DELTA。
+- Notes: World.cpp・RenderingCoordinator.cpp は編集で行末が崩れたので、HEAD の行末へ戻した（numstat の 2 通りが一致）。

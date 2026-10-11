@@ -9,8 +9,11 @@
  * - 空きリストは範囲単位。範囲は連続した席の組で、範囲の AABB は所属する全席の境界を包む。
  * - 解放した席は、次の 2 つがそろうまで再利用しない（待ちの一覧から使える一覧へ移さない）。
  *   (1) 削除の適用の確認: 解放を運ぶパケットの番号以上が RenderThread に適用された（世代が進んでいれば、写しごと入れ替わっている）
- *   (2) その席を最後に使った提出の完了: 解放の時点で送り終えていた最後のパケットまでが、GPU で完了した
- * - 描画側（消費者）がいない間（ゲートが無効）は、解放した席を直ちに再利用できる。
+ *   (2) その席を最後に使った提出の完了: 解放を運ぶパケットの直前に送ったパケットまでが、GPU で完了した
+ * - 解放を運ぶパケットの番号は、解放の時点では決めない。解放の後の最初の Advance（同期の先頭。SceneView へ削除を
+ *   反映する前で、ゲートは直前に送ったパケットの番号を持つ）で、そのゲートの番号から決める。前の同期で取り込んだ
+ *   ゲートは、その後に送ったパケットを知らない（古い番号で記録すると、席を含むパケットの完了を待たずに再利用してしまう）。
+ * - 描画側（消費者）がいない間（ゲートが無効）は、解放した席を次の Advance で直ちに使える一覧へ移す。
  *
  * EcsWorld が 1 つ持ち、GameThread だけが触る（スレッドセーフではない）。
  */
@@ -193,32 +196,40 @@ namespace NorvesLib::Core::Ecs
             --range.Live;
             --m_LiveCount;
             ++m_Released;
-            if (!m_Gate.bValid)
-            {
-                MakeReady(index, slot.Range);
-                return true;
-            }
+            // 解放を運ぶパケットの番号は次の Advance で決める（それまでは再利用の条件を判定しない）
             PendingEntry entry;
             entry.Slot = index;
             entry.Range = slot.Range;
-            entry.Release.Generation = m_Gate.SceneGeneration;
-            entry.Release.ReleaseSerial = m_Gate.LastSentSerial + 1;
-            entry.Release.LastUsedSerial = m_Gate.LastSentSerial;
             m_State[index] = SlotState::Pending;
             ++range.Pending;
             m_Pending.push_back(entry);
-            if (m_bAudit)
-            {
-                m_Audit[index].Release = entry.Release;
-            }
             return true;
         }
 
-        /// 描画側の進み具合を取り込み、再利用の条件がそろった席を使える一覧へ移す。ゲートが無効なら待ちを全部移す
+        /// 描画側の進み具合を取り込み、再利用の条件がそろった席を使える一覧へ移す。ゲートが無効なら待ちを全部移す。
+        /// 同期の先頭（SceneView へ削除を反映する前）で、最後に送ったパケットの番号を持つゲートを渡す
         void Advance(const EcsSlotGate &gate)
         {
             m_Gate = gate;
             ++m_AdvanceCount;
+            if (gate.bValid)
+            {
+                // 前の Advance の後に解放した席へ、解放を運ぶパケットの番号を記録する。
+                // 削除はこの同期で SceneView へ反映されるので、運ぶのは次に送るパケット（LastSentSerial + 1）で、
+                // 席を最後に使いうるのは送り終えた最後のパケット（LastSentSerial）
+                for (size_t index = m_StampedEnd; index < m_Pending.size(); ++index)
+                {
+                    PendingEntry &entry = m_Pending[index];
+                    entry.Release.Generation = gate.SceneGeneration;
+                    entry.Release.ReleaseSerial = gate.LastSentSerial + 1;
+                    entry.Release.LastUsedSerial = gate.LastSentSerial;
+                    if (m_bAudit)
+                    {
+                        m_Audit[entry.Slot].Release = entry.Release;
+                    }
+                }
+                m_StampedEnd = m_Pending.size();
+            }
             while (m_PendingHead < m_Pending.size())
             {
                 const PendingEntry &entry = m_Pending[m_PendingHead];
@@ -245,6 +256,8 @@ namespace NorvesLib::Core::Ecs
                 m_Pending.erase(m_Pending.begin(), m_Pending.begin() + static_cast<std::ptrdiff_t>(m_PendingHead));
                 m_PendingHead = 0;
             }
+            // ゲートが有効なら全部記録済み、無効なら全部移し終えている
+            m_StampedEnd = m_Pending.size();
         }
 
         /// 席の境界を覚え、所属する範囲の AABB をそれを包むところまで広げる
@@ -444,9 +457,9 @@ namespace NorvesLib::Core::Ecs
         {
             /// 解放したときのシーンの世代
             uint64_t Generation = 0;
-            /// 解放を運ぶパケットの番号（解放したときに送り終えていた番号 + 1）
+            /// 解放を運ぶパケットの番号（解放の後の最初の Advance で、送り終えていた番号 + 1）
             uint64_t ReleaseSerial = 0;
-            /// その席を最後に使いうる、送り終えていた最後のパケットの番号
+            /// その席を最後に使いうる、解放を運ぶパケットの直前に送ったパケットの番号
             uint64_t LastUsedSerial = 0;
         };
 
@@ -535,6 +548,8 @@ namespace NorvesLib::Core::Ecs
         /// 解放の順（番号は増える一方なので、条件も先頭から順にそろう）
         Container::VariableArray<PendingEntry> m_Pending;
         size_t m_PendingHead = 0;
+        /// m_Pending のうち、解放を運ぶパケットの番号を記録済みの末尾（ここから後ろは次の Advance で記録する）
+        size_t m_StampedEnd = 0;
         EcsSlotGate m_Gate;
         uint32_t m_ActiveRange = kInvalidRange;
         uint32_t m_SlotCount = 0;
