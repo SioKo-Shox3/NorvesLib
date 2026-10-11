@@ -306,6 +306,9 @@ namespace NorvesLib::Core::Scene
 
         UpdateStats m_LastStats;
         uint64_t m_UpdateCalls = 0;
+        /// 開発ログ SCENEQUERY を最後に出した Update の回と時刻（steady_clock のナノ秒）
+        uint64_t m_LastReportCall = 0;
+        int64_t m_LastReportNs = 0;
         uint64_t m_TotalUpdated = 0;
         uint64_t m_TotalRebuilt = 0;
         uint64_t m_CheckCalls = 0;

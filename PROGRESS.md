@@ -2350,3 +2350,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-MEGA-FIX-TRANSIENT-BOARDS-4.txt`: `--timing --min-frames 300 --max-scope-median-ms GameThread.TransientBoards=0.1` で `CHECK_CAPTURE_METRICS result=pass views=default`、EXIT=0。
 - Next: 残りの todo の最優先。
 - Notes: rt は描画スレッドの行から独立に集めるので、ゲームスレッドと描画スレッドの 1:1 の負荷では窓の行と同じ標本になり、値は変わらない。
+
+### SCN-ECS-RETIRE-LEGACY-FLAGS（2026-10-12、反復 1・run 20261012-030203）
+
+- Done: 旧の更新・同期の切替（`--ecs-legacy-transform`・`--ecs-legacy-sync`、`SetLegacyRenderSync`/`IsLegacyRenderSync`、`SetLegacyTransformPropagation`）、旧の再帰（`UpdateEntityTransformRecursive`・`SyncEntityRecursive`・`CollectTransientBoardProxiesRecursive` ほか）、全走査との照合（`EcsRenderSyncCompare`・`FinishRenderSyncFrame`・`NoteRenderScanChanged`・`CheckRenderRowUnchanged`）、SceneQuery の旧への切替を消した（実装は途中保存 eaad1e4f のまま。`--mega-scene-full-sync` は残す）。`WorldSyncDifferentialTest`・`EcsHierarchyTest`・`SceneQueryRaycastTest` は手で決めた期待値との照合（追加・値の変更・親の付け替え・非アクティブ・破棄・シーンの出入り）に替えた。
+- 周回の失敗の切り分け: 変更前の 7c7e56f7 を同じビルドで周回しても同じ形で落ちた（`check-cycle-baseline-7c7e56f7.txt`。サンプル 7 件・結果行なし・Game.log がちょうど 10MB）。原因はこの変更ではなく、周回中のゲームスレッドが毎秒数万フレーム回り、120 フレームごとの `ECS_TRANSFORM_COUNTS`・`SCENEQUERY` の行（各約 1 万行・2MB 強）で Game.log が上限 10MB を越えて回り、スクリプトが結果の行を読めないこと。両方の行を「120 フレーム（回）以上かつ前回から 1 秒以上」で出すようにした（World.cpp・SceneQuery.cpp）。
+- 開発ビルドの検査の扱い:
+
+| 検査 | 扱い | 照合の中身 |
+|---|---|---|
+| ECS_TRANSFORM | 残す（旧の再帰を使わない全量の照合） | 階層のシステムの `EcsWorldTransform` を、根から局所の変換をたどって求め直した値と全行 bit まで照合 |
+| ECS_RENDER_TRANSFORM | 残す（同上） | 描画の変換の列を全行求め直した値と照合（「旧の式」の言い回しを外しただけ） |
+| ECS_RENDER_SYNC | 全走査との照合（`EcsRenderSyncCompare`）を消し、全量の照合を残す | `VerifyRenderSyncDelta`: 全 Entity・Component から作り直した proxy と SceneView の proxy・内容の hash を照合 |
+| ECS_RENDER_INVALIDATION | 旧の全走査の中の作り直し照合（`CheckRenderRowUnchanged`）を消し、全量の照合を残す | `VerifyRenderSyncDelta` の内容の hash の照合（通知・変更ログに載らない変化の検出）と再試行の一覧の照合 |
+| ECS_SCENEQUERY | 変わらず | 全量の Rebuild との照合 |
+
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RETIRE-LEGACY-FLAGS-1.txt`: Debug の 4 ターゲットのビルド EXIT=0、error・warning 0。
+  - `-2.txt`: 15 件中 14 件 Passed（EcsHierarchyTest・WorldSyncDifferentialTest・SceneQueryRaycastTest ほか）。M9WorldAcceptanceTest だけ `reason=t0_capture_failed`（一時ディレクトリのテクスチャが `LooseReadFailed`）で EXIT=8。親の記録どおり変更の前後で同じ理由で落ちる既知の失敗で、この項目と無関係。
+  - `-3.txt`: 3 シーンの混在の周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。Game.log を開いて確認: `SCENE_CYCLE_SMOKE result=pass cycles=3 scenes=3 changed=none unsettled=0`、サンプル 9 件、ERROR 0、Game.log 8.2MB（`ECS_TRANSFORM_COUNTS`・`SCENEQUERY` は各 71 行）。
+- Next: 残りの todo の最優先（SCN-ECS-RETIRE-REGISTRY ほか）。
+- Notes: 周回の Game.log は 8.2MB でまだ上限 10MB に近い。残りの大半は RenderingCoordinator の 120 フレームごとの `MEGA_SCENE_DELTA`・`PACKET_DELTA`（paths の外）。周回の数・シーンを増やすと同じ形で落ちうるので、同じ間引きを入れるか、周回中のフレームの速さ（毎秒数万フレーム）を見直す項目が要る。

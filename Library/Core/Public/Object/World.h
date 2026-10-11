@@ -607,11 +607,13 @@ namespace NorvesLib::Core
         /// 検査 ECS_RENDER_TRANSFORM の照合の回数と、最後に pass を出した回
         uint64_t m_RenderCheckCalls = 0;
         uint64_t m_RenderCheckLastReport = 0;
-        /// 計測（統計が有効な構成だけ数える）: 変換の伝播・描画の変換・同期で扱った行の数の累計。kReportFrames ごとに
-        /// 1 フレームあたりの平均を ECS_TRANSFORM_COUNTS で出して戻す
+        /// 計測（統計が有効な構成だけ数える）: 変換の伝播・描画の変換・同期で扱った行の数の累計。kReportFrames 以上かつ
+        /// 前回から kReportIntervalNs 以上たつごとに、1 フレームあたりの平均を ECS_TRANSFORM_COUNTS で出して戻す
+        /// （フレームが速い構成でもログの量を時間で抑える）
         struct TransformCounts
         {
             static constexpr uint32_t kReportFrames = 120;
+            static constexpr int64_t kReportIntervalNs = 1000000000;
             /// 変わった行（伝播のきっかけ）
             uint64_t Seeds = 0;
             /// 伝播で処理した行（きっかけ + 影響する子孫）
@@ -625,6 +627,8 @@ namespace NorvesLib::Core
             uint32_t Frames = 0;
         };
         TransformCounts m_TransformCounts;
+        /// 最後に ECS_TRANSFORM_COUNTS を出した時刻（steady_clock のナノ秒。0 は未報告）
+        int64_t m_TransformCountsLastReportNs = 0;
         uint32_t m_StageTick = 0;
         uint32_t m_StageLateTick = 0;
         uint32_t m_StageFixedBegin = 0;

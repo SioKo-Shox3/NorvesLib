@@ -10,6 +10,7 @@
 #include "Math/GeometryIntersection.h"
 #include <algorithm>
 #include <cfloat>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -24,8 +25,9 @@ namespace NorvesLib::Core::Scene
         /// 累積した refit の回数がこれ以上（Entry 数に対する倍率、下限つき）になったら作り直す
         constexpr uint64_t kRefitRebuildFloor = 256;
         constexpr uint64_t kRefitRebuildFactor = 2;
-        /// 開発ログ SCENEQUERY を出す間隔（Update の回数）
+        /// 開発ログ SCENEQUERY を出す間隔（Update の回数と時間の両方を満たしたとき。フレームが速いとログが Game.log の上限を越えて回るため）
         constexpr uint64_t kReportInterval = 120;
+        constexpr int64_t kReportIntervalNs = 1000000000;
 
         /// 行を 1 つの値に詰める（World の逆引きと同じ形）
         constexpr uint64_t PackRow(Ecs::EcsEntity entity)
@@ -1330,10 +1332,20 @@ namespace NorvesLib::Core::Scene
 
     void SceneQuery::ReportUpdate()
     {
-        if (m_UpdateCalls % kReportInterval != 1)
+        // 最初の回は必ず出し、その後は回数と時間の両方の間隔を満たしたときだけ出す
+        if (m_LastReportCall != 0 && m_UpdateCalls - m_LastReportCall < kReportInterval)
         {
             return;
         }
+        const int64_t nowNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        if (m_LastReportCall != 0 && nowNs - m_LastReportNs < kReportIntervalNs)
+        {
+            return;
+        }
+        m_LastReportCall = m_UpdateCalls;
+        m_LastReportNs = nowNs;
         LOG_INFO("SCENEQUERY updated=%u added=%u removed=%u rebuilt=%u entries=%u calls=%llu total_updated=%llu total_rebuilt=%llu",
                  m_LastStats.Updated, m_LastStats.Added, m_LastStats.Removed, m_LastStats.Rebuilt, m_LastStats.Entries,
                  static_cast<unsigned long long>(m_UpdateCalls), static_cast<unsigned long long>(m_TotalUpdated),

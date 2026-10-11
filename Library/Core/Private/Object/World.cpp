@@ -35,6 +35,7 @@
 #include "Rendering/SceneView.h"
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -2292,16 +2293,25 @@ namespace NorvesLib::Core
         const Rendering::MeshResources* meshes = m_StageMeshes;
         m_RenderSyncVisitedRows = 0;
 #if NORVES_ENABLE_STATS
-        // 計測: 同期は 1 フレーム 1 回なので、ここでフレームを数え、変換の行の数の 1 フレームあたりの平均を一定のフレームごとに出す
+        // 計測: 同期は 1 フレーム 1 回なので、ここでフレームを数え、変換の行の数の 1 フレームあたりの平均を一定のフレームごとに出す。
+        // 前回の報告から一定の時間がたつまでは出さずに数え続ける（フレームが速いとログが Game.log の上限を越えて回るため）
         m_TransformCounts.SyncRows += m_RenderSyncTransformLog.size();
         if (++m_TransformCounts.Frames >= TransformCounts::kReportFrames)
         {
-            const double frames = static_cast<double>(m_TransformCounts.Frames);
-            LOG_INFO("ECS_TRANSFORM_COUNTS frames=%u seeds=%.1f processed=%.1f changed=%.1f render_rows=%.1f sync_rows=%.1f",
-                     m_TransformCounts.Frames, m_TransformCounts.Seeds / frames, m_TransformCounts.Processed / frames,
-                     m_TransformCounts.Changed / frames, m_TransformCounts.RenderRows / frames,
-                     m_TransformCounts.SyncRows / frames);
-            m_TransformCounts = TransformCounts{};
+            const int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count();
+            if (m_TransformCountsLastReportNs == 0 ||
+                nowNs - m_TransformCountsLastReportNs >= TransformCounts::kReportIntervalNs)
+            {
+                m_TransformCountsLastReportNs = nowNs;
+                const double frames = static_cast<double>(m_TransformCounts.Frames);
+                LOG_INFO("ECS_TRANSFORM_COUNTS frames=%u seeds=%.1f processed=%.1f changed=%.1f render_rows=%.1f sync_rows=%.1f",
+                         m_TransformCounts.Frames, m_TransformCounts.Seeds / frames, m_TransformCounts.Processed / frames,
+                         m_TransformCounts.Changed / frames, m_TransformCounts.RenderRows / frames,
+                         m_TransformCounts.SyncRows / frames);
+                m_TransformCounts = TransformCounts{};
+            }
         }
 #endif
         if (m_EcsWorld)
