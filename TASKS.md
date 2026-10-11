@@ -644,13 +644,13 @@
 
 
 ## SCN-ECS-RETIRE-LEGACY-FLAGS: 旧の更新・同期の切替と再帰を消し、旧を正解にしていた照合を期待値に替える
-- status: doing
+- status: todo
 - done-when: `--ecs-legacy-transform`・`--ecs-legacy-sync`、`SetLegacyRenderSync`/`IsLegacyRenderSync`、旧の再帰（UpdateEntityTransformRecursive・SyncEntityRecursive・UpdateRenderTransformRecursive ほか）と、SceneQuery の旧への切替（`SceneQuery.cpp` 944 行付近）を消す。`--mega-scene-full-sync` は残す。旧の全走査を正解にしていた照合は次のように替える: `WorldSyncDifferentialTest`・`EcsHierarchyTest`・`SceneQueryRaycastTest` は、手で決めた期待値（追加・値の変更・親の付け替え・非アクティブ・破棄・シーンの出入りの後の proxy・板・変換・照会の結果）との照合にする。開発ビルドの検査（ECS_RENDER_SYNC・ECS_RENDER_INVALIDATION・ECS_TRANSFORM など）は、旧の再帰を使わない全量の照合（ECS の行から全量を作り直して比べる）に替えるか、照合が成り立たないものは消してその役目をテストの期待値で持つ（どちらにしたかを PROGRESS に表で書く）。3 シーンの混在の周回が pass。
 - verify: `cmake --build build --config Debug --target EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest SceneQueryRaycastTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB|TransformHierarchy|EcsHierarchy|SceneQuery" --no-tests=error --output-on-failure --timeout 180`
+- verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB|TransformHierarchy|EcsHierarchy|SceneQuery" -LE Reference --no-tests=error --output-on-failure --timeout 180`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Private/Object/World.cpp, Library/Core/Public/Object/World.h, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Core/Public/Engine, Library/Core/Private/Engine, Library/Core/Public/Debug, Library/Core/Private/Debug, Game/GameApplicationHandler.cpp, Test/Core/Object, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY の推奨 A の 1）。後の項目の verify は ECS_* の検査も旧の切替も使っていない（親が確かめた）。危険地帯（描画の同期・Object の寿命）。 2026-10-12 親: 反復 23 は 40 分の上限で止まった。そのとき作業を git stash に退避して HEAD の周回と比べる途中だったので、親が退避を戻して 作業途中の保存 eaad1e4f に入れた（World.cpp の旧の再帰の削除・照合のテストの書き換え、計 12 ファイル）。続きから進める。分かっていたこと: M9 の受入れは変更の前後で同じ理由（t0_capture_failed）で落ちる（この項目と無関係）。3 シーンの周回（verify 3）がこの変更で落ちた（`.harness/runs/20261011-211043/verify-SCN-ECS-RETIRE-LEGACY-FLAGS-3.txt`）ので、まず HEAD~1 と比べて原因を切り分ける。作業を git stash に退避しない（上限で止まると失われる）。比べるときは別のディレクトリにビルドせず、コミットしてから戻す。
+- notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY の推奨 A の 1）。後の項目の verify は ECS_* の検査も旧の切替も使っていない（親が確かめた）。危険地帯（描画の同期・Object の寿命）。 2026-10-12 親: 反復 23 は 40 分の上限で止まった。そのとき作業を git stash に退避して HEAD の周回と比べる途中だったので、親が退避を戻して 作業途中の保存 eaad1e4f に入れた（World.cpp の旧の再帰の削除・照合のテストの書き換え、計 12 ファイル）。続きから進める。分かっていたこと: M9 の受入れは変更の前後で同じ理由（t0_capture_failed）で落ちる（この項目と無関係）。3 シーンの周回（verify 3）がこの変更で落ちた（`.harness/runs/20261011-211043/verify-SCN-ECS-RETIRE-LEGACY-FLAGS-3.txt`）ので、まず HEAD~1 と比べて原因を切り分ける。作業を git stash に退避しない（上限で止まると失われる）。比べるときは別のディレクトリにビルドせず、コミットしてから戻す。 2026-10-12 親: verify 2 の正規表現が Reference の受入れ M9WorldAcceptanceTest にも当たり、それが変更の前から t0_capture_failed で落ちる。blocked の推奨 A を採り、verify 2 に `-LE Reference` を足して todo に戻した。M9 は SCN-FIX-M9-T0-CAPTURE で直す。
 
 
 ## SCN-ECS-RETIRE-REGISTRY: EntityHandle の発行と解決を World へ移し、ComponentDataRegistry を消す
@@ -662,6 +662,15 @@
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M8MinimalPhysics.ps1 -Configuration RelWithDebInfo`
 - paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Engine, Library/Core/Private/Engine, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/CMakeLists.txt, Game/Input, Game/GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Scripts/Test-M8MinimalPhysics.ps1, Test/Core/Engine, Test/Core/Object, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY の推奨 A の 2）。危険地帯（Object の寿命・公開 API）。ComponentDataRegistry の場所は `GEngine` のメンバ（`NorvesEngine.*`）と `Test/Core/Rendering` のテスト・ベンチマーク。
+## SCN-FIX-M9-T0-CAPTURE: M9 の世界の受入れが撮影の失敗（t0_capture_failed）で落ちるのを直す
+- status: todo
+- done-when: `ctest -R M9WorldAcceptanceTest`（Reference の GPU の受入れ）が `M9_WORLD_SMOKE stage=failure reason=t0_capture_failed` で落ちる原因を突き止めて直す。まず撮影の結果が成功でないときの状態（MapFailed など）を `FrameCaptureReadbackHelper.cpp`・`Rendering3DTestRoutine.cpp` でログに出し、原因を PROGRESS に書く。このブランチの変更（ランチャー・`--window-background`・ECS の同期など）が原因なら、どの変更かを書いて直す。M9 の受入れが pass する。Game の起動に `--window-background` を付けていなければ足す。
+- verify: `cmake --build build --config Debug --target Game -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^M9WorldAcceptanceTest$" --no-tests=error --output-on-failure --timeout 600`
+- paths: Game/GameModes/Rendering3DTest, Library/Core/Private/Rendering/FrameCaptureReadbackHelper.cpp, Library/Core/Public/Rendering, Scripts/Test-M9World.ps1, Test/M9, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY-FLAGS の blocked の推奨 A）。7c7e56f7 の時点でも同じ理由で落ちる。危険地帯（描画の撮影）。
+
+
 ## SCN-ECS-SCOPE-METRICS-THREADS: 撮影の区間の集計を、その区間が出たフレームだけで数え、スレッドの名前を添える
 - status: todo
 - done-when: `Scripts/CaptureScene.ps1` の `cpu_scope_ms`・`cpu_scope_group_ms` の median・p95・max を、その区間が出たフレーム（`frames_present`）だけで求める（今はゲームスレッドの窓の全フレームで数えるので、ゲームスレッドが描画 1 フレームの間に何回も回ると描画スレッドの区間の median が 0 になる。5万個の静止の撮影で `RenderGraph.Execute` が median 0・p95 49.3 ms・frames_present 302 / 窓 3832）。区間ごとに、出たスレッドの名前（GameThread・RenderThread・Worker）を `thread` に書く。mega-stress 2000 個の短い撮影で、`RenderGraph.Execute` の median が 0 より大きく、`thread` が入っている。
