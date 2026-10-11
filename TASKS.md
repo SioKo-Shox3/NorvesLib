@@ -414,7 +414,7 @@
 - paths: Library/Core/Private/Object/World.cpp, Library/Core/Public/Object/World.h, Library/Core/Public/Rendering/SceneView.h, Library/Core/Private/Rendering/SceneView.cpp, Library/Core/Public/Ecs, Library/Core/Private/Ecs, TASKS.md, PROGRESS.md
 
 ## SCN-ECS-SCENEQUERY: SceneQuery を、境界の変化からの refit と追加・削除にする
-- status: done
+- status: blocked
 - done-when: 毎フレームの Rebuild（ApplicationProcessor.cpp:2123）をやめ、境界の変更ログからの refit と追加・削除にする。作り直すときの分割は O(N log N) にする（SceneQuery.cpp:465-475 の挿入ソートをやめる）。静止では更新 0 件、1% 移動では移動数に比例する（開発ログ `SCENEQUERY updated=`）。検査 `ECS_SCENEQUERY`（全量で作った結果と照会の結果が一致）が pass する。
 - verify: `cmake --build build --config Debug --target SceneQueryRaycastTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(SceneQueryRaycastTest|SceneQueryOverlapTest|SceneQueryPhysicsFacadeTest|SceneCameraProbeTest)$" --no-tests=error --output-on-failure --timeout 180`
