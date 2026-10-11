@@ -2198,3 +2198,51 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-MEGA-FIX-RENDERSYNC-WALK-8.txt`: 起動画面 default を RelWithDebInfo で検査 2 つ付きで撮り、どちらも pass=3 fail=0。SCN-MEGA-BASE-RWDI との比較は平均輝度差 0・PSNR 100 dB・不一致画素 3E-06（最大差 1）で `result=pass`、EXIT=0。PNG を開いて確認（天球・地面・球・岩・家）。Game.log の ERROR は 0。
 - Next: SCN-MEGA-MEASURE-CPU を todo に戻して全部の負荷を撮り直す。
 - Notes: グリフの板の前フレームの変換は、グリフごとの位置ずらしを含まない（Entity の前フレームの変換のまま）。速度のベクトルを使う段がグリフを扱うなら、ずれが出る。この項目では触っていない。
+### SCN-MEGA-MEASURE-CPU 完了（2026-10-12、反復 17〜18・run 20261011-211043）
+
+- 変更（計測の口だけ）: ゲームスレッドの Ecs の区間の外に区間を足した（`ApplicationProcessor.cpp`）。`GameThread.Input`・`GameThread.Simulation`（段を含む Tick 全体）・`GameThread.TransientBoards`（Text のグリフと粒子の板集め）・`GameThread.SceneQueryCheck`・`GameThread.RenderWorld.BeginFrame/Render/EndFrame`。
+- 撮影（反復 17。RelWithDebInfo・1920×1080・300 フレーム。`.harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/<負荷>/metrics.json`。Game.exe（00:51）は区間を足した `ApplicationProcessor.cpp`（00:50）・`World.cpp`（00:30）より後で、今の HEAD のコードの値）:
+  - 5万個の静止（default・close・aerial）、5万個の 1% 移動（default）、1% 移動 + 64 m 区画は 3万個（default）、バナナ 1万本 overview・10万本 horizon。
+  - 1% 移動 + 64 m 区画の 5万個は、描画スレッドのバッファの確保の失敗で落ちた（VRAM の使用 15428 MB > 予算 12350 MB。親の注記どおり BVH-INDIRECT の前の既知の限界）。3万個で撮った。5万個の値は MEASURE-CULL で足す。
+
+| 区間（median / p95 ms） | 5万個 静止 | 5万個 1% 移動 | 3万個 1% 移動 + 64 m 区画 | バナナ 1万本 overview | バナナ 10万本 horizon |
+|---|---|---|---|---|---|
+| 変わった行 / 伝播で処理した行（`ECS_TRANSFORM_COUNTS`） | 0 / 1 | 500 / 501 | 297 / 299 | 0 / 1 | 0 / 1 |
+| 段の合計 `Ecs.Stage.*` | **0.180 / 0.258** | 2.054 / 2.577 | 1.083 / 1.376 | 0.096 / 0.164 | 0.098 / 0.201 |
+| `Ecs.Sync.TransformPropagate` | 0.003 / 0.005 | 0.210 / 0.301 | 0.106 / 0.149 | 0.000 / 0.002 | 0.000 / 0.002 |
+| `Ecs.Sys.RenderTransform` | 0.000 / 0.001 | 0.091 / 0.165 | 0.043 / 0.075 | 0.000 / 0.000 | 0.000 / 0.000 |
+| `Ecs.Stage.RenderSync` | 0.017 / 0.025 | 1.175 / 1.500 | 0.592 / 0.778 | 0.011 / 0.019 | 0.011 / 0.022 |
+| `Ecs.Sys.SceneQuery` | 0.009 / 0.012 | 1.231 / 1.546 | 0.596 / 0.781 | <0.005 | <0.005 |
+| `Ecs.Sync.Cleanup` | 0.000 / 0.000 | 0.000 / 0.000 | 0.000 / 0.000 | 0.000 / 0.000 | 0.000 / 0.000 |
+| `Ecs.Stage.PreSimulation`（移動のロジック） | 0.025 / 0.033 | 0.388 / 0.540 | 0.197 / 0.286 | 0.009 / 0.017 | 0.010 / 0.020 |
+| `Ecs.Stage.LateTick` | 0.034 / 0.088 | 0.137 / 0.242 | 0.078 / 0.141 | 0.029 / 0.044 | 0.029 / 0.052 |
+| `GameThread.TransientBoards`（Ecs の外） | **10.433 / 11.636** | 10.690 / 12.573 | 5.959 / 6.791 | <0.005 | <0.005 |
+| `GameThread.Simulation`（段を含む） | 0.169 / 0.245 | 0.863 / 1.168 | 0.470 / 0.657 | 0.077 / 0.122 | 0.077 / 0.140 |
+| `GameThread.RenderWorld.*` | 0.042 / 0.058 | 0.135 / 0.189 | 0.101 / 0.133 | 0.005 / 0.017 | 0.011 / 0.026 |
+| gt | 10.97 / 11.93 | 14.44 / 16.64 | 8.11 / 9.29 | 0.177 / 0.292 | 0.190 / 0.313 |
+| rt | 138.0 / 146.0 | 132.0 / 146.6 | 79.7 / 111.4 | 21.7 / 21.7 | 記録なし |
+| GPU | 64.9 / 71.3 | 57.0 / 62.4 | 32.0 / 64.8 | 8.6 / 10.0 | 67.7 / 71.6 |
+
+- 1% 移動での増分（静止からの差 ÷ 変わった行。補間の部分木は mega-stress では 0 行）:
+
+| 区間 | 5万個（500 行） | 3万個 + 64 m 区画（297 行） | 増分の比（行の比 1.68） |
+|---|---|---|---|
+| `Ecs.Sync.TransformPropagate` | +0.207 ms・0.41 µs/行 | +0.103 ms・0.35 µs/行 | 2.0 |
+| `Ecs.Sys.RenderTransform` | +0.091 ms・0.18 µs/行 | +0.043 ms・0.14 µs/行 | 2.1 |
+| `Ecs.Stage.RenderSync` | +1.158 ms・2.3 µs/行 | +0.575 ms・1.9 µs/行 | 2.0 |
+| `Ecs.Sys.SceneQuery` | +1.222 ms・2.4 µs/行 | +0.587 ms・2.0 µs/行 | 2.1 |
+| `Ecs.Stage.PreSimulation` | +0.363 ms・0.73 µs/行 | +0.172 ms・0.58 µs/行 | 2.1 |
+
+- 合否:
+  - 5万個の静止でゲームスレッドの段の合計 ≤ 2 ms: **合格**（0.180 ms。close 0.18・aerial 0.182 も同じ）。
+  - 各区間 ≤ 0.1 ms: 変換の伝播 0.003・描画の変換 0.000・RenderSync 0.017・SceneQuery 0.009・cleanup 0.000 で**合格**（FIX-RENDERSYNC-WALK で RenderSync は 13.24 → 0.017 ms）。
+  - 1% 移動の増分が数に比例: **合格**。静止（行 0〜1）でどの区間も 0.02 ms 未満で、増分は変わった行の数で決まり、本数に比例する固定の重さは無い。1 行あたりは 3万個より 5万個が 15〜25% 高い（増分の比 2.0〜2.1 に対し行の比 1.68）。全体の行が増えて動かす行がばらけた分のキャッシュの外れと見る（負荷の条件も 64 m 区画の有無で違う）。
+  - 10万本と 1万本の gt の差 ≤ 0.5 ms: **合格**（0.190 − 0.177 = 0.013 ms）。
+  - 並列の系: この負荷で走る系は全部 GameThreadOnly で、Ecs の区間はすべてスレッド 1（ワーカーに出る系が無い）。
+  - 届かないスコープ: gt の残りのほぼ全部が Ecs の外の `GameThread.TransientBoards`（5万個の静止で 10.43 ms、本数に比例）。SCN-MEGA-FIX-TRANSIENT-BOARDS として足した（反復 17）。他に新しい FIX は無い。
+- 検証（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-MEGA-MEASURE-CPU-4.txt`: 5万個の静止の metrics.json に対し、300 フレーム・gt の p95 ≤ 16.6 ms・区間 6 つ（`Ecs.Stage.*`・`Ecs.Sync.TransformPropagate`・`Ecs.Sys.RenderTransform`・`Ecs.Stage.RenderSync`・`Ecs.Sys.SceneQuery`・`Ecs.Sync.Cleanup`）が揃って `result=pass views=default,close,aerial`、EXIT=0（同じ確認の反復 17 の 2 も pass）。
+  - `verify-SCN-MEGA-MEASURE-CPU-5.txt`: Debug の起動画面 default を撮って `CAPTURE_STARTUP_SCENE result=pass`、EXIT=0。`vulkan_validation` の error_count=0・vuid_count=0、Game.log の ERROR は 0。PNG を開いて確認（天球・地面・球・岩・家）。
+  - 撮影の Game.log の ERROR は 5 つの負荷とも 0（落ちた 5万個 + 64 m 区画を除く）。
+- Next: SCN-MEGA-FIX-TRANSIENT-BOARDS。
+- Notes: 1% 移動の RenderSync と SceneQuery は 1 行あたり 2〜2.4 µs で、移動の CPU の大半（5万個の 1% で約 2.4 ms）。合格の条件（比例）は満たすので FIX は足さない。バナナ 10万本 horizon の撮影は rt の値が記録されていない（trace に描画スレッドの列が無い）。

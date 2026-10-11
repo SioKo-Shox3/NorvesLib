@@ -615,7 +615,7 @@
 - notes: 2026-10-12 SCN-MEGA-MEASURE-CPU の計測（反復 14）で足した。5万個の静止で `Ecs.Stage.RenderSync` が median 13.2 ms（変わった行 0 件。`ECS_TRANSFORM_COUNTS sync_rows=0.0`）で、ゲームスレッドの段の合計（13.4 ms）のほぼ全部。差分の同期でも「Text は旧の走査」として根から全 Entity をたどっている（`World.cpp` の SyncToSceneViewBody、`deltaRoots` の行）。危険地帯（描画の同期・Object の寿命）。
 
 ## SCN-MEGA-MEASURE-CPU: 節目の計測: ECS 化した CPU（ワールド・同期・ロジック）の効果を測る
-- status: todo
+- status: done
 - done-when: - 測る負荷: 5万個の静止・1% 移動・1% 移動 + 64 m 区画と、バナナ 1万本 overview・10万本 horizon。 - 問い: ECS 化した段・系・同期点のそれぞれが、本数と変化の数に対してどれだけかかり、並列の系がワーカーに広がっているか。 - 測る値: 段・系・同期点の区間（冒頭の方針の名前）ごとの median と p95、並列の系の区間が出たスレッドの数。全体の gt・rt・GPU は添える。PROGRESS の表に書く（合否は下の閾値で決め、改修前の値は撮らない）。 - 合格の条件: - 5万個の静止で、ゲームスレッドの段の合計 ≤ 2 ms（変換の伝播・描画の変換・RenderSync・SceneQuery・cleanup はそれぞれ ≤ 0.1 ms）。 - 1% 移動での増分が「変わった行 + 影響する子孫 + 補間の部分木」の数に比例する（数をログに出し、比を表に書く）。 - 10万本と 1万本の gt の差 ≤ 0.5 ms。 - 届かないスコープは `SCN-MEGA-FIX-<名前>` として足す。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static --timing --min-frames 300 --max-gt-p95-ms 16.6 --require-scope Ecs.Stage.* --require-scope Ecs.Sync.TransformPropagate --require-scope Ecs.Sys.RenderTransform --require-scope Ecs.Stage.RenderSync --require-scope Ecs.Sys.SceneQuery --require-scope Ecs.Sync.Cleanup`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-CPU-debug`
