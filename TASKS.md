@@ -502,12 +502,12 @@
 - notes: 2026-10-11 親: 評価の指摘 1（散布の proxy を ECS_RENDER_SYNC・RENDER_INVALIDATION の照合が残留と数える）の直し先の World.cpp（VerifyRenderSyncDelta の viewMega と全走査の scanStale の 2 か所）を paths に足して todo に戻した（blocked の推奨 1）。
 
 ## SCN-ECS-MASS-STREAM: 散布の作成・反映・解放を予算で分け、mega-stress の区画を散布で出し入れする
-- status: doing
-- done-when: 作成、所有者の変換とメッシュの反映、解放を、1 フレームの行数と ms の予算で分け、範囲ごとに公開・解放する（設計 1.11）。mega-stress の区画が `--stress-batch-cells` で散布として出し入れされる。検査 `MASS_RANGES`（公開中の範囲は全行が揃っている、解放した範囲は描かない）が pass する。5万個 + 64 m 区画で gt の p95 を PROGRESS に書き、予算の既定値を決める。
+- status: todo
+- done-when: 作成、所有者の変換とメッシュの反映、解放を、1 フレームの行数と ms の予算で分け、範囲ごとに公開・解放する（設計 1.11）。mega-stress の区画が `--stress-batch-cells` で散布として出し入れされる。検査 `MASS_RANGES`（公開中の範囲は全行が揃っている、解放した範囲は描かない）が pass する。3万個 + 64 m 区画で gt の p95 を PROGRESS に書き、予算の既定値を決める（5万個は描画側の BVH の列が VRAM に載らず落ちるので、BVH の改修の後の節目の計測で測る）。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Views overview -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=5000,stress-moving-percent=1,stress-stream-cell=64,stress-batch-cells -RequireChecks MASS_RANGES -OutDir .harness/runs/scene-capture/SCN-ECS-MASS-STREAM/check`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes mega-stress,mega-bananas -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Public/Component, Library/Core/Private/Component, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Game, Test/Game/Bridge/CMakeLists.txt, Test/Core/Rendering/CMakeLists.txt, TASKS.md, PROGRESS.md
-- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-11 親: 5万個は MegaGeometryPass の BVH の列（leaf_capacity 7,514 万・queue 1 億 6,517 万）が VRAM を超えて RenderThread が落ちる（`.harness/runs/scene-capture/SCN-ECS-MASS-STREAM/measure-default`）。このタスクの範囲の外なので、計測を 3万個に直して todo に戻した（blocked の推奨 1。3万個の値は反復 12 で測り済み: gt median 2.424 ms・p95 3.935 ms）。反復 12 の直しを verify に通して評価を受ける。
 
 ## SCN-MEGA-MIXED-LOAD: バナナ 100万本と mega-stress の個別 Entity を 1 回の起動で同時に置く
 - status: todo
@@ -592,7 +592,7 @@
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static --timing --min-frames 300 --max-gt-p95-ms 16.6 --require-scope Ecs.Stage.* --require-scope Ecs.Sync.TransformPropagate --require-scope Ecs.Sys.RenderTransform --require-scope Ecs.Stage.RenderSync --require-scope Ecs.Sys.SceneQuery --require-scope Ecs.Sync.Cleanup`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-MEGA-MEASURE-CPU-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。反復の中で 1 回撮る: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static`（他の負荷も同じ形で、出力先だけ変える） 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
+- notes: 計測だけ。反復の中で 1 回撮る: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-CPU/static`（他の負荷も同じ形で、出力先だけ変える） 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-11 親: 5万個の mega-stress は、SCN-MEGA-BVH-INDIRECT の前は BVH の列が VRAM を超えて落ちる（SCN-ECS-MASS-STREAM の記録）。落ちるときは CPU の段の値を 3万個で測って表に書き、5万個の値は BVH-INDIRECT の後の節目の計測（MEASURE-CULL）で足す。
 
 ## SCN-ECS-RETIRE-LEGACY: 旧経路と ComponentDataRegistry を消す
 - status: todo
@@ -753,7 +753,7 @@
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 今は最悪値で dispatch（1983〜2009 行付近）、列は全節の総和（1351〜1373 行付近）。
+- notes: 今は最悪値で dispatch（1983〜2009 行付近）、列は全節の総和（1351〜1373 行付近）。 2026-10-11 親: 今の BVH の列はインスタンスの数とメッシュから最大の容量を取るので、mega-stress 5万個で leaf_capacity 7,514 万・queue 1 億 6,517 万になり、VRAM（使用 14,975 MB / 予算 11,847 MB）を超えて RenderThread がバッファの割り当てに失敗して落ちる。この項目の固定容量の列で、5万個の mega-stress が落ちずに描けることを確かめる。
 
 ## SCN-MEGA-INSTANCE-CULL: 範囲とインスタンスの専用のカリングを、BVH の段 0 の前に置く
 - status: todo
