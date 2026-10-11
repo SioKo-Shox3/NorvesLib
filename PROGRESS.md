@@ -1465,3 +1465,23 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 画面空間の板 sink は proxy の一覧を持てないので、走査で外される proxy の照合は World の板までで、画面空間は「Remove なのに生存」の側だけ見ている。
   - World.h は `paths:` に書かれていないが、World.cpp の宣言として前の項目と同じく編集した。
   - 行末: 編集したファイルは numstat の 2 通りが一致。新規 `EcsRenderSync.h` は UTF-8 BOM + CRLF。
+
+### SCN-ECS-RENDER-SYNC-SWITCH（2026-10-11、反復 41〜42・run 20261010-223034）
+
+- 変更（反復 41 の実装を反復 42 で検証。コードは保存コミット 2d5be294 に入っている）:
+  - 既定の同期を「変わった行だけ」にした。`SyncRenderRowsDelta`: 一覧（`BuildRenderSyncList`）を作り、Remove を SceneView・画面空間の sink から外し（`ApplyRenderSyncRemovals`）、変わった行だけ proxy を作り直して公開する（`PublishRenderRow`。Mesh・Skinned・Light・Board）。生存集合と `RemoveStale*`、dirty でない行の作り直しは、この経路では使わない。
+  - Remove は一覧だけで決める: 行の削除のフック、破棄予約の部分木（`NoteSubtreeRenderRemoval`）、走査に入らない行の dirty（`AddRenderSyncRemoval`）。走査に入らない行の公開の状態は Remove を外すときに「公開していない」へ戻す。
+  - Mesh の履歴が落ち着くまでの公開し直しは `m_RenderSettleRows`（公開した proxy の前フレームの変換が現在と違う行を次の同期でもう一度公開する）。非表示の SkinnedMesh も見た時点のポーズの版を覚えるので、毎フレーム「変わった行」にならない。
+  - ComponentDataRegistry への公開は、レジストリが有効なときだけ（既定は無効なので毎フレームの公開は無い）。MegaGeometry と Text は SCENE-DELTA まで旧の走査（`SyncEntityRecursive`）が行い、`RemoveStaleMegaGeometryProxies` だけ残る。
+  - `--ecs-legacy-sync`（`World::SetLegacyRenderSync`）で旧の全走査に戻せる。検査 `ECS_RENDER_SYNC` は、既定の同期では公開の結果を全行から求め直した proxy と照合する（`VerifyRenderSyncDelta`）。
+- テスト（paths の外）: `WorldSyncDifferentialTest` に既定の同期と旧の全走査の差分・切り戻しのケースを追加。`BoardComponentRoutingTest` は画面空間 sink の `StaleCount` の期待を既定の同期（0）に合わせ、旧の全走査を `--ecs-legacy-sync` 相当で確かめるケースを足した。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-ECS-RENDER-SYNC-SWITCH-7-build.txt`（SceneViewProxyLookupTest・WorldSyncDifferentialTest の Debug ビルド EXIT=0）、`-8-ctest.txt`（3 件 Passed）。
+  - `-11-startup.txt`: 起動画面の決定論の比較 `result=pass`（default 平均輝度差 0・near 0.0001・low 0.0001、すべて limit 内）。
+  - `-13-rendering3dtest.txt`・`-13-mega-bananas.txt`・`-13-mega-stress.txt`: `ECS_RENDER_SYNC` を有効にしたシーンごとの周回 3 周が各 `result=pass`、pass=1323/633/2078、fail 無し。
+  - `-12-mixed.txt`: 指定の混在周回は `result=fail`（EXIT=1）。`SCENE_CYCLE_DIFF field=textures,texture_bytes` だけで、他の項目の増減は無い。INVALIDATION・PREP と同じ既知の差。
+  - 隣接 69 件（反復 41 の `-3-neighbors.txt`）は `BoardComponentRoutingTest` だけタイムアウトだったが、単体の ctest（`-10-board-ctest.txt`）と単独実行 10 回（各 20〜40ms）で通り、再現しない。環境起因の単発。
+- BLOCKED: 混在周回の verify だけが ECS 側と無関係な既知のテクスチャ差で通らない。`blocked/SCN-ECS-RENDER-SYNC-SWITCH.md` に、INVALIDATION・PREP と同じ判断を書いた。実装は完了・コミット済み。判断後に `status:` を戻す。
+- Notes:
+  - 同期の走査（`SyncEntityRecursive`）自体は MegaGeometry・Text のために全 Entity を巡回する。O(変化) になるのは SCENE-DELTA で MegaGeometry を移したあと。
+  - 行末: 編集したファイルは numstat の 2 通りが一致。
