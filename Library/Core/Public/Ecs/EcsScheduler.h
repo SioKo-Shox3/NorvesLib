@@ -20,6 +20,8 @@
  * - 順序付きの GameThread 系（RegisterOrderedSystem）は、Tick を持っていた型の呼び先を
  *   （群, 優先度, 順番）の順 = TickDispatchLess と同じ比較で呼ぶ。順の一覧を作り直すのは、
  *   追加・削除・付け替えがあったときの次の収集の先頭だけ。
+ *   bCallerDriven の系は段の中では呼ばず、同じ段の GameThread のシステム（呼び手）が GetOrderedRun で
+ *   順の一覧を読み、外部の一覧（まだ移していない仮想の経路）と同じ比較で合流させて呼ぶ。
  * - 収集（BeginCollection / EndCollection）は通常の Tick や単独の固定ステップの単位。入れ子では番号を共有する。
  *   参加の番号 = 「次の収集」の番号（GetNextCollectionSerial）。収集の中で足した呼び先は、次の収集まで呼ばれない。
  * - 統計が有効な構成では、段・系・同期点を Ecs.Stage.<段>・Ecs.Sys.<系>・Ecs.Sync.<段> の区間としてトレースへ記録する。
@@ -125,6 +127,8 @@ namespace NorvesLib::Core::Ecs
         Container::VariableArray<EcsSystemId> After;
         /// この系が呼ぶ群。群が含まれない項目は呼ばない
         Component::TickGroupMask Groups = Component::AllTickGroups;
+        /// true: 段の中では呼ばない。呼び手が GetOrderedRunCount / GetOrderedRun で順に読んで呼ぶ
+        bool bCallerDriven = false;
     };
 
     /// 順序付きの系の呼び先 1 つ
@@ -133,6 +137,17 @@ namespace NorvesLib::Core::Ecs
         Component::ETickGroup Group = Component::ETickGroup::Default;
         int16_t Priority = 0;
         /// 同じ群・優先度の中の順（Entity の深さ優先の番号など）
+        size_t Ordinal = 0;
+        EcsSystemFn Run = nullptr;
+        void *User = nullptr;
+        uint8_t TimeChannel = 0;
+    };
+
+    /// 順の一覧の 1 項目（呼び手が合流させて呼ぶときの読み口）
+    struct OrderedRunView
+    {
+        Component::ETickGroup Group = Component::ETickGroup::Default;
+        int16_t Priority = 0;
         size_t Ordinal = 0;
         EcsSystemFn Run = nullptr;
         void *User = nullptr;
@@ -227,6 +242,13 @@ namespace NorvesLib::Core::Ecs
 
         /// 群・優先度を付け替える。順への反映は次の収集から
         bool SetOrderedEntryKey(EcsOrderedHandle handle, Component::ETickGroup group, int16_t priority);
+        /// 群・優先度・同じ群と優先度の中の順を付け替える。順への反映は次の収集から
+        bool SetOrderedEntryKey(EcsOrderedHandle handle, Component::ETickGroup group, int16_t priority, size_t ordinal);
+
+        /// この収集の順の一覧の長さ（bCallerDriven の系の呼び手が読む。収集の先頭でだけ変わる）
+        [[nodiscard]] uint32_t GetOrderedRunCount(EcsSystemId system) const;
+        /// 順の一覧の index 番目を読む。範囲外・外された呼び先は false（呼ぶ直前に毎回読み直す）
+        [[nodiscard]] bool GetOrderedRun(EcsSystemId system, uint32_t index, OrderedRunView &out) const;
 
         // ---- 収集 ----
 
@@ -303,6 +325,7 @@ namespace NorvesLib::Core::Ecs
             size_t Ordinal = 0;
             Component::ETickGroup NextGroup = Component::ETickGroup::Default;
             int16_t NextPriority = 0;
+            size_t NextOrdinal = 0;
             bool bHasNextKey = false;
             bool bAlive = false;
             /// 空き一覧に入れた
@@ -331,6 +354,7 @@ namespace NorvesLib::Core::Ecs
             int32_t Wave = -1;
 
             bool bOrdered = false;
+            bool bCallerDriven = false;
             Component::TickGroupMask Groups = Component::AllTickGroups;
             Container::VariableArray<OrderedEntry> Entries;
             Container::VariableArray<uint32_t> FreeEntries;

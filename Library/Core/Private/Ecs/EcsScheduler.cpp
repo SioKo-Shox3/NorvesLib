@@ -224,6 +224,7 @@ namespace NorvesLib::Core::Ecs
             }
         }
         system.bOrdered = true;
+        system.bCallerDriven = desc.bCallerDriven;
         system.Groups = desc.Groups;
 
         const EcsSystemId id = static_cast<EcsSystemId>(m_Systems.size());
@@ -512,10 +513,56 @@ namespace NorvesLib::Core::Ecs
         {
             return false;
         }
+        entry->NextOrdinal = entry->bHasNextKey ? entry->NextOrdinal : entry->Ordinal;
         entry->NextGroup = group;
         entry->NextPriority = priority;
         entry->bHasNextKey = true;
         m_Systems[handle.System].bOrderDirty = true;
+        return true;
+    }
+
+    bool SystemScheduler::SetOrderedEntryKey(EcsOrderedHandle handle, Component::ETickGroup group, int16_t priority,
+                                             size_t ordinal)
+    {
+        if (!SetOrderedEntryKey(handle, group, priority))
+        {
+            return false;
+        }
+        ResolveEntry(handle)->NextOrdinal = ordinal;
+        return true;
+    }
+
+    uint32_t SystemScheduler::GetOrderedRunCount(EcsSystemId systemId) const
+    {
+        if (systemId >= m_Systems.size() || !m_Systems[systemId].bOrdered)
+        {
+            return 0;
+        }
+        return static_cast<uint32_t>(m_Systems[systemId].Order.size());
+    }
+
+    bool SystemScheduler::GetOrderedRun(EcsSystemId systemId, uint32_t index, OrderedRunView &out) const
+    {
+        if (systemId >= m_Systems.size())
+        {
+            return false;
+        }
+        const System &system = m_Systems[systemId];
+        if (!system.bOrdered || index >= system.Order.size())
+        {
+            return false;
+        }
+        const OrderedEntry &entry = system.Entries[system.Order[index]];
+        if (!entry.bAlive)
+        {
+            return false;
+        }
+        out.Group = entry.Group;
+        out.Priority = entry.Priority;
+        out.Ordinal = entry.Ordinal;
+        out.Run = entry.Run;
+        out.User = entry.User;
+        out.TimeChannel = entry.TimeChannel;
         return true;
     }
 
@@ -551,6 +598,7 @@ namespace NorvesLib::Core::Ecs
                 {
                     entry.Group = entry.NextGroup;
                     entry.Priority = entry.NextPriority;
+                    entry.Ordinal = entry.NextOrdinal;
                     entry.bHasNextKey = false;
                 }
                 if ((system.Groups & Component::TickGroupBit(entry.Group)) == 0)
@@ -678,6 +726,11 @@ namespace NorvesLib::Core::Ecs
 
     void SystemScheduler::RunGameThreadSystem(System &system, Container::Span<const float> channelDeltas)
     {
+        if (system.bCallerDriven)
+        {
+            // 呼び手（同じ段の GameThread のシステム）が順の一覧を読んで呼ぶ
+            return;
+        }
         const uint32_t slotIndex = m_SlotCursor++;
         EnsureSlots(m_SlotCursor);
         system.FirstSlot = slotIndex;

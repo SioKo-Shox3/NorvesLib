@@ -26,6 +26,7 @@ namespace NorvesLib::Core::Ecs
     class EcsWorld;
     class SystemScheduler;
     class EcsTransformSystem;
+    struct EcsSystemContext;
 }
 
 namespace NorvesLib::Core
@@ -242,7 +243,7 @@ namespace NorvesLib::Core
         /**
          * @brief 型 cls の Tick の本体を順序付きの系へ登録する（設計 1.12。同じ型の登録は置き換え）
          *
-         * 照合は型の完全一致。反映は次の収集（BuildTickSnapshot）から。Core の型は World の初期化で登録する
+         * 照合は型の完全一致。反映は次の Tick の収集から。Core の型は World の初期化で登録する
          */
         void RegisterComponentTick(const IClass* cls, const Component::ComponentTickRegistration& registration);
         /// 型 cls の登録（無ければ null。仮想の OnTickGroup で呼ばれる）
@@ -472,13 +473,34 @@ namespace NorvesLib::Core
                                 uint32_t& count, const char*& error);
         void RunEcsRenderTransformCheck();
 
-        void BuildTickSnapshot();
+        /// bSyncOrdered: 登録のある型の呼び先（順序付きの系の項目）を、同じ深さ優先の順で足し・付け替え・外す
+        void BuildTickSnapshot(bool bSyncOrdered);
         void CollectTickEntries(Entity& entity, size_t& ordinal);
         bool CanDispatchEntity(const Entity& entity) const;
         const Engine::FrameTimes* m_ActiveTickTimes = nullptr;
         float m_ActiveTickDelta = 0;
         bool m_bHasActiveTickTime = false;
         bool TryResolveTickDelta(const Entity& owner, const Component::Component* component, float& out) const;
+        bool TryResolveChannelDelta(const Entity& owner, Engine::TimeChannel channel, float& out) const;
+
+        /// 順序付きの系の呼び先 1 つ（登録のある型の Component の、群 1 つぶん）。項目の User はこれを指す
+        struct OrderedTickRecord;
+        /// Component ごとの呼び先。Component が木から外れる（InvalidateTickComponent）か、収集で見つからなければ外す
+        Container::UnorderedMap<const Component::Component*,
+                                Container::VariableArray<Container::TUniquePtr<OrderedTickRecord>>> m_OrderedTicks;
+        /// 順序付きの系: [0] Input〜PoseFinalize（Tick）・[1] PostPhysics・[2] Camera〜PreRender（LateTick）
+        uint32_t m_OrderedTickSystems[3] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
+        uint64_t m_OrderedTickWalk = 0;
+        bool m_bSyncOrderedTicks = false;
+        uint32_t OrderedTickSystemOf(Component::ETickGroup group) const;
+        void SyncOrderedTick(Entity& entity, Component::Component& component, Component::ETickGroup group,
+                             int16_t priority, size_t ordinal, const Component::ComponentTickRegistration& registration);
+        bool AddOrderedTickEntry(OrderedTickRecord& record);
+        void SweepOrderedTicks();
+        void RemoveOrderedTicks(const Component::Component& component);
+        void ClearOrderedTicks();
+        static void RunOrderedTick(void* user, const Ecs::EcsSystemContext& context);
+        void ExecuteOrderedTick(OrderedTickRecord& record);
         void TickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime);
         void LateTickWithFrameTimes(const Engine::FrameTimes* times, float deltaTime);
         void DispatchTickGroups(Component::ETickGroup first, Component::ETickGroup last, float deltaTime,

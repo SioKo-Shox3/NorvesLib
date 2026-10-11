@@ -320,7 +320,8 @@ namespace NorvesLib::Core::Component
      *
      * World::RegisterComponentTick で型（IClass）に結び付ける。照合は型の完全一致で、派生の型は自分の型で登録する
      * （リフレクションを宣言しない派生は基底の型として扱われる）。登録の無い型は旧の仮想の OnTickGroup で呼ばれる。
-     * channel は型の GetTimeChannel、群・mask・優先度は Component の Tick の設定をそのまま使う。
+     * 登録のある型の Component は、World の順序付きの系（スケジューラの AddOrderedEntry）に（Component, 群）ごとの
+     * 呼び先として載る。群・mask・優先度は Component の Tick の設定をそのまま使う。
      */
     struct ComponentTickRegistration
     {
@@ -331,6 +332,12 @@ namespace NorvesLib::Core::Component
         /// true: 主群（GetTickGroup）の呼び出しだけで呼ぶ（旧の Tick と同じ）。false: Groups に含まれる群で呼ぶ
         bool bPrimaryGroupOnly = true;
         TickGroupMask Groups = AllTickGroups;
+        /// 型の channel。呼び先は個体の channel（Core の型ではこの値と同じ）を順序付きの系の項目に持ち、delta をそこから取る。
+        /// 個体ごとに上書きできる仮想の GetTimeChannel は TICK-REMOVE で消す
+        Engine::TimeChannel TimeChannel = Engine::TimeChannel::World;
+        /// 本体が読む列・書く列（型の番号）
+        Container::VariableArray<TypeId> Reads;
+        Container::VariableArray<TypeId> Writes;
     };
 
     // コンポーネントへのスマートポインタ

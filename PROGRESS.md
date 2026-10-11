@@ -1902,3 +1902,23 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 検査 ECS_TICK_DUP と型の登録の単体テストは足していない（計画に無い。起動画面の検査で確かめた）。
   - 一覧を作り直すのは今も毎フレーム（BuildTickSnapshot）。一覧と仮想の経路を消すのは TICK-REMOVE。
   - verify 1 本目の `/m:1` は Git Bash だとパスに変換されて MSBuild が拒む。PowerShell から回した。
+
+### SCN-ECS-TICK-SIMPLE 差し戻しへの対応（2026-10-11、反復 17・run 20261011-144300）
+
+- 指摘: 移した本体が旧の一覧（BuildTickSnapshot）に載って毎フレーム集めてソートされ、スケジューラの順序付きの系（AddOrderedEntry）に繋がっていない。登録に Reads/Writes・channel が無い。
+- 変更:
+  - スケジューラ: `OrderedSystemDesc::bCallerDriven`（段の中では呼ばず、同じ段の GameThread のシステムが順の一覧を読んで呼ぶ）、読み口 `GetOrderedRunCount`/`GetOrderedRun`（`OrderedRunView`）、順番まで付け替える `SetOrderedEntryKey(handle, group, priority, ordinal)` を足した。
+  - World: 順序付きの系を 3 つ登録（`Tick.OrderedInputToPoseFinalize`・`LateTick.OrderedPostPhysics`・`LateTick.OrderedCameraToPreRender`）。登録のある型の Component は（Component, 群）ごとの呼び先（`World::OrderedTickRecord`、User が指す）として AddOrderedEntry し、旧の一覧には載せない。`DispatchTickGroups` は順序付きの系の順の一覧と旧の一覧（未移行の Entity::Tick・仮想の OnTickGroup）を TickDispatchLess で合流させて呼ぶ（群が替わるときの UpdateWorldTransforms も同じ位置）。
+  - 一覧の更新: 収集（深さ優先の番号の振り方は旧と同じ）を `Tick.BuildSnapshot` のシステムから `TickWithFrameTimes` の収集を開く直前へ移した（間に走る処理は無い）。そこで新しい呼び先を足し、優先度・順番が変わったものだけ `SetOrderedEntryKey`、channel が変わったものは足し直し、見つからなかったもの（破棄予約の部分木・群や mask から外れたもの）を外す。スケジューラの並べ直しは、この足し・付け替え・外しがあった収集の先頭だけ。収集の中の変更は旧の一覧と同じく次の収集から。木から外れた Component は `InvalidateTickComponent` で即座に外す（走っている収集の中でも呼ばれない）。Finalize とスケジューラの作り直しで全部外す。
+  - 登録: `ComponentTickRegistration` に `TimeChannel`・`Reads`・`Writes` を足した（Board: 書く EcsBoardRender。SpringArm: Unscaled、読む EcsWorldTransform・書く EcsLocalTransform。HoldSlot・SocketAttachment: 読む EcsWorldTransform・EcsSkinnedRender、書く EcsLocalTransform）。呼び先の delta は項目の channel（個体の channel を収集で写す）から取る。
+  - `TickDispatchEntry::Run` を消した（旧の一覧には登録のある型が載らないため）。検査 ECS_TICK_DUP のログの説明文を日本語にした。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-ECS-TICK-SIMPLE-4.txt`: Debug の EntityTreeTest・FlipbookAdvanceTest・BoardComponentRoutingTest のビルド EXIT=0。
+  - `-5.txt`: SpringArmComponentTest・FlipbookAdvanceTest・BoardComponentRoutingTest・BillboardComponentTest・WorldTickGroupTest の 5/5 が pass、EXIT=0。
+  - `-7.txt`: 起動画面 default を `ECS_TICK_DUP` 付きで撮り、`engine_check name=ECS_TICK_DUP pass=3 fail=0`（count 25・29・29）、SCN-MEGA-BASE-RWDI との比較は平均輝度差 0・PSNR 100 dB・不一致画素 2E-06（最大差 1）で `result=pass`、EXIT=0。PNG を開いて確認（天球・地面・球・岩・家）。Game.log の ERROR は 0。Game.exe（20:24）と Core.lib（20:22）は World.cpp の編集（20:18）より後。`-6.txt` は途中で出力の受け口が切れた 1 回目の走行が後から書いたもの（内容は同じく pass）。
+  - `check-SCN-ECS-TICK-SIMPLE-ordered-related.txt`: EcsSchedulerTest・TickDispatchTest・WorldTimeChannelTest・EntityTreeTest・SkeletalAnimationSamplingTest（SocketTimeProbe の channel を含む）・EntitySubtreeSnapshotTest の 6/6 が pass（verify の外の確認）。
+- Next: SCN-ECS-TICK-ANIM。
+- Notes:
+  - 収集の走査（旧の一覧を作るもの）は未移行の型のために毎フレーム残る。順序付きの系の項目は、その走査の番号と比べて変わったときだけ付け替える。走査と旧の一覧を消すのは TICK-REMOVE。
+  - スケジューラに足した口（bCallerDriven・GetOrderedRun・順番の付け替え）の単体テストは足していない（計画に無い）。
+  - World.h（paths の外だが World.cpp の非公開のメンバの宣言）に呼び先の記録と関数の宣言を足した。
