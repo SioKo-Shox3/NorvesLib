@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("Debug", "Release")]
+    [ValidateSet("Debug", "RelWithDebInfo", "Release")]
     [string]$Configuration = "Debug",
     [string]$BuildDirectory = "build",
     [ValidateRange(1, 300)]
@@ -109,13 +109,14 @@ try
 
     $normalDirectory = Join-Path $runRoot "normal"
     New-Item -ItemType Directory -Path $normalDirectory | Out-Null
-    $normalRun = Invoke-M8Game $gamePath @("--scene=rendering3dtest", "--exit-after-rendered-frames=120") $normalDirectory $TimeoutSeconds
+    $normalRun = Invoke-M8Game $gamePath @("--scene=rendering3dtest", "--window-background", "--exit-after-rendered-frames=120") $normalDirectory $TimeoutSeconds
 
     $smokeDirectory = Join-Path $runRoot "smoke"
     New-Item -ItemType Directory -Path $smokeDirectory | Out-Null
-    $smokeRun = Invoke-M8Game $gamePath @("--scene=rendering3dtest", "--rendering3dtest-physics-smoke", "--render-thread=mt", "--exit-after-rendered-frames=120") $smokeDirectory $TimeoutSeconds
+    $smokeRun = Invoke-M8Game $gamePath @("--scene=rendering3dtest", "--window-background", "--rendering3dtest-physics-smoke", "--render-thread=mt", "--exit-after-rendered-frames=120") $smokeDirectory $TimeoutSeconds
 
-    if ($Configuration -eq "Debug")
+    # ログのある開発ビルド（Debug・RelWithDebInfo）はスモークの印まで照合する。Release は終了コードだけ
+    if ($Configuration -ne "Release")
     {
         Assert-M8DebugNormal $normalRun
         Assert-M8DebugSmoke $smokeRun

@@ -2380,3 +2380,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-RETIRE-LEGACY-FLAGS-5-excluding-M9.txt`: verify 2 から M9WorldAcceptanceTest だけを除いて 14/14 Passed、EXIT=0。
 - Next: 人の判断の後に再開（推奨 A なら verify を取り直して done）。
 - Notes: M9 の撮影失敗はログに失敗の状態（`FrameCaptureResultStatus`）が出ないので原因が未特定。直す項目ではまず状態をログに出す。
+
+### SCN-ECS-RETIRE-REGISTRY（2026-10-12、反復 3・run 20261012-030203）
+
+- Done: `EntityHandle` の発行と解決を World に移した。`World::GetEntityHandle(entity)` は ECS の行の番号と世代に World の識別子（`WorldId`。ECS の世界を作るたびに新しく取る）を付けて返し、`World::ResolveEntityHandle(handle)` は識別子・行の生存・`EcsObjectRef` の世代を照合して Entity を返す（表は World の ECS の行そのもので、World ごとの寿命）。`Entity::GetEntityHandle` は自分の World の発行を返す（`m_EntityHandle`・`SetEntityHandle` は消した）。`GEngine` のメンバの ComponentDataRegistry（`Engine/ComponentDataRegistry.*`、Publish*、`NORVES_ENABLE_COMPONENT_DATA_REGISTRY`）と `ComponentDataRegistryTest`・`ComponentDataBenchmark` を消した。
+- 利用者: `PickingController` は `Engine::GetWorld().ResolveEntityHandle`、`ApplicationFixedStepPipelineTest` は World の発行と解決、`WorldTickGroupTest` は登録の解除の代わりに切り離した部分木のハンドルが無効になることを見る。`M8MinimalPhysicsSmoke` は Release でもハンドルが有効になったので条件コンパイルを外した。`PhysicsModule` は `slot.Owner->GetEntityHandle()`（所有者の World の発行）のままにした（テストの fixture は Engine の World でない World を使うので、Engine の World に固定しない）。
+- テスト: `EcsLifetimeTest` に `TestEntityHandleIssueAndResolve` を足した（付け替えでハンドルが変わらない・世代の違うハンドルを拒む・破棄の予約の間は解決し同期点の除去の後は解決しない・行の番号の再利用で古いハンドルが新しい Entity を指さない・即時の除去の後・別の World の同じ行の番号と世代のハンドルを拒む）。
+- スクリプト: `Scripts/Test-M8MinimalPhysics.ps1` の Game の起動 2 本に `--window-background` を足し、`-Configuration RelWithDebInfo` を受け付けるようにした（開発ビルドは Debug と同じく印まで照合）。スモークの印（ready・complete・failure）は `NORVES_BUILD_DEBUG` だけで出ていたので `NORVES_BUILD_DEVELOPMENT` に替えた（Release は変わらず終了コードだけ）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RETIRE-REGISTRY-1.txt`: Debug の EntityTreeTest・ApplicationFixedStepPipelineTest のビルド EXIT=0、error 0。
+  - `-2.txt`: WorldTickGroupTest・EcsLifetimeTest・EcsHierarchyTest・ApplicationFixedStepPipelineTest 4/4 Passed、EXIT=0。
+  - `-3.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `-4.txt`: `M8_MINIMAL_PHYSICS_ACCEPTANCE result=pass configuration=RelWithDebInfo normal_exit=0 smoke_exit=0`、EXIT=0（ready の印 1 回・complete の `query_stable=1`（照会の当たりの Entity のハンドルの一致を含む）・failure の印なしをスクリプトが照合）。
+- 確認（verify の外）: SceneQueryPhysicsFacadeTest・LegacyInputResetTest は pass。PhysicsBroadphaseQueryTest は Debug で 2 個目の fixture の `InstallAll` の assert で止まる既知の失敗（反復 SCN-ECS-TICK-PHYSICS の記録と同じ。この変更と無関係）。
+- Next: 残りの todo の最優先。
+- Notes: 段の最中に作った Entity は、作成の予約が同期点で再生されるまで行が無いのでハンドルは無効（旧の表は作った時点で発行していた）。`Library/Core/Public/Math/MatrixUtils.h` のコメントに ComponentDataRegistry の名が残る（paths の外）。

@@ -21,10 +21,10 @@
 #include "Ecs/EcsScheduler.h"
 #include "Ecs/EcsTransformSystem.h"
 #include "Ecs/EcsWorld.h"
-#include "Engine/ComponentDataRegistry.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
 #include "Logging/LogMacros.h"
+#include "Thread/Atomic.h"
 #include "Object/Entity.h"
 #include "Object/PrefabAsset.h"
 #include "Rendering/CanvasView.h"
@@ -1026,26 +1026,16 @@ namespace NorvesLib::Core
             return rootGuard.Release();
         }
 
-        void RegisterEntitySubtreeForComponentData(World& world, Entity& entity)
+        /// ハンドルに入れる World の識別子を取る（ECS の世界を作るたびに 1 つ。0 は無効のハンドルの値なので飛ばす）
+        uint32_t AllocateEntityHandleWorldId()
         {
-            GEngine.GetComponentDataRegistry().RegisterEntity(world, entity);
-
-            auto children = entity.GetChildEntities();
-            for (auto* child : children)
+            static Thread::Atomic<uint32_t> s_NextWorldId{1};
+            uint32_t id = s_NextWorldId.FetchAdd(1, std::memory_order_relaxed);
+            if (id == 0)
             {
-                RegisterEntitySubtreeForComponentData(world, *child);
+                id = s_NextWorldId.FetchAdd(1, std::memory_order_relaxed);
             }
-        }
-
-        void UnregisterEntitySubtreeForComponentData(Entity& entity)
-        {
-            auto children = entity.GetChildEntities();
-            for (auto* child : children)
-            {
-                UnregisterEntitySubtreeForComponentData(*child);
-            }
-
-            GEngine.GetComponentDataRegistry().UnregisterEntity(entity);
+            return id;
         }
     } // namespace
 
@@ -1138,8 +1128,6 @@ namespace NorvesLib::Core
                 delete inner;
             }
         }
-
-        GEngine.GetComponentDataRegistry().UnregisterWorld(*this);
 
         FlushDeferredEntityRows();
         RunEcsBindingCheck(true);
@@ -1482,6 +1470,8 @@ namespace NorvesLib::Core
         m_bTextBoardOrderDirty = false;
         RegisterCoreComponentTicks();
         m_EcsWorld = Container::MakeUnique<Ecs::EcsWorld>();
+        // 作り直した ECS の世界は行の番号と世代を振り直すので、前の世界のハンドルを引かないよう識別子を替える
+        m_EntityHandleWorldId = AllocateEntityHandleWorldId();
         // 階層のシステムのきっかけになる列は追跡する（最初のアーキタイプを作る前に決める）。消費者がいない間はログを積まない
         m_EcsWorld->SetColumnTrackedOf<Ecs::EcsLocalTransform>();
         m_EcsWorld->SetColumnTrackedOf<Ecs::EcsHierarchy>();
@@ -3910,6 +3900,25 @@ namespace NorvesLib::Core
         }
     }
 
+    EntityHandle World::GetEntityHandle(const Entity& entity) const
+    {
+        const Ecs::EcsEntity row = entity.m_EcsEntity;
+        if (!m_EcsWorld || row.IsNull() || ResolveRenderEntity(row) != &entity)
+        {
+            return EntityHandle::Invalid();
+        }
+        return EntityHandle{row.Index, row.Generation, m_EntityHandleWorldId};
+    }
+
+    Entity* World::ResolveEntityHandle(EntityHandle handle) const
+    {
+        if (!handle.IsValid() || handle.WorldId != m_EntityHandleWorldId)
+        {
+            return nullptr;
+        }
+        return ResolveRenderEntity(Ecs::EcsEntity{handle.SlotIndex, handle.Generation});
+    }
+
     Entity* World::ResolveRenderEntity(Ecs::EcsEntity row) const
     {
         if (!m_EcsWorld || row.IsNull() || !m_EcsWorld->IsAlive(row))
@@ -4702,7 +4711,6 @@ namespace NorvesLib::Core
         BindEntitySubtreeRows(*entity);
         InitializeEntitySubtreeForWorld(*entity);
         AssignFreshObjectIdsRecursive(*entity);
-        RegisterEntitySubtreeForComponentData(*this, *entity);
         MarkEntitySubtreeTransformDirty(*entity);
         MarkEntitySubtreeRenderStateDirty(*entity);
         NotifyEntitySubtreeAdded(*entity);
@@ -4738,7 +4746,6 @@ namespace NorvesLib::Core
         BindEntitySubtreeRows(*child);
         InitializeEntitySubtreeForWorld(*child);
         AssignFreshObjectIdsRecursive(*child);
-        RegisterEntitySubtreeForComponentData(*this, *child);
         MarkEntitySubtreeTransformDirty(*child);
         MarkEntitySubtreeRenderStateDirty(*child);
         NotifyEntitySubtreeAdded(*child);
@@ -4786,8 +4793,6 @@ namespace NorvesLib::Core
         }
 
         ScopedWorldFlag removing(m_bCleaningObjects);
-        UnregisterEntitySubtreeForComponentData(entity);
-
         RemoveEntitySubtreeProxies(entity);
         NotifyEntitySubtreeRemoved(entity);
         InvalidateTickEntitySubtree(entity);

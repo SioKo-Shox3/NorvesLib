@@ -7,7 +7,6 @@
 #include "Thread/Atomic.h"
 #include "Object/ResourceRegistry.h"
 #include "Engine/AssetRegistry.h"
-#include "Engine/ComponentDataRegistry.h"
 #include "Scripting/ScriptRuntime.h"
 #include "Rendering/Screen.h"
 #include "Rendering/RenderingCoordinator.h"
@@ -171,18 +170,6 @@ namespace NorvesLib::Core
         Rendering::RayTracingSceneSubsystem& GetRayTracingSceneSubsystem() { return m_RayTracingSceneSubsystem; }
         const Rendering::RayTracingSceneSubsystem& GetRayTracingSceneSubsystem() const { return m_RayTracingSceneSubsystem; }
 
-        /**
-         * @brief Component data registryを取得
-         * @return Component data registryへの参照
-         */
-        ComponentDataRegistry &GetComponentDataRegistry() { return m_ComponentDataRegistry; }
-
-        /**
-         * @brief Component data registryを取得（const版）
-         * @return Component data registryへのconst参照
-         */
-        const ComponentDataRegistry &GetComponentDataRegistry() const { return m_ComponentDataRegistry; }
-
         SkeletalAssetSession& GetSkeletalAssetSession()
         {
             return m_SkeletalAssetSession;
@@ -204,7 +191,6 @@ namespace NorvesLib::Core
         ResourceRegistry m_ResourceRegistry;                    ///< リソース管理
         SkeletalAssetSession m_SkeletalAssetSession;            ///< application ownerの骨格session
         AssetRegistry m_AssetRegistry;                          ///< アセット（ファイル）管理
-        ComponentDataRegistry m_ComponentDataRegistry;           ///< Component data scratch registry
         ScriptRuntime m_ScriptRuntime;                            ///< AngelScript runtime
         Rendering::RenderingCoordinator m_RenderingCoordinator; ///< 描画フロー管理
         Rendering::RenderThread m_RenderThread;                 ///< レンダースレッド

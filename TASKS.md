@@ -654,7 +654,7 @@
 
 
 ## SCN-ECS-RETIRE-REGISTRY: EntityHandle の発行と解決を World へ移し、ComponentDataRegistry を消す
-- status: todo
+- status: done
 - done-when: 世代付きの `EntityHandle` の発行と解決を World の持ち物（ECS の行の番号と世代から作る表）にし、`Entity::GetEntityHandle` はそれを返す。利用者（`Game/Input/PickingController.cpp`・`Library/Modules/Physics/Private/Physics/PhysicsModule.cpp`・`Game/GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.cpp`・`Test/Core/Engine/ApplicationFixedStepPipelineTest.cpp`・`Test/Core/Object/WorldTickGroupTest.cpp`）を World の API に移す。`GEngine` のメンバの ComponentDataRegistry と、その Publish*・テスト・ベンチマークを消す（シングルトン禁止・所有権モデルに合わせ、ハンドルの表は World ごとの寿命にする）。破棄の後のハンドルが解決できないこと、世代の違うハンドルを拒むこと、別の World のハンドルを解決しないことをテストで確かめる。物理の最小のスモーク（`Scripts/Test-M8MinimalPhysics.ps1`）が今と同じ結果で pass（このスクリプトの Game の起動に `--window-background` を足す）。
 - verify: `cmake --build build --config Debug --target EntityTreeTest ApplicationFixedStepPipelineTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(WorldTickGroupTest|ApplicationFixedStepPipelineTest|EcsLifetimeTest|EcsHierarchyTest)$" --no-tests=error --output-on-failure --timeout 180`

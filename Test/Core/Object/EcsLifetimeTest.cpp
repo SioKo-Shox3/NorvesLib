@@ -4,6 +4,7 @@
 // - Tick と LateTick の間の除去・DestroyNow・破棄予約の直後の除去・部分木の連鎖でも孤児や古い参照が残らない
 // - 段の最中の作成は同期点まで予約され、再生の前の破棄で取り消される
 // - Component の行は所有者の子の葉で、flags・時間倍率・Tick の設定は行が付いている間だけ列にあり、外れると Object に戻る
+// - World が行の番号と世代から発行する EntityHandle は、破棄の後・世代違い・別の World では解決されない
 #include "Component/Component.h"
 #include "Ecs/EcsWorld.h"
 #include "Object/Entity.h"
@@ -495,6 +496,68 @@ namespace
         assert(world.GetEcsWorld().GetEntityCount() == 0);
     }
 
+    // EntityHandle: World が行の番号と世代から発行し、付け替えでは変わらない。
+    // 破棄の後・世代の違う・別の World のハンドルは解決しない
+    void TestEntityHandleIssueAndResolve()
+    {
+        World world;
+        world.Initialize();
+        Entity *root = world.SpawnEntity<Entity>();
+        Entity *child = world.SpawnEntity<Entity>(root);
+        const EntityHandle rootHandle = root->GetEntityHandle();
+        const EntityHandle childHandle = world.GetEntityHandle(*child);
+        assert(rootHandle.IsValid() && childHandle.IsValid() && rootHandle != childHandle);
+        assert(rootHandle.SlotIndex == root->GetEcsEntity().Index && rootHandle.Generation == root->GetEcsEntity().Generation);
+        assert(world.ResolveEntityHandle(rootHandle) == root);
+        assert(world.ResolveEntityHandle(childHandle) == child);
+        assert(world.ResolveEntityHandle(EntityHandle::Invalid()) == nullptr);
+
+        // 付け替えでは行もハンドルも変わらない
+        assert(world.ReparentEntity(child, nullptr));
+        assert(child->GetEntityHandle() == childHandle);
+        assert(world.ResolveEntityHandle(childHandle) == child);
+
+        // 世代の違うハンドルは拒む
+        EntityHandle wrongGeneration = childHandle;
+        ++wrongGeneration.Generation;
+        assert(world.ResolveEntityHandle(wrongGeneration) == nullptr);
+
+        // 破棄（予約から同期点での除去）の後は解決しない。予約の間はまだ解決する
+        child->MarkForDestroy();
+        assert(world.ResolveEntityHandle(childHandle) == child);
+        world.Tick(0.01f);
+        world.LateTick(0.01f);
+        assert(world.ResolveEntityHandle(childHandle) == nullptr);
+
+        // 同じ行の番号が再利用されても、古いハンドルは新しい Entity を指さない
+        Entity *reused = world.SpawnEntity<Entity>();
+        const EntityHandle reusedHandle = reused->GetEntityHandle();
+        assert(reusedHandle.IsValid() && reusedHandle != childHandle);
+        assert(world.ResolveEntityHandle(childHandle) == nullptr);
+        assert(world.ResolveEntityHandle(reusedHandle) == reused);
+
+        // 段の外の即時の除去でも解決しなくなる
+        world.RemoveObject(root);
+        assert(world.ResolveEntityHandle(rootHandle) == nullptr);
+
+        // 別の World: 同じ行の番号と世代の Entity がいても、識別子が違うので解決しない
+        World other;
+        other.Initialize();
+        Entity *otherEntity = other.SpawnEntity<Entity>();
+        const EntityHandle otherHandle = otherEntity->GetEntityHandle();
+        assert(otherHandle.IsValid() && otherHandle.WorldId != reusedHandle.WorldId);
+        EntityHandle sameRowOtherWorld = otherHandle;
+        sameRowOtherWorld.WorldId = reusedHandle.WorldId;
+        assert(other.ResolveEntityHandle(sameRowOtherWorld) == nullptr);
+        assert(other.ResolveEntityHandle(reusedHandle) == nullptr);
+        assert(world.ResolveEntityHandle(otherHandle) == nullptr);
+        assert(other.ResolveEntityHandle(otherHandle) == otherEntity);
+
+        other.Finalize();
+        world.Finalize();
+        assert(world.ResolveEntityHandle(reusedHandle) == nullptr);
+    }
+
     // 世代: 消した行の識別子は、同じ番号が再利用されても古い識別子として拒まれる
     void TestStaleRowRejected()
     {
@@ -820,6 +883,7 @@ int main()
     TestDestroyNowBetweenTickAndLateTick();
     TestPublicRemoveInnerAndReattach();
     TestStaleRowRejected();
+    TestEntityHandleIssueAndResolve();
     TestFlagsAndTickConfigColumns();
     TestTransformColumns();
     TestComponentRowsAddRemoveAndReserve();

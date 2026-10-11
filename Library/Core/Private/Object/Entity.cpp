@@ -251,6 +251,12 @@ namespace NorvesLib::Core
     // World関連（Outer経由）
     // ========================================
 
+    EntityHandle Entity::GetEntityHandle() const
+    {
+        World* world = GetWorld();
+        return world ? world->GetEntityHandle(*this) : EntityHandle::Invalid();
+    }
+
     World *Entity::GetWorld() const
     {
         // Outer関係はオーナーシップの概念であり、constの制約を受けない

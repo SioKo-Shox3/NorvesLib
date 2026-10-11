@@ -1,7 +1,6 @@
 ﻿#include "Input/PickingController.h"
 
 #include "Core/Public/Engine/Engine.h"
-#include "Core/Public/Engine/ComponentDataRegistry.h"
 #include "Core/Public/Engine/NorvesEngine.h"
 #include "Core/Public/Object/Entity.h"
 #include "Core/Public/Scene/SceneQuery.h"
@@ -153,6 +152,15 @@ namespace Game::Input
             return;
         }
 
+        NorvesLib::Core::Engine::Engine* engine = NorvesLib::Core::Engine::GEngine;
+        if (engine == nullptr)
+        {
+            m_SelectionHandles.clear();
+            return;
+        }
+
+        // 選択は照会の対象の World の Entity。破棄済み・別の World のハンドルは解決されず選択から外れる
+        NorvesLib::Core::World& world = engine->GetWorld();
         NorvesLib::Core::Container::VariableArray<NorvesLib::Core::EntityHandle> liveHandles;
         liveHandles.reserve(m_SelectionHandles.size());
 
@@ -163,8 +171,7 @@ namespace Game::Input
                 continue;
             }
 
-            NorvesLib::Core::Entity* entity =
-                NorvesLib::Core::GEngine.GetComponentDataRegistry().ResolveEntity(handle);
+            NorvesLib::Core::Entity* entity = world.ResolveEntityHandle(handle);
             if (entity == nullptr)
             {
                 continue;

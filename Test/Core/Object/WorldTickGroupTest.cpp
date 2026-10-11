@@ -1,7 +1,6 @@
 ﻿#include "Object/World.h"
 #include "Object/ObjectHeap.h"
 #include "Component/Component.h"
-#include "Engine/ComponentDataRegistry.h"
 #include "Engine/NorvesEngine.h"
 #ifdef NDEBUG
 #undef NDEBUG
@@ -489,9 +488,8 @@ namespace
         assert(world.RemoveInner(root));
         assert(root->GetOuter() == nullptr);
         assert(WorldTickGroupTestAccess::PendingEntities(world) == 0);
-        // 公開の RemoveInner は Component データの登録までは解除しないので、削除する側が解除する
-        GEngine.GetComponentDataRegistry().UnregisterEntity(*child);
-        GEngine.GetComponentDataRegistry().UnregisterEntity(*root);
+        // 切り離した部分木は World の木にいないので、ハンドルは無効になる
+        assert(!root->GetEntityHandle().IsValid() && !child->GetEntityHandle().IsValid());
         root->Finalize();
         delete root;
 

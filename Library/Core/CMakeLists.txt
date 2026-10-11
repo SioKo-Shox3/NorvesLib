@@ -188,7 +188,6 @@ set(PRIVATE_SOURCES
     Private/Scripting/ScriptSourceTracker.cpp
     Private/Scripting/ScriptRuntime.cpp
     Private/Component/ScriptComponent.cpp
-    Private/Engine/ComponentDataRegistry.cpp
     Private/Engine/ApplicationProcessor.cpp
     # Scene
     Private/Scene/SceneQuery.cpp
@@ -685,7 +684,6 @@ set(PUBLIC_HEADERS
     Public/Component/ScriptComponent.h
     Public/Engine/IEngine.h
     Public/Engine/AssetRegistry.h
-    Public/Engine/ComponentDataRegistry.h
     # Resource
     Public/Resource/MeshResource.h
     Public/Resource/MaterialResource.h
@@ -864,7 +862,6 @@ target_compile_definitions(${MODULE_NAME}
         NORVES_ENABLE_STATS=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
         NORVES_ENABLE_RENDERGRAPH_DUMP=$<IF:$<CONFIG:Debug>,1,0>
         NORVES_ENABLE_PROFILING=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
-        NORVES_ENABLE_COMPONENT_DATA_REGISTRY=$<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,1,0>
         NORVES_ENABLE_CORE_TEXT=$<BOOL:${NORVES_ENABLE_CORE_TEXT}>
 )
 

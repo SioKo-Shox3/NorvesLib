@@ -135,8 +135,6 @@ namespace NorvesLib::Core
         // AssetRegistryのシャットダウン
         m_AssetRegistry.ShutdownSubsystem();
 
-        m_ComponentDataRegistry.SetEnabled(false);
-
         // ResourceRegistryのシャットダウン（最後に行う）
         m_ResourceRegistry.Shutdown();
 

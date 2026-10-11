@@ -366,6 +366,12 @@ namespace NorvesLib::Core
 
         /// ECS の行の保管庫。更新は GetScheduler() の段を通して走る
         Ecs::EcsWorld& GetEcsWorld() { return *m_EcsWorld; }
+
+        /// Entity の世代付きハンドルを発行する（ECS の行の番号と世代に、この World の識別子を付けたもの）。
+        /// この World の木にいない・行がまだ無い（段の最中に作って作成の予約が再生される前）なら無効
+        EntityHandle GetEntityHandle(const Entity& entity) const;
+        /// ハンドルから Entity を引く。破棄の後・世代の違う・別の World（作り直す前の ECS を含む）のハンドルは null
+        Entity* ResolveEntityHandle(EntityHandle handle) const;
         /// 更新の段（Tick / LateTick / FixedBegin / FixedTick / FixedEnd / Sync）を走らせるスケジューラ
         Ecs::SystemScheduler& GetScheduler() { return *m_Scheduler; }
 
@@ -591,6 +597,8 @@ namespace NorvesLib::Core
                                             Ecs::EcsHookReason reason);
 
         Container::TUniquePtr<Ecs::EcsWorld> m_EcsWorld;
+        /// ハンドルに入れる World の識別子（ECS の世界を作るたびに新しく取る。0 は使わない）
+        uint32_t m_EntityHandleWorldId = 0;
         Container::TUniquePtr<Ecs::SystemScheduler> m_Scheduler;
         /// 階層のシステム（ワールドの変換と EffectiveActive を伝播で求める）。EcsWorld より先に壊す
         Container::TUniquePtr<Ecs::EcsTransformSystem> m_EcsTransformSystem;

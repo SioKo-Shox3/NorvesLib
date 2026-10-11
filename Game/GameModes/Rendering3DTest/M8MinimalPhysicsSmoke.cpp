@@ -105,27 +105,22 @@ namespace Game::GameModes
         m_BoxBody = m_pBoxBody->GetBodyHandle();
         m_SphereBody = m_pSphereBody->GetBodyHandle();
         m_CapsuleBody = m_pCapsuleBody->GetBodyHandle();
-#if NORVES_ENABLE_COMPONENT_DATA_REGISTRY
         m_FloorEntityHandle = m_pFloorEntity->GetEntityHandle();
         m_BoxEntityHandle = m_pBoxEntity->GetEntityHandle();
         m_SphereEntityHandle = m_pSphereEntity->GetEntityHandle();
         m_CapsuleEntityHandle = m_pCapsuleEntity->GetEntityHandle();
-#endif
         if (!m_FloorCollider.IsValid() || !m_BoxCollider.IsValid() || !m_SphereCollider.IsValid()
             || !m_CapsuleCollider.IsValid() || !m_BoxBody.IsValid() || !m_SphereBody.IsValid()
             || !m_CapsuleBody.IsValid()
-#if NORVES_ENABLE_COMPONENT_DATA_REGISTRY
             || !m_FloorEntityHandle.IsValid() || !m_BoxEntityHandle.IsValid() || !m_SphereEntityHandle.IsValid()
-            || !m_CapsuleEntityHandle.IsValid()
-#endif
-            )
+            || !m_CapsuleEntityHandle.IsValid())
         {
             ReportFailure(ctx, "invalid_handle");
             return false;
         }
 
         m_bActive = true;
-#if NORVES_BUILD_DEBUG
+#if NORVES_BUILD_DEVELOPMENT
         LOG_INFO("M8_PHYSICS_SMOKE stage=ready colliders=4 bodies=3");
 #endif
         return true;
@@ -185,7 +180,7 @@ namespace Game::GameModes
             if (m_StableObservationCount >= kRequiredStableObservations)
             {
                 m_bComplete = true;
-#if NORVES_BUILD_DEBUG
+#if NORVES_BUILD_DEVELOPMENT
                 LOG_INFO("M8_PHYSICS_SMOKE stage=complete query_stable=1 stack_stable=1 rendered_positive=1 exit_code=0");
 #endif
                 return;
@@ -370,48 +365,29 @@ namespace Game::GameModes
         NorvesLib::Core::EntityHandle entity,
         bool bHasEntity) const
     {
-#if NORVES_ENABLE_COMPONENT_DATA_REGISTRY
         if (!bHasEntity || !entity.IsValid())
         {
             return false;
         }
-#else
-        if (bHasEntity || entity.IsValid())
-        {
-            return false;
-        }
-#endif
         if (collider == m_FloorCollider)
         {
             return !body.IsValid()
-#if NORVES_ENABLE_COMPONENT_DATA_REGISTRY
-                && entity == m_FloorEntityHandle
-#endif
-                ;
+                && entity == m_FloorEntityHandle;
         }
         if (collider == m_BoxCollider)
         {
             return body == m_BoxBody
-#if NORVES_ENABLE_COMPONENT_DATA_REGISTRY
-                && entity == m_BoxEntityHandle
-#endif
-                ;
+                && entity == m_BoxEntityHandle;
         }
         if (collider == m_SphereCollider)
         {
             return body == m_SphereBody
-#if NORVES_ENABLE_COMPONENT_DATA_REGISTRY
-                && entity == m_SphereEntityHandle
-#endif
-                ;
+                && entity == m_SphereEntityHandle;
         }
         if (collider == m_CapsuleCollider)
         {
             return body == m_CapsuleBody
-#if NORVES_ENABLE_COMPONENT_DATA_REGISTRY
-                && entity == m_CapsuleEntityHandle
-#endif
-                ;
+                && entity == m_CapsuleEntityHandle;
         }
         return false;
     }
@@ -426,7 +402,7 @@ namespace Game::GameModes
         }
 
         m_bActive = false;
-#if NORVES_BUILD_DEBUG
+#if NORVES_BUILD_DEVELOPMENT
         LOG_ERROR("M8_PHYSICS_SMOKE stage=failure reason=%s exit_code=1", reason);
 #endif
         ctx.EngineRef.RequestExit(1);

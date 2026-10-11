@@ -536,13 +536,15 @@ namespace
         }
 
         GFixture->DestroyEntity = entity;
-        GFixture->DestroyHandle = GEngine.GetComponentDataRegistry().GetHandle(*entity);
+        GFixture->DestroyHandle = world.GetEntityHandle(*entity);
+        if (!GFixture->DestroyHandle.IsValid() || world.ResolveEntityHandle(GFixture->DestroyHandle) != entity)
+        {
+            return false;
+        }
         entity->MarkForDestroy();
         const Engine::FixedStepAdvanceResult first =
             Engine::ApplicationFixedStepTestAccess::Advance(processor, 17'000'000, true);
-        const bool bRemoved = GFixture->DestroyHandle.IsValid()
-            ? GEngine.GetComponentDataRegistry().ResolveEntity(GFixture->DestroyHandle) == nullptr
-            : world.GetObjectCount() == 0;
+        const bool bRemoved = world.ResolveEntityHandle(GFixture->DestroyHandle) == nullptr;
         GFixture->DestroyEntity = nullptr;
         const Engine::FixedStepAdvanceResult second =
             Engine::ApplicationFixedStepTestAccess::Advance(processor, 17'000'000, true);

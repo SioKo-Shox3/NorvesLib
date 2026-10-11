@@ -162,14 +162,9 @@ namespace NorvesLib::Core
         void SetObjectId(uint64_t id) { ObjectId = id; }
 
         /**
-         * @brief ComponentDataRegistry用Entityハンドルを取得
+         * @brief 世代付きのハンドルを取得（World::GetEntityHandle の結果。World の木にいて行がある間だけ有効）
          */
-        EntityHandle GetEntityHandle() const { return m_EntityHandle; }
-
-        /**
-         * @brief ComponentDataRegistry用Entityハンドルを設定
-         */
-        void SetEntityHandle(EntityHandle handle) { m_EntityHandle = handle; }
+        EntityHandle GetEntityHandle() const;
 
         // ========================================
         // トランスフォーム
@@ -381,7 +376,6 @@ namespace NorvesLib::Core
         Math::Transform m_WorldTransformFallback;
         bool m_bWorldTransformDirty = true;
         uint64_t m_TransformVersion = 1;
-        EntityHandle m_EntityHandle;
         /// ECS の行（World が付け外しする）
         Ecs::EcsEntity m_EcsEntity;
         /// 段の最中に予約した行の作成の位置（World の予約の並び。予約が無ければ最大値。同期点までの間だけ持つ）
