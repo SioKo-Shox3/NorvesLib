@@ -15,6 +15,7 @@
 #include "RHI/IAccelerationStructure.h"
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <utility>
 
@@ -199,6 +200,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief ライト配列のFramePacket値revision。 */
         uint64_t LightRevision = 0;
 
+        /** @brief 送った時点のシーンの世代。SceneView が内容を入れ替えたときに進む。差分は同じ世代のものだけが当たる。 */
+        uint64_t SceneGeneration = 0;
+
+        /** @brief 送った番号。FinishWrite が 1 から順に振る（0 は未送信）。RenderThread の適用の確認の単位。 */
+        uint64_t SendSerial = 0;
+
         /** @brief GameThread が非破壊 snapshot した capture request 値。 */
         FrameCaptureRequestSnapshot CaptureRequest;
 
@@ -300,6 +307,8 @@ namespace NorvesLib::Core::Rendering
             bRTGIEnabled = true;
             SceneRevision = 0;
             LightRevision = 0;
+            SceneGeneration = 0;
+            SendSerial = 0;
             CaptureRequest = FrameCaptureRequestSnapshot{};
             bHasMainCamera = false;
             bHasPreviousMainCamera = false;
@@ -661,6 +670,337 @@ namespace NorvesLib::Core::Rendering
     }
 
     // ========================================
+    // パケットの適用の確認
+    // ========================================
+
+    /** @brief RenderThread がパケットを適用しようとした結果 */
+    enum class PacketApplyResult : uint8_t
+    {
+        Applied,         // 適用した（確認を進めた）
+        Unnumbered,      // 番号の無いパケット（手で組んだものなど）。確認しない
+        StaleSerial,     // 適用済みより古い番号。捨てる
+        StaleGeneration, // 適用済みより古い世代。捨てる
+    };
+
+    /**
+     * @brief RenderThread の適用の確認
+     *
+     * 適用したパケットの番号・シーンの世代・GPU の提出の完了を覚え、atomic で GameThread へ公開する。
+     * マルチ・シングルのどちらの経路でも RenderFrame が同じ場所で呼ぶ（描画を見送っても、適用したら確認する）。
+     * 書くのは描画を行うスレッドだけ。GameThread は Get 系だけを読む。
+     *
+     * 確認の番号 N は「N までに送ったパケットのうち、適用されたものは N 以前に適用済み」を意味する。
+     * 飛ばされたパケットの差分は、GameThread が確認の番号より後の分として積み直す（PacketDeltaLedger）。
+     */
+    class PacketConfirmation
+    {
+    public:
+        /** @brief 初期化（描画が止まっている間に呼ぶ） */
+        void Reset()
+        {
+            m_Entries.clear();
+            m_LastCompletedSubmission = 0;
+            m_ConfirmedGeneration.Store(0, std::memory_order_release);
+            m_ConfirmedSerial.Store(0, std::memory_order_release);
+            m_CompletedSerial.Store(0, std::memory_order_release);
+            m_StaleDropped.Store(0, std::memory_order_release);
+        }
+
+        /**
+         * @brief パケットを適用する（描画するスレッドから、パケットを取った直後に呼ぶ）
+         *
+         * 適用済みより古い番号・世代のパケットは Stale を返す（呼び出し側は描かずに捨てる）。
+         * Applied のときは、描画を終えたあとで NoteFinished を呼ぶ。
+         */
+        PacketApplyResult TryApply(uint64_t sendSerial, uint64_t sceneGeneration)
+        {
+            if (sendSerial == 0)
+            {
+                return PacketApplyResult::Unnumbered;
+            }
+            if (sceneGeneration < m_ConfirmedGeneration.Load(std::memory_order_relaxed))
+            {
+                m_StaleDropped.FetchAdd(1, std::memory_order_relaxed);
+                return PacketApplyResult::StaleGeneration;
+            }
+            if (sendSerial < m_ConfirmedSerial.Load(std::memory_order_relaxed))
+            {
+                m_StaleDropped.FetchAdd(1, std::memory_order_relaxed);
+                return PacketApplyResult::StaleSerial;
+            }
+            m_Entries.push_back({sendSerial, 0, false});
+            // 世代を先に公開する: 番号を読んだ側が、それ以後の世代を読めるようにする
+            m_ConfirmedGeneration.Store(sceneGeneration, std::memory_order_release);
+            m_ConfirmedSerial.Store(sendSerial, std::memory_order_release);
+            return PacketApplyResult::Applied;
+        }
+
+        /** @brief 適用したパケットの描画を GPU へ提出した（提出番号との対応を持つ） */
+        void NoteSubmitted(uint64_t sendSerial, uint64_t submissionSerial)
+        {
+            if (Entry* entry = FindLast(sendSerial))
+            {
+                entry->SubmissionSerial = submissionSerial;
+            }
+        }
+
+        /** @brief 適用したパケットの処理を終えた（提出が無くても呼ぶ） */
+        void NoteFinished(uint64_t sendSerial)
+        {
+            if (Entry* entry = FindLast(sendSerial))
+            {
+                entry->bFinished = true;
+            }
+            RetireCompleted(false);
+        }
+
+        /**
+         * @brief GPU の完了した提出番号を取り込む
+         * @param bAllCompleted スワップチェーンの作り直しで提出番号が戻ったとき true（持っていた提出は完了済み）
+         */
+        void Retire(uint64_t completedSubmissionSerial, bool bAllCompleted)
+        {
+            m_LastCompletedSubmission = completedSubmissionSerial;
+            RetireCompleted(bAllCompleted);
+        }
+
+        /** @brief 適用した最後のパケットの番号（読んでよいスレッド: どこでも） */
+        [[nodiscard]] uint64_t GetConfirmedSerial() const { return m_ConfirmedSerial.Load(std::memory_order_acquire); }
+        /** @brief 適用した最後のパケットのシーンの世代 */
+        [[nodiscard]] uint64_t GetConfirmedGeneration() const { return m_ConfirmedGeneration.Load(std::memory_order_acquire); }
+        /** @brief GPU の描画が完了した番号。これ以前に適用したパケットはすべて、提出が完了したか提出が無かった */
+        [[nodiscard]] uint64_t GetCompletedSerial() const { return m_CompletedSerial.Load(std::memory_order_acquire); }
+        /** @brief 古いため捨てたパケットの数 */
+        [[nodiscard]] uint64_t GetStaleDropCount() const { return m_StaleDropped.Load(std::memory_order_acquire); }
+
+        /** @brief この世代の差分を、適用済みの写しへ当ててよいか（世代が替わったら古い差分は拒む） */
+        [[nodiscard]] bool CanApplyDelta(uint64_t deltaGeneration) const
+        {
+            return deltaGeneration == m_ConfirmedGeneration.Load(std::memory_order_acquire);
+        }
+
+    private:
+        struct Entry
+        {
+            uint64_t SendSerial = 0;
+            uint64_t SubmissionSerial = 0; // 0 は提出が無い
+            bool bFinished = false;
+        };
+
+        Entry* FindLast(uint64_t sendSerial)
+        {
+            for (size_t index = m_Entries.size(); index > 0; --index)
+            {
+                if (m_Entries[index - 1].SendSerial == sendSerial)
+                {
+                    return &m_Entries[index - 1];
+                }
+            }
+            return nullptr;
+        }
+
+        // 先頭から、処理を終えて提出が完了した（または提出が無い）ものを外し、完了の番号を進める
+        void RetireCompleted(bool bAllCompleted)
+        {
+            size_t retired = 0;
+            uint64_t completed = m_CompletedSerial.Load(std::memory_order_relaxed);
+            for (const Entry& entry : m_Entries)
+            {
+                const bool bSubmissionDone =
+                    entry.SubmissionSerial == 0 || bAllCompleted || entry.SubmissionSerial <= m_LastCompletedSubmission;
+                if (!entry.bFinished || !bSubmissionDone)
+                {
+                    break;
+                }
+                completed = std::max(completed, entry.SendSerial);
+                ++retired;
+            }
+            if (retired > 0)
+            {
+                m_Entries.erase(m_Entries.begin(), m_Entries.begin() + static_cast<std::ptrdiff_t>(retired));
+                m_CompletedSerial.Store(completed, std::memory_order_release);
+            }
+        }
+
+        // 描画するスレッドだけが触る（適用した順 = 番号の順）
+        Container::VariableArray<Entry> m_Entries;
+        uint64_t m_LastCompletedSubmission = 0;
+
+        Thread::Atomic<uint64_t> m_ConfirmedGeneration{0};
+        Thread::Atomic<uint64_t> m_ConfirmedSerial{0};
+        Thread::Atomic<uint64_t> m_CompletedSerial{0};
+        Thread::Atomic<uint64_t> m_StaleDropped{0};
+    };
+
+    /**
+     * @brief GameThread が持つ、確認されていない差分の台帳
+     *
+     * 送ったパケットが運んだ変化の鍵（行の識別子など）を番号つきで覚える。確認の番号以前の分は捨て、
+     * それより後の分（RenderThread に飛ばされたパケットの分を含む）は次のパケットが積み直して運ぶ。
+     * 世代が替わったら、古い世代の差分は拒んで捨てる（写しごと入れ替わるため意味を持たない）。
+     * GameThread だけが触る。
+     */
+    class PacketDeltaLedger
+    {
+    public:
+        void Reset() { m_Sent.clear(); }
+
+        /** @brief 送ったパケットの新しい変化の鍵を覚える。新しい世代になったら古い世代の分を捨てる */
+        void NoteSent(uint64_t sendSerial, uint64_t sceneGeneration, const uint64_t* keys, size_t keyCount)
+        {
+            DiscardOlderGenerations(sceneGeneration);
+            SentEntry entry;
+            entry.SendSerial = sendSerial;
+            entry.SceneGeneration = sceneGeneration;
+            entry.Keys.reserve(keyCount);
+            for (size_t index = 0; index < keyCount; ++index)
+            {
+                entry.Keys.push_back(keys[index]);
+            }
+            m_Sent.push_back(std::move(entry));
+        }
+
+        /** @brief RenderThread の確認を取り込む。確認の番号以前と、確認の世代より古い世代の分を捨てる */
+        void NoteConfirmed(uint64_t confirmedSerial, uint64_t confirmedGeneration)
+        {
+            size_t kept = 0;
+            for (size_t index = 0; index < m_Sent.size(); ++index)
+            {
+                const SentEntry& entry = m_Sent[index];
+                const bool bConfirmed = entry.SceneGeneration == confirmedGeneration && entry.SendSerial <= confirmedSerial;
+                if (bConfirmed || entry.SceneGeneration < confirmedGeneration)
+                {
+                    continue;
+                }
+                if (kept != index)
+                {
+                    m_Sent[kept] = std::move(m_Sent[index]);
+                }
+                ++kept;
+            }
+            m_Sent.resize(kept);
+        }
+
+        /** @brief 次のパケットが積み直す鍵（確認されていない、現在の世代の送信の分。重複は除く） */
+        void CollectPending(uint64_t currentGeneration, Container::VariableArray<uint64_t>& outKeys) const
+        {
+            outKeys.clear();
+            for (const SentEntry& entry : m_Sent)
+            {
+                if (entry.SceneGeneration != currentGeneration)
+                {
+                    continue;
+                }
+                for (uint64_t key : entry.Keys)
+                {
+                    if (std::find(outKeys.begin(), outKeys.end(), key) == outKeys.end())
+                    {
+                        outKeys.push_back(key);
+                    }
+                }
+            }
+        }
+
+        /** @brief 確認を待っている送信の数 */
+        [[nodiscard]] size_t GetUnconfirmedSendCount() const { return m_Sent.size(); }
+
+    private:
+        struct SentEntry
+        {
+            uint64_t SendSerial = 0;
+            uint64_t SceneGeneration = 0;
+            Container::VariableArray<uint64_t> Keys;
+        };
+
+        void DiscardOlderGenerations(uint64_t sceneGeneration)
+        {
+            size_t kept = 0;
+            for (size_t index = 0; index < m_Sent.size(); ++index)
+            {
+                if (m_Sent[index].SceneGeneration < sceneGeneration)
+                {
+                    continue;
+                }
+                if (kept != index)
+                {
+                    m_Sent[kept] = std::move(m_Sent[index]);
+                }
+                ++kept;
+            }
+            m_Sent.resize(kept);
+        }
+
+        Container::VariableArray<SentEntry> m_Sent;
+    };
+
+    /**
+     * @brief GameThread が確認の公開値を見張る（検査 MEGA_SCENE_CONFIRM）
+     *
+     * 確認の番号・世代・完了の番号が単調で、送った番号・世代を超えず、完了が確認を超えないことを確かめる。
+     */
+    class PacketConfirmationMonitor
+    {
+    public:
+        /** @return 守られていれば true。破れたときは detail に理由を書く */
+        bool Observe(const PacketConfirmation& confirmation, uint64_t lastSentSerial, uint64_t currentGeneration,
+                     char* detail, size_t detailSize)
+        {
+            // 書く側は 世代 → 番号 → 完了 の順に公開するので、読む側は逆の順に読む
+            const uint64_t completed = confirmation.GetCompletedSerial();
+            const uint64_t serial = confirmation.GetConfirmedSerial();
+            const uint64_t generation = confirmation.GetConfirmedGeneration();
+            ++m_ObserveCount;
+
+            const char* reason = nullptr;
+            if (serial < m_LastSerial)
+            {
+                reason = "確認の番号が戻った";
+            }
+            else if (generation < m_LastGeneration)
+            {
+                reason = "確認の世代が戻った";
+            }
+            else if (completed < m_LastCompleted)
+            {
+                reason = "完了の番号が戻った";
+            }
+            else if (completed > serial)
+            {
+                reason = "完了の番号が確認の番号を超えた";
+            }
+            else if (serial > lastSentSerial)
+            {
+                reason = "確認の番号が送った番号を超えた";
+            }
+            else if (generation > currentGeneration)
+            {
+                reason = "確認の世代が送った世代を超えた";
+            }
+            m_LastSerial = std::max(m_LastSerial, serial);
+            m_LastGeneration = std::max(m_LastGeneration, generation);
+            m_LastCompleted = std::max(m_LastCompleted, completed);
+            if (reason != nullptr && detail != nullptr && detailSize > 0)
+            {
+                std::snprintf(detail, detailSize, "%s: confirmed=%llu generation=%llu completed=%llu sent=%llu current_generation=%llu",
+                              reason, static_cast<unsigned long long>(serial), static_cast<unsigned long long>(generation),
+                              static_cast<unsigned long long>(completed), static_cast<unsigned long long>(lastSentSerial),
+                              static_cast<unsigned long long>(currentGeneration));
+            }
+            return reason == nullptr;
+        }
+
+        [[nodiscard]] uint64_t GetObserveCount() const { return m_ObserveCount; }
+        [[nodiscard]] uint64_t GetLastSerial() const { return m_LastSerial; }
+        [[nodiscard]] uint64_t GetLastCompleted() const { return m_LastCompleted; }
+
+    private:
+        uint64_t m_LastSerial = 0;
+        uint64_t m_LastGeneration = 0;
+        uint64_t m_LastCompleted = 0;
+        uint64_t m_ObserveCount = 0;
+    };
+
+    // ========================================
     // FramePacketManager
     // ========================================
 
@@ -699,6 +1039,13 @@ namespace NorvesLib::Core::Rendering
             m_WriteIndex.Store(0, std::memory_order_release);
             m_ReadIndex.Store(0, std::memory_order_release);
             m_CurrentFrameNumber.Store(0, std::memory_order_release);
+            m_SentSerial.Store(0, std::memory_order_release);
+            m_Confirmation.Reset();
+            m_SceneGeneration = 1;
+            m_ObservedGenerationSource = nullptr;
+            m_ObservedGenerationValue = 0;
+            m_bGenerationObserved = false;
+            m_ConfirmationMonitor = PacketConfirmationMonitor{};
             m_SequenceCarry.Reset();
         }
 
@@ -757,6 +1104,8 @@ namespace NorvesLib::Core::Rendering
         {
             if (packet)
             {
+                // 送った番号を振る（飛ばされたパケットがあっても番号は欠けない）
+                packet->SendSerial = m_SentSerial.FetchAdd(1, std::memory_order_relaxed) + 1;
                 packet->SetState(FramePacketState::Ready);
                 // 次のバッファへ進む
                 uint32_t currentIdx = static_cast<uint32_t>(packet - m_Packets.data());
@@ -1032,12 +1381,52 @@ namespace NorvesLib::Core::Rendering
         /** @brief 連番の1フレームの前の値の固定状態（GameThreadでパケットを書くときだけ触る） */
         PathTracingSequenceCarry& GetSequenceCarry() { return m_SequenceCarry; }
 
+        /** @brief 最後に送ったパケットの番号（FinishWrite が振った最大。送っていなければ 0） */
+        [[nodiscard]] uint64_t GetLastSentSerial() const { return m_SentSerial.Load(std::memory_order_acquire); }
+
+        /** @brief RenderThread の適用の確認（RenderFrame が書き、GameThread が公開値を読む） */
+        PacketConfirmation& GetConfirmation() { return m_Confirmation; }
+        const PacketConfirmation& GetConfirmation() const { return m_Confirmation; }
+
+        /** @brief GameThread が確認の公開値を見張る（検査 MEGA_SCENE_CONFIRM 用。GameThread だけが触る） */
+        PacketConfirmationMonitor& GetConfirmationMonitor() { return m_ConfirmationMonitor; }
+
+        /**
+         * @brief パケットへ書くシーンの世代を決める（GameThread）
+         *
+         * 差分の源（SceneView）が替わった、またはその世代が進んだら、シーンの世代を 1 つ進める。
+         * @param source 世代の源の識別（SceneView のアドレスなど。無ければ nullptr）
+         * @param sourceGeneration 源が持つ世代
+         */
+        uint64_t ResolveSceneGeneration(const void* source, uint64_t sourceGeneration)
+        {
+            if (m_bGenerationObserved && (source != m_ObservedGenerationSource || sourceGeneration != m_ObservedGenerationValue))
+            {
+                ++m_SceneGeneration;
+            }
+            m_ObservedGenerationSource = source;
+            m_ObservedGenerationValue = sourceGeneration;
+            m_bGenerationObserved = true;
+            return m_SceneGeneration;
+        }
+
+        /** @brief 最後に決めたシーンの世代 */
+        [[nodiscard]] uint64_t GetSceneGeneration() const { return m_SceneGeneration; }
+
     private:
         Container::FixedArray<FramePacket, FRAME_PACKET_BUFFER_COUNT> m_Packets;
         PathTracingSequenceCarry m_SequenceCarry;
         Thread::Atomic<uint32_t> m_WriteIndex{0};
         Thread::Atomic<uint32_t> m_ReadIndex{0};
         Thread::Atomic<uint64_t> m_CurrentFrameNumber{0};
+        Thread::Atomic<uint64_t> m_SentSerial{0};
+        PacketConfirmation m_Confirmation;
+        PacketConfirmationMonitor m_ConfirmationMonitor;
+        // GameThread だけが触る
+        uint64_t m_SceneGeneration = 1;
+        const void* m_ObservedGenerationSource = nullptr;
+        uint64_t m_ObservedGenerationValue = 0;
+        bool m_bGenerationObserved = false;
     };
 
 } // namespace NorvesLib::Core::Rendering

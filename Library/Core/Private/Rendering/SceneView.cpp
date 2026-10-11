@@ -610,12 +610,14 @@ namespace NorvesLib::Core::Rendering
         m_LightProxyIndex.clear();
         m_VisibleMeshProxies.clear();
         m_VisibleBoardProxies.clear();
+        AdvanceSceneGeneration();
     }
 
     void SceneView::ClearMegaGeometryProxies()
     {
         m_MegaGeometryProxies.clear();
         m_MegaGeometryProxyIndex.clear();
+        AdvanceSceneGeneration();
     }
 
     // ========================================

@@ -193,6 +193,19 @@ namespace NorvesLib::Core::Rendering
          */
         void ClearMegaGeometryProxies();
 
+        /**
+         * @brief シーンの世代を取得する
+         *
+         * Proxy を入れ替えた（全部クリアした）ときと、シーンを切り替えたとき（AdvanceSceneGeneration）に進む。
+         * FramePacket::SceneGeneration の源になり、世代が替わると古い世代の差分は RenderThread が拒む。
+         */
+        uint64_t GetSceneGeneration() const { return m_SceneGeneration; }
+
+        /**
+         * @brief シーンの世代を 1 つ進める（シーンの切り替えなど、内容を入れ替えるとき）
+         */
+        void AdvanceSceneGeneration() { ++m_SceneGeneration; }
+
         // ========================================
         // 描画フロー
         // ========================================
@@ -498,6 +511,9 @@ namespace NorvesLib::Core::Rendering
         bool m_bEnableInstancing = true;
         uint32_t m_MinInstanceCount = 2;
         bool m_bTemporalAAForced = false;
+
+        // Proxy の内容を入れ替えるたびに進む世代（GameThread だけが触る）
+        uint64_t m_SceneGeneration = 1;
         bool m_bShadowProbeEnabled = false;
         bool m_bShadowProbePointOnly = false;
         ShadowMethod m_ShadowMethod = ShadowMethod::Csm;

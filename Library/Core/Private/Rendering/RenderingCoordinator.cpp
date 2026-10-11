@@ -1,4 +1,5 @@
 ﻿#include "Rendering/RenderingCoordinator.h"
+#include "Debug/EngineChecks.h"
 #include "Debug/Stats.h"
 #include "Engine/Engine.h"
 #include "Engine/NorvesEngine.h"
@@ -1689,12 +1690,214 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    namespace
+    {
+        bool ContainsKey(const Container::VariableArray<uint64_t>& keys, uint64_t key)
+        {
+            return std::find(keys.begin(), keys.end(), key) != keys.end();
+        }
+
+        // 検査 MEGA_SCENE_CONFIRM の決まった場面: 確認・台帳の約束を、本物の型で確かめる。
+        // 破れたときは detail に理由を書いて false を返す。examined に確かめた項目数を足す
+        bool VerifyPacketDeltaProtocol(char* detail, size_t detailSize, uint32_t& examined)
+        {
+            auto fail = [&](const char* reason)
+            {
+                std::snprintf(detail, detailSize, "%s", reason);
+                return false;
+            };
+
+            // 場面 A: RenderThread に飛ばされたパケットの差分は、確認より後の分として次のパケットに積み直される
+            PacketConfirmation confirmation;
+            PacketDeltaLedger ledger;
+            {
+                Container::VariableArray<uint64_t> applied; // RenderThread の写しに当たった鍵
+                Container::VariableArray<uint64_t> carried;
+                constexpr uint64_t kGeneration = 1;
+                // 番号 1..6 のうち、RenderThread が適用するもの（2・3・6 は飛ばされる）。GameThread が確認を取り込むのは 3 と 6 の送信のあと
+                const bool applyPattern[6] = {true, false, false, true, true, false};
+                for (uint64_t serial = 1; serial <= 6; ++serial)
+                {
+                    ledger.CollectPending(kGeneration, carried);
+                    const uint64_t newKey = serial * 10;
+                    ledger.NoteSent(serial, kGeneration, &newKey, 1);
+                    carried.push_back(newKey);
+                    if (applyPattern[serial - 1])
+                    {
+                        if (confirmation.TryApply(serial, kGeneration) != PacketApplyResult::Applied)
+                        {
+                            return fail("適用できるはずのパケットが適用されなかった");
+                        }
+                        for (uint64_t key : carried)
+                        {
+                            if (!ContainsKey(applied, key))
+                            {
+                                applied.push_back(key);
+                            }
+                        }
+                    }
+                    if (serial == 3 || serial == 6)
+                    {
+                        ledger.NoteConfirmed(confirmation.GetConfirmedSerial(), confirmation.GetConfirmedGeneration());
+                    }
+                    ++examined;
+                }
+                if (confirmation.GetConfirmedSerial() != 5)
+                {
+                    return fail("確認の番号が最後に適用した番号にならない");
+                }
+                for (uint64_t serial = 1; serial <= 5; ++serial)
+                {
+                    if (!ContainsKey(applied, serial * 10))
+                    {
+                        return fail("確認より前の送信の変化が、写しに届いていない（飛んだパケットの差分が積み直されていない）");
+                    }
+                    ++examined;
+                }
+                ledger.CollectPending(kGeneration, carried);
+                if (carried.size() != 1 || carried[0] != 60 || ledger.GetUnconfirmedSendCount() != 1)
+                {
+                    return fail("確認より後の送信の変化だけが、積み直しの対象に残るはず");
+                }
+                ++examined;
+            }
+
+            // 場面 B: シーンの世代が替わったら、古い世代の差分は拒む
+            {
+                const uint64_t newKey = 70;
+                ledger.NoteSent(7, 2, &newKey, 1);
+                Container::VariableArray<uint64_t> pendingNew;
+                Container::VariableArray<uint64_t> pendingOld;
+                ledger.CollectPending(2, pendingNew);
+                ledger.CollectPending(1, pendingOld);
+                if (pendingNew.size() != 1 || pendingNew[0] != 70 || !pendingOld.empty())
+                {
+                    return fail("世代が替わったあとに、古い世代の差分が台帳に残った");
+                }
+                if (!confirmation.CanApplyDelta(1) || confirmation.CanApplyDelta(2))
+                {
+                    return fail("適用前は、適用済みの世代の差分だけが当たるはず");
+                }
+                if (confirmation.TryApply(7, 2) != PacketApplyResult::Applied)
+                {
+                    return fail("新しい世代のパケットが適用されなかった");
+                }
+                if (confirmation.CanApplyDelta(1) || !confirmation.CanApplyDelta(2))
+                {
+                    return fail("世代が替わったあとに、古い世代の差分が拒まれない");
+                }
+                if (confirmation.TryApply(8, 1) != PacketApplyResult::StaleGeneration ||
+                    confirmation.TryApply(3, 2) != PacketApplyResult::StaleSerial)
+                {
+                    return fail("適用済みより古い世代・番号のパケットが捨てられない");
+                }
+                if (confirmation.GetConfirmedSerial() != 7 || confirmation.GetConfirmedGeneration() != 2 ||
+                    confirmation.GetStaleDropCount() != 2)
+                {
+                    return fail("捨てたパケットが確認を動かした");
+                }
+                ledger.NoteConfirmed(confirmation.GetConfirmedSerial(), confirmation.GetConfirmedGeneration());
+                if (ledger.GetUnconfirmedSendCount() != 0)
+                {
+                    return fail("確認した送信が台帳に残った");
+                }
+                examined += 5;
+            }
+
+            // 場面 C: 適用した番号と GPU の提出番号の対応。提出が完了するまで、完了の番号は進まない
+            {
+                PacketConfirmation mapping;
+                if (mapping.TryApply(0, 1) != PacketApplyResult::Unnumbered || mapping.GetConfirmedSerial() != 0)
+                {
+                    return fail("番号の無いパケットが確認を動かした");
+                }
+                mapping.TryApply(1, 1);
+                mapping.NoteSubmitted(1, 100);
+                mapping.NoteFinished(1);
+                mapping.TryApply(2, 1); // 描画を見送った（提出が無い）が、適用したので確認する
+                mapping.NoteFinished(2);
+                if (mapping.GetConfirmedSerial() != 2 || mapping.GetCompletedSerial() != 0)
+                {
+                    return fail("提出が完了する前に、完了の番号が進んだ");
+                }
+                mapping.Retire(99, false);
+                if (mapping.GetCompletedSerial() != 0)
+                {
+                    return fail("提出番号に届かないのに、完了の番号が進んだ");
+                }
+                mapping.Retire(100, false);
+                if (mapping.GetCompletedSerial() != 2)
+                {
+                    return fail("提出が完了したのに、提出の無いパケットまで完了の番号が進まない");
+                }
+                mapping.TryApply(3, 1);
+                mapping.NoteSubmitted(3, 5);
+                mapping.NoteFinished(3);
+                mapping.Retire(4, true); // スワップチェーンの作り直しで提出番号が戻った
+                if (mapping.GetCompletedSerial() != 3)
+                {
+                    return fail("提出番号が戻ったとき、持っていた提出が完了済みにならない");
+                }
+                examined += 5;
+            }
+            return true;
+        }
+
+        // 検査 MEGA_SCENE_CONFIRM: 確認の公開値の単調さ（毎回）と、確認・台帳の約束（最初の回と 256 回ごと）を確かめる。
+        // GameThread から呼ぶ
+        void RunPacketConfirmCheck(FramePacketManager& manager)
+        {
+            if (Engine::GEngine == nullptr)
+            {
+                return;
+            }
+            NorvesLib::Debug::EngineChecks& checks = Engine::GEngine->GetEngineChecks();
+            if (!checks.IsEnabled("MEGA_SCENE_CONFIRM"))
+            {
+                return;
+            }
+
+            char detail[240] = {};
+            PacketConfirmationMonitor& monitor = manager.GetConfirmationMonitor();
+            bool bPass = monitor.Observe(manager.GetConfirmation(), manager.GetLastSentSerial(),
+                                         manager.GetSceneGeneration(), detail, sizeof(detail));
+            uint32_t examined = 1;
+            const uint64_t calls = monitor.GetObserveCount();
+            if (bPass && (calls == 1 || calls % 256 == 0))
+            {
+                bPass = VerifyPacketDeltaProtocol(detail, sizeof(detail), examined);
+            }
+            if (!bPass && checks.GetFailCount() <= 8)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "MEGA_SCENE_CONFIRM: 約束が破れた: %s", detail);
+            }
+            if (calls % 120 == 0)
+            {
+                const PacketConfirmation& confirmation = manager.GetConfirmation();
+                NORVES_LOG_INFO("RenderingCoordinator",
+                                "MEGA_SCENE_CONFIRM sent=%llu confirmed=%llu completed=%llu generation=%llu stale=%llu",
+                                static_cast<unsigned long long>(manager.GetLastSentSerial()),
+                                static_cast<unsigned long long>(confirmation.GetConfirmedSerial()),
+                                static_cast<unsigned long long>(confirmation.GetCompletedSerial()),
+                                static_cast<unsigned long long>(manager.GetSceneGeneration()),
+                                static_cast<unsigned long long>(confirmation.GetStaleDropCount()));
+            }
+            // fail は毎回、pass は最初の回と 64 回ごとに出す
+            if (!bPass || calls == 1 || calls % 64 == 0)
+            {
+                checks.Report("MEGA_SCENE_CONFIRM", bPass, examined);
+            }
+        }
+    } // namespace
+
     void RenderingCoordinator::AdvanceCompletedRenderFrameSerial(uint64_t completedSubmissionSerial)
     {
         // スワップチェーンを作り直すと提出 serial の数え直しで値が戻りうる（作り直す前に GPU は待ち終えている）。
         // 戻ったときは、持っていた提出がすべて完了済みとして扱う
         const bool bRestarted = completedSubmissionSerial < m_LastCompletedSubmissionSerial;
         m_LastCompletedSubmissionSerial = completedSubmissionSerial;
+        // 適用の確認にも、完了した提出を渡す（適用した番号と提出番号の対応から、完了した番号を公開する）
+        m_PacketManager.GetConfirmation().Retire(completedSubmissionSerial, bRestarted);
 
         size_t completedCount = 0;
         for (const SubmittedRenderFrame& frame : m_SubmittedRenderFrames)
@@ -2111,6 +2314,8 @@ namespace NorvesLib::Core::Rendering
                 m_CurrentPacket->bHasMainCamera = true;
             }
 
+            m_CurrentPacket->SceneGeneration = m_PacketManager.ResolveSceneGeneration(
+                m_MainSceneView.get(), m_MainSceneView ? m_MainSceneView->GetSceneGeneration() : 0u);
             if (m_MainSceneView)
             {
                 m_CurrentPacket->Scene.MeshProxies = m_MainSceneView->GetMeshProxies();
@@ -2383,6 +2588,7 @@ namespace NorvesLib::Core::Rendering
             }
             m_PacketManager.FinishWrite(m_CurrentPacket);
             m_CurrentPacket = nullptr;
+            RunPacketConfirmCheck(m_PacketManager);
         }
 
         if (bFinishedCameraValid)
@@ -2485,6 +2691,34 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+
+        // 適用の確認。マルチ・シングルのどちらの経路もここを通る共通の場所で、適用済みより古いパケットは描かずに捨て、
+        // 適用したパケットは、描画を見送っても（スワップチェーンが使えないなど）確認する
+        PacketConfirmation& packetConfirmation = m_PacketManager.GetConfirmation();
+        const PacketApplyResult applyResult =
+            packetConfirmation.TryApply(packet->SendSerial, packet->SceneGeneration);
+        if (applyResult == PacketApplyResult::StaleSerial || applyResult == PacketApplyResult::StaleGeneration)
+        {
+            NORVES_LOG_WARNING("RenderingCoordinator",
+                               "Dropped a packet older than the applied one: serial=%llu generation=%llu confirmed=%llu",
+                               static_cast<unsigned long long>(packet->SendSerial),
+                               static_cast<unsigned long long>(packet->SceneGeneration),
+                               static_cast<unsigned long long>(packetConfirmation.GetConfirmedSerial()));
+            return;
+        }
+        struct AppliedPacketScope
+        {
+            PacketConfirmation& Confirmation;
+            uint64_t SendSerial;
+            bool bApplied;
+            ~AppliedPacketScope()
+            {
+                if (bApplied)
+                {
+                    Confirmation.NoteFinished(SendSerial);
+                }
+            }
+        } appliedPacketScope{packetConfirmation, packet->SendSerial, applyResult == PacketApplyResult::Applied};
 
         FrameCaptureRequestSnapshot claimedCaptureRequest;
         if (m_FrameCaptureReadbackHelper)
@@ -2653,6 +2887,10 @@ namespace NorvesLib::Core::Rendering
                     m_RenderResources->SkinnedMeshes().AbortFrame();
                     m_RenderResources->AbortRetireFrame();
                 }
+            }
+            if (endFrameResult.SubmissionSerial != 0)
+            {
+                packetConfirmation.NoteSubmitted(packet->SendSerial, endFrameResult.SubmissionSerial);
             }
             if (endFrameResult.HasError())
             {
@@ -3150,6 +3388,7 @@ namespace NorvesLib::Core::Rendering
         if (endFrameResult.SubmissionSerial != 0)
         {
             m_SubmittedRenderFrames.push_back({viewContext.RenderFrameSerial, endFrameResult.SubmissionSerial});
+            packetConfirmation.NoteSubmitted(packet->SendSerial, endFrameResult.SubmissionSerial);
         }
         if (endFrameResult.HasError())
         {

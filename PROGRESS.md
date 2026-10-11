@@ -1514,3 +1514,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - テスト（paths の外）: `SceneQueryRaycastTest` に MegaGeometry の子・非アクティブな親への付け替えと復帰・World 切替後の古い World の削除、の 3 ケースを追加。各段で全量と照合。
 - 結果（`.harness/runs/20261010-223034/`）: `verify-SCN-ECS-SCENEQUERY-44-build.txt`（Debug ビルド EXIT=0）、`-44-ctest.txt`（4 件 Passed）、`-44-capture.txt`（mega-stress の `result=pass`、`ECS_SCENEQUERY` が default 3・close 3・aerial 2 pass、fail 無し。1% 移動で `updated=45 entries=4838 rebuilt=0`、累計 作り直し 2 回）。
 - Notes: 行末は numstat の 2 通りが一致。旧の World が SceneQuery より長く生きて切替前に Clear されない場合、その World に残る識別子は無効のまま（SceneQuery 破棄後は呼ばれない前提）。
+
+### SCN-MEGA-SCENE-CONFIRM（2026-10-11、反復 45・run 20261010-223034）
+
+- 変更:
+  - `FramePacket` に `SceneGeneration`（シーンの世代）と `SendSerial`（送った番号）を足した。番号は `FramePacketManager::FinishWrite` が 1 から順に振る（飛ばされたパケットがあっても欠けない）。世代は `SceneView` が持ち（`GetSceneGeneration`・`AdvanceSceneGeneration`。`ClearAllProxies`・`ClearMegaGeometryProxies` でも進む）、`FramePacketManager::ResolveSceneGeneration` が源の SceneView の替わり・世代の進みを見てパケットに書く。
+  - 共通の場所は `RenderingCoordinator::RenderFrame`（RenderThread のループも、RenderWorld.cpp の直接の経路も通る）。パケットを取った直後に `PacketConfirmation::TryApply` を呼び、適用済みより古い番号・世代のパケットは描かずに捨てる。適用したら、描画を見送っても（スワップチェーンが使えない等の早期 return）スコープの終わりで `NoteFinished` を呼ぶ。EndFrame の提出ごとに `NoteSubmitted` で「適用した番号 ↔ 提出番号」を持ち、`AdvanceCompletedRenderFrameSerial` から `Retire` で完了を取り込む。
+  - 公開（atomic）: 確認の番号・確認の世代・完了した番号・捨てた数（`PacketConfirmation::Get*`）。世代を先に、完了を最後に書く。
+  - GameThread 側の積み直し: `PacketDeltaLedger`（送った番号ごとの変化の鍵を覚え、確認以前を捨て、確認より後を次のパケットが積み直す。世代が替わると古い世代の分を捨てる）。まだ差分は運んでいない（全量の写しも運ぶまま）。DELTA の項目が使う。
+  - 検査 `MEGA_SCENE_CONFIRM`（`RunPacketConfirmCheck`、EndFrame から）: 毎回、確認・世代・完了が単調で、完了 ≤ 確認 ≤ 送った番号、確認の世代 ≤ 送った世代であること（`PacketConfirmationMonitor`）。最初の回と 256 回ごとに、本物の型で 3 つの場面（飛ばされたパケットの差分が積み直される／世代が替わったら古い差分を拒み古いパケットを捨てる／適用した番号と提出番号の対応・提出なしの完了・スワップチェーン作り直しでの完了）を確かめる。開発ログ `MEGA_SCENE_CONFIRM sent= confirmed= completed=` は 120 回ごと。
+- 結果（`.harness/runs/20261010-223034/`）:
+  - `verify-SCN-MEGA-SCENE-CONFIRM-1.txt`: 指定の撮影 `result=pass`（RelWithDebInfo のビルド pass）。`MEGA_SCENE_CONFIRM` が default 3・close 3・aerial 2 pass、fail 0。開発ログは `sent=120 confirmed=119 completed=118 stale=0`。
+  - `-2.txt`: 指定の周回（mega-stress,mega-bananas）は `MEGA_SCENE_CONFIRM` pass=5585・fail 0 だが、`SCENE_CYCLE_DIFF field=textures,texture_bytes`（mega-stress の 2 周目以降 6→9。別シーンが先に読んだテクスチャのキャッシュ。既知）で EXIT=1。
+  - `-3-mega-stress.txt`・`-3-mega-bananas.txt`: シーンごとの周回 3 周が各 `result=pass`、`MEGA_SCENE_CONFIRM` pass=3907 / 3878、fail 無し。
+  - `-4-build.txt`・`-4-ctest.txt`: Debug の FramePacketManagerTest・RenderThreadFrameCompletionTest・SkeletalFramePacketSnapshotTest のビルド EXIT=0、3 件 Passed。
+- BLOCKED: 混在周回の verify だけが、ECS・描画と無関係な既知のテクスチャ差で通らない（`blocked/SCN-MEGA-SCENE-CONFIRM.md`。INVALIDATION・PREP・SWITCH と同じ判断）。実装は完了・コミット済み。
+- Notes:
+  - `RenderingCoordinator.h` は触っていない（確認の状態は `FramePacketManager` に持たせ、検査は cpp の無名名前空間）。`RenderThread.cpp` も触っていない（`NotifyNewFrame` での置き換え・確認用の破棄はパケットを適用しないので確認されず、飛んだ扱いになる）。
+  - 実際のシーンの切り替え（World の SetSceneView・シーンの破棄）は、まだ `SceneView::AdvanceSceneGeneration` を呼んでいない。今は `ClearAllProxies` 系でだけ世代が進む。SCENE-DELTA（World.cpp が paths）で切り替えの口から呼ぶこと。
+  - 確認の番号は「その番号のパケットを適用した」であり、それ以前のパケットがすべて適用された意味ではない。差分は「確認より後」を全部積み直す累積にして、飛んだ分を落とさない（`PacketDeltaLedger`）。差分を運ぶ項目では、RenderThread 側で `CanApplyDelta` を使うこと。
+  - 起動の読み込み中は RenderThread が最初のパケットで止まり、GameThread だけが数万フレーム先へ進む（周回のログで `confirmed=1`、`sent` は増える）。再開すると確認・完了とも単調に追いつく。既存の挙動で、この項目では変えていない。
+  - 行末: 編集したファイルは numstat の 2 通りが一致。
