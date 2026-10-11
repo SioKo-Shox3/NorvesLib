@@ -2114,3 +2114,23 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes:
   - フレームの段は World のスケジューラに載せず別のスケジューラにした。handler の OnUpdate の中のシーンの切り替えが World のスケジューラへ系を登録する（散布の `EnsureMassWorkSystem`・物理の段の系）ので、World の段の最中（登録を拒む）に OnUpdate を呼ぶと登録が落ちるため。World の収集の番号も増やさない。専用の EcsWorld はチャンクの pool の最初の 1 枚（約 256 KB）を持つ。
   - 段を走らせる順は呼び手（ApplicationProcessor）が決める。World の段（Tick・Fixed*・LateTick・Sync）との前後は上の表のとおりで、設計 1.7 の PreUpdate/PostUpdate を実際の順に合わせて 7 段に分けた。
+
+
+### SCN-ECS-TICK-REMOVE（2026-10-11、反復 12〜13・run 20261011-211043）
+
+- 変更:
+  - Component の仮想（Tick・GetTimeChannel・OnTickGroup・FixedTick）と主群の受け渡し（`m_DispatchPrimaryGroup`）、`Entity::Tick`・`TickComponents`、`TickDispatch.h`（と TickDispatchTest）、`BuildTickSnapshot`・旧の一覧（`m_TickEntries`・`m_FixedTickEntries`・`m_bHasTickSnapshot`）、旧の配信のシステム（`FixedTick.Dispatch`・`DispatchFixedTickBody`・`TickEntityRecursive`・`FixedTickEntityRecursive`・`TryResolveTickDelta`）を消した。段 Tick/LateTick の呼び手は順序付きの系の順の一覧だけを呼ぶ。
+  - 順の比較は `TickOrderLess`（`Component/TickGroup.h`）に移し、スケジューラの順の一覧もこれで並べる。
+  - 呼び先の付け直し（`SyncOrderedTicks`）は毎フレームではなく、`m_bOrderedTicksDirty` が立ったときだけ収集の先頭で行う。立てるのは、部分木の追加（`BindEntitySubtreeRows`）・Component の追加（`BindComponentRow`）・親の付け替え（`RelinkEntityRow`）・型の登録（`RegisterComponentTick`）・Tick の設定の変更（`Component::StoreTickConfiguration`。値は BIND-FLAGS の列に書く形のまま）・スケジューラの作り直し。外れるものは従来どおり `InvalidateTickComponent`/`InvalidateTickEntitySubtree` で即時に外し、呼ぶ直前の検査（有効・Tick 有効・破棄予約）も残る。
+  - channel は型の登録の `TimeChannel` だけになった（`World::GetComponentTimeChannel`）。Camera・SpringArm・FollowCamera・QuadrupedLocomotion は Unscaled、Animator・SkinnedMesh は Animation を登録に持つ。個体ごとに channel を変えていたテストは、channel の違う派生の型を登録する形に直した（AnimGraphRuntimeTest の Socket）。
+  - 検査 ECS_TICK_DUP は「同じ収集で同じ呼び先と群を 2 回」だけを見る（仮想の経路が無くなったため）。収集の番号の増分と検査の数え直しは収集の先頭（Tick）へ、Tick の外の単独の固定ステップの番号は `DispatchFixedTick` へ移した。
+  - 検証シーンの FixedStepSentinel は、仮想の FixedTick の代わりに段 FixedTick のシステム（`RenderingValidation.FixedStepSentinel`）から呼ぶ。
+- 結果（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-ECS-TICK-REMOVE-3.txt`: Debug の 4 つのビルド EXIT=0。
+  - `-4.txt`: 7/7 が pass、EXIT=0。
+  - `-5-neighbors.txt`（verify の外）: SkeletalAnimationSamplingTest・RenderingValidationFixtureSupport のビルド EXIT=0、SpringArmComponentTest・EcsSchedulerTest・EcsLifetimeTest・EcsHierarchyTest・SkeletalAnimationSamplingTest の 5/5 が pass。
+  - `-6.txt`: 起動画面 default を RelWithDebInfo で撮り、SCN-MEGA-BASE-RWDI との比較は平均輝度差 0・PSNR 100 dB・不一致画素 7E-06（最大差 1）で `result=pass`、EXIT=0。PNG を開いて確認（天球・地面・球・岩・家）。Game.log の ERROR は 0。
+  - `-1.txt`・`-2.txt` は反復 12（途中で止まり、作業は「作業途中の保存」のコミットに入った）の実行。反復 13 は追加の変更なしで通し直した。
+- Next: TASKS.md の次の todo。
+- Notes:
+  - `TickDispatch.h` を消したので、paths の外の `Library/Core/CMakeLists.txt`（ヘッダの一覧）と `Ecs/EcsScheduler.*`（比較の参照）も合わせて直した。

@@ -597,7 +597,7 @@
 - notes: 親の追記（GPT 2 周目）: 段は `ApplicationProcessor.cpp` 2096 行付近の実際の順（handler の更新は GameMode の更新より前、粒子の更新は固定ステップより前、`Module::TickAll` は RenderSync より後）で定義し、シミュレーションが止まっているときにどの呼び出しが走るかを表にして PROGRESS に残す。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-TICK-REMOVE: 仮想の Tick と、毎フレームの Tick の一覧を消す
-- status: todo
+- status: done
 - done-when: 次を消す: Component.h:82-89・102 の仮想（Tick・GetTimeChannel・OnTickGroup・FixedTick）、`Entity::Tick`/`TickComponents`、`TickDispatch.h`、`BuildTickSnapshot` と一覧（World.h:286-306）、旧の配信のシステム。Tick の設定の API は、BIND-FLAGS の列に書く形で残す。残っているテストを直し、全部 pass させる。
 - verify: `cmake --build build --config Debug --target EntityTreeTest ApplicationFixedStepPipelineTest PhysicsDynamicsTest ScriptComponentTickTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(WorldTickGroupTest|WorldTimeChannelTest|EntityTreeTest|TickGroupConfigurationTest|ApplicationFixedStepPipelineTest|PhysicsFixedStepPipelineTest|ScriptComponentTickTest)$" --no-tests=error --output-on-failure --timeout 180`
