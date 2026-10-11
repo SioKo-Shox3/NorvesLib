@@ -2157,7 +2157,6 @@ namespace NorvesLib::Core::Engine
         auto handlerOwner = GEngine->GetApplicationHandlerShared();
         auto* handler = handlerOwner.get();
 
-        // OnUpdate呼び出し
         // 注: OnUpdate はシミュレーション進行ゲートの影響を受けない。Bridge ポーズ中も
         // 受信フレーム処理（DrainInbound）を回し続ける必要があるため、ここはガードしない。
         auto& skeletalSession = NorvesLib::Core::GEngine.GetSkeletalAssetSession();
@@ -2166,17 +2165,11 @@ namespace NorvesLib::Core::Engine
             Detail::ObservePendingAssets(HasPendingSkeletalConsumers(skeletalSession, handler),
                                          m_bObservedPendingAssets, m_bAssetSettleBaselineLatched);
         }
-        const auto skeletalTick = TickSkeletalOwnerAssetsAndHandler(skeletalSession, handler, deltaTime);
-        if (skeletalTick.Status != SkeletalRuntimeStatus::Success)
+        // 段 PreUpdate: 骨格の資産の反映と handler の OnUpdate → スクリプトの前処理
+        RunFrameStage(EFrameStage::PreUpdate, deltaTime, handler);
+        if (m_bFrameStageAbort)
         {
-            GEngine->RequestExit(skeletalTick.Status == SkeletalRuntimeStatus::Closed ? 0 : 1);
             return;
-        }
-
-        if (NorvesLib::Core::GEngine.GetScriptRuntime().BeginFrameMaintenance(deltaTime) !=
-            EScriptRuntimeResult::Success)
-        {
-            LOG_ERROR("ScriptRuntime BeginFrameMaintenance failed");
         }
 
         TickSimulationAndHaptics(rawDeltaNanoseconds, deltaTime, handler);
@@ -2196,14 +2189,8 @@ namespace NorvesLib::Core::Engine
         GEngine->GetSceneQuery().Update(GEngine->GetWorld());
         GEngine->GetSceneQuery().RunCheck(GEngine->GetWorld(), GEngine->GetEngineChecks());
 
-        if (NorvesLib::Core::GEngine.GetScriptRuntime().EndFrameMaintenance() !=
-            EScriptRuntimeResult::Success)
-        {
-            LOG_ERROR("ScriptRuntime EndFrameMaintenance failed");
-        }
-
-        // モジュールの毎フレーム Tick(GameThread・SyncToSceneView 後・描画前)。空 registry で no-op。
-        Module::GetModuleRegistry().TickAll(deltaTime);
+        // 段 PostUpdate: スクリプトの後処理 → モジュールの毎フレーム Tick(SyncToSceneView 後・描画前)
+        RunFrameStage(EFrameStage::PostUpdate, deltaTime, handler);
 
         // 描画モジュールの overlay パスを収集(借用ポインタ・非 null のみ)。
         // RenderThread が直接 registry を読まないよう、この集合を書き込み中パケットへ焼く。
@@ -2647,9 +2634,10 @@ namespace NorvesLib::Core::Engine
         timing.StartRemainderScaledUnits = m_FixedStepScheduler->GetRemainderScaledUnits();
         if (bAdvanceSimulation)
         {
-            GEngine->UpdateGameModeStateMachine(times.Unscaled);
+            // 段 PreSimulation: GameMode の状態機械 → World の段 Tick → 段 PostTick: 粒子
+            RunFrameStage(EFrameStage::PreSimulation, times.Unscaled, handler);
             GEngine->GetWorld().Tick(times);
-            GEngine->GetParticleSystem().Tick(times.Particle);
+            RunFrameStage(EFrameStage::PostTick, times.Particle, handler);
         }
         const FixedStepAdvanceResult result =
             AdvanceFixedSimulation(times.PhysicsDeltaNanoseconds, bAdvanceSimulation, &timing);
@@ -2657,12 +2645,9 @@ namespace NorvesLib::Core::Engine
                                                               1'000'000'000.0f);
         if (bAdvanceSimulation)
         {
+            // World の段 LateTick → 段 PostLateTick: モジュールの LateTick → handler の OnLateUpdate
             GEngine->GetWorld().LateTick(times);
-            Module::GetModuleRegistry().DispatchLateTick(times.Unscaled);
-            if (handler)
-            {
-                handler->OnLateUpdate(times.Unscaled);
-            }
+            RunFrameStage(EFrameStage::PostLateTick, times.Unscaled, handler);
         }
         return result;
     }
@@ -2762,16 +2747,144 @@ namespace NorvesLib::Core::Engine
                 }
             }
         } fixedStageDelta(world.GetScheduler(), FixedDeltaTime);
+        // 1 歩: World の段 FixedBegin → 段 FixedModulePre: モジュールの PreFixedTick → World の段 FixedTick →
+        // 段 FixedModulePost: モジュールの FixedTick → World の段 FixedEnd
         for (uint64_t step = 0; step < result.ExecutedSteps; ++step)
         {
             world.BeginFixedStep();
-            Module::GetModuleRegistry().DispatchPreFixedTick(FixedDeltaTime);
+            RunFrameStage(EFrameStage::FixedModulePre, FixedDeltaTime, nullptr);
             world.DispatchFixedTick(FixedDeltaTime);
-            Module::GetModuleRegistry().DispatchFixedTick(FixedDeltaTime);
+            RunFrameStage(EFrameStage::FixedModulePost, FixedDeltaTime, nullptr);
             world.EndFixedStep();
         }
 
         return result;
+    }
+
+    void ApplicationProcessor::EnsureFrameStages()
+    {
+        if (m_FrameStageScheduler)
+        {
+            return;
+        }
+        m_FrameStageWorld = Container::MakeUnique<Ecs::EcsWorld>();
+        m_FrameStageScheduler = Container::MakeUnique<Ecs::SystemScheduler>(*m_FrameStageWorld);
+        Ecs::SystemScheduler& scheduler = *m_FrameStageScheduler;
+
+        // 段は 1 フレームの中で走る順に足す（World の段 Tick・Fixed*・LateTick・Sync はその間に World が走らせる）
+        static constexpr const char* kStageNames[static_cast<size_t>(EFrameStage::Count)] = {
+            "PreUpdate", "PreSimulation", "PostTick", "FixedModulePre", "FixedModulePost", "PostLateTick", "PostUpdate"};
+        for (size_t index = 0; index < static_cast<size_t>(EFrameStage::Count); ++index)
+        {
+            m_FrameStages[index] = scheduler.AddStage(kStageNames[index]);
+        }
+
+        // 段の GameThreadOnly のシステムは登録順に単独の波で走る。中身はそれぞれの持ち主の関数を呼ぶだけ
+        auto add = [&](EFrameStage stage, const char* name, Ecs::EcsSystemFn fn)
+        {
+            Ecs::SystemDesc desc;
+            desc.Name = name;
+            desc.Stage = m_FrameStages[static_cast<size_t>(stage)];
+            desc.Thread = ThreadPolicy::GameThreadOnly;
+            desc.Run = fn;
+            desc.User = this;
+            if (scheduler.RegisterSystem(desc) == Ecs::kInvalidEcsSystem)
+            {
+                LOG_ERROR("ApplicationProcessor: フレームの段のシステム %s を登録できなかった", name);
+            }
+        };
+        using Context = Ecs::EcsSystemContext;
+
+        add(EFrameStage::PreUpdate, "PreUpdate.HandlerUpdate",
+            [](void* user, const Context& context)
+            {
+                auto* self = static_cast<ApplicationProcessor*>(user);
+                const auto skeletalTick = TickSkeletalOwnerAssetsAndHandler(
+                    NorvesLib::Core::GEngine.GetSkeletalAssetSession(), self->m_FrameStageHandler, context.DeltaTime);
+                if (skeletalTick.Status != SkeletalRuntimeStatus::Success)
+                {
+                    self->m_bFrameStageAbort = true;
+                    GEngine->RequestExit(skeletalTick.Status == SkeletalRuntimeStatus::Closed ? 0 : 1);
+                }
+            });
+        add(EFrameStage::PreUpdate, "PreUpdate.ScriptBegin",
+            [](void* user, const Context& context)
+            {
+                if (static_cast<ApplicationProcessor*>(user)->m_bFrameStageAbort)
+                {
+                    return;
+                }
+                if (NorvesLib::Core::GEngine.GetScriptRuntime().BeginFrameMaintenance(context.DeltaTime) !=
+                    EScriptRuntimeResult::Success)
+                {
+                    LOG_ERROR("ScriptRuntime BeginFrameMaintenance failed");
+                }
+            });
+
+        add(EFrameStage::PreSimulation, "PreSimulation.GameModeStateMachine",
+            [](void*, const Context& context) { GEngine->UpdateGameModeStateMachine(context.DeltaTime); });
+
+        add(EFrameStage::PostTick, "PostTick.Particles",
+            [](void*, const Context& context) { GEngine->GetParticleSystem().Tick(context.DeltaTime); });
+
+        add(EFrameStage::FixedModulePre, "FixedModulePre.PreFixedTick",
+            [](void*, const Context& context) { Module::GetModuleRegistry().DispatchPreFixedTick(context.DeltaTime); });
+        add(EFrameStage::FixedModulePost, "FixedModulePost.FixedTick",
+            [](void*, const Context& context) { Module::GetModuleRegistry().DispatchFixedTick(context.DeltaTime); });
+
+        add(EFrameStage::PostLateTick, "PostLateTick.ModuleLateTick",
+            [](void*, const Context& context) { Module::GetModuleRegistry().DispatchLateTick(context.DeltaTime); });
+        add(EFrameStage::PostLateTick, "PostLateTick.HandlerLateUpdate",
+            [](void* user, const Context& context)
+            {
+                if (Application::IApplicationHandler* handler = static_cast<ApplicationProcessor*>(user)->m_FrameStageHandler)
+                {
+                    handler->OnLateUpdate(context.DeltaTime);
+                }
+            });
+
+        add(EFrameStage::PostUpdate, "PostUpdate.ScriptEnd",
+            [](void*, const Context&)
+            {
+                if (NorvesLib::Core::GEngine.GetScriptRuntime().EndFrameMaintenance() != EScriptRuntimeResult::Success)
+                {
+                    LOG_ERROR("ScriptRuntime EndFrameMaintenance failed");
+                }
+            });
+        // 空の registry では何もしない
+        add(EFrameStage::PostUpdate, "PostUpdate.ModuleTick",
+            [](void*, const Context& context) { Module::GetModuleRegistry().TickAll(context.DeltaTime); });
+    }
+
+    void ApplicationProcessor::RunFrameStage(EFrameStage stage, float deltaTime, Application::IApplicationHandler* handler)
+    {
+        EnsureFrameStages();
+        if (stage == EFrameStage::PreUpdate)
+        {
+            m_bFrameStageAbort = false;
+        }
+        // 段の中の handler は呼び手の借用。例外で抜けても前の値へ戻す
+        struct HandlerScope
+        {
+            Application::IApplicationHandler*& Slot;
+            Application::IApplicationHandler* Previous;
+            HandlerScope(Application::IApplicationHandler*& slot, Application::IApplicationHandler* handler)
+                : Slot(slot), Previous(slot)
+            {
+                Slot = handler;
+            }
+            ~HandlerScope()
+            {
+                Slot = Previous;
+            }
+        } handlerScope(m_FrameStageHandler, handler);
+        // システムは channel 0 の delta を受け取る
+        const float deltas[1] = {deltaTime};
+        const uint32_t stageId = m_FrameStages[static_cast<size_t>(stage)];
+        if (!m_FrameStageScheduler->RunStage(stageId, Container::Span<const float>(deltas, 1)))
+        {
+            LOG_ERROR("ApplicationProcessor: フレームの段 %u を走らせられなかった", stageId);
+        }
     }
 
     bool ApplicationProcessor::CreateEngine()

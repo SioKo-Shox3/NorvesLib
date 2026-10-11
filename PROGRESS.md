@@ -2084,3 +2084,33 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-6.txt`: QuadrupedLocomotionModelTest・LocomotionProfileReloadTest・CameraCollisionSolverTest の 3/3 が pass、EXIT=0。
   - 起動画面の比較は、2026-10-11 の検証の軽量化に従い verify に無いので回していない。
 - Next: TASKS.md の次の todo。
+
+### SCN-ECS-FRAME-HOOKS（2026-10-11、反復 11・run 20261011-211043）
+
+- 変更:
+  - ApplicationProcessor にフレームの段のスケジューラ（`Ecs::SystemScheduler`。行を持たない専用の `EcsWorld` に付ける）を足し、初めて使うときに作る。段は `PreUpdate`・`PreSimulation`・`PostTick`・`FixedModulePre`・`FixedModulePost`・`PostLateTick`・`PostUpdate`（1 フレームの中で走る順）。各段の GameThreadOnly のシステムは持ち主の関数を呼ぶだけで、delta は RunStage の channel 0 で渡す（値は従来と同じ float）。
+  - 置き換えた呼び出し（順は従来のまま）: `PreUpdate.HandlerUpdate`（骨格の資産の反映と handler の OnUpdate。失敗したら終了を求め、このフレームの残りを走らせない）→ `PreUpdate.ScriptBegin`、`PreSimulation.GameModeStateMachine`、`PostTick.Particles`、`FixedModulePre.PreFixedTick`、`FixedModulePost.FixedTick`、`PostLateTick.ModuleLateTick` → `PostLateTick.HandlerLateUpdate`、`PostUpdate.ScriptEnd` → `PostUpdate.ModuleTick`。区間は `Ecs.Stage.<段>`・`Ecs.Sys.<系>` で記録される。
+- 1 フレームの順と、シミュレーションが止まっているとき（`ShouldAdvanceSimulation` が偽）に走るか:
+
+| 順 | 段・処理 | 呼び出し | 停止中 |
+|---|---|---|---|
+| 1 | 段 PreUpdate | 骨格の資産の反映 → handler OnUpdate → スクリプトの前処理 | 走る |
+| 2 | （段の外） | 入力の焦点の反映・進行の判定・振動の一時停止 | 走る |
+| 3 | 段 PreSimulation | GameMode の状態機械 | 走らない |
+| 4 | World の段 Tick | 群 Input〜PoseFinalize | 走らない |
+| 5 | 段 PostTick | 粒子の Tick | 走らない |
+| 6 | 固定ステップ × 歩数 | World FixedBegin → 段 FixedModulePre（モジュール PreFixedTick）→ World FixedTick → 段 FixedModulePost（モジュール FixedTick）→ World FixedEnd | 走らない（Paused で 0 歩） |
+| 7 | （段の外） | 描画の補間の alpha | 走る |
+| 8 | World の段 LateTick → 段 PostLateTick | 群 PostPhysics〜PreRender → モジュール LateTick → handler OnLateUpdate | 走らない |
+| 9 | （段の外） | 振動の更新 | 走る |
+| 10 | World の段 Sync ほか | SyncToSceneView・一時の板・粒子の板・SceneQuery | 走る |
+| 11 | 段 PostUpdate | スクリプトの後処理 → モジュール TickAll | 走る |
+
+- 結果（`.harness/runs/20261011-211043/`）:
+  - `verify-SCN-ECS-FRAME-HOOKS-2.txt`: Debug の ApplicationFixedStepPipelineTest・GameModeStateMachineTest・LoggerSinkTest・CanvasTransientBoardSnapshotTest のビルド EXIT=0（`-1.txt` は定義の引数の型の直し忘れでコンパイルエラー。無効）。
+  - `-3.txt`: ApplicationFixedStepPipelineTest・ParticleFrameSnapshotTest・ModuleRegistryTest・GameModeRegistryTest・GameModeStateMachineTest・SubRoutineTest の 6/6 が pass、EXIT=0（モジュールの Pre/Fixed/Late と handler の OnLateUpdate の順、停止中に Late の段が走らないことを含む）。
+  - `-4.txt`: 起動画面 default を RelWithDebInfo で撮り、SCN-MEGA-BASE-RWDI との比較は平均輝度差 0・PSNR 100 dB・不一致画素 7E-06（最大差 1）で `result=pass`、EXIT=0。PNG を開いて確認（天球・地面・球・岩・家）。Game.log の ERROR は 0。
+- Next: SCN-ECS-TICK-REMOVE。
+- Notes:
+  - フレームの段は World のスケジューラに載せず別のスケジューラにした。handler の OnUpdate の中のシーンの切り替えが World のスケジューラへ系を登録する（散布の `EnsureMassWorkSystem`・物理の段の系）ので、World の段の最中（登録を拒む）に OnUpdate を呼ぶと登録が落ちるため。World の収集の番号も増やさない。専用の EcsWorld はチャンクの pool の最初の 1 枚（約 256 KB）を持つ。
+  - 段を走らせる順は呼び手（ApplicationProcessor）が決める。World の段（Tick・Fixed*・LateTick・Sync）との前後は上の表のとおりで、設計 1.7 の PreUpdate/PostUpdate を実際の順に合わせて 7 段に分けた。

@@ -588,7 +588,7 @@
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-11 親: verify の LoggerSinkTest の束が、この項目と関係なく 10 月初めから別のテスト 5 本のコンパイルエラーでビルドできない。束を直す SCN-FIX-LOGGERSINK-BUNDLE をこの項目の前に足して todo に戻した（blocked の推奨 A）。消した OnTickGroup を直接呼んでいた `Test/Modules/Physics/PhysicsFixedStepPipelineTest.cpp` の 3 行の追随は paths に足して追認した。
 
 ## SCN-ECS-FRAME-HOOKS: GameMode・粒子・モジュール・handler の更新を段のシステムにする
-- status: todo
+- status: done
 - done-when: 次を設計 1.7 の段の GameThreadOnly のシステムとして、今と同じ順で走らせる（中身は持ち主に残す）: `UpdateGameModeStateMachine`、handler の OnUpdate/OnLateUpdate、`ParticleSystem::Tick`、モジュールの TickAll/LateTick/PreFixedTick/FixedTick、スクリプトの前後処理（ApplicationProcessor.cpp:2096-2132・2576-2590・2670-2672）。下のテストと起動画面の比較が pass する。
 - verify: `cmake --build build --config Debug --target ApplicationFixedStepPipelineTest GameModeStateMachineTest LoggerSinkTest CanvasTransientBoardSnapshotTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^(ApplicationFixedStepPipelineTest|GameModeStateMachineTest|GameModeRegistryTest|SubRoutineTest|ModuleRegistryTest|ParticleFrameSnapshotTest)$" --no-tests=error --output-on-failure --timeout 180`

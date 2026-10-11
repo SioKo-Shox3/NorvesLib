@@ -20,6 +20,12 @@ namespace NorvesLib::Core::Boot
     struct BootConfig;
 }
 
+namespace NorvesLib::Core::Ecs
+{
+    class EcsWorld;
+    class SystemScheduler;
+}
+
 namespace NorvesLib::Core::Engine
 {
     class FixedStepScheduler;
@@ -120,6 +126,23 @@ namespace NorvesLib::Core::Engine
             int64_t rawDeltaNanoseconds,
             bool bAdvanceSimulation, FixedStepFrameTiming* timing = nullptr);
 
+        /// フレームの段（設計 1.7）。1 フレームの中で走る順
+        enum class EFrameStage : uint8_t
+        {
+            PreUpdate,
+            PreSimulation,
+            PostTick,
+            FixedModulePre,
+            FixedModulePost,
+            PostLateTick,
+            PostUpdate,
+            Count
+        };
+        /// フレームの段のスケジューラを、初めて使うときに作る
+        void EnsureFrameStages();
+        /// フレームの段を 1 つ走らせる。段の GameThreadOnly のシステムは delta と handler をここから受け取る
+        void RunFrameStage(EFrameStage stage, float deltaTime, Application::IApplicationHandler* handler);
+
         /**
          * @brief GEngineを作成・初期化
          * @return 成功時true
@@ -167,6 +190,17 @@ namespace NorvesLib::Core::Engine
         bool m_HapticsFailureWarned = false;
         uint64_t m_InputFocusConnectionSerial = 0;
         Container::TUniquePtr<FixedStepScheduler> m_FixedStepScheduler;
+        // フレームの段（handler・GameMode・粒子・モジュール・スクリプトの前後処理）。World の段とは別のスケジューラに置く。
+        // handler の OnUpdate の中のシーンの切り替えなどが World のスケジューラへ系を登録するので、
+        // それを World の段の最中（登録を拒む）に呼ばないため。行は持たない
+        Container::TUniquePtr<Ecs::EcsWorld> m_FrameStageWorld;
+        Container::TUniquePtr<Ecs::SystemScheduler> m_FrameStageScheduler;
+        // EFrameStage ごとのスケジューラの段の番号
+        uint32_t m_FrameStages[static_cast<size_t>(EFrameStage::Count)] = {};
+        // 走っている段へ渡す handler（RunFrameStage の間だけ有効。借用）
+        Application::IApplicationHandler* m_FrameStageHandler = nullptr;
+        // PreUpdate の handler の更新が失敗して終了を求めたら、このフレームの残りを走らせない
+        bool m_bFrameStageAbort = false;
         int64_t m_LastFrameTimeNanoseconds = 0;
         float m_TargetFrameTime = 1.0f / 60.0f; // デフォルト60FPS
         uint64_t m_ExitAfterFrames = 0;         // 0は無効
