@@ -633,13 +633,35 @@
 - notes: 2026-10-12 SCN-MEGA-MEASURE-CPU の撮り直し（反復 17）で足した。5万個の静止で gt の median 10.97 ms のうち `GameThread.TransientBoards` が 10.43 ms（p95 11.64）で、Ecs の段の合計（0.18 ms）の外にある gt のほぼ全部。mega-stress に Text は無いが、根から全 Entity と全 Component を毎フレームたどっている（`World.cpp` の `CollectTransientBoardProxiesRecursive`）。撮影は反復の中で 1 回: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -Views default -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-TRANSIENT-BOARDS/static`。危険地帯（描画へ渡す板・Object の寿命）。 2026-10-12 親: verify 4 が `timing_missing=render_thread_ms_*` で落ちた（gt が 10.97 → 0.174 ms に下がり、rt の拾い方の限界に当たった）。blocked の推奨 1 を採り、CaptureScene.ps1 の rt の集め方の修正をこの項目に含めて todo に戻した。
 
 ## SCN-ECS-RETIRE-LEGACY: 旧経路と ComponentDataRegistry を消す
-- status: todo
+- status: backlog
 - done-when: 次を消す: `--ecs-legacy-transform`/`--ecs-legacy-sync`、旧の再帰（UpdateEntityTransformRecursive・SyncEntityRecursive・UpdateRenderTransformRecursive ほか）、ComponentDataRegistry とそのテスト・ベンチマーク。先に利用者を数え、残る利用者がいれば消さずに BLOCKED にする。`--mega-scene-full-sync` は残す。
 - verify: `cmake --build build --config Debug --target EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB|TransformHierarchy" --no-tests=error --output-on-failure --timeout 180`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Private/Object/World.cpp, Library/Core/Public/Object/World.h, Library/Core/Public/Engine, Library/Core/Private/Engine, Library/Core/CMakeLists.txt, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親: 利用者が残っていたので（`blocked/SCN-ECS-RETIRE-LEGACY.md`）、推奨 A のとおり SCN-ECS-RETIRE-LEGACY-FLAGS（旧の切替と再帰）と SCN-ECS-RETIRE-REGISTRY（EntityHandle を World へ移して ComponentDataRegistry を消す）の 2 つに分け、この項目は backlog にした。
 
+
+
+## SCN-ECS-RETIRE-LEGACY-FLAGS: 旧の更新・同期の切替と再帰を消し、旧を正解にしていた照合を期待値に替える
+- status: todo
+- done-when: `--ecs-legacy-transform`・`--ecs-legacy-sync`、`SetLegacyRenderSync`/`IsLegacyRenderSync`、旧の再帰（UpdateEntityTransformRecursive・SyncEntityRecursive・UpdateRenderTransformRecursive ほか）と、SceneQuery の旧への切替（`SceneQuery.cpp` 944 行付近）を消す。`--mega-scene-full-sync` は残す。旧の全走査を正解にしていた照合は次のように替える: `WorldSyncDifferentialTest`・`EcsHierarchyTest`・`SceneQueryRaycastTest` は、手で決めた期待値（追加・値の変更・親の付け替え・非アクティブ・破棄・シーンの出入りの後の proxy・板・変換・照会の結果）との照合にする。開発ビルドの検査（ECS_RENDER_SYNC・ECS_RENDER_INVALIDATION・ECS_TRANSFORM など）は、旧の再帰を使わない全量の照合（ECS の行から全量を作り直して比べる）に替えるか、照合が成り立たないものは消してその役目をテストの期待値で持つ（どちらにしたかを PROGRESS に表で書く）。3 シーンの混在の周回が pass。
+- verify: `cmake --build build --config Debug --target EntityTreeTest SceneViewProxyLookupTest WorldSyncDifferentialTest SceneQueryRaycastTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "World|SceneViewProxy|EntityWorldAABB|TransformHierarchy|EcsHierarchy|SceneQuery" --no-tests=error --output-on-failure --timeout 180`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Build -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
+- paths: Library/Core/Private/Object/World.cpp, Library/Core/Public/Object/World.h, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Scene/SceneQuery.h, Library/Core/Private/Scene/SceneQuery.cpp, Library/Core/Public/Engine, Library/Core/Private/Engine, Library/Core/Public/Debug, Library/Core/Private/Debug, Game/GameApplicationHandler.cpp, Test/Core/Object, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY の推奨 A の 1）。後の項目の verify は ECS_* の検査も旧の切替も使っていない（親が確かめた）。危険地帯（描画の同期・Object の寿命）。
+
+
+## SCN-ECS-RETIRE-REGISTRY: EntityHandle の発行と解決を World へ移し、ComponentDataRegistry を消す
+- status: todo
+- done-when: 世代付きの `EntityHandle` の発行と解決を World の持ち物（ECS の行の番号と世代から作る表）にし、`Entity::GetEntityHandle` はそれを返す。利用者（`Game/Input/PickingController.cpp`・`Library/Modules/Physics/Private/Physics/PhysicsModule.cpp`・`Game/GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.cpp`・`Test/Core/Engine/ApplicationFixedStepPipelineTest.cpp`・`Test/Core/Object/WorldTickGroupTest.cpp`）を World の API に移す。`GEngine` のメンバの ComponentDataRegistry と、その Publish*・テスト・ベンチマークを消す（シングルトン禁止・所有権モデルに合わせ、ハンドルの表は World ごとの寿命にする）。破棄の後のハンドルが解決できないこと、世代の違うハンドルを拒むこと、別の World のハンドルを解決しないことをテストで確かめる。物理の最小のスモーク（`Scripts/Test-M8MinimalPhysics.ps1`）が今と同じ結果で pass（このスクリプトの Game の起動に `--window-background` を足す）。
+- verify: `cmake --build build --config Debug --target EntityTreeTest ApplicationFixedStepPipelineTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^(WorldTickGroupTest|ApplicationFixedStepPipelineTest|EcsLifetimeTest|EcsHierarchyTest)$" --no-tests=error --output-on-failure --timeout 180`
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/Test-M8MinimalPhysics.ps1 -Configuration RelWithDebInfo`
+- paths: Library/Core/Public/Object, Library/Core/Private/Object, Library/Core/Public/Ecs, Library/Core/Private/Ecs, Library/Core/Public/Engine, Library/Core/Private/Engine, Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/CMakeLists.txt, Game/Input, Game/GameModes/Rendering3DTest/M8MinimalPhysicsSmoke.cpp, Library/Modules/Physics/Private/Physics/PhysicsModule.cpp, Scripts/Test-M8MinimalPhysics.ps1, Test/Core/Engine, Test/Core/Object, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が足した（SCN-ECS-RETIRE-LEGACY の推奨 A の 2）。危険地帯（Object の寿命・公開 API）。ComponentDataRegistry の場所は `GEngine` のメンバ（`NorvesEngine.*`）と `Test/Core/Rendering` のテスト・ベンチマーク。
 ## SCN-MEGA-GPU-SCENE-PREP: シェーダーのインスタンスの読み方を 1 つの関数とメッシュ表へ寄せ、表の更新を共通の前段に置く（準備・見た目は不変）
 - status: todo
 - done-when: cull・visbuffer・vsm_mega・megageometry.vert の MegaInstance の直接の読みを `LoadMegaInstance(index)` に寄せる。メッシュ表（binding を追加）を書き、関数はメッシュ表から補って同じ値を返す。インスタンス表・メッシュ表の更新を、最初にそれを読むパス（影のパスを含む）より前の共通の前段に移す。起動画面・バナナの比較が pass。
