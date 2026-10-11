@@ -241,12 +241,14 @@ namespace NorvesLib::Core::Rendering
         if (indexIt != m_MeshProxyIndex.end())
         {
             m_MeshProxies[indexIt->second] = proxy;
+            NoteProxyChanged(m_MeshChangedIndices, indexIt->second, m_MeshProxies.size());
             return;
         }
 
         const uint32_t index = static_cast<uint32_t>(m_MeshProxies.size());
         m_MeshProxies.push_back(proxy);
         m_MeshProxyIndex[proxy.ComponentId] = index;
+        NoteProxyChanged(m_MeshChangedIndices, index, m_MeshProxies.size());
         m_VisibleMeshProxies.clear();
     }
 
@@ -266,8 +268,10 @@ namespace NorvesLib::Core::Rendering
         {
             m_MeshProxies[removeIndex] = m_MeshProxies[lastIndex];
             m_MeshProxyIndex[m_MeshProxies[removeIndex].ComponentId] = removeIndex;
+            NoteProxyChanged(m_MeshChangedIndices, removeIndex, m_MeshProxies.size());
         }
 
+        NoteProxyChanged(m_MeshChangedIndices, lastIndex, m_MeshProxies.size());
         m_MeshProxies.pop_back();
         m_VisibleMeshProxies.clear();
         m_VisibleBoardProxies.clear();
@@ -291,7 +295,9 @@ namespace NorvesLib::Core::Rendering
             {
                 m_MeshProxies[index] = m_MeshProxies[lastIndex];
                 m_MeshProxyIndex[m_MeshProxies[index].ComponentId] = index;
+                NoteProxyChanged(m_MeshChangedIndices, index, m_MeshProxies.size());
             }
+            NoteProxyChanged(m_MeshChangedIndices, lastIndex, m_MeshProxies.size());
             m_MeshProxies.pop_back();
             m_VisibleMeshProxies.clear();
         }
@@ -375,11 +381,13 @@ namespace NorvesLib::Core::Rendering
         if (indexIt != m_SkinnedMeshProxyIndex.end())
         {
             m_SkinnedMeshProxies[indexIt->second] = proxy;
+            NoteProxyChanged(m_SkinnedMeshChangedIndices, indexIt->second, m_SkinnedMeshProxies.size());
             return;
         }
         const uint32_t index = static_cast<uint32_t>(m_SkinnedMeshProxies.size());
         m_SkinnedMeshProxies.push_back(proxy);
         m_SkinnedMeshProxyIndex[proxy.ComponentId] = index;
+        NoteProxyChanged(m_SkinnedMeshChangedIndices, index, m_SkinnedMeshProxies.size());
     }
 
     void SceneView::RemoveSkinnedMeshProxy(uint64_t componentId)
@@ -396,7 +404,9 @@ namespace NorvesLib::Core::Rendering
         {
             m_SkinnedMeshProxies[removeIndex] = m_SkinnedMeshProxies[lastIndex];
             m_SkinnedMeshProxyIndex[m_SkinnedMeshProxies[removeIndex].ComponentId] = removeIndex;
+            NoteProxyChanged(m_SkinnedMeshChangedIndices, removeIndex, m_SkinnedMeshProxies.size());
         }
+        NoteProxyChanged(m_SkinnedMeshChangedIndices, lastIndex, m_SkinnedMeshProxies.size());
         m_SkinnedMeshProxies.pop_back();
     }
 
@@ -417,7 +427,9 @@ namespace NorvesLib::Core::Rendering
             {
                 m_SkinnedMeshProxies[index] = m_SkinnedMeshProxies[lastIndex];
                 m_SkinnedMeshProxyIndex[m_SkinnedMeshProxies[index].ComponentId] = index;
+                NoteProxyChanged(m_SkinnedMeshChangedIndices, index, m_SkinnedMeshProxies.size());
             }
+            NoteProxyChanged(m_SkinnedMeshChangedIndices, lastIndex, m_SkinnedMeshProxies.size());
             m_SkinnedMeshProxies.pop_back();
         }
     }
@@ -428,6 +440,7 @@ namespace NorvesLib::Core::Rendering
         if (indexIt != m_SkinnedMeshProxyIndex.end())
         {
             m_SkinnedMeshProxies[indexIt->second] = proxy;
+            NoteProxyChanged(m_SkinnedMeshChangedIndices, indexIt->second, m_SkinnedMeshProxies.size());
             return;
         }
         AddSkinnedMeshProxy(proxy);
@@ -444,12 +457,14 @@ namespace NorvesLib::Core::Rendering
         if (indexIt != m_LightProxyIndex.end())
         {
             m_LightProxies[indexIt->second] = proxy;
+            NoteProxyChanged(m_LightChangedIndices, indexIt->second, m_LightProxies.size());
             return;
         }
 
         const uint32_t index = static_cast<uint32_t>(m_LightProxies.size());
         m_LightProxies.push_back(proxy);
         m_LightProxyIndex[proxy.LightId] = index;
+        NoteProxyChanged(m_LightChangedIndices, index, m_LightProxies.size());
     }
 
     void SceneView::AddMegaGeometryProxy(const MegaGeometryProxy &proxy)
@@ -489,8 +504,10 @@ namespace NorvesLib::Core::Rendering
         {
             m_LightProxies[removeIndex] = m_LightProxies[lastIndex];
             m_LightProxyIndex[m_LightProxies[removeIndex].LightId] = removeIndex;
+            NoteProxyChanged(m_LightChangedIndices, removeIndex, m_LightProxies.size());
         }
 
+        NoteProxyChanged(m_LightChangedIndices, lastIndex, m_LightProxies.size());
         m_LightProxies.pop_back();
     }
 
@@ -512,7 +529,9 @@ namespace NorvesLib::Core::Rendering
             {
                 m_LightProxies[index] = m_LightProxies[lastIndex];
                 m_LightProxyIndex[m_LightProxies[index].LightId] = index;
+                NoteProxyChanged(m_LightChangedIndices, index, m_LightProxies.size());
             }
+            NoteProxyChanged(m_LightChangedIndices, lastIndex, m_LightProxies.size());
             m_LightProxies.pop_back();
         }
     }
@@ -569,6 +588,7 @@ namespace NorvesLib::Core::Rendering
         if (indexIt != m_MeshProxyIndex.end())
         {
             m_MeshProxies[indexIt->second] = proxy;
+            NoteProxyChanged(m_MeshChangedIndices, indexIt->second, m_MeshProxies.size());
             return;
         }
 
@@ -582,6 +602,7 @@ namespace NorvesLib::Core::Rendering
         if (indexIt != m_LightProxyIndex.end())
         {
             m_LightProxies[indexIt->second] = proxy;
+            NoteProxyChanged(m_LightChangedIndices, indexIt->second, m_LightProxies.size());
             return;
         }
 
@@ -678,6 +699,45 @@ namespace NorvesLib::Core::Rendering
         m_MegaChangedIndices.clear();
     }
 
+    void SceneView::NoteProxyChanged(Container::VariableArray<uint32_t> &changedIndices, uint32_t index, size_t arraySize)
+    {
+        changedIndices.push_back(index);
+        if (changedIndices.size() > arraySize * 4u + 4096u)
+        {
+            std::sort(changedIndices.begin(), changedIndices.end());
+            changedIndices.erase(std::unique(changedIndices.begin(), changedIndices.end()), changedIndices.end());
+        }
+    }
+
+    void SceneView::TakeProxyChangedIndices(Container::VariableArray<uint32_t> &changedIndices,
+                                            Container::VariableArray<uint32_t> &outIndices)
+    {
+        outIndices.clear();
+        if (changedIndices.empty())
+        {
+            return;
+        }
+        std::sort(changedIndices.begin(), changedIndices.end());
+        changedIndices.erase(std::unique(changedIndices.begin(), changedIndices.end()), changedIndices.end());
+        outIndices.assign(changedIndices.begin(), changedIndices.end());
+        changedIndices.clear();
+    }
+
+    void SceneView::TakeMeshProxyChangedIndices(Container::VariableArray<uint32_t> &outIndices)
+    {
+        TakeProxyChangedIndices(m_MeshChangedIndices, outIndices);
+    }
+
+    void SceneView::TakeSkinnedMeshProxyChangedIndices(Container::VariableArray<uint32_t> &outIndices)
+    {
+        TakeProxyChangedIndices(m_SkinnedMeshChangedIndices, outIndices);
+    }
+
+    void SceneView::TakeLightProxyChangedIndices(Container::VariableArray<uint32_t> &outIndices)
+    {
+        TakeProxyChangedIndices(m_LightChangedIndices, outIndices);
+    }
+
     void SceneView::ClearAllProxies()
     {
         m_MeshProxies.clear();
@@ -692,6 +752,9 @@ namespace NorvesLib::Core::Rendering
         m_MegaChangedIndices.clear();
         m_MegaUnsettledObjects.clear();
         m_LightProxyIndex.clear();
+        m_MeshChangedIndices.clear();
+        m_SkinnedMeshChangedIndices.clear();
+        m_LightChangedIndices.clear();
         m_VisibleMeshProxies.clear();
         m_VisibleBoardProxies.clear();
         AdvanceSceneGeneration();

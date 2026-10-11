@@ -1747,3 +1747,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `-4.txt`: mega-stress・mega-bananas の混在周回 3 周が `SCENE_CYCLE_SMOKE_RUN result=pass`、`MEGA_SLOTS pass=941`、ログの `MEGA_SLOTS result=fail` と「席の規則が破れた」は 0 件、`released=36000 reused=26000`、EXIT=0。
 - Next: SCN-ECS-PACKET-DELTA。
 - Notes: World.cpp・RenderingCoordinator.cpp は編集で行末が崩れたので、HEAD の行末へ戻した（numstat の 2 通りが一致）。
+
+### SCN-ECS-PACKET-DELTA（2026-10-11、反復 8・run 20261011-144300）
+
+- 変更:
+  - パケットに `ProxyArrayDelta<MeshProxy/SkinnedMeshProxy/LightProxy>` を足し、GameThread の `ProxyArrayDeltaSender` が SceneView の変わった位置（`Take*ProxyChangedIndices`）と確認されていない送信の分だけを積む（MegaGeometry と同じ確認の台帳 `PacketDeltaLedger`）。基準（確認された世代が違うあいだ）だけパケットの `Scene.*Proxies` に全量を書く。毎フレームの `Scene.MeshProxies / SkinnedMeshProxies / LightProxies = SceneView` の全量の写しはやめた。
+  - RenderThread は適用の確認と同じ場所で `ProxyArrayMirror` に差分を当て、`SnapshotMeshProxies` などの消費者と `RenderedObjectHistory` は写しを読む（差分の無い手組みのパケットは従来どおり `Scene` の配列）。
+  - 構成の revision の hash の Mesh・Skinned の集合（数・XOR・和）を `ProxyRevisionSet` で変わった位置だけ更新する。光源表（SceneView の光源 + 空の太陽）は GameThread で変わった位置だけ保ち、その hash は変わったときだけ計算し直す。`BuildPointShadowSnapshot` と RT の物体 ID の照合は GameThread の配列を読む。
+  - 検査 `PACKET_DELTA`: 3 種の写しの hash を送った時点の全量と照合し、増分の集合を全部を数え直した値と照合する。最初と 256 回ごとに、飛ばし・遅れた適用・世代替わりの基準の飛ばし・古い世代の拒否の場面を確かめる。
+- 結果（`.harness/runs/20261011-144300/`）:
+  - `verify-SCN-ECS-PACKET-DELTA-1.txt`: 起動画面（default、RelWithDebInfo、決定論）が `PACKET_DELTA pass=171 fail=0`、SCN-MEGA-BASE-RWDI と比較し平均輝度差 0・PSNR 100 dB・不一致画素 4E-06 で `result=pass`、EXIT=0。PNG を開いて確認。Game.log の `PACKET_DELTA sent=120 mesh_entries=33 light_entries=2`（基準の 33 件の後は運んだ件数 0）。
+  - `-2.txt`: mega-stress（5000 本・動く 1%・セル 64）の overview が `PACKET_DELTA pass=140 fail=0`、`result=pass`、EXIT=0。PNG を開いて確認。
+- Next: SCN-ECS-MASS-ROWS。
+- Notes:
+  - RenderThread の `RenderedObjectHistory` は記録に MeshProxy を毎フレーム全部回す（既存。写しを読むだけに変えた）。差分化は別の項目。
+  - 写しの SortDepth は、SceneView がカリングで書いた値でなく最後に運んだ値になる（RenderThread の消費者は読まない。照合の hash も含めない）。
+  - 手組みのパケットの経路を残したので、生成したパケットの `Scene.SkinnedMeshProxies` を見る SkeletalFramePacketSnapshotTest は最初のパケットが基準になるため変わらない見込み（この反復では走らせていない）。

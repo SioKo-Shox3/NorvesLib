@@ -16,6 +16,7 @@
 #include "Rendering/InstanceBufferRing.h"
 #include "Rendering/RenderedObjectHistory.h"
 #include "Rendering/MegaGeometryMirror.h"
+#include "Rendering/ProxyArrayMirror.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
@@ -516,6 +517,15 @@ namespace NorvesLib::Core::Rendering
         void SnapshotSceneParameters(FramePacket& packet,
                                      const RHI::DeviceCapabilities& capabilities) const;
         void UpdateFrameRevisions(FramePacket& packet);
+        /**
+         * @brief Mesh・Skinned・Light の proxy を差分でパケットへ積み、構成の hash の集合と光源表を変わった位置だけで更新する
+         *
+         * 確認されていない送信の分も積み直す（MegaGeometry と同じ約束）。適用された世代が現在の世代でないあいだは、
+         * パケットの Scene の配列へ全量（基準）を書く。
+         */
+        void BuildSceneProxyDeltas(FramePacket& packet);
+        /** @brief パケットへ運ぶ光源表（SceneView の光源の後に空の太陽）を、変わった位置だけで更新する */
+        void UpdatePacketLights(const Container::VariableArray<LightProxy>& sceneLights, bool bRebuild);
 
         // ========================================
         // 内部ヘルパー
@@ -681,6 +691,45 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_MegaDeltaEntryTotal = 0;
         uint64_t m_MegaVerifyReportedChecked = 0;
         uint64_t m_MegaVerifyReportedMismatched = 0;
+
+        // Mesh・Skinned・Light の差分の同期。送り手・作業用の配列・光源表・構成の hash の集合は GameThread、写しは RenderThread が触る。
+        // 差分の無い（手で組んだ）パケットは、Scene の配列を全量として読む
+        ProxyArrayDeltaSender<MeshProxy> m_MeshSender;
+        ProxyArrayDeltaSender<SkinnedMeshProxy> m_SkinnedMeshSender;
+        ProxyArrayDeltaSender<LightProxy> m_LightSender;
+        ProxyArrayMirror<MeshProxy> m_MeshMirror;
+        ProxyArrayMirror<SkinnedMeshProxy> m_SkinnedMeshMirror;
+        ProxyArrayMirror<LightProxy> m_LightMirror;
+        Container::VariableArray<uint32_t> m_MeshChangedScratch;
+        Container::VariableArray<uint32_t> m_SkinnedMeshChangedScratch;
+        Container::VariableArray<uint32_t> m_LightChangedScratch;
+        // パケットへ運ぶ光源表（SceneView の光源と同じ位置の後に空の太陽）と、今回の更新で書いた位置
+        Container::VariableArray<LightProxy> m_PacketLights;
+        Container::VariableArray<uint32_t> m_PacketLightChanged;
+        size_t m_PacketSceneLightCount = 0;
+        LightProxy m_PacketSkySun;
+        bool m_bPacketHasSkySun = false;
+        // 構成の revision の hash のうち、Mesh・Skinned の集合（変わった位置だけで更新する）と、光源表の hash
+        ProxyRevisionSet m_MeshRevisionSet;
+        ProxyRevisionSet m_SkinnedMeshRevisionSet;
+        uint64_t m_PacketLightRevisionHash = 0;
+        bool m_bPacketLightRevisionDirty = true;
+        // 上の保持を作った SceneView とシーンの世代（替わったら全部作り直す）
+        const SceneView* m_ProxySyncSource = nullptr;
+        uint64_t m_ProxySyncGeneration = 0;
+        bool m_bProxySyncValid = false;
+        // 作ったパケットが差分を持つとき true（EndFrame で送り終えた番号を台帳へ記録する）
+        bool m_bProxyDeltaPending = false;
+        uint64_t m_ProxyDeltaPendingGeneration = 0;
+        // 開発ログ・検査 PACKET_DELTA（GameThread）
+        uint64_t m_ProxyDeltaSentCount = 0;
+        uint64_t m_MeshDeltaEntryTotal = 0;
+        uint64_t m_SkinnedMeshDeltaEntryTotal = 0;
+        uint64_t m_LightDeltaEntryTotal = 0;
+        uint64_t m_SceneRevisionSetChecked = 0;
+        uint64_t m_SceneRevisionSetMismatched = 0;
+        uint64_t m_ProxyDeltaReportedChecked = 0;
+        uint64_t m_ProxyDeltaReportedMismatched = 0;
 
         // 同期
         Thread::Mutex m_Mutex;

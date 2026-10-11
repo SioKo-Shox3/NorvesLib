@@ -44,6 +44,18 @@ namespace NorvesLib::Core::Rendering
     public:
         RenderedObjectHistoryResult Apply(FramePacket& packet, bool bRewriteOnGap)
         {
+            return Apply(packet, packet.Scene.MeshProxies, bRewriteOnGap);
+        }
+
+        /**
+         * @param meshProxies 照合と記録に使う MeshProxy の配列。差分の同期では RenderThread の写し（パケットは全量を持たない）。
+         *        パケットの Scene.MeshProxies 以外を渡したときは、その配列の前の変換は書き換えない
+         *        （RenderThread の消費者は MeshProxy の前の変換を読まず、インスタンスの前の変換だけを付け替えれば足りる）
+         */
+        RenderedObjectHistoryResult Apply(FramePacket& packet,
+                                          const Container::VariableArray<MeshProxy>& meshProxies,
+                                          bool bRewriteOnGap)
+        {
             RenderedObjectHistoryResult result;
             result.PreviousFrameNumber = packet.FrameNumber > 0u ? packet.FrameNumber - 1u : 0u;
             const bool bGap = m_bValid && packet.FrameNumber > m_FrameNumber + 1u;
@@ -53,11 +65,11 @@ namespace NorvesLib::Core::Rendering
             }
             else if (bGap && bRewriteOnGap)
             {
-                Rebase(packet, result);
+                Rebase(packet, meshProxies, result);
                 result.PreviousFrameNumber = m_FrameNumber;
                 result.bRebased = true;
             }
-            Record(packet);
+            Record(packet, meshProxies);
             return result;
         }
 
@@ -92,11 +104,12 @@ namespace NorvesLib::Core::Rendering
             return std::memcmp(lhs, rhs, sizeof(lhs)) == 0;
         }
 
-        void Rebase(FramePacket& packet, RenderedObjectHistoryResult& result) const
+        void Rebase(FramePacket& packet,
+                    const Container::VariableArray<MeshProxy>& meshProxies,
+                    RenderedObjectHistoryResult& result) const
         {
             // インスタンスの World から、同じ World・PreviousWorld の MeshProxy を引く。
             Container::UnorderedMap<uint64_t, Container::VariableArray<uint32_t>> proxiesByWorld;
-            const auto& meshProxies = packet.Scene.MeshProxies;
             for (uint32_t index = 0; index < static_cast<uint32_t>(meshProxies.size()); ++index)
             {
                 if (meshProxies[index].ComponentId != 0u)
@@ -137,12 +150,15 @@ namespace NorvesLib::Core::Rendering
                 }
             }
 
-            for (MeshProxy& proxy : packet.Scene.MeshProxies)
+            if (&meshProxies == &packet.Scene.MeshProxies)
             {
-                const auto found = m_MeshWorlds.find(proxy.ComponentId);
-                if (proxy.ComponentId != 0u && found != m_MeshWorlds.end())
+                for (MeshProxy& proxy : packet.Scene.MeshProxies)
                 {
-                    proxy.PreviousWorldTransform = found->second;
+                    const auto found = m_MeshWorlds.find(proxy.ComponentId);
+                    if (proxy.ComponentId != 0u && found != m_MeshWorlds.end())
+                    {
+                        proxy.PreviousWorldTransform = found->second;
+                    }
                 }
             }
             for (MegaGeometryProxy& proxy : packet.Scene.MegaGeometryProxies)
@@ -201,10 +217,10 @@ namespace NorvesLib::Core::Rendering
             return bMatched;
         }
 
-        void Record(const FramePacket& packet)
+        void Record(const FramePacket& packet, const Container::VariableArray<MeshProxy>& meshProxies)
         {
             m_MeshWorlds.clear();
-            for (const MeshProxy& proxy : packet.Scene.MeshProxies)
+            for (const MeshProxy& proxy : meshProxies)
             {
                 if (proxy.ComponentId != 0u)
                 {

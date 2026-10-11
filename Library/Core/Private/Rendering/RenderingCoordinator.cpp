@@ -93,6 +93,14 @@ namespace NorvesLib::Core::Rendering
             return hash;
         }
 
+        uint64_t FinishRevisionSet(uint64_t hash, uint64_t count, uint64_t xorValue, uint64_t sum)
+        {
+            hash = HashRevisionValue(hash, count);
+            hash = HashRevisionValue(hash, xorValue);
+            hash = HashRevisionValue(hash, sum);
+            return hash;
+        }
+
         uint64_t MixRevisionValue(uint64_t value)
         {
             value += 0x9E3779B97F4A7C15ull;
@@ -117,12 +125,26 @@ namespace NorvesLib::Core::Rendering
 
             uint64_t Finish(uint64_t hash) const
             {
-                hash = HashRevisionValue(hash, Count);
-                hash = HashRevisionValue(hash, Xor);
-                hash = HashRevisionValue(hash, Sum);
-                return hash;
+                return FinishRevisionSet(hash, Count, Xor, Sum);
             }
         };
+
+        /** @brief 空の太陽の光源が同じ値か（LightProxy の全部の値を比べる。詰め物の bit は比べない） */
+        bool SameLightValues(const LightProxy& lhs, const LightProxy& rhs)
+        {
+            return lhs.LightId == rhs.LightId && lhs.Type == rhs.Type &&
+                   lhs.PositionX == rhs.PositionX && lhs.PositionY == rhs.PositionY && lhs.PositionZ == rhs.PositionZ &&
+                   lhs.DirectionX == rhs.DirectionX && lhs.DirectionY == rhs.DirectionY &&
+                   lhs.DirectionZ == rhs.DirectionZ && lhs.ColorR == rhs.ColorR && lhs.ColorG == rhs.ColorG &&
+                   lhs.ColorB == rhs.ColorB && lhs.CanonicalIntensity == rhs.CanonicalIntensity &&
+                   lhs.Range == rhs.Range && lhs.AttenuationConstant == rhs.AttenuationConstant &&
+                   lhs.AttenuationLinear == rhs.AttenuationLinear &&
+                   lhs.AttenuationQuadratic == rhs.AttenuationQuadratic &&
+                   lhs.InnerConeAngle == rhs.InnerConeAngle && lhs.OuterConeAngle == rhs.OuterConeAngle &&
+                   lhs.bCastShadows == rhs.bCastShadows && lhs.ShadowBias == rhs.ShadowBias &&
+                   lhs.ShadowMapResolution == rhs.ShadowMapResolution && lhs.bVisible == rhs.bVisible &&
+                   lhs.AffectedLayers == rhs.AffectedLayers;
+        }
 
         uint64_t HashMeshProxyRevision(const MeshProxy& proxy)
         {
@@ -180,30 +202,9 @@ namespace NorvesLib::Core::Rendering
             return HashRevisionValue(hash, proxy.bVisible);
         }
 
-        /**
-         * @brief シーン構成revisionを計算する
-         *
-         * 物体とUIの変換はR6-aのvelocityと深度・法線棄却で扱うため、全画面履歴を
-         * 無効化する構成revisionへ含めません。proxy集合のメッシュ・材質・環境だけを
-         * 追跡し、構成変更時の履歴不採用を判定できる値にします。
-         */
-        uint64_t HashSceneRevisionInternal(const FramePacket& packet)
+        /** @brief 構成revisionのhashのうち、proxy集合の後に続く環境の値（環境光・空・DDGI・フォグ） */
+        uint64_t HashSceneEnvironmentRevision(uint64_t hash, const FramePacket& packet)
         {
-            uint64_t hash = RevisionHashOffset;
-            RevisionSetAccumulator meshProxies;
-            for (const MeshProxy& proxy : packet.Scene.MeshProxies)
-            {
-                meshProxies.Add(HashMeshProxyRevision(proxy));
-            }
-            hash = meshProxies.Finish(hash);
-
-            RevisionSetAccumulator skinnedMeshProxies;
-            for (const SkinnedMeshProxy& proxy : packet.Scene.SkinnedMeshProxies)
-            {
-                skinnedMeshProxies.Add(HashSkinnedMeshProxyRevision(proxy));
-            }
-            hash = skinnedMeshProxies.Finish(hash);
-
             hash = HashRevisionValue(hash, packet.Scene.AmbientColorR);
             hash = HashRevisionValue(hash, packet.Scene.AmbientColorG);
             hash = HashRevisionValue(hash, packet.Scene.AmbientColorB);
@@ -252,11 +253,67 @@ namespace NorvesLib::Core::Rendering
             return hash;
         }
 
-        uint64_t HashLightRevision(const FramePacket& packet)
+        /**
+         * @brief シーン構成revisionを計算する
+         *
+         * 物体とUIの変換はR6-aのvelocityと深度・法線棄却で扱うため、全画面履歴を
+         * 無効化する構成revisionへ含めません。proxy集合のメッシュ・材質・環境だけを
+         * 追跡し、構成変更時の履歴不採用を判定できる値にします。
+         */
+        uint64_t HashSceneRevisionInternal(const FramePacket& packet)
         {
             uint64_t hash = RevisionHashOffset;
-            hash = HashRevisionValue(hash, packet.Scene.LightProxies.size());
-            for (const LightProxy& light : packet.Scene.LightProxies)
+            RevisionSetAccumulator meshProxies;
+            for (const MeshProxy& proxy : packet.Scene.MeshProxies)
+            {
+                meshProxies.Add(HashMeshProxyRevision(proxy));
+            }
+            hash = meshProxies.Finish(hash);
+
+            RevisionSetAccumulator skinnedMeshProxies;
+            for (const SkinnedMeshProxy& proxy : packet.Scene.SkinnedMeshProxies)
+            {
+                skinnedMeshProxies.Add(HashSkinnedMeshProxyRevision(proxy));
+            }
+            hash = skinnedMeshProxies.Finish(hash);
+            return HashSceneEnvironmentRevision(hash, packet);
+        }
+
+        /**
+         * @brief 差分の同期のシーン構成revision（HashSceneRevisionInternal と同じ値）
+         *
+         * Mesh・Skinned の集合は、変わった位置だけで更新した数・XOR・和を使い、全 proxy を回さない。
+         */
+        uint64_t HashSceneRevisionIncremental(const FramePacket& packet,
+                                              const ProxyRevisionSet& meshProxies,
+                                              const ProxyRevisionSet& skinnedMeshProxies)
+        {
+            uint64_t hash = RevisionHashOffset;
+            hash = FinishRevisionSet(hash, meshProxies.GetCount(), meshProxies.GetXor(), meshProxies.GetSum());
+            hash = FinishRevisionSet(hash, skinnedMeshProxies.GetCount(), skinnedMeshProxies.GetXor(),
+                                     skinnedMeshProxies.GetSum());
+            return HashSceneEnvironmentRevision(hash, packet);
+        }
+
+        /** @brief 検査 PACKET_DELTA: 変わった位置だけで更新した集合が、配列の全部を数え直した値と一致するか */
+        template<typename TProxy, typename THashProxy>
+        bool MatchesRevisionSet(const ProxyRevisionSet& set,
+                                const Container::VariableArray<TProxy>& proxies,
+                                THashProxy&& hashProxy)
+        {
+            RevisionSetAccumulator full;
+            for (const TProxy& proxy : proxies)
+            {
+                full.Add(hashProxy(proxy));
+            }
+            return full.Count == set.GetCount() && full.Xor == set.GetXor() && full.Sum == set.GetSum();
+        }
+
+        uint64_t HashLightRevision(const Container::VariableArray<LightProxy>& lights)
+        {
+            uint64_t hash = RevisionHashOffset;
+            hash = HashRevisionValue(hash, lights.size());
+            for (const LightProxy& light : lights)
             {
                 hash = HashRevisionValue(hash, light.LightId);
                 hash = HashRevisionValue(hash, static_cast<uint8_t>(light.Type));
@@ -618,7 +675,8 @@ namespace NorvesLib::Core::Rendering
                                                        FramePacket& packet,
                                                        const MaterialResources* materialResources,
                                                        const MegaGeometryResources* megaGeometryResources,
-                                                       const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies)
+                                                       const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies,
+                                                       const Container::VariableArray<MeshProxy>* meshProxies)
     {
         packet.RayTracingScene.Clear();
         if (!meshResources && !megaGeometryResources)
@@ -693,7 +751,8 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<uint64_t> instanceObjectIds;
             if (bResolveInstanceObjectIds && draw.bInstanced)
             {
-                ResolveInstancedDrawObjectIds(packet, draw, instanceObjectIds);
+                ResolveInstancedDrawObjectIds(meshProxies ? *meshProxies : packet.Scene.MeshProxies,
+                                              packet, draw, instanceObjectIds);
             }
 
             for (uint32_t instanceIndex = 0; instanceIndex < instanceCount; ++instanceIndex)
@@ -2652,6 +2711,265 @@ namespace NorvesLib::Core::Rendering
             reportedChecked = checked;
             reportedMismatched = mismatched;
         }
+
+        /**
+         * @brief 検査 PACKET_DELTA の決まった場面: proxy 配列の差分の送り手と写し、構成の hash の集合
+         *
+         * 追加・更新・外し（末尾の入れ替え）を重ね、RenderThread が飛ばす・遅れて古いパケットを当てる・世代が替わった基準を
+         * 飛ばす、の順を作る。当てるたびに写しが GameThread の配列と一致し、変わった位置だけで更新した集合の hash が
+         * 全部を数え直した値と一致すること、古い世代の差分が写しへ当たらないことを確かめる。
+         */
+        bool VerifyProxyDeltaProtocol(char* detail, size_t detailSize, uint32_t& examined)
+        {
+            auto fail = [&](const char* reason)
+            {
+                std::snprintf(detail, detailSize, "%s", reason);
+                return false;
+            };
+
+            Container::VariableArray<LightProxy> source;
+            Container::VariableArray<uint32_t> changedRaw;
+            uint64_t seed = 0xD1B54A32D192ED03ull;
+            const auto nextRandom = [&seed]()
+            {
+                seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+                return static_cast<uint32_t>(seed >> 33);
+            };
+            uint64_t nextLight = 1;
+            const auto addProxy = [&]()
+            {
+                LightProxy light;
+                light.LightId = nextLight;
+                light.PositionX = static_cast<float>(nextLight);
+                ++nextLight;
+                source.push_back(light);
+                changedRaw.push_back(static_cast<uint32_t>(source.size() - 1));
+            };
+            const auto updateProxy = [&](uint32_t index)
+            {
+                source[index].PositionX += 1.0f + static_cast<float>(nextRandom() % 7u);
+                changedRaw.push_back(index);
+            };
+            // SceneView と同じ外し方: 末尾を外した位置へ入れ、両方の位置を書いた位置にする
+            const auto removeProxy = [&](uint32_t index)
+            {
+                const uint32_t last = static_cast<uint32_t>(source.size() - 1);
+                if (index != last)
+                {
+                    source[index] = source[last];
+                    changedRaw.push_back(index);
+                }
+                changedRaw.push_back(last);
+                source.pop_back();
+            };
+            const auto mixedAt = [&](size_t index) { return MixRevisionValue(HashProxy(source[index])); };
+
+            PacketConfirmation confirmation;
+            ProxyArrayDeltaSender<LightProxy> sender;
+            ProxyArrayMirror<LightProxy> mirror;
+            ProxyRevisionSet revision;
+            uint64_t generation = 1;
+            uint64_t revisionGeneration = 0;
+            uint64_t serial = 0;
+            struct InFlight
+            {
+                uint64_t Serial = 0;
+                uint64_t Generation = 0;
+                ProxyArrayDelta<LightProxy> Delta;
+                Container::VariableArray<LightProxy> Baseline;
+            };
+            Container::VariableArray<InFlight> inFlight;
+            uint32_t baselines = 0;
+
+            for (uint32_t step = 0; step < 72; ++step)
+            {
+                if (step == 30)
+                {
+                    // シーンを入れ替える: 世代が進み、配列を作り直す。この基準は RenderThread に飛ばされる
+                    source.clear();
+                    changedRaw.clear();
+                    ++generation;
+                    for (uint32_t add = 0; add < 12; ++add)
+                    {
+                        addProxy();
+                    }
+                }
+                else
+                {
+                    const uint32_t adds = step < 4 ? 8u : nextRandom() % 3u;
+                    for (uint32_t add = 0; add < adds; ++add)
+                    {
+                        addProxy();
+                    }
+                    if (!source.empty())
+                    {
+                        const uint32_t updates = nextRandom() % 4u;
+                        for (uint32_t update = 0; update < updates; ++update)
+                        {
+                            updateProxy(nextRandom() % static_cast<uint32_t>(source.size()));
+                        }
+                        if (nextRandom() % 3u == 0u)
+                        {
+                            removeProxy(nextRandom() % static_cast<uint32_t>(source.size()));
+                        }
+                    }
+                }
+
+                Container::VariableArray<uint32_t> taken = changedRaw;
+                changedRaw.clear();
+                std::sort(taken.begin(), taken.end());
+                taken.erase(std::unique(taken.begin(), taken.end()), taken.end());
+
+                // 構成の hash の集合: 世代が替わったら作り直し、それ以外は書いた位置だけで更新する
+                revision.Update(source.size(), taken, revisionGeneration != generation, mixedAt);
+                revisionGeneration = generation;
+                if (!MatchesRevisionSet(revision, source, [](const LightProxy& light) { return HashProxy(light); }))
+                {
+                    return fail("書いた位置だけで更新した構成の hash の集合が、全部を数え直した値と一致しない");
+                }
+
+                InFlight flight;
+                flight.Generation = generation;
+                const uint64_t confirmedSerial = confirmation.GetConfirmedSerial();
+                const uint64_t confirmedGeneration = confirmation.GetConfirmedGeneration();
+                sender.Build(source, taken, confirmedSerial, confirmedGeneration, generation, flight.Delta, flight.Baseline);
+                ++serial;
+                flight.Serial = serial;
+                sender.NoteSent(serial, generation);
+                if (flight.Delta.bBaseline != (confirmedGeneration != generation))
+                {
+                    return fail("適用された世代が現在の世代でないあいだは基準を送り、それ以外は差分を送るはず");
+                }
+                if (!flight.Delta.bBaseline && !flight.Baseline.empty())
+                {
+                    return fail("基準でない差分のパケットが全量の配列を持った");
+                }
+                baselines += flight.Delta.bBaseline ? 1u : 0u;
+                inFlight.push_back(std::move(flight));
+                ++examined;
+
+                // RenderThread は、適用すると決めたステップで最新のパケットだけを適用する（ステップ 30 の基準は飛ばす）。
+                // 3 の倍数のステップでは、適用の前に 1 つ古いパケットを遅れて適用して、重なった当たり方も確かめる
+                const bool bApply = (step % 4u == 3u) || (step % 11u == 5u) || step == 31 || step == 33;
+                if (bApply)
+                {
+                    if (step % 3u == 0u && inFlight.size() >= 2)
+                    {
+                        const InFlight& older = inFlight[inFlight.size() - 2];
+                        if (confirmation.TryApply(older.Serial, older.Generation) == PacketApplyResult::Applied &&
+                            !mirror.Apply(older.Delta, older.Generation, older.Baseline))
+                        {
+                            return fail("遅れて適用した差分を当てられなかった");
+                        }
+                    }
+                    const InFlight& newest = inFlight.back();
+                    if (confirmation.TryApply(newest.Serial, newest.Generation) != PacketApplyResult::Applied)
+                    {
+                        return fail("適用できるはずのパケットが適用されなかった");
+                    }
+                    if (!mirror.Apply(newest.Delta, newest.Generation, newest.Baseline))
+                    {
+                        return fail("最新のパケットの差分を当てられなかった");
+                    }
+                    if (mirror.GetProxies().size() != source.size() ||
+                        HashProxyArrayContent(mirror.GetProxies()) != HashProxyArrayContent(source))
+                    {
+                        return fail("差分を当てた写しが、GameThread の配列と一致しない");
+                    }
+                    inFlight.clear();
+                    ++examined;
+                }
+            }
+            if (baselines < 2)
+            {
+                return fail("世代が替わったあとに基準を送り直す場面が通らなかった");
+            }
+
+            // 世代が替わったあとに、古い世代の差分は写しへ当たらない
+            ProxyArrayDelta<LightProxy> staleDelta;
+            staleDelta.bActive = true;
+            staleDelta.Size = 1;
+            staleDelta.Indices.push_back(0);
+            staleDelta.Proxies.push_back(LightProxy{});
+            const Container::VariableArray<LightProxy> noBaseline;
+            const size_t sizeBefore = mirror.GetProxies().size();
+            if (mirror.Apply(staleDelta, generation - 1, noBaseline) || mirror.GetProxies().size() != sizeBefore ||
+                mirror.GetRejectedCount() != 1)
+            {
+                return fail("古い世代の差分が写しへ当たった");
+            }
+            ++examined;
+            return true;
+        }
+
+        // 検査 PACKET_DELTA: Mesh・Skinned・Light の写しの照合（RenderThread が公開）と、構成の hash の集合の照合
+        // （GameThread）と、決まった場面（最初の回と 256 回ごと）を確かめる。GameThread から呼ぶ
+        void RunPacketDeltaCheck(uint64_t sentCount,
+                                 uint64_t checked,
+                                 uint64_t mismatched,
+                                 uint64_t& reportedChecked,
+                                 uint64_t& reportedMismatched)
+        {
+            if (Engine::GEngine == nullptr)
+            {
+                return;
+            }
+            NorvesLib::Debug::EngineChecks& checks = Engine::GEngine->GetEngineChecks();
+            if (!checks.IsEnabled("PACKET_DELTA"))
+            {
+                return;
+            }
+            char detail[240] = {};
+            bool bPass = true;
+            uint32_t examined = 0;
+            if (sentCount == 1 || sentCount % 256 == 0)
+            {
+                bPass = VerifyProxyDeltaProtocol(detail, sizeof(detail), examined);
+            }
+            if (mismatched > reportedMismatched)
+            {
+                bPass = false;
+                std::snprintf(detail, sizeof(detail),
+                              "差分を当てた写し・増分で更新した構成の hash が、全量と一致しない: mismatched=%llu checked=%llu",
+                              static_cast<unsigned long long>(mismatched), static_cast<unsigned long long>(checked));
+            }
+            if (!bPass && checks.GetFailCount() <= 8)
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator", "PACKET_DELTA: 約束が破れた: %s", detail);
+            }
+            // fail は毎回、pass は照合が進んだときと決まった場面を確かめたときに出す
+            if (!bPass || checked > reportedChecked || examined > 0)
+            {
+                checks.Report("PACKET_DELTA", bPass,
+                              std::max<uint32_t>(examined, static_cast<uint32_t>(checked - reportedChecked)));
+            }
+            reportedChecked = checked;
+            reportedMismatched = mismatched;
+        }
+
+        /** @brief Mesh・Skinned・Light の差分を写しへ当て、検査のときは送った時点の配列と照合する（RenderThread） */
+        template<typename TProxy>
+        void ApplyProxyArrayDelta(ProxyArrayMirror<TProxy>& mirror,
+                                  const ProxyArrayDelta<TProxy>& delta,
+                                  const FramePacket& packet,
+                                  const Container::VariableArray<TProxy>& baseline,
+                                  const char* kind)
+        {
+            if (!delta.bActive)
+            {
+                return;
+            }
+            if (!mirror.Apply(delta, packet.SceneGeneration, baseline))
+            {
+                NORVES_LOG_ERROR("RenderingCoordinator",
+                                 "%s の差分を写しへ当てられません: serial=%llu generation=%llu mirror_generation=%llu",
+                                 kind,
+                                 static_cast<unsigned long long>(packet.SendSerial),
+                                 static_cast<unsigned long long>(packet.SceneGeneration),
+                                 static_cast<unsigned long long>(mirror.GetGeneration()));
+            }
+            mirror.Verify(delta);
+        }
     } // namespace
 
     void RenderingCoordinator::AdvanceCompletedRenderFrameSerial(uint64_t completedSubmissionSerial)
@@ -2776,6 +3094,31 @@ namespace NorvesLib::Core::Rendering
         m_MegaDeltaEntryTotal = 0;
         m_MegaVerifyReportedChecked = 0;
         m_MegaVerifyReportedMismatched = 0;
+        m_MeshSender.Reset();
+        m_SkinnedMeshSender.Reset();
+        m_LightSender.Reset();
+        m_MeshMirror.Reset();
+        m_SkinnedMeshMirror.Reset();
+        m_LightMirror.Reset();
+        m_PacketLights.clear();
+        m_PacketLightChanged.clear();
+        m_PacketSceneLightCount = 0;
+        m_bPacketHasSkySun = false;
+        m_MeshRevisionSet.Reset();
+        m_SkinnedMeshRevisionSet.Reset();
+        m_bPacketLightRevisionDirty = true;
+        m_ProxySyncSource = nullptr;
+        m_ProxySyncGeneration = 0;
+        m_bProxySyncValid = false;
+        m_bProxyDeltaPending = false;
+        m_ProxyDeltaSentCount = 0;
+        m_MeshDeltaEntryTotal = 0;
+        m_SkinnedMeshDeltaEntryTotal = 0;
+        m_LightDeltaEntryTotal = 0;
+        m_SceneRevisionSetChecked = 0;
+        m_SceneRevisionSetMismatched = 0;
+        m_ProxyDeltaReportedChecked = 0;
+        m_ProxyDeltaReportedMismatched = 0;
         m_RenderedObjectRebasedFrameCount = 0u;
         m_RenderedObjectIncompleteFrameCount = 0u;
 
@@ -2996,9 +3339,8 @@ namespace NorvesLib::Core::Rendering
         FramePacket& packet,
         const RHI::DeviceCapabilities& capabilities) const
     {
+        // 空の太陽は、パケットへ運ぶ光源表（UpdatePacketLights）が SceneView の光源の後に加える。
         packet.Scene.SkyAtmosphere = m_SkyAtmosphere;
-        // 空が有効なら空の太陽を方向光として光源表へ加える（packetの再利用でも1つだけ）。
-        ReplaceSkySunLight(packet.Scene.SkyAtmosphere, packet.Scene.LightProxies);
         packet.Scene.SetDDGIVolumeParameters(
             SanitizeDDGIVolumeParametersForRHI(
                 m_DDGIVolume,
@@ -3010,9 +3352,152 @@ namespace NorvesLib::Core::Rendering
         packet.bRTGIEnabled = m_bRTGIEnabled;
     }
 
+    void RenderingCoordinator::BuildSceneProxyDeltas(FramePacket& packet)
+    {
+        SceneView* sceneView = m_MainSceneView.get();
+        const Container::VariableArray<MeshProxy> noMeshProxies;
+        const Container::VariableArray<SkinnedMeshProxy> noSkinnedMeshProxies;
+        const Container::VariableArray<LightProxy> noLightProxies;
+        const Container::VariableArray<MeshProxy>& meshProxies = sceneView ? sceneView->GetMeshProxies() : noMeshProxies;
+        const Container::VariableArray<SkinnedMeshProxy>& skinnedMeshProxies =
+            sceneView ? sceneView->GetSkinnedMeshProxies() : noSkinnedMeshProxies;
+        const Container::VariableArray<LightProxy>& sceneLights = sceneView ? sceneView->GetLightProxies() : noLightProxies;
+        if (sceneView)
+        {
+            sceneView->TakeMeshProxyChangedIndices(m_MeshChangedScratch);
+            sceneView->TakeSkinnedMeshProxyChangedIndices(m_SkinnedMeshChangedScratch);
+            sceneView->TakeLightProxyChangedIndices(m_LightChangedScratch);
+        }
+        else
+        {
+            m_MeshChangedScratch.clear();
+            m_SkinnedMeshChangedScratch.clear();
+            m_LightChangedScratch.clear();
+        }
+
+        // SceneView かシーンの世代が替わったら、書いた位置の記録は前の配列のものなので、保持を全部作り直す
+        const bool bRebuild = !m_bProxySyncValid || m_ProxySyncSource != sceneView ||
+                              m_ProxySyncGeneration != packet.SceneGeneration;
+        m_ProxySyncSource = sceneView;
+        m_ProxySyncGeneration = packet.SceneGeneration;
+        m_bProxySyncValid = true;
+
+        // 構成の revision の hash の集合を、書いた位置だけで更新する
+        m_MeshRevisionSet.Update(meshProxies.size(), m_MeshChangedScratch, bRebuild, [&](size_t index)
+        {
+            return MixRevisionValue(HashMeshProxyRevision(meshProxies[index]));
+        });
+        m_SkinnedMeshRevisionSet.Update(skinnedMeshProxies.size(), m_SkinnedMeshChangedScratch, bRebuild, [&](size_t index)
+        {
+            return MixRevisionValue(HashSkinnedMeshProxyRevision(skinnedMeshProxies[index]));
+        });
+        UpdatePacketLights(sceneLights, bRebuild);
+
+        // 書く側は 世代 → 番号 の順に公開するので、読む側は逆の順に読む
+        const uint64_t confirmedSerial = m_PacketManager.GetConfirmation().GetConfirmedSerial();
+        const uint64_t confirmedGeneration = m_PacketManager.GetConfirmation().GetConfirmedGeneration();
+        m_MeshSender.Build(meshProxies, m_MeshChangedScratch, confirmedSerial, confirmedGeneration,
+                           packet.SceneGeneration, packet.MeshDelta, packet.Scene.MeshProxies);
+        m_SkinnedMeshSender.Build(skinnedMeshProxies, m_SkinnedMeshChangedScratch, confirmedSerial, confirmedGeneration,
+                                  packet.SceneGeneration, packet.SkinnedMeshDelta, packet.Scene.SkinnedMeshProxies);
+        m_LightSender.Build(m_PacketLights, m_PacketLightChanged, confirmedSerial, confirmedGeneration,
+                            packet.SceneGeneration, packet.LightDelta, packet.Scene.LightProxies);
+        m_bProxyDeltaPending = true;
+        m_ProxyDeltaPendingGeneration = packet.SceneGeneration;
+        m_MeshDeltaEntryTotal += packet.MeshDelta.bBaseline ? meshProxies.size() : packet.MeshDelta.Indices.size();
+        m_SkinnedMeshDeltaEntryTotal +=
+            packet.SkinnedMeshDelta.bBaseline ? skinnedMeshProxies.size() : packet.SkinnedMeshDelta.Indices.size();
+        m_LightDeltaEntryTotal += packet.LightDelta.bBaseline ? m_PacketLights.size() : packet.LightDelta.Indices.size();
+
+        if (Engine::GEngine != nullptr && Engine::GEngine->GetEngineChecks().IsEnabled("PACKET_DELTA"))
+        {
+            // RenderThread が差分を当てた写しと照合する、送った時点の全量の hash
+            packet.MeshDelta.bVerify = true;
+            packet.MeshDelta.VerifyHash = HashProxyArrayContent(meshProxies);
+            packet.SkinnedMeshDelta.bVerify = true;
+            packet.SkinnedMeshDelta.VerifyHash = HashProxyArrayContent(skinnedMeshProxies);
+            packet.LightDelta.bVerify = true;
+            packet.LightDelta.VerifyHash = HashProxyArrayContent(m_PacketLights);
+            // 書いた位置だけで更新した構成の hash の集合が、全部を数え直した値と一致すること
+            const bool bMeshSame = MatchesRevisionSet(m_MeshRevisionSet, meshProxies,
+                                                      [](const MeshProxy& proxy) { return HashMeshProxyRevision(proxy); });
+            const bool bSkinnedSame =
+                MatchesRevisionSet(m_SkinnedMeshRevisionSet, skinnedMeshProxies,
+                                   [](const SkinnedMeshProxy& proxy) { return HashSkinnedMeshProxyRevision(proxy); });
+            m_SceneRevisionSetChecked += 2u;
+            m_SceneRevisionSetMismatched += (bMeshSame ? 0u : 1u) + (bSkinnedSame ? 0u : 1u);
+        }
+    }
+
+    void RenderingCoordinator::UpdatePacketLights(const Container::VariableArray<LightProxy>& sceneLights, bool bRebuild)
+    {
+        // パケットの光源表は SceneView の光源と同じ位置に同じ光源を置き、その後に空の太陽を 1 つ置く
+        // （空の太陽の LightId は Component の通し番号と重ならないので、SceneView の光源には含まれない）
+        m_PacketLightChanged.clear();
+        LightProxy sun;
+        const bool bHasSun = MakeSkySunLightProxy(m_SkyAtmosphere, sun);
+        const size_t oldSize = m_PacketLights.size();
+        const size_t oldSceneCount = m_PacketSceneLightCount;
+        const size_t sceneCount = sceneLights.size();
+        const size_t newSize = sceneCount + (bHasSun ? 1u : 0u);
+        if (bRebuild)
+        {
+            m_PacketLights = sceneLights;
+            if (bHasSun)
+            {
+                m_PacketLights.push_back(sun);
+            }
+            for (size_t index = 0; index < std::max(oldSize, newSize); ++index)
+            {
+                m_PacketLightChanged.push_back(static_cast<uint32_t>(index));
+            }
+        }
+        else
+        {
+            m_PacketLights.resize(newSize);
+            for (uint32_t index : m_LightChangedScratch)
+            {
+                if (index < sceneCount)
+                {
+                    m_PacketLights[index] = sceneLights[index];
+                    m_PacketLightChanged.push_back(index);
+                }
+            }
+            // SceneView の光源が増えた位置（前は空の太陽が居た位置を含む）
+            for (size_t index = oldSceneCount; index < sceneCount; ++index)
+            {
+                m_PacketLights[index] = sceneLights[index];
+                m_PacketLightChanged.push_back(static_cast<uint32_t>(index));
+            }
+            const bool bSunChanged = bHasSun != m_bPacketHasSkySun || sceneCount != oldSceneCount ||
+                                     (bHasSun && !SameLightValues(sun, m_PacketSkySun));
+            if (bHasSun && bSunChanged)
+            {
+                m_PacketLights[sceneCount] = sun;
+                m_PacketLightChanged.push_back(static_cast<uint32_t>(sceneCount));
+            }
+            std::sort(m_PacketLightChanged.begin(), m_PacketLightChanged.end());
+            m_PacketLightChanged.erase(std::unique(m_PacketLightChanged.begin(), m_PacketLightChanged.end()),
+                                       m_PacketLightChanged.end());
+        }
+        m_PacketSceneLightCount = sceneCount;
+        m_bPacketHasSkySun = bHasSun;
+        if (bHasSun)
+        {
+            m_PacketSkySun = sun;
+        }
+        if (!m_PacketLightChanged.empty() || oldSize != newSize)
+        {
+            m_bPacketLightRevisionDirty = true;
+        }
+    }
+
     void RenderingCoordinator::UpdateFrameRevisions(FramePacket& packet)
     {
-        const uint64_t sceneHash = ComputeSceneRevisionHash(packet);
+        // 差分の同期では、Mesh・Skinned の集合は変わった位置だけで更新した値を使う（パケットは全量を持たない）
+        const uint64_t sceneHash = packet.MeshDelta.bActive
+                                       ? HashSceneRevisionIncremental(packet, m_MeshRevisionSet, m_SkinnedMeshRevisionSet)
+                                       : ComputeSceneRevisionHash(packet);
         if (!m_bSceneRevisionHashValid)
         {
             m_LastSceneRevisionHash = sceneHash;
@@ -3024,7 +3509,18 @@ namespace NorvesLib::Core::Rendering
             m_SceneRevision = AdvanceRevision(m_SceneRevision);
         }
 
-        const uint64_t lightHash = HashLightRevision(packet);
+        // 光源表の hash は、光源表が変わったときだけ計算し直す
+        if (!packet.LightDelta.bActive)
+        {
+            m_PacketLightRevisionHash = HashLightRevision(packet.Scene.LightProxies);
+            m_bPacketLightRevisionDirty = true;
+        }
+        else if (m_bPacketLightRevisionDirty)
+        {
+            m_PacketLightRevisionHash = HashLightRevision(m_PacketLights);
+            m_bPacketLightRevisionDirty = false;
+        }
+        const uint64_t lightHash = m_PacketLightRevisionHash;
         if (!m_bLightRevisionHashValid)
         {
             m_LastLightRevisionHash = lightHash;
@@ -3089,11 +3585,10 @@ namespace NorvesLib::Core::Rendering
                 m_MainSceneView.get(), m_MainSceneView ? m_MainSceneView->GetSceneGeneration() : 0u);
             m_CurrentPacket->MegaDelta.Clear();
             m_bMegaDeltaPending = false;
+            // Mesh・Skinned・Light は差分で運ぶ（基準のパケットだけが Scene の配列に全量を持つ）。消費者は RenderThread の写しを読む
+            BuildSceneProxyDeltas(*m_CurrentPacket);
             if (m_MainSceneView)
             {
-                m_CurrentPacket->Scene.MeshProxies = m_MainSceneView->GetMeshProxies();
-                m_CurrentPacket->Scene.SkinnedMeshProxies = m_MainSceneView->GetSkinnedMeshProxies();
-                m_CurrentPacket->Scene.LightProxies = m_MainSceneView->GetLightProxies();
                 if (m_MainSceneView->IsMegaFullSync())
                 {
                     // 全量の同期（--mega-scene-full-sync）: 配列を毎フレーム全量で写す
@@ -3123,7 +3618,7 @@ namespace NorvesLib::Core::Rendering
             }
             SnapshotSceneParameters(*m_CurrentPacket, capabilities);
             // 影を落とす点光源の選択と6面の行列は、空の太陽を加えた後の光源表とメインカメラから作る。
-            BuildPointShadowSnapshot(m_CurrentPacket->Scene.LightProxies,
+            BuildPointShadowSnapshot(m_PacketLights,
                                      m_CurrentPacket->bHasMainCamera
                                          ? &m_CurrentPacket->Scene.MainCamera
                                          : nullptr,
@@ -3317,6 +3812,9 @@ namespace NorvesLib::Core::Rendering
                     bDeferMegaRayTracing ? nullptr : megaGeometryResources,
                     m_CurrentPacket->MegaDelta.bActive && m_MainSceneView
                         ? &m_MainSceneView->GetMegaGeometryProxies()
+                        : nullptr,
+                    m_CurrentPacket->MeshDelta.bActive && m_MainSceneView
+                        ? &m_MainSceneView->GetMeshProxies()
                         : nullptr))
             {
                 NORVES_LOG_WARNING("RayTracingSceneSubsystem", "FramePacketのレイトレーシングscene "
@@ -3419,6 +3917,36 @@ namespace NorvesLib::Core::Rendering
                 }
                 RunMegaDeltaCheck(m_MegaMirror, m_MegaDeltaSentCount, m_MegaVerifyReportedChecked,
                                   m_MegaVerifyReportedMismatched);
+            }
+            if (m_bProxyDeltaPending)
+            {
+                // 送り終えた番号で、運んだ変化を台帳へ記録する（確認されるまで次のパケットが積み直す）
+                const uint64_t sentSerial = m_PacketManager.GetLastSentSerial();
+                m_MeshSender.NoteSent(sentSerial, m_ProxyDeltaPendingGeneration);
+                m_SkinnedMeshSender.NoteSent(sentSerial, m_ProxyDeltaPendingGeneration);
+                m_LightSender.NoteSent(sentSerial, m_ProxyDeltaPendingGeneration);
+                m_bProxyDeltaPending = false;
+                ++m_ProxyDeltaSentCount;
+                if (m_ProxyDeltaSentCount % 120 == 0)
+                {
+                    NORVES_LOG_INFO("RenderingCoordinator",
+                                    "PACKET_DELTA sent=%llu mesh_entries=%llu skinned_entries=%llu light_entries=%llu "
+                                    "mesh_baselines=%llu unconfirmed=%zu",
+                                    static_cast<unsigned long long>(m_ProxyDeltaSentCount),
+                                    static_cast<unsigned long long>(m_MeshDeltaEntryTotal),
+                                    static_cast<unsigned long long>(m_SkinnedMeshDeltaEntryTotal),
+                                    static_cast<unsigned long long>(m_LightDeltaEntryTotal),
+                                    static_cast<unsigned long long>(m_MeshSender.GetBaselineCount()),
+                                    m_MeshSender.GetUnconfirmedSendCount());
+                }
+                const uint64_t checked = m_MeshMirror.GetVerifyCheckedCount() +
+                                         m_SkinnedMeshMirror.GetVerifyCheckedCount() +
+                                         m_LightMirror.GetVerifyCheckedCount() + m_SceneRevisionSetChecked;
+                const uint64_t mismatched = m_MeshMirror.GetVerifyMismatchedCount() +
+                                            m_SkinnedMeshMirror.GetVerifyMismatchedCount() +
+                                            m_LightMirror.GetVerifyMismatchedCount() + m_SceneRevisionSetMismatched;
+                RunPacketDeltaCheck(m_ProxyDeltaSentCount, checked, mismatched, m_ProxyDeltaReportedChecked,
+                                    m_ProxyDeltaReportedMismatched);
             }
             RunPacketConfirmCheck(m_PacketManager);
             PublishSceneSlotGate(m_MainSceneView.get(), m_PacketManager);
@@ -3567,6 +4095,14 @@ namespace NorvesLib::Core::Rendering
                                  static_cast<unsigned long long>(m_MegaMirror.GetGeneration()));
             }
             m_MegaMirror.Verify(packet->MegaDelta);
+        }
+        // Mesh・Skinned・Light の差分も同じ場所で写しへ当てる（描画を見送っても当てる。次の差分の土台になる）
+        if (applyResult == PacketApplyResult::Applied)
+        {
+            ApplyProxyArrayDelta(m_MeshMirror, packet->MeshDelta, *packet, packet->Scene.MeshProxies, "Mesh");
+            ApplyProxyArrayDelta(m_SkinnedMeshMirror, packet->SkinnedMeshDelta, *packet,
+                                 packet->Scene.SkinnedMeshProxies, "SkinnedMesh");
+            ApplyProxyArrayDelta(m_LightMirror, packet->LightDelta, *packet, packet->Scene.LightProxies, "Light");
         }
 
         FrameCaptureRequestSnapshot claimedCaptureRequest;
@@ -3758,8 +4294,10 @@ namespace NorvesLib::Core::Rendering
             (m_MainSceneView && m_MainSceneView->IsTemporalAAForced()) ||
             (packet->bHasMainCamera &&
              packet->Scene.MainCamera.AntiAliasing == CameraAntiAliasingMode::TemporalAA);
-        const RenderedObjectHistoryResult renderedObjectHistory =
-            m_RenderedObjectHistory.Apply(*packet, bTemporalAARequested);
+        const RenderedObjectHistoryResult renderedObjectHistory = m_RenderedObjectHistory.Apply(
+            *packet,
+            packet->MeshDelta.bActive ? m_MeshMirror.GetProxies() : packet->Scene.MeshProxies,
+            bTemporalAARequested);
         if (renderedObjectHistory.bRebased)
         {
             ++m_RenderedObjectRebasedFrameCount;
@@ -3945,10 +4483,15 @@ namespace NorvesLib::Core::Rendering
         viewContext.SnapshotTransparentCommands = DrawCommandView::FromRange(packet->DrawCommands,
                                                                              packet->TransparentCommandRange);
         viewContext.SnapshotSkinnedMeshFrameLeases = &packet->SkinnedMeshFrameLeases;
-        viewContext.SnapshotMeshProxies = &packet->Scene.MeshProxies;
+        // 差分を持つパケットでは、Mesh・Skinned・Light の全量は RenderThread の写しにある
+        viewContext.SnapshotMeshProxies =
+            packet->MeshDelta.bActive ? &m_MeshMirror.GetProxies() : &packet->Scene.MeshProxies;
         viewContext.SnapshotInstanceData = &packet->InstanceData;
-        viewContext.SnapshotSkinnedMeshProxies = &packet->Scene.SkinnedMeshProxies;
-        viewContext.SnapshotLightProxies = &packet->Scene.LightProxies;
+        viewContext.SnapshotSkinnedMeshProxies = packet->SkinnedMeshDelta.bActive
+                                                     ? &m_SkinnedMeshMirror.GetProxies()
+                                                     : &packet->Scene.SkinnedMeshProxies;
+        viewContext.SnapshotLightProxies =
+            packet->LightDelta.bActive ? &m_LightMirror.GetProxies() : &packet->Scene.LightProxies;
         viewContext.SnapshotPointShadows = &packet->PointShadows;
         if (packet->MegaDelta.bActive)
         {

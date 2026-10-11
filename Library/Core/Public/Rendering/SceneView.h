@@ -259,6 +259,20 @@ namespace NorvesLib::Core::Rendering
         void TakeMegaGeometryChangedIndices(Container::VariableArray<uint32_t> &outIndices);
 
         // ========================================
+        // Mesh・Skinned・Light の差分の同期（GameThread だけが触る）
+        // ========================================
+
+        /**
+         * @brief 前回の呼び出し以降に書いた MeshProxy・SkinnedMeshProxy・LightProxy 配列の位置を取り出す（昇順・重複なし）
+         *
+         * 追加・更新はその位置、外した位置は末尾の proxy が入った位置と元の末尾の位置。配列の大きさはパケットの差分が別に運ぶ。
+         * 配列を空にしたとき（クリア）は世代が進み、記録は捨てる。描画の準備（カリング）が書く SortDepth の変化は記録しない。
+         */
+        void TakeMeshProxyChangedIndices(Container::VariableArray<uint32_t> &outIndices);
+        void TakeSkinnedMeshProxyChangedIndices(Container::VariableArray<uint32_t> &outIndices);
+        void TakeLightProxyChangedIndices(Container::VariableArray<uint32_t> &outIndices);
+
+        // ========================================
         // 描画フロー
         // ========================================
 
@@ -577,6 +591,14 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<uint64_t> m_MegaUnsettledObjects;
         // 位置を記録する（全量の同期では記録しない。Take されないまま溜まったときは重複を畳んで大きさを抑える）
         void NoteMegaChanged(uint32_t index);
+        // Mesh・Skinned・Light の差分の同期: 前回の Take 以降に書いた位置（重複あり。Take で整える。GameThread だけが触る）
+        Container::VariableArray<uint32_t> m_MeshChangedIndices;
+        Container::VariableArray<uint32_t> m_SkinnedMeshChangedIndices;
+        Container::VariableArray<uint32_t> m_LightChangedIndices;
+        // 位置を記録する（Take されないまま溜まったときは重複を畳んで大きさを抑える）
+        static void NoteProxyChanged(Container::VariableArray<uint32_t> &changedIndices, uint32_t index, size_t arraySize);
+        static void TakeProxyChangedIndices(Container::VariableArray<uint32_t> &changedIndices,
+                                            Container::VariableArray<uint32_t> &outIndices);
         bool m_bShadowProbeEnabled = false;
         bool m_bShadowProbePointOnly = false;
         ShadowMethod m_ShadowMethod = ShadowMethod::Csm;

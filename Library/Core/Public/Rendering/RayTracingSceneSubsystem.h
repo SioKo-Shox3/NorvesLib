@@ -39,13 +39,16 @@ namespace NorvesLib::Core::Rendering
          * @param megaGeometryResources MegaGeometry（岩・小屋など）のLOD0を解決するリソース。nullなら含めない
          * @param megaGeometryProxies MegaGeometry の proxy の配列。nullなら packet.Scene.MegaGeometryProxies を読む
          *        （連番のパストレーシングでは差分の同期でも GameThread で作るので、GameThread の SceneView の配列を渡す）
+         * @param meshProxies インスタンシング描画の物体IDの照合に使う MeshProxy の配列。nullなら packet.Scene.MeshProxies を読む
+         *        （差分の同期ではパケットが全量を持たないので、GameThread の SceneView の配列を渡す）
          * @return 有効なスナップショットを構築できた場合true
          */
         bool BuildFrameSnapshot(const MeshResources* meshResources,
                                 FramePacket& packet,
                                 const MaterialResources* materialResources = nullptr,
                                 const MegaGeometryResources* megaGeometryResources = nullptr,
-                                const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies = nullptr);
+                                const Container::VariableArray<MegaGeometryProxy>* megaGeometryProxies = nullptr,
+                                const Container::VariableArray<MeshProxy>* meshProxies = nullptr);
 
         /**
          * @brief MegaGeometry（岩・小屋など）のインスタンスを、パケットのレイトレーシングシーンの末尾へ足す

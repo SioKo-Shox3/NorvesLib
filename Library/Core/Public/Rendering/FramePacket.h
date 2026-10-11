@@ -197,6 +197,37 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
+     * @brief Mesh・Skinned・Light の proxy 配列の差分（RenderThread の写し ProxyArrayMirror へ当てる）
+     *
+     * MegaSceneDelta と同じ約束（位置を鍵にした状態の差分。確認されていない送信の分も含む累積）。
+     * bBaseline のときは、パケットの Scene の同じ種類の配列（Scene.MeshProxies など）が全量で、写しをそれに置き換える。
+     * それ以外のとき Scene の配列は空。bActive が false のパケット（手で組んだもの）は、Scene の配列を全量として読む。
+     */
+    template<typename TProxy>
+    struct ProxyArrayDelta
+    {
+        bool bActive = false;
+        bool bBaseline = false;
+        uint32_t Size = 0;
+        Container::VariableArray<uint32_t> Indices;
+        Container::VariableArray<TProxy> Proxies;
+        // 検査 PACKET_DELTA: 送った時点の GameThread の配列の hash。RenderThread が写しの hash と照合する
+        bool bVerify = false;
+        uint64_t VerifyHash = 0;
+
+        void Clear()
+        {
+            bActive = false;
+            bBaseline = false;
+            Size = 0;
+            Indices.clear();
+            Proxies.clear();
+            bVerify = false;
+            VerifyHash = 0;
+        }
+    };
+
+    /**
      * @brief フレームパケット
      *
      * 1フレーム分の描画データを格納する構造体。
@@ -253,7 +284,15 @@ namespace NorvesLib::Core::Rendering
         /** @brief MegaGeometry の差分。有効なとき、Scene.MegaGeometryProxies は空で、消費者は RenderThread の写しを読む */
         MegaSceneDelta MegaDelta;
 
-        /** @brief キューブシャドウを描く点光源の選択と6面の行列（Scene.LightProxiesとMainCameraから作る） */
+        /**
+         * @brief Mesh・Skinned・Light の差分。有効なとき、Scene の同じ種類の配列は基準のパケットだけが全量を持ち、
+         *        消費者は RenderThread の写しを読む。光源の配列は空の太陽を加えた後のもの
+         */
+        ProxyArrayDelta<MeshProxy> MeshDelta;
+        ProxyArrayDelta<SkinnedMeshProxy> SkinnedMeshDelta;
+        ProxyArrayDelta<LightProxy> LightDelta;
+
+        /** @brief キューブシャドウを描く点光源の選択と6面の行列（空の太陽を加えた光源表とMainCameraから作る） */
         PointShadowSnapshot PointShadows;
 
         /**
@@ -362,6 +401,9 @@ namespace NorvesLib::Core::Rendering
             Scene.Clear();
             RayTracingScene.Clear();
             MegaDelta.Clear();
+            MeshDelta.Clear();
+            SkinnedMeshDelta.Clear();
+            LightDelta.Clear();
             PointShadows.Clear();
             DrawCommands.clear();
             DrawCommandRange = CommandRange{};
@@ -465,8 +507,10 @@ namespace NorvesLib::Core::Rendering
      * カスタムデータがbit一致するMeshProxyへ対応付ける。一致が複数あるときはまだ使っていない候補を
      * バッチへの追加順（instanceの並び）で割り当てる。そうした候補同士は描画に使う値が同じなので、
      * 入れ替わっても像は変わらない。見つからないinstanceは0にする。
+     * meshProxies は照合に使う MeshProxy の配列（差分の同期では GameThread の SceneView の配列。パケットは全量を持たない）。
      */
-    inline void ResolveInstancedDrawObjectIds(const FramePacket& packet, const DrawParams& draw,
+    inline void ResolveInstancedDrawObjectIds(const Container::VariableArray<MeshProxy>& meshProxies,
+                                              const FramePacket& packet, const DrawParams& draw,
                                               Container::VariableArray<uint64_t>& outObjectIds)
     {
         outObjectIds.clear();
@@ -478,7 +522,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         Container::VariableArray<const MeshProxy*> candidates;
-        for (const MeshProxy& proxy : packet.Scene.MeshProxies)
+        for (const MeshProxy& proxy : meshProxies)
         {
             if (!proxy.IsValid() || proxy.MeshHandle.Id != draw.MeshHandle.Id ||
                 proxy.bCastShadow != draw.bCastShadow)
@@ -517,6 +561,13 @@ namespace NorvesLib::Core::Rendering
                 break;
             }
         }
+    }
+
+    /** @brief パケットの Scene.MeshProxies（手で組んだパケット・基準のパケット）で照合する */
+    inline void ResolveInstancedDrawObjectIds(const FramePacket& packet, const DrawParams& draw,
+                                              Container::VariableArray<uint64_t>& outObjectIds)
+    {
+        ResolveInstancedDrawObjectIds(packet.Scene.MeshProxies, packet, draw, outObjectIds);
     }
 
     namespace PathTracingSequenceCarryDetail
