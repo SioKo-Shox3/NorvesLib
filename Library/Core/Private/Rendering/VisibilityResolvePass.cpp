@@ -42,6 +42,8 @@ namespace NorvesLib::Core::Rendering
         // 共通の束縛の数（0..8、材質の GBuffer の 9、発光の GBuffer の 10。検証用の版はさらに 11 の書き出し）
         constexpr uint32_t CommonBindingCount = 11u;
         constexpr uint32_t DumpBindingIndex = 11u;
+        // MegaGeometry のメッシュの表（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。材質ごとの形の追加の束縛より後ろ）
+        constexpr uint32_t MegaMeshTableBindingIndex = 22u;
 
         // bFeedback: 材質ごとの形の最後に VT の要求のバッファ（シェーダーの VT_FEEDBACK_BINDING）を足す（bTiles のときだけ）
         RHI::DescriptorSetDesc MakeDescriptorSetDesc(bool bDump, bool bTiles, bool bFeedback)
@@ -104,6 +106,13 @@ namespace NorvesLib::Core::Rendering
                     binding.stages = RHI::ShaderStage::Compute;
                     desc.bindings.push_back(binding);
                 }
+            }
+            {
+                RHI::DescriptorBinding binding;
+                binding.binding = MegaMeshTableBindingIndex;
+                binding.type = RHI::ResourceBindType::StructuredBuffer;
+                binding.stages = RHI::ShaderStage::Compute;
+                desc.bindings.push_back(binding);
             }
             return desc;
         }
@@ -534,7 +543,7 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    // 直接版と材質ごとの版で共通の束縛（0..10 と、検証用の版の 11）
+    // 直接版と材質ごとの版で共通の束縛（0..10 と、検証用の版の 11、メッシュの表の 22）
     void VisibilityResolve::BindCommon(RHI::IDescriptorSet& set,
                                        const RHI::BufferPtr& paramsUniform,
                                        const VisibilityResolveDispatch& dispatch) const
@@ -548,6 +557,10 @@ namespace NorvesLib::Core::Rendering
         set.BindStorageBuffer(4, megaInstances, 0,
                               dispatch.MegaInstances ? BindBytes(megaInstances, dispatch.MegaInstancesBytes)
                                                      : ClampBindSize(PlaceholderBytes));
+        const RHI::BufferPtr& megaMeshes = dispatch.MegaMeshes ? dispatch.MegaMeshes : m_Placeholder;
+        set.BindStorageBuffer(MegaMeshTableBindingIndex, megaMeshes, 0,
+                              dispatch.MegaMeshes ? BindBytes(megaMeshes, dispatch.MegaMeshesBytes)
+                                                  : ClampBindSize(PlaceholderBytes));
         const RHI::BufferPtr& drawInstances = dispatch.DrawInstances ? dispatch.DrawInstances : m_Placeholder;
         set.BindStorageBuffer(5, drawInstances, 0,
                               dispatch.DrawInstances ? BindBytes(drawInstances, dispatch.DrawInstancesBytes)
@@ -987,6 +1000,8 @@ namespace NorvesLib::Core::Rendering
             static_cast<uint64_t>(m_RasterPass->GetMaterialTableCount()) * sizeof(VisibilityBuffer::MaterialEntry);
         dispatch.MegaInstances = m_RasterPass->GetMegaInstanceBuffer();
         dispatch.MegaInstancesBytes = m_RasterPass->GetMegaInstanceBufferBytes();
+        dispatch.MegaMeshes = m_RasterPass->GetMegaMeshBuffer();
+        dispatch.MegaMeshesBytes = m_RasterPass->GetMegaMeshBufferBytes();
         dispatch.DrawInstances = context.InstanceDataBuffer;
         dispatch.DrawInstancesBytes = context.InstanceDataBuffer ? context.InstanceDataBuffer->GetSize() : 0;
 

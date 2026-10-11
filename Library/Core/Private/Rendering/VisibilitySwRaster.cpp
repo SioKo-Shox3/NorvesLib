@@ -37,7 +37,10 @@ namespace NorvesLib::Core::Rendering
                                                                : static_cast<uint32_t>(size);
         }
 
-        // visbuffer_sw_raster.comp の binding 0〜6
+        // MegaGeometry のメッシュの表の binding（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING）
+        constexpr uint32_t MegaMeshTableBinding = 22;
+
+        // visbuffer_sw_raster.comp の binding 0〜6 と 22（メッシュの表）
         RHI::DescriptorSetDesc MakeSwRasterDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
@@ -56,6 +59,7 @@ namespace NorvesLib::Core::Rendering
             add(4, RHI::ResourceBindType::StructuredBuffer);
             add(5, RHI::ResourceBindType::ConstantBuffer);
             add(6, RHI::ResourceBindType::RWBuffer);
+            add(MegaMeshTableBinding, RHI::ResourceBindType::StructuredBuffer);
             return desc;
         }
     } // namespace
@@ -177,7 +181,7 @@ namespace NorvesLib::Core::Rendering
 
     bool VisibilitySwRaster::RecordDispatch(RHI::ICommandList* commandList, uint32_t passIndex, const Inputs& inputs)
     {
-        if (!IsReady() || !m_Device || !commandList || passIndex > 1u || !inputs.FrameUniform || !inputs.InstanceBuffer ||
+        if (!IsReady() || !m_Device || !commandList || passIndex > 1u || !inputs.FrameUniform || !inputs.InstanceBuffer || !inputs.MeshBuffer ||
             !inputs.RecordTable || !inputs.KeyBuffer || !inputs.List || !inputs.Stats || inputs.ListCapacity == 0 || inputs.KeyWidth == 0 ||
             inputs.KeyHeight == 0)
         {
@@ -220,6 +224,7 @@ namespace NorvesLib::Core::Rendering
 
         use.DescriptorSet->BindConstantBuffer(0, inputs.FrameUniform, 0, FrameUniformBytes);
         use.DescriptorSet->BindStorageBuffer(1, inputs.InstanceBuffer, 0, ClampBindSize(inputs.InstanceBufferBytes));
+        use.DescriptorSet->BindStorageBuffer(MegaMeshTableBinding, inputs.MeshBuffer, 0, ClampBindSize(inputs.MeshBufferBytes));
         use.DescriptorSet->BindStorageBuffer(2, inputs.RecordTable, 0, ClampBindSize(inputs.RecordTableBytes));
         use.DescriptorSet->BindStorageBuffer(3, inputs.KeyBuffer, 0, ClampBindSize(inputs.KeyBuffer->GetSize()));
         use.DescriptorSet->BindStorageBuffer(4, inputs.List, 0, ClampBindSize(inputs.List->GetSize()));

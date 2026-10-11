@@ -252,6 +252,9 @@ namespace NorvesLib::Core::Rendering
          */
         const RHI::BufferPtr& GetMegaInstanceBuffer() const { return m_LastMegaInstanceBuffer; }
         uint64_t GetMegaInstanceBufferBytes() const { return m_LastMegaInstanceBytes; }
+        /** @brief 同じフレームの MegaGeometry のメッシュの表（インスタンスの表の行が番号で指す）と、使っている範囲のバイト数 */
+        const RHI::BufferPtr& GetMegaMeshBuffer() const { return m_LastMegaMeshBuffer; }
+        uint64_t GetMegaMeshBufferBytes() const { return m_LastMegaMeshBytes; }
 
         RGResourceHandle GetIdHandle() const { return m_IdHandle.ToResourceHandle(); }
         RGResourceHandle GetDepthHandle() const { return m_DepthHandle; }
@@ -372,6 +375,8 @@ namespace NorvesLib::Core::Rendering
              * の値として公開する） */
             RHI::BufferPtr MegaInstanceBuffer;
             uint64_t MegaInstanceBytes = 0;
+            RHI::BufferPtr MegaMeshBuffer;
+            uint64_t MegaMeshBytes = 0;
             /** @brief MegaGeometryPass の記録が、2
              * パスの途中で呼び出し（IDrawSink）を使ったか */
             bool bSinkUsed = false;
@@ -535,6 +540,8 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<Container::TSharedPtr<const void>> m_LastMaterialOwners;
         RHI::BufferPtr m_LastMegaInstanceBuffer;
         uint64_t m_LastMegaInstanceBytes = 0;
+        RHI::BufferPtr m_LastMegaMeshBuffer;
+        uint64_t m_LastMegaMeshBytes = 0;
         // そのフレームの材質の表の積み上げ（Execute のたびに空にする）
         VisibilityBuffer::MaterialTable m_MaterialTable;
         // 材質の表の件数を最後にログへ書いた値（変わったときだけ書く）

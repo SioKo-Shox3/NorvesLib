@@ -158,7 +158,7 @@ void main()
     {
         return;
     }
-    const MegaInstance instance = instances[instanceIndex];
+    const MegaInstance instance = LoadMegaInstance(instanceIndex);
 
     // (2) クラスタの判定
     const uint clusterIndex = groupInInstance * 64u + gl_LocalInvocationID.x;

@@ -1936,7 +1936,7 @@ namespace
     // 出力の一覧の容量が 5 のときは、選んだ数は 22・溢れは 17 で、書かれた 5 件はどれも期待の集合に入る。
     namespace MegaCull
     {
-        // Common/MegaGeometryCull.glsl の MegaInstance（192 バイト）と同じ並び
+        // シェーダーが LoadMegaInstance で受け取る MegaInstance と同じ値（GPU へはインスタンスの表とメッシュの表に分けて書く）
         struct TestInstance
         {
             float World[16];
@@ -1946,7 +1946,45 @@ namespace
             uint32_t DrawInfo[4];
             uint32_t BvhInfo[4]; // BVH のアドレス（0）、節の数、ページの表の先頭は [3]
         };
-        static_assert(sizeof(TestInstance) == 192, "MegaInstance と大きさが一致しません");
+
+        // Common/MegaInstanceTable.glsl の MegaInstanceRow（144 バイト）と MegaMeshEntry（64 バイト）と同じ並び
+        struct TestInstanceRow
+        {
+            float World[16];
+            float PreviousWorld[16];
+            uint32_t Info[4]; // メッシュの表の番号、最初のワークグループの番号、見えた印の先頭、予約
+        };
+        static_assert(sizeof(TestInstanceRow) == 144, "MegaInstanceRow と大きさが一致しません");
+        struct TestMesh
+        {
+            float LODSphere[4];
+            uint32_t ClusterInfo[4]; // アドレスの下位・上位、クラスタ数、予約
+            uint32_t DrawInfo[4];    // 区間、頂点の基点、インデックスの基点、予約
+            uint32_t BvhInfo[4];     // BVH のアドレス、節の数、ページの表の先頭
+        };
+        static_assert(sizeof(TestMesh) == 64, "MegaMeshEntry と大きさが一致しません");
+
+        // インスタンスごとに 1 行ずつのメッシュの表を作り、インスタンスの表の行はそれぞれ自分の番号の行を指す
+        void SplitInstances(const TestInstance* source, uint32_t count, TestInstanceRow* rows, TestMesh* meshes)
+        {
+            for (uint32_t index = 0; index < count; ++index)
+            {
+                const TestInstance& instance = source[index];
+                TestInstanceRow& row = rows[index];
+                TestMesh& mesh = meshes[index];
+                row = TestInstanceRow{};
+                mesh = TestMesh{};
+                std::memcpy(row.World, instance.World, sizeof(row.World));
+                std::memcpy(row.PreviousWorld, instance.PreviousWorld, sizeof(row.PreviousWorld));
+                row.Info[0] = index;
+                row.Info[1] = instance.ClusterInfo[3];
+                row.Info[2] = instance.DrawInfo[3];
+                std::memcpy(mesh.LODSphere, instance.LODSphere, sizeof(mesh.LODSphere));
+                std::memcpy(mesh.ClusterInfo, instance.ClusterInfo, sizeof(uint32_t) * 3u);
+                std::memcpy(mesh.DrawInfo, instance.DrawInfo, sizeof(uint32_t) * 3u);
+                std::memcpy(mesh.BvhInfo, instance.BvhInfo, sizeof(mesh.BvhInfo));
+            }
+        }
 
         constexpr uint32_t ClusterCount = 15;
         constexpr uint32_t LevelCount = 4;
@@ -2128,12 +2166,14 @@ namespace
             const BufferPtr clusters = device->CreateBuffer(
                 BufferDesc(sizeof(Mega::GPUClusterData) * clusterArrayCount, ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress, true, "VsmMegaTestClusters"));
             const BufferPtr instances = device->CreateBuffer(
-                BufferDesc(sizeof(TestInstance) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmMegaTestInstances"));
+                BufferDesc(sizeof(TestInstanceRow) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmMegaTestInstances"));
+            const BufferPtr meshes = device->CreateBuffer(
+                BufferDesc(sizeof(TestMesh) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmMegaTestMeshes"));
             const BufferPtr shadowInstances = device->CreateBuffer(
                 BufferDesc(sizeof(MegaGeometryShadowInstance) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmMegaTestShadowInstances"));
             const BufferPtr geometryPages = device->CreateBuffer(
                 BufferDesc(sizeof(Mega::GeometryPageTable::Entry) * 4u, ResourceUsage::StorageBuffer, true, "VsmMegaTestGeometryPages"));
-            if (!pageTable || !stats || !dirtyBits || !list || !clusters || !instances || !shadowInstances || !geometryPages)
+            if (!pageTable || !stats || !dirtyBits || !list || !clusters || !instances || !meshes || !shadowInstances || !geometryPages)
             {
                 return false;
             }
@@ -2227,13 +2267,23 @@ namespace
                 }
             }
             {
-                void* mapped = instances->Map(0u, sizeof(instanceTable));
+                TestInstanceRow rowTable[InstanceCount] = {};
+                TestMesh meshTable[InstanceCount] = {};
+                SplitInstances(instanceTable, InstanceCount, rowTable, meshTable);
+                void* mapped = instances->Map(0u, sizeof(rowTable));
                 if (mapped == nullptr)
                 {
                     return false;
                 }
-                std::memcpy(mapped, instanceTable, sizeof(instanceTable));
+                std::memcpy(mapped, rowTable, sizeof(rowTable));
                 instances->Unmap();
+                mapped = meshes->Map(0u, sizeof(meshTable));
+                if (mapped == nullptr)
+                {
+                    return false;
+                }
+                std::memcpy(mapped, meshTable, sizeof(meshTable));
+                meshes->Unmap();
                 mapped = shadowInstances->Map(0u, sizeof(shadowTable));
                 if (mapped == nullptr)
                 {
@@ -2321,6 +2371,7 @@ namespace
             dispatch.DirtyBits = dirtyBits;
             dispatch.List = list;
             dispatch.Instances = instances;
+            dispatch.Meshes = meshes;
             dispatch.ShadowInstances = shadowInstances;
             dispatch.MegaPageTable = geometryPages;
             dispatch.InstanceCount = InstanceCount;
@@ -2751,12 +2802,14 @@ namespace
             const BufferPtr clusters = device->CreateBuffer(BufferDesc(
                 sizeof(Mega::GPUClusterData) * MegaCull::ClusterCount, ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress, true, "VsmPointMegaTestClusters"));
             const BufferPtr instances = device->CreateBuffer(
-                BufferDesc(sizeof(MegaCull::TestInstance) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmPointMegaTestInstances"));
+                BufferDesc(sizeof(MegaCull::TestInstanceRow) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmPointMegaTestInstances"));
+            const BufferPtr meshes = device->CreateBuffer(
+                BufferDesc(sizeof(MegaCull::TestMesh) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmPointMegaTestMeshes"));
             const BufferPtr shadowInstances = device->CreateBuffer(
                 BufferDesc(sizeof(MegaGeometryShadowInstance) * InstanceCount, ResourceUsage::StorageBuffer, true, "VsmPointMegaTestShadowInstances"));
             const BufferPtr geometryPages = device->CreateBuffer(
                 BufferDesc(sizeof(Mega::GeometryPageTable::Entry) * 4u, ResourceUsage::StorageBuffer, true, "VsmPointMegaTestGeometryPages"));
-            if (!pageTable || !stats || !dirtyBits || !list || !clusters || !instances || !shadowInstances || !geometryPages)
+            if (!pageTable || !stats || !dirtyBits || !list || !clusters || !instances || !meshes || !shadowInstances || !geometryPages)
             {
                 return false;
             }
@@ -2817,7 +2870,11 @@ namespace
                     totalGroups += 1u; // 15 クラスタ = 1 ワークグループ
                 }
             }
-            if (!upload(instances, instanceTable, sizeof(instanceTable)) || !upload(shadowInstances, shadowTable, sizeof(shadowTable)))
+            MegaCull::TestInstanceRow rowTable[InstanceCount] = {};
+            MegaCull::TestMesh meshTable[InstanceCount] = {};
+            MegaCull::SplitInstances(instanceTable, InstanceCount, rowTable, meshTable);
+            if (!upload(instances, rowTable, sizeof(rowTable)) || !upload(meshes, meshTable, sizeof(meshTable)) ||
+                !upload(shadowInstances, shadowTable, sizeof(shadowTable)))
             {
                 return false;
             }
@@ -2883,6 +2940,7 @@ namespace
             dispatch.DirtyBits = dirtyBits;
             dispatch.List = list;
             dispatch.Instances = instances;
+            dispatch.Meshes = meshes;
             dispatch.ShadowInstances = shadowInstances;
             dispatch.MegaPageTable = geometryPages;
             dispatch.InstanceCount = InstanceCount;
@@ -3372,7 +3430,9 @@ namespace
         const BufferPtr clusterBuffer = device->CreateBuffer(BufferDesc(
             sizeof(Mega::GPUClusterData) * shapeCount, ResourceUsage::StorageBuffer | ResourceUsage::BufferDeviceAddress, true, "VsmMegaDrawTestClusters"));
         const BufferPtr instanceBuffer = device->CreateBuffer(
-            BufferDesc(sizeof(MegaCull::TestInstance) * shapeCount, ResourceUsage::StorageBuffer, true, "VsmMegaDrawTestInstances"));
+            BufferDesc(sizeof(MegaCull::TestInstanceRow) * shapeCount, ResourceUsage::StorageBuffer, true, "VsmMegaDrawTestInstances"));
+        const BufferPtr meshBuffer = device->CreateBuffer(
+            BufferDesc(sizeof(MegaCull::TestMesh) * shapeCount, ResourceUsage::StorageBuffer, true, "VsmMegaDrawTestMeshes"));
         const BufferPtr shadowBuffer = device->CreateBuffer(
             BufferDesc(sizeof(MegaGeometryShadowInstance) * shapeCount, ResourceUsage::StorageBuffer, true, "VsmMegaDrawTestShadowInstances"));
         const BufferPtr geometryPages = device->CreateBuffer(
@@ -3391,7 +3451,7 @@ namespace
         const BufferPtr draws = device->CreateBuffer(
             BufferDesc(VirtualShadowMap::RasterDrawBytes(ListCapacity), VirtualShadowMap::RasterDrawUsage() | readable, true, "VsmMegaDrawTestDraws"));
         Resources resources;
-        if (!poolChunk || !clusterBuffer || !instanceBuffer || !shadowBuffer || !geometryPages || !dirtyBits || !list || !megaChunks || !hostChunks ||
+        if (!poolChunk || !clusterBuffer || !instanceBuffer || !meshBuffer || !shadowBuffer || !geometryPages || !dirtyBits || !list || !megaChunks || !hostChunks ||
             !instances || !draws || !CreateResources(device, caseF.PoolPages, resources))
         {
             std::cerr << TestName << " ケース K: バッファを作れませんでした" << std::endl;
@@ -3513,7 +3573,13 @@ namespace
             shadow.IndexAddress[1] = shadow.VertexAddress[1];
         }
         clusterBuffer->Update(clusters.data(), clusters.size() * sizeof(Mega::GPUClusterData));
-        instanceBuffer->Update(instanceTable.data(), instanceTable.size() * sizeof(MegaCull::TestInstance));
+        {
+            Container::VariableArray<MegaCull::TestInstanceRow> rowTable(instanceTable.size());
+            Container::VariableArray<MegaCull::TestMesh> meshTable(instanceTable.size());
+            MegaCull::SplitInstances(instanceTable.data(), static_cast<uint32_t>(instanceTable.size()), rowTable.data(), meshTable.data());
+            instanceBuffer->Update(rowTable.data(), rowTable.size() * sizeof(MegaCull::TestInstanceRow));
+            meshBuffer->Update(meshTable.data(), meshTable.size() * sizeof(MegaCull::TestMesh));
+        }
         shadowBuffer->Update(shadowTable.data(), shadowTable.size() * sizeof(MegaGeometryShadowInstance));
         {
             Mega::GeometryPageTable::Entry entries[4] = {};
@@ -3587,6 +3653,7 @@ namespace
         cullDispatch.List = list;
         cullDispatch.Chunks = megaChunks;
         cullDispatch.Instances = instanceBuffer;
+        cullDispatch.Meshes = meshBuffer;
         cullDispatch.ShadowInstances = shadowBuffer;
         cullDispatch.MegaPageTable = geometryPages;
         cullDispatch.InstanceCount = shapeCount;
@@ -3821,6 +3888,7 @@ namespace
                 frameCull.List = frameList;
                 frameCull.Chunks = frameChunks;
                 frameCull.Instances = instanceBuffer;
+                frameCull.Meshes = meshBuffer;
                 frameCull.ShadowInstances = shadowBuffer;
                 frameCull.MegaPageTable = geometryPages;
                 frameCull.InstanceCount = shapeCount;

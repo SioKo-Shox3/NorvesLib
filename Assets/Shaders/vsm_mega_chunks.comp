@@ -56,7 +56,7 @@ void main()
     }
 
     const uvec4 entry = listEntries[index];
-    const MegaInstance instance = instances[entry.x];
+    const MegaInstance instance = LoadMegaInstance(entry.x);
     const ShadowInstance shadow = shadowInstances[entry.x];
     g_WorldMatrix = instance.world;
     g_Clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));

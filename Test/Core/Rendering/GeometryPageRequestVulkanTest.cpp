@@ -120,7 +120,7 @@ namespace
         uint32_t OrthoReserved[3];
     };
 
-    // MegaInstance（192 バイト）と同じ並び
+    // シェーダーが LoadMegaInstance で受け取る MegaInstance と同じ値（GPU へはインスタンスの表とメッシュの表に分けて書く）
     struct TestInstance
     {
         float World[16];
@@ -130,7 +130,26 @@ namespace
         uint32_t DrawInfo[4];    // 区間、頂点の基点、インデックスの基点、見えた印の先頭
         uint32_t BvhInfo[4];     // BVH のアドレス（0）、節の数、ページの表の先頭
     };
-    static_assert(sizeof(TestInstance) == 192, "MegaInstance と大きさが一致しません");
+
+    // Common/MegaInstanceTable.glsl の MegaInstanceRow（144 バイト）と MegaMeshEntry（64 バイト）と同じ並び
+    struct TestInstanceRow
+    {
+        float World[16];
+        float PreviousWorld[16];
+        uint32_t Info[4]; // メッシュの表の番号、最初のワークグループの番号、見えた印の先頭、予約
+    };
+    static_assert(sizeof(TestInstanceRow) == 144, "MegaInstanceRow と大きさが一致しません");
+    struct TestMesh
+    {
+        float LODSphere[4];
+        uint32_t ClusterInfo[4]; // アドレスの下位・上位、クラスタ数、予約
+        uint32_t DrawInfo[4];    // 区間、頂点の基点、インデックスの基点、予約
+        uint32_t BvhInfo[4];     // BVH のアドレス、節の数、ページの表の先頭
+    };
+    static_assert(sizeof(TestMesh) == 64, "MegaMeshEntry と大きさが一致しません");
+
+    // メッシュの表の binding（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING）
+    constexpr uint32_t MeshTableBinding = 22u;
 
     constexpr uint32_t ClusterCount = 15;
     constexpr uint32_t PageCount = 4;
@@ -147,6 +166,7 @@ namespace
         SamplerPtr Sampler;
         BufferPtr Uniform;
         BufferPtr Instances;
+        BufferPtr Meshes;
         BufferPtr Clusters;
         BufferPtr Commands;
         BufferPtr Counts;
@@ -190,6 +210,11 @@ namespace
             binding.stages = RHI::ShaderStage::Compute;
             desc.bindings.push_back(binding);
         }
+        DescriptorBinding meshBinding; // メッシュの表
+        meshBinding.binding = MeshTableBinding;
+        meshBinding.type = ResourceBindType::StructuredBuffer;
+        meshBinding.stages = RHI::ShaderStage::Compute;
+        desc.bindings.push_back(meshBinding);
         return desc;
     }
 
@@ -214,6 +239,24 @@ namespace
         void* mapped = buffer->Map(0u, bytes);
         std::memcpy(mapped, data, static_cast<size_t>(bytes));
         buffer->Unmap();
+    }
+
+    // 1 つのインスタンスを、インスタンスの表の行（メッシュの表の 0 番を指す）とメッシュの表の 0 番に分けて書く
+    void WriteInstance(const Fixture& fixture, const TestInstance& instance)
+    {
+        TestInstanceRow row{};
+        std::memcpy(row.World, instance.World, sizeof(row.World));
+        std::memcpy(row.PreviousWorld, instance.PreviousWorld, sizeof(row.PreviousWorld));
+        row.Info[0] = 0u;
+        row.Info[1] = instance.ClusterInfo[3];
+        row.Info[2] = instance.DrawInfo[3];
+        TestMesh mesh{};
+        std::memcpy(mesh.LODSphere, instance.LODSphere, sizeof(mesh.LODSphere));
+        std::memcpy(mesh.ClusterInfo, instance.ClusterInfo, sizeof(uint32_t) * 3u);
+        std::memcpy(mesh.DrawInfo, instance.DrawInfo, sizeof(uint32_t) * 3u);
+        std::memcpy(mesh.BvhInfo, instance.BvhInfo, sizeof(mesh.BvhInfo));
+        WriteBuffer(fixture.Instances, &row, sizeof(row));
+        WriteBuffer(fixture.Meshes, &mesh, sizeof(mesh));
     }
 
     BoundingSphere MakeSphere(float x, float y, float z, float radius)
@@ -331,7 +374,8 @@ namespace
             return false;
         }
         descriptorSet->BindConstantBuffer(0u, fixture.Uniform, 0u, static_cast<uint32_t>(sizeof(CullUniforms)));
-        descriptorSet->BindStorageBuffer(1u, fixture.Instances, 0u, static_cast<uint32_t>(sizeof(TestInstance)));
+        descriptorSet->BindStorageBuffer(1u, fixture.Instances, 0u, static_cast<uint32_t>(sizeof(TestInstanceRow)));
+        descriptorSet->BindStorageBuffer(MeshTableBinding, fixture.Meshes, 0u, static_cast<uint32_t>(sizeof(TestMesh)));
         descriptorSet->BindStorageBuffer(2u, fixture.Commands, 0u, CommandCapacity * 5u * 4u);
         descriptorSet->BindStorageBuffer(3u, fixture.Counts, 0u, 16u);
         descriptorSet->BindTexture(4u, fixture.HiZ);
@@ -601,7 +645,8 @@ namespace
 
             const ResourceUsage storage = ResourceUsage::StorageBuffer;
             fixture.Uniform = CreateHostBuffer(device, sizeof(CullUniforms), ResourceUsage::ConstantBuffer, "GeometryPageRequestUBO");
-            fixture.Instances = CreateHostBuffer(device, sizeof(TestInstance), storage, "GeometryPageRequestInstances");
+            fixture.Instances = CreateHostBuffer(device, sizeof(TestInstanceRow), storage, "GeometryPageRequestInstances");
+            fixture.Meshes = CreateHostBuffer(device, sizeof(TestMesh), storage, "GeometryPageRequestMeshes");
             fixture.Clusters = CreateHostBuffer(device, sizeof(gpuClusters), storage | ResourceUsage::BufferDeviceAddress,
                                                 "GeometryPageRequestClusters");
             fixture.Commands = CreateHostBuffer(device, CommandCapacity * 5u * 4u, storage, "GeometryPageRequestCommands");
@@ -616,7 +661,7 @@ namespace
                                                  "GeometryPageRequestTable");
             fixture.PageRequests = CreateHostBuffer(device, Mega::GeometryPageRequestBuffer::GetBufferBytes(RequestCapacity), storage,
                                                     "GeometryPageRequestList");
-            if (!fixture.Pipeline || !fixture.Sampler || !fixture.HiZ || !fixture.Uniform || !fixture.Instances ||
+            if (!fixture.Pipeline || !fixture.Sampler || !fixture.HiZ || !fixture.Uniform || !fixture.Instances || !fixture.Meshes ||
                 !fixture.Clusters || !fixture.Commands || !fixture.Counts || !fixture.Visible || !fixture.Stats ||
                 !fixture.Sections || !fixture.DrawInfos || !fixture.BvhQueue || !fixture.BvhCounters || !fixture.PageTable ||
                 !fixture.PageRequests)
@@ -643,7 +688,7 @@ namespace
             instance.ClusterInfo[2] = ClusterCount;
             instance.ClusterInfo[3] = 0;
             instance.BvhInfo[3] = 0;
-            WriteBuffer(fixture.Instances, &instance, sizeof(instance));
+            WriteInstance(fixture, instance);
             const uint32_t section[2] = {0u, CommandCapacity};
             WriteBuffer(fixture.Sections, section, sizeof(section));
 
@@ -889,7 +934,7 @@ namespace
                 bvhInstance.BvhInfo[1] = static_cast<uint32_t>(nodeAddress >> 32);
                 bvhInstance.BvhInfo[2] = NodeCount;
                 bvhInstance.BvhInfo[3] = 0;
-                WriteBuffer(fixture.Instances, &bvhInstance, sizeof(bvhInstance));
+                WriteInstance(fixture, bvhInstance);
 
                 // 1 パスぶん（節の判定の 2 段 + 葉のクラスタの判定）を実行する。段のカウンタはパスごとに 0 へ戻す
                 const auto runBvhPass = [&](uint32_t cullPass) -> bool

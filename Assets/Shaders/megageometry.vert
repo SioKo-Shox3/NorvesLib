@@ -18,21 +18,10 @@ layout(set = 0, binding = 0) uniform MVPData
     vec4 frameParams;    // x=前のカメラがあるか（1/0）, y=発光に掛けるプリエクスポージャ, z=変位の頂点の間隔（UV）, w=描画の番号がLODの段か（1/0）
 } mvp;
 
-// インスタンスの表（cluster_cull.comp の MegaInstance と一致）。描画が引くのは変換だけ。
-struct MegaInstance
-{
-    mat4 world;
-    mat4 previousWorld;   // 直前のフレームの変換（velocity 用）
-    vec4 lodSphere;
-    uvec4 clusterInfo;
-    uvec4 drawInfo;
-    uvec4 bvhInfo;        // グループの BVH の節の配列のアドレス・節の数（描画では使わない。配列の刻みを合わせるために持つ）
-};
-
-layout(std430, set = 0, binding = 8) readonly buffer InstanceBuffer
-{
-    MegaInstance instances[];
-};
+// インスタンスの表（binding 8）とメッシュの表（binding 22）。描画が引くのは変換だけ。
+#define MEGA_INSTANCE_BINDING 8
+#define MEGA_MESH_BINDING 22
+#include "Common/MegaInstanceTable.glsl"
 
 // コマンドごとの描画情報（x = インスタンスの番号, y = デバッグ表示・LODの段の payload）。
 // コマンドの firstInstance が添え字（カリングが書いたコマンドの通しの位置）なので gl_InstanceIndex で引く。
@@ -54,8 +43,9 @@ layout(location = 8) out vec4 fragPreviousClip;
 void main()
 {
     uvec2 drawInfo = drawInfos[gl_InstanceIndex];
-    mat4 world = instances[drawInfo.x].world;
-    mat4 previousWorld = instances[drawInfo.x].previousWorld;
+    const MegaInstance instance = LoadMegaInstance(drawInfo.x);
+    mat4 world = instance.world;
+    mat4 previousWorld = instance.previousWorld;
 
     vec4 worldPos = world * vec4(inPosition, 1.0);
     fragWorldPos = worldPos.xyz;

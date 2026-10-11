@@ -65,8 +65,9 @@ namespace NorvesLib::Core::Rendering
     };
 
     /**
-     * @brief VSM の投影物のカリングが読む、直前の RecordFrameCommand の入力（無ければ bValid が false）
+     * @brief VSM の投影物のカリングが読む、このフレームのインスタンスの表などの入力（無ければ bValid が false）
      *
+     * 表を書く前段（MegaGeometryPass::Execute。読み手のどのパスよりも前）が作る。
      * バッファはどれも host-visible で、ホストが書いたまま（このフレームの記録が終わるまで書き換わらない）。主の経路が
      * 使うものと同じバッファを読み取りだけで使うので、状態の遷移は要らない。
      */
@@ -76,6 +77,8 @@ namespace NorvesLib::Core::Rendering
         /** @brief インスタンスの表（GPUMegaInstance[]）と、同じ並びの影の表（MegaGeometryShadowInstance[]） */
         RHI::BufferPtr InstanceBuffer;
         RHI::BufferPtr ShadowInstanceBuffer;
+        /** @brief メッシュの表（GPUMegaMesh[]。インスタンスの表の行が番号で指す） */
+        RHI::BufferPtr MeshBuffer;
         /** @brief ページの表（ジオメトリのページの常駐。GeometryPageTable::Entry の並び） */
         RHI::BufferPtr PageTableBuffer;
         uint32_t InstanceCount = 0;
@@ -144,10 +147,12 @@ namespace NorvesLib::Core::Rendering
      *
      * 動作フロー:
      * 1. Setup(): 登録済みMegaMeshリソースを収集
-     * 2. 記録（RecordFrameCommand）:
-     *    a. 全インスタンスの表（変換・前のフレームの変換・メッシュ・材質の区間の番号など）を1つのストレージバッファに書く。
-     *       インスタンスは材質（と、メッシュを置くプールの塊）ごとの「区間」に分かれ、区間ごとに IndirectDraw
-     *       コマンドの連続した範囲とカウンタを持つ
+     * 2. 表を書く前段（Execute。読み手のどのパスよりも前）: インスタンスの表（変換・前のフレームの変換・メッシュの表の番号など）・
+     *    メッシュの表（クラスタ配列・材質の区間の番号・頂点とインデックスの基点・BVH など）・影の表を書く。
+     *    シェーダーは LoadMegaInstance（Common/MegaInstanceTable.glsl）で 2 つの表を合わせて読む
+     * 3. 記録（RecordFrameCommand）:
+     *    a. インスタンスは材質（と、メッシュを置くプールの塊）ごとの「区間」に分かれ、区間ごとに IndirectDraw
+     *       コマンドの連続した範囲とカウンタを持つ（前段を通らなかった記録は、ここで表も書く）
      *    b. 区間ごとのカウンタをゼロクリアし、クラスタカリングを全インスタンスに対して1回ディスパッチ
      *    c. バリア: Compute → IndirectDraw
      *    d. GBufferレンダーパス内で、区間ごとに DrawIndexedIndirectCount を発行
@@ -251,6 +256,8 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr DrawInfoBuffer; // コマンドごとの描画情報（uvec2: インスタンスの番号・payload。GenericRead の状態で渡す）
             RHI::BufferPtr InstanceBuffer; // インスタンスの表（GPUMegaInstance[]。ホストが書いたまま）
             uint64_t InstanceBufferBytes = 0;
+            RHI::BufferPtr MeshBuffer;     // メッシュの表（GPUMegaMesh[]。ホストが書いたまま）
+            uint64_t MeshBufferBytes = 0;
             RHI::BufferPtr SectionBuffer;  // 区間の表（uvec2: コマンドの先頭・最大数。パス × 区間。ホストが書いたまま）
             uint64_t SectionBufferBytes = 0;
             /**
@@ -422,9 +429,9 @@ namespace NorvesLib::Core::Rendering
         RGResourceHandle GetMegaGeometryCompleteHandle() const { return m_MegaGeometryCompleteHandle; }
 
         /**
-         * @brief VSM の投影物（bCastShadow のインスタンス）のカリングの入力。直前の RecordFrameCommand が作る
+         * @brief VSM の投影物（bCastShadow のインスタンス）のカリングの入力。表を書く前段（Execute）か記録が作る
          *
-         * Setup（フレームの最初）で無効に戻り、記録がインスタンスの表と影の表を書けたときだけ有効になる。
+         * Setup（フレームの最初）で無効に戻り、インスタンスの表と影の表を書けたときだけ有効になる。
          */
         const MegaGeometryShadowCasterInputs &GetShadowCasterInputs() const { return m_ShadowCasterInputs; }
 
@@ -433,27 +440,42 @@ namespace NorvesLib::Core::Rendering
         using CullUniformData = MegaGeometry::CullUniformData;
 
         /**
-         * @brief インスタンスの表の1要素（GPU送信用。cluster_cull.comp・megageometry.vert の MegaInstance と一致）
+         * @brief インスタンスの表の1要素（GPU送信用。Common/MegaInstanceTable.glsl の MegaInstanceRow と一致）
+         *
+         * 席ごとに変わる値だけを持つ。メッシュごとに決まる値はメッシュの表（GPUMegaMesh）に置き、MeshIndex で指す。
+         * シェーダーは LoadMegaInstance(index) で 2 つの表を合わせて読む。
          */
         struct alignas(16) GPUMegaInstance
         {
             float WorldMatrix[16];         // ワールド変換（行ベクトル規約の列優先の並びのまま）
             float PreviousWorldMatrix[16]; // 直前のフレームの変換（velocity 用）
+            uint32_t MeshIndex;            // メッシュの表の番号
+            uint32_t FirstGroup;           // このインスタンスの最初のワークグループの通し番号
+            uint32_t VisibleOffset;        // 「見えた」ビットの先頭（全インスタンス共通の配列の中の位置）
+            uint32_t Reserved;
+        };
+        static_assert(sizeof(GPUMegaInstance) == 144, "Common/MegaInstanceTable.glsl の MegaInstanceRow と大きさが一致しません");
+
+        /**
+         * @brief メッシュの表の1要素（GPU送信用。Common/MegaInstanceTable.glsl の MegaMeshEntry と一致）
+         */
+        struct alignas(16) GPUMegaMesh
+        {
             float LODSphere[4];            // LODの選択に使うメッシュ共通の境界球（ローカル。半径0ならクラスタごと）
             uint32_t ClusterAddressLow;    // クラスタ配列のデバイスアドレス
             uint32_t ClusterAddressHigh;
             uint32_t ClusterCount;
-            uint32_t FirstGroup;           // このインスタンスの最初のワークグループの通し番号
+            uint32_t Reserved0;
             uint32_t SectionIndex;         // 材質の区間の番号
             uint32_t VertexBase;           // 頂点の基点（プールの塊の先頭から。頂点単位）
             uint32_t IndexBase;            // インデックスの基点（プールの塊の先頭から。インデックス単位）
-            uint32_t VisibleOffset;        // 「見えた」ビットの先頭（全インスタンス共通の配列の中の位置）
-            uint32_t BvhAddressLow;        // グループの BVH の節の配列のデバイスアドレス（BVH が無ければ 0）
+            uint32_t Reserved1;
+            uint32_t BvhAddressLow;        // グループの BVH の節の配列のデバイスアドレス（BVH をたどらないメッシュは 0）
             uint32_t BvhAddressHigh;
             uint32_t BvhNodeCount;
             uint32_t PageTableBase;        // ページの表の中の、このメッシュのページの範囲の先頭
         };
-        static_assert(sizeof(GPUMegaInstance) == 192, "cluster_cull.comp の MegaInstance と大きさが一致しません");
+        static_assert(sizeof(GPUMegaMesh) == 64, "Common/MegaInstanceTable.glsl の MegaMeshEntry と大きさが一致しません");
 
         /**
          * @brief MegaMeshインスタンス情報
@@ -530,6 +552,8 @@ namespace NorvesLib::Core::Rendering
             RHI::BufferPtr InstanceBuffer; // インスタンスの表（host-visible）
             uint32_t InstanceCapacity = 0; // 要素数
             RHI::BufferPtr ShadowInstanceBuffer; // 影の表（インスタンスの表と同じ要素数。host-visible）
+            RHI::BufferPtr MeshBuffer;     // メッシュの表（host-visible）
+            uint32_t MeshCapacity = 0;     // 要素数
             RHI::BufferPtr SectionBuffer;  // 区間の表（uvec2: コマンドの先頭・最大数。host-visible）
             uint32_t SectionCapacity = 0;  // 要素数
             // ページの表（GeometryPageTable::Entry の並び。host-visible）。このフレームの常駐を固定して、
@@ -544,8 +568,98 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<SectionDraw> Sections;
         };
 
-        /** @brief フレームスロットに、このフレームのインスタンス・区間の数を収める資源を用意する */
-        bool EnsureFrameSlot(FrameSlot &slot, uint32_t instanceCount, uint32_t sectionTableEntries, uint32_t sectionCount);
+        /** @brief フレームスロットに、このフレームの区間の数を収める資源（区間の表・カリングと描画の UBO・ディスクリプタセット）を用意する */
+        bool EnsureFrameSlot(FrameSlot &slot, uint32_t sectionTableEntries, uint32_t sectionCount);
+
+        /** @brief フレームスロットに、インスタンスの表・影の表・メッシュの表を収めるバッファを用意する */
+        bool EnsureSceneTableBuffers(FrameSlot &slot, uint32_t instanceCount, uint32_t meshCount);
+
+        /** @brief 「見えた」ビットの区画を要求するインスタンス1つ分 */
+        struct VisibilityRequest
+        {
+            uint64_t Key = 0;
+            uint64_t MeshId = 0;
+            uint64_t ComponentId = 0;
+            const void *ClusterBufferIdentity = nullptr;
+            uint64_t ClusterBufferOffsetBytes = 0;
+            uint32_t ClusterCount = 0;
+            uint32_t Offset = 0; // 出力: 区画の先頭（要素の位置）
+        };
+
+        /**
+         * @brief 材質の区間: 同じ材質（値とテクスチャ）で、メッシュを置くプールの塊が同じインスタンスの集まり。区間ごとに
+         * IndirectDraw コマンドの連続した範囲・カウンタ・描画のディスクリプタセットを持ち、1回の間接描画で描く
+         */
+        struct SceneSection
+        {
+            const MegaGeometry::MegaMeshGPUData *Representative = nullptr; // 材質・プールの塊の持ち主
+            uint64_t ClusterTotal = 0;                                     // 区間のインスタンスのクラスタ数の合計
+            uint32_t Capacity = 0;                                         // 1パスのコマンドの最大数（記録が決める）
+            uint32_t CommandBase = 0;                                      // 1パス目の範囲での先頭（コマンドの位置。記録が決める）
+        };
+
+        /** @brief インスタンスの表の1行の出所（m_Instances の番号と、ロード済みのメッシュ） */
+        struct SceneDrawable
+        {
+            size_t InstanceIndex = 0;
+            const MegaGeometry::MegaMeshGPUData *GpuData = nullptr;
+        };
+
+        /**
+         * @brief 1 フレームのインスタンスの表・メッシュの表・影の表と、記録がそれから決める規模
+         *
+         * 表は読み手のどのパス（主のカリングと描画・ビジビリティバッファ・VSM の影）よりも前の共通の前段
+         * （PrepareSceneTables）で作ってフレームスロットへ書く。記録はそれを使い、前段を通らなかった記録
+         * （同じフレームの 2 つ目のビューポート・コマンドを直接組んだ呼び出し）は自分で作る。
+         */
+        struct SceneTables
+        {
+            Container::VariableArray<SceneSection> Sections;
+            Container::VariableArray<SceneDrawable> Drawables;
+            Container::VariableArray<GPUMegaInstance> Instances;
+            Container::VariableArray<GPUMegaMesh> Meshes;
+            // 「見えた」ビットの区画の要求（インスタンスの表と同じ並び）
+            Container::VariableArray<VisibilityRequest> VisibilityRequests;
+            // 影の表（インスタンスの表と同じ並び）。影を落とすインスタンスだけが、影の判定のワークグループを持つ
+            Container::VariableArray<MegaGeometryShadowInstance> ShadowInstances;
+            // 影を落とすインスタンスの動き（VSM のキャッシュが、動いた投影物のページだけを描き直すために使う）
+            Container::VariableArray<MegaGeometryShadowMotion> ShadowMotions;
+            uint64_t ShadowTotalGroups = 0;
+            uint32_t ShadowCasterCount = 0;
+            // 平らな判定の全ワークグループの数（BVH をたどるインスタンスは持たない）
+            uint64_t TotalGroups = 0;
+            // BVH のたどりの規模: BVH を持つインスタンスの数と、段ごとの節の数・葉の数のインスタンスの合計（列の大きさになる）
+            uint32_t BvhInstanceCount = 0;
+            Container::VariableArray<uint64_t> BvhLevelCapacity;
+            uint64_t BvhLeafCapacity = 0;
+        };
+
+        /** @brief 前段で表を書いたフレームの印（記録が同じフレーム・同じ枠なら、その表とスロットを使う） */
+        struct PreparedSceneTables
+        {
+            bool bPrepared = false;
+            uint64_t FrameSerial = 0;
+            uint32_t InFlightIndex = 0;
+            FrameSlot *Slot = nullptr;
+        };
+
+        /**
+         * @brief m_Instances とロード済みのメッシュから、このフレームの表を作る（CPU だけ。GPU のバッファには書かない）
+         *
+         * インスタンスの並びは BVH をたどるインスタンスが先。「見えた」ビットの先頭は、インスタンスの並びでクラスタ数を
+         * 詰めた位置（UpdateVisibilityLayout の配置と同じ）を書く。2パスでないフレームはシェーダーが読まない。
+         */
+        void BuildSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables);
+
+        /** @brief 作った表をフレームスロットのバッファへ書き、VSM の投影物のカリングの入力を作る */
+        void UploadSceneTables(FrameSlot &slot, SceneTables &tables);
+
+        /**
+         * @brief 表を書く共通の前段。読み手のどのパスよりも前（MegaGeometryPass::Execute）で 1 回呼ぶ
+         *
+         * フレームスロットを 1 組取り、表を作って書き、ページの表をそろえる。同じフレームの記録はこのスロットを使う。
+         */
+        void PrepareSceneTables(const MegaGeometryPassCommand &command);
 
         /**
          * @brief フレームスロットのページの表を、今の常駐の状態に合わせる
@@ -588,18 +702,6 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief GBuffer の描画を止めるか（止める設定で、解決が実際に使えるとき） */
         bool ShouldSkipGBufferDraw(DebugViewMode mode) const;
-
-        /** @brief 「見えた」ビットの区画を要求するインスタンス1つ分 */
-        struct VisibilityRequest
-        {
-            uint64_t Key = 0;
-            uint64_t MeshId = 0;
-            uint64_t ComponentId = 0;
-            const void *ClusterBufferIdentity = nullptr;
-            uint64_t ClusterBufferOffsetBytes = 0;
-            uint32_t ClusterCount = 0;
-            uint32_t Offset = 0; // 出力: 区画の先頭（要素の位置）
-        };
 
         /**
          * @brief 「前のフレームで見えた」ビットの配置を、このフレームのインスタンスに合わせる
@@ -769,8 +871,11 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_InstanceSourceRevision = 0;
         const void *m_InstanceSourceProxies = nullptr;
 
-        // VSM の投影物のカリングの入力（Setup で無効に戻り、記録がバッファを書けたときに有効になる）
+        // VSM の投影物のカリングの入力（Setup で無効に戻り、前段か記録が表を書けたときに有効になる）
         MegaGeometryShadowCasterInputs m_ShadowCasterInputs;
+        // このフレームの表（前段が作り、同じフレームの記録が使う。配列の容量はフレームをまたいで使い回す）
+        SceneTables m_SceneTables;
+        PreparedSceneTables m_PreparedSceneTables;
 
         // ビジビリティバッファのラスタへ渡す描画の写し（TakeVisibilityDrawPlan が取り出す）
         bool m_bVisibilityPlanEnabled = false;

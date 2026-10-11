@@ -88,16 +88,6 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Bv
     BvhNode nodes[];
 };
 
-struct MegaInstance
-{
-    mat4 world;
-    mat4 previousWorld;   // 頂点シェーダーが velocity に使う（ここでは読まない）
-    vec4 lodSphere;       // LODの選択に使うメッシュ共通の境界球（ローカル。w<=0ならクラスタごとの中心で選ぶ）
-    uvec4 clusterInfo;    // x,y = クラスタ配列のデバイスアドレス（下位・上位）, z = クラスタ数, w = 最初のワークグループの通し番号
-    uvec4 drawInfo;       // x = 材質の区間の番号, y = 頂点の基点（塊の先頭から。頂点単位）, z = インデックスの基点（塊の先頭から。インデックス単位）, w = 「見えた」印の先頭
-    uvec4 bvhInfo;        // x,y = BVH の節の配列のデバイスアドレス（下位・上位。BVH が無ければ 0）, z = 節の数, w = ページの表の先頭（このメッシュのページの範囲の先頭）
-};
-
 struct DrawIndexedIndirectCommand
 {
     uint indexCount;
@@ -170,11 +160,10 @@ const uint DEBUG_PAYLOAD_MODE_NONE = 0u;
 const uint DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
 const uint DEBUG_PAYLOAD_MODE_LOD_LEVEL = 2u;
 
-// set 0, binding 1: インスタンスの表（読み取り専用）
-layout(std430, set = 0, binding = 1) readonly buffer InstanceBuffer
-{
-    MegaInstance instances[];
-};
+// set 0, binding 1: インスタンスの表、binding 22: メッシュの表（読み取り専用。LoadMegaInstance で読む）
+#define MEGA_INSTANCE_BINDING 1
+#define MEGA_MESH_BINDING 22
+#include "Common/MegaInstanceTable.glsl"
 
 // set 0, binding 2: IndirectDrawコマンド出力（区間ごとに連続した範囲）
 layout(std430, set = 0, binding = 2) writeonly buffer IndirectDrawBuffer

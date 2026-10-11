@@ -927,6 +927,7 @@ namespace NorvesLib::Core::Rendering
         megaDispatch.List = m_MegaList;
         megaDispatch.Chunks = m_MegaChunks;
         megaDispatch.Instances = inputs.InstanceBuffer;
+        megaDispatch.Meshes = inputs.MeshBuffer;
         megaDispatch.ShadowInstances = inputs.ShadowInstanceBuffer;
         megaDispatch.MegaPageTable = inputs.PageTableBuffer;
         megaDispatch.InstanceCount = inputs.InstanceCount;

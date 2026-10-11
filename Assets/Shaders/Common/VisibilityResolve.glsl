@@ -114,21 +114,10 @@ layout(std430, set = 0, binding = 3) readonly buffer MaterialTable
     VisMaterialEntry materials[];
 };
 
-// MegaGeometry のインスタンスの表（cluster_cull.comp の MegaInstance と一致）
-struct VisMegaInstance
-{
-    mat4 world;
-    mat4 previousWorld;
-    vec4 lodSphere;
-    uvec4 clusterInfo;
-    uvec4 drawInfo;
-    uvec4 bvhInfo;
-};
-
-layout(std430, set = 0, binding = 4) readonly buffer MegaInstanceBuffer
-{
-    VisMegaInstance megaInstances[];
-};
+// MegaGeometry のインスタンスの表（binding 4）とメッシュの表（binding 22）
+#define MEGA_INSTANCE_BINDING 4
+#define MEGA_MESH_BINDING 22
+#include "Common/MegaInstanceTable.glsl"
 
 // 描画のインスタンスの表（gbuffer.vert の InstanceData と一致）
 struct VisDrawInstance
@@ -269,7 +258,7 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
     const uvec2 previousAddress = VisRecordPreviousVertexAddress(record);
     const bool bHasPreviousVertices = (previousAddress.x | previousAddress.y) != 0u;
 
-    if (kind == VIS_KIND_MEGA_CLUSTER && instanceIndex >= uint(megaInstances.length()))
+    if (kind == VIS_KIND_MEGA_CLUSTER && instanceIndex >= uint(megaInstanceRows.length()))
     {
         return false;
     }
@@ -294,7 +283,7 @@ bool VisLoadTriangle(VisibilityDrawRecord record, uint triangleIndex, out VisTri
         if (kind == VIS_KIND_MEGA_CLUSTER)
         {
             // megageometry.vert と同じ式: 法線は変換の上 3x3 をそのまま掛ける
-            const VisMegaInstance instance = megaInstances[instanceIndex];
+            const MegaInstance instance = LoadMegaInstance(instanceIndex);
             triangle.position[k] = (instance.world * vec4(local, 1.0)).xyz;
             triangle.previous[k] = (instance.previousWorld * vec4(local, 1.0)).xyz;
             triangle.normal[k] = VisNormalizeVertexNormal(mat3(instance.world) * localNormal);

@@ -46,21 +46,10 @@ layout(std140, set = 0, binding = 0) uniform VisFrame
     mat4 projection;
 } frame;
 
-// binding 1: インスタンスの表（cluster_cull.comp の MegaInstance と一致）。ここで引くのは変換だけ
-struct MegaInstance
-{
-    mat4 world;
-    mat4 previousWorld;
-    vec4 lodSphere;
-    uvec4 clusterInfo;
-    uvec4 drawInfo;
-    uvec4 bvhInfo;
-};
-
-layout(std430, set = 0, binding = 1) readonly buffer InstanceBuffer
-{
-    MegaInstance instances[];
-};
+// binding 1: インスタンスの表、binding 22: メッシュの表。ここで引くのは変換だけ
+#define MEGA_INSTANCE_BINDING 1
+#define MEGA_MESH_BINDING 22
+#include "Common/MegaInstanceTable.glsl"
 
 // binding 2: 描画の記録の表（Common/VisibilityBuffer.glsl が visRecords を宣言する）
 
@@ -150,7 +139,7 @@ void main()
         return;
     }
     const uint instanceIndex = VisRecordInstanceIndex(record);
-    if (instanceIndex >= uint(instances.length()))
+    if (instanceIndex >= uint(megaInstanceRows.length()))
     {
         return;
     }
@@ -167,7 +156,7 @@ void main()
     }
 
     // クリップ空間（visbuffer_mega.vert と同じ式・同じ順序）から画面の位置と深度へ
-    const mat4 world = instances[instanceIndex].world;
+    const mat4 world = LoadMegaInstance(instanceIndex).world;
     ivec2 fixedPosition[3];
     float depth[3];
     for (uint k = 0u; k < 3u; ++k)

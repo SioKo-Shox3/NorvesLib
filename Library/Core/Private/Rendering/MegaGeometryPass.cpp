@@ -48,6 +48,8 @@ namespace NorvesLib::Core::Rendering
     {
         // VT の要求のバッファの binding（megageometry.frag の VT_FEEDBACK_BINDING と同じ。材質のテクスチャ 1-6 の次）
         constexpr uint32_t VirtualTextureFeedbackBindingIndex = 7;
+        // メッシュの表の binding（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。カリングと描画のセットで同じ番号）
+        constexpr uint32_t MegaMeshTableBindingIndex = 22;
     } // namespace
 
     using namespace Container;
@@ -482,6 +484,7 @@ namespace NorvesLib::Core::Rendering
         m_DrawCountBufferHandle = {};
         m_MegaGeometryCompleteHandle = {};
         m_FrameSlots.Clear();
+        m_PreparedSceneTables = PreparedSceneTables{};
         m_RenderFrameCount = 0;
         m_LastRenderFrameSerial = 0;
         m_bUnsetFrameSerialWarned = false;
@@ -1029,6 +1032,10 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // 表を書く共通の前段: インスタンスの表・メッシュの表・影の表を、読み手のどのパス（主のカリングと描画、
+        // ID のラスタと解決、VSM の影）よりも前にここで書く。記録がどこで行われても（キューのコマンド・ID のラスタ）同じ表を使う
+        PrepareSceneTables(context.BuildMegaGeometryPassCommand(this).MegaGeometry);
+
         // 解決が GBuffer を書くフレームは GBuffer の描画を止めるので、2パスの遮蔽の HZB の元になる深度が GBuffer に入らない。
         // ID のラスタがその Execute の中で記録を駆動して（ID・深度の1パス目 → HZB → 2パス目）、HZB を ID の深度から作る。
         // GBuffer の添付の状態遷移（render pass の開始と終了）は、ここで済ませる
@@ -1092,6 +1099,291 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t IndirectCommandBytes = static_cast<uint32_t>(sizeof(MegaGeometry::DrawIndexedIndirectCommand));
     } // namespace
 
+    void MegaGeometryPass::BuildSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables)
+    {
+        NORVES_PROFILE_SCOPE("MegaGeometryPass.BuildSceneTables");
+        tables.Sections.clear();
+        tables.Drawables.clear();
+        tables.Instances.clear();
+        tables.Meshes.clear();
+        tables.VisibilityRequests.clear();
+        tables.ShadowInstances.clear();
+        tables.ShadowMotions.clear();
+        tables.ShadowTotalGroups = 0;
+        tables.ShadowCasterCount = 0;
+        tables.TotalGroups = 0;
+        tables.BvhInstanceCount = 0;
+        tables.BvhLevelCapacity.clear();
+        tables.BvhLeafCapacity = 0;
+        if (!command.MegaGeometry)
+        {
+            return;
+        }
+        tables.Drawables.reserve(m_Instances.size());
+        tables.Instances.reserve(m_Instances.size());
+        tables.VisibilityRequests.reserve(m_Instances.size());
+        tables.ShadowInstances.reserve(m_Instances.size());
+
+        // グループの BVH を持つメッシュ（NVMESH v1.1）は BVH をたどって判定し、それ以外は平らなクラスタの列で判定する。
+        // BVH のインスタンスをインスタンスの表の先頭に並べる（平らな判定のワークグループは、後ろのインスタンスだけが持つ）
+        const auto canTraverseBvh = [this](const MegaGeometry::MegaMeshGPUData *data) -> bool
+        {
+            return m_Settings.bUseGroupBVH && m_BvhCullPipeline && m_BvhQueueBuffer && m_BvhCounterBuffer && data &&
+                   data->GroupBVHNodeCount > 0 && data->GroupBVHBufferBytes > 0 &&
+                   !data->GroupBVHLevelNodeCounts.empty() &&
+                   data->GroupBVHLevelNodeCounts.size() <= MegaGeometry::GROUP_BVH_MAX_LEVELS;
+        };
+        VariableArray<size_t> instanceOrder;
+        instanceOrder.reserve(m_Instances.size());
+        {
+            VariableArray<size_t> flatInstances;
+            for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
+            {
+                const auto *orderData = command.MegaGeometry->GetReadyMegaMeshGPUData(m_Instances[instanceIndex].Handle);
+                (canTraverseBvh(orderData) ? instanceOrder : flatInstances).push_back(instanceIndex);
+            }
+            instanceOrder.insert(instanceOrder.end(), flatInstances.begin(), flatInstances.end());
+        }
+
+        // メッシュの表の番号（ロード済みのメッシュごとに 1 行。同じメッシュのインスタンスは同じ行を指す）
+        Container::UnorderedMap<const MegaGeometry::MegaMeshGPUData *, uint32_t> meshIndices;
+        // 「見えた」ビットの区画の先頭（インスタンスの並びでクラスタ数を詰める。UpdateVisibilityLayout の配置と同じ）
+        uint64_t visibleOffset = 0;
+        for (const size_t instanceIndex : instanceOrder)
+        {
+            const auto &instance = m_Instances[instanceIndex];
+            // 区画へのコピーが GPU で完了したメッシュだけを描く（書き込み中の区画は読まない）
+            const auto *gpuData = command.MegaGeometry->GetReadyMegaMeshGPUData(instance.Handle);
+            if (!gpuData || gpuData->ClusterCount == 0)
+            {
+                continue;
+            }
+
+            // クラスタ配列はデバイスアドレスで、頂点・インデックスはプールの塊の先頭からの基点で引く。
+            // 基点は頂点・インデックスの単位で表すので、領域の先頭が頂点・インデックスの大きさの倍数であること
+            // （プールの区画は 256 バイト整列）
+            const uint64_t clusterAddress =
+                gpuData->ClusterBuffer ? gpuData->ClusterBuffer->GetDeviceAddress() : 0ull;
+            const bool bAddressable = clusterAddress != 0 && gpuData->VertexBuffer && gpuData->IndexBuffer;
+            const bool bAligned =
+                gpuData->VertexBufferOffsetBytes % sizeof(Mesh3DVertex) == 0 &&
+                gpuData->IndexBufferOffsetBytes % sizeof(uint32_t) == 0;
+            const uint64_t vertexBase = gpuData->VertexBufferOffsetBytes / sizeof(Mesh3DVertex);
+            const uint64_t indexBase = gpuData->IndexBufferOffsetBytes / sizeof(uint32_t);
+            if (!bAddressable || !bAligned || vertexBase > 0x7FFFFFFFull || indexBase > 0xFFFFFFFFull)
+            {
+                if (!m_bBatchUnsupportedLogged)
+                {
+                    NORVES_LOG_ERROR("MegaGeometryPass",
+                                     "MEGA_BATCH_INSTANCE_SKIPPED mesh=\"%s\" addressable=%d "
+                                     "aligned=%d "
+                                     "メッシュの区画をまとめた描画で引けないため、このメッシュは描き"
+                                     "ません",
+                                     gpuData->DebugName.empty() ? "" : gpuData->DebugName.c_str(), bAddressable ? 1 : 0,
+                                     bAligned ? 1 : 0);
+                    m_bBatchUnsupportedLogged = true;
+                }
+                continue;
+            }
+
+            // 区間を探す（無ければ作る）
+            VariableArray<SceneSection> &sections = tables.Sections;
+            uint32_t sectionIndex = 0;
+            for (; sectionIndex < sections.size(); ++sectionIndex)
+            {
+                const auto *representative = sections[sectionIndex].Representative;
+                if (representative->VertexBuffer.get() == gpuData->VertexBuffer.get() &&
+                    representative->IndexBuffer.get() == gpuData->IndexBuffer.get() &&
+                    IsSameMaterial(representative->Material, gpuData->Material))
+                {
+                    break;
+                }
+            }
+            if (sectionIndex == sections.size())
+            {
+                SceneSection section;
+                section.Representative = gpuData;
+                sections.push_back(section);
+            }
+            sections[sectionIndex].ClusterTotal += gpuData->ClusterCount;
+
+            // メッシュの表の行（このフレームで初めて出たメッシュなら足す）
+            const bool bTraverseBvh = canTraverseBvh(gpuData);
+            uint32_t meshIndex = 0;
+            const auto foundMesh = meshIndices.find(gpuData);
+            if (foundMesh != meshIndices.end())
+            {
+                meshIndex = foundMesh->second;
+            }
+            else
+            {
+                const uint64_t clusterAddressWithOffset = clusterAddress + gpuData->ClusterBufferOffsetBytes;
+                GPUMegaMesh mesh{};
+                if (gpuData->LODBounds.IsValid())
+                {
+                    mesh.LODSphere[0] = gpuData->LODBounds.CenterX;
+                    mesh.LODSphere[1] = gpuData->LODBounds.CenterY;
+                    mesh.LODSphere[2] = gpuData->LODBounds.CenterZ;
+                    mesh.LODSphere[3] = gpuData->LODBounds.Radius;
+                }
+                mesh.ClusterAddressLow = static_cast<uint32_t>(clusterAddressWithOffset & 0xFFFFFFFFull);
+                mesh.ClusterAddressHigh = static_cast<uint32_t>(clusterAddressWithOffset >> 32);
+                mesh.ClusterCount = gpuData->ClusterCount;
+                mesh.SectionIndex = sectionIndex;
+                mesh.VertexBase = static_cast<uint32_t>(vertexBase);
+                mesh.IndexBase = static_cast<uint32_t>(indexBase);
+                mesh.PageTableBase = gpuData->PageTableBase;
+                if (bTraverseBvh)
+                {
+                    const uint64_t bvhAddress = clusterAddress + gpuData->GroupBVHBufferOffsetBytes;
+                    mesh.BvhAddressLow = static_cast<uint32_t>(bvhAddress & 0xFFFFFFFFull);
+                    mesh.BvhAddressHigh = static_cast<uint32_t>(bvhAddress >> 32);
+                    mesh.BvhNodeCount = gpuData->GroupBVHNodeCount;
+                }
+                meshIndex = static_cast<uint32_t>(tables.Meshes.size());
+                tables.Meshes.push_back(mesh);
+                meshIndices.emplace(gpuData, meshIndex);
+            }
+
+            GPUMegaInstance entry{};
+            std::memcpy(entry.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
+            std::memcpy(entry.PreviousWorldMatrix, instance.PreviousWorldMatrix, sizeof(float) * 16);
+            entry.MeshIndex = meshIndex;
+            entry.FirstGroup = static_cast<uint32_t>(tables.TotalGroups);
+            entry.VisibleOffset = static_cast<uint32_t>(visibleOffset);
+            visibleOffset += gpuData->ClusterCount;
+            if (bTraverseBvh)
+            {
+                // BVH をたどるインスタンスは、平らな判定のワークグループを持たない
+                ++tables.BvhInstanceCount;
+                if (tables.BvhLevelCapacity.size() < gpuData->GroupBVHLevelNodeCounts.size())
+                {
+                    tables.BvhLevelCapacity.resize(gpuData->GroupBVHLevelNodeCounts.size(), 0ull);
+                }
+                for (size_t level = 0; level < gpuData->GroupBVHLevelNodeCounts.size(); ++level)
+                {
+                    tables.BvhLevelCapacity[level] += gpuData->GroupBVHLevelNodeCounts[level];
+                }
+                tables.BvhLeafCapacity += gpuData->GroupBVHLeafCount;
+            }
+            else
+            {
+                tables.TotalGroups += (static_cast<uint64_t>(gpuData->ClusterCount) + 63u) / 64u;
+            }
+
+            VisibilityRequest request;
+            request.Key = instance.ObjectId != 0 ? instance.ObjectId : (0x8000000000000000ull | instanceIndex);
+            request.MeshId = instance.Handle.Id;
+            request.ComponentId = instance.ComponentId;
+            request.ClusterBufferIdentity = gpuData->ClusterBuffer.get();
+            request.ClusterBufferOffsetBytes = gpuData->ClusterBufferOffsetBytes;
+            request.ClusterCount = gpuData->ClusterCount;
+
+            SceneDrawable drawable;
+            drawable.InstanceIndex = instanceIndex;
+            drawable.GpuData = gpuData;
+            tables.Drawables.push_back(drawable);
+            tables.Instances.push_back(entry);
+            tables.VisibilityRequests.push_back(request);
+
+            // 影の表: 影を落とすインスタンスだけが、影の判定のワークグループ（64クラスタ）を持つ。BVH のインスタンスも
+            // 平らなクラスタの列として全部見る（影の判定は BVH をたどらない）
+            MegaGeometryShadowInstance shadowEntry{};
+            shadowEntry.FirstGroup = static_cast<uint32_t>(tables.ShadowTotalGroups);
+            {
+                // 頂点・インデックスの塊のバッファのアドレス（bAddressable で両方のバッファがあることは確かめてある）
+                const uint64_t vertexAddress = gpuData->VertexBuffer->GetDeviceAddress();
+                const uint64_t indexAddress = gpuData->IndexBuffer->GetDeviceAddress();
+                shadowEntry.VertexAddress[0] = static_cast<uint32_t>(vertexAddress & 0xFFFFFFFFull);
+                shadowEntry.VertexAddress[1] = static_cast<uint32_t>(vertexAddress >> 32);
+                shadowEntry.IndexAddress[0] = static_cast<uint32_t>(indexAddress & 0xFFFFFFFFull);
+                shadowEntry.IndexAddress[1] = static_cast<uint32_t>(indexAddress >> 32);
+            }
+            if (instance.bCastShadow)
+            {
+                shadowEntry.Flags |= MegaGeometryShadowFlagCaster;
+                const bool bHasShadowBounds =
+                    ResolveShadowBounds(instance.WorldMatrix, instance.WorldBounds, gpuData->TotalBounds, shadowEntry.BoundsSphere);
+                if (bHasShadowBounds)
+                {
+                    shadowEntry.Flags |= MegaGeometryShadowFlagBounds;
+                }
+                MegaGeometryShadowMotion motion;
+                motion.Key = MixShadowMotionKey(request.Key, instance.ComponentId);
+                motion.Signature = HashShadowMotionFloats(instance.Handle.Id, instance.WorldMatrix, 16u);
+                motion.bHasBounds = bHasShadowBounds;
+                if (bHasShadowBounds)
+                {
+                    std::memcpy(motion.BoundsSphere, shadowEntry.BoundsSphere, sizeof(motion.BoundsSphere));
+                }
+                motion.bMoved = std::memcmp(instance.WorldMatrix, instance.PreviousWorldMatrix, sizeof(float) * 16) != 0;
+                tables.ShadowMotions.push_back(motion);
+                tables.ShadowTotalGroups += (static_cast<uint64_t>(gpuData->ClusterCount) + 63u) / 64u;
+                ++tables.ShadowCasterCount;
+            }
+            tables.ShadowInstances.push_back(shadowEntry);
+        }
+    }
+
+    void MegaGeometryPass::UploadSceneTables(FrameSlot &slot, SceneTables &tables)
+    {
+        // インスタンスの表とメッシュの表を書く（ホストが書き、カリング・頂点シェーダー・ビジビリティバッファ・VSM の影が読む）
+        slot.InstanceBuffer->Update(tables.Instances.data(), tables.Instances.size() * sizeof(GPUMegaInstance));
+        slot.MeshBuffer->Update(tables.Meshes.data(), tables.Meshes.size() * sizeof(GPUMegaMesh));
+        // 影の表（インスタンスの表と同じ並び）を書き、VSM の投影物のカリングへ渡す入力を有効にする。
+        // 影を落とすインスタンスが無い・ワークグループの数が 32 ビットに収まらないときは入力を作らない
+        if (slot.ShadowInstanceBuffer && tables.ShadowCasterCount > 0 && tables.ShadowTotalGroups <= 0xFFFFFFFFull)
+        {
+            slot.ShadowInstanceBuffer->Update(tables.ShadowInstances.data(),
+                                              tables.ShadowInstances.size() * sizeof(MegaGeometryShadowInstance));
+            m_ShadowCasterInputs.bValid = true;
+            m_ShadowCasterInputs.InstanceBuffer = slot.InstanceBuffer;
+            m_ShadowCasterInputs.ShadowInstanceBuffer = slot.ShadowInstanceBuffer;
+            m_ShadowCasterInputs.MeshBuffer = slot.MeshBuffer;
+            m_ShadowCasterInputs.PageTableBuffer = slot.PageTableBuffer;
+            m_ShadowCasterInputs.PageTableVersion = slot.PageTableVersion;
+            m_ShadowCasterInputs.InstanceCount = static_cast<uint32_t>(tables.Instances.size());
+            m_ShadowCasterInputs.CasterCount = tables.ShadowCasterCount;
+            m_ShadowCasterInputs.TotalGroups = static_cast<uint32_t>(tables.ShadowTotalGroups);
+            m_ShadowCasterInputs.Motions = std::move(tables.ShadowMotions);
+        }
+    }
+
+    void MegaGeometryPass::PrepareSceneTables(const MegaGeometryPassCommand &command)
+    {
+        NORVES_PROFILE_SCOPE("MegaGeometryPass.PrepareSceneTables");
+        m_PreparedSceneTables = PreparedSceneTables{};
+        // 通し番号が無いコマンドは記録ごとに別のフレームとして扱うので、前段の表を記録へ渡せない（記録が自分で作る）
+        if (m_Instances.empty() || !m_CullPipeline || !command.MegaGeometry || command.RenderFrameSerial == 0)
+        {
+            return;
+        }
+
+        BuildSceneTables(command, m_SceneTables);
+        if (m_SceneTables.Instances.empty() || m_SceneTables.TotalGroups > 0xFFFFFFFFull)
+        {
+            return;
+        }
+
+        // このフレームの資源の組を 1 つ取り、同じフレームの記録へ渡す（記録は同じ枠・同じ通し番号なら取り直さない）
+        m_FrameSlots.BeginFrame(command.InFlightIndex, command.RenderFrameSerial);
+        FrameSlot &slot = m_FrameSlots.Acquire();
+        if (!EnsureSceneTableBuffers(slot,
+                                     static_cast<uint32_t>(m_SceneTables.Instances.size()),
+                                     static_cast<uint32_t>(m_SceneTables.Meshes.size())) ||
+            !SyncPageTable(slot, *command.MegaGeometry))
+        {
+            // 記録が自分で作り直し、同じ失敗ならそこで記録する
+            return;
+        }
+        UploadSceneTables(slot, m_SceneTables);
+
+        m_PreparedSceneTables.bPrepared = true;
+        m_PreparedSceneTables.FrameSerial = command.RenderFrameSerial;
+        m_PreparedSceneTables.InFlightIndex = command.InFlightIndex;
+        m_PreparedSceneTables.Slot = &slot;
+    }
+
     void MegaGeometryPass::RecordFrameCommand(const MegaGeometryPassCommand &command,
                                               RHI::ICommandList *commandList,
                                               IDrawSink *sink)
@@ -1106,7 +1398,18 @@ namespace NorvesLib::Core::Rendering
         ReleaseVisibilityDrawBuffers(commandList);
         m_bSwRasterBinned = false;
         m_SwRasterCapacity = 0;
-        m_ShadowCasterInputs = MegaGeometryShadowCasterInputs{};
+        // 同じフレーム・同じ枠で前段が表を書いていれば、その表とフレームスロットを使う（1 回だけ。同じフレームの
+        // 次のビューポートは自分で作る）。使わない記録は、VSM の入力を自分が表を書けたときだけ有効にする
+        const bool bPreparedTables = m_PreparedSceneTables.bPrepared && command.RenderFrameSerial != 0 &&
+                                     m_PreparedSceneTables.FrameSerial == command.RenderFrameSerial &&
+                                     m_PreparedSceneTables.InFlightIndex == command.InFlightIndex &&
+                                     m_PreparedSceneTables.Slot != nullptr;
+        FrameSlot *preparedSlot = bPreparedTables ? m_PreparedSceneTables.Slot : nullptr;
+        m_PreparedSceneTables = PreparedSceneTables{};
+        if (!bPreparedTables)
+        {
+            m_ShadowCasterInputs = MegaGeometryShadowCasterInputs{};
+        }
 
         if (m_Instances.empty() || !m_CullPipeline || !commandList || !command.MegaGeometry || !command.bHasMainCamera)
         {
@@ -1219,214 +1522,23 @@ namespace NorvesLib::Core::Rendering
             (command.bDeterministicCapture && m_bStatsEpochActive) ? static_cast<int64_t>(command.TemporalFrameIndex) : -1;
 
         // ========================================
-        // 描くインスタンスと、材質の区間の収集
+        // インスタンスの表・メッシュの表・影の表（前段が書いたフレームはそれを使い、書いていなければここで作る）
         // ========================================
-        // 区間: 同じ材質（値とテクスチャ）で、メッシュを置くプールの塊が同じインスタンスの集まり。区間ごとに
-        // IndirectDraw コマンドの連続した範囲・カウンタ・描画のディスクリプタセットを持ち、1回の間接描画で描く。
-        struct Section
+        using Section = SceneSection;
+        using Drawable = SceneDrawable;
+        SceneTables &tables = m_SceneTables;
+        if (!bPreparedTables)
         {
-            const MegaGeometry::MegaMeshGPUData *Representative = nullptr; // 材質・プールの塊の持ち主
-            uint64_t ClusterTotal = 0;                                     // 区間のインスタンスのクラスタ数の合計
-            uint32_t Capacity = 0;                                         // 1パスのコマンドの最大数
-            uint32_t CommandBase = 0;                                      // 1パス目の範囲での先頭（コマンドの位置）
-        };
-        struct Drawable
-        {
-            size_t InstanceIndex = 0;
-            const MegaGeometry::MegaMeshGPUData *GpuData = nullptr;
-        };
-
-        VariableArray<Section> sections;
-        VariableArray<Drawable> drawables;
-        VariableArray<GPUMegaInstance> instanceTable;
-        // 影の表（インスタンスの表と同じ並び）。影を落とすインスタンスだけが、影の判定のワークグループを持つ
-        VariableArray<MegaGeometryShadowInstance> shadowTable;
-        // 影を落とすインスタンスの動き（VSM のキャッシュが、動いた投影物のページだけを描き直すために使う）
-        VariableArray<MegaGeometryShadowMotion> shadowMotions;
-        uint64_t shadowTotalGroups = 0;
-        uint32_t shadowCasterCount = 0;
-        VariableArray<VisibilityRequest> visibilityRequests;
-        drawables.reserve(m_Instances.size());
-        instanceTable.reserve(m_Instances.size());
-        shadowTable.reserve(m_Instances.size());
-
-        // グループの BVH を持つメッシュ（NVMESH v1.1）は BVH をたどって判定し、それ以外は平らなクラスタの列で判定する。
-        // BVH のインスタンスをインスタンスの表の先頭に並べる（平らな判定のワークグループは、後ろのインスタンスだけが持つ）
-        const auto canTraverseBvh = [this](const MegaGeometry::MegaMeshGPUData *data) -> bool
-        {
-            return m_Settings.bUseGroupBVH && m_BvhCullPipeline && m_BvhQueueBuffer && m_BvhCounterBuffer && data &&
-                   data->GroupBVHNodeCount > 0 && data->GroupBVHBufferBytes > 0 &&
-                   !data->GroupBVHLevelNodeCounts.empty() &&
-                   data->GroupBVHLevelNodeCounts.size() <= MegaGeometry::GROUP_BVH_MAX_LEVELS;
-        };
-        VariableArray<size_t> instanceOrder;
-        instanceOrder.reserve(m_Instances.size());
-        {
-            VariableArray<size_t> flatInstances;
-            for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
-            {
-                const auto *orderData = command.MegaGeometry->GetReadyMegaMeshGPUData(m_Instances[instanceIndex].Handle);
-                (canTraverseBvh(orderData) ? instanceOrder : flatInstances).push_back(instanceIndex);
-            }
-            instanceOrder.insert(instanceOrder.end(), flatInstances.begin(), flatInstances.end());
+            BuildSceneTables(command, tables);
         }
-
-        uint64_t totalGroups = 0;
-        // BVH のたどりの規模: BVH を持つインスタンスの数と、段ごとの節の数・葉の数のインスタンスの合計（列の大きさになる）
-        uint32_t bvhInstanceCount = 0;
-        VariableArray<uint64_t> bvhLevelCapacity;
-        uint64_t bvhLeafCapacity = 0;
-        for (const size_t instanceIndex : instanceOrder)
-        {
-            const auto &instance = m_Instances[instanceIndex];
-            // 区画へのコピーが GPU で完了したメッシュだけを描く（書き込み中の区画は読まない）
-            const auto *gpuData = command.MegaGeometry->GetReadyMegaMeshGPUData(instance.Handle);
-            if (!gpuData || gpuData->ClusterCount == 0)
-            {
-                continue;
-            }
-
-            // クラスタ配列はデバイスアドレスで、頂点・インデックスはプールの塊の先頭からの基点で引く。
-            // 基点は頂点・インデックスの単位で表すので、領域の先頭が頂点・インデックスの大きさの倍数であること
-            // （プールの区画は 256 バイト整列）
-            const uint64_t clusterAddress =
-                gpuData->ClusterBuffer ? gpuData->ClusterBuffer->GetDeviceAddress() : 0ull;
-            const bool bAddressable = clusterAddress != 0 && gpuData->VertexBuffer && gpuData->IndexBuffer;
-            const bool bAligned =
-                gpuData->VertexBufferOffsetBytes % sizeof(Mesh3DVertex) == 0 &&
-                gpuData->IndexBufferOffsetBytes % sizeof(uint32_t) == 0;
-            const uint64_t vertexBase = gpuData->VertexBufferOffsetBytes / sizeof(Mesh3DVertex);
-            const uint64_t indexBase = gpuData->IndexBufferOffsetBytes / sizeof(uint32_t);
-            if (!bAddressable || !bAligned || vertexBase > 0x7FFFFFFFull || indexBase > 0xFFFFFFFFull)
-            {
-                if (!m_bBatchUnsupportedLogged)
-                {
-                    NORVES_LOG_ERROR("MegaGeometryPass",
-                                     "MEGA_BATCH_INSTANCE_SKIPPED mesh=\"%s\" addressable=%d "
-                                     "aligned=%d "
-                                     "メッシュの区画をまとめた描画で引けないため、このメッシュは描き"
-                                     "ません",
-                                     gpuData->DebugName.empty() ? "" : gpuData->DebugName.c_str(), bAddressable ? 1 : 0,
-                                     bAligned ? 1 : 0);
-                    m_bBatchUnsupportedLogged = true;
-                }
-                continue;
-            }
-
-            // 区間を探す（無ければ作る）
-            uint32_t sectionIndex = 0;
-            for (; sectionIndex < sections.size(); ++sectionIndex)
-            {
-                const auto *representative = sections[sectionIndex].Representative;
-                if (representative->VertexBuffer.get() == gpuData->VertexBuffer.get() &&
-                    representative->IndexBuffer.get() == gpuData->IndexBuffer.get() &&
-                    IsSameMaterial(representative->Material, gpuData->Material))
-                {
-                    break;
-                }
-            }
-            if (sectionIndex == sections.size())
-            {
-                Section section;
-                section.Representative = gpuData;
-                sections.push_back(section);
-            }
-            sections[sectionIndex].ClusterTotal += gpuData->ClusterCount;
-
-            const uint64_t clusterAddressWithOffset = clusterAddress + gpuData->ClusterBufferOffsetBytes;
-            GPUMegaInstance entry{};
-            std::memcpy(entry.WorldMatrix, instance.WorldMatrix, sizeof(float) * 16);
-            std::memcpy(entry.PreviousWorldMatrix, instance.PreviousWorldMatrix, sizeof(float) * 16);
-            if (gpuData->LODBounds.IsValid())
-            {
-                entry.LODSphere[0] = gpuData->LODBounds.CenterX;
-                entry.LODSphere[1] = gpuData->LODBounds.CenterY;
-                entry.LODSphere[2] = gpuData->LODBounds.CenterZ;
-                entry.LODSphere[3] = gpuData->LODBounds.Radius;
-            }
-            entry.ClusterAddressLow = static_cast<uint32_t>(clusterAddressWithOffset & 0xFFFFFFFFull);
-            entry.ClusterAddressHigh = static_cast<uint32_t>(clusterAddressWithOffset >> 32);
-            entry.ClusterCount = gpuData->ClusterCount;
-            entry.FirstGroup = static_cast<uint32_t>(totalGroups);
-            entry.SectionIndex = sectionIndex;
-            entry.VertexBase = static_cast<uint32_t>(vertexBase);
-            entry.IndexBase = static_cast<uint32_t>(indexBase);
-            entry.PageTableBase = gpuData->PageTableBase;
-            if (canTraverseBvh(gpuData))
-            {
-                // BVH をたどるインスタンスは、平らな判定のワークグループを持たない
-                const uint64_t bvhAddress = clusterAddress + gpuData->GroupBVHBufferOffsetBytes;
-                entry.BvhAddressLow = static_cast<uint32_t>(bvhAddress & 0xFFFFFFFFull);
-                entry.BvhAddressHigh = static_cast<uint32_t>(bvhAddress >> 32);
-                entry.BvhNodeCount = gpuData->GroupBVHNodeCount;
-                ++bvhInstanceCount;
-                if (bvhLevelCapacity.size() < gpuData->GroupBVHLevelNodeCounts.size())
-                {
-                    bvhLevelCapacity.resize(gpuData->GroupBVHLevelNodeCounts.size(), 0ull);
-                }
-                for (size_t level = 0; level < gpuData->GroupBVHLevelNodeCounts.size(); ++level)
-                {
-                    bvhLevelCapacity[level] += gpuData->GroupBVHLevelNodeCounts[level];
-                }
-                bvhLeafCapacity += gpuData->GroupBVHLeafCount;
-            }
-            else
-            {
-                totalGroups += (static_cast<uint64_t>(gpuData->ClusterCount) + 63u) / 64u;
-            }
-
-            VisibilityRequest request;
-            request.Key = instance.ObjectId != 0 ? instance.ObjectId : (0x8000000000000000ull | instanceIndex);
-            request.MeshId = instance.Handle.Id;
-            request.ComponentId = instance.ComponentId;
-            request.ClusterBufferIdentity = gpuData->ClusterBuffer.get();
-            request.ClusterBufferOffsetBytes = gpuData->ClusterBufferOffsetBytes;
-            request.ClusterCount = gpuData->ClusterCount;
-
-            Drawable drawable;
-            drawable.InstanceIndex = instanceIndex;
-            drawable.GpuData = gpuData;
-            drawables.push_back(drawable);
-            instanceTable.push_back(entry);
-            visibilityRequests.push_back(request);
-
-            // 影の表: 影を落とすインスタンスだけが、影の判定のワークグループ（64クラスタ）を持つ。BVH のインスタンスも
-            // 平らなクラスタの列として全部見る（影の判定は BVH をたどらない）
-            MegaGeometryShadowInstance shadowEntry{};
-            shadowEntry.FirstGroup = static_cast<uint32_t>(shadowTotalGroups);
-            {
-                // 頂点・インデックスの塊のバッファのアドレス（bAddressable で両方のバッファがあることは確かめてある）
-                const uint64_t vertexAddress = gpuData->VertexBuffer->GetDeviceAddress();
-                const uint64_t indexAddress = gpuData->IndexBuffer->GetDeviceAddress();
-                shadowEntry.VertexAddress[0] = static_cast<uint32_t>(vertexAddress & 0xFFFFFFFFull);
-                shadowEntry.VertexAddress[1] = static_cast<uint32_t>(vertexAddress >> 32);
-                shadowEntry.IndexAddress[0] = static_cast<uint32_t>(indexAddress & 0xFFFFFFFFull);
-                shadowEntry.IndexAddress[1] = static_cast<uint32_t>(indexAddress >> 32);
-            }
-            if (instance.bCastShadow)
-            {
-                shadowEntry.Flags |= MegaGeometryShadowFlagCaster;
-                const bool bHasShadowBounds =
-                    ResolveShadowBounds(instance.WorldMatrix, instance.WorldBounds, gpuData->TotalBounds, shadowEntry.BoundsSphere);
-                if (bHasShadowBounds)
-                {
-                    shadowEntry.Flags |= MegaGeometryShadowFlagBounds;
-                }
-                MegaGeometryShadowMotion motion;
-                motion.Key = MixShadowMotionKey(request.Key, instance.ComponentId);
-                motion.Signature = HashShadowMotionFloats(instance.Handle.Id, instance.WorldMatrix, 16u);
-                motion.bHasBounds = bHasShadowBounds;
-                if (bHasShadowBounds)
-                {
-                    std::memcpy(motion.BoundsSphere, shadowEntry.BoundsSphere, sizeof(motion.BoundsSphere));
-                }
-                motion.bMoved = std::memcmp(instance.WorldMatrix, instance.PreviousWorldMatrix, sizeof(float) * 16) != 0;
-                shadowMotions.push_back(motion);
-                shadowTotalGroups += (static_cast<uint64_t>(gpuData->ClusterCount) + 63u) / 64u;
-                ++shadowCasterCount;
-            }
-            shadowTable.push_back(shadowEntry);
-        }
+        VariableArray<Section> &sections = tables.Sections;
+        const VariableArray<Drawable> &drawables = tables.Drawables;
+        const VariableArray<GPUMegaInstance> &instanceTable = tables.Instances;
+        VariableArray<VisibilityRequest> &visibilityRequests = tables.VisibilityRequests;
+        const uint64_t totalGroups = tables.TotalGroups;
+        const uint32_t bvhInstanceCount = tables.BvhInstanceCount;
+        const VariableArray<uint64_t> &bvhLevelCapacity = tables.BvhLevelCapacity;
+        const uint64_t bvhLeafCapacity = tables.BvhLeafCapacity;
 
         if (instanceTable.empty() || totalGroups > 0xFFFFFFFFull)
         {
@@ -1479,14 +1591,8 @@ namespace NorvesLib::Core::Rendering
         // 「前のフレームで見えた」ビットの配置（2パスのときだけ）。作れなければ従来の1回の判定で描く
         if (bTwoPass)
         {
-            if (UpdateVisibilityLayout(cmdList, visibilityRequests))
-            {
-                for (size_t index = 0; index < instanceTable.size(); ++index)
-                {
-                    instanceTable[index].VisibleOffset = visibilityRequests[index].Offset;
-                }
-            }
-            else
+            // 区画はインスタンスの並びで詰めるので、表を作るときに書いた先頭（GPUMegaInstance::VisibleOffset）と同じ
+            if (!UpdateVisibilityLayout(cmdList, visibilityRequests))
             {
                 NORVES_LOG_ERROR("MegaGeometryPass", "見えたビットのバッファを作れませんでした。遮蔽カリ"
                                                      "ングを使わずに描きます");
@@ -1621,9 +1727,12 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        FrameSlot &frameSlot = m_FrameSlots.Acquire();
+        FrameSlot &frameSlot = preparedSlot ? *preparedSlot : m_FrameSlots.Acquire();
         if (!EnsureBatchBuffers(static_cast<uint32_t>(commandsTotal), sectionCount * passCount) ||
-            !EnsureFrameSlot(frameSlot, static_cast<uint32_t>(instanceTable.size()), sectionCount * passCount, sectionCount) ||
+            (!bPreparedTables && !EnsureSceneTableBuffers(frameSlot,
+                                                          static_cast<uint32_t>(instanceTable.size()),
+                                                          static_cast<uint32_t>(tables.Meshes.size()))) ||
+            !EnsureFrameSlot(frameSlot, sectionCount * passCount, sectionCount) ||
             (bvhInstanceCount > 0 &&
              (!EnsureBvhBuffers(static_cast<uint32_t>(bvhQueueEntries)) ||
               !EnsureBvhStageResources(frameSlot, 0, bvhLevelCount + 1u) ||
@@ -1669,23 +1778,17 @@ namespace NorvesLib::Core::Rendering
             pageRequestBuffer = m_DummyStatsBuffer;
         }
 
-        // インスタンスの表と区間の表を書く（ホストが書き、カリングと頂点シェーダーが読む）
-        frameSlot.InstanceBuffer->Update(instanceTable.data(), instanceTable.size() * sizeof(GPUMegaInstance));
-        // 影の表（インスタンスの表と同じ並び）を書き、VSM の投影物のカリングへ渡す入力を有効にする。
-        // 影を落とすインスタンスが無い・ワークグループの数が 32 ビットに収まらないときは入力を作らない
-        if (frameSlot.ShadowInstanceBuffer && shadowCasterCount > 0 && shadowTotalGroups <= 0xFFFFFFFFull)
+        // インスタンスの表・メッシュの表・影の表（前段が書いていなければここで書く）
+        if (!bPreparedTables)
         {
-            frameSlot.ShadowInstanceBuffer->Update(shadowTable.data(), shadowTable.size() * sizeof(MegaGeometryShadowInstance));
-            m_ShadowCasterInputs.bValid = true;
-            m_ShadowCasterInputs.InstanceBuffer = frameSlot.InstanceBuffer;
-            m_ShadowCasterInputs.ShadowInstanceBuffer = frameSlot.ShadowInstanceBuffer;
-            m_ShadowCasterInputs.PageTableBuffer = frameSlot.PageTableBuffer;
-            m_ShadowCasterInputs.PageTableVersion = frameSlot.PageTableVersion;
-            m_ShadowCasterInputs.InstanceCount = static_cast<uint32_t>(instanceTable.size());
-            m_ShadowCasterInputs.CasterCount = shadowCasterCount;
-            m_ShadowCasterInputs.TotalGroups = static_cast<uint32_t>(shadowTotalGroups);
-            m_ShadowCasterInputs.Motions = std::move(shadowMotions);
+            UploadSceneTables(frameSlot, tables);
         }
+        else if (m_ShadowCasterInputs.bValid)
+        {
+            // 前段の後に常駐が変わっていれば上で書き直したので、VSM のキャッシュが比べる版を合わせる
+            m_ShadowCasterInputs.PageTableVersion = frameSlot.PageTableVersion;
+        }
+        // 区間の表を書く（ホストが書き、カリングが読む）
         {
             VariableArray<uint32_t> sectionTable;
             sectionTable.reserve(static_cast<size_t>(sectionCount) * passCount * 2u);
@@ -1824,9 +1927,11 @@ namespace NorvesLib::Core::Rendering
             descriptorSet->BindSampler(6, m_DefaultLinearSampler);
             BindVirtualTextureFeedback(*descriptorSet, VirtualTextureFeedbackBindingIndex, feedbackTarget);
 
-            // 頂点シェーダーが引くインスタンスの表と描画情報
+            // 頂点シェーダーが引くインスタンスの表・メッシュの表と描画情報
             descriptorSet->BindStorageBuffer(8, frameSlot.InstanceBuffer, 0,
                                              static_cast<uint32_t>(instanceTable.size() * sizeof(GPUMegaInstance)));
+            descriptorSet->BindStorageBuffer(MegaMeshTableBindingIndex, frameSlot.MeshBuffer, 0,
+                                             static_cast<uint32_t>(tables.Meshes.size() * sizeof(GPUMegaMesh)));
             descriptorSet->BindStorageBuffer(9, m_DrawInfoBuffer, 0,
                                              static_cast<uint32_t>(m_DrawInfoBuffer->GetSize()));
 
@@ -1953,6 +2058,8 @@ namespace NorvesLib::Core::Rendering
                                                   static_cast<uint32_t>(sizeof(CullUniformData)));
                 descriptorSet->BindStorageBuffer(1, frameSlot.InstanceBuffer, 0,
                                                  static_cast<uint32_t>(instanceTable.size() * sizeof(GPUMegaInstance)));
+                descriptorSet->BindStorageBuffer(MegaMeshTableBindingIndex, frameSlot.MeshBuffer, 0,
+                                                 static_cast<uint32_t>(tables.Meshes.size() * sizeof(GPUMegaMesh)));
                 descriptorSet->BindStorageBuffer(2, m_IndirectDrawBuffer, 0,
                                                  static_cast<uint32_t>(m_IndirectDrawBuffer->GetSize()));
                 descriptorSet->BindStorageBuffer(3, m_DrawCountBuffer, 0,
@@ -2168,6 +2275,8 @@ namespace NorvesLib::Core::Rendering
             plan.DrawInfoBuffer = m_DrawInfoBuffer;
             plan.InstanceBuffer = frameSlot.InstanceBuffer;
             plan.InstanceBufferBytes = static_cast<uint64_t>(instanceTable.size()) * sizeof(GPUMegaInstance);
+            plan.MeshBuffer = frameSlot.MeshBuffer;
+            plan.MeshBufferBytes = static_cast<uint64_t>(tables.Meshes.size()) * sizeof(GPUMegaMesh);
             plan.SectionBuffer = frameSlot.SectionBuffer;
             plan.SectionBufferBytes = static_cast<uint64_t>(sectionCount) * passCount * 2u * sizeof(uint32_t);
             if (bSwRasterBin)
@@ -2798,13 +2907,14 @@ namespace NorvesLib::Core::Rendering
         addBinding(11, RHI::ResourceBindType::RWBuffer);             // ページの表（常駐 + 要求の印）
         addBinding(12, RHI::ResourceBindType::RWBuffer);             // ページの要求の列
         addBinding(13, RHI::ResourceBindType::RWBuffer);             // ソフトウェアラスタの一覧と間接 dispatch の引数
+        addBinding(MegaMeshTableBindingIndex, RHI::ResourceBindType::StructuredBuffer); // メッシュの表
         return desc;
     }
 
     RHI::DescriptorSetDesc MegaGeometryPass::BuildDrawDescriptorSetDesc() const
     {
         // GBufferPassと同じ（set=0, binding 0=UBO, 1-6=textures）に、頂点シェーダーが引く
-        // インスタンスの表（8）と描画情報（9）を足した形
+        // インスタンスの表（8）・描画情報（9）・メッシュの表（22）を足した形
         RHI::DescriptorSetDesc desc;
         RHI::DescriptorBinding uboBinding;
         uboBinding.binding = 0;
@@ -2825,7 +2935,7 @@ namespace NorvesLib::Core::Rendering
             AddVirtualTextureFeedbackBinding(desc, VirtualTextureFeedbackBindingIndex);
         }
 
-        for (uint32_t binding : {8u, 9u})
+        for (uint32_t binding : {8u, 9u, MegaMeshTableBindingIndex})
         {
             RHI::DescriptorBinding bufferBinding;
             bufferBinding.binding = binding;
@@ -2836,10 +2946,7 @@ namespace NorvesLib::Core::Rendering
         return desc;
     }
 
-    bool MegaGeometryPass::EnsureFrameSlot(FrameSlot &slot,
-                                           uint32_t instanceCount,
-                                           uint32_t sectionTableEntries,
-                                           uint32_t sectionCount)
+    bool MegaGeometryPass::EnsureSceneTableBuffers(FrameSlot &slot, uint32_t instanceCount, uint32_t meshCount)
     {
         if (!m_Device)
         {
@@ -2872,6 +2979,33 @@ namespace NorvesLib::Core::Rendering
                                  "MegaGeometry_ShadowInstanceTable");
             // 作れなくても主の描画は止めない（影の入力が無効になるだけ）
             slot.ShadowInstanceBuffer = m_Device->CreateBuffer(desc);
+        }
+
+        if (!slot.MeshBuffer || slot.MeshCapacity < meshCount)
+        {
+            const uint32_t capacity = std::max(16u, NextPowerOfTwo(meshCount));
+            RHI::BufferDesc desc(static_cast<uint64_t>(capacity) * sizeof(GPUMegaMesh),
+                                 RHI::ResourceUsage::StorageBuffer,
+                                 true,
+                                 "MegaGeometry_MeshTable");
+            RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
+            if (!buffer)
+            {
+                return false;
+            }
+            slot.MeshBuffer = buffer;
+            slot.MeshCapacity = capacity;
+        }
+        return true;
+    }
+
+    bool MegaGeometryPass::EnsureFrameSlot(FrameSlot &slot,
+                                           uint32_t sectionTableEntries,
+                                           uint32_t sectionCount)
+    {
+        if (!m_Device)
+        {
+            return false;
         }
 
         if (!slot.SectionBuffer || slot.SectionCapacity < sectionTableEntries)

@@ -37,7 +37,7 @@ void main()
     while (low < high)
     {
         uint mid = (low + high + 1u) >> 1u;
-        if (instances[mid].clusterInfo.w <= flatGroup)
+        if (LoadMegaInstanceFirstGroup(mid) <= flatGroup)
         {
             low = mid;
         }
@@ -48,7 +48,7 @@ void main()
     }
 
     uint instanceIndex = low;
-    MegaInstance instance = instances[instanceIndex];
+    MegaInstance instance = LoadMegaInstance(instanceIndex);
     uint clusterIndex = (flatGroup - instance.clusterInfo.w) * 64u + gl_LocalInvocationID.x;
     if (clusterIndex >= instance.clusterInfo.z)
     {

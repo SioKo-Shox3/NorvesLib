@@ -243,6 +243,9 @@ namespace NorvesLib::Core::Rendering
         /** @brief MegaGeometry のインスタンスの表。無ければ null（空の表を束ねる） */
         RHI::BufferPtr MegaInstances;
         uint64_t MegaInstancesBytes = 0;
+        /** @brief MegaGeometry のメッシュの表（インスタンスの表の行が番号で指す）。無ければ null（空の表を束ねる） */
+        RHI::BufferPtr MegaMeshes;
+        uint64_t MegaMeshesBytes = 0;
         /** @brief 描画のインスタンスの表（手続きメッシュ）。無ければ
          * null（空の表を束ねる） */
         RHI::BufferPtr DrawInstances;

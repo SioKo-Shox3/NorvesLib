@@ -50,7 +50,7 @@ void NodeStage()
     }
     uvec2 entry = cullData.bvhStage == 0u ? uvec2(thread, 0u) : bvhQueue[cullData.bvhInputBase + thread];
     uint instanceIndex = entry.x;
-    MegaInstance instance = instances[instanceIndex];
+    MegaInstance instance = LoadMegaInstance(instanceIndex);
 
     g_WorldMatrix = instance.world;
     BvhNodeArray bvh = BvhNodeArray(uvec2(instance.bvhInfo.x, instance.bvhInfo.y));
@@ -101,7 +101,7 @@ void ClusterStage()
     }
     uvec2 entry = bvhQueue[cullData.bvhLeafBase + leafSlot];
     uint instanceIndex = entry.x;
-    MegaInstance instance = instances[instanceIndex];
+    MegaInstance instance = LoadMegaInstance(instanceIndex);
 
     BvhNodeArray bvh = BvhNodeArray(uvec2(instance.bvhInfo.x, instance.bvhInfo.y));
     BvhNode node = bvh.nodes[entry.y];

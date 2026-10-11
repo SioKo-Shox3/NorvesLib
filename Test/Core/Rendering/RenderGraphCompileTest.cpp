@@ -144,6 +144,8 @@ namespace
     Container::VariableArray<SkinnedPaletteUpdate> GSkinnedPaletteUpdates;
     // MegaGeometryPass が毎フレーム書くインスタンスの表（"MegaGeometry_InstanceTable"）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaInstanceTableUpdates;
+    // MegaGeometryPass が毎フレーム書くメッシュの表（"MegaGeometry_MeshTable"）の更新の記録（更新ごとの中身）
+    Container::VariableArray<Container::VariableArray<uint8_t>> GMegaMeshTableUpdates;
     // MegaGeometryPass のカリングの定数バッファ（"MegaGeometry_CullUBO"。パスごとに 1 つ）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaCullUniformUpdates;
     // VSM の MegaGeometry の投影物のカリングの定数バッファ（"VsmMegaCullUniform"・"VsmMegaCullParams"）の更新の記録（更新ごとの中身）
@@ -328,6 +330,10 @@ namespace
             if (IsDebugName(m_Desc.DebugName, "MegaGeometry_InstanceTable"))
             {
                 GMegaInstanceTableUpdates.push_back(LastUpdateBytes);
+            }
+            if (IsDebugName(m_Desc.DebugName, "MegaGeometry_MeshTable"))
+            {
+                GMegaMeshTableUpdates.push_back(LastUpdateBytes);
             }
             if (IsDebugName(m_Desc.DebugName, "MegaGeometry_CullUBO"))
             {
@@ -9252,7 +9258,7 @@ namespace
             assert(argsBindings.size() == 1u);
             assert(IsDebugName(BoundBufferNameAt(argsBindings, 21u), "VsmMegaCullPairs"));
             const Container::VariableArray<BoundBufferName>& cullBindings = cullIndirect.Bindings;
-            assert(cullBindings.size() == 11u);
+            assert(cullBindings.size() == 12u);
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 0u), "VsmMegaCullUniform"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 1u), "MegaGeometry_InstanceTable"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 11u), "MegaGeometry_PageTable"));
@@ -9265,14 +9271,17 @@ namespace
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 19u), "VSM_PageTable"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 20u), "VsmMegaCullSlices"));
             assert(IsDebugName(BoundBufferNameAt(cullBindings, 21u), "VsmMegaCullPairs"));
+            // 主の経路のメッシュの表（インスタンスの表の行が番号で指す）
+            assert(IsDebugName(BoundBufferNameAt(cullBindings, 22u), "MegaGeometry_MeshTable"));
             // クラスタの記録: 主の経路のインスタンスの表・影の表と自分の一覧を読み、自分の記録の出力へ書く
             const Container::VariableArray<BoundBufferName>& chunkBindings = commandList.DispatchBindings[chunkDispatch];
-            assert(chunkBindings.size() == 5u);
+            assert(chunkBindings.size() == 6u);
             assert(IsDebugName(BoundBufferNameAt(chunkBindings, 1u), "MegaGeometry_InstanceTable"));
             assert(IsDebugName(BoundBufferNameAt(chunkBindings, 14u), "VsmMegaCullParams"));
             assert(IsDebugName(BoundBufferNameAt(chunkBindings, 15u), "VsmMega_List"));
             assert(IsDebugName(BoundBufferNameAt(chunkBindings, 18u), "MegaGeometry_ShadowInstanceTable"));
             assert(IsDebugName(BoundBufferNameAt(chunkBindings, 19u), "VsmMega_Chunks"));
+            assert(IsDebugName(BoundBufferNameAt(chunkBindings, 22u), "MegaGeometry_MeshTable"));
             // 展開は、ホストが書いた塊（束縛 1）に続けて、クラスタの記録（束縛 6）と一覧（束縛 7）を読む
             const Container::VariableArray<BoundBufferName>& expandArgsBindings = commandList.DispatchBindings[expandArgsDispatch];
             const Container::VariableArray<BoundBufferName>& expandBindings = expandIndirect.Bindings;
@@ -9623,7 +9632,7 @@ namespace
                     argsDispatch = index;
                     ++argsCount;
                 }
-                if (bindings.size() == 5u && BoundBufferNameAt(bindings, 19u) != nullptr && IsDebugName(BoundBufferNameAt(bindings, 19u), "VsmMega_Chunks"))
+                if (bindings.size() == 6u && BoundBufferNameAt(bindings, 19u) != nullptr && IsDebugName(BoundBufferNameAt(bindings, 19u), "VsmMega_Chunks"))
                 {
                     chunkDispatch = index;
                     ++chunkCount;
@@ -10964,42 +10973,59 @@ namespace
         assert(commandList.IndirectDraws[1].MaxDrawCount == 1);
     }
 
-    // インスタンスの表（1つの storage buffer）: 並びはインスタンスの並び。ワークグループ・区間・見えたビットの区画・
-    // 頂点とインデックスの基点（プールの塊の先頭から）が入る
+    // インスタンスの表（1つの storage buffer）: 並びはインスタンスの並び。メッシュの表の番号・ワークグループ・見えたビットの区画が入る。
+    // メッシュの表（もう1つの storage buffer）: ロード済みのメッシュごとに 1 行。クラスタ配列・区間・頂点とインデックスの基点
+    // （プールの塊の先頭から）が入る
     void TestMegaGeometryRecordFrameCommandWritesInstanceTable()
     {
         GMegaInstanceTableUpdates.clear();
+        GMegaMeshTableUpdates.clear();
         FakeCommandList commandList;
         RecordMegaGeometryTwoInstances(true, commandList, 1.0f, 1, nullptr, nullptr, true);
 
         assert(GMegaInstanceTableUpdates.size() == 1);
+        assert(GMegaMeshTableUpdates.size() == 1);
         const Container::VariableArray<uint8_t> &bytes = GMegaInstanceTableUpdates[0];
-        // MegaGeometryPass::GPUMegaInstance は 192 バイト（world 0・previousWorld 64・LODSphere 128・
-        // クラスタ配列のアドレス下位/上位・クラスタ数・最初のワークグループ 144〜156・区間・頂点の基点・インデックスの基点・見えたビットの先頭 160〜172・
-        // グループの BVH の節の配列のアドレス下位/上位・節の数・予約 176〜188）
-        constexpr size_t InstanceBytes = 192;
+        const Container::VariableArray<uint8_t> &meshBytes = GMegaMeshTableUpdates[0];
+        // MegaGeometryPass::GPUMegaInstance は 144 バイト（world 0・previousWorld 64・メッシュの表の番号 128・
+        // 最初のワークグループ 132・見えたビットの先頭 136・予約 140）
+        constexpr size_t InstanceBytes = 144;
+        // MegaGeometryPass::GPUMegaMesh は 64 バイト（LODSphere 0・クラスタ配列のアドレス下位/上位 16〜20・クラスタ数 24・予約 28・
+        // 区間 32・頂点の基点 36・インデックスの基点 40・予約 44・BVH の節の配列のアドレス下位/上位 48〜52・節の数 56・ページの表の先頭 60）
+        constexpr size_t MeshBytes = 64;
         assert(bytes.size() == 2 * InstanceBytes);
+        assert(meshBytes.size() == 2 * MeshBytes);
         auto readUint = [&bytes](size_t instanceIndex, size_t byteOffset) -> uint32_t
         {
             uint32_t value = 0;
             std::memcpy(&value, bytes.data() + instanceIndex * InstanceBytes + byteOffset, sizeof(value));
             return value;
         };
+        auto readMeshUint = [&meshBytes](size_t meshIndex, size_t byteOffset) -> uint32_t
+        {
+            uint32_t value = 0;
+            std::memcpy(&value, meshBytes.data() + meshIndex * MeshBytes + byteOffset, sizeof(value));
+            return value;
+        };
 
         for (size_t instanceIndex = 0; instanceIndex < 2; ++instanceIndex)
         {
-            assert((readUint(instanceIndex, 144) | readUint(instanceIndex, 148)) != 0); // クラスタ配列のアドレス
-            assert(readUint(instanceIndex, 152) == 1);                                  // クラスタ数
+            // 2つのインスタンスは別のメッシュなので、メッシュの表の別の行を指す
+            const uint32_t meshIndex = readUint(instanceIndex, 128);
+            assert(meshIndex == instanceIndex);
             // 1クラスタ = 1ワークグループなので、最初のワークグループの通し番号はインスタンスの番号
-            assert(readUint(instanceIndex, 156) == instanceIndex);
-            // 材質が違うので区間も別
-            assert(readUint(instanceIndex, 160) == instanceIndex);
+            assert(readUint(instanceIndex, 132) == instanceIndex);
             // 見えたビットは、全インスタンスで1本の配列にクラスタ数ずつ詰める
-            assert(readUint(instanceIndex, 172) == instanceIndex);
+            assert(readUint(instanceIndex, 136) == instanceIndex);
+
+            assert((readMeshUint(meshIndex, 16) | readMeshUint(meshIndex, 20)) != 0); // クラスタ配列のアドレス
+            assert(readMeshUint(meshIndex, 24) == 1);                                 // クラスタ数
+            // 材質が違うので区間も別
+            assert(readMeshUint(meshIndex, 32) == meshIndex);
         }
         // 2つのメッシュは同じプールの塊の中にあり、2つ目は1つ目の後ろ
-        assert(readUint(0, 164) < readUint(1, 164));
-        assert(readUint(0, 168) < readUint(1, 168));
+        assert(readMeshUint(0, 36) < readMeshUint(1, 36));
+        assert(readMeshUint(0, 40) < readMeshUint(1, 40));
     }
 
     // 遮蔽カリング（既定）は2パス: 1パス目のカリングと描画 → HZBの生成 → 2パス目のカリングと描画。

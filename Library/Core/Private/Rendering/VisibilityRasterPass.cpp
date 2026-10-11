@@ -81,12 +81,17 @@ namespace NorvesLib::Core::Rendering
         //   MegaGeometry: 1 = インスタンスの表、2 = コマンドごとの描画情報
         //   手続き: 1 = 描画のインスタンスの表、2 = 記録の表
         //   スキニング: 1 = 変形した頂点、2 = 記録の表（使わない）
+        // MegaGeometry のメッシュの表の binding（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING）
+        constexpr uint32_t MegaMeshTableBinding = 22;
+
         RHI::DescriptorSetDesc MakeDrawDescriptorSetDesc()
         {
             RHI::DescriptorSetDesc desc;
             AddBinding(desc, 0, RHI::ResourceBindType::ConstantBuffer, RHI::ShaderStage::Vertex);
             AddBinding(desc, 1, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex);
             AddBinding(desc, 2, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex);
+            // MegaGeometry のメッシュの表（visbuffer_mega.vert の MEGA_MESH_BINDING。手続き・スキニングの描画は読まない）
+            AddBinding(desc, MegaMeshTableBinding, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Vertex);
             return desc;
         }
 
@@ -1291,6 +1296,8 @@ namespace NorvesLib::Core::Rendering
 
             m_Work.MegaInstanceBuffer = plan->InstanceBuffer;
             m_Work.MegaInstanceBytes = plan->InstanceBufferBytes;
+            m_Work.MegaMeshBuffer = plan->MeshBuffer;
+            m_Work.MegaMeshBytes = plan->MeshBufferBytes;
         }
 
         // 描画のディスクリプタセット
@@ -1298,6 +1305,7 @@ namespace NorvesLib::Core::Rendering
         {
             slot.MegaSet->BindConstantBuffer(0, slot.FrameUniform, 0, FrameUniformBytes);
             slot.MegaSet->BindStorageBuffer(1, plan->InstanceBuffer, 0, ClampBindSize(plan->InstanceBufferBytes));
+            slot.MegaSet->BindStorageBuffer(MegaMeshTableBinding, plan->MeshBuffer, 0, ClampBindSize(plan->MeshBufferBytes));
             slot.MegaSet->BindStorageBuffer(2, plan->DrawInfoBuffer, 0, ClampBindSize(plan->DrawInfoBuffer->GetSize()));
             slot.MegaSet->Update();
         }
@@ -1307,6 +1315,8 @@ namespace NorvesLib::Core::Rendering
             slot.MeshSet->BindConstantBuffer(0, slot.FrameUniform, 0, FrameUniformBytes);
             slot.MeshSet->BindStorageBuffer(1, context.InstanceDataBuffer, 0, ClampBindSize(context.InstanceDataBuffer->GetSize()));
             slot.MeshSet->BindStorageBuffer(2, slot.RecordTable, 0, ClampBindSize(tableBytes));
+            // メッシュの表は読まないが、同じ形のセットなので有効なバッファを結んでおく
+            slot.MeshSet->BindStorageBuffer(MegaMeshTableBinding, slot.RecordTable, 0, ClampBindSize(tableBytes));
             slot.MeshSet->Update();
         }
         const RHI::BufferPtr& skinnedVertices = m_Work.SkinnedVertices;
@@ -1316,6 +1326,7 @@ namespace NorvesLib::Core::Rendering
             slot.SkinnedSet->BindConstantBuffer(0, slot.FrameUniform, 0, FrameUniformBytes);
             slot.SkinnedSet->BindStorageBuffer(1, skinnedVertices, 0, ClampBindSize(skinnedVertices->GetSize()));
             slot.SkinnedSet->BindStorageBuffer(2, slot.RecordTable, 0, ClampBindSize(tableBytes));
+            slot.SkinnedSet->BindStorageBuffer(MegaMeshTableBinding, slot.RecordTable, 0, ClampBindSize(tableBytes));
             slot.SkinnedSet->Update();
         }
         return PrepareResult::Ready;
@@ -1628,6 +1639,8 @@ namespace NorvesLib::Core::Rendering
         inputs.FrameUniform = m_Work.Slot->FrameUniform;
         inputs.InstanceBuffer = plan.InstanceBuffer;
         inputs.InstanceBufferBytes = plan.InstanceBufferBytes;
+        inputs.MeshBuffer = plan.MeshBuffer;
+        inputs.MeshBufferBytes = plan.MeshBufferBytes;
         inputs.RecordTable = m_Work.Slot->RecordTable;
         inputs.RecordTableBytes = m_Work.TableBytes;
         inputs.KeyBuffer = m_Merge.GetKeyBuffer();
@@ -1703,6 +1716,8 @@ namespace NorvesLib::Core::Rendering
         {
             m_LastMegaInstanceBuffer = m_Work.MegaInstanceBuffer;
             m_LastMegaInstanceBytes = m_Work.MegaInstanceBytes;
+            m_LastMegaMeshBuffer = m_Work.MegaMeshBuffer;
+            m_LastMegaMeshBytes = m_Work.MegaMeshBytes;
         }
 
         // 材質の数は、変わったときだけログへ書く。上限を超えたら、通知を一度だけ出す
@@ -1761,6 +1776,8 @@ namespace NorvesLib::Core::Rendering
         m_LastMaterialOwners.clear();
         m_LastMegaInstanceBuffer.reset();
         m_LastMegaInstanceBytes = 0;
+        m_LastMegaMeshBuffer.reset();
+        m_LastMegaMeshBytes = 0;
         m_Work = FrameWork{};
 
         RHI::ICommandList* commandList = context.CommandList;

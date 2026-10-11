@@ -17,21 +17,10 @@ layout(set = 0, binding = 0) uniform VisFrame
     mat4 projection;
 } frame;
 
-// インスタンスの表（cluster_cull.comp の MegaInstance と一致）。描画が引くのは変換だけ。
-struct MegaInstance
-{
-    mat4 world;
-    mat4 previousWorld;
-    vec4 lodSphere;
-    uvec4 clusterInfo;
-    uvec4 drawInfo;
-    uvec4 bvhInfo;
-};
-
-layout(std430, set = 0, binding = 1) readonly buffer InstanceBuffer
-{
-    MegaInstance instances[];
-};
+// インスタンスの表（binding 1）とメッシュの表（binding 22）。描画が引くのは変換だけ。
+#define MEGA_INSTANCE_BINDING 1
+#define MEGA_MESH_BINDING 22
+#include "Common/MegaInstanceTable.glsl"
 
 // コマンドごとの描画情報（x = インスタンスの番号, y = payload）。添え字は firstInstance
 layout(std430, set = 0, binding = 2) readonly buffer DrawInfoBuffer
@@ -44,7 +33,7 @@ layout(location = 0) flat out uint outRecord;
 void main()
 {
     uvec2 drawInfo = drawInfos[gl_InstanceIndex];
-    mat4 world = instances[drawInfo.x].world;
+    mat4 world = LoadMegaInstance(drawInfo.x).world;
 
     vec4 worldPos = world * vec4(inPosition, 1.0);
     gl_Position = frame.projection * frame.view * worldPos;

@@ -292,6 +292,7 @@ namespace
     };
     static_assert(sizeof(DrawInstanceData) == 208, "シェーダーの VisDrawInstance と同じ 208 バイト");
 
+    // シェーダーが LoadMegaInstance で受け取る MegaInstance と同じ値（GPU へはインスタンスの表とメッシュの表に分けて書く）
     struct MegaInstanceData
     {
         float World[16];
@@ -301,7 +302,52 @@ namespace
         uint32_t DrawInfo[4];
         uint32_t BvhInfo[4];
     };
-    static_assert(sizeof(MegaInstanceData) == 192, "シェーダーの VisMegaInstance と同じ 192 バイト");
+
+    // Common/MegaInstanceTable.glsl の MegaInstanceRow（144 バイト）と MegaMeshEntry（64 バイト）と同じ並び
+    struct MegaInstanceRowData
+    {
+        float World[16];
+        float PreviousWorld[16];
+        uint32_t Info[4]; // メッシュの表の番号、最初のワークグループの番号、見えた印の先頭、予約
+    };
+    static_assert(sizeof(MegaInstanceRowData) == 144, "シェーダーの MegaInstanceRow と同じ 144 バイト");
+    struct MegaMeshData
+    {
+        float LodSphere[4];
+        uint32_t ClusterInfo[4];
+        uint32_t DrawInfo[4];
+        uint32_t BvhInfo[4];
+    };
+    static_assert(sizeof(MegaMeshData) == 64, "シェーダーの MegaMeshEntry と同じ 64 バイト");
+
+    // メッシュの表の binding（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING）
+    constexpr uint32_t MegaMeshTableBinding = 22u;
+
+    // インスタンスごとに 1 行ずつのメッシュの表を作り、インスタンスの表の行はそれぞれ自分の番号の行を指す
+    void SplitMegaInstances(const Container::VariableArray<MegaInstanceData>& source,
+                            Container::VariableArray<MegaInstanceRowData>& rows,
+                            Container::VariableArray<MegaMeshData>& meshes)
+    {
+        rows.clear();
+        meshes.clear();
+        for (size_t index = 0; index < source.size(); ++index)
+        {
+            const MegaInstanceData& instance = source[index];
+            MegaInstanceRowData row = {};
+            MegaMeshData mesh = {};
+            std::memcpy(row.World, instance.World, sizeof(row.World));
+            std::memcpy(row.PreviousWorld, instance.PreviousWorld, sizeof(row.PreviousWorld));
+            row.Info[0] = static_cast<uint32_t>(index);
+            row.Info[1] = instance.ClusterInfo[3];
+            row.Info[2] = instance.DrawInfo[3];
+            std::memcpy(mesh.LodSphere, instance.LodSphere, sizeof(mesh.LodSphere));
+            std::memcpy(mesh.ClusterInfo, instance.ClusterInfo, sizeof(uint32_t) * 3u);
+            std::memcpy(mesh.DrawInfo, instance.DrawInfo, sizeof(uint32_t) * 3u);
+            std::memcpy(mesh.BvhInfo, instance.BvhInfo, sizeof(mesh.BvhInfo));
+            rows.push_back(row);
+            meshes.push_back(mesh);
+        }
+    }
 
     // 1 つの三角形の、ワールド空間での参照のデータ（倍精度）
     struct ReferenceTriangle
@@ -967,6 +1013,7 @@ namespace
         BufferPtr RecordTable;
         BufferPtr MaterialTable;
         BufferPtr MegaInstances;
+        BufferPtr MegaMeshes;
         BufferPtr DrawInstances;
         TexturePtr IdTexture;
         // BDA で読む頂点・インデックス（記録のアドレスが指す）
@@ -1055,10 +1102,14 @@ namespace
         const ResourceUsage tableUsage = ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead;
         gpu.RecordTable = CreateHostBuffer(device, gpu.Records.Data(), gpu.Records.SizeInBytes(), tableUsage, "ResolveTestRecords");
         gpu.MaterialTable = CreateArrayBuffer(device, scene.Materials, tableUsage, "ResolveTestMaterials");
-        gpu.MegaInstances = CreateArrayBuffer(device, scene.MegaInstances, tableUsage, "ResolveTestMegaInstances");
+        Container::VariableArray<MegaInstanceRowData> megaRows;
+        Container::VariableArray<MegaMeshData> megaMeshes;
+        SplitMegaInstances(scene.MegaInstances, megaRows, megaMeshes);
+        gpu.MegaInstances = CreateArrayBuffer(device, megaRows, tableUsage, "ResolveTestMegaInstances");
+        gpu.MegaMeshes = CreateArrayBuffer(device, megaMeshes, tableUsage, "ResolveTestMegaMeshes");
         gpu.DrawInstances = CreateArrayBuffer(device, scene.DrawInstances, tableUsage, "ResolveTestDrawInstances");
         gpu.IdTexture = CreateIdTexture(device, idImage);
-        return gpu.RecordTable && gpu.MaterialTable && gpu.MegaInstances && gpu.DrawInstances && gpu.IdTexture;
+        return gpu.RecordTable && gpu.MaterialTable && gpu.MegaInstances && gpu.MegaMeshes && gpu.DrawInstances && gpu.IdTexture;
     }
 
     Readback RunResolve(const DevicePtr& device,
@@ -1145,6 +1196,8 @@ namespace
         dispatch.MaterialTableBytes = gpu.MaterialTable->GetSize();
         dispatch.MegaInstances = gpu.MegaInstances;
         dispatch.MegaInstancesBytes = gpu.MegaInstances->GetSize();
+        dispatch.MegaMeshes = gpu.MegaMeshes;
+        dispatch.MegaMeshesBytes = gpu.MegaMeshes->GetSize();
         dispatch.DrawInstances = gpu.DrawInstances;
         dispatch.DrawInstancesBytes = gpu.DrawInstances->GetSize();
         dispatch.Albedo = albedo;
@@ -3795,6 +3848,11 @@ namespace
             descriptorBinding.stages = RHI::ShaderStage::Vertex;
             desc.bindings.push_back(descriptorBinding);
         }
+        DescriptorBinding meshBinding; // メッシュの表
+        meshBinding.binding = MegaMeshTableBinding;
+        meshBinding.type = ResourceBindType::StructuredBuffer;
+        meshBinding.stages = RHI::ShaderStage::Vertex;
+        desc.bindings.push_back(meshBinding);
         return desc;
     }
 
@@ -3844,8 +3902,13 @@ namespace
         const BufferPtr indexBuffer = CreateHostBuffer(
             device, scene.Indices.data(), static_cast<uint64_t>(scene.Indices.size()) * sizeof(uint32_t),
             addressUsage | ResourceUsage::IndexBuffer, "SwRasterTestIndices");
-        const BufferPtr instanceBuffer = CreateArrayBuffer(device, scene.Instances, ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead,
+        Container::VariableArray<MegaInstanceRowData> instanceRows;
+        Container::VariableArray<MegaMeshData> instanceMeshes;
+        SplitMegaInstances(scene.Instances, instanceRows, instanceMeshes);
+        const BufferPtr instanceBuffer = CreateArrayBuffer(device, instanceRows, ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead,
                                                            "SwRasterTestInstances");
+        const BufferPtr meshBuffer = CreateArrayBuffer(device, instanceMeshes, ResourceUsage::StorageBuffer | ResourceUsage::ShaderRead,
+                                                       "SwRasterTestMeshes");
 
         // 記録の表と、コマンドごとの描画情報（x = インスタンスの番号、y = payload）
         VisibilityBuffer::RecordTable records;
@@ -3901,7 +3964,7 @@ namespace
         constexpr uint32_t SwStatsWords = 12u;
         constexpr uint32_t SwStatOversize = 9u;
         constexpr uint32_t SwStatGroups = 10u;
-        if (!vertexBuffer || !indexBuffer || !instanceBuffer || !recordTable || !drawInfoBuffer || !frameBuffer || !listBuffer)
+        if (!vertexBuffer || !indexBuffer || !instanceBuffer || !meshBuffer || !recordTable || !drawInfoBuffer || !frameBuffer || !listBuffer)
         {
             Expect(false, "ソフトウェアラスタのケースのバッファを作れなければならない");
             return;
@@ -3958,7 +4021,8 @@ namespace
             return;
         }
         hardSet->BindConstantBuffer(0, frameBuffer, 0, sizeof(frameData));
-        hardSet->BindStorageBuffer(1, instanceBuffer, 0, static_cast<uint32_t>(scene.Instances.size() * sizeof(MegaInstanceData)));
+        hardSet->BindStorageBuffer(1, instanceBuffer, 0, static_cast<uint32_t>(instanceRows.size() * sizeof(MegaInstanceRowData)));
+        hardSet->BindStorageBuffer(MegaMeshTableBinding, meshBuffer, 0, static_cast<uint32_t>(instanceMeshes.size() * sizeof(MegaMeshData)));
         hardSet->BindStorageBuffer(2, drawInfoBuffer, 0, static_cast<uint32_t>(drawInfos.size() * sizeof(uint32_t)));
         hardSet->Update();
 
@@ -4010,7 +4074,9 @@ namespace
             VisibilitySwRaster::Inputs inputs;
             inputs.FrameUniform = frameBuffer;
             inputs.InstanceBuffer = instanceBuffer;
-            inputs.InstanceBufferBytes = static_cast<uint64_t>(scene.Instances.size()) * sizeof(MegaInstanceData);
+            inputs.InstanceBufferBytes = static_cast<uint64_t>(instanceRows.size()) * sizeof(MegaInstanceRowData);
+            inputs.MeshBuffer = meshBuffer;
+            inputs.MeshBufferBytes = static_cast<uint64_t>(instanceMeshes.size()) * sizeof(MegaMeshData);
             inputs.RecordTable = recordTable;
             inputs.RecordTableBytes = records.SizeInBytes();
             inputs.KeyBuffer = keyBuffer;

@@ -2465,3 +2465,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: 残りの todo の最優先。
 - Notes: 既定の経路（ビジビリティバッファ）でのスキンの描画は M9 で数えていない。VisibilityRaster の `SkinnedRecords` を `RenderingCoordinatorStatsSnapshot` へ出せば（`RenderingCoordinator.cpp` 側。この項目の paths の外）、M9 を既定の経路のまま検査できる。
 - Notes: t0 は組み立てがそろってから撮るので、M9 のスモークの t0 はフレーム 61 前後になる（Debug。VT の落ち着きに 60 ティック）。
+
+### SCN-MEGA-GPU-SCENE-PREP（2026-10-12、反復 9・run 20261012-030203）
+
+- Done:
+  - シェーダー: `Assets/Shaders/Common/MegaInstanceTable.glsl` を足し、インスタンスの表の行（`MegaInstanceRow` 144 B: world・previousWorld・メッシュの表の番号・最初のワークグループ・「見えた」印の先頭）とメッシュの表（`MegaMeshEntry` 64 B: LOD の球・クラスタ配列・材質の区間・頂点とインデックスの基点・BVH・ページの表の先頭）を宣言する。`LoadMegaInstance(index)` が 2 つの表から以前の `MegaInstance` と同じ値を組み立てる（平らな判定の二分探索だけ `LoadMegaInstanceFirstGroup`）。cull（`MegaGeometryCull.glsl`・`cluster_cull`・`cluster_bvh_cull`）・visbuffer（`visbuffer_mega.vert`・`visbuffer_sw_raster`・`VisibilityResolve.glsl`）・vsm_mega（`vsm_mega_cull`・`vsm_mega_chunks`）・`megageometry.vert` の直接の読みをすべて寄せた。メッシュの表の binding はどのセットでも 22。
+  - C++: `GPUMegaInstance`（144 B）と `GPUMegaMesh`（64 B）に分け、`MegaGeometryPass::BuildSceneTables`（CPU で表を作る）・`UploadSceneTables`（フレームスロットへ書き、VSM の入力を作る）・`PrepareSceneTables`（共通の前段）を足した。前段は `MegaGeometryPass::Execute`（RenderGraph の順で、主のカリングと描画・ID のラスタと解決・VSM の影のどれよりも前）で表を書き、同じフレーム・同じ枠の記録はその表とスロットを使う。前段を通らない記録（同じフレームの 2 つ目のビューポート・コマンドを直接組んだ呼び出し）は従来どおり自分で作る。「見えた」ビットの先頭は表を作るときにクラスタ数を詰めて書く（`UpdateVisibilityLayout` の配置と同じで、2 パスでないフレームはシェーダーが読まない）。メッシュの表は描画・カリング・ID のラスタ（ソフトを含む）・解決・VSM のカリングと影の塊の記録の各セットへ binding 22 で結ぶ。
+  - テスト: 表を手で組む `GeometryPageRequestVulkanTest`・`VirtualShadowMapVulkanTest`（ケース K を含む）・`VisibilityResolveVulkanTest` を、行とメッシュの表に分けて書く形にした。`RenderGraphCompileTest` のインスタンスの表のバイトの検査をメッシュの表と合わせて新しい並びにし、VSM のカリングと影の塊の記録の束縛の数（12・6）とメッシュの表の束縛を確かめるようにした。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-GPU-SCENE-PREP-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error・warning 0。
+  - `-2.txt`: バナナ 1 万本 overview の `SCN-MEGA-BASE` との比較が `mean_luminance_difference=0`・`psnr_db=65.311`・`mismatched_pixel_ratio=0.000246` で `CAPTURE_SCENE result=pass`、EXIT=0。Game.log の ERROR 0。以前の項目の同じ比較（64.8〜69.2 dB・0.0002〜0.0003）の幅の中。
+  - `-3.txt`（追加の確認）: `visibility-buffer=off`（GBuffer のラスタの経路。`megageometry.vert` と描画のセットの binding 22）で撮って ERROR 0、`SCN-MEGA-BASE` との比較 pass（47.2 dB。経路の違いの差）。
+  - `-8.txt`: Debug の ctest 4 本のうち `GeometryPageRequestVulkanTest`・`VirtualShadowMapVulkanTest`・`RenderGraphCompileTest` が Passed。`VisibilityResolveVulkanTest` は「直接 dispatch の粗さの既定」の 1 件だけで落ちる（`-8-resolve-failures.txt`）。変更を stash して変更前（HEAD 0ed7bf4e）で再ビルドしても同じ 1 件で落ちる（`-6-baseline.txt`）ので、この変更によるものではない。
+- Next: SCN-MEGA-GPU-SCENE-SCATTER（席ごとの device-local な表と散在書き込み。前段の `PrepareSceneTables` の位置で compute を記録する）。
+- Notes: `VisibilityResolveVulkanTest` の直接 dispatch の粗さ（MegaGeometry の AO の既定、`VisFlatMaterialSurface`）の失敗は変更前からある。直す項目は TASKS に無い。
+- Notes: 前段は `MegaGeometryPass::Execute` の中に置いた（RenderGraph の順で MegaGeometry が表の読み手のどのパスよりも前。CSM・点光源の影は GPU の表を読まない）。独立の RenderGraph のパスにするかは、散在書き込みの compute を入れる SCATTER で決める。

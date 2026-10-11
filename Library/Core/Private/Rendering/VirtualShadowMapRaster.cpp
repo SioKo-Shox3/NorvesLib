@@ -87,6 +87,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t MegaBindVsmPageTable = 19;
         constexpr uint32_t MegaBindSlices = 20;
         constexpr uint32_t MegaBindPairs = 21;
+        // 主の経路のメッシュの表（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。カリングと影の塊の記録の両方が読む）
+        constexpr uint32_t MegaBindMeshes = 22;
         // vsm_mega_chunks.comp: 1 = インスタンスの表、14 = 定数、15 = 出力の一覧、18 = 影の表、19 = 影の塊の記録の出力
         // vsm_mega_cull_pairs.comp: 14 = 定数、15 = 出力の一覧、16 = dirty の階層、17 = 統計、18 = 影の表、20 = スライスの表、21 = 組の一覧
         // 組の一覧の頭 8 語（組の数・最大のワークグループ数・予約 2 語・間接 dispatch の引数 4 語）。引数は頭から 16 バイト目
@@ -195,6 +197,7 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(MegaBindVsmPageTable, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(MegaBindSlices, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(MegaBindPairs, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(MegaBindMeshes, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
             return desc;
         }
 
@@ -206,6 +209,7 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(ChunkBindList, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(ChunkBindShadowInstances, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(ChunkBindChunks, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(MegaBindMeshes, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
             return desc;
         }
 
@@ -859,7 +863,7 @@ namespace NorvesLib::Core::Rendering
         m_LastGroupCount = 0;
         m_bLastChunkBuilt = false;
         if (!IsReady() || !commandList || !dispatch.PageTable || !dispatch.Stats || !dispatch.DirtyBits || !dispatch.List ||
-            !dispatch.Instances || !dispatch.ShadowInstances || !dispatch.MegaPageTable || dispatch.InstanceCount == 0u ||
+            !dispatch.Instances || !dispatch.Meshes || !dispatch.ShadowInstances || !dispatch.MegaPageTable || dispatch.InstanceCount == 0u ||
             dispatch.TotalGroups == 0u)
         {
             return false;
@@ -992,6 +996,7 @@ namespace NorvesLib::Core::Rendering
         // ----- クラスタの選択: 通った組だけを間接 dispatch で出す。x, y = 組 × 組の最大のワークグループ数（x の上限を超える分は y へ折り返す） -----
         use->CullSet->BindConstantBuffer(MegaBindCullData, use->CullUniform, 0, sizeof(cullUniform));
         use->CullSet->BindStorageBuffer(MegaBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
+        use->CullSet->BindStorageBuffer(MegaBindMeshes, dispatch.Meshes, 0, ClampBindSize(dispatch.Meshes->GetSize()));
         use->CullSet->BindStorageBuffer(MegaBindPageTable, dispatch.MegaPageTable, 0, ClampBindSize(dispatch.MegaPageTable->GetSize()));
         use->CullSet->BindConstantBuffer(MegaBindParams, use->ParamsUniform, 0, sizeof(params));
         use->CullSet->BindStorageBuffer(MegaBindList, dispatch.List, 0, ClampBindSize(listBytes));
@@ -1028,6 +1033,7 @@ namespace NorvesLib::Core::Rendering
         {
             ScopedGpuTimestamp chunkTimestamp(commandList, "VsmCullChunks");
             use->ChunkSet->BindStorageBuffer(ChunkBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
+            use->ChunkSet->BindStorageBuffer(MegaBindMeshes, dispatch.Meshes, 0, ClampBindSize(dispatch.Meshes->GetSize()));
             use->ChunkSet->BindConstantBuffer(ChunkBindParams, use->ParamsUniform, 0, sizeof(params));
             use->ChunkSet->BindStorageBuffer(ChunkBindList, dispatch.List, 0, ClampBindSize(listBytes));
             use->ChunkSet->BindStorageBuffer(ChunkBindShadowInstances, dispatch.ShadowInstances, 0,

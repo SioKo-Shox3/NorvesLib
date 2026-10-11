@@ -73,6 +73,9 @@ namespace NorvesLib::Core::Rendering
             /** @brief MegaGeometry のインスタンスの表（変換だけを引く） */
             RHI::BufferPtr InstanceBuffer;
             uint64_t InstanceBufferBytes = 0;
+            /** @brief MegaGeometry のメッシュの表（インスタンスの表の行が番号で指す） */
+            RHI::BufferPtr MeshBuffer;
+            uint64_t MeshBufferBytes = 0;
             /** @brief 描画の記録の表（記録の番号 = 1 + コマンドの位置） */
             RHI::BufferPtr RecordTable;
             uint64_t RecordTableBytes = 0;

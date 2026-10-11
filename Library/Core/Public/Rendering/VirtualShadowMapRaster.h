@@ -300,6 +300,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr Instances;
         RHI::BufferPtr ShadowInstances;
         RHI::BufferPtr MegaPageTable;
+        /** @brief 主の経路のメッシュの表（GPUMegaMesh[]。インスタンスの表の行が番号で指す） */
+        RHI::BufferPtr Meshes;
         /** @brief インスタンスの表の要素数と、影の判定の全ワークグループ（64 クラスタ）の数 */
         uint32_t InstanceCount = 0;
         uint32_t TotalGroups = 0;
