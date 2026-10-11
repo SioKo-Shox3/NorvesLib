@@ -1656,3 +1656,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 直したこと（反復 4 の評価者 NEEDS_WORK）: 検査 `MEGA_SCENE_DELTA` の決まった場面（`VerifyMegaDeltaProtocol`、`RenderingCoordinator.cpp`）が、変わった席の累積方式に合っていなかった。基準→非基準差分を続けて当てると `AreAllChanged()` が真のまま席の一覧が空になり、「運んだ proxy の席が、変わった席に入っていない」で落ちた。`AreAllChanged()` のあいだは席の包含を求めず（全部が変わった扱い）、基準を当てた直後は `AreAllChanged()` を求める形に分けた。検査用の消費者が取り込んだ地点で `mirror.NoteDrawn(false)` を呼び、次の適用から変わった席を数え直す。
 - 結果（`.harness/runs/20261011-130759/`）: `verify-SCN-MEGA-FIX-DELTA-SKIP-4.txt` Debug の WorldSyncDifferentialTest ビルド exit=0、`-5.txt` ctest 1/1 Passed、`-6.txt` 起動画面の決定論比較 `result=pass`、`-8-checks.txt` mega-stress の撮影（`-RequireChecks MEGA_SCENE_DELTA,MEGA_SCENE_CONFIRM,ECS_RENDER_SYNC`）で `MEGA_SCENE_DELTA` default 286・close 294・aerial 107 pass / fail 0、他の 2 検査も fail 0。
 - Notes: 指定の撮影（CaptureStartupScene）では `MEGA_SCENE_DELTA` が有効にならない。この検査を見るには CaptureScene.ps1 に `-RequireChecks MEGA_SCENE_DELTA` を付ける。行末は numstat の 2 通りが一致（11/5）。
+
+### SCN-ECS-RENDER-INVALIDATION 再検証（2026-10-11、反復 6・run 20261011-130759）
+
+- 変更なし。差し戻し対応（逆引きの旧参照・走査しない部分木の公開状態の列・英語コメント）は 3d8e475e でコミット済みで、混在周回の判定は SCN-SCENE-CYCLE-SHARED-CACHE で直っているので、元の verify を通し直した。
+- 結果（`.harness/runs/20261011-130759/`）:
+  - `verify-SCN-ECS-RENDER-INVALIDATION-1.txt`: 起動画面の決定論比較 `result=pass`（default の psnr 100 dB、基準 SCN-MEGA-BASE-RWDI と同水準）、`ECS_RENDER_INVALIDATION` default pass=3・fail=0、EXIT=0。
+  - `-2.txt`: 3 シーン混在の周回（rendering3dtest,mega-bananas,mega-stress、3 周）が `SCENE_CYCLE_SMOKE_RUN result=pass`、`ECS_RENDER_INVALIDATION` pass=4282・fail 無し、Game.log に `SCENE_CYCLE_BASELINE cycle=2 scenes=3`・`changed=none unsettled=0`、EXIT=0。
+- Notes: SCN-ECS-RENDER-INVALIDATION を done にした。同期はまだ全走査のまま（次の SYNC-SWITCH で一覧へ切り替える）。
