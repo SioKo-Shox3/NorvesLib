@@ -342,6 +342,10 @@ namespace NorvesLib::Core::Rendering
      * VSM_CACHE cached=<n> rendered=<n> invalidated=<n> released=<n>（持ち越したページ・描いたページ・無効にしたページ・空きへ戻したページ）に、
      * 点光源の面だけの point_cached=<n> point_rendered=<n> point_invalidated=<n> point_released=<n> を足して出す。投影物の集めた内訳は
      * VSM_CASTERS procedural_chunks=<n> skinned_chunks=<n> culled=<n> dropped=<n> skipped=<n> に出す（値が変わったとき・60 回ごと）。
+     * 開発ビルドは 60 フレームごとに、無効化の直後のページの表（太陽の段）を読み戻し、同じフレームの動いた境界が覆う割り当て済みの
+     * ページを CPU で数えて VSM_INVALIDATE_EXPECTED pages=<n> invalidated=<n> point_invalidated=<n> sun_dirty=<n> missed=<n> extra=<n> bounds=<n>
+     * を出す（invalidated・point_invalidated は同じフレームの統計。missed は数えたページのうち dirty の付かなかった数で、0 でなければ描き直し漏れ。
+     * extra は dirty だが数えたページの外の数で、余白・再描画の印の分）。
      * プールの確保量は GpuResources::SetShadowMapPoolBytes で予算の計算（VideoMemoryPool::ShadowMap）へ伝える。
      */
     class VirtualShadowMapPass final : public IViewPass, public IRenderGraphPass
@@ -435,6 +439,15 @@ namespace NorvesLib::Core::Rendering
             uint64_t FrameSerial = 0;
             /** @brief 写した Execute が MegaGeometry の投影物のカリングを記録したか（語 8〜10 が有効か） */
             bool bMegaCull = false;
+            /**
+             * @brief 無効化の照合（開発ビルドだけが使う）: 無効化の直後のページの表（太陽の段）の読み戻し先と、写したフレームの
+             *        動いた境界（1 個 = 最小 xyz・最大 xyz の 6 つの float）・クリップマップ。bSnapshot が立った枠だけ有効
+             */
+            RHI::BufferPtr Snapshot;
+            const uint32_t* SnapshotMapped = nullptr;
+            bool bSnapshot = false;
+            Container::VariableArray<float> SnapshotBounds;
+            VirtualShadowMapClipmap SnapshotClipmap;
         };
 
         void Fallback(VirtualShadowMap::FallbackReason reason);
@@ -506,6 +519,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_FramesSinceStatsLog = 0;
         /** @brief VSM_CACHE を出してからの読み戻したフレーム数（60 フレームごとに出す） */
         uint32_t m_FramesSinceCacheLog = 0;
+        /** @brief 無効化の照合のページの表を写してからのフレーム数（開発ビルドで 60 フレームごとに写す） */
+        uint32_t m_FramesSinceSnapshot = 0;
 
         RGResourceHandle m_PoolHandle;
         RGResourceHandle m_PageTableHandle;

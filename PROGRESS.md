@@ -2693,3 +2693,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: 区画は席ごとなので、区画の外へ出たインスタンスの区画は、末尾が容量を超えるまで残る（前の表に載らなかった席だけを手放す）。見えたビットのバッファは、席の区画の和 + 1/8 までになる（今の負荷で 849 MB。前は詰めた大きさの 760 MB と、作り直しの 8 フレームの間の倍）。
 - Notes: 席の区画の割り当て・手放し・回収を直接確かめるテストは書いていない（verify に無い）。
 - Notes: `RecordFrameCommand` の中の区間は、トレースの記録の待ちが親に乗るので常設しない。内訳が要るときは同じ区間を一時的に足して撮り、比較は区間なしの撮影で行う。
+
+### SCN-MEGA-FIX-VSM-INVALIDATE 再開（2026-10-12、反復 24・run 20261012-030203）
+
+- 受入れの基準を「動いた境界が覆う割り当て済みのページの和との一致（多い側にだけずれる）」に改めたので、その和を数える照合を足した（無効化の実装は反復 21 のまま）。
+- 実装: 開発ビルド（`NORVES_BUILD_DEVELOPMENT`）だけ、60 フレームごとに、太陽の段を矩形だけで無効にするフレームを選び、割り当ての段階 1（無効化）の直後のページの表の太陽の段（640 KB）を読み戻し先へ写す（`VirtualShadowMapPagesDispatch::PageTableSnapshot`。統計の読み戻しの枠ごとに 1 本）。読み戻したとき、同じフレームの動いた境界（`ChangedBounds`。MegaGeometry の席の旧・新の境界と、それ以外の動いた投影物）を余白なしでライト空間の矩形にし、段ごとにページの集合を作って、割り当て済みの欄と突き合わせる。`VSM_INVALIDATE_EXPECTED pages=<覆う割り当て済みのページ> invalidated=<同じフレームの統計> point_invalidated=<同> sun_dirty=<表の割り当て済みで dirty の欄> missed=<覆うのに dirty でない欄> extra=<dirty だが覆わない欄> bounds=<境界の数>` を出す。合格は `missed=0` かつ `invalidated − point_invalidated ≥ pages`。
+- 結果（5万個・1920×1080・300 フレーム。`.harness/runs/scene-capture/SCN-MEGA-FIX-VSM-INVALIDATE/<move1|move0.2>/default.Game.log` の 10 回ずつ）:
+
+| 負荷 | `pages`（照合の和） | `invalidated`（GPU） | missed / extra | 平均 | `VirtualShadowMapPass` GPU median / p95 ms |
+|---|---|---|---|---|---|
+| 1% 移動（500 席、bounds=500） | 341 300 329 318 318 335 308 332 292 346 | 同じ値（10 回とも一致） | 0 / 0 | 321.9 | 0.969 / 2.039 |
+| 0.2% 移動（100 席、bounds=100） | 302 335 282 343 295 343 290 343 295 322 | 同じ値（10 回とも一致） | 0 / 0 | 315.0 | 0.938 / 2.063 |
+
+  - 無効化は全ページ（743）より少なく（読み込み直後の 1 回の 743 を除く `VSM_CACHE invalidated` は 1% 移動で 300〜355）、動いた境界が覆う割り当て済みのページの和と同じフレームで一致した（少ない側・多い側のずれとも 0。矩形の余白 1 mm が加えるページは無い）。点光源の面は使っていない（point_invalidated=0）。
+  - 起動画面でも照合が出る（`pages=21 invalidated=43 point_invalidated=22 sun_dirty=21 missed=0`。太陽の段の 21 が一致）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-FIX-VSM-INVALIDATE-4.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `-5.txt`: 起動画面 default の `SCN-MEGA-BASE-RWDI` との決定的な比較が `mean_luminance_difference=0`・`psnr_db=100`・`mismatched_pixel_ratio=4E-06` で `result=pass`、EXIT=0。Game.log の ERROR 0。
+  - `-6.txt`: mega-stress 5万個・1% 移動が `CAPTURE_SCENE result=pass`、EXIT=0。PNG を開いて確認（影は崩れていない。下端中央の近平面の切れは既知の SCN-MEGA-FIX-STRESS-NEAR-CLIP）。Game.log の ERROR 0、`MEGA_SHADOW_DIRTY ... invalidate_all=0`。
+  - 補助: `capture-SCN-MEGA-FIX-VSM-INVALIDATE-move0.2-check.txt`（0.2% 移動、`CAPTURE_SCENE result=pass`、EXIT=0、ERROR 0）。
+- Next: 残りの todo の最優先。
+- Notes: 照合は 60 フレームに 1 回、RenderThread で境界の数 × 段 × 覆うページを回す（範囲 128 × 128 で切る）。Release では読み戻し先を作らず、照合もしない。

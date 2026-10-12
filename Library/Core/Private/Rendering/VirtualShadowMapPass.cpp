@@ -20,6 +20,8 @@
 #include "RHI/ICommandList.h"
 #include "RHI/IDevice.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cwchar>
 
 namespace NorvesLib::Core::Rendering
@@ -34,6 +36,91 @@ namespace NorvesLib::Core::Rendering
                        ? VirtualShadowMap::LEVEL_COUNT + PointShadowMaxLights * PointShadowFaceCount * VirtualShadowMapPointSettings{}.MipCount
                        : VirtualShadowMap::LEVEL_COUNT;
         }
+
+#if NORVES_BUILD_DEVELOPMENT
+        /** 無効化の照合の結果（VSM_INVALIDATE_EXPECTED の値） */
+        struct InvalidationCheck
+        {
+            /** 動いた境界が覆う、割り当て済みのページの数（太陽の段） */
+            uint32_t Expected = 0;
+            /** 割り当て済みで dirty のページの数（太陽の段） */
+            uint32_t SunDirty = 0;
+            /** Expected のうち dirty の付かなかった数（描き直し漏れ） */
+            uint32_t Missed = 0;
+            /** dirty だが Expected の外の数 */
+            uint32_t Extra = 0;
+        };
+
+        /**
+         * 無効化の直後のページの表（太陽の段）と、同じフレームの動いた境界・クリップマップから、境界が覆う割り当て済みのページを数える。
+         * 境界はライト空間の矩形（余白なし）にし、段ごとに floor(位置 / ページの幅) が範囲 [原点, 原点 + 一辺) に入るページを、
+         * GPU と同じトーラスの番地（段 × 128 × 128 + (y mod 128) × 128 + (x mod 128)）で集合にする。
+         */
+        InvalidationCheck CountExpectedInvalidation(const VirtualShadowMapClipmap& clipmap,
+                                                    const Container::VariableArray<float>& bounds,
+                                                    const uint32_t* table)
+        {
+            InvalidationCheck check;
+            const uint32_t levelCount = std::min(clipmap.LevelCount, VirtualShadowMap::LEVEL_COUNT);
+            const int64_t dimension = static_cast<int64_t>(VirtualShadowMap::TABLE_DIMENSION);
+            Container::VariableArray<uint32_t> covered;
+            covered.resize(static_cast<size_t>(levelCount) * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL / 32u, 0u);
+            for (size_t offset = 0; offset + 6u <= bounds.size(); offset += 6u)
+            {
+                VirtualShadowMap::CasterBounds box;
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    box.Min[axis] = bounds[offset + axis];
+                    box.Max[axis] = bounds[offset + 3u + axis];
+                }
+                double lightMin[2] = {};
+                double lightMax[2] = {};
+                if (!VirtualShadowMap::LightSpaceRect(clipmap, box, lightMin, lightMax))
+                {
+                    continue;
+                }
+                for (uint32_t level = 0; level < levelCount; ++level)
+                {
+                    const VirtualShadowMapClipmapLevel& data = clipmap.Levels[level];
+                    const double pageMeters = static_cast<double>(data.PageMeters);
+                    if (!(pageMeters > 0.0))
+                    {
+                        continue;
+                    }
+                    const int64_t lowX = std::max(static_cast<int64_t>(std::floor(lightMin[0] / pageMeters)), data.OriginPageX);
+                    const int64_t lowY = std::max(static_cast<int64_t>(std::floor(lightMin[1] / pageMeters)), data.OriginPageY);
+                    const int64_t highX = std::min(static_cast<int64_t>(std::floor(lightMax[0] / pageMeters)), data.OriginPageX + dimension - 1);
+                    const int64_t highY = std::min(static_cast<int64_t>(std::floor(lightMax[1] / pageMeters)), data.OriginPageY + dimension - 1);
+                    for (int64_t pageY = lowY; pageY <= highY; ++pageY)
+                    {
+                        for (int64_t pageX = lowX; pageX <= highX; ++pageX)
+                        {
+                            const uint32_t entry = level * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL +
+                                                   static_cast<uint32_t>(pageY & (dimension - 1)) * VirtualShadowMap::TABLE_DIMENSION +
+                                                   static_cast<uint32_t>(pageX & (dimension - 1));
+                            covered[entry >> 5u] |= 1u << (entry & 31u);
+                        }
+                    }
+                }
+            }
+            const uint32_t entryCount = levelCount * VirtualShadowMap::TABLE_ENTRIES_PER_LEVEL;
+            for (uint32_t entry = 0; entry < entryCount; ++entry)
+            {
+                const uint32_t value = table[entry];
+                if ((value & VirtualShadowMap::PAGE_ENTRY_ALLOCATED) == 0u)
+                {
+                    continue;
+                }
+                const bool bCovered = ((covered[entry >> 5u] >> (entry & 31u)) & 1u) != 0u;
+                const bool bDirty = (value & VirtualShadowMap::PAGE_ENTRY_DIRTY) != 0u;
+                check.Expected += bCovered ? 1u : 0u;
+                check.SunDirty += bDirty ? 1u : 0u;
+                check.Missed += bCovered && !bDirty ? 1u : 0u;
+                check.Extra += !bCovered && bDirty ? 1u : 0u;
+            }
+            return check;
+        }
+#endif
     } // namespace
 
     /**
@@ -985,6 +1072,23 @@ namespace NorvesLib::Core::Rendering
                             slot.Mapped[VirtualShadowMap::StatPointInvalidated],
                             slot.Mapped[VirtualShadowMap::StatPointReleased]);
         }
+#if NORVES_BUILD_DEVELOPMENT
+        // 無効化の照合: 同じフレームの統計の無効にしたページの数と、動いた境界が覆う割り当て済みのページの数（CPU で数えた）を並べる
+        if (slot.bSnapshot && slot.SnapshotMapped)
+        {
+            slot.bSnapshot = false;
+            const InvalidationCheck check = CountExpectedInvalidation(slot.SnapshotClipmap, slot.SnapshotBounds, slot.SnapshotMapped);
+            NORVES_LOG_INFO("VirtualShadowMapPass",
+                            "VSM_INVALIDATE_EXPECTED pages=%u invalidated=%u point_invalidated=%u sun_dirty=%u missed=%u extra=%u bounds=%u",
+                            check.Expected,
+                            slot.Mapped[VirtualShadowMap::StatInvalidated],
+                            slot.Mapped[VirtualShadowMap::StatPointInvalidated],
+                            check.SunDirty,
+                            check.Missed,
+                            check.Extra,
+                            static_cast<uint32_t>(slot.SnapshotBounds.size() / 6u));
+        }
+#endif
         const uint32_t stats[6] = {slot.Mapped[VirtualShadowMap::StatRequested],
                                    slot.Mapped[VirtualShadowMap::StatAllocated],
                                    slot.Mapped[VirtualShadowMap::StatOverflow],
@@ -1153,6 +1257,46 @@ namespace NorvesLib::Core::Rendering
             m_Casters->MotionTracker.Reset();
             TakeMegaInvalidationFrom(m_MegaPass, *m_Casters);
         }
+
+        // 統計を写す読み戻しの枠。同じフレームの 2 回目以降の Execute は、同じ枠を新しい統計で上書きする。
+        // 新しいフレームは次の枠を使い、その枠がまだ読まれていない（GPU の完了が確かめられていない）ときは、このフレームの統計は取らない
+        StatsSlot* slot = nullptr;
+        if (m_StatsWriteSerial == frameSerial)
+        {
+            slot = &m_StatsSlots[m_StatsWriteIndex];
+        }
+        else
+        {
+            const uint32_t nextIndex = (m_StatsWriteIndex + 1u) % StatsSlotCount;
+            if (!m_StatsSlots[nextIndex].bPending)
+            {
+                m_StatsWriteIndex = nextIndex;
+                m_StatsWriteSerial = frameSerial;
+                slot = &m_StatsSlots[nextIndex];
+            }
+        }
+        const bool bStatsSlot = slot && slot->Buffer && slot->Mapped;
+#if NORVES_BUILD_DEVELOPMENT
+        // 無効化の照合: 太陽の段を動いた境界の矩形で無効にするフレームを 60 フレームごとに選び、無効化の直後のページの表を写す
+        bool bSnapshotWanted = false;
+        if (bStatsSlot && bCollected && m_bCacheEnabled && !m_Casters->bInvalidateAll && dispatch.Clipmap->bEnabled &&
+            ++m_FramesSinceSnapshot >= StatsLogIntervalFrames)
+        {
+            if (!slot->Snapshot)
+            {
+                slot->Snapshot = m_Device->CreateBuffer(RHI::BufferDesc(VirtualShadowMap::PageTableBytes(VirtualShadowMap::LEVEL_COUNT),
+                                                                        VirtualShadowMap::StatsReadbackUsage(),
+                                                                        true,
+                                                                        "VSM_InvalidationSnapshot"));
+                slot->SnapshotMapped = slot->Snapshot ? static_cast<const uint32_t*>(slot->Snapshot->Map(0, 0)) : nullptr;
+            }
+            if (slot->SnapshotMapped)
+            {
+                dispatch.PageTableSnapshot = slot->Snapshot;
+                bSnapshotWanted = true;
+            }
+        }
+#endif
         m_Pages->Record(commandList, dispatch);
         m_bMarked = m_Pages->WasMarked();
 
@@ -1173,29 +1317,35 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // 統計を読み戻しの枠へ写す。同じフレームの 2 回目以降の Execute は、同じ枠を新しい統計で上書きする。
-        // 新しいフレームは次の枠を使い、その枠がまだ読まれていない（GPU の完了が確かめられていない）ときは、このフレームの統計は取らない
-        StatsSlot* slot = nullptr;
-        if (m_StatsWriteSerial == frameSerial)
-        {
-            slot = &m_StatsSlots[m_StatsWriteIndex];
-        }
-        else
-        {
-            const uint32_t nextIndex = (m_StatsWriteIndex + 1u) % StatsSlotCount;
-            if (!m_StatsSlots[nextIndex].bPending)
-            {
-                m_StatsWriteIndex = nextIndex;
-                m_StatsWriteSerial = frameSerial;
-                slot = &m_StatsSlots[nextIndex];
-            }
-        }
-        if (slot && slot->Buffer && slot->Mapped)
+        // 統計を読み戻しの枠へ写す
+        if (bStatsSlot)
         {
             VirtualShadowMap::RecordStatsReadback(*commandList, m_Stats, slot->Buffer);
             slot->bPending = true;
             slot->FrameSerial = frameSerial;
             slot->bMegaCull = m_bMegaCullRecorded;
+            slot->bSnapshot = false;
+#if NORVES_BUILD_DEVELOPMENT
+            if (bSnapshotWanted && m_Pages->WasSnapshotRecorded())
+            {
+                // 照合に使う、このフレームの動いた境界とクリップマップ
+                slot->bSnapshot = true;
+                slot->SnapshotClipmap = *dispatch.Clipmap;
+                slot->SnapshotBounds.clear();
+                for (const VirtualShadowMap::CasterBounds& bounds : m_Casters->ChangedBounds)
+                {
+                    for (uint32_t axis = 0; axis < 3u; ++axis)
+                    {
+                        slot->SnapshotBounds.push_back(bounds.Min[axis]);
+                    }
+                    for (uint32_t axis = 0; axis < 3u; ++axis)
+                    {
+                        slot->SnapshotBounds.push_back(bounds.Max[axis]);
+                    }
+                }
+                m_FramesSinceSnapshot = 0;
+            }
+#endif
         }
 
         // 宣言した状態（Common）へ戻す

@@ -495,6 +495,7 @@ namespace NorvesLib::Core::Rendering
         m_bMarked = false;
         m_bCacheContinued = false;
         m_bInvalidatedAll = false;
+        m_bSnapshotRecorded = false;
         // 記録の途中で戻ったとき、古い状態を次の記録が引き継がないよう先に無効にする（最後で入力を残して有効に戻す）
         const bool bCacheWasValid = m_bCacheValid;
         m_bCacheValid = false;
@@ -795,15 +796,27 @@ namespace NorvesLib::Core::Rendering
             {
                 RemapPointPageTable(commandList, dispatch, pointRemap);
             }
+            // 照合用の写し（太陽の段の欄だけ）。読み戻し先が小さければ写さない
+            const uint64_t snapshotBytes = VirtualShadowMap::PageTableBytes(std::min(sliceCount, VirtualShadowMap::LEVEL_COUNT));
+            const bool bSnapshot = dispatch.PageTableSnapshot && dispatch.PageTableSnapshot->GetSize() >= snapshotBytes;
             for (uint32_t index = 0; index < StageCount; ++index)
             {
-                if (groups[index] == 0u)
+                if (groups[index] != 0u)
                 {
-                    continue;
+                    commandList->SetDescriptorSet(allocateUses[index]->DescriptorSet, 0);
+                    commandList->Dispatch(groups[index], 1u, 1u);
+                    BarrierWrites(commandList, {dispatch.FreeList, dispatch.PageTable, dispatch.Stats, dispatch.DirtyList});
                 }
-                commandList->SetDescriptorSet(allocateUses[index]->DescriptorSet, 0);
-                commandList->Dispatch(groups[index], 1u, 1u);
-                BarrierWrites(commandList, {dispatch.FreeList, dispatch.PageTable, dispatch.Stats, dispatch.DirtyList});
+                // 無効化の直後（年齢の段階が dirty の欄を空きへ戻す前）の表を写す。矩形が 0 件で段階 1 を記録しないフレームも写す
+                if (index == StageRects && bSnapshot)
+                {
+                    commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopySource);
+                    commandList->BufferBarrier(dispatch.PageTableSnapshot, RHI::ResourceState::HostRead, RHI::ResourceState::CopyDest);
+                    commandList->CopyBuffer(dispatch.PageTable, dispatch.PageTableSnapshot, snapshotBytes);
+                    commandList->BufferBarrier(dispatch.PageTableSnapshot, RHI::ResourceState::CopyDest, RHI::ResourceState::HostRead);
+                    commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::CopySource, RHI::ResourceState::UnorderedAccess);
+                    m_bSnapshotRecorded = bContinue && bSunMark && !bInvalidateSun;
+                }
             }
         }
 

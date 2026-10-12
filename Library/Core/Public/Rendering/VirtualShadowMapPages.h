@@ -157,6 +157,12 @@ namespace NorvesLib::Core::Rendering
          *        太陽の向き・深度の原点の変化（太陽の段だけ）と、点光源の灯の位置・Range・並びの変化（その灯のスライスだけ）は、Pages が自分で見つける
          */
         bool bInvalidateAll = false;
+        /**
+         * @brief 無効化の照合用の読み戻し先（開発ビルドの観測。null なら写さない）。無効化（段階 1）の直後のページの表の、先頭
+         *        min(スライスの数, LEVEL_COUNT) スライス（太陽の段）を写す。host-visible で PageTableBytes(LEVEL_COUNT) 以上の大きさにし、
+         *        HostRead の状態で渡す（HostRead へ戻る）。欄の割り当て済み・dirty のビットは、段階 1 が付けた dirty を含む
+         */
+        RHI::BufferPtr PageTableSnapshot;
 
         RHI::BufferPtr Pool;
         RHI::BufferPtr PageTable;
@@ -198,6 +204,11 @@ namespace NorvesLib::Core::Rendering
         bool WasInvalidatedAll() const { return m_bInvalidatedAll; }
         /** @brief 直前の Record が、灯の位置・Range・識別子・並びの変化で全ページを無効にした点光源のスライスの数 */
         uint32_t GetPointInvalidatedSliceCount() const { return m_PointInvalidatedSlices; }
+        /**
+         * @brief 直前の Record が PageTableSnapshot へページの表を写し、そのフレームの太陽の段が矩形だけで無効にされたか
+         *        （前フレームから引き継ぎ、太陽の段の全ページの無効化をしていない）。false なら写した表は照合に使えない
+         */
+        bool WasSnapshotRecorded() const { return m_bSnapshotRecorded; }
         /** @brief 次の Record で、前フレームのページの表を引き継がず、全部を割り当て直す（資源を作り直したとき・テスト） */
         void DiscardCache() { m_bCacheValid = false; }
 
@@ -252,6 +263,7 @@ namespace NorvesLib::Core::Rendering
         bool m_bCacheValid = false;
         bool m_bCacheContinued = false;
         bool m_bInvalidatedAll = false;
+        bool m_bSnapshotRecorded = false;
         uint32_t m_PointInvalidatedSlices = 0;
         /** @brief 前フレームが太陽の印付けをしたか、点光源の印付けをしたか（昼夜や灯の有無が変わったときは、その種類のスライスを引き継がない） */
         bool m_bPreviousSun = false;
