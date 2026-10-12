@@ -103,12 +103,6 @@ namespace NorvesLib::RHI::Vulkan
         TexturePtr GetCurrentBackBuffer() const override;
 
         /**
-         * @brief スワップチェーンを画面に表示
-         * @param vsync 垂直同期を行うかどうか
-         */
-        void Present(bool vsync = true) override;
-
-        /**
          * @brief スワップチェーンをリサイズ
          * @param width 新しい幅
          * @param height 新しい高さ
@@ -182,7 +176,11 @@ namespace NorvesLib::RHI::Vulkan
         VariableArray<TSharedPtr<VulkanTexture>> m_backBufferTextures;
 
         // 同期オブジェクト
+        // imageAvailable とフェンスは飛行中のスロットごと（m_currentFrame で引く）。
         VariableArray<vk::Semaphore> m_imageAvailableSemaphores;
+        // 描画の完了はスワップチェーンの画像ごと（m_currentImageIndex で引く）。画像 i を取得できたことで、
+        // 前に画像 i を表示した present がこのセマフォを待ち終えたことが保証されるので、次の提出が signal してよい。
+        // スロットごとにすると、前の present がまだ待っているセマフォを次の提出が signal しうる。
         VariableArray<vk::Semaphore> m_renderFinishedSemaphores;
         VariableArray<vk::Fence> m_inFlightFences;
         VariableArray<uint64_t> m_frameSlotSubmissionSerials;
@@ -199,8 +197,11 @@ namespace NorvesLib::RHI::Vulkan
         void CreateSwapChain();
         void CreateImageViews();
         void CreateSyncObjects();
+        /// @brief スワップチェーンの画像の数だけ描画の完了のセマフォを作る（作成と Resize で呼ぶ）
+        void CreateRenderFinishedSemaphores();
 
         // スワップチェーン関連ヘルパー
+        /// @brief バックバッファ・描画の完了のセマフォ・スワップチェーンを破棄する（呼び出し側が GPU のアイドルを待ってから呼ぶ）
         void CleanupSwapChain();
         /// @brief slot の提出に含めたコマンドリストへ、その slot の提出番号までの完了を通知して忘れる
         void NotifyFrameSlotCommandListsCompleted(uint32_t frameSlot);

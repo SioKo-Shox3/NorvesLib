@@ -3204,3 +3204,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-IMGUI-3.txt`: ランチャー → rendering3dtest → ランチャーの周回 3 周 result=pass、EXIT=0。`Game.log` に ImGui の `Initialize(seam)` があり、新しい警告（`exceeds in-flight set count`）と ERROR は 0 件。
 - Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り）。
 - Notes: `ViewRenderContext::OverlayPacketSlotIndex` は CPU の写しの添字として引き続き使う（paths の外なので触っていない。そのコメントの「プール排他で安全」は CPU の写しについては正しい）。
+
+### SCN-ECS-FIF-SWAPCHAIN（2026-10-12、反復 47・run 20261012-030203）
+
+- `VulkanSwapChain` の `m_renderFinishedSemaphores` を飛行中のスロットごとからスワップチェーンの画像ごとにした。提出の signal と present の wait は `m_currentImageIndex` で引く。`CreateRenderFinishedSemaphores` が画像の数だけ作り（作成時と Resize の作り直しで呼ぶ）、`CleanupSwapChain` が破棄する。`imageAvailable` とフェンスはスロットごとのまま。`BeginFrame` の同期の揃いの検査はセマフォの数＝画像の数に、`EndFrame` の束の検査に画像の添字の範囲を足した。
+- 呼び出し元の無い `ISwapChain::Present` と `VulkanSwapChain::Present` を消し、テストの偽物（`Test/Core/Rendering/SkinnedRenderPathContractTest.cpp` の `Present` の override）も合わせて消した（notes の指示による。paths の外の 1 行）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-SWAPCHAIN-1.txt`: RelWithDebInfo の Game のビルド（`VulkanSwapChain.cpp` を再コンパイル）EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-SWAPCHAIN-2.txt`: Debug の起動画面の撮影 result=pass、`vulkan_validation` は error_count=0・warning_count=0・vuid_count=0（`default.Validation.log` は 0 行）。
+  - `verify-SCN-ECS-FIF-SWAPCHAIN-3.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=4E-06・within_limits=True、result=pass、EXIT=0。
+- Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り）。
+- Notes: 提出が拒まれたとき `imageAvailable` の signal が残る既存の問題（`EndFrame` の早期 return）は MAX に依らないので未対応のまま。Resize で画像の数が変わったあとの `m_currentImageIndex` の古い値は、`EndFrame` の範囲の検査で `InvalidCommandList` として拒む。

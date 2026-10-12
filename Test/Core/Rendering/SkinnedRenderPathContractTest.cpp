@@ -418,7 +418,6 @@ namespace
             return index == 0 ? m_BackBuffer : nullptr;
         }
         RHI::TexturePtr GetCurrentBackBuffer() const override { return m_BackBuffer; }
-        void Present(bool = true) override {}
 
         RHI::SwapChainBeginFrameStatus BeginFrame() override
         {

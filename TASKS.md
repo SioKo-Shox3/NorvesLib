@@ -906,7 +906,7 @@
 - notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 44、評価の差し戻しで足した）。`DynamicBufferRing` の拡張はスロットの古いバッファを置き換えるので、飛行中のスロットで引けば前の利用は完了している（DebugDraw の頂点の `FrameIndex % 3` と同じ形）。`OverlayPacketSlotIndex` を他に使う所が無くなれば消してよいが、`ViewRenderContext` は paths の外なので残して PROGRESS の Notes に書く。危険地帯（RenderThread・資源の寿命）。
 
 ## SCN-ECS-FIF-SWAPCHAIN: 描画の完了のセマフォをスワップチェーンの画像ごとにし、使われていない旧の Present を消す
-- status: todo
+- status: done
 - done-when: `VulkanSwapChain` の `m_renderFinishedSemaphores` を、飛行中のスロットごとからスワップチェーンの画像ごと（`m_currentImageIndex` で引く。画像の数で作り、Resize で作り直す）にする（スロットごとのままだと、2 にしたとき前の present がまだ待っているセマフォを次の提出が signal しうる）。`imageAvailable` と `inFlightFences` はスロットごとのまま。呼び出し元の無い `ISwapChain::Present` と `VulkanSwapChain::Present`（フェンスを reset して提出しないので、呼ぶと次の `BeginFrame` が止まる）を消す。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass し、Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-SWAPCHAIN-debug`

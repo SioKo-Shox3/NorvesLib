@@ -72,6 +72,7 @@ namespace NorvesLib::RHI::Vulkan
         CreateSurface();
         CreateSwapChain();
         CreateImageViews();
+        CreateRenderFinishedSemaphores();
         CreateSyncObjects();
     }
 
@@ -87,10 +88,9 @@ namespace NorvesLib::RHI::Vulkan
             NotifyFrameSlotCommandListsCompleted(frameSlot);
         }
 
-        // 同期オブジェクトのクリーンアップ
+        // 同期オブジェクトのクリーンアップ（描画の完了のセマフォは画像ごとなので CleanupSwapChain で破棄する）
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
-            m_device->GetVkDevice().destroySemaphore(m_renderFinishedSemaphores[i]);
             m_device->GetVkDevice().destroySemaphore(m_imageAvailableSemaphores[i]);
             m_device->GetVkDevice().destroyFence(m_inFlightFences[i]);
         }
@@ -128,73 +128,6 @@ namespace NorvesLib::RHI::Vulkan
         return nullptr;
     }
 
-    // スワップチェーンを画面に表示
-    void VulkanSwapChain::Present(bool vsync)
-    {
-        // 現在のフレームのフェンスが完了するまで待機
-        auto waitResult = m_device->GetVkDevice().waitForFences(
-            m_inFlightFences[m_currentFrame],
-            VK_TRUE,
-            UINT64_MAX);
-
-        if (waitResult != vk::Result::eSuccess)
-        {
-            throw std::runtime_error("フェンスの待機に失敗しました");
-        }
-
-        // 次の画像を取得
-        auto acquireResult = m_device->GetVkDevice().acquireNextImageKHR(
-            m_swapChain,
-            UINT64_MAX,
-            m_imageAvailableSemaphores[m_currentFrame],
-            nullptr);
-
-        // スワップチェーンの再作成が必要な場合
-        if (acquireResult.result == vk::Result::eErrorOutOfDateKHR)
-        {
-            Resize(m_width, m_height);
-            return;
-        }
-        else if (acquireResult.result != vk::Result::eSuccess && acquireResult.result != vk::Result::eSuboptimalKHR)
-        {
-            throw std::runtime_error("次のスワップチェーン画像の取得に失敗しました");
-        }
-
-        m_currentImageIndex = acquireResult.value;
-
-        // レンダリングが完了したシグナルを待つ
-        m_device->GetVkDevice().resetFences(m_inFlightFences[m_currentFrame]);
-
-        // プレゼント情報の設定
-        vk::PresentInfoKHR presentInfo = {};
-        presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = &m_renderFinishedSemaphores[m_currentFrame];
-        presentInfo.swapchainCount = 1;
-        presentInfo.pSwapchains = &m_swapChain;
-        presentInfo.pImageIndices = &m_currentImageIndex;
-
-        // プレゼント実行
-        vk::Result presentResult;
-        {
-            // 提出と同じキューなので、描画の提出・待機と同時に触らない
-            Thread::ScopedLock queueLock(m_device->GetGraphicsQueueMutex());
-            presentResult = m_device->GetPresentQueue().presentKHR(presentInfo);
-        }
-
-        // スワップチェーンの再作成が必要な場合
-        if (presentResult == vk::Result::eErrorOutOfDateKHR || presentResult == vk::Result::eSuboptimalKHR)
-        {
-            Resize(m_width, m_height);
-        }
-        else if (presentResult != vk::Result::eSuccess)
-        {
-            throw std::runtime_error("画像のプレゼントに失敗しました");
-        }
-
-        // 次のフレームに進む
-        m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
-    }
-
     // スワップチェーンのリサイズ
     void VulkanSwapChain::Resize(uint32_t width, uint32_t height)
     {
@@ -212,10 +145,11 @@ namespace NorvesLib::RHI::Vulkan
         m_width = width;
         m_height = height;
 
-        // スワップチェーンを再作成
+        // スワップチェーンを再作成（画像の数が変わりうるので、描画の完了のセマフォも作り直す）
         CleanupSwapChain();
         CreateSwapChain();
         CreateImageViews();
+        CreateRenderFinishedSemaphores();
         m_bPresentationDirty = true;
     }
 
@@ -232,7 +166,8 @@ namespace NorvesLib::RHI::Vulkan
         const bool bHasFrameSync =
             m_currentFrame < m_inFlightFences.size() &&
             m_currentFrame < m_imageAvailableSemaphores.size() &&
-            m_currentFrame < m_renderFinishedSemaphores.size() &&
+            !m_renderFinishedSemaphores.empty() &&
+            m_renderFinishedSemaphores.size() == m_swapChainImages.size() &&
             m_currentFrame < m_frameSlotSubmissionSerials.size();
         if (!Detail::IsAcquireStateReady(m_width,
                                          m_height,
@@ -305,6 +240,7 @@ namespace NorvesLib::RHI::Vulkan
         VariableArray<VulkanCommandList *> batchLists;
         VariableArray<vk::CommandBuffer> cmdBuffers;
         if (m_currentFrame >= m_frameSlotCommandLists.size() ||
+            m_currentImageIndex >= m_renderFinishedSemaphores.size() ||
             !VulkanCommandList::CollectSubmissionBatch(commandLists, commandListCount, batchLists, cmdBuffers))
         {
             // 拒否した束の中身は再利用させない（全リストを中止する）
@@ -329,7 +265,8 @@ namespace NorvesLib::RHI::Vulkan
         {
             waitCount = 2;
         }
-        vk::Semaphore signalSemaphores[2] = {m_renderFinishedSemaphores[m_currentFrame], vk::Semaphore{}};
+        // 描画の完了は取得した画像のセマフォへ通知する（present がそれを待つ）
+        vk::Semaphore signalSemaphores[2] = {m_renderFinishedSemaphores[m_currentImageIndex], vk::Semaphore{}};
         uint64_t signalValues[2] = {0, 0};
         uint32_t signalCount = 1;
         if (submitScope.AcquireRenderSignal(signalSemaphores[1], signalValues[1]))
@@ -414,7 +351,7 @@ namespace NorvesLib::RHI::Vulkan
         FrameStageScope presentStage("RT.Present");
         vk::PresentInfoKHR presentInfo = {};
         presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = &m_renderFinishedSemaphores[m_currentFrame];
+        presentInfo.pWaitSemaphores = &m_renderFinishedSemaphores[m_currentImageIndex];
         presentInfo.swapchainCount = 1;
         presentInfo.pSwapchains = &m_swapChain;
         presentInfo.pImageIndices = &m_currentImageIndex;
@@ -615,7 +552,6 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanSwapChain::CreateSyncObjects()
     {
         m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-        m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
         m_frameSlotSubmissionSerials.resize(MAX_FRAMES_IN_FLIGHT, 0);
         m_frameSlotCommandLists.resize(MAX_FRAMES_IN_FLIGHT);
@@ -628,8 +564,18 @@ namespace NorvesLib::RHI::Vulkan
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
             m_imageAvailableSemaphores[i] = m_device->GetVkDevice().createSemaphore(semaphoreInfo).value;
-            m_renderFinishedSemaphores[i] = m_device->GetVkDevice().createSemaphore(semaphoreInfo).value;
             m_inFlightFences[i] = m_device->GetVkDevice().createFence(fenceInfo).value;
+        }
+    }
+
+    // 描画の完了のセマフォを画像の数だけ作る
+    void VulkanSwapChain::CreateRenderFinishedSemaphores()
+    {
+        vk::SemaphoreCreateInfo semaphoreInfo = {};
+        m_renderFinishedSemaphores.resize(m_swapChainImages.size());
+        for (size_t i = 0; i < m_renderFinishedSemaphores.size(); i++)
+        {
+            m_renderFinishedSemaphores[i] = m_device->GetVkDevice().createSemaphore(semaphoreInfo).value;
         }
     }
 
@@ -639,6 +585,13 @@ namespace NorvesLib::RHI::Vulkan
         // バックバッファテクスチャをクリア
         m_backBufferTextures.clear();
         m_bPresentationDirty = false;
+
+        // 画像ごとの描画の完了のセマフォを破棄（呼び出し側の WaitIdle で present の待ちも終わっている）
+        for (vk::Semaphore semaphore : m_renderFinishedSemaphores)
+        {
+            m_device->GetVkDevice().destroySemaphore(semaphore);
+        }
+        m_renderFinishedSemaphores.clear();
 
         // スワップチェーンを破棄
         if (m_swapChain)

@@ -101,12 +101,6 @@ namespace NorvesLib::RHI
         virtual TexturePtr GetCurrentBackBuffer() const = 0;
 
         /**
-         * @brief スワップチェーンのプレゼント（表示）
-         * @param vsync 垂直同期を行うかどうか
-         */
-        virtual void Present(bool vsync = true) = 0;
-
-        /**
          * @brief フレーム開始（次のバックバッファを取得）
          *
          * フェンス待機 → イメージ取得を行います。
