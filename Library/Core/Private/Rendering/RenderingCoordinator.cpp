@@ -378,6 +378,9 @@ namespace NorvesLib::Core::Rendering
             throw std::runtime_error("SwapChain EndFrame failed with an unknown status");
         }
 
+        // フレーム全体の GPU の区間の名前。リストごとに開いた同名の区間を、先頭の開始から末尾の終了までに合わせる
+        constexpr const char* FrameGPUScopeName = "FrameGPU";
+
         class ScopedGPUTimestampFrameRecording
         {
         public:
@@ -1788,22 +1791,53 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        Container::VariableArray<RHI::GPUTimestampResult> results;
-        m_CommandList->ConsumeCompletedGPUTimestampResults(results);
-        if (results.empty())
+        // 仕事の番号の順（提出の順）にリストごとの結果を集め、同じフレームの同じ区間の名前で合わせる。
+        // FrameGPU は先頭のリストの開始から末尾のリストの終了まで、パスの区間は記録したリストの値になる
+        const uint32_t listCount = m_JobCommandLists.empty()
+                                       ? 1u
+                                       : static_cast<uint32_t>(m_JobCommandLists.size());
+        Container::VariableArray<Container::VariableArray<RHI::GPUTimestampResult>> perListResults;
+        perListResults.resize(listCount);
+        bool bAnyResult = false;
+        for (uint32_t listIndex = 0u; listIndex < listCount; ++listIndex)
+        {
+            RHI::ICommandList* commandList = m_JobCommandLists.empty()
+                                                 ? m_CommandList.get()
+                                                 : m_JobCommandLists[listIndex].get();
+            if (commandList)
+            {
+                commandList->ConsumeCompletedGPUTimestampResults(perListResults[listIndex]);
+                bAnyResult = bAnyResult || !perListResults[listIndex].empty();
+            }
+        }
+        if (!bAnyResult)
         {
             return;
         }
+        Container::VariableArray<RHI::GPUTimestampResult> results;
+        RHI::MergeGPUTimestampResultsAcrossCommandLists(perListResults.data(), listCount, results);
 
         Container::VariableArray<RenderPassGPUTiming> timings;
         timings.reserve(results.size());
 #if NORVES_ENABLE_STATS
         NorvesLib::Debug::StatsManager& statsManager = NorvesLib::Debug::StatsManager::Get();
         const bool bTraceActive = statsManager.IsTraceActive();
+        uint64_t latestFrameGPUFrameNumber = 0u;
+        bool bLatestFrameGPUFound = false;
 #endif
         for (const RHI::GPUTimestampResult& result : results)
         {
 #if NORVES_ENABLE_STATS
+            // 完了した最も新しいフレームの FrameGPU（全リストに合わせた値）を、フレームの GPU 時間の統計に使う
+            if (bTraceActive && result.bValid && result.DurationMs > 0.0f &&
+                result.ScopeName == FrameGPUScopeName &&
+                (!bLatestFrameGPUFound || result.FrameNumber >= latestFrameGPUFrameNumber))
+            {
+                latestFrameGPUFrameNumber = result.FrameNumber;
+                bLatestFrameGPUFound = true;
+                m_LatestCompletedGPUTimeMs = result.DurationMs;
+                m_bLatestCompletedGPUTimeValid = true;
+            }
             // 完了したフレームの区間（FrameGPU・加速構造の更新・RenderGraph のパス）をトレースの行へ書く。
             if (bTraceActive && result.bValid)
             {
@@ -1817,6 +1851,12 @@ namespace NorvesLib::Core::Rendering
             timing.bValid = result.bValid;
             timings.push_back(timing);
         }
+#if NORVES_ENABLE_STATS
+        if (bLatestFrameGPUFound)
+        {
+            statsManager.SetGPUFrameTimeMs(m_LatestCompletedGPUTimeMs);
+        }
+#endif
         m_GPUTimingMailbox.Append(timings);
     }
 
@@ -4993,15 +5033,7 @@ namespace NorvesLib::Core::Rendering
 #if NORVES_ENABLE_STATS
         if (bTraceActive)
         {
-            const float latestGPUTimeMs = m_CommandList->GetLastGPUTimestampDurationMs();
-            if (latestGPUTimeMs > 0.0f)
-            {
-                m_LatestCompletedGPUTimeMs = latestGPUTimeMs;
-                m_bLatestCompletedGPUTimeValid = true;
-                renderStats.GPUTimeMs = latestGPUTimeMs;
-                statsManager.SetGPUFrameTimeMs(latestGPUTimeMs);
-            }
-
+            // 最新の FrameGPU は PublishCompletedGPUTimestampResults が全リストの結果を合わせて求める
             if (m_bLatestCompletedGPUTimeValid)
             {
                 renderStats.GPUTimeMs = m_LatestCompletedGPUTimeMs;
@@ -5010,7 +5042,7 @@ namespace NorvesLib::Core::Rendering
             if (m_CommandList->SupportsGPUTimestamps())
             {
                 m_CommandList->BeginGPUTimestampFrame(packet->FrameNumber);
-                m_CommandList->BeginGPUTimestamp("FrameGPU");
+                m_CommandList->BeginGPUTimestamp(FrameGPUScopeName);
             }
         }
 #endif

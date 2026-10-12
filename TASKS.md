@@ -796,7 +796,7 @@
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RT-RHI-TIMESTAMPS: GPU の時間をリストをまたいで集め、FrameGPU を先頭の開始から末尾の終了までにする
-- status: todo
+- status: done
 - done-when: リストごとに取った GPU の時間をパスの名前で合わせ、FrameGPU を先頭のリストの開始から末尾のリストの終了までで求める（RenderingCoordinator.cpp:1134-1145・2734-2764）。`RHIParallelRecordVulkanTest` に、2 本にまたがる FrameGPU が各区間の時間以上で、開始と終了の順が正しいことの検査を足す。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^RHIParallelRecordVulkanTest$" --no-tests=error --output-on-failure --timeout 180`

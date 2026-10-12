@@ -738,7 +738,7 @@ namespace NorvesLib::RHI::Vulkan
 #if NORVES_ENABLE_STATS
         void CreateTimestampQueryPool();
         void DestroyTimestampQueryPool();
-        void ResolveGPUTimestampResultsForCurrentSlot();
+        void ResolveGPUTimestampResultsForSlot(uint32_t frameSlotIndex);
         void PrepareGPUTimestampSlotForRecording();
         uint32_t GetTimestampQueryBaseIndex(uint32_t frameSlotIndex,
                                             uint32_t scopeIndex = 0u) const;

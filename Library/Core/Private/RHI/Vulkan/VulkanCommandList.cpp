@@ -431,7 +431,7 @@ namespace NorvesLib::RHI::Vulkan
         NotifyGPUTimestampFrameSlotCompleted(
             m_currentFrameIndex,
             m_DirectFrameSlotSubmissionSerials[m_currentFrameIndex]);
-        ResolveGPUTimestampResultsForCurrentSlot();
+        ResolveGPUTimestampResultsForSlot(m_currentFrameIndex);
 #endif
 
         // フェンスは提出の直前にリセットする（記録だけして中止・未提出で終えても、次の Begin の待機が止まらない）
@@ -459,7 +459,7 @@ namespace NorvesLib::RHI::Vulkan
         // 束で提出した slot は、完了の通知が届くまで記録し直さない
         ThrowIfCurrentFrameSlotPending();
 #if NORVES_ENABLE_STATS
-        ResolveGPUTimestampResultsForCurrentSlot();
+        ResolveGPUTimestampResultsForSlot(m_currentFrameIndex);
 #endif
 
         Reset();
@@ -690,6 +690,9 @@ namespace NorvesLib::RHI::Vulkan
         (void)Detail::TryNotifyGPUTimestampFrameCompleted(
             m_TimestampFrameBatches[frameSlotIndex],
             completedSubmissionSerial);
+        // 完了した slot はその場で読み出す（束の全リストの結果が、同じフレームの頭で揃う）。
+        // まだ読めない分は次の通知か、その slot の記録の開始で読み直す
+        ResolveGPUTimestampResultsForSlot(frameSlotIndex);
 #else
         (void)frameSlotIndex;
         (void)completedSubmissionSerial;
@@ -1104,6 +1107,10 @@ namespace NorvesLib::RHI::Vulkan
         for (VulkanCommandList *list : batchLists)
         {
             list->NotifySubmissionCompleted(submittedSerial);
+#if NORVES_ENABLE_STATS
+            // 直接の提出（Submit(true)）と同じく、待った束の GPU の時間も完了として読み出す
+            list->NotifyGPUTimestampFrameSlotCompleted(list->m_currentFrameIndex, submittedSerial);
+#endif
         }
         return submittedSerial;
     }
@@ -2375,14 +2382,14 @@ namespace NorvesLib::RHI::Vulkan
         }
     }
 
-    void VulkanCommandList::ResolveGPUTimestampResultsForCurrentSlot()
+    void VulkanCommandList::ResolveGPUTimestampResultsForSlot(uint32_t frameSlotIndex)
     {
-        if (!m_bTimestampSupported)
+        if (!m_bTimestampSupported || frameSlotIndex >= MAX_COMMAND_BUFFERS)
         {
             return;
         }
 
-        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[m_currentFrameIndex];
+        Detail::GPUTimestampFrameBatch& batch = m_TimestampFrameBatches[frameSlotIndex];
         if (batch.State != Detail::GPUTimestampFrameState::Completed)
         {
             return;
@@ -2403,7 +2410,7 @@ namespace NorvesLib::RHI::Vulkan
         const uint32_t queryCount = batch.ScopeCount * 2u;
         const vk::Result result = m_device->GetVkDevice().getQueryPoolResults(
             m_timestampQueryPool,
-            GetTimestampQueryBaseIndex(m_currentFrameIndex),
+            GetTimestampQueryBaseIndex(frameSlotIndex),
             queryCount,
             sizeof(TimestampQueryReadback) * queryCount,
             timestamps.data(),
@@ -2458,6 +2465,14 @@ namespace NorvesLib::RHI::Vulkan
                 completed.DurationMs = static_cast<float>(durationMs);
                 completed.bValid = std::isfinite(durationMs) &&
                                    std::isfinite(completed.DurationMs);
+                // リストをまたいで区間を合わせるため、開始と終了の時刻も渡す（同じキューの時刻は同じ基準）
+                const uint64_t mask = m_TimestampValidBits >= 64u
+                                          ? UINT64_MAX
+                                          : ((uint64_t{1} << m_TimestampValidBits) - 1u);
+                completed.BeginTimestamp = begin.Value & mask;
+                completed.EndTimestamp = end.Value & mask;
+                completed.TimestampPeriodNs = m_timestampPeriodNs;
+                completed.TimestampValidBits = m_TimestampValidBits;
             }
             if (scope.bLegacy && completed.bValid)
             {

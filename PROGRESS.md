@@ -2805,3 +2805,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 回帰（`check-SCN-ECS-RT-RHI-SUBMIT-regress-2.txt`）: RHIGPUTimestampVulkanTest・RHITextureUpdateVulkanTest・RHIImageLayoutVulkanValidationTest は Passed。
 - Next: SCN-ECS-RT-RHI-TIMESTAMPS。
 - Notes: 直接の提出で、フェンスのリセットの後に `vkQueueSubmit` が失敗するとフェンスは unsignaled のまま残り、次の `Begin()` が待ち続ける（前からの挙動。提出の失敗はデバイスの喪失と同じ扱いで、今回は直していない）。
+
+### SCN-ECS-RT-RHI-TIMESTAMPS（2026-10-12、反復 30・run 20261012-030203）
+
+- リストごとに取った GPU の時間を、同じフレームの同じ区間の名前で合わせる経路（設計 §1.13）を入れた。
+  - `GPUTimestampResult` に区間の開始と終了の時刻（tick。有効なビットで切った値）・1 tick の長さ・有効なビット数を足した。Vulkan の解決で埋める（同じキューの時刻はリストをまたいで比べられる）。
+  - `RHI::MergeGPUTimestampResultsAcrossCommandLists`（GPUTimestamp.h）: 提出の順に並べたリストごとの結果を合わせる。あるリストの (フレーム, 名前) は、前のリストから来た同じ (フレーム, 名前) のうち、このリストとまだ合わせていない最初のものと 1 つになる（同じリストの中の同名の区間は別々に残る）。合わせた区間は先頭のリストの開始から、最も遅い終了まで。後のリストの区間が先頭の開始より前に始まる・自分の開始より前に終わる・時刻の単位が違う、のどれかのときは無効にする。1 つのリストにしか無い区間（パス）はそのまま通す。
+  - `VulkanCommandList`: `NotifyGPUTimestampFrameSlotCompleted` が完了にした slot をその場で読み出す（束の全リストの結果がフレームの頭で揃う。読めない分は次の通知か記録の開始で読み直す）。`SubmitBatchAndWait` は待った束の各リストへ時刻の完了も通知する（直接の `Submit(true)` と同じ）。
+  - RenderingCoordinator: `PublishCompletedGPUTimestampResults` が仕事の番号の順に全リストの結果を集めて合わせ、最新の FrameGPU（合わせた値）をフレームの GPU 時間の統計（`m_LatestCompletedGPUTimeMs`・`SetGPUFrameTimeMs`）に使う。前は 0 番のリストの旧 API の値（`GetLastGPUTimestampDurationMs`）を読んでいた。今はリストが 1 本なので値は同じ。
+- テスト: `RHIParallelRecordVulkanTest` に `cross_list_frame_gpu` を足した。書き込みと読み出しの 2 本のそれぞれに FrameGPU とパスの区間を開いて 1 回で提出し、合わせた FrameGPU の開始が先頭のリストの開始・終了が末尾のリストの終了で、先頭の開始 <= 末尾の開始 <= 末尾の終了・先頭の終了 <= 末尾の終了、4 つの区間（2 本の FrameGPU と 2 つのパス）の時間以上であることを確かめる。パスの区間は記録したリストの値のまま残る。後のリストが先頭より前に始まる並びを合わせると無効になる。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RT-RHI-TIMESTAMPS-1.txt`: Debug の RHITextureUpdateVulkanTest のビルド build exit=0。
+  - `-2.txt`: `RHIParallelRecordVulkanTest` Passed（ctest exit=0）。直接の実行（`check-SCN-ECS-RT-RHI-TIMESTAMPS-direct.txt`）で `CASE cross_list_frame_gpu frame_ms=0.005472 first_ms=0.002464 last_ms=0.000928`・`VUID_COUNT=0`・`RESULT=PASS`。
+  - 回帰（`check-SCN-ECS-RT-RHI-TIMESTAMPS-regress.txt`）: RenderingCoordinatorGPUTimestampPublicationTest・RenderGraphGPUTimestampScopeTest・RHIGPUTimestampVulkanTest・RHITextureUpdateVulkanTest・RHIImageLayoutVulkanValidationTest は Passed。
+- Next: SCN-ECS-RT-GRAPH。
+- Notes: RT-GRAPH で区間ごとのリストを記録するときは、各リストの記録の頭で `BeginGPUTimestampFrame(フレーム番号)` と `FrameGPU` の区間を開き、末尾で閉じる（合わせる側は名前で 1 つにする）。0 番のリストは今の旧 API（`BeginGPUTimestamp`）のままでよい。
+- Notes: 合わせる規則は (フレーム, 名前) だけで見るので、別々のリストに同じ名前のパス（例: 2 つのビューの同名のパス）が記録されると 1 つの区間に合わさる。区間ごとの記録でビューをまたぐなら、パスの区間の名前にビューを含めるか、FrameGPU だけを合わせる規則に絞る。

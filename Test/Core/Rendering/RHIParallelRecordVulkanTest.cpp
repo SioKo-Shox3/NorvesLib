@@ -5,6 +5,8 @@
 //   - 1 本を中止すると、その束は提出されず（GPU は何も実行しない）、束の残りのリストも中止される。中止したリストは
 //     記録し直すまで単独でも提出できない。記録し直した後の提出は、新しく記録した中身だけを実行する。
 //   - 直接の提出（Begin/Submit）でも、中止したリストの提出は拒否され、中止の後の Begin は待ち続けずに記録し直せる。
+//   - 2 本のそれぞれで取った GPU の時間をパスの名前で合わせると、2 本にまたがる FrameGPU は先頭のリストの開始から
+//     末尾のリストの終了までになり、各区間の時間以上で、開始と終了の順が正しい。順の壊れた区間は合わせても無効になる。
 //   - どのケースも Vulkan の検証レイヤーのエラーが 0 件。
 #include "CoreTypes.h"
 #include "RHI/RHIDeviceDesc.h"
@@ -187,6 +189,160 @@ namespace
         writeThread.join();
         readThread.join();
         return !bWriteFailed && !bReadFailed;
+    }
+
+    constexpr const char* FrameGPUScopeName = "FrameGPU";
+    constexpr uint64_t TimestampFrameNumber = 500u;
+
+    // FrameGPU の区間の中に、パスの区間（segmentName）を開いて record を記録する
+    template <typename RecordFunction>
+    void RecordWithTimestamps(ICommandList& commandList, const char* segmentName, RecordFunction record)
+    {
+        commandList.SetFrameIndex(0);
+        commandList.BeginRecording();
+        commandList.SetSharedTextureLayoutWrites(false);
+        commandList.BeginGPUTimestampFrame(TimestampFrameNumber);
+        const GPUTimestampScopeHandle frameScope = commandList.BeginGPUTimestampScope(FrameGPUScopeName);
+        const GPUTimestampScopeHandle segmentScope = commandList.BeginGPUTimestampScope(segmentName);
+        record();
+        commandList.EndGPUTimestampScope(segmentScope);
+        commandList.EndGPUTimestampScope(frameScope);
+        commandList.EndGPUTimestampFrame();
+        commandList.End();
+    }
+
+    const GPUTimestampResult* FindTimestampResult(const Core::Container::VariableArray<GPUTimestampResult>& results,
+                                                  const char* scopeName)
+    {
+        const GPUTimestampResult* found = nullptr;
+        for (const GPUTimestampResult& result : results)
+        {
+            if (result.FrameNumber == TimestampFrameNumber && result.ScopeName == scopeName)
+            {
+                if (found != nullptr)
+                {
+                    return nullptr;
+                }
+                found = &result;
+            }
+        }
+        return found;
+    }
+
+    uint64_t TimestampTicks(const GPUTimestampResult& result)
+    {
+        return CalculateGPUTimestampTickDelta(result.BeginTimestamp, result.EndTimestamp, result.TimestampValidBits);
+    }
+
+    // 書き込みのリストと読み出しのリストのそれぞれに FrameGPU を開いて 1 回で提出し、合わせた FrameGPU を確かめる
+    void RunCrossListFrameGPUCase(IDevice& device,
+                                  const CommandListPtr& writeList,
+                                  const WriteTarget& target,
+                                  const CommandListPtr& readList,
+                                  const TexturePtr& texture,
+                                  const BufferPtr& readback)
+    {
+        Expect(writeList->SupportsGPUTimestamps() && readList->SupportsGPUTimestamps(),
+               "Debug の Vulkan のリストは GPU の時間を取れなければならない");
+        if (!writeList->SupportsGPUTimestamps() || !readList->SupportsGPUTimestamps())
+        {
+            return;
+        }
+        device.WaitIdle();
+        // 前のケースの結果を捨てる
+        Core::Container::VariableArray<GPUTimestampResult> discarded;
+        writeList->ConsumeCompletedGPUTimestampResults(discarded);
+        readList->ConsumeCompletedGPUTimestampResults(discarded);
+
+        RecordWithTimestamps(*writeList, "WriteSegment", [&]()
+        {
+            writeList->BeginRenderPass(target.RenderPass, target.Framebuffer);
+            writeList->EndRenderPass();
+        });
+        RecordWithTimestamps(*readList, "ReadSegment", [&]()
+        {
+            ExplicitTextureBarrierDesc barrier;
+            barrier.BeforeState = ResourceState::RenderTarget;
+            barrier.AfterState = ResourceState::CopySource;
+            barrier.OldLayout = TextureLayout::ColorAttachment;
+            barrier.NewLayout = TextureLayout::TransferSource;
+            readList->TextureBarrierExplicit(texture, barrier);
+            readList->CopyTextureToBuffer(texture, readback, TextureWidth, TextureHeight, 0);
+        });
+        const CommandListPtr batch[2] = {writeList, readList};
+        const uint64_t serial = writeList->SubmitBatchAndWait(batch, 2u);
+        Expect(serial != 0u, "時間を取る 2 本の束の提出は成功しなければならない");
+
+        // 完了を待った束の結果は、記録し直す前に読める
+        Core::Container::VariableArray<GPUTimestampResult> perListResults[2];
+        writeList->ConsumeCompletedGPUTimestampResults(perListResults[0]);
+        readList->ConsumeCompletedGPUTimestampResults(perListResults[1]);
+        const GPUTimestampResult* firstFrame = FindTimestampResult(perListResults[0], FrameGPUScopeName);
+        const GPUTimestampResult* firstSegment = FindTimestampResult(perListResults[0], "WriteSegment");
+        const GPUTimestampResult* lastFrame = FindTimestampResult(perListResults[1], FrameGPUScopeName);
+        const GPUTimestampResult* lastSegment = FindTimestampResult(perListResults[1], "ReadSegment");
+        const bool bPartsValid = firstFrame && firstSegment && lastFrame && lastSegment &&
+                                 firstFrame->bValid && firstSegment->bValid && lastFrame->bValid && lastSegment->bValid &&
+                                 firstFrame->TimestampValidBits > 0u && firstFrame->TimestampPeriodNs > 0.0f;
+        Expect(bPartsValid, "2 本のそれぞれに FrameGPU とパスの区間が 1 つずつ、有効な時刻で残らなければならない");
+        if (!bPartsValid)
+        {
+            return;
+        }
+
+        Core::Container::VariableArray<GPUTimestampResult> merged;
+        MergeGPUTimestampResultsAcrossCommandLists(perListResults, 2u, merged);
+        Expect(merged.size() == 3u, "合わせた結果は FrameGPU 1 つとパスの区間 2 つでなければならない");
+        const GPUTimestampResult* frame = FindTimestampResult(merged, FrameGPUScopeName);
+        const GPUTimestampResult* writeSegment = FindTimestampResult(merged, "WriteSegment");
+        const GPUTimestampResult* readSegment = FindTimestampResult(merged, "ReadSegment");
+        Expect(frame && frame->bValid, "2 本にまたがる FrameGPU は有効でなければならない");
+        Expect(writeSegment && readSegment &&
+                   writeSegment->DurationMs == firstSegment->DurationMs &&
+                   readSegment->DurationMs == lastSegment->DurationMs,
+               "パスの区間は記録したリストの値のまま残らなければならない");
+        if (!frame || !frame->bValid)
+        {
+            return;
+        }
+
+        const uint32_t validBits = frame->TimestampValidBits;
+        const uint64_t halfRange = uint64_t{1} << (validBits - 1u);
+        const uint64_t frameTicks = TimestampTicks(*frame);
+        // 先頭のリストの開始からの位置で、開始と終了の順を見る
+        const uint64_t firstEnd = CalculateGPUTimestampTickDelta(firstFrame->BeginTimestamp, firstFrame->EndTimestamp, validBits);
+        const uint64_t lastBegin = CalculateGPUTimestampTickDelta(firstFrame->BeginTimestamp, lastFrame->BeginTimestamp, validBits);
+        const uint64_t lastEnd = CalculateGPUTimestampTickDelta(firstFrame->BeginTimestamp, lastFrame->EndTimestamp, validBits);
+        Expect(frame->BeginTimestamp == firstFrame->BeginTimestamp,
+               "FrameGPU の開始は先頭のリストの開始でなければならない");
+        Expect(frame->EndTimestamp == lastFrame->EndTimestamp,
+               "FrameGPU の終了は末尾のリストの終了でなければならない（読み出しは書き込みの完了を待つ）");
+        Expect(frameTicks < halfRange && lastBegin <= lastEnd && firstEnd <= lastEnd,
+               "先頭のリストの開始 <= 末尾のリストの開始 <= 末尾のリストの終了、かつ先頭のリストの終了 <= 末尾のリストの終了でなければならない");
+        const GPUTimestampResult* parts[4] = {firstFrame, firstSegment, lastFrame, lastSegment};
+        bool bCoversParts = true;
+        for (const GPUTimestampResult* part : parts)
+        {
+            bCoversParts = bCoversParts && TimestampTicks(*part) <= frameTicks && part->DurationMs <= frame->DurationMs;
+        }
+        Expect(bCoversParts, "2 本にまたがる FrameGPU は各区間の時間以上でなければならない");
+        Expect(frame->DurationMs > 0.0f, "2 本にまたがる FrameGPU は 0 より長くなければならない");
+
+        // 順の壊れた区間（後のリストが先頭のリストより前に始まる）は合わせても無効になる
+        Core::Container::VariableArray<GPUTimestampResult> swapped[2] = {perListResults[1], perListResults[0]};
+        swapped[0][0].BeginTimestamp = firstFrame->BeginTimestamp + 1u;
+        swapped[1][0].BeginTimestamp = firstFrame->BeginTimestamp;
+        Core::Container::VariableArray<GPUTimestampResult> brokenMerged;
+        MergeGPUTimestampResultsAcrossCommandLists(swapped, 2u, brokenMerged);
+        const GPUTimestampResult* brokenFrame = FindTimestampResult(brokenMerged, FrameGPUScopeName);
+        Expect(brokenFrame && !brokenFrame->bValid,
+               "後のリストの区間が先頭のリストの開始より前に始まると、合わせた FrameGPU は無効でなければならない");
+
+        std::cout << "CASE cross_list_frame_gpu frame_ms=" << frame->DurationMs
+                  << " first_ms=" << firstFrame->DurationMs
+                  << " last_ms=" << lastFrame->DurationMs
+                  << " write_ms=" << firstSegment->DurationMs
+                  << " read_ms=" << lastSegment->DurationMs << '\n';
     }
 
     void FillReadback(IBuffer& readback, uint8_t value)
@@ -381,6 +537,9 @@ namespace
                     std::cout << "CASE direct_abort_then_rerecord rejected=" << (bSubmitRejected ? 1 : 0) << '\n';
                 }
             }
+
+            // 4. 2 本のそれぞれで取った GPU の時間を合わせ、2 本にまたがる FrameGPU を求める
+            RunCrossListFrameGPUCase(*device, writeList, redTarget, readList, texture, readback);
 
             device->WaitIdle();
         }
