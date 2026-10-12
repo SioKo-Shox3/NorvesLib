@@ -23,6 +23,15 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+
+        // 記録の方針（既定は Serial）。Parallel を返してよいのは、Execute が記録だけで、自分でバリアを張らず、
+        // CPU の状態（ViewRenderContext のメンバの書き換えを含む）を他のパスと共有しないと監査したパスだけ。
+        // Parallel のパスは区間ごとの context（CommandList と PendingFrameCommands が区間のもの）で、
+        // ワーカースレッドから呼ばれる。
+        virtual RGRecordPolicy GetRecordPolicy() const
+        {
+            return RGRecordPolicy::Serial;
+        }
     };
 
 } // namespace NorvesLib::Core::Rendering

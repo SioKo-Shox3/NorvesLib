@@ -2829,3 +2829,25 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-RT-RHI-TIMESTAMPS-1.txt`: Debug のビルド EXIT=0。`-2.txt`: Debug の ctest 100% passed、EXIT=0。`-3.txt`（-V）: `CASE cross_list_frame_gpu frame_ms=0.006144 first_ms=0.002304 last_ms=0.001248`・`VUID_COUNT=0`・`RESULT=PASS`。
   - `-4.txt`: Release のビルド EXIT=0。`-5.txt`（Release の ctest -V）: 提出・中止の 3 ケースが出て計測ケースは出ず、`VUID_COUNT=0`・`RESULT=PASS`・EXIT=0。
 - Next: SCN-ECS-RT-GRAPH。
+
+### SCN-ECS-RT-GRAPH（2026-10-12、反復 32・run 20261012-030203）
+
+- RenderGraph をパスの区間ごとのリストへ記録できるようにした（設計 §1.13）。どのパスもまだ Parallel を宣言しないので、今の描画は 1 本の記録のまま。
+  - 記録の方針: `RGRecordPolicy`（Serial・Parallel）と `IRenderGraphPass::GetRecordPolicy()`（既定 Serial）。Parallel は `DeclaresAllLayoutChanges()` が true のパスだけが有効で、false なら `NORVES_LOG_ERROR` を出して Serial として扱う。
+  - リストの区間（`RGRecordListSegment`・`GetRecordListSegments()`）: Compile で、グラフの頭と Parallel のパスで新しいリストを始め、Serial のパスは前のパスのリストへ続ける。Serial だけのグラフは 1 つの区間。
+  - 記録: `ViewRenderContext::RecordListSource`（`IRenderGraphRecordListSource::AcquireRecordList`。Begin 済みのリストを提出の順に渡す口）がある時だけ、続く Parallel のパスごとにリストを受け取り、区間ごとの context（CommandList と PendingFrameCommands を区間のものにした写し）で `JobSystem::ParallelFor` から同時に記録する。バリアの範囲は記録の前に直列で決め、各区間のリストへ RT-PLAN の明示の old/new で張る。計画した区間では区間のリストの共有の layout の書き込みも止め、区間の後に全リストで戻してから書き戻す。区間の保留のコマンドは合流の後に RenderThread でその区間のリストのパスの後へ流し、パスの GPU の区間はその後に閉じる（Serial と同じ範囲）。続く Serial のパスは最後に受け取ったリストへ続け、実行の後の `context.CommandList` は最後のリストになる（呼び手は以後の記録をそこへ続ける）。リストを受け取れなかったパスは最後のリストへ Serial で記録する。
+  - Serial の記録は前の反復の手順を `RecordSerialPass` へ移しただけで、バリア・保留のコマンドの flush・デバッグの印・GPU の区間の並びは同じ。
+  - 各パスの Execute を、記録したスレッドの番号で `RG.Record.<パス>` の区間（カテゴリ RenderGraph）として残す。名前は `AddPass` の時のパスの名前で作り、グラフが持つ（計測が有効な構成だけ）。
+- テスト: `RenderGraphParallelRecordTest`（RenderGraphCompileTest の束）。偽のリストと偽のリストの渡し口で、JobSystem を 2 つのワーカーで初期化して確かめる。
+  - Serial だけのグラフ（計画できるパスと Serial の区間の混在、保留のコマンドあり）: リストの区間が 1 つ、リストを受け取らず、記録が渡し口なしの実行と同じ並び。
+  - Parallel を返すが layout を宣言から決められないパスは同じ区間に残る。
+  - Serial（計画）・Parallel・Parallel・Serial（計画）・Parallel・Serial（計画できない）の 6 パス: 区間が [0] [1] [2 3] [4 5]、各パスの記録先とバリアがそのパスの区間のリストに入りパスより前、区間ごとの保留のコマンドがその区間のリストのパスの後、受け取ったリストは 3 本で実行の後の記録先は最後のリスト、全リストの共有の layout の書き込みが戻っている。区間のリストを提出の順に並べると 1 本へ記録したときと同じ並び（old/new を含む）で、最終の layout も同じ。各パスの `RG.Record.<パス>` が 1 つずつ、そのパスを記録したスレッドの番号で残る。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RT-GRAPH-1.txt`: Debug の RenderGraphCompileTest のビルド EXIT=0。
+  - `-2.txt`: `RenderGraphParallelPlanTest`・`RenderGraphParallelRecordTest` が Passed（100%、EXIT=0）。
+  - `-3.txt`: RelWithDebInfo の起動画面 default の決定論比較 pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 8E-06・最大差 1）。default.Game.log の ERROR 0。PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
+  - 回帰（`check-SCN-ECS-RT-GRAPH-regress.txt`）: RenderGraphGPUTimestampScopeTest・RenderGraphLifetimeTest・RenderGraphAttachmentStateTest・RenderGraphDumpTest・LegacyViewPassAdapterTest は Passed。
+- Next: SCN-ECS-RT-PASSES。
+- Notes: RT-PASSES で RenderingCoordinator をつなぐときは、`RecordListSource` の実装で仕事の番号ごとのリスト（`m_JobCommandLists`）を Begin して返し、リストの頭で `BeginGPUTimestampFrame` と FrameGPU の区間を開く。グラフの実行の後は `context.CommandList`（最後のリスト）へ以後の記録（次のビューのグラフ・合成・提示）を続け、提出は 0 番と受け取った順のリストを 1 回で行う。`render-parallel-record=off` は渡し口を null にすれば今の 1 本に戻る。
+- Notes: Parallel のパスは区間ごとの context の写しで記録するので、Execute の中で ViewRenderContext のメンバ（例: `ActiveShadowMapSettings`）を書いて後のパスへ渡すパスは Parallel にできない。RT-PASSES の監査の条件に入れる。
+- Notes: 区間の保留のコマンドの実行（`SceneRenderer::ExecuteFrameCommands`）は RenderThread で合流の後に行うので、スレッド安全の監査は要らない。ParallelFor の中で例外が出たときは、区間のリストの共有の layout の書き込みを戻さない（呼び手のフレームの中止でリストごと捨てる前提。Serial の例外と同じ扱い）。

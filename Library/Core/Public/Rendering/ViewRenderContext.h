@@ -36,6 +36,7 @@ namespace NorvesLib::Core::Rendering
     class MegaGeometryMirror;
     class PresentationPass;
     class RenderGraph;
+    class IRenderGraphRecordListSource;
     struct RenderGraphExecutionResult;
     struct ShadowMapPassSettings;
     struct PointShadowSnapshot;
@@ -663,6 +664,14 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief 有効な場合、ViewはRenderGraph経由でパスチェーンを実行する */
         RenderGraph* Graph = nullptr;
+
+        /**
+         * @brief Parallel のパスを区間ごとのリストへ記録するときのリストの渡し口（null なら全パスを CommandList へ Serial で記録する）
+         *
+         * Parallel の区間を記録したグラフは、実行の後に CommandList を最後に受け取ったリストへ差し替える。
+         * 呼び手は以後の記録をその CommandList へ続ける（受け取ったリストは今の記録先の後へ提出される）。
+         */
+        IRenderGraphRecordListSource* RecordListSource = nullptr;
 
         /** @brief RenderFrame stack-owned, requested text-only graph diagnostics. */
         RenderGraphDebugCapture* DebugDumpCapture = nullptr;

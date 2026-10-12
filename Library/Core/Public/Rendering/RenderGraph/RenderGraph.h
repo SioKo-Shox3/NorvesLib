@@ -128,6 +128,18 @@ namespace NorvesLib::Core::Rendering
             return m_RecordSegments;
         }
 
+        // 記録のリストの区間（コンパイルした順。Serial だけのグラフは 1 つ）
+        const Container::VariableArray<RGRecordListSegment>& GetRecordListSegments() const
+        {
+            return m_RecordListSegments;
+        }
+
+        // 直近の Execute が RecordListSource から受け取ったリストの数
+        uint32_t GetLastAcquiredRecordListCount() const
+        {
+            return m_LastAcquiredRecordListCount;
+        }
+
         bool TryGetCompiledResourceLifetime(RGResourceHandle handle, RGCompiledResourceLifetime& outLifetime) const;
         bool TryGetDeclaredPassVersionDiagnostic(uint32_t passIndex,
                                                  uint32_t accessIndex,
@@ -357,6 +369,23 @@ namespace NorvesLib::Core::Rendering
         bool AcquireTransientResourcesForOrderIndex(uint32_t orderIndex);
         bool AcquireTransientResource(RGResourceRecord& resource);
         void BuildRecordSegments();
+        void BuildRecordListSegments();
+        bool IsParallelRecordPass(uint32_t passIndex) const;
+        bool RecordSerialPass(uint32_t orderIndex,
+                              const RGRecordSegment& segment,
+                              RenderGraphResources& resources,
+                              ViewRenderContext& context,
+                              uint32_t& nextBarrierIndex,
+                              bool& bFlushedInSerialSegment);
+        bool RecordParallelPasses(uint32_t firstOrderIndex,
+                                  uint32_t endOrderIndex,
+                                  const RGRecordSegment& segment,
+                                  RenderGraphResources& resources,
+                                  ViewRenderContext& context,
+                                  uint32_t& nextBarrierIndex,
+                                  bool& bFlushedInSerialSegment,
+                                  Container::VariableArray<RHI::ICommandList*>& segmentLists);
+        void RecordPassExecute(uint32_t passIndex, RenderGraphResources& resources, ViewRenderContext& context);
         bool PlanRecording(ViewRenderContext& context);
         void PlanSegmentLayouts(const RGRecordSegment& segment);
         void PlanBarrierLayouts(uint32_t barrierIndex);
@@ -392,6 +421,11 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<RGCompiledResourceLifetime> m_CompiledResourceLifetimes;
         Container::VariableArray<RGTransientAllocationStep> m_TransientAllocationPlan;
         Container::VariableArray<RGRecordSegment> m_RecordSegments;
+        Container::VariableArray<RGRecordListSegment> m_RecordListSegments;
+        // コンパイルした順ごとの、Parallel で記録するかの印
+        Container::VariableArray<uint8_t> m_ParallelRecordOrders;
+        // パスの登録時の名前から作った、記録の区間の名前（RG.Record.<パス>。パスの番号の順。計測が無効なら空）
+        Container::VariableArray<Container::String> m_PassRecordScopeNames;
         Container::VariableArray<RGPlannedBarrier> m_PlannedBarriers;
         // 資源ごとの計画上の共有の layout と、書き戻しが要るかの印（Texture だけ使う）
         Container::VariableArray<RHI::TextureLayout> m_PlannedTextureLayouts;
@@ -406,6 +440,7 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_DebugDumpFrameCount = 0;
         uint32_t m_LastCompiledBarrierCount = 0;
         uint32_t m_LastTransientAcquireCount = 0;
+        uint32_t m_LastAcquiredRecordListCount = 0;
         bool m_bInitialized = false;
         bool m_bCompiled = false;
         bool m_bHasGraphError = false;

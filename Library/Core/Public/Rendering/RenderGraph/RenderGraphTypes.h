@@ -239,6 +239,39 @@ namespace NorvesLib::Core::Rendering
         bool bLayoutPlanned = false;
     };
 
+    // パスの記録の方針。
+    enum class RGRecordPolicy : uint8_t
+    {
+        // RenderThread で、前のパスに続けて同じリストへ記録する（既定）。
+        Serial,
+        // 自分の区間のリストへ、続く Parallel のパスと同時に記録してよい。
+        // DeclaresAllLayoutChanges() が true のパスだけが Parallel になれる（false なら Serial として扱う）。
+        Parallel,
+    };
+
+    // 記録のリストの区間。グラフの頭か Parallel のパスから始まり、続く Serial のパスを同じリストへ含む。
+    // Serial だけのグラフは 1 つの区間（今の記録先の 1 本）になる。
+    struct RGRecordListSegment
+    {
+        uint32_t FirstOrderIndex = RGInvalidPassIndex;
+        uint32_t EndOrderIndex = RGInvalidPassIndex; // この順番は含まない
+        // true: 先頭のパスを、続く Parallel の区間の先頭のパスと同時に、別のリストへ記録する。
+        bool bParallel = false;
+    };
+
+    // 区間ごとの記録に使うコマンドリストを渡す口（描画の調整役が持つ）。
+    class IRenderGraphRecordListSource
+    {
+    public:
+        virtual ~IRenderGraphRecordListSource() = default;
+
+        // 記録を始めた（Begin 済みの）リストを 1 本返す。返した順に、今の記録先
+        // （ViewRenderContext::CommandList）の後へ 1 回で提出する。リストの頭で GPU タイムスタンプの
+        // フレームと FrameGPU の区間を開くのは渡す側が行う。渡せないときは null を返す
+        // （グラフは残りのパスを今の記録先へ Serial で記録する）。RenderThread からだけ呼ぶ。
+        virtual RHI::ICommandList* AcquireRecordList() = 0;
+    };
+
     struct RGTransientAllocationStep
     {
         RGResourceHandle Resource;
