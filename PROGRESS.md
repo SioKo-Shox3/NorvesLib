@@ -3045,3 +3045,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `check-SCN-ECS-FIX-LIGHTING-RECORD-rtgi-test.txt`: Debug の `RTGIDiffuseIndirectVulkanTest`（静止の年齢の上限・instance や材質や露出の変化で静止が切れること・多ビューポートの組を含む）が Passed。
 - Next: SCN-MEGA-FIX-SCENE-TABLES-DELTA（反復 35 の Next の並びどおり）。
 - Notes: 原因を探すために足した区間（`Lighting.*`）は外した（区間 1 件のトレースへの書き込みが約 50〜90 µs かかり、`RG.Record.LightingPass` に入るため）。mega-stress 5万個 close は撮り直していない（RTGI の instance を持たない構成なので、変わるのは VSM の 0.08 ms の分だけの見込み）。同じ instance 1万本を毎フレーム走査する処理が `RT.BuildAccelerationStructures`（1.17 ms。TLAS の入力の照合）にも残っている。
+
+### SCN-MEGA-FIX-SCENE-TABLES-DELTA（2026-10-12、反復 40・run 20261012-030203）
+
+- 直し: `MegaGeometryPass` が表（`m_SceneTables`）をフレームをまたいで持ち続け、並びが変わらないフレームは直したインスタンスの行だけを書き換える（`PatchSceneTables`）。
+  - 全部を作る（`ComposeSceneTables`）のは、インスタンスの作り直し（Setup の作り直し・手で足した・消した）・席の表の番号の決め直し・メッシュの区画の持ち主の手放し・表へ載せたメッシュの準備や中身（区画・アドレス・境界・BVH）の変化・載らなかったメッシュの準備完了・BVH の使える状態の変化・直したインスタンスのメッシュの差し替えのとき。確かめは表へ載せたメッシュごと（`SceneMeshSource`）と載らなかったメッシュごと（`SceneSkippedMesh`）で、インスタンスごとの引き直しをしない。
+  - 差分は `PatchInstancesFromChangedSlots` が直した位置（`MarkSceneTableDirty`）の行の「見えた」区画の要求・描く順の行の区画の先頭・影の行と記録だけを直す。投影物かどうかが変わったときだけ影の判定のワークグループの先頭を数え直す。VSM の無効化は、直した行と、ページの常駐が変わったメッシュの行だけを積む（前と同じ条件）。
+  - 「見えた」の区画の表の番号（`m_VisibilityBuildStamp`）は全部を作ったときだけ進める（回収の判定は「前の 2 回の全部の作り直しに載らなかった席」になる）。
+  - 開発ビルドの検査 `CheckSceneTables`: 表を作った 120 回ごとに、何も変えずに全部を作り直した表（区画は今の割り当てを引くだけ）と、今の表の全部の行・合計・影の記録を比べ、`MEGA_TABLES mismatch=<通算の食い違った照合の数> checks=… full=… delta=… delta_rows=…` を出す。食い違えば `MEGA_TABLES_MISMATCH` を出し、次の表を全部作る。照合は `BuildSceneTables` の区間の外（`MegaGeometryPass.CheckSceneTables`。5万個で 1 回 約 8.3 ms）。
+- 結果（mega-stress 5万個 close・RelWithDebInfo・300 フレーム）: `MegaGeometryPass.BuildSceneTables` の median 7.18 → 0.005 ms（静止）・0.141 ms（1% 移動。1 フレーム 500 行を差分で直す）。静止の rt の median 46.12 → 38.13 ms。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-FIX-SCENE-TABLES-DELTA-1.txt`: RelWithDebInfo の Game のビルド EXIT=0（エラー・C の警告なし）。
+  - `verify-…-2.txt`: 静止の撮影 `result=pass`、EXIT=0、300 フレーム（GPU median 30.46 / rt median 38.13・p95 41.55）。close.Game.log の ERROR 0、`MEGA_TABLES mismatch=0` が 5 回（checks=1〜5、2 回目以降は full=0 delta=120）。PNG を開いて確認（塔・岩・家・バナナ・影が描けている）。
+  - `verify-…-3.txt`: `CHECK_CAPTURE_METRICS result=pass views=close`、EXIT=0（`BuildSceneTables` の median ≤ 0.5）。
+  - `verify-…-4.txt`: 1% 移動の撮影 `result=pass`、EXIT=0。close.Game.log の ERROR 0、`MEGA_TABLES mismatch=0` が 5 回（delta_rows=60000 / 120 回）。
+  - `verify-…-5.txt`: `CHECK_CAPTURE_METRICS result=pass views=close`、EXIT=0（`BuildSceneTables` の median ≤ 1.0）。
+  - `verify-…-6.txt`: 起動画面 default の決定論比較 pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 5E-06・最大差 1、`indirect_lighting=rtgi`）、EXIT=0。default.Game.log の ERROR 0・`MEGA_TABLES mismatch=0`。PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
+- Next: SCN-ECS-FIF-AUDIT（反復 35 の Next の並びどおり）。
+- Notes: 照合は撮影の 1% 移動で影の記録・投影物の数え直しを含めて通ったが、投影物かどうかの切り替え・メッシュの差し替え・ページの常駐の変化を狙って起こす試験は足していない（差分の経路の CPU の試験が無い）。`CheckSceneTables` の 1 回 8.3 ms は 120 フレームに 1 回 RenderThread に乗る（開発ビルドだけ。Release では呼ばない）。

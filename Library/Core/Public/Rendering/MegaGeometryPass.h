@@ -708,8 +708,65 @@ namespace NorvesLib::Core::Rendering
          *
          * インスタンスの並びは BVH をたどるインスタンスが先。「見えた」ビットの先頭は、席ごとの区画（AssignVisibilityRegion）の
          * 位置を書く。2パスでないフレームはシェーダーが読まない。
+         * 前に作った表（m_SceneTables）を持ち続け、並びが変わらない（インスタンスの作り直し・メッシュの準備や中身の変化・BVH の
+         * 使える状態の変化が無い）フレームは、直したインスタンスの行だけを書き換える（PatchSceneTables）。
          */
         void BuildSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables);
+
+        /** @brief 表の差分更新: 表へ載せたメッシュ 1 つの出所（全部を作ったときの中身。変わったら表を作り直す） */
+        struct SceneMeshSource
+        {
+            MegaGeometry::MegaMeshHandle Handle;
+            const MegaGeometry::MegaMeshGPUData *GpuData = nullptr;
+            const void *VertexBuffer = nullptr;
+            const void *IndexBuffer = nullptr;
+            const void *ClusterBuffer = nullptr;
+            const void *RegionOwner = nullptr;
+            GPUMegaMesh Row{};
+            float TotalBounds[4] = {};
+            bool bTraverseBvh = false;
+            uint32_t BvhLeafCount = 0;
+            Container::VariableArray<uint32_t> BvhLevelNodeCounts;
+        };
+
+        /** @brief 表の差分更新: 表へ載らなかったインスタンスのメッシュ（準備前・クラスタ無し・引けない）を見たときの状態 */
+        struct SceneSkippedMesh
+        {
+            MegaGeometry::MegaMeshHandle Handle;
+            const MegaGeometry::MegaMeshGPUData *GpuData = nullptr;
+            uint32_t ClusterCount = 0;
+        };
+
+        /**
+         * @brief 前に作った表の、直したインスタンスの行だけを書き換える
+         *
+         * 先に全部を確かめ、作り直しが要る（表が無い・メッシュの準備や中身が変わった・BVH の使える状態が変わった・
+         * 直したインスタンスのメッシュが替わった）なら何も変えずに false を返す。VSM の無効化も、直した行とページの常駐が
+         * 変わったメッシュの行だけを積む。
+         */
+        bool PatchSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables, bool bResidencyFresh);
+
+        /** @brief 表の差分更新: 表の行に効く中身（メッシュ・コンポーネント・影の設定・変換・境界）が変わった位置を覚える */
+        void MarkSceneTableDirty(size_t position);
+
+        /**
+         * @brief 開発ビルドの検査: 一定の回数ごとに、全部を作り直した表と今の表（差分で直した表）を比べ、MEGA_TABLES に出す
+         */
+        void CheckSceneTables(const MegaGeometryPassCommand &command, const SceneTables &tables);
+
+        /** @brief グループの BVH をたどれる状態か（設定・パイプライン・列のバッファ） */
+        bool IsSceneBvhAvailable() const;
+        /** @brief このメッシュをグループの BVH でたどれるか（IsSceneBvhAvailable と BVH の中身） */
+        bool CanTraverseSceneBvh(const MegaGeometry::MegaMeshGPUData *data) const;
+        /** @brief メッシュの表の 1 行を組む（区画のアドレスと基点は引けることを確かめた値） */
+        static GPUMegaMesh MakeSceneMeshRow(const MegaGeometry::MegaMeshGPUData &gpuData, uint64_t clusterAddress,
+                                            uint64_t vertexBase, uint64_t indexBase, uint32_t sectionIndex, bool bTraverseBvh);
+        /** @brief インスタンス 1 つの「見えた」ビットの区画の要求を組む（Offset は呼び出し側が決める） */
+        static VisibilityRequest MakeSceneVisibilityRequest(const MegaMeshInstance &instance, size_t instanceIndex,
+                                                            const MegaGeometry::MegaMeshGPUData &gpuData);
+
+        /** @brief 「見えた」ビットの区画を決めずに、今の割り当てから区画の先頭を引く（合わなければ ~0u） */
+        uint32_t PeekVisibilityRegion(uint32_t tableSlot, const VisibilityRequest &request) const;
 
         /**
          * @brief m_Instances の席の表の番号（TableSlot）を決める（m_bSceneSlotsDirty のときだけ）
@@ -797,6 +854,28 @@ namespace NorvesLib::Core::Rendering
         void FlushShadowRebuildWithoutInstances();
         /** @brief インスタンス 1 つの前と今の記録から、描き直す範囲を積む（どちらかが投影物でなければ、もう片方だけ） */
         void PushShadowInvalidation(const ShadowInstanceRecord &before, const ShadowInstanceRecord &after);
+        /**
+         * @brief 作り直しを待っていない表で、インスタンス 1 つの影の記録を今のものにする
+         *
+         * メッシュの中身・常駐が変わった、影に効く中身が変わった位置（NoteShadowPatched）、投影物かどうかが変わったときだけ、
+         * 前と今の境界を無効化へ積む。
+         */
+        void NoteShadowRecord(size_t instanceIndex, const ShadowInstanceRecord &now, bool bMeshChanged);
+        /**
+         * @brief m_Instances の全部から表を作る
+         *
+         * @param bCommit true なら「見えた」区画を決め（AssignVisibilityRegion）、差分更新の出所（席の行・メッシュ・載らなかったメッシュ）を
+         * 覚える。false なら何も変えずに作る（開発ビルドの照合。区画は今の割り当てを引くだけ）
+         * @param outRecords m_Instances と同じ並びの、影の表へ載せた記録（載らなかったインスタンスは投影物でない記録）
+         */
+        void ComposeSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables, bool bCommit,
+                                Container::VariableArray<ShadowInstanceRecord> &outRecords);
+        /**
+         * @brief インスタンス 1 つの影の表の行（FirstGroup 以外）と記録を組む
+         * @param ioEntry FirstGroup はそのまま残し、ほかを書く
+         */
+        void FillSceneShadowRow(const MegaMeshInstance &instance, const MegaGeometry::MegaMeshGPUData &gpuData,
+                                MegaGeometryShadowInstance &ioEntry, ShadowInstanceRecord &outRecord) const;
         /**
          * @brief このフレームに表へ載せるメッシュの中身を覚えたものと比べる
          * @param bResidencyFresh ページの表の写しが前に比べてから変わった（常駐の署名を作り直す）
@@ -1127,8 +1206,38 @@ namespace NorvesLib::Core::Rendering
             bool bLoggedOnce = false;
         };
         ShadowDirtyStats m_ShadowDirtyStats;
-        // このフレームの表（前段が作り、同じフレームの記録が使う。配列の容量はフレームをまたいで使い回す）
+        // このフレームの表（前段が作り、同じフレームの記録が使う。フレームをまたいで持ち続け、差分で直す）
         SceneTables m_SceneTables;
+        // 表の差分更新: false なら次の表は全部を作る（インスタンスの作り直し・席の表の番号の決め直し・持ち主の手放しなど）
+        bool m_bSceneTablesValid = false;
+        // 表を全部作ったときに BVH をたどれる状態だったか（設定・パイプライン・列のバッファ）
+        bool m_bSceneTablesBvhAvailable = false;
+        // m_Instances の位置ごとの、表の行（NoSceneRow は載っていない）と、表を作ったときのメッシュのハンドルの番号
+        Container::VariableArray<uint32_t> m_SceneInstanceRows;
+        Container::VariableArray<uint64_t> m_SceneInstanceHandles;
+        // メッシュの表の行ごとの出所と、表へ載らなかったインスタンスのメッシュ（ハンドルごとに 1 つ）
+        Container::VariableArray<SceneMeshSource> m_SceneMeshSources;
+        Container::VariableArray<SceneSkippedMesh> m_SceneSkippedMeshes;
+        // 表の行に効く中身が変わった位置（印と一覧。PatchInstancesFromChangedSlots が積み、表を作ると消える）
+        Container::VariableArray<uint8_t> m_SceneTableDirtyMarks;
+        Container::VariableArray<uint32_t> m_SceneTableDirtyPositions;
+        // 表を作る作業領域（フレームをまたいで使い回す）
+        Container::VariableArray<size_t> m_SceneInstanceOrder;
+        Container::VariableArray<ShadowInstanceRecord> m_SceneComposeRecords;
+        Container::VariableArray<uint8_t> m_SceneMeshShadowChanged;
+        // 開発ビルドの照合 MEGA_TABLES: 全部を作り直した表の作業領域と、統計（mismatch・checks は通算、ほかは出す間隔の間）
+        SceneTables m_SceneTablesCheck;
+        Container::VariableArray<ShadowInstanceRecord> m_SceneTablesCheckRecords;
+        struct SceneTablesStats
+        {
+            uint32_t SinceCheck = 0;
+            uint32_t FullBuilds = 0;
+            uint32_t DeltaBuilds = 0;
+            uint64_t DeltaRows = 0;
+            uint32_t Checks = 0;
+            uint32_t Mismatches = 0;
+        };
+        SceneTablesStats m_SceneTablesStats;
         PreparedSceneTables m_PreparedSceneTables;
 
         // ビジビリティバッファのラスタへ渡す描画の写し（TakeVisibilityDrawPlan が取り出す）

@@ -545,6 +545,18 @@ namespace NorvesLib::Core::Rendering
         m_ShadowPageEntries.clear();
         m_ShadowInvalidation = MegaGeometryShadowInvalidation{};
         m_ShadowDirtyStats = ShadowDirtyStats{};
+        m_SceneTables = SceneTables{};
+        m_bSceneTablesValid = false;
+        m_bSceneTablesBvhAvailable = false;
+        m_SceneInstanceRows.clear();
+        m_SceneInstanceHandles.clear();
+        m_SceneMeshSources.clear();
+        m_SceneSkippedMeshes.clear();
+        m_SceneTableDirtyMarks.clear();
+        m_SceneTableDirtyPositions.clear();
+        m_SceneTablesCheck = SceneTables{};
+        m_SceneTablesCheckRecords.clear();
+        m_SceneTablesStats = SceneTablesStats{};
         m_RenderFrameCount = 0;
         m_LastRenderFrameSerial = 0;
         m_bUnsetFrameSerialWarned = false;
@@ -668,6 +680,8 @@ namespace NorvesLib::Core::Rendering
             m_Instances[position].TableSlot = tableSlot;
             // VSM のキャッシュ: 影に効く中身が変わった位置だけを、次に表を作るときに旧・新の境界で無効にする
             NoteShadowPatched(position, before, m_Instances[position]);
+            // 表の差分更新: 次に表を作るときに、この位置の行を直す
+            MarkSceneTableDirty(position);
             // 席の表の行を確かめる位置（全部を確かめる更新が待っていれば要らない）
             if (!m_bSceneRowsAllDirty)
             {
@@ -728,6 +742,7 @@ namespace NorvesLib::Core::Rendering
             m_bSceneRowsAllDirty = true;
             m_bSceneSlotsDirty = true;
             m_SceneDirtyPositions.clear();
+            m_bSceneTablesValid = false;
             // VSM のキャッシュ: 並びが変わるので、次に表を作るときに前の並びと鍵で引いて比べる
             BeginShadowRebuild(false);
             m_Instances.clear();
@@ -1193,9 +1208,139 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t IndirectCommandBytes = static_cast<uint32_t>(sizeof(MegaGeometry::DrawIndexedIndirectCommand));
     } // namespace
 
-    void MegaGeometryPass::BuildSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables)
+    namespace
     {
-        NORVES_PROFILE_SCOPE("MegaGeometryPass.BuildSceneTables");
+        // 表の差分更新: m_Instances の位置が表へ載っていない印
+        constexpr uint32_t NoSceneRow = 0xFFFFFFFFu;
+        // MEGA_TABLES の照合の間隔（表を作った回数）
+        constexpr uint32_t SceneTablesCheckInterval = 120;
+
+        // メッシュの区画をまとめた描画で引くためのアドレスと基点
+        struct SceneMeshAddressing
+        {
+            uint64_t ClusterAddress = 0;
+            uint64_t VertexBase = 0;
+            uint64_t IndexBase = 0;
+            bool bAddressable = false;
+            bool bAligned = false;
+
+            bool IsUsable() const
+            {
+                return bAddressable && bAligned && VertexBase <= 0x7FFFFFFFull && IndexBase <= 0xFFFFFFFFull;
+            }
+        };
+
+        SceneMeshAddressing ResolveSceneMeshAddressing(const MegaGeometry::MegaMeshGPUData &gpuData)
+        {
+            // クラスタ配列はデバイスアドレスで、頂点・インデックスはプールの塊の先頭からの基点で引く。
+            // 基点は頂点・インデックスの単位で表すので、領域の先頭が頂点・インデックスの大きさの倍数であること
+            // （プールの区画は 256 バイト整列）
+            SceneMeshAddressing addressing;
+            addressing.ClusterAddress = gpuData.ClusterBuffer ? gpuData.ClusterBuffer->GetDeviceAddress() : 0ull;
+            addressing.bAddressable = addressing.ClusterAddress != 0 && gpuData.VertexBuffer && gpuData.IndexBuffer;
+            addressing.bAligned = gpuData.VertexBufferOffsetBytes % sizeof(Mesh3DVertex) == 0 &&
+                                  gpuData.IndexBufferOffsetBytes % sizeof(uint32_t) == 0;
+            addressing.VertexBase = gpuData.VertexBufferOffsetBytes / sizeof(Mesh3DVertex);
+            addressing.IndexBase = gpuData.IndexBufferOffsetBytes / sizeof(uint32_t);
+            return addressing;
+        }
+
+        bool IsSameSphere(const float (&a)[4], const BoundingSphere &b)
+        {
+            return a[0] == b.CenterX && a[1] == b.CenterY && a[2] == b.CenterZ && a[3] == b.Radius;
+        }
+    } // namespace
+
+    bool MegaGeometryPass::IsSceneBvhAvailable() const
+    {
+        return m_Settings.bUseGroupBVH && m_BvhCullPipeline && m_BvhQueueBuffer && m_BvhCounterBuffer;
+    }
+
+    bool MegaGeometryPass::CanTraverseSceneBvh(const MegaGeometry::MegaMeshGPUData *data) const
+    {
+        // グループの BVH を持つメッシュ（NVMESH v1.1）は BVH をたどって判定し、それ以外は平らなクラスタの列で判定する
+        return IsSceneBvhAvailable() && data && data->GroupBVHNodeCount > 0 && data->GroupBVHBufferBytes > 0 &&
+               !data->GroupBVHLevelNodeCounts.empty() &&
+               data->GroupBVHLevelNodeCounts.size() <= MegaGeometry::GROUP_BVH_MAX_LEVELS;
+    }
+
+    MegaGeometryPass::GPUMegaMesh MegaGeometryPass::MakeSceneMeshRow(const MegaGeometry::MegaMeshGPUData &gpuData,
+                                                                     uint64_t clusterAddress, uint64_t vertexBase,
+                                                                     uint64_t indexBase, uint32_t sectionIndex,
+                                                                     bool bTraverseBvh)
+    {
+        const uint64_t clusterAddressWithOffset = clusterAddress + gpuData.ClusterBufferOffsetBytes;
+        GPUMegaMesh mesh{};
+        if (gpuData.LODBounds.IsValid())
+        {
+            mesh.LODSphere[0] = gpuData.LODBounds.CenterX;
+            mesh.LODSphere[1] = gpuData.LODBounds.CenterY;
+            mesh.LODSphere[2] = gpuData.LODBounds.CenterZ;
+            mesh.LODSphere[3] = gpuData.LODBounds.Radius;
+        }
+        mesh.ClusterAddressLow = static_cast<uint32_t>(clusterAddressWithOffset & 0xFFFFFFFFull);
+        mesh.ClusterAddressHigh = static_cast<uint32_t>(clusterAddressWithOffset >> 32);
+        mesh.ClusterCount = gpuData.ClusterCount;
+        mesh.SectionIndex = sectionIndex;
+        mesh.VertexBase = static_cast<uint32_t>(vertexBase);
+        mesh.IndexBase = static_cast<uint32_t>(indexBase);
+        mesh.PageTableBase = gpuData.PageTableBase;
+        if (bTraverseBvh)
+        {
+            const uint64_t bvhAddress = clusterAddress + gpuData.GroupBVHBufferOffsetBytes;
+            mesh.BvhAddressLow = static_cast<uint32_t>(bvhAddress & 0xFFFFFFFFull);
+            mesh.BvhAddressHigh = static_cast<uint32_t>(bvhAddress >> 32);
+            mesh.BvhNodeCount = gpuData.GroupBVHNodeCount;
+        }
+        return mesh;
+    }
+
+    MegaGeometryPass::VisibilityRequest MegaGeometryPass::MakeSceneVisibilityRequest(
+        const MegaMeshInstance &instance, size_t instanceIndex, const MegaGeometry::MegaMeshGPUData &gpuData)
+    {
+        VisibilityRequest request;
+        request.Key = instance.ObjectId != 0 ? instance.ObjectId : (0x8000000000000000ull | instanceIndex);
+        request.MeshId = instance.Handle.Id;
+        request.ComponentId = instance.ComponentId;
+        request.ClusterBufferIdentity = gpuData.ClusterBuffer.get();
+        request.ClusterBufferOffsetBytes = gpuData.ClusterBufferOffsetBytes;
+        request.ClusterCount = gpuData.ClusterCount;
+        request.TableSlot = instance.TableSlot;
+        return request;
+    }
+
+    void MegaGeometryPass::FillSceneShadowRow(const MegaMeshInstance &instance, const MegaGeometry::MegaMeshGPUData &gpuData,
+                                              MegaGeometryShadowInstance &ioEntry, ShadowInstanceRecord &outRecord) const
+    {
+        // 頂点・インデックスの塊のバッファのアドレス（表へ載るメッシュは、両方のバッファがあることを確かめてある）
+        const uint64_t vertexAddress = gpuData.VertexBuffer->GetDeviceAddress();
+        const uint64_t indexAddress = gpuData.IndexBuffer->GetDeviceAddress();
+        ioEntry.VertexAddress[0] = static_cast<uint32_t>(vertexAddress & 0xFFFFFFFFull);
+        ioEntry.VertexAddress[1] = static_cast<uint32_t>(vertexAddress >> 32);
+        ioEntry.IndexAddress[0] = static_cast<uint32_t>(indexAddress & 0xFFFFFFFFull);
+        ioEntry.IndexAddress[1] = static_cast<uint32_t>(indexAddress >> 32);
+        ioEntry.Flags = 0u;
+        std::memset(ioEntry.BoundsSphere, 0, sizeof(ioEntry.BoundsSphere));
+        outRecord = ShadowInstanceRecord{};
+        // 影を落とすインスタンスだけが、影の判定のワークグループ（64クラスタ）を持つ
+        if (instance.bCastShadow)
+        {
+            ioEntry.Flags |= MegaGeometryShadowFlagCaster;
+            const bool bHasShadowBounds =
+                ResolveShadowBounds(instance.WorldMatrix, instance.WorldBounds, gpuData.TotalBounds, ioEntry.BoundsSphere);
+            if (bHasShadowBounds)
+            {
+                ioEntry.Flags |= MegaGeometryShadowFlagBounds;
+                std::memcpy(outRecord.Sphere, ioEntry.BoundsSphere, sizeof(outRecord.Sphere));
+            }
+            outRecord.bCaster = true;
+            outRecord.bHasBounds = bHasShadowBounds;
+        }
+    }
+
+    void MegaGeometryPass::ComposeSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables, bool bCommit,
+                                              VariableArray<ShadowInstanceRecord> &outRecords)
+    {
         tables.Sections.clear();
         tables.Drawables.clear();
         tables.Entries.clear();
@@ -1209,148 +1354,84 @@ namespace NorvesLib::Core::Rendering
         tables.BvhInstanceCount = 0;
         tables.BvhLevelCapacity.clear();
         tables.BvhLeafCapacity = 0;
-        if (!command.MegaGeometry)
-        {
-            return;
-        }
         tables.Drawables.reserve(m_Instances.size());
         tables.Entries.reserve(m_Instances.size());
         tables.VisibilityRequests.reserve(m_Instances.size());
         tables.ShadowInstances.reserve(m_Instances.size());
-
-        // ----- VSM のキャッシュの無効化の準備 -----
-        // ページの表が変わったときだけ写しを取り、表へ載せるメッシュの常駐の署名を作り直す
-        const bool bResidencyFresh =
-            command.MegaGeometry->CopyPageTableIfChanged(m_ShadowPageTableVersion, m_ShadowPageEntries);
-        ++m_ShadowMeshStamp;
-        // 作り直した後の最初の表は、前に表を作ったときの並びを鍵で引いて全部を比べる。それ以外は、影に効く中身が変わった位置
-        // （NoteShadowPatched）・メッシュの中身が変わったインスタンス・投影物かどうかが変わったインスタンスだけを見る
-        const bool bShadowRebuild = m_bShadowRebuildPending;
-        Container::UnorderedMap<uint64_t, uint32_t> previousShadowPositions;
-        VariableArray<uint8_t> previousShadowSeen;
-        if (bShadowRebuild)
+        outRecords.assign(m_Instances.size(), ShadowInstanceRecord{});
+        if (bCommit)
         {
-            previousShadowPositions.reserve(m_ShadowPreviousInstances.size());
-            for (size_t index = 0; index < m_ShadowPreviousInstances.size(); ++index)
-            {
-                const MegaMeshInstance &previous = m_ShadowPreviousInstances[index];
-                const uint64_t objectKey = previous.ObjectId != 0 ? previous.ObjectId : (0x8000000000000000ull | index);
-                previousShadowPositions.emplace(MixShadowInstanceKey(objectKey, previous.ComponentId),
-                                                static_cast<uint32_t>(index));
-            }
-            previousShadowSeen.assign(m_ShadowPreviousInstances.size(), 0u);
-            m_ShadowRecords.assign(m_Instances.size(), ShadowInstanceRecord{});
-            m_ShadowDirtyMarks.assign(m_Instances.size(), 0u);
-            m_ShadowDirtyPositions.clear();
-            ++m_ShadowDirtyStats.Rebuilds;
+            m_SceneInstanceRows.assign(m_Instances.size(), NoSceneRow);
+            m_SceneInstanceHandles.resize(m_Instances.size());
+            m_SceneMeshSources.clear();
+            m_SceneSkippedMeshes.clear();
+            m_bSceneTablesBvhAvailable = IsSceneBvhAvailable();
         }
-        else if (m_ShadowRecords.size() != m_Instances.size() || m_ShadowDirtyMarks.size() != m_Instances.size())
-        {
-            // 並びの数は作り直しでしか変わらない（念のため、足りない位置は投影物でないものとして扱う）
-            m_ShadowRecords.resize(m_Instances.size());
-            m_ShadowDirtyMarks.resize(m_Instances.size(), 0u);
-        }
-        m_ShadowDirtyStats.DirtySlots += m_ShadowDirtyPositions.size();
-        ++m_ShadowDirtyStats.Builds;
-        // メッシュの表の行ごとの「前に載せたときから中身・常駐が変わった」印
-        VariableArray<uint8_t> meshShadowChanged;
-        const auto noteShadow = [&](size_t instanceIndex, const ShadowInstanceRecord &now, bool bMeshChanged)
-        {
-            ShadowInstanceRecord &record = m_ShadowRecords[instanceIndex];
-            if (bShadowRebuild)
-            {
-                const MegaMeshInstance &instance = m_Instances[instanceIndex];
-                const uint64_t objectKey = instance.ObjectId != 0 ? instance.ObjectId : (0x8000000000000000ull | instanceIndex);
-                const auto found = previousShadowPositions.find(MixShadowInstanceKey(objectKey, instance.ComponentId));
-                // 前の並びに無かった物は、投影物でなかったものとして比べる
-                ShadowInstanceRecord before;
-                bool bSame = !now.bCaster;
-                if (found != previousShadowPositions.end())
-                {
-                    const uint32_t previousIndex = found->second;
-                    previousShadowSeen[previousIndex] = 1u;
-                    before = m_ShadowPreviousRecords[previousIndex];
-                    const MegaMeshInstance &previous = m_ShadowPreviousInstances[previousIndex];
-                    bSame = !bMeshChanged && before.bCaster == now.bCaster &&
-                            (!now.bCaster ||
-                             (before.bHasBounds == now.bHasBounds &&
-                              std::memcmp(before.Sphere, now.Sphere, sizeof(now.Sphere)) == 0 &&
-                              previous.Handle.Id == instance.Handle.Id &&
-                              std::memcmp(previous.WorldMatrix, instance.WorldMatrix, sizeof(instance.WorldMatrix)) == 0));
-                }
-                if (!bSame)
-                {
-                    PushShadowInvalidation(before, now);
-                }
-            }
-            else if (bMeshChanged || m_ShadowDirtyMarks[instanceIndex] != 0u || record.bCaster != now.bCaster)
-            {
-                PushShadowInvalidation(record, now);
-            }
-            record = now;
-        };
 
-        // グループの BVH を持つメッシュ（NVMESH v1.1）は BVH をたどって判定し、それ以外は平らなクラスタの列で判定する。
         // BVH のインスタンスをインスタンスの表の先頭に並べる（平らな判定のワークグループは、後ろのインスタンスだけが持つ）
-        const auto canTraverseBvh = [this](const MegaGeometry::MegaMeshGPUData *data) -> bool
-        {
-            return m_Settings.bUseGroupBVH && m_BvhCullPipeline && m_BvhQueueBuffer && m_BvhCounterBuffer && data &&
-                   data->GroupBVHNodeCount > 0 && data->GroupBVHBufferBytes > 0 &&
-                   !data->GroupBVHLevelNodeCounts.empty() &&
-                   data->GroupBVHLevelNodeCounts.size() <= MegaGeometry::GROUP_BVH_MAX_LEVELS;
-        };
-        VariableArray<size_t> instanceOrder;
+        VariableArray<size_t> &instanceOrder = m_SceneInstanceOrder;
+        instanceOrder.clear();
         instanceOrder.reserve(m_Instances.size());
         {
             VariableArray<size_t> flatInstances;
             for (size_t instanceIndex = 0; instanceIndex < m_Instances.size(); ++instanceIndex)
             {
                 const auto *orderData = command.MegaGeometry->GetReadyMegaMeshGPUData(m_Instances[instanceIndex].Handle);
-                (canTraverseBvh(orderData) ? instanceOrder : flatInstances).push_back(instanceIndex);
+                (CanTraverseSceneBvh(orderData) ? instanceOrder : flatInstances).push_back(instanceIndex);
             }
             instanceOrder.insert(instanceOrder.end(), flatInstances.begin(), flatInstances.end());
         }
 
         // メッシュの表の番号（ロード済みのメッシュごとに 1 行。同じメッシュのインスタンスは同じ行を指す）
         Container::UnorderedMap<const MegaGeometry::MegaMeshGPUData *, uint32_t> meshIndices;
+        // 表へ載らなかったメッシュ（ハンドルごとに 1 つ覚える）
+        Container::UnorderedSet<uint64_t> skippedHandles;
         // 「見えた」ビットの区画は席ごとに決める（AssignVisibilityRegion）。この表の番号で、前の表に載った席を見分ける
-        ++m_VisibilityBuildStamp;
+        if (bCommit)
+        {
+            ++m_VisibilityBuildStamp;
+        }
         for (const size_t instanceIndex : instanceOrder)
         {
             const auto &instance = m_Instances[instanceIndex];
             // 区画へのコピーが GPU で完了したメッシュだけを描く（書き込み中の区画は読まない）
             const auto *gpuData = command.MegaGeometry->GetReadyMegaMeshGPUData(instance.Handle);
+            const auto noteSkipped = [&]() -> void
+            {
+                if (bCommit && skippedHandles.insert(instance.Handle.Id).second)
+                {
+                    SceneSkippedMesh skipped;
+                    skipped.Handle = instance.Handle;
+                    skipped.GpuData = gpuData;
+                    skipped.ClusterCount = gpuData ? gpuData->ClusterCount : 0u;
+                    m_SceneSkippedMeshes.push_back(skipped);
+                }
+            };
+            if (bCommit)
+            {
+                m_SceneInstanceHandles[instanceIndex] = instance.Handle.Id;
+            }
             if (!gpuData || gpuData->ClusterCount == 0)
             {
-                noteShadow(instanceIndex, ShadowInstanceRecord{}, false);
+                noteSkipped();
                 continue;
             }
 
-            // クラスタ配列はデバイスアドレスで、頂点・インデックスはプールの塊の先頭からの基点で引く。
-            // 基点は頂点・インデックスの単位で表すので、領域の先頭が頂点・インデックスの大きさの倍数であること
-            // （プールの区画は 256 バイト整列）
-            const uint64_t clusterAddress =
-                gpuData->ClusterBuffer ? gpuData->ClusterBuffer->GetDeviceAddress() : 0ull;
-            const bool bAddressable = clusterAddress != 0 && gpuData->VertexBuffer && gpuData->IndexBuffer;
-            const bool bAligned =
-                gpuData->VertexBufferOffsetBytes % sizeof(Mesh3DVertex) == 0 &&
-                gpuData->IndexBufferOffsetBytes % sizeof(uint32_t) == 0;
-            const uint64_t vertexBase = gpuData->VertexBufferOffsetBytes / sizeof(Mesh3DVertex);
-            const uint64_t indexBase = gpuData->IndexBufferOffsetBytes / sizeof(uint32_t);
-            if (!bAddressable || !bAligned || vertexBase > 0x7FFFFFFFull || indexBase > 0xFFFFFFFFull)
+            const SceneMeshAddressing addressing = ResolveSceneMeshAddressing(*gpuData);
+            if (!addressing.IsUsable())
             {
-                if (!m_bBatchUnsupportedLogged)
+                if (bCommit && !m_bBatchUnsupportedLogged)
                 {
                     NORVES_LOG_ERROR("MegaGeometryPass",
                                      "MEGA_BATCH_INSTANCE_SKIPPED mesh=\"%s\" addressable=%d "
                                      "aligned=%d "
                                      "メッシュの区画をまとめた描画で引けないため、このメッシュは描き"
                                      "ません",
-                                     gpuData->DebugName.empty() ? "" : gpuData->DebugName.c_str(), bAddressable ? 1 : 0,
-                                     bAligned ? 1 : 0);
+                                     gpuData->DebugName.empty() ? "" : gpuData->DebugName.c_str(),
+                                     addressing.bAddressable ? 1 : 0, addressing.bAligned ? 1 : 0);
                     m_bBatchUnsupportedLogged = true;
                 }
-                noteShadow(instanceIndex, ShadowInstanceRecord{}, false);
+                noteSkipped();
                 continue;
             }
 
@@ -1376,7 +1457,7 @@ namespace NorvesLib::Core::Rendering
             sections[sectionIndex].ClusterTotal += gpuData->ClusterCount;
 
             // メッシュの表の行（このフレームで初めて出たメッシュなら足す）
-            const bool bTraverseBvh = canTraverseBvh(gpuData);
+            const bool bTraverseBvh = CanTraverseSceneBvh(gpuData);
             uint32_t meshIndex = 0;
             const auto foundMesh = meshIndices.find(gpuData);
             if (foundMesh != meshIndices.end())
@@ -1385,48 +1466,37 @@ namespace NorvesLib::Core::Rendering
             }
             else
             {
-                const uint64_t clusterAddressWithOffset = clusterAddress + gpuData->ClusterBufferOffsetBytes;
-                GPUMegaMesh mesh{};
-                if (gpuData->LODBounds.IsValid())
-                {
-                    mesh.LODSphere[0] = gpuData->LODBounds.CenterX;
-                    mesh.LODSphere[1] = gpuData->LODBounds.CenterY;
-                    mesh.LODSphere[2] = gpuData->LODBounds.CenterZ;
-                    mesh.LODSphere[3] = gpuData->LODBounds.Radius;
-                }
-                mesh.ClusterAddressLow = static_cast<uint32_t>(clusterAddressWithOffset & 0xFFFFFFFFull);
-                mesh.ClusterAddressHigh = static_cast<uint32_t>(clusterAddressWithOffset >> 32);
-                mesh.ClusterCount = gpuData->ClusterCount;
-                mesh.SectionIndex = sectionIndex;
-                mesh.VertexBase = static_cast<uint32_t>(vertexBase);
-                mesh.IndexBase = static_cast<uint32_t>(indexBase);
-                mesh.PageTableBase = gpuData->PageTableBase;
-                if (bTraverseBvh)
-                {
-                    const uint64_t bvhAddress = clusterAddress + gpuData->GroupBVHBufferOffsetBytes;
-                    mesh.BvhAddressLow = static_cast<uint32_t>(bvhAddress & 0xFFFFFFFFull);
-                    mesh.BvhAddressHigh = static_cast<uint32_t>(bvhAddress >> 32);
-                    mesh.BvhNodeCount = gpuData->GroupBVHNodeCount;
-                }
+                const GPUMegaMesh mesh = MakeSceneMeshRow(*gpuData, addressing.ClusterAddress, addressing.VertexBase,
+                                                          addressing.IndexBase, sectionIndex, bTraverseBvh);
                 meshIndex = static_cast<uint32_t>(tables.Meshes.size());
                 tables.Meshes.push_back(mesh);
                 tables.MeshOwners.push_back(gpuData->RegionOwner);
                 meshIndices.emplace(gpuData, meshIndex);
-                // VSM のキャッシュ: 区画・境界・ページの常駐が前に載せたときから変わったメッシュは、使う席を描き直す
-                const bool bMeshChanged = UpdateShadowMeshState(instance.Handle, *gpuData, bResidencyFresh);
-                meshShadowChanged.push_back(bMeshChanged ? 1u : 0u);
-                m_ShadowDirtyStats.MeshChanges += bMeshChanged ? 1u : 0u;
+                if (bCommit)
+                {
+                    // 差分更新は、次のフレームもこのメッシュが同じ中身のまま準備できていることを確かめてから行を使い続ける
+                    SceneMeshSource source;
+                    source.Handle = instance.Handle;
+                    source.GpuData = gpuData;
+                    source.VertexBuffer = gpuData->VertexBuffer.get();
+                    source.IndexBuffer = gpuData->IndexBuffer.get();
+                    source.ClusterBuffer = gpuData->ClusterBuffer.get();
+                    source.RegionOwner = gpuData->RegionOwner.get();
+                    source.Row = mesh;
+                    source.TotalBounds[0] = gpuData->TotalBounds.CenterX;
+                    source.TotalBounds[1] = gpuData->TotalBounds.CenterY;
+                    source.TotalBounds[2] = gpuData->TotalBounds.CenterZ;
+                    source.TotalBounds[3] = gpuData->TotalBounds.Radius;
+                    source.bTraverseBvh = bTraverseBvh;
+                    source.BvhLeafCount = gpuData->GroupBVHLeafCount;
+                    source.BvhLevelNodeCounts = gpuData->GroupBVHLevelNodeCounts;
+                    m_SceneMeshSources.push_back(std::move(source));
+                }
             }
 
-            VisibilityRequest request;
-            request.Key = instance.ObjectId != 0 ? instance.ObjectId : (0x8000000000000000ull | instanceIndex);
-            request.MeshId = instance.Handle.Id;
-            request.ComponentId = instance.ComponentId;
-            request.ClusterBufferIdentity = gpuData->ClusterBuffer.get();
-            request.ClusterBufferOffsetBytes = gpuData->ClusterBufferOffsetBytes;
-            request.ClusterCount = gpuData->ClusterCount;
-            request.TableSlot = instance.TableSlot;
-            request.Offset = AssignVisibilityRegion(instance.TableSlot, request);
+            VisibilityRequest request = MakeSceneVisibilityRequest(instance, instanceIndex, *gpuData);
+            request.Offset = bCommit ? AssignVisibilityRegion(instance.TableSlot, request)
+                                     : PeekVisibilityRegion(instance.TableSlot, request);
 
             // 変換は席の表にあり、GPU が描く順の表の行を組むときに席から引く
             GPUMegaEntry entry;
@@ -1453,6 +1523,10 @@ namespace NorvesLib::Core::Rendering
                 tables.TotalGroups += (static_cast<uint64_t>(gpuData->ClusterCount) + 63u) / 64u;
             }
 
+            if (bCommit)
+            {
+                m_SceneInstanceRows[instanceIndex] = static_cast<uint32_t>(tables.Entries.size());
+            }
             SceneDrawable drawable;
             drawable.InstanceIndex = instanceIndex;
             drawable.GpuData = gpuData;
@@ -1460,84 +1534,495 @@ namespace NorvesLib::Core::Rendering
             tables.Entries.push_back(entry);
             tables.VisibilityRequests.push_back(request);
 
-            // 影の表: 影を落とすインスタンスだけが、影の判定のワークグループ（64クラスタ）を持つ。BVH のインスタンスも
-            // 平らなクラスタの列として全部見る（影の判定は BVH をたどらない）
+            // 影の表: BVH のインスタンスも平らなクラスタの列として全部見る（影の判定は BVH をたどらない）
             MegaGeometryShadowInstance shadowEntry{};
             shadowEntry.FirstGroup = static_cast<uint32_t>(tables.ShadowTotalGroups);
+            ShadowInstanceRecord &shadowRecord = outRecords[instanceIndex];
+            FillSceneShadowRow(instance, *gpuData, shadowEntry, shadowRecord);
+            if (shadowRecord.bCaster)
             {
-                // 頂点・インデックスの塊のバッファのアドレス（bAddressable で両方のバッファがあることは確かめてある）
-                const uint64_t vertexAddress = gpuData->VertexBuffer->GetDeviceAddress();
-                const uint64_t indexAddress = gpuData->IndexBuffer->GetDeviceAddress();
-                shadowEntry.VertexAddress[0] = static_cast<uint32_t>(vertexAddress & 0xFFFFFFFFull);
-                shadowEntry.VertexAddress[1] = static_cast<uint32_t>(vertexAddress >> 32);
-                shadowEntry.IndexAddress[0] = static_cast<uint32_t>(indexAddress & 0xFFFFFFFFull);
-                shadowEntry.IndexAddress[1] = static_cast<uint32_t>(indexAddress >> 32);
-            }
-            ShadowInstanceRecord shadowRecord;
-            if (instance.bCastShadow)
-            {
-                shadowEntry.Flags |= MegaGeometryShadowFlagCaster;
-                const bool bHasShadowBounds =
-                    ResolveShadowBounds(instance.WorldMatrix, instance.WorldBounds, gpuData->TotalBounds, shadowEntry.BoundsSphere);
-                if (bHasShadowBounds)
-                {
-                    shadowEntry.Flags |= MegaGeometryShadowFlagBounds;
-                    std::memcpy(shadowRecord.Sphere, shadowEntry.BoundsSphere, sizeof(shadowRecord.Sphere));
-                }
-                shadowRecord.bCaster = true;
-                shadowRecord.bHasBounds = bHasShadowBounds;
                 tables.ShadowTotalGroups += (static_cast<uint64_t>(gpuData->ClusterCount) + 63u) / 64u;
                 ++tables.ShadowCasterCount;
             }
             tables.ShadowInstances.push_back(shadowEntry);
-            noteShadow(instanceIndex, shadowRecord, meshShadowChanged[meshIndex] != 0u);
+        }
+    }
+
+    void MegaGeometryPass::MarkSceneTableDirty(size_t position)
+    {
+        // 表が無ければ次の表は全部を作るので、覚えなくてよい
+        if (!m_bSceneTablesValid)
+        {
+            return;
+        }
+        if (m_SceneTableDirtyMarks.size() < m_Instances.size())
+        {
+            m_SceneTableDirtyMarks.resize(m_Instances.size(), 0u);
+        }
+        if (position < m_SceneTableDirtyMarks.size() && m_SceneTableDirtyMarks[position] == 0u)
+        {
+            m_SceneTableDirtyMarks[position] = 1u;
+            m_SceneTableDirtyPositions.push_back(static_cast<uint32_t>(position));
+        }
+    }
+
+    bool MegaGeometryPass::PatchSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables, bool bResidencyFresh)
+    {
+        if (!m_bSceneTablesValid || &tables != &m_SceneTables || m_SceneInstanceRows.size() != m_Instances.size() ||
+            m_SceneInstanceHandles.size() != m_Instances.size() || m_SceneMeshSources.size() != tables.Meshes.size() ||
+            m_ShadowRecords.size() != m_Instances.size() || IsSceneBvhAvailable() != m_bSceneTablesBvhAvailable)
+        {
+            return false;
         }
 
-        // ----- VSM のキャッシュの無効化の後始末 -----
-        if (bShadowRebuild)
+        // ----- 確かめる（作り直しが要れば、何も変えずに戻る） -----
+        // 表へ載せたメッシュが、同じ中身のまま準備できていること（材質は作った後に変わらず、区間はメッシュと同じ持ち主を指す）
+        for (const SceneMeshSource &source : m_SceneMeshSources)
         {
-            // 前の並びにあって今の並びに無い投影物は、前の境界を描き直す
-            for (size_t index = 0; index < m_ShadowPreviousRecords.size(); ++index)
+            const auto *gpuData = command.MegaGeometry->GetReadyMegaMeshGPUData(source.Handle);
+            if (gpuData != source.GpuData || gpuData->ClusterCount == 0 || gpuData->VertexBuffer.get() != source.VertexBuffer ||
+                gpuData->IndexBuffer.get() != source.IndexBuffer || gpuData->ClusterBuffer.get() != source.ClusterBuffer ||
+                gpuData->RegionOwner.get() != source.RegionOwner || !IsSameSphere(source.TotalBounds, gpuData->TotalBounds) ||
+                gpuData->GroupBVHLeafCount != source.BvhLeafCount ||
+                gpuData->GroupBVHLevelNodeCounts.size() != source.BvhLevelNodeCounts.size() ||
+                !std::equal(source.BvhLevelNodeCounts.begin(), source.BvhLevelNodeCounts.end(),
+                            gpuData->GroupBVHLevelNodeCounts.begin()))
             {
-                if (index >= previousShadowSeen.size() || previousShadowSeen[index] == 0u)
+                return false;
+            }
+            const SceneMeshAddressing addressing = ResolveSceneMeshAddressing(*gpuData);
+            const bool bTraverseBvh = CanTraverseSceneBvh(gpuData);
+            if (!addressing.IsUsable() || bTraverseBvh != source.bTraverseBvh)
+            {
+                return false;
+            }
+            const GPUMegaMesh row = MakeSceneMeshRow(*gpuData, addressing.ClusterAddress, addressing.VertexBase,
+                                                     addressing.IndexBase, source.Row.SectionIndex, bTraverseBvh);
+            if (std::memcmp(&row, &source.Row, sizeof(row)) != 0)
+            {
+                return false;
+            }
+        }
+        // 表へ載らなかったメッシュが、準備できていない（または同じ中身で引けない）ままであること
+        for (const SceneSkippedMesh &skipped : m_SceneSkippedMeshes)
+        {
+            const auto *gpuData = command.MegaGeometry->GetReadyMegaMeshGPUData(skipped.Handle);
+            if (gpuData != skipped.GpuData || (gpuData && gpuData->ClusterCount != skipped.ClusterCount))
+            {
+                return false;
+            }
+        }
+        // 直したインスタンスのメッシュが替わっていないこと（替わると区間・メッシュの行・並びが変わる）
+        for (const uint32_t position : m_SceneTableDirtyPositions)
+        {
+            if (position >= m_Instances.size() || m_Instances[position].Handle.Id != m_SceneInstanceHandles[position])
+            {
+                return false;
+            }
+        }
+
+        // ----- 直す -----
+        // VSM のキャッシュ: このフレームに載せたメッシュの中身を覚えたものと比べる（区画・境界は上で同じと確かめたので、
+        // 変わるのはページの常駐だけ）
+        m_SceneMeshShadowChanged.assign(m_SceneMeshSources.size(), 0u);
+        bool bAnyMeshShadowChanged = false;
+        for (size_t meshIndex = 0; meshIndex < m_SceneMeshSources.size(); ++meshIndex)
+        {
+            const SceneMeshSource &source = m_SceneMeshSources[meshIndex];
+            const bool bMeshChanged = UpdateShadowMeshState(source.Handle, *source.GpuData, bResidencyFresh);
+            m_SceneMeshShadowChanged[meshIndex] = bMeshChanged ? 1u : 0u;
+            bAnyMeshShadowChanged = bAnyMeshShadowChanged || bMeshChanged;
+            m_ShadowDirtyStats.MeshChanges += bMeshChanged ? 1u : 0u;
+        }
+
+        // 直したインスタンスの行: 「見えた」の区画の要求・描く順の行の区画の先頭・影の行と記録
+        bool bCasterChanged = false;
+        for (const uint32_t position : m_SceneTableDirtyPositions)
+        {
+            const MegaMeshInstance &instance = m_Instances[position];
+            const uint32_t row = m_SceneInstanceRows[position];
+            if (row == NoSceneRow)
+            {
+                NoteShadowRecord(position, ShadowInstanceRecord{}, false);
+                continue;
+            }
+            const MegaGeometry::MegaMeshGPUData &gpuData = *tables.Drawables[row].GpuData;
+            GPUMegaEntry &entry = tables.Entries[row];
+            VisibilityRequest request = MakeSceneVisibilityRequest(instance, position, gpuData);
+            request.Offset = AssignVisibilityRegion(instance.TableSlot, request);
+            tables.VisibilityRequests[row] = request;
+            entry.Slot = instance.TableSlot;
+            entry.VisibleOffset = request.Offset;
+
+            MegaGeometryShadowInstance &shadowEntry = tables.ShadowInstances[row];
+            const bool bWasCaster = (shadowEntry.Flags & MegaGeometryShadowFlagCaster) != 0u;
+            ShadowInstanceRecord record;
+            FillSceneShadowRow(instance, gpuData, shadowEntry, record);
+            bCasterChanged = bCasterChanged || bWasCaster != record.bCaster;
+            NoteShadowRecord(position, record, m_SceneMeshShadowChanged[entry.MeshIndex] != 0u);
+        }
+        // ページの常駐が変わったメッシュを使う、直していない行は、記録はそのままで今の境界を描き直す
+        if (bAnyMeshShadowChanged)
+        {
+            for (size_t row = 0; row < tables.Entries.size(); ++row)
+            {
+                const size_t instanceIndex = tables.Drawables[row].InstanceIndex;
+                if (m_SceneMeshShadowChanged[tables.Entries[row].MeshIndex] != 0u &&
+                    (instanceIndex >= m_SceneTableDirtyMarks.size() || m_SceneTableDirtyMarks[instanceIndex] == 0u))
                 {
-                    PushShadowInvalidation(m_ShadowPreviousRecords[index], ShadowInstanceRecord{});
+                    const ShadowInstanceRecord record = m_ShadowRecords[instanceIndex];
+                    NoteShadowRecord(instanceIndex, record, true);
                 }
             }
-            m_ShadowPreviousInstances.clear();
-            m_ShadowPreviousRecords.clear();
-            m_bShadowRebuildPending = false;
+        }
+        // 投影物かどうかが変わった: 影の判定のワークグループの先頭を数え直す（落とさない行は次の行と同じ値）
+        if (bCasterChanged)
+        {
+            tables.ShadowTotalGroups = 0;
+            tables.ShadowCasterCount = 0;
+            for (size_t row = 0; row < tables.ShadowInstances.size(); ++row)
+            {
+                MegaGeometryShadowInstance &shadowEntry = tables.ShadowInstances[row];
+                shadowEntry.FirstGroup = static_cast<uint32_t>(tables.ShadowTotalGroups);
+                if ((shadowEntry.Flags & MegaGeometryShadowFlagCaster) != 0u)
+                {
+                    tables.ShadowTotalGroups += (static_cast<uint64_t>(tables.Drawables[row].GpuData->ClusterCount) + 63u) / 64u;
+                    ++tables.ShadowCasterCount;
+                }
+            }
+        }
+
+        m_SceneTablesStats.DeltaRows += m_SceneTableDirtyPositions.size();
+        for (const uint32_t position : m_SceneTableDirtyPositions)
+        {
+            m_SceneTableDirtyMarks[position] = 0u;
+        }
+        m_SceneTableDirtyPositions.clear();
+        return true;
+    }
+
+    void MegaGeometryPass::NoteShadowRecord(size_t instanceIndex, const ShadowInstanceRecord &now, bool bMeshChanged)
+    {
+        ShadowInstanceRecord &record = m_ShadowRecords[instanceIndex];
+        if (bMeshChanged || m_ShadowDirtyMarks[instanceIndex] != 0u || record.bCaster != now.bCaster)
+        {
+            PushShadowInvalidation(record, now);
+        }
+        record = now;
+    }
+
+    void MegaGeometryPass::BuildSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables)
+    {
+        {
+            NORVES_PROFILE_SCOPE("MegaGeometryPass.BuildSceneTables");
+            if (!command.MegaGeometry)
+            {
+                tables.Sections.clear();
+                tables.Drawables.clear();
+                tables.Entries.clear();
+                tables.Meshes.clear();
+                tables.MeshOwners.clear();
+                tables.VisibilityRequests.clear();
+                tables.ShadowInstances.clear();
+                tables.ShadowTotalGroups = 0;
+                tables.ShadowCasterCount = 0;
+                tables.TotalGroups = 0;
+                tables.BvhInstanceCount = 0;
+                tables.BvhLevelCapacity.clear();
+                tables.BvhLeafCapacity = 0;
+                m_bSceneTablesValid = false;
+                return;
+            }
+
+            // ----- VSM のキャッシュの無効化の準備 -----
+            // ページの表が変わったときだけ写しを取り、表へ載せるメッシュの常駐の署名を作り直す
+            const bool bResidencyFresh =
+                command.MegaGeometry->CopyPageTableIfChanged(m_ShadowPageTableVersion, m_ShadowPageEntries);
+            ++m_ShadowMeshStamp;
+            // 作り直した後の最初の表は、前に表を作ったときの並びを鍵で引いて全部を比べる。それ以外は、影に効く中身が変わった位置
+            // （NoteShadowPatched）・メッシュの中身が変わったインスタンス・投影物かどうかが変わったインスタンスだけを見る
+            const bool bShadowRebuild = m_bShadowRebuildPending;
+            Container::UnorderedMap<uint64_t, uint32_t> previousShadowPositions;
+            VariableArray<uint8_t> previousShadowSeen;
+            if (bShadowRebuild)
+            {
+                previousShadowPositions.reserve(m_ShadowPreviousInstances.size());
+                for (size_t index = 0; index < m_ShadowPreviousInstances.size(); ++index)
+                {
+                    const MegaMeshInstance &previous = m_ShadowPreviousInstances[index];
+                    const uint64_t objectKey = previous.ObjectId != 0 ? previous.ObjectId : (0x8000000000000000ull | index);
+                    previousShadowPositions.emplace(MixShadowInstanceKey(objectKey, previous.ComponentId),
+                                                    static_cast<uint32_t>(index));
+                }
+                previousShadowSeen.assign(m_ShadowPreviousInstances.size(), 0u);
+                m_ShadowRecords.assign(m_Instances.size(), ShadowInstanceRecord{});
+                m_ShadowDirtyMarks.assign(m_Instances.size(), 0u);
+                m_ShadowDirtyPositions.clear();
+                ++m_ShadowDirtyStats.Rebuilds;
+            }
+            else if (m_ShadowRecords.size() != m_Instances.size() || m_ShadowDirtyMarks.size() != m_Instances.size())
+            {
+                // 並びの数は作り直しでしか変わらない（念のため、足りない位置は投影物でないものとして扱う）
+                m_ShadowRecords.resize(m_Instances.size());
+                m_ShadowDirtyMarks.resize(m_Instances.size(), 0u);
+            }
+            m_ShadowDirtyStats.DirtySlots += m_ShadowDirtyPositions.size();
+            ++m_ShadowDirtyStats.Builds;
+
+            // 並びが変わらなければ、前の表の直したインスタンスの行だけを書き換える。変われば全部を作る
+            if (!bShadowRebuild && PatchSceneTables(command, tables, bResidencyFresh))
+            {
+                ++m_SceneTablesStats.DeltaBuilds;
+            }
+            else
+            {
+                ComposeSceneTables(command, tables, true, m_SceneComposeRecords);
+                m_bSceneTablesValid = &tables == &m_SceneTables;
+                m_SceneTableDirtyMarks.assign(m_Instances.size(), 0u);
+                m_SceneTableDirtyPositions.clear();
+                ++m_SceneTablesStats.FullBuilds;
+
+                // VSM のキャッシュ: 区画・境界・ページの常駐が前に載せたときから変わったメッシュは、使う席を描き直す
+                m_SceneMeshShadowChanged.assign(m_SceneMeshSources.size(), 0u);
+                for (size_t meshIndex = 0; meshIndex < m_SceneMeshSources.size(); ++meshIndex)
+                {
+                    const SceneMeshSource &source = m_SceneMeshSources[meshIndex];
+                    const bool bMeshChanged = UpdateShadowMeshState(source.Handle, *source.GpuData, bResidencyFresh);
+                    m_SceneMeshShadowChanged[meshIndex] = bMeshChanged ? 1u : 0u;
+                    m_ShadowDirtyStats.MeshChanges += bMeshChanged ? 1u : 0u;
+                }
+                for (const size_t instanceIndex : m_SceneInstanceOrder)
+                {
+                    const uint32_t row = m_SceneInstanceRows[instanceIndex];
+                    const bool bMeshChanged =
+                        row != NoSceneRow && m_SceneMeshShadowChanged[tables.Entries[row].MeshIndex] != 0u;
+                    const ShadowInstanceRecord &now = m_SceneComposeRecords[instanceIndex];
+                    if (!bShadowRebuild)
+                    {
+                        NoteShadowRecord(instanceIndex, now, bMeshChanged);
+                        continue;
+                    }
+                    const MegaMeshInstance &instance = m_Instances[instanceIndex];
+                    const uint64_t objectKey =
+                        instance.ObjectId != 0 ? instance.ObjectId : (0x8000000000000000ull | instanceIndex);
+                    const auto found = previousShadowPositions.find(MixShadowInstanceKey(objectKey, instance.ComponentId));
+                    // 前の並びに無かった物は、投影物でなかったものとして比べる
+                    ShadowInstanceRecord before;
+                    bool bSame = !now.bCaster;
+                    if (found != previousShadowPositions.end())
+                    {
+                        const uint32_t previousIndex = found->second;
+                        previousShadowSeen[previousIndex] = 1u;
+                        before = m_ShadowPreviousRecords[previousIndex];
+                        const MegaMeshInstance &previous = m_ShadowPreviousInstances[previousIndex];
+                        bSame = !bMeshChanged && before.bCaster == now.bCaster &&
+                                (!now.bCaster ||
+                                 (before.bHasBounds == now.bHasBounds &&
+                                  std::memcmp(before.Sphere, now.Sphere, sizeof(now.Sphere)) == 0 &&
+                                  previous.Handle.Id == instance.Handle.Id &&
+                                  std::memcmp(previous.WorldMatrix, instance.WorldMatrix, sizeof(instance.WorldMatrix)) == 0));
+                    }
+                    if (!bSame)
+                    {
+                        PushShadowInvalidation(before, now);
+                    }
+                    m_ShadowRecords[instanceIndex] = now;
+                }
+            }
+
+            // ----- VSM のキャッシュの無効化の後始末 -----
+            if (bShadowRebuild)
+            {
+                // 前の並びにあって今の並びに無い投影物は、前の境界を描き直す
+                for (size_t index = 0; index < m_ShadowPreviousRecords.size(); ++index)
+                {
+                    if (index >= previousShadowSeen.size() || previousShadowSeen[index] == 0u)
+                    {
+                        PushShadowInvalidation(m_ShadowPreviousRecords[index], ShadowInstanceRecord{});
+                    }
+                }
+                m_ShadowPreviousInstances.clear();
+                m_ShadowPreviousRecords.clear();
+                m_bShadowRebuildPending = false;
+            }
+            else
+            {
+                for (const uint32_t position : m_ShadowDirtyPositions)
+                {
+                    if (position < m_ShadowDirtyMarks.size())
+                    {
+                        m_ShadowDirtyMarks[position] = 0u;
+                    }
+                }
+            }
+            m_ShadowDirtyPositions.clear();
+            // このフレームに載らなかったメッシュは記録から外す（次に載ったときに変わったものとして扱う）
+            for (auto iterator = m_ShadowMeshes.begin(); iterator != m_ShadowMeshes.end();)
+            {
+                iterator = iterator->second.Stamp != m_ShadowMeshStamp ? m_ShadowMeshes.erase(iterator) : std::next(iterator);
+            }
+            // 120 回ごとに、積んだ無効化の内訳を出す
+            ShadowDirtyStats &stats = m_ShadowDirtyStats;
+            if (!stats.bLoggedOnce || stats.Builds >= ShadowDirtyLogInterval)
+            {
+                NORVES_LOG_INFO("MegaGeometryPass",
+                                "MEGA_SHADOW_DIRTY builds=%u rebuilds=%u dirty_slots=%llu mesh_changes=%llu residency_changes=%llu "
+                                "boxes=%llu invalidate_all=%u instances=%u",
+                                stats.Builds, stats.Rebuilds, static_cast<unsigned long long>(stats.DirtySlots),
+                                static_cast<unsigned long long>(stats.MeshChanges),
+                                static_cast<unsigned long long>(stats.ResidencyChanges), static_cast<unsigned long long>(stats.Boxes),
+                                stats.InvalidateAll, static_cast<uint32_t>(m_Instances.size()));
+                stats = ShadowDirtyStats{};
+                stats.bLoggedOnce = true;
+            }
+        }
+#if NORVES_BUILD_DEVELOPMENT
+        CheckSceneTables(command, tables);
+#endif
+    }
+
+    void MegaGeometryPass::CheckSceneTables(const MegaGeometryPassCommand &command, const SceneTables &tables)
+    {
+        SceneTablesStats &stats = m_SceneTablesStats;
+        if (++stats.SinceCheck < SceneTablesCheckInterval || &tables != &m_SceneTables)
+        {
+            return;
+        }
+        NORVES_PROFILE_SCOPE("MegaGeometryPass.CheckSceneTables");
+        stats.SinceCheck = 0;
+        // 全部を作り直した表（何も変えずに作る）と、今の表・影の記録を行ごとに比べる。記録が決める区間の範囲（Capacity・CommandBase）は
+        // 表の中身ではないので比べない
+        ComposeSceneTables(command, m_SceneTablesCheck, false, m_SceneTablesCheckRecords);
+        const SceneTables &expected = m_SceneTablesCheck;
+        uint32_t mismatchedRows = 0;
+        const char *firstTable = nullptr;
+        size_t firstRow = 0;
+        const auto note = [&](const char *table, size_t row) -> void
+        {
+            if (mismatchedRows++ == 0)
+            {
+                firstTable = table;
+                firstRow = row;
+            }
+        };
+        if (tables.TotalGroups != expected.TotalGroups || tables.ShadowTotalGroups != expected.ShadowTotalGroups ||
+            tables.ShadowCasterCount != expected.ShadowCasterCount || tables.BvhInstanceCount != expected.BvhInstanceCount ||
+            tables.BvhLeafCapacity != expected.BvhLeafCapacity || tables.BvhLevelCapacity.size() != expected.BvhLevelCapacity.size() ||
+            !std::equal(tables.BvhLevelCapacity.begin(), tables.BvhLevelCapacity.end(), expected.BvhLevelCapacity.begin(),
+                        expected.BvhLevelCapacity.end()))
+        {
+            note("Totals", 0);
+        }
+        if (tables.Sections.size() != expected.Sections.size())
+        {
+            note("Sections", tables.Sections.size());
+        }
+        for (size_t row = 0; row < std::min(tables.Sections.size(), expected.Sections.size()); ++row)
+        {
+            if (tables.Sections[row].Representative != expected.Sections[row].Representative ||
+                tables.Sections[row].ClusterTotal != expected.Sections[row].ClusterTotal)
+            {
+                note("Sections", row);
+            }
+        }
+        if (tables.Meshes.size() != expected.Meshes.size() || tables.MeshOwners.size() != expected.MeshOwners.size())
+        {
+            note("Meshes", tables.Meshes.size());
+        }
+        for (size_t row = 0; row < std::min(tables.Meshes.size(), expected.Meshes.size()); ++row)
+        {
+            if (std::memcmp(&tables.Meshes[row], &expected.Meshes[row], sizeof(GPUMegaMesh)) != 0)
+            {
+                note("Meshes", row);
+            }
+        }
+        for (size_t row = 0; row < std::min(tables.MeshOwners.size(), expected.MeshOwners.size()); ++row)
+        {
+            if (tables.MeshOwners[row].get() != expected.MeshOwners[row].get())
+            {
+                note("MeshOwners", row);
+            }
+        }
+        const size_t rowCount = tables.Entries.size();
+        if (rowCount != expected.Entries.size() || tables.Drawables.size() != rowCount ||
+            expected.Drawables.size() != rowCount || tables.VisibilityRequests.size() != rowCount ||
+            expected.VisibilityRequests.size() != rowCount || tables.ShadowInstances.size() != rowCount ||
+            expected.ShadowInstances.size() != rowCount)
+        {
+            note("Rows", rowCount);
         }
         else
         {
-            for (const uint32_t position : m_ShadowDirtyPositions)
+            for (size_t row = 0; row < rowCount; ++row)
             {
-                if (position < m_ShadowDirtyMarks.size())
+                const GPUMegaEntry &entry = tables.Entries[row];
+                const GPUMegaEntry &expectedEntry = expected.Entries[row];
+                const VisibilityRequest &request = tables.VisibilityRequests[row];
+                const VisibilityRequest &expectedRequest = expected.VisibilityRequests[row];
+                if (tables.Drawables[row].InstanceIndex != expected.Drawables[row].InstanceIndex ||
+                    tables.Drawables[row].GpuData != expected.Drawables[row].GpuData)
                 {
-                    m_ShadowDirtyMarks[position] = 0u;
+                    note("Drawables", row);
+                }
+                else if (entry.Slot != expectedEntry.Slot || entry.MeshIndex != expectedEntry.MeshIndex ||
+                         entry.FirstGroup != expectedEntry.FirstGroup || entry.VisibleOffset != expectedEntry.VisibleOffset)
+                {
+                    note("Entries", row);
+                }
+                else if (request.Key != expectedRequest.Key || request.MeshId != expectedRequest.MeshId ||
+                         request.ComponentId != expectedRequest.ComponentId ||
+                         request.ClusterBufferIdentity != expectedRequest.ClusterBufferIdentity ||
+                         request.ClusterBufferOffsetBytes != expectedRequest.ClusterBufferOffsetBytes ||
+                         request.ClusterCount != expectedRequest.ClusterCount || request.TableSlot != expectedRequest.TableSlot ||
+                         request.Offset != expectedRequest.Offset)
+                {
+                    note("VisibilityRequests", row);
+                }
+                else if (std::memcmp(&tables.ShadowInstances[row], &expected.ShadowInstances[row],
+                                     sizeof(MegaGeometryShadowInstance)) != 0)
+                {
+                    note("ShadowInstances", row);
                 }
             }
         }
-        m_ShadowDirtyPositions.clear();
-        // このフレームに載らなかったメッシュは記録から外す（次に載ったときに変わったものとして扱う）
-        for (auto iterator = m_ShadowMeshes.begin(); iterator != m_ShadowMeshes.end();)
+        // 影の記録（VSM の無効化が前と比べる値）も、全部を作ったときと同じであること
+        if (m_ShadowRecords.size() != m_SceneTablesCheckRecords.size())
         {
-            iterator = iterator->second.Stamp != m_ShadowMeshStamp ? m_ShadowMeshes.erase(iterator) : std::next(iterator);
+            note("ShadowRecords", m_ShadowRecords.size());
         }
-        // 120 回ごとに、積んだ無効化の内訳を出す
-        ShadowDirtyStats &stats = m_ShadowDirtyStats;
-        if (!stats.bLoggedOnce || stats.Builds >= ShadowDirtyLogInterval)
+        else
         {
-            NORVES_LOG_INFO("MegaGeometryPass",
-                            "MEGA_SHADOW_DIRTY builds=%u rebuilds=%u dirty_slots=%llu mesh_changes=%llu residency_changes=%llu "
-                            "boxes=%llu invalidate_all=%u instances=%u",
-                            stats.Builds, stats.Rebuilds, static_cast<unsigned long long>(stats.DirtySlots),
-                            static_cast<unsigned long long>(stats.MeshChanges),
-                            static_cast<unsigned long long>(stats.ResidencyChanges), static_cast<unsigned long long>(stats.Boxes),
-                            stats.InvalidateAll, static_cast<uint32_t>(m_Instances.size()));
-            stats = ShadowDirtyStats{};
-            stats.bLoggedOnce = true;
+            for (size_t index = 0; index < m_ShadowRecords.size(); ++index)
+            {
+                const ShadowInstanceRecord &record = m_ShadowRecords[index];
+                const ShadowInstanceRecord &expectedRecord = m_SceneTablesCheckRecords[index];
+                if (record.bCaster != expectedRecord.bCaster || record.bHasBounds != expectedRecord.bHasBounds ||
+                    std::memcmp(record.Sphere, expectedRecord.Sphere, sizeof(record.Sphere)) != 0)
+                {
+                    note("ShadowRecords", index);
+                }
+            }
         }
+
+        // 照合の表がメッシュの区画の持ち主を持ち続けないようにする
+        m_SceneTablesCheck.MeshOwners.clear();
+        ++stats.Checks;
+        if (mismatchedRows > 0)
+        {
+            ++stats.Mismatches;
+            // 食い違った表は使い続けない（次の表は全部を作る）
+            m_bSceneTablesValid = false;
+            NORVES_LOG_ERROR("MegaGeometryPass",
+                             "MEGA_TABLES_MISMATCH table=%s row=%zu rows=%u 差分で直した表が、全部を作り直した表と一致しません",
+                             firstTable, firstRow, mismatchedRows);
+        }
+        NORVES_LOG_INFO("MegaGeometryPass",
+                        "MEGA_TABLES mismatch=%u checks=%u full=%u delta=%u delta_rows=%llu rows=%zu instances=%zu",
+                        stats.Mismatches, stats.Checks, stats.FullBuilds, stats.DeltaBuilds,
+                        static_cast<unsigned long long>(stats.DeltaRows), tables.Entries.size(), m_Instances.size());
+        stats.FullBuilds = 0;
+        stats.DeltaBuilds = 0;
+        stats.DeltaRows = 0;
     }
 
     bool MegaGeometryPass::ShadowMeshState::operator==(const ShadowMeshState &other) const
@@ -1740,6 +2225,7 @@ namespace NorvesLib::Core::Rendering
         // インスタンスの無いフレームが飛行中のフレームの数だけ続けば、どの組もメッシュの区画を持たなくなる
         // 前のフレームの表の持ち主は CPU の一覧で、GPU が読むのは組の持ち主なので、すぐ手放してよい
         m_SceneTables.MeshOwners.clear();
+        m_bSceneTablesValid = false;
         m_FrameSlots.BeginFrame(inFlightIndex, frameSerial);
         m_FrameSlots.ForEachIdleInActiveSlot([](FrameSlot &slot) { slot.MeshRegionOwners.clear(); });
     }
@@ -3054,6 +3540,7 @@ namespace NorvesLib::Core::Rendering
         m_InstanceSourceProxies = nullptr;
         m_bSceneSlotsDirty = true;
         m_bSceneRowsAllDirty = true;
+        m_bSceneTablesValid = false;
     }
 
     void MegaGeometryPass::ClearMegaMeshInstances()
@@ -3066,6 +3553,7 @@ namespace NorvesLib::Core::Rendering
         m_InstanceSourceProxies = nullptr;
         m_bSceneSlotsDirty = true;
         m_bSceneRowsAllDirty = true;
+        m_bSceneTablesValid = false;
     }
 
     namespace
@@ -3440,6 +3928,8 @@ namespace NorvesLib::Core::Rendering
     void MegaGeometryPass::AssignSceneTableSlots()
     {
         m_bSceneSlotsDirty = false;
+        // 席の表の番号が変わるので、次の表は全部を作る
+        m_bSceneTablesValid = false;
         // 行の席（SceneSlot = 席の番号 + 1）をそのまま席の表の番号にする。席を持たないインスタンス（手で足した・行の外の
         // proxy）と、同じ席を持つ 2 つ目以降のインスタンスは、行の席の最大の次から順に割り当てる
         uint32_t slotLimit = 0;
@@ -4642,6 +5132,22 @@ namespace NorvesLib::Core::Rendering
         region.Offset = offset;
         region.LastUsedFrame = 0;
         return offset;
+    }
+
+    uint32_t MegaGeometryPass::PeekVisibilityRegion(uint32_t tableSlot, const VisibilityRequest &request) const
+    {
+        if (tableSlot >= m_VisibilityRegions.size())
+        {
+            return ~0u;
+        }
+        const VisibilityRegion &region = m_VisibilityRegions[tableSlot];
+        if (region.Key != request.Key || region.ComponentId != request.ComponentId || region.MeshId != request.MeshId ||
+            region.ClusterBufferIdentity != request.ClusterBufferIdentity ||
+            region.ClusterBufferOffsetBytes != request.ClusterBufferOffsetBytes || region.ClusterCount != request.ClusterCount)
+        {
+            return ~0u;
+        }
+        return request.ClusterCount == 0 ? 0u : region.Offset;
     }
 
     bool MegaGeometryPass::UpdateVisibilityLayout(RHI::ICommandList *commandList,

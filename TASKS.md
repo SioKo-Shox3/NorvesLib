@@ -857,7 +857,7 @@
 - notes: 2026-10-12 親が足した（SCN-ECS-MEASURE-RT の区間の内訳から）。危険地帯（RenderThread）。
 
 ## SCN-MEGA-FIX-SCENE-TABLES-DELTA: MegaGeometry の表を毎フレーム全量で作り直さず、変わった席だけ直す
-- status: todo
+- status: done
 - done-when: `MegaGeometryPass::BuildSceneTables`（`MegaGeometryPass.cpp` 1196 行付近）は毎フレーム全インスタンスを走査し、表（Sections・Drawables・Entries・Meshes・VisibilityRequests・ShadowInstances）を作り直す（mega-stress 5万個 close の静止で median 7.2 ms。RenderThread の記録の道の 6 割。SCN-ECS-MEASURE-RT）。表を席ごとに持ち続け、GPU Scene の変わった席（追加・削除・メッシュの準備完了・変換・影の設定）だけで直す。並びが変わる（席の追加・削除・メッシュの常駐）ときだけ作り直してよい。開発ビルドで、差分で直した表と全量で作り直した表を一定の間隔で比べる検査を足す（`MEGA_TABLES mismatch=0`）。合格: mega-stress 5万個 close の静止で `MegaGeometryPass.BuildSceneTables` の median ≤ 0.5 ms、1% 移動で ≤ 1.0 ms、両方の撮影のログで `MEGA_TABLES mismatch=0`、起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-SCENE-TABLES-DELTA/static`
