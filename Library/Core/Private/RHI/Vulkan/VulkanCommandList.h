@@ -559,6 +559,7 @@ namespace NorvesLib::RHI::Vulkan
         void TextureBarrier(TexturePtr texture, ResourceState beforeState, ResourceState afterState,
                             uint32_t mipLevel = 0, uint32_t arrayIndex = 0, uint32_t mipCount = 0, uint32_t arrayCount = 0) override;
         void TextureBarrierExplicit(TexturePtr texture, const ExplicitTextureBarrierDesc &desc) override;
+        void GlobalMemoryBarrier() override;
         TextureLayout GetTextureLayout(const ITexture *texture) const override;
         void CommitTextureLayout(ITexture *texture, TextureLayout layout) override;
         void SetSharedTextureLayoutWrites(bool bEnabled) override;

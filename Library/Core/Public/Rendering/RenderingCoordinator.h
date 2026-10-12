@@ -582,10 +582,12 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::IPipeline> m_BlitPipeline;
         Container::TSharedPtr<RHI::IShader> m_BlitVertexShader;
         Container::TSharedPtr<RHI::IShader> m_BlitFragmentShader;
-        Container::TSharedPtr<RHI::IDescriptorSet> m_BlitDescriptorSet;
+        // Blit と表示の合成の記述子は毎フレーム束ね直すので、飛行中のスロットごとに 1 組持ち、ViewRenderContext::FrameIndex で引く
+        // （前のフレームの GPU が読む組を書き換えない）
+        Container::VariableArray<Container::TSharedPtr<RHI::IDescriptorSet>> m_BlitDescriptorSets;
         Container::TSharedPtr<RHI::ISampler> m_BlitSampler;
         Container::TSharedPtr<RHI::IShader> m_CompositeAlphaOverFragmentShader;
-        Container::TSharedPtr<RHI::IDescriptorSet> m_CompositeAlphaOverDescriptorSet;
+        Container::VariableArray<Container::TSharedPtr<RHI::IDescriptorSet>> m_CompositeAlphaOverDescriptorSets;
 
         // 深度バッファ（スワップチェーン用、将来的にForwardPass等で使用）
         Container::TSharedPtr<RHI::ITexture> m_DepthTexture;

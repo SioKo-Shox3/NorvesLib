@@ -3170,3 +3170,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-AUDIT-2.txt`: `^## SCN-ECS-FIF-(?!AUDIT|SWITCH)` の見出しが TASKS.md にある、EXIT=0（足した項目の見出し 14 件を同じファイルに並べた）。
 - Next: SCN-ECS-FIF-FRAME-ORDER。
 - Notes: 描画先が交互に替わることで framebuffer などを毎フレーム作り直す費用は、壊れはしない（DEFERRED-DESTROY の後）が CPU の時間を食いうる。FIF-SWITCH で `RHI.DeferredDestroy` の数を見て、毎フレーム増えるならパスの作り直しを描画先ごとのキャッシュにする項目を足す。
+
+### SCN-ECS-FIF-FRAME-ORDER（2026-10-12、反復 45・run 20261012-030203）
+
+- `ICommandList::GlobalMemoryBarrier` を足した（既定は何もしない。Vulkan は `VkMemoryBarrier` 1 本、src/dst とも ALL_COMMANDS、MEMORY_WRITE → MEMORY_READ|MEMORY_WRITE、render pass の中では例外）。`RenderingCoordinator` が仕事の番号 0 番（`m_CommandList`）の `BeginRecording` の直後、タイルのコピー（`RecordTileUploads`）と TLAS の Update（`BuildAccelerationStructures`）の記録より前に 1 回張る。
+- Blit の記述子を `m_BlitDescriptorSets`、表示の合成の記述子を `m_CompositeAlphaOverDescriptorSets`（どちらも飛行中のスロットの数 = `GetMaxFramesInFlight()` 組）にし、フレームの `frameIndex`（`ViewRenderContext::FrameIndex` と同じ値）で引く。PresentationComposer・PresentationPass・予備の Blit・CompositePass はこのフレームの組だけを束ね直す。スワップチェーンの作り直しでは全組の encode の定数を束ね直す。
+- TLAS のキャッシュの「スキップ」のコメントを、パケットのスロットは GPU の完了を保証せず、順序はフレームの頭のバリアで守る形に書き直した（条件は足していない）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-FRAME-ORDER-1.txt`: RelWithDebInfo の Game のビルド EXIT=0。
+  - `verify-SCN-ECS-FIF-FRAME-ORDER-2.txt`: Debug の起動画面の撮影 result=pass、`metrics.json` の `vulkan_validation` は error_count=0・warning_count=0・vuid_count=0。
+  - `verify-SCN-ECS-FIF-FRAME-ORDER-3.txt`: RelWithDebInfo の決定論の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=9E-06・within_limits=True、result=pass、EXIT=0。
+- Next: SCN-ECS-FIF-IMGUI。
+- Notes: メンバの改名に合わせて `Test/Core/Rendering/BoardComponentRoutingTest.cpp` の 1 行（合成の記述子が作られていないことの assert）を `.empty()` に追従させた（paths の外だが改名の機械的な追従）。このテストはビルドが通ることだけ確かめた（RelWithDebInfo、EXIT=0。実行はしていない）。

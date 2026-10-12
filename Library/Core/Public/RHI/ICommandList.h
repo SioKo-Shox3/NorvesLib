@@ -676,6 +676,17 @@ namespace NorvesLib::RHI
                                     uint32_t mipLevel = 0, uint32_t arrayIndex = 0, uint32_t mipCount = 0, uint32_t arrayCount = 0) = 0;
 
         /**
+         * @brief 全体のメモリバリアを張る（全ステージの全書き込み → 全ステージの読み書き）
+         *
+         * 同じキューで提出の順に前にある全コマンドの書き込みを、このバリアより後の全コマンドが待つ。
+         * 資源を名指しせず layout も変えない。render pass の外で記録する。
+         * 同期を持たないバックエンドは何もしない。
+         */
+        virtual void GlobalMemoryBarrier()
+        {
+        }
+
+        /**
          * @brief old/new の layout を明示してテクスチャのバリアを張る
          *
          * 共有の layout を読まず、書き換えもしない（最終の layout は記録の後に CommitTextureLayout で書き戻す）。

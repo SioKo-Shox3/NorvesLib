@@ -745,6 +745,18 @@ namespace NorvesLib::Core::Rendering
             return frameIndex;
         }
 
+        // 飛行中のスロットごとの記述子の組から、このフレームの組を引く
+        RHI::DescriptorSetPtr SelectFrameDescriptorSet(const Container::VariableArray<RHI::DescriptorSetPtr>& sets,
+                                                       uint32_t frameIndex)
+        {
+            if (sets.empty())
+            {
+                return nullptr;
+            }
+            assert(frameIndex < sets.size());
+            return sets[frameIndex % sets.size()];
+        }
+
         RHI::BufferPtr CreateAddressableMeshBuffer(RHI::IDevice& device,
                                                    const RHI::BufferPtr& source,
                                                    RHI::ResourceUsage usage,
@@ -1726,7 +1738,9 @@ namespace NorvesLib::Core::Rendering
         m_TopLevelUpdateStats.LastInstances = instanceCount;
 
         // この slot で前回記録した入力（集合と並び・変換・マスク・BLAS）と全部一致すれば、slot の TLAS はすでにこの内容なので
-        // Update を記録しない（slot の前回の GPU の仕事は、この slot のパケットを描く前に終わっている）
+        // Update を記録しない。パケットのスロットは GPU の完了を保証しない（RenderThread は提出の直後にパケットを Empty へ戻し、
+        // 同じスロットを続けて描くことがある）。前の利用の GPU の読み書きとの順序はフレームの頭の全体のバリアで守り、
+        // インスタンスの表と scratch は呼び出しごとの lease
         if (cachedTopLevel.Structure && SameTopLevelInstances(cachedTopLevel.Instances, tlasInstances))
         {
             ++m_TopLevelUpdateStats.Skipped;
@@ -2249,15 +2263,22 @@ namespace NorvesLib::Core::Rendering
             encodeBinding.stages = RHI::ShaderStage::Pixel;
             blitDsDesc.bindings.push_back(encodeBinding);
 
-            m_BlitDescriptorSet = m_Device->CreateDescriptorSet(blitDsDesc);
-            if (!m_BlitDescriptorSet)
+            // 毎フレーム束ね直すので、飛行中のスロットごとに 1 組作る
+            const uint32_t blitDescriptorSetCount = std::max<uint32_t>(swapChain->GetMaxFramesInFlight(), 1u);
+            m_BlitDescriptorSets.clear();
+            for (uint32_t slot = 0; slot < blitDescriptorSetCount; ++slot)
             {
-                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create Blit descriptor set");
-                return false;
-            }
+                RHI::DescriptorSetPtr blitDescriptorSet = m_Device->CreateDescriptorSet(blitDsDesc);
+                if (!blitDescriptorSet)
+                {
+                    NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create Blit descriptor set");
+                    return false;
+                }
 
-            // サンプラーを事前バインド（CombinedImageSamplerに必要）
-            m_BlitDescriptorSet->BindSampler(0, m_BlitSampler);
+                // サンプラーを事前バインド（CombinedImageSamplerに必要）
+                blitDescriptorSet->BindSampler(0, m_BlitSampler);
+                m_BlitDescriptorSets.push_back(std::move(blitDescriptorSet));
+            }
 
             RHI::PresentationEncodeParams presentationParams;
             presentationParams.EncodePath =
@@ -2273,10 +2294,13 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
             presentationParamsBuffer->Update(&presentationParams, sizeof(presentationParams));
-            m_BlitDescriptorSet->BindConstantBuffer(1,
-                                                     presentationParamsBuffer,
-                                                     0,
-                                                     sizeof(presentationParams));
+            for (const RHI::DescriptorSetPtr& blitDescriptorSet : m_BlitDescriptorSets)
+            {
+                blitDescriptorSet->BindConstantBuffer(1,
+                                                      presentationParamsBuffer,
+                                                      0,
+                                                      sizeof(presentationParams));
+            }
 
             // Blitパイプライン
             RHI::GraphicsPipelineDesc blitPipelineDesc;
@@ -3887,8 +3911,8 @@ namespace NorvesLib::Core::Rendering
 
         // 3Dメッシュリソースの解放 → Blitリソースの解放
         m_BlitPipeline.reset();
-        m_BlitDescriptorSet.reset();
-        m_CompositeAlphaOverDescriptorSet.reset();
+        m_BlitDescriptorSets.clear();
+        m_CompositeAlphaOverDescriptorSets.clear();
         m_BlitSampler.reset();
         m_CompositeAlphaOverFragmentShader.reset();
         m_BlitFragmentShader.reset();
@@ -3926,7 +3950,7 @@ namespace NorvesLib::Core::Rendering
 
     bool RenderingCoordinator::EnsureCompositeAlphaOverResources()
     {
-        if (m_CompositeAlphaOverFragmentShader && m_CompositeAlphaOverDescriptorSet)
+        if (m_CompositeAlphaOverFragmentShader && !m_CompositeAlphaOverDescriptorSets.empty())
         {
             return true;
         }
@@ -3953,7 +3977,7 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        if (!m_CompositeAlphaOverDescriptorSet)
+        if (m_CompositeAlphaOverDescriptorSets.empty())
         {
             RHI::DescriptorSetDesc compositeDsDesc;
             RHI::DescriptorBinding sceneBinding;
@@ -3968,15 +3992,24 @@ namespace NorvesLib::Core::Rendering
             canvasBinding.stages = RHI::ShaderStage::Pixel;
             compositeDsDesc.bindings.push_back(canvasBinding);
 
-            m_CompositeAlphaOverDescriptorSet = m_Device->CreateDescriptorSet(compositeDsDesc);
-            if (!m_CompositeAlphaOverDescriptorSet)
+            // CompositePass が毎フレーム束ね直して Update するので、Blit と同じく飛行中のスロットごとに 1 組作る
+            const uint32_t compositeDescriptorSetCount =
+                std::max<uint32_t>(static_cast<uint32_t>(m_BlitDescriptorSets.size()), 1u);
+            Container::VariableArray<RHI::DescriptorSetPtr> compositeDescriptorSets;
+            for (uint32_t slot = 0; slot < compositeDescriptorSetCount; ++slot)
             {
-                NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create Composite alpha-over descriptor set");
-                return false;
-            }
+                RHI::DescriptorSetPtr compositeDescriptorSet = m_Device->CreateDescriptorSet(compositeDsDesc);
+                if (!compositeDescriptorSet)
+                {
+                    NORVES_LOG_ERROR("RenderingCoordinator", "Failed to create Composite alpha-over descriptor set");
+                    return false;
+                }
 
-            m_CompositeAlphaOverDescriptorSet->BindSampler(0, m_BlitSampler);
-            m_CompositeAlphaOverDescriptorSet->BindSampler(1, m_BlitSampler);
+                compositeDescriptorSet->BindSampler(0, m_BlitSampler);
+                compositeDescriptorSet->BindSampler(1, m_BlitSampler);
+                compositeDescriptorSets.push_back(std::move(compositeDescriptorSet));
+            }
+            m_CompositeAlphaOverDescriptorSets = std::move(compositeDescriptorSets);
         }
 
         return true;
@@ -5124,6 +5157,10 @@ namespace NorvesLib::Core::Rendering
         frameScopes.Begin("RT.BeginRecording");
         m_CommandList->BeginRecording();
         ScopedJobCommandListsAbort jobCommandListsAbort(m_JobCommandLists);
+        // 仕事の番号 0 番はこのフレームで最初に提出されるので、その頭の全体のバリア 1 本で、同じキューの前の提出の
+        // GPU の書き込み（TAA などの履歴・VSM のページの状態・HZB・TLAS の Update など、GPU だけが書いてフレームを
+        // またいで 1 つで持つ資源）を、このフレームの全コマンドが待つ。以下の記録（タイルのコピー・TLAS の Update を含む）より前に張る
+        m_CommandList->GlobalMemoryBarrier();
         // ステージングのリングに置いたタイル・ミップテイルのデータを、描画のコマンドの先頭でテクスチャの領域へコピーする
         // （GPU を待たない。render pass の外で、他の記録より前）。
         if (m_RenderResources)
@@ -5329,7 +5366,7 @@ namespace NorvesLib::Core::Rendering
         presentationRequest.ClearFramebuffer = m_SwapChainFramebuffers[imageIndex];
         presentationRequest.LoadFramebuffer = m_PresentationLoadFramebuffers[imageIndex];
         presentationRequest.BlitPipeline = m_BlitPipeline;
-        presentationRequest.BlitDescriptorSet = m_BlitDescriptorSet;
+        presentationRequest.BlitDescriptorSet = SelectFrameDescriptorSet(m_BlitDescriptorSets, frameIndex);
         presentationRequest.BlitSampler = m_BlitSampler;
 
         PresentationComposeRequest deferredLegacyRequest = presentationRequest;
@@ -5348,13 +5385,13 @@ namespace NorvesLib::Core::Rendering
         graphPresentationRequest.ClearFramebuffer = m_GraphPresentationClearFramebuffers[imageIndex];
         graphPresentationRequest.LoadFramebuffer = m_GraphPresentationLoadFramebuffers[imageIndex];
         graphPresentationRequest.BlitPipeline = m_BlitPipeline;
-        graphPresentationRequest.BlitDescriptorSet = m_BlitDescriptorSet;
+        graphPresentationRequest.BlitDescriptorSet = presentationRequest.BlitDescriptorSet;
         graphPresentationRequest.BlitSampler = m_BlitSampler;
 
         CompositePassRequest graphCompositeRequest;
         graphCompositeRequest.VertexShader = m_BlitVertexShader;
         graphCompositeRequest.PixelShader = m_CompositeAlphaOverFragmentShader;
-        graphCompositeRequest.DescriptorSet = m_CompositeAlphaOverDescriptorSet;
+        graphCompositeRequest.DescriptorSet = SelectFrameDescriptorSet(m_CompositeAlphaOverDescriptorSets, frameIndex);
         graphCompositeRequest.Sampler = m_BlitSampler;
 
         RenderFrameExecutionRequest executionRequest;
@@ -5486,18 +5523,20 @@ namespace NorvesLib::Core::Rendering
             presentationRequest.ClearRenderPass &&
             presentationRequest.ClearFramebuffer &&
             m_BlitPipeline &&
-            m_BlitDescriptorSet &&
+            presentationRequest.BlitDescriptorSet &&
             m_BlitSampler)
         {
-            m_BlitDescriptorSet->BindTexture(0, finalPresentationTexture);
-            m_BlitDescriptorSet->BindSampler(0, m_BlitSampler);
-            m_BlitDescriptorSet->Update();
+            // このフレームのスロットの組だけを束ね直す（前のフレームの GPU が読む組は触らない）
+            const RHI::DescriptorSetPtr& blitDescriptorSet = presentationRequest.BlitDescriptorSet;
+            blitDescriptorSet->BindTexture(0, finalPresentationTexture);
+            blitDescriptorSet->BindSampler(0, m_BlitSampler);
+            blitDescriptorSet->Update();
             viewContext.EnqueueFullscreenPass(presentationRequest.ClearRenderPass,
                                               presentationRequest.ClearFramebuffer,
                                               viewContext.GetActiveOutputViewport(),
                                               viewContext.GetActiveOutputScissor(),
                                               m_BlitPipeline,
-                                              m_BlitDescriptorSet);
+                                              blitDescriptorSet);
             bPresentationBlitRecorded = true;
         }
         m_PresentationPass.SetDeferBlit(false);
@@ -6360,7 +6399,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        if (m_BlitVertexShader && m_BlitFragmentShader && m_BlitDescriptorSet)
+        if (m_BlitVertexShader && m_BlitFragmentShader && !m_BlitDescriptorSets.empty())
         {
             RHI::DescriptorSetDesc blitDsDesc;
             RHI::DescriptorBinding texBinding;
@@ -6389,10 +6428,13 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
             presentationParamsBuffer->Update(&presentationParams, sizeof(presentationParams));
-            m_BlitDescriptorSet->BindConstantBuffer(1,
-                                                     presentationParamsBuffer,
-                                                     0,
-                                                     sizeof(presentationParams));
+            for (const RHI::DescriptorSetPtr& blitDescriptorSet : m_BlitDescriptorSets)
+            {
+                blitDescriptorSet->BindConstantBuffer(1,
+                                                      presentationParamsBuffer,
+                                                      0,
+                                                      sizeof(presentationParams));
+            }
 
             RHI::GraphicsPipelineDesc blitPipelineDesc;
             blitPipelineDesc.vertexShader = m_BlitVertexShader;

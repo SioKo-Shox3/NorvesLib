@@ -2107,6 +2107,27 @@ namespace NorvesLib::RHI::Vulkan
             0, nullptr);
     }
 
+    void VulkanCommandList::GlobalMemoryBarrier()
+    {
+        if (m_bInRenderPass)
+        {
+            throw std::runtime_error("全体のメモリバリアは render pass の外で張ってください");
+        }
+
+        // 第 1 の範囲は提出の順で前にある全コマンド（前の提出を含む）。layout は変えないので画像のバリアは要らない
+        vk::MemoryBarrier barrier;
+        barrier.srcAccessMask = vk::AccessFlagBits::eMemoryWrite;
+        barrier.dstAccessMask = vk::AccessFlagBits::eMemoryRead | vk::AccessFlagBits::eMemoryWrite;
+
+        m_commandBuffer.pipelineBarrier(
+            vk::PipelineStageFlagBits::eAllCommands,
+            vk::PipelineStageFlagBits::eAllCommands,
+            {},
+            1, &barrier,
+            0, nullptr,
+            0, nullptr);
+    }
+
     void VulkanCommandList::TextureBarrier(TexturePtr texture, ResourceState beforeState, ResourceState afterState,
                                            uint32_t mipLevel, uint32_t arrayIndex, uint32_t mipCount, uint32_t arrayCount)
     {

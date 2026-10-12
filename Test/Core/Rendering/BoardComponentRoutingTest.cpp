@@ -490,7 +490,7 @@ namespace
         assert(!coordinator.IsBoardInstanceBatchingEnabled());
         assert(!firstCanvas->IsBoardInstanceBatchingEnabled());
         assert(!coordinator.m_CompositeAlphaOverFragmentShader);
-        assert(!coordinator.m_CompositeAlphaOverDescriptorSet);
+        assert(coordinator.m_CompositeAlphaOverDescriptorSets.empty());
 
         coordinator.DestroyView(firstCanvas);
         assert(!coordinator.GetCanvasView());
