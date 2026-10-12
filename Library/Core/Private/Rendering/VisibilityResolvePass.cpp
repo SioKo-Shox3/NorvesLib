@@ -498,6 +498,8 @@ namespace NorvesLib::Core::Rendering
 
     bool VisibilityResolve::PrepareMaterialTextures(const Container::VariableArray<VisibilityResolveMaterial>& materials)
     {
+        // 準備段は記録の前の直列の段なので、作成を許可する（前のフレームの区間の記録が止めたままにしない）
+        m_bTextureCreationAllowed = true;
         if (!EnsureMaterialDefaults())
         {
             return false;
@@ -1004,6 +1006,15 @@ namespace NorvesLib::Core::Rendering
         const bool bPreparedForParallelRecord = m_bPreparedForParallelRecord;
         m_bPreparedForParallelRecord = false;
         m_Resolve.SetTextureCreationAllowed(!bPreparedForParallelRecord);
+        // 作成を止めるのはこの記録の間だけ。どの戻り方でも許可へ戻し、次のフレーム（準備段・Serial）へ持ち越さない
+        struct TextureCreationRestore
+        {
+            VisibilityResolve& Resolve;
+            ~TextureCreationRestore()
+            {
+                Resolve.SetTextureCreationAllowed(true);
+            }
+        } textureCreationRestore{m_Resolve};
 
         m_bResolved = false;
         m_bResolvedWithTiles = false;

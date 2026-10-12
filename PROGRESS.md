@@ -2930,3 +2930,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 判定: on の rt の p95（48.42）が off（48.29）を 0.13 ms 上回り、done-when の合格を外れたので既定を off にした（`--render-parallel-record=on` で有効）。差は組ごとの揺れ（off の p95 が 48.3〜53.4）より小さい。Debug の起動画面（on）の検証レイヤーのエラーは 0。
 - 読み: Parallel にした 5 つの記録は合わせて約 0.03〜0.11 ms で、on と off の差は測れない大きさ。rt の内訳は 5万個で Execute 11.4 + Compile 0.6 + 区間外 約 33 ms（GPU 30.4）、バナナで Execute 7.9 + 区間外 約 12 ms（GPU 8.1）。`VulkanSwapChain.h` の `MAX_FRAMES_IN_FLIGHT = 1` で、記録と GPU が重ならずに足し算になっている。記録の道の上位は 5万個の `BuildSceneTables` 7.2 ms（毎フレーム全量の作り直し）とバナナの `RG.Record.LightingPass` 3.6 ms。
 - Next: SCN-ECS-FIX-VISRESOLVE-CONST → SCN-ECS-RT-FRAME-SCOPES → SCN-ECS-FIX-LIGHTING-RECORD → SCN-MEGA-FIX-SCENE-TABLES-DELTA → SCN-ECS-FIF-AUDIT → （足した FIF の項目）→ SCN-ECS-FIF-SWITCH → SCN-ECS-MEASURE-FIF → SCN-ECS-RT-PARALLEL-WIDEN。
+
+### SCN-ECS-FIX-VISRESOLVE-CONST（2026-10-12、反復 36・run 20261012-030203）
+
+- 直し: `VisibilityResolve::PrepareMaterialTextures`（直列の準備段）の頭で作成を許可し、前のフレームの区間の記録が止めたままでも、途中のフレームに現れた未キャッシュの定数（金属度・粗さ・AO）の 1x1 のテクスチャを作る。`VisibilityResolvePass::Execute` は準備段を通ったフレームだけ作成を止め、どの戻り方でも許可へ戻す（止めるのは区間の記録の間だけ）。
+- 試験: CPU の束 `RenderGraphCompileTest` の `RenderGraphTextureUsageContractTest` に `TestVisibilityResolveConstantTexturesMatchBetweenParallelAndSerialRecord` を足した（偽のデバイスで VisibilityResolve を初期化し、1 フレーム目の材質だけ → 2 フレーム目に定数 0.6・0.25・0.4 の材質を足す。並列の順（準備段 → 作成を止めて記録）と 1 本の順（記録の中で作る）で、2 フレーム目の各間接 dispatch が同じ枠に同じ濃さの定数のテクスチャを束ね、足した材質に 153・64・102 の 3 枚が付く）。修正を外すと 2 フレーム目の準備段で落ちることを確かめた。
+- 同じ試験の束の既存の ShadowMap の検査が、ShaderManager が include の展開で原文を読むようになって（2026-09-23）から、空のシェーダーのディレクトリで落ちていた。束のシェーダーのディレクトリを `NORVES_SOURCE_ROOT/Assets/Shaders` にした。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `check-SCN-ECS-FIX-VISRESOLVE-CONST-cpu.txt`: Debug の RenderGraphTextureUsageContractTest（新しい検査を含む 14 件）・RenderGraphParallelPlanTest・RenderGraphParallelRecordTest が Passed。
+  - `verify-SCN-ECS-FIX-VISRESOLVE-CONST-1.txt`: RelWithDebInfo の Game のビルド EXIT=0。
+  - `verify-…-2.txt`（引数なし。SCN-ECS-MEASURE-RT で既定が off になったので off）・`verify-…-3.txt`（off）・`verify-…-4.txt`（`render-parallel-record=on` を足した）: default の決定論比較がどれも pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 5E-06）、EXIT=0。3 本とも default.Game.log の ERROR 0。on は `RENDER_PARALLEL_RECORD enabled=1`・`RENDER_PARALLEL_RECORD_LISTS count=4 frame=1`。on・off の PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
+- SCN-ECS-RT-PASSES の残りの指摘はこれで解け、status を done にした。
+- Next: SCN-ECS-RT-FRAME-SCOPES（反復 35 の Next の並びどおり）。
+- Notes: done-when の「on と off の起動画面の比較」は、既定が off になったため verify の 1 本目（引数なし）が off になる。on は `-GameArgs render-parallel-record=on` で別に撮った（`.harness/runs/startup-capture/SCN-ECS-FIX-VISRESOLVE-CONST-on`）。

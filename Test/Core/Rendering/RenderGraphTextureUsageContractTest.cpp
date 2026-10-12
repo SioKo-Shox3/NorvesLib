@@ -12,6 +12,8 @@
 #include "Rendering/UpscalePass.h"
 #undef private
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/MaterialTileClassifyPass.h"
+#include "Rendering/VisibilityResolvePass.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/IDescriptorSet.h"
@@ -35,6 +37,9 @@ namespace RHI = NorvesLib::RHI;
 
 namespace
 {
+    // ShaderManager は include を展開するためにシェーダーの原文を読む（偽のコンパイラでも実ファイルが要る）
+    constexpr const char* kShaderDirectory = NORVES_SOURCE_ROOT "/Assets/Shaders";
+
     bool HasUsage(RHI::ResourceUsage value, RHI::ResourceUsage flag)
     {
         return static_cast<uint32_t>(value & flag) != 0;
@@ -99,12 +104,24 @@ namespace
                     uint32_t mipLevel = 0,
                     uint32_t arrayIndex = 0) override
         {
-            (void)data;
             (void)rowPitch;
-            (void)slicePitch;
             (void)mipLevel;
             (void)arrayIndex;
+            // 1x1 の既定・定数のテクスチャの中身を比べるため、先頭の 1 texel（RGBA8）を残す
+            if (data && slicePitch >= 4)
+            {
+                std::memcpy(FirstTexel, data, 4);
+                bUpdated = true;
+            }
         }
+
+        const RHI::TextureDesc& GetDesc() const
+        {
+            return m_Desc;
+        }
+
+        uint8_t FirstTexel[4] = {};
+        bool bUpdated = false;
 
     private:
         RHI::TextureDesc m_Desc;
@@ -405,6 +422,7 @@ namespace
 
         void BindTexture(uint32_t binding, RHI::TexturePtr texture) override
         {
+            TexturesByBinding[binding] = texture;
             if (binding == 0)
             {
                 BoundTexture = texture;
@@ -449,6 +467,7 @@ namespace
             ++UpdateCount;
         }
 
+        Container::UnorderedMap<uint32_t, RHI::TexturePtr> TexturesByBinding;
         RHI::TexturePtr BoundTexture;
         RHI::TexturePtr BoundCanvasTexture;
         RHI::SamplerPtr BoundSampler;
@@ -556,7 +575,7 @@ namespace
         RHI::PipelinePtr CreateComputePipeline(const RHI::ComputePipelineDesc& desc) override
         {
             (void)desc;
-            return nullptr;
+            return bCreateComputePipelines ? RHI::MakeShared<FakePipeline>() : nullptr;
         }
 
         RHI::DescriptorSetPtr CreateDescriptorSet(const RHI::DescriptorSetDesc& desc) override
@@ -576,6 +595,8 @@ namespace
         }
 
         uint32_t CreatedFramebufferCount = 0;
+        // 計算パイプラインを作るか（既定は作らない。VisibilityResolve の検査だけが作る）
+        bool bCreateComputePipelines = false;
 
         void WaitIdle() override
         {
@@ -682,9 +703,23 @@ namespace
 
         void SetDescriptorSet(RHI::DescriptorSetPtr descriptorSet, uint32_t slot = 0) override
         {
-            (void)descriptorSet;
             (void)slot;
+            CurrentDescriptorSet = descriptorSet;
         }
+
+        // 間接 dispatch ごとに、その時に束ねていたテクスチャ（binding → テクスチャ）を残す
+        bool DispatchIndirect(RHI::BufferPtr indirectBuffer, uint64_t offset) override
+        {
+            (void)indirectBuffer;
+            (void)offset;
+            const auto* set = static_cast<const FakeDescriptorSet*>(CurrentDescriptorSet.get());
+            IndirectDispatchTextures.push_back(set ? set->TexturesByBinding
+                                                   : Container::UnorderedMap<uint32_t, RHI::TexturePtr>{});
+            return true;
+        }
+
+        RHI::DescriptorSetPtr CurrentDescriptorSet;
+        Container::VariableArray<Container::UnorderedMap<uint32_t, RHI::TexturePtr>> IndirectDispatchTextures;
 
         void DrawIndexed(uint32_t indexCount, uint32_t startIndexLocation = 0, int32_t baseVertexLocation = 0) override
         {
@@ -943,7 +978,7 @@ namespace
     {
         GraphFixture fixture;
         ShaderManager shaderManager;
-        assert(shaderManager.Initialize(&fixture.Device, ""));
+        assert(shaderManager.Initialize(&fixture.Device, kShaderDirectory));
         fixture.Context.ShaderMgr = &shaderManager;
 
         ShadowMapPass pass;
@@ -1265,6 +1300,140 @@ namespace
 
         std::cout << "TestPresentationOverlayFramebufferRingOwnsAndReusesByFrameSlotKey passed\n";
     }
+
+    // VisibilityResolve の材質ごとの形の 1 フレーム分の入力（64x32 の画面、材質ごとに 1 つの間接引数）
+    VisibilityResolveDispatch MakeVisibilityResolveTileDispatch(
+        const Container::VariableArray<VisibilityResolveMaterial>& materials)
+    {
+        VisibilityResolveDispatch dispatch;
+        dispatch.IdTexture = RHI::MakeShared<FakeTexture>("VisBuffer.Id");
+        dispatch.Albedo = RHI::MakeShared<FakeTexture>("GBuffer_Albedo");
+        dispatch.Normal = RHI::MakeShared<FakeTexture>("GBuffer_Normal");
+        dispatch.Material = RHI::MakeShared<FakeTexture>("GBuffer_Material");
+        dispatch.Velocity = RHI::MakeShared<FakeTexture>("GBuffer_Velocity");
+        dispatch.Emissive = RHI::MakeShared<FakeTexture>("GBuffer_Emissive");
+        dispatch.RecordTable = RHI::MakeShared<FakeBuffer>(
+            RHI::BufferDesc(256, RHI::ResourceUsage::StorageBuffer, true, "VisBuffer.RecordTable"));
+        dispatch.RecordTableBytes = 256;
+        dispatch.MaterialTable = RHI::MakeShared<FakeBuffer>(
+            RHI::BufferDesc(256, RHI::ResourceUsage::StorageBuffer, true, "VisBuffer.MaterialTable"));
+        dispatch.MaterialTableBytes = 256;
+        const uint64_t materialCount = static_cast<uint64_t>(materials.size());
+        dispatch.TileArgs = RHI::MakeShared<FakeBuffer>(RHI::BufferDesc(
+            materialCount * MaterialTiles::ARGS_STRIDE_BYTES,
+            RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::IndirectBuffer,
+            false,
+            "MaterialTiles.Args"));
+        dispatch.TileList = RHI::MakeShared<FakeBuffer>(
+            RHI::BufferDesc(1024, RHI::ResourceUsage::StorageBuffer, false, "MaterialTiles.List"));
+        dispatch.TileMaterialCount = static_cast<uint32_t>(materials.size());
+        dispatch.Materials = materials;
+        dispatch.Params.Screen[0] = 64;
+        dispatch.Params.Screen[1] = 32;
+        return dispatch;
+    }
+
+    // 定数の 1x1 のテクスチャ（VisibilityResolveConstantGray1x1）の濃さ。それ以外のテクスチャは -1
+    int ConstantGrayLevel(const RHI::TexturePtr& texture)
+    {
+        const auto* fake = static_cast<const FakeTexture*>(texture.get());
+        if (!fake || !fake->GetDesc().DebugName ||
+            std::strcmp(fake->GetDesc().DebugName, "VisibilityResolveConstantGray1x1") != 0 || !fake->bUpdated)
+        {
+            return -1;
+        }
+        return fake->FirstTexel[0];
+    }
+
+    // 並列の記録（準備段で作って区間の記録の間は作らない）と 1 本の記録（記録の中で作る）で、途中のフレームに現れた
+    // 未キャッシュの定数（金属度・粗さ・AO）の材質に、同じ濃さの定数のテクスチャが同じ枠に束ねられること。
+    // 前のフレームの区間の記録が作成を止めたまま、次のフレームの準備段が作れずに既定へ置き換わる退行を防ぐ
+    void TestVisibilityResolveConstantTexturesMatchBetweenParallelAndSerialRecord()
+    {
+        using BoundTextures = Container::UnorderedMap<uint32_t, RHI::TexturePtr>;
+        VisibilityResolveMaterial first;
+        first.RoughnessConstant = 0.5f;
+        VisibilityResolveMaterial added;
+        added.MetallicConstant = 0.6f;
+        added.RoughnessConstant = 0.25f;
+        added.AOConstant = 0.4f;
+        Container::VariableArray<VisibilityResolveMaterial> firstFrame;
+        firstFrame.push_back(first);
+        Container::VariableArray<VisibilityResolveMaterial> secondFrame = firstFrame;
+        secondFrame.push_back(added);
+
+        // bParallel: 各フレームで準備段 → 作成を止めて記録 → 許可へ戻す（VisibilityResolvePass の Parallel のフレームと同じ順）
+        auto recordTwoFrames = [&](bool bParallel) -> Container::VariableArray<BoundTextures>
+        {
+            FakeDevice device;
+            device.bCreateComputePipelines = true;
+            ShaderManager shaderManager;
+            assert(shaderManager.Initialize(&device, kShaderDirectory));
+            VisibilityResolve resolve;
+            assert(resolve.Initialize(&device, &shaderManager, false, true));
+            assert(resolve.IsTileReady());
+
+            const Container::VariableArray<VisibilityResolveMaterial>* frames[2] = {&firstFrame, &secondFrame};
+            Container::VariableArray<BoundTextures> secondFrameTextures;
+            for (uint32_t frame = 0; frame < 2; ++frame)
+            {
+                const Container::VariableArray<VisibilityResolveMaterial>& materials = *frames[frame];
+                if (bParallel)
+                {
+                    assert(resolve.PrepareMaterialTextures(materials));
+                    resolve.SetTextureCreationAllowed(false);
+                }
+                FakeCommandList commandList;
+                resolve.BeginFrame(frame, frame + 1u);
+                const bool bRecorded = resolve.Record(&commandList, MakeVisibilityResolveTileDispatch(materials));
+                assert(bRecorded);
+                assert(commandList.IndirectDispatchTextures.size() == materials.size());
+                if (frame == 1)
+                {
+                    secondFrameTextures = commandList.IndirectDispatchTextures;
+                }
+            }
+            resolve.Shutdown();
+            shaderManager.Shutdown();
+            return secondFrameTextures;
+        };
+
+        const Container::VariableArray<BoundTextures> parallel = recordTwoFrames(true);
+        const Container::VariableArray<BoundTextures> serial = recordTwoFrames(false);
+        assert(parallel.size() == 2 && serial.size() == 2);
+        for (size_t material = 0; material < parallel.size(); ++material)
+        {
+            assert(parallel[material].size() == serial[material].size());
+            for (const auto& [binding, texture] : serial[material])
+            {
+                const auto found = parallel[material].find(binding);
+                assert(found != parallel[material].end());
+                assert(ConstantGrayLevel(found->second) == ConstantGrayLevel(texture));
+            }
+        }
+
+        // 足した材質の 3 つの定数（0.6・0.25・0.4 → 153・64・102）が、既定（黒・中間灰・白）でなく定数のテクスチャで束ねられる
+        uint32_t constantCount = 0;
+        bool bFound[3] = {};
+        const int expected[3] = {153, 64, 102};
+        for (const auto& [binding, texture] : parallel[1])
+        {
+            (void)binding;
+            const int level = ConstantGrayLevel(texture);
+            if (level < 0)
+            {
+                continue;
+            }
+            ++constantCount;
+            for (uint32_t index = 0; index < 3; ++index)
+            {
+                bFound[index] = bFound[index] || level == expected[index];
+            }
+        }
+        assert(constantCount == 3);
+        assert(bFound[0] && bFound[1] && bFound[2]);
+        std::cout << "TestVisibilityResolveConstantTexturesMatchBetweenParallelAndSerialRecord passed\n";
+    }
 } // namespace
 
 int main()
@@ -1284,6 +1453,7 @@ int main()
     TestCompositeAlphaOverFreshColorIncludesTransferSrc();
     TestCompositePassthroughPresentationKeepsImportedSceneWithoutTransferSrc();
     TestPresentationOverlayFramebufferRingOwnsAndReusesByFrameSlotKey();
+    TestVisibilityResolveConstantTexturesMatchBetweenParallelAndSerialRecord();
 
     std::cout << "RenderGraphTextureUsageContractTest passed\n";
     return 0;

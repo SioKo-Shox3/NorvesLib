@@ -371,6 +371,7 @@ namespace NorvesLib::Core::Rendering
          * @brief 材質の並びが束ねる既定のテクスチャ・サンプラーと定数の 1x1 のテクスチャを先に作る
          *
          * テクスチャの作成・転送は単発のコマンドの提出・待ちとバリアを伴うので、区間ごとの記録の前に直列で呼ぶ。
+         * 呼ぶと作成を許可する（前の区間の記録が SetTextureCreationAllowed(false) にしたままでも、要るものを作る）。
          * @return 全部そろえば true
          */
         bool PrepareMaterialTextures(const Container::VariableArray<VisibilityResolveMaterial>& materials);

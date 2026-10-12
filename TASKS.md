@@ -812,7 +812,7 @@
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RT-PASSES: 監査したパスを並列に記録する
-- status: blocked
+- status: done
 - done-when: MEASURE-CPU の rt の上位から、次の 3 つを満たすと監査したパスに Parallel を宣言する: Execute が記録だけ、自分でバリアを張らない、共有の CPU の状態を持たない（監査の表を PROGRESS に書く。共有のアロケータは区間ごとに分ける）。`--render-parallel-record=off` で 1 本に戻せる。on と off の両方で起動画面の比較が pass する。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PASSES`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -GameArgs render-parallel-record=off -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PASSES-off`
@@ -822,7 +822,7 @@
 
 
 ## SCN-ECS-FIX-VISRESOLVE-CONST: 並列記録のフレームの後でも、未キャッシュの材質の定数のテクスチャを作れるようにする
-- status: todo
+- status: done
 - done-when: `VisibilityResolvePass` の定数のテクスチャ（金属度・粗さ・AO の灰色）の作成を、直列の準備段で許可して要るものを作り、Execute（区間の記録）の間だけ禁止する（今は Parallel のフレームの Execute が `m_bTextureCreationAllowed=false` にした後、準備段が許可し直さないので、次のフレームに現れた未キャッシュの定数が `GetConstantGrayTexture` で nullptr になり、既定の黒・中間灰に置き換わる。off では作れるので on と off で描画が分かれる。`VisibilityResolvePass.cpp` 469・1006・1186 行付近）。未キャッシュの定数を持つ材質を途中のフレームで足したとき、on と off で同じ定数のテクスチャが使われることを、既存の Rendering の CPU の試験の束で確かめる（新しい実行ファイルは足さない）。起動画面の比較が on・off とも pass。通ったら SCN-ECS-RT-PASSES の status を done にし、`blocked/SCN-ECS-RT-PASSES.md` に解消を書き足す（残りの指摘はこの 1 点だけ）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -GameArgs render-parallel-record=on -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-VISRESOLVE-CONST`
