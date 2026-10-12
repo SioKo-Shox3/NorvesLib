@@ -541,6 +541,52 @@ namespace
         uint32_t UpdateCount = 0;
     };
 
+    // 共有の記述子セットのレイアウト。描画のパスは初期化でデバイスから引き、引けなければ初期化に失敗する（本物のデバイスと同じく返す）
+    class FakeDescriptorSetLayout final : public RHI::IDescriptorSetLayout
+    {
+    public:
+        explicit FakeDescriptorSetLayout(const RHI::DescriptorSetDesc& desc)
+            : Desc(desc)
+        {
+        }
+
+        const RHI::DescriptorSetDesc& GetDesc() const override { return Desc; }
+
+        RHI::DescriptorSetDesc Desc;
+    };
+
+    // フレームの持ち主が飛行中のスロットごとに持つ記述子の pool。借りるたびに新しいセットを返し、Reset で全部戻す
+    class FakeFrameDescriptorAllocator final : public RHI::IFrameDescriptorAllocator
+    {
+    public:
+        RHI::DescriptorSetPtr Allocate(const RHI::DescriptorSetLayoutPtr& layout) override
+        {
+            if (!layout)
+            {
+                ++Stats.Failures;
+                return nullptr;
+            }
+            auto descriptorSet = Container::MakeShared<FakeDescriptorSet>();
+            BorrowedSets.push_back(descriptorSet);
+            ++Stats.Allocations;
+            return descriptorSet;
+        }
+
+        void Reset() override
+        {
+            BorrowedSets.clear();
+            Stats = {};
+        }
+
+        void Release() override { Reset(); }
+        RHI::FrameDescriptorStats GetFrameStats() const override { return Stats; }
+        uint32_t GetPoolCount() const override { return 1; }
+        uint64_t GetTotalPoolsAdded() const override { return 1; }
+
+        Container::VariableArray<Container::TSharedPtr<FakeDescriptorSet>> BorrowedSets;
+        RHI::FrameDescriptorStats Stats;
+    };
+
     class FakeCommandList;
 
     class FakeDevice final : public RHI::IDevice
@@ -588,6 +634,15 @@ namespace
             auto descriptorSet = Container::MakeShared<FakeDescriptorSet>();
             CreatedDescriptorSets.push_back(descriptorSet);
             return descriptorSet;
+        }
+        RHI::DescriptorSetLayoutPtr GetOrCreateDescriptorSetLayout(const RHI::DescriptorSetDesc& desc) override
+        {
+            return Container::MakeShared<FakeDescriptorSetLayout>(desc);
+        }
+        RHI::FrameDescriptorAllocatorPtr CreateFrameDescriptorAllocator(
+            const RHI::FrameDescriptorPoolCapacity&) override
+        {
+            return Container::MakeShared<FakeFrameDescriptorAllocator>();
         }
         RHI::ShaderCompilerPtr CreateShaderCompiler() override
         {

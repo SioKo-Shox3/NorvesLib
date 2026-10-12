@@ -3485,3 +3485,14 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `check-SCN-ECS-FIF-LIGHTING-rtgi-test.txt`: Debug の `RTGIDiffuseIndirectVulkanTest`（検証レイヤー有効）EXIT=0、`lighting_execute_borrows_per_viewport=true bound_descriptor_sets_distinct=true borrowed_slices_keep_own_viewport_values=true no_execute_limit=true` ほか RTGI の全項目が true、検証レイヤーの報告 0。
 - Next: TASKS.md の未完の次の項目。
 - Notes: `DynamicUniformAllocator` の持ち主の無い文脈（`DynUBO_Unowned`）も、作った定数のバッファを記録の後に手放すので同じ寿命の問題を持ちうる（この項目の外。GBuffer・Shadow を直接呼ぶ検査は FrameCommand が記述子セット経由でバッファを持つ形なら守られるが、直接記録する経路は確かめていない）。
+
+### SCN-FIX-SKINNED-PATH-TEST（2026-10-13、反復 1・run 20261013-010750）
+
+- 原因: 517bdf0a で `DebugDrawPass::Initialize` が共有の記述子セットのレイアウトを `GetOrCreateDescriptorSetLayout` で引き、引けなければ初期化に失敗するようになった。試験の `FakeDevice` は共有のレイアウトの口（5004cd79 で足された）を持たず既定の nullptr を返すので、`TestCoordinatorPropagatesFramePacketStatsAndSubmissionSerials` で PostProcessStack の初期化が失敗し、`View::Render` がグラフを組む前に戻ってフレーム全体（GBuffer・影を含む）を記録しなくなっていた。c3b2294a 以降は `LightingPass::Initialize` も同じくレイアウトを要るので、DebugDrawPass だけ緩めても通らない。
+- 判断: 期待が古いのではなく、試験の偽デバイスが今のデバイスの約束（遅延描画の経路は共有のレイアウトと飛行中のスロットごとの記述子の pool をデバイスから引く。Vulkan のデバイスは常に返す）を写していなかった。実装の退行ではないので実装は変えず、assert の期待（GBuffer 1・影はカスケード数）もそのまま。
+- 直したこと: `SkinnedRenderPathContractTest.cpp` の `FakeDevice` に `GetOrCreateDescriptorSetLayout`（束縛の形を持つ偽のレイアウトを返す）と `CreateFrameDescriptorAllocator`（借りるたびに新しい偽のセットを返し Reset で戻す偽の pool）を足した。RenderingCoordinator を通す場合はフレームの持ち主から借りる形、通さない場合（`TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer` など）は従来どおり持ち主の無い形で動く。
+- 検証（`.harness/runs/20261013-010750/`）:
+  - `verify-SCN-FIX-SKINNED-PATH-TEST-1.txt`: Debug の `SkinnedRenderPathContractTest` のビルド EXIT=0、error 0。
+  - `verify-SCN-FIX-SKINNED-PATH-TEST-2.txt`: ctest（-V）で `SkinnedRenderPathContractTest passed`（main の最後の出力。1849 行の後ろの `TestCoordinatorDistinguishesRecoverableAndFatalBeginFrameStatuses`・`TestRuntimeCompilerAcceptsSkinnedShaders`・`TestVulkanBeginFrameFaultClassification`・`TestSubmissionSerialExhaustionNeverWrapsOrSubmits` まで走った）、100% tests passed、EXIT=0。
+- Next: TASKS.md の未完の次の項目（SCN-FIX-RENDERGRAPH-COMPILE-TEST など）。
+- Notes: 共有のレイアウトを返さないデバイスでは、デバッグ描画のような任意のポストプロセスの初期化失敗がビュー全体の描画を止める（`View::Render` が PostProcessStack の失敗で戻る）。本番の Vulkan では起きないので直していない。ほかの試験の偽デバイス（`RenderGraphCompileTest` など）が coordinator や View を通すなら、同じ口が要りうる。

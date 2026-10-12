@@ -1011,7 +1011,7 @@
 - paths: Library/Core/Public/Rendering/LightingPass.h, Library/Core/Private/Rendering/LightingPass.cpp, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: SCN-ECS-FIF-AUDIT（反復 43）で足した項目を、2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。照明の VSM の統計の読み戻しは SCN-ECS-FIF-READBACK で共通の口へ移す。Debug の `RTGIDiffuseIndirectVulkanTest` が関係するなら回す。危険地帯（RenderThread・資源の寿命）。 2026-10-12 親: 記録の時間の確かめ（`RG.Record.LightingPass` ≤ 0.5 ms）は準備の途中では測らず、節目の SCN-ECS-MEASURE-FIF へ移した。
 ## SCN-FIX-SKINNED-PATH-TEST: SkinnedRenderPathContractTest を直す（デバッグ描画の移し替えから落ちている）
-- status: todo
+- status: done
 - done-when: Debug の `SkinnedRenderPathContractTest`（1849 行付近 `packet.Stats.SkinnedGBufferRecordedDraws == 1` の assert）は、SCN-ECS-FIF-DEBUGDRAW のコミット 517bdf0a から落ちている（親 517bdf0a~1 では通る。反復 66 の調べ）。517bdf0a の差分を読み、試験の期待が古いのか実装の退行なのかを分けて直す（期待が古いだけなら今の契約に合わせて期待を直し、根拠を PROGRESS に書く。退行なら実装を直す）。assert で止まって走っていなかった後ろの検査も走って pass する。Debug で pass。
 - verify: `cmake --build build --config Debug --target SkinnedRenderPathContractTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^SkinnedRenderPathContractTest$" --no-tests=error --output-on-failure --timeout 180`
