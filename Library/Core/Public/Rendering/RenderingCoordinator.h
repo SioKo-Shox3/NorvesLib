@@ -558,7 +558,7 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<Container::TSharedPtr<RHI::ICommandList>> m_JobCommandLists;
         // Parallel のパスを区間ごとのリストへ記録するか（最初のフレームで NORVES_RENDER_PARALLEL_RECORD から決める）
         bool m_bParallelRecordResolved = false;
-        bool m_bParallelRecordEnabled = true;
+        bool m_bParallelRecordEnabled = false;
         uint32_t m_LastLoggedParallelRecordListCount = 0;
 
         // レンダーパス・フレームバッファ（Screen SwapChain用）

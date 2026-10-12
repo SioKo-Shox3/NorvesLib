@@ -163,8 +163,8 @@ namespace Game
 #if NORVES_BUILD_DEVELOPMENT
         constexpr const TCHAR *kMegaLodErrorPxOption = TEXT("--mega-lod-error-px=");
 #endif
-        // --render-parallel-record=on|off: 監査したパスを区間ごとのリストへ同時に記録するか（既定 on）。
-        // off では全パスを 1 本のリストへ記録する。環境変数 NORVES_RENDER_PARALLEL_RECORD（0 で off）で描画側へ渡す。
+        // --render-parallel-record=on|off: 監査したパスを区間ごとのリストへ同時に記録するか（既定 off）。
+        // off では全パスを 1 本のリストへ記録する。環境変数 NORVES_RENDER_PARALLEL_RECORD（1 で on）で描画側へ渡す。
         constexpr const TCHAR *kRenderParallelRecordOption = TEXT("--render-parallel-record=");
         // --engine-checks=<名前,...>: 開発ビルドの検査（Debug/EngineChecks.h）を名前で有効にする。結果は ENGINE_CHECK の行でログへ出る。
         // --engine-checks-selftest-fail: 配線の確認用の検査 ENGINE_CHECK_SELFTEST を fail で報告させる（落ちる出力の確認用）。

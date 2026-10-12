@@ -830,12 +830,20 @@
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した。SCN-ECS-RT-PASSES の評価の 2 周目の指摘（NEXT_FINDINGS の反復 34）。ToneMapping の LUT の転送を準備段へ移した直しは評価者が確認済み。危険地帯（RenderThread）。
 ## SCN-ECS-MEASURE-RT: 節目の計測: 並列の記録の効果と安全を測る
-- status: todo
+- status: done
 - done-when: バナナ 1万本 overview と mega-stress 5万個で、on と off の rt の median と p95、`RenderGraph.Execute`、GPU、ワーカーの統計（JobSystem.h:133）、`RG.Record.*` の区間ごとの時間と記録したスレッドの数を PROGRESS の表に書く。合格は、on の rt の p95 が off 以下で、Debug の起動画面（on）で検証レイヤーのエラーが 0（Threading を含む）。外れたら off を既定にし、`SCN-ECS-FIX-<名前>` を足す。
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-MEASURE-RT/on --timing --min-frames 300 --require-scope RG.Record.*`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-ECS-MEASURE-RT-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
 - notes: 計測だけ。反復の中で on と off を撮る（`CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000[,render-parallel-record=off] -OutDir .harness/runs/scene-capture/SCN-ECS-MEASURE-RT/<on|off>`）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
+
+## SCN-ECS-FIX-RT-PARALLEL-DEFAULT: 並列の記録の rt の p95 が off 以下であることを揺れ込みで確かめ、on を既定に戻す
+- status: todo
+- done-when: SCN-ECS-FIX-VISRESOLVE-CONST の後に行う。SCN-ECS-MEASURE-RT で mega-stress 5万個 close の rt の p95 が on 48.415 ms > off 48.291 ms（+0.12 ms）で外れたため、既定を off にした（`RenderingCoordinator.cpp` の `ResolveParallelRecordEnabled`。`--render-parallel-record=on` で有効）。同じ設定の撮り直しで off の p95 が 48.3〜53.4 ms と動き、差は揺れより小さい。on の記録の得（Parallel の 5 つの記録は合わせて約 0.03 ms がワーカーへ移るだけ）を揺れより大きくする（例: ワーカーの起こしの費用を測って並びの短い区間は 1 本で記録する、または rt の上位のパスを並列にできる形へ移す）か、on/off を交互に 3 組撮って組ごとの p95 の差（on − off）の中央値が 0 以下であることを示す。どちらも満たせたら既定を on に戻し、PROGRESS の表に 3 組の rt の median・p95 と GPU を書く。起動画面の比較が on・off とも pass。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-RT-PARALLEL-DEFAULT`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -GameArgs render-parallel-record=off -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-RT-PARALLEL-DEFAULT-off`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-ECS-MEASURE-RT が足した（計測は `.harness/runs/scene-capture/SCN-ECS-MEASURE-RT/`）。撮影は `CaptureScene.ps1 -Scene mega-stress -RequireAssets -Views close -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,render-parallel-record=<on|off>`。GPU の p95 が組の中で大きく違う組（外乱）は数えずに撮り直す。危険地帯（RenderThread）。
 
 ## SCN-MEGA-BVH-LEAF-SPLIT: BVH を持たないメッシュに、葉 8 クラスタ以下の階層の BVH を作る（準備）
 - status: todo
