@@ -103,6 +103,29 @@ namespace NorvesLib::Core::Rendering
                                           float& outFade);
 
     /**
+     * @brief 段の切り替えの距離（VirtualShadowMapLevelDistanceThresholds）を、設定・画角・画面の高さが変わったときだけ求め直す
+     *
+     * 求め方は段ごとの二分法で重いので、毎フレーム VSM を読むパラメータを作る呼び出し側が持つ。
+     */
+    class VirtualShadowMapLevelThresholdCache
+    {
+    public:
+        /** @brief VirtualShadowMapLevelDistanceThresholds と同じ結果を outThresholds へ書く（設定が不正なら何も書かず false） */
+        bool Resolve(const VirtualShadowMapClipmapSettings& settings,
+                     float fovYDegrees,
+                     float screenHeightPixels,
+                     float* outThresholds);
+
+    private:
+        VirtualShadowMapClipmapSettings m_Settings;
+        float m_FovYDegrees = 0.0f;
+        float m_ScreenHeightPixels = 0.0f;
+        float m_Thresholds[VirtualShadowMapMaxLevels] = {};
+        bool m_bResult = false;
+        bool m_bValid = false;
+    };
+
+    /**
      * @brief クリップマップとカメラから、VSM を読むパラメータを作る
      *
      * 使えない入力（クリップマップが無効・段の数やページの大きさが資源と合わない・物理ページが 0・画角や画面の高さが不正）なら、
@@ -119,6 +142,7 @@ namespace NorvesLib::Core::Rendering
      * @param fovYDegrees 垂直の画角（度）
      * @param screenHeightPixels 画面の高さ（画素）
      * @param poolPages 物理ページの数
+     * @param thresholdCache 段の切り替えの距離を前の呼び出しから使い回す入れ物（nullptr なら毎回求める）
      */
     bool BuildVirtualShadowMapSampleParams(const VirtualShadowMapClipmap* clipmap,
                                            const float* cameraPosition,
@@ -127,5 +151,6 @@ namespace NorvesLib::Core::Rendering
                                            float fovYDegrees,
                                            float screenHeightPixels,
                                            uint32_t poolPages,
-                                           GPUVsmSampleParams& outParams);
+                                           GPUVsmSampleParams& outParams,
+                                           VirtualShadowMapLevelThresholdCache* thresholdCache = nullptr);
 } // namespace NorvesLib::Core::Rendering

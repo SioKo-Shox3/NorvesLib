@@ -3028,3 +3028,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-RT-FRAME-SCOPES-4.txt`: RelWithDebInfo の Game のビルド EXIT=0（エラー・C の警告なし）。
   - `verify-SCN-ECS-RT-FRAME-SCOPES-5.txt`: 反復 37 の撮影に対する `CHECK_CAPTURE_METRICS result=pass views=close`、EXIT=0（`RT.WaitFrameFence`・`RT.Submit`・`RT.Present` を要求）。
 - Next: SCN-ECS-FIX-LIGHTING-RECORD。
+
+### SCN-ECS-FIX-LIGHTING-RECORD（2026-10-12、反復 39・run 20261012-030203）
+
+- 原因（バナナ 1万本 overview・RelWithDebInfo・300 フレーム。`LightingPass` の Execute の中を区間で切った撮影 `.harness/runs/scene-capture/SCN-ECS-FIX-LIGHTING-RECORD-diag*` のトレースから median）: `RG.Record.LightingPass` の 3.6 ms のうち 3.44 ms が RTGI の準備（`ExecuteRTGI`）。残りは VSM のパラメータ 0.08 ms、他の区間（入力の解決・照明の定数・DDGI・束縛・記述子の更新・描画の積み込み）は合わせて 0.03 ms。RTGI の中は、静止判定の署名 1.77 ms（レイトレーシングの instance 1万本 × 約 210 バイトを 1 バイトずつの FNV-1a で畳み込み、乗算が直列につながる）・instance の表の作成 1.35 ms（毎フレーム 1.1 MB の配列の確保・伸長と解放、頂点・インデックスのバッファの共有の参照を 2 万本複製、並べ替え、`std::isfinite`・`std::round` の呼び出し。RelWithDebInfo は `/Ob1` で inline の付かない関数は展開されない）・表の書き込み 0.13 ms・検証の走査（`IsComplete`・`HasShadowCasters`）0.07 ms・発光の表 0.04 ms。mega-stress（0.42 ms）との差は、バナナが RTGI の instance を 1万本持つこと。VSM の 0.08 ms は段の切り替えの距離（`VirtualShadowMapLevelDistanceThresholds`。段ごとに最大 80 回の二分法）を毎フレーム求め直していたもの。
+- 直し（変わったときだけ行う）:
+  - `TryBuildRTGIInstanceData` を 1 回の走査にまとめた: instance の表の行・BLAS の欠けと影を落とす物体の有無（`IsComplete`・`HasShadowCasters` と同じ条件）・発光の表・静止判定の署名を同じ走査で求める。表はメンバ（`m_RTGIInstances`）にフレームをまたいで持ち、行ごとに 8 バイトずつ比べて変わった行だけ書き換え、表のバッファへは変わったフレーム（とバッファを作り直したとき）だけ書く。スナップショットは CustomIndex の順なので、並んでいないときだけ並べ替える。頂点・インデックスのバッファは続けて同じなら重ねて持たない。有限の判定はビットで見て、走査で呼ぶ補助の関数に inline を付けた。
+  - 静止判定の署名の instance の部分は、4 本の独立した列で 8 バイトずつ畳み込む（各列の 1 歩は全単射なので 1 語の変化は必ず署名を変える）。比べる値（変換を原点の位置と各軸の拡大率にそろえた表の行・材質の BaseColor・texture のハンドル）と、拡大率の 1/1024 の刻みは前と同じ。
+  - `VirtualShadowMapLevelThresholdCache`（`VirtualShadowMapSample.h`）: 段の切り替えの距離を、設定・画角・画面の高さが変わったときだけ求め直す。`BuildVirtualShadowMapSampleParams` の末尾の省略できる引数で渡し、`LightingPass` が持つ（`ShadowProbePass` は従来どおり毎回求める）。
+- 結果: `RG.Record.LightingPass` の median 3.63 → 0.373 ms、p95 5.39 → 0.454 ms（トレースの全 636 件）。rt の median 19.83 → 16.73 ms（SCN-ECS-MEASURE-RT の on との比較）。表の書き込みは静止したバナナの撮影の間 2 回だけ。撮影の平均の輝度は直す前の撮影と同じ 122.379。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIX-LIGHTING-RECORD-1.txt`: RelWithDebInfo の Game のビルド EXIT=0（エラー・C の警告なし）。
+  - `verify-SCN-ECS-FIX-LIGHTING-RECORD-2.txt`: 撮影 `result=pass`、EXIT=0、300 フレーム（GPU median 8.02 ms、rt median 16.73 ms）。`RG.Record.LightingPass=0.373/max=0.626`。overview.Game.log の ERROR 0、`INDIRECT_LIGHTING source=rtgi`（RTGI は有効のまま）。PNG を開いて確認（床・バナナ・影・空が直す前と同じ）。
+  - `verify-SCN-ECS-FIX-LIGHTING-RECORD-3.txt`: `CHECK_CAPTURE_METRICS result=pass views=overview`、EXIT=0（`RG.Record.LightingPass` の median ≤ 0.5）。
+  - `verify-SCN-ECS-FIX-LIGHTING-RECORD-4.txt`: 起動画面 default の決定論比較 pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 1.1E-05・最大差 1、`indirect_lighting=rtgi`）、EXIT=0。default.Game.log の ERROR 0。PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
+  - `check-SCN-ECS-FIX-LIGHTING-RECORD-rtgi-test.txt`: Debug の `RTGIDiffuseIndirectVulkanTest`（静止の年齢の上限・instance や材質や露出の変化で静止が切れること・多ビューポートの組を含む）が Passed。
+- Next: SCN-MEGA-FIX-SCENE-TABLES-DELTA（反復 35 の Next の並びどおり）。
+- Notes: 原因を探すために足した区間（`Lighting.*`）は外した（区間 1 件のトレースへの書き込みが約 50〜90 µs かかり、`RG.Record.LightingPass` に入るため）。mega-stress 5万個 close は撮り直していない（RTGI の instance を持たない構成なので、変わるのは VSM の 0.08 ms の分だけの見込み）。同じ instance 1万本を毎フレーム走査する処理が `RT.BuildAccelerationStructures`（1.17 ms。TLAS の入力の照合）にも残っている。

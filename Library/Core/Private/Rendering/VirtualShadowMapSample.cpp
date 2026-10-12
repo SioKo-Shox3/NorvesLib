@@ -97,6 +97,31 @@ namespace NorvesLib::Core::Rendering
         return count;
     }
 
+    bool VirtualShadowMapLevelThresholdCache::Resolve(const VirtualShadowMapClipmapSettings& settings,
+                                                      float fovYDegrees,
+                                                      float screenHeightPixels,
+                                                      float* outThresholds)
+    {
+        static_assert(sizeof(VirtualShadowMapClipmapSettings) == 8u * sizeof(uint32_t), "設定に詰め物があると比べられない");
+        if (!m_bValid || std::memcmp(&m_Settings, &settings, sizeof(settings)) != 0 || m_FovYDegrees != fovYDegrees ||
+            m_ScreenHeightPixels != screenHeightPixels)
+        {
+            m_Settings = settings;
+            m_FovYDegrees = fovYDegrees;
+            m_ScreenHeightPixels = screenHeightPixels;
+            // 段の数より後ろは書かれないので、呼び出しごとに 0 から始める（毎回求めるときの params と同じ）
+            std::memset(m_Thresholds, 0, sizeof(m_Thresholds));
+            m_bResult = VirtualShadowMapLevelDistanceThresholds(settings, fovYDegrees, screenHeightPixels, m_Thresholds);
+            m_bValid = true;
+        }
+        if (!m_bResult || outThresholds == nullptr)
+        {
+            return false;
+        }
+        std::memcpy(outThresholds, m_Thresholds, sizeof(float) * (VirtualShadowMapMaxLevels - 1u));
+        return true;
+    }
+
     bool BuildVirtualShadowMapSampleParams(const VirtualShadowMapClipmap* clipmap,
                                            const float* cameraPosition,
                                            const float* cameraForward,
@@ -104,7 +129,8 @@ namespace NorvesLib::Core::Rendering
                                            float fovYDegrees,
                                            float screenHeightPixels,
                                            uint32_t poolPages,
-                                           GPUVsmSampleParams& outParams)
+                                           GPUVsmSampleParams& outParams,
+                                           VirtualShadowMapLevelThresholdCache* thresholdCache)
     {
         std::memset(&outParams, 0, sizeof(outParams));
         if (clipmap == nullptr || cameraPosition == nullptr || cameraForward == nullptr || !clipmap->bEnabled || clipmap->LevelCount == 0u ||
@@ -131,7 +157,11 @@ namespace NorvesLib::Core::Rendering
 
         GPUVsmSampleParams params;
         std::memset(&params, 0, sizeof(params));
-        if (!VirtualShadowMapLevelDistanceThresholds(clipmap->Settings, fovYDegrees, screenHeightPixels, params.thresholds))
+        const bool bThresholds =
+            thresholdCache != nullptr
+                ? thresholdCache->Resolve(clipmap->Settings, fovYDegrees, screenHeightPixels, params.thresholds)
+                : VirtualShadowMapLevelDistanceThresholds(clipmap->Settings, fovYDegrees, screenHeightPixels, params.thresholds);
+        if (!bThresholds)
         {
             return false;
         }

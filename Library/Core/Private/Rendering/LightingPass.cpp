@@ -870,125 +870,126 @@ namespace NorvesLib::Core::Rendering
         return std::min(RTGIHistoryMaximumAge + extension, RTGIHistoryStaticMaximumAge);
     }
 
-    static bool IsFiniteNonNegativeRTGI(float value)
+    // 指数部がすべて1（無限大・NaN）でないか。instanceごとに20回引くので、呼び出しにならないようビットで見る。
+    // （RelWithDebInfo は /Ob1 で inline の付いた関数だけを展開するので、instanceの走査で呼ぶ関数には inline を付ける）
+    static inline bool IsFiniteRTGI(float value)
     {
-        return std::isfinite(value) && value >= 0.0f;
+        uint32_t bits = 0u;
+        std::memcpy(&bits, &value, sizeof(bits));
+        return (bits & 0x7F800000u) != 0x7F800000u;
     }
 
-    static bool TryBuildRTGIInstanceData(
-        const RayTracingSceneSnapshot& scene,
-        Container::VariableArray<RTGIInstanceData>& outInstances,
-        Container::VariableArray<RHI::BufferPtr>& outGeometryBuffers)
+    static inline bool IsFiniteNonNegativeRTGI(float value)
     {
-        outInstances.clear();
-        outGeometryBuffers.clear();
-        if (scene.Instances.empty() ||
-            scene.Instances.size() > std::numeric_limits<uint32_t>::max())
-        {
-            return false;
-        }
-
-        for (const RayTracingSceneInstanceSnapshot& snapshot : scene.Instances)
-        {
-            if (!snapshot.AccelerationStructureVertexBuffer ||
-                !snapshot.AccelerationStructureIndexBuffer ||
-                snapshot.VertexStride < sizeof(float) * 3u ||
-                snapshot.VertexCount < 3u || snapshot.IndexCount < 3u ||
-                snapshot.IndexCount % 3u != 0u ||
-                snapshot.Instance.customIndex > RTGI_MAX_INSTANCE_CUSTOM_INDEX)
-            {
-                return false;
-            }
-
-            const uint64_t vertexOffsetBytes = snapshot.VertexBufferOffsetBytes +
-                static_cast<uint64_t>(snapshot.VertexOffset) * snapshot.VertexStride;
-            const uint64_t vertexRangeBytes =
-                static_cast<uint64_t>(snapshot.VertexCount) * snapshot.VertexStride;
-            const uint64_t indexOffsetBytes = snapshot.IndexBufferOffsetBytes +
-                static_cast<uint64_t>(snapshot.IndexOffset) * sizeof(uint32_t);
-            const uint64_t indexRangeBytes =
-                static_cast<uint64_t>(snapshot.IndexCount) * sizeof(uint32_t);
-            const RHI::BufferPtr& vertexBuffer = snapshot.AccelerationStructureVertexBuffer;
-            const RHI::BufferPtr& indexBuffer = snapshot.AccelerationStructureIndexBuffer;
-            if (vertexRangeBytes > std::numeric_limits<uint32_t>::max() ||
-                indexRangeBytes > std::numeric_limits<uint32_t>::max() ||
-                vertexOffsetBytes > vertexBuffer->GetSize() ||
-                vertexRangeBytes > vertexBuffer->GetSize() - vertexOffsetBytes ||
-                indexOffsetBytes > indexBuffer->GetSize() ||
-                indexRangeBytes > indexBuffer->GetSize() - indexOffsetBytes ||
-                vertexBuffer->GetDeviceAddress() == 0u ||
-                indexBuffer->GetDeviceAddress() == 0u ||
-                vertexBuffer->GetDeviceAddress() >
-                    std::numeric_limits<uint64_t>::max() - vertexOffsetBytes ||
-                indexBuffer->GetDeviceAddress() >
-                    std::numeric_limits<uint64_t>::max() - indexOffsetBytes)
-            {
-                return false;
-            }
-
-            RTGIInstanceData instanceData;
-            instanceData.VertexAddress = vertexBuffer->GetDeviceAddress() + vertexOffsetBytes;
-            instanceData.IndexAddress = indexBuffer->GetDeviceAddress() + indexOffsetBytes;
-            // 命中面の反射率はGBuffer・パストレーサーと同じ規則（instance色×アルベドtexture、
-            // 材質のBaseColorは使わない）で作る。RTGIはtextureを引かないので白とみなす。
-            for (uint32_t channel = 0u; channel < 4u; ++channel)
-            {
-                if (!IsFiniteNonNegativeRTGI(snapshot.Material.ObjectColor[channel]))
-                {
-                    return false;
-                }
-                instanceData.BaseColor[channel] = snapshot.Material.ObjectColor[channel];
-            }
-            for (uint32_t channel = 0u; channel < 3u; ++channel)
-            {
-                if (!IsFiniteNonNegativeRTGI(snapshot.Material.EmissiveColor[channel]))
-                {
-                    return false;
-                }
-                instanceData.EmissiveChromaticityAndLuminance[channel] =
-                    snapshot.Material.EmissiveColor[channel];
-            }
-            if (!IsFiniteNonNegativeRTGI(snapshot.Material.EmissiveLuminanceNits))
-            {
-                return false;
-            }
-            instanceData.EmissiveChromaticityAndLuminance[3] =
-                snapshot.Material.EmissiveLuminanceNits;
-            instanceData.VertexStride = snapshot.VertexStride;
-            instanceData.VertexCount = snapshot.VertexCount;
-            instanceData.IndexCount = snapshot.IndexCount;
-            instanceData.CustomIndex = snapshot.Instance.customIndex;
-            for (uint32_t transformIndex = 0u; transformIndex < 12u; ++transformIndex)
-            {
-                if (!std::isfinite(snapshot.Instance.transform[transformIndex]))
-                {
-                    return false;
-                }
-                instanceData.Transform[transformIndex] =
-                    snapshot.Instance.transform[transformIndex];
-            }
-            outInstances.push_back(instanceData);
-            outGeometryBuffers.push_back(vertexBuffer);
-            outGeometryBuffers.push_back(indexBuffer);
-        }
-
-        std::sort(outInstances.begin(), outInstances.end(),
-                  [](const RTGIInstanceData& lhs, const RTGIInstanceData& rhs)
-                  {
-                      return lhs.CustomIndex < rhs.CustomIndex;
-                  });
-        for (size_t index = 1u; index < outInstances.size(); ++index)
-        {
-            if (outInstances[index - 1u].CustomIndex == outInstances[index].CustomIndex)
-            {
-                return false;
-            }
-        }
-        return true;
+        return IsFiniteRTGI(value) && value >= 0.0f;
     }
+
+    // 0以上の長さを1/1024の刻みへ四捨五入する。2^23以上の値は整数しか表せないのでそのまま返す。
+    static inline float QuantizeRTGIScale(float length)
+    {
+        const float scaled = length * 1024.0f;
+        const float rounded = scaled < 8388608.0f
+                                  ? static_cast<float>(static_cast<int32_t>(scaled + 0.5f))
+                                  : scaled;
+        return rounded / 1024.0f;
+    }
+
+    /**
+     * @brief RTGIの静止判定の署名のうちinstanceの部分を、4本の独立した列で8バイトずつ畳み込む
+     *
+     * 1バイトずつのFNV-1aは乗算が直列につながり、instanceが1万を超えると記録の時間の大半を占めるため、
+     * instanceの部分はこの形で求める。各列の1歩（xorと奇数の乗算）は列の値の全単射なので、1語だけの
+     * 変化は必ず署名を変える。
+     */
+    struct RTGISignatureLanes
+    {
+        uint64_t Lanes[4] = {14695981039346656037ull, 0x9E3779B97F4A7C15ull,
+                             0xC2B2AE3D27D4EB4Full, 0x165667B19E3779F9ull};
+
+        template <size_t WordCount>
+        void AddWords(const uint64_t (&words)[WordCount])
+        {
+            for (size_t index = 0u; index < WordCount; ++index)
+            {
+                uint64_t& lane = Lanes[index & 3u];
+                lane = (lane ^ words[index]) * 1099511628211ull;
+            }
+        }
+
+        uint64_t Finish(uint64_t hash) const
+        {
+            return HashRTGIBytes(hash, Lanes, sizeof(Lanes));
+        }
+    };
+
+    /**
+     * @brief 静止判定へ入れるinstance 1つ分の値
+     *
+     * 変換を原点の位置と各軸の拡大率だけにそろえたinstanceの表の行と、命中面の材質のうち表の行に無い値。
+     */
+    struct RTGIInstanceSignatureRecord
+    {
+        RTGIInstanceData Placement;
+        float MaterialBaseColor[4] = {};
+        uint64_t TextureIds[6] = {};
+    };
+    static_assert(sizeof(RTGIInstanceSignatureRecord) == 176u);
+
+    // instanceの表の2行が同じか（8バイトずつ比べる）
+    static inline bool IsSameRTGIInstanceData(const RTGIInstanceData& lhs, const RTGIInstanceData& rhs)
+    {
+        static_assert(sizeof(RTGIInstanceData) % sizeof(uint64_t) == 0u);
+        uint64_t lhsWords[sizeof(RTGIInstanceData) / sizeof(uint64_t)];
+        uint64_t rhsWords[sizeof(RTGIInstanceData) / sizeof(uint64_t)];
+        std::memcpy(lhsWords, &lhs, sizeof(lhsWords));
+        std::memcpy(rhsWords, &rhs, sizeof(rhsWords));
+        uint64_t difference = 0u;
+        for (size_t index = 0u; index < sizeof(lhsWords) / sizeof(uint64_t); ++index)
+        {
+            difference |= lhsWords[index] ^ rhsWords[index];
+        }
+        return difference == 0u;
+    }
+
+    /** @brief RTGIのinstanceの表を作る走査の結果 */
+    struct RTGIInstanceBuildResult
+    {
+        RTGISignatureLanes Signature;
+        uint32_t EmitterTriangleCount = 0u;
+        /** @brief 表の中身が前の内容から変わった（大きさ・並べ替えを含む） */
+        bool bChanged = false;
+        /** @brief 影を落とす物体（影・DDGI・RTGIの光線が当たる物体）がある */
+        bool bHasShadowCaster = false;
+    };
 
     // 発光色×nitsが正のinstanceを、RTGIの1次面と命中点の光源標本の対象にする（命中側の発光の
     // 判定と同じ条件）。
+    static inline bool TryAppendRTGIEmitter(const RTGIInstanceData& instance,
+                                     uint32_t instanceIndex,
+                                     Container::VariableArray<RTGIEmitterEntry>& entries,
+                                     uint64_t& triangleTotal)
+    {
+        const float* emission = instance.EmissiveChromaticityAndLuminance;
+        const bool bEmissive = emission[3] > 0.0f &&
+            (emission[0] > 0.0f || emission[1] > 0.0f || emission[2] > 0.0f);
+        const uint32_t triangleCount = instance.IndexCount / 3u;
+        if (!bEmissive || triangleCount == 0u)
+        {
+            return true;
+        }
+        RTGIEmitterEntry entry;
+        entry.InstanceIndex = instanceIndex;
+        entry.TriangleCount = triangleCount;
+        entry.FirstTriangle = static_cast<uint32_t>(triangleTotal);
+        triangleTotal += triangleCount;
+        if (triangleTotal > std::numeric_limits<uint32_t>::max())
+        {
+            return false;
+        }
+        entries.push_back(entry);
+        return true;
+    }
+
     static bool TryBuildRTGIEmitterTable(
         const Container::VariableArray<RTGIInstanceData>& instances,
         Container::VariableArray<RTGIEmitterEntry>& outEntries,
@@ -999,26 +1000,232 @@ namespace NorvesLib::Core::Rendering
         uint64_t triangleTotal = 0u;
         for (size_t index = 0u; index < instances.size(); ++index)
         {
-            const float* emission = instances[index].EmissiveChromaticityAndLuminance;
-            const bool bEmissive = emission[3] > 0.0f &&
-                (emission[0] > 0.0f || emission[1] > 0.0f || emission[2] > 0.0f);
-            const uint32_t triangleCount = instances[index].IndexCount / 3u;
-            if (!bEmissive || triangleCount == 0u)
-            {
-                continue;
-            }
-            RTGIEmitterEntry entry;
-            entry.InstanceIndex = static_cast<uint32_t>(index);
-            entry.TriangleCount = triangleCount;
-            entry.FirstTriangle = static_cast<uint32_t>(triangleTotal);
-            triangleTotal += triangleCount;
-            if (triangleTotal > std::numeric_limits<uint32_t>::max())
+            if (!TryAppendRTGIEmitter(instances[index], static_cast<uint32_t>(index), outEntries,
+                                      triangleTotal))
             {
                 return false;
             }
-            outEntries.push_back(entry);
         }
         outTriangleCount = static_cast<uint32_t>(triangleTotal);
+        return true;
+    }
+
+    /**
+     * @brief レイトレーシングのinstanceからRTGIのinstanceの表を作り、同じ走査で静止判定の署名・発光の表・
+     *        影を落とす物体の有無を求める
+     *
+     * inOutInstances は前のフレームの表を持ったまま渡し、行ごとに比べて変わった行だけ書き換える
+     * （変わったかどうかを bChanged に返す）。失敗したときは表が途中まで書き換わっている。
+     * 表はCustomIndexの順に並べる（スナップショットは通常その順なので、並んでいないときだけ並べ替える）。
+     * BLASと頂点・インデックスのバッファが欠けたinstanceがあれば失敗する（RayTracingSceneSnapshot::IsCompleteと同じ）。
+     * 頂点・インデックスのバッファは描画が終わるまで生かすために残し、続けて同じバッファなら重ねて持たない
+     * （共有のプールや同じメッシュでは同じバッファが続く）。
+     */
+    static bool TryBuildRTGIInstanceData(
+        const RayTracingSceneSnapshot& scene,
+        Container::VariableArray<RTGIInstanceData>& inOutInstances,
+        Container::VariableArray<RHI::BufferPtr>& outGeometryBuffers,
+        Container::VariableArray<RTGIEmitterEntry>& outEmitters,
+        RTGIInstanceBuildResult& outResult)
+    {
+        outGeometryBuffers.clear();
+        outEmitters.clear();
+        outResult = RTGIInstanceBuildResult{};
+        if (scene.Instances.empty() ||
+            scene.Instances.size() > std::numeric_limits<uint32_t>::max())
+        {
+            return false;
+        }
+        const size_t previousCount = inOutInstances.size();
+        const size_t instanceCount = scene.Instances.size();
+        bool bChanged = previousCount != instanceCount;
+        if (previousCount > instanceCount)
+        {
+            inOutInstances.resize(instanceCount);
+        }
+        else
+        {
+            inOutInstances.reserve(instanceCount);
+        }
+
+        // 同じバッファが続くあいだは、大きさ・アドレスを引き直さない
+        const RHI::IBuffer* lastVertexBuffer = nullptr;
+        const RHI::IBuffer* lastIndexBuffer = nullptr;
+        uint64_t vertexBufferSize = 0u;
+        uint64_t vertexBufferAddress = 0u;
+        uint64_t indexBufferSize = 0u;
+        uint64_t indexBufferAddress = 0u;
+        bool bSorted = true;
+        uint32_t previousCustomIndex = 0u;
+        uint64_t emitterTriangleTotal = 0u;
+
+        for (size_t instanceIndex = 0u; instanceIndex < instanceCount; ++instanceIndex)
+        {
+            const RayTracingSceneInstanceSnapshot& snapshot = scene.Instances[instanceIndex];
+            if (!snapshot.BottomLevel ||
+                !snapshot.AccelerationStructureVertexBuffer ||
+                !snapshot.AccelerationStructureIndexBuffer ||
+                snapshot.VertexStride < sizeof(float) * 3u ||
+                snapshot.VertexCount < 3u || snapshot.IndexCount < 3u ||
+                snapshot.IndexCount % 3u != 0u ||
+                snapshot.Instance.customIndex > RTGI_MAX_INSTANCE_CUSTOM_INDEX)
+            {
+                return false;
+            }
+            if ((snapshot.Instance.mask & RayTracingInstanceMaskShadowCaster) != 0u)
+            {
+                outResult.bHasShadowCaster = true;
+            }
+
+            const RHI::BufferPtr& vertexBuffer = snapshot.AccelerationStructureVertexBuffer;
+            const RHI::BufferPtr& indexBuffer = snapshot.AccelerationStructureIndexBuffer;
+            if (vertexBuffer.get() != lastVertexBuffer)
+            {
+                lastVertexBuffer = vertexBuffer.get();
+                vertexBufferSize = vertexBuffer->GetSize();
+                vertexBufferAddress = vertexBuffer->GetDeviceAddress();
+                outGeometryBuffers.push_back(vertexBuffer);
+            }
+            if (indexBuffer.get() != lastIndexBuffer)
+            {
+                lastIndexBuffer = indexBuffer.get();
+                indexBufferSize = indexBuffer->GetSize();
+                indexBufferAddress = indexBuffer->GetDeviceAddress();
+                outGeometryBuffers.push_back(indexBuffer);
+            }
+
+            const uint64_t vertexOffsetBytes = snapshot.VertexBufferOffsetBytes +
+                static_cast<uint64_t>(snapshot.VertexOffset) * snapshot.VertexStride;
+            const uint64_t vertexRangeBytes =
+                static_cast<uint64_t>(snapshot.VertexCount) * snapshot.VertexStride;
+            const uint64_t indexOffsetBytes = snapshot.IndexBufferOffsetBytes +
+                static_cast<uint64_t>(snapshot.IndexOffset) * sizeof(uint32_t);
+            const uint64_t indexRangeBytes =
+                static_cast<uint64_t>(snapshot.IndexCount) * sizeof(uint32_t);
+            if (vertexRangeBytes > std::numeric_limits<uint32_t>::max() ||
+                indexRangeBytes > std::numeric_limits<uint32_t>::max() ||
+                vertexOffsetBytes > vertexBufferSize ||
+                vertexRangeBytes > vertexBufferSize - vertexOffsetBytes ||
+                indexOffsetBytes > indexBufferSize ||
+                indexRangeBytes > indexBufferSize - indexOffsetBytes ||
+                vertexBufferAddress == 0u ||
+                indexBufferAddress == 0u ||
+                vertexBufferAddress >
+                    std::numeric_limits<uint64_t>::max() - vertexOffsetBytes ||
+                indexBufferAddress >
+                    std::numeric_limits<uint64_t>::max() - indexOffsetBytes)
+            {
+                return false;
+            }
+
+            RTGIInstanceData instanceData;
+            instanceData.VertexAddress = vertexBufferAddress + vertexOffsetBytes;
+            instanceData.IndexAddress = indexBufferAddress + indexOffsetBytes;
+            // 命中面の反射率はGBuffer・パストレーサーと同じ規則（instance色×アルベドtexture、
+            // 材質のBaseColorは使わない）で作る。RTGIはtextureを引かないので白とみなす。
+            const RayTracingHitMaterialSnapshot& material = snapshot.Material;
+            bool bValidValues = true;
+            for (uint32_t channel = 0u; channel < 4u; ++channel)
+            {
+                bValidValues = bValidValues && IsFiniteNonNegativeRTGI(material.ObjectColor[channel]);
+                instanceData.BaseColor[channel] = material.ObjectColor[channel];
+            }
+            for (uint32_t channel = 0u; channel < 3u; ++channel)
+            {
+                bValidValues = bValidValues && IsFiniteNonNegativeRTGI(material.EmissiveColor[channel]);
+                instanceData.EmissiveChromaticityAndLuminance[channel] = material.EmissiveColor[channel];
+            }
+            bValidValues = bValidValues && IsFiniteNonNegativeRTGI(material.EmissiveLuminanceNits);
+            instanceData.EmissiveChromaticityAndLuminance[3] = material.EmissiveLuminanceNits;
+            instanceData.VertexStride = snapshot.VertexStride;
+            instanceData.VertexCount = snapshot.VertexCount;
+            instanceData.IndexCount = snapshot.IndexCount;
+            instanceData.CustomIndex = snapshot.Instance.customIndex;
+            for (uint32_t transformIndex = 0u; transformIndex < 12u; ++transformIndex)
+            {
+                bValidValues = bValidValues && IsFiniteRTGI(snapshot.Instance.transform[transformIndex]);
+                instanceData.Transform[transformIndex] = snapshot.Instance.transform[transformIndex];
+            }
+            if (!bValidValues)
+            {
+                return false;
+            }
+            if (instanceIndex > 0u && instanceData.CustomIndex <= previousCustomIndex)
+            {
+                bSorted = false;
+            }
+            previousCustomIndex = instanceData.CustomIndex;
+
+            if (instanceIndex < previousCount)
+            {
+                RTGIInstanceData& slot = inOutInstances[instanceIndex];
+                if (!IsSameRTGIInstanceData(slot, instanceData))
+                {
+                    slot = instanceData;
+                    bChanged = true;
+                }
+            }
+            else
+            {
+                inOutInstances.push_back(instanceData);
+            }
+            if (bSorted &&
+                !TryAppendRTGIEmitter(instanceData, static_cast<uint32_t>(instanceIndex), outEmitters,
+                                      emitterTriangleTotal))
+            {
+                return false;
+            }
+
+            // 静止判定: 3x4の行優先の変換。各列の長さが拡大率、各行の4番目が原点の位置。拡大率は回転の丸めで
+            // 最下位の桁が揺れるため、1/1024の刻みにそろえて比べる（原点を通る軸の周りの回転は静止として扱う）。
+            RTGIInstanceSignatureRecord record;
+            record.Placement = instanceData;
+            std::memset(record.Placement.Transform, 0, sizeof(record.Placement.Transform));
+            for (uint32_t column = 0u; column < 3u; ++column)
+            {
+                const float x = instanceData.Transform[column];
+                const float y = instanceData.Transform[4u + column];
+                const float z = instanceData.Transform[8u + column];
+                record.Placement.Transform[column] = QuantizeRTGIScale(std::sqrt(x * x + y * y + z * z));
+            }
+            record.Placement.Transform[3] = instanceData.Transform[3];
+            record.Placement.Transform[4] = instanceData.Transform[7];
+            record.Placement.Transform[5] = instanceData.Transform[11];
+            std::memcpy(record.MaterialBaseColor, material.BaseColor, sizeof(record.MaterialBaseColor));
+            record.TextureIds[0] = material.AlbedoTexture.Id;
+            record.TextureIds[1] = material.NormalTexture.Id;
+            record.TextureIds[2] = material.MetallicTexture.Id;
+            record.TextureIds[3] = material.RoughnessTexture.Id;
+            record.TextureIds[4] = material.ORMTexture.Id;
+            record.TextureIds[5] = material.bNormalTwoChannel ? 1ull : 0ull;
+            uint64_t recordWords[sizeof(RTGIInstanceSignatureRecord) / sizeof(uint64_t)];
+            std::memcpy(recordWords, &record, sizeof(recordWords));
+            outResult.Signature.AddWords(recordWords);
+        }
+
+        outResult.EmitterTriangleCount = static_cast<uint32_t>(emitterTriangleTotal);
+        if (!bSorted)
+        {
+            std::sort(inOutInstances.begin(), inOutInstances.end(),
+                      [](const RTGIInstanceData& lhs, const RTGIInstanceData& rhs)
+                      {
+                          return lhs.CustomIndex < rhs.CustomIndex;
+                      });
+            for (size_t index = 1u; index < inOutInstances.size(); ++index)
+            {
+                if (inOutInstances[index - 1u].CustomIndex == inOutInstances[index].CustomIndex)
+                {
+                    return false;
+                }
+            }
+            // 発光の表の番号は並べ替えた後の表の番号なので作り直す
+            if (!TryBuildRTGIEmitterTable(inOutInstances, outEmitters, outResult.EmitterTriangleCount))
+            {
+                return false;
+            }
+            bChanged = true;
+        }
+        outResult.bChanged = bChanged;
         return true;
     }
 
@@ -1986,6 +2193,8 @@ namespace NorvesLib::Core::Rendering
         m_RTGIComputeInstanceDataBuffer.reset();
         m_RTGIComputeEmitterBuffer.reset();
         m_RTGIGeometryBuffers.clear();
+        m_RTGIInstances.clear();
+        m_bRTGIInstancesUploaded = false;
         for (RTGIHistoryTextureSet& history : m_RTGIHistoryTextures)
         {
             history.Clear();
@@ -3248,6 +3457,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
         m_RTGIComputeInstanceDataCapacity = m_RTGIComputeInstanceDataBuffer->GetSize();
+        m_bRTGIInstancesUploaded = false;
         return true;
     }
 
@@ -3578,8 +3788,7 @@ namespace NorvesLib::Core::Rendering
             !context.bRTGIEnabled ||
             !context.bRTGITLASAvailable || !context.RTGICapability.IsUsable() ||
             !context.SnapshotRayTracingScene ||
-            !context.SnapshotRayTracingScene->IsComplete() ||
-            !context.SnapshotRayTracingScene->HasShadowCasters() ||
+            !context.SnapshotRayTracingScene->TopLevel ||
             !albedoTexture || !normalTexture || !materialTexture || !depthTexture ||
             !velocityTexture ||
             !rtgiDiffuseIndirectTexture ||
@@ -3609,20 +3818,26 @@ namespace NorvesLib::Core::Rendering
             return fail();
         }
 
-        Container::VariableArray<RTGIInstanceData> instanceData;
+        // instanceの表は前のフレームの表を書き換えて作る。BLASの欠け（IsComplete）・影を落とす物体の有無
+        // （HasShadowCasters）も同じ走査で調べる
         Container::VariableArray<RHI::BufferPtr> geometryBuffers;
-        if (!TryBuildRTGIInstanceData(*context.SnapshotRayTracingScene,
-                                      instanceData,
-                                      geometryBuffers))
-        {
-            return fail();
-        }
         Container::VariableArray<RTGIEmitterEntry> emitterEntries;
-        uint32_t emitterTriangleCount = 0u;
-        if (!TryBuildRTGIEmitterTable(instanceData, emitterEntries, emitterTriangleCount))
+        RTGIInstanceBuildResult instanceBuild;
+        const bool bInstancesBuilt = TryBuildRTGIInstanceData(*context.SnapshotRayTracingScene,
+                                                              m_RTGIInstances,
+                                                              geometryBuffers,
+                                                              emitterEntries,
+                                                              instanceBuild);
+        if (!bInstancesBuilt || instanceBuild.bChanged)
+        {
+            m_bRTGIInstancesUploaded = false;
+        }
+        if (!bInstancesBuilt || !instanceBuild.bHasShadowCaster)
         {
             return fail();
         }
+        const Container::VariableArray<RTGIInstanceData>& instanceData = m_RTGIInstances;
+        const uint32_t emitterTriangleCount = instanceBuild.EmitterTriangleCount;
         if (!EnsureRTGIComputePipeline(context) ||
             !EnsureRTGIHistoryTextures(width, height))
         {
@@ -3666,6 +3881,7 @@ namespace NorvesLib::Core::Rendering
             }
             m_RTGIComputeInstanceDataBuffer = std::move(instanceDataBuffer);
             m_RTGIComputeInstanceDataCapacity = requiredInstanceDataSize;
+            m_bRTGIInstancesUploaded = false;
             m_RTGIComputeDescriptorSet.reset();
         }
         // 発光instanceがなくても束縛できるよう、最低1行分を確保する。
@@ -3770,46 +3986,8 @@ namespace NorvesLib::Core::Rendering
             context.PhysicalLighting.bIBLEnabled ? context.PhysicalLighting.IBLIntensity : -1.0f;
         staticSignature = HashRTGIBytes(staticSignature, &environmentIntensity,
                                         sizeof(environmentIntensity));
-        for (const RTGIInstanceData& instance : instanceData)
-        {
-            RTGIInstanceData placement = instance;
-            // 3x4の行優先の変換。各列の長さが拡大率、各行の4番目が原点の位置。拡大率は回転の丸めで
-            // 最下位の桁が揺れるため、1/1024の刻みにそろえて比べる。
-            float placementTransform[6] = {};
-            for (uint32_t column = 0u; column < 3u; ++column)
-            {
-                const float x = instance.Transform[column];
-                const float y = instance.Transform[4u + column];
-                const float z = instance.Transform[8u + column];
-                placementTransform[column] =
-                    std::round(std::sqrt(x * x + y * y + z * z) * 1024.0f) / 1024.0f;
-            }
-            placementTransform[3] = instance.Transform[3];
-            placementTransform[4] = instance.Transform[7];
-            placementTransform[5] = instance.Transform[11];
-            std::memset(placement.Transform, 0, sizeof(placement.Transform));
-            std::memcpy(placement.Transform, placementTransform, sizeof(placementTransform));
-            staticSignature = HashRTGIBytes(staticSignature, &placement, sizeof(placement));
-        }
-        for (const RayTracingSceneInstanceSnapshot& instance :
-             context.SnapshotRayTracingScene->Instances)
-        {
-            const RayTracingHitMaterialSnapshot& material = instance.Material;
-            staticSignature = HashRTGIBytes(staticSignature, material.BaseColor,
-                                            sizeof(material.BaseColor));
-            staticSignature = HashRTGIBytes(staticSignature, material.EmissiveColor,
-                                            sizeof(material.EmissiveColor));
-            staticSignature = HashRTGIBytes(staticSignature, &material.EmissiveLuminanceNits,
-                                            sizeof(material.EmissiveLuminanceNits));
-            staticSignature = HashRTGIBytes(staticSignature, material.ObjectColor,
-                                            sizeof(material.ObjectColor));
-            const uint64_t textureIds[6] = {material.AlbedoTexture.Id, material.NormalTexture.Id,
-                                            material.MetallicTexture.Id,
-                                            material.RoughnessTexture.Id,
-                                            material.ORMTexture.Id,
-                                            material.bNormalTwoChannel ? 1ull : 0ull};
-            staticSignature = HashRTGIBytes(staticSignature, textureIds, sizeof(textureIds));
-        }
+        // instance（位置・拡大率・形状・材質の表と、材質の色・textureハンドル）は表を作る走査で畳み込んだ値を使う
+        staticSignature = instanceBuild.Signature.Finish(staticSignature);
         const float rtgiPreExposure = std::isfinite(lightingParams.preExposure) &&
                                               lightingParams.preExposure > 0.0f
                                           ? std::clamp(lightingParams.preExposure, 1.0e-6f, 1.0e6f)
@@ -3927,8 +4105,13 @@ namespace NorvesLib::Core::Rendering
             std::isfinite(historyExposureScale) && historyExposureScale > 0.0f ? historyExposureScale
                                                                                 : 1.0f;
         m_RTGIComputeParametersBuffer->Update(&parameters, sizeof(parameters));
-        m_RTGIComputeInstanceDataBuffer->Update(
-            instanceData.data(), requiredInstanceDataSize);
+        // instanceの表は前のフレームに書いた内容から変わったときだけ書く（バッファを作り直したときも書く）
+        if (!m_bRTGIInstancesUploaded)
+        {
+            m_RTGIComputeInstanceDataBuffer->Update(
+                instanceData.data(), requiredInstanceDataSize);
+            m_bRTGIInstancesUploaded = true;
+        }
         if (emitterDataSize > 0u)
         {
             m_RTGIComputeEmitterBuffer->Update(emitterEntries.data(), emitterDataSize);
@@ -4467,7 +4650,8 @@ namespace NorvesLib::Core::Rendering
                                                                    vsmCamera->FieldOfView,
                                                                    static_cast<float>(depthTexture->GetHeight()),
                                                                    clampedPoolPages,
-                                                                   vsmParams);
+                                                                   vsmParams,
+                                                                   &m_VsmLevelThresholdCache);
             // 点光源の VSM: VirtualShadowMapPass が灯を公開し、ページの表が点光源のスライスまで届くときだけ
             const VirtualShadowMapPointLights& pointVsmLights = context.PhysicalLighting.PointVsmLights;
             const bool bPointVsm =

@@ -8,6 +8,7 @@
 #include "Rendering/RayTracingShadowPass.h"
 #include "Rendering/RTGIContract.h"
 #include "Rendering/SkyAtmosphere.h"
+#include "Rendering/VirtualShadowMapSample.h"
 #include "RHI/RHITypes.h"
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
@@ -18,6 +19,8 @@ using namespace NorvesLib::Core::Container;
 namespace NorvesLib::Core::Rendering
 {
     struct GPULightingParams;
+    /** @brief RTGIのinstanceの表の1行（GPUの配置。定義は LightingPass.cpp） */
+    struct RTGIInstanceData;
 
     /**
      * @brief ライティングパス設定
@@ -389,6 +392,10 @@ namespace NorvesLib::Core::Rendering
         /** @brief RTGIが光源標本する発光instanceの表 */
         RHI::BufferPtr m_RTGIComputeEmitterBuffer;
         Container::VariableArray<RHI::BufferPtr> m_RTGIGeometryBuffers;
+        /** @brief RTGIのinstanceの表。フレームをまたいで持ち、行ごとに比べて変わった行だけ書き換える */
+        Container::VariableArray<RTGIInstanceData> m_RTGIInstances;
+        /** @brief m_RTGIInstances の今の中身をinstanceの表のバッファへ書いた後か */
+        bool m_bRTGIInstancesUploaded = false;
         struct RTGIHistoryTextureSet
         {
             RHI::TexturePtr Radiance;
@@ -558,6 +565,8 @@ namespace NorvesLib::Core::Rendering
         static constexpr uint32_t VsmStatsSlotCount = 16;
         static constexpr uint32_t VsmStatsBytes = 16;
         VsmStatsSlot m_VsmStatsSlots[VsmStatsSlotCount];
+        /** @brief 太陽の VSM の段の切り替えの距離（設定・画角・画面の高さが変わったときだけ求め直す） */
+        VirtualShadowMapLevelThresholdCache m_VsmLevelThresholdCache;
         /** @brief 空きの枠が無いとき・枠を作れないときに束ねる、読まない統計の置き場（シェーダーの数え上げが他の資源へ書かないようにする） */
         RHI::BufferPtr m_VsmStatsSink;
         /** @brief 読み戻した実行の数と、その合計の逃げた標本の数 */
