@@ -17,6 +17,7 @@
 #include "Rendering/RenderedObjectHistory.h"
 #include "Rendering/MegaGeometryMirror.h"
 #include "Rendering/ProxyArrayMirror.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/CompositePass.h"
 #include "Rendering/PresentationPass.h"
 #include "Rendering/RenderGraph/RenderGraph.h"
@@ -637,6 +638,9 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_CompletedRenderFrameSerial = 0;
         uint64_t m_LastCompletedSubmissionSerial = 0;
         void AdvanceCompletedRenderFrameSerial(uint64_t completedSubmissionSerial);
+        // 飛行中のスロットごとのフレームの持ち主（ViewRenderContext::FrameResources に渡す）。
+        // 開始は BeginFrame の成功の後、提出・中止は SubmitJobCommandLists の結果、回収は完了した提出の通し番号で決める
+        FrameResourceOwners m_FrameResourceOwners;
 
         // RenderThread が最後に描いたフレームの物体の変換。描画がゲームのフレームを飛ばしたとき、TAA を選んだ
         // カメラなら、パケットの前の変換（velocity の基準）をそのフレームのものへ付け替える。

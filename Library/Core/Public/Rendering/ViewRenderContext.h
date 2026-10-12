@@ -37,6 +37,7 @@ namespace NorvesLib::Core::Rendering
     class PresentationPass;
     class RenderGraph;
     class IRenderGraphRecordListSource;
+    class FrameResourceOwner;
     struct RenderGraphExecutionResult;
     struct ShadowMapPassSettings;
     struct PointShadowSnapshot;
@@ -1035,6 +1036,14 @@ namespace NorvesLib::Core::Rendering
          */
         uint64_t CompletedRenderFrameSerial = 0;
 
+        /**
+         * @brief このフレームの持ち主（フレームごとに書くデータを借りる先。全ビュー・ビューポート・overlay で同じ）
+         *
+         * 持ち主から借りた物は、飛行中のフレームの番号や提出の通し番号を扱わずに、このフレームの間だけ使える。
+         * 戻す時期（提出の完了・提出しなかったフレームの次の開始）は持ち主が決める。
+         * nullptr は RenderingCoordinator を通さない手組みの文脈。
+         */
+        FrameResourceOwner* FrameResources = nullptr;
         /** @brief FrameUseRing に渡すフレームの通し番号（未設定なら FrameNumber + 1） */
         uint64_t ResolveRenderFrameSerial() const
         {

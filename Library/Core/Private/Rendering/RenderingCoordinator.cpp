@@ -3797,6 +3797,8 @@ namespace NorvesLib::Core::Rendering
         {
             m_Device->WaitIdle();
         }
+        // GPU を待ち終えたので、フレームの持ち主の分を全部戻す
+        m_FrameResourceOwners.Reset();
 
         // デバイス所有参照を解放する前に、レイトレーシングsceneの資源を破棄する
         NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().Shutdown();
@@ -5013,6 +5015,10 @@ namespace NorvesLib::Core::Rendering
         }
         const uint32_t frameIndex = ResolveFrameIndex(*swapChain);
         AdvanceCompletedRenderFrameSerial(swapChain->GetCompletedSubmissionSerial());
+        // フレームの持ち主の開始。完了した提出の分と、提出しなかったフレームの分を先に回収する。
+        // このフレームの全ビュー・ビューポート・overlay がこの持ち主を使う（パスの Execute では位置を戻さない）
+        FrameResourceOwner* const frameResources =
+            m_FrameResourceOwners.BeginFrame(frameIndex, swapChain->GetCompletedSubmissionSerial());
         for (const Container::TSharedPtr<RHI::ICommandList>& jobCommandList : m_JobCommandLists)
         {
             jobCommandList->NotifyGPUTimestampFrameSlotCompleted(
@@ -5050,6 +5056,8 @@ namespace NorvesLib::Core::Rendering
             PublishCompletedGPUTimestampResults();
             m_CommandList->End();
             const RHI::SwapChainEndFrameResult endFrameResult = SubmitJobCommandLists(*swapChain, m_JobCommandLists);
+            // 提出できたら通し番号を持ち主に結び付け、できなければ中止として次の開始で回収する
+            m_FrameResourceOwners.CommitSubmitted(endFrameResult.SubmissionSerial);
             if (m_RenderResources)
             {
                 if (endFrameResult.SubmissionSerial != 0)
@@ -5273,6 +5281,7 @@ namespace NorvesLib::Core::Rendering
         viewContext.FrameNumber = packet->FrameNumber;
         viewContext.RenderFrameSerial = ++m_RenderFrameSerial;
         viewContext.CompletedRenderFrameSerial = m_CompletedRenderFrameSerial;
+        viewContext.FrameResources = frameResources;
         viewContext.ScreenWidth = swapChain->GetWidth();
         viewContext.ScreenHeight = swapChain->GetHeight();
         viewContext.RenderWidth = m_RenderWidth;
@@ -5656,6 +5665,8 @@ namespace NorvesLib::Core::Rendering
         {
             captureAssignment.MarkResolved();
         }
+        // 提出できたら通し番号を持ち主に結び付け（その完了で回収する）、できなければ中止として次の開始で回収する
+        m_FrameResourceOwners.CommitSubmitted(endFrameResult.SubmissionSerial);
         if (m_RenderResources)
         {
             if (endFrameResult.SubmissionSerial != 0)

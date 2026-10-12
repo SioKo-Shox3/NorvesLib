@@ -3266,3 +3266,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-12.txt`: rendering3dtest・mega-bananas・mega-stress の周回 3 周 result=pass、EXIT=0。定期の統計の行はどれも `Pending=0`、終了のログで `Pending=0`（Enqueued=Destroyed=52471）、ERROR 0 行。
 - Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り）。
 - Notes: 記録中の印は「BeginFrame の成功から提出（または EndFrame の失敗）まで」。呼び出し側が BeginFrame の後に EndFrame を呼ばずにフレームを捨てた場合は、次の提出まで印が残る（WaitIdle の後に次の通し番号の分が次の提出の完了まで残るだけで、早く壊す側には倒れない）。競合や状態遷移を再現するテストは書いていない（verify が名指ししていないため）。
+
+### SCN-ECS-FIF-FRAME-OWNER（2026-10-12、反復 52・run 20261012-030203）
+
+- `Rendering/FrameResourceOwner.h`（ヘッダのみ）に、飛行中のスロットごとの「フレームの持ち主」`FrameResourceOwner` と、寿命を決める `FrameResourceOwners` を足した。段は 開始（`BeginFrame`: 完了した提出の分と、中止した・提出も中止もしないまま残った分を先に回収してから、このスロットの持ち主を新しい世代で記録中にする）→ 提出（`CommitSubmitted`: 提出の通し番号を結び付ける。0 は中止と同じ）または 中止（`AbortFrame`: 次の開始で回収）→ 回収（`Retire`: 結び付けた通し番号の完了で戻す。完了の通し番号が前より小さくなったら振り直しとして提出済みを全部戻す）。借りる口は `IFrameResourceAllocator` を持ち主に登録し、回収で `OnFrameResourcesReclaimed` が呼ばれる（中身のリング・記述子はまだ無い）。
+- 世代は開始のたびに全スロットを通して増える。借りた物は `GetGeneration()` を持ち、`ValidateBorrowed` が開発ビルドで記録中のフレームの世代でなければ `FRAME_RESOURCE_STALE` を出して false を返す（最初の 8 回と、その後は 2 の冪の回だけログ）。
+- `RenderingCoordinator` が `m_FrameResourceOwners` を持ち、スワップチェーンの `BeginFrame` の成功の後（`AdvanceCompletedRenderFrameSerial` の直後）に開始し、`ViewRenderContext::FrameResources` に渡す（全ビュー・ビューポート・overlay が同じ文脈を使う。並列の記録の区間は文脈を写すので同じ持ち主を指す）。提出の成功・失敗の分岐（本経路と、framebuffer の添字の範囲外の早期の提出の経路）で `CommitSubmitted` を呼び、`ReleaseInitializedResources` の `WaitIdle` の後に `Reset` する。
+- 検査: `RenderGraphLifetimeTest` の束に `FrameResourceOwnerTest` を足した（同じフレームの 2 回目の Execute が前の分を戻さない、中止と提出も中止もしないまま次の開始が来た分の回収、2 スロットの回収、通し番号の振り直し、世代の拒否）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-FRAME-OWNER-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-FRAME-OWNER-2.txt`: Debug の `RenderGraphLifetimeTest` のビルド EXIT=0。
+  - `verify-SCN-ECS-FIF-FRAME-OWNER-3.txt`: `ctest -R "^FrameResource"` で `FrameResourceOwnerTest` Passed（1/1）、EXIT=0。
+  - `verify-SCN-ECS-FIF-FRAME-OWNER-4.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=9E-06・within_limits=True、result=pass、EXIT=0。`default.Game.log` に `FRAME_RESOURCE_*`（`FRAME_RESOURCE_OWNER_UNRETIRED` を含む）と ERROR は 0 件。
+- Next: SCN-ECS-FIF-UPLOAD-ARENA。
+- Notes: 持ち主はヘッダのみにした（`Library/Core/CMakeLists.txt` が paths の外のため。`FrameUseRing.h` と同じ形）。開始の時点でこのスロットの提出が回収されていなければ（スワップチェーンのフェンスの待ちの後なので本来は起きない）`FRAME_RESOURCE_OWNER_UNRETIRED` の警告を出して回収して進める。`Resize` の `WaitIdle` の後は振り直しの検出に任せ、`Reset` は呼んでいない。

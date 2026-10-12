@@ -935,7 +935,7 @@
 - notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 44）で足した。シーンの出入りで大きな資源をまとめて手放すとき、列に残る分だけメモリが一時に増える（1〜2 フレーム）。周回のログでメモリの台帳が戻ることを確かめる。`VulkanGPUResourceAllocator` を通す確保があれば、解放もこの列に合わせる。危険地帯（RHI/Vulkan・資源の寿命）。
 
 ## SCN-ECS-FIF-FRAME-OWNER: フレームごとのデータの持ち主を作り、寿命の約束（開始・提出・中止・回収）を決める
-- status: todo
+- status: done
 - done-when: パスを書く人が飛行中のフレームの番号・通し番号・`FrameUseRing` を扱わずに済む土台。RenderingCoordinator が飛行中のスロットごとに「フレームの持ち主」を持ち、寿命を 4 つの段で決める: 開始（スワップチェーンの `BeginFrame` が成功した後。全ビュー・ビューポート・overlay が同じ持ち主を使い、パスの Execute の開始では位置を戻さない。同じフレームに同じパスが何回 Execute しても前の分を上書きしない）、提出（提出が成功したときに実際の提出の通し番号を結び付ける。`RenderingCoordinator.cpp` 5661 行付近の成功・中止の分岐）、中止（提出しなかったフレームの分は、GPU が使っていないので次の開始で戻す）、回収（結び付けた提出の完了で戻す。通し番号の振り直し〔同ファイル 3741 行付近〕にも対応）。パスの Execute に渡る文脈からこの持ち主を引ける。借りた物には世代を持たせ、開発ビルドでは借りたフレームより後で使うと `FRAME_RESOURCE_STALE` を出して拒む。この項目では借りる口の中身（リング・記述子）はまだ作らず、持ち主・寿命・世代の検査を既存の試験の束 `RenderGraphLifetimeTest` に `FrameResource*` の名前で足す（新しい実行ファイルは足さない）: 同じフレームの 2 回目の Execute、中止、回収、通し番号の振り直し、世代の拒否。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target RenderGraphLifetimeTest -- /m:1`
