@@ -2,6 +2,7 @@
 
 #include "Container/Containers.h"
 #include "Container/PointerTypes.h"
+#include "RHI/FrameResourceWriteTracker.h"
 
 #include <cassert>
 #include <cstdint>
@@ -56,9 +57,16 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        /** @brief 選んだ枠の次の資源。使い切っていれば既定の構築で足す。BeginFrame を呼ぶ前は枠 0 を使う */
+        /**
+         * @brief 選んだ枠の次の資源。使い切っていれば既定の構築で足す。BeginFrame を呼ぶ前は枠 0 を使う
+         *
+         * 渡した資源は飛行中のフレームの番号で引くので、前のフレームの GPU の仕事と重ならない。開発ビルドでは、
+         * 今のパスの区間の残りで作る資源（Use の資源は Acquire の後に作る）を守られていない上書きの見張りへ
+         * 「守られている」と登録する（RHI::MarkFrameUseProtectedCreation）。
+         */
         Use& Acquire()
         {
+            RHI::MarkFrameUseProtectedCreation();
             Slot& slot = m_Slots[m_ActiveSlot];
             if (slot.Cursor >= slot.Uses.size())
             {

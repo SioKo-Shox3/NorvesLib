@@ -59,6 +59,19 @@ namespace NorvesLib::RHI::Vulkan
             ReleaseHandles();
             throw;
         }
+
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+        // 守られていない上書きの見張りへ登録する（リングやフレームの持ち主が作る資源は「守られている」）
+        if (FrameResourceWriteTracker *tracker = m_device->GetFrameResourceWriteTracker())
+        {
+            tracker->Register(m_writeTrack,
+                              FrameResourceTrackKind::Buffer,
+                              m_desc.DebugName,
+                              m_desc.Size,
+                              1,
+                              IsFrameResourceProtectedCreation());
+        }
+#endif
     }
 
     // デストラクタ
@@ -167,6 +180,13 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("更新範囲がバッファサイズを超えています");
         }
 
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+        if (m_writeTrack.Tracker && size > 0)
+        {
+            m_writeTrack.Tracker->OnBufferWrite(m_writeTrack, offset, size);
+        }
+#endif
+
         // ホスト可視の場合は直接マッピングして更新
         if (m_desc.CPUAccessible)
         {
@@ -206,6 +226,20 @@ namespace NorvesLib::RHI::Vulkan
 
             // ステージングバッファは自動的に解放される（スマートポインタによる管理）
         }
+    }
+
+    // IBufferインターフェース実装: NoteExplicitWrite（Map したポインタへ書いた範囲を見張りへ知らせる）
+    void VulkanBuffer::NoteExplicitWrite(uint64_t offset, uint64_t size)
+    {
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+        if (m_writeTrack.Tracker && size > 0 && offset < m_desc.Size)
+        {
+            m_writeTrack.Tracker->OnBufferWrite(m_writeTrack, offset, size);
+        }
+#else
+        (void)offset;
+        (void)size;
+#endif
     }
 
     bool VulkanBuffer::ShouldEnableDeviceAddress() const

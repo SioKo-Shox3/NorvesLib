@@ -3,6 +3,7 @@
 #include "Rendering/SequentialStatScope.h"
 #include "Rendering/ViewRenderContext.h"
 #include "Rendering/FrameResourceOwner.h"
+#include "RHI/FrameResourceWriteTracker.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/ITexture.h"
@@ -661,6 +662,8 @@ namespace NorvesLib::Core::Rendering
             }
 
             RenderGraphBuilder builder(this, passIndex, context);
+            // 守られていない上書きの見張りが、書き込みを起こしたパスの名前を引く区間
+            RHI::FrameResourceWriteScope writeScope(pass->GetName());
             pass->Declare(builder);
         }
 
@@ -2427,6 +2430,8 @@ namespace NorvesLib::Core::Rendering
                                         ViewRenderContext& context,
                                         float* traceRecordMs)
     {
+        // 守られていない上書きの見張りが、書き込みを起こしたパスの名前を引く区間（並列の記録のワーカーでも同じ）
+        RHI::FrameResourceWriteScope writeScope(m_Passes[passIndex]->GetName());
 #if NORVES_ENABLE_STATS
         // 記録したスレッドの番号で RG.Record.<パス> の区間を残す（Serial でも区間ごとの記録でも同じ）。
         const char* recordScopeName = passIndex < m_PassRecordScopeNames.size()
@@ -2474,7 +2479,9 @@ namespace NorvesLib::Core::Rendering
         // 各パスの作成・転送（単発のコマンドの提出とバリアを伴う）を、記録の前に RenderThread で直列に済ませる。
         for (uint32_t orderIndex = firstOrderIndex; orderIndex < endOrderIndex; ++orderIndex)
         {
-            m_Passes[m_CompiledPassOrder[orderIndex]]->PrepareParallelRecord(resources, context);
+            IRenderGraphPass* const preparePass = m_Passes[m_CompiledPassOrder[orderIndex]];
+            RHI::FrameResourceWriteScope writeScope(preparePass->GetName());
+            preparePass->PrepareParallelRecord(resources, context);
         }
 
         // 同時に記録するパスがサンプルする Texture の layout を、記録の前に直列で書き戻す

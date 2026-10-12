@@ -1,6 +1,7 @@
 ﻿#include "Rendering/DynamicBufferRing.h"
 #include "RHI/IDevice.h"
 #include "RHI/IBuffer.h"
+#include "RHI/FrameResourceWriteTracker.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core::Rendering
@@ -127,6 +128,9 @@ namespace NorvesLib::Core::Rendering
         desc.Usage = m_Usage;
         desc.CPUAccessible = true;
         desc.DebugName = "DynamicBufferRing_Slot";
+        // スロットは飛行中のフレームの番号で引く（呼び出し側の DebugDraw・ImGui）ので、前のフレームの GPU の仕事と重ならない。
+        // 守られていない上書きの見張りへ「守られている」と登録する（同じフレームの中の重なりは引き続き見る）
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         return m_Device->CreateBuffer(desc);
     }
 

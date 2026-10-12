@@ -423,6 +423,10 @@ namespace NorvesLib::RHI::Vulkan
         m_descriptorSet = result.value[0];
 
         CreatePipelineLayout();
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+        // FrameUseRing の Use など、飛行中のスロットで引く仕組みが作るセットは「守られている」
+        RegisterFrameResourceTracking(IsFrameResourceProtectedCreation(), 1);
+#endif
     }
 
     VulkanDescriptorSet::VulkanDescriptorSet(
@@ -438,6 +442,35 @@ namespace NorvesLib::RHI::Vulkan
           m_descriptorSet(descriptorSet)
     {
         // 借りたセットはパイプラインレイアウトを持たない（束縛はパイプラインのレイアウトで行う）
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+        // フレームの持ち主から借りたセットは「守られている」（世代は pool の世代）
+        RegisterFrameResourceTracking(true, borrowEpoch);
+#endif
+    }
+
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+    void VulkanDescriptorSet::RegisterFrameResourceTracking(bool bProtected, uint64_t generation)
+    {
+        if (FrameResourceWriteTracker *tracker = m_device ? m_device->GetFrameResourceWriteTracker() : nullptr)
+        {
+            tracker->Register(m_writeTrack, FrameResourceTrackKind::DescriptorSet, nullptr, 0, generation, bProtected);
+        }
+    }
+#endif
+
+    void VulkanDescriptorSet::NoteFrameResourceBound()
+    {
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+        if (!m_writeTrack.Tracker)
+        {
+            return;
+        }
+        m_writeTrack.Tracker->OnDescriptorBound(m_writeTrack);
+        for (const TrackedBufferReference &reference : m_trackedBufferReferences)
+        {
+            reference.Buffer->NoteFrameResourceReference(reference.Offset, reference.Range);
+        }
+#endif
     }
 
     VulkanDescriptorSet::~VulkanDescriptorSet()
@@ -598,6 +631,12 @@ namespace NorvesLib::RHI::Vulkan
 
         if (!m_borrowState)
         {
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+            if (m_writeTrack.Tracker)
+            {
+                m_writeTrack.Tracker->OnDescriptorWrite(m_writeTrack);
+            }
+#endif
             (void)WriteBindings();
             m_bNeedsUpdate = false;
             return;
@@ -623,6 +662,12 @@ namespace NorvesLib::RHI::Vulkan
             }
             return;
         }
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+        if (m_writeTrack.Tracker)
+        {
+            m_writeTrack.Tracker->OnDescriptorWrite(m_writeTrack);
+        }
+#endif
         const uint32_t writeCount = WriteBindings();
         m_bNeedsUpdate = false;
         m_borrowState->Stats.Writes += writeCount;
@@ -650,6 +695,9 @@ namespace NorvesLib::RHI::Vulkan
         imageInfos.reserve(m_bindings.size() + m_arrayElementBindings.size());
         accelerationStructureInfos.reserve(m_bindings.size());
         accelerationStructureHandles.reserve(m_bindings.size());
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+        m_trackedBufferReferences.clear();
+#endif
 
         for (const auto &[binding, info] : m_bindings)
         {
@@ -675,6 +723,10 @@ namespace NorvesLib::RHI::Vulkan
 
                 bufferInfos.push_back(bufferInfo);
                 writeDesc.pBufferInfo = &bufferInfos.back();
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+                m_trackedBufferReferences.push_back(TrackedBufferReference{
+                    vkBuffer.get(), info.offset, info.range == 0 || info.range == VK_WHOLE_SIZE ? ~0ull : info.range});
+#endif
             }
             else if (info.type == BindingInfo::ResourceType::Texture)
             {

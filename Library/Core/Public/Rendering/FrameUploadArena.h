@@ -6,6 +6,7 @@
 #include "RHI/IBuffer.h"
 #include "RHI/IDevice.h"
 #include "RHI/IGPUResourceAllocator.h"
+#include "RHI/FrameResourceWriteTracker.h"
 #include "Thread/Mutex.h"
 
 #include <algorithm>
@@ -184,6 +185,8 @@ namespace NorvesLib::Core::Rendering
             desc.DebugName = "FrameResource.UploadPage";
             try
             {
+                // ページはフレームの持ち主の回収（提出の完了）の後にだけ先頭へ戻るので「守られている」
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
                 RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
                 if (!buffer)
                 {
@@ -432,6 +435,11 @@ namespace NorvesLib::Core::Rendering
             allocation.Size = size;
             allocation.CPUAddress = page.CPUAddress + offset;
             allocation.Usage = usage;
+            // 借りた範囲は書き込みの借りとして見張りへ知らせる（ページは守られているので、同じフレームの重なりだけを見る）
+            if (page.Buffer)
+            {
+                page.Buffer->NoteExplicitWrite(offset, size);
+            }
             m_Cursor = offset + size;
             ++m_FrameStats.Allocations;
             m_FrameStats.Bytes += size;

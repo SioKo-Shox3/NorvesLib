@@ -3351,3 +3351,41 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-PARALLEL-ALLOC-5.txt`: on の決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=9E-06・within_limits=True、result=pass、EXIT=0。
 - Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り）。
 - Notes: 排他つきの共有にはしていない（区間ごとに口を分けたので `FrameResource.LockWait` は測っていない。領域の排他は口ごとに残し、競らない）。区間の口の記述子の pool は口を作るときに `ConfigureDescriptors` と同じデバイス・容量で作る（pool そのものは最初の借りで作る）。まだ借りる側が無いので、Game では口の貸し借りだけが通り、借りは 0。口ごとの記述子の pool を複数のワーカーから同時に借りる検査（検証レイヤーのスレッドの検査つき）は書いていない（verify が名指ししていないため。GPU の束の `FrameResourceDescriptorVulkanTest` に足すのが候補）。
+
+### SCN-ECS-FIF-REWRITE-GUARD（2026-10-12、反復 58・run 20261012-030203）
+
+- 開発ビルドだけで動く「守られていない上書きの見張り」`RHI::FrameResourceWriteTracker`（`RHI/FrameResourceWriteTracker.h`、ヘッダのみ）を足し、`VulkanDevice` が 1 つ持つ（`IDevice::GetFrameResourceWriteTracker`。Release と他の描画バックエンドは nullptr）。資源ごとの状態（ID・世代・名前・書き込みの回数・前のフレームと今のフレームの参照の範囲・束縛したフレーム）は `VulkanBuffer`・`VulkanDescriptorSet` が持つ。説明は `Docs/Architecture/FrameResourceWriteGuard.md`。
+  - 数える書き込み: `IBuffer::Update`、新しい `IBuffer::NoteExplicitWrite`（明示した書き込みの借り。`FrameUploadArena` は切れ端を返すたびに呼ぶ）、書き込みのある `IDescriptorSet::Update`。作成の直後の 1 回（大きさの変更は作り直しなので、その直後も）は数えない。任意の `Map` のポインタへの書き込みは捕まえられない（読み戻しの `Map` は書き込みとみなさない）ことを文書に書いた。
+  - 参照: `VulkanCommandList` の記述子セットの束縛（セットが参照するバッファの範囲を含む）・頂点とインデックスの束縛・間接引数・`CopyBuffer` の両側・`FillBuffer`・`CopyBufferToTexture(Region)` の元。フレームの番号は `RenderingCoordinator` がフレームの持ち主の開始のたびに進める。
+  - (2) 合否に使う: `FRAME_RESOURCE_UNPROTECTED resource=<名前> pass=<パス> kind=<buffer_previous_frame|buffer_recorded_same_frame|descriptor_bound_previous_frame|descriptor_bound_same_frame>`（名前・パス・種類の組ごとに初めての 1 回、id・gen・range・frame を付ける）と、`ReleaseInitializedResources` の `WaitIdle` の後に `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=<組の数> resources= events= rewrites= frames=`。(1) 合否に使わない: `FRAME_RESOURCE_REWRITE resource= pass= frames= instances=`（名前とパスの組ごとに終わりに 1 回）。組ごとの資源の数は `FRAME_RESOURCE_UNPROTECTED_TOTAL`。
+  - `pass=`: RenderGraph がパスの `Declare`・`PrepareParallelRecord`・`Execute` を、`RenderingCoordinator` が overlay のパスと Blit の記録を、その名前の区間（`RHI::FrameResourceWriteScope`、スレッドごと）で包む。パスの外は `RenderingCoordinator`。LightingPass の中から呼ぶ `DDGIProbePass::Execute` は自分の名前の区間を持つ。名前の末尾の番号は `#` にまとめる（`DynUBO_Slot12` → `DynUBO_Slot#`）。
+  - 「守られている」の登録（名前ではなく作る所で）: フレームの持ち主の領域のページと借りた記述子セット、`FrameUseRing`（`Acquire` が今のパスの区間の残りで作る資源を登録。準備の段と記録の段で区間が分かれる MegaGeometry の `EnsureFrameSlot`・`EnsureBvhStageResources` は作る所を `FrameResourceProtectedCreationScope` で包む）、`DynamicBufferRing`（DebugDraw・ImGui のスロット）、`InstanceBufferRing`、飛行中のフレームの番号で引く枠（AutoExposure・PathTracing・RayTracingShadow・DDGI の `FindOrCreateFrameResources` など）、FIF-FRAME-ORDER の表示の Blit・合成の記述子の組。守られている資源は前のフレームとの重なりを見ず一覧にも載らないが、同じフレームの中の重なりは見る。
+- (2) の一覧（起動画面 `default.Game.log` と、シーンの周回 rendering3dtest・mega-bananas・mega-stress × 3 の `scene-cycle-smoke/Game.log`。数は組ごとの資源の数。種類は全部 `*_previous_frame`、同じフレームの重なりは 0 件）:
+
+| パス | 資源（`resource=`） | 種類 | 起動画面 | 周回 | 項目 |
+|---|---|---|---|---|---|
+| ShadowMapPass | `DynUBO_Slot#`（DynamicUniformAllocator の UBO） | buffer | 73 | 73 | DYNAMIC-UBO |
+| ShadowMapPass | 同じ allocator の記述子（初期化の分 `RenderingCoordinator.DescriptorSet`、Grow の分 `ShadowMapPass.DescriptorSet`） | descriptor | 62 + 11 | 62 + 11 | DYNAMIC-UBO |
+| LightingPass | `LightingParamsUBO`・`LightArraySSBO`・`LightingVsmSampleParams`・`LightingVsmPointSampleParams`・`LightingVsmSlices` | buffer | 各 1 | 各 1（LightArray 2） | LIGHTING |
+| LightingPass | `RTGI.DiffuseIndirect.Parameters`・`.Emitters`・`.Instances` | buffer | 1・1・2 | 1・1・3 | LIGHTING |
+| LightingPass | `LightingPass.DescriptorSet`（照明の組）・`RenderingCoordinator.DescriptorSet`（初期化で作る RTGI の記述子） | descriptor | 3・1 | 4・1 | LIGHTING |
+| TemporalAAPass | `TemporalAAParams`・記述子（`RenderingCoordinator.DescriptorSet`：Resolve と Copy） | buffer・descriptor | 1・2 | 1・2 | POST-A |
+| BloomPass | `BloomParamsUBO`・`BloomDownsampleParamsUBO`・`BloomUpsampleParamsUBO`・`BloomPass.DescriptorSet` | buffer・descriptor | 1・6・5・12 | 同じ | POST-A |
+| ToneMappingPass | `ToneMappingParamsUBO`・`ToneMappingPass.DescriptorSet` | buffer・descriptor | 1・1 | 1・4 | POST-A |
+| SSAOPass | `SSAOParamsUBO`・`SSAOBlurParamsUBO`・`SSAOPass.DescriptorSet` | buffer・descriptor | 1・1・2 | 同じ | POST-A |
+| SSRPass | `SSRParamsUBO`・`SSRPass.DescriptorSet` | buffer・descriptor | 1・1 | 1・4 | POST-B |
+| VolumetricsPass | `VolumetricsParams`・記述子（`RenderingCoordinator.DescriptorSet`） | buffer・descriptor | 1・1 | 1・1 | POST-B |
+| VignettePass | `VignetteParamsUBO`・`VignettePass.DescriptorSet` | buffer・descriptor | 1・1 | 1・4 | POST-B |
+| FXAAPass | `FXAAParamsUBO`・`FXAAPass.DescriptorSet` | buffer・descriptor | — | 1・4 | POST-B |
+
+  - 組の数: 起動画面 count=30（resources=198、events=32886、172 フレーム）、周回 count=32（resources=215、events=242193、3109 フレーム）。(1) の一覧（`FRAME_RESOURCE_REWRITE`）は起動画面 30 行・周回 32 行で、(2) と同じ資源（守られていない資源はどれも毎フレーム書き換えている）。
+  - 突き合わせ: 出たパスは全部 DYNAMIC-UBO・LIGHTING・POST-A・POST-B の対象にあり、漏れたパスは無い。起動画面・周回では動かないので出なかったもの: DebugDrawPass（DEBUGDRAW）、GBufferPass・ForwardPass（DYNAMIC-UBO）、MotionBlurPass（POST-A）、DepthOfFieldPass・UpscalePass・HiZPyramidPass（POST-B）、ImGuiOverlayPass・Canvas（PRESENT）。PresentationPass の Blit の記述子は FIF-FRAME-ORDER で飛行中のスロットごとの組になっていたので「守られている」と登録し、出なくなった（最初の撮影では `Unscoped.DescriptorSet` で出ていた）。DDGI の CPU が書くデータは FrameIndex ごとの枠なので「守られている」に入れた（DDGI の項目の本題の履歴の分かれは GPU→GPU で、この見張りでは見えない）。
+  - TASKS.md の更新: PRESENT の verify の照合に、Canvas の書き込みが出る RenderGraph のパスの名前（`CanvasBoardPass`・`CanvasClearPass`・`CanvasInlineLayerPass`・`CanvasOwnRTLayerPass`・`CanvasLayerCompositePass`）を足した。DYNAMIC-UBO の notes に、ShadowMapPass の記述子が 2 つの名前で出ることを書いた。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-REWRITE-GUARD-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-REWRITE-GUARD-2.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=5E-06・within_limits=True、result=pass、EXIT=0。
+  - `verify-SCN-ECS-FIF-REWRITE-GUARD-3.txt`: `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=30 …` があり EXIT=0（SUMMARY の行を同じファイルに写した）。
+  - `verify-SCN-ECS-FIF-REWRITE-GUARD-4.txt`: シーンの周回（rendering3dtest・mega-bananas・mega-stress × 3）`SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。Game.log の ERROR は 0 件。
+  - Release で見張りが消えた形のビルド: `build-REWRITE-GUARD-release-core.txt`（Release の Core、error 0、EXIT=0。Blit・合成の記述子の登録を足す前の版）。
+- Next: SCN-ECS-FIF-DEBUGDRAW。
+- Notes: バッファの参照の範囲は書き換えを一度見たバッファだけ記録するので、重なりは 2 回目の書き換えから見つかる（作成の直後に 1 回だけ書く頂点などの記録を省くため）。記述子セットには名前が無いので、作ったパスの名前に `.DescriptorSet` を付けて出す（初期化で作ったものは `RenderingCoordinator.DescriptorSet` になる）。`FrameUseRing` の窓は「Acquire から今のパスの区間の終わりまで」なので、その間に作ったパスのメンバの資源も守られている扱いになる（同じフレームの中の重なりは見る）。同じフレームの重なり（`buffer_recorded_same_frame`・`descriptor_bound_same_frame`）は起動画面・周回では 0 件で、この 2 種類を起こす検査は書いていない（verify が名指ししていないため。`RenderGraphLifetimeTest` の束に足すのが候補）。性能を測る撮影（RelWithDebInfo）の数字には見張りの分が入る（束縛は原子変数の読み 1 回、書き換えを見たバッファの束縛とフレームで初めての記述子の束縛は資源ごとの排他）。テクスチャの書き換えと加速構造の構築の入力は見ない。

@@ -45,6 +45,20 @@ public:
     virtual void Update(const void* data, uint64_t size, uint64_t offset = 0) = 0;
 
     /**
+     * @brief Map したポインタ（常にマップしたままのページなど）へ書いた範囲を明示する（明示した書き込みの借り）
+     *
+     * 開発ビルドの守られていない上書きの見張り（FrameResourceWriteTracker）が、Update と同じ書き込みとして数える。
+     * Map で得たポインタへの任意の書き込みは、これを呼ばない限り見張りには見えない。Release では何もしない。
+     * @param offset 書いた範囲の開始オフセット
+     * @param size 書いた範囲の大きさ
+     */
+    virtual void NoteExplicitWrite(uint64_t offset, uint64_t size)
+    {
+        (void)offset;
+        (void)size;
+    }
+
+    /**
      * @brief バッファの使用用途を取得
      * @return バッファの使用用途
      */

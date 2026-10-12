@@ -1,6 +1,7 @@
 ﻿#include "Rendering/InstanceBufferRing.h"
 #include "RHI/IDevice.h"
 #include "RHI/IBuffer.h"
+#include "RHI/FrameResourceWriteTracker.h"
 #include "Logging/LogMacros.h"
 
 namespace NorvesLib::Core::Rendering
@@ -127,6 +128,9 @@ namespace NorvesLib::Core::Rendering
         desc.Usage = RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::ShaderRead;
         desc.CPUAccessible = true;
         desc.DebugName = "InstanceBufferRing_Slot";
+        // スロットは飛行中のフレームの番号で引くので、前のフレームの GPU の仕事と重ならない。
+        // 守られていない上書きの見張りへ「守られている」と登録する（同じフレームの中の重なりは引き続き見る）
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         return m_Device->CreateBuffer(desc);
     }
 

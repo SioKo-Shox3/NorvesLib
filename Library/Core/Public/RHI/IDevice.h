@@ -13,6 +13,7 @@
 
 namespace NorvesLib::RHI
 {
+    class FrameResourceWriteTracker;
 
     /**
      * @brief サンプラー作成情報
@@ -286,6 +287,12 @@ namespace NorvesLib::RHI
             (void)capacity;
             return nullptr;
         }
+
+        /**
+         * @brief 守られていない上書きの見張り（開発ビルドだけ。デバイスが持ち、デバイスの資源が報告する）
+         * @return Release・未対応の描画バックエンドでは nullptr
+         */
+        virtual FrameResourceWriteTracker *GetFrameResourceWriteTracker() { return nullptr; }
 
         /**
          * @brief シェーダーコンパイラを作成

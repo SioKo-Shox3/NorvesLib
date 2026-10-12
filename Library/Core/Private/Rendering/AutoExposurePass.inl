@@ -1,5 +1,6 @@
 ﻿// 自動露出の測定パス（AutoExposurePass）の実装。Coreの登録済みのSceneView.cppから取り込む。
 #include "Rendering/AutoExposurePass.h"
+#include "RHI/FrameResourceWriteTracker.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -270,6 +271,8 @@ namespace NorvesLib::Core::Rendering
 
     AutoExposurePass::FrameSlot* AutoExposurePass::EnsureFrameSlot(uint32_t frameIndex)
     {
+        // 飛行中のフレームの番号で引く枠の資源なので、守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         if (frameIndex >= m_FrameSlots.size())
         {
             m_FrameSlots.resize(static_cast<size_t>(frameIndex) + 1u);

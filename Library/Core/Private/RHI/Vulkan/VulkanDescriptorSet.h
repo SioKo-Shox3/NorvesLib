@@ -2,6 +2,7 @@
 
 #include "RHI/IDescriptorSet.h"
 #include "RHI/IDevice.h"
+#include "RHI/FrameResourceWriteTracker.h"
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
 #include "Container/Containers.h"
@@ -252,6 +253,12 @@ namespace NorvesLib::RHI::Vulkan
         /** @brief フレームごとの pool から借りたセットか */
         bool IsBorrowed() const { return static_cast<bool>(m_borrowState); }
 
+        /**
+         * @brief 記録したコマンドがこのセットを束縛した（開発ビルドの守られていない上書きの見張りへ、
+         *        セットと、セットが参照するバッファの範囲を知らせる）
+         */
+        void NoteFrameResourceBound();
+
     private:
         TSharedPtr<VulkanDevice> m_device;
         DescriptorSetDesc m_desc;
@@ -265,6 +272,19 @@ namespace NorvesLib::RHI::Vulkan
         vk::PipelineLayout m_pipelineLayout;
 
         bool m_bNeedsUpdate = false;
+
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+        // 守られていない上書きの見張りの状態と、最後に書き込んだ束縛が参照するバッファの範囲
+        struct TrackedBufferReference
+        {
+            VulkanBuffer *Buffer = nullptr;
+            uint64_t Offset = 0;
+            uint64_t Range = ~0ull;
+        };
+        FrameResourceTrackState m_writeTrack;
+        VariableArray<TrackedBufferReference> m_trackedBufferReferences;
+        void RegisterFrameResourceTracking(bool bProtected, uint64_t generation);
+#endif
 
         struct BindingInfo
         {

@@ -2,6 +2,7 @@
 #include "Container/UnorderedSet.h"
 #include "Debug/DebugConfig.h"
 #include "Debug/Stats.h"
+#include "RHI/FrameResourceWriteTracker.h"
 #include "Logging/LogMacros.h"
 #include "Math/MatrixUtils.h"
 #include "RHI/DeviceCapabilities.h"
@@ -3698,6 +3699,9 @@ namespace NorvesLib::Core::Rendering
 
     bool MegaGeometryPass::EnsureBvhStageResources(FrameSlot &slot, uint32_t passIndex, uint32_t stageCount)
     {
+        // FrameUseRing の枠（FrameSlot）の資源。Acquire と作成が別の区間（準備の段と記録の段）になることがあるので、
+        // 作る所で守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         if (!m_Device)
         {
             return false;
@@ -4616,6 +4620,9 @@ namespace NorvesLib::Core::Rendering
                                            uint32_t sectionTableEntries,
                                            uint32_t sectionCount)
     {
+        // FrameUseRing の枠（FrameSlot）の資源。Acquire と作成が別の区間（準備の段と記録の段）になることがあるので、
+        // 作る所で守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         if (!m_Device)
         {
             return false;

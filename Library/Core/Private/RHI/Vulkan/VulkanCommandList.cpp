@@ -1294,6 +1294,7 @@ namespace NorvesLib::RHI::Vulkan
 
         m_currentVertexBuffers[slot] = buffer;
         m_currentVertexBufferOffsets[slot] = offset;
+        vkBuffer->NoteFrameResourceReference(offset, ~0ull);
 
         vk::Buffer vkBuf = vkBuffer->GetVkBuffer();
         m_commandBuffer.bindVertexBuffers(slot, 1, &vkBuf, &offset);
@@ -1309,6 +1310,7 @@ namespace NorvesLib::RHI::Vulkan
 
         m_currentIndexBuffer = buffer;
         m_currentIndexBufferOffset = offset;
+        vkBuffer->NoteFrameResourceReference(offset, ~0ull);
 
         const vk::IndexType vkIndexType = type == IndexType::Uint16 ? vk::IndexType::eUint16 : vk::IndexType::eUint32;
         m_commandBuffer.bindIndexBuffer(vkBuffer->GetVkBuffer(), offset, vkIndexType);
@@ -1381,6 +1383,7 @@ namespace NorvesLib::RHI::Vulkan
             bindPoint = vk::PipelineBindPoint::eRayTracingKHR;
         }
 
+        vkDescSet->NoteFrameResourceBound();
         vk::DescriptorSet descSet = vkDescSet->GetVkDescriptorSet();
         m_commandBuffer.bindDescriptorSets(
             bindPoint,
@@ -1423,6 +1426,7 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("DrawIndexedIndirect: 無効な間接バッファです");
         }
 
+        vkBuffer->NoteFrameResourceReference(offset, ~0ull);
         m_commandBuffer.drawIndexedIndirect(vkBuffer->GetVkBuffer(), offset, drawCount, stride);
     }
 
@@ -1441,6 +1445,8 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("DrawIndexedIndirectCount: 無効なカウントバッファです");
         }
 
+        vkIndirect->NoteFrameResourceReference(indirectOffset, ~0ull);
+        vkCount->NoteFrameResourceReference(countOffset, sizeof(uint32_t));
         m_commandBuffer.drawIndexedIndirectCount(
             vkIndirect->GetVkBuffer(), indirectOffset,
             vkCount->GetVkBuffer(), countOffset,
@@ -1455,6 +1461,7 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("FillBuffer: 無効なバッファです");
         }
 
+        vkBuffer->NoteFrameResourceReference(offset, size);
         m_commandBuffer.fillBuffer(vkBuffer->GetVkBuffer(), offset, size, value);
     }
 
@@ -1476,6 +1483,7 @@ namespace NorvesLib::RHI::Vulkan
             return false;
         }
 
+        vkBuffer->NoteFrameResourceReference(offset, DispatchIndirectCommandBytes);
         m_commandBuffer.dispatchIndirect(vkBuffer->GetVkBuffer(), offset);
         return true;
     }
@@ -1795,6 +1803,8 @@ namespace NorvesLib::RHI::Vulkan
         region.dstOffset = dstOffset;
         region.size = copySize;
 
+        vkSrc->NoteFrameResourceReference(srcOffset, copySize);
+        vkDst->NoteFrameResourceReference(dstOffset, copySize);
         m_commandBuffer.copyBuffer(vkSrc->GetVkBuffer(), vkDst->GetVkBuffer(), 1, &region);
     }
 
@@ -1809,6 +1819,7 @@ namespace NorvesLib::RHI::Vulkan
         {
             throw std::runtime_error("無効なバッファまたはテクスチャです");
         }
+        vkSrc->NoteFrameResourceReference(bufferOffset, ~0ull);
 
         vk::BufferImageCopy region;
         region.bufferOffset = bufferOffset;
@@ -1889,6 +1900,7 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         const vk::BufferImageCopy copy = MakeBufferImageCopyRegion(region);
+        vkSrc->NoteFrameResourceReference(copy.bufferOffset, ~0ull);
         m_commandBuffer.copyBufferToImage(
             vkSrc->GetVkBuffer(),
             vkDst->GetVkImage(),

@@ -38,6 +38,7 @@
 #include "Rendering/RenderFrameExecutor.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderResources.h"
+#include "RHI/FrameResourceWriteTracker.h"
 #include "Rendering/RenderingCoordinatorDiagnostics.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/Screen.h"
@@ -2296,6 +2297,8 @@ namespace NorvesLib::Core::Rendering
             m_BlitDescriptorSets.clear();
             for (uint32_t slot = 0; slot < blitDescriptorSetCount; ++slot)
             {
+                // 飛行中のスロットで引く組なので、守られていない上書きの見張りへ「守られている」と登録する
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
                 RHI::DescriptorSetPtr blitDescriptorSet = m_Device->CreateDescriptorSet(blitDsDesc);
                 if (!blitDescriptorSet)
                 {
@@ -3861,6 +3864,11 @@ namespace NorvesLib::Core::Rendering
         if (m_Device)
         {
             m_Device->WaitIdle();
+            // 守られていない上書きの見張りの一覧と集計を出す（終わりに 1 回）
+            if (RHI::FrameResourceWriteTracker* const writeTracker = m_Device->GetFrameResourceWriteTracker())
+            {
+                writeTracker->EmitSummary("release");
+            }
         }
         // GPU を待ち終えたので、フレームの持ち主の分を全部戻す
         m_FrameResourceOwners.Reset();
@@ -4071,6 +4079,8 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<RHI::DescriptorSetPtr> compositeDescriptorSets;
             for (uint32_t slot = 0; slot < compositeDescriptorSetCount; ++slot)
             {
+                // 飛行中のスロットで引く組なので、守られていない上書きの見張りへ「守られている」と登録する
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
                 RHI::DescriptorSetPtr compositeDescriptorSet = m_Device->CreateDescriptorSet(compositeDsDesc);
                 if (!compositeDescriptorSet)
                 {
@@ -4884,6 +4894,8 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
+        // パスの外の書き込みは呼び出し元の名前で見張りへ報告する（パスの中はパスの名前の区間が上書きする）
+        RHI::FrameResourceWriteScope frameWriteScope("RenderingCoordinator");
 
 #if NORVES_ENABLE_STATS
         auto &statsManager = NorvesLib::Debug::StatsManager::Get();
@@ -5094,6 +5106,11 @@ namespace NorvesLib::Core::Rendering
         // このフレームの全ビュー・ビューポート・overlay がこの持ち主を使う（パスの Execute では位置を戻さない）
         FrameResourceOwner* const frameResources =
             m_FrameResourceOwners.BeginFrame(frameIndex, swapChain->GetCompletedSubmissionSerial());
+        // 守られていない上書きの見張りのフレームを進める（飛行中のフレームを 2 と仮定して前のフレームの参照と比べる）
+        if (RHI::FrameResourceWriteTracker* const writeTracker = m_Device->GetFrameResourceWriteTracker())
+        {
+            writeTracker->BeginFrame();
+        }
         for (const Container::TSharedPtr<RHI::ICommandList>& jobCommandList : m_JobCommandLists)
         {
             jobCommandList->NotifyGPUTimestampFrameSlotCompleted(
@@ -5595,13 +5612,18 @@ namespace NorvesLib::Core::Rendering
                         }
                     }
 
+                    RHI::FrameResourceWriteScope overlayWriteScope(overlayPass->GetName());
                     overlayPass->Setup(viewContext);
                     overlayPass->Execute(viewContext);
                 }
             }
         }
 
-        bool bPresentationBlitRecorded = m_PresentationPass.RecordDeferredBlit(viewContext);
+        bool bPresentationBlitRecorded = false;
+        {
+            RHI::FrameResourceWriteScope presentationWriteScope("PresentationPass");
+            bPresentationBlitRecorded = m_PresentationPass.RecordDeferredBlit(viewContext);
+        }
         if (!bPresentationBlitRecorded &&
             finalPresentationTexture &&
             presentationRequest.ClearRenderPass &&

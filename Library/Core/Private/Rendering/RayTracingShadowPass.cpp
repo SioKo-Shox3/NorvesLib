@@ -1,5 +1,6 @@
 ﻿// RT可視性を生成する描画passを実装する。
 #include "Rendering/RayTracingShadowPass.h"
+#include "RHI/FrameResourceWriteTracker.h"
 
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/DirectionalShadowLightMatrices.h"
@@ -173,6 +174,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t width,
         uint32_t height)
     {
+        // 飛行中のフレームの番号で引く枠の資源なので、守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         const uint32_t viewId = context.PhysicalLighting.ViewId;
         const uint32_t viewportId = context.PhysicalLighting.ViewportId;
         for (FrameResources& resources : m_FrameResources)

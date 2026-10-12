@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "RHI/IDevice.h"
+#include "RHI/FrameResourceWriteTracker.h"
 
 // Windowsプラットフォーム用Vulkan拡張
 #ifdef _WIN32
@@ -110,6 +111,14 @@ namespace NorvesLib::RHI::Vulkan
         DescriptorSetPtr CreateDescriptorSet(const DescriptorSetDesc &desc) override;
         DescriptorSetLayoutPtr GetOrCreateDescriptorSetLayout(const DescriptorSetDesc &desc) override;
         FrameDescriptorAllocatorPtr CreateFrameDescriptorAllocator(const FrameDescriptorPoolCapacity &capacity) override;
+        FrameResourceWriteTracker *GetFrameResourceWriteTracker() override
+        {
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+            return &m_FrameResourceWriteTracker;
+#else
+            return nullptr;
+#endif
+        }
         ShaderCompilerPtr CreateShaderCompiler() override;
         ShaderCompilerPtr CreateSlangShaderCompiler() override;
         IGPUResourceAllocator* GetResourceAllocator() override;
@@ -268,6 +277,10 @@ namespace NorvesLib::RHI::Vulkan
         Format FromVkFormat(vk::Format format) const;
 
     private:
+#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
+        // 守られていない上書きの見張り（デバイスの資源より後まで残るよう先頭に置く）
+        FrameResourceWriteTracker m_FrameResourceWriteTracker;
+#endif
         // Vulkanインスタンスとデバイス
         vk::Instance m_instance;
         uint32_t m_instanceApiVersion = 0; ///< CreateInstance が設定した VkApplicationInfo::apiVersion

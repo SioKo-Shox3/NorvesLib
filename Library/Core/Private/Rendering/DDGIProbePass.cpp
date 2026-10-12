@@ -1,5 +1,6 @@
 ﻿// FramePacketのTLASを使うDDGIプローブレイ問い合わせを実装する。
 #include "Rendering/DDGIProbePass.h"
+#include "RHI/FrameResourceWriteTracker.h"
 
 #include "Rendering/DDGIVolume.h"
 #include "Rendering/FramePacket.h"
@@ -378,6 +379,8 @@ namespace NorvesLib::Core::Rendering
         uint32_t resultCount,
         uint32_t instanceDataCount)
     {
+        // 飛行中のフレームの番号で引く枠の資源なので、守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         const uint32_t viewId = context.PhysicalLighting.ViewId;
         const uint32_t viewportId = context.PhysicalLighting.ViewportId;
         const uint64_t requiredResultBufferSize =
@@ -482,6 +485,8 @@ namespace NorvesLib::Core::Rendering
 
     bool DDGIProbePass::Execute(ViewRenderContext& context)
     {
+        // LightingPass の中から呼ばれるので、守られていない上書きの見張りへはこのパスの名前で報告する
+        RHI::FrameResourceWriteScope writeScope("DDGIProbePass");
         bool bFrameResourceWasValid = false;
         uint32_t previousAtlasProbeCount = 0u;
         for (FrameResources& resources : m_FrameResources)

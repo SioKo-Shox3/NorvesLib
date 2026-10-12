@@ -1,5 +1,6 @@
 ﻿// FramePacketの値スナップショットから独立したPT描画と履歴を実装する。
 #include "Rendering/PathTracingPass.h"
+#include "RHI/FrameResourceWriteTracker.h"
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/DfgLut.h"
 #include "Rendering/EnvironmentMapSource.h"
@@ -714,6 +715,8 @@ namespace NorvesLib::Core::Rendering
     PathTracingPass::FrameResources* PathTracingPass::FindOrCreateFrameResources(
         const ViewRenderContext& context, History& history)
     {
+        // 飛行中のフレームの番号で引く枠の資源なので、守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         FrameResources* frameResources = nullptr;
         for (FrameResources& entry : history.FrameSlots)
         {
@@ -750,6 +753,8 @@ namespace NorvesLib::Core::Rendering
     bool PathTracingPass::PrepareInstances(const ViewRenderContext& context,
                                            FrameResources& frameResources)
     {
+        // 飛行中のフレームの番号で引く枠の資源なので、守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         const RayTracingSceneSnapshot& scene = *context.SnapshotRayTracingScene;
         if (scene.Instances.empty() ||
             scene.Instances.size() > std::numeric_limits<uint32_t>::max())
@@ -949,6 +954,8 @@ namespace NorvesLib::Core::Rendering
     bool PathTracingPass::PrepareLights(const ViewRenderContext& context,
                                         FrameResources& frameResources)
     {
+        // 飛行中のフレームの番号で引く枠の資源なので、守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         // 点・spot・方向光はラスタのLightingPassと同じ関数で詰め、単位・減衰・spot円錐を一致させる。
         // 空の太陽の方向光は、同じ太陽を空の円盤の光源標本で数えるので除く。
         const Container::VariableArray<LightProxy>* sourceLights =
