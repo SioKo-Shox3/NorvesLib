@@ -571,9 +571,11 @@ namespace NorvesLib::RHI::Vulkan
 
     VulkanAccelerationStructure::~VulkanAccelerationStructure()
     {
+        // 構造を先に列へ移す。下のバッファはメンバの破棄で後から列へ積まれるので、構造の後に破棄される
         if (m_device && m_accelerationStructure)
         {
-            m_device->GetVkDevice().destroyAccelerationStructureKHR(m_accelerationStructure);
+            m_device->DeferDestroy(m_accelerationStructure);
+            m_accelerationStructure = nullptr;
         }
     }
 
@@ -2723,7 +2725,32 @@ namespace NorvesLib::RHI::Vulkan
         EnqueueDeferredDestroy(DeferredDestroyKind::Sampler, ToDeferredDestroyHandle(handle));
     }
 
-    void VulkanDevice::EnqueueDeferredDestroy(DeferredDestroyKind kind, uint64_t handle) noexcept
+    void VulkanDevice::DeferDestroy(vk::Buffer handle) noexcept
+    {
+        EnqueueDeferredDestroy(DeferredDestroyKind::Buffer, ToDeferredDestroyHandle(handle));
+    }
+
+    void VulkanDevice::DeferDestroy(vk::Image handle) noexcept
+    {
+        EnqueueDeferredDestroy(DeferredDestroyKind::Image, ToDeferredDestroyHandle(handle));
+    }
+
+    void VulkanDevice::DeferDestroy(vk::ImageView handle) noexcept
+    {
+        EnqueueDeferredDestroy(DeferredDestroyKind::ImageView, ToDeferredDestroyHandle(handle));
+    }
+
+    void VulkanDevice::DeferDestroy(vk::AccelerationStructureKHR handle) noexcept
+    {
+        EnqueueDeferredDestroy(DeferredDestroyKind::AccelerationStructure, ToDeferredDestroyHandle(handle));
+    }
+
+    void VulkanDevice::DeferFree(vk::DeviceMemory handle, uint64_t sizeBytes) noexcept
+    {
+        EnqueueDeferredDestroy(DeferredDestroyKind::Memory, ToDeferredDestroyHandle(handle), sizeBytes);
+    }
+
+    void VulkanDevice::EnqueueDeferredDestroy(DeferredDestroyKind kind, uint64_t handle, uint64_t memoryBytes) noexcept
     {
         if (handle == 0 || !m_device)
         {
@@ -2733,8 +2760,14 @@ namespace NorvesLib::RHI::Vulkan
             Thread::ScopedLock lock(m_deferredDestroyMutex);
             if (m_deferredDestroyTrackerCount > 0)
             {
-                m_deferredDestroyQueue.push_back(DeferredDestroyEntry{kind, handle, m_deferredDestroyNextSerial});
+                m_deferredDestroyQueue.push_back(
+                    DeferredDestroyEntry{kind, handle, m_deferredDestroyNextSerial, memoryBytes});
                 ++m_deferredDestroyEnqueuedCount;
+                m_deferredDestroyPendingMemoryBytes += memoryBytes;
+                if (m_deferredDestroyPendingMemoryBytes > m_deferredDestroyMaxPendingMemoryBytes)
+                {
+                    m_deferredDestroyMaxPendingMemoryBytes = m_deferredDestroyPendingMemoryBytes;
+                }
                 return;
             }
             ++m_deferredDestroyImmediateCount;
@@ -2766,6 +2799,21 @@ namespace NorvesLib::RHI::Vulkan
             break;
         case DeferredDestroyKind::Sampler:
             m_device.destroySampler(FromDeferredDestroyHandle<vk::Sampler>(handle));
+            break;
+        case DeferredDestroyKind::Buffer:
+            m_device.destroyBuffer(FromDeferredDestroyHandle<vk::Buffer>(handle));
+            break;
+        case DeferredDestroyKind::Image:
+            m_device.destroyImage(FromDeferredDestroyHandle<vk::Image>(handle));
+            break;
+        case DeferredDestroyKind::ImageView:
+            m_device.destroyImageView(FromDeferredDestroyHandle<vk::ImageView>(handle));
+            break;
+        case DeferredDestroyKind::AccelerationStructure:
+            m_device.destroyAccelerationStructureKHR(FromDeferredDestroyHandle<vk::AccelerationStructureKHR>(handle));
+            break;
+        case DeferredDestroyKind::Memory:
+            m_device.freeMemory(FromDeferredDestroyHandle<vk::DeviceMemory>(handle));
             break;
         }
     }
@@ -2814,6 +2862,7 @@ namespace NorvesLib::RHI::Vulkan
             if (entry.Serial <= lastCompletedSerial)
             {
                 outEntries.push_back(entry);
+                m_deferredDestroyPendingMemoryBytes -= entry.MemoryBytes;
             }
             else
             {
@@ -2852,6 +2901,7 @@ namespace NorvesLib::RHI::Vulkan
             drained = std::move(m_deferredDestroyQueue);
             m_deferredDestroyQueue.clear();
             m_deferredDestroyDestroyedCount += drained.size();
+            m_deferredDestroyPendingMemoryBytes = 0;
         }
         if (m_device)
         {
@@ -2874,6 +2924,8 @@ namespace NorvesLib::RHI::Vulkan
         stats.Destroyed = m_deferredDestroyDestroyedCount;
         stats.Pending = m_deferredDestroyQueue.size();
         stats.Immediate = m_deferredDestroyImmediateCount;
+        stats.PendingMemoryBytes = m_deferredDestroyPendingMemoryBytes;
+        stats.MaxPendingMemoryBytes = m_deferredDestroyMaxPendingMemoryBytes;
         return stats;
     }
 
@@ -2884,12 +2936,15 @@ namespace NorvesLib::RHI::Vulkan
         NORVES_LOG_INFO("VulkanDevice",
                         "RHI.DeferredDestroy reason=%s RHI.DeferredDestroy.Enqueued=%llu "
                         "RHI.DeferredDestroy.Destroyed=%llu RHI.DeferredDestroy.Pending=%llu "
-                        "RHI.DeferredDestroy.Immediate=%llu",
+                        "RHI.DeferredDestroy.Immediate=%llu RHI.DeferredDestroy.PendingMemoryBytes=%llu "
+                        "RHI.DeferredDestroy.MaxPendingMemoryBytes=%llu",
                         reason ? reason : "-",
                         static_cast<unsigned long long>(stats.Enqueued),
                         static_cast<unsigned long long>(stats.Destroyed),
                         static_cast<unsigned long long>(stats.Pending),
-                        static_cast<unsigned long long>(stats.Immediate));
+                        static_cast<unsigned long long>(stats.Immediate),
+                        static_cast<unsigned long long>(stats.PendingMemoryBytes),
+                        static_cast<unsigned long long>(stats.MaxPendingMemoryBytes));
 #else
         (void)reason;
 #endif

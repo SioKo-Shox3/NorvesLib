@@ -179,8 +179,10 @@ namespace NorvesLib::RHI::Vulkan
         Thread::Mutex &GetGraphicsQueueMutex() { return m_sparseBindMutex; }
 
         // 提出の完了までの破棄の遅延。
-        // Framebuffer・RenderPass・Pipeline・記述子・Sampler のデストラクタは vkDestroy* の代わりに
-        // ハンドルをここへ移す（どのスレッドからでもよい）。積んだ時点の「次に提出する通し番号」を添え、
+        // Framebuffer・RenderPass・Pipeline・記述子・Sampler・Buffer・Texture・加速構造のデストラクタは
+        // vkDestroy* と vkFreeMemory の代わりにハンドルをここへ移す（どのスレッドからでもよい）。
+        // 同じ資源のハンドルは使う側から先に積む（view → image → memory など）。列は積んだ順に破棄する。
+        // 積んだ時点の「次に提出する通し番号」を添え、
         // スワップチェーンが渡す完了の通し番号がそれ以上になったら破棄する（記録中のフレームが参照して
         // いても、そのフレームの完了まで生かす。中止したフレームの通し番号は次の提出が使う）。
         // WaitIdle は待ちと同じキューロックの下で提出済みの分（次に提出する通し番号より小さい分）を退避して
@@ -195,6 +197,12 @@ namespace NorvesLib::RHI::Vulkan
         // プールを破棄すると、そこから確保した記述子セットも一緒に解放される
         void DeferDestroy(vk::DescriptorPool handle) noexcept;
         void DeferDestroy(vk::Sampler handle) noexcept;
+        void DeferDestroy(vk::Buffer handle) noexcept;
+        void DeferDestroy(vk::Image handle) noexcept;
+        void DeferDestroy(vk::ImageView handle) noexcept;
+        void DeferDestroy(vk::AccelerationStructureKHR handle) noexcept;
+        // メモリは unmap してから積む。sizeBytes は列に残るメモリの量の統計に使う
+        void DeferFree(vk::DeviceMemory handle, uint64_t sizeBytes) noexcept;
 
         // スワップチェーンが提出の通し番号を追い始める・やめる。nextSubmissionSerial は次の提出が使う通し番号。
         // やめるのは WaitIdle の後に呼ぶ（列を全部空ける）。
@@ -211,6 +219,8 @@ namespace NorvesLib::RHI::Vulkan
             uint64_t Destroyed = 0; ///< 列から破棄した数（累計）
             uint64_t Pending = 0;   ///< 列の残り
             uint64_t Immediate = 0; ///< 追うスワップチェーンが無く、その場で破棄した数（累計）
+            uint64_t PendingMemoryBytes = 0;    ///< 列に残るメモリの量（バイト）
+            uint64_t MaxPendingMemoryBytes = 0; ///< 列に残ったメモリの量の最大（バイト）
         };
         DeferredDestroyStats GetDeferredDestroyStats() const;
 
@@ -344,6 +354,11 @@ namespace NorvesLib::RHI::Vulkan
             DescriptorSetLayout,
             DescriptorPool,
             Sampler,
+            Buffer,
+            Image,
+            ImageView,
+            AccelerationStructure,
+            Memory,
         };
         struct DeferredDestroyEntry
         {
@@ -351,6 +366,8 @@ namespace NorvesLib::RHI::Vulkan
             uint64_t Handle = 0;
             // この通し番号の提出が完了したら破棄してよい
             uint64_t Serial = 0;
+            // Memory のときの大きさ（バイト。統計だけに使う）
+            uint64_t MemoryBytes = 0;
         };
         mutable Thread::Mutex m_deferredDestroyMutex;
         VariableArray<DeferredDestroyEntry> m_deferredDestroyQueue;
@@ -361,10 +378,12 @@ namespace NorvesLib::RHI::Vulkan
         uint64_t m_deferredDestroyEnqueuedCount = 0;
         uint64_t m_deferredDestroyDestroyedCount = 0;
         uint64_t m_deferredDestroyImmediateCount = 0;
+        uint64_t m_deferredDestroyPendingMemoryBytes = 0;
+        uint64_t m_deferredDestroyMaxPendingMemoryBytes = 0;
         // 定期の統計のログの間引き用
         uint64_t m_deferredDestroyCompletionCount = 0;
 
-        void EnqueueDeferredDestroy(DeferredDestroyKind kind, uint64_t handle) noexcept;
+        void EnqueueDeferredDestroy(DeferredDestroyKind kind, uint64_t handle, uint64_t memoryBytes = 0) noexcept;
         void DestroyDeferredHandle(DeferredDestroyKind kind, uint64_t handle) noexcept;
         // 通し番号が lastCompletedSerial 以下の分を列から外して outEntries へ移す（m_deferredDestroyMutex を持って呼ぶ）
         void TakeCompletedDeferredDestroyEntriesLocked(

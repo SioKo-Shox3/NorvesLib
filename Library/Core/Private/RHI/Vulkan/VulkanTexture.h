@@ -143,6 +143,8 @@ namespace NorvesLib::RHI::Vulkan
         TextureDesc m_desc;
         vk::Image m_image;
         vk::DeviceMemory m_memory;
+        // 確保したメモリの大きさ（破棄の列に残るメモリの量の統計に使う）
+        uint64_t m_memorySize = 0;
         vk::ImageView m_imageView;
         mutable NorvesLib::Core::Container::VariableArray<vk::ImageView> m_mipImageViews;
         mutable NorvesLib::Core::Container::VariableArray<vk::ImageView> m_arrayLayerImageViews;

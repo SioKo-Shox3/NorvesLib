@@ -446,41 +446,42 @@ namespace NorvesLib::RHI::Vulkan
             }
         }
 
-        // 配列layer ImageViewの破棄
+        // 前の提出がまだ読み書きしているかもしれないので、ハンドルは device の破棄の列へ移し、
+        // 提出の完了を待って破棄する（view → image → memory の順に積む）。
+        // 所有しない image（スワップチェーンの画像）は持ち主が破棄するので移さない。
         for (auto arrayLayerView : m_arrayLayerImageViews)
         {
             if (arrayLayerView)
             {
-                vkDevice.destroyImageView(arrayLayerView);
+                m_device->DeferDestroy(arrayLayerView);
             }
         }
         m_arrayLayerImageViews.clear();
 
-        // per-mip ImageViewの破棄
         for (auto mipView : m_mipImageViews)
         {
             if (mipView)
             {
-                vkDevice.destroyImageView(mipView);
+                m_device->DeferDestroy(mipView);
             }
         }
         m_mipImageViews.clear();
 
         if (m_imageView)
         {
-            vkDevice.destroyImageView(m_imageView);
+            m_device->DeferDestroy(m_imageView);
             m_imageView = nullptr;
         }
 
         if (m_bOwnsImage && m_image)
         {
-            vkDevice.destroyImage(m_image);
+            m_device->DeferDestroy(m_image);
             m_image = nullptr;
         }
 
         if (m_memory)
         {
-            vkDevice.freeMemory(m_memory);
+            m_device->DeferFree(m_memory, m_memorySize);
             m_memory = nullptr;
         }
     }
@@ -578,6 +579,7 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("イメージメモリの割り当てに失敗しました");
         }
         m_memory = allocResult.value;
+        m_memorySize = memRequirements.size;
 
         // メモリとイメージをバインド
         auto bindResult = vkDevice.bindImageMemory(m_image, m_memory, 0);

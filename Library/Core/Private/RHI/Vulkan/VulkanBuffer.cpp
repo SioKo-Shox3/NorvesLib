@@ -70,7 +70,20 @@ namespace NorvesLib::RHI::Vulkan
             Unmap();
         }
 
-        ReleaseHandles();
+        // 前の提出がまだ読み書きしているかもしれないので、ハンドルは device の破棄の列へ移し、
+        // 提出の完了を待って破棄する（バッファ → メモリの順に積む）
+        if (m_buffer)
+        {
+            m_device->DeferDestroy(m_buffer);
+            m_buffer = nullptr;
+            g_liveBufferCount.fetch_sub(1, std::memory_order_relaxed);
+        }
+        if (m_deviceMemory)
+        {
+            m_device->DeferFree(m_deviceMemory, m_memorySize);
+            m_deviceMemory = nullptr;
+            g_liveBufferMemoryCount.fetch_sub(1, std::memory_order_relaxed);
+        }
     }
 
     // 作成済みの VkBuffer とメモリを破棄する（未作成のハンドルは何もしない）
@@ -257,6 +270,7 @@ namespace NorvesLib::RHI::Vulkan
             throw std::runtime_error("バッファメモリの割り当てに失敗しました");
         }
         m_deviceMemory = allocResult.value;
+        m_memorySize = memRequirements.size;
         g_liveBufferMemoryCount.fetch_add(1, std::memory_order_relaxed);
 
         // メモリをバッファにバインド

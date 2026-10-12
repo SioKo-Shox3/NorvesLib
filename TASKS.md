@@ -925,7 +925,7 @@
 - notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 44、評価の差し戻しの洗い直しで足した）。「次に提出する通し番号」で待つのは、記録中のフレームが参照しているかもしれない資源を、そのフレームの完了まで生かすため（`GpuRetireQueue` と同じ考え。中止したフレームの通し番号は次の提出が使うので取りこぼさない）。SCN-ECS-FIF-SWAPCHAIN と `VulkanSwapChain.cpp` を共有するので、その後に行う。自前で遅らせている所（`CompositePass` の 8 フレーム保持、`GpuRetireQueue`、`TransientResourcePool`、`DynamicBufferRing`・`InstanceBufferRing`）はそのままでよい（二重に遅れても害は無い）。FIF-SWITCH で `RHI.DeferredDestroy` の数が毎フレーム増えていないか（描画先の交互の替わりで framebuffer を作り直し続けていないか）を見る。危険地帯（RHI/Vulkan・資源の寿命）。 2026-10-12 親: 評価の 2 周目の指摘（`WaitIdle` の後に、記録中でないのに次の提出の通し番号で積んだ分が残る。`blocked/SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE.md`）は、完了条件の「全部空ける」が記録中のフレームを考えていなかったため。記録中かどうかで分ける形に完了条件を直して todo に戻した（キューロックの下で退避する今の直しは保つ）。直すのは記録中でないときに次の通し番号の分も空けることだけ。
 
 ## SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY: Buffer・Texture・加速構造の破棄を、提出の完了まで遅らせる
-- status: todo
+- status: done
 - done-when: SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE の破棄の列を使い、`VulkanBuffer`（VkBuffer・メモリ。map 中なら unmap してから移す）・`VulkanTexture`（image・memory・view・ミップと配列の view。所有しない image は移さない。今ある `DeferVulkanTextureResourcesUntilDeviceIdle` の経路はそのまま）・`VulkanAccelerationStructure`（構造と、その下のバッファ）のデストラクタのハンドルの破棄を列へ移す。TLAS のキャッシュを作り直したとき（`m_TopLevelCache` の置き換え）と、パスが大きさの変化で作り直した中間の texture・buffer の古いものが、前の提出の完了まで生きることになる。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass し、Debug の起動画面で検証レイヤーのエラーが 0、シーンの周回が pass し、終了のログで列の残りが 0。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY-debug`

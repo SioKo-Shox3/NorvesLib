@@ -58,6 +58,8 @@ namespace NorvesLib::RHI::Vulkan
         BufferDesc m_desc;
         vk::Buffer m_buffer;
         vk::DeviceMemory m_deviceMemory;
+        // 確保したメモリの大きさ（破棄の列に残るメモリの量の統計に使う）
+        uint64_t m_memorySize = 0;
         uint64_t m_deviceAddress = 0;
         vk::MemoryPropertyFlags m_memoryPropertyFlags{};
 
@@ -66,7 +68,7 @@ namespace NorvesLib::RHI::Vulkan
 
         bool ShouldEnableDeviceAddress() const;
 
-        // 作成済みの VkBuffer とメモリを破棄する（デストラクタと、コンストラクタ失敗時の後始末で共有）
+        // 作成済みの VkBuffer とメモリをその場で破棄する（コンストラクタ失敗時の後始末。まだ提出に使われていない）
         void ReleaseHandles() noexcept;
 
         // バッファとメモリの作成

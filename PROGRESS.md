@@ -3240,3 +3240,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-8.txt`: rendering3dtest・mega-bananas・mega-stress の周回 3 周 result=pass、EXIT=0。終了のログで `Pending=0`（Enqueued=Destroyed=42010）、ERROR 0 行。
 - Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り）。
 - Notes: done-when の「WaitIdle の後は列を全部空ける」は、提出が済んだ分を全部空ける、と読んだ（まだ提出していないフレームの分を空けると、記録中のコマンドバッファが参照するハンドルを壊しうるため）。全部空けるのはスワップチェーンの破棄（WaitIdle の後、追う提出が無くなる）と device の破棄の前。競合そのものを再現するテストは書いていない（verify が名指ししていないため）。
+
+### SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY（2026-10-12、反復 50・run 20261012-030203）
+
+- `VulkanDevice` の破棄の列に Buffer・Image・ImageView・加速構造・メモリの種類を足した（`DeferDestroy(vk::Buffer/Image/ImageView/AccelerationStructureKHR)`・`DeferFree(vk::DeviceMemory, sizeBytes)`）。列は積んだ順に破棄するので、使う側から先に積む（view → image → memory、buffer → memory、構造 → 下のバッファ）。
+- `VulkanBuffer` のデストラクタは unmap の後に VkBuffer とメモリを列へ移す（コンストラクタの失敗の後始末はまだ提出に使われていないのでその場で破棄のまま）。`VulkanTexture` のデストラクタは配列とミップの view・view・所有する image・メモリを列へ移す（所有しない image は移さない。`DeferVulkanTextureResourcesUntilDeviceIdle` の経路はそのまま）。`VulkanAccelerationStructure` のデストラクタは構造を列へ移し、下のバッファはメンバの破棄でその後に積まれる。TLAS のキャッシュの置き換えと、パスが作り直した中間の texture・buffer の古いものはこれで前の提出の完了まで生きる。
+- `VulkanGPUResourceAllocator` は `CreateBuffer` の `BufferPtr` を持つだけなので、`FreeBuffer` で参照を落とすと `VulkanBuffer` のデストラクタ経由で同じ列に乗る（別の対応は不要）。
+- 統計: `RHI.DeferredDestroy.PendingMemoryBytes`（列に残るメモリの量）と `MaxPendingMemoryBytes`（その最大）をログの行に足した。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY-1.txt`: RelWithDebInfo の Game のビルド（`VulkanDevice.cpp`・`VulkanTexture.cpp`・`VulkanBuffer.cpp` を再コンパイル）EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY-2.txt`: Debug の起動画面の撮影 result=pass、`vulkan_validation` は error_count=0・warning_count=0・vuid_count=0（`default.Validation.log` は 0 行）。終了のログで `Pending=0`・`PendingMemoryBytes=0`（Enqueued=Destroyed=14305）。
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY-3.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=5E-06・within_limits=True、result=pass、EXIT=0。
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY-4.txt`: rendering3dtest・mega-bananas・mega-stress の周回 3 周 result=pass、EXIT=0。周回の台帳（textures・texture_bytes）は反復 49 と同じ値で、2 周目以降も増えない。定期の統計の行はどれも `Pending=0`・`PendingMemoryBytes=0`、終了のログで `Pending=0`（Enqueued=Destroyed=55706）、ERROR 0 行。
+- Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り。SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE は人が todo に戻した）。
+- Notes: 列に残ったメモリの最大は周回の走行中で約 1.08 GB（シーンを出るときにまとめて手放した分が 1 フレームほど残る）。終了時の 5.2 GB はスワップチェーンの破棄の前に全部手放した分で、その後の `SwapChainDestroy` で全部空く。スワップチェーンの画像の view は列へ移るので、Resize ではスワップチェーンの破棄の後に view が破棄される（view は使われないので破棄の順は問わない）。sparse のメモリ（`VulkanSparseMemoryBlock`）の解放は paths の外なのでその場のまま。行末: `VulkanDevice.*`・`VulkanTexture.*` は HEAD で CRLF と LF が混ざっているので、変えた行だけを周りに合わせて直した。
