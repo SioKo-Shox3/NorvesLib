@@ -1804,27 +1804,6 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // ========================================
-        // ライティングパラメータUBOバッファ作成
-        // ========================================
-        RHI::BufferDesc paramsUboDesc(
-            LIGHTING_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "LightingParamsUBO");
-        m_LightDataBuffer = m_Device->CreateBuffer(paramsUboDesc);
-        if (!m_LightDataBuffer)
-        {
-            NORVES_LOG_ERROR("LightingPass", "Failed to create lighting params buffer");
-            return false;
-        }
-
-        // ========================================
-        // ライト配列SSBOバッファ作成（binding=5用）
-        // ========================================
-        if (!EnsureLightArrayBufferCapacity(1))
-        {
-            NORVES_LOG_ERROR("LightingPass", "Failed to create light array buffer");
-            return false;
-        }
-
         // D0/D1共通の有効なfallbackを先に確保する。未bind descriptorは許可しない。
         RHI::TextureDesc blackTextureDesc;
         blackTextureDesc.Width = 1u;
@@ -1962,46 +1941,6 @@ namespace NorvesLib::Core::Rendering
         const uint32_t neuralFallbackValue = 0u;
         m_DefaultNeuralBRDFWeightBuffer->Update(&neuralFallbackValue, sizeof(neuralFallbackValue));
 
-        // 太陽の VSM を読むパラメータ。0 で埋めた値は control.x = 0（無効）で、ページの表・プールは読まれない
-        m_VsmSampleBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmSampleParams),
-                                                                   RHI::ResourceUsage::ConstantBuffer,
-                                                                   true,
-                                                                   "LightingVsmSampleParams"));
-        if (!m_VsmSampleBuffer)
-        {
-            NORVES_LOG_ERROR("LightingPass", "VSM を読むパラメータのバッファを作れませんでした");
-            return false;
-        }
-        const GPUVsmSampleParams disabledVsmParams = {};
-        m_VsmSampleBuffer->Update(&disabledVsmParams, sizeof(disabledVsmParams));
-
-        // 点光源の VSM を読むパラメータ。0 で埋めた値は header.x = 0（灯なし）で、点光源の影はキューブのまま
-        m_VsmPointSampleBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmPointSampleParams),
-                                                                        RHI::ResourceUsage::ConstantBuffer,
-                                                                        true,
-                                                                        "LightingVsmPointSampleParams"));
-        if (!m_VsmPointSampleBuffer)
-        {
-            NORVES_LOG_ERROR("LightingPass", "点光源の VSM を読むパラメータのバッファを作れませんでした");
-            return false;
-        }
-        const GPUVsmPointSampleParams disabledVsmPointParams = {};
-        m_VsmPointSampleBuffer->Update(&disabledVsmPointParams, sizeof(disabledVsmPointParams));
-
-        // スライスの表（太陽の段 + 点光源の面）。VSM が無効なフレームは読まれないが、束縛は埋める
-        m_VsmSliceBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices,
-                                                                  RHI::ResourceUsage::StorageBuffer,
-                                                                  true,
-                                                                  "LightingVsmSlices"));
-        if (!m_VsmSliceBuffer)
-        {
-            NORVES_LOG_ERROR("LightingPass", "VSM のスライスの表のバッファを作れませんでした");
-            return false;
-        }
-        GPUVsmSlice disabledSlices[VirtualShadowMapMaxLevels];
-        BuildVirtualShadowMapSlices(nullptr, nullptr, VirtualShadowMapMaxLevels, disabledSlices);
-        m_VsmSliceBuffer->Update(disabledSlices, sizeof(disabledSlices));
-
         RHI::SamplerDesc sourceSamplerDesc;
         sourceSamplerDesc.filterMin = RHI::FilterMode::Linear;
         sourceSamplerDesc.filterMag = RHI::FilterMode::Linear;
@@ -2115,27 +2054,11 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // Populate the initial light buffer before the mandatory descriptor bindings are made.
-        // Render-graph initialization therefore has a complete binding, while the first
-        // per-frame update remains ordered before the descriptor update.
-        if (!UpdateLightBuffer(context, false, false))
-        {
-            NORVES_LOG_ERROR("LightingPass", "Failed to populate the initial light buffer");
-            return false;
-        }
-
-        RHI::DescriptorSetPtr initialDescriptorSet;
-        if (!CreateLightingDescriptorSet(initialDescriptorSet))
+        // 照明の定数・光源の配列・VSM のパラメータと記述子セットは Execute ごとに借りる。ここでは共有のレイアウトだけ引く
+        if (!EnsureLightingDescriptorSetLayout())
         {
             return false;
         }
-        m_LightingDescriptorSet = std::move(initialDescriptorSet);
-        // ここまでに作った現在の枠が組 0。以後の Execute は通し番号ごとに先頭の組から使う
-        m_ExecuteResourceSetCount = 1u;
-        m_ActiveExecuteResourceSet = 0u;
-        m_ExecuteResourceSetCursor = 0u;
-        m_ExecuteResourceSetFrameSerial = 0u;
-        m_bExecuteResourceSetOverflowLogged = false;
 
         initializationRollback.Commit();
         m_bInitialized = true;
@@ -2150,26 +2073,16 @@ namespace NorvesLib::Core::Rendering
         if (!m_bInitialized && m_Device == nullptr && !m_DefaultBlackTexture &&
             !m_DefaultShadowMapArrayTexture && !m_DefaultPointShadowCubeTexture &&
             !m_DefaultDDGIIrradianceAtlas && !m_DefaultDDGIDistanceAtlas &&
-            !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer && !m_VsmSampleBuffer && !m_VsmSliceBuffer && !m_VsmPointSampleBuffer &&
-            !m_RTGIComputePipeline && !m_RTGIComputeParametersBuffer &&
-            !m_RTGIComputeInstanceDataBuffer && !m_RTGIComputeEmitterBuffer &&
+            !m_BrdfLutTexture && !m_DefaultNeuralBRDFWeightBuffer && !m_LightingDescriptorSetLayout &&
+            !m_RTGIComputePipeline && !m_RTGIComputeInstanceDataBuffer &&
             !m_RTGIDenoiserPipeline &&
             !m_RTGIDenoisedTexture)
         {
             return;
         }
 
-        // Descriptor bindings own references to buffers, textures, and samplers.
-        m_LightingDescriptorSet.reset();
-        for (ExecuteResourceSet& set : m_ExecuteResourceSets)
-        {
-            set = ExecuteResourceSet{};
-        }
-        m_ExecuteResourceSetCount = 0u;
-        m_ActiveExecuteResourceSet = 0u;
-        m_ExecuteResourceSetCursor = 0u;
-        m_ExecuteResourceSetFrameSerial = 0u;
-        m_bExecuteResourceSetOverflowLogged = false;
+        // 記述子セットは Execute ごとに借りるので、持ち続けるのは共有のレイアウトだけ
+        m_LightingDescriptorSetLayout.reset();
 
         // Release dependents before the resources they reference.
         m_LightingPipeline.reset();
@@ -2179,22 +2092,21 @@ namespace NorvesLib::Core::Rendering
         m_IndirectSpecularTexture.reset();
         m_SpecularReflectanceTexture.reset();
 
-        // RTGIのcompute資源はdescriptor、pipeline、shaderの順で解放する。
-        m_RTGIComputeDescriptorSet.reset();
+        // RTGIのcompute資源はレイアウト、pipeline、shaderの順で解放する。
+        m_RTGIComputeDescriptorSetLayout.reset();
         m_RTGIComputePipeline.reset();
-        m_RTGIDenoiserDescriptorSet.reset();
+        m_RTGIDenoiserDescriptorSetLayout.reset();
         m_RTGIDenoiserPipeline.reset();
         m_RTGIDenoisedTexture.reset();
         m_RTGIDenoiserShader.reset();
         m_RTGIDenoisedTextureState = RHI::ResourceState::Undefined;
         m_RTGIDenoisedWidth = 0u;
         m_RTGIDenoisedHeight = 0u;
-        m_RTGIComputeParametersBuffer.reset();
         m_RTGIComputeInstanceDataBuffer.reset();
-        m_RTGIComputeEmitterBuffer.reset();
         m_RTGIGeometryBuffers.clear();
         m_RTGIInstances.clear();
         m_bRTGIInstancesUploaded = false;
+        m_RTGIInstancesPendingGeneration = FrameResourceGeneration{};
         for (RTGIHistoryTextureSet& history : m_RTGIHistoryTextures)
         {
             history.Clear();
@@ -2202,7 +2114,6 @@ namespace NorvesLib::Core::Rendering
         m_RTGIHistorySlotState[0] = RHI::ResourceState::Undefined;
         m_RTGIHistorySlotState[1] = RHI::ResourceState::Undefined;
         m_RTGIComputeInstanceDataCapacity = 0u;
-        m_RTGIComputeEmitterCapacity = 0u;
         m_RTGIHistoryWidth = 0u;
         m_RTGIHistoryHeight = 0u;
         m_RTGIHistoryWriteIndex = 0u;
@@ -2222,11 +2133,6 @@ namespace NorvesLib::Core::Rendering
         m_bRTGIHistoryLightRevisionValid = false;
         m_bRTGIComputeUnavailable = false;
         m_bRTGIDenoiserUnavailable = false;
-
-        m_LightArrayBuffer.reset();
-        m_RetiredLightArrayBuffers.clear();
-        m_LightArrayCapacity = 0;
-        m_LightDataBuffer.reset();
 
         // IBL resources
         m_EnvironmentTexture.reset();
@@ -2258,9 +2164,6 @@ namespace NorvesLib::Core::Rendering
         // Neural BRDF resources
         m_NeuralBRDFWeightBuffer.reset();
         m_DefaultNeuralBRDFWeightBuffer.reset();
-        m_VsmSampleBuffer.reset();
-        m_VsmSliceBuffer.reset();
-        m_VsmPointSampleBuffer.reset();
         // 太陽の VSM の読み出しの統計。GPU が書き終えた後に残りを読み、1 度だけ集計を出す
         HarvestVsmStats();
         if (m_VsmStatsHarvestedExecutes > 0u)
@@ -2349,7 +2252,7 @@ namespace NorvesLib::Core::Rendering
             !m_LightingRenderPass ||
             !m_LightingFramebuffer ||
             !m_LightingPipeline ||
-            !m_LightingDescriptorSet;
+            !m_LightingDescriptorSetLayout;
 
         if (bResourcesChanged)
         {
@@ -2966,7 +2869,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        if (!EnsureLightingDescriptorSet())
+        if (!EnsureLightingDescriptorSetLayout())
         {
             return false;
         }
@@ -3133,218 +3036,101 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool LightingPass::CreateLightingDescriptorSet(RHI::DescriptorSetPtr& outDescriptorSet)
+    bool LightingPass::EnsureLightingDescriptorSetLayout()
     {
-        outDescriptorSet.reset();
-        if (!m_Device || !m_LightDataBuffer || !m_LightArrayBuffer || !m_BrdfLutTexture ||
-            !m_DefaultBlackTexture || !m_DefaultShadowMapArrayTexture ||
-            !m_DefaultPointShadowCubeTexture ||
-            !m_DefaultDDGIIrradianceAtlas || !m_DefaultDDGIDistanceAtlas ||
-            !m_DefaultNeuralBRDFWeightBuffer || !m_VsmSampleBuffer || !m_VsmSliceBuffer || !m_VsmPointSampleBuffer ||
-            !m_GBufferSampler || !m_IBLSampler || !m_DiffuseIrradianceSampler ||
-            !m_PrefilteredSpecularSampler || !m_DfgSampler || !m_DDGISampler)
-        {
-            NORVES_LOG_ERROR("LightingPass", "Mandatory lighting descriptor resources are unavailable");
-            return false;
-        }
-
-        RHI::DescriptorSetDesc dsDesc = CreateLightingDescriptorSetDesc(m_bNeuralBRDFAvailable);
-        RHI::DescriptorSetPtr descriptorSet = m_Device->CreateDescriptorSet(dsDesc);
-        if (!descriptorSet)
-        {
-            NORVES_LOG_ERROR("LightingPass", "Failed to create lighting descriptor set");
-            return false;
-        }
-
-        descriptorSet->BindConstantBuffer(4, m_LightDataBuffer, 0u, LIGHTING_PARAMS_SIZE);
-        descriptorSet->BindStorageBuffer(5,
-                                         m_LightArrayBuffer,
-                                         0u,
-                                         GetLightArrayBufferSizeBytes());
-        descriptorSet->BindTexture(6, m_DefaultShadowMapArrayTexture);
-        descriptorSet->BindSampler(6, m_GBufferSampler);
-        descriptorSet->BindTexture(8, m_DefaultBlackTexture);
-        descriptorSet->BindSampler(8, m_IBLSampler);
-        descriptorSet->BindTexture(9, m_BrdfLutTexture);
-        descriptorSet->BindSampler(9, m_DfgSampler);
-        if (m_bNeuralBRDFAvailable && m_NeuralBRDFWeightBuffer)
-        {
-            descriptorSet->BindStorageBuffer(
-                11,
-                m_NeuralBRDFWeightBuffer,
-                0u,
-                static_cast<uint32_t>(m_NeuralBRDFData.GetWeightDataSizeFP32()));
-        }
-        else
-        {
-            descriptorSet->BindStorageBuffer(11, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
-        }
-        descriptorSet->BindTexture(12, m_DefaultBlackTexture);
-        descriptorSet->BindSampler(12, m_DiffuseIrradianceSampler);
-        descriptorSet->BindTexture(13, m_DefaultBlackTexture);
-        descriptorSet->BindSampler(13, m_PrefilteredSpecularSampler);
-        descriptorSet->BindTexture(14, m_DefaultBlackTexture);
-        descriptorSet->BindSampler(14, m_IBLSampler);
-        descriptorSet->BindTexture(15, m_DefaultBlackTexture);
-        descriptorSet->BindSampler(15, m_IBLSampler);
-        descriptorSet->BindTexture(16, m_DefaultBlackTexture);
-        descriptorSet->BindSampler(16, m_GBufferSampler);
-        descriptorSet->BindTexture(17, m_DefaultDDGIIrradianceAtlas);
-        descriptorSet->BindSampler(17, m_DDGISampler);
-        descriptorSet->BindTexture(18, m_DefaultDDGIDistanceAtlas);
-        descriptorSet->BindSampler(18, m_DDGISampler);
-        descriptorSet->BindTexture(19, m_DefaultBlackTexture);
-        descriptorSet->BindSampler(19, m_GBufferSampler);
-        descriptorSet->BindTexture(20, m_DefaultPointShadowCubeTexture);
-        descriptorSet->BindSampler(20, m_GBufferSampler);
-        descriptorSet->BindConstantBuffer(21, m_VsmSampleBuffer, 0u, static_cast<uint32_t>(sizeof(GPUVsmSampleParams)));
-        descriptorSet->BindStorageBuffer(22, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
-        descriptorSet->BindStorageBuffer(23, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
-        descriptorSet->BindStorageBuffer(24, m_DefaultNeuralBRDFWeightBuffer, 0u, 4u);
-        descriptorSet->BindStorageBuffer(25, m_VsmSliceBuffer, 0u, static_cast<uint32_t>(sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices));
-        descriptorSet->BindConstantBuffer(26, m_VsmPointSampleBuffer, 0u, static_cast<uint32_t>(sizeof(GPUVsmPointSampleParams)));
-
-        outDescriptorSet = std::move(descriptorSet);
-        return true;
-    }
-
-    bool LightingPass::EnsureLightingDescriptorSet()
-    {
-        if (m_LightingDescriptorSet)
+        if (m_LightingDescriptorSetLayout)
         {
             return true;
         }
-
-        RHI::DescriptorSetPtr descriptorSet;
-        if (!CreateLightingDescriptorSet(descriptorSet))
-        {
-            return false;
-        }
-        m_LightingDescriptorSet = std::move(descriptorSet);
-        return true;
-    }
-
-    void LightingPass::StoreActiveExecuteResourceSet()
-    {
-        ExecuteResourceSet& set = m_ExecuteResourceSets[m_ActiveExecuteResourceSet];
-        set.LightData = m_LightDataBuffer;
-        set.LightArray = m_LightArrayBuffer;
-        set.VsmSample = m_VsmSampleBuffer;
-        set.VsmPointSample = m_VsmPointSampleBuffer;
-        set.VsmSlice = m_VsmSliceBuffer;
-        set.DescriptorSet = m_LightingDescriptorSet;
-        set.LightArrayCapacity = m_LightArrayCapacity;
-    }
-
-    void LightingPass::LoadExecuteResourceSet(uint32_t index)
-    {
-        const ExecuteResourceSet& set = m_ExecuteResourceSets[index];
-        m_LightDataBuffer = set.LightData;
-        m_LightArrayBuffer = set.LightArray;
-        m_VsmSampleBuffer = set.VsmSample;
-        m_VsmPointSampleBuffer = set.VsmPointSample;
-        m_VsmSliceBuffer = set.VsmSlice;
-        m_LightingDescriptorSet = set.DescriptorSet;
-        m_LightArrayCapacity = set.LightArrayCapacity;
-        m_ActiveExecuteResourceSet = index;
-    }
-
-    bool LightingPass::CreateExecuteResourceSet()
-    {
         if (!m_Device)
         {
             return false;
         }
 
-        m_LightDataBuffer = m_Device->CreateBuffer(
-            RHI::BufferDesc(LIGHTING_PARAMS_SIZE, RHI::ResourceUsage::ConstantBuffer, true, "LightingParamsUBO"));
-        if (!m_LightDataBuffer)
+        m_LightingDescriptorSetLayout =
+            m_Device->GetOrCreateDescriptorSetLayout(CreateLightingDescriptorSetDesc(m_bNeuralBRDFAvailable));
+        if (!m_LightingDescriptorSetLayout)
         {
-            NORVES_LOG_ERROR("LightingPass", "Execute 用の照明パラメータのバッファを作れませんでした");
+            NORVES_LOG_ERROR("LightingPass", "照明の記述子セットの共有のレイアウトを引けませんでした");
             return false;
         }
-        if (!EnsureLightArrayBufferCapacity(1))
-        {
-            NORVES_LOG_ERROR("LightingPass", "Execute 用のライト配列のバッファを作れませんでした");
-            return false;
-        }
-
-        m_VsmSampleBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmSampleParams),
-                                                                   RHI::ResourceUsage::ConstantBuffer,
-                                                                   true,
-                                                                   "LightingVsmSampleParams"));
-        m_VsmPointSampleBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmPointSampleParams),
-                                                                        RHI::ResourceUsage::ConstantBuffer,
-                                                                        true,
-                                                                        "LightingVsmPointSampleParams"));
-        m_VsmSliceBuffer = m_Device->CreateBuffer(RHI::BufferDesc(sizeof(GPUVsmSlice) * VirtualShadowMapMaxSlices,
-                                                                  RHI::ResourceUsage::StorageBuffer,
-                                                                  true,
-                                                                  "LightingVsmSlices"));
-        if (!m_VsmSampleBuffer || !m_VsmPointSampleBuffer || !m_VsmSliceBuffer)
-        {
-            NORVES_LOG_ERROR("LightingPass", "Execute 用の VSM のバッファを作れませんでした");
-            return false;
-        }
-        // Execute が全部書き直すが、書く前の内容も無効の値にそろえておく
-        const GPUVsmSampleParams disabledVsmParams = {};
-        m_VsmSampleBuffer->Update(&disabledVsmParams, sizeof(disabledVsmParams));
-        const GPUVsmPointSampleParams disabledVsmPointParams = {};
-        m_VsmPointSampleBuffer->Update(&disabledVsmPointParams, sizeof(disabledVsmPointParams));
-        GPUVsmSlice disabledSlices[VirtualShadowMapMaxLevels];
-        BuildVirtualShadowMapSlices(nullptr, nullptr, VirtualShadowMapMaxLevels, disabledSlices);
-        m_VsmSliceBuffer->Update(disabledSlices, sizeof(disabledSlices));
-
-        return CreateLightingDescriptorSet(m_LightingDescriptorSet);
+        return true;
     }
 
-    bool LightingPass::AcquireExecuteResourceSet(uint64_t frameSerial)
+    LightingPass::ExecuteUpload LightingPass::BorrowUpload(ViewRenderContext& context,
+                                                           const void* data,
+                                                           uint64_t size,
+                                                           FrameUploadUsage usage,
+                                                           const char* unownedDebugName) const
     {
-        if (m_ExecuteResourceSetCount == 0u)
+        ExecuteUpload upload;
+        if (size == 0)
         {
-            // Initialize を通らずに揃った現在の枠は、組 0 として扱う
-            m_ExecuteResourceSetCount = 1u;
-            m_ActiveExecuteResourceSet = 0u;
-        }
-        if (frameSerial != m_ExecuteResourceSetFrameSerial)
-        {
-            m_ExecuteResourceSetFrameSerial = frameSerial;
-            m_ExecuteResourceSetCursor = 0u;
-        }
-        if (m_ExecuteResourceSetCursor >= MaxExecuteResourceSets)
-        {
-            if (!m_bExecuteResourceSetOverflowLogged)
-            {
-                m_bExecuteResourceSetOverflowLogged = true;
-                NORVES_LOG_ERROR("LightingPass",
-                                 "LIGHTING_EXECUTE_SETS_EXCEEDED limit=%u 1 フレームの照明の Execute が上限を超えたため、超えた分は描きません",
-                                 MaxExecuteResourceSets);
-            }
-            return false;
+            return upload;
         }
 
-        const uint32_t index = m_ExecuteResourceSetCursor;
-        if (index >= m_ExecuteResourceSetCount)
+        if (FrameResourceLane* frameResources = context.FrameResources)
         {
-            // 組は先頭から順に足すので、足りないのは常に末尾の次。作れなければ現在の枠を元の組へ戻し、次の Execute でやり直す
-            const uint32_t previous = m_ActiveExecuteResourceSet;
-            StoreActiveExecuteResourceSet();
-            m_ExecuteResourceSets[index] = ExecuteResourceSet{};
-            LoadExecuteResourceSet(index);
-            if (!CreateExecuteResourceSet())
+            const FrameUploadAllocation allocation = frameResources->AllocateUpload(size, usage);
+            if (!allocation.IsValid())
             {
-                LoadExecuteResourceSet(previous);
-                return false;
+                return upload;
             }
-            m_ExecuteResourceSetCount = index + 1u;
+            if (data)
+            {
+                std::memcpy(allocation.CPUAddress, data, static_cast<size_t>(size));
+            }
+            else
+            {
+                std::memset(allocation.CPUAddress, 0, static_cast<size_t>(size));
+            }
+            upload.Buffer = allocation.Buffer;
+            upload.Offset = allocation.Offset;
+            upload.Size = allocation.Size;
+            return upload;
         }
-        else if (index != m_ActiveExecuteResourceSet)
+
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）: 使い回さない専用のバッファを作る（上書きは起きない）
+        if (!m_Device)
         {
-            StoreActiveExecuteResourceSet();
-            LoadExecuteResourceSet(index);
+            return upload;
         }
-        ++m_ExecuteResourceSetCursor;
-        return true;
+        RHI::ResourceUsage bufferUsage = RHI::ResourceUsage::ConstantBuffer;
+        if (usage == FrameUploadUsage::Storage)
+        {
+            bufferUsage = RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferSrc;
+        }
+        RHI::BufferPtr buffer = m_Device->CreateBuffer(RHI::BufferDesc(size, bufferUsage, true, unownedDebugName));
+        if (!buffer)
+        {
+            NORVES_LOG_ERROR("LightingPass", "持ち主の無い文脈で %s のバッファを作れませんでした", unownedDebugName);
+            return upload;
+        }
+        if (data)
+        {
+            buffer->Update(data, size);
+        }
+        else
+        {
+            Container::VariableArray<uint8_t> zeros(static_cast<size_t>(size), 0u);
+            buffer->Update(zeros.data(), size);
+        }
+        upload.Buffer = std::move(buffer);
+        upload.Offset = 0;
+        upload.Size = size;
+        return upload;
+    }
+
+    RHI::DescriptorSetPtr LightingPass::BorrowDescriptorSet(ViewRenderContext& context,
+                                                            const RHI::DescriptorSetLayoutPtr& layout,
+                                                            const RHI::DescriptorSetDesc& desc) const
+    {
+        if (FrameResourceLane* frameResources = context.FrameResources)
+        {
+            return frameResources->AllocateDescriptorSet(layout).Set;
+        }
+        // 持ち主の無い文脈: 使い回さないセットを作る
+        return m_Device ? m_Device->CreateDescriptorSet(desc) : RHI::DescriptorSetPtr{};
     }
 
     bool LightingPass::EnsureLightingPipeline()
@@ -3399,8 +3185,7 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
-        if (m_RTGIComputePipeline && m_RTGIComputeParametersBuffer &&
-            m_RTGIComputeInstanceDataBuffer)
+        if (m_RTGIComputePipeline && m_RTGIComputeDescriptorSetLayout)
         {
             return true;
         }
@@ -3431,33 +3216,15 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        RHI::BufferDesc parametersDesc(
-            sizeof(RTGIComputeParameters),
-            RHI::ResourceUsage::ConstantBuffer,
-            true,
-            "RTGI.DiffuseIndirect.Parameters");
-        m_RTGIComputeParametersBuffer = context.Device->CreateBuffer(parametersDesc);
-        if (!m_RTGIComputeParametersBuffer)
+        // 定数・発光の表・記述子セットは dispatch ごとに借りる。instance の表の置き場は表の大きさが分かってから作る
+        m_RTGIComputeDescriptorSetLayout =
+            context.Device->GetOrCreateDescriptorSetLayout(CreateRTGIComputeDescriptorSetDesc());
+        if (!m_RTGIComputeDescriptorSetLayout)
         {
             m_bRTGIComputeUnavailable = true;
-            NORVES_LOG_WARNING("LightingPass", "RTGI parameter bufferを作成できません");
+            NORVES_LOG_WARNING("LightingPass", "RTGI の記述子セットの共有のレイアウトを引けません");
             return false;
         }
-
-        RHI::BufferDesc instanceDataDesc(
-            sizeof(RTGIInstanceData),
-            RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
-            true,
-            "RTGI.DiffuseIndirect.Instances");
-        m_RTGIComputeInstanceDataBuffer = context.Device->CreateBuffer(instanceDataDesc);
-        if (!m_RTGIComputeInstanceDataBuffer)
-        {
-            m_bRTGIComputeUnavailable = true;
-            NORVES_LOG_WARNING("LightingPass", "RTGI instance bufferを作成できません");
-            return false;
-        }
-        m_RTGIComputeInstanceDataCapacity = m_RTGIComputeInstanceDataBuffer->GetSize();
-        m_bRTGIInstancesUploaded = false;
         return true;
     }
 
@@ -3523,15 +3290,15 @@ namespace NorvesLib::Core::Rendering
             m_RTGIDenoisedHeight = height;
         }
 
-        if (!m_RTGIDenoiserDescriptorSet)
+        if (!m_RTGIDenoiserDescriptorSetLayout)
         {
-            m_RTGIDenoiserDescriptorSet = context.Device->CreateDescriptorSet(
+            m_RTGIDenoiserDescriptorSetLayout = context.Device->GetOrCreateDescriptorSetLayout(
                 CreateRTGIDenoiserDescriptorSetDesc());
-            if (!m_RTGIDenoiserDescriptorSet)
+            if (!m_RTGIDenoiserDescriptorSetLayout)
             {
                 m_bRTGIDenoiserUnavailable = true;
                 NORVES_LOG_WARNING("LightingPass",
-                                   "RTGI cross-bilateral denoiser descriptorを作成できません");
+                                   "RTGI cross-bilateral denoiser の記述子セットの共有のレイアウトを引けません");
                 return false;
             }
         }
@@ -3592,6 +3359,14 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // 記述子セットは dispatch ごとに借りる（記録済みの dispatch が束縛したセットを書き換えない）
+        const RHI::DescriptorSetPtr denoiserDescriptorSet = BorrowDescriptorSet(
+            context, m_RTGIDenoiserDescriptorSetLayout, CreateRTGIDenoiserDescriptorSetDesc());
+        if (!denoiserDescriptorSet)
+        {
+            return false;
+        }
+
         if (m_RTGIDenoisedTextureState != RHI::ResourceState::UnorderedAccess)
         {
             context.CommandList->TextureBarrier(m_RTGIDenoisedTexture,
@@ -3600,32 +3375,85 @@ namespace NorvesLib::Core::Rendering
             m_RTGIDenoisedTextureState = RHI::ResourceState::UnorderedAccess;
         }
 
-        m_RTGIDenoiserDescriptorSet->BindTexture(0u, temporalRadiance);
-        m_RTGIDenoiserDescriptorSet->BindSampler(0u, m_GBufferSampler);
-        m_RTGIDenoiserDescriptorSet->BindTexture(1u, depthTexture);
-        m_RTGIDenoiserDescriptorSet->BindSampler(1u, m_GBufferSampler);
-        m_RTGIDenoiserDescriptorSet->BindTexture(2u, normalTexture);
-        m_RTGIDenoiserDescriptorSet->BindSampler(2u, m_GBufferSampler);
-        m_RTGIDenoiserDescriptorSet->BindTexture(3u, materialTexture);
-        m_RTGIDenoiserDescriptorSet->BindSampler(3u, m_GBufferSampler);
-        m_RTGIDenoiserDescriptorSet->BindTexture(4u, confidenceTexture);
-        m_RTGIDenoiserDescriptorSet->BindSampler(4u, m_GBufferSampler);
-        m_RTGIDenoiserDescriptorSet->BindStorageTexture(5u, m_RTGIDenoisedTexture);
-        m_RTGIDenoiserDescriptorSet->BindTexture(6u, ageTexture);
-        m_RTGIDenoiserDescriptorSet->BindSampler(6u, m_GBufferSampler);
-        m_RTGIDenoiserDescriptorSet->Update();
+        denoiserDescriptorSet->BindTexture(0u, temporalRadiance);
+        denoiserDescriptorSet->BindSampler(0u, m_GBufferSampler);
+        denoiserDescriptorSet->BindTexture(1u, depthTexture);
+        denoiserDescriptorSet->BindSampler(1u, m_GBufferSampler);
+        denoiserDescriptorSet->BindTexture(2u, normalTexture);
+        denoiserDescriptorSet->BindSampler(2u, m_GBufferSampler);
+        denoiserDescriptorSet->BindTexture(3u, materialTexture);
+        denoiserDescriptorSet->BindSampler(3u, m_GBufferSampler);
+        denoiserDescriptorSet->BindTexture(4u, confidenceTexture);
+        denoiserDescriptorSet->BindSampler(4u, m_GBufferSampler);
+        denoiserDescriptorSet->BindStorageTexture(5u, m_RTGIDenoisedTexture);
+        denoiserDescriptorSet->BindTexture(6u, ageTexture);
+        denoiserDescriptorSet->BindSampler(6u, m_GBufferSampler);
+        denoiserDescriptorSet->Update();
 
         const uint32_t groupCountX =
             (width + RTGI_COMPUTE_WORKGROUP_SIZE - 1u) / RTGI_COMPUTE_WORKGROUP_SIZE;
         const uint32_t groupCountY =
             (height + RTGI_COMPUTE_WORKGROUP_SIZE - 1u) / RTGI_COMPUTE_WORKGROUP_SIZE;
         context.CommandList->SetPipeline(m_RTGIDenoiserPipeline);
-        context.CommandList->SetDescriptorSet(m_RTGIDenoiserDescriptorSet);
+        context.CommandList->SetDescriptorSet(denoiserDescriptorSet);
         context.CommandList->Dispatch(groupCountX, groupCountY, 1u);
         context.CommandList->TextureBarrier(m_RTGIDenoisedTexture,
                                              RHI::ResourceState::UnorderedAccess,
                                              RHI::ResourceState::ShaderResource);
         m_RTGIDenoisedTextureState = RHI::ResourceState::ShaderResource;
+        return true;
+    }
+
+    bool LightingPass::RecordRTGIInstanceUpload(ViewRenderContext& context, const void* data, uint64_t size)
+    {
+        FrameResourceLane* const frameResources = context.FrameResources;
+        // 前にコピーを記録したフレームが提出されたかで、GPUの置き場に表が届いたかを決める
+        if (m_RTGIInstancesPendingGeneration.IsSet())
+        {
+            const FrameSubmissionOutcome outcome = frameResources
+                ? frameResources->GetSubmissionOutcome(m_RTGIInstancesPendingGeneration)
+                : FrameSubmissionOutcome::Unknown;
+            if (outcome == FrameSubmissionOutcome::Recording)
+            {
+                // 同じフレームで先に記録したコピーは、この dispatch より先に実行される
+                return true;
+            }
+            // 提出しなかったフレームのコピーは実行されないので持ち越さない（記録が残っていないときも同じ）
+            m_bRTGIInstancesUploaded = outcome == FrameSubmissionOutcome::Submitted;
+            m_RTGIInstancesPendingGeneration = FrameResourceGeneration{};
+        }
+        if (m_bRTGIInstancesUploaded)
+        {
+            return true;
+        }
+
+        const ExecuteUpload upload = BorrowUpload(context,
+                                                  data,
+                                                  size,
+                                                  FrameUploadUsage::Storage,
+                                                  "RTGI.DiffuseIndirect.Instances.Upload.Unowned");
+        if (!upload.IsValid())
+        {
+            return false;
+        }
+        // コピーの前の読み（同じフレームの前の Execute・前のフレームの dispatch）が終わってから書く
+        context.CommandList->BufferBarrier(m_RTGIComputeInstanceDataBuffer,
+                                           RHI::ResourceState::ShaderResource,
+                                           RHI::ResourceState::CopyDest,
+                                           0u,
+                                           size);
+        context.CommandList->CopyBuffer(upload.Buffer, m_RTGIComputeInstanceDataBuffer, size, upload.Offset, 0u);
+        // コピーの書き込みを、この後の dispatch の読みへ見せる
+        context.CommandList->BufferBarrier(m_RTGIComputeInstanceDataBuffer,
+                                           RHI::ResourceState::CopyDest,
+                                           RHI::ResourceState::ShaderResource,
+                                           0u,
+                                           size);
+        // 届いたことは提出の成功で確定する。持ち主の無い文脈は提出を確かめられないので、確定せず次もコピーする
+        if (frameResources)
+        {
+            m_RTGIInstancesPendingGeneration = frameResources->GetGeneration();
+        }
         return true;
     }
 
@@ -3831,6 +3659,7 @@ namespace NorvesLib::Core::Rendering
         if (!bInstancesBuilt || instanceBuild.bChanged)
         {
             m_bRTGIInstancesUploaded = false;
+            m_RTGIInstancesPendingGeneration = FrameResourceGeneration{};
         }
         if (!bInstancesBuilt || !instanceBuild.bHasShadowCaster)
         {
@@ -3866,13 +3695,14 @@ namespace NorvesLib::Core::Rendering
         {
             return fail();
         }
+        // instanceの表の置き場はGPUだけが読む（CPUは書かず、借りた切れ端からコピーする）
         if (!m_RTGIComputeInstanceDataBuffer ||
             m_RTGIComputeInstanceDataCapacity < requiredInstanceDataSize)
         {
             RHI::BufferDesc instanceDataDesc(
                 requiredInstanceDataSize,
                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
-                true,
+                false,
                 "RTGI.DiffuseIndirect.Instances");
             RHI::BufferPtr instanceDataBuffer = context.Device->CreateBuffer(instanceDataDesc);
             if (!instanceDataBuffer)
@@ -3882,30 +3712,13 @@ namespace NorvesLib::Core::Rendering
             m_RTGIComputeInstanceDataBuffer = std::move(instanceDataBuffer);
             m_RTGIComputeInstanceDataCapacity = requiredInstanceDataSize;
             m_bRTGIInstancesUploaded = false;
-            m_RTGIComputeDescriptorSet.reset();
+            m_RTGIInstancesPendingGeneration = FrameResourceGeneration{};
         }
-        // 発光instanceがなくても束縛できるよう、最低1行分を確保する。
+        // 発光instanceがなくても束縛できるよう、最低1行分を借りる。
         const uint64_t emitterDataSize =
             static_cast<uint64_t>(emitterEntries.size()) * sizeof(RTGIEmitterEntry);
         const uint64_t requiredEmitterBufferSize =
             std::max<uint64_t>(emitterDataSize, sizeof(RTGIEmitterEntry));
-        if (!m_RTGIComputeEmitterBuffer ||
-            m_RTGIComputeEmitterCapacity < requiredEmitterBufferSize)
-        {
-            RHI::BufferDesc emitterDesc(
-                requiredEmitterBufferSize,
-                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
-                true,
-                "RTGI.DiffuseIndirect.Emitters");
-            RHI::BufferPtr emitterBuffer = context.Device->CreateBuffer(emitterDesc);
-            if (!emitterBuffer)
-            {
-                return fail();
-            }
-            m_RTGIComputeEmitterBuffer = std::move(emitterBuffer);
-            m_RTGIComputeEmitterCapacity = requiredEmitterBufferSize;
-            m_RTGIComputeDescriptorSet.reset();
-        }
 
         const RHI::TexturePtr& environmentTexture =
             context.PhysicalLighting.EnvironmentRadianceTexture;
@@ -3918,7 +3731,8 @@ namespace NorvesLib::Core::Rendering
                                      : 1u) * sizeof(GPULightData);
         if (!lightBuffer || !environmentTexture || !environmentSampler ||
             context.PhysicalLighting.LightBufferSizeBytes < requiredLightBufferSize ||
-            lightBuffer->GetSize() < context.PhysicalLighting.LightBufferSizeBytes)
+            lightBuffer->GetSize() < static_cast<uint64_t>(context.PhysicalLighting.LightBufferOffset) +
+                                         context.PhysicalLighting.LightBufferSizeBytes)
         {
             return fail();
         }
@@ -4104,94 +3918,102 @@ namespace NorvesLib::Core::Rendering
         parameters.previousCameraPosition[3] =
             std::isfinite(historyExposureScale) && historyExposureScale > 0.0f ? historyExposureScale
                                                                                 : 1.0f;
-        m_RTGIComputeParametersBuffer->Update(&parameters, sizeof(parameters));
-        // instanceの表は前のフレームに書いた内容から変わったときだけ書く（バッファを作り直したときも書く）
-        if (!m_bRTGIInstancesUploaded)
+        // 定数・発光の表・記述子セットは dispatch ごとに借りる（同じフレームの別の Execute・前のフレームの dispatch が
+        // 読む物を書き換えない）
+        const ExecuteUpload parametersUpload = BorrowUpload(context,
+                                                            &parameters,
+                                                            sizeof(parameters),
+                                                            FrameUploadUsage::Constants,
+                                                            "RTGI.DiffuseIndirect.Parameters.Unowned");
+        // 発光instanceが無いフレームは 0 で埋めた 1 行（行の数 0 を渡すので読まれない）
+        const ExecuteUpload emitterUpload = BorrowUpload(context,
+                                                         emitterDataSize > 0u ? emitterEntries.data() : nullptr,
+                                                         requiredEmitterBufferSize,
+                                                         FrameUploadUsage::Storage,
+                                                         "RTGI.DiffuseIndirect.Emitters.Unowned");
+        if (!parametersUpload.IsValid() || !emitterUpload.IsValid())
         {
-            m_RTGIComputeInstanceDataBuffer->Update(
-                instanceData.data(), requiredInstanceDataSize);
-            m_bRTGIInstancesUploaded = true;
+            return fail();
         }
-        if (emitterDataSize > 0u)
+        const RHI::DescriptorSetPtr computeDescriptorSet = BorrowDescriptorSet(
+            context, m_RTGIComputeDescriptorSetLayout, CreateRTGIComputeDescriptorSetDesc());
+        if (!computeDescriptorSet)
         {
-            m_RTGIComputeEmitterBuffer->Update(emitterEntries.data(), emitterDataSize);
+            return fail();
+        }
+
+        // instanceの表は、GPUの置き場に届いたと確かめられていないときだけ、借りた切れ端から表全体をコピーする
+        // （表が変わった・置き場を作り直した・コピーを記録したフレームを提出しなかった・前の例外で印を落とした）
+        if (!RecordRTGIInstanceUpload(context, instanceData.data(), requiredInstanceDataSize))
+        {
+            return fail();
         }
         m_RTGIGeometryBuffers = std::move(geometryBuffers);
 
-        if (!m_RTGIComputeDescriptorSet)
-        {
-            m_RTGIComputeDescriptorSet = context.Device->CreateDescriptorSet(
-                CreateRTGIComputeDescriptorSetDesc());
-            if (!m_RTGIComputeDescriptorSet)
-            {
-                return fail();
-            }
-        }
-
-        if (!m_RTGIComputeDescriptorSet->BindAccelerationStructure(
+        if (!computeDescriptorSet->BindAccelerationStructure(
                 0u, context.SnapshotRayTracingScene->TopLevel))
         {
             return fail();
         }
-        m_RTGIComputeDescriptorSet->BindConstantBuffer(
+        computeDescriptorSet->BindConstantBuffer(
             1u,
-            m_RTGIComputeParametersBuffer,
-            0u,
-            static_cast<uint32_t>(sizeof(RTGIComputeParameters)));
-        m_RTGIComputeDescriptorSet->BindTexture(2u, normalTexture);
-        m_RTGIComputeDescriptorSet->BindSampler(2u, m_GBufferSampler);
-        m_RTGIComputeDescriptorSet->BindTexture(3u, depthTexture);
-        m_RTGIComputeDescriptorSet->BindSampler(3u, m_GBufferSampler);
-        m_RTGIComputeDescriptorSet->BindTexture(4u, albedoTexture);
-        m_RTGIComputeDescriptorSet->BindSampler(4u, m_GBufferSampler);
-        m_RTGIComputeDescriptorSet->BindTexture(5u, materialTexture);
-        m_RTGIComputeDescriptorSet->BindSampler(5u, m_GBufferSampler);
-        m_RTGIComputeDescriptorSet->BindStorageTexture(6u, rtgiDiffuseIndirectTexture);
-        m_RTGIComputeDescriptorSet->BindStorageBuffer(
+            parametersUpload.Buffer,
+            parametersUpload.GetOffset32(),
+            parametersUpload.GetSize32());
+        computeDescriptorSet->BindTexture(2u, normalTexture);
+        computeDescriptorSet->BindSampler(2u, m_GBufferSampler);
+        computeDescriptorSet->BindTexture(3u, depthTexture);
+        computeDescriptorSet->BindSampler(3u, m_GBufferSampler);
+        computeDescriptorSet->BindTexture(4u, albedoTexture);
+        computeDescriptorSet->BindSampler(4u, m_GBufferSampler);
+        computeDescriptorSet->BindTexture(5u, materialTexture);
+        computeDescriptorSet->BindSampler(5u, m_GBufferSampler);
+        computeDescriptorSet->BindStorageTexture(6u, rtgiDiffuseIndirectTexture);
+        computeDescriptorSet->BindStorageBuffer(
             7u,
             m_RTGIComputeInstanceDataBuffer,
             0u,
             static_cast<uint32_t>(requiredInstanceDataSize));
-        m_RTGIComputeDescriptorSet->BindStorageBuffer(
+        computeDescriptorSet->BindStorageBuffer(
             8u,
             lightBuffer,
-            0u,
+            context.PhysicalLighting.LightBufferOffset,
             context.PhysicalLighting.LightBufferSizeBytes);
-        m_RTGIComputeDescriptorSet->BindStorageBuffer(
+        computeDescriptorSet->BindStorageBuffer(
             23u,
-            m_RTGIComputeEmitterBuffer,
-            0u,
-            static_cast<uint32_t>(requiredEmitterBufferSize));
-        m_RTGIComputeDescriptorSet->BindTexture(9u, environmentTexture);
-        m_RTGIComputeDescriptorSet->BindSampler(9u, environmentSampler);
-        m_RTGIComputeDescriptorSet->BindTexture(10u, velocityTexture);
-        m_RTGIComputeDescriptorSet->BindSampler(10u, m_GBufferSampler);
-        m_RTGIComputeDescriptorSet->BindTexture(11u, readHistory.Radiance);
-        m_RTGIComputeDescriptorSet->BindSampler(11u, m_GBufferSampler);
-        m_RTGIComputeDescriptorSet->BindTexture(12u, readHistory.Age);
-        m_RTGIComputeDescriptorSet->BindSampler(12u, m_GBufferSampler);
-        m_RTGIComputeDescriptorSet->BindTexture(13u, readHistory.Confidence);
-        m_RTGIComputeDescriptorSet->BindSampler(13u, m_GBufferSampler);
-        m_RTGIComputeDescriptorSet->BindTexture(14u, readHistory.Depth);
-        m_RTGIComputeDescriptorSet->BindSampler(14u, m_GBufferSampler);
-        m_RTGIComputeDescriptorSet->BindTexture(15u, readHistory.Normal);
-        m_RTGIComputeDescriptorSet->BindSampler(15u, m_GBufferSampler);
-        m_RTGIComputeDescriptorSet->BindTexture(16u, readHistory.Material);
-        m_RTGIComputeDescriptorSet->BindSampler(16u, m_GBufferSampler);
-        m_RTGIComputeDescriptorSet->BindStorageTexture(17u, writeHistory.Radiance);
-        m_RTGIComputeDescriptorSet->BindStorageTexture(18u, writeHistory.Age);
-        m_RTGIComputeDescriptorSet->BindStorageTexture(19u, writeHistory.Confidence);
-        m_RTGIComputeDescriptorSet->BindStorageTexture(20u, writeHistory.Depth);
-        m_RTGIComputeDescriptorSet->BindStorageTexture(21u, writeHistory.Normal);
-        m_RTGIComputeDescriptorSet->BindStorageTexture(22u, writeHistory.Material);
-        m_RTGIComputeDescriptorSet->Update();
+            emitterUpload.Buffer,
+            emitterUpload.GetOffset32(),
+            emitterUpload.GetSize32());
+        computeDescriptorSet->BindTexture(9u, environmentTexture);
+        computeDescriptorSet->BindSampler(9u, environmentSampler);
+        computeDescriptorSet->BindTexture(10u, velocityTexture);
+        computeDescriptorSet->BindSampler(10u, m_GBufferSampler);
+        computeDescriptorSet->BindTexture(11u, readHistory.Radiance);
+        computeDescriptorSet->BindSampler(11u, m_GBufferSampler);
+        computeDescriptorSet->BindTexture(12u, readHistory.Age);
+        computeDescriptorSet->BindSampler(12u, m_GBufferSampler);
+        computeDescriptorSet->BindTexture(13u, readHistory.Confidence);
+        computeDescriptorSet->BindSampler(13u, m_GBufferSampler);
+        computeDescriptorSet->BindTexture(14u, readHistory.Depth);
+        computeDescriptorSet->BindSampler(14u, m_GBufferSampler);
+        computeDescriptorSet->BindTexture(15u, readHistory.Normal);
+        computeDescriptorSet->BindSampler(15u, m_GBufferSampler);
+        computeDescriptorSet->BindTexture(16u, readHistory.Material);
+        computeDescriptorSet->BindSampler(16u, m_GBufferSampler);
+        computeDescriptorSet->BindStorageTexture(17u, writeHistory.Radiance);
+        computeDescriptorSet->BindStorageTexture(18u, writeHistory.Age);
+        computeDescriptorSet->BindStorageTexture(19u, writeHistory.Confidence);
+        computeDescriptorSet->BindStorageTexture(20u, writeHistory.Depth);
+        computeDescriptorSet->BindStorageTexture(21u, writeHistory.Normal);
+        computeDescriptorSet->BindStorageTexture(22u, writeHistory.Material);
+        computeDescriptorSet->Update();
 
         const uint32_t groupCountX =
             (width + RTGI_COMPUTE_WORKGROUP_SIZE - 1u) / RTGI_COMPUTE_WORKGROUP_SIZE;
         const uint32_t groupCountY =
             (height + RTGI_COMPUTE_WORKGROUP_SIZE - 1u) / RTGI_COMPUTE_WORKGROUP_SIZE;
         context.CommandList->SetPipeline(m_RTGIComputePipeline);
-        context.CommandList->SetDescriptorSet(m_RTGIComputeDescriptorSet);
+        context.CommandList->SetDescriptorSet(computeDescriptorSet);
         context.CommandList->Dispatch(groupCountX, groupCountY, 1u);
         context.CommandList->TextureBarrier(
             rtgiDiffuseIndirectTexture,
@@ -4298,8 +4120,9 @@ namespace NorvesLib::Core::Rendering
                            "RTGI ray-queryの実行に失敗したため既存間接光へ戻ります: %s",
                            exception.what());
         // instanceの表（m_RTGIInstances）は書き換えの途中で止まっていることがあり、次のフレームの比較で
-        // 変化なしと見えてもGPUの表とは一致しない。次に表を作れたフレームで必ず書き直す
+        // 変化なしと見えてもGPUの表とは一致しない。次に表を作れたフレームで必ず書き直す（記録したコピーの確認も待たない）
         m_bRTGIInstancesUploaded = false;
+        m_RTGIInstancesPendingGeneration = FrameResourceGeneration{};
         InvalidateRTGIHistory();
         return false;
     }
@@ -4308,6 +4131,7 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_WARNING("LightingPass",
                            "RTGI ray-queryの実行に失敗したため既存間接光へ戻ります");
         m_bRTGIInstancesUploaded = false;
+        m_RTGIInstancesPendingGeneration = FrameResourceGeneration{};
         InvalidateRTGIHistory();
         return false;
     }
@@ -4332,7 +4156,7 @@ namespace NorvesLib::Core::Rendering
         context.PhysicalLighting.PublishShadowMapFallback(m_DefaultShadowMapArrayTexture,
                                                           m_GBufferSampler);
 
-        if (!m_LightingRenderPass || !m_LightingFramebuffer || !m_LightingPipeline || !m_LightingDescriptorSet)
+        if (!m_LightingRenderPass || !m_LightingFramebuffer || !m_LightingPipeline || !m_LightingDescriptorSetLayout)
         {
             NORVES_LOG_WARNING("LightingPass", "Lighting resources not ready, skipping");
             TryEnqueueNativeTransitionPass(context);
@@ -4346,8 +4170,11 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // 同じフレームの別の Execute が記録した描画が読む資源を書き換えないよう、この Execute 専用の組へ切り替える
-        if (!AcquireExecuteResourceSet(context.ResolveRenderFrameSerial()))
+        // 記述子セットと照明の定数・光源の配列・VSM のパラメータは Execute ごとにフレームの持ち主から借りる
+        // （同じフレームの別の Execute・前のフレームの描画が読む物を書き換えない）
+        const RHI::DescriptorSetPtr lightingDescriptorSet = BorrowDescriptorSet(
+            context, m_LightingDescriptorSetLayout, CreateLightingDescriptorSetDesc(m_bNeuralBRDFAvailable));
+        if (!lightingDescriptorSet)
         {
             TryEnqueueNativeTransitionPass(context);
             return;
@@ -4369,10 +4196,12 @@ namespace NorvesLib::Core::Rendering
             shadowMapTexture &&
             shadowMapTexture->GetArraySize() == PhysicalLightingShadowCascadeCount;
         GPULightingParams lightingParams = {};
+        ExecuteUpload lightArrayUpload;
         if (!UpdateLightBuffer(context,
                                bShadowResourceAvailable,
                                ssaoTexture != nullptr,
-                               &lightingParams))
+                               lightingParams,
+                               lightArrayUpload))
         {
             NORVES_LOG_ERROR("LightingPass", "Failed to update lighting light buffer, skipping lighting draw");
             return;
@@ -4454,7 +4283,17 @@ namespace NorvesLib::Core::Rendering
             ddgiParameters.info[1] = 1u;
         }
         lightingParams.ddgi = ddgiParameters;
-        m_LightDataBuffer->Update(&lightingParams, sizeof(lightingParams));
+        const ExecuteUpload lightingParamsUpload = BorrowUpload(context,
+                                                                &lightingParams,
+                                                                LIGHTING_PARAMS_SIZE,
+                                                                FrameUploadUsage::Constants,
+                                                                "LightingParamsUBO.Unowned");
+        if (!lightingParamsUpload.IsValid())
+        {
+            NORVES_LOG_ERROR("LightingPass", "照明の定数を借りられないため、照明を描きません");
+            TryEnqueueNativeTransitionPass(context);
+            return;
+        }
 
         if (m_bRegisterLegacyBridge && bRegisterLegacyOutputs)
         {
@@ -4465,37 +4304,37 @@ namespace NorvesLib::Core::Rendering
             RegisterOutputs(context, targets, depthTexture);
         }
 
-        m_LightingDescriptorSet->BindTexture(0, albedoTexture);
-        m_LightingDescriptorSet->BindTexture(1, normalTexture);
-        m_LightingDescriptorSet->BindTexture(2, materialTexture);
-        m_LightingDescriptorSet->BindTexture(3, depthTexture);
-        m_LightingDescriptorSet->BindSampler(0, m_GBufferSampler);
-        m_LightingDescriptorSet->BindSampler(1, m_GBufferSampler);
-        m_LightingDescriptorSet->BindSampler(2, m_GBufferSampler);
-        m_LightingDescriptorSet->BindSampler(3, m_GBufferSampler);
+        lightingDescriptorSet->BindTexture(0, albedoTexture);
+        lightingDescriptorSet->BindTexture(1, normalTexture);
+        lightingDescriptorSet->BindTexture(2, materialTexture);
+        lightingDescriptorSet->BindTexture(3, depthTexture);
+        lightingDescriptorSet->BindSampler(0, m_GBufferSampler);
+        lightingDescriptorSet->BindSampler(1, m_GBufferSampler);
+        lightingDescriptorSet->BindSampler(2, m_GBufferSampler);
+        lightingDescriptorSet->BindSampler(3, m_GBufferSampler);
 
         const RHI::TexturePtr& boundShadowMapTexture =
             shadowMapTexture ? shadowMapTexture : context.PhysicalLighting.ShadowMapTexture;
         const bool bShadowMapIsArray =
             boundShadowMapTexture &&
             boundShadowMapTexture->GetArraySize() == PhysicalLightingShadowCascadeCount;
-        m_LightingDescriptorSet->BindTexture(
+        lightingDescriptorSet->BindTexture(
             6,
             bShadowMapIsArray ? boundShadowMapTexture : m_DefaultShadowMapArrayTexture);
-        m_LightingDescriptorSet->BindSampler(
+        lightingDescriptorSet->BindSampler(
             6,
             bShadowMapIsArray && context.PhysicalLighting.ShadowSampler ?
                 context.PhysicalLighting.ShadowSampler : m_GBufferSampler);
 
         if (emissiveTexture)
         {
-            m_LightingDescriptorSet->BindTexture(7, emissiveTexture);
+            lightingDescriptorSet->BindTexture(7, emissiveTexture);
         }
         else
         {
-            m_LightingDescriptorSet->BindTexture(7, albedoTexture);
+            lightingDescriptorSet->BindTexture(7, albedoTexture);
         }
-        m_LightingDescriptorSet->BindSampler(7, m_GBufferSampler);
+        lightingDescriptorSet->BindSampler(7, m_GBufferSampler);
 
         const uint32_t activeDebugMode = static_cast<uint32_t>(context.GetActiveDebugMode());
         const bool bValidationRaw250 = activeDebugMode == 250u;
@@ -4519,12 +4358,12 @@ namespace NorvesLib::Core::Rendering
             bSkyAtmosphereAvailable ? context.SkyAtmosphere.RadianceTexture :
             bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_EnvironmentTexture ? m_EnvironmentTexture : m_DefaultBlackTexture;
-        m_LightingDescriptorSet->BindTexture(8, environmentTexture);
-        m_LightingDescriptorSet->BindSampler(8,
+        lightingDescriptorSet->BindTexture(8, environmentTexture);
+        lightingDescriptorSet->BindSampler(8,
                                              bSkyAtmosphereAvailable ?
                                                  context.SkyAtmosphere.Sampler : m_IBLSampler);
-        m_LightingDescriptorSet->BindTexture(9, m_BrdfLutTexture);
-        m_LightingDescriptorSet->BindSampler(9, m_DfgSampler);
+        lightingDescriptorSet->BindTexture(9, m_BrdfLutTexture);
+        lightingDescriptorSet->BindSampler(9, m_DfgSampler);
 
         const RHI::TexturePtr& diffuseIrradianceTexture =
             bValidationRaw251 ? m_DefaultBlackTexture :
@@ -4537,8 +4376,8 @@ namespace NorvesLib::Core::Rendering
             bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_DiffuseIrradianceTexture ?
                 m_DiffuseIrradianceTexture : m_DefaultBlackTexture;
-        m_LightingDescriptorSet->BindTexture(12, diffuseIrradianceTexture);
-        m_LightingDescriptorSet->BindSampler(12, m_DiffuseIrradianceSampler);
+        lightingDescriptorSet->BindTexture(12, diffuseIrradianceTexture);
+        lightingDescriptorSet->BindSampler(12, m_DiffuseIrradianceSampler);
 
         const RHI::TexturePtr& prefilteredSpecularTexture =
             bValidationRaw251 ? m_DefaultBlackTexture :
@@ -4550,77 +4389,81 @@ namespace NorvesLib::Core::Rendering
             bSkyAtmosphereRequested ? m_DefaultBlackTexture :
             m_bIBLAvailable && m_PrefilteredSpecularTexture ? m_PrefilteredSpecularTexture :
             m_DefaultBlackTexture;
-        m_LightingDescriptorSet->BindTexture(13, prefilteredSpecularTexture);
-        m_LightingDescriptorSet->BindSampler(13, m_PrefilteredSpecularSampler);
+        lightingDescriptorSet->BindTexture(13, prefilteredSpecularTexture);
+        lightingDescriptorSet->BindSampler(13, m_PrefilteredSpecularSampler);
 
-        m_LightingDescriptorSet->BindTexture(
+        lightingDescriptorSet->BindTexture(
             14,
             bSkyAtmosphereAvailable ? context.SkyAtmosphere.SunDiskTexture : m_DefaultBlackTexture);
-        m_LightingDescriptorSet->BindSampler(
+        lightingDescriptorSet->BindSampler(
             14,
             bSkyAtmosphereAvailable ? context.SkyAtmosphere.Sampler : m_IBLSampler);
-        m_LightingDescriptorSet->BindTexture(
+        lightingDescriptorSet->BindTexture(
             15,
             bSkyAtmosphereAvailable ? context.SkyAtmosphere.TransmittanceTexture : m_DefaultBlackTexture);
-        m_LightingDescriptorSet->BindSampler(
+        lightingDescriptorSet->BindSampler(
             15,
             bSkyAtmosphereAvailable ? context.SkyAtmosphere.Sampler : m_IBLSampler);
 
-        m_LightingDescriptorSet->BindTexture(
+        lightingDescriptorSet->BindTexture(
             16,
             context.PhysicalLighting.bRayTracingShadowPublished
                 ? context.PhysicalLighting.RayTracingShadowVisibilityTexture
                 : m_DefaultBlackTexture);
-        m_LightingDescriptorSet->BindSampler(16, m_GBufferSampler);
+        lightingDescriptorSet->BindSampler(16, m_GBufferSampler);
 
-        m_LightingDescriptorSet->BindTexture(
+        lightingDescriptorSet->BindTexture(
             17,
             bUseDDGILighting
                 ? context.PhysicalLighting.DDGIIrradianceAtlas
                 : m_DefaultDDGIIrradianceAtlas);
-        m_LightingDescriptorSet->BindSampler(17, m_DDGISampler);
-        m_LightingDescriptorSet->BindTexture(
+        lightingDescriptorSet->BindSampler(17, m_DDGISampler);
+        lightingDescriptorSet->BindTexture(
             18,
             bUseDDGILighting
                 ? context.PhysicalLighting.DDGIDistanceAtlas
                 : m_DefaultDDGIDistanceAtlas);
-        m_LightingDescriptorSet->BindSampler(18, m_DDGISampler);
-        m_LightingDescriptorSet->BindTexture(
+        lightingDescriptorSet->BindSampler(18, m_DDGISampler);
+        lightingDescriptorSet->BindTexture(
             19,
             bUseRTGILighting && context.PhysicalLighting.RTGI.Result.DiffuseIndirectRadiance
                 ? context.PhysicalLighting.RTGI.Result.DiffuseIndirectRadiance
                 : m_DefaultBlackTexture);
-        m_LightingDescriptorSet->BindSampler(19, m_GBufferSampler);
-        m_LightingDescriptorSet->BindTexture(
+        lightingDescriptorSet->BindSampler(19, m_GBufferSampler);
+        lightingDescriptorSet->BindTexture(
             20,
             m_FramePointShadowCubeTexture ? m_FramePointShadowCubeTexture
                                           : m_DefaultPointShadowCubeTexture);
-        m_LightingDescriptorSet->BindSampler(20, m_GBufferSampler);
+        lightingDescriptorSet->BindSampler(20, m_GBufferSampler);
 
         if (ssaoTexture)
         {
-            m_LightingDescriptorSet->BindTexture(10, ssaoTexture);
+            lightingDescriptorSet->BindTexture(10, ssaoTexture);
         }
         else
         {
-            m_LightingDescriptorSet->BindTexture(10, albedoTexture);
+            lightingDescriptorSet->BindTexture(10, albedoTexture);
         }
-        m_LightingDescriptorSet->BindSampler(10, m_GBufferSampler);
+        lightingDescriptorSet->BindSampler(10, m_GBufferSampler);
 
-        m_LightingDescriptorSet->BindStorageBuffer(5,
-                                                   m_LightArrayBuffer,
-                                                   0,
-                                                   GetLightArrayBufferSizeBytes());
+        lightingDescriptorSet->BindConstantBuffer(4,
+                                                  lightingParamsUpload.Buffer,
+                                                  lightingParamsUpload.GetOffset32(),
+                                                  lightingParamsUpload.GetSize32());
+        lightingDescriptorSet->BindStorageBuffer(5,
+                                                 lightArrayUpload.Buffer,
+                                                 lightArrayUpload.GetOffset32(),
+                                                 lightArrayUpload.GetSize32());
 
         if (m_bNeuralBRDFAvailable && m_NeuralBRDFWeightBuffer)
         {
-            m_LightingDescriptorSet->BindStorageBuffer(
+            lightingDescriptorSet->BindStorageBuffer(
                 11, m_NeuralBRDFWeightBuffer, 0,
                 static_cast<uint32_t>(m_NeuralBRDFData.GetWeightDataSizeFP32()));
         }
         else
         {
-            m_LightingDescriptorSet->BindStorageBuffer(11, m_DefaultNeuralBRDFWeightBuffer, 0, 4u);
+            lightingDescriptorSet->BindStorageBuffer(11, m_DefaultNeuralBRDFWeightBuffer, 0, 4u);
         }
 
         // 太陽の VSM（--shadow-method=vsm）。クリップマップ・ページの表・プール・カメラが揃ったときだけパラメータを有効にして渡す。
@@ -4712,17 +4555,38 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         }
-        m_VsmSampleBuffer->Update(&vsmParams, sizeof(vsmParams));
-        m_VsmPointSampleBuffer->Update(&vsmPointParams, sizeof(vsmPointParams));
-        m_VsmSliceBuffer->Update(vsmSlices, sizeof(vsmSlices));
-        m_LightingDescriptorSet->BindConstantBuffer(21, m_VsmSampleBuffer, 0, static_cast<uint32_t>(sizeof(GPUVsmSampleParams)));
-        m_LightingDescriptorSet->BindStorageBuffer(22, boundVsmPageTable, 0, boundVsmPageTableBytes);
-        m_LightingDescriptorSet->BindStorageBuffer(23, boundVsmPool, 0, boundVsmPoolBytes);
-        m_LightingDescriptorSet->BindStorageBuffer(24, boundVsmStats, 0, boundVsmStatsBytes);
-        m_LightingDescriptorSet->BindStorageBuffer(25, m_VsmSliceBuffer, 0, static_cast<uint32_t>(sizeof(vsmSlices)));
-        m_LightingDescriptorSet->BindConstantBuffer(26, m_VsmPointSampleBuffer, 0, static_cast<uint32_t>(sizeof(GPUVsmPointSampleParams)));
+        const ExecuteUpload vsmSampleUpload = BorrowUpload(context,
+                                                           &vsmParams,
+                                                           sizeof(vsmParams),
+                                                           FrameUploadUsage::Constants,
+                                                           "LightingVsmSampleParams.Unowned");
+        const ExecuteUpload vsmPointSampleUpload = BorrowUpload(context,
+                                                                &vsmPointParams,
+                                                                sizeof(vsmPointParams),
+                                                                FrameUploadUsage::Constants,
+                                                                "LightingVsmPointSampleParams.Unowned");
+        const ExecuteUpload vsmSliceUpload = BorrowUpload(context,
+                                                          vsmSlices,
+                                                          sizeof(vsmSlices),
+                                                          FrameUploadUsage::Storage,
+                                                          "LightingVsmSlices.Unowned");
+        if (!vsmSampleUpload.IsValid() || !vsmPointSampleUpload.IsValid() || !vsmSliceUpload.IsValid())
+        {
+            NORVES_LOG_ERROR("LightingPass", "VSM を読むパラメータを借りられないため、照明を描きません");
+            TryEnqueueNativeTransitionPass(context);
+            return;
+        }
+        lightingDescriptorSet->BindConstantBuffer(21, vsmSampleUpload.Buffer, vsmSampleUpload.GetOffset32(), vsmSampleUpload.GetSize32());
+        lightingDescriptorSet->BindStorageBuffer(22, boundVsmPageTable, 0, boundVsmPageTableBytes);
+        lightingDescriptorSet->BindStorageBuffer(23, boundVsmPool, 0, boundVsmPoolBytes);
+        lightingDescriptorSet->BindStorageBuffer(24, boundVsmStats, 0, boundVsmStatsBytes);
+        lightingDescriptorSet->BindStorageBuffer(25, vsmSliceUpload.Buffer, vsmSliceUpload.GetOffset32(), vsmSliceUpload.GetSize32());
+        lightingDescriptorSet->BindConstantBuffer(26,
+                                                  vsmPointSampleUpload.Buffer,
+                                                  vsmPointSampleUpload.GetOffset32(),
+                                                  vsmPointSampleUpload.GetSize32());
 
-        m_LightingDescriptorSet->Update();
+        lightingDescriptorSet->Update();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();
         RHI::ScissorRect scissor = context.GetActiveLocalScissor();
@@ -4732,7 +4596,7 @@ namespace NorvesLib::Core::Rendering
                                       viewport,
                                       scissor,
                                       m_LightingPipeline,
-                                      m_LightingDescriptorSet);
+                                      lightingDescriptorSet);
 
         // 照明の描画（統計への書き込み）の後に、書き込みをホストの読み取りへ見せる。読むのは提出の完了の後
         if (vsmStatsToHost)
@@ -4787,55 +4651,6 @@ namespace NorvesLib::Core::Rendering
                                       0,
                                       0);
         return true;
-    }
-
-    bool LightingPass::EnsureLightArrayBufferCapacity(uint32_t requiredLightCount)
-    {
-        if (requiredLightCount == 0)
-        {
-            requiredLightCount = 1;
-        }
-
-        if (requiredLightCount <= m_LightArrayCapacity && m_LightArrayBuffer)
-        {
-            return true;
-        }
-
-        if (!m_Device)
-        {
-            return false;
-        }
-
-        uint32_t newCapacity = m_LightArrayCapacity > 0 ? m_LightArrayCapacity : 1;
-        while (newCapacity < requiredLightCount)
-        {
-            newCapacity *= 2;
-        }
-
-        const uint64_t newSizeBytes = static_cast<uint64_t>(newCapacity) * sizeof(GPULightData);
-        RHI::BufferDesc lightArraySsboDesc(newSizeBytes,
-                                           RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::ShaderRead,
-                                           true,
-                                           "LightArraySSBO");
-        RHI::BufferPtr newLightArrayBuffer = m_Device->CreateBuffer(lightArraySsboDesc);
-        if (!newLightArrayBuffer)
-        {
-            return false;
-        }
-
-        if (m_LightArrayBuffer)
-        {
-            m_RetiredLightArrayBuffers.push_back(m_LightArrayBuffer);
-        }
-
-        m_LightArrayBuffer = newLightArrayBuffer;
-        m_LightArrayCapacity = newCapacity;
-        return true;
-    }
-
-    uint32_t LightingPass::GetLightArrayBufferSizeBytes() const
-    {
-        return m_LightArrayCapacity * static_cast<uint32_t>(sizeof(GPULightData));
     }
 
     bool LightingPass::EnsureSkyAtmosphereIbl(const SkyAtmosphereParameters& parameters,
@@ -4914,8 +4729,10 @@ namespace NorvesLib::Core::Rendering
     bool LightingPass::UpdateLightBuffer(ViewRenderContext& context,
                                          bool bShadowAvailable,
                                          bool bSSAOAvailable,
-                                         GPULightingParams* outParams)
+                                         GPULightingParams& outParams,
+                                         ExecuteUpload& outLightArray)
     {
+        outLightArray = ExecuteUpload{};
         // ライティングパラメータを構築
         GPULightingParams params = {};
         InitializeSafeCascadedShadowParams(params);
@@ -5022,10 +4839,6 @@ namespace NorvesLib::Core::Rendering
             lightArray,
             SelectShadowedDirectionalLight(context.SnapshotLightProxies),
             m_FramePointShadowCubeTexture ? context.SnapshotPointShadows : nullptr);
-        if (!EnsureLightArrayBufferCapacity(lightCount))
-        {
-            return false;
-        }
 
         // SSAOパラメータ設定
         params.debugViewMode = static_cast<uint32_t>(context.GetActiveDebugMode());
@@ -5169,23 +4982,19 @@ namespace NorvesLib::Core::Rendering
             params.ambientColor[3] = publishedIblIntensity;
         }
 
-        if (!m_LightDataBuffer || !m_LightArrayBuffer)
+        // 光源の配列はこの Execute のために借りる（光源が無いフレームも束縛できるよう、0 で埋めた 1 つ分を借りる）
+        const uint64_t lightArrayBytes =
+            static_cast<uint64_t>(lightCount > 0u ? lightCount : 1u) * sizeof(GPULightData);
+        outLightArray = BorrowUpload(context,
+                                     lightCount > 0u ? lightArray.data() : nullptr,
+                                     lightArrayBytes,
+                                     FrameUploadUsage::Storage,
+                                     "LightArraySSBO.Unowned");
+        if (!outLightArray.IsValid())
         {
             return false;
         }
-
-        if (outParams != nullptr)
-        {
-            *outParams = params;
-        }
-        else
-        {
-            m_LightDataBuffer->Update(&params, sizeof(GPULightingParams));
-        }
-        if (lightCount > 0)
-        {
-            m_LightArrayBuffer->Update(lightArray.data(), sizeof(GPULightData) * lightCount);
-        }
+        outParams = params;
 
         // RTGI・DDGIの不交差は、IBLと同じ地表から見た空（視線方向の透過率込み）を引く。
         const RHI::TexturePtr& environmentRadiance =
@@ -5220,9 +5029,9 @@ namespace NorvesLib::Core::Rendering
         if (m_bInitialized && context.PhysicalLighting.bActive)
         {
             context.PhysicalLighting.PublishLighting(
-                m_LightArrayBuffer,
+                outLightArray.Buffer,
                 lightCount,
-                GetLightArrayBufferSizeBytes(),
+                outLightArray.GetSize32(),
                 environmentRadiance,
                 environmentRadianceSampler,
                 diffuseIrradiance,
@@ -5234,7 +5043,8 @@ namespace NorvesLib::Core::Rendering
                 9u,
                 publishedIblIntensity,
                 params.bIBLEnabled != 0u,
-                params.staticEnvironmentMaxRadiance);
+                params.staticEnvironmentMaxRadiance,
+                outLightArray.GetOffset32());
             // 透明物も同じキューブの番号で点光源の影を引く（光源バッファと同じフレームの配列）。
             context.PhysicalLighting.PublishPointShadowCubes(
                 m_FramePointShadowCubeTexture ? m_FramePointShadowCubeTexture

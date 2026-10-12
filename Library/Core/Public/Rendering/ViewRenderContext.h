@@ -108,6 +108,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr LightBuffer;
         uint32_t LogicalLightCount = 0;
         uint32_t LightBufferSizeBytes = 0;
+        /** @brief LightBuffer の中の光源の配列の先頭（照明がフレームの持ち主から借りた切れ端のオフセット。束縛へそのまま渡す） */
+        uint32_t LightBufferOffset = 0;
 
         RHI::TexturePtr EnvironmentRadianceTexture;
         RHI::SamplerPtr EnvironmentRadianceSampler;
@@ -154,6 +156,7 @@ namespace NorvesLib::Core::Rendering
             LightBuffer.reset();
             LogicalLightCount = 0;
             LightBufferSizeBytes = 0;
+            LightBufferOffset = 0;
             EnvironmentRadianceTexture.reset();
             EnvironmentRadianceSampler.reset();
             DiffuseIrradianceTexture.reset();
@@ -337,11 +340,13 @@ namespace NorvesLib::Core::Rendering
                              uint32_t prefilteredSpecularMipLevels,
                              float iblIntensity,
                              bool bIBLEnabledValue,
-                             float staticEnvironmentMaxRadiance = 0.0f)
+                             float staticEnvironmentMaxRadiance = 0.0f,
+                             uint32_t lightBufferOffset = 0u)
         {
             LightBuffer = lightBuffer;
             LogicalLightCount = logicalLightCount;
             LightBufferSizeBytes = lightBufferSizeBytes;
+            LightBufferOffset = lightBufferOffset;
             EnvironmentRadianceTexture = environmentRadiance;
             EnvironmentRadianceSampler = environmentRadianceSampler;
             DiffuseIrradianceTexture = diffuseIrradiance;

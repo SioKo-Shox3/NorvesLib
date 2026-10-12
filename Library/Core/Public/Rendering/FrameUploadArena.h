@@ -179,8 +179,10 @@ namespace NorvesLib::Core::Rendering
             }
             RHI::BufferDesc desc;
             desc.Size = sizeBytes;
+            // コピー元（TransferSrc）は、GPU だけが読む資源へ借りた切れ端から写すパスのため（RTGI の instance の表など）
             desc.Usage = RHI::ResourceUsage::ConstantBuffer | RHI::ResourceUsage::VertexBuffer |
-                         RHI::ResourceUsage::IndexBuffer | RHI::ResourceUsage::StorageBuffer;
+                         RHI::ResourceUsage::IndexBuffer | RHI::ResourceUsage::StorageBuffer |
+                         RHI::ResourceUsage::TransferSrc;
             desc.CPUAccessible = true;
             desc.DebugName = "FrameResource.UploadPage";
             try

@@ -62,6 +62,58 @@ namespace NorvesLib::Core::Rendering
         return "Unknown";
     }
 
+    /** @brief 世代のフレームを提出したか（記録したコマンドが GPU で実行されるか） */
+    enum class FrameSubmissionOutcome : uint8_t
+    {
+        /** まだ記録中（今のフレーム）。同じフレームで先に記録したコマンドは、後に記録したコマンドより先に実行される */
+        Recording,
+        /** 提出した。GPU はそのフレームのコマンドを、後のフレームのコマンドより先に実行する */
+        Submitted,
+        /** 提出しなかった。そのフレームに記録したコマンドは実行されない */
+        Aborted,
+        /** 記録が残っていない（古すぎる・未設定・持ち主の外の世代）。呼び出し側は提出しなかったものとして扱う */
+        Unknown,
+    };
+
+    /**
+     * @brief 終わったフレームの世代ごとの提出の結果（直近の Capacity 個）
+     *
+     * 世代は全部のスロットを通して 1 ずつ増えるので、世代を Capacity で割った余りの位置に置く。RenderThread が提出・中止の
+     * ときに書き、パスが記録中に読む（書くのは記録の外なので排他は持たない）。
+     */
+    struct FrameSubmissionHistory
+    {
+        static constexpr uint32_t Capacity = 16;
+
+        uint64_t Generations[Capacity] = {};
+        uint8_t Submitted[Capacity] = {};
+
+        void Record(uint64_t generation, bool bSubmitted)
+        {
+            if (generation == 0)
+            {
+                return;
+            }
+            const uint32_t index = static_cast<uint32_t>(generation % Capacity);
+            Generations[index] = generation;
+            Submitted[index] = bSubmitted ? 1u : 0u;
+        }
+
+        FrameSubmissionOutcome Find(uint64_t generation) const
+        {
+            if (generation == 0)
+            {
+                return FrameSubmissionOutcome::Unknown;
+            }
+            const uint32_t index = static_cast<uint32_t>(generation % Capacity);
+            if (Generations[index] != generation)
+            {
+                return FrameSubmissionOutcome::Unknown;
+            }
+            return Submitted[index] != 0 ? FrameSubmissionOutcome::Submitted : FrameSubmissionOutcome::Aborted;
+        }
+    };
+
     /**
      * @brief フレームの持ち主から借りた記述子セット
      *
@@ -137,6 +189,15 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief generation が持ち主の記録中のフレームで借りた物か */
         bool IsCurrent(const FrameResourceGeneration& generation) const;
+
+        /**
+         * @brief generation のフレームを提出したか
+         *
+         * GPU だけが使う資源へコピーを記録したパスが、その内容が GPU に届いたか（次のフレームでコピーを省いてよいか）を
+         * 決めるのに使う。記録中のフレームなら Recording。終わったフレームは直近の FrameSubmissionHistory::Capacity 個まで
+         * 答え、それより古い・未設定の世代は Unknown（提出しなかったものとして扱う）。
+         */
+        FrameSubmissionOutcome GetSubmissionOutcome(const FrameResourceGeneration& generation) const;
 
         /**
          * @brief 借りた物を使ってよいか確かめる
@@ -484,6 +545,10 @@ namespace NorvesLib::Core::Rendering
             assert(IsRecording());
             m_SubmissionSerial = submissionSerial;
             m_State = FrameResourceOwnerState::Submitted;
+            if (m_SubmissionHistory)
+            {
+                m_SubmissionHistory->Record(m_Generation, true);
+            }
         }
 
         void MarkAborted()
@@ -491,6 +556,10 @@ namespace NorvesLib::Core::Rendering
             assert(IsRecording());
             m_SubmissionSerial = 0;
             m_State = FrameResourceOwnerState::Aborted;
+            if (m_SubmissionHistory)
+            {
+                m_SubmissionHistory->Record(m_Generation, false);
+            }
         }
 
         void Reclaim()
@@ -572,6 +641,8 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_Generation = 0;
         uint64_t m_SubmissionSerial = 0;
         FrameResourceOwnerState m_State = FrameResourceOwnerState::Idle;
+        // 全部の持ち主で共有する提出の結果（FrameResourceOwners が持つ。単独の持ち主では null で、終わった世代は Unknown）
+        FrameSubmissionHistory* m_SubmissionHistory = nullptr;
         uint64_t m_ReclaimCount = 0;
         uint64_t m_LeakedLaneLeaseCount = 0;
         mutable NorvesLib::Thread::Atomic<uint64_t> m_StaleRejectCount{0};
@@ -606,6 +677,20 @@ namespace NorvesLib::Core::Rendering
     {
         return IsRecording() && generation.SlotIndex == m_Owner->m_SlotIndex &&
                generation.Generation == m_Owner->m_Generation;
+    }
+
+    inline FrameSubmissionOutcome FrameResourceLane::GetSubmissionOutcome(const FrameResourceGeneration& generation) const
+    {
+        if (!generation.IsSet())
+        {
+            return FrameSubmissionOutcome::Unknown;
+        }
+        if (IsCurrent(generation))
+        {
+            return FrameSubmissionOutcome::Recording;
+        }
+        return m_Owner->m_SubmissionHistory ? m_Owner->m_SubmissionHistory->Find(generation.Generation)
+                                            : FrameSubmissionOutcome::Unknown;
     }
 
     inline bool FrameResourceLane::ValidateBorrowed(const FrameResourceGeneration& generation,
@@ -709,6 +794,7 @@ namespace NorvesLib::Core::Rendering
             for (uint32_t index = 0; index < FrameResourceMaxInFlightSlots; ++index)
             {
                 m_Owners[index].m_SlotIndex = index;
+                m_Owners[index].m_SubmissionHistory = &m_SubmissionHistory;
             }
         }
 
@@ -1039,6 +1125,8 @@ namespace NorvesLib::Core::Rendering
         }
 
         FrameResourceOwner m_Owners[FrameResourceMaxInFlightSlots];
+        // 持ち主が提出・中止のときに書く、終わったフレームの提出の結果（持ち主はこれを指す。この型は写せず動かせない）
+        FrameSubmissionHistory m_SubmissionHistory;
         FrameResourceOwner* m_Recording = nullptr;
         uint64_t m_NextGeneration = 1;
         uint64_t m_LastCompletedSubmissionSerial = 0;

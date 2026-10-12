@@ -1129,7 +1129,9 @@ namespace NorvesLib::Core::Rendering
                 published.DfgLutTexture && published.DfgLutSampler &&
                 published.PrefilteredSpecularMipLevels > 0u &&
                 std::isfinite(published.IBLIntensity) && published.IBLIntensity >= 0.0f &&
-                requiredLightBytes <= static_cast<uint64_t>(published.LightBufferSizeBytes);
+                requiredLightBytes <= static_cast<uint64_t>(published.LightBufferSizeBytes) &&
+                static_cast<uint64_t>(published.LightBufferOffset) + published.LightBufferSizeBytes <=
+                    published.LightBuffer->GetSize();
             if (!bPhysicalLightingReady)
             {
                 NORVES_LOG_ERROR("ForwardPass",
@@ -1393,7 +1395,7 @@ namespace NorvesLib::Core::Rendering
                                                         instanceDataSize);
             allocation.DescriptorSet->BindStorageBuffer(8,
                                                         physicalLighting.LightBuffer,
-                                                        0,
+                                                        physicalLighting.LightBufferOffset,
                                                         physicalLighting.LightBufferSizeBytes);
             const bool bShadowTextureIsArray =
                 physicalLighting.ShadowMapTexture &&

@@ -4,6 +4,7 @@
 #include "NeuralBRDFData.h"
 #include "Rendering/DDGIProbePass.h"
 #include "Rendering/FrameCaptureTypes.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
 #include "Rendering/RayTracingShadowPass.h"
 #include "Rendering/RTGIContract.h"
@@ -207,22 +208,57 @@ namespace NorvesLib::Core::Rendering
         friend struct RTGIDiffuseIndirectVulkanTestAccess;
 
         /**
-         * @brief ライト情報をGPUバッファ向けに構築
+         * @brief 1 回の Execute の間だけ使う、CPU が書いて GPU が読むデータの置き場
          *
-         * 更新に成功したフレームは、同じViewRenderContextへ物理ライトSSBO・方向影・
-         * IBLリソースを公開します。ForwardPassはこの公開値だけを使用します。
-         * outParamsが有効な場合はGPU定数を返し、GPUバッファの更新を呼出元へ委ねます。
+         * フレームの持ち主から借りた切れ端（Buffer + Offset + Size をそのまま束縛へ渡す）。持ち主の無い文脈
+         * （RenderingCoordinator を通さない検査）では、使い回さない専用のバッファ（Offset 0）を作る。
+         * どちらもその Execute の記録の中でだけ使い、メンバに残さない。
+         */
+        struct ExecuteUpload
+        {
+            RHI::BufferPtr Buffer;
+            uint64_t Offset = 0;
+            uint64_t Size = 0;
+
+            bool IsValid() const { return Buffer && Size != 0; }
+            uint32_t GetOffset32() const { return static_cast<uint32_t>(Offset); }
+            uint32_t GetSize32() const { return static_cast<uint32_t>(Size); }
+        };
+
+        /**
+         * @brief data の size バイトを書いた置き場を借りる（data が null なら 0 で埋める）
+         * @param unownedDebugName 持ち主の無い文脈で作るバッファの名前
+         */
+        ExecuteUpload BorrowUpload(ViewRenderContext& context,
+                                   const void* data,
+                                   uint64_t size,
+                                   FrameUploadUsage usage,
+                                   const char* unownedDebugName) const;
+        /**
+         * @brief 記述子セットを借りる（持ち主の無い文脈では desc から使い回さないセットを作る）
+         * @param layout 共有のレイアウト（IDevice::GetOrCreateDescriptorSetLayout で引いたもの）
+         */
+        RHI::DescriptorSetPtr BorrowDescriptorSet(ViewRenderContext& context,
+                                                  const RHI::DescriptorSetLayoutPtr& layout,
+                                                  const RHI::DescriptorSetDesc& desc) const;
+
+        /**
+         * @brief ライト情報をGPU向けに構築
+         *
+         * GPU定数を outParams へ返し（借りて書くのは呼出元）、光源の配列を借りて書いた置き場を outLightArray へ返します。
+         * 成功したフレームは、同じViewRenderContextへ物理ライトの配列・方向影・IBLリソースを公開します。
+         * ForwardPassはこの公開値だけを使用します。
          * @param context 描画コンテキスト
          * @param bShadowAvailable シャドウマップが利用可能か
          * @param bSSAOAvailable SSAOテクスチャが利用可能か
-         * @param outParams GPU定数の出力先。nullptrの場合はGPUバッファへ直接反映します。
+         * @param outParams GPU定数の出力先
+         * @param outLightArray 光源の配列を書いた置き場（binding 5 と公開に使う）
          */
         bool UpdateLightBuffer(ViewRenderContext& context,
                                bool bShadowAvailable,
                                bool bSSAOAvailable,
-                               GPULightingParams* outParams = nullptr);
-        bool EnsureLightArrayBufferCapacity(uint32_t requiredLightCount);
-        uint32_t GetLightArrayBufferSizeBytes() const;
+                               GPULightingParams& outParams,
+                               ExecuteUpload& outLightArray);
 
         // ライティングの描画先（MRTの3枚。順にシェーダーの出力 location 0・1・2）
         struct LightingOutputTargets
@@ -276,22 +312,8 @@ namespace NorvesLib::Core::Rendering
         bool EnsureLightingFramebuffer(uint32_t width,
                                        uint32_t height,
                                        const LightingOutputTargets& targets);
-        bool CreateLightingDescriptorSet(RHI::DescriptorSetPtr& outDescriptorSet);
-        bool EnsureLightingDescriptorSet();
-        /**
-         * @brief この Execute が使う資源の組を選び、組の資源を m_LightDataBuffer などの現在の枠へ載せる
-         *
-         * 通し番号が前回と違えば先頭の組から使い直し、同じ間は Execute のたびに次の組へ進む。組が足りなければ作る。
-         * 上限（MaxExecuteResourceSets）を超えたとき・組を作れないときは false（呼び出し側は描かない）。
-         * @param frameSerial 今のフレームの通し番号（ViewRenderContext::ResolveRenderFrameSerial）
-         */
-        bool AcquireExecuteResourceSet(uint64_t frameSerial);
-        /** @brief 現在の枠（m_LightDataBuffer などと m_LightingDescriptorSet）を組の配列の active の位置へ書き戻す */
-        void StoreActiveExecuteResourceSet();
-        /** @brief 組の配列の index の位置の組を現在の枠へ載せ、active を index にする */
-        void LoadExecuteResourceSet(uint32_t index);
-        /** @brief 現在の枠が空のとき、ライトの定数・配列・VSM の 3 つのバッファと descriptor set を作る */
-        bool CreateExecuteResourceSet();
+        /** @brief 照明の記述子セットの共有のレイアウトを引く（Neural BRDF の有無でレイアウトが変わる） */
+        bool EnsureLightingDescriptorSetLayout();
         bool EnsureLightingPipeline();
         void ExecuteWithInputs(ViewRenderContext& context,
                                const RHI::TexturePtr& albedoTexture,
@@ -318,6 +340,13 @@ namespace NorvesLib::Core::Rendering
                          const RHI::TexturePtr& velocityTexture,
                          const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
                          const GPULightingParams& lightingParams);
+        /**
+         * @brief instanceの表（data の size バイト）を、GPUの置き場に届いたと確かめられていなければ借りた切れ端からコピーする
+         *
+         * コピーの前の読みとの依存・コピーの後の dispatch の読みへの依存はバリアで張る。届いたことは、コピーを記録した
+         * フレームの提出が確かめられたときに確定する（提出しなかったフレームのコピーは持ち越さない）。借りられなければ false。
+         */
+        bool RecordRTGIInstanceUpload(ViewRenderContext& context, const void* data, uint64_t size);
         bool ExecuteRTGIDenoiser(ViewRenderContext& context,
                                  const RHI::TexturePtr& temporalRadiance,
                                  const RHI::TexturePtr& confidenceTexture,
@@ -379,23 +408,28 @@ namespace NorvesLib::Core::Rendering
         RHI::ShaderPtr m_LightingFragmentShader;
         RHI::ShaderPtr m_RTGIComputeShader;
         RHI::PipelinePtr m_RTGIComputePipeline;
-        RHI::DescriptorSetPtr m_RTGIComputeDescriptorSet;
+        /** @brief RTGI の記述子セットの共有のレイアウト（セットは Execute ごとに借りる） */
+        RHI::DescriptorSetLayoutPtr m_RTGIComputeDescriptorSetLayout;
         RHI::ShaderPtr m_RTGIDenoiserShader;
         RHI::PipelinePtr m_RTGIDenoiserPipeline;
-        RHI::DescriptorSetPtr m_RTGIDenoiserDescriptorSet;
+        RHI::DescriptorSetLayoutPtr m_RTGIDenoiserDescriptorSetLayout;
         RHI::TexturePtr m_RTGIDenoisedTexture;
         RHI::ResourceState m_RTGIDenoisedTextureState = RHI::ResourceState::Undefined;
         uint32_t m_RTGIDenoisedWidth = 0u;
         uint32_t m_RTGIDenoisedHeight = 0u;
-        RHI::BufferPtr m_RTGIComputeParametersBuffer;
+        /** @brief RTGIのinstanceの表のGPUの置き場（GPUだけが読む。変わったフレームに、借りた切れ端から表全体をコピーする） */
         RHI::BufferPtr m_RTGIComputeInstanceDataBuffer;
-        /** @brief RTGIが光源標本する発光instanceの表 */
-        RHI::BufferPtr m_RTGIComputeEmitterBuffer;
         Container::VariableArray<RHI::BufferPtr> m_RTGIGeometryBuffers;
         /** @brief RTGIのinstanceの表。フレームをまたいで持ち、行ごとに比べて変わった行だけ書き換える */
         Container::VariableArray<RTGIInstanceData> m_RTGIInstances;
-        /** @brief m_RTGIInstances の今の中身をinstanceの表のバッファへ書いた後か */
+        /**
+         * @brief m_RTGIInstances の今の中身がGPUの置き場に届いたと確かめられたか
+         *
+         * コピーを記録したフレームの提出が確かめられたときだけ true にする（提出しなかったフレームのコピーは実行されない）。
+         */
         bool m_bRTGIInstancesUploaded = false;
+        /** @brief 表のコピーを記録して、提出の確認を待っているフレームの世代（未設定なら待ちなし） */
+        FrameResourceGeneration m_RTGIInstancesPendingGeneration;
         struct RTGIHistoryTextureSet
         {
             RHI::TexturePtr Radiance;
@@ -420,7 +454,6 @@ namespace NorvesLib::Core::Rendering
             RHI::ResourceState::Undefined,
             RHI::ResourceState::Undefined};
         uint64_t m_RTGIComputeInstanceDataCapacity = 0;
-        uint64_t m_RTGIComputeEmitterCapacity = 0;
         uint32_t m_RTGIHistoryWidth = 0;
         uint32_t m_RTGIHistoryHeight = 0;
         uint32_t m_RTGIHistoryWriteIndex = 0;
@@ -458,44 +491,12 @@ namespace NorvesLib::Core::Rendering
         DDGIProbePass m_DDGIProbePass;
         RayTracingShadowPass m_RayTracingShadowPass;
         /**
-         * @brief 1 回の Execute が自分で使う、書き換えるバッファと descriptor set の組
+         * @brief 照明の記述子セットの共有のレイアウト
          *
-         * 同じ SceneView が 1 フレームに複数のビューポートを描くと LightingPass が複数回 Execute される。
-         * 照明の定数・ライトの配列・VSM のパラメータとスライスの表は Execute ごとに書き換えるうえ、descriptor set は
-         * 記録済みのコマンドが参照するので、提出前に次の Execute が同じ資源を書くと先に記録した描画を壊す。
-         * そのため Execute ごとに別の組を使う。
+         * 照明の定数・光源の配列・VSM のパラメータとスライスの表と記述子セットは、Execute ごとにフレームの持ち主から
+         * 借りる（同じフレームに複数のビューポートを描いても、Execute ごとに別の切れ端・セットになる）。
          */
-        struct ExecuteResourceSet
-        {
-            RHI::BufferPtr LightData;
-            RHI::BufferPtr LightArray;
-            RHI::BufferPtr VsmSample;
-            RHI::BufferPtr VsmPointSample;
-            RHI::BufferPtr VsmSlice;
-            RHI::DescriptorSetPtr DescriptorSet;
-            uint32_t LightArrayCapacity = 0;
-        };
-        /** @brief 1 フレームに描ける Execute の数の上限（超えた Execute はエラーを 1 回出して描かない） */
-        static constexpr uint32_t MaxExecuteResourceSets = 4;
-        /**
-         * @brief 組の配列。m_ActiveExecuteResourceSet の位置は古く、現在の枠（下の 7 つのメンバ）が最新
-         *
-         * 組は通し番号が変わったときだけ先頭から使い直す。前のフレームの提出は、スワップチェーンの BeginFrame が
-         * 飛行中のフェンスを待つ（飛行中のフレームは 1 つ）ことで、次の記録の開始までに完了している。
-         */
-        ExecuteResourceSet m_ExecuteResourceSets[MaxExecuteResourceSets];
-        uint32_t m_ExecuteResourceSetCount = 0;
-        uint32_t m_ActiveExecuteResourceSet = 0;
-        /** @brief 今のフレーム（m_ExecuteResourceSetFrameSerial）で渡した組の数 */
-        uint32_t m_ExecuteResourceSetCursor = 0;
-        uint64_t m_ExecuteResourceSetFrameSerial = 0;
-        bool m_bExecuteResourceSetOverflowLogged = false;
-
-        // 現在の枠（Execute が使っている組）。組の取り替えで差し替わる
-        RHI::BufferPtr m_LightDataBuffer;
-        RHI::BufferPtr m_LightArrayBuffer;
-        Container::VariableArray<RHI::BufferPtr> m_RetiredLightArrayBuffers;
-        RHI::DescriptorSetPtr m_LightingDescriptorSet;
+        RHI::DescriptorSetLayoutPtr m_LightingDescriptorSetLayout;
         RHI::SamplerPtr m_GBufferSampler;
 
         // IBL (Image-Based Lighting) リソース
@@ -538,12 +539,6 @@ namespace NorvesLib::Core::Rendering
         NeuralBRDFData m_NeuralBRDFData;         ///< 学習済みBRDFデータ
         RHI::BufferPtr m_NeuralBRDFWeightBuffer; ///< GPU側重みStorageBuffer
         RHI::BufferPtr m_DefaultNeuralBRDFWeightBuffer;
-        /** @brief 太陽の VSM を読むパラメータ（GPUVsmSampleParams の定数バッファ。VSM が使えないフレームは無効の値） */
-        RHI::BufferPtr m_VsmSampleBuffer;
-        /** @brief 太陽の VSM のスライスの表（GPUVsmSlice の配列。ページの一辺・texel・範囲の原点・ページの表の先頭。VSM が使えないフレームは何も無い表） */
-        RHI::BufferPtr m_VsmSliceBuffer;
-        /** @brief 点光源の VSM を読むパラメータ（GPUVsmPointSampleParams の定数バッファ。使えないフレームは無効の値 = キューブのまま） */
-        RHI::BufferPtr m_VsmPointSampleBuffer;
         /** @brief 今フレームに RenderGraph から解決した太陽の VSM のページの表・物理ページのプール（無ければ null） */
         RHI::BufferPtr m_FrameVsmPageTable;
         RHI::BufferPtr m_FrameVsmPool;
@@ -600,7 +595,6 @@ namespace NorvesLib::Core::Rendering
         // 現在のサイズ
         uint32_t m_CurrentWidth = 0;
         uint32_t m_CurrentHeight = 0;
-        uint32_t m_LightArrayCapacity = 0;
         bool m_bRegisterLegacyBridge = true;
         bool m_bLegacyInputFallbackActive = false;
         bool m_bUsingRenderGraphResources = false;

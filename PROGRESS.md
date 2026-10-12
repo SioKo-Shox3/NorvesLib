@@ -3456,3 +3456,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 補助（節目の計測の材料。done-when の外）: 変更前のソース（c2822c93 の 5 ファイル）で、CSM が MegaGeometry を描く構成（mega-stress 5万個 close、`--shadow-probe`）を撮った（`scene-capture/SCN-ECS-FIF-DYNAMIC-UBO-csm-before`、`csm-before-SCN-ECS-FIF-DYNAMIC-UBO.txt`。result=pass、ERROR 0）。CSM の MegaGeometry の描画は 1 フレーム 49・202・605・2670（約 3,500 件の定数と記述子）、計測の窓（Frame 39806..40105、300 フレーム）で `RG.Record.ShadowMapPass` median 23.19 ms・p95 30.66 ms、`RG.Record.GBufferPass` 0.010、`RG.Record.ForwardPass` 0.003、GPU median 58.4 ms。変更後の同じ撮影は撮っていない（比べは節目へ移ったため）。
 - Next: TASKS.md の未完の次の項目（SCN-ECS-FIF-LIGHTING）。
 - Notes: 節目の SCN-ECS-MEASURE-FIF で記述子の借りの時間を見るときは、`--shadow-probe` 付きの mega-stress が借りの多い構成（1 フレーム約 3,500 件）として使える（`-GameArgs "stress-entities=50000,shadow-probe"`）。上の変更前の数字と同じ窓の定義（CaptureScene の timing_window）で比べられる。Git Bash から verify のビルドを走らせると `/m:1` がパスに変換されるので `MSYS_NO_PATHCONV=1` を付ける。
+
+### SCN-ECS-FIF-LIGHTING（2026-10-13、反復 64・run 20261012-030203）
+
+- `LightingPass` の照明の組（`m_ExecuteResourceSets` と現在の枠の 7 つのメンバ、組の取り替え・上限 4・通し番号の扱い）を消し、Execute ごとにフレームの持ち主から借りる形にした。借りるのは照明の定数（binding 4）・光源の配列（binding 5。光源が無いフレームは 0 で埋めた 1 つ分）・VSM のサンプル／点光源のサンプル（21・26）・スライスの表（25）・記述子セット（共有のレイアウトを `GetOrCreateDescriptorSetLayout` で引いてメンバに持つ）。初期化での照明のバッファと最初の記述子セットの作成もやめた。
+- RTGI の定数（`m_RTGIComputeParametersBuffer`）・発光の表（`m_RTGIComputeEmitterBuffer`）・RTGI と denoise の記述子セットも dispatch ごとに借りる。メンバに残るのは共有のレイアウト・パイプライン・履歴・denoise の出力だけ。
+- RTGI の instance の表の置き場は GPU だけが読むバッファ（CPU から見えない。`Update` を使わない）にし、`RecordRTGIInstanceUpload` が、表が GPU に届いたと確かめられていないときだけ、借りた切れ端から表全体を `CopyBuffer` で写す。コピーの前に `ShaderResource→CopyDest`（前の Execute・前のフレームの dispatch の読みとの依存）、後に `CopyDest→ShaderResource`（この後の dispatch の読み）のバリアを張る。同じフレームの 2 回目の Execute は、先に記録したコピーが使えるので写さない（表が変わればバリアを張って写し直す）。
+- 「届いた」は提出の成功で確定する: コピーを記録したフレームの世代を持ち、次の dispatch で `FrameResourceLane::GetSubmissionOutcome` が `Submitted` なら確定、`Aborted`・`Unknown`（記録が残っていない）なら持ち越さずに写し直す。例外の catch では印と待ちの世代を両方落とす。持ち主の無い文脈は提出を確かめられないので毎回写す。
+- フレームの持ち主に、終わったフレームの世代ごとの提出の結果（直近 16 個の `FrameSubmissionHistory`。提出・中止の段で書く）と `GetSubmissionOutcome` を足した。持ち主のページに `TransferSrc` を足した（借りた切れ端をコピー元にするため）。
+- 光源の配列は借りた切れ端になったので、公開（`PhysicalLighting.PublishLighting`）にオフセット（`LightBufferOffset`）を足し、読む側（ForwardPass の binding 8・DDGIProbePass の binding 4・RTGI の binding 8）で束縛と大きさの確かめに通した。
+- 持ち主の無い文脈（RenderingCoordinator を通さない検査）では、借りる代わりに使い回さない専用のバッファ・記述子セットを Execute ごとに作る（`DynamicUniformAllocator` と同じ扱い）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-LIGHTING-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-LIGHTING-2.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、`indirect_lighting=rtgi`、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=4E-06・within_limits=True、result=pass、EXIT=0。PNG は天球・地面・球・岩・家と影が以前どおり。
+  - `verify-SCN-ECS-FIF-LIGHTING-3.txt`: `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=17 resources=39`（反復 63 の 27 から、LightingPass の 10 組〔照明の定数・光源の配列・VSM の 3 つ・照明の記述子セット・初期化で作った記述子セット・RTGI の定数・発光・instance の表〕が消えた）、LightingPass の行は 0、EXIT=0。Game.log の ERROR 0、`INDIRECT_LIGHTING source=rtgi`。借りは最後のフレームで切れ端 81・記述子セット 76（ページ・pool は最初のフレームで 1 つずつ足した後は足していない）、借りの失敗 0。
+- Next: TASKS.md の未完の次の項目。
+- Notes: Debug の `RTGIDiffuseIndirectVulkanTest` の複数ビューポートの場合は、消した組のメンバ（`m_LightDataBuffer` など）を読み、組の上限 4・次のフレームでの組の使い回しを確かめているので、この変更でコンパイルできない（Test/ は paths の外なので直していない）。借りる形の約束（Execute ごとに別の切れ端・セット、中身がそのビューポートの値、描画が束縛するセットが Execute のセット、上限なし）へ書き直す必要がある。DDGI の地図の引き方（`GetIrradianceAtlas(context.FrameIndex, …)`）と VSM の統計の読み戻し（通し番号の枠）は LightingPass に残っている（前者は DDGIProbePass の資源、後者は SCN-ECS-FIF-READBACK の対象）。提出の結果の確かめ・中止のフレームのコピーを持ち越さないことを起こす検査は書いていない（verify が名指ししていないため）。`git diff --numstat` と `--ignore-cr-at-eol` は LightingPass.cpp で 1 行違うが、`--minimal`・`--histogram` では一致する（既定の差分の並べ方の違いで、行末だけの書き換えは無い）。

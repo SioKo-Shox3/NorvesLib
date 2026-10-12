@@ -533,7 +533,8 @@ namespace NorvesLib::Core::Rendering
                                       ? physicalLighting.LogicalLightCount
                                       : 1u) * sizeof(GPULightData);
         if (physicalLighting.LightBufferSizeBytes < requiredLightBufferSize ||
-            physicalLighting.LightBuffer->GetSize() < physicalLighting.LightBufferSizeBytes)
+            physicalLighting.LightBuffer->GetSize() <
+                static_cast<uint64_t>(physicalLighting.LightBufferOffset) + physicalLighting.LightBufferSizeBytes)
         {
             return false;
         }
@@ -859,7 +860,7 @@ namespace NorvesLib::Core::Rendering
             frameResources->DescriptorSet->BindStorageBuffer(
                 4u,
                 physicalLighting.LightBuffer,
-                0u,
+                physicalLighting.LightBufferOffset,
                 physicalLighting.LightBufferSizeBytes);
             frameResources->DescriptorSet->BindTexture(
                 5u, physicalLighting.EnvironmentRadianceTexture);
