@@ -157,6 +157,10 @@ namespace NorvesLib::Core::Rendering
 
         void Declare(RenderGraphBuilder &builder) override;
         void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
+        // 監査済み: Execute は全画面のパスを積むだけで自分でバリアを張らず、出力は render pass の finalState
+        // （宣言の最終の状態 ShaderResource）へ移る。準備が整ったフレームだけ、計画した区間で Parallel に記録する。
+        bool DeclaresAllLayoutChanges() const override;
+        RGRecordPolicy GetRecordPolicy() const override;
 
         // ========================================
         // パラメータ調整

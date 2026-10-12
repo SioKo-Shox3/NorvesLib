@@ -1121,4 +1121,17 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    bool VisibilityResolvePass::DeclaresAllLayoutChanges() const
+    {
+        // Execute が読む他のパスの状態（ラスタの表・分類の結果）は前の Serial のパスが書き終えたもので、書き込むのは
+        // 自分のメンバと自分のディスクリプタセット・定数のリングだけ。初期化・パイプラインが無いフレームは Serial に残す。
+        return IsInitialized() && m_Resolve.IsReady() && m_RasterPass != nullptr && m_IdHandle.IsValid() &&
+               m_AlbedoHandle.IsValid();
+    }
+
+    RGRecordPolicy VisibilityResolvePass::GetRecordPolicy() const
+    {
+        return DeclaresAllLayoutChanges() ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
+    }
+
 } // namespace NorvesLib::Core::Rendering

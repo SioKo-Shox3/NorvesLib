@@ -102,6 +102,14 @@ namespace NorvesLib::Core::Rendering
                 }
             }
         }
+
+        // 今の記録先。Parallel のパスを区間ごとのリストへ記録したグラフは、実行の後に Context の CommandList を
+        // 最後に受け取ったリストへ差し替えるので、以後の記録はそこへ続ける（提出の順を保つ）。
+        RHI::ICommandList* ResolveRecordingCommandList(const RenderFrameExecutionRequest &request)
+        {
+            return request.Context && request.Context->CommandList ? request.Context->CommandList
+                                                                   : request.CommandList;
+        }
     } // namespace
 
     RenderFrameExecutionResult RenderFrameExecutor::Execute(const RenderFrameExecutionRequest &request) const
@@ -561,7 +569,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        request.Renderer->ExecuteFrameCommands(*request.PendingFrameCommands, request.CommandList);
+        request.Renderer->ExecuteFrameCommands(*request.PendingFrameCommands, ResolveRecordingCommandList(request));
         request.PendingFrameCommands->clear();
     }
 
@@ -587,7 +595,7 @@ namespace NorvesLib::Core::Rendering
         const DrawCommandView activeDrawCommands = request.Context->GetActiveDrawCommands();
         if (!activeDrawCommands.empty())
         {
-            request.Renderer->ExecuteDrawCommands(activeDrawCommands, request.CommandList);
+            request.Renderer->ExecuteDrawCommands(activeDrawCommands, ResolveRecordingCommandList(request));
             return true;
         }
 
@@ -664,7 +672,7 @@ namespace NorvesLib::Core::Rendering
         PresentationComposeRequest composeRequest = request.PresentationRequest;
         composeRequest.Context = request.Context;
         composeRequest.Renderer = request.Renderer;
-        composeRequest.CommandList = request.CommandList;
+        composeRequest.CommandList = ResolveRecordingCommandList(request);
         composeRequest.bClearPresentation = bClearPresentation;
         composeRequest.OutCaptureSource = &captureSource;
         const bool bComposed = request.Presentation->Compose(composeRequest);

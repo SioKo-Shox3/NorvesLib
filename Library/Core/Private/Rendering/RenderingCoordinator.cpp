@@ -53,6 +53,7 @@
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -474,6 +475,100 @@ namespace NorvesLib::Core::Rendering
                 }
             }
             return swapChain.EndFrame(frameCommandLists.data(), static_cast<uint32_t>(frameCommandLists.size()));
+        }
+
+        // 1 フレームで区間ごとの記録に渡すリストの上限（0 番を除く）。超えた分のパスは最後のリストへ Serial で記録される
+        constexpr uint32_t MaxRecordJobCommandLists = 32u;
+
+        // RenderGraph の Parallel のパスへ、仕事の番号 1 以降のリストを提出の順に渡す（RenderThread だけで使う）。
+        // 渡すリストは記録を始め、GPU の時間を取るフレームでは FrameGPU の区間を開いておく。
+        // フレームの終わりに CloseAcquiredLists で区間を閉じて記録を終える（提出は SubmitJobCommandLists が番号の順に行う）。
+        class JobRecordListSource final : public IRenderGraphRecordListSource
+        {
+        public:
+            JobRecordListSource(RHI::IDevice& device,
+                                JobCommandLists& commandLists,
+                                uint32_t frameIndex,
+                                uint64_t frameNumber,
+                                bool bGPUTimestamps)
+                : m_Device(device),
+                  m_CommandLists(commandLists),
+                  m_FrameIndex(frameIndex),
+                  m_FrameNumber(frameNumber),
+                  m_bGPUTimestamps(bGPUTimestamps)
+            {
+            }
+
+            RHI::ICommandList* AcquireRecordList() override
+            {
+                if (m_AcquiredCount >= MaxRecordJobCommandLists)
+                {
+                    return nullptr;
+                }
+
+                const size_t jobIndex = static_cast<size_t>(m_AcquiredCount) + 1u;
+                while (m_CommandLists.size() <= jobIndex)
+                {
+                    RHI::CommandListPtr commandList = m_Device.CreateCommandList();
+                    if (!commandList)
+                    {
+                        return nullptr;
+                    }
+                    m_CommandLists.push_back(commandList);
+                }
+
+                RHI::ICommandList* commandList = m_CommandLists[jobIndex].get();
+                commandList->SetFrameIndex(m_FrameIndex);
+                commandList->BeginRecording();
+                ++m_AcquiredCount;
+                if (m_bGPUTimestamps && commandList->SupportsGPUTimestamps())
+                {
+                    commandList->BeginGPUTimestampFrame(m_FrameNumber);
+                    commandList->BeginGPUTimestamp(FrameGPUScopeName);
+                }
+                return commandList;
+            }
+
+            void CloseAcquiredLists()
+            {
+                for (uint32_t index = 0; index < m_AcquiredCount; ++index)
+                {
+                    RHI::ICommandList* commandList = m_CommandLists[static_cast<size_t>(index) + 1u].get();
+                    if (m_bGPUTimestamps && commandList->SupportsGPUTimestamps())
+                    {
+                        commandList->EndGPUTimestamp();
+                        commandList->EndGPUTimestampFrame();
+                    }
+                    commandList->End();
+                }
+            }
+
+            uint32_t GetAcquiredCount() const
+            {
+                return m_AcquiredCount;
+            }
+
+        private:
+            RHI::IDevice& m_Device;
+            JobCommandLists& m_CommandLists;
+            uint32_t m_FrameIndex = 0u;
+            uint64_t m_FrameNumber = 0u;
+            bool m_bGPUTimestamps = false;
+            uint32_t m_AcquiredCount = 0u;
+        };
+
+        // --render-parallel-record（Game が NORVES_RENDER_PARALLEL_RECORD へ渡す）。0 のときだけ全パスを 1 本へ記録する
+        bool ResolveParallelRecordEnabled()
+        {
+            char* value = nullptr;
+            size_t length = 0;
+            if (_dupenv_s(&value, &length, "NORVES_RENDER_PARALLEL_RECORD") != 0)
+            {
+                value = nullptr;
+            }
+            const bool bEnabled = value == nullptr || std::strcmp(value, "0") != 0;
+            std::free(value);
+            return bEnabled;
         }
 
         template<typename CameraResolver>
@@ -5094,6 +5189,26 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<FrameCommand> pendingFrameCommands;
         ViewRenderContext viewContext;
         viewContext.CommandList = m_CommandList.get();
+        // Parallel のパスは仕事の番号 1 以降のリストへ同時に記録する（--render-parallel-record=off なら全パスを 0 番へ）。
+        // グラフは実行の後に viewContext.CommandList を最後に受け取ったリストへ差し替えるので、以後の記録はそこへ続ける。
+        if (!m_bParallelRecordResolved)
+        {
+            m_bParallelRecordResolved = true;
+            m_bParallelRecordEnabled = ResolveParallelRecordEnabled();
+            NORVES_LOG_INFO("RenderingCoordinator",
+                            "RENDER_PARALLEL_RECORD enabled=%d",
+                            m_bParallelRecordEnabled ? 1 : 0);
+        }
+        bool bRecordListTimestamps = false;
+#if NORVES_ENABLE_STATS
+        bRecordListTimestamps = bTraceActive;
+#endif
+        JobRecordListSource recordListSource(*m_Device,
+                                             m_JobCommandLists,
+                                             frameIndex,
+                                             packet->FrameNumber,
+                                             bRecordListTimestamps);
+        viewContext.RecordListSource = m_bParallelRecordEnabled ? &recordListSource : nullptr;
         viewContext.InstanceDataBuffer = instanceDataBuffer;
         viewContext.Device = m_Device.get();
         viewContext.TransientPool = &m_TransientPool;
@@ -5374,9 +5489,12 @@ namespace NorvesLib::Core::Rendering
             executionResult.PresentationBlitCount = 1;
         }
 
+        // グラフの後の記録（保留のコマンド・撮影のコピー・VT の要求のバリア）は、最後に記録したリストへ続ける
+        // （Parallel のパスが無ければ 0 番のまま）。
+        RHI::ICommandList* frameTailCommandList = viewContext.CommandList ? viewContext.CommandList : m_CommandList.get();
         if (!pendingFrameCommands.empty())
         {
-            m_SceneRenderer.ExecuteFrameCommands(pendingFrameCommands, m_CommandList.get());
+            m_SceneRenderer.ExecuteFrameCommands(pendingFrameCommands, frameTailCommandList);
             pendingFrameCommands.clear();
         }
 
@@ -5422,7 +5540,7 @@ namespace NorvesLib::Core::Rendering
         {
             captureRecordStatus = m_FrameCaptureReadbackHelper->TryRecordCopy(
                 frameIndex,
-                m_CommandList.get(),
+                frameTailCommandList,
                 claimedCaptureRequest,
                 executionResult.CaptureSources);
             if (captureRecordStatus == FrameCaptureRecordStatus::PublishedFailure ||
@@ -5436,10 +5554,10 @@ namespace NorvesLib::Core::Rendering
         // VT の要求のバッファへのシェーダーの書き込みを、ホストの読み取りへ見せる（最後の書き込みの後・提出の前）
         if (m_RenderResources)
         {
-            m_RenderResources->RecordVirtualTextureFeedbackBarrier(*m_CommandList);
+            m_RenderResources->RecordVirtualTextureFeedbackBarrier(*frameTailCommandList);
         }
 
-        // コマンド録画終了
+        // コマンド録画終了（0 番と、区間ごとの記録に渡したリスト。FrameGPU は合わせる側が先頭の開始から末尾の終了にする）
 #if NORVES_ENABLE_STATS
         if (bTraceActive && m_CommandList->SupportsGPUTimestamps())
         {
@@ -5448,6 +5566,16 @@ namespace NorvesLib::Core::Rendering
         }
 #endif
         m_CommandList->End();
+        recordListSource.CloseAcquiredLists();
+        // 区間ごとの記録に渡したリストの数は、変わったときだけ出す（計測と撮影の確認用）
+        if (recordListSource.GetAcquiredCount() != m_LastLoggedParallelRecordListCount)
+        {
+            m_LastLoggedParallelRecordListCount = recordListSource.GetAcquiredCount();
+            NORVES_LOG_INFO("RenderingCoordinator",
+                            "RENDER_PARALLEL_RECORD_LISTS count=%u frame=%llu",
+                            m_LastLoggedParallelRecordListCount,
+                            static_cast<unsigned long long>(packet->FrameNumber));
+        }
 
         // SceneRendererフレーム終了
         m_SceneRenderer.EndFrame();

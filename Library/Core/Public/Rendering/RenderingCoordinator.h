@@ -556,6 +556,10 @@ namespace NorvesLib::Core::Rendering
         Container::TSharedPtr<RHI::ICommandList> m_CommandList;
         // 仕事の番号ごとの記録のリスト（0 番は m_CommandList）。1 つのフレームで記録したものを、番号の順に 1 回で提出する
         Container::VariableArray<Container::TSharedPtr<RHI::ICommandList>> m_JobCommandLists;
+        // Parallel のパスを区間ごとのリストへ記録するか（最初のフレームで NORVES_RENDER_PARALLEL_RECORD から決める）
+        bool m_bParallelRecordResolved = false;
+        bool m_bParallelRecordEnabled = true;
+        uint32_t m_LastLoggedParallelRecordListCount = 0;
 
         // レンダーパス・フレームバッファ（Screen SwapChain用）
         Container::TSharedPtr<RHI::IRenderPass> m_RenderPass;

@@ -530,4 +530,17 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool FXAAPass::DeclaresAllLayoutChanges() const
+    {
+        // 入力をグラフから読めるフレーム（SharedResources の旧経路を読み書きしない）で、パイプラインと
+        // ディスクリプタセットが揃っているときだけ。それ以外は Serial に残す。
+        return IsInitialized() && !m_bLegacyInputFallbackActive && m_InputToneMappedHandle.IsValid() &&
+               m_OutputHandle.IsValid() && m_RenderPass && m_Framebuffer && m_Pipeline && m_DescriptorSet;
+    }
+
+    RGRecordPolicy FXAAPass::GetRecordPolicy() const
+    {
+        return DeclaresAllLayoutChanges() ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
+    }
+
 } // namespace NorvesLib::Core::Rendering

@@ -812,7 +812,7 @@
 - notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RT-PASSES: 監査したパスを並列に記録する
-- status: todo
+- status: done
 - done-when: MEASURE-CPU の rt の上位から、次の 3 つを満たすと監査したパスに Parallel を宣言する: Execute が記録だけ、自分でバリアを張らない、共有の CPU の状態を持たない（監査の表を PROGRESS に書く。共有のアロケータは区間ごとに分ける）。`--render-parallel-record=off` で 1 本に戻せる。on と off の両方で起動画面の比較が pass する。
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PASSES`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -GameArgs render-parallel-record=off -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PASSES-off`

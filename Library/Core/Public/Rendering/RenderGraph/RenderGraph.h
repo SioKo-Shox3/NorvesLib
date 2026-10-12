@@ -390,6 +390,8 @@ namespace NorvesLib::Core::Rendering
         void PlanSegmentLayouts(const RGRecordSegment& segment);
         void PlanBarrierLayouts(uint32_t barrierIndex);
         void PlanPassFinalLayouts(uint32_t passIndex);
+        void PlanPassSampledLayouts(uint32_t orderIndex);
+        bool CommitSampledLayouts(uint32_t firstOrderIndex, uint32_t endOrderIndex, ViewRenderContext& context);
         void CommitPlannedLayouts(ViewRenderContext& context);
         void ConfirmRecordedLayouts(const RGRecordSegment& segment, ViewRenderContext& context);
         void ConfirmAllTextureLayouts(ViewRenderContext& context);
@@ -430,6 +432,20 @@ namespace NorvesLib::Core::Rendering
         // 資源ごとの計画上の共有の layout と、書き戻しが要るかの印（Texture だけ使う）
         Container::VariableArray<RHI::TextureLayout> m_PlannedTextureLayouts;
         Container::VariableArray<uint8_t> m_PlannedTextureLayoutDirty;
+        // 計画した区間で、パスがサンプルする Texture のパスの中の layout（バリアの後）。記述子の書き込みは共有の
+        // layout が General かどうかで image の layout を決めるので、記録の前にこの値を書き戻す。
+        // 今の区間の分だけ持ち、コンパイルした順ごとに [Begin, End) の範囲を指す。
+        struct RGSampledTextureLayout
+        {
+            uint32_t ResourceIndex = 0;
+            RHI::TextureLayout Layout = RHI::TextureLayout::Undefined;
+        };
+        Container::VariableArray<RGSampledTextureLayout> m_PlannedSampledLayouts;
+        Container::VariableArray<uint32_t> m_PlannedSampledBegins;
+        Container::VariableArray<uint32_t> m_PlannedSampledEnds;
+        bool m_bLoggedSampledLayoutConflict = false;
+        // 直近に出した、Parallel で記録するパスの組
+        Container::String m_LastLoggedParallelPasses;
         Container::UnorderedMap<Identity, RGNamedResource, Identity::Hasher> m_NamedResources;
         Container::UnorderedMap<Identity, RGTextureHandle, Identity::Hasher> m_TextureExports;
         RenderGraphExecutionResult m_LastExecutionResult;

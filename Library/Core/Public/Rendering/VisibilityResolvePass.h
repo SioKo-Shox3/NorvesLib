@@ -447,6 +447,10 @@ namespace NorvesLib::Core::Rendering
 
         void Declare(RenderGraphBuilder& builder) override;
         void Execute(RenderGraphResources& resources, ViewRenderContext& context) override;
+        // 監査済み: Execute は記録だけで自分でバリアを張らず、GBuffer は宣言どおり UnorderedAccess のまま。
+        // 初期化と解決の準備が整い、ID を宣言したフレームだけ、計画した区間で Parallel に記録する。
+        bool DeclaresAllLayoutChanges() const override;
+        RGRecordPolicy GetRecordPolicy() const override;
 
         /** @brief 記録の表・材質の表・インスタンスの表の取り出し元（同じ View の
          * VisibilityRasterPass） */

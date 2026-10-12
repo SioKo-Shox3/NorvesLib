@@ -2851,3 +2851,47 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: RT-PASSES で RenderingCoordinator をつなぐときは、`RecordListSource` の実装で仕事の番号ごとのリスト（`m_JobCommandLists`）を Begin して返し、リストの頭で `BeginGPUTimestampFrame` と FrameGPU の区間を開く。グラフの実行の後は `context.CommandList`（最後のリスト）へ以後の記録（次のビューのグラフ・合成・提示）を続け、提出は 0 番と受け取った順のリストを 1 回で行う。`render-parallel-record=off` は渡し口を null にすれば今の 1 本に戻る。
 - Notes: Parallel のパスは区間ごとの context の写しで記録するので、Execute の中で ViewRenderContext のメンバ（例: `ActiveShadowMapSettings`）を書いて後のパスへ渡すパスは Parallel にできない。RT-PASSES の監査の条件に入れる。
 - Notes: 区間の保留のコマンドの実行（`SceneRenderer::ExecuteFrameCommands`）は RenderThread で合流の後に行うので、スレッド安全の監査は要らない。ParallelFor の中で例外が出たときは、区間のリストの共有の layout の書き込みを戻さない（呼び手のフレームの中止でリストごと捨てる前提。Serial の例外と同じ扱い）。
+
+### SCN-ECS-RT-PASSES（2026-10-12、反復 33・run 20261012-030203）
+
+- 監査したパスに Parallel を宣言し、RenderingCoordinator から区間ごとのリストを渡して同時に記録するようにした（設計 §1.13）。`--render-parallel-record=off` で 1 本の記録に戻る。
+- rt の上位: MEASURE-CPU の撮影にはパスごとの CPU の区間が無い（`RenderGraph.Execute` 49.8 ms・`MegaGeometryPass.RecordFrameCommand` 15.3 ms だけ）ので、同じ負荷（mega-stress 5万個・静止・RelWithDebInfo・120 フレーム）を今のビルドで 1 回撮り、RT-GRAPH の `RG.Record.<パス>` で並べた（`.harness/runs/scene-capture/SCN-ECS-RT-PASSES/audit-static/metrics.json`。rt の median 57.8 ms・`RenderGraph.Execute` 11.9 ms）。
+- 監査の表（median / p95 ms は `RG.Record.<パス>`。条件は「Execute が記録だけ」「自分でバリアを張らない」「共有の CPU の状態を持たない（ViewRenderContext の書き換えと SharedResources を含む）」）:
+
+| 順 | パス | median / p95 | 記録だけ | バリアなし | 共有の状態なし | 判定 |
+|---|---|---|---|---|---|---|
+| 1 | MegaGeometryPass | 7.711 / 9.132 | × 記録の前に表を作る（PrepareSceneTables 7.7 ms） | × 55 か所 | × RenderThread の写し・席の表 | Serial |
+| 2 | VisibilityRasterPass | 0.694 / 1.001 | ○ | × 21 か所 | ○ | Serial |
+| 3 | LightingPass | 0.417 / 0.462 | ○ | × 9 か所＋DDGI 13＋RT の影 3、保留へ 1 | ○ | Serial |
+| 4 | ShadowMapPass | 0.387 / 0.434 | ○ | ○ | × `context.ActiveShadowMapSettings` を書いて後のパスへ渡す | Serial |
+| 5 | VirtualShadowMapPass | 0.197 / 0.262 | ○ | × 8＋Raster 24＋Pages 14 | ○ | Serial |
+| 6 | VisibilityResolvePass | 0.095 / 0.115 | ○ dispatch だけ | ○（GBuffer は UnorderedAccess のまま） | ○ 書くのは自分のメンバ・ディスクリプタセット・定数のリング。読むラスタ・分類の結果は前の Serial のパスが書き終えたもの | **Parallel** |
+| 7 | BloomPass | 0.026 / 0.035 | ○ | ○ | ○ | Serial（ミップの鎖の自前のテクスチャ（グラフの外）の layout を自分の render pass で変えるので、宣言どおりにだけ layout を変えるとは言えない） |
+| 8 | MaterialTileClassifyPass | 0.018 / 0.033 | ○ | × 7 か所 | ○ | Serial |
+| 9 | AutoExposurePass | 0.016 / 0.031 | ○ | × 4 か所 | ○ | Serial |
+| 10 | SSAOPass | 0.008 / 0.011 | ○ 全画面 2 つを積むだけ | ○（出力 2 枚は render pass の finalState で宣言の ShaderResource へ） | ○ SharedResources は入力をグラフから読めない旧経路だけ | **Parallel** |
+| 11 | SSRPass | 0.005 / 0.009 | — | — | — | Serial（前後が Serial で同時に記録する相手が無い。監査の対象外） |
+| 12 | ToneMappingPass | 0.004 / 0.008 | ○ | ○（出力は finalState ShaderResource） | ○ 旧経路だけ SharedResources。LUT の作成・読み込みは自分のメンバとデバイス（スレッドごとの単発のプール） | **Parallel** |
+| 13 | FXAAPass | 0.003 / 0.006 | ○ | ○ | ○ 旧経路だけ | **Parallel**（起動画面では宣言されない） |
+| 14 | PresentationPass | 0.003 / 0.005 | ○ | ○ | × `context.bPresentationGraphPassHandled` を書く | Serial |
+| 15 | GBufferPass | 0.003 / 0.004 | — | — | — | Serial（前後が Serial。監査の対象外） |
+| 16 | VignettePass | 0.002 / 0.003 | ○ | ○ | ○ 旧経路だけ | **Parallel** |
+| 17 | ForwardPass | 0.002 / 0.003 | ○ | × 2 か所＋保留へ 2 | ○ | Serial |
+| — | SkyAtmospherePass | 0.000 | ○ | ○ | × context へ LUT を公開する | Serial |
+| — | UpscalePass・DebugDrawPass | 0.000 | — | — | — | Serial（既定では何も記録しない（拡大なし・線なし）。リストを増やすだけ） |
+| — | TemporalAA・MotionBlur・DepthOfField・Volumetrics・NeuralMaterialDecode・SkinningCompute | 0.000 | — | × 保留へ積むバリアか直接のバリア | — | Serial |
+
+- Parallel の 5 つは、準備が整ったフレーム（初期化済み・パイプラインとディスクリプタセットが揃う・入力をグラフから読む（旧経路でない））だけ `DeclaresAllLayoutChanges()` と `GetRecordPolicy()` が true / Parallel を返す（最初のフレームは Serial。宣言の矛盾のエラーを出さない）。同時に記録される並びは [VisibilityResolve, SSAO] と [ToneMapping, Vignette, FXAA]。
+- 共有のアロケータ: リスト（仕事の番号ごとに 1 本）と保留のフレームコマンド（区間ごと）は区間ごと、transient は記録の前に直列で確保（RT-PLAN）。Execute が触るディスクリプタセット（セットごとのプール）・定数のバッファ・VisibilityResolve の定数のリングはパスが持つ。テクスチャの作成・転送はデバイスのスレッドごとの単発のプールで行う。
+- RenderGraph: 計画した区間で、パスがサンプルする Texture（ShaderResource の宣言）のパスの中の layout（バリアの後）を残し、記録の前に書き戻す（`CommitSampledLayouts`）。Vulkan の記述子の書き込みは共有の layout が General かどうかで image の layout を決め、計画した区間では共有の layout が区間の頭のままになるため。Parallel の並びはまとめて書き戻し、同じ Texture を General とそれ以外でサンプルするパスが並びにあれば同時に記録せず Serial で記録する（`RG_PARALLEL_SAMPLED_LAYOUT_CONFLICT` を 1 回出す）。計画した区間の Serial のパスはパスごとに書き戻す。Parallel のパスの組は、空でなく変わったときだけ `RG_PARALLEL_RECORD_PASSES` で出す。
+- RenderingCoordinator: `JobRecordListSource`（仕事の番号 1 以降のリストを提出の順に作って渡す。記録を始め、トレース中は GPU タイムスタンプのフレームと FrameGPU の区間を開く。上限 32 本）。グラフの後の記録（保留のコマンド・撮影のコピー・VT の要求のバリア）は最後のリスト（`viewContext.CommandList`）へ続け、フレームの終わりに受け取ったリストの区間を閉じて End する。提出は既存の `SubmitJobCommandLists`（番号の順に 1 回）。リストの数は変わったときだけ `RENDER_PARALLEL_RECORD_LISTS` で出す。`NORVES_RENDER_PARALLEL_RECORD`（0 で off）を最初のフレームで読み、`RENDER_PARALLEL_RECORD enabled=` を出す。RenderFrameExecutor も、グラフの後の記録（保留のコマンド・直接の描画・合成）を Context の今のリストへ続ける。
+- Game: `--render-parallel-record=on|off` を `NORVES_RENDER_PARALLEL_RECORD` へ渡す（それ以外の値はエラー）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RT-PASSES-1.txt`（on）: RelWithDebInfo の起動画面 default の決定論比較 pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 4E-06・最大差 1）。default.Game.log の ERROR 0。`RENDER_PARALLEL_RECORD enabled=1`、`RG_PARALLEL_RECORD_PASSES passes=VisibilityResolvePass,SSAOPass,ToneMappingPass,VignettePass`、`RENDER_PARALLEL_RECORD_LISTS count=4 frame=1`（フレーム 0 は VisibilityResolve だけで 1 本）。
+  - `verify-SCN-ECS-RT-PASSES-2.txt`（off）: 同じ比較 pass（差 0、psnr 100 dB、不一致の画素 4E-06・最大差 1）。ERROR 0。`enabled=0` でリストは 0 本（全パスを 0 番へ記録）。
+  - 両方の PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
+  - 回帰（`check-SCN-ECS-RT-PASSES-regress.txt`）: Debug の RenderGraphParallelPlanTest・RenderGraphParallelRecordTest・RenderGraphLifetimeTest・RenderGraphAttachmentStateTest が Passed。
+- Next: SCN-ECS-MEASURE-RT。
+- Notes: Parallel にできた 5 つの記録の CPU は合わせて約 0.11 ms（5万個の静止）で、rt の上位 5 つ（合計約 9.4 ms）はどれもバリアか共有の状態で Serial のまま。MEASURE-RT で on の rt が off より悪化しないかを見る。上位を並列にするには、バリアをグラフの宣言へ移す・ShadowMapPass の設定を context でなくグラフの出力で渡すなどの別の項目が要る。
+- Notes: 起動画面では FXAAPass が並びに入らない（宣言の条件を満たさないフレームか無効）。原因は確かめていない（Serial のまま正しく描かれる）。
+- Notes: 別々のリストに同じ名前のパスが記録されると、GPU の時間を合わせる規則（フレームと名前）で 1 つに合わさる（RT-RHI-TIMESTAMPS の Notes）。今は Parallel のパスを持つグラフがビューごとに 1 つなので起きない。

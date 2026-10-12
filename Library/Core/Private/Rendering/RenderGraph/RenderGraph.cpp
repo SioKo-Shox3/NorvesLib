@@ -2254,6 +2254,26 @@ namespace NorvesLib::Core::Rendering
             }
             m_RecordListSegments.back().EndOrderIndex = orderIndex + 1;
         }
+
+        // Parallel で記録するパスの組は、空でなく前に出した組と違うときだけ出す（撮影と計測の確認用）。
+        Container::String parallelPasses;
+        for (uint32_t orderIndex = 0; orderIndex < m_CompiledPassOrder.size(); ++orderIndex)
+        {
+            if (!m_ParallelRecordOrders[orderIndex])
+            {
+                continue;
+            }
+            if (!parallelPasses.empty())
+            {
+                parallelPasses += ",";
+            }
+            parallelPasses += m_Passes[m_CompiledPassOrder[orderIndex]]->GetName();
+        }
+        if (!parallelPasses.empty() && parallelPasses != m_LastLoggedParallelPasses)
+        {
+            m_LastLoggedParallelPasses = parallelPasses;
+            NORVES_LOG_INFO("RenderGraph", "RG_PARALLEL_RECORD_PASSES passes=%s", parallelPasses.c_str());
+        }
     }
 
     bool RenderGraph::RecordSerialPass(uint32_t orderIndex,
@@ -2285,6 +2305,11 @@ namespace NorvesLib::Core::Rendering
         {
             // Serial のパスは記録の最中に共有の layout を読むので、バリアの後の layout を先に書き戻す。
             CommitPlannedLayouts(context);
+        }
+        else
+        {
+            // 計画した区間でも、記述子の書き込みが読むサンプルする Texture の layout はパスの中の値にする。
+            CommitSampledLayouts(orderIndex, orderIndex + 1, context);
         }
 
         bFlushedInSerialSegment |= FlushPendingFrameCommands(context) && !segment.bLayoutPlanned;
@@ -2340,11 +2365,28 @@ namespace NorvesLib::Core::Rendering
         // 最初のパスのバリアの前に流していた保留のコマンドは、今の記録先（区間のリストより前に提出される）へ流す。
         FlushPendingFrameCommands(context);
 
-        // 区間ごとのリストを、提出の順（グラフの順）に受け取る。受け取れなかったパスは、最後に受け取ったリストへ Serial で続ける。
+        // 同時に記録するパスがサンプルする Texture の layout を、記録の前に直列で書き戻す
+        // （記録の最中は誰も共有の layout を書かないので、各パスの記述子はこの値を読む）。
+        // パスの間で General とそれ以外が食い違うときは、同時に記録せず Serial で記録する。
         const uint32_t passCount = endOrderIndex - firstOrderIndex;
+        uint32_t acquireCount = passCount;
+        if (!CommitSampledLayouts(firstOrderIndex, endOrderIndex, context))
+        {
+            acquireCount = 0;
+            if (!m_bLoggedSampledLayoutConflict)
+            {
+                m_bLoggedSampledLayoutConflict = true;
+                NORVES_LOG_WARNING("RenderGraph",
+                                   "RG_PARALLEL_SAMPLED_LAYOUT_CONFLICT first='%s' 同時に記録するパスが同じ Texture を "
+                                   "General とそれ以外の layout でサンプルするため、Serial で記録します",
+                                   m_Passes[m_CompiledPassOrder[firstOrderIndex]]->GetName());
+            }
+        }
+
+        // 区間ごとのリストを、提出の順（グラフの順）に受け取る。受け取れなかったパスは、最後に受け取ったリストへ Serial で続ける。
         Container::VariableArray<RHI::ICommandList*> lists;
-        lists.reserve(passCount);
-        for (uint32_t index = 0; index < passCount; ++index)
+        lists.reserve(acquireCount);
+        for (uint32_t index = 0; index < acquireCount; ++index)
         {
             RHI::ICommandList* list = context.RecordListSource->AcquireRecordList();
             if (!list)
@@ -2487,6 +2529,9 @@ namespace NorvesLib::Core::Rendering
         m_PlannedBarriers.resize(m_CompiledBarriers.size());
         m_PlannedTextureLayouts.assign(m_Resources.size(), RHI::TextureLayout::Undefined);
         m_PlannedTextureLayoutDirty.assign(m_Resources.size(), 0);
+        m_PlannedSampledLayouts.clear();
+        m_PlannedSampledBegins.assign(m_CompiledPassOrder.size(), 0u);
+        m_PlannedSampledEnds.assign(m_CompiledPassOrder.size(), 0u);
         if (!context.CommandList)
         {
             return true;
@@ -2511,6 +2556,8 @@ namespace NorvesLib::Core::Rendering
             ++barrierIndex;
         }
 
+        // サンプルする Texture の layout は今の区間の分だけ持つ。
+        m_PlannedSampledLayouts.clear();
         for (uint32_t orderIndex = segment.FirstOrderIndex; orderIndex < segment.EndOrderIndex; ++orderIndex)
         {
             for (; barrierIndex < m_CompiledBarriers.size() &&
@@ -2520,12 +2567,95 @@ namespace NorvesLib::Core::Rendering
                 PlanBarrierLayouts(barrierIndex);
             }
 
-            // 計画した区間では、パスの最終の layout を反映してから次のパスのバリアを決める。
+            // 計画した区間では、パスの中の layout（バリアの後）を残し、パスの最終の layout を反映してから
+            // 次のパスのバリアを決める。
             if (segment.bLayoutPlanned)
             {
+                PlanPassSampledLayouts(orderIndex);
                 PlanPassFinalLayouts(m_CompiledPassOrder[orderIndex]);
             }
         }
+    }
+
+    void RenderGraph::PlanPassSampledLayouts(uint32_t orderIndex)
+    {
+        if (orderIndex >= m_PlannedSampledBegins.size())
+        {
+            return;
+        }
+
+        m_PlannedSampledBegins[orderIndex] = static_cast<uint32_t>(m_PlannedSampledLayouts.size());
+        const uint32_t passIndex = m_CompiledPassOrder[orderIndex];
+        if (passIndex < m_PassDeclarations.size())
+        {
+            // 記述子が共有の layout を読むのはサンプルする画像だけ（storage image は常に General、
+            // attachment は render pass が決める）。
+            for (const RGPassAccess& access : m_PassDeclarations[passIndex].Accesses)
+            {
+                if (!ValidateHandle(access.Resource) ||
+                    m_Resources[access.Resource.Index].Kind != RGResourceKind::Texture ||
+                    access.bAttachment ||
+                    access.State != RHI::ResourceState::ShaderResource)
+                {
+                    continue;
+                }
+
+                RGSampledTextureLayout sampled;
+                sampled.ResourceIndex = access.Resource.Index;
+                sampled.Layout = m_PlannedTextureLayouts[access.Resource.Index];
+                m_PlannedSampledLayouts.push_back(sampled);
+            }
+        }
+        m_PlannedSampledEnds[orderIndex] = static_cast<uint32_t>(m_PlannedSampledLayouts.size());
+    }
+
+    bool RenderGraph::CommitSampledLayouts(uint32_t firstOrderIndex,
+                                           uint32_t endOrderIndex,
+                                           ViewRenderContext& context)
+    {
+        if (!context.CommandList || endOrderIndex > m_PlannedSampledBegins.size())
+        {
+            return true;
+        }
+
+        // 同時に記録するパスの間で、同じ Texture を General とそれ以外の layout でサンプルするなら、
+        // 1 つの共有の layout では両方の記述子を正しく書けない。
+        for (uint32_t orderIndex = firstOrderIndex; orderIndex < endOrderIndex; ++orderIndex)
+        {
+            for (uint32_t index = m_PlannedSampledBegins[orderIndex]; index < m_PlannedSampledEnds[orderIndex]; ++index)
+            {
+                const RGSampledTextureLayout& sampled = m_PlannedSampledLayouts[index];
+                const bool bGeneral = sampled.Layout == RHI::TextureLayout::General;
+                for (uint32_t otherOrder = orderIndex; otherOrder < endOrderIndex; ++otherOrder)
+                {
+                    for (uint32_t otherIndex = m_PlannedSampledBegins[otherOrder];
+                         otherIndex < m_PlannedSampledEnds[otherOrder];
+                         ++otherIndex)
+                    {
+                        const RGSampledTextureLayout& other = m_PlannedSampledLayouts[otherIndex];
+                        if (other.ResourceIndex == sampled.ResourceIndex &&
+                            (other.Layout == RHI::TextureLayout::General) != bGeneral)
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 区間の中で layout が変わる Texture は書き戻しの印が付いているので、区間の後に最終の layout で上書きされる。
+        for (uint32_t orderIndex = firstOrderIndex; orderIndex < endOrderIndex; ++orderIndex)
+        {
+            for (uint32_t index = m_PlannedSampledBegins[orderIndex]; index < m_PlannedSampledEnds[orderIndex]; ++index)
+            {
+                const RGSampledTextureLayout& sampled = m_PlannedSampledLayouts[index];
+                if (RHI::ITexture* texture = GetPlannedTexture(sampled.ResourceIndex))
+                {
+                    context.CommandList->CommitTextureLayout(texture, sampled.Layout);
+                }
+            }
+        }
+        return true;
     }
 
     void RenderGraph::PlanBarrierLayouts(uint32_t barrierIndex)
@@ -2917,6 +3047,9 @@ namespace NorvesLib::Core::Rendering
         m_PlannedBarriers.clear();
         m_PlannedTextureLayouts.clear();
         m_PlannedTextureLayoutDirty.clear();
+        m_PlannedSampledLayouts.clear();
+        m_PlannedSampledBegins.clear();
+        m_PlannedSampledEnds.clear();
         m_LastCompiledBarrierCount = 0;
         m_bCompiled = false;
     }

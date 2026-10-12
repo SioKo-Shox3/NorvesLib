@@ -939,4 +939,19 @@ namespace NorvesLib::Core::Rendering
         return bEnqueued;
     }
 
+    bool SSAOPass::DeclaresAllLayoutChanges() const
+    {
+        // GBuffer をグラフから読めるフレーム（SharedResources の旧経路を読み書きしない）で、パイプラインと
+        // ディスクリプタセットが揃っているときだけ。それ以外は Serial に残す。
+        return IsInitialized() && !m_bLegacyInputFallbackActive && m_GBufferDepthHandle.IsValid() &&
+               m_GBufferNormalHandle.IsValid() && m_SSAORawHandle.IsValid() && m_SSAOBlurredHandle.IsValid() &&
+               m_SSAORenderPass && m_SSAOFramebuffer && m_SSAOPipeline && m_SSAODescriptorSet && m_BlurRenderPass &&
+               m_BlurFramebuffer && m_BlurPipeline && m_BlurDescriptorSet;
+    }
+
+    RGRecordPolicy SSAOPass::GetRecordPolicy() const
+    {
+        return DeclaresAllLayoutChanges() ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
+    }
+
 } // namespace NorvesLib::Core::Rendering

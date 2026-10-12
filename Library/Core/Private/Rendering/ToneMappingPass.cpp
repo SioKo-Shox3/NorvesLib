@@ -966,4 +966,18 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    bool ToneMappingPass::DeclaresAllLayoutChanges() const
+    {
+        // 入力をグラフから読めるフレーム（SharedResources の旧経路を読み書きしない）で、パイプラインと
+        // ディスクリプタセットが揃っているときだけ。それ以外は Serial に残す。
+        return IsInitialized() && !m_bLegacyInputFallbackActive && m_InputSceneColorHandle.IsValid() &&
+               m_OutputHandle.IsValid() && m_ToneMappingRenderPass && m_ToneMappingFramebuffer &&
+               m_ToneMappingPipeline && m_ToneMappingDescriptorSet;
+    }
+
+    RGRecordPolicy ToneMappingPass::GetRecordPolicy() const
+    {
+        return DeclaresAllLayoutChanges() ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
+    }
+
 } // namespace NorvesLib::Core::Rendering
