@@ -847,7 +847,7 @@
 - notes: 2026-10-12 親が足した。計測の方針（狙いと内訳）に従い、以後の RenderThread の項目の判定に使う。描画を変えないので起動画面の比較は要らない。危険地帯（RenderThread・RHI）。
 
 ## SCN-ECS-FIX-LIGHTING-RECORD: LightingPass の記録の CPU の 3.6 ms を減らす
-- status: done
+- status: doing
 - done-when: バナナ 1万本 overview で `RG.Record.LightingPass` の median が 3.6 ms・p95 5.4 ms（SCN-ECS-MEASURE-RT。RenderThread の記録の中で最大。mega-stress 5万個 close では 0.42 ms）。LightingPass の Execute の中を区間で分けて原因を PROGRESS に書き、記録の最中の重い処理を、変わったときだけ行う・直列の準備段へ移す・GPU へ移す、のいずれかで減らす（原因に合わせて選ぶ）。合格: 同じ撮影で `RG.Record.LightingPass` の median ≤ 0.5 ms、起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-ECS-FIX-LIGHTING-RECORD`
