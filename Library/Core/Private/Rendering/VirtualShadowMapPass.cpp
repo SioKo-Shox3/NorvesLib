@@ -928,6 +928,7 @@ namespace NorvesLib::Core::Rendering
         if (!use.Chunks || use.ChunkCapacity < chunkCount)
         {
             const uint32_t wanted = std::max(chunkCount, std::min(VirtualShadowMap::MAX_CASTER_CHUNKS, std::max(256u, use.ChunkCapacity * 2u)));
+            RHI::FrameResourceProtectedCreationScope protectedCreation;
             use.Chunks = m_Device->CreateBuffer(
                 RHI::BufferDesc(VirtualShadowMap::RasterChunkBytes(wanted), VirtualShadowMap::RasterChunkUsage(), true, "VsmRaster_Chunks"));
             use.ChunkCapacity = use.Chunks ? wanted : 0u;

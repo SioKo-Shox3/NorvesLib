@@ -7,6 +7,7 @@
 #include "Thread/Mutex.h"
 
 #include <cstdint>
+#include <utility>
 
 /**
  * @file FrameResourceWriteTracker.h
@@ -18,15 +19,16 @@
  *
  * 出すものは 2 種類:
  * - 一覧（合否に使わない）: 2 つ以上のフレームで CPU から書き換えた、守られていない資源を
- *   `FRAME_RESOURCE_REWRITE resource=<名前> pass=<パス> frames=<n> instances=<n>` で名前とパスの組ごとに 1 回（終わりに出す）。
+ *   `FRAME_RESOURCE_REWRITE resource=<名前> pass=<パス> frames=<n> id=<ID> gen=<世代>` で資源（ID と世代）ごとに 1 回（終わりに出す）。
+ *   名前とパスの組ごとの集計は `FRAME_RESOURCE_REWRITE_TOTAL` で添える。
  * - 守られていない上書き（合否に使う）: 飛行中のフレームを 2 と仮定して前のフレームの記録が参照した範囲への書き込み、
  *   同じフレームで記録済みのコマンドが参照する範囲への書き込み、束縛した後の記述子セットの Update を
  *   `FRAME_RESOURCE_UNPROTECTED resource=<名前> pass=<パス> kind=<種類>` で名前・パス・種類の組ごとに初めて見つけたときに出し、
  *   終わりに `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=<組の数>` を出す。
  *
  * 作成の直後の 1 回（大きさの変更は作り直しなので、その直後の 1 回も同じ）と、初期化で 1 回だけ書く物は数えない。
- * 「守られている」資源（フレームの持ち主から借りた物・飛行中のスロットで引くリングの資源）は、作るときに仕組みの側が登録する
- * （FrameResourceProtectedCreationScope・MarkFrameUseProtectedCreation）。守られている資源は前のフレームとの重なりを見ず、
+ * 「守られている」資源（フレームの持ち主から借りた物・飛行中のスロットで引くリングの資源）は、作る所を仕組みの側が
+ * FrameResourceProtectedCreationScope で包んで登録する。守られている資源は前のフレームとの重なりを見ず、
  * 一覧にも載せないが、同じフレームの中の重なり（記録済みのコマンドが参照する範囲への書き込み・束縛した後の Update）は見る。
  * Release では何もしない。
  */
@@ -90,11 +92,6 @@ namespace NorvesLib::RHI
         struct ThreadState
         {
             const char* Name = nullptr;
-            /** 今の区間の番号（0 は区間の外） */
-            uint64_t ScopeSerial = 0;
-            uint64_t NextScopeSerial = 1;
-            /** FrameUseRing の Acquire が開いた「守られている資源を作る」窓の区間の番号 */
-            uint64_t FrameUseCreationScope = 0;
             /** FrameResourceProtectedCreationScope の深さ */
             uint32_t ProtectedCreationDepth = 0;
         };
@@ -111,9 +108,7 @@ namespace NorvesLib::RHI
 #if NORVES_FRAME_RESOURCE_WRITE_TRACKING
             auto& state = FrameResourceWriteScopeDetail::t_State;
             m_PreviousName = state.Name;
-            m_PreviousSerial = state.ScopeSerial;
             state.Name = name;
-            state.ScopeSerial = state.NextScopeSerial++;
 #else
             (void)name;
 #endif
@@ -124,7 +119,6 @@ namespace NorvesLib::RHI
 #if NORVES_FRAME_RESOURCE_WRITE_TRACKING
             auto& state = FrameResourceWriteScopeDetail::t_State;
             state.Name = m_PreviousName;
-            state.ScopeSerial = m_PreviousSerial;
 #endif
         }
 
@@ -134,7 +128,6 @@ namespace NorvesLib::RHI
     private:
 #if NORVES_FRAME_RESOURCE_WRITE_TRACKING
         const char* m_PreviousName = nullptr;
-        uint64_t m_PreviousSerial = 0;
 #endif
     };
 
@@ -142,6 +135,7 @@ namespace NorvesLib::RHI
      * @brief この区間で作る資源を「守られている」と登録する（フレームの持ち主の領域のページ・飛行中のスロットで引くリングの資源）
      *
      * 区間で作った資源は前のフレームとの重なりを見ない。同じフレームの中の重なりは見る。
+     * 包むのは仕組みに属する資源を作る所だけにする（FrameUseRing なら Acquire で受け取った Use のメンバを作る所）。
      */
     class FrameResourceProtectedCreationScope
     {
@@ -164,28 +158,11 @@ namespace NorvesLib::RHI
         FrameResourceProtectedCreationScope& operator=(const FrameResourceProtectedCreationScope&) = delete;
     };
 
-    /**
-     * @brief FrameUseRing の Acquire が呼ぶ。今のパスの区間の残りで作る資源を「守られている」と登録する
-     *
-     * リングの Use の資源は Acquire の後に呼び出し側が作る（作り直す）ので、Acquire から今の区間の終わりまでを窓にする。
-     * 区間の外（パスの区間を持たない所）の Acquire は窓を開かない。窓で作ったパスのメンバの資源も守られている扱いになるが、
-     * 同じフレームの中の重なりは引き続き見る。
-     */
-    inline void MarkFrameUseProtectedCreation()
-    {
-#if NORVES_FRAME_RESOURCE_WRITE_TRACKING
-        auto& state = FrameResourceWriteScopeDetail::t_State;
-        state.FrameUseCreationScope = state.ScopeSerial;
-#endif
-    }
-
     /** @brief 今作る資源を「守られている」と登録するか */
     inline bool IsFrameResourceProtectedCreation()
     {
 #if NORVES_FRAME_RESOURCE_WRITE_TRACKING
-        const auto& state = FrameResourceWriteScopeDetail::t_State;
-        return state.ProtectedCreationDepth > 0 ||
-               (state.ScopeSerial != 0 && state.FrameUseCreationScope == state.ScopeSerial);
+        return FrameResourceWriteScopeDetail::t_State.ProtectedCreationDepth > 0;
 #else
         return false;
 #endif
@@ -205,21 +182,23 @@ namespace NorvesLib::RHI
         uint64_t End = 0;
     };
 
-    /** @brief 一覧の名前とパスの組ごとの集計 */
+    /** @brief 一覧の資源 1 つ分（ID と世代ごと。資源が消えても終わりの一覧のために残す） */
     struct FrameResourceRewriteEntry
     {
         Core::Container::String Resource;
-        Core::Container::String Pass;
-        Thread::Atomic<uint64_t> MaxFrames{0};
-        uint64_t Instances = 0;
+        /** 書き換えたパスの名前（2 つ以上なら , で区切る） */
+        Core::Container::String Passes;
+        uint64_t Id = 0;
+        uint64_t Generation = 1;
+        Thread::Atomic<uint64_t> Frames{0};
     };
 
     /**
      * @brief 資源 1 つの見張りの状態（バッファ・記述子セットのオブジェクトが持つ）
      *
      * 識別は ID（作るたびに増える。使い回さない）と世代（借りた記述子セットは pool の世代、ほかは 1）。
-     * バッファの参照の範囲は、書き換えを一度見たバッファだけ記録する（作成の直後に 1 回だけ書く頂点などは記録しない）。
-     * そのため書き換えの最初の 1 回はまだ参照を持たず、重なりは 2 回目の書き換えから見つかる。
+     * バッファの参照の範囲は、CPU から一度でも書いたバッファだけ記録する（GPU だけが書くバッファの束縛は原子変数の読み 1 回で済ませる）。
+     * 作成の直後の 1 回の書き込みは数えないが、その後の参照は記録するので、最初の書き換えから重なりが見つかる。
      */
     class FrameResourceTrackState
     {
@@ -245,11 +224,15 @@ namespace NorvesLib::RHI
         /** 作成の直後の 1 回を除いて書き換えたフレームの数 */
         uint64_t RewriteFrames = 0;
         FrameResourceRewriteEntry* RewriteEntry = nullptr;
-        /** 種類ごとに 1 度だけ報告する */
-        uint32_t ReportedMask = 0;
+        /** 一覧へ最後に足したパスの名前（同じパスが続く間は報告の排他を取らない） */
+        const char* LastRewritePass = nullptr;
+        /** 報告済みの名前・パス・種類の組（パスと種類ごとに 1 度だけ報告する） */
+        Core::Container::VariableArray<uint64_t> ReportedKeys;
 
-        /** バッファ: 参照の範囲を記録するか（書き換えを一度見たら true） */
+        /** バッファ: 参照の範囲を記録するか（CPU から一度でも書いたら true） */
         Thread::Atomic<bool> bTrackReferences{false};
+        /** バッファ: 全体の参照を記録済みのフレーム（同じフレームの全体の参照は排他を取らずに済ませる） */
+        Thread::Atomic<uint64_t> WholeReferenceFrame{0};
         /** バッファ: フレームの番号の偶奇ごとの参照の範囲 */
         uint64_t ReferenceFrame[2] = {0, 0};
         Core::Container::VariableArray<FrameResourceRange> References[2];
@@ -328,11 +311,12 @@ namespace NorvesLib::RHI
             const uint64_t frame = GetFrame();
             const char* scope = GetFrameResourceWriteScopeName();
             NorvesLib::Thread::ScopedLock lock(state.Mutex);
+            // 作成の直後の 1 回も、その後の参照は記録する（初回の書き込みの後に参照された範囲への最初の書き換えを見逃さない）
+            state.bTrackReferences.Store(true, std::memory_order_relaxed);
             if (!CountWriteLocked(state, frame, scope))
             {
                 return;
             }
-            state.bTrackReferences.Store(true, std::memory_order_relaxed);
             const FrameResourceRange written{offset, offset + size};
             if (OverlapsLocked(state, frame, written))
             {
@@ -357,6 +341,11 @@ namespace NorvesLib::RHI
                 return;
             }
             const uint64_t end = (size == ~0ull || size > state.Size - offset) ? state.Size : offset + size;
+            const bool bWhole = offset == 0 && end == state.Size;
+            if (bWhole && state.WholeReferenceFrame.Load(std::memory_order_relaxed) == frame)
+            {
+                return;
+            }
             NorvesLib::Thread::ScopedLock lock(state.Mutex);
             const uint32_t slot = static_cast<uint32_t>(frame & 1u);
             if (state.ReferenceFrame[slot] != frame)
@@ -365,6 +354,10 @@ namespace NorvesLib::RHI
                 state.References[slot].clear();
             }
             AddRange(state.References[slot], FrameResourceRange{offset, end});
+            if (bWhole)
+            {
+                state.WholeReferenceFrame.Store(frame, std::memory_order_relaxed);
+            }
         }
 
         /** @brief 記述子セットへの書き込み（実際に書いた Update） */
@@ -417,22 +410,50 @@ namespace NorvesLib::RHI
                 return;
             }
             m_bSummaryEmitted = true;
-            uint64_t rewriteCount = 0;
-            for (const auto& [key, entry] : m_Rewrites)
+            // 一覧は資源（ID と世代）ごとに 1 行。名前とパスの組ごとの集計は TOTAL の行で添える
+            struct RewriteTotal
             {
-                (void)key;
-                const uint64_t frames = entry->MaxFrames.Load(std::memory_order_relaxed);
+                const FrameResourceRewriteEntry* First = nullptr;
+                uint64_t Resources = 0;
+                uint64_t MaxFrames = 0;
+            };
+            Core::Container::UnorderedMap<uint64_t, RewriteTotal> totals;
+            Core::Container::VariableArray<uint64_t> totalOrder;
+            uint64_t rewriteCount = 0;
+            for (const auto& entry : m_RewriteResources)
+            {
+                const uint64_t frames = entry->Frames.Load(std::memory_order_relaxed);
                 if (frames < 2)
                 {
                     continue;
                 }
                 ++rewriteCount;
                 NORVES_LOG_INFO("FrameResource",
-                                "FRAME_RESOURCE_REWRITE resource=%s pass=%s frames=%llu instances=%llu",
+                                "FRAME_RESOURCE_REWRITE resource=%s pass=%s frames=%llu id=%llu gen=%llu",
                                 entry->Resource.c_str(),
-                                entry->Pass.c_str(),
+                                entry->Passes.c_str(),
                                 static_cast<unsigned long long>(frames),
-                                static_cast<unsigned long long>(entry->Instances));
+                                static_cast<unsigned long long>(entry->Id),
+                                static_cast<unsigned long long>(entry->Generation));
+                const uint64_t key = HashKey(entry->Resource.c_str(), entry->Passes.c_str(), "");
+                RewriteTotal& total = totals[key];
+                if (!total.First)
+                {
+                    total.First = entry.get();
+                    totalOrder.push_back(key);
+                }
+                ++total.Resources;
+                total.MaxFrames = total.MaxFrames > frames ? total.MaxFrames : frames;
+            }
+            for (const uint64_t key : totalOrder)
+            {
+                const RewriteTotal& total = totals[key];
+                NORVES_LOG_INFO("FrameResource",
+                                "FRAME_RESOURCE_REWRITE_TOTAL resource=%s pass=%s resources=%llu max_frames=%llu",
+                                total.First->Resource.c_str(),
+                                total.First->Passes.c_str(),
+                                static_cast<unsigned long long>(total.Resources),
+                                static_cast<unsigned long long>(total.MaxFrames));
             }
             uint64_t resources = 0;
             for (const auto& [key, entry] : m_Unprotected)
@@ -503,33 +524,64 @@ namespace NorvesLib::RHI
             {
                 return false;
             }
-            if (!state.bProtected && bNewFrame)
+            if (!state.bProtected)
             {
-                ++state.RewriteFrames;
-                if (state.RewriteFrames >= 2)
+                if (bNewFrame)
                 {
-                    if (!state.RewriteEntry)
+                    ++state.RewriteFrames;
+                }
+                if (!state.RewriteEntry && state.RewriteFrames >= 2)
+                {
+                    NorvesLib::Thread::ScopedLock reportLock(m_ReportMutex);
+                    auto entry = Core::Container::MakeUnique<FrameResourceRewriteEntry>();
+                    entry->Resource = state.Name;
+                    entry->Id = state.Id;
+                    entry->Generation = state.Generation;
+                    state.RewriteEntry = entry.get();
+                    m_RewriteResources.push_back(std::move(entry));
+                }
+                if (state.RewriteEntry)
+                {
+                    state.RewriteEntry->Frames.Store(state.RewriteFrames, std::memory_order_relaxed);
+                    if (state.LastRewritePass != scope)
                     {
-                        NorvesLib::Thread::ScopedLock reportLock(m_ReportMutex);
-                        const uint64_t key = HashKey(state.Name.c_str(), scope, "");
-                        auto& entry = m_Rewrites[key];
-                        if (!entry)
-                        {
-                            entry = Core::Container::MakeUnique<FrameResourceRewriteEntry>();
-                            entry->Resource = state.Name;
-                            entry->Pass = scope;
-                        }
-                        ++entry->Instances;
-                        state.RewriteEntry = entry.get();
-                    }
-                    uint64_t current = state.RewriteEntry->MaxFrames.Load(std::memory_order_relaxed);
-                    while (current < state.RewriteFrames &&
-                           !state.RewriteEntry->MaxFrames.CompareExchangeWeak(current, state.RewriteFrames))
-                    {
+                        state.LastRewritePass = scope;
+                        AddRewritePass(*state.RewriteEntry, scope);
                     }
                 }
             }
             return true;
+        }
+
+        /** @brief 一覧の資源へ書き換えたパスの名前を足す（同じ名前は足さない） */
+        void AddRewritePass(FrameResourceRewriteEntry& entry, const char* scope)
+        {
+            NorvesLib::Thread::ScopedLock reportLock(m_ReportMutex);
+            const Core::Container::String& passes = entry.Passes;
+            size_t begin = 0;
+            while (begin <= passes.size() && !passes.empty())
+            {
+                size_t end = begin;
+                while (end < passes.size() && passes[end] != ',')
+                {
+                    ++end;
+                }
+                size_t index = 0;
+                while (begin + index < end && scope[index] != '\0' && passes[begin + index] == scope[index])
+                {
+                    ++index;
+                }
+                if (begin + index == end && scope[index] == '\0')
+                {
+                    return;
+                }
+                begin = end + 1;
+            }
+            if (!entry.Passes.empty())
+            {
+                entry.Passes += ',';
+            }
+            entry.Passes += scope;
         }
 
         static bool OverlapsLocked(const FrameResourceTrackState& state, uint64_t frame, const FrameResourceRange& range)
@@ -577,16 +629,20 @@ namespace NorvesLib::RHI
                           const FrameResourceRange& range)
         {
             m_Events.FetchAdd(1, std::memory_order_relaxed);
-            const uint32_t bit = 1u << static_cast<uint32_t>(hazard);
-            if ((state.ReportedMask & bit) != 0)
-            {
-                return;
-            }
-            state.ReportedMask |= bit;
-
+            // 同じ資源でもパスが違えば別に報告する（後の項目がパスごとに照合するため）
             const char* kindName = GetFrameResourceHazardName(hazard);
+            const uint64_t key = HashKey(state.Name.c_str(), scope, kindName);
+            for (const uint64_t reported : state.ReportedKeys)
+            {
+                if (reported == key)
+                {
+                    return;
+                }
+            }
+            state.ReportedKeys.push_back(key);
+
             NorvesLib::Thread::ScopedLock reportLock(m_ReportMutex);
-            UnprotectedEntry& entry = m_Unprotected[HashKey(state.Name.c_str(), scope, kindName)];
+            UnprotectedEntry& entry = m_Unprotected[key];
             ++entry.Resources;
             if (entry.Resources != 1)
             {
@@ -614,7 +670,7 @@ namespace NorvesLib::RHI
         mutable Thread::Mutex m_ReportMutex;
         // キーは名前・パス・種類の 64 bit のハッシュ（衝突は見込まない）
         Core::Container::UnorderedMap<uint64_t, UnprotectedEntry> m_Unprotected;
-        Core::Container::UnorderedMap<uint64_t, Core::Container::TUniquePtr<FrameResourceRewriteEntry>> m_Rewrites;
+        Core::Container::VariableArray<Core::Container::TUniquePtr<FrameResourceRewriteEntry>> m_RewriteResources;
         bool m_bSummaryEmitted = false;
     };
 } // namespace NorvesLib::RHI

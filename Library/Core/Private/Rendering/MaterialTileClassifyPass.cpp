@@ -144,11 +144,13 @@ namespace NorvesLib::Core::Rendering
             Use& use = m_Uses.Acquire();
             if (!use.Uniform)
             {
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
                 use.Uniform = m_Device->CreateBuffer(
                     RHI::BufferDesc(ParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "MaterialTileClassifyParams"));
             }
             if (!use.DescriptorSet)
             {
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
                 use.DescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc());
             }
             if (!use.Uniform || !use.DescriptorSet)

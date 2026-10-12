@@ -299,11 +299,13 @@ namespace NorvesLib::Core::Rendering
             use = &m_Uses.Acquire();
             if (!use->ParamsUniform)
             {
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
                 use->ParamsUniform = m_Device->CreateBuffer(
                     RHI::BufferDesc(DebugParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "GBuffer_DebugParams"));
             }
             if (!use->DescriptorSet)
             {
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
                 use->DescriptorSet = m_Device->CreateDescriptorSet(MakeGBufferDebugDescriptorSetDesc());
             }
             if (!use->ParamsUniform || !use->DescriptorSet)

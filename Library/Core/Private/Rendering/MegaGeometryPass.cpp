@@ -4291,6 +4291,7 @@ namespace NorvesLib::Core::Rendering
                                                                    : stagingBytes;
             const uint64_t capacity = std::max<uint64_t>(64ull * 1024ull, rounded);
             RHI::BufferDesc desc(capacity, RHI::ResourceUsage::StorageBuffer, true, "MegaGeometry_SceneStaging");
+            RHI::FrameResourceProtectedCreationScope protectedCreation;
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
             if (!buffer)
             {
@@ -4307,6 +4308,7 @@ namespace NorvesLib::Core::Rendering
         {
             if (!descriptorSet)
             {
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
                 descriptorSet = m_Device->CreateDescriptorSet(scatterDesc);
                 if (!descriptorSet)
                 {
@@ -4467,6 +4469,7 @@ namespace NorvesLib::Core::Rendering
         {
             RHI::BufferDesc desc(totalBytes, RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst, true,
                                  "MegaGeometry_SceneCheckReadback");
+            RHI::FrameResourceProtectedCreationScope protectedCreation;
             slot.SceneCheckReadback = m_Device->CreateBuffer(desc);
             slot.SceneCheckCapacity = slot.SceneCheckReadback ? totalBytes : 0u;
             if (!slot.SceneCheckReadback)
@@ -4717,6 +4720,7 @@ namespace NorvesLib::Core::Rendering
                                  RHI::ResourceUsage::StorageBuffer,
                                  true,
                                  "MegaGeometry_PageTable");
+            RHI::FrameResourceProtectedCreationScope protectedCreation;
             RHI::BufferPtr buffer = m_Device->CreateBuffer(desc);
             if (!buffer)
             {

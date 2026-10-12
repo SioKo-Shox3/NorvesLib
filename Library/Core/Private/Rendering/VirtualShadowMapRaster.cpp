@@ -473,6 +473,8 @@ namespace NorvesLib::Core::Rendering
     bool VirtualShadowMapRaster::AcquireUse(Use*& outUse)
     {
         Use& use = m_Uses.Acquire();
+        // FrameUseRing の枠の資源。作る所で守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         if (!use.Uniform)
         {
             use.Uniform = m_Device->CreateBuffer(
@@ -797,6 +799,8 @@ namespace NorvesLib::Core::Rendering
     bool VirtualShadowMapMegaCull::AcquireUse(Use*& outUse)
     {
         Use& use = m_Uses.Acquire();
+        // FrameUseRing の枠の資源。作る所で守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         if (!use.CullUniform)
         {
             use.CullUniform = m_Device->CreateBuffer(RHI::BufferDesc(
@@ -849,6 +853,7 @@ namespace NorvesLib::Core::Rendering
             rounded <<= 1u;
         }
         const uint64_t bytes = (static_cast<uint64_t>(PairsHeaderWords) + rounded) * sizeof(uint32_t);
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         use.Pairs = m_Device->CreateBuffer(RHI::BufferDesc(
             bytes,
             RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst | RHI::ResourceUsage::IndirectBuffer,

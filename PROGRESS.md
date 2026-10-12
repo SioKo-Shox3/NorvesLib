@@ -3389,3 +3389,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - Release で見張りが消えた形のビルド: `build-REWRITE-GUARD-release-core.txt`（Release の Core、error 0、EXIT=0。Blit・合成の記述子の登録を足す前の版）。
 - Next: SCN-ECS-FIF-DEBUGDRAW。
 - Notes: バッファの参照の範囲は書き換えを一度見たバッファだけ記録するので、重なりは 2 回目の書き換えから見つかる（作成の直後に 1 回だけ書く頂点などの記録を省くため）。記述子セットには名前が無いので、作ったパスの名前に `.DescriptorSet` を付けて出す（初期化で作ったものは `RenderingCoordinator.DescriptorSet` になる）。`FrameUseRing` の窓は「Acquire から今のパスの区間の終わりまで」なので、その間に作ったパスのメンバの資源も守られている扱いになる（同じフレームの中の重なりは見る）。同じフレームの重なり（`buffer_recorded_same_frame`・`descriptor_bound_same_frame`）は起動画面・周回では 0 件で、この 2 種類を起こす検査は書いていない（verify が名指ししていないため。`RenderGraphLifetimeTest` の束に足すのが候補）。性能を測る撮影（RelWithDebInfo）の数字には見張りの分が入る（束縛は原子変数の読み 1 回、書き換えを見たバッファの束縛とフレームで初めての記述子の束縛は資源ごとの排他）。テクスチャの書き換えと加速構造の構築の入力は見ない。
+
+### SCN-ECS-FIF-REWRITE-GUARD の差し戻しへの対応（2026-10-12、反復 59・run 20261012-030203）
+
+- 参照の記録: CPU から一度でも書いたバッファは、作成の直後の 1 回（数えない書き込み）の後から参照の範囲を記録する。「作成 → 初回の書き込み → コマンドが参照 → 同じ範囲へ再び書き込み」が最初の書き換えで見つかる（以前は 2 回目の書き換えまで参照を持たなかった）。バッファ全体の参照は、同じフレームの 2 回目から原子変数の読みだけで済ませる。
+- 「守られている」の登録を Use に属する資源に限った: `FrameUseRing::Acquire` が開いていた「今のパスの区間の終わりまで」の窓（`MarkFrameUseProtectedCreation`）をやめ、Acquire で受け取った Use（枠）のメンバを作る所を `RHI::FrameResourceProtectedCreationScope` で包んだ（GBufferDebugPass・MaterialTileClassifyPass・ShadowProbePass・SkinningComputePass・VirtualShadowMapPages・VirtualShadowMapPass・VirtualShadowMapRaster・VisibilityRasterPass（合流・枠・検証表示）・VisibilityResolvePass・VisibilitySwRaster・MegaGeometryPass の枠の SceneStaging・SceneScatter の記述子・SceneCheckReadback・PageTable）。同じ区間で作るパスのメンバの資源は守られている扱いにならない。
+- 報告の重複抑制: 資源ごとの抑制を種類だけでなく名前・パス・種類の組にした。同じ資源を別のパスで危険に書き換えると、そのパスの組も `FRAME_RESOURCE_UNPROTECTED` に出る。
+- 一覧（1）: `FRAME_RESOURCE_REWRITE resource= pass= frames= id= gen=` を資源（ID と世代）ごとに 1 行にした（`pass` は書き換えたパス、2 つ以上なら `,` 区切り）。名前とパスの組ごとの集計は `FRAME_RESOURCE_REWRITE_TOTAL resource= pass= resources= max_frames=` で添える。`Docs/Architecture/FrameResourceWriteGuard.md` を合わせて直した。
+- 結果: (2) の組は起動画面 count=30（resources=198、events=32982、172 フレーム）、周回 count=32（resources=215、events=242269、3109 フレーム）で、上の表と同じ組・同じ資源の数（リングの Use の資源は 1 つも出ていない）。(1) の一覧は起動画面 198 行（TOTAL 30 行）、周回 215 行。2 つ以上のパスから書き換えた資源は無かった。突き合わせの結論（漏れたパスは無い）は変わらない。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-REWRITE-GUARD-5.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-REWRITE-GUARD-6.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=1E-06・within_limits=True、result=pass、EXIT=0。
+  - `verify-SCN-ECS-FIF-REWRITE-GUARD-7.txt`: `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=30 …` があり EXIT=0。
+  - `verify-SCN-ECS-FIF-REWRITE-GUARD-8.txt`: シーンの周回（rendering3dtest・mega-bananas・mega-stress × 3）`SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。Game.log の ERROR は 0 件。
+- Next: SCN-ECS-FIF-DEBUGDRAW。
+- Notes: 上の反復 58 の Notes のうち「重なりは 2 回目の書き換えから見つかる」「FrameUseRing の窓で作ったパスのメンバの資源も守られている扱い」はこの反復で無くなった。FrameUseRing を新しく使う所は Use のメンバを作る所を包む（包み忘れは一覧と `FRAME_RESOURCE_UNPROTECTED` に出る側に倒れる）。差し戻しの 4 件を起こす最小の再現の検査は書いていない（verify が名指ししていないため。`RenderGraphLifetimeTest` の束が候補）。

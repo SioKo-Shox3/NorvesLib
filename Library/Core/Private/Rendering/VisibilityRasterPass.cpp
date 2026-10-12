@@ -368,6 +368,8 @@ namespace NorvesLib::Core::Rendering
 
     bool VisibilityMerge::PrepareUse(Use& use)
     {
+        // FrameUseRing の枠の資源。作る所で守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         if (!use.Params)
         {
             use.Params = m_Device->CreateBuffer(
@@ -773,6 +775,8 @@ namespace NorvesLib::Core::Rendering
                                                uint32_t cpuRecordCount,
                                                uint32_t materialCount)
     {
+        // FrameUseRing の枠の資源。作る所で守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         if (!m_Device)
         {
             return false;
@@ -2112,11 +2116,13 @@ namespace NorvesLib::Core::Rendering
             use = &m_Uses.Acquire();
             if (!use->ParamsUniform)
             {
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
                 use->ParamsUniform = m_Device->CreateBuffer(
                     RHI::BufferDesc(DebugParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisBuffer_DebugParams"));
             }
             if (!use->DescriptorSet)
             {
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
                 use->DescriptorSet = m_Device->CreateDescriptorSet(MakeDebugDescriptorSetDesc());
             }
             if (!use->ParamsUniform || !use->DescriptorSet)

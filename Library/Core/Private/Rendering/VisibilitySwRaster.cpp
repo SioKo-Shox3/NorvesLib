@@ -127,6 +127,8 @@ namespace NorvesLib::Core::Rendering
 
     bool VisibilitySwRaster::PrepareUse(Use& use)
     {
+        // FrameUseRing の枠の資源。作る所で守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         if (!use.Params)
         {
             use.Params = m_Device->CreateBuffer(

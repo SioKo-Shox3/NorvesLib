@@ -565,11 +565,13 @@ namespace NorvesLib::Core::Rendering
         Use& use = m_Uses.Acquire();
         if (!use.Uniform)
         {
+            RHI::FrameResourceProtectedCreationScope protectedCreation;
             use.Uniform = m_Device->CreateBuffer(
                 RHI::BufferDesc(ParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisibilityResolveParams"));
         }
         if (!use.DescriptorSet)
         {
+            RHI::FrameResourceProtectedCreationScope protectedCreation;
             use.DescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(m_bDump, false, false));
         }
         if (!use.Uniform || !use.DescriptorSet)
@@ -731,11 +733,13 @@ namespace NorvesLib::Core::Rendering
             Use& use = m_Uses.Acquire();
             if (!use.TileUniform)
             {
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
                 use.TileUniform = m_Device->CreateBuffer(
                     RHI::BufferDesc(TileParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisibilityResolveTileParams"));
             }
             if (!use.TileDescriptorSet)
             {
+                RHI::FrameResourceProtectedCreationScope protectedCreation;
                 use.TileDescriptorSet = m_Device->CreateDescriptorSet(MakeDescriptorSetDesc(m_bDump, true, m_bFeedback));
             }
             if (!use.TileUniform || !use.TileDescriptorSet)
@@ -749,6 +753,7 @@ namespace NorvesLib::Core::Rendering
         Use& first = *uses[0];
         if (!first.Uniform)
         {
+            RHI::FrameResourceProtectedCreationScope protectedCreation;
             first.Uniform = m_Device->CreateBuffer(
                 RHI::BufferDesc(ParamsBytes, RHI::ResourceUsage::ConstantBuffer, true, "VisibilityResolveParams"));
         }

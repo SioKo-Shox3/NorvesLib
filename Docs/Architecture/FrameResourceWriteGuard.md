@@ -10,8 +10,9 @@
 
 | 行 | いつ | 合否に使うか | 意味 |
 |---|---|---|---|
-| `FRAME_RESOURCE_UNPROTECTED resource=<名前> pass=<パス> kind=<種類> id=<ID> gen=<世代> range=<開始>+<大きさ> frame=<n>` | 名前・パス・種類の組を初めて見つけたとき（警告） | 使う | 守られていない上書き |
-| `FRAME_RESOURCE_REWRITE resource=<名前> pass=<パス> frames=<n> instances=<n>` | 終わりに、名前とパスの組ごとに 1 回 | 使わない | フレームをまたいで持ち続ける資源を、2 つ以上のフレームで CPU から書き換えた（一覧） |
+| `FRAME_RESOURCE_UNPROTECTED resource=<名前> pass=<パス> kind=<種類> id=<ID> gen=<世代> range=<開始>+<大きさ> frame=<n>` | 名前・パス・種類の組を初めて見つけたとき（警告） | 使う | 守られていない上書き。同じ資源でもパスが違えば別の組として出す |
+| `FRAME_RESOURCE_REWRITE resource=<名前> pass=<パス> frames=<n> id=<ID> gen=<世代>` | 終わりに、資源（ID と世代）ごとに 1 回 | 使わない | フレームをまたいで持ち続ける資源を、2 つ以上のフレームで CPU から書き換えた（一覧）。`pass` は書き換えたパス（2 つ以上なら `,` で区切る）、`frames` はその資源を書き換えたフレームの数 |
+| `FRAME_RESOURCE_REWRITE_TOTAL resource=<名前> pass=<パス> resources=<n> max_frames=<n>` | 終わりに、名前とパスの組ごとに 1 回 | 使わない | 一覧の名前とパスの組ごとの集計 |
 | `FRAME_RESOURCE_UNPROTECTED_TOTAL resource=… pass=… kind=… resources=<n> first_frame=<n>` | 終わりに、組ごとに 1 回 | 使わない | 組ごとの資源の数 |
 | `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=<組の数> resources=<n> events=<n> rewrites=<n> frames=<n> reason=<理由>` | 終わりに 1 回（`RenderingCoordinator::ReleaseInitializedResources` の `WaitIdle` の後） | 使う | 集計 |
 
@@ -39,8 +40,8 @@
 - 記録したコマンドの参照として数えるのは、記述子セットの束縛（セットが参照するバッファの範囲を含む）・頂点とインデックスのバッファの束縛・
   間接引数（`DrawIndexedIndirect`・`DrawIndexedIndirectCount`・`DispatchIndirect`）・`CopyBuffer` の両側・`FillBuffer`・`CopyBufferToTexture` の元。
   加速構造の構築の入力は数えない。
-- バッファの参照の範囲は、書き換えを一度見たバッファだけ記録する（作成の直後に 1 回だけ書く頂点などの記録を省くため）。
-  そのため書き換えの最初の 1 回はまだ参照を持たず、重なりは 2 回目の書き換えから見つかる。
+- バッファの参照の範囲は、CPU から一度でも書いたバッファだけ記録する（GPU だけが書くバッファの束縛は原子変数を読むだけで済ませる）。
+  作成の直後の 1 回の書き込みは数えないが、その後の参照は記録するので、「作成 → 初回の書き込み → コマンドが参照 → 同じ範囲へ再び書き込み」は最初の書き換えで見つかる。
 
 ## 「守られている」の登録
 
@@ -51,15 +52,16 @@
 |---|---|
 | フレームの持ち主の領域のページ（`DeviceFrameUploadPageSource`） | ページを作る所を `RHI::FrameResourceProtectedCreationScope` で包む |
 | フレームの持ち主から借りた記述子セット | 借りたセットを包む `VulkanDescriptorSet` の作成で登録する（世代は pool の世代） |
-| `FrameUseRing`（飛行中のフレームの番号で引くリング） | `Acquire` が `RHI::MarkFrameUseProtectedCreation` を呼び、今のパスの区間の残りで作る資源（Use の資源は Acquire の後に作る）を登録する |
+| `FrameUseRing`（飛行中のフレームの番号で引くリング） | `Acquire` で受け取った Use（枠）のメンバを作る所を、呼び出し側が `RHI::FrameResourceProtectedCreationScope` で包む（Use の資源は Acquire の後に呼び出し側が作るため）。同じ区間で作るパスのメンバの資源は包まないので守られている扱いにならない |
 | `DynamicBufferRing`（呼び出し側の DebugDraw・ImGui が飛行中のフレームの番号でスロットを引く） | スロットのバッファを作る所を `RHI::FrameResourceProtectedCreationScope` で包む |
 | `InstanceBufferRing`（飛行中のフレームの番号でスロットを引く） | 同上 |
 
-`FrameUseRing` の窓は「Acquire から今のパスの区間の終わりまで」なので、その間に作ったパスのメンバの資源も守られている扱いになる（同じフレームの中の重なりは見る）。
-パスの区間の外の Acquire は窓を開かない。
+`FrameUseRing` を新しく使うときは、Use のメンバを作る所を `RHI::FrameResourceProtectedCreationScope` で包む。包み忘れた資源は守られていない資源として一覧と
+`FRAME_RESOURCE_UNPROTECTED` に出る（見逃しではなく、出過ぎる側に倒れる）。
 
 ## 費用
 
-- 書き換えを一度も見ていないバッファの束縛は、原子変数を 1 回読むだけ。書き換えを見たバッファの束縛と、フレームで初めての記述子セットの束縛は資源ごとの排他を取る。
-- 報告は名前・パス・種類の組ごとに初めての 1 回だけログへ出す（資源ごと・種類ごとに 1 度だけ報告の排他を取る）。
+- CPU から一度も書いていないバッファの束縛は、原子変数を 1 回読むだけ。CPU から書いたバッファの束縛と、フレームで初めての記述子セットの束縛は資源ごとの排他を取る。
+- 報告は名前・パス・種類の組ごとに初めての 1 回だけログへ出す（資源ごとに、パスと種類の組ごとに 1 度だけ報告の排他を取る）。
+- バッファ全体の参照は、同じフレームの 2 回目からは原子変数を読むだけで済ませる。
 - 性能を測る撮影の数字には、この見張りの分が入る（開発ビルドの RelWithDebInfo）。

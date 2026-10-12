@@ -60,13 +60,12 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 選んだ枠の次の資源。使い切っていれば既定の構築で足す。BeginFrame を呼ぶ前は枠 0 を使う
          *
-         * 渡した資源は飛行中のフレームの番号で引くので、前のフレームの GPU の仕事と重ならない。開発ビルドでは、
-         * 今のパスの区間の残りで作る資源（Use の資源は Acquire の後に作る）を守られていない上書きの見張りへ
-         * 「守られている」と登録する（RHI::MarkFrameUseProtectedCreation）。
+         * 渡した資源は飛行中のフレームの番号で引くので、前のフレームの GPU の仕事と重ならない。Use の資源は Acquire の後に
+         * 呼び出し側が作る（作り直す）ので、作る所を RHI::FrameResourceProtectedCreationScope で包み、開発ビルドの
+         * 守られていない上書きの見張りへ「守られている」と登録する（Use に属さない資源は包まない）。
          */
         Use& Acquire()
         {
-            RHI::MarkFrameUseProtectedCreation();
             Slot& slot = m_Slots[m_ActiveSlot];
             if (slot.Cursor >= slot.Uses.size())
             {

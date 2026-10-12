@@ -422,6 +422,8 @@ namespace NorvesLib::Core::Rendering
     bool VirtualShadowMapPages::AcquireUse(FrameUseRing<Use>& ring, const RHI::DescriptorSetDesc& layout, Use*& outUse)
     {
         Use& use = ring.Acquire();
+        // FrameUseRing の枠の資源。作る所で守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         if (!use.Uniform)
         {
             use.Uniform = m_Device->CreateBuffer(
@@ -571,6 +573,7 @@ namespace NorvesLib::Core::Rendering
         InvalidationUse& invalidationUse = m_InvalidationUses.Acquire();
         if (!invalidationUse.Buffer)
         {
+            RHI::FrameResourceProtectedCreationScope protectedCreation;
             invalidationUse.Buffer = m_Device->CreateBuffer(
                 RHI::BufferDesc(InvalidationBufferBytes, RHI::ResourceUsage::StorageBuffer, true, "VsmInvalidations"));
         }

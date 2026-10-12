@@ -331,6 +331,8 @@ namespace NorvesLib::Core::Rendering
     bool ShadowProbePass::AcquireUse(Use*& outUse)
     {
         Use& use = m_Uses.Acquire();
+        // FrameUseRing の枠の資源。作る所で守られていない上書きの見張りへ「守られている」と登録する
+        RHI::FrameResourceProtectedCreationScope protectedCreation;
         if (!use.Uniform)
         {
             use.Uniform = m_Device->CreateBuffer(
