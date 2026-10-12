@@ -146,6 +146,8 @@ namespace
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaInstanceTableUpdates;
     // MegaGeometryPass が毎フレーム書くメッシュの表（"MegaGeometry_MeshTable"）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaMeshTableUpdates;
+    // MegaGeometryPass が常駐の表（席の行・影の表など）へ散在書き込みする記録の列（"MegaGeometry_SceneStaging"）の更新の記録
+    Container::VariableArray<Container::VariableArray<uint8_t>> GMegaSceneStagingUpdates;
     // MegaGeometryPass のカリングの定数バッファ（"MegaGeometry_CullUBO"。パスごとに 1 つ）の更新の記録（更新ごとの中身）
     Container::VariableArray<Container::VariableArray<uint8_t>> GMegaCullUniformUpdates;
     // VSM の MegaGeometry の投影物のカリングの定数バッファ（"VsmMegaCullUniform"・"VsmMegaCullParams"）の更新の記録（更新ごとの中身）
@@ -323,7 +325,7 @@ namespace
                 std::memcpy(LastUpdateBytes.data(), data, static_cast<size_t>(size));
             }
 
-            if (IsDebugName(m_Desc.DebugName, "LightArraySSBO"))
+            if (IsDebugName(m_Desc.DebugName, "LightArraySSBO.Unowned"))
             {
                 PushRenderEvent(FakeRenderEvent::LightSsboUpdate);
             }
@@ -334,6 +336,10 @@ namespace
             if (IsDebugName(m_Desc.DebugName, "MegaGeometry_MeshTable"))
             {
                 GMegaMeshTableUpdates.push_back(LastUpdateBytes);
+            }
+            if (IsDebugName(m_Desc.DebugName, "MegaGeometry_SceneStaging"))
+            {
+                GMegaSceneStagingUpdates.push_back(LastUpdateBytes);
             }
             if (IsDebugName(m_Desc.DebugName, "MegaGeometry_CullUBO"))
             {
@@ -1186,6 +1192,20 @@ namespace
         }
     };
 
+    // 共有の記述子セットのレイアウト。照明のパスは初期化・Execute でデバイスから引き、引けなければ描かない（本物のデバイスと同じく返す）
+    class FakeDescriptorSetLayout final : public RHI::IDescriptorSetLayout
+    {
+    public:
+        explicit FakeDescriptorSetLayout(const RHI::DescriptorSetDesc& desc)
+            : Desc(desc)
+        {
+        }
+
+        const RHI::DescriptorSetDesc& GetDesc() const override { return Desc; }
+
+        RHI::DescriptorSetDesc Desc;
+    };
+
     class FakeDevice final : public RHI::IDevice
     {
     public:
@@ -1200,7 +1220,9 @@ namespace
             record.Tracker = RHI::MakeShared<FakeBufferLifetimeTracker>();
             CreatedBuffers.push_back(record);
 
-            if (IsDebugName(desc.DebugName, "LightArraySSBO"))
+            // 照明の光源の配列・VSM の読み出しのパラメータは、フレームの持ち主の無い文脈（この偽デバイスの検査）では
+            // Execute ごとに「.Unowned」の名前で作られる
+            if (IsDebugName(desc.DebugName, "LightArraySSBO.Unowned"))
             {
                 ++LightArraySSBOCreateCount;
                 if (FailLightArraySSBOCreateIndex != 0 &&
@@ -1215,7 +1237,7 @@ namespace
             {
                 VisBufferSectionMaterials = buffer;
             }
-            if (IsDebugName(desc.DebugName, "LightingVsmSampleParams"))
+            if (IsDebugName(desc.DebugName, "LightingVsmSampleParams.Unowned"))
             {
                 LightingVsmSampleBuffer = buffer;
             }
@@ -1299,6 +1321,10 @@ namespace
             LastDescriptorSetDesc = desc;
             ++DescriptorSetCreations;
             return RHI::MakeShared<FakeDescriptorSet>();
+        }
+        RHI::DescriptorSetLayoutPtr GetOrCreateDescriptorSetLayout(const RHI::DescriptorSetDesc& desc) override
+        {
+            return RHI::MakeShared<FakeDescriptorSetLayout>(desc);
         }
 
         RHI::ShaderCompilerPtr CreateShaderCompiler() override
@@ -2839,8 +2865,9 @@ namespace
         }
         assert(commandList.IndirectDraws[3].OffsetBytes == 2 * 20);
 
-        // dispatch: カリング 2 回 + HZB 7 段 + 記録を書く計算の引数を作る計算 1 回（記録を書く計算は間接 dispatch）
-        assert(commandList.DispatchCount == 10);
+        // dispatch: 常駐の表の散在書き込み 2 段（席の行・表。最初のフレームはすべて変わった扱い）+ カリング 2 回 + HZB 7 段
+        // + 記録を書く計算の引数を作る計算 1 回（記録を書く計算は間接 dispatch）
+        assert(commandList.DispatchCount == 12);
 
         // 記録を書く計算は、引数を作る計算が書いたバッファの先頭から間接 dispatch で走る（固定の大きさの dispatch ではない）
         assert(commandList.IndirectDispatches.size() == 1);
@@ -2958,8 +2985,8 @@ namespace
 
         // GBuffer（空）・MegaGeometry（2パス）・ビジビリティ・材質のタイル分類の4つのパス
         assert(scene.Graph.GetLastExecutedPassCount() == 4);
-        // 記録を書く計算まで 10 回 + 分類の 3 回（数える・位置を決める・書き出す）
-        assert(commandList.DispatchCount == 13);
+        // 記録を書く計算まで 12 回 + 分類の 3 回（数える・位置を決める・書き出す）
+        assert(commandList.DispatchCount == 15);
         assert(scene.Classify.WasClassified());
 
         // 画面は 128x64 なので 16x8 のタイル。一覧は 1 タイルが出せる材質の最大数ぶん
@@ -3033,7 +3060,7 @@ namespace
 
         assert(scene.Graph.GetLastExecutedPassCount() == 4);
         assert(!scene.Classify.WasClassified());
-        assert(commandList.DispatchCount == 10); // 分類の dispatch は無い
+        assert(commandList.DispatchCount == 12); // 分類の dispatch は無い
 
         bool bArgsCleared = false;
         bool bStatsCleared = false;
@@ -3067,7 +3094,7 @@ namespace
         VisibilityRasterScene scene;
         RunVisibilityRasterScene(scene, true, true);
         assert(scene.Graph.GetLastExecutedPassCount() == 3);
-        assert(scene.CommandList.DispatchCount == 10);
+        assert(scene.CommandList.DispatchCount == 12);
         assert(scene.CommandList.MaterialTileFills.empty());
         assert(!scene.Classify.GetLayout().IsValid());
         ShutdownVisibilityRasterScene(scene);
@@ -3082,7 +3109,7 @@ namespace
         RunVisibilityRasterScene(scene, true, true, ClassifyMode::AddedDisabled);
         assert(!scene.Classify.IsEnabled());
         assert(scene.Graph.GetLastExecutedPassCount() == 3);
-        assert(scene.CommandList.DispatchCount == 10);
+        assert(scene.CommandList.DispatchCount == 12);
         assert(scene.CommandList.MaterialTileFills.empty());
         assert(!scene.Classify.GetLayout().IsValid());
         assert(!scene.Classify.WasClassified());
@@ -3100,9 +3127,10 @@ namespace
 
         // GBuffer・MegaGeometry・SkinningCompute・VisibilityRaster
         assert(scene.Graph.GetLastExecutedPassCount() == 4);
-        // 変形は1つも記録できないので、スキニングの dispatch は増えない（カリング 2 回 + HZB 7 段 + 記録を書く計算 1 回）
+        // 変形は1つも記録できないので、スキニングの dispatch は増えない
+        // （常駐の表の散在書き込み 2 段 + カリング 2 回 + HZB 7 段 + 記録を書く計算 1 回）
         assert(scene.Skinning.GetInstances().empty());
-        assert(scene.CommandList.DispatchCount == 10);
+        assert(scene.CommandList.DispatchCount == 12);
         assert(scene.Skinning.GetCurrentVerticesHandle().IsValid());
         assert(scene.Skinning.GetPreviousVerticesHandle().IsValid());
 
@@ -3727,7 +3755,8 @@ namespace
         RunVisibilityRasterScene(scene, true, true, ClassifyMode::LinkedToRaster);
         const FakeDevice& device = *scene.Device;
         const char* const classifyUniform = "MaterialTileClassifyParams";
-        const char* const megaFrameSlot = "MegaGeometry_InstanceTable";
+        // MegaGeometry のフレームの枠ごとの資源の目印は区間の表（インスタンスの表は常駐の 1 本で、枠ごとには作らない）
+        const char* const megaFrameSlot = "MegaGeometry_SectionTable";
 
         // 1回目の Execute: 分類は 3 回の dispatch ぶん、MegaGeometry は 1 組
         assert(CountBufferCreations(device, classifyUniform) == MaterialTileClassify::DispatchesPerRecord);
@@ -3964,8 +3993,8 @@ namespace
         assert(commandList.IndirectDraws.size() == 2);
         assert(commandList.IndirectDraws[1].OffsetBytes == commandList.IndirectDraws[0].OffsetBytes);
         assert(commandList.IndirectDraws[1].MaxDrawCount == 2);
-        // カリング 1 回 + 記録を書く計算 1 回
-        assert(commandList.DispatchCount == 2);
+        // 常駐の表の散在書き込み 2 段 + カリング 1 回 + 記録を書く計算 1 回
+        assert(commandList.DispatchCount == 4);
         assert(scene.Raster.GetLastFrameStats().MegaCommandSlots == 2);
         assert(scene.Raster.GetLastFrameStats().TotalSlots == 3);
 
@@ -4049,6 +4078,7 @@ namespace
         const auto& sequence = commandList.CallSequence;
         const char expected[] = {
             'B', 'E',                                   // GBufferPass: 描画を止めてクリアと添付の遷移だけ
+            'D', 'D',                                   // MegaGeometryPass の前段: 常駐の表の散在書き込み 2 段（席の行・表）
             'B', 'E',                                   // MegaGeometryPass: GBuffer の添付の遷移だけ（描画も記録もラスタへ移した）
             'D',                                        // 計算スキニング（この場面のスキニングの塊 1 体）
             'D',                                        // 1 パス目のカリング（ラスタの Execute の中）
@@ -4073,13 +4103,14 @@ namespace
         assert(commandList.BeginRenderPassCount == 6);
         assert(commandList.EndRenderPassCount == 6);
 
-        // 64bit のバッファは、ラスタの最初の render pass の前（GBuffer・MegaGeometry の遷移・計算スキニング・1 パス目のカリングの後）に、
-        // すべてのビットが 1 で 1 回だけ埋める。ソフトウェアラスタが書く前に空にするため、1 回目の描画より後ろへ動かすと落ちる
+        // 64bit のバッファは、ラスタの最初の render pass の前（GBuffer・前段の散在書き込み・MegaGeometry の遷移・計算スキニング・
+        // 1 パス目のカリングの後）に、すべてのビットが 1 で 1 回だけ埋める。ソフトウェアラスタが書く前に空にするため、
+        // 1 回目の描画より後ろへ動かすと落ちる
         assert(commandList.Key64Fills.size() == 1);
         assert(commandList.Key64Fills[0].SizeBytes == 128u * 64u * 8u);
         assert(commandList.Key64Fills[0].Value == 0xFFFFFFFFu);
-        assert(commandList.Key64Fills[0].SequencePosition == 6);
-        assert(sequence[6] == 'B' && sequence[7] == 'I' && sequence[8] == 'E');
+        assert(commandList.Key64Fills[0].SequencePosition == 8);
+        assert(sequence[8] == 'B' && sequence[9] == 'I' && sequence[10] == 'E');
 
         // 合流は全画面の描画が 1 回ずつ、「1 回目の render pass の直後・HZB の前」と「2 回目の render pass の直後」の
         // 空の render pass（B と E の間に描画の呼び出しだけ）として記録される。HZB の後ろへ動かす・2 回目を外すと落ちる
@@ -4092,9 +4123,9 @@ namespace
             }
         }
         assert(mergeDrawPositions.size() == SceneMergeDrawsStaged);
-        assert(mergeDrawPositions[0] == 10); // 1 回目の B・I・E（6〜8）の直後の B（9）の中。この後に HZB の 7 段
-        assert(mergeDrawPositions[1] == 25); // 2 回目の B・I・E（21〜23）の直後の B（24）の中
-        for (size_t i = 11; i < 18; ++i)
+        assert(mergeDrawPositions[0] == 12); // 1 回目の B・I・E（8〜10）の直後の B（11）の中。この後に HZB の 7 段
+        assert(mergeDrawPositions[1] == 27); // 2 回目の B・I・E（23〜25）の直後の B（26）の中
+        for (size_t i = 13; i < 20; ++i)
         {
             assert(sequence[i] == 'D'); // 1 つ目の合流の後は HZB の 7 段
         }
@@ -4108,7 +4139,7 @@ namespace
         assert(commandList.InstancedDrawSequencePositions.size() == SceneIdDirectDraws);
         for (const size_t position : commandList.InstancedDrawSequencePositions)
         {
-            assert(position == 7); // 'B' の直後（1 パス目の間接描画 'I' より前）
+            assert(position == 9); // 'B' の直後（1 パス目の間接描画 'I' より前）
         }
 
         // 記録の表は MegaGeometry の 2 パスぶんのコマンド（4）と塊（手続き 3・スキニング 1）の記録を持つ
@@ -4153,6 +4184,7 @@ namespace
         const auto& sequence = commandList.CallSequence;
         const char expected[] = {
             'B', 'E',      // GBufferPass
+            'D', 'D',      // MegaGeometryPass の前段: 常駐の表の散在書き込み 2 段（席の行・表）
             'B', 'E',      // MegaGeometryPass: GBuffer の添付の遷移だけ
             'D',           // 計算スキニング
             'D',           // 1 回の判定のカリング（ラスタの Execute の中）
@@ -4169,7 +4201,7 @@ namespace
         assert(commandList.InstancedDrawSequencePositions.size() == SceneIdDirectDraws);
         for (const size_t position : commandList.InstancedDrawSequencePositions)
         {
-            assert(position == 10); // 間接描画 'I' の後（塊は MegaGeometry の後）
+            assert(position == 12); // 間接描画 'I' の後（塊は MegaGeometry の後）
         }
         // 1 パスぶんのコマンド（同じ材質の 2 インスタンスは 1 つの区間でクラスタ数の合計 2）だけ
         assert(scene.Raster.GetLastFrameStats().MegaCommandSlots == 2);
@@ -4686,8 +4718,8 @@ namespace
 
         assert(scene.Raster.GetLastFrameStats().bRendered);
         assert(commandList.IndirectDispatches.empty());
-        // dispatch: カリング 2 回 + HZB 7 段 + 記録の引数を作る計算 1 回 + 記録を書く計算（直接）1 回
-        assert(commandList.DispatchCount == 11);
+        // dispatch: 常駐の表の散在書き込み 2 段 + カリング 2 回 + HZB 7 段 + 記録の引数を作る計算 1 回 + 記録を書く計算（直接）1 回
+        assert(commandList.DispatchCount == 13);
 
         // 並びの最後は、引数を作る計算（D）→ 記録を書く計算（D）→ ID のレンダーパス → 64bit のバッファの合流
         const auto& sequence = commandList.CallSequence;
@@ -4978,10 +5010,27 @@ namespace
         assert(commandList.SwRasterFills.size() == 1);
         assert(commandList.SwRasterFills[0].SizeBytes == 8u * sizeof(uint32_t));
         assert(commandList.SwRasterFills[0].Value == 0u);
+        // 先頭の dispatch は MegaGeometryPass の前段の散在書き込み 2 段（staging を束ねる）なので、その次をカリングの最初とする
+        size_t scatterDispatches = 0;
+        while (scatterDispatches < commandList.DispatchBindings.size())
+        {
+            bool bBindsStaging = false;
+            for (const BoundBufferName& entry : commandList.DispatchBindings[scatterDispatches])
+            {
+                bBindsStaging = bBindsStaging || IsDebugName(entry.Name, "MegaGeometry_SceneStaging");
+            }
+            if (!bBindsStaging)
+            {
+                break;
+            }
+            ++scatterDispatches;
+        }
+        assert(scatterDispatches == 2);
         size_t firstDispatch = commandList.CallSequence.size();
+        size_t dispatchesSeen = 0;
         for (size_t index = 0; index < commandList.CallSequence.size(); ++index)
         {
-            if (commandList.CallSequence[index] == 'D')
+            if (commandList.CallSequence[index] == 'D' && dispatchesSeen++ == scatterDispatches)
             {
                 firstDispatch = index;
                 break;
@@ -8376,7 +8425,7 @@ namespace
             for (const DescriptorBindingRecord& record : GDescriptorBindingRecords)
             {
                 const char* sampleName = BoundBufferNameAt(record.Buffers, 21);
-                if (sampleName == nullptr || std::strcmp(sampleName, "LightingVsmSampleParams") != 0)
+                if (sampleName == nullptr || std::strcmp(sampleName, "LightingVsmSampleParams.Unowned") != 0)
                 {
                     continue;
                 }
@@ -8429,7 +8478,7 @@ namespace
         for (const DescriptorBindingRecord& record : GDescriptorBindingRecords)
         {
             const char* sampleName = BoundBufferNameAt(record.Buffers, 21);
-            if (sampleName != nullptr && std::strcmp(sampleName, "LightingVsmSampleParams") == 0)
+            if (sampleName != nullptr && std::strcmp(sampleName, "LightingVsmSampleParams.Unowned") == 0)
             {
                 sets.push_back(record.Set);
             }
@@ -8469,23 +8518,10 @@ namespace
     // 同じフレームに照明が複数回 Execute される（同じ SceneView の複数のビューポート）とき、
     //  - Execute ごとに別の記述子セットと、別の定数・ライトの配列・VSM のパラメータとスライスの表のバッファを使う
     //  - 後の Execute が、先の Execute の組のバッファの中身（その時のカメラの値）を書き換えない
-    //  - 組は 4 つまで。超えた Execute はエラーを 1 回だけ出して描かず、組を増やさない
-    //  - 通し番号が変わると先頭の組から使い直し、組を増やさない
+    //  - 組の数に上限は無い。5 回目以降の Execute も同じ数だけ描き、新しい組を使う
+    //  - 通し番号が変わっても先の組を使い直さない（この検査はフレームの持ち主の無い文脈なので、組はパスを手放すまで持たれる）
     void TestLightingExecutesInOneFrameUseSeparateResourceSets()
     {
-#if NORVES_ENABLE_LOGGING
-        Logging::LogConfig logConfig;
-        logConfig.minLevel = Logging::LogLevel::Trace;
-        logConfig.outputType = Logging::LogOutput::None;
-        logConfig.bAsyncLogging = false;
-        logConfig.bAutoFlush = false;
-        Logging::Logger& logger = Logging::Logger::GetInstance();
-        logger.Shutdown();
-        assert(logger.Initialize(logConfig));
-        LightingLogCollector logs;
-        logger.AddSink(&logs);
-#endif
-
         VsmRun run;
         run.Device->SetVirtualShadowMapCapabilities(true, true, 0xFFFFFFFFull);
         InitializeVsmRun(run);
@@ -8577,63 +8613,39 @@ namespace
         assert(!SameBytes(expected[0].Bytes[2], expected[1].Bytes[2]));
         assert(!SameBytes(expected[0].Bytes[2], expected[3].Bytes[2]));
 
-        // 組の数の上限を超えた Execute: 描かず、組を増やさず、エラーは 1 回だけ
-#if NORVES_ENABLE_LOGGING
-        assert(logs.Count("LIGHTING_EXECUTE_SETS_EXCEEDED") == 0);
-#endif
+        // 4 つを超える Execute（同じフレームの 5・6 回目）と、通し番号が変わった後の Execute も、同じ数だけ描いて新しい組を使う。
+        // 新しい組は先の組の記述子セット・バッファのどれとも別で、先の組の中身を書き換えない
+        const auto expectNewSet = [&](uint64_t frame, float cameraX, uint32_t setCountBefore)
         {
             const uint32_t drawsBefore = run.CommandList.DrawCallCount;
-            runViewport(0, 40.0f);
-            assert(run.CommandList.DrawCallCount - drawsBefore < drawsPerViewport);
-            runViewport(0, 50.0f);
-            assert(CollectLightingDescriptorSets().size() == 4u);
+            runViewport(frame, cameraX);
+            assert(run.CommandList.DrawCallCount - drawsBefore == drawsPerViewport);
+            const Container::VariableArray<const void*> sets = CollectLightingDescriptorSets();
+            assert(sets.size() == setCountBefore + 1u);
+            const LightingSetContents added = CaptureLightingSet(sets.back());
+            GPUVsmSampleParams params = {};
+            assert(added.Bytes[2].size() == sizeof(params));
+            std::memcpy(&params, added.Bytes[2].data(), sizeof(params));
+            assert(params.cameraPosition[0] == cameraX);
             for (uint32_t viewport = 0; viewport < 4u; ++viewport)
             {
+                assert(added.Set != expected[viewport].Set);
                 for (uint32_t index = 0; index < 5u; ++index)
                 {
+                    assert(added.Buffers[index] != expected[viewport].Buffers[index]);
                     assert(SameBytes(expected[viewport].Buffers[index]->LastUpdateBytes, expected[viewport].Bytes[index]));
                 }
             }
-        }
-#if NORVES_ENABLE_LOGGING
-        assert(logs.Count("LIGHTING_EXECUTE_SETS_EXCEEDED") == 1);
-#endif
-
-        // 通し番号が変わると先頭の組から使い直す: 組は増えず、先頭の組へ新しいカメラの値が入り、2 番目の組は触られない
-        runViewport(1, 5.0f);
-        assert(CollectLightingDescriptorSets().size() == 4u);
-        {
-            const Container::VariableArray<const void*> sets = CollectLightingDescriptorSets();
-            const LightingSetContents reused = CaptureLightingSet(sets[0]);
-            assert(reused.Set == expected[0].Set);
-            GPUVsmSampleParams params = {};
-            assert(reused.Bytes[2].size() == sizeof(params));
-            std::memcpy(&params, reused.Bytes[2].data(), sizeof(params));
-            assert(params.cameraPosition[0] == 5.0f);
-            for (uint32_t index = 0; index < 5u; ++index)
-            {
-                assert(SameBytes(expected[1].Buffers[index]->LastUpdateBytes, expected[1].Bytes[index]));
-            }
-        }
-        runViewport(1, 15.0f);
-        assert(CollectLightingDescriptorSets().size() == 4u);
-        {
-            const LightingSetContents second = CaptureLightingSet(CollectLightingDescriptorSets()[1]);
-            assert(second.Set == expected[1].Set);
-            GPUVsmSampleParams params = {};
-            std::memcpy(&params, second.Bytes[2].data(), sizeof(params));
-            assert(params.cameraPosition[0] == 15.0f);
-        }
+        };
+        expectNewSet(0, 40.0f, 4u);
+        expectNewSet(0, 50.0f, 5u);
+        expectNewSet(1, 5.0f, 6u);
 
         lightingPass.Shutdown();
         gbufferPass.Shutdown();
         renderer.Shutdown();
         renderResources.Shutdown();
         ShutdownVsmRun(run, vsmPass);
-#if NORVES_ENABLE_LOGGING
-        logger.RemoveSink(&logs);
-        logger.Shutdown();
-#endif
     }
 
     // 太陽の VSM の照明の統計（逃げた標本の数）の読み戻し:
@@ -9071,6 +9083,88 @@ namespace
         }
     }
 
+    // MegaGeometryPass が常駐の表へ散在書き込みする記録の列（"MegaGeometry_SceneStaging" の 1 回の更新）を読んだもの。
+    // 表の行は、列に載った番号の位置に置く（最初のフレームは全行が載るので、番号は 0 から件数 - 1 までをちょうど 1 回ずつ持つ）
+    struct StagedMegaEntry
+    {
+        uint32_t Slot = 0;
+        uint32_t MeshIndex = 0;
+        uint32_t FirstGroup = 0;
+        uint32_t VisibleOffset = 0;
+    };
+    struct StagedMegaScene
+    {
+        uint32_t SlotRowCount = 0;                                  // 段 0 の席の行の数
+        Container::VariableArray<StagedMegaEntry> Entries;          // 描く順の表（インスタンスの並び）
+        Container::VariableArray<MegaGeometryShadowInstance> Shadows; // 影の表（描く順の表と同じ並び）
+        Container::VariableArray<Container::VariableArray<uint8_t>> Meshes; // メッシュの表（1 行 64 B）
+    };
+
+    // 列は、席の行の区画（段 0。頭 4 語 = 行の数・段 → 1 件 36 語 = 席の番号の uvec4 + 席の行 32 語）を 256 B にそろえた後ろに、
+    // 表の区画（段 1。頭 4 語 = 入口の件数・段・影の件数・メッシュの件数 → 入口 8 語ずつ = 番号・席・メッシュの表の番号・
+    // 最初のワークグループ・見えたビットの先頭 → 影 16 語ずつ = 番号の uvec4 + 影の表の行 12 語 → メッシュ 20 語ずつ =
+    // 番号の uvec4 + メッシュの表の行 16 語）が並ぶ（MegaGeometryPass::PrepareSceneTables が書く並び）
+    StagedMegaScene DecodeMegaSceneStaging(const Container::VariableArray<uint8_t>& bytes)
+    {
+        constexpr size_t HeaderWords = 4u;
+        constexpr size_t RowRecordWords = 4u + 32u;
+        constexpr size_t EntryRecordWords = 8u;
+        constexpr size_t ShadowRecordWords = 4u + 12u;
+        constexpr size_t MeshRecordWords = 4u + 16u;
+        constexpr size_t RegionAlignWords = 64u;
+        static_assert(sizeof(MegaGeometryShadowInstance) == 12u * sizeof(uint32_t));
+        const size_t wordCount = bytes.size() / sizeof(uint32_t);
+        assert(wordCount >= HeaderWords);
+        const uint32_t* words = reinterpret_cast<const uint32_t*>(bytes.data());
+        StagedMegaScene scene;
+        size_t region = 0;
+        if (words[1] == 0u)
+        {
+            // 席の行の区画（段 0）が先にある
+            scene.SlotRowCount = words[0];
+            const size_t rowRegionWords = HeaderWords + static_cast<size_t>(words[0]) * RowRecordWords;
+            region = (rowRegionWords + RegionAlignWords - 1u) / RegionAlignWords * RegionAlignWords;
+        }
+        assert(region + HeaderWords <= wordCount && words[region + 1] == 1u);
+        const uint32_t entryRecords = words[region];
+        const uint32_t shadowRecords = words[region + 2];
+        const uint32_t meshRecords = words[region + 3];
+        size_t cursor = region + HeaderWords;
+        assert(cursor + static_cast<size_t>(entryRecords) * EntryRecordWords + static_cast<size_t>(shadowRecords) * ShadowRecordWords +
+                   static_cast<size_t>(meshRecords) * MeshRecordWords <=
+               wordCount);
+
+        // 番号が 0 から件数 - 1 までをちょうど 1 回ずつ持つことを確かめながら、番号の位置へ置く
+        const auto place = [&](uint32_t records, size_t recordWords, auto&& store)
+        {
+            Container::VariableArray<uint8_t> seen(records, 0u);
+            for (uint32_t record = 0; record < records; ++record, cursor += recordWords)
+            {
+                const uint32_t index = words[cursor];
+                assert(index < records && seen[index] == 0u);
+                seen[index] = 1u;
+                store(index, words + cursor);
+            }
+        };
+        scene.Entries.resize(entryRecords);
+        place(entryRecords, EntryRecordWords, [&](uint32_t index, const uint32_t* record)
+        {
+            scene.Entries[index] = StagedMegaEntry{record[1], record[2], record[3], record[4]};
+        });
+        scene.Shadows.resize(shadowRecords);
+        place(shadowRecords, ShadowRecordWords, [&](uint32_t index, const uint32_t* record)
+        {
+            std::memcpy(&scene.Shadows[index], record + 4u, sizeof(MegaGeometryShadowInstance));
+        });
+        scene.Meshes.resize(meshRecords);
+        place(meshRecords, MeshRecordWords, [&](uint32_t index, const uint32_t* record)
+        {
+            scene.Meshes[index].resize(16u * sizeof(uint32_t));
+            std::memcpy(scene.Meshes[index].data(), record + 4u, 16u * sizeof(uint32_t));
+        });
+        return scene;
+    }
+
     // vsm の構成の 1 フレーム: 主の経路（2 パスの遮蔽。DBIE + HZB の D 7 つ + DBIE）の後に、スキニングの変形 → 印付け・割り当て・消去 →
     // MegaGeometry の投影物のカリング（dirty の階層 = D・組の絞り込み = D・間接 dispatch の引数 = D・クラスタの選択 = J・クラスタの記録 = D）→ 展開 → 描画
     // （DDDDDJ + DDDJD + DD + J + BIIIIE）が並ぶ。
@@ -9088,6 +9182,7 @@ namespace
     void TestVirtualShadowMapPassRecordsMegaCullBetweenMainCullAndExpand()
     {
         {
+            GMegaSceneStagingUpdates.clear();
             GVsmMegaCullUniformUpdates.clear();
             GVsmMegaCullParamsUpdates.clear();
             GVsmMegaCullSliceUpdates.clear();
@@ -9095,14 +9190,14 @@ namespace
             BuildVsmMegaScene(scene);
             FakeCommandList& commandList = scene.Base.Run.CommandList;
 
-            // 主の経路の記録
-            const char* mainSequence = "DBIEDDDDDDDDBIE";
+            // 主の経路の記録（先頭の DD は、通し番号の無いコマンドの記録が自分で書く常駐の表の散在書き込み 2 段）
+            const char* mainSequence = "DDDBIEDDDDDDDDBIE";
             assert(scene.MainSequenceLength == std::strlen(mainSequence));
             for (size_t index = 0; index < scene.MainSequenceLength; ++index)
             {
                 assert(commandList.CallSequence[index] == mainSequence[index]);
             }
-            assert(scene.MainDispatchCount == 9u);
+            assert(scene.MainDispatchCount == 11u);
 
             // 影の入力: 3 インスタンス・影を落とす 2 つ・ワークグループ 2（1 クラスタ = 1 ワークグループ）
             const MegaGeometryShadowCasterInputs& inputs = scene.Mega.GetShadowCasterInputs();
@@ -9112,10 +9207,13 @@ namespace
             assert(IsDebugName(static_cast<const FakeBuffer*>(inputs.ShadowInstanceBuffer.get())->GetDesc().DebugName, "MegaGeometry_ShadowInstanceTable"));
             assert(IsDebugName(static_cast<const FakeBuffer*>(inputs.PageTableBuffer.get())->GetDesc().DebugName, "MegaGeometry_PageTable"));
             {
+                // 影の表は常駐の表で、CPU からは書かず、記録の列（staging）から散在書き込みで書く。最初のフレームは全行が列に載る
                 const FakeBuffer* shadowBuffer = static_cast<const FakeBuffer*>(inputs.ShadowInstanceBuffer.get());
-                assert(shadowBuffer->LastUpdateBytes.size() == 3u * sizeof(MegaGeometryShadowInstance));
-                MegaGeometryShadowInstance table[3] = {};
-                std::memcpy(table, shadowBuffer->LastUpdateBytes.data(), sizeof(table));
+                assert(shadowBuffer->GetSize() >= 3u * sizeof(MegaGeometryShadowInstance));
+                assert(GMegaSceneStagingUpdates.size() == 1u);
+                const StagedMegaScene staged = DecodeMegaSceneStaging(GMegaSceneStagingUpdates[0]);
+                assert(staged.Shadows.size() == 3u);
+                const MegaGeometryShadowInstance* table = staged.Shadows.data();
                 const uint32_t casterWithBounds = MegaGeometryShadowFlagCaster | MegaGeometryShadowFlagBounds;
                 // A: プロキシの境界（中心 (1, 2, 3)・半径 4）と、メッシュ全体の境界（中心 (0.5, 0.5, 0)・半径 1.25）の両方を含む最小の球。
                 //    プロキシの境界だけを信じると、読み込みが済む前の小さな球のまま影のページの無効化・カリングが抜ける。ワークグループは 0 番から
@@ -9886,7 +9984,7 @@ namespace
         assert(commandList.Key64Fills.empty());
         assert(commandList.BeginRenderPassCount == 3); // GBuffer（空）・MegaGeometry 2 パス
         assert(commandList.IndirectDraws.size() == 2);
-        assert(commandList.DispatchCount == 9);        // カリング 2 回 + HZB 7 段
+        assert(commandList.DispatchCount == 11);       // 常駐の表の散在書き込み 2 段 + カリング 2 回 + HZB 7 段
         MegaGeometryPass::VisibilityDrawPlan plan;
         assert(!scene.Mega.TakeVisibilityDrawPlan(plan));
 
@@ -10931,11 +11029,11 @@ namespace
 
         assert(commandList.BeginRenderPassCount == 1);
         assert(commandList.EndRenderPassCount == 1);
-        assert(commandList.DispatchCount == 1);
+        assert(commandList.DispatchCount == 3);
         assert(commandList.DrawCallCount == 1);
 
-        // 並び: 全インスタンスのカリング（1回）→ render pass 1つの中で区間ごとに1回描く
-        const char expected[] = {'D', 'B', 'I', 'E'};
+        // 並び: 常駐の表の散在書き込み 2 段 → 全インスタンスのカリング（1回）→ render pass 1つの中で区間ごとに1回描く
+        const char expected[] = {'D', 'D', 'D', 'B', 'I', 'E'};
         assert(commandList.CallSequence.size() == sizeof(expected));
         for (size_t i = 0; i < sizeof(expected); ++i)
         {
@@ -10955,10 +11053,10 @@ namespace
         RecordMegaGeometryTwoInstances(false, commandList, 1.0f, 1, nullptr, nullptr, true);
 
         assert(commandList.BeginRenderPassCount == 1);
-        assert(commandList.DispatchCount == 1);
+        assert(commandList.DispatchCount == 3); // 常駐の表の散在書き込み 2 段 + カリング 1 回
         assert(commandList.DrawCallCount == 2);
 
-        const char expected[] = {'D', 'B', 'I', 'I', 'E'};
+        const char expected[] = {'D', 'D', 'D', 'B', 'I', 'I', 'E'};
         assert(commandList.CallSequence.size() == sizeof(expected));
         for (size_t i = 0; i < sizeof(expected); ++i)
         {
@@ -10973,50 +11071,48 @@ namespace
         assert(commandList.IndirectDraws[1].MaxDrawCount == 1);
     }
 
-    // インスタンスの表（1つの storage buffer）: 並びはインスタンスの並び。メッシュの表の番号・ワークグループ・見えたビットの区画が入る。
-    // メッシュの表（もう1つの storage buffer）: ロード済みのメッシュごとに 1 行。クラスタ配列・区間・頂点とインデックスの基点
-    // （プールの塊の先頭から）が入る
+    // インスタンスの表（常駐の storage buffer。席の行と描く順の表）: 描く順の表の並びはインスタンスの並び。席・メッシュの表の番号・
+    // ワークグループ・見えたビットの区画が入る。メッシュの表（もう1つの常駐の storage buffer）: ロード済みのメッシュごとに 1 行。
+    // クラスタ配列・区間・頂点とインデックスの基点（プールの塊の先頭から）が入る。
+    // 常駐の表は CPU から書かず、記録の列（staging）から散在書き込みで書くので、中身は記録の列から読む（最初のフレームは全行が載る）
     void TestMegaGeometryRecordFrameCommandWritesInstanceTable()
     {
         GMegaInstanceTableUpdates.clear();
         GMegaMeshTableUpdates.clear();
+        GMegaSceneStagingUpdates.clear();
         FakeCommandList commandList;
         RecordMegaGeometryTwoInstances(true, commandList, 1.0f, 1, nullptr, nullptr, true);
 
-        assert(GMegaInstanceTableUpdates.size() == 1);
-        assert(GMegaMeshTableUpdates.size() == 1);
-        const Container::VariableArray<uint8_t> &bytes = GMegaInstanceTableUpdates[0];
-        const Container::VariableArray<uint8_t> &meshBytes = GMegaMeshTableUpdates[0];
-        // MegaGeometryPass::GPUMegaInstance は 144 バイト（world 0・previousWorld 64・メッシュの表の番号 128・
-        // 最初のワークグループ 132・見えたビットの先頭 136・予約 140）
-        constexpr size_t InstanceBytes = 144;
+        assert(GMegaInstanceTableUpdates.empty());
+        assert(GMegaMeshTableUpdates.empty());
+        assert(GMegaSceneStagingUpdates.size() == 1);
+        const StagedMegaScene staged = DecodeMegaSceneStaging(GMegaSceneStagingUpdates[0]);
+        // 席の行は 2 つ（インスタンスごとに 1 席）、描く順の表・影の表は 2 行
+        assert(staged.SlotRowCount == 2);
+        assert(staged.Entries.size() == 2);
+        assert(staged.Shadows.size() == 2);
         // MegaGeometryPass::GPUMegaMesh は 64 バイト（LODSphere 0・クラスタ配列のアドレス下位/上位 16〜20・クラスタ数 24・予約 28・
         // 区間 32・頂点の基点 36・インデックスの基点 40・予約 44・BVH の節の配列のアドレス下位/上位 48〜52・節の数 56・ページの表の先頭 60）
         constexpr size_t MeshBytes = 64;
-        assert(bytes.size() == 2 * InstanceBytes);
-        assert(meshBytes.size() == 2 * MeshBytes);
-        auto readUint = [&bytes](size_t instanceIndex, size_t byteOffset) -> uint32_t
+        assert(staged.Meshes.size() == 2);
+        auto readMeshUint = [&staged](size_t meshIndex, size_t byteOffset) -> uint32_t
         {
+            assert(staged.Meshes[meshIndex].size() == MeshBytes);
             uint32_t value = 0;
-            std::memcpy(&value, bytes.data() + instanceIndex * InstanceBytes + byteOffset, sizeof(value));
-            return value;
-        };
-        auto readMeshUint = [&meshBytes](size_t meshIndex, size_t byteOffset) -> uint32_t
-        {
-            uint32_t value = 0;
-            std::memcpy(&value, meshBytes.data() + meshIndex * MeshBytes + byteOffset, sizeof(value));
+            std::memcpy(&value, staged.Meshes[meshIndex].data() + byteOffset, sizeof(value));
             return value;
         };
 
         for (size_t instanceIndex = 0; instanceIndex < 2; ++instanceIndex)
         {
+            const StagedMegaEntry& entry = staged.Entries[instanceIndex];
             // 2つのインスタンスは別のメッシュなので、メッシュの表の別の行を指す
-            const uint32_t meshIndex = readUint(instanceIndex, 128);
+            const uint32_t meshIndex = entry.MeshIndex;
             assert(meshIndex == instanceIndex);
             // 1クラスタ = 1ワークグループなので、最初のワークグループの通し番号はインスタンスの番号
-            assert(readUint(instanceIndex, 132) == instanceIndex);
+            assert(entry.FirstGroup == instanceIndex);
             // 見えたビットは、全インスタンスで1本の配列にクラスタ数ずつ詰める
-            assert(readUint(instanceIndex, 136) == instanceIndex);
+            assert(entry.VisibleOffset == instanceIndex);
 
             assert((readMeshUint(meshIndex, 16) | readMeshUint(meshIndex, 20)) != 0); // クラスタ配列のアドレス
             assert(readMeshUint(meshIndex, 24) == 1);                                 // クラスタ数
@@ -11040,9 +11136,10 @@ namespace
         // 同じ材質の2インスタンスは1つの区間なので、1パス目と2パス目で1回ずつ描く
         assert(commandList.DrawCallCount == 2);
 
-        // 並び: [1パス目のカリング] [render pass: 描画] [HZBの各ミップ（Dispatchだけ）] [2パス目のカリング] [render pass: 描画]
+        // 並び: [常駐の表の散在書き込み 2 段] [1パス目のカリング] [render pass: 描画] [HZBの各ミップ（Dispatchだけ）]
+        // [2パス目のカリング] [render pass: 描画]
         const auto &sequence = commandList.CallSequence;
-        const char head[] = {'D', 'B', 'I', 'E'};
+        const char head[] = {'D', 'D', 'D', 'B', 'I', 'E'};
         const char tail[] = {'D', 'B', 'I', 'E'};
         assert(sequence.size() > sizeof(head) + sizeof(tail));
         for (size_t i = 0; i < sizeof(head); ++i)
@@ -12913,7 +13010,7 @@ namespace
         for (size_t i = device.CreatedBuffers.size(); i > 0; --i)
         {
             const BufferCreationRecord& record = device.CreatedBuffers[i - 1];
-            if (IsDebugName(record.Desc.DebugName, "LightArraySSBO"))
+            if (IsDebugName(record.Desc.DebugName, "LightArraySSBO.Unowned"))
             {
                 return record;
             }
@@ -12928,7 +13025,7 @@ namespace
         uint32_t count = 0;
         for (const BufferCreationRecord& record : device.CreatedBuffers)
         {
-            if (IsDebugName(record.Desc.DebugName, "LightArraySSBO"))
+            if (IsDebugName(record.Desc.DebugName, "LightArraySSBO.Unowned"))
             {
                 ++count;
             }
