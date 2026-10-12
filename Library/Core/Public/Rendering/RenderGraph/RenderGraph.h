@@ -363,9 +363,11 @@ namespace NorvesLib::Core::Rendering
         void PlanPassFinalLayouts(uint32_t passIndex);
         void CommitPlannedLayouts(ViewRenderContext& context);
         void ConfirmRecordedLayouts(const RGRecordSegment& segment, ViewRenderContext& context);
+        void ConfirmAllTextureLayouts(ViewRenderContext& context);
         RHI::ITexture* GetPlannedTexture(uint32_t resourceIndex) const;
         bool ExecuteBarrier(uint32_t barrierIndex, ViewRenderContext& context);
-        void FlushPendingFrameCommands(ViewRenderContext& context) const;
+        /** @brief 保留のフレームコマンドを流す。流したコマンドがあれば true。 */
+        bool FlushPendingFrameCommands(ViewRenderContext& context) const;
 
         RHI::TexturePtr ResolveTexture(RGResourceHandle handle);
         RHI::BufferPtr ResolveBuffer(RGResourceHandle handle);

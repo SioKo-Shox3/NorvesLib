@@ -2755,3 +2755,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: RenderGraphCompileTest（2843 行の `commandList.DispatchCount == 10`）と RenderGraphTextureUsageContractTest（950 行の `pass.Initialize`、assert の窓でタイムアウト）は、この反復の変更の前（スモーク）から落ちている。今回の変更の後も同じ箇所で落ちる。
 - Notes: Serial の区間の確定は、そのパスが宣言した Texture だけを読む（全 Texture を毎パス読むと 1 フレームに数千回の dynamic_cast になるため）。宣言に無い Texture をパスが変えた場合、その Texture の見込みは次にそれを宣言する Serial のパスの記録の後まで古いまま（今は old/new が状態だけで決まるので張るバリアは変わらない）。
 - Notes: Vulkan の記述子の書き込み（VulkanDescriptorSet の `ResolveDescriptorImageLayout`）も記録の最中に共有の layout（General かどうか）を読む。計画した区間ではその値が区間の頭のままになるので、RT-PASSES の監査では「記述子へ General と読み取りを切り替えるテクスチャを書かない」も条件に入れる。
+
+### SCN-ECS-RT-PLAN 差し戻しの修正（2026-10-12、反復 27・run 20261012-030203）
+
+- 差し戻し: 計画した区間の頭で流した、実行の前の保留のコマンドのバリアが、共有の layout の書き込みを止めた状態で記録され、最終の layout が書き戻されなかった（共有の layout が Undefined のまま残る）。
+- 保留のフレームコマンドの区間ごとの束（設計 §1.13）:
+  - 区間の頭（計画の前）に、それまでに積まれた保留のコマンドを、共有の layout を書く設定のまま 1 つの束として流す。流したコマンドがあれば、グラフの全 Texture の共有の layout を読み直し（`ConfirmAllTextureLayouts`）、それを起点に区間のバリアと最終の layout を計画する。GPU のコマンドの並びは今と同じ（前は最初のパスのバリアの前に流していた位置で、計画は CPU の処理だけ）。
+  - Serial の区間の中で保留のコマンドを流したときは、宣言した Texture だけでなく全 Texture の layout を読み直して確定する（パスが積んだバリアが宣言に無い Texture を変えても次の区間の見込みが外れない）。保留のコマンドを流さなかった Serial の区間は、今までどおり宣言した Texture だけを読む。
+  - 計画した区間のパスが、layout を宣言の外で変える保留のコマンド（`TextureBarrier`・`MegaGeometryPass`）を積んだら、契約違反として `NORVES_LOG_ERROR` を出す（計画に入らないため）。render pass のコマンドの最終の layout は宣言どおりなので計画で扱える。
+  - `FlushPendingFrameCommands` は流したかどうかを返す。
+- テスト: `RenderGraphParallelPlanTest` に `TestPreQueuedBarrierLayoutIsWrittenBack` を足した（指摘の再現: 共有の layout が Undefined の Texture を初期状態 ShaderResource で取り込み、計画したパスが読み、実行の前の保留のコマンドが Undefined → ShaderResource のバリアを張る）。既存の逐次比較（全バリアの old/new と最終の layout）に乗せ、最終の layout が ShaderReadOnly で逐次の実行と一致することを確かめる。表示文を日本語にした。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RT-PLAN-1.txt`: Debug の RenderGraphCompileTest のビルド build exit=0（エラー 0）。
+  - `-2.txt`: `RenderGraphParallelPlanTest` Passed（ctest exit=0）。直接の実行で 5 件すべて合格の行を確認。
+  - `-3.txt`: RelWithDebInfo の起動画面 default の決定論比較 pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 9E-06・最大差 1）。default.Game.log の ERROR 0（契約違反のログも出ない）。PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
+  - 回帰: RenderGraphLifetimeTest・RenderGraphAttachmentStateTest・RenderGraphDumpTest・LegacyViewPassAdapterTest は Passed。
+- Execute の中で自分でバリアを張るパスの一覧は反復 26 の節のとおり（変更なし）。
+- Next: SCN-ECS-RT-RHI-SUBMIT。
+- Notes: RT-RECORD で区間ごとに保留のコマンドを分けるときは、区間の頭の束（前の区間の後に積まれたもの）を前の区間のリストの末尾か、その区間のリストの先頭に置く。どちらでも束の後に layout を読み直す今の規則で足りる。

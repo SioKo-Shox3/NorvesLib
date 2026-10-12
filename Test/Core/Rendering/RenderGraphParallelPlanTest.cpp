@@ -3,6 +3,7 @@
 // 全バリアで一致すること、宣言から計画した区間は記録の最中に共有の layout を更新しないこと、
 // 記録の後に書き戻した最終の layout が逐次の実行と同じになることを、Serial の区間と計画した区間の両方で見る。
 #include "Rendering/RenderGraph/RenderGraph.h"
+#include "Rendering/SceneRenderer.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/ICommandList.h"
 #include "RHI/ITexture.h"
@@ -410,9 +411,12 @@ namespace
         Container::TSharedPtr<LayoutTexture> Color;
         Container::TSharedPtr<LayoutTexture> Storage;
         Container::TSharedPtr<LayoutTexture> Depth;
+        // 実行の前に保留のコマンドで Undefined から読み取りへ移すテクスチャ（bPreQueuedBarrier のときだけ）
+        Container::TSharedPtr<LayoutTexture> Sampled;
         RGResourceHandle ColorHandle;
         RGResourceHandle StorageHandle;
         RGResourceHandle DepthHandle;
+        RGResourceHandle SampledHandle;
         Container::VariableArray<Container::TUniquePtr<ScriptedPass>> Passes;
 
         void ResetLayouts()
@@ -420,10 +424,20 @@ namespace
             Color->Layout = RHI::TextureLayout::ShaderReadOnly;
             Storage->Layout = RHI::TextureLayout::ShaderReadOnly;
             Depth->Layout = RHI::TextureLayout::DepthStencilReadOnly;
+            if (Sampled)
+            {
+                Sampled->Layout = RHI::TextureLayout::Undefined;
+            }
         }
 
         // bInternalBarrierInPass1: パス 1 が宣言に無いバリアで Storage を ShaderResource へ移す
-        PlanFixture(bool bPass0Plannable, bool bPass1Plannable, bool bPass2Plannable, bool bInternalBarrierInPass1)
+        // bPreQueuedBarrier: 共有の layout が Undefined の Sampled を初期状態 ShaderResource で取り込み、パス 0 が読む。
+        //                    実行の前の保留のコマンドが Undefined → ShaderResource のバリアを張る。
+        PlanFixture(bool bPass0Plannable,
+                    bool bPass1Plannable,
+                    bool bPass2Plannable,
+                    bool bInternalBarrierInPass1,
+                    bool bPreQueuedBarrier = false)
         {
             const RHI::ResourceUsage colorUsage = RHI::ResourceUsage::RenderTarget | RHI::ResourceUsage::ShaderRead;
             const RHI::ResourceUsage storageUsage = RHI::ResourceUsage::UnorderedAccess | RHI::ResourceUsage::ShaderRead;
@@ -439,6 +453,12 @@ namespace
             pass0->Imports.push_back({Depth, RHI::ResourceState::DepthRead, &DepthHandle});
             pass0->Accesses.push_back({&ColorHandle, RHI::ResourceState::RenderTarget, RHI::ResourceState::ShaderResource, true, true, RGAttachmentKind::Color});
             pass0->Accesses.push_back({&DepthHandle, RHI::ResourceState::DepthWrite, RHI::ResourceState::DepthRead, true, true, RGAttachmentKind::DepthStencil});
+            if (bPreQueuedBarrier)
+            {
+                Sampled = Container::MakeShared<LayoutTexture>(RHI::ResourceUsage::ShaderRead, RHI::TextureLayout::Undefined);
+                pass0->Imports.push_back({Sampled, RHI::ResourceState::ShaderResource, &SampledHandle});
+                pass0->Accesses.push_back({&SampledHandle, RHI::ResourceState::ShaderResource, RHI::ResourceState::ShaderResource, false, false, RGAttachmentKind::Color});
+            }
 
             // パス 1: Color を読み、Storage を UAV で書く
             auto pass1 = Container::MakeUnique<ScriptedPass>("PlanPass1", bPass1Plannable);
@@ -468,11 +488,15 @@ namespace
         RHI::TextureLayout Color = RHI::TextureLayout::Undefined;
         RHI::TextureLayout Storage = RHI::TextureLayout::Undefined;
         RHI::TextureLayout Depth = RHI::TextureLayout::Undefined;
+        RHI::TextureLayout Sampled = RHI::TextureLayout::Undefined;
     };
 
     FinalLayouts CaptureLayouts(const PlanFixture& fixture)
     {
-        return FinalLayouts{fixture.Color->Layout, fixture.Storage->Layout, fixture.Depth->Layout};
+        return FinalLayouts{fixture.Color->Layout,
+                            fixture.Storage->Layout,
+                            fixture.Depth->Layout,
+                            fixture.Sampled ? fixture.Sampled->Layout : RHI::TextureLayout::Undefined};
     }
 
     // 今の逐次の実行: コンパイルした順に、従来のバリア（共有の layout を読み書きする）とパスの記録を交互に行う。
@@ -484,6 +508,12 @@ namespace
         auto* commandList = static_cast<LayoutCommandList*>(context.CommandList);
         commandList->LegacyBarriers.clear();
         fixture.ResetLayouts();
+
+        // 実行の前に積んだ保留のコマンドは、最初のパスより前に従来のバリアとして流れる
+        if (fixture.Sampled)
+        {
+            commandList->TextureBarrier(fixture.Sampled, RHI::ResourceState::Undefined, RHI::ResourceState::ShaderResource);
+        }
 
         // グラフのバリアの記録だけを、コンパイルしたバリアと同じ並びで取り出す（パスの中のバリアは混ぜない）
         Container::VariableArray<RecordedBarrier> graphBarriers;
@@ -541,8 +571,19 @@ namespace
         fixture.ResetLayouts();
         commandList.LegacyBarriers.clear();
         commandList.ExplicitBarriers.clear();
+        SceneRenderer renderer;
+        Container::VariableArray<FrameCommand> pendingFrameCommands;
+        if (fixture.Sampled)
+        {
+            context.Renderer = &renderer;
+            context.PendingFrameCommands = &pendingFrameCommands;
+            pendingFrameCommands.push_back(FrameCommand::CreateTextureBarrier(fixture.Sampled,
+                                                                              RHI::ResourceState::Undefined,
+                                                                              RHI::ResourceState::ShaderResource));
+        }
         const bool bExecuted = graph.Execute(context);
         assert(bExecuted);
+        assert(pendingFrameCommands.empty());
         assert(commandList.bSharedWrites);
         assert(graph.GetLastExecutedPassCount() == 3);
 
@@ -579,7 +620,8 @@ namespace
         const FinalLayouts plannedFinal = CaptureLayouts(fixture);
         comparison.bFinalLayoutsMatch = plannedFinal.Color == referenceFinal.Color &&
                                         plannedFinal.Storage == referenceFinal.Storage &&
-                                        plannedFinal.Depth == referenceFinal.Depth;
+                                        plannedFinal.Depth == referenceFinal.Depth &&
+                                        plannedFinal.Sampled == referenceFinal.Sampled;
 
         // 計画した区間の記録の最中は、共有の layout を書かない
         for (const RGRecordSegment& segment : graph.GetRecordSegments())
@@ -612,7 +654,7 @@ namespace
             assert(!segment.bLayoutPlanned);
             assert(segment.EndOrderIndex == segment.FirstOrderIndex + 1);
         }
-        std::cout << "TestSerialSegmentsMatchSequentialLayouts passed\n";
+        std::cout << "TestSerialSegmentsMatchSequentialLayouts: 合格\n";
     }
 
     void TestPlannedSegmentMatchesSequentialLayouts()
@@ -626,7 +668,7 @@ namespace
         assert(segments.size() == 1);
         assert(segments[0].bLayoutPlanned);
         assert(segments[0].FirstOrderIndex == 0 && segments[0].EndOrderIndex == 3);
-        std::cout << "TestPlannedSegmentMatchesSequentialLayouts passed\n";
+        std::cout << "TestPlannedSegmentMatchesSequentialLayouts: 合格\n";
     }
 
     void TestMixedSegmentsMatchSequentialLayouts()
@@ -639,7 +681,7 @@ namespace
         assert(comparison.bFinalLayoutsMatch);
         assert(segments.size() == 3);
         assert(segments[0].bLayoutPlanned && !segments[1].bLayoutPlanned && segments[2].bLayoutPlanned);
-        std::cout << "TestMixedSegmentsMatchSequentialLayouts passed\n";
+        std::cout << "TestMixedSegmentsMatchSequentialLayouts: 合格\n";
     }
 
     void TestUndeclaredBarrierInPlannedSegmentIsDetected()
@@ -648,7 +690,20 @@ namespace
         PlanFixture fixture(true, true, true, true);
         const PlanComparison comparison = RunPlannedAndCompare(fixture);
         assert(!comparison.bAllBarriersMatch);
-        std::cout << "TestUndeclaredBarrierInPlannedSegmentIsDetected passed\n";
+        std::cout << "TestUndeclaredBarrierInPlannedSegmentIsDetected: 合格\n";
+    }
+
+    void TestPreQueuedBarrierLayoutIsWrittenBack()
+    {
+        // 実行の前の保留のコマンドが張るバリアは、計画した区間の頭より前に流れ、その最終の layout が共有の layout に残る。
+        PlanFixture fixture(true, true, true, false, true);
+        Container::VariableArray<RGRecordSegment> segments;
+        const PlanComparison comparison = RunPlannedAndCompare(fixture, &segments);
+        assert(comparison.bAllBarriersMatch);
+        assert(comparison.bFinalLayoutsMatch);
+        assert(fixture.Sampled->Layout == RHI::TextureLayout::ShaderReadOnly);
+        assert(segments.size() == 1 && segments[0].bLayoutPlanned);
+        std::cout << "TestPreQueuedBarrierLayoutIsWrittenBack: 合格\n";
     }
 } // namespace
 
@@ -658,6 +713,7 @@ int main()
     TestPlannedSegmentMatchesSequentialLayouts();
     TestMixedSegmentsMatchSequentialLayouts();
     TestUndeclaredBarrierInPlannedSegmentIsDetected();
-    std::cout << "RenderGraphParallelPlanTest passed\n";
+    TestPreQueuedBarrierLayoutIsWrittenBack();
+    std::cout << "RenderGraphParallelPlanTest: 合格\n";
     return 0;
 }

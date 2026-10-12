@@ -46,6 +46,24 @@ namespace NorvesLib::Core::Rendering
         {
             return passIndex == RGInvalidPassIndex;
         }
+
+        // 宣言の外で layout を変える保留のコマンド（バリアと、中で自分でバリアを張る MegaGeometry の描画）があるか。
+        bool HasUndeclaredLayoutCommands(const Container::VariableArray<FrameCommand>* commands)
+        {
+            if (!commands)
+            {
+                return false;
+            }
+            for (const FrameCommand& command : *commands)
+            {
+                if (command.Type == FrameCommandType::TextureBarrier ||
+                    command.Type == FrameCommandType::MegaGeometryPass)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
     } // namespace
 
     RGTextureDesc RGTextureDesc::RenderTarget(uint32_t width,
@@ -667,6 +685,13 @@ namespace NorvesLib::Core::Rendering
         uint32_t nextBarrierIndex = 0;
         for (const RGRecordSegment& segment : m_RecordSegments)
         {
+            // 区間の前に積まれた保留のコマンド（実行の前に積んだものなど）は、区間の束として共有の layout を
+            // 書く設定のまま先に流し、その後の layout を起点に区間を計画する（コマンドの並びは今と同じ）。
+            if (FlushPendingFrameCommands(context))
+            {
+                ConfirmAllTextureLayouts(context);
+            }
+
             // 区間の頭で、ここまでに確定した layout から区間の全バリアの old/new を決める。
             PlanSegmentLayouts(segment);
             if (segment.bLayoutPlanned && context.CommandList)
@@ -674,6 +699,8 @@ namespace NorvesLib::Core::Rendering
                 context.CommandList->SetSharedTextureLayoutWrites(false);
             }
 
+            // Serial の区間の中で流した保留のコマンドは、宣言に無い Texture の layout も変えうる。
+            bool bFlushedInSerialSegment = false;
             for (uint32_t orderIndex = segment.FirstOrderIndex; orderIndex < segment.EndOrderIndex; ++orderIndex)
             {
                 const uint32_t passIndex = m_CompiledPassOrder[orderIndex];
@@ -689,7 +716,7 @@ namespace NorvesLib::Core::Rendering
                     return result;
                 }
 
-                FlushPendingFrameCommands(context);
+                bFlushedInSerialSegment |= FlushPendingFrameCommands(context) && !segment.bLayoutPlanned;
                 while (nextBarrierIndex < m_CompiledBarriers.size() &&
                        m_CompiledBarriers[nextBarrierIndex].CompiledOrderIndex == orderIndex)
                 {
@@ -712,7 +739,7 @@ namespace NorvesLib::Core::Rendering
                     CommitPlannedLayouts(context);
                 }
 
-                FlushPendingFrameCommands(context);
+                bFlushedInSerialSegment |= FlushPendingFrameCommands(context) && !segment.bLayoutPlanned;
 #if NORVES_ENABLE_RENDERGRAPH_DUMP
                 const bool bDebugMarkers = ShouldEmitDebugMarkers() && context.CommandList != nullptr;
                 if (bDebugMarkers)
@@ -729,7 +756,14 @@ namespace NorvesLib::Core::Rendering
                 }
 #endif
                 ++m_LastExecutedPassCount;
-                FlushPendingFrameCommands(context);
+                if (segment.bLayoutPlanned && HasUndeclaredLayoutCommands(context.PendingFrameCommands))
+                {
+                    // 計画した区間のパスが積んだバリアは計画に入らない（宣言の契約違反）。
+                    NORVES_LOG_ERROR("RenderGraph",
+                                     "Pass '%s' declares all layout changes but enqueued a layout-changing frame command",
+                                     pass->GetName());
+                }
+                bFlushedInSerialSegment |= FlushPendingFrameCommands(context) && !segment.bLayoutPlanned;
             }
 
             if (segment.bLayoutPlanned)
@@ -740,6 +774,11 @@ namespace NorvesLib::Core::Rendering
                     context.CommandList->SetSharedTextureLayoutWrites(true);
                 }
                 CommitPlannedLayouts(context);
+            }
+            else if (bFlushedInSerialSegment)
+            {
+                // 保留のコマンドが宣言に無い Texture を変えたかもしれないので、全 Texture の共有の layout を読んで確定する。
+                ConfirmAllTextureLayouts(context);
             }
             else
             {
@@ -2360,6 +2399,23 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
+    void RenderGraph::ConfirmAllTextureLayouts(ViewRenderContext& context)
+    {
+        if (!context.CommandList)
+        {
+            return;
+        }
+
+        // 共有の layout を書いたまま流した保留のコマンドの後に、グラフの全 Texture の layout を読み直す。
+        for (uint32_t resourceIndex = 0; resourceIndex < m_Resources.size(); ++resourceIndex)
+        {
+            if (RHI::ITexture* texture = GetPlannedTexture(resourceIndex))
+            {
+                m_PlannedTextureLayouts[resourceIndex] = context.CommandList->GetTextureLayout(texture);
+            }
+        }
+    }
+
     RHI::ITexture* RenderGraph::GetPlannedTexture(uint32_t resourceIndex) const
     {
         if (resourceIndex >= m_Resources.size())
@@ -2428,20 +2484,21 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    void RenderGraph::FlushPendingFrameCommands(ViewRenderContext& context) const
+    bool RenderGraph::FlushPendingFrameCommands(ViewRenderContext& context) const
     {
         if (!context.Renderer || !context.PendingFrameCommands || !context.CommandList)
         {
-            return;
+            return false;
         }
 
         if (context.PendingFrameCommands->empty())
         {
-            return;
+            return false;
         }
 
         context.Renderer->ExecuteFrameCommands(*context.PendingFrameCommands, context.CommandList);
         context.PendingFrameCommands->clear();
+        return true;
     }
 
     RHI::TexturePtr RenderGraph::ResolveTexture(RGResourceHandle handle)
