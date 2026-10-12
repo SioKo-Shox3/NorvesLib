@@ -893,7 +893,7 @@
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-SWITCH-debug`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-SWITCH`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 2 -Configuration RelWithDebInfo`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Private/RHI, Library/Core/Public/RHI, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した。危険地帯（RHI/Vulkan・RenderThread・資源の寿命）。
 
