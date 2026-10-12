@@ -3102,7 +3102,8 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 使うキューはグラフィックスの 1 本だけ（compute・transfer のキューを使う所は無い）。同じキューの提出は提出の順に並ぶが、バリアが無ければ前の提出と重なって走りうる。バリアの第 1 の範囲は提出の順で前のコマンドを全部含む。
   - `ViewRenderContext::FrameIndex` は `m_currentFrame`。main のリスト（`m_CommandList`）は仕事の番号 0 番として `PrepareJobCommandLists` が `SetFrameIndex(frameIndex)` を呼ぶ（スロット 0 に固定ではない）。
   - `WaitIdle` は Resize・Canvas のビューの破棄・`RenderWorld::WaitForRender`・終了だけで、毎フレームの経路には無い。シーンの出入りは `WaitForRender` で両方のスロットを待つ。
-  - `FRAME_PACKET_BUFFER_COUNT = 3`。パケットのスロットで引く資源（ImGui・TLAS のキャッシュ）は、飛行中のフレーム数 + 1 ≤ 3 のとき、同じスロットの前の利用の GPU が次の利用の BeginFrame の前に終わる。
+  - `FRAME_PACKET_BUFFER_COUNT = 3`。パケットのスロットは GPU の完了を保証しない（反復 44 で訂正）: RenderThread は `RenderFrame`（提出まで）の直後に `ReleasePacket` → `FinishRead` でパケットを Empty へ戻し（`RenderThread.cpp:511`、`FramePacket.h:1302`）、`AcquireForRead` は最新の Ready を取るので、`--gt-pacing=off` や未消費のパケットの置き換えで同じスロットを続けて描くことがある。2 にすると 2 回目の `BeginFrame` は別の飛行中のスロットのフェンスしか待たないので、1 回目の提出が未完了のまま同じパケットのスロットの資源を書き換えうる。パケットのスロットで引いてよいのは CPU だけが読む資源（パケットの本体、ImGui の `ImDrawData` の写し）だけ。
+  - RHI の資源のデストラクタ（`VulkanBuffer`・`VulkanTexture`・`VulkanFramebuffer`・`VulkanRenderPass`・`VulkanPipeline`・`VulkanDescriptorSet`・`VulkanSampler`・`VulkanAccelerationStructure`）はその場で `vkDestroy*` を呼ぶ（`VulkanTexture` の更新待ちの経路だけ例外）。今は前の提出が `BeginFrame` の待ちで終わっているので、記録の中で古いものを手放しても壊れない（反復 44 で追加）。
 - 表（向き: C→G = CPU が書き GPU が読む、G→C = 読み戻し、G→G = GPU だけが書いて読み、フレームをまたいで 1 つで持つ）:
 
 | 資源 | 持ち主 | 向き | 今の数え方 | 2 にしたとき | 直す項目 |
@@ -3120,9 +3121,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 | スキンのパレット・前のパレット | `SkinnedMeshGpuStore.cpp:100-177` | C→G | 変わったら作り直し（書き直さない） | 壊れない | — |
 | MegaGeometry の散布の stage（`SceneStaging`）・区画の表・ページの表 | `MegaGeometryPass.cpp:2693,4299,4723` | C→G | FrameSlot（スロットごと） | 壊れない | — |
 | MegaGeometry の常駐の表（slot・instance・shadow・mesh） | `MegaGeometryPass.cpp:4011-4171` | G→G（散布の compute が stage から書く） | 1 つ。拡張の古いバッファは 8 描画フレーム後に解放 | フレームの頭のバリアで守れる。8 > 2 で解放も足りる | FIF-FRAME-ORDER |
-| ImGui の頂点・インデックス・UBO・記述子 | `Modules/ImGui/.../ImGuiOverlayPass.cpp:259-311,447-483` | C→G | パケットのスロット（3） | 飛行中 + 1 ≤ 3 なら壊れない（暗黙の結合） | FIF-FRAME-ORDER（条件を初期化で確かめる） |
-| TLAS のキャッシュ（`m_TopLevelCache[slot]`、in-place の更新）・TLAS のインスタンスの表と scratch | `RenderingCoordinator.cpp:1719-1790`、`VulkanCommandList.cpp:1606-1700` | C→G・G→G | パケットのスロット／呼び出しごとに新規（lease） | 同上。コメントの前提が 1 飛行 | FIF-FRAME-ORDER（コメントと条件） |
+| ImGui の `ImDrawData` の写し（`m_SlotSnapshots`） | `Modules/ImGui/.../ImGuiOverlayPass.cpp:349-384` | CPU だけ（GT が書き RT が読む） | パケットのスロット（3） | 壊れない（パケットの状態で GT と RT が排他） | — |
+| ImGui の頂点・インデックス・UBO・記述子（`m_VertexRing`・`m_IndexRing`・`m_UniformRing`・`m_SlotDescriptorSets`） | `Modules/ImGui/.../ImGuiOverlayPass.cpp:259-311,447-483` | C→G | パケットのスロット（`OverlayPacketSlotIndex`） | パケットのスロットは GPU の完了を保証しないので、前の提出が読む頂点・UBO を書き換えうる（反復 44 で訂正） | FIF-IMGUI（飛行中のスロットで引く） |
+| TLAS のキャッシュ（`RayTracingSceneSubsystem` の `m_TopLevelCache[パケットのスロット]`、構造を in-place で Update） | `RenderingCoordinator.cpp:1719-1790` | G→G（Update は GPU が書く。入力の一致の判定は CPU だけ） | パケットのスロット | パケットのスロットは GPU の完了を保証しない。前の提出が読む TLAS を次のフレームの Update が書きうる（反復 44 で訂正） | FIF-FRAME-ORDER（フレームの頭のバリアで順序づけ、コメントを直す） |
+| TLAS のインスタンスの表と scratch | `VulkanCommandList.cpp:1606-1700` | C→G | 呼び出しごとに lease（コマンドリストのスロット） | 壊れない | — |
+| TLAS・BLAS を作り直したときの古い構造 | `RenderingCoordinator.cpp:1719-1790`（置き換え）、`VulkanAccelerationStructure.h` | — | 置き換えでその場で破棄 | 前の提出が使う構造を壊しうる | FIF-DEFERRED-DESTROY-MEMORY |
 | 表示の Blit の記述子 `m_BlitDescriptorSet` | `RenderingCoordinator.cpp:5492-5494` | C→G | 1 組を毎フレーム束ね直す | 前のフレームが使う記述子を書き換える | FIF-FRAME-ORDER |
+| 表示の合成の記述子 `m_CompositeAlphaOverDescriptorSet`（反復 44 で追加） | 持ち主 `RenderingCoordinator.cpp:3956-3979,5357`、書き換え `CompositePass.cpp:259-263` | C→G | 1 組を毎フレーム束ね直して `Update` | 前のフレームが使う記述子を書き換える | FIF-FRAME-ORDER（飛行中のスロットごとの組を渡す） |
+| CompositePass が毎フレーム作る RenderPass・Framebuffer・Pipeline | `CompositePass.cpp:134-152,250-253` | — | 8 フレーム持ってから手放す | 8 > 2 で足りる | — |
+| パスが描画先の替わりで作り直す Framebuffer・RenderPass・Pipeline・記述子・Sampler の古いもの（ToneMapping の `RenderPassSignature` など、`CreateFramebuffer`・`CreateDescriptorSet` を持つ約 40 ファイル）（反復 44 で追加） | 各パス、破棄は `VulkanFramebuffer.cpp:28`・`VulkanRenderPass.cpp:18`・`VulkanPipeline.cpp:99`・`VulkanDescriptorSet.cpp`・`VulkanSampler.cpp` | — | 置き換えでその場で `vkDestroy*` | 前の提出が使うものを壊しうる。RenderGraph の一時資源はスロットごとなので、2 にすると描画先が交互に替わり、毎フレーム作り直しうる | FIF-DEFERRED-DESTROY-PIPELINE（FIF-SWITCH で作り直しの数を見る） |
+| パスが大きさの変化などで作り直す中間の Buffer・Texture の古いもの（反復 44 で追加） | 各パス、破棄は `VulkanBuffer.cpp:65-80`・`VulkanTexture.cpp:428` | — | 置き換えでその場で破棄（Resize は `WaitIdle` の後） | 前の提出が使うものを壊しうる | FIF-DEFERRED-DESTROY-MEMORY |
 | overlay の framebuffer | `RenderingCoordinator.cpp:5442` | — | FrameIndex ごと | 壊れない | — |
 | GPU→GPU の前のフレームの履歴（TAA の 2 枚、RTGI の履歴 2 組と denoise の出力、PathTracing の累積 2 枚〔ビューごと〕、VSM のページの状態〔Pool・PageTable・RequestBits・FreeList・DirtyList・Mega 系〕、HZB のピラミッド、AutoExposure のヒストグラムの作業バッファ、MegaGeometry の可視ビット・BVH のキュー・間接描画の配列、VisibilityMerge のキー） | 各パス | G→G | 1 つ（ping-pong は 2 枚） | 前の提出と重なって走りうる（今は BeginFrame の CPU 待ちが隠している） | FIF-FRAME-ORDER（フレームの頭の全体のバリア 1 本） |
 | DynamicUniformAllocator の UBO と記述子（物体ごと。前の変換を含む） | `DynamicUniformAllocator.h`、使う所 `GBufferPass.cpp:746`・`ForwardPass.cpp:1262,1381`・`ShadowMapPass.cpp:1302-1857`・`DebugDrawPass.cpp:309` | C→G | 1 組、`Reset` で先頭へ戻す | 前のフレームが読む UBO・記述子を書き換える | FIF-DYNAMIC-UBO |
@@ -3133,17 +3141,32 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 | PresentationPass・PresentationComposer の Blit の記述子、CanvasView の層の定数と記述子 | `PresentationPass.cpp:125,167`、`PresentationComposer.cpp:50`、`CanvasView.cpp:519,815-838` | C→G | 1 組 | 同上 | FIF-PRESENT |
 | DDGI の照射・距離のアトラスと履歴 | `DDGIProbePass.h:66-89`、`DDGIProbePass.cpp:485-505,696` | G→G | FrameIndex ごと（履歴まで分かれる） | 履歴が 2 つに分かれ、2 フレームおきに積まれて交互に出る（ちらつき・収束が半分） | FIF-DDGI |
 | VSM の統計・照明の VSM の統計・VT のフィードバック | `VirtualShadowMapPass.cpp:1125-1172`、`LightingPass.cpp:1615-1670`、`VirtualTextureFeedbackRing.h:50-52` | G→C | 枠ごと、完了の通し番号で読む | 壊れない | — |
+| 転送のリング `TileUploader`（タイル・ミップテイル・ジオメトリのプールの区画への staging）（反復 44 で追加） | `TileUploader.h:7-60`、`RenderResources.cpp:1520-1560`（`BeginRetireFrame`・`CommitRetireFrame` が完了／提出の通し番号を渡す） | C→G | リングの区画を、それをコピーしたフレームの提出の通し番号が完了するまで再利用しない。重なるコピーは次のフレームへ送り、フレームをまたげば遷移のバリアが順序を作る | 壊れない | — |
+| ジオメトリのページの要求 `GeometryPageRequestRing`（反復 44 で追加） | `GeometryPageRequestRing.h:7-110`、`RenderResources.cpp:1520-1560` | G→C | 3 枠、提出の通し番号が完了し、かつ書いてから `MinReadAgeFrames` 以上経った枠だけ読む | 壊れない。3 枠とも使用中のフレームは要求を取らずに進む（取りこぼしの数は `GetStats` に出る） | —（FIF-SWITCH で取れなかったフレームの数を見る） |
+| 遅延解放 `GpuRetireQueue`（資源・sparse のページ・ジオメトリのプールの区画）（反復 44 で追加） | `GpuRetireQueue.h:7-80`、使う所 `GpuResourceStore.cpp`・`MegaGeometryResourceStore.cpp`・`MegaGeometryPass.cpp`・`SparsePagePool.h`・`GeometryPool.h`・`VirtualTextureStreamer.h`、`RenderResources.cpp:1520-1560` | — | 解放を頼んだ時点で最後に提出した通し番号（記録中ならそのフレームの通し番号）の完了まで生かす | 壊れない | — |
 | 撮影の読み戻し | `FrameCaptureReadbackHelper.cpp:146-308`（`RenderingCoordinator.cpp:2466` で MAX から枠を作る） | G→C | スロットごと、同じスロットの BeginFrame の後に Map | 壊れない。読めるのが 2 フレーム後になる | —（FIF-SWITCH で撮影の終わりの待ちを確かめる） |
 | AutoExposure のヒストグラムの読み戻し | `AutoExposurePass.inl:271-346,558-566` | G→C | FrameIndex ごと、同じ枠のフェンスの後に読む | 壊れない。露出の応答が 1 フレーム遅れる | —（FIF-SWITCH の起動画面の比較で差を見る） |
 | ShadowProbe の統計 | `ShadowProbePass.cpp:432-440,602-608` | G→C | 4 枠を Execute の回数（`+2`）で読む | 1 フレームに 2 回以上 Execute すると未完了の提出を読む | FIF-READBACK-GATES |
 | MegaGeometry の統計 | `MegaGeometryPass.cpp:2529-2538,2881` | G→C | 4 枠を描画フレームの数（`+2`）で読む | 2 では足りるが、飛行中 2 以下の前提に依存 | FIF-READBACK-GATES |
 | device-local の `Update` の staging・BLAS の同期の構築 | `VulkanBuffer.cpp:167-194`、`VulkanTexture.cpp:1039-1172`、`VulkanDevice.cpp:1820-1955`、`RenderingCoordinator.cpp:1671-1708` | C→G | 呼び出しごとに staging、提出の後に `graphicsQueue.waitIdle()` | 正しいが、フレームの途中で呼ぶと前のフレームの GPU の完了まで止まり、重なりが消える | FIF-SYNC-SUBMIT-SCOPE（見えるようにする） |
 | PersistentResourceCache | `RenderingCoordinator.cpp:2402`（`nullptr` を渡す） | — | 未接続 | 影響なし | — |
-| FramePacket の本体 | `FramePacket.h`、`RenderingCoordinator.cpp:3717-3729` | CPU だけ（GPU は直接読まない） | 3 枚、提出の完了の通し番号で外す | 壊れない | — |
+| FramePacket の本体 | `FramePacket.h:1188-1310`、`RenderThread.cpp:511`、`RenderingCoordinator.cpp:5750` | CPU だけ（GPU は直接読まない） | 3 枚、提出の直後に `FinishRead` で Empty へ戻す（GPU の完了は待たない。反復 44 で訂正。適用の確認は `RenderingCoordinator.cpp:3717-3729` で完了の通し番号に合わせる） | パケット自体は壊れない。`Clear` で手放す RHI 資源の参照が最後の参照なら、その場で破棄される | FIF-DEFERRED-DESTROY-*（破棄の側で守る） |
 
-- 足した項目（SCN-ECS-FIF-SWITCH の前。書き込みパスは互いに交わらない）: SCN-ECS-FIF-FRAME-ORDER → SCN-ECS-FIF-SWAPCHAIN → SCN-ECS-FIF-DYNAMIC-UBO → SCN-ECS-FIF-LIGHTING → SCN-ECS-FIF-POST-A → SCN-ECS-FIF-POST-B → SCN-ECS-FIF-PRESENT → SCN-ECS-FIF-DDGI → SCN-ECS-FIF-READBACK-GATES → SCN-ECS-FIF-SYNC-SUBMIT-SCOPE。各項目は MAX_FRAMES_IN_FLIGHT=1 のまま、起動画面の比較が pass する形で書いた。
+- 足した項目（SCN-ECS-FIF-SWITCH の前。反復 44 で IMGUI と DEFERRED-DESTROY の 2 つを足した。DEFERRED-DESTROY-PIPELINE は SWAPCHAIN と `VulkanSwapChain.cpp` を、DEFERRED-DESTROY-MEMORY は PIPELINE と `VulkanDevice` を共有するので、この順で 1 つずつ行う。他は書き込みパスが交わらない）: SCN-ECS-FIF-FRAME-ORDER → SCN-ECS-FIF-IMGUI → SCN-ECS-FIF-SWAPCHAIN → SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE → SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY → SCN-ECS-FIF-DYNAMIC-UBO → SCN-ECS-FIF-LIGHTING → SCN-ECS-FIF-POST-A → SCN-ECS-FIF-POST-B → SCN-ECS-FIF-PRESENT → SCN-ECS-FIF-DDGI → SCN-ECS-FIF-READBACK-GATES → SCN-ECS-FIF-SYNC-SUBMIT-SCOPE。各項目は MAX_FRAMES_IN_FLIGHT=1 のまま、起動画面の比較が pass する形で書いた。
 - 検証（`.harness/runs/20261012-030203/`）:
   - `verify-SCN-ECS-FIF-AUDIT-1.txt`: `^## SCN-ECS-FIF-(?!AUDIT|SWITCH)` の見出しが TASKS.md にある、EXIT=0。
   - 反復の始めの RelWithDebInfo の Game のビルド EXIT=0（コードは変えていない）。
 - Next: SCN-ECS-FIF-FRAME-ORDER。
 - Notes: 2 にしたときの意味の変化（壊れはしない）: 撮影の読み戻しが 2 フレーム後に読める、AutoExposure の露出が 1 フレーム遅れる。FIF-SWITCH の起動画面の比較（決定論の撮影は 1 本のスレッドで描くので差が出ない見込み）と撮影の終わりの待ち（`--exit-after-rendered-frames` の前に最後の読み戻しが届くか）で確かめる。同期の検証（VK_LAYER の synchronization validation）を撮影の台本で有効にする口は無い。FIF-SWITCH の Debug の撮影は通常の検証レイヤーだけを見る。
+
+### SCN-ECS-FIF-AUDIT 差し戻しの直し（2026-10-12、反復 44・run 20261012-030203）
+
+- 評価（反復 43）の NEEDS_WORK の 3 点をコードで確かめ、上の表と前提と TASKS.md を直した。コードは変えていない。
+  1. パケットのスロットは GPU の完了を保証しない: `RenderThread.cpp:511` は提出の直後に `ReleasePacket` を呼び、`FramePacket.h:1302` の `FinishRead` は GPU を待たずに Empty へ戻す。`AcquireForRead` は最新の Ready を取るので同じスロットを続けて描くことがある。前提の行・FramePacket の行・ImGui の行・TLAS の行を訂正し、ImGui の GPU 資源を飛行中のスロットで引く SCN-ECS-FIF-IMGUI を足した。TLAS の in-place の Update は G→G に分け直し、FIF-FRAME-ORDER のフレームの頭のバリアで順序づける形にした（パケットのスロットの条件 `GetMaxFramesInFlight() + 1 <= FRAME_PACKET_BUFFER_COUNT` は完了条件から外した）。
+  2. `m_CompositeAlphaOverDescriptorSet`（`RenderingCoordinator.cpp:5357` が渡し、`CompositePass.cpp:259-263` が毎フレーム束ね直して `Update`）を表に足し、FIF-FRAME-ORDER の完了条件に飛行中のスロットごとの組を足した。CompositePass が毎フレーム作る RenderPass・Framebuffer・Pipeline は 8 フレーム持つので足りる。
+  3. `TileUploader`・`GeometryPageRequestRing`・`GpuRetireQueue` を表に足した（3 つとも提出／完了の通し番号で再利用・読み戻し・解放を決めるので変更不要）。
+- 洗い直しで見つけた漏れ: RHI の資源のデストラクタはその場で `vkDestroy*` を呼ぶ（`VulkanFramebuffer.cpp:28` など）。パスが描画先の替わりで作り直す framebuffer・記述子・pipeline、作り直す中間の texture・buffer、置き換える TLAS・BLAS の古いものを、2 にすると前の提出が使っている間に壊しうる。RenderGraph の一時資源はスロットごとなので、2 にすると描画先が交互に替わる。破棄を提出の完了まで遅らせる SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE と SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY を足した。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-AUDIT-2.txt`: `^## SCN-ECS-FIF-(?!AUDIT|SWITCH)` の見出しが TASKS.md にある、EXIT=0（足した項目の見出し 14 件を同じファイルに並べた）。
+- Next: SCN-ECS-FIF-FRAME-ORDER。
+- Notes: 描画先が交互に替わることで framebuffer などを毎フレーム作り直す費用は、壊れはしない（DEFERRED-DESTROY の後）が CPU の時間を食いうる。FIF-SWITCH で `RHI.DeferredDestroy` の数を見て、毎フレーム増えるならパスの作り直しを描画先ごとのキャッシュにする項目を足す。
