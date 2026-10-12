@@ -170,6 +170,9 @@ namespace Game
         // --gt-pacing=on|off: GameThread が前のパケットを RenderThread が受け取るまで待つか（既定 on。開発ビルドだけ）。
         // off では待たず、受け取られていないパケットを捨てて最新に差し替える。環境変数 NORVES_GT_PACING（0 で off）で描画側へ渡す。
         constexpr const TCHAR *kGameThreadPacingOption = TEXT("--gt-pacing=");
+        // --frame-arena-initial-kb=<n>: フレームの持ち主の CPU から書ける領域の 1 ページの大きさ（KiB。開発ビルドだけ）。
+        // 小さくするとページを足す道を通せる。環境変数 NORVES_FRAME_ARENA_INITIAL_KB で描画側へ渡す（最初のフレームで 1 回だけ読む）。
+        constexpr const TCHAR *kFrameArenaInitialKbOption = TEXT("--frame-arena-initial-kb=");
 #endif
         // --engine-checks=<名前,...>: 開発ビルドの検査（Debug/EngineChecks.h）を名前で有効にする。結果は ENGINE_CHECK の行でログへ出る。
         // --engine-checks-selftest-fail: 配線の確認用の検査 ENGINE_CHECK_SELFTEST を fail で報告させる（落ちる出力の確認用）。
@@ -1187,6 +1190,20 @@ namespace Game
                     LOG_ERROR("--gt-pacing は on か off で指定してください");
                     return false;
                 }
+                continue;
+            }
+            if (TryStripPrefix(args[i], kFrameArenaInitialKbOption, sceneValue))
+            {
+                // 描画の最初のフレームより前に環境変数へ渡す
+                uint32_t kilobytes = 0;
+                if (!TryParseUInt32(sceneValue, kilobytes) || kilobytes == 0 || kilobytes > 1024u * 1024u)
+                {
+                    LOG_ERROR("--frame-arena-initial-kb は 1 から 1048576 までの整数で指定してください");
+                    return false;
+                }
+                char kilobytesText[16] = {};
+                std::snprintf(kilobytesText, sizeof(kilobytesText), "%u", kilobytes);
+                _putenv_s("NORVES_FRAME_ARENA_INITIAL_KB", kilobytesText);
                 continue;
             }
 #endif

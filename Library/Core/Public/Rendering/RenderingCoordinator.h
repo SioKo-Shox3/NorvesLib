@@ -641,6 +641,9 @@ namespace NorvesLib::Core::Rendering
         // 飛行中のスロットごとのフレームの持ち主（ViewRenderContext::FrameResources に渡す）。
         // 開始は BeginFrame の成功の後、提出・中止は SubmitJobCommandLists の結果、回収は完了した提出の通し番号で決める
         FrameResourceOwners m_FrameResourceOwners;
+        // フレームの持ち主の CPU から書ける領域のページを作る口（最初のフレームでデバイスから設定する）
+        DeviceFrameUploadPageSource m_FrameUploadPageSource;
+        void ConfigureFrameUploadArena();
 
         // RenderThread が最後に描いたフレームの物体の変換。描画がゲームのフレームを飛ばしたとき、TAA を選んだ
         // カメラなら、パケットの前の変換（velocity の基準）をそのフレームのものへ付け替える。

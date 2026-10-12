@@ -1701,6 +1701,7 @@ norves_add_test_bundle(RenderGraphLifetimeTest
     MEMBER RenderGraphLifetimeTest RenderGraphLifetimeTest.cpp
     MEMBER RenderGraphAttachmentStateTest RenderGraphAttachmentStateTest.cpp
     MEMBER FrameResourceOwnerTest FrameResourceOwnerTest.cpp
+    MEMBER FrameResourceUploadArenaTest FrameResourceUploadArenaTest.cpp
 )
 target_link_libraries(RenderGraphLifetimeTest PRIVATE Core)
 target_include_directories(RenderGraphLifetimeTest PRIVATE
@@ -1720,6 +1721,7 @@ add_test(NAME RenderGraphNamedResourceTest COMMAND RenderGraphNamedResourceTest)
 
 add_test(NAME RenderGraphAttachmentStateTest COMMAND RenderGraphLifetimeTest --test=RenderGraphAttachmentStateTest)
 add_test(NAME FrameResourceOwnerTest COMMAND RenderGraphLifetimeTest --test=FrameResourceOwnerTest)
+add_test(NAME FrameResourceUploadArenaTest COMMAND RenderGraphLifetimeTest --test=FrameResourceUploadArenaTest)
 
 add_test(NAME RenderGraphDumpTest COMMAND RenderGraphCompileTest --test=RenderGraphDumpTest)
 

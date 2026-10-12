@@ -573,6 +573,34 @@ namespace NorvesLib::Core::Rendering
             return bEnabled;
         }
 
+        // フレームの持ち主の CPU から書ける領域の 1 ページの大きさ。開発ビルドだけ --frame-arena-initial-kb
+        // （Game が NORVES_FRAME_ARENA_INITIAL_KB へ渡す）で小さくでき、ページを足す道を通せる
+        uint64_t ResolveFrameUploadPageBytes()
+        {
+            uint64_t pageBytes = FrameUploadArena::DefaultInitialPageBytes;
+#if NORVES_BUILD_DEVELOPMENT
+            char* value = nullptr;
+            size_t length = 0;
+            if (_dupenv_s(&value, &length, "NORVES_FRAME_ARENA_INITIAL_KB") == 0 && value != nullptr)
+            {
+                char* end = nullptr;
+                const unsigned long long kilobytes = std::strtoull(value, &end, 10);
+                if (end != value && end != nullptr && *end == 0 && kilobytes != 0 && kilobytes <= 1024ull * 1024ull)
+                {
+                    pageBytes = static_cast<uint64_t>(kilobytes) * 1024ull;
+                }
+                else
+                {
+                    NORVES_LOG_WARNING("FrameResource",
+                                       "NORVES_FRAME_ARENA_INITIAL_KB=%s は 1 から 1048576 までの整数でないので既定の大きさを使います",
+                                       value);
+                }
+            }
+            std::free(value);
+#endif
+            return pageBytes;
+        }
+
         template<typename CameraResolver>
         ViewportRenderPlan BuildViewportRenderPlan(const Viewport &viewport,
                                                    uint32_t viewId,
@@ -3738,6 +3766,27 @@ namespace NorvesLib::Core::Rendering
         }
     } // namespace
 
+    void RenderingCoordinator::ConfigureFrameUploadArena()
+    {
+        if (!m_Device)
+        {
+            return;
+        }
+        // ページはデバイスで作り、整列と範囲の上限はデバイスの能力から決める
+        m_FrameUploadPageSource.SetDevice(m_Device);
+        const uint64_t pageBytes = ResolveFrameUploadPageBytes();
+        m_FrameResourceOwners.ConfigureUpload(&m_FrameUploadPageSource, pageBytes);
+        const FrameUploadLimits limits = m_FrameUploadPageSource.GetLimits();
+        NORVES_LOG_INFO("FrameResource",
+                        "FRAME_RESOURCE_UPLOAD_CONFIG page_bytes=%llu constants_alignment=%llu storage_alignment=%llu "
+                        "max_constants=%llu max_storage=%llu",
+                        static_cast<unsigned long long>(pageBytes),
+                        static_cast<unsigned long long>(limits.ConstantsAlignment),
+                        static_cast<unsigned long long>(limits.StorageAlignment),
+                        static_cast<unsigned long long>(limits.MaxConstantsSize),
+                        static_cast<unsigned long long>(limits.MaxStorageSize));
+    }
+
     void RenderingCoordinator::AdvanceCompletedRenderFrameSerial(uint64_t completedSubmissionSerial)
     {
         // スワップチェーンを作り直すと提出 serial の数え直しで値が戻りうる（作り直す前に GPU は待ち終えている）。
@@ -3799,6 +3848,10 @@ namespace NorvesLib::Core::Rendering
         }
         // GPU を待ち終えたので、フレームの持ち主の分を全部戻す
         m_FrameResourceOwners.Reset();
+        // 領域のページ（マップしたままのバッファ）をデバイスより先に手放す
+        m_FrameResourceOwners.ReleaseUploadPages();
+        m_FrameResourceOwners.ConfigureUpload(nullptr, FrameUploadArena::DefaultInitialPageBytes);
+        m_FrameUploadPageSource.SetDevice(nullptr);
 
         // デバイス所有参照を解放する前に、レイトレーシングsceneの資源を破棄する
         NorvesLib::Core::GEngine.GetRayTracingSceneSubsystem().Shutdown();
@@ -5015,6 +5068,10 @@ namespace NorvesLib::Core::Rendering
         }
         const uint32_t frameIndex = ResolveFrameIndex(*swapChain);
         AdvanceCompletedRenderFrameSerial(swapChain->GetCompletedSubmissionSerial());
+        if (!m_FrameResourceOwners.IsUploadConfigured())
+        {
+            ConfigureFrameUploadArena();
+        }
         // フレームの持ち主の開始。完了した提出の分と、提出しなかったフレームの分を先に回収する。
         // このフレームの全ビュー・ビューポート・overlay がこの持ち主を使う（パスの Execute では位置を戻さない）
         FrameResourceOwner* const frameResources =

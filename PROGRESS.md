@@ -3280,3 +3280,19 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-FRAME-OWNER-4.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=9E-06・within_limits=True、result=pass、EXIT=0。`default.Game.log` に `FRAME_RESOURCE_*`（`FRAME_RESOURCE_OWNER_UNRETIRED` を含む）と ERROR は 0 件。
 - Next: SCN-ECS-FIF-UPLOAD-ARENA。
 - Notes: 持ち主はヘッダのみにした（`Library/Core/CMakeLists.txt` が paths の外のため。`FrameUseRing.h` と同じ形）。開始の時点でこのスロットの提出が回収されていなければ（スワップチェーンのフェンスの待ちの後なので本来は起きない）`FRAME_RESOURCE_OWNER_UNRETIRED` の警告を出して回収して進める。`Resize` の `WaitIdle` の後は振り直しの検出に任せ、`Reset` は呼んでいない。
+
+### SCN-ECS-FIF-UPLOAD-ARENA（2026-10-12、反復 53・run 20261012-030203）
+
+- `Rendering/FrameUploadArena.h`（ヘッダのみ）に、飛行中のスロットごとの CPU から書ける領域 `FrameUploadArena` を足した。常にマップしたままのページ（`CPUAccessible` = HOST_VISIBLE | HOST_COHERENT。定数・頂点・インデックス・ストレージのどれにも束縛できる使い道）の列で、1 フレームの中は前へ進むだけ、足りなければページを足す（ページより大きな切れ端はその大きさを 64 KiB 単位に丸めたページ）。返した切れ端は回収まで動かさず、前のページへ戻らないので上書きもしない。回収で先頭へ戻り、ページは使い回す。寿命は持ち主の段（回収）だけで決まり、Upload の回数は見ない。借りるのは排他の下で、並列の記録のワーカーから呼んでよい。
+- 持ち主（`FrameResourceOwner`）に `AllocateUpload(size, usage)`・`AllocateUploadData(data, size, usage)`・`AllocateConstants<T>(const T&)` を足した。返す `FrameUploadAllocation` は `Buffer + Offset + Size`（記述子には `GetOffset32`/`GetSize32`）と `CPUAddress`・世代を持ち、`ValidateBorrowed(allocation, name)` で世代を確かめられる。書き込みはマップしたままのページへの memcpy で、`Buffer::Update` は通さない。記録中でない・大きさ 0・範囲の上限超え・ページを作れないときは無効の切れ端を返す（`FRAME_RESOURCE_UPLOAD_NOT_RECORDING`・`FRAME_RESOURCE_UPLOAD_TOO_LARGE`・`FRAME_RESOURCE_UPLOAD_PAGE_FAILED`）。
+- 整列と範囲の上限は `FrameUploadLimits::FromCapabilities` がデバイスの能力から決める。`DeviceCapabilities` に `MaxUniformBufferRange`・`MinUniformBufferOffsetAlignment`・`MinStorageBufferOffsetAlignment` を足し、`VulkanDevice` が物理デバイスの limits から入れる（不明なら 256 と 16384、整列の下限は 16。頂点・インデックスは 16）。この環境では定数 64・ストレージ 16・定数の上限 65536。
+- `RenderingCoordinator` は最初のフレームの開始の前に `DeviceFrameUploadPageSource` をデバイスで設定し（`FRAME_RESOURCE_UPLOAD_CONFIG` のログ）、`ReleaseInitializedResources` の `WaitIdle`・`Reset` の後にページを手放す。開発ビルドの `--frame-arena-initial-kb=<n>`（1〜1048576。`NORVES_FRAME_ARENA_INITIAL_KB` で描画側へ渡す）で 1 ページの大きさ（既定 1 MiB）を変えられる。
+- 統計（開発ビルド）: `FrameResource.Upload reason=… FrameResource.Upload.Allocations/Bytes/PagesAdded/Failures`（最後に記録を終えたフレームの値）と `MaxFrameBytes`・`TotalPagesAdded`・`Pages`・`PageBytes` を 1 行で出す。出すのは最初のフレーム・600 フレームごと・ページを足したフレーム・失敗したフレーム・ページを手放すとき。
+- 検査: `RenderGraphLifetimeTest` の束に `FrameResourceUploadArenaTest` を足した（使い道ごとの整列と範囲の上限、同じフレームの複数の借りが重ならず中身が残る・Update を通らずマップは 1 回、小さなページでページを足した後も前の切れ端が有効、大きな切れ端のページ、回収で先頭へ戻り同じページを使い回す・完了していないスロットは戻らない・中止は次の開始で戻る・前のフレームの切れ端の世代の拒否、記録中でないときの拒否、能力からの整列と上限）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-UPLOAD-ARENA-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-UPLOAD-ARENA-2.txt`: Debug の `RenderGraphLifetimeTest` のビルド EXIT=0。
+  - `verify-SCN-ECS-FIF-UPLOAD-ARENA-3.txt`: `ctest -R "^FrameResource"` で `FrameResourceOwnerTest`・`FrameResourceUploadArenaTest` が Passed（2/2）、EXIT=0。
+  - `verify-SCN-ECS-FIF-UPLOAD-ARENA-4.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=0・within_limits=True、result=pass、EXIT=0。`default.Game.log` に `FRAME_RESOURCE_UPLOAD_CONFIG page_bytes=1048576` と `FrameResource.Upload` の行（借りは 0）、ERROR は 0 件。
+- Next: SCN-ECS-FIF-DESCRIPTOR-BORROW。
+- Notes: まだ借りる側が無いので、起動画面では借りは 0・ページも 0（ページは最初の借りで作る）。`--frame-arena-initial-kb` でページを足す道を Game で通すのは、最初の利用者（SCN-ECS-FIF-DEBUGDRAW など）を移した後になる（今回は検査の小さなページで通した）。足したページは回収で手放さず使い回すので、一度だけ大きく借りたフレームの分はスロットに残る（縮める仕組みは無い）。持ち主・領域はヘッダのみ（`Library/Core/CMakeLists.txt` が paths の外のため）。ソースの `small` は Windows SDK のマクロと衝突するので使わない。

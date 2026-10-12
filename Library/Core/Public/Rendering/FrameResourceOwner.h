@@ -2,11 +2,13 @@
 
 #include "Container/Containers.h"
 #include "Logging/LogMacros.h"
+#include "Rendering/FrameUploadArena.h"
 #include "Thread/Atomic.h"
 
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
@@ -152,6 +154,71 @@ namespace NorvesLib::Core::Rendering
         /** @brief ValidateBorrowed が拒んだ回数（開発ビルドだけ数える） */
         uint64_t GetStaleRejectCount() const { return m_StaleRejectCount.Load(); }
 
+        /**
+         * @brief CPU が書いて GPU が読むデータの切れ端を借りる（中身は未初期化。記録中だけ）
+         *
+         * 返す Buffer + Offset + Size は usage の束縛にそのまま渡せる（整列と記述子の範囲の上限は領域が守る）。
+         * CPUAddress へ書いたものは HOST_COHERENT なのでフラッシュせずに GPU から見える。戻るのはこのフレームの回収で、
+         * それまで同じフレームで何回借りても前の切れ端は動かず、上書きもされない。
+         * 記録中でない・大きさの上限を超えた・ページを作れなかったときは IsValid() が false の切れ端を返す。
+         * 並列の記録のワーカーから呼んでよい。
+         */
+        FrameUploadAllocation AllocateUpload(uint64_t size, FrameUploadUsage usage)
+        {
+            if (!IsRecording())
+            {
+                const uint64_t rejectCount = m_UploadOutsideRecordingCount.FetchAdd(1) + 1;
+                if (rejectCount <= 8 || (rejectCount & (rejectCount - 1)) == 0)
+                {
+                    NORVES_LOG_ERROR("FrameResource",
+                                     "FRAME_RESOURCE_UPLOAD_NOT_RECORDING slot=%u usage=%s bytes=%llu state=%s rejects=%llu",
+                                     m_SlotIndex, GetFrameUploadUsageName(usage),
+                                     static_cast<unsigned long long>(size), GetFrameResourceOwnerStateName(m_State),
+                                     static_cast<unsigned long long>(rejectCount));
+                }
+                FrameUploadAllocation allocation;
+                allocation.Usage = usage;
+                return allocation;
+            }
+            FrameUploadAllocation allocation = m_Upload.Allocate(size, usage);
+            allocation.GenerationSlotIndex = m_SlotIndex;
+            allocation.Generation = m_Generation;
+            return allocation;
+        }
+
+        /** @brief 切れ端を借りて data の size バイトを書き込む（Buffer::Update は通さず、マップしたままのページへ写す） */
+        FrameUploadAllocation AllocateUploadData(const void* data, uint64_t size, FrameUploadUsage usage)
+        {
+            FrameUploadAllocation allocation = AllocateUpload(size, usage);
+            if (allocation.IsValid() && data)
+            {
+                std::memcpy(allocation.CPUAddress, data, static_cast<size_t>(size));
+            }
+            return allocation;
+        }
+
+        /** @brief 定数の切れ端を借りて value を書き込む（BindConstantBuffer にそのまま渡せる） */
+        template <typename T>
+        FrameUploadAllocation AllocateConstants(const T& value)
+        {
+            return AllocateUploadData(&value, sizeof(T), FrameUploadUsage::Constants);
+        }
+
+        /** @brief 切れ端の世代（FrameResourceGeneration の形） */
+        static FrameResourceGeneration GetAllocationGeneration(const FrameUploadAllocation& allocation)
+        {
+            return {allocation.GenerationSlotIndex, allocation.Generation};
+        }
+
+        /** @brief 借りた切れ端を使ってよいか確かめる（世代で確かめる ValidateBorrowed と同じ。開発ビルドだけ） */
+        bool ValidateBorrowed(const FrameUploadAllocation& allocation, const char* resourceName) const
+        {
+            return ValidateBorrowed(GetAllocationGeneration(allocation), resourceName);
+        }
+
+        /** @brief CPU から書ける領域（統計と検査のため） */
+        const FrameUploadArena& GetUploadArena() const { return m_Upload; }
+
         /** @brief 回収した回数（回収の段を確かめる検査と統計のため） */
         uint64_t GetReclaimCount() const { return m_ReclaimCount; }
 
@@ -211,6 +278,8 @@ namespace NorvesLib::Core::Rendering
             {
                 allocator->OnFrameResourcesReclaimed(generation);
             }
+            // GPU はこのフレームの切れ端を使い終えたので、領域を先頭へ戻す（ページは使い回す）
+            m_Upload.Reset();
             m_SubmissionSerial = 0;
             m_State = FrameResourceOwnerState::Idle;
             ++m_ReclaimCount;
@@ -222,7 +291,9 @@ namespace NorvesLib::Core::Rendering
         FrameResourceOwnerState m_State = FrameResourceOwnerState::Idle;
         uint64_t m_ReclaimCount = 0;
         mutable NorvesLib::Thread::Atomic<uint64_t> m_StaleRejectCount{0};
+        NorvesLib::Thread::Atomic<uint64_t> m_UploadOutsideRecordingCount{0};
         Container::VariableArray<IFrameResourceAllocator*> m_Allocators;
+        FrameUploadArena m_Upload;
     };
 
     /**
@@ -262,6 +333,7 @@ namespace NorvesLib::Core::Rendering
             {
                 // 提出も中止もしないまま次のフレームが始まった。提出していないので GPU は使っていない
                 ++m_AbandonedFrameCount;
+                FinishRecording(*m_Recording);
                 m_Recording->MarkAborted();
                 m_Recording = nullptr;
             }
@@ -311,6 +383,7 @@ namespace NorvesLib::Core::Rendering
                 AbortFrame();
                 return false;
             }
+            FinishRecording(*m_Recording);
             m_Recording->MarkSubmitted(submissionSerial);
             m_Recording = nullptr;
             return true;
@@ -323,6 +396,7 @@ namespace NorvesLib::Core::Rendering
             {
                 return;
             }
+            FinishRecording(*m_Recording);
             m_Recording->MarkAborted();
             m_Recording = nullptr;
         }
@@ -374,7 +448,102 @@ namespace NorvesLib::Core::Rendering
         /** @brief 完了の通し番号の振り直しを見つけた回数 */
         uint64_t GetSerialRestartCount() const { return m_SerialRestartCount; }
 
+        /**
+         * @brief CPU から書ける領域のページを作る口と、1 ページの大きさを全スロットに設定する（RenderThread。借りる前に）
+         * @param pageSource ページを作る口（持ち主より長く生きること。nullptr なら借りられない）
+         * @param pageBytes 1 ページの大きさ（開発ビルドの --frame-arena-initial-kb で小さくできる）
+         */
+        void ConfigureUpload(IFrameUploadPageSource* pageSource, uint64_t pageBytes)
+        {
+            for (FrameResourceOwner& owner : m_Owners)
+            {
+                owner.m_Upload.Configure(pageSource, pageBytes);
+            }
+            m_bUploadConfigured = pageSource != nullptr;
+        }
+
+        bool IsUploadConfigured() const { return m_bUploadConfigured; }
+
+        /** @brief 全スロットの領域のページを手放す（Reset の後、デバイスを手放す前に呼ぶ） */
+        void ReleaseUploadPages()
+        {
+            LogUploadStats("release");
+            for (FrameResourceOwner& owner : m_Owners)
+            {
+                owner.m_Upload.Release();
+            }
+        }
+
+        /** @brief 最後に記録を終えたフレーム（提出・中止）の領域の統計 */
+        const FrameUploadStats& GetLastFrameUploadStats() const { return m_LastFrameUploadStats; }
+        /** @brief 1 フレームで借りたバイト数の最大 */
+        uint64_t GetMaxFrameUploadBytes() const { return m_MaxFrameUploadBytes; }
+        /** @brief 全スロットでページを足した回数の合計 */
+        uint64_t GetTotalUploadPagesAdded() const
+        {
+            uint64_t total = 0;
+            for (const FrameResourceOwner& owner : m_Owners)
+            {
+                total += owner.m_Upload.GetTotalPagesAdded();
+            }
+            return total;
+        }
+
+        /**
+         * @brief 領域の統計を 1 行でログに出す（開発ビルドだけ）
+         *
+         * 1 フレームの値は最後に記録を終えたフレームのもの。ページの数・バイト数は全スロットの合計。
+         */
+        void LogUploadStats(const char* reason) const
+        {
+#if NORVES_BUILD_DEVELOPMENT
+            uint64_t pageCount = 0;
+            uint64_t pageBytes = 0;
+            for (const FrameResourceOwner& owner : m_Owners)
+            {
+                pageCount += owner.m_Upload.GetPageCount();
+                pageBytes += owner.m_Upload.GetTotalPageBytes();
+            }
+            NORVES_LOG_INFO("FrameResource",
+                            "FrameResource.Upload reason=%s frames=%llu FrameResource.Upload.Allocations=%llu "
+                            "FrameResource.Upload.Bytes=%llu FrameResource.Upload.PagesAdded=%llu "
+                            "FrameResource.Upload.Failures=%llu FrameResource.Upload.MaxFrameBytes=%llu "
+                            "FrameResource.Upload.TotalPagesAdded=%llu FrameResource.Upload.Pages=%llu "
+                            "FrameResource.Upload.PageBytes=%llu",
+                            reason ? reason : "(none)",
+                            static_cast<unsigned long long>(m_FinishedFrameCount),
+                            static_cast<unsigned long long>(m_LastFrameUploadStats.Allocations),
+                            static_cast<unsigned long long>(m_LastFrameUploadStats.Bytes),
+                            static_cast<unsigned long long>(m_LastFrameUploadStats.PagesAdded),
+                            static_cast<unsigned long long>(m_LastFrameUploadStats.Failures),
+                            static_cast<unsigned long long>(m_MaxFrameUploadBytes),
+                            static_cast<unsigned long long>(GetTotalUploadPagesAdded()),
+                            static_cast<unsigned long long>(pageCount),
+                            static_cast<unsigned long long>(pageBytes));
+#else
+            (void)reason;
+#endif
+        }
+
     private:
+        /** @brief 統計をログへ出す間隔（記録を終えたフレームの数） */
+        static constexpr uint64_t UploadStatsLogIntervalFrames = 600;
+
+        // 記録を終える（提出・中止）ときに、そのフレームの領域の統計を残す
+        void FinishRecording(const FrameResourceOwner& owner)
+        {
+            m_LastFrameUploadStats = owner.m_Upload.GetFrameStats();
+            m_MaxFrameUploadBytes = std::max(m_MaxFrameUploadBytes, m_LastFrameUploadStats.Bytes);
+            ++m_FinishedFrameCount;
+            if (m_FinishedFrameCount == 1 || m_FinishedFrameCount % UploadStatsLogIntervalFrames == 0 ||
+                m_LastFrameUploadStats.PagesAdded != 0 || m_LastFrameUploadStats.Failures != 0)
+            {
+                LogUploadStats(m_LastFrameUploadStats.Failures != 0      ? "failure"
+                               : m_LastFrameUploadStats.PagesAdded != 0 ? "pages_added"
+                                                                        : "periodic");
+            }
+        }
+
         FrameResourceOwner m_Owners[FrameResourceMaxInFlightSlots];
         FrameResourceOwner* m_Recording = nullptr;
         uint64_t m_NextGeneration = 1;
@@ -382,5 +551,9 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_AbandonedFrameCount = 0;
         uint64_t m_UnretiredBeginCount = 0;
         uint64_t m_SerialRestartCount = 0;
+        bool m_bUploadConfigured = false;
+        FrameUploadStats m_LastFrameUploadStats;
+        uint64_t m_MaxFrameUploadBytes = 0;
+        uint64_t m_FinishedFrameCount = 0;
     };
 } // namespace NorvesLib::Core::Rendering

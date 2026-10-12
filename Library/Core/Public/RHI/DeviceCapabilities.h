@@ -303,6 +303,15 @@ namespace NorvesLib::RHI
          */
         uint64_t MaxStorageBufferRange = 0;
 
+        /** @brief uniform buffer 1 つの束縛で扱える最大のバイト数（物理デバイスの maxUniformBufferRange。0 は不明） */
+        uint64_t MaxUniformBufferRange = 0;
+
+        /** @brief uniform buffer の束縛の開始オフセットの整列（物理デバイスの minUniformBufferOffsetAlignment。0 は不明） */
+        uint64_t MinUniformBufferOffsetAlignment = 0;
+
+        /** @brief storage buffer の束縛の開始オフセットの整列（物理デバイスの minStorageBufferOffsetAlignment。0 は不明） */
+        uint64_t MinStorageBufferOffsetAlignment = 0;
+
         /**
          * @brief geometryShader が論理デバイスで有効か
          *

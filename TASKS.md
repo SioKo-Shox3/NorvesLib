@@ -945,7 +945,7 @@
 - notes: 2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。危険地帯（RenderThread・資源の寿命）。
 
 ## SCN-ECS-FIF-UPLOAD-ARENA: CPU が書いて GPU が読むデータを、フレームの持ち主から切り出して借りられるようにする
-- status: todo
+- status: done
 - done-when: フレームの持ち主（SCN-ECS-FIF-FRAME-OWNER）に、CPU から書ける領域（常にマップしたままのページの列。HOST_COHERENT を求める今の約束のまま）を足し、文脈から定数・頂点・インデックス・ストレージを借りられるようにする（例 `AllocateConstants<T>(const T&)`・`AllocateTransient(size, usage)`。名前は実装で決める）。返すのは `Buffer + Offset + Size` の切れ端で、定数・頂点・インデックス・ストレージの束縛にそのまま渡せる。GPU の整列（定数の最小オフセットの整列など）と記述子の範囲の上限はこの仕組みが守る。1 フレームの中では前へ進むだけで、足りなければページを足す（既に返した切れ端は動かさず、上書きもしない）。書き込みは `Buffer::Update`（中でマップし直す。`VulkanBuffer.cpp` 163 行付近）を通さない。開発ビルドの統計に、1 フレームの借りた数・バイト数・ページを足した回数を出す（`FrameResource.Upload.*`）。開発ビルドの `--frame-arena-initial-kb=<n>` で最初の大きさを小さくして、ページを足す道を通せる。`FrameResource*` の検査（整列・複数の借り・ページを足した後も前の切れ端が有効・回収で戻る）を `RenderGraphLifetimeTest` の束に足す。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target RenderGraphLifetimeTest -- /m:1`

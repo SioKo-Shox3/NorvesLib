@@ -3228,6 +3228,9 @@ namespace NorvesLib::RHI::Vulkan
             m_Capabilities.bFragmentStoresAndAtomics =
                 (m_enabledDeviceFeatures.fragmentStoresAndAtomics == VK_TRUE);
             m_Capabilities.MaxStorageBufferRange = m_deviceProperties.limits.maxStorageBufferRange;
+            m_Capabilities.MaxUniformBufferRange = m_deviceProperties.limits.maxUniformBufferRange;
+            m_Capabilities.MinUniformBufferOffsetAlignment = m_deviceProperties.limits.minUniformBufferOffsetAlignment;
+            m_Capabilities.MinStorageBufferOffsetAlignment = m_deviceProperties.limits.minStorageBufferOffsetAlignment;
 
             // sparse は論理デバイスで有効にできたものだけを載せる（結び付け用のキューが無ければ全て無効）
             const bool bSparseEnabled =
