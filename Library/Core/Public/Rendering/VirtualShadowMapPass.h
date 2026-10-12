@@ -171,8 +171,11 @@ namespace NorvesLib::Core::Rendering
                       "統計の語の数が並びと合っていること");
         /** @brief 要求されなくなったページを持ち越すフレーム数（これを超えて要求が無ければ空きへ戻す） */
         constexpr uint32_t CACHE_CARRY_FRAMES = 30;
-        /** @brief 1 フレームに渡せる無効化の矩形の数（超えたら全ページを無効にする） */
-        constexpr uint32_t MAX_INVALIDATION_RECTS = 256;
+        /**
+         * @brief 1 フレームに渡せる無効化の矩形の数（球も同じ数まで。超えたら全ページを無効にする）。
+         *        MegaGeometry が積む箱の上限（4096）と同じにして、多くの席が動くフレームも動いた範囲のページだけを無効にする
+         */
+        constexpr uint32_t MAX_INVALIDATION_RECTS = 4096;
 
         /** @brief 統計のバッファの用途。計算で書き、読み戻しのコピーの元になる（TransferSrc が無いとコピーが検証に違反する） */
         inline RHI::ResourceUsage StatsBufferUsage()

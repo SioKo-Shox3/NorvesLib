@@ -35,12 +35,12 @@ namespace NorvesLib::Core::Rendering
             float view[4];       // x, y, z = カメラの前方（単位ベクトル）、w = 影の範囲の手前の端（前方への距離 m）
             // ここから下は vsm_allocate.comp だけが読む（vsm_mark.comp・vsm_clear.comp の VsmParams はここまでの前半と同じ並び）
             uint32_t cache[4];                                  // x = 印（CacheFlag*）、y = 持ち越すフレーム数、z = 無効化の矩形の数、w = 無効化の球の数
-            float rects[VirtualShadowMap::MAX_INVALIDATION_RECTS][4]; // 無効化の矩形（ライト空間。x, y = 最小、z, w = 最大）
-            float spheres[VirtualShadowMap::MAX_INVALIDATION_RECTS][4]; // 無効化の球（ワールド。xyz = 中心、w = 半径）
         };
-        // ページの一辺・texel・範囲の原点（前フレームの分を含む）はスライスの表（GPUVsmSlice。binding BindSlices）にある
-        static_assert(sizeof(GPUVsmParams) == 224 + 16 + 16 + VirtualShadowMap::MAX_INVALIDATION_RECTS * 16 * 2,
-                      "vsm_*.comp の VsmParams と同じ大きさにすること");
+        // ページの一辺・texel・範囲の原点（前フレームの分を含む）はスライスの表（GPUVsmSlice。binding BindSlices）にある。
+        // 無効化の矩形・球は数が多くなりうるので、UBO ではなく storage buffer（binding BindInvalidations）で渡す
+        static_assert(sizeof(GPUVsmParams) == 224 + 16 + 16, "vsm_*.comp の VsmParams と同じ大きさにすること");
+        /** 無効化の storage buffer の大きさ（矩形と球を MAX_INVALIDATION_RECTS 個ずつ。1 個 = 4 つの float） */
+        constexpr uint64_t InvalidationBufferBytes = static_cast<uint64_t>(VirtualShadowMap::MAX_INVALIDATION_RECTS) * 2u * 4u * sizeof(float);
 
         // vsm_mark.comp の VsmPointParams（std140）と同じ並び。点光源の印付けの入力
         struct GPUVsmPointParams
@@ -98,6 +98,8 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t BindSlices = 8;
         // vsm_mark.comp の点光源の入力
         constexpr uint32_t BindPointParams = 9;
+        // vsm_allocate.comp の無効化の矩形・球（矩形の後ろに球が続く）
+        constexpr uint32_t BindInvalidations = 10;
 
         RHI::DescriptorBinding MakeBinding(uint32_t binding, RHI::ResourceBindType type)
         {
@@ -128,6 +130,7 @@ namespace NorvesLib::Core::Rendering
                 desc.bindings.push_back(MakeBinding(binding, RHI::ResourceBindType::RWBuffer));
             }
             desc.bindings.push_back(MakeBinding(BindSlices, RHI::ResourceBindType::StructuredBuffer));
+            desc.bindings.push_back(MakeBinding(BindInvalidations, RHI::ResourceBindType::StructuredBuffer));
             return desc;
         }
 
@@ -384,6 +387,8 @@ namespace NorvesLib::Core::Rendering
         m_MarkUses.Clear();
         m_AllocateUses.Clear();
         m_ClearUses.Clear();
+        m_InvalidationUses.Clear();
+        m_InvalidationData.clear();
         m_MarkPipeline.reset();
         m_AllocatePipeline.reset();
         m_ClearPipeline.reset();
@@ -411,6 +416,7 @@ namespace NorvesLib::Core::Rendering
         m_MarkUses.BeginFrame(inFlightIndex, frameSerial);
         m_AllocateUses.BeginFrame(inFlightIndex, frameSerial);
         m_ClearUses.BeginFrame(inFlightIndex, frameSerial);
+        m_InvalidationUses.BeginFrame(inFlightIndex, frameSerial);
     }
 
     bool VirtualShadowMapPages::AcquireUse(FrameUseRing<Use>& ring, const RHI::DescriptorSetDesc& layout, Use*& outUse)
@@ -560,6 +566,17 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        // 無効化の矩形・球は 1 回の Record に 1 本（割り当ての段階のディスクリプタがすべて同じものを指す）
+        InvalidationUse& invalidationUse = m_InvalidationUses.Acquire();
+        if (!invalidationUse.Buffer)
+        {
+            invalidationUse.Buffer = m_Device->CreateBuffer(
+                RHI::BufferDesc(InvalidationBufferBytes, RHI::ResourceUsage::StorageBuffer, true, "VsmInvalidations"));
+        }
+        if (!invalidationUse.Buffer)
+        {
+            return false;
+        }
 
         // ----- 印付け -----
         {
@@ -672,21 +689,27 @@ namespace NorvesLib::Core::Rendering
                 }
                 allocateSlices = allocateSliceStorage;
             }
-            for (uint32_t index = 0; index < sphereCount; ++index)
-            {
-                const float* sphere = dispatch.InvalidationSpheres + static_cast<size_t>(index) * 4u;
-                allocateParams.spheres[index][0] = sphere[0];
-                allocateParams.spheres[index][1] = sphere[1];
-                allocateParams.spheres[index][2] = sphere[2];
-                allocateParams.spheres[index][3] = sphere[3] + InvalidationMarginMeters;
-            }
+            // 無効化の storage buffer: 先頭から rectCount 個の矩形、続いて sphereCount 個の球（シェーダーは球を cache.z 番目から読む）
+            m_InvalidationData.clear();
             for (uint32_t index = 0; index < rectCount; ++index)
             {
                 const float* rect = dispatch.InvalidationRects + static_cast<size_t>(index) * 4u;
-                allocateParams.rects[index][0] = rect[0] - InvalidationMarginMeters;
-                allocateParams.rects[index][1] = rect[1] - InvalidationMarginMeters;
-                allocateParams.rects[index][2] = rect[2] + InvalidationMarginMeters;
-                allocateParams.rects[index][3] = rect[3] + InvalidationMarginMeters;
+                m_InvalidationData.push_back(rect[0] - InvalidationMarginMeters);
+                m_InvalidationData.push_back(rect[1] - InvalidationMarginMeters);
+                m_InvalidationData.push_back(rect[2] + InvalidationMarginMeters);
+                m_InvalidationData.push_back(rect[3] + InvalidationMarginMeters);
+            }
+            for (uint32_t index = 0; index < sphereCount; ++index)
+            {
+                const float* sphere = dispatch.InvalidationSpheres + static_cast<size_t>(index) * 4u;
+                m_InvalidationData.push_back(sphere[0]);
+                m_InvalidationData.push_back(sphere[1]);
+                m_InvalidationData.push_back(sphere[2]);
+                m_InvalidationData.push_back(sphere[3] + InvalidationMarginMeters);
+            }
+            if (!m_InvalidationData.empty())
+            {
+                invalidationUse.Buffer->Update(m_InvalidationData.data(), m_InvalidationData.size() * sizeof(float));
             }
 
             // 点光源の灯の並びが変わると、どの灯にも引き継がれない旧領域の欄は移し替えの上書きで消える。消える前に割り当て済みの欄を解放の統計へ数える
@@ -730,6 +753,7 @@ namespace NorvesLib::Core::Rendering
                 use.Slices->Update(allocateSlices, sliceBytes);
                 use.DescriptorSet->BindConstantBuffer(BindParams, use.Uniform, 0, sizeof(params));
                 use.DescriptorSet->BindStorageBuffer(BindSlices, use.Slices, 0, sliceBytes);
+                use.DescriptorSet->BindStorageBuffer(BindInvalidations, invalidationUse.Buffer, 0, ClampBindSize(InvalidationBufferBytes));
                 use.DescriptorSet->BindStorageBuffer(BindRequestBits, dispatch.RequestBits, 0,
                                                      ClampBindSize(VirtualShadowMap::RequestBitsBytes(sliceCount)));
                 use.DescriptorSet->BindStorageBuffer(BindPageTable, dispatch.PageTable, 0,

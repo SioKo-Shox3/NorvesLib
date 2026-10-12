@@ -237,6 +237,14 @@ namespace NorvesLib::Core::Rendering
         FrameUseRing<Use> m_MarkUses;
         FrameUseRing<Use> m_AllocateUses;
         FrameUseRing<Use> m_ClearUses;
+        /** @brief 無効化の矩形・球の storage buffer（vsm_allocate.comp の binding 10）。Record ごとに 1 本 */
+        struct InvalidationUse
+        {
+            RHI::BufferPtr Buffer;
+        };
+        FrameUseRing<InvalidationUse> m_InvalidationUses;
+        /** @brief 無効化の storage buffer へ書く前に並べる作業領域（矩形の後ろに球） */
+        Container::VariableArray<float> m_InvalidationData;
         bool m_bMarked = false;
 
         // キャッシュの状態（前フレームの記録が見た入力）。資源・段の設定が変わったときは引き継がない

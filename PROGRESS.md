@@ -2646,3 +2646,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: 3万個 + 64 m 区画の 1 フレームの値は、区画の出入りの作り直し（`rebuilds=5`／120）で上下する（upload の最初の窓 250 KB / 更新など）。
 - 反復 20（差し戻しへの対応、撮り直しなし）: 3万個 + 64 m 区画の upload を、瞬間値の範囲から集計窓（metrics.json の `window_first_frame` 60562〜`window_last_frame` 72313 = 08:54:41.2〜54.2）と重なる 3 窓の `window_bytes ÷ updates`（72,217.2・73,178.8・72,504.8 B）へ直した。`RecordFrameCommand` の値は metrics.json の算出方法（p95 は昇順の `int(0.95 × (n − 1))` 番目）へ揃えた（前の表は線形補間で、区画ありの p95 が 6.313 → 6.294 ms。他の列の差は 0.02 ms 未満で合否は同じ）。
   - 検証: `verify-SCN-MEGA-MEASURE-UPLOAD-5.txt`（RelWithDebInfo のビルド EXIT=0）・`-6.txt`（`CHECK_CAPTURE_METRICS result=pass views=default,close,aerial`、EXIT=0）・`-7.txt`（Debug のビルド EXIT=0）・`-8.txt`（`CAPTURE_STARTUP_SCENE result=pass`、EXIT=0。`vulkan_validation` error_count=0・vuid_count=0、Game.log の ERROR 0、PNG を開いて家・球・岩・影を確認）。
+
+### SCN-MEGA-FIX-VSM-INVALIDATE（2026-10-12、反復 21・run 20261012-030203）
+
+- 実装: 無効化の矩形・球を VsmParams（UBO、各 256 個）から storage buffer（`vsm_allocate.comp` の binding 10 `VsmInvalidations`。先頭から矩形 `cache.z` 個、続いて球 `cache.w` 個）へ移し、`VirtualShadowMap::MAX_INVALIDATION_RECTS` を 256 → 4096（MegaGeometry が積む箱の上限 `ShadowInvalidationMaxBoxes` と同じ）にした。バッファは `VirtualShadowMapPages` の `FrameUseRing<InvalidationUse>`（Record ごとに 1 本、128 KB、割り当ての全段階のディスクリプタが同じものを指す）。矩形は併合せず、動いた席の旧・新の境界のライト空間の矩形をそのまま渡す（多く無効にする方向の余白 1 mm は従来どおり）。4096 を超えたら全ページにする規則は保った。`GPUVsmParams` は 8,448 B → 256 B になり、割り当ての 12 段階ぶんの UBO の書き込みも減った。
+- 結果（5万個・1920×1080・300 フレーム。撮影は `.harness/runs/scene-capture/SCN-MEGA-FIX-VSM-INVALIDATE/<move1|move0.2>/`）:
+
+| 値 | 1% 移動（500 席）前 | 1% 移動（500 席）後 | 0.2% 移動（100 席）前 | 0.2% 移動（100 席）後 |
+|---|---|---|---|---|
+| `VSM_CACHE invalidated`（読み込み後の 10 回の範囲 / 平均） | 741〜744（全 743） | **299〜350 / 323.7**（全 742〜743） | 290〜343 | 290〜343 / 317.1 |
+| `VirtualShadowMapPass`（GPU）median / p95 ms | 3.042 / 4.938 | **0.958 / 2.095** | 0.944 / 2.084 | 0.940 / 2.067 |
+| GPU のフレーム median / p95 ms | 46.0 / 47.3 | 43.5 / 46.1 | 43.3 / 44.7 | 43.2 / 44.7 |
+
+- 比: 移動数は 5 倍だが無効化のページは 1.02 倍（323.7 / 317.1）。動く席は番号のハッシュの小さい順に選ぶ（`MegaStressRoutine.cpp`）ので 100 席は 500 席の部分集合で、無効化のページの大半は両方に共通の、カメラの近く（影の範囲 80 m の内側の細かい段）にいる席が占める。増えた 400 席は大半が割り当て済みのページ（影の範囲の中だけ）の外を動くので、加わるページは少ない。無効化は動いた範囲（席の境界が覆う割り当て済みのページの和）に沿っており、全ページの描き直しは無くなった。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-FIX-VSM-INVALIDATE-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0、警告 0。
+  - `-2.txt`: 起動画面 default の `SCN-MEGA-BASE-RWDI` との決定的な比較が `mean_luminance_difference=0`・`psnr_db=100`・`mismatched_pixel_ratio=5E-06` で `result=pass`、EXIT=0。PNG を開いて確認（家・球・岩・天球・影）。Game.log の ERROR 0、`vsm_allocate.comp` のコンパイル成功、`VSM_PAGES ... point_requested=178`（点光源の球の経路も通る）。
+  - `-3.txt`: mega-stress 5万個・1% 移動が `CAPTURE_SCENE result=pass`、EXIT=0。PNG を開いて確認（影は崩れていない。下端中央の近平面の切れは既知の SCN-MEGA-FIX-STRESS-NEAR-CLIP）。Game.log の ERROR 0、`MEGA_SHADOW_DIRTY ... invalidate_all=0`。
+  - 補助: `capture-SCN-MEGA-FIX-VSM-INVALIDATE-move0.2.txt`（0.2% 移動、pass、ERROR 0）。`test-SCN-MEGA-FIX-VSM-INVALIDATE-vsm-vulkan.txt`: 既存の `RHITextureUpdateVulkanTest --test=VirtualShadowMapVulkanTest`（矩形・球の無効化の dirty の集合を CPU の参照と比べるキャッシュのケースを含む）が `RESULT=PASS`・`VUID_COUNT=0`、EXIT=0（ビルドは `-vsm-vulkan-build.txt`）。
+- Next: SCN-MEGA-FIX-RECORD-COMMAND。
+- Notes: 4096 を超える無効化（MegaGeometry の箱の上限 4096 に、MegaGeometry 以外の動いた投影物が加わるフレーム）は従来どおり全ページ。併合での上限の回避は入れていない。
+- Notes: 256 を超える矩形・球の経路を直接確かめるテストは書いていない（verify に無い。既存の GPU テストは 256 以下の数）。

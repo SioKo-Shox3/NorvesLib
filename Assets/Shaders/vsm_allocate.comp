@@ -56,11 +56,14 @@ layout(std140, set = 0, binding = 0) uniform VsmParams
     // x: 印（1 = キャッシュを使う、2 = 太陽の段の全ページを無効にする、4 = 点光源の面の全ページを無効にする）、
     // y: 持ち越すフレーム数、z: 無効化の矩形の数（太陽の段）、w: 無効化の球の数（点光源の面）
     uvec4 cache;
-    // 無効化の矩形（ライト空間。x, y = 最小、z, w = 最大）
-    vec4 rects[256];
-    // 無効化の球（ワールド。xyz = 中心、w = 半径）
-    vec4 spheres[256];
 } params;
+
+// 無効化の矩形と球（数が多くなりうるので storage buffer。VirtualShadowMapPages.cpp の BindInvalidations）。
+// 先頭から cache.z 個が矩形（ライト空間。x, y = 最小、z, w = 最大）、続く cache.w 個が球（ワールド。xyz = 中心、w = 半径）
+layout(std430, set = 0, binding = 10) readonly buffer VsmInvalidations
+{
+    vec4 invalidations[];
+};
 
 layout(std430, set = 0, binding = 2) buffer VsmRequestBits
 {
@@ -295,7 +298,7 @@ void InvalidateRects()
     {
         if (rectIndex < params.cache.w)
         {
-            InvalidateSphere(slice, params.spheres[rectIndex], part);
+            InvalidateSphere(slice, invalidations[params.cache.z + rectIndex], part);
         }
         return;
     }
@@ -303,7 +306,7 @@ void InvalidateRects()
     {
         return;
     }
-    const vec4 rect = params.rects[rectIndex];
+    const vec4 rect = invalidations[rectIndex];
     const float pageMeters = slice.info.x;
     if (!(pageMeters > 0.0))
     {
