@@ -986,7 +986,7 @@
 - notes: 2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。この項目では件数を 0 にしない（移す項目ごとに 0 にし、SCN-ECS-FIF-SWITCH で全体を 0 にする）。危険地帯（RHI）。 2026-10-12 親: 評価の 2 周目の指摘（`blocked/SCN-ECS-FIF-REWRITE-GUARD.md`）は一覧 (1) の数え漏れ 1 点だけで、直し方も決まっている（作成直後の除外の後にだけ進める「最後に書き換えを数えたフレーム」を持ち、同じフレームの 2 回目の書き込みも最初の対象のフレームとして数える）。合否に使う (2) は評価者が確認済み。todo に戻した。直すのはこの 1 点だけ。
 
 ## SCN-ECS-FIF-DEBUGDRAW: デバッグ描画を借りる形へ移し、パスを書く人向けの約束を書く（手本）
-- status: todo
+- status: done
 - done-when: DebugDraw を、頂点・定数・記述子をフレームの持ち主から借りる形へ移す最初の手本にする。今の `DynamicBufferRing` は指定したスロットの先頭（オフセット 0）へUpload し（`DebugDrawPass.cpp` 283 行付近、`DynamicBufferRing.cpp` 114 行付近）、`SceneRenderer.cpp` 384 行付近は頂点の束縛の位置を 0 に固定している。借りた切れ端のオフセットを `FrameCommand` から束縛まで通し、DebugDrawPass から飛行中の番号と `DynamicBufferRing` の扱いを消す。DebugDraw の `FRAME_RESOURCE_UNPROTECTED` が 0。パスを書く人向けの約束を `Docs/Architecture/FrameResources.md` に書く: フレームごとに書くデータ（定数・頂点・インデックス・ストレージ・記述子）は文脈から借りてメンバに持たない、GPU だけが使う資源（履歴など）はメンバに持ってよい、RHI の資源は手放せばよく破棄の時期は気にしない、読み戻しは共通の口（SCN-ECS-FIF-READBACK）を使う、Parallel のパスでも同じ口を使える、開発ビルドの `FRAME_RESOURCE_*` の出力の読み方。デバッグ描画（`DebugDrawQueue` の線・箱・球）が起動画面の撮影で今と同じに描かれる（起動画面で線が出ないなら、出す構成を 1 本撮って PNG で確かめる）。起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-DEBUGDRAW`

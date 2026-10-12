@@ -381,7 +381,7 @@ namespace NorvesLib::Core::Rendering
 
             commandList->SetPipeline(debugDraw.Pipeline);
             commandList->SetDescriptorSet(debugDraw.DescriptorSet, 0);
-            commandList->SetVertexBuffer(debugDraw.VertexBuffer, 0, 0);
+            commandList->SetVertexBuffer(debugDraw.VertexBuffer, debugDraw.VertexBufferOffset, 0);
             commandList->Draw(debugDraw.VertexCount, 0);
 
             ++m_Stats.DrawCallCount;

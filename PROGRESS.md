@@ -3404,3 +3404,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-REWRITE-GUARD-8.txt`: シーンの周回（rendering3dtest・mega-bananas・mega-stress × 3）`SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。Game.log の ERROR は 0 件。
 - Next: SCN-ECS-FIF-DEBUGDRAW。
 - Notes: 上の反復 58 の Notes のうち「重なりは 2 回目の書き換えから見つかる」「FrameUseRing の窓で作ったパスのメンバの資源も守られている扱い」はこの反復で無くなった。FrameUseRing を新しく使う所は Use のメンバを作る所を包む（包み忘れは一覧と `FRAME_RESOURCE_UNPROTECTED` に出る側に倒れる）。差し戻しの 4 件を起こす最小の再現の検査は書いていない（verify が名指ししていないため。`RenderGraphLifetimeTest` の束が候補）。
+
+### SCN-ECS-FIF-DEBUGDRAW（2026-10-12、反復 60・run 20261012-030203）
+
+- `DebugDrawPass` を、頂点・定数・記述子セットをフレームの持ち主から借りる最初の手本にした。`Execute` は `context.FrameResources` から頂点（`AllocateUploadData(..., FrameUploadUsage::Vertex)`）・カメラの定数（`AllocateConstants`）・記述子セット（`AllocateDescriptorSet`。レイアウトは `IDevice::GetOrCreateDescriptorSetLayout` で引いた共有の 1 つをメンバに持つ）を借り、定数は `BindConstantBuffer(0, Buffer, GetOffset32, GetSize32)` で束ねる。`DynamicBufferRing`・`DynamicUniformAllocator`・飛行中のフレームの番号（`FrameIndex`・`FRAME_PACKET_BUFFER_COUNT`）の扱いを DebugDrawPass から消した。
+- 借りた頂点の切れ端のオフセットを `DebugDrawLineListPassCommand::VertexBufferOffset`（`FrameCommand::CreateDebugDrawLineList` の引数）で運び、`SceneRenderer` の `SetVertexBuffer` に渡す（以前は 0 に固定）。
+- `Docs/Architecture/FrameResources.md` にパスを書く人向けの約束を書いた（フレームごとに書くデータは文脈から借りてメンバに持たない／GPU だけが使う資源はメンバに持ってよい／RHI の資源は手放せばよい／読み戻しは共通の口／Parallel でも同じ口／借り方の表と DebugDraw の形／`FRAME_RESOURCE_*` の読み方）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-DEBUGDRAW-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-DEBUGDRAW-2.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=5E-06・within_limits=True、result=pass、EXIT=0。画像は天球・地面・球・岩・家が以前どおり。
+  - `verify-SCN-ECS-FIF-DEBUGDRAW-3.txt`: `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=30` があり DebugDrawPass の組は無い、EXIT=0。ERROR は 0 件。
+  - 起動画面ではデバッグの線が出ないので、`-DebugDrawTestLines`（大きな球を囲む箱）の決定論の撮影を変更前（`startup-capture/SCN-ECS-FIF-DEBUGDRAW-lines-before`、`debugdraw-lines-before.txt`）と変更後（`SCN-ECS-FIF-DEBUGDRAW-lines`、`verify-SCN-ECS-FIF-DEBUGDRAW-4-lines.txt`）で撮って比べた: mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=1E-05・within_limits=True、result=pass。PNG は黄色の箱が同じ位置に描かれ、球の裏の辺は以前どおり遮蔽されている。`FRAME_RESOURCE_UNPROTECTED_SUMMARY` は変更前 count=32（`DynUBO_Slot#` と `RenderingCoordinator.DescriptorSet` が pass=DebugDrawPass）→ 変更後 count=30 で DebugDrawPass の組・一覧は 0。借りは 1 フレームに切れ端 2（816 バイト = 頂点 672 + 定数 144）・記述子セット 1、ページ 1・pool 1 を最初のフレームで足した後は足していない。ERROR は 0 件。
+- Next: SCN-ECS-FIF-DYNAMIC-UBO。
+- Notes: `Docs/Architecture/FrameResourceWriteGuard.md` の「守られている」の表の `DynamicBufferRing` の行に「呼び出し側の DebugDraw・ImGui」と残っている（この項目の paths の外なので直していない。今の呼び出し側は ImGui だけ。`DynamicBufferRing.cpp` のコメントは直した）。DebugDraw の借りを並列の記録の区間で通す撮影はしていない（DebugDrawPass は直列のパスで、借りる口は同じ）。

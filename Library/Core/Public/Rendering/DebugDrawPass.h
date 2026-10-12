@@ -1,9 +1,8 @@
 ﻿#pragma once
 
-#include "Rendering/DynamicBufferRing.h"
-#include "Rendering/DynamicUniformAllocator.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
+#include "RHI/IDescriptorSet.h"
 #include "RHI/RHITypes.h"
 #include <cstdint>
 
@@ -20,6 +19,9 @@ namespace NorvesLib::Core::Rendering
      *
      * TAA のジッタを外したカメラで描き、TAA の履歴・FXAA・Upscale を通らない。遮蔽は、内部解像度の SceneDepth を
      * シェーダで読んで深度テスト（Less）と同じ比較で行う（内部解像度と画面解像度が違っても同じ経路）。
+     *
+     * フレームごとに書く頂点・定数・記述子セットは文脈の FrameResources（フレームの持ち主）から毎フレーム借り、
+     * メンバには持たない（パスを書く人向けの約束は Docs/Architecture/FrameResources.md）。
      */
     class DebugDrawPass : public IViewPass, public IRenderGraphPass
     {
@@ -77,8 +79,8 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_Pipeline;
         RHI::SamplerPtr m_PointSampler;
         RHI::TexturePtr m_PresentationColorTexture;
-        DynamicUniformAllocator m_UniformAllocator;
-        DynamicBufferRing m_VertexRing;
+        // 共有の記述子セットのレイアウト（デバイスが同じ形に 1 つだけ作る。セットは毎フレーム借りる）
+        RHI::DescriptorSetLayoutPtr m_DescriptorSetLayout;
         RGResourceHandle m_PresentationColorHandle;
         RGResourceHandle m_SceneDepthHandle;
         RenderPassSignature m_RenderPassSignature;

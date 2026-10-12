@@ -2,7 +2,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/DebugDrawQueue.h"
 #include "Rendering/FrameCommand.h"
-#include "Rendering/FramePacket.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -28,12 +28,6 @@ namespace NorvesLib::Core::Rendering
             // xy: 描画先（PresentationColor）の画素座標から SceneDepth の画素座標への倍率
             float depthCoordScale[4];
         };
-
-        constexpr uint32_t DEBUG_LINE_UNIFORM_SLOTS = 32;
-        constexpr uint32_t DEBUG_LINE_VERTEX_RING_SLOT_COUNT = FRAME_PACKET_BUFFER_COUNT;
-        constexpr uint32_t DEBUG_LINE_INITIAL_VERTEX_CAPACITY = 4096;
-        constexpr uint64_t DEBUG_LINE_INITIAL_VERTEX_BYTES =
-            static_cast<uint64_t>(DEBUG_LINE_INITIAL_VERTEX_CAPACITY) * sizeof(DebugLineVertex);
 
         static_assert(sizeof(DebugLineVertex) == sizeof(float) * 7);
         static_assert(offsetof(DebugLineVertex, Position) == 0);
@@ -119,26 +113,12 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        const RHI::DescriptorSetDesc descriptorSetDesc = CreateDebugLineDescriptorSetDesc();
-        if (!m_UniformAllocator.Initialize(m_Device,
-                                           sizeof(DebugLineCameraUBO),
-                                           DEBUG_LINE_UNIFORM_SLOTS,
-                                           descriptorSetDesc))
+        // セットは毎フレーム FrameResources から借りる。レイアウトは同じ形のパスと共有する 1 つをデバイスから引く
+        m_DescriptorSetLayout = m_Device->GetOrCreateDescriptorSetLayout(CreateDebugLineDescriptorSetDesc());
+        if (!m_DescriptorSetLayout)
         {
-            NORVES_LOG_ERROR("DebugDrawPass", "Failed to initialize line uniform allocator");
-            m_LineVertexShader.reset();
-            m_LineFragmentShader.reset();
-            m_Device = nullptr;
-            return false;
-        }
-
-        if (!m_VertexRing.Initialize(m_Device,
-                                     DEBUG_LINE_VERTEX_RING_SLOT_COUNT,
-                                     RHI::ResourceUsage::VertexBuffer,
-                                     DEBUG_LINE_INITIAL_VERTEX_BYTES))
-        {
-            NORVES_LOG_ERROR("DebugDrawPass", "Failed to initialize line vertex ring");
-            m_UniformAllocator.Shutdown();
+            NORVES_LOG_ERROR("DebugDrawPass", "Failed to get shared line descriptor set layout");
+            m_PointSampler.reset();
             m_LineVertexShader.reset();
             m_LineFragmentShader.reset();
             m_Device = nullptr;
@@ -164,8 +144,7 @@ namespace NorvesLib::Core::Rendering
         m_PointSampler.reset();
         m_LineVertexShader.reset();
         m_LineFragmentShader.reset();
-        m_UniformAllocator.Shutdown();
-        m_VertexRing.Shutdown();
+        m_DescriptorSetLayout.reset();
         m_PresentationColorHandle = {};
         m_SceneDepthHandle = {};
         m_RenderPassSignature = {};
@@ -265,6 +244,13 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // 頂点・定数・記述子セットはこのフレームの持ち主から借りる（戻すのは持ち主の回収。パスは寿命を気にしない）
+        FrameResourceLane* frameResources = context.FrameResources;
+        if (!frameResources)
+        {
+            return;
+        }
+
         RHI::TexturePtr presentationColorTexture = resources.GetTexture(m_PresentationColorHandle);
         RHI::TexturePtr sceneDepthTexture = resources.GetTexture(m_SceneDepthHandle);
         if (!presentationColorTexture || !sceneDepthTexture || sceneDepthTexture->GetWidth() == 0 ||
@@ -281,9 +267,9 @@ namespace NorvesLib::Core::Rendering
         }
 
         const uint64_t uploadBytes = static_cast<uint64_t>(vertices->size()) * sizeof(DebugLineVertex);
-        const uint32_t vertexSlot = context.FrameIndex % DEBUG_LINE_VERTEX_RING_SLOT_COUNT;
-        RHI::BufferPtr vertexBuffer = m_VertexRing.Upload(vertexSlot, vertices->data(), uploadBytes);
-        if (!vertexBuffer)
+        const FrameUploadAllocation vertexAllocation =
+            frameResources->AllocateUploadData(vertices->data(), uploadBytes, FrameUploadUsage::Vertex);
+        if (!vertexAllocation.IsValid())
         {
             return;
         }
@@ -306,17 +292,22 @@ namespace NorvesLib::Core::Rendering
         uboData.depthCoordScale[0] = colorToDepthX;
         uboData.depthCoordScale[1] = colorToDepthY;
 
-        m_UniformAllocator.Reset();
-        DynamicUniformAllocator::Allocation allocation = m_UniformAllocator.Allocate();
-        if (!allocation.UniformBuffer || !allocation.DescriptorSet)
+        const FrameUploadAllocation uboAllocation = frameResources->AllocateConstants(uboData);
+        const FrameDescriptorAllocation descriptorAllocation =
+            frameResources->AllocateDescriptorSet(m_DescriptorSetLayout);
+        if (!uboAllocation.IsValid() || !descriptorAllocation.IsValid())
         {
             return;
         }
 
-        allocation.UniformBuffer->Update(&uboData, sizeof(DebugLineCameraUBO));
-        allocation.DescriptorSet->BindTexture(1, sceneDepthTexture);
-        allocation.DescriptorSet->BindSampler(1, m_PointSampler);
-        allocation.DescriptorSet->Update();
+        const RHI::DescriptorSetPtr& descriptorSet = descriptorAllocation.Set;
+        descriptorSet->BindConstantBuffer(0,
+                                          uboAllocation.Buffer,
+                                          uboAllocation.GetOffset32(),
+                                          uboAllocation.GetSize32());
+        descriptorSet->BindTexture(1, sceneDepthTexture);
+        descriptorSet->BindSampler(1, m_PointSampler);
+        descriptorSet->Update();
 
         // 内部解像度の Viewport を描画先の解像度へ広げる（同じ解像度なら従来の Viewport のまま）。
         RHI::Viewport viewport = context.GetActiveLocalViewport();
@@ -338,8 +329,9 @@ namespace NorvesLib::Core::Rendering
             viewport,
             scissor,
             m_Pipeline,
-            allocation.DescriptorSet,
-            vertexBuffer,
+            descriptorSet,
+            vertexAllocation.Buffer,
+            vertexAllocation.Offset,
             static_cast<uint32_t>(vertices->size())));
     }
 

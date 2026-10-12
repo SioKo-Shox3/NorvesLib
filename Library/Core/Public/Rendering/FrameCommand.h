@@ -53,6 +53,8 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr Pipeline;
         RHI::DescriptorSetPtr DescriptorSet;
         RHI::BufferPtr VertexBuffer;
+        // VertexBuffer の中の頂点の先頭（フレームの持ち主から借りた切れ端のオフセット。バイト）
+        uint64_t VertexBufferOffset = 0;
         uint32_t VertexCount = 0;
         RHI::Viewport Viewport;
         RHI::ScissorRect Scissor;
@@ -158,6 +160,7 @@ namespace NorvesLib::Core::Rendering
                                                     RHI::PipelinePtr pipeline,
                                                     RHI::DescriptorSetPtr descriptorSet,
                                                     RHI::BufferPtr vertexBuffer,
+                                                    uint64_t vertexBufferOffset,
                                                     uint32_t vertexCount)
         {
             FrameCommand command;
@@ -169,6 +172,7 @@ namespace NorvesLib::Core::Rendering
             command.DebugDrawLineList.Pipeline = pipeline;
             command.DebugDrawLineList.DescriptorSet = descriptorSet;
             command.DebugDrawLineList.VertexBuffer = vertexBuffer;
+            command.DebugDrawLineList.VertexBufferOffset = vertexBufferOffset;
             command.DebugDrawLineList.VertexCount = vertexCount;
             return command;
         }
