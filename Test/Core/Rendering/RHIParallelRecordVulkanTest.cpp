@@ -191,6 +191,8 @@ namespace
         return !bWriteFailed && !bReadFailed;
     }
 
+#if NORVES_ENABLE_STATS
+    // GPU の時間の計測は NORVES_ENABLE_STATS の構成（Debug・RelWithDebInfo）だけで有効なので、計測ケースもそこに限る
     constexpr const char* FrameGPUScopeName = "FrameGPU";
     constexpr uint64_t TimestampFrameNumber = 500u;
 
@@ -344,6 +346,7 @@ namespace
                   << " write_ms=" << firstSegment->DurationMs
                   << " read_ms=" << lastSegment->DurationMs << '\n';
     }
+#endif
 
     void FillReadback(IBuffer& readback, uint8_t value)
     {
@@ -538,8 +541,10 @@ namespace
                 }
             }
 
+#if NORVES_ENABLE_STATS
             // 4. 2 本のそれぞれで取った GPU の時間を合わせ、2 本にまたがる FrameGPU を求める
             RunCrossListFrameGPUCase(*device, writeList, redTarget, readList, texture, readback);
+#endif
 
             device->WaitIdle();
         }

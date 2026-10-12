@@ -2821,3 +2821,11 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: SCN-ECS-RT-GRAPH。
 - Notes: RT-GRAPH で区間ごとのリストを記録するときは、各リストの記録の頭で `BeginGPUTimestampFrame(フレーム番号)` と `FrameGPU` の区間を開き、末尾で閉じる（合わせる側は名前で 1 つにする）。0 番のリストは今の旧 API（`BeginGPUTimestamp`）のままでよい。
 - Notes: 合わせる規則は (フレーム, 名前) だけで見るので、別々のリストに同じ名前のパス（例: 2 つのビューの同名のパス）が記録されると 1 つの区間に合わさる。区間ごとの記録でビューをまたぐなら、パスの区間の名前にビューを含めるか、FrameGPU だけを合わせる規則に絞る。
+
+### SCN-ECS-RT-RHI-TIMESTAMPS 反復 31（2026-10-12、run 20261012-030203）
+
+- 差し戻しの修正: Release・MinSizeRel は `NORVES_ENABLE_STATS=0` で `SupportsGPUTimestamps()` が常に false のため、`cross_list_frame_gpu` が無条件に失敗していた。計測ケースとその補助（`RunCrossListFrameGPUCase` ほか）を `#if NORVES_ENABLE_STATS` で囲み、提出・中止の検査は全構成で残した。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RT-RHI-TIMESTAMPS-1.txt`: Debug のビルド EXIT=0。`-2.txt`: Debug の ctest 100% passed、EXIT=0。`-3.txt`（-V）: `CASE cross_list_frame_gpu frame_ms=0.006144 first_ms=0.002304 last_ms=0.001248`・`VUID_COUNT=0`・`RESULT=PASS`。
+  - `-4.txt`: Release のビルド EXIT=0。`-5.txt`（Release の ctest -V）: 提出・中止の 3 ケースが出て計測ケースは出ず、`VUID_COUNT=0`・`RESULT=PASS`・EXIT=0。
+- Next: SCN-ECS-RT-GRAPH。
