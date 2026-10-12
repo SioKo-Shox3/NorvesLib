@@ -1010,14 +1010,21 @@
 - verify: `python -c "import re,sys;t=open(r'.harness/runs/startup-capture/SCN-ECS-FIF-LIGHTING/default.Game.log',encoding='utf-8',errors='replace').read();ok=re.search(r'FRAME_RESOURCE_UNPROTECTED_SUMMARY count=\d+',t) and not re.search(r'FRAME_RESOURCE_UNPROTECTED resource=\S+ pass=(LightingPass)\b',t);sys.exit(0 if ok else 1)"`
 - paths: Library/Core/Public/Rendering/LightingPass.h, Library/Core/Private/Rendering/LightingPass.cpp, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: SCN-ECS-FIF-AUDIT（反復 43）で足した項目を、2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。照明の VSM の統計の読み戻しは SCN-ECS-FIF-READBACK で共通の口へ移す。Debug の `RTGIDiffuseIndirectVulkanTest` が関係するなら回す。危険地帯（RenderThread・資源の寿命）。 2026-10-12 親: 記録の時間の確かめ（`RG.Record.LightingPass` ≤ 0.5 ms）は準備の途中では測らず、節目の SCN-ECS-MEASURE-FIF へ移した。
-## SCN-FIX-RENDER-TESTS-FAILING: 前から落ちている描画の 2 つの試験を直す
+## SCN-FIX-SKINNED-PATH-TEST: SkinnedRenderPathContractTest を直す（デバッグ描画の移し替えから落ちている）
 - status: todo
-- done-when: Debug の `RenderGraphCompileTest`（2843 行付近 `commandList.DispatchCount == 10` の assert）と `SkinnedRenderPathContractTest`（1849 行付近 `packet.Stats.SkinnedGBufferRecordedDraws == 1`）が、SCN-ECS-FIF-DYNAMIC-UBO の前の HEAD でも落ちていた（PROGRESS の `### SCN-ECS-FIF-DYNAMIC-UBO`）。どのコミットで落ち始めたかを特定し、試験の期待が古いのか実装の退行なのかを分けて直す（期待が古いだけなら今の契約に合わせて期待を直し、根拠を PROGRESS に書く。退行なら実装を直す）。assert で止まって走っていなかった後ろの検査（`TestDynamicUniformAllocatorGrowsToCoverShadowCasters` など）も走って pass する。両方の試験が Debug で pass。
-- verify: `cmake --build build --config Debug --target RenderGraphCompileTest SkinnedRenderPathContractTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^(RenderGraphCompileTest|SkinnedRenderPathContractTest)$" --no-tests=error --output-on-failure --timeout 180`
+- done-when: Debug の `SkinnedRenderPathContractTest`（1849 行付近 `packet.Stats.SkinnedGBufferRecordedDraws == 1` の assert）は、SCN-ECS-FIF-DEBUGDRAW のコミット 517bdf0a から落ちている（親 517bdf0a~1 では通る。反復 66 の調べ）。517bdf0a の差分を読み、試験の期待が古いのか実装の退行なのかを分けて直す（期待が古いだけなら今の契約に合わせて期待を直し、根拠を PROGRESS に書く。退行なら実装を直す）。assert で止まって走っていなかった後ろの検査も走って pass する。Debug で pass。
+- verify: `cmake --build build --config Debug --target SkinnedRenderPathContractTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^SkinnedRenderPathContractTest$" --no-tests=error --output-on-failure --timeout 180`
 - paths: Test/Core/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 親が足した（SCN-ECS-FIF-DYNAMIC-UBO の評価で、変更の前から落ちている試験が 2 つあると分かった）。マージの前に直す。
+- notes: 2026-10-12 親が SCN-FIX-RENDER-TESTS-FAILING を 2 つに分けた。作業ツリーでほかのコミットへ切り替えない（`git checkout <rev>`・`--detach`・`git switch`・`git bisect`・`git stash`・ファイルを古い版で上書きする `git checkout <rev> -- <path>` を使わない。2026-10-12 の反復 66 は古いコミットへ切り替えたまま壁時計で止められ、次の反復が古い TASKS.md で動いた）。古い版は `git show <rev>:<path>`・`git log -p`・`git diff <a> <b>` で読み、ビルドして比べることはしない。
 
+## SCN-FIX-RENDERGRAPH-COMPILE-TEST: RenderGraphCompileTest を直す（古い期待値）
+- status: todo
+- done-when: Debug の `RenderGraphCompileTest`（2843 行付近 `commandList.DispatchCount == 10` の assert ほか）は、この項目より前から落ちている。反復 66 の調べでは、VisibilityRasterScene の 4 つの検査と光源の配列の検査の期待値（リテラルと数。オフセットは相対なので数だけ直せばよい）が今の実装と合っていないだけで、直すと assert が出なくなった（ShadowProbe の検査は別件）。期待が古いだけか退行かを、`git log -p` と `git show` で落ち始めた変更を読んで分け、期待を直す場合は根拠を PROGRESS に書く。assert で止まって走っていなかった後ろの検査（`TestDynamicUniformAllocatorGrowsToCoverShadowCasters` など）も走って pass する。Debug で pass。
+- verify: `cmake --build build --config Debug --target RenderGraphCompileTest -- /m:1`
+- verify: `ctest --test-dir build -C Debug -R "^RenderGraphCompileTest$" --no-tests=error --output-on-failure --timeout 180`
+- paths: Test/Core/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が SCN-FIX-RENDER-TESTS-FAILING を 2 つに分けた。作業ツリーでほかのコミットへ切り替えない（`git checkout <rev>`・`--detach`・`git switch`・`git bisect`・`git stash`・ファイルを古い版で上書きする `git checkout <rev> -- <path>` を使わない。2026-10-12 の反復 66 は古いコミットへ切り替えたまま壁時計で止められ、次の反復が古い TASKS.md で動いた）。古い版は `git show <rev>:<path>`・`git log -p`・`git diff <a> <b>` で読み、ビルドして比べることはしない。
 ## SCN-ECS-FIF-POST-A: TAA・Bloom・ToneMapping・SSAO・MotionBlur のフレームごとのデータを借りる形へ移す
 - status: todo
 - done-when: 次のパスは、メンバの定数バッファ 1 つと記述子セット 1 組を Execute のたびに `Update` で書き換える。毎フレーム書く定数と記述子をフレームの持ち主から借りる形へ移す: `TemporalAAPass`（`m_ParamsBuffer`・`m_ResolveDescriptorSet`・`m_CopyDescriptorSet`）、`BloomPass`（`m_ParamsBuffer`・`m_BloomDescriptorSet`・ミップごとの Down/Up の定数と記述子）、`ToneMappingPass`（`m_ParamsBuffer`・`m_ToneMappingDescriptorSet`）、`SSAOPass`（SSAO と Blur の定数と記述子）、`MotionBlurPass`（`m_ParamsBuffer` と 3 つの記述子）。 パスのコードから飛行中の番号・フレームごとの組（`FrameUseRing` を含む）の扱いを持たない。初期化で 1 回だけ書くもの（LUT・レンズの汚れ・ミップごとの作成時の定数）と GPU だけが使う資源（TAA の履歴・HiZ のピラミッド）はメンバのまま。対象のパスの `FRAME_RESOURCE_UNPROTECTED` が 0。起動画面の比較が pass。起動画面で無効のパスは、ビルドとコードの照合で確かめて PROGRESS に書く（撮影を増やさない）。
