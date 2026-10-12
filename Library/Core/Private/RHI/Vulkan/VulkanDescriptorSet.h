@@ -5,6 +5,8 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.hpp>
 #include "Container/Containers.h"
+#include "Thread/Atomic.h"
+#include "Thread/Mutex.h"
 
 namespace NorvesLib::RHI::Vulkan
 {
@@ -65,6 +67,11 @@ namespace NorvesLib::RHI::Vulkan
         const VariableArray<vk::DescriptorSetLayoutBinding> &GetVkBindings() const { return m_vkBindings; }
         vk::DescriptorType ToVkDescriptorType(DescriptorType type) const;
 
+        /**
+         * @brief レイアウトのハンドルを今すぐ破棄の列へ渡す（デバイスの終了の前。この後のデストラクタは何もしない）
+         */
+        void ReleaseHandle();
+
     private:
         TSharedPtr<VulkanDevice> m_device;
         VariableArray<DescriptorBindingDesc> m_bindings;
@@ -116,6 +123,66 @@ namespace NorvesLib::RHI::Vulkan
         vk::DescriptorPool m_pool;
     };
 
+    /** @brief フレームごとの pool が数える記述子の型（pool の容量と、レイアウトが求める数の添字） */
+    enum class FrameDescriptorPoolType : uint32_t
+    {
+        UniformBuffer,
+        SampledImage,
+        Sampler,
+        StorageBuffer,
+        StorageImage,
+        CombinedImageSampler,
+        AccelerationStructure,
+        Count
+    };
+
+    inline constexpr uint32_t FrameDescriptorPoolTypeCount = static_cast<uint32_t>(FrameDescriptorPoolType::Count);
+
+    /**
+     * @brief 共有のディスクリプタセットレイアウト（IDevice::GetOrCreateDescriptorSetLayout が返す）
+     *
+     * 同じ束縛の形にはデバイスの中で 1 つだけ作る。形の照合に使う並び（binding の順にそろえた
+     * binding・型・ステージ・要素数）と、フレームごとの pool から借りるときに要る型ごとの数を持つ。
+     */
+    class VulkanSharedDescriptorSetLayout : public IDescriptorSetLayout
+    {
+    public:
+        VulkanSharedDescriptorSetLayout(const DescriptorSetDesc &desc,
+                                        TSharedPtr<VulkanDescriptorSetLayout> layout,
+                                        VariableArray<uint32_t> signature);
+
+        const DescriptorSetDesc &GetDesc() const override { return m_desc; }
+        const TSharedPtr<VulkanDescriptorSetLayout> &GetLayout() const { return m_layout; }
+        const VariableArray<uint32_t> &GetSignature() const { return m_signature; }
+
+        /** @brief このレイアウトのセット 1 つが pool から取る、型ごとの記述子の数 */
+        uint32_t GetRequiredCount(FrameDescriptorPoolType type) const
+        {
+            return m_requiredCounts[static_cast<uint32_t>(type)];
+        }
+
+    private:
+        DescriptorSetDesc m_desc;
+        TSharedPtr<VulkanDescriptorSetLayout> m_layout;
+        VariableArray<uint32_t> m_signature;
+        uint32_t m_requiredCounts[FrameDescriptorPoolTypeCount] = {};
+    };
+
+    /**
+     * @brief フレームごとの pool と、そこから借りたセットが共有する状態
+     *
+     * 世代（Epoch）は pool を回収・手放すたびに増える。借りたセットは借りたときの世代を持ち、
+     * 今の世代と違えば回収された後として書き込みも束縛も拒む。Mutex は pool からの確保・回収と、
+     * 借りたセットの書き込みを直列にする（Vulkan は同じ pool の確保・書き込み・reset に外部の同期を求める）。
+     */
+    struct VulkanFrameDescriptorPoolState
+    {
+        Thread::Mutex Mutex;
+        Thread::Atomic<uint64_t> Epoch{1};
+        /** 前の回収から今までの統計（Mutex の下で読み書きする） */
+        FrameDescriptorStats Stats;
+    };
+
     /**
      * @brief Vulkanディスクリプタセット実装クラス (vulkan.hpp使用)
      */
@@ -136,6 +203,21 @@ namespace NorvesLib::RHI::Vulkan
             TSharedPtr<VulkanDescriptorPool> pool);
 
         /**
+         * @brief フレームごとの pool から借りたセットを包む（レイアウト・pool・パイプラインレイアウトは作らない）
+         * @param device Vulkanデバイス
+         * @param layout 共有のレイアウト
+         * @param descriptorSet pool から確保したセット（pool の回収で一緒に戻る）
+         * @param borrowState pool と共有する状態
+         * @param borrowEpoch 借りたときの pool の世代
+         */
+        VulkanDescriptorSet(
+            TSharedPtr<VulkanDevice> device,
+            TSharedPtr<VulkanDescriptorSetLayout> layout,
+            vk::DescriptorSet descriptorSet,
+            TSharedPtr<VulkanFrameDescriptorPoolState> borrowState,
+            uint64_t borrowEpoch);
+
+        /**
          * @brief デストラクタ
          */
         ~VulkanDescriptorSet() override;
@@ -154,17 +236,24 @@ namespace NorvesLib::RHI::Vulkan
         void BindStorageTexture(uint32_t binding, TexturePtr texture) override;
         void BindStorageTexture(uint32_t binding, TexturePtr texture, uint32_t mipLevel) override;
         void Update() override;
+        bool IsExpired() const override;
 
         // Vulkan固有のメソッド (vulkan.hpp型)
         vk::DescriptorSet GetVkDescriptorSet() const { return m_descriptorSet; }
         vk::DescriptorSetLayout GetVkDescriptorSetLayout() const;
         vk::PipelineLayout GetVkPipelineLayout() const;
 
+        /** @brief フレームごとの pool から借りたセットか */
+        bool IsBorrowed() const { return static_cast<bool>(m_borrowState); }
+
     private:
         TSharedPtr<VulkanDevice> m_device;
         DescriptorSetDesc m_desc;
         TSharedPtr<VulkanDescriptorSetLayout> m_layout;
         TSharedPtr<VulkanDescriptorPool> m_pool;
+        // 借りたセットだけ持つ（専用のセットは空）
+        TSharedPtr<VulkanFrameDescriptorPoolState> m_borrowState;
+        uint64_t m_borrowEpoch = 0;
 
         vk::DescriptorSet m_descriptorSet;
         vk::PipelineLayout m_pipelineLayout;
@@ -199,6 +288,50 @@ namespace NorvesLib::RHI::Vulkan
         void CreatePipelineLayout();
         vk::DescriptorType GetVkDescriptorType(uint32_t binding) const;
         uint32_t GetDescriptorCount(uint32_t binding) const;
+        /** @brief 束縛を記述子へ書き込み、書いた記述子の数を返す */
+        uint32_t WriteBindings();
+    };
+
+    /**
+     * @brief フレームごとにまとめた記述子の pool（IFrameDescriptorAllocator の Vulkan 実装）
+     *
+     * 型ごとの容量を持つ pool の列から前へ進みながら確保し、残りの容量が足りなければ次の pool、
+     * 無ければ pool を足す（残りは自分で数えるので、確保の失敗に頼らない）。Reset で全部の pool を
+     * vkResetDescriptorPool で戻し、先頭から使い回す。
+     */
+    class VulkanFrameDescriptorAllocator : public IFrameDescriptorAllocator
+    {
+    public:
+        VulkanFrameDescriptorAllocator(TSharedPtr<VulkanDevice> device, const FrameDescriptorPoolCapacity &capacity);
+        ~VulkanFrameDescriptorAllocator() override;
+
+        DescriptorSetPtr Allocate(const DescriptorSetLayoutPtr &layout) override;
+        void Reset() override;
+        void Release() override;
+        FrameDescriptorStats GetFrameStats() const override;
+        uint32_t GetPoolCount() const override;
+        uint64_t GetTotalPoolsAdded() const override;
+
+    private:
+        struct PoolEntry
+        {
+            vk::DescriptorPool Pool;
+            uint32_t Capacity[FrameDescriptorPoolTypeCount] = {};
+            uint32_t Remaining[FrameDescriptorPoolTypeCount] = {};
+            uint32_t MaxSets = 0;
+            uint32_t RemainingSets = 0;
+        };
+
+        static bool Fits(const PoolEntry &pool, const VulkanSharedDescriptorSetLayout &layout);
+        bool AddPoolLocked(const VulkanSharedDescriptorSetLayout &layout);
+        void ReleasePoolsLocked();
+
+        TSharedPtr<VulkanDevice> m_device;
+        FrameDescriptorPoolCapacity m_capacity;
+        TSharedPtr<VulkanFrameDescriptorPoolState> m_state;
+        VariableArray<PoolEntry> m_pools;
+        size_t m_currentPool = 0;
+        uint64_t m_totalPoolsAdded = 0;
     };
 
 } // namespace NorvesLib::RHI::Vulkan

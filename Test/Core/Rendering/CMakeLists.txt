@@ -403,6 +403,17 @@ set_tests_properties(VirtualTextureFeedbackVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# フレームの持ち主から記述子セットを借りる。同じ束縛の形は共有の layout 1 つになり、小さな容量の pool を超えて借りると
+# pool を足し、提出の完了でスロットの pool がまとめて戻って次のフレームは pool を足さずに借りられること、
+# 前のフレームで借りたセットは世代の検査・書き込みで拒まれること、検証レイヤーのエラーが 0 件であることを確かめる。
+add_test(NAME FrameResourceDescriptorVulkanTest COMMAND RHITextureUpdateVulkanTest --test=FrameResourceDescriptorVulkanTest)
+set_tests_properties(FrameResourceDescriptorVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 add_test(NAME VideoMemoryBudgetVulkanTest COMMAND RHITextureUpdateVulkanTest --test=VideoMemoryBudgetVulkanTest)
 set_tests_properties(VideoMemoryBudgetVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"
@@ -547,6 +558,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
     MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
+    MEMBER FrameResourceDescriptorVulkanTest FrameResourceDescriptorVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE

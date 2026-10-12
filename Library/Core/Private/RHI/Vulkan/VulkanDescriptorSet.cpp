@@ -4,6 +4,9 @@
 #include "VulkanTexture.h"
 #include "VulkanSampler.h"
 #include "VulkanAccelerationStructure.h"
+#include "Logging/LogMacros.h"
+#include <algorithm>
+#include <chrono>
 #include <stdexcept>
 
 namespace NorvesLib::RHI::Vulkan
@@ -11,6 +14,90 @@ namespace NorvesLib::RHI::Vulkan
 
     namespace
     {
+        /** @brief 記述子の型をフレームごとの pool が数える型へ写す（数えない型は Count） */
+        FrameDescriptorPoolType ToFrameDescriptorPoolType(DescriptorType type)
+        {
+            switch (type)
+            {
+            case DescriptorType::UniformBuffer:
+                return FrameDescriptorPoolType::UniformBuffer;
+            case DescriptorType::SampledImage:
+                return FrameDescriptorPoolType::SampledImage;
+            case DescriptorType::Sampler:
+                return FrameDescriptorPoolType::Sampler;
+            case DescriptorType::StorageBuffer:
+                return FrameDescriptorPoolType::StorageBuffer;
+            case DescriptorType::StorageImage:
+                return FrameDescriptorPoolType::StorageImage;
+            case DescriptorType::CombinedImageSampler:
+                return FrameDescriptorPoolType::CombinedImageSampler;
+            case DescriptorType::AccelerationStructure:
+                return FrameDescriptorPoolType::AccelerationStructure;
+            default:
+                return FrameDescriptorPoolType::Count;
+            }
+        }
+
+        vk::DescriptorType ToVkDescriptorType(FrameDescriptorPoolType type)
+        {
+            switch (type)
+            {
+            case FrameDescriptorPoolType::UniformBuffer:
+                return vk::DescriptorType::eUniformBuffer;
+            case FrameDescriptorPoolType::SampledImage:
+                return vk::DescriptorType::eSampledImage;
+            case FrameDescriptorPoolType::Sampler:
+                return vk::DescriptorType::eSampler;
+            case FrameDescriptorPoolType::StorageBuffer:
+                return vk::DescriptorType::eStorageBuffer;
+            case FrameDescriptorPoolType::StorageImage:
+                return vk::DescriptorType::eStorageImage;
+            case FrameDescriptorPoolType::CombinedImageSampler:
+                return vk::DescriptorType::eCombinedImageSampler;
+            case FrameDescriptorPoolType::AccelerationStructure:
+            default:
+                return vk::DescriptorType::eAccelerationStructureKHR;
+            }
+        }
+
+        uint32_t GetCapacityCount(const FrameDescriptorPoolCapacity &capacity, FrameDescriptorPoolType type)
+        {
+            switch (type)
+            {
+            case FrameDescriptorPoolType::UniformBuffer:
+                return capacity.UniformBuffers;
+            case FrameDescriptorPoolType::SampledImage:
+                return capacity.SampledImages;
+            case FrameDescriptorPoolType::Sampler:
+                return capacity.Samplers;
+            case FrameDescriptorPoolType::StorageBuffer:
+                return capacity.StorageBuffers;
+            case FrameDescriptorPoolType::StorageImage:
+                return capacity.StorageImages;
+            case FrameDescriptorPoolType::CombinedImageSampler:
+                return capacity.CombinedImageSamplers;
+            case FrameDescriptorPoolType::AccelerationStructure:
+                return capacity.AccelerationStructures;
+            default:
+                return 0u;
+            }
+        }
+
+#if NORVES_BUILD_DEVELOPMENT
+        uint64_t ReadDescriptorTimerNanoseconds()
+        {
+            return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                             std::chrono::steady_clock::now().time_since_epoch())
+                                             .count());
+        }
+#endif
+
+        // 同じ誤りが毎フレーム続くとログが埋まるので、最初の 8 回と、その後は 2 の冪の回だけ出す
+        bool ShouldLogRepeated(uint64_t count)
+        {
+            return count <= 8 || (count & (count - 1)) == 0;
+        }
+
         vk::ImageLayout ResolveDescriptorImageLayout(
             vk::DescriptorType descriptorType,
             vk::ImageLayout trackedLayout)
@@ -74,6 +161,35 @@ namespace NorvesLib::RHI::Vulkan
             // 前の提出が使っているかもしれないので、提出の完了まで破棄を遅らせる
             m_device->DeferDestroy(m_layout);
             m_layout = nullptr;
+        }
+    }
+
+    void VulkanDescriptorSetLayout::ReleaseHandle()
+    {
+        if (m_layout)
+        {
+            m_device->DeferDestroy(m_layout);
+            m_layout = nullptr;
+        }
+    }
+
+    //===========================================================================================
+    // VulkanSharedDescriptorSetLayoutの実装
+    //===========================================================================================
+
+    VulkanSharedDescriptorSetLayout::VulkanSharedDescriptorSetLayout(
+        const DescriptorSetDesc &desc,
+        TSharedPtr<VulkanDescriptorSetLayout> layout,
+        VariableArray<uint32_t> signature)
+        : m_desc(desc), m_layout(layout), m_signature(signature)
+    {
+        for (const DescriptorBindingDesc &binding : m_layout->GetBindings())
+        {
+            const FrameDescriptorPoolType type = ToFrameDescriptorPoolType(binding.type);
+            if (type != FrameDescriptorPoolType::Count)
+            {
+                m_requiredCounts[static_cast<uint32_t>(type)] += binding.count;
+            }
         }
     }
 
@@ -309,6 +425,21 @@ namespace NorvesLib::RHI::Vulkan
         CreatePipelineLayout();
     }
 
+    VulkanDescriptorSet::VulkanDescriptorSet(
+        TSharedPtr<VulkanDevice> device,
+        TSharedPtr<VulkanDescriptorSetLayout> layout,
+        vk::DescriptorSet descriptorSet,
+        TSharedPtr<VulkanFrameDescriptorPoolState> borrowState,
+        uint64_t borrowEpoch)
+        : m_device(device),
+          m_layout(layout),
+          m_borrowState(borrowState),
+          m_borrowEpoch(borrowEpoch),
+          m_descriptorSet(descriptorSet)
+    {
+        // 借りたセットはパイプラインレイアウトを持たない（束縛はパイプラインのレイアウトで行う）
+    }
+
     VulkanDescriptorSet::~VulkanDescriptorSet()
     {
         if (m_pipelineLayout)
@@ -348,12 +479,13 @@ namespace NorvesLib::RHI::Vulkan
         uint32_t binding,
         AccelerationStructurePtr accelerationStructure)
     {
+        // 借りたセットは作成情報を持たないので、レイアウトの束縛で型を確かめる
         bool expectsAccelerationStructure = false;
-        for (const DescriptorBinding& bindingDesc : m_desc.bindings)
+        for (const DescriptorBindingDesc& bindingDesc : m_layout->GetBindings())
         {
             if (bindingDesc.binding == binding)
             {
-                expectsAccelerationStructure = bindingDesc.type == ResourceBindType::AccelerationStructure;
+                expectsAccelerationStructure = bindingDesc.type == DescriptorType::AccelerationStructure;
                 break;
             }
         }
@@ -464,6 +596,48 @@ namespace NorvesLib::RHI::Vulkan
             return;
         }
 
+        if (!m_borrowState)
+        {
+            (void)WriteBindings();
+            m_bNeedsUpdate = false;
+            return;
+        }
+
+        // 借りたセット: pool の回収・確保と同じ排他の下で、回収されていなければ書き込む
+#if NORVES_BUILD_DEVELOPMENT
+        const uint64_t startNanoseconds = ReadDescriptorTimerNanoseconds();
+#endif
+        Thread::ScopedLock lock(m_borrowState->Mutex);
+        if (m_borrowState->Epoch.Load() != m_borrowEpoch)
+        {
+            static Thread::Atomic<uint64_t> s_expiredWriteRejectCount{0};
+            ++m_borrowState->Stats.ExpiredRejects;
+            const uint64_t rejectCount = s_expiredWriteRejectCount.FetchAdd(1) + 1;
+            if (ShouldLogRepeated(rejectCount))
+            {
+                NORVES_LOG_ERROR("FrameResource",
+                                 "FRAME_RESOURCE_DESCRIPTOR_EXPIRED op=update borrowed_epoch=%llu current_epoch=%llu rejects=%llu",
+                                 static_cast<unsigned long long>(m_borrowEpoch),
+                                 static_cast<unsigned long long>(m_borrowState->Epoch.Load()),
+                                 static_cast<unsigned long long>(rejectCount));
+            }
+            return;
+        }
+        const uint32_t writeCount = WriteBindings();
+        m_bNeedsUpdate = false;
+        m_borrowState->Stats.Writes += writeCount;
+#if NORVES_BUILD_DEVELOPMENT
+        m_borrowState->Stats.WriteNanoseconds += ReadDescriptorTimerNanoseconds() - startNanoseconds;
+#endif
+    }
+
+    bool VulkanDescriptorSet::IsExpired() const
+    {
+        return m_borrowState && m_borrowState->Epoch.Load() != m_borrowEpoch;
+    }
+
+    uint32_t VulkanDescriptorSet::WriteBindings()
+    {
         NorvesLib::Core::Container::VariableArray<vk::WriteDescriptorSet> descriptorWrites;
         NorvesLib::Core::Container::VariableArray<vk::DescriptorBufferInfo> bufferInfos;
         NorvesLib::Core::Container::VariableArray<vk::DescriptorImageInfo> imageInfos;
@@ -621,7 +795,7 @@ namespace NorvesLib::RHI::Vulkan
                 nullptr);
         }
 
-        m_bNeedsUpdate = false;
+        return static_cast<uint32_t>(descriptorWrites.size());
     }
 
     vk::DescriptorSetLayout VulkanDescriptorSet::GetVkDescriptorSetLayout() const
@@ -675,6 +849,220 @@ namespace NorvesLib::RHI::Vulkan
             }
         }
         return 0u;
+    }
+
+    //===========================================================================================
+    // VulkanFrameDescriptorAllocatorの実装
+    //===========================================================================================
+
+    VulkanFrameDescriptorAllocator::VulkanFrameDescriptorAllocator(
+        TSharedPtr<VulkanDevice> device,
+        const FrameDescriptorPoolCapacity &capacity)
+        : m_device(device), m_capacity(capacity), m_state(MakeShared<VulkanFrameDescriptorPoolState>())
+    {
+        m_capacity.MaxSets = std::max(m_capacity.MaxSets, 1u);
+    }
+
+    VulkanFrameDescriptorAllocator::~VulkanFrameDescriptorAllocator()
+    {
+        Release();
+    }
+
+    bool VulkanFrameDescriptorAllocator::Fits(const PoolEntry &pool, const VulkanSharedDescriptorSetLayout &layout)
+    {
+        if (pool.RemainingSets == 0)
+        {
+            return false;
+        }
+        for (uint32_t typeIndex = 0; typeIndex < FrameDescriptorPoolTypeCount; ++typeIndex)
+        {
+            if (layout.GetRequiredCount(static_cast<FrameDescriptorPoolType>(typeIndex)) > pool.Remaining[typeIndex])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool VulkanFrameDescriptorAllocator::AddPoolLocked(const VulkanSharedDescriptorSetLayout &layout)
+    {
+        const bool bAccelerationStructure = m_device->GetCapabilities().RayTracing.bAccelerationStructure;
+        PoolEntry entry;
+        entry.MaxSets = m_capacity.MaxSets;
+        entry.RemainingSets = entry.MaxSets;
+
+        VariableArray<vk::DescriptorPoolSize> poolSizes;
+        poolSizes.reserve(FrameDescriptorPoolTypeCount);
+        for (uint32_t typeIndex = 0; typeIndex < FrameDescriptorPoolTypeCount; ++typeIndex)
+        {
+            const FrameDescriptorPoolType type = static_cast<FrameDescriptorPoolType>(typeIndex);
+            // 容量を超える型を持つレイアウトは、そのレイアウトが入る大きさの pool にする
+            const uint32_t count = std::max(GetCapacityCount(m_capacity, type), layout.GetRequiredCount(type));
+            if (count == 0 || (type == FrameDescriptorPoolType::AccelerationStructure && !bAccelerationStructure))
+            {
+                continue;
+            }
+            entry.Capacity[typeIndex] = count;
+            entry.Remaining[typeIndex] = count;
+            vk::DescriptorPoolSize poolSize;
+            poolSize.type = ToVkDescriptorType(type);
+            poolSize.descriptorCount = count;
+            poolSizes.push_back(poolSize);
+        }
+        if (poolSizes.empty())
+        {
+            return false;
+        }
+
+        vk::DescriptorPoolCreateInfo poolInfo;
+        poolInfo.maxSets = entry.MaxSets;
+        poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+        poolInfo.pPoolSizes = poolSizes.data();
+        // セットを 1 つずつ解放しない（回収で pool ごと戻す）ので eFreeDescriptorSet は付けない
+        auto result = m_device->GetVkDevice().createDescriptorPool(poolInfo);
+        if (result.result != vk::Result::eSuccess)
+        {
+            NORVES_LOG_ERROR("FrameResource",
+                             "FRAME_RESOURCE_DESCRIPTOR_POOL_FAILED result=%d max_sets=%u",
+                             static_cast<int32_t>(result.result),
+                             entry.MaxSets);
+            return false;
+        }
+        entry.Pool = result.value;
+        m_pools.push_back(entry);
+        ++m_totalPoolsAdded;
+        ++m_state->Stats.PoolsAdded;
+        return true;
+    }
+
+    DescriptorSetPtr VulkanFrameDescriptorAllocator::Allocate(const DescriptorSetLayoutPtr &layout)
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        const uint64_t startNanoseconds = ReadDescriptorTimerNanoseconds();
+#endif
+        auto sharedLayout = DynamicPointerCast<VulkanSharedDescriptorSetLayout>(layout);
+        Thread::ScopedLock lock(m_state->Mutex);
+        if (!m_device || !sharedLayout || !sharedLayout->GetLayout() ||
+            !sharedLayout->GetLayout()->GetVkDescriptorSetLayout())
+        {
+            ++m_state->Stats.Failures;
+            NORVES_LOG_ERROR("FrameResource", "FRAME_RESOURCE_DESCRIPTOR_INVALID_LAYOUT");
+            return nullptr;
+        }
+
+        // 今の pool から前へ進み、入る pool を探す。どれにも入らなければ pool を足す
+        while (m_currentPool < m_pools.size() && !Fits(m_pools[m_currentPool], *sharedLayout))
+        {
+            ++m_currentPool;
+        }
+        if (m_currentPool >= m_pools.size())
+        {
+            if (!AddPoolLocked(*sharedLayout))
+            {
+                ++m_state->Stats.Failures;
+                return nullptr;
+            }
+            m_currentPool = m_pools.size() - 1;
+            if (!Fits(m_pools[m_currentPool], *sharedLayout))
+            {
+                // デバイスに無い型（加速構造など）を求めるレイアウトは、足した pool にも入らない
+                ++m_state->Stats.Failures;
+                NORVES_LOG_ERROR("FrameResource", "FRAME_RESOURCE_DESCRIPTOR_UNSUPPORTED_LAYOUT");
+                return nullptr;
+            }
+        }
+
+        PoolEntry &pool = m_pools[m_currentPool];
+        vk::DescriptorSetLayout layoutHandle = sharedLayout->GetLayout()->GetVkDescriptorSetLayout();
+        vk::DescriptorSetAllocateInfo allocInfo;
+        allocInfo.descriptorPool = pool.Pool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &layoutHandle;
+        vk::DescriptorSet descriptorSet;
+        const vk::Result result = m_device->GetVkDevice().allocateDescriptorSets(&allocInfo, &descriptorSet);
+        if (result != vk::Result::eSuccess)
+        {
+            // 残りは数えているので本来は起きない。この pool は使い切ったとして次へ進む
+            pool.RemainingSets = 0;
+            ++m_state->Stats.Failures;
+            NORVES_LOG_ERROR("FrameResource",
+                             "FRAME_RESOURCE_DESCRIPTOR_ALLOCATE_FAILED result=%d pool=%llu",
+                             static_cast<int32_t>(result),
+                             static_cast<unsigned long long>(m_currentPool));
+            return nullptr;
+        }
+        --pool.RemainingSets;
+        for (uint32_t typeIndex = 0; typeIndex < FrameDescriptorPoolTypeCount; ++typeIndex)
+        {
+            pool.Remaining[typeIndex] -= sharedLayout->GetRequiredCount(static_cast<FrameDescriptorPoolType>(typeIndex));
+        }
+
+        auto descriptorSetObject = MakeShared<VulkanDescriptorSet>(
+            m_device, sharedLayout->GetLayout(), descriptorSet, m_state, m_state->Epoch.Load());
+        ++m_state->Stats.Allocations;
+#if NORVES_BUILD_DEVELOPMENT
+        m_state->Stats.AllocateNanoseconds += ReadDescriptorTimerNanoseconds() - startNanoseconds;
+#endif
+        return StaticPointerCast<IDescriptorSet>(descriptorSetObject);
+    }
+
+    void VulkanFrameDescriptorAllocator::Reset()
+    {
+        Thread::ScopedLock lock(m_state->Mutex);
+        // 前に借りたセットを使えなくしてから、pool をまとめて戻す
+        m_state->Epoch.FetchAdd(1);
+        for (PoolEntry &pool : m_pools)
+        {
+            m_device->GetVkDevice().resetDescriptorPool(pool.Pool, {});
+            pool.RemainingSets = pool.MaxSets;
+            for (uint32_t typeIndex = 0; typeIndex < FrameDescriptorPoolTypeCount; ++typeIndex)
+            {
+                pool.Remaining[typeIndex] = pool.Capacity[typeIndex];
+            }
+        }
+        m_currentPool = 0;
+        m_state->Stats = {};
+    }
+
+    void VulkanFrameDescriptorAllocator::ReleasePoolsLocked()
+    {
+        m_state->Epoch.FetchAdd(1);
+        for (PoolEntry &pool : m_pools)
+        {
+            // 前の提出が使っているかもしれないので、提出の完了まで破棄を遅らせる（確保したセットも一緒に戻る）
+            m_device->DeferDestroy(pool.Pool);
+        }
+        m_pools.clear();
+        m_currentPool = 0;
+        m_state->Stats = {};
+    }
+
+    void VulkanFrameDescriptorAllocator::Release()
+    {
+        if (!m_device || !m_state)
+        {
+            return;
+        }
+        Thread::ScopedLock lock(m_state->Mutex);
+        ReleasePoolsLocked();
+    }
+
+    FrameDescriptorStats VulkanFrameDescriptorAllocator::GetFrameStats() const
+    {
+        Thread::ScopedLock lock(m_state->Mutex);
+        return m_state->Stats;
+    }
+
+    uint32_t VulkanFrameDescriptorAllocator::GetPoolCount() const
+    {
+        Thread::ScopedLock lock(m_state->Mutex);
+        return static_cast<uint32_t>(m_pools.size());
+    }
+
+    uint64_t VulkanFrameDescriptorAllocator::GetTotalPoolsAdded() const
+    {
+        Thread::ScopedLock lock(m_state->Mutex);
+        return m_totalPoolsAdded;
     }
 
 } // namespace NorvesLib::RHI::Vulkan

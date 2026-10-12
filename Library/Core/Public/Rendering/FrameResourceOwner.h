@@ -3,6 +3,8 @@
 #include "Container/Containers.h"
 #include "Logging/LogMacros.h"
 #include "Rendering/FrameUploadArena.h"
+#include "RHI/IDescriptorSet.h"
+#include "RHI/IDevice.h"
 #include "Thread/Atomic.h"
 
 #include <algorithm>
@@ -59,6 +61,21 @@ namespace NorvesLib::Core::Rendering
         }
         return "Unknown";
     }
+
+    /**
+     * @brief フレームの持ち主から借りた記述子セット
+     *
+     * Set は共有のレイアウトから借りたセットで、借りたフレームの回収まで使える。Bind* と Update で中身を書き、
+     * SetDescriptorSet に渡す。回収の後は Set が IsExpired() になり、書き込みも束縛も拒まれる。
+     */
+    struct FrameDescriptorAllocation
+    {
+        RHI::DescriptorSetPtr Set;
+        uint32_t GenerationSlotIndex = FrameResourceGeneration::InvalidSlot;
+        uint64_t Generation = 0;
+
+        bool IsValid() const { return static_cast<bool>(Set); }
+    };
 
     /**
      * @brief フレームの持ち主から借りる口（リング・記述子の pool など）が実装する回収の受け口
@@ -219,6 +236,54 @@ namespace NorvesLib::Core::Rendering
         /** @brief CPU から書ける領域（統計と検査のため） */
         const FrameUploadArena& GetUploadArena() const { return m_Upload; }
 
+        /**
+         * @brief 記述子セットを 1 つ借りる（記録中だけ）
+         *
+         * layout は IDevice::GetOrCreateDescriptorSetLayout で引いた共有のレイアウト。レイアウト・pool・
+         * パイプラインレイアウトは作らず、このスロットの pool から確保するだけなので毎フレーム呼んでよい。
+         * 戻るのはこのフレームの回収で、それまでは同じフレームの中で何度でも書き換え・束縛できる。
+         * 記録中でない・pool を設定していない・借りられなかったときは IsValid() が false を返す。
+         * 並列の記録のワーカーから呼んでよい（pool は排他の下で確保する）。
+         */
+        FrameDescriptorAllocation AllocateDescriptorSet(const RHI::DescriptorSetLayoutPtr& layout)
+        {
+            FrameDescriptorAllocation allocation;
+            if (!IsRecording() || !m_Descriptors)
+            {
+                const uint64_t rejectCount = m_DescriptorOutsideRecordingCount.FetchAdd(1) + 1;
+                if (rejectCount <= 8 || (rejectCount & (rejectCount - 1)) == 0)
+                {
+                    NORVES_LOG_ERROR("FrameResource",
+                                     "FRAME_RESOURCE_DESCRIPTOR_NOT_RECORDING slot=%u state=%s configured=%d rejects=%llu",
+                                     m_SlotIndex, GetFrameResourceOwnerStateName(m_State), m_Descriptors ? 1 : 0,
+                                     static_cast<unsigned long long>(rejectCount));
+                }
+                return allocation;
+            }
+            allocation.Set = m_Descriptors->Allocate(layout);
+            if (allocation.Set)
+            {
+                allocation.GenerationSlotIndex = m_SlotIndex;
+                allocation.Generation = m_Generation;
+            }
+            return allocation;
+        }
+
+        /** @brief 借りた記述子セットの世代（FrameResourceGeneration の形） */
+        static FrameResourceGeneration GetAllocationGeneration(const FrameDescriptorAllocation& allocation)
+        {
+            return {allocation.GenerationSlotIndex, allocation.Generation};
+        }
+
+        /** @brief 借りた記述子セットを使ってよいか確かめる（世代で確かめる ValidateBorrowed と同じ。開発ビルドだけ） */
+        bool ValidateBorrowed(const FrameDescriptorAllocation& allocation, const char* resourceName) const
+        {
+            return ValidateBorrowed(GetAllocationGeneration(allocation), resourceName);
+        }
+
+        /** @brief 記述子の pool（統計と検査のため。設定していなければ nullptr） */
+        const RHI::IFrameDescriptorAllocator* GetDescriptorAllocator() const { return m_Descriptors.get(); }
+
         /** @brief 回収した回数（回収の段を確かめる検査と統計のため） */
         uint64_t GetReclaimCount() const { return m_ReclaimCount; }
 
@@ -280,6 +345,11 @@ namespace NorvesLib::Core::Rendering
             }
             // GPU はこのフレームの切れ端を使い終えたので、領域を先頭へ戻す（ページは使い回す）
             m_Upload.Reset();
+            // 記述子の pool もまとめて戻す（pool は使い回す。前に借りたセットは使えなくなる）
+            if (m_Descriptors)
+            {
+                m_Descriptors->Reset();
+            }
             m_SubmissionSerial = 0;
             m_State = FrameResourceOwnerState::Idle;
             ++m_ReclaimCount;
@@ -292,8 +362,10 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_ReclaimCount = 0;
         mutable NorvesLib::Thread::Atomic<uint64_t> m_StaleRejectCount{0};
         NorvesLib::Thread::Atomic<uint64_t> m_UploadOutsideRecordingCount{0};
+        NorvesLib::Thread::Atomic<uint64_t> m_DescriptorOutsideRecordingCount{0};
         Container::VariableArray<IFrameResourceAllocator*> m_Allocators;
         FrameUploadArena m_Upload;
+        RHI::FrameDescriptorAllocatorPtr m_Descriptors;
     };
 
     /**
@@ -474,6 +546,101 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
+        /**
+         * @brief 全スロットに記述子の pool を作る（RenderThread。借りる前に 1 回）
+         * @param device pool を作るデバイス（nullptr なら pool を外す）
+         * @param capacity pool 1 つの容量
+         * @return 全スロットに pool を作れたら true
+         */
+        bool ConfigureDescriptors(RHI::IDevice* device,
+                                  const RHI::FrameDescriptorPoolCapacity& capacity = RHI::FrameDescriptorPoolCapacity{})
+        {
+            bool bAllCreated = device != nullptr;
+            for (FrameResourceOwner& owner : m_Owners)
+            {
+                if (owner.m_Descriptors)
+                {
+                    owner.m_Descriptors->Release();
+                }
+                owner.m_Descriptors = device ? device->CreateFrameDescriptorAllocator(capacity) : nullptr;
+                bAllCreated = bAllCreated && owner.m_Descriptors != nullptr;
+            }
+            m_bDescriptorsConfigured = bAllCreated;
+            return bAllCreated;
+        }
+
+        bool IsDescriptorsConfigured() const { return m_bDescriptorsConfigured; }
+
+        /** @brief 全スロットの記述子の pool を手放す（Reset の後、デバイスを手放す前に呼ぶ） */
+        void ReleaseDescriptorPools()
+        {
+            LogDescriptorStats("release");
+            for (FrameResourceOwner& owner : m_Owners)
+            {
+                if (owner.m_Descriptors)
+                {
+                    owner.m_Descriptors->Release();
+                    owner.m_Descriptors.reset();
+                }
+            }
+            m_bDescriptorsConfigured = false;
+        }
+
+        /** @brief 最後に記録を終えたフレーム（提出・中止）の記述子の統計 */
+        const RHI::FrameDescriptorStats& GetLastFrameDescriptorStats() const { return m_LastFrameDescriptorStats; }
+
+        /** @brief 全スロットで記述子の pool を足した回数の合計 */
+        uint64_t GetTotalDescriptorPoolsAdded() const
+        {
+            uint64_t total = 0;
+            for (const FrameResourceOwner& owner : m_Owners)
+            {
+                if (owner.m_Descriptors)
+                {
+                    total += owner.m_Descriptors->GetTotalPoolsAdded();
+                }
+            }
+            return total;
+        }
+
+        /**
+         * @brief 記述子の統計を 1 行でログに出す（開発ビルドだけ）
+         *
+         * 1 フレームの値は最後に記録を終えたフレームのもの。pool の数は全スロットの合計。
+         */
+        void LogDescriptorStats(const char* reason) const
+        {
+#if NORVES_BUILD_DEVELOPMENT
+            uint64_t poolCount = 0;
+            for (const FrameResourceOwner& owner : m_Owners)
+            {
+                if (owner.m_Descriptors)
+                {
+                    poolCount += owner.m_Descriptors->GetPoolCount();
+                }
+            }
+            NORVES_LOG_INFO("FrameResource",
+                            "FrameResource.Descriptor reason=%s frames=%llu FrameResource.Descriptor.Allocations=%llu "
+                            "FrameResource.Descriptor.Writes=%llu FrameResource.Descriptor.PoolsAdded=%llu "
+                            "FrameResource.Descriptor.Failures=%llu FrameResource.Descriptor.ExpiredRejects=%llu "
+                            "FrameResource.Descriptor.AllocateUs=%.1f FrameResource.Descriptor.WriteUs=%.1f "
+                            "FrameResource.Descriptor.TotalPoolsAdded=%llu FrameResource.Descriptor.Pools=%llu",
+                            reason ? reason : "(none)",
+                            static_cast<unsigned long long>(m_FinishedFrameCount),
+                            static_cast<unsigned long long>(m_LastFrameDescriptorStats.Allocations),
+                            static_cast<unsigned long long>(m_LastFrameDescriptorStats.Writes),
+                            static_cast<unsigned long long>(m_LastFrameDescriptorStats.PoolsAdded),
+                            static_cast<unsigned long long>(m_LastFrameDescriptorStats.Failures),
+                            static_cast<unsigned long long>(m_LastFrameDescriptorStats.ExpiredRejects),
+                            static_cast<double>(m_LastFrameDescriptorStats.AllocateNanoseconds) / 1000.0,
+                            static_cast<double>(m_LastFrameDescriptorStats.WriteNanoseconds) / 1000.0,
+                            static_cast<unsigned long long>(GetTotalDescriptorPoolsAdded()),
+                            static_cast<unsigned long long>(poolCount));
+#else
+            (void)reason;
+#endif
+        }
+
         /** @brief 最後に記録を終えたフレーム（提出・中止）の領域の統計 */
         const FrameUploadStats& GetLastFrameUploadStats() const { return m_LastFrameUploadStats; }
         /** @brief 1 フレームで借りたバイト数の最大 */
@@ -534,13 +701,24 @@ namespace NorvesLib::Core::Rendering
         {
             m_LastFrameUploadStats = owner.m_Upload.GetFrameStats();
             m_MaxFrameUploadBytes = std::max(m_MaxFrameUploadBytes, m_LastFrameUploadStats.Bytes);
+            m_LastFrameDescriptorStats =
+                owner.m_Descriptors ? owner.m_Descriptors->GetFrameStats() : RHI::FrameDescriptorStats{};
             ++m_FinishedFrameCount;
-            if (m_FinishedFrameCount == 1 || m_FinishedFrameCount % UploadStatsLogIntervalFrames == 0 ||
-                m_LastFrameUploadStats.PagesAdded != 0 || m_LastFrameUploadStats.Failures != 0)
+            const bool bPeriodic =
+                m_FinishedFrameCount == 1 || m_FinishedFrameCount % UploadStatsLogIntervalFrames == 0;
+            if (bPeriodic || m_LastFrameUploadStats.PagesAdded != 0 || m_LastFrameUploadStats.Failures != 0)
             {
                 LogUploadStats(m_LastFrameUploadStats.Failures != 0      ? "failure"
                                : m_LastFrameUploadStats.PagesAdded != 0 ? "pages_added"
                                                                         : "periodic");
+            }
+            const bool bDescriptorFailure =
+                m_LastFrameDescriptorStats.Failures != 0 || m_LastFrameDescriptorStats.ExpiredRejects != 0;
+            if (bPeriodic || bDescriptorFailure || m_LastFrameDescriptorStats.PoolsAdded != 0)
+            {
+                LogDescriptorStats(bDescriptorFailure                              ? "failure"
+                                   : m_LastFrameDescriptorStats.PoolsAdded != 0 ? "pools_added"
+                                                                                : "periodic");
             }
         }
 
@@ -552,7 +730,9 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_UnretiredBeginCount = 0;
         uint64_t m_SerialRestartCount = 0;
         bool m_bUploadConfigured = false;
+        bool m_bDescriptorsConfigured = false;
         FrameUploadStats m_LastFrameUploadStats;
+        RHI::FrameDescriptorStats m_LastFrameDescriptorStats;
         uint64_t m_MaxFrameUploadBytes = 0;
         uint64_t m_FinishedFrameCount = 0;
     };

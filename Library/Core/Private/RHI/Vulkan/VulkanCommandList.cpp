@@ -1350,6 +1350,20 @@ namespace NorvesLib::RHI::Vulkan
         {
             throw std::runtime_error("無効なディスクリプタセットです");
         }
+        if (vkDescSet->IsExpired())
+        {
+            // フレームごとの pool が回収した後のセットは、ハンドルが別のフレームのセットに使い回されている
+            static Thread::Atomic<uint64_t> s_expiredBindRejectCount{0};
+            const uint64_t rejectCount = s_expiredBindRejectCount.FetchAdd(1) + 1;
+            if (rejectCount <= 8 || (rejectCount & (rejectCount - 1)) == 0)
+            {
+                NORVES_LOG_ERROR("FrameResource",
+                                 "FRAME_RESOURCE_DESCRIPTOR_EXPIRED op=bind slot=%u rejects=%llu",
+                                 slot,
+                                 static_cast<unsigned long long>(rejectCount));
+            }
+            return;
+        }
 
         auto vkPipeline = DynamicPointerCast<VulkanPipeline>(m_currentPipeline);
         if (!vkPipeline)

@@ -3785,6 +3785,22 @@ namespace NorvesLib::Core::Rendering
                         static_cast<unsigned long long>(limits.StorageAlignment),
                         static_cast<unsigned long long>(limits.MaxConstantsSize),
                         static_cast<unsigned long long>(limits.MaxStorageSize));
+
+        // 記述子の pool も飛行中のスロットごとに作る（借りるのは共有のレイアウトから）
+        const RHI::FrameDescriptorPoolCapacity descriptorCapacity;
+        const bool bDescriptorsConfigured = m_FrameResourceOwners.ConfigureDescriptors(m_Device.get(), descriptorCapacity);
+        NORVES_LOG_INFO("FrameResource",
+                        "FRAME_RESOURCE_DESCRIPTOR_CONFIG configured=%d max_sets=%u uniform=%u sampled=%u sampler=%u "
+                        "storage_buffer=%u storage_image=%u combined=%u acceleration=%u",
+                        bDescriptorsConfigured ? 1 : 0,
+                        descriptorCapacity.MaxSets,
+                        descriptorCapacity.UniformBuffers,
+                        descriptorCapacity.SampledImages,
+                        descriptorCapacity.Samplers,
+                        descriptorCapacity.StorageBuffers,
+                        descriptorCapacity.StorageImages,
+                        descriptorCapacity.CombinedImageSamplers,
+                        descriptorCapacity.AccelerationStructures);
     }
 
     void RenderingCoordinator::AdvanceCompletedRenderFrameSerial(uint64_t completedSubmissionSerial)
@@ -3851,6 +3867,8 @@ namespace NorvesLib::Core::Rendering
         // 領域のページ（マップしたままのバッファ）をデバイスより先に手放す
         m_FrameResourceOwners.ReleaseUploadPages();
         m_FrameResourceOwners.ConfigureUpload(nullptr, FrameUploadArena::DefaultInitialPageBytes);
+        // 記述子の pool もデバイスより先に手放す
+        m_FrameResourceOwners.ReleaseDescriptorPools();
         m_FrameUploadPageSource.SetDevice(nullptr);
 
         // デバイス所有参照を解放する前に、レイトレーシングsceneの資源を破棄する

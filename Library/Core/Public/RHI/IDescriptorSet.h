@@ -138,6 +138,103 @@ namespace NorvesLib::RHI
          * バインド設定をGPUに反映する
          */
         virtual void Update() = 0;
+
+        /**
+         * @brief フレームごとの pool から借りたセットで、その pool が回収された後か
+         *
+         * 回収された後のセットは書き込みも束縛もできない（Update と SetDescriptorSet は拒む）。
+         * CreateDescriptorSet で作った専用のセットは常に false。
+         */
+        virtual bool IsExpired() const { return false; }
     };
+
+    /**
+     * @brief 共有のディスクリプタセットレイアウト
+     *
+     * IDevice::GetOrCreateDescriptorSetLayout が返す。同じ束縛の形（binding・型・ステージ・要素数の並び）には
+     * デバイスの中で 1 つだけ作り、デバイスが生きている間は使い回す。フレームごとの pool から借りるときに渡す。
+     */
+    class IDescriptorSetLayout
+    {
+    public:
+        virtual ~IDescriptorSetLayout() = default;
+
+        /** @brief 作ったときの束縛の形 */
+        virtual const DescriptorSetDesc& GetDesc() const = 0;
+    };
+
+    using DescriptorSetLayoutPtr = TSharedPtr<IDescriptorSetLayout>;
+
+    /**
+     * @brief フレームごとの記述子の pool 1 つの容量（型ごとの記述子の数と、セットの数）
+     *
+     * 足りなくなったら同じ容量の pool を足す。1 つのレイアウトがこの容量を超える型を持つときは、
+     * そのレイアウトが入る大きさの pool を足す。
+     */
+    struct FrameDescriptorPoolCapacity
+    {
+        uint32_t MaxSets = 256;
+        uint32_t UniformBuffers = 512;
+        uint32_t SampledImages = 512;
+        uint32_t Samplers = 256;
+        uint32_t StorageBuffers = 512;
+        uint32_t StorageImages = 256;
+        uint32_t CombinedImageSamplers = 1024;
+        uint32_t AccelerationStructures = 32;
+    };
+
+    /** @brief フレームごとの記述子の pool の統計（前の回収から今までの分） */
+    struct FrameDescriptorStats
+    {
+        /** 借りたセットの数 */
+        uint64_t Allocations = 0;
+        /** 借りたセットへ書き込んだ記述子の数（Update が書いた束縛・配列の要素の数） */
+        uint64_t Writes = 0;
+        /** pool を足した回数 */
+        uint64_t PoolsAdded = 0;
+        /** 借りられなかった回数（レイアウトが無効・pool を作れない） */
+        uint64_t Failures = 0;
+        /** 回収された後のセットへの書き込みを拒んだ回数 */
+        uint64_t ExpiredRejects = 0;
+        /** 借りにかかった CPU の時間（ナノ秒。開発ビルドだけ測る） */
+        uint64_t AllocateNanoseconds = 0;
+        /** 書き込み（Update）にかかった CPU の時間（ナノ秒。開発ビルドだけ測る） */
+        uint64_t WriteNanoseconds = 0;
+    };
+
+    /**
+     * @brief フレームごとにまとめた記述子の pool（飛行中のスロット 1 つ分）
+     *
+     * Allocate は共有のレイアウトからセットを 1 つ借りる（レイアウト・pool・パイプラインレイアウトは作らない）。
+     * pool が足りなければ pool を足す。Reset でこのフレームに借りたセットを全部まとめて戻す（pool は使い回す）。
+     * Reset の後、前に借りたセットは IsExpired() が true になり、書き込みも束縛もできない。
+     * Reset は GPU がこのフレームのセットを使い終えた後（フレームの持ち主の回収）にだけ呼ぶ。
+     * Allocate と借りたセットの Update は排他の下で行うので、並列の記録のワーカーから呼んでよい。
+     */
+    class IFrameDescriptorAllocator
+    {
+    public:
+        virtual ~IFrameDescriptorAllocator() = default;
+
+        /** @brief layout のセットを 1 つ借りる。借りられなければ nullptr */
+        virtual DescriptorSetPtr Allocate(const DescriptorSetLayoutPtr& layout) = 0;
+
+        /** @brief 借りたセットを全部戻す（pool は手放さずに使い回す） */
+        virtual void Reset() = 0;
+
+        /** @brief pool を全部手放す（デバイスを手放す前に呼ぶ。借りたセットも使えなくなる） */
+        virtual void Release() = 0;
+
+        /** @brief 前の Reset から今までの統計 */
+        virtual FrameDescriptorStats GetFrameStats() const = 0;
+
+        /** @brief 持っている pool の数 */
+        virtual uint32_t GetPoolCount() const = 0;
+
+        /** @brief 作ってから pool を足した回数の合計 */
+        virtual uint64_t GetTotalPoolsAdded() const = 0;
+    };
+
+    using FrameDescriptorAllocatorPtr = TSharedPtr<IFrameDescriptorAllocator>;
 
 } // namespace NorvesLib::RHI

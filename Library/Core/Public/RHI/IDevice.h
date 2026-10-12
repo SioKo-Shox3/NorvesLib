@@ -265,6 +265,29 @@ namespace NorvesLib::RHI
         virtual DescriptorSetPtr CreateDescriptorSet(const DescriptorSetDesc &desc) = 0;
 
         /**
+         * @brief 共有のディスクリプタセットレイアウトを引く（無ければ作る）
+         *
+         * 同じ束縛の形には 1 つだけ作り、デバイスが生きている間は使い回す。どのスレッドから呼んでもよい。
+         * @return レイアウト。未対応の描画バックエンドや作れない形では nullptr
+         */
+        virtual DescriptorSetLayoutPtr GetOrCreateDescriptorSetLayout(const DescriptorSetDesc &desc)
+        {
+            (void)desc;
+            return nullptr;
+        }
+
+        /**
+         * @brief フレームごとにまとめた記述子の pool を作る（フレームの持ち主が飛行中のスロットごとに 1 つ持つ）
+         * @param capacity pool 1 つの容量
+         * @return 未対応の描画バックエンドでは nullptr
+         */
+        virtual FrameDescriptorAllocatorPtr CreateFrameDescriptorAllocator(const FrameDescriptorPoolCapacity &capacity)
+        {
+            (void)capacity;
+            return nullptr;
+        }
+
+        /**
          * @brief シェーダーコンパイラを作成
          * @return 対応するRHI用シェーダーコンパイラ
          */

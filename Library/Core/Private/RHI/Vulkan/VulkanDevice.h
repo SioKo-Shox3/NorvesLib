@@ -43,6 +43,7 @@ namespace NorvesLib::RHI::Vulkan
     class VulkanDescriptorSet;
     class VulkanDescriptorSetLayout;
     class VulkanDescriptorPool;
+    class VulkanSharedDescriptorSetLayout;
     class VulkanGPUResourceAllocator;
 
     /**
@@ -107,6 +108,8 @@ namespace NorvesLib::RHI::Vulkan
         PipelinePtr CreateComputePipeline(const ComputePipelineDesc &desc) override;
         PipelinePtr CreateRayTracingPipeline(const RayTracingPipelineDesc& desc) override;
         DescriptorSetPtr CreateDescriptorSet(const DescriptorSetDesc &desc) override;
+        DescriptorSetLayoutPtr GetOrCreateDescriptorSetLayout(const DescriptorSetDesc &desc) override;
+        FrameDescriptorAllocatorPtr CreateFrameDescriptorAllocator(const FrameDescriptorPoolCapacity &capacity) override;
         ShaderCompilerPtr CreateShaderCompiler() override;
         ShaderCompilerPtr CreateSlangShaderCompiler() override;
         IGPUResourceAllocator* GetResourceAllocator() override;
@@ -347,6 +350,12 @@ namespace NorvesLib::RHI::Vulkan
         };
         VariableArray<SingleTimePoolEntry> m_singleTimePools;
         Thread::Mutex m_singleTimePoolMutex;
+
+        // 共有のディスクリプタセットレイアウト（束縛の形の並びのハッシュ → 同じハッシュの形の列）。
+        // m_sharedDescriptorLayoutMutex の下で読み書きし、デバイスの破棄の前に手放す
+        Thread::Mutex m_sharedDescriptorLayoutMutex;
+        UnorderedMap<uint64_t, VariableArray<TSharedPtr<VulkanSharedDescriptorSetLayout>>> m_sharedDescriptorLayouts;
+        void ReleaseSharedDescriptorLayouts() noexcept;
 
         // 提出の完了まで遅らせる破棄の列（m_deferredDestroyMutex の下で読み書きする）
         enum class DeferredDestroyKind : uint8_t

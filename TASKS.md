@@ -955,7 +955,7 @@
 - notes: 2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。既存の `DynamicBufferRing`・`InstanceBufferRing` の「Upload の回数で古い資源を残す」決まりを、この領域の寿命の判定に流用しない。危険地帯（RHI/Vulkan・資源の寿命）。
 
 ## SCN-ECS-FIF-DESCRIPTOR-BORROW: 記述子セットをフレームの持ち主から借りられるようにする
-- status: todo
+- status: done
 - done-when: 今の `CreateDescriptorSet` は呼ぶたびに layout と専用の pool を作り（`VulkanDevice.cpp` 2598 行付近）、pipeline layout まで作る（`VulkanDescriptorSet.cpp` 309 行付近）ので、毎フレーム呼ぶ形にはできない。RHI に、共有の layout（同じ束縛の形は 1 つ）と、フレームの持ち主ごとのまとめた pool（型ごとの容量。足りなければ pool を足す。回収でまとめて戻す）を作り、文脈から `AllocateDescriptorSet(layout)` で軽く借りられるようにする（名前は実装で決める）。借りたセットには世代を持たせ、借りたフレームの後では使えない（FRAME-OWNER の世代の検査）。既存の Execute の中の共有（`GBufferPass.cpp` 811 行付近の材質ごと）は保つ。フレームをまたぐ中身のキャッシュはこの項目では作らない。開発ビルドの統計に、1 フレームの借りた数・書き込んだ数・pool を足した回数・借りと書き込みの CPU の時間を出す（`FrameResource.Descriptor.*`）。検査を既存の Vulkan の試験の束 `RHITextureUpdateVulkanTest` に `FrameResourceDescriptor*` の名前で足す（新しい実行ファイルは足さない）: 共有の layout、pool を足す道、回収で戻ること、世代の拒否。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1`

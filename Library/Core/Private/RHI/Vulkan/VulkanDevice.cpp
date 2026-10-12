@@ -878,6 +878,9 @@ namespace NorvesLib::RHI::Vulkan
         }
         m_singleTimePools.clear();
 
+        // 共有のディスクリプタセットレイアウトを破棄の列へ渡す（WaitIdle の後なので使用中ではない）
+        ReleaseSharedDescriptorLayouts();
+
         // 遅らせた破棄の残りを空ける（WaitIdle の後なので使用中ではない）
         DrainDeferredDestroyQueue("DeviceDestroy");
 
@@ -2612,6 +2615,109 @@ namespace NorvesLib::RHI::Vulkan
             layout,
             pool);
         return StaticPointerCast<IDescriptorSet>(descriptorSet);
+    }
+
+    DescriptorSetLayoutPtr VulkanDevice::GetOrCreateDescriptorSetLayout(const DescriptorSetDesc &desc)
+    {
+        {
+            VariableArray<DescriptorSetDesc> sets;
+            sets.push_back(desc);
+            if (!IsWithinDescriptorArrayLimits(sets))
+            {
+                NORVES_LOG_ERROR("VulkanDevice",
+                                 "Descriptor set arrays exceed the physical device descriptor limits");
+                return nullptr;
+            }
+        }
+        VariableArray<DescriptorBindingDesc> bindingDescs;
+        bindingDescs.reserve(desc.bindings.size());
+        for (const auto &binding : desc.bindings)
+        {
+            if (!IsSupportedDescriptorBindingCount(binding))
+            {
+                NORVES_LOG_ERROR("VulkanDevice",
+                                 "Descriptor binding %u has an unsupported array count %u",
+                                 binding.binding,
+                                 binding.count);
+                return nullptr;
+            }
+            DescriptorBindingDesc bindingDesc;
+            bindingDesc.binding = binding.binding;
+            bindingDesc.type = ConvertResourceBindType(binding.type);
+            bindingDesc.stages = binding.stages;
+            bindingDesc.count = binding.count;
+            bindingDescs.push_back(bindingDesc);
+        }
+
+        // 形の並びは binding の順にそろえる（並べる順だけが違う作成情報は同じレイアウトにする）。
+        // 型は Vulkan の記述子の型へ写した後の値で比べる（RWBuffer と StructuredBuffer は同じ形）
+        std::sort(bindingDescs.begin(), bindingDescs.end(),
+                  [](const DescriptorBindingDesc &lhs, const DescriptorBindingDesc &rhs)
+                  { return lhs.binding < rhs.binding; });
+        VariableArray<uint32_t> signature;
+        signature.reserve(bindingDescs.size() * 4);
+        uint64_t hash = 14695981039346656037ull;
+        for (const DescriptorBindingDesc &bindingDesc : bindingDescs)
+        {
+            const uint32_t values[4] = {bindingDesc.binding,
+                                        static_cast<uint32_t>(bindingDesc.type),
+                                        static_cast<uint32_t>(bindingDesc.stages),
+                                        bindingDesc.count};
+            for (const uint32_t value : values)
+            {
+                signature.push_back(value);
+                hash = (hash ^ value) * 1099511628211ull;
+            }
+        }
+
+        Thread::ScopedLock lock(m_sharedDescriptorLayoutMutex);
+        VariableArray<TSharedPtr<VulkanSharedDescriptorSetLayout>> &candidates = m_sharedDescriptorLayouts[hash];
+        for (const TSharedPtr<VulkanSharedDescriptorSetLayout> &candidate : candidates)
+        {
+            if (candidate->GetSignature() == signature)
+            {
+                return StaticPointerCast<IDescriptorSetLayout>(candidate);
+            }
+        }
+
+        TSharedPtr<VulkanDescriptorSetLayout> layout;
+        try
+        {
+            layout = MakeShared<VulkanDescriptorSetLayout>(
+                TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}),
+                bindingDescs);
+        }
+        catch (const std::exception &exception)
+        {
+            NORVES_LOG_ERROR("VulkanDevice", "共有のディスクリプタセットレイアウトを作れません: %s", exception.what());
+            return nullptr;
+        }
+        auto sharedLayout = MakeShared<VulkanSharedDescriptorSetLayout>(desc, layout, signature);
+        candidates.push_back(sharedLayout);
+        return StaticPointerCast<IDescriptorSetLayout>(sharedLayout);
+    }
+
+    FrameDescriptorAllocatorPtr VulkanDevice::CreateFrameDescriptorAllocator(const FrameDescriptorPoolCapacity &capacity)
+    {
+        auto allocator = MakeShared<VulkanFrameDescriptorAllocator>(
+            TSharedPtr<VulkanDevice>(this, [](VulkanDevice *) {}),
+            capacity);
+        return StaticPointerCast<IFrameDescriptorAllocator>(allocator);
+    }
+
+    void VulkanDevice::ReleaseSharedDescriptorLayouts() noexcept
+    {
+        Thread::ScopedLock lock(m_sharedDescriptorLayoutMutex);
+        for (auto &[hash, layouts] : m_sharedDescriptorLayouts)
+        {
+            (void)hash;
+            for (const TSharedPtr<VulkanSharedDescriptorSetLayout> &layout : layouts)
+            {
+                // まだ誰かが持っていても、デバイスより後にハンドルを触らないよう今ここで破棄の列へ渡す
+                layout->GetLayout()->ReleaseHandle();
+            }
+        }
+        m_sharedDescriptorLayouts.clear();
     }
 
     void VulkanDevice::WaitIdle()
