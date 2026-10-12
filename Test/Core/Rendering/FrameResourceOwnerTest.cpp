@@ -44,7 +44,7 @@ namespace
     CountingAllocator::Borrowed ExecuteFakePass(ViewRenderContext& context, CountingAllocator& allocator)
     {
         assert(context.FrameResources != nullptr);
-        return allocator.Borrow(*context.FrameResources);
+        return allocator.Borrow(context.FrameResources->GetOwner());
     }
 
     void TestFrameResourceSecondExecuteKeepsEarlierBorrows()

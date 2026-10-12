@@ -3336,3 +3336,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-DESCRIPTOR-BORROW-8.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=8E-06・within_limits=True、result=pass、EXIT=0。`default.Game.log` の ERROR は 0 件、画像は天球・地面・球・岩・家が以前どおり。
 - Next: SCN-ECS-FIF-PARALLEL-ALLOC。
 - Notes: 待機失敗の道で残すのは layout のハンドルだけ（デバイスと同じく意図した漏れ）。フレームの pool（`VulkanFrameDescriptorAllocator`）はデバイスより前に持ち主が手放す前提のまま（`RenderingCoordinator` の `ReleaseDescriptorPools`）。
+
+### SCN-ECS-FIF-PARALLEL-ALLOC（2026-10-12、反復 57・run 20261012-030203）
+
+- 借りる口を `FrameResourceLane`（`Rendering/FrameResourceOwner.h`）に分けた。口は CPU から書ける領域（`FrameUploadArena`）と記述子の pool を 1 組ずつ持ち、`AllocateUpload`・`AllocateUploadData`・`AllocateConstants`・`AllocateDescriptorSet`・`ValidateBorrowed` を持つ。持ち主（`FrameResourceOwner`）は口を継いで既定の口（番号 0）になり、区間の口は `AcquireLane`（RenderThread・記録中だけ。空いた口を使い回し、無ければ作る）と `ReleaseLane` で貸し借りする。口の裏のページと pool は持ち主に束ね、回収で全部の口を先頭へ戻し pool をまとめて戻す。回収の時点で返されていない口は `FRAME_RESOURCE_LANE_LEAKED` を出して返したものとして扱う。設定（`ConfigureUpload`・`ConfigureDescriptors`）・手放す処理・統計（`FrameResource.Upload`・`FrameResource.Descriptor` の 1 フレームの値とページ・pool の数）は全部の口を合計し、`FrameResource.Lanes`（作った区間の口の数）を足した。
+- `ViewRenderContext::FrameResources` を `FrameResourceLane*` にした（直列の記録は持ち主自身を指す）。RenderGraph は Parallel の区間の文脈を写すとき、区間ごとに持ち主から口を借りて `FrameResources` に入れ、ワーカーの記録の後（途中で抜けるときも）返す（`ParallelFrameResourceLaneLease`）。持ち主が無い・記録中でないときは写した口のまま。
+- ワーカーでページ・pool を足してよい条件を `FrameResourceLane` と `IRenderGraphPass.h` の準備段の約束に書いた（自分の区間の口だけ・デバイスでの作成だけで提出・待ち・バリアを伴わない・回収と手放すのは RenderThread）。
+- 検査: `RenderGraphLifetimeTest` の束に `FrameResourceParallelAllocTest` を足した（8 区間のワーカーが同時に 400 回ずつ借り、小さなページでワーカーが同時にページを足す。直列の口と同じフレームの 2 回の区間の全部の切れ端が重ならず中身が残る、口をまたいで同じページを使わない、作成が同時に重なる、返した口の使い回し、統計の合計、回収の後のページの使い回しと前の世代の拒否。記録中でないときは口を貸さない、返し忘れの数え方、スロットごとに口が別）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-PARALLEL-ALLOC-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-PARALLEL-ALLOC-2.txt`: Debug の `RenderGraphLifetimeTest` のビルド EXIT=0。
+  - `verify-SCN-ECS-FIF-PARALLEL-ALLOC-3.txt`: `ctest -R "^FrameResource"` で `FrameResourceDescriptorVulkanTest`・`FrameResourceOwnerTest`・`FrameResourceUploadArenaTest`・`FrameResourceParallelAllocTest` が Passed（4/4）、EXIT=0（ヘッダの変更を入れるため `RHITextureUpdateVulkanTest` も Debug で先にビルドした）。
+  - `verify-SCN-ECS-FIF-PARALLEL-ALLOC-4.txt`: `--render-parallel-record=on` の Debug の起動画面の撮影 result=pass、`vulkan_validation` は error_count=0・warning_count=0・vuid_count=0（`default.Validation.log` は 0 バイト）。ログに `RG_PARALLEL_RECORD_PASSES` と `FrameResource.Lanes=2`、ERROR・`FRAME_RESOURCE_LANE_LEAKED` は 0 件。画像は天球・地面・球・岩・家が以前どおり。
+  - `verify-SCN-ECS-FIF-PARALLEL-ALLOC-5.txt`: on の決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=9E-06・within_limits=True、result=pass、EXIT=0。
+- Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り）。
+- Notes: 排他つきの共有にはしていない（区間ごとに口を分けたので `FrameResource.LockWait` は測っていない。領域の排他は口ごとに残し、競らない）。区間の口の記述子の pool は口を作るときに `ConfigureDescriptors` と同じデバイス・容量で作る（pool そのものは最初の借りで作る）。まだ借りる側が無いので、Game では口の貸し借りだけが通り、借りは 0。口ごとの記述子の pool を複数のワーカーから同時に借りる検査（検証レイヤーのスレッドの検査つき）は書いていない（verify が名指ししていないため。GPU の束の `FrameResourceDescriptorVulkanTest` に足すのが候補）。

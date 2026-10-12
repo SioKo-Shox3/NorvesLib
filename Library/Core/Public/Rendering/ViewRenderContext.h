@@ -37,7 +37,7 @@ namespace NorvesLib::Core::Rendering
     class PresentationPass;
     class RenderGraph;
     class IRenderGraphRecordListSource;
-    class FrameResourceOwner;
+    class FrameResourceLane;
     struct RenderGraphExecutionResult;
     struct ShadowMapPassSettings;
     struct PointShadowSnapshot;
@@ -1037,13 +1037,16 @@ namespace NorvesLib::Core::Rendering
         uint64_t CompletedRenderFrameSerial = 0;
 
         /**
-         * @brief このフレームの持ち主（フレームごとに書くデータを借りる先。全ビュー・ビューポート・overlay で同じ）
+         * @brief このフレームの持ち主の借りる口（フレームごとに書くデータを借りる先）
          *
-         * 持ち主から借りた物は、飛行中のフレームの番号や提出の通し番号を扱わずに、このフレームの間だけ使える。
-         * 戻す時期（提出の完了・提出しなかったフレームの次の開始）は持ち主が決める。
+         * 直列の記録では持ち主自身（全ビュー・ビューポート・overlay で同じ）を指す。RenderGraph が Parallel の区間を
+         * 記録するときは、区間（コマンドリスト）ごとに同じ持ち主の別の口を入れた文脈を写して渡すので、パスは口の
+         * 違いを気にせずここから借りればよい（同時に記録するワーカーが 1 つのカーソル・pool を共有しない）。
+         * 借りた物は、飛行中のフレームの番号や提出の通し番号を扱わずに、このフレームの間だけ使える。
+         * 戻す時期（提出の完了・提出しなかったフレームの次の開始）は持ち主が決める（GetOwner() で引ける）。
          * nullptr は RenderingCoordinator を通さない手組みの文脈。
          */
-        FrameResourceOwner* FrameResources = nullptr;
+        FrameResourceLane* FrameResources = nullptr;
         /** @brief FrameUseRing に渡すフレームの通し番号（未設定なら FrameNumber + 1） */
         uint64_t ResolveRenderFrameSerial() const
         {

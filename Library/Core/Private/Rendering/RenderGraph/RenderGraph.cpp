@@ -2,6 +2,7 @@
 #include "Rendering/SceneRenderer.h"
 #include "Rendering/SequentialStatScope.h"
 #include "Rendering/ViewRenderContext.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
 #include "RHI/ITexture.h"
@@ -14,6 +15,47 @@ namespace NorvesLib::Core::Rendering
 {
     namespace
     {
+        // 並列の記録の区間に貸したフレームの持ち主の借りる口を、ワーカーの記録が終わった後（途中で抜けるときも）返す。
+        // 借りた切れ端・セットは返した後もこのフレームの回収まで有効のまま（戻すのは持ち主の回収だけ）。
+        class ParallelFrameResourceLaneLease
+        {
+        public:
+            explicit ParallelFrameResourceLaneLease(FrameResourceOwner* owner) : m_Owner(owner) {}
+
+            ~ParallelFrameResourceLaneLease()
+            {
+                Release();
+            }
+
+            ParallelFrameResourceLaneLease(const ParallelFrameResourceLaneLease&) = delete;
+            ParallelFrameResourceLaneLease& operator=(const ParallelFrameResourceLaneLease&) = delete;
+
+            // 区間 1 つ分の口を借りる。借りられなければ（持ち主が無い・記録中でない）fallback を返す
+            FrameResourceLane* Acquire(FrameResourceLane* fallback)
+            {
+                FrameResourceLane* const lane = m_Owner ? m_Owner->AcquireLane() : nullptr;
+                if (!lane)
+                {
+                    return fallback;
+                }
+                m_Lanes.push_back(lane);
+                return lane;
+            }
+
+            void Release()
+            {
+                for (FrameResourceLane* lane : m_Lanes)
+                {
+                    m_Owner->ReleaseLane(lane);
+                }
+                m_Lanes.clear();
+            }
+
+        private:
+            FrameResourceOwner* m_Owner = nullptr;
+            Container::VariableArray<FrameResourceLane*> m_Lanes;
+        };
+
         class ScopedPassGPUTimestamp
         {
         public:
@@ -2490,6 +2532,12 @@ namespace NorvesLib::Core::Rendering
             }
 
             Container::VariableArray<Container::VariableArray<FrameCommand>> segmentPendingCommands(parallelCount);
+            // 区間ごとの借りる口（領域のカーソルと記述子の pool）をフレームの持ち主から借り、写した文脈に入れる。
+            // 同時に記録するワーカーが 1 つのカーソル・pool を共有しない（Vulkan は同じ pool からの確保に外部の同期を求める）。
+            // 口の裏のページ・pool は持ち主に束ねられ、戻すのは持ち主の回収。口そのものはワーカーの記録の後に返す。
+            FrameResourceOwner* const frameOwner =
+                context.FrameResources ? &context.FrameResources->GetOwner() : nullptr;
+            ParallelFrameResourceLaneLease laneLease(frameOwner);
             Container::VariableArray<ViewRenderContext> segmentContexts;
             segmentContexts.reserve(parallelCount);
             for (uint32_t index = 0; index < parallelCount; ++index)
@@ -2497,6 +2545,7 @@ namespace NorvesLib::Core::Rendering
                 segmentContexts.push_back(context);
                 segmentContexts.back().CommandList = lists[index];
                 segmentContexts.back().PendingFrameCommands = &segmentPendingCommands[index];
+                segmentContexts.back().FrameResources = laneLease.Acquire(context.FrameResources);
             }
 
             Container::VariableArray<uint8_t> recorded(parallelCount, static_cast<uint8_t>(0));
@@ -2535,6 +2584,7 @@ namespace NorvesLib::Core::Rendering
 #endif
                     recorded[index] = 1;
                 });
+            laneLease.Release();
 
             // 区間の保留のコマンドは、RenderThread でその区間のリストの末尾（パスの後）へ流す。
             parallelStages.Begin("RG.ParallelFinish");

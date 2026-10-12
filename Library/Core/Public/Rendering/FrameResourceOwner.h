@@ -93,115 +93,68 @@ namespace NorvesLib::Core::Rendering
         virtual void OnFrameResourcesReclaimed(const FrameResourceGeneration& generation) = 0;
     };
 
+    class FrameResourceOwner;
+    class FrameResourceOwners;
+
     /**
-     * @brief 飛行中のスロット 1 つ分の「フレームの持ち主」
+     * @brief フレームの持ち主から借りる口（記録先のコマンドリスト 1 本分）
      *
-     * パスを書く人は、フレームごとに書くデータをこの持ち主から借りる（ViewRenderContext::FrameResources で引く）。
-     * 飛行中のフレームの番号・提出の通し番号・FrameUseRing を扱わなくてよい。寿命は FrameResourceOwners が決める:
-     * 開始（スワップチェーンの BeginFrame の成功の後）→ 提出（提出の通し番号を結び付ける）または中止 → 回収。
-     * 1 フレームの間（開始から提出・中止まで）は、全ビュー・ビューポート・overlay が同じ持ち主を使い、
-     * パスが何回 Execute しても位置は戻らない（戻すのは回収だけ）。
+     * CPU から書ける領域（FrameUploadArena）と記述子の pool を 1 組ずつ持つ。持ち主自身が既定の口（番号 0）で、
+     * RenderThread の直列の記録はこれから借りる。RenderGraph が Parallel の区間を記録するときは、区間（コマンドリスト）
+     * ごとに持ち主から別の口を借りて（FrameResourceOwner::AcquireLane）写した文脈の FrameResources に入れるので、
+     * 同時に記録するワーカーが 1 つのカーソル・pool を共有しない（Vulkan は同じ pool からの確保に外部の同期を求める）。
+     * 口の裏のページと pool は持ち主に束ねられ、戻す時期は持ち主の段（回収）だけで決まる。パスを書く人は口の違いを
+     * 気にせず、文脈の FrameResources から借りればよい。
      *
-     * 借りた物には GetGeneration() の世代を付け、使う前に ValidateBorrowed で確かめる。開発ビルドでは、
-     * 借りたフレームより後で使うと FRAME_RESOURCE_STALE を出して拒む。
-     * 状態を変えるのは RenderThread だけ。ValidateBorrowed は記録中に並列の記録のワーカーから呼んでもよい。
+     * ワーカーが記録中にページ・pool を足してよい条件（IRenderGraphPass::PrepareParallelRecord の約束と対になる）:
+     * - 足すのは自分の区間の口だけ。1 つの口を同時に使うのは、1 本のコマンドリストを記録する 1 つのワーカーだけ。
+     * - 足す処理はデバイスでの作成（vkCreateBuffer・vkAllocateMemory・vkMapMemory・vkCreateDescriptorPool）だけで、
+     *   キューへの提出・待ち・バリアを伴わない。これらはデバイスに外部の同期を求めないので、ワーカーから呼んでよい。
+     * - 足したページ・pool は持ち主が持ち続け、先頭へ戻す（回収）のも手放す（Release）のも RenderThread だけ。
+     * 提出・待ちを伴う準備（テクスチャの作成・転送、render pass・framebuffer・パイプラインの作り直し）は
+     * PrepareParallelRecord で済ませる。
      */
-    class FrameResourceOwner
+    class FrameResourceLane
     {
     public:
-        uint32_t GetSlotIndex() const { return m_SlotIndex; }
-        FrameResourceOwnerState GetState() const { return m_State; }
-        bool IsRecording() const { return m_State == FrameResourceOwnerState::Recording; }
+        FrameResourceLane(const FrameResourceLane&) = delete;
+        FrameResourceLane& operator=(const FrameResourceLane&) = delete;
+        ~FrameResourceLane() = default;
 
-        /** @brief 結び付けた提出の通し番号（提出する前は 0） */
-        uint64_t GetSubmissionSerial() const { return m_SubmissionSerial; }
+        /** @brief この口を束ねる持ち主 */
+        FrameResourceOwner& GetOwner() { return *m_Owner; }
+        const FrameResourceOwner& GetOwner() const { return *m_Owner; }
 
-        /** @brief 今のフレームの世代。借りた物に付ける（記録中でなければ未設定を返す） */
-        FrameResourceGeneration GetGeneration() const
-        {
-            if (!IsRecording())
-            {
-                return {};
-            }
-            return {m_SlotIndex, m_Generation};
-        }
+        /** @brief 持ち主の中の口の番号（0 は持ち主自身の既定の口） */
+        uint32_t GetLaneIndex() const { return m_LaneIndex; }
 
-        /** @brief generation がこの持ち主の記録中のフレームで借りた物か */
-        bool IsCurrent(const FrameResourceGeneration& generation) const
-        {
-            return IsRecording() && generation.SlotIndex == m_SlotIndex && generation.Generation == m_Generation;
-        }
+        uint32_t GetSlotIndex() const;
+        FrameResourceOwnerState GetState() const;
+        bool IsRecording() const;
+
+        /** @brief 今のフレームの世代。借りた物に付ける（記録中でなければ未設定を返す。持ち主の全部の口で同じ） */
+        FrameResourceGeneration GetGeneration() const;
+
+        /** @brief generation が持ち主の記録中のフレームで借りた物か */
+        bool IsCurrent(const FrameResourceGeneration& generation) const;
 
         /**
          * @brief 借りた物を使ってよいか確かめる
          *
          * 開発ビルドでは、記録中のフレームで借りた物でなければ FRAME_RESOURCE_STALE をログに出し、false を返す
-         * （呼び出し側は使わずに捨てる）。開発ビルドでなければ確かめずに true を返す。
+         * （呼び出し側は使わずに捨てる）。開発ビルドでなければ確かめずに true を返す。どの口で借りた物でも確かめられる。
          */
-        bool ValidateBorrowed(const FrameResourceGeneration& generation, const char* resourceName) const
-        {
-#if NORVES_BUILD_DEVELOPMENT
-            if (IsCurrent(generation))
-            {
-                return true;
-            }
-            const uint64_t rejectCount = m_StaleRejectCount.FetchAdd(1) + 1;
-            // 同じ誤りが毎フレーム続くとログが埋まるので、最初の 8 回と、その後は 2 の冪の回だけ出す
-            if (rejectCount <= 8 || (rejectCount & (rejectCount - 1)) == 0)
-            {
-                NORVES_LOG_ERROR("FrameResource",
-                                 "FRAME_RESOURCE_STALE resource=%s slot=%u borrowed_slot=%u borrowed_generation=%llu "
-                                 "current_generation=%llu state=%s rejects=%llu",
-                                 resourceName ? resourceName : "(unnamed)",
-                                 m_SlotIndex,
-                                 generation.SlotIndex,
-                                 static_cast<unsigned long long>(generation.Generation),
-                                 static_cast<unsigned long long>(m_Generation),
-                                 GetFrameResourceOwnerStateName(m_State),
-                                 static_cast<unsigned long long>(rejectCount));
-            }
-            return false;
-#else
-            (void)generation;
-            (void)resourceName;
-            return true;
-#endif
-        }
-
-        /** @brief ValidateBorrowed が拒んだ回数（開発ビルドだけ数える） */
-        uint64_t GetStaleRejectCount() const { return m_StaleRejectCount.Load(); }
+        bool ValidateBorrowed(const FrameResourceGeneration& generation, const char* resourceName) const;
 
         /**
          * @brief CPU が書いて GPU が読むデータの切れ端を借りる（中身は未初期化。記録中だけ）
          *
          * 返す Buffer + Offset + Size は usage の束縛にそのまま渡せる（整列と記述子の範囲の上限は領域が守る）。
          * CPUAddress へ書いたものは HOST_COHERENT なのでフラッシュせずに GPU から見える。戻るのはこのフレームの回収で、
-         * それまで同じフレームで何回借りても前の切れ端は動かず、上書きもされない。
+         * それまで同じフレームで何回借りても前の切れ端は動かず、上書きもされない（ほかの口の切れ端とも重ならない）。
          * 記録中でない・大きさの上限を超えた・ページを作れなかったときは IsValid() が false の切れ端を返す。
-         * 並列の記録のワーカーから呼んでよい。
          */
-        FrameUploadAllocation AllocateUpload(uint64_t size, FrameUploadUsage usage)
-        {
-            if (!IsRecording())
-            {
-                const uint64_t rejectCount = m_UploadOutsideRecordingCount.FetchAdd(1) + 1;
-                if (rejectCount <= 8 || (rejectCount & (rejectCount - 1)) == 0)
-                {
-                    NORVES_LOG_ERROR("FrameResource",
-                                     "FRAME_RESOURCE_UPLOAD_NOT_RECORDING slot=%u usage=%s bytes=%llu state=%s rejects=%llu",
-                                     m_SlotIndex, GetFrameUploadUsageName(usage),
-                                     static_cast<unsigned long long>(size), GetFrameResourceOwnerStateName(m_State),
-                                     static_cast<unsigned long long>(rejectCount));
-                }
-                FrameUploadAllocation allocation;
-                allocation.Usage = usage;
-                return allocation;
-            }
-            FrameUploadAllocation allocation = m_Upload.Allocate(size, usage);
-            allocation.GenerationSlotIndex = m_SlotIndex;
-            allocation.Generation = m_Generation;
-            return allocation;
-        }
+        FrameUploadAllocation AllocateUpload(uint64_t size, FrameUploadUsage usage);
 
         /** @brief 切れ端を借りて data の size バイトを書き込む（Buffer::Update は通さず、マップしたままのページへ写す） */
         FrameUploadAllocation AllocateUploadData(const void* data, uint64_t size, FrameUploadUsage usage)
@@ -233,41 +186,18 @@ namespace NorvesLib::Core::Rendering
             return ValidateBorrowed(GetAllocationGeneration(allocation), resourceName);
         }
 
-        /** @brief CPU から書ける領域（統計と検査のため） */
+        /** @brief この口の CPU から書ける領域（統計と検査のため） */
         const FrameUploadArena& GetUploadArena() const { return m_Upload; }
 
         /**
          * @brief 記述子セットを 1 つ借りる（記録中だけ）
          *
          * layout は IDevice::GetOrCreateDescriptorSetLayout で引いた共有のレイアウト。レイアウト・pool・
-         * パイプラインレイアウトは作らず、このスロットの pool から確保するだけなので毎フレーム呼んでよい。
+         * パイプラインレイアウトは作らず、この口の pool から確保するだけなので毎フレーム呼んでよい。
          * 戻るのはこのフレームの回収で、それまでは同じフレームの中で何度でも書き換え・束縛できる。
          * 記録中でない・pool を設定していない・借りられなかったときは IsValid() が false を返す。
-         * 並列の記録のワーカーから呼んでよい（pool は排他の下で確保する）。
          */
-        FrameDescriptorAllocation AllocateDescriptorSet(const RHI::DescriptorSetLayoutPtr& layout)
-        {
-            FrameDescriptorAllocation allocation;
-            if (!IsRecording() || !m_Descriptors)
-            {
-                const uint64_t rejectCount = m_DescriptorOutsideRecordingCount.FetchAdd(1) + 1;
-                if (rejectCount <= 8 || (rejectCount & (rejectCount - 1)) == 0)
-                {
-                    NORVES_LOG_ERROR("FrameResource",
-                                     "FRAME_RESOURCE_DESCRIPTOR_NOT_RECORDING slot=%u state=%s configured=%d rejects=%llu",
-                                     m_SlotIndex, GetFrameResourceOwnerStateName(m_State), m_Descriptors ? 1 : 0,
-                                     static_cast<unsigned long long>(rejectCount));
-                }
-                return allocation;
-            }
-            allocation.Set = m_Descriptors->Allocate(layout);
-            if (allocation.Set)
-            {
-                allocation.GenerationSlotIndex = m_SlotIndex;
-                allocation.Generation = m_Generation;
-            }
-            return allocation;
-        }
+        FrameDescriptorAllocation AllocateDescriptorSet(const RHI::DescriptorSetLayoutPtr& layout);
 
         /** @brief 借りた記述子セットの世代（FrameResourceGeneration の形） */
         static FrameResourceGeneration GetAllocationGeneration(const FrameDescriptorAllocation& allocation)
@@ -281,11 +211,241 @@ namespace NorvesLib::Core::Rendering
             return ValidateBorrowed(GetAllocationGeneration(allocation), resourceName);
         }
 
-        /** @brief 記述子の pool（統計と検査のため。設定していなければ nullptr） */
+        /** @brief この口の記述子の pool（統計と検査のため。設定していなければ nullptr） */
         const RHI::IFrameDescriptorAllocator* GetDescriptorAllocator() const { return m_Descriptors.get(); }
+
+    protected:
+        FrameResourceLane(FrameResourceOwner* owner, uint32_t laneIndex) : m_Owner(owner), m_LaneIndex(laneIndex) {}
+
+    private:
+        friend class FrameResourceOwner;
+        friend class FrameResourceOwners;
+
+        // 回収。この口の領域を先頭へ戻し、pool をまとめて戻す（RenderThread）
+        void ResetLane()
+        {
+            m_Upload.Reset();
+            if (m_Descriptors)
+            {
+                m_Descriptors->Reset();
+            }
+        }
+
+        // 記述子の pool を作り直す（device が nullptr なら外す。RenderThread）
+        void RecreateDescriptors(RHI::IDevice* device, const RHI::FrameDescriptorPoolCapacity& capacity)
+        {
+            ReleaseDescriptors();
+            m_Descriptors = device ? device->CreateFrameDescriptorAllocator(capacity) : nullptr;
+        }
+
+        void ReleaseDescriptors()
+        {
+            if (m_Descriptors)
+            {
+                m_Descriptors->Release();
+                m_Descriptors.reset();
+            }
+        }
+
+        FrameResourceOwner* m_Owner = nullptr;
+        uint32_t m_LaneIndex = 0;
+        NorvesLib::Thread::Atomic<uint64_t> m_UploadOutsideRecordingCount{0};
+        NorvesLib::Thread::Atomic<uint64_t> m_DescriptorOutsideRecordingCount{0};
+        FrameUploadArena m_Upload;
+        RHI::FrameDescriptorAllocatorPtr m_Descriptors;
+    };
+
+    /**
+     * @brief 飛行中のスロット 1 つ分の「フレームの持ち主」
+     *
+     * パスを書く人は、フレームごとに書くデータを持ち主の口から借りる（ViewRenderContext::FrameResources で引く）。
+     * 飛行中のフレームの番号・提出の通し番号・FrameUseRing を扱わなくてよい。寿命は FrameResourceOwners が決める:
+     * 開始（スワップチェーンの BeginFrame の成功の後）→ 提出（提出の通し番号を結び付ける）または中止 → 回収。
+     * 1 フレームの間（開始から提出・中止まで）は、全ビュー・ビューポート・overlay が同じ持ち主を使い、
+     * パスが何回 Execute しても位置は戻らない（戻すのは回収だけ）。
+     *
+     * 持ち主自身が既定の口で、並列の記録の区間には AcquireLane で別の口を貸す（FrameResourceLane を参照）。
+     * 借りた物には GetGeneration() の世代を付け、使う前に ValidateBorrowed で確かめる。開発ビルドでは、
+     * 借りたフレームより後で使うと FRAME_RESOURCE_STALE を出して拒む。
+     * 状態を変えるのは RenderThread だけ。借りること・ValidateBorrowed は記録中に並列の記録のワーカーから呼んでもよい。
+     */
+    class FrameResourceOwner : public FrameResourceLane
+    {
+    public:
+        FrameResourceOwner() : FrameResourceLane(this, 0) {}
+
+        /** @brief 結び付けた提出の通し番号（提出する前は 0） */
+        uint64_t GetSubmissionSerial() const { return m_SubmissionSerial; }
+
+        /** @brief ValidateBorrowed が拒んだ回数（開発ビルドだけ数える） */
+        uint64_t GetStaleRejectCount() const { return m_StaleRejectCount.Load(); }
 
         /** @brief 回収した回数（回収の段を確かめる検査と統計のため） */
         uint64_t GetReclaimCount() const { return m_ReclaimCount; }
+
+        /**
+         * @brief 並列の記録の区間 1 つ分の口を借りる（RenderThread。記録中だけ）
+         *
+         * 空いている口を返し、無ければ作る（ページ・pool は口から最初に借りたときに作る）。返した口は ReleaseLane まで
+         * ほかの区間に渡さない。同じフレームの中で返された口を次の区間が使っても、領域は前へ進むだけで pool も
+         * 戻さないので、前の区間の切れ端・セットとは重ならない。記録中でなければ nullptr（呼び出し側は既定の口を使う）。
+         */
+        FrameResourceLane* AcquireLane()
+        {
+            if (!IsRecording())
+            {
+                return nullptr;
+            }
+            for (size_t index = 0; index < m_Lanes.size(); ++index)
+            {
+                if (!m_LaneLeased[index])
+                {
+                    m_LaneLeased[index] = 1;
+                    return m_Lanes[index].get();
+                }
+            }
+            Container::TUniquePtr<FrameResourceLane> lane(
+                new FrameResourceLane(this, static_cast<uint32_t>(m_Lanes.size()) + 1));
+            lane->m_Upload.Configure(m_Upload.GetPageSource(), m_Upload.GetPageBytes());
+            lane->RecreateDescriptors(m_DescriptorDevice, m_DescriptorCapacity);
+            m_Lanes.push_back(std::move(lane));
+            m_LaneLeased.push_back(1);
+            return m_Lanes.back().get();
+        }
+
+        /**
+         * @brief 区間の口を返す（RenderThread。その口で記録したワーカーが終わった後）
+         *
+         * 借りた切れ端・セットは返した後もこのフレームの回収まで有効のまま（戻すのは回収だけ）。
+         */
+        void ReleaseLane(FrameResourceLane* lane)
+        {
+            if (!lane || lane == this)
+            {
+                return;
+            }
+            for (size_t index = 0; index < m_Lanes.size(); ++index)
+            {
+                if (m_Lanes[index].get() == lane)
+                {
+                    m_LaneLeased[index] = 0;
+                    return;
+                }
+            }
+        }
+
+        /** @brief 既定の口を除いた口の数（作った数。回収でも減らない） */
+        uint32_t GetLaneCount() const { return static_cast<uint32_t>(m_Lanes.size()); }
+
+        /** @brief 今、区間に貸している口の数 */
+        uint32_t GetLeasedLaneCount() const
+        {
+            uint32_t count = 0;
+            for (const uint8_t leased : m_LaneLeased)
+            {
+                count += leased ? 1u : 0u;
+            }
+            return count;
+        }
+
+        /** @brief 既定の口を除いた index 番目の口（検査と統計のため） */
+        const FrameResourceLane& GetLane(uint32_t index) const
+        {
+            assert(index < m_Lanes.size());
+            return *m_Lanes[index];
+        }
+
+        /** @brief 回収の時点で区間に貸したままだった口の数（区間の後始末の漏れ） */
+        uint64_t GetLeakedLaneLeaseCount() const { return m_LeakedLaneLeaseCount; }
+
+        /** @brief 今のフレームの領域の統計（全部の口の合計。RenderThread） */
+        FrameUploadStats GetFrameUploadStats() const
+        {
+            FrameUploadStats total = m_Upload.GetFrameStats();
+            for (const auto& lane : m_Lanes)
+            {
+                const FrameUploadStats stats = lane->m_Upload.GetFrameStats();
+                total.Allocations += stats.Allocations;
+                total.Bytes += stats.Bytes;
+                total.PagesAdded += stats.PagesAdded;
+                total.Failures += stats.Failures;
+            }
+            return total;
+        }
+
+        /** @brief 今のフレームの記述子の統計（全部の口の合計。RenderThread） */
+        RHI::FrameDescriptorStats GetFrameDescriptorStats() const
+        {
+            RHI::FrameDescriptorStats total = m_Descriptors ? m_Descriptors->GetFrameStats() : RHI::FrameDescriptorStats{};
+            for (const auto& lane : m_Lanes)
+            {
+                if (!lane->m_Descriptors)
+                {
+                    continue;
+                }
+                const RHI::FrameDescriptorStats stats = lane->m_Descriptors->GetFrameStats();
+                total.Allocations += stats.Allocations;
+                total.Writes += stats.Writes;
+                total.PoolsAdded += stats.PoolsAdded;
+                total.Failures += stats.Failures;
+                total.ExpiredRejects += stats.ExpiredRejects;
+                total.AllocateNanoseconds += stats.AllocateNanoseconds;
+                total.WriteNanoseconds += stats.WriteNanoseconds;
+            }
+            return total;
+        }
+
+        /** @brief 全部の口で作ったページの数・合計バイト数・足した回数 */
+        uint64_t GetUploadPageCount() const
+        {
+            uint64_t total = m_Upload.GetPageCount();
+            for (const auto& lane : m_Lanes)
+            {
+                total += lane->m_Upload.GetPageCount();
+            }
+            return total;
+        }
+
+        uint64_t GetUploadPageBytes() const
+        {
+            uint64_t total = m_Upload.GetTotalPageBytes();
+            for (const auto& lane : m_Lanes)
+            {
+                total += lane->m_Upload.GetTotalPageBytes();
+            }
+            return total;
+        }
+
+        uint64_t GetUploadTotalPagesAdded() const
+        {
+            uint64_t total = m_Upload.GetTotalPagesAdded();
+            for (const auto& lane : m_Lanes)
+            {
+                total += lane->m_Upload.GetTotalPagesAdded();
+            }
+            return total;
+        }
+
+        /** @brief 全部の口の記述子の pool の数・足した回数 */
+        uint64_t GetDescriptorPoolCount() const
+        {
+            uint64_t total = m_Descriptors ? m_Descriptors->GetPoolCount() : 0;
+            for (const auto& lane : m_Lanes)
+            {
+                total += lane->m_Descriptors ? lane->m_Descriptors->GetPoolCount() : 0;
+            }
+            return total;
+        }
+
+        uint64_t GetDescriptorTotalPoolsAdded() const
+        {
+            uint64_t total = m_Descriptors ? m_Descriptors->GetTotalPoolsAdded() : 0;
+            for (const auto& lane : m_Lanes)
+            {
+                total += lane->m_Descriptors ? lane->m_Descriptors->GetTotalPoolsAdded() : 0;
+            }
+            return total;
+        }
 
         /** @brief 借りる口を登録する。回収のたびに OnFrameResourcesReclaimed が呼ばれる（RenderThread） */
         void AttachAllocator(IFrameResourceAllocator* allocator)
@@ -307,6 +467,7 @@ namespace NorvesLib::Core::Rendering
         }
 
     private:
+        friend class FrameResourceLane;
         friend class FrameResourceOwners;
 
         void Begin(uint32_t slotIndex, uint64_t generation)
@@ -343,16 +504,68 @@ namespace NorvesLib::Core::Rendering
             {
                 allocator->OnFrameResourcesReclaimed(generation);
             }
-            // GPU はこのフレームの切れ端を使い終えたので、領域を先頭へ戻す（ページは使い回す）
-            m_Upload.Reset();
-            // 記述子の pool もまとめて戻す（pool は使い回す。前に借りたセットは使えなくなる）
-            if (m_Descriptors)
+            // GPU はこのフレームの切れ端・セットを使い終えたので、全部の口の領域を先頭へ戻し、pool をまとめて戻す
+            // （ページ・pool は使い回す。前に借りたセットは使えなくなる）
+            ResetLane();
+            for (size_t index = 0; index < m_Lanes.size(); ++index)
             {
-                m_Descriptors->Reset();
+                m_Lanes[index]->ResetLane();
+                if (m_LaneLeased[index])
+                {
+                    // 区間の後で返されなかった口。記録は終わっているので返したものとして扱う
+                    ++m_LeakedLaneLeaseCount;
+                    m_LaneLeased[index] = 0;
+                    NORVES_LOG_WARNING("FrameResource", "FRAME_RESOURCE_LANE_LEAKED slot=%u lane=%u",
+                                       m_SlotIndex, m_Lanes[index]->GetLaneIndex());
+                }
             }
             m_SubmissionSerial = 0;
             m_State = FrameResourceOwnerState::Idle;
             ++m_ReclaimCount;
+        }
+
+        // 全部の口の領域のページを作る口と大きさを設定する（RenderThread）
+        void ConfigureUploadLanes(IFrameUploadPageSource* pageSource, uint64_t pageBytes)
+        {
+            m_Upload.Configure(pageSource, pageBytes);
+            for (const auto& lane : m_Lanes)
+            {
+                lane->m_Upload.Configure(pageSource, pageBytes);
+            }
+        }
+
+        void ReleaseUploadLanes()
+        {
+            m_Upload.Release();
+            for (const auto& lane : m_Lanes)
+            {
+                lane->m_Upload.Release();
+            }
+        }
+
+        // 全部の口の記述子の pool を作り直す（device が nullptr なら外す）。全部作れたら true
+        bool ConfigureDescriptorLanes(RHI::IDevice* device, const RHI::FrameDescriptorPoolCapacity& capacity)
+        {
+            m_DescriptorDevice = device;
+            m_DescriptorCapacity = capacity;
+            RecreateDescriptors(device, capacity);
+            bool bAllCreated = m_Descriptors != nullptr;
+            for (const auto& lane : m_Lanes)
+            {
+                lane->RecreateDescriptors(device, capacity);
+                bAllCreated = bAllCreated && lane->m_Descriptors != nullptr;
+            }
+            return bAllCreated;
+        }
+
+        void ReleaseDescriptorLanes()
+        {
+            ReleaseDescriptors();
+            for (const auto& lane : m_Lanes)
+            {
+                lane->ReleaseDescriptors();
+            }
+            m_DescriptorDevice = nullptr;
         }
 
         uint32_t m_SlotIndex = FrameResourceGeneration::InvalidSlot;
@@ -360,13 +573,120 @@ namespace NorvesLib::Core::Rendering
         uint64_t m_SubmissionSerial = 0;
         FrameResourceOwnerState m_State = FrameResourceOwnerState::Idle;
         uint64_t m_ReclaimCount = 0;
+        uint64_t m_LeakedLaneLeaseCount = 0;
         mutable NorvesLib::Thread::Atomic<uint64_t> m_StaleRejectCount{0};
-        NorvesLib::Thread::Atomic<uint64_t> m_UploadOutsideRecordingCount{0};
-        NorvesLib::Thread::Atomic<uint64_t> m_DescriptorOutsideRecordingCount{0};
         Container::VariableArray<IFrameResourceAllocator*> m_Allocators;
-        FrameUploadArena m_Upload;
-        RHI::FrameDescriptorAllocatorPtr m_Descriptors;
+        // 区間に貸す口（既定の口を除く）。アドレスは回収・追加でも変わらない
+        Container::VariableArray<Container::TUniquePtr<FrameResourceLane>> m_Lanes;
+        Container::VariableArray<uint8_t> m_LaneLeased;
+        // 後から作る口の記述子の pool を作るデバイスと容量（ConfigureDescriptors で決める）
+        RHI::IDevice* m_DescriptorDevice = nullptr;
+        RHI::FrameDescriptorPoolCapacity m_DescriptorCapacity;
     };
+
+    inline uint32_t FrameResourceLane::GetSlotIndex() const { return m_Owner->m_SlotIndex; }
+
+    inline FrameResourceOwnerState FrameResourceLane::GetState() const { return m_Owner->m_State; }
+
+    inline bool FrameResourceLane::IsRecording() const
+    {
+        return m_Owner->m_State == FrameResourceOwnerState::Recording;
+    }
+
+    inline FrameResourceGeneration FrameResourceLane::GetGeneration() const
+    {
+        if (!IsRecording())
+        {
+            return {};
+        }
+        return {m_Owner->m_SlotIndex, m_Owner->m_Generation};
+    }
+
+    inline bool FrameResourceLane::IsCurrent(const FrameResourceGeneration& generation) const
+    {
+        return IsRecording() && generation.SlotIndex == m_Owner->m_SlotIndex &&
+               generation.Generation == m_Owner->m_Generation;
+    }
+
+    inline bool FrameResourceLane::ValidateBorrowed(const FrameResourceGeneration& generation,
+                                                    const char* resourceName) const
+    {
+#if NORVES_BUILD_DEVELOPMENT
+        if (IsCurrent(generation))
+        {
+            return true;
+        }
+        const uint64_t rejectCount = m_Owner->m_StaleRejectCount.FetchAdd(1) + 1;
+        // 同じ誤りが毎フレーム続くとログが埋まるので、最初の 8 回と、その後は 2 の冪の回だけ出す
+        if (rejectCount <= 8 || (rejectCount & (rejectCount - 1)) == 0)
+        {
+            NORVES_LOG_ERROR("FrameResource",
+                             "FRAME_RESOURCE_STALE resource=%s slot=%u borrowed_slot=%u borrowed_generation=%llu "
+                             "current_generation=%llu state=%s rejects=%llu",
+                             resourceName ? resourceName : "(unnamed)",
+                             m_Owner->m_SlotIndex,
+                             generation.SlotIndex,
+                             static_cast<unsigned long long>(generation.Generation),
+                             static_cast<unsigned long long>(m_Owner->m_Generation),
+                             GetFrameResourceOwnerStateName(m_Owner->m_State),
+                             static_cast<unsigned long long>(rejectCount));
+        }
+        return false;
+#else
+        (void)generation;
+        (void)resourceName;
+        return true;
+#endif
+    }
+
+    inline FrameUploadAllocation FrameResourceLane::AllocateUpload(uint64_t size, FrameUploadUsage usage)
+    {
+        if (!IsRecording())
+        {
+            const uint64_t rejectCount = m_UploadOutsideRecordingCount.FetchAdd(1) + 1;
+            if (rejectCount <= 8 || (rejectCount & (rejectCount - 1)) == 0)
+            {
+                NORVES_LOG_ERROR("FrameResource",
+                                 "FRAME_RESOURCE_UPLOAD_NOT_RECORDING slot=%u lane=%u usage=%s bytes=%llu state=%s "
+                                 "rejects=%llu",
+                                 GetSlotIndex(), m_LaneIndex, GetFrameUploadUsageName(usage),
+                                 static_cast<unsigned long long>(size), GetFrameResourceOwnerStateName(GetState()),
+                                 static_cast<unsigned long long>(rejectCount));
+            }
+            FrameUploadAllocation allocation;
+            allocation.Usage = usage;
+            return allocation;
+        }
+        FrameUploadAllocation allocation = m_Upload.Allocate(size, usage);
+        allocation.GenerationSlotIndex = m_Owner->m_SlotIndex;
+        allocation.Generation = m_Owner->m_Generation;
+        return allocation;
+    }
+
+    inline FrameDescriptorAllocation FrameResourceLane::AllocateDescriptorSet(const RHI::DescriptorSetLayoutPtr& layout)
+    {
+        FrameDescriptorAllocation allocation;
+        if (!IsRecording() || !m_Descriptors)
+        {
+            const uint64_t rejectCount = m_DescriptorOutsideRecordingCount.FetchAdd(1) + 1;
+            if (rejectCount <= 8 || (rejectCount & (rejectCount - 1)) == 0)
+            {
+                NORVES_LOG_ERROR("FrameResource",
+                                 "FRAME_RESOURCE_DESCRIPTOR_NOT_RECORDING slot=%u lane=%u state=%s configured=%d "
+                                 "rejects=%llu",
+                                 GetSlotIndex(), m_LaneIndex, GetFrameResourceOwnerStateName(GetState()),
+                                 m_Descriptors ? 1 : 0, static_cast<unsigned long long>(rejectCount));
+            }
+            return allocation;
+        }
+        allocation.Set = m_Descriptors->Allocate(layout);
+        if (allocation.Set)
+        {
+            allocation.GenerationSlotIndex = m_Owner->m_SlotIndex;
+            allocation.Generation = m_Owner->m_Generation;
+        }
+        return allocation;
+    }
 
     /**
      * @brief 飛行中のスロットごとのフレームの持ち主と、その寿命の 4 つの段
@@ -521,7 +841,7 @@ namespace NorvesLib::Core::Rendering
         uint64_t GetSerialRestartCount() const { return m_SerialRestartCount; }
 
         /**
-         * @brief CPU から書ける領域のページを作る口と、1 ページの大きさを全スロットに設定する（RenderThread。借りる前に）
+         * @brief CPU から書ける領域のページを作る口と、1 ページの大きさを全スロットの全部の口に設定する（RenderThread。借りる前に）
          * @param pageSource ページを作る口（持ち主より長く生きること。nullptr なら借りられない）
          * @param pageBytes 1 ページの大きさ（開発ビルドの --frame-arena-initial-kb で小さくできる）
          */
@@ -529,25 +849,25 @@ namespace NorvesLib::Core::Rendering
         {
             for (FrameResourceOwner& owner : m_Owners)
             {
-                owner.m_Upload.Configure(pageSource, pageBytes);
+                owner.ConfigureUploadLanes(pageSource, pageBytes);
             }
             m_bUploadConfigured = pageSource != nullptr;
         }
 
         bool IsUploadConfigured() const { return m_bUploadConfigured; }
 
-        /** @brief 全スロットの領域のページを手放す（Reset の後、デバイスを手放す前に呼ぶ） */
+        /** @brief 全スロットの全部の口の領域のページを手放す（Reset の後、デバイスを手放す前に呼ぶ） */
         void ReleaseUploadPages()
         {
             LogUploadStats("release");
             for (FrameResourceOwner& owner : m_Owners)
             {
-                owner.m_Upload.Release();
+                owner.ReleaseUploadLanes();
             }
         }
 
         /**
-         * @brief 全スロットに記述子の pool を作る（RenderThread。借りる前に 1 回）
+         * @brief 全スロットの全部の口に記述子の pool を作る（RenderThread。借りる前に 1 回。後から作る口も同じ容量で作る）
          * @param device pool を作るデバイス（nullptr なら pool を外す）
          * @param capacity pool 1 つの容量
          * @return 全スロットに pool を作れたら true
@@ -558,12 +878,7 @@ namespace NorvesLib::Core::Rendering
             bool bAllCreated = device != nullptr;
             for (FrameResourceOwner& owner : m_Owners)
             {
-                if (owner.m_Descriptors)
-                {
-                    owner.m_Descriptors->Release();
-                }
-                owner.m_Descriptors = device ? device->CreateFrameDescriptorAllocator(capacity) : nullptr;
-                bAllCreated = bAllCreated && owner.m_Descriptors != nullptr;
+                bAllCreated = owner.ConfigureDescriptorLanes(device, capacity) && bAllCreated;
             }
             m_bDescriptorsConfigured = bAllCreated;
             return bAllCreated;
@@ -571,22 +886,18 @@ namespace NorvesLib::Core::Rendering
 
         bool IsDescriptorsConfigured() const { return m_bDescriptorsConfigured; }
 
-        /** @brief 全スロットの記述子の pool を手放す（Reset の後、デバイスを手放す前に呼ぶ） */
+        /** @brief 全スロットの全部の口の記述子の pool を手放す（Reset の後、デバイスを手放す前に呼ぶ） */
         void ReleaseDescriptorPools()
         {
             LogDescriptorStats("release");
             for (FrameResourceOwner& owner : m_Owners)
             {
-                if (owner.m_Descriptors)
-                {
-                    owner.m_Descriptors->Release();
-                    owner.m_Descriptors.reset();
-                }
+                owner.ReleaseDescriptorLanes();
             }
             m_bDescriptorsConfigured = false;
         }
 
-        /** @brief 最後に記録を終えたフレーム（提出・中止）の記述子の統計 */
+        /** @brief 最後に記録を終えたフレーム（提出・中止）の記述子の統計（全部の口の合計） */
         const RHI::FrameDescriptorStats& GetLastFrameDescriptorStats() const { return m_LastFrameDescriptorStats; }
 
         /** @brief 全スロットで記述子の pool を足した回数の合計 */
@@ -595,10 +906,18 @@ namespace NorvesLib::Core::Rendering
             uint64_t total = 0;
             for (const FrameResourceOwner& owner : m_Owners)
             {
-                if (owner.m_Descriptors)
-                {
-                    total += owner.m_Descriptors->GetTotalPoolsAdded();
-                }
+                total += owner.GetDescriptorTotalPoolsAdded();
+            }
+            return total;
+        }
+
+        /** @brief 全スロットで作った区間の口の数の合計（既定の口を除く） */
+        uint64_t GetTotalLaneCount() const
+        {
+            uint64_t total = 0;
+            for (const FrameResourceOwner& owner : m_Owners)
+            {
+                total += owner.GetLaneCount();
             }
             return total;
         }
@@ -606,7 +925,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 記述子の統計を 1 行でログに出す（開発ビルドだけ）
          *
-         * 1 フレームの値は最後に記録を終えたフレームのもの。pool の数は全スロットの合計。
+         * 1 フレームの値は最後に記録を終えたフレームのもの。pool の数は全スロットの全部の口の合計。
          */
         void LogDescriptorStats(const char* reason) const
         {
@@ -614,10 +933,7 @@ namespace NorvesLib::Core::Rendering
             uint64_t poolCount = 0;
             for (const FrameResourceOwner& owner : m_Owners)
             {
-                if (owner.m_Descriptors)
-                {
-                    poolCount += owner.m_Descriptors->GetPoolCount();
-                }
+                poolCount += owner.GetDescriptorPoolCount();
             }
             NORVES_LOG_INFO("FrameResource",
                             "FrameResource.Descriptor reason=%s frames=%llu FrameResource.Descriptor.Allocations=%llu "
@@ -651,7 +967,7 @@ namespace NorvesLib::Core::Rendering
             uint64_t total = 0;
             for (const FrameResourceOwner& owner : m_Owners)
             {
-                total += owner.m_Upload.GetTotalPagesAdded();
+                total += owner.GetUploadTotalPagesAdded();
             }
             return total;
         }
@@ -659,7 +975,7 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief 領域の統計を 1 行でログに出す（開発ビルドだけ）
          *
-         * 1 フレームの値は最後に記録を終えたフレームのもの。ページの数・バイト数は全スロットの合計。
+         * 1 フレームの値は最後に記録を終えたフレームのもの。ページの数・バイト数・口の数は全スロットの全部の口の合計。
          */
         void LogUploadStats(const char* reason) const
         {
@@ -668,15 +984,15 @@ namespace NorvesLib::Core::Rendering
             uint64_t pageBytes = 0;
             for (const FrameResourceOwner& owner : m_Owners)
             {
-                pageCount += owner.m_Upload.GetPageCount();
-                pageBytes += owner.m_Upload.GetTotalPageBytes();
+                pageCount += owner.GetUploadPageCount();
+                pageBytes += owner.GetUploadPageBytes();
             }
             NORVES_LOG_INFO("FrameResource",
                             "FrameResource.Upload reason=%s frames=%llu FrameResource.Upload.Allocations=%llu "
                             "FrameResource.Upload.Bytes=%llu FrameResource.Upload.PagesAdded=%llu "
                             "FrameResource.Upload.Failures=%llu FrameResource.Upload.MaxFrameBytes=%llu "
                             "FrameResource.Upload.TotalPagesAdded=%llu FrameResource.Upload.Pages=%llu "
-                            "FrameResource.Upload.PageBytes=%llu",
+                            "FrameResource.Upload.PageBytes=%llu FrameResource.Lanes=%llu",
                             reason ? reason : "(none)",
                             static_cast<unsigned long long>(m_FinishedFrameCount),
                             static_cast<unsigned long long>(m_LastFrameUploadStats.Allocations),
@@ -686,7 +1002,8 @@ namespace NorvesLib::Core::Rendering
                             static_cast<unsigned long long>(m_MaxFrameUploadBytes),
                             static_cast<unsigned long long>(GetTotalUploadPagesAdded()),
                             static_cast<unsigned long long>(pageCount),
-                            static_cast<unsigned long long>(pageBytes));
+                            static_cast<unsigned long long>(pageBytes),
+                            static_cast<unsigned long long>(GetTotalLaneCount()));
 #else
             (void)reason;
 #endif
@@ -696,13 +1013,12 @@ namespace NorvesLib::Core::Rendering
         /** @brief 統計をログへ出す間隔（記録を終えたフレームの数） */
         static constexpr uint64_t UploadStatsLogIntervalFrames = 600;
 
-        // 記録を終える（提出・中止）ときに、そのフレームの領域の統計を残す
+        // 記録を終える（提出・中止）ときに、そのフレームの領域の統計（全部の口の合計）を残す
         void FinishRecording(const FrameResourceOwner& owner)
         {
-            m_LastFrameUploadStats = owner.m_Upload.GetFrameStats();
+            m_LastFrameUploadStats = owner.GetFrameUploadStats();
             m_MaxFrameUploadBytes = std::max(m_MaxFrameUploadBytes, m_LastFrameUploadStats.Bytes);
-            m_LastFrameDescriptorStats =
-                owner.m_Descriptors ? owner.m_Descriptors->GetFrameStats() : RHI::FrameDescriptorStats{};
+            m_LastFrameDescriptorStats = owner.GetFrameDescriptorStats();
             ++m_FinishedFrameCount;
             const bool bPeriodic =
                 m_FinishedFrameCount == 1 || m_FinishedFrameCount % UploadStatsLogIntervalFrames == 0;

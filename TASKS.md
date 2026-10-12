@@ -965,7 +965,7 @@
 - notes: 2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。危険地帯（RHI/Vulkan・資源の寿命）。
 
 ## SCN-ECS-FIF-PARALLEL-ALLOC: 並列の記録の区間ごとに、借りる口を分ける
-- status: todo
+- status: done
 - done-when: RenderGraph は Parallel の区間を記録するとき文脈を写し、記録先と保留のコマンドだけを差し替える（`RenderGraph.cpp` 2497 行付近）。写した文脈の借りる口（UPLOAD-ARENA の領域と DESCRIPTOR-BORROW の pool）が 1 つのカーソル・pool を共有すると競合する（Vulkan は同じ pool からの確保に外部の同期を求める）。区間ごと（コマンドリストごと）の借りる口を文脈を写すときに設定し、その裏のページと pool をフレームの持ち主に束ねる。ワーカーでページ・pool を足してよい条件を、`IRenderGraphPass.h` 36 行付近の準備段の約束と合わせて書く。区間をまたいで切れ端が重ならないことを、`RenderGraphLifetimeTest` の束の `FrameResource*` の検査（複数のスレッドから同時に借りる）で確かめる。`--render-parallel-record=on` の Debug の起動画面で検証レイヤーのエラーが 0、on の起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `cmake --build build --config Debug --target RenderGraphLifetimeTest -- /m:1`

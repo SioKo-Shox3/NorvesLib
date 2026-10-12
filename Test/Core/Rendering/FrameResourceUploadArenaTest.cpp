@@ -147,7 +147,7 @@ namespace
 
         ViewRenderContext context;
         context.FrameResources = owners.BeginFrame(0, 0);
-        FrameResourceOwner& owner = *context.FrameResources;
+        FrameResourceOwner& owner = context.FrameResources->GetOwner();
 
         // 端数の大きさを挟んで、次の切れ端の開始がその使い道の整列にそろうこと
         const FrameUploadAllocation vertex = owner.AllocateUpload(12, FrameUploadUsage::Vertex);

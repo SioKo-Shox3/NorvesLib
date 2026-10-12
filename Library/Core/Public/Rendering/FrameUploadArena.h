@@ -265,7 +265,8 @@ namespace NorvesLib::Core::Rendering
      * 1 フレームの間は前へ進むだけで、足りなければページを足す。既に返した切れ端は動かさず、上書きもしない
      * （ページは回収まで手放さず、カーソルは戻らない）。回収（Reset）で先頭へ戻り、ページは次のフレームで使い回す。
      * 寿命は持ち主（FrameResourceOwner）の段で決まり、Upload の回数などで古さを判定しない。
-     * Allocate は並列の記録のワーカーから同時に呼んでよい（排他で守る）。Reset・Release は RenderThread だけ。
+     * 並列の記録では区間ごとに別の領域（FrameResourceLane の口）を使うので、ふつうは 1 つの領域を同時に使うのは
+     * 1 つのスレッドだけ。それでも Allocate は排他の下で行うので、同時に呼んでも壊れない。Reset・Release は RenderThread だけ。
      */
     class FrameUploadArena
     {
@@ -296,6 +297,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         bool IsConfigured() const { return m_PageSource != nullptr; }
+        IFrameUploadPageSource* GetPageSource() const { return m_PageSource; }
         uint64_t GetPageBytes() const { return m_PageBytes; }
         const FrameUploadLimits& GetLimits() const { return m_Limits; }
 
