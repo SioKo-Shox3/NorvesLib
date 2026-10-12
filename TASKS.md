@@ -1018,13 +1018,6 @@
 - paths: Test/Core/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が SCN-FIX-RENDER-TESTS-FAILING を 2 つに分けた。作業ツリーでほかのコミットへ切り替えない（`git checkout <rev>`・`--detach`・`git switch`・`git bisect`・`git stash`・ファイルを古い版で上書きする `git checkout <rev> -- <path>` を使わない。2026-10-12 の反復 66 は古いコミットへ切り替えたまま壁時計で止められ、次の反復が古い TASKS.md で動いた）。古い版は `git show <rev>:<path>`・`git log -p`・`git diff <a> <b>` で読み、ビルドして比べることはしない。
 
-## SCN-FIX-RENDERGRAPH-COMPILE-TEST: RenderGraphCompileTest の実装の写しの検査を消して通す
-- status: todo
-- done-when: Debug の `RenderGraphCompileTest` は前から落ちている。落ちている検査（VisibilityRasterScene の検査・光源の配列の検査など）は、dispatch の数・render pass の数・呼び出しの並び・バイト数のような実装の写しで、正しい変更のたびに壊れ、画像の比較・検証レイヤー・評価者のコード読みで見つからない不具合を捕まえていない（ユーザーの方針: 意味の無い試験は足さない・直さない）。期待値を書き直さず、こうした実装の写しの検査（関数ごと）を消す。契約を確かめる検査（依存の順・資源の寿命・バリアの状態など、純粋な論理で画像に出にくいもの）は残す。残した検査に必要な分だけ、偽デバイスを今の借りる仕組みに合わせる。消した検査の名前と理由を PROGRESS に書く。Debug で pass。
-- verify: `cmake --build build --config Debug --target RenderGraphCompileTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "^RenderGraphCompileTest$" --no-tests=error --output-on-failure --timeout 180`
-- paths: Test/Core/Rendering, Library/Core/Private/Rendering, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 親が SCN-FIX-RENDER-TESTS-FAILING を 2 つに分けた。作業ツリーでほかのコミットへ切り替えない（`git checkout <rev>`・`--detach`・`git switch`・`git bisect`・`git stash`・ファイルを古い版で上書きする `git checkout <rev> -- <path>` を使わない。2026-10-12 の反復 66 は古いコミットへ切り替えたまま壁時計で止められ、次の反復が古い TASKS.md で動いた）。古い版は `git show <rev>:<path>`・`git log -p`・`git diff <a> <b>` で読み、ビルドして比べることはしない。 2026-10-13 親: 反復 2（run 20261013-010750）は期待値を書き直していて行末も書き換えたので止め、途中の保存を戻した（7bd9519a）。直し方を「実装の写しは消す」に変えた。
 ## SCN-ECS-FIF-POST-A: TAA・Bloom・ToneMapping・SSAO・MotionBlur のフレームごとのデータを借りる形へ移す
 - status: todo
 - done-when: 次のパスは、メンバの定数バッファ 1 つと記述子セット 1 組を Execute のたびに `Update` で書き換える。毎フレーム書く定数と記述子をフレームの持ち主から借りる形へ移す: `TemporalAAPass`（`m_ParamsBuffer`・`m_ResolveDescriptorSet`・`m_CopyDescriptorSet`）、`BloomPass`（`m_ParamsBuffer`・`m_BloomDescriptorSet`・ミップごとの Down/Up の定数と記述子）、`ToneMappingPass`（`m_ParamsBuffer`・`m_ToneMappingDescriptorSet`）、`SSAOPass`（SSAO と Blur の定数と記述子）、`MotionBlurPass`（`m_ParamsBuffer` と 3 つの記述子）。 パスのコードから飛行中の番号・フレームごとの組（`FrameUseRing` を含む）の扱いを持たない。初期化で 1 回だけ書くもの（LUT・レンズの汚れ・ミップごとの作成時の定数）と GPU だけが使う資源（TAA の履歴・HiZ のピラミッド）はメンバのまま。対象のパスの `FRAME_RESOURCE_UNPROTECTED` が 0。起動画面の比較が pass。起動画面で無効のパスは、ビルドとコードの照合で確かめて PROGRESS に書く（撮影を増やさない）。
@@ -1117,34 +1110,28 @@
 - notes: 2026-10-12 親が SCN-ECS-FIX-RT-PARALLEL-DEFAULT（SCN-ECS-MEASURE-RT が足した。on と off の rt の p95 を揺れ込みで比べる）を置き換えた。rt の p95 の比べは揺れで決まり狙いが無いため。危険地帯（RenderThread）。 2026-10-12 親: 計測の見直し（ユーザーの指摘「節目に計測を入れても意味があるのかを考えるべき」。計測ごとに、問い・結果で変わる判断・測らずに分からないかの 3 点を書き、書けないものは置かない。Sol の批評を反映）。0.5 ms・0.2 ms の閾値は目標から来ていないので外した。
 ## SCN-MEGA-BVH-LEAF-SPLIT: BVH を持たないメッシュに、葉 8 クラスタ以下の階層の BVH を作る（準備）
 - status: todo
-- done-when: MegaGeometryResourceStore が、v1.0・手続き・実行時に作るメッシュ（BVH が無いもの）に、葉の上限 8 クラスタ（`CookedMeshFormat.h` 71 行付近）を守る多段の BVH を作る（空間で分けて葉を作り、上の段を組む）。作った BVH の検査（全クラスタが 1 回ずつ葉にある・節の境界が子を包む）を開発ビルドで行い、`MEGA_BVH_BUILD violations=0`。まだ描画には使わない。起動画面の比較と ctest が pass。
+- done-when: MegaGeometryResourceStore が、v1.0・手続き・実行時に作るメッシュ（BVH が無いもの）に、葉の上限 8 クラスタ（`CookedMeshFormat.h` 71 行付近）を守る多段の BVH を作る（空間で分けて葉を作り、上の段を組む）。作った BVH の検査（全クラスタが 1 回ずつ葉にある・節の境界が子を包む）を開発ビルドで行い、`MEGA_BVH_BUILD violations=0`。まだ描画には使わない。起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-BVH-LEAF-SPLIT`
-- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Library/Core/Private/Rendering/MegaGeometryResourceStore.cpp, Library/Core/Private/Rendering/MegaGeometryResourceStore.h, Library/Core/Public/Rendering/MegaGeometry, TASKS.md, PROGRESS.md
-- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
+- notes: 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-13 親: ユーザーの指示（邪魔な試験は実行から外す。コード上の確からしさを見るだけの試験は意味が薄い）で、既存の試験の束の ctest を verify から外した。
 
 ## SCN-MEGA-FLAT-TO-BVH: 全インスタンスを BVH の経路で描く（平らな経路は残すが使わない）
 - status: todo
-- done-when: BVH-LEAF-SPLIT で作った BVH を使い、全インスタンスを BVH の経路へ流す。平らな経路（`cluster_cull.comp`・FirstGroup の接頭和、`MegaGeometryPass.cpp` 1264 行付近）は `--mega-flat-path` で戻せるように残す。起動画面・旋回の比較と ctest が pass。
+- done-when: BVH-LEAF-SPLIT で作った BVH を使い、全インスタンスを BVH の経路へ流す。平らな経路（`cluster_cull.comp`・FirstGroup の接頭和、`MegaGeometryPass.cpp` 1264 行付近）は `--mega-flat-path` で戻せるように残す。起動画面・旋回の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FLAT-TO-BVH`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -OcclusionViews -OrbitDegreesPerSecond 30 -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-ORBIT-OFF -OutDir .harness/runs/startup-capture/SCN-MEGA-FLAT-TO-BVH-orbit`
-- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering/MegaGeometryPass.h, Assets/Shaders, TASKS.md, PROGRESS.md
-- notes: 起動画面の球・岩が通る経路。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
+- notes: 起動画面の球・岩が通る経路。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-13 親: ユーザーの指示（邪魔な試験は実行から外す。コード上の確からしさを見るだけの試験は意味が薄い）で、既存の試験の束の ctest を verify から外した。
 
 ## SCN-MEGA-BVH-INDIRECT: BVH の段を間接 dispatch・固定容量の列にする
 - status: todo
-- done-when: 段 1 以降を GPU のカウンタから書いた引数で dispatch する（`ICommandList.h` 382 行付近）。列は固定容量で、書く前に境界を検査し、件数は頭打ち、引数は min(count, cap)、溢れを `bvh_overflow` に数える。2 パス目用の入力は別のバッファに持つ（`MegaGeometryPass.cpp` 1979 行付近の各パスの頭の消去と分ける）。`bvh_queue_bytes` が本数によらず一定（ログ）。バナナの比較と ctest が pass。性能はこの項目では測らず、SCN-MEGA-ACCEPT-1M の受入れで判断する。
+- done-when: 段 1 以降を GPU のカウンタから書いた引数で dispatch する（`ICommandList.h` 382 行付近）。列は固定容量で、書く前に境界を検査し、件数は頭打ち、引数は min(count, cap)、溢れを `bvh_overflow` に数える。2 パス目用の入力は別のバッファに持つ（`MegaGeometryPass.cpp` 1979 行付近の各パスの頭の消去と分ける）。`bvh_queue_bytes` が本数によらず一定（ログ）。バナナの比較が pass。性能はこの項目では測らず、SCN-MEGA-ACCEPT-1M の受入れで判断する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-BVH-INDIRECT/det`
-- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, TASKS.md, PROGRESS.md
-- notes: 今は最悪値で dispatch（1983〜2009 行付近）、列は全節の総和（1351〜1373 行付近）。 2026-10-11 親: 今の BVH の列はインスタンスの数とメッシュから最大の容量を取るので、mega-stress 5万個で leaf_capacity 7,514 万・queue 1 億 6,517 万になり、VRAM（使用 14,975 MB / 予算 11,847 MB）を超えて RenderThread がバッファの割り当てに失敗して落ちる。この項目の固定容量の列で、5万個の mega-stress が落ちずに描けることを確かめる。 2026-10-11 親: バナナ 10万本 + mega-stress 5000 個の混在でも同じく VRAM を超える（SCN-MEGA-MIXED-LOAD の記録）。そのとき `VulkanBuffer.cpp` の割り当て失敗の例外が描画スレッドで捕まらず、Game が 0xC0000409 で落ちる。固定容量の列にしたうえで、列の割り当てに失敗したら落ちずにその描画を見送り、ERROR を出す形にする。10万本 + 5000 個の混在が落ちずに描けることも確かめる。
+- notes: 今は最悪値で dispatch（1983〜2009 行付近）、列は全節の総和（1351〜1373 行付近）。 2026-10-11 親: 今の BVH の列はインスタンスの数とメッシュから最大の容量を取るので、mega-stress 5万個で leaf_capacity 7,514 万・queue 1 億 6,517 万になり、VRAM（使用 14,975 MB / 予算 11,847 MB）を超えて RenderThread がバッファの割り当てに失敗して落ちる。この項目の固定容量の列で、5万個の mega-stress が落ちずに描けることを確かめる。 2026-10-11 親: バナナ 10万本 + mega-stress 5000 個の混在でも同じく VRAM を超える（SCN-MEGA-MIXED-LOAD の記録）。そのとき `VulkanBuffer.cpp` の割り当て失敗の例外が描画スレッドで捕まらず、Game が 0xC0000409 で落ちる。固定容量の列にしたうえで、列の割り当てに失敗したら落ちずにその描画を見送り、ERROR を出す形にする。10万本 + 5000 個の混在が落ちずに描けることも確かめる。 2026-10-13 親: ユーザーの指示（邪魔な試験は実行から外す。コード上の確からしさを見るだけの試験は意味が薄い）で、既存の試験の束の ctest を verify から外した。
 
 ## SCN-MEGA-INSTANCE-CULL: 範囲とインスタンスの専用のカリングを、BVH の段 0 の前に置く
 - status: todo
@@ -1191,13 +1178,11 @@
 
 ## SCN-MEGA-TWOPASS-CLUSTERS: 節とクラスタの 2 パス遮蔽も同じ形にし、見えたビットを消す
 - status: todo
-- done-when: 節・葉・クラスタの 1 パス目も前の HZB で判定し、隠れたものを 2 パス目の列へ回す（溢れは TWOPASS-INSTANCES と同じ規則）。見えたビットと `UpdateVisibilityLayout`（`MegaGeometryPass.cpp` 3194〜3372 行付近）を消し、ページ要求のフレームの印（`visibleWriteStamp` 相当）は残す。旋回・バナナの比較と ctest が pass。性能はこの項目では測らず、SCN-MEGA-ACCEPT-1M の受入れで判断する。
+- done-when: 節・葉・クラスタの 1 パス目も前の HZB で判定し、隠れたものを 2 パス目の列へ回す（溢れは TWOPASS-INSTANCES と同じ規則）。見えたビットと `UpdateVisibilityLayout`（`MegaGeometryPass.cpp` 3194〜3372 行付近）を消し、ページ要求のフレームの印（`visibleWriteStamp` 相当）は残す。旋回・バナナの比較が pass。性能はこの項目では測らず、SCN-MEGA-ACCEPT-1M の受入れで判断する。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GameArgs banana-count=10000 -CompareWith .harness/runs/scene-capture/SCN-MEGA-BASE -OutDir .harness/runs/scene-capture/SCN-MEGA-TWOPASS-CLUSTERS/det`
-- verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest MegaGeometryResourcesTest ViewportSnapshotDebugWiringTest -- /m:1`
-- verify: `ctest --test-dir build -C Debug -R "GeometryPageRequestVulkanTest|HiZOcclusionTestVulkanTest|MegaGeometryResourcesTest|MegaGeometryFrameCommandDebugModeTest" --no-tests=error --output-on-failure --timeout 180`
 - paths: Assets/Shaders, Library/Core/Private/Rendering/MegaGeometryPass.cpp, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 危険地帯。GeometryPageRequestVulkanTest は `cluster_cull.comp` を直接使うので定数の変更に追従させる。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
+- notes: 危険地帯。GeometryPageRequestVulkanTest は `cluster_cull.comp` を直接使うので定数の変更に追従させる。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-13 親: ユーザーの指示（邪魔な試験は実行から外す。コード上の確からしさを見るだけの試験は意味が薄い）で、既存の試験の束の ctest を verify から外した。
 
 ## SCN-MEGA-VSM-RANGES: VSM の組の判定を、受け手距離内の範囲とインスタンスに絞る
 - status: todo
@@ -1283,12 +1268,11 @@
 
 ## SCN-TERRAIN-GEN: 起伏のある地形の高さ場を作り、MegaGeometry に焼いて描く
 - status: todo
-- done-when: 共有の高さ場（seed と関数で決まる。Game が同じ関数で任意の (x,z) の高さと法線を引ける）を Library に足し、AssetCook の `--generate` で約2km四方・0.5〜1m 間隔の地形メッシュ（中央に前哨地の平らな盆地 約200m、周りに砂丘とメサ、外周に稜線。UV はワールドの XZ から）を NVMESH v1（クラスタ・LOD の階層）に焼く。`wasteland` シーン（この項目では地形・物理空・太陽・高さフォグだけ。材質は Poly Haven の砂 1 種でよい）に置き、名前付き視点 `overview`（盆地を見下ろし遠くの稜線まで）・`ground`（人の目の高さ）・`ridge`（稜線から盆地）を持たせる。撮影を開いて、地平線が平らな板でなく起伏がある・遠くの地形に LOD の切り替えの穴やクラックが無いことを確かめる。高さ場に CPU のテスト `TerrainHeightfieldTest`（同じ seed で同じ高さ・盆地が平ら・焼いたメッシュの頂点と関数の高さの一致）を既存の束へ足す。
+- done-when: 共有の高さ場（seed と関数で決まる。Game が同じ関数で任意の (x,z) の高さと法線を引ける）を Library に足し、AssetCook の `--generate` で約2km四方・0.5〜1m 間隔の地形メッシュ（中央に前哨地の平らな盆地 約200m、周りに砂丘とメサ、外周に稜線。UV はワールドの XZ から）を NVMESH v1（クラスタ・LOD の階層）に焼く。`wasteland` シーン（この項目では地形・物理空・太陽・高さフォグだけ。材質は Poly Haven の砂 1 種でよい）に置き、名前付き視点 `overview`（盆地を見下ろし遠くの稜線まで）・`ground`（人の目の高さ）・`ridge`（稜線から盆地）を持たせる。撮影を開いて、地平線が平らな板でなく起伏がある・遠くの地形に LOD の切り替えの穴やクラックが無いことを確かめる。
 - verify: `cmake --build build --config Debug --target Game -- /m:1`
-- verify: `ctest --test-dir build -C Debug --output-on-failure --no-tests=error -R "^TerrainHeightfieldTest$"`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene wasteland -RequireAssets -OutDir .harness/runs/scene-capture/SCN-TERRAIN-GEN`
 - paths: Library/Core/Public/Rendering, Library/Core/Private/Rendering, Library/Core/CMakeLists.txt, Tools/AssetCook, Assets/AssetSets, Game, Scripts, Test/Core/Rendering, Test/TestBundle, Test/Game/Bridge/CMakeLists.txt, TASKS.md, PROGRESS.md
-- notes: 危険地帯（アセットのクック）。手本は球の手続き生成（`Library/Core/Public/Rendering/MegaGeometry/ProceduralMegaSphere.h` 34・234 行付近）と `Assets/AssetSets/Rendering3DTestStartupModels.json` の `generate=displaced-sphere`。地形は1つのメッシュでも区画に分けてもよい（クラスタ単位で外される）。カメラの遠クリップは既定 1000 m（`CameraComponent.cpp` 320 行付近）なので、シーンで延ばす。
+- notes: 危険地帯（アセットのクック）。手本は球の手続き生成（`Library/Core/Public/Rendering/MegaGeometry/ProceduralMegaSphere.h` 34・234 行付近）と `Assets/AssetSets/Rendering3DTestStartupModels.json` の `generate=displaced-sphere`。地形は1つのメッシュでも区画に分けてもよい（クラスタ単位で外される）。カメラの遠クリップは既定 1000 m（`CameraComponent.cpp` 320 行付近）なので、シーンで延ばす。 2026-10-13 親: ユーザーの指示で、高さ場の CPU の試験の追加を外した（地形は撮影で見る）。
 
 ## SCN-TERRAIN-BLEND: 地形の材質を 3 層（砂・乾いた土・岩肌）の混ぜ合わせにする
 - status: todo
