@@ -2990,7 +2990,25 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 | `RG.Record.ShadowMapPass` | 0.40 | 0.50 |
 | `RG.Record.VirtualShadowMapPass` | 0.23 | 0.32 |
 | `RG.Record.VisibilityResolvePass` | 0.10 | 0.14 |
-| 残りの `RG.Record.*`（19 パス。各 0.03 以下）の median の和 | 0.09 | — |
+| `RG.Record.BloomPass` | 0.03 | 0.04 |
+| `RG.Record.AutoExposurePass` | 0.02 | 0.03 |
+| `RG.Record.MaterialTileClassifyPass` | 0.02 | 0.04 |
+| `RG.Record.SSAOPass` | 0.01 | 0.01 |
+| `RG.Record.SSRPass` | 0.01 | 0.01 |
+| `RG.Record.FXAAPass` | 0.00 | 0.01 |
+| `RG.Record.PresentationPass` | 0.00 | 0.01 |
+| `RG.Record.ToneMappingPass` | 0.00 | 0.01 |
+| `RG.Record.VignettePass` | 0.00 | 0.01 |
+| `RG.Record.DebugDrawPass` | 0.00 | 0.00 |
+| `RG.Record.DepthOfFieldPass` | 0.00 | 0.00 |
+| `RG.Record.ForwardPass` | 0.00 | 0.00 |
+| `RG.Record.GBufferPass` | 0.00 | 0.00 |
+| `RG.Record.MotionBlurPass` | 0.00 | 0.00 |
+| `RG.Record.NeuralMaterialDecodePass` | 0.00 | 0.00 |
+| `RG.Record.SkinningComputePass` | 0.00 | 0.00 |
+| `RG.Record.SkyAtmospherePass` | 0.00 | 0.00 |
+| `RG.Record.UpscalePass` | 0.00 | 0.00 |
+| `RG.Record.VolumetricsPass` | 0.00 | 0.00 |
 | 直下の median の和 | 11.59 | — |
 | （参考）フレームごとの直下の和 | 11.93 | 13.77 |
 | `RenderGraph.Execute` | 12.02 | 13.90 |
@@ -3003,3 +3021,10 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-RT-FRAME-SCOPES-3.txt`: `CHECK_CAPTURE_METRICS result=pass views=close`、EXIT=0（`RT.WaitFrameFence`・`RT.Submit`・`RT.Present` を要求）。
 - Next: SCN-ECS-FIX-LIGHTING-RECORD（反復 35 の Next の並びどおり）。
 - Notes: `RG.TraceRecord` の 1.2 ms（p95 2.6 ms）は計測そのものの費用で、区間 1 件の書き込みが平均 約 50 µs かかっている（ゲームスレッドが同じトレースへ 1 フレーム 0.2 ms の周期で書き続け、ミューテックスを競る）。以後の RenderThread の項目の判定で rt を比べるときは、記録の件数が変わると rt も動くことに注意する。描画 1 フレームごとの集計はまだ CaptureScene に無い（今回は使い捨ての集計で表を作った）。Release の構成のビルドは今回走らせていない（足した区間はすべて `NORVES_ENABLE_STATS` の中か、何もしない版を持つ）。
+
+### SCN-ECS-RT-FRAME-SCOPES の差し戻しへの対応（2026-10-12、反復 38・run 20261012-030203）
+- Done: 上の表の「残りの `RG.Record.*`（19 パス）」の 1 行を、19 区間の median・p95 の個別の行に置き換えた（値は `check-SCN-ECS-RT-FRAME-SCOPES-breakdown.txt` のまま。19 行の median の和は 0.09 で、直下の和 11.59 は変わらない）。コードは変えていないので撮影はやり直さず、反復 37 の撮影を使う。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RT-FRAME-SCOPES-4.txt`: RelWithDebInfo の Game のビルド EXIT=0（エラー・C の警告なし）。
+  - `verify-SCN-ECS-RT-FRAME-SCOPES-5.txt`: 反復 37 の撮影に対する `CHECK_CAPTURE_METRICS result=pass views=close`、EXIT=0（`RT.WaitFrameFence`・`RT.Submit`・`RT.Present` を要求）。
+- Next: SCN-ECS-FIX-LIGHTING-RECORD。
