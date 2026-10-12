@@ -513,7 +513,8 @@ set_tests_properties(VirtualShadowMapVulkanTest PROPERTIES
 )
 
 # 2 つのスレッドで記録した「書き込み」と「バリア → 読み出し」の 2 本を 1 回で提出し、読み出した値と、2 本に同じ提出番号・完了の通知が
-# 配られることを確かめる。1 本を中止すると束が提出されず残りも中止され、記録し直した中身だけが実行されることも確かめる。validation error 0 件。
+# 配られることを確かめる。1 本を中止すると束が提出されず残りも中止され、記録し直した中身だけが実行されることも確かめる。
+# 直接の提出でも中止したリストを拒否し、中止の後の Begin が止まらないことを確かめる。検証レイヤーのエラーは 0 件。
 add_test(NAME RHIParallelRecordVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIParallelRecordVulkanTest)
 set_tests_properties(RHIParallelRecordVulkanTest PROPERTIES
     LABELS "GPU;RenderingValidation"

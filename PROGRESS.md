@@ -2791,3 +2791,17 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: `FixedArray` の既定の構築（スタックに置く大きさ）は要素を初期化しない（`= {}` でも同じ）。新しい slot ごとの番号は値で埋める構築にした。同じ形の `m_DirectFrameSlotSubmissionSerials`（GPU タイムスタンプの直接の提出の番号）は初期化されないまま（このタスクの範囲の外なので直していない）。
 - Notes: RT-GRAPH の paths には RenderingCoordinator.cpp が無い。区間ごとのリストをグラフへ渡すには、`PrepareJobCommandLists` の数を区間の数にし、リストを ViewRenderContext へ載せる変更が Coordinator 側に要る。
 - Notes: 1 つのリストは 1 つの提出の窓口（スワップチェーンか、1 つの SubmitBatchAndWait の窓口）で使う前提（完了待ちの番号は窓口ごとの番号で比べる）。
+
+### SCN-ECS-RT-RHI-SUBMIT 差し戻しの修正（2026-10-12、反復 29・run 20261012-030203）
+
+- 差し戻し: 直接の提出の経路で、中止の後の `Begin()` がフェンスの待機で止まり、中止したリストの `Submit()` がキューへ提出された。
+- `VulkanCommandList`: フェンスのリセットを `Begin()` から `Submit()` の提出の直前（提出番号の確保の後、`vkQueueSubmit` の前）へ移した。記録だけして中止・未提出で終えてもフェンスは signaled のままなので、次の `Begin()` は待ち続けない。束の提出（`SubmitBatchAndWait`）は前から提出の直前でリセットしている。
+- `Submit()` は Aborted（コマンドバッファを初期状態へ戻した）と Pending（束で提出して完了待ち）のリストを例外で拒否する。それ以外の状態は今までどおり（既存の呼び出し元を変えない）。
+- テスト: `RHIParallelRecordVulkanTest` に直接の提出のケースを足した（`Begin → 記録 → End → AbortSubmission → Submit` が拒否され GPU で実行されない、その後の `Begin` が止まらずに記録し直した中身（白）が実行される）。CMake の説明の英語を日本語にした。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RT-RHI-SUBMIT-1.txt`: Debug の RHITextureUpdateVulkanTest のビルド build exit=0（エラー 0）。
+  - `-2.txt`: `RHIParallelRecordVulkanTest` Passed（ctest exit=0）。直接の実行（`check-SCN-ECS-RT-RHI-SUBMIT-direct-2.txt`）で `CASE two_threads_one_submit`・`CASE abort_then_rerecord`・`CASE direct_abort_then_rerecord rejected=1`・`VUID_COUNT=0`・`RESULT=PASS`。
+  - `-3.txt`: RelWithDebInfo の起動画面 default の決定論比較 pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 8E-06・最大差 1）。default.Game.log の ERROR 0。PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
+  - 回帰（`check-SCN-ECS-RT-RHI-SUBMIT-regress-2.txt`）: RHIGPUTimestampVulkanTest・RHITextureUpdateVulkanTest・RHIImageLayoutVulkanValidationTest は Passed。
+- Next: SCN-ECS-RT-RHI-TIMESTAMPS。
+- Notes: 直接の提出で、フェンスのリセットの後に `vkQueueSubmit` が失敗するとフェンスは unsignaled のまま残り、次の `Begin()` が待ち続ける（前からの挙動。提出の失敗はデバイスの喪失と同じ扱いで、今回は直していない）。

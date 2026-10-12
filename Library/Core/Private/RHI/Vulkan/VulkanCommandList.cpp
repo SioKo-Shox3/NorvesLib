@@ -434,12 +434,7 @@ namespace NorvesLib::RHI::Vulkan
         ResolveGPUTimestampResultsForCurrentSlot();
 #endif
 
-        const vk::Result resetFenceResult = m_device->GetVkDevice().resetFences(1, &m_fence);
-        if (resetFenceResult != vk::Result::eSuccess)
-        {
-            throw std::runtime_error("コマンドフェンスのリセットに失敗しました");
-        }
-
+        // フェンスは提出の直前にリセットする（記録だけして中止・未提出で終えても、次の Begin の待機が止まらない）
         Reset();
 
         vk::CommandBufferBeginInfo beginInfo;
@@ -797,6 +792,13 @@ namespace NorvesLib::RHI::Vulkan
 
     void VulkanCommandList::Submit(bool bWaitForCompletion)
     {
+        // 中止したリスト（コマンドバッファを初期状態へ戻した）と、束で提出して完了待ちのリストは提出しない
+        if (m_SubmissionState == CommandListSubmissionState::Aborted ||
+            m_SubmissionState == CommandListSubmissionState::Pending)
+        {
+            throw std::runtime_error("中止したか完了待ちのコマンドリストを提出しようとしました");
+        }
+
         vk::SubmitInfo submitInfo;
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &m_commandBuffer;
@@ -841,16 +843,16 @@ namespace NorvesLib::RHI::Vulkan
             Detail::ExecuteGPUTimestampSubmissionSequence(
                 this,
                 m_currentFrameIndex,
-                false,
+                true,
                 [&](uint64_t& outSerial)
                 {
                     return RHI::Detail::TryAllocateSubmissionSerial(
                         m_DirectNextSubmissionSerial,
                         outSerial);
                 },
-                []() noexcept
+                [&]()
                 {
-                    return true;
+                    return m_device->GetVkDevice().resetFences(1, &m_fence) == vk::Result::eSuccess;
                 },
                 [&]()
                 {
@@ -866,6 +868,10 @@ namespace NorvesLib::RHI::Vulkan
         {
             throw std::runtime_error("コマンド送信serialが枯渇しました");
         }
+        if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::FenceResetFailed)
+        {
+            throw std::runtime_error("コマンドフェンスのリセットに失敗しました");
+        }
         if (submissionStatus != Detail::GPUTimestampSubmissionSequenceStatus::Success)
         {
             throw std::runtime_error("コマンドの送信に失敗しました");
@@ -874,6 +880,10 @@ namespace NorvesLib::RHI::Vulkan
         m_DirectNextSubmissionSerial = submittedSerial;
         m_DirectFrameSlotSubmissionSerials[m_currentFrameIndex] = submittedSerial;
 #else
+        if (m_device->GetVkDevice().resetFences(1, &m_fence) != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("コマンドフェンスのリセットに失敗しました");
+        }
         auto result = queue.submit(1, &submitInfo, m_fence);
         if (result != vk::Result::eSuccess)
         {

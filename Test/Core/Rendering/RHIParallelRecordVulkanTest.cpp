@@ -4,6 +4,7 @@
 //     2 本を 1 回で提出すると、読み出した値が書き込んだ色になる。2 本に同じ提出番号が配られ、完了が通知される。
 //   - 1 本を中止すると、その束は提出されず（GPU は何も実行しない）、束の残りのリストも中止される。中止したリストは
 //     記録し直すまで単独でも提出できない。記録し直した後の提出は、新しく記録した中身だけを実行する。
+//   - 直接の提出（Begin/Submit）でも、中止したリストの提出は拒否され、中止の後の Begin は待ち続けずに記録し直せる。
 //   - どのケースも Vulkan の検証レイヤーのエラーが 0 件。
 #include "CoreTypes.h"
 #include "RHI/RHIDeviceDesc.h"
@@ -329,6 +330,57 @@ namespace
             Expect(ReadbackMatches(*readback, blue, false),
                    "記録し直した後の提出は新しい中身（青）だけを実行しなければならない");
             std::cout << "CASE abort_then_rerecord serial=" << secondSerial << '\n';
+
+            // 3. 直接の提出（Begin/Submit）でも、中止したリストは提出せず、中止の後の Begin は待ち続けない
+            {
+                device->WaitIdle();
+                FillReadback(*readback, PrefillByte);
+                CommandListPtr directList = device->CreateCommandList();
+                Expect(directList != nullptr, "直接の提出のリストを作れなければならない");
+                if (directList)
+                {
+                    const ClearColor white{255, 255, 255};
+                    const WriteTarget whiteTarget = MakeWriteTarget(*device, texture, white);
+                    auto recordDirect = [&](const WriteTarget& target)
+                    {
+                        directList->Begin();
+                        directList->SetSharedTextureLayoutWrites(false);
+                        directList->BeginRenderPass(target.RenderPass, target.Framebuffer);
+                        directList->EndRenderPass();
+                        ExplicitTextureBarrierDesc barrier;
+                        barrier.BeforeState = ResourceState::RenderTarget;
+                        barrier.AfterState = ResourceState::CopySource;
+                        barrier.OldLayout = TextureLayout::ColorAttachment;
+                        barrier.NewLayout = TextureLayout::TransferSource;
+                        directList->TextureBarrierExplicit(texture, barrier);
+                        directList->CopyTextureToBuffer(texture, readback, TextureWidth, TextureHeight, 0);
+                        directList->End();
+                    };
+
+                    recordDirect(greenTarget);
+                    directList->AbortSubmission();
+                    bool bSubmitRejected = false;
+                    try
+                    {
+                        directList->Submit(true);
+                    }
+                    catch (const std::exception&)
+                    {
+                        bSubmitRejected = true;
+                    }
+                    Expect(bSubmitRejected, "中止したリストの直接の提出は拒否されなければならない");
+                    device->WaitIdle();
+                    Expect(ReadbackMatches(*readback, green, true),
+                           "中止したリストの中身（緑のクリアとコピー）は GPU で実行されてはならない");
+
+                    // 中止の後の Begin がフェンスの待機で止まらず、記録し直した中身だけが実行される
+                    recordDirect(whiteTarget);
+                    directList->Submit(true);
+                    Expect(ReadbackMatches(*readback, white, false),
+                           "中止の後に記録し直した直接の提出は新しい中身（白）を実行しなければならない");
+                    std::cout << "CASE direct_abort_then_rerecord rejected=" << (bSubmitRejected ? 1 : 0) << '\n';
+                }
+            }
 
             device->WaitIdle();
         }
