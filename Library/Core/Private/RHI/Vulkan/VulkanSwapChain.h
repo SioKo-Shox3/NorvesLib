@@ -126,6 +126,12 @@ namespace NorvesLib::RHI::Vulkan
          * @param commandList 実行するコマンドリスト
          */
         SwapChainEndFrameResult EndFrame(CommandListPtr commandList) override;
+        /**
+         * @brief フレーム終了（複数のコマンドリストを 1 回でサブミット＋プレゼント）
+         * @param commandLists 提出するリストの並び（並びの順に実行する）
+         * @param commandListCount 並びの数
+         */
+        SwapChainEndFrameResult EndFrame(const CommandListPtr *commandLists, uint32_t commandListCount) override;
         uint64_t GetCompletedSubmissionSerial() const override { return m_completedSubmissionSerial; }
 
         /**
@@ -180,6 +186,8 @@ namespace NorvesLib::RHI::Vulkan
         VariableArray<vk::Semaphore> m_renderFinishedSemaphores;
         VariableArray<vk::Fence> m_inFlightFences;
         VariableArray<uint64_t> m_frameSlotSubmissionSerials;
+        // slot ごとに、その slot の提出に含めたコマンドリスト（次にその slot のフェンスを待ったとき完了を通知する）
+        VariableArray<VariableArray<TWeakPtr<ICommandList>>> m_frameSlotCommandLists;
         uint32_t m_currentFrame = 0;
         uint64_t m_nextSubmissionSerial = 0;
         uint64_t m_completedSubmissionSerial = 0;
@@ -194,6 +202,8 @@ namespace NorvesLib::RHI::Vulkan
 
         // スワップチェーン関連ヘルパー
         void CleanupSwapChain();
+        /// @brief slot の提出に含めたコマンドリストへ、その slot の提出番号までの完了を通知して忘れる
+        void NotifyFrameSlotCommandListsCompleted(uint32_t frameSlot);
         vk::SurfaceFormatKHR ChooseSurfaceFormat();
         vk::PresentModeKHR ChoosePresentMode();
         vk::Extent2D ChooseSwapExtent();

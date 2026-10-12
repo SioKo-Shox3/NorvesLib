@@ -35,6 +35,12 @@ namespace NorvesLib::RHI::Vulkan
         // デバイスの処理が完了するのを待機
         m_device->WaitIdle();
 
+        // 全 slot の提出が完了したので、まだ通知していないコマンドリストへ伝える（別のスワップチェーンで記録し直せるように）
+        for (uint32_t frameSlot = 0; frameSlot < m_frameSlotCommandLists.size(); ++frameSlot)
+        {
+            NotifyFrameSlotCommandListsCompleted(frameSlot);
+        }
+
         // 同期オブジェクトのクリーンアップ
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
@@ -205,6 +211,7 @@ namespace NorvesLib::RHI::Vulkan
         {
             m_completedSubmissionSerial = m_frameSlotSubmissionSerials[m_currentFrame];
         }
+        NotifyFrameSlotCommandListsCompleted(m_currentFrame);
 
         // 次の画像を取得
         auto acquireResult = m_device->GetVkDevice().acquireNextImageKHR(
@@ -232,14 +239,23 @@ namespace NorvesLib::RHI::Vulkan
     // フレーム終了（セマフォ同期付きサブミット＋プレゼント）
     SwapChainEndFrameResult VulkanSwapChain::EndFrame(CommandListPtr commandList)
     {
+        return EndFrame(&commandList, 1u);
+    }
+
+    // フレーム終了（複数のコマンドリストを 1 回でサブミット＋プレゼント）
+    SwapChainEndFrameResult VulkanSwapChain::EndFrame(const CommandListPtr *commandLists, uint32_t commandListCount)
+    {
         SwapChainEndFrameResult result;
-        auto vulkanCmdList = DynamicPointerCast<VulkanCommandList>(commandList);
-        if (!vulkanCmdList)
+        VariableArray<VulkanCommandList *> batchLists;
+        VariableArray<vk::CommandBuffer> cmdBuffers;
+        if (m_currentFrame >= m_frameSlotCommandLists.size() ||
+            !VulkanCommandList::CollectSubmissionBatch(commandLists, commandListCount, batchLists, cmdBuffers))
         {
+            // 拒否した束の中身は再利用させない（全リストを中止する）
+            VulkanCommandList::AbortSubmissionBatch(commandLists, commandListCount);
             result.Status = SwapChainEndFrameStatus::InvalidCommandList;
             return result;
         }
-        vk::CommandBuffer cmdBuffer = vulkanCmdList->GetVkCommandBuffer();
 
         // セマフォ同期付きでサブミット
         // 出してある sparse の結び付けの完了も待つ（結んだタイルを読む描画より前に結び付けを終える）。
@@ -277,16 +293,15 @@ namespace NorvesLib::RHI::Vulkan
         submitInfo.waitSemaphoreCount = waitCount;
         submitInfo.pWaitSemaphores = waitSemaphores;
         submitInfo.pWaitDstStageMask = waitStages;
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &cmdBuffer;
+        submitInfo.commandBufferCount = static_cast<uint32_t>(cmdBuffers.size());
+        submitInfo.pCommandBuffers = cmdBuffers.data();
         submitInfo.signalSemaphoreCount = signalCount;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
         uint64_t submittedSerial = 0u;
         const Detail::GPUTimestampSubmissionSequenceStatus submissionStatus =
-            Detail::ExecuteGPUTimestampSubmissionSequence(
-                vulkanCmdList.get(),
-                m_currentFrame,
+            Detail::ExecuteCommandListBatchSubmissionSequence(
+                batchLists,
                 true,
                 [&](uint64_t& outSerial)
                 {
@@ -331,6 +346,12 @@ namespace NorvesLib::RHI::Vulkan
         m_nextSubmissionSerial = submittedSerial;
         m_frameSlotSubmissionSerials[m_currentFrame] = submittedSerial;
         result.SubmissionSerial = submittedSerial;
+        // この slot のフェンスを次に待ったとき、束の全リストへ完了を通知する
+        VariableArray<TWeakPtr<ICommandList>> &slotCommandLists = m_frameSlotCommandLists[m_currentFrame];
+        for (uint32_t index = 0; index < commandListCount; ++index)
+        {
+            slotCommandLists.push_back(commandLists[index]);
+        }
 
         // プレゼント
         vk::PresentInfoKHR presentInfo = {};
@@ -361,6 +382,23 @@ namespace NorvesLib::RHI::Vulkan
         m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
         result.Status = SwapChainEndFrameStatus::Success;
         return result;
+    }
+
+    void VulkanSwapChain::NotifyFrameSlotCommandListsCompleted(uint32_t frameSlot)
+    {
+        if (frameSlot >= m_frameSlotCommandLists.size() || frameSlot >= m_frameSlotSubmissionSerials.size())
+        {
+            return;
+        }
+        const uint64_t completedSerial = m_frameSlotSubmissionSerials[frameSlot];
+        for (const TWeakPtr<ICommandList> &weakCommandList : m_frameSlotCommandLists[frameSlot])
+        {
+            if (TSharedPtr<ICommandList> commandList = weakCommandList.lock())
+            {
+                commandList->NotifySubmissionCompleted(completedSerial);
+            }
+        }
+        m_frameSlotCommandLists[frameSlot].clear();
     }
 
     // サーフェスの作成
@@ -522,6 +560,7 @@ namespace NorvesLib::RHI::Vulkan
         m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
         m_frameSlotSubmissionSerials.resize(MAX_FRAMES_IN_FLIGHT, 0);
+        m_frameSlotCommandLists.resize(MAX_FRAMES_IN_FLIGHT);
 
         vk::SemaphoreCreateInfo semaphoreInfo = {};
 

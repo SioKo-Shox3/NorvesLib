@@ -417,6 +417,8 @@ namespace NorvesLib::RHI::Vulkan
 
     void VulkanCommandList::Begin()
     {
+        ThrowIfCurrentFrameSlotPending();
+
         // フェンスを待機
         const vk::Result waitResult = m_device->GetVkDevice().waitForFences(
             1, &m_fence, vk::True, UINT64_MAX);
@@ -450,6 +452,7 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_bIsRecording = true;
+        m_SubmissionState = CommandListSubmissionState::Recording;
 #if NORVES_ENABLE_STATS
         PrepareGPUTimestampSlotForRecording();
 #endif
@@ -458,6 +461,8 @@ namespace NorvesLib::RHI::Vulkan
     void VulkanCommandList::BeginRecording()
     {
         // 現在のフレームのコマンドバッファを使用（SetFrameIndexで設定済み）
+        // 束で提出した slot は、完了の通知が届くまで記録し直さない
+        ThrowIfCurrentFrameSlotPending();
 #if NORVES_ENABLE_STATS
         ResolveGPUTimestampResultsForCurrentSlot();
 #endif
@@ -474,6 +479,7 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_bIsRecording = true;
+        m_SubmissionState = CommandListSubmissionState::Recording;
 #if NORVES_ENABLE_STATS
         PrepareGPUTimestampSlotForRecording();
 #endif
@@ -511,6 +517,7 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_bIsRecording = false;
+        m_SubmissionState = CommandListSubmissionState::Recorded;
     }
 
     bool VulkanCommandList::SupportsGPUTimestamps() const
@@ -876,6 +883,8 @@ namespace NorvesLib::RHI::Vulkan
 #endif
 
         CommitPendingAccelerationStructureBuilds(m_currentFrameIndex);
+        // 直接の提出は自分のフェンスで再利用を守る（次の Begin が待つ）ので、束の完了待ちには入れない
+        m_SubmissionState = CommandListSubmissionState::Idle;
 
         if (bWaitForCompletion)
         {
@@ -889,6 +898,204 @@ namespace NorvesLib::RHI::Vulkan
             NotifyGPUTimestampFrameSlotCompleted(m_currentFrameIndex, submittedSerial);
 #endif
         }
+    }
+
+    void VulkanCommandList::ThrowIfCurrentFrameSlotPending() const
+    {
+        if (m_FrameSlotPendingSubmissionSerials[m_currentFrameIndex] != 0u)
+        {
+            throw std::runtime_error("束で提出した slot のコマンドバッファを、完了の通知の前に記録し直そうとしました");
+        }
+    }
+
+    void VulkanCommandList::AbortSubmission() noexcept
+    {
+        if (m_SubmissionState != CommandListSubmissionState::Recording &&
+            m_SubmissionState != CommandListSubmissionState::Recorded)
+        {
+            return;
+        }
+
+        AbortGPUTimestampFrame(m_currentFrameIndex);
+        // 記録中・記録済みのコマンドバッファは提出していないので、ここで初期状態へ戻せる。
+        // 中身を捨てるので、次の記録の開始（Reset を通る）まで提出を拒む。
+        (void)m_commandBuffer.reset({});
+        m_frameResourceLeases[m_currentFrameIndex].pendingAccelerationStructureBuilds.clear();
+        m_bIsRecording = false;
+        m_bInRenderPass = false;
+        m_SubmissionState = CommandListSubmissionState::Aborted;
+    }
+
+    void VulkanCommandList::NotifySubmissionCompleted(uint64_t completedSubmissionSerial)
+    {
+        if (completedSubmissionSerial == 0u)
+        {
+            return;
+        }
+        for (uint64_t& pendingSerial : m_FrameSlotPendingSubmissionSerials)
+        {
+            if (pendingSerial != 0u && pendingSerial <= completedSubmissionSerial)
+            {
+                pendingSerial = 0u;
+            }
+        }
+        if (m_SubmissionState == CommandListSubmissionState::Pending &&
+            m_LastSubmissionSerial <= completedSubmissionSerial)
+        {
+            m_SubmissionState = CommandListSubmissionState::Idle;
+        }
+    }
+
+    void VulkanCommandList::MarkBatchSubmitted(uint64_t submissionSerial)
+    {
+        m_FrameSlotPendingSubmissionSerials[m_currentFrameIndex] = submissionSerial;
+        m_LastSubmissionSerial = submissionSerial;
+        m_SubmissionState = CommandListSubmissionState::Pending;
+    }
+
+    bool VulkanCommandList::CollectSubmissionBatch(const CommandListPtr *commandLists,
+                                                   uint32_t commandListCount,
+                                                   VariableArray<VulkanCommandList *> &outCommandLists,
+                                                   VariableArray<vk::CommandBuffer> &outCommandBuffers)
+    {
+        outCommandLists.clear();
+        outCommandBuffers.clear();
+        if (commandLists == nullptr || commandListCount == 0u)
+        {
+            return false;
+        }
+
+        outCommandLists.reserve(commandListCount);
+        outCommandBuffers.reserve(commandListCount);
+        for (uint32_t index = 0; index < commandListCount; ++index)
+        {
+            auto *vulkanCommandList = dynamic_cast<VulkanCommandList *>(commandLists[index].get());
+            if (vulkanCommandList == nullptr ||
+                vulkanCommandList->m_SubmissionState != CommandListSubmissionState::Recorded)
+            {
+                return false;
+            }
+            for (const VulkanCommandList *collected : outCommandLists)
+            {
+                if (collected == vulkanCommandList)
+                {
+                    return false;
+                }
+            }
+            outCommandLists.push_back(vulkanCommandList);
+            outCommandBuffers.push_back(vulkanCommandList->m_commandBuffer);
+        }
+        return true;
+    }
+
+    void VulkanCommandList::AbortSubmissionBatch(const CommandListPtr *commandLists,
+                                                 uint32_t commandListCount) noexcept
+    {
+        if (commandLists == nullptr)
+        {
+            return;
+        }
+        for (uint32_t index = 0; index < commandListCount; ++index)
+        {
+            if (commandLists[index])
+            {
+                commandLists[index]->AbortSubmission();
+            }
+        }
+    }
+
+    uint64_t VulkanCommandList::SubmitBatchAndWait(const CommandListPtr *commandLists, uint32_t commandListCount)
+    {
+        VariableArray<VulkanCommandList *> batchLists;
+        VariableArray<vk::CommandBuffer> batchBuffers;
+        if (!CollectSubmissionBatch(commandLists, commandListCount, batchLists, batchBuffers))
+        {
+            AbortSubmissionBatch(commandLists, commandListCount);
+            return 0u;
+        }
+
+        // 窓口のフェンスで前の提出（直接の提出を含む）の完了を待ってから使う
+        if (m_device->GetVkDevice().waitForFences(1, &m_fence, vk::True, UINT64_MAX) != vk::Result::eSuccess)
+        {
+            AbortSubmissionBatch(commandLists, commandListCount);
+            return 0u;
+        }
+
+        vk::SubmitInfo submitInfo;
+        submitInfo.commandBufferCount = static_cast<uint32_t>(batchBuffers.size());
+        submitInfo.pCommandBuffers = batchBuffers.data();
+
+        // 直接の提出（Submit）と同じく、出してある sparse の結び付けの完了を待ち、描画の完了を結び付けの側へ通知する
+        VulkanDevice::GraphicsSubmitScope submitScope(*m_device);
+        vk::Semaphore sparseBindWait;
+        uint64_t sparseBindWaitValue = 0;
+        const vk::PipelineStageFlags sparseBindWaitStage = vk::PipelineStageFlagBits::eAllCommands;
+        vk::Semaphore renderSignal;
+        uint64_t renderSignalValue = 0;
+        vk::TimelineSemaphoreSubmitInfo timelineInfo{};
+        const bool bSparseBindWait = submitScope.GetSparseBindWait(sparseBindWait, sparseBindWaitValue);
+        const bool bRenderSignal = submitScope.AcquireRenderSignal(renderSignal, renderSignalValue);
+        if (bSparseBindWait)
+        {
+            timelineInfo.waitSemaphoreValueCount = 1;
+            timelineInfo.pWaitSemaphoreValues = &sparseBindWaitValue;
+            submitInfo.waitSemaphoreCount = 1;
+            submitInfo.pWaitSemaphores = &sparseBindWait;
+            submitInfo.pWaitDstStageMask = &sparseBindWaitStage;
+        }
+        if (bRenderSignal)
+        {
+            timelineInfo.signalSemaphoreValueCount = 1;
+            timelineInfo.pSignalSemaphoreValues = &renderSignalValue;
+            submitInfo.signalSemaphoreCount = 1;
+            submitInfo.pSignalSemaphores = &renderSignal;
+        }
+        if (bSparseBindWait || bRenderSignal)
+        {
+            submitInfo.pNext = &timelineInfo;
+        }
+
+        vk::Queue queue = m_device->GetGraphicsQueue();
+        uint64_t submittedSerial = 0u;
+        const Detail::GPUTimestampSubmissionSequenceStatus submissionStatus =
+            Detail::ExecuteCommandListBatchSubmissionSequence(
+                batchLists,
+                true,
+                [&](uint64_t& outSerial)
+                {
+                    return RHI::Detail::TryAllocateSubmissionSerial(
+                        m_BatchNextSubmissionSerial,
+                        outSerial);
+                },
+                [&]()
+                {
+                    return m_device->GetVkDevice().resetFences(1, &m_fence) == vk::Result::eSuccess;
+                },
+                [&]()
+                {
+                    const bool bSubmitted = queue.submit(1, &submitInfo, m_fence) == vk::Result::eSuccess;
+                    if (bSubmitted)
+                    {
+                        submitScope.Commit();
+                    }
+                    return bSubmitted;
+                },
+                submittedSerial);
+        if (submissionStatus != Detail::GPUTimestampSubmissionSequenceStatus::Success)
+        {
+            return 0u;
+        }
+        m_BatchNextSubmissionSerial = submittedSerial;
+
+        if (m_device->GetVkDevice().waitForFences(1, &m_fence, vk::True, UINT64_MAX) != vk::Result::eSuccess)
+        {
+            throw std::runtime_error("束の提出の完了の待機に失敗しました");
+        }
+        for (VulkanCommandList *list : batchLists)
+        {
+            list->NotifySubmissionCompleted(submittedSerial);
+        }
+        return submittedSerial;
     }
 
     void VulkanCommandList::BeginRenderPass(RenderPassPtr renderPass, FramebufferPtr framebuffer)

@@ -117,6 +117,20 @@ namespace NorvesLib::RHI
         uint32_t ArrayCount = 0; // 0 で残りのすべて
     };
 
+    /**
+     * @brief 提出の側から見たコマンドリストの状態
+     *
+     * 複数のリストを 1 回で提出する経路（ISwapChain::EndFrame の複数リストの版・SubmitBatchAndWait）が使う。
+     */
+    enum class CommandListSubmissionState : uint8_t
+    {
+        Idle,      ///< 記録していない、または提出した中身の完了を通知された
+        Recording, ///< 記録の開始の後、End の前
+        Recorded,  ///< End の後で、まだ提出も中止もしていない（束で提出できるのはこの状態だけ）
+        Pending,   ///< 束で提出した。完了の通知を待っている
+        Aborted,   ///< 記録した中身を捨てた。次の記録の開始まで提出できない
+    };
+
 
     /**
      * @brief コマンドリストインターフェース
@@ -140,6 +154,7 @@ namespace NorvesLib::RHI
          *
          * 外部で同期制御を行う場合（SwapChain::BeginFrame/EndFrame等）に使用します。
          * フェンスの待機・リセットを行わず、コマンドバッファのリセットと記録開始のみを行います。
+         * 束で提出した slot は、完了の通知（NotifySubmissionCompleted）が届くまで記録し直しません（例外を投げます）。
          */
         virtual void BeginRecording()
         {
@@ -162,6 +177,60 @@ namespace NorvesLib::RHI
          * @brief コマンドリストの記録を終了
          */
         virtual void End() = 0;
+
+        /**
+         * @brief 提出の側から見た状態を取得
+         *
+         * 状態を追わない実装は、End の後を表す Recorded を返す。
+         */
+        virtual CommandListSubmissionState GetSubmissionState() const
+        {
+            return CommandListSubmissionState::Recorded;
+        }
+
+        /**
+         * @brief 最後に束で提出したときの提出番号（同じ束の全リストで同じ値）。未提出は 0
+         */
+        virtual uint64_t GetLastSubmissionSerial() const
+        {
+            return 0u;
+        }
+
+        /**
+         * @brief 記録中・記録済みで未提出の中身を捨て、次の記録の開始まで提出を拒む
+         *
+         * 提出済み（Pending）と Idle・Aborted では何もしない。GPU タイムスタンプのフレームも中止する。
+         */
+        virtual void AbortSubmission() noexcept
+        {
+        }
+
+        /**
+         * @brief 提出番号 completedSubmissionSerial までの GPU の完了を通知する
+         *
+         * その番号以下で束として提出した slot だけが、記録し直せるようになる。
+         */
+        virtual void NotifySubmissionCompleted(uint64_t completedSubmissionSerial)
+        {
+            (void)completedSubmissionSerial;
+        }
+
+        /**
+         * @brief 複数のリストを、このリストのフェンスで 1 回に提出し、GPU の完了まで待つ
+         *
+         * スワップチェーンを通さない道具・テスト用。並びの順に GPU が実行する（リストをまたぐ依存は記録したバリアで成り立たせる）。
+         * 全リストへ同じ提出番号を配り、完了を通知する。拒否（Recorded でないリスト・重複・バックエンドの違い）と
+         * 提出の失敗では何も実行せず、並びの全リストを中止する。
+         * @param commandLists 提出するリストの並び（このリストを含めなくてもよい）
+         * @param commandListCount 並びの数
+         * @return 配った提出番号。拒否・失敗と、対応しない実装は 0
+         */
+        virtual uint64_t SubmitBatchAndWait(const CommandListPtr *commandLists, uint32_t commandListCount)
+        {
+            (void)commandLists;
+            (void)commandListCount;
+            return 0u;
+        }
 
         /**
          * @brief GPUタイムスタンプ計測に対応しているか

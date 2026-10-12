@@ -2773,3 +2773,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Execute の中で自分でバリアを張るパスの一覧は反復 26 の節のとおり（変更なし）。
 - Next: SCN-ECS-RT-RHI-SUBMIT。
 - Notes: RT-RECORD で区間ごとに保留のコマンドを分けるときは、区間の頭の束（前の区間の後に積まれたもの）を前の区間のリストの末尾か、その区間のリストの先頭に置く。どちらでも束の後に layout を読み直す今の規則で足りる。
+
+### SCN-ECS-RT-RHI-SUBMIT（2026-10-12、反復 28・run 20261012-030203）
+
+- 複数のコマンドリストを 1 回で提出する経路（設計 §1.13）を RHI に入れた。描画の記録はまだ 0 番の 1 本だけ。
+  - `ISwapChain::EndFrame(const CommandListPtr*, uint32_t)`: 並びの順に 1 回の `vkQueueSubmit` で提出し、全リストへ同じ提出番号を配る。既定の実装は 1 本だけを受け付けて単一の版へ渡す（テストの偽のスワップチェーンはそのまま動く）。Vulkan の単一の版は複数の版へ 1 本で渡す。
+  - `ICommandList` の提出の状態（`CommandListSubmissionState`: Idle・Recording・Recorded・Pending・Aborted）と、`GetSubmissionState`・`GetLastSubmissionSerial`・`AbortSubmission`・`NotifySubmissionCompleted`・`SubmitBatchAndWait`（スワップチェーンを通さない道具・テスト用の束の提出。窓口のリストのフェンスで待つ）。既定の実装を持つので偽のリストはそのまま動く。
+  - 束で提出できるのは Recorded のリストだけ。null・Vulkan でない・Recorded でない・重複を含む束は拒否し、拒否と提出の失敗（番号の枯渇・フェンスのリセット・キューの提出。例外を含む）では並びの全リストを中止する（`AbortSubmission`: コマンドバッファを初期状態へ戻し、GPU タイムスタンプのフレームと保留の AS の確定を捨て、次の記録の開始まで提出を拒む）。成功したら各リストの現在の slot の GPU タイムスタンプを同じ番号で確定する（`Detail::ExecuteCommandListBatchSubmissionSequence`）。
+  - 同じ slot が完了するまで記録し直さない: 束で提出したリストは slot ごとに完了待ちの番号を持ち、`Begin`/`BeginRecording` はその slot が完了の通知を受けるまで例外を投げる。`VulkanSwapChain` は slot ごとに提出に含めたリスト（weak）を覚え、次にその slot のフェンスを待った `BeginFrame` と、破棄（WaitIdle の後）で完了を通知する。
+  - RenderingCoordinator: 仕事の番号ごとのリスト `m_JobCommandLists`（0 番は `m_CommandList`）。フレームの頭で `PrepareJobCommandLists`（足りない番号のリストを RenderThread で作り、全リストを今の slot に合わせる。今の数は 1）、GPU タイムスタンプの完了の通知を全リストへ、提出は `SubmitJobCommandLists`（0 番と、このフレームで Recorded になった番号を番号の順に 1 回で）。記録の開始から提出までを `ScopedJobCommandListsAbort` で囲み、提出まで届かなかったフレーム（例外など）のリストを中止する（提出済みには何もしない）。
+- paths の外: `RenderingCoordinator.h` に非公開のメンバ `m_JobCommandLists` の宣言を 1 つ足した（RenderingCoordinator.cpp の非公開の状態。World.h の前例と同じ扱い）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RT-RHI-SUBMIT-1.txt`: Debug の RHITextureUpdateVulkanTest のビルド build exit=0（エラー 0）。
+  - `-2.txt`: `RHIParallelRecordVulkanTest` Passed（ctest exit=0）。直接の実行（`check-SCN-ECS-RT-RHI-SUBMIT-direct.txt`）で `CASE two_threads_one_submit serial=1`・`CASE abort_then_rerecord serial=2`・`VUID_COUNT=0`・`RESULT=PASS`。内容: 2 つのスレッドで「render pass のクリア（書き込み）」と「明示の old/new のバリア → バッファへのコピー（読み出し）」を別々のリストへ記録（共有の layout は書かない）し、2 本を 1 回で提出すると読み出しが赤になり、2 本の提出番号が同じで完了が通知される。1 本を中止すると束は提出されず（読み出し先は前の値のまま）、残りの 1 本も中止され、中止したリストは単独でも提出できない。記録し直した束は新しい番号で提出され、新しい中身（青）だけを実行する。検証レイヤーを有効にしてエラー 0。
+  - `-3.txt`: RelWithDebInfo の起動画面 default の決定論比較 pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 9E-06・最大差 1）。default.Game.log の ERROR 0。PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
+- Next: SCN-ECS-RT-RHI-TIMESTAMPS。
+- Notes: `FixedArray` の既定の構築（スタックに置く大きさ）は要素を初期化しない（`= {}` でも同じ）。新しい slot ごとの番号は値で埋める構築にした。同じ形の `m_DirectFrameSlotSubmissionSerials`（GPU タイムスタンプの直接の提出の番号）は初期化されないまま（このタスクの範囲の外なので直していない）。
+- Notes: RT-GRAPH の paths には RenderingCoordinator.cpp が無い。区間ごとのリストをグラフへ渡すには、`PrepareJobCommandLists` の数を区間の数にし、リストを ViewRenderContext へ載せる変更が Coordinator 側に要る。
+- Notes: 1 つのリストは 1 つの提出の窓口（スワップチェーンか、1 つの SubmitBatchAndWait の窓口）で使う前提（完了待ちの番号は窓口ごとの番号で比べる）。

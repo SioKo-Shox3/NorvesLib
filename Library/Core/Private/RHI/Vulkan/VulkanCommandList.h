@@ -480,6 +480,11 @@ namespace NorvesLib::RHI::Vulkan
         void BeginRecording() override;
         void SetFrameIndex(uint32_t frameIndex) override;
         void End() override;
+        CommandListSubmissionState GetSubmissionState() const override { return m_SubmissionState; }
+        uint64_t GetLastSubmissionSerial() const override { return m_LastSubmissionSerial; }
+        void AbortSubmission() noexcept override;
+        void NotifySubmissionCompleted(uint64_t completedSubmissionSerial) override;
+        uint64_t SubmitBatchAndWait(const CommandListPtr *commandLists, uint32_t commandListCount) override;
         bool SupportsGPUTimestamps() const override;
         uint32_t GetMaximumGPUTimestampScopesPerFrame() const override;
         void BeginGPUTimestampFrame(uint64_t frameNumber) override;
@@ -561,6 +566,27 @@ namespace NorvesLib::RHI::Vulkan
         // Vulkan固有のメソッド
         vk::CommandBuffer GetVkCommandBuffer() const { return m_commandBuffer; }
         bool IsInRenderPass() const { return m_bInRenderPass; }
+        uint32_t GetCurrentFrameIndex() const { return m_currentFrameIndex; }
+
+        /**
+         * @brief 束で提出するリストを確かめ、Vulkan のリストとコマンドバッファの並びへ写す
+         *
+         * 並びが空、null・Vulkan でないリスト、Recorded でないリスト、同じリストの重複があれば false。
+         */
+        static bool CollectSubmissionBatch(const CommandListPtr *commandLists,
+                                           uint32_t commandListCount,
+                                           VariableArray<VulkanCommandList *> &outCommandLists,
+                                           VariableArray<vk::CommandBuffer> &outCommandBuffers);
+
+        /**
+         * @brief 束の拒否・失敗で、並びの全リストを中止する（null と Vulkan でないリストも ICommandList として中止する）
+         */
+        static void AbortSubmissionBatch(const CommandListPtr *commandLists, uint32_t commandListCount) noexcept;
+
+        /**
+         * @brief 束の提出が成功したことを記録する（現在の slot を、この番号の完了の通知まで記録し直さない）
+         */
+        void MarkBatchSubmitted(uint64_t submissionSerial);
 
         /**
          * @brief 最適化されたバッファバリア
@@ -645,6 +671,19 @@ namespace NorvesLib::RHI::Vulkan
 
         bool m_bIsRecording = false;
         bool m_bInRenderPass = false;
+
+        // 束の提出（ISwapChain::EndFrame の複数リストの版・SubmitBatchAndWait）の状態
+        CommandListSubmissionState m_SubmissionState = CommandListSubmissionState::Idle;
+        // slot ごとの、束で提出して完了の通知をまだ受けていない提出番号（0 は無し）。
+        // FixedArray の既定の構築は要素を初期化しないので、値で埋める構築を使う
+        FixedArray<uint64_t, MAX_COMMAND_BUFFERS> m_FrameSlotPendingSubmissionSerials =
+            FixedArray<uint64_t, MAX_COMMAND_BUFFERS>(uint64_t{0});
+        uint64_t m_LastSubmissionSerial = 0u;
+        // SubmitBatchAndWait の窓口として配る提出番号
+        uint64_t m_BatchNextSubmissionSerial = 0u;
+
+        /// @brief 現在の slot が束の提出の完了を待っていたら、記録し直さずに例外を投げる
+        void ThrowIfCurrentFrameSlotPending() const;
 
         // レンダーパス終了時のレイアウト追跡用
         TSharedPtr<VulkanRenderPass> m_activeRenderPass;
@@ -738,5 +777,73 @@ namespace NorvesLib::RHI::Vulkan
         uint32_t m_TimestampValidBits = 0u;
 #endif
     };
+
+    namespace Detail
+    {
+        /**
+         * @brief 複数のリストの 1 回の提出の手順（提出番号の割り当て → フェンスのリセット → キューへの提出）
+         *
+         * 成功したら全リストへ同じ提出番号を配る（各リストの現在の slot の GPU タイムスタンプの確定と、slot の完了待ちの記録）。
+         * 途中で失敗したとき（例外を含む）は全リストを中止する。
+         */
+        template <typename AllocateSubmissionSerialCallable,
+                  typename ResetFenceCallable,
+                  typename QueueSubmitCallable>
+        GPUTimestampSubmissionSequenceStatus ExecuteCommandListBatchSubmissionSequence(
+            const VariableArray<VulkanCommandList *> &commandLists,
+            bool bResetFence,
+            AllocateSubmissionSerialCallable &&allocateSubmissionSerial,
+            ResetFenceCallable &&resetFence,
+            QueueSubmitCallable &&queueSubmit,
+            uint64_t &outSubmittedSerial)
+        {
+            class AbortGuard final
+            {
+            public:
+                explicit AbortGuard(const VariableArray<VulkanCommandList *> &lists) noexcept : m_Lists(lists) {}
+                ~AbortGuard() noexcept
+                {
+                    if (m_bArmed)
+                    {
+                        for (VulkanCommandList *list : m_Lists)
+                        {
+                            list->AbortSubmission();
+                        }
+                    }
+                }
+                void Disarm() noexcept { m_bArmed = false; }
+
+            private:
+                const VariableArray<VulkanCommandList *> &m_Lists;
+                bool m_bArmed = true;
+            };
+
+            outSubmittedSerial = 0u;
+            AbortGuard guard(commandLists);
+
+            uint64_t submittedSerial = 0u;
+            if (!allocateSubmissionSerial(submittedSerial) || submittedSerial == 0u)
+            {
+                return GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed;
+            }
+            if (bResetFence && !resetFence())
+            {
+                return GPUTimestampSubmissionSequenceStatus::FenceResetFailed;
+            }
+            if (!queueSubmit())
+            {
+                return GPUTimestampSubmissionSequenceStatus::QueueSubmitFailed;
+            }
+
+            guard.Disarm();
+            for (VulkanCommandList *list : commandLists)
+            {
+                list->CommitGPUTimestampSubmission(list->GetCurrentFrameIndex(), submittedSerial);
+                list->MarkBatchSubmitted(submittedSerial);
+            }
+            outSubmittedSerial = submittedSerial;
+            return GPUTimestampSubmissionSequenceStatus::Success;
+        }
+    } // namespace Detail
 
 } // namespace NorvesLib::RHI::Vulkan

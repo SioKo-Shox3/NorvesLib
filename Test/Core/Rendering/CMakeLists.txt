@@ -512,6 +512,16 @@ set_tests_properties(VirtualShadowMapVulkanTest PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# 2 つのスレッドで記録した「書き込み」と「バリア → 読み出し」の 2 本を 1 回で提出し、読み出した値と、2 本に同じ提出番号・完了の通知が
+# 配られることを確かめる。1 本を中止すると束が提出されず残りも中止され、記録し直した中身だけが実行されることも確かめる。validation error 0 件。
+add_test(NAME RHIParallelRecordVulkanTest COMMAND RHITextureUpdateVulkanTest --test=RHIParallelRecordVulkanTest)
+set_tests_properties(RHIParallelRecordVulkanTest PROPERTIES
+    LABELS "GPU;RenderingValidation"
+    RESOURCE_LOCK NorvesLibGPU
+    SKIP_RETURN_CODE 125
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 norves_add_test_bundle(RHITextureUpdateVulkanTest
     FOLDER "Test/Core/Rendering"
     MEMBER RHITextureUpdateVulkanTest RHITextureUpdateVulkanTest.cpp
@@ -535,6 +545,7 @@ norves_add_test_bundle(RHITextureUpdateVulkanTest
     MEMBER VisibilityResolveVulkanTest VisibilityResolveVulkanTest.cpp
     MEMBER IndirectDispatchVulkanTest IndirectDispatchVulkanTest.cpp
     MEMBER VirtualShadowMapVulkanTest VirtualShadowMapVulkanTest.cpp
+    MEMBER RHIParallelRecordVulkanTest RHIParallelRecordVulkanTest.cpp
 )
 target_link_libraries(RHITextureUpdateVulkanTest PRIVATE Core)
 target_include_directories(RHITextureUpdateVulkanTest PRIVATE

@@ -787,7 +787,7 @@
 - notes: 親の追記（GPT 2 周目）: `EndRenderPass`（VulkanCommandList.cpp 903 行付近）も共有の layout を書き換える。attachment の最終の layout とパスの内部の遷移も計画の対象にし、記録の最中に共有の layout を更新しない。計画できない Serial の区間は記録の後に状態を確定して次の区間を計画する。両方の経路を検証する。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-ECS-RT-RHI-SUBMIT: 複数のコマンドリストを、同じ提出番号と完了通知で 1 回に提出する
-- status: todo
+- status: done
 - done-when: 次が入る: `ISwapChain::EndFrame` の複数リストの版、全リストへの提出番号・完了通知・中止、同じ slot が完了するまで記録し直さないこと、RenderingCoordinator が仕事の番号ごとに持つリスト。`RHIParallelRecordVulkanTest`（RHITextureUpdateVulkanTest の束）が次を確かめる: 2 つのスレッドで記録した「書き込み → バリア → 読み出し」の 2 本を 1 回で提出して結果が正しい、検証レイヤーのエラーが 0、中止の後に古いリストを再利用しない。描画はまだ 1 本。起動画面の比較が pass する。
 - verify: `cmake --build build --config Debug --target RHITextureUpdateVulkanTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^RHIParallelRecordVulkanTest$" --no-tests=error --output-on-failure --timeout 180`

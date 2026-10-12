@@ -554,6 +554,8 @@ namespace NorvesLib::Core::Rendering
         // RHIリソース
         Container::TSharedPtr<RHI::IDevice> m_Device;
         Container::TSharedPtr<RHI::ICommandList> m_CommandList;
+        // 仕事の番号ごとの記録のリスト（0 番は m_CommandList）。1 つのフレームで記録したものを、番号の順に 1 回で提出する
+        Container::VariableArray<Container::TSharedPtr<RHI::ICommandList>> m_JobCommandLists;
 
         // レンダーパス・フレームバッファ（Screen SwapChain用）
         Container::TSharedPtr<RHI::IRenderPass> m_RenderPass;

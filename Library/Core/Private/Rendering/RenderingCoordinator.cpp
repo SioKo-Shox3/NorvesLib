@@ -403,6 +403,76 @@ namespace NorvesLib::Core::Rendering
             uint32_t m_FrameSlotIndex = 0u;
         };
 
+        using JobCommandLists = Container::VariableArray<Container::TSharedPtr<RHI::ICommandList>>;
+
+        // 提出まで届かなかったフレーム（例外など）の、仕事の番号ごとのリストの中身を捨てる。
+        // 提出したリスト（Pending）には何もしないので、提出の後に抜けたときは何も変わらない。
+        class ScopedJobCommandListsAbort
+        {
+        public:
+            explicit ScopedJobCommandListsAbort(const JobCommandLists& commandLists)
+                : m_CommandLists(commandLists)
+            {
+            }
+
+            ~ScopedJobCommandListsAbort()
+            {
+                for (const Container::TSharedPtr<RHI::ICommandList>& commandList : m_CommandLists)
+                {
+                    if (commandList)
+                    {
+                        commandList->AbortSubmission();
+                    }
+                }
+            }
+
+            ScopedJobCommandListsAbort(const ScopedJobCommandListsAbort&) = delete;
+            ScopedJobCommandListsAbort& operator=(const ScopedJobCommandListsAbort&) = delete;
+
+        private:
+            const JobCommandLists& m_CommandLists;
+        };
+
+        // 仕事の番号 0〜jobCount-1 のリストを用意し（足りない分を作る）、全リストを今のフレームの slot に合わせる。
+        // 作るのは RenderThread の記録の前だけなので、番号ごとのリストは別々のスレッドが同時に記録できる。
+        void PrepareJobCommandLists(RHI::IDevice& device,
+                                    JobCommandLists& commandLists,
+                                    uint32_t jobCount,
+                                    uint32_t frameIndex)
+        {
+            while (commandLists.size() < jobCount)
+            {
+                RHI::CommandListPtr commandList = device.CreateCommandList();
+                if (!commandList)
+                {
+                    throw std::runtime_error("仕事の番号の記録のリストを作れませんでした");
+                }
+                commandLists.push_back(commandList);
+            }
+            for (const Container::TSharedPtr<RHI::ICommandList>& commandList : commandLists)
+            {
+                commandList->SetFrameIndex(frameIndex);
+            }
+        }
+
+        // このフレームで記録を終えたリストを、仕事の番号の順に 1 回で提出する（同じ提出番号・完了の通知・中止を全リストへ配る）。
+        // 0 番（m_CommandList）は必ず含める。
+        RHI::SwapChainEndFrameResult SubmitJobCommandLists(RHI::ISwapChain& swapChain,
+                                                           const JobCommandLists& commandLists)
+        {
+            Container::VariableArray<RHI::CommandListPtr> frameCommandLists;
+            frameCommandLists.reserve(commandLists.size());
+            for (size_t jobIndex = 0; jobIndex < commandLists.size(); ++jobIndex)
+            {
+                if (jobIndex == 0u ||
+                    commandLists[jobIndex]->GetSubmissionState() == RHI::CommandListSubmissionState::Recorded)
+                {
+                    frameCommandLists.push_back(commandLists[jobIndex]);
+                }
+            }
+            return swapChain.EndFrame(frameCommandLists.data(), static_cast<uint32_t>(frameCommandLists.size()));
+        }
+
         template<typename CameraResolver>
         ViewportRenderPlan BuildViewportRenderPlan(const Viewport &viewport,
                                                    uint32_t viewId,
@@ -1829,6 +1899,8 @@ namespace NorvesLib::Core::Rendering
             m_Screen.Shutdown();
             return false;
         }
+        m_JobCommandLists.clear();
+        m_JobCommandLists.push_back(m_CommandList);
 
         // ========================================
         // 4. RenderPass作成（Screen SwapChain用）
@@ -3698,6 +3770,7 @@ namespace NorvesLib::Core::Rendering
         m_GraphPresentationLoadRenderPass.reset();
 
         // コマンドリストの解放
+        m_JobCommandLists.clear();
         m_CommandList.reset();
 
         // 共有リソースレジストリを明示的にクリア（テクスチャ参照をデバイス破棄前に解放）
@@ -4762,9 +4835,12 @@ namespace NorvesLib::Core::Rendering
         }
         const uint32_t frameIndex = ResolveFrameIndex(*swapChain);
         AdvanceCompletedRenderFrameSerial(swapChain->GetCompletedSubmissionSerial());
-        m_CommandList->NotifyGPUTimestampFrameSlotCompleted(
-            frameIndex,
-            swapChain->GetCompletedSubmissionSerial());
+        for (const Container::TSharedPtr<RHI::ICommandList>& jobCommandList : m_JobCommandLists)
+        {
+            jobCommandList->NotifyGPUTimestampFrameSlotCompleted(
+                frameIndex,
+                swapChain->GetCompletedSubmissionSerial());
+        }
         if (m_RenderResources)
         {
             m_RenderResources->SkinnedMeshes().BeginFrame(
@@ -4790,11 +4866,12 @@ namespace NorvesLib::Core::Rendering
                              m_PresentationLoadFramebuffers.size(),
                               m_GraphPresentationClearFramebuffers.size(),
                               m_GraphPresentationLoadFramebuffers.size());
-            m_CommandList->SetFrameIndex(frameIndex);
+            PrepareJobCommandLists(*m_Device, m_JobCommandLists, 1u, frameIndex);
             m_CommandList->BeginRecording();
+            ScopedJobCommandListsAbort jobCommandListsAbort(m_JobCommandLists);
             PublishCompletedGPUTimestampResults();
             m_CommandList->End();
-            const RHI::SwapChainEndFrameResult endFrameResult = m_Screen.EndFrame(m_CommandList);
+            const RHI::SwapChainEndFrameResult endFrameResult = SubmitJobCommandLists(*swapChain, m_JobCommandLists);
             if (m_RenderResources)
             {
                 if (endFrameResult.SubmissionSerial != 0)
@@ -4878,7 +4955,8 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr instanceDataBuffer = m_InstanceBufferRing.Upload(frameIndex, packet->InstanceData);
 
         // フレーム別コマンドバッファを選択（ダブルバッファリングでの同期問題を回避）
-        m_CommandList->SetFrameIndex(frameIndex);
+        // 仕事の番号ごとのリストを用意する。描画の記録はまだ 0 番の 1 本だけ
+        PrepareJobCommandLists(*m_Device, m_JobCommandLists, 1u, frameIndex);
 
         // SceneRendererフレーム開始
         m_SceneRenderer.BeginFrame();
@@ -4898,6 +4976,7 @@ namespace NorvesLib::Core::Rendering
 
         // コマンド録画開始
         m_CommandList->BeginRecording();
+        ScopedJobCommandListsAbort jobCommandListsAbort(m_JobCommandLists);
         // ステージングのリングに置いたタイル・ミップテイルのデータを、描画のコマンドの先頭でテクスチャの領域へコピーする
         // （GPU を待たない。render pass の外で、他の記録より前）。
         if (m_RenderResources)
@@ -5349,8 +5428,8 @@ namespace NorvesLib::Core::Rendering
         renderStats.DrawCalls = rendererStats.DrawCallCount;
         renderStats.TrianglesRendered = rendererStats.TriangleCount;
 
-        // コマンドリストをサブミット＆Present（旧EndFrame経路から移動）
-        const RHI::SwapChainEndFrameResult endFrameResult = m_Screen.EndFrame(m_CommandList);
+        // 仕事の番号ごとのリストを 1 回でサブミット＆Present
+        const RHI::SwapChainEndFrameResult endFrameResult = SubmitJobCommandLists(*swapChain, m_JobCommandLists);
         if (captureRecordStatus == FrameCaptureRecordStatus::Recorded &&
             endFrameResult.SubmissionSerial != 0 &&
             m_FrameCaptureReadbackHelper &&

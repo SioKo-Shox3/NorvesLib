@@ -128,6 +128,28 @@ namespace NorvesLib::RHI
         virtual SwapChainEndFrameResult EndFrame(CommandListPtr commandList) = 0;
 
         /**
+         * @brief フレーム終了（複数のコマンドリストを 1 回でサブミット＆プレゼント）
+         *
+         * 並びの順に GPU が実行する（リストをまたぐ依存は記録したバリアで成り立たせる）。全リストへ同じ提出番号を配り、
+         * このフレームの slot の完了は、次にその slot を待つ BeginFrame で全リストへ通知する
+         * （ICommandList::NotifySubmissionCompleted。それまでリストはその slot を記録し直さない）。
+         * 拒否（Recorded でないリスト・重複）と提出の失敗では、並びの全リストを中止する（ICommandList::AbortSubmission）。
+         * 結果の意味は単一リストの版と同じ。既定の実装は 1 本だけを受け付け、単一リストの版へ渡す。
+         * @param commandLists 提出するリストの並び
+         * @param commandListCount 並びの数
+         */
+        virtual SwapChainEndFrameResult EndFrame(const CommandListPtr *commandLists, uint32_t commandListCount)
+        {
+            if (commandLists != nullptr && commandListCount == 1u)
+            {
+                return EndFrame(commandLists[0]);
+            }
+            SwapChainEndFrameResult result;
+            result.Status = SwapChainEndFrameStatus::InvalidCommandList;
+            return result;
+        }
+
+        /**
          * @brief BeginFrameで実際のGPU fence完了を確認済みのsubmission serialを取得
          */
         virtual uint64_t GetCompletedSubmissionSerial() const = 0;
