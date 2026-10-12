@@ -116,9 +116,27 @@ namespace NorvesLib::Core::Rendering
 
         /**
          * @brief 新しいフレームの準備完了を通知
+         *
+         * 既定（GameThread の歩調合わせ on）では、前に渡したパケットを RenderThread が受け取るまで待ってから渡す
+         * （GameThread の先行は最大 1 フレーム。待った時間は区間 GT.WaitRenderThread）。
+         * off（開発ビルドの環境変数 NORVES_GT_PACING=0）では待たず、受け取られていないパケットを捨てて最新に差し替える。
          * @param packet 描画するフレームパケット
          */
         void NotifyNewFrame(FramePacket* packet);
+
+        /**
+         * @brief GameThread と RenderThread の歩調の集計
+         */
+        struct FramePacingStats
+        {
+            uint64_t GameFrames = 0;   // RenderThread へ渡したパケットの数
+            uint64_t RenderFrames = 0; // 描いたパケットの数
+            uint64_t Dropped = 0;      // 受け取られる前に新しいパケットへ差し替えて捨てた数
+            bool bPacingEnabled = true;
+        };
+
+        /** @brief 開始からの歩調の集計を返す（GameThread から呼ぶ）。 */
+        [[nodiscard]] FramePacingStats GetFramePacingStats() const;
 
         // ========================================
         // 統計
@@ -188,6 +206,13 @@ namespace NorvesLib::Core::Rendering
         // 飛ばしたときの TAA の履歴の扱いを確かめるのに使う。0 なら捨てない。
         uint32_t m_DebugDropRenderFrameInterval = 0;
         uint64_t m_DebugDroppedRenderFrameCount = 0;
+
+        // GameThread の歩調合わせ。最初の NotifyNewFrame で 1 回だけ設定を読む（引数の解析が描画の初期化より後になるため）。
+        // 集計は GameThread だけが書き、m_FrameMutex の中で更新する。
+        bool m_bGameThreadPacing = true;
+        bool m_bGameThreadPacingResolved = false;
+        uint64_t m_SubmittedPacketCount = 0;
+        uint64_t m_DroppedPacketCount = 0;
 
         /** @brief 確認用の指定で捨てるパケットなら、描かずに再利用へ戻して true を返す。 */
         bool TryDropPacketForDebug(FramePacket* packet);

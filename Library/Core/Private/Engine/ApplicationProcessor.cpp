@@ -715,6 +715,17 @@ namespace
     // 撮影を要求してから結果が戻るまで待つ描画フレーム数の上限。超えたら失敗として終了する。
     constexpr uint64_t kCapturePngResultTimeoutRenderedFrames = 120;
 
+    // 終了の前に GameThread と RenderThread の歩調の集計を 1 行出す（撮影・計測の照合用）。
+    void LogFramePacing(const NorvesLib::Core::Rendering::RenderWorld& renderWorld)
+    {
+        const auto pacing = renderWorld.GetFramePacingStats();
+        LOG_INFO("FRAME_PACING gt_frames=%llu rt_frames=%llu dropped=%llu pacing=%s",
+                 static_cast<unsigned long long>(pacing.GameFrames),
+                 static_cast<unsigned long long>(pacing.RenderFrames),
+                 static_cast<unsigned long long>(pacing.Dropped),
+                 pacing.bPacingEnabled ? "on" : "off");
+    }
+
     void AppendCapturePngBytes(void* pContext, void* pData, int byteCount)
     {
         auto* pBytes = static_cast<VariableArray<uint8_t>*>(pContext);
@@ -2275,6 +2286,7 @@ namespace NorvesLib::Core::Engine
                                          static_cast<unsigned long long>(capturedFrame.FrameNumber),
                                          capturedFrame.Width,
                                          capturedFrame.Height);
+                                LogFramePacing(renderWorld);
                                 GEngine->RequestExit(0);
                             }
                             else
@@ -2313,6 +2325,7 @@ namespace NorvesLib::Core::Engine
             LOG_INFO_F("ApplicationProcessor::Tick() - exit-after-frames reached frame=%llu target=%llu",
                        static_cast<unsigned long long>(GEngine->GetFrameCount()),
                        static_cast<unsigned long long>(m_ExitAfterFrames));
+            LogFramePacing(GEngine->GetRenderWorld());
             GEngine->RequestExit(0);
         }
         else if (bRenderedExitReached)
@@ -2321,6 +2334,7 @@ namespace NorvesLib::Core::Engine
                      static_cast<unsigned long long>(renderedFrameCount),
                      static_cast<unsigned long long>(m_AssetSettleRenderedBaseline),
                      static_cast<unsigned long long>(m_ExitAfterRenderedFrames));
+            LogFramePacing(GEngine->GetRenderWorld());
             GEngine->RequestExit(0);
         }
 

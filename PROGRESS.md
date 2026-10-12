@@ -3075,3 +3075,21 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIX-LIGHTING-RECORD-8.txt`: 起動画面 default の決定論比較 pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 1.4E-05・最大差 1、`indirect_lighting=rtgi`）、EXIT=0。default.Game.log の ERROR 0。PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
 - Next: SCN-ECS-FIF-AUDIT（反復 40 の Next どおり）。
 - Notes: 配列の確保の失敗を注入して例外の経路を実機で起こす試験は無い（直しはコードの経路で確かめた）。
+
+### SCN-ECS-FIX-GT-PACING（2026-10-12、反復 42・run 20261012-030203）
+
+- 直し: `RenderThread::NotifyNewFrame` が、前に渡したパケットを RenderThread が受け取る（`RenderLoop` が `m_CurrentPacket` を外す）まで `m_IdleCondition` で待ってから次のパケットを渡す。GameThread の先行は最大 1 フレーム（RenderThread が描くパケット・待っているパケット・書いているパケットの 3 枚で、パケットの数 3 と合う）。待ちは停止・終了の印（致命的な失敗を含む）・Running でない状態でも解ける。受け取った直後に `RenderLoop` が `m_IdleCondition` を起こす。待った時間は区間 `GT.WaitRenderThread`（GameThread）。
+  - 開発ビルドの `--gt-pacing=on|off`（Game が環境変数 `NORVES_GT_PACING` に渡し、RenderThread が最初のパケットで 1 回だけ読む。`stage=gt_pacing enabled=<0|1>` をログへ出す）。off は前の動き（受け取られていないパケットを捨てて最新に差し替える）。
+  - 渡したパケット・捨てたパケットの数を RenderThread が数え（`GetFramePacingStats`。`RenderWorld::GetFramePacingStats` から読む）、ApplicationProcessor が撮影の PNG の保存・`--exit-after-rendered-frames`・`--exit-after-frames` の終了の直前に `FRAME_PACING gt_frames=<n> rt_frames=<n> dropped=<n> pacing=<on|off>` を出す。
+- 結果（mega-stress 5万個 close・RelWithDebInfo・300 フレーム）: `FRAME_PACING gt_frames=693 rt_frames=693 dropped=0`。窓の GameThread のフレーム数（`cpu_scope_frames`）87171 → 300。`RG.TraceRecord` の median 1.2 → 0.107 ms（p95 2.6 → 0.156 ms）でトレースのスレッドごとの溜めは不要だった。rt の median 38.13 → 35.66 ms、GPU の median 29.90 ms、`GT.WaitRenderThread` の median 35.14 ms。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIX-GT-PACING-1.txt`: RelWithDebInfo の Game のビルド EXIT=0（エラー・C の警告なし）。
+  - `verify-SCN-ECS-FIX-GT-PACING-2.txt`: 撮影 `result=pass`、EXIT=0、300 フレーム。close.Game.log の ERROR 0、`stage=gt_pacing enabled=1`。PNG を開いて確認（塔・岩・家・バナナ・影・空が描けている）。
+  - `verify-SCN-ECS-FIX-GT-PACING-3.txt`: `CHECK_CAPTURE_METRICS result=pass views=close`、EXIT=0（`GT.WaitRenderThread` を要求、`RG.TraceRecord` の median ≤ 0.2）。
+  - `verify-SCN-ECS-FIX-GT-PACING-4.txt`: `FRAME_PACING` の照合 EXIT=0（`gt_frames=693 rt_frames=693 dropped=0`）。
+  - `verify-SCN-ECS-FIX-GT-PACING-5.txt`: 起動画面 default の決定論比較 pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 8E-06・最大差 1、`indirect_lighting=rtgi`）、EXIT=0。default.Game.log の ERROR 0。PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
+  - `verify-SCN-ECS-FIX-GT-PACING-6.txt`: 周回 `-Cycles 2` は `SCENE_CYCLE_TOO_FEW`（複数のシーンでは 2 周目が基準なので 3 周以上が要る）で fail、EXIT=1。資源の差（`changed=none`）・落ち着かない周回は無し。
+  - `verify-SCN-ECS-FIX-GT-PACING-7.txt`: 周回 `-Cycles 3`（rendering3dtest・mega-bananas・mega-stress）`SCENE_CYCLE_SMOKE result=pass changed=none unsettled=0`、EXIT=0。Game.log の ERROR 0。シーンの切り替えと終了で待ち合いが詰まらない。
+  - `check-SCN-ECS-FIX-GT-PACING-off.txt`: `--gt-pacing=off`（mega-stress 5000 個・200 描画フレーム）で `FRAME_PACING gt_frames=134081 rt_frames=200 dropped=133879 pacing=off`、EXIT=0（前の動きに戻る）。
+- Next: SCN-ECS-FIF-AUDIT。
+- Notes: このタスクの verify の周回を `-Cycles 2` から `-Cycles 3` に直した（前の項目の複数のシーンの周回と同じ数。比べる周回が増えるので厳しくなる側）。SCN-ECS-FIF-SWITCH の verify にも同じ `-Cycles 2` が残っている。決定論の撮影（起動画面の比較）は 1 本のスレッドで描くので `FRAME_PACING gt_frames=0 rt_frames=0`。GameThread の Tick の dt は描画の間隔（mega-stress で約 35 ms）になる。固定の段は今のまま、周回と撮影で見た目・資源の差は出ていないが、dt に依存するゲームの処理を個別に確かめる試験は無い。窓を最小化したとき RenderThread はスワップチェーンの NotReady ですぐ返すので待ちは詰まらないが、GameThread は描画に合わせて回らなくなる（前と同じく全速で回る）。

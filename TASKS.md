@@ -869,14 +869,14 @@
 - notes: 2026-10-12 親が足した（SCN-ECS-MEASURE-RT の区間の内訳から）。`MEGA_TABLES` の行は撮影の `close.Game.log` で確かめる。危険地帯（RenderThread）。
 
 ## SCN-ECS-FIX-GT-PACING: GameThread を RenderThread に合わせて回し、描かれないパケットを作らない
-- status: todo
+- status: done
 - done-when: GameThread は RenderThread を待たずに回り続け（`RenderThread::NotifyNewFrame` は受け取られていないパケットを捨てて最新に差し替える）、mega-stress 5万個 close では描画 1 フレームの間に約 270 回回る（SCN-ECS-MEASURE-RT の `cpu_scope_frames` 87171 / 描画 320 フレーム）。`ApplicationProcessor` の `m_TargetFrameTime`（`BootConfig::TargetFrameRate`）は設定されるだけでどこからも使われていない。CPU の 1 コアを使い切り、捨てるパケットを作り続け、計測のトレースのロックを競って RenderThread の `RG.TraceRecord` を 1.2 ms（p95 2.6 ms）にしている（SCN-ECS-RT-FRAME-SCOPES）。GameThread は、前のパケットを RenderThread が受け取るまで次のパケットを渡さない（先行は最大 1 フレーム。待つ時間は `GT.WaitRenderThread` の区間にする）。シーンの切り替え・終了・窓の最小化・デバイスの待機で待ち合いが詰まらないこと。開発ビルドの `--gt-pacing=off` で今の動き（最新に差し替え）に戻せる。撮影の終わりに `FRAME_PACING gt_frames=<n> rt_frames=<n> dropped=<n>` をログへ出す。合格: mega-stress 5万個 close で `dropped=0`・gt_frames が rt_frames の 1.05 倍以下、`RG.TraceRecord` の median ≤ 0.2 ms、起動画面の比較と、mega-stress・バナナ・起動画面のシーンの周回が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-ECS-FIX-GT-PACING`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-FIX-GT-PACING --timing --min-frames 300 --require-scope GT.WaitRenderThread --max-scope-median-ms RG.TraceRecord=0.2`
 - verify: `python -c "import re,sys;t=open(r'.harness/runs/scene-capture/SCN-ECS-FIX-GT-PACING/close.Game.log',encoding='utf-8',errors='replace').read();m=re.findall(r'FRAME_PACING gt_frames=(\d+) rt_frames=(\d+) dropped=(\d+)',t);sys.exit(0 if m and m[-1][2]=='0' and int(m[-1][0])<=int(m[-1][1])*1.05 else 1)"`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-GT-PACING`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 2 -Configuration RelWithDebInfo`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 3 -Configuration RelWithDebInfo`
 - paths: Library/Core/Private/Rendering/RenderThread.cpp, Library/Core/Public/Rendering, Library/Core/Private/Engine, Library/Core/Public/Engine, Library/Core/Public/Boot, Library/Core/Private/Debug, Library/Core/Public/Debug, Game/GameApplicationHandler.cpp, Scripts/CheckCaptureMetrics.py, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した（SCN-ECS-RT-FRAME-SCOPES の内訳と、`m_TargetFrameTime` が使われていないことから）。GameThread の 1 フレームの時間（Tick の dt）が描画の間隔に近づくので、ゲームの処理が dt に依存して壊れないかも見る（固定の段は今のまま）。2 フレームの重ね（SCN-ECS-FIF-*）の前提（GameThread → RenderThread → GPU の段の数）になる。`RG.TraceRecord` が 0.2 ms に届かなければ、トレースの書き込みをスレッドごとの溜めに分ける直しもこの項目で行う。危険地帯（RenderThread・FramePacket の受け渡し）。
 

@@ -166,6 +166,11 @@ namespace Game
         // --render-parallel-record=on|off: 監査したパスを区間ごとのリストへ同時に記録するか（既定 off）。
         // off では全パスを 1 本のリストへ記録する。環境変数 NORVES_RENDER_PARALLEL_RECORD（1 で on）で描画側へ渡す。
         constexpr const TCHAR *kRenderParallelRecordOption = TEXT("--render-parallel-record=");
+#if NORVES_BUILD_DEVELOPMENT
+        // --gt-pacing=on|off: GameThread が前のパケットを RenderThread が受け取るまで待つか（既定 on。開発ビルドだけ）。
+        // off では待たず、受け取られていないパケットを捨てて最新に差し替える。環境変数 NORVES_GT_PACING（0 で off）で描画側へ渡す。
+        constexpr const TCHAR *kGameThreadPacingOption = TEXT("--gt-pacing=");
+#endif
         // --engine-checks=<名前,...>: 開発ビルドの検査（Debug/EngineChecks.h）を名前で有効にする。結果は ENGINE_CHECK の行でログへ出る。
         // --engine-checks-selftest-fail: 配線の確認用の検査 ENGINE_CHECK_SELFTEST を fail で報告させる（落ちる出力の確認用）。
         constexpr const TCHAR *kEngineChecksOption = TEXT("--engine-checks=");
@@ -1165,6 +1170,26 @@ namespace Game
                 }
                 continue;
             }
+#if NORVES_BUILD_DEVELOPMENT
+            if (TryStripPrefix(args[i], kGameThreadPacingOption, sceneValue))
+            {
+                // 最初のパケットを渡す前に環境変数へ渡す（描画側は最初のパケットで 1 回だけ読む）。
+                if (sceneValue == TEXT("on"))
+                {
+                    _putenv_s("NORVES_GT_PACING", "1");
+                }
+                else if (sceneValue == TEXT("off"))
+                {
+                    _putenv_s("NORVES_GT_PACING", "0");
+                }
+                else
+                {
+                    LOG_ERROR("--gt-pacing は on か off で指定してください");
+                    return false;
+                }
+                continue;
+            }
+#endif
             if (TryStripPrefix(args[i], kEngineChecksOption, sceneValue))
             {
 #if NORVES_BUILD_DEVELOPMENT

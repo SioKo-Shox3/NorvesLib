@@ -31,6 +31,25 @@ namespace NorvesLib::Core::Rendering
             std::free(value);
             return interval;
         }
+
+        // GameThread の歩調合わせを使うか。開発ビルドだけ環境変数 NORVES_GT_PACING（0 で off、1 で on。
+        // Game の --gt-pacing=off|on が設定する）で替えられる。既定は on。
+        bool ReadGameThreadPacingEnabled()
+        {
+#if NORVES_BUILD_DEVELOPMENT
+            char* value = nullptr;
+            size_t length = 0;
+            bool bEnabled = true;
+            if (_dupenv_s(&value, &length, "NORVES_GT_PACING") == 0 && value)
+            {
+                bEnabled = !(value[0] == '0' && value[1] == '\0');
+            }
+            std::free(value);
+            return bEnabled;
+#else
+            return true;
+#endif
+        }
     } // namespace
 
     // ========================================
@@ -78,6 +97,8 @@ namespace NorvesLib::Core::Rendering
         m_bFrameComplete.Store(true, std::memory_order_release);
         m_Stats = ThreadStats{};
         m_PublishedFramesRendered.Store(0, std::memory_order_release);
+        m_SubmittedPacketCount = 0;
+        m_DroppedPacketCount = 0;
         m_bAssetGpuFlushWindowRequested = false;
         m_bAssetGpuFlushWindowReady = false;
         m_bReportAssetGpuFlushWindowResume = false;
@@ -240,6 +261,37 @@ namespace NorvesLib::Core::Rendering
     {
         m_FrameMutex.Lock();
 
+        if (!m_bGameThreadPacingResolved)
+        {
+            m_bGameThreadPacing = ReadGameThreadPacingEnabled();
+            m_bGameThreadPacingResolved = true;
+            NORVES_LOG_INFO("Rendering", "stage=gt_pacing enabled=%d", m_bGameThreadPacing ? 1 : 0);
+        }
+
+        // 歩調合わせ: 前に渡したパケットを RenderThread が受け取るまで待つ。受け取りは RenderLoop が m_CurrentPacket を
+        // 外して m_IdleCondition を起こす。停止・終了（致命的な失敗を含む）でも待ちを解く。
+#if NORVES_ENABLE_STATS
+        bool bMeasuredWait = false;
+        std::chrono::high_resolution_clock::time_point waitStartTime;
+#endif
+        if (m_bGameThreadPacing && packet)
+        {
+#if NORVES_ENABLE_STATS
+            bMeasuredWait = NorvesLib::Debug::StatsManager::Get().IsTraceActive();
+            if (bMeasuredWait)
+            {
+                waitStartTime = std::chrono::high_resolution_clock::now();
+            }
+#endif
+            m_IdleCondition.Wait(m_FrameMutex,
+                                 [this, packet]()
+                                 {
+                                     return m_CurrentPacket == nullptr || m_CurrentPacket == packet ||
+                                            m_bShouldExit.Load(std::memory_order_acquire) ||
+                                            GetState() != RenderThreadState::Running;
+                                 });
+        }
+
         if (m_CurrentPacket && m_CurrentPacket != packet)
         {
             if (m_CurrentPacket->CompareExchangeState(FramePacketState::Queued,
@@ -247,12 +299,14 @@ namespace NorvesLib::Core::Rendering
             {
                 m_CurrentPacket->Clear();
                 m_CurrentPacket->SetState(FramePacketState::Empty);
+                ++m_DroppedPacketCount;
             }
         }
 
         if (packet)
         {
             packet->CompareExchangeState(FramePacketState::Ready, FramePacketState::Queued);
+            ++m_SubmittedPacketCount;
         }
 
         m_CurrentPacket = packet;
@@ -262,6 +316,25 @@ namespace NorvesLib::Core::Rendering
         m_FrameMutex.Unlock();
 
         m_FrameCondition.NotifyOne();
+
+#if NORVES_ENABLE_STATS
+        if (bMeasuredWait)
+        {
+            const float waitMs = std::chrono::duration<float, std::milli>(
+                std::chrono::high_resolution_clock::now() - waitStartTime).count();
+            NorvesLib::Debug::StatsManager::Get().RecordScope("GT.WaitRenderThread", "GameThread", waitMs);
+        }
+#endif
+    }
+
+    RenderThread::FramePacingStats RenderThread::GetFramePacingStats() const
+    {
+        FramePacingStats stats;
+        stats.GameFrames = m_SubmittedPacketCount;
+        stats.RenderFrames = m_PublishedFramesRendered.Load(std::memory_order_acquire);
+        stats.Dropped = m_DroppedPacketCount;
+        stats.bPacingEnabled = m_bGameThreadPacing;
+        return stats;
     }
 
     void RenderThread::RenderLoop()
@@ -304,6 +377,11 @@ namespace NorvesLib::Core::Rendering
                 bDrainAssetGpuFlushWindow = true;
             }
             m_FrameMutex.Unlock();
+            if (packet)
+            {
+                // 歩調合わせで次のパケットを待っている GameThread を起こす。
+                m_IdleCondition.NotifyAll();
+            }
 #if NORVES_ENABLE_STATS
             if (packet)
             {

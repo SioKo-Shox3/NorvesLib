@@ -241,6 +241,11 @@ namespace NorvesLib::Core::Rendering
          */
         [[nodiscard]] bool HasPendingAsyncAssets() const;
         [[nodiscard]] uint64_t GetRenderedFrameCount() const;
+        /** @brief GameThread と RenderThread の歩調の集計（渡したパケット・描いたパケット・捨てたパケットの数） */
+        [[nodiscard]] RenderThread::FramePacingStats GetFramePacingStats() const
+        {
+            return m_RenderThread.GetFramePacingStats();
+        }
 
         FrameCaptureRequestResult RequestFrameCapture();
         FrameCaptureRequestResult RequestFrameCapture(const FrameCaptureRequest& request);
