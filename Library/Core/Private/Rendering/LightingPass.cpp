@@ -2081,10 +2081,14 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        // 記述子セットは Execute ごとに借りるので、持ち続けるのは共有のレイアウトだけ
+        // 記述子セットは Execute ごとに借りるので、持ち続けるのは共有のレイアウトだけ。
+        // 持ち主の無い文脈で作った分は、参照する資源より先に手放す
+        m_UnownedDescriptorSets.clear();
+        m_UnownedBuffers.clear();
+        m_LastLightingExecute = LightingExecuteObservation{};
         m_LightingDescriptorSetLayout.reset();
 
-        // Release dependents before the resources they reference.
+        // 参照する側を、参照される資源より先に解放する
         m_LightingPipeline.reset();
         m_LightingFramebuffer.reset();
         m_LightingRenderPass.reset();
@@ -3090,7 +3094,8 @@ namespace NorvesLib::Core::Rendering
             return upload;
         }
 
-        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）: 使い回さない専用のバッファを作る（上書きは起きない）
+        // 持ち主の無い文脈（RenderingCoordinator を通さない検査）: 使い回さない専用のバッファを作る（上書きは起きない）。
+        // 提出の完了を知る手段が無いので、記録したコマンドが読み終える前に破棄されないようパスを手放すまで持つ
         if (!m_Device)
         {
             return upload;
@@ -3115,6 +3120,7 @@ namespace NorvesLib::Core::Rendering
             Container::VariableArray<uint8_t> zeros(static_cast<size_t>(size), 0u);
             buffer->Update(zeros.data(), size);
         }
+        m_UnownedBuffers.push_back(buffer);
         upload.Buffer = std::move(buffer);
         upload.Offset = 0;
         upload.Size = size;
@@ -3129,8 +3135,13 @@ namespace NorvesLib::Core::Rendering
         {
             return frameResources->AllocateDescriptorSet(layout).Set;
         }
-        // 持ち主の無い文脈: 使い回さないセットを作る
-        return m_Device ? m_Device->CreateDescriptorSet(desc) : RHI::DescriptorSetPtr{};
+        // 持ち主の無い文脈: 使い回さないセットを作り、パスを手放すまで持つ（BorrowUpload と同じ理由）
+        RHI::DescriptorSetPtr descriptorSet = m_Device ? m_Device->CreateDescriptorSet(desc) : RHI::DescriptorSetPtr{};
+        if (descriptorSet)
+        {
+            m_UnownedDescriptorSets.push_back(descriptorSet);
+        }
+        return descriptorSet;
     }
 
     bool LightingPass::EnsureLightingPipeline()
@@ -3406,13 +3417,17 @@ namespace NorvesLib::Core::Rendering
 
     bool LightingPass::RecordRTGIInstanceUpload(ViewRenderContext& context, const void* data, uint64_t size)
     {
+        // コピー元はフレームの持ち主から借り、提出の完了まで持ち主が持つ（持ち主の無い文脈は ExecuteRTGI が先に断る）
         FrameResourceLane* const frameResources = context.FrameResources;
+        if (!frameResources)
+        {
+            return false;
+        }
         // 前にコピーを記録したフレームが提出されたかで、GPUの置き場に表が届いたかを決める
         if (m_RTGIInstancesPendingGeneration.IsSet())
         {
-            const FrameSubmissionOutcome outcome = frameResources
-                ? frameResources->GetSubmissionOutcome(m_RTGIInstancesPendingGeneration)
-                : FrameSubmissionOutcome::Unknown;
+            const FrameSubmissionOutcome outcome =
+                frameResources->GetSubmissionOutcome(m_RTGIInstancesPendingGeneration);
             if (outcome == FrameSubmissionOutcome::Recording)
             {
                 // 同じフレームで先に記録したコピーは、この dispatch より先に実行される
@@ -3449,11 +3464,8 @@ namespace NorvesLib::Core::Rendering
                                            RHI::ResourceState::ShaderResource,
                                            0u,
                                            size);
-        // 届いたことは提出の成功で確定する。持ち主の無い文脈は提出を確かめられないので、確定せず次もコピーする
-        if (frameResources)
-        {
-            m_RTGIInstancesPendingGeneration = frameResources->GetGeneration();
-        }
+        // 届いたことは提出の成功で確定する
+        m_RTGIInstancesPendingGeneration = frameResources->GetGeneration();
         return true;
     }
 
@@ -3612,7 +3624,10 @@ namespace NorvesLib::Core::Rendering
             m_RTGISampleFrameNumber = 0u;
             m_bRTGISampleFrameNumberValid = false;
         }
+        // RTGI は dispatch と instance の表のコピーをコマンドリストへ直接記録し、「表が届いた」を提出の結果で確定するので、
+        // フレームの持ち主（借りた資源を提出の完了まで持ち、提出の結果を残す）の無い文脈では記録の前に断る
         if (m_bRTGIDenoiserUnavailable || !context.CommandList || !context.Device ||
+            !context.FrameResources ||
             !context.bRTGIEnabled ||
             !context.bRTGITLASAvailable || !context.RTGICapability.IsUsable() ||
             !context.SnapshotRayTracingScene ||
@@ -4148,6 +4163,7 @@ namespace NorvesLib::Core::Rendering
                                          const RHI::TexturePtr& rtgiDiffuseIndirectTexture,
                                          bool bRegisterLegacyOutputs)
     {
+        m_LastLightingExecute = LightingExecuteObservation{};
         if (!context.CommandList)
         {
             return;
@@ -4203,7 +4219,7 @@ namespace NorvesLib::Core::Rendering
                                lightingParams,
                                lightArrayUpload))
         {
-            NORVES_LOG_ERROR("LightingPass", "Failed to update lighting light buffer, skipping lighting draw");
+            NORVES_LOG_ERROR("LightingPass", "照明の光源の配列を用意できないため、照明を描きません");
             return;
         }
         const bool bDDGIProbeUpdateSucceeded = m_DDGIProbePass.Execute(context);
@@ -4587,6 +4603,16 @@ namespace NorvesLib::Core::Rendering
                                                   vsmPointSampleUpload.GetSize32());
 
         lightingDescriptorSet->Update();
+
+        const auto observeUpload = [](const ExecuteUpload& upload) {
+            return LightingExecuteObservation::Upload{upload.Buffer, upload.Offset, upload.Size};
+        };
+        m_LastLightingExecute.LightData = observeUpload(lightingParamsUpload);
+        m_LastLightingExecute.LightArray = observeUpload(lightArrayUpload);
+        m_LastLightingExecute.VsmSample = observeUpload(vsmSampleUpload);
+        m_LastLightingExecute.VsmPointSample = observeUpload(vsmPointSampleUpload);
+        m_LastLightingExecute.VsmSlice = observeUpload(vsmSliceUpload);
+        m_LastLightingExecute.DescriptorSet = lightingDescriptorSet.get();
 
         RHI::Viewport viewport = context.GetActiveLocalViewport();
         RHI::ScissorRect scissor = context.GetActiveLocalScissor();

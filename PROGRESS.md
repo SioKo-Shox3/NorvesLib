@@ -3472,3 +3472,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-LIGHTING-3.txt`: `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=17 resources=39`（反復 63 の 27 から、LightingPass の 10 組〔照明の定数・光源の配列・VSM の 3 つ・照明の記述子セット・初期化で作った記述子セット・RTGI の定数・発光・instance の表〕が消えた）、LightingPass の行は 0、EXIT=0。Game.log の ERROR 0、`INDIRECT_LIGHTING source=rtgi`。借りは最後のフレームで切れ端 81・記述子セット 76（ページ・pool は最初のフレームで 1 つずつ足した後は足していない）、借りの失敗 0。
 - Next: TASKS.md の未完の次の項目。
 - Notes: Debug の `RTGIDiffuseIndirectVulkanTest` の複数ビューポートの場合は、消した組のメンバ（`m_LightDataBuffer` など）を読み、組の上限 4・次のフレームでの組の使い回しを確かめているので、この変更でコンパイルできない（Test/ は paths の外なので直していない）。借りる形の約束（Execute ごとに別の切れ端・セット、中身がそのビューポートの値、描画が束縛するセットが Execute のセット、上限なし）へ書き直す必要がある。DDGI の地図の引き方（`GetIrradianceAtlas(context.FrameIndex, …)`）と VSM の統計の読み戻し（通し番号の枠）は LightingPass に残っている（前者は DDGIProbePass の資源、後者は SCN-ECS-FIF-READBACK の対象）。提出の結果の確かめ・中止のフレームのコピーを持ち越さないことを起こす検査は書いていない（verify が名指ししていないため）。`git diff --numstat` と `--ignore-cr-at-eol` は LightingPass.cpp で 1 行違うが、`--minimal`・`--histogram` では一致する（既定の差分の並べ方の違いで、行末だけの書き換えは無い）。
+
+### SCN-ECS-FIF-LIGHTING の差し戻しへの対応（2026-10-13、反復 65・run 20261012-030203）
+
+- 持ち主の無い文脈の資源の寿命: RTGI（dispatch・denoise・instance の表のコピー）は、フレームの持ち主が無い文脈では記録の前に断るようにした（`ExecuteRTGI` の入口の条件に `context.FrameResources` を足し、`RecordRTGIInstanceUpload` も持ち主が無ければ記録しない）。コピー元の切れ端・RTGI と denoise の記述子セットは常に持ち主から借り、提出の完了まで持ち主が持つ。照明の全画面パスは持ち主の無い文脈でも描くので、その文脈で作るバッファと記述子セットは `m_UnownedBuffers`・`m_UnownedDescriptorSets` にパスを手放す（Shutdown）まで持つ（提出の完了を知る手段が無いため。本番の経路は常に借りるので入らない）。
+- `RTGIDiffuseIndirectVulkanTest` を借りる形へ書き直した: 試験がフレームの持ち主（`FrameResourceOwners`。ページを作る口はデバイスで作りマップした先頭を覚える）を開始・提出・中止し、`context.FrameResources` に渡す。消した組のメンバの代わりに、LightingPass が直近の照明の Execute で束縛した借りた置き場（弱い参照・オフセット・大きさ）と記述子セット（生のポインタ）を `m_LastLightingExecute` に残し、試験がそこから読む。複数ビューポートの場合は、Execute ごとに別の切れ端・別のセットを借りること、描画が束縛するセットがその Execute のセットであること、中身がそのビューポートの値のままであること、同じフレームの 5 回目の Execute も描く（上限が無い）ことを確かめる（旧来の上限 4・次のフレームで同じ組を使い直す期待は消した）。
+- non-blocking の指摘: Shutdown の英語のコメントと、光源の配列を用意できないときの英語のエラーの説明文を日本語にした。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-LIGHTING-4.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0（行末の修復の後のビルド `verify-SCN-ECS-FIF-LIGHTING-7.txt` も EXIT=0）。
+  - `verify-SCN-ECS-FIF-LIGHTING-5.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、`indirect_lighting=rtgi`、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=1.2E-05・within_limits=True、result=pass、EXIT=0。PNG は天球・地面・球・岩・家と影が以前どおり。
+  - `verify-SCN-ECS-FIF-LIGHTING-6.txt`: `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=17`、LightingPass の行 0、EXIT=0。Game.log の ERROR 0、`INDIRECT_LIGHTING source=rtgi`。
+  - `check-SCN-ECS-FIF-LIGHTING-rtgi-test.txt`: Debug の `RTGIDiffuseIndirectVulkanTest`（検証レイヤー有効）EXIT=0、`lighting_execute_borrows_per_viewport=true bound_descriptor_sets_distinct=true borrowed_slices_keep_own_viewport_values=true no_execute_limit=true` ほか RTGI の全項目が true、検証レイヤーの報告 0。
+- Next: TASKS.md の未完の次の項目。
+- Notes: `DynamicUniformAllocator` の持ち主の無い文脈（`DynUBO_Unowned`）も、作った定数のバッファを記録の後に手放すので同じ寿命の問題を持ちうる（この項目の外。GBuffer・Shadow を直接呼ぶ検査は FrameCommand が記述子セット経由でバッファを持つ形なら守られるが、直接記録する経路は確かめていない）。

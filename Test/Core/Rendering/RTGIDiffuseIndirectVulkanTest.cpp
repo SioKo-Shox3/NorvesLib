@@ -1,6 +1,8 @@
 ﻿// LightingPassのRTGI ray-query computeと既存間接光fallbackをGPU readbackで検証する。
 #include "Rendering/FramePacket.h"
 #include "Rendering/FrameCommand.h"
+#include "Rendering/FrameResourceOwner.h"
+#include "Rendering/FrameUploadArena.h"
 #include "Rendering/LightingPass.h"
 #include "Rendering/LightingPassGpuTypes.h"
 #include "Rendering/LightingPassLightPacking.h"
@@ -60,25 +62,12 @@ namespace NorvesLib::Core::Rendering
                                    false);
         }
 
-        // 今の Execute が使っている組（ExecuteWithInputs の直後は、その Execute の組）
-        struct ActiveExecuteSet
-        {
-            RHI::BufferPtr LightData;
-            RHI::BufferPtr LightArray;
-            RHI::BufferPtr VsmSample;
-            RHI::BufferPtr VsmPointSample;
-            RHI::BufferPtr VsmSlice;
-            RHI::DescriptorSetPtr DescriptorSet;
-        };
+        // 直近の照明の Execute が束縛した借りた置き場（ページと位置）と記述子セット
+        using LightingObservation = LightingPass::LightingExecuteObservation;
 
-        static ActiveExecuteSet GetActiveExecuteSet(const LightingPass& pass)
+        static LightingObservation GetLastLightingExecute(const LightingPass& pass)
         {
-            return ActiveExecuteSet{pass.m_LightDataBuffer,
-                                    pass.m_LightArrayBuffer,
-                                    pass.m_VsmSampleBuffer,
-                                    pass.m_VsmPointSampleBuffer,
-                                    pass.m_VsmSliceBuffer,
-                                    pass.m_LightingDescriptorSet};
+            return pass.m_LastLightingExecute;
         }
 
         // グラフを通さずに Execute を呼ぶ試験が、VSM のページの表とプールを渡す
@@ -129,12 +118,123 @@ namespace
     constexpr uint32_t ExpectedSceneRevision = 41u;
     constexpr uint32_t ExpectedLightRevision = 7u;
 
-    // 提出（Submit）ごとに 1 つ進める描画フレームの通し番号。照明の Execute ごとの資源の組は、通し番号が同じ間は
-    // 同じフレームの別のビューポートとして別の組を使うので、別々に提出する試験の各呼び出しには別の番号を渡す。
+    // 提出（Submit）ごとに 1 つ進める描画フレームの通し番号。通し番号でフレームを分ける資源（VSM の統計の読み戻しの枠）
+    // のため、別々に提出する試験の各呼び出しには別の番号を渡す。
     uint64_t NextRenderFrameSerial()
     {
         static uint64_t serial = 1000000u;
         return ++serial;
+    }
+
+    using LightingObservation = RTGIDiffuseIndirectVulkanTestAccess::LightingObservation;
+
+    // デバイスでページを作り、借りた切れ端の中身を検査が読めるよう、マップしたままの先頭をページごとに覚える口
+    class RecordingPageSource final : public IFrameUploadPageSource
+    {
+    public:
+        explicit RecordingPageSource(const DevicePtr& device)
+        {
+            m_Inner.SetDevice(device);
+        }
+
+        bool CreatePage(uint64_t sizeBytes, FrameUploadPage& outPage) override
+        {
+            if (!m_Inner.CreatePage(sizeBytes, outPage))
+            {
+                return false;
+            }
+            m_Pages.push_back(outPage);
+            return true;
+        }
+
+        FrameUploadLimits GetLimits() const override
+        {
+            return m_Inner.GetLimits();
+        }
+
+        const FrameUploadPage* FindPage(const IBuffer* buffer) const
+        {
+            for (const FrameUploadPage& page : m_Pages)
+            {
+                if (page.Buffer.get() == buffer)
+                {
+                    return &page;
+                }
+            }
+            return nullptr;
+        }
+
+        void Clear()
+        {
+            m_Pages.clear();
+        }
+
+    private:
+        DeviceFrameUploadPageSource m_Inner;
+        VariableArray<FrameUploadPage> m_Pages;
+    };
+
+    // RenderingCoordinator と同じフレームの持ち主。照明と RTGI はフレームごとのデータをここから借り、
+    // 借りた物は提出の完了まで持ち主が持つ。試験は提出のたびに完了を待つ（Submit(true)）ので、
+    // 次のフレームの開始で前の提出のスロットを回収できる。
+    struct TestFrameResources
+    {
+        explicit TestFrameResources(const DevicePtr& device)
+            : PageSource(device)
+        {
+        }
+
+        ~TestFrameResources()
+        {
+            Owners.Reset();
+            Owners.ReleaseUploadPages();
+            Owners.ReleaseDescriptorPools();
+            PageSource.Clear();
+        }
+
+        bool Configure(IDevice* device)
+        {
+            Owners.ConfigureUpload(&PageSource, FrameUploadArena::DefaultInitialPageBytes);
+            return Owners.ConfigureDescriptors(device);
+        }
+
+        FrameResourceLane* Begin()
+        {
+            return Owners.BeginFrame(0u, SubmittedSerial);
+        }
+
+        void Commit()
+        {
+            Owners.CommitSubmitted(++SubmittedSerial);
+        }
+
+        void Abort()
+        {
+            Owners.AbortFrame();
+        }
+
+        // 借りた切れ端の先頭 byteCount バイト（そのフレームの持ち主が回収されるまで読める）
+        bool Read(const LightingObservation::Upload& upload, uint64_t byteCount, VariableArray<uint8_t>& outBytes) const
+        {
+            const BufferPtr buffer = upload.Buffer.lock();
+            const FrameUploadPage* page = buffer ? PageSource.FindPage(buffer.get()) : nullptr;
+            if (!page || byteCount > upload.Size || upload.Offset + byteCount > page->Size)
+            {
+                return false;
+            }
+            outBytes.resize(static_cast<size_t>(byteCount));
+            std::memcpy(outBytes.data(), page->CPUAddress + upload.Offset, static_cast<size_t>(byteCount));
+            return true;
+        }
+
+        RecordingPageSource PageSource;
+        FrameResourceOwners Owners;
+        uint64_t SubmittedSerial = 0u;
+    };
+
+    bool SameUpload(const LightingObservation::Upload& lhs, const LightingObservation::Upload& rhs)
+    {
+        return lhs.Buffer.lock() == rhs.Buffer.lock() && lhs.Offset == rhs.Offset;
     }
 
     struct Vertex
@@ -535,7 +635,8 @@ namespace
         return true;
     }
 
-    bool RunLightingFrame(const DevicePtr& device,
+    bool RunLightingFrame(TestFrameResources& frameResources,
+                          const DevicePtr& device,
                           const RHI::DeviceCapabilities& capabilities,
                           const RTGIRayQueryCapability& rtgiCapability,
                           LightingPass& lightingPass,
@@ -605,6 +706,12 @@ namespace
         context.FrameIndex = 0u;
         context.FrameNumber = frameNumber;
         context.RenderFrameSerial = NextRenderFrameSerial();
+        context.FrameResources = frameResources.Begin();
+        if (!context.FrameResources)
+        {
+            std::cerr << "フレームの持ち主を開始できませんでした\n";
+            return false;
+        }
         context.SnapshotRayTracingScene = &rayTracingScene;
         context.RTGICapability = rtgiCapability;
         context.bRTGIEnabled = bRTGIEnabled;
@@ -673,11 +780,14 @@ namespace
                         bRecorded;
         }
         commandList->End();
+        context.FrameResources = nullptr;
         if (!bRecorded)
         {
+            frameResources.Abort();
             return false;
         }
         commandList->Submit(true);
+        frameResources.Commit();
 
         const void* mappedSceneColor = sceneColorReadback->Map(0u, readbackSize);
         if (!mappedSceneColor)
@@ -711,9 +821,9 @@ namespace
     // 同じフレームの複数の照明の Execute の観測
     struct ExecutedViewport
     {
-        RTGIDiffuseIndirectVulkanTestAccess::ActiveExecuteSet Set;
+        LightingObservation Set;
         // 描画の FrameCommand（提出前に積まれた全画面パス）が束縛する descriptor set
-        DescriptorSetPtr BoundDescriptorSet;
+        const IDescriptorSet* BoundDescriptorSet = nullptr;
     };
 
     uint32_t CountFullscreenPasses(const VariableArray<FrameCommand>& commands)
@@ -738,34 +848,18 @@ namespace
         return DescriptorSetPtr{};
     }
 
-    bool ReadBufferBytes(const BufferPtr& buffer, uint64_t byteCount, VariableArray<uint8_t>& outBytes)
-    {
-        if (!buffer || buffer->GetSize() < byteCount)
-        {
-            return false;
-        }
-        const void* mapped = buffer->Map(0u, byteCount);
-        if (!mapped)
-        {
-            return false;
-        }
-        outBytes.resize(static_cast<size_t>(byteCount));
-        std::memcpy(outBytes.data(), mapped, static_cast<size_t>(byteCount));
-        buffer->Unmap();
-        return true;
-    }
-
     bool BytesEqual(const VariableArray<uint8_t>& bytes, const void* expected, size_t expectedSize)
     {
         return bytes.size() >= expectedSize && std::memcmp(bytes.data(), expected, expectedSize) == 0;
     }
 
     // 同じフレームに照明を複数回 Execute する（同じ SceneView の複数のビューポート）。
-    // 実 Vulkan 装置で、Execute ごとに別の descriptor set と定数・ライト配列・VSM のパラメータとスライスの表のバッファの組を使うこと、
-    // 描画が束縛する descriptor set が Execute ごとに別であること、各組のバッファの中身がその Execute のカメラ・ライト・VSM の値のまま
-    // 後の Execute に書き換えられないこと、組の上限（4）を超えた Execute が描かず組を壊さないこと、
-    // フレームが変わると先頭の組から使い直すことを確かめる。
-    bool RunMultiViewportResourceSetTest(const DevicePtr& device,
+    // 実 Vulkan 装置で、Execute ごとにフレームの持ち主から別の descriptor set と定数・ライト配列・VSM のパラメータと
+    // スライスの表の切れ端を借りること、描画が束縛する descriptor set がその Execute の借りたセットであること、
+    // 各切れ端の中身がその Execute のカメラ・ライト・VSM の値のまま後の Execute に書き換えられないこと、
+    // 同じフレームの Execute の数に上限が無い（5 回目も描き、前の切れ端を壊さない）ことを確かめる。
+    bool RunMultiViewportResourceSetTest(TestFrameResources& frameResources,
+                                         const DevicePtr& device,
                                          const RHI::DeviceCapabilities& capabilities,
                                          const RTGIRayQueryCapability& rtgiCapability,
                                          LightingPass& lightingPass,
@@ -869,6 +963,12 @@ namespace
             context.FrameIndex = 0u;
             context.FrameNumber = frameNumber;
             context.RenderFrameSerial = NextRenderFrameSerial();
+            context.FrameResources = frameResources.Begin();
+            if (!context.FrameResources)
+            {
+                std::cerr << "複数ビューポートの試験: フレームの持ち主を開始できませんでした\n";
+                return false;
+            }
             context.bRTGIEnabled = false;
             context.bRTGITLASAvailable = false;
             renderer.ResetStats();
@@ -897,8 +997,8 @@ namespace
                 outPassesAddedByLastExecute = CountFullscreenPasses(pending) - passesBefore;
                 if (outExecuted != nullptr && outPassesAddedByLastExecute == 1u)
                 {
-                    outExecuted[execute].Set = RTGIDiffuseIndirectVulkanTestAccess::GetActiveExecuteSet(lightingPass);
-                    outExecuted[execute].BoundDescriptorSet = LastFullscreenPassDescriptorSet(pending);
+                    outExecuted[execute].Set = RTGIDiffuseIndirectVulkanTestAccess::GetLastLightingExecute(lightingPass);
+                    outExecuted[execute].BoundDescriptorSet = LastFullscreenPassDescriptorSet(pending).get();
                 }
             }
             // 提出前に、積んだ描画をまとめて記録する（RenderingCoordinator と同じ順）
@@ -906,6 +1006,8 @@ namespace
             outDrawCalls = renderer.GetStats().DrawCallCount;
             commandList->End();
             commandList->Submit(true);
+            frameResources.Commit();
+            context.FrameResources = nullptr;
             context.PendingFrameCommands = nullptr;
             context.MainCamera = nullptr;
             return true;
@@ -925,7 +1027,7 @@ namespace
             VariableArray<uint8_t> bytes;
             // 照明の定数: そのカメラの位置とライトの数
             GPULightingParams lighting = {};
-            if (!ReadBufferBytes(entry.Set.LightData, sizeof(lighting), bytes))
+            if (!frameResources.Read(entry.Set.LightData, sizeof(lighting), bytes))
             {
                 bOk = false;
             }
@@ -942,7 +1044,7 @@ namespace
             const uint32_t expectedLightCount =
                 PackLightingPassLights(Span<const LightProxy>(lightSets[cameraViewport]), expectedLights);
             const size_t lightBytes = static_cast<size_t>(expectedLightCount) * sizeof(GPULightData);
-            bOk = bOk && expectedLightCount > 0u && ReadBufferBytes(entry.Set.LightArray, lightBytes, bytes) &&
+            bOk = bOk && expectedLightCount > 0u && frameResources.Read(entry.Set.LightArray, lightBytes, bytes) &&
                   BytesEqual(bytes, expectedLights.data(), lightBytes);
             // 太陽の VSM のパラメータ
             GPUVsmSampleParams expectedSample = {};
@@ -954,20 +1056,20 @@ namespace
                                                                 depthHeight,
                                                                 clampedPoolPages,
                                                                 expectedSample);
-            bOk = bOk && bSun && ReadBufferBytes(entry.Set.VsmSample, sizeof(expectedSample), bytes) &&
+            bOk = bOk && bSun && frameResources.Read(entry.Set.VsmSample, sizeof(expectedSample), bytes) &&
                   BytesEqual(bytes, &expectedSample, sizeof(expectedSample));
             // 点光源の VSM のパラメータ
             GPUVsmPointSampleParams expectedPoint = {};
             const bool bPoint = BuildVirtualShadowMapPointSampleParams(
                 pointLights[cameraViewport], cameraPosition, camera.FieldOfView, depthHeight, clampedPoolPages, expectedPoint);
-            bOk = bOk && bPoint && ReadBufferBytes(entry.Set.VsmPointSample, sizeof(expectedPoint), bytes) &&
+            bOk = bOk && bPoint && frameResources.Read(entry.Set.VsmPointSample, sizeof(expectedPoint), bytes) &&
                   BytesEqual(bytes, &expectedPoint, sizeof(expectedPoint));
             // スライスの表（太陽の段の後ろに点光源のスライス）
             GPUVsmSlice expectedSlices[VirtualShadowMapMaxSlices];
             std::memset(expectedSlices, 0, sizeof(expectedSlices));
             BuildVirtualShadowMapSlices(&clipmaps[cameraViewport], nullptr, VirtualShadowMapMaxSlices, expectedSlices);
             BuildVirtualShadowMapPointSlices(pointLights[cameraViewport], expectedSlices);
-            bOk = bOk && ReadBufferBytes(entry.Set.VsmSlice, sizeof(expectedSlices), bytes) &&
+            bOk = bOk && frameResources.Read(entry.Set.VsmSlice, sizeof(expectedSlices), bytes) &&
                   BytesEqual(bytes, expectedSlices, sizeof(expectedSlices));
             if (!bOk)
             {
@@ -977,7 +1079,36 @@ namespace
             return bOk;
         };
 
-        // フレーム 0: 4 つのビューポート。Execute のたびに別の組が使われ、描画は 4 回
+        // Execute ごとの観測が、どれも他と別の切れ端・別のセットで、描画がその Execute のセットを束縛していること
+        const auto verifyDistinct = [&](const ExecutedViewport* entries, uint32_t count, const char* label) -> bool
+        {
+            for (uint32_t execute = 0u; execute < count; ++execute)
+            {
+                const ExecutedViewport& entry = entries[execute];
+                if (!entry.Set.DescriptorSet || entry.BoundDescriptorSet != entry.Set.DescriptorSet)
+                {
+                    std::cerr << "複数ビューポートの試験: 描画が束縛する descriptor set が Execute の借りたセットと違います execute="
+                              << execute << "（" << label << "）\n";
+                    return false;
+                }
+                for (uint32_t other = execute + 1u; other < count; ++other)
+                {
+                    const LightingObservation& a = entry.Set;
+                    const LightingObservation& b = entries[other].Set;
+                    if (a.DescriptorSet == b.DescriptorSet || SameUpload(a.LightData, b.LightData) ||
+                        SameUpload(a.LightArray, b.LightArray) || SameUpload(a.VsmSample, b.VsmSample) ||
+                        SameUpload(a.VsmPointSample, b.VsmPointSample) || SameUpload(a.VsmSlice, b.VsmSlice))
+                    {
+                        std::cerr << "複数ビューポートの試験: 別の Execute が同じ descriptor set または切れ端を使っています execute="
+                                  << execute << " other=" << other << "（" << label << "）\n";
+                        return false;
+                    }
+                }
+            }
+            return true;
+        };
+
+        // フレーム 0: 4 つのビューポート。Execute のたびに別のセット・切れ端を借り、描画は 4 回
         const uint32_t order[ViewportCount] = {0u, 1u, 2u, 3u};
         ExecutedViewport executed[ViewportCount];
         uint32_t drawCalls = 0u;
@@ -987,56 +1118,43 @@ namespace
             std::cerr << "複数ビューポートの試験: 4 ビューポートの描画数が不正です draw_calls=" << drawCalls << "\n";
             return false;
         }
-        for (uint32_t viewport = 0u; viewport < ViewportCount; ++viewport)
+        if (!verifyDistinct(executed, ViewportCount, "同じフレームの 4 回"))
         {
-            const ExecutedViewport& entry = executed[viewport];
-            if (!entry.BoundDescriptorSet || entry.BoundDescriptorSet != entry.Set.DescriptorSet)
-            {
-                std::cerr << "複数ビューポートの試験: 描画が束縛する descriptor set が Execute の組と違います viewport=" << viewport
-                          << "\n";
-                return false;
-            }
-            for (uint32_t other = viewport + 1u; other < ViewportCount; ++other)
-            {
-                const RTGIDiffuseIndirectVulkanTestAccess::ActiveExecuteSet& a = entry.Set;
-                const RTGIDiffuseIndirectVulkanTestAccess::ActiveExecuteSet& b = executed[other].Set;
-                if (entry.BoundDescriptorSet == executed[other].BoundDescriptorSet || a.DescriptorSet == b.DescriptorSet ||
-                    a.LightData == b.LightData || a.LightArray == b.LightArray || a.VsmSample == b.VsmSample ||
-                    a.VsmPointSample == b.VsmPointSample || a.VsmSlice == b.VsmSlice)
-                {
-                    std::cerr << "複数ビューポートの試験: 別の Execute が同じ descriptor set またはバッファを使っています viewport="
-                              << viewport << " other=" << other << "\n";
-                    return false;
-                }
-            }
-            if (!verifySet(entry, viewport, "同じフレームの 4 回の後"))
-            {
-                return false;
-            }
-        }
-
-        // 次のフレームで 5 回 Execute する: 先頭の組から使い直し、組の上限を超えた 5 回目は描かず、4 つ目の組を壊さない
-        ExecutedViewport overflow[ViewportCount + 1u];
-        const uint32_t overflowOrder[ViewportCount + 1u] = {0u, 1u, 2u, 3u, 0u};
-        if (!recordFrame(FrameNumber + 1u, overflowOrder, ViewportCount + 1u, overflow, drawCalls, lastAdded) ||
-            drawCalls != ViewportCount || lastAdded != 0u)
-        {
-            std::cerr << "複数ビューポートの試験: 上限を超えた Execute が描いています draw_calls=" << drawCalls
-                      << " added=" << lastAdded << "\n";
             return false;
         }
         for (uint32_t viewport = 0u; viewport < ViewportCount; ++viewport)
         {
-            if (overflow[viewport].BoundDescriptorSet != executed[viewport].BoundDescriptorSet ||
-                !verifySet(overflow[viewport], viewport, "上限を超えた Execute の後"))
+            if (!verifySet(executed[viewport], viewport, "同じフレームの 4 回の後"))
             {
-                std::cerr << "複数ビューポートの試験: 次のフレームが先頭の組から使い直されていないか、上限超えが組を壊しました viewport="
-                          << viewport << "\n";
                 return false;
             }
         }
 
-        // カメラの順を逆にしたフレーム: 各組には、その順番の Execute のカメラの値が入る
+        // 次のフレームで 5 回 Execute する: 借りる形に上限は無いので 5 回目も描き、同じビューポート 0 の 1 回目とは
+        // 別の切れ端・セットを借りて、前の 4 回の中身を壊さない
+        constexpr uint32_t ExtraExecuteCount = ViewportCount + 1u;
+        ExecutedViewport extra[ExtraExecuteCount];
+        const uint32_t extraOrder[ExtraExecuteCount] = {0u, 1u, 2u, 3u, 0u};
+        if (!recordFrame(FrameNumber + 1u, extraOrder, ExtraExecuteCount, extra, drawCalls, lastAdded) ||
+            drawCalls != ExtraExecuteCount || lastAdded != 1u)
+        {
+            std::cerr << "複数ビューポートの試験: 5 回目の Execute が描いていません draw_calls=" << drawCalls
+                      << " added=" << lastAdded << "\n";
+            return false;
+        }
+        if (!verifyDistinct(extra, ExtraExecuteCount, "同じフレームの 5 回"))
+        {
+            return false;
+        }
+        for (uint32_t execute = 0u; execute < ExtraExecuteCount; ++execute)
+        {
+            if (!verifySet(extra[execute], extraOrder[execute], "同じフレームの 5 回の後"))
+            {
+                return false;
+            }
+        }
+
+        // カメラの順を逆にしたフレーム: 各 Execute の切れ端には、その順番の Execute のカメラの値が入る
         ExecutedViewport reversed[ViewportCount];
         const uint32_t reversedOrder[ViewportCount] = {3u, 2u, 1u, 0u};
         if (!recordFrame(FrameNumber + 2u, reversedOrder, ViewportCount, reversed, drawCalls, lastAdded) || drawCalls != ViewportCount)
@@ -1044,12 +1162,15 @@ namespace
             std::cerr << "複数ビューポートの試験: 逆順のフレームの描画数が不正です draw_calls=" << drawCalls << "\n";
             return false;
         }
+        if (!verifyDistinct(reversed, ViewportCount, "逆順のフレーム"))
+        {
+            return false;
+        }
         for (uint32_t execute = 0u; execute < ViewportCount; ++execute)
         {
-            if (reversed[execute].BoundDescriptorSet != executed[execute].BoundDescriptorSet ||
-                !verifySet(reversed[execute], reversedOrder[execute], "逆順のフレームの後"))
+            if (!verifySet(reversed[execute], reversedOrder[execute], "逆順のフレームの後"))
             {
-                std::cerr << "複数ビューポートの試験: 逆順のフレームの組が不正です execute=" << execute << "\n";
+                std::cerr << "複数ビューポートの試験: 逆順のフレームの切れ端が不正です execute=" << execute << "\n";
                 return false;
             }
         }
@@ -1156,6 +1277,13 @@ namespace
             return 1;
         }
 
+        TestFrameResources frameResources(device);
+        if (!frameResources.Configure(device.get()))
+        {
+            std::cerr << "フレームの持ち主に記述子の pool を作れませんでした\n";
+            return 1;
+        }
+
         LightingPass lightingPass;
         lightingPass.SetRegisterLegacyBridge(false);
         if (!lightingPass.Initialize(context))
@@ -1178,7 +1306,7 @@ namespace
         }
 
         LightingFrameObservation active;
-        if (!RunLightingFrame(device,
+        if (!RunLightingFrame(frameResources, device,
                               capabilities,
                               rtgiCapability,
                               lightingPass,
@@ -1213,7 +1341,7 @@ namespace
         }
 
         LightingFrameObservation disabled;
-        if (!RunLightingFrame(device,
+        if (!RunLightingFrame(frameResources, device,
                               capabilities,
                               rtgiCapability,
                               lightingPass,
@@ -1238,7 +1366,7 @@ namespace
         }
 
         LightingFrameObservation incomplete;
-        if (!RunLightingFrame(device,
+        if (!RunLightingFrame(frameResources, device,
                               capabilities,
                               rtgiCapability,
                               lightingPass,
@@ -1281,7 +1409,7 @@ namespace
         AccelerationStructureBuildDesc nonCasterOnlyBuild = topLevelBuild;
         nonCasterOnlyBuild.instances[0].mask = RayTracingInstanceMaskNonShadowCaster;
         LightingFrameObservation nonCasterOnly;
-        if (!RunLightingFrame(device,
+        if (!RunLightingFrame(frameResources, device,
                               capabilities,
                               rtgiCapability,
                               lightingPass,
@@ -1363,11 +1491,11 @@ namespace
         constexpr uint64_t CasterComparisonFrame = 40u;
         LightingFrameObservation emitterOnly;
         LightingFrameObservation withNonCaster;
-        if (!RunLightingFrame(device, capabilities, rtgiCapability, lightingPass, renderer,
+        if (!RunLightingFrame(frameResources, device, capabilities, rtgiCapability, lightingPass, renderer,
                               context, emitterOnlyPacket.RayTracingScene, emitterOnlyBuild,
                               gbuffer, rtgiOutput, true, true, true, CasterComparisonFrame,
                               emitterOnly) ||
-            !RunLightingFrame(device, capabilities, rtgiCapability, lightingPass, renderer,
+            !RunLightingFrame(frameResources, device, capabilities, rtgiCapability, lightingPass, renderer,
                               context, occludedPacket.RayTracingScene, occludedBuild, gbuffer,
                               rtgiOutput, true, true, true, CasterComparisonFrame,
                               withNonCaster) ||
@@ -1456,11 +1584,11 @@ namespace
         }
         LightingFrameObservation nearBlocked;
         LightingFrameObservation blockerOnly;
-        if (!RunLightingFrame(device, capabilities, rtgiCapability, lightingPass, renderer,
+        if (!RunLightingFrame(frameResources, device, capabilities, rtgiCapability, lightingPass, renderer,
                               context, nearBlockedPacket.RayTracingScene, nearBlockedBuild,
                               gbuffer, rtgiOutput, true, true, true, CasterComparisonFrame,
                               nearBlocked) ||
-            !RunLightingFrame(device, capabilities, rtgiCapability, lightingPass, renderer,
+            !RunLightingFrame(frameResources, device, capabilities, rtgiCapability, lightingPass, renderer,
                               context, blockerOnlyPacket.RayTracingScene, blockerOnlyBuild,
                               gbuffer, rtgiOutput, true, true, true, CasterComparisonFrame,
                               blockerOnly) ||
@@ -1539,7 +1667,7 @@ namespace
             const float baseNits = emitterMaterial.EmissiveLuminanceNits;
             emitterMaterial.EmissiveLuminanceNits = baseNits * nitsScale;
             context.MainCamera = &exposureCamera;
-            const bool bRan = RunLightingFrame(device, capabilities, rtgiCapability, lightingPass,
+            const bool bRan = RunLightingFrame(frameResources, device, capabilities, rtgiCapability, lightingPass,
                                                renderer, context, smallEmitterPacket.RayTracingScene,
                                                smallEmitterBuild, gbuffer, rtgiOutput, true, true,
                                                true, CasterComparisonFrame, outObservation);
@@ -1693,7 +1821,7 @@ namespace
         for (uint32_t frame = 0u; frame < StaticFrameCount; ++frame)
         {
             LightingFrameObservation staticFrame;
-            if (!RunLightingFrame(device, capabilities, rtgiCapability, lightingPass, renderer,
+            if (!RunLightingFrame(frameResources, device, capabilities, rtgiCapability, lightingPass, renderer,
                                   context, emitterOnlyPacket.RayTracingScene, emitterOnlyBuild,
                                   gbuffer, rtgiOutput, true, true, true, StaticFirstFrame + frame,
                                   staticFrame) ||
@@ -1757,7 +1885,7 @@ namespace
         emitterOnlyBuild.instances[0].transform[3] += 0.25f;
         LightingFrameObservation movedFrame;
         VariableArray<float> movedAges;
-        const bool bMovedRan = RunLightingFrame(device, capabilities, rtgiCapability, lightingPass,
+        const bool bMovedRan = RunLightingFrame(frameResources, device, capabilities, rtgiCapability, lightingPass,
                                                 renderer, context, emitterOnlyPacket.RayTracingScene,
                                                 emitterOnlyBuild, gbuffer, rtgiOutput, true, true, true,
                                                 StaticFirstFrame + StaticFrameCount, movedFrame) &&
@@ -1789,7 +1917,7 @@ namespace
             for (uint32_t frame = 0u; frame < WarmFrames; ++frame)
             {
                 LightingFrameObservation warmFrame;
-                if (!RunLightingFrame(device, capabilities, rtgiCapability, lightingPass, renderer,
+                if (!RunLightingFrame(frameResources, device, capabilities, rtgiCapability, lightingPass, renderer,
                                       context, emitterOnlyPacket.RayTracingScene, emitterOnlyBuild,
                                       gbuffer, rtgiOutput, true, true, true, firstFrame + frame,
                                       warmFrame) ||
@@ -1801,7 +1929,7 @@ namespace
             const uint32_t warmCap = RTGIDiffuseIndirectVulkanTestAccess::GetHistoryAgeCap(lightingPass);
             change();
             LightingFrameObservation changedFrame;
-            const bool bRan = RunLightingFrame(device, capabilities, rtgiCapability, lightingPass,
+            const bool bRan = RunLightingFrame(frameResources, device, capabilities, rtgiCapability, lightingPass,
                                                renderer, context, emitterOnlyPacket.RayTracingScene,
                                                emitterOnlyBuild, gbuffer, rtgiOutput, true, true, true,
                                                firstFrame + WarmFrames, changedFrame) &&
@@ -1845,13 +1973,13 @@ namespace
         }
 
         // 同じフレームに照明を複数回 Execute する（同じ SceneView の複数のビューポート）
-        if (!RunMultiViewportResourceSetTest(device, capabilities, rtgiCapability, lightingPass, renderer, context, gbuffer))
+        if (!RunMultiViewportResourceSetTest(frameResources, device, capabilities, rtgiCapability, lightingPass, renderer, context, gbuffer))
         {
-            std::cerr << "同じフレームの複数の Execute が Execute ごとの組を使っていません\n";
+            std::cerr << "同じフレームの複数の Execute が Execute ごとに借りていません\n";
             return 1;
         }
-        std::cout << "lighting_execute_sets_per_viewport=true bound_descriptor_sets_distinct=true "
-                     "set_buffers_keep_own_viewport_values=true over_limit_execute_not_drawn=true\n";
+        std::cout << "lighting_execute_borrows_per_viewport=true bound_descriptor_sets_distinct=true "
+                     "borrowed_slices_keep_own_viewport_values=true no_execute_limit=true\n";
 
         std::cout << "rtgi_capability_usable=true tlas_complete=true output_format=R16G16B16A16_FLOAT\n";
         std::cout << "rtgi_hit_miss_readback=finite hit_positive=true miss_zero=true\n";

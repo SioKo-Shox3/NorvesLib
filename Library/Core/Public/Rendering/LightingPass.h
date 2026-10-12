@@ -211,8 +211,8 @@ namespace NorvesLib::Core::Rendering
          * @brief 1 回の Execute の間だけ使う、CPU が書いて GPU が読むデータの置き場
          *
          * フレームの持ち主から借りた切れ端（Buffer + Offset + Size をそのまま束縛へ渡す）。持ち主の無い文脈
-         * （RenderingCoordinator を通さない検査）では、使い回さない専用のバッファ（Offset 0）を作る。
-         * どちらもその Execute の記録の中でだけ使い、メンバに残さない。
+         * （RenderingCoordinator を通さない検査）では、使い回さない専用のバッファ（Offset 0）を作り、
+         * 提出の完了を知る手段が無いのでパスを手放すまで m_UnownedBuffers に持つ。
          */
         struct ExecuteUpload
         {
@@ -497,6 +497,35 @@ namespace NorvesLib::Core::Rendering
          * 借りる（同じフレームに複数のビューポートを描いても、Execute ごとに別の切れ端・セットになる）。
          */
         RHI::DescriptorSetLayoutPtr m_LightingDescriptorSetLayout;
+        /**
+         * @brief 持ち主の無い文脈（RenderingCoordinator を通さない検査）で作ったバッファと記述子セット
+         *
+         * 記録したコマンドがいつ提出され完了するかを知る手段が無いので、パスを手放す（Shutdown）まで持つ。
+         * 使い回さないので上書きも起きない。本番の経路は常にフレームの持ち主から借りるので、ここには入らない。
+         */
+        mutable Container::VariableArray<RHI::BufferPtr> m_UnownedBuffers;
+        mutable Container::VariableArray<RHI::DescriptorSetPtr> m_UnownedDescriptorSets;
+        /**
+         * @brief 直近の照明の Execute が束縛した借りた置き場と記述子セット（検査が中身と束縛を確かめるための観測）
+         *
+         * 寿命を延ばさないよう弱い参照と生のポインタだけを持つ。中身を読めるのは、そのフレームの持ち主が回収されるまで。
+         */
+        struct LightingExecuteObservation
+        {
+            struct Upload
+            {
+                Container::TWeakPtr<RHI::IBuffer> Buffer;
+                uint64_t Offset = 0;
+                uint64_t Size = 0;
+            };
+            Upload LightData;
+            Upload LightArray;
+            Upload VsmSample;
+            Upload VsmPointSample;
+            Upload VsmSlice;
+            const RHI::IDescriptorSet* DescriptorSet = nullptr;
+        };
+        LightingExecuteObservation m_LastLightingExecute;
         RHI::SamplerPtr m_GBufferSampler;
 
         // IBL (Image-Based Lighting) リソース
