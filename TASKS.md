@@ -762,7 +762,7 @@
 - notes: 2026-10-12 SCN-MEGA-MEASURE-UPLOAD（反復 19・run 20261012-030203）で足した。5万個の 1% 移動で `MEGA_SHADOW_DIRTY` の箱は 1 フレーム 500（移動数どおり）だが、VSM は矩形の上限 256 を超えて全ページ（743）を描き直し、`VirtualShadowMapPass` の GPU が 3.04 / 4.94 ms（静止 0.20 / 0.78）。0.2% 移動（100 席）では 290〜343 ページ・0.94 / 2.08 ms。証拠は `.harness/runs/scene-capture/SCN-MEGA-MEASURE-UPLOAD/<move1|move0.2>/`。危険地帯（VSM のページの寿命）。 2026-10-12 親: 反復 21 の実装（183dbb1c）で 1% 移動の無効化は 741〜744 → 299〜350 ページ、VirtualShadowMapPass は 3.04 → 0.96 ms に下がった。比が移動数に沿わない（5 倍の移動で 1.02 倍）のは、増えた席の多くが割り当て済みのページの外を動くためで、受入れの基準の書き方の誤り。blocked の推奨 1 を採り、基準を「動いた境界が覆う割り当て済みのページの和との一致（多い側にだけずれる）」に改めて todo に戻した。
 
 ## SCN-MEGA-FIX-RECORD-COMMAND: MegaGeometryPass.RecordFrameCommand の p95 と区画の出入りのフレームの跳ねを 1 ms 以下にする
-- status: todo
+- status: done
 - done-when: 先に `RecordFrameCommand` の中に区間を足して、跳ねるフレームの内訳を PROGRESS に書く。5万個の静止で 1 回あたりの p95 ≤ 1 ms（今 1.04〜1.15 ms。median は 0.90〜0.96 ms で合格済み）。3万個の 1% 移動 + 64 m 区画で、区画の出入りで跳ねるフレーム（今 300 回中 26 回が 3 ms 超、最大 8.4 ms。p95 6.3 ms）を無くし p95 ≤ 1 ms。描画の結果は変えない（起動画面の比較が pass）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FIX-RECORD-COMMAND`

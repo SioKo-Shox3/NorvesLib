@@ -551,7 +551,12 @@ namespace NorvesLib::Core::Rendering
         m_DummyVisibilityBuffer.reset();
         m_DummyStatsBuffer.reset();
         m_VisibilityBuffer.reset();
-        m_VisibilityEntries.clear();
+        m_VisibilityCapacity = 0;
+        m_VisibilityRegions.clear();
+        m_VisibilityFreeRegions.clear();
+        m_VisibilityAllocatedEnd = 0;
+        m_VisibilityBuildStamp = 0;
+        m_VisibilitySweepStamp = 0;
         m_RetiredBuffers.clear();
         m_OcclusionFrameCount = 0;
         for (StatsSlot &slot : m_StatsSlots)
@@ -758,11 +763,11 @@ namespace NorvesLib::Core::Rendering
                 presentKeys.insert(objectId != 0 ? objectId : (0x8000000000000000ull | instanceIndex));
             }
 
-            for (VisibilityEntry &entry : m_VisibilityEntries)
+            for (VisibilityRegion &region : m_VisibilityRegions)
             {
-                if (presentKeys.find(entry.Key) == presentKeys.end())
+                if (region.ClusterCount != 0 && presentKeys.find(region.Key) == presentKeys.end())
                 {
-                    entry.LastUsedFrame = 0;
+                    region.LastUsedFrame = 0;
                 }
             }
 
@@ -1308,8 +1313,8 @@ namespace NorvesLib::Core::Rendering
 
         // メッシュの表の番号（ロード済みのメッシュごとに 1 行。同じメッシュのインスタンスは同じ行を指す）
         Container::UnorderedMap<const MegaGeometry::MegaMeshGPUData *, uint32_t> meshIndices;
-        // 「見えた」ビットの区画の先頭（インスタンスの並びでクラスタ数を詰める。UpdateVisibilityLayout の配置と同じ）
-        uint64_t visibleOffset = 0;
+        // 「見えた」ビットの区画は席ごとに決める（AssignVisibilityRegion）。この表の番号で、前の表に載った席を見分ける
+        ++m_VisibilityBuildStamp;
         for (const size_t instanceIndex : instanceOrder)
         {
             const auto &instance = m_Instances[instanceIndex];
@@ -1413,13 +1418,22 @@ namespace NorvesLib::Core::Rendering
                 m_ShadowDirtyStats.MeshChanges += bMeshChanged ? 1u : 0u;
             }
 
+            VisibilityRequest request;
+            request.Key = instance.ObjectId != 0 ? instance.ObjectId : (0x8000000000000000ull | instanceIndex);
+            request.MeshId = instance.Handle.Id;
+            request.ComponentId = instance.ComponentId;
+            request.ClusterBufferIdentity = gpuData->ClusterBuffer.get();
+            request.ClusterBufferOffsetBytes = gpuData->ClusterBufferOffsetBytes;
+            request.ClusterCount = gpuData->ClusterCount;
+            request.TableSlot = instance.TableSlot;
+            request.Offset = AssignVisibilityRegion(instance.TableSlot, request);
+
             // 変換は席の表にあり、GPU が描く順の表の行を組むときに席から引く
             GPUMegaEntry entry;
             entry.Slot = instance.TableSlot;
             entry.MeshIndex = meshIndex;
             entry.FirstGroup = static_cast<uint32_t>(tables.TotalGroups);
-            entry.VisibleOffset = static_cast<uint32_t>(visibleOffset);
-            visibleOffset += gpuData->ClusterCount;
+            entry.VisibleOffset = request.Offset;
             if (bTraverseBvh)
             {
                 // BVH をたどるインスタンスは、平らな判定のワークグループを持たない
@@ -1438,14 +1452,6 @@ namespace NorvesLib::Core::Rendering
             {
                 tables.TotalGroups += (static_cast<uint64_t>(gpuData->ClusterCount) + 63u) / 64u;
             }
-
-            VisibilityRequest request;
-            request.Key = instance.ObjectId != 0 ? instance.ObjectId : (0x8000000000000000ull | instanceIndex);
-            request.MeshId = instance.Handle.Id;
-            request.ComponentId = instance.ComponentId;
-            request.ClusterBufferIdentity = gpuData->ClusterBuffer.get();
-            request.ClusterBufferOffsetBytes = gpuData->ClusterBufferOffsetBytes;
-            request.ClusterCount = gpuData->ClusterCount;
 
             SceneDrawable drawable;
             drawable.InstanceIndex = instanceIndex;
@@ -4555,182 +4561,216 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
+    uint32_t MegaGeometryPass::AssignVisibilityRegion(uint32_t tableSlot, const VisibilityRequest &request)
+    {
+        if (m_VisibilityRegions.size() <= tableSlot)
+        {
+            m_VisibilityRegions.resize(static_cast<size_t>(tableSlot) + 1u);
+        }
+        VisibilityRegion &region = m_VisibilityRegions[tableSlot];
+        region.LastBuildStamp = m_VisibilityBuildStamp;
+
+        // 鍵・コンポーネント・メッシュ・クラスタの塊が替わった席は、同じ区画でも中身を引き継がない（記録が0で埋める）
+        if (region.Key != request.Key || region.ComponentId != request.ComponentId || region.MeshId != request.MeshId ||
+            region.ClusterBufferIdentity != request.ClusterBufferIdentity ||
+            region.ClusterBufferOffsetBytes != request.ClusterBufferOffsetBytes)
+        {
+            region.Key = request.Key;
+            region.ComponentId = request.ComponentId;
+            region.MeshId = request.MeshId;
+            region.ClusterBufferIdentity = request.ClusterBufferIdentity;
+            region.ClusterBufferOffsetBytes = request.ClusterBufferOffsetBytes;
+            region.LastUsedFrame = 0;
+        }
+        if (region.ClusterCount == request.ClusterCount)
+        {
+            return region.Offset;
+        }
+
+        // クラスタ数が替わった: 区画を手放して取り直す
+        const auto releaseRegion = [this](VisibilityRegion &released) -> void
+        {
+            if (released.ClusterCount != 0)
+            {
+                m_VisibilityFreeRegions[released.ClusterCount].push_back(released.Offset);
+            }
+            released.ClusterCount = 0;
+            released.Offset = 0;
+            released.LastUsedFrame = 0;
+        };
+        releaseRegion(region);
+        if (request.ClusterCount == 0)
+        {
+            return 0;
+        }
+
+        const auto takeFreeRegion = [this](uint32_t clusterCount, uint32_t &outOffset) -> bool
+        {
+            const auto found = m_VisibilityFreeRegions.find(clusterCount);
+            if (found == m_VisibilityFreeRegions.end() || found->second.empty())
+            {
+                return false;
+            }
+            outOffset = found->second.back();
+            found->second.pop_back();
+            return true;
+        };
+        uint32_t offset = 0;
+        bool bTaken = takeFreeRegion(request.ClusterCount, offset);
+        if (!bTaken && m_VisibilityAllocatedEnd + request.ClusterCount > m_VisibilityCapacity &&
+            m_VisibilitySweepStamp != m_VisibilityBuildStamp)
+        {
+            // 末尾から切り出すとバッファを大きくすることになる。前の表にも載らなかった席（区画の外へ出た・消えたインスタンス）の
+            // 区画を先に手放す（この表でまだ見ていない席は、前の表に載っていれば手放さない）
+            m_VisibilitySweepStamp = m_VisibilityBuildStamp;
+            for (VisibilityRegion &stale : m_VisibilityRegions)
+            {
+                if (stale.ClusterCount != 0 && stale.LastBuildStamp + 1u < m_VisibilityBuildStamp)
+                {
+                    releaseRegion(stale);
+                }
+            }
+            bTaken = takeFreeRegion(request.ClusterCount, offset);
+        }
+        if (!bTaken)
+        {
+            // 末尾が 32bit を超える配置はバッファを作れない（UpdateVisibilityLayout が 2 パスを止める）ので、位置は丸めるだけ
+            offset = static_cast<uint32_t>(std::min<uint64_t>(m_VisibilityAllocatedEnd, 0xFFFFFFFFull));
+            m_VisibilityAllocatedEnd += request.ClusterCount;
+        }
+        region.ClusterCount = request.ClusterCount;
+        region.Offset = offset;
+        region.LastUsedFrame = 0;
+        return offset;
+    }
+
     bool MegaGeometryPass::UpdateVisibilityLayout(RHI::ICommandList *commandList,
                                                   VariableArray<VisibilityRequest> &requests)
     {
-        // 区画はインスタンスの並びで詰める
-        uint64_t totalElements = 0;
-        for (VisibilityRequest &request : requests)
-        {
-            request.Offset = static_cast<uint32_t>(totalElements);
-            totalElements += request.ClusterCount;
-        }
-        if (totalElements == 0 || totalElements > 0x3FFFFFFFull || !m_Device || !commandList)
+        // 区画は表を作るときに席ごとに決めてある（AssignVisibilityRegion）。末尾が容量に収まらないときだけバッファを大きくする
+        const uint64_t requiredElements = m_VisibilityAllocatedEnd;
+        if (requiredElements == 0 || requiredElements > 0x3FFFFFFFull || !m_Device || !commandList)
         {
             return false;
         }
 
-        // 直前のフレームに描かれていたインスタンスだけが、見えたビットを引き継げる。
-        // 1フレームでも描かれなかった（スナップショットから外れた・メッシュが無かった・2パスでなかった）インスタンスや、
-        // コンポーネントが作り直されたインスタンスは、同じ ObjectId・メッシュでも別物として0から始める。
-        // クラスタのバッファは全メッシュが共有するプールの塊なので、区画の位置も一致の条件に入れる
-        auto isContinuing = [this](const VisibilityEntry &entry, const VisibilityRequest &request) -> bool
+        // 決定的な撮影のエポックの最初のフレームは、全部の区画を0から始める
+        const bool bClearAll = m_bDropVisibilityContinuity;
+        bool bCopyDest = false;
+        if (!m_VisibilityBuffer || requiredElements > m_VisibilityCapacity)
         {
-            return !m_bDropVisibilityContinuity && entry.LastUsedFrame + 1 == m_OcclusionFrameCount &&
-                   entry.ComponentId == request.ComponentId &&
-                   entry.MeshId == request.MeshId &&
-                   entry.ClusterBufferIdentity == request.ClusterBufferIdentity &&
-                   entry.ClusterBufferOffsetBytes == request.ClusterBufferOffsetBytes &&
-                   entry.ClusterCount == request.ClusterCount;
-        };
-        auto toEntry = [this](const VisibilityRequest &request) -> VisibilityEntry
-        {
-            VisibilityEntry entry;
-            entry.Key = request.Key;
-            entry.MeshId = request.MeshId;
-            entry.ComponentId = request.ComponentId;
-            entry.ClusterBufferIdentity = request.ClusterBufferIdentity;
-            entry.ClusterBufferOffsetBytes = request.ClusterBufferOffsetBytes;
-            entry.ClusterCount = request.ClusterCount;
-            entry.Offset = request.Offset;
-            entry.LastUsedFrame = m_OcclusionFrameCount;
-            return entry;
-        };
+            // 1/8 の余裕を足して作り直し、0で埋めてから古い中身を同じ位置へ写す（区画は動かないので、引き継ぐ区画もそのまま読める）
+            const uint64_t newCapacity = std::min<uint64_t>(requiredElements + requiredElements / 8u, 0x3FFFFFFFull);
+            RHI::BufferDesc desc(newCapacity * sizeof(uint32_t),
+                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst |
+                                     RHI::ResourceUsage::TransferSrc,
+                                 false,
+                                 "MegaGeometry_VisibleLastFrame");
+            RHI::BufferPtr newBuffer = m_Device->CreateBuffer(desc);
+            if (!newBuffer)
+            {
+                return false;
+            }
 
-        // 配置（鍵とクラスタ数の並び）が前のフレームと同じか
-        bool bSameLayout = m_VisibilityBuffer && m_VisibilityEntries.size() == requests.size();
-        for (size_t index = 0; bSameLayout && index < requests.size(); ++index)
-        {
-            bSameLayout = m_VisibilityEntries[index].Key == requests[index].Key &&
-                          m_VisibilityEntries[index].ClusterCount == requests[index].ClusterCount;
+            commandList->BufferBarrier(newBuffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
+            commandList->FillBuffer(newBuffer, 0, newCapacity * sizeof(uint32_t), 0);
+            if (m_VisibilityBuffer && !bClearAll)
+            {
+                // 前のフレームの2パス目の書き込みを、コピー元として見せる。0埋めの後にコピーが書く
+                commandList->BufferBarrier(m_VisibilityBuffer,
+                                           RHI::ResourceState::UnorderedAccess,
+                                           RHI::ResourceState::CopySource);
+                commandList->BufferBarrier(newBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::CopyDest);
+                commandList->CopyBuffer(m_VisibilityBuffer, newBuffer, m_VisibilityCapacity * sizeof(uint32_t), 0, 0);
+            }
+
+            // 古いバッファは、GPUが使い終わるまで保持してから破棄する
+            if (m_VisibilityBuffer)
+            {
+                m_RetiredBuffers.push_back(RetiredBuffer{m_VisibilityBuffer, m_RenderFrameCount});
+            }
+            m_VisibilityBuffer = newBuffer;
+            m_VisibilityCapacity = newCapacity;
+            bCopyDest = true;
         }
 
-        if (bSameLayout)
+        const auto beginClear = [&]() -> void
         {
-            // 配置は同じ。引き継げないインスタンス（作り直し・メッシュの差し替え・途切れ）の区画だけ0に戻す
-            bool bClearing = false;
-            for (size_t index = 0; index < requests.size(); ++index)
+            if (bCopyDest)
             {
-                if (!isContinuing(m_VisibilityEntries[index], requests[index]))
-                {
-                    if (!bClearing)
-                    {
-                        commandList->BufferBarrier(m_VisibilityBuffer,
-                                                   RHI::ResourceState::UnorderedAccess,
-                                                   RHI::ResourceState::CopyDest);
-                        bClearing = true;
-                    }
-                    commandList->FillBuffer(m_VisibilityBuffer,
-                                            static_cast<uint64_t>(requests[index].Offset) * sizeof(uint32_t),
-                                            static_cast<uint64_t>(requests[index].ClusterCount) * sizeof(uint32_t),
-                                            0);
-                }
+                // 作り直したときの0埋め・コピーの後に埋める
+                commandList->BufferBarrier(m_VisibilityBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::CopyDest);
             }
-            if (bClearing)
+            else
             {
                 commandList->BufferBarrier(m_VisibilityBuffer,
-                                           RHI::ResourceState::CopyDest,
-                                           RHI::ResourceState::UnorderedAccess);
+                                           RHI::ResourceState::UnorderedAccess,
+                                           RHI::ResourceState::CopyDest);
+                bCopyDest = true;
             }
-            for (size_t index = 0; index < requests.size(); ++index)
-            {
-                m_VisibilityEntries[index] = toEntry(requests[index]);
-            }
-            return true;
-        }
-
-        // 配置が変わった（インスタンスの追加・削除・並びの変更・メッシュの差し替え）: ぴったりの大きさで作り直し、
-        // 0で埋めてから、引き継げるインスタンスの区画だけを古いバッファから写す
-        RHI::BufferDesc desc(totalElements * sizeof(uint32_t),
-                             RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst |
-                                 RHI::ResourceUsage::TransferSrc,
-                             false,
-                             "MegaGeometry_VisibleLastFrame");
-        RHI::BufferPtr newBuffer = m_Device->CreateBuffer(desc);
-        if (!newBuffer)
-        {
-            return false;
-        }
-
-        // 古い配置を鍵の順に引けるようにする
-        VariableArray<uint32_t> oldOrder;
-        oldOrder.reserve(m_VisibilityEntries.size());
-        for (uint32_t index = 0; index < m_VisibilityEntries.size(); ++index)
-        {
-            oldOrder.push_back(index);
-        }
-        std::sort(oldOrder.begin(), oldOrder.end(),
-                  [this](uint32_t left, uint32_t right) -> bool
-                  { return m_VisibilityEntries[left].Key < m_VisibilityEntries[right].Key; });
-
-        struct CopyRegion
-        {
-            uint64_t SourceOffsetBytes = 0;
-            uint64_t DestinationOffsetBytes = 0;
-            uint64_t SizeBytes = 0;
         };
-        VariableArray<CopyRegion> copies;
-        if (m_VisibilityBuffer)
+
+        if (bClearAll && !bCopyDest)
         {
-            for (const VisibilityRequest &request : requests)
-            {
-                size_t low = 0;
-                size_t high = oldOrder.size();
-                while (low < high)
-                {
-                    const size_t mid = low + (high - low) / 2;
-                    if (m_VisibilityEntries[oldOrder[mid]].Key < request.Key)
-                    {
-                        low = mid + 1;
-                    }
-                    else
-                    {
-                        high = mid;
-                    }
-                }
-                if (low < oldOrder.size())
-                {
-                    const VisibilityEntry &old = m_VisibilityEntries[oldOrder[low]];
-                    if (old.Key == request.Key && isContinuing(old, request))
-                    {
-                        CopyRegion region;
-                        region.SourceOffsetBytes = static_cast<uint64_t>(old.Offset) * sizeof(uint32_t);
-                        region.DestinationOffsetBytes = static_cast<uint64_t>(request.Offset) * sizeof(uint32_t);
-                        region.SizeBytes = static_cast<uint64_t>(request.ClusterCount) * sizeof(uint32_t);
-                        copies.push_back(region);
-                    }
-                }
-            }
+            beginClear();
+            commandList->FillBuffer(m_VisibilityBuffer, 0, m_VisibilityCapacity * sizeof(uint32_t), 0);
         }
 
-        commandList->BufferBarrier(newBuffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
-        commandList->FillBuffer(newBuffer, 0, totalElements * sizeof(uint32_t), 0);
-        if (!copies.empty())
+        // 直前のフレームに描かれていた区画だけが、見えたビットを引き継げる。1フレームでも描かれなかった（スナップショットから
+        // 外れた・メッシュが無かった・2パスでなかった）区画と、取り直した・持ち主が替わった区画は0から始める。
+        // 隣り合う区画はまとめて埋める
+        bool bClearStarted = false;
+        uint64_t pendingBegin = 0;
+        uint64_t pendingEnd = 0;
+        const auto flushClear = [&]() -> void
         {
-            // 前のフレームの2パス目の書き込みを、コピー元として見せる。0埋めの後にコピーが書く
-            commandList->BufferBarrier(m_VisibilityBuffer,
-                                       RHI::ResourceState::UnorderedAccess,
-                                       RHI::ResourceState::CopySource);
-            commandList->BufferBarrier(newBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::CopyDest);
-            for (const CopyRegion &region : copies)
+            if (pendingEnd > pendingBegin)
             {
-                commandList->CopyBuffer(m_VisibilityBuffer, newBuffer, region.SizeBytes,
-                                        region.SourceOffsetBytes, region.DestinationOffsetBytes);
+                if (!bClearStarted)
+                {
+                    beginClear();
+                    bClearStarted = true;
+                }
+                commandList->FillBuffer(m_VisibilityBuffer,
+                                        pendingBegin * sizeof(uint32_t),
+                                        (pendingEnd - pendingBegin) * sizeof(uint32_t),
+                                        0);
             }
-        }
-        commandList->BufferBarrier(newBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
-
-        // 古いバッファは、GPUが使い終わるまで保持してから破棄する
-        if (m_VisibilityBuffer)
-        {
-            m_RetiredBuffers.push_back(RetiredBuffer{m_VisibilityBuffer, m_RenderFrameCount});
-        }
-        m_VisibilityBuffer = newBuffer;
-        m_VisibilityEntries.clear();
-        m_VisibilityEntries.reserve(requests.size());
+            pendingBegin = 0;
+            pendingEnd = 0;
+        };
         for (const VisibilityRequest &request : requests)
         {
-            m_VisibilityEntries.push_back(toEntry(request));
+            if (request.TableSlot >= m_VisibilityRegions.size())
+            {
+                return false;
+            }
+            VisibilityRegion &region = m_VisibilityRegions[request.TableSlot];
+            const bool bContinuing = !bClearAll && region.LastUsedFrame != 0 &&
+                                     region.LastUsedFrame + 1 == m_OcclusionFrameCount &&
+                                     region.Key == request.Key && region.Offset == request.Offset &&
+                                     region.ClusterCount == request.ClusterCount;
+            region.LastUsedFrame = m_OcclusionFrameCount;
+            if (bContinuing || bClearAll || request.ClusterCount == 0)
+            {
+                continue;
+            }
+            const uint64_t begin = request.Offset;
+            const uint64_t end = begin + request.ClusterCount;
+            if (pendingEnd > pendingBegin && begin == pendingEnd)
+            {
+                pendingEnd = end;
+                continue;
+            }
+            flushClear();
+            pendingBegin = begin;
+            pendingEnd = end;
+        }
+        flushClear();
+
+        if (bCopyDest)
+        {
+            commandList->BufferBarrier(m_VisibilityBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
         }
         return true;
     }

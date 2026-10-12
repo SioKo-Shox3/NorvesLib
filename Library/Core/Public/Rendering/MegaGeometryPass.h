@@ -641,7 +641,8 @@ namespace NorvesLib::Core::Rendering
             const void *ClusterBufferIdentity = nullptr;
             uint64_t ClusterBufferOffsetBytes = 0;
             uint32_t ClusterCount = 0;
-            uint32_t Offset = 0; // 出力: 区画の先頭（要素の位置）
+            uint32_t TableSlot = 0; // 区画を持つ席
+            uint32_t Offset = 0;    // 区画の先頭（要素の位置。AssignVisibilityRegion が決める）
         };
 
         /**
@@ -705,8 +706,8 @@ namespace NorvesLib::Core::Rendering
         /**
          * @brief m_Instances とロード済みのメッシュから、このフレームの表を作る（CPU だけ。GPU のバッファには書かない）
          *
-         * インスタンスの並びは BVH をたどるインスタンスが先。「見えた」ビットの先頭は、インスタンスの並びでクラスタ数を
-         * 詰めた位置（UpdateVisibilityLayout の配置と同じ）を書く。2パスでないフレームはシェーダーが読まない。
+         * インスタンスの並びは BVH をたどるインスタンスが先。「見えた」ビットの先頭は、席ごとの区画（AssignVisibilityRegion）の
+         * 位置を書く。2パスでないフレームはシェーダーが読まない。
          */
         void BuildSceneTables(const MegaGeometryPassCommand &command, SceneTables &tables);
 
@@ -860,13 +861,21 @@ namespace NorvesLib::Core::Rendering
         bool ShouldSkipGBufferDraw(DebugViewMode mode) const;
 
         /**
-         * @brief 「前のフレームで見えた」ビットの配置を、このフレームのインスタンスに合わせる
+         * @brief インスタンスの席の「見えた」ビットの区画を決め、先頭（要素の位置）を返す（BuildSceneTables が呼ぶ。CPU だけ）
          *
-         * ビットは全インスタンスで1本のバッファに、インスタンスの並びで区画を詰めて持つ。配置（鍵とクラスタ数の並び）が
-         * 前のフレームと同じなら何もしない。変わったときは、ぴったりの大きさのバッファを作り直して0で埋め、
-         * 直前のフレームに描かれていた同じコンポーネント・メッシュのインスタンスの区画だけを写して引き継ぐ。
-         * 追加されたインスタンスやメッシュの差し替えは0から始まる。LODの切り替えでは、選ばれなくなったクラスタを
-         * 2パス目が0に書き戻すので、古いビットは残らない。
+         * 同じ席が同じクラスタ数で続く間は同じ区画を返す。鍵・コンポーネント・メッシュが替わったら中身を引き継げない印を付け、
+         * クラスタ数が替わったら区画を手放して取り直す。区画は手放された同じクラスタ数の区画から取り、無ければ末尾から
+         * 切り出す。末尾がバッファの容量を超えるときは、前の表にも載らなかった席の区画を先に手放してから取り直す。
+         */
+        uint32_t AssignVisibilityRegion(uint32_t tableSlot, const VisibilityRequest &request);
+
+        /**
+         * @brief 「前のフレームで見えた」ビットのバッファを、このフレームの区画に合わせる
+         *
+         * ビットは全インスタンスで1本のバッファに、席ごとの区画（AssignVisibilityRegion）で持つ。区画の末尾が容量を超えたときだけ、
+         * 1/8 の余裕を足したバッファを作り直し、古い中身を同じ位置へ1回のコピーで写す（区画は動かない）。
+         * 直前のフレームに描かれていなかった区画・取り直した区画だけを0で埋める（隣り合う区画はまとめて埋める）。
+         * LODの切り替えでは、選ばれなくなったクラスタを2パス目が0に書き戻すので、古いビットは残らない。
          *
          * @return false ならバッファを作れなかった（2パスの遮蔽カリングは使えない）
          */
@@ -956,17 +965,19 @@ namespace NorvesLib::Core::Rendering
         bool m_bSwRasterBinned = false;
         bool m_bSwRasterFallbackLogged = false;
 
-        // 「前のフレームで見えた」ビット（全インスタンスで1本）と、その配置（インスタンスの並び順）
-        struct VisibilityEntry
+        // 「前のフレームで見えた」ビット（全インスタンスで1本）と、席（TableSlot）ごとの区画。区画は席が同じインスタンスを
+        // 同じクラスタ数のメッシュで描き続ける間は動かさない（インスタンスの出入りで他の区画を動かさない）
+        struct VisibilityRegion
         {
             uint64_t Key = 0;
             uint64_t MeshId = 0;
             uint64_t ComponentId = 0;
             const void *ClusterBufferIdentity = nullptr;
             uint64_t ClusterBufferOffsetBytes = 0;
-            uint32_t ClusterCount = 0;
-            uint32_t Offset = 0;
-            uint64_t LastUsedFrame = 0;
+            uint32_t ClusterCount = 0; // 0 は区画を持たない
+            uint32_t Offset = 0;       // 区画の先頭（要素の位置）
+            uint64_t LastUsedFrame = 0; // 記録がビットを使った m_OcclusionFrameCount（0 は中身を引き継げない）
+            uint64_t LastBuildStamp = 0; // 最後に表へ載せた m_VisibilityBuildStamp（回収の判定）
         };
         struct RetiredBuffer
         {
@@ -974,7 +985,13 @@ namespace NorvesLib::Core::Rendering
             uint64_t RetiredFrame = 0; // 退避したときの m_RenderFrameCount
         };
         RHI::BufferPtr m_VisibilityBuffer; // uint32_t[]。1=前のフレームで見えた
-        Container::VariableArray<VisibilityEntry> m_VisibilityEntries;
+        uint64_t m_VisibilityCapacity = 0; // m_VisibilityBuffer の要素数
+        Container::VariableArray<VisibilityRegion> m_VisibilityRegions; // TableSlot ごと
+        // 手放した区画の先頭（クラスタ数ごと）と、区画を切り出した末尾（要素の位置）
+        Container::UnorderedMap<uint32_t, Container::VariableArray<uint32_t>> m_VisibilityFreeRegions;
+        uint64_t m_VisibilityAllocatedEnd = 0;
+        uint64_t m_VisibilityBuildStamp = 0;
+        uint64_t m_VisibilitySweepStamp = 0; // 前の表に載らなかった席の区画を手放した m_VisibilityBuildStamp（1回の表で1度まで）
         Container::VariableArray<RetiredBuffer> m_RetiredBuffers;
         uint64_t m_OcclusionFrameCount = 0;
 

@@ -2667,3 +2667,29 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: SCN-MEGA-FIX-RECORD-COMMAND。
 - Notes: 4096 を超える無効化（MegaGeometry の箱の上限 4096 に、MegaGeometry 以外の動いた投影物が加わるフレーム）は従来どおり全ページ。併合での上限の回避は入れていない。
 - Notes: 256 を超える矩形・球の経路を直接確かめるテストは書いていない（verify に無い。既存の GPU テストは 256 以下の数）。
+
+### SCN-MEGA-FIX-RECORD-COMMAND（2026-10-12、反復 23・run 20261012-030203）
+
+- 内訳（先に `RecordFrameCommand` の中へ `MegaGeometryPass.Record.*` の区間を 15 個足して撮った。3万個・1% 移動・64 m 区画、RelWithDebInfo・1920×1080・300 フレーム。`.harness/runs/scene-capture/SCN-MEGA-FIX-RECORD-COMMAND/breakdown-before/`）:
+  - 3 ms 超の 25 回（最大 8.38 ms）は 2 種類だけ。**区画の出入りのフレーム 12 回**: `UpdateVisibilityLayout`（見えたビットのバッファ）が 6.4〜7.7 ms。インスタンスの並びが変わると区画を詰め直すため、約 760 MB（`MEGA_CAPACITY visibility_bytes=752〜770 MB`、1 クラスタ 4 B × 約 1.9 億）のバッファを作り直し、0 で埋め、3 万個の区画を 1 個ずつコピーしていた。**その 8 フレーム後の 13 回**: `ReleaseStaleBuffers` が 4.5〜6.5 ms（手放した古い 760 MB のバッファの破棄）。
+  - 1 ms をわずかに超える残りの 10 回（1.00〜1.35 ms）は、毎フレームの `UpdateVisibilityLayout`（配置の比較と 3 万個の写しで 0.35〜0.68 ms）が最大の部分。他の区間はカリングの記録 0.09・ID のラスタ 0.07・区間のディスクリプタ 0.07 ms（median）など小さい。
+- 実装: 見えたビットの区画を席（`TableSlot`）ごとに持ち（`VisibilityRegion`）、席が同じクラスタ数で続く間は位置を動かさない。区画は表を作るとき（`BuildSceneTables` → `AssignVisibilityRegion`）に決めて `GPUMegaEntry::VisibleOffset` に書く。クラスタ数が替わった席は区画を手放し（クラスタ数ごとの空き区画へ）、空きから取るか末尾から切り出す。末尾が容量を超えるときは、前の表にも載らなかった席の区画を先に手放す。バッファは末尾が容量を超えたときだけ 1/8 の余裕を足して作り直し、古い中身を同じ位置へ 1 回のコピーで写す。記録（`UpdateVisibilityLayout`）は、直前のフレームに描かれていなかった区画・取り直した区画・持ち主が替わった区画だけを 0 で埋める（隣り合う区画はまとめて 1 回）。引き継ぎの条件（直前のフレームに描かれた・同じ鍵・コンポーネント・メッシュ・クラスタの塊）と、エポックの最初のフレームで全部を 0 から始める規則は変えていない。
+- 区間は内訳を取った後に外した: `StatsManager::RecordScope` は全スレッド共通の mutex とトレースの書き込みを通るので、`RecordFrameCommand` の中の約 30 個 / フレームの記録の待ちが親の区間に乗る（5万個の静止で区間ありは median 2.36 ms、区間の合計は約 0.5 ms で、残りは区間の終わりと次の始まりの間の隙間。区間なしは 0.63 ms）。区間ありの撮影は `move1-cell64-30k-with-scopes/`・`static-50k-with-scopes/` に残した（区間ありでも区画ありの p95 は 0.825 ms、`Record.VisibilityLayout` は max 0.447 ms・`Record.ReleaseStale` は max 0）。
+- 結果（区間なし、`.harness/runs/scene-capture/SCN-MEGA-FIX-RECORD-COMMAND/<負荷>/`。値は metrics.json の `MegaGeometryPass.RecordFrameCommand`、median / p95 / max ms）:
+
+| 負荷 | 前（SCN-MEGA-MEASURE-UPLOAD） | 後 |
+|---|---|---|
+| 5万個 静止（`static-50k`） | 0.960 / 1.138 | **0.628 / 0.745** / 1.383 |
+| 3万個 1% 移動 + 64 m 区画（`move1-cell64-30k`） | 0.619 / 6.294（3 ms 超 26 回、最大 8.4） | **0.487 / 0.625** / 1.042（1 ms 超 1 回、3 ms 超 0 回） |
+
+  - 区画ありの撮影でも区画の出入りは起きている（`MEGA_SHADOW_DIRTY rebuilds=5・5・4`／120、`RT_SCENE built=13`／120）。見えたビットのバッファは窓の中で作り直していない（`MEGA_CAPACITY visibility_bytes=848,976,504` が 26 行とも同じ。前の 760 MB の詰めた大きさ + 1/8 の余裕と、区画の外の席の分）。
+  - 付随: 区画ありの GPU のフレームは 31.2 / 34.8 → 28.5 / 31.1 ms、rt は 42.1 / 57.3 → 38.5 / 42.7 ms（760 MB の 0 埋めとコピーが無くなった）。5万個の静止は GPU 42.2 / 43.7 → 42.3 / 43.6 ms、rt 56.0 / 59.0 → 55.5 / 58.1 ms で変わらない。Game.log の ERROR は両方 0、`MEGA_SCENE_UPLOAD ... mismatch=0`。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-FIX-RECORD-COMMAND-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `-2.txt`: 起動画面 default の `SCN-MEGA-BASE-RWDI` との決定的な比較が `mean_luminance_difference=0`・`psnr_db=100`・`mismatched_pixel_ratio=8E-06` で `result=pass`、EXIT=0。PNG を開いて確認（家・球・岩・天球・影）。
+  - `-3.txt`: `CHECK_CAPTURE_METRICS result=pass views=default`（`--timing --min-frames 300 --max-scope-p95-ms MegaGeometryPass.RecordFrameCommand=1.0`）、EXIT=0。区画ありの PNG を開いて確認（岩・家・塔が欠けずに描かれている）。
+  - 撮影の出力: `capture-SCN-MEGA-FIX-RECORD-COMMAND-<breakdown-before|static-50k|move1-cell64-30k>.txt`（どれも `CAPTURE_SCENE result=pass`）。
+- Next: 残りの todo の最優先。
+- Notes: 区画は席ごとなので、区画の外へ出たインスタンスの区画は、末尾が容量を超えるまで残る（前の表に載らなかった席だけを手放す）。見えたビットのバッファは、席の区画の和 + 1/8 までになる（今の負荷で 849 MB。前は詰めた大きさの 760 MB と、作り直しの 8 フレームの間の倍）。
+- Notes: 席の区画の割り当て・手放し・回収を直接確かめるテストは書いていない（verify に無い）。
+- Notes: `RecordFrameCommand` の中の区間は、トレースの記録の待ちが親に乗るので常設しない。内訳が要るときは同じ区間を一時的に足して撮り、比較は区間なしの撮影で行う。
