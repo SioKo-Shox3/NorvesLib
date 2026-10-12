@@ -881,11 +881,96 @@
 - notes: 2026-10-12 親が足した（SCN-ECS-RT-FRAME-SCOPES の内訳と、`m_TargetFrameTime` が使われていないことから）。GameThread の 1 フレームの時間（Tick の dt）が描画の間隔に近づくので、ゲームの処理が dt に依存して壊れないかも見る（固定の段は今のまま）。2 フレームの重ね（SCN-ECS-FIF-*）の前提（GameThread → RenderThread → GPU の段の数）になる。`RG.TraceRecord` が 0.2 ms に届かなければ、トレースの書き込みをスレッドごとの溜めに分ける直しもこの項目で行う。危険地帯（RenderThread・FramePacket の受け渡し）。
 
 ## SCN-ECS-FIF-AUDIT: 2 フレームを重ねるために、フレームごとの資源を洗い出す（調べるだけ）
-- status: todo
+- status: done
 - done-when: `VulkanSwapChain.h` の `MAX_FRAMES_IN_FLIGHT = 1` のため、RenderThread は記録 → 提出 → 次のフレームの前に GPU の完了を待つ、を直列に行い、フレームの時間が CPU と GPU の和になっている（mega-stress 5万個 close で rt 45.0 ms ≒ Execute 11.4 + GPU 30.4 + その他。バナナ 1万本 overview で rt 19.8 ms ≒ Execute 7.9 + GPU 8.1 + その他。SCN-ECS-MEASURE-RT）。2 フレームを重ねるために、CPU が書いて GPU が読む・GPU が書いて CPU が読むフレームごとの資源（定数・インスタンスのリング、記述子の書き換え、一時の資源のプール、転送の stage、GPU Scene の scatter の stage、読み戻し〔VSM のフィードバック・撮影・GPU の時間の計測・カウンタ〕、TLAS のインスタンス、ImGui、MegaGeometry の表とキュー、前のフレームの履歴〔HZB・TAA・prevWorld〕、遅延解放の通し番号など）を全部洗い、各資源の持ち主のファイル・今の数え方（1 つ／スロットごと／通し番号で待つ）・2 にしたときの直し方を PROGRESS の表にする。この項目ではコードを変えない。直しを書き込みパスが交わる単位でまとめて `SCN-ECS-FIF-<名前>` の項目にし、SCN-ECS-FIF-SWITCH の前に足す（各項目は MAX_FRAMES_IN_FLIGHT=1 のまま正しく動き、起動画面の比較が pass する形で書く）。
 - verify: `powershell -NoProfile -Command "if (-not (Select-String -Path TASKS.md -Pattern '^## SCN-ECS-FIF-(?!AUDIT|SWITCH)' -Quiet)) { exit 1 }"`
 - paths: TASKS.md, PROGRESS.md
 - notes: 2026-10-12 親が足した。足す項目は 1 反復（40 分）で閉じる大きさに切る。危険地帯（RHI/Vulkan・RenderThread・資源の寿命）の調べ。
+
+## SCN-ECS-FIF-FRAME-ORDER: フレームの頭に全体のメモリバリアを張り、前のフレームの GPU の書き込みを次のフレームが必ず待つ
+- status: todo
+- done-when: SCN-ECS-FIF-AUDIT の表の「GPU→GPU」の行（TAA・RTGI・PathTracing の ping-pong、VSM のページの状態、HZB のピラミッド、AutoExposure のヒストグラムの作業バッファ、MegaGeometry の可視ビット・BVH のキュー・間接描画の配列、VisibilityMerge のキー、RTGI の denoise の出力など、GPU だけが書いてフレームをまたいで 1 つで持つ資源）を 1 か所で守る。`ICommandList` に全体のメモリバリア（Vulkan は `vkCmdPipelineBarrier` の `VkMemoryBarrier`、src/dst とも ALL_COMMANDS・MEMORY_WRITE → MEMORY_READ|MEMORY_WRITE）を足し、`RenderingCoordinator` がフレームの最初に提出されるリスト（仕事の番号 0 番）の記録の頭で 1 回張る（同じキューの前の提出の書き込みを、このフレームの全コマンドが待つ）。あわせて `RenderingCoordinator` の Blit の記述子（`m_BlitDescriptorSet`。毎フレーム `finalPresentationTexture` を束ね直す）を飛行中のスロットごとの組にし、初期化で `GetMaxFramesInFlight() + 1 <= FRAME_PACKET_BUFFER_COUNT` を確かめる（ImGui の頂点・UBO、TLAS のキャッシュ〔`m_TopLevelCache`〕はパケットのスロットで引き、この条件で前の利用の GPU の完了が保証される）。TLAS のキャッシュの「前回の GPU の仕事は終わっている」のコメントを、この条件に書き直す。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass し、Debug の起動画面で検証レイヤーのエラーが 0。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-FRAME-ORDER-debug`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-FRAME-ORDER`
+- paths: Library/Core/Public/RHI/ICommandList.h, Library/Core/Private/RHI/Vulkan/VulkanCommandList.h, Library/Core/Private/RHI/Vulkan/VulkanCommandList.cpp, Library/Core/Public/Rendering/RenderingCoordinator.h, Library/Core/Private/Rendering/RenderingCoordinator.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。同じキューの提出は提出の順で並ぶが、バリアが無ければ前の提出のコマンドと重なって走りうる。バリアの第 1 の範囲は提出の順で前のコマンドを全部含むので、フレームの頭の 1 本で足りる（timeline のセマフォで提出ごとに待つ形より軽く、CPU の記録と GPU の実行の重なりは保つ。GPU どうしのフレームの境目の重なりだけを捨てる）。各パスのフレームをまたぐ資源の状態の追跡（`ResourceState`）は記録の順＝提出の順なので、そのままでよい。危険地帯（RHI/Vulkan・RenderThread）。
+
+## SCN-ECS-FIF-SWAPCHAIN: 描画の完了のセマフォをスワップチェーンの画像ごとにし、使われていない旧の Present を消す
+- status: todo
+- done-when: `VulkanSwapChain` の `m_renderFinishedSemaphores` を、飛行中のスロットごとからスワップチェーンの画像ごと（`m_currentImageIndex` で引く。画像の数で作り、Resize で作り直す）にする（スロットごとのままだと、2 にしたとき前の present がまだ待っているセマフォを次の提出が signal しうる）。`imageAvailable` と `inFlightFences` はスロットごとのまま。呼び出し元の無い `ISwapChain::Present` と `VulkanSwapChain::Present`（フェンスを reset して提出しないので、呼ぶと次の `BeginFrame` が止まる）を消す。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass し、Debug の起動画面で検証レイヤーのエラーが 0。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-SWAPCHAIN-debug`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-SWAPCHAIN`
+- paths: Library/Core/Public/RHI/ISwapChain.h, Library/Core/Private/RHI/Vulkan/VulkanSwapChain.h, Library/Core/Private/RHI/Vulkan/VulkanSwapChain.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。提出が拒まれたとき `imageAvailable` の signal が残る既存の問題（`VulkanSwapChain.cpp` の EndFrame の早期 return）は MAX に依らないので、この項目では扱わない（気づいたら PROGRESS の Notes に残す）。ISwapChain の他の実装（テストの偽物）があれば合わせて消す。危険地帯（RHI/Vulkan）。
+
+## SCN-ECS-FIF-DYNAMIC-UBO: DynamicUniformAllocator を飛行中のスロットごとの組にする
+- status: todo
+- done-when: `DynamicUniformAllocator`（物体ごとの UBO と記述子セットを事前に確保し、`Reset` で先頭へ戻して使い直す）は今 1 組で、`Reset` の後に前のフレームの GPU がまだ読む UBO・記述子を書き換える。`Reset` を `BeginFrame(inFlightIndex, frameSerial)`（FrameUseRing と同じ約束: 通し番号が変わった最初の呼び出しだけ位置を戻す。同じフレームに何回呼んでも戻らない）に替え、スロットごとに UBO と記述子の組を持つ。呼び出し側（`GBufferPass`・`ForwardPass`・`ShadowMapPass` の 2 つ・`DebugDrawPass`）は `ViewRenderContext::FrameIndex` とフレームの通し番号を渡す。Execute の単位で `Reset` していた所が、1 フレームの 2 回目の Execute で同じフレームの組を上書きしていないかも直す。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-DYNAMIC-UBO`
+- paths: Library/Core/Public/Rendering/DynamicUniformAllocator.h, Library/Core/Private/Rendering/DynamicUniformAllocator.cpp, Library/Core/Public/Rendering/GBufferPass.h, Library/Core/Private/Rendering/GBufferPass.cpp, Library/Core/Public/Rendering/ForwardPass.h, Library/Core/Private/Rendering/ForwardPass.cpp, Library/Core/Public/Rendering/ShadowMapPass.h, Library/Core/Private/Rendering/ShadowMapPass.cpp, Library/Core/Public/Rendering/DebugDrawPass.h, Library/Core/Private/Rendering/DebugDrawPass.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。足したスロットは `Reset` の後も残る今の決まりは保つ（スロットの組ごと）。DebugDraw の頂点（`DynamicBufferRing`、`FrameIndex % 3`）は対応済み。危険地帯（RenderThread・資源の寿命）。
+
+## SCN-ECS-FIF-LIGHTING: LightingPass の照明の組と RTGI の定数・表・記述子を飛行中のスロットごとにする
+- status: todo
+- done-when: `LightingPass` の照明の組（`m_ExecuteResourceSets[MaxExecuteResourceSets]`。LightData・LightArray・VSM のサンプル／スライスのバッファと記述子。今は通し番号が変わると組 0 から使い直す）を「飛行中のスロット × Execute の番号」にする（FrameUseRing へ寄せてよい）。RTGI の定数（`m_RTGIComputeParametersBuffer`）・発光の表（`m_RTGIComputeEmitterBuffer`）・instance の表（`m_RTGIComputeInstanceDataBuffer`）・RTGI の記述子（`m_RTGIComputeDescriptorSet`）・denoise の記述子（`m_RTGIDenoiserDescriptorSet`）をスロットごとにし、instance の表の差分の書き直し（`m_bRTGIInstancesUploaded`・変わった行だけの書き換え。SCN-ECS-FIX-LIGHTING-RECORD）もスロットごとの「アップロード済み」の印と、そのスロットの表が前に書いた版にそろえる（別のスロットが書いた差分を取りこぼさない。例外の catch で印を落とす直しもスロットごとに保つ）。RTGI の履歴（`m_RTGIHistoryTextures[2]`）と denoise の出力は GPU だけが使うので 1 つのまま（SCN-ECS-FIF-FRAME-ORDER で守る）。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較（`indirect_lighting=rtgi`）が pass し、`RG.Record.LightingPass` の median が SCN-ECS-FIX-LIGHTING-RECORD の 0.5 ms 以下のまま。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-LIGHTING`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-ECS-FIF-LIGHTING`
+- paths: Library/Core/Public/Rendering/LightingPass.h, Library/Core/Private/Rendering/LightingPass.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。照明の VSM の統計の読み戻し（16 枠・完了の通し番号で読む）は対応済み。Debug の `RTGIDiffuseIndirectVulkanTest` が関係するなら回す。危険地帯（RenderThread・資源の寿命）。
+
+## SCN-ECS-FIF-POST-A: TAA・Bloom・ToneMapping・SSAO・MotionBlur の定数と記述子を飛行中のスロットごとにする
+- status: todo
+- done-when: 次のパスは、メンバの定数バッファ 1 つと記述子セット 1 組を Execute のたびに `Update` で書き換える。2 にしたとき前のフレームの GPU が読む定数・記述子を書き換えるので、FrameUseRing（`ViewRenderContext::FrameIndex` とフレームの通し番号）で定数と記述子の組をスロットごとにする: `TemporalAAPass`（`m_ParamsBuffer`・`m_ResolveDescriptorSet`・`m_CopyDescriptorSet`）、`BloomPass`（`m_ParamsBuffer`・`m_BloomDescriptorSet`・ミップごとの Down/Up の定数と記述子）、`ToneMappingPass`（`m_ParamsBuffer`・`m_ToneMappingDescriptorSet`）、`SSAOPass`（SSAO と Blur の定数と記述子）、`MotionBlurPass`（`m_ParamsBuffer` と 3 つの記述子）。TAA の履歴の 2 枚は GPU だけが使うので 1 つのまま。初期化で 1 回だけ書くテクスチャ（LUT・レンズの汚れ）はそのまま。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-POST-A`
+- paths: Library/Core/Public/Rendering/TemporalAAPass.h, Library/Core/Private/Rendering/TemporalAAPass.inl, Library/Core/Public/Rendering/BloomPass.h, Library/Core/Private/Rendering/BloomPass.cpp, Library/Core/Public/Rendering/ToneMappingPass.h, Library/Core/Private/Rendering/ToneMappingPass.cpp, Library/Core/Public/Rendering/SSAOPass.h, Library/Core/Private/Rendering/SSAOPass.cpp, Library/Core/Public/Rendering/MotionBlurPass.h, Library/Core/Private/Rendering/MotionBlurPass.inl, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。パスごとに同じ形の直しなので、共通の小さな型（スロットごとの定数＋記述子）を作るなら、このパスの組の中に置く（POST-B・PRESENT が後で同じ型を使えるよう Public/Rendering に置いてよい。その場合は paths に足したことを PROGRESS に書く）。起動画面で無効のパスは、ビルドとコードの照合で確かめる（撮影を増やさない）。危険地帯（資源の寿命）。
+
+## SCN-ECS-FIF-POST-B: SSR・DoF・Volumetrics・Vignette・FXAA・Upscale・HiZ の定数と記述子を飛行中のスロットごとにする
+- status: todo
+- done-when: SCN-ECS-FIF-POST-A と同じ直しを次のパスに行う: `SSRPass`（`m_ParamsBuffer`・`m_DescriptorSet`）、`DepthOfFieldPass`（`m_ParamsBuffer`・Gather／Resample の記述子）、`VolumetricsPass`（`m_ParamsBuffer`・`m_DescriptorSet`）、`VignettePass`（`m_ParamsBuffer`・`m_DescriptorSet`）、`FXAAPass`（`m_ParamsBuffer`・`m_DescriptorSet`）、`UpscalePass`（`m_DescriptorSet`）、`HiZPyramidPass`（深度が替わったフレームに `m_DescriptorSets[0]` を書き換える。ミップごとの定数は作成時だけ書くのでそのまま。ピラミッドは GPU だけが使うので 1 つのまま）。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-POST-B`
+- paths: Library/Core/Public/Rendering/SSRPass.h, Library/Core/Private/Rendering/SSRPass.cpp, Library/Core/Public/Rendering/DepthOfFieldPass.h, Library/Core/Private/Rendering/DepthOfFieldPass.inl, Library/Core/Public/Rendering/VolumetricsPass.h, Library/Core/Private/Rendering/VolumetricsPass.cpp, Library/Core/Public/Rendering/VignettePass.h, Library/Core/Private/Rendering/VignettePass.cpp, Library/Core/Public/Rendering/FXAAPass.h, Library/Core/Private/Rendering/FXAAPass.cpp, Library/Core/Public/Rendering/UpscalePass.h, Library/Core/Private/Rendering/UpscalePass.cpp, Library/Core/Public/Rendering/HiZPyramidPass.h, Library/Core/Private/Rendering/HiZPyramidPass.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。POST-A で共通の型を作っていれば使う。起動画面で無効のパスは、ビルドとコードの照合で確かめる（撮影を増やさない）。危険地帯（資源の寿命）。
+
+## SCN-ECS-FIF-PRESENT: 表示の合成と Canvas の記述子・定数を飛行中のスロットごとにする
+- status: todo
+- done-when: `PresentationPass`（`m_Request.BlitDescriptorSet` を毎フレーム束ね直す）、`PresentationComposer`（`request.BlitDescriptorSet`）、`CanvasView`（層の不透明度の定数 `buffer->Update` と記述子 `descriptorSet->Update` を毎フレーム書く所）の、毎フレーム書き換える記述子と定数をスロットごとの組にする（作成時に 1 回だけ書く物はそのまま）。overlay の framebuffer（`AcquireOverlayFramebuffer`）は対応済み。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass し、ランチャー（Canvas）の画面が崩れない。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-PRESENT`
+- paths: Library/Core/Public/Rendering/PresentationPass.h, Library/Core/Private/Rendering/PresentationPass.cpp, Library/Core/Public/Rendering/PresentationComposer.h, Library/Core/Private/Rendering/PresentationComposer.cpp, Library/Core/Public/Rendering/CanvasView.h, Library/Core/Private/Rendering/CanvasView.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。RenderingCoordinator の Blit の記述子は SCN-ECS-FIF-FRAME-ORDER で直す（書き込みパスを分けるため）。ランチャーの見た目は撮影を増やさず、起動の流れ（ランチャー → シーン）を 1 回の起動で確かめれば足りる。危険地帯（資源の寿命）。
+
+## SCN-ECS-FIF-DDGI: DDGI の照射・距離のアトラスと履歴を、飛行中のスロットごとの資源から外す
+- status: todo
+- done-when: `DDGIProbePass` の `FrameResources` は FrameIndex × ViewId × ViewportId ごとに、定数・instance・結果のバッファ（CPU が書く。スロットごとでよい）と、照射・距離のアトラスとその履歴（`IrradianceAtlas`・`DistanceAtlas`・`HistoryIrradianceAtlas`・`HistoryDistanceAtlas`。GPU が前のフレームの値を積む）を一緒に持つ。2 にすると履歴が 2 つに分かれ、それぞれが 2 フレームおきに積まれて交互に表示される（収束が半分になり、2 つの差がちらつく）。アトラスと履歴・その状態（`*AtlasState`・`bAtlasValid`・`AtlasProbeCount`）を ViewId × ViewportId ごとの 1 組へ移し、スロットごとには CPU が書くバッファだけを残す。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-DDGI`
+- paths: Library/Core/Public/Rendering/DDGIProbePass.h, Library/Core/Private/Rendering/DDGIProbePass.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。起動画面の既定の間接光は RTGI なので、DDGI を有効にする構成（DDGI の試験か起動の引数）が既にあれば 1 本だけ撮って比べる（無ければビルドとコードの照合で確かめ、PROGRESS に書く）。履歴の GPU どうしの順序は SCN-ECS-FIF-FRAME-ORDER で守る。危険地帯（資源の寿命）。
+
+## SCN-ECS-FIF-READBACK-GATES: ShadowProbe と MegaGeometry の統計の読み戻しを、完了した提出の通し番号で判定する
+- status: todo
+- done-when: `ShadowProbePass` の統計は Execute の回数（`ExecuteIndex + 2`）で読む時を決めていて、1 フレームに 2 回以上 Execute する（複数のビューポート）と、2 にしたとき未完了の提出の結果を読む。`MegaGeometryPass` の統計（`StatsSlot`、`RenderFrameCount + 2 <= 現在`）は飛行中のフレーム数 2 以下を前提にしている。どちらも、書いた提出の通し番号を枠に持ち、`CompletedRenderFrameSerial`（VSM の統計・照明の VSM の統計と同じ）以下になった枠だけを読む形にする。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass し、mega-stress の撮影のログに MegaGeometry の統計の行が今と同じ頻度で出る。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-READBACK-GATES`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-ECS-FIF-READBACK-GATES`
+- paths: Library/Core/Public/Rendering/ShadowProbePass.h, Library/Core/Private/Rendering/ShadowProbePass.cpp, Library/Core/Public/Rendering/MegaGeometryPass.h, Library/Core/Private/Rendering/MegaGeometryPass.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。完了の通し番号の渡し方は VSM の統計（`VirtualShadowMapPass` の `HarvestReadyStats`）にそろえる。危険地帯（RenderThread・読み戻し）。
+
+## SCN-ECS-FIF-SYNC-SUBMIT-SCOPE: フレームの途中の同期の単発提出（キュー全体の待ち）を区間と数で見えるようにする
+- status: todo
+- done-when: `VulkanDevice` の単発のコマンドの提出（device-local のバッファ・テクスチャの `Update` の staging、BLAS の同期の構築〔`RenderingCoordinator` の `entry.Structure->Build`〕などが使い、提出の後に `graphicsQueue.waitIdle()` で待つ）は、2 にすると前のフレームの GPU の完了まで RenderThread を止め、重なりを消す（正しさは保つ）。待ちを区間 `RHI.ImmediateSubmitWait`（呼んだスレッドの区間）で囲み、開発ビルドで 1 フレームあたりの回数を数えて撮影のログへ出す（`IMMEDIATE_SUBMIT frames=<n> submits=<n> max_per_frame=<n>`。Release では数えない）。直すのは SCN-ECS-MEASURE-FIF で区間が効いていると分かってから（この項目では呼び出し側を変えない）。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass し、mega-stress の撮影のログに `IMMEDIATE_SUBMIT` が出る。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-SYNC-SUBMIT-SCOPE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-ECS-FIF-SYNC-SUBMIT-SCOPE`
+- paths: Library/Core/Private/RHI/Vulkan/VulkanDevice.h, Library/Core/Private/RHI/Vulkan/VulkanDevice.cpp, Library/Core/Private/Rendering/RenderWorld.cpp, Library/Core/Private/Engine/ApplicationProcessor.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。ログの出し方は `FRAME_PACING`（SCN-ECS-FIX-GT-PACING）にそろえる（ApplicationProcessor が撮影の終わりに出す。RenderWorld から読む口が要れば足す）。危険地帯（RHI/Vulkan）。
 
 ## SCN-ECS-FIF-SWITCH: 2 フレームを重ねて描く
 - status: todo

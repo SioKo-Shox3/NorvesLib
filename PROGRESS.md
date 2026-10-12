@@ -3093,3 +3093,57 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `check-SCN-ECS-FIX-GT-PACING-off.txt`: `--gt-pacing=off`（mega-stress 5000 個・200 描画フレーム）で `FRAME_PACING gt_frames=134081 rt_frames=200 dropped=133879 pacing=off`、EXIT=0（前の動きに戻る）。
 - Next: SCN-ECS-FIF-AUDIT。
 - Notes: このタスクの verify の周回を `-Cycles 2` から `-Cycles 3` に直した（前の項目の複数のシーンの周回と同じ数。比べる周回が増えるので厳しくなる側）。SCN-ECS-FIF-SWITCH の verify にも同じ `-Cycles 2` が残っている。決定論の撮影（起動画面の比較）は 1 本のスレッドで描くので `FRAME_PACING gt_frames=0 rt_frames=0`。GameThread の Tick の dt は描画の間隔（mega-stress で約 35 ms）になる。固定の段は今のまま、周回と撮影で見た目・資源の差は出ていないが、dt に依存するゲームの処理を個別に確かめる試験は無い。窓を最小化したとき RenderThread はスワップチェーンの NotReady ですぐ返すので待ちは詰まらないが、GameThread は描画に合わせて回らなくなる（前と同じく全速で回る）。
+
+### SCN-ECS-FIF-AUDIT（2026-10-12、反復 43・run 20261012-030203）
+
+- 調べた範囲: `Library/Core/Private|Public/RHI`、`Library/Core/Private|Public/Rendering` の全パス（`->Update(` を持つ全ファイル）、`Library/Modules/ImGui`。コードは変えていない。
+- 前提（確かめた事実）:
+  - フレームの待ちは `VulkanSwapChain::BeginFrame` の `m_inFlightFences[m_currentFrame]` だけ（区間 `RT.WaitFrameFence`）。提出は `imageAvailable` しか待たない。
+  - 使うキューはグラフィックスの 1 本だけ（compute・transfer のキューを使う所は無い）。同じキューの提出は提出の順に並ぶが、バリアが無ければ前の提出と重なって走りうる。バリアの第 1 の範囲は提出の順で前のコマンドを全部含む。
+  - `ViewRenderContext::FrameIndex` は `m_currentFrame`。main のリスト（`m_CommandList`）は仕事の番号 0 番として `PrepareJobCommandLists` が `SetFrameIndex(frameIndex)` を呼ぶ（スロット 0 に固定ではない）。
+  - `WaitIdle` は Resize・Canvas のビューの破棄・`RenderWorld::WaitForRender`・終了だけで、毎フレームの経路には無い。シーンの出入りは `WaitForRender` で両方のスロットを待つ。
+  - `FRAME_PACKET_BUFFER_COUNT = 3`。パケットのスロットで引く資源（ImGui・TLAS のキャッシュ）は、飛行中のフレーム数 + 1 ≤ 3 のとき、同じスロットの前の利用の GPU が次の利用の BeginFrame の前に終わる。
+- 表（向き: C→G = CPU が書き GPU が読む、G→C = 読み戻し、G→G = GPU だけが書いて読み、フレームをまたいで 1 つで持つ）:
+
+| 資源 | 持ち主 | 向き | 今の数え方 | 2 にしたとき | 直す項目 |
+|---|---|---|---|---|---|
+| フェンス・`imageAvailable`・提出の通し番号・通知待ちのリスト | `RHI/Vulkan/VulkanSwapChain.cpp` | — | スロットごと（MAX で作る） | 壊れない | — |
+| `renderFinished` のセマフォ | `VulkanSwapChain.cpp:332,417` | G→表示 | スロットごと | 前の present が待つセマフォを次の提出が signal しうる | FIF-SWAPCHAIN（画像ごと） |
+| 旧の `Present()` | `ISwapChain.h:107`、`VulkanSwapChain.cpp:132` | — | 呼び出し元なし | 呼ぶとフェンスを reset して提出せず止まる | FIF-SWAPCHAIN（消す） |
+| コマンドバッファ・記録し直しの禁止の番号・リストの記述子プール | `VulkanCommandList.cpp:336-356,483-487,916-922` | C→G | スロットごと（`MAX_COMMAND_BUFFERS=3`） | 壊れない | — |
+| 一時資源の lease（AS の構築の入力） | `VulkanCommandList.h:715,751` | C→G | スロットごと | 壊れない | — |
+| GPU の時間の計測（query） | `VulkanCommandList.cpp:2353,2411,2487-2510` | G→C | スロットごと、完了の通知の後に読む | 壊れない | — |
+| `TransientResourcePool`（RenderGraph の一時資源） | `RHI/TransientResourcePool.cpp:61-166` | G→G | スロット＋通し番号（同じスロットの前の通し番号だけ再利用） | 壊れない | — |
+| `InstanceBufferRing` | `Rendering/InstanceBufferRing.cpp` | C→G | スロットごと、拡張は Upload の回数で遅延解放（1 フレーム 1 回） | 壊れない | — |
+| `FrameUseRing` を使う資源（GBufferDebug・VSM の Pass／Pages の Mark・Allocate・Clear・Invalidation／Raster 2 つ・MaterialTileClassify・MegaGeometry の FrameSlot・ShadowProbe・Skinning・VisibilityMerge・VisibilityRaster の FrameSlot と Use・VisibilityResolve・VisibilitySwRaster） | 各パス | C→G | スロット＋通し番号（上限 4） | 壊れない | — |
+| PathTracing の定数・instance の表、DDGI の定数・instance・結果、RayTracingShadow の定数・記述子・可視性、AutoExposure の定数 | `PathTracingPass.inl:715-745`、`DDGIProbePass.cpp:387-410`、`RayTracingShadowPass.cpp:177-214`、`AutoExposurePass.inl:488-530` | C→G | FrameIndex ごと | 壊れない | — |
+| スキンのパレット・前のパレット | `SkinnedMeshGpuStore.cpp:100-177` | C→G | 変わったら作り直し（書き直さない） | 壊れない | — |
+| MegaGeometry の散布の stage（`SceneStaging`）・区画の表・ページの表 | `MegaGeometryPass.cpp:2693,4299,4723` | C→G | FrameSlot（スロットごと） | 壊れない | — |
+| MegaGeometry の常駐の表（slot・instance・shadow・mesh） | `MegaGeometryPass.cpp:4011-4171` | G→G（散布の compute が stage から書く） | 1 つ。拡張の古いバッファは 8 描画フレーム後に解放 | フレームの頭のバリアで守れる。8 > 2 で解放も足りる | FIF-FRAME-ORDER |
+| ImGui の頂点・インデックス・UBO・記述子 | `Modules/ImGui/.../ImGuiOverlayPass.cpp:259-311,447-483` | C→G | パケットのスロット（3） | 飛行中 + 1 ≤ 3 なら壊れない（暗黙の結合） | FIF-FRAME-ORDER（条件を初期化で確かめる） |
+| TLAS のキャッシュ（`m_TopLevelCache[slot]`、in-place の更新）・TLAS のインスタンスの表と scratch | `RenderingCoordinator.cpp:1719-1790`、`VulkanCommandList.cpp:1606-1700` | C→G・G→G | パケットのスロット／呼び出しごとに新規（lease） | 同上。コメントの前提が 1 飛行 | FIF-FRAME-ORDER（コメントと条件） |
+| 表示の Blit の記述子 `m_BlitDescriptorSet` | `RenderingCoordinator.cpp:5492-5494` | C→G | 1 組を毎フレーム束ね直す | 前のフレームが使う記述子を書き換える | FIF-FRAME-ORDER |
+| overlay の framebuffer | `RenderingCoordinator.cpp:5442` | — | FrameIndex ごと | 壊れない | — |
+| GPU→GPU の前のフレームの履歴（TAA の 2 枚、RTGI の履歴 2 組と denoise の出力、PathTracing の累積 2 枚〔ビューごと〕、VSM のページの状態〔Pool・PageTable・RequestBits・FreeList・DirtyList・Mega 系〕、HZB のピラミッド、AutoExposure のヒストグラムの作業バッファ、MegaGeometry の可視ビット・BVH のキュー・間接描画の配列、VisibilityMerge のキー） | 各パス | G→G | 1 つ（ping-pong は 2 枚） | 前の提出と重なって走りうる（今は BeginFrame の CPU 待ちが隠している） | FIF-FRAME-ORDER（フレームの頭の全体のバリア 1 本） |
+| DynamicUniformAllocator の UBO と記述子（物体ごと。前の変換を含む） | `DynamicUniformAllocator.h`、使う所 `GBufferPass.cpp:746`・`ForwardPass.cpp:1262,1381`・`ShadowMapPass.cpp:1302-1857`・`DebugDrawPass.cpp:309` | C→G | 1 組、`Reset` で先頭へ戻す | 前のフレームが読む UBO・記述子を書き換える | FIF-DYNAMIC-UBO |
+| LightingPass の照明の組（`m_ExecuteResourceSets[4]`） | `LightingPass.h:468-498`、`LightingPass.cpp:3301,4457,4715-4725,5183-5187` | C→G | 4 組を通し番号で 0 から使い直す（FrameIndex を見ない） | 同上 | FIF-LIGHTING |
+| RTGI の定数・発光の表・instance の表・RTGI と denoise の記述子 | `LightingPass.cpp:3439-3616,4107-4187` | C→G | 1 つ（instance の表は変わった行だけ書き換え） | 同上。差分の書き換えはスロットごとの版が要る | FIF-LIGHTING |
+| TAA・Bloom・ToneMapping・SSAO・MotionBlur の定数と記述子 | `TemporalAAPass.inl:404-421`、`BloomPass.cpp:699-938`、`ToneMappingPass.cpp:834-849`、`SSAOPass.cpp:862-887`、`MotionBlurPass.inl:344-362` | C→G | 1 組を Execute ごとに書き換え | 同上 | FIF-POST-A |
+| SSR・DoF・Volumetrics・Vignette・FXAA・Upscale の定数と記述子、HZB の記述子 0（深度が替わったとき） | `SSRPass.cpp:725-757`、`DepthOfFieldPass.inl:330-339`、`VolumetricsPass.cpp:495-505`、`VignettePass.cpp:475-484`、`FXAAPass.cpp:493-504`、`UpscalePass.cpp:430`、`HiZPyramidPass.cpp:262-265` | C→G | 1 組 | 同上 | FIF-POST-B |
+| PresentationPass・PresentationComposer の Blit の記述子、CanvasView の層の定数と記述子 | `PresentationPass.cpp:125,167`、`PresentationComposer.cpp:50`、`CanvasView.cpp:519,815-838` | C→G | 1 組 | 同上 | FIF-PRESENT |
+| DDGI の照射・距離のアトラスと履歴 | `DDGIProbePass.h:66-89`、`DDGIProbePass.cpp:485-505,696` | G→G | FrameIndex ごと（履歴まで分かれる） | 履歴が 2 つに分かれ、2 フレームおきに積まれて交互に出る（ちらつき・収束が半分） | FIF-DDGI |
+| VSM の統計・照明の VSM の統計・VT のフィードバック | `VirtualShadowMapPass.cpp:1125-1172`、`LightingPass.cpp:1615-1670`、`VirtualTextureFeedbackRing.h:50-52` | G→C | 枠ごと、完了の通し番号で読む | 壊れない | — |
+| 撮影の読み戻し | `FrameCaptureReadbackHelper.cpp:146-308`（`RenderingCoordinator.cpp:2466` で MAX から枠を作る） | G→C | スロットごと、同じスロットの BeginFrame の後に Map | 壊れない。読めるのが 2 フレーム後になる | —（FIF-SWITCH で撮影の終わりの待ちを確かめる） |
+| AutoExposure のヒストグラムの読み戻し | `AutoExposurePass.inl:271-346,558-566` | G→C | FrameIndex ごと、同じ枠のフェンスの後に読む | 壊れない。露出の応答が 1 フレーム遅れる | —（FIF-SWITCH の起動画面の比較で差を見る） |
+| ShadowProbe の統計 | `ShadowProbePass.cpp:432-440,602-608` | G→C | 4 枠を Execute の回数（`+2`）で読む | 1 フレームに 2 回以上 Execute すると未完了の提出を読む | FIF-READBACK-GATES |
+| MegaGeometry の統計 | `MegaGeometryPass.cpp:2529-2538,2881` | G→C | 4 枠を描画フレームの数（`+2`）で読む | 2 では足りるが、飛行中 2 以下の前提に依存 | FIF-READBACK-GATES |
+| device-local の `Update` の staging・BLAS の同期の構築 | `VulkanBuffer.cpp:167-194`、`VulkanTexture.cpp:1039-1172`、`VulkanDevice.cpp:1820-1955`、`RenderingCoordinator.cpp:1671-1708` | C→G | 呼び出しごとに staging、提出の後に `graphicsQueue.waitIdle()` | 正しいが、フレームの途中で呼ぶと前のフレームの GPU の完了まで止まり、重なりが消える | FIF-SYNC-SUBMIT-SCOPE（見えるようにする） |
+| PersistentResourceCache | `RenderingCoordinator.cpp:2402`（`nullptr` を渡す） | — | 未接続 | 影響なし | — |
+| FramePacket の本体 | `FramePacket.h`、`RenderingCoordinator.cpp:3717-3729` | CPU だけ（GPU は直接読まない） | 3 枚、提出の完了の通し番号で外す | 壊れない | — |
+
+- 足した項目（SCN-ECS-FIF-SWITCH の前。書き込みパスは互いに交わらない）: SCN-ECS-FIF-FRAME-ORDER → SCN-ECS-FIF-SWAPCHAIN → SCN-ECS-FIF-DYNAMIC-UBO → SCN-ECS-FIF-LIGHTING → SCN-ECS-FIF-POST-A → SCN-ECS-FIF-POST-B → SCN-ECS-FIF-PRESENT → SCN-ECS-FIF-DDGI → SCN-ECS-FIF-READBACK-GATES → SCN-ECS-FIF-SYNC-SUBMIT-SCOPE。各項目は MAX_FRAMES_IN_FLIGHT=1 のまま、起動画面の比較が pass する形で書いた。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-AUDIT-1.txt`: `^## SCN-ECS-FIF-(?!AUDIT|SWITCH)` の見出しが TASKS.md にある、EXIT=0。
+  - 反復の始めの RelWithDebInfo の Game のビルド EXIT=0（コードは変えていない）。
+- Next: SCN-ECS-FIF-FRAME-ORDER。
+- Notes: 2 にしたときの意味の変化（壊れはしない）: 撮影の読み戻しが 2 フレーム後に読める、AutoExposure の露出が 1 フレーム遅れる。FIF-SWITCH の起動画面の比較（決定論の撮影は 1 本のスレッドで描くので差が出ない見込み）と撮影の終わりの待ち（`--exit-after-rendered-frames` の前に最後の読み戻しが届くか）で確かめる。同期の検証（VK_LAYER の synchronization validation）を撮影の台本で有効にする口は無い。FIF-SWITCH の Debug の撮影は通常の検証レイヤーだけを見る。
