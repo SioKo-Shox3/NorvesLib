@@ -3,9 +3,11 @@
 #include "VulkanTexture.h"
 #include "VulkanCommandList.h"
 #include "RHI/SubmissionSerialAllocator.h"
+#include "Debug/Stats.h"
 #include "Logging/LogMacros.h"
 #include <stdexcept>
 #include <algorithm>
+#include <chrono>
 #include "Container/Containers.h"
 
 // Windowsのインクルード（ヘッダで定義済みだが追加インクルードが必要）
@@ -18,6 +20,50 @@ namespace NorvesLib::RHI::Vulkan
 {
 
     using namespace NorvesLib::Core::Container;
+
+    namespace
+    {
+        // RenderThread のフレームの区間（Debug/Stats.h の区間と同じ記録）。End で破棄より前に閉じられる。
+        class FrameStageScope
+        {
+        public:
+#if NORVES_ENABLE_STATS
+            explicit FrameStageScope(const char *name)
+                : m_Name(NorvesLib::Debug::StatsManager::Get().IsTraceActive() ? name : nullptr),
+                  m_StartTime(std::chrono::high_resolution_clock::now())
+            {
+            }
+
+            ~FrameStageScope()
+            {
+                End();
+            }
+
+            void End()
+            {
+                if (!m_Name)
+                {
+                    return;
+                }
+                const float durationMs = std::chrono::duration<float, std::milli>(
+                                             std::chrono::high_resolution_clock::now() - m_StartTime)
+                                             .count();
+                NorvesLib::Debug::StatsManager::Get().RecordScope(m_Name, "RenderThread", durationMs);
+                m_Name = nullptr;
+            }
+
+        private:
+            const char *m_Name = nullptr;
+            std::chrono::high_resolution_clock::time_point m_StartTime;
+#else
+            explicit FrameStageScope(const char *) {}
+            void End() {}
+#endif
+        public:
+            FrameStageScope(const FrameStageScope &) = delete;
+            FrameStageScope &operator=(const FrameStageScope &) = delete;
+        };
+    } // namespace
 
     // コンストラクタ
     VulkanSwapChain::VulkanSwapChain(TSharedPtr<VulkanDevice> device, const SwapChainDesc &desc)
@@ -196,11 +242,15 @@ namespace NorvesLib::RHI::Vulkan
             return SwapChainBeginFrameStatus::NotReady;
         }
 
-        // 現在のフレームのフェンスが完了するまで待機
-        auto waitResult = m_device->GetVkDevice().waitForFences(
-            m_inFlightFences[m_currentFrame],
-            VK_TRUE,
-            UINT64_MAX);
+        // 現在のフレームのフェンスが完了するまで待機（RenderThread の区間 RT.WaitFrameFence）
+        auto waitResult = [this]()
+        {
+            NORVES_STAT_SCOPE_CATEGORY("RT.WaitFrameFence", "RenderThread");
+            return m_device->GetVkDevice().waitForFences(
+                m_inFlightFences[m_currentFrame],
+                VK_TRUE,
+                UINT64_MAX);
+        }();
 
         const SwapChainBeginFrameStatus fenceStatus = Detail::ClassifyFenceWaitResult(waitResult);
         if (fenceStatus != SwapChainBeginFrameStatus::Success)
@@ -213,12 +263,16 @@ namespace NorvesLib::RHI::Vulkan
         }
         NotifyFrameSlotCommandListsCompleted(m_currentFrame);
 
-        // 次の画像を取得
-        auto acquireResult = m_device->GetVkDevice().acquireNextImageKHR(
-            m_swapChain,
-            UINT64_MAX,
-            m_imageAvailableSemaphores[m_currentFrame],
-            nullptr);
+        // 次の画像を取得（RenderThread の区間 RT.AcquireImage）
+        auto acquireResult = [this]()
+        {
+            NORVES_STAT_SCOPE_CATEGORY("RT.AcquireImage", "RenderThread");
+            return m_device->GetVkDevice().acquireNextImageKHR(
+                m_swapChain,
+                UINT64_MAX,
+                m_imageAvailableSemaphores[m_currentFrame],
+                nullptr);
+        }();
 
         const SwapChainBeginFrameStatus acquireStatus = Detail::ClassifyAcquireResult(acquireResult.result);
         if (acquireStatus == SwapChainBeginFrameStatus::OutOfDate)
@@ -246,6 +300,8 @@ namespace NorvesLib::RHI::Vulkan
     SwapChainEndFrameResult VulkanSwapChain::EndFrame(const CommandListPtr *commandLists, uint32_t commandListCount)
     {
         SwapChainEndFrameResult result;
+        // 束の検査から提出までを RenderThread の区間 RT.Submit として取る（表示の前に閉じる）
+        FrameStageScope submitStage("RT.Submit");
         VariableArray<VulkanCommandList *> batchLists;
         VariableArray<vk::CommandBuffer> cmdBuffers;
         if (m_currentFrame >= m_frameSlotCommandLists.size() ||
@@ -353,7 +409,9 @@ namespace NorvesLib::RHI::Vulkan
             slotCommandLists.push_back(commandLists[index]);
         }
 
-        // プレゼント
+        // プレゼント（RenderThread の区間 RT.Present。作り直しも含める）
+        submitStage.End();
+        FrameStageScope presentStage("RT.Present");
         vk::PresentInfoKHR presentInfo = {};
         presentInfo.waitSemaphoreCount = 1;
         presentInfo.pWaitSemaphores = &m_renderFinishedSemaphores[m_currentFrame];

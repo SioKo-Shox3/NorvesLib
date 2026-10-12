@@ -41,6 +41,7 @@
 #include "Rendering/RenderingCoordinatorDiagnostics.h"
 #include "Rendering/SceneView.h"
 #include "Rendering/Screen.h"
+#include "Rendering/SequentialStatScope.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/SharedResourceRegistry.h"
 #include "Rendering/SkinnedDrawCommands.h"
@@ -4787,6 +4788,11 @@ namespace NorvesLib::Core::Rendering
             renderFrameStartTime = std::chrono::high_resolution_clock::now();
         }
 #endif
+        // 直下の区間: RT.ApplyPacket → （RT.WaitFrameFence・RT.AcquireImage はスワップチェーンが取る）→ RT.PrepareFrame
+        // → RT.Streaming → RT.BeginRecording → RT.BuildAccelerationStructures → RT.RenderViews（RenderGraph.* を含む）
+        // → RT.RecordTail → （RT.Submit・RT.Present はスワップチェーンが取る）→ RT.FinishFrame
+        SequentialStatScope frameScopes("RenderThread");
+        frameScopes.Begin("RT.ApplyPacket");
 
         bool bCanReadPacket = packet->GetState() == FramePacketState::Reading;
         if (!bCanReadPacket)
@@ -4932,7 +4938,10 @@ namespace NorvesLib::Core::Rendering
 
         // swapchain acquire（旧BeginFrame経路から移動）
         // RenderThreadまたはSTインライン経路でここを呼ぶ。
+        // 前のフレームの完了待ちと画像の取得は、スワップチェーンが RT.WaitFrameFence・RT.AcquireImage として取る。
+        frameScopes.End();
         const RHI::SwapChainBeginFrameStatus beginFrameStatus = m_Screen.BeginFrame();
+        frameScopes.Begin("RT.PrepareFrame");
         if (beginFrameStatus == RHI::SwapChainBeginFrameStatus::Fatal)
         {
             ThrowSwapChainBeginFrameError(beginFrameStatus);
@@ -5097,6 +5106,7 @@ namespace NorvesLib::Core::Rendering
         // SceneRendererフレーム開始
         m_SceneRenderer.BeginFrame();
 
+        frameScopes.Begin("RT.Streaming");
         // VT のストリーマを進める（タイルの読み込み完了の取り込み・ページの結び付け・コピーの積み込み）。
         // BindSparse は提出の直列化の下で呼ぶ必要があるので、RenderThread のこの位置（BeginRetireFrame の後）で行う。
         if (m_RenderResources)
@@ -5111,6 +5121,7 @@ namespace NorvesLib::Core::Rendering
         }
 
         // コマンド録画開始
+        frameScopes.Begin("RT.BeginRecording");
         m_CommandList->BeginRecording();
         ScopedJobCommandListsAbort jobCommandListsAbort(m_JobCommandLists);
         // ステージングのリングに置いたタイル・ミップテイルのデータを、描画のコマンドの先頭でテクスチャの領域へコピーする
@@ -5143,6 +5154,7 @@ namespace NorvesLib::Core::Rendering
         }
 #endif
 
+        frameScopes.Begin("RT.BuildAccelerationStructures");
         {
 #if NORVES_ENABLE_STATS
             // 加速構造の更新は別の区間としても取り、トレースのGPUの行に出す。
@@ -5180,6 +5192,9 @@ namespace NorvesLib::Core::Rendering
             }
 #endif
         }
+
+        // ビューの描画（グラフの構築・RenderGraph.Compile・RenderGraph.Execute）
+        frameScopes.Begin("RT.RenderViews");
 
         // ========================================
         // Deferredパスチェーン描画（スワップチェーンレンダーパスの外で実行）
@@ -5364,6 +5379,8 @@ namespace NorvesLib::Core::Rendering
         m_PresentationPass.SetDeferBlit(true);
         RenderFrameExecutor frameExecutor;
         RenderFrameExecutionResult executionResult = frameExecutor.Execute(executionRequest);
+        // グラフの後の記録（overlay・表示のコピー・保留のコマンド・撮影のコピー）とリストの終了
+        frameScopes.Begin("RT.RecordTail");
 
         if (debugDumpClaim.IsClaimed() && m_Diagnostics)
         {
@@ -5589,8 +5606,10 @@ namespace NorvesLib::Core::Rendering
         renderStats.DrawCalls = rendererStats.DrawCallCount;
         renderStats.TrianglesRendered = rendererStats.TriangleCount;
 
-        // 仕事の番号ごとのリストを 1 回でサブミット＆Present
+        // 仕事の番号ごとのリストを 1 回でサブミット＆Present（スワップチェーンが RT.Submit・RT.Present として取る）
+        frameScopes.End();
         const RHI::SwapChainEndFrameResult endFrameResult = SubmitJobCommandLists(*swapChain, m_JobCommandLists);
+        frameScopes.Begin("RT.FinishFrame");
         if (captureRecordStatus == FrameCaptureRecordStatus::Recorded &&
             endFrameResult.SubmissionSerial != 0 &&
             m_FrameCaptureReadbackHelper &&

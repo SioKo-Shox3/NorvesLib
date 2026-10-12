@@ -268,7 +268,10 @@ namespace NorvesLib::Core::Rendering
     {
         while (!m_bShouldExit.Load(std::memory_order_acquire))
         {
-            // 新しいフレームの待機
+            // 新しいフレームの待機（受け取ったパケットの待ちを RT.WaitPacket に残す。rt の計測の外）
+#if NORVES_ENABLE_STATS
+            const auto waitPacketStartTime = std::chrono::high_resolution_clock::now();
+#endif
             m_FrameMutex.Lock();
             m_FrameCondition.Wait(m_FrameMutex,
                                   [this]()
@@ -301,6 +304,18 @@ namespace NorvesLib::Core::Rendering
                 bDrainAssetGpuFlushWindow = true;
             }
             m_FrameMutex.Unlock();
+#if NORVES_ENABLE_STATS
+            if (packet)
+            {
+                auto& waitStatsManager = NorvesLib::Debug::StatsManager::Get();
+                if (waitStatsManager.IsTraceActive())
+                {
+                    const float waitPacketMs = std::chrono::duration<float, std::milli>(
+                        std::chrono::high_resolution_clock::now() - waitPacketStartTime).count();
+                    waitStatsManager.RecordScope("RT.WaitPacket", "RenderThread", waitPacketMs);
+                }
+            }
+#endif
 
             if (bDrainAssetGpuFlushWindow)
             {
@@ -417,7 +432,10 @@ namespace NorvesLib::Core::Rendering
 
                     m_Coordinator->RenderFrame(packet);
                     // 描画完了後にパケットをEmpty状態に戻して再利用可能にする
-                    m_Coordinator->ReleasePacket(packet);
+                    {
+                        NORVES_STAT_SCOPE_CATEGORY("RT.ReleasePacket", "RenderThread");
+                        m_Coordinator->ReleasePacket(packet);
+                    }
 
 #if NORVES_ENABLE_STATS
                     // 統計を更新

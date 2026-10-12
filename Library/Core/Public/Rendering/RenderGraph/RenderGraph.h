@@ -385,7 +385,11 @@ namespace NorvesLib::Core::Rendering
                                   uint32_t& nextBarrierIndex,
                                   bool& bFlushedInSerialSegment,
                                   Container::VariableArray<RHI::ICommandList*>& segmentLists);
-        void RecordPassExecute(uint32_t passIndex, RenderGraphResources& resources, ViewRenderContext& context);
+        // traceRecordMs があれば、RG.Record.<パス> の区間を書き込む費用をそこへ足し込む（RenderThread の Serial の記録だけ）
+        void RecordPassExecute(uint32_t passIndex,
+                               RenderGraphResources& resources,
+                               ViewRenderContext& context,
+                               float* traceRecordMs = nullptr);
         bool PlanRecording(ViewRenderContext& context);
         void PlanSegmentLayouts(const RGRecordSegment& segment);
         void PlanBarrierLayouts(uint32_t barrierIndex);
@@ -457,6 +461,15 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_LastCompiledBarrierCount = 0;
         uint32_t m_LastTransientAcquireCount = 0;
         uint32_t m_LastAcquiredRecordListCount = 0;
+        // 1 回の Execute で何度も通る短い区間の合計（記録の件数を増やさないよう足し込み、Execute の終わりに 1 件ずつ記録する）。
+        // RG.SegmentBegin・RG.SegmentEnd は区間の頭と終わり、RG.Barriers はパスの前、RG.FlushPending はパスの後、
+        // RG.TraceRecord は Serial のパスの RG.Record.* の区間をトレースへ書き込む費用（計測そのものの費用）。
+        float m_SegmentBeginMs = 0.0f;
+        float m_SegmentEndMs = 0.0f;
+        float m_PassBarriersMs = 0.0f;
+        float m_PassFlushPendingMs = 0.0f;
+        float m_TraceRecordMs = 0.0f;
+        bool m_bExecuteStageTiming = false;
         bool m_bInitialized = false;
         bool m_bCompiled = false;
         bool m_bHasGraphError = false;

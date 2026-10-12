@@ -1,5 +1,6 @@
 ﻿#include "Rendering/RenderGraph/RenderGraph.h"
 #include "Rendering/SceneRenderer.h"
+#include "Rendering/SequentialStatScope.h"
 #include "Rendering/ViewRenderContext.h"
 #include "RHI/IBuffer.h"
 #include "RHI/ICommandList.h"
@@ -673,6 +674,33 @@ namespace NorvesLib::Core::Rendering
     RenderGraphExecutionResult RenderGraph::ExecuteWithResult(ViewRenderContext& context)
     {
         NORVES_STAT_SCOPE_CATEGORY("RenderGraph.Execute", "RenderGraph");
+#if NORVES_ENABLE_STATS
+        // 直下の区間のうち何度も通るもの（区間の頭と終わり・パスの前と後）は足し込み、Execute を出る前に 1 件ずつ記録する。
+        m_bExecuteStageTiming = NorvesLib::Debug::StatsManager::Get().IsTraceActive();
+        m_SegmentBeginMs = 0.0f;
+        m_SegmentEndMs = 0.0f;
+        m_PassBarriersMs = 0.0f;
+        m_PassFlushPendingMs = 0.0f;
+        m_TraceRecordMs = 0.0f;
+        struct ExecuteStageRecord
+        {
+            RenderGraph& Graph;
+            ~ExecuteStageRecord()
+            {
+                if (!Graph.m_bExecuteStageTiming)
+                {
+                    return;
+                }
+                auto& statsManager = NorvesLib::Debug::StatsManager::Get();
+                statsManager.RecordScope("RG.SegmentBegin", "RenderGraph", Graph.m_SegmentBeginMs);
+                statsManager.RecordScope("RG.SegmentEnd", "RenderGraph", Graph.m_SegmentEndMs);
+                statsManager.RecordScope("RG.Barriers", "RenderGraph", Graph.m_PassBarriersMs);
+                statsManager.RecordScope("RG.FlushPending", "RenderGraph", Graph.m_PassFlushPendingMs);
+                statsManager.RecordScope("RG.TraceRecord", "RenderGraph", Graph.m_TraceRecordMs);
+                Graph.m_bExecuteStageTiming = false;
+            }
+        } executeStageRecord{*this};
+#endif
         m_LastExecutedPassCount = 0;
         m_LastTransientAcquireCount = 0;
         RenderGraphExecutionResult result;
@@ -707,6 +735,8 @@ namespace NorvesLib::Core::Rendering
 
         for (const RGRecordSegment& segment : m_RecordSegments)
         {
+            // 区間の頭（保留のコマンドの流し・layout の計画）は RG.SegmentBegin へ足し込む
+            AccumulatingStatTimer segmentBeginTimer(m_SegmentBeginMs, m_bExecuteStageTiming);
             // 区間の前に積まれた保留のコマンド（実行の前に積んだものなど）は、区間の束として共有の layout を
             // 書く設定のまま先に流し、その後の layout を起点に区間を計画する（コマンドの並びは今と同じ）。
             if (FlushPendingFrameCommands(context))
@@ -722,6 +752,7 @@ namespace NorvesLib::Core::Rendering
                 context.CommandList->SetSharedTextureLayoutWrites(false);
                 segmentLists.push_back(context.CommandList);
             }
+            segmentBeginTimer.Stop();
 
             // Serial の区間の中で流した保留のコマンドは、宣言に無い Texture の layout も変えうる。
             bool bFlushedInSerialSegment = false;
@@ -765,6 +796,8 @@ namespace NorvesLib::Core::Rendering
                 ++orderIndex;
             }
 
+            // 区間の終わり（layout の書き戻し・確定）は RG.SegmentEnd へ足し込む
+            AccumulatingStatTimer segmentEndTimer(m_SegmentEndMs, m_bExecuteStageTiming);
             if (segment.bLayoutPlanned)
             {
                 // 区間を記録し終えてから、計画した最終の layout を書き戻す。
@@ -2290,6 +2323,10 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        // パスの前（前の保留のコマンドの流し・バリア・layout の書き戻し・GPU の区間の開始）は RG.Barriers、
+        // パスの後（保留のコマンドの流し・GPU の区間の終了）は RG.FlushPending へ足し込む（GPU の区間より先に作り、後に壊す）。
+        AccumulatingStatTimer beforePassTimer(m_PassBarriersMs, m_bExecuteStageTiming);
+        AccumulatingStatTimer afterPassTimer(m_PassFlushPendingMs, m_bExecuteStageTiming, false);
         bFlushedInSerialSegment |= FlushPendingFrameCommands(context) && !segment.bLayoutPlanned;
         while (nextBarrierIndex < m_CompiledBarriers.size() &&
                m_CompiledBarriers[nextBarrierIndex].CompiledOrderIndex == orderIndex)
@@ -2322,7 +2359,9 @@ namespace NorvesLib::Core::Rendering
 #endif
         // パスの GPU の区間は、パスの後に流す保留のコマンドまでを含める。
         ScopedPassGPUTimestamp timing(context.CommandList, pass->GetName());
-        RecordPassExecute(passIndex, resources, context);
+        beforePassTimer.Stop();
+        RecordPassExecute(passIndex, resources, context, m_bExecuteStageTiming ? &m_TraceRecordMs : nullptr);
+        afterPassTimer.Start();
 #if NORVES_ENABLE_RENDERGRAPH_DUMP
         if (bDebugMarkers)
         {
@@ -2341,16 +2380,36 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    void RenderGraph::RecordPassExecute(uint32_t passIndex, RenderGraphResources& resources, ViewRenderContext& context)
+    void RenderGraph::RecordPassExecute(uint32_t passIndex,
+                                        RenderGraphResources& resources,
+                                        ViewRenderContext& context,
+                                        float* traceRecordMs)
     {
 #if NORVES_ENABLE_STATS
         // 記録したスレッドの番号で RG.Record.<パス> の区間を残す（Serial でも区間ごとの記録でも同じ）。
         const char* recordScopeName = passIndex < m_PassRecordScopeNames.size()
                                           ? m_PassRecordScopeNames[passIndex].c_str()
                                           : "RG.Record.<unnamed>";
-        NorvesLib::Debug::ScopedStat recordScope(recordScopeName, "RenderGraph");
-#endif
+        auto& statsManager = NorvesLib::Debug::StatsManager::Get();
+        if (!statsManager.IsTraceActive())
+        {
+            m_Passes[passIndex]->Execute(resources, context);
+            return;
+        }
+        const auto startTime = std::chrono::high_resolution_clock::now();
         m_Passes[passIndex]->Execute(resources, context);
+        const float durationMs = std::chrono::duration<float, std::milli>(
+                                     std::chrono::high_resolution_clock::now() - startTime)
+                                     .count();
+        // 区間の書き込み（トレースのミューテックスとファイル）は記録の後に測り、RG.TraceRecord へ足し込む
+        float unusedTraceRecordMs = 0.0f;
+        AccumulatingStatTimer traceRecordTimer(traceRecordMs ? *traceRecordMs : unusedTraceRecordMs,
+                                               traceRecordMs != nullptr);
+        statsManager.RecordScope(recordScopeName, "RenderGraph", durationMs);
+#else
+        (void)traceRecordMs;
+        m_Passes[passIndex]->Execute(resources, context);
+#endif
     }
 
     bool RenderGraph::RecordParallelPasses(uint32_t firstOrderIndex,
@@ -2362,6 +2421,11 @@ namespace NorvesLib::Core::Rendering
                                            bool& bFlushedInSerialSegment,
                                            Container::VariableArray<RHI::ICommandList*>& segmentLists)
     {
+        // RenderGraph.Execute の直下の区間: RG.PrepareParallel（準備段・layout の書き戻し・リストと context の用意）
+        // → RG.ParallelRecord（同時の記録。RG.Record.* はこの中の各スレッドで取る）→ RG.ParallelFinish（区間の保留のコマンドの流し）。
+        // 続く Serial のパスは RecordSerialPass の区間で取る。
+        SequentialStatScope parallelStages("RenderGraph");
+        parallelStages.Begin("RG.PrepareParallel");
         // 最初のパスのバリアの前に流していた保留のコマンドは、今の記録先（区間のリストより前に提出される）へ流す。
         FlushPendingFrameCommands(context);
 
@@ -2437,6 +2501,7 @@ namespace NorvesLib::Core::Rendering
 
             Container::VariableArray<uint8_t> recorded(parallelCount, static_cast<uint8_t>(0));
             Container::VariableArray<RHI::GPUTimestampScopeHandle> timestampHandles(parallelCount);
+            parallelStages.Begin("RG.ParallelRecord");
             Thread::JobSystem::Get().ParallelFor(
                 parallelCount,
                 1,
@@ -2472,6 +2537,7 @@ namespace NorvesLib::Core::Rendering
                 });
 
             // 区間の保留のコマンドは、RenderThread でその区間のリストの末尾（パスの後）へ流す。
+            parallelStages.Begin("RG.ParallelFinish");
             bool bAllRecorded = true;
             for (uint32_t index = 0; index < parallelCount; ++index)
             {
@@ -2509,6 +2575,7 @@ namespace NorvesLib::Core::Rendering
             // 以後の記録は最後のリストへ続ける（区間のリストは今の記録先の後に、受け取った順で提出される）。
             context.CommandList = lists.back();
         }
+        parallelStages.End();
 
         for (uint32_t orderIndex = firstOrderIndex + parallelCount; orderIndex < endOrderIndex; ++orderIndex)
         {

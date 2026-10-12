@@ -2943,3 +2943,63 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - SCN-ECS-RT-PASSES の残りの指摘はこれで解け、status を done にした。
 - Next: SCN-ECS-RT-FRAME-SCOPES（反復 35 の Next の並びどおり）。
 - Notes: done-when の「on と off の起動画面の比較」は、既定が off になったため verify の 1 本目（引数なし）が off になる。on は `-GameArgs render-parallel-record=on` で別に撮った（`.harness/runs/startup-capture/SCN-ECS-FIX-VISRESOLVE-CONST-on`）。
+
+### SCN-ECS-RT-FRAME-SCOPES（2026-10-12、反復 37・run 20261012-030203）
+
+- RenderThread の 1 フレーム（rt の計測と同じ `RenderFrame` と `ReleasePacket`）を、重ならない直下の区間で切った（カテゴリ `RenderThread`）: `RT.ApplyPacket`（パケットの差分の適用・撮影の受付）→ `RT.WaitFrameFence`・`RT.AcquireImage`（`VulkanSwapChain::BeginFrame`）→ `RT.PrepareFrame`（完了の通知・退役・履歴・インスタンスの転送・リストの用意）→ `RT.Streaming`（VT とジオメトリのページ）→ `RT.BeginRecording`（記録の開始・タイルの転送・GPU の時間の取り込み）→ `RT.BuildAccelerationStructures` → `RT.RenderViews`（`RenderFrameExecutor::Execute`。`RenderGraph.Compile`・`RenderGraph.Execute` を含む）→ `RT.RecordTail`（overlay・表示のコピー・保留のコマンド・撮影のコピー・リストの終了）→ `RT.Submit`・`RT.Present`（`VulkanSwapChain::EndFrame`。提出の窓口の寿命は変えず、表示の前で区間だけ閉じる）→ `RT.FinishFrame`（統計・作り直しの確認）→ `RT.ReleasePacket`。`RT.WaitPacket`（パケットを受け取るまでの待ち）は rt の計測の外なので、直下の和に入れない。
+- `RenderGraph.Execute` の直下: 既存の `RenderGraph.PlanRecording`・`RG.Record.*` に、`RG.SegmentBegin`（区間の頭の保留のコマンドの流しと layout の計画）・`RG.SegmentEnd`（区間の終わりの layout の書き戻し・確定）・`RG.Barriers`（パスの前の流し・バリア・layout の書き戻し・GPU の区間の開始）・`RG.FlushPending`（パスの後の保留のコマンドの流し・GPU の区間の終了）・`RG.TraceRecord`（Serial のパスの `RG.Record.*` をトレースへ書き込む費用）、Parallel の並びの `RG.PrepareParallel`・`RG.ParallelRecord`・`RG.ParallelFinish` を足した。
+- 1 フレームに何十回も通る 5 つ（`RG.SegmentBegin`・`RG.SegmentEnd`・`RG.Barriers`・`RG.FlushPending`・`RG.TraceRecord`）は時間を足し込み、Execute の終わりに 1 件ずつ記録する（`Rendering/SequentialStatScope.h` の `AccumulatingStatTimer`。順に切る区間は同じヘッダの `SequentialStatScope`）。1 件ずつ記録した版は 1 フレームに約 100 件増え、トレースのミューテックスとファイルへの書き込み（ゲームスレッドと競る）で Execute が 11.4 → 13.6 ms に伸び、その費用がどの子にも入らず Execute の被覆が 77.9% だった。区間はすべて `NORVES_ENABLE_STATS` の中で、トレースが無効なら記録しない（Release では何もしない）。
+- 表（mega-stress 5万個 close・RelWithDebInfo・1920x1080・300 フレーム。単位 ms）。CaptureScene の `cpu_scope_ms` はゲームスレッドのフレーム番号ごとの合計で、ゲームスレッドが描画 1 フレームの間に数百回回るため、1 フレームに何度も出る区間の median が描画 1 フレーム分にならない。そこでトレースから RenderThread の記録を `RT.WaitPacket` で描画 1 フレームずつに区切り、同じ窓（ゲームスレッドのフレーム 154468〜228176、299 フレーム）で名前ごとの合計の median・p95 を求めた（`.harness/runs/20261012-030203/check-SCN-ECS-RT-FRAME-SCOPES-breakdown.txt`）。
+
+| RenderThread の直下 | median | p95 |
+|---|---|---|
+| `RT.ApplyPacket` | 0.00 | 0.00 |
+| `RT.WaitFrameFence` | 30.04 | 31.40 |
+| `RT.AcquireImage` | 0.01 | 0.01 |
+| `RT.PrepareFrame` | 0.96 | 1.35 |
+| `RT.Streaming` | 0.31 | 0.40 |
+| `RT.BeginRecording` | 0.25 | 0.59 |
+| `RT.BuildAccelerationStructures` | 0.59 | 0.74 |
+| `RT.RenderViews` | 12.95 | 14.92 |
+| `RT.RecordTail` | 0.02 | 0.04 |
+| `RT.Submit` | 0.06 | 0.09 |
+| `RT.Present` | 0.05 | 0.07 |
+| `RT.FinishFrame` | 0.01 | 0.33 |
+| `RT.ReleasePacket` | 0.03 | 0.03 |
+| 直下の median の和 | 45.28 | — |
+| （参考）フレームごとの直下の和 | 45.40 | 49.53 |
+| rt（metrics.json） | 46.12 | 49.27 |
+| （rt の外）`RT.WaitPacket` | 0.00 | 0.00 |
+
+| `RT.RenderViews` の内訳 | median | p95 |
+|---|---|---|
+| `RenderGraph.Compile` | 0.64 | 1.23 |
+| `RenderGraph.Execute` | 12.02 | 13.90 |
+
+| `RenderGraph.Execute` の直下 | median | p95 |
+|---|---|---|
+| `RenderGraph.PlanRecording` | 0.01 | 0.01 |
+| `RG.SegmentBegin` | 0.01 | 0.01 |
+| `RG.Barriers` | 0.05 | 0.06 |
+| `RG.FlushPending` | 0.17 | 0.21 |
+| `RG.SegmentEnd` | 0.01 | 0.01 |
+| `RG.TraceRecord` | 1.24 | 2.60 |
+| `RG.Record.MegaGeometryPass` | 8.11 | 9.40 |
+| `RG.Record.VisibilityRasterPass` | 0.73 | 1.08 |
+| `RG.Record.LightingPass` | 0.44 | 0.52 |
+| `RG.Record.ShadowMapPass` | 0.40 | 0.50 |
+| `RG.Record.VirtualShadowMapPass` | 0.23 | 0.32 |
+| `RG.Record.VisibilityResolvePass` | 0.10 | 0.14 |
+| 残りの `RG.Record.*`（19 パス。各 0.03 以下）の median の和 | 0.09 | — |
+| 直下の median の和 | 11.59 | — |
+| （参考）フレームごとの直下の和 | 11.93 | 13.77 |
+| `RenderGraph.Execute` | 12.02 | 13.90 |
+
+- 判定: RenderThread の直下の median の和 45.28 は rt の median 46.12 の 98.2%（描画 1 フレームごとの直下の和で見た被覆は median 98.9%・最小 95.3%）。`RenderGraph.Execute` の直下の median の和 11.59 は Execute の median 12.02 の 96.4%（フレームごとの被覆は median 99.6%・最小 92.1%）。どちらも 90% 以上。Parallel の区間は既定（off）のこの撮影には出ない。
+- 読み: rt の 65% は `RT.WaitFrameFence`（30.0 ms。GPU の 30.5 ms とほぼ同じ）で、`MAX_FRAMES_IN_FLIGHT = 1` の見込みどおり、記録と GPU が重ならず足し算になっている。記録の道は `RT.RenderViews` 13.0 ms で、その 2/3 が `RG.Record.MegaGeometryPass`（中の `BuildSceneTables` 7.5 ms）。提出と表示は合わせて 0.1 ms。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RT-FRAME-SCOPES-1.txt`: RelWithDebInfo の Game のビルド EXIT=0（C の警告・エラーなし）。
+  - `verify-SCN-ECS-RT-FRAME-SCOPES-2.txt`: 撮影 `result=pass`、EXIT=0、300 フレーム（GPU median 30.51 / rt median 46.12・p95 49.27）。close.Game.log の ERROR 0。
+  - `verify-SCN-ECS-RT-FRAME-SCOPES-3.txt`: `CHECK_CAPTURE_METRICS result=pass views=close`、EXIT=0（`RT.WaitFrameFence`・`RT.Submit`・`RT.Present` を要求）。
+- Next: SCN-ECS-FIX-LIGHTING-RECORD（反復 35 の Next の並びどおり）。
+- Notes: `RG.TraceRecord` の 1.2 ms（p95 2.6 ms）は計測そのものの費用で、区間 1 件の書き込みが平均 約 50 µs かかっている（ゲームスレッドが同じトレースへ 1 フレーム 0.2 ms の周期で書き続け、ミューテックスを競る）。以後の RenderThread の項目の判定で rt を比べるときは、記録の件数が変わると rt も動くことに注意する。描画 1 フレームごとの集計はまだ CaptureScene に無い（今回は使い捨ての集計で表を作った）。Release の構成のビルドは今回走らせていない（足した区間はすべて `NORVES_ENABLE_STATS` の中か、何もしない版を持つ）。
