@@ -2646,11 +2646,17 @@ namespace NorvesLib::RHI::Vulkan
             if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST)
             {
                 // 破棄してよい分はキューロックを持ったまま退避する。手放した後に別のスレッドが出す提出と、
-                // その提出のために積まれるハンドルを巻き込まない。退避するのは待ちの前に提出が済んだ分
-                // （通し番号が次に提出する通し番号より小さい分）だけで、記録中のフレームの分は通常の完了通知まで残す。
-                // 提出の通知は提出の後に来るので、次に提出する通し番号は実際の提出より先へ進まない。
+                // その提出のために積まれるハンドルを巻き込まない。
+                // 記録中のフレームが無ければ列を全部退避する（次に提出する通し番号で積んだ分も、もう記録に載らない）。
+                // 記録中なら、その記録が提出される通し番号（次に提出する通し番号）で積んだ分だけを残し、
+                // その提出の完了の通知で破棄する。提出の通知は提出の後に来るので、
+                // 次に提出する通し番号は実際の提出より先へ進まず、記録中の印も提出の後まで消えない。
                 Thread::ScopedLock lock(m_deferredDestroyMutex);
-                if (m_deferredDestroyNextSerial > 0)
+                if (!m_bDeferredDestroyFrameRecording)
+                {
+                    TakeCompletedDeferredDestroyEntriesLocked(UINT64_MAX, idleCompleted);
+                }
+                else if (m_deferredDestroyNextSerial > 0)
                 {
                     TakeCompletedDeferredDestroyEntriesLocked(m_deferredDestroyNextSerial - 1, idleCompleted);
                 }
@@ -2833,6 +2839,7 @@ namespace NorvesLib::RHI::Vulkan
             {
                 --m_deferredDestroyTrackerCount;
             }
+            m_bDeferredDestroyFrameRecording = false;
         }
         // 呼び出し元が WaitIdle を済ませているので、列のハンドルは GPU が使っていない
         DrainDeferredDestroyQueue("SwapChainDestroy");
@@ -2845,6 +2852,19 @@ namespace NorvesLib::RHI::Vulkan
         {
             m_deferredDestroyNextSerial = submittedSerial + 1;
         }
+        m_bDeferredDestroyFrameRecording = false;
+    }
+
+    void VulkanDevice::NotifyDeferredDestroyFrameRecordingBegan()
+    {
+        Thread::ScopedLock lock(m_deferredDestroyMutex);
+        m_bDeferredDestroyFrameRecording = true;
+    }
+
+    void VulkanDevice::NotifyDeferredDestroyFrameRecordingAborted()
+    {
+        Thread::ScopedLock lock(m_deferredDestroyMutex);
+        m_bDeferredDestroyFrameRecording = false;
     }
 
     void VulkanDevice::TakeCompletedDeferredDestroyEntriesLocked(

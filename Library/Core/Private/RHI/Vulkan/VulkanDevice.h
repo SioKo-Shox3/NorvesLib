@@ -208,8 +208,12 @@ namespace NorvesLib::RHI::Vulkan
         // やめるのは WaitIdle の後に呼ぶ（列を全部空ける）。
         void BeginDeferredDestroyTracking(uint64_t nextSubmissionSerial);
         void EndDeferredDestroyTracking();
-        // 提出した通し番号（以後に積むものは submittedSerial + 1 の完了を待つ）
+        // 提出した通し番号（以後に積むものは submittedSerial + 1 の完了を待つ）。記録中のフレームもここで終わる
         void NotifyDeferredDestroySubmitted(uint64_t submittedSerial);
+        // フレームの記録が始まった（BeginFrame の成功）・提出せずに終わった（EndFrame の失敗）。
+        // 記録中は、WaitIdle の後も次に提出する通し番号で積んだ分を残す（その記録が提出で参照しうる）
+        void NotifyDeferredDestroyFrameRecordingBegan();
+        void NotifyDeferredDestroyFrameRecordingAborted();
         // GPU の完了を確かめた通し番号（それ以下で積んだものを破棄する）
         void NotifyDeferredDestroyCompleted(uint64_t completedSerial);
 
@@ -375,6 +379,8 @@ namespace NorvesLib::RHI::Vulkan
         uint64_t m_deferredDestroyNextSerial = 0;
         // 提出を追っているスワップチェーンの数（0 ならその場で破棄する）
         uint32_t m_deferredDestroyTrackerCount = 0;
+        // BeginFrame から提出（または提出の失敗）までの間
+        bool m_bDeferredDestroyFrameRecording = false;
         uint64_t m_deferredDestroyEnqueuedCount = 0;
         uint64_t m_deferredDestroyDestroyedCount = 0;
         uint64_t m_deferredDestroyImmediateCount = 0;

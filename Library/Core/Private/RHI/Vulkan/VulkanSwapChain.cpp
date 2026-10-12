@@ -229,6 +229,8 @@ namespace NorvesLib::RHI::Vulkan
         }
 
         m_currentImageIndex = acquireResult.value;
+        // ここから提出までは記録中（WaitIdle の後も、この記録が提出される通し番号で積んだ分を残す）
+        m_device->NotifyDeferredDestroyFrameRecordingBegan();
 
         return SwapChainBeginFrameStatus::Success;
     }
@@ -253,6 +255,7 @@ namespace NorvesLib::RHI::Vulkan
         {
             // 拒否した束の中身は再利用させない（全リストを中止する）
             VulkanCommandList::AbortSubmissionBatch(commandLists, commandListCount);
+            m_device->NotifyDeferredDestroyFrameRecordingAborted();
             result.Status = SwapChainEndFrameStatus::InvalidCommandList;
             return result;
         }
@@ -330,17 +333,20 @@ namespace NorvesLib::RHI::Vulkan
                 submittedSerial);
         if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::SerialAllocationFailed)
         {
+            m_device->NotifyDeferredDestroyFrameRecordingAborted();
             result.Status = SwapChainEndFrameStatus::SubmissionSerialExhausted;
             return result;
         }
         if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::FenceResetFailed)
         {
+            m_device->NotifyDeferredDestroyFrameRecordingAborted();
             result.Status = SwapChainEndFrameStatus::FenceResetFailed;
             return result;
         }
         if (submissionStatus == Detail::GPUTimestampSubmissionSequenceStatus::QueueSubmitFailed)
         {
             // reset済みfenceは未signalのため、このswapchainでの継続利用はfatal扱い。
+            m_device->NotifyDeferredDestroyFrameRecordingAborted();
             result.Status = SwapChainEndFrameStatus::SubmitFailed;
             return result;
         }

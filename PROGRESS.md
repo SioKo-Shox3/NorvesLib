@@ -3254,3 +3254,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-MEMORY-4.txt`: rendering3dtest・mega-bananas・mega-stress の周回 3 周 result=pass、EXIT=0。周回の台帳（textures・texture_bytes）は反復 49 と同じ値で、2 周目以降も増えない。定期の統計の行はどれも `Pending=0`・`PendingMemoryBytes=0`、終了のログで `Pending=0`（Enqueued=Destroyed=55706）、ERROR 0 行。
 - Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り。SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE は人が todo に戻した）。
 - Notes: 列に残ったメモリの最大は周回の走行中で約 1.08 GB（シーンを出るときにまとめて手放した分が 1 フレームほど残る）。終了時の 5.2 GB はスワップチェーンの破棄の前に全部手放した分で、その後の `SwapChainDestroy` で全部空く。スワップチェーンの画像の view は列へ移るので、Resize ではスワップチェーンの破棄の後に view が破棄される（view は使われないので破棄の順は問わない）。sparse のメモリ（`VulkanSparseMemoryBlock`）の解放は paths の外なのでその場のまま。行末: `VulkanDevice.*`・`VulkanTexture.*` は HEAD で CRLF と LF が混ざっているので、変えた行だけを周りに合わせて直した。
+
+### SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE 差し戻しの対応 2 周目（2026-10-12、反復 51・run 20261012-030203）
+
+- 差し戻し: `WaitIdle` の後に、記録中のフレームが無いのに「次に提出する通し番号」で積んだ分が列に残る（スワップチェーンの作成直後に手放した Sampler など）。完了条件を「記録中のフレームが無ければ全部空ける、記録中ならその記録が提出される通し番号の分だけ残す」に直したもの。
+- 対応: `VulkanDevice` に記録中の印（`m_bDeferredDestroyFrameRecording`。列のミューテックスで守る）を足した。`VulkanSwapChain::BeginFrame` は画像の取得に成功した後に `NotifyDeferredDestroyFrameRecordingBegan` を呼び、`EndFrame` は提出の成功で `NotifyDeferredDestroySubmitted`（通し番号を進めるのと同じロックの下で印を消す）、束の拒否・通し番号の枯渇・フェンスの reset の失敗・提出の失敗で `NotifyDeferredDestroyFrameRecordingAborted` を呼ぶ。`EndDeferredDestroyTracking` も印を消す。`WaitIdleInternal` はキューロックの下で、印が無ければ列を全部退避し、印があれば次に提出する通し番号より小さい分だけを退避する（反復 49 のキューロックの下での退避はそのまま）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-9.txt`: RelWithDebInfo の Game のビルド（`VulkanDevice.cpp`・`VulkanSwapChain.cpp` を再コンパイル）EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-10.txt`: Debug の起動画面の撮影 result=pass、`vulkan_validation` は error_count=0・warning_count=0・vuid_count=0（`default.Validation.log` は 0 バイト）。画像は天球・地面・球・岩・家が以前どおり。終了のログで `Pending=0`・`PendingMemoryBytes=0`（Enqueued=Destroyed=14273）。
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-11.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=1.3E-05・within_limits=True、result=pass、EXIT=0。
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-12.txt`: rendering3dtest・mega-bananas・mega-stress の周回 3 周 result=pass、EXIT=0。定期の統計の行はどれも `Pending=0`、終了のログで `Pending=0`（Enqueued=Destroyed=52471）、ERROR 0 行。
+- Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り）。
+- Notes: 記録中の印は「BeginFrame の成功から提出（または EndFrame の失敗）まで」。呼び出し側が BeginFrame の後に EndFrame を呼ばずにフレームを捨てた場合は、次の提出まで印が残る（WaitIdle の後に次の通し番号の分が次の提出の完了まで残るだけで、早く壊す側には倒れない）。競合や状態遷移を再現するテストは書いていない（verify が名指ししていないため）。
