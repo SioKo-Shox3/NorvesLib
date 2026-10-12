@@ -70,6 +70,47 @@ namespace
         Container::VariableArray<Container::TSharedPtr<FakeUploadBuffer>> m_Created;
     };
 
+    // 4 GiB を超える大きさを名乗るだけのページ。中身は持たず、借りた切れ端へは書かない検査でだけ使う
+    class VirtualUploadBuffer final : public RHI::IBuffer
+    {
+    public:
+        explicit VirtualUploadBuffer(uint64_t size) : m_Size(size) {}
+
+        uint64_t GetSize() const override { return m_Size; }
+        void* Map(uint64_t, uint64_t) override { return m_Bytes; }
+        void Unmap() override {}
+        void Update(const void*, uint64_t, uint64_t) override {}
+        RHI::ResourceUsage GetUsage() const override
+        {
+            return RHI::ResourceUsage::ConstantBuffer | RHI::ResourceUsage::VertexBuffer |
+                   RHI::ResourceUsage::IndexBuffer | RHI::ResourceUsage::StorageBuffer;
+        }
+
+    private:
+        uint64_t m_Size = 0;
+        uint8_t m_Bytes[16] = {};
+    };
+
+    class VirtualPageSource final : public IFrameUploadPageSource
+    {
+    public:
+        explicit VirtualPageSource(const FrameUploadLimits& limits) : m_Limits(limits) {}
+
+        bool CreatePage(uint64_t sizeBytes, FrameUploadPage& outPage) override
+        {
+            auto buffer = Container::MakeShared<VirtualUploadBuffer>(sizeBytes);
+            outPage.Buffer = buffer;
+            outPage.CPUAddress = static_cast<uint8_t*>(buffer->Map(0, 0));
+            outPage.Size = sizeBytes;
+            return true;
+        }
+
+        FrameUploadLimits GetLimits() const override { return m_Limits; }
+
+    private:
+        FrameUploadLimits m_Limits;
+    };
+
     FrameUploadLimits MakeTestLimits()
     {
         // 定数とストレージの整列を頂点・インデックスと違う値にして、使い道ごとに整列が効くことを見る
@@ -248,6 +289,41 @@ namespace
         owners.ReleaseUploadPages();
     }
 
+    void TestFrameResourceUploadDescriptorOffsetFitsUint32()
+    {
+        VirtualPageSource source(MakeTestLimits());
+        FrameResourceOwners owners;
+        owners.ConfigureUpload(&source, 64 * 1024);
+        FrameResourceOwner* owner = owners.BeginFrame(0, 0);
+
+        // 4 GiB を超える頂点の切れ端で、その大きさのページを足す
+        const FrameUploadAllocation vertex = owner->AllocateUpload(4294967297ull, FrameUploadUsage::Vertex);
+        assert(vertex.IsValid() && vertex.Offset == 0);
+        assert(vertex.Buffer->GetSize() > FrameUploadMaxDescriptorValue);
+
+        // 同じページの続きはオフセットが uint32 を超えるので、定数・ストレージは新しいページの先頭から返す
+        // （GetOffset32 が切り詰めて先の頂点の範囲を束縛しない）
+        const FrameUploadAllocation constants = owner->AllocateUpload(16, FrameUploadUsage::Constants);
+        assert(constants.IsValid());
+        assert(constants.Buffer != vertex.Buffer);
+        assert(constants.Offset <= FrameUploadMaxDescriptorValue);
+        assert(static_cast<uint64_t>(constants.GetOffset32()) == constants.Offset);
+        assert(static_cast<uint64_t>(constants.GetSize32()) == constants.Size);
+        const FrameUploadAllocation storage = owner->AllocateUpload(16, FrameUploadUsage::Storage);
+        assert(storage.IsValid() && storage.Buffer == constants.Buffer);
+        assert(static_cast<uint64_t>(storage.GetOffset32()) == storage.Offset);
+        assert(!RangesOverlap(constants, storage));
+
+        // 前へ進むだけなので、飛ばした大きなページへは戻らない
+        const FrameUploadAllocation vertexAfter = owner->AllocateUpload(16, FrameUploadUsage::Vertex);
+        assert(vertexAfter.IsValid() && vertexAfter.Buffer == constants.Buffer);
+        assert(owner->GetUploadArena().GetFrameStats().PagesAdded == 2);
+
+        owners.CommitSubmitted(1);
+        owners.Reset();
+        owners.ReleaseUploadPages();
+    }
+
     void TestFrameResourceUploadReclaimReturnsSpace()
     {
         FakePageSource source(MakeTestLimits());
@@ -361,15 +437,16 @@ namespace
 
 int main()
 {
-    std::cout << "FrameResourceUploadArenaTest start\n";
+    std::cout << "FrameResourceUploadArenaTest 開始\n";
 
     TestFrameResourceUploadAlignment();
     TestFrameResourceUploadMultipleBorrowsKeepContents();
     TestFrameResourceUploadPageGrowthKeepsEarlierSlices();
+    TestFrameResourceUploadDescriptorOffsetFitsUint32();
     TestFrameResourceUploadReclaimReturnsSpace();
     TestFrameResourceUploadRejectedOutsideRecording();
     TestFrameResourceUploadLimitsFromCapabilities();
 
-    std::cout << "FrameResourceUploadArenaTest passed\n";
+    std::cout << "FrameResourceUploadArenaTest 合格\n";
     return 0;
 }

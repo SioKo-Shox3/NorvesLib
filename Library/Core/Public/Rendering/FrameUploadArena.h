@@ -114,7 +114,16 @@ namespace NorvesLib::Core::Rendering
             }
             return 0;
         }
+
+        /** @brief 記述子の束縛（uint32 のオフセットと大きさ）に渡す使い道か */
+        static bool UsesDescriptorRange(FrameUploadUsage usage)
+        {
+            return usage == FrameUploadUsage::Constants || usage == FrameUploadUsage::Storage;
+        }
     };
+
+    /** @brief 記述子の束縛に渡せるオフセットと大きさの上限（BindConstantBuffer / BindStorageBuffer の引数が uint32） */
+    inline constexpr uint64_t FrameUploadMaxDescriptorValue = 0xFFFFFFFFull;
 
     /** @brief 常にマップしたままの 1 ページ（HOST_VISIBLE | HOST_COHERENT のバッファ） */
     struct FrameUploadPage
@@ -226,7 +235,12 @@ namespace NorvesLib::Core::Rendering
 
         bool IsValid() const { return Buffer && CPUAddress && Size != 0; }
 
-        /** @brief 記述子の束縛（uint32 の引数）に渡すオフセット */
+        /**
+         * @brief 記述子の束縛（uint32 の引数）に渡すオフセット
+         *
+         * 定数・ストレージの切れ端は、領域がオフセットと大きさを uint32 に収まる位置でだけ返すので切り詰めは起きない。
+         * 頂点・インデックスは SetVertexBuffer / SetIndexBuffer の uint64 のオフセットに Offset をそのまま渡す。
+         */
         uint32_t GetOffset32() const { return static_cast<uint32_t>(Offset); }
         /** @brief 記述子の束縛（uint32 の引数）に渡す大きさ */
         uint32_t GetSize32() const { return static_cast<uint32_t>(Size); }
@@ -299,7 +313,12 @@ namespace NorvesLib::Core::Rendering
                 ++m_FrameStats.Failures;
                 return allocation;
             }
-            const uint64_t maxSize = m_Limits.GetMaxSize(usage);
+            const bool usesDescriptorRange = FrameUploadLimits::UsesDescriptorRange(usage);
+            uint64_t maxSize = m_Limits.GetMaxSize(usage);
+            if (usesDescriptorRange && (maxSize == 0 || maxSize > FrameUploadMaxDescriptorValue))
+            {
+                maxSize = FrameUploadMaxDescriptorValue;
+            }
             if (maxSize != 0 && size > maxSize)
             {
                 ++m_FrameStats.Failures;
@@ -312,12 +331,14 @@ namespace NorvesLib::Core::Rendering
             const uint64_t alignment = std::max<uint64_t>(m_Limits.GetAlignment(usage), 1);
 
             // 今のページの残りに入らなければ、次のページ（前のフレームで作った物）へ進み、無ければ足す。
-            // 戻らないので、既に返した切れ端の範囲には二度と書かない
+            // 戻らないので、既に返した切れ端の範囲には二度と書かない。
+            // 定数・ストレージは記述子の束縛に渡すオフセットが uint32 に収まらない位置（4 GiB を超える大きなページの奥）を飛ばす
             while (m_CurrentPage < m_Pages.size())
             {
                 const FrameUploadPage& page = m_Pages[m_CurrentPage];
                 const uint64_t offset = AlignUp(m_Cursor, alignment);
-                if (offset <= page.Size && size <= page.Size - offset)
+                const bool offsetBindable = !usesDescriptorRange || offset <= FrameUploadMaxDescriptorValue;
+                if (offsetBindable && offset <= page.Size && size <= page.Size - offset)
                 {
                     return TakeLocked(page, offset, size, usage);
                 }

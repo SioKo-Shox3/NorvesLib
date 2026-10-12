@@ -3296,3 +3296,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-UPLOAD-ARENA-4.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=0・within_limits=True、result=pass、EXIT=0。`default.Game.log` に `FRAME_RESOURCE_UPLOAD_CONFIG page_bytes=1048576` と `FrameResource.Upload` の行（借りは 0）、ERROR は 0 件。
 - Next: SCN-ECS-FIF-DESCRIPTOR-BORROW。
 - Notes: まだ借りる側が無いので、起動画面では借りは 0・ページも 0（ページは最初の借りで作る）。`--frame-arena-initial-kb` でページを足す道を Game で通すのは、最初の利用者（SCN-ECS-FIF-DEBUGDRAW など）を移した後になる（今回は検査の小さなページで通した）。足したページは回収で手放さず使い回すので、一度だけ大きく借りたフレームの分はスロットに残る（縮める仕組みは無い）。持ち主・領域はヘッダのみ（`Library/Core/CMakeLists.txt` が paths の外のため）。ソースの `small` は Windows SDK のマクロと衝突するので使わない。
+
+### SCN-ECS-FIF-UPLOAD-ARENA の差し戻しへの対応（2026-10-12、反復 54・run 20261012-030203）
+
+- 差し戻し: 4 GiB を超える大きなページでは、定数・ストレージの切れ端のオフセットが uint32 を超える位置に置かれ、`GetOffset32` が切り詰めて別の範囲（先の頂点データ）を束縛してしまう。
+- 対応: `FrameUploadArena::Allocate` で、定数・ストレージ（記述子の束縛が uint32 のオフセットと大きさを受け取る使い道）は、整列後のオフセットが `FrameUploadMaxDescriptorValue`（0xFFFFFFFF）を超える位置を飛ばして次のページ（無ければ新しいページの先頭）から返すようにした。大きさの上限も uint32 に収まる値に抑える（能力が 0 や uint32 超えのとき）。頂点・インデックスは uint64 のオフセットを受けるのでそのまま。前へ進むだけの決まりは変えない（飛ばしたページへは戻らない）。
+- 検査: `FrameResourceUploadArenaTest` に、4 GiB を超える頂点の切れ端の後の定数・ストレージが別のページの uint32 に収まるオフセットで返り、`GetOffset32`/`GetSize32` が切り詰めないことを足した（中身を持たない大きさだけのページの偽物で、GPU のメモリは使わない）。進捗の表示を日本語にした。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-UPLOAD-ARENA-5.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-UPLOAD-ARENA-6.txt`: Debug の `RenderGraphLifetimeTest` のビルド EXIT=0。
+  - `verify-SCN-ECS-FIF-UPLOAD-ARENA-7.txt`: `ctest -R "^FrameResource"` で `FrameResourceOwnerTest`・`FrameResourceUploadArenaTest` が Passed（2/2）、EXIT=0。
+  - `verify-SCN-ECS-FIF-UPLOAD-ARENA-8.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=1.1E-05・within_limits=True、result=pass、EXIT=0。`default.Game.log` の ERROR は 0 件、画像は天球・地面・球・岩・家が以前どおり。
+- Next: SCN-ECS-FIF-DESCRIPTOR-BORROW。
+- Notes: この環境の `max_storage` は 4294967295（ログの `FRAME_RESOURCE_UPLOAD_CONFIG`）。飛ばした大きなページの残りはそのフレームでは使わない（次の回収で先頭へ戻る）。
