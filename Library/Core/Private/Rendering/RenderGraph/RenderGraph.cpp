@@ -2365,6 +2365,12 @@ namespace NorvesLib::Core::Rendering
         // 最初のパスのバリアの前に流していた保留のコマンドは、今の記録先（区間のリストより前に提出される）へ流す。
         FlushPendingFrameCommands(context);
 
+        // 各パスの作成・転送（単発のコマンドの提出とバリアを伴う）を、記録の前に RenderThread で直列に済ませる。
+        for (uint32_t orderIndex = firstOrderIndex; orderIndex < endOrderIndex; ++orderIndex)
+        {
+            m_Passes[m_CompiledPassOrder[orderIndex]]->PrepareParallelRecord(resources, context);
+        }
+
         // 同時に記録するパスがサンプルする Texture の layout を、記録の前に直列で書き戻す
         // （記録の最中は誰も共有の layout を書かないので、各パスの記述子はこの値を読む）。
         // パスの間で General とそれ以外が食い違うときは、同時に記録せず Serial で記録する。

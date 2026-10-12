@@ -71,6 +71,8 @@ namespace NorvesLib::Core::Rendering
         // （宣言の最終の状態 ShaderResource）へ移る。準備が整ったフレームだけ、計画した区間で Parallel に記録する。
         bool DeclaresAllLayoutChanges() const override;
         RGRecordPolicy GetRecordPolicy() const override;
+        // 区間ごとの記録の前に、render pass・framebuffer・パイプラインの作り直しを直列で済ませる。
+        void PrepareParallelRecord(RenderGraphResources &resources, ViewRenderContext &context) override;
 
         // ========================================
         // パラメータ調整

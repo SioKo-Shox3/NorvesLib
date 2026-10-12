@@ -523,4 +523,15 @@ namespace NorvesLib::Core::Rendering
         return DeclaresAllLayoutChanges() ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
     }
 
+    void VignettePass::PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        (void)context;
+        // 出力が変わったフレームの作り直しを Execute より先に済ませる（Execute の PrepareResources は同じシグネチャなら何も作らない）
+        RHI::TexturePtr outputTexture = m_bInitialized ? resources.GetTexture(m_OutputHandle) : RHI::TexturePtr{};
+        if (outputTexture)
+        {
+            PrepareResources(outputTexture->GetWidth(), outputTexture->GetHeight(), outputTexture, true);
+        }
+    }
+
 } // namespace NorvesLib::Core::Rendering

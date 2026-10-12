@@ -367,6 +367,19 @@ namespace NorvesLib::Core::Rendering
          */
         bool Record(RHI::ICommandList* commandList, const VisibilityResolveDispatch& dispatch);
 
+        /**
+         * @brief 材質の並びが束ねる既定のテクスチャ・サンプラーと定数の 1x1 のテクスチャを先に作る
+         *
+         * テクスチャの作成・転送は単発のコマンドの提出・待ちとバリアを伴うので、区間ごとの記録の前に直列で呼ぶ。
+         * @return 全部そろえば true
+         */
+        bool PrepareMaterialTextures(const Container::VariableArray<VisibilityResolveMaterial>& materials);
+        /** @brief false の間、Record はテクスチャ・サンプラーを作らず、無いものは作れなかった扱いにする（区間ごとの記録の最中） */
+        void SetTextureCreationAllowed(bool bAllowed)
+        {
+            m_bTextureCreationAllowed = bAllowed;
+        }
+
     private:
         struct Use
         {
@@ -404,6 +417,8 @@ namespace NorvesLib::Core::Rendering
         RHI::SamplerPtr m_MaterialSampler;
         RHI::SamplerPtr m_MegaMaterialSampler;
         Container::UnorderedMap<uint32_t, RHI::TexturePtr> m_ConstantGrayTextures;
+        bool m_bTextureCreationAllowed = true;
+        bool m_bLoggedTextureCreationBlocked = false;
         bool m_bDump = false;
         // 材質ごとの形のシェーダーが VT の要求のバッファの binding を持つか（デバイスが VT のフィードバックに対応するとき）
         bool m_bFeedback = false;
@@ -451,6 +466,9 @@ namespace NorvesLib::Core::Rendering
         // 初期化と解決の準備が整い、ID を宣言したフレームだけ、計画した区間で Parallel に記録する。
         bool DeclaresAllLayoutChanges() const override;
         RGRecordPolicy GetRecordPolicy() const override;
+        // 区間ごとの記録の前に、ラスタのパスが集めた材質の既定・定数のテクスチャを直列で作る
+        // （同じフレームの Execute はテクスチャを作らない）。
+        void PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context) override;
 
         /** @brief 記録の表・材質の表・インスタンスの表の取り出し元（同じ View の
          * VisibilityRasterPass） */
@@ -545,6 +563,9 @@ namespace NorvesLib::Core::Rendering
         bool m_bResolved = false;
         bool m_bResolvedWithTiles = false;
         uint32_t m_LastTileDispatchCount = 0;
+        // PrepareParallelRecord を通ったフレーム（次の Execute が 1 回だけ読み、テクスチャの作成を止める）
+        bool m_bPreparedForParallelRecord = false;
+        Container::VariableArray<VisibilityResolveMaterial> m_PrepareMaterialScratch;
         bool m_bLoggedFallback = false;
         // 材質ごとの形の記録を、変わったときだけログへ出すための前回の値
         bool m_bLoggedTileState = false;

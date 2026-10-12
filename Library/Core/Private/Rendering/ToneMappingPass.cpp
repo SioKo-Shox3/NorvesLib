@@ -592,7 +592,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
-        ExecuteWithInput(context, sceneColorPtr, true);
+        ExecuteWithInput(context, sceneColorPtr, true, false);
     }
 
     void ToneMappingPass::Declare(RenderGraphBuilder &builder)
@@ -655,6 +655,10 @@ namespace NorvesLib::Core::Rendering
 
     void ToneMappingPass::Execute(RenderGraphResources &resources, ViewRenderContext &context)
     {
+        // 準備段の LUT はこのフレームの Execute だけが使う（準備段の無い Serial のフレームへ持ち越さない）
+        const bool bLutsPrepared = m_bLutsPreparedForRecord;
+        m_bLutsPreparedForRecord = false;
+
         if (!m_bInitialized)
         {
             if (!Initialize(context))
@@ -705,12 +709,48 @@ namespace NorvesLib::Core::Rendering
 
         ExecuteWithInput(context,
                          sceneColorPtr,
-                         m_bLegacyInputFallbackActive || bUsedSharedResourceFallback);
+                         m_bLegacyInputFallbackActive || bUsedSharedResourceFallback,
+                         bLutsPrepared);
+    }
+
+    void ToneMappingPass::PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        m_bLutsPreparedForRecord = false;
+        m_PreparedLookLut.reset();
+        // Parallel の判定は初期化済みが前提（初期化の無いフレームは Serial の Execute が初期化する）
+        if (!m_bInitialized)
+        {
+            return;
+        }
+
+        // 出力の大きさ・テクスチャが変わったフレームの作り直しを、Execute より先に済ませる
+        // （Execute の PrepareResources は同じシグネチャなら何も作らない）
+        if (RHI::TexturePtr outputTexture = resources.GetTexture(m_OutputHandle))
+        {
+            PrepareResources(outputTexture->GetWidth(), outputTexture->GetHeight(), outputTexture, true);
+        }
+
+        // 3D LUT の作成・転送は単発のコマンドの提出・待ちとバリアを伴うので、ここで直列に行う
+        const CameraProxy* activeCamera = context.GetActiveCamera();
+        m_PreparedViewOperatorType = PrepareColorLut();
+        if (ResolveOperatorType(activeCamera, m_PreparedViewOperatorType) != Aces20LutOperatorType)
+        {
+            m_PreparedLookLut = PrepareLookLut(activeCamera);
+        }
+        m_bLutsPreparedForRecord = true;
+    }
+
+    uint32_t ToneMappingPass::ResolveOperatorType(const CameraProxy* camera, uint32_t viewOperatorType)
+    {
+        return camera != nullptr && camera->ToneMapCurve == CameraToneMapCurve::NeutralLinear
+                   ? NeutralLinearOperatorType
+                   : viewOperatorType;
     }
 
     void ToneMappingPass::ExecuteWithInput(ViewRenderContext& context,
                                            const RHI::TexturePtr& sceneColorPtr,
-                                           bool bRegisterLegacyBridge)
+                                           bool bRegisterLegacyBridge,
+                                           bool bLutsPrepared)
     {
         if (!m_ToneMappingRenderPass ||
             !m_ToneMappingFramebuffer ||
@@ -723,11 +763,9 @@ namespace NorvesLib::Core::Rendering
 
         // カメラがトーンマップの曲線を差し替えていればそれを使う（起動画面など、検証シーンの既定を変えずに切り替える）。
         const CameraProxy* activeCamera = context.GetActiveCamera();
-        const uint32_t viewOperatorType = PrepareColorLut();
-        const uint32_t operatorType =
-            activeCamera != nullptr && activeCamera->ToneMapCurve == CameraToneMapCurve::NeutralLinear
-                ? NeutralLinearOperatorType
-                : viewOperatorType;
+        // 準備段を通ったフレーム（区間ごとの記録）は、用意済みの LUT を読むだけにする
+        const uint32_t viewOperatorType = bLutsPrepared ? m_PreparedViewOperatorType : PrepareColorLut();
+        const uint32_t operatorType = ResolveOperatorType(activeCamera, viewOperatorType);
         const RHI::TexturePtr& colorLut =
             operatorType == Aces20LutOperatorType ? m_ColorLutTexture : m_ColorLutFallbackTexture;
         if (!colorLut)
@@ -737,8 +775,10 @@ namespace NorvesLib::Core::Rendering
         }
 
         // 見た目のLUTはグレーディングと同じく、表示変換そのものの ACES 2.0 SDR LUT には掛けない
-        RHI::TexturePtr lookLut =
-            operatorType != Aces20LutOperatorType ? PrepareLookLut(activeCamera) : RHI::TexturePtr{};
+        RHI::TexturePtr lookLut = operatorType == Aces20LutOperatorType ? RHI::TexturePtr{}
+                                  : bLutsPrepared                       ? m_PreparedLookLut
+                                                                        : PrepareLookLut(activeCamera);
+        m_PreparedLookLut.reset();
         const float lookLutIntensity = lookLut ? std::clamp(activeCamera->LookLut.Intensity, 0.0f, 1.0f) : 0.0f;
         if (!lookLut)
         {

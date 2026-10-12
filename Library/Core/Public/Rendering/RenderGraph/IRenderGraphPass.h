@@ -32,6 +32,15 @@ namespace NorvesLib::Core::Rendering
         {
             return RGRecordPolicy::Serial;
         }
+
+        // Parallel で記録する並びの直前に、RenderThread で直列に呼ぶ準備段（前の Serial のパスを記録した後）。
+        // テクスチャの作成・転送（単発のコマンドの提出・待ちとバリアを伴う）や、作り直しの要る render pass・
+        // framebuffer・パイプラインはここで済ませ、同じフレームの Execute を記録だけにする。
+        virtual void PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context)
+        {
+            (void)resources;
+            (void)context;
+        }
     };
 
 } // namespace NorvesLib::Core::Rendering

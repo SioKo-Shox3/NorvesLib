@@ -954,4 +954,21 @@ namespace NorvesLib::Core::Rendering
         return DeclaresAllLayoutChanges() ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
     }
 
+    void SSAOPass::PrepareParallelRecord(RenderGraphResources &resources, ViewRenderContext &context)
+    {
+        (void)context;
+        if (!m_bInitialized)
+        {
+            return;
+        }
+        // 出力が変わったフレームの作り直しを Execute より先に済ませる（Execute の PrepareSSAOAttachments は
+        // 同じ大きさ・テクスチャなら何も作らない）
+        RHI::TexturePtr rawTexture = resources.GetTexture(m_SSAORawHandle);
+        RHI::TexturePtr blurredTexture = resources.GetTexture(m_SSAOBlurredHandle);
+        if (rawTexture && blurredTexture)
+        {
+            PrepareSSAOAttachments(rawTexture->GetWidth(), rawTexture->GetHeight(), rawTexture, blurredTexture, true);
+        }
+    }
+
 } // namespace NorvesLib::Core::Rendering

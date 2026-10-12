@@ -161,6 +161,8 @@ namespace NorvesLib::Core::Rendering
         // （宣言の最終の状態 ShaderResource）へ移る。準備が整ったフレームだけ、計画した区間で Parallel に記録する。
         bool DeclaresAllLayoutChanges() const override;
         RGRecordPolicy GetRecordPolicy() const override;
+        // 区間ごとの記録の前に、render pass・framebuffer・パイプラインの作り直しと 3D LUT の作成・転送を直列で済ませる。
+        void PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context) override;
 
         // ========================================
         // パラメータ調整
@@ -230,9 +232,11 @@ namespace NorvesLib::Core::Rendering
                               uint32_t height,
                               const RHI::TexturePtr& outputTexture,
                               bool bUseRenderGraphInitialState);
+        // bLutsPrepared が true のときは PrepareParallelRecord が用意した LUT を使い、作成・転送をしない
         void ExecuteWithInput(ViewRenderContext& context,
                               const RHI::TexturePtr& sceneColorPtr,
-                              bool bRegisterLegacyBridge);
+                              bool bRegisterLegacyBridge,
+                              bool bLutsPrepared);
         bool EnqueueEmptyNativePass(ViewRenderContext& context) const;
 
         /**
@@ -244,6 +248,8 @@ namespace NorvesLib::Core::Rendering
          */
         uint32_t PrepareColorLut();
         RHI::TexturePtr LoadAces20SdrLut() const;
+        // カメラの曲線の差し替え（NeutralLinear）を反映した演算子の番号
+        static uint32_t ResolveOperatorType(const CameraProxy* camera, uint32_t viewOperatorType);
 
         /**
          * @brief binding 3 に結ぶ見た目の3D LUTを用意する
@@ -283,6 +289,11 @@ namespace NorvesLib::Core::Rendering
         RHI::TexturePtr m_LookLutTexture;
         Container::String m_LookLutPath;
         bool m_bLookLutLoadFailed = false;
+
+        // PrepareParallelRecord が直列で用意した、そのフレームの演算子と見た目の LUT（次の Execute が 1 回だけ使う）
+        uint32_t m_PreparedViewOperatorType = 0;
+        RHI::TexturePtr m_PreparedLookLut;
+        bool m_bLutsPreparedForRecord = false;
 
         // デバイス参照
         RHI::IDevice *m_Device = nullptr;

@@ -2865,13 +2865,13 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 | 3 | LightingPass | 0.417 / 0.462 | ○ | × 9 か所＋DDGI 13＋RT の影 3、保留へ 1 | ○ | Serial |
 | 4 | ShadowMapPass | 0.387 / 0.434 | ○ | ○ | × `context.ActiveShadowMapSettings` を書いて後のパスへ渡す | Serial |
 | 5 | VirtualShadowMapPass | 0.197 / 0.262 | ○ | × 8＋Raster 24＋Pages 14 | ○ | Serial |
-| 6 | VisibilityResolvePass | 0.095 / 0.115 | ○ dispatch だけ | ○（GBuffer は UnorderedAccess のまま） | ○ 書くのは自分のメンバ・ディスクリプタセット・定数のリング。読むラスタ・分類の結果は前の Serial のパスが書き終えたもの | **Parallel** |
+| 6 | VisibilityResolvePass | 0.095 / 0.115 | ○ dispatch だけ（材質の既定・定数の 1x1 のテクスチャは準備段で作り、記録の最中は作らない（反復 34）） | ○（GBuffer は UnorderedAccess のまま） | ○ 書くのは自分のメンバ・ディスクリプタセット・定数のリング。読むラスタ・分類の結果は前の Serial のパスが書き終えたもの | **Parallel** |
 | 7 | BloomPass | 0.026 / 0.035 | ○ | ○ | ○ | Serial（ミップの鎖の自前のテクスチャ（グラフの外）の layout を自分の render pass で変えるので、宣言どおりにだけ layout を変えるとは言えない） |
 | 8 | MaterialTileClassifyPass | 0.018 / 0.033 | ○ | × 7 か所 | ○ | Serial |
 | 9 | AutoExposurePass | 0.016 / 0.031 | ○ | × 4 か所 | ○ | Serial |
 | 10 | SSAOPass | 0.008 / 0.011 | ○ 全画面 2 つを積むだけ | ○（出力 2 枚は render pass の finalState で宣言の ShaderResource へ） | ○ SharedResources は入力をグラフから読めない旧経路だけ | **Parallel** |
 | 11 | SSRPass | 0.005 / 0.009 | — | — | — | Serial（前後が Serial で同時に記録する相手が無い。監査の対象外） |
-| 12 | ToneMappingPass | 0.004 / 0.008 | ○ | ○（出力は finalState ShaderResource） | ○ 旧経路だけ SharedResources。LUT の作成・読み込みは自分のメンバとデバイス（スレッドごとの単発のプール） | **Parallel** |
+| 12 | ToneMappingPass | 0.004 / 0.008 | ○（表示変換・見た目の 3D LUT の作成・転送は準備段で行い、記録の最中は用意済みを読むだけ（反復 34）） | ○（出力は finalState ShaderResource） | ○ 旧経路だけ SharedResources | **Parallel** |
 | 13 | FXAAPass | 0.003 / 0.006 | ○ | ○ | ○ 旧経路だけ | **Parallel**（起動画面では宣言されない） |
 | 14 | PresentationPass | 0.003 / 0.005 | ○ | ○ | × `context.bPresentationGraphPassHandled` を書く | Serial |
 | 15 | GBufferPass | 0.003 / 0.004 | — | — | — | Serial（前後が Serial。監査の対象外） |
@@ -2882,7 +2882,7 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 | — | TemporalAA・MotionBlur・DepthOfField・Volumetrics・NeuralMaterialDecode・SkinningCompute | 0.000 | — | × 保留へ積むバリアか直接のバリア | — | Serial |
 
 - Parallel の 5 つは、準備が整ったフレーム（初期化済み・パイプラインとディスクリプタセットが揃う・入力をグラフから読む（旧経路でない））だけ `DeclaresAllLayoutChanges()` と `GetRecordPolicy()` が true / Parallel を返す（最初のフレームは Serial。宣言の矛盾のエラーを出さない）。同時に記録される並びは [VisibilityResolve, SSAO] と [ToneMapping, Vignette, FXAA]。
-- 共有のアロケータ: リスト（仕事の番号ごとに 1 本）と保留のフレームコマンド（区間ごと）は区間ごと、transient は記録の前に直列で確保（RT-PLAN）。Execute が触るディスクリプタセット（セットごとのプール）・定数のバッファ・VisibilityResolve の定数のリングはパスが持つ。テクスチャの作成・転送はデバイスのスレッドごとの単発のプールで行う。
+- 共有のアロケータ: リスト（仕事の番号ごとに 1 本）と保留のフレームコマンド（区間ごと）は区間ごと、transient は記録の前に直列で確保（RT-PLAN）。Execute が触るディスクリプタセット（セットごとのプール）・定数のバッファ・VisibilityResolve の定数のリングはパスが持つ。テクスチャの作成・転送（`Texture::Update` は単発のコマンドに layout のバリアを記録して提出し GPU を待つ）と、render pass・framebuffer・パイプラインの作り直しは、Parallel の並びの記録の前に RenderThread で直列に呼ぶ準備段（`IRenderGraphPass::PrepareParallelRecord`）で済ませる（反復 34）。
 - RenderGraph: 計画した区間で、パスがサンプルする Texture（ShaderResource の宣言）のパスの中の layout（バリアの後）を残し、記録の前に書き戻す（`CommitSampledLayouts`）。Vulkan の記述子の書き込みは共有の layout が General かどうかで image の layout を決め、計画した区間では共有の layout が区間の頭のままになるため。Parallel の並びはまとめて書き戻し、同じ Texture を General とそれ以外でサンプルするパスが並びにあれば同時に記録せず Serial で記録する（`RG_PARALLEL_SAMPLED_LAYOUT_CONFLICT` を 1 回出す）。計画した区間の Serial のパスはパスごとに書き戻す。Parallel のパスの組は、空でなく変わったときだけ `RG_PARALLEL_RECORD_PASSES` で出す。
 - RenderingCoordinator: `JobRecordListSource`（仕事の番号 1 以降のリストを提出の順に作って渡す。記録を始め、トレース中は GPU タイムスタンプのフレームと FrameGPU の区間を開く。上限 32 本）。グラフの後の記録（保留のコマンド・撮影のコピー・VT の要求のバリア）は最後のリスト（`viewContext.CommandList`）へ続け、フレームの終わりに受け取ったリストの区間を閉じて End する。提出は既存の `SubmitJobCommandLists`（番号の順に 1 回）。リストの数は変わったときだけ `RENDER_PARALLEL_RECORD_LISTS` で出す。`NORVES_RENDER_PARALLEL_RECORD`（0 で off）を最初のフレームで読み、`RENDER_PARALLEL_RECORD enabled=` を出す。RenderFrameExecutor も、グラフの後の記録（保留のコマンド・直接の描画・合成）を Context の今のリストへ続ける。
 - Game: `--render-parallel-record=on|off` を `NORVES_RENDER_PARALLEL_RECORD` へ渡す（それ以外の値はエラー）。
@@ -2895,3 +2895,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: Parallel にできた 5 つの記録の CPU は合わせて約 0.11 ms（5万個の静止）で、rt の上位 5 つ（合計約 9.4 ms）はどれもバリアか共有の状態で Serial のまま。MEASURE-RT で on の rt が off より悪化しないかを見る。上位を並列にするには、バリアをグラフの宣言へ移す・ShadowMapPass の設定を context でなくグラフの出力で渡すなどの別の項目が要る。
 - Notes: 起動画面では FXAAPass が並びに入らない（宣言の条件を満たさないフレームか無効）。原因は確かめていない（Serial のまま正しく描かれる）。
 - Notes: 別々のリストに同じ名前のパスが記録されると、GPU の時間を合わせる規則（フレームと名前）で 1 つに合わさる（RT-RHI-TIMESTAMPS の Notes）。今は Parallel のパスを持つグラフがビューごとに 1 つなので起きない。
+
+### SCN-ECS-RT-PASSES 差し戻しの修正（2026-10-12、反復 34・run 20261012-030203）
+
+- 差し戻し: ToneMappingPass（カメラの見た目の LUT のパスが変わったフレーム）と VisibilityResolvePass（未キャッシュの金属度・粗さ・AO の定数）が、Parallel の記録の最中に `Texture::Update`（単発のコマンドに layout のバリアを記録して提出し GPU を待つ）を呼ぶ。
+- 修正: `IRenderGraphPass::PrepareParallelRecord(resources, context)`（既定は何もしない）を足し、RenderGraph が Parallel の並びを区間ごとのリストへ記録する前に、並びの各パスについて RenderThread で直列に呼ぶ（前の Serial のパスを記録した後・サンプルする layout の書き戻しの前）。
+  - ToneMappingPass: 準備段で render pass・framebuffer・パイプラインの作り直し（`PrepareResources`）、表示変換の LUT（`PrepareColorLut`）、見た目の LUT（`PrepareLookLut`。演算子が ACES 2.0 LUT 以外のとき）を済ませ、演算子の番号と見た目の LUT を残す。同じフレームの Execute は残した値を読むだけで、LUT を作らない。準備段の無い Serial のフレームは今までどおり Execute で用意する（印は Execute の頭で消すので持ち越さない）。
+  - VisibilityResolvePass: 準備段でラスタのパスが集めた材質の並び（Execute と同じ `MakeResolveMaterial`）から、既定のテクスチャ・サンプラーと定数の 1x1 のテクスチャを作る（`VisibilityResolve::PrepareMaterialTextures`。`RecordTiles` と同じ条件）。準備段を通ったフレームの Execute は `SetTextureCreationAllowed(false)` で作成を止め、足りないものは作れなかった扱い（定数は ERROR を 1 回出して既定へ、既定のテクスチャは記録しない）にする。
+  - SSAOPass・VignettePass・FXAAPass: 準備段で attachment・render pass・framebuffer・パイプラインの作り直しを済ませる（Execute の同じ呼び出しは同じ大きさ・テクスチャなら何も作らない）。この 3 つの Execute にテクスチャの転送は無い。
+- 監査の表の「記録だけ」と共有のアロケータの行を、上の準備段に合わせて直した。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RT-PASSES-3.txt`（on）: ビルド pass、default の決定論比較 pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 7E-06・最大差 1）、EXIT=0。default.Game.log の ERROR 0、`RENDER_PARALLEL_RECORD enabled=1`、`RG_PARALLEL_RECORD_PASSES passes=VisibilityResolvePass,SSAOPass,ToneMappingPass,VignettePass`、`RENDER_PARALLEL_RECORD_LISTS count=4 frame=1`。
+  - `verify-SCN-ECS-RT-PASSES-4.txt`（off）: ビルド pass、同じ比較 pass（差 0、psnr 100 dB、不一致の画素 8E-06・最大差 1）、EXIT=0。ERROR 0、`enabled=0`。
+  - 両方の PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
+- Next: SCN-ECS-MEASURE-RT。
+- Notes: 今回の差し戻しの経路（見た目の LUT の切り替え・新しい定数の材質の出現）を起動画面で踏む検証は無い（起動画面のカメラは LUT のパスを変えず、材質も固定）。Debug の RenderGraph の並列の記録のテストは今回走らせていない（既定の空の準備段を呼ぶだけの変更）。

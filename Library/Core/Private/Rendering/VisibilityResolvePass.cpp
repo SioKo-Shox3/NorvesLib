@@ -382,6 +382,11 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        if (!m_bTextureCreationAllowed)
+        {
+            // 区間ごとの記録の最中は作らない（準備段で作れなかったフレーム）
+            return false;
+        }
 
         // GBufferPass::Initialize の既定のテクスチャとサンプラーと同じ値（ラスタとテクスチャの枠の既定を揃える）
         auto createDefault1x1 = [this](const char* debugName, uint8_t r, uint8_t g, uint8_t b, uint8_t a) -> RHI::TexturePtr
@@ -461,6 +466,18 @@ namespace NorvesLib::Core::Rendering
         {
             return nullptr;
         }
+        if (!m_bTextureCreationAllowed)
+        {
+            // 区間ごとの記録の最中は作らない。準備段（PrepareMaterialTextures）と同じ材質を読む限り、ここへは来ない
+            if (!m_bLoggedTextureCreationBlocked)
+            {
+                m_bLoggedTextureCreationBlocked = true;
+                NORVES_LOG_ERROR("VisibilityResolve",
+                                 "区間ごとの記録の最中に、準備段で作っていない定数のテクスチャ（%u）が要りました",
+                                 level);
+            }
+            return nullptr;
+        }
         RHI::TextureDesc texDesc;
         texDesc.Width = 1;
         texDesc.Height = 1;
@@ -477,6 +494,32 @@ namespace NorvesLib::Core::Rendering
         texture->Update(pixel, 4, 4);
         m_ConstantGrayTextures[level] = texture;
         return texture;
+    }
+
+    bool VisibilityResolve::PrepareMaterialTextures(const Container::VariableArray<VisibilityResolveMaterial>& materials)
+    {
+        if (!EnsureMaterialDefaults())
+        {
+            return false;
+        }
+        // RecordTiles が定数の 1x1 のテクスチャを引く条件と同じ（作ったものは m_ConstantGrayTextures に残る）
+        bool bReady = true;
+        for (const VisibilityResolveMaterial& input : materials)
+        {
+            if (input.MetallicConstant >= 0.0f && !input.Metallic)
+            {
+                GetConstantGrayTexture(input.MetallicConstant);
+            }
+            if (input.RoughnessConstant >= 0.0f && !input.Roughness)
+            {
+                GetConstantGrayTexture(input.RoughnessConstant);
+            }
+            if (input.AOConstant != 1.0f && !input.AO)
+            {
+                bReady = GetConstantGrayTexture(input.AOConstant) != nullptr && bReady;
+            }
+        }
+        return bReady;
     }
 
     bool VisibilityResolve::Record(RHI::ICommandList* commandList, const VisibilityResolveDispatch& dispatch)
@@ -956,6 +999,12 @@ namespace NorvesLib::Core::Rendering
 
     void VisibilityResolvePass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
     {
+        // 準備段を通ったフレーム（区間ごとの記録）は、記録の最中にテクスチャを作らない。準備段の無い Serial の
+        // フレームは今までどおり、要るものをここで作る
+        const bool bPreparedForParallelRecord = m_bPreparedForParallelRecord;
+        m_bPreparedForParallelRecord = false;
+        m_Resolve.SetTextureCreationAllowed(!bPreparedForParallelRecord);
+
         m_bResolved = false;
         m_bResolvedWithTiles = false;
         m_LastTileDispatchCount = 0;
@@ -1132,6 +1181,34 @@ namespace NorvesLib::Core::Rendering
     RGRecordPolicy VisibilityResolvePass::GetRecordPolicy() const
     {
         return DeclaresAllLayoutChanges() ? RGRecordPolicy::Parallel : RGRecordPolicy::Serial;
+    }
+
+    void VisibilityResolvePass::PrepareParallelRecord(RenderGraphResources& resources, ViewRenderContext& context)
+    {
+        (void)resources;
+        // 準備段が作れなかったものも、同じフレームの記録の最中には作らない（Execute が作成を止める）
+        m_bPreparedForParallelRecord = true;
+        if (!m_bInitialized || !m_Resolve.IsReady() || !m_RasterPass)
+        {
+            return;
+        }
+
+        // Execute と同じ材質の並び（ラスタのパスは前の Serial の記録で材質を集め終えている）から、
+        // 既定・定数のテクスチャを作る。作成・転送は単発のコマンドの提出・待ちとバリアを伴うので、ここで直列に行う
+        const TextureResources* textures = context.Resources.Textures;
+        const TextureResources::VirtualTextureFeedbackTarget feedbackTarget =
+            textures ? textures->GetVirtualTextureFeedbackTarget() : TextureResources::VirtualTextureFeedbackTarget{};
+        Container::VariableArray<VisibilityResolveMaterial>& materials = m_PrepareMaterialScratch;
+        materials.clear();
+        for (const VisibilityBuffer::MaterialEntry& entry : m_RasterPass->GetMaterialEntries())
+        {
+            materials.push_back(VisibilityResolveGeometry::MakeResolveMaterial(textures, entry, feedbackTarget));
+        }
+        if (!m_Resolve.PrepareMaterialTextures(materials))
+        {
+            NORVES_LOG_WARNING("VisibilityResolvePass", "区間ごとの記録の前に、材質の既定・定数のテクスチャをそろえられませんでした");
+        }
+        materials.clear();
     }
 
 } // namespace NorvesLib::Core::Rendering
