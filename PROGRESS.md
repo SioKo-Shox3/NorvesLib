@@ -3444,3 +3444,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 既存の失敗（この変更の前の HEAD でも同じ assert で落ちる）: Debug の `RenderGraphCompileTest`（2843 行 `commandList.DispatchCount == 10`）と `SkinnedRenderPathContractTest`（1849 行 `packet.Stats.SkinnedGBufferRecordedDraws == 1`）。`SkinnedRenderPathContractTest` で失敗より前に走る `TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer`（持ち主の無い文脈で GBuffer・Shadow の Execute が描画を積み、スキニングの束縛 8・9 を書く）は通った。`TestDynamicUniformAllocatorGrowsToCoverShadowCasters` は `RenderGraphCompileTest` の失敗より後なので走っていない。
 - Next: TASKS.md の未完の次の項目。
 - Notes: mega-stress 5万個 close では CSM の描画が無く（VSM が太陽の影を持つ）、借りは 1 フレーム 0 件なので、表の比較は「物体の多い描画で借りが増えすぎない」ことを直接には測っていない（起動画面の 73 件では記述子の借りと書き込みは合わせて 0.1 ms 未満）。`Docs/Architecture/FrameResourceWriteGuard.md` の守られていない組の一覧と `FrameResources.md` の手本の表に、この 3 つのパスが借りる形になったことは書いていない（paths の外）。持ち主の無い文脈と事前確保の形を確かめる検査は書いていない（verify が名指ししていないため。事前確保の形は検査と一緒に消すのが候補）。
+
+### SCN-ECS-FIF-DYNAMIC-UBO の差し戻しへの対応（2026-10-12、反復 63・run 20261012-030203）
+
+- 差し戻しの本題（物体の多い描画での記述子の借りと書き込みの CPU の時間）は、親が done-when から外し、節目の SCN-ECS-MEASURE-FIF で借りた数と時間を見る形にした（0343b256）。この反復は今の done-when と verify で閉じた。
+- non-blocking の指摘: `DynamicUniformAllocator.cpp` の借りる形で足したログの説明文（Initialize の 2 件・Allocate の 1 件・持ち主の無い文脈で作るときの 2 件）を日本語にした。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-DYNAMIC-UBO-5.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-DYNAMIC-UBO-6.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=5E-06・within_limits=True、result=pass、EXIT=0。PNG は天球・地面・球・岩・家と影が以前どおり。
+  - `verify-SCN-ECS-FIF-DYNAMIC-UBO-7.txt`: `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=27 resources=52`、GBufferPass・ForwardPass・ShadowMapPass の組は 0 件、EXIT=0。Game.log の ERROR 0。
+- 補助（節目の計測の材料。done-when の外）: 変更前のソース（c2822c93 の 5 ファイル）で、CSM が MegaGeometry を描く構成（mega-stress 5万個 close、`--shadow-probe`）を撮った（`scene-capture/SCN-ECS-FIF-DYNAMIC-UBO-csm-before`、`csm-before-SCN-ECS-FIF-DYNAMIC-UBO.txt`。result=pass、ERROR 0）。CSM の MegaGeometry の描画は 1 フレーム 49・202・605・2670（約 3,500 件の定数と記述子）、計測の窓（Frame 39806..40105、300 フレーム）で `RG.Record.ShadowMapPass` median 23.19 ms・p95 30.66 ms、`RG.Record.GBufferPass` 0.010、`RG.Record.ForwardPass` 0.003、GPU median 58.4 ms。変更後の同じ撮影は撮っていない（比べは節目へ移ったため）。
+- Next: TASKS.md の未完の次の項目（SCN-ECS-FIF-LIGHTING）。
+- Notes: 節目の SCN-ECS-MEASURE-FIF で記述子の借りの時間を見るときは、`--shadow-probe` 付きの mega-stress が借りの多い構成（1 フレーム約 3,500 件）として使える（`-GameArgs "stress-entities=50000,shadow-probe"`）。上の変更前の数字と同じ窓の定義（CaptureScene の timing_window）で比べられる。Git Bash から verify のビルドを走らせると `/m:1` がパスに変換されるので `MSYS_NO_PATHCONV=1` を付ける。

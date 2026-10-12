@@ -33,13 +33,13 @@ namespace NorvesLib::Core::Rendering
     {
         if (m_bInitialized)
         {
-            NORVES_LOG_WARNING("DynamicUniformAllocator", "Already initialized");
+            NORVES_LOG_WARNING("DynamicUniformAllocator", "初期化済み（2 回目の Initialize は無視する）");
             return true;
         }
 
         if (!device || uboSize == 0)
         {
-            NORVES_LOG_ERROR("DynamicUniformAllocator", "Invalid parameters for DynamicUniformAllocator::Initialize");
+            NORVES_LOG_ERROR("DynamicUniformAllocator", "Initialize の引数が不正（device が null か uboSize が 0）");
             return false;
         }
 
@@ -182,7 +182,7 @@ namespace NorvesLib::Core::Rendering
     {
         if (!m_bInitialized || !m_bBorrowing)
         {
-            NORVES_LOG_ERROR("DynamicUniformAllocator", "Not initialized for borrowing");
+            NORVES_LOG_ERROR("DynamicUniformAllocator", "借りる形で初期化されていない");
             return {};
         }
 
@@ -223,13 +223,13 @@ namespace NorvesLib::Core::Rendering
         result.UniformBuffer = m_Device->CreateBuffer(bufDesc);
         if (!result.UniformBuffer)
         {
-            NORVES_LOG_ERROR("DynamicUniformAllocator", "Failed to create UBO");
+            NORVES_LOG_ERROR("DynamicUniformAllocator", "定数のバッファを作れなかった");
             return {};
         }
         result.DescriptorSet = m_Device->CreateDescriptorSet(m_DescriptorSetDesc);
         if (!result.DescriptorSet)
         {
-            NORVES_LOG_ERROR("DynamicUniformAllocator", "Failed to create DescriptorSet");
+            NORVES_LOG_ERROR("DynamicUniformAllocator", "記述子セットを作れなかった");
             return {};
         }
         result.DescriptorSet->BindConstantBuffer(0, result.UniformBuffer, 0, m_UBOSize);
