@@ -3228,3 +3228,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-4.txt`: rendering3dtest・mega-bananas・mega-stress の周回 3 周 result=pass、EXIT=0。終了のログで `Pending=0`（Enqueued=Destroyed=42010）、ERROR 0 行。
 - Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り）。
 - Notes: 提出を追うスワップチェーンが無い間（作成前・破棄後、スワップチェーンを作らないテスト）はその場で破棄する（`Immediate` に数える。今回の 2 本とも 0）。通し番号はスワップチェーンのものなので、スワップチェーンが同時に 2 つある形には対応していない（`Screen` が 1 つだけ作る）。起動画面は 1 フレームあたり約 70 個を積んでいる（読み込み込み）。周回のランチャーの待機の区間では増えていない。FIF-SWITCH で描画先の交互の替わりによる作り直しが毎フレーム増えるかを見る。
+
+### SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE 差し戻しの対応（2026-10-12、反復 49・run 20261012-030203）
+
+- 差し戻し: `WaitIdleInternal` がキューロックを手放した後に破棄の列を全部空けていたため、その間に別のスレッドが提出して積んだハンドルを、提出の完了前に破棄しうる。
+- 対応: `vkDeviceWaitIdle` と同じキューロック（`m_sparseBindMutex`）の下で、破棄してよい分を列から退避し、ロックを手放した後に退避した分だけを破棄する。退避するのは通し番号が「次に提出する通し番号」より小さい分（待ちの前に提出が済んだ分）だけで、記録中のフレームの分（まだ提出していない通し番号）は通常の完了通知まで残す。提出の通知は提出の後に来るので、次に提出する通し番号が実際の提出より先へ進むことはない。完了通知と共通の取り出しを `TakeCompletedDeferredDestroyEntriesLocked` にした。ロックの順は キュー → 列 で、列のロックを持ってキューのロックを取る経路は無い。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-5.txt`: RelWithDebInfo の Game のビルド（`VulkanDevice.cpp` を再コンパイル）EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-6.txt`: Debug の起動画面の撮影 result=pass、`vulkan_validation` は error_count=0・warning_count=0・vuid_count=0。終了のログで `Pending=0`（Enqueued=Destroyed=7949）。
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-7.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=1.4E-05・within_limits=True、result=pass、EXIT=0。
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-8.txt`: rendering3dtest・mega-bananas・mega-stress の周回 3 周 result=pass、EXIT=0。終了のログで `Pending=0`（Enqueued=Destroyed=42010）、ERROR 0 行。
+- Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り）。
+- Notes: done-when の「WaitIdle の後は列を全部空ける」は、提出が済んだ分を全部空ける、と読んだ（まだ提出していないフレームの分を空けると、記録中のコマンドバッファが参照するハンドルを壊しうるため）。全部空けるのはスワップチェーンの破棄（WaitIdle の後、追う提出が無くなる）と device の破棄の前。競合そのものを再現するテストは書いていない（verify が名指ししていないため）。

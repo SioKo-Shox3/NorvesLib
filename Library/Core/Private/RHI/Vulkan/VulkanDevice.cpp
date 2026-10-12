@@ -2625,6 +2625,7 @@ namespace NorvesLib::RHI::Vulkan
     {
         g_waitIdleCallCount.fetch_add(1, std::memory_order_relaxed);
         VkResult result = VK_SUCCESS;
+        VariableArray<DeferredDestroyEntry> idleCompleted;
         if (g_waitIdleFailureDevice == this && g_waitIdleFailuresRemaining > 0)
         {
             --g_waitIdleFailuresRemaining;
@@ -2640,12 +2641,27 @@ namespace NorvesLib::RHI::Vulkan
             // vkDeviceWaitIdle は全キューの外部同期を要求するので、提出・プレゼントと同じミューテックスの下で待つ
             Thread::ScopedLock queueLock(m_sparseBindMutex);
             result = WaitIdleWithoutResultCheck(m_device, "VulkanDevice::WaitIdle");
+            if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST)
+            {
+                // 破棄してよい分はキューロックを持ったまま退避する。手放した後に別のスレッドが出す提出と、
+                // その提出のために積まれるハンドルを巻き込まない。退避するのは待ちの前に提出が済んだ分
+                // （通し番号が次に提出する通し番号より小さい分）だけで、記録中のフレームの分は通常の完了通知まで残す。
+                // 提出の通知は提出の後に来るので、次に提出する通し番号は実際の提出より先へ進まない。
+                Thread::ScopedLock lock(m_deferredDestroyMutex);
+                if (m_deferredDestroyNextSerial > 0)
+                {
+                    TakeCompletedDeferredDestroyEntriesLocked(m_deferredDestroyNextSerial - 1, idleCompleted);
+                }
+            }
         }
         if (result == VK_SUCCESS || result == VK_ERROR_DEVICE_LOST)
         {
             ReleaseDeferredSingleTimeCommandBuffers(m_device);
             ReleaseDeferredVulkanTextureUpdateStagingResourcesForDevice(m_device);
-            DrainDeferredDestroyQueue(nullptr);
+            for (const DeferredDestroyEntry &entry : idleCompleted)
+            {
+                DestroyDeferredHandle(entry.Kind, entry.Handle);
+            }
         }
         if (result == VK_ERROR_DEVICE_LOST)
         {
@@ -2783,29 +2799,38 @@ namespace NorvesLib::RHI::Vulkan
         }
     }
 
+    void VulkanDevice::TakeCompletedDeferredDestroyEntriesLocked(
+        uint64_t lastCompletedSerial,
+        VariableArray<DeferredDestroyEntry> &outEntries) noexcept
+    {
+        if (m_deferredDestroyQueue.empty())
+        {
+            return;
+        }
+        VariableArray<DeferredDestroyEntry> remaining;
+        const size_t takenBefore = outEntries.size();
+        for (const DeferredDestroyEntry &entry : m_deferredDestroyQueue)
+        {
+            if (entry.Serial <= lastCompletedSerial)
+            {
+                outEntries.push_back(entry);
+            }
+            else
+            {
+                remaining.push_back(entry);
+            }
+        }
+        m_deferredDestroyQueue = std::move(remaining);
+        m_deferredDestroyDestroyedCount += outEntries.size() - takenBefore;
+    }
+
     void VulkanDevice::NotifyDeferredDestroyCompleted(uint64_t completedSerial)
     {
         VariableArray<DeferredDestroyEntry> completed;
         bool bLogStats = false;
         {
             Thread::ScopedLock lock(m_deferredDestroyMutex);
-            if (!m_deferredDestroyQueue.empty())
-            {
-                VariableArray<DeferredDestroyEntry> remaining;
-                for (const DeferredDestroyEntry &entry : m_deferredDestroyQueue)
-                {
-                    if (entry.Serial <= completedSerial)
-                    {
-                        completed.push_back(entry);
-                    }
-                    else
-                    {
-                        remaining.push_back(entry);
-                    }
-                }
-                m_deferredDestroyQueue = std::move(remaining);
-                m_deferredDestroyDestroyedCount += completed.size();
-            }
+            TakeCompletedDeferredDestroyEntriesLocked(completedSerial, completed);
             ++m_deferredDestroyCompletionCount;
             bLogStats = (m_deferredDestroyCompletionCount % kDeferredDestroyStatsLogInterval) == 0;
         }

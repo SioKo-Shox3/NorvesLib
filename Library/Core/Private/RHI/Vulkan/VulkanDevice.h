@@ -183,7 +183,9 @@ namespace NorvesLib::RHI::Vulkan
         // ハンドルをここへ移す（どのスレッドからでもよい）。積んだ時点の「次に提出する通し番号」を添え、
         // スワップチェーンが渡す完了の通し番号がそれ以上になったら破棄する（記録中のフレームが参照して
         // いても、そのフレームの完了まで生かす。中止したフレームの通し番号は次の提出が使う）。
-        // WaitIdle の後と device の破棄の前は列を全部空ける。提出を追うスワップチェーンが無い間は
+        // WaitIdle は待ちと同じキューロックの下で提出済みの分（次に提出する通し番号より小さい分）を退避して
+        // 破棄する（待ちの後に出た提出や、記録中のフレームの分は通常の完了通知まで残す）。
+        // スワップチェーンの破棄（WaitIdle の後）と device の破棄の前は列を全部空ける。提出を追うスワップチェーンが無い間は
         // その場で破棄する（スワップチェーンを通さない提出は自分のフェンスで待つ経路だけ）。
         void DeferDestroy(vk::Framebuffer handle) noexcept;
         void DeferDestroy(vk::RenderPass handle) noexcept;
@@ -364,6 +366,10 @@ namespace NorvesLib::RHI::Vulkan
 
         void EnqueueDeferredDestroy(DeferredDestroyKind kind, uint64_t handle) noexcept;
         void DestroyDeferredHandle(DeferredDestroyKind kind, uint64_t handle) noexcept;
+        // 通し番号が lastCompletedSerial 以下の分を列から外して outEntries へ移す（m_deferredDestroyMutex を持って呼ぶ）
+        void TakeCompletedDeferredDestroyEntriesLocked(
+            uint64_t lastCompletedSerial,
+            VariableArray<DeferredDestroyEntry> &outEntries) noexcept;
         // 列を全部破棄する（GPU が列のハンドルを使っていないと分かっているときだけ呼ぶ）
         void DrainDeferredDestroyQueue(const char *reason) noexcept;
         void LogDeferredDestroyStats(const char *reason) const;
