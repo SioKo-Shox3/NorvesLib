@@ -3063,3 +3063,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-…-6.txt`: 起動画面 default の決定論比較 pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 5E-06・最大差 1、`indirect_lighting=rtgi`）、EXIT=0。default.Game.log の ERROR 0・`MEGA_TABLES mismatch=0`。PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
 - Next: SCN-ECS-FIF-AUDIT（反復 35 の Next の並びどおり）。
 - Notes: 照合は撮影の 1% 移動で影の記録・投影物の数え直しを含めて通ったが、投影物かどうかの切り替え・メッシュの差し替え・ページの常駐の変化を狙って起こす試験は足していない（差分の経路の CPU の試験が無い）。`CheckSceneTables` の 1 回 8.3 ms は 120 フレームに 1 回 RenderThread に乗る（開発ビルドだけ。Release では呼ばない）。
+
+### SCN-ECS-FIX-LIGHTING-RECORD の差し戻しへの対応（2026-10-12、反復 41・run 20261012-030203）
+
+- 指摘: `ExecuteRTGI` の中で例外が出ると、両方の catch は履歴だけを無効化し、instance の表のアップロード済みの印（`m_bRTGIInstancesUploaded`）を残していた。CPU の表（`m_RTGIInstances`）を途中まで書き換えた後に例外が出ると、次のフレームの比較は変化なしと見て、GPU の表に古い行が残る。
+- 直し: `ExecuteRTGI` の両方の catch の先頭で `m_bRTGIInstancesUploaded = false` にする。次に表を作れたフレームで表を必ず書き直す（CPU の表は差分の比較で今のスナップショットにそろうので、書き直せば GPU の表と一致する）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIX-LIGHTING-RECORD-5.txt`: RelWithDebInfo の Game のビルド EXIT=0（エラー・C の警告なし）。
+  - `verify-SCN-ECS-FIX-LIGHTING-RECORD-6.txt`: 撮影 `result=pass`、EXIT=0、300 フレーム（GPU median 9.06 ms、rt median 16.61 ms）。`RG.Record.LightingPass=0.373/max=1.492`。overview.Game.log の ERROR 0、`INDIRECT_LIGHTING source=rtgi`。平均の輝度 122.379（反復 39 と同じ）。PNG を開いて確認（床・バナナ・影・空が描けている）。
+  - `verify-SCN-ECS-FIX-LIGHTING-RECORD-7.txt`: `CHECK_CAPTURE_METRICS result=pass views=overview`、EXIT=0（`RG.Record.LightingPass` の median ≤ 0.5）。
+  - `verify-SCN-ECS-FIX-LIGHTING-RECORD-8.txt`: 起動画面 default の決定論比較 pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 1.4E-05・最大差 1、`indirect_lighting=rtgi`）、EXIT=0。default.Game.log の ERROR 0。PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
+- Next: SCN-ECS-FIF-AUDIT（反復 40 の Next どおり）。
+- Notes: 配列の確保の失敗を注入して例外の経路を実機で起こす試験は無い（直しはコードの経路で確かめた）。

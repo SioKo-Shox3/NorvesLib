@@ -4297,6 +4297,9 @@ namespace NorvesLib::Core::Rendering
         NORVES_LOG_WARNING("LightingPass",
                            "RTGI ray-queryの実行に失敗したため既存間接光へ戻ります: %s",
                            exception.what());
+        // instanceの表（m_RTGIInstances）は書き換えの途中で止まっていることがあり、次のフレームの比較で
+        // 変化なしと見えてもGPUの表とは一致しない。次に表を作れたフレームで必ず書き直す
+        m_bRTGIInstancesUploaded = false;
         InvalidateRTGIHistory();
         return false;
     }
@@ -4304,6 +4307,7 @@ namespace NorvesLib::Core::Rendering
     {
         NORVES_LOG_WARNING("LightingPass",
                            "RTGI ray-queryの実行に失敗したため既存間接光へ戻ります");
+        m_bRTGIInstancesUploaded = false;
         InvalidateRTGIHistory();
         return false;
     }
