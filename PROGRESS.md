@@ -2910,3 +2910,23 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 両方の PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
 - Next: SCN-ECS-MEASURE-RT。
 - Notes: 今回の差し戻しの経路（見た目の LUT の切り替え・新しい定数の材質の出現）を起動画面で踏む検証は無い（起動画面のカメラは LUT のパスを変えず、材質も固定）。Debug の RenderGraph の並列の記録のテストは今回走らせていない（既定の空の準備段を呼ぶだけの変更）。
+
+### SCN-ECS-MEASURE-RT 節目の計測（2026-10-12、反復 35・親が表を書いた）
+
+- 反復 35 は撮影と既定を off にする変更の後、壁時計（40 分）で止められた（表は親が `.harness/runs/scene-capture/SCN-ECS-MEASURE-RT/*/metrics.json` から書いた）。
+- RelWithDebInfo・1920x1080・300 フレーム。単位 ms（median / p95）。
+
+| 撮影 | GPU | rt | `RenderGraph.Execute` | `MegaGeometryPass.BuildSceneTables` | `RG.Record.LightingPass` |
+|---|---|---|---|---|---|
+| 5万個 close on | 30.44 / 31.09 | 45.01 / 48.42 | 11.36 / 13.75 | 7.18 / 8.51 | 0.42 / 0.47 |
+| 5万個 close off | 30.50 / 31.25 | 45.06 / 48.29 | 11.48 / 13.70 | 7.18 / 8.28 | 0.43 / 0.49 |
+| 5万個 close on（2 組目） | 30.48 / 31.56 | 45.02 / 49.41 | | | |
+| 5万個 close off（2 組目） | 30.58 / 33.89 | 45.52 / 49.88 | | | |
+| 5万個 close on（3 組目） | 34.23 / 43.55 | 51.23 / 62.91 | | | |
+| 5万個 close off（3 組目） | 33.91 / 36.16 | 49.58 / 53.38 | | | |
+| バナナ 1万本 overview on | 8.12 / 9.87 | 19.83 / 23.09 | 7.90 / 10.84 | 0.84 / 1.27 | 3.63 / 5.39 |
+| バナナ 1万本 overview off | 8.21 / 9.89 | 20.03 / 23.80 | 8.16 / — | 0.83 / — | — |
+
+- 判定: on の rt の p95（48.42）が off（48.29）を 0.13 ms 上回り、done-when の合格を外れたので既定を off にした（`--render-parallel-record=on` で有効）。差は組ごとの揺れ（off の p95 が 48.3〜53.4）より小さい。Debug の起動画面（on）の検証レイヤーのエラーは 0。
+- 読み: Parallel にした 5 つの記録は合わせて約 0.03〜0.11 ms で、on と off の差は測れない大きさ。rt の内訳は 5万個で Execute 11.4 + Compile 0.6 + 区間外 約 33 ms（GPU 30.4）、バナナで Execute 7.9 + 区間外 約 12 ms（GPU 8.1）。`VulkanSwapChain.h` の `MAX_FRAMES_IN_FLIGHT = 1` で、記録と GPU が重ならずに足し算になっている。記録の道の上位は 5万個の `BuildSceneTables` 7.2 ms（毎フレーム全量の作り直し）とバナナの `RG.Record.LightingPass` 3.6 ms。
+- Next: SCN-ECS-FIX-VISRESOLVE-CONST → SCN-ECS-RT-FRAME-SCOPES → SCN-ECS-FIX-LIGHTING-RECORD → SCN-MEGA-FIX-SCENE-TABLES-DELTA → SCN-ECS-FIF-AUDIT → （足した FIF の項目）→ SCN-ECS-FIF-SWITCH → SCN-ECS-MEASURE-FIF → SCN-ECS-RT-PARALLEL-WIDEN。

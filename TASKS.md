@@ -825,26 +825,86 @@
 - status: todo
 - done-when: `VisibilityResolvePass` の定数のテクスチャ（金属度・粗さ・AO の灰色）の作成を、直列の準備段で許可して要るものを作り、Execute（区間の記録）の間だけ禁止する（今は Parallel のフレームの Execute が `m_bTextureCreationAllowed=false` にした後、準備段が許可し直さないので、次のフレームに現れた未キャッシュの定数が `GetConstantGrayTexture` で nullptr になり、既定の黒・中間灰に置き換わる。off では作れるので on と off で描画が分かれる。`VisibilityResolvePass.cpp` 469・1006・1186 行付近）。未キャッシュの定数を持つ材質を途中のフレームで足したとき、on と off で同じ定数のテクスチャが使われることを、既存の Rendering の CPU の試験の束で確かめる（新しい実行ファイルは足さない）。起動画面の比較が on・off とも pass。通ったら SCN-ECS-RT-PASSES の status を done にし、`blocked/SCN-ECS-RT-PASSES.md` に解消を書き足す（残りの指摘はこの 1 点だけ）。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-VISRESOLVE-CONST`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -GameArgs render-parallel-record=on -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-VISRESOLVE-CONST`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -GameArgs render-parallel-record=off -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-VISRESOLVE-CONST-off`
 - paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Test/Core/Rendering, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 親が足した。SCN-ECS-RT-PASSES の評価の 2 周目の指摘（NEXT_FINDINGS の反復 34）。ToneMapping の LUT の転送を準備段へ移した直しは評価者が確認済み。危険地帯（RenderThread）。
+- notes: 2026-10-12 親が足した。SCN-ECS-RT-PASSES の評価の 2 周目の指摘（NEXT_FINDINGS の反復 34）。ToneMapping の LUT の転送を準備段へ移した直しは評価者が確認済み。危険地帯（RenderThread）。 2026-10-12 親: SCN-ECS-MEASURE-RT が既定を off にしたので、1 本目の撮影は `render-parallel-record=on` を明示する。
 ## SCN-ECS-MEASURE-RT: 節目の計測: 並列の記録の効果と安全を測る
 - status: done
 - done-when: バナナ 1万本 overview と mega-stress 5万個で、on と off の rt の median と p95、`RenderGraph.Execute`、GPU、ワーカーの統計（JobSystem.h:133）、`RG.Record.*` の区間ごとの時間と記録したスレッドの数を PROGRESS の表に書く。合格は、on の rt の p95 が off 以下で、Debug の起動画面（on）で検証レイヤーのエラーが 0（Threading を含む）。外れたら off を既定にし、`SCN-ECS-FIX-<名前>` を足す。
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-MEASURE-RT/on --timing --min-frames 300 --require-scope RG.Record.*`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-ECS-MEASURE-RT-debug`
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
-- notes: 計測だけ。反復の中で on と off を撮る（`CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000[,render-parallel-record=off] -OutDir .harness/runs/scene-capture/SCN-ECS-MEASURE-RT/<on|off>`）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
+- notes: 計測だけ。反復の中で on と off を撮る（`CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000[,render-parallel-record=off] -OutDir .harness/runs/scene-capture/SCN-ECS-MEASURE-RT/<on|off>`）。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。 2026-10-12 親: 反復 35 は status を done にした後で壁時計（40 分）に止められ、評価を通らず PROGRESS の表も書かれなかった。計測だけの項目で、撮影（on・off と揺れの確かめ 2 組、バナナ）と既定を off にする変更はそろっているので、親が表を PROGRESS に書いて受け入れた。既定を off にした変更は SCN-ECS-FIX-VISRESOLVE-CONST の検証で on・off とも確かめる。合否を rt の p95 で決めたのは狙いの外れ（rt は GPU の完了待ちを含み、Parallel の 5 つの記録の得 約 0.03 ms は揺れに埋もれる）。以後の RenderThread の項目は、区間の内訳（`RenderGraph.Execute` と RT の各段）で判定する。
 
-## SCN-ECS-FIX-RT-PARALLEL-DEFAULT: 並列の記録の rt の p95 が off 以下であることを揺れ込みで確かめ、on を既定に戻す
+## SCN-ECS-RT-FRAME-SCOPES: RenderThread の 1 フレームを区間で切り、rt の内訳を全部見えるようにする
 - status: todo
-- done-when: SCN-ECS-FIX-VISRESOLVE-CONST の後に行う。SCN-ECS-MEASURE-RT で mega-stress 5万個 close の rt の p95 が on 48.415 ms > off 48.291 ms（+0.12 ms）で外れたため、既定を off にした（`RenderingCoordinator.cpp` の `ResolveParallelRecordEnabled`。`--render-parallel-record=on` で有効）。同じ設定の撮り直しで off の p95 が 48.3〜53.4 ms と動き、差は揺れより小さい。on の記録の得（Parallel の 5 つの記録は合わせて約 0.03 ms がワーカーへ移るだけ）を揺れより大きくする（例: ワーカーの起こしの費用を測って並びの短い区間は 1 本で記録する、または rt の上位のパスを並列にできる形へ移す）か、on/off を交互に 3 組撮って組ごとの p95 の差（on − off）の中央値が 0 以下であることを示す。どちらも満たせたら既定を on に戻し、PROGRESS の表に 3 組の rt の median・p95 と GPU を書く。起動画面の比較が on・off とも pass。
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-RT-PARALLEL-DEFAULT`
-- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -GameArgs render-parallel-record=off -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-RT-PARALLEL-DEFAULT-off`
-- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, TASKS.md, PROGRESS.md
-- notes: 2026-10-12 SCN-ECS-MEASURE-RT が足した（計測は `.harness/runs/scene-capture/SCN-ECS-MEASURE-RT/`）。撮影は `CaptureScene.ps1 -Scene mega-stress -RequireAssets -Views close -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,render-parallel-record=<on|off>`。GPU の p95 が組の中で大きく違う組（外乱）は数えずに撮り直す。危険地帯（RenderThread）。
+- done-when: SCN-ECS-MEASURE-RT の撮影では、mega-stress 5万個 close の rt の median 45.0 ms のうち区間に入るのは `RenderGraph.Execute` 11.4 ms と `RenderGraph.Compile` 0.6 ms だけで、残りの約 33 ms がどの区間にも入らない（GPU は 30.4 ms。`VulkanSwapChain.h` の `MAX_FRAMES_IN_FLIGHT = 1` による GPU の完了待ちと見込む）。RenderThread の 1 フレームを、重ならない直下の区間で切る: パケット待ち（`RT.WaitPacket`）、前のフレームの完了待ち（`RT.WaitFrameFence`）、画像の取得（`RT.AcquireImage`）、グラフの構築と記録（既存の `RenderGraph.*`）、提出（`RT.Submit`）、表示（`RT.Present`）、その他の前後処理（名前は実装で決める）。`RenderGraph.Execute` の中で `RG.Record.*` に入らない時間（バリア・layout の書き戻し・リストの開始と終了・Parallel の準備段）も区間にする（`RG.Barriers`・`RG.PrepareParallel` など。名前は実装で決める）。mega-stress 5万個 close の撮影 1 本で、RenderThread の直下の区間の median の和が rt の median の 90% 以上、`RenderGraph.Execute` の直下の区間の median の和が Execute の median の 90% 以上であることを、区間ごとの median・p95 の表で PROGRESS に書く。区間は `Debug/Stats.h` の既存の仕組みで足し、Release では無効のまま。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-ECS-RT-FRAME-SCOPES`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-RT-FRAME-SCOPES --timing --min-frames 300 --require-scope RT.WaitFrameFence --require-scope RT.Submit --require-scope RT.Present`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Library/Core/Private/RHI, Library/Core/Public/RHI, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が足した。計測の方針（狙いと内訳）に従い、以後の RenderThread の項目の判定に使う。描画を変えないので起動画面の比較は要らない。危険地帯（RenderThread・RHI）。
 
+## SCN-ECS-FIX-LIGHTING-RECORD: LightingPass の記録の CPU の 3.6 ms を減らす
+- status: todo
+- done-when: バナナ 1万本 overview で `RG.Record.LightingPass` の median が 3.6 ms・p95 5.4 ms（SCN-ECS-MEASURE-RT。RenderThread の記録の中で最大。mega-stress 5万個 close では 0.42 ms）。LightingPass の Execute の中を区間で分けて原因を PROGRESS に書き、記録の最中の重い処理を、変わったときだけ行う・直列の準備段へ移す・GPU へ移す、のいずれかで減らす（原因に合わせて選ぶ）。合格: 同じ撮影で `RG.Record.LightingPass` の median ≤ 0.5 ms、起動画面の比較が pass。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-ECS-FIX-LIGHTING-RECORD`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-FIX-LIGHTING-RECORD --timing --min-frames 300 --max-scope-median-ms RG.Record.LightingPass=0.5`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIX-LIGHTING-RECORD`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が足した（SCN-ECS-MEASURE-RT の区間の内訳から）。危険地帯（RenderThread）。
+
+## SCN-MEGA-FIX-SCENE-TABLES-DELTA: MegaGeometry の表を毎フレーム全量で作り直さず、変わった席だけ直す
+- status: todo
+- done-when: `MegaGeometryPass::BuildSceneTables`（`MegaGeometryPass.cpp` 1196 行付近）は毎フレーム全インスタンスを走査し、表（Sections・Drawables・Entries・Meshes・VisibilityRequests・ShadowInstances）を作り直す（mega-stress 5万個 close の静止で median 7.2 ms。RenderThread の記録の道の 6 割。SCN-ECS-MEASURE-RT）。表を席ごとに持ち続け、GPU Scene の変わった席（追加・削除・メッシュの準備完了・変換・影の設定）だけで直す。並びが変わる（席の追加・削除・メッシュの常駐）ときだけ作り直してよい。開発ビルドで、差分で直した表と全量で作り直した表を一定の間隔で比べる検査を足す（`MEGA_TABLES mismatch=0`）。合格: mega-stress 5万個 close の静止で `MegaGeometryPass.BuildSceneTables` の median ≤ 0.5 ms、1% 移動で ≤ 1.0 ms、両方の撮影のログで `MEGA_TABLES mismatch=0`、起動画面の比較が pass。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-SCENE-TABLES-DELTA/static`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-SCENE-TABLES-DELTA/static --timing --min-frames 300 --max-scope-median-ms MegaGeometryPass.BuildSceneTables=0.5`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-SCENE-TABLES-DELTA/move1`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-SCENE-TABLES-DELTA/move1 --timing --min-frames 300 --max-scope-median-ms MegaGeometryPass.BuildSceneTables=1.0`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FIX-SCENE-TABLES-DELTA`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Assets/Shaders, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が足した（SCN-ECS-MEASURE-RT の区間の内訳から）。`MEGA_TABLES` の行は撮影の `close.Game.log` で確かめる。危険地帯（RenderThread）。
+
+## SCN-ECS-FIF-AUDIT: 2 フレームを重ねるために、フレームごとの資源を洗い出す（調べるだけ）
+- status: todo
+- done-when: `VulkanSwapChain.h` の `MAX_FRAMES_IN_FLIGHT = 1` のため、RenderThread は記録 → 提出 → 次のフレームの前に GPU の完了を待つ、を直列に行い、フレームの時間が CPU と GPU の和になっている（mega-stress 5万個 close で rt 45.0 ms ≒ Execute 11.4 + GPU 30.4 + その他。バナナ 1万本 overview で rt 19.8 ms ≒ Execute 7.9 + GPU 8.1 + その他。SCN-ECS-MEASURE-RT）。2 フレームを重ねるために、CPU が書いて GPU が読む・GPU が書いて CPU が読むフレームごとの資源（定数・インスタンスのリング、記述子の書き換え、一時の資源のプール、転送の stage、GPU Scene の scatter の stage、読み戻し〔VSM のフィードバック・撮影・GPU の時間の計測・カウンタ〕、TLAS のインスタンス、ImGui、MegaGeometry の表とキュー、前のフレームの履歴〔HZB・TAA・prevWorld〕、遅延解放の通し番号など）を全部洗い、各資源の持ち主のファイル・今の数え方（1 つ／スロットごと／通し番号で待つ）・2 にしたときの直し方を PROGRESS の表にする。この項目ではコードを変えない。直しを書き込みパスが交わる単位でまとめて `SCN-ECS-FIF-<名前>` の項目にし、SCN-ECS-FIF-SWITCH の前に足す（各項目は MAX_FRAMES_IN_FLIGHT=1 のまま正しく動き、起動画面の比較が pass する形で書く）。
+- verify: `powershell -NoProfile -Command "if (-not (Select-String -Path TASKS.md -Pattern '^## SCN-ECS-FIF-(?!AUDIT|SWITCH)' -Quiet)) { exit 1 }"`
+- paths: TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が足した。足す項目は 1 反復（40 分）で閉じる大きさに切る。危険地帯（RHI/Vulkan・RenderThread・資源の寿命）の調べ。
+
+## SCN-ECS-FIF-SWITCH: 2 フレームを重ねて描く
+- status: todo
+- done-when: SCN-ECS-FIF-AUDIT の表の全行が直った後に行う。`MAX_FRAMES_IN_FLIGHT` を 2 にする（開発ビルドは `--frames-in-flight=1` で 1 に戻せる。Release は 2）。Debug の起動画面（2）で検証レイヤーのエラーが 0、RelWithDebInfo の起動画面の比較が pass、mega-stress と バナナ と起動画面のシーンの周回が pass（シーンの出入りで資源を解放する前に、両方のスロットの完了を待つ）。効果はこの項目では測らず、節目の計測（SCN-ECS-MEASURE-FIF）で確かめる。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-SWITCH-debug`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-SWITCH`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/RunSceneCycleSmoke.ps1 -Scenes rendering3dtest,mega-bananas,mega-stress -Cycles 2 -Configuration RelWithDebInfo`
+- paths: Library/Core/Private/RHI, Library/Core/Public/RHI, Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が足した。危険地帯（RHI/Vulkan・RenderThread・資源の寿命）。
+
+## SCN-ECS-MEASURE-FIF: 節目の計測: CPU と GPU が重なったことを区間の内訳で確かめる
+- status: todo
+- done-when: mega-stress 5万個 close とバナナ 1万本 overview を撮り、GPU・rt の median と p95、RenderThread の直下の区間（SCN-ECS-RT-FRAME-SCOPES）と `RenderGraph.Execute` の内訳を PROGRESS の表に書く。合格: 両方で rt の median ≤ max(GPU の median, RenderThread の CPU の区間〔`RT.WaitFrameFence` を除く〕の median の和) + 2 ms（重なりが効いていて、GPU 待ちは `RT.WaitFrameFence` に入る）。外れたら原因の区間を書き、`SCN-ECS-FIX-<名前>` を足す。
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-ECS-MEASURE-FIF/stress`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-MEASURE-FIF/stress --timing --min-frames 300 --require-scope RT.WaitFrameFence`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-bananas -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views overview -GpuTimingFrames 300 -GameArgs banana-count=10000 -OutDir .harness/runs/scene-capture/SCN-ECS-MEASURE-FIF/bananas`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-ECS-MEASURE-FIF/bananas --timing --min-frames 300 --require-scope RT.WaitFrameFence`
+- paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が足した。計測だけ。
+
+## SCN-ECS-RT-PARALLEL-WIDEN: 記録の重いパスを並列にし、記録の道が短くなったら on を既定に戻す
+- status: todo
+- done-when: SCN-ECS-MEASURE-FIF の後に行う。判定は rt ではなく RenderThread の記録の道（`RenderGraph.Execute` の median）で行う（rt は GPU 待ちを含み、並列の得より揺れが大きい。SCN-ECS-MEASURE-RT では Parallel の 5 つの記録が合わせて約 0.03〜0.11 ms で、on と off の差は揺れの中）。MEASURE-FIF の表で `RG.Record.*` が 0.2 ms 以上のパスについて、Parallel にできない理由（自分でバリアを張る・共有の CPU の状態）を外して Parallel にする（監査の表を PROGRESS に書き足す）。合格: mega-stress 5万個 close で、on の `RenderGraph.Execute` の median が off より 0.5 ms 以上短い。届いたら on を既定に戻す。届かなければ、パスごとの記録の時間と並列にできない理由を表にして off のままにする。on・off とも起動画面の比較が pass、Debug の起動画面（on）で検証レイヤーのエラーが 0。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -GameArgs render-parallel-record=on -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PARALLEL-WIDEN-debug-on`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -GameArgs render-parallel-record=off -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-RT-PARALLEL-WIDEN-off`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GpuTimingFrames 300 -GameArgs stress-entities=50000,render-parallel-record=on -OutDir .harness/runs/scene-capture/SCN-ECS-RT-PARALLEL-WIDEN/on`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Build -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -Views close -GpuTimingFrames 300 -GameArgs stress-entities=50000,render-parallel-record=off -OutDir .harness/runs/scene-capture/SCN-ECS-RT-PARALLEL-WIDEN/off`
+- paths: Library/Core/Private/Rendering, Library/Core/Public/Rendering, Game/GameApplicationHandler.cpp, Test/Core/Rendering, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 親が SCN-ECS-FIX-RT-PARALLEL-DEFAULT（SCN-ECS-MEASURE-RT が足した。on と off の rt の p95 を揺れ込みで比べる）を置き換えた。rt の p95 の比べは揺れで決まり狙いが無いため。危険地帯（RenderThread）。
 ## SCN-MEGA-BVH-LEAF-SPLIT: BVH を持たないメッシュに、葉 8 クラスタ以下の階層の BVH を作る（準備）
 - status: todo
 - done-when: MegaGeometryResourceStore が、v1.0・手続き・実行時に作るメッシュ（BVH が無いもの）に、葉の上限 8 クラスタ（`CookedMeshFormat.h` 71 行付近）を守る多段の BVH を作る（空間で分けて葉を作り、上の段を組む）。作った BVH の検査（全クラスタが 1 回ずつ葉にある・節の境界が子を包む）を開発ビルドで行い、`MEGA_BVH_BUILD violations=0`。まだ描画には使わない。起動画面の比較と ctest が pass。
