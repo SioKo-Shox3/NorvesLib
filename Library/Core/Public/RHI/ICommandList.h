@@ -50,6 +50,73 @@ namespace NorvesLib::RHI
         uint64_t BufferOffset = 0;
     };
 
+    /**
+     * @brief テクスチャの layout（バックエンドの画像の layout を RHI の語で表したもの）
+     *
+     * 記録の前に layout を直列で計画するために使う。ResourceState から一意に決まる。
+     */
+    enum class TextureLayout : uint8_t
+    {
+        Undefined,
+        General,
+        ColorAttachment,
+        DepthStencilAttachment,
+        DepthStencilReadOnly,
+        ShaderReadOnly,
+        TransferSource,
+        TransferDest,
+        Present,
+    };
+
+    /**
+     * @brief ResourceState をテクスチャの layout へ写す
+     *
+     * Vulkan のバリアが使う対応（ResourceBarrierTracker::ResourceStateToImageLayout）と同じ。
+     */
+    constexpr TextureLayout ResourceStateToTextureLayout(ResourceState state)
+    {
+        switch (state)
+        {
+        case ResourceState::Common:
+        case ResourceState::UnorderedAccess:
+        case ResourceState::RayTracingStorage:
+            return TextureLayout::General;
+        case ResourceState::RenderTarget:
+            return TextureLayout::ColorAttachment;
+        case ResourceState::DepthWrite:
+            return TextureLayout::DepthStencilAttachment;
+        case ResourceState::DepthRead:
+            return TextureLayout::DepthStencilReadOnly;
+        case ResourceState::ShaderResource:
+            return TextureLayout::ShaderReadOnly;
+        case ResourceState::CopySource:
+            return TextureLayout::TransferSource;
+        case ResourceState::CopyDest:
+            return TextureLayout::TransferDest;
+        case ResourceState::Present:
+            return TextureLayout::Present;
+        default:
+            return TextureLayout::Undefined;
+        }
+    }
+
+    /**
+     * @brief old/new の layout を明示して張るテクスチャのバリア
+     *
+     * 共有の layout（Texture が持つ追跡値）を読まず、書き換えもしない。
+     */
+    struct ExplicitTextureBarrierDesc
+    {
+        ResourceState BeforeState = ResourceState::Undefined;
+        ResourceState AfterState = ResourceState::Undefined;
+        TextureLayout OldLayout = TextureLayout::Undefined;
+        TextureLayout NewLayout = TextureLayout::Undefined;
+        uint32_t MipLevel = 0;
+        uint32_t ArrayIndex = 0;
+        uint32_t MipCount = 0;   // 0 で残りのすべて
+        uint32_t ArrayCount = 0; // 0 で残りのすべて
+    };
+
 
     /**
      * @brief コマンドリストインターフェース
@@ -538,6 +605,47 @@ namespace NorvesLib::RHI
          */
         virtual void TextureBarrier(TexturePtr texture, ResourceState beforeState, ResourceState afterState,
                                     uint32_t mipLevel = 0, uint32_t arrayIndex = 0, uint32_t mipCount = 0, uint32_t arrayCount = 0) = 0;
+
+        /**
+         * @brief old/new の layout を明示してテクスチャのバリアを張る
+         *
+         * 共有の layout を読まず、書き換えもしない（最終の layout は記録の後に CommitTextureLayout で書き戻す）。
+         * layout を追跡しないバックエンドは状態だけの TextureBarrier に委ねる。
+         */
+        virtual void TextureBarrierExplicit(TexturePtr texture, const ExplicitTextureBarrierDesc &desc)
+        {
+            TextureBarrier(texture, desc.BeforeState, desc.AfterState,
+                           desc.MipLevel, desc.ArrayIndex, desc.MipCount, desc.ArrayCount);
+        }
+
+        /**
+         * @brief テクスチャの共有の layout を読む（記録の前の計画の起点と、Serial の区間の記録の後の確定に使う）
+         */
+        virtual TextureLayout GetTextureLayout(const ITexture *texture) const
+        {
+            (void)texture;
+            return TextureLayout::Undefined;
+        }
+
+        /**
+         * @brief 計画した最終の layout をテクスチャの共有の layout へ書き戻す
+         */
+        virtual void CommitTextureLayout(ITexture *texture, TextureLayout layout)
+        {
+            (void)texture;
+            (void)layout;
+        }
+
+        /**
+         * @brief このリストの記録が共有の layout を書き換えるかを切り替える
+         *
+         * false の間は EndRenderPass・TextureBarrier などが共有の layout を更新しない。
+         * layout を計画した区間を記録するときに使い、区間の後に CommitTextureLayout で書き戻す。
+         */
+        virtual void SetSharedTextureLayoutWrites(bool bEnabled)
+        {
+            (void)bEnabled;
+        }
     };
 
 } // namespace NorvesLib::RHI

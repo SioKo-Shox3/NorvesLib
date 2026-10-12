@@ -15,6 +15,14 @@ namespace NorvesLib::Core::Rendering
         virtual const char* GetName() const = 0;
         virtual void Declare(RenderGraphBuilder& builder) = 0;
         virtual void Execute(RenderGraphResources& resources, ViewRenderContext& context) = 0;
+
+        // Execute が宣言した最終の状態のとおりにだけ layout を変える（自分でバリアを張らず、
+        // render pass の finalState が宣言と一致する）と監査したパスだけ true を返す。
+        // true のパスは記録の前に最終の layout まで計画し、記録の最中は共有の layout を更新しない。
+        virtual bool DeclaresAllLayoutChanges() const
+        {
+            return false;
+        }
     };
 
 } // namespace NorvesLib::Core::Rendering

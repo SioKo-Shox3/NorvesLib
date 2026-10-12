@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "RHI/ICommandList.h"
 #include "RHI/IGPUResourceAllocator.h"
 #include "RHI/RHITypes.h"
 #include "Text/IdentityPool.h"
@@ -216,6 +217,26 @@ namespace NorvesLib::Core::Rendering
         bool bExported = false;
         bool bPinnedUntilGraphEnd = false;
         const char* DebugName = nullptr;
+    };
+
+    // 記録の前に決めたバリアの layout。GetCompiledBarriers() と同じ並びで持つ。
+    struct RGPlannedBarrier
+    {
+        // バリアの直前に Texture の共有の layout が持つと見込んだ値（バッファは Undefined）
+        RHI::TextureLayout ExpectedCurrentLayout = RHI::TextureLayout::Undefined;
+        RHI::TextureLayout OldLayout = RHI::TextureLayout::Undefined;
+        RHI::TextureLayout NewLayout = RHI::TextureLayout::Undefined;
+        bool bPlanned = false;
+    };
+
+    // 記録の区間。layout を宣言から決められるパスの連なり、または Serial のパス 1 つ。
+    struct RGRecordSegment
+    {
+        uint32_t FirstOrderIndex = RGInvalidPassIndex;
+        uint32_t EndOrderIndex = RGInvalidPassIndex; // この順番は含まない
+        // true: 最終の layout まで記録の前に決め、記録の後に書き戻す区間。
+        // false: 記録の後に共有の layout を読んで状態を確定し、次の区間を計画する Serial の区間。
+        bool bLayoutPlanned = false;
     };
 
     struct RGTransientAllocationStep

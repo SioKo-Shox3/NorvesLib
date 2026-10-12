@@ -1670,6 +1670,7 @@ norves_add_test_bundle(RenderGraphCompileTest
     MEMBER RenderGraphTextureUsageContractTest RenderGraphTextureUsageContractTest.cpp
     MEMBER RenderGraphDumpTest RenderGraphDumpTest.cpp
     MEMBER LegacyViewPassAdapterTest LegacyViewPassAdapterTest.cpp
+    MEMBER RenderGraphParallelPlanTest RenderGraphParallelPlanTest.cpp
 )
 target_link_libraries(RenderGraphCompileTest PRIVATE Core)
 target_include_directories(RenderGraphCompileTest PRIVATE
@@ -1708,6 +1709,8 @@ add_test(NAME RenderGraphAttachmentStateTest COMMAND RenderGraphLifetimeTest --t
 add_test(NAME RenderGraphDumpTest COMMAND RenderGraphCompileTest --test=RenderGraphDumpTest)
 
 add_test(NAME LegacyViewPassAdapterTest COMMAND RenderGraphCompileTest --test=LegacyViewPassAdapterTest)
+
+add_test(NAME RenderGraphParallelPlanTest COMMAND RenderGraphCompileTest --test=RenderGraphParallelPlanTest)
 
 add_executable(TransientResourcePoolTest
     TransientResourcePoolTest.cpp

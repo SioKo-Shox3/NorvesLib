@@ -778,7 +778,7 @@
 - paths: Game/GameModes/MegaStress, Game/Scenes/SceneCatalog.h, TASKS.md, PROGRESS.md
 - notes: 2026-10-12 SCN-MEGA-MEASURE-UPLOAD（反復 19）の 1% 移動の連続撮影を開いて見つけた。静止・1% 移動の撮影と、前の節目（SCN-MEGA-MEASURE-CPU）の撮影にも同じ量（黒い画素 6,033〜6,086）であり、移動・この節目の改修とは関係のない前からの欠陥。拡大は f121 の (900,820)〜(1300,1080)。
 ## SCN-ECS-RT-PLAN: 記録の前に、確保・保留コマンド・バリアの layout を直列で決める
-- status: todo
+- status: done
 - done-when: 設計 1.13 の記録の前の計画と、RHI の明示の old/new のバリア、最終の layout の書き戻しが入る。記録はまだ 1 本のリスト。`RenderGraphParallelPlanTest`（RenderGraphCompileTest の束）が、計画した layout が今の逐次の実行の layout と全バリアで一致することを確かめる。Execute の中で自分でバリアを張るパスの一覧を PROGRESS に書く。
 - verify: `cmake --build build --config Debug --target RenderGraphCompileTest -- /m:1`
 - verify: `ctest --test-dir build -C Debug -R "^RenderGraphParallelPlanTest$" --no-tests=error --output-on-failure --timeout 180`

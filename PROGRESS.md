@@ -2730,3 +2730,28 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Next: 残りの todo の最優先。
 - Notes: 開いた殻の判定は粗い段の三角形だけで数える（崖 2 種で 0.48〜0.59、閉じた岩は 0.035 未満なので下限 0.2 に十分な隔たりがある）。動く崖は回るので、時刻によって開いた背面が見える（動く物の配置を変えない条件のため）。
 - Notes: 根本の直しは資産（背面の無いスキャン）か MegaGeometry の両面描画で、どちらも paths の外。今の置き方の直しは、視点がフィールドの手前から +Z を見る間だけ効く。
+
+### SCN-ECS-RT-PLAN（2026-10-12、反復 26・run 20261012-030203）
+
+- 記録の前の計画（設計 §1.13）を RenderGraph に入れた。記録はまだ 1 本のリスト。
+  - `PlanRecording`: 記録の前に、コンパイルした順に transient をすべて確保し、使う Texture の共有の layout を起点として読む（`ICommandList::GetTextureLayout`）。
+  - 区間（`RGRecordSegment`）: `IRenderGraphPass::DeclaresAllLayoutChanges()`（既定 false）が true のパスは続く限り 1 つの「計画した区間」にまとめ、それ以外は Serial のパス 1 つの区間にする。Compile で作る（`GetRecordSegments()`）。
+  - 区間の頭で全バリアの old/new を決める（`RGPlannedBarrier`。`GetPlannedBarriers()` は `GetCompiledBarriers()` と同じ並び）。規則は Vulkan の `TextureBarrier` と同じ（全体を覆うバリアだけが layout を進め、一部の UAV → 読み取りは General のまま）。計画した区間ではパスの最終の layout（attachment は render pass の finalState、それ以外は最終の状態が使う状態と違うときだけ）も反映してから次のパスのバリアを決める。
+  - バリアは RHI の明示の old/new の `TextureBarrierExplicit` で張る（共有の layout を読まず書かない）。Serial の区間はバリアの直後に書き戻してから Execute を記録し（パスが記録の最中に共有の layout を読むため）、記録の後にそのパスが宣言した Texture の共有の layout を読んで確定してから次の区間を計画する。計画した区間は記録の間 `SetSharedTextureLayoutWrites(false)` で `EndRenderPass`・`TextureBarrier`・`GenerateMipmaps` などの共有の layout の書き込みを止め、区間の後に計画した最終の layout を `CommitTextureLayout` で書き戻す。
+  - 保留のフレームコマンドの束: flush の位置は今と同じ（各パスのバリアの前・後とパスの後）。transient の確保が記録の前へ移っただけで、コマンドの並びは変わらない（確保は CPU の処理だけ）。
+- RHI（`ICommandList`）: `TextureLayout`・`ResourceStateToTextureLayout`・`ExplicitTextureBarrierDesc` と、既定の実装を持つ仮想 4 つ（`TextureBarrierExplicit`・`GetTextureLayout`・`CommitTextureLayout`・`SetSharedTextureLayoutWrites`）。既定は状態だけの `TextureBarrier` に委ねるので、テストの偽のリストはそのまま動く。Vulkan は共有の layout の書き込みを `WriteSharedTextureLayout` の 1 か所に集めた。
+- 今のグラフのバリアはすべて全体を覆うので、張る old/new と書き戻す layout は今の `TextureBarrier` と同じ（起動画面の決定論比較で一致）。どのパスもまだ `DeclaresAllLayoutChanges` を宣言しない。
+- Execute の中で自分でバリアを張るパス（Rendering 層の `TextureBarrier`/`BufferBarrier` の直接の呼び出しと、保留のフレームコマンドへ積む `EnqueueTextureBarrier` の呼び手を辿った。数は呼び出しの箇所）:
+  - 直接: MegaGeometryPass（55）、VirtualShadowMapPass（本体 8 + VirtualShadowMapRaster 24 + VirtualShadowMapPages 14）、VisibilityRasterPass・VisibilityDebugPass（21）、LightingPass（9 + DDGIProbePass 13 + RayTracingShadowPass 3）、ShadowProbePass（7）、MaterialTileClassifyPass（7）、HiZPyramidPass（4）、AutoExposurePass（4）、SkinningComputePass（1）、PathTracingPass（1）。
+  - 保留のフレームコマンド経由（パスの後の flush で張られる）: MotionBlurPass（6）、DepthOfFieldPass（6）、TemporalAAPass（4）、ForwardPass（2）、VolumetricsPass（1）、NeuralMaterialDecodePass（1）、LightingPass（1）。
+  - パスの外（RenderingCoordinator・RenderResources のフレームの頭と終わり）: TileUploader・VirtualTextureFeedbackRing・GeometryPageRequestRing（RenderResources）、FrameCaptureReadbackHelper、SceneRenderer（保留のフレームコマンドの実行）。
+  - 上の一覧のパスは RT-PASSES で Parallel にできない（設計 §1.13）。一覧に無い RG のパス（GBuffer・ToneMapping・FXAA・Bloom・SSAO・SSR・Upscale・Composite・Presentation など）が候補。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-RT-PLAN-1.txt`: Debug の RenderGraphCompileTest のビルド build exit=0。
+  - `-2.txt`: `RenderGraphParallelPlanTest` Passed（ctest exit=0）。4 件: 全 Serial（パスが宣言に無いバリアを張る）・全部を計画した 1 区間・計画 → Serial → 計画の混在で、計画した見込みの layout と old/new が逐次の実行（従来の `TextureBarrier` が共有の layout を読み書きする）と全バリアで一致し、書き戻した最終の layout も一致する。計画した区間は記録の最中に共有の layout を書かない。宣言に無いバリアを張るパスを計画の対象にすると食い違いを検出する（比較が空振りしない）。
+  - `-3.txt`: RelWithDebInfo の起動画面 default の決定論比較が pass（mean_luminance の差 0、psnr 100 dB、不一致の画素 8E-06・最大差 1）。Game.log の ERROR 0。PNG を開いて確認（天球・地面・球・岩・家が基準どおり）。
+  - 回帰: RenderGraphLifetimeTest・RenderGraphAttachmentStateTest・RenderGraphDumpTest・LegacyViewPassAdapterTest は Passed。
+- Next: SCN-ECS-RT-RHI-SUBMIT。
+- Notes: RenderGraphCompileTest（2843 行の `commandList.DispatchCount == 10`）と RenderGraphTextureUsageContractTest（950 行の `pass.Initialize`、assert の窓でタイムアウト）は、この反復の変更の前（スモーク）から落ちている。今回の変更の後も同じ箇所で落ちる。
+- Notes: Serial の区間の確定は、そのパスが宣言した Texture だけを読む（全 Texture を毎パス読むと 1 フレームに数千回の dynamic_cast になるため）。宣言に無い Texture をパスが変えた場合、その Texture の見込みは次にそれを宣言する Serial のパスの記録の後まで古いまま（今は old/new が状態だけで決まるので張るバリアは変わらない）。
+- Notes: Vulkan の記述子の書き込み（VulkanDescriptorSet の `ResolveDescriptorImageLayout`）も記録の最中に共有の layout（General かどうか）を読む。計画した区間ではその値が区間の頭のままになるので、RT-PASSES の監査では「記述子へ General と読み取りを切り替えるテクスチャを書かない」も条件に入れる。

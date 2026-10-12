@@ -92,6 +92,56 @@ namespace NorvesLib::RHI::Vulkan
 
             return vk::ImageAspectFlagBits::eColor;
         }
+
+        vk::ImageLayout ToVkImageLayout(TextureLayout layout)
+        {
+            switch (layout)
+            {
+            case TextureLayout::General:
+                return vk::ImageLayout::eGeneral;
+            case TextureLayout::ColorAttachment:
+                return vk::ImageLayout::eColorAttachmentOptimal;
+            case TextureLayout::DepthStencilAttachment:
+                return vk::ImageLayout::eDepthStencilAttachmentOptimal;
+            case TextureLayout::DepthStencilReadOnly:
+                return vk::ImageLayout::eDepthStencilReadOnlyOptimal;
+            case TextureLayout::ShaderReadOnly:
+                return vk::ImageLayout::eShaderReadOnlyOptimal;
+            case TextureLayout::TransferSource:
+                return vk::ImageLayout::eTransferSrcOptimal;
+            case TextureLayout::TransferDest:
+                return vk::ImageLayout::eTransferDstOptimal;
+            case TextureLayout::Present:
+                return vk::ImageLayout::ePresentSrcKHR;
+            default:
+                return vk::ImageLayout::eUndefined;
+            }
+        }
+
+        TextureLayout FromVkImageLayout(vk::ImageLayout layout)
+        {
+            switch (layout)
+            {
+            case vk::ImageLayout::eGeneral:
+                return TextureLayout::General;
+            case vk::ImageLayout::eColorAttachmentOptimal:
+                return TextureLayout::ColorAttachment;
+            case vk::ImageLayout::eDepthStencilAttachmentOptimal:
+                return TextureLayout::DepthStencilAttachment;
+            case vk::ImageLayout::eDepthStencilReadOnlyOptimal:
+                return TextureLayout::DepthStencilReadOnly;
+            case vk::ImageLayout::eShaderReadOnlyOptimal:
+                return TextureLayout::ShaderReadOnly;
+            case vk::ImageLayout::eTransferSrcOptimal:
+                return TextureLayout::TransferSource;
+            case vk::ImageLayout::eTransferDstOptimal:
+                return TextureLayout::TransferDest;
+            case vk::ImageLayout::ePresentSrcKHR:
+                return TextureLayout::Present;
+            default:
+                return TextureLayout::Undefined;
+            }
+        }
     } // namespace
 
     //===========================================================================================
@@ -933,7 +983,7 @@ namespace NorvesLib::RHI::Vulkan
                 {
                     vk::ImageLayout finalLayout = m_barrierTracker.ResourceStateToImageLayout(
                         rpDesc.colorAttachments[i].finalState);
-                    vkTexture->SetVkImageLayout(finalLayout);
+                    WriteSharedTextureLayout(*vkTexture, finalLayout);
                 }
             }
         }
@@ -949,7 +999,7 @@ namespace NorvesLib::RHI::Vulkan
                 {
                     vk::ImageLayout finalLayout = m_barrierTracker.ResourceStateToImageLayout(
                         rpDesc.depthStencilAttachment.finalState);
-                    vkTexture->SetVkImageLayout(finalLayout);
+                    WriteSharedTextureLayout(*vkTexture, finalLayout);
                 }
             }
         }
@@ -1803,7 +1853,7 @@ namespace NorvesLib::RHI::Vulkan
             mipHeight = nextMipHeight;
         }
 
-        vkTexture->SetVkImageLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
+        WriteSharedTextureLayout(*vkTexture, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
 
     void VulkanCommandList::BufferBarrier(BufferPtr buffer, ResourceState beforeState, ResourceState afterState,
@@ -1899,7 +1949,68 @@ namespace NorvesLib::RHI::Vulkan
 
         if (bCoversWholeTexture)
         {
-            vkTexture->SetVkImageLayout(barrier.newLayout);
+            WriteSharedTextureLayout(*vkTexture, barrier.newLayout);
+        }
+    }
+
+    void VulkanCommandList::TextureBarrierExplicit(TexturePtr texture, const ExplicitTextureBarrierDesc &desc)
+    {
+        auto vkTexture = DynamicPointerCast<VulkanTexture>(texture);
+        if (!vkTexture)
+        {
+            throw std::runtime_error("無効なテクスチャです");
+        }
+
+        // 共有の layout は読まない。old/new は記録の前の計画が決めたものをそのまま使う。
+        vk::ImageMemoryBarrier barrier;
+        barrier.srcAccessMask = m_barrierTracker.ResourceStateToAccessFlags(desc.BeforeState);
+        barrier.dstAccessMask = m_barrierTracker.ResourceStateToAccessFlags(desc.AfterState);
+        barrier.oldLayout = ToVkImageLayout(desc.OldLayout);
+        barrier.newLayout = ToVkImageLayout(desc.NewLayout);
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = vkTexture->GetVkImage();
+        barrier.subresourceRange.aspectMask = GetBarrierAspectMask(*vkTexture);
+        barrier.subresourceRange.baseMipLevel = desc.MipLevel;
+        barrier.subresourceRange.levelCount = desc.MipCount == 0 ? VK_REMAINING_MIP_LEVELS : desc.MipCount;
+        barrier.subresourceRange.baseArrayLayer = desc.ArrayIndex;
+        barrier.subresourceRange.layerCount = desc.ArrayCount == 0 ? VK_REMAINING_ARRAY_LAYERS : desc.ArrayCount;
+
+        m_commandBuffer.pipelineBarrier(
+            ResolvePipelineStageFlags(desc.BeforeState),
+            ResolvePipelineStageFlags(desc.AfterState),
+            {},
+            0, nullptr,
+            0, nullptr,
+            1, &barrier);
+    }
+
+    TextureLayout VulkanCommandList::GetTextureLayout(const ITexture *texture) const
+    {
+        const auto *vkTexture = dynamic_cast<const VulkanTexture *>(texture);
+        return vkTexture ? FromVkImageLayout(vkTexture->GetVkImageLayout()) : TextureLayout::Undefined;
+    }
+
+    void VulkanCommandList::CommitTextureLayout(ITexture *texture, TextureLayout layout)
+    {
+        // 書き戻しは記録の後に直列で行う。共有の layout の更新を止めている間でも書く。
+        auto *vkTexture = dynamic_cast<VulkanTexture *>(texture);
+        if (vkTexture)
+        {
+            vkTexture->SetVkImageLayout(ToVkImageLayout(layout));
+        }
+    }
+
+    void VulkanCommandList::SetSharedTextureLayoutWrites(bool bEnabled)
+    {
+        m_bSharedTextureLayoutWrites = bEnabled;
+    }
+
+    void VulkanCommandList::WriteSharedTextureLayout(VulkanTexture &texture, vk::ImageLayout layout) const
+    {
+        if (m_bSharedTextureLayoutWrites)
+        {
+            texture.SetVkImageLayout(layout);
         }
     }
 
@@ -1944,7 +2055,7 @@ namespace NorvesLib::RHI::Vulkan
             0, nullptr,
             1, &barrier);
 
-        texture->SetVkImageLayout(barrier.newLayout);
+        WriteSharedTextureLayout(*texture, barrier.newLayout);
     }
 
     vk::Pipeline VulkanCommandList::GetOrCreateGraphicsPipeline(const PipelineStateCache::GraphicsPipelineCacheKey &key)

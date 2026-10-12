@@ -629,6 +629,7 @@ namespace NorvesLib::Core::Rendering
 
         BuildTransientAllocationPlan();
         BuildBarriers();
+        BuildRecordSegments();
         m_LastCompiledBarrierCount = static_cast<uint32_t>(m_CompiledBarriers.size());
         NORVES_STAT_ADD(NorvesLib::Debug::StatsManager::Get().GetRenderingStats().RenderGraphBarrierCount,
                         m_LastCompiledBarrierCount);
@@ -654,64 +655,97 @@ namespace NorvesLib::Core::Rendering
             return result;
         }
 
+        // 記録の前に直列で決める: transient の確保（コンパイルした順）と、共有の layout の起点。
+        if (!PlanRecording(context))
+        {
+            result.ExecutedPassCount = m_LastExecutedPassCount;
+            m_LastExecutionResult = result;
+            return result;
+        }
+
         RenderGraphResources resources(this);
         uint32_t nextBarrierIndex = 0;
-        for (uint32_t orderIndex = 0; orderIndex < m_CompiledPassOrder.size(); ++orderIndex)
+        for (const RGRecordSegment& segment : m_RecordSegments)
         {
-            const uint32_t passIndex = m_CompiledPassOrder[orderIndex];
-            if (!ValidatePassIndex(passIndex))
+            // 区間の頭で、ここまでに確定した layout から区間の全バリアの old/new を決める。
+            PlanSegmentLayouts(segment);
+            if (segment.bLayoutPlanned && context.CommandList)
             {
-                result.ExecutedPassCount = m_LastExecutedPassCount;
-                m_LastExecutionResult = result;
-                return result;
+                context.CommandList->SetSharedTextureLayoutWrites(false);
             }
 
-            IRenderGraphPass* pass = m_Passes[passIndex];
-            if (!pass)
+            for (uint32_t orderIndex = segment.FirstOrderIndex; orderIndex < segment.EndOrderIndex; ++orderIndex)
             {
-                result.ExecutedPassCount = m_LastExecutedPassCount;
-                m_LastExecutionResult = result;
-                return result;
-            }
-
-            FlushPendingFrameCommands(context);
-            if (!AcquireTransientResourcesForOrderIndex(orderIndex))
-            {
-                result.ExecutedPassCount = m_LastExecutedPassCount;
-                m_LastExecutionResult = result;
-                return result;
-            }
-
-            while (nextBarrierIndex < m_CompiledBarriers.size() &&
-                   m_CompiledBarriers[nextBarrierIndex].CompiledOrderIndex == orderIndex)
-            {
-                if (!ExecuteBarrier(m_CompiledBarriers[nextBarrierIndex], context))
+                const uint32_t passIndex = m_CompiledPassOrder[orderIndex];
+                IRenderGraphPass* pass = ValidatePassIndex(passIndex) ? m_Passes[passIndex] : nullptr;
+                if (!pass)
                 {
+                    if (segment.bLayoutPlanned && context.CommandList)
+                    {
+                        context.CommandList->SetSharedTextureLayoutWrites(true);
+                    }
                     result.ExecutedPassCount = m_LastExecutedPassCount;
                     m_LastExecutionResult = result;
                     return result;
                 }
-                ++nextBarrierIndex;
+
+                FlushPendingFrameCommands(context);
+                while (nextBarrierIndex < m_CompiledBarriers.size() &&
+                       m_CompiledBarriers[nextBarrierIndex].CompiledOrderIndex == orderIndex)
+                {
+                    if (!ExecuteBarrier(nextBarrierIndex, context))
+                    {
+                        if (segment.bLayoutPlanned && context.CommandList)
+                        {
+                            context.CommandList->SetSharedTextureLayoutWrites(true);
+                        }
+                        result.ExecutedPassCount = m_LastExecutedPassCount;
+                        m_LastExecutionResult = result;
+                        return result;
+                    }
+                    ++nextBarrierIndex;
+                }
+
+                if (!segment.bLayoutPlanned)
+                {
+                    // Serial のパスは記録の最中に共有の layout を読むので、バリアの後の layout を先に書き戻す。
+                    CommitPlannedLayouts(context);
+                }
+
+                FlushPendingFrameCommands(context);
+#if NORVES_ENABLE_RENDERGRAPH_DUMP
+                const bool bDebugMarkers = ShouldEmitDebugMarkers() && context.CommandList != nullptr;
+                if (bDebugMarkers)
+                {
+                    context.CommandList->BeginDebugMarker(pass->GetName());
+                }
+#endif
+                ScopedPassGPUTimestamp timing(context.CommandList, pass->GetName());
+                pass->Execute(resources, context);
+#if NORVES_ENABLE_RENDERGRAPH_DUMP
+                if (bDebugMarkers)
+                {
+                    context.CommandList->EndDebugMarker();
+                }
+#endif
+                ++m_LastExecutedPassCount;
+                FlushPendingFrameCommands(context);
             }
 
-            FlushPendingFrameCommands(context);
-#if NORVES_ENABLE_RENDERGRAPH_DUMP
-            const bool bDebugMarkers = ShouldEmitDebugMarkers() && context.CommandList != nullptr;
-            if (bDebugMarkers)
+            if (segment.bLayoutPlanned)
             {
-                context.CommandList->BeginDebugMarker(pass->GetName());
+                // 区間を記録し終えてから、計画した最終の layout を書き戻す。
+                if (context.CommandList)
+                {
+                    context.CommandList->SetSharedTextureLayoutWrites(true);
+                }
+                CommitPlannedLayouts(context);
             }
-#endif
-            ScopedPassGPUTimestamp timing(context.CommandList, pass->GetName());
-            pass->Execute(resources, context);
-#if NORVES_ENABLE_RENDERGRAPH_DUMP
-            if (bDebugMarkers)
+            else
             {
-                context.CommandList->EndDebugMarker();
+                // 計画できない区間は、記録の後の共有の layout を読んで状態を確定する。
+                ConfirmRecordedLayouts(segment, context);
             }
-#endif
-            ++m_LastExecutedPassCount;
-            FlushPendingFrameCommands(context);
         }
 
         for (const auto& exportEntry : m_TextureExports)
@@ -2122,7 +2156,231 @@ namespace NorvesLib::Core::Rendering
         return true;
     }
 
-    bool RenderGraph::ExecuteBarrier(const RGCompiledBarrier& barrier, ViewRenderContext& context)
+    void RenderGraph::BuildRecordSegments()
+    {
+        m_RecordSegments.clear();
+        for (uint32_t orderIndex = 0; orderIndex < m_CompiledPassOrder.size(); ++orderIndex)
+        {
+            const uint32_t passIndex = m_CompiledPassOrder[orderIndex];
+            const bool bPlannable = ValidatePassIndex(passIndex) &&
+                                    m_Passes[passIndex] &&
+                                    m_Passes[passIndex]->DeclaresAllLayoutChanges();
+            // 宣言から layout を決められるパスは続く限り 1 つの区間にまとめ、Serial のパスは 1 つずつ区間にする。
+            if (bPlannable && !m_RecordSegments.empty() && m_RecordSegments.back().bLayoutPlanned)
+            {
+                m_RecordSegments.back().EndOrderIndex = orderIndex + 1;
+                continue;
+            }
+
+            RGRecordSegment segment;
+            segment.FirstOrderIndex = orderIndex;
+            segment.EndOrderIndex = orderIndex + 1;
+            segment.bLayoutPlanned = bPlannable;
+            m_RecordSegments.push_back(segment);
+        }
+    }
+
+    bool RenderGraph::PlanRecording(ViewRenderContext& context)
+    {
+        NORVES_STAT_SCOPE_CATEGORY("RenderGraph.PlanRecording", "RenderGraph");
+        for (uint32_t orderIndex = 0; orderIndex < m_CompiledPassOrder.size(); ++orderIndex)
+        {
+            if (!AcquireTransientResourcesForOrderIndex(orderIndex))
+            {
+                return false;
+            }
+        }
+
+        m_PlannedBarriers.clear();
+        m_PlannedBarriers.resize(m_CompiledBarriers.size());
+        m_PlannedTextureLayouts.assign(m_Resources.size(), RHI::TextureLayout::Undefined);
+        m_PlannedTextureLayoutDirty.assign(m_Resources.size(), 0);
+        if (!context.CommandList)
+        {
+            return true;
+        }
+
+        for (uint32_t resourceIndex = 0; resourceIndex < m_Resources.size(); ++resourceIndex)
+        {
+            if (RHI::ITexture* texture = GetPlannedTexture(resourceIndex))
+            {
+                m_PlannedTextureLayouts[resourceIndex] = context.CommandList->GetTextureLayout(texture);
+            }
+        }
+        return true;
+    }
+
+    void RenderGraph::PlanSegmentLayouts(const RGRecordSegment& segment)
+    {
+        uint32_t barrierIndex = 0;
+        while (barrierIndex < m_CompiledBarriers.size() &&
+               m_CompiledBarriers[barrierIndex].CompiledOrderIndex < segment.FirstOrderIndex)
+        {
+            ++barrierIndex;
+        }
+
+        for (uint32_t orderIndex = segment.FirstOrderIndex; orderIndex < segment.EndOrderIndex; ++orderIndex)
+        {
+            for (; barrierIndex < m_CompiledBarriers.size() &&
+                   m_CompiledBarriers[barrierIndex].CompiledOrderIndex == orderIndex;
+                 ++barrierIndex)
+            {
+                PlanBarrierLayouts(barrierIndex);
+            }
+
+            // 計画した区間では、パスの最終の layout を反映してから次のパスのバリアを決める。
+            if (segment.bLayoutPlanned)
+            {
+                PlanPassFinalLayouts(m_CompiledPassOrder[orderIndex]);
+            }
+        }
+    }
+
+    void RenderGraph::PlanBarrierLayouts(uint32_t barrierIndex)
+    {
+        const RGCompiledBarrier& barrier = m_CompiledBarriers[barrierIndex];
+        RGPlannedBarrier& planned = m_PlannedBarriers[barrierIndex];
+        planned = RGPlannedBarrier{};
+        planned.bPlanned = true;
+        if (barrier.Kind != RGBarrierKind::Texture || !ValidateHandle(barrier.Resource))
+        {
+            return;
+        }
+
+        const uint32_t resourceIndex = barrier.Resource.Index;
+        const RHI::ITexture* texture = GetPlannedTexture(resourceIndex);
+        const RHI::TextureLayout current = m_PlannedTextureLayouts[resourceIndex];
+        planned.ExpectedCurrentLayout = current;
+        planned.OldLayout = RHI::ResourceStateToTextureLayout(barrier.BeforeState);
+        planned.NewLayout = RHI::ResourceStateToTextureLayout(barrier.AfterState);
+
+        // Vulkan の TextureBarrier と同じ規則: 全体を覆うバリアだけが共有の layout を進める。
+        // 一部の UAV を読み取りへ移すときは、General の画像を General のまま扱う。
+        const uint32_t totalMipLevels = texture ? texture->GetMipLevels() : 0u;
+        const uint32_t totalArrayLayers = texture ? texture->GetArraySize() * (texture->IsCubemap() ? 6u : 1u) : 0u;
+        const uint32_t mipCount = barrier.MipCount == 0 && barrier.MipLevel <= totalMipLevels
+                                      ? totalMipLevels - barrier.MipLevel
+                                      : barrier.MipCount;
+        const uint32_t arrayCount = barrier.ArrayCount == 0 && barrier.ArrayIndex <= totalArrayLayers
+                                        ? totalArrayLayers - barrier.ArrayIndex
+                                        : barrier.ArrayCount;
+        const bool bCoversWholeTexture = barrier.MipLevel == 0u && barrier.ArrayIndex == 0u &&
+                                         mipCount == totalMipLevels && arrayCount == totalArrayLayers;
+        const bool bPreserveGeneral =
+            !bCoversWholeTexture && texture &&
+            (barrier.BeforeState == RHI::ResourceState::UnorderedAccess ||
+             barrier.BeforeState == RHI::ResourceState::RayTracingStorage) &&
+            barrier.AfterState == RHI::ResourceState::ShaderResource &&
+            HasResourceUsage(texture->GetUsage(), RHI::ResourceUsage::UnorderedAccess) &&
+            current == RHI::TextureLayout::General;
+        if (bPreserveGeneral)
+        {
+            planned.OldLayout = RHI::TextureLayout::General;
+            planned.NewLayout = RHI::TextureLayout::General;
+        }
+
+        if (bCoversWholeTexture)
+        {
+            m_PlannedTextureLayouts[resourceIndex] = planned.NewLayout;
+            m_PlannedTextureLayoutDirty[resourceIndex] = 1;
+        }
+    }
+
+    void RenderGraph::PlanPassFinalLayouts(uint32_t passIndex)
+    {
+        if (passIndex >= m_PassDeclarations.size())
+        {
+            return;
+        }
+
+        // 宣言どおりにだけ layout を変えるパス: attachment は render pass の finalState、
+        // それ以外は最終の状態が使う状態と違うときだけ、パスの中で最終の状態へ移る。
+        for (const RGPassAccess& access : m_PassDeclarations[passIndex].Accesses)
+        {
+            if (!ValidateHandle(access.Resource) ||
+                m_Resources[access.Resource.Index].Kind != RGResourceKind::Texture)
+            {
+                continue;
+            }
+
+            if (access.bAttachment || access.FinalState != access.State)
+            {
+                m_PlannedTextureLayouts[access.Resource.Index] = RHI::ResourceStateToTextureLayout(access.FinalState);
+                m_PlannedTextureLayoutDirty[access.Resource.Index] = 1;
+            }
+        }
+    }
+
+    void RenderGraph::CommitPlannedLayouts(ViewRenderContext& context)
+    {
+        for (uint32_t resourceIndex = 0; resourceIndex < m_PlannedTextureLayoutDirty.size(); ++resourceIndex)
+        {
+            if (!m_PlannedTextureLayoutDirty[resourceIndex])
+            {
+                continue;
+            }
+
+            m_PlannedTextureLayoutDirty[resourceIndex] = 0;
+            RHI::ITexture* texture = GetPlannedTexture(resourceIndex);
+            if (texture && context.CommandList)
+            {
+                context.CommandList->CommitTextureLayout(texture, m_PlannedTextureLayouts[resourceIndex]);
+            }
+        }
+    }
+
+    void RenderGraph::ConfirmRecordedLayouts(const RGRecordSegment& segment, ViewRenderContext& context)
+    {
+        if (!context.CommandList)
+        {
+            return;
+        }
+
+        // 区間のパスが宣言した Texture の共有の layout を読んで確定する（バリアの資源も宣言の一部）。
+        for (uint32_t orderIndex = segment.FirstOrderIndex; orderIndex < segment.EndOrderIndex; ++orderIndex)
+        {
+            const uint32_t passIndex = m_CompiledPassOrder[orderIndex];
+            if (passIndex >= m_PassDeclarations.size())
+            {
+                continue;
+            }
+
+            for (const RGPassAccess& access : m_PassDeclarations[passIndex].Accesses)
+            {
+                if (!ValidateHandle(access.Resource))
+                {
+                    continue;
+                }
+
+                if (RHI::ITexture* texture = GetPlannedTexture(access.Resource.Index))
+                {
+                    m_PlannedTextureLayouts[access.Resource.Index] = context.CommandList->GetTextureLayout(texture);
+                }
+            }
+        }
+    }
+
+    RHI::ITexture* RenderGraph::GetPlannedTexture(uint32_t resourceIndex) const
+    {
+        if (resourceIndex >= m_Resources.size())
+        {
+            return nullptr;
+        }
+
+        // 確保していない transient は解決しない（解決すると確保してしまう）。
+        const RGResourceRecord& resource = m_Resources[resourceIndex];
+        if (resource.Kind != RGResourceKind::Texture)
+        {
+            return nullptr;
+        }
+        if (resource.Lifetime == RGResourceLifetime::Imported)
+        {
+            return resource.ImportedTexture.get();
+        }
+        return resource.ExecutionTexture.get();
+    }
+
+    bool RenderGraph::ExecuteBarrier(uint32_t barrierIndex, ViewRenderContext& context)
     {
         if (!context.CommandList)
         {
@@ -2130,6 +2388,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
+        const RGCompiledBarrier& barrier = m_CompiledBarriers[barrierIndex];
         if (barrier.Kind == RGBarrierKind::Texture)
         {
             RHI::TexturePtr texture = ResolveTexture(barrier.Resource);
@@ -2139,13 +2398,18 @@ namespace NorvesLib::Core::Rendering
                 return false;
             }
 
-            context.CommandList->TextureBarrier(texture,
-                                                barrier.BeforeState,
-                                                barrier.AfterState,
-                                                barrier.MipLevel,
-                                                barrier.ArrayIndex,
-                                                barrier.MipCount,
-                                                barrier.ArrayCount);
+            // 記録の前に決めた old/new で張り、共有の layout は読まない。
+            const RGPlannedBarrier& planned = m_PlannedBarriers[barrierIndex];
+            RHI::ExplicitTextureBarrierDesc desc;
+            desc.BeforeState = barrier.BeforeState;
+            desc.AfterState = barrier.AfterState;
+            desc.OldLayout = planned.OldLayout;
+            desc.NewLayout = planned.NewLayout;
+            desc.MipLevel = barrier.MipLevel;
+            desc.ArrayIndex = barrier.ArrayIndex;
+            desc.MipCount = barrier.MipCount;
+            desc.ArrayCount = barrier.ArrayCount;
+            context.CommandList->TextureBarrierExplicit(texture, desc);
             return true;
         }
 
@@ -2337,6 +2601,10 @@ namespace NorvesLib::Core::Rendering
         m_CompiledBarriers.clear();
         m_CompiledResourceLifetimes.clear();
         m_TransientAllocationPlan.clear();
+        m_RecordSegments.clear();
+        m_PlannedBarriers.clear();
+        m_PlannedTextureLayouts.clear();
+        m_PlannedTextureLayoutDirty.clear();
         m_LastCompiledBarrierCount = 0;
         m_bCompiled = false;
     }

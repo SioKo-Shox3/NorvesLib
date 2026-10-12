@@ -553,6 +553,10 @@ namespace NorvesLib::RHI::Vulkan
                            uint64_t offset = 0, uint64_t size = 0) override;
         void TextureBarrier(TexturePtr texture, ResourceState beforeState, ResourceState afterState,
                             uint32_t mipLevel = 0, uint32_t arrayIndex = 0, uint32_t mipCount = 0, uint32_t arrayCount = 0) override;
+        void TextureBarrierExplicit(TexturePtr texture, const ExplicitTextureBarrierDesc &desc) override;
+        TextureLayout GetTextureLayout(const ITexture *texture) const override;
+        void CommitTextureLayout(ITexture *texture, TextureLayout layout) override;
+        void SetSharedTextureLayoutWrites(bool bEnabled) override;
 
         // Vulkan固有のメソッド
         vk::CommandBuffer GetVkCommandBuffer() const { return m_commandBuffer; }
@@ -648,6 +652,12 @@ namespace NorvesLib::RHI::Vulkan
 
         /// @brief レンダーパス終了後にアタッチメントテクスチャのレイアウトを更新
         void UpdateAttachmentLayoutsAfterRenderPass();
+
+        /// @brief 共有の layout を書き換える（SetSharedTextureLayoutWrites(false) の間は書かない）
+        void WriteSharedTextureLayout(VulkanTexture &texture, vk::ImageLayout layout) const;
+
+        // false の間は記録が共有の layout を書き換えない（layout を計画した区間の記録）
+        bool m_bSharedTextureLayoutWrites = true;
 
         // 現在バインドされているリソース
         PipelinePtr m_currentPipeline;

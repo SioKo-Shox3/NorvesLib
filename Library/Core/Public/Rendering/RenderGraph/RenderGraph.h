@@ -117,6 +117,17 @@ namespace NorvesLib::Core::Rendering
             return m_TransientAllocationPlan;
         }
 
+        // 直近の Execute が記録の前に決めたバリアの layout（GetCompiledBarriers() と同じ並び）
+        const Container::VariableArray<RGPlannedBarrier>& GetPlannedBarriers() const
+        {
+            return m_PlannedBarriers;
+        }
+
+        const Container::VariableArray<RGRecordSegment>& GetRecordSegments() const
+        {
+            return m_RecordSegments;
+        }
+
         bool TryGetCompiledResourceLifetime(RGResourceHandle handle, RGCompiledResourceLifetime& outLifetime) const;
         bool TryGetDeclaredPassVersionDiagnostic(uint32_t passIndex,
                                                  uint32_t accessIndex,
@@ -345,7 +356,15 @@ namespace NorvesLib::Core::Rendering
 
         bool AcquireTransientResourcesForOrderIndex(uint32_t orderIndex);
         bool AcquireTransientResource(RGResourceRecord& resource);
-        bool ExecuteBarrier(const RGCompiledBarrier& barrier, ViewRenderContext& context);
+        void BuildRecordSegments();
+        bool PlanRecording(ViewRenderContext& context);
+        void PlanSegmentLayouts(const RGRecordSegment& segment);
+        void PlanBarrierLayouts(uint32_t barrierIndex);
+        void PlanPassFinalLayouts(uint32_t passIndex);
+        void CommitPlannedLayouts(ViewRenderContext& context);
+        void ConfirmRecordedLayouts(const RGRecordSegment& segment, ViewRenderContext& context);
+        RHI::ITexture* GetPlannedTexture(uint32_t resourceIndex) const;
+        bool ExecuteBarrier(uint32_t barrierIndex, ViewRenderContext& context);
         void FlushPendingFrameCommands(ViewRenderContext& context) const;
 
         RHI::TexturePtr ResolveTexture(RGResourceHandle handle);
@@ -370,6 +389,11 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<RGCompiledBarrier> m_CompiledBarriers;
         Container::VariableArray<RGCompiledResourceLifetime> m_CompiledResourceLifetimes;
         Container::VariableArray<RGTransientAllocationStep> m_TransientAllocationPlan;
+        Container::VariableArray<RGRecordSegment> m_RecordSegments;
+        Container::VariableArray<RGPlannedBarrier> m_PlannedBarriers;
+        // 資源ごとの計画上の共有の layout と、書き戻しが要るかの印（Texture だけ使う）
+        Container::VariableArray<RHI::TextureLayout> m_PlannedTextureLayouts;
+        Container::VariableArray<uint8_t> m_PlannedTextureLayoutDirty;
         Container::UnorderedMap<Identity, RGNamedResource, Identity::Hasher> m_NamedResources;
         Container::UnorderedMap<Identity, RGTextureHandle, Identity::Hasher> m_TextureExports;
         RenderGraphExecutionResult m_LastExecutionResult;
