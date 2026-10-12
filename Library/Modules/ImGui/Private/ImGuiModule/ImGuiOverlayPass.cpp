@@ -256,10 +256,11 @@ namespace NorvesLib::Modules::Gui
             return false;
         }
 
-        // ---- VB/IB/UBO リング(per-slot=FramePacket スロット数) ----
+        // ---- VB/IB/UBO リング(飛行中のスロットごと=IN_FLIGHT_SET_COUNT 組) ----
         // 初期容量は控えめに確保し、不足時に DynamicBufferRing が 2 倍リサイズする
-        // (VB/IB は実描画量で伸びる。UBO は固定 16B なのでリサイズしない)。
-        constexpr uint32_t slotCount = Core::Rendering::FRAME_PACKET_BUFFER_COUNT;
+        // (VB/IB は実描画量で伸びる。UBO は固定 16B なのでリサイズしない)。拡張はスロットの
+        // 古いバッファを置き換えるが、飛行中のスロットで引くので前の利用は GPU 完了済み。
+        constexpr uint32_t slotCount = IN_FLIGHT_SET_COUNT;
         const bool bRingsOk =
             m_VertexRing.Initialize(context.Device, slotCount, RHI::ResourceUsage::VertexBuffer,
                                     static_cast<uint64_t>(sizeof(ImDrawVert)) * 4096ull) &&
@@ -277,9 +278,9 @@ namespace NorvesLib::Modules::Gui
             return false;
         }
 
-        // ---- per-slot DescriptorSet(共有フォントテクスチャ/サンプラー + 当該スロットの UBO) ----
-        // 各スロットの DescriptorSet を「binding1=共有フォントテクスチャ/サンプラー(不変)」+
-        // 「binding0=当該スロットの固定 UBO buffer」で一度だけ束ねて Update する。UBO は固定 16B で
+        // ---- 飛行中のスロットごとの DescriptorSet(共有フォントテクスチャ/サンプラー + 同じスロットの UBO) ----
+        // 各組の DescriptorSet を「binding1=共有フォントテクスチャ/サンプラー(不変)」+
+        // 「binding0=同じ飛行中スロットの固定 UBO buffer」で一度だけ束ねて Update する。UBO は固定 16B で
         // リサイズしないため DynamicBufferRing のスロット buffer は安定(Initialize 時の実体)。
         // 以後 Execute は UBO の中身のみ書き換え(CPU マップ)、DescriptorSet を再 Update しない
         // (=描画中に vkUpdateDescriptorSets を起こさず、in-flight 中の DescriptorSet 更新を避ける)。
@@ -325,7 +326,7 @@ namespace NorvesLib::Modules::Gui
     {
         // RenderThread 静止後・device 生存中に ImGuiModule から駆動される。全 RHI リソースを
         // 本パスが所有しているため明示解放する(順序は任意・参照カウントで安全)。
-        for (uint32_t i = 0; i < Core::Rendering::FRAME_PACKET_BUFFER_COUNT; ++i)
+        for (uint32_t i = 0; i < IN_FLIGHT_SET_COUNT; ++i)
         {
             m_SlotDescriptorSets[i].reset();
         }
@@ -374,11 +375,21 @@ namespace NorvesLib::Modules::Gui
             return;
         }
 
-        // RenderThread。処理中パケットのスロット index で per-slot クローンを選ぶ。当該
-        // スロットは Reading(RT 専有)で GT は同スロットへ書き込まないため安全。
+        // RenderThread。CPU の写しは処理中パケットのスロット index で選ぶ。当該スロットは
+        // Reading(RT 専有)で GT は同スロットへ書き込まないため安全。
         const uint32_t slotIndex = context.OverlayPacketSlotIndex;
         if (slotIndex >= Core::Rendering::FRAME_PACKET_BUFFER_COUNT)
         {
+            return;
+        }
+        // GPU 資源の組は飛行中のスロットで選ぶ(パケットのスロットは GPU の完了を保証しない)。
+        // 組の数を超える飛行中スロットは、前の提出が読む組を書き換えうるので描かない。
+        const uint32_t inFlightIndex = context.FrameIndex;
+        if (inFlightIndex >= IN_FLIGHT_SET_COUNT)
+        {
+            NORVES_LOG_WARNING(kLogCategory,
+                               "Execute skipped: FrameIndex %u exceeds in-flight set count %u",
+                               inFlightIndex, IN_FLIGHT_SET_COUNT);
             return;
         }
         const ImGuiDrawSnapshot &snapshot = m_SlotSnapshots[slotIndex];
@@ -399,14 +410,14 @@ namespace NorvesLib::Modules::Gui
         commandList->BeginRenderPass(NonOwning(context.OverlayLoadRenderPass),
                                      NonOwning(context.OverlayLoadFramebuffer));
 
-        RenderDrawData(context, drawData, slotIndex);
+        RenderDrawData(context, drawData, inFlightIndex);
 
         commandList->EndRenderPass();
     }
 
     void ImGuiOverlayPass::RenderDrawData(Core::Rendering::ViewRenderContext &context,
                                           const ::ImDrawData *drawData,
-                                          uint32_t slotIndex)
+                                          uint32_t inFlightIndex)
     {
         RHI::ICommandList *commandList = context.CommandList;
 
@@ -444,11 +455,12 @@ namespace NorvesLib::Modules::Gui
             return;
         }
 
-        // 当該スロットの VB/IB へ Upload する(per-slot=FramePacket スロット排他で安全)。
+        // 飛行中スロットの VB/IB へ Upload する(同じスロットの前の利用は BeginFrame のフェンスで
+        // GPU 完了済みなので、書き換えや拡張による置き換えは前の提出と重ならない)。
         RHI::BufferPtr vertexBuffer = m_VertexRing.Upload(
-            slotIndex, vertices.data(), static_cast<uint64_t>(vertices.size()) * sizeof(ImDrawVert));
+            inFlightIndex, vertices.data(), static_cast<uint64_t>(vertices.size()) * sizeof(ImDrawVert));
         RHI::BufferPtr indexBuffer = m_IndexRing.Upload(
-            slotIndex, indices.data(), static_cast<uint64_t>(indices.size()) * sizeof(ImDrawIdx));
+            inFlightIndex, indices.data(), static_cast<uint64_t>(indices.size()) * sizeof(ImDrawIdx));
         if (!vertexBuffer || !indexBuffer)
         {
             NORVES_LOG_WARNING(kLogCategory, "RenderDrawData: VB/IB upload failed");
@@ -472,15 +484,15 @@ namespace NorvesLib::Modules::Gui
         transform.Translate[1] = -1.0f - displayPos.y * transform.Scale[1];
         // UBO は固定 16B でリサイズしないため、スロット buffer は Initialize で DescriptorSet へ
         // 束ねた安定実体。ここでは中身のみ CPU マップ書き換えする(DescriptorSet は再 Update
-        // しない=描画中の vkUpdateDescriptorSets を起こさない)。slot 排他のため当該 buffer は
-        // 前フレームの GPU in-flight と競合しない(同一スロットは回収済みになるまで再書込みされない)。
-        RHI::BufferPtr uniformBuffer = m_UniformRing.Upload(slotIndex, &transform, sizeof(transform));
+        // しない=描画中の vkUpdateDescriptorSets を起こさない)。飛行中のスロットで引くので、
+        // 同じ buffer を読んだ前の提出は BeginFrame のフェンスで GPU 完了済み。
+        RHI::BufferPtr uniformBuffer = m_UniformRing.Upload(inFlightIndex, &transform, sizeof(transform));
         if (!uniformBuffer)
         {
             NORVES_LOG_WARNING(kLogCategory, "RenderDrawData: UBO upload failed");
             return;
         }
-        RHI::DescriptorSetPtr descriptorSet = m_SlotDescriptorSets[slotIndex];
+        RHI::DescriptorSetPtr descriptorSet = m_SlotDescriptorSets[inFlightIndex];
         if (!descriptorSet)
         {
             return;

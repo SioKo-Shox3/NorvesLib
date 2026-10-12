@@ -43,9 +43,16 @@ struct ImDrawData;
 //       ライブ ImDrawData を借用設定し、OnAssignedToPacket(slot) が「書き込み中パケットの
 //       スロット index」へ m_SlotSnapshots[slot] をディープクローンする(Writing=GT 専有)。
 //     - RenderThread: Execute が context.OverlayPacketSlotIndex(処理中パケットのスロット
-//       index)で m_SlotSnapshots[idx] を読み、頂点/インデックス/UBO を当該スロットの
-//       DynamicBufferRing へ Upload して描画する(Reading=RT 専有)。
-//   同一スロットへの GT クローン書込みと RT 読取/Upload はプール排他で時間的に重ならない。
+//       index)で m_SlotSnapshots[idx] を読む(Reading=RT 専有)。
+//   同一スロットへの GT クローン書込みと RT 読取はプール排他で時間的に重ならない。
+//
+// GPU 資源の添字(飛行中のスロット):
+//   頂点/インデックス/UBO の DynamicBufferRing のスロットと m_SlotDescriptorSets は、パケットの
+//   スロットでなく飛行中のスロット(context.FrameIndex)で引く。RenderThread は提出の直後に
+//   パケットを Empty へ戻すため、パケットのスロットは GPU の完了を保証せず、同じスロットを続けて
+//   描くことがある。飛行中のスロットは BeginFrame のフェンスで前の利用の GPU 完了が保証されるので、
+//   その組の頂点/UBO を書き換えても前の提出が読む中身を壊さない。FrameIndex が組の数
+//   (IN_FLIGHT_SET_COUNT)以上なら描かずに警告する。
 //
 // テクスチャ(MT 安全・レガシー単一アトラス維持):
 //   フォントアトラスは GameThread の InitializeGameThread で
@@ -122,12 +129,17 @@ namespace NorvesLib::Modules::Gui
         void OnAssignedToPacket(uint32_t slotIndex) override;
 
     private:
+        // GPU 資源(VB/IB/UBO リングのスロットと DescriptorSet)の組の数。飛行中のスロット
+        // (context.FrameIndex)で引くので、スワップチェーンの飛行中フレーム数の上限以上にする。
+        static constexpr uint32_t IN_FLIGHT_SET_COUNT = NorvesLib::Core::Rendering::FRAME_PACKET_BUFFER_COUNT;
+
         // 単一フレームの ImDrawData を自前描画する(Execute・RenderThread)。snapshot の全
         // ImDrawList を 1 本の VB/IB へ連結 Upload し、各 ImDrawCmd を Mesh2D DrawCommand へ
-        // 変換して context.Renderer->ExecuteDrawCommands で発行する。
+        // 変換して context.Renderer->ExecuteDrawCommands で発行する。inFlightIndex は飛行中の
+        // スロット(context.FrameIndex)で、GPU 資源の組を選ぶ。
         void RenderDrawData(NorvesLib::Core::Rendering::ViewRenderContext &context,
                             const ::ImDrawData *drawData,
-                            uint32_t slotIndex);
+                            uint32_t inFlightIndex);
 
         // GameThread ①: フォント ITexture(借用 device 所有でなく本パス所有)。
         NorvesLib::RHI::TexturePtr m_FontTexture;
@@ -136,23 +148,26 @@ namespace NorvesLib::Modules::Gui
 
         // seam ②: mesh2d パイプライン(overlay load RP に対して生成・本パス所有)。
         NorvesLib::RHI::PipelinePtr m_Pipeline;
-        // seam ②: per-slot DescriptorSet(本パス所有)。各スロットの DescriptorSet は
-        // 「共有フォントテクスチャ/サンプラー(binding1)」+「当該スロットの固定 UBO buffer
-        // (binding0)」を Initialize で一度だけ束ね、以後 Update しない(=描画中に
-        // vkUpdateDescriptorSets を起こさず in-flight 競合を避ける)。Execute はスロットの
-        // UBO buffer の中身のみを DynamicBufferRing 経由で書き換える(CPU マップ)。
-        // アトラスは 1 枚のみ・全スロットでテクスチャ同一のため、Execute は cmd.GetTexID() を
-        // 解決に使わず常に当該スロットの DescriptorSet を直接バインドする。
-        NorvesLib::RHI::DescriptorSetPtr m_SlotDescriptorSets[NorvesLib::Core::Rendering::FRAME_PACKET_BUFFER_COUNT];
-        // seam ②: scale/translate UBO(per-slot・固定 16B でリサイズしない・本パス所有)。
+        // seam ②: 飛行中のスロットごとの DescriptorSet(本パス所有・context.FrameIndex で引く)。
+        // 各組は「共有フォントテクスチャ/サンプラー(binding1)」+「同じ飛行中スロットの固定 UBO
+        // buffer(binding0)」を Initialize で一度だけ束ね、以後 Update しない(=描画中に
+        // vkUpdateDescriptorSets を起こさない)。Execute はその UBO buffer の中身のみを
+        // DynamicBufferRing 経由で書き換える(CPU マップ)。同じ飛行中スロットの前の利用は
+        // BeginFrame のフェンスで GPU 完了済みなので、書き換えは前の提出と重ならない。
+        // アトラスは 1 枚のみ・全組でテクスチャ同一のため、Execute は cmd.GetTexID() を
+        // 解決に使わず常に当該組の DescriptorSet を直接バインドする。
+        NorvesLib::RHI::DescriptorSetPtr m_SlotDescriptorSets[IN_FLIGHT_SET_COUNT];
+        // seam ②: scale/translate UBO(飛行中のスロットごと・固定 16B でリサイズしない・本パス所有)。
         NorvesLib::Core::Rendering::DynamicBufferRing m_UniformRing;
-        // seam ②: 頂点バッファリング(per-slot・本パス所有)。Execute で全 ImDrawList を連結 Upload。
+        // seam ②: 頂点バッファリング(飛行中のスロットごと・本パス所有)。Execute で全 ImDrawList を連結 Upload。
         NorvesLib::Core::Rendering::DynamicBufferRing m_VertexRing;
-        // seam ②: インデックスバッファリング(per-slot・本パス所有)。
+        // seam ②: インデックスバッファリング(飛行中のスロットごと・本パス所有)。
         NorvesLib::Core::Rendering::DynamicBufferRing m_IndexRing;
 
-        // FramePacket スロットごとの ImDrawData ディープクローン(本パス所有)。GameThread が
-        // OnAssignedToPacket で書込み、RenderThread が Execute で読む。スロット排他で安全。
+        // FramePacket スロットごとの ImDrawData ディープクローン(本パス所有・CPU の写し)。
+        // GameThread が OnAssignedToPacket で書込み、RenderThread が Execute で読む。パケットの
+        // スロットはプール排他(Writing=GT / Reading=RT)なので CPU 側では重ならない。GPU 資源は
+        // パケットのスロットでなく飛行中のスロットで引く(上の各リング/DescriptorSet を参照)。
         ImGuiDrawSnapshot m_SlotSnapshots[NorvesLib::Core::Rendering::FRAME_PACKET_BUFFER_COUNT];
 
         // 本フレームのライブ ImDrawData(GameThread 借用・次 NewFrame まで有効)。RT は読まない。

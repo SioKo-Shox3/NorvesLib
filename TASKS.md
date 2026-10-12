@@ -897,7 +897,7 @@
 - notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。同じキューの提出は提出の順で並ぶが、バリアが無ければ前の提出のコマンドと重なって走りうる。バリアの第 1 の範囲は提出の順で前のコマンドを全部含むので、フレームの頭の 1 本で足りる（timeline のセマフォで提出ごとに待つ形より軽く、CPU の記録と GPU の実行の重なりは保つ。GPU どうしのフレームの境目の重なりだけを捨てる）。各パスのフレームをまたぐ資源の状態の追跡（`ResourceState`）は記録の順＝提出の順なので、そのままでよい。TLAS の Update はこのバリアより後に記録されること（仕事の番号 0 番のリスト、`BuildAccelerationStructures`）を確かめる。ImGui の GPU 資源は SCN-ECS-FIF-IMGUI、置き換えた古い RHI 資源の破棄は SCN-ECS-FIF-DEFERRED-DESTROY-* で直す。危険地帯（RHI/Vulkan・RenderThread）。
 
 ## SCN-ECS-FIF-IMGUI: ImGui の頂点・インデックス・UBO・記述子を、パケットのスロットでなく飛行中のスロットで引く
-- status: todo
+- status: done
 - done-when: `ImGuiOverlayPass` の GPU 資源（`m_VertexRing`・`m_IndexRing`・`m_UniformRing` のスロットと `m_SlotDescriptorSets`）を、パケットのスロット（`context.OverlayPacketSlotIndex`）でなく飛行中のスロット（`context.FrameIndex`）で引く。CPU の写し（`m_SlotSnapshots`。GameThread が `OnAssignedToPacket` で書き、RenderThread が `Execute` で読む）はパケットのスロットのまま。理由: RenderThread は提出の直後にパケットを Empty へ戻す（`RenderThread.cpp` の `ReleasePacket`、`FramePacket.h` の `FinishRead`）ので、パケットのスロットは GPU の完了を保証せず、同じスロットを続けて描くことがある。2 にしたとき前の提出が読んでいる頂点・UBO を書き換えうる。飛行中のスロットは `BeginFrame` のフェンスで前の利用の完了が保証される。`FrameIndex` が組の数以上なら描かずに警告を出す。ヘッダとコメントの「スロット排他で安全」「同一スロットは回収済みになるまで再書込みされない」を、この決まりに書き直す。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass し、ランチャー（ImGui で描く）→ シーン → ランチャーの周回が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-IMGUI`
