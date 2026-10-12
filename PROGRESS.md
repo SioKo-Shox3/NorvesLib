@@ -2603,3 +2603,44 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - Notes: VSM が投影物を集めなかったフレーム（深度・クリップマップが無い）は、他の投影物の記録と同じく積まれた MegaGeometry の無効化も捨てる。
 - Notes: 表の作り直し（区画の出入り）のフレームは前の並びを鍵で引くので O(本数)。読み込み後の mega-stress では 120 フレームに 1〜2 回。
 - Notes: `DirectionalShadowLightMatrices` の `CollectDirectionalShadowCasterBounds`・`FitDirectionalShadowMatrixSettingsToCasters` は MegaGeometry の proxy の配列を受ける形のまま（既存のテストが物ごとの球の値を確かめている。製品の経路は ShadowMapPass が範囲の境界を足す）。範囲の集合を直接確かめるテストは書いていない（verify に無い）。
+
+### SCN-MEGA-MEASURE-UPLOAD（2026-10-12、反復 19・run 20261012-030203）
+
+- 計測だけ（コードは変えていない）。RelWithDebInfo・1920×1080・300 フレーム。Game.exe（08:36）は HEAD 2a29301b のソースより後のビルド（verify 1 で up-to-date）。撮影は `.harness/runs/scene-capture/SCN-MEGA-MEASURE-UPLOAD/<負荷>/`（metrics.json・Game.log・trace.csv）、撮影の出力は `.harness/runs/20261012-030203/capture-SCN-MEGA-MEASURE-UPLOAD-<負荷>.txt`。
+- 負荷: MEASURE-CPU と同じ 5万個の静止（default・close・aerial）・1% 移動、1% 移動 + 64 m 区画（5万個は前回と同じく VRAM 15,645 MB > 予算 12,307 MB でバッファの確保に失敗して落ちたので 3万個）、バナナ 3万本 overview。補助に 5万個の 0.2% 移動（矩形の上限 256 未満の側で比例を見るため）、カメラパスの再生（`camera-path-play`）をバナナ 3万本 overview と 10万本 horizon。
+- `RecordFrameCommand` は trace の RenderThread の区間を 1 回ずつ集めた median / p95（metrics の値と 0.01 ms 以内で一致）。upload は `MEGA_SCENE_UPLOAD` の窓（120 回の更新）の `window_bytes ÷ updates`。VSM の無効化は `VSM_CACHE invalidated`（60 フレームごとの 1 フレームの値）の読み込み後の範囲。
+
+| 値（median / p95） | 5万個 静止 | 5万個 1% 移動 | 5万個 0.2% 移動（補助） | 3万個 1% 移動 + 64 m 区画 | バナナ 3万本 overview | バナナ 3万本 パス再生 | バナナ 10万本 パス再生 |
+|---|---|---|---|---|---|---|---|
+| gt ms | 0.162 / 0.248 | 1.722 / 22.64 | 0.457 / 20.95 | 0.989 / 12.65 | 0.158 / 0.287 | 0.164 / 0.272 | 0.176 / 0.342 |
+| rt ms | 56.0 / 59.0 | 60.4 / 63.8 | 57.5 / 60.5 | 42.1 / 57.3 | 41.4 / 46.8 | 45.0 / 50.6 | 120.2 / 144.8 |
+| GPU ms | 42.2 / 43.7 | 46.0 / 47.3 | 43.3 / 44.7 | 31.2 / 34.8 | 18.5 / 20.3 | 22.1 / 24.9 | 50.7 / 60.0 |
+| `MegaGeometryPass.RecordFrameCommand` ms | **0.961** / 1.145 | **0.898** / 1.127 | 0.896 / 1.115 | 0.619 / **6.313** | 0.565 / 0.717 | 0.565 / 0.702 | 1.650 / 2.136 |
+| `MEGA_SCENE_UPLOAD` bytes / フレーム（変わった行） | **0**（窓 120 回すべて 0） | 120,032（500） | 24,032（100） | 71,312〜72,032（297〜300） | 0 | 0 | 0 |
+| `AccelerationStructureBuild`（GPU）ms | **0.000 / 0.000** | 0.025 / 0.026 | 0.024 / 0.025 | 0.022 / 0.103 | 0.000 / 0.000 | 0.000 / 0.000 | 0.789 / 1.365 |
+| TLAS（`RT_SCENE`、120 フレームあたり） | 省略 120 | Update 120（890 本） | Update 120（890 本） | Update 105・Build 15 | 省略 120（30,001 本） | 省略 120（30,001 本、120 m 外 0） | Update 120（65,536 本、上限外 34,465） |
+| VSM の無効化（ページ / 全ページ） | 0 / 743 | **741〜744 / 743（全部）** | 290〜343 / 743 | **679〜783（全部）** | 0 / 1,211 | 0 / 1,310 | 0 / 1,309 |
+| `MEGA_SHADOW_DIRTY` 箱 / フレーム | 0 | 500 | 100 | 約 304 | 0 | 0 | 0 |
+| `VirtualShadowMapPass`（GPU）ms | 0.203 / 0.780 | 3.042 / 4.938 | 0.944 / 2.084 | 2.223 / 4.294 | 0.376 / 0.927 | 0.743 / 1.554 | 1.940 / 4.748 |
+
+- 静止の close・aerial: `RecordFrameCommand` 0.909 / 1.127・0.896 / 1.040 ms、upload 0、AS 0、TLAS は全部省略、無効化 0。gt 0.161 / 0.265・0.155 / 0.244、rt 46.7 / 49.3・55.1 / 58.1、GPU 33.3 / 34.3・42.1 / 43.8 ms。
+- 合否:
+  - 5万個で `RecordFrameCommand` ≤ 1 ms: median は**合格**（静止 0.90〜0.96・1% 移動 0.90 ms。前の節目では 1 回あたり約 16 ms）。p95 は 1.04〜1.15 ms で 1 ms をわずかに超え、3万個 + 64 m 区画では区画の出入りのフレームで跳ねる（300 回中 26 回が 3 ms 超・最大 8.4 ms、p95 6.3 ms）→ **SCN-MEGA-FIX-RECORD-COMMAND** を足した。
+  - 静止で upload 0: **合格**（読み込み後の窓は 3 視点ともすべて `zero_updates=120`）。
+  - 静止で `AccelerationStructureBuild` ≤ 0.05 ms: **合格**（0.000 ms。TLAS の Update は全フレーム省略）。
+  - 1% 移動で upload が移動数に比例: **合格**。1 行 240 B（100 行 24,032 B・約 300 行 72,032 B・500 行 120,032 B、`page_bytes=0`）。
+  - 1% 移動で VSM の無効化が移動数に比例: **不合格**。積む箱は移動数どおり（100・500）だが、矩形が上限 256 を超える 1%（500 席）・3万個の 1%（約 300 席）は全ページを描き直す（0.2% の 100 席は 290〜343 ページで部分）→ **SCN-MEGA-FIX-VSM-INVALIDATE** を足した。
+  - カメラパスの再生中に TLAS の更新があるフレームの p95: バナナ 10万本 horizon（120 m 内の近い順 65,536 本の集合がカメラの移動で変わり、300 フレームすべて Update）で `AccelerationStructureBuild` 0.790 / **1.365 ms**、GPU のフレーム 50.7 / **60.0 ms**、rt 120.2 / **144.8 ms**。バナナ 3万本は全部が 120 m 内で集合が変わらず、パス再生中も Update 0（全部省略）。
+  - 1% 移動の連続撮影（`move1-sequence/f120〜f124・f130.png`。Game を `--capture-sequence` で直接起動、EXIT=0）を開いた: 左端の岩（f123→f130 で右へ入る）と中央の橙の岩（左へ動く）は、どのフレームも輪郭がくっきりして二重像・尾を引く跡は無い。地面の影も一緒に動く。残像は増えていない。
+  - 届かないもの: 上の 2 件を FIX として足した。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-MEGA-MEASURE-UPLOAD-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `-2.txt`: 5万個の静止の metrics.json に `CHECK_CAPTURE_METRICS result=pass views=default,close,aerial`、EXIT=0。
+  - `-3.txt`: Debug の Game のビルド EXIT=0、error 0。
+  - `-4.txt`: Debug の起動画面 default が `CAPTURE_STARTUP_SCENE result=pass`、EXIT=0。`vulkan_validation` の error_count=0・vuid_count=0、Game.log の ERROR 0。PNG を開いて確認（家・球・岩・天球・影）。
+  - 撮影の Game.log の ERROR は全負荷 0（落ちた 5万個 + 64 m 区画を除く）。`MEGA_SCENE_UPLOAD ... mismatch=0`。
+- Next: SCN-MEGA-FIX-VSM-INVALIDATE、SCN-MEGA-FIX-RECORD-COMMAND。
+- Notes: 撮影中に見つけた前からの欠陥: mega-stress の既定の視点で、近くの岩が近平面で切れて内側（黒い面と半透明の膜）が下端中央に見える。静止・前の節目の撮影にも同じ量であり、移動とは無関係。SCN-MEGA-FIX-STRESS-NEAR-CLIP として足した。
+- Notes: 動く負荷の gt の p95（1% 20〜23 ms）は、描画フレームの行のゲームスレッド時間だけが跳ねる（同じ窓の全ゲームフレーム 9,757 行では median 1.65・p95 2.28 ms）。Ecs の区間の p95 はどれも 1 ms 未満で、跳ねの内訳はこの計測では分からない（静止では跳ねない）。
+- Notes: RenderThread の `MegaGeometryPass.BuildSceneTables` が静止でも 7.1 ms / フレーム（`PrepareSceneTables` 7.7 ms）で、rt の大きな部分。upload が 0 でも CPU で表を作る処理は本数に比例して残る。目標の外なので FIX は足していない（節目の判断で扱う）。
+- Notes: 3万個 + 64 m 区画の 1 フレームの値は、区画の出入りの作り直し（`rebuilds=5`／120）で上下する（upload の最初の窓 250 KB / 更新など）。

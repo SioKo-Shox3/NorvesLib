@@ -743,7 +743,7 @@
 - notes: 危険地帯。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
 ## SCN-MEGA-MEASURE-UPLOAD: 節目の計測: GPU に常駐する表・RT・影の改修の効果を測る
-- status: todo
+- status: done
 - done-when: MEASURE-CPU と同じ 3 つの負荷とバナナ 3万本 overview で、gt・rt・GPU の median と p95、`MegaGeometryPass.RecordFrameCommand`、`MEGA_SCENE_UPLOAD bytes`、`AccelerationStructureBuild`、VSM の無効化のページ数を測って PROGRESS の表に書く。目標: 5万個で `RecordFrameCommand` ≤ 1 ms、静止で upload 0 と `AccelerationStructureBuild` ≤ 0.05 ms、1% 移動で upload・VSM の無効化が移動数に比例。カメラパスの再生中に TLAS の更新があるフレームの p95 も書く。1% 移動の連続撮影を開いて動く物に残像が増えていない（TAA と prevWorld）。届かないものは `SCN-MEGA-FIX-<名前>` を次へ足す。Debug の起動画面で検証レイヤーのエラーが 0。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-MEASURE-UPLOAD/static --timing`
@@ -752,6 +752,31 @@
 - paths: Docs/RenderingValidation/SceneLauncherAcceptance.md, TASKS.md, PROGRESS.md
 - notes: 計測だけ。 verify はビルド・代表の計測 1 本・Debug の検証だけにしてある（ランナーの再検証を軽くするため）。done-when の他の計測は反復の中で行い、PROGRESS に証拠の場所を書く。 反復の中で 1 回撮る計測: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-MEASURE-UPLOAD/static`（ランナーは撮り直さず、保存した結果を検査する）。 （ECS 計画の対応）変わった席は RenderSync から受け取る。 2026-10-11 検証の軽量化（ユーザー決定）: 起動画面の画像比較は、描くものの出所を切り替える項目・描画を変える項目・節目の計測だけで、1 視点（default）で行う。検査付きの起動は 1 視点 1 本、周回は寿命とシーンの出入りに触る項目だけ。done-when にある「起動画面の比較」「各視点」は、verify に残っている分だけを求める。
 
+## SCN-MEGA-FIX-VSM-INVALIDATE: 多くの席が動くフレームでも、VSM の無効化を動いた範囲のページだけにする
+- status: todo
+- done-when: 1 フレームに 256 を超える MegaGeometry の席が動いても、太陽の VSM の無効化が全ページにならず、動いた席の旧・新の境界が覆うページだけになる（今は矩形が `VirtualShadowMap::MAX_INVALIDATION_RECTS`＝256 を超えると `VirtualShadowMapPass.cpp` の `BuildInvalidationRects` が失敗して全ページを無効にする。例: 箱をライト空間のページの格子で併合して上限に収める、矩形を大きなバッファで渡す）。多く無効にするぶんには影は崩れない規則は保つ。5万個の 1% 移動（500 席）で `VSM_CACHE invalidated` が全ページ（今 741〜744 / 743）より少なく、0.2% 移動（100 席。今 290〜343）との比が移動数の比に沿う（数値を PROGRESS に書く）。起動画面の比較が pass。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FIX-VSM-INVALIDATE`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views default -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=50000,stress-moving-percent=1 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-VSM-INVALIDATE/move1`
+- paths: Library/Core/Public/Rendering/VirtualShadowMapPages.h, Library/Core/Public/Rendering/VirtualShadowMapPass.h, Library/Core/Private/Rendering/VirtualShadowMapPages.cpp, Library/Core/Private/Rendering/VirtualShadowMapPass.cpp, Assets/Shaders/vsm_mark.comp, Assets/Shaders/vsm_allocate.comp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-MEGA-MEASURE-UPLOAD（反復 19・run 20261012-030203）で足した。5万個の 1% 移動で `MEGA_SHADOW_DIRTY` の箱は 1 フレーム 500（移動数どおり）だが、VSM は矩形の上限 256 を超えて全ページ（743）を描き直し、`VirtualShadowMapPass` の GPU が 3.04 / 4.94 ms（静止 0.20 / 0.78）。0.2% 移動（100 席）では 290〜343 ページ・0.94 / 2.08 ms。証拠は `.harness/runs/scene-capture/SCN-MEGA-MEASURE-UPLOAD/<move1|move0.2>/`。危険地帯（VSM のページの寿命）。
+
+## SCN-MEGA-FIX-RECORD-COMMAND: MegaGeometryPass.RecordFrameCommand の p95 と区画の出入りのフレームの跳ねを 1 ms 以下にする
+- status: todo
+- done-when: 先に `RecordFrameCommand` の中に区間を足して、跳ねるフレームの内訳を PROGRESS に書く。5万個の静止で 1 回あたりの p95 ≤ 1 ms（今 1.04〜1.15 ms。median は 0.90〜0.96 ms で合格済み）。3万個の 1% 移動 + 64 m 区画で、区画の出入りで跳ねるフレーム（今 300 回中 26 回が 3 ms 超、最大 8.4 ms。p95 6.3 ms）を無くし p95 ≤ 1 ms。描画の結果は変えない（起動画面の比較が pass）。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-MEGA-FIX-RECORD-COMMAND`
+- verify: `python Scripts/CheckCaptureMetrics.py .harness/runs/scene-capture/SCN-MEGA-FIX-RECORD-COMMAND/move1-cell64-30k --timing --min-frames 300 --max-scope-p95-ms MegaGeometryPass.RecordFrameCommand=1.0`
+- paths: Library/Core/Public/Rendering/MegaGeometryPass.h, Library/Core/Private/Rendering/MegaGeometryPass.cpp, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-MEGA-MEASURE-UPLOAD（反復 19・run 20261012-030203）で足した。区画の出入りのフレームは `MEGA_SHADOW_DIRTY rebuilds=5`（120 回の表の作成あたり）と `RT_SCENE built=15`（120 フレームあたり）で、表の作り直しと重なる。撮影は反復の中で 1 回: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views default -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=30000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-RECORD-COMMAND/move1-cell64-30k`（5万個 + 64 m 区画は BVH-INDIRECT の前は VRAM を超えて落ちる）。危険地帯（RenderThread・記録）。
+
+## SCN-MEGA-FIX-STRESS-NEAR-CLIP: mega-stress の既定の視点で、近くの岩が近平面で切れて内側が見える
+- status: todo
+- done-when: 5万個の mega-stress の既定の視点（overview）の PNG の下端中央（x 950〜1250・y 880〜1080 の 1920×1080）に、近平面で切れた岩の内側（黒い面と半透明の膜。今は黒い画素が約 6,000）が出ない。先に原因（カメラのすぐ前に置かれた Entity・近平面の距離・切れた面の描き方）を特定して PROGRESS に書き、直す先が paths の外なら blocked に書く。他の視点（close・aerial）と動く物の配置は変えない。
+- verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
+- verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views default -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-NEAR-CLIP`
+- paths: Game/GameModes/MegaStress, Game/Scenes/SceneCatalog.h, TASKS.md, PROGRESS.md
+- notes: 2026-10-12 SCN-MEGA-MEASURE-UPLOAD（反復 19）の 1% 移動の連続撮影を開いて見つけた。静止・1% 移動の撮影と、前の節目（SCN-MEGA-MEASURE-CPU）の撮影にも同じ量（黒い画素 6,033〜6,086）であり、移動・この節目の改修とは関係のない前からの欠陥。拡大は f121 の (900,820)〜(1300,1080)。
 ## SCN-ECS-RT-PLAN: 記録の前に、確保・保留コマンド・バリアの layout を直列で決める
 - status: todo
 - done-when: 設計 1.13 の記録の前の計画と、RHI の明示の old/new のバリア、最終の layout の書き戻しが入る。記録はまだ 1 本のリスト。`RenderGraphParallelPlanTest`（RenderGraphCompileTest の束）が、計画した layout が今の逐次の実行の layout と全バリアで一致することを確かめる。Execute の中で自分でバリアを張るパスの一覧を PROGRESS に書く。
