@@ -852,6 +852,9 @@ namespace NorvesLib::RHI::Vulkan
             }
 
             // 待機を確認できないため、GPUが参照し得る資源群を意図的に保持する。
+            // 共有のレイアウトはハンドルを破棄せずに切り離してからキャッシュを空ける（メンバの破棄の順では
+            // 遅らせる破棄の列が先に消えるので、キャッシュに残ったレイアウトが消えた列へ触らないようにする）
+            ReleaseSharedDescriptorLayouts(false);
             m_ResourceAllocator.release();
             g_safeDeviceTeardownLeakCount.fetch_add(1, std::memory_order_relaxed);
             return;
@@ -879,7 +882,7 @@ namespace NorvesLib::RHI::Vulkan
         m_singleTimePools.clear();
 
         // 共有のディスクリプタセットレイアウトを破棄の列へ渡す（WaitIdle の後なので使用中ではない）
-        ReleaseSharedDescriptorLayouts();
+        ReleaseSharedDescriptorLayouts(true);
 
         // 遅らせた破棄の残りを空ける（WaitIdle の後なので使用中ではない）
         DrainDeferredDestroyQueue("DeviceDestroy");
@@ -2625,7 +2628,7 @@ namespace NorvesLib::RHI::Vulkan
             if (!IsWithinDescriptorArrayLimits(sets))
             {
                 NORVES_LOG_ERROR("VulkanDevice",
-                                 "Descriptor set arrays exceed the physical device descriptor limits");
+                                 "共有のディスクリプタセットレイアウトの配列が物理デバイスの記述子の上限を超えています");
                 return nullptr;
             }
         }
@@ -2636,7 +2639,7 @@ namespace NorvesLib::RHI::Vulkan
             if (!IsSupportedDescriptorBindingCount(binding))
             {
                 NORVES_LOG_ERROR("VulkanDevice",
-                                 "Descriptor binding %u has an unsupported array count %u",
+                                 "共有のディスクリプタセットレイアウトの binding %u の要素数 %u は扱えません",
                                  binding.binding,
                                  binding.count);
                 return nullptr;
@@ -2705,7 +2708,7 @@ namespace NorvesLib::RHI::Vulkan
         return StaticPointerCast<IFrameDescriptorAllocator>(allocator);
     }
 
-    void VulkanDevice::ReleaseSharedDescriptorLayouts() noexcept
+    void VulkanDevice::ReleaseSharedDescriptorLayouts(bool bDestroyHandles) noexcept
     {
         Thread::ScopedLock lock(m_sharedDescriptorLayoutMutex);
         for (auto &[hash, layouts] : m_sharedDescriptorLayouts)
@@ -2713,8 +2716,15 @@ namespace NorvesLib::RHI::Vulkan
             (void)hash;
             for (const TSharedPtr<VulkanSharedDescriptorSetLayout> &layout : layouts)
             {
-                // まだ誰かが持っていても、デバイスより後にハンドルを触らないよう今ここで破棄の列へ渡す
-                layout->GetLayout()->ReleaseHandle();
+                // まだ誰かが持っていても、デバイスより後にハンドルを触らないよう今ここで手放す
+                if (bDestroyHandles)
+                {
+                    layout->GetLayout()->ReleaseHandle();
+                }
+                else
+                {
+                    layout->GetLayout()->DetachHandle();
+                }
             }
         }
         m_sharedDescriptorLayouts.clear();

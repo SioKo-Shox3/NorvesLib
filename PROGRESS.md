@@ -3323,3 +3323,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-DESCRIPTOR-BORROW-4.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=2E-06・within_limits=True、result=pass、EXIT=0。`default.Game.log` に `FRAME_RESOURCE_DESCRIPTOR_CONFIG configured=1` と `FrameResource.Descriptor` の行（借りは 0・pool は 0）、ERROR は 0 件。画像は天球・地面・球・岩・家が以前どおり。
 - Next: SCN-ECS-FIF-PARALLEL-ALLOC。
 - Notes: まだ借りる側が無いので、起動画面では借りも pool も 0（pool は最初の借りで作る）。既定の容量は 1 pool に 256 セット・定数 512・sampled 512・sampler 256・storage buffer 512・storage image 256・結合 1024・加速構造 32（内部の値。最初の利用者を移したら統計で見直す）。借りたセットの対象（`VulkanDescriptorSet`）は借りるたびに作る（使い回しはしていない）。pool の排他は確保と書き込みで 1 つなので、並列の記録で競る分は SCN-ECS-FIF-PARALLEL-ALLOC で分ける。回収の後のセットの束縛の拒否（`SetDescriptorSet`）は検査で通していない（パイプラインが要るため。書き込みの拒否と `IsExpired` は通した）。
+
+### SCN-ECS-FIF-DESCRIPTOR-BORROW の差し戻しへの対応（2026-10-12、反復 56・run 20261012-030203）
+
+- 差し戻し: 共有の layout のキャッシュは遅らせる破棄の列（排他と列）より先に宣言されているので、デバイスの待機が失敗した終了の早期 return では列が先に破棄され、その後キャッシュに残った layout のデストラクタが `DeferDestroy` で破棄済みの排他を触る。
+- 対応: `VulkanDescriptorSetLayout::DetachHandle`（ハンドルを破棄せずに手放す）を足し、`ReleaseSharedDescriptorLayouts(bDestroyHandles)` にした。待機失敗の道では他の資源と同じくハンドルを意図して残し、切り離してからキャッシュを空ける（`false`）。通常の終了は今までどおり破棄の列へ渡す（`true`）。デバイスより後まで持たれた layout も、切り離した後はデバイスに触らない。追加したエラーの説明文を日本語にした。
+- 検査: `FrameResourceDescriptorVulkanTest` に待機失敗の終了を足した（キャッシュにだけ残る layout と持ち続ける layout を作り、待機の失敗を注入してデバイスを手放す。保護された終了の道を通り、持ち続けた layout のハンドルが切り離されていること）。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-DESCRIPTOR-BORROW-5.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-DESCRIPTOR-BORROW-6.txt`: Debug の `RHITextureUpdateVulkanTest` のビルド EXIT=0。
+  - `verify-SCN-ECS-FIF-DESCRIPTOR-BORROW-7.txt`: `ctest -R "^FrameResourceDescriptor"`（`-V` 付き）で `FrameResourceDescriptorVulkanTest` Passed（1/1）、待機失敗の終了も合格、validation_errors=0、EXIT=0。
+  - `verify-SCN-ECS-FIF-DESCRIPTOR-BORROW-8.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=8E-06・within_limits=True、result=pass、EXIT=0。`default.Game.log` の ERROR は 0 件、画像は天球・地面・球・岩・家が以前どおり。
+- Next: SCN-ECS-FIF-PARALLEL-ALLOC。
+- Notes: 待機失敗の道で残すのは layout のハンドルだけ（デバイスと同じく意図した漏れ）。フレームの pool（`VulkanFrameDescriptorAllocator`）はデバイスより前に持ち主が手放す前提のまま（`RenderingCoordinator` の `ReleaseDescriptorPools`）。

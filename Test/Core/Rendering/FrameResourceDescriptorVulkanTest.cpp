@@ -9,6 +9,8 @@
 //     完了していない提出のスロットは戻らず、そのセットは使えるまま。
 //   - 世代の拒否: 前のフレームで借りたセットは世代の検査で拒まれ、IsExpired になり、書き込みも拒まれる。
 //     記録中でないときは借りられない。
+//   - 待機失敗の終了: デバイスの待機が失敗した終了でも、共有の layout はハンドルを破棄せずに切り離され、
+//     デバイスより後まで持たれた layout がデバイスに触らない。
 //   - どのケースも Vulkan の検証レイヤーのエラーが 0 件。
 // Vulkan デバイスが無い環境では 125（スキップ）を返す。
 #include "CoreTypes.h"
@@ -31,6 +33,8 @@ namespace NorvesLib::RHI::Vulkan
 void BeginVulkanValidationErrorCaptureForTesting() noexcept;
 void EndVulkanValidationErrorCaptureForTesting() noexcept;
 uint32_t GetVulkanValidationErrorCaptureHitCountForTesting() noexcept;
+void InjectVulkanDeviceWaitIdleFailuresForTesting(IDevice *device, uint32_t failureCount) noexcept;
+uint32_t GetVulkanSafeDeviceTeardownLeakCountForTesting() noexcept;
 } // namespace NorvesLib::RHI::Vulkan
 
 namespace
@@ -303,6 +307,57 @@ namespace
         return bOk;
     }
 
+    uint64_t GetLayoutVkHandle(const DescriptorSetLayoutPtr& layout)
+    {
+        auto sharedLayout = DynamicPointerCast<RHI::Vulkan::VulkanSharedDescriptorSetLayout>(layout);
+        if (!sharedLayout || !sharedLayout->GetLayout())
+        {
+            return 0;
+        }
+        return reinterpret_cast<uint64_t>(
+            static_cast<VkDescriptorSetLayout>(sharedLayout->GetLayout()->GetVkDescriptorSetLayout()));
+    }
+
+    // 待機失敗の終了: キャッシュにだけ残る layout と、デバイスより後まで持たれる layout の両方を作ってから、
+    // 待機の失敗を注入してデバイスを手放す。保護された終了の道を通り、持たれた layout はハンドルを切り離されている
+    bool RunTeardownWaitFailureCase()
+    {
+        RHIDeviceDesc deviceDesc;
+        deviceDesc.Api = GraphicsAPI::Vulkan;
+        deviceDesc.bEnableValidation = false;
+        DevicePtr device = CreateRHIDevice(deviceDesc);
+        if (!IsValid(device))
+        {
+            return Check(false, "待機失敗の終了の検査でデバイスを作れない");
+        }
+
+        DescriptorSetLayoutPtr heldLayout = device->GetOrCreateDescriptorSetLayout(MakeDesc({
+            {0, ResourceBindType::ConstantBuffer, ShaderStage::Vertex, 1},
+        }));
+        {
+            const DescriptorSetLayoutPtr droppedLayout = device->GetOrCreateDescriptorSetLayout(MakeDesc({
+                {0, ResourceBindType::StructuredBuffer, ShaderStage::Compute, 1},
+            }));
+            if (!Check(droppedLayout != nullptr, "キャッシュにだけ残す layout を作れない"))
+            {
+                return false;
+            }
+        }
+        bool bOk = Check(GetLayoutVkHandle(heldLayout) != 0, "持ち続ける layout を作れない");
+
+        const uint32_t leakBefore = RHI::Vulkan::GetVulkanSafeDeviceTeardownLeakCountForTesting();
+        RHI::Vulkan::InjectVulkanDeviceWaitIdleFailuresForTesting(device.get(), 1);
+        device.reset();
+        const uint32_t leakAfter = RHI::Vulkan::GetVulkanSafeDeviceTeardownLeakCountForTesting();
+        bOk &= Check(leakAfter == leakBefore + 1, "待機失敗の終了が保護された道を通らなかった");
+        bOk &= Check(GetLayoutVkHandle(heldLayout) == 0,
+                     "待機失敗の終了の後も、デバイスより後まで持たれた layout がハンドルを持っている");
+        // ハンドルを切り離した layout は、デバイスの後に手放してもデバイスに触らない
+        heldLayout.reset();
+        std::cout << TestName << " 待機失敗の終了: " << (bOk ? "合格" : "不合格") << std::endl;
+        return bOk;
+    }
+
     int RunTest()
     {
         if (IsGpuTestSkipForced())
@@ -328,6 +383,7 @@ namespace
             bOk &= RunBorrowCases(*device);
             device->WaitIdle();
         }
+        bOk &= RunTeardownWaitFailureCase();
 
         const uint32_t validationErrors = validationCapture.GetHitCount();
         bOk &= Check(validationErrors == 0, "Vulkan の検証レイヤーのエラーが出た");

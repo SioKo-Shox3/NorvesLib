@@ -352,10 +352,13 @@ namespace NorvesLib::RHI::Vulkan
         Thread::Mutex m_singleTimePoolMutex;
 
         // 共有のディスクリプタセットレイアウト（束縛の形の並びのハッシュ → 同じハッシュの形の列）。
-        // m_sharedDescriptorLayoutMutex の下で読み書きし、デバイスの破棄の前に手放す
+        // m_sharedDescriptorLayoutMutex の下で読み書きし、デバイスの破棄の前に手放す。
+        // このキャッシュは遅らせる破棄の列より先に宣言しているので、メンバの破棄で中身の layout が列へ触らないよう、
+        // デストラクタはどの道でも先に空にする（待機を確かめられない終了ではハンドルを破棄せずに切り離す）
         Thread::Mutex m_sharedDescriptorLayoutMutex;
         UnorderedMap<uint64_t, VariableArray<TSharedPtr<VulkanSharedDescriptorSetLayout>>> m_sharedDescriptorLayouts;
-        void ReleaseSharedDescriptorLayouts() noexcept;
+        // bDestroyHandles が true ならハンドルを破棄の列へ渡し、false なら破棄せずに切り離す
+        void ReleaseSharedDescriptorLayouts(bool bDestroyHandles) noexcept;
 
         // 提出の完了まで遅らせる破棄の列（m_deferredDestroyMutex の下で読み書きする）
         enum class DeferredDestroyKind : uint8_t

@@ -72,6 +72,12 @@ namespace NorvesLib::RHI::Vulkan
          */
         void ReleaseHandle();
 
+        /**
+         * @brief レイアウトのハンドルを破棄せずに手放す（デバイスの待機を確かめられない終了で、ハンドルを意図して残すとき。
+         *        この後のデストラクタはデバイスに触らない）
+         */
+        void DetachHandle() noexcept { m_layout = nullptr; }
+
     private:
         TSharedPtr<VulkanDevice> m_device;
         VariableArray<DescriptorBindingDesc> m_bindings;
