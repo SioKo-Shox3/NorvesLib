@@ -1,4 +1,5 @@
 ﻿#include "Rendering/DynamicUniformAllocator.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "RHI/IDevice.h"
 #include "RHI/IBuffer.h"
 #include "RHI/IDescriptorSet.h"
@@ -6,9 +7,52 @@
 #include "Logging/LogMacros.h"
 
 #include <cstdio>
+#include <cstring>
 
 namespace NorvesLib::Core::Rendering
 {
+
+    void DynamicUniformAllocator::Allocation::Write(const void *data, uint32_t size) const
+    {
+        if (!UniformBuffer || !data || size == 0)
+        {
+            return;
+        }
+        const uint32_t writeSize = size < Size ? size : Size;
+        if (CPUAddress)
+        {
+            // 借りた切れ端は常にマップしたままの HOST_COHERENT のページなので、写すだけで GPU から見える
+            std::memcpy(CPUAddress, data, writeSize);
+            return;
+        }
+        UniformBuffer->Update(data, writeSize, Offset);
+    }
+
+    bool DynamicUniformAllocator::Initialize(RHI::IDevice *device, uint32_t uboSize,
+                                             const RHI::DescriptorSetDesc &descriptorSetDesc)
+    {
+        if (m_bInitialized)
+        {
+            NORVES_LOG_WARNING("DynamicUniformAllocator", "Already initialized");
+            return true;
+        }
+
+        if (!device || uboSize == 0)
+        {
+            NORVES_LOG_ERROR("DynamicUniformAllocator", "Invalid parameters for DynamicUniformAllocator::Initialize");
+            return false;
+        }
+
+        m_Device = device;
+        m_DescriptorSetDesc = descriptorSetDesc;
+        m_UBOSize = uboSize;
+        // 記述子セットは毎フレーム FrameResources から借りる。レイアウトは同じ形のパスと共有する 1 つをデバイスから引く
+        // （引けないデバイスでは、フレームの持ち主が無い文脈と同じく Allocate のたびに作る）
+        m_DescriptorSetLayout = device->GetOrCreateDescriptorSetLayout(descriptorSetDesc);
+        m_bBorrowing = true;
+        m_bInitialized = true;
+        return true;
+    }
 
     bool DynamicUniformAllocator::Initialize(RHI::IDevice *device, uint32_t uboSize, uint32_t maxSlots,
                                              const RHI::DescriptorSetDesc &descriptorSetDesc)
@@ -82,7 +126,7 @@ namespace NorvesLib::Core::Rendering
 
     bool DynamicUniformAllocator::Grow()
     {
-        if (!m_bInitialized || m_MaxSlots >= m_GrowthLimit)
+        if (!m_bInitialized || m_bBorrowing || m_MaxSlots >= m_GrowthLimit)
         {
             return false;
         }
@@ -120,11 +164,13 @@ namespace NorvesLib::Core::Rendering
         m_Slots.clear();
         m_Device = nullptr;
         m_DescriptorSetDesc = RHI::DescriptorSetDesc{};
+        m_DescriptorSetLayout.reset();
         m_GrowthLimit = 0;
         m_MaxSlots = 0;
         m_UBOSize = 0;
         m_CurrentIndex = 0;
         m_bInitialized = false;
+        m_bBorrowing = false;
     }
 
     void DynamicUniformAllocator::Reset()
@@ -132,11 +178,70 @@ namespace NorvesLib::Core::Rendering
         m_CurrentIndex = 0;
     }
 
+    DynamicUniformAllocator::Allocation DynamicUniformAllocator::Allocate(FrameResourceLane *frameResources) const
+    {
+        if (!m_bInitialized || !m_bBorrowing)
+        {
+            NORVES_LOG_ERROR("DynamicUniformAllocator", "Not initialized for borrowing");
+            return {};
+        }
+
+        if (!frameResources || !m_DescriptorSetLayout)
+        {
+            return CreateUnowned();
+        }
+
+        // 定数の切れ端と記述子セットをフレームの持ち主から借りる。戻るのはこのフレームの回収で、それまで動かず上書きもされない。
+        // 借りられなかったときのエラーは持ち主がログに出す
+        const FrameUploadAllocation upload = frameResources->AllocateUpload(m_UBOSize, FrameUploadUsage::Constants);
+        if (!upload.IsValid())
+        {
+            return {};
+        }
+        const FrameDescriptorAllocation descriptor = frameResources->AllocateDescriptorSet(m_DescriptorSetLayout);
+        if (!descriptor.IsValid())
+        {
+            return {};
+        }
+
+        descriptor.Set->BindConstantBuffer(0, upload.Buffer, upload.GetOffset32(), upload.GetSize32());
+
+        Allocation result;
+        result.UniformBuffer = upload.Buffer;
+        result.DescriptorSet = descriptor.Set;
+        result.Offset = upload.Offset;
+        result.Size = upload.GetSize32();
+        result.CPUAddress = upload.CPUAddress;
+        return result;
+    }
+
+    DynamicUniformAllocator::Allocation DynamicUniformAllocator::CreateUnowned() const
+    {
+        // フレームの持ち主が無い文脈では、毎回新しいバッファと記述子セットを作る（使い回さないので前の描画を書き換えない）
+        Allocation result;
+        RHI::BufferDesc bufDesc(m_UBOSize, RHI::ResourceUsage::ConstantBuffer, true, "DynUBO_Unowned");
+        result.UniformBuffer = m_Device->CreateBuffer(bufDesc);
+        if (!result.UniformBuffer)
+        {
+            NORVES_LOG_ERROR("DynamicUniformAllocator", "Failed to create UBO");
+            return {};
+        }
+        result.DescriptorSet = m_Device->CreateDescriptorSet(m_DescriptorSetDesc);
+        if (!result.DescriptorSet)
+        {
+            NORVES_LOG_ERROR("DynamicUniformAllocator", "Failed to create DescriptorSet");
+            return {};
+        }
+        result.DescriptorSet->BindConstantBuffer(0, result.UniformBuffer, 0, m_UBOSize);
+        result.Size = m_UBOSize;
+        return result;
+    }
+
     DynamicUniformAllocator::Allocation DynamicUniformAllocator::Allocate()
     {
         Allocation result{};
 
-        if (!m_bInitialized)
+        if (!m_bInitialized || m_bBorrowing)
         {
             NORVES_LOG_ERROR("DynamicUniformAllocator", "Not initialized");
             return result;
@@ -151,6 +256,7 @@ namespace NorvesLib::Core::Rendering
         auto &slot = m_Slots[m_CurrentIndex];
         result.UniformBuffer = slot.UniformBuffer;
         result.DescriptorSet = slot.DescriptorSet;
+        result.Size = m_UBOSize;
         result.SlotIndex = m_CurrentIndex;
 
         ++m_CurrentIndex;

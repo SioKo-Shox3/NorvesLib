@@ -99,7 +99,6 @@ namespace NorvesLib::Core::Rendering
             // UBOレイアウト: current/previous view-projection(256) + cameraPos/emissive/POM/velocity(64)
             // + VT のフィードバックのパラメータ（法線・ORM・高さ。16） = 336 bytes（描画側の PerObjectUBO の大きさと同じ）
             constexpr uint32_t UBO_SIZE = 336;
-            constexpr uint32_t MAX_OBJECTS = 256; // 1フレームあたりの最大オブジェクト数
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
@@ -149,7 +148,7 @@ namespace NorvesLib::Core::Rendering
                 AddVirtualTextureFeedbackBinding(uboDescSetDesc, VirtualTextureFeedbackBindingIndex);
             }
 
-            if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, uboDescSetDesc))
+            if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, uboDescSetDesc))
             {
                 NORVES_LOG_ERROR("GBufferPass", "Failed to initialize DynamicUniformAllocator");
                 return false;
@@ -598,9 +597,6 @@ namespace NorvesLib::Core::Rendering
         previousCameraConstants.CopyShaderView(previousViewData);
         previousCameraConstants.CopyShaderProjection(previousProjData);
 
-        // フレーム開始時にアロケータリセット
-        m_UniformAllocator.Reset();
-
         PerObjectUBO frameTemplate{};
         std::memcpy(frameTemplate.view, viewData, sizeof(viewData));
         std::memcpy(frameTemplate.projection, projData, sizeof(projData));
@@ -616,8 +612,7 @@ namespace NorvesLib::Core::Rendering
         // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）
         const TextureResources::VirtualTextureFeedbackTarget feedbackTarget = textures->GetVirtualTextureFeedbackTarget();
 
-        // Execute-local by design: descriptors contain view/frame constants, and allocator slot lifetime
-        // assumes this GBufferPass instance is executed once per frame.
+        // Execute の中だけで使う（記述子はビュー・フレームの定数を含む。借りた記述子はこのフレームの回収まで使える）
         Container::UnorderedMap<uint64_t, RHI::DescriptorSetPtr> materialDescriptorCache;
         const bool bMaterialDescriptorCacheEnabled = IsMaterialDescriptorCacheEnabled();
 
@@ -637,7 +632,7 @@ namespace NorvesLib::Core::Rendering
         auto BuildMaterialDescriptor = [&](const DrawCommand& command) -> RHI::DescriptorSetPtr
         {
             const uint64_t materialKey = command.Draw.MaterialHandle.Id;
-            auto allocation = m_UniformAllocator.Allocate();
+            auto allocation = m_UniformAllocator.Allocate(context.FrameResources);
             if (!allocation.UniformBuffer)
             {
                 return nullptr;
@@ -743,7 +738,7 @@ namespace NorvesLib::Core::Rendering
                 ResolveVirtualTextureFeedbackParam(textures, matORM, ormTex.get(), feedbackTarget));
             uboData.vtFeedbackParams[2] = static_cast<float>(
                 ResolveVirtualTextureFeedbackParam(textures, matHeight, heightTex.get(), feedbackTarget));
-            allocation.UniformBuffer->Update(&uboData, sizeof(PerObjectUBO));
+            allocation.Write(&uboData, sizeof(PerObjectUBO));
 
             allocation.DescriptorSet->BindTexture(1, albedoTex);
             allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);

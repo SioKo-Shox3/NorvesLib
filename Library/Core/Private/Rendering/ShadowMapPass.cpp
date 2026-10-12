@@ -48,16 +48,6 @@ namespace NorvesLib::Core::Rendering
         };
         static_assert(sizeof(PointShadowFaceUBO) == 224);
 
-        // 非スキンは面ごとに1枠、スキンはcomponentごと・面ごとに1枠、MegaGeometryは描画ごと・面ごとに1枠。
-        // 事前に確保する数は MegaGeometry を面あたり8描画として見積もり、足りなければ
-        // PointShadowUniformSlotLimit まで DynamicUniformAllocator が増やす（投影物の数で決まる）。
-        constexpr uint32_t PointShadowMaxSkinnedComponentsPerFace = SkinnedPointShadowComponentCapacity;
-        constexpr uint32_t PointShadowInitialMegaDrawsPerFace = 8u;
-        constexpr uint32_t PointShadowUniformSlotCount =
-            PointShadowMaxLights * PointShadowFaceCount *
-            (1u + PointShadowMaxSkinnedComponentsPerFace + PointShadowInitialMegaDrawsPerFace);
-        constexpr uint32_t PointShadowUniformSlotLimit = 32768u;
-
         // CSMの1カスケード・1描画のUBO（shadow.vertのShadowMVPに対応）
         struct ShadowPerObjectUBO
         {
@@ -773,11 +763,8 @@ namespace NorvesLib::Core::Rendering
         // ========================================
         {
             // UBO: lightView(64) + lightProjection(64) + world(64) + worldSource(16) = 208 bytes
+            // 定数と記述子セットは描画ごと・カスケードごとに FrameResources から借りる（数の上限は無い）
             constexpr uint32_t UBO_SIZE = sizeof(ShadowPerObjectUBO);
-            constexpr uint32_t MAX_OBJECTS = 256 * CSM_CASCADE_COUNT;
-            // 事前確保を超える分（半透明・ボリューム、MegaGeometry の投影物 × カスケード）は足りなくなったら増やす
-            // 上限は MegaGeometry の本数の上限（バナナの --banana-count の最大 65536）× カスケード。使った分だけ増える
-            constexpr uint32_t MAX_OBJECTS_LIMIT = 65536 * CSM_CASCADE_COUNT;
 
             RHI::DescriptorSetDesc uboDescSetDesc;
             RHI::DescriptorBinding uboBinding;
@@ -800,12 +787,11 @@ namespace NorvesLib::Core::Rendering
                 storageBinding.stages = RHI::ShaderStage::Vertex;
                 uboDescSetDesc.bindings.push_back(storageBinding);
             }
-            if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, uboDescSetDesc))
+            if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, uboDescSetDesc))
             {
                 NORVES_LOG_ERROR("ShadowMapPass", "Failed to initialize DynamicUniformAllocator");
                 return failInitialize();
             }
-            m_UniformAllocator.SetGrowthLimit(MAX_OBJECTS_LIMIT);
         }
 
         // ========================================
@@ -1240,16 +1226,10 @@ namespace NorvesLib::Core::Rendering
             CollectMegaShadowCasters(*m_MegaCasters, megaCasters);
         }
 
-        if (bCanBuildShadowCommands || bCanDrawMegaCasters)
-        {
-            // 4つのFramebufferで同じキャスターを記録するため、カスケードごとに
-            // 別のUBOスロットを使用する。
-            m_UniformAllocator.Reset();
-        }
-
+        // 4つのFramebufferで同じキャスターを記録するため、カスケードごとに別の定数と記述子セットを借りる。
         uint32_t megaDrawCounts[PhysicalLightingShadowCascadeCount] = {};
         uint32_t megaTriangleCounts[PhysicalLightingShadowCascadeCount] = {};
-        // UBO の枠が足りず、影を描けなかったMegaGeometryの数（カスケードごと）
+        // 定数・記述子セットを借りられず、影を描けなかったMegaGeometryの数（カスケードごと）
         uint32_t megaOmittedCounts[PhysicalLightingShadowCascadeCount] = {};
         // カスケードごとに描いたMegaGeometryの段（「c0=メッシュ名:段/三角形数,...」）
         Container::String csmMegaLevels;
@@ -1281,8 +1261,8 @@ namespace NorvesLib::Core::Rendering
                     {
                         continue;
                     }
-                    // UBOスロット確保
-                    auto allocation = m_UniformAllocator.Allocate();
+                    // 定数と記述子セットを借りる
+                    auto allocation = m_UniformAllocator.Allocate(context.FrameResources);
                     if (!allocation.UniformBuffer)
                     {
                         NORVES_LOG_WARNING("ShadowMapPass", "UBO allocation failed, skipping remaining objects");
@@ -1299,7 +1279,7 @@ namespace NorvesLib::Core::Rendering
                                 sizeof(uboData.lightProjection));
 
                     // UBO更新
-                    allocation.UniformBuffer->Update(&uboData, sizeof(ShadowPerObjectUBO));
+                    allocation.Write(&uboData, sizeof(ShadowPerObjectUBO));
                     if (bSkinned)
                     {
                         allocation.DescriptorSet->BindStorageBuffer(
@@ -1349,7 +1329,7 @@ namespace NorvesLib::Core::Rendering
                         continue;
                     }
                     const MegaShadowRange range = ResolveMegaShadowRange(megaCaster, cascade.TexelSize);
-                    auto allocation = m_UniformAllocator.Allocate();
+                    auto allocation = m_UniformAllocator.Allocate(context.FrameResources);
                     if (!allocation.UniformBuffer)
                     {
                         // 残りのこのカスケードにかかる投影物は影を描かれない。数を数えて記録に出す（0 が合格）
@@ -1371,7 +1351,7 @@ namespace NorvesLib::Core::Rendering
                                 sizeof(megaUboData.lightProjection));
                     std::memcpy(megaUboData.world, megaCaster.World, sizeof(megaUboData.world));
                     megaUboData.worldSource[0] = 1.0f;
-                    allocation.UniformBuffer->Update(&megaUboData, sizeof(megaUboData));
+                    allocation.Write(&megaUboData, sizeof(megaUboData));
                     // インスタンスは読まないが、レイアウトの束縛を満たすために結ぶ。
                     allocation.DescriptorSet->BindStorageBuffer(7,
                                                                 context.InstanceDataBuffer,
@@ -1524,14 +1504,10 @@ namespace NorvesLib::Core::Rendering
             storageBinding.stages = RHI::ShaderStage::Vertex;
             setDesc.bindings.push_back(storageBinding);
         }
-        if (!m_PointShadowUniformAllocator.Initialize(m_Device,
-                                                      sizeof(PointShadowFaceUBO),
-                                                      PointShadowUniformSlotCount,
-                                                      setDesc))
+        if (!m_PointShadowUniformAllocator.Initialize(m_Device, sizeof(PointShadowFaceUBO), setDesc))
         {
             return failPointShadow("uniform allocator");
         }
-        m_PointShadowUniformAllocator.SetGrowthLimit(PointShadowUniformSlotLimit);
 
         RHI::GraphicsPipelineDesc pipelineDesc;
         pipelineDesc.vertexShader = m_PointShadowVertexShader;
@@ -1626,8 +1602,6 @@ namespace NorvesLib::Core::Rendering
         {
             return;
         }
-
-        m_PointShadowUniformAllocator.Reset();
 
         // キャスターの境界球を物体IDで引けるように並べる。
         Container::VariableArray<PointShadowMeshBounds> meshBoundsByObject;
@@ -1775,14 +1749,14 @@ namespace NorvesLib::Core::Rendering
                                 prepared.PaletteBuffer.get(),prepared.VertexBuffer.get()};
                             const auto createSet = [&]() -> RHI::DescriptorSetPtr
                             {
-                                auto allocation = m_PointShadowUniformAllocator.Allocate();
+                                auto allocation = m_PointShadowUniformAllocator.Allocate(context.FrameResources);
                                 if (!allocation.UniformBuffer || !allocation.DescriptorSet)
                                 {
                                     NORVES_LOG_WARNING("ShadowMapPass",
                                         "点光源の影のUBOが足りないためcomponent全体を省きます");
                                     return {};
                                 }
-                                allocation.UniformBuffer->Update(&faceData,sizeof(faceData));
+                                allocation.Write(&faceData, sizeof(faceData));
                                 if (!BindSkinnedShadowStorage(prepared,allocation.DescriptorSet.get()))
                                 {
                                     return {};
@@ -1798,14 +1772,14 @@ namespace NorvesLib::Core::Rendering
                         {
                             if (!sharedFaceSet)
                             {
-                                auto allocation = m_PointShadowUniformAllocator.Allocate();
+                                auto allocation = m_PointShadowUniformAllocator.Allocate(context.FrameResources);
                                 if (!allocation.UniformBuffer)
                                 {
                                     NORVES_LOG_WARNING("ShadowMapPass",
                                                        "点光源の影のUBOが足りないため面の描画を省きます");
                                     break;
                                 }
-                                allocation.UniformBuffer->Update(&faceData, sizeof(faceData));
+                                allocation.Write(&faceData, sizeof(faceData));
                                 allocation.DescriptorSet->BindStorageBuffer(7,
                                                                             context.InstanceDataBuffer,
                                                                             0,
@@ -1838,7 +1812,7 @@ namespace NorvesLib::Core::Rendering
                                                           static_cast<float>(m_Settings.PointShadowResolution)
                                                     : 0.0f;
                         const MegaShadowRange range = ResolveMegaShadowRange(megaCaster, texelSize);
-                        auto allocation = m_PointShadowUniformAllocator.Allocate();
+                        auto allocation = m_PointShadowUniformAllocator.Allocate(context.FrameResources);
                         if (!allocation.UniformBuffer)
                         {
                             NORVES_LOG_WARNING("ShadowMapPass",
@@ -1848,7 +1822,7 @@ namespace NorvesLib::Core::Rendering
                         PointShadowFaceUBO megaFaceData = faceData;
                         std::memcpy(megaFaceData.world, megaCaster.World, sizeof(megaFaceData.world));
                         megaFaceData.worldSource[0] = 1.0f;
-                        allocation.UniformBuffer->Update(&megaFaceData, sizeof(megaFaceData));
+                        allocation.Write(&megaFaceData, sizeof(megaFaceData));
                         // インスタンスは読まないが、レイアウトの束縛を満たすために結ぶ。
                         allocation.DescriptorSet->BindStorageBuffer(7,
                                                                     context.InstanceDataBuffer,

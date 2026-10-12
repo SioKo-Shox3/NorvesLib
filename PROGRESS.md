@@ -3429,3 +3429,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-REWRITE-GUARD-12.txt`: シーンの周回（rendering3dtest・mega-bananas・mega-stress × 3）`SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。Game.log の ERROR は 0 件。
 - Next: SCN-ECS-FIF-DYNAMIC-UBO。
 - Notes: 差し戻しの再現（同じフレームで作成の直後と 2 回目、次のフレームで 3 回目）を起こす検査は書いていない（verify が名指ししていないため。`RenderGraphLifetimeTest` の束が候補）。
+
+### SCN-ECS-FIF-DYNAMIC-UBO（2026-10-12、反復 62・run 20261012-030203）
+
+- `DynamicUniformAllocator` に借りる形を足し、`GBufferPass`・`ForwardPass`（透明・ワールドボード）・`ShadowMapPass`（CSM・点光源の影）を移した。`Initialize(device, uboSize, descriptorSetDesc)` は共有のレイアウトを `GetOrCreateDescriptorSetLayout` で引くだけで、`Allocate(context.FrameResources)` が定数の切れ端（`AllocateUpload(..., FrameUploadUsage::Constants)`）と記述子セット（`AllocateDescriptorSet`）を借り、切れ端をオフセット付きで binding 0 に結んで返す。定数は `Allocation::Write`（マップしたままのページへの写し）で書く。呼び出し側から `Reset`・`IBuffer::Update`・事前確保の数（`MAX_OBJECTS`・`SetGrowthLimit`・点光源の影の `PointShadowUniformSlot*`）を消した。飛行中の番号・通し番号は渡さない。`Allocate` は自分の状態を変えない（並列の記録の区間から区間の口を渡して呼べる）。
+- フレームの持ち主が無い文脈（`FrameResources` が null。RenderingCoordinator を通さずにパスを実行する検査）とレイアウトを引けないデバイスでは、`Allocate` のたびに定数のバッファ（`DynUBO_Unowned`）と記述子セットを新しく作る（使い回さないので上書きは起きない）。
+- 事前確保の形（4 引数の `Initialize`・`SetGrowthLimit`・`Reset`・引数なしの `Allocate`）は `RenderGraphCompileTest` の `TestDynamicUniformAllocatorGrowsToCoverShadowCasters` だけが使うので残した（paths の外。パスからは使わない）。
+- 借りる形では数の上限が無くなった: 以前の GBuffer・Forward は 1 フレーム 256 で頭打ち（超えた描画を省いていた）、CSM は 65536 × 4、点光源の影は 32768 まで。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-DYNAMIC-UBO-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-DYNAMIC-UBO-2.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=9E-06・within_limits=True、result=pass、EXIT=0。PNG は天球・地面・球・岩・家と影が以前どおり。
+  - `verify-SCN-ECS-FIF-DYNAMIC-UBO-3.txt`: mega-stress 5万個 close の撮影 result=pass、EXIT=0（GPU median 38.2 ms、rt median 44.4 ms）。close.Game.log の ERROR 0。`check-SCN-ECS-FIF-DYNAMIC-UBO-record-median.txt`（トレースの計測の窓 300 フレーム）: `RG.Record.ShadowMapPass` median 0.395 ms（表 0.40、-0.005）・`RG.Record.GBufferPass` 0.004（表 0.00）・`RG.Record.ForwardPass` 0.002（表 0.00）で、どれも +0.3 ms 以内。
+  - `verify-SCN-ECS-FIF-DYNAMIC-UBO-4.txt`: `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=27`（反復 61 の 30 から、ShadowMapPass の `DynUBO_Slot#`・`RenderingCoordinator.DescriptorSet`・`ShadowMapPass.DescriptorSet` の 3 組が消えた）、GBufferPass・ForwardPass・ShadowMapPass の組は 0、EXIT=0。ERROR 0。起動画面の借りは 1 フレームに定数 73・記述子セット 73（ページ・pool は最初のフレームで 1 つずつ足した後は足していない）。
+- 既存の失敗（この変更の前の HEAD でも同じ assert で落ちる）: Debug の `RenderGraphCompileTest`（2843 行 `commandList.DispatchCount == 10`）と `SkinnedRenderPathContractTest`（1849 行 `packet.Stats.SkinnedGBufferRecordedDraws == 1`）。`SkinnedRenderPathContractTest` で失敗より前に走る `TestInitializedPassesExecuteThroughFrameCommandsAndSceneRenderer`（持ち主の無い文脈で GBuffer・Shadow の Execute が描画を積み、スキニングの束縛 8・9 を書く）は通った。`TestDynamicUniformAllocatorGrowsToCoverShadowCasters` は `RenderGraphCompileTest` の失敗より後なので走っていない。
+- Next: TASKS.md の未完の次の項目。
+- Notes: mega-stress 5万個 close では CSM の描画が無く（VSM が太陽の影を持つ）、借りは 1 フレーム 0 件なので、表の比較は「物体の多い描画で借りが増えすぎない」ことを直接には測っていない（起動画面の 73 件では記述子の借りと書き込みは合わせて 0.1 ms 未満）。`Docs/Architecture/FrameResourceWriteGuard.md` の守られていない組の一覧と `FrameResources.md` の手本の表に、この 3 つのパスが借りる形になったことは書いていない（paths の外）。持ち主の無い文脈と事前確保の形を確かめる検査は書いていない（verify が名指ししていないため。事前確保の形は検査と一緒に消すのが候補）。

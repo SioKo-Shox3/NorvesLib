@@ -260,8 +260,7 @@ namespace NorvesLib::Core::Rendering
             }
 
             constexpr uint32_t UBO_SIZE = sizeof(TransparentForwardUBO);
-            constexpr uint32_t MAX_OBJECTS = 256;
-            if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, MAX_OBJECTS, descriptorSetDesc))
+            if (!m_UniformAllocator.Initialize(m_Device, UBO_SIZE, descriptorSetDesc))
             {
                 NORVES_LOG_ERROR("ForwardPass", "Failed to initialize transparent uniform allocator");
                 return false;
@@ -290,7 +289,6 @@ namespace NorvesLib::Core::Rendering
             constexpr uint32_t WORLD_BOARD_UBO_SIZE = sizeof(WorldBoardForwardUBO);
             if (!m_WorldBoardUniformAllocator.Initialize(m_Device,
                                                          WORLD_BOARD_UBO_SIZE,
-                                                         MAX_OBJECTS,
                                                          boardDescriptorSetDesc))
             {
                 NORVES_LOG_ERROR("ForwardPass", "Failed to initialize world-board uniform allocator");
@@ -1202,9 +1200,6 @@ namespace NorvesLib::Core::Rendering
         const float sceneColorPreExposure =
             activeCamera && bApplySceneColorPreExposure ? activeCamera->PreExposure : 1.0f;
 
-        m_UniformAllocator.Reset();
-        m_WorldBoardUniformAllocator.Reset();
-
         // VT の要求を書く先（このフレームのバッファ。対応しないデバイスでは null で、シェーダーに binding は入らない）
         const TextureResources::VirtualTextureFeedbackTarget feedbackTarget =
             textures ? textures->GetVirtualTextureFeedbackTarget() : TextureResources::VirtualTextureFeedbackTarget{};
@@ -1251,7 +1246,7 @@ namespace NorvesLib::Core::Rendering
         {
             if (cmd.Draw.PayloadKind == DrawPayloadKind::Board)
             {
-                auto allocation = m_WorldBoardUniformAllocator.Allocate();
+                auto allocation = m_WorldBoardUniformAllocator.Allocate(context.FrameResources);
                 if (!allocation.UniformBuffer)
                 {
                     NORVES_LOG_WARNING("ForwardPass",
@@ -1259,7 +1254,7 @@ namespace NorvesLib::Core::Rendering
                     break;
                 }
 
-                allocation.UniformBuffer->Update(&worldBoardFrameUBO, sizeof(WorldBoardForwardUBO));
+                allocation.Write(&worldBoardFrameUBO, sizeof(WorldBoardForwardUBO));
 
                 RHI::TexturePtr boardTexture = m_DefaultWhiteTexture;
                 if (textures && cmd.Draw.Texture.IsValid())
@@ -1294,7 +1289,7 @@ namespace NorvesLib::Core::Rendering
                 continue;
             }
 
-            auto allocation = m_UniformAllocator.Allocate();
+            auto allocation = m_UniformAllocator.Allocate(context.FrameResources);
             if (!allocation.UniformBuffer)
             {
                 NORVES_LOG_WARNING("ForwardPass",
@@ -1378,7 +1373,7 @@ namespace NorvesLib::Core::Rendering
                 ResolveVirtualTextureFeedbackParam(textures, matORM, ormTexture.get(), feedbackTarget);
             uboData.virtualTextureFeedbackHeightParam =
                 ResolveVirtualTextureFeedbackParam(textures, matHeight, heightTexture.get(), feedbackTarget);
-            allocation.UniformBuffer->Update(&uboData, sizeof(TransparentForwardUBO));
+            allocation.Write(&uboData, sizeof(TransparentForwardUBO));
 
             allocation.DescriptorSet->BindTexture(1, albedoTexture);
             allocation.DescriptorSet->BindSampler(1, m_DefaultLinearSampler);

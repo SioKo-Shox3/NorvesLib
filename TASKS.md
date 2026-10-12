@@ -995,7 +995,7 @@
 - notes: 2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。危険地帯（RenderThread・資源の寿命）。
 
 ## SCN-ECS-FIF-DYNAMIC-UBO: DynamicUniformAllocator を借りる形へ移す（GBuffer・Forward・Shadow）
-- status: todo
+- status: done
 - done-when: `DynamicUniformAllocator`（物体ごとの UBO と記述子セットを事前に確保し、`Reset` で先頭へ戻す）は今 1 組で、`Reset` の後に前のフレームの GPU が読む UBO・記述子を書き換え、Execute の単位で `Reset` すると同じフレームの 2 回目の Execute が 1 回目を上書きする。これをフレームの持ち主から借りる形へ移し（UBO は UPLOAD-ARENA の切れ端、記述子は DESCRIPTOR-BORROW）、呼び出し側（`GBufferPass`・`ForwardPass`・`ShadowMapPass` の 2 つ）は飛行中の番号も通し番号も渡さず、`Reset` も呼ばない。この 3 つのパスの `FRAME_RESOURCE_UNPROTECTED` が 0。物体の多い描画で記述子の借りと書き込みの CPU の時間が増えすぎないことを、mega-stress 5万個 close の `RG.Record.*` の median で確かめる（SCN-ECS-RT-FRAME-SCOPES の表から +0.3 ms 以内。超えたら、Execute の中の共有を足すか、記述子を減らす形にする）。起動画面の比較が pass。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-DYNAMIC-UBO`
