@@ -220,7 +220,8 @@ namespace NorvesLib::RHI
         Thread::Mutex Mutex;
         /** 数えた書き込みの回数（作成の直後の 1 回を含む） */
         uint64_t WriteCount = 0;
-        uint64_t LastWriteFrame = 0;
+        /** 最後に書き換えを数えたフレーム（作成の直後の 1 回では進めない。フレームの番号は 1 から） */
+        uint64_t LastRewriteFrame = 0;
         /** 作成の直後の 1 回を除いて書き換えたフレームの数 */
         uint64_t RewriteFrames = 0;
         FrameResourceRewriteEntry* RewriteEntry = nullptr;
@@ -518,12 +519,13 @@ namespace NorvesLib::RHI
         bool CountWriteLocked(FrameResourceTrackState& state, uint64_t frame, const char* scope)
         {
             ++state.WriteCount;
-            const bool bNewFrame = state.LastWriteFrame != frame;
-            state.LastWriteFrame = frame;
             if (state.WriteCount == 1)
             {
                 return false;
             }
+            // 作成の直後の 1 回と同じフレームの 2 回目も、そのフレームを最初の書き換えのフレームとして数える
+            const bool bNewFrame = state.LastRewriteFrame != frame;
+            state.LastRewriteFrame = frame;
             if (!state.bProtected)
             {
                 if (bNewFrame)

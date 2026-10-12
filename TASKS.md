@@ -976,7 +976,7 @@
 - notes: 2026-10-12 親が足した（ユーザーの要望: フレームのデータが消える時期などを使う側が気にせずに、ImGui やデバッグ描画などの描画を足せる仕組みにする。パスごとに飛行中のスロットを持たせる直しをやめ、共通の仕組みから借りる形にした。Sol の批評を反映）。最初は排他つきの共有でもよいが、そのときは待ちの時間を `FrameResource.LockWait` の区間で測って PROGRESS に書く。危険地帯（RenderThread・並列の記録）。
 
 ## SCN-ECS-FIF-REWRITE-GUARD: 守られていない上書きを開発ビルドで見つけ、今ある所を一覧にする
-- status: todo
+- status: done
 - done-when: 開発ビルドで 2 種類を分けて出す。(1) 一覧（合否に使わない）: フレームをまたいで持ち続ける資源（メンバのバッファ・記述子セット）を 2 つ以上のフレームでCPU から書き換えた資源を `FRAME_RESOURCE_REWRITE resource=<名前> pass=<パス> frames=<n>` で資源ごとに 1 回。(2) 守られていない上書き（合否に使う）: 飛行中のフレームを 2 と仮定して前のフレームの提出が参照しうる範囲への書き込み、同じフレームで記録済みのコマンドが参照する範囲への書き込み、束縛した後の記述子セットの `Update` を `FRAME_RESOURCE_UNPROTECTED resource=<名前> pass=<パスのクラス名。パスの外なら呼び出し元の名前> kind=<種類>` で出し、終わりに `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=<n>` を出す（MAX_FRAMES_IN_FLIGHT=1 のままでも見つかる）。フレームの持ち主から借りた物・フェンスで守った再利用（既存の `FrameUseRing`・済みの ImGui のスロット）は、名前で除くのではなく仕組みとして「守られている」と登録する。識別は資源の ID と世代、バッファは範囲ごと。数えるのは `Update` と明示した書き込みの借りで、任意の `Map` のポインタへの書き込みは捕まえられないこと（読み戻しの `Map` は書き込みとみなさない）を文書に書く。作成の直後・大きさの変更の直後の 1 回、初期化で 1 回だけ書く物は数えない。起動画面とシーンの周回（mega-stress・バナナ・起動画面のシーン）で出た (2) の一覧を PROGRESS の表にし、SCN-ECS-FIF-DEBUGDRAW・DYNAMIC-UBO・LIGHTING・POST-A・POST-B・PRESENT・DDGI の対象と突き合わせ、漏れたパスをどれかの項目へ足す。Release では無効。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -Configuration RelWithDebInfo -Deterministic -CompareDeterministicWith .harness/runs/startup-capture/SCN-MEGA-BASE-RWDI -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-REWRITE-GUARD`

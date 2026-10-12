@@ -3417,3 +3417,15 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - 起動画面ではデバッグの線が出ないので、`-DebugDrawTestLines`（大きな球を囲む箱）の決定論の撮影を変更前（`startup-capture/SCN-ECS-FIF-DEBUGDRAW-lines-before`、`debugdraw-lines-before.txt`）と変更後（`SCN-ECS-FIF-DEBUGDRAW-lines`、`verify-SCN-ECS-FIF-DEBUGDRAW-4-lines.txt`）で撮って比べた: mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=1E-05・within_limits=True、result=pass。PNG は黄色の箱が同じ位置に描かれ、球の裏の辺は以前どおり遮蔽されている。`FRAME_RESOURCE_UNPROTECTED_SUMMARY` は変更前 count=32（`DynUBO_Slot#` と `RenderingCoordinator.DescriptorSet` が pass=DebugDrawPass）→ 変更後 count=30 で DebugDrawPass の組・一覧は 0。借りは 1 フレームに切れ端 2（816 バイト = 頂点 672 + 定数 144）・記述子セット 1、ページ 1・pool 1 を最初のフレームで足した後は足していない。ERROR は 0 件。
 - Next: SCN-ECS-FIF-DYNAMIC-UBO。
 - Notes: `Docs/Architecture/FrameResourceWriteGuard.md` の「守られている」の表の `DynamicBufferRing` の行に「呼び出し側の DebugDraw・ImGui」と残っている（この項目の paths の外なので直していない。今の呼び出し側は ImGui だけ。`DynamicBufferRing.cpp` のコメントは直した）。DebugDraw の借りを並列の記録の区間で通す撮影はしていない（DebugDrawPass は直列のパスで、借りる口は同じ）。
+
+### SCN-ECS-FIF-REWRITE-GUARD の 2 周目の差し戻しへの対応（2026-10-12、反復 61・run 20261012-030203）
+
+- 一覧（1）の数え漏れ: 書き換えたフレームを数える基準を、作成の直後の 1 回（数えない書き込み）でも進んでいた `LastWriteFrame` から、数えない 1 回の後にだけ進める `LastRewriteFrame` に替えた。「フレーム 1 で作成の直後の書き込み → フレーム 1 で再び書き込み → フレーム 2 で再び書き込み」が `frames=2` で一覧に出る（以前は 1 と数えて出なかった）。`Docs/Architecture/FrameResourceWriteGuard.md` に `frames` の数え方を 1 行足した。合否に使う (2) の判定は変えていない。
+- 結果: 起動画面 `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=30 resources=198 events=32982 rewrites=198 frames=172`、一覧 198 行（TOTAL 30 行）。周回 count=32（resources=215、rewrites=215、3109 フレーム）、一覧 215 行。今の起動画面・周回では守られていない資源はどれも毎フレーム書き換えているので件数は前回と同じで、上の表と突き合わせの結論（漏れたパスは無い）は変わらない。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-REWRITE-GUARD-9.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-REWRITE-GUARD-10.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=3E-06・within_limits=True、result=pass、EXIT=0。
+  - `verify-SCN-ECS-FIF-REWRITE-GUARD-11.txt`: `FRAME_RESOURCE_UNPROTECTED_SUMMARY count=30 …` があり EXIT=0。ERROR は 0 件。
+  - `verify-SCN-ECS-FIF-REWRITE-GUARD-12.txt`: シーンの周回（rendering3dtest・mega-bananas・mega-stress × 3）`SCENE_CYCLE_SMOKE_RUN result=pass`、EXIT=0。Game.log の ERROR は 0 件。
+- Next: SCN-ECS-FIF-DYNAMIC-UBO。
+- Notes: 差し戻しの再現（同じフレームで作成の直後と 2 回目、次のフレームで 3 回目）を起こす検査は書いていない（verify が名指ししていないため。`RenderGraphLifetimeTest` の束が候補）。
