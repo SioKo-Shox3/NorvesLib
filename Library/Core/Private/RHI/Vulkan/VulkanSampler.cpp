@@ -52,7 +52,8 @@ namespace NorvesLib::RHI::Vulkan
     {
         if (m_sampler)
         {
-            m_device->GetVkDevice().destroySampler(m_sampler);
+            // 前の提出が使っているかもしれないので、提出の完了まで破棄を遅らせる
+            m_device->DeferDestroy(m_sampler);
             m_sampler = nullptr;
         }
     }

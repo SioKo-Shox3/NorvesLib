@@ -178,6 +178,40 @@ namespace NorvesLib::RHI::Vulkan
         // （プレゼント・キューやデバイスの待機）は、このミューテックスを取ってから行う。
         Thread::Mutex &GetGraphicsQueueMutex() { return m_sparseBindMutex; }
 
+        // 提出の完了までの破棄の遅延。
+        // Framebuffer・RenderPass・Pipeline・記述子・Sampler のデストラクタは vkDestroy* の代わりに
+        // ハンドルをここへ移す（どのスレッドからでもよい）。積んだ時点の「次に提出する通し番号」を添え、
+        // スワップチェーンが渡す完了の通し番号がそれ以上になったら破棄する（記録中のフレームが参照して
+        // いても、そのフレームの完了まで生かす。中止したフレームの通し番号は次の提出が使う）。
+        // WaitIdle の後と device の破棄の前は列を全部空ける。提出を追うスワップチェーンが無い間は
+        // その場で破棄する（スワップチェーンを通さない提出は自分のフェンスで待つ経路だけ）。
+        void DeferDestroy(vk::Framebuffer handle) noexcept;
+        void DeferDestroy(vk::RenderPass handle) noexcept;
+        void DeferDestroy(vk::Pipeline handle) noexcept;
+        void DeferDestroy(vk::PipelineLayout handle) noexcept;
+        void DeferDestroy(vk::DescriptorSetLayout handle) noexcept;
+        // プールを破棄すると、そこから確保した記述子セットも一緒に解放される
+        void DeferDestroy(vk::DescriptorPool handle) noexcept;
+        void DeferDestroy(vk::Sampler handle) noexcept;
+
+        // スワップチェーンが提出の通し番号を追い始める・やめる。nextSubmissionSerial は次の提出が使う通し番号。
+        // やめるのは WaitIdle の後に呼ぶ（列を全部空ける）。
+        void BeginDeferredDestroyTracking(uint64_t nextSubmissionSerial);
+        void EndDeferredDestroyTracking();
+        // 提出した通し番号（以後に積むものは submittedSerial + 1 の完了を待つ）
+        void NotifyDeferredDestroySubmitted(uint64_t submittedSerial);
+        // GPU の完了を確かめた通し番号（それ以下で積んだものを破棄する）
+        void NotifyDeferredDestroyCompleted(uint64_t completedSerial);
+
+        struct DeferredDestroyStats
+        {
+            uint64_t Enqueued = 0;  ///< 列へ積んだ数（累計）
+            uint64_t Destroyed = 0; ///< 列から破棄した数（累計）
+            uint64_t Pending = 0;   ///< 列の残り
+            uint64_t Immediate = 0; ///< 追うスワップチェーンが無く、その場で破棄した数（累計）
+        };
+        DeferredDestroyStats GetDeferredDestroyStats() const;
+
         uint32_t GetGraphicsQueueFamilyIndex() const { return m_graphicsQueueFamilyIndex; }
         // VK_QUEUE_SPARSE_BINDING_BIT を持つ族（無ければ UINT32_MAX）。グラフィックスの族が持てばそれを使う。
         uint32_t GetSparseBindingQueueFamilyIndex() const { return m_sparseQueueFamilyIndex; }
@@ -297,6 +331,42 @@ namespace NorvesLib::RHI::Vulkan
         };
         VariableArray<SingleTimePoolEntry> m_singleTimePools;
         Thread::Mutex m_singleTimePoolMutex;
+
+        // 提出の完了まで遅らせる破棄の列（m_deferredDestroyMutex の下で読み書きする）
+        enum class DeferredDestroyKind : uint8_t
+        {
+            Framebuffer,
+            RenderPass,
+            Pipeline,
+            PipelineLayout,
+            DescriptorSetLayout,
+            DescriptorPool,
+            Sampler,
+        };
+        struct DeferredDestroyEntry
+        {
+            DeferredDestroyKind Kind = DeferredDestroyKind::Framebuffer;
+            uint64_t Handle = 0;
+            // この通し番号の提出が完了したら破棄してよい
+            uint64_t Serial = 0;
+        };
+        mutable Thread::Mutex m_deferredDestroyMutex;
+        VariableArray<DeferredDestroyEntry> m_deferredDestroyQueue;
+        // 次に提出する通し番号（スワップチェーンの通し番号）
+        uint64_t m_deferredDestroyNextSerial = 0;
+        // 提出を追っているスワップチェーンの数（0 ならその場で破棄する）
+        uint32_t m_deferredDestroyTrackerCount = 0;
+        uint64_t m_deferredDestroyEnqueuedCount = 0;
+        uint64_t m_deferredDestroyDestroyedCount = 0;
+        uint64_t m_deferredDestroyImmediateCount = 0;
+        // 定期の統計のログの間引き用
+        uint64_t m_deferredDestroyCompletionCount = 0;
+
+        void EnqueueDeferredDestroy(DeferredDestroyKind kind, uint64_t handle) noexcept;
+        void DestroyDeferredHandle(DeferredDestroyKind kind, uint64_t handle) noexcept;
+        // 列を全部破棄する（GPU が列のハンドルを使っていないと分かっているときだけ呼ぶ）
+        void DrainDeferredDestroyQueue(const char *reason) noexcept;
+        void LogDeferredDestroyStats(const char *reason) const;
 
         // GPUリソースアロケーター
         TUniquePtr<VulkanGPUResourceAllocator> m_ResourceAllocator;

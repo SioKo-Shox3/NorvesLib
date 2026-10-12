@@ -915,7 +915,7 @@
 - notes: 2026-10-12 SCN-ECS-FIF-AUDIT（反復 43）で足した。提出が拒まれたとき `imageAvailable` の signal が残る既存の問題（`VulkanSwapChain.cpp` の EndFrame の早期 return）は MAX に依らないので、この項目では扱わない（気づいたら PROGRESS の Notes に残す）。ISwapChain の他の実装（テストの偽物）があれば合わせて消す。危険地帯（RHI/Vulkan）。
 
 ## SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE: Framebuffer・RenderPass・Pipeline・記述子・Sampler の破棄を、提出の完了まで遅らせる
-- status: todo
+- status: done
 - done-when: 今は RHI の資源のデストラクタがその場で `vkDestroy*` を呼ぶ。MAX_FRAMES_IN_FLIGHT=1 では `BeginFrame` の待ちで前の提出が終わっているので、次のフレームの記録の中で手放しても壊れないが、2 にすると前の提出が使っている framebuffer などを壊しうる（各パスは描画先の texture が替わると `RenderPassSignature` などで framebuffer・記述子・pipeline を作り直し、古いものを即座に手放す。RenderGraph の一時資源はスロットごとなので、2 にすると描画先が 2 組を交互に替わる）。`VulkanDevice` に破棄の列（ハンドルと、積んだ時点の「次に提出する通し番号」。ミューテックスで守り、どのスレッドから積んでもよい）を持ち、`VulkanFramebuffer`・`VulkanRenderPass`・`VulkanPipeline`（pipeline と layout）・`VulkanDescriptorSet`（set・pool・layout）・`VulkanSampler` のデストラクタは `vkDestroy*` の代わりにハンドルを列へ移す。`VulkanSwapChain` が提出の通し番号を進めたとき・`BeginFrame` のフェンスの待ちの後に完了の通し番号を device へ渡し、device は完了した通し番号以下のハンドルを破棄する。`WaitIdle` の後と device の破棄の前は列を全部空ける。積んだ数・破棄した数・残りの数を開発ビルドの統計（`RHI.DeferredDestroy.*`）に出す。MAX_FRAMES_IN_FLIGHT=1 のまま起動画面の比較が pass し、Debug の起動画面で検証レイヤーのエラーが 0、シーンの周回が pass し、終了のログで列の残りが 0。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureStartupScene.ps1 -ViewNames default -Build -OutDir .harness/runs/startup-capture/SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-debug`

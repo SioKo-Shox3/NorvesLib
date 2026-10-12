@@ -876,6 +876,9 @@ namespace NorvesLib::RHI::Vulkan
         }
         m_singleTimePools.clear();
 
+        // 遅らせた破棄の残りを空ける（WaitIdle の後なので使用中ではない）
+        DrainDeferredDestroyQueue("DeviceDestroy");
+
         // デバイスを破棄
         if (m_device)
         {
@@ -2642,12 +2645,229 @@ namespace NorvesLib::RHI::Vulkan
         {
             ReleaseDeferredSingleTimeCommandBuffers(m_device);
             ReleaseDeferredVulkanTextureUpdateStagingResourcesForDevice(m_device);
+            DrainDeferredDestroyQueue(nullptr);
         }
         if (result == VK_ERROR_DEVICE_LOST)
         {
             ReportDeviceFaultOnce();
         }
         return result;
+    }
+
+    namespace
+    {
+        template <typename THandle>
+        uint64_t ToDeferredDestroyHandle(THandle handle) noexcept
+        {
+            return reinterpret_cast<uint64_t>(static_cast<typename THandle::CType>(handle));
+        }
+
+        template <typename THandle>
+        THandle FromDeferredDestroyHandle(uint64_t handle) noexcept
+        {
+            return THandle(reinterpret_cast<typename THandle::CType>(handle));
+        }
+
+        // 定期の統計のログを出す、完了の通知の間隔
+        constexpr uint64_t kDeferredDestroyStatsLogInterval = 600;
+    } // namespace
+
+    void VulkanDevice::DeferDestroy(vk::Framebuffer handle) noexcept
+    {
+        EnqueueDeferredDestroy(DeferredDestroyKind::Framebuffer, ToDeferredDestroyHandle(handle));
+    }
+
+    void VulkanDevice::DeferDestroy(vk::RenderPass handle) noexcept
+    {
+        EnqueueDeferredDestroy(DeferredDestroyKind::RenderPass, ToDeferredDestroyHandle(handle));
+    }
+
+    void VulkanDevice::DeferDestroy(vk::Pipeline handle) noexcept
+    {
+        EnqueueDeferredDestroy(DeferredDestroyKind::Pipeline, ToDeferredDestroyHandle(handle));
+    }
+
+    void VulkanDevice::DeferDestroy(vk::PipelineLayout handle) noexcept
+    {
+        EnqueueDeferredDestroy(DeferredDestroyKind::PipelineLayout, ToDeferredDestroyHandle(handle));
+    }
+
+    void VulkanDevice::DeferDestroy(vk::DescriptorSetLayout handle) noexcept
+    {
+        EnqueueDeferredDestroy(DeferredDestroyKind::DescriptorSetLayout, ToDeferredDestroyHandle(handle));
+    }
+
+    void VulkanDevice::DeferDestroy(vk::DescriptorPool handle) noexcept
+    {
+        EnqueueDeferredDestroy(DeferredDestroyKind::DescriptorPool, ToDeferredDestroyHandle(handle));
+    }
+
+    void VulkanDevice::DeferDestroy(vk::Sampler handle) noexcept
+    {
+        EnqueueDeferredDestroy(DeferredDestroyKind::Sampler, ToDeferredDestroyHandle(handle));
+    }
+
+    void VulkanDevice::EnqueueDeferredDestroy(DeferredDestroyKind kind, uint64_t handle) noexcept
+    {
+        if (handle == 0 || !m_device)
+        {
+            return;
+        }
+        {
+            Thread::ScopedLock lock(m_deferredDestroyMutex);
+            if (m_deferredDestroyTrackerCount > 0)
+            {
+                m_deferredDestroyQueue.push_back(DeferredDestroyEntry{kind, handle, m_deferredDestroyNextSerial});
+                ++m_deferredDestroyEnqueuedCount;
+                return;
+            }
+            ++m_deferredDestroyImmediateCount;
+        }
+        DestroyDeferredHandle(kind, handle);
+    }
+
+    void VulkanDevice::DestroyDeferredHandle(DeferredDestroyKind kind, uint64_t handle) noexcept
+    {
+        switch (kind)
+        {
+        case DeferredDestroyKind::Framebuffer:
+            m_device.destroyFramebuffer(FromDeferredDestroyHandle<vk::Framebuffer>(handle));
+            break;
+        case DeferredDestroyKind::RenderPass:
+            m_device.destroyRenderPass(FromDeferredDestroyHandle<vk::RenderPass>(handle));
+            break;
+        case DeferredDestroyKind::Pipeline:
+            m_device.destroyPipeline(FromDeferredDestroyHandle<vk::Pipeline>(handle));
+            break;
+        case DeferredDestroyKind::PipelineLayout:
+            m_device.destroyPipelineLayout(FromDeferredDestroyHandle<vk::PipelineLayout>(handle));
+            break;
+        case DeferredDestroyKind::DescriptorSetLayout:
+            m_device.destroyDescriptorSetLayout(FromDeferredDestroyHandle<vk::DescriptorSetLayout>(handle));
+            break;
+        case DeferredDestroyKind::DescriptorPool:
+            m_device.destroyDescriptorPool(FromDeferredDestroyHandle<vk::DescriptorPool>(handle));
+            break;
+        case DeferredDestroyKind::Sampler:
+            m_device.destroySampler(FromDeferredDestroyHandle<vk::Sampler>(handle));
+            break;
+        }
+    }
+
+    void VulkanDevice::BeginDeferredDestroyTracking(uint64_t nextSubmissionSerial)
+    {
+        Thread::ScopedLock lock(m_deferredDestroyMutex);
+        ++m_deferredDestroyTrackerCount;
+        m_deferredDestroyNextSerial = nextSubmissionSerial;
+    }
+
+    void VulkanDevice::EndDeferredDestroyTracking()
+    {
+        {
+            Thread::ScopedLock lock(m_deferredDestroyMutex);
+            if (m_deferredDestroyTrackerCount > 0)
+            {
+                --m_deferredDestroyTrackerCount;
+            }
+        }
+        // 呼び出し元が WaitIdle を済ませているので、列のハンドルは GPU が使っていない
+        DrainDeferredDestroyQueue("SwapChainDestroy");
+    }
+
+    void VulkanDevice::NotifyDeferredDestroySubmitted(uint64_t submittedSerial)
+    {
+        Thread::ScopedLock lock(m_deferredDestroyMutex);
+        if (submittedSerial + 1 > m_deferredDestroyNextSerial)
+        {
+            m_deferredDestroyNextSerial = submittedSerial + 1;
+        }
+    }
+
+    void VulkanDevice::NotifyDeferredDestroyCompleted(uint64_t completedSerial)
+    {
+        VariableArray<DeferredDestroyEntry> completed;
+        bool bLogStats = false;
+        {
+            Thread::ScopedLock lock(m_deferredDestroyMutex);
+            if (!m_deferredDestroyQueue.empty())
+            {
+                VariableArray<DeferredDestroyEntry> remaining;
+                for (const DeferredDestroyEntry &entry : m_deferredDestroyQueue)
+                {
+                    if (entry.Serial <= completedSerial)
+                    {
+                        completed.push_back(entry);
+                    }
+                    else
+                    {
+                        remaining.push_back(entry);
+                    }
+                }
+                m_deferredDestroyQueue = std::move(remaining);
+                m_deferredDestroyDestroyedCount += completed.size();
+            }
+            ++m_deferredDestroyCompletionCount;
+            bLogStats = (m_deferredDestroyCompletionCount % kDeferredDestroyStatsLogInterval) == 0;
+        }
+        for (const DeferredDestroyEntry &entry : completed)
+        {
+            DestroyDeferredHandle(entry.Kind, entry.Handle);
+        }
+        if (bLogStats)
+        {
+            LogDeferredDestroyStats("Periodic");
+        }
+    }
+
+    void VulkanDevice::DrainDeferredDestroyQueue(const char *reason) noexcept
+    {
+        VariableArray<DeferredDestroyEntry> drained;
+        {
+            Thread::ScopedLock lock(m_deferredDestroyMutex);
+            drained = std::move(m_deferredDestroyQueue);
+            m_deferredDestroyQueue.clear();
+            m_deferredDestroyDestroyedCount += drained.size();
+        }
+        if (m_device)
+        {
+            for (const DeferredDestroyEntry &entry : drained)
+            {
+                DestroyDeferredHandle(entry.Kind, entry.Handle);
+            }
+        }
+        if (reason)
+        {
+            LogDeferredDestroyStats(reason);
+        }
+    }
+
+    VulkanDevice::DeferredDestroyStats VulkanDevice::GetDeferredDestroyStats() const
+    {
+        Thread::ScopedLock lock(m_deferredDestroyMutex);
+        DeferredDestroyStats stats;
+        stats.Enqueued = m_deferredDestroyEnqueuedCount;
+        stats.Destroyed = m_deferredDestroyDestroyedCount;
+        stats.Pending = m_deferredDestroyQueue.size();
+        stats.Immediate = m_deferredDestroyImmediateCount;
+        return stats;
+    }
+
+    void VulkanDevice::LogDeferredDestroyStats(const char *reason) const
+    {
+#if NORVES_ENABLE_STATS
+        const DeferredDestroyStats stats = GetDeferredDestroyStats();
+        NORVES_LOG_INFO("VulkanDevice",
+                        "RHI.DeferredDestroy reason=%s RHI.DeferredDestroy.Enqueued=%llu "
+                        "RHI.DeferredDestroy.Destroyed=%llu RHI.DeferredDestroy.Pending=%llu "
+                        "RHI.DeferredDestroy.Immediate=%llu",
+                        reason ? reason : "-",
+                        static_cast<unsigned long long>(stats.Enqueued),
+                        static_cast<unsigned long long>(stats.Destroyed),
+                        static_cast<unsigned long long>(stats.Pending),
+                        static_cast<unsigned long long>(stats.Immediate));
+#else
+        (void)reason;
+#endif
     }
 
     void VulkanDevice::ReportDeviceFaultOnce()

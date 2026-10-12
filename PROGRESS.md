@@ -3215,3 +3215,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-ECS-FIF-SWAPCHAIN-3.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=4E-06・within_limits=True、result=pass、EXIT=0。
 - Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り）。
 - Notes: 提出が拒まれたとき `imageAvailable` の signal が残る既存の問題（`EndFrame` の早期 return）は MAX に依らないので未対応のまま。Resize で画像の数が変わったあとの `m_currentImageIndex` の古い値は、`EndFrame` の範囲の検査で `InvalidCommandList` として拒む。
+
+### SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE（2026-10-12、反復 48・run 20261012-030203）
+
+- `VulkanDevice` に破棄の列を足した（ハンドルの種類・ハンドル・積んだ時点の「次に提出する通し番号」。`m_deferredDestroyMutex` で守り、どのスレッドから積んでもよい）。`VulkanFramebuffer`・`VulkanRenderPass`・`VulkanPipelineLayout`・`VulkanPipeline`・`VulkanDescriptorSetLayout`・`VulkanDescriptorPool`・`VulkanDescriptorSet`（pipeline layout）・`VulkanSampler` のデストラクタは `vkDestroy*` の代わりに `DeferDestroy` でハンドルを列へ移す。記述子セットは専用のプールと一緒にプールの破棄で解放される。
+- `VulkanSwapChain` は作成の最後に `BeginDeferredDestroyTracking`、`EndFrame` の提出の後に `NotifyDeferredDestroySubmitted`、`BeginFrame` のフェンスの待ちの後に `NotifyDeferredDestroyCompleted`（完了の通し番号以下を破棄）、破棄の `WaitIdle` の後に `EndDeferredDestroyTracking`（列を全部空ける）を呼ぶ。`WaitIdleInternal` の成功（と device lost）の後と device の破棄の前も列を全部空ける。
+- 統計: 開発ビルドで `RHI.DeferredDestroy reason=… RHI.DeferredDestroy.Enqueued/Destroyed/Pending/Immediate=…` をログに出す（完了の通知 600 回ごと・スワップチェーンの破棄・device の破棄）。`Stats.h` に数の口が無いので、ログの行と `GetDeferredDestroyStats()` で出す。
+- 検証（`.harness/runs/20261012-030203/`）:
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-2.txt`: Debug の起動画面の撮影 result=pass、`vulkan_validation` は error_count=0・warning_count=0・vuid_count=0。終了のログで `Pending=0`（110 フレームで Enqueued=Destroyed=7949）。
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-3.txt`: 決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=8E-06・within_limits=True、result=pass、EXIT=0。
+  - `verify-SCN-ECS-FIF-DEFERRED-DESTROY-PIPELINE-4.txt`: rendering3dtest・mega-bananas・mega-stress の周回 3 周 result=pass、EXIT=0。終了のログで `Pending=0`（Enqueued=Destroyed=42010）、ERROR 0 行。
+- Next: TASKS.md の次の未完（SCN-ECS-FIF 系の残り）。
+- Notes: 提出を追うスワップチェーンが無い間（作成前・破棄後、スワップチェーンを作らないテスト）はその場で破棄する（`Immediate` に数える。今回の 2 本とも 0）。通し番号はスワップチェーンのものなので、スワップチェーンが同時に 2 つある形には対応していない（`Screen` が 1 つだけ作る）。起動画面は 1 フレームあたり約 70 個を積んでいる（読み込み込み）。周回のランチャーの待機の区間では増えていない。FIF-SWITCH で描画先の交互の替わりによる作り直しが毎フレーム増えるかを見る。

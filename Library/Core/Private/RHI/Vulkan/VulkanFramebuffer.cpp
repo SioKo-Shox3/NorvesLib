@@ -29,7 +29,8 @@ namespace NorvesLib::RHI::Vulkan
     {
         if (m_framebuffer)
         {
-            m_device->GetVkDevice().destroyFramebuffer(m_framebuffer);
+            // 前の提出が使っているかもしれないので、提出の完了まで破棄を遅らせる
+            m_device->DeferDestroy(m_framebuffer);
             m_framebuffer = nullptr;
         }
     }

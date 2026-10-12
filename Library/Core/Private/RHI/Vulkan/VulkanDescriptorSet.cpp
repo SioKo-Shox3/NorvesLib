@@ -71,7 +71,8 @@ namespace NorvesLib::RHI::Vulkan
     {
         if (m_layout)
         {
-            m_device->GetVkDevice().destroyDescriptorSetLayout(m_layout);
+            // 前の提出が使っているかもしれないので、提出の完了まで破棄を遅らせる
+            m_device->DeferDestroy(m_layout);
             m_layout = nullptr;
         }
     }
@@ -265,7 +266,9 @@ namespace NorvesLib::RHI::Vulkan
     {
         if (m_pool)
         {
-            m_device->GetVkDevice().destroyDescriptorPool(m_pool);
+            // 前の提出が使っているかもしれないので、提出の完了まで破棄を遅らせる
+            // （このプールから確保した記述子セットもプールと一緒に解放される）
+            m_device->DeferDestroy(m_pool);
             m_pool = nullptr;
         }
     }
@@ -310,7 +313,9 @@ namespace NorvesLib::RHI::Vulkan
     {
         if (m_pipelineLayout)
         {
-            m_device->GetVkDevice().destroyPipelineLayout(m_pipelineLayout);
+            // 前の提出が使っているかもしれないので、提出の完了まで破棄を遅らせる。
+            // 記述子セットそのものは専用のプール（m_pool）と一緒に、プールの破棄の時に解放される
+            m_device->DeferDestroy(m_pipelineLayout);
             m_pipelineLayout = nullptr;
         }
     }

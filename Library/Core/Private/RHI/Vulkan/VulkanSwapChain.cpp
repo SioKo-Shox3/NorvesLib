@@ -74,6 +74,9 @@ namespace NorvesLib::RHI::Vulkan
         CreateImageViews();
         CreateRenderFinishedSemaphores();
         CreateSyncObjects();
+
+        // RHI の資源の破棄を、このスワップチェーンの提出の完了まで遅らせる（通し番号を device へ渡す）
+        m_device->BeginDeferredDestroyTracking(m_nextSubmissionSerial + 1);
     }
 
     // デストラクタ
@@ -87,6 +90,9 @@ namespace NorvesLib::RHI::Vulkan
         {
             NotifyFrameSlotCommandListsCompleted(frameSlot);
         }
+
+        // 全部の提出が完了したので、遅らせた破棄を全部済ませて通し番号を追うのをやめる
+        m_device->EndDeferredDestroyTracking();
 
         // 同期オブジェクトのクリーンアップ（描画の完了のセマフォは画像ごとなので CleanupSwapChain で破棄する）
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
@@ -197,6 +203,8 @@ namespace NorvesLib::RHI::Vulkan
             m_completedSubmissionSerial = m_frameSlotSubmissionSerials[m_currentFrame];
         }
         NotifyFrameSlotCommandListsCompleted(m_currentFrame);
+        // 完了した通し番号以下で積んだ RHI の資源を破棄する
+        m_device->NotifyDeferredDestroyCompleted(m_completedSubmissionSerial);
 
         // 次の画像を取得（RenderThread の区間 RT.AcquireImage）
         auto acquireResult = [this]()
@@ -338,6 +346,8 @@ namespace NorvesLib::RHI::Vulkan
         }
         m_nextSubmissionSerial = submittedSerial;
         m_frameSlotSubmissionSerials[m_currentFrame] = submittedSerial;
+        // 以後に手放す RHI の資源は、次の提出の完了まで生かす
+        m_device->NotifyDeferredDestroySubmitted(submittedSerial);
         result.SubmissionSerial = submittedSerial;
         // この slot のフェンスを次に待ったとき、束の全リストへ完了を通知する
         VariableArray<TWeakPtr<ICommandList>> &slotCommandLists = m_frameSlotCommandLists[m_currentFrame];

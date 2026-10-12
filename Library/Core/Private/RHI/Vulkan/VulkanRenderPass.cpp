@@ -19,7 +19,8 @@ namespace NorvesLib::RHI::Vulkan
     {
         if (m_renderPass)
         {
-            m_device->GetVkDevice().destroyRenderPass(m_renderPass);
+            // 前の提出が使っているかもしれないので、提出の完了まで破棄を遅らせる
+            m_device->DeferDestroy(m_renderPass);
         }
     }
 

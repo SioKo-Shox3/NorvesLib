@@ -86,7 +86,8 @@ namespace NorvesLib::RHI::Vulkan
     {
         if (m_pipelineLayout)
         {
-            m_device->GetVkDevice().destroyPipelineLayout(m_pipelineLayout);
+            // 前の提出が使っているかもしれないので、提出の完了まで破棄を遅らせる
+            m_device->DeferDestroy(m_pipelineLayout);
         }
     }
 
@@ -100,7 +101,8 @@ namespace NorvesLib::RHI::Vulkan
     {
         if (m_pipeline)
         {
-            m_device->GetVkDevice().destroyPipeline(m_pipeline);
+            // 前の提出が使っているかもしれないので、提出の完了まで破棄を遅らせる
+            m_device->DeferDestroy(m_pipeline);
         }
     }
 
