@@ -86,6 +86,11 @@ namespace Game::GameModes
         float BaseY = 0.0f;
         /// 原点から最も遠い頂点までの水平の距離（拡大後）。向きによらず Entity の足元がこの円に収まる
         float FootprintRadius = 0.0f;
+        /// 面の法線の和の水平成分と表面積の比（閉じた岩・底だけ開いた岩は 0 に近く、背面の無い崖のスキャンは大きい）
+        float OpenSideRatio = 0.0f;
+        /// 横に開いた殻（背面の無いスキャン）のとき true。表の向き（ローカルの XZ で +Z から測った角[rad]）を FrontYaw に持つ
+        bool bOpenSide = false;
+        float FrontYaw = 0.0f;
         uint32_t PlacedCount = 0;
     };
 
@@ -209,6 +214,12 @@ namespace Game::GameModes
         constexpr float kMoverOmegaMin = 0.8f;
         constexpr float kMoverOmegaMax = 1.6f;
         constexpr float kMoverYawOmegaMax = 1.5f;
+
+        // 横に開いた殻とみなす OpenSideRatio の下限。閉じた岩・底だけ開いた岩は 0.035 未満、背面の無い崖のスキャンは 0.48〜0.59。
+        // 開いた殻の動かない Entity は、開いた側が視点（どの視点もフィールドの手前の原点付近から +Z を見る）に向かないよう、
+        // 表を原点の方へ向け、向きのばらつきは ±kOpenSideYawSpread[rad] に収める
+        constexpr float kOpenSideRatioMin = 0.2f;
+        constexpr float kOpenSideYawSpread = 30.0f * kPi / 180.0f;
 
         // 整数のハッシュ（配置の乱数。番号だけで決まり、実行ごとに同じ）
         uint32_t HashIndex(uint32_t value)
@@ -436,6 +447,77 @@ namespace Game::GameModes
             textures.LoadTextureAsync(path, onLoaded);
         }
 
+        /// 常駐の粗い段の三角形の、面積を掛けた法線の和から、横に開いた殻かどうかと表の向きを決める。
+        /// 閉じたメッシュでは和が 0 になり、開いた殻では開いた側の逆（表の側）を向く。
+        /// 三角形の向きは巻き方でなく頂点の法線の平均で決める（巻き方の規約によらない）
+        void MeasureOpenSide(StressMeshLoad &load)
+        {
+            const Asset::CookedMeshData &mesh = *load.Mesh;
+            const size_t begin = mesh.FallbackIndexOffset;
+            const size_t end = begin + mesh.FallbackIndexCount;
+            if (mesh.FallbackIndexCount < 3 || end > mesh.Indices.size())
+            {
+                return;
+            }
+            double sumX = 0.0;
+            double sumZ = 0.0;
+            double totalArea = 0.0;
+            for (size_t i = begin; i + 2 < end; i += 3)
+            {
+                const uint32_t ia = mesh.Indices[i];
+                const uint32_t ib = mesh.Indices[i + 1];
+                const uint32_t ic = mesh.Indices[i + 2];
+                if (ia >= mesh.Vertices.size() || ib >= mesh.Vertices.size() || ic >= mesh.Vertices.size())
+                {
+                    continue;
+                }
+                const Asset::CookedMeshVertex &a = mesh.Vertices[ia];
+                const Asset::CookedMeshVertex &b = mesh.Vertices[ib];
+                const Asset::CookedMeshVertex &c = mesh.Vertices[ic];
+                const double e1x = b.Position.X - a.Position.X;
+                const double e1y = b.Position.Y - a.Position.Y;
+                const double e1z = b.Position.Z - a.Position.Z;
+                const double e2x = c.Position.X - a.Position.X;
+                const double e2y = c.Position.Y - a.Position.Y;
+                const double e2z = c.Position.Z - a.Position.Z;
+                const double cx = e1y * e2z - e1z * e2y;
+                const double cy = e1z * e2x - e1x * e2z;
+                const double cz = e1x * e2y - e1y * e2x;
+                const double area = std::sqrt(cx * cx + cy * cy + cz * cz);
+                const double nx = static_cast<double>(a.Normal.X) + b.Normal.X + c.Normal.X;
+                const double ny = static_cast<double>(a.Normal.Y) + b.Normal.Y + c.Normal.Y;
+                const double nz = static_cast<double>(a.Normal.Z) + b.Normal.Z + c.Normal.Z;
+                const double nLength = std::sqrt(nx * nx + ny * ny + nz * nz);
+                if (!(area > 0.0) || !(nLength > 0.0))
+                {
+                    continue;
+                }
+                sumX += nx / nLength * area;
+                sumZ += nz / nLength * area;
+                totalArea += area;
+            }
+            if (!(totalArea > 0.0))
+            {
+                return;
+            }
+            load.OpenSideRatio = static_cast<float>(std::sqrt(sumX * sumX + sumZ * sumZ) / totalArea);
+            load.bOpenSide = load.OpenSideRatio >= kOpenSideRatioMin;
+            load.FrontYaw = static_cast<float>(std::atan2(sumX, sumZ));
+        }
+
+        /// 動かない Entity の向き。開いた殻は表を原点の方へ向け、置いた番号の向き yaw をばらつきに使う。それ以外は yaw のまま。
+        /// World は行ベクトルの規約なので、Y 軸まわりの回転 θ はローカルの XZ の向き φ をワールドの φ − θ へ写す
+        float FacingYaw(const StressMeshLoad &load, float x, float z, float yaw)
+        {
+            if (!load.bOpenSide)
+            {
+                return yaw;
+            }
+            const float towardOrigin = std::atan2(-x, -z);
+            const float spread = (yaw / (2.0f * kPi) - 0.5f) * 2.0f * kOpenSideYawSpread;
+            return load.FrontYaw - towardOrigin + spread;
+        }
+
         /// メッシュ 1 種類のクック済みメッシュを解決・解析し、材質のテクスチャの読み込みを始める。
         /// クック済みが無い・壊れているときは理由を警告して false を返す（その種類を読み飛ばす）
         bool StartMeshLoad(GameModeContext &ctx, const TSharedPtr<const Asset::AssetSystem> &assetSystem,
@@ -506,6 +588,10 @@ namespace Game::GameModes
                        static_cast<unsigned int>(load.Mesh->Clusters.size()),
                        static_cast<unsigned int>(load.Mesh->LODLevelCount), load.Mesh->Pages.size(),
                        static_cast<double>(maxY - minY), static_cast<double>(load.BaseScale));
+            MeasureOpenSide(load);
+            LOG_INFO_F("MEGA_STRESS_OPEN_SIDE id=%s ratio=%.3f open=%d front_yaw_deg=%.1f", spec.Id.c_str(),
+                       static_cast<double>(load.OpenSideRatio), load.bOpenSide ? 1 : 0,
+                       static_cast<double>(load.FrontYaw * 180.0f / kPi));
 
             auto pending = MakeShared<StressPendingMaterial>();
             pending->CreateData.DebugName = spec.Id.c_str();
@@ -1150,7 +1236,9 @@ namespace Game::GameModes
                     const float x = (static_cast<float>(column) - 0.5f * static_cast<float>(columns - 1)) * kCellMeters + jitterX;
                     const float z = kFieldNearZ + static_cast<float>(row) * kCellMeters + jitterZ;
                     StressMeshLoad &load = assembly.Loads[static_cast<size_t>(kind)];
-                    Entity *entity = bBatch ? nullptr : SpawnStressEntity(ctx, load, x, z, yaw);
+                    // 置く向き（開いた殻は表を原点へ向ける）。動く Entity は置いた直後から番号の向き yaw を基準に回す
+                    const float placedYaw = FacingYaw(load, x, z, yaw);
+                    Entity *entity = bBatch ? nullptr : SpawnStressEntity(ctx, load, x, z, placedYaw);
                     if (entity != nullptr || bBatch)
                     {
                         ++load.PlacedCount;
@@ -1165,7 +1253,7 @@ namespace Game::GameModes
                             record.Kind = static_cast<uint32_t>(kind);
                             record.X = x;
                             record.Z = z;
-                            record.Yaw = yaw;
+                            record.Yaw = placedYaw;
                             record.pEntity = entity;
                             stream->Placed.push_back(record);
                         }

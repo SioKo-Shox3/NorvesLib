@@ -771,7 +771,7 @@
 - notes: 2026-10-12 SCN-MEGA-MEASURE-UPLOAD（反復 19・run 20261012-030203）で足した。区画の出入りのフレームは `MEGA_SHADOW_DIRTY rebuilds=5`（120 回の表の作成あたり）と `RT_SCENE built=15`（120 フレームあたり）で、表の作り直しと重なる。撮影は反復の中で 1 回: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views default -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GpuTimingFrames 300 -GameArgs stress-entities=30000,stress-moving-percent=1,stress-stream-cell=64 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-RECORD-COMMAND/move1-cell64-30k`（5万個 + 64 m 区画は BVH-INDIRECT の前は VRAM を超えて落ちる）。危険地帯（RenderThread・記録）。
 
 ## SCN-MEGA-FIX-STRESS-NEAR-CLIP: mega-stress の既定の視点で、近くの岩が近平面で切れて内側が見える
-- status: todo
+- status: done
 - done-when: 5万個の mega-stress の既定の視点（overview）の PNG の下端中央（x 950〜1250・y 880〜1080 の 1920×1080）に、近平面で切れた岩の内側（黒い面と半透明の膜。今は黒い画素が約 6,000）が出ない。先に原因（カメラのすぐ前に置かれた Entity・近平面の距離・切れた面の描き方）を特定して PROGRESS に書き、直す先が paths の外なら blocked に書く。他の視点（close・aerial）と動く物の配置は変えない。
 - verify: `cmake --build build --config RelWithDebInfo --target Game -- /m:1`
 - verify: `powershell -NoProfile -ExecutionPolicy Bypass -File Scripts/CaptureScene.ps1 -Scene mega-stress -Views default -RequireAssets -Configuration RelWithDebInfo -Width 1920 -Height 1080 -GameArgs stress-entities=50000 -OutDir .harness/runs/scene-capture/SCN-MEGA-FIX-STRESS-NEAR-CLIP`
