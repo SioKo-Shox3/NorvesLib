@@ -6,7 +6,7 @@
 // vsm_mega_cull_pairs.comp が作った（インスタンス、スライス）の組の一覧（binding 21）の頭の、組の数 pairCount と
 // 通った組のワークグループ数の最大 pairMaxGroups から、VkDispatchIndirectCommand（x, y, z）を pairArgs に書く。
 // x = 組の数 × 最大のワークグループ数を x の上限で頭打ちにした数、y = 上限を超える分を折り返した数、z = 1。
-// 太陽の段の BVH の経路の根の数 pairBvhCount からは、段 0（vsm_mega_bvh.comp。1 スレッド = 1 つの根）の引数を pairBvhArgs に書く
+// BVH の経路の根の数 pairBvhCount からは、段 0（vsm_mega_bvh.comp。1 スレッド = 1 つの根）の引数を pairBvhArgs に書く
 // （x = ceil(根の数 / 64) を x の上限で頭打ちにした数、y = 折り返した数、z = 1）。
 // 1 ワークグループ（1 スレッド）で出す。
 // ========================================

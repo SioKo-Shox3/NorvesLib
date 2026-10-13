@@ -322,13 +322,14 @@ namespace NorvesLib::Core::Rendering
      *      続けて、インスタンスの境界のライト空間の矩形が、その段の範囲・深度の範囲に入り、dirty のページを含む組だけを一覧にし、
      *      選択の間接 dispatch の引数を作る。
      *      組ごとに 1 回だけ判定するので、選択のワークグループがインスタンスの判定を繰り返さない。
-     *      太陽の段でメッシュがグループの BVH を持つ組は BVH の経路の根として一覧の後ろから積み、それ以外は平らな経路の組として前から積む。
+     *      メッシュがグループの BVH を持つ組（太陽の段・点光源の面）は BVH の経路の根として一覧の後ろから積み、それ以外は平らな経路の組として前から積む。
      *      続けて vsm_mega_cull_args.comp（1 スレッド）が、組の数と組のワークグループ数の最大・根の数から間接 dispatch の引数を書く。
      *   3. 選択（主の経路の Common/MegaGeometryCull.glsl の判定の本体を正射影の LOD で使う）。クラスタを LOD の判定
      *      （自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）で選び、結果は（インスタンスの表の番号・段・クラスタの番号）の一覧と数で、自分のバッファに書く。
-     *      平らな経路（vsm_mega_cull.comp。点光源の面と BVH を持たないメッシュ）: 通った組だけを間接 dispatch で受け持ち、1 ワークグループ = 1 つの組の 64 クラスタ。
-     *      BVH の経路（vsm_mega_bvh.comp。太陽の段）: 根から BVH を段ごとの間接 dispatch（段 0〜15 と葉の段）でたどり、節の球が段の範囲・
-     *      dirty のページに掛からない枝と、節の親の誤差の最大 ÷ texel が許容以下の枝を切って、葉のクラスタだけを平らな経路と同じ判定にかける。
+     *      平らな経路（vsm_mega_cull.comp。BVH を持たないメッシュ）: 通った組だけを間接 dispatch で受け持ち、1 ワークグループ = 1 つの組の 64 クラスタ。
+     *      BVH の経路（vsm_mega_bvh.comp。太陽の段と点光源の面）: 根から BVH を段ごとの間接 dispatch（段 0〜15 と葉の段）でたどり、節の球が
+     *      スライスの範囲・dirty のページに掛からない枝と、節の親の誤差の最大 ÷ texel（点光源の面は節の球の最も近い点の texel）が
+     *      許容以下の枝を切って、葉のクラスタだけを平らな経路と同じ判定にかける。
      *      列は固定容量（節の列 2 本と葉の列）で、超えた要素は積まずに溢れ（統計の語 10）へ数え、その節が覆うページへ再描画の印を付ける。
      *      列を作れない・起動引数 --vsm-mega-flat のときは、全部の組を平らな経路で選ぶ。
      *   4. 影の塊の記録（vsm_mega_chunks.comp。dispatch.Chunks があるときだけ）: 一覧の 1 件を、手続き・スキニングと同じ形の
@@ -404,7 +405,7 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_ArgsPipeline;
         RHI::PipelinePtr m_CullPipeline;
         RHI::PipelinePtr m_ChunkPipeline;
-        /** @brief 太陽の段の BVH の経路（vsm_mega_bvh.comp）。作れなければ平らな経路だけを使う */
+        /** @brief BVH の経路（vsm_mega_bvh.comp）。作れなければ平らな経路だけを使う */
         RHI::ShaderPtr m_BvhShader;
         RHI::PipelinePtr m_BvhPipeline;
         /** @brief BVH のたどりの列（節の列 2 本 + 葉の列。GPU だけが使う）と数え・間接 dispatch の引数。フレームをまたいで共有する */

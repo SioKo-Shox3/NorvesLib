@@ -66,7 +66,7 @@ namespace NorvesLib::Core::Rendering
             float lightDirection[4];
             float depth[4];     // x = 深度の原点、y = 深度の範囲の片側（m）
             uint32_t counts[4]; // x = スライス（段）の数、y = 出力の一覧の容量、z = 影の判定の全ワークグループ数
-            uint32_t bvh[4];    // x = 太陽の段の BVH の経路を使うなら 1、y = 節の列 1 本の容量、z = 葉の列の容量、w = 組の一覧の容量
+            uint32_t bvh[4];    // x = BVH の経路を使うなら 1、y = 節の列 1 本の容量、z = 葉の列の容量、w = 組の一覧の容量
         };
         // ページの一辺・texel・範囲の原点はスライスの表（GPUVsmSlice。DirtyBindSlices・MegaBindSlices）にある
         static_assert(sizeof(GPUMegaCullParams) == 96, "Common/VirtualShadowMapMegaCull.glsl の VsmMegaCullParams と同じ大きさにすること");
@@ -843,7 +843,7 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
 
-        // 太陽の段の BVH の経路。--vsm-mega-flat のとき・作れないときは平らな経路だけを使う（カリング全体は止めない）
+        // BVH の経路（太陽の段・点光源の面）。--vsm-mega-flat のとき・作れないときは平らな経路だけを使う（カリング全体は止めない）
         m_bBvhEnabled = !HasProcessCommandLineFlag(L"--vsm-mega-flat");
         m_bBvhResourceFailed = false;
         if (m_bBvhEnabled)
@@ -865,7 +865,7 @@ namespace NorvesLib::Core::Rendering
             }
             if (!m_BvhPipeline)
             {
-                NORVES_LOG_WARNING("VirtualShadowMapMegaCull", "太陽の段の BVH の経路を作れず、全部の組を平らな経路で選ぶ");
+                NORVES_LOG_WARNING("VirtualShadowMapMegaCull", "BVH の経路を作れず、全部の組を平らな経路で選ぶ");
                 m_BvhShader.reset();
                 m_bBvhEnabled = false;
             }
@@ -1102,7 +1102,7 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
-        // 太陽の段の BVH の経路: 列と段ごとの束縛が揃うときだけ。組の一覧の後ろから根を積むので、一覧の容量も渡す
+        // BVH の経路: 列と段ごとの束縛が揃うときだけ。組の一覧の後ろから根を積むので、一覧の容量も渡す
         bool bBvh = EnsureBvhResources();
         for (const RHI::DescriptorSetPtr& set : use->BvhSets)
         {
@@ -1227,7 +1227,7 @@ namespace NorvesLib::Core::Rendering
             commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         }
 
-        // ----- 太陽の段の BVH の経路: 段 0（組の一覧の後ろの根。引数は組の一覧の頭）→ 段 1〜15（前の段が書いた引数）→ 葉の段。
+        // ----- BVH の経路（太陽の段・点光源の面）: 段 0（組の一覧の後ろの根。引数は組の一覧の頭）→ 段 1〜15（前の段が書いた引数）→ 葉の段。
         // 段 s は節の列 s & 1 を読み、子を列 (s + 1) & 1 へ、葉を葉の列へ積む。根が無ければどの段も 0 個のワークグループ -----
         if (bSelected && bBvh)
         {

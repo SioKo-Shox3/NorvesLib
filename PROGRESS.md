@@ -4037,3 +4037,18 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
 - 補助（verify の外）: 最初の容量（節・葉とも 1,048,576）で撮った `verify-SCN-MEGA-VSM-BVH-SUN-1〜3.txt` は、3 の horizon で `overflow=47525`、溢れたページへの再描画の印で次のフレームも dirty が戻り `overflow=913817` が続いた。列を 8M にし、点光源の統計の語へ段ごとの積もうとした数の最大を書く一時の計測版（戻した）で同じ horizon を撮り（`aux-SCN-MEGA-VSM-BVH-SUN-probe8m.txt`）、節の列の 1 段の最大 1,193,951・葉の列 547,863 と、`clusters=226427` が同じ撮影の VSM-RANGES の horizon（226427）と一致することを確かめてから容量を決めた。
 - Next: SCN-MEGA-VSM-BVH-POINT。
 - Notes: 列が溢れ続ける負荷では、節の球が覆うページの再描画の印で毎フレーム dirty が戻り、収まるまで同じ量をたどり直す（取りこぼしは無いが重い）。100 万本の容量の足りる・足りないは SCN-MEGA-ACCEPT-1M の `VSM_MEGA_CULL overflow` で判断する。節の段の LOD の判定は焼き込みの BVH の葉の親の誤差の最大に頼る（実行時の階層は親の誤差が既定の最大値なので枝を切らない。主の経路と同じ）。段の数え・ピークの統計は出していない（`VirtualShadowMapPass.cpp` が paths の外）。`VirtualShadowMapVulkanTest` のケース J は平らな経路（合成メッシュは BVH のアドレスが 0）を通るが、verify に無いので走らせていない。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。
+
+### SCN-MEGA-VSM-BVH-POINT（2026-10-14、反復 12・run 20261014-061910）
+- Done: 点光源の面（立方体の各面の透視のスライス）の MegaGeometry の投影物のクラスタの選択も、BVH を持つメッシュの組についてグループの BVH の段の間接 dispatch でたどるようにした。
+  - 組の絞り込み（`vsm_mega_cull_pairs.comp`）は、太陽の段に限らずメッシュが BVH を持つ組を BVH の経路の根として一覧の後ろから積む。平らな経路（`vsm_mega_cull.comp`）に残るのは BVH を持たないメッシュと `--vsm-mega-flat` のときだけ。
+  - `vsm_mega_bvh.comp` の節の段は、スライスの種類に応じて LOD の texel の値（`g_ShadowPerspective`・`g_ShadowAxisZ`・`g_ShadowTexelNdc`・`g_ShadowNearPlane`）を `SelectShadowCluster` と同じに入れる。点光源の面の節の LOD は `ProjectBakedErrorOrtho` が節の球の最も近い点の面の軸の距離で texel を求め、節の球は下のクラスタの親の球を包むので節の値は下の値以上（近い平面での頭打ちも単調）。球の判定（`LevelOverlapsSphere`・`SphereHasDirtyPage`）も包む球の透視像が包まれる球の像を含み、近い平面をまたげば面全体になるので、節で落ちる枝は葉でも落ちる。
+  - ホスト（`VirtualShadowMapRaster.cpp/.h`）はコメントとログの文言だけ（列・段・束縛は太陽の段と共有のまま）。
+- 検証（`.harness/runs/20261014-061910/`。最終のバイナリは 3）:
+  - `verify-SCN-MEGA-VSM-BVH-POINT-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。変えたシェーダーは BOM を除いた写しで `glslc` によりコンパイルを確かめた。
+  - `verify-SCN-MEGA-VSM-BVH-POINT-2.txt`: 夜の起動画面 default の決定的撮影 result=pass（EXIT=0）。`default-night.Game.log` の `[ERROR]` 0、`VSM_MEGA_BVH enabled=1`、`VSM_MEGA_CULL` は 3 行とも前の項目と同じ数（point_clusters=128・1972・3171）で overflow=0。PNG は点光源の照らす球・小球の列・岩の影が出ている。
+  - `verify-SCN-MEGA-VSM-BVH-POINT-3.txt`: 下の計測版を戻した後の再ビルド EXIT=0。
+- 補助（verify の外）:
+  - `--vsm-mega-flat`（点光源の面は従来の平らな経路）で同じ夜の撮影をして比べ、psnr 100 dB・不一致の画素 0・輝度差 0（`aux-SCN-MEGA-VSM-BVH-POINT-flat.txt`。`VSM_MEGA_BVH enabled=0`、数も同じ）。点光源の影は変わらない。
+  - 葉の段で点光源の面を捨てる一時の計測版（戻した）で撮り、point_clusters が 3 行とも 0 になり画像も変わる（`aux-SCN-MEGA-VSM-BVH-POINT-probe.txt`）ことで、点光源の面の組が全部 BVH の経路を通ったことを確かめた。
+- Next: SCN-MEGA-LAYOUT-SEA。
+- Notes: 点光源の面は範囲（64 席の AABB）の判定をしない（前の項目のまま。Range で絞る）。BVH の列の容量（節 4,194,304・葉 2,097,152）は太陽の段と点光源の面で共有するので、100 万本で点光源が多い場面の溢れは SCN-MEGA-ACCEPT-1M の `VSM_MEGA_CULL overflow` で判断する。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。

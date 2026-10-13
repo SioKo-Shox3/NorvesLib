@@ -1,6 +1,6 @@
 ﻿// ========================================
 // VSM の MegaGeometry の投影物の 1 クラスタの選択（判定と一覧への書き込み）
-// （平らな経路 vsm_mega_cull.comp と、太陽の段の BVH の経路 vsm_mega_bvh.comp の葉の段が同じ関数を使う）
+// （平らな経路 vsm_mega_cull.comp と、BVH の経路 vsm_mega_bvh.comp の葉の段が同じ関数を使う）
 //
 // 取り込む側が、先に Common/MegaGeometryCull.glsl・Common/VirtualShadowMapMegaCull.glsl・Common/VirtualShadowMapMegaSphere.glsl を
 // 取り込んでおくこと。出力の一覧（binding 15）・統計（binding 17）・影の表（binding 18）・VSM のページの表（binding 19）をここで宣言する。

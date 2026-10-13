@@ -3,19 +3,23 @@
 #extension GL_EXT_buffer_reference_uvec2 : require
 
 // ========================================
-// 仮想シャドウマップ（VSM）の、MegaGeometry の投影物の太陽の段（正射影のクリップマップ）のクラスタの選択（グループの BVH をたどる経路）
+// 仮想シャドウマップ（VSM）の、MegaGeometry の投影物のクラスタの選択（グループの BVH をたどる経路）。
+// 太陽の段（正射影のクリップマップ）と点光源の面（立方体の各面の透視のスライス）の両方を受け持つ。
 //
-// 事前の絞り込み（vsm_mega_cull_pairs.comp）が、太陽の段で BVH を持つメッシュの（インスタンス、段）の組を、組の一覧（binding 21）の
+// 事前の絞り込み（vsm_mega_cull_pairs.comp）が、BVH を持つメッシュの（インスタンス、スライス）の組を、組の一覧（binding 21）の
 // 後ろから根として積む。ここではその根から BVH を段ごとの dispatch でたどり、葉のクラスタを平らな経路（vsm_mega_cull.comp）と
-// 同じ判定（SelectShadowCluster）にかけて出力の一覧（binding 15）へ書く。点光源の面と BVH を持たないメッシュは平らな経路のまま。
+// 同じ判定（SelectShadowCluster）にかけて出力の一覧（binding 15）へ書く。BVH を持たないメッシュは平らな経路のまま。
 //
 // 節の判定の段（bvhStageInfo.x = 段の番号 s。0 〜 VSM_BVH_NODE_STAGES − 1）:
 //   1 スレッド = 1 つの（組、節）。段 0 は組の一覧の後ろの根（節 0）、段 s（1 以上）は節の列 s & 1 の要素を受け持つ。
 //   節の球（下のクラスタの球と親の球を包む）が、その段の範囲・深度の範囲に入り、dirty のページを含み、LOD の判定（下）で切れなければ、
 //   葉は葉の列へ、内部の節は子を節の列 (s + 1) & 1 へ積む。球の判定はクラスタの判定（SelectShadowCluster）と同じ関数なので、
 //   節で落ちた枝の下のクラスタはどれもクラスタの判定でも落ちる。
-//   LOD: 節の親の誤差の最大 ÷ その段の texel の一辺 ≤ lodBias（texel）なら、下のどのクラスタも「親の誤差 ÷ texel > lodBias」を満たさず
-//   描かれないので枝ごと切る（正射影は texel が位置に依らないので、節の球によらず下のクラスタの値以上。丸めの余裕は主の経路と同じ）。
+//   LOD: 節の親の誤差の最大 ÷ texel の一辺 ≤ lodBias（texel）なら、下のどのクラスタも「親の誤差 ÷ texel > lodBias」を満たさず
+//   描かれないので枝ごと切る（丸めの余裕は主の経路と同じ）。太陽の段は texel が位置に依らない（その段の定数）ので、節の値は下の
+//   クラスタの値以上。点光源の面の texel は球の最も近い点の面の軸の距離で決まり（ShadowTexelMetersAtSphere）、節の球は下の
+//   クラスタの親の球を包むので、その距離は親の球の距離以下（近い平面での頭打ちも単調）で texel も以下、節の値はやはり下の値以上。
+//   球の判定も、点光源の面では包む球の透視像が包まれる球の像を含み、近い平面をまたげば面全体になるので、節で落ちる枝は下でも落ちる。
 //   BVH の段の数は GROUP_BVH_MAX_LEVELS（16）以下なので、根を段 0 として段 15 までで全部の節に届く。
 // 葉のクラスタの判定（bvhStageInfo.x = VSM_BVH_STAGE_LEAVES）:
 //   葉の列の 1 要素を BVH_LEAF_SLOTS 個のスレッドが 1 クラスタずつ受け持つ（実行時に作った BVH の葉は、節の配列の直後の
@@ -101,9 +105,9 @@ void CountQueueOverflow(uint count, uint level, vec3 center, float radius)
 }
 
 /**
- * @brief 節の LOD の判定（正射影）: 節の親の誤差の最大を texel へ直した値が許容以下なら true（下のどのクラスタも描かれない）
+ * @brief 節の LOD の判定（影）: 節の親の誤差の最大を texel へ直した値が許容以下なら true（下のどのクラスタも描かれない）
  *
- * cluster_bvh_cull.comp の CanPruneBvhNodeByLOD の正射影版。NaN は切らない側。
+ * cluster_bvh_cull.comp の CanPruneBvhNodeByLOD の影の版（ProjectBakedErrorOrtho が太陽の段と点光源の面の texel を選ぶ）。NaN は切らない側。
  */
 bool CanPruneShadowNodeByLOD(BvhNode node)
 {
@@ -145,10 +149,15 @@ void NodeStage(uint stage)
     const uint instanceIndex = pair >> 8u;
     const uint level = pair & 0xFFu;
 
+    // LOD の texel の値は SelectShadowCluster と同じ（太陽の段は段の定数、点光源の面は面の軸の距離から求める）
+    const VsmSlice levelSlice = vsmSlices[level];
     const MegaInstance instance = LoadMegaInstance(instanceIndex);
     g_WorldMatrix = instance.world;
-    g_OrthoTexelMeters = vsmSlices[level].info.y;
-    g_ShadowPerspective = false;
+    g_OrthoTexelMeters = levelSlice.info.y;
+    g_ShadowPerspective = IsPerspectiveSlice(levelSlice);
+    g_ShadowAxisZ = levelSlice.axisZ;
+    g_ShadowTexelNdc = levelSlice.info.y;
+    g_ShadowNearPlane = levelSlice.info.w;
     BvhNodeArray bvh = BvhNodeArray(uvec2(instance.bvhInfo.x, instance.bvhInfo.y));
     const BvhNode node = bvh.nodes[nodeIndex];
     const vec3 center = TransformClusterCenterToWorld(node.sphere.xyz);

@@ -15,8 +15,8 @@
 // ワークグループの番号を求め、影の表（binding 18）の firstGroup（そのインスタンスの最初のワークグループの通し番号）の差から組の
 // ワークグループの数を求めて、足りない分は何もしない。影を落とさないインスタンスは組に入らない。
 // スライスの投影の種類（extra.z）で判定が変わる。太陽の段（正射影）は下の「判定」、点光源の面（透視）は下の「点光源の面」。
-// 太陽の段で BVH を持つメッシュの組は、事前の絞り込みが BVH の経路（vsm_mega_bvh.comp）へ回すので、ここでは受け持たない
-// （点光源の面と、BVH を持たないメッシュ・--vsm-mega-flat のときの組が平らなクラスタの列として全部見る）。
+// BVH を持つメッシュの組は（太陽の段・点光源の面のどちらも）、事前の絞り込みが BVH の経路（vsm_mega_bvh.comp）へ回すので、ここでは受け持たない
+// （BVH を持たないメッシュ・--vsm-mega-flat のときの組が平らなクラスタの列として全部見る）。
 //
 // 判定:
 //   (1) インスタンス（事前の絞り込み）: 境界（WorldBounds）のライト空間の矩形が、その段の範囲・深度の範囲に入り、dirty のページを 1 つでも含む
@@ -56,7 +56,7 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 // binding 21: 事前の絞り込み（vsm_mega_cull_pairs.comp）が作った（インスタンス、スライス）の組の一覧。
 // 組 = (インスタンスの表の番号 << 8) | スライスの番号。pairMaxGroups = 平らな経路の組のワークグループ数の最大。
-// 平らな経路の組は前から pairCount 個。太陽の段の BVH の経路の組（pairBvhCount 個）は一覧の後ろから積み、vsm_mega_bvh.comp が受け持つ
+// 平らな経路の組は前から pairCount 個。BVH の経路の組（pairBvhCount 個）は一覧の後ろから積み、vsm_mega_bvh.comp が受け持つ
 layout(std430, set = 0, binding = 21) readonly buffer VsmMegaPairs
 {
     uint pairCount;
