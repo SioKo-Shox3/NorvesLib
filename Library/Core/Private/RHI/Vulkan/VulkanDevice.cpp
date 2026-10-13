@@ -25,6 +25,14 @@
 #include <cstring>
 #include "Container/Containers.h"
 #include "Thread/Mutex.h"
+#include "Debug/Stats.h"
+#include <chrono>
+#include <cstdio>
+#if NORVES_ENABLE_STATS
+#include <Windows.h>
+#include <DbgHelp.h>
+#pragma comment(lib, "dbghelp.lib")
+#endif
 
 // Dynamic dispatcherの定義
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
@@ -186,6 +194,303 @@ namespace NorvesLib::RHI::Vulkan
             }
         }
 
+#if NORVES_ENABLE_STATS
+        // 単発の提出（EndSingleTimeCommands。提出の後にキュー全体を待つ）の集計。開発ビルドだけ数える。
+        // 呼び出し元（RHI の外で最初に現れる関数）・経由した RHI の関数・スレッドごとに、回数と
+        // 描画フレーム（AdvanceObjectCacheFrame が進める番号。最初のフレームの前は 0）あたりの最大の回数、
+        // 提出・待機のロックの待ちと GPU の完了の待ちの時間を持つ。
+        constexpr uint32_t kImmediateSubmitStackFrames = 16;
+        constexpr size_t kImmediateSubmitNameMaxLength = 160;
+
+        struct ImmediateSubmitSymbol
+        {
+            String Name;
+            // RHI の中（NorvesLib::RHI::）か標準ライブラリの関数。呼び出し元を探すときに飛ばす
+            bool bInternal = false;
+        };
+
+        struct ImmediateSubmitCallerStats
+        {
+            String Via;
+            String Caller;
+            Thread::Thread::ThreadId ThreadId{};
+            uint64_t Count = 0;
+            uint64_t Frames = 0;
+            uint64_t FirstFrame = 0;
+            uint64_t LastFrame = 0;
+            uint64_t CountInLastFrame = 0;
+            uint64_t MaxPerFrame = 0;
+            double LockWaitMs = 0.0;
+            double GpuWaitMs = 0.0;
+            double MaxGpuWaitMs = 0.0;
+        };
+
+        ::NorvesLib::Thread::Mutex g_immediateSubmitMutex;
+        VariableArray<ImmediateSubmitCallerStats> g_immediateSubmitStats;
+        UnorderedMap<uint64_t, ImmediateSubmitSymbol> g_immediateSubmitSymbols;
+        bool g_bImmediateSubmitSymbolsInitialized = false;
+        bool g_bImmediateSubmitSymbolsAvailable = false;
+        bool g_bImmediateSubmitMainThreadKnown = false;
+        Thread::Thread::ThreadId g_immediateSubmitMainThread{};
+        bool g_bImmediateSubmitRenderThreadKnown = false;
+        Thread::Thread::ThreadId g_immediateSubmitRenderThread{};
+        std::atomic<uint64_t> g_immediateSubmitFrame{0};
+
+        double ElapsedImmediateSubmitMs(std::chrono::steady_clock::time_point start)
+        {
+            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        }
+
+        // 関数の名前をログの値に合う形にする（名前空間の前置きを落とし、空白・引用符を _ にする）
+        String ShortenImmediateSubmitSymbol(const char *pName)
+        {
+            static constexpr const char *kPrefixes[] = {
+                "NorvesLib::Core::Rendering::",
+                "NorvesLib::Core::",
+                "NorvesLib::RHI::Vulkan::",
+                "NorvesLib::RHI::",
+                "NorvesLib::",
+            };
+            String result;
+            const char *pCursor = pName;
+            while (*pCursor != '\0' && result.size() < kImmediateSubmitNameMaxLength)
+            {
+                bool bSkipped = false;
+                for (const char *pPrefix : kPrefixes)
+                {
+                    const size_t prefixLength = std::strlen(pPrefix);
+                    if (std::strncmp(pCursor, pPrefix, prefixLength) == 0)
+                    {
+                        pCursor += prefixLength;
+                        bSkipped = true;
+                        break;
+                    }
+                }
+                if (bSkipped)
+                {
+                    continue;
+                }
+                const char ch = *pCursor++;
+                const bool bSeparator = ch == ' ' || ch == '\t' || ch == '`' || ch == '\'' || ch == '"' || ch == '=';
+                result.append(1, bSeparator ? '_' : ch);
+            }
+            return result;
+        }
+
+        // 戻り先のアドレスを関数の名前にする（DbgHelp。引けなければモジュールの中の位置）。
+        // g_immediateSubmitMutex の下で呼ぶ（DbgHelp はスレッドをまたいで同時に呼べない）。
+        const ImmediateSubmitSymbol &ResolveImmediateSubmitSymbol(void *pAddress)
+        {
+            const uint64_t address = reinterpret_cast<uint64_t>(pAddress);
+            const auto found = g_immediateSubmitSymbols.find(address);
+            if (found != g_immediateSubmitSymbols.end())
+            {
+                return found->second;
+            }
+
+            const HANDLE process = GetCurrentProcess();
+            if (!g_bImmediateSubmitSymbolsInitialized)
+            {
+                g_bImmediateSubmitSymbolsInitialized = true;
+                SymSetOptions(SymGetOptions() | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_NO_PROMPTS |
+                              SYMOPT_FAIL_CRITICAL_ERRORS);
+                // 実行ファイルの置き場だけを探す（シンボルサーバーへ問い合わせない）
+                char searchPath[MAX_PATH] = {};
+                const DWORD pathLength = GetModuleFileNameA(nullptr, searchPath, MAX_PATH);
+                for (DWORD index = pathLength; index > 0; --index)
+                {
+                    if (searchPath[index - 1] == '\\' || searchPath[index - 1] == '/')
+                    {
+                        searchPath[index - 1] = '\0';
+                        break;
+                    }
+                }
+                g_bImmediateSubmitSymbolsAvailable = SymInitialize(process, searchPath, TRUE) != FALSE;
+            }
+
+            ImmediateSubmitSymbol symbol;
+            if (g_bImmediateSubmitSymbolsAvailable)
+            {
+                alignas(SYMBOL_INFO) char buffer[sizeof(SYMBOL_INFO) + 512] = {};
+                SYMBOL_INFO *pInfo = reinterpret_cast<SYMBOL_INFO *>(buffer);
+                pInfo->SizeOfStruct = sizeof(SYMBOL_INFO);
+                pInfo->MaxNameLen = 511;
+                DWORD64 displacement = 0;
+                // 戻り先は呼び出しの次の命令なので、1 つ前のバイトで呼び出しの命令を含む関数を引く
+                if (SymFromAddr(process, address - 1, &displacement, pInfo) != FALSE)
+                {
+                    symbol.Name = ShortenImmediateSubmitSymbol(pInfo->Name);
+                    symbol.bInternal = std::strncmp(pInfo->Name, "NorvesLib::RHI::", 16) == 0 ||
+                                       std::strncmp(pInfo->Name, "std::", 5) == 0;
+                }
+            }
+            if (symbol.Name.empty())
+            {
+                char text[64] = {};
+                HMODULE module = nullptr;
+                if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                       reinterpret_cast<LPCSTR>(pAddress),
+                                       &module) &&
+                    module != nullptr)
+                {
+                    std::snprintf(text, sizeof(text), "rva_0x%llX",
+                                  static_cast<unsigned long long>(address - reinterpret_cast<uint64_t>(module)));
+                }
+                else
+                {
+                    std::snprintf(text, sizeof(text), "addr_0x%llX", static_cast<unsigned long long>(address));
+                }
+                symbol.Name = String(text);
+            }
+            ImmediateSubmitSymbol &stored = g_immediateSubmitSymbols[address];
+            stored = symbol;
+            return stored;
+        }
+
+        const char *GetImmediateSubmitThreadName(const Thread::Thread::ThreadId &threadId)
+        {
+            const bool bRender = g_bImmediateSubmitRenderThreadKnown && threadId == g_immediateSubmitRenderThread;
+            const bool bMain = g_bImmediateSubmitMainThreadKnown && threadId == g_immediateSubmitMainThread;
+            if (bRender && bMain)
+            {
+                return "main_render";
+            }
+            if (bRender)
+            {
+                return "render";
+            }
+            if (bMain)
+            {
+                return "main";
+            }
+            return "other";
+        }
+
+        void RecordImmediateSubmit(void *const *pFrames, uint32_t frameCount, double lockWaitMs, double gpuWaitMs)
+        {
+            const uint64_t frame = g_immediateSubmitFrame.load(std::memory_order_relaxed);
+            const Thread::Thread::ThreadId self = Thread::Thread::GetCurrentThreadId();
+            ::NorvesLib::Thread::ScopedLock lock(g_immediateSubmitMutex);
+
+            String via;
+            String caller;
+            for (uint32_t index = 0; index < frameCount; ++index)
+            {
+                const ImmediateSubmitSymbol &symbol = ResolveImmediateSubmitSymbol(pFrames[index]);
+                if (index == 0)
+                {
+                    via = symbol.Name;
+                }
+                if (!symbol.bInternal)
+                {
+                    caller = symbol.Name;
+                    break;
+                }
+            }
+            if (via.empty())
+            {
+                via = String("unknown");
+            }
+            if (caller.empty())
+            {
+                caller = String("unknown");
+            }
+
+            ImmediateSubmitCallerStats *pStats = nullptr;
+            for (ImmediateSubmitCallerStats &stats : g_immediateSubmitStats)
+            {
+                if (stats.ThreadId == self && stats.Caller == caller && stats.Via == via)
+                {
+                    pStats = &stats;
+                    break;
+                }
+            }
+            if (pStats == nullptr)
+            {
+                ImmediateSubmitCallerStats created;
+                created.Via = via;
+                created.Caller = caller;
+                created.ThreadId = self;
+                created.Frames = 1;
+                created.FirstFrame = frame;
+                created.LastFrame = frame;
+                g_immediateSubmitStats.push_back(created);
+                pStats = &g_immediateSubmitStats.back();
+            }
+            else if (pStats->LastFrame != frame)
+            {
+                ++pStats->Frames;
+                pStats->LastFrame = frame;
+                pStats->CountInLastFrame = 0;
+            }
+            ++pStats->Count;
+            ++pStats->CountInLastFrame;
+            pStats->MaxPerFrame = std::max(pStats->MaxPerFrame, pStats->CountInLastFrame);
+            pStats->LockWaitMs += lockWaitMs;
+            pStats->GpuWaitMs += gpuWaitMs;
+            pStats->MaxGpuWaitMs = std::max(pStats->MaxGpuWaitMs, gpuWaitMs);
+        }
+
+        void NoteImmediateSubmitMainThread()
+        {
+            ::NorvesLib::Thread::ScopedLock lock(g_immediateSubmitMutex);
+            if (!g_bImmediateSubmitMainThreadKnown)
+            {
+                g_immediateSubmitMainThread = Thread::Thread::GetCurrentThreadId();
+                g_bImmediateSubmitMainThreadKnown = true;
+            }
+        }
+
+        void AdvanceImmediateSubmitFrame()
+        {
+            const Thread::Thread::ThreadId self = Thread::Thread::GetCurrentThreadId();
+            g_immediateSubmitFrame.fetch_add(1, std::memory_order_relaxed);
+            ::NorvesLib::Thread::ScopedLock lock(g_immediateSubmitMutex);
+            g_immediateSubmitRenderThread = self;
+            g_bImmediateSubmitRenderThreadKnown = true;
+        }
+#endif // NORVES_ENABLE_STATS
+
+    }
+
+    // 単発の提出の呼び出し元ごとの集計をログへ出す（撮影・計測の終わりに ApplicationProcessor が呼ぶ）。
+    // 1 行目からは呼び出し元ごとに IMMEDIATE_SUBMIT、最後に合計の IMMEDIATE_SUBMIT_SUMMARY。Release では何も出さない。
+    void LogVulkanImmediateSubmitSummary()
+    {
+#if NORVES_ENABLE_STATS
+        ::NorvesLib::Thread::ScopedLock lock(g_immediateSubmitMutex);
+        uint64_t totalCount = 0;
+        double totalLockWaitMs = 0.0;
+        double totalGpuWaitMs = 0.0;
+        for (const ImmediateSubmitCallerStats &stats : g_immediateSubmitStats)
+        {
+            NORVES_LOG_INFO("VulkanDevice",
+                            "IMMEDIATE_SUBMIT caller=%s thread=%s count=%llu max_per_frame=%llu via=%s frames=%llu "
+                            "first_frame=%llu last_frame=%llu lock_wait_ms=%.3f gpu_wait_ms=%.3f max_gpu_wait_ms=%.3f",
+                            stats.Caller.c_str(),
+                            GetImmediateSubmitThreadName(stats.ThreadId),
+                            static_cast<unsigned long long>(stats.Count),
+                            static_cast<unsigned long long>(stats.MaxPerFrame),
+                            stats.Via.c_str(),
+                            static_cast<unsigned long long>(stats.Frames),
+                            static_cast<unsigned long long>(stats.FirstFrame),
+                            static_cast<unsigned long long>(stats.LastFrame),
+                            stats.LockWaitMs,
+                            stats.GpuWaitMs,
+                            stats.MaxGpuWaitMs);
+            totalCount += stats.Count;
+            totalLockWaitMs += stats.LockWaitMs;
+            totalGpuWaitMs += stats.GpuWaitMs;
+        }
+        NORVES_LOG_INFO("VulkanDevice",
+                        "IMMEDIATE_SUBMIT_SUMMARY count=%llu callers=%llu frame=%llu lock_wait_ms=%.3f gpu_wait_ms=%.3f",
+                        static_cast<unsigned long long>(totalCount),
+                        static_cast<unsigned long long>(g_immediateSubmitStats.size()),
+                        static_cast<unsigned long long>(g_immediateSubmitFrame.load(std::memory_order_relaxed)),
+                        totalLockWaitMs,
+                        totalGpuWaitMs);
+#endif
     }
 
     void ReleaseDeferredVulkanTextureUpdateStagingResourcesForDevice(vk::Device device) noexcept;
@@ -797,6 +1102,10 @@ namespace NorvesLib::RHI::Vulkan
     VulkanDevice::VulkanDevice(bool bEnableValidation)
         : m_bValidationEnabled(bEnableValidation)
     {
+#if NORVES_ENABLE_STATS
+        // デバイスを作ったスレッドを単発の提出の集計で main と呼ぶ
+        NoteImmediateSubmitMainThread();
+#endif
         // Dynamic dispatcherの初期化（Vulkan SDKからvkGetInstanceProcAddrを直接使用）
         VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
@@ -1861,6 +2170,11 @@ namespace NorvesLib::RHI::Vulkan
     // 単発コマンドバッファ終了
     void VulkanDevice::EndSingleTimeCommands(vk::CommandBuffer commandBuffer)
     {
+#if NORVES_ENABLE_STATS
+        // 呼び出し元を集計で名前にするため、この関数を呼んだ所からのスタックを取る
+        void *callerFrames[kImmediateSubmitStackFrames] = {};
+        const uint32_t callerFrameCount = CaptureStackBackTrace(1, kImmediateSubmitStackFrames, callerFrames, nullptr);
+#endif
         // Begin と同じスレッドで呼ぶので、確保したプールと同じものが返る
         const vk::CommandPool commandPool = GetSingleTimeCommandPool();
         uint32_t failurePoint = 0;
@@ -1919,7 +2233,13 @@ namespace NorvesLib::RHI::Vulkan
 
         // 描画の完了を通知する値の割り当てと提出を、結び付けの提出と同じミューテックスの下で行う
         // （失敗したときは窓口の破棄で値が戻る）。
+#if NORVES_ENABLE_STATS
+        const auto submitLockStart = std::chrono::steady_clock::now();
+#endif
         GraphicsSubmitScope submitScope(*this);
+#if NORVES_ENABLE_STATS
+        const double submitLockWaitMs = ElapsedImmediateSubmitMs(submitLockStart);
+#endif
         vk::Semaphore renderSignalSemaphore;
         uint64_t renderSignalValue = 0;
         vk::TimelineSemaphoreSubmitInfo renderTimelineInfo{};
@@ -1962,12 +2282,39 @@ namespace NorvesLib::RHI::Vulkan
         // 提出の窓口は Commit で手放してあるので、待機は改めてキューのミューテックスを取る
         // （描画スレッドの提出・プレゼントと同じキューを同時に触らない）
         vk::Result queueWaitResult = vk::Result::eSuccess;
+#if NORVES_ENABLE_STATS
+        double queueLockWaitMs = 0.0;
+        double gpuWaitMs = 0.0;
+#endif
         {
+            // 呼んだスレッドの区間。キューのロックの待ちと GPU の完了の待ちを分けて集計する
+            NORVES_PROFILE_SCOPE("RHI.ImmediateSubmitWait");
+#if NORVES_ENABLE_STATS
+            const auto queueLockStart = std::chrono::steady_clock::now();
+#endif
             Thread::ScopedLock queueLock(m_sparseBindMutex);
+#if NORVES_ENABLE_STATS
+            queueLockWaitMs = ElapsedImmediateSubmitMs(queueLockStart);
+            const auto gpuWaitStart = std::chrono::steady_clock::now();
+#endif
             queueWaitResult = bInjectWaitFailure
                 ? vk::Result::eErrorOutOfHostMemory
                 : m_graphicsQueue.waitIdle();
+#if NORVES_ENABLE_STATS
+            gpuWaitMs = ElapsedImmediateSubmitMs(gpuWaitStart);
+#endif
         }
+#if NORVES_ENABLE_STATS
+        // 名前の解決（初回はシンボルの読み込み）はキューのロックの外で行う。
+        // 集計の失敗（確保の失敗）で後ろのコマンドバッファの後始末を飛ばさない
+        try
+        {
+            RecordImmediateSubmit(callerFrames, callerFrameCount, submitLockWaitMs + queueLockWaitMs, gpuWaitMs);
+        }
+        catch (...)
+        {
+        }
+#endif
         if (queueWaitResult != vk::Result::eSuccess)
         {
             if (queueWaitResult == vk::Result::eErrorDeviceLost)
@@ -2784,6 +3131,10 @@ namespace NorvesLib::RHI::Vulkan
 
     void VulkanDevice::AdvanceObjectCacheFrame()
     {
+#if NORVES_ENABLE_STATS
+        // 単発の提出の集計の描画フレームを進め、呼んだスレッドを render と呼ぶ
+        AdvanceImmediateSubmitFrame();
+#endif
         // 手放す物はロックの外で破棄する（破棄は遅らせる破棄の列へ積まれ、提出の完了まで遅れる）
         VariableArray<TSharedPtr<void>> released;
         {

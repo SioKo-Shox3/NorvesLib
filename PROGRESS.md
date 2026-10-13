@@ -3617,3 +3617,22 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `check-SCN-ECS-FIF-READBACK-probe.txt`（移した ShadowProbe の確かめ。verify では通らないので 1 回だけ）: `-ShadowProbe` の起動画面の撮影 EXIT=0。`SHADOW_PROBE method=csm frames=361 mean_texel_mm=20.702`・`method=vsm mean_texel_mm=11.209`・`SHADOW_PROBE_AGREE ratio=0.999358` は以前の測定（SCN-BANANAS-PERF-probe）と同じ値。`Readback Requests=2147 Delivered=2147 Flushed=3`。
 - Next: TASKS.md の未完の次の項目。
 - Notes: 他の資源からのコピーの形・満杯で飛ばす道・取り消し（中止したフレーム）・受け取り手が消えた後の捨て方は撮影では通っていない（どの撮影でも Canceled・Orphaned・DroppedFull が 0）。それらを起こす検査は書いていない（verify が名指ししていないため）。持ち主の無い手組みの文脈（`RenderGraphCompileTest` の照明の VSM の統計の検査。ctest で無効）では統計を取らなくなった。AutoExposure・VT のフィードバック・ページの要求の列などほかの読み戻しは移していない。`FrameReadback.h` は新規なので BOM + CRLF、ほかは行末の混在を保った（numstat の 2 通りが一致）。
+
+### SCN-ECS-FIF-SYNC-SUBMIT-SCOPE（2026-10-14、反復 3・run 20261014-005646）
+
+- `VulkanDevice::EndSingleTimeCommands`（単発の提出。提出の後に `graphicsQueue.waitIdle()` で待つ）を計装した。開発ビルド（`NORVES_ENABLE_STATS`）だけ数え、Release では何もしない。呼び出し側は変えていない。
+  - 待ち（キューのロック＋`waitIdle`）を区間 `RHI.ImmediateSubmitWait`（呼んだスレッドの区間）で囲んだ。提出のロック（`GraphicsSubmitScope`）と待機のキューのロックの待ちを `lock_wait_ms`、`waitIdle` の時間を `gpu_wait_ms`・`max_gpu_wait_ms` に分けて集計する。
+  - 呼び出し元: 入口でスタック（`CaptureStackBackTrace`）を取り、DbgHelp（`SymFromAddr`。実行ファイルの置き場だけを探し、シンボルサーバーへ行かない）で名前にする。RHI の中（`NorvesLib::RHI::`）と `std::` の関数を飛ばした最初の関数を `caller`、1 つ目の関数を `via`（`VulkanBuffer::Update`・`VulkanTexture::Update`・`VulkanAccelerationStructure::Build`）にする。名前はアドレスごとに覚え、解決はキューのロックの外で行う。
+  - 描画フレーム: `AdvanceObjectCacheFrame`（RenderingCoordinator が毎フレームの EndFrame の後に呼ぶ）で番号を進め、呼んだスレッドを `render`、デバイスを作ったスレッドを `main` と呼ぶ（同じなら `main_render`、どちらでもなければ `other`）。呼び出し元・経由・スレッドごとに回数・フレーム数・最初と最後のフレーム・1 フレームの最大の回数を持つ。
+  - ログ: ApplicationProcessor が `FRAME_PACING` と同じ時点（撮影の保存・`--exit-after-*` の終了の直前）に `LogVulkanImmediateSubmitSummary` を呼び、`IMMEDIATE_SUBMIT caller=<名前> thread=<名前> count=<n> max_per_frame=<n> via=... frames=... first_frame=... last_frame=... lock_wait_ms=... gpu_wait_ms=... max_gpu_wait_ms=...` を呼び出し元ごとに、最後に `IMMEDIATE_SUBMIT_SUMMARY` を出す。`IDevice.h`・`RenderWorld.h` は paths の外なので、関数は VulkanDevice.cpp に定義し ApplicationProcessor.cpp で宣言して呼ぶ（試験のフックと同じ形）。
+- 検証（`.harness/runs/20261014-005646/`）:
+  - `baseline-build-SYNC-SUBMIT-SCOPE.txt`: 変更前の RelWithDebInfo の Game のビルド EXIT=0。
+  - `verify-SCN-ECS-FIF-SYNC-SUBMIT-SCOPE-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0。警告 2 件（`VulkanDevice.h` の NOMINMAX の再定義、既存の文字列の C4566）は変更していない行（ヘッダの 9 行目、既存の書式の文字列）を指す。
+  - `verify-SCN-ECS-FIF-SYNC-SUBMIT-SCOPE-2.txt`: MAX_FRAMES_IN_FLIGHT=1 のまま決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=8E-06・max_channel_difference=1、result=pass、EXIT=0。ログの ERROR 0、`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0`。
+  - `verify-SCN-ECS-FIF-SYNC-SUBMIT-SCOPE-3.txt`: `IMMEDIATE_SUBMIT` の照合 EXIT=0。`IMMEDIATE_SUBMIT_SUMMARY count=258 callers=19 frame=171 lock_wait_ms=0.119 gpu_wait_ms=124.763`。
+- 起動画面（決定論・1 本のスレッド）で分かったこと（MEASURE-FIF の材料）:
+  - 毎フレーム: `SkyAtmospherePass::GenerateSunDiskTexture`（via `VulkanTexture::Update`）が count=171・frames=171・max_per_frame=1、待ちの合計 65.8 ms（最大 2.6 ms）。描画フレームごとに 1 回、キュー全体を待っている。
+  - 立ち上がりの数フレーム: `RayTracingSceneSubsystem::BuildAccelerationStructures`（via `VulkanAccelerationStructure::Build`）が count=17・frames=4（フレーム 0〜6）・max_per_frame=11、待ちの合計 16.3 ms。
+  - フレーム 0 だけ: 各パスの Initialize・LUT の生成（`CreateIblResources` 22 回、`LightingPass::Initialize` 10 回、`ForwardPass::Initialize` 10 回ほか）。
+- Next: TASKS.md の未完の次の項目（SCN-ECS-MEASURE-FIF ほか）。
+- Notes: `GenerateSunDiskTexture` の毎フレームの同期の提出は、直す項目が決まっていない（`SkyAtmospherePass` は paths の外）ので直していない。MEASURE-FIF で 2 フレームの時の実害を見てから決める。決定論の撮影は 1 本のスレッドで描くのでスレッドは全部 `main_render` で、`render`・`main`・`other` の振り分けは撮影では確かめていない。Release のビルドは走らせていない（追加はすべて `NORVES_ENABLE_STATS` の中）。初回の名前の解決で Game.pdb を読む（決定論の撮影の比較には影響なし）。`VulkanDevice.cpp`・`ApplicationProcessor.cpp` は行末の混在を保った（numstat の 2 通りが一致）。

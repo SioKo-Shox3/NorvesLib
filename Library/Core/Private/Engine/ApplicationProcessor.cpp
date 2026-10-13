@@ -38,6 +38,13 @@
 
 using namespace NorvesLib::Core::Container;
 
+namespace NorvesLib::RHI::Vulkan
+{
+    // 単発の提出（提出の後にキュー全体を待つ）の呼び出し元ごとの集計をログへ出す（定義は VulkanDevice.cpp。
+    // Vulkan のデバイスだけが数える診断なので、IDevice の口にせず撮影の終わりの集計の行と一緒に呼ぶ）。
+    void LogVulkanImmediateSubmitSummary();
+}
+
 namespace
 {
     constexpr TCHAR kExitAfterFramesOption[] = TEXT("--exit-after-frames=");
@@ -724,6 +731,8 @@ namespace
                  static_cast<unsigned long long>(pacing.RenderFrames),
                  static_cast<unsigned long long>(pacing.Dropped),
                  pacing.bPacingEnabled ? "on" : "off");
+        // 同じ時点で、フレームの途中の同期の単発提出（IMMEDIATE_SUBMIT）の呼び出し元ごとの集計も出す
+        NorvesLib::RHI::Vulkan::LogVulkanImmediateSubmitSummary();
     }
 
     void AppendCapturePngBytes(void* pContext, void* pData, int byteCount)
