@@ -1176,7 +1176,7 @@ namespace NorvesLib::Core::Rendering
         const bool bHasPlan = plan != nullptr;
 
         // 描くものの記録と描画を集める（MegaGeometry の記録の枠 → 手続き → スキニングの順に番号を振る）
-        const uint32_t megaSlots = bHasPlan ? plan->CommandsTotal : 0u;
+        const uint32_t megaSlots = bHasPlan ? plan->RecordSlots : 0u;
         const uint32_t recordBase = 1u + megaSlots;
         VariableArray<VisibilityBuffer::DrawRecord>& cpuRecords = m_Work.CpuRecords;
         VariableArray<ChunkDraw>& meshDraws = m_Work.MeshDraws;
@@ -1205,7 +1205,7 @@ namespace NorvesLib::Core::Rendering
         }
         m_Work.bHasMegaDraw = bHasPlan && camera && megaSlots > 0 && VisibilityBuffer::IsValidRecordNumber(megaSlots) &&
                               plan->InstanceBuffer && plan->DrawInfoBuffer && plan->IndirectBuffer &&
-                              plan->CountBuffer && plan->SectionBuffer;
+                              plan->CountBuffer && plan->SectionBuffer && plan->RecordSectionBuffer;
         const bool bHasMegaDraw = m_Work.bHasMegaDraw;
         if (!camera || (!bHasMegaDraw && cpuRecords.empty()))
         {
@@ -1287,13 +1287,16 @@ namespace NorvesLib::Core::Rendering
             // 区間ごとの材質の表の番号（plan.Sections と同じ並び）
             slot.SectionMaterials->Update(sectionMaterials.data(), sectionMaterials.size() * sizeof(uint32_t));
 
-            const uint32_t params[4] = {plan->SectionCount, plan->SectionCount * plan->PassCount, 0u, 0u};
+            // z・w: 詰めた経路では、記録用のコマンドの先頭と、区間の表の y を数に使う印（visbuffer_records*.comp）
+            const uint32_t params[4] = {plan->SectionCount, plan->SectionCount * plan->PassCount, plan->RecordCommandBase,
+                                        plan->bCompactRecords ? 1u : 0u};
             slot.RecordParams->Update(params, sizeof(params));
 
             slot.RecordSet->BindConstantBuffer(0, slot.RecordParams, 0, RecordParamsBytes);
             slot.RecordSet->BindStorageBuffer(1, plan->IndirectBuffer, 0, ClampBindSize(plan->IndirectBuffer->GetSize()));
             slot.RecordSet->BindStorageBuffer(2, plan->CountBuffer, 0, ClampBindSize(plan->CountBuffer->GetSize()));
-            slot.RecordSet->BindStorageBuffer(3, plan->SectionBuffer, 0, ClampBindSize(plan->SectionBufferBytes));
+            slot.RecordSet->BindStorageBuffer(3, plan->RecordSectionBuffer, plan->RecordSectionOffset,
+                                              ClampBindSize(plan->RecordSectionBytes));
             slot.RecordSet->BindStorageBuffer(4, plan->DrawInfoBuffer, 0, ClampBindSize(plan->DrawInfoBuffer->GetSize()));
             slot.RecordSet->BindStorageBuffer(5, slot.SectionAddresses, 0, ClampBindSize(addresses.size() * sizeof(uint32_t)));
             slot.RecordSet->BindStorageBuffer(6, m_RecordTable, 0, ClampBindSize(tableBytes));
@@ -1393,11 +1396,20 @@ namespace NorvesLib::Core::Rendering
             // 間接 dispatch を断るコマンドリスト: 区間の容量から数えた上限のグループ数で直接 dispatch する。
             // 余りのグループはシェーダーが引数の合計（[3]）で捨てる
             uint64_t groupLimit = 0;
-            for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan.Sections)
+            if (plan.bCompactRecords)
             {
-                groupLimit += (static_cast<uint64_t>(section.Capacity) + RecordThreadsPerGroup - 1u) / RecordThreadsPerGroup;
+                // 詰めた経路: 区間の表の要素ごとの範囲は記録の枠を分け合うので、枠の数と要素ごとの端数のグループの和が上限
+                groupLimit = (static_cast<uint64_t>(plan.RecordSlots) + RecordThreadsPerGroup - 1u) / RecordThreadsPerGroup +
+                             static_cast<uint64_t>(plan.SectionCount) * std::max(plan.PassCount, 1u);
             }
-            groupLimit *= std::max(plan.PassCount, 1u);
+            else
+            {
+                for (const MegaGeometryPass::VisibilityDrawPlan::Section& section : plan.Sections)
+                {
+                    groupLimit += (static_cast<uint64_t>(section.Capacity) + RecordThreadsPerGroup - 1u) / RecordThreadsPerGroup;
+                }
+                groupLimit *= std::max(plan.PassCount, 1u);
+            }
             groupLimit = std::max<uint64_t>(groupLimit, 1u);
             const uint32_t groupsX = static_cast<uint32_t>(std::min<uint64_t>(groupLimit, RecordMaxGroupsX));
             const uint32_t groupsY = static_cast<uint32_t>((groupLimit + RecordMaxGroupsX - 1u) / RecordMaxGroupsX);

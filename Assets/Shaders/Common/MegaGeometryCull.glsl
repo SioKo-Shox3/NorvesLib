@@ -40,12 +40,17 @@
 // クラスタ配列・グループのBVHの節の配列はジオメトリの共有プールの塊の中にあり、塊が複数あっても1回の dispatch で
 // 読めるよう、インスタンスごとのデバイスアドレス（buffer_reference）で引く。
 //
-// 可視クラスタの全体の列（binning の準備。描画はまだ区間ごとのコマンドの経路）:
-//   描くと決めたクラスタは、区間ごとのコマンドに加えて、全パス通しの 1 本の固定容量の列（binding 23）へも積む。
+// 可視クラスタの全体の列（binning）:
+//   描くと決めたクラスタは、全パス通しの 1 本の固定容量の列（binding 23）へ積む。
 //   要素は (席, クラスタの番号, 区画, 区画の中の位置)。区画は「パスの区間 × ハード/ソフト」（(sectionBase + 区間) × 2 + ソフトなら 1）で、
 //   区画の数（binding 24）を積むときに数え、区画の中の位置はその数の atomicAdd の戻り値。各パスの判定の後に
 //   mega_bin_prefix.comp が数えの接頭和を作るので、区画の先頭 + 区画の中の位置で、区画ごとに詰めた並びの位置が決まる。
 //   列の容量を超えた要素は積まず、数え（binding 24 の先頭の語）だけ進める（溢れ）。
+//   詰めた経路（既定。binCounters[BIN_RECORD_CAPACITY_WORD] が 0 でない）: 判定は列へ積むだけで、区間ごとのコマンドを書かない。
+//   接頭和の後に mega_bin_scatter.comp が、詰めた並びの位置 P（記録の番号は 1 + P）で描画情報・記録用のコマンドを書き、
+//   ハードの区画の要素は区間のコマンドの範囲の先頭から詰めて、ソフトの区画の要素はソフトの一覧へ P を積む。
+//   1 パス目の区画は 2 パス目の区画より前に並ぶので、2 パス目の後に接頭和を作り直しても 1 パス目の P は変わらない。
+//   旧の経路（--mega-binning=off）: 判定が区間ごとのコマンドを書き、列へも積む（開発ビルドは新旧を照合する）。
 // ========================================
 
 #ifndef NORVES_MEGA_GEOMETRY_CULL_GLSL
@@ -309,6 +314,11 @@ layout(std430, set = 0, binding = 23) buffer VisibleClusterListBuffer
 //   [BIN_CHECK_ARGS..+2] = 新旧の照合（mega_bin_check.comp）の間接 dispatch の引数（mega_bin_prefix.comp が書く）
 //   [BIN_COUNT_WORD] = 区画の数 B、[BIN_SLOT_WORD] = 区間の表の要素の数（パスの数 × 区間の数）、
 //   [BIN_SW_CAPACITY_WORD] = ソフトの一覧のパスごとの容量（0 なら一覧が無い）、[BIN_CHECK_STAMP_WORD] = 照合の印
+//   [BIN_SCATTER_ARGS..+2] = 詰めた経路の書き出し（mega_bin_scatter.comp）の間接 dispatch の引数（mega_bin_prefix.comp が書く）
+//   [BIN_SECTION_COUNT_WORD] = 区間の数（パスによらない）、[BIN_RECORD_CAPACITY_WORD] = 記録の枠の数（0 なら旧の経路）、
+//   [BIN_RECORD_COMMAND_BASE_WORD] = 記録用のコマンド（P 番）の、コマンドのバッファ（binding 2）の中の先頭、
+//   [BIN_RECORD_TABLE_WORD] = 記録の区間の表（uvec2: P の先頭・数。区間の表の要素ごと）の、区間のカウンタ（binding 3）の中の先頭の語、
+//   [BIN_PASS_BEGIN_WORD]・[BIN_PASS_END_WORD] = 今のパスが列へ積んだ要素の範囲（接頭和が書く。end は次のパスの begin になる）
 //   [BIN_HEADER_WORDS + b] = 区画 b の数、[BIN_HEADER_WORDS + B + b] = 区画 b の先頭（接頭和。全パス通し）、
 //   [BIN_HEADER_WORDS + 2B + s] = 旧の経路の区間 s までのコマンドの数の和（照合用。s = 0..区間の表の要素の数）
 layout(std430, set = 0, binding = 24) buffer BinCounterBuffer
@@ -321,7 +331,14 @@ const uint BIN_COUNT_WORD = 8u;
 const uint BIN_SLOT_WORD = 9u;
 const uint BIN_SW_CAPACITY_WORD = 10u;
 const uint BIN_CHECK_STAMP_WORD = 11u;
-const uint BIN_HEADER_WORDS = 16u;
+const uint BIN_SCATTER_ARGS = 12u;
+const uint BIN_SECTION_COUNT_WORD = 16u;
+const uint BIN_RECORD_CAPACITY_WORD = 17u;
+const uint BIN_RECORD_COMMAND_BASE_WORD = 18u;
+const uint BIN_RECORD_TABLE_WORD = 19u;
+const uint BIN_PASS_BEGIN_WORD = 20u;
+const uint BIN_PASS_END_WORD = 21u;
+const uint BIN_HEADER_WORDS = 32u;
 
 // 統計（binding 6）の binning の語（MegaGeometryPass.cpp の OnFrameReadback が読む）
 const uint STAT_BIN_LIST_ATTEMPTED = 16u; // 全体の列へ積もうとした数（統計を読み戻すフレームごとに、照合とは別にホストが数えの BIN_LIST_COUNTER から写す）
@@ -340,17 +357,19 @@ const uint STAT_BIN_OLD_SW_HASH = 29u;
  * @brief 描くと決めたクラスタを可視クラスタの全体の列へ積み、区画の数を数える
  *
  * 列の位置を先に取り、容量に入ったものだけ区画の数を数える（区画の数の和 = 列に入った要素の数のまま保つ）。
+ * 容量を超えて積めなければ false。
  */
-void AppendVisibleCluster(uint instanceIndex, uint clusterIndex, uint sectionSlot, bool bSoftware)
+bool AppendVisibleCluster(uint instanceIndex, uint clusterIndex, uint sectionSlot, bool bSoftware)
 {
     uint entry = atomicAdd(binCounters[BIN_LIST_COUNTER], 1u);
     if (entry >= uint(visibleClusters.length()))
     {
-        return; // 溢れ（数えだけ進める。MEGA_CAPACITY の visible_list_overflow）
+        return false; // 溢れ（数えだけ進める。MEGA_CAPACITY の visible_list_overflow）
     }
     uint bin = sectionSlot * 2u + (bSoftware ? 1u : 0u);
     uint local = atomicAdd(binCounters[BIN_HEADER_WORDS + bin], 1u);
     visibleClusters[entry] = uvec4(instanceIndex, clusterIndex, bin, local);
+    return true;
 }
 const uint BVH_STAGE_CLUSTERS = 0xFFFFFFFFu;
 // 葉が持つクラスタの最大数（GROUP_BVH_MAX_LEAF_CLUSTERS）。葉の列の1要素を、この数のスレッドが1クラスタずつ受け持つ
@@ -868,10 +887,24 @@ bool AppendSwRasterList(uint commandIndex)
  * swRasterEnabled=2 は、ソフトウェアラスタが実際に走るフレーム: 一覧へ積めたクラスタは、ハードのコマンドの
  * instanceCount を 0 にして描かない（ソフトが代わりに描く）。一覧が満杯で積めなかったクラスタは、ハードが描く。
  * 区間の最大数によらず、可視クラスタの全体の列へも積む（区画のハード/ソフトは画面上の大きさの判断で決める）。
+ *
+ * 詰めた経路では列へ積むだけで、コマンド・描画情報・ソフトの一覧は mega_bin_scatter.comp が詰めた並びで書く。
+ * ソフトの区画へ回すのはソフトのラスタが走るフレーム（swRasterEnabled=2）だけ（走らなければハードがすべて描く）。
  */
 void EmitDrawCommand(uint instanceIndex, MegaInstance instance, uint clusterIndex, GPUClusterData cluster)
 {
     uint sectionSlot = cullData.sectionBase + instance.drawInfo.x;
+    if (binCounters[BIN_RECORD_CAPACITY_WORD] != 0u)
+    {
+        bool bSoftware = cullData.swRasterEnabled == 2u && IsSwRasterSmallCluster(cluster);
+        if (!AppendVisibleCluster(instanceIndex, clusterIndex, sectionSlot, bSoftware) && cullData.bStatsEnabled != 0u)
+        {
+            // 列の容量を超えて描かれないクラスタ（MEGA_CAPACITY の visible_list_overflow にも出る）
+            atomicAdd(stats[STAT_DRAW_DROPPED], 1u);
+        }
+        return;
+    }
+
     uvec2 section = sections[sectionSlot];
     // ソフトへ振り分ける大きさか（区間ごとのコマンドの経路と全体の列で同じ判断を使う）
     bool bSmall = cullData.swRasterEnabled != 0u && IsSwRasterSmallCluster(cluster);

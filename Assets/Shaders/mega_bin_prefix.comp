@@ -10,6 +10,10 @@
 // 2 パス目の後に作り直しても 1 パス目の区画の先頭は変わらない（記録の番号を両パスを通じて保てる）。
 // あわせて、旧の経路（区間ごとのコマンド）の区間ごとの数の接頭和と、新旧の照合（mega_bin_check.comp）の
 // 間接 dispatch の引数を書く。
+// 詰めた経路（binCounters[BIN_RECORD_CAPACITY_WORD] が 0 でない）では、旧の接頭和の代わりに、このパスの区間ごとに
+//   - ハードの区画の数を区間のカウンタ（binding 3。間接描画の数）へ、
+//   - 記録の区間の表（P の先頭・ハードとソフトの数の和。記録の枠の数で頭打ち）を区間のカウンタの後ろへ書き、
+// このパスが列へ積んだ要素の範囲と、書き出し（mega_bin_scatter.comp）の間接 dispatch の引数を書く。
 // ディスクリプタセットはカリングと同じ形（MegaGeometryPass::BuildCullDescriptorSetDesc）を使う。
 // ========================================
 
@@ -60,6 +64,45 @@ void main()
         }
         carry += s_Scan[SCAN_WIDTH - 1u];
         barrier();
+    }
+
+    uint recordCapacity = binCounters[BIN_RECORD_CAPACITY_WORD];
+    if (recordCapacity != 0u)
+    {
+        // 詰めた経路: 1 で書いた区画の先頭を、ワークグループの全スレッドから読めるようにする
+        memoryBarrierBuffer();
+        barrier();
+
+        uint sectionCount = binCounters[BIN_SECTION_COUNT_WORD];
+        uint recordTable = binCounters[BIN_RECORD_TABLE_WORD];
+        for (uint section = lane; section < sectionCount; section += SCAN_WIDTH)
+        {
+            uint slot = cullData.sectionBase + section;
+            uint hardware = binCounters[BIN_HEADER_WORDS + slot * 2u];
+            uint software = binCounters[BIN_HEADER_WORDS + slot * 2u + 1u];
+            uint first = binCounters[offsetBase + slot * 2u];
+            uint recordBegin = min(first, recordCapacity);
+            uint recordEnd = min(first + hardware + software, recordCapacity);
+            sectionCounts[slot] = hardware;
+            sectionCounts[recordTable + slot * 2u] = recordBegin;
+            sectionCounts[recordTable + slot * 2u + 1u] = recordEnd - recordBegin;
+        }
+
+        if (lane == 0u)
+        {
+            // このパスが積んだ要素は、前のパスの終わりから今の数え（容量で頭打ち）まで
+            uint passBegin = binCounters[BIN_PASS_END_WORD];
+            uint passEnd = min(binCounters[BIN_LIST_COUNTER], uint(visibleClusters.length()));
+            passEnd = max(passEnd, passBegin);
+            binCounters[BIN_PASS_BEGIN_WORD] = passBegin;
+            binCounters[BIN_PASS_END_WORD] = passEnd;
+            uint groups = (passEnd - passBegin + 63u) / 64u;
+            uint groupsX = min(groups, SW_RASTER_MAX_GROUPS_X);
+            binCounters[BIN_SCATTER_ARGS + 0u] = groupsX;
+            binCounters[BIN_SCATTER_ARGS + 1u] = groupsX == 0u ? 0u : (groups + groupsX - 1u) / groupsX;
+            binCounters[BIN_SCATTER_ARGS + 2u] = 1u;
+        }
+        return;
     }
 
     // 2. 旧の経路の区間ごとのコマンドの数（区間の最大数で頭打ち）の接頭和。末尾（slotCount 番目）に全体の数

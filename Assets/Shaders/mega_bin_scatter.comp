@@ -1,0 +1,101 @@
+﻿#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+// ========================================
+// Mega Geometry の可視クラスタの binning: 詰めた経路の書き出し（各パスの接頭和の後に、間接 dispatch で 1 回）
+//
+// このパスの判定が全体の列（binding 23）へ積んだ要素（接頭和が書いた BIN_PASS_BEGIN_WORD〜BIN_PASS_END_WORD）を 1 スレッド 1 要素で読み、
+// 詰めた並びの位置 P = 区画の先頭 + 区画の中の位置 を求めて書く。記録の番号は 1 + P で、ハードとソフトが同じ記録を引く。
+//   - 描画情報（binding 8）の P 番: 席と payload（頂点シェーダーが firstInstance = P で引く）
+//   - 記録用のコマンド（binding 2 の BIN_RECORD_COMMAND_BASE_WORD + P 番）: 記録を書く計算（visbuffer_records.comp）が読む
+//   - ハードの区画の要素: 区間のコマンドの範囲の先頭 + 区画の中の位置 に、firstInstance = P のコマンド
+//     （区間の最大数を超えた分は書かない。間接描画の数はハードの区画の数で、最大数で頭打ち）
+//   - ソフトの区画の要素: このパスのソフトの一覧へ P を積む（ソフトのラスタは 1 + P 番の記録を引く）
+// P が記録の枠の数を超えた要素は描かない（MEGA_CAPACITY の draw_dropped）。
+// 1 パス目の区画は 2 パス目の区画より前に並ぶので、2 パス目の書き出しは 1 パス目の P の範囲を書き換えない。
+// ディスクリプタセットはカリングと同じ形（MegaGeometryPass::BuildCullDescriptorSetDesc）を使う。
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#include "Common/MegaGeometryCull.glsl"
+
+void main()
+{
+    uint thread = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+    uint passBegin = binCounters[BIN_PASS_BEGIN_WORD];
+    uint passEnd = binCounters[BIN_PASS_END_WORD];
+    if (thread >= passEnd - passBegin)
+    {
+        return;
+    }
+
+    uvec4 entry = visibleClusters[passBegin + thread];
+    uint instanceIndex = entry.x;
+    uint clusterIndex = entry.y;
+    uint bin = entry.z;
+    uint local = entry.w;
+    uint sectionSlot = bin >> 1u;
+    bool bSoftware = (bin & 1u) != 0u;
+    bool bStats = cullData.bStatsEnabled != 0u;
+
+    uint binCount = binCounters[BIN_COUNT_WORD];
+    uint position = binCounters[BIN_HEADER_WORDS + binCount + bin] + local;
+    if (position >= binCounters[BIN_RECORD_CAPACITY_WORD])
+    {
+        if (bStats)
+        {
+            atomicAdd(stats[STAT_DRAW_DROPPED], 1u);
+        }
+        return;
+    }
+
+    MegaInstance instance = LoadMegaInstance(instanceIndex);
+    ClusterArray clusters = ClusterArray(uvec2(instance.clusterInfo.x, instance.clusterInfo.y));
+    GPUClusterData cluster = clusters.clusters[clusterIndex];
+
+    // 区間ごとのコマンドの経路（EmitDrawCommand）と同じ値。firstInstance は描画情報・記録の位置 P
+    DrawIndexedIndirectCommand command;
+    command.indexCount = cluster.indexInfo.y;
+    command.instanceCount = 1u;
+    command.firstIndex = instance.drawInfo.z + cluster.indexInfo.x;
+    command.vertexOffset = int(instance.drawInfo.y) + int(cluster.indexInfo.z);
+    command.firstInstance = position;
+
+    drawInfos[position] = uvec2(instanceIndex, ComputeDebugPayload(clusterIndex, cluster));
+    drawCommands[binCounters[BIN_RECORD_COMMAND_BASE_WORD] + position] = command;
+
+    if (bSoftware)
+    {
+        if (AppendSwRasterList(position))
+        {
+            if (bStats)
+            {
+                atomicAdd(stats[cullData.cullPass == CULL_PASS_SECOND ? STAT_SW_PASS2 : STAT_SW_PASS1], 1u);
+            }
+        }
+        else if (bStats)
+        {
+            // 一覧が満杯で積めない（ハードのコマンドも無いので描かれない）
+            atomicAdd(stats[STAT_SW_OVERFLOW], 1u);
+            atomicAdd(stats[STAT_DRAW_DROPPED], 1u);
+        }
+        return;
+    }
+
+    uvec2 section = sections[sectionSlot];
+    if (local < section.y)
+    {
+        drawCommands[section.x + local] = command;
+        if (bStats && cullData.swRasterEnabled != 0u)
+        {
+            atomicAdd(stats[STAT_SW_HARDWARE], 1u);
+        }
+    }
+    else if (bStats)
+    {
+        // 区間の最大数を超えて描かれないクラスタ（0 でなければ MaxDrawCount を上げる）
+        atomicAdd(stats[STAT_DRAW_DROPPED], 1u);
+    }
+}

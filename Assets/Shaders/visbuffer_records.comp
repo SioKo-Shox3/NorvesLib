@@ -6,6 +6,9 @@
 // MegaGeometryPass のカリングが積んだ IndirectDraw コマンド 1 つにつき、記録の表の「1 + コマンドの通しの位置」番へ
 // 記録を 1 行書く（visbuffer_mega.vert が同じ番号を ID に使う）。積まれたコマンドの数は区間ごとのカウンタ
 // （区間のコマンドの最大数で頭打ち）で、それより後ろの位置は書かない。
+// 詰めた経路（counts.w = 1）では、区間の表（binding 3）が記録の区間の表（x = P の先頭、y = 数）で、位置 P は
+// 可視クラスタの詰めた並びの位置（ハードとソフトの両方。記録の番号は 1 + P）。コマンドは binding 1 の counts.z + P 番の
+// 記録用のコマンド（mega_bin_scatter.comp が書く）を読み、区間のカウンタ（binding 2）は読まない。
 // 1 スレッドが 1 コマンドを受け持つ。ワークグループは積まれたコマンドの数だけを、全区間をまたいで 1 本の列に並べて走る
 // （visbuffer_records_args.comp が列の長さと区間ごとの先頭を書く）。グループの番号から区間の表の添え字（パス × 区間）
 // を二分探索で引き、区間の中の位置を求める。
@@ -15,7 +18,8 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(std140, set = 0, binding = 0) uniform RecordParams
 {
-    // x: 区間の数（パスによらない）, y: 区間の表の要素数（パスの数 × 区間の数）
+    // x: 区間の数（パスによらない）, y: 区間の表の要素数（パスの数 × 区間の数）,
+    // z: コマンドを読む位置の足し分（詰めた経路は記録用のコマンドの先頭。旧の経路は 0）, w: 1 なら詰めた経路
     uvec4 counts;
 } params;
 
@@ -103,7 +107,7 @@ void main()
     const uint sectionSlot = low;
 
     const uvec2 section = sections[sectionSlot];
-    const uint drawnCount = min(sectionCounts[sectionSlot], section.y);
+    const uint drawnCount = params.counts.w != 0u ? section.y : min(sectionCounts[sectionSlot], section.y);
     const uint localIndex = (groupIndex - recordArgs[4u + sectionSlot]) * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
     if (localIndex >= drawnCount)
     {
@@ -111,7 +115,7 @@ void main()
     }
 
     const uint commandIndex = section.x + localIndex;
-    const DrawIndexedIndirectCommand command = drawCommands[commandIndex];
+    const DrawIndexedIndirectCommand command = drawCommands[params.counts.z + commandIndex];
     const uint sectionIndex = sectionSlot % params.counts.x;
     const uvec4 addresses = sectionAddresses[sectionIndex];
 

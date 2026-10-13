@@ -166,7 +166,10 @@ namespace NorvesLib::Core::Rendering
         constexpr uint64_t VisibleListBytes = static_cast<uint64_t>(VisibleListCapacity) * 4u * sizeof(uint32_t);
         // binning の数え（binding 24）。頭の語の位置は Common/MegaGeometryCull.glsl の BIN_* と一致（[0] = 列へ積もうとした数、
         // [BinCheckArgsWord..+2] = 照合の間接 dispatch の引数、[BinCountWord] = 区画の数、[BinSlotWord] = 区間の表の要素の数、
-        // [BinSwCapacityWord] = ソフトの一覧の容量、[BinCheckStampWord] = 照合の印）。頭の後ろに区画の数・区画の先頭（各 2 × 要素の数）と、
+        // [BinSwCapacityWord] = ソフトの一覧の容量、[BinCheckStampWord] = 照合の印、[BinScatterArgsWord..+2] = 詰めた経路の書き出しの
+        // 間接 dispatch の引数、[BinSectionCountWord] = 区間の数、[BinRecordCapacityWord] = 記録の枠の数（0 なら旧の経路）、
+        // [BinRecordCommandBaseWord] = 記録用のコマンドの先頭、[BinRecordTableWord] = 記録の区間の表の区間のカウンタの中の先頭の語。
+        // 20・21 はパスが列へ積んだ要素の範囲で GPU が書く）。頭の後ろに区画の数・区画の先頭（各 2 × 要素の数）と、
         // 旧の区間の接頭和（要素の数 + 1）が続く
         constexpr uint32_t BinCounterBinding = 24;
         constexpr uint32_t BinCheckMarkBinding = 25;
@@ -176,11 +179,23 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t BinSlotWord = 9;
         constexpr uint32_t BinSwCapacityWord = 10;
         constexpr uint32_t BinCheckStampWord = 11;
-        constexpr uint32_t BinHeaderWords = 16;
+        constexpr uint32_t BinScatterArgsWord = 12;
+        constexpr uint32_t BinSectionCountWord = 16;
+        constexpr uint32_t BinRecordCapacityWord = 17;
+        constexpr uint32_t BinRecordCommandBaseWord = 18;
+        constexpr uint32_t BinRecordTableWord = 19;
+        constexpr uint32_t BinHeaderWords = 32;
         // 区間の表の要素の数 slotCount に要る数えの語数
         constexpr uint64_t BinCounterWords(uint32_t slotCount)
         {
             return static_cast<uint64_t>(BinHeaderWords) + 5ull * slotCount + 1u;
+        }
+        // 詰めた経路の記録の区間の表（uvec2: P の先頭・数）の、区間のカウンタのバッファの中の先頭の語。
+        // 記録を書く計算がバッファの途中から結ぶので、storage buffer の範囲のオフセットの整列（上限 256 バイト）にそろえる
+        constexpr uint32_t BinRecordTableAlignWords = 64;
+        constexpr uint32_t BinRecordTableWordBase(uint32_t slotCount)
+        {
+            return (slotCount + BinRecordTableAlignWords - 1u) / BinRecordTableAlignWords * BinRecordTableAlignWords;
         }
         // 統計の binning の語（Common/MegaGeometryCull.glsl の STAT_BIN_*）
         constexpr uint32_t StatBinListAttempted = 16;
@@ -395,6 +410,11 @@ namespace NorvesLib::Core::Rendering
             m_Settings.bUseGroupBVH = false;
         }
         // 既定は全インスタンスを BVH の経路でたどる。--mega-flat-path で平らな経路（cluster_cull.comp・FirstGroup の接頭和）へ戻す
+        // 既定は描画・記録・ソフトの一覧を binning の結果で詰めて書く。--mega-binning=off で区間ごとのコマンドの経路へ戻す
+        if (HasProcessCommandLineFlag(L"--mega-binning=off"))
+        {
+            m_Settings.bUseBinning = false;
+        }
         if (HasProcessCommandLineFlag(L"--mega-flat-path"))
         {
             m_Settings.bUseGroupBVH = false;
@@ -593,6 +613,10 @@ namespace NorvesLib::Core::Rendering
             }
         };
         createBinPipeline("mega_bin_prefix.comp", m_BinPrefixShader, m_BinPrefixPipeline);
+        if (m_Settings.bUseBinning)
+        {
+            createBinPipeline("mega_bin_scatter.comp", m_BinScatterShader, m_BinScatterPipeline);
+        }
 #if NORVES_BUILD_DEVELOPMENT
         createBinPipeline("mega_bin_check.comp", m_BinCheckShader, m_BinCheckPipeline);
 #endif
@@ -682,6 +706,8 @@ namespace NorvesLib::Core::Rendering
         m_LoggedFlatInstances = 0xFFFFFFFFu;
         m_BinPrefixPipeline.reset();
         m_BinPrefixShader.reset();
+        m_BinScatterPipeline.reset();
+        m_BinScatterShader.reset();
         m_BinCheckPipeline.reset();
         m_BinCheckShader.reset();
         m_VisibleListBuffer.reset();
@@ -2833,8 +2859,37 @@ namespace NorvesLib::Core::Rendering
             return;
         }
 
+        // 可視クラスタの binning の数え（区間の表の要素ごとにハード/ソフトの 2 区画）と全体の列
+        const uint32_t binSlotCount = sectionCount * passCount;
+        const uint32_t binCount = binSlotCount * 2u;
+        if (!EnsureBinBuffers(binSlotCount))
+        {
+            NORVES_LOG_ERROR("MegaGeometryPass", "可視クラスタの binning の数えのバッファを用意できませんでした");
+            recordEmptyRenderPass();
+            return;
+        }
+
+        // 描画・記録・ソフトの一覧を binning の結果で詰めて書くか（全体の列と接頭和・書き出しの計算があるときだけ。
+        // 無ければ判定が区間ごとのコマンドを書く旧の経路）。記録の枠は詰めた並びの位置 P の分で、全体の列の容量と
+        // 全パスのコマンドの数の小さい方（P は列に入った要素の数未満。超えた分は書き出しが描かずに数える）。
+        // P 番の記録用のコマンドは、コマンドのバッファの区間ごとの範囲（全パス）の後ろに置く
+        uint32_t recordSlots = 0;
+        if (m_Settings.bUseBinning && m_BinPrefixPipeline && m_BinScatterPipeline && m_VisibleListBuffer)
+        {
+            recordSlots = static_cast<uint32_t>(std::min<uint64_t>(commandsTotal, VisibleListCapacity));
+            if (commandsTotal + recordSlots > 0x7FFFFFFFull / IndirectCommandBytes)
+            {
+                recordSlots = 0;
+            }
+        }
+        const bool bCompact = recordSlots != 0;
+        const uint32_t recordCommandBase = static_cast<uint32_t>(commandsTotal);
+        const uint32_t recordTableWordBase = BinRecordTableWordBase(binSlotCount);
+        // 区間のカウンタの語数（詰めた経路は後ろに記録の区間の表）
+        const uint32_t drawCountWords = bCompact ? recordTableWordBase + 2u * binSlotCount : binSlotCount;
+
         FrameSlot &frameSlot = preparedSlot ? *preparedSlot : m_FrameSlots.Acquire();
-        if (!EnsureBatchBuffers(static_cast<uint32_t>(commandsTotal), sectionCount * passCount) ||
+        if (!EnsureBatchBuffers(static_cast<uint32_t>(commandsTotal) + recordSlots, drawCountWords) ||
             !EnsureFrameSlot(frameSlot, sectionCount * passCount, sectionCount) ||
             (bvhInstanceCount > 0 &&
              (!EnsureBvhStageResources(frameSlot, 0, bvhLevelCount + 2u) ||
@@ -2847,15 +2902,6 @@ namespace NorvesLib::Core::Rendering
         // BVH の固定容量の列。作れなければ（VRAM の不足など）このフレームの描画を見送る（ERROR は作れなくなった最初の 1 回だけ）
         if (bvhInstanceCount > 0 && !EnsureBvhQueueBuffers())
         {
-            recordEmptyRenderPass();
-            return;
-        }
-        // 可視クラスタの binning の数え（区間の表の要素ごとにハード/ソフトの 2 区画）と全体の列
-        const uint32_t binSlotCount = sectionCount * passCount;
-        const uint32_t binCount = binSlotCount * 2u;
-        if (!EnsureBinBuffers(binSlotCount))
-        {
-            NORVES_LOG_ERROR("MegaGeometryPass", "可視クラスタの binning の数えのバッファを用意できませんでした");
             recordEmptyRenderPass();
             return;
         }
@@ -3144,7 +3190,7 @@ namespace NorvesLib::Core::Rendering
         // GPU側のカウントを参照できない環境（DrawIndexedIndirect）では、積まれなかったコマンドが
         // instanceCount=0 の空振りになるよう、コマンドも0で埋める
         cmdList->BufferBarrier(m_DrawCountBuffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
-        cmdList->FillBuffer(m_DrawCountBuffer, 0, static_cast<uint64_t>(sectionCount) * passCount * sizeof(uint32_t), 0);
+        cmdList->FillBuffer(m_DrawCountBuffer, 0, static_cast<uint64_t>(drawCountWords) * sizeof(uint32_t), 0);
         cmdList->BufferBarrier(m_DrawCountBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
         if (caps.bDrawIndirectCount)
         {
@@ -3168,7 +3214,8 @@ namespace NorvesLib::Core::Rendering
         // 可視クラスタの binning: 新旧の照合は、開発ビルドで統計を読み戻す 2 パスのフレームで、全体の列と照合の印があるときだけ
         bool bBinCheck = false;
 #if NORVES_BUILD_DEVELOPMENT
-        bBinCheck = statsSlot != nullptr && bTwoPass && m_BinPrefixPipeline && m_BinCheckPipeline && m_VisibleListBuffer &&
+        // （詰めた経路は区間ごとのコマンドを書かないので照合しない）
+        bBinCheck = !bCompact && statsSlot != nullptr && bTwoPass && m_BinPrefixPipeline && m_BinCheckPipeline && m_VisibleListBuffer &&
                     m_BinCheckMarkBuffer;
 #endif
         uint32_t binCheckStamp = 0;
@@ -3187,23 +3234,29 @@ namespace NorvesLib::Core::Rendering
             statsSlot->BinCount = binCount;
             statsSlot->VisibleListCapacity = m_VisibleListBuffer ? VisibleListCapacity : 0u;
         }
-        // 数えを 0 にし、頭の語（区画の数・区間の表の要素の数・ソフトの一覧の容量・照合の印）を書く。
-        // 転送どうしの書き込みが重ならないよう、頭の語の前後を分けて 0 で埋める
+        // 数えを 0 にし、頭の語（区画の数・区間の表の要素の数・ソフトの一覧の容量・照合の印・区間の数・記録の枠の数・
+        // 記録用のコマンドの先頭・記録の区間の表の先頭）を書く。転送どうしの書き込みが重ならないよう、頭の語の前後を分けて 0 で埋める
         {
             const uint64_t binWordsBytes = BinCounterWords(binSlotCount) * sizeof(uint32_t);
-            const uint64_t headerValuesOffset = static_cast<uint64_t>(BinCountWord) * sizeof(uint32_t);
-            const uint64_t headerValuesEnd = static_cast<uint64_t>(BinCheckStampWord + 1u) * sizeof(uint32_t);
+            const auto wordBytes = [](uint32_t word) -> uint64_t { return static_cast<uint64_t>(word) * sizeof(uint32_t); };
             const auto fillBinWord = [&](uint32_t word, uint32_t value) -> void
             {
-                cmdList->FillBuffer(m_BinCounterBuffer, static_cast<uint64_t>(word) * sizeof(uint32_t), sizeof(uint32_t), value);
+                cmdList->FillBuffer(m_BinCounterBuffer, wordBytes(word), sizeof(uint32_t), value);
             };
             cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::Common, RHI::ResourceState::CopyDest);
-            cmdList->FillBuffer(m_BinCounterBuffer, 0, headerValuesOffset, 0);
+            cmdList->FillBuffer(m_BinCounterBuffer, 0, wordBytes(BinCountWord), 0);
             fillBinWord(BinCountWord, binCount);
             fillBinWord(BinSlotWord, binSlotCount);
             fillBinWord(BinSwCapacityWord, bSwRasterBin ? swRasterCapacity : 0u);
             fillBinWord(BinCheckStampWord, binCheckStamp);
-            cmdList->FillBuffer(m_BinCounterBuffer, headerValuesEnd, binWordsBytes - headerValuesEnd, 0);
+            cmdList->FillBuffer(m_BinCounterBuffer, wordBytes(BinCheckStampWord + 1u),
+                                wordBytes(BinSectionCountWord) - wordBytes(BinCheckStampWord + 1u), 0);
+            fillBinWord(BinSectionCountWord, sectionCount);
+            fillBinWord(BinRecordCapacityWord, recordSlots);
+            fillBinWord(BinRecordCommandBaseWord, recordCommandBase);
+            fillBinWord(BinRecordTableWord, recordTableWordBase);
+            cmdList->FillBuffer(m_BinCounterBuffer, wordBytes(BinRecordTableWord + 1u),
+                                binWordsBytes - wordBytes(BinRecordTableWord + 1u), 0);
             cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
         }
         if (m_VisibleListBuffer)
@@ -3507,11 +3560,43 @@ namespace NorvesLib::Core::Rendering
                 {
                     cmdList->BufferBarrier(m_SwRasterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
                 }
+                if (bCompact && bSecond)
+                {
+                    // 詰めた経路の 2 パス目: 接頭和・書き出しが、1 パス目の描画（間接描画の引数・数、頂点シェーダーの描画情報）と
+                    // 記録の計算が読んだバッファの別の範囲へ書く。読み取りの後に書き込みを並べる
+                    cmdList->BufferBarrier(m_DrawCountBuffer, RHI::ResourceState::IndirectArgument, RHI::ResourceState::UnorderedAccess);
+                    cmdList->BufferBarrier(m_IndirectDrawBuffer, RHI::ResourceState::IndirectArgument, RHI::ResourceState::UnorderedAccess);
+                    cmdList->BufferBarrier(m_DrawInfoBuffer, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
+                }
                 cmdList->SetPipeline(m_BinPrefixPipeline);
                 cmdList->SetDescriptorSet(cullDescriptorSet, 0);
                 cmdList->Dispatch(1, 1, 1);
-                // 次の書き手（照合・次のパスの判定）が接頭和の書き込みの後に読み書きする
+                // 次の書き手（書き出し・照合・次のパスの判定）が接頭和の書き込みの後に読み書きする
                 cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+
+                if (bCompact)
+                {
+                    // 詰めた経路の書き出し: このパスが列へ積んだ要素から、詰めた並びの位置 P で描画情報・記録用のコマンドを書き、
+                    // ハードの要素は区間のコマンドの範囲へ詰め、ソフトの要素はソフトの一覧へ積む。引数は接頭和が書いた間接 dispatch の引数
+                    cmdList->BufferBarrier(m_VisibleListBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    if (uniformData.bStatsEnabled != 0)
+                    {
+                        cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    }
+                    if (bSwRasterBin)
+                    {
+                        cmdList->BufferBarrier(m_SwRasterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    }
+                    cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::IndirectArgument);
+                    cmdList->SetPipeline(m_BinScatterPipeline);
+                    cmdList->SetDescriptorSet(cullDescriptorSet, 0);
+                    if (!cmdList->DispatchIndirect(m_BinCounterBuffer, static_cast<uint64_t>(BinScatterArgsWord) * sizeof(uint32_t)))
+                    {
+                        // 間接 dispatch を断るコマンドリスト: 列の容量の分のスレッドで直接 dispatch する（余りはシェーダーが範囲で捨てる）
+                        dispatchThreads(VisibleListCapacity);
+                    }
+                    cmdList->BufferBarrier(m_BinCounterBuffer, RHI::ResourceState::IndirectArgument, RHI::ResourceState::UnorderedAccess);
+                }
 
                 if (bBinCheck && bSecond)
                 {
@@ -3591,6 +3676,14 @@ namespace NorvesLib::Core::Rendering
             plan.MeshBufferBytes = static_cast<uint64_t>(tables.Meshes.size()) * sizeof(GPUMegaMesh);
             plan.SectionBuffer = frameSlot.SectionBuffer;
             plan.SectionBufferBytes = static_cast<uint64_t>(sectionCount) * passCount * 2u * sizeof(uint32_t);
+            // 記録: 旧の経路はコマンドの通しの位置（区間の表と区間のカウンタ）、詰めた経路は詰めた並びの位置 P
+            // （接頭和が区間のカウンタの後ろに書いた記録の区間の表と、書き出しが書いた P 番の記録用のコマンド）
+            plan.bCompactRecords = bCompact;
+            plan.RecordSlots = bCompact ? recordSlots : static_cast<uint32_t>(commandsTotal);
+            plan.RecordCommandBase = bCompact ? recordCommandBase : 0u;
+            plan.RecordSectionBuffer = bCompact ? m_DrawCountBuffer : frameSlot.SectionBuffer;
+            plan.RecordSectionOffset = bCompact ? static_cast<uint64_t>(recordTableWordBase) * sizeof(uint32_t) : 0u;
+            plan.RecordSectionBytes = plan.SectionBufferBytes;
             if (bSwRasterBin)
             {
                 plan.SwRasterBuffer = m_SwRasterBuffer;

@@ -3,9 +3,9 @@
 // ========================================
 // ビジビリティバッファ: MegaGeometry のクラスタを描く頂点シェーダー（位置だけを読む）
 //
-// 描くのは MegaGeometryPass のカリングが積んだ IndirectDraw コマンドで、コマンドの firstInstance がコマンドの通しの位置。
-// 記録の番号は「1 + コマンドの通しの位置」で、記録の表の 1 番から、コマンドと同じ並びで置く
-// （visbuffer_records.comp が、そのフレームのコマンドから記録を書く）。
+// 描くのは MegaGeometryPass のカリングが積んだ IndirectDraw コマンドで、記録の番号は「1 + firstInstance」。
+// firstInstance は、詰めた経路では可視クラスタの詰めた並びの位置 P（ソフトのラスタも同じ記録を引く）、
+// 旧の経路（--mega-binning=off）ではコマンドの通しの位置（visbuffer_records.comp が、そのフレームの記録を書く）。
 // 位置の計算は megageometry.vert と同じ式・同じ順序（GBuffer の深度と同じ値になる）。
 // ========================================
 

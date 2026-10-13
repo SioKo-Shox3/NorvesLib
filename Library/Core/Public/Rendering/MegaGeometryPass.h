@@ -152,6 +152,15 @@ namespace NorvesLib::Core::Rendering
          * 環境変数 NORVES_MEGA_INSTANCE_PIXEL_CULL が 0 か off なら false にする（撮り比べ用）。
          */
         bool bInstancePixelCull = true;
+
+        /**
+         * @brief 描画・記録・ソフトの一覧を、可視クラスタの binning の結果で詰めて書くか（既定）
+         *
+         * true なら判定は全体の列へ積むだけで、接頭和の後に mega_bin_scatter.comp が詰めた並びの位置で書く
+         * （ハードの間接描画はハードの区画の分だけ。ソフトへ回したクラスタのコマンドを空振りにしない）。
+         * 起動引数 --mega-binning=off なら false（判定が区間ごとのコマンドを書く旧の経路。開発ビルドは新旧を照合する）。
+         */
+        bool bUseBinning = true;
     };
 
     /**
@@ -268,7 +277,21 @@ namespace NorvesLib::Core::Rendering
             uint32_t PassCount = 0;        // 1（従来の1回の判定）か 2（2パスの遮蔽）
             uint32_t SectionCount = 0;
             uint32_t CommandsPerPass = 0;  // 2パス目の範囲は、1パス目の範囲の後ろ
-            uint32_t CommandsTotal = 0;    // 全パスのコマンドの数（記録の番号は 1 + コマンドの通しの位置）
+            uint32_t CommandsTotal = 0;    // 全パスのコマンドの数
+            /**
+             * 記録の枠の数（MegaGeometry の分。記録の番号は 1 + 位置）。旧の経路はコマンドの通しの位置で CommandsTotal、
+             * 詰めた経路（bCompactRecords）は可視クラスタの詰めた並びの位置 P（ハードとソフトが同じ記録を引く）
+             */
+            uint32_t RecordSlots = 0;
+            bool bCompactRecords = false;
+            uint32_t RecordCommandBase = 0; // 記録を書く計算が読むコマンドの位置の足し分（詰めた経路は P 番の記録用のコマンドの先頭）
+            /**
+             * 記録を書く計算の区間の表（uvec2。区間の表の要素ごと）。旧の経路は SectionBuffer（コマンドの先頭・最大数）、
+             * 詰めた経路は CountBuffer の後ろの記録の区間の表（P の先頭・数）
+             */
+            RHI::BufferPtr RecordSectionBuffer;
+            uint64_t RecordSectionOffset = 0;
+            uint64_t RecordSectionBytes = 0;
             bool bUseIndirectCount = false;
             RHI::BufferPtr IndirectBuffer; // DrawIndexedIndirectCommand[]（IndirectArgument の状態で渡す）
             RHI::BufferPtr CountBuffer;    // 区間ごとのカウンタ（添え字は パス × 区間の数 + 区間。IndirectArgument の状態で渡す）
@@ -318,7 +341,7 @@ namespace NorvesLib::Core::Rendering
              *
              * RecordFrameCommand が振り分けるフレームのカリングの前に 1 回だけ呼ぶ。sink は dispatch と合流に要る資源を
              * ここで作り、作れたときだけ true を返す。true を返したら、sink は 2 回の呼び出しの中で一覧を dispatch する責任を負い、
-             * カリングは一覧へ積めたクラスタのハードのコマンドを空振り（instanceCount = 0）にする。
+             * 一覧へ積めたクラスタはハードが描かない（旧の経路はコマンドを空振り（instanceCount = 0）にし、詰めた経路はハードのコマンドを書かない）。
              * false なら、一覧へ積むだけでハードがすべてのクラスタを描く（振り分けの統計だけが取れる）。
              */
             virtual bool PrepareSwRaster() = 0;
@@ -1046,11 +1069,14 @@ namespace NorvesLib::Core::Rendering
         uint32_t m_LoggedBvhLevels = 0xFFFFFFFFu;
         uint32_t m_LoggedFlatInstances = 0xFFFFFFFFu;
 
-        // 可視クラスタの binning（準備。描画はまだ区間ごとのコマンド）: 判定が積む全体の固定容量の列（binding 23。uvec4: 席・クラスタ・
+        // 可視クラスタの binning: 判定が積む全体の固定容量の列（binding 23。uvec4: 席・クラスタ・
         // 区画・区画の中の位置）、区画の数え・接頭和・照合の引数（binding 24）、開発ビルドの照合の印（binding 25）。
-        // 接頭和は各パスの判定の後に mega_bin_prefix.comp、新旧の照合は 2 パス目の後に mega_bin_check.comp が作る
+        // 接頭和は各パスの判定の後に mega_bin_prefix.comp、詰めた経路の書き出しはその後に mega_bin_scatter.comp、
+        // 旧の経路（--mega-binning=off）の新旧の照合は 2 パス目の後に mega_bin_check.comp が作る
         RHI::PipelinePtr m_BinPrefixPipeline;
         RHI::ShaderPtr m_BinPrefixShader;
+        RHI::PipelinePtr m_BinScatterPipeline;
+        RHI::ShaderPtr m_BinScatterShader;
         RHI::PipelinePtr m_BinCheckPipeline;
         RHI::ShaderPtr m_BinCheckShader;
         RHI::BufferPtr m_VisibleListBuffer;
@@ -1067,7 +1093,7 @@ namespace NorvesLib::Core::Rendering
         // カリング・描画用GPUバッファ（全インスタンス・全パスで1組。コマンドは区間ごとの連続した範囲で、
         // パスごとに別の範囲を使う。範囲の配置は区間の表が持つ）
         RHI::BufferPtr m_IndirectDrawBuffer; // DrawIndexedIndirectCommand[]
-        RHI::BufferPtr m_DrawCountBuffer;    // uint32_t[] 区間ごとの可視クラスタ数
+        RHI::BufferPtr m_DrawCountBuffer;    // uint32_t[] 区間ごとの可視クラスタ数（詰めた経路は後ろに記録の区間の表）
         RHI::BufferPtr m_DrawInfoBuffer;     // uint32_t[2] × コマンド（インスタンスの番号・payload）
         uint32_t m_CommandCapacity = 0;      // m_IndirectDrawBuffer・m_DrawInfoBuffer のコマンド数
         uint32_t m_CounterCapacity = 0;      // m_DrawCountBuffer のカウンタ数
