@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "Rendering/FrameReadback.h"
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/HiZPyramidPass.h"
 #include "Rendering/IViewPass.h"
@@ -168,7 +169,7 @@ namespace NorvesLib::Core::Rendering
      *
      * MegaMeshが未登録の場合はパスが自動的にスキップされます。
      */
-    class MegaGeometryPass : public IViewPass, public IRenderGraphPass
+    class MegaGeometryPass : public IViewPass, public IRenderGraphPass, private IFrameReadbackReceiver
     {
     public:
         explicit MegaGeometryPass(const MegaGeometryPassSettings &settings = MegaGeometryPassSettings{});
@@ -964,7 +965,8 @@ namespace NorvesLib::Core::Rendering
         void ReleaseStaleBuffers();
 
         /** @brief 統計（MEGA_OCCLUSION）の読み戻しのスロットを用意する。作れなければ統計は取らない */
-        void EnsureStatsSlots();
+        /** @brief 統計（MEGA_OCCLUSION）の読み戻しの結果を受け取り、ログへ出す（提出の完了の後に RenderThread で呼ばれる） */
+        void OnFrameReadback(const FrameReadbackResult &result) override;
 
         // 設定
         MegaGeometryPassSettings m_Settings;
@@ -1074,24 +1076,21 @@ namespace NorvesLib::Core::Rendering
         Container::VariableArray<RetiredBuffer> m_RetiredBuffers;
         uint64_t m_OcclusionFrameCount = 0;
 
-        // 統計（MEGA_OCCLUSION）。ホストが読めるバッファを数フレームずつ遅らせて読み戻す（GPUを待たない）。
-        struct StatsSlot
+        // 統計（MEGA_OCCLUSION）。フレームの持ち主の読み戻しの口で借りた先へ GPU が数え、提出の完了の後に受け取る（GPUを待たない）。
+        // 読み戻しの要求ごとに、ログに付ける記録の情報を持つ
+        struct PendingStats
         {
-            RHI::BufferPtr Buffer;
-            const uint32_t *Mapped = nullptr;
+            uint64_t RequestId = 0;
             uint64_t Frame = 0;
             uint64_t RenderFrame = 0;  // 描画のフレームの番号（ViewRenderContext::FrameNumber）
-            uint64_t RenderFrameCount = 0; // 書いたときの m_RenderFrameCount
             int64_t EpochFrame = -1;   // 決定的な撮影のエポックからの相対フレーム。エポック前は -1
-            bool bPending = false;
             bool bSwRasterBin = false; // このフレームがソフトウェアラスタの振り分けを行い、統計の 4〜7 が有効
             uint32_t SwDispatches = 0; // このフレームで sink が記録したソフトの dispatch の数（GPU の統計ではなく CPU の記録の数）
         };
-        static constexpr uint32_t StatsSlotCount = 4;
         bool m_bStatsEpochActive = false;
         bool m_bDropVisibilityContinuity = false; // 決定的な撮影のエポックの最初のフレーム: 見えたビットを引き継がない
-        StatsSlot m_StatsSlots[StatsSlotCount];
-        bool m_bStatsSlotsTried = false;
+        FrameReadbackReceiver m_StatsReadback{this};
+        Container::VariableArray<PendingStats> m_PendingStats;
         bool m_bStatsLoggedOnce = false;
         bool m_bOcclusionFallbackLogged = false;
         bool m_bBatchUnsupportedLogged = false;

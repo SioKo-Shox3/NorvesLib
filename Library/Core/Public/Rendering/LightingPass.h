@@ -96,7 +96,7 @@ namespace NorvesLib::Core::Rendering
     class GBufferPass;
     class SSAOPass;
 
-    class LightingPass : public IViewPass, public IRenderGraphPass
+    class LightingPass : public IViewPass, public IRenderGraphPass, private IFrameReadbackReceiver
     {
     public:
         /**
@@ -573,44 +573,24 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_FrameVsmPool;
 
         /**
-         * @brief 太陽の VSM の読み出しの統計の読み戻し先（照明のシェーダーが storage buffer へ数え、ホストが数回後の実行で読む）
+         * @brief 太陽の VSM の読み出しの統計の読み戻し（照明のシェーダーが storage buffer へ数え、提出の完了の後に受け取る）
          *
          * [0] = 太陽の VSM で自分の段のページが無く、粗い段へ逃げた PCF の標本の数、[1] = 点光源の VSM の同じ数。--shadow-probe が無効でも数える。
-         * 書いたフレームの通し番号を持ち、その提出の完了が確かめられた（ViewRenderContext::CompletedRenderFrameSerial 以下）
-         * 枠だけを読んで空ける。
+         * 読み戻し先は実行ごとにフレームの持ち主の読み戻しの口から借り（借りるときにホストが 0 を書く）、結果は OnFrameReadback で合計へ足す。
          */
-        struct VsmStatsSlot
-        {
-            RHI::BufferPtr Buffer;
-            const uint32_t* Mapped = nullptr;
-            uint64_t FrameSerial = 0;
-            bool bPending = false;
-        };
-        static constexpr uint32_t VsmStatsSlotCount = 16;
         static constexpr uint32_t VsmStatsBytes = 16;
-        VsmStatsSlot m_VsmStatsSlots[VsmStatsSlotCount];
+        FrameReadbackReceiver m_VsmStatsReadback{this};
         /** @brief 太陽の VSM の段の切り替えの距離（設定・画角・画面の高さが変わったときだけ求め直す） */
         VirtualShadowMapLevelThresholdCache m_VsmLevelThresholdCache;
-        /** @brief 空きの枠が無いとき・枠を作れないときに束ねる、読まない統計の置き場（シェーダーの数え上げが他の資源へ書かないようにする） */
+        /** @brief 読み戻し先を借りられないとき（上限・持ち主の無い文脈）に束ねる、読まない統計の置き場（シェーダーの数え上げが他の資源へ書かないようにする） */
         RHI::BufferPtr m_VsmStatsSink;
         /** @brief 読み戻した実行の数と、その合計の逃げた標本の数 */
         uint64_t m_VsmStatsHarvestedExecutes = 0;
         uint64_t m_VsmFallbackSamples = 0;
         uint64_t m_VsmPointFallbackSamples = 0;
 
-        /**
-         * @brief 次の統計の書き込み先を取り、0 に戻して返す
-         *
-         * 先に、提出の完了が確かめられた枠を読んで空ける。どの枠も GPU の完了が未確認のとき、作れない・写像できないときは null
-         * （GPU が書いているかもしれない枠は上書きしない）。
-         * @param frameSerial 今のフレームの通し番号（ViewRenderContext::ResolveRenderFrameSerial）
-         * @param completedSerial 提出の完了が確かめられた最大の通し番号
-         */
-        RHI::BufferPtr AcquireVsmStatsSlot(uint64_t frameSerial, uint64_t completedSerial);
-        /** @brief 書いたフレームの提出が完了した枠を合計へ足して空ける */
-        void HarvestCompletedVsmStats(uint64_t completedSerial);
-        /** @brief 残っている統計をすべて合計へ足す（GPU が書き終えた後の終了時） */
-        void HarvestVsmStats();
+        /** @brief 太陽の VSM の読み出しの統計の読み戻しの結果を合計へ足す（提出の完了の後に RenderThread で呼ばれる） */
+        void OnFrameReadback(const FrameReadbackResult& result) override;
         bool m_bNeuralBRDFAvailable = false;     ///< Neural BRDFが利用可能か
 
         // デバイス参照

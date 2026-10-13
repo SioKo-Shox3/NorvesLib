@@ -3826,6 +3826,8 @@ namespace NorvesLib::Core::Rendering
         // 記述子の pool も飛行中のスロットごとに作る（借りるのは共有のレイアウトから）
         const RHI::FrameDescriptorPoolCapacity descriptorCapacity;
         const bool bDescriptorsConfigured = m_FrameResourceOwners.ConfigureDescriptors(m_Device.get(), descriptorCapacity);
+        // 読み戻し先（ホストが読めるバッファ）もデバイスで作る
+        m_FrameResourceOwners.ConfigureReadback(m_Device.get());
         NORVES_LOG_INFO("FrameResource",
                         "FRAME_RESOURCE_DESCRIPTOR_CONFIG configured=%d max_sets=%u uniform=%u sampled=%u sampler=%u "
                         "storage_buffer=%u storage_image=%u combined=%u acceleration=%u",
@@ -3921,8 +3923,10 @@ namespace NorvesLib::Core::Rendering
             // GPU を待ち終えたので、鍵で持ち続けた物を手放す（持ち手の残る物はその持ち手が手放すまで生きる）
             m_Device->ReleaseObjectCache();
         }
-        // GPU を待ち終えたので、フレームの持ち主の分を全部戻す
+        // GPU を待ち終えたので、フレームの持ち主の分を全部戻す。提出済みの読み戻しはここで受け取り手（ビューの
+        // パス）へ渡るので、下のビューの Shutdown が最後のフレームまでの統計を出せる
         m_FrameResourceOwners.Reset();
+        m_FrameResourceOwners.ReleaseReadback();
         // 領域のページ（マップしたままのバッファ）をデバイスより先に手放す
         m_FrameResourceOwners.ReleaseUploadPages();
         m_FrameResourceOwners.ConfigureUpload(nullptr, FrameUploadArena::DefaultInitialPageBytes);

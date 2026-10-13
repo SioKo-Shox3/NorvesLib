@@ -5,6 +5,7 @@
 
 #include "Logging/LogMacros.h"
 #include "Rendering/CameraViewConstants.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/RenderGraph/RenderGraphBuilder.h"
 #include "Rendering/RenderGraph/RenderGraphResourceNames.h"
 #include "Rendering/RenderGraph/RenderGraphResources.h"
@@ -176,11 +177,10 @@ namespace NorvesLib::Core::Rendering
     void ShadowProbePass::Shutdown()
     {
         LogSummary();
+        // まだ渡っていない統計は受け取らない（読み戻し先は GPU の完了の後に持ち主へ戻る）
+        m_Readback.CancelPending();
+        m_PendingStats.clear();
         m_Uses.Clear();
-        for (StatsSlot& slot : m_Slots)
-        {
-            slot = StatsSlot{};
-        }
         m_ProbeBuffer.reset();
         m_StateBuffer.reset();
         m_Pipeline.reset();
@@ -188,7 +188,6 @@ namespace NorvesLib::Core::Rendering
         m_Shader.reset();
         m_Device = nullptr;
         m_Grid = {};
-        m_bStatsMapped = false;
         m_DepthHandle = {};
         m_NormalHandle = {};
         m_ShadowMapHandle = {};
@@ -309,22 +308,6 @@ namespace NorvesLib::Core::Rendering
             return false;
         }
         m_Grid = grid;
-
-        // 統計の読み戻し先。シェーダーが storage buffer として直接数え、ホストが数フレーム後に読む（host-visible）。
-        // 作れない・写像できないデバイスでは測れない（Execute が何もしない）
-        for (StatsSlot& slot : m_Slots)
-        {
-            slot.Buffer = m_Device->CreateBuffer(RHI::BufferDesc(ShadowProbe::STATS_BYTES,
-                                                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
-                                                                 true,
-                                                                 "ShadowProbe_Stats"));
-            slot.Mapped = slot.Buffer ? static_cast<const uint32_t*>(slot.Buffer->Map(0, 0)) : nullptr;
-            if (!slot.Mapped)
-            {
-                return false;
-            }
-        }
-        m_bStatsMapped = true;
         return true;
     }
 
@@ -351,28 +334,37 @@ namespace NorvesLib::Core::Rendering
         return use.Uniform && use.Slices && use.DescriptorSet;
     }
 
-    void ShadowProbePass::HarvestSlot(StatsSlot& slot)
+    void ShadowProbePass::OnFrameReadback(const FrameReadbackResult& result)
     {
-        if (!slot.bPending || !slot.Mapped)
+        const auto it = std::find_if(m_PendingStats.begin(), m_PendingStats.end(),
+                                     [&result](const PendingStats& pending) { return pending.RequestId == result.RequestId; });
+        if (it == m_PendingStats.end())
         {
             return;
         }
-        if (slot.bCapture)
+        const PendingStats pending = *it;
+        m_PendingStats.erase(it);
+        // 提出しなかったフレームの統計（取り消し）は足さない
+        const uint32_t* const stats = result.Size >= ShadowProbe::STATS_BYTES ? static_cast<const uint32_t*>(result.Data) : nullptr;
+        if (result.Status != FrameReadbackStatus::Delivered || !stats)
         {
-            m_Totals.AddCaptureFrame(slot.Mapped);
+            return;
+        }
+        if (pending.bCapture)
+        {
+            m_Totals.AddCaptureFrame(stats);
         }
         else
         {
-            if (slot.bSun)
+            if (pending.bSun)
             {
-                m_Totals.AddMeasuredFrame(slot.Mapped, slot.bVsm);
+                m_Totals.AddMeasuredFrame(stats, pending.bVsm);
             }
-            if (slot.bPoint)
+            if (pending.bPoint)
             {
-                m_Totals.AddPointFrame(slot.Mapped);
+                m_Totals.AddPointFrame(stats);
             }
         }
-        slot.bPending = false;
     }
 
     void ShadowProbePass::Execute(RenderGraphResources& resources, ViewRenderContext& context)
@@ -391,10 +383,9 @@ namespace NorvesLib::Core::Rendering
             m_bEpochSeen = true;
             m_bCaptured = false;
             m_Totals = ShadowProbe::Totals{};
-            for (StatsSlot& pendingSlot : m_Slots)
-            {
-                pendingSlot.bPending = false;
-            }
+            // 読み込み前のシーンで測った、まだ渡っていない統計も受け取らない
+            m_Readback.CancelPending();
+            m_PendingStats.clear();
         }
         const bool bCaptureFrame =
             !m_bCaptured && (context.bDeterministicCapture ? m_bEpochSeen
@@ -424,21 +415,10 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         const ShadowProbe::Grid grid = ShadowProbe::ComputeGrid(depth->GetWidth(), depth->GetHeight());
-        if (!EnsureBuffers(grid) || !m_bStatsMapped)
+        // 統計はフレームの持ち主の読み戻しの口で戻す（持ち主の無い手組みの文脈では測らない）
+        if (!context.FrameResources || !EnsureBuffers(grid))
         {
             return;
-        }
-
-        // 数フレーム前の統計を読み戻す。同じフレームの別のビューポートや直前のフレームが書いた統計は、
-        // GPU が書き終えていないかもしれないので、読まず・上書きせず、この記録は取らない
-        StatsSlot& slot = m_Slots[m_ExecuteCount % StatsSlotCount];
-        if (slot.bPending)
-        {
-            if (slot.ExecuteIndex + 2 > m_ExecuteCount)
-            {
-                return;
-            }
-            HarvestSlot(slot);
         }
 
         Use* use = nullptr;
@@ -541,6 +521,19 @@ namespace NorvesLib::Core::Rendering
             vsmPageTable = m_ProbeBuffer;
             vsmPool = m_ProbeBuffer;
         }
+
+        // 統計の読み戻し先を借りる。シェーダーが storage buffer として直接数え、このフレームの提出の完了の後に
+        // OnFrameReadback で受け取る。借りられない（上限）ときは、このフレームを測らない
+        FrameReadbackRequest readbackRequest;
+        readbackRequest.Receiver = &m_Readback;
+        readbackRequest.Size = ShadowProbe::STATS_BYTES;
+        readbackRequest.ViewId = lighting.ViewId;
+        readbackRequest.ViewportId = lighting.ViewportId;
+        const FrameReadbackTarget statsTarget = context.FrameResources->RequestReadback(readbackRequest);
+        if (!statsTarget.IsValid())
+        {
+            return;
+        }
         use->Uniform->Update(&params, sizeof(params));
         use->Slices->Update(vsmSlices, sizeof(vsmSlices));
 
@@ -553,7 +546,7 @@ namespace NorvesLib::Core::Rendering
         use->DescriptorSet->BindSampler(3, lighting.ShadowSampler ? lighting.ShadowSampler : m_PointSampler);
         use->DescriptorSet->BindStorageBuffer(4, m_ProbeBuffer, 0, static_cast<uint32_t>(m_ProbeBuffer->GetSize()));
         use->DescriptorSet->BindStorageBuffer(5, m_StateBuffer, 0, static_cast<uint32_t>(m_StateBuffer->GetSize()));
-        use->DescriptorSet->BindStorageBuffer(6, slot.Buffer, 0, ShadowProbe::STATS_BYTES);
+        use->DescriptorSet->BindStorageBuffer(6, statsTarget.Buffer, static_cast<uint32_t>(statsTarget.Offset), ShadowProbe::STATS_BYTES);
         use->DescriptorSet->BindStorageBuffer(7, vsmPageTable, 0, static_cast<uint32_t>(std::min<uint64_t>(vsmPageTable->GetSize(), 0xFFFFFFFFull)));
         use->DescriptorSet->BindStorageBuffer(8, vsmPool, 0, static_cast<uint32_t>(std::min<uint64_t>(vsmPool->GetSize(), 0xFFFFFFFFull)));
         use->DescriptorSet->BindStorageBuffer(9, use->Slices, 0, static_cast<uint32_t>(sizeof(vsmSlices)));
@@ -563,10 +556,10 @@ namespace NorvesLib::Core::Rendering
         use->DescriptorSet->Update();
 
         RHI::ICommandList* commandList = context.CommandList;
-        // 1 フレームぶんの統計を 0 から数える（前に使ったのはホストが読んだ後）
-        commandList->BufferBarrier(slot.Buffer, RHI::ResourceState::HostRead, RHI::ResourceState::CopyDest);
-        commandList->FillBuffer(slot.Buffer, 0, ShadowProbe::STATS_BYTES, 0);
-        commandList->BufferBarrier(slot.Buffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+        // 1 フレームぶんの統計を GPU で 0 から数える（借りた読み戻し先は前の受け取りが終わった後）
+        commandList->BufferBarrier(statsTarget.Buffer, RHI::ResourceState::HostRead, RHI::ResourceState::CopyDest);
+        commandList->FillBuffer(statsTarget.Buffer, statsTarget.Offset, ShadowProbe::STATS_BYTES, 0);
+        commandList->BufferBarrier(statsTarget.Buffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
         commandList->BufferBarrier(m_ProbeBuffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
         commandList->BufferBarrier(m_StateBuffer, RHI::ResourceState::Common, RHI::ResourceState::UnorderedAccess);
 
@@ -577,16 +570,17 @@ namespace NorvesLib::Core::Rendering
                               1u);
 
         // 統計の書き込みをホストの読み取りへ、標本・前の可視度を次のフレームへ見せる
-        commandList->BufferBarrier(slot.Buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::HostRead);
+        commandList->BufferBarrier(statsTarget.Buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::HostRead);
         commandList->BufferBarrier(m_ProbeBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
         commandList->BufferBarrier(m_StateBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::Common);
 
-        slot.ExecuteIndex = m_ExecuteCount;
-        slot.bPending = true;
-        slot.bCapture = bCaptureFrame;
-        slot.bVsm = bVsm;
-        slot.bSun = bSunUsable && !bCaptureFrame;
-        slot.bPoint = bPoint;
+        PendingStats pending;
+        pending.RequestId = statsTarget.RequestId;
+        pending.bCapture = bCaptureFrame;
+        pending.bVsm = bVsm;
+        pending.bSun = bSunUsable && !bCaptureFrame;
+        pending.bPoint = bPoint;
+        m_PendingStats.push_back(pending);
         if (bCaptureFrame)
         {
             m_bCaptured = true;
@@ -600,14 +594,7 @@ namespace NorvesLib::Core::Rendering
             return;
         }
         m_bLogged = true;
-        // 書き終えたと分かる（2 実行以上前の）統計を読み戻してから出す
-        for (StatsSlot& slot : m_Slots)
-        {
-            if (slot.bPending && slot.ExecuteIndex + 2 <= m_ExecuteCount)
-            {
-                HarvestSlot(slot);
-            }
-        }
+        // 合計には、提出の完了の後に渡った統計だけが入っている（終了時は GPU を待ってから持ち主が残りを渡す）
         const ShadowProbe::Totals& totals = m_Totals;
         // 太陽を測ったフレームがある、または点光源も測らなかったときだけ、太陽（csm）の行を出す（夜・--shadow-probe=point は点光源の行だけ）
         if (totals.Frames != 0 || totals.PointFrames == 0)

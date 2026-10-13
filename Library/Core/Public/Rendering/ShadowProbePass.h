@@ -37,6 +37,7 @@
 // 標本を固定するフレームは、決定的な撮影ではエポック（読み込み完了）の最初のフレーム。そうでない起動では、
 // 読み込みの完了を知る手段が無いので、起動から FALLBACK_CAPTURE_EXECUTE_COUNT 回目の実行で固定する。
 
+#include "Rendering/FrameReadback.h"
 #include "Rendering/FrameUseRing.h"
 #include "Rendering/IViewPass.h"
 #include "Rendering/RenderGraph/IRenderGraphPass.h"
@@ -294,7 +295,7 @@ namespace NorvesLib::Core::Rendering
      * 書くものは RenderGraph の資源に無い（標本・前の可視度・統計は、このパスが持つバッファ）。
      * CSM の行列・分割・影の地図の読み方は ViewRenderContext::PhysicalLighting（ShadowMapPass の公開値）から取る。
      */
-    class ShadowProbePass final : public IViewPass, public IRenderGraphPass
+    class ShadowProbePass final : public IViewPass, public IRenderGraphPass, private IFrameReadbackReceiver
     {
     public:
         ShadowProbePass();
@@ -331,13 +332,10 @@ namespace NorvesLib::Core::Rendering
             RHI::DescriptorSetPtr DescriptorSet;
         };
 
-        /** @brief 統計の読み戻し先（ホストが読めるバッファ）。数フレーム遅れて読む */
-        struct StatsSlot
+        /** @brief 読み戻しを待っている統計の記録（フレームの持ち主の読み戻しの要求ごと） */
+        struct PendingStats
         {
-            RHI::BufferPtr Buffer;
-            const uint32_t* Mapped = nullptr;
-            uint64_t ExecuteIndex = 0;
-            bool bPending = false;
+            uint64_t RequestId = 0;
             bool bCapture = false;
             /** @brief この記録が太陽の VSM も測ったか */
             bool bVsm = false;
@@ -346,11 +344,11 @@ namespace NorvesLib::Core::Rendering
             /** @brief この記録が点光源（キューブと VSM）を測ったか */
             bool bPoint = false;
         };
-        static constexpr uint32_t StatsSlotCount = 4;
 
         bool CreatePipeline(ViewRenderContext& context);
         bool EnsureBuffers(const ShadowProbe::Grid& grid);
-        void HarvestSlot(StatsSlot& slot);
+        /** @brief 統計の読み戻しの結果（提出の完了の後に RenderThread で呼ばれる）を合計へ足す */
+        void OnFrameReadback(const FrameReadbackResult& result) override;
         bool AcquireUse(Use*& outUse);
 
         RHI::IDevice* m_Device = nullptr;
@@ -363,8 +361,9 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr m_ProbeBuffer;
         RHI::BufferPtr m_StateBuffer;
         ShadowProbe::Grid m_Grid;
-        StatsSlot m_Slots[StatsSlotCount];
-        bool m_bStatsMapped = false;
+        /** @brief 統計の読み戻しの受け取り手（測定のやり直し・Shutdown で前の要求を取り消す） */
+        FrameReadbackReceiver m_Readback{this};
+        Container::VariableArray<PendingStats> m_PendingStats;
 
         RGTextureHandle m_DepthHandle;
         RGTextureHandle m_NormalHandle;

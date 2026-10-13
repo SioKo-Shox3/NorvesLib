@@ -2,6 +2,7 @@
 
 #include "Container/Containers.h"
 #include "Logging/LogMacros.h"
+#include "Rendering/FrameReadback.h"
 #include "Rendering/FrameUploadArena.h"
 #include "RHI/IDescriptorSet.h"
 #include "RHI/IDevice.h"
@@ -274,6 +275,16 @@ namespace NorvesLib::Core::Rendering
 
         /** @brief この口の記述子の pool（統計と検査のため。設定していなければ nullptr） */
         const RHI::IFrameDescriptorAllocator* GetDescriptorAllocator() const { return m_Descriptors.get(); }
+
+        /**
+         * @brief 読み戻し先を 1 つ借りる（記録中だけ。FrameReadback.h を参照）
+         *
+         * GPU が直接書く読み戻し先と、他の資源からのコピー（request.CopySource。commandList にコピーを記録する）の
+         * どちらも同じ要求で扱う。結果は、このフレームの提出の完了の後に RenderThread で request.Receiver へ渡る
+         * （提出しなかったら取り消しとして渡る）。記録中でない・上限・作れないときは IsValid() が false
+         * （パスはそのフレームの統計を飛ばす）。
+         */
+        FrameReadbackTarget RequestReadback(const FrameReadbackRequest& request, RHI::ICommandList* commandList = nullptr);
 
     protected:
         FrameResourceLane(FrameResourceOwner* owner, uint32_t laneIndex) : m_Owner(owner), m_LaneIndex(laneIndex) {}
@@ -643,6 +654,8 @@ namespace NorvesLib::Core::Rendering
         FrameResourceOwnerState m_State = FrameResourceOwnerState::Idle;
         // 全部の持ち主で共有する提出の結果（FrameResourceOwners が持つ。単独の持ち主では null で、終わった世代は Unknown）
         FrameSubmissionHistory* m_SubmissionHistory = nullptr;
+        // 全部の持ち主で共有する読み戻しの口（FrameResourceOwners が持つ。単独の持ち主では null で、読み戻しは借りられない）
+        FrameReadbackQueue* m_Readback = nullptr;
         uint64_t m_ReclaimCount = 0;
         uint64_t m_LeakedLaneLeaseCount = 0;
         mutable NorvesLib::Thread::Atomic<uint64_t> m_StaleRejectCount{0};
@@ -671,6 +684,16 @@ namespace NorvesLib::Core::Rendering
             return {};
         }
         return {m_Owner->m_SlotIndex, m_Owner->m_Generation};
+    }
+
+    inline FrameReadbackTarget FrameResourceLane::RequestReadback(const FrameReadbackRequest& request,
+                                                                  RHI::ICommandList* commandList)
+    {
+        if (!IsRecording() || !m_Owner->m_Readback)
+        {
+            return {};
+        }
+        return m_Owner->m_Readback->Request(request, m_Owner->m_Generation, commandList);
     }
 
     inline bool FrameResourceLane::IsCurrent(const FrameResourceGeneration& generation) const
@@ -795,6 +818,7 @@ namespace NorvesLib::Core::Rendering
             {
                 m_Owners[index].m_SlotIndex = index;
                 m_Owners[index].m_SubmissionHistory = &m_SubmissionHistory;
+                m_Owners[index].m_Readback = &m_Readback;
             }
         }
 
@@ -813,6 +837,7 @@ namespace NorvesLib::Core::Rendering
                 ++m_AbandonedFrameCount;
                 FinishRecording(*m_Recording);
                 m_Recording->MarkAborted();
+                m_Readback.Abort(m_Recording->m_Generation);
                 m_Recording = nullptr;
             }
             for (FrameResourceOwner& owner : m_Owners)
@@ -822,6 +847,8 @@ namespace NorvesLib::Core::Rendering
                     owner.Reclaim();
                 }
             }
+            // 中止したフレームの読み戻しを取り消しとして渡す（完了した提出の分は Retire で渡した）
+            m_Readback.Retire(completedSubmissionSerial, false);
 
             if (inFlightIndex >= FrameResourceMaxInFlightSlots)
             {
@@ -863,6 +890,8 @@ namespace NorvesLib::Core::Rendering
             }
             FinishRecording(*m_Recording);
             m_Recording->MarkSubmitted(submissionSerial);
+            // このフレームの読み戻しに実際の提出の通し番号を付ける（その完了の後に Retire で渡す）
+            m_Readback.CommitSubmitted(m_Recording->m_Generation, submissionSerial);
             m_Recording = nullptr;
             return true;
         }
@@ -876,6 +905,7 @@ namespace NorvesLib::Core::Rendering
             }
             FinishRecording(*m_Recording);
             m_Recording->MarkAborted();
+            m_Readback.Abort(m_Recording->m_Generation);
             m_Recording = nullptr;
         }
 
@@ -896,11 +926,19 @@ namespace NorvesLib::Core::Rendering
                     owner.Reclaim();
                 }
             }
+            // 完了した提出の読み戻しを受け取り手へ渡し、読み戻し先を空ける
+            m_Readback.Retire(completedSubmissionSerial, bRestarted);
         }
 
-        /** @brief 全部の持ち主を回収して初期状態へ戻す（GPU を待ち終えた後の終了処理で呼ぶ） */
+        /**
+         * @brief 全部の持ち主を回収して初期状態へ戻す（GPU を待ち終えた後の終了処理で呼ぶ）
+         *
+         * 提出済みの読み戻しは GPU が書き終えているので全部渡し、提出していない分は取り消す（終了時の吐き出し）。
+         * パスの Shutdown より前に呼べば、パスは最後のフレームまでの結果を集計に入れられる。
+         */
         void Reset()
         {
+            m_Readback.Flush();
             m_Recording = nullptr;
             for (FrameResourceOwner& owner : m_Owners)
             {
@@ -982,6 +1020,15 @@ namespace NorvesLib::Core::Rendering
             }
             m_bDescriptorsConfigured = false;
         }
+
+        /** @brief 読み戻し先を作るデバイスを設定する（RenderThread。借りる前に 1 回） */
+        void ConfigureReadback(RHI::IDevice* device) { m_Readback.Configure(device); }
+
+        /** @brief 読み戻し先を全部手放す（Reset の後、デバイスを手放す前に呼ぶ） */
+        void ReleaseReadback() { m_Readback.Release(); }
+
+        /** @brief 読み戻しの口（統計と検査のため） */
+        const FrameReadbackQueue& GetReadback() const { return m_Readback; }
 
         /** @brief 最後に記録を終えたフレーム（提出・中止）の記述子の統計（全部の口の合計） */
         const RHI::FrameDescriptorStats& GetLastFrameDescriptorStats() const { return m_LastFrameDescriptorStats; }
@@ -1122,11 +1169,19 @@ namespace NorvesLib::Core::Rendering
                                    : m_LastFrameDescriptorStats.PoolsAdded != 0 ? "pools_added"
                                                                                 : "periodic");
             }
+            // 読み戻しは定期と、満杯で統計を飛ばしたフレームの後に出す
+            const bool bReadbackDropped = m_Readback.HasDropsSinceLog();
+            if (bPeriodic || bReadbackDropped)
+            {
+                m_Readback.LogStats(bReadbackDropped ? "dropped_full" : "periodic");
+            }
         }
 
         FrameResourceOwner m_Owners[FrameResourceMaxInFlightSlots];
         // 持ち主が提出・中止のときに書く、終わったフレームの提出の結果（持ち主はこれを指す。この型は写せず動かせない）
         FrameSubmissionHistory m_SubmissionHistory;
+        // 全部の持ち主で共有する読み戻しの口（持ち主はこれを指す）
+        FrameReadbackQueue m_Readback;
         FrameResourceOwner* m_Recording = nullptr;
         uint64_t m_NextGeneration = 1;
         uint64_t m_LastCompletedSubmissionSerial = 0;

@@ -933,6 +933,12 @@ namespace NorvesLib::Core::Rendering
             command.MegaGeometry.RenderFrameSerial = ResolveRenderFrameSerial();
             command.MegaGeometry.bDeterministicCapture = bDeterministicCapture;
             command.MegaGeometry.bTemporalEpochStart = bTemporalEpochStart;
+            command.MegaGeometry.FrameResources = FrameResources;
+            if (CurrentViewport)
+            {
+                command.MegaGeometry.ViewId = CurrentViewport->ViewId;
+                command.MegaGeometry.ViewportId = CurrentViewport->ViewportId;
+            }
             if (const CameraProxy *previousCamera = GetPreviousCamera())
             {
                 command.MegaGeometry.PreviousCamera = *previousCamera;

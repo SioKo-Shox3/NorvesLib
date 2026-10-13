@@ -13,6 +13,7 @@
 namespace NorvesLib::Core::Rendering
 {
     class MegaGeometryPass;
+    class FrameResourceLane;
 
     enum class FrameCommandType : uint8_t
     {
@@ -101,6 +102,11 @@ namespace NorvesLib::Core::Rendering
         uint64_t RenderFrameSerial = 0;
         bool bDeterministicCapture = false;
         bool bTemporalEpochStart = false;
+        // このフレームの持ち主の借りる口（統計の読み戻し先を借りる。null は持ち主の無い手組みのコマンドで、統計を取らない）と、
+        // 読み戻しの結果に付けるビュー・ビューポート
+        FrameResourceLane* FrameResources = nullptr;
+        uint32_t ViewId = UINT32_MAX;
+        uint32_t ViewportId = UINT32_MAX;
     };
 
     struct FrameCommand

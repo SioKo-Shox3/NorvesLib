@@ -3596,3 +3596,24 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - DDGI を有効にする構成: Game には DDGI の volume を設定する呼び出しが無く（`SetDDGIVolumeParameters` を呼ぶのは試験だけ）、起動の引数では有効にできない。試験 `DDGIProbeUpdateVulkanTest`（RelWithDebInfo、`check-SCN-ECS-FIF-DDGI-test-build.txt`・`check-SCN-ECS-FIF-DDGI-update-test.txt`）を走らせ、EXIT=0・VUID_COUNT=0。seed（フレーム番号 1）の後の bounce（フレーム番号 2）が seed のアトラスを履歴として 1 回読み、hysteresis=0.6 の混ぜ方で期待値と一致した（`single_probe_bounce`・`visibility` の各項目が通過）。履歴の更新は 1 フレーム 1 回、収束の混ぜ方は以前と同じ。撮影は増やしていない。
 - Next: TASKS.md の未完の次の項目（SCN-ECS-FIF-READBACK など）。
 - Notes: 提出しなかったフレームの後の履歴の捨て方・8 フレームでの組の手放し・2 つのビューポートの同時の Execute を起こす検査は書いていない（verify が名指ししていないため）。既定のアトラス（`m_DefaultIrradianceAtlas` の 1 回だけの遷移）は以前のまま（提出しなかったフレームで遷移した場合の扱いは変えていない）。`DDGIProbeRayQueryVulkanTest`・`DDGIProbeRadianceVulkanTest` は走らせていない（3 引数の getter を残したのでコンパイルの形は変わらない）。`DDGIProbePass.h`・`.cpp` は全行 CRLF・BOM 付きのまま、`LightingPass.cpp` は行末の混在を保った（numstat の 2 通りが一致）。
+
+### SCN-ECS-FIF-READBACK（2026-10-14、反復 2・run 20261014-005646）
+
+- フレームの持ち主に読み戻しの口を足した（`Rendering/FrameReadback.h`。ヘッダだけで実装し、`FrameResourceOwners` が 1 つ持つ）。パスは記録中に `FrameResourceLane::RequestReadback` で読み戻し先（ホストが読めて写像したままのバッファ）を借りる。
+  - 1 つの要求で 2 つの形を扱う: GPU が直接書く（返したバッファを storage buffer として束縛し、書いた後に HostRead へのバリアを記録する。0 から数えるなら `bZeroOnHost` でホストが 0 を書くか、パスが GPU で FillBuffer する）と、他の資源からのコピー（`CopySource` を渡すと口がコピーとバリアを記録する）。
+  - `CommitSubmitted` で要求へ実際の提出の通し番号を付け、`Retire`（開始の回収と同じ時点）でその完了の後に RenderThread で受け取り手へ渡す。提出しなかったフレーム（中止・放棄）の要求は取り消し（`FrameReadbackStatus::Canceled`）として次の開始で渡す。受け取りの呼び出しが終わるまで、その読み戻し先をほかの要求へ使い直さない。
+  - 受け取り手は `FrameReadbackReceiver`（パスのメンバ）で登録する。要求が持つのは共有の状態（受け取り手のポインタ・世代）と要求したときの世代だけで、パスが消えると共有の状態のポインタが null になり、`CancelPending` で世代を進めると前の要求の結果は渡さずに捨てる（読み戻し先は GPU の完了を待ってから戻す）。結果には要求の番号・提出の通し番号・ビュー・ビューポートを付ける。
+  - 上限は待っている要求 64・読み戻し先の合計 4 MiB。満杯なら借りられず、パスはそのフレームの統計を飛ばす。終了時は `FrameResourceOwners::Reset`（GPU を待った後）で提出済みの要求を全部渡し、残りを取り消す。RenderingCoordinator の終了では Reset がビューの Shutdown より前なので、パスの集計の行に最後のフレームまで入る。読み戻し先はその後 `ReleaseReadback` で手放す。
+  - ログ `FrameResource.Readback reason=<periodic|dropped_full|release>` に `Requests`・`Delivered`・`Canceled`・`Orphaned`（受け取り手が消えた・世代を進めた）・`DroppedFull`・`Failures`・`Flushed`・`Pending`・`MaxPending`・`Buffers`・`BufferBytes` を出す（開発ビルドだけ。定期は持ち主の統計と同じ 600 フレームおき）。
+- 移した使い手:
+  - `ShadowProbePass`: 飛行中の 4 つの統計の枠と `ExecuteIndex + 2` の判定を消し、測るフレームごとに読み戻し先を借りる（GPU で 0 にする形は保った）。測定のやり直し（エポックの始まり）と Shutdown で `CancelPending`。
+  - `MegaGeometryPass`: `StatsSlot`・`EnsureStatsSlots`・`RenderFrameCount + 2` の判定を消した。2 パスの記録で描く直前に借り、ログ（`MEGA_OCCLUSION`・`SW_RASTER_BIN`・`SW_RASTER_OVERSIZE`・`MEGA_CAPACITY`）は受け取り（`OnFrameReadback`）で出す。出す条件（最初の 1 回・相対フレームが 30 の倍数・`bStatsEveryFrame`）は変えていない。持ち主の口はコマンド（`MegaGeometryPassCommand::FrameResources`・ViewId・ViewportId）で渡す。
+  - `LightingPass`（照明の VSM の統計）: 16 の枠と `CompletedRenderFrameSerial` の判定を消し、実行ごとに借りる（`bZeroOnHost`）。借りられないときは今までどおり読まない置き場へ束ねる。
+- 検証（`.harness/runs/20261014-005646/`）:
+  - `baseline-build-READBACK.txt`: 変更前の RelWithDebInfo の Game のビルド EXIT=0。
+  - `verify-SCN-ECS-FIF-READBACK-1.txt`: RelWithDebInfo の Game のビルド EXIT=0、error 0・警告 0。
+  - `verify-SCN-ECS-FIF-READBACK-2.txt`: MAX_FRAMES_IN_FLIGHT=1 のまま決定論の起動画面の撮影を SCN-MEGA-BASE-RWDI と比較、mean_luminance_difference=0・psnr_db=100・mismatched_pixel_ratio=8E-06・max_channel_difference=1、result=pass、EXIT=0。ログは ERROR 0、`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0`、`FrameResource.Readback reason=release Requests=339 Delivered=339 Canceled=0 Orphaned=0 DroppedFull=0 Failures=0 Flushed=2 MaxPending=2 Buffers=2`。`MEGA_OCCLUSION` は基準（SCN-MEGA-BASE-RWDI）と同じ frame=3・31・61・91・109・139 に出て、終了時の吐き出しで frame=169 も出た。`VSM_LIGHTING_STATS executes=171` は基準と同じ。
+  - `verify-SCN-ECS-FIF-READBACK-3.txt`: mega-stress（5 万体、1920x1080、close）の撮影 result=pass、EXIT=0。ログは ERROR 0、`FRAME_RESOURCE_UNPROTECTED_SUMMARY count=0`、`Readback Requests=277 Delivered=277 DroppedFull=0`。`MEGA_OCCLUSION` は frame=5・33・63 と相対フレーム 0・30・60 に出て、30 フレームおき（前の mega-stress の撮影 SCN-ECS-FIF-DYNAMIC-UBO・SCN-ECS-FIX-GT-PACING も 30 フレームおき）。統計の 3 種の行は計 21 行。
+  - `check-SCN-ECS-FIF-READBACK-probe.txt`（移した ShadowProbe の確かめ。verify では通らないので 1 回だけ）: `-ShadowProbe` の起動画面の撮影 EXIT=0。`SHADOW_PROBE method=csm frames=361 mean_texel_mm=20.702`・`method=vsm mean_texel_mm=11.209`・`SHADOW_PROBE_AGREE ratio=0.999358` は以前の測定（SCN-BANANAS-PERF-probe）と同じ値。`Readback Requests=2147 Delivered=2147 Flushed=3`。
+- Next: TASKS.md の未完の次の項目。
+- Notes: 他の資源からのコピーの形・満杯で飛ばす道・取り消し（中止したフレーム）・受け取り手が消えた後の捨て方は撮影では通っていない（どの撮影でも Canceled・Orphaned・DroppedFull が 0）。それらを起こす検査は書いていない（verify が名指ししていないため）。持ち主の無い手組みの文脈（`RenderGraphCompileTest` の照明の VSM の統計の検査。ctest で無効）では統計を取らなくなった。AutoExposure・VT のフィードバック・ページの要求の列などほかの読み戻しは移していない。`FrameReadback.h` は新規なので BOM + CRLF、ほかは行末の混在を保った（numstat の 2 通りが一致）。

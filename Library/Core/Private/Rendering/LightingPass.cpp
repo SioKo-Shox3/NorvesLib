@@ -1612,71 +1612,17 @@ namespace NorvesLib::Core::Rendering
         Shutdown();
     }
 
-    void LightingPass::HarvestCompletedVsmStats(uint64_t completedSerial)
+    void LightingPass::OnFrameReadback(const FrameReadbackResult& result)
     {
-        for (VsmStatsSlot& slot : m_VsmStatsSlots)
+        // 提出しなかったフレームの統計（取り消し）は足さない
+        const uint32_t* const stats = result.Size >= VsmStatsBytes ? static_cast<const uint32_t*>(result.Data) : nullptr;
+        if (result.Status != FrameReadbackStatus::Delivered || !stats)
         {
-            // 書いたフレームの提出の完了が確かめられるまで読まない（書いた GPU の仕事が終わる前の値を読まない）
-            if (!slot.bPending || !slot.Mapped || slot.FrameSerial > completedSerial)
-            {
-                continue;
-            }
-            m_VsmFallbackSamples += slot.Mapped[0];
-            m_VsmPointFallbackSamples += slot.Mapped[1];
-            ++m_VsmStatsHarvestedExecutes;
-            slot.bPending = false;
+            return;
         }
-    }
-
-    RHI::BufferPtr LightingPass::AcquireVsmStatsSlot(uint64_t frameSerial, uint64_t completedSerial)
-    {
-        if (!m_Device)
-        {
-            return {};
-        }
-        HarvestCompletedVsmStats(completedSerial);
-        for (VsmStatsSlot& slot : m_VsmStatsSlots)
-        {
-            if (slot.bPending)
-            {
-                continue;
-            }
-            if (!slot.Buffer)
-            {
-                slot.Buffer = m_Device->CreateBuffer(RHI::BufferDesc(VsmStatsBytes,
-                                                                     RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
-                                                                     true,
-                                                                     "LightingVsmStats"));
-                slot.Mapped = slot.Buffer ? static_cast<const uint32_t*>(slot.Buffer->Map(0, 0)) : nullptr;
-                if (!slot.Mapped)
-                {
-                    slot = VsmStatsSlot{};
-                    return {};
-                }
-            }
-            // 写像したままのバッファは Update（内部で写像する）を使えないので、写像した領域へ直接 0 を書く（host-coherent）。
-            // 空けた枠は、書いたフレームの提出の完了が確かめられているので、GPU が使っていない
-            std::memset(const_cast<uint32_t*>(slot.Mapped), 0, VsmStatsBytes);
-            slot.bPending = true;
-            slot.FrameSerial = frameSerial;
-            return slot.Buffer;
-        }
-        return {};
-    }
-
-    void LightingPass::HarvestVsmStats()
-    {
-        for (VsmStatsSlot& slot : m_VsmStatsSlots)
-        {
-            if (!slot.bPending || !slot.Mapped)
-            {
-                continue;
-            }
-            m_VsmFallbackSamples += slot.Mapped[0];
-            m_VsmPointFallbackSamples += slot.Mapped[1];
-            ++m_VsmStatsHarvestedExecutes;
-            slot.bPending = false;
-        }
+        m_VsmFallbackSamples += stats[0];
+        m_VsmPointFallbackSamples += stats[1];
+        ++m_VsmStatsHarvestedExecutes;
     }
 
     namespace
@@ -2168,8 +2114,8 @@ namespace NorvesLib::Core::Rendering
         // Neural BRDF resources
         m_NeuralBRDFWeightBuffer.reset();
         m_DefaultNeuralBRDFWeightBuffer.reset();
-        // 太陽の VSM の読み出しの統計。GPU が書き終えた後に残りを読み、1 度だけ集計を出す
-        HarvestVsmStats();
+        // 太陽の VSM の読み出しの統計。合計には提出の完了の後に渡った分だけが入っている
+        // （終了時は GPU を待ってからフレームの持ち主が残りを渡す）。1 度だけ集計を出す
         if (m_VsmStatsHarvestedExecutes > 0u)
         {
             NORVES_LOG_INFO("LightingPass",
@@ -2178,10 +2124,8 @@ namespace NorvesLib::Core::Rendering
                             static_cast<unsigned long long>(m_VsmFallbackSamples),
                             static_cast<unsigned long long>(m_VsmPointFallbackSamples));
         }
-        for (VsmStatsSlot& slot : m_VsmStatsSlots)
-        {
-            slot = VsmStatsSlot{};
-        }
+        // まだ渡っていない統計は受け取らない（読み戻し先は GPU の完了の後に持ち主へ戻る）
+        m_VsmStatsReadback.CancelPending();
         m_VsmStatsSink.reset();
         m_VsmStatsHarvestedExecutes = 0;
         m_VsmFallbackSamples = 0;
@@ -4543,13 +4487,24 @@ namespace NorvesLib::Core::Rendering
                 boundVsmPoolBytes = static_cast<uint32_t>(std::min<uint64_t>(
                     m_FrameVsmPool->GetSize(), std::numeric_limits<uint32_t>::max()));
                 // VSM が有効なフレームは、シェーダーが逃げた標本を数える（VT のフィードバックの有無には依らない）。
-                // 空きの枠が無いときは、読まない置き場へ束ねて他の資源を書かないようにする
-                if (RHI::BufferPtr statsBuffer = AcquireVsmStatsSlot(context.ResolveRenderFrameSerial(),
-                                                                     context.CompletedRenderFrameSerial))
+                // 読み戻し先はフレームの持ち主から借り、借りるときにホストが 0 を書く。借りられない（上限・持ち主の無い
+                // 文脈）ときは、読まない置き場へ束ねて他の資源を書かないようにする
+                FrameReadbackTarget statsTarget;
+                if (context.FrameResources)
                 {
-                    boundVsmStats = statsBuffer;
+                    FrameReadbackRequest readbackRequest;
+                    readbackRequest.Receiver = &m_VsmStatsReadback;
+                    readbackRequest.Size = VsmStatsBytes;
+                    readbackRequest.bZeroOnHost = true;
+                    readbackRequest.ViewId = context.PhysicalLighting.ViewId;
+                    readbackRequest.ViewportId = context.PhysicalLighting.ViewportId;
+                    statsTarget = context.FrameResources->RequestReadback(readbackRequest);
+                }
+                if (statsTarget.IsValid() && statsTarget.Offset == 0)
+                {
+                    boundVsmStats = statsTarget.Buffer;
                     boundVsmStatsBytes = VsmStatsBytes;
-                    vsmStatsToHost = statsBuffer;
+                    vsmStatsToHost = statsTarget.Buffer;
                 }
                 else
                 {

@@ -17,6 +17,7 @@
 #include "Rendering/CameraViewConstants.h"
 #include "Rendering/ConstantMaterialTextureCache.h"
 #include "Rendering/FrameCommand.h"
+#include "Rendering/FrameResourceOwner.h"
 #include "Rendering/MegaGeometry/MegaGeometryLODSelection.h"
 #include "Rendering/MegaGeometryMirror.h"
 #include "Rendering/ProceduralMeshGenerator.h"
@@ -572,15 +573,9 @@ namespace NorvesLib::Core::Rendering
         m_VisibilitySweepStamp = 0;
         m_RetiredBuffers.clear();
         m_OcclusionFrameCount = 0;
-        for (StatsSlot &slot : m_StatsSlots)
-        {
-            if (slot.Buffer && slot.Mapped)
-            {
-                slot.Buffer->Unmap();
-            }
-            slot = StatsSlot{};
-        }
-        m_bStatsSlotsTried = false;
+        // まだ渡っていない統計は受け取らない（読み戻し先は GPU の完了の後にフレームの持ち主へ戻る）
+        m_StatsReadback.CancelPending();
+        m_PendingStats.clear();
         m_bStatsLoggedOnce = false;
         m_bStatsEpochActive = false;
         m_bDropVisibilityContinuity = false;
@@ -2526,76 +2521,11 @@ namespace NorvesLib::Core::Rendering
             }
         }
 
-        // 統計（MEGA_OCCLUSION）の書き込み先。読み戻しのあるビルド（開発）だけ取る
-        StatsSlot *statsSlot = nullptr;
+        // 統計（MEGA_OCCLUSION）を取るか。読み戻しのあるビルド（開発）で、フレームの持ち主があるときだけ。
+        // 読み戻し先は、描く直前にフレームの持ち主から借りる（提出の完了の後に OnFrameReadback で受け取ってログへ出す）
+        bool bWantStats = false;
 #if NORVES_ENABLE_STATS
-        if (bTwoPass)
-        {
-            EnsureStatsSlots();
-            StatsSlot &slot = m_StatsSlots[m_OcclusionFrameCount % StatsSlotCount];
-            // 同じフレームの別のビューポートや直前のフレームが書いた統計は、GPU が書き終えていないかもしれないので、
-            // 読まず・上書きせず、この記録の統計は取らない（2フレーム以上前なら完了している。フレームの飛行数は2以下）
-            const bool bSlotSettled = !slot.bPending || slot.RenderFrameCount + 2 <= m_RenderFrameCount;
-            if (slot.Buffer && slot.Mapped && bSlotSettled)
-            {
-                if (slot.bPending)
-                {
-                    // 2フレーム以上前の統計。そのフレームの提出は完了している
-                    // エポックが始まっていれば相対フレームが30の倍数のフレームで出す（撮影の間で同じ相対フレームを突き合わせられる）
-                    const bool bSampleFrame = slot.EpochFrame >= 0 ? (slot.EpochFrame % 30 == 0) : (slot.Frame % 30 == 0);
-                    if (!m_bStatsLoggedOnce || bSampleFrame || m_Settings.bStatsEveryFrame)
-                    {
-                        NORVES_LOG_INFO("MegaGeometryPass",
-                                        "MEGA_OCCLUSION frame=%llu epoch_frame=%lld pass1=%u "
-                                        "pass2_tested=%u pass2_drawn=%u occluded=%u",
-                                        static_cast<unsigned long long>(slot.RenderFrame),
-                                        static_cast<long long>(slot.EpochFrame),
-                                        slot.Mapped[0],
-                                        slot.Mapped[1],
-                                        slot.Mapped[2],
-                                        slot.Mapped[3]);
-                        if (slot.bSwRasterBin)
-                        {
-                            // 振り分けの結果。ソフトのラスタが無い間は、ハードがすべてのクラスタを描く（hw は一覧へ積まなかった数）
-                            NORVES_LOG_INFO("MegaGeometryPass",
-                                            "SW_RASTER_BIN pass1=%u pass2=%u hw=%u overflow=%u "
-                                            "zeroed=%u sw_groups=%u sw_dispatches=%u frame=%llu "
-                                            "epoch_frame=%lld",
-                                            slot.Mapped[4], slot.Mapped[5], slot.Mapped[6], slot.Mapped[7],
-                                            slot.Mapped[8], slot.Mapped[10], slot.SwDispatches,
-                                            static_cast<unsigned long long>(slot.RenderFrame),
-                                            static_cast<long long>(slot.EpochFrame));
-                            // ソフトが 1 スレッド 1 三角形で走査する矩形（一辺の上限は振り分けのしきい値から max(64, ceil(2 × しきい値) + 2) 画素で決める）を超えて描かなかった三角形の数。振り分けのしきい値が保守的なら 0
-                            NORVES_LOG_INFO("MegaGeometryPass",
-                                            "SW_RASTER_OVERSIZE=%u frame=%llu epoch_frame=%lld",
-                                            slot.Mapped[9],
-                                            static_cast<unsigned long long>(slot.RenderFrame),
-                                            static_cast<long long>(slot.EpochFrame));
-                        }
-                        // 描かれなかったクラスタの数（0 が合格）と、インスタンス数に比例して膨らむバッファの大きさ
-                        const auto bufferBytes = [](const RHI::BufferPtr &buffer) -> unsigned long long
-                        { return buffer ? static_cast<unsigned long long>(buffer->GetSize()) : 0ull; };
-                        NORVES_LOG_INFO("MegaGeometryPass",
-                                        "MEGA_CAPACITY draw_dropped=%u max_draw_count=%u command_capacity=%u "
-                                        "visibility_bytes=%llu indirect_bytes=%llu draw_info_bytes=%llu "
-                                        "bvh_queue_bytes=%llu sw_raster_bytes=%llu frame=%llu epoch_frame=%lld",
-                                        slot.Mapped[11],
-                                        m_Settings.MaxDrawCount,
-                                        m_CommandCapacity,
-                                        bufferBytes(m_VisibilityBuffer),
-                                        bufferBytes(m_IndirectDrawBuffer),
-                                        bufferBytes(m_DrawInfoBuffer),
-                                        bufferBytes(m_BvhQueueBuffer),
-                                        bufferBytes(m_SwRasterBuffer),
-                                        static_cast<unsigned long long>(slot.RenderFrame),
-                                        static_cast<long long>(slot.EpochFrame));
-                        m_bStatsLoggedOnce = true;
-                    }
-                    slot.bPending = false;
-                }
-                statsSlot = &slot;
-            }
-        }
+        bWantStats = bTwoPass && command.FrameResources != nullptr;
 #endif
 
         // ========================================
@@ -2870,20 +2800,33 @@ namespace NorvesLib::Core::Rendering
         }
 
         RHI::BufferPtr statsBuffer = m_DummyStatsBuffer;
-        if (statsSlot)
+        // この記録の統計の読み戻し（借りられたときだけ。statsSlot が null なら統計を取らない）
+        PendingStats statsRecord;
+        PendingStats *statsSlot = nullptr;
+        if (bWantStats)
         {
-            statsBuffer = statsSlot->Buffer;
-            // 1フレームぶんの統計を0から数える（前に使ったのはホストが読んだ後）
-            cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::HostRead, RHI::ResourceState::CopyDest);
-            cmdList->FillBuffer(statsBuffer, 0, StatsBufferBytes, 0);
-            cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
-            statsSlot->Frame = m_OcclusionFrameCount;
-            statsSlot->RenderFrame = command.FrameNumber;
-            statsSlot->RenderFrameCount = m_RenderFrameCount;
-            statsSlot->EpochFrame = epochFrame;
-            statsSlot->bPending = true;
-            statsSlot->bSwRasterBin = bSwRasterBin;
-            statsSlot->SwDispatches = 0;
+            FrameReadbackRequest readbackRequest;
+            readbackRequest.Receiver = &m_StatsReadback;
+            readbackRequest.Size = StatsBufferBytes;
+            readbackRequest.ViewId = command.ViewId;
+            readbackRequest.ViewportId = command.ViewportId;
+            const FrameReadbackTarget statsTarget = command.FrameResources->RequestReadback(readbackRequest);
+            // 束縛は先頭から（借りた読み戻し先の位置は常に 0）
+            if (statsTarget.IsValid() && statsTarget.Offset == 0)
+            {
+                statsBuffer = statsTarget.Buffer;
+                // 1フレームぶんの統計を GPU で 0 から数える（借りた読み戻し先は前の受け取りが終わった後）
+                cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::HostRead, RHI::ResourceState::CopyDest);
+                cmdList->FillBuffer(statsBuffer, 0, StatsBufferBytes, 0);
+                cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+                statsRecord.RequestId = statsTarget.RequestId;
+                statsRecord.Frame = m_OcclusionFrameCount;
+                statsRecord.RenderFrame = command.FrameNumber;
+                statsRecord.EpochFrame = epochFrame;
+                statsRecord.bSwRasterBin = bSwRasterBin;
+                statsRecord.SwDispatches = 0;
+                statsSlot = &statsRecord;
+            }
         }
 
         // 区間のカウンタ（全パス分）を0にし、コマンド・描画情報をカリングが書ける状態にする。
@@ -3316,10 +3259,11 @@ namespace NorvesLib::Core::Rendering
 
             if (statsSlot)
             {
-                // 統計のシェーダーの書き込みを、ホストの読み取りへ見せる
-                cmdList->BufferBarrier(statsSlot->Buffer,
+                // 統計のシェーダーの書き込みを、ホストの読み取りへ見せる。提出の完了の後に OnFrameReadback で受け取る
+                cmdList->BufferBarrier(statsBuffer,
                                        RHI::ResourceState::UnorderedAccess,
                                        RHI::ResourceState::HostRead);
+                m_PendingStats.push_back(*statsSlot);
             }
         }
 
@@ -5307,27 +5251,72 @@ namespace NorvesLib::Core::Rendering
         }
     }
 
-    void MegaGeometryPass::EnsureStatsSlots()
+    void MegaGeometryPass::OnFrameReadback(const FrameReadbackResult &result)
     {
-        if (m_bStatsSlotsTried || !m_Device)
+        const auto it = std::find_if(m_PendingStats.begin(), m_PendingStats.end(),
+                                     [&result](const PendingStats &entry) { return entry.RequestId == result.RequestId; });
+        if (it == m_PendingStats.end())
         {
             return;
         }
-        m_bStatsSlotsTried = true;
-
-        // シェーダーが storage buffer として直接数え、ホストが数フレーム後に読む（host-visible・host-coherent）。
-        // 作れない・写像できないデバイスでは、統計だけ取らない。
-        for (StatsSlot &slot : m_StatsSlots)
+        const PendingStats pending = *it;
+        m_PendingStats.erase(it);
+        // 提出しなかったフレームの統計（取り消し）は出さない
+        const uint32_t *const stats = result.Size >= StatsBufferBytes ? static_cast<const uint32_t *>(result.Data) : nullptr;
+        if (result.Status != FrameReadbackStatus::Delivered || !stats)
         {
-            RHI::BufferDesc desc(StatsBufferBytes,
-                                 RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst,
-                                 true,
-                                 "MegaGeometry_OcclusionStats");
-            slot.Buffer = m_Device->CreateBuffer(desc);
-            if (slot.Buffer)
+            return;
+        }
+        // 書いたフレームの提出は完了している
+        // エポックが始まっていれば相対フレームが30の倍数のフレームで出す（撮影の間で同じ相対フレームを突き合わせられる）
+        const bool bSampleFrame = pending.EpochFrame >= 0 ? (pending.EpochFrame % 30 == 0) : (pending.Frame % 30 == 0);
+        if (!m_bStatsLoggedOnce || bSampleFrame || m_Settings.bStatsEveryFrame)
+        {
+            NORVES_LOG_INFO("MegaGeometryPass",
+                            "MEGA_OCCLUSION frame=%llu epoch_frame=%lld pass1=%u "
+                            "pass2_tested=%u pass2_drawn=%u occluded=%u",
+                            static_cast<unsigned long long>(pending.RenderFrame),
+                            static_cast<long long>(pending.EpochFrame),
+                            stats[0],
+                            stats[1],
+                            stats[2],
+                            stats[3]);
+            if (pending.bSwRasterBin)
             {
-                slot.Mapped = static_cast<const uint32_t *>(slot.Buffer->Map(0, 0));
+                // 振り分けの結果。ソフトのラスタが無い間は、ハードがすべてのクラスタを描く（hw は一覧へ積まなかった数）
+                NORVES_LOG_INFO("MegaGeometryPass",
+                                "SW_RASTER_BIN pass1=%u pass2=%u hw=%u overflow=%u "
+                                "zeroed=%u sw_groups=%u sw_dispatches=%u frame=%llu "
+                                "epoch_frame=%lld",
+                                stats[4], stats[5], stats[6], stats[7],
+                                stats[8], stats[10], pending.SwDispatches,
+                                static_cast<unsigned long long>(pending.RenderFrame),
+                                static_cast<long long>(pending.EpochFrame));
+                // ソフトが 1 スレッド 1 三角形で走査する矩形（一辺の上限は振り分けのしきい値から max(64, ceil(2 × しきい値) + 2) 画素で決める）を超えて描かなかった三角形の数。振り分けのしきい値が保守的なら 0
+                NORVES_LOG_INFO("MegaGeometryPass",
+                                "SW_RASTER_OVERSIZE=%u frame=%llu epoch_frame=%lld",
+                                stats[9],
+                                static_cast<unsigned long long>(pending.RenderFrame),
+                                static_cast<long long>(pending.EpochFrame));
             }
+            // 描かれなかったクラスタの数（0 が合格）と、インスタンス数に比例して膨らむバッファの大きさ
+            const auto bufferBytes = [](const RHI::BufferPtr &buffer) -> unsigned long long
+            { return buffer ? static_cast<unsigned long long>(buffer->GetSize()) : 0ull; };
+            NORVES_LOG_INFO("MegaGeometryPass",
+                            "MEGA_CAPACITY draw_dropped=%u max_draw_count=%u command_capacity=%u "
+                            "visibility_bytes=%llu indirect_bytes=%llu draw_info_bytes=%llu "
+                            "bvh_queue_bytes=%llu sw_raster_bytes=%llu frame=%llu epoch_frame=%lld",
+                            stats[11],
+                            m_Settings.MaxDrawCount,
+                            m_CommandCapacity,
+                            bufferBytes(m_VisibilityBuffer),
+                            bufferBytes(m_IndirectDrawBuffer),
+                            bufferBytes(m_DrawInfoBuffer),
+                            bufferBytes(m_BvhQueueBuffer),
+                            bufferBytes(m_SwRasterBuffer),
+                            static_cast<unsigned long long>(pending.RenderFrame),
+                            static_cast<long long>(pending.EpochFrame));
+            m_bStatsLoggedOnce = true;
         }
     }
 
