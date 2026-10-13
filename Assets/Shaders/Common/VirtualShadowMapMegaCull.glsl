@@ -60,6 +60,9 @@ layout(std140, set = 0, binding = 14) uniform VsmMegaCullParams
     vec4 depth;
     // x: スライス（段）の数、y: 出力の一覧の容量（クラスタの数）、z: 影のフラットな判定の全ワークグループの数
     uvec4 counts;
+    // 太陽の段の BVH のたどり（vsm_mega_cull_pairs.comp・vsm_mega_bvh.comp）: x = 1 なら BVH を持つメッシュの組を BVH でたどる、
+    // y = 節の列 1 本の容量（要素）、z = 葉の列の容量（要素）、w = 組の一覧の容量（組。BVH の組は一覧の後ろから積む）
+    uvec4 bvh;
 } megaParams;
 
 #endif // NORVES_VSM_MEGA_CULL_GLSL

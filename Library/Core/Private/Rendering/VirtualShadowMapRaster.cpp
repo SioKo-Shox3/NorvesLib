@@ -3,6 +3,7 @@
 #include "Container/Containers.h"
 #include "Logging/LogMacros.h"
 #include "Rendering/MegaGeometry/MegaGeometryCullUniforms.h"
+#include "Rendering/MegaGeometry/MegaGeometryTypes.h"
 #include "Rendering/ScopedGpuTimestamp.h"
 #include "Rendering/ShaderManager.h"
 #include "Rendering/VirtualShadowMapPages.h"
@@ -16,6 +17,7 @@
 #include "RHI/IPipeline.h"
 #include "RHI/IRenderPass.h"
 
+#include <cwchar>
 #include <limits>
 
 namespace NorvesLib::Core::Rendering
@@ -64,9 +66,10 @@ namespace NorvesLib::Core::Rendering
             float lightDirection[4];
             float depth[4];     // x = 深度の原点、y = 深度の範囲の片側（m）
             uint32_t counts[4]; // x = スライス（段）の数、y = 出力の一覧の容量、z = 影の判定の全ワークグループ数
+            uint32_t bvh[4];    // x = 太陽の段の BVH の経路を使うなら 1、y = 節の列 1 本の容量、z = 葉の列の容量、w = 組の一覧の容量
         };
         // ページの一辺・texel・範囲の原点はスライスの表（GPUVsmSlice。DirtyBindSlices・MegaBindSlices）にある
-        static_assert(sizeof(GPUMegaCullParams) == 80, "Common/VirtualShadowMapMegaCull.glsl の VsmMegaCullParams と同じ大きさにすること");
+        static_assert(sizeof(GPUMegaCullParams) == 96, "Common/VirtualShadowMapMegaCull.glsl の VsmMegaCullParams と同じ大きさにすること");
 
         // vsm_dirty_mips.comp: 14 = 定数、15 = VSM のページの表、16 = dirty の階層、17 = スライスの表
         constexpr uint32_t DirtyBindParams = 14;
@@ -90,8 +93,12 @@ namespace NorvesLib::Core::Rendering
         // 主の経路のメッシュの表（Common/MegaInstanceTable.glsl の MEGA_MESH_BINDING。カリングと影の塊の記録の両方が読む）
         constexpr uint32_t MegaBindMeshes = 22;
         // vsm_mega_chunks.comp: 1 = インスタンスの表、14 = 定数、15 = 出力の一覧、18 = 影の表、19 = 影の塊の記録の出力
-        // vsm_mega_cull_pairs.comp: 14 = 定数、15 = 出力の一覧、16 = dirty の階層、17 = 統計、18 = 影の表、20 = スライスの表、21 = 組の一覧
-        // 組の一覧の頭 8 語（組の数・最大のワークグループ数・予約 2 語・間接 dispatch の引数 4 語）。引数は頭から 16 バイト目
+        // vsm_mega_cull_pairs.comp: 1 = インスタンスの表、14 = 定数、15 = 出力の一覧、16 = dirty の階層、17 = 統計、18 = 影の表、
+        // 20 = スライスの表、21 = 組の一覧、22 = メッシュの表（組のメッシュが BVH を持つかを見る）
+        // 組の一覧の頭 12 語（平らな経路の組の数・最大のワークグループ数・BVH の経路の根の数・予約・平らな経路の間接 dispatch の引数 4 語・
+        // BVH の経路の段 0 の引数 4 語）。平らな経路の引数は頭から 16 バイト目、BVH の段 0 の引数は 32 バイト目
+        constexpr uint32_t PairsBindInstances = 1;
+        constexpr uint32_t PairsBindMeshes = 22;
         constexpr uint32_t PairsBindParams = 14;
         constexpr uint32_t PairsBindList = 15;
         constexpr uint32_t PairsBindDirtyBits = 16;
@@ -101,8 +108,35 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t PairsBindPairs = 21;
         // vsm_mega_cull_args.comp: 21 = 組の一覧（間接 dispatch の引数を書く）
         constexpr uint32_t ArgsBindPairs = 21;
-        constexpr uint32_t PairsHeaderWords = 8;
+        constexpr uint32_t PairsHeaderWords = 12;
         constexpr uint64_t PairsArgsOffsetBytes = 4u * sizeof(uint32_t);
+        constexpr uint64_t PairsBvhArgsOffsetBytes = 8u * sizeof(uint32_t);
+
+        // vsm_mega_bvh.comp: vsm_mega_cull.comp の束縛に、9 = BVH のたどりの列、10 = 数え・間接 dispatch の引数、25 = 段の定数を足す
+        // （9・10 の並びは Common/MegaGeometryCull.glsl の bvhQueue・bvhCounters）
+        constexpr uint32_t BvhBindQueue = 9;
+        constexpr uint32_t BvhBindCounters = 10;
+        constexpr uint32_t BvhBindStage = 25;
+        // 列の容量（要素。1 要素 = uvec2（組, 節））: 節の列 2 本（段 s は列 s & 1 を読み、列 (s + 1) & 1 へ書く）と葉の列。
+        // 本数・メッシュによらず一定（(2 × 4194304 + 2097152) × 8 バイト = 80 MiB）。バナナ 1 万本の horizon の最初のフレーム
+        // （全部のページが dirty）で、節の列の 1 段へ積もうとした数の最大が約 119 万・葉の列が約 55 万だったので、その 3.5 倍・3.8 倍を取る
+        constexpr uint32_t BvhNodeQueueCapacity = 1u << 22;
+        constexpr uint32_t BvhLeafQueueCapacity = 1u << 21;
+        constexpr uint64_t BvhQueueBytes =
+            (2ull * BvhNodeQueueCapacity + BvhLeafQueueCapacity) * 2ull * sizeof(uint32_t);
+        // 数え・引数の並び（Common/MegaGeometryCull.glsl の BVH_LEAF_COUNTER・BVH_ARGS_BASE・BVH_ARGS_STRIDE と同じ）:
+        // [s] = 段 s の入力へ積もうとした数、[16] = 葉の列へ積もうとした数、[32 + 4s] = 段 s の引数、[32 + 4 × 16] = 葉の段の引数
+        constexpr uint32_t BvhLeafCounter = 16;
+        constexpr uint32_t BvhArgsBaseWords = 32;
+        constexpr uint32_t BvhArgsStrideWords = 4;
+        constexpr uint32_t BvhCounterWords = 128;
+        static_assert(BvhArgsBaseWords + BvhLeafCounter * BvhArgsStrideWords + 3u <= BvhCounterWords, "数え・引数のバッファに葉の段の引数が収まること");
+        // 段の定数の x: 節の判定の段の番号、または葉の段（vsm_mega_bvh.comp の VSM_BVH_STAGE_LEAVES と同じ）
+        constexpr uint32_t BvhStageLeaves = 0xFFFFFFFFu;
+        // 根を段 0 として、BVH の段の数の上限まで節の判定の段で届くこと（vsm_mega_bvh.comp の VSM_BVH_NODE_STAGES と同じ）
+        static_assert(VirtualShadowMapMegaCull::BvhNodeStages == MegaGeometry::GROUP_BVH_MAX_LEVELS,
+                      "BVH の経路の節の判定の段の数は GROUP_BVH_MAX_LEVELS と同じにすること");
+        static_assert(VirtualShadowMapMegaCull::BvhNodeStages == BvhLeafCounter, "葉の段の引数の位置は節の判定の段の数と同じ");
         // 組 = (インスタンスの表の番号 << 8) | スライスの番号。スライスの番号が 8 bit に収まり、インスタンスの表の番号が 24 bit に収まること
         constexpr uint32_t PairsMaxInstances = 1u << 24;
 
@@ -166,6 +200,8 @@ namespace NorvesLib::Core::Rendering
         RHI::DescriptorSetDesc MakeMegaPairsLayout()
         {
             RHI::DescriptorSetDesc desc;
+            desc.bindings.push_back(MakeBinding(PairsBindInstances, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(PairsBindMeshes, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(PairsBindParams, RHI::ResourceBindType::ConstantBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(PairsBindList, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(PairsBindDirtyBits, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
@@ -201,6 +237,15 @@ namespace NorvesLib::Core::Rendering
             return desc;
         }
 
+        RHI::DescriptorSetDesc MakeMegaBvhLayout()
+        {
+            RHI::DescriptorSetDesc desc = MakeMegaCullLayout();
+            desc.bindings.push_back(MakeBinding(BvhBindQueue, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(BvhBindCounters, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
+            desc.bindings.push_back(MakeBinding(BvhBindStage, RHI::ResourceBindType::ConstantBuffer, RHI::ShaderStage::Compute));
+            return desc;
+        }
+
         RHI::DescriptorSetDesc MakeMegaChunksLayout()
         {
             RHI::DescriptorSetDesc desc;
@@ -211,6 +256,33 @@ namespace NorvesLib::Core::Rendering
             desc.bindings.push_back(MakeBinding(ChunkBindChunks, RHI::ResourceBindType::RWBuffer, RHI::ShaderStage::Compute));
             desc.bindings.push_back(MakeBinding(MegaBindMeshes, RHI::ResourceBindType::StructuredBuffer, RHI::ShaderStage::Compute));
             return desc;
+        }
+
+        // 値を持たない起動引数（flag）があるか。起動引数は ApplicationProcessor の外（描画の層）でも読めるよう、
+        // プロセスのコマンドラインを直接見る（MegaGeometryPass の --mega-flat-path と同じ読み方）
+        bool HasProcessCommandLineFlag(const wchar_t* flag)
+        {
+#if defined(_WIN32)
+            const wchar_t* commandLine = GetCommandLineW();
+            if (commandLine == nullptr)
+            {
+                return false;
+            }
+            const size_t flagLength = std::wcslen(flag);
+            for (const wchar_t* found = std::wcsstr(commandLine, flag); found != nullptr; found = std::wcsstr(found + 1, flag))
+            {
+                // 引数の先頭から末尾までが flag と一致するものだけ（--vsm-mega-flat-x などを取り違えない）
+                const bool bStartsArgument = found == commandLine || found[-1] == L' ' || found[-1] == L'"';
+                const wchar_t next = found[flagLength];
+                if (bStartsArgument && (next == L'\0' || next == L' ' || next == L'"'))
+                {
+                    return true;
+                }
+            }
+#else
+            (void)flag;
+#endif
+            return false;
         }
 
         uint32_t ClampBindSize(uint64_t size)
@@ -770,12 +842,53 @@ namespace NorvesLib::Core::Rendering
             Shutdown();
             return false;
         }
+
+        // 太陽の段の BVH の経路。--vsm-mega-flat のとき・作れないときは平らな経路だけを使う（カリング全体は止めない）
+        m_bBvhEnabled = !HasProcessCommandLineFlag(L"--vsm-mega-flat");
+        m_bBvhResourceFailed = false;
+        if (m_bBvhEnabled)
+        {
+            m_BvhShader = shaderManager->LoadShader("vsm_mega_bvh.comp", RHI::ShaderStage::Compute);
+            if (m_BvhShader)
+            {
+                try
+                {
+                    RHI::ComputePipelineDesc bvhDesc;
+                    bvhDesc.computeShader = m_BvhShader;
+                    bvhDesc.descriptorSetLayouts.push_back(MakeMegaBvhLayout());
+                    m_BvhPipeline = device->CreateComputePipeline(bvhDesc);
+                }
+                catch (...)
+                {
+                    m_BvhPipeline.reset();
+                }
+            }
+            if (!m_BvhPipeline)
+            {
+                NORVES_LOG_WARNING("VirtualShadowMapMegaCull", "太陽の段の BVH の経路を作れず、全部の組を平らな経路で選ぶ");
+                m_BvhShader.reset();
+                m_bBvhEnabled = false;
+            }
+        }
+        NORVES_LOG_INFO("VirtualShadowMapMegaCull", "VSM_MEGA_BVH enabled=%u node_capacity=%u leaf_capacity=%u queue_bytes=%llu",
+                        m_bBvhEnabled ? 1u : 0u, BvhNodeQueueCapacity, BvhLeafQueueCapacity,
+                        static_cast<unsigned long long>(m_bBvhEnabled ? BvhQueueBytes : 0ull));
         return true;
     }
 
     void VirtualShadowMapMegaCull::Shutdown()
     {
         m_Uses.Clear();
+        for (RHI::BufferPtr& uniform : m_BvhStageUniforms)
+        {
+            uniform.reset();
+        }
+        m_BvhCounters.reset();
+        m_BvhQueue.reset();
+        m_BvhPipeline.reset();
+        m_BvhShader.reset();
+        m_bBvhEnabled = true;
+        m_bBvhResourceFailed = false;
         m_ChunkPipeline.reset();
         m_CullPipeline.reset();
         m_ArgsPipeline.reset();
@@ -836,8 +949,71 @@ namespace NorvesLib::Core::Rendering
         {
             use.ChunkSet = m_Device->CreateDescriptorSet(MakeMegaChunksLayout());
         }
+        if (m_BvhPipeline)
+        {
+            for (RHI::DescriptorSetPtr& set : use.BvhSets)
+            {
+                if (!set)
+                {
+                    set = m_Device->CreateDescriptorSet(MakeMegaBvhLayout());
+                }
+            }
+        }
         outUse = &use;
         return use.CullUniform && use.ParamsUniform && use.Slices && use.DirtySet && use.PairsSet && use.ArgsSet && use.CullSet && use.ChunkSet;
+    }
+
+    bool VirtualShadowMapMegaCull::EnsureBvhResources()
+    {
+        if (!m_bBvhEnabled || !m_BvhPipeline || m_bBvhResourceFailed)
+        {
+            return false;
+        }
+        if (m_BvhQueue && m_BvhCounters && m_BvhStageUniforms[BvhStageCount - 1u])
+        {
+            return true;
+        }
+        // 列は GPU だけが使い、記録の頭で数え・引数を 0 にしてから使うので、フレームをまたいで 1 つを共有する
+        // （前のフレームの読み書きとは、頭の消去の前の障壁で順序が付く）。作れなければ以後は平らな経路だけを使う
+        try
+        {
+            m_BvhQueue = m_Device->CreateBuffer(RHI::BufferDesc(BvhQueueBytes, RHI::ResourceUsage::StorageBuffer, false, "VsmMegaBvhQueue"));
+            m_BvhCounters = m_Device->CreateBuffer(RHI::BufferDesc(
+                static_cast<uint64_t>(BvhCounterWords) * sizeof(uint32_t),
+                RHI::ResourceUsage::StorageBuffer | RHI::ResourceUsage::TransferDst | RHI::ResourceUsage::IndirectBuffer,
+                false,
+                "VsmMegaBvhCounters"));
+            for (uint32_t stage = 0; stage < BvhStageCount; ++stage)
+            {
+                m_BvhStageUniforms[stage] = m_Device->CreateBuffer(
+                    RHI::BufferDesc(4u * sizeof(uint32_t), RHI::ResourceUsage::ConstantBuffer, true, "VsmMegaBvhStage"));
+                if (!m_BvhStageUniforms[stage])
+                {
+                    break;
+                }
+                const uint32_t stageInfo[4] = {stage < BvhNodeStages ? stage : BvhStageLeaves, 0u, 0u, 0u};
+                m_BvhStageUniforms[stage]->Update(stageInfo, sizeof(stageInfo));
+            }
+        }
+        catch (...)
+        {
+            m_BvhQueue.reset();
+            m_BvhCounters.reset();
+        }
+        if (!m_BvhQueue || !m_BvhCounters || !m_BvhStageUniforms[BvhStageCount - 1u])
+        {
+            NORVES_LOG_WARNING("VirtualShadowMapMegaCull", "VSM_MEGA_BVH_QUEUE_ALLOC_FAILED bytes=%llu。全部の組を平らな経路で選ぶ",
+                               static_cast<unsigned long long>(BvhQueueBytes));
+            m_BvhQueue.reset();
+            m_BvhCounters.reset();
+            for (RHI::BufferPtr& uniform : m_BvhStageUniforms)
+            {
+                uniform.reset();
+            }
+            m_bBvhResourceFailed = true;
+            return false;
+        }
+        return true;
     }
 
     bool VirtualShadowMapMegaCull::EnsurePairs(Use& use, uint32_t capacity)
@@ -926,6 +1102,16 @@ namespace NorvesLib::Core::Rendering
         {
             return false;
         }
+        // 太陽の段の BVH の経路: 列と段ごとの束縛が揃うときだけ。組の一覧の後ろから根を積むので、一覧の容量も渡す
+        bool bBvh = EnsureBvhResources();
+        for (const RHI::DescriptorSetPtr& set : use->BvhSets)
+        {
+            bBvh = bBvh && set != nullptr;
+        }
+        params.bvh[0] = bBvh ? 1u : 0u;
+        params.bvh[1] = BvhNodeQueueCapacity;
+        params.bvh[2] = BvhLeafQueueCapacity;
+        params.bvh[3] = use->PairsCapacity;
 
         ScopedGpuTimestamp timestamp(commandList, "VsmCullMega");
 
@@ -942,6 +1128,14 @@ namespace NorvesLib::Core::Rendering
         commandList->BufferBarrier(use->Pairs, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest, 0u, pairsHeaderBytes);
         commandList->FillBuffer(use->Pairs, 0u, pairsHeaderBytes, 0u);
         commandList->BufferBarrier(use->Pairs, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess, 0u, pairsHeaderBytes);
+        // BVH の経路の数え・引数も 0 にする（前のフレームの読み書きとは、この障壁で順序が付く）
+        const uint64_t bvhCounterBytes = static_cast<uint64_t>(BvhCounterWords) * sizeof(uint32_t);
+        if (bBvh)
+        {
+            commandList->BufferBarrier(m_BvhCounters, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::CopyDest);
+            commandList->FillBuffer(m_BvhCounters, 0u, bvhCounterBytes, 0u);
+            commandList->BufferBarrier(m_BvhCounters, RHI::ResourceState::CopyDest, RHI::ResourceState::UnorderedAccess);
+        }
 
         use->CullUniform->Update(&cullUniform, sizeof(cullUniform));
         use->ParamsUniform->Update(&params, sizeof(params));
@@ -972,6 +1166,8 @@ namespace NorvesLib::Core::Rendering
         // ----- 組の絞り込み: 1 スレッド = 1 つの（インスタンス、スライス）の組。太陽の段は範囲（64 席）の AABB が受け手の要求した
         // dirty のページに届かなければ範囲の席は組を作らない。インスタンスの判定を組ごとに 1 回だけ行い、通った組の一覧と
         // 選択の間接 dispatch の引数を作る -----
+        use->PairsSet->BindStorageBuffer(PairsBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
+        use->PairsSet->BindStorageBuffer(PairsBindMeshes, dispatch.Meshes, 0, ClampBindSize(dispatch.Meshes->GetSize()));
         use->PairsSet->BindConstantBuffer(PairsBindParams, use->ParamsUniform, 0, sizeof(params));
         use->PairsSet->BindStorageBuffer(PairsBindList, dispatch.List, 0, ClampBindSize(listBytes));
         use->PairsSet->BindStorageBuffer(PairsBindDirtyBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes(sliceCount)));
@@ -1000,18 +1196,23 @@ namespace NorvesLib::Core::Rendering
         }
 
         // ----- クラスタの選択: 通った組だけを間接 dispatch で出す。x, y = 組 × 組の最大のワークグループ数（x の上限を超える分は y へ折り返す） -----
-        use->CullSet->BindConstantBuffer(MegaBindCullData, use->CullUniform, 0, sizeof(cullUniform));
-        use->CullSet->BindStorageBuffer(MegaBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
-        use->CullSet->BindStorageBuffer(MegaBindMeshes, dispatch.Meshes, 0, ClampBindSize(dispatch.Meshes->GetSize()));
-        use->CullSet->BindStorageBuffer(MegaBindPageTable, dispatch.MegaPageTable, 0, ClampBindSize(dispatch.MegaPageTable->GetSize()));
-        use->CullSet->BindConstantBuffer(MegaBindParams, use->ParamsUniform, 0, sizeof(params));
-        use->CullSet->BindStorageBuffer(MegaBindList, dispatch.List, 0, ClampBindSize(listBytes));
-        use->CullSet->BindStorageBuffer(MegaBindDirtyBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes(sliceCount)));
-        use->CullSet->BindStorageBuffer(MegaBindStats, dispatch.Stats, 0, ClampBindSize(VirtualShadowMap::STATS_BYTES));
-        use->CullSet->BindStorageBuffer(MegaBindShadowInstances, dispatch.ShadowInstances, 0, ClampBindSize(dispatch.ShadowInstances->GetSize()));
-        use->CullSet->BindStorageBuffer(MegaBindVsmPageTable, dispatch.PageTable, 0, ClampBindSize(VirtualShadowMap::PageTableBytes(sliceCount)));
-        use->CullSet->BindStorageBuffer(MegaBindSlices, use->Slices, 0, sliceBytes);
-        use->CullSet->BindStorageBuffer(MegaBindPairs, use->Pairs, 0, ClampBindSize(use->Pairs->GetSize()));
+        // 平らな経路と BVH の経路の段は、同じ束縛（BVH の経路は列・数え・段の定数を足す）を使う
+        const auto bindSelectSet = [&](const RHI::DescriptorSetPtr& set) -> void
+        {
+            set->BindConstantBuffer(MegaBindCullData, use->CullUniform, 0, sizeof(cullUniform));
+            set->BindStorageBuffer(MegaBindInstances, dispatch.Instances, 0, ClampBindSize(dispatch.Instances->GetSize()));
+            set->BindStorageBuffer(MegaBindMeshes, dispatch.Meshes, 0, ClampBindSize(dispatch.Meshes->GetSize()));
+            set->BindStorageBuffer(MegaBindPageTable, dispatch.MegaPageTable, 0, ClampBindSize(dispatch.MegaPageTable->GetSize()));
+            set->BindConstantBuffer(MegaBindParams, use->ParamsUniform, 0, sizeof(params));
+            set->BindStorageBuffer(MegaBindList, dispatch.List, 0, ClampBindSize(listBytes));
+            set->BindStorageBuffer(MegaBindDirtyBits, dispatch.DirtyBits, 0, ClampBindSize(VirtualShadowMap::MegaDirtyBitsBytes(sliceCount)));
+            set->BindStorageBuffer(MegaBindStats, dispatch.Stats, 0, ClampBindSize(VirtualShadowMap::STATS_BYTES));
+            set->BindStorageBuffer(MegaBindShadowInstances, dispatch.ShadowInstances, 0, ClampBindSize(dispatch.ShadowInstances->GetSize()));
+            set->BindStorageBuffer(MegaBindVsmPageTable, dispatch.PageTable, 0, ClampBindSize(VirtualShadowMap::PageTableBytes(sliceCount)));
+            set->BindStorageBuffer(MegaBindSlices, use->Slices, 0, sliceBytes);
+            set->BindStorageBuffer(MegaBindPairs, use->Pairs, 0, ClampBindSize(use->Pairs->GetSize()));
+        };
+        bindSelectSet(use->CullSet);
         use->CullSet->Update();
 
         bool bSelected = false;
@@ -1020,12 +1221,50 @@ namespace NorvesLib::Core::Rendering
             commandList->SetPipeline(m_CullPipeline);
             commandList->SetDescriptorSet(use->CullSet, 0);
             bSelected = commandList->DispatchIndirect(use->Pairs, PairsArgsOffsetBytes);
-            commandList->BufferBarrier(use->Pairs, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
             commandList->BufferBarrier(dispatch.List, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
             commandList->BufferBarrier(dispatch.Stats, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
             // 溢れたクラスタの範囲のページへ書いた再描画の印を、後続の展開・次フレームの引き継ぎが読めるようにする
             commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
         }
+
+        // ----- 太陽の段の BVH の経路: 段 0（組の一覧の後ろの根。引数は組の一覧の頭）→ 段 1〜15（前の段が書いた引数）→ 葉の段。
+        // 段 s は節の列 s & 1 を読み、子を列 (s + 1) & 1 へ、葉を葉の列へ積む。根が無ければどの段も 0 個のワークグループ -----
+        if (bSelected && bBvh)
+        {
+            ScopedGpuTimestamp bvhTimestamp(commandList, "VsmCullBvh");
+            for (uint32_t stage = 0; stage < BvhStageCount; ++stage)
+            {
+                const RHI::DescriptorSetPtr& set = use->BvhSets[stage];
+                bindSelectSet(set);
+                set->BindStorageBuffer(BvhBindQueue, m_BvhQueue, 0, ClampBindSize(BvhQueueBytes));
+                set->BindStorageBuffer(BvhBindCounters, m_BvhCounters, 0, ClampBindSize(bvhCounterBytes));
+                set->BindConstantBuffer(BvhBindStage, m_BvhStageUniforms[stage], 0, 4u * sizeof(uint32_t));
+                set->Update();
+            }
+            commandList->SetPipeline(m_BvhPipeline);
+            for (uint32_t stage = 0; stage < BvhStageCount && bSelected; ++stage)
+            {
+                commandList->SetDescriptorSet(use->BvhSets[stage], 0);
+                if (stage == 0u)
+                {
+                    bSelected = commandList->DispatchIndirect(use->Pairs, PairsBvhArgsOffsetBytes);
+                }
+                else
+                {
+                    const uint32_t argsStage = stage < BvhNodeStages ? stage : BvhLeafCounter;
+                    bSelected = commandList->DispatchIndirect(
+                        m_BvhCounters, static_cast<uint64_t>(BvhArgsBaseWords + argsStage * BvhArgsStrideWords) * sizeof(uint32_t));
+                }
+                // 次の段が、この段が積んだ列・数え・引数を読む
+                commandList->BufferBarrier(m_BvhQueue, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                commandList->BufferBarrier(m_BvhCounters, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                commandList->BufferBarrier(m_BvhCounters, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::IndirectArgument);
+            }
+            commandList->BufferBarrier(dispatch.List, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            commandList->BufferBarrier(dispatch.Stats, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+            commandList->BufferBarrier(dispatch.PageTable, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+        }
+        commandList->BufferBarrier(use->Pairs, RHI::ResourceState::GenericRead, RHI::ResourceState::UnorderedAccess);
         if (!bSelected)
         {
             // 間接 dispatch を記録できないコマンドリストでは、選択を走らせられない（組の数が GPU でしか分からない）

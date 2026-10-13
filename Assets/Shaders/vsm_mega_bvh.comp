@@ -1,0 +1,245 @@
+﻿#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+// ========================================
+// 仮想シャドウマップ（VSM）の、MegaGeometry の投影物の太陽の段（正射影のクリップマップ）のクラスタの選択（グループの BVH をたどる経路）
+//
+// 事前の絞り込み（vsm_mega_cull_pairs.comp）が、太陽の段で BVH を持つメッシュの（インスタンス、段）の組を、組の一覧（binding 21）の
+// 後ろから根として積む。ここではその根から BVH を段ごとの dispatch でたどり、葉のクラスタを平らな経路（vsm_mega_cull.comp）と
+// 同じ判定（SelectShadowCluster）にかけて出力の一覧（binding 15）へ書く。点光源の面と BVH を持たないメッシュは平らな経路のまま。
+//
+// 節の判定の段（bvhStageInfo.x = 段の番号 s。0 〜 VSM_BVH_NODE_STAGES − 1）:
+//   1 スレッド = 1 つの（組、節）。段 0 は組の一覧の後ろの根（節 0）、段 s（1 以上）は節の列 s & 1 の要素を受け持つ。
+//   節の球（下のクラスタの球と親の球を包む）が、その段の範囲・深度の範囲に入り、dirty のページを含み、LOD の判定（下）で切れなければ、
+//   葉は葉の列へ、内部の節は子を節の列 (s + 1) & 1 へ積む。球の判定はクラスタの判定（SelectShadowCluster）と同じ関数なので、
+//   節で落ちた枝の下のクラスタはどれもクラスタの判定でも落ちる。
+//   LOD: 節の親の誤差の最大 ÷ その段の texel の一辺 ≤ lodBias（texel）なら、下のどのクラスタも「親の誤差 ÷ texel > lodBias」を満たさず
+//   描かれないので枝ごと切る（正射影は texel が位置に依らないので、節の球によらず下のクラスタの値以上。丸めの余裕は主の経路と同じ）。
+//   BVH の段の数は GROUP_BVH_MAX_LEVELS（16）以下なので、根を段 0 として段 15 までで全部の節に届く。
+// 葉のクラスタの判定（bvhStageInfo.x = VSM_BVH_STAGE_LEAVES）:
+//   葉の列の 1 要素を BVH_LEAF_SLOTS 個のスレッドが 1 クラスタずつ受け持つ（実行時に作った BVH の葉は、節の配列の直後の
+//   並べ替えの表でクラスタの番号を引く）。
+//
+// 列（binding 9）と数え・引数（binding 10）は Common/MegaGeometryCull.glsl の bvhQueue・bvhCounters を使い、並びも主の経路と同じ
+// （bvhCounters[s] = 段 s の入力へ積もうとした数、[BVH_LEAF_COUNTER] = 葉の列へ積もうとした数、[BVH_ARGS_BASE + s × BVH_ARGS_STRIDE] =
+// 段 s の間接 dispatch の引数、葉の段は BVH_LEAF_COUNTER の位置）。容量は固定（megaParams.bvh.y・z）。積む前に容量を確かめ、
+// 超えた要素は積まずに溢れ（統計の STAT_MEGA_OVERFLOW）へ数え、その節の球が覆う割り当て済みで dirty のページへ再描画の印を付ける
+// （次フレームの引き継ぎがそのページを描き直すので、欠けた影が静止した場面で持ち越されない）。カウンタは積もうとした数なので、
+// 読む側は容量で頭打ちにする。段 1 以降と葉の段は、積んだ段が書いた引数（積めた数から求めたワークグループ数）で間接 dispatch する。
+// 段 0 の引数は vsm_mega_cull_args.comp が組の一覧の頭（pairBvhArgs）に書く。数え・引数はホストが記録の前に 0 にする。
+// ========================================
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#include "Common/MegaGeometryCull.glsl"
+// binding 20: スライスの表（ページの一辺・texel・範囲の原点・ページの表の先頭）
+#define VSM_SLICE_BINDING 20
+#include "Common/VirtualShadowMapMegaCull.glsl"
+#include "Common/VirtualShadowMapMegaSphere.glsl"
+// 出力の一覧（binding 15）・統計（binding 17）・影の表（binding 18）・VSM のページの表（binding 19）と、1 クラスタの選択
+#include "Common/VirtualShadowMapMegaSelect.glsl"
+
+// binding 21: 組の一覧（並びは vsm_mega_cull_pairs.comp と同じ）。BVH の経路の根は後ろから pairBvhCount 個
+layout(std430, set = 0, binding = 21) readonly buffer VsmMegaPairs
+{
+    uint pairCount;
+    uint pairMaxGroups;
+    uint pairBvhCount;
+    uint pairReserved1;
+    uint pairArgs[4];
+    uint pairBvhArgs[4];
+    uint pairEntries[];
+};
+
+// binding 25: この dispatch の段（x = 節の判定の段の番号、または VSM_BVH_STAGE_LEAVES。y・z・w = 予約）
+layout(std140, set = 0, binding = 25) uniform VsmMegaBvhStage
+{
+    uvec4 bvhStageInfo;
+};
+
+const uint VSM_BVH_STAGE_LEAVES = 0xFFFFFFFFu;
+// 節の判定の段の数（MegaGeometryTypes.h の GROUP_BVH_MAX_LEVELS と同じ。VirtualShadowMapRaster.cpp の BvhNodeStages と一致）
+const uint VSM_BVH_NODE_STAGES = 16u;
+// 間接 dispatch の x 方向の上限（超える分は y へ折り返す）
+const uint VSM_BVH_DISPATCH_LIMIT_X = 65535u;
+// 1 ワークグループが受け持つ列の要素の数（節の段は 1 スレッド 1 要素、葉の段は BVH_LEAF_SLOTS スレッドで 1 要素）
+const uint VSM_BVH_NODE_ENTRIES_PER_GROUP = 64u;
+const uint VSM_BVH_LEAF_ENTRIES_PER_GROUP = 64u / BVH_LEAF_SLOTS;
+
+/**
+ * @brief 列の位置 [first, end) へ積んだ後、その列を読む段の間接 dispatch の引数（ワークグループ数）を引き上げる
+ *
+ * end は容量で頭打ちにした位置。ワークグループ数は ceil(end / entriesPerGroup) で、x = min(数, 上限)、y = ceil(数 / 上限)。
+ * どちらも end について単調なので atomicMax で書けば、スレッドの順序によらず最後は積めた数に対する値になる。
+ * ワークグループの先頭の要素を含む範囲を積んだスレッドだけが書き、z は位置 0 を積んだスレッドだけが 1 を書く
+ * （cluster_bvh_cull.comp の RaiseStageArgs と同じ）。
+ */
+void RaiseStageArgs(uint argsWord, uint first, uint end, uint entriesPerGroup)
+{
+    const uint groupsBefore = (first + entriesPerGroup - 1u) / entriesPerGroup;
+    const uint groups = (end + entriesPerGroup - 1u) / entriesPerGroup;
+    if (groups == groupsBefore)
+    {
+        return;
+    }
+    atomicMax(bvhCounters[argsWord], min(groups, VSM_BVH_DISPATCH_LIMIT_X));
+    atomicMax(bvhCounters[argsWord + 1u], (groups + VSM_BVH_DISPATCH_LIMIT_X - 1u) / VSM_BVH_DISPATCH_LIMIT_X);
+    if (first == 0u)
+    {
+        bvhCounters[argsWord + 2u] = 1u;
+    }
+}
+
+/**
+ * @brief 列の容量を超えて積めなかった要素を溢れへ数え、節の球が覆う割り当て済みで dirty のページへ再描画の印を付ける
+ */
+void CountQueueOverflow(uint count, uint level, vec3 center, float radius)
+{
+    atomicAdd(vsmStats[STAT_MEGA_OVERFLOW], count);
+    MarkRetryPages(level, center, radius);
+}
+
+/**
+ * @brief 節の LOD の判定（正射影）: 節の親の誤差の最大を texel へ直した値が許容以下なら true（下のどのクラスタも描かれない）
+ *
+ * cluster_bvh_cull.comp の CanPruneBvhNodeByLOD の正射影版。NaN は切らない側。
+ */
+bool CanPruneShadowNodeByLOD(BvhNode node)
+{
+    return ProjectBakedErrorOrtho(node.sphere.xyz, node.sphere.w, uintBitsToFloat(node.info.x)) * BVH_LOD_PRUNE_MARGIN <=
+           cullData.lodBias;
+}
+
+/**
+ * @brief 節の判定の段: 1 つの（組、節）を節の球で判定し、通れば葉は葉の列へ、内部の節は子を次の段の列へ積む
+ */
+void NodeStage(uint stage)
+{
+    const uint flatGroup = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    const uint thread = flatGroup * VSM_BVH_NODE_ENTRIES_PER_GROUP + gl_LocalInvocationID.x;
+    const uint nodeCapacity = megaParams.bvh.y;
+
+    // この段の入力: 段 0 は組の一覧の後ろの根、段 s（1 以上）は節の列 s & 1（容量で頭打ちにした数）
+    uint pair;
+    uint nodeIndex;
+    if (stage == 0u)
+    {
+        if (thread >= pairBvhCount)
+        {
+            return;
+        }
+        pair = pairEntries[megaParams.bvh.w - 1u - thread];
+        nodeIndex = 0u;
+    }
+    else
+    {
+        if (thread >= min(bvhCounters[stage], nodeCapacity))
+        {
+            return;
+        }
+        const uvec2 entry = bvhQueue[(stage & 1u) * nodeCapacity + thread];
+        pair = entry.x;
+        nodeIndex = entry.y;
+    }
+    const uint instanceIndex = pair >> 8u;
+    const uint level = pair & 0xFFu;
+
+    const MegaInstance instance = LoadMegaInstance(instanceIndex);
+    g_WorldMatrix = instance.world;
+    g_OrthoTexelMeters = vsmSlices[level].info.y;
+    g_ShadowPerspective = false;
+    BvhNodeArray bvh = BvhNodeArray(uvec2(instance.bvhInfo.x, instance.bvhInfo.y));
+    const BvhNode node = bvh.nodes[nodeIndex];
+    const vec3 center = TransformClusterCenterToWorld(node.sphere.xyz);
+    const float radius = node.sphere.w * ComputeWorldRadiusScale();
+    if (!LevelOverlapsSphere(level, center, radius) || !SphereHasDirtyPage(level, center, radius) || CanPruneShadowNodeByLOD(node))
+    {
+        return;
+    }
+
+    if ((node.info.w & BVH_NODE_FLAG_LEAF) != 0u)
+    {
+        const uint slot = atomicAdd(bvhCounters[BVH_LEAF_COUNTER], 1u);
+        if (slot >= megaParams.bvh.z)
+        {
+            CountQueueOverflow(1u, level, center, radius);
+            return;
+        }
+        bvhQueue[2u * nodeCapacity + slot] = uvec2(pair, nodeIndex);
+        RaiseStageArgs(BVH_ARGS_BASE + BVH_LEAF_COUNTER * BVH_ARGS_STRIDE, slot, slot + 1u, VSM_BVH_LEAF_ENTRIES_PER_GROUP);
+        return;
+    }
+
+    // 内部の節: 子を次の段の列へ積む。最後の段の内部の節（段の数の上限を超える BVH。読み込みが弾くので通常は無い）は溢れとして扱う
+    const uint childCount = node.info.z;
+    const uint nextStage = stage + 1u;
+    if (nextStage >= VSM_BVH_NODE_STAGES)
+    {
+        CountQueueOverflow(childCount, level, center, radius);
+        return;
+    }
+    const uint firstSlot = atomicAdd(bvhCounters[nextStage], childCount);
+    const uint stored = firstSlot >= nodeCapacity ? 0u : min(childCount, nodeCapacity - firstSlot);
+    const uint nextBase = (nextStage & 1u) * nodeCapacity;
+    for (uint child = 0u; child < stored; ++child)
+    {
+        bvhQueue[nextBase + firstSlot + child] = uvec2(pair, node.info.y + child);
+    }
+    if (stored < childCount)
+    {
+        CountQueueOverflow(childCount - stored, level, center, radius);
+    }
+    if (stored > 0u)
+    {
+        RaiseStageArgs(BVH_ARGS_BASE + nextStage * BVH_ARGS_STRIDE, firstSlot, firstSlot + stored, VSM_BVH_NODE_ENTRIES_PER_GROUP);
+    }
+}
+
+/**
+ * @brief 葉のクラスタの判定: 葉の列の 1 要素を BVH_LEAF_SLOTS 個のスレッドが 1 クラスタずつ判定し、通れば一覧へ書く
+ */
+void LeafStage()
+{
+    const uint flatGroup = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    const uint thread = flatGroup * 64u + gl_LocalInvocationID.x;
+    const uint leafSlot = thread / BVH_LEAF_SLOTS;
+    const uint memberSlot = thread % BVH_LEAF_SLOTS;
+    if (leafSlot >= min(bvhCounters[BVH_LEAF_COUNTER], megaParams.bvh.z))
+    {
+        return;
+    }
+    const uvec2 entry = bvhQueue[2u * megaParams.bvh.y + leafSlot];
+    const uint instanceIndex = entry.x >> 8u;
+    const uint level = entry.x & 0xFFu;
+    const MegaInstance instance = LoadMegaInstance(instanceIndex);
+
+    BvhNodeArray bvh = BvhNodeArray(uvec2(instance.bvhInfo.x, instance.bvhInfo.y));
+    const BvhNode node = bvh.nodes[entry.y];
+    if (memberSlot >= node.info.z)
+    {
+        return;
+    }
+    // 焼き込みの BVH の葉はクラスタの連続した範囲。実行時に作った BVH の葉は並べ替えの表の範囲なので、表でクラスタの番号を引く
+    uint clusterIndex = node.info.y + memberSlot;
+    if ((node.info.w & BVH_NODE_FLAG_CLUSTER_ORDER) != 0u)
+    {
+        uint carry;
+        const uint orderLow = uaddCarry(instance.bvhInfo.x, instance.bvhInfo.z * 32u, carry);
+        BvhClusterOrderArray order = BvhClusterOrderArray(uvec2(orderLow, instance.bvhInfo.y + carry));
+        clusterIndex = order.clusters[clusterIndex];
+    }
+    SelectShadowCluster(instanceIndex, instance, level, clusterIndex);
+}
+
+void main()
+{
+    if (bvhStageInfo.x == VSM_BVH_STAGE_LEAVES)
+    {
+        LeafStage();
+    }
+    else
+    {
+        NodeStage(bvhStageInfo.x);
+    }
+}

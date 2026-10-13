@@ -4024,3 +4024,16 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-MEGA-VSM-RANGES-6.txt`: バナナ 1 万本 horizon result=pass（EXIT=0）。`horizon.Game.log` の `[ERROR]` 0、`VSM_MEGA_CULL instances=9067 clusters=251084 overflow=0`（静止で以降は 0）。PNG はバナナと影が以前どおり。
 - Next: SCN-MEGA-VSM-BVH-SUN。
 - Notes: 前の反復の深度の上限（受け手の最も奥の深度より奥の投影物を落とす）は、受け手の深度の上限を画角なしに保証できないので外した（太陽の向きの奥は従来の深度の範囲まで）。画角を VSM の組の絞り込みへ渡すには `VirtualShadowMapPass.cpp`（paths の外）を触る。範囲の判定は席の判定より多く落とさないので組の数は範囲の判定が無いときと同じになり（9067。前の反復の 8464 はカメラの距離で余分に落としていた分）、効くのは範囲の 64 席の判定を 1 回にまとめる分だけ。範囲で落ちた数は統計に出していない。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。
+
+### SCN-MEGA-VSM-BVH-SUN（2026-10-14、反復 11・run 20261014-061910）
+- Done: 太陽の段（正射影のクリップマップ）の MegaGeometry の投影物のクラスタの選択を、組ごとに全クラスタを見る形から、グループの BVH を段ごとの間接 dispatch でたどる形にした（新しい `vsm_mega_bvh.comp`）。点光源の面と BVH を持たないメッシュは平らな経路（`vsm_mega_cull.comp`）のまま。
+  - 組の絞り込み（`vsm_mega_cull_pairs.comp`）は、太陽の段でメッシュの `bvhInfo` が BVH を持つ組を BVH の根として組の一覧の後ろから積む（数は頭の語 2）。組の一覧の頭を 12 語にし、`vsm_mega_cull_args.comp` が平らな経路の引数に加えて段 0 の引数（語 8〜10）を書く。絞り込みの束縛にインスタンスの表（1）とメッシュの表（22）を足した。
+  - 段 0〜15（根を段 0。`GROUP_BVH_MAX_LEVELS` = 16 なので全部の節に届く。static_assert で結んだ）は 1 スレッド 1（組, 節）で、節の球を `LevelOverlapsSphere`・`SphereHasDirtyPage`（クラスタの判定と同じ関数）と正射影の LOD（節の親の誤差の最大 ÷ texel × 1.001 ≤ lodBias なら枝を切る）で判定し、葉は葉の列へ、内部の節は子を次の段の列へ積む。葉の段は 1 葉 8 スレッドで、平らな経路と同じ判定（新しい共通の `Common/VirtualShadowMapMegaSelect.glsl` の `SelectShadowCluster`）にかけて一覧へ書く。
+  - 列の安全策は BVH-INDIRECT と同じ: 固定容量（節の列 2 本 × 4,194,304・葉の列 2,097,152、計 80 MiB。フレームをまたいで 1 つを共有）、積む前に容量を確かめ、カウンタは積もうとした数、読む側と引数は min(数, 容量)、段 1 以降と葉の段は前の段が書いた引数で間接 dispatch。溢れた要素は統計の語 10（`VSM_MEGA_CULL overflow`）へ数え、その節の球が覆う割り当て済みで dirty のページへ再描画の印を付ける。列を作れないとき・`--vsm-mega-flat` のときは全部の組を平らな経路で選ぶ（`VSM_MEGA_BVH enabled=…` を初期化で 1 行出す）。GPU の区間は `VsmCullBvh`。
+- 検証（`.harness/runs/20261014-061910/`。最終のバイナリは 4〜6）:
+  - `verify-SCN-MEGA-VSM-BVH-SUN-4.txt`: RelWithDebInfo の Game のビルド EXIT=0。新旧のシェーダーは BOM を除いた写しで `glslc` によりコンパイルを確かめた。
+  - `verify-SCN-MEGA-VSM-BVH-SUN-5.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 60.068 dB、輝度差 0.0021、EXIT=0）。`default.Game.log` の `[ERROR]` 0、`VSM_MEGA_BVH enabled=1`、`VSM_MEGA_CULL` は 3 行とも前の項目（VSM-RANGES）と同じ数（clusters=192・2168・4401、point_clusters=128・1972・3171）で overflow=0。PNG は家・球・岩・地面・影が以前どおり。
+  - `verify-SCN-MEGA-VSM-BVH-SUN-6.txt`: バナナ 1 万本 horizon result=pass（EXIT=0）。`horizon.Game.log` の `[ERROR]` 0、`VSM_MEGA_CULL instances=9195 clusters=256204 overflow=0`（静止で以降は 0）。PNG はバナナと影が以前どおり。
+- 補助（verify の外）: 最初の容量（節・葉とも 1,048,576）で撮った `verify-SCN-MEGA-VSM-BVH-SUN-1〜3.txt` は、3 の horizon で `overflow=47525`、溢れたページへの再描画の印で次のフレームも dirty が戻り `overflow=913817` が続いた。列を 8M にし、点光源の統計の語へ段ごとの積もうとした数の最大を書く一時の計測版（戻した）で同じ horizon を撮り（`aux-SCN-MEGA-VSM-BVH-SUN-probe8m.txt`）、節の列の 1 段の最大 1,193,951・葉の列 547,863 と、`clusters=226427` が同じ撮影の VSM-RANGES の horizon（226427）と一致することを確かめてから容量を決めた。
+- Next: SCN-MEGA-VSM-BVH-POINT。
+- Notes: 列が溢れ続ける負荷では、節の球が覆うページの再描画の印で毎フレーム dirty が戻り、収まるまで同じ量をたどり直す（取りこぼしは無いが重い）。100 万本の容量の足りる・足りないは SCN-MEGA-ACCEPT-1M の `VSM_MEGA_CULL overflow` で判断する。節の段の LOD の判定は焼き込みの BVH の葉の親の誤差の最大に頼る（実行時の階層は親の誤差が既定の最大値なので枝を切らない。主の経路と同じ）。段の数え・ピークの統計は出していない（`VirtualShadowMapPass.cpp` が paths の外）。`VirtualShadowMapVulkanTest` のケース J は平らな経路（合成メッシュは BVH のアドレスが 0）を通るが、verify に無いので走らせていない。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。試験の追加はしていない。

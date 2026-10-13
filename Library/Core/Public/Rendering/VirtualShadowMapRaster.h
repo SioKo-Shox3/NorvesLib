@@ -312,8 +312,8 @@ namespace NorvesLib::Core::Rendering
     /**
      * @brief MegaGeometry の投影物（bCastShadow のインスタンス）を VSM の段ごとにカリングする
      *
-     * 区間（GPU のタイムスタンプの名前）: VsmCullMega（下の 1〜4 の全部）。内訳は VsmCullDirty（1）・VsmCullPairs（2）・VsmCullSelect（3）・
-     * VsmCullChunks（4）。
+     * 区間（GPU のタイムスタンプの名前）: VsmCullMega（下の 1〜4 の全部）。内訳は VsmCullDirty（1）・VsmCullPairs（2）・VsmCullSelect（3 の平らな経路）・
+     * VsmCullBvh（3 の BVH の経路）・VsmCullChunks（4）。
      *   1. dirty の階層（vsm_dirty_mips.comp）: ページの表の「割り当て済みで dirty」のページから、段ごとのページの mip（128² → 1）の
      *      ビット列を作る。
      *   2. 組の絞り込み（vsm_mega_cull_pairs.comp）: 1 スレッド = 1 つの（インスタンス、段）の組。太陽の段では、まず 1 ワークグループの
@@ -322,10 +322,15 @@ namespace NorvesLib::Core::Rendering
      *      続けて、インスタンスの境界のライト空間の矩形が、その段の範囲・深度の範囲に入り、dirty のページを含む組だけを一覧にし、
      *      選択の間接 dispatch の引数を作る。
      *      組ごとに 1 回だけ判定するので、選択のワークグループがインスタンスの判定を繰り返さない。
-     *      続けて vsm_mega_cull_args.comp（1 スレッド）が、組の数と組のワークグループ数の最大から間接 dispatch の引数を書く。
-     *   3. 選択（vsm_mega_cull.comp。主の経路の Common/MegaGeometryCull.glsl の判定の本体を正射影の LOD で使う）: 通った組だけを間接 dispatch で受け持ち、
-     *      1 ワークグループ = 1 つの組の 64 クラスタ。クラスタを LOD の判定（自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）で選ぶ。
-     *      結果は（インスタンスの表の番号・段・クラスタの番号）の一覧と数で、自分のバッファに書く。
+     *      太陽の段でメッシュがグループの BVH を持つ組は BVH の経路の根として一覧の後ろから積み、それ以外は平らな経路の組として前から積む。
+     *      続けて vsm_mega_cull_args.comp（1 スレッド）が、組の数と組のワークグループ数の最大・根の数から間接 dispatch の引数を書く。
+     *   3. 選択（主の経路の Common/MegaGeometryCull.glsl の判定の本体を正射影の LOD で使う）。クラスタを LOD の判定
+     *      （自分の誤差 ÷ texel ≤ 1 かつ親の誤差 ÷ texel > 1）で選び、結果は（インスタンスの表の番号・段・クラスタの番号）の一覧と数で、自分のバッファに書く。
+     *      平らな経路（vsm_mega_cull.comp。点光源の面と BVH を持たないメッシュ）: 通った組だけを間接 dispatch で受け持ち、1 ワークグループ = 1 つの組の 64 クラスタ。
+     *      BVH の経路（vsm_mega_bvh.comp。太陽の段）: 根から BVH を段ごとの間接 dispatch（段 0〜15 と葉の段）でたどり、節の球が段の範囲・
+     *      dirty のページに掛からない枝と、節の親の誤差の最大 ÷ texel が許容以下の枝を切って、葉のクラスタだけを平らな経路と同じ判定にかける。
+     *      列は固定容量（節の列 2 本と葉の列）で、超えた要素は積まずに溢れ（統計の語 10）へ数え、その節が覆うページへ再描画の印を付ける。
+     *      列を作れない・起動引数 --vsm-mega-flat のときは、全部の組を平らな経路で選ぶ。
      *   4. 影の塊の記録（vsm_mega_chunks.comp。dispatch.Chunks があるときだけ）: 一覧の 1 件を、手続き・スキニングと同じ形の
      *      VsmShadowChunk（クラスタの境界球の AABB・インスタンスのワールド行列・頂点とインデックスの読み方・展開する段 = 選んだ段）にする。
      * 装置がバッファのアドレスを使えない・シェーダーやパイプラインを作れないときは作れない（IsReady が false。VSM 全体は CSM へ落とさない）。
@@ -356,6 +361,10 @@ namespace NorvesLib::Core::Rendering
         /** @brief 直前の Record が影の塊の記録を作ったか */
         bool WasChunkBuilt() const { return m_bLastChunkBuilt; }
 
+        /** @brief BVH の経路の段の数（節の判定の段 = MegaGeometry::GROUP_BVH_MAX_LEVELS と、葉の段） */
+        static constexpr uint32_t BvhNodeStages = 16;
+        static constexpr uint32_t BvhStageCount = BvhNodeStages + 1;
+
     private:
         struct Use
         {
@@ -368,12 +377,19 @@ namespace NorvesLib::Core::Rendering
             RHI::DescriptorSetPtr ArgsSet;
             RHI::DescriptorSetPtr CullSet;
             RHI::DescriptorSetPtr ChunkSet;
-            /** @brief 通った（インスタンス、スライス）の組の一覧。頭 8 語（組の数・最大のワークグループ数・予約 2 語・間接 dispatch の引数 4 語）+ 組 */
+            /** @brief BVH の経路の段ごとの束縛（段 0〜BvhNodeStages − 1 と葉の段。段の定数だけが違う） */
+            RHI::DescriptorSetPtr BvhSets[BvhStageCount];
+            /**
+             * @brief 通った（インスタンス、スライス）の組の一覧。頭 12 語（平らな経路の組の数・最大のワークグループ数・BVH の経路の根の数・予約・
+             *        平らな経路の間接 dispatch の引数 4 語・BVH の経路の段 0 の引数 4 語）+ 組（平らな経路は前から、BVH の根は後ろから）
+             */
             RHI::BufferPtr Pairs;
             uint32_t PairsCapacity = 0;
         };
 
         bool AcquireUse(Use*& outUse);
+        /** @brief BVH の経路の列・数え・段の定数を作る（初回だけ）。作れなければ false で、以後は平らな経路だけを使う */
+        bool EnsureBvhResources();
         /** @brief 組の一覧を capacity 組ぶん持たせる（足りなければ作り直す）。作れなければ false */
         bool EnsurePairs(Use& use, uint32_t capacity);
 
@@ -388,6 +404,17 @@ namespace NorvesLib::Core::Rendering
         RHI::PipelinePtr m_ArgsPipeline;
         RHI::PipelinePtr m_CullPipeline;
         RHI::PipelinePtr m_ChunkPipeline;
+        /** @brief 太陽の段の BVH の経路（vsm_mega_bvh.comp）。作れなければ平らな経路だけを使う */
+        RHI::ShaderPtr m_BvhShader;
+        RHI::PipelinePtr m_BvhPipeline;
+        /** @brief BVH のたどりの列（節の列 2 本 + 葉の列。GPU だけが使う）と数え・間接 dispatch の引数。フレームをまたいで共有する */
+        RHI::BufferPtr m_BvhQueue;
+        RHI::BufferPtr m_BvhCounters;
+        /** @brief 段ごとの定数（段の番号。作るときに 1 回だけ書く） */
+        RHI::BufferPtr m_BvhStageUniforms[BvhStageCount];
+        /** @brief BVH の経路を使うか（--vsm-mega-flat で false）と、列を作れなかったか */
+        bool m_bBvhEnabled = true;
+        bool m_bBvhResourceFailed = false;
         FrameUseRing<Use> m_Uses;
         uint32_t m_LastGroupCount = 0;
         bool m_bLastChunkBuilt = false;
