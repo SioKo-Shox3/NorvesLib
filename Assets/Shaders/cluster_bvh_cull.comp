@@ -14,9 +14,11 @@
 //   範囲の AABB（mega_scene_scatter.comp の段 2 が、行の変わった範囲だけ作り直す常駐の表。binding 15）で視錐台・距離の判定を
 //   する。通った範囲を節の列 0 へ積み（カウンタ 0）、席の段の間接 dispatch の引数（1 範囲 = 1 ワークグループ）を書く。
 // 席の段（bvhStage = 0）:
-//   1席1スレッド。入力は、1パス目と1回の判定では範囲の段が積んだ範囲の席、2パス目は1パス目が残した根の入力（溢れたら全部の席）。
-//   締まった球（メッシュの球 × 拡大率。メッシュの球が無ければ根の節の球）で視錐台・距離・画素の大きさ・遮蔽（2パス目だけ）の
-//   判定をし、通った席だけ根の節の LOD の判定をして、根の子を段1の列へ（根が葉なら葉の列へ）積む。
+//   1席1スレッド。入力は、1パス目と1回の判定では範囲の段が積んだ範囲の席、2パス目は1パス目が残した根の入力と
+//   1パス目が2パス目へ回した範囲の席（別の dispatch。どちらかの列が溢れたら全部の席）。
+//   締まった球（メッシュの球 × 拡大率。メッシュの球が無ければ根の節の球）で視錐台・距離・画素の大きさ・根の節の LOD・
+//   遮蔽（2パス目は今のフレームの HZB、1パス目は前のフレームの HZB を使えるフレームだけ）の判定をし、通った席の根の子を
+//   段1の列へ（根が葉なら葉の列へ）積む。
 // 節の判定の段（bvhStage = 段の番号。1以上）:
 //   前の段が積んだ列の各要素（インスタンス・節）を1スレッドが受け持ち、節の球で視錐台・遮蔽（2パス目だけ）・LOD（節の球から投影した
 //   親の誤差の最大が許容以下）の判定をする。どれかで落ちれば、その下のクラスタは選ばれないので枝ごと切る。残った内部の節は
@@ -30,9 +32,17 @@
 // 積む前に容量を確かめ、超えた要素は積まずに統計（STAT_BVH_OVERFLOW）へ数える。カウンタは積もうとした数なので、読む側は
 // 容量で頭打ちにする。段1以降と葉の段は、積んだ段が書いた引数（積めた数から求めたワークグループ数）で間接 dispatch する。
 //
-// 2パス目の根の入力（binding 14）: 1パス目の席の段が、遮蔽以外の判定と根の LOD を通った席をここへ積む（遮蔽の判定は2パス目だけで、
-// ほかの判定は両パスで同じ値になる）。2パス目の段0はこの入力だけを判定する。各パスの頭で 0 にするカウンタとは別のバッファで、
-// 1パス目の前に1回だけ 0 にする。容量を超えた根があれば、2パス目は全部の根を判定し直す（取りこぼさない）。
+// 2パス目の根の入力（binding 14）: 1パス目の席の段が、遮蔽以外の判定と根の LOD を通り1パス目でたどった席をここへ積む（遮蔽の判定は
+// 2パス目だけで、ほかの判定は両パスで同じ値になる）。2パス目の段0はこの入力を判定し直す（1パス目で描かなかったクラスタを描き、
+// 見えた印を書くため）。各パスの頭で 0 にするカウンタとは別のバッファで、1パス目の前に1回だけ頭を 0 にする。
+//
+// 前のフレームの HZB（bPrevHiZEnabled = 1。binding 26。契約が合うフレームだけ）: 1パス目の範囲の段は、視錐台・距離を通った範囲の
+// AABB を包む球を前のフレームの VP で前の HZB に投影し、隠れていれば範囲ごと2パス目へ回す（席の段へ渡さない）。席の段は、遮蔽以外の
+// 判定と根の LOD を通った席を同じく前の HZB で判定し、隠れた席は1パス目でたどらずに2パス目へ回す。回した席は、同じバッファの
+// 根の入力の後ろの「2パス目へ回した範囲の列」へ（範囲, 席の 64 ビットの印）として 1 範囲 1 要素で積む（範囲ごと回したときは全部の席の印）。
+// 2パス目の段0は、根の入力とは別の dispatch で、この列の 1 要素を 1 ワークグループで受け持ち、印の立った席を今のフレームの HZB で判定する。
+// 根の入力・回した範囲の列のどちらかが容量を超えたら、2パス目は両方の列を使わず、全部の根を席の遮蔽の判定なしで判定し直す
+// （溢れて積めなかった範囲の席を取りこぼさない。節・クラスタの遮蔽の判定は今のフレームの HZB で続ける）。
 //
 // 段の間は CPU が UAV と間接引数のバリアを入れ、段ごとのカウンタ（bvhCounters）は各パスの先頭で0にする。
 // ========================================
@@ -41,16 +51,31 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 #include "Common/MegaGeometryCull.glsl"
 
-// set 0, binding 14: 2パス目の根の入力。[0..2] = 2パス目の段0の間接 dispatch の引数（VkDispatchIndirectCommand）、
-// [3] = 積もうとした根の数、[4] = 容量を超えた根の数（1 以上なら全部の根を判定し直す）、[5..7] = 予約、
-// [BVH_PASS2_HEADER_WORDS..] = 根のインスタンスの番号（MegaGeometryPass.cpp の BvhPass2HeaderWords と一致）
+// set 0, binding 14: 2パス目の根の入力と、2パス目へ回した範囲の列。[0..2] = 2パス目の段0（根の入力）の間接 dispatch の引数
+// （VkDispatchIndirectCommand）、[3] = 積もうとした根の数、[4] = どちらかの列の容量を超えた数（1 以上なら全部の根を判定し直す）、
+// [5..7] = 予約、[8..10] = 2パス目の段0（回した範囲の列）の間接 dispatch の引数、[11] = 回した範囲の列へ積もうとした数、[12..15] = 予約、
+// [BVH_PASS2_HEADER_WORDS..] = 根のインスタンスの番号（容量 bvhPass2Capacity）、その後ろ = 回した範囲の列
+// （1 要素 BVH_DEFER_ENTRY_WORDS 語: 範囲, 席 0〜31 の印, 席 32〜63 の印, 予約。容量 bvhDeferCapacity）。
+// MegaGeometryPass.cpp の BvhPass2HeaderWords・BvhDefer* と一致
 layout(std430, set = 0, binding = 14) buffer BvhPass2InputBuffer
 {
     uint bvhPass2[];
 };
 const uint BVH_PASS2_COUNT = 3u;
 const uint BVH_PASS2_FALLBACK = 4u;
-const uint BVH_PASS2_HEADER_WORDS = 8u;
+const uint BVH_DEFER_ARGS = 8u;
+const uint BVH_DEFER_COUNT = 11u;
+const uint BVH_PASS2_HEADER_WORDS = 16u;
+const uint BVH_DEFER_ENTRY_WORDS = 4u;
+
+// set 0, binding 26: 前のフレームの HZB（1パス目の bPrevHiZEnabled = 1 のときだけ読む。全ミップが ShaderResource）
+layout(set = 0, binding = 26) uniform sampler2D u_PrevHiZTexture;
+
+// 席の段（段0）の入力（bvhSeatsFromRanges。MegaGeometryPass.cpp の BvhSeatsFrom* と一致）:
+// 根の入力（2パス目。溢れたら全部の根）・範囲の段が積んだ範囲の一覧（1パス目と1回の判定）・2パス目へ回した範囲の列（2パス目）
+const uint SEATS_FROM_ROOTS = 0u;
+const uint SEATS_FROM_RANGES = 1u;
+const uint SEATS_FROM_DEFERRED = 2u;
 
 // set 0, binding 15: 範囲の境界（範囲ごとに vec4 × 2: [0] = (最小の xyz, 印), [1] = (最大の xyz, 0)。mega_scene_scatter.comp の段 2 が書く）
 layout(std430, set = 0, binding = 15) readonly buffer RangeBoundsBuffer
@@ -100,35 +125,97 @@ void RaiseStageArgs(uint argsWord, uint peakStat, uint first, uint end, uint att
 }
 
 /**
- * @brief 1パス目の段0で、視錐台と LOD を通った根を2パス目の根の入力へ積む
+ * @brief 2パス目に全部の根を判定し直させる（根の入力・回した範囲の列のどちらかが溢れたとき）
  *
- * 容量を超えたら積まずに数え、2パス目の引数を全部の根（bvhRootCount）の数まで引き上げる（2パス目は全部の根を判定し直す）。
+ * 溢れた印を立て、根の入力の引数を全部の根（bvhRootCount）の数まで引き上げる。2パス目の根の入力の dispatch は全部の根を判定し、
+ * 回した範囲の列の dispatch は何もしない（同じ席を2回たどらない）。
+ */
+void RequestPass2Rescan()
+{
+    if (atomicAdd(bvhPass2[BVH_PASS2_FALLBACK], 1u) == 0u)
+    {
+        atomicAdd(stats[STAT_BVH_PASS2_FALLBACK], 1u);
+    }
+    uint groups = (cullData.bvhRootCount + BVH_NODE_ENTRIES_PER_GROUP - 1u) / BVH_NODE_ENTRIES_PER_GROUP;
+    if (groups > 0u)
+    {
+        atomicMax(bvhPass2[0], min(groups, BVH_DISPATCH_LIMIT_X));
+        atomicMax(bvhPass2[1], (groups + BVH_DISPATCH_LIMIT_X - 1u) / BVH_DISPATCH_LIMIT_X);
+        atomicMax(bvhPass2[2], 1u);
+    }
+}
+
+/**
+ * @brief 1パス目の段0で、視錐台と LOD を通り1パス目でたどる根を2パス目の根の入力へ積む
+ *
+ * 容量を超えたら積まずに、2パス目に全部の根を判定し直させる。
  */
 void AppendPass2Root(uint instanceIndex)
 {
     uint slot = atomicAdd(bvhPass2[BVH_PASS2_COUNT], 1u);
-    uint end = slot + 1u;
-    if (slot < cullData.bvhPass2Capacity)
+    if (slot >= cullData.bvhPass2Capacity)
     {
-        bvhPass2[BVH_PASS2_HEADER_WORDS + slot] = instanceIndex;
+        RequestPass2Rescan();
+        return;
     }
-    else
-    {
-        if (atomicAdd(bvhPass2[BVH_PASS2_FALLBACK], 1u) == 0u)
-        {
-            atomicAdd(stats[STAT_BVH_PASS2_FALLBACK], 1u);
-        }
-        slot = 0u;
-        end = cullData.bvhRootCount;
-    }
+    bvhPass2[BVH_PASS2_HEADER_WORDS + slot] = instanceIndex;
     uint groupsBefore = (slot + BVH_NODE_ENTRIES_PER_GROUP - 1u) / BVH_NODE_ENTRIES_PER_GROUP;
-    uint groups = (end + BVH_NODE_ENTRIES_PER_GROUP - 1u) / BVH_NODE_ENTRIES_PER_GROUP;
+    uint groups = (slot + 1u + BVH_NODE_ENTRIES_PER_GROUP - 1u) / BVH_NODE_ENTRIES_PER_GROUP;
     if (groups != groupsBefore)
     {
         atomicMax(bvhPass2[0], min(groups, BVH_DISPATCH_LIMIT_X));
         atomicMax(bvhPass2[1], (groups + BVH_DISPATCH_LIMIT_X - 1u) / BVH_DISPATCH_LIMIT_X);
         atomicMax(bvhPass2[2], 1u);
     }
+}
+
+/**
+ * @brief 1パス目で前のフレームの HZB に隠れた範囲の席（印の立った席）を、2パス目へ回した範囲の列へ 1 要素として積む
+ *
+ * 1 要素 = 2パス目の 1 ワークグループ。容量を超えたら積まずに数え、2パス目に全部の根を遮蔽なしで判定し直させる
+ * （積めなかった範囲の席は1パス目でたどっていないので、見直さないと描かれない）。
+ */
+void AppendDeferredRange(uint range, uint seatMaskLow, uint seatMaskHigh)
+{
+    CountStat(STAT_TWOPASS_DEFER_ENTRIES);
+    uint slot = atomicAdd(bvhPass2[BVH_DEFER_COUNT], 1u);
+    if (slot >= cullData.bvhDeferCapacity)
+    {
+        CountStat(STAT_TWOPASS_DEFER_OVERFLOW);
+        RequestPass2Rescan();
+        return;
+    }
+    uint base = BVH_PASS2_HEADER_WORDS + cullData.bvhPass2Capacity + slot * BVH_DEFER_ENTRY_WORDS;
+    bvhPass2[base] = range;
+    bvhPass2[base + 1u] = seatMaskLow;
+    bvhPass2[base + 2u] = seatMaskHigh;
+    // ワークグループ数は積めた要素の数。単調なので atomicMax で、スレッドの順序によらず最後は積めた数になる
+    uint groups = slot + 1u;
+    atomicMax(bvhPass2[BVH_DEFER_ARGS], min(groups, BVH_DISPATCH_LIMIT_X));
+    atomicMax(bvhPass2[BVH_DEFER_ARGS + 1u], (groups + BVH_DISPATCH_LIMIT_X - 1u) / BVH_DISPATCH_LIMIT_X);
+    atomicMax(bvhPass2[BVH_DEFER_ARGS + 2u], 1u);
+}
+
+/**
+ * @brief 前のフレームの HZB で、球が完全に隠れているか（1パス目の範囲・席の判定）
+ *
+ * 前の HZB の深度を描いた VP（ジッタ込み）で今のワールドの球を投影する。前の HZB は前のフレームの1パス目の深度
+ * （ソフトの合流の後）から作ったもので、契約（寸法・カメラ・シーンの世代など）が合うフレームだけ使う。
+ * 誤って隠れたとしても2パス目が今のフレームの HZB で判定し直すので、取りこぼさない。
+ * @return true = 隠れている（2パス目へ回す）
+ */
+bool PrevOcclusionCullSphere(vec3 center, float radius)
+{
+    if (cullData.bPrevHiZEnabled == 0u)
+    {
+        return false;
+    }
+    return HiZIsSphereOccluded(u_PrevHiZTexture,
+                               ivec2(int(cullData.hiZWidth), int(cullData.hiZHeight)),
+                               int(cullData.hiZMipCount),
+                               cullData.prevViewProjection,
+                               center,
+                               radius);
 }
 
 /**
@@ -282,6 +369,14 @@ void RangeStage()
         {
             return;
         }
+        // 1パス目: AABB を包む球が前のフレームの HZB に隠れていれば、範囲ごと2パス目へ回す（席は2パス目が判定する）
+        if (cullData.cullPass == CULL_PASS_FIRST &&
+            PrevOcclusionCullSphere((boxMin.xyz + boxMax.xyz) * 0.5, 0.5 * length(boxMax.xyz - boxMin.xyz)))
+        {
+            CountStat(STAT_TWOPASS_DEFER_RANGES);
+            AppendDeferredRange(range, 0xFFFFFFFFu, 0xFFFFFFFFu);
+            return;
+        }
     }
 
     uint slot = atomicAdd(bvhCounters[0], 1u);
@@ -296,15 +391,111 @@ void RangeStage()
 }
 
 /**
+ * @brief 席の遮蔽以外の判定: 締まった球の視錐台・距離・画素の大きさと、根の節の LOD
+ *
+ * 通れば true で、根の節と締まった球（ワールド）を返す（g_WorldMatrix はこの席の変換になる）。両パスで同じ値になる。
+ */
+bool PassesSeatBasicTests(uint instanceIndex, out BvhNode root, out vec3 center, out float radius)
+{
+    MegaInstance instance = LoadMegaInstance(instanceIndex);
+
+    g_WorldMatrix = instance.world;
+    BvhNodeArray bvh = BvhNodeArray(uvec2(instance.bvhInfo.x, instance.bvhInfo.y));
+    root = bvh.nodes[0];
+
+    // 締まった球: メッシュ全体の球 × 拡大率。メッシュの球が無ければ根の節の球（下のクラスタと親の球を包むので大きい）
+    vec4 localSphere = instance.boundsSphere.w > 0.0 ? instance.boundsSphere : root.sphere;
+    center = TransformClusterCenterToWorld(localSphere.xyz);
+    radius = localSphere.w * ComputeWorldRadiusScale();
+    if (FrustumCullSphere(center, radius))
+    {
+        return false;
+    }
+    if (DistanceCull(distance(center, cullData.cameraPosition.xyz) - radius))
+    {
+        return false;
+    }
+    if (PixelCullSphere(center, radius))
+    {
+        return false;
+    }
+    return !CanPruneBvhNodeByLOD(root);
+}
+
+// 1パス目の席の段で、前のフレームの HZB に隠れた席の印（ワークグループ = 1 つの範囲の 64 席）
+shared uint s_DeferredSeats[2];
+
+/**
+ * @brief 前のフレームの HZB を使う1パス目の席の段: 1 ワークグループ = 範囲の段が積んだ 1 つの範囲（64 席）
+ *
+ * 遮蔽以外の判定と根の LOD を通った席を前の HZB で判定し、見える席は1パス目でたどって根の入力へ積み、隠れた席は
+ * ワークグループで印をまとめて、範囲ごとに 1 要素として2パス目へ回す（barrier を通るので、席ごとに途中で抜けない）。
+ */
+void SeatStageWithPrevHiZ()
+{
+    uint flatGroup = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    // ワークグループ全体で同じ判断（barrier の前に抜けるのはワークグループごと）
+    if (flatGroup >= min(bvhCounters[0], cullData.bvhNodeCapacity))
+    {
+        return;
+    }
+    uint lane = gl_LocalInvocationID.x;
+    uint range = bvhQueue[cullData.bvhInputBase + flatGroup].x;
+    uint instanceIndex = range * RANGE_SEATS + lane;
+    if (lane < 2u)
+    {
+        s_DeferredSeats[lane] = 0u;
+    }
+    memoryBarrierShared();
+    barrier();
+
+    bool bTraverse = false;
+    BvhNode root;
+    if (instanceIndex < cullData.bvhRootCount)
+    {
+        vec3 center;
+        float radius;
+        if (PassesSeatBasicTests(instanceIndex, root, center, radius))
+        {
+            if (PrevOcclusionCullSphere(center, radius))
+            {
+                atomicOr(s_DeferredSeats[lane >> 5u], 1u << (lane & 31u));
+                CountStat(STAT_TWOPASS_DEFER_SEATS);
+            }
+            else
+            {
+                bTraverse = true;
+            }
+        }
+    }
+    memoryBarrierShared();
+    barrier();
+
+    if (lane == 0u && (s_DeferredSeats[0] | s_DeferredSeats[1]) != 0u)
+    {
+        AppendDeferredRange(range, s_DeferredSeats[0], s_DeferredSeats[1]);
+    }
+    if (bTraverse)
+    {
+        CountStat(STAT_TWOPASS_PASS1_SEATS);
+        AppendPass2Root(instanceIndex);
+        PushPassedNode(uvec2(instanceIndex, 0u), root);
+    }
+}
+
+/**
  * @brief 席の段（段0）: 1席1スレッドで締まった球の判定をし、通った席の根の節を判定して子を段1の列へ積む
  */
 void SeatStage()
 {
     uint flatGroup = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
     uint thread = flatGroup * 64u + gl_LocalInvocationID.x;
+    // 2パス目に全部の根を判定し直すか（根の入力・回した範囲の列のどちらかが溢れた）
+    bool bRescan = cullData.cullPass == CULL_PASS_SECOND && bvhPass2[BVH_PASS2_FALLBACK] != 0u;
+    bool bDeferredSeat = false;
 
     uint instanceIndex = thread;
-    if (cullData.bvhSeatsFromRanges != 0u)
+    if (cullData.bvhSeatsFromRanges == SEATS_FROM_RANGES)
     {
         // 1 ワークグループ = 範囲の段が積んだ 1 つの範囲（64 席）
         if (flatGroup >= min(bvhCounters[0], cullData.bvhNodeCapacity))
@@ -317,7 +508,30 @@ void SeatStage()
             return;
         }
     }
-    else if (cullData.cullPass == CULL_PASS_SECOND && bvhPass2[BVH_PASS2_FALLBACK] == 0u)
+    else if (cullData.bvhSeatsFromRanges == SEATS_FROM_DEFERRED)
+    {
+        // 2パス目: 1 ワークグループ = 1パス目が回した範囲の列の 1 要素。印の立った席だけを判定する。
+        // 全部の根を判定し直すときは、根の入力の dispatch がこの席も受け持つ
+        if (bRescan || flatGroup >= min(bvhPass2[BVH_DEFER_COUNT], cullData.bvhDeferCapacity))
+        {
+            return;
+        }
+        uint lane = gl_LocalInvocationID.x;
+        uint base = BVH_PASS2_HEADER_WORDS + cullData.bvhPass2Capacity + flatGroup * BVH_DEFER_ENTRY_WORDS;
+        uint seatMask = bvhPass2[base + 1u + (lane >> 5u)];
+        if ((seatMask & (1u << (lane & 31u))) == 0u)
+        {
+            return;
+        }
+        instanceIndex = bvhPass2[base] * RANGE_SEATS + lane;
+        if (instanceIndex >= cullData.bvhRootCount)
+        {
+            return;
+        }
+        bDeferredSeat = true;
+        CountStat(STAT_TWOPASS_PASS2_TESTED);
+    }
+    else if (cullData.cullPass == CULL_PASS_SECOND && !bRescan)
     {
         uint rootCount = min(bvhPass2[BVH_PASS2_COUNT], cullData.bvhPass2Capacity);
         if (thread >= rootCount)
@@ -330,40 +544,29 @@ void SeatStage()
     {
         return;
     }
-    MegaInstance instance = LoadMegaInstance(instanceIndex);
 
-    g_WorldMatrix = instance.world;
-    BvhNodeArray bvh = BvhNodeArray(uvec2(instance.bvhInfo.x, instance.bvhInfo.y));
-    BvhNode root = bvh.nodes[0];
-
-    // 締まった球: メッシュ全体の球 × 拡大率。メッシュの球が無ければ根の節の球（下のクラスタと親の球を包むので大きい）
-    vec4 localSphere = instance.boundsSphere.w > 0.0 ? instance.boundsSphere : root.sphere;
-    vec3 center = TransformClusterCenterToWorld(localSphere.xyz);
-    float radius = localSphere.w * ComputeWorldRadiusScale();
-    if (FrustumCullSphere(center, radius))
+    BvhNode root;
+    vec3 center;
+    float radius;
+    if (!PassesSeatBasicTests(instanceIndex, root, center, radius))
     {
         return;
     }
-    if (DistanceCull(distance(center, cullData.cameraPosition.xyz) - radius))
-    {
-        return;
-    }
-    if (PixelCullSphere(center, radius))
-    {
-        return;
-    }
-    // 遮蔽の判定は2パス目だけ（1パス目は遮蔽の判定をしない）
-    if (cullData.cullPass == CULL_PASS_SECOND && OcclusionCullSphere(center, radius))
-    {
-        return;
-    }
-    if (CanPruneBvhNodeByLOD(root))
+    // 遮蔽の判定は2パス目だけ（1パス目の前のフレームの HZB の判定は SeatStageWithPrevHiZ）。
+    // 1パス目の印を使う経路で全部の根を判定し直すときは、溢れて積めなかった範囲の席を取りこぼさないよう席の遮蔽の判定をしない
+    // （旧の経路は今までどおり判定する）
+    bool bSkipOcclusion = bRescan && cullData.visiblePass1Stamp != 0u;
+    if (cullData.cullPass == CULL_PASS_SECOND && !bSkipOcclusion && OcclusionCullSphere(center, radius))
     {
         return;
     }
     if (cullData.cullPass == CULL_PASS_FIRST)
     {
         AppendPass2Root(instanceIndex);
+    }
+    if (bDeferredSeat)
+    {
+        CountStat(STAT_TWOPASS_PASS2_PASSED);
     }
     PushPassedNode(uvec2(instanceIndex, 0u), root);
 }
@@ -458,7 +661,16 @@ void main()
     }
     else if (cullData.bvhStage == 0u)
     {
-        SeatStage();
+        // 前のフレームの HZB を使う1パス目は、範囲の一覧から席を引く（dispatch 全体で同じ分岐）
+        if (cullData.cullPass == CULL_PASS_FIRST && cullData.bPrevHiZEnabled != 0u &&
+            cullData.bvhSeatsFromRanges == SEATS_FROM_RANGES)
+        {
+            SeatStageWithPrevHiZ();
+        }
+        else
+        {
+            SeatStage();
+        }
     }
     else
     {

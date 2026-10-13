@@ -102,12 +102,13 @@ namespace NorvesLib::Core::Rendering
         // 4〜7 はソフトウェアラスタの振り分け（pass1 の一覧・pass2 の一覧・ハードだけ・一覧が満杯で積めなかった数）、
         // 8 はハードのコマンドを空振りにした数、9・10 は visbuffer_sw_raster.comp が数える（矩形の上限を超えた三角形・走ったワークグループ）、
         // 11 は区間の描画コマンドの上限（MaxDrawCount）を超えて積めなかった可視クラスタの数（両パスの合計）、
-        // 12 は BVH のたどりの列の容量を超えて落ちた要素の数（両パスの合計）、13 は 2 パス目の根の入力の容量を超えたか（1 なら超えた）、
+        // 12 は BVH のたどりの列の容量を超えて落ちた要素の数（両パスの合計）、13 は 2 パス目の根の入力か 2 パス目へ回した範囲の列の容量を超えたか（1 なら超えた）、
         // 14・15 は BVH の節の列の 1 段・葉の列へ積もうとした数の最大（容量を超えた分も含む）。
         // 16 からは可視クラスタの binning（Common/MegaGeometryCull.glsl の STAT_BIN_*）: 16 は全体の列へ積もうとした数、
         // 17〜30 は新旧の照合（17 = 旧のコマンドの数、18・19 = 新・旧のソフトの数、20 = 範囲の外の要素、21 = 詰めた位置の重なり、
-        // 22 = 数の違う区間、23・24 / 25・26 = 新・旧の集合の hash の和、27・28 / 29・30 = 新・旧のソフトの集合の hash の和）
-        constexpr uint32_t StatsBufferWords = 32u;
+        // 22 = 数の違う区間、23・24 / 25・26 = 新・旧の集合の hash の和、27・28 / 29・30 = 新・旧のソフトの集合の hash の和）。
+        // 31 からは前のフレームの HZB による 1 パス目の判定（Common/MegaGeometryCull.glsl の STAT_TWOPASS_*）
+        constexpr uint32_t StatsBufferWords = 48u;
         constexpr uint32_t StatsBufferBytes = StatsBufferWords * sizeof(uint32_t);
 
         // ソフトウェアラスタの一覧（cluster_cull.comp の SwRasterBuffer）。先頭はパスごとの間接 dispatch の引数（x・y・z）と
@@ -143,11 +144,23 @@ namespace NorvesLib::Core::Rendering
         static_assert(static_cast<uint64_t>(BvhLeafQueueCapacity) * BvhLeafSlots <= 0xFFFFFFFFull,
                       "葉の段のスレッドの番号が uint32 に収まりません");
 
-        // 2 パス目の根の入力（cluster_bvh_cull.comp の binding 14）。頭の 8 語（2 パス目の段 0 の間接 dispatch の引数・
-        // 積もうとした数・容量を超えた数・予約）の後ろに、1 パス目の段 0 が視錐台と LOD を通った根のインスタンスの番号を積む。
+        // 2 パス目の根の入力と 2 パス目へ回した範囲の列（cluster_bvh_cull.comp の binding 14）。頭の 16 語（根の入力の間接 dispatch の
+        // 引数・積もうとした数・どちらかの列が溢れた数、回した範囲の列の間接 dispatch の引数（BvhDeferArgsWord から）・積もうとした数、予約）の
+        // 後ろに、1 パス目の段 0 が視錐台と LOD を通ってたどった根のインスタンスの番号を積み、その後ろに 1 パス目が前のフレームの HZB に
+        // 隠れたとして回した範囲（1 要素 BvhDeferEntryWords 語: 範囲・席 0〜31 の印・席 32〜63 の印・予約）を積む。
         // 各パスの頭で 0 にするカウンタとは別に持ち、1 パス目の前に頭だけを 0 にする
-        constexpr uint32_t BvhPass2HeaderWords = 8;
+        constexpr uint32_t BvhPass2HeaderWords = 16;
         constexpr uint32_t BvhPass2Capacity = 1u << 20;
+        constexpr uint32_t BvhDeferArgsWord = 8;
+        constexpr uint32_t BvhDeferEntryWords = 4;
+        // 回した範囲の列の容量（範囲。1 範囲 = 64 席なので 400 万席まで溢れない）
+        constexpr uint32_t BvhDeferCapacity = 1u << 16;
+        // 席の段（段 0）の入力（cluster_bvh_cull.comp の SEATS_FROM_*）: 根の入力・範囲の段が積んだ範囲の一覧・回した範囲の列
+        constexpr uint32_t BvhSeatsFromRoots = 0;
+        constexpr uint32_t BvhSeatsFromRanges = 1;
+        constexpr uint32_t BvhSeatsFromDeferred = 2;
+        // 前のフレームの HZB（cluster_bvh_cull.comp の binding 26。1 パス目だけが読む）
+        constexpr uint32_t PrevHiZBinding = 26;
 
         // インスタンスの判定の範囲（cluster_bvh_cull.comp の範囲の段・mega_scene_scatter.comp の段 2）。BVH を持つインスタンスを
         // 描く順に BvhRangeSeats 席ずつ区切り、範囲ごとの AABB（vec4 × 2 = RangeBoundsBytes）を常駐の表に持つ。範囲の段は
@@ -210,6 +223,16 @@ namespace NorvesLib::Core::Rendering
         constexpr uint32_t StatBinNewSwHash = 27;
         constexpr uint32_t StatBinOldSwHash = 29;
         static_assert(StatBinOldSwHash + 2u <= StatsBufferWords, "binning の統計が統計のバッファに収まりません");
+        // 統計の 2 パスの語（Common/MegaGeometryCull.glsl の STAT_TWOPASS_*。MEGA_TWOPASS）
+        constexpr uint32_t StatTwoPassPass1Seats = 31;
+        constexpr uint32_t StatTwoPassDeferRanges = 32;
+        constexpr uint32_t StatTwoPassDeferSeats = 33;
+        constexpr uint32_t StatTwoPassDeferEntries = 34;
+        constexpr uint32_t StatTwoPassDeferOverflow = 35;
+        constexpr uint32_t StatTwoPassPass2Tested = 36;
+        constexpr uint32_t StatTwoPassPass2Passed = 37;
+        static_assert(StatBinOldSwHash + 2u <= StatTwoPassPass1Seats && StatTwoPassPass2Passed < StatsBufferWords,
+                      "2 パスの統計が統計のバッファに収まりません");
 
         // 画素の大きさの判定（席の段）を使える描く範囲か: 描く範囲が描画先の全体（上下の反転は可）のときだけ判定する
         // （画素の中心の位置を、カリングと描画で同じに数えられるときだけ）
@@ -414,6 +437,11 @@ namespace NorvesLib::Core::Rendering
         if (HasProcessCommandLineFlag(L"--mega-binning=off"))
         {
             m_Settings.bUseBinning = false;
+        }
+        // 既定は範囲・インスタンスの 1 パス目を前のフレームの HZB で判定する。--mega-twopass=legacy で 1 パス目に遮蔽の判定をしない経路へ戻す
+        if (HasProcessCommandLineFlag(L"--mega-twopass=legacy"))
+        {
+            m_Settings.bTwoPassPrevHiZ = false;
         }
         if (HasProcessCommandLineFlag(L"--mega-flat-path"))
         {
@@ -2906,7 +2934,7 @@ namespace NorvesLib::Core::Rendering
             !EnsureFrameSlot(frameSlot, sectionCount * passCount, sectionCount) ||
             (bvhInstanceCount > 0 &&
              (!EnsureBvhStageResources(frameSlot, 0, bvhLevelCount + 2u) ||
-              (bTwoPass && !EnsureBvhStageResources(frameSlot, 1, bvhLevelCount + 2u)))))
+              (bTwoPass && !EnsureBvhStageResources(frameSlot, 1, bvhLevelCount + 3u)))))
         {
             NORVES_LOG_ERROR("MegaGeometryPass", "まとめた描画の資源を用意できませんでした");
             recordEmptyRenderPass();
@@ -3141,6 +3169,17 @@ namespace NorvesLib::Core::Rendering
         // 0（バッファを0で埋めた直後・見えなかった）とは決して一致しない（番号は1から数える）
         baseUniform.VisibleReadStamp = static_cast<uint32_t>(m_OcclusionFrameCount);
         baseUniform.VisibleWriteStamp = static_cast<uint32_t>(m_OcclusionFrameCount) + 1u;
+        // 1 パス目が描いたクラスタへ書く印（前のフレームの HZB を使う経路だけ）。読む印・書く印・0 のどれとも一致しない値
+        // （書く印の最上位のビットを反転する。0 になるときだけ全ビット 1 にする）
+        if (bTwoPass && m_Settings.bTwoPassPrevHiZ)
+        {
+            baseUniform.VisiblePass1Stamp = baseUniform.VisibleWriteStamp ^ 0x80000000u;
+            if (baseUniform.VisiblePass1Stamp == 0u)
+            {
+                baseUniform.VisiblePass1Stamp = 0xFFFFFFFFu;
+            }
+        }
+        baseUniform.BvhDeferCapacity = BvhDeferCapacity;
         baseUniform.BvhRootCount = bvhInstanceCount;
         baseUniform.BvhNodeCapacity = BvhNodeQueueCapacity;
         baseUniform.BvhLeafCapacity = BvhLeafQueueCapacity;
@@ -3297,6 +3336,10 @@ namespace NorvesLib::Core::Rendering
         bool bBvhBuffersUsed = false;
         // 2 パス目の根の入力を、このフレームの 1 パス目が書いたか（2 パス目の段 0 はそれを読む。書かなければ全部の根を判定する）
         bool bBvhPass2Used = false;
+        // 1 パス目の範囲・席の判定に使う前のフレームの HZB と、その深度を描いた VP（契約が合うフレームだけ。null なら 1 パス目は遮蔽の判定をしない）
+        RHI::TexturePtr prevHiZTexture;
+        uint32_t prevHiZMipCount = 0;
+        Math::Matrix4x4 prevHiZViewProjection = Math::Matrix4x4::Identity;
 
         // cullPass: 0=従来の1回の判定、1=1パス目、2=2パス目。hiZTexture は2パス目の遮蔽の判定が読む HZB（null なら判定しない）
         auto recordCull = [&](uint32_t cullPass, const RHI::TexturePtr &hiZTexture) -> void
@@ -3321,6 +3364,16 @@ namespace NorvesLib::Core::Rendering
                 uniformData.HiZMipCount = m_HiZ[m_HiZIndex].GetMipCount();
                 uniformData.bHiZEnabled = 1;
             }
+            // 前のフレームの HZB（1パス目の BVH の範囲・席だけ）。寸法は契約で今の深度と同じことを確かめてある
+            const bool bPrevHiZ = cullPass == CULL_PASS_FIRST && prevHiZTexture && m_DepthTexture;
+            if (bPrevHiZ)
+            {
+                uniformData.HiZWidth = m_DepthTexture->GetWidth();
+                uniformData.HiZHeight = m_DepthTexture->GetHeight();
+                uniformData.HiZMipCount = prevHiZMipCount;
+                uniformData.bPrevHiZEnabled = 1;
+                Math::MatrixUtils::TransposeToShaderData(prevHiZViewProjection, uniformData.PrevViewProjection);
+            }
             frameSlot.CullUniform[passIndex]->Update(&uniformData, sizeof(CullUniformData));
 
             // ----------------------------------------
@@ -3343,6 +3396,9 @@ namespace NorvesLib::Core::Rendering
                 // binding 4 の HZB は2パス目の遮蔽の判定（bHiZEnabled=1）だけが読む
                 descriptorSet->BindTexture(4, (bSecond && hiZTexture) ? hiZTexture : m_DefaultBlackTexture);
                 descriptorSet->BindSampler(4, m_DefaultLinearSampler);
+                // binding 26 の前のフレームの HZB は 1 パス目の BVH の範囲・席（bPrevHiZEnabled=1）だけが読む
+                descriptorSet->BindTexture(PrevHiZBinding, bPrevHiZ ? prevHiZTexture : m_DefaultBlackTexture);
+                descriptorSet->BindSampler(PrevHiZBinding, m_DefaultLinearSampler);
 
                 // binding 5・6: 「前のフレームで見えた」印と統計。従来の経路は触らないので代わりのバッファを結ぶ
                 if (bTwoPass && cullPass != CULL_PASS_SINGLE)
@@ -3505,6 +3561,11 @@ namespace NorvesLib::Core::Rendering
                     cmdList->BufferBarrier(m_BvhQueueBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
                     cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
                     cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::IndirectArgument);
+                    if (cullPass == CULL_PASS_FIRST)
+                    {
+                        // 範囲の段が 2 パス目へ回した範囲の列へ積んだ数と引数に、席の段が続けて積む
+                        cmdList->BufferBarrier(m_BvhPass2Buffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                    }
                 }
                 for (uint32_t stage = 0; stage <= bvhLevelCount; ++stage)
                 {
@@ -3528,7 +3589,7 @@ namespace NorvesLib::Core::Rendering
                     CullUniformData stageUniform = uniformData;
                     stageUniform.BvhStage = bClusterStage ? BvhStageClusters : stage;
                     stageUniform.BvhInputBase = !bClusterStage ? bvhNodeQueueBase(stage) : 0u;
-                    stageUniform.bBvhSeatsFromRanges = (stage == 0 && bSeatsFromRanges) ? 1u : 0u;
+                    stageUniform.bBvhSeatsFromRanges = (stage == 0 && bSeatsFromRanges) ? BvhSeatsFromRanges : BvhSeatsFromRoots;
                     stageUniform.BvhNextBase = bvhNodeQueueBase(stage + 1u);
                     stageUniform.BvhLeafBase = bvhLeafQueueBase;
                     const BvhStageDraw &stageDraw = frameSlot.BvhStages[passIndex][stage];
@@ -3551,6 +3612,28 @@ namespace NorvesLib::Core::Rendering
                     if (!bDispatched)
                     {
                         NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_BVH_INDIRECT_FAILED pass=%u stage=%u", passIndex + 1u, stage);
+                    }
+                    // 2 パス目の段 0 の続き: 1 パス目が前のフレームの HZB に隠れたとして回した範囲の席を、別の dispatch で判定する
+                    // （1 要素 = 1 ワークグループ。どちらかの列が溢れたフレームはシェーダーが何もせず、根の入力の dispatch が全部の根を見直す）。
+                    // 根の入力の dispatch と同じ段 1 の列・カウンタへ積むので、間に書き込みの順序を入れる
+                    if (stage == 0 && !bSeatsFromRanges && uniformData.VisiblePass1Stamp != 0)
+                    {
+                        cmdList->BufferBarrier(m_BvhQueueBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                        cmdList->BufferBarrier(m_BvhCounterBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                        if (uniformData.bStatsEnabled != 0)
+                        {
+                            cmdList->BufferBarrier(statsBuffer, RHI::ResourceState::UnorderedAccess, RHI::ResourceState::UnorderedAccess);
+                        }
+                        CullUniformData deferUniform = stageUniform;
+                        deferUniform.bBvhSeatsFromRanges = BvhSeatsFromDeferred;
+                        const BvhStageDraw &deferDraw = frameSlot.BvhStages[passIndex][bvhLevelCount + 2u];
+                        deferDraw.Uniform->Update(&deferUniform, sizeof(CullUniformData));
+                        bindCullDescriptors(deferDraw.DescriptorSet, deferDraw.Uniform);
+                        cmdList->SetDescriptorSet(deferDraw.DescriptorSet, 0);
+                        if (!cmdList->DispatchIndirect(m_BvhPass2Buffer, static_cast<uint64_t>(BvhDeferArgsWord) * sizeof(uint32_t)))
+                        {
+                            NORVES_LOG_ERROR("MegaGeometryPass", "MEGA_BVH_INDIRECT_FAILED pass=%u stage=deferred", passIndex + 1u);
+                        }
                     }
 
                     // 次の段が、この段が積んだ列・カウンタ（シェーダーの読み取り）と引数（間接 dispatch）を読む
@@ -3796,7 +3879,43 @@ namespace NorvesLib::Core::Rendering
                 buildVisibilityPlan(stagedPlan);
             }
 
-            // 1パス目: 前のフレームで見えたクラスタだけを描く。前のフレームの2パス目の書き込みを見せる
+            // HZB は 2 枚を交互に作る。前のフレームが作った方（m_HiZIndex）とその契約を残し、今のフレームはもう一方へ作る。
+            // 前の HZB が今のフレームの 1 パス目の遮蔽の判定に使えるかを、契約と今のフレームの値で決める
+            MegaHiZContract currentContract;
+            currentContract.bValid = true;
+            currentContract.RenderFrame = m_RenderFrameCount;
+            currentContract.GameFrame = command.FrameNumber;
+            currentContract.ViewProjection = cameraConstants.ViewProjectionMatrix;
+            currentContract.DepthWidth = m_DepthTexture->GetWidth();
+            currentContract.DepthHeight = m_DepthTexture->GetHeight();
+            currentContract.SceneGeneration = m_SceneGeneration;
+            currentContract.SceneResyncCount = m_SceneResyncCount;
+            currentContract.CameraId = command.MainCamera.CameraId;
+            currentContract.SourceCameraId = command.MainCamera.SourceCameraId;
+            currentContract.ViewId = command.ViewId;
+            currentContract.ViewportId = command.ViewportId;
+            const uint32_t previousHiZIndex = m_HiZIndex;
+            m_PrevHiZStatus = EvaluatePreviousHiZ(m_HiZContracts[previousHiZIndex], currentContract,
+                                                  m_bDropVisibilityContinuity);
+            LogPreviousHiZStatus(m_HiZContracts[previousHiZIndex], currentContract, epochFrame);
+            // 契約が合うフレームだけ、1 パス目の範囲・席を前の HZB で判定する（--mega-twopass=legacy では使わない）
+            const bool bUsePrevHiZ = m_Settings.bTwoPassPrevHiZ && m_PrevHiZStatus == MegaPrevHiZStatus::Ready &&
+                                     m_HiZ[previousHiZIndex].IsReady() && bvhInstanceCount > 0;
+            if (bUsePrevHiZ)
+            {
+                prevHiZTexture = m_HiZ[previousHiZIndex].GetTexture();
+                prevHiZMipCount = m_HiZ[previousHiZIndex].GetMipCount();
+                prevHiZViewProjection = m_HiZContracts[previousHiZIndex].ViewProjection;
+            }
+            if (statsSlot)
+            {
+                statsSlot->bTwoPassPrevHiZ = m_Settings.bTwoPassPrevHiZ;
+                statsSlot->bPrevHiZUsed = bUsePrevHiZ;
+                statsSlot->PrevHiZStatus = m_PrevHiZStatus;
+            }
+
+            // 1パス目: 前のフレームで見えたクラスタだけを描く（前の HZB を使えるフレームは、それに隠れた範囲・席をたどらずに
+            // 2 パス目へ回す）。前のフレームの2パス目の書き込みを見せる
             cmdList->BufferBarrier(m_VisibilityBuffer,
                                    RHI::ResourceState::UnorderedAccess,
                                    RHI::ResourceState::UnorderedAccess);
@@ -3815,25 +3934,6 @@ namespace NorvesLib::Core::Rendering
             // 深度（GBufferPass の不透明＋1パス目。sink があるときは ID のラスタが描いた塊＋1パス目＋合流した値）から HZB を作る
             // （深度は1パス目の終わりで ShaderResource）。
             // 作れなかったときは遮蔽の判定をしない（1パス目で描かなかったクラスタを全て描く）
-            // HZB は 2 枚を交互に作る。前のフレームが作った方（m_HiZIndex）とその契約を残し、今のフレームはもう一方へ作る。
-            // 前の HZB が今のフレームの遮蔽の判定に使えるかを、契約と今のフレームの値で決める（判定にはまだ使わない）
-            MegaHiZContract currentContract;
-            currentContract.bValid = true;
-            currentContract.RenderFrame = m_RenderFrameCount;
-            currentContract.GameFrame = command.FrameNumber;
-            currentContract.ViewProjection = cameraConstants.ViewProjectionMatrix;
-            currentContract.DepthWidth = m_DepthTexture->GetWidth();
-            currentContract.DepthHeight = m_DepthTexture->GetHeight();
-            currentContract.SceneGeneration = m_SceneGeneration;
-            currentContract.SceneResyncCount = m_SceneResyncCount;
-            currentContract.CameraId = command.MainCamera.CameraId;
-            currentContract.SourceCameraId = command.MainCamera.SourceCameraId;
-            currentContract.ViewId = command.ViewId;
-            currentContract.ViewportId = command.ViewportId;
-            const uint32_t previousHiZIndex = m_HiZIndex;
-            m_PrevHiZStatus = EvaluatePreviousHiZ(m_HiZContracts[previousHiZIndex], currentContract,
-                                                  m_bDropVisibilityContinuity);
-            LogPreviousHiZStatus(m_HiZContracts[previousHiZIndex], currentContract, epochFrame);
             m_HiZIndex = 1u - previousHiZIndex;
             const bool bHiZBuilt = m_HiZ[m_HiZIndex].Build(cmdList, m_DepthTexture);
             currentContract.bValid = bHiZBuilt;
@@ -4231,7 +4331,9 @@ namespace NorvesLib::Core::Rendering
         RHI::BufferPtr queueBuffer = m_BvhQueueBuffer;
         RHI::BufferPtr pass2Buffer = m_BvhPass2Buffer;
         const uint64_t queueBytes = BvhQueueEntries * 2u * sizeof(uint32_t);
-        const uint64_t pass2Bytes = (static_cast<uint64_t>(BvhPass2HeaderWords) + BvhPass2Capacity) * sizeof(uint32_t);
+        const uint64_t pass2Bytes =
+            (static_cast<uint64_t>(BvhPass2HeaderWords) + BvhPass2Capacity + static_cast<uint64_t>(BvhDeferCapacity) * BvhDeferEntryWords) *
+            sizeof(uint32_t);
         try
         {
             if (!queueBuffer)
@@ -4283,12 +4385,14 @@ namespace NorvesLib::Core::Rendering
         m_BvhPass2Buffer = pass2Buffer;
         m_bBvhQueueAllocFailedLogged = false;
         NORVES_LOG_INFO("MegaGeometryPass",
-                        "VRAM_LEDGER bvh_queue mb=%.2f node_capacity=%u leaf_capacity=%u pass2_mb=%.2f pass2_capacity=%u",
+                        "VRAM_LEDGER bvh_queue mb=%.2f node_capacity=%u leaf_capacity=%u pass2_mb=%.2f pass2_capacity=%u "
+                        "defer_capacity=%u",
                         static_cast<double>(queueBytes) / (1024.0 * 1024.0),
                         BvhNodeQueueCapacity,
                         BvhLeafQueueCapacity,
                         static_cast<double>(pass2Bytes) / (1024.0 * 1024.0),
-                        BvhPass2Capacity);
+                        BvhPass2Capacity,
+                        BvhDeferCapacity);
         return true;
     }
 
@@ -4543,6 +4647,7 @@ namespace NorvesLib::Core::Rendering
         addBinding(VisibleListBinding, RHI::ResourceBindType::RWBuffer);  // 可視クラスタの全体の列
         addBinding(BinCounterBinding, RHI::ResourceBindType::RWBuffer);   // binning の数え・接頭和・照合の引数
         addBinding(BinCheckMarkBinding, RHI::ResourceBindType::RWBuffer); // 照合の印（開発ビルドの照合だけが使う）
+        addBinding(PrevHiZBinding, RHI::ResourceBindType::CombinedImageSampler); // 前のフレームの HZB（BVH の 1 パス目だけが読む）
         return desc;
     }
 
@@ -6248,6 +6353,27 @@ namespace NorvesLib::Core::Rendering
                             stats[1],
                             stats[2],
                             stats[3]);
+            // 範囲・インスタンスの 1 パス目を前のフレームの HZB で判定した結果。pass1_seats は 1 パス目でたどった席、
+            // deferred_ranges・deferred_seats は前の HZB に隠れて 2 パス目へ回した範囲と席（範囲ごと回した席は数えない）、
+            // defer_entries・defer_overflow は回した範囲の列へ積もうとした要素と容量を超えた要素（0 が合格。超えたら rescan=1 で
+            // 2 パス目が全部の根を遮蔽なしで見直す）、pass2_tested・pass2_passed は 2 パス目が回された範囲から判定した席と、
+            // 今のフレームの HZB でも隠れずにたどった席
+            NORVES_LOG_INFO("MegaGeometryPass",
+                            "MEGA_TWOPASS mode=%s prev_hiz=%u reason=%s pass1_seats=%u deferred_ranges=%u deferred_seats=%u "
+                            "defer_entries=%u defer_overflow=%u rescan=%u pass2_tested=%u pass2_passed=%u frame=%llu epoch_frame=%lld",
+                            pending.bTwoPassPrevHiZ ? "prev_hiz" : "legacy",
+                            pending.bPrevHiZUsed ? 1u : 0u,
+                            ToString(pending.PrevHiZStatus),
+                            stats[StatTwoPassPass1Seats],
+                            stats[StatTwoPassDeferRanges],
+                            stats[StatTwoPassDeferSeats],
+                            stats[StatTwoPassDeferEntries],
+                            stats[StatTwoPassDeferOverflow],
+                            stats[13],
+                            stats[StatTwoPassPass2Tested],
+                            stats[StatTwoPassPass2Passed],
+                            static_cast<unsigned long long>(pending.RenderFrame),
+                            static_cast<long long>(pending.EpochFrame));
             if (pending.bSwRasterBin)
             {
                 // 振り分けの結果。ソフトのラスタが無い間は、ハードがすべてのクラスタを描く（hw は一覧へ積まなかった数）
@@ -6268,7 +6394,7 @@ namespace NorvesLib::Core::Rendering
             }
             // 描かれなかったクラスタの数（0 が合格）と、インスタンス数に比例して膨らむバッファの大きさ。
             // bvh_overflow は BVH のたどりの固定容量の列を超えて判定から落ちた要素の数（0 が合格）、bvh_pass2_fallback は
-            // 2 パス目の根の入力が溢れて全部の根を判定し直したか、bvh_node_peak・bvh_leaf_peak は節の列の 1 段・葉の列へ
+            // 2 パス目の根の入力か回した範囲の列が溢れて全部の根を判定し直したか、bvh_node_peak・bvh_leaf_peak は節の列の 1 段・葉の列へ
             // 積もうとした数の最大（容量を超えた分も含む）。BVH の列（bvh_queue_bytes）は本数によらず一定。
             // visible_list_* は可視クラスタの全体の列（全パス通しの固定容量）: 枠（要素数・バイト数）、このフレームの溢れ
             // （積もうとした数 − 容量。列を確保できなかったときは容量 0 で、積もうとした数がそのまま溢れ。0 が合格）、

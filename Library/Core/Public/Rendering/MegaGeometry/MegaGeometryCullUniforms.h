@@ -53,11 +53,20 @@ namespace NorvesLib::Core::Rendering::MegaGeometry
         float InstanceCullDistance;   // 0 より大きければ、締まった球（範囲は AABB）の最も近い点がこれより遠い席・範囲を落とす（m）
         float PixelCullWidth;         // 0 より大きければ、席の締まった球を包む矩形が画素の中心を 1 つも含まないとき落とす（描く範囲の幅。画素）
         float PixelCullHeight;        // 同じ判定の描く範囲の高さ（画素）
+        uint32_t VisiblePass1Stamp;   // 0 でなければ、1 パス目が描いたクラスタへ書く印（2 パス目はその印で「1 パス目で描いた」を知る）。0 は旧の経路
+        uint32_t bPrevHiZEnabled;     // 1 なら 1 パス目の範囲・席を前のフレームの HZB で判定し、隠れたものを 2 パス目へ回す
+        float PrevViewProjection[16]; // 前のフレームの HZB の深度を描いた VP（シェーダーの並び。TAA のジッタ込み）
+        uint32_t BvhDeferCapacity;    // 2 パス目へ回した範囲の列の容量（要素）
     };
     // ソフトウェアラスタの 4 語は、行列 2 つ・視点・平面 6 つ・語 21 個の後ろに並ぶ（cluster_cull.comp の CullUniforms と同じ std140 の位置）。
     // 正射影の LOD の印は、その 4 語の直後
     static_assert(offsetof(CullUniformData, bSwRasterEnabled) == (16 + 16 + 4 + 24 + 21) * sizeof(uint32_t),
                   "cluster_cull.comp の CullUniforms と並びが一致しません");
     static_assert(offsetof(CullUniformData, OrthoLod) == (16 + 16 + 4 + 24 + 21 + 4) * sizeof(uint32_t),
+                  "Common/MegaGeometryCull.glsl の CullUniforms と並びが一致しません");
+    // 前のフレームの VP（mat4）は std140 で 16 バイトの境界に置かれる。直前の 2 語で境界にそろう
+    static_assert(offsetof(CullUniformData, PrevViewProjection) == 96 * sizeof(uint32_t),
+                  "Common/MegaGeometryCull.glsl の CullUniforms と並びが一致しません");
+    static_assert(offsetof(CullUniformData, BvhDeferCapacity) == (96 + 16) * sizeof(uint32_t),
                   "Common/MegaGeometryCull.glsl の CullUniforms と並びが一致しません");
 } // namespace NorvesLib::Core::Rendering::MegaGeometry

@@ -3951,3 +3951,20 @@ GR10〜GR13の実装をmainへ統合する。姿勢評価、アニメーショ�
   - `verify-SCN-MEGA-PREV-HIZ-2.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 60.066 dB、輝度差 0.0021、EXIT=0）。`default.Game.log` の `[ERROR]` 0。`MEGA_PREV_HIZ` は 4 行: 最初の 2 パスのフレームで `ready=0 reason=missing`、次のフレームから `ready=1`、エポックの先頭（`epoch_frame=0`）で `ready=0 reason=epoch`、`epoch_frame=1` から `ready=1`（`ready_frames=113 not_ready_frames=2`）。PNG は家・球・岩・地面が以前どおり。
 - Next: SCN-MEGA-TWOPASS-INSTANCES。
 - Notes: 撮影で実際に出た理由は missing・epoch だけで、resize・camera_cut・resync・packet_gap・generation・stale・view は実機の起動では通していない（コードの判定だけ）。全量の同期（`--mega-scene-full-sync`）は毎フレームインスタンスを作り直すので常に `reason=resync` になる。1 フレームに複数のビューポートで記録すると、交互の 2 枚を別のビューポートが使うので `reason=view` になる（ビューごとの HZB は持たない）。HZB の 2 枚目の分だけ GPU メモリが増える（1280×720 で R32 の半分の解像度の全ミップ、約 1.2 MB）。試験の追加はしていない。
+
+### SCN-MEGA-TWOPASS-INSTANCES（2026-10-14、反復 6・run 20261014-061910）
+- Done: 範囲とインスタンス（席）の 1 パス目を、契約が合うフレーム（`MEGA_PREV_HIZ ready=1`）だけ前のフレームの HZB で判定するようにした。HZB は今までどおり 1 パス目の深度（ソフトの合流の後）から作り、前の HZB の契約の評価を 1 パス目の前へ移した。
+  - 範囲の段は、視錐台・距離を通った範囲の AABB を包む球を前の VP（ジッタ込み）で前の HZB に当て、隠れていれば範囲ごと 2 パス目へ回す。席の段は、遮蔽以外の判定と根の LOD を通った席を前の HZB に当て、見える席だけ 1 パス目でたどり（根の入力へも積む）、隠れた席はワークグループで印をまとめて範囲ごとに 1 要素として回す。回した範囲の列は根の入力と同じバッファの後ろの別の列（範囲・席 64 ビットの印、容量 65536 範囲）で、2 パス目は根の入力とは別の間接 dispatch で印の立った席を今のフレームの HZB で判定する。
+  - 根の入力か回した範囲の列が溢れたら、2 パス目は両方の列を使わず全部の根を席の遮蔽の判定なしで判定し直す（溢れて積めなかった範囲の席を取りこぼさない。節・クラスタは今のフレームの HZB で判定を続ける）。
+  - 2 パス目が 1 パス目のたどらなかったインスタンスにも届くので、「前のフレームで見えた」印から 1 パス目で描いたかを推せない。1 パス目が描いたクラスタへ 1 パス目の印（書く印の最上位ビットを反転した値）を書き、2 パス目はその印で重ねて描かないようにした。
+  - `--mega-twopass=legacy` で旧経路（1 パス目は遮蔽の判定をせず、印から推す）へ戻る。開発ビルドは `MEGA_TWOPASS mode prev_hiz reason pass1_seats deferred_ranges deferred_seats defer_entries defer_overflow rescan pass2_tested pass2_passed` を出す。
+- 検証（`.harness/runs/20261014-061910/`）:
+  - `verify-SCN-MEGA-TWOPASS-INSTANCES-1.txt`: RelWithDebInfo の Game のビルド EXIT=0（警告は触っていない `VisibilityRasterPass.cpp` の既存の C4244 だけ）。シェーダーは `glslc` で cluster_bvh_cull・cluster_cull・vsm_mega_cull・mega_bin_*・vsm_mega_chunks のコンパイルも確かめた。
+  - `verify-SCN-MEGA-TWOPASS-INSTANCES-2.txt`: 旋回（遮蔽 Off との一致）f60・f75・f90 すべて within_limits（psnr 60.881 / 60.429 / 59.279 dB、輝度差 0.0007 / 0.0072 / 0.039）、result=pass、EXIT=0。`default-orbit.Game.log` の `[ERROR]` 0、エポックの先頭は `prev_hiz=0 reason=epoch`、以降は `prev_hiz=1 pass1_seats=6`、`MEGA_CAPACITY` 全行 `draw_dropped=0 bvh_overflow=0 bvh_pass2_fallback=0 visible_list_overflow=0`。PNG は家・球・岩・地面が以前どおり。
+  - `verify-SCN-MEGA-TWOPASS-INSTANCES-3.txt`: 起動画面 default の決定的撮影の比較 result=pass（psnr 60.066 dB、輝度差 0.0021、EXIT=0）。`default.Game.log` の `[ERROR]` 0、`MEGA_TWOPASS prev_hiz=1 pass1_seats=6`、`SW_RASTER_BIN pass1=1849 pass2=0 hw=823 zeroed=0`。PNG は以前どおり。
+- 補助（verify の外。起動画面は 6 席とも見えていて回す経路を通らないため）:
+  - バナナ 1 万本 overview と SCN-MEGA-BASE の比較 pass（psnr 66.223 dB、`aux-SCN-MEGA-TWOPASS-INSTANCES-bananas.txt`）。`pass1_seats=2611`、回した席 0、`MEGA_OCCLUSION` は前と同じ。
+  - バナナ 1 万本の low・horizon を `--mega-twopass=legacy` で撮り（`aux-...-legacy.txt`）、既定の経路と比べて pass（low psnr 100 dB、horizon 59.936 dB、`aux-...-prev.txt`）。既定の経路は `deferred_seats=2`・`pass2_tested=2`・`pass2_passed=0`、`[ERROR]` 0。
+  - 回した範囲の列を必ず溢れさせたシェーダー（一時的な変更。戻した）で同じ 2 視点を撮り、旧経路と比べて pass（low psnr 100 dB、horizon 61.549 dB、`aux-...-overflow.txt`）。`defer_overflow=2`/`1`・`rescan=1`、`[ERROR]` 0。
+- Next: SCN-MEGA-TWOPASS-CLUSTERS。
+- Notes: 撮影で範囲ごと回した範囲（`deferred_ranges`）は 0 で、範囲の段の前の HZB の判定は実機では通っていない（席の判定と同じ関数で、球は AABB を包む）。前の HZB は前のフレームの 1 パス目の深度から作ったもので、そのフレームの 2 パス目の描画を含まない（隠れる判定が少なめになる側）。溢れたときは溢れた範囲だけでなく全部の根を見直す（溢れた範囲を特定する印を持たないため）。1 パス目の印は過去のフレームの印と 2^31 フレーム後に一致しうるが、そのときは前のフレームで見えた扱いで 1 パス目に描くだけ（重ね描きはしない）。性能は測っていない（SCN-MEGA-ACCEPT-1M で判断）。統計のバッファは 32 → 48 語。試験の追加はしていない。

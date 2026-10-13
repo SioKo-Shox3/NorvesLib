@@ -267,6 +267,15 @@ namespace NorvesLib::Core::Rendering
          * 起動引数 --mega-binning=off なら false（判定が区間ごとのコマンドを書く旧の経路。開発ビルドは新旧を照合する）。
          */
         bool bUseBinning = true;
+
+        /**
+         * @brief 2 パスの遮蔽で、範囲・インスタンスの 1 パス目を前のフレームの HZB で判定するか（既定）
+         *
+         * true なら、契約が合うフレームの 1 パス目は前の HZB に隠れた範囲・席をたどらずに 2 パス目の別の列へ回し、
+         * 2 パス目が今のフレームの HZB で判定する。1 パス目が描いたクラスタには印を書き、2 パス目はその印で重ねて描かない。
+         * 起動引数 --mega-twopass=legacy なら false（1 パス目は遮蔽の判定をせず、判定を通った全部の根を 2 パス目が判定し直す旧の経路）。
+         */
+        bool bTwoPassPrevHiZ = true;
     };
 
     /**
@@ -1313,6 +1322,9 @@ namespace NorvesLib::Core::Rendering
             bool bBinCheck = false;    // このフレームが binning の新旧の照合を記録し、統計の 17〜30 が有効
             uint32_t BinCount = 0;     // 区画の数（パスの数 × 区間の数 × 2）
             uint32_t VisibleListCapacity = 0; // このフレームの全体の列の要素の数（列を確保できなかったときは 0）。統計の 16 は照合によらず有効
+            bool bTwoPassPrevHiZ = false; // 前のフレームの HZB を使う経路か（--mega-twopass=legacy なら false）
+            bool bPrevHiZUsed = false;    // このフレームの 1 パス目が前の HZB で判定したか。統計の 31〜37 は前の HZB を使う経路で有効
+            MegaPrevHiZStatus PrevHiZStatus = MegaPrevHiZStatus::Missing; // 前の HZB が使えるかの判定
         };
         bool m_bStatsEpochActive = false;
         bool m_bDropVisibilityContinuity = false; // 決定的な撮影のエポックの最初のフレーム: 見えたビットを引き継がない

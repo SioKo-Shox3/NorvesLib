@@ -17,6 +17,8 @@
 // 次のフレームの1パス目は visibleReadStamp（前のフレームの visibleWriteStamp）と等しいものだけを「前のフレームで見えた」
 // とみなす。見えなかったクラスタを0に戻す必要が無いので、BVH の枝ごと切られて判定されなかったクラスタの印も古い値のまま
 // 次のフレームで見えなかった扱いになる（全クラスタを毎フレーム書き直す従来の経路と同じ結果）。
+// visiblePass1Stamp が 0 でなければ、1パス目は描いたクラスタへその印を書き、2パス目はその印で「1パス目で描いた」を知る
+// （範囲・席を前のフレームの HZB で2パス目へ回す経路では、2パス目が1パス目のたどらなかったインスタンスにも届くため）。
 //
 // LODの段の選び方は2通り（クラスタの bakedInfo.x のビットで決まる）:
 //   焼き込み済みの階層（NVMESH v1）: 自分の誤差を自分の球から画面へ投影した値がしきい値以下で、
@@ -163,6 +165,10 @@ layout(set = 0, binding = 0) uniform CullUniforms
     float instanceCullDistance; // 0 より大きければ、締まった球（範囲は AABB）の最も近い点がこれより遠い席・範囲を落とす（m）
     float pixelCullWidth;    // 0 より大きければ、席の締まった球を包む矩形が画素の中心を含まないとき落とす（描く範囲の幅。画素）
     float pixelCullHeight;   // 同じ判定の描く範囲の高さ（画素）
+    uint visiblePass1Stamp;  // 0 でなければ、1パス目が描いたクラスタへ書く印（2パス目は印で「1パス目で描いた」を知る）。0 は旧の経路
+    uint bPrevHiZEnabled;    // 1 なら1パス目の範囲・席を前のフレームの HZB（binding 26）で判定し、隠れたものを2パス目へ回す
+    mat4 prevViewProjection; // 前のフレームの HZB の深度を描いた VP（射影 * ビュー、TAA のジッタ込み）
+    uint bvhDeferCapacity;   // 2パス目へ回した範囲の列の容量（要素。cluster_bvh_cull.comp だけが読む）
 } cullData;
 
 const uint CULL_PASS_SINGLE = 0u;
@@ -186,6 +192,14 @@ const uint STAT_BVH_OVERFLOW = 12u;       // 節・葉の列の容量を超え�
 const uint STAT_BVH_PASS2_FALLBACK = 13u; // 2 パス目の根の入力の容量を超えた根（1 以上なら 2 パス目は全部の根を見直す）
 const uint STAT_BVH_NODE_PEAK = 14u;      // 節の列の 1 段へ積もうとした数の最大（両パス。容量を超えた分も含む。64 要素の粒度）
 const uint STAT_BVH_LEAF_PEAK = 15u;      // 葉の列へ積もうとした数の最大（両パス。容量を超えた分も含む。8 要素の粒度）
+// 前のフレームの HZB による1パス目の判定（cluster_bvh_cull.comp。統計の 31〜37）
+const uint STAT_TWOPASS_PASS1_SEATS = 31u;      // 1パス目でたどった席
+const uint STAT_TWOPASS_DEFER_RANGES = 32u;     // 1パス目で範囲ごと隠れたとして2パス目へ回した範囲
+const uint STAT_TWOPASS_DEFER_SEATS = 33u;      // 1パス目で席が隠れたとして2パス目へ回した席（範囲ごと回した席を含まない）
+const uint STAT_TWOPASS_DEFER_ENTRIES = 34u;    // 2パス目へ回した範囲の列へ積もうとした要素
+const uint STAT_TWOPASS_DEFER_OVERFLOW = 35u;   // その列の容量を超えて積めなかった要素（2パス目は全部の席を遮蔽なしで見直す）
+const uint STAT_TWOPASS_PASS2_TESTED = 36u;     // 2パス目で、回された範囲から判定した席
+const uint STAT_TWOPASS_PASS2_PASSED = 37u;     // そのうち今のフレームの HZB でも隠れず、たどった席
 
 const uint DEBUG_PAYLOAD_MODE_NONE = 0u;
 const uint DEBUG_PAYLOAD_MODE_CLUSTER_INDEX = 1u;
@@ -1003,6 +1017,12 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
         {
             EmitDrawCommand(instanceIndex, instance, clusterIndex, cluster);
             CountStat(STAT_PASS1_DRAWN);
+            // 1パス目で描いた印。インスタンスを前のフレームの HZB で2パス目へ回すと、2パス目は1パス目がたどらなかった
+            // クラスタにも届くので、「前のフレームで見えた」印から1パス目で描いたかを推せない
+            if (cullData.visiblePass1Stamp != 0u)
+            {
+                visibleLastFrame[visibleIndex] = cullData.visiblePass1Stamp;
+            }
             // 描いた時点で自分のページの使用の印を出す。BVH の経路は2パス目で節ごと遮蔽されると枝を打ち切り、
             // このクラスタが2パス目に届かないので、2パス目の使用の印に頼れない。子のページの要求は2パス目の可視の判定に任せる
             RequestPage(instance.bvhInfo.w, ownPage);
@@ -1012,8 +1032,12 @@ void ProcessCluster(uint instanceIndex, MegaInstance instance, uint clusterIndex
 
     if (cullData.cullPass == CULL_PASS_SECOND)
     {
-        // 1パス目で描いたか（描くのは「前のフレームで見えた」かつ判定を通ったクラスタ）。印を書き換える前に読む
-        bool bDrawnInFirstPass = bPassesBasicTests && visibleLastFrame[visibleIndex] == cullData.visibleReadStamp;
+        // 1パス目で描いたか。印を書き換える前に読む。1パス目の印があれば、1パス目が描いたときに書いた印と比べる。
+        // 旧の経路は、1パス目が描くのは「前のフレームで見えた」かつ判定を通ったクラスタなので、その条件から推す
+        // （旧の経路の2パス目が届くクラスタは、1パス目も必ずたどっている）
+        bool bDrawnInFirstPass = cullData.visiblePass1Stamp != 0u
+                                     ? visibleLastFrame[visibleIndex] == cullData.visiblePass1Stamp
+                                     : bPassesBasicTests && visibleLastFrame[visibleIndex] == cullData.visibleReadStamp;
 
         // 判定を通った全クラスタを、1パス目の深度のHi-Zで判定し直す
         bool bOccluded = false;
